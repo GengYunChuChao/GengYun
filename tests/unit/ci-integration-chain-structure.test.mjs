@@ -91,6 +91,21 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/admin-audit-logs-pg.mjs',
+    reason: '需真实 PG 17.11，且是**自起集群**脚本（R34 / #18 交付）：要求 `GY_PG_BIN` 指向服务端'
+      + '二进制目录，自行 `initdb`/`pg_ctl` 起一次性集群（仅回环；端口在 55436–55467 里**先探活再起**，'
+      + '数据目录父目录走可选的 `GY_R34_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），再 apply 迁移 0033 起的读面：'
+      + '`public.list_admin_audit_logs()` 的七参数绑定、键集 `(created_at, id)` 分页、'
+      + '同一毫秒不同微秒不漏行，并断言运行时角色直读 `admin_audit_events` 仍恰好 42501（零新增授权）。'
+      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
+      + '本片（R34）**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
+      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／'
+      + '`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，'
+      + '须由指挥裁定），故在此如实登记为未接线；本地已用本机 PG 17.11 二进制跑通该臂。'
+      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
+      + '接进真库 job 不等于进 `test:integration:http`。',
+  },
+  {
     path: 'tests/integration/admin-community-posts-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_community_posts_test`：脚本要求**空库**'
       + '（先断言 `public` 下 0 张表），只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段：'

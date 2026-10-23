@@ -78,7 +78,7 @@ export interface MediaObjectStore {
 2. `services/api/src/app.ts:353`：`BuildAppOptions` 增可选字段
    `ocrMedia?: OcrRouteDeps['media'];`（命名对齐既有 `recognitionMedia` / `speechMedia`），并写明「缺省 undefined ⇒ 域内
    按 `executionMode` 自建；默认装配不注入、`real` 仍 fail-closed」。
-3. `services/api/src/app.ts:700`：解构新增 `ocrMedia`。
+3. `services/api/src/app.ts:716`：解构新增 `ocrMedia`。
 4. `services/api/src/app.ts:1947`：装配行改为
    `registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool);`
    —— 行尾仍是 `}, ocrPersistencePool);`，`ocrPersistencePool` 仍是第 4 个位置实参。

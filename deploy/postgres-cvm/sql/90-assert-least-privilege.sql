@@ -1674,6 +1674,10 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'list_admin_flag_audit',              'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R34（迁移 0033）：后台审计日志查询的唯一读路径（SECURITY DEFINER + 固定
+    -- search_path）；`admin_audit_events` 对运行时仍是零表级权限。
+    ('public',         'list_admin_audit_logs',              'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'suspend_account',                    'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'admin_account_display_name',         'runtime',

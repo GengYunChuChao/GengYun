@@ -4,14 +4,17 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态：`0001..0032` 连续，无缺号
+## 当前状态：`0001..0033` 连续，无缺号
 
-迁移 `0001..0032` 已全部真实落盘：**32 个正向 + 31 个 down**（无 `0001` 的 down），末项 `0032`。
+迁移 `0001..0033` 已全部真实落盘：**33 个正向 + 32 个 down**（无 `0001` 的 down），末项 `0033`。
 保留台账 `services/api/db/migration-reservations.json` 的 `reservations` 为**空数组**
-（`count + 保留数 === max` ⇒ **32 + 0 === 32**），
-`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据为「`0001..0032` 连续、无缺口」。
+（`count + 保留数 === max` ⇒ **33 + 0 === 33**），
+`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据为「`0001..0033` 连续、无缺口」。
 （本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations` ⇒
-正向 `.sql` 32 条、`rollback/` 31 条、`0001..0032` 无缺号。）
+正向 `.sql` 33 条、`rollback/` 32 条、`0001..0033` 无缺号。）
+
+- `0033_admin_audit_log_read.sql`（R34 · 后台审计日志查询面，Refs #18）接在 `0032` 之后：
+  编号前核对过全部 refs 与在途 PR（`003[3-9]_` 零命中）⇒ 直接用最大号 +1，**台账仍为空数组**。
 
 - `0031_online_purge_evidence.sql`（#19 片B · 在线清理证据落库）与
   `0032_community_report_reporter_ref.sql`（#15 去身份残留 · 举报者行级注销引用）按裁定

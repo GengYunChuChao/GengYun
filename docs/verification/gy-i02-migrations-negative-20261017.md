@@ -96,7 +96,7 @@ AssertionError [ERR_ASSERTION]: 台账写入失败后，同一迁移里已执行
 | 位置 | 末尾新增一步 `:37-41`：两行中文注释说明三臂与自建自删库，`:39` 为 `- run: node tests/integration/migrations-negative-pg.mjs`，`:40-41` 设 `MIGRATIONS_NEGATIVE_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_auth_privacy_test` |
 | 未新建 workflow | 是（10 个 workflow 数量不变） |
 | 未动 `engineering-shell.yml` | 是（该文件的 11 条集成链一字未改） |
-| 未接进 `test:integration:http` 链 | 是（该链需无 PG 环境可跑）；改为在 `tests/unit/ci-integration-chain-structure.test.mjs:107` 的白名单里声明「需真 PG、由 workflow 另起一步」，否则结构测试断言 4 会红 |
+| 未接进 `test:integration:http` 链 | 是（该链需无 PG 环境可跑）；改为在 `tests/unit/ci-integration-chain-structure.test.mjs:299` 的白名单里声明「需真 PG、由 workflow 另起一步」，否则结构测试断言 4 会红 |
 | **CI 未跑** | **是：本片只本地提交、未推送，workflow 未触发；上述 CI 读数待推送后验证** |
 
 ## 5 六项门禁读数（合流后重跑，本机实测，全部退出码 0）

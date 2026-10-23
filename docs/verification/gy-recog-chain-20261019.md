@@ -14,7 +14,7 @@
 
 **合流复核二（2026-10-19，`upstream/main` `607c03c`；本栈第 1 片）**：再以 `git merge --no-ff upstream/main` 合入
 `607c03cd0c54508164822cc36640a0ec3675564e`（含 `#309`–`#312`）得 merge `0f54b2b`（双亲 `0371cdc` + `607c03c`，无冲突）：
-此前那次合流保留的 `test:integration:http` 链成员**被撤出**（`#312` 的新守卫「打印 SKIP 必须给 77 出口」对它判红，而 `ci-integration-chain-structure.test.mjs:332` 又不允许链成员带 flag ⇒ 两者不可兼得），
+此前那次合流保留的 `test:integration:http` 链成员**被撤出**（`#312` 的新守卫「打印 SKIP 必须给 77 出口」对它判红，而 `ci-integration-chain-structure.test.mjs:347` 又不允许链成员带 flag ⇒ 两者不可兼得），
 裁决见上「接线口径」，随后本页读数按**合流后的树**重测。
 
 ## 1 结论
@@ -191,7 +191,7 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 - `GET /api/v1/history` 恒 `Cache-Control: no-store` 且**无 ETag**；历史投影键集恰为 `created_at/id/job_state/kind/reference_state/revision/target_ref`，不含 `owner_id`。
 - `reference_state=unavailable` 是**如实披露**：stub 装配下没有 `/knowledge` 读面，服务端不去假装核验过目标可见性。⚠ 但如实披露 ≠ 实现「读取时重查对象权限及当前可见性」⇒ `#16 AC4` 判**不成立**（见 §1.1、§6）。
 - 删除历史：`If-Match` 必填；**同键重放返回 200 回放**（真库臂由 `history_idempotency` 台账裁决），**换新键再删已删除 id 返回 404**，且与他人 id / 不存在 id 的 404 **同形** —— 这两种「重复删除」语义不同，本脚本分开断言，避免把幂等回放误记成 404。
-- 本片未改：契约、`docs/architecture/contract-status.json`、迁移、`miniprogram/**`、`services/api/**`、既有测试断言。合流 `607c03c` 后的接线改动：`package.json` 撤出无库链里本片那一条、新增 `test:integration:recognition-chain-pg`；结构门禁豁免表登记 1 行（冻结清单未动）；脚本本身 77 化。没有选「给无库链成员加 flag」这条路——`tests/unit/ci-integration-chain-structure.test.mjs:332` 要求链成员严格形如 `node <path>`，带 flag 即红。
+- 本片未改：契约、`docs/architecture/contract-status.json`、迁移、`miniprogram/**`、`services/api/**`、既有测试断言。合流 `607c03c` 后的接线改动：`package.json` 撤出无库链里本片那一条、新增 `test:integration:recognition-chain-pg`；结构门禁豁免表登记 1 行（冻结清单未动）；脚本本身 77 化。没有选「给无库链成员加 flag」这条路——`tests/unit/ci-integration-chain-structure.test.mjs:347` 要求链成员严格形如 `node <path>`，带 flag 即红。
 
 ## 9 与 issue 的关系
 
