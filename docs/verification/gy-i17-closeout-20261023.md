@@ -3,7 +3,7 @@
 - 任务：GY-R33 写手分片（文档/取证档）——为 issue **#17**「[初版 GY-I17] 实现首版应用内消息、未读状态与权限跳转」出关闭材料。本页**纯文档**：不改代码、不改 `docs/architecture/contract-status.json`、不 push／不 merge／不 approve、不改 issue 状态。
 - 分支：`docs/gy-r33-i17-closeout`（工作树 `E:\GengYunCommander\wt-r33-i17`），从 `upstream/main` 新建；基线＝`7dd3d699d71ce5ce69b5254ea8a3e54aed4f7f79`（`git -C E:\GengYunCommander\GengYun_Agent2 rev-parse upstream/main` 实测）。本页所有 `路径:行号` 都是该 SHA 上的**实读值**：工作树 `git status --porcelain` 为空 ⇒ 磁盘内容与 `upstream/main` 是同一棵树。
 - 环境：Windows · node **v24.16.0** · npm **11.13.0**；本树自装依赖 `npm ci --prefer-offline --no-audit --no-fund --ignore-scripts`（`added 103 packages in 5s`，装完 `git status --porcelain` 仍为空 ⇒ lockfile 未变）。**本机无可用真 PostgreSQL**：`127.0.0.1:55727` 探测 `TcpTestSucceeded=False`，仅 `55715` 在听（属其它回合的集群，本片不借用）⇒ 本轮**未跑**真库臂，真库读数只能引既有证据页（§5-U5）。
-- 本页性质：关闭材料（读数页）。只记录「已经取得什么读数、还差什么」，不替代监工裁定，也**不把任何未取得项写成已通过**。
+- 本页性质：关闭材料（读数页）。只记录「已经取得什么读数、还差什么」，不替代监工的验收判定，也**不把任何未取得项写成已通过**。
 - **身份归属边界**：本页引用的评论 `6333028693` 是 **`Sek1ro-oka` 于 2026-10-22 发布的「指挥裁定」**（`gh api` 实读 `user.login=Sek1ro-oka`、首行「指挥裁定（GY-I17，2026-10-22）」），属**指挥侧历史裁定/建议**；它**不能替代**用户最新「沿用完整验收、缺口未齐保持开放」的要求，也**不构成**任何「监工已改口径」的暗示。
 - 与既有页面的关系：`#445` 的只读复盘（[gy-r31-i17-recon-20261022.md](gy-r31-i17-recon-20261022.md)）、G2 裁定（[gy-r31-i17-g2-ruling-20261022.md](gy-r31-i17-g2-ruling-20261022.md)）、G5（[gy-r31-i17-g5-20261022.md](gy-r31-i17-g5-20261022.md)）、G6／G7／G8（[gy-r31-i17-g678-20261022.md](gy-r31-i17-g678-20261022.md)）、真库注销臂（[gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md)）都是**当时时点**的快照；本页按 `7dd3d699` 重新逐条核过，**不复制**它们的结论。
 
@@ -16,7 +16,7 @@
 | 判定项 | 实测读数 | 结论 |
 | --- | --- | --- |
 | #17 是否可关 | 裁定前置 3 项：A ✓（#448）、G3 ✓（#448）、台账重生成 ✗（§3.3） | **不可关** |
-| 缺的第 1 条 | 台账重生成：3 条 operation 仍 `partial`，`blocker` 含已不成立的子句 | **工程/流程缺口**（须另派台账片或由监工裁定，本页不改台账） |
+| 缺的第 1 条 | 台账重生成：3 条 operation 仍 `partial`，`blocker` 含已不成立的子句 | **工程/流程缺口**（须另派台账片或由监工判定，本页不改台账） |
 | 缺的第 2 条 | 真机／Android 走查、真 PG `system` 事件形状、通知重试 outbox、停用期间不可读 | **契约/外部依赖缺口**（§5 的 U1–U4） |
 | 功能侧 | AC1／AC2／AC3 **已具备**；AC4 的消息域子句已具备，「收藏历史」子句属 #16 | 见 §1 |
 | 代码是否落地 | 迁移 0019 ＋ PG 存储 ＋ 未读派生 ＋ 读标记 CAS ＋ 游标 ＋ 跳转端口 ＋ 四类消息事件（`comment`/`like`/`moderation`/`system`）的生产点，全部在 `upstream/main` 且装配在位 | 见 §2 |
