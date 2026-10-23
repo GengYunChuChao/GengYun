@@ -3,7 +3,7 @@
 一套**能重复跑**的权限/安全失败回归：表驱动、每条用例给真实读数、每条关键守卫配**负控制**
 （故意放宽守卫 → 对应用例必须真红 → 原字节恢复 → sha256 前后一致 → 复跑转绿）。
 
-**本片不宣称 #22 完成。** 这里交付骨架 + 168 条用例 + 23 条负控制，覆盖「身份与权限面
+**本片不宣称 #22 完成。** 这里交付骨架 + 230 条用例 + 26 条负控制，覆盖「身份与权限面
 （游客/越权/后台/会话与注销）」「媒体归属与访问凭据」「重复请求」「无效输入」「审核回调与 AI 失败」
 「下架缓存」「版本回写」「提示注入」。**真实 AI 外呼、真机、微信端到端、真实对象存储签名过期、
 断网重试、账号停用、注销到期清理、在途取消 409** 仍**未取得**（见末尾「未取得」一节，逐条写明为什么）。
@@ -14,20 +14,20 @@
 ## 一条命令
 
 ```bash
-node tests/failmatrix/run.mjs                  # 全跑（HTTP 150 + 受信 seam 18 = 168 条）
+node tests/failmatrix/run.mjs                  # 全跑（HTTP 210 + 受信 seam 20 = 230 条）
 node tests/failmatrix/run.mjs --only=C2        # 只跑某族（前缀匹配，D/E 族同样适用）
 node tests/failmatrix/run.mjs --only=D1-01,C6-10 --json=out.json
 node tests/failmatrix/run.mjs --list           # 只列用例
 
-node tools/i22-failmatrix-negative-control.mjs               # 23 条负控制
+node tools/i22-failmatrix-negative-control.mjs               # 26 条负控制
 node tools/i22-failmatrix-negative-control.mjs --only=NC-09  # 只跑一条
 
 # 证据页三列表（读上面两条命令的 --json，重跑即复核）
-node tools/i22-failmatrix-evidence-table.mjs --write
+node tools/i22-failmatrix-evidence-table.mjs                       # 只打印不写盘（对账）；要写页必须 --write --page=<目标页>
 ```
 
 进 CI/单测入口：`tests/unit/gy-i22-failmatrix.test.mjs`（`npm run test:unit` 会带上它）。
-它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 168，另加一条**静态同步检查**：负控制清单里
+它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 230，另加一条**静态同步检查**：负控制清单里
 每处 `find` 必须在当前产品代码里恰好出现一次（守卫被重构时这条先红，而不是等你发现矩阵不再变红）。
 
 ## 为什么用进程内 `app.inject`，不用 loopback HTTP
@@ -55,9 +55,9 @@ node tools/i22-failmatrix-evidence-table.mjs --write
 | `cases.mjs` | HTTP 用例表：`id` / `method` / `path` / `headers` / `body` / `expect{status,code,etag}` / `check` / `sameShapeAs` / `concurrent` |
 | `seams.mjs` | 受信 seam 用例表：`invoke` + `expect{code}` + `check`（审核回调 / AI 失败 / 下架缓存 / 版本回写） |
 | `run.mjs` | 表驱动 runner：判定 + 拒绝不变量 + 同形对照 + 按族/批次汇总 + `--json` 机读结果 |
-| `mutations.mjs` | 23 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
+| `mutations.mjs` | 26 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
 | `tools/i22-failmatrix-negative-control.mjs` | 负控制执行器：sha256 → 改 → 跑（必须全红）→ 原字节恢复 → sha256 复核 → 复跑（必须全绿） |
-| `tools/i22-failmatrix-evidence-table.mjs` | 证据表生成器：读 `--json` 结果生成三列表，条数与文档声明不符即失败 |
+| `tools/i22-failmatrix-evidence-table.mjs` | 证据表生成器：读 `--json` 结果生成三列表，条数与文档声明不符即失败；`--write` 没有隐式默认页（必须显式 `--page=`，写归档页还要 `--i-know-this-rewrites-archive` 且页内条数必须等于 `EXPECTED`），对账不通过一律不写盘 |
 
 ## 用例族与批次
 
@@ -76,9 +76,11 @@ node tools/i22-failmatrix-evidence-table.mjs --write
 | D2 | 4 | AI 失败：端口抛错 / 超时 / 结构未知 / 规则未过 ⇒ 任务 `quarantined`、`publishable:false` |
 | D3 | 2 | 下架缓存：下架 ⇒ 读缓存键失效 + 可见性 `hidden`；二次下架幂等 |
 | D4 | 3 | 版本回写：改版后未筛查 ⇒ `INPUT_UNCERTAIN`；已筛查 ⇒ 可发布；历史版本 ⇒ `REVISION_CONFLICT` |
+| C10 | 23 | 异步 AI 域游客面（识别 / OCR / 转写 / 合成 / 作业 / 会话）：无凭据一律 `401 SESSION_REQUIRED`，且带 `no-store`（#449 引入） |
+| C11 | 39 | 异步 AI 域归属面：他人资源一律 `404`（与「不存在」同形，不泄露存在性）、列表隔离（#449 引入） |
 
 批次：**B1** = C1–C4，106 条（身份与权限面）· **B2** = C5–C7，36 条（媒体归属、重复请求与无效输入）·
-**B3** = D1–D3，17 条（受信 seam：回调 / AI 失败 / 下架缓存）· **B4** = D4+E1+E2，9 条（版本回写 / 提示注入 / 媒体凭据）。
+**B3** = D1–D3，17 条（受信 seam：回调 / AI 失败 / 下架缓存）· **B4** = D4+E1+E2，9 条（版本回写 / 提示注入 / 媒体凭据）· **B5** = C10+C11，62 条（异步 AI 域的游客面与归属面）。
 
 ## 拒绝不变量（每条 4xx/5xx 都校验，不只是状态码）
 
@@ -162,7 +164,7 @@ node tools/i22-failmatrix-evidence-table.mjs --write
 
 ## 与 `#22` 的关系
 
-`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 168 条真读数用例 + 23 条负控制**，
+`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 230 条真读数用例 + 26 条负控制**，
 并把「在 main 上一跑就绿」与「哪些还没取得」分开记账。后续批次直接在 `cases.mjs` 追加族
 `C8+`/`E3+`、在 `seams.mjs` 追加 `D5+`，并在 `mutations.mjs` 追加对应负控制；
 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` / `FAMILY_COUNTS` / `BATCH_COUNTS` 随之抬高——

@@ -705,8 +705,20 @@ Node.js v24.16.0
 
 - `git diff --numstat tests/failmatrix/mutations.mjs` = `41 0`：**新增 41 行、删除 0 行**——`NC-01…NC-21`（23 条）的 `find` / `replace` / `watch` 一个字节都没动，只在其后追加 `NC-22/23/24` 并补了文件头关于 `unitWatch` 的说明。
 - 计数只上调：`tests/unit/gy-i22-failmatrix.test.mjs` 里负控制条数下限 `MUTATIONS.length >= 20` → `>= 26`（= 现有全部负控制条数）；`MIN_CASES` 仍为 `230`（本轮没有新增矩阵用例，故不上调）。
-- 收尾 `git status --porcelain -uall` 只剩 5 个有意改动的文件（`tests/failmatrix/mutations.mjs`、`tests/failmatrix/README.md`、`tests/unit/gy-i22-failmatrix.test.mjs`、`tools/i22-failmatrix-negative-control.mjs`、本页），任何变异残留都没有。
+- 收尾 `git status --porcelain -uall` 只剩 5 个有意改动的文件（`tests/failmatrix/mutations.mjs`、`tests/failmatrix/README.md`、`tests/unit/gy-i22-failmatrix.test.mjs`、`tools/i22-failmatrix-negative-control.mjs`、本页），任何变异残留都没有（这是 `3825d60f` 收尾时的读数；其后的 `ef35b3fa` 与「拒绝改写归档快照」那个提交又各动了 `tools/i22-failmatrix-evidence-table.mjs` 等文件，见本节末尾「订正」）。
 
-### 本轮没动的（避免与其它分片相撞）
+### 本轮没动的（避免与其它分片相撞；`tools/i22-failmatrix-evidence-table.mjs` 不在此列，见下「订正」）
 
-`.github/**`、`services/api/db/migrations/**`、`migration-reservations.json` 一律没碰；未起 PG 集群、未占端口（`exports-route-http.test.mjs` 自己 `app.listen({ port: 0 })` 的临时环回口是它原有形态）。`tools/i22-failmatrix-evidence-table.mjs` 的 `EXPECTED`（`total: 168`、`negativeControls: 23`）与本轮实测（矩阵 230 条 / 负控制 26 条）已对不上，属既有陈旧账，本轮不碰、如实记录。
+`.github/**`、`services/api/db/migrations/**`、`migration-reservations.json` 一律没碰；未起 PG 集群、未占端口（`exports-route-http.test.mjs` 自己 `app.listen({ port: 0 })` 的临时环回口是它原有形态）。
+
+### 订正：计数口径**已由本分支校正**（此前那句「本轮不碰 EXPECTED」说过头了）
+
+本节此前写的是「`tools/i22-failmatrix-evidence-table.mjs` 的 `EXPECTED`（`total: 168`、`negativeControls: 23`）与本轮实测（矩阵 230 条 / 负控制 26 条）已对不上，属既有陈旧账，本轮不碰、如实记录」。这句话在 `ef35b3fa`（`chore(test): 校正 i22 负控制证据表计数口径`）落盘后就不成立了——那个提交改的正是 `EXPECTED`：`total` 168 → 230、`negativeControls` 23 → 26，并补 `C10: 23`、`C11: 39`、`B5: 62` 三个分组（`families` 与 `batches` 都是全 230 的分组计数）。校正依据：R29 建页时 13 族之和 = 168（**同一口径**的旧读数，不是另一个维度），加上 R31 补的同步 AI 域 23 + 39 后 = 168 + 23 + 39 = 230；负控制 23 + 3 = 26。
+
+同一提交暴露出连带风险，本次一并机械拦住：`PAGE` 常量仍指向本页之外的归档页 `docs/verification/gy-i22-failmatrix-20261022.md`（R29 快照，表格 168 行 / 负控制 23 条），`EXPECTED` 上调之后**裸跑 `--write` 会无报错把那份归档快照重写成 230 行**，而且原来的写盘位于 `problems` 对账**之前**。现在的口径（不是注释提醒，是可被负控制测试证伪的拦截）：
+
+- `--write` 不再有隐式默认页：裸 `--write` 一律 exit 1 并打印原因；目标页必须显式 `--page=`。
+- 目标页就是归档页时还要 `--i-know-this-rewrites-archive`；**即便给了旗标**，页内矩阵表行数 / 负控制表行数也必须与 `EXPECTED`（230 / 26）逐项相等才写——归档快照只允许「同一基线刷新读数」，不允许被换成另一份快照。今天它就被拒（`条数 168 与 EXPECTED 230 不一致`）。
+- 写盘挪到 `problems` 判定之后：对账不通过一律不写盘、exit 1。
+- 只读路径不变：不带 `--write` 时照旧把两张表打到 stdout、末行「自洽：矩阵 230 条全 PASS、负控制 26 条全 PASS，与文档声明一致」、exit 0（对账不通过则 exit 1）；`--matrix=` / `--nc=` 仍按仓库根解析相对路径。
+- 守卫由 `tests/unit/i22-failmatrix-evidence-table-guard.test.mjs` 兜底：工件自洽时 `--write` 真的写盘（正控制，证明守卫不是「永远红」）、工件与 `EXPECTED` 不一致时不写盘且 exit 1、真实归档页在「裸 `--write`」「显式 `--page=`」「再加双钥匙」三种调用下字节不变。
