@@ -219,9 +219,14 @@
 - **并流刷新（2026-10-23，GY-R34-I19 · #19 注销闭集扩展第 2 片）**：该片新增
   `services/api/db/migrations/0034_r34_owner_content_purge.sql`（两条 `SECURITY DEFINER` 窄函数
   `public.purge_owner_recognitions(uuid)` / `public.purge_owner_speech(uuid)`，只授 `EXECUTE`）
-  与其 down ⇒ 按本树实读：迁移数 **33** 个（`0001..0032` ＋ 本片 `0034`；**0033 归 #525 的审计读表** `0033_admin_audit_log_read.sql`，故 `0033` 是台账已登记的有依据缺号）、`rollback/` **32** 个
+  与其 down ⇒ 按**合并前**的本树实读：迁移数 **33** 个（`0001..0032` ＋ 本片 `0034`；当时 **0033 归 #525 的审计读表**、其文件尚未进主干，故 `0033` 是台账已登记的缺号）、`rollback/` **32** 个
   （`0002..0032` ＋ `0034`，仍无 `0001`）、`deploy/` 在册仍 **36** 个（该片不改 `deploy/**` 的文件集合）。
   §4 第 8 项读数已同步；上文历史读数一律按原样保留。
+  **2026-10-24 合流复核（#525 已落）**：`origin/main` 前进到 `4b87e1d9`（`Reviewed PR #525`），
+  `0033_admin_audit_log_read.sql` 与其 down 随主干进树、本片 `0034` 紧随其后 ⇒ 迁移 **34** 个
+  （`0001..0034` 连续无缺号）、`rollback/` **33** 个（`0002..0034`）、`deploy/` 在册仍 **36** 个；
+  `migration-reservations.json` 的 `reservations` 回到 `[]`（33 号那一条已按 `remove_when` 删除）。
+  故本节上面「33 个 / 缺 0033」是**合并前**读数；本页 §2 末行与 §4 第 8 项的「当前读数」已同步为 34／33。
 - 分支：`step/gy-i24-release-readiness-20261017`。
 - 写手：WorkBuddy Step（本地实现与自检；**未推送、未建 PR、未改 main**）。
 - 范围（派单口径）：**整理部署、备份、恢复、回滚材料索引，仅做离线文档核验**。

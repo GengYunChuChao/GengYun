@@ -90,7 +90,7 @@ createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversati
 
 | 授权 | 来源 | 实测（`has_table_privilege`，以运行时角色身份查） |
 | --- | --- | --- |
-| `public.messages` DELETE | 表级：`deploy/postgres-cvm/sql/20-login-roles.sql:454`（`gy-r28-runtime-domain-grants` 区域 `:449-454`；PU 没有列级 DELETE） | `true` |
+| `public.messages` DELETE | 表级：`deploy/postgres-cvm/sql/20-login-roles.sql:566`（`#region gy-r28-runtime-domain-grants` 起于 `:527`；本条前有 `:561-565` 的「为什么必须表级」注释；PU 没有列级 DELETE） | `true` |
 | `public.idempotency_keys` DELETE | 域组角色 `gengyun_auth_privacy`（`services/api/db/roles/auth_privacy.sql:33`），经 `GRANT gengyun_auth_privacy TO gengyun_api_runtime` | `true` |
 | `public.users` DELETE | **不授**（反向实测） | `false` |
 
