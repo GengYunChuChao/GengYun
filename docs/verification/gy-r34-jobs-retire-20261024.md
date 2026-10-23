@@ -1,8 +1,8 @@
 # R34 · `public.jobs` 死表下线（收窄授权 + 依赖判定去 jobs 臂 + 清单/测试同步）
 
-- 树：`E:\GengYunCommander\wt-r34-jobs-retire`，分支 `feat/gy-r34-jobs-retire`。**基线两个读数都要记**：派单起始基线 `upstream/main` = `123ee4bd5a827f7d5cef1c9bb89abd905e178dc6`；本片合流后基线（= 下面 `git merge --no-ff upstream/main` 吸收进来的上游尖端）= `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`（`Reviewed PR #525`）。本页 §3 的全部读数都在**合流后**这棵树上实跑；§6 逐条记录三次**内容**提交与一次合并提交的父子关系。
+- 树：`E:\GengYunCommander\wt-r34-jobs-retire`，分支 `feat/gy-r34-jobs-retire`。**基线两个读数都要记**：派单起始基线 `upstream/main` = `123ee4bd5a827f7d5cef1c9bb89abd905e178dc6`；本片合流后基线（= 下面 `git merge --no-ff upstream/main` 吸收进来的上游尖端）= `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`（`Reviewed PR #525`）。本页 §3 的全部读数都在**合流后**这棵树上实跑；§6 逐条记录完整提交链（含合并提交的双父关系）。
 - 片范围：只做「无人读、无人授、清单不再分类它」；**不新增迁移、不 `DROP TABLE`**（理由见 §2）。
-- 提交链：`7be2480a`（`feat(privacy): 下线 public.jobs 死表引用与授权（Refs #19, #22）`）→ `9157e032`（合并提交，`git merge --no-ff upstream/main`，吸收 `4b87e1d9`）→ `53af1c2b`（`fix(gy-r34-jobs-retire): 修复 doc 锚点与 90-assert 总数口径，补臂集合正控制（Refs #19, #22）`）→ 本页所在提交（`fix(gy-r34-jobs-retire): 校正证据页基线读数与 90-assert 立论口径，补清单内容单测（Refs #19, #22）`，oid 见片回报——本页不能自引自身 oid）。
+- 提交链（逐级 `git rev-list --parents` 核对）：`123ee4bd`（起始基线）→ `7be2480a`（功能：`feat(privacy): 下线 public.jobs 死表引用与授权（Refs #19, #22）`）→ `9157e032`（`--no-ff` 合并 `upstream/main`，第二父即 `4b87e1d9`）→ `53af1c2b`（返修：doc 锚点与 90-assert 总数口径，补臂集合正控制）→ `64323db6`（返修：证据页基线读数与立论口径，补清单内容单测）→ `770fe4b9`（返修：补记 merge-tree 读数与提交链）→ `8fdeb7c3`（订正前的当前 HEAD，本页所在提交；本页订正提交见片回报——本页不能自引自身 oid）。
 - 本页 **167 行**（写定后按 `split('\n')` 实测长度 −1 复算，第三轮修正：上一版自称 111 行、实测 114 行，属自述失准）。
 - 本页全部读数均在上述工作树实跑；**PG 臂（`tests/integration/consent-grant-pg.mjs`）本地未执行**（本树无依赖、不许起集群），靠 CI。
 
@@ -51,7 +51,7 @@ real 模式下，历史上真有 jobs 行的用户，撤回/授权变更会从 *
 | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | 区间标签 `69-86` → `69-84`（`:1544`、`:3104`）；总数口径 `:3605-3617` 曾按「`117 条 → 116 条`、`sum 3693 → 3663`」写死 | 18 个编号对应 16 行不符；但总数那次只扣了 jobs、漏了 W12 那次未扣——**第三轮已重新推导并改正，见 §1.3 与 §3.5** |
 | `tests/unit/consent-withdraw-dependency.test.mjs` | 新增两条**臂集合形状钉**（`:217`、`:229`）+ `readFileSync` 导入（`:35`）+ 头注第 7/8 点（`:30-31`） | 既有 :68 用 `sql.includes('AS present')` 把查询形状桩死，「把 jobs 臂加回去」原本全绿（复审 P1 实测） |
 
-### 1.3 本页所在提交（第三轮：基线读数、立论口径、清单内容门禁）
+### 1.3 返修提交 `64323db6`（第三轮：基线读数、立论口径、清单内容门禁）
 
 | 文件 | 改动 | 为什么 |
 |---|---|---|
@@ -72,11 +72,11 @@ real 模式下，历史上真有 jobs 行的用户，撤回/授权变更会从 *
 - **没有把总数拍成定论**：清单总数只有静态扣减值，真库一次 `count(*)` 才能定案（§5.3）；`85`/`86` 两个编号槽随 media（R28-W12）/ jobs（R34）退役**留空不复用**，已在 `:1545` 登记。
 - **没有放宽形状钉**：`.mjs` 形状钉（`:217`/`:229`）与清单字面量都保持「过紧」；放宽需安全评审，新单测头注里已写明。
 
-## 3 门禁读数（本树实跑，逐字尾部 + EXIT）
+## 3 门禁读数（本树实跑，TAP 关键行 + EXIT）
 
-第三轮返修后**全跑一遍**。下表逐行对应实际执行的命令；红过的也在表里/§3.3 留档，没跑的单列在 §3.5。
+第三轮返修后**全跑一遍**；订正提交（第六轮）按交付要求重跑表中第 8 / 13 / 14 / 17 / 18 行，读数与本表一致。下表逐行对应实际执行的命令；红过的也在表里/§3.3 留档，没跑的单列在 §3.5。
 
-| # | 命令 | 尾部（逐字） | EXIT |
+| # | 命令 | TAP 关键行（tests / pass / fail） | EXIT |
 |---|---|---|---|
 | 1 | `node --test tests/unit/ci-integration-chain-structure.test.mjs` | `ℹ tests 7 / ℹ pass 7 / ℹ fail 0` | 0 |
 | 2 | `node --test tests/unit/migration-reservations.test.mjs` | `ℹ tests 8 / ℹ pass 8 / ℹ fail 0` | 0 |
@@ -95,7 +95,7 @@ real 模式下，历史上真有 jobs 行的用户，撤回/授权变更会从 *
 | 15 | `node tools/verify-contract-status.mjs` | `PASS: 覆盖 114 条契约操作；已装配 111 条；implemented 17 / partial 93 / planned 4；形状错误 0 项；语义错误 0 项` + `PASS: 中文表格一致` + `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。`（共 7 行 PASS、0 行 FAIL） | 0 |
 | 16 | `node --check`：`services/api/src/privacy/consent-pg.ts`、`services/api/src/privacy/grant-pg.ts`、`tests/unit/consent-withdraw-dependency.test.mjs`、`tests/unit/least-privilege-external-manifest.test.mjs` | 四条均无输出 | 0 |
 | 17 | `git diff --check` | 无输出 | 0 |
-| 18 | `git merge-tree --write-tree upstream/main HEAD`（**提交后**跑） | **在 `64323db6` 上跑的读数**：树 OID `332725ef472e155585bf38b51f7d4f04e57ad1c4`，无 `CONFLICT`、无冲突文件行；与上一 HEAD `53af1c2b` 的交叉预演为树 OID `0af91d4aeeb9b6feae64762bb94f12ca6e4bb9fa`，同为 EXIT=0。`upstream/main` 仍为 `4b87e1d9`（fetch --prune 后无新提交） | 0 |
+| 18 | `git merge-tree --write-tree upstream/main HEAD`（**提交后**跑） | 零冲突：无 `CONFLICT`、无冲突文件行；`upstream/main` 仍为 `4b87e1d9`（`git fetch upstream --prune` 后无新提交）。树 OID 会随任何新提交失效（E4 类易腐读数），故只登记命令与退出码 | 0 |
 
 ### 3.1 `gy-i22-secmatrix.test.mjs`：未取得（环境缺失，非本片回归）
 
@@ -135,7 +135,7 @@ code: 'ERR_MODULE_NOT_FOUND'
 
 - `tests/unit/*.test.mjs` **全量**：派单明令禁跑（只跑定向门禁）；`--test-isolation=none` 亦按要求未用。
 - 真库臂（psql 跑 `90-assert`、`expected/expected_42501` 实际比对）：本树无依赖、不许起集群 ⇒ 未跑。
-- **清单总数只有静态可算值**：`117 条 / 3693` 是 2026-10-21 真库实测、写下时清单 **18 行**（media + jobs 都在）；同日 R28-W12 删 media 行只改了「18 张→17 张」的文本、**没扣** 117/3693。按同一静态扣减法：删 media（label 29+2=31）得 `116/3662`，再删 jobs（label 28+2=30）得 **`115 条 / 3632`**。第二轮曾写 `116/3663`（只扣 jobs、漏掉 W12 那次），前提错，已在 `:3613` 注明并改正。精确值需真库 `psql` 复核，本页只登记「静态值 + 真库待核」。
+- **清单总数只有静态可算值**：`117 条 / 3693` 系 `90-assert` 注释**自称**的 2026-10-21 合流后读数（引入者 `903ad629`，2026-10-22，#424），**仓内无留档可复核**；可复核的只是「当时清单 18 行」这一点（media + jobs 都在）；同日 R28-W12 删 media 行只改了「18 张→17 张」的文本、**没扣** 117/3693。按同一静态扣减法：删 media（label 29+2=31）得 `116/3662`，再删 jobs（label 28+2=30）得 **`115 条 / 3632`**（静态可算值，真库待核）。第二轮曾写 `116/3663`（只扣 jobs、漏掉 W12 那次），前提错，已在 `:3613` 注明并改正。精确值需真库 `psql` 复核，本页只登记「静态值 + 真库待核」。
 - `tests/unit/privacy-consent-wiring.test.mjs`：同 §3.1 的 `fastify` 缺失原因未跑（同一环境证据已由 secmatrix 给出）。
 
 ## 4 判过、但不改（附理由）
@@ -149,7 +149,7 @@ code: 'ERR_MODULE_NOT_FOUND'
 | `90-assert` 里与清单无关的「17」（PostgreSQL 17 / `#16/#17 清理链` / `PG 17.11` / `staging_importer.sql:17-18` / `17. 必须真的是 SECURITY DEFINER`） | 与 manifest 条数无关 | 不改：只改描述该清单条数的那几处 |
 | `tests/unit/least-privilege-expected-parity.test.mjs` | 在 #528 上，本树不存在 | 跳过（未造文件） |
 | `job_state` 枚举 | 0025/0026/0028 在用 | 不删 |
-| `.mjs` 形状钉「过紧」（吃空格、钉住臂顺序、钉死 `$1::uuid` 缺席） | 复审判为可接受、只需登记 | 不改断言：在 `tests/unit/consent-withdraw-dependency.test.mjs` 头注与本页 §2 登记「放宽需安全评审」 |
+| `.mjs` 形状钉「过紧」（吃空格、钉住臂顺序、钉死 `$1::uuid` 缺席） | 上一轮建议把形状钉改用 `\s*` 容忍空白，**本片未实施**，现有形状钉对空白敏感 | 不改断言：在 `tests/unit/consent-withdraw-dependency.test.mjs` 头注与本页 §2 登记「放宽需安全评审」 |
 
 ## 5 剩余项
 
@@ -162,6 +162,6 @@ code: 'ERR_MODULE_NOT_FOUND'
 - 功能提交：`7be2480a feat(privacy): 下线 public.jobs 死表引用与授权（Refs #19, #22）`（父 `123ee4bd`）。
 - 合并：`git merge --no-ff upstream/main` ⇒ 合并提交 `9157e032`，第二父 `4b87e1d9`（`Reviewed PR #525`），EXIT=0、无冲突。
 - 第二轮返修：`53af1c2b fix(gy-r34-jobs-retire): 修复 doc 锚点与 90-assert 总数口径，补臂集合正控制（Refs #19, #22）`（父 `9157e032`）。
-- 第三轮返修：`64323db6 fix(gy-r34-jobs-retire): 校正证据页基线读数与 90-assert 立论口径，补清单内容单测（Refs #19, #22）`（父 `53af1c2b`，4 files +208/−48）。
-- 本页所在提交：`fix(gy-r34-jobs-retire): 校正证据页基线读数与 90-assert 立论口径，补清单内容单测（Refs #19, #22）`（父 `53af1c2b`）。
+- 第三轮返修：`64323db6 fix(gy-r34-jobs-retire): 校正证据页基线读数与 90-assert 立论口径，补清单内容单测（Refs #19, #22）`（父 `53af1c2b`，4 files +208/−48）；第四轮 `770fe4b9 docs(gy-r34-jobs-retire): 证据页补记 merge-tree 树 OID 与提交链，明确三次内容提交 + 一次合并（Refs #19, #22）`（父 `64323db6`，1 file +4/−3）；第五轮 `8fdeb7c3 docs(gy-r34-jobs-retire): merge-tree 读数改为「在 64323db6 上跑」，避免自引自身树 OID（Refs #19, #22）`（父 `770fe4b9`，1 file +1/−1）—— 即本页订正前的当前 HEAD。
+- 本页所在提交：`8fdeb7c3`（父 `770fe4b9`，订正前 HEAD）；本页自身的订正提交不自引 oid，见片回报。
 - 收工：`git status --porcelain -uall` 0 行；`git rev-parse HEAD` 的实测值见片回报（本页无法自引自身 oid）。
