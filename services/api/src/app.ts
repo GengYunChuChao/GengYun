@@ -32,7 +32,7 @@ import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
 import { registerUserAuthRoutes } from './routes/auth.ts';
 import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
-import { registerConsentRoutes } from './routes/consents.ts';
+import { registerConsentRoutes } from './routes/consents.ts'; import { registerExportRoutes } from './routes/exports.ts';
 import { registerProfileRoutes } from './routes/profile.ts';
 import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { registerRecognitionRoutes } from './routes/recognitions.ts';
@@ -63,7 +63,7 @@ import { createMemoryRecognitionStore, type RecognitionStore } from './recogniti
 import { registerSynthesisRoutes } from './routes/synthesis.ts';
 import { createCheckedContentPortFromConfig } from './ai/checked-content-live-adapter.ts';
 import type { CheckedContentPort, SubstituteCheckedContentEntry } from './tts/content.ts';
-import { createSynthesisMediaPort, type SynthesisMediaPort } from './tts/media.ts';
+import { createSynthesisMediaPort, type SynthesisMediaPort, type SynthesisMediaPortOptions } from './tts/media.ts';
 import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
 import { createMemorySynthesisStore, type SynthesisStore } from './tts/store.ts';
@@ -353,8 +353,8 @@ export interface BuildAppOptions {
   synthesisStore?: SynthesisStore;
   /** 测试注入：替换合成提供者（默认按 executionMode 选择 real/替身）。 */
   synthesisProvider?: TtsProvider;
-  /** 测试注入：替换合成产物存储端口（默认 real=未接线 fail-closed，其余=明确标注的替身）。 */
-  synthesisMedia?: SynthesisMediaPort;
+  /** 测试注入：替换合成产物存储端口（默认 real=未接线 fail-closed，其余=明确标注的替身）；`synthesisMediaWiring` = 合成产物真实存储的**显式注入**（批准能力＋`s3_compatible` 端口；装配层只转发、绝不铸造、不读 env，见 `tts/media.ts` 的 `SynthesisMediaPortOptions`）。 */
+  synthesisMedia?: SynthesisMediaPort; synthesisMediaWiring?: SynthesisMediaPortOptions;
   /**
    * 测试注入：替换「已核对内容」读取端口（默认按 executionMode；`stub`/`preset_demo` 下为
    * **带明确标注替身条目**的内存源 `SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT`，`real` 下为未接线端口）。
@@ -709,7 +709,7 @@ export const SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT: readonly SubstituteCheckedCon
 ];
 
 /** 构建已装配的 Fastify 实例（未监听端口，便于测试用 app.inject）。 */
-export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisContent, synthesisJobDeadlineMs, ocrMedia, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, mediaStore: mediaStoreOption, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, pool = null, now, store, idempotency, wechat, consentGrantTestOptions, recognitionStore, recognitionProvider, recognitionMedia, recognitionJobDeadlineMs, speechStore, speechProvider, speechMedia, speechJobDeadlineMs, synthesisStore, synthesisProvider, synthesisMedia, synthesisMediaWiring, synthesisContent, synthesisJobDeadlineMs, ocrMedia, adminInjection, mediaObjectStore: mediaObjectStoreOption, mediaContentSource, mediaAttachmentCounter, mediaStore: mediaStoreOption, realMediaApproval: mediaRealApprovalOption, privacyInjection, messagesInjection, moderationInjection, favoritesInjection, historyInjection, userDataDeletionInjection, communityInjection, conversationInjection, logStream }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     // 日志是**共享出口**：请求日志发生在路由与 schema 校验之前，路由层拒绝（400）救不回已经
     // 写下的日志，因此坐标不进日志必须在这里做（见 `requestLogFields`）。
@@ -1060,7 +1060,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(recognitionJobDeadlineMs === undefined ? {} : { jobDeadlineMs: recognitionJobDeadlineMs }),
   });
 
-  // GY-I13 合成域：real 走 fail-closed 提供者（缺凭据受理前 503，绝不回退替身）；产物存储与
+  // GY-I13 合成域：real 走 fail-closed 提供者（缺凭据受理前 503，绝不回退替身）；产物存储（R34-I13：只认显式注入的批准能力＋`s3_compatible` 端口，装配层不铸造、不读 env）与
   // 「已核对内容」读取端口同样按执行模式解析。**R28-W3 起**核对端口的 real 分支已接真实现：
   // `createCheckedContentPortFromConfig({executionMode, entries, pool})` —— 非 real 走替身（不变）、
   // real 且无连接池（未配 `DATABASE_URL`）走**未接线**端口（与接线前逐字一致、仍 fail-closed）、
@@ -1094,7 +1094,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const synthesisService = createSynthesisService({
     store: synthesisStore ?? createMemorySynthesisStore(),
     provider: synthesisEgress === undefined ? synthesisProviderResolved : synthesisEgress.provider(synthesisProviderResolved),
-    media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode),
+    media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode, synthesisMediaWiring),
     content: synthesisContentResolved,
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     now: clock,
@@ -1978,6 +1978,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(consentGrantTestOptions ?? {}),
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
+  // GY-I19（#19）：`listExports`（`GET /me/exports`）装配（无池 ⇒ 503 fail-closed，见 `routes/exports.ts`）。
+  // ⚠ 新 import 与上一条 import 同行：独占一行会推移 `app.ts` 行号，令历史证据页的引用锚点判 SUSPECT。
+  registerExportRoutes(app, config, pool, guards);
   registerProfileRoutes(app, config, pool, guards);
   // 本片起：以下域的输出面受**全局开关**控制（受控面与其 `operationId` 的权威清单见
   // `admin/ops/flag-gate.ts` 的 `FLAG_GATED_SURFACES`：除草剂列表／详情、社区 `createPost`／

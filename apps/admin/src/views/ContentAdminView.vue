@@ -14,12 +14,14 @@ import { computed, onMounted, ref } from 'vue';
 import { API_BASE_URL, loadAdminSession, signInAdmin } from '../auth/session';
 import CategoriesView from './CategoriesView.vue';
 import KnowledgeAdminView from './KnowledgeAdminView.vue';
+import PostTakedownView from './PostTakedownView.vue';
 import SourcesView from './SourcesView.vue';
 
 const FAMILIES = [
   { key: 'sources', label: '资料来源', note: '/admin/sources' },
   { key: 'knowledge', label: '科普内容', note: '/admin/knowledge' },
   { key: 'categories', label: '分类', note: '/admin/categories' },
+  { key: 'posts', label: '帖子下架（紧急处置）', note: '/admin/posts/{id}/hide' },
 ];
 
 const active = ref('sources');
@@ -144,6 +146,12 @@ onMounted(refreshSession);
         :token="session.accessToken"
         :scopes="scopes"
         @signed-out="handleSignedOut"
+      />
+      <PostTakedownView
+        v-else-if="active === 'posts'"
+        :base-url="baseUrl"
+        :token="session.accessToken"
+        :scopes="scopes" @signed-out="handleSignedOut"
       />
       <CategoriesView
         v-else

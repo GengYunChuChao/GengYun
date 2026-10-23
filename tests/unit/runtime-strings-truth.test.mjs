@@ -161,11 +161,16 @@ test('运行期文案 · 默认 real 装配下三域 describe() 报告的正是�
     assert.equal(view.providerAvailable, false, `${label}: 默认 real 装配不应有可用真实供应商`);
   }
 
-  // 兄弟域（合成域）文案准确，本片未改，这里钉住它不被顺手改动。
+  // 兄弟域（合成域）：GY-R34 · I13 起 `real` 的默认装配**仍是 `unwired`**，但文案改为点名
+  // 「缺少显式批准能力」（真实端口已存在，缺的是显式接线决定 —— 旧文案「真实对象存储尚未接线」
+  // 会让读者以为缺实现）。判据强度不变：仍是**逐字相等**，不是 includes/正则放宽。
+  // 依据见 `docs/verification/gy-r34-i13-tts-media-store-20261023.md`。
+  const synthesisView = app.synthesisService.describe();
+  assert.equal(synthesisView.mediaPort, 'unwired', 'tts: 默认 real 装配的合成产物存储必须仍未接线');
   assert.equal(
-    app.synthesisService.describe().mediaNote,
-    '真实对象存储尚未接线，无法存放合成产物（fail-closed）',
-    'tts: 该域文案本片不应改动',
+    synthesisView.mediaNote,
+    'real 模式缺少合成产物真实存储接线的显式批准能力：合成产物存储不可用（拒绝以内存/替身存储返回成功应答）（fail-closed）',
+    'tts: 该域文案必须点名「缺少显式批准能力」，且不得声称已接真实存储',
   );
 });
 

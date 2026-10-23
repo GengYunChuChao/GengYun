@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AI_ENDPOINTS, auditAIConfiguration, loadPrivateEnvironment, prepareOfflineRequest, describeOfflineRequest } from '../tools/ai-config.mjs';
+import { AI_ENDPOINTS, auditAIConfiguration, loadPrivateEnvironment, parseJsonc, prepareOfflineRequest, describeOfflineRequest } from '../tools/ai-config.mjs';
 const example = JSON.parse(readFileSync(new URL('../docs/verification/config.example.json', import.meta.url), 'utf8'));
 const fixture = () => { const config = structuredClone(example); config.providers.moderation.bizType = 'synthetic_text'; config.providers.moderation.image.bizType = 'synthetic_image'; return config; };
 const env = { TOKENHUB_API_KEY: 'synthetic-tokenhub-secret', DEEPSEEK_API_KEY: 'synthetic-deepseek-secret', TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-tencent-secret' };
@@ -88,5 +88,76 @@ test('private loading uses explicit account and allowlisted fields, suppressing 
     writeFileSync(file, JSON.stringify({ appid: 'wrong', tokenhubApiKey: 'synthetic-key' })); assert.throws(() => loadPrivateEnvironment(file), /PRIVATE_ACCOUNT_MISMATCH/);
     writeFileSync(file, JSON.stringify({ appid: 'wx4407a4b908a69a54', tokenhubApiKey: 'synthetic-tokenhub', tencentSessionToken: 'synthetic-session', tencentAsrSessionToken: 'synthetic-asr-session', unexpectedSecret: 'ignore-me' }));
     const loaded = loadPrivateEnvironment(file); assert.equal(loaded.TOKENHUB_API_KEY, 'synthetic-tokenhub'); assert.equal(loaded.TENCENTCLOUD_SESSION_TOKEN, 'synthetic-session'); assert.equal(loaded.TENCENTCLOUD_ASR_SESSION_TOKEN, 'synthetic-asr-session'); assert.equal(loaded.unexpectedSecret, undefined);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+// 以下 JSONC 用例全部用**合成字符串**：不读、不引用任何真实凭据文件。
+const SYNTHETIC_APPID = 'wx4407a4b908a69a54';
+const SYNTHETIC_JSONC = [
+  '{',
+  '  // 整行注释：JSONC 允许注释，严格 JSON 解析会整体失败',
+  '  "appid": "' + SYNTHETIC_APPID + '",',
+  '  "databaseUrl": "postgres://synthetic-synthetic@db.invalid:5432/synthetic?sslmode=require", // 行尾注释',
+  '  "deepseekApiKey": "synthetic-deepseek",',
+  '  "callbackUrl": "https://example.invalid//double-slash-in-string",',
+  '  "escaped": "quote \\" then // still inside a string",',
+  '  /* 块注释：',
+  '     "tokenhubApiKey" 这一行被注释掉，不应出现 */',
+  '  "tokenhubApiKey": "synthetic-tokenhub",',
+  '  "nested": { "a": [1, 2, 3,], },',
+  '}',
+].join('\n');
+test('JSONC parser removes line/block comments and trailing commas without touching string content', () => {
+  const value = parseJsonc(SYNTHETIC_JSONC);
+  assert.equal(value.appid, SYNTHETIC_APPID);
+  assert.equal(value.databaseUrl, 'postgres://synthetic-synthetic@db.invalid:5432/synthetic?sslmode=require');
+  assert.equal(value.callbackUrl, 'https://example.invalid//double-slash-in-string');
+  assert.equal(value.escaped, 'quote " then // still inside a string');
+  assert.equal(value.tokenhubApiKey, 'synthetic-tokenhub');
+  assert.deepEqual(value.nested, { a: [1, 2, 3] });
+  assert.deepEqual(parseJsonc('{"s":"a,] ,} // c"}'), { s: 'a,] ,} // c' });
+  assert.deepEqual(parseJsonc('\uFEFF{"bom":true}'), { bom: true });
+  assert.deepEqual(parseJsonc('{\r\n  "crlf": 1, // x\r\n}'), { crlf: 1 });
+  assert.deepEqual(parseJsonc('{"keep":"\\/\\/ not a comment"}'), { keep: '// not a comment' });
+});
+test('JSONC parse failures stay controlled, name the code only and never echo content', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gy25-jsonc-'));
+  try {
+    const file = join(dir, 'synthetic.jsonc');
+    writeFileSync(file, '{"appid": "' + SYNTHETIC_APPID + '", "deepseekApiKey": "synthetic-leak-marker" "x": 1}');
+    assert.throws(() => loadPrivateEnvironment(file), (error) => error.message === 'PRIVATE_FILE_UNAVAILABLE' && error.message.includes('synthetic-leak-marker') === false);
+    writeFileSync(file, '{"appid": "' + SYNTHETIC_APPID + '", /* 未闭合块注释');
+    assert.throws(() => loadPrivateEnvironment(file), /^Error: PRIVATE_FILE_UNAVAILABLE$/);
+    assert.throws(() => loadPrivateEnvironment(join(dir, 'absent.jsonc')), /^Error: PRIVATE_FILE_UNAVAILABLE$/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test('JSONC private file maps appid/databaseUrl additively, keeps old names and exposes name-only missingFields', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gy25-jsonc-'));
+  try {
+    const file = join(dir, 'synthetic.jsonc'); writeFileSync(file, SYNTHETIC_JSONC);
+    const loaded = loadPrivateEnvironment(file, { PATH: 'synthetic-path' });
+    assert.equal(loaded.PATH, 'synthetic-path');
+    assert.equal(loaded.WECHAT_APP_ID, SYNTHETIC_APPID);
+    assert.equal(loaded.DATABASE_URL, 'postgres://synthetic-synthetic@db.invalid:5432/synthetic?sslmode=require');
+    assert.equal(loaded.GENGYUN_DATABASE_URL, loaded.DATABASE_URL);
+    assert.equal(loaded.DEEPSEEK_API_KEY, 'synthetic-deepseek');
+    assert.deepEqual(loaded.missingFields, ['SESSION_SIGNING_KEY', 'DELETION_LEDGER_KEY', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY']);
+    assert.ok(Object.isFrozen(loaded.missingFields));
+    assert.equal(Object.getOwnPropertyDescriptor(loaded, 'missingFields').writable, false);
+    assert.equal(Object.keys(loaded).includes('missingFields'), false);
+    for (const name of loaded.missingFields) assert.match(name, /^[A-Z][A-Z0-9_]*$/);
+    writeFileSync(file, '{ "appid": "wx0000000000000000", // 账号不符\n "x": 1, }');
+    assert.throws(() => loadPrivateEnvironment(file), /PRIVATE_ACCOUNT_MISMATCH/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test('missingFields stays in step with REQUIRED_WHEN_REAL in services/api/src/config.ts', () => {
+  const source = readFileSync(new URL('../services/api/src/config.ts', import.meta.url), 'utf8');
+  const body = source.match(/export const REQUIRED_WHEN_REAL = \[([\s\S]*?)\] as const;/);
+  assert.ok(body, 'REQUIRED_WHEN_REAL 形状变了：同步本测试与 tools/ai-config.mjs 的 MISSING_REQUIRED_FIELDS');
+  const required = [...body[1].matchAll(/'([A-Z][A-Z0-9_]*)'/g)].map(match => match[1]);
+  const dir = mkdtempSync(join(tmpdir(), 'gy25-jsonc-'));
+  try {
+    const file = join(dir, 'synthetic.jsonc'); writeFileSync(file, SYNTHETIC_JSONC);
+    const mapped = ['WECHAT_APP_ID', 'WECHAT_APP_SECRET', 'DATABASE_URL'];
+    assert.deepEqual([...new Set([...loadPrivateEnvironment(file).missingFields, ...mapped])].sort(), [...required].sort());
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

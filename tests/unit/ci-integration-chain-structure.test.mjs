@@ -91,6 +91,20 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/admin-community-posts-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_community_posts_test`：脚本要求**空库**'
+      + '（先断言 `public` 下 0 张表），只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段：'
+      + '身份底座、社区六表（含 `community_moderation_decisions`，读面 `effectiveState()` 每次都要它）、'
+      + '0030 的 `anonymized_author_ref`、0032 的同一套列口径），⛔ 不是全链，也不引 0007 的 pgcrypto 扩展；'
+      + '再用 **real 装配 + 真库池**跑列表/单条读面、`POST /admin/posts/{id}/hide` 的下架处置'
+      + '（真库行 visibility+revision、`post.hide` 审计留痕、社区可见性联动）与失败隔离'
+      + '（八条被拒路径逐列不动 + 并发只成功一笔）。连接串只走 argv[2]（owner URL），不建组角色；'
+      + '缺 URL 时脚本打印 SKIP 并 exit 77 ⇒ workflow 把 77 显式升级成硬失败。'
+      + 'R34 已把它接进 `.github/workflows/real-pg-integration.yml` 的 `real-pg-17.11` job'
+      + '（自带 `CREATE DATABASE gengyun_admin_community_posts_test` 空库、一个**独立 step** 真跑）；'
+      + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/admin-jobs-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_jobs_test`：本脚本自带迁移全量应用（0001→0027）、'
       + '运行时角色最小权限探针（只跑开关/审计两条出厂授权区域，作业表的列级读授权归 0024/0025/0026 各自的区域，'

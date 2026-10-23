@@ -17,11 +17,11 @@ const fail = code => { throw new Error(code); };
 
 export function loadPrivateEnvironment(file, baseEnv = {}) {
   let data;
-  try { data = JSON.parse(readFileSync(file, 'utf8').replace(/^\uFEFF/, '')); } catch (_) { fail('PRIVATE_FILE_UNAVAILABLE'); }
+  try { data = parseJsonc(readFileSync(file, 'utf8')); } catch (_) { fail('PRIVATE_FILE_UNAVAILABLE'); }
   if (!data || data.appid !== 'wx4407a4b908a69a54') fail('PRIVATE_ACCOUNT_MISMATCH');
   const env = { ...baseEnv };
-  for (const [field, variable] of Object.entries(ENV_FIELDS)) if (validText(data[field])) env[variable] = data[field];
-  return env; // Never log or serialize this object. Caller owns its in-memory lifetime.
+  for (const [field, variable] of PRIVATE_ENV_PAIRS) if (validText(data[field])) env[variable] = data[field];
+  return Object.defineProperty(env, 'missingFields', { value: MISSING_REQUIRED_FIELDS, enumerable: false, writable: false }); // Never log or serialize this object. Caller owns its in-memory lifetime.
 }
 export function providerFor(config, key) {
   const spec = AI_ENDPOINTS[key];
@@ -117,4 +117,77 @@ export function prepareOfflineRequest(config, key, input) {
 export function describeOfflineRequest(request) {
   // Never include body values, sample data, headers, credentials, signatures or identity in reports.
   return { key: request.key, authentication: request.authentication, timeoutMs: request.timeoutMs, maxRetries: request.maxRetries, executionAllowed: false, requestFields: Object.keys(request.body), encodedBodyBytes: Buffer.byteLength(JSON.stringify(request.body)), mode: 'OFFLINE_PREPARED' };
+}
+
+// ── 私密凭据文件的 JSONC 解析与真实模式映射缺口 ──────────────────────────────
+// 刻意追加在文件末尾、不前插：`docs/verification/*` 用 `tools/ai-config.mjs:10/14/43/57/69/91/115`
+// 这类行号引用本文；前插会让它们整体漂移，而 `verify-doc-anchors` 只判结构、不判语义，漂移不会报红。
+
+// 真实模式（`services/api/src/config.ts` 的 `REQUIRED_WHEN_REAL`）需要、但 `ENV_FIELDS` 原先漏掉的两个值。
+// 既有变量名一个都不动：`databaseUrl` 继续导出 `GENGYUN_DATABASE_URL`（`docs/verification/config.example.json`
+// 与运维流程按此名读取），这里只是**追加** `DATABASE_URL`；`appid` 原先只校验、不导出，这里追加 `WECHAT_APP_ID`。
+// 用「字段 → 变量名」的**有序对**而不是对象合并：一个字段可以映射出多个变量名，对象字面量的同名键会互相覆盖。
+const EXTRA_ENV_PAIRS = Object.freeze([['appid', 'WECHAT_APP_ID'], ['databaseUrl', 'DATABASE_URL']]);
+const PRIVATE_ENV_PAIRS = Object.freeze([...Object.entries(ENV_FIELDS), ...EXTRA_ENV_PAIRS]);
+
+// `REQUIRED_WHEN_REAL` 里这份私密凭据文件**根本无法映射**的字段名：私密 JSON 没有对应字段，
+// 无论文件多完整都只能由真实环境变量提供。**只列名，绝不含值**；也不含已映射的
+// `WECHAT_APP_ID` / `WECHAT_APP_SECRET` / `DATABASE_URL`。
+const MISSING_REQUIRED_FIELDS = Object.freeze([
+  'SESSION_SIGNING_KEY', 'DELETION_LEDGER_KEY', 'OBJECT_STORAGE_ENDPOINT',
+  'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY',
+]);
+
+// 逐字符扫描：字符串内的 `//`、`/*` 与尾逗号都不是结构。`escaped` 让 `\"` 不结束字符串
+// （`"a\\" // b"` 里的 `//` 仍属字符串），这是「字符串里的 `//` 不能被误删」的关键。
+function stripComments(source) {
+  let out = '', inString = false, escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') { inString = true; out += char; }
+    else if (char === '/' && source[index + 1] === '/') {
+      while (index + 1 < source.length && source[index + 1] !== '\n' && source[index + 1] !== '\r') index += 1;
+    } else if (char === '/' && source[index + 1] === '*') {
+      const end = source.indexOf('*/', index + 2);
+      if (end === -1) fail('PRIVATE_FILE_UNAVAILABLE'); // 未闭合块注释按解析失败处理，不吞成半截对象
+      out += source.slice(index, end + 2).replace(/[^\r\n]/g, ' ');
+      index = end + 1;
+    } else out += char;
+  }
+  return out;
+}
+
+// 去掉对象/数组收尾前的逗号；同样跳过字符串内容（字符串里的 `,` 不是结构）。
+function stripTrailingCommas(source) {
+  let out = '', inString = false, escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') { inString = true; out += char; }
+    else if (char === ',') {
+      let next = index + 1;
+      while (next < source.length && /\s/.test(source[next])) next += 1;
+      if (source[next] !== '}' && source[next] !== ']') out += char;
+    } else out += char;
+  }
+  return out;
+}
+
+/**
+ * JSONC（行注释、块注释、尾逗号）→ JS 值，其余按严格 JSON 处理；只删结构、不改值，返回只读用途的纯数据。
+ * 失败统一抛 `PRIVATE_FILE_UNAVAILABLE`：`JSON.parse` 的异常消息会回显原文片段，绝不允许外泄。
+ */
+export function parseJsonc(text) {
+  if (typeof text !== 'string') fail('PRIVATE_FILE_UNAVAILABLE');
+  const source = text.replace(/^\uFEFF/, '');
+  try { return JSON.parse(stripTrailingCommas(stripComments(source))); } catch (_) { fail('PRIVATE_FILE_UNAVAILABLE'); }
 }
