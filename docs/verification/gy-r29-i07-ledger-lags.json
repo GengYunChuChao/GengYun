@@ -4,7 +4,7 @@
   "original_reviewed_at": "2026-10-22",
   "base_commit": "a2ab0d9aff391a199142699038b01eda2f74d497",
   "resolved_base_commit": "7dd3d699d71ce5ce69b5254ea8a3e54aed4f7f79",
-  "note": "台账滞后登记（原：代码已更新、台账文字未更新）。2026-10-23 R33 已按代码事实订正两处 blocker 文本（第二次提交再为亚毫秒 tie-break 差异加限定）；本文件保留这两条逐字登记，作为「订正后文本仍与代码一致」的钉子（tests/unit/knowledge-ledger-sort-drift.test.mjs 的 ②③④ 仍逐字读取本文件）。本文件只登记事实，不改任何 status；status 变更属监工权限。见 docs/verification/gy-r33-contract-ledger-20261023.md 与 docs/verification/gy-r29-i07-closure-20261022.md；R34：#500 合入后已从「未修」订正为「已修」（改前/改后对照、代码判据与门禁读数见 docs/verification/gy-r34-ledger-microsync-20261023.md；测量 SHA f3a5f24d）",
+  "note": "台账滞后登记（原：代码已更新、台账文字未更新）。2026-10-23 R33 已按代码事实订正两处 blocker 文本（第二次提交再为亚毫秒 tie-break 差异加限定）；本文件保留这两条逐字登记，作为「订正后文本仍与代码一致」的钉子（tests/unit/knowledge-ledger-sort-drift.test.mjs 的 ②③④ 仍逐字读取本文件）。本文件只登记事实，不改任何 status；status 变更属监工权限。见 docs/verification/gy-r33-contract-ledger-20261023.md 与 docs/verification/gy-r29-i07-closure-20261022.md；R34：#500 合入后已从「未修」订正为「已修」（改前/改后对照、代码判据与门禁读数见 docs/verification/gy-r34-ledger-microsync-20261023.md；测量 SHA f3a5f24d）。R34 合流重锚（2026-10-23）：R34 在 `operations` 里新增 `listAuditLogs` 一条（+37 行），`dimensions.pagination` 的 blocker/status 行随之整体下移 37 行（`ledger_line` 3199→3236、`status_field_line` 3168→3205），两条 blocker 的逐字文本未改、`status` 仍为 partial（改判属监工权限）。",
   "frozen_sort": {
     "pointer": "docs/architecture/state-contract.md:32",
     "clause": "created_at DESC, id DESC"
@@ -32,8 +32,8 @@
     {
       "ledger_file": "docs/architecture/contract-status.json",
       "pointer": "dimensions.pagination.blocker",
-      "ledger_line": 3199,
-      "status_field_line": 3168,
+      "ledger_line": 3236,
+      "status_field_line": 3205,
       "status_value": "partial",
       "kind": "台账已订正（原滞后关闭；保留逐字登记以钉住订正后文本）",
       "claimed_sort_absent_from_code": "id_asc",

@@ -16,7 +16,8 @@
  *   $env:GY_R34_PG_ROOT = 'E:\GengYunCommander\.pg17\tmp'    # 可选：数据目录的父目录
  *   node tests/integration/admin-audit-logs-pg.mjs
  *
- * 没设 `GY_PG_BIN` 时**明确 SKIP**（打印原因并 exit 0）：跳过不是通过。
+ * 没设 `GY_PG_BIN` 时**明确 SKIP**：打印 3 行原因并以 **77 退出**（未取得，不是通过）——
+ * 与 `backup-purge-pg` / `online-purge-pg` 等自起集群脚本同一口径；77 由调用方（workflow）显式判红。
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -54,7 +55,10 @@ if (binDir === '' || !existsSync(TOOL('initdb'))) {
     'SKIP: 未设置 GY_PG_BIN（含 initdb/pg_ctl 的目录）⇒ 真库臂跳过，'
       + '没有验证迁移 0033 的读通道（未取得，不是通过）。',
   );
-  process.exit(0);
+  console.log('SKIP: 本臂只认 GY_PG_BIN 指向的 PG 17 二进制（initdb/pg_ctl），找不到就整链未取得。');
+  console.log('SKIP: 退出码 77 ＝ 未取得（⛔ 不是通过）；调用方必须把它显式判红，另见 tests/unit/integration-script-coverage.test.mjs。');
+  // 77 ＝ 未取得（POSIX skipped），⛔ 不是 0：整链跳过不许被读成通过。
+  process.exit(77);
 }
 
 const rootDir = (process.env.GY_R34_PG_ROOT ?? tmpdir()).trim();

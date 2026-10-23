@@ -125,7 +125,7 @@
 放宽的是**被识别的脚本口径**，不是断言：判据⑨「双向相等」一个字没动，反向控制⑧ 的变异仍逐条判红
 （单测 16/16 绿）。「前向⑦」的用例名与消息同步改成 `-pg.mjs`／`-e2e.mjs`，让报错点名的口径与实际一致。
 
-### 2.3 `tests/unit/ci-integration-chain-structure.test.mjs:186-196`：把 reason 改成事实
+### 2.3 `tests/unit/ci-integration-chain-structure.test.mjs:201-211`：把 reason 改成事实
 
 `UNWIRED_DECLARATIONS` 里 `recognition-chain-e2e.mjs` 的 reason 由旧的「需 PG17 + 硬钉库名 + 只提
 `npm run test:integration:recognition-chain-pg`」改写为**当班事实**：专用空库、真库臂只 apply `0001`+`0018`

@@ -1,4 +1,4 @@
-﻿# W12 · 媒体持久化：PG 仓储 + `object_ref_cipher` 键接线 + 幂等落库（2026-10-22）
+# W12 · 媒体持久化：PG 仓储 + `object_ref_cipher` 键接线 + 幂等落库（2026-10-22）
 
 分支 `feat/gy-r28-w12-media-persistence`（Refs #6 #16）。本片**不新增迁移号**：`0027` 保持空闲，
 `services/api/db/migrations` 仍是 26 个迁移（真库读数见 §5 `[1] schema_migrations 行数=26`）。
@@ -458,7 +458,7 @@ tests/unit/*sql-column*.test.mjs` ⇒ 89 pass / 0 fail；`node tools/verify-cont
    （`REQUIRED_STEP_ORDER` 第 12b 条）三处清单同步加入该脚本，另有 10 行注释写明「与第 12 条同型、独立库、零耦合」。
    判据 ⑦ 的「workflow 里执行的 `-pg.mjs` 集合与 `MANAGED_SCRIPTS` 双向相等」因此把新脚本也纳入管控 —— 这是**加严**：
    接线前它完全没人跑，接线后任何一方漏登记都红。
-3. `tests/unit/ci-integration-chain-structure.test.mjs:225`：`UNWIRED_DECLARATIONS` 增一条该脚本的 reason，写明
+3. `tests/unit/ci-integration-chain-structure.test.mjs:240`：`UNWIRED_DECLARATIONS` 增一条该脚本的 reason，写明
    「已接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job」「同型但不同库」「不进无 PG 回环链」。
 
 **为什么「接线 + 登记」不是二选一**：判据 4 的 `wired` 集合只来自 `package.json` 的 `test:integration:http` 链，
