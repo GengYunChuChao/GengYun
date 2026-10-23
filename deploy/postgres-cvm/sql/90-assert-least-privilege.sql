@@ -711,32 +711,37 @@ DELETE FROM public.recognition_idempotency
 \set r28_probe_rec_idem_release :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_rec;
 
--- --- 禁止面：这些语句必须**恰好** 42501（R28-S28 不授予）------------------------
--- selections 不授 UPDATE ⇒ FOR UPDATE（行锁载体）也拿不到；DELETE 四表一个都不授，
--- 注销清理由 request_account_deletion() 以属主身份级联完成（owner_user_id ON DELETE CASCADE）。
+-- [16] 账号注销清理（GY-R34-I19）：按主体清空三张表的整行 DELETE（recognitions/store-pg.ts
+-- ::purgeOwnerRows）。PG 无列级 DELETE ⇒ `20-login-roles.sql` 的 gy-r28-runtime-domain-grants
+-- 已表级授 DELETE。谓词与真实语句逐字一致（`owner_user_id = $1::uuid`），这里用不存在的
+-- 主体 uuid 只为验权限形状，命中 0 行。
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_selections
+ WHERE owner_user_id = '28a28a28-00ff-4000-8000-0000000000ff'::uuid;
+\set r28_probe_rec_sel_owner_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_jobs
+ WHERE owner_user_id = '28a28a28-00ff-4000-8000-0000000000ff'::uuid;
+\set r28_probe_rec_job_owner_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+SAVEPOINT r28_probe_rec;
+DELETE FROM public.recognition_records
+ WHERE owner_user_id = '28a28a28-00ff-4000-8000-0000000000ff'::uuid;
+\set r28_probe_rec_rec_owner_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe_rec;
+
+-- --- 禁止面：这条语句必须**恰好** 42501（R28-S28 不授予）-----------------------
+-- recognition_selections 不授 UPDATE ⇒ 行锁载体 `SELECT … FOR UPDATE` 仍拿不到。
+-- （GY-R34-I19 之后三张正文表的整行 DELETE 已从禁止面移出、进了上面的 [16]，因为账号注销
+--   清理真的要用它；`request_account_deletion()` 不删 public.users 行，那条级联不存在。）
 SAVEPOINT r28_probe_rec;
 SELECT id FROM public.recognition_selections
  WHERE id = '28a28a28-0003-4000-8000-000000000003'::uuid
    FOR UPDATE;
 \set r28_probe_rec_sel_lock_forbidden :ERROR
-ROLLBACK TO SAVEPOINT r28_probe_rec;
-
-SAVEPOINT r28_probe_rec;
-DELETE FROM public.recognition_jobs
- WHERE id = '28a28a28-0001-4000-8000-000000000001'::uuid;
-\set r28_probe_rec_job_del_forbidden :ERROR
-ROLLBACK TO SAVEPOINT r28_probe_rec;
-
-SAVEPOINT r28_probe_rec;
-DELETE FROM public.recognition_records
- WHERE id = '28a28a28-0002-4000-8000-000000000002'::uuid;
-\set r28_probe_rec_rec_del_forbidden :ERROR
-ROLLBACK TO SAVEPOINT r28_probe_rec;
-
-SAVEPOINT r28_probe_rec;
-DELETE FROM public.recognition_selections
- WHERE id = '28a28a28-0003-4000-8000-000000000003'::uuid;
-\set r28_probe_rec_sel_del_forbidden :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_rec;
 
 ROLLBACK;
@@ -956,17 +961,19 @@ RETURNING scope \gset
 \set r28_probe_sp_idem_purge :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_sp;
 
--- [15] 禁止面：speech_jobs / transcriptions 的整行 DELETE 必须 42501（真行、真 WHERE）。
+-- [16] 账号注销清理（GY-R34-I19）：按主体清空两张正文表的整行 DELETE（speech/store-pg.ts
+-- ::purgeOwnerRows）。PG 无列级 DELETE ⇒ `20-login-roles.sql` 的 gy-r28-runtime-domain-grants
+-- 已表级授 DELETE。谓词与真实语句逐字一致（`owner_user_id = $1::uuid`）。
 SAVEPOINT r28_probe_sp;
 DELETE FROM public.speech_jobs
- WHERE id = '38a38a38-0001-4000-8000-000000000001'::uuid;
-\set r28_probe_sp_job_del :ERROR
+ WHERE owner_user_id = '38a38a38-00ff-4000-8000-0000000000ff'::uuid;
+\set r28_probe_sp_job_owner_del :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_sp;
 
 SAVEPOINT r28_probe_sp;
 DELETE FROM public.transcriptions
- WHERE id = '38a38a38-0002-4000-8000-000000000002'::uuid;
-\set r28_probe_sp_rc_del :ERROR
+ WHERE owner_user_id = '38a38a38-00ff-4000-8000-0000000000ff'::uuid;
+\set r28_probe_sp_rc_owner_del :ERROR
 ROLLBACK TO SAVEPOINT r28_probe_sp;
 
 ROLLBACK;
@@ -1436,19 +1443,35 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public', 'recognition_idempotency', 'DELETE'),
     -- R28-S38（迁移 0026）：PG 没有列级 DELETE，而语音域幂等台账有两条整行删除
     -- （services/api/src/speech/store-pg.ts:654 release、:660-662 purge），只能表级授予。
-    -- 本片新增后，表级写授权白名单为 14 个三元组；speech_jobs / transcriptions
-    -- 仍然完全不授 DELETE —— 若下面断言判红，先查是不是有人给这两张表加了表级写权。
+    -- 本片新增后，表级写授权白名单为 14 个三元组。GY-R34-I19 起 speech_jobs / transcriptions
+    -- **也**表级授 DELETE（账号注销按主体清空；见下面那两条），本段那句「仍然完全不授 DELETE」
+    -- 已作废 —— 若断言判红，先查 20-login-roles.sql 的 GRANT DELETE 是不是被收回。
     ('public', 'speech_idempotency',    'DELETE'),
+    -- GY-R34-I19（#19 延续片，2026-10-23）：识别域四表接进注销闭集，按主体清空需要
+    -- recognition_jobs / recognition_records / recognition_selections 三张表的表级 DELETE
+    -- （唯一调用点 services/api/src/recognitions/store-pg.ts 的 purgeOwnerRows，
+    -- 谓词 `owner_user_id = $1::uuid`；删除顺序按 FK 先子后父：selections → jobs → records）。
+    -- 为什么必须授：`request_account_deletion()` 不删 public.users 行，
+    -- 所以 `owner_user_id … ON DELETE CASCADE` 永不触发，S28 当时的注释是错的。
+    -- 本片新增后，表级写授权白名单为 15 / 16 / 17 个三元组。
+    ('public', 'recognition_jobs',      'DELETE'),
+    ('public', 'recognition_records',   'DELETE'),
+    ('public', 'recognition_selections', 'DELETE'),
+    -- GY-R34-I19：语音域两表同理（唯一调用点 speech/store-pg.ts 的 purgeOwnerRows，
+    -- 顺序 speech_jobs → transcriptions → speech_idempotency）。
+    -- 本片新增后，表级写授权白名单为 18 / 19 个三元组。
+    ('public', 'speech_jobs',           'DELETE'),
+    ('public', 'transcriptions',        'DELETE'),
     -- R28-W12（迁移 0001）：PG 没有列级 DELETE，而 media/store-pg.ts:171 有
     -- `DELETE FROM public.media_derivatives WHERE media_id = $1`（衍生物按媒体整行重建），
     -- 只能表级授予。media 本体仍然完全不授 DELETE（状态机删除），
     -- 若这里判红先查是不是有人给 media 加了表级写权。
-    -- 本片新增后，表级写授权白名单为 15 个三元组。
+    -- 本片新增后，表级写授权白名单为 20 个三元组。
     ('public', 'media_derivatives',     'DELETE'),
     -- R28-W12 返修（迁移 0029，监工 1022-0659 轮 P1）：待清理对象台账的**唯一**删除路径是
     -- 「桶删除被确认成功 ⇒ 删掉那一行」，且按对象键摘要整行删（PG 无列级 DELETE）。
     -- 若这里判红（即有人给别的表加了表级写权），先查是不是把清理台账改成了只增不删。
-    -- 本片新增后，表级写授权白名单为 16 个三元组。
+    -- 本片新增后，表级写授权白名单为 21 个三元组。
     ('public', 'media_object_cleanup',  'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里）。
@@ -3018,16 +3041,22 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'SET LOCAL ROLE gengyun_api_runtime 后，识别域四表的十七种真实语句形状必须全部成功：jobs 与 records 各 SELECT 12 列 / INSERT 12 列 / UPDATE（5 列、7 列）/ SELECT … FOR UPDATE 真行，selections SELECT 8 列 / INSERT 8 列，idempotency SELECT 4 列 / 真冲突 claim 与 complete（ON CONFLICT DO UPDATE）/ release 与 purge 两条整行 DELETE；任一 42501 即失败'
 
   UNION ALL
-  -- 65. R28-S28 禁止面：这四条语句必须**恰好** 42501（运行时拿不到 UPDATE/DELETE）。
-  --     selections 不授 UPDATE ⇒ FOR UPDATE 也拿不到（与 S26 三表的性质不同，别照抄那句
-  --     「UPDATE (revision) 行锁载体」的注释）；DELETE 四表一个都不授，注销清理走
-  --     request_account_deletion() 的属主级联（owner_user_id ON DELETE CASCADE）。
+  -- 65. R28-S28 + GY-R34-I19 账号注销清理的按主体 DELETE（[16]）。
+  SELECT 'runtime_recognition_owner_purge_delete',
+         coalesce(:'r28_probe_rec_sel_owner_del', '') = 'false'
+         AND coalesce(:'r28_probe_rec_job_owner_del', '') = 'false'
+         AND coalesce(:'r28_probe_rec_rec_owner_del', '') = 'false',
+         '账号注销清理（recognitions/store-pg.ts::purgeOwnerRows）对 recognition_selections / recognition_jobs / recognition_records 的整行 DELETE 必须成功；任一 42501 即说明 20-login-roles.sql 的 GRANT DELETE 丢了'
+
+  UNION ALL
+  -- 65b. R28-S28 禁止面：这一条语句必须**恰好** 42501（运行时拿不到 UPDATE）。
+  --     recognition_selections 不授 UPDATE ⇒ 行锁载体 `SELECT … FOR UPDATE` 也拿不到
+  --     （与 S26 三表的性质不同，别照抄那句「UPDATE (revision) 行锁载体」的注释）。
+  --     ⚠️ GY-R34-I19 之后，jobs / records / selections 的整行 DELETE **不再** 属禁止面
+  --     —— 它们是账号注销清理的真实语句，见上一条 65。
   SELECT 'runtime_recognition_forbidden_surface',
-         :'r28_probe_rec_sel_lock_forbidden' = 'true'
-         AND :'r28_probe_rec_job_del_forbidden' = 'true'
-         AND :'r28_probe_rec_rec_del_forbidden' = 'true'
-         AND :'r28_probe_rec_sel_del_forbidden' = 'true',
-         'recognition_selections 的 SELECT … FOR UPDATE 与 jobs / records / selections 的整行 DELETE 必须全部 42501；任一成功即越权'
+         :'r28_probe_rec_sel_lock_forbidden' = 'true',
+         'recognition_selections 的 SELECT … FOR UPDATE 必须 42501（无 UPDATE 授权）；成功即越权'
 
   UNION ALL
   -- 66. R28-S28 泛化反向控制（PUBLIC 面）：manifest 里所有 granted / granted_external 的表
@@ -3081,18 +3110,23 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND :'r28_probe_sp_idem_seed_release' = 'false'
          AND :'r28_probe_sp_idem_release' = 'false'
          AND :'r28_probe_sp_idem_seed_expired' = 'false'
-         AND :'r28_probe_sp_idem_purge' = 'false',
-         'SET LOCAL ROLE gengyun_api_runtime 后，语音域三表的十七种真实语句形状必须全部成功：speech_jobs SELECT 12 列 / INSERT 12 列 / UPDATE 5 列 / SELECT … FOR UPDATE 真行 / 终态提交 UPDATE，transcriptions SELECT 13 列 / INSERT 13 列 / UPDATE 8 列，speech_idempotency SELECT 6 列 / 占位 INSERT / 真冲突 claim（ON CONFLICT DO NOTHING RETURNING scope）/ finalize 2 列 / release 与 purge 两条整行 DELETE；任一 42501 即失败'
+         AND :'r28_probe_sp_idem_purge' = 'false'
+         AND coalesce(:'r28_probe_sp_job_owner_del', '') = 'false'
+         AND coalesce(:'r28_probe_sp_rc_owner_del', '') = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，语音域三表的真实语句形状必须全部成功：speech_jobs SELECT 12 列 / INSERT 12 列 / UPDATE 5 列 / SELECT … FOR UPDATE 真行 / 终态提交 UPDATE / 账号注销按主体整行 DELETE（GY-R34-I19），transcriptions SELECT 13 列 / INSERT 13 列 / UPDATE 8 列 / 账号注销按主体整行 DELETE（GY-R34-I19），speech_idempotency SELECT 6 列 / 占位 INSERT / 真冲突 claim（ON CONFLICT DO NOTHING RETURNING scope）/ finalize 2 列 / release 与 purge 两条整行 DELETE；任一 42501 即失败'
 
   UNION ALL
-  -- 68. R28-S38 禁止面：speech_jobs / transcriptions 的整行 DELETE 必须恰好 42501。
-  --     这两表不授 DELETE（注销清理走 request_account_deletion() 的属主级联，
-  --     owner_user_id 都是 ON DELETE CASCADE）；表级 INSERT/UPDATE 不授这件事由
-  --     49-58 的 runtime_grants_* 逐表断言兜住（has_table_privilege 逐个 priv 比对）。
-  SELECT 'runtime_speech_forbidden_surface',
-         :'r28_probe_sp_job_del' = 'true'
-         AND :'r28_probe_sp_rc_del' = 'true',
-         'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
+  -- 68. R28-S38 禁止面**已撤销**（GY-R34-I19）：原断言是「speech_jobs / transcriptions 的整行
+  --     DELETE 必须恰好 42501，注销清理走 request_account_deletion() 的属主级联」。实测该函数
+  --     （迁移 0016:68-170）不删 public.users 行、全仓也没有 DELETE FROM public.users ⇒ 那条级联
+  --     永不触发，等于语音域的用户数据一条都不会被删。账号注销接进闭集后这两条 DELETE 是**真实
+  --     语句**（speech/store-pg.ts::purgeOwnerRows），已并入上面 67 的成功面。
+  --     表级 INSERT/UPDATE 不授这件事仍由 49-58 的 runtime_grants_* 逐表断言兜住
+  --     （has_table_privilege 逐个 priv 比对）。
+  SELECT 'runtime_speech_forbidden_surface_withdrawn',
+         coalesce(:'r28_probe_sp_job_owner_del', '') = 'false'
+         AND coalesce(:'r28_probe_sp_rc_owner_del', '') = 'false',
+         'R28-S38 的「speech_jobs / transcriptions 整行 DELETE 必须 42501」已被 GY-R34-I19 撤销：这两条 DELETE 现在是账号注销清理的真实语句，必须成功；若又变回 42501 说明 GRANT DELETE 被收回'
 
   UNION ALL
   -- 69-86. R28-S43 逐表范围断言（17 张经 NOLOGIN 组继承来的 public 表）：

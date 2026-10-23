@@ -336,6 +336,17 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
   },
   {
+    path: 'tests/integration/recognitions-speech-purge-pg.mjs',
+    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时集群、跑全链迁移与运行时角色授权，'
+      + '再经真实 `createUserDataDeletion` 与识别/语音两域的 `purgeOwnerData` 取「本主体七表 → 0 行／他人行原样／'
+      + '`public.users` 行仍在（证明不是外键级联的副作用）／两本台账按 scope 前缀只删本主体」的注销读数；'
+      + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），'
+      + '故不进无 PG 的回环链。⚠️ 它的数据根目录键是 `GY_R34_PG_ROOT`（脚本 `:92`），⛔ 不是同族脚本的'
+      + ' `GY_W11_PG_ROOT`——守卫按脚本映射键名并与源码真值交叉核对，给错键即红。'
+      + '本片（GY-R34-I19）未把它接进任何 workflow：真库读数以本地临时集群取得（见'
+      + ' `docs/verification/gy-r34-i19-deletion-closure-20261023.md` §4），接 CI 留待总监安排。',
+  },
+  {
     path: 'tests/integration/source-lifecycle-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/source-lifecycle-postgres.yml` 用独立测试集群运行。',
   },

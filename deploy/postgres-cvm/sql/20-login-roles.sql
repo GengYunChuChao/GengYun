@@ -799,12 +799,21 @@ GRANT INSERT (id, turn_id, owner_id, revision, status, checked_text, check_state
 --      而这两张表本来就有**真实**的 UPDATE 列（业务写权限）⇒ 行锁由它们满足，
 --      **不**另授 S26 那种 `UPDATE (revision)` 行锁载体（性质不同，别照抄 I 段那句注释）。
 --      recognition_selections 不授 UPDATE，它的 FOR UPDATE 仍然 42501 —— store 从不这么用。
---   ④ PG 没有列级 DELETE ⇒ 表级 DELETE 只授 recognition_idempotency（release / purge 是两条
---      整行 DELETE）。jobs / records / selections **不授 DELETE**：账号注销走
---      public.request_account_deletion()（SECURITY DEFINER，以属主身份级联），四表的
---      owner_user_id 都是 ON DELETE CASCADE，运行时不需要删这三张表的任何行。
+--   ④ PG 没有列级 DELETE ⇒ 表级 DELETE 只授 idempotency 与**账号注销清理**用到的三张表。
+--      原注释（R28-S28）写的是「jobs / records / selections 不授 DELETE：账号注销走
+--      public.request_account_deletion() 的属主级联」。GY-R34-I19 复核（实测，非推断）：
+--      `request_account_deletion()`（迁移 0016:68-170）只做三件事 —— 账号 state →
+--      `deletion_pending`、`auth_epoch+1`、撤销全部会话、落 `deletion_requests` 行；**它不删
+--      `public.users` 的行**，全仓（services / tools / deploy / migrations）也没有任何
+--      `DELETE FROM public.users`。因此那四张表的 `owner_user_id … ON DELETE CASCADE`
+--      永远不会被触发 —— 原注释描述的那条级联在代码里不存在，识别域的用户数据此前一条都
+--      不会被删。GY-R34-I19 把识别域接进注销闭集（`services/api/src/privacy/
+--      user-data-deletion.ts` 的 `recognitions` 模块 → `recognitions/store-pg.ts` 的
+--      `purgeOwnerRows`，谓词恒为 `owner_user_id = $1::uuid`），故必须表级授予这三张表的
+--      DELETE；否则真模式下清理即 42501、回执折叠 blocked（fail-closed：不假报完成，
+--      但清理也永远不会成功）。
 --   ⛔ 一律不给 TRUNCATE / REFERENCES / TRIGGER；表级 INSERT / UPDATE 一律不给
---      （idempotency 的 DELETE 是本段唯一的表级写授权）。
+--      （DELETE 是本段唯一的表级写授权，且只被上述按主体的清理语句使用）。
 \echo '--- J. 运行时域（识别）列级授权（R28-S28，迁移 0025）---'
 
 -- 缺表硬前置（方案 B，S24 证据页 §10 的裁决）：0025 已合入 main，四张表是硬依赖。
@@ -852,8 +861,9 @@ GRANT UPDATE (revision, candidates, uncertainty_reasons, selected_species_id, mo
               updated_at, deleted)
   ON public.recognition_records TO gengyun_api_runtime;
 
--- recognition_selections（0025）：SELECT 8 列 / INSERT 8 列；无 UPDATE、无 DELETE
--- （关系只追加：选中结果落在 recognition_records.selected_species_id 上，见 commitSelection）
+-- recognition_selections（0025）：SELECT 8 列 / INSERT 8 列 / 表级 DELETE；无 UPDATE
+-- （关系只追加：选中结果落在 recognition_records.selected_species_id 上，见 commitSelection；
+--   DELETE 只为账号注销清理而授，见上方 ④）
 GRANT SELECT (id, revision, recognition_id, owner_user_id, species_id, provenance, decided_at,
               linkage)
   ON public.recognition_selections TO gengyun_api_runtime;
@@ -871,8 +881,20 @@ GRANT UPDATE (request_hash, payload, pending, expires_at)
   ON public.recognition_idempotency TO gengyun_api_runtime;
 GRANT DELETE ON public.recognition_idempotency TO gengyun_api_runtime;
 
+-- 账号注销清理（GY-R34-I19）：识别域四表接进注销闭集后，按主体清空需要这三张表的表级
+-- DELETE（PG 无列级 DELETE）。唯一调用点是 `recognitions/store-pg.ts::purgeOwnerRows`，
+-- 四条 DELETE 的谓词分别是 `owner_user_id = $1::uuid`（selections / jobs / records）与
+-- `left(scope, char_length($1::text) + 1) = $1::text || chr(10)`（idempotency 台账）。
+-- 删除顺序按 FK 先子后父：selections → jobs → records → idempotency。
+-- 为什么必须授（S28 当时的注释是错的）：见本段 ④ —— `request_account_deletion()` 不删
+-- `public.users` 行，`owner_user_id … ON DELETE CASCADE` 永不触发。
+GRANT DELETE ON public.recognition_jobs,
+                public.recognition_records,
+                public.recognition_selections
+  TO gengyun_api_runtime;
+
 \echo '20-login-roles.sql：已授予 public.recognition_jobs / public.recognition_records / public.recognition_selections / public.recognition_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 recognitions/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.recognition_idempotency（PG 无列级 DELETE；jobs / records / selections 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
+\echo '20-login-roles.sql：DELETE 全部为**表级**：public.recognition_idempotency（release / purge 两条整行 DELETE）＋ public.recognition_jobs / public.recognition_records / public.recognition_selections（GY-R34-I19 账号注销按主体清空；PG 无列级 DELETE）。'
 \echo '20-login-roles.sql：recognition_jobs / recognition_records 的 UPDATE 是业务写权限（认领、终态提交、改选），同时满足各自的 SELECT … FOR UPDATE；recognition_selections 不授 UPDATE。'
 
 -- ----------------------------------------------------------------------------
@@ -911,11 +933,16 @@ GRANT DELETE ON public.recognition_idempotency TO gengyun_api_runtime;
 --   ③ `SELECT … FOR UPDATE` 只在 speech_jobs :497（commitTerminal）出现，而 speech_jobs 本来就有
 --      **真实**的 UPDATE 列 ⇒ 行锁由它们满足，**不**另授 I 段那种 `UPDATE (revision)` 行锁载体
 --      （性质不同，别照抄 I 段那句注释）。transcriptions 没有 FOR UPDATE。
---   ④ PG 没有列级 DELETE ⇒ 表级 DELETE 只授 speech_idempotency（release / purge 是两条整行 DELETE）。
---      speech_jobs / transcriptions **不授 DELETE**：账号注销走 public.request_account_deletion()
---      （SECURITY DEFINER，以属主身份级联），两表的 owner_user_id 都是 ON DELETE CASCADE。
+--   ④ PG 没有列级 DELETE ⇒ 表级 DELETE 只授 speech_idempotency 与**账号注销清理**用到的两张表。
+--      原注释（R28-S38）写的是「speech_jobs / transcriptions 不授 DELETE：账号注销走
+--      public.request_account_deletion() 的属主级联」。GY-R34-I19 复核（实测，非推断）：
+--      该函数（迁移 0016:68-170）不删 `public.users` 的行，全仓也没有 `DELETE FROM public.users`
+--      ⇒ `owner_user_id … ON DELETE CASCADE` 永不触发。语音域的用户数据此前同样一条都不会被删。
+--      GY-R34-I19 把语音域接进注销闭集（`user-data-deletion.ts` 的 `speech` 模块 →
+--      `speech/store-pg.ts::purgeOwnerRows`），故必须表级授予这两张表的 DELETE；否则真模式下
+--      清理即 42501、回执折叠 blocked（fail-closed：不假报完成，但清理也永远不会成功）。
 --   ⛔ 一律不给 TRUNCATE / REFERENCES / TRIGGER；表级 INSERT / UPDATE 一律不给
---      （speech_idempotency 的 DELETE 是本段唯一的表级写授权）。
+--      （DELETE 是本段唯一的表级写授权，且只被上述按主体的清理语句使用）。
 \echo '--- K. 语音域（迁移 0026）列级授权（R28-S38）---'
 
 -- 缺表硬前置（同 J 段）：0026 由 S20 引入、本片基线 fcb42e9 已含，三张表是硬依赖。顺序错（先跑本文件、后跑 migrate.ts）
@@ -969,8 +996,18 @@ GRANT UPDATE (payload, pending)
   ON public.speech_idempotency TO gengyun_api_runtime;
 GRANT DELETE ON public.speech_idempotency TO gengyun_api_runtime;
 
+-- 账号注销清理（GY-R34-I19）：语音域接进注销闭集后，按主体清空需要这两张表的表级
+-- DELETE（PG 无列级 DELETE）。唯一调用点是 `speech/store-pg.ts::purgeOwnerRows`，
+-- 删除顺序按业务语义：speech_jobs → transcriptions → speech_idempotency（jobs 引用
+-- transcription_id，两张正文表之间无 FK；台账按 scope 前缀删）。
+-- 为什么必须授（S38 当时的注释是错的）：见本段 ④ —— `request_account_deletion()` 不删
+-- `public.users` 行，`owner_user_id … ON DELETE CASCADE` 永不触发。
+GRANT DELETE ON public.speech_jobs,
+                public.transcriptions
+  TO gengyun_api_runtime;
+
 \echo '20-login-roles.sql：已授予 public.speech_jobs / public.transcriptions / public.speech_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 speech/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.speech_idempotency（PG 无列级 DELETE；speech_jobs / transcriptions 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
+\echo '20-login-roles.sql：DELETE 全部为**表级**：public.speech_idempotency（release / purge 两条整行 DELETE）＋ public.speech_jobs / public.transcriptions（GY-R34-I19 账号注销按主体清空；PG 无列级 DELETE）。'
 \echo '20-login-roles.sql：speech_jobs 的 UPDATE 是业务写权限（认领、终态提交），同时满足 commitTerminal 的 SELECT … FOR UPDATE；transcriptions 不授 FOR UPDATE，speech_idempotency 的 SELECT 是全部 6 列（WHERE 与 RETURNING 需要）。'
 
 -- ----------------------------------------------------------------------------

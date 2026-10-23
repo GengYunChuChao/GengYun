@@ -77,6 +77,7 @@ import type {
   IdempotencyClaimResult,
   IdempotencyRow,
   JobRow,
+  RecognitionOwnerPurgeCounts,
   RecognitionRow,
   RecognitionStore,
 } from './store.ts';
@@ -571,6 +572,51 @@ export function createPostgresRecognitionStore({ pool }: PostgresRecognitionStor
     }
   }
 
+  /**
+   * 注销闭集（#19 延续片）· 按主体清空识别域四张表，**同一事务**、先子后父。
+   *
+   * 顺序不是惯例而是外键唯一钉死的（`services/api/db/migrations/0025_recognitions_persistence.sql`）：
+   *   - `:163` `recognition_selections.recognition_id → recognition_records(id) ON DELETE CASCADE`
+   *     ⇒ 人工选择是**子**，必须先删；不靠"看不见的级联"顺手清掉，否则删除行数无处计、
+   *     证据串里的 `online-purged` 就会漏掉这部分真实删除；
+   *   - `:110`（`recognition_jobs`）与 `:134`（`recognition_records`）各自的
+   *     `owner_user_id → users(id) ON DELETE CASCADE` ⇒ 两张表**分别**按 `owner_user_id` 删；
+   *     它们互相**没有**外键（任务产记录是业务关系，不是 FK），顺序按语义：任务先于其产物；
+   *   - `recognition_idempotency`（`:180`）**没有**主体列 ⇒ 按 `scope` 首段主体前缀删。
+   *     `auth/idempotency.ts` 的 `idempotencyScope` 恒为 `<主体 uuid>\n<METHOD>\n<路径>`，
+   *     因此用 `left(scope, char_length($1::text) + 1) = $1::text || chr(10)` 做**精确**前缀比较
+   *     （不解释通配符、也不是会误伤其他主体的 `LIKE '%…%'`；主体是定长 uuid，前缀唯一）。
+   *
+   * ⚠️ 表未迁移（`0025` 没跑）⇒ `requireTables()` 明确 fail-closed，⛔ 不静默当"已清 0 行"。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<RecognitionOwnerPurgeCounts> {
+    await requireTables();
+    return withTransaction(async (sql) => {
+      const selections = await sql.query(
+        `DELETE FROM public.recognition_selections WHERE owner_user_id = $1::uuid RETURNING id`,
+        [ownerId],
+      );
+      const jobs = await sql.query(
+        `DELETE FROM public.recognition_jobs WHERE owner_user_id = $1::uuid RETURNING id`,
+        [ownerId],
+      );
+      const records = await sql.query(
+        `DELETE FROM public.recognition_records WHERE owner_user_id = $1::uuid RETURNING id`,
+        [ownerId],
+      );
+      const idempotency = await sql.query(
+        `DELETE FROM public.recognition_idempotency
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)
+          RETURNING scope`,
+        [ownerId],
+      );
+      return {
+        records: selections.rows.length + jobs.rows.length + records.rows.length,
+        idempotency: idempotency.rows.length,
+      };
+    });
+  }
+
   return {
     persistent: true,
 
@@ -842,6 +888,16 @@ export function createPostgresRecognitionStore({ pool }: PostgresRecognitionStor
         [now],
       );
       return rows.length;
+    },
+
+    // ---- 注销闭集（#19 延续片）：按主体清空（四表同一事务、先子后父；见 `purgeOwnerRows`） ----
+
+    async purgeOwnerData(ownerId) {
+      return purgeOwnerRows(ownerId);
+    },
+
+    async deleteAllByOwner(ownerId) {
+      return (await purgeOwnerRows(ownerId)).records;
     },
   };
 }

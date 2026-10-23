@@ -66,7 +66,12 @@ import {
   normalizeUncertainSpans,
   requireTranscriptText,
 } from './state.ts';
-import type { SpeechJobRow, SpeechStore, TranscriptionRow } from './store.ts';
+import type {
+  SpeechJobRow,
+  SpeechOwnerPurgeCounts,
+  SpeechStore,
+  TranscriptionRow,
+} from './store.ts';
 
 /** 任务截止时间（毫秒）：超过即 `timed_out`，且迟到结果不复活任务。 */
 export const DEFAULT_JOB_DEADLINE_MS = 30 * 1000;
@@ -805,6 +810,25 @@ export function createSpeechService(options: SpeechServiceOptions) {
     confirmTranscription,
     deleteTranscription,
     settle,
+    /**
+     * 账号注销清理（GY-R34-I19）：按主体清空语音域三表（jobs → transcriptions → 台账前缀）。
+     *
+     * 为什么在这个层：语音存储的**唯一**解析点是语音路由注册函数内（`registerSpeechRoutes`
+     * 第 128 行：注入优先 → real 且
+     * 真池用 PG → 否则内存），而装配层（`app.ts`）对存储实现只允许 `import type`
+     * （`tests/unit/speech-store-pg-wiring.test.mjs` 的源码钉子）。所以注销只能用路由已经建好的
+     * 这一份 store，不能另建实例 —— 否则清的可能是另一份缓存/另一个实例。
+     *
+     * 存储缺原语时**抛错**，不返回 0 假装清空：删除协议会把异常折叠成回执 `blocked` +
+     * `HANDLER_FAILED`，⛔ 不会把该域标成 `completed`。
+     */
+    async purgeOwnerData(ownerId: string): Promise<SpeechOwnerPurgeCounts> {
+      const purge = store.purgeOwnerData;
+      if (purge === undefined) {
+        throw new Error('语音域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+      }
+      return purge.call(store, ownerId);
+    },
     /** 供证据文档/诊断：当前提供者与各端口标注（替身如实标注，不含凭据）。 */
     describe: () => ({
       executionMode: provider.executionMode,

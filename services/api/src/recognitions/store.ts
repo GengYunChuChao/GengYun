@@ -76,6 +76,22 @@ export type IdempotencyClaimResult =
 export type JobMutation = (row: JobRow) => JobRow;
 export type RecognitionMutation = (row: RecognitionRow) => RecognitionRow;
 
+/**
+ * 注销闭集（#19 延续片）· 识别域按主体清空的**分表**真实行数。
+ *
+ * `records` = 正文三表（识别任务 / 识别记录 / 人工选择）删除行数之和；
+ * `idempotency` = 本域幂等台账（含未完成的占位行）删除行数。
+ * 两项都进在线清除证据（`<module>:online-purged:<records>` + `;<module>:idempotency-purged:<n>`）；
+ * ⛔ 不把「只删了任务表」报成「识别域已清空」。
+ *
+ * 字段名与 `services/api/src/privacy/user-data-deletion.ts` 的 `OwnerPurgeCounts` 逐字一致，
+ * 因此可以直接作为 `OwnerPurgeStore.purgeOwnerData` 的返回值（结构化兼容，不新增适配层）。
+ */
+export interface RecognitionOwnerPurgeCounts {
+  records: number;
+  idempotency: number;
+}
+
 export interface RecognitionStore {
   readonly persistent: boolean;
   insertJob(row: JobRow): Promise<void>;
@@ -126,6 +142,20 @@ export interface RecognitionStore {
   releaseIdempotent(scope: string, keyHashHex: string): Promise<void>;
   /** 物理删除已到期的回执与占位。 */
   purgeIdempotent(now: Date): Promise<number>;
+  /**
+   * **注销按主体清空**（#19 延续片）：删掉该主体在本域**全部**行
+   * （识别任务 / 识别记录 / 人工选择 / 幂等台账），返回分表真实行数。
+   *
+   * 只由 `services/api/src/privacy/user-data-deletion.ts` 的注销处理器调用，**不注册任何契约路由**。
+   * 顺序由迁移 `0025_recognitions_persistence.sql` 的外键唯一钉死：先子（人工选择）后父（识别记录），
+   * 任务与记录之间无序（无外键），幂等台账按 `scope` 首段主体前缀精确删。
+   *
+   * ⛔ 缺这个方法就是「本域不可按主体清空」：装配处必须让它**调用即失败**（折叠 blocked），
+   * 不得静默跳过、更不得假装已清。
+   */
+  purgeOwnerData?(ownerId: string): Promise<RecognitionOwnerPurgeCounts>;
+  /** 同一清理的窄口径（只回正文行数）；`purgeOwnerData` 可用时优先后者。 */
+  deleteAllByOwner?(ownerId: string): Promise<number>;
 }
 
 function cloneJob(row: JobRow): JobRow {
@@ -159,6 +189,46 @@ export function createMemoryRecognitionStore(): RecognitionStore {
   /** 单飞占位：`claimed` 只在占位存在期间唯一，完成回执写入时释放。 */
   const claims = new Map<string, { requestHash: string; expiresAt: Date }>();
   const composite = (scope: string, keyHashHex: string): string => `${scope}\u0000${keyHashHex}`;
+
+  /**
+   * 按主体清空（#19 延续片）· 内存实现。
+   *
+   * 与 PG 实现的**口径必须一致**（否则 stub/preset_demo 与 real 的证据串读数不可比）：
+   * 正文行 = 任务 + 识别记录 + 人工选择；台账 = 完成回执 + 未完成占位（PG 里它们是同一张表的两种行）。
+   * 顺序同样是**先子后父**：选择行挂在识别记录下，随其父一起清（对应 PG 的外键方向）。
+   */
+  function purgeOwnerRows(ownerId: string): RecognitionOwnerPurgeCounts {
+    let records = 0;
+    for (const [id, row] of jobs) {
+      if (row.ownerUserId !== ownerId) continue;
+      jobs.delete(id);
+      records += 1;
+    }
+    for (const [recognitionId, row] of recognitions) {
+      if (row.ownerUserId !== ownerId) continue;
+      records += (selections.get(recognitionId) ?? []).length;
+      selections.delete(recognitionId);
+      recognitions.delete(recognitionId);
+      records += 1;
+    }
+    let idleRemoved = 0;
+    // 台账按**主体前缀**清：`composite(scope, keyHash)` = `scope + "\u0000" + keyHash`，而
+    // scope 首段恒为主体（`auth/idempotency.ts` 的 `<主体>\n<METHOD>\n<路径>` 口径），
+    // 因此正确前缀是 `<主体>\n` —— ⛔ 不是 `<主体>\u0000`（那是 scope 与 keyHash 的分隔符，
+    // 拿它当前缀会一条都匹配不到，于是"清了正文、漏了台账"这种缺口静默通过）。
+    // 与 PG 的 `left(scope, char_length($1::text) + 1) = $1::text || chr(10)` 逐字等价。
+    for (const key of [...idempotency.keys()]) {
+      if (!key.startsWith(`${ownerId}\n`)) continue;
+      idempotency.delete(key);
+      idleRemoved += 1;
+    }
+    for (const key of [...claims.keys()]) {
+      if (!key.startsWith(`${ownerId}\n`)) continue;
+      claims.delete(key);
+      idleRemoved += 1;
+    }
+    return { records, idempotency: idleRemoved };
+  }
   return {
     persistent: false,
     async insertJob(row) {
@@ -279,6 +349,12 @@ export function createMemoryRecognitionStore(): RecognitionStore {
         }
       }
       return removed;
+    },
+    async purgeOwnerData(ownerId) {
+      return purgeOwnerRows(ownerId);
+    },
+    async deleteAllByOwner(ownerId) {
+      return purgeOwnerRows(ownerId).records;
     },
   };
 }

@@ -54,7 +54,14 @@ import type { ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import { canTransitionJob, isJobState, type JobState, type UncertainSpan } from './state.ts';
-import { sameSpans, type IdempotencyRow, type SpeechJobRow, type SpeechStore, type TranscriptionRow } from './store.ts';
+import {
+  sameSpans,
+  type IdempotencyRow,
+  type SpeechJobRow,
+  type SpeechOwnerPurgeCounts,
+  type SpeechStore,
+  type TranscriptionRow,
+} from './store.ts';
 
 /** `pg` 连接池/连接的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容）。 */
 export interface SqlRunner {
@@ -454,6 +461,44 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
     }
   }
 
+  /**
+   * 注销闭集（#19 延续片）· 按主体清空语音域三张表，**同一事务**、先父后子（按业务语义）。
+   *
+   * 顺序与计数口径（`services/api/db/migrations/0026_speech_persistence.sql`）：
+   *   - `:92`（`speech_jobs`）与 `:115`（`transcriptions`）各自 `owner_user_id → users(id) ON DELETE CASCADE`
+   *     ⇒ 两张表**分别**按 `owner_user_id` 删；它们互相**没有**外键（任务产记录是业务关系，不是 FK），
+   *     顺序按语义：任务先于其产物；
+   *   - `speech_idempotency`（`:137`）**没有**主体列 ⇒ 按 `scope` 首段主体前缀删。
+   *     `auth/idempotency.ts` 的 `idempotencyScope` 恒为 `<主体 uuid>\n<METHOD>\n<路径>`，
+   *     因此用 `left(scope, char_length($1::text) + 1) = $1::text || chr(10)` 做**精确**前缀比较
+   *     （不解释通配符、也不是会误伤其他主体的 `LIKE '%…%'`；主体是定长 uuid，前缀唯一）。
+   *
+   * ⚠️ 表未迁移（`0026` 没跑）⇒ `requireTables()` 明确 fail-closed，⛔ 不静默当"已清 0 行"。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<SpeechOwnerPurgeCounts> {
+    await requireTables();
+    return withTransaction(async (sql) => {
+      const jobs = await sql.query(
+        `DELETE FROM public.speech_jobs WHERE owner_user_id = $1::uuid RETURNING id`,
+        [ownerId],
+      );
+      const records = await sql.query(
+        `DELETE FROM public.transcriptions WHERE owner_user_id = $1::uuid RETURNING id`,
+        [ownerId],
+      );
+      const idempotency = await sql.query(
+        `DELETE FROM public.speech_idempotency
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)
+          RETURNING scope`,
+        [ownerId],
+      );
+      return {
+        records: jobs.rows.length + records.rows.length,
+        idempotency: idempotency.rows.length,
+      };
+    });
+  }
+
   return {
     persistent: true,
 
@@ -670,6 +715,16 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
         [now],
       );
       return rows.length;
+    },
+
+    // ---- 注销闭集（#19 延续片）：按主体清空（三表同一事务；见 `purgeOwnerRows`） ----
+
+    async purgeOwnerData(ownerId) {
+      return purgeOwnerRows(ownerId);
+    },
+
+    async deleteAllByOwner(ownerId) {
+      return (await purgeOwnerRows(ownerId)).records;
     },
   };
 }

@@ -427,16 +427,32 @@ const OPAQUE_ALLOWLIST = [
  * + 剩余读数第三分支的 `reporter_id` 1 条 + `REPORT_COLUMNS` 多一列被读路径展开 1 条）、
  * 逐文件 `community` 41→**42**；SELECT/DELETE/INSERT、引用表数（举报表早已在清单里）、
  * `SELECT *`/无顶层 FROM 处数**不变**。
+ *
+ * R34（#19 注销闭集扩展，2026-10-23）：识别域（`recognitions`）与语音域（`speech`）接进注销
+ * 闭集，两个 store-pg 各新增一个 `purgeOwnerRows`：
+ *   - `recognitions/store-pg.ts` +4 条整表 DELETE（`recognition_selections` → `recognition_jobs`
+ *     → `recognition_records` 按 `owner_user_id`，`recognition_idempotency` 按 scope 前缀），
+ *     四条都带 `RETURNING`；列要求每条 `owner_user_id`/`id`/`scope`（均已授权）。
+ *   - `speech/store-pg.ts` +3 条整表 DELETE（`speech_jobs` → `transcriptions` 按
+ *     `owner_user_id`，`speech_idempotency` 按 scope 前缀），三条都带 `RETURNING`。
+ *   授权面同步补齐：`deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r28-runtime-domain-grants`
+ *   区新增 `GRANT DELETE ON public.recognition_jobs, recognition_records, recognition_selections`
+ *   与 `GRANT DELETE ON public.speech_jobs, transcriptions`（补之前，注释里「账号注销经
+ *   `request_account_deletion()` 的属主级联」是错的：该函数不删 `public.users` 行，级联永不触发）。
+ * 实测合计：字面量 157→**164**、DELETE 29→**36**、RETURNING 62→**69**、
+ * columnRequirements 1241→**1255**（7 条整表 DELETE 的 `*` 需求 + 各表谓词列）、
+ * 逐文件 `recognitions` 20→**24**、`speech` 16→**19**；INSERT/UPDATE/SELECT、引用表数、
+ * `SELECT *`/无顶层 FROM 处数**不变**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 157,
-  statements: { INSERT: 27, UPDATE: 29, SELECT: 72, DELETE: 29 },
-  returningClauses: 62,
+  sqlLiterals: 164,
+  statements: { INSERT: 27, UPDATE: 29, SELECT: 72, DELETE: 36 },
+  returningClauses: 69,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1241,
+  columnRequirements: 1255,
   opaqueExpressions: 2,
 };
 
@@ -448,8 +464,8 @@ const EXPECTED_PER_FILE = {
   history: 16,
   messages: 15,
   ocr: 16,
-  recognitions: 20,
-  speech: 16,
+  recognitions: 24,
+  speech: 19,
 };
 
 /** 运行时 SQL 里被引用到的表（逐张钉死，漏一张就说明某段解析掉了）。 */
@@ -556,14 +572,19 @@ const TABLE_WIDE_COLUMN = '*';
  *   INSERT/SELECT/DELETE、引用表 44 张、`rowLocks` 分桶、onConflict、无顶层 FROM 全部不变
  *   （本片没有新增行锁语句 ⇒ 沿用 ⑨ 的 rowLockRequirements 41，口径不因本片回退）。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
+ * ⑪ 2026-10-23 R34（#19 注销闭集扩展）：识别域 +4 条、语音域 +3 条整表 DELETE（都带 RETURNING），
+ *   授权面同步补 `GRANT DELETE`。⇒ 字面量 266 → **273**、DELETE 36 → **43**、RETURNING 82 → **89**、
+ *   列要求 1720 → **1734**、已覆盖 1666 → **1680**（缺口仍 0：5 张表的整表 DELETE 已在
+ *   `20-login-roles.sql` 授权）、逐文件 `recognitions` 20 → **24**、`speech` 16 → **19**；
+ *   INSERT/UPDATE/SELECT、引用表 44 张、`rowLocks` 分桶、onConflict、无顶层 FROM 均不变。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 266,
-  statements: { INSERT: 42, UPDATE: 47, SELECT: 141, DELETE: 36 },
-  returningClauses: 82,
+  sqlLiterals: 273,
+  statements: { INSERT: 42, UPDATE: 47, SELECT: 141, DELETE: 43 },
+  returningClauses: 89,
   onConflictClauses: 26,
   selectStar: 15,
   qualifiedStar: 4,
@@ -571,8 +592,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 11,
   referencedTables: 44,
-  columnRequirements: 1720,
-  coveredRequirements: 1666,
+  columnRequirements: 1734,
+  coveredRequirements: 1680,
   ledgerExemptions: 33,
   rowLockRequirements: 41,
   rowLockExemptions: 1,
@@ -598,8 +619,8 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'privacy/grant-pg.ts': 12,
   'privacy/ledger-pg.ts': 24,
   'profile/service.ts': 11,
-  'recognitions': 20,
-  'speech': 16,
+  'recognitions': 24,
+  'speech': 19,
 };
 
 /** 扩展审计引用到的表（44 张；含 catalog_read 视图，迁移期不判权限）。 */

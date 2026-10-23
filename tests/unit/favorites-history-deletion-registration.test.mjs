@@ -25,9 +25,11 @@ import { createPostgresHistoryStore } from '../../services/api/src/history/store
 import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
 import {
   COMMUNITY_DELETION_MODULE,
+  RECOGNITIONS_DELETION_MODULE,
+  SPEECH_DELETION_MODULE,
   USER_DATA_DELETION_MODULES,
 } from '../../services/api/src/privacy/user-data-deletion.ts';
-import { PG_MIGRATIONS_WITH_COMMUNITY, pglitePool } from './favorites-history-fixtures.mjs';
+import { PG_MIGRATIONS_WITH_DELETION_DOMAINS, pglitePool } from './favorites-history-fixtures.mjs';
 
 const realConfig = () => ({
   ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
@@ -36,7 +38,7 @@ const realConfig = () => ({
 });
 
 test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，清空后真表为 0 且行数进证据', async (t) => {
-  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_COMMUNITY);
+  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_DELETION_DOMAINS);
   const auth = createMemoryAuthStore();
   // `requests: null` 是 `app.ts` 支持的**显式关闭**口：本用例只锁"清空接线"，不锁
   // GY-I19 的持久化受理（那条链路由 `account-deletion-*.test.mjs` 覆盖）。
@@ -247,13 +249,16 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await communityLedgerRows(mine.id), 2);
   assert.equal(await communityLedgerRows(others.id), 1);
 
-  // 模块闭集（C1b / C1b-3 起扩到含 messages 与 conversations；R31-S6 起再扩到 community）：
-  // 既没有把 favorites/history 从闭集里摘掉，也不是"随便加了个名字"——消息域、会话域与社区域
-  // 必须真的在闭集内（同一条路、同一 requestId、同一回执行）。社区是**装配期无条件注入**的
-  // （`app.ts:1556-1567`），所以真实注销路径的闭集就是 5 项。
+  // 模块闭集（C1b / C1b-3 起扩到含 messages 与 conversations；R31-S6 起再扩到 community；
+  // GY-R34-I19 起再扩到 recognitions 与 speech）：既没有把 favorites/history 从闭集里摘掉，
+  // 也不是"随便加了个名字"——消息域、会话域、社区域、识别域与语音域必须真的在闭集内
+  // （同一条路、同一 requestId、同一回执行）。后三者都是**装配期无条件注入**的
+  // （`app.ts` 的 `createUserDataDeletion({...})` 实参），所以真实注销路径的闭集就是 7 项。
   assert.deepEqual(app.userDataDeletion.requiredModules(), [
     ...USER_DATA_DELETION_MODULES,
     COMMUNITY_DELETION_MODULE,
+    RECOGNITIONS_DELETION_MODULE,
+    SPEECH_DELETION_MODULE,
   ]);
   assert.deepEqual(app.userDataDeletion.requiredModules(), [
     'favorites',
@@ -261,6 +266,8 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
     'messages',
     'conversations',
     'community',
+    'recognitions',
+    'speech',
   ]);
   for (const legacy of ['favorites', 'history']) {
     assert.ok(app.userDataDeletion.requiredModules().includes(legacy), `闭集不得丢掉既有模块 ${legacy}`);
@@ -349,11 +356,20 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await communityLedgerRows(others.id), 1, '他人社区台账不动');
 
   // 行数进证据：favorites 1 行、history 2 行、messages 1 行、conversations 0 行、
-  // community **2 行真实改动**（1 举报自述 + 1 点赞；帖子/评论是保留，不是删除，故不进 online-purged）。
+  // community **2 行真实改动**（1 举报自述 + 1 点赞；帖子/评论是保留，不是删除，故不进 online-purged）、
+  // recognitions / speech 各 0 行（本用例没造这两域的行，但**必须**照实出现 0 —— 缺项说明该域没被驱动）。
   // 会话域本用例没造行，但**必须**照实出现 0 —— 缺项说明该域没被驱动。
   const audit = app.userDataDeletion.audit().filter((entry) => entry.requestId === requestId);
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
-  assert.deepEqual(removed, { favorites: 1, history: 2, messages: 1, conversations: 0, community: 2 });
+  assert.deepEqual(removed, {
+    favorites: 1,
+    history: 2,
+    messages: 1,
+    conversations: 0,
+    community: 2,
+    recognitions: 0,
+    speech: 0,
+  });
   const communityAudit = audit.find((entry) => entry.module === 'community');
   assert.equal(communityAudit.retained, 2, 'F13：1 帖 + 1 评论保留（单列读数）');
   assert.equal(communityAudit.redacted, 0);
@@ -366,16 +382,24 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   );
   assert.deepEqual(
     audit.map((entry) => entry.userId),
-    [mine.id, mine.id, mine.id, mine.id, mine.id],
+    [mine.id, mine.id, mine.id, mine.id, mine.id, mine.id, mine.id],
     '审计只记目标主体',
   );
 
-  // 回执：五个模块的在线行**都**如实 `completed`（社区域的"行级作者引用未替换/引用未持久化"
-  // 两项已由迁移 0030 + 列级授权消除；能力缺失/生成失败仍会 blocked，见 retention 的反向控制）。
+  // 回执：七个模块的在线行**都**如实 `completed`（社区域的"行级作者引用未替换/引用未持久化"
+  // 两项已由迁移 0030 + 列级授权消除；识别/语音两域在 GY-R34-I19 接入，表已随迁移 0025/0026 就位；
+  // 能力缺失/生成失败仍会 blocked，见 retention 的反向控制）。
   const receipt = app.userDataDeletion.receipt(requestId);
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
-  for (const module of ['favorites', 'history', 'messages', 'conversations']) {
-    assert.equal(byModule.get(module).online_state, 'completed');
+  for (const module of [
+    'favorites',
+    'history',
+    'messages',
+    'conversations',
+    RECOGNITIONS_DELETION_MODULE,
+    SPEECH_DELETION_MODULE,
+  ]) {
+    assert.equal(byModule.get(module).online_state, 'completed', `${module} 必须 completed`);
     assert.equal(byModule.get(module).backup_state, 'pending');
     assert.equal(byModule.get(module).error_code, null);
   }
@@ -392,6 +416,10 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(evidence.history, 'history:online-purged:2;history:idempotency-purged:1');
   assert.equal(evidence.messages, 'messages:online-purged:1;messages:idempotency-purged:1');
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
+  // 识别域 / 语音域（GY-R34-I19）：本用例没造行，但证据串里**必须**有这两域，且照实报 0。
+  // 两域的台账是各自独立的 `*_idempotency` 表（无主体列、按 scope 前缀删），所以计数字段同样在。
+  assert.equal(evidence.recognitions, 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
+  assert.equal(evidence.speech, 'speech:online-purged:0;speech:idempotency-purged:0');
   assert.ok(
     evidence.community.startsWith(
       'community:online-purged:2;community:idempotency-purged:2;community:retained:2;community:redacted:0;'
@@ -411,7 +439,7 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
 });
 
 test('注销清空·再次清空：0 行也如实回 0（不省略、不当作失败）', async (t) => {
-  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_COMMUNITY);
+  const { db, pool } = await pglitePool(t, PG_MIGRATIONS_WITH_DELETION_DOMAINS);
   const auth = createMemoryAuthStore();
   const app = buildApp({
     config: realConfig(),
@@ -433,8 +461,8 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
   assert.deepEqual(
     removed,
-    { favorites: 0, history: 0, messages: 0, conversations: 0, community: 0 },
-    '无行时五个模块都记 0（不是缺项）',
+    { favorites: 0, history: 0, messages: 0, conversations: 0, community: 0, recognitions: 0, speech: 0 },
+    '无行时七个模块都记 0（不是缺项）',
   );
   const receipt = app.userDataDeletion.receipt(requestId);
   for (const row of receipt.handlers) assert.equal(row.online_state, 'completed');
@@ -444,6 +472,8 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   assert.equal(evidence.history, 'history:online-purged:0;history:idempotency-purged:0');
   assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
+  assert.equal(evidence.recognitions, 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
+  assert.equal(evidence.speech, 'speech:online-purged:0;speech:idempotency-purged:0');
   // 社区：0 行也照实回 0，保留/脱敏/媒体/作者指针替换四段同样在（不是"表都没有"折叠成 blocked）。
   // 注意 `author-refs-replaced:0` 必须**写出来**：0 与"没做/没这一段"是两件事（否则真库缺 0030 时
   // 会被误读成"替换了 0 行"而不是"语句根本跑不了"）。

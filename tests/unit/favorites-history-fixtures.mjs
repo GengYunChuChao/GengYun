@@ -95,6 +95,25 @@ export const PG_MIGRATIONS_WITH_COMMUNITY = [
   '0032_community_report_reporter_ref',
 ];
 
+/**
+ * GY-R34-I19 追加：注销闭集扩到识别域（四表）与语音域（三表）且同属**装配期无条件注入**之后，
+ * 任何走真实 `buildApp` 装配的用例都必须带上 `0025_recognitions_persistence`（`recognition_jobs`
+ * / `recognition_records` / `recognition_selections` / `recognition_idempotency`）与
+ * `0026_speech_persistence`（`speech_jobs` / `transcriptions` / `speech_idempotency`）。
+ *
+ * 缺表不是"清完了 0 行"，而是 `probeTables()` 判 missing、写类 fail-closed（存储层刻意这样设计），
+ * 于是协调器把这两域折叠成 `blocked`——用例会看到 `completed` 变 `blocked`。
+ *
+ * 依据（实读迁移原文，两文件只依赖 `public.users`，`0001` 已建）：
+ * `0025:110/134/163-164` 与 `0026:92/115` 全是 `REFERENCES public.users (id) ON DELETE CASCADE`。
+ * 同样单独一个常量：`PG_MIGRATIONS_WITH_COMMUNITY` 逐字不动，其他用例的迁移集不受影响。
+ */
+export const PG_MIGRATIONS_WITH_DELETION_DOMAINS = [
+  ...PG_MIGRATIONS_WITH_COMMUNITY,
+  '0025_recognitions_persistence',
+  '0026_speech_persistence',
+];
+
 export function migrationSql(name) {
   return readFileSync(new URL(`../../services/api/db/migrations/${name}.sql`, import.meta.url), 'utf8');
 }
