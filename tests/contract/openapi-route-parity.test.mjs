@@ -23,38 +23,53 @@ import {operationKey} from '../../tools/contract-status-core.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const {openapi, ledger} = readContractInputs(root);
 const operations = contractOperations(openapi);
-const report = buildParityReport(root);
+// 顶层直接 `buildParityReport(root)` 会把冷启动（TS 加载 + buildApp + printRoutes 子进程）压进
+// 模块加载阶段：子进程一超时，整个文件 10 条用例一起塌，报错还只剩 `spawnSync ... ETIMEDOUT`。
+// 改成首次用到时才算；失败也缓存，10 条用例拿到同一条可读错误，不会各等一次超时。
+let _report;
+let _reportError;
+const report = () => {
+  if (_reportError) throw _reportError;
+  if (!_report) {
+    try { _report = buildParityReport(root); }
+    catch (e) {
+      _reportError = new Error(`路由清单生成失败（buildApp/printRoutes 超时或崩溃）：${e.message}`);
+      throw _reportError;
+    }
+  }
+  return _report;
+};
 
 test('实现里每个已挂载路由都在契约里（除显式例外）', () => {
-  assert.deepEqual(report.mountedOnly, [], [
+  assert.deepEqual(report().mountedOnly, [], [
     '以下已挂载路由在 packages/contracts/openapi.json 里没有对应操作：',
-    ...report.mountedOnly.map(entry => `  ${entry.key}  ← ${entry.route}`),
+    ...report().mountedOnly.map(entry => `  ${entry.key}  ← ${entry.route}`),
     '要么补契约（paths + components.schemas + operations.json + 台账），',
     '要么在 tools/openapi-route-parity.mjs 的 MOUNTED_EXEMPTIONS 里写清依据后放行。',
   ].join('\n'));
 });
 
 test('契约里的每个路径都有实现，或台账明确标为 planned', () => {
-  assert.deepEqual(report.missing, [], [
+  assert.deepEqual(report().missing, [], [
     '以下契约操作既没有实现，台账也没标 route_mounted=false + status=planned：',
-    ...report.missing.map(entry => `  ${entry.key}（${entry.operationId}）台账：${entry.ledger}`),
+    ...report().missing.map(entry => `  ${entry.key}（${entry.operationId}）台账：${entry.ledger}`),
   ].join('\n'));
 });
 
 test('台账 route_mounted 与运行时实况一致', () => {
-  assert.deepEqual(report.ledgerDrift, [], [
+  assert.deepEqual(report().ledgerDrift, [], [
     'docs/architecture/contract-status.json 的 route_mounted 与 buildApp() 实况不一致：',
-    ...report.ledgerDrift.map(entry => `  ${entry.key}：台账 ${entry.ledger} / 实际 ${entry.actual}`),
+    ...report().ledgerDrift.map(entry => `  ${entry.key}：台账 ${entry.ledger} / 实际 ${entry.actual}`),
   ].join('\n'));
 });
 
 test('例外表只放行真实挂载且确实不在契约里的路由', () => {
-  const mountedKeys = new Set(report.rows.filter(row => row.mounted).map(row => operationKey(row.method, API_PREFIX + row.path)));
+  const mountedKeys = new Set(report().rows.filter(row => row.mounted).map(row => operationKey(row.method, API_PREFIX + row.path)));
   for (const key of MOUNTED_EXEMPTIONS.keys()) {
     assert.ok(key.startsWith('get /health'), `例外表出现未评审的条目：${key}`);
   }
   assert.equal(MOUNTED_EXEMPTIONS.size, 1, '新增例外需要在 tests/contract 这里同步评审');
-  assert.equal(report.exempt.length, 1);
+  assert.equal(report().exempt.length, 1);
   assert.equal(mountedKeys.has('get /health'), false, '/health 不该出现在契约操作里');
 });
 
@@ -139,7 +154,7 @@ test('共享错误响应的错误码与 ErrorCode 枚举、states.json 状态映
 test('对照表文档与重新生成的结果一致', () => {
   const block = readDocBlock(root);
   assert.ok(block, `${DOC_PATH} 不存在；先跑 node tools/openapi-route-parity.mjs --write-doc`);
-  assert.equal(block, renderParityDoc(report, {contractVersion: openapi.info?.version || ''}),
+  assert.equal(block, renderParityDoc(report(), {contractVersion: openapi.info?.version || ''}),
     `${DOC_PATH} 的标记块已过期；跑 node tools/openapi-route-parity.mjs --write-doc 重新生成，不要手改`);
 });
 

@@ -80,7 +80,7 @@ export function mountInventory(root){
  const allowed=new Set(['systemroot','windir','path','temp','tmp','home','userprofile','appdata','localappdata','lang']);
  const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>allowed.has(name.toLowerCase())));
  const output=execFileSync(process.execPath,[fileURLToPath(new URL('./openapi-route-inventory.mjs',import.meta.url)),root],{
-  env,encoding:'utf8',timeout:15000,windowsHide:true,stdio:['ignore','pipe','pipe']});
+  env,encoding:'utf8',timeout:60000,windowsHide:true,stdio:['ignore','pipe','pipe']});
  const data=JSON.parse(output);
  if(!Array.isArray(data))throw Error('运行时路由盘点返回值不是数组');
  for(const entry of data){
@@ -186,7 +186,11 @@ export function renderParityDoc(report,{contractVersion=''}={}){
  lines.push('| 方法 | 契约路径 | operationId | scope | 版本头 | 已挂载 | 台账状态 | 对账 |');
  lines.push('| --- | --- | --- | --- | --- | --- | --- | --- |');
  for(const row of report.rows){
-  const verdict=row.mounted?'一致':(row.status==='planned'?'计划中':'缺失');
+  // 已挂载、但台账状态仍写 planned：`route_mounted` 与实况一致（所以 ledgerDrift 为 0），
+  // 可状态本身和挂载矛盾。这行不能笼统写「一致」，否则台账里唯一自相矛盾的记录会被这张表洗白。
+  const verdict=row.mounted
+   ?(row.status==='planned'?'planned（台账 planned 但已挂载）':'一致')
+   :(row.status==='planned'?'计划中':'缺失');
   lines.push(`| ${row.method} | \`${row.path}\` | ${row.operationId} | ${row.scope} | ${row.versionRequired?'需要':'不要求'} | ${row.mounted?'是':'否'} | ${row.status} | ${verdict} |`);
  }
  lines.push('');
@@ -228,6 +232,9 @@ export function writeDoc(root,report){
   '契约侧 `packages/contracts/openapi.json`、台账侧 `docs/architecture/contract-status.json`。',
   '操作级证据与阻塞说明见 `docs/architecture/contract-implementation-status.md`。',
   '',
+  '**口径局限**：本表只对账到**操作级**——method、path、operationId、2xx 响应存在性、台账 `planned` 状态；',
+  '**字段级 schema 未纳入**：请求/响应体的字段、类型、必填与枚举差异不在本表判定范围内，以 `packages/contracts/openapi.json` 为准。',
+  '',
  ].join('\n');
  writeFileSync(absolute,`${header}${block}\n`,'utf8');
  return absolute;
@@ -243,5 +250,9 @@ if(invokedDirectly){
   console.log(JSON.stringify({counts:report.counts,extra:report.mountedOnly.map(entry=>entry.key),missing:report.missing.map(entry=>entry.key),ledgerDrift:report.ledgerDrift},null,2));
  }
  const failing=report.counts.extra+report.counts.missing+report.counts.ledgerDrift;
- process.exit(failing===0?0:1);
+ // 例外数校验也要计入：例外表与实况不匹配（表里删了/漏了条目）时计数不会变红，
+ // 只有 tests/contract 里那条 deepEqual 会红 ⇒ CLI 单独跑会给出假的 0。
+ const exemptMismatch=report.counts.exempt!==MOUNTED_EXEMPTIONS.size;
+ if(exemptMismatch)console.error(`例外数与 MOUNTED_EXEMPTIONS 不一致：实际例外 ${report.counts.exempt} / 例外表 ${MOUNTED_EXEMPTIONS.size}`);
+ process.exit(failing===0&&!exemptMismatch?0:1);
 }

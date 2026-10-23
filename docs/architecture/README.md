@@ -22,6 +22,6 @@
 2. 想知道行为应该是什么 → 读[状态协议](state-contract.md)与 [OpenAPI](../../packages/contracts/openapi.json)。
 3. 想知道契约本身是否自洽 → 读[验证记录](validation.md)，并跑 `npm run test:contract`。
 4. 对照表是否会腐烂 → `node tools/verify-contract-status.mjs`（校验覆盖性、`app.ts` 装配一致性与证据可复核）。
-5. 想知道「实现里挂的路由」和「契约里写的操作」有没有分叉 → 读[路由 × 契约对照表](openapi-route-parity.md)，并跑 `node tools/openapi-route-parity.mjs`（或 `npm run test:contract`，同一口径）。
+5. 想知道「实现里挂的路由」和「契约里写的操作」有没有分叉 → 读[路由 × 契约对照表](openapi-route-parity.md)，并跑 `node tools/openapi-route-parity.mjs`（CLI 只汇总多出／少掉／台账漂移／例外数四类数值缺口；完整闸门在 `npm run test:contract`，那里还要校验契约内部完整性与文档新鲜度）。
 
 对照表里的三档状态只描述**实现进度**，不构成验收结论；契约经监工确认后下游按冻结版本验收。

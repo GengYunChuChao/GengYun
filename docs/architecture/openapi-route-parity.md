@@ -6,6 +6,9 @@
 数据来源三处：实现侧 `buildApp()` 后 `app.printRoutes({commonPrefix:false})`（逐条 `app.hasRoute` 复核）、
 契约侧 `packages/contracts/openapi.json`、台账侧 `docs/architecture/contract-status.json`。
 操作级证据与阻塞说明见 `docs/architecture/contract-implementation-status.md`。
+
+**口径局限**：本表只对账到**操作级**——method、path、operationId、2xx 响应存在性、台账 `planned` 状态；
+**字段级 schema 未纳入**：请求/响应体的字段、类型、必填与枚举差异不在本表判定范围内，以 `packages/contracts/openapi.json` 为准。
 <!-- openapi-route-parity:start -->
 
 契约版本：`1.0.0`；生成命令：`node tools/openapi-route-parity.mjs --write-doc`（勿手改本块）。
@@ -125,7 +128,7 @@
 | GET | `/me/consents` | listConsents | user | 不要求 | 是 | partial | 一致 |
 | POST | `/me/consents` | grantConsent | user | 不要求 | 是 | partial | 一致 |
 | DELETE | `/me/consents/{purpose}` | withdrawConsent | user | 需要 | 是 | partial | 一致 |
-| GET | `/me/exports` | listExports | user | 不要求 | 是 | planned | 一致 |
+| GET | `/me/exports` | listExports | user | 不要求 | 是 | planned | planned（台账 planned 但已挂载） |
 | GET | `/me/privacy-policy` | getPrivacyPolicy | user | 不要求 | 否 | planned | 计划中 |
 | GET | `/me/profile` | getProfile | user | 不要求 | 是 | implemented | 一致 |
 | PUT | `/me/profile` | putProfile | user | 需要 | 是 | implemented | 一致 |
