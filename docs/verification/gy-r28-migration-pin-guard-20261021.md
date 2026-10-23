@@ -125,7 +125,7 @@ f1/f2 的断言不止看「有没有红」，还要求红字**原样回显**修�
 | 1 | `tests/integration/account-suspend-pg.mjs:119` | `note()` 字符串插值 `${versions[versions.length - 1]}` | 只是把目录「最大号」打印进日志，紧接其后写的就是「与本脚本无关」；本脚本 setup 只应用 `name < MIGRATION` 的版本，与目录最大号解耦，不参与任何断言 |
 | 2 | `tests/integration/account-suspend-pg.mjs:148` | `assert.equal(applied[applied.length - 1], '0017', …)` | 断的是**本脚本 setup 的固定窗口**末项，不是迁移目录末位，见 §5.2 |
 | 3 | `tests/integration/admin-accounts-read-pg.mjs:92` | `note()` 插值（注明「现算」） | 打印迁移目录最大号让真库日志能看出当时到哪一号；不与 `MIGRATION` 比较 |
-| 4 | `tests/integration/admin-flags-pg.mjs:130` | `note()` 消息模板参数 | 把目录最大号写进「与 `discoverMigrations()` 逐项一致」的日志行；是字符串内容，不是断言左值 |
+| 4 | `tests/integration/admin-flags-pg.mjs:160` | `note()` 消息模板参数 | 把目录最大号写进「与 `discoverMigrations()` 逐项一致」的日志行；是字符串内容，不是断言左值 |
 | 5 | `tests/integration/messages-pg.mjs:109` | `note()` 插值 `末项 ${versions[versions.length - 1]}` | 同一行 note 的正题是「版本号无重复且严格递增」，打印末项供人读；不含「本片迁移必须是末位」判据 |
 
 ### 5.2 关于「现存第三个末位 pin」：**不存在**（附判定证据）
