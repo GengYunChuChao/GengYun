@@ -18,7 +18,7 @@
 | `package.json` | 新增 `purge:retention`、`test:integration:retention-purge-pg` | `node tools/verify-purge-schedule.mjs` 仍绿 |
 | `tests/unit/ci-integration-chain-structure.test.mjs` | 在 `UNWIRED_DECLARATIONS` 登记真库臂（不进无 PG 的 `test:integration:http` 回环链），PR #522 的 `unit-tests` 红就是缺这一条 | `node --test tests/unit/ci-integration-chain-structure.test.mjs` |
 | `tests/unit/ci-real-pg-wiring.test.mjs` | 把真库臂登记进 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER`（紧跟 `online-purge-pg`、仍在 `recognition-chain-e2e` 之前），并登记 `SELF_CLUSTERED_SCRIPTS` + `SELF_CLUSTERED_ROOT_KEY`（`GY_R34_PG_ROOT`） | `node --test tests/unit/ci-real-pg-wiring.test.mjs`（判据⑥⑦⑧⑨ 双向核对） |
-| `.github/workflows/real-pg-integration.yml` | 新增一个**自起集群** step：`GY_PG_BIN=/usr/lib/postgresql/17/bin`、`GY_R34_PG_ROOT=${{ runner.temp }}/gy-r34-pg`、`PGCLIENTENCODING=UTF8`，`⛔` 不 `CREATE DATABASE`、不加 `continue-on-error`/`|| true` | YAML 解析 + 上面那份 wiring 门禁 |
+| `.github/workflows/real-pg-integration.yml` | 新增一个**自起集群** step：`GY_PG_BIN=/usr/lib/postgresql/17/bin`、`GY_R34_PG_ROOT=${{ runner.temp }}/gy-r34-pg`、`PGCLIENTENCODING=UTF8`，`⛔` 不 `CREATE DATABASE`、不加 `continue-on-error`、不加吞错兜底 | YAML 解析 + 上面那份 wiring 门禁 |
 
 策略表（正式口径见架构文档 §2）：`idempotency_keys`（`expires_at`，1 天，产品，
 `services/api/src/auth/idempotency.ts:32-33`，delete）、`sessions`（`expires_at`，30 天，审计留存，
