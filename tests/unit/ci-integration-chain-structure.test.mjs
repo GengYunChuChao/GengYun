@@ -243,6 +243,17 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
   {
+    // R34（#17「社区事件 → 消息域」）：**紧挨着 `messages-pg`** 登记（同一条「消息域落库」链的两面：
+    // 消息域自己写 vs 经社区事件投递进来）；⛔ 不要追加到清单末尾，那里紧邻 admin 域条目。
+    path: 'tests/integration/message-events-pg.mjs',
+    reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用专用空库 `gengyun_message_events_test` 运行'
+      + '（`psql … CREATE DATABASE … && node <脚本> <owner url>`），不进无 PG 的回环链——'
+      + '回环链里既没有真库可 `CREATE DATABASE`、也没有迁移/唯一键可裁决，'
+      + '而本脚本证明的正是「社区事件经装配层投递进 `public.messages`、同一事件键只有一行、'
+      + '投递失败不拖垮内容写入、进程内状态清空后仍能读回未读/已读」这条**只有真库能证明**的链。'
+      + '它没有 77 跳过分支（缺 argv 就退回默认端口、连不上即非 0 失败）⇒ 缺库必红。',
+  },
+  {
     path: 'tests/integration/messages-purge-pg.mjs',
     reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时集群、跑全链迁移与运行时角色授权，'
       + '再经真实 `purgeOwnerData` 取「本主体 messages 行数 → 0／他人行原样」的注销行数读数；未设 `GY_PG_BIN` 时'
