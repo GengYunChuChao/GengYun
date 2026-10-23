@@ -271,18 +271,6 @@
       "path": "docs/architecture/contract-status.json",
       "reason": "SUSPECT",
       "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:1771"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:1771"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
       "reference": "docs/architecture/contract-status.json:370"
     },
     {
@@ -380,12 +368,6 @@
       "reason": "SUSPECT",
       "owner": "miniprogram",
       "reference": "miniprogram/utils/reference.js:1006"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:13268"
     },
     {
       "path": "packages/evaluation/samples/README.md",
@@ -560,12 +542,6 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/moderation/model-ports.test.mjs:156"
-    },
-    {
-      "path": "tests/unit/community-http.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/community-http.test.mjs:506"
     },
     {
       "path": "tests/unit/gy-i22-identity-headers.test.mjs",

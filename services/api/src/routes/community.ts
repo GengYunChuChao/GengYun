@@ -1,5 +1,5 @@
 /**
- * GY-I15（#15）阶段 2 · 社区 HTTP 路由（契约 operationId 一一对应，**不新增路径/字段**）。
+ * GY-I15（#15）阶段 2 · 社区 HTTP 路由（契约 operationId 一一对应）。
  *
  *   GET    /posts                     listPosts        → 200 PostPageEnvelope
  *   POST   /posts                     createPost       → 201 PostEnvelope
@@ -11,6 +11,7 @@
  *   GET    /comments/{id}             getComment       → 200 CommentEnvelope
  *   PATCH  /comments/{id}             editComment      → 200 CommentEnvelope
  *   DELETE /comments/{id}             deleteComment    → 200 AckEnvelope
+ *   GET    /posts/{id}/like           getPostLike      → 200 LikeStatusEnvelope
  *   PUT    /posts/{id}/like           likePosts        → 200 AckEnvelope
  *   DELETE /posts/{id}/like           unlikePosts      → 200 AckEnvelope
  *   PUT    /comments/{id}/like        likeComments     → 200 AckEnvelope
@@ -302,6 +303,21 @@ export function registerCommunityRoutes(
 
   // 点赞：PUT/DELETE 幂等（重复 PUT 不产生第二条记录、不改内容 revision），
   // 因此不写 ETag（`Ack` 无资源表示，且集合变化不改变 `Post`/`Comment` 的版本）。
+  //
+  // 读取面（`GET`）是**独立读端点**：点赞计数是派生量，不挂进 `Post`/`Comment`
+  // （加字段 = 改内容契约形状 + 列表页每条帖子一次相关子查询）。可读性闸门与
+  // `GET /posts/{id}` 同一道（`readablePost`），读不到就是同一个 404，不新造错误码。
+  // `LikeStatus` 不是资源表示（没有 revision）⇒ 不写 ETag；`Cache-Control: no-store`
+  // 与既有读路径一致（计数随他人点赞变化，不能被缓存）。
+  app.get(
+    `${API_PREFIX}/posts/:id/like`,
+    { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },
+    async (request, reply) => {
+      const data = await ready().getPostLike(actorOf(request), idOf(request));
+      return noStore(reply).send({ data, meta: buildMeta(request, config) });
+    },
+  );
+
   app.put(
     `${API_PREFIX}/posts/:id/like`,
     { onRequest: noStoreHook, preHandler: guards.requireUser, schema: { params: ID_PARAMS } },

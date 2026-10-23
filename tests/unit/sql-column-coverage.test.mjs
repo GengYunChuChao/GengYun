@@ -443,8 +443,8 @@ const OPAQUE_ALLOWLIST = [
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 157,
-  statements: { INSERT: 27, UPDATE: 29, SELECT: 72, DELETE: 29 },
+  sqlLiterals: 158,
+  statements: { INSERT: 27, UPDATE: 29, SELECT: 73, DELETE: 29 },
   returningClauses: 62,
   onConflictClauses: 17,
   selectStar: 0,
@@ -455,7 +455,7 @@ const EXPECTED_READINGS = {
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 42,
+  community: 43,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -568,14 +568,22 @@ const TABLE_WIDE_COLUMN = '*';
  *   `90-assert-least-privilege.sql` **成对**授权）、逐文件 `community` 41 → **42**；
  *   INSERT/SELECT/DELETE、引用表 44 张、`rowLocks` 分桶、onConflict、无顶层 FROM 全部不变
  *   （本片没有新增行锁语句 ⇒ 沿用 ⑨ 的 rowLockRequirements 41，口径不因本片回退）。
+ * ⑪ 2026-10-24 R34（#15 点赞读面：独立只读端点）：
+ *   本片在 `community/store-pg.ts::hasLiked` 新增一条只读
+ *   `SELECT 1 AS liked FROM community_likes WHERE user_id = $1::uuid AND target_type = $2::text
+ *    AND target_id = $3::uuid LIMIT 1`（`liked_by_me`；计数仍复用既有 `countLikes`，未加语句）。
+ *   ⇒ 字面量 266 → **267**、SELECT 141 → **142**、逐文件 `community` 42 → **43**；
+ *   列要求与已覆盖**不增**（`user_id`/`target_type`/`target_id` 三列的 SELECT 面早已被
+ *   `countLikes` 与 `removeLike` 计入），INSERT/UPDATE/DELETE、RETURNING、引用表 44 张、
+ *   行锁、onConflict、无顶层 FROM 全部不变；本片零迁移、零 GRANT 变更。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 266,
-  statements: { INSERT: 42, UPDATE: 47, SELECT: 141, DELETE: 36 },
+  sqlLiterals: 267,
+  statements: { INSERT: 42, UPDATE: 47, SELECT: 142, DELETE: 36 },
   returningClauses: 82,
   onConflictClauses: 26,
   selectStar: 15,
@@ -597,7 +605,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 42,
+  'community': 43,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

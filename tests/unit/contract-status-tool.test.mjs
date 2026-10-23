@@ -199,14 +199,14 @@ test('实际 buildApp 注册清单与当前契约表一致；消息与社区均�
   assert.deepEqual(mountedMismatches(status.operations, mounted), []);
   assert.deepEqual([...mounted].sort(), [...scanMountedRoutes(ROOT).mounted].sort());
   for (const key of ['post /recognitions', 'post /ocr', 'post /speech/transcriptions', 'post /speech/synthesis']) assert.ok(mounted.has(key), key);
-  // 已交付的后台、三个消息端点与 GY-I15 的 16 条社区端点必须装配。
+  // 已交付的后台、三个消息端点与 GY-I15 的 17 条社区端点必须装配。
   for (const key of ['get /admin/sources', 'get /messages', 'get /messages/unread-count', 'put /messages/{id}/read']) {
     assert.equal(mounted.has(key), true, key);
   }
   for (const key of ['get /posts', 'post /posts', 'get /posts/{id}', 'patch /posts/{id}', 'delete /posts/{id}',
     'get /posts/{id}/comments', 'post /posts/{id}/comments', 'get /comments/{id}', 'patch /comments/{id}',
-    'delete /comments/{id}', 'put /posts/{id}/like', 'delete /posts/{id}/like', 'put /comments/{id}/like',
-    'delete /comments/{id}/like', 'post /reports', 'get /reports/{id}']) {
+    'delete /comments/{id}', 'get /posts/{id}/like', 'put /posts/{id}/like', 'delete /posts/{id}/like',
+    'put /comments/{id}/like', 'delete /comments/{id}/like', 'post /reports', 'get /reports/{id}']) {
     assert.equal(mounted.has(key), true, key);
   }
   // `hidePost` 属 #18，仍由后台路由装配（不是社区路由）。
