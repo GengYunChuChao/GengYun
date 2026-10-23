@@ -32,8 +32,10 @@
     "db:migrate": "npm run db:migrate --workspace @gengyun/api",
     "purge:backup-copies": "node tools/purge-expired-backup-copies.mjs",
     "purge:online-data": "node tools/purge-expired-online-data.mjs",
+    "purge:retention": "node tools/purge-retention-expired.mjs",
     "test:integration:backup-copies-purge-pg": "node tests/integration/backup-copies-purge-pg.mjs",
     "test:integration:online-purge-pg": "node tests/integration/online-purge-pg.mjs",
+    "test:integration:retention-purge-pg": "node tests/integration/retention-purge-pg.mjs",
     "verify:purge-schedule": "node tools/verify-purge-schedule.mjs"
   },
   "devDependencies": {

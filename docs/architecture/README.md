@@ -13,6 +13,7 @@
 | [F / AC 覆盖与交接](acceptance-map.md) | 功能与验收场景到模块、消费任务 | 设计覆盖，**不是运行 AC 通过** |
 | [GY-I01 验证记录](validation.md) | 契约本身的检查与限制 | 契约一致性、标准 schema、负例 |
 | [Excel 暂存设计](workbook-staging-design.md) | 未审核增量暂存的表与权限 | GY-I03 前置 |
+| [数据保留策略表与清理执行器](gy-r34-retention-policy.md) | 跨表「日历保留」：策略表、排除清单、执行方式（dry-run 优先）、审计要求 | GY-R34 并行切片；策略表＋幂等执行器＋单测＋真库臂已落地，**调度与 CI 未接线**，详见文内「未做项」 |
 | [逐用户备份副本域设计](gy-i19-user-backup-copies-design.md) | 「在线 7 日／备份 30 日」里的备份轴：表、写入、清除、契约映射 | GY-I19 后续片；**设计稿时点**未落地 DDL、未接线，**GY-R28 起已落地**（`0023_user_backup_copies.sql` ＋ `services/api/src/privacy/backup-copies-pg.ts`，有真库连接时装配）——**契约状态仍未改**，#19 的到期执行与第三方证据仍未取得 |
 
 ## 怎么用
