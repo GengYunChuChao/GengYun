@@ -153,6 +153,24 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
+      # 社区事件 → 消息域（#17，R34）：库名硬钉 `gengyun_message_events_test`，脚本同样要求**空库**
+      # （开头自己断言 `public` 下 0 张表）。它与上一步是**同一套连库口径**：连接串走 **argv[2]**
+      # （`node <脚本> <owner url>`），上面那几个 PG* 环境变量只给 `psql` 建库用（脚本自己从不读它们）。
+      # 为什么紧跟在消息域这一步之后：两者是同一条「消息域落库」链的两面 —— 上一步证明消息域**自己**的
+      # 读写语义（迁移三连/重复判定/已读 CAS/分页/注销即删），本步证明**社区事件真的能经装配层投递进来**：
+      # 三类事件（审核结论/他人评论/他人点赞）各落一行且 `type`/`event_key` 与 `communityEventMessageType`/
+      # `communityEventKey` 逐字相等、同一事件键重复投递只有一行（唯一约束裁决）、投递失败不影响内容写入
+      # 且失败可观测、关掉 app 与连接池后新实例仍能读回未读/已读。两步**不共享库/角色/进程状态**，
+      # 相邻只是让「同一域的两条真库臂」并排读，⛔ 不构成任何执行顺序依赖。
+      # 它没有 77 跳过分支（缺 argv 就退回默认端口、连不上即非 0）⇒ 缺库必红，⛔ 不加任何放宽开关。
+      # 本地取证（PG 17.11 + 空库 + 库 owner）：exit=0，`TOTAL PASS = 8`，末行 `[√] ALL PASS`。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_message_events_test' && node tests/integration/message-events-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_message_events_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
       # 收藏／历史域（#16，R27-S4）：库名硬钉 `gengyun_favorites_history_test`，同样要求空库；
       # 连接串走 env（`FAVORITES_HISTORY_PG_TEST_URL`），未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_favorites_history_test' && node tests/integration/favorites-history-pg.mjs

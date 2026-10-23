@@ -108,6 +108,14 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 自起集群脚本（`GY_PG_BIN` + `GY_I19_PG_ROOT`，⛔ 无 `CREATE DATABASE`）。它此前**不在任何 workflow** ——
  * 驱动 `services/api/src/privacy/online-purge-driver.ts` 与运维命令 `tools/purge-expired-online-data.mjs`
  * 早在 main，但「7 日到期」这条保证在 CI 上从未被真库验证过；这正是本片要补的那条缺口（与第 1 条同族）。
+ * 第 18 条是 R34 接的（`message-events-pg.mjs`／`#17` 的**社区事件 → 消息域**真库臂）：它补的是另一个
+ * 「有实现、有单元层、但真库上从未跑过」的缺口 —— `services/api/src/community/events.ts` 的
+ * `createMessagesCommunityEventsPort`/`communityEventKey`/`communityEventMessageType` 只有**内存 store**
+ * 的单元证据（`tests/unit/community-message-notifications.test.mjs`），而 `messages-pg.mjs` 手工调
+ * `appendMessage`（不经社区）、`community-pg.mjs` 只看社区内容落库（不看消息域）⇒「社区事件真的落到
+ * `public.messages`、靠唯一键去重、失败不拖垮内容写入、进程内状态清空后仍能读回未读/已读」这条链
+ * 在真库上是空白。判据形态与第 3 条（`messages-pg`）**同形**（自建专用空库 + argv[2] 连接串 +
+ * 全程库 owner），因此不需要任何新豁免；它不影响 #17 的页面端到端（那部分仍未取得）。
  * 第 18 条是 R34 接的（`admin-community-posts-pg.mjs`／`#18` 的**后台社区帖域**）：后台四域里此前唯一
  * 没有真库臂的一域（账号读/开关/作业三条已有臂；`hidePost`＝契约 operationId 109 只在社区域脚本
  * `community-pg.mjs` 第 13 节被顺带读到，而那一段明确声明**不**证明审计留痕）。它要求**空库**、
@@ -124,6 +132,10 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/community-filter-pg.mjs',
   'tests/integration/qa-citations-pg.mjs',
   'tests/integration/messages-pg.mjs',
+  // R34：`message-events-pg.mjs`（#17 的「社区事件 → 消息域」真库臂）。**紧挨着 `messages-pg`** 插入：
+  // 两者是同一条「消息域落库」链的两面（自己写 vs 经社区事件投递进来），并排读最省事；
+  // ⛔ 不追加到清单末尾——那里紧邻 admin 域条目，会与另一个切片的清单追加互相冲突。
+  'tests/integration/message-events-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
   'tests/integration/admin-jobs-pg.mjs',
@@ -151,6 +163,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/community-filter-pg.mjs',
   'tests/integration/qa-citations-pg.mjs',
   'tests/integration/messages-pg.mjs',
+  // R34：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/message-events-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
   'tests/integration/admin-jobs-pg.mjs',
@@ -212,6 +226,15 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    「库 owner + 只 apply 需要的迁移 + 断言空库」这一类并排读。缺 env 时脚本 exit 77 ⇒ workflow 把 77 升级成硬失败。
   'tests/integration/qa-citations-pg.mjs',
   'tests/integration/messages-pg.mjs',
+  // R34-a. `message-events-pg`（R34 接入，#17「社区事件 → 消息域」的真库臂）：自建专用空库
+  //    （硬钉 `gengyun_message_events_test`）、`applyMigrations(discoverMigrations())` 全链自举
+  //    （**不重复** `messages-pg` 的 0019 UP/ROLLBACK/REPLAY 三连）、全程只用库 owner 连接
+  //    ⇒ 不建组角色、也不复用别人的运行时角色，对前后脚本零耦合。
+  //    它**紧跟 `messages-pg`**：同一域的两条真库臂并排读（自己写 vs 经社区事件投递进来），两者不共享
+  //    库/角色/进程状态 ⇒ 相邻纯粹是可读性，⛔ 不是执行顺序依赖；⛔ 也不要挪到清单末尾（那里紧邻
+  //    admin 域条目，会与另一个切片的追加互相冲突）。
+  //    连接串走 argv[2]（与 `messages-pg` 同形），所以这步同时是「argv URL 形态」的第二个样本。
+  'tests/integration/message-events-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
   // R31-b. `admin-jobs-pg`（R31 接入，#9 作业台：开关生效／作业与错误可见／变更留痕 A→B／最小权限）：
