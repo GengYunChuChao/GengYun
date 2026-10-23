@@ -1,9 +1,9 @@
 # R34 · `public.jobs` 死表下线（收窄授权 + 依赖判定去 jobs 臂 + 清单/测试同步）
 
-- 树：`E:\GengYunCommander\wt-r34-jobs-retire`，分支 `feat/gy-r34-jobs-retire`。**基线两个读数都要记**：派单起始基线 `upstream/main` = `123ee4bd5a827f7d5cef1c9bb89abd905e178dc6`；本片合流后基线（= 下面 `git merge --no-ff upstream/main` 吸收进来的上游尖端）= `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`（`Reviewed PR #525`）。本页 §3 的全部读数都在**合流后**这棵树上实跑；§6 记录三次提交的父子关系。
+- 树：`E:\GengYunCommander\wt-r34-jobs-retire`，分支 `feat/gy-r34-jobs-retire`。**基线两个读数都要记**：派单起始基线 `upstream/main` = `123ee4bd5a827f7d5cef1c9bb89abd905e178dc6`；本片合流后基线（= 下面 `git merge --no-ff upstream/main` 吸收进来的上游尖端）= `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`（`Reviewed PR #525`）。本页 §3 的全部读数都在**合流后**这棵树上实跑；§6 逐条记录三次**内容**提交与一次合并提交的父子关系。
 - 片范围：只做「无人读、无人授、清单不再分类它」；**不新增迁移、不 `DROP TABLE`**（理由见 §2）。
 - 提交链：`7be2480a`（`feat(privacy): 下线 public.jobs 死表引用与授权（Refs #19, #22）`）→ `9157e032`（合并提交，`git merge --no-ff upstream/main`，吸收 `4b87e1d9`）→ `53af1c2b`（`fix(gy-r34-jobs-retire): 修复 doc 锚点与 90-assert 总数口径，补臂集合正控制（Refs #19, #22）`）→ 本页所在提交（`fix(gy-r34-jobs-retire): 校正证据页基线读数与 90-assert 立论口径，补清单内容单测（Refs #19, #22）`，oid 见片回报——本页不能自引自身 oid）。
-- 本页 **166 行**（写定后按 `split('\n')` 实测长度 −1 复算，第三轮修正：上一版自称 111 行、实测 114 行，属自述失准）。
+- 本页 **167 行**（写定后按 `split('\n')` 实测长度 −1 复算，第三轮修正：上一版自称 111 行、实测 114 行，属自述失准）。
 - 本页全部读数均在上述工作树实跑；**PG 臂（`tests/integration/consent-grant-pg.mjs`）本地未执行**（本树无依赖、不许起集群），靠 CI。
 
 ## 0 裁定 3 与本片的立论口径
@@ -95,7 +95,7 @@ real 模式下，历史上真有 jobs 行的用户，撤回/授权变更会从 *
 | 15 | `node tools/verify-contract-status.mjs` | `PASS: 覆盖 114 条契约操作；已装配 111 条；implemented 17 / partial 93 / planned 4；形状错误 0 项；语义错误 0 项` + `PASS: 中文表格一致` + `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。`（共 7 行 PASS、0 行 FAIL） | 0 |
 | 16 | `node --check`：`services/api/src/privacy/consent-pg.ts`、`services/api/src/privacy/grant-pg.ts`、`tests/unit/consent-withdraw-dependency.test.mjs`、`tests/unit/least-privilege-external-manifest.test.mjs` | 四条均无输出 | 0 |
 | 17 | `git diff --check` | 无输出 | 0 |
-| 18 | `git merge-tree --write-tree upstream/main HEAD`（**提交后**跑） | 单行树 OID、无 `CONFLICT` / 无冲突文件行，且与上一 HEAD 的交叉预演同为 0 冲突 | 0 |
+| 18 | `git merge-tree --write-tree upstream/main HEAD`（**提交后**跑） | 树 OID `332725ef472e155585bf38b51f7d4f04e57ad1c4`，无 `CONFLICT`、无冲突文件行；与上一 HEAD `53af1c2b` 的交叉预演为树 OID `0af91d4aeeb9b6feae64762bb94f12ca6e4bb9fa`，同为 EXIT=0。`upstream/main` 仍为 `4b87e1d9`（fetch --prune 后无新提交） | 0 |
 
 ### 3.1 `gy-i22-secmatrix.test.mjs`：未取得（环境缺失，非本片回归）
 
@@ -162,5 +162,6 @@ code: 'ERR_MODULE_NOT_FOUND'
 - 功能提交：`7be2480a feat(privacy): 下线 public.jobs 死表引用与授权（Refs #19, #22）`（父 `123ee4bd`）。
 - 合并：`git merge --no-ff upstream/main` ⇒ 合并提交 `9157e032`，第二父 `4b87e1d9`（`Reviewed PR #525`），EXIT=0、无冲突。
 - 第二轮返修：`53af1c2b fix(gy-r34-jobs-retire): 修复 doc 锚点与 90-assert 总数口径，补臂集合正控制（Refs #19, #22）`（父 `9157e032`）。
+- 第三轮返修：`64323db6 fix(gy-r34-jobs-retire): 校正证据页基线读数与 90-assert 立论口径，补清单内容单测（Refs #19, #22）`（父 `53af1c2b`，4 files +208/−48）。
 - 本页所在提交：`fix(gy-r34-jobs-retire): 校正证据页基线读数与 90-assert 立论口径，补清单内容单测（Refs #19, #22）`（父 `53af1c2b`）。
 - 收工：`git status --porcelain -uall` 0 行；`git rev-parse HEAD` 的实测值见片回报（本页无法自引自身 oid）。
