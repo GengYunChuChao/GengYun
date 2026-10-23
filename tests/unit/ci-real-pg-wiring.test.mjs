@@ -154,6 +154,11 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
   'tests/integration/online-purge-pg.mjs',
+  // R34：`retention-purge-pg.mjs`（#19 的**保留策略侧**：`packages/privacy/retention-policy.mjs` 的声明式
+  // 策略表 + `tools/purge-retention-expired.mjs` 的分批执行器）。**紧挨着上面那条到期清理驱动**插入：
+  // 两者同族（自起临时集群、自建库、跑完即删），并排读最省事；⛔ 不追加到清单末尾——那里紧邻识别链
+  // `recognition-chain-e2e`，它必须始终排最后。
+  'tests/integration/retention-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -183,6 +188,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/backup-copies-purge-pg.mjs',
   'tests/integration/messages-purge-pg.mjs',
   'tests/integration/online-purge-pg.mjs',
+  // R34：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合）。
+  'tests/integration/retention-purge-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -346,6 +353,15 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    与第 13/14 条同键（⛔ 与第 15 条的 `GY_W11_PG_ROOT` 不同）；守卫按脚本源码交叉核对。
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步。
   'tests/integration/online-purge-pg.mjs',
+  // 15c. `retention-purge-pg`（R34 接入，`#19` 的**保留策略侧**——声明式策略表 `packages/privacy/retention-policy.mjs`
+  //    与分工执行器 `tools/purge-retention-expired.mjs` 的真库臂）：与第 13/14/15b 条**同类**的自起集群脚本
+  //    （自己 `initdb` 出临时 17 集群、端口 55432–55467 且**先探活再起**／可用 `GY_PG_PORT` 钉死、自建
+  //    `gengyun_retention_purge_test`、跑完 `pg_ctl stop` 并删数据目录），**不连** service 里的库、
+  //    **不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
+  //    它的数据根目录键是 **`GY_R34_PG_ROOT`**（脚本取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`），
+  //    ⛔ 与第 13/14/15b 条都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步。
+  'tests/integration/retention-purge-pg.mjs',
   // 16. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
   //    （`-e2e.mjs`），跑的是仓内唯一的完整业务链路（上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
   //    全程 loopback 真 HTTP）。前提三条：① 专用空库 `gengyun_recognition_chain_test`（脚本 `preparePg()` 先数
@@ -390,6 +406,10 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   // R32：`online-purge-pg.mjs`（`#19` 在线数据 7 日到期执行者）同上（自起集群、自建 `gy_w6_online_purge`、
   // 跑完 `pg_ctl stop` 并删数据目录）。它读的数据根键是 `GY_I19_PG_ROOT`（与第 13/14 条同键）。
   'tests/integration/online-purge-pg.mjs',
+  // R34：`retention-purge-pg.mjs`（`#19` 保留策略侧）同上（自起集群、自建 `gengyun_retention_purge_test`、
+  // 跑完 `pg_ctl stop` 并删数据目录）。它读的数据根键是 **`GY_R34_PG_ROOT`**（源码取值点
+  // `process.env.GY_R34_PG_ROOT ?? tmpdir()`），与上四条都不同 ⇒ 键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  'tests/integration/retention-purge-pg.mjs',
 ]);
 
 /**
@@ -412,6 +432,9 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   // R32：`online-purge-pg.mjs`（`#19`）读 `GY_I19_PG_ROOT`（源码取值点
   // `process.env.GY_I19_PG_ROOT ?? tmpdir()`）⇒ 与第 13/14 条同键。
   'tests/integration/online-purge-pg.mjs': 'GY_I19_PG_ROOT',
+  // R34：`retention-purge-pg.mjs`（`#19` 保留策略侧）读 **`GY_R34_PG_ROOT`**（源码取值点
+  // `process.env.GY_R34_PG_ROOT ?? tmpdir()`；日志键是 `GY_R34_PG_LOG`，不匹配根键形状，故不会误登记）。
+  'tests/integration/retention-purge-pg.mjs': 'GY_R34_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */

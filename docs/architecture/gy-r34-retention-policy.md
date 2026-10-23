@@ -1,8 +1,8 @@
 # 数据保留策略表与清理执行器（GY-R34）
 
-本片状态（2026-10-23）：**声明式策略表 + 幂等执行器 + 单测 + 真库臂已落地**（读数见
+本片状态（2026-10-23）：**声明式策略表 + 幂等执行器 + 单测 + 真库臂 + CI 注册已落地**（读数见
 [证据页](../verification/gy-r34-retention-20261023.md)）。**调度接线**（`deploy/purge-schedule/` 的
-`.service`/`.timer`）与 **CI 注册未做**，见 §8。
+`.service`/`.timer`）仍未做，见 §8。
 
 ## 0. 一句话结论
 
@@ -158,14 +158,16 @@ DATABASE_URL=postgresql://… npm run purge:retention -- --yes --table public.se
 | --- | --- | --- |
 | 单测 | `node --test tests/unit/retention-policy.test.mjs` | **21/21 通过，0 失败**（`duration_ms` 288.4313，同代码另一次 1307.4588；P3 复审后补了「最后一道闸也挡 `revisionColumn === targetColumn`」一条，此前 20/20） |
 | 真库臂 | `GY_PG_PORT=55435 node tests/integration/retention-purge-pg.mjs`（PG 17.11） | **8 个断言组全绿**；dry-run `rows=1205 batches=0`；真执行 `rows=1205`（删 1200+5）、`batches=4`；降级两表**一行未动**；第二轮 `rows=0`（2 次空批）`exit=0`；机制臂标记 4 行 / 匿名化 6 行且 `revision` 1→2、第二轮 0 行；受限角色 `exit=1`（`public.sessions` = `PERMISSION_DENIED`）。此前在 55438 / 55439 上复跑同样 8 组全绿 |
-| 门禁 | `node tools/verify-purge-schedule.mjs` / `verify-layout.mjs` / `verify-doc-anchors.mjs --strict` | 三者均 `PASS` |
+| 门禁 | `node tools/verify-purge-schedule.mjs` / `verify-layout.mjs` / `verify-doc-anchors.mjs --strict` | 三者均 `PASS`（doc-anchors：扫 268 份、引用 4819 条、基线外新增 0） |
+| 接线门禁 | `node --test tests/unit/ci-integration-chain-structure.test.mjs` / `ci-real-pg-wiring.test.mjs` | `7/7` 与 `18/18` 全绿；把 `UNWIRED_DECLARATIONS` 里新加那条注释掉会立刻复现 CI 原文的红（反例已跑） |
+| 全量单测 | `npm run test:unit` | `tests 4295 / pass 4278 / fail 14 / skipped 1 / todo 2`，`exit 1`。14 条红全部是**既有**的「发版材料/索引」门禁（`release-runbook-guard` 6、`release-materials-index-strict` 6、`release-materials-index` 2），在基线 `af0fb36e` 上逐条复现，根因是本机把目录 `deploy/purge-schedule/` 当文件读 ⇒ 见证据页 §4.1，⛔ 不写成全绿 |
 
 ## 8. 未做项（如实登记）
 
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
 | 调度接线 | **未做** | 没往 `deploy/purge-schedule/` 加 `.service`/`.timer`；**且**现有 `[calendar]` ≤60 分钟判据与日级保留任务天然冲突，接线前需先定日级例外（见 §4 调度建议表） |
-| CI 注册 | **未做** | `test:integration:retention-purge-pg` 只在本地跑过；CI 里没有 `GY_PG_BIN` 时该臂按既有约定 `exit 77` 跳过 |
+| CI 注册 | **已做** | 接进 `.github/workflows/real-pg-integration.yml` 的独立 step（自起集群、`GY_PG_BIN=/usr/lib/postgresql/17/bin`、`GY_R34_PG_ROOT=${{ runner.temp }}/gy-r34-pg`、⛔ 不 `CREATE DATABASE`、不加吞红开关），并在 `tests/unit/ci-real-pg-wiring.test.mjs` 里登记 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER`／`SELF_CLUSTERED_SCRIPTS`／`SELF_CLUSTERED_ROOT_KEY`；`tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 也写明它不进无 PG 的回环链。⛔ 它**不进** `test:integration:http`（那条链没有 PG，只会 `exit 77`） |
 | `admin_sessions` / `community_reports` 的处置 | **未启用（刻意）** | 90/180 天无出处 ⇒ 只进排除清单；`archive_marker` 与 `anonymize + revisionColumn` 的机制已在单测与真库臂覆盖，口径定了即可启用 |
 | 运行时角色授权 | **未做（刻意）** | `public.sessions` 的 `DELETE` 没给运行时角色，跑法是用属主/运维连接串；要不要开权限属独立评审 |
 | 归档表设计 | **未做** | `admin_audit_events` 需要归档时得先改表（加归档列或分区），append-only 触发器下无从下手 |

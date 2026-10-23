@@ -16,6 +16,9 @@
 | `tests/integration/retention-purge-pg.mjs` | 真库臂：起临时集群→跑全链迁移→造过期/未过期/贴边数据→dry-run→真执行→复核→第二轮→**机制臂（合成策略行）**→受限角色；`GY_PG_PORT` 可钉死端口 | 见 §3 命令 |
 | `docs/architecture/gy-r34-retention-policy.md` | 策略表＋字段口径＋排除清单＋执行方式＋审计要求（表格化） | 文档评审 |
 | `package.json` | 新增 `purge:retention`、`test:integration:retention-purge-pg` | `node tools/verify-purge-schedule.mjs` 仍绿 |
+| `tests/unit/ci-integration-chain-structure.test.mjs` | 在 `UNWIRED_DECLARATIONS` 登记真库臂（不进无 PG 的 `test:integration:http` 回环链），PR #522 的 `unit-tests` 红就是缺这一条 | `node --test tests/unit/ci-integration-chain-structure.test.mjs` |
+| `tests/unit/ci-real-pg-wiring.test.mjs` | 把真库臂登记进 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER`（紧跟 `online-purge-pg`、仍在 `recognition-chain-e2e` 之前），并登记 `SELF_CLUSTERED_SCRIPTS` + `SELF_CLUSTERED_ROOT_KEY`（`GY_R34_PG_ROOT`） | `node --test tests/unit/ci-real-pg-wiring.test.mjs`（判据⑥⑦⑧⑨ 双向核对） |
+| `.github/workflows/real-pg-integration.yml` | 新增一个**自起集群** step：`GY_PG_BIN=/usr/lib/postgresql/17/bin`、`GY_R34_PG_ROOT=${{ runner.temp }}/gy-r34-pg`、`PGCLIENTENCODING=UTF8`，`⛔` 不 `CREATE DATABASE`、不加 `continue-on-error`/`|| true` | YAML 解析 + 上面那份 wiring 门禁 |
 
 策略表（正式口径见架构文档 §2）：`idempotency_keys`（`expires_at`，1 天，产品，
 `services/api/src/auth/idempotency.ts:32-33`，delete）、`sessions`（`expires_at`，30 天，审计留存，
@@ -55,7 +58,7 @@ PASS 6: [5] 重复执行：rows=0（2 张表各一次空批）exit=0，库内状
 PASS 7: [6] 机制臂（合成策略行）：标记 4 行（值 = expires_at）、匿名化 6 行且 revision 1→2、早已匿名 2 行未再动、第二轮 0 行
 PASS 8: [7] 受限角色：sessions 报 PERMISSION_DENIED 且一行未动，幂等台账照跑；exit=1
 
-全绿：8 个断言组通过（临时集群端口 55438，日志 E:\GengYunCommander\.pg17\tmp\r34-pg.log）
+全绿：8 个断言组通过（临时集群端口 55435，日志 E:\GengYunCommander\.pg17\tmp\r34-pg.log）
 $ echo $?  ⇒ 0
 ```
 
@@ -77,7 +80,29 @@ $ echo $?  ⇒ 0
 | --- | --- | --- |
 | 调度层判据 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`（scripts 24 条、必需覆盖 2/2、`setInterval(` 命中 0、`.service`/`.timer` 各 2） |
 | 布局 | `node tools/verify-layout.mjs` | `PASS`（五档视口触控区、正文、末屏预留含最大字号档） |
-| 文档锚点 | `node tools/verify-doc-anchors.mjs --strict` | `PASS: --strict 下没有基线之外的新增`（扫 267 份、引用 4816 条；基线登记 103 条、本次命中 103 条、**基线外新增 0**、陈旧 0） |
+| 文档锚点 | `node tools/verify-doc-anchors.mjs --strict` | `PASS: --strict 下没有基线之外的新增`（扫 268 份、引用 4819 条；基线登记 103 条、本次命中 103 条、**基线外新增 0**、陈旧 0） |
+| 回环链接线白名单 | `node --test tests/unit/ci-integration-chain-structure.test.mjs` | `tests 7 / pass 7 / fail 0`（174.6807 ms）；**反例**：把新加那条 `path:` 注释掉 ⇒ 立刻复现 CI 原文 `既未接线、也未…声明的脚本：tests/integration/retention-purge-pg.mjs`（`pass 4 / fail 3`），还原后复绿 |
+| 真库接线门禁 | `node --test tests/unit/ci-real-pg-wiring.test.mjs` | `tests 18 / pass 18 / fail 0`（1244.4252 ms；含判据⑥⑦⑧⑨ 双向核对与 10 组反向控制） |
+
+### 4.1 全量单测（`npm run test:unit`）与两条**既有**红
+
+```
+$ npm run test:unit        # 提交前在干净树上的一次全量
+ℹ tests 4295   ℹ pass 4278   ℹ fail 14   ℹ cancelled 0   ℹ skipped 1   ℹ todo 2
+EXIT=1
+```
+
+14 条红**全部**来自与保留策略无关的三份「发版材料/索引」门禁，且**在基线 `af0fb36e` 上逐条复现**（临时探针 worktree 实测）：
+
+| 文件 | 本树读数 | 基线 `af0fb36e` 读数 |
+| --- | --- | --- |
+| `tests/unit/release-runbook-guard.test.mjs` | `pass 3 / fail 6` | `pass 3 / fail 6` |
+| `tests/unit/release-materials-index-strict.test.mjs` | `pass 0 / fail 6` | `pass 0 / fail 6` |
+| `tests/unit/release-materials-index.test.mjs` | `pass 3 / fail 2` | `pass 3 / fail 2` |
+
+根因是同一处环境口径：`node tools/verify-release-materials.mjs` 在本机把**目录** `deploy/purge-schedule/` 当文件读，
+报 `FAIL 被索引文件全部非空 — 空文件：deploy/purge-schedule/`（基线同样 `15/16 项通过`、exit 1）。
+本片未改这三份文件，也未改它们守护的文档 ⇒ 这 14 条按「既有红」记，⛔ 不写成「全绿」。
 
 ## 5. 复现注意（踩过的坑，写给下一个人）
 
@@ -95,7 +120,8 @@ $ echo $?  ⇒ 0
 | --- | --- |
 | 生产库读数 | 只在临时集群取得读数；生产到期行数与耗时未测 |
 | 调度接线 | `deploy/purge-schedule/` 未加 `.service`/`.timer`，`purge:retention` 未进 `REQUIRED_NPM_SCRIPTS`；且现有 `[calendar]` ≤60 分钟判据与日级保留任务冲突，接线前需先定日级例外（或声明仅手工执行） |
-| CI 注册 | 真库臂只在本地跑过；CI 无 `GY_PG_BIN` 时按既有约定 `exit 77` 跳过 |
+| CI 注册 | 已接进 `.github/workflows/real-pg-integration.yml` 的独立 step（自起集群、`GY_PG_BIN=/usr/lib/postgresql/17/bin`、`GY_R34_PG_ROOT=${{ runner.temp }}/gy-r34-pg`），并同时登记 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER`／`SELF_CLUSTERED_SCRIPTS`／`SELF_CLUSTERED_ROOT_KEY`；本机只有本地读数，CI 上的首次真跑读数要等 PR 的 `real-pg-17.11` job（缺 `GY_PG_BIN` 时脚本 `exit 77`，不吞红） |
+| 全量单测全绿 | `npm run test:unit` 本树 `fail 14`（`release-runbook-guard` 6 / `release-materials-index-strict` 6 / `release-materials-index` 2），基线 `af0fb36e` 同样 14 条 ⇒ 既有环境口径，见 §4.1 |
 | `admin_sessions` / `community_reports` 的实际处置 | 90/180 天无出处 ⇒ 未启用（只在排除清单里）；机制已覆盖，口径定了即可启用 |
 | 运行时角色授权 | `public.sessions` 的 `DELETE` 未加给运行时角色，跑法是属主/运维连接串 |
 | `admin_audit_events` 归档 | append-only 触发器挡住 UPDATE/DELETE，要归档必须先改表设计 |
