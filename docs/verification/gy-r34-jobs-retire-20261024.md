@@ -95,7 +95,7 @@ real 模式下，历史上真有 jobs 行的用户，撤回/授权变更会从 *
 | 15 | `node tools/verify-contract-status.mjs` | `PASS: 覆盖 114 条契约操作；已装配 111 条；implemented 17 / partial 93 / planned 4；形状错误 0 项；语义错误 0 项` + `PASS: 中文表格一致` + `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。`（共 7 行 PASS、0 行 FAIL） | 0 |
 | 16 | `node --check`：`services/api/src/privacy/consent-pg.ts`、`services/api/src/privacy/grant-pg.ts`、`tests/unit/consent-withdraw-dependency.test.mjs`、`tests/unit/least-privilege-external-manifest.test.mjs` | 四条均无输出 | 0 |
 | 17 | `git diff --check` | 无输出 | 0 |
-| 18 | `git merge-tree --write-tree upstream/main HEAD`（**提交后**跑） | 树 OID `332725ef472e155585bf38b51f7d4f04e57ad1c4`，无 `CONFLICT`、无冲突文件行；与上一 HEAD `53af1c2b` 的交叉预演为树 OID `0af91d4aeeb9b6feae64762bb94f12ca6e4bb9fa`，同为 EXIT=0。`upstream/main` 仍为 `4b87e1d9`（fetch --prune 后无新提交） | 0 |
+| 18 | `git merge-tree --write-tree upstream/main HEAD`（**提交后**跑） | **在 `64323db6` 上跑的读数**：树 OID `332725ef472e155585bf38b51f7d4f04e57ad1c4`，无 `CONFLICT`、无冲突文件行；与上一 HEAD `53af1c2b` 的交叉预演为树 OID `0af91d4aeeb9b6feae64762bb94f12ca6e4bb9fa`，同为 EXIT=0。`upstream/main` 仍为 `4b87e1d9`（fetch --prune 后无新提交） | 0 |
 
 ### 3.1 `gy-i22-secmatrix.test.mjs`：未取得（环境缺失，非本片回归）
 
