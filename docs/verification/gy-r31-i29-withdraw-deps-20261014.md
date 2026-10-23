@@ -93,7 +93,7 @@ SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
   `packages/privacy/in-flight.mjs:237`（`createEgressRevoker`）、`:254-261`（`onConsentWithdrawn`
   → `ledger.revokeInFlight({ userId, purpose })`，**不吞错**，错误冒泡到 `consent-pg.ts:185` 变成 409）。
 
-因此生产上 `consent-pg.ts:179`（缺消费者）不可达，`consent-pg.ts:186`（消费者失败）可达 ——
+因此生产上 `consent-pg.ts:179`（缺消费者）不可达，`consent-pg.ts:185`（消费者失败）可达 ——
 后者正是「有依赖 + 账本未就绪」时的 409 兜底。
 
 ### 2.3 既有文件已把这条完备性写清

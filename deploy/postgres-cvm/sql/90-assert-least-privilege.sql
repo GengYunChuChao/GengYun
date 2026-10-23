@@ -1541,7 +1541,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['wechat_subject_cipher','wechat_subject_lookup']::text[],
      ARRAY['updated_at']::text[])
   ),
-  -- R28-S43：external_manifest 的逐条违规明细。断言 69-86 的 ok 与 detail 共用这一份定义：
+  -- R28-S43：external_manifest 的逐条违规明细。断言 69-84 的 ok 与 detail 共用这一份定义：
   -- 一条违规一行（表名 + 一句人话），detail 里 string_agg 出来就能点名到列。
   -- 语义分界（本片最容易被后人误解的地方）：正向用 has_column_privilege（**有效权限**，含
   -- 表级投影）；反向必须读 pg_attribute.attacl（**直接列级 ACL**）—— 表级 SELECT 会让
@@ -3101,7 +3101,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
 
   UNION ALL
-  -- 69-86. R28-S43 逐表范围断言（16 张经 NOLOGIN 组继承来的 public 表）：
+  -- 69-84. R28-S43 逐表范围断言（16 张经 NOLOGIN 组继承来的 public 表）：
   --     与 49-58 同形，差异只在快照来源 —— 这些权限来自 services/api/db/roles/*.sql 的五个组，
   --     不是 20-login-roles.sql 的域段落，所以不在 expected 清单里，49-58 对它们是完全盲的。
   --     判据全部收在 external_violations（一条违规一行明细）：ok 只问「这张表有没有违规」，
@@ -3599,13 +3599,19 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：117 条断言全红时标签合计约 3.6K 字符（2026-10-21 合流后实测：总 117 条、
+-- 上限 4000：断言全红时标签合计约 3.6K 字符（2026-10-21 合流后真库实测：总 117 条、
 -- sum(length(label)+2)=3693、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
+-- 口径（静态可数，用来核对上面的实测数）：断言行 = 带编号的字面断言行 + 逐表展开行
+-- （external_manifest 每行一条 `runtime_grants_external_<tbl>`；allow_table_dml 只进 detail
+-- 文案、不增减断言行，现为 16 个三元组）。编号槽位 1..102 中 49-61 与 69-84 是逐行展开区。
+-- R34（2026-10-24）：external_manifest 删掉 jobs 行（17→16）⇒ 断言总数 117→116、
+-- sum(length(label)+2) 3693→3663（被删的 `runtime_grants_external_jobs` 长 28，+2 分隔符共 30）。
+-- 这两个新值是**静态扣减**，精确值待真库 psql 复核（本树不含 PG，未本地执行）。
 -- R28-S45 更新：本片新增 runtime_users_login_insert_path（第 89 条）。R28-S51 合流后本文件共
 -- 108 条（S43 时 103 条 / 3239、S45 后 104 条 / 3272、S51 合流后 108 条 / 3404，均为实测）；
 -- R28-S52 又追加四条跨 schema 面（94–97），共 112 条 / 3553 实测；
--- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693。
+-- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693（R34 起 116 条 / 3663，见上）。
 DO $$
 DECLARE
   v_failed integer;

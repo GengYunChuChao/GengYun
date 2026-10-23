@@ -22,9 +22,17 @@
  * 真库读数不在此文件：既有 `docs/verification/gy-i27-egress-ledger-pg-20261014.md`（PASS 8
  * HTTP 撤回 200 + 在途置 `failed`）与 `tests/integration/auth-privacy-pg.mjs:329-333`
  * （真库有依赖 ⇒ 409、依赖清空后 ⇒ 200）覆盖；本片不重复、也不冒充已跑真库。
+ *
+ * 另加两条**静态形状钉**（只读源码文本，不跑业务逻辑）：上面第 1–6 点的替身按
+ * `sql.includes('AS present')` 识别依赖查询，**形状本身**不受任何断言约束 —— 把 `public.jobs`
+ * 臂加回去或删掉一臂，替身照旧返回 canned 结果、六点全绿。因此补：
+ *  7. `services/api/src/privacy/consent-pg.ts` 的依赖查询恰是 `media`/`exports`/`author_links`
+ *     三臂（`public.jobs` 已按 R34 下线：该表零读者、零入向外键、零外发账本关联）；
+ *  8. `services/api/src/privacy/grant-pg.ts` 同形三臂，且占位符保持 `$1`（不得被"统一"成 `$1::uuid`）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createPostgresConsentService } from '../../services/api/src/privacy/consent-pg.ts';
 
 const USER_ID = '11111111-1111-4111-8111-1111111111aa';
@@ -193,4 +201,40 @@ test('撤回消费者抛错 ⇒ 仍是 409 OBJECT_UNAVAILABLE，不得退化成 
   assert.equal(sqlIndexOf(pool, 'UPDATE public.consent_records'), -1);
   assert.equal(sqlIndexOf(pool, 'INSERT INTO public.idempotency_keys'), -1);
   assert.ok(pool.queries.some((q) => q.text === 'ROLLBACK'));
+});
+
+/**
+ * 臂集合形状钉：读源码文本取依赖查询那一段，只读、不执行、不连库。
+ * 上面的六点替身按 `sql.includes('AS present')` 识别依赖查询，**形状**因此无人看守 ——
+ * 把 `public.jobs` 臂加回去、或删掉一臂，替身照旧返回 canned 结果、六点全绿。
+ */
+function dependencySql(source, file) {
+  const match = source.match(/SELECT EXISTS\(SELECT 1 FROM public\.media[\s\S]*?AS present/);
+  assert.ok(match, `${file} 的依赖查询必须以 public.media 首臂开头、以 AS present 收尾`);
+  return match[0];
+}
+
+test('形状钉·consent-pg 依赖查询恰是 media/exports/author_links 三臂（jobs 不得回来）', () => {
+  const source = readFileSync(new URL('../../services/api/src/privacy/consent-pg.ts', import.meta.url), 'utf8');
+  const sql = dependencySql(source, 'consent-pg.ts');
+  assert.equal(sql.includes('public.jobs'), false, 'public.jobs 已下线（零读者死表），不得回到依赖判定臂里');
+  assert.deepEqual(
+    [...sql.matchAll(/EXISTS\(SELECT 1 FROM (public\.\w+)/g)].map((m) => m[1]),
+    ['public.media', 'public.exports', 'public.author_links'],
+    '臂集合必须恰是这三张表（多一臂 = 又把一个零读者表算成"真实依赖"）',
+  );
+  assert.ok(sql.includes('owner_id=$1::uuid'), 'consent-pg 的占位符是 $1::uuid，与本文件其它查询同形');
+});
+
+test('形状钉·grant-pg 同形三臂，且占位符保持 $1（不得改成 $1::uuid）', () => {
+  const source = readFileSync(new URL('../../services/api/src/privacy/grant-pg.ts', import.meta.url), 'utf8');
+  const sql = dependencySql(source, 'grant-pg.ts');
+  assert.equal(sql.includes('public.jobs'), false, 'public.jobs 已下线，grant 的依赖判定同样不得含它');
+  assert.deepEqual(
+    [...sql.matchAll(/EXISTS\(SELECT 1 FROM (public\.\w+)/g)].map((m) => m[1]),
+    ['public.media', 'public.exports', 'public.author_links'],
+    'grant-pg 与 consent-pg 的臂集合必须同形（三臂），但两个文件不是同一段代码',
+  );
+  assert.ok(sql.includes('owner_id=$1)'), 'grant-pg 的占位符保持 $1（不许"统一"成 consent-pg 的 $1::uuid）');
+  assert.equal(sql.includes('$1::uuid'), false, '不得把 $1 改成 $1::uuid');
 });
