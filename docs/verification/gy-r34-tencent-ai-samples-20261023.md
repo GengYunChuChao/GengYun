@@ -7,6 +7,8 @@
 - 工作树 `wt-r34-real-ai`，分支 `test/gy-r34-real-ai-samples`，起点 = 上述基线。
 - 取证时间：**2026-10-23 16:15:50 → 16:15:52（Asia/Shanghai，UTC+8）**，单次运行，6 次真实外呼，2.37 s 内完成。
 - 调用量：TMS 2 / IMS 1 / OCR 1 / TTS 1 / ASR 1 —— 上限用尽，**零重试、零循环、零压测**。
+  报告 `budget` 拆成两栏：`reserved`（发送前预留/计费计数）= 6、`sent`（真实发出的 HTTP 次数）= 6；
+  `sent` **不是成功数**（成功只算 `BUSINESS_RESPONSE`：本次 5 条，ASR 未取得），口径见 §3.6。
 - 相关单：`Refs #10 #11 #13 #14`（`#14` 审核：TMS/IMS；`#13` 媒体：TTS；`#11` 语音：ASR；`#10` OCR）。
 
 ---
@@ -14,8 +16,9 @@
 ## 0 结论摘要
 
 1. **四类取得真实业务响应**（TMS×2 / IMS / OCR / TTS），**ASR 未取得**（凭据被供应商拒绝，见 §2）。
-2. **TMS 受控违规样本未被拦截**：`Suggestion=Pass`、`Label=Normal`、`Score=0`。
-   当前 BizType 策略对「加微信引流 ＋ 出售 ＋ 私聊低价」这一类文本**没有判定力**。
+2. **TMS 受控违规样本未被拦截**：`Suggestion=Pass`、`Label=Normal`、`Score=0`
+   （样本＝「加微信引流 ＋ 出售 ＋ 私聊低价」形状的**合成**文本）。
+   结论限定在 **n=1**：**本样本未被拦截，不能外推为整类无判定力；策略有效性仍未证**。
    这是本页最重要的读数：**连通性与鉴权已证，策略有效性未证**。⛔ 不得据此认为审核链路"能拦住违规"。
 3. **OCR 逐字识别正确**：合成样张「除草剂使用说明」被原样检出，`Confidence=100`（单行）。
 4. **TTS 以 `Codec=wav` 拿到音频**（101,804 B，`SessionId` 原样回显），音频剖面通过仓内
@@ -115,13 +118,22 @@
    （`ocr 0.5` / `tts 0.003` / `asr 0.0032` 元/次），这是**保守上限**，通常显著高于实际目录价；
    TMS/IMS 在仓内**没有**预留单价，本次也**没有取到账单**，因此不填数字。
    合计（预留口径）：**¥0.503** ＝ OCR 0.5 ＋ TTS 0.003；ASR 未计费；**账单口径：未取得**。
+6. **两个计数分开记（`reserved` / `sent`）**：`reserved` 是**发送前**的预留/计费计数（本地 fail-closed
+   未送达的调用也算预留），`sent` 是 `fetch` **真实被调用**的次数（含超时、HTTP 错误、响应不可解析）。
+   ⛔ `sent` **不是成功数**：成功数只由 `calls[*].status === 'BUSINESS_RESPONSE'` 判定。本次真实运行
+   `reserved = { tms:2, ims:1, ocr:1, tts:1, asr:1 }`、`sent` 同值（6 次全部真的发出），而
+   `BUSINESS_RESPONSE` 为 **5 条**（ASR 是 `SERVICE_ERROR`）。旧口径把预留计数直接叫 `used`，
+   零外呼时也会报 `tms:2/ims:1/…`，容易被读成"发了这么多次"，因此拆开。
 
 ---
 
 ## 4 凭据与脱敏自证
 
-- 凭据**只在本机进程内**读取，以**文件路径**传入：`E:\GengYunPrivate\credentials.local.json`（JSONC）与
-  `E:\GengYunPrivate\腾讯云.txt`（两个 BizType ＋ ASR 专用配对）。脚本源码里**只有环境变量名**
+- 凭据来源 = **env 或显式传入的私密文件路径，均在进程内使用**（与 `docs/verification/README.md:52`
+  的「`--credentials <私密文件>` 仅在进程内映射环境变量」同一口径）：环境变量，或 `--private-env <私密 JSON>` /
+  `--tencent-txt <私密 txt>` 两个路径入参（BizType 与 ASR 专用配对不同源）。本次以路径传入：
+  `E:\GengYunPrivate\credentials.local.json`（JSONC）与 `E:\GengYunPrivate\腾讯云.txt`（两个 BizType ＋ ASR 专用配对）。
+  脚本源码里**只有环境变量名**
   （`TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` / `TENCENTCLOUD_ASR_SECRET_ID` /
   `TENCENTCLOUD_ASR_SECRET_KEY` / `TENCENTCLOUD_SESSION_TOKEN` / `TENCENTCLOUD_ASR_SESSION_TOKEN`），
   **没有任何值**，启动时用 `assertEnvNamesMatchAiConfig()` 与 `tools/ai-config.mjs:ENV_FIELDS` 逐名比对（防漂移）。
@@ -130,10 +142,13 @@
   ⛔ 不含 `Authorization`、`SecretId`、`SecretKey`、`SessionToken`、BizType、账号 UIN、`database-url`、
   原始响应全文、图片或音频字节。
 - 脚本结尾做一次 `assertNoSecretLeak()` 自检：把 6 个凭据值与 2 个 BizType 逐个在序列化后的报告里查找，
-  命中即 `REDACTION_FAILED` 并中止；本次自检**通过**。
+  命中即 `REDACTION_FAILED` 并中止；本次自检**通过**。比对有显式阈值 `MIN_SECRET_LENGTH = 8`
+  （短于 8 字符的值会被跳过，理由见脚本注释；本例两个 BizType 为 13 / 12 字符，**均被覆盖**）。
 - **过程披露（如实写）**：调试阶段有一条本地诊断命令把私密 TXT 的**行首 40 字符**原样打到了本机 stdout，
   其中含两个 BizType 的部分字符。该输出**未写入仓库、未进本页、未进提交**；随后的诊断改为只输出布尔量，
   不再输出任何行内容。**建议在控制台重置这两个 BizType**（成本为零，且它们未被任何仓内配置引用）。
+  该教训已固化为脚本头注释第 6 条：私密文件内容**一律不得以任何长度前缀**进入 stdout / stderr / 日志；
+  需要比对时只输出「行号 + 字段名 + 长度 + 正则布尔」或 `sha256(行)[:8]`。
 - 本条之外的凭据使用记录：无。没有 push、没有开 PR、没有动 GitHub 凭据。
 
 ---
@@ -157,6 +172,11 @@ node tools/evidence/tencent-ai-samples.mjs `
   `ocr-live-adapter.ts` / `asr-live-adapter.ts`），因此需要 **Node ≥ 22.18**（默认开启 `.ts` 类型擦除）。
   ⛔ **没有**第二套签名器：TMS/IMS 走 `live-tc3.ts:signModerationTc3Request()`（按其注入契约喂 `target`），
   OCR/ASR/TTS 走 `tts/tc3.ts:signTc3Request()`。
+- **退出码（「空集 ≠ 成功」）**：`0` ＝ 至少 1 条 `BUSINESS_RESPONSE`；`77` ＝ **0 条 `BUSINESS_RESPONSE`
+  （全部 `notObtained`）⇒ 未取得，不是通过**，同时在 stderr 打一行缺失清单（**只列字段名/开关名**，
+  不含任何值或前缀）；`1` ＝ 脚本自身失败。无凭据时**不再 exit 0**（"零外呼却报成功"的形状已消除）。
+- **`--out` 必须在仓库外**：指向仓库内会被 `OUT_INSIDE_REPO` 拒绝并 `exit 1`（不写文件、不外呼），
+  与 `tools/evidence/make-sample-image.py` 的同一守卫。
 - 复跑会产生新的付费调用；除本页记录的一次运行外**不要重跑**。
 
 ---

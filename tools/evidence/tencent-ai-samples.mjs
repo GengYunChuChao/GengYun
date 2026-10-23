@@ -8,13 +8,15 @@
  * ---------------------------------------------------------------------------
  * 设计约束（逐条对应派单红线）
  * ---------------------------------------------------------------------------
- * 1. **凭据只走内存**：本文件不含任何凭据值、不含签名、不含账号标识。
- *    凭据来源二选一：
+ * 1. **凭据来源 = env 或显式传入的私密文件路径，两者都只在进程内使用**：
+ *    本文件不含任何凭据值、不含签名、不含账号标识。来源二选一（可叠加，env 优先）：
  *      a) 进程环境变量（变量名与 `tools/ai-config.mjs:ENV_FIELDS` 一致，
  *         启动时用 `assertEnvNamesMatchAiConfig()` 机器比对，漂移即失败）；
- *      b) `--private-env <file>`：在本进程内解析私密 JSON，**只**映射到同名的内存对象，
+ *      b) `--private-env <私密 JSON>`：在本进程内解析，**只**映射到同名的内存对象，
  *         不回显、不落盘、不进报告。
- *    BizType 与 ASR 专用配对不同源，来自 `--tencent-txt <file>`（同样只在内存里取用）。
+ *    BizType 与 ASR 专用配对不同源，来自 `--tencent-txt <私密 txt>`（同样只在内存里取用）。
+ *    这与 `docs/verification/README.md` 的既定口径一致（`--credentials <私密文件>` 仅在进程内
+ *    映射环境变量）。⛔ 本文件内**没有**任何指向私密目录的硬编码路径：路径只从 argv 来。
  * 2. **复用仓内既有实现，不写第二套签名器**：
  *      - TMS/IMS：`services/api/src/moderation/live-tc3.ts:signModerationTc3Request()`
  *        （按其注入契约喂 `target`），回报解析用 `moderation/live-vendor.ts`（含控制字段旁路扫描）；
@@ -23,11 +25,19 @@
  *        （与产品路径同一份口径：PNG/JPEG 头、2 MiB、16k/单声道/16bit WAV）。
  * 3. **请求形状照抄配置冻结面**：端点/动作/版本取自 `tools/ai-config.mjs:AI_ENDPOINTS`；
  *    Region 恒 `ap-shanghai`；TMS `Type=TEXT`、`SourceLanguage=zh`、`Content` 为 UTF-8 正文的 base64。
- * 4. **调用量硬上限**：tms 2 / ims 1 / ocr 1 / tts 1 / asr 1。计数器在发送前递增，
+ * 4. **调用量硬上限**：tms 2 / ims 1 / ocr 1 / tts 1 / asr 1。预留计数器在发送前递增，
  *    越界直接 `throw`（不是"记一条日志继续跑"）。零重试：每类只 `fetch` 一次。
+ *    报告里两个计数分开：`budget.reserved`（预留/计费计数）与 `budget.sent`（真实 `fetch` 次数，⛔ 不是成功数）。
  * 5. **落盘/打印只有脱敏字段**：RequestId、动作、耗时、结论字段、字节长度、摘要哈希。
  *    ⛔ 不打印 Authorization / SecretId / SecretKey / SessionToken / BizType / 原始响应全文 /
  *    音频与图片字节。跑完做一次 `assertNoSecretLeak()` 自检。
+ * 6. **私密文件内容零前缀纪律**（注释级，不改变行为）：私密文件（`--private-env` /
+ *    `--tencent-txt`）的内容**一律不得以任何长度前缀**进入 stdout / stderr / 日志 / 报告 ——
+ *    包括"行首 N 字符""前 8 位""打一半看看"这类看起来像诊断的打印。需要比对时只输出
+ *    「行号 + 字段名 + 长度 + 正则布尔」或 `sha256(行)[:8]`。原因：前缀算泄漏，终端回滚缓冲、
+ *    会话记录、agent 转录都会持久化它，且短前缀配合枚举足以还原密钥。
+ * 7. **「空集 ≠ 成功」**：0 条 `BUSINESS_RESPONSE` 时进程 `exit 77`（未取得），⛔ 不是 exit 0；
+ *    详见下面的「退出码」。
  *
  * ---------------------------------------------------------------------------
  * 运行
@@ -41,11 +51,22 @@
  * 需要 Node ≥ 22.18（默认开启 `.ts` 类型擦除，脚本直接 import 仓内 `.ts` 实现）。
  * 私密 JSON 当前是 **JSONC**（行尾 `//` 注释），严格 `JSON.parse` 会抛 SyntaxError，
  * 因此这里自带一个只读的 JSONC 容错解析；⛔ 不要为此修改私密区原文件。
+ *
+ * ---------------------------------------------------------------------------
+ * 退出码（「空集 ≠ 成功」）
+ * ---------------------------------------------------------------------------
+ *   0  —— 至少 1 条 `BUSINESS_RESPONSE`（成功路径口径不变，⛔ 不要改）；
+ *   77 —— 0 条 `BUSINESS_RESPONSE`（全部 notObtained）＝**未取得，不是通过**；
+ *         同时往 stderr 打一行缺失清单（**只字段名/开关名**，⛔ 不含任何值或前缀）。
+ *         77 与仓内其它真库臂（`tests/integration/*-pg.mjs`）同一惯例：`&&` 不把它当成功。
+ *   1  —— 脚本自身失败（`EVIDENCE_RUN_FAILED:<短标签>`），或 `--out` 指向仓库内被
+ *         `OUT_INSIDE_REPO` 拒绝（与 `tools/evidence/make-sample-image.py` 同一守卫）。
  */
 
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { AI_ENDPOINTS } from '../ai-config.mjs';
 import { LIVE_OCR_FROZEN_PROFILE, requireLiveOcrImage } from '../../services/api/src/ai/ocr-live-adapter.ts';
@@ -798,8 +819,10 @@ async function runAsr({ wav, credentials, timeoutMs, fetchImpl, now, notAttempte
 /**
  * 跑完五类取证。
  *
- * `limits` 只是"再声明一次"的护栏：计数器在每次发送前 +1，越界直接 throw，
- * 确保没有人把它改成循环重试。
+ * `limits` 只是"再声明一次"的护栏：**预留计数**在每次发送前 +1，越界直接 throw，
+ * 确保没有人把它改成循环重试。真实 `fetch` 次数另用一个计数器（`sent`）单独统计。
+ *
+ * 返回值三件套：`calls`（逐类记录）、`reserved`（预留/计费计数）、`sent`（真实发出的 HTTP 次数）。
  */
 export async function runEvidenceSamples(options) {
   const {
@@ -813,12 +836,22 @@ export async function runEvidenceSamples(options) {
     now = () => Date.now(),
   } = options;
 
-  const used = { tms: 0, ims: 0, ocr: 0, tts: 0, asr: 0 };
-  const charge = (category) => {
-    used[category] += 1;
-    if (used[category] > limits[category]) {
+  /** 预留/计费计数：发送**前**递增并与 `limits` 比较；本地 fail-closed 未送达也算预留。 */
+  const reserved = { tms: 0, ims: 0, ocr: 0, tts: 0, asr: 0 };
+  const reserve = (category) => {
+    reserved[category] += 1;
+    if (reserved[category] > limits[category]) {
       throw new Error(`CALL_LIMIT_EXCEEDED:${category}（上限 ${limits[category]} 次，零重试）`);
     }
+  };
+  /**
+   * 真实发送计数：只在 `fetch` **被真正调用**的那一刻 +1（含超时 / HTTP 错误 / 响应不可解析）。
+   * ⛔ `sent` **不是**成功数：成功数只由 `calls[*].status === 'BUSINESS_RESPONSE'` 判定。
+   */
+  const sent = { tms: 0, ims: 0, ocr: 0, tts: 0, asr: 0 };
+  const countingFetch = (category) => async (...args) => {
+    sent[category] += 1;
+    return fetchImpl(...args);
   };
 
   const sharedPair = credentialTriple(
@@ -837,49 +870,49 @@ export async function runEvidenceSamples(options) {
   const calls = {};
 
   // ① TMS 正常文本
-  charge('tms');
+  reserve('tms');
   calls.tmsNormal = await runTms({
     text: texts.tmsNormal,
     category: 'tms_normal',
     credentials: sharedPair,
     bizType: bizTypes.tms,
     timeoutMs,
-    fetchImpl,
+    fetchImpl: countingFetch('tms'),
     now,
   });
   calls.tmsNormal.inputKind = '合成文本（农事说明，非个人数据）';
 
   // ② TMS 受控违规文本（明显的假联系方式，绝不写真实号码）
-  charge('tms');
+  reserve('tms');
   calls.tmsControlledViolation = await runTms({
     text: texts.tmsControlledViolation,
     category: 'tms_controlled_violation',
     credentials: sharedPair,
     bizType: bizTypes.tms,
     timeoutMs,
-    fetchImpl,
+    fetchImpl: countingFetch('tms'),
     now,
   });
   calls.tmsControlledViolation.inputKind = '合成文本（含明显假的联系方式，受控违规样本）';
 
   // ③ IMS 合成图
-  charge('ims');
+  reserve('ims');
   calls.ims = await runIms({
     imageBytes,
     credentials: sharedPair,
     bizType: bizTypes.ims,
     timeoutMs,
-    fetchImpl,
+    fetchImpl: countingFetch('ims'),
     now,
   });
 
   // ④ OCR 同一张合成图
-  charge('ocr');
-  calls.ocr = await runOcr({ imageBytes, credentials: sharedPair, timeoutMs, fetchImpl, now });
+  reserve('ocr');
+  calls.ocr = await runOcr({ imageBytes, credentials: sharedPair, timeoutMs, fetchImpl: countingFetch('ocr'), now });
 
   // ⑤ TTS 合成一段播报
-  charge('tts');
-  calls.tts = await runTts({ text: texts.tts, credentials: sharedPair, timeoutMs, fetchImpl, now });
+  reserve('tts');
+  calls.tts = await runTts({ text: texts.tts, credentials: sharedPair, timeoutMs, fetchImpl: countingFetch('tts'), now });
 
   // ⑥ ASR：只有在 TTS 产出**合规 16k/单声道/16bit WAV** 时才发；否则如实记"未取得"，不伪造。
   let asrInput = null;
@@ -898,15 +931,21 @@ export async function runEvidenceSamples(options) {
     calls.asr = baseRecord('asr', AI_ENDPOINTS.asr.action, AI_ENDPOINTS.asr.version, AI_ENDPOINTS.asr.endpoint, new Date(now()).toISOString());
     calls.asr.notObtainedReason = asrSkipReason;
   } else {
-    charge('asr');
-    calls.asr = await runAsr({ wav: asrInput, credentials: asrPair ?? sharedPair, timeoutMs, fetchImpl, now });
+    reserve('asr');
+    calls.asr = await runAsr({
+      wav: asrInput,
+      credentials: asrPair ?? sharedPair,
+      timeoutMs,
+      fetchImpl: countingFetch('asr'),
+      now,
+    });
     calls.asr.inputKind = 'TTS 环回产物（同一段音频，未落库）';
   }
 
   // 音频字节绝不出内存：从返回对象里摘掉。
   for (const record of Object.values(calls)) delete record.audioInline;
 
-  return { calls, used };
+  return { calls, reserved, sent };
 }
 
 // ---------------------------------------------------------------------------
@@ -936,17 +975,51 @@ export function estimateReserveCostCny(calls) {
   };
 }
 
+/**
+ * 脱敏自检的**最短比对长度**（F5，显式常量）。
+ *
+ * 只比对 `length >= MIN_SECRET_LENGTH` 的值。理由：更短的值（4~7 字符）在中文/代码文本里会大量
+ * **偶然命中**（`score`、`pass`、`tts`、`asr` 这类），做成硬失败会把自检变成噪音源，进而诱使
+ * 下一个人直接把阈值降到 1 或干脆删掉自检。本例两个真实 BizType 为 13 / 12 字符，**均被覆盖**；
+ * 短值请改用 `BIZ_TYPE_PATTERN` 形状校验或人工核对，⛔ 不要为此调低本阈值。
+ */
+export const MIN_SECRET_LENGTH = 8;
+
 /** 脱敏自检：序列化结果里不得出现任何凭据值、BizType 值或数据库连接串。 */
 export function assertNoSecretLeak(serialized, secrets) {
   for (const [name, value] of secrets) {
-    if (typeof value === 'string' && value.length >= 8 && serialized.includes(value)) {
+    if (typeof value === 'string' && value.length >= MIN_SECRET_LENGTH && serialized.includes(value)) {
       throw new Error(`REDACTION_FAILED:${name}`);
     }
   }
   return true;
 }
 
-export function buildReport({ calls, used, diagnostics, startedAt, finishedAt, gitHead }) {
+/**
+ * 「未取得」退出（77）时的**缺失输入清单**：只返回字段名/开关名，供 stderr 那一行使用。
+ *
+ * ⛔ 这里只允许出现名字（`TENCENTCLOUD_SECRET_ID`、`tms BizType`、`--private-env` …）；
+ * 绝不出现任何值、前缀、长度、行内容或哈希。
+ */
+export function missingInputNames({ diagnostics = {}, env = {} } = {}) {
+  const present = (name) => typeof env[name] === 'string' && env[name].trim() !== '';
+  const missing = [];
+  const credentialsFile = diagnostics.credentialsFile ?? 'absent';
+  if (credentialsFile === 'unreadable') missing.push('--private-env（文件读不到）');
+  else if (credentialsFile === 'unparsable') missing.push('--private-env（JSONC 解析失败）');
+  for (const variable of Object.values(CREDENTIAL_ENV_NAMES)) {
+    // env 是"合并后的内存视图"（文件里的同名字段已在 loadCredentialSources() 里映射进来），
+    // 因此这里只看 env：缺失即两个来源都没给到。
+    if (!present(variable)) missing.push(variable);
+  }
+  if ((diagnostics.tencentTxt ?? 'absent') === 'unreadable') missing.push('--tencent-txt（文件读不到）');
+  const bizTypeFields = diagnostics.bizTypeFields ?? {};
+  if (bizTypeFields.tms !== 'present') missing.push('tms BizType（私密 txt 的「文本biztype」）');
+  if (bizTypeFields.ims !== 'present') missing.push('ims BizType（私密 txt 的「图片biztype」）');
+  return missing;
+}
+
+export function buildReport({ calls, reserved, sent, diagnostics, startedAt, finishedAt, gitHead }) {
   const notObtained = [];
   for (const record of Object.values(calls)) {
     if (record.status !== 'BUSINESS_RESPONSE') {
@@ -970,7 +1043,13 @@ export function buildReport({ calls, used, diagnostics, startedAt, finishedAt, g
     credentialDiagnostics: diagnostics,
     calls,
     notObtained,
-    budget: { limits: CALL_LIMITS, used },
+    budget: {
+      limits: CALL_LIMITS,
+      reserved,
+      sent,
+      countersNote:
+        'reserved = 发送**前**的预留/计费计数（本地 fail-closed 未送达也算预留）；sent = `fetch` 真实被调用的次数（超时/HTTP 错误/响应不可解析也算发出）；⛔ sent **不是**成功数——成功数只看 calls[*].status === "BUSINESS_RESPONSE"。',
+    },
     cost: estimateReserveCostCny(calls),
     selfCheck: {
       containsCredentialValue: false,
@@ -999,6 +1078,27 @@ export function assertEnvNamesMatchAiConfig(aiConfigSource) {
 // ---------------------------------------------------------------------------
 // 10. CLI
 // ---------------------------------------------------------------------------
+
+/** 仓库根：本文件位于 `<repo>/tools/evidence/`。 */
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
+
+/**
+ * `--out` 是否落在仓库内（F6）。
+ *
+ * 与 `tools/evidence/make-sample-image.py` 的 `OUT_INSIDE_REPO` 同一守卫：报告 JSON 是"仓外制品"，
+ * 写进仓库就有被 `git add` 误提交的风险（样张 PNG 早已按此口径写在仓外）。
+ * Windows 路径大小写不敏感，比较前统一小写。
+ */
+export function outInsideRepo(outPath, repoRoot = REPO_ROOT) {
+  const target = resolve(outPath);
+  const root = resolve(repoRoot);
+  const [normalizedTarget, normalizedRoot] =
+    process.platform === 'win32' ? [target.toLowerCase(), root.toLowerCase()] : [target, root];
+  return (
+    normalizedTarget === normalizedRoot ||
+    normalizedTarget.startsWith(normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`)
+  );
+}
 
 function parseArgs(argv) {
   const args = {
@@ -1032,6 +1132,12 @@ async function main(argv) {
     console.log('usage: node tools/evidence/tencent-ai-samples.mjs --private-env <file> --tencent-txt <file> --image <png> --out <json>');
     return 0;
   }
+  // `--out` 必须落在仓库外（F6）：与 `tools/evidence/make-sample-image.py:OUT_INSIDE_REPO` 同一守卫。
+  // 在**任何外呼之前**拒绝，确保被拒的这次运行零请求、零写盘。
+  if (args.out !== null && outInsideRepo(args.out)) {
+    console.error('OUT_INSIDE_REPO: --out 指向仓库内，拒绝写入（证据报告 JSON 必须落在仓库外，避免误提交）');
+    return 1;
+  }
   // 变量名漂移自检（只读本地源码，零网络）。
   assertEnvNamesMatchAiConfig(readFileSync(new URL('../ai-config.mjs', import.meta.url), 'utf8'));
 
@@ -1050,7 +1156,7 @@ async function main(argv) {
   }
 
   const startedAt = new Date().toISOString();
-  const { calls, used } = await runEvidenceSamples({
+  const { calls, reserved, sent } = await runEvidenceSamples({
     env,
     bizTypes,
     imageBytes,
@@ -1058,7 +1164,7 @@ async function main(argv) {
   });
   const finishedAt = new Date().toISOString();
 
-  const report = buildReport({ calls, used, diagnostics, startedAt, finishedAt, gitHead: args.gitHead });
+  const report = buildReport({ calls, reserved, sent, diagnostics, startedAt, finishedAt, gitHead: args.gitHead });
 
   // 自检：报告里不得出现任何凭据值或 BizType 值。
   const secrets = [
@@ -1077,6 +1183,22 @@ async function main(argv) {
   const text = JSON.stringify(report, null, 2);
   if (args.out !== null) writeFileSync(args.out, text, 'utf8');
   console.log(text);
+
+  // 「空集 ≠ 成功」：一条业务响应都没拿到时给出"未取得"信号，⛔ 不能 exit 0。
+  // 报告照常产出（它是取证制品），进程退出码才是"这次到底跑成没有"的机器可读信号。
+  const total = Object.keys(calls).length;
+  const businessResponses = Object.values(calls).filter((record) => record.status === 'BUSINESS_RESPONSE').length;
+  if (businessResponses === 0) {
+    const missing = missingInputNames({ diagnostics, env });
+    console.error(
+      `EXITCODE=77 表示未取得，不是通过：本次 ${businessResponses}/${total} 条 BUSINESS_RESPONSE（全部 notObtained）；` +
+        `缺：${missing.length === 0 ? '无（输入齐备，但供应商未给出业务响应）' : missing.join(' / ')}；` +
+        `类别状态：${Object.values(calls)
+          .map((record) => `${record.category}=${record.status}`)
+          .join(' ')}`,
+    );
+    return 77;
+  }
   return 0;
 }
 
