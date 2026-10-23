@@ -265,8 +265,8 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
-    // 末项取树上的真实最大号：#19 的 0031（在线清理证据）与 #15 的 0032（举报者行级注销引用）都已在树上
-    // ⇒ 目录 `0001..0032` 连续、**无缺号**，真实台账回到空数组（31 号保留条目已按 remove_when 删除）。
+    // 末项取树上的真实最大号：#19 的 0031（在线清理证据）与 0033（注销内容清理窄函数）、#15 的 0032（举报者行级注销引用）都已在树上
+    // ⇒ 目录 `0001..0033` 连续、**无缺号**，真实台账回到空数组（31 号保留条目已按 remove_when 删除）。
     // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
       if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) {
@@ -286,7 +286,7 @@ function forwardMergeNumbering() {
     assert.deepEqual(
       numbering.undeclaredGaps.map(formatMigrationVersion),
       [],
-      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19 与 0032/本片都已在树上，台账无保留号）',
+      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15 与 0033/本片都已在树上，台账无保留号）',
     );
     assert.equal(
       numbering.maxVersion,
@@ -295,8 +295,8 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0032',
-      '合流树末项是 0032（#15 举报者行级注销引用；0031 是 #19 的在线清理证据，已在树上）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0033',
+      '合流树末项是 0033（#19 的 0033_r34_owner_content_purge.sql，注销内容清理窄函数；0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用，均已在树上）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,
