@@ -123,20 +123,53 @@ export function describeOfflineRequest(request) {
 // 刻意追加在文件末尾、不前插：`docs/verification/*` 用 `tools/ai-config.mjs:10/14/43/57/69/91/115`
 // 这类行号引用本文；前插会让它们整体漂移，而 `verify-doc-anchors` 只判结构、不判语义，漂移不会报红。
 
-// 真实模式（`services/api/src/config.ts` 的 `REQUIRED_WHEN_REAL`）需要、但 `ENV_FIELDS` 原先漏掉的两个值。
+// 真实模式（`services/api/src/config.ts` 的 `REQUIRED_WHEN_REAL`）需要、但 `ENV_FIELDS` 原先漏掉的映射。
 // 既有变量名一个都不动：`databaseUrl` 继续导出 `GENGYUN_DATABASE_URL`（`docs/verification/config.example.json`
 // 与运维流程按此名读取），这里只是**追加** `DATABASE_URL`；`appid` 原先只校验、不导出，这里追加 `WECHAT_APP_ID`。
 // 用「字段 → 变量名」的**有序对**而不是对象合并：一个字段可以映射出多个变量名，对象字面量的同名键会互相覆盖。
-const EXTRA_ENV_PAIRS = Object.freeze([['appid', 'WECHAT_APP_ID'], ['databaseUrl', 'DATABASE_URL']]);
-const PRIVATE_ENV_PAIRS = Object.freeze([...Object.entries(ENV_FIELDS), ...EXTRA_ENV_PAIRS]);
-
-// `REQUIRED_WHEN_REAL` 里这份私密凭据文件**根本无法映射**的字段名：私密 JSON 没有对应字段，
-// 无论文件多完整都只能由真实环境变量提供。**只列名，绝不含值**；也不含已映射的
-// `WECHAT_APP_ID` / `WECHAT_APP_SECRET` / `DATABASE_URL`。
-const MISSING_REQUIRED_FIELDS = Object.freeze([
-  'SESSION_SIGNING_KEY', 'DELETION_LEDGER_KEY', 'OBJECT_STORAGE_ENDPOINT',
-  'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY',
+// 末尾六条补齐真实模式必需、而私密 JSON 的字段名从未登记过的项：`SESSION_SIGNING_KEY` / `DELETION_LEDGER_KEY`
+// 与对象存储四键此前只能靠真实环境变量提供，`missingFields` 因此长期非空。
+const EXTRA_ENV_PAIRS = Object.freeze([
+  ['appid', 'WECHAT_APP_ID'], ['databaseUrl', 'DATABASE_URL'],
+  ['sessionSigningKey', 'SESSION_SIGNING_KEY'], ['deletionLedgerKey', 'DELETION_LEDGER_KEY'],
+  ['objectStorageEndpoint', 'OBJECT_STORAGE_ENDPOINT'], ['objectStorageBucket', 'OBJECT_STORAGE_BUCKET'],
+  ['objectStorageAccessKey', 'OBJECT_STORAGE_ACCESS_KEY'], ['objectStorageSecretKey', 'OBJECT_STORAGE_SECRET_KEY'],
 ]);
+// 唯一的「字段 → 变量名」映射表。导出只为让测试**从模块派生** `mapped`，而不是在测试里手抄一份名单：
+// 手抄的名单会和实现分叉，那正是「stays in step」守卫单向漏检的同一类毛病。
+export const PRIVATE_ENV_PAIRS = Object.freeze([...Object.entries(ENV_FIELDS), ...EXTRA_ENV_PAIRS]);
+/** 已映射的环境变量名（去重、保序）；只含名字，绝不含值。 */
+export const MAPPED_ENV_NAMES = Object.freeze([...new Set(PRIVATE_ENV_PAIRS.map(([, variable]) => variable))]);
+
+// `REQUIRED_WHEN_REAL` 的**仓内镜像**（只抄名字，绝不含值；顺序与 `services/api/src/config.ts` 一致）。
+// 同步不靠人记：`tests/ai-config.test.mjs` 逐项比对两边，任一边增删都会红。
+export const REQUIRED_WHEN_REAL_FIELDS = Object.freeze([
+  'DATABASE_URL', 'SESSION_SIGNING_KEY', 'DELETION_LEDGER_KEY', 'WECHAT_APP_ID', 'WECHAT_APP_SECRET',
+  'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY',
+]);
+
+// **派生**而非手写死名单：必需项里没有私密文件映射来源的变量名 = 必需项 ∖ 已映射变量名。
+// 六条补齐后它自然是 0 项；将来加一条映射就自动少一项、删一条映射就自动多一项。
+// 手写名单做不到这点：加了映射却忘删同名项时，同一个名字会同时躺在「能映射」和「无法映射」两侧。
+// 注意语义是「这份文件**映射不到**的必需项」，不是「本次文件恰好没写」的清单；**只列名，绝不含值**。
+export const MISSING_REQUIRED_FIELDS = Object.freeze(REQUIRED_WHEN_REAL_FIELDS.filter(name => !MAPPED_ENV_NAMES.includes(name)));
+
+/**
+ * 「mapped 与 missingFields 必须踩准 REQUIRED_WHEN_REAL」的**双向**守卫：
+ * `(mapped ∩ required) ∪ missing === required` **且** `mapped ∩ missing === ∅`。
+ * 只查并集是单向的——新增映射却漏删 `missingFields` 同名项时并集仍相等、守卫仍绿，
+ * 而同一变量名同时出现在两侧，自相矛盾。返回问题码数组（空数组才是一致），纯函数、不读文件、不含任何值。
+ * 映射表还带着 `DEEPSEEK_API_KEY` 这类不在 `REQUIRED_WHEN_REAL` 里的凭据名（按能力单独校验），
+ * 所以只在 `required` 这一侧取交集比较，不要求 `mapped ⊆ required`。
+ */
+export function envMappingIssues({ mapped = MAPPED_ENV_NAMES, missing = MISSING_REQUIRED_FIELDS, required = REQUIRED_WHEN_REAL_FIELDS } = {}) {
+  const mappedSet = new Set(mapped), missingSet = new Set(missing), requiredSet = new Set(required);
+  const issues = [];
+  for (const name of missingSet) if (!requiredSet.has(name)) issues.push('MISSING_NOT_REQUIRED:' + name);
+  for (const name of requiredSet) if (!mappedSet.has(name) && !missingSet.has(name)) issues.push('UNACCOUNTED:' + name);
+  for (const name of mappedSet) if (missingSet.has(name)) issues.push('MAPPED_AND_MISSING:' + name);
+  return issues;
+}
 
 // 逐字符扫描：字符串内的 `//`、`/*` 与尾逗号都不是结构。`escaped` 让 `\"` 不结束字符串
 // （`"a\\" // b"` 里的 `//` 仍属字符串），这是「字符串里的 `//` 不能被误删」的关键。

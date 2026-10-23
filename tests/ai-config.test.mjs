@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AI_ENDPOINTS, auditAIConfiguration, loadPrivateEnvironment, parseJsonc, prepareOfflineRequest, describeOfflineRequest } from '../tools/ai-config.mjs';
+import {
+  AI_ENDPOINTS, auditAIConfiguration, loadPrivateEnvironment, parseJsonc, prepareOfflineRequest, describeOfflineRequest,
+  PRIVATE_ENV_PAIRS, MAPPED_ENV_NAMES, REQUIRED_WHEN_REAL_FIELDS, MISSING_REQUIRED_FIELDS, envMappingIssues,
+} from '../tools/ai-config.mjs';
 const example = JSON.parse(readFileSync(new URL('../docs/verification/config.example.json', import.meta.url), 'utf8'));
 const fixture = () => { const config = structuredClone(example); config.providers.moderation.bizType = 'synthetic_text'; config.providers.moderation.image.bizType = 'synthetic_image'; return config; };
 const env = { TOKENHUB_API_KEY: 'synthetic-tokenhub-secret', DEEPSEEK_API_KEY: 'synthetic-deepseek-secret', TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-tencent-secret' };
@@ -98,6 +101,12 @@ const SYNTHETIC_JSONC = [
   '  "appid": "' + SYNTHETIC_APPID + '",',
   '  "databaseUrl": "postgres://synthetic-synthetic@db.invalid:5432/synthetic?sslmode=require", // 行尾注释',
   '  "deepseekApiKey": "synthetic-deepseek",',
+  '  "sessionSigningKey": "synthetic-session-signing-key",',
+  '  "deletionLedgerKey": "synthetic-deletion-ledger-key",',
+  '  "objectStorageEndpoint": "https://cos.ap-shanghai.myqcloud.invalid",',
+  '  "objectStorageBucket": "synthetic-bucket-1250000000",',
+  '  "objectStorageAccessKey": "synthetic-oss-access-key",',
+  '  "objectStorageSecretKey": "synthetic-oss-secret-key",',
   '  "callbackUrl": "https://example.invalid//double-slash-in-string",',
   '  "escaped": "quote \\" then // still inside a string",',
   '  /* 块注释：',
@@ -130,7 +139,29 @@ test('JSONC parse failures stay controlled, name the code only and never echo co
     assert.throws(() => loadPrivateEnvironment(join(dir, 'absent.jsonc')), /^Error: PRIVATE_FILE_UNAVAILABLE$/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
-test('JSONC private file maps appid/databaseUrl additively, keeps old names and exposes name-only missingFields', () => {
+test('mapping table appends the six real-mode fields without renaming any existing variable', () => {
+  const variablesFor = field => PRIVATE_ENV_PAIRS.filter(([name]) => name === field).map(([, variable]) => variable);
+  // 既有映射一个都不改：`databaseUrl` 仍先出旧名 `GENGYUN_DATABASE_URL`，新名只是追加。
+  assert.deepEqual(variablesFor('databaseUrl'), ['GENGYUN_DATABASE_URL', 'DATABASE_URL']);
+  assert.deepEqual(variablesFor('appsecret'), ['WECHAT_APP_SECRET']);
+  assert.deepEqual(variablesFor('tokenhubApiKey'), ['TOKENHUB_API_KEY']);
+  assert.deepEqual(variablesFor('tencentAsrSessionToken'), ['TENCENTCLOUD_ASR_SESSION_TOKEN']);
+  assert.deepEqual(variablesFor('appid'), ['WECHAT_APP_ID']);
+  // 六条新增映射：JSON 字段名 → 真实模式环境变量名，逐条钉住。
+  const appended = [
+    ['sessionSigningKey', 'SESSION_SIGNING_KEY'],
+    ['deletionLedgerKey', 'DELETION_LEDGER_KEY'],
+    ['objectStorageEndpoint', 'OBJECT_STORAGE_ENDPOINT'],
+    ['objectStorageBucket', 'OBJECT_STORAGE_BUCKET'],
+    ['objectStorageAccessKey', 'OBJECT_STORAGE_ACCESS_KEY'],
+    ['objectStorageSecretKey', 'OBJECT_STORAGE_SECRET_KEY'],
+  ];
+  for (const [field, variable] of appended) assert.deepEqual(variablesFor(field), [variable]);
+  for (const name of MAPPED_ENV_NAMES) assert.match(name, /^[A-Z][A-Z0-9_]*$/);
+  // 补齐六条后没有「私密文件映射不到」的必需项：missingFields 派生结果为 0 项。
+  assert.deepEqual([...MISSING_REQUIRED_FIELDS], []);
+});
+test('JSONC private file maps appid/databaseUrl plus six real-mode fields additively and settles missingFields at zero', () => {
   const dir = mkdtempSync(join(tmpdir(), 'gy25-jsonc-'));
   try {
     const file = join(dir, 'synthetic.jsonc'); writeFileSync(file, SYNTHETIC_JSONC);
@@ -140,24 +171,64 @@ test('JSONC private file maps appid/databaseUrl additively, keeps old names and 
     assert.equal(loaded.DATABASE_URL, 'postgres://synthetic-synthetic@db.invalid:5432/synthetic?sslmode=require');
     assert.equal(loaded.GENGYUN_DATABASE_URL, loaded.DATABASE_URL);
     assert.equal(loaded.DEEPSEEK_API_KEY, 'synthetic-deepseek');
-    assert.deepEqual(loaded.missingFields, ['SESSION_SIGNING_KEY', 'DELETION_LEDGER_KEY', 'OBJECT_STORAGE_ENDPOINT', 'OBJECT_STORAGE_BUCKET', 'OBJECT_STORAGE_ACCESS_KEY', 'OBJECT_STORAGE_SECRET_KEY']);
+    // 六条新映射：合成 JSONC 里的值真的落到了真实模式读的那个变量名上。
+    assert.equal(loaded.SESSION_SIGNING_KEY, 'synthetic-session-signing-key');
+    assert.equal(loaded.DELETION_LEDGER_KEY, 'synthetic-deletion-ledger-key');
+    assert.equal(loaded.OBJECT_STORAGE_ENDPOINT, 'https://cos.ap-shanghai.myqcloud.invalid');
+    assert.equal(loaded.OBJECT_STORAGE_BUCKET, 'synthetic-bucket-1250000000');
+    assert.equal(loaded.OBJECT_STORAGE_ACCESS_KEY, 'synthetic-oss-access-key');
+    assert.equal(loaded.OBJECT_STORAGE_SECRET_KEY, 'synthetic-oss-secret-key');
+    // 六条补齐后没有「私密文件映射不到」的必需项。
+    assert.deepEqual(loaded.missingFields, []);
     assert.ok(Object.isFrozen(loaded.missingFields));
     assert.equal(Object.getOwnPropertyDescriptor(loaded, 'missingFields').writable, false);
     assert.equal(Object.keys(loaded).includes('missingFields'), false);
-    for (const name of loaded.missingFields) assert.match(name, /^[A-Z][A-Z0-9_]*$/);
+    assert.equal(Object.keys(loaded).includes('sessionSigningKey'), false); // 只导出变量名，不回显 JSON 字段名
     writeFileSync(file, '{ "appid": "wx0000000000000000", // 账号不符\n "x": 1, }');
     assert.throws(() => loadPrivateEnvironment(file), /PRIVATE_ACCOUNT_MISMATCH/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
-test('missingFields stays in step with REQUIRED_WHEN_REAL in services/api/src/config.ts', () => {
+test('mapped and missingFields stay in step with REQUIRED_WHEN_REAL in both directions', () => {
   const source = readFileSync(new URL('../services/api/src/config.ts', import.meta.url), 'utf8');
   const body = source.match(/export const REQUIRED_WHEN_REAL = \[([\s\S]*?)\] as const;/);
-  assert.ok(body, 'REQUIRED_WHEN_REAL 形状变了：同步本测试与 tools/ai-config.mjs 的 MISSING_REQUIRED_FIELDS');
+  assert.ok(body, 'REQUIRED_WHEN_REAL 形状变了：同步本测试与 tools/ai-config.mjs 的 REQUIRED_WHEN_REAL_FIELDS');
   const required = [...body[1].matchAll(/'([A-Z][A-Z0-9_]*)'/g)].map(match => match[1]);
+  // 模块镜像必须与 config.ts 同序同名，否则下面所有比较都建在假地基上。
+  assert.deepEqual([...REQUIRED_WHEN_REAL_FIELDS], required);
+  // `mapped` 从模块派生，不再在测试里手抄名单。
+  const mapped = [...MAPPED_ENV_NAMES];
+  assert.deepEqual([...new Set(mapped)], mapped);
   const dir = mkdtempSync(join(tmpdir(), 'gy25-jsonc-'));
   try {
     const file = join(dir, 'synthetic.jsonc'); writeFileSync(file, SYNTHETIC_JSONC);
-    const mapped = ['WECHAT_APP_ID', 'WECHAT_APP_SECRET', 'DATABASE_URL'];
-    assert.deepEqual([...new Set([...loadPrivateEnvironment(file).missingFields, ...mapped])].sort(), [...required].sort());
+    const missing = [...loadPrivateEnvironment(file).missingFields];
+    // 映射表还带 `DEEPSEEK_API_KEY` 这类必需项之外的凭据名，故只在 required 一侧取交集。
+    const mappedRequired = mapped.filter(name => required.includes(name));
+    // 方向一：`(mapped ∩ required) ∪ missing` 覆盖 REQUIRED_WHEN_REAL（旧守卫只有这一半）。
+    assert.deepEqual([...new Set([...mappedRequired, ...missing])].sort(), [...required].sort());
+    // 方向二：交集为空——同一变量名不得既「可映射」又「无法映射」。
+    assert.deepEqual(mapped.filter(name => missing.includes(name)), []);
+    // 生产守卫与测试共用同一实现，对真实数据零问题。
+    assert.deepEqual(envMappingIssues({ mapped, missing, required }), []);
+    assert.deepEqual(envMappingIssues(), []);
+    // 六条补齐后每一项必需值都真的有映射来源（missingFields 为空时，这就是「全覆盖」）。
+    assert.deepEqual(required.filter(name => !mapped.includes(name)), []);
+    // 派生式 MISSING_REQUIRED_FIELDS 就是「必需项 ∖ 已映射」，不是手写死名单。
+    assert.deepEqual([...MISSING_REQUIRED_FIELDS], REQUIRED_WHEN_REAL_FIELDS.filter(name => !mapped.includes(name)));
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test('two-sided guard rejects a mapping added without pruning missingFields even though the union check stays green', () => {
+  // 测试内构造，不改生产语义：模拟「新增 BETA_KEY 映射，却忘了从 missingFields 删掉同名项」。
+  const required = ['ALPHA_KEY', 'BETA_KEY'];
+  const mapped = ['ALPHA_KEY', 'BETA_KEY'];
+  const staleMissing = ['BETA_KEY'];
+  // 单向（只查并集）看不出问题：这正是上一轮漏检的那个洞。
+  assert.deepEqual([...new Set([...mapped, ...staleMissing])].sort(), [...required].sort());
+  // 双向守卫必须点名「同名项同时躺在两侧」。
+  assert.deepEqual(envMappingIssues({ mapped, missing: staleMissing, required }), ['MAPPED_AND_MISSING:BETA_KEY']);
+  // 反向缺口同样要点名：必需项两边都没有 → UNACCOUNTED；missing 里混入非必需项 → MISSING_NOT_REQUIRED。
+  assert.deepEqual(envMappingIssues({ mapped: ['ALPHA_KEY'], missing: [], required }), ['UNACCOUNTED:BETA_KEY']);
+  assert.deepEqual(envMappingIssues({ mapped, missing: ['GAMMA_KEY'], required }), ['MISSING_NOT_REQUIRED:GAMMA_KEY']);
+  // 空问题数组只属于真正一致的三元组。
+  assert.deepEqual(envMappingIssues({ mapped: ['ALPHA_KEY'], missing: ['BETA_KEY'], required }), []);
 });
