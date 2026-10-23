@@ -112,6 +112,16 @@ node tools/i22-failmatrix-evidence-table.mjs --write
 | NC-19 | 判定引擎不再因命中阻断级规则判 rejected | E1-01、E1-02 |
 | NC-20 | 删「未筛查 ⇒ INPUT_UNCERTAIN」分级 | D4-01 |
 | NC-21 | 删「版本已被推进」守卫 | D4-03 |
+| NC-22 | `privacy/exports-list.ts` 的 `ledger()` 懒建 catch：读面解析失败不再折成 503，原样上抛 | 单元测试 `exports-route-http.test.mjs`「连接池形状不合：装配期不抛（buildApp 能起），请求期 fail-closed 503」 |
+| NC-23 | `db/catalog.ts` 的 `readHomePreviews`：删掉语句超时单独分级（504 退化成 503） | 单元测试 `public-home.test.mjs`「database failures use safe contract errors, including statement timeout」 |
+| NC-24 | `knowledge/applicability-screen.ts` 的 `screenRegistrationMatch`：非 matched 的阻断码钉成 `INTERNAL`（不再 fail-closed 成 4xx） | 单元测试 `knowledge-applicability-screen.test.mjs`「GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 保留记录但资格另判」 |
+
+> **NC-22/23/24（R34 追加）的靶子不是矩阵用例，而是既有单元测试**：`me/exports`、`public/home`、
+> 登记校验面这三个读面不进 HTTP 失败矩阵，守着它们的是 `tests/unit/*.test.mjs`。执行器为此支持
+> `unitWatch: [{ file, pattern }]`，`pattern` 是测试名的**字面子串**：改一处后必须**恰好那一条**转红
+> （`# fail ≥ 1` 且 `# pass = 0`），恢复原字节后必须**恰好一条**转绿（`# fail = 0` 且 `# pass = 1`）。
+> 隐私说明（`GET /me/privacy-policy`）本轮判为**负控制不成立**：该域无路由、无守卫代码、无守护测试，
+> 缺口性质是「缺实现 / 缺测试」——不为凑数新写弱测试去喂负控制，详见证据页 R34 小节。
 
 四条**必须知道**的实测结论（它们本身就是被测代码/工具链的性质，不是测试写法）：
 

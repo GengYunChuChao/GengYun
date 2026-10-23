@@ -642,3 +642,71 @@ Node.js v24.16.0
 | `E2-02`@279 | 291 | +12 | 同一凭据去读一个不存在的媒体 id ⇒ 404，与上一条完全同形 |
 
 订正后逐条复核：65 个 id 全部命中**该 id 的用例行**（`hit=65 / miss=0`），不再有「行号对、指错用例」的情形。
+
+## R34 追加：4 域负控制覆盖（2026-10-24）
+
+**本节基线 commit = `4b87e1d9`**（`git rev-parse upstream/main` = `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`，`Reviewed PR #525`；工作树分支 `feat/gy-r34-i22-failmatrix-4domains`）。开工三读数：`git rev-parse HEAD` = `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`、`git rev-parse upstream/main` = 同值、`git status --porcelain -uall` = 0 行。
+
+### 口径：两类靶子（为什么这 3 个域要用单元测试当靶子）
+
+`mutations.mjs` 原来每条负控制只有一类靶子 `watch`（矩阵用例 id，执行器跑 `run.mjs --only=<id>`，要求全红）。本轮 4 个域里有 3 个**不进 HTTP 失败矩阵**（矩阵是 `execution_mode=stub` 下的失败注入表，不覆盖这几个读面），守着它们的是 `tests/unit/*.test.mjs` 里**既有**的测试。于是执行器新增第二类靶子：
+
+| 靶子 | 字段 | 「真红」判据 | 「转绿」判据 |
+| --- | --- | --- | --- |
+| 矩阵用例 | `watch: ['C2-05']` | `run.mjs --only=C2-05` 的每条都必须 `FAIL` | 恢复原字节后复跑全 `PASS` |
+| 既有单元测试 | `unitWatch: [{ file, pattern }]` | `node --test --test-name-pattern=<pattern> <file>` 必须 `# fail ≥ 1` **且** `# pass = 0`（恰好那一条红，不许有 PASS 混在里面） | 恢复原字节后必须 `# fail = 0` **且** `# pass = 1`（恰好一条转绿；pattern 变宽顺手盖住别的测试不算） |
+
+`pattern` 是测试名的**字面子串**，执行器转义成正则后传给 `--test-name-pattern`。`tests/unit/gy-i22-failmatrix.test.mjs` 同时加了反向闸门：`unitWatch.file` 必须在 `tests/unit/` 下、`pattern` 必须在该文件里**逐字出现**——测试改名或删除 ⇒ 负控制必须同步，不能让一条指向空气的负控制继续绿。
+
+⛔ **没有为任何域新写测试来喂负控制**：`unitWatch` 指向的 3 个测试文件在本轮之前就存在，`git diff` 里它们一个字节都没动。
+
+### 逐域结果
+
+| # | 域 | 变异点（文件:函数名） | 目标测试（既有） | 红（改后实测） | 绿（恢复后实测） | 是否成立 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `me/exports` | `services/api/src/privacy/exports-list.ts:createExportsListService` 内 `ledger()` 的懒建 catch | `tests/unit/exports-route-http.test.mjs`「连接池形状不合：装配期不抛（buildApp 能起），请求期 fail-closed 503」 | `# tests 1 / # pass 0 / # fail 1`；`The validation function is expected to return "true". Received false`（`assert.rejects` 的校验函数判否：原始错误不再是 `PROVIDER_UNAVAILABLE` 503） | `# fail 0 / # pass 1` | ✅ 成立（NC-22） |
+| 2 | `public/home` | `services/api/src/db/catalog.ts:readHomePreviews` 的「语句超时单独分级」那一行 | `tests/unit/public-home.test.mjs`「database failures use safe contract errors, including statement timeout」 | `# fail 1 / # pass 0`；`expected: 504` / `actual: 503` | `# fail 0 / # pass 1` | ✅ 成立（NC-23） |
+| 3 | `privacy-policy` | ——（无守卫代码可改） | ——（无守护测试） | —— | —— | ❌ **不成立：该域没有实现**，见 3.1 |
+| 4 | `registrations/verify` | `services/api/src/knowledge/applicability-screen.ts:screenRegistrationMatch` 的阻断码 fail-closed 映射 | `tests/unit/knowledge-applicability-screen.test.mjs`「GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 保留记录但资格另判」 | `# fail 1 / # pass 0`；`error: '契约错误码没有对应 HTTP 状态：INTERNAL'` | `# fail 0 / # pass 1` | ✅ 成立（NC-24），但域口径需订正，见 4.1 |
+
+每条都过了完整闭包：改前 / 改后 / 恢复后三次 sha256 逐字节比对一致（`NC-22` `services/api/src/privacy/exports-list.ts` = `65dfc495c3c3014b6a869571e674f368173088da27ff54e6184c22683432c587`、`NC-23` `services/api/src/db/catalog.ts` = `3fd779cc9be18f7bb85470633f03dfe3bdc8b961c1be4ca02ea78a04936554c2`、`NC-24` `services/api/src/knowledge/applicability-screen.ts` = `45cad9090813c2f231e64fc8b9c849e05069474b9c67f138fc97f9145136ea43`），恢复用**原始字节**回写，不经过字符串重编码。
+
+#### 3.1 `privacy-policy` 为什么不成立（缺口性质＝缺实现，比缺测试更上游）
+
+查证事实（三处互相独立）：
+
+1. `services/api/src/routes/` 下**没有**任何实现 `GET /me/privacy-policy`（或 `/privacy-policy`）的路由文件：`Select-String -Path services/api/src/routes/*.ts -Pattern 'privacy'` 的命中全部是 `import … from '../privacy/*.ts'` 与内容举报枚举 `'privacy'`，**没有一条是路由声明**。
+2. 契约侧该行仍标「待接入」：`docs/ui-contract-binding.md` 绑定表的「隐私说明 | `GET /me/privacy-policy` | 静态文案」一行写着「界面读取待接入」。
+3. 仓内既有测试把它登记为**计划证据**而不是已实现能力：`tests/unit/contract-planned-exemptions.test.mjs` 的 `getPrivacyPolicy` 条目 `why: '无任何 policy 内容模块、无路由、无用例；仅有界面绑定的需求侧要求，因此只能记计划证据并标明是需求侧依据。'`；`services/api/src/privacy/backup-replay-manifest.ts` 的注释同样写明「**未自造任何路由/字段**」。
+
+结论：**该域无守护测试，负控制无法成立，缺口性质＝缺实现（连路由都没有；退一步讲也是缺测试）**。按本轮规则**没有**为它新写一条弱断言去喂负控制——那种做法只会产出一条「无论如何都红不了」的假负控制。
+
+#### 4.1 `registrations/verify` 的域口径订正
+
+任务书给的域名叫 `registrations/verify`。实测：`services/api/src/routes/` 下**没有** `/registrations/verify` 路由，只有 `/admin/registrations` 系列读面（`routes/admin.ts`）。真正承担「登记校验」语义的是 `services/api/src/knowledge/applicability-screen.ts` 的 `screenRegistrationMatch`：登记匹配状态 `state` 经 `MATCH_ERROR_MAP` 折成阻断错误码，未登记的 `state` 一律折成 `UNMAPPED_BLOCK_ERROR`（`OBJECT_UNAVAILABLE` 409）——即「非 matched 一律 fail-closed 成 4xx，绝不放行成 200/500」。NC-24 改的就是这一行（把折档结果钉成 `INTERNAL`），由既有单元测试「GY-I08 装配：登记匹配非 matched 一律带 4xx」检出。**域成立，但成立在模块函数上、不在路由上**，故在此如实记账。
+
+### 本轮跑过的命令与读数（定向 + 一次全量）
+
+| 命令 | 读数 |
+| --- | --- |
+| `node --test tests/unit/gy-i22-failmatrix.test.mjs` | `# tests 3 / # pass 3 / # fail 0`（含新增的 `unitWatch` 闸门与 `MUTATIONS.length >= 26`） |
+| `node --test tests/unit/exports-route-http.test.mjs` | `pass 3 / fail 0`（干净树） |
+| `node --test tests/unit/public-home.test.mjs` | `pass 4 / fail 0`（干净树） |
+| `node --test tests/unit/knowledge-applicability-screen.test.mjs` | `pass 9 / fail 0`（干净树） |
+| `node tools/i22-failmatrix-negative-control.mjs --only=NC-22,NC-23,NC-24` | `PASS 3 / FAIL 0`（首轮 NC-22 曾 `FAIL`，见下「被否掉的候选」） |
+| `node tools/i22-failmatrix-negative-control.mjs --only=NC-01,NC-21` | `PASS 2 / FAIL 0`（回归自检：执行器改了红/绿分支后，老条目的 `watch` 通道必须照旧） |
+| `node --test "tests/unit/*.test.mjs"`（**一次**，串行） | `ℹ tests 3264 / pass 3261 / fail 0 / cancelled 0 / skipped 1 / todo 2 / duration_ms 79427.9506`，exit 0；末尾 `✖ failing tests:` 段只列出 `tests/unit/i11-audio-mp3-wav-guard.test.mjs` 的 2 条**既有 `todo`**（I11 缺口本体未修，本版不动），不计入 fail |
+
+#### 被否掉的候选（留档，免得下一片重走）
+
+`me/exports` 的第一个候选变异点是 `services/api/src/privacy/ledger-pg.ts` 里「无法归类的库错误 ⇒ `PROVIDER_UNAVAILABLE`(503, retryable=false)」那行兜底。实测**不红**：`--only=NC-22` 跑出 `fail=0 pass=1`。原因：`GET /me/exports` 的**列表读面**根本不走那条兜底（它是账本写入/回放路径的分档），列表面自己的 fail-closed 在 `exports-list.ts` 的 `ledger()` catch 里。换成后者后一次命中。教训：负控制挑的必须是**该测试真的走到**的那一行，不是「名字听起来对」的那一行。
+
+### 没有削弱已有负控制（可复核）
+
+- `git diff --numstat tests/failmatrix/mutations.mjs` = `41 0`：**新增 41 行、删除 0 行**——`NC-01…NC-21`（23 条）的 `find` / `replace` / `watch` 一个字节都没动，只在其后追加 `NC-22/23/24` 并补了文件头关于 `unitWatch` 的说明。
+- 计数只上调：`tests/unit/gy-i22-failmatrix.test.mjs` 里负控制条数下限 `MUTATIONS.length >= 20` → `>= 26`（= 现有全部负控制条数）；`MIN_CASES` 仍为 `230`（本轮没有新增矩阵用例，故不上调）。
+- 收尾 `git status --porcelain -uall` 只剩 5 个有意改动的文件（`tests/failmatrix/mutations.mjs`、`tests/failmatrix/README.md`、`tests/unit/gy-i22-failmatrix.test.mjs`、`tools/i22-failmatrix-negative-control.mjs`、本页），任何变异残留都没有。
+
+### 本轮没动的（避免与其它分片相撞）
+
+`.github/**`、`services/api/db/migrations/**`、`migration-reservations.json` 一律没碰；未起 PG 集群、未占端口（`exports-route-http.test.mjs` 自己 `app.listen({ port: 0 })` 的临时环回口是它原有形态）。`tools/i22-failmatrix-evidence-table.mjs` 的 `EXPECTED`（`total: 168`、`negativeControls: 23`）与本轮实测（矩阵 230 条 / 负控制 26 条）已对不上，属既有陈旧账，本轮不碰、如实记录。
