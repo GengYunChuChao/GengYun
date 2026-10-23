@@ -18,9 +18,12 @@
  *
  * 本片把两者**同时**解决，因此两个原因码在正常路径上**不再出现**：
  *   - 迁移 0030：`author_id` 可空 + 行内列 `anonymized_author_ref`（CHECK：恰好一个非空）；
- *   - 授权：`20-login-roles.sql` 的两表 `SELECT`/`UPDATE` 列清单补上这两列；
+ *   - 迁移 0032（R32 残留收口）：举报表同构 —— `reporter_id` 可空 + 行内
+ *     `anonymized_author_ref`（同一条 CHECK），注销清理把举报者指针换成**同一串**注销引用；
+ *   - 授权：`20-login-roles.sql` 的两表（0032 起含举报表）`SELECT`/`UPDATE` 列清单补上这两列；
  *   - 写路径：`store.purgeOwnerData(ownerId, { anonymizedAuthorRef })` 在同一事务里
- *     `author_id = NULL, anonymized_author_ref = <ref>`；
+ *     `author_id = NULL, anonymized_author_ref = <ref>`（帖/评）、
+ *     `reporter_id = NULL, anonymized_author_ref = <ref>`（举报）；
  *   - 读路径：`service.ts` 用 `author_id ?? anonymized_author_ref` 投影，`authors.resolve()`
  *     对**行内引用**直接投影 ⇒ 不依赖任何进程内状态。
  *
@@ -37,6 +40,18 @@
  * 「普通行 + 已软删行」时普通行替换成功（>0）、平台判 completed，而软删行仍以原 `author_id`
  * 直接关联账户。现在判据改为**清理后重新测量的剩余 owner 引用**（`authorRefsRemaining`，
  * 含软删行）：只要还剩一行指向该账户，就去身份未完成 ⇒ `blocked` + 本原因码。
+ *
+ * ## R32 残留收口（迁移 0032）：举报者指针也进同一条读数
+ *
+ * #483 只把帖/评的作者指针换成注销引用，`community_reports.reporter_id` 仍原样保留（注销清理
+ * 只清 `detail`）⇒ 已注销账户与「谁举报了什么」之间还有一条直接关联面；而当时的
+ * `authorRefsRemaining` 只数帖 + 评 ⇒ 这条残留**读数看不见**，端口报 completed。
+ *
+ * 本片（迁移 0032）把举报者指针按 0030 的同构模式处理（`reporter_id` 可空 + 行内
+ * `anonymized_author_ref`，与帖/评**共用同一串**），并把举报并入**同一条** `authorRefsRemaining`
+ * 读数。为什么扩口径而不是新增第二个读数：完成判据只能有一个 —「还剩多少行指向该账户」
+ * 是个整体事实；两个读数会立刻产生"哪个说了算"的歧义（例如一个 0、一个未知时该判什么）。
+ * 字段名沿用 `authorRefsRemaining` 是历史原因，语义是「本主体在社区域的行级账户引用」。
  *
  * ## fail-closed：证明不了就不算完成（P2 返修残留 fail-open 收口）
  *
@@ -76,11 +91,13 @@ export interface CommunityOwnerPurgePort {
 
 export const AUTHOR_REFERENCE_BLOCKED_REASONS = Object.freeze({
   /**
-   * **仍有行以原 `author_id` 关联本账户**（去身份未完成）。
+   * **仍有行以原账户 id 关联本账户**（去身份未完成）。
    *
-   * 判据口径（P2 返修）：以存储清理后**重新测量**的 `authorRefsRemaining` 为准，**含**
-   * `visibility='deleted'` 的行；⛔ 不再以"换了几行 > 0"推断完成 —— 那正是 PR #483 [P2]
-   * 「普通行替换成功、软删行仍关联账户，回执 completed」的成因。
+   * 判据口径（P2 返修 + R32/0032 扩展）：以存储清理后**重新测量**的 `authorRefsRemaining`
+   * 为准，覆盖 `community_posts.author_id` / `community_comments.author_id` /
+   * `community_reports.reporter_id`，**含** `visibility='deleted'` 的行；
+   * ⛔ 不再以"换了几行 > 0"推断完成 —— 那正是 PR #483 [P2]「普通行替换成功、软删行仍关联账户，
+   * 回执 completed」的成因。举报者指针是 #483 之后剩下的同类残留（当时读数只数帖评 ⇒ 看不见）。
    */
   ROW_REFERENCE: 'author-row-reference-not-replaced',
   /**

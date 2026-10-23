@@ -187,7 +187,7 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/conversations-pg.mjs',
   'tests/integration/community-pg.mjs',
   // 2b. `community-filter-pg`（R29-S13 接入，#15 的筛选真库读数 + 举报状态缺口登记）：自建专用空库
-  //    （硬钉 `gengyun_community_filter_test`）、只 apply 0001+0022、全程只用库 owner 连接，
+  //    （硬钉 `gengyun_community_filter_test`）、只 apply 0001+0022+0030+0032、全程只用库 owner 连接，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本零耦合；紧跟 `community-pg` 便于两条社区臂
   //    并排读（两者**不共享库/角色**，重排也不会互相污染，但顺序判据要求与 workflow 逐条一致）。
   'tests/integration/community-filter-pg.mjs',

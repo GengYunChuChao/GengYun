@@ -116,7 +116,8 @@ const POST_COLUMNS =
 const COMMENT_COLUMNS =
   'id, revision, post_id, author_id, anonymized_author_ref, body, visibility, audit_state, created_at';
 const REPORT_COLUMNS =
-  'id, revision, reporter_id, target_type, target_id, target_revision, state, reason_code, detail, created_at';
+  'id, revision, reporter_id, anonymized_author_ref, target_type, target_id, target_revision,'
+  + ' state, reason_code, detail, created_at';
 const MODERATION_COLUMNS =
   'id, target_type, target_id, target_revision, decision, reason_codes, hard_rule_passed, rule_version,'
   + ' text_digest, contract_complete, missing_contract_fields, created_at';
@@ -212,7 +213,11 @@ export function reportRecordFromRow(row: Record<string, unknown>): ReportRecord 
   return {
     id: String(row.id),
     revision: Number(row.revision),
-    reporter_id: String(row.reporter_id),
+    // 迁移 0032：举报者指针可空（注销后 `reporter_id = NULL` + 行内注销引用）。
+    // ⚠️ 绝不能写成 `String(row.reporter_id)`：那会把 NULL 变成字符串 'null'
+    // （0030 在 author_id 上踩过的同一个坑），注销后读回就成了一条"假举报者"。
+    reporter_id: nullableUuid(row.reporter_id),
+    anonymized_author_ref: nullableAnonRef(row.anonymized_author_ref),
     target_ref: {
       type: closedValue(row.target_type, TARGET_TYPE_VALUES, '目标类型'),
       id: String(row.target_id),
@@ -769,6 +774,11 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
 
     async insertReport(record) {
       // 按 `id` 覆盖（与内存实现的 `Map.set` 同义）；重复举报的去重在服务层 Idempotency-Key。
+      // ⚠️ `anonymized_author_ref`（迁移 0032）**不在这一列清单里**：新举报的举报者恒为活账户，
+      // 新列按列默认值 NULL 落库，`reporter_id` 由 `$3` 写入 ⇒ 满足 `exactly_one`。
+      // 也正因为如此，`ON CONFLICT` 的 `reporter_id = EXCLUDED.reporter_id` 只会作用于
+      // "同一 id 重放"（服务层用幂等台账拦截，正常不会走到这里）；若真有人拿已匿名行的 id
+      // 重放，库侧 `exactly_one` 会直接拒绝（fail-closed，不静默复活账户关联）。
       await run(
         `INSERT INTO community_reports
            (id, revision, reporter_id, target_type, target_id, target_revision, state, reason_code, detail,
@@ -830,17 +840,21 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
      *    与「删除账号映射」不冲突（P2 返修：监工 PR #483 指出旧实现把这类行整行跳过，
      *    导致同主体「普通行 + 已软删行」时普通行替换成功、软删行仍以原 `author_id` 关联账户，
      *    而回执已报 completed）。
-     * 5. **点赞 ⇒ 物理删**（集合语义、行为痕迹）；**举报 ⇒ 只清 `detail`**（行与 state 保留，
-     *    处置轨迹是审核域留痕）；**本域幂等台账**按 `scope` 前缀清空。
-     * 6. **行级作者指针替换（迁移 0030）**：同一事务内把命中行的 `author_id` 置 NULL、写入随机
-     *    注销引用 `anonymized_author_ref`（全行共用一串，逐主体独立）。这是 F13「内部作者换
-     *    不可反查的注销引用、删除账号映射」的落地点：引用**落在行上** ⇒ 重启/多副本读同一行得
-     *    同一串（不再依赖 `authors.ts` 的进程内 Map），也不再有"删账号级联删内容"的风险
-     *    （`author_id = NULL` 不参与 `ON DELETE CASCADE`）。命中集 = 该主体名下**全部**行，
-     *    **含** `visibility='deleted'` 行（见第 4 条）。
-     * 7. **剩余读数**：写入完成后用一条只读查询**重新测量**「仍以原 `author_id` 关联本主体的
-     *    行数」（帖 + 评、含软删行）⇒ `authorRefsRemaining`。端口（`purge.ts`）只认这个数判
-     *    blocked：⛔ 不再以 `authorRefsReplaced > 0` 冒充"账号映射已清干净"。读数不可读时
+     * 5. **点赞 ⇒ 物理删**（集合语义、行为痕迹）；**举报 ⇒ 清 `detail` + 举报者指针换注销引用**
+     *    （迁移 0032；行、state 与处置轨迹保留——处置轨迹是审核域留痕）；**本域幂等台账**按
+     *    `scope` 前缀清空。
+     * 6. **行级作者指针替换（迁移 0030 / 举报表 0032）**：同一事务内把命中行的 `author_id` /
+     *    `reporter_id` 置 NULL、写入随机注销引用 `anonymized_author_ref`（**三张表共用一串**，
+     *    逐主体独立）。这是 F13「内部作者换不可反查的注销引用、删除账号映射」的落地点：引用
+     *    **落在行上** ⇒ 重启/多副本读同一行得同一串（不再依赖 `authors.ts` 的进程内 Map），
+     *    也不再有"删账号级联删内容"的风险（`author_id = NULL` 不参与 `ON DELETE CASCADE`）。
+     *    命中集 = 该主体名下**全部**行，**含** `visibility='deleted'` 行（见第 4 条）与
+     *    `detail` 本来为空的举报行（上一版按 `detail IS NOT NULL` 过滤 ⇒ 这类行被整行跳过，
+     *    `reporter_id` 原样留给已注销账户）。
+     * 7. **剩余读数**：写入完成后用一条只读查询**重新测量**「仍以原账户 id 关联本主体的
+     *    行数」（帖 + 评 + **举报**、含软删行）⇒ `authorRefsRemaining`。端口（`purge.ts`）只认
+     *    这个数判 blocked：⛔ 不再以 `authorRefsReplaced > 0` 冒充"账号映射已清干净"，也
+     *    ⛔ 不用"只数帖评"的旧口径（那会让只剩举报的主体谎报 0）。读数不可读时
      *    （计数行列数不对 / 值不可信）报 `AUTHOR_REFS_REMAINING_UNKNOWN`，⛔ 不得折成 0 ——
      *    端口据此 fail-closed 判 `blocked`（监工 PR #483 的残留 fail-open）。
      *
@@ -868,8 +882,20 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         const providedRef = options.anonymizedAuthorRef;
         const replaceAuthorRefs = providedRef !== null;
         if (typeof providedRef === 'string' && !ANONYMIZED_AUTHOR_REF_PATTERN.test(providedRef)) {
-          throw new Error('注销引用形状不合约定（拒绝写入：迁移 0030 的 CHECK 会拒绝它）');
+          throw new Error('注销引用形状不合约定（拒绝写入：迁移 0030/0032 的 CHECK 会拒绝它）');
         }
+        /**
+         * 本次事务唯一的注销引用（**惰性**求值）：帖、评、举报三张表必须写同一串。
+         *
+         * 为什么不在三处各自 `providedRef ?? createAnonymizedAuthorRef()`：那会让"调用方没表态"
+         * 的路径生成三个不同的引用，同一主体在社区域分裂成三个注销身份（F13「不混为一个账号」
+         * 的镜像要求：是"一个主体一个引用"，不是"一行一个随机串"）。
+         */
+        let sharedRef: string | null = typeof providedRef === 'string' ? providedRef : null;
+        const refForRows = (): string => {
+          sharedRef ??= createAnonymizedAuthorRef();
+          return sharedRef;
+        };
         // 先锁住本主体的内容行再逐行判定：清除规则在 JS 里（纯函数），
         // 同一事务内完成"读 → 判 → 写"，不产生检查-写入窗口。
         // ⚠️ 命中集**不**排除 `visibility='deleted'`：软删行的内容不动，但作者关联也要清
@@ -955,14 +981,13 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         //    「普通行 + 已软删行」时普通行替换成功、`authorRefsReplaced > 0`，回执就误判 completed，
         //    而软删行仍以原 `author_id` 直接关联账户（监工 PR #483 [P2] 的缺陷面）。
         if (replaceAuthorRefs && (postIds.length > 0 || commentIds.length > 0)) {
-          const ref = providedRef ?? createAnonymizedAuthorRef();
           if (postIds.length > 0) {
             const replacedPosts = (await sql.query(
               `UPDATE community_posts
                   SET author_id = NULL, anonymized_author_ref = $2
                 WHERE id = ANY($1::uuid[])
                 RETURNING id`,
-              [postIds, ref],
+              [postIds, refForRows()],
             )).rows;
             authorRefsReplaced += replacedPosts.length;
           }
@@ -972,7 +997,7 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
                   SET author_id = NULL, anonymized_author_ref = $2
                 WHERE id = ANY($1::uuid[])
                 RETURNING id`,
-              [commentIds, ref],
+              [commentIds, refForRows()],
             )).rows;
             authorRefsReplaced += replacedComments.length;
           }
@@ -985,6 +1010,26 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
           [ownerId],
         )).rows;
         records += reports.length;
+        // ---- 举报者指针替换（迁移 0032 / 与帖评同一口径）----
+        //
+        // 为什么必须单独一条语句、且**在清 detail 之后**：
+        //   · 清 detail 的那条按 `reporter_id = $1` 定位；若先把指针置空，它就一行也找不到了
+        //     （顺序错了不是报错，而是静默漏掉"清自由文本"这一既有义务）；
+        //   · 本条的命中集是「该主体名下的**全部**举报行」，与 detail 是否为空无关 —— 上一版
+        //     只处理 `detail IS NOT NULL` 的行，`detail` 本来就空的举报会被整行跳过，从而把
+        //     `reporter_id` 原样留给一个已注销账户（#483 之后的残留）。
+        // ⚠️ 不进 `records`（替换指针不是"改写正文"）、**不推进 revision** —— 与帖/评同一条纪律。
+        // ⚠️ 幂等：`WHERE reporter_id = <主体>` 命中 0 行 ⇒ 重放不会把新生成的引用写进去。
+        const replacedReports = replaceAuthorRefs
+          ? (await sql.query(
+              `UPDATE community_reports
+                  SET reporter_id = NULL, anonymized_author_ref = $2
+                WHERE reporter_id = $1::uuid
+                RETURNING id`,
+              [ownerId, refForRows()],
+            )).rows
+          : [];
+        authorRefsReplaced += replacedReports.length;
         const likes = (await sql.query(
           `DELETE FROM community_likes WHERE user_id = $1::uuid RETURNING target_id`,
           [ownerId],
@@ -1008,6 +1053,14 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         // ⇒ 报 {@link AUTHOR_REFS_REMAINING_UNKNOWN}（NaN），由端口 fail-closed 判 `blocked`。
         // ⛔ 不要写回 `Number(row.remaining ?? 0)`：那会把"没读到"折成 0，等于替存储撒谎说
         // "已清干净"（监工 PR #483 的残留 fail-open 正是从这类兜底长出来的）。
+        //
+        // ⚠️ R32（迁移 0032）：分支从 2 条扩到 **3 条** —— 举报也是"以原账户 id 关联本主体"的行。
+        // 只数帖评时，「只剩举报」的主体读数恒为 0 ⇒ 端口报 completed，而 `reporter_id` 仍直连
+        // 已注销账户。三分支因此必须**恰好 3 行**；少一行即"证明不了"⇒ unknown ⇒ blocked。
+        //
+        // `count(*)` 在运行时角色（列级 SELECT）下可执行：本机 PG 17.11 实测
+        // `GRANT SELECT (a)` 后 `SELECT count(*) FROM t` 通过、`SELECT b` 被拒（42501）
+        // ⇒ 不需要为了这条读数把表级 SELECT 授给运行时（那会破坏最小授权面）。
         const remainingRows = (await sql.query(
           `SELECT count(*)::int AS remaining
              FROM community_posts
@@ -1015,15 +1068,20 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
            UNION ALL
            SELECT count(*)::int AS remaining
              FROM community_comments
-            WHERE author_id = $1::uuid`,
+            WHERE author_id = $1::uuid
+           UNION ALL
+           SELECT count(*)::int AS remaining
+             FROM community_reports
+            WHERE reporter_id = $1::uuid`,
           [ownerId],
         )).rows;
         const readings = remainingRows.map((row) => readAuthorRefsRemaining(row['remaining']));
-        const [postRemaining, commentRemaining] = readings;
-        const authorRefsRemaining = readings.length === 2
+        const [postRemaining, commentRemaining, reportRemaining] = readings;
+        const authorRefsRemaining = readings.length === 3
           && typeof postRemaining === 'number'
           && typeof commentRemaining === 'number'
-          ? postRemaining + commentRemaining
+          && typeof reportRemaining === 'number'
+          ? postRemaining + commentRemaining + reportRemaining
           : AUTHOR_REFS_REMAINING_UNKNOWN;
         return {
           records,

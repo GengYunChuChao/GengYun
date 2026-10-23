@@ -146,6 +146,18 @@ test('正控制：安全帖子/评论保留、A 的点赞与举报自述清理�
   assert.equal(storedReportByA.detail, null, '举报人自述必须抹除');
   assert.equal(storedReportByA.state, 'isolated', '处置轨迹保留（注销不推翻审核结论）');
   assert.equal(storedReportByA.revision, triaged.revision + 1);
+  // 迁移 0032（R32 · #15 残留）：举报者指针也必须断开，并落行内注销引用（与帖/评同一串）。
+  assert.equal(storedReportByA.reporter_id, null, '举报者指针必须置空（否则已注销账户仍关联到"谁举报了什么"）');
+  assert.match(
+    String(storedReportByA.anonymized_author_ref),
+    /^gy-anon-[0-9a-f]{16}$/,
+    '举报行必须落形状合法的注销引用',
+  );
+  assert.equal(
+    storedReportByA.anonymized_author_ref,
+    storedPostA.anonymized_author_ref,
+    '同一注销主体的帖与举报必须共用同一个引用（不分裂成两个注销身份）',
+  );
   const otherReport = (await h.store.listReportsByReporter?.(USER_B.userId) ?? [])[0];
   if (otherReport !== undefined) {
     assert.equal(otherReport.detail, '别人的举报说明，不应被他人注销带走', '他人的举报说明不受影响');
@@ -170,15 +182,15 @@ test('正控制：安全帖子/评论保留、A 的点赞与举报自述清理�
   assert.ok(evidence.includes('community:retained:2'), `保留 1 帖 + 1 评论：${evidence}`);
   assert.ok(evidence.includes('community:online-purged:2'), `点赞 1 + 举报自述 1：${evidence}`);
   assert.ok(
-    evidence.includes('community:author-refs-replaced:2'),
-    `A 的 1 帖 + 1 评论 = 2 行作者指针被替换：${evidence}`,
+    evidence.includes('community:author-refs-replaced:3'),
+    `A 的 1 帖 + 1 评论 + 1 举报 = 3 行行级账户引用被替换（迁移 0032 起举报计入）：${evidence}`,
   );
   assert.equal(evidence.includes('community:blocked'), false, `归零后不得再写 blocked 段：${evidence}`);
   const communityAudit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.equal(communityAudit.retained, 2);
   assert.equal(communityAudit.redacted, 0);
   assert.equal(communityAudit.hiddenMedia, 0);
-  assert.equal(communityAudit.authorRefsReplaced, 2);
+  assert.equal(communityAudit.authorRefsReplaced, 3, '1 帖 + 1 评论 + 1 举报（迁移 0032 起举报计入）');
   assert.equal(communityAudit.blocked, undefined, '没有未完成项 ⇒ 审计行不带 blocked');
 });
 
@@ -192,7 +204,11 @@ test('幂等：同一主体再注销一次，真实改动归零；作者指针�
   await deletion.executeHandlers(String(first.id));
   const firstAudit = deletion.audit().find((entry) => entry.module === COMMUNITY_DELETION_MODULE);
   assert.ok(firstAudit.retained >= 2);
-  assert.equal(firstAudit.authorRefsReplaced, 2, '首轮把 A 的 1 帖 + 1 评论的作者指针替换掉');
+  assert.equal(
+    firstAudit.authorRefsReplaced,
+    3,
+    '首轮把 A 的 1 帖 + 1 评论 + 1 举报的行级账户引用都替换掉（迁移 0032 起举报计入）',
+  );
 
   const second = deletion.requestDeletionFor(USER_A.userId);
   await deletion.executeHandlers(String(second.id));

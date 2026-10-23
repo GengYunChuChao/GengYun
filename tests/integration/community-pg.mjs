@@ -138,16 +138,17 @@ async function main() {
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
-    const migrations = all.filter((m) => ['0001', '0019', '0022', '0028', '0030'].includes(m.version));
+    const migrations = all.filter((m) => ['0001', '0019', '0022', '0028', '0030', '0032'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0019', '0022', '0028', '0030'],
+      ['0001', '0019', '0022', '0028', '0030', '0032'],
       '0001（users/枚举底座）+ 0019（messages：GY-I18 admin 臂要证明"下架后消息跳转目标由 available 变 unavailable"，'
         + '该判据经消息域读取时重查，因此需要真消息表）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）'
-        + ' + 0030（F13 行级作者注销引用：author_id 可空 + anonymized_author_ref）',
+        + ' + 0030（F13 行级作者注销引用：author_id 可空 + anonymized_author_ref）'
+        + ' + 0032（#15 去身份残留：举报者 reporter_id 可空 + 同一形态的匿名引用）',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0019 + 0022 + 0028 + 0030`);
+    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0019 + 0022 + 0028 + 0030 + 0032`);
 
     const tables = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
@@ -260,6 +261,85 @@ async function main() {
     );
     await owner.query('DELETE FROM community_posts WHERE id = $1::uuid', [anonPost]);
     say('迁移 0030 真库契约：author_id 可空 + 引用 varchar(40)；同空/同非空与形状非法全被 CHECK 拒绝；匿名行不被 users 级联删除');
+
+    // ---- 1c. 迁移 0032（#15 去身份残留：举报者行级注销引用）的真库结构契约 ----
+    // 与 1b 同一条分工：CHECK 的判定权在数据库，不在 JS。这里是 #483 之后剩下的那股残留
+    // （`community_reports.reporter_id` 一直没人清）第一次在**真库**上被钉住。
+    {
+      const columns = (await owner.query(
+        `SELECT column_name, is_nullable, data_type, character_maximum_length
+           FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'community_reports'
+            AND column_name IN ('reporter_id', 'anonymized_author_ref')
+          ORDER BY column_name`,
+      )).rows;
+      assert.deepEqual(
+        columns.map((column) => column.column_name),
+        ['anonymized_author_ref', 'reporter_id'],
+        'community_reports 必须同时有 0032 的两列',
+      );
+      const [ref, reporter] = columns;
+      assert.equal(reporter.is_nullable, 'YES', 'community_reports.reporter_id 必须可空（0032 的 DROP NOT NULL）');
+      assert.equal(reporter.data_type, 'uuid', 'reporter_id 类型不变（⛔ 不改成 text 塞引用）');
+      assert.equal(ref.data_type, 'character varying');
+      assert.equal(Number(ref.character_maximum_length), 40, 'community_reports.anonymized_author_ref 必须是 varchar(40)');
+
+      const anonReporter = (await owner.query(
+        'INSERT INTO users (id) VALUES (gen_random_uuid()) RETURNING id',
+      )).rows[0].id;
+      const anonReport = randomUUID();
+      const reportTarget = randomUUID();
+      const insertAnonReport = (reporterId, anonRef) => owner.query(
+        `INSERT INTO community_reports
+           (id, revision, reporter_id, anonymized_author_ref, target_type, target_id, target_revision,
+            state, reason_code, detail, created_at)
+         VALUES ($1, 1, $2, $3, 'post', $4, 1, 'received', 'other', NULL, now())`,
+        [anonReport, reporterId, anonRef, reportTarget],
+      );
+      await assert.rejects(
+        () => insertAnonReport(null, null),
+        /community_reports_reporter_exactly_one|check constraint/i,
+        '两列同空（无主举报）必须被 exactly_one 拒绝（真库）',
+      );
+      await assert.rejects(
+        () => insertAnonReport(anonReporter, 'gy-anon-0123456789abcdef'),
+        /community_reports_reporter_exactly_one|check constraint/i,
+        '两列同非空（活账户 + 注销引用并存）必须被 exactly_one 拒绝（真库）',
+      );
+      await assert.rejects(
+        () => insertAnonReport(null, 'gy-anon-0123456789ABCDEF'),
+        /community_reports_anon_ref_shape|check constraint/i,
+        '大写 hex 必须被举报表的形状 CHECK 拒绝（真库）',
+      );
+      await assert.rejects(
+        () => insertAnonReport(null, 'gy-anon-0123'),
+        /community_reports_anon_ref_shape|check constraint/i,
+        '位数不足必须被举报表的形状 CHECK 拒绝（真库）',
+      );
+      await insertAnonReport(anonReporter, null);
+      assert.equal(
+        (await owner.query('SELECT reporter_id FROM community_reports WHERE id = $1::uuid', [anonReport]))
+          .rows[0].reporter_id,
+        anonReporter,
+        '合法形态（活账户 + NULL 引用）必须可插入，否则上面的负例可能只是"所有插入都失败"的假红',
+      );
+      // 注销形态：置空 + 写引用（与 `purgeOwnerData` 里那条 UPDATE 同形）。
+      await owner.query(
+        'UPDATE community_reports SET reporter_id = NULL, anonymized_author_ref = $2 WHERE id = $1::uuid',
+        [anonReport, 'gy-anon-0123456789abcdef'],
+      );
+      // 级联豁免：匿名举报（reporter_id=NULL）⇒ DELETE FROM users 不再级联删掉处置轨迹。
+      await owner.query('DELETE FROM users WHERE id = $1::uuid', [anonReporter]);
+      const survived = (await owner.query(
+        'SELECT reporter_id, anonymized_author_ref FROM community_reports WHERE id = $1::uuid',
+        [anonReport],
+      )).rows;
+      assert.equal(survived.length, 1, '已匿名举报必须在 DELETE FROM users 之后仍然存活（举报是审核域留痕）');
+      assert.equal(survived[0].reporter_id, null);
+      assert.equal(survived[0].anonymized_author_ref, 'gy-anon-0123456789abcdef');
+      await owner.query('DELETE FROM community_reports WHERE id = $1::uuid', [anonReport]);
+    }
+    say('迁移 0032 真库契约：reporter_id 可空 + 同一形态引用；同空/同非空与形状非法全被 CHECK 拒绝；匿名举报不被 users 级联删除');
 
     // ---- 2. 两个真实用户（作者 / 他人） ----------------------------------
     const userIds = [];
@@ -439,6 +519,8 @@ async function main() {
       reason_code: 'misleading',
       detail: '剂量写错了',
       created_at: CREATED,
+      // 迁移 0032：未注销举报的行内注销引用恒为 NULL（与 `REPORT_COLUMNS` 的读回形状逐字段对齐）。
+      anonymized_author_ref: null,
     };
     await store.insertReport(report);
     assert.deepEqual(await store.getReport(reportId), report);
@@ -586,22 +668,39 @@ async function main() {
       true,
     );
 
+    // 举报：`authorId` 自己**举报过**一条内容（带自述）—— 迁移 0032 之前，注销清理只把
+    // `detail` 置空、`reporter_id` 原样留着 ⇒ 已注销账户与「谁举报了什么」之间仍有关联面，
+    // 而当时的剩余读数只数帖评 ⇒ 看不见。这条夹具就是那个缺口的真库载体。
+    const ownReport = randomUUID();
+    await store.insertReport({
+      id: ownReport,
+      revision: 1,
+      reporter_id: authorId,
+      target_ref: { type: 'post', id: post2, revision: 1 },
+      state: 'received',
+      reason_code: 'other',
+      detail: '举报人自己的说明，注销时必须抹掉',
+      created_at: LATER,
+      anonymized_author_ref: null,
+    });
+
     const purged = await store.purgeOwnerData(authorId);
     assert.deepEqual(
       purged,
       {
-        records: 3,
+        records: 4,
         idempotency: 1,
         retained: 1,
         redacted: 1,
         hiddenMedia: 3,
-        authorRefsReplaced: 2,
+        authorRefsReplaced: 3,
         authorRefsRemaining: 0,
       },
-      'F13：安全帖保留（仅媒体移除）+ PII 帖脱敏 + 点赞物理删；'
-        + '媒体引用：安全帖 2 + PII 帖 1；评论与举报本主体此时没有；'
-        + '**作者指针替换 2 行**（post2 + piiPost，同一事务内 author_id 置 NULL + 写行内匿名引用）；'
-        + '**剩余 owner 引用 0**（写入后重新测量；含软删行 —— 本夹具没有 deleted 行，'
+      'F13：安全帖保留（仅媒体移除）+ PII 帖脱敏 + 点赞物理删 + 举报自述清理；'
+        + '媒体引用：安全帖 2 + PII 帖 1；评论本主体此时没有；'
+        + '**行级账户引用替换 3 行**（post2 + piiPost + 本主体的 1 条举报，同一事务内 '
+        + '`author_id`/`reporter_id` 置 NULL + 写行内匿名引用）；'
+        + '**剩余 owner 引用 0**（写入后重新测量，含软删行与举报 —— 本夹具没有 deleted 行，'
         + '软删行覆盖见 tests/unit/community-author-ref-softdeleted.test.mjs 的 A/B/D 组）',
     );
     // 迁移 0030：行级作者指针必须真的换掉（真库行值，不是投影层的假象）。
@@ -643,6 +742,45 @@ async function main() {
     assert.equal(purgedPii.revision, 2, '正文改了 ⇒ revision+1（旧 ETag/旧审核摘要失效）');
     assert.deepEqual(purgedPii.media_ids, [], 'PII 行的媒体引用同样移除');
     assert.equal(await store.countLikes('post', post2), 0, '点赞是物理删（行为痕迹不留）');
+
+    // ---- 迁移 0032：本主体的举报必须断开举报者关联（#483 之后剩下的那股残留）----
+    const purgedReport = (await owner.query(
+      `SELECT reporter_id, anonymized_author_ref, detail, revision, state, reason_code,
+              target_type, target_id, target_revision
+         FROM community_reports WHERE id = $1::uuid`,
+      [ownReport],
+    )).rows;
+    assert.equal(purgedReport.length, 1, '举报行必须仍然存在（处置轨迹是审核域留痕，注销不删行）');
+    assert.equal(purgedReport[0].reporter_id, null, 'F13/0032：行级举报者指针必须置空（删除账号映射）');
+    assert.match(
+      String(purgedReport[0].anonymized_author_ref),
+      /^gy-anon-[0-9a-f]{16}$/,
+      '举报行必须留下形状合法的注销引用',
+    );
+    assert.equal(
+      purgedReport[0].anonymized_author_ref,
+      anonRows[0].anonymized_author_ref,
+      '同一注销主体的帖与举报必须共用**同一个**引用（不分裂成两个注销身份）',
+    );
+    assert.equal(purgedReport[0].detail, null, '举报自由文本照旧清空（既有口径不变）');
+    assert.equal(purgedReport[0].revision, 2, '唯一的推进原因是清 detail（替换举报者指针不推进 revision）');
+    assert.equal(purgedReport[0].state, 'received', '举报状态原样保留（注销不推翻审核结论）');
+    assert.equal(purgedReport[0].reason_code, 'other', '理由码原样保留');
+    assert.deepEqual(
+      [purgedReport[0].target_type, purgedReport[0].target_id, purgedReport[0].target_revision],
+      ['post', post2, 1],
+      '举报目标与目标版本原样保留',
+    );
+    assert.equal(
+      (await owner.query(
+        'SELECT count(*)::int AS n FROM community_reports WHERE reporter_id = $1::uuid',
+        [authorId],
+      )).rows[0].n,
+      0,
+      '该主体名下不得再有任何 reporter_id 命中的举报行',
+    );
+    say('迁移 0032（真库）：注销把举报的 reporter_id 置空并写入同一串注销引用；举报行/状态/目标/理由原样保留（只断关联）');
+
     assert.deepEqual(
       (await owner.query(
         'SELECT detail FROM community_reports WHERE reporter_id = $1::uuid',
@@ -673,8 +811,8 @@ async function main() {
         authorRefsReplaced: 0,
         authorRefsRemaining: 0,
       },
-      '重跑：改动/删除为 0，作者指针也不再替换（author_id 已置空 ⇒ 该主体名下已无行）；'
-        + 'retained 因此如实为 0 —— 保留结果记录在首轮的 retained:1 与 author-refs-replaced:2 上；'
+      '重跑：改动/删除为 0，作者指针也不再替换（author_id/reporter_id 已置空 ⇒ 该主体名下已无行）；'
+        + 'retained 因此如实为 0 —— 保留结果记录在首轮的 retained:1 与 author-refs-replaced:3 上；'
         + '剩余 owner 引用仍为 0（重放不产生新的未完成项）',
     );
     say('注销清理可重跑：第二次改动/替换全 0；主体名下已无行（author_id 已置空）⇒ retained 如实为 0，不重复抹也不报错');
@@ -708,6 +846,9 @@ async function main() {
     // 0030 的列/约束挂在 0022 的两张表上：0022 的 down 把表一起撤了，所以再 apply 必须把 0030 也补回来，
     // 否则后续走 store 的语句会因 `anonymized_author_ref` 不存在而 42703（这正是真库臂抓到的形态）。
     await owner.query(sqlFile('migrations/0030_community_author_ref.sql'));
+    // 0032 同理：举报表的 `anonymized_author_ref` 也挂在 0022 的表上，缺了它读举报（`REPORT_COLUMNS`）
+    // 就会 42703 —— 与 0030 是同一条"运行时依赖"，不是可选项。
+    await owner.query(sqlFile('migrations/0032_community_report_reporter_ref.sql'));
     const afterReapply = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
     )).rows.map((row) => row.tablename);

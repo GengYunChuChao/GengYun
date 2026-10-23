@@ -1543,6 +1543,9 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             reason_code: body.reason_code,
             detail: body.detail ?? null,
             created_at: nowIso(),
+            // 迁移 0032：新举报的举报者恒为活账户 ⇒ 行内注销引用为 NULL
+            // （库侧 `community_reports_reporter_exactly_one` 要求恰好一个非空）。
+            anonymized_author_ref: null,
           };
           await store.insertReport(record);
           return { outcome: { kind: 'report' as const, id, revision: 1 }, result: projectReport(record) };

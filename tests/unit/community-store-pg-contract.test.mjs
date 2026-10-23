@@ -527,6 +527,8 @@ test('insertReport / getReport：按 id 覆盖（与 Map.set 同义），读回�
     id: REPORT_ID,
     revision: 1,
     reporter_id: OTHER,
+    // 迁移 0032：`REPORT_COLUMNS` 必须把行内注销引用读出来（未注销行恒为 NULL）。
+    anonymized_author_ref: null,
     target_type: 'post',
     target_id: POST_ID,
     target_revision: 3,
@@ -546,6 +548,7 @@ test('insertReport / getReport：按 id 覆盖（与 Map.set 同义），读回�
     reason_code: 'dangerous',
     detail: null,
     created_at: CREATED_AT,
+    anonymized_author_ref: null,
   });
   const read = await store.getReport(REPORT_ID);
 
@@ -554,6 +557,7 @@ test('insertReport / getReport：按 id 覆盖（与 Map.set 同义），读回�
     id: REPORT_ID,
     revision: 1,
     reporter_id: OTHER,
+    anonymized_author_ref: null,
     target_ref: { type: 'post', id: POST_ID, revision: 3 },
     state: 'received',
     reason_code: 'dangerous',

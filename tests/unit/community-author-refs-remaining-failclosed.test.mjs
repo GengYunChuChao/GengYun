@@ -290,13 +290,16 @@ function scriptedCountPool(remainingRows) {
 }
 
 test('F. PG 实现：计数不可读 ⇒ 报 unknown 哨兵（⛔ 不得折成 0）；正常 0 行仍如实 0', async (t) => {
+  // R32（迁移 0032）后剩余读数有**三个**分支：帖 / 评 / 举报。少任何一个分支都等于
+  // "还有一类账户关联没被看见" ⇒ 必须 unknown（fail-closed），⛔ 不得把"少一行"当 0。
   const unreadable = [
     ['一行计数都没返回（[]）', []],
-    ['只返回一半（缺一张表的 count）', [{ remaining: 0 }]],
-    ['计数为 null', [{ remaining: null }, { remaining: 0 }]],
-    ['计数是字符串 "3"（驱动层未转成数字）', [{ remaining: '3' }, { remaining: 0 }]],
-    ['计数是 1.5', [{ remaining: 1.5 }, { remaining: 0 }]],
-    ['计数是 -1', [{ remaining: -1 }, { remaining: 0 }]],
+    ['只返回 1/3（缺两张表的 count）', [{ remaining: 0 }]],
+    ['只返回 2/3（缺一张表的 count）', [{ remaining: 0 }, { remaining: 0 }]],
+    ['计数为 null', [{ remaining: null }, { remaining: 0 }, { remaining: 0 }]],
+    ['计数是字符串 "3"（驱动层未转成数字）', [{ remaining: '3' }, { remaining: 0 }, { remaining: 0 }]],
+    ['计数是 1.5', [{ remaining: 1.5 }, { remaining: 0 }, { remaining: 0 }]],
+    ['计数是 -1', [{ remaining: -1 }, { remaining: 0 }, { remaining: 0 }]],
   ];
   for (const [label, rows] of unreadable) {
     await t.test(label, async () => {
@@ -321,12 +324,12 @@ test('F. PG 实现：计数不可读 ⇒ 报 unknown 哨兵（⛔ 不得折成 0
     });
   }
 
-  await t.test('正常：两表都报 0 ⇒ 0，且端口 completed', async () => {
+  await t.test('正常：三表都报 0 ⇒ 0，且端口 completed', async () => {
     const store = createPostgresCommunityStore({
-      pool: scriptedCountPool([{ remaining: 0 }, { remaining: 0 }]),
+      pool: scriptedCountPool([{ remaining: 0 }, { remaining: 0 }, { remaining: 0 }]),
     });
     const counts = await store.purgeOwnerData(USER_A.userId, { anonymizedAuthorRef: 'gy-anon-0123456789abcdef' });
-    assert.equal(counts.authorRefsRemaining, 0, '两表都报 0 ⇒ 读数如实为 0');
+    assert.equal(counts.authorRefsRemaining, 0, '三表都报 0 ⇒ 读数如实为 0');
     const port = createCommunityOwnerPurgePort({
       store,
       authors: {
@@ -341,7 +344,7 @@ test('F. PG 实现：计数不可读 ⇒ 报 unknown 哨兵（⛔ 不得折成 0
 
   await t.test('正常：一表剩 1 行 ⇒ 1，端口 blocked + row-reference', async () => {
     const store = createPostgresCommunityStore({
-      pool: scriptedCountPool([{ remaining: 1 }, { remaining: 0 }]),
+      pool: scriptedCountPool([{ remaining: 1 }, { remaining: 0 }, { remaining: 0 }]),
     });
     const counts = await store.purgeOwnerData(USER_A.userId, { anonymizedAuthorRef: 'gy-anon-0123456789abcdef' });
     assert.equal(counts.authorRefsRemaining, 1, '一表 1 行 ⇒ 读数如实为 1');
@@ -354,6 +357,27 @@ test('F. PG 实现：计数不可读 ⇒ 报 unknown 哨兵（⛔ 不得折成 0
     });
     const result = await port.purgeOwnerData(USER_A.userId);
     assert.equal(result.blocked, 1);
+    assert.deepEqual([...result.blockedReasons], [ROW_REASON]);
+  });
+
+  // R32 新增：**只有举报**那一个分支剩 1 行 ⇒ 读数必须把它算进来（这正是 #483 之后漏掉的那类
+  // 残留：帖评都干净、举报还指着账户）。上一个"一表剩 1 行"用的是三分支里的第一个（帖）；
+  // 这里专门把 1 放在**第三个**（举报）分支，证明求和不是"只取前两行"。
+  await t.test('正常：只有举报分支剩 1 行 ⇒ 1（读数必须把第三个分支算进去）', async () => {
+    const store = createPostgresCommunityStore({
+      pool: scriptedCountPool([{ remaining: 0 }, { remaining: 0 }, { remaining: 1 }]),
+    });
+    const counts = await store.purgeOwnerData(USER_A.userId, { anonymizedAuthorRef: 'gy-anon-0123456789abcdef' });
+    assert.equal(counts.authorRefsRemaining, 1, '举报分支 1 行 ⇒ 读数如实为 1（⛔ 不得只加前两行）');
+    const port = createCommunityOwnerPurgePort({
+      store,
+      authors: {
+        resolve: async () => null,
+        anonymize: async () => ({ display_id: 'gy-anon-0123456789abcdef' }),
+      },
+    });
+    const result = await port.purgeOwnerData(USER_A.userId);
+    assert.equal(result.blocked, 1, '只剩举报残留 ⇒ 必须 blocked');
     assert.deepEqual([...result.blockedReasons], [ROW_REASON]);
   });
 });

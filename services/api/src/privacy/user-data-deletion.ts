@@ -681,8 +681,10 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   // `community:retained:<保留行数>` / `community:redacted:<脱敏行数>` / `community:media-hidden:<移除媒体数>`
   // / `community:author-refs-replaced:<行级作者指针替换行数>`（迁移 0030）。
   // 帖子/评论**保留可见性**（安全正文不因注销消失；含个人信息的正文改写后退出公开面等重审），
-  // 不能可靠脱敏的媒体引用移除，点赞物理删，举报只清 `detail`、保留 `state`，
-  // 作者指针换成**行内**随机注销引用（重启/多副本仍匿名）—— 判断依据见
+  // 不能可靠脱敏的媒体引用移除，点赞物理删；
+  // 举报**既清 `detail`（既有口径）也断开 `reporter_id`** 并写入行内注销引用（迁移 0032 引入），
+  // 举报行本身与 `state`/`target_ref`/`reason_code` 等处置轨迹**按设计保留**；
+  // 帖/评作者指针同样换成**行内**随机注销引用（重启/多副本仍匿名）—— 判断依据见
   // `community/store.ts::purgeOwnerData` 与 `community/purge.ts` 的注释。
   // ⚠️ 该端口在三种情况下返回 `blocked`：能力缺失 / 引用生成失败 / **剩余关联读数不可信**
   // （`author-refs-remaining-unknown`，fail-closed）。那部分**不会**被这里的保留计数洗成

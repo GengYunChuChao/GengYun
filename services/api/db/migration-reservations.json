@@ -18,7 +18,14 @@
     "【2026-10-22 F13 行级作者注销引用切片 / 迁移 0030 · 已按 remove_when 清空】落 0030 时 #419 的",
     "0029_media_object_cleanup.sql 还在分支上 ⇒ 本台账登记过 29（owner #419）。**#419 已合入 origin/main",
     "（056cf424）**、0029 已真实落盘 ⇒ 该条目按它自己的 remove_when **删除**，台账回到空数组：",
-    "30 个文件 + 0 保留 === max 30，三条不变量自然成立；缺号 0（verify-migrations-unique --strict PASS）。"
+    "30 个文件 + 0 保留 === max 30，三条不变量自然成立；缺号 0（verify-migrations-unique --strict PASS）。",
+    "【2026-10-23 R32 / #15 去身份残留切片 · 迁移 0032 · 已按 remove_when 清空 31 号条目】本片只许用 0032",
+    "（裁定 .pg17/ruling-r32-migration-0031-allocation.md 把 0031 锁给 #19）。**本片单独在树上时**曾登记 31",
+    "（31 个文件 + 1 保留 === max 32）—— 那是当时的事实，⛔ 不是可以拿来长期躺着的白名单：不能靠「清空台账",
+    "+ 在 README 写一句」蒙过去，那会让 undeclaredGaps 判红（未声明缺号 = 发现器漏项的形态），",
+    "而本台账正是把「有意缺号」与「漏片」分开的唯一机器判据。**#19 的 0031_online_purge_evidence.sql 已随",
+    "#494 真实落盘**（合流顺序：先 #494、再本片）⇒ 该条目按它自己的 remove_when **删除**，台账回到空数组：",
+    "**32 个文件 + 0 保留 === max 32、缺号 0**（verify-migrations-unique --strict PASS）。"
   ],
   "reservations": []
 }
