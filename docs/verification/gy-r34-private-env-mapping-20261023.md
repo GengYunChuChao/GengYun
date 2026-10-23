@@ -66,8 +66,8 @@
 | `OBJECT_STORAGE_BUCKET` | 私密文件 `objectStorageBucket` | 同上 |
 | `OBJECT_STORAGE_ACCESS_KEY` | 私密文件 `objectStorageAccessKey` | 同上 |
 | `OBJECT_STORAGE_SECRET_KEY` | 私密文件 `objectStorageSecretKey` | 同上 |
-| `CHAT_LLM_ENDPOINT` | 显式 env，否则取白名单默认（**有 key 时才补**） | 有 key 却缺 → `ConfigError`（本切片修的就是这行） |
-| `CHAT_LLM_MODEL` | 显式 env，否则取白名单默认（**有 key 时才补**） | 同上 |
+| `CHAT_LLM_ENDPOINT` | 显式 env，否则取白名单默认（**有 key、且两个键都未显式时才补**） | 绕过 `loadPrivateEnvironment()` 直接传 env 时才可能触发：有 key 却缺 → `ConfigError`（本切片修的就是这行） |
+| `CHAT_LLM_MODEL` | 显式 env，否则取白名单默认（**有 key、且两个键都未显式时才补**） | 同上 |
 | `CHAT_LLM_API_KEY` | 显式 env，否则回落 `DEEPSEEK_API_KEY`（= 私密文件 `deepseekApiKey`） | 两处都没有 → chat provider 为 `null`，不报错 |
 
 9 项 `REQUIRED_WHEN_REAL`（`services/api/src/config.ts:147`、仓内镜像 `tools/ai-config.mjs:146`）就是上表第 2–10 行：只给私密文件即可 9/9 非空，单测与 §5 探针各自证明一遍。
@@ -78,9 +78,9 @@
 | --- | --- | --- |
 | 白名单（唯一真源） | `endpoint: https://api.deepseek.com/chat/completions`，`model: deepseek-flash`，`keyEnv: DEEPSEEK_API_KEY` | `tools/ai-config.mjs:10` 的 `AI_ENDPOINTS.llm` |
 | 派生常量 | `CHAT_LLM_DEFAULT_ENV = { CHAT_LLM_ENDPOINT: AI_ENDPOINTS.llm.endpoint, CHAT_LLM_MODEL: AI_ENDPOINTS.llm.model }` | `tools/ai-config.mjs:235` |
-| 补齐点 | `applyChatProviderDefaults()`：拿到 key 才补，且只补「为空/未设」的那一个 | `tools/ai-config.mjs:246`、由 `tools/ai-config.mjs:24` 在返回前调用 |
-| 可覆盖 | **是**。显式 `CHAT_LLM_ENDPOINT` / `CHAT_LLM_MODEL` 一个字符都不改；优先级为 显式 env > 私密文件 `deepseekApiKey` > 默认值 | `tools/ai-config.mjs:248` |
-| 不补的情况 | 两处 key 都没有 → 一个都不补，避免把「没配 LLM」误判成「配错了 LLM」 | `tools/ai-config.mjs:247` |
+| 补齐点 | `applyChatProviderDefaults()`：拿到 key、且两个键都未显式时才补，只补「为空/未设」的那一个 | `tools/ai-config.mjs:246`、由 `tools/ai-config.mjs:24` 在返回前调用 |
+| 可覆盖 | **仅在两个键都未显式时补默认**。显式 `CHAT_LLM_ENDPOINT` / `CHAT_LLM_MODEL` 一个字符都不改；任一显式即整对不补，半配置交回 `asChatProvider()` 报 `ConfigError`；优先级为 显式 env > 私密文件 `deepseekApiKey` > 默认值 | `tools/ai-config.mjs:248` |
+| 不补的情况 | ① 两处 key 都没有 → 一个都不补，避免把「没配 LLM」误判成「配错了 LLM」；② 端点/模型任一显式（半配置）→ 整对一个都不补，缺的那半由 `ConfigError` 点名 | `tools/ai-config.mjs:247` |
 
 默认值不新造第二份字符串：改 `AI_ENDPOINTS.llm` 就等于改默认值，两处不可能分叉。
 
@@ -113,7 +113,7 @@ loadConfig=OK executionMode=real chatProvider=present objectStorage=present
 | `all thirteen documented private keys map to allowlisted variable names, none to zero` | 13 键逐一有映射；表内字段名恰好是 13＋4；只有 `databaseUrl` 一字段两名 |
 | `thirteen-key private file alone satisfies every required real-mode variable with the right value` | 每个合成标记落在自己的变量名上；13 键文件即 9/9，`missingFields` 为空 |
 | `the real-mode gap report names variables only and never echoes a value` | 缺口报错逐字等于 `MISSING_REAL_MODE_ENV:SESSION_SIGNING_KEY,OBJECT_STORAGE_BUCKET`，且反查不含任何合成值 |
-| `CHAT_LLM defaults come from the allowlist, lose to explicit env, and never appear without a key` | 默认值 = 白名单；显式 env 优先；无 key 不补、不虚造 `CHAT_LLM_API_KEY` |
+| `CHAT_LLM defaults come from the allowlist, lose to explicit env, and never appear without a key` | 默认值 = 白名单；显式 env 优先；无 key 不补、不虚造 `CHAT_LLM_API_KEY`；半配置（只给端点或只给模型）一个都不补，缺的那半由 `asChatProvider()` 报 `ConfigError` |
 
 ### 5.3 门禁
 
@@ -121,7 +121,7 @@ loadConfig=OK executionMode=real chatProvider=present objectStorage=present
 | --- | --- |
 | `node --check tools/ai-config.mjs` | exit 0（CI `access-verification` 的第一条） |
 | `node --test tests/ai-config.test.mjs` | `tests 17 / pass 17 / fail 0` |
-| `npm run verify:anchors` | PASS：`--strict` 下基线之外新增 0 条（本页 10 处行号引用全部可解析、区间有实质内容） |
+| `npm run verify:anchors` | PASS：`--strict` 下基线之外新增 0 条（本页 13 处行号引用全部可解析、区间有实质内容：`tools/ai-config.mjs` 10 处（第 10/14/24/132/140/146/235/246/247/248 行）＋ `services/api/src/config.ts` 2 处（第 147、278 行）＋ `docs/verification/README.md` 1 处（第 52 行）） |
 | `npm run test:docs` | PASS：27 initial tasks、Markdown 链接与表格、`docs/research` 结构 |
 
 ### 5.4 私密文件的键名实读（只打名字，不打印任何值）

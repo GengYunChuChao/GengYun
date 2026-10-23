@@ -239,12 +239,13 @@ export const CHAT_LLM_DEFAULT_ENV = Object.freeze({
 
 /**
  * 原地补齐 `CHAT_LLM_*` 的公开默认值，返回同一个对象（由 `loadPrivateEnvironment()` 在返回前调用）。
- * 生效条件：已经拿到 chat 的 key（显式 `CHAT_LLM_API_KEY` 或私密文件的 `deepseekApiKey`）。
- * 没有 key 时一个都不补——`asChatProvider()` 会返回 `null`，凭空补上端点只会把「没配 LLM」
- * 误判成「配错了 LLM」。优先级：显式环境变量 > 私密文件 `deepseekApiKey` > 本默认值。
+ * 生效条件：拿到 chat 的 key（显式 `CHAT_LLM_API_KEY` 或私密文件的 `deepseekApiKey`），且端点/模型都没有显式值。
+ * 没有 key 时一个都不补——`asChatProvider()` 会返回 `null`，凭空补上端点只会把「没配 LLM」误判成「配错了 LLM」。
+ * 半配置同理一个都不补：缺的那一半留给 `asChatProvider()` 报 `ConfigError`。优先级：显式环境变量 > 私密文件 `deepseekApiKey` > 本默认值。
  */
 export function applyChatProviderDefaults(env = {}) {
   if (!validText(env.CHAT_LLM_API_KEY) && !validText(env.DEEPSEEK_API_KEY)) return env;
+  if (validText(env.CHAT_LLM_ENDPOINT) || validText(env.CHAT_LLM_MODEL)) return env; // 半配置：一个都不补，缺的那半交回 `asChatProvider()` 报 `ConfigError`
   for (const [name, value] of Object.entries(CHAT_LLM_DEFAULT_ENV)) if (!validText(env[name])) env[name] = value;
   return env;
 }

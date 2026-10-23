@@ -8,6 +8,8 @@ import {
   PRIVATE_ENV_PAIRS, MAPPED_ENV_NAMES, REQUIRED_WHEN_REAL_FIELDS, MISSING_REQUIRED_FIELDS, envMappingIssues,
   CHAT_LLM_DEFAULT_ENV, applyChatProviderDefaults, missingRealModeEnv, assertRealModeEnv,
 } from '../tools/ai-config.mjs';
+// 半配置必须由 `asChatProvider()` 报 `ConfigError`：直接用真判定，不在这里复述一份判据。
+import { loadConfig } from '../services/api/src/config.ts';
 const example = JSON.parse(readFileSync(new URL('../docs/verification/config.example.json', import.meta.url), 'utf8'));
 const fixture = () => { const config = structuredClone(example); config.providers.moderation.bizType = 'synthetic_text'; config.providers.moderation.image.bizType = 'synthetic_image'; return config; };
 const env = { TOKENHUB_API_KEY: 'synthetic-tokenhub-secret', DEEPSEEK_API_KEY: 'synthetic-deepseek-secret', TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-tencent-secret' };
@@ -299,6 +301,16 @@ test('the real-mode gap report names variables only and never echoes a value', (
     Object.values(syntheticPrivate()).forEach((value, index) => assert.equal(error.message.includes(value), false, 'synthetic value #' + index));
   });
 });
+// 只问「chat 相关还差哪个字段」：stub 模式下 `loadConfig()` 仍无条件校验聊天模型（real 前置才按模式追加），
+// 把私密文件导出的合成 `DATABASE_URL` 换成形状合法的合成连接串，避免无关的 INVALID_VALUE 混进 issue 列表。
+const chatConfigIssueFields = (env) => {
+  try {
+    loadConfig({ ...env, APP_EXECUTION_MODE: 'stub', DATABASE_URL: 'postgres://synthetic.invalid:5432/synthetic' });
+  } catch (error) {
+    return error.issues.map(issue => issue.field);
+  }
+  return [];
+};
 test('CHAT_LLM defaults come from the allowlist, lose to explicit env, and never appear without a key', () => {
   assert.deepEqual({ ...CHAT_LLM_DEFAULT_ENV }, { CHAT_LLM_ENDPOINT: AI_ENDPOINTS.llm.endpoint, CHAT_LLM_MODEL: AI_ENDPOINTS.llm.model });
   assert.equal(Object.isFrozen(CHAT_LLM_DEFAULT_ENV), true);
@@ -312,10 +324,22 @@ test('CHAT_LLM defaults come from the allowlist, lose to explicit env, and never
     const full = loadPrivateEnvironment(file, { CHAT_LLM_ENDPOINT: 'https://explicit.invalid/chat', CHAT_LLM_MODEL: 'synthetic-explicit-model' });
     assert.equal(full.CHAT_LLM_ENDPOINT, 'https://explicit.invalid/chat');
     assert.equal(full.CHAT_LLM_MODEL, 'synthetic-explicit-model');
-    // 只给一半时只补另一半，已给的那个保留。
+    // 半配置不补另一半：只给模型时端点保持未设，缺的那半交给 `asChatProvider()` 报 `ConfigError`。
     const partial = loadPrivateEnvironment(file, { CHAT_LLM_MODEL: 'synthetic-explicit-model' });
     assert.equal(partial.CHAT_LLM_MODEL, 'synthetic-explicit-model');
-    assert.equal(partial.CHAT_LLM_ENDPOINT, AI_ENDPOINTS.llm.endpoint);
+    assert.equal(partial.CHAT_LLM_ENDPOINT, undefined);
+    assert.equal(Object.hasOwn(partial, 'CHAT_LLM_ENDPOINT'), false);
+    assert.deepEqual(chatConfigIssueFields(partial), ['CHAT_LLM_ENDPOINT']);
+    // 反方向同样一个都不补：只给端点时模型也不补，缺的是模型。
+    const reverse = loadPrivateEnvironment(file, { CHAT_LLM_ENDPOINT: 'https://explicit.invalid/chat' });
+    assert.equal(reverse.CHAT_LLM_ENDPOINT, 'https://explicit.invalid/chat');
+    assert.equal(reverse.CHAT_LLM_MODEL, undefined);
+    assert.equal(Object.hasOwn(reverse, 'CHAT_LLM_MODEL'), false);
+    assert.deepEqual(chatConfigIssueFields(reverse), ['CHAT_LLM_MODEL']);
+    // 空白串算未设（与 `applyChatProviderDefaults()` 的 `!validText` 同口径）：两个都只有空白时照旧补默认。
+    const blank = loadPrivateEnvironment(file, { CHAT_LLM_ENDPOINT: '   ', CHAT_LLM_MODEL: '' });
+    assert.equal(blank.CHAT_LLM_ENDPOINT, AI_ENDPOINTS.llm.endpoint);
+    assert.equal(blank.CHAT_LLM_MODEL, AI_ENDPOINTS.llm.model);
   });
   withPrivateFile({ appid: SYNTHETIC_APPID }, (file) => {
     // 私密文件只有 appid：没有 chat key ⇒ 不补端点/模型，也不凭空虚造 CHAT_LLM_API_KEY。
