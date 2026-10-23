@@ -10,9 +10,10 @@
  *
  * 判据（是 assert，⛔ 不是 warn）：
  *   ① **全扫描面 0 命中**；命中就打印 `文件:行:列 → 命中片段` ＋ 整改建议，并由 `node --test` 判红。
- *   ② **检测器正控制**：裁定 §2.1 列出的每种形式（含大小写、半角／全角冒号、无分隔写法）都必须判红；
- *      裁定允许的引用写法（`` `关键字`＋`#N` ``、「关单前置：`#N`」、「`Refs #N`」）一个都不许判红。
- *      没有 ②，「0 命中」可能只是检测器瞎了（假绿），这就是本文件存在的理由。
+ *   ② **检测器正控制**：裁定 §2.1 列出的每种形式（含大小写、半角／全角冒号、无分隔写法）、
+ *      跨行形态（关键字在行末、编号在下一行首）、`OWNER/REPO#N`、完整 URL、历史 `GH-N`
+ *      都必须判红；裁定允许的引用写法（`` `关键字`＋`#N` ``、「关单前置：`#N`」、「`Refs #N`」）
+ *      一个都不许判红。没有 ②，「0 命中」可能只是检测器瞎了（假绿），这就是本文件存在的理由。
  *   ③ **扫描面自检**：文档数下限、`docs/archive/**` 确实被排除、事故源文件确实在扫描面内 ——
  *      防止有人改一行路径之后「扫了个寂寞」还报绿。
  *
@@ -25,8 +26,13 @@
  *   ⚠ 本文件自身不在扫描面内；即便如此，源码里也**故意不写出**「关键字 + 编号」的连续字面串
  *   （样本用 `keyword + ' #17'` 拼），这样将来即使有人把扫描面扩到 `tests/**` 也不会自咬。
  *
- * 已知非目标：不覆盖 `repository_dispatch`／API 关单等形态，只覆盖 GitHub 在 PR 正文与
- * commit message 里会解析的两种引用（`#N` 与 issue／pull 的完整 URL）。
+ * 已知非目标（2026-10-23 如实登记，⛔ 不得写成「已全覆盖」）：
+ *   - **PR 正文与 commit message 本身**——本闸门扫的是仓库文件，而本次事故的触发面正是合并说明；
+ *     该面只能靠发正文前用同一正则自查（流程工具，非 CI）。
+ *   - `repository_dispatch`／GitHub API 关单等非文本形态。
+ *   - 子目录 README（`services/api/README.md` 等，当前 27 份）不在扫描面内（`docs/**` 之外）。
+ *   已覆盖的引用形态见 `REFERENCE`：`#N`、`OWNER/REPO#N`、issue／pull 完整 URL、历史 `GH-N`；
+ *   关键字与编号之间**允许跨一个换行**（见 `SEPARATOR`）。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -45,16 +51,33 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
  */
 const CLOSING_KEYWORDS = ['close', 'closes', 'closed', 'fix', 'fixes', 'fixed', 'resolve', 'resolves', 'resolved'];
 
-/** 关键字与编号之间的分隔：GitHub 允许 0..n 个空白、可选一个冒号（含全角 `：`）。 */
-const SEPARATOR = String.raw`[\s:：]*`;
+/** 关键字与编号之间的**行内**分隔：GitHub 允许 0..n 个空白、可选一个冒号（含全角 `：`）。 */
+const INLINE_SEPARATOR = String.raw`[^\S\r\n:：]*(?:[:：][^\S\r\n]*)?`;
 
-/** 引用形态：`#17` 或 issue／pull 的完整 URL（GitHub 两种都认）。 */
-const REFERENCE = String.raw`(?:#\d+|https?:\/\/(?:www\.)?github\.com\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+)`;
+/**
+ * 完整分隔：行内分隔 ＋ **最多跨一个换行**。
+ *
+ * 为什么要跨行（2026-10-23 对抗性审查 P7/P8 实测漏判）：GitHub 的解析作用在正文渲染后的
+ * 文本上，markdown 软换行在渲染时就是空格；而本次事故的串本身是在**合并说明**里被搬动／重排
+ * 后才触发的 ⇒ 「关键字在行末、编号在下一行首」不可排除，闸门必须取保守侧。
+ * ⛔ 只允许**一个**换行：空行分段属于另一段文本，再放宽会把整篇文档连起来，误伤面失控。
+ */
+const SEPARATOR = String.raw`${INLINE_SEPARATOR}(?:\r?\n${INLINE_SEPARATOR})?`;
+
+/**
+ * 引用形态（GitHub 官方文档 `Linking a pull request to an issue` 明列的写法）：
+ *   ① `#17`；② `OWNER/REPO#17`（如 `octo-org/octo-repo#100`，审查探针 X1/X2 曾漏判）；
+ *   ③ issue／pull 的完整 URL；④ 历史形态 `GH-17`。
+ * ④ 的依据弱于前三种（现行文档已不列 `GH-N`），但成本为零、且本仓当前 0 命中，故一并覆盖；
+ * 若监工认为超范围，删掉 `|\s*gh-\d+` 这一段即可，其余三类不受影响。
+ */
+const REFERENCE = String.raw`(?:(?:[\w.-]+\/[\w.-]+)?#\d+|https?:\/\/(?:www\.)?github\.com\/[^\s/]+\/[^\s/]+\/(?:issues|pull)\/\d+|\s*gh-\d+)`;
 
 /**
  * 检测器本体。
  * - `(?<![\w-])` 前置边界：`forecloses`／`unclosed` 这类英文词尾不算关键字（不误伤散文）；
- * - `gi`：大小写不敏感（全小写的写法一样会关单）＋ 逐行 `matchAll`。
+ * - `gi`：大小写不敏感（全小写的写法一样会关单）＋ **整段** `matchAll`（不再逐行匹配，
+ *   否则跨行形态永远抓不到；行列改由匹配偏移反算，见 `scanText`）。
  */
 const CLOSING_PATTERN = new RegExp(
   String.raw`(?<![\w-])(?:${CLOSING_KEYWORDS.join('|')})${SEPARATOR}${REFERENCE}`,
@@ -135,14 +158,37 @@ function collectScanTargets() {
   return [...new Set(targets)].sort();
 }
 
-/** 逐行扫描一段文本，返回 `{ line, column, match }`。 */
+/** 把跨行命中压成一行，便于在断言信息里逐条点名（`⏎` 代表命中片段里的换行）。 */
+function oneLine(text) {
+  return text.replace(/\r?\n/g, '⏎');
+}
+
+/**
+ * **整段**扫描一段文本，返回 `{ line, column, match }`。
+ *
+ * 判据从「逐行 `matchAll`」改成「整段 `matchAll` ＋ 偏移反算行列」：逐行扫描时
+ * 「关键字在行末、编号在下一行首」这种形态**永远抓不到**（对抗性审查 P7/P8 实测漏判）。
+ * 行列仍须准确 —— 报告 `文件:行:列` 是给人按图索骥的，行号错了比不报更糟。
+ */
 function scanText(text) {
   const hits = [];
-  const lines = text.split(/\r\n|\r|\n/);
-  for (let index = 0; index < lines.length; index += 1) {
-    for (const match of lines[index].matchAll(CLOSING_PATTERN)) {
-      hits.push({ line: index + 1, column: match.index + 1, match: match[0] });
+  // 行首偏移表 + 二分查找：命中数少，但文件多（373 份），避免每条命中都从头数换行。
+  const lineStarts = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] === '\n') lineStarts.push(index + 1);
+  }
+  const locate = offset => {
+    let low = 0;
+    let high = lineStarts.length - 1;
+    while (low < high) {
+      const middle = (low + high + 1) >> 1;
+      if (lineStarts[middle] <= offset) low = middle;
+      else high = middle - 1;
     }
+    return { line: low + 1, column: offset - lineStarts[low] + 1 };
+  };
+  for (const match of text.matchAll(CLOSING_PATTERN)) {
+    hits.push({ ...locate(match.index), match: match[0] });
   }
   return hits;
 }
@@ -172,7 +218,7 @@ function renderReport(findings) {
     `文档里出现了可被 GitHub 解析的关单关键字：${findings.length} 处`,
     '（授权／事故背景：.pg17/ruling-r33-closing-keyword-hazard-20261023.md；2026-10-23 #496 合并说明带出该串 ⇒ 关联 issue 被自动关闭）',
     '',
-    ...findings.map(finding => `  · ${finding.file}:${finding.line}:${finding.column} → ${finding.match}`),
+    ...findings.map(finding => `  · ${finding.file}:${finding.line}:${finding.column} → ${oneLine(finding.match)}`),
     '',
     REMEDIATION,
     '',
@@ -212,6 +258,57 @@ test('正控制：裁定 §2.1 的每种关键字形式（大小写／冒号／�
   assert.equal(scanText(urlForm).length, 1, 'issue／pull 的完整 URL 形态也必须判红（GitHub 两种引用都认）');
 });
 
+test('正控制：跨行／`OWNER/REPO#N`／历史 `GH-N` 形态必须判红，且 `行:列` 读数准确', () => {
+  // 拼接样本：源码里不留「关键字 + 编号」的连续字面串（将来扩扫描面到 tests/** 也不会自咬）。
+  const K = (...parts) => parts.join('');
+  const cases = [
+    // 对抗性审查 P7 原例：关键字在行末、编号在下一行首
+    { name: '跨行 #N', text: `${K('判据：', 'Clos', 'es')}\n${K('#', '99')} 已满足。\n`, line: 1, column: 4 },
+    // 对抗性审查 P8 原例：跨行 URL
+    { name: '跨行 URL', text: `${K('Clos', 'es')}\nhttps://github.com/o/r/pull/99\n`, line: 1, column: 1 },
+    // 对抗性审查 X1 原例：GitHub 官方文档「不同仓库」表格写法
+    { name: 'OWNER/REPO#N（Fixes）', text: `${K('Fix', 'es')} octo-org/octo-repo${K('#', '100')}\n`, line: 1, column: 1 },
+    // 对抗性审查 X2 原例：本仓 OWNER/REPO#N
+    { name: 'OWNER/REPO#N（Closes）', text: `${K('Clos', 'es')} GengYunChuChao/GengYun${K('#', '99')}\n`, line: 1, column: 1 },
+    // 对抗性审查 X3/X4：历史 `GH-N` 形态（取舍见文件头 `REFERENCE` 注释）
+    { name: 'GH-N（大写）', text: `${K('Clos', 'es')} ${K('GH', '-99')}\n`, line: 1, column: 1 },
+    { name: 'GH-N（小写）', text: `${K('clos', 'es')} ${K('gh', '-99')}\n`, line: 1, column: 1 },
+    // 跨行 ＋ 冒号 ＋ 缩进：报的必须是「关键字首字符」的行列，不是编号那一行
+    { name: '跨行 + 冒号 + 缩进', text: `第一行\n  判据 Resolved:\n   ${K('#', '7')} 结束\n`, line: 2, column: 6 },
+  ];
+  const failures = [];
+  for (const item of cases) {
+    const hits = scanText(item.text);
+    const ok = hits.length === 1 && hits[0].line === item.line && hits[0].column === item.column;
+    if (!ok) {
+      const got = hits.map(hit => `${hit.line}:${hit.column} ${oneLine(hit.match)}`).join(' / ') || '无命中';
+      failures.push(`${item.name} ⇒ 实得 ${got}（期望 ${item.line}:${item.column} 恰 1 处）`);
+    }
+  }
+  assert.deepEqual(
+    failures,
+    [],
+    [
+      '这些形态 GitHub 都会解析（跨行两条为审查实测漏判，`OWNER/REPO#N` 是官方文档原例）：',
+      ...failures.map(line => `  · ${line}`),
+    ].join('\n'),
+  );
+
+  // 反方向的边界：不许为了「多抓」把这两类也算命中，否则闸门变成噪声源。
+  const boundaries = [
+    { name: '关键字在行末但下一行没有编号', text: `${K('判据：', 'Clos', 'es')}\n下一段没有编号。\n` },
+    { name: '空行分段（只允许跨一个换行）', text: `${K('判据：', 'Clos', 'es')}\n\n${K('#', '99')}\n` },
+    { name: 'OWNER/REPO 但没有 # 编号', text: `${K('Fix', 'es')} octo-org/octo-repo\n` },
+  ];
+  for (const boundary of boundaries) {
+    assert.deepEqual(
+      scanText(boundary.text),
+      [],
+      `过度匹配（${boundary.name}）：闸门会把合法散文咬成红，维护者只能整体放弃引用`,
+    );
+  }
+});
+
 test('正控制：裁定允许的引用写法一个都不许判红（闸门不得把合规写法咬成红）', () => {
   const allowed = [
     '`' + 'Closes' + '`＋`#17`', // 裁定首选形式：关键字与编号被反引号＋全角加号隔开
@@ -239,7 +336,7 @@ test('全扫描面 0 命中：docs/**（排除 archive）＋ 根级说明 ＋ .g
   const targets = collectScanTargets();
   const findings = scanRepository(targets);
   assert.deepEqual(
-    findings.map(finding => `${finding.file}:${finding.line}:${finding.column} → ${finding.match}`),
+    findings.map(finding => `${finding.file}:${finding.line}:${finding.column} → ${oneLine(finding.match)}`),
     [],
     renderReport(findings),
   );
