@@ -108,6 +108,15 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 自起集群脚本（`GY_PG_BIN` + `GY_I19_PG_ROOT`，⛔ 无 `CREATE DATABASE`）。它此前**不在任何 workflow** ——
  * 驱动 `services/api/src/privacy/online-purge-driver.ts` 与运维命令 `tools/purge-expired-online-data.mjs`
  * 早在 main，但「7 日到期」这条保证在 CI 上从未被真库验证过；这正是本片要补的那条缺口（与第 1 条同族）。
+ * 第 18 条是 R34 接的（`admin-community-posts-pg.mjs`／`#18` 的**后台社区帖域**）：后台四域里此前唯一
+ * 没有真库臂的一域（账号读/开关/作业三条已有臂；`hidePost`＝契约 operationId 109 只在社区域脚本
+ * `community-pg.mjs` 第 13 节被顺带读到，而那一段明确声明**不**证明审计留痕）。它要求**空库**、
+ * 只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段；⛔ 不是全链，也不引 0007 的 pgcrypto 扩展），
+ * argv 只给 owner URL（不建组角色）；读数覆盖〔列表读面（分页/过滤/计数/契约形状）／单条读面
+ * （越权与不存在同形）／下架处置（真库行 visibility+revision、`post.hide` 审计留痕、社区可见性联动）／
+ * 失败隔离（八条被拒路径逐列不动 + 并发只成功一笔）〕。排在 `admin-accounts-read` 之后、`ocr-jobs` 之前
+ * （后台域三条 `admin-jobs → admin-flags → admin-accounts-read` 那条**有角色前提**的链原样保留，本脚本对
+ * 集群级角色零依赖 ⇒ 放在会把运行时角色 + 6 个组角色留下的 `admin-accounts-read` 之后不受影响）。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
@@ -120,6 +129,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
+  'tests/integration/admin-community-posts-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
@@ -146,6 +156,7 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
+  'tests/integration/admin-community-posts-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
@@ -219,6 +230,17 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    ⛔ 不要把它挪回 `admin-accounts-read-pg` 之后：那一步之后角色一直在，本臂会当场 exit=1。
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
+  // 3d. `admin-community-posts-pg`（R34 接入，#18 的后台**社区帖**域——这是「后台四域真 PG 联调」里
+  //    此前**唯一**没有真库臂的一域：账号读/开关/作业三条已有臂，社区帖的 `hidePost`（契约 109）
+  //    只在社区域脚本 `community-pg.mjs` 第 13 节被顺带读到，且那一段明确不证明审计留痕）。
+  //    它要求**空库**，只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段，⛔ 不是全链），
+  //    再用 real 装配 + 真库池跑列表/单条读面、下架处置（真库行 + 审计台账 + 社区可见性联动）
+  //    与失败隔离（八条被拒路径逐列不动 + 并发只成功一笔）。argv 只给 owner URL，**不建任何角色**。
+  //    位置：后台域三条（jobs → flags → accounts-read）之后、`ocr-jobs` 之前。⛔ 不要挪进
+  //    `admin-jobs → admin-flags → admin-accounts-read` 这条**有角色前提**的链中间（flags 要求前一步
+  //    收尾把角色清空、accounts-read 之后会把运行时角色 + 6 个组角色留在集群里）；本脚本对角色零依赖
+  //    （只用 owner URL、不 `CREATE ROLE`、不读 `pg_authid`）⇒ 排在 accounts-read **之后**不受影响。
+  'tests/integration/admin-community-posts-pg.mjs',
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合（R28-S36 之后它不再是最后一步）。
   'tests/integration/ocr-jobs-pg.mjs',
