@@ -182,11 +182,11 @@
   `>32` 都在启动时以 `ConfigError` 一次性报出，**不夹取**、不猜。
 - **实现注意**：Fastify 5 **不再接受数字**（`trustProxy: number` 会把所有来源判成不可信、静默
   fail-closed 退回到 socket 地址），因此布尔以外的取值由 `trustProxyOption` 编译成自定义谓词
-  `(_address, hop) => hop < trustProxy`（`services/api/src/app.ts:2222-2226`）后传入：谓词只判
+  `(_address, hop) => hop < trustProxy`（`services/api/src/app.ts:2271-2276`）后传入：谓词只判
   `hop`，`address` 不参与判断，语义与 `proxy-addr` 的 hop 形态一致。改这里时别忘了
   `tests/unit/rate-limit.test.mjs` 里「默认忽略 XFF / 打开后按 XFF 分桶」两条断言。
 - **额外的落盘面（开 `trustProxy` 的副作用）**：请求日志里的 `remoteAddress` 会从网关地址变成
-  **真实客户端 IP**（`services/api/src/app.ts:614`）。这是本片新引入的「终端用户 IP 落盘」，
+  **真实客户端 IP**（`services/api/src/app.ts:630`）。这是本片新引入的「终端用户 IP 落盘」，
   与限流生效与否是两件事——需要和日志脱敏/留存口径一起评估，而不是只看 429 是否按 IP 分开。
 ## 9. 验证
 
