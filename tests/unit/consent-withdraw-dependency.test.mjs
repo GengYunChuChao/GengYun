@@ -2,7 +2,7 @@
  * GY-R31-I29 · 撤授权**依赖判定臂**的只读回归钉（不改变生产行为）。
  *
  * 结论前置（详见 `docs/verification/gy-r31-i29-withdraw-deps-20261014.md`）：
- * `services/api/src/privacy/consent-pg.ts:171-196` 早已有依赖判定与 409 分支，且产品装配
+ * `services/api/src/privacy/consent-pg.ts:171-195` 早已有依赖判定与 409 分支，且产品装配
  * （`services/api/src/app.ts:860-870` → `:1419-1422`）**必然注入** `egressRevoker`，
  * 所以「有依赖」在装配后的语义是**撤回成功并先撤销在途外发**，不是 409。
  * 因此本片**不加**新的 409，只把**当前**语义钉死，防止将来被无声改成「一律 409」或
@@ -64,7 +64,7 @@ function syntheticPool({ present }) {
       if (sql.includes('DELETE FROM public.idempotency_keys')) return { rows: [] };
       if (sql.includes('SELECT request_hash,outcome FROM public.idempotency_keys')) return { rows: [] };
       if (sql.includes('JOIN public.consent_records')) return { rows: [consentRow('granted')] };
-      // 依赖判定：jobs / media / exports / author_links 四臂合成成一条 EXISTS 并集。
+      // 依赖判定：media / exports / author_links 三臂合成成一条 EXISTS 并集（R34 下线了 jobs 臂）。
       if (sql.includes('AS present')) return { rows: [{ present }] };
       if (sql.includes('UPDATE public.consent_records')) return { rows: [consentRow('withdrawn')] };
       if (sql.includes('UPDATE public.privacy_epochs')) return { rows: [{ user_id: USER_ID }] };

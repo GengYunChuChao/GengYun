@@ -39,7 +39,7 @@
 
 | 角色文件 | 授权对象 | 由哪个迁移创建 |
 | --- | --- | --- |
-| `auth_privacy.sql` | `users`、`sessions`、`admin_accounts`、`admin_scopes`、`admin_sessions`、`idempotency_keys`、`consent_records`、`privacy_epochs`、`jobs`、`media`、`exports`、`author_links` | 0001、0003、0008、0009 |
+| `auth_privacy.sql` | `users`、`sessions`、`admin_accounts`、`admin_scopes`、`admin_sessions`、`idempotency_keys`、`consent_records`、`privacy_epochs`、`media`、`exports`、`author_links` | 0001、0003、0008、0009 |
 | `catalog_readers.sql` | `catalog_read.home_species`、`catalog_read.registration_evidence` | 0005 |
 | `consent_granter.sql` | `consent_policies`、`recipients`、`consent_records`、`privacy_epochs` | 0001、0009 |
 | `profile_runtime.sql` | `crops`、`regions`、`single_profiles` | 0001 |
@@ -64,7 +64,7 @@
 
 | 角色 | 用途 | 授予范围（摘要；**权威在第 3 列的文件里**） | 文件 |
 | --- | --- | --- | --- |
-| `gengyun_auth_privacy` | 身份、会话、隐私撤回、幂等回执 | `users`/`sessions`/`admin_accounts`/`admin_scopes`/`admin_sessions`/`idempotency_keys`/`consent_records`/`privacy_epochs` 的**按列** SELECT/INSERT/UPDATE；`jobs`、`media` 只授 `owner_id`、`exports`/`author_links` 只授属主列的 SELECT（仅存在性检查） | `services/api/db/roles/auth_privacy.sql` |
+| `gengyun_auth_privacy` | 身份、会话、隐私撤回、幂等回执 | `users`/`sessions`/`admin_accounts`/`admin_scopes`/`admin_sessions`/`idempotency_keys`/`consent_records`/`privacy_epochs` 的**按列** SELECT/INSERT/UPDATE；`media` 只授 `owner_id`、`exports`/`author_links` 只授属主列的 SELECT（仅存在性检查） | `services/api/db/roles/auth_privacy.sql` |
 | `gengyun_preview_reader` | 公共科普预览 | `catalog_read.home_species` 的 SELECT | `services/api/db/roles/catalog_readers.sql` |
 | `gengyun_evidence_reader` | 内部登记证据 | `catalog_read.registration_evidence` 的 SELECT | 同上（与 preview_reader 在同一文件里，文件不可分割，故两个组都会建出） |
 | `gengyun_consent_granter` | 用途授权与撤回写入 | `consent_policies`/`recipients` 的 SELECT + `UPDATE(updated_at)`；`consent_records`/`privacy_epochs` 的按列 INSERT | `services/api/db/roles/consent_granter.sql` |
