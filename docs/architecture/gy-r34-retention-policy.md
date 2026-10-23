@@ -42,7 +42,7 @@
 | `basisRef` | 依据出处，`文件:行` 或 `文件:起-止` | 必填、非空白；**且该行原文必须出现该天数或窗口词**（单测 §1b 实读校验；小时按 /24 折算） |
 | `disposition` | `delete` / `anonymize` / `archive_marker` | 三选一，且与 `targetColumn`/`markerSource`/`revisionColumn` 的搭配必须自洽 |
 | `targetColumn` | 匿名化或标记的列 | `delete` 必须为 `null`；`anonymize`/`archive_marker` 必须给 |
-| `revisionColumn` | 匿名化时要一起推进的版本列 | **`anonymize` 必须声明**且不得等于 `targetColumn`；其它两种必须为 `null`。口径对齐注销路径 `services/api/src/community/store-pg.ts:1005-1011`（`SET detail = NULL, revision = revision + 1`）：以 `revision` 做 CAS/失效判定的读者必须看得见这次变化 |
+| `revisionColumn` | 匿名化时要一起推进的版本列 | **`anonymize` 必须声明**且不得等于 `targetColumn`；其它两种必须为 `null`。这道闸在**校验器与 SQL 生成器各查一次**（绕过 `assertRetentionPolicy` 直接拼 SQL 也会被拒），否则会拼出 `SET "detail" = NULL, "detail" = "detail" + 1` 到库才报 42601。口径对齐注销路径 `services/api/src/community/store-pg.ts:1005-1011`（`SET detail = NULL, revision = revision + 1`）：以 `revision` 做 CAS/失效判定的读者必须看得见这次变化 |
 | `markerSource` | 标记值来源 | 仅 `archive_marker` 需要；当前只支持 `age_column`（`SET <target> = <ageColumn>`，**不读时钟**，重跑结果稳定） |
 
 ## 3. 排除清单（写进代码里的 `RETENTION_EXCLUSIONS`，不只是本文档）
@@ -55,7 +55,7 @@
 | `public.media_object_cleanup` | 是**对象清理 outbox**，删行会丢掉「还有对象没删」的可重试依据 | 由清理端消费，不是保留期对象 |
 | `public.user_backup_copies` | 另有 30 日驱动（`packages/privacy/backup-retention.mjs` + `tools/purge-expired-backup-copies.mjs`），按 `retention_until` 逐用户判定 | 备份轴（GY-I19） |
 | `public.transcriptions` / `public.conversations` / `public.messages` | 需求要求**保留至注销**，不按日历删 | 注销闭集（F13） |
-| `public.favorites` / `public.history` | 用户私有内容，没有独立的日历出处，随注销链处理（`docs/implementation-requirements.md:277`） | 注销闭集 |
+| `public.favorites` / `public.history` | 用户私有内容，没有独立的日历出处，随注销链处理：口径**类推**自 `docs/implementation-requirements.md:277`（「私有…识别记录原则保存至注销」，原文没有「收藏」二字），表语义见 `docs/architecture/data-dictionary.md:77-78`（`favorites`、`recognition_history` 两行） | 注销闭集 |
 | 「注销证据」表（`docs/architecture/data-dictionary.md:89-91`）+ `deletion_tombstones` | 注销流程的状态机与第三方证据，删行＝删证据；tombstone 自带「保留期至少覆盖所有 30 日备份和恢复演练」（`docs/architecture/data-dictionary.md:92`） | 注销闭集 |
 | `exports` / `export_writebacks` | 外发台账是合规证据（谁、何时、给谁、依据哪版授权） | 隐私域，按需单独定策略 |
 
@@ -97,7 +97,7 @@ DATABASE_URL=postgresql://… npm run purge:retention -- --yes --table public.se
 | 事务边界 | **一批一个事务**：`BEGIN` → 一条变更 → `COMMIT`；异常 `ROLLBACK` 后把原始错误抛出去（回滚失败不掩盖原错） |
 | 失败可重入 | 判据只依赖「年龄 < cutoff」与「尚未处理」两个条件，不依赖游标文件；中断后重跑自动接着删剩下的 |
 | 幂等 | `delete`：行已不在即不再匹配；`anonymize`：额外 `AND target IS NOT NULL`，且同一条 `UPDATE` 里 `revision = revision + 1`；`archive_marker`：额外 `AND target IS NULL` 且标记值取自行内 `ageColumn` |
-| 并发性质 | 同一批的 `ctid` 子查询与变更语句在**同一语句、同一快照**里求值；另有 `IS NOT NULL` 闸门兜住「别人已经处理过」的行 ⇒ 与注销路径/请求路径的 `UPDATE` 并发时，最坏情况只是该行**本轮跳过、下轮补上**，不会重复删、不会把 `revision` 推进两次 |
+| 并发性质 | 同一批的 `ctid` 子查询与变更语句在**同一语句、同一快照**里求值；另有 `IS NOT NULL` 闸门兜住「别人已经处理过」的行 ⇒ **顺序重跑不会重复处理**（第二轮 0 行）；与注销路径/请求路径的 `UPDATE` 并发时，最坏情况只是该行**本轮跳过、下轮补上**。`anonymize` 的 `revision` 在 READ COMMITTED + HOT 更新下若与并发匿名化极端交错（对方在快照与 `UPDATE` 之间提交），外层 `ctid` 条件经 EPQ 重查后仍命中，`revision` 可能**多推进一次**（内容仍为 NULL，无实质破坏；本片未启用该处置） |
 | 时刻源 | 唯一 `SELECT now()`（库时钟）；`cutoff` 逐表打印，dry-run 与真执行对得上 |
 | 失败隔离 | 单表失败只记该表失败码，**不影响**其它表；有失败才返回 1 |
 
@@ -156,8 +156,8 @@ DATABASE_URL=postgresql://… npm run purge:retention -- --yes --table public.se
 
 | 臂 | 命令 | 读数 |
 | --- | --- | --- |
-| 单测 | `node --test tests/unit/retention-policy.test.mjs` | **20/20 通过，0 失败**（`duration_ms` 294.0028） |
-| 真库臂 | `GY_PG_PORT=55438 node tests/integration/retention-purge-pg.mjs`（PG 17.11） | **8 个断言组全绿**；dry-run `rows=1205 batches=0`；真执行 `rows=1205`（删 1200+5）、`batches=4`；降级两表**一行未动**；第二轮 `rows=0`（2 次空批）`exit=0`；机制臂标记 4 行 / 匿名化 6 行且 `revision` 1→2、第二轮 0 行；受限角色 `exit=1`（`public.sessions` = `PERMISSION_DENIED`）。提交后在干净树上用 `GY_PG_PORT=55439` 复跑同样 8 组全绿 |
+| 单测 | `node --test tests/unit/retention-policy.test.mjs` | **21/21 通过，0 失败**（`duration_ms` 288.4313，同代码另一次 1307.4588；P3 复审后补了「最后一道闸也挡 `revisionColumn === targetColumn`」一条，此前 20/20） |
+| 真库臂 | `GY_PG_PORT=55435 node tests/integration/retention-purge-pg.mjs`（PG 17.11） | **8 个断言组全绿**；dry-run `rows=1205 batches=0`；真执行 `rows=1205`（删 1200+5）、`batches=4`；降级两表**一行未动**；第二轮 `rows=0`（2 次空批）`exit=0`；机制臂标记 4 行 / 匿名化 6 行且 `revision` 1→2、第二轮 0 行；受限角色 `exit=1`（`public.sessions` = `PERMISSION_DENIED`）。此前在 55438 / 55439 上复跑同样 8 组全绿 |
 | 门禁 | `node tools/verify-purge-schedule.mjs` / `verify-layout.mjs` / `verify-doc-anchors.mjs --strict` | 三者均 `PASS` |
 
 ## 8. 未做项（如实登记）

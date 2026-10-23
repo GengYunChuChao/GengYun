@@ -549,6 +549,19 @@ test('§5 跳过策略校验直接拼 SQL 时，匿名化仍必须带 revisionCo
   );
 });
 
+test('§5 最后一道闸也挡 revisionColumn === targetColumn（不许同列两次赋值）', () => {
+  assert.throws(
+    () => buildRetentionMutationSql({ ...ANONYMIZE_ENTRY, revisionColumn: ANONYMIZE_ENTRY.targetColumn }),
+    (error) => error.code === RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
+    '否则会拼出 SET "detail" = NULL, "detail" = "detail" + 1，到库才 42601',
+  );
+  // 正臂：合法匿名化仍能拼出 SQL，且目标列只被赋值一次、SET 子句只有一处。
+  const sql = buildRetentionMutationSql(ANONYMIZE_ENTRY);
+  assert.match(sql, /^UPDATE "public"\."community_reports" SET "detail" = NULL, "revision" = "revision" \+ 1 WHERE ctid IN/);
+  assert.equal((sql.match(/SET /g) ?? []).length, 1);
+  assert.equal((sql.match(/"detail" = /g) ?? []).length, 1);
+});
+
 // ---------------------------------------------------------------------------
 // §6 cutoff 边界
 // ---------------------------------------------------------------------------

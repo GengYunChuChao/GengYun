@@ -510,10 +510,18 @@ export function buildRetentionMutationSql(entry) {
   if (disposition === 'anonymize') {
     // 最后一道闸：直接调本函数（跳过 assertRetentionPolicy）也必须带上 revisionColumn，
     // 否则「置 NULL 但不推进 revision」这种静默改写会被当成合法 SQL 发进库。
+    // 同口径再挡一次 `revisionColumn === targetColumn`：那样会拼出
+    // `SET "detail" = NULL, "detail" = "detail" + 1`，到库才 42601（multiple assignments）。
     if (typeof revisionColumn !== 'string' || !COLUMN_PATTERN.test(revisionColumn)) {
       throw policyError(
         RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
         `anonymize 必须声明 revisionColumn（表 ${table}），改写时同步 revision + 1`,
+      );
+    }
+    if (revisionColumn === targetColumn) {
+      throw policyError(
+        RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
+        `anonymize 的 revisionColumn 不得与 targetColumn 相同（表 ${table}）：会拼出同列两次赋值（42601）`,
       );
     }
     // 置 NULL 的同时推进 revision：内容被改写这件事必须让以 revision 做 CAS/失效判定的读者看见。

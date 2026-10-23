@@ -1,7 +1,7 @@
 # 证据页：数据保留策略表与清理执行器（GY-R34，2026-10-23）
 
 **一句话结论**：跨表保留策略表（**2 张表**，只登记「有的出处天数」）＋幂等执行器 `npm run purge:retention` 已落地，
-单测 **20/20 通过**，真库臂在 **PostgreSQL 17.11** 临时集群上 **8 个断言组全绿**：dry-run 一行未写、
+单测 **21/21 通过**，真库臂在 **PostgreSQL 17.11** 临时集群上 **8 个断言组全绿**：dry-run 一行未写、
 真执行只删过期、未过期与贴边行一行未动、两张天数无出处而**降级**的表一行未动、重复执行 **0 行**、
 机制臂（标记/匿名化 + `revision` 推进）可执行且第二轮 0 行、受限角色 **fail-closed 且不整轮停摆**。
 **未取得**：生产库读数、调度接线、CI 注册（见文末）。
@@ -10,9 +10,9 @@
 
 | 文件 | 做了什么 | 复核方式 |
 | --- | --- | --- |
-| `packages/privacy/retention-policy.mjs` | 声明式策略表 `RETENTION_POLICY`（**2** 条）＋排除清单 `RETENTION_EXCLUSIONS`（**9** 条）＋**14** 个稳定错误码＋`assertRetentionPolicy`／`retentionCutoffIso`／`retentionDuePredicate`／`buildRetentionCountSql`／`buildRetentionMutationSql`／`normalizeRetentionBatchLimit`／`normalizeRetentionMaxBatches`；`anonymize` 强制声明 `revisionColumn` 并在同一条 `UPDATE` 里 `revision = revision + 1` | 纯逻辑、无 IO、不读时钟；`node --test tests/unit/retention-policy.test.mjs` |
+| `packages/privacy/retention-policy.mjs` | 声明式策略表 `RETENTION_POLICY`（**2** 条）＋排除清单 `RETENTION_EXCLUSIONS`（**9** 条）＋**14** 个稳定错误码＋`assertRetentionPolicy`／`retentionCutoffIso`／`retentionDuePredicate`／`buildRetentionCountSql`／`buildRetentionMutationSql`／`normalizeRetentionBatchLimit`／`normalizeRetentionMaxBatches`；`anonymize` 强制声明 `revisionColumn`（且**不得等于 `targetColumn`**），并在同一条 `UPDATE` 里 `revision = revision + 1` | 纯逻辑、无 IO、不读时钟；`node --test tests/unit/retention-policy.test.mjs` |
 | `tools/purge-retention-expired.mjs` | 幂等清理执行器：默认 dry-run、`--yes` 才写库、`--batch`（≤500 硬顶）、`--max-batches`、`--table`、`--json`；一批一事务、失败 `ROLLBACK`、单表失败不拖垮其它表、退出码 0/1/2 | 同上；真库臂 |
-| `tests/unit/retention-policy.test.mjs` | §1 表级自洽（无重复表、天数>0、依据必填、处置与目标列搭配、`revisionColumn` 必填）／**§1b 依据出处实读**（`basisRef` 指向的行必须真的写着该天数或窗口）／§2 与 migrations 实文对齐（正反两向）／§3 dry-run 只发 SELECT／§4 分批与事务／§5 幂等（第二轮 0 行、三种 SQL 形状）／§7 硬顶与表名两段解析／§8 失败码与 CLI 闸门 | `node --test tests/unit/retention-policy.test.mjs` |
+| `tests/unit/retention-policy.test.mjs` | §1 表级自洽（无重复表、天数>0、依据必填、处置与目标列搭配、`revisionColumn` 必填且≠目标列）／**§1b 依据出处实读**（`basisRef` 指向的行必须真的写着该天数或窗口）／§2 与 migrations 实文对齐（正反两向）／§3 dry-run 只发 SELECT／§4 分批与事务／§5 幂等（第二轮 0 行、三种 SQL 形状、**最后一道闸**挡 `revisionColumn === targetColumn`）／§7 硬顶与表名两段解析／§8 失败码与 CLI 闸门 | `node --test tests/unit/retention-policy.test.mjs` |
 | `tests/integration/retention-purge-pg.mjs` | 真库臂：起临时集群→跑全链迁移→造过期/未过期/贴边数据→dry-run→真执行→复核→第二轮→**机制臂（合成策略行）**→受限角色；`GY_PG_PORT` 可钉死端口 | 见 §3 命令 |
 | `docs/architecture/gy-r34-retention-policy.md` | 策略表＋字段口径＋排除清单＋执行方式＋审计要求（表格化） | 文档评审 |
 | `package.json` | 新增 `purge:retention`、`test:integration:retention-purge-pg` | `node tools/verify-purge-schedule.mjs` 仍绿 |
@@ -31,19 +31,20 @@
 $ node --test tests/unit/retention-policy.test.mjs
 ✔ §1 策略表自洽：无重复表、天数>0、依据必填、处置与目标列搭配
 …
-ℹ tests 20   ℹ pass 20   ℹ fail 0   ℹ duration_ms 229.4563
+ℹ tests 21   ℹ pass 21   ℹ fail 0   ℹ duration_ms 288.4313
 ```
 
-（同一份代码三轮实测：`duration_ms` 229.4563 / 294.0028 / 1538.6355，三次都是 20/20、0 失败；
-差异只是机器并行负载。）
+（同一份代码多轮实测：`duration_ms` 229.4563 / 294.0028 / 1538.6355 时是 **20/20**；P3 复审后补了
+「最后一道闸也挡 `revisionColumn === targetColumn`」一条，读数变为 **21/21**（两次 288.4313 与
+1307.4588），差异都只是机器并行负载。）
 
-## 3. 读数二：真库臂（临时 PG 17.11，端口 55438）
+## 3. 读数二：真库臂（临时 PG 17.11，端口 55435）
 
 ```
 $ GY_PG_BIN=E:\GengYunCommander\.pg17\pgsql\bin \
   GY_R34_PG_ROOT=E:\GengYunCommander\.pg17\tmp \
   GY_R34_PG_LOG=E:\GengYunCommander\.pg17\tmp\r34-pg.log \
-  GY_PG_PORT=55438 \
+  GY_PG_PORT=55435 \
   node tests/integration/retention-purge-pg.mjs
 PASS 1: [0] 全链迁移 32 个已应用；策略表 2 张表 + 机制臂 2 张表全部在岗
 PASS 2: [1] 造数就位：idempotency 1200 过期/40 未过期/7 贴边；sessions 5/5/3；admin_sessions 4/4；reports 6 超期/4 未超期/2 早已匿名
