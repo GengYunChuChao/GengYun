@@ -137,7 +137,7 @@ import { createHistoryService, type HistoryService } from './history/service.ts'
 import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts';
 import { createPostgresHistoryStore } from './history/store-pg.ts';
 import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
-import { createUnwiredHistoryCascadePort, type HistoryCascadePort } from './history/cascade.ts';
+import { createHistoryCascadePort, type HistoryCascadePort } from './history/cascade-wiring.ts';
 import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
 import { createReferenceQueryService } from './knowledge/reference-query.ts';
 import {
@@ -1561,7 +1561,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         return app.ocrService.getJob({ userId, jobId });
       },
     });
-  const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createUnwiredHistoryCascadePort();
+  const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createHistoryCascadePort({ recognitionService: () => app.recognitionService, ocrService: () => app.ocrService });
   // 服务层门禁（**唯一**开关）：只有"有真实持久化落点"时才交出服务。
   //   - 非 `real` ⇒ 开启（内存 store，既有行为）；
   //   - `real` + `store.persistent === true`（PG store）⇒ 开启；

@@ -447,6 +447,7 @@ function messageFor(e) {
 function cascadeNote(cascade) {
   return {
     initiated: '已同时启动关联识别/OCR 私有结果、媒体与外发删除的删除流程（不等于已完成）。',
+    partial: '已删除关联的识别/OCR 私有结果，但媒体与外发删除尚未接线：这次清理不是全部完成。',
     unwired: '关联识别/OCR 私有结果、媒体与外发删除的流程尚未接线：本次只删除了历史记录本身。',
     failed: '关联删除流程启动失败：本次只删除了历史记录本身。',
     null: '未取得级联状态。'
