@@ -1,4 +1,4 @@
-﻿# 真库臂（real PostgreSQL 17.11）· 把「已在 main、却没有任何 workflow 跑过」的集成脚本接进 CI：
+# 真库臂（real PostgreSQL 17.11）· 把「已在 main、却没有任何 workflow 跑过」的集成脚本接进 CI：
 #   · tests/integration/conversations-pg.mjs（#313 / I12）
 #   · tests/integration/community-pg.mjs（#296 / I15）
 #   · tests/integration/messages-pg.mjs（#17 / I17）；R27-S4 追加
@@ -6,6 +6,8 @@
 #   · tests/integration/backup-copies-purge-pg.mjs（#19 / GY-I19 的 P0-4 执行者）；R28-E5 追加
 #   · tests/integration/qa-citations-pg.mjs（#12 / 问答引用可溯源）；R31 追加
 #   · tests/integration/admin-jobs-pg.mjs（#9 / 作业台：开关生效·作业可见·变更留痕·最小权限）；R31 追加
+#   · tests/integration/admin-community-posts-pg.mjs（#18 / 后台社区帖域：列表·单条读面 / 下架处置 /
+#     审计留痕 / 失败隔离）；R34 追加 —— 后台四域（账号读·开关·作业·社区帖）里此前**唯一**没有真库臂的一域。
 #   · tests/integration/ocr-corrections-pg.mjs（#10 / OCR 校正台账）；R31 追加
 #   · tests/integration/online-purge-pg.mjs（#19 / 在线数据 7 日到期**执行者**：到期闭区间·跨进程游标·
 #     失败不阻塞·回执 backupState）；R32 追加 —— 它的驱动与运维命令早已在 main，但此前**不在任何 workflow**，
@@ -228,6 +230,47 @@ jobs:
       # （角色必须已存在）。所以这一条只传一个参数——这是它唯一自洽的调用形态。
       # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，`[H]` 等锁 4007ms ⇒ 504 PROVIDER_TIMEOUT。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_flags_test' && node tests/integration/admin-flags-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_flags_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+      # 后台社区帖域（#18 / I18，#18 的「后台四域真 PG 联调」缺口）：库名硬钉
+      # `gengyun_admin_community_posts_test`，脚本要求**空库**（自己断言 `public` 下 0 张表），
+      # 只 apply 0001+0022+0030+0032（社区帖 读/写 真正依赖的四段：身份底座、社区六表（含
+      # `community_moderation_decisions`，读面 `effectiveState()` 每次都要它）、0030 的
+      # `anonymized_author_ref`、0032 的同一套列口径），⛔ 不是全链。
+      # 读数：real 装配 + 真库池下的〔列表读面（分页/过滤/计数/契约形状）／单条读面（越权与不存在同形）／
+      # 下架处置（真库行 visibility+revision+审计留痕+社区可见性联动）／失败隔离（八条被拒路径逐列不动 +
+      # 并发只成功一笔）〕，末行固定 `[ALL PASS]`。
+      # 连接串只走 **argv[2]**（owner URL）：它不建组角色、不要求运行时角色，也不需要 `CREATE ROLE` 权限；
+      # 缺 URL 时脚本打印 SKIP 并以 77 退出 ⇒ 下面把 77 显式升级成硬失败（77 = 未取得，⛔ 不是通过）。
+      # 位置：紧跟 `admin-flags`（同为后台域的臂）。`admin-flags` 收尾会清掉自己建的运行时角色
+      # （实测跑完只剩 `gengyun_ci_owner`），而本脚本对角色零依赖 ⇒ 放在它之后与之前都不受角色残留影响，
+      # 故按「后台域并排读」放在这一组里，⛔ 不追加到文件末尾。
+      # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：读数 23 组，末行 `[ALL PASS]`。
+      - name: 后台社区帖域（#18 / 列表·单条读面 / 下架处置 / 审计留痕 / 失败隔离）
+        run: |
+          set -euo pipefail
+          log=/tmp/admin-community-posts-pg.log
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_admin_community_posts_test'
+          rc=0
+          node tests/integration/admin-community-posts-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_admin_community_posts_test 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::后台社区帖域臂被跳过（exit 77）：连接串 env 传丢了，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::后台社区帖域臂失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/^\[[A-Z]\]/{n++} END{print n+0}' "$log")
+          echo "读数：${readings} 条 [X] 注释"
+          if [ "$readings" -lt 1 ] || ! grep -Fq '[ALL PASS]' "$log"; then
+            echo "::error::后台社区帖域 exit 0 但读数缺失（[X] 行=${readings}，末行 [ALL PASS] 未出现）⇒ 等于没跑。"
+            exit 1
+          fi
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
