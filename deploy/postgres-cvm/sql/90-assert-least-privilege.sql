@@ -1300,14 +1300,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- R28-S28（迁移 0025）：识别域四表。列清单与 20-login-roles.sql 段 J 逐列一致，
     -- 但这里是**独立复述**（同一事实的第二次写法），任一处漂移都会被下面的逐表断言抓住。
     -- recognition_selections 的 upd 是空数组：store 只 INSERT / SELECT，不 UPDATE；
-    -- recognition_idempotency 的 del 是 true：PG 无列级 DELETE，两条整行删除见 store:820/:830。
+    -- GY-R34-I19 起 recognition_jobs / records / selections 的 del 也是 true（连同
+    -- recognition_idempotency 共四张）：账号注销按主体清空
+    -- （`recognitions/store-pg.ts::purgeOwnerRows`）在 PG 上无列级 DELETE 可用，只能表级授。
+    -- 这四行与 20-login-roles.sql 段 J 的 GRANT DELETE 必须成对，由
+    -- tests/unit/least-privilege-expected-parity.test.mjs 双向核对（本片新增的护栏）。
     ('recognition_jobs',
      ARRAY['id','revision','kind','owner_user_id','recognition_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['id','revision','kind','owner_user_id','recognition_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['revision','state','deadline_at','updated_at','error_code'],
-     false),
+     true),
     ('recognition_records',
      ARRAY['id','revision','owner_user_id','media_id','media_revision','candidates',
            'uncertainty_reasons','selected_species_id','model_version','created_at','updated_at',
@@ -1317,14 +1321,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            'deleted'],
      ARRAY['revision','candidates','uncertainty_reasons','selected_species_id','model_version',
            'updated_at','deleted'],
-     false),
+     true),
     ('recognition_selections',
      ARRAY['id','revision','recognition_id','owner_user_id','species_id','provenance','decided_at',
            'linkage'],
      ARRAY['id','revision','recognition_id','owner_user_id','species_id','provenance','decided_at',
            'linkage'],
      ARRAY[]::text[],
-     false),
+     true),
     ('recognition_idempotency',
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
@@ -1341,7 +1345,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','revision','kind','owner_user_id','transcription_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['revision','state','deadline_at','updated_at','error_code'],
-     false),
+     true),
     ('transcriptions',
      ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_text','uncertain_spans',
            'confirmed_text','confirmed_at','model_version','created_at','updated_at','deleted'],
@@ -1349,7 +1353,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            'confirmed_text','confirmed_at','model_version','created_at','updated_at','deleted'],
      ARRAY['revision','raw_text','uncertain_spans','confirmed_text','confirmed_at','model_version',
            'updated_at','deleted'],
-     false),
+     true),
     ('speech_idempotency',
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
@@ -2865,7 +2869,10 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   --   反向：清单外的列，任何列级权限（含 REFERENCES）都不许有；
   --   表级：INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER 一律不得有，
   --         DELETE 必须**恰好**等于 del 列声明（del=true 的表见各行声明；本片起含
-  --         recognition_idempotency，它与 S24/S26 的三张幂等台账同性质）。
+  --         recognition_idempotency / speech_idempotency 两本幂等台账，以及
+  --         GY-R34-I19 账号注销按主体清空的 recognition_jobs / records / selections
+  --         与 speech_jobs / transcriptions 五张正文表——它们与 20-login-roles.sql 的
+  --         GRANT DELETE 成对，任一侧漂移都会被 least-privilege-expected-parity 抓住）。
   SELECT 'runtime_grants_' || e.tbl,
          to_regclass('public.'||e.tbl) IS NOT NULL
          AND NOT EXISTS (

@@ -111,7 +111,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 | 13 | `exports` | `user_id`/`recipient_id` | 2 张（`third_party_deletions`、`export_writebacks`，均 `NO ACTION`） | — | **排除**：导出请求台账，是「第三方到底收到过什么」的证据链头；删除会连带毁掉第三方删除证据 |
 | 14 | `export_writebacks` | `user_id` | 无 | — | **排除**：同上（导出回写结果） |
 | 15 | `third_party_deletions` | `recipient_id` | 无 | — | **排除**：第三方删除证据（在线/备份两态 + 证据引用），`#19` 的 30 日备份义务要靠它取证 |
-| 16 | `jobs` | `owner_id` | 自引用（`NO ACTION`） | — | **排除**：后台/管理任务台账（还有 `actor_admin_id`），归属列指向运维任务所有者，不是用户数据面 |
+| 16 | `jobs` | `owner_id`（`REFERENCES users (id)`，且有 `jobs_single_actor` 约束：`owner_id` 与 `actor_admin_id` 恰一） | 自引用（`retry_of` → `jobs`，`NO ACTION`） | — | **排除（下一片候选）**：`0001_initial_schema.sql:203-228` 的 `jobs` 是**早期媒体任务队列**（含 `input_hash` / `result_ref` / `provider_config_version` 等元数据），`owner_id` 非空时确实是用户维度的一行（`consent-pg.ts:174`、`grant-pg.ts:86` 还按 `WHERE owner_id = $1` 读它）；但识别/语音域已各有专表（0025/0026），这张表**是否仍在写**需先定性——若已停写就只余历史行，删与不删都要先定方案，故本片不接 |
 | 17 | `media` | `owner_id` | 3 张（`media_derivatives` CASCADE、`content_media_refs` NO ACTION、`community_media_grants` NO ACTION） | — | **排除**：媒体本体是对象存储指针 + 状态机，真正的清理面是 `public.media_object_cleanup` 与桶确认；只删行会留下孤儿对象（比删不干净更糟），需要独立片 |
 | 18 | `public.user_backup_copies` | `user_id` | 无 | — | **排除**：备份副本清单由备份清除端口在 30 日窗口处理（`backupPurge`），在线闭集不碰；本片两新域的 `backup_state` 如实停在 `pending` |
 | 19 | `sessions` | `user_id` | 无 | — | **排除**：注销受理时由 `public.request_account_deletion()`（SECURITY DEFINER）置 `revoked_at`，行保留作登录审计；属于账号状态迁移而非删除 |
@@ -137,7 +137,9 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 | 文件 | 改动 |
 | --- | --- |
 | `deploy/postgres-cvm/sql/20-login-roles.sql` | 识别段加 `GRANT DELETE ON public.recognition_jobs, public.recognition_records, public.recognition_selections TO gengyun_api_runtime;`；语音段加 `GRANT DELETE ON public.speech_jobs, public.transcriptions TO gengyun_api_runtime;`；两段 ④ 号说明块与 `\echo` 逐字重写（把「级联」错误说法换成上面这段事实） |
-| `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | 识别/语音探针段原本把这三条/两条 `DELETE` 当作**禁止面**（必须 42501）；改为「按主体 DELETE 必须成功」的 `[16]` 块，禁止面只剩 `recognition_selections` 的 `SELECT … FOR UPDATE`；断言块相应改名（`runtime_recognition_owner_purge_delete`、`runtime_speech_forbidden_surface_withdrawn`）；表级写授权白名单补 5 条三元组，计数 16 → 21 |
+| `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | 识别/语音探针段原本把这三条/两条 `DELETE` 当作**禁止面**（必须 42501）；改为「按主体 DELETE 必须成功」的 `[16]` 块，禁止面只剩 `recognition_selections` 的 `SELECT … FOR UPDATE`；断言块相应改名（`runtime_recognition_owner_purge_delete`、`runtime_speech_forbidden_surface_withdrawn`）；表级写授权白名单补 5 条三元组，计数 16 → 21；`expected` 清单里这 5 张表的 `del` 由 `false` 改 `true`（`recognition_jobs` / `recognition_records` / `recognition_selections` / `speech_jobs` / `transcriptions`），判据在 `AND has_table_privilege('gengyun_api_runtime', 'public.'\|\|e.tbl, 'DELETE') = e.del` |
+
+**expected 与 GRANT 必须同口径（本片第二次返修新增的护栏）**：`tests/unit/least-privilege-expected-parity.test.mjs`（新增）解析两份 SQL 做**双向**核对 —— `GRANT DELETE … ON … <表>` 里出现的每张表，`90-assert` 的 `expected` 必须 `del=true`；反过来说 `del=true` 的表必须真有 `GRANT`。正向 `ℹ tests 3 · pass 3 · fail 0`；把 `recognition_jobs` 的 `true),` 临时改回 `false),` ⇒ `ℹ tests 3 · pass 1 · fail 2`，红字逐字 `这些表在 20-login-roles.sql 里授了表级 DELETE，但 90-assert 的 expected 仍写 del=false（deploy-sql-gate 会判红）：recognition_jobs`；还原后回到 3/3。
 
 **为什么必须成对**：`tests/unit/sql-column-coverage.test.mjs` 把 8 个 store-pg 里每条 `DELETE` 折算成「整表 DELETE」需求，再拿 `20-login-roles.sql` 的真实授权文本核对（`const TABLE_WIDE_COLUMN = '*';` :494；`if (statement.verb === 'DELETE') add(statement, TABLE_WIDE_COLUMN, 'DELETE', 'DELETE 整表（PG 无列级 DELETE）');` :1573）。只改 store 不改授权 ⇒ 5 条红字（实测原文：`services/api/src/recognitions/store-pg.ts:596 → public.recognition_selections（整表） 缺 DELETE（DELETE 整表（PG 无列级 DELETE））；授权面现状：该表该权限未授任何列`）。这套棘轮正是为「表建了、运行时零授权」这个历史坑设的。
 
@@ -181,10 +183,13 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 | `tests/unit/recognitions-store-pg-wiring.test.mjs` / `speech-store-pg-wiring.test.mjs`（未改，被本片打红后返修代码） | 两条结构钉子要求「装配行保持内联三段式」「装配层只允许 `import type` 语音存储、且只 1 行」 | `ℹ tests 10 · pass 10 · fail 0` |
 | `tests/unit/ci-integration-chain-structure.test.mjs`（改） | 新真库臂登记进 `UNWIRED_DECLARATIONS`（含数据根键 `GY_R34_PG_ROOT` 的真值说明） | `ℹ tests 7 · pass 7 · fail 0` |
 | `tests/unit/doc-anchors-guard.test.mjs`（未改，被本片打红后改文档） | 7 处文档行号锚点随本片代码下移，逐处重取并注明新旧行号 | `ℹ tests 10 · pass 10 · fail 0` |
+| `tests/unit/least-privilege-expected-parity.test.mjs`（新增） | ① 双向成对：`20-login-roles.sql` 的 `GRANT DELETE` 表集 == `90-assert` 的 `expected … del=true` 表集；② 解析器自检（`flags.size ≥ 29`、`granted.size ≥ 9`、本片五张表两侧都在）；③ 常驻反向控制（合成 SQL 两侧都能点名） | 正向 `ℹ tests 3 · pass 3 · fail 0`；把一行 `expected` 改回 `false` ⇒ `ℹ tests 3 · pass 1 · fail 2`（红字点名 `recognition_jobs`） |
 
 ### 5.2 全量 `npm run test:unit`（根目录，命令见 §0）
 
-`ℹ tests 4278 · pass 4261 · fail 14 · cancelled 0 · skipped 1 · todo 2`，exit 1。
+`ℹ tests 4281 · pass 4264 · fail 14 · cancelled 0 · skipped 1 · todo 2`，exit 1。
+
+> 读数稳定性说明（如实）：加护栏后第一次全量跑报过 `fail 15`，该次同时有 5 个临时集群在跑；随后两次独立跑（全量一次、`tests/unit` 单独一次）都是 `14` 红，且逐条都是下表这三个文件，另外三个目录（`tests/privacy` `tests/media` `tests/reference` `tests/moderation`，共 1063 条）全绿。判定那 1 条为并发负载下的抖动，未在本片复现，故不登记为本片缺陷。
 
 **14 条失败全部是**上游既有**（与本片改动无关），逐文件实测归因（在 detach 到 `upstream/main`=`5a449305` 的干净 worktree 里复跑同一批文件）：
 
@@ -197,6 +202,32 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 基线复跑命令（干净 worktree 内，`npm ci` 后）：`node --test tests/unit/release-materials-index.test.mjs tests/unit/release-runbook-guard.test.mjs` ⇒ `ℹ tests 14 · pass 6 · fail 8`；`node --test tests/unit/release-materials-index-strict.test.mjs` ⇒ `ℹ tests 6 · pass 0 · fail 6`。合计 14 红，与本树逐条同名。
 
+### 5.3 `90-assert-least-privilege.sql` 本机真库实跑（按 deploy gate 配方）
+
+配方取自 `.github/workflows/deploy-sql-gate.yml` 的 job `deploy-sql-17-11`（`postgres:17.11` 服务容器、`POSTGRES_DB=gengyun`、`POSTGRES_USER=gengyun_cvm_owner`），本机以临时集群逐字复刻：
+
+| 步 | 命令（工作树根目录执行） | 前置条件 |
+| --- | --- | --- |
+| 0 | `initdb -D <tmp> --no-sync --encoding=UTF8 --locale=C -U gengyun_cvm_owner --auth=trust`；端口/监听地址/`max_connections=64` 写进 `postgresql.conf` 后 `pg_ctl -w start` | 端口取 **55436 之后**的空闲口（本机 55432–55435 已被占；本次用 55438） |
+| 1 | `psql -X -q -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun OWNER gengyun_cvm_owner'` | `20-login-roles.sql:94` 断言 `current_database() = 'gengyun'` |
+| 2 | `node services/api/src/db/migrate.ts up`（env `DATABASE_URL=postgres://gengyun_cvm_owner:…@127.0.0.1:<port>/gengyun`） | `migrate.ts` 只认 `DATABASE_URL` |
+| 3 | 5 个组角色按 `provision-db.sh:267-273` 顺序：`auth_privacy` → `catalog_readers` → `consent_granter` → `profile_runtime` → `knowledge_runtime`，各 `psql -X -q -v ON_ERROR_STOP=1 -f services/api/db/roles/<f>` | 组角色必须**先**存在（`20-login-roles.sql` 只校验不代建） |
+| 4 | `psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/20-login-roles.sql`（env `GENGYUN_API_RUNTIME_PASSWORD` = 48 位小写十六进制合成值） | 文件头 `\getenv` + 口令形状校验；库名/owner 校验 |
+| 5 | `psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | 需要超级用户（读 `pg_authid`） |
+
+实测读数：`STEP2_MIGRATE_EXIT=0`（`已应用：0001…0032`）、`STEP3_*` 五个角色文件均 `exit 0`、`STEP5_90ASSERT_EXIT=0`、输出非空行 22 行、**末行逐字 `ok`** ⇒ 判据（退出码 0 **且** 末行 `ok`）双双满足。日志里可见的 `ERROR: permission denied for table recognition_selections`（`:743`）与 `permission denied for schema catalog_ops/staging_intake` 是脚本**设计内的** 42501 探针，不改退出码。
+
+配套的直接读数（同一集群，库属主视角）：
+
+| 表 | `has_table_privilege('gengyun_api_runtime','public.'||tbl,'DELETE')` |
+| --- | --- |
+| `recognition_jobs` / `recognition_records` / `recognition_selections` | `t` / `t` / `t` |
+| `speech_jobs` / `transcriptions` | `t` / `t` |
+| `recognition_idempotency` / `speech_idempotency` | `t` / `t` |
+| `users` / `media` / `deletion_requests` | `f` / `f` / `f` |
+
+复跑脚本：本机一次性脚本 `E:\GengYunCommander\.pg17\tmp\i19closure2\run-deploy-sql-gate.ps1`（**不入库**；仓库内可复现的是上面 6 步命令）。Windows PowerShell 5.1 上有两个坑，写在这里免得下一个人再踩：① `pg_ctl` 的输出**不能**重定向/进管道——它启动的 `postgres` 会继承句柄，PowerShell 会等到 EOF 卡死；② 直接 `& pg_ctl … -t 60 -w start` 会被 5.1 的原生参数传递弄坏（实测 pg_ctl 报 `unrecognized operation mode "60"`），`cmd /c` 拼引号又会把 `-o` 吃掉（postgres 退回 5432）——最终用 `System.Diagnostics.Process` 逐参数传 argv，并把端口写进 `postgresql.conf`。
+
 ---
 
 ## 6. 未做 / 风险 / 建议
@@ -207,7 +238,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 2. **`single_profiles` 不接**：确属用户数据，但存储层无清空原语，且与目录/地区版本一致性耦合，留给独立片。
 3. **媒体本体不接**：`media` / `media_derivatives` / `content_media_refs` / `community_media_grants` 的删除必须与对象存储清理（`media_object_cleanup`）同批做，只删行会留孤儿对象。
 4. **备份列仍是 `pending`**：`recognitions` / `speech` 没有 `user_backup_copies` 的写入源，`refreshBackupStates` 仍只推导四域（否则会凭空 `blocked`）。30 日备份义务对这两域**尚无取证路径**。
-5. **`deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 未在真库跑过**：它是部署链的 psql 脚本，单测不解析它；本片只做了「与 20-login-roles.sql 成对改」的静态一致性，**没有** `psql -f 90-assert…` 的真库读数。
+5. **`90-assert` 已在本机真库跑过，但不是 CI 本体**：按 §5.3 的 gate 配方用临时集群 + 生产身份实跑，读数 `exit 0`、末行 `ok`、五张表 `DELETE=true`/`users=false`；差别在于本机是 Windows + 自建集群（`postgres:17.11` 二进制相同），**没有**跑 gate 的另外三个 job（`--with-cli-groups` 形态、42501 探针 job、恢复演练 job）。
 
 ### 6.2 风险
 
