@@ -15,13 +15,16 @@
  * "已删除资源的 ETag"是编造；口径与已合并的 `DELETE /recognitions/{id}` 一致。
  *
  * ## `X-GY-Cascade`（**非契约披露标记**，与前例 `contract_gap` 同一做法）
- * 契约对该删除的描述是「同时启动关联识别/OCR私有结果/媒体和外发删除」。截至本片，
- * 那条级联链路（`recognitions/**`／`ocr/**`／`media/**`／外发删除）**尚未接线**（属 GY-I19／跨线），
- * 而契约 `Ack` 只有 `accepted` 一个字段、**没有**位置承载这个缺口。因此本路由额外回一个
+ * 契约对该删除的描述是「同时启动关联识别/OCR私有结果/媒体和外发删除」。R33 片（授权：
+ * `.pg17/ruling-r33-i16-history-cascade-partial-20261023.md`）把**识别与 OCR 两类**关联对象的
+ * 删除接上（`services/api/src/history/cascade-wiring.ts`）；**媒体与外发删除仍跨线未接**（#6/#19）。
+ * 契约 `Ack` 只有 `accepted` 一个字段、**没有**位置承载这个缺口，因此本路由额外回一个
  * **明确标注为非契约**的响应头，取值：
- *   - `initiated`：级联删除已**启动**（**不代表已完成**）；
+ *   - `initiated`：级联删除已**启动**（**不代表已完成**；仅显式注入的端口会给此值）；
+ *   - `partial`：历史行已删除，且**至少一项**关联对象（识别结果 / OCR 记录）**已删除**，
+ *     但**未全部**删除成功（媒体与外发删除未接）—— 默认生产装配的成功档就到此为止；
  *   - `unwired`：级联尚未接线 —— **只有历史行本身被删除**；
- *   - `failed`：级联启动失败（历史行已完成删除，不受影响）。
+ *   - `failed`：级联启动失败／一项关联都没删成功（历史行已完成删除，不受影响）。
  * 客户端**不得**把它当契约字段依赖（前端不读它）；它服务于运营核对、监工复核与回归断言。
  */
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -92,7 +95,8 @@ export function registerHistoryRoutes(
       });
       // 契约 `/history/{id}` 的 DELETE **只声明 202**（`description`：「受理异步任务，尚未完成」，
       // `packages/contracts/openapi.json:6955-6979`，响应表里没有 200）⇒ 回 202：受理已发生，而契约
-      // 描述的异步级联本轮仍未接线，200 会把「已受理」说成「已完成」。级联真实处置由 `X-GY-Cascade` 披露。
+      // 描述的异步级联即使本片接上了识别/OCR 两腿，**媒体与外发仍未接**（不可能"全部完成"），
+      // 200 会把「已受理」说成「已完成」。级联真实处置由 `X-GY-Cascade` 披露。
       return reply
         .code(202)
         .headers(noStore)

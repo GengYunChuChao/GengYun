@@ -37,8 +37,8 @@
  * - **识别/OCR → 历史的写入接线属跨线**（要在 `recognitions/**`／`ocr/**` 里加一次调用），
  *   本片只交付内部口 `appendHistory` 与其测试；那一句由指挥另行派单。
  * - 契约对 `deleteHistory` 描述的"同时启动关联识别/OCR 私有结果/媒体和外发删除"同属跨线：
- *   本片只删除**历史行本身**，并通过 `history/cascade.ts` 的端口 + `X-GY-Cascade` 非契约
- *   披露头如实说明级联状态（`initiated`/`unwired`/`failed`），**不谎称级联已完成**。
+ *   本片只删除**历史行本身**；R33 片已接上识别/OCR 两类关联删除（`history/cascade-wiring.ts`），
+ *   经 `X-GY-Cascade` 如实披露 `initiated`/`partial`/`unwired`/`failed`，媒体与外发仍未接。
  */
 import { createHmac, randomUUID } from 'node:crypto';
 import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts';
@@ -296,7 +296,7 @@ export function createHistoryService(deps: HistoryServiceDeps) {
 
   /**
    * 启动关联删除；**绝不向上抛**（历史行已删除这一事实不因级联失败而回滚或改口）。
-   * 未接线 ⇒ `'unwired'`；抛错 ⇒ `'failed'`；成功 ⇒ `'initiated'`。
+   * 未接线 ⇒ `'unwired'`；抛错/一项都没删成功 ⇒ `'failed'`；至少一项已删 ⇒ `'partial'`（`'initiated'` 仅注入端口）。
    */
   async function initiateCascade(record: HistoryRecord, userId: string): Promise<CascadeDisclosure> {
     try {
@@ -364,7 +364,7 @@ export function createHistoryService(deps: HistoryServiceDeps) {
      * - `If-Match`：缺失 428、形状非法 400、**与目标当前 `revision` 不符 409**；
      * - 物理删除历史行（CAS，同一同步临界区内完成）；
      * - 删除成功后**启动**关联删除（端口未接线即如实披露 `unwired`；**不**谎称已完成）；
-     * - 幂等重放按结果引用重新鉴权，并**回放同一份级联披露**（不重复触发第二次级联删除）。
+     * - 幂等重放按结果引用重新鉴权，并**回放同一份级联披露**（不重复触发第二次级联删除；取不到时保守 `'failed'`，不推断 `'initiated'`）。
      */
     async deleteHistory(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<DeleteHistoryResult> {
       const user = requireUserActor(actor);
@@ -397,7 +397,7 @@ export function createHistoryService(deps: HistoryServiceDeps) {
         async (ref) => {
           const record = await store.getHistory(historyId);
           if (record !== null && record.owner_id !== user.userId) throw notFound();
-          const disclosure: CascadeDisclosure = ref.cascade ?? (cascade.available ? 'initiated' : 'unwired');
+          const disclosure: CascadeDisclosure = ref.cascade ?? 'failed';
           return { data: { accepted: true as const }, cascade: disclosure };
         },
       );

@@ -377,6 +377,20 @@ test('级联披露（非契约标记）三态文案不同，未接线明确说�
   assert.ok(f.history.messageFor({ code: 'NOT_FOUND' }).length > 0);
 });
 
+// R33-I16：服务端新增披露档 `partial`（授权 `.pg17/ruling-r33-i16-history-cascade-partial-20261023.md`）。
+// 页面必须**如实**说明"关联识别/OCR 私有结果已删、媒体与外发删除仍未接"，不得落到兜底文案
+// 「未取得级联状态。」——那会把"已收到 partial"说成"没拿到状态"（用户可见的假话）。
+test('级联披露新增档 partial（R33）：文案点明"已删关联私有结果、媒体与外发仍未接"，且不落兜底文案', () => {
+  const f = fixture();
+  const partial = f.history.cascadeNote('partial');
+  assert.match(partial, /识别\/OCR 私有结果/, '必须说明删的是哪一类关联对象');
+  assert.match(partial, /媒体与外发删除尚未接线/, '必须说明仍缺哪条腿，不得暗示"全部完成"');
+  assert.doesNotMatch(partial, /未取得/, '收到 partial 不得被说成"没拿到状态"');
+  for (const other of ['initiated', 'unwired', 'failed', null]) {
+    assert.notEqual(partial, f.history.cascadeNote(other), `partial 的文案不得与 ${other} 相同`);
+  }
+});
+
 // ===========================================================================
 // GY-I16 切片A：**详情页**收藏／取消收藏的接线（合成响应驱动页面实例；
 // 仍**不是**真机、微信开发者工具或渲染证据 —— 本片按要求未 attach 9420）。
