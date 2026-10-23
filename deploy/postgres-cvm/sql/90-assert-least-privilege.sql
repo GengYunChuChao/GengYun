@@ -1503,11 +1503,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY[]::text[],
      ARRAY[]::text[],
      ARRAY['response_status','outcome']::text[]),
-    -- R34（2026-10-24）：'jobs' 这一行**移出**本清单。裁定 3 认定 public.jobs 是死表（零生产
-    -- 写入、零入向外键、四份迁移自述不读不写不删），R34 片已下线它的组授权
-    -- （services/api/db/roles/auth_privacy.sql:39 现在只授 media）与两条 fail-closed 依赖
-    -- 判定里的 jobs 分支。表本身仍在库里，DROP 是 0035 之后的独立片，见
-    -- docs/verification/gy-r34-jobs-retire-20261024.md。
+    -- R34（2026-10-24）：'jobs' 这一行**移出**本清单。裁定 3：public.jobs 零读者、零入向外键、
+    -- 无外发账本关联——**不是**「零写入」：恢复演练至今仍有文档化手工 INSERT 种子
+    -- （gy-i24-restore-drill-local-20261018.md 第 81 行），本片撤的是授权面与判定臂，不是写入能力。
+    -- 已下线组授权（services/api/db/roles/auth_privacy.sql:39 现在只授 media）与两条 fail-closed
+    -- 依赖判定里的 jobs 分支；表仍在库里，DROP 留作 0035 之后的独立片，见本片证据页。
     -- R28-W12（2026-10-22）：'media' 从这里**移出**，改由 domain_manifest + expected 的
     -- 内部授权面覆盖。原因：媒体域换成 PG 仓储后，运行时对 media 的权限来自
     -- 20-login-roles.sql 段 M 的**直授**（14/14/12 列），而本清单的判定 (c) 规定
@@ -1542,7 +1542,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['updated_at']::text[])
   ),
   -- R28-S43：external_manifest 的逐条违规明细。断言 69-84 的 ok 与 detail 共用这一份定义：
-  -- 一条违规一行（表名 + 一句人话），detail 里 string_agg 出来就能点名到列。
+  -- 一条违规一行（表名 + 一句人话），detail 里 string_agg 出来就能点名到列；编号槽 85/86 随 media（R28-W12）/ jobs（R34）退役留空号，不复用（复用会让旧证据页的编号指向错行）。
   -- 语义分界（本片最容易被后人误解的地方）：正向用 has_column_privilege（**有效权限**，含
   -- 表级投影）；反向必须读 pg_attribute.attacl（**直接列级 ACL**）—— 表级 SELECT 会让
   -- has_column_privilege 对每一列都返回 true，拿它做反向判据，「又给某列单独 GRANT 了一条」
@@ -3605,13 +3605,16 @@ SELECT CASE
 -- 口径（静态可数，用来核对上面的实测数）：断言行 = 带编号的字面断言行 + 逐表展开行
 -- （external_manifest 每行一条 `runtime_grants_external_<tbl>`；allow_table_dml 只进 detail
 -- 文案、不增减断言行，现为 16 个三元组）。编号槽位 1..102 中 49-61 与 69-84 是逐行展开区。
--- R34（2026-10-24）：external_manifest 删掉 jobs 行（17→16）⇒ 断言总数 117→116、
--- sum(length(label)+2) 3693→3663（被删的 `runtime_grants_external_jobs` 长 28，+2 分隔符共 30）。
--- 这两个新值是**静态扣减**，精确值待真库 psql 复核（本树不含 PG，未本地执行）。
+-- R34（2026-10-24）：external_manifest 去掉 jobs 行（17→16）。**总数没有定论，只有静态可算值**：
+-- 上面记的「117 条 / 3693」（2026-10-21 口径）写下时清单是 **18 行**（media + jobs 都在）；
+-- 同日 R28-W12 删 media 行（18→17）只改了「18 张→17 张」的文本，**没有扣** 117/3693。
+-- 按同一静态扣减法：删 media（label 29 + 2 = 31）得 116 条 / 3662；再删 jobs（label 28 + 2 = 30）
+-- 得 **115 条 / 3632** —— 精确值待真库 psql count(*) 复核（本树无 PG，未本地执行）。
+-- 附注：本注释上一版写「116 条 / 3663」，是把 18 行时代的 117/3693 只扣了 jobs、漏掉 W12 那次，前提错，已改正。
 -- R28-S45 更新：本片新增 runtime_users_login_insert_path（第 89 条）。R28-S51 合流后本文件共
 -- 108 条（S43 时 103 条 / 3239、S45 后 104 条 / 3272、S51 合流后 108 条 / 3404，均为实测）；
 -- R28-S52 又追加四条跨 schema 面（94–97），共 112 条 / 3553 实测；
--- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693（R34 起 116 条 / 3663，见上）。
+-- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693（R34 起静态值 115 条 / 3632，见上）。
 DO $$
 DECLARE
   v_failed integer;

@@ -128,7 +128,7 @@ SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
 | 4 | 有依赖 + 未注入撤回消费者 ⇒ 409 OBJECT_UNAVAILABLE（确定性失败）且不留回执 | `status 409` + `retryable:false`；不写撤回、不递增 epoch、不写幂等回执（重放拿不到「成功」）；`ROLLBACK` 且不 `COMMIT` |
 | 5 | 撤回消费者抛错 ⇒ 仍是 409 OBJECT_UNAVAILABLE，不得退化成 503 | 账本未就绪（`42P01`）时如实拒绝部分撤回，**不得**说成 `PROVIDER_UNAVAILABLE`（`#451`/`#455` 口径） |
 
-第 4、5 条对应 `consent-pg.ts:179` / `:186`；第 1 条对应 `:184` 与 `:189-195`。
+第 4、5 条对应 `services/api/src/privacy/consent-pg.ts:178`（缺消费者 ⇒ 409）/ `services/api/src/privacy/consent-pg.ts:185`（消费者抛错 ⇒ 仍 409）；第 1 条对应 `services/api/src/privacy/consent-pg.ts:183`（调用消费者）与 `services/api/src/privacy/consent-pg.ts:188`（写 consent_records）/ `services/api/src/privacy/consent-pg.ts:192`（递增 privacy_epochs）。
 前 3 条用**合成 PG 替身**（按 SQL 片段返回 canned 结果，不连数据库），身份与记录 id 全为合成常量。
 
 ### 4.2 既有真库覆盖（本片不重复、不冒充）
