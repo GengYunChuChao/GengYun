@@ -1,13 +1,13 @@
 # GY-R31（#22 / GY-I22）失败矩阵复盘与缺口矩阵（只读）
 
 - 基线（**本页初稿时点**）：`origin/main` `d4d48088`（worktree `E:\GengYunCommander\wt-r31-i22`，分支 `feat/gy-r31-i22-recon`）
-- **本页时点：`origin/main` `1fbe7572`**（2026-10-22，分支 `docs/gy-r31-i22-evidence-sync`）。§0.3、§1、§2.6、§2.8、§4.1、§4.2、§4.3 的条数与状态以本时点的回写为准（改动逐条列在文末「2026-10-22 回写记录」）；§2 其余表格与 §5.1–§5.3/§7 仍是初稿时点的读码结论，未重算（§5.4／§5.5 已按 #442／#447 改写）。
+- **本页时点：`upstream/main` `7dd3d699`**（**2026-10-23 重绑时点**）。历史时点：初稿 `d4d48088`（2026-10-22）→ 回写 `1fbe7572`（2026-10-22）。本次重绑只做三件事：① 核引用——`文件:行` **只核「同号同内容」**，`C 族@行` 另做语义核并整体订正 12 行（结论见文末「2026-10-23 重绑记录」与**附录 A**）；② 订正两处本来就指错的引用（`community-service.test.mjs`、`history-http.test.mjs`）；③ 补记「本页时点」的新读数。**§2 各表的逐格判定、§3、§4、§5 的条数与结论一律沿用回写时点，未重算。**
 - 性质：**只读复盘**。本页不改业务代码、不改 `docs/architecture/contract-status.json`、不跑全量单测。
 - 证据口径：**每一格都给可定位的 `文件:行`**（`tests/...` 或 `services/api/src/...`）。
   本页区分两类事实，不混写：
-  - **【断言】**＝仓库里已存在的用例断言（读码定位，未在本次重跑）；
-  - **【实现】**＝产品代码里的行为（读码定位，未实测）。
-  - 本次**实测**仅 §7 记的一条定向单文件运行；其余一律**没有实测**。
+  - **【断言】**＝仓库里已存在的用例断言（读码定位，**未**在本页重跑）；
+  - **【实现】**＝产品代码里的行为（读码定位，**未**实测）。
+  - 本页的**实测**只有两处：§7 记的初稿那次定向单文件运行（失败，缺依赖），以及文末「2026-10-23 重绑记录」里为核引用与门禁而跑的几条命令；其余一律**没有实测**。
 
 ---
 
@@ -91,11 +91,11 @@
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `loginWechat` POST /auth/wechat | —（匿名入口） | — | — | ● `auth-routes.test.mjs:295`（同键异体 `IDEMPOTENCY_CONFLICT`） | ○（real 无 store 时 503 只在别域断言） | ○ | ● `auth-routes.test.mjs:249-262`（缺键/短键 `IDEMPOTENCY_KEY_REQUIRED`） | ○ |
-| `getUserSession` GET /auth/session | ● `auth-routes.test.mjs:102,115,119`；failmatrix `C1-27@78` | ● `auth-routes.test.mjs:202`（用户 token 打后台面 → `SCOPE_DENIED`） | — | — | ○ | ○ | — | ○ |
-| `logoutUser` POST /auth/logout | ● `C1-28@79`；`auth-routes.test.mjs:224-226`（注销后同 token 401 `SESSION_EXPIRED`）、`:332` | ● `C4-06@167` | — | — | ○ | ○ | ● `C4-01@162`；`auth-routes.test.mjs:249-262` | ○ |
+| `getUserSession` GET /auth/session | ● `auth-routes.test.mjs:102,115,119`；failmatrix `C1-27@90` | ● `auth-routes.test.mjs:202`（用户 token 打后台面 → `SCOPE_DENIED`） | — | — | ○ | ○ | — | ○ |
+| `logoutUser` POST /auth/logout | ● `C1-28@91`；`auth-routes.test.mjs:224-226`（注销后同 token 401 `SESSION_EXPIRED`）、`:332` | ● `C4-06@179` | — | — | ○ | ○ | ● `C4-01@174`；`auth-routes.test.mjs:249-262` | ○ |
 | `loginAdmin` POST /admin/auth/session | —（匿名入口） | ○（凭据错误沿用 401，见 `contract-status.json` loginAdmin blocker） | — | ○ | ○ | ○ | ○ | ○ |
-| `getAdminSession` GET /admin/auth/session | ● `C1-36@87` | ● `C3-17@142`（有 scope → 200 对照片） | — | — | ○ | ○ | — | ○ |
-| `logoutAdmin` POST /admin/auth/logout | ● `C3-23@148`（对照片） | ● `C3-12@137` | — | — | ○ | ○ | ○ | ○ |
+| `getAdminSession` GET /admin/auth/session | ● `C1-36@99` | ● `C3-17@154`（有 scope → 200 对照片） | — | — | ○ | ○ | — | ○ |
+| `logoutAdmin` POST /admin/auth/logout | ● `C3-23@160`（对照片） | ● `C3-12@149` | — | — | ○ | ○ | ○ | ○ |
 
 注：`auth-routes.test.mjs:771` 有一条 **503** 断言（auth 域唯一直达 503 的一行）；`miniprogram-auth-failure-attribution.test.mjs:253`、`miniprogram-auth-runtime.test.mjs:203,406` 断言的是**客户端对 503 的归属处理**（不得清会话），不是服务端 503 的产生。
 `loginWechat` 是**唯一**在服务端产出 429 的路径：`services/api/src/auth/wechat.ts:121` 抛 `RATE_LIMITED`——**但没有任何断言**（见 §4.1 #1）。
@@ -104,24 +104,24 @@
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `listPosts` GET /posts | ● `C1-16@67` | ● `community-service.test.mjs:674`（`SCOPE_DENIED`） | — | — | ● `community-service.test.mjs:344` | ○ | ● `C7-09@253`、`C7-10@254` | ○ |
-| `createPost` POST /posts | ● `C1-17@68` | ● `community-posting-consent.test.mjs:107`（无授权 403） | — | ● `C6-07@225`（同键异体） | ● 同 `:344` | ○ | ● `C6-04@218`、`C7-11@255`、`E1-01@263`（注入命中 400） | ○ |
-| `getPost` GET /posts/:id | ● `C1-18@69` | ○ | ● `C2-17@107`；`community-atomic.test.mjs:88,160,306` | — | ● `community-moderation-takedown.test.mjs:305` | ○ | ● `C7-01@245` | ○ |
+| `listPosts` GET /posts | ● `C1-16@79` | ● `community-service.test.mjs:725`（`SCOPE_DENIED`） | — | — | ● `community-service.test.mjs:344` | ○ | ● `C7-09@265`、`C7-10@266` | ○ |
+| `createPost` POST /posts | ● `C1-17@80` | ● `community-posting-consent.test.mjs:107`（无授权 403） | — | ● `C6-07@237`（同键异体） | ● 同 `:344` | ○ | ● `C6-04@230`、`C7-11@267`、`E1-01@275`（注入命中 400） | ○ |
+| `getPost` GET /posts/:id | ● `C1-18@81` | ○ | ● `C2-17@119`；`community-atomic.test.mjs:88,160,306` | — | ● `community-moderation-takedown.test.mjs:305` | ○ | ● `C7-01@257` | ○ |
 | `editPost` PATCH /posts/:id | ○（C1 未单列，按统一守卫推断） | ○ | ● `community-service.test.mjs:310`；`community-atomic.test.mjs:306` | ● `community-moderation-revision-guard.test.mjs:58,71,72`（`REVISION_CONFLICT`） | ○ | ○ | ○ | ○ |
 | `deletePost` DELETE /posts/:id | ○ | ○ | ● `community-atomic.test.mjs:306-307` | ● `community-moderation-revision-guard.test.mjs:94`（`OBJECT_UNAVAILABLE`） | ○ | ○ | ○ | ○ |
-| `listComments` GET /posts/:id/comments | ● `C1-19@70` | ○ | ● `community-moderation-takedown.test.mjs:171` | — | ○ | ○ | ○ | ○ |
-| `createComment` POST /posts/:id/comments | ● `C1-20@71` | ○ | ● `community-atomic.test.mjs:204`、`community-moderation-gate-wiring.test.mjs:291` | ● `C6-07@225`（同族幂等） | ○ | ○ | ● `C7-10@254` | ○ |
-| `getComment` GET /comments/:id | ● `C1-21@72` | ○ | ● `C2-18@108`；`community-atomic.test.mjs:307` | — | ○ | ○ | ○ | ○ |
+| `listComments` GET /posts/:id/comments | ● `C1-19@82` | ○ | ● `community-moderation-takedown.test.mjs:171` | — | ○ | ○ | ○ | ○ |
+| `createComment` POST /posts/:id/comments | ● `C1-20@83` | ○ | ● `community-atomic.test.mjs:204`、`community-moderation-gate-wiring.test.mjs:291` | ● `C6-07@237`（同族幂等） | ○ | ○ | ● `C7-10@266` | ○ |
+| `getComment` GET /comments/:id | ● `C1-21@84` | ○ | ● `C2-18@120`；`community-atomic.test.mjs:307` | — | ○ | ○ | ○ | ○ |
 | `editComment` PATCH /comments/:id | ○ | ○ | ● `community-service.test.mjs:310`（同族） | ● 同 `revision-guard:58` | ○ | ○ | ○ | ○ |
 | `deleteComment` DELETE /comments/:id | ○ | ○ | ● `community-atomic.test.mjs:307` | ● 同 `revision-guard:94` | ○ | ○ | ○ | ○ |
-| `likePosts` PUT /posts/:id/like | ● `C1-22@73` | ○ | ○（无权/不存在因同形由 `C2-17@107` 覆盖） | ○ | ○ | ○ | ○ | ○ |
+| `likePosts` PUT /posts/:id/like | ● `C1-22@85` | ○ | ○（无权/不存在因同形由 `C2-17@119` 覆盖） | ○ | ○ | ○ | ○ | ○ |
 | `unlikePosts` DELETE /posts/:id/like | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | `likeComments` PUT /comments/:id/like | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | `unlikeComments` DELETE /comments/:id/like | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| `createReport` POST /reports | ● `C1-23@74` | ○ | — | ● `C6-08@226`/`C6-09@227`（同键重放 201；异体 409 见 C6-03 同族） | ○ | ○ | ● `C7-12@256` | ○ |
-| `getOwnReport` GET /reports/:id | ● `C1-24@75` | ○ | ● `C2-21@111` | — | ○ | ○ | ● `C7-04@248` | ○ |
-| `grantCommunityMediaAccess` POST /community/media-access | ● `C1-14@65` | ○ | ● `C5-07@198` | ○ | ○ | ○ | ○ | ○ |
-| `readCommunityMediaContent` GET /community/media/:grant_id/content | ● `C1-15@66` | ○ | ● `C5-05@196`、`E2-02@279`（篡改 token 同形 404） | — | ○ | ○ | ● `C5-04@195`、`C5-06@197` | ○ |
+| `createReport` POST /reports | ● `C1-23@86` | ○ | — | ● `C6-08@238`/`C6-09@239`（同键重放 201；异体 409 见 C6-03 同族） | ○ | ○ | ● `C7-12@268` | ○ |
+| `getOwnReport` GET /reports/:id | ● `C1-24@87` | ○ | ● `C2-21@123` | — | ○ | ○ | ● `C7-04@260` | ○ |
+| `grantCommunityMediaAccess` POST /community/media-access | ● `C1-14@77` | ○ | ● `C5-07@210` | ○ | ○ | ○ | ○ | ○ |
+| `readCommunityMediaContent` GET /community/media/:grant_id/content | ● `C1-15@78` | ○ | ● `C5-05@208`、`E2-02@291`（篡改 token 同形 404） | — | ○ | ○ | ● `C5-04@207`、`C5-06@209` | ○ |
 
 注：`community-chain-client.test.mjs:210-432` 的 403 断言是**小程序端对 403 的处置**（不清会话、不落 toast），不是服务端 403 的产生；不要记到 API 列。
 点赞族（`like/unlike`）在 failmatrix 只有 `C1-22` 一条游客 401，**锁与并发语义零覆盖**。
@@ -130,31 +130,31 @@
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `listFavorites` GET /favorites | ● `C1-01@52`；`favorites-http.test.mjs:270,398` | ● `C4-06@167` | — | — | ● `favorites-http.test.mjs:318`；`C4-18@189`（200 对照） | ○ | ● `C7-05@249`~`C7-08@252` | ○ |
-| `createFavorite` POST /favorites | ● `C1-02@53` | ○ | ○ | ● `C6-03@217`（同键异体）；`favorites-http.test.mjs:155` | ● 同 `:318` | ○ | ● `C6-04@218`、`C7-13@257` | ○ |
-| `deleteFavorite` DELETE /favorites/:id | ● `C1-03@54` | ○ | ● `C2-14@104`；`favorites-http.test.mjs:188`（他人）、`:189`（不存在）、`:196`（他人+旧 ETag）、`:225`（二次删） | ● `favorites-http.test.mjs:211,390`（`REVISION_CONFLICT`）；`C6-*`；428 见下 | ● 同 `:318` | ○ | ● `favorites-http.test.mjs:382`（**428** `REVISION_REQUIRED`）、`C7-02@246` | ○ |
-| `listHistory` GET /history | ● `C1-04@55`；`history-http.test.mjs:477` | ○ | — | — | ● `history-http.test.mjs:548,751` | ○ | ● `C2-23@116`（200 对照） | ○ |
-| `deleteHistory` DELETE /history/:id | ● `C1-05@56` | ○ | ● `C2-15@105`；`history-http.test.mjs:381,382,388,743` | ● `history-http.test.mjs:411,469` | ● 同 `:548` | ○ | ● `history-http.test.mjs:461`（428） | ○ |
+| `listFavorites` GET /favorites | ● `C1-01@64`；`favorites-http.test.mjs:270,398` | ● `C4-06@179` | — | — | ● `favorites-http.test.mjs:318`；`C4-18@201`（200 对照） | ○ | ● `C7-05@261`~`C7-08@264` | ○ |
+| `createFavorite` POST /favorites | ● `C1-02@65` | ○ | ○ | ● `C6-03@229`（同键异体）；`favorites-http.test.mjs:155` | ● 同 `:318` | ○ | ● `C6-04@230`、`C7-13@269` | ○ |
+| `deleteFavorite` DELETE /favorites/:id | ● `C1-03@66` | ○ | ● `C2-14@116`；`favorites-http.test.mjs:188`（他人）、`:189`（不存在）、`:196`（他人+旧 ETag）、`:225`（二次删） | ● `favorites-http.test.mjs:211,390`（`REVISION_CONFLICT`）；`C6-*`；428 见下 | ● 同 `:318` | ○ | ● `favorites-http.test.mjs:382`（**428** `REVISION_REQUIRED`）、`C7-02@258` | ○ |
+| `listHistory` GET /history | ● `C1-04@67`（该文件**没有** `listHistory` 的 401 断言；原挂在这里的 `history-http.test.mjs:477` 实为 DELETE 面，已移到下一行） | ○ | — | — | ● `history-http.test.mjs:548,751` | ○ | ● `C2-23@128`（200 对照） | ○ |
+| `deleteHistory` DELETE /history/:id | ● `C1-05@68`；`history-http.test.mjs:477`（匿名 DELETE ⇒ 401，全文件唯一一条 401） | ○ | ● `C2-15@117`；`history-http.test.mjs:381,382,388,743` | ● `history-http.test.mjs:411,469` | ● 同 `:548` | ○ | ● `history-http.test.mjs:461`（428） | ○ |
 
-注：这两域是 failmatrix 覆盖**最厚**的域（C1/C2/C4/C6/C7 全有），也是唯二把 **428** 写进断言的域。
+注：这两域是 failmatrix 覆盖**最厚**的域（C1/C2/C4/C6/C7 全有），也是唯二把 **428** 写进断言的域。另：全页的 `C1-xx@NN` 定位符已于 2026-10-23 整体订正（自 `#449` 起 `cases.mjs` 整体下移 12 行，原 `@行` 全部偏小 12），65 个 id 的「改前 → 改后」对照见文末**附录 A**；`listHistory` 那一格原挂的 `history-http.test.mjs:477` 实为 DELETE 面，已移到 `deleteHistory` 行。
 
 ### 2.4 messages（3 个 operation）
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `listMessages` GET /messages | ● `C1-06@57` | ○ | — | — | ● `messages-http.test.mjs:189-198`（real 无 pool 整域 503） | ○ | ● `C2-24@120`（200 对照） | ○ |
-| `getUnreadCount` GET /messages/unread-count | ● `C1-07@58` | ○ | — | — | ● 同 `:192` | ○ | — | ○ |
-| `markMessageRead` PUT /messages/:id/read | ● `C1-08@59` | ○ | ● `C2-16@106`；`messages-pg.mjs:284`（他人）、`:290`（不存在）；`rejections-http.mjs:445` | ● `messages-read-version.test.mjs:104,173,174,216,217`；`messages-concurrency.test.mjs:59,60,111`（`REVISION_CONFLICT`）、`:204`（`REQUEST_IN_PROGRESS`）、`:224`（`IDEMPOTENCY_CONFLICT`） | ● 同 `:193` | ○ | ● `C7-03@247`；`messages-security.test.mjs:256` | ○ |
+| `listMessages` GET /messages | ● `C1-06@69` | ○ | — | — | ● `messages-http.test.mjs:189-198`（real 无 pool 整域 503） | ○ | ● `C2-24@132`（200 对照） | ○ |
+| `getUnreadCount` GET /messages/unread-count | ● `C1-07@70` | ○ | — | — | ● 同 `:192` | ○ | — | ○ |
+| `markMessageRead` PUT /messages/:id/read | ● `C1-08@71` | ○ | ● `C2-16@118`；`messages-pg.mjs:284`（他人）、`:290`（不存在）；`rejections-http.mjs:445` | ● `messages-read-version.test.mjs:104,173,174,216,217`；`messages-concurrency.test.mjs:59,60,111`（`REVISION_CONFLICT`）、`:204`（`REQUEST_IN_PROGRESS`）、`:224`（`IDEMPOTENCY_CONFLICT`） | ● 同 `:193` | ○ | ● `C7-03@259`；`messages-security.test.mjs:256` | ○ |
 
-注：`messages-pg.mjs:284` 是**真库**脚本（`tests/integration/*-pg.mjs`，需 PG），不在 `test:integration:http` 名单内（`package.json` 的 `test:integration:http` 未列它）——即「他人消息 404」的**真库**证据只在 PG 流水线跑，HTTP 面的同形断言由 `C2-16@106` 与 `rejections-http.mjs:445`（回环、无 PG）承担。
+注：`messages-pg.mjs:284` 是**真库**脚本（`tests/integration/*-pg.mjs`，需 PG），不在 `test:integration:http` 名单内（`package.json` 的 `test:integration:http` 未列它）——即「他人消息 404」的**真库**证据只在 PG 流水线跑，HTTP 面的同形断言由 `C2-16@118` 与 `rejections-http.mjs:445`（回环、无 PG）承担。
 
 ### 2.5 knowledge（5 个 operation，含 `verifyRegistration`）
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `listKnowledge` GET /knowledge | ● `C1-34@85`；`knowledge-herbicides-http.test.mjs:152,156` | ○ | — | — | ○ | ○ | ● `knowledge-api.test.mjs:48-49`、`:73,76`（`INVALID_CURSOR`）、`:82` | ○ |
+| `listKnowledge` GET /knowledge | ● `C1-34@97`；`knowledge-herbicides-http.test.mjs:152,156` | ○ | — | — | ○ | ○ | ● `knowledge-api.test.mjs:48-49`、`:73,76`（`INVALID_CURSOR`）、`:82` | ○ |
 | `getKnowledge` GET /knowledge/:id | ○（C1 未单列） | ○ | ● `knowledge-public-invalidation-wiring.test.mjs:136,137,221,418`；`knowledge-herbicides-http.test.mjs:224,364,367` | ● `knowledge-applicability-screen.test.mjs:88,113,266`（`OBJECT_UNAVAILABLE`/`SOURCE_CONFLICT`） | ○ | ○ | ● `knowledge-applicability-screen.test.mjs:285`（422 `INPUT_UNCERTAIN`） | ○ |
-| `listHerbicides` GET /herbicides | ● `C1-33@84` | ○ | — | — | ○ | ○ | ○ | ○ |
+| `listHerbicides` GET /herbicides | ● `C1-33@96` | ○ | — | — | ○ | ○ | ○ | ○ |
 | `getHerbicide` GET /herbicides/:id | ○ | ○ | ● `knowledge-herbicides-http.test.mjs:224,364` | ○ | ○ | ○ | ● 同 `:367`（非法筛选 404/400 双口径） | ○ |
 | `verifyRegistration` POST /registrations/verify | — | — | — | — | — | — | — | — |
 
@@ -220,7 +220,7 @@
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `hidePost` POST /admin/posts/:id/hide | ○ | ● `C3-*` 系列（后台 403 统一族 `cases.mjs:126-137`） | ● `admin-http.mjs:494-497`（隐藏后他人读 404） | ● `community-moderation-revision-guard.test.mjs:58,71,72,94` | ● `admin-http.mjs:365,374` | ○ | ○ | ○ |
-| `listAuditEvents` GET /admin/audit-events | ● `C1` 族（后台未登录） | ● `C3-04@129`、`C3-15@140`（200 对照）、`C3-26@151` | — | — | ○ | ○ | ● `C7` 族游标口径 | ○ |
+| `listAuditEvents` GET /admin/audit-events | ● `C1` 族（后台未登录） | ● `C3-04@141`、`C3-15@152`（200 对照）、`C3-26@163` | — | — | ○ | ○ | ● `C7` 族游标口径 | ○ |
 
 注：审核**前置门禁**（先审后发）不是契约 operation，其断言在 `community-moderation-read-recheck.test.mjs:54,85,112`、`community-moderation-gate-wiring.test.mjs:125,190,291`（均为 404 形态）——计入 community 域的 404 列，不单独成行。
 
@@ -228,11 +228,11 @@
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `listConsents` GET /me/consents | ● `C1-31@82`；`privacy-consent-wiring.test.mjs:139` | ● `privacy-egress-http.test.mjs:117,133,153,157`（含 `ACCOUNT_INACTIVE`） | —（端点无 `:id`） | — | ● `privacy-consent-wiring.test.mjs:307`；`privacy-egress-http.test.mjs:185` | ○ | ○ | ○ |
+| `listConsents` GET /me/consents | ● `C1-31@94`；`privacy-consent-wiring.test.mjs:139` | ● `privacy-egress-http.test.mjs:117,133,153,157`（含 `ACCOUNT_INACTIVE`） | —（端点无 `:id`） | — | ● `privacy-consent-wiring.test.mjs:307`；`privacy-egress-http.test.mjs:185` | ○ | ○ | ○ |
 | `grantConsent` POST /me/consents | ○ | ● `privacy-consent-wiring.test.mjs:131,159,199,212,260` | — | ● `media-consent-wiring.test.mjs:214` | ● 同 `:307` | ○ | ● `C7` 族同构 | ○ |
 | `withdrawConsent` DELETE /me/consents/:purpose | ○ | ● `media-consent-wiring.test.mjs:231,269,303,316` | — | ● `media-consent-wiring.test.mjs:214`；blocker 记录「依赖未清时 409 `OBJECT_UNAVAILABLE`」 | ● `privacy-synthesis-egress-retryable.test.mjs:66,89`（正反两向） | ○ | ○ | ○ |
 
-注：consents 域**没有跨用户断言**，但这是**结构性不适用**：三个端点都不接收 subject 参数，主体一律取自 token（`C1-31@82` 已钉住未登录面）。
+注：consents 域**没有跨用户断言**，但这是**结构性不适用**：三个端点都不接收 subject 参数，主体一律取自 token（`C1-31@94` 已钉住未登录面）。
 
 ### 2.12 其余域（每域一行汇总）
 
@@ -260,7 +260,7 @@
 | --- | --- | --- |
 | favorites / history | `favorites-http.test.mjs:188,189,196`；`history-http.test.mjs:381,382,388,743` | **是**（同一处成对断言 foreign/absent） |
 | messages | `messages-pg.mjs:284,290`（真库）；`rejections-http.mjs:445`（回环） | **是**（`messages-pg.mjs:299` 另断言 `error.code` 逐字一致） |
-| community | `community-atomic.test.mjs:88,160,204,306,307`；`community-moderation-takedown.test.mjs:170,171,229`；`read-recheck:54,85,112`；`gate-wiring:125,190,291`；`community-filter-pg.mjs:422`（他人读他人举报 404） | **否**（多数只断言 404，未逐个比对封套） |
+| community | `community-atomic.test.mjs:88,160,204,306,307`；`community-moderation-takedown.test.mjs:170,171,229`；`read-recheck:54,85,112`；`gate-wiring:125,190,291`；`community-filter-pg.mjs:474-475`（他人读他人举报 404） | **否**（多数只断言 404，未逐个比对封套） |
 | media | `media-http-access.test.mjs:168` | 部分 |
 | ocr | `ocr-http.mjs:1337,1338,1351,1355,2025` | **是**（`:1358` 明确记录「错误体与不存在同形」） |
 | speech | `speech-http.mjs:225,226,237,238` | **是**（`:222` 组名即「与『不存在』同形」） |
@@ -314,7 +314,7 @@
 | 同键重放换发令牌 | `auth-routes.test.mjs:266-297`（`:291` 旧 token 401、`:292` 新 token 200、`:289` 会话数仍 1） | 一会话一活 token（`:364` 另断言 `[200,401]`） |
 | epoch 变更（撤销） | `auth-routes.test.mjs:230-243`（`:240` 403 `ACCOUNT_INACTIVE`） | 撤销走 403 不是 401 |
 | 注销回执 bearer | `account-deletion-http.mjs:354`（`换发后旧 bearer 必须立刻失效`） | 回执专用 bearer 同样失效 |
-| 后台登出 | failmatrix `C3-12@137`（403 对照）、`C3-23@148` | 后台 401 面 |
+| 后台登出 | failmatrix `C3-12@149`（403 对照）、`C3-23@160` | 后台 401 面 |
 
 **判定**：A4 可判「齐」。唯一未覆盖的是**跨进程/跨实例**的撤销传播（会话存内存时，另一个实例的 token 仍有效）——属 `#313`／持久会话范围，本页不外推。
 
@@ -328,12 +328,12 @@
 
 | # | 风险 | 证据（现状） | 严重度 |
 | --- | --- | --- | --- |
-| 1 | **限流 429 全族零 API 断言** → **已关闭（#442＋#450，2026-10-22）**：`loginWechat` 是唯一产出 429 的路径（`services/api/src/auth/wechat.ts:121` 抛 `RATE_LIMITED`），现在「收到上游 45011 之后的对外行为」有 HTTP 面断言（429 `RATE_LIMITED`＋`Retry-After` 正整数秒＋`retryable`＋封套完整＋失败不落幂等台账） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:77`（`:113` 状态码、`:139-141` `Retry-After` 必须正整数秒、`:147` 同键重试仍 429；#442 建文件、#450 把该头断言从「无该头」改为「必须整数秒」）；实现侧 `services/api/src/errors.ts:82-86`＋`app.ts:1917-1918`（#450 统一出口单一取值） | **已关闭**（原：高；「连打真实触发限流」的窗口仍未取得，见 §5.4） |
+| 1 | **限流 429 全族零 API 断言** → **已关闭（#442＋#450，2026-10-22）**：`loginWechat` 是唯一产出 429 的路径（`services/api/src/auth/wechat.ts:121` 抛 `RATE_LIMITED`），现在「收到上游 45011 之后的对外行为」有 HTTP 面断言（429 `RATE_LIMITED`＋`Retry-After` 正整数秒＋`retryable`＋封套完整＋失败不落幂等台账） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:77`（`:113` 状态码、`:139-141` `Retry-After` 必须正整数秒、`:147` 同键重试仍 429；#442 建文件、#450 把该头断言从「无该头」改为「必须整数秒」）；实现侧 `services/api/src/errors.ts:82-86`＋`app.ts:2057-2058`（#450 统一出口单一取值；初稿时点为 `1917-1918`，`7dd3d699` 上该段已下移） | **已关闭**（原：高；「连打真实触发限流」的窗口仍未取得，见 §5.4） |
 | 2 | **同步面 504 `PROVIDER_TIMEOUT` 零断言** → **已关闭（#442＋#447，2026-10-22）**：用户面同步读路径在超时族 SQLSTATE 下折叠成 504 + `PROVIDER_TIMEOUT` 已有用例（初稿时点 504 只在后台 PG 锁通道：`admin-flags-pg.mjs:513-515`、`admin-flags-pg.test.mjs:373-382`、`account-authority-pg.test.mjs:120-121`、`admin-accounts-directory.test.mjs:263`、`db-error-retryable-classification.test.mjs:130`） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:218-273`（`:247` 504、`:251` 错误码，注入 `57014`／`55P03`，`:235` 先证明合成登录 200）；`tests/unit/knowledge-herbicides-http.test.mjs:436-439`（#447 把 57014/55P03 ⇒ 504 且 `retryable:true` 落进 `services/api/src/knowledge/service.ts:125-129`） | **已关闭**（原：高；真实锁竞争的触发条件仍未取得，见 §5.5） |
 | 3 | **`selectSpecies` 整行 8 列零断言**（`PATCH /recognitions/:id/selection`） → **已关闭（404/409/400/428 页面过期；401 由 #449 补上）**：404／409／400（＋428）在**初稿时点就有断言**，是漏收；**401 列晚于初稿时点**——由 #449 的 C10-03 引入（`d4d48088` 时点 `recognitions-api.test.mjs` 的 401 只有 POST /recognitions、GET /recognitions/:id、GET /jobs/:id 三条，不含 `PATCH …/selection`） | §2.6 第 4 行（`recognitions-api.test.mjs:542` 他人 404／`:587-588` 409／`:592,597` 400；428 另见 `:582`）；401 见 `C10-03@313`（#449 引入） | **已关闭**（原：高；403/503/超时/429 四列仍 ○） |
 | 4 | **failmatrix 完全不覆盖异步 AI 域与 `/jobs`** → **已关闭（#449，2026-10-22）**：`cases.mjs` 新增 C10 游客面 23 条 + C11 归属面 39 条，矩阵 168 → **230** 条，`MIN_CASES` 同步到 230（只增不减） | `tests/failmatrix/cases.mjs:303-333`（C10）、`:335-384`（C11，含 5 条属主正控制）、`tests/unit/gy-i22-failmatrix.test.mjs:35`；CI 读数 `Failmatrix regression` run `39778342989`（headSha `1fbe7572`）success。**仍未进矩阵的域**：`me/exports`、`public/home`、`privacy-policy`、`registrations/verify`（grep 空结果） | **已关闭**（原：高；剩余 4 类域仍无 failmatrix 覆盖，见 §4.2 备注） |
 | 5 | **OCR 403 全族 ○**（5 个 operation 无任何 scope/授权断言） | §2.7 | 中高 |
-| 6 | **点赞族 `like/unlike` 只有 1 条游客 401**，锁/并发/重复点赞语义零覆盖 | `C1-22@73` 是唯一一条 | 中高 |
+| 6 | **点赞族 `like/unlike` 只有 1 条游客 401**，锁/并发/重复点赞语义零覆盖 | `C1-22@85` 是唯一一条 | 中高 |
 | 7 | **community「同形」弱于其他域**：多数只断言 404，未成对比对封套（对比 `messages-pg.mjs:299`、`speech-http.mjs:222`） | §3.1 | 中 |
 | 8 | **`confirmTranscription` 无 401/404 断言**（未进 `speech-http.mjs:263` 的循环） → **已关闭（页面过期，不是本轮新增用例）**：该端点早就在无会话循环里，404 也成对断言 | §2.8 第 4 行（`speech-http.mjs:260` 在 `:256-265` 循环内；`:241-249` 他人／不存在同形 404；`:288-290` 409；428 见 `:280-282`） | **已关闭**（原：中） |
 | 9 | **`verifyRegistration` 整行不适用**（`planned`，HTTP 未装配）且 failmatrix 无「未装配即 404/不泄露」的形态断言 | `contract-status.json` blocker | 中（是"没做"，不是"做错"，但会被误读成已覆盖） |
@@ -387,7 +387,7 @@
 | `createSynthesis` | partial | 「取消已于 …接线」；「真实提供者、核对内容与产物端口未在产品装配接线」 | **印证** §2.9 的 503 列（`tts-jobs-http.test.mjs:510,570`） |
 | `loginWechat` | implemented | 「stub/preset_demo 用合成身份，不代表真实微信身份」 | ~~与本页 #1 冲突~~ **已消解（2026-10-22，#442／#450）**：429 的 HTTP 面断言在 `gy-i22-rate-and-timeout.test.mjs:77` |
 | `loginAdmin` | implemented | 「凭据错误沿用 401 `SESSION_REQUIRED`（契约无专用码）」 | **与本页 #10 冲突**：该"故意选择"无断言钉住 |
-| `grantCommunityMediaAccess` / `readCommunityMediaContent` | partial | 「公开内容来源默认**关闭**（统一 404，不误放行）」 | **印证** §2.2 末两行（`C5-05@196`、`E2-02@279`） |
+| `grantCommunityMediaAccess` / `readCommunityMediaContent` | partial | 「公开内容来源默认**关闭**（统一 404，不误放行）」 | **印证** §2.2 末两行（`C5-05@208`、`E2-02@291`） |
 | `listPosts`…`getOwnReport`（16 条社区） | partial | 统一 blocker：「HTTP 路由已装配（`services/api/src/routes/community.ts`；真实回环回归 `tests/unit/community-http.test.mjs`）」 | **部分冲突**：`community-http.test.mjs` 里状态码断言只有 `:790`（422）一条，blocker 暗示的"回环回归"并不覆盖失败族（失败族断言实际散在 `community-service/atomic/moderation-*` 等服务层文件） |
 | `hidePost` / `listAuditEvents` | partial | 「路由已装配（`services/api/src/routes/admin.ts`，HTTP 集成回归 `tests/integration/admin-http.mjs`）」 | **印证** §2.10（`admin-http.mjs:494-497`） |
 | `listKnowledge` | partial | 「当前 id_asc 排序仍不同于冻结(created_at DESC,id DESC)」 | 与本页矩阵无关（排序口径），登记备查 |
@@ -407,13 +407,15 @@
 7. `docs/architecture/contract-status.json` 只读交叉核对，**未改动**（在飞 PR 占用）。
 8. 本页的"断言密度"数字是 `tests/**` 内状态码字面量出现次数的**粗筛**（按域正则聚合），不是断言条数；只用于排序，不作为判定依据。
 
+> **2026-10-23 重绑补记**：本次要求单独登记的三条未取得项（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 属沙箱事实而非产品缺陷）写在 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1–§10.3，每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」。本节上面 8 条的含义与口径**不变**，不因那次登记被弱化或抵消。
+
 ---
 
 ## 6 附：本页的定位口径速查
 
 | 缩写 | 全文 |
 | --- | --- |
-| `C1-*@行` | `tests/failmatrix/cases.mjs` 第 N 行的用例（例：`C1-01@52`） |
+| `C1-*@行` | `tests/failmatrix/cases.mjs` 第 N 行的用例（例：`C1-01@64`） |
 | C 族 | HTTP 族（`app.inject`，stub）；D 族在 `tests/failmatrix/seams.mjs`（受信 seam）；E 族注入与媒体凭据 |
 | 428 | `REVISION_REQUIRED`（缺/非法 `If-Match`），只在 favorites/history/ocr/speech/tts 被断言 |
 | 422 | `CONDITIONS_INCOMPLETE` / `SOURCE_CONFLICT` / `INPUT_UNCERTAIN`，不在本页 8 列内（见 §4.1 补充） |
@@ -487,3 +489,156 @@ Node.js v24.16.0
 - `node --test tests/unit/gy-i22-failmatrix.test.mjs` ⇒ 3/3 pass，其中「全量真跑 230 条全绿，且每条都有真实读数」通过。
 - `node --test tests/unit/gy-i22-*.test.mjs`（9 个文件）⇒ 47/47 pass。
 - 这些读数只覆盖矩阵与 i22 单测；**真实微信侧限流、真实 AI 供应商超时、真机/微信开发者工具仍未取得**（§5）。
+
+---
+
+## 2026-10-23 重绑记录（`upstream/main` = `7dd3d699`）
+
+本次只做三件事：**核引用**（`文件:行` 只核「同号同内容」；`C 族@行` 另做语义核并订正 12 行）、**订正两处本来就指错的引用**、**补读数**。不重算 §2 的逐格判定，不改任何 `status`，不改 `docs/architecture/contract-status.json`。
+
+### 一、引用逐条核对（两类分开计数，不再合并成一个总数）
+
+核对方法（可复现）：把本页引用拆成**两类**分别核——
+
+- **`文件:行`（`路径.ext:NNN`）**：按**出现次数**计，两个口径分写、不要混用——**改前页体（§0–§12，`upstream/main` 版）235 条**；**本版同一区段 237 条**（`+2` 是 §2.3 新增的两处 `history-http.test.mjs:477`）。⚠️ **本「重绑记录」与附录 A 里的说明性引用不计入任何一档**（否则会自我指涉、每改一次就变一次数）。核法：`git show 1fbe7572:<path>` 与 `git show 7dd3d699:<path>` 取**同一行号**处的原文逐字比对，不同再在该文件里做唯一内容匹配找新行号。
+- **`C 族@行`（`Cx-yy@NN`）**：同为按出现次数计——**§0–§12 区段 82 处**（改前与本次**相同**，本轮没有增删这项），去重后 **65 个 id**；本记录里的说明性提及同样不计入。⚠️ **「同号同内容」这个判据对本类完全无效**——`tests/failmatrix/cases.mjs` 在 `1fbe7572` 与 `7dd3d699` 上是**同一个 blob**（`67bc5cd8a7c6edffed8a2e70c458ed991265c217`），同号必然同内容。语义必须另核，见 1.3。
+
+#### 1.1 `文件:行`：只核了「同号同内容」
+
+| 类别 | 条数（改前页体口径） | 说明 |
+| --- | --- | --- |
+| 同号同内容 | 233 | 只证明「行号没动」，**不证明「指对了地方」** |
+| 内容位移（可复现） | 2 | `app.ts:1917` → `2057`；`community-filter-pg.mjs:422` → `474-475`（**不是 `424`**——`:424` 是 SQL 占位符位序段，与所称断言无关，见下一条原文片段与 §1.2） |
+| 原行不在界内 / 文件不存在 | 0 | — |
+| 合计 | 235 | 解析失败 0 条；**本版页体口径 237**（见 §一 的两口径说明） |
+
+两处位移的原文片段（自算，勿照抄）：
+
+- `app.ts:2057` ⇒ `const retryAfterSeconds = retryAfterSecondsFor(error);`（`:2058` ⇒ `if (retryAfterSeconds !== null) reply.header('Retry-After', String(retryAfterSeconds));`）。初稿时点在 `1917-1918`；`7dd3d699` 上该文件共 2,116 行，整段下移。
+- `community-filter-pg.mjs:474-475` ⇒ `assert.equal((await call('GET', '/api/v1/reports/${reportId}')).status, 404,` + `'他人读他人举报必须 404（只回本人）');`。**原引的 `:422` 在 `1fbe7572` 上就已不是这条断言**（那一带是「crop/region/limit 占位符位序」的 SQL 断言，`:424` 是其中的 `const orderedStatements = statements`）⇒ 它**不是单纯行号漂移，是指错了地方**。
+
+#### 1.2 「同号同内容」证不出的「指错」：另查出 2 处
+
+这条判据只能证「行号没动」，**证不出「指错了地方」**。初版把两类混报成「仍成立 312」属 overclaim，已按本节改写。另查出（第三类 `community-filter-pg.mjs` 那条已列在 §1.1 的「内容位移」里，此处不重复）：
+
+| # | 原引 | 实际是什么 | 订正 |
+| --- | --- | --- | --- |
+| 1 | `community-service.test.mjs:674`（声称 `listPosts` 403 `SCOPE_DENIED`） | 该行是 `['media_ids 重复', …, 'DUPLICATE_ITEM']` | → `community-service.test.mjs:725`（`await assert.rejects(h.service.listPosts(ADMIN, {}), assertApiError('SCOPE_DENIED', 403));`） |
+| 2 | `history-http.test.mjs:477`（挂在 `listHistory` 的 401 列） | 该行是 **`DELETE /history/{id}`** 的匿名 401（全文件仅此一条 401，且属 DELETE 面） | 从 `listHistory` 行**移除**，改挂 `deleteHistory` 行（见 §2.3） |
+
+#### 1.3 `C 族@行`：语义复核（本次新做）
+
+`cases.mjs` 的行数演进（自算，`git show <rev>:tests/failmatrix/cases.mjs`）：
+
+| 时点 | 行数 | `C1-01` 行号 | `C1-27` 行号 |
+| --- | --- | --- | --- |
+| `d4d48088`（本页初稿） | 290 | 52 | 78 |
+| `1fbe7572`（回写） | 385 | 64 | 90 |
+| `7dd3d699`（本次） | 385 | 64 | 90 |
+
+⇒ 行号整体下移 **12 行**，而页内 `@行` 从未跟着改。
+
+**机制（自核，`git diff d4d48088 1fbe7572 -- tests/failmatrix/cases.mjs` 的 4 个 hunk）**：`+12` 全部来自 `CASES` **之前**的三处插入——① `COMMUNITY_MEDIA_BODY` 一带的 4 个 body 常量 **+9**（`@@ -30,0 +31,9 @@`）；② `BATCHES` 新增 B5 批次 **+1**（`@@ -35,0 +45 @@`）；③ `FAMILIES` 补 C10/C11 两条说明 **+2**（`@@ -47,0 +58,2 @@`）。而 C10（23 条）/C11（39 条）的**用例块本身是追加在文件尾**（`@@ -289,0 +302,83 @@`，**+83**），**推不动任何既有行**。（`9+1+2+83 = 95`，与 `git diff --numstat` 的 `95 0` 相符。）⇒ 错的是「`CASES` 头部多出来的 12 行」，不是「尾部多了 62 条用例」。
+
+逐条语义核（把每个 `Cx-yy@NN` 的 `@NN` 行原文取出来，看它是不是**该 id 的用例行**）：
+
+| 类别 | 条数 | 说明 |
+| --- | --- | --- |
+| 语义正确（`@NN` 就是该 id 的用例行） | 5 | 全部是 `C10-03@313`——它由 `#449` 同期写入，本来就对 |
+| 语义错误（整体小 12 行） | 77 | 已统一订正为真实行号（等价于 +12），逐条对照见**附录 A** |
+| 合计 | 82 | 去重 65 个 id；订正后 **65/65 命中该 id 的用例行** |
+
+### 二、`7dd3d699` 上的复读（本节为新增读数，不覆盖上面各节）
+
+| 项 | 命令 | 读数 |
+| --- | --- | --- |
+| 矩阵条数 | `node tests/failmatrix/run.mjs --list` | 末行原文 `合计 230 条用例（HTTP 210 + seam 20）。`；exit 0 |
+| 矩阵包装器 | `node --test tests/unit/gy-i22-failmatrix.test.mjs` | `tests 3 / pass 3 / fail 0`，其中「全量真跑 230 条全绿，且每条都有真实读数」通过；exit 0 |
+| `MIN_CASES` / 族条数 / 批次条数 | `git show 7dd3d699:tests/unit/gy-i22-failmatrix.test.mjs` | `MIN_CASES = 230`、`FAMILY_COUNTS`（C1:37 C2:24 C3:27 C4:18 C5:10 C6:10 C7:16 D1:11 D2:4 D3:2 D4:3 E1:3 E2:3 C10:23 C11:39）、`BATCH_COUNTS`（B1:106 B2:36 B3:17 B4:9 B5:62）**全部与 §0.3 所记一致** |
+| 契约操作数 | `node tools/verify-contract-status.mjs` | `覆盖 113 条契约操作；已装配 109 条；implemented 17 / partial 92 / planned 4`；exit 0 |
+| 矩阵单测（i22 矩阵本体） | `node --test tests/unit/gy-i22-secmatrix.test.mjs` | `tests 6 / pass 6 / fail 0`，146 条 `[I22]` 行；exit 0 |
+| 文档门禁 | `npm run test:docs` / `node tools/verify-doc-anchors.mjs --strict` | 均 exit 0（详见同批重绑的安全矩阵页 §8.1） |
+
+**与 §0.3 的差异登记（只登记、不改写）**：§0.3 记的分布是 `partial 96 / implemented 13 / planned 4`，`7dd3d699` 上实测为 `partial 92 / implemented 17 / planned 4`；**operation 总数 113 未变**。这是契约台账随主线推进自己变了，**不是本页的结论改动**，本页不评论这些状态判定是否恰当。
+
+### 三、三条「未取得」的登记位置
+
+本次要求如实登记、不得当成已解决的三条（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 是沙箱事实而非产品缺陷）**不在本页展开**，统一登记在同一批重绑的安全矩阵页 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1、§10.2、§10.3（每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」）。本页 §5 的既有未取得条目照旧、不因那次登记而被弱化。
+
+本页仍**没有**做的事：未跑全量单测、未起真库/真机、未重算 §2 逐格判定、未改 `docs/architecture/contract-status.json`、未改任何 `status`。
+
+---
+
+## 附录 A：`C 族@行` 订正对照（65 个 id，2026-10-23）
+
+本表由**仓外一次性脚本**生成（脚本未入库，本片只交表；可复现的方法与判据见 §一 1.3）：「改后」= `git show 7dd3d699:tests/failmatrix/cases.mjs` 中 `id: 'Cx-yy'` 所在行号，「改前」= 本页 `97db10c3` 版里该 id 的 `@NN`，「位移」= 改后 − 改前。65 个去重 id 里 **64 个整体 +12**、1 个（`C10-03`）本来就对。
+
+| 改前 | 改后 | 位移 | 该行用例标题（`cases.mjs` 原文） |
+| --- | --- | --- | --- |
+| `C1-01`@52 | 64 | +12 | 游客读收藏列表 |
+| `C1-02`@53 | 65 | +12 | 游客写收藏 |
+| `C1-03`@54 | 66 | +12 | 游客取消收藏 |
+| `C1-04`@55 | 67 | +12 | 游客读历史 |
+| `C1-05`@56 | 68 | +12 | 游客删历史 |
+| `C1-06`@57 | 69 | +12 | 游客读消息 |
+| `C1-07`@58 | 70 | +12 | 游客读未读数 |
+| `C1-08`@59 | 71 | +12 | 游客标记已读 |
+| `C1-14`@65 | 77 | +12 | 游客申请社区媒体访问 |
+| `C1-15`@66 | 78 | +12 | 游客取社区媒体内容 |
+| `C1-16`@67 | 79 | +12 | 游客读帖子列表 |
+| `C1-17`@68 | 80 | +12 | 游客发帖 |
+| `C1-18`@69 | 81 | +12 | 游客读单帖 |
+| `C1-19`@70 | 82 | +12 | 游客发评论 |
+| `C1-20`@71 | 83 | +12 | 游客读评论列表 |
+| `C1-21`@72 | 84 | +12 | 游客改评论 |
+| `C1-22`@73 | 85 | +12 | 游客点赞 |
+| `C1-23`@74 | 86 | +12 | 游客举报 |
+| `C1-24`@75 | 87 | +12 | 游客查举报 |
+| `C1-27`@78 | 90 | +12 | 游客读会话 |
+| `C1-28`@79 | 91 | +12 | 游客注销 |
+| `C1-31`@82 | 94 | +12 | 游客读同意书 |
+| `C1-33`@84 | 96 | +12 | 游客读除草剂目录 |
+| `C1-34`@85 | 97 | +12 | 游客读知识库 |
+| `C1-36`@87 | 99 | +12 | 游客读后台会话 |
+| `C2-14`@104 | 116 | +12 | 对照：A 取消不存在的收藏 |
+| `C2-15`@105 | 117 | +12 | 对照：A 删不存在的历史 |
+| `C2-16`@106 | 118 | +12 | 对照：A 标记不存在的消息 |
+| `C2-17`@107 | 119 | +12 | 对照：A 删不存在的帖子 |
+| `C2-18`@108 | 120 | +12 | 对照：A 改不存在的评论 |
+| `C2-21`@111 | 123 | +12 | 对照：A 查不存在的举报 |
+| `C2-23`@116 | 128 | +12 | A 的历史列表不含 B 的行 |
+| `C2-24`@120 | 132 | +12 | A 的消息列表不含 B 的行 |
+| `C3-04`@129 | 141 | +12 | 用户会话读审计事件 |
+| `C3-12`@137 | 149 | +12 | 零 scope 后台会话登出 |
+| `C3-15`@140 | 152 | +12 | 正控制：全 scope 后台会话读审计事件 |
+| `C3-17`@142 | 154 | +12 | 正控制：全 scope 后台会话读后台会话 |
+| `C3-23`@148 | 160 | +12 | 后台会话读用户会话（不得代替） |
+| `C3-26`@151 | 163 | +12 | 正控制：隐藏留痕（审计事件指向被隐藏帖子） |
+| `C4-01`@162 | 174 | +12 | 注销缺幂等键 |
+| `C4-06`@167 | 179 | +12 | 账号 epoch 变更后的旧会话 |
+| `C4-18`@189 | 201 | +12 | 冷静期内原会话仍可用（注销在线 7 日到期前） |
+| `C5-04`@195 | 207 | +12 | 社区媒体内容缺 X-Media-Access-Token |
+| `C5-05`@196 | 208 | +12 | 社区媒体内容 token 在但授权不存在 |
+| `C5-06`@197 | 209 | +12 | 社区媒体授权 id 非 uuid |
+| `C5-07`@198 | 210 | +12 | 内容-媒体不匹配的社区媒体授权 |
+| `C6-03`@217 | 229 | +12 | 同键异体：409 |
+| `C6-04`@218 | 230 | +12 | 缺幂等键：400 |
+| `C6-07`@225 | 237 | +12 | 同键异体重放帖子：409 |
+| `C6-08`@226 | 238 | +12 | 举报（首次） |
+| `C6-09`@227 | 239 | +12 | 同键同体重放举报：同一行 |
+| `C7-01`@245 | 257 | +12 | 帖子路径 id 非 uuid |
+| `C7-02`@246 | 258 | +12 | 取消收藏路径 id 非 uuid |
+| `C7-03`@247 | 259 | +12 | 标记已读路径 id 非 uuid |
+| `C7-04`@248 | 260 | +12 | 举报路径 id 非 uuid |
+| `C7-05`@249 | 261 | +12 | 游标非法 |
+| `C7-08`@252 | 264 | +12 | 列表多余查询参数 |
+| `C7-09`@253 | 265 | +12 | 帖子列表分页非数字 |
+| `C7-10`@254 | 266 | +12 | 发帖缺 media_ids |
+| `C7-11`@255 | 267 | +12 | 发帖 4 个媒体（上限 3） |
+| `C7-12`@256 | 268 | +12 | 举报原因码不在枚举内 |
+| `C7-13`@257 | 269 | +12 | 收藏目标类型不在枚举内 |
+| `C10-03`@313 | 313 | （未变） | 游客改识别选择 |
+| `E1-01`@263 | 275 | +12 | 标题里塞「忽略以上指令」⇒ 硬规则命中 PROMPT_INJECTION 并拒绝（不是照做） |
+| `E2-02`@279 | 291 | +12 | 同一凭据去读一个不存在的媒体 id ⇒ 404，与上一条完全同形 |
+
+订正后逐条复核：65 个 id 全部命中**该 id 的用例行**（`hit=65 / miss=0`），不再有「行号对、指错用例」的情形。

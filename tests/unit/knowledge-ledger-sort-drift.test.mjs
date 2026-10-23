@@ -7,13 +7,18 @@
  *     · `tests/unit/knowledge-order-sql-direction.test.mjs`（DB `ORDER BY` 半边）。
  *   两者都只钉**代码**。而 `docs/architecture/contract-status.json` 里关于「知识列表排序」的
  *   **文字**没有任何机械检查：
- *     · `:716`（`operations.listKnowledge.blocker`）写「当前 id_asc 排序仍不同于冻结
+ *     · `:716`（`operations.listKnowledge.blocker`）**曾**写「当前 id_asc 排序仍不同于冻结
  *       (created_at DESC,id DESC)，实际表/投影无 created_at」；
- *     · `:3164`（`dimensions.pagination.blocker`）写「知识 id_asc 仍偏离冻结 …缺历史创建时点字段」。
+ *     · `:3199`（`dimensions.pagination.blocker`）**曾**写「知识 id_asc 仍偏离冻结 …缺历史创建时点字段」。
  *   事实是：排序早在 `b56ba9d`（PR #209，2026-10-16 合入 main）就已改成
  *   `services/api/src/knowledge/service.ts:76` 的 `ORDER BY created_at DESC, id DESC`，
  *   迁移 `services/api/db/migrations/0012_knowledge_created_at.sql` 也把 `created_at` 落到了投影里。
  *   ⇒ 台账这两处是**滞后文字**，不是功能缺失。
+ *
+ *   **2026-10-23（R33）补记**：上述两处台账文字已按代码事实订正（before/after 见
+ *   `docs/verification/gy-r33-contract-ledger-20261023.md`）；本文件与登记表**未删任何断言**，
+ *   登记表把两条登记保留为「已订正」并同步逐字文本，继续钉住「台账文字 = 代码事实」。
+ *   为避免该类声称静默消失，订正后的 blocker 仍以历史对照方式保留 `id_asc` 字样。
  *
  * 后果已经发生过：`docs/verification/gy-i07-knowledge-miniprogram-wiring-20261021.md:76`
  *   （2026-10-21，晚于 #209 五天）据台账写下「现行实现为 `id_asc`」，把滞后文字当成了实现事实。
@@ -23,9 +28,9 @@
  *   ① **三方逐字一致**：冻结契约 `docs/architecture/state-contract.md:32` 的排序子句、
  *      `service.ts` 实际发出的读语句 `ORDER BY` 子句、本文件内置的字面量必须逐字相同
  *      ⇒ 改代码或改契约任一侧都会红。
- *   ② **滞后登记必须同时与台账和代码成立**：登记的 `ledger_line` 必须仍指向该条目的
- *      `blocker` 行、`blocker` 原文必须逐字未改、其中仍含 `id_asc`、而代码里**已经**不再有
- *      `id_asc` ⇒ 台账被修正（或又被改回）都必须同步更新登记，不能沉默漂移。
+ *   ② **登记必须同时与台账和代码成立**：登记的 `ledger_line` 必须仍指向该条目的
+ *      `blocker` 行、`blocker` 原文必须与登记逐字一致、其中仍含 `id_asc`（订正后作为历史对照保留），
+ *      而代码里**已经**不再有 `id_asc` ⇒ 台账再被改写、或代码退回旧口径，都会红。
  *   ③ **未登记的新漂移直接红**：台账里任何条目（operation 或 8 条横切维度）只要在
  *      `blocker` 里声称了 `id_asc`／`id_desc` 口径，就必须出现在登记表里；新增一处即红。
  *   ④ **零放宽自证**：本文件不得含软化钩子；登记表不得为空、不得与台账脱钩。
