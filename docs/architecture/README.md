@@ -10,6 +10,7 @@
 | [数据字典](data-dictionary.md) | 实体、字段、关系、索引与迁移约定 | 语义入口 |
 | [状态协议](state-contract.md) | HTTP、任务与隐私行为 | **实施必须遵循的行为，不是已运行证据** |
 | [契约实现状态对照](contract-implementation-status.md) | 哪些契约**现在就能调**、调不通该等哪一项 | GY-I01 收尾交付；机器可读副本 [contract-status.json](contract-status.json) |
+| [路由 × 契约对照表](openapi-route-parity.md) | 已挂载路由与 OpenAPI 操作的双向对账（多出／少掉／台账漂移） | 由 `node tools/openapi-route-parity.mjs --write-doc` 生成，勿手改标记块 |
 | [F / AC 覆盖与交接](acceptance-map.md) | 功能与验收场景到模块、消费任务 | 设计覆盖，**不是运行 AC 通过** |
 | [GY-I01 验证记录](validation.md) | 契约本身的检查与限制 | 契约一致性、标准 schema、负例 |
 | [Excel 暂存设计](workbook-staging-design.md) | 未审核增量暂存的表与权限 | GY-I03 前置 |
@@ -21,5 +22,6 @@
 2. 想知道行为应该是什么 → 读[状态协议](state-contract.md)与 [OpenAPI](../../packages/contracts/openapi.json)。
 3. 想知道契约本身是否自洽 → 读[验证记录](validation.md)，并跑 `npm run test:contract`。
 4. 对照表是否会腐烂 → `node tools/verify-contract-status.mjs`（校验覆盖性、`app.ts` 装配一致性与证据可复核）。
+5. 想知道「实现里挂的路由」和「契约里写的操作」有没有分叉 → 读[路由 × 契约对照表](openapi-route-parity.md)，并跑 `node tools/openapi-route-parity.mjs`（或 `npm run test:contract`，同一口径）。
 
 对照表里的三档状态只描述**实现进度**，不构成验收结论；契约经监工确认后下游按冻结版本验收。
