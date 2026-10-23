@@ -401,10 +401,10 @@
       "route": "/api/v1/me/exports",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
+      "route_mounted": true,
       "status": "planned",
       "evidence": [],
-      "blocker": "导出与注销未实现（GY-I19）；packages/privacy 已有删除清单/回执库与用例，无 HTTP 路由与 handler 注册"
+      "blocker": "HTTP 路由已装配：`registerExportRoutes` 在 app.ts 一处 import ＋ 一处注册，`GET /api/v1/me/exports` 由 routes/exports.ts 提供（无连接池 ⇒ 503 fail-closed）；`status` 仍 planned、`evidence` 仍为空，改判待监工裁定。真实 PG17 集成臂与运行时角色对 `public.exports` 的读授权面未取得，真实外发账本数据与小程序/真机链路亦未取得（GY-I19）"
     },
     {
       "id": "requestAccountDeletion",
