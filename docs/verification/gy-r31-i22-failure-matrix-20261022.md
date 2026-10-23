@@ -1,13 +1,13 @@
 # GY-R31（#22 / GY-I22）失败矩阵复盘与缺口矩阵（只读）
 
 - 基线（**本页初稿时点**）：`origin/main` `d4d48088`（worktree `E:\GengYunCommander\wt-r31-i22`，分支 `feat/gy-r31-i22-recon`）
-- **本页时点：`origin/main` `1fbe7572`**（2026-10-22，分支 `docs/gy-r31-i22-evidence-sync`）。§0.3、§1、§2.6、§2.8、§4.1、§4.2、§4.3 的条数与状态以本时点的回写为准（改动逐条列在文末「2026-10-22 回写记录」）；§2 其余表格与 §5.1–§5.3/§7 仍是初稿时点的读码结论，未重算（§5.4／§5.5 已按 #442／#447 改写）。
+- **本页时点：`upstream/main` `7dd3d699`**（**2026-10-23 重绑时点**）。历史时点：初稿 `d4d48088`（2026-10-22）→ 回写 `1fbe7572`（2026-10-22）。本次重绑只做两件事：① 按 `7dd3d699` 逐条核 `文件:行` 引用（结论见文末「2026-10-23 重绑记录」）；② 补记「本页时点」的新读数。**§2 各表的逐格判定、§3、§4、§5 的条数与结论一律沿用回写时点，未重算。**
 - 性质：**只读复盘**。本页不改业务代码、不改 `docs/architecture/contract-status.json`、不跑全量单测。
 - 证据口径：**每一格都给可定位的 `文件:行`**（`tests/...` 或 `services/api/src/...`）。
   本页区分两类事实，不混写：
-  - **【断言】**＝仓库里已存在的用例断言（读码定位，未在本次重跑）；
-  - **【实现】**＝产品代码里的行为（读码定位，未实测）。
-  - 本次**实测**仅 §7 记的一条定向单文件运行；其余一律**没有实测**。
+  - **【断言】**＝仓库里已存在的用例断言（读码定位，**未**在本页重跑）；
+  - **【实现】**＝产品代码里的行为（读码定位，**未**实测）。
+  - 本页的**实测**只有两处：§7 记的初稿那次定向单文件运行（失败，缺依赖），以及文末「2026-10-23 重绑记录」里为核引用与门禁而跑的几条命令；其余一律**没有实测**。
 
 ---
 
@@ -260,7 +260,7 @@
 | --- | --- | --- |
 | favorites / history | `favorites-http.test.mjs:188,189,196`；`history-http.test.mjs:381,382,388,743` | **是**（同一处成对断言 foreign/absent） |
 | messages | `messages-pg.mjs:284,290`（真库）；`rejections-http.mjs:445`（回环） | **是**（`messages-pg.mjs:299` 另断言 `error.code` 逐字一致） |
-| community | `community-atomic.test.mjs:88,160,204,306,307`；`community-moderation-takedown.test.mjs:170,171,229`；`read-recheck:54,85,112`；`gate-wiring:125,190,291`；`community-filter-pg.mjs:422`（他人读他人举报 404） | **否**（多数只断言 404，未逐个比对封套） |
+| community | `community-atomic.test.mjs:88,160,204,306,307`；`community-moderation-takedown.test.mjs:170,171,229`；`read-recheck:54,85,112`；`gate-wiring:125,190,291`；`community-filter-pg.mjs:474-475`（他人读他人举报 404） | **否**（多数只断言 404，未逐个比对封套） |
 | media | `media-http-access.test.mjs:168` | 部分 |
 | ocr | `ocr-http.mjs:1337,1338,1351,1355,2025` | **是**（`:1358` 明确记录「错误体与不存在同形」） |
 | speech | `speech-http.mjs:225,226,237,238` | **是**（`:222` 组名即「与『不存在』同形」） |
@@ -328,7 +328,7 @@
 
 | # | 风险 | 证据（现状） | 严重度 |
 | --- | --- | --- | --- |
-| 1 | **限流 429 全族零 API 断言** → **已关闭（#442＋#450，2026-10-22）**：`loginWechat` 是唯一产出 429 的路径（`services/api/src/auth/wechat.ts:121` 抛 `RATE_LIMITED`），现在「收到上游 45011 之后的对外行为」有 HTTP 面断言（429 `RATE_LIMITED`＋`Retry-After` 正整数秒＋`retryable`＋封套完整＋失败不落幂等台账） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:77`（`:113` 状态码、`:139-141` `Retry-After` 必须正整数秒、`:147` 同键重试仍 429；#442 建文件、#450 把该头断言从「无该头」改为「必须整数秒」）；实现侧 `services/api/src/errors.ts:82-86`＋`app.ts:1917-1918`（#450 统一出口单一取值） | **已关闭**（原：高；「连打真实触发限流」的窗口仍未取得，见 §5.4） |
+| 1 | **限流 429 全族零 API 断言** → **已关闭（#442＋#450，2026-10-22）**：`loginWechat` 是唯一产出 429 的路径（`services/api/src/auth/wechat.ts:121` 抛 `RATE_LIMITED`），现在「收到上游 45011 之后的对外行为」有 HTTP 面断言（429 `RATE_LIMITED`＋`Retry-After` 正整数秒＋`retryable`＋封套完整＋失败不落幂等台账） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:77`（`:113` 状态码、`:139-141` `Retry-After` 必须正整数秒、`:147` 同键重试仍 429；#442 建文件、#450 把该头断言从「无该头」改为「必须整数秒」）；实现侧 `services/api/src/errors.ts:82-86`＋`app.ts:2057-2058`（#450 统一出口单一取值；初稿时点为 `1917-1918`，`7dd3d699` 上该段已下移） | **已关闭**（原：高；「连打真实触发限流」的窗口仍未取得，见 §5.4） |
 | 2 | **同步面 504 `PROVIDER_TIMEOUT` 零断言** → **已关闭（#442＋#447，2026-10-22）**：用户面同步读路径在超时族 SQLSTATE 下折叠成 504 + `PROVIDER_TIMEOUT` 已有用例（初稿时点 504 只在后台 PG 锁通道：`admin-flags-pg.mjs:513-515`、`admin-flags-pg.test.mjs:373-382`、`account-authority-pg.test.mjs:120-121`、`admin-accounts-directory.test.mjs:263`、`db-error-retryable-classification.test.mjs:130`） | `tests/unit/gy-i22-rate-and-timeout.test.mjs:218-273`（`:247` 504、`:251` 错误码，注入 `57014`／`55P03`，`:235` 先证明合成登录 200）；`tests/unit/knowledge-herbicides-http.test.mjs:436-439`（#447 把 57014/55P03 ⇒ 504 且 `retryable:true` 落进 `services/api/src/knowledge/service.ts:125-129`） | **已关闭**（原：高；真实锁竞争的触发条件仍未取得，见 §5.5） |
 | 3 | **`selectSpecies` 整行 8 列零断言**（`PATCH /recognitions/:id/selection`） → **已关闭（404/409/400/428 页面过期；401 由 #449 补上）**：404／409／400（＋428）在**初稿时点就有断言**，是漏收；**401 列晚于初稿时点**——由 #449 的 C10-03 引入（`d4d48088` 时点 `recognitions-api.test.mjs` 的 401 只有 POST /recognitions、GET /recognitions/:id、GET /jobs/:id 三条，不含 `PATCH …/selection`） | §2.6 第 4 行（`recognitions-api.test.mjs:542` 他人 404／`:587-588` 409／`:592,597` 400；428 另见 `:582`）；401 见 `C10-03@313`（#449 引入） | **已关闭**（原：高；403/503/超时/429 四列仍 ○） |
 | 4 | **failmatrix 完全不覆盖异步 AI 域与 `/jobs`** → **已关闭（#449，2026-10-22）**：`cases.mjs` 新增 C10 游客面 23 条 + C11 归属面 39 条，矩阵 168 → **230** 条，`MIN_CASES` 同步到 230（只增不减） | `tests/failmatrix/cases.mjs:303-333`（C10）、`:335-384`（C11，含 5 条属主正控制）、`tests/unit/gy-i22-failmatrix.test.mjs:35`；CI 读数 `Failmatrix regression` run `39778342989`（headSha `1fbe7572`）success。**仍未进矩阵的域**：`me/exports`、`public/home`、`privacy-policy`、`registrations/verify`（grep 空结果） | **已关闭**（原：高；剩余 4 类域仍无 failmatrix 覆盖，见 §4.2 备注） |
@@ -406,6 +406,8 @@
 6. 真实 AI 供应商的超时/配额/结果不确定，**一律未取得**（stub 世界的 `timed_out` 不代表真实供应商行为）。
 7. `docs/architecture/contract-status.json` 只读交叉核对，**未改动**（在飞 PR 占用）。
 8. 本页的"断言密度"数字是 `tests/**` 内状态码字面量出现次数的**粗筛**（按域正则聚合），不是断言条数；只用于排序，不作为判定依据。
+
+> **2026-10-23 重绑补记**：本次要求单独登记的三条未取得项（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 属沙箱事实而非产品缺陷）写在 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1–§10.3，每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」。本节上面 8 条的含义与口径**不变**，不因那次登记被弱化或抵消。
 
 ---
 
@@ -487,3 +489,44 @@ Node.js v24.16.0
 - `node --test tests/unit/gy-i22-failmatrix.test.mjs` ⇒ 3/3 pass，其中「全量真跑 230 条全绿，且每条都有真实读数」通过。
 - `node --test tests/unit/gy-i22-*.test.mjs`（9 个文件）⇒ 47/47 pass。
 - 这些读数只覆盖矩阵与 i22 单测；**真实微信侧限流、真实 AI 供应商超时、真机/微信开发者工具仍未取得**（§5）。
+
+---
+
+## 2026-10-23 重绑记录（`upstream/main` = `7dd3d699`）
+
+本次只做两件事：**核引用**、**补读数**。不重算 §2 的逐格判定，不改任何 `status`，不改 `docs/architecture/contract-status.json`。
+
+### 一、`文件:行` 引用逐条核对
+
+核对方法（可复现）：把本页所有 `文件:行` 与 `C 族@行` 引用解析成仓内真实路径（同名文件唯一解析），再用 `git show 1fbe7572:<path>` 与 `git show 7dd3d699:<path>` 取同一行号处的原文逐字比对；内容不同则在该文件里做**唯一内容匹配**找新行号。
+
+| 类别 | 条数 | 说明 |
+| --- | --- | --- |
+| 仍成立（同一行号仍是同一段内容） | 312 | — |
+| 已漂移（内容在、行号变） | 1 | `app.ts:1917-1918` → `app.ts:2057-2058` |
+| 已失效（原行从来不是所称的断言 / 原文已被改写） | 1 | `community-filter-pg.mjs:422` → `community-filter-pg.mjs:474-475` |
+| 合计 | 314 | 解析失败 0 条、越界 0 条 |
+
+两条改绑的原文片段（自算，勿照抄）：
+
+- `app.ts:2057` ⇒ `const retryAfterSeconds = retryAfterSecondsFor(error);`（`:2058` ⇒ `if (retryAfterSeconds !== null) reply.header('Retry-After', String(retryAfterSeconds));`）——这就是 §4.1 #1 说的「统一出口单一取值」。初稿时点在 `1917-1918`，`7dd3d699` 上该文件长到 2,116 行，整段下移。
+- `community-filter-pg.mjs:474-475` ⇒ `assert.equal((await call('GET', '/api/v1/reports/${reportId}')).status, 404,` + `'他人读他人举报必须 404（只回本人）');`。**这条要单独说明**：原引的 `:422` 在 `1fbe7572` 上就已不是这条断言（那一带是「crop/region/limit 占位符位序」的 SQL 断言），只是内容在 `7dd3d699` 上又漂到 `:424`。所以它不是单纯行号漂移，而是**指错了地方**，本次按符号重找改绑。
+
+### 二、`7dd3d699` 上的复读（本节为新增读数，不覆盖上面各节）
+
+| 项 | 命令 | 读数 |
+| --- | --- | --- |
+| 矩阵条数 | `node tests/failmatrix/run.mjs --list` | 末行原文 `合计 230 条用例（HTTP 210 + seam 20）。`；exit 0 |
+| 矩阵包装器 | `node --test tests/unit/gy-i22-failmatrix.test.mjs` | `tests 3 / pass 3 / fail 0`，其中「全量真跑 230 条全绿，且每条都有真实读数」通过；exit 0 |
+| `MIN_CASES` / 族条数 / 批次条数 | `git show 7dd3d699:tests/unit/gy-i22-failmatrix.test.mjs` | `MIN_CASES = 230`、`FAMILY_COUNTS`（C1:37 C2:24 C3:27 C4:18 C5:10 C6:10 C7:16 D1:11 D2:4 D3:2 D4:3 E1:3 E2:3 C10:23 C11:39）、`BATCH_COUNTS`（B1:106 B2:36 B3:17 B4:9 B5:62）**全部与 §0.3 所记一致** |
+| 契约操作数 | `node tools/verify-contract-status.mjs` | `覆盖 113 条契约操作；已装配 109 条；implemented 17 / partial 92 / planned 4`；exit 0 |
+| 矩阵单测（i22 矩阵本体） | `node --test tests/unit/gy-i22-secmatrix.test.mjs` | `tests 6 / pass 6 / fail 0`，146 条 `[I22]` 行；exit 0 |
+| 文档门禁 | `npm run test:docs` / `node tools/verify-doc-anchors.mjs --strict` | 均 exit 0（详见同批重绑的安全矩阵页 §8.1） |
+
+**与 §0.3 的差异登记（只登记、不改写）**：§0.3 记的分布是 `partial 96 / implemented 13 / planned 4`，`7dd3d699` 上实测为 `partial 92 / implemented 17 / planned 4`；**operation 总数 113 未变**。这是契约台账随主线推进自己变了，**不是本页的结论改动**，本页不评论这些状态判定是否恰当。
+
+### 三、三条「未取得」的登记位置
+
+本次要求如实登记、不得当成已解决的三条（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 是沙箱事实而非产品缺陷）**不在本页展开**，统一登记在同一批重绑的安全矩阵页 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1、§10.2、§10.3（每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」）。本页 §5 的既有未取得条目照旧、不因那次登记而被弱化。
+
+本页仍**没有**做的事：未跑全量单测、未起真库/真机、未重算 §2 逐格判定、未改 `docs/architecture/contract-status.json`、未改任何 `status`。
