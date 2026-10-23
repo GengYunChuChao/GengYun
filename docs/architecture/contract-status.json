@@ -1998,7 +1998,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources`",
-          "lines": "172-174"
+          "lines": "183-183"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2029,7 +2029,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources`",
-          "lines": "175-177"
+          "lines": "186-186"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2060,7 +2060,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "178-180"
+          "lines": "189-189"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2091,7 +2091,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "181-183"
+          "lines": "192-192"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2126,7 +2126,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/publish`",
-          "lines": "184-186"
+          "lines": "195-195"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2157,7 +2157,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/withdraw`",
-          "lines": "187-189"
+          "lines": "198-198"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2188,7 +2188,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge`",
-          "lines": "192-194"
+          "lines": "203-203"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2219,7 +2219,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge`",
-          "lines": "195-197"
+          "lines": "206-206"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2250,7 +2250,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "198-200"
+          "lines": "209-209"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2281,7 +2281,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "201-203"
+          "lines": "212-212"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2312,7 +2312,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/publish`",
-          "lines": "204-206"
+          "lines": "215-215"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2347,7 +2347,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`",
-          "lines": "207-209"
+          "lines": "218-218"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2378,7 +2378,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations`",
-          "lines": "212-214"
+          "lines": "223-223"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2409,7 +2409,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations`",
-          "lines": "215-217"
+          "lines": "226-226"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2440,7 +2440,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "218-220"
+          "lines": "229-229"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2471,7 +2471,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "221-223"
+          "lines": "232-232"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2502,7 +2502,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/publish`",
-          "lines": "224-226"
+          "lines": "235-235"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2533,7 +2533,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/withdraw`",
-          "lines": "227-229"
+          "lines": "238-238"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2564,7 +2564,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions`",
-          "lines": "232-234"
+          "lines": "243-243"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2595,7 +2595,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions`",
-          "lines": "235-237"
+          "lines": "246-246"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2626,7 +2626,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "238-240"
+          "lines": "249-249"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2657,7 +2657,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "241-243"
+          "lines": "252-252"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2688,7 +2688,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/publish`",
-          "lines": "244-246"
+          "lines": "255-255"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2719,7 +2719,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`",
-          "lines": "247-249"
+          "lines": "258-258"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2750,7 +2750,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/categories`",
-          "lines": "267-271"
+          "lines": "292-294"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2781,7 +2781,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/categories/:id`",
-          "lines": "272-281"
+          "lines": "297-303"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2812,7 +2812,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/accounts`",
-          "lines": "288-292"
+          "lines": "313-315"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2843,7 +2843,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/accounts/:id/suspend`",
-          "lines": "293-301"
+          "lines": "318-323"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2874,7 +2874,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs`",
-          "lines": "311-315"
+          "lines": "336-338"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2905,7 +2905,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "316-324"
+          "lines": "341-346"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2936,7 +2936,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "listFlags",
-          "lines": "332-336"
+          "lines": "357-361"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2967,7 +2967,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/feature-flags/:key`",
-          "lines": "337-345"
+          "lines": "362-367"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3002,7 +3002,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/flag-audit-events`",
-          "lines": "352-356"
+          "lines": "377-379"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
@@ -3017,6 +3017,43 @@
       "blocker": "开关变更审计的只读查询已装配（读 public.admin_audit_events 的 set_flag 行，键集游标 (created_at,id) 降序）；后台 UI 已有「操作者/变更前后」列；人审隔离位仍属契约/范围外（AdminJob 9 字段无隔离位）"
     },
     {
+      "id": "listAuditLogs",
+      "method": "get",
+      "path": "/admin/audit-logs",
+      "route": "/api/v1/admin/audit-logs",
+      "scope": "audit:read",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/audit-logs`",
+          "lines": "279-285"
+        },
+        {
+          "path": "services/api/src/admin/audit/service.ts",
+          "symbol": "async function listAuditLogs",
+          "lines": "182-232"
+        },
+        {
+          "path": "services/api/src/admin/audit/pg.ts",
+          "symbol": "createPostgresAdminAuditLogPort",
+          "lines": "247-262"
+        },
+        {
+          "path": "services/api/db/migrations/0033_admin_audit_log_read.sql",
+          "symbol": "CREATE OR REPLACE FUNCTION public.list_admin_audit_logs",
+          "lines": "44-82"
+        },
+        {
+          "test": "tests/unit/admin-audit-logs.test.mjs",
+          "name": "GET /admin/audit-logs：权限矩阵、筛选组合、分页边界与脱敏"
+        }
+      ],
+      "blocker": "读面已装配（迁移 0033 的只读函数 public.list_admin_audit_logs()，scope audit:read；权限与 listAuditEvents 同一把门），真库臂已建数据→查询→断言；但**审计写面仍未落库**：库内写入点只有 suspend_account / restore_account / set_feature_flag 三处，其余 appendAudit 仍落内存 ops store（persistent=false，重启即丢），后台 UI 的审计页尚未消费本接口，表内无 ip / user_agent 列故响应不含该二字段。"
+    },
+    {
       "id": "hidePost",
       "method": "post",
       "path": "/admin/posts/{id}/hide",
@@ -3029,7 +3066,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "hidePost",
-          "lines": "364-372"
+          "lines": "389-397"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3060,7 +3097,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/audit-events`",
-          "lines": "255-259"
+          "lines": "266-268"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3245,7 +3282,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "884-884"
+          "lines": "900-900"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -3384,7 +3421,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "316-324"
+          "lines": "341-346"
         }
       ],
       "blocker": "共享作业面现由 `services/api/src/app.ts:1953` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:1954`）、transcription（`:1960`）、moderation（`:1963`）、synthesis（`:1969`）、ocr（`:1977`）、answer（`:1985`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
