@@ -8,7 +8,8 @@
  *   3. **`--only` / `--skip` 过滤** —— 只跑点名的项；未知 id、过滤后为空都按**用法错误**退出码 2；
  *   4. **泄漏扫描命中/未命中** —— 在 `os.tmpdir()` 里铺真 git 夹具，命中时四条规则都报、
  *      密钥原文**不出现在 stdout／报告里**（只给掩码），未命中时判 pass 且确实扫过新增行。
- * 另含：大文件/二进制门禁、真库臂默认跳过且带理由、`--list` 产物契约。
+ * 另含：大文件/二进制门禁、真库臂默认跳过且带理由、`--list` 产物契约，
+ * 以及**自指回归**（工具源码自己不得命中自己的扫描规则——真跑时踩过两次）。
  *
  * ⚠️ **夹具字面量必须拆开拼**（`'sk' + '-abc…'`、`'E:' + '\\…'`）：本文件自己也在
  * 「待发布 diff 的新增行」里，写成整串会被本门禁的扫描规则命中 ⇒ 自己扫自己，红得毫无意义。
@@ -279,6 +280,26 @@ test('门禁·泄漏扫描未命中：干净新增文件判 pass，且确实扫�
     assert.equal(secrets.exitCode, 0);
     assert.deepEqual(secrets.details.hits, []);
     assert.equal(secrets.details.scannedLines, CLEAN_FIXTURE.split('\n').length - 1);
+  } finally {
+    rmSync(fixture.dir, { recursive: true, force: true });
+  }
+});
+
+test('门禁·自指回归：本脚本源码自己不得命中自己的扫描规则', () => {
+  // 真跑时踩过两次：规则 id、规则 label 里写了会被本表命中的字面量示例，
+  // 于是脚本自己（也在待发布 diff 里）被自己点名。这条测试把那两次固化成回归——
+  // 把工具源码原样丢进夹具仓库当新增文件，`--only secrets` 必须判 pass。
+  const fixture = makeGitFixture({ 'README.md': '# baseline\n' });
+  try {
+    writeFileSync(join(fixture.dir, 'release-gate-copy.mjs'), readFileSync(TOOL));
+    fixture.git('add', '-A');
+    fixture.git('commit', '-q', '--no-gpg-sign', '-m', 'self');
+
+    const run = gate(['--root', fixture.dir, '--base', fixture.base, '--only', 'secrets', '--out', join(makeScratch(), 'report.json')]);
+    const secrets = parseReport(run.stdout).gates[0];
+    const hits = (secrets.details.hits ?? []).map((hit) => `${hit.line} ${hit.ruleId} ${hit.preview}`);
+    assert.deepEqual(hits, [], `工具源码不得命中自己的规则（自指假阳性）：\n${hits.join('\n')}`);
+    assert.equal(run.status, 0, run.stderr);
   } finally {
     rmSync(fixture.dir, { recursive: true, force: true });
   }
