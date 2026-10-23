@@ -11,6 +11,11 @@
  *      （写盘已挪到对账 `problems` 判定之后）；
  *   3. 负控制：真实归档页在「裸 `--write`」「显式 `--page=`」「再加 `--i-know-this-rewrites-archive`」
  *      三种调用下都**不被改写**——最后一种因为页内条数（168）≠ `EXPECTED`（230）同样被拒；
+ *   3'. 负控制：归档页的**路径别名**（`docs/verification/./x.md`、`docs/verification/../verification/x.md`、
+ *      `DOCS/verification/x.md`）修复前全部能从 `rel === ARCHIVE_PAGE` 的字符串比较里溜过去，EXIT 0
+ *      把快照从 168 / 23 改写成 230 / 26；现在按真实路径比较，三种写法都必须 exit 1、字节不变；
+ *   3''. 负控制：`--page=../outside.md` 这类**越界目标**修复前 EXIT 0 能改仓库外文件；现在包含性
+ *      校验早于读文件，仓库外的受害者文件必须一个字节都不变；
  *   4. 负控制：目标页缺生成器标记 ⇒ 拒绝写入且不写盘。
  *
  * 为什么用临时树：生成器的 `ROOT` 由脚本自身位置推导，`--matrix=` / `--nc=` / `--page=` 都按该
@@ -20,7 +25,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -223,4 +228,85 @@ test('证据表生成器：目标页缺生成器标记时拒绝写入（不写�
   assert.equal(result.status, 1, `缺标记应 exit 1，实际 ${result.status}：\n${result.stdout}\n${result.stderr}`);
   assert.match(result.stderr, /缺少标记 <!-- BEGIN:MATRIX-TABLE -->/);
   assert.equal(readFileSync(tree.page, 'utf8'), markerless, '缺标记却写盘了');
+});
+
+/**
+ * 归档页的**路径别名**（审查者实测的漏洞）：修复前归档页保护判的是归一化字符串
+ * `rel === ARCHIVE_PAGE`，而 `normalizeRel` 只做 `\`→`/`、剥开头 `./`、剥结尾 `/`，于是
+ *
+ *   --page=docs/verification/./gy-i22-failmatrix-20261022.md
+ *   --page=docs/verification/../verification/gy-i22-failmatrix-20261022.md
+ *   --page=DOCS/verification/gy-i22-failmatrix-20261022.md   （Windows 大小写不敏感）
+ *
+ * 全部 **EXIT 0 且真把归档页从 168 / 23 改写成 230 / 26**。现在判据是真实路径比较
+ * （`realpathSync.native` + Windows 折叠大小写），三种写法必须与直接点名同一个结果：
+ * exit 1、拒绝原因指向归档快照、归档页字节逐字不变。
+ */
+test('证据表生成器：归档页的路径别名（./、..、大小写）按真实路径比较一律拒绝', (t) => {
+  const archivePath = path.join(ROOT, ARCHIVE_PAGE);
+  const before = readFileSync(archivePath, 'utf8');
+  // 兜底：万一守卫被改坏、真写盘了，先把原字节放回去，别把仓库里的归档页留成脏状态。
+  t.after(() => {
+    if (readFileSync(archivePath, 'utf8') !== before) writeFileSync(archivePath, before, 'utf8');
+  });
+
+  const expected = readExpected();
+  assert.notEqual(
+    countRowsBetweenMarkers(before, 'MATRIX-TABLE'),
+    expected.total,
+    '归档页条数与 EXPECTED 相等了：别名负控制的前提变了（那份快照已被改写），需人工复核',
+  );
+
+  const dir = ARCHIVE_PAGE.slice(0, ARCHIVE_PAGE.lastIndexOf('/'));
+  const name = ARCHIVE_PAGE.slice(ARCHIVE_PAGE.lastIndexOf('/') + 1);
+  const aliases = [
+    { page: `${dir}/./${name}`, note: '中间插 `./`', archiveBranch: true },
+    { page: `${dir}/../verification/${name}`, note: '用 `..` 绕出去再回来', archiveBranch: true },
+    {
+      // 大小写只在大小写不敏感的文件系统上构成别名；POSIX 上它是**另一个不存在的路径**，
+      // 由「读不到目标页」拦住，同样 exit 1、同样不写盘（断言随之放宽到 /拒绝写入/）。
+      page: ARCHIVE_PAGE.replace(/^docs\//, 'DOCS/'),
+      note: '大写目录别名',
+      archiveBranch: process.platform === 'win32' || process.platform === 'darwin',
+    },
+  ];
+  for (const one of aliases) {
+    const result = runTool(TOOL, ['--write', `--page=${one.page}`], ROOT);
+    assert.equal(result.status, 1, `${one.note}（--page=${one.page}）应 exit 1，实际 ${result.status}：\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /拒绝写入/, `${one.note} 没有打印拒绝原因：\n${result.stderr}`);
+    if (one.archiveBranch) {
+      assert.match(result.stderr, /拒绝写入归档快照/, `${one.note} 没被识别成归档页（别名绕过了真实路径比较）：\n${result.stderr}`);
+    }
+    assert.equal(readFileSync(archivePath, 'utf8'), before, `${one.note} 改写了归档快照`);
+  }
+});
+
+/**
+ * 越界目标：修复前 `--page=../outside.md` **EXIT 0**，把仓库外的文件当成证据页改写了。
+ * 现在包含性校验（真实路径必须以 `<仓库根><分隔符>` 开头）放在读文件之前，越界目标一律拒绝，
+ * 仓库外的受害者文件必须一个字节都不变——而且不存在的越界目标也不许被创建。
+ */
+test('证据表生成器：目标越出仓库（../outside.md）在打开文件之前就拒绝', (t) => {
+  const tree = makeTree(t);
+  const expected = readExpected();
+  tree.writeArtifacts(buildMatrix(expected), buildNegativeControls(expected));
+
+  const victimName = `gy-i22-outside-${process.pid}-${Date.now()}.md`;
+  const victim = path.resolve(tree.root, '..', victimName);
+  writeFileSync(victim, PAGE_FIXTURE, 'utf8'); // 仓库外的「受害者页」：带满标记，修复前会被真改写
+  t.after(() => rmSync(victim, { force: true }));
+  const missing = `${victim}.missing.md`;
+
+  const cases = [
+    { page: `../${victimName}`, note: '上一级目录的仓库外文件' },
+    { page: `docs/../../${victimName}`, note: '套一层 `docs/` 再用 `..` 越界' },
+    { page: `../${victimName}.missing.md`, note: '仓库外不存在的目标' },
+  ];
+  for (const one of cases) {
+    const result = runTool(tree.tool, ['--write', `--page=${one.page}`], tree.root);
+    assert.equal(result.status, 1, `${one.note}（--page=${one.page}）应 exit 1，实际 ${result.status}：\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /拒绝写入：目标不在仓库内/, `${one.note} 没打印「目标不在仓库内」：\n${result.stderr}`);
+    assert.equal(readFileSync(victim, 'utf8'), PAGE_FIXTURE, `${one.note} 改写了仓库外的文件`);
+  }
+  assert.ok(!existsSync(missing), '仓库外的 .missing.md 被创建了：越界目标必须在打开文件之前就拒绝');
 });
