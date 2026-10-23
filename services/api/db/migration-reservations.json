@@ -32,15 +32,13 @@
     "树上因此出现「有依据的缺号」：33 个文件 + 1 保留 === max 34（三条不变量成立）。33 号条目登记",
     "owner #525，remove_when = #525 合入即删 —— 0033 一落盘 reservedButPresent 立刻判红，不许躺平。",
     "⛔ 这条不是白名单：缺 33 但没登记，undeclaredGaps 照旧判红（tests/unit/migration-reservations.test.mjs",
-    "负控制①）。README 的同一条依据见 services/api/db/migrations/README.md 的「0033 预留」段。"
+    "负控制①）。README 的同一条依据见 services/api/db/migrations/README.md 的「0033 预留」段。",
+    "【2026-10-24 #525 已合入 origin/main @ 4b87e1d9 · 33 号条目已按 remove_when 清空】#525（feat/gy-admin-audit-query）",
+    "于 2026-10-24 合入 origin/main（4b87e1d9），0033_admin_audit_log_read.sql 真实落盘 ⇒ 该条目按它自己的",
+    "remove_when **删除**，台账回到空数组：**34 个文件 + 0 保留 === max 34**、缺号 0",
+    "（verify-migrations-unique --strict PASS）。上一条（R34-I19 让号段的 33 个文件 + 1 保留 === max 34）",
+    "是让号当时的事实，保留项一落盘就必须删 —— 本次合流正是它自己的 remove_when 到期，⛔ 不是放宽判据。",
+    "README 的「0033 预留」当前状态段已随本合流删除，历史叙述留在 README 的 R34-I19 段。"
   ],
-  "reservations": [
-    {
-      "version": 33,
-      "filename": "0033_admin_audit_log_read.sql",
-      "owner": "PR #525（feat/gy-admin-audit-query）",
-      "reason": "审计读表迁移在并行分支上；本片（#19 注销闭集扩展）原取 0033，撞号后整体让到 0034，故本树上 33 是有意空缺",
-      "remove_when": "#525 合入 origin/main 即删（0033 落盘后 33 文件 + 1 保留 ≠ max 34 会由 reservedButPresent 判红）"
-    }
-  ]
+  "reservations": []
 }

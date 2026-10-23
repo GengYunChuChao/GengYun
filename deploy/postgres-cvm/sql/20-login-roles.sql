@@ -432,6 +432,26 @@ REVOKE ALL ON FUNCTION public.list_admin_flag_audit(integer, timestamptz, uuid) 
 GRANT EXECUTE ON FUNCTION public.list_admin_flag_audit(integer, timestamptz, uuid) TO gengyun_api_runtime;
 -- #endregion gy-i18-flag-audit-grant
 
+-- --- 后台审计日志只读面（R34 / 迁移 0033：`list_admin_audit_logs`）-----------
+-- 上一段只放开了 `action='set_flag'` 一类行；同样落在 `admin_audit_events` 的
+-- `account.suspend` / `account.restore` 在库内没有任何读路径（进程内 `audit-events`
+-- 只看得见内存 store，real 模式下实测 503）。这里同样**不**给表级 SELECT，
+-- 只给一个 SECURITY DEFINER 函数的 EXECUTE：函数体内 `SET search_path = pg_catalog`，
+-- 键集分页 `(created_at,id)` 严格递减，`target_ref` 在函数内按允许列表重建。
+-- 前置：迁移 0033 必须先执行（缺失即显式失败，绝不留「看似收敛、点开 503」的运行态）。
+-- #region gy-r34-audit-logs-grant
+DO $$
+BEGIN
+  IF to_regprocedure('public.list_admin_audit_logs(integer,timestamp with time zone,timestamp with time zone,text[],text[],timestamp with time zone,uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.list_admin_audit_logs(...)：迁移 0033 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.list_admin_audit_logs(integer, timestamptz, timestamptz, text[], text[], timestamptz, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.list_admin_audit_logs(integer, timestamptz, timestamptz, text[], text[], timestamptz, uuid) TO gengyun_api_runtime;
+-- #endregion gy-r34-audit-logs-grant
+
 -- --- G. 逐用户备份副本清单：运行时**列级** DML（GY-I19 / 迁移 0023）-----------
 -- ---------------------------------------------------------------------------
 -- GY-I19（#19）· 逐用户备份副本清单（迁移 0023）的运行时**列级**授权

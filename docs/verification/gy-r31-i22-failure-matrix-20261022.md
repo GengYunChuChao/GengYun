@@ -244,7 +244,7 @@
 | deletion / exports（3 ops） | 401:58 403:14 404:17 409:8 503:17 | `account-deletion-http.mjs:202,316,321,326`（四类 401）、`:359`（换发后旧 bearer 立即失效）、failmatrix `C4-10..15` | **齐** |
 | catalog / public / profile（7 ops） | 400:13 401:6 404:5 503:4 | `C1-25..26,32`（游客 401）；`C2-22` | **基本齐**，无写面冲突 |
 | admin 内容面（24 ops：sources/knowledge/registrations/restrictions） | 401:82 403:78 404:79 409:87 503:135 504:16 | 守卫 `routes/admin.ts:166-167`（`readGuards`/`writeGuards`）；`C3-01..03,09..11`（403）、`C3-14..17`（200 对照）、`C3-22`（404） | **齐**；本域 504 只在 PG 锁通道；用户面同步读路径的 504 由 §4.1 #2 回写补上（#442／#447） |
-| admin 运维面（10 ops：accounts/jobs/flags/audit/categories/hide） | 同上 | `admin.ts:257,269,275,290,296,313,319,334,340,354,367` 每条均 `guards.requireAdmin` | **齐** |
+| admin 运维面（10 ops：accounts/jobs/flags/audit/categories/hide） | 同上 | `admin.ts:268,269,275,290,296,313,319,334,340,354,367` 每条均 `guards.requireAdmin` | **齐** |
 | admin auth（3 ops） | — | `routes/admin-auth.ts:47,89,104` | **齐** |
 | community media（2 ops） | — | 见 §2.2 末两行 | **齐** |
 

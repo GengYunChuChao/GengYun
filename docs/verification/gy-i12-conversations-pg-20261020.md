@@ -135,7 +135,7 @@ conversations-pg：12 条读数全部通过（真 PostgreSQL 17.11）
 
 真库臂由**独立 npm 脚本** `test:integration:conversations-pg`（值为 `node tests/integration/conversations-pg.mjs`）
 承载，不进 `test:integration:http` 链：该链成员必须严格是 `node <路径>`
-（`tests/unit/ci-integration-chain-structure.test.mjs:185-203`，不允许带 flag），而真库前置
+（`tests/unit/ci-integration-chain-structure.test.mjs:200-218`，不允许带 flag），而真库前置
 （PG 17.11 + 空库 + 连接串）不该拖垮无库回环链。同一脚本的两种出口都在 HEAD 上实测过：
 
 - 带 `CONVERSATIONS_PG_TEST_URL` 跑 `npm run test:integration:conversations-pg` ⇒ 12 条 PASS，`exit=0`；

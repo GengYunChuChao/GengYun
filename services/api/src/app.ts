@@ -84,6 +84,10 @@ import { createAdminContentStore } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
 import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
+import { createAdminAuditLogService } from './admin/audit/service.ts';
+import type { AdminAuditLogService, AdminAuditLogServiceOptions } from './admin/audit/service.ts';
+import { createPostgresAdminAuditLogPort } from './admin/audit/pg.ts';
+import type { AdminAuditLogPort } from './admin/audit/pg.ts';
 import { createReferenceIntegrity } from './admin/reference-integrity.ts';
 import type { AdminCallContext } from './admin/types.ts';
 // GY-I18 本片：全局开关的**跨端点真实生效**（受控输出面清单 + 守卫包装 + 投稿面装饰）。
@@ -257,6 +261,12 @@ declare module 'fastify' {
     /** GY-I18 阶段 1b：后台运营与开关服务（9 个 operationId）。 */
     adminOpsService: AdminOpsService;
     /**
+     * R34：库内审计日志只读查询服务（1 个 operationId：`listAuditLogs`）。
+     * 与 `adminOpsService` 分开装配：审计**读面**的生命周期与运营**写面**不同
+     * （读面只依赖迁移 0033 的只读函数，不依赖任何写权威）。
+     */
+    adminAuditLogService: AdminAuditLogService;
+    /**
      * GY-I18 本片：全局开关门（跨端点真实生效）。供回归测试核对"关闭 ⇒ 拒绝且零产出"、
      * "不可识别 ⇒ fail-closed"与"开关不改变适用判定结论"。
      */
@@ -394,6 +404,12 @@ export interface BuildAppOptions {
      * 注入优先（测试用它钉住"注入端口才接线"，不依赖真实库）。
      */
     flagsPort?: AdminOpsServiceOptions['flagsPort'];
+    /**
+     * 真实审计日志读端口（R34）：不传时 `real` 且 `pool !== null` 按
+     * `createPostgresAdminAuditLogPort({ pool })` 自建；`pool === null` ⇒ `/admin/audit-logs`
+     * 保持 503（⛔ 不返回空页）。注入优先（测试用它钉住接线点，不依赖真实库）。
+     */
+    auditLogPort?: AdminAuditLogServiceOptions['port'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
   // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
@@ -1317,6 +1333,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   let adminContentService: AdminContentService;
   let adminOpsService: AdminOpsService;
+  let adminAuditLogService: AdminAuditLogService;
   if (adminRealUnwired) {
     const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
     const failClosed = createFailClosedAdminServices(reason);
@@ -1362,9 +1379,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // `pool === null` ⇒ 目录为 null ⇒ 读面保持 503（⛔ 不拿内存种子冒充真实账号，也⛔ 不返回空页）。
     // 读的是迁移 0021 的窄口径函数 `public.list_admin_accounts()`（运行时角色只有 EXECUTE）。
     const realAccountsDirectory = pool === null ? null : createPostgresAccountsDirectory({ pool });
+    // **R34 显式放行（库内审计**读**面，不是写面）**：只在**确实拿到库池**时构造只读端口；
+    // `pool === null` ⇒ 端口 null ⇒ `/admin/audit-logs` 保持 503（⛔ 不返回空页：空页会被读成
+    // "平台不存在任何后台审计记录"，那是伪造读数）。读的是迁移 0033 的
+    // `public.list_admin_audit_logs()` —— 运行时角色对 `admin_audit_events` 仍是**零表级权限**，
+    // 只有该函数的 EXECUTE（`deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r34-audit-logs-grant`）。
+    // ⛔ 本片**不**解决"审计落库"：三处库内写入（`suspend_account`/`restore_account`/`set_feature_flag`）
+    // 之外的 `appendAudit` 仍落内存 ops store（`persistent:false`），此处只补**读**通道。
+    const realAuditLogPort =
+      adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));
+    adminAuditLogService = createAdminAuditLogService({
+      port: realAuditLogPort,
+      now: clock,
+      signingKey: adminSigningKey,
+      executionMode: config.executionMode,
+    });
     if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
-      app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 34 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
+      app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 36 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
     } else {
       adminOpsService = restrictAdminOpsToAccountsAuthority(
         createAdminOpsService({
@@ -1397,14 +1429,17 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       if (flagsWired) released.push('开关读写');
       // 只在**真的**放行时才把这个能力计入读数：未持久化时它仍属"逐条 503"的一员。
       if (communityPostPortForAdmin.persistent === true) released.push('帖子下架');
+      // R34：库内审计**读**面（迁移 0033 的只读函数）；审计**写**面仍未落库，不在此列。
+      if (realAuditLogPort !== null) released.push('库内审计读面');
       app.log.warn(
         {
           executionMode: config.executionMode,
           accountsReadWired: realAccountsDirectory !== null,
           flagsWired,
           hidePostWired: communityPostPortForAdmin.persistent === true,
+          auditLogReadWired: realAuditLogPort !== null,
         },
-        `GY-I18/I22 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022）；其余 ${34 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033）；其余 ${36 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {
@@ -1437,6 +1472,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         posts: communityPostPortForAdmin,
       });
     }
+    // R34：审计日志读面在 stub/preset_demo 域**只经显式注入**接真实库端口（与 `flagsPort` 同一口径：
+    // 不因"恰好有 pool"就在 stub 域自动读库）。默认注入为空 ⇒ 端口 null ⇒ 读面 503
+    // （未接线 ≠ 没有历史；空页会被读成"平台从未发生任何后台事件"）。
+    adminAuditLogService = createAdminAuditLogService({
+      port: adminInjection?.auditLogPort ?? null,
+      now: clock,
+      signingKey: adminSigningKey,
+      executionMode: config.executionMode,
+    });
   }
 
   // GY-I06 私有媒体域（#6）：契约 7 个 operationId 的唯一装配点。
@@ -2006,6 +2050,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('synthesisService', synthesisService);
   app.decorate('adminContentService', adminContentService);
   app.decorate('adminOpsService', adminOpsService);
+  app.decorate('adminAuditLogService', adminAuditLogService);
   app.decorate('featureFlagGate', featureFlagGate);
   app.decorate('humanReviewDirectory', humanReviewDirectory);
   app.decorate('mediaService', mediaService);
@@ -2134,7 +2179,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       },
     }),
   ]));
-  registerAdminRoutes(app, guards, { content: adminContentService, ops: adminOpsService });
+  registerAdminRoutes(app, guards, {
+    content: adminContentService,
+    ops: adminOpsService,
+    audit: adminAuditLogService,
+  });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
   // GY-I27 第三片（C7）：把与识别/转写/合成/OCR **同源的那一个** `consentGate` 交给媒体域，
   // 媒体域只在 `POST /media/uploads` 上按请求体 `purpose` 用它（其余 6 条入口不挂）。

@@ -7,7 +7,7 @@
  * 声称成功、重启即丢。**不能**用 `contract-status=partial` 之类文档披露替代运行时拒绝。
  *
  * 本文件钉住两件事：
- * 1. **real 默认装配反例 ⇒ 35 条后台路由一律 fail-closed（503 `PROVIDER_UNAVAILABLE`）**，
+ * 1. **real 默认装配反例 ⇒ 36 条后台路由一律 fail-closed（503 `PROVIDER_UNAVAILABLE`）**，
  *    且**不产生任何内存副作用**（审计台账为空）、**路由保持注册**（契约面不缩水）；
  * 2. **stub 默认装配行为不变**（内存实现仍可用，且确会写内存）—— 说明改动只对外拒绝 real。
  *
@@ -48,7 +48,7 @@ const ALL_SCOPES = [
   'flags:read', 'flags:write',
 ];
 
-/** 契约里 34 个 operationId 的 method + path（从 openapi.json 原文取）。 */
+/** 契约里 36 个 operationId 的 method + path（从 openapi.json 原文取）。 */
 const CONTRACT = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'));
 const CONTRACT_ROUTES = new Map();
 for (const [path, item] of Object.entries(CONTRACT.paths)) {
@@ -92,7 +92,7 @@ function restrictionInput() {
   };
 }
 
-/** 34 个 operationId 的**合法形状**请求（real 下若未 fail-closed，其中一些会直接成功）。 */
+/** 36 个 operationId 的**合法形状**请求（real 下若未 fail-closed，其中一些会直接成功）。 */
 function adminRequests() {
   const families = [
     { path: `${API}/admin/sources`, input: sourceInput },
@@ -119,6 +119,7 @@ function adminRequests() {
   rows.push({ op: 'listFlags', method: 'GET', url: `${API}/admin/feature-flags` });
   rows.push({ op: 'setFlag', method: 'PUT', url: `${API}/admin/feature-flags/ai_enabled`, body: { enabled: true, reason: 'r' }, ifMatch: '"1"' });
   rows.push({ op: 'listFlagAuditEvents', method: 'GET', url: `${API}/admin/flag-audit-events` });
+  rows.push({ op: 'listAuditLogs', method: 'GET', url: `${API}/admin/audit-logs` });
   rows.push({ op: 'hidePost', method: 'POST', url: `${API}/admin/posts/${UNKNOWN_UUID}/hide`, body: { reason: 'r' }, ifMatch: '"1"' });
   return rows;
 }
@@ -151,13 +152,13 @@ function inject(app, token, row, index) {
   });
 }
 
-test('real 默认装配反例：35 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
+test('real 默认装配反例：36 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
   const authStore = createMemoryAuthStore();
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore });
   try {
     const token = await seedAdmin(authStore);
     const rows = adminRequests();
-    assert.equal(rows.length, 35, '反例必须覆盖全部 35 个 operationId');
+    assert.equal(rows.length, 36, '反例必须覆盖全部 36 个 operationId');
 
     const succeeded = [];
     for (const [index, row] of rows.entries()) {
@@ -171,8 +172,8 @@ test('real 默认装配反例：35 条后台路由一律 fail-closed（503 PROVI
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);
 
-    // 契约面不缩水：35 条路由**仍然注册**（只是运行时一律拒绝）。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 35);
+    // 契约面不缩水：36 条路由**仍然注册**（只是运行时一律拒绝）。
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 36);
     for (const opId of ADMIN_HTTP_OPERATION_IDS) {
       const route = CONTRACT_ROUTES.get(opId);
       const url = `${route.path}`.replaceAll('{id}', ':id').replaceAll('{key}', ':key');

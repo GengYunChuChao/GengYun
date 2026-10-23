@@ -765,6 +765,13 @@
       "version_required": false
     },
     {
+      "id": "listAuditLogs",
+      "path": "/admin/audit-logs",
+      "method": "get",
+      "scope": "audit:read",
+      "version_required": false
+    },
+    {
       "id": "hidePost",
       "path": "/admin/posts/{id}/hide",
       "method": "post",

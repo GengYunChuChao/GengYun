@@ -331,6 +331,19 @@ const UNAUDITED_SQL_HOSTS = [
     owner: 'W6 / R28-W6 backup-state-derivation；静态纳管待 R28-S66 重定读数',
   },
   {
+    file: 'services/api/src/admin/audit/pg.ts',
+    reason: 'R34（#18，迁移 0033）新增的后台审计日志只读端口：唯一一条 SQL 是'
+      + '`SELECT … FROM public.list_admin_audit_logs($1::integer, $2::timestamptz, $3::timestamptz, '
+      + '$4::text[], $5::text[], $6::timestamptz, $7::uuid)` —— **函数调用**，`FROM` 后面不是表：'
+      + '`public.admin_audit_events` 对运行时角色是**零表级权限**（0017 裁定的最小权限，本片不动它），'
+      + '读面因此走 0033 的 `SECURITY DEFINER` 函数（固定 `search_path`、参数全绑定、`LIMIT` 函数内收口），'
+      + '本文件里零字符串拼接。列面由**函数级**断言 + 真库臂覆盖：'
+      + 'tests/integration/admin-audit-logs-pg.mjs 用运行时角色实测「七参数绑定 / 键集 (created_at,id) / '
+      + '同一毫秒不同微秒不漏行」，并断言运行时直读 admin_audit_events 仍恰好 42501 ⇒ 零新增授权。'
+      + '纳入本管线需 R28-S66 重定 auditedFiles 读数（19→20 等），留给该片统一改。',
+    owner: 'R34 / #18 审计日志查询面；静态纳管待 R28-S66 重定读数',
+  },
+  {
     file: 'services/api/src/ai/checked-content-live-adapter.ts',
     reason: 'R28-W3 新增的 TTS「已核对内容」端口真实现，两条只读语句：'
       + '(a) `select revision, check_state, owner_id, checked_text from public.conversation_answers where id = $1::uuid limit 1`；'
@@ -2352,11 +2365,11 @@ test('sql-column-coverage/扩展 19 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 10 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 11 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 29, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 30, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
