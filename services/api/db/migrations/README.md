@@ -4,14 +4,20 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态：`0001..0032` 连续，无缺号
+## 当前状态：`0001..0032` + `0034`，缺 `0033`（#525 的审计读表预留，有依据）
 
-迁移 `0001..0032` 已全部真实落盘：**32 个正向 + 31 个 down**（无 `0001` 的 down），末项 `0032`。
-保留台账 `services/api/db/migration-reservations.json` 的 `reservations` 为**空数组**
-（`count + 保留数 === max` ⇒ **32 + 0 === 32**），
-`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据为「`0001..0032` 连续、无缺口」。
-（本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations` ⇒
-正向 `.sql` 32 条、`rollback/` 31 条、`0001..0032` 无缺号。）
+迁移 `0001..0034` 里已真实落盘 **33 个正向 + 32 个 down**（无 `0001` 的 down），末项 `0034`。
+**0033 是有意空缺**：`0033_admin_audit_log_read.sql` 归并行分支 #525（`feat/gy-admin-audit-query`），
+本片（#19 注销闭集扩展）原取 0033、撞号后整体让到 `0034_r34_owner_content_purge.sql`。
+保留台账 `services/api/db/migration-reservations.json` 的 `reservations` 因此有**一条**（`version: 33`，
+`owner: #525`，`remove_when: #525 合入即删`）⇒ `count + 保留数 === max` 即 **33 + 1 === 34**，
+`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据为「缺 0033，有依据」。
+（本段数字为实测：`git ls-tree -r --name-only <本树> -- services/api/db/migrations` ⇒
+正向 `.sql` 33 条、`rollback/` 32 条、缺号只有 0033。⛔ 0033 落盘那天必须删掉这条登记。）
+
+- **0033 预留**：`0033_admin_audit_log_read.sql` 只在 #525（`feat/gy-admin-audit-query`，head `04199ac9`）
+  分支上 ⇒ 本树上缺 33，保留台账登记 `owner: #525`。本片让号理由是它更早成形、且它的 0033 不牵动
+  `tests/integration/moderation-ledger-pg.mjs` 的合流 canary；#525 合入后按 `remove_when` 删条目与这一行。
 
 - `0031_online_purge_evidence.sql`（#19 片B · 在线清理证据落库）与
   `0032_community_report_reporter_ref.sql`（#15 去身份残留 · 举报者行级注销引用）按裁定

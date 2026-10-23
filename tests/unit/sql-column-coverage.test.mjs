@@ -445,7 +445,7 @@ const OPAQUE_ALLOWLIST = [
  * `SELECT *`/无顶层 FROM 处数**不变**。
  *
  * R34 第 2 轮（同日复审后）：**撤销**上面那 7 条整表 DELETE 与两条表级 `GRANT DELETE`，
- * 改走迁移 `0033_r34_owner_content_purge.sql` 的两条 `SECURITY DEFINER` 函数
+ * 改走迁移 `0034_r34_owner_content_purge.sql` 的两条 `SECURITY DEFINER` 函数
  * （`public.purge_owner_recognitions(uuid)` / `public.purge_owner_speech(uuid)`），运行时只拿
  * `EXECUTE`。理由：`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 与
  * `tests/unit/deploy-sql-gate-probe.test.mjs` 把「运行时对 recognition_jobs / recognition_records /
@@ -594,7 +594,7 @@ const TABLE_WIDE_COLUMN = '*';
  *   `20-login-roles.sql` 授权）、逐文件 `recognitions` 20 → **24**、`speech` 16 → **19**；
  *   INSERT/UPDATE/SELECT、引用表 44 张、`rowLocks` 分桶、onConflict、无顶层 FROM 均不变。
  * ⑫ 2026-10-23 R34 第 2 轮（复审后改口径）：撤销 ⑪ 那 7 条整表 DELETE 与两条表级 `GRANT DELETE`，
- *   改走迁移 0033 的两条 `SECURITY DEFINER` 函数（运行时只拿 `EXECUTE`）；存储层改为
+ *   改走迁移 0034 的两条 `SECURITY DEFINER` 函数（运行时只拿 `EXECUTE`）；存储层改为
  *   `SELECT public.<fn>($1::uuid) AS counts`。⇒ 字面量 273 → **268**、DELETE 43 → **36**、
  *   RETURNING 89 → **82**、SELECT 141 → **143**、列要求 1734 → **1720**、已覆盖 1680 → **1666**、
  *   无顶层 FROM 11 → **13**（两条函数调用没有顶层 FROM）、逐文件 `recognitions` 24 → **21**、

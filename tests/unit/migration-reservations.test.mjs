@@ -43,6 +43,15 @@
  * 31 号条目按它自己的 `remove_when` **删除**（0031 已真实落盘，留着会让 `reservedButPresent` 判红）。
  * 「当前仓库」用例同时把真实 0031 文件的存在性期望**翻成 `true`** —— 那条断言原来期望 `false`，
  * 0031 一落盘它就该变红；继续写 `false` 就是假通过，方向必须与「已落盘」的事实一致。
+ *
+ * **R34-I19（2026-10-23，本片撞号后让号：0033 → `0034_r34_owner_content_purge.sql`）**：
+ * 本片原取 0033，与并行分支 #525（`feat/gy-admin-audit-query`）的 `0033_admin_audit_log_read.sql`
+ * 撞号。裁定**保留 #525 的 0033**（更早成形、且不动本片这套跨文件 canary）⇒ 本片整体改 0034，
+ * 树上因此出现「有依据的缺号」：`gaps=[33] / reserved=[33]`、`maxVersion=0034`、
+ * 33 个文件 + 1 保留 === 34（三条不变量全部成立）。0033 的台账条目 `owner: #525`，
+ * `remove_when: #525 合入即删` —— #525 一落盘 `reservedButPresent` 就会把它判红。
+ * 这与 R32 那次（`gaps=[31] / reserved=[31]`）是同一种形态：本台账存在的原始用途就是跨 PR 缺号，
+ * ⛔ 不是为了让判据放行而加的白名单；负控制①仍逐字证明「缺 33 但不登记 ⇒ 判红」。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -86,7 +95,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号（缺号 0）、末项 0033、三条不变量成立', () => {
+test('迁移编号/当前仓库：0031 已随 #494 落盘、本片让号到 0034 ⇒ 台账只剩 #525 的 0033 一条保留、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -95,11 +104,21 @@ test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [],
-    `0031 已随 #494 落盘、0032 随 #15、0033 在本片 ⇒ 0001..0033 连续，树上不应再有任何缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    [33],
+    `0031 已随 #494 落盘、0032 随 #15、0034 在本片 ⇒ 0001..0034 里只缺 0033（#525 的审计读表预留号；现场 ${JSON.stringify(numbering.gaps)}）`,
   );
-  assert.deepEqual(numbering.reserved, [], '0031 已落盘 ⇒ 保留号必须清零（保留项不许躺平）');
-  assert.deepEqual(reservations, [], '保留台账必须回到空数组：0031 落盘后不应再有任何「有意缺号」');
+  assert.deepEqual(
+    numbering.reserved,
+    [33],
+    '0033 在 #525（feat/gy-admin-audit-query）上 ⇒ 台账必须登记它（本片已让号到 0034）',
+  );
+  assert.equal(reservations.length, 1, '台账眼下只该有 0033 一条（#525 合入即删）');
+  assert.equal(reservations[0].version, 33, '占位的必须是 0033 —— 那是 #525 的号，本片不许再碰');
+  assert.equal(
+    reservations[0].filename,
+    '0033_admin_audit_log_read.sql',
+    '保留项的 filename 必须与 version 前缀一致、且是 #525 的真实文件名',
+  );
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -142,6 +161,18 @@ test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号
     true,
     '#19 的 0031 已随 #494 落盘 ⇒ 真实文件必须在清单里，且台账里的 31 条目必须已删'
       + '（否则 reservedButPresent 会先把这条判红）',
+  );
+  // R34-I19：本片撞号后让号 0033 → 0034（0033 归 #525 的审计读表）。方向必须与事实一致：
+  // 0034 在清单里、0033 **不在**（它还在 #525 分支上，所以台账登记了它）。
+  assert.equal(
+    files.includes('0034_r34_owner_content_purge.sql'),
+    true,
+    '本片清理迁移已让号到 0034 ⇒ 真实文件必须在清单里',
+  );
+  assert.equal(
+    files.includes('0033_r34_owner_content_purge.sql'),
+    false,
+    '0033 已让给 #525（0033_admin_audit_log_read.sql）⇒ 本片不得再出现 0033 前缀的文件',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),

@@ -13,7 +13,7 @@
 //     speech_jobs / transcriptions）对运行时角色**一条 DELETE 都没有**，这是刻意的禁止面
 //     （`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 逐条探针要求「直接 DELETE 必须
 //     恰好 42501」，deploy-sql-gate 钉死 18 条 / 9 个对象）；
-//   · 内容清理走迁移 0033 的两条窄口径 SECURITY DEFINER 函数，授权只有
+//   · 内容清理走迁移 0034 的两条窄口径 SECURITY DEFINER 函数，授权只有
 //     `GRANT EXECUTE ON FUNCTION public.purge_owner_*(uuid) TO gengyun_api_runtime`。
 //   所以护栏两个方向都要管：① 表面 DELETE 两侧一致（含"这五张表必须是 false/无授权"）；
 //   ② 函数面 EXECUTE 授权与 `function_surface_manifest` 一致。
@@ -32,7 +32,7 @@ import test from 'node:test';
 const ROLES_SQL_URL = new URL('../../deploy/postgres-cvm/sql/20-login-roles.sql', import.meta.url);
 const ASSERT_SQL_URL = new URL('../../deploy/postgres-cvm/sql/90-assert-least-privilege.sql', import.meta.url);
 
-// 五张正文表：账号注销要清空它们，但**不许**给运行时表级 DELETE（清理只能走 0033 的函数）。
+// 五张正文表：账号注销要清空它们，但**不许**给运行时表级 DELETE（清理只能走 0034 的函数）。
 const OWNER_PURGE_DENY_DELETE_TABLES = [
   'recognition_jobs',
   'recognition_records',
@@ -183,7 +183,7 @@ test('禁止面守住：五张正文表对运行时既无 GRANT DELETE、expecte
       granted.has(table),
       false,
       `${table} 不允许有表级 GRANT DELETE：它是 probe-runtime-grants.sql 锁定的禁止面`
-        + `（直接 DELETE 必须恰好 42501），清理只能经迁移 0033 的函数`,
+        + `（直接 DELETE 必须恰好 42501），清理只能经迁移 0034 的函数`,
     );
     assert.equal(
       flags.get(table),

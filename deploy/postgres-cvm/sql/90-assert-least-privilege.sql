@@ -1296,7 +1296,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- recognition_idempotency 的 del 是 true：PG 无列级 DELETE，两条整行删除见
     -- store-pg.ts:880 releaseIdempotent / :891 purgeIdempotent（release / 过期回收，与注销无关）。
     -- ⚠️ 本块其余四张表（jobs / records / selections）的 del 必须是 false：运行时对它们**没有**
-    -- 表级 DELETE，注销清理只能经迁移 0033 的 SECURITY DEFINER 函数（本文件断言的
+    -- 表级 DELETE，注销清理只能经迁移 0034 的 SECURITY DEFINER 函数（本文件断言的
     -- owner_purge_function_* 五条即为此设）；deploy/postgres-cvm/evidence/probe-runtime-grants.sql
     -- 把「直接 DELETE 恰好 42501」锁成禁止面，两侧任一漂移都由
     -- tests/unit/least-privilege-expected-parity.test.mjs 抓住。
@@ -1691,7 +1691,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'read_online_purge_evidence',         'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
-    -- GY-R34（#19 片2 / 迁移 0033）：注销内容清理**唯一写路径**（识别域 / 语音域各一条窄函数）。
+    -- GY-R34（#19 片2 / 迁移 0034）：注销内容清理**唯一写路径**（识别域 / 语音域各一条窄函数）。
     -- 运行时对这五张正文表仍然一条 DELETE 都没有（domain_manifest 与表级写授权白名单逐字未动），
     -- 清理只能经这两条 SECURITY DEFINER 函数；EXECUTE 只授运行时（断言 92 精确比对 grantee 集）。
     ('public',         'purge_owner_recognitions',           'runtime',
@@ -2320,7 +2320,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
 
   UNION ALL
   -- ---------------------------------------------------------------------------
-  -- GY-R34（#19 片2 / 迁移 0033）追加：注销**内容清理**唯一写路径的函数级契约断言。
+  -- GY-R34（#19 片2 / 迁移 0034）追加：注销**内容清理**唯一写路径的函数级契约断言。
   -- 背景：注销闭集从 5 项扩到 7 项（识别域四表 + 语音域三表），但运行时对这五张正文表
   -- **一条 DELETE 都没有**，而且这是刻意的禁止面（probe-runtime-grants.sql 逐条探针要求
   -- 「直接 DELETE 必须恰好 42501」，deploy-sql-gate 的 18 条 / 9 个对象）。PG 没有列级 DELETE
@@ -3114,7 +3114,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- 65. R28-S28 禁止面：这四条语句必须**恰好** 42501（运行时拿不到 UPDATE/DELETE）。
   --     selections 不授 UPDATE ⇒ FOR UPDATE 也拿不到（与 S26 三表的性质不同，别照抄那句
   --     「UPDATE (revision) 行锁载体」的注释）；DELETE 四表一个都不授 —— GY-R34-I19 起，
-  --     账号注销的内容清理改由迁移 0033 的两条 SECURITY DEFINER 函数以属主身份执行
+  --     账号注销的内容清理改由迁移 0034 的两条 SECURITY DEFINER 函数以属主身份执行
   --     （`public.purge_owner_recognitions(uuid)`；若切成属主级联，`owner_user_id …
   --     ON DELETE CASCADE` 也永不触发：`request_account_deletion()` 不删 `public.users` 行）。
   --     本禁止面由 `tests/unit/least-privilege-expected-parity.test.mjs` 正向锁住。

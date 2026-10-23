@@ -282,9 +282,9 @@ GRANT EXECUTE ON FUNCTION public.read_online_purge_evidence(uuid,uuid) TO gengyu
 -- #endregion gy-r32-i19-online-evidence-grant
 \echo '20-login-roles.sql：已授予 record_online_purge_evidence(...) / read_online_purge_evidence(...) 的 EXECUTE（在线证据唯一写/读路径；未授予任何表/列权限）。'
 
--- --- D3. 注销内容清理：识别域/语音域按主体清空的 EXECUTE（GY-R34 / 迁移 0033）------
+-- --- D3. 注销内容清理：识别域/语音域按主体清空的 EXECUTE（GY-R34 / 迁移 0034）------
 -- 注销闭集从 5 项扩到 7 项（识别域四表 + 语音域三表），内容清理由各域 handler 在在线窗口内
--- 各自执行并各自留证据串。清理写路径**不是**给运行时发表级 DELETE，而是迁移 0033 建的两条
+-- 各自执行并各自留证据串。清理写路径**不是**给运行时发表级 DELETE，而是迁移 0034 建的两条
 -- **窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员，`REVOKE ALL ... FROM PUBLIC`）：
 --   · `purge_owner_recognitions(uuid)` —— 只删该主体的 recognition_selections / jobs / records
 --     与 recognition_idempotency 台账；
@@ -303,10 +303,10 @@ GRANT EXECUTE ON FUNCTION public.read_online_purge_evidence(uuid,uuid) TO gengyu
 DO $$
 BEGIN
   IF to_regprocedure('public.purge_owner_recognitions(uuid)') IS NULL THEN
-    RAISE EXCEPTION '缺少 public.purge_owner_recognitions(uuid)：迁移 0033 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+    RAISE EXCEPTION '缺少 public.purge_owner_recognitions(uuid)：迁移 0034 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
   END IF;
   IF to_regprocedure('public.purge_owner_speech(uuid)') IS NULL THEN
-    RAISE EXCEPTION '缺少 public.purge_owner_speech(uuid)：迁移 0033 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+    RAISE EXCEPTION '缺少 public.purge_owner_speech(uuid)：迁移 0034 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
   END IF;
 END;
 $$;
@@ -908,7 +908,7 @@ GRANT UPDATE (request_hash, payload, pending, expires_at)
 GRANT DELETE ON public.recognition_idempotency TO gengyun_api_runtime;
 
 \echo '20-login-roles.sql：已授予 public.recognition_jobs / public.recognition_records / public.recognition_selections / public.recognition_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 recognitions/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.recognition_idempotency（PG 无列级 DELETE；jobs / records / selections 不授 DELETE —— 账号注销的内容清理只能经迁移 0033 的 SECURITY DEFINER 函数 public.purge_owner_recognitions(uuid) 以属主身份执行，本段只授该函数的 EXECUTE）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.recognition_idempotency（PG 无列级 DELETE；jobs / records / selections 不授 DELETE —— 账号注销的内容清理只能经迁移 0034 的 SECURITY DEFINER 函数 public.purge_owner_recognitions(uuid) 以属主身份执行，本段只授该函数的 EXECUTE）。'
 \echo '20-login-roles.sql：recognition_jobs / recognition_records 的 UPDATE 是业务写权限（认领、终态提交、改选），同时满足各自的 SELECT … FOR UPDATE；recognition_selections 不授 UPDATE。'
 
 -- ----------------------------------------------------------------------------
@@ -1006,7 +1006,7 @@ GRANT UPDATE (payload, pending)
 GRANT DELETE ON public.speech_idempotency TO gengyun_api_runtime;
 
 \echo '20-login-roles.sql：已授予 public.speech_jobs / public.transcriptions / public.speech_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 speech/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.speech_idempotency（PG 无列级 DELETE；speech_jobs / transcriptions 不授 DELETE —— 账号注销的内容清理只能经迁移 0033 的 SECURITY DEFINER 函数 public.purge_owner_speech(uuid) 以属主身份执行，段 D3 只授该函数的 EXECUTE）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.speech_idempotency（PG 无列级 DELETE；speech_jobs / transcriptions 不授 DELETE —— 账号注销的内容清理只能经迁移 0034 的 SECURITY DEFINER 函数 public.purge_owner_speech(uuid) 以属主身份执行，段 D3 只授该函数的 EXECUTE）。'
 \echo '20-login-roles.sql：speech_jobs 的 UPDATE 是业务写权限（认领、终态提交），同时满足 commitTerminal 的 SELECT … FOR UPDATE；transcriptions 不授 FOR UPDATE，speech_idempotency 的 SELECT 是全部 6 列（WHERE 与 RETURNING 需要）。'
 
 -- ----------------------------------------------------------------------------

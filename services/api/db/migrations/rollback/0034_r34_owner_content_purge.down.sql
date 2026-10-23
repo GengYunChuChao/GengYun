@@ -1,8 +1,8 @@
--- GY-R34 · 回滚 0033_r34_owner_content_purge.sql
+-- GY-R34 · 回滚 0034_r34_owner_content_purge.sql
 --
 -- ## 可逆性判定：**完全可逆**（本迁移只新增函数，不改任何表、不搬任何数据）
 --
--- 0033 只做两件事：建 `public.purge_owner_recognitions(uuid)`、
+-- 0034 只做两件事：建 `public.purge_owner_recognitions(uuid)`、
 -- 建 `public.purge_owner_speech(uuid)`，并把它们的 EXECUTE 从 PUBLIC 收回。
 -- 它**没有**改表结构、没有改既有函数、没有落任何一行数据，所以结构可以整块还原。
 --

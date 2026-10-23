@@ -490,7 +490,7 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
   /**
    * 注销闭集（#19 延续片）· 按主体清空语音域三张表。
    *
-   * 写路径是**迁移 0033 的 SECURITY DEFINER 函数** `public.purge_owner_speech(uuid)`，不是本文件
+   * 写路径是**迁移 0034 的 SECURITY DEFINER 函数** `public.purge_owner_speech(uuid)`，不是本文件
    * 里的 DELETE：运行时角色对这五张正文表**没有任何** DELETE 权限，且那是刻意的安全不变量
    * （`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 逐条探针要求「直接 DELETE 必须
    * 恰好 42501」，deploy-sql-gate 钉死 18 条 / 9 个对象）。PG 没有列级 DELETE，所以收窄只能
@@ -505,7 +505,7 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
    *
    * 返回值仍是本域计数形状 `{ records, idempotency }`；函数回 jsonb 明细，这里只取这两个与
    * 端口一致的字段。读数读不懂就抛（⛔ 不把「读不到」当「已清 0 行」）。
-   * ⚠️ 迁移没跑（0026/0033 缺）⇒ `requireTables()` / 函数不存在都会明确 fail-closed。
+   * ⚠️ 迁移没跑（0026/0034 缺）⇒ `requireTables()` / 函数不存在都会明确 fail-closed。
    */
   async function purgeOwnerRows(ownerId: string): Promise<SpeechOwnerPurgeCounts> {
     await requireTables();

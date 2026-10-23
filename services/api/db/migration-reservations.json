@@ -25,7 +25,22 @@
     "+ 在 README 写一句」蒙过去，那会让 undeclaredGaps 判红（未声明缺号 = 发现器漏项的形态），",
     "而本台账正是把「有意缺号」与「漏片」分开的唯一机器判据。**#19 的 0031_online_purge_evidence.sql 已随",
     "#494 真实落盘**（合流顺序：先 #494、再本片）⇒ 该条目按它自己的 remove_when **删除**，台账回到空数组：",
-    "**32 个文件 + 0 保留 === max 32、缺号 0**（verify-migrations-unique --strict PASS）。"
+    "**32 个文件 + 0 保留 === max 32、缺号 0**（verify-migrations-unique --strict PASS）。",
+    "【2026-10-23 R34-I19 / #19 注销闭集扩展 · 让号 0033 → 0034 · 登记 33】本片原取 0033，与并行分支",
+    "#525（feat/gy-admin-audit-query）的 0033_admin_audit_log_read.sql **撞号**。裁定保留 #525 的 0033",
+    "（更早成形，且不动本片这套跨文件 canary）⇒ 本片整体改成 0034_r34_owner_content_purge.sql，",
+    "树上因此出现「有依据的缺号」：33 个文件 + 1 保留 === max 34（三条不变量成立）。33 号条目登记",
+    "owner #525，remove_when = #525 合入即删 —— 0033 一落盘 reservedButPresent 立刻判红，不许躺平。",
+    "⛔ 这条不是白名单：缺 33 但没登记，undeclaredGaps 照旧判红（tests/unit/migration-reservations.test.mjs",
+    "负控制①）。README 的同一条依据见 services/api/db/migrations/README.md 的「0033 预留」段。"
   ],
-  "reservations": []
+  "reservations": [
+    {
+      "version": 33,
+      "filename": "0033_admin_audit_log_read.sql",
+      "owner": "PR #525（feat/gy-admin-audit-query）",
+      "reason": "审计读表迁移在并行分支上；本片（#19 注销闭集扩展）原取 0033，撞号后整体让到 0034，故本树上 33 是有意空缺",
+      "remove_when": "#525 合入 origin/main 即删（0033 落盘后 33 文件 + 1 保留 ≠ max 34 会由 reservedButPresent 判红）"
+    }
+  ]
 }

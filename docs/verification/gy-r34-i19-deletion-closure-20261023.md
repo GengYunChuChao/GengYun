@@ -6,6 +6,7 @@
 - 工作树：`E:\GengYunCommander\wt-r34-i19-closure2`
 - 上游 `upstream/main` 现为 `3c7fc19e`（`Reviewed PR #518` 之后又并入 #519/#520/#504/#524/#523）；本分支从 `3c7fc19e` 长出 `090820c8 → f1c0b102 → e44c2990` 三个提交
 - 前置页：`docs/verification/gy-r29-i19-closure-20261022.md`（八项检查清单与四域闭集的历史口径）
+- **编号让渡（2026-10-23 复审后追加）**：本片迁移由 `0033` 改为 **`0034`** —— 0033 让给并行分支 #525（`feat/gy-admin-audit-query`，head `04199ac9`）的 `0033_admin_audit_log_read.sql`。主线此刻仍只有 `0001..0032`，合流后为 `0001..0032` + 本片 0034（0033 归 #525 的审计读表）。理由与全量改动面见 §7。
 
 ---
 
@@ -44,7 +45,7 @@
 - 模块名常量：`services/api/src/privacy/user-data-deletion.ts:132`（`RECOGNITIONS_DELETION_MODULE = 'recognitions'`）、`:140`（`SPEECH_DELETION_MODULE = 'speech'`）。
 - 条件追加的机器可读清单：`:185` `CONDITIONAL_DELETION_MODULES`（顺序＝追加顺序＝回执 `handlers` 行顺序）；真实追加点在 `:525` 的 `conditionalStores` 表与 `:785` / `:796` 两个 `registerModule` 分支。
 - 在线清除证据的落库门：`:694` `(ONLINE_EVIDENCE_MODULES as readonly string[]).includes(module)` —— 名单在 `:169`；社区域**故意不在内**（社区是脱敏/保留语义，不是「清空」）。
-- 按主体清空的存储层原语：`services/api/src/recognitions/store-pg.ts:624` 与 `services/api/src/speech/store-pg.ts:510` 的 `async function purgeOwnerRows(ownerId)`。**它们不再自己发 DELETE**：写路径是迁移 `0033_r34_owner_content_purge.sql` 的两条 `SECURITY DEFINER` 函数，store 只做一次 `SELECT public.<fn>($1::uuid) AS counts` 并把 jsonb 读数收敛成计数（原因见 §3）。
+- 按主体清空的存储层原语：`services/api/src/recognitions/store-pg.ts:624` 与 `services/api/src/speech/store-pg.ts:510` 的 `async function purgeOwnerRows(ownerId)`。**它们不再自己发 DELETE**：写路径是迁移 `0034_r34_owner_content_purge.sql` 的两条 `SECURITY DEFINER` 函数，store 只做一次 `SELECT public.<fn>($1::uuid) AS counts` 并把 jsonb 读数收敛成计数（原因见 §3）。
 
 ### 1.2 关键实现（删除顺序之所以唯一）
 
@@ -60,7 +61,7 @@ async function purgeOwnerRows(ownerId: string): Promise<RecognitionOwnerPurgeCou
 ```
 
 ```sql
--- services/api/db/migrations/0033_r34_owner_content_purge.sql（识别域函数体，节选）
+-- services/api/db/migrations/0034_r34_owner_content_purge.sql（识别域函数体，节选）
 DELETE FROM public.recognition_selections WHERE owner_user_id = p_owner;   -- ① 子表先删
 GET DIAGNOSTICS x_selections = ROW_COUNT;
 DELETE FROM public.recognition_jobs      WHERE owner_user_id = p_owner;    -- ②
@@ -156,10 +157,10 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 | 文件 | 改动 |
 | --- | --- |
-| `services/api/db/migrations/0033_r34_owner_content_purge.sql`（新） | 两条窄函数 `public.purge_owner_recognitions(uuid)` / `public.purge_owner_speech(uuid)`：`SECURITY DEFINER` + `SET search_path = pg_catalog` + `SET TimeZone = 'UTC'` + `REVOKE ALL … FROM PUBLIC`；按 FK 先子后父删（selections → jobs → records / jobs → transcriptions），台账按 `left(scope, char_length($1::text)+1) = $1::text \|\| chr(10)` 前缀删；`p_owner IS NULL` ⇒ `G0001`；返回 `jsonb` 读数（`records` / `idempotency` 与分表计数），重复调用返回全 0 而不报错 |
-| `services/api/db/migrations/rollback/0033_r34_owner_content_purge.down.sql`（新） | `DROP FUNCTION IF EXISTS` 两条；头注释写明「结构可逆、已删行不可恢复」且回退后调用会 `42883` ⇒ 折叠 `blocked` + `HANDLER_FAILED`（必须与代码侧撤回闭集两域配套） |
-| `deploy/postgres-cvm/sql/20-login-roles.sql` | 新增具名区 `-- #region gy-r34-i19-owner-content-purge-grant`：两条 `GRANT EXECUTE ON FUNCTION public.purge_owner_<域>(uuid) TO gengyun_api_runtime;` + 两条 `REVOKE ALL … FROM PUBLIC;` + `to_regprocedure(...) IS NULL` 即 `RAISE EXCEPTION`（挡住「先跑 20-login-roles 后跑迁移」的顺序错）；J/K 段两条 `\echo` 改为「清理只能经 0033 的函数以属主身份执行，本段只授 EXECUTE」。**这五张表仍然零表级 DELETE** |
-| `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | `expected` 五张表保持 `del=false`（未改）；`function_surface_manifest` 登记两条新函数（`kind='runtime'`、`allowed_grantees=ARRAY['gengyun_api_runtime']`）；新增 5 条函数面断言（`owner_purge_function_exists` / `_security_definer` / `_search_path` / `_owner` / `_execute`）；禁止面注释由「走属主级联」改为「走 0033 的 definer 函数」 |
+| `services/api/db/migrations/0034_r34_owner_content_purge.sql`（新） | 两条窄函数 `public.purge_owner_recognitions(uuid)` / `public.purge_owner_speech(uuid)`：`SECURITY DEFINER` + `SET search_path = pg_catalog` + `SET TimeZone = 'UTC'` + `REVOKE ALL … FROM PUBLIC`；按 FK 先子后父删（selections → jobs → records / jobs → transcriptions），台账按 `left(scope, char_length($1::text)+1) = $1::text \|\| chr(10)` 前缀删；`p_owner IS NULL` ⇒ `G0001`；返回 `jsonb` 读数（`records` / `idempotency` 与分表计数），重复调用返回全 0 而不报错 |
+| `services/api/db/migrations/rollback/0034_r34_owner_content_purge.down.sql`（新） | `DROP FUNCTION IF EXISTS` 两条；头注释写明「结构可逆、已删行不可恢复」且回退后调用会 `42883` ⇒ 折叠 `blocked` + `HANDLER_FAILED`（必须与代码侧撤回闭集两域配套） |
+| `deploy/postgres-cvm/sql/20-login-roles.sql` | 新增具名区 `-- #region gy-r34-i19-owner-content-purge-grant`：两条 `GRANT EXECUTE ON FUNCTION public.purge_owner_<域>(uuid) TO gengyun_api_runtime;` + 两条 `REVOKE ALL … FROM PUBLIC;` + `to_regprocedure(...) IS NULL` 即 `RAISE EXCEPTION`（挡住「先跑 20-login-roles 后跑迁移」的顺序错）；J/K 段两条 `\echo` 改为「清理只能经 0034 的函数以属主身份执行，本段只授 EXECUTE」。**这五张表仍然零表级 DELETE** |
+| `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | `expected` 五张表保持 `del=false`（未改）；`function_surface_manifest` 登记两条新函数（`kind='runtime'`、`allowed_grantees=ARRAY['gengyun_api_runtime']`）；新增 5 条函数面断言（`owner_purge_function_exists` / `_security_definer` / `_search_path` / `_owner` / `_execute`）；禁止面注释由「走属主级联」改为「走 0034 的 definer 函数」 |
 | `services/api/src/recognitions/store-pg.ts` / `speech/store-pg.ts` | `purgeOwnerRows` 改为 `SELECT public.<fn>($1::uuid) AS counts`；新增 `purgeCountsFromFunction()` 对 jsonb 读数做**形状校验**（缺字段/非整数/负数一律抛错——⛔ 不把「读不懂读数」当成「已清 0 行」）；**删掉全部直接 `DELETE FROM public.recognition_* / speech_jobs / transcriptions`** |
 | `tests/unit/least-privilege-expected-parity.test.mjs`（新） | 双向护栏：① `GRANT DELETE … ON … <表>` 与 `expected.del` 必须同口径；② 五张表**两侧都必须是「没有 / false」**（禁止面守住）；③ `GRANT EXECUTE … FUNCTION` 的函数必须在 `function_surface_manifest` 登记为 `runtime`；④ 解析器自检；⑤ 合成 SQL 反向控制 |
 | `tests/integration/account-deletion-http.mjs` | 回执模块清单 5 项 → 7 项（加 `recognitions` / `speech`）——回执确实多摊两个域 |
@@ -170,7 +171,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 | --- | --- | --- |
 | 正向 | `ℹ tests 5 · pass 5 · fail 0` | — |
 | 反例 A：删掉 `GRANT EXECUTE … purge_owner_speech` | `ℹ tests 5 · pass 4 · fail 1` | `purge_owner_speech 必须有 GRANT EXECUTE … TO gengyun_api_runtime` |
-| 反例 B：临时加 `GRANT DELETE ON public.recognition_records` | `ℹ tests 5 · pass 3 · fail 2` | `… 但 90-assert 的 expected 仍写 del=false（deploy-sql-gate 会判红）：recognition_records` / `recognition_records 不允许有表级 GRANT DELETE：它是 probe-runtime-grants.sql 锁定的禁止面（直接 DELETE 必须恰好 42501），清理只能经迁移 0033 的函数` |
+| 反例 B：临时加 `GRANT DELETE ON public.recognition_records` | `ℹ tests 5 · pass 3 · fail 2` | `… 但 90-assert 的 expected 仍写 del=false（deploy-sql-gate 会判红）：recognition_records` / `recognition_records 不允许有表级 GRANT DELETE：它是 probe-runtime-grants.sql 锁定的禁止面（直接 DELETE 必须恰好 42501），清理只能经迁移 0034 的函数` |
 
 两处反例均已还原（`git diff` 里没有任何表级 `GRANT DELETE` 落到这 5 张表上，见 §5.4 自查）。
 
@@ -186,9 +187,9 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 | # | 断言 | 本次实测读数 |
 | --- | --- | --- |
-| 1 | 全链迁移 + 表/函数在岗 | `33 个已应用；识别域四表 + 语音域三表 + users 共查 8 张真实表，外加迁移 0033 的两条清理函数 purge_owner_recognitions / purge_owner_speech，全部在岗` |
+| 1 | 全链迁移 + 表/函数在岗 | `全链迁移 33 个已应用；识别域四表 + 语音域三表 + users 共查 8 张真实表，外加迁移 0034 的两条清理函数 purge_owner_recognitions / purge_owner_speech，全部在岗` |
 | 2 | 生产身份授权实测（**成对**：能执行函数、但没有表级 DELETE） | `purge_owner_recognitions EXECUTE=true、purge_owner_speech EXECUTE=true；recognition_selections / recognition_jobs / recognition_records / speech_jobs / transcriptions DELETE=false；users DELETE=false` |
-| 3 | 反向控制（同身份直接 `DELETE`） | `直接 DELETE ... 全部 42501 ⇒ 清理的 0 行只能来自迁移 0033 的 definer 函数，不是表权限` |
+| 3 | 反向控制（同身份直接 `DELETE`） | `直接 DELETE ... 全部 42501 ⇒ 清理的 0 行只能来自迁移 0034 的 definer 函数，不是表权限` |
 | 4 | 清理前读数 | `A 识别域 2/2/2 行（jobs/records/selections）+ 台账 2 行；A 语音域 2/2 行 + 台账 2 行；两本域内台账合计 4/4 行` |
 | 5 | 闭集清单 | `favorites / history / messages / conversations / recognitions / speech`（六项，`missingRegistrations` 为空） |
 | 6 | 证据串 | `recognitions:online-purged:6;recognitions:idempotency-purged:2`、`speech:online-purged:4;speech:idempotency-purged:2`（计数取自 `DELETE … RETURNING` 的实际行数，逐项等于清理前读数） |
@@ -224,7 +225,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 `ℹ tests 4296 · pass 4293 · fail 0 · cancelled 0 · skipped 1 · todo 2`，**exit 0**（命令 `npm run test:unit`，树 = 分支 `feat/gy-r34-i19-deletion-closure` 基于 `e44c2990` ＋ 本提交）。
 
-> **上一轮的 14 条红已随基线前进消失**：第 1 轮在本片树上量到 `fail 14`，逐条归因为上游既有（`release-materials-index` 2 条、`release-materials-index-strict` 6 条、`release-runbook-guard` 6 条），并在 detach 到 `upstream/main`=`5a449305` 的干净 worktree 里复现同样 14 红（下文表与命令保留作历史读数）。本片第 2 轮把分支对齐到 `e44c2990`（其祖先 `3c7fc19e` 已含上游对 `verify-release-materials` 与 runbook 的修复）后，这 14 条全部转绿；本轮新增的 1 条红（`release-materials-index` 的「索引·当前读数与文件系统一致」——本片新增 `0033` 迁移与其 down 使索引页的迁移数过期）已按索引页口径同步修好。
+> **上一轮的 14 条红已随基线前进消失**：第 1 轮在本片树上量到 `fail 14`，逐条归因为上游既有（`release-materials-index` 2 条、`release-materials-index-strict` 6 条、`release-runbook-guard` 6 条），并在 detach 到 `upstream/main`=`5a449305` 的干净 worktree 里复现同样 14 红（下文表与命令保留作历史读数）。本片第 2 轮把分支对齐到 `e44c2990`（其祖先 `3c7fc19e` 已含上游对 `verify-release-materials` 与 runbook 的修复）后，这 14 条全部转绿；本轮新增的 1 条红（`release-materials-index` 的「索引·当前读数与文件系统一致」——本片新增 `0034` 迁移与其 down 使索引页的迁移数过期）已按索引页口径同步修好（迁移总数仍是 33，只是号段从 `0001..0033` 变为 `0001..0032` + `0034`）。
 
 > 读数稳定性说明（如实）：加护栏后第一次全量跑报过 `fail 15`，该次同时有 5 个临时集群在跑；随后两次独立跑（全量一次、`tests/unit` 单独一次）都是 `14` 红，且逐条都是下表这三个文件，另外三个目录（`tests/privacy` `tests/media` `tests/reference` `tests/moderation`，共 1063 条）全绿。判定那 1 条为并发负载下的抖动，未在本片复现，故不登记为本片缺陷。
 
@@ -252,7 +253,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 | 4 | `psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/20-login-roles.sql`（env `GENGYUN_API_RUNTIME_PASSWORD` = 48 位小写十六进制合成值） | 文件头 `\getenv` + 口令形状校验；库名/owner 校验 |
 | 5 | `psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | 需要超级用户（读 `pg_authid`） |
 
-实测读数（迁移 0033 入库后重跑）：`STEP2_MIGRATE_EXIT=0`（`已应用：0001…0033`，33 个）、`STEP3_*` 五个角色文件均 `exit 0`、`STEP4_20_LOGIN_EXIT=0`、`STEP5_90ASSERT_EXIT=0`、输出非空行 **28** 行、**末行逐字 `ok`** ⇒ 判据（退出码 0 **且** 末行 `ok`）双双满足。日志里的 12 条 `ERROR: permission denied` 是脚本**设计内的** 42501 探针（识别域 `:726/:732/:738`、语音域 `:962/:968` 五张正文表的整行 `DELETE`，选了 `FOR UPDATE` 的 `:720`，以及 `catalog_ops`/`staging_intake` 两个 schema 与 `users` 表），不改退出码 —— 也就是说**表级禁区在本机真库上逐条仍成立**。
+实测读数（迁移入库后重跑；当时本片迁移的文件名还是 `0033_r34_owner_content_purge.sql`，见 §7）：`STEP2_MIGRATE_EXIT=0`（`已应用：0001…0033`，33 个）、`STEP3_*` 五个角色文件均 `exit 0`、`STEP4_20_LOGIN_EXIT=0`、`STEP5_90ASSERT_EXIT=0`、输出非空行 **28** 行、**末行逐字 `ok`** ⇒ 判据（退出码 0 **且** 末行 `ok`）双双满足。日志里的 12 条 `ERROR: permission denied` 是脚本**设计内的** 42501 探针（识别域 `:726/:732/:738`、语音域 `:962/:968` 五张正文表的整行 `DELETE`，选了 `FOR UPDATE` 的 `:720`，以及 `catalog_ops`/`staging_intake` 两个 schema 与 `users` 表），不改退出码 —— 也就是说**表级禁区在本机真库上逐条仍成立**。让号到 `0034` 只改文件名与编号，**SQL 内容一个字没动**、迁移总数仍是 33（号段变成 `0001..0032` ＋ `0034`），故上面这组读数按改名前的原样保留；改名后对 canary 相关两臂的真库复跑见 §7.4。
 
 配套的直接读数（同一集群，库属主视角）：
 
@@ -303,3 +304,55 @@ git diff upstream/main...HEAD -- deploy/postgres-cvm/sql/20-login-roles.sql |
 2. `single_profiles` 需要先定「档案数据在注销后是否允许保留用于统计」的口径，再决定是删还是脱敏。
 3. 媒体域应单独立项：`media_object_cleanup` + 桶确认 + `content_media_refs` 的一致性，不是一个批次能收口的。
 4. 若要消除风险 1，可把 `CONDITIONAL_DELETION_MODULES` 的注入改成「生产装配下缺失即抛、测试装配显式声明」——但那要先改全部既有测试的装配方式，属于独立重构。
+
+---
+
+## 7. 编号让渡：`0033` → `0034`（2026-10-23 复审后追加）
+
+### 7.1 撞号事实
+
+本片第 1 轮把迁移号取成 `0033`（`0033_r34_owner_content_purge.sql`）。并行分支 **#525**（`feat/gy-admin-audit-query`，head `04199ac9`）新增了 **同一编号** 的另一张迁移：
+
+- `services/api/db/migrations/0033_admin_audit_log_read.sql`
+- `services/api/db/migrations/rollback/0033_admin_audit_log_read.down.sql`
+
+`main` 上此刻只有 `0001..0032`，两张 `0033` 又都落在 `0033`（`verify-migrations-unique` 的 `[dup]` 与 `tests/integration/moderation-ledger-pg.mjs` 的合流 canary 都按编号唯一判），**先合入的那张会占掉编号、后合入的直接撞**。两片不可能同时以 `0033` 落地。
+
+### 7.2 裁定与让号结果
+
+**保留 #525 的 `0033`**（它更早成形，且它的 `0033` 不牵动本片这套跨文件 canary），**本片整体改 `0034`**：
+
+- `services/api/db/migrations/0034_r34_owner_content_purge.sql`（原 `0033_…sql`，`git mv`）
+- `services/api/db/migrations/rollback/0034_r34_owner_content_purge.down.sql`（原 `0033_…down.sql`，`git mv`）
+
+改动范围只有文件名与「自述编号」，**SQL 正文一行未改**（两条 `SECURITY DEFINER` 窄函数、`REVOKE ALL … FROM PUBLIC`、只授 `EXECUTE` 全保持原样）。本迁移在树上**必排在 `0032` 之后**，与 `0033` 之间**没有任何内容依赖**（它只依赖 `0016` / `0025` / `0026` / `0031`），所以让号不影响语义。
+
+号段现状：**主线 `0001..0032` + 本片 `0034`（`0033` 归 #525 的审计读表）**；合流后就是 `0001..0034` 十五位对齐、无重复。
+
+### 7.3 为什么本树上 `0033` 是「有依据的缺号」而不是漏号
+
+本分支上必然**缺** `0033`（文件号 `0001..0032` ＋ `0034`）。仓库对这种情况已有先例（R32 片的 `0031`、更早的 `0029`）：**跨 PR 缺号 ⇒ 保留号台账登记 + `migrations/README.md` 写一行依据**，三条不变量才成立（`migrate.ts` 的 `gaps` / `undeclaredGaps` / `countMatchesMax`）。本轮照此办理：
+
+- `services/api/db/migration-reservations.json` 的 `reservations` 加一条：`version: 33`、`filename: "0033_admin_audit_log_read.sql"`、`owner` = #525、`remove_when` = 「#525 合入 `origin/main` 即删」。
+- `services/api/db/migrations/README.md` 写「`0033` 预留」依据行，并把「当前状态」改成实测事实（33 个正向 ＋ 32 个 down、缺 `0033`、`33 + 1 === 34`）。
+- `tests/unit/migration-reservations.test.mjs` 里那条「当前仓库」快照断言的**值**随之更新（`gaps → [33]`、`reserved → [33]`、台账恰好 1 条 `version 33`），其余不变量（`countMatchesMax`、负控制①~④、躺平回归）一条未动；并新增两条方向断言：`0034_r34_owner_content_purge.sql` **在**清单里、`0033_r34_owner_content_purge.sql` **不在**。
+
+⚠️ `0033` 落盘（#525 合入）那天，这条登记**必须删**——否则 `reservedButPresent` 会立刻判红（这也是 #525 那条 `remove_when` 的意义）。
+
+### 7.4 改名后的实跑读数
+
+| 臂 | 命令 | 读数 |
+| --- | --- | --- |
+| 编号唯一门禁 | `node tools/verify-migrations-unique.mjs --strict` | **exit 0**：`[surface] 33 条正向`、`[dup] 33 条占 33 个编号（0001..0034）`、`[coexist] rollback 32 条`、`[rollback] 已配对 32、允许缺省 1（0001）、缺回滚 0、孤儿 0`、`[gap] 0001..0034 缺 1 个：0033`（已登记依据 1 / 未登记 0）、`0034 ← rollback/0034_r34_owner_content_purge.down.sql`、`PASS：5 项判据全部满足` |
+| 台账单测 | `node --test tests/unit/migration-reservations.test.mjs` | `ℹ tests 8 · pass 8 · fail 0`（exit 0） |
+| 合流 canary 真库臂 | `node tests/integration/moderation-ledger-pg.mjs <临时 PG 17.11>` | **ALL PASS**（exit 0）：`[M] 迁移清单 33 个（0001..0034），无未声明缺号；保留号 [0033]；count＋保留 === max`、`[F] 保留号躺平判据回归：…reservedButPresent=[0027]…`、`[R] real 模式…零写入` |
+| 注销闭集真库臂 | `node tests/integration/recognitions-speech-purge-pg.mjs`（`GY_R34_PG_ROOT` 指临时目录） | **ALL PASS：10 条真库断言**（exit code 0）；PASS 1 逐字 `全链迁移 33 个已应用；…外加迁移 0034 的两条清理函数 purge_owner_recognitions / purge_owner_speech，全部在岗`；PASS 3 逐字含「只能来自迁移 0034 的 definer 函数」 |
+
+两条真库臂都在本机自建临时集群上跑（`postgres:17.11` 同版本二进制、端口取 55551 与 55888，避开本机已占段与 Windows 排除段），跑完 `pg_ctl -m fast stop` 并删净临时目录（复查 `Test-Path` 为 `False`）。
+
+### 7.5 同期跟着改的引用（非本片文件，但读数是本片号）
+
+- `services/api/src/recognitions/store-pg.ts`、`services/api/src/speech/store-pg.ts`：`… 迁移 0034 的 SECURITY DEFINER 函数`、「（`0025`/`0034` 缺）」「（`0026`/`0034` 缺）」。
+- `deploy/postgres-cvm/sql/20-login-roles.sql`、`deploy/postgres-cvm/sql/90-assert-least-privilege.sql`：具名区注释与 `RAISE` 文案里的迁移号（⛔ 函数名仍是 `purge_owner_recognitions` / `purge_owner_speech`，未改）。
+- `tests/integration/account-deletion-http.mjs`、`tests/integration/moderation-ledger-pg.mjs`（`:298` 的 `'0033'` → `'0034'`，断言意图不变）、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/unit/favorites-history-fixtures.mjs`、`tests/unit/least-privilege-expected-parity.test.mjs`、`tests/unit/sql-column-coverage.test.mjs`。
+- 本分支自己加进别人页面的并流读数：`docs/verification/gy-i24-release-materials-index-20261017.md`、`docs/verification/gy-r28-favorites-history-grants-20261020.md`、`docs/verification/gy-r29-i19-closure-20261022.md`（**只**改本片这几行，那三页的其它历史读数一律按原样保留）。

@@ -15,13 +15,13 @@
 // 也没有运行时角色的表级 DELETE 授权**（`20-login-roles.sql` 的旧注释声称「账号注销经
 // `request_account_deletion()` 的属主级联」，但该函数并不删 `public.users` 行 ⇒ 那条级联永不触发）。
 // 所以本脚本要证的是四段闭环：
-//   [1] 迁移 0025/0026/0033 的七张真实表与两条清理函数在岗；
+//   [1] 迁移 0025/0026/0034 的七张真实表与两条清理函数在岗；
 //   [2] 生产清理身份（`gengyun_api_runtime`）的真实授权面：**两条函数可执行**（EXECUTE=true），
 //       而对五张正文/任务表**一条 DELETE 都没有**（false），对 `public.users` 也没有 DELETE；
 //   [3] 成对的反向控制：以运行时身份**直接** `DELETE FROM public.recognition_records /
 //       speech_jobs …` 必须恰好 `42501` —— 证明 0 行不是靠表权限删出来的，而是函数删的；
 //   [4] 走产品真实路径（`privacy/user-data-deletion.ts` 协调器 → 两个 PG 存储的
-//       `purgeOwnerData` → 迁移 0033 的 definer 函数）跑注销，断言：本主体七表**删到 0 行**、
+//       `purgeOwnerData` → 迁移 0034 的 definer 函数）跑注销，断言：本主体七表**删到 0 行**、
 //       他人行**逐字原样**、证据串两个计数逐项等于清理前读数、重放幂等两个计数都是 0、
 //       回执两域 `online_state=completed` 而 `backup_state=pending`（未接线备份端口 ⇒ 不谎称完成）。
 //   外加负控制：另立一主体全程**不跑清理**只读 ⇒ 行数非 0（证明上面的 0 行不是恒真断言）。
@@ -32,7 +32,7 @@
 // （release / purge 两条路径）；五张正文/任务表**不是**、也不许是 ——
 // `deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 把「运行时直接 DELETE 这五张表」
 // 锁成刻意的禁止面（deploy-sql-gate 逐条断言 42501，18 条 / 9 个对象）。
-// PG 没有列级 DELETE ⇒ 清理只能经 `SECURITY DEFINER` 函数（迁移 0033），
+// PG 没有列级 DELETE ⇒ 清理只能经 `SECURITY DEFINER` 函数（迁移 0034），
 // 由 `20-login-roles.sql` 的 `gy-r34-i19-owner-content-purge-grant` 区域只授 EXECUTE。
 // 清理**跑在运行时角色上**，并在断言里实测两侧：能执行函数 ≠ 能删表。
 
@@ -87,7 +87,7 @@ const RECOGNITION_TABLES = ['recognition_selections', 'recognition_jobs', 'recog
 const SPEECH_TABLES = ['speech_jobs', 'transcriptions'];
 // 五张正文/任务表：运行时**不许**有表级 DELETE（禁止面），清理只能经下面的两条函数。
 const OWNER_PURGE_TABLES = [...RECOGNITION_TABLES, ...SPEECH_TABLES];
-// 迁移 0033 的两条窄口径 SECURITY DEFINER 函数：运行时只有 EXECUTE。
+// 迁移 0034 的两条窄口径 SECURITY DEFINER 函数：运行时只有 EXECUTE。
 const PURGE_FUNCTIONS = ['purge_owner_recognitions', 'purge_owner_speech'];
 
 // ---------------------------------------------------------------------------
@@ -413,7 +413,7 @@ try {
   const version = (await owner.query('SHOW server_version')).rows[0].server_version;
   note(`PostgreSQL ${version}`);
 
-  // ---- [0] 全链迁移：本片要的是 0025（识别域四表）/ 0026（语音域三表）/ 0033（清理函数）/ 0001（users）----
+  // ---- [0] 全链迁移：本片要的是 0025（识别域四表）/ 0026（语音域三表）/ 0034（清理函数）/ 0001（users）----
   const discovered = readdirSync(migrationsDir)
     .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/.test(name))
     .sort();
@@ -436,12 +436,12 @@ try {
     assert.equal(
       present[name],
       `${name}(uuid)`,
-      `迁移 0033 必须建出 public.${name}(uuid)（清理唯一写路径）`,
+      `迁移 0034 必须建出 public.${name}(uuid)（清理唯一写路径）`,
     );
   }
   say(
     `[0] 全链迁移 ${discovered.length} 个已应用；识别域四表 + 语音域三表 + users 共查 8 张真实表，`
-      + `外加迁移 0033 的两条清理函数 ${PURGE_FUNCTIONS.join(' / ')}，全部在岗`,
+      + `外加迁移 0034 的两条清理函数 ${PURGE_FUNCTIONS.join(' / ')}，全部在岗`,
   );
 
   // ---- [1] 角色与授权：与出厂 provisioning 同形（5 个 NOLOGIN 域组 → 运行时 LOGIN → 两个区域）----
@@ -470,14 +470,14 @@ try {
       grants[table],
       false,
       `运行时角色**不得**能 DELETE public.${table}：它是 probe-runtime-grants.sql 锁定的禁止面`
-        + `（直接 DELETE 必须 42501），清理只能经迁移 0033 的 definer 函数`,
+        + `（直接 DELETE 必须 42501），清理只能经迁移 0034 的 definer 函数`,
     );
   }
   for (const name of PURGE_FUNCTIONS) {
     assert.equal(
       grants[`${name}_execute`],
       true,
-      `运行时角色必须能执行 public.${name}(uuid)（迁移 0033 + 20-login-roles.sql 的 EXECUTE 授权）`,
+      `运行时角色必须能执行 public.${name}(uuid)（迁移 0034 + 20-login-roles.sql 的 EXECUTE 授权）`,
     );
   }
   assert.equal(grants.users, false, '运行时角色不得能 DELETE public.users（否则下面的 0 行可能是级联带走的）');
@@ -501,7 +501,7 @@ try {
   }
   say(
     `[1b] 反向控制（生产身份 ${RUNTIME_ROLE}）：直接 DELETE ${OWNER_PURGE_TABLES.join(' / ')} 全部 42501`
-      + ' ⇒ 清理的 0 行只能来自迁移 0033 的 definer 函数，不是表权限',
+      + ' ⇒ 清理的 0 行只能来自迁移 0034 的 definer 函数，不是表权限',
   );
 
   // ---- [2] 造数：三主体（A=被注销、B=他人、C=负控制），各若干识别/语音行 + 各若干台账行 ----
