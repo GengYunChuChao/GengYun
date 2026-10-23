@@ -116,7 +116,7 @@
 | `RATE_LIMIT_EXEMPT_PATHS` | 豁免路径前缀（逗号分隔） | `/health` | 以 `/` 开头的纯路径 | 逐条**精确/前缀**豁免；显式空串（`RATE_LIMIT_EXEMPT_PATHS=`）表示**清空**默认豁免 |
 | `RATE_LIMIT_ALLOWLIST_IPS` | 豁免 IP（逗号分隔，精确匹配） | 空 | IPv4/IPv6 字面量 | 给运维探针/压测机留口子；⛔ 不接受网段写法（`10.0.0.0/8` 会被判 `INVALID_VALUE`） |
 | `RATE_LIMIT_MAX_KEYS` | 进程内 key 上限 | `5000` | 1..1000000 | 调大＝更少 fail-open，内存占用随之上升 |
-| `API_TRUST_PROXY` | 是否信任反向代理（决定 `request.ip` 取 socket 对端还是 `X-Forwarded-For` 里的客户端） | `false` | `true` / `false` / `0..32` 的整数跳数 | 网关后**必须**置 `true`（或 `1` 跳），否则 `auth-ip` 退化成全站共享额度；风险与取值口径见 §8「代理与 IP 语义」 |
+| `API_TRUST_PROXY` | 是否信任反向代理（决定 `request.ip` 取 socket 对端还是 `X-Forwarded-For` 里的客户端） | `false` | `true` / `false` / `0..32` 的整数跳数 | 网关后**必须**打开，否则 `auth-ip` 退化成全站共享额度；**优先 `true`**（云托管场景固定 `true`，见 `deploy/cloudrun/README.md` §4.1）。数字跳数只在「反向代理**覆盖**（而非追加）`X-Forwarded-For`、且代理层数固定」时才安全：`1` 信的是 XFF **末段**，即对端写入、客户端直连时可伪造的值。风险与取值口径见 §8「代理与 IP 语义」 |
 
 配置口径（与其它 `*_` 环境变量一致）：
 
@@ -159,19 +159,28 @@
   都是**同一个网关地址** ⇒ `auth-ip` 的 20 次/分钟退化成**全站共享**的登录额度，一波流量就能让
   所有人登录 429（`write-user` 按用户键不受影响，但未鉴权的写请求兜底用 `ip:` 键，同样共享）。
   云托管的具体取值与验收步骤见 `deploy/cloudrun/README.md`。
-- **风险（必读）**：开了 `trustProxy` 就**必须**有可信网关，否则客户端自带
-  `X-Forwarded-For: <随便一个 IP>` 就能伪造 `request.ip`，**绕过限流**，并污染请求日志的
-  `remoteAddress`。`true` 信任整条链、取**最左**项（网关只追加不覆盖时，客户端自带的伪造值恰好
-  是最左被打头的那个）；跳数形态只信最近 N 跳、取**最右**可信项，客户端自带的最左项进不了
-  `request.ip`，代价是容器不能被绕过网关直连。**没有可信网关时请保持 `false`。**
+- **风险（必读）**：开了 `trustProxy` 就**必须**有可信网关，且客户端不能绕过网关直连容器，否则
+  客户端自带 `X-Forwarded-For: <随便一个 IP>` 就能伪造 `request.ip`，**绕过限流**，并污染请求日志的
+  `remoteAddress`。两种形态取的位置不同，别当成等价：
+  - `true`（信任整条链）：取**最左**项。网关只**追加**不覆盖时，最左就是客户端自己塞进去的伪造值
+    （实测：socket `192.0.2.10` + `X-Forwarded-For: 5.6.7.8, 203.0.113.7, 198.51.100.5` ⇒
+    `request.ip = 5.6.7.8`）。所以 `true` 的前提是**网关覆盖**该头（或链上没有任何客户端可写的段）。
+  - 数字跳数（只信最近 N 跳）：取**最右**可信项（同一请求实测 `1` ⇒ `198.51.100.5`、
+    `2` ⇒ `203.0.113.7`）。`1` 信的是 **XFF 末段**，末段由**对端**写入——只有对端一定是网关、
+    且代理层数固定时才等于真实客户端；客户端能直连或网关前面还有别的层，末段就是可伪造的值。
+  - 因此：**优先 `true`**（云托管网关覆盖该头，且不受平台增删代理层影响）；确认代理**覆盖**且层数
+    固定时才用数字跳数。代价一致——容器不能被绕过网关直连。**没有可信网关时请保持 `false`。**
 - **取值面**：`true` / `false` / `0..32` 的整数跳数（`0` 等价 `false`，`1` = 只信任最近一跳）。
   `1` / `0` 按**跳数**解释而非布尔（与 `RATE_LIMIT_ENABLED` 接受 `1/0` 不同）；`yes`、`-1`、`2.5`、
   `>32` 都在启动时以 `ConfigError` 一次性报出，**不夹取**、不猜。
 - **实现注意**：Fastify 5 **不再接受数字**（`trustProxy: number` 会把所有来源判成不可信、静默
-  fail-closed 退回到 socket 地址），因此跳数由 `config.ts` 编译成自定义谓词
-  `(address, hop) => typeof address === 'string' && hop < hops` 后传入，语义与 `proxy-addr`
-  的 hop 形态一致且对非法 `address` 返回 `false`。改这里时别忘了 `tests/unit/rate-limit.test.mjs`
-  里「默认忽略 XFF / 打开后按 XFF 分桶」两条断言。
+  fail-closed 退回到 socket 地址），因此布尔以外的取值由 `trustProxyOption` 编译成自定义谓词
+  `(_address, hop) => hop < trustProxy`（`services/api/src/app.ts:2222-2226`）后传入：谓词只判
+  `hop`，`address` 不参与判断，语义与 `proxy-addr` 的 hop 形态一致。改这里时别忘了
+  `tests/unit/rate-limit.test.mjs` 里「默认忽略 XFF / 打开后按 XFF 分桶」两条断言。
+- **额外的落盘面（开 `trustProxy` 的副作用）**：请求日志里的 `remoteAddress` 会从网关地址变成
+  **真实客户端 IP**（`services/api/src/app.ts:614`）。这是本片新引入的「终端用户 IP 落盘」，
+  与限流生效与否是两件事——需要和日志脱敏/留存口径一起评估，而不是只看 429 是否按 IP 分开。
 ## 9. 验证
 
 ```bash
