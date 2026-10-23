@@ -86,7 +86,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号（缺号 0）、末项 0032、三条不变量成立', () => {
+test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号（缺号 0）、末项 0033、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -96,7 +96,7 @@ test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号
   assert.deepEqual(
     numbering.gaps,
     [],
-    `0031 已随 #494 落盘、0032 在本片 ⇒ 0001..0032 连续，树上不应再有任何缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    `0031 已随 #494 落盘、0032 在本片 ⇒ 0001..0033 连续，树上不应再有任何缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(numbering.reserved, [], '0031 已落盘 ⇒ 保留号必须清零（保留项不许躺平）');
   assert.deepEqual(reservations, [], '保留台账必须回到空数组：0031 落盘后不应再有任何「有意缺号」');
