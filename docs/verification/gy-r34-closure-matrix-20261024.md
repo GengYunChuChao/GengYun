@@ -53,7 +53,7 @@
 | #4 | [初版 GY-I04] 实现微信登录、游客限制与服务端归属权限 | 部分交付 | `services/api/src/auth/wechat.ts:computeSubjectLookup`；`services/api/src/auth/service.ts:issuedSessionToSession`；`services/api/db/migrations/0016_account_deletion_persistence.sql` | 缺 Android/iOS 真机登录链路量化读数与正式 AppID 归属 | 真机 |
 | #5 | [初版 GY-I05] 实现单作物地区档案及授权定位／手动选择 | 部分交付 | `services/api/src/profile/service.ts:createProfileService`；`services/api/src/profile/service.ts:cropItems`；`docs/verification/gy-i05-locate-timeout-20261021.md` | 缺真机三态定位取证（授权/拒绝/超时回退）与地区目录真实数据源版本 | 真机 |
 | #6 | [初版 GY-I06] 实现私有媒体上传、访问权限及EXIF清除 | 部分交付 | `services/api/src/media/store-pg.ts:createPostgresMediaStore`；`services/api/src/media/service.ts:stripImageMetadata`；`services/api/db/migrations/0029_media_object_cleanup.sql` | 缺真机大图/视频性能集；真实对象存储要 `services/api/src/media/real-ports.ts:approveRealMediaWiring` 批准，未取得 | 真机 |
-| #7 | [初版 GY-I07] 实现科普／除草剂查询、详情与来源版本展示 | 部分交付 | `packages/reference/query.mjs:evaluateEligibility`；`packages/reference/query.mjs:isSimulatedSource`；`packages/reference/service.mjs:traceable_authority` | 排序口径（登记号升序 vs 名称）待用户裁定；真 PG 读面读数未取得 | 用户裁定 |
+| #7 | [初版 GY-I07] 实现科普／除草剂查询、详情与来源版本展示 | 部分交付 | `packages/reference/query.mjs:evaluateEligibility`；`packages/reference/query.mjs:isSimulatedSource`；`packages/reference/seed.mjs:seedMeta`（`traceable_authority: false`） | 排序口径（登记号升序 vs 名称）待用户裁定；真 PG 读面读数未取得 | 用户裁定 |
 | #8 | [初版 GY-I08] 实现药剂适用过滤与标签原文用量安全边界 | 部分交付 | `tests/reference/_i08-scenarios.mjs`（159 个唯一场景 id，`LIM-001`→`MRG-040`）；`packages/reference/deterministic.mjs:executable_enabled` | 场景全跑在替身目录上，真实标签样本与真实制剂登记核对未取得 | 真实样本 |
 | #9 | [初版 GY-I09] 实现实时拍草识别、Top3核对及不确定处理 | 部分交付 | `services/api/src/recognitions/store-pg.ts:createPostgresRecognitionStore`；`services/api/db/migrations/0025_recognitions_persistence.sql` | 真实识别供应商凭证/预算与真实草样本未取得；real 媒体端口仍是 fail-closed | 真实供应商 |
 | #10 | [初版 GY-I10] 实现实时标签OCR、用户校正及登记精确核对 | 部分交付 | `services/api/src/app.ts:ocrMedia`（注入口）；`services/api/src/ocr/store-pg.ts:createPostgresOcrStore`；`services/api/db/migrations/0024_ocr_persistence.sql` | 注入口有了但默认 real 仍 unwired（无对象存储批准）；真实标签样本未取得 | 真实供应商 |
@@ -61,13 +61,13 @@
 | #12 | [初版 GY-I12] 实现有来源的语音／文字大模型问答与回答安全检查 | 部分交付 | `services/api/src/ai/chat-live-adapter.ts:bodyViolationsOf`；`services/api/src/conversations/store-pg.ts`；`services/api/db/migrations/0013_conversations.sql` | 真实模型调用读数与固定 120 题评估未取得（需预算授权） | 真实供应商 |
 | #13 | [初版 GY-I13] 实现普通话TTS、播放球及安全文本自动播报 | 部分交付 | `services/api/src/tts/media.ts:createSynthesisMediaPort`；`services/api/src/tts/media.ts:REAL_SYNTHESIS_MEDIA_APPROVAL_REQUIRED_REASON` | 30 段真实文本 TTS 与真机播放球未取得；real 合成产物存储要批准能力，未取得 | 真实供应商 |
 | #14 | [初版 GY-I14] 实现文字／图片AI筛查、版本重审和失败隔离 | 部分交付 | `services/api/src/moderation/ledger-pg.ts:createPostgresModerationLedger`；`services/api/db/migrations/0028_moderation_persistence.sql` | 200 条文字 + 200 张图片真实样本未取得；人审队列 `services/api/src/admin/human-review.ts` 仍 `wired: false` | 真实供应商 |
-| #15 | [初版 GY-I15] 实现真实社区发帖、评论、点赞、筛选与举报 | 部分交付 | `services/api/src/community/store-pg.ts:createPostgresCommunityStore`；`services/api/db/migrations/0022_community_persistence.sql`；`services/api/db/migrations/0032_community_report_reporter_ref.sql` | 真实审核供应商未接；点赞计数无读面（服务层 `countLikes` 有、契约无端点）；`linked_knowledge_ref` 仍 409 | 真实供应商 |
+| #15 | [初版 GY-I15] 实现真实社区发帖、评论、点赞、筛选与举报 | 部分交付 | `services/api/src/community/store-pg.ts:createPostgresCommunityStore`；`services/api/db/migrations/0022_community_persistence.sql`；`services/api/db/migrations/0032_community_report_reporter_ref.sql`；`services/api/src/app.ts:communityKnowledgeRowOf`（S4 资料关联已接线） | 代码侧仅剩 S7 点赞对外读取面（契约无计数端点，另有切片在飞）；真实审核供应商未接（本行卡点） | 真实供应商 |
 | #16 | [初版 GY-I16] 实现收藏与可浏览的识别历史 | 部分交付 | `services/api/src/app.ts:historyDomainEnabled`；`services/api/src/history/cascade-wiring.ts:createHistoryCascadePort`；`services/api/src/favorites/store-pg.ts:createPostgresFavoritesStore` | 真机三页走查未做；级联只接识别/OCR 两腿，媒体与外发腿未接（成功只到 `partial`） | 真机 |
 | #17 | [初版 GY-I17] 实现首版应用内消息、未读状态与权限跳转 | 部分交付 | `services/api/src/messages/store-pg.ts:createPostgresMessagesStore`；`miniprogram/pages/messages/messages.wxml:onRetryUnread`；`docs/verification/gy-r31-i17-g2-ruling-20261022.md` | 跳转范围（现仅 post/comment，其余 14 型降级）需用户裁定；真机走查未做 | 用户裁定 |
 | #18 | [初版 GY-I18] 实现独立后台资料、账号、AI任务及功能开关 | 部分交付 | `apps/admin/src/views/JobsView.vue`；`services/api/src/admin/ops/flags-pg.ts`；`services/api/db/migrations/0033_admin_audit_log_read.sql` | 资料域 27 条路由仍走 `services/api/src/admin/store.ts` 的内存 store（`persistent: false`）⇒ real 全 503；缺内容域 PG 落点 | 纯代码 |
 | #19 | [初版 GY-I19] 贯通注销去身份、在线7日备份30日删除与恢复验收 | 部分交付 | `services/api/src/routes/exports.ts:registerExportRoutes`；`services/api/src/privacy/user-data-deletion.ts:USER_DATA_DELETION_MODULES`；`services/api/db/migrations/0031_online_purge_evidence.sql` | #528 未合入（缺 `0034` 与识别/语音两条删除模块）；真实备份介质与第三方回执未取得 | 在飞 PR |
 | #20 | [初版 GY-I20] 冻结独立评估样本、标准答案及评估程序 | 部分交付 | `packages/evaluation/samples/gy-i20-weeds-real-index.json`（172 条 `test` 分割）；`docs/evaluation/sample-gap-register.md` | 真实杂草图片采集/版权与标准答案评审未取得 | 真实样本 |
-| #21 | [初版 GY-I21] 持续评估各项真实AI能力并汇总首版验收门槛 | 部分交付 | `packages/evaluation/src/targets.mjs:METRIC_GATES`；`docs/evaluation/acceptance-thresholds-summary.md` | 18 条门槛的 basis 全是 provisional，真实供应商持续读数未取得 | 真实供应商 |
+| #21 | [初版 GY-I21] 持续评估各项真实AI能力并汇总首版验收门槛 | 部分交付 | `packages/evaluation/src/targets.mjs:METRIC_GATES`（18 条：12 条 `requirement` + 6 条 `provisional`）；`docs/evaluation/acceptance-thresholds-summary.md` | 6 条 `provisional` 门槛待真实读数校准；真实供应商持续读数未取得 | 真实供应商 |
 | #22 | [初版 GY-I22] 完成权限、安全规则及首版端到端失败回归 | 部分交付 | `tests/unit/gy-i22-failmatrix.test.mjs:MIN_CASES`（230）；`tests/failmatrix/mutations.mjs`（23 条负控制）；`services/api/src/errors.ts:retryAfterSecondsFor` | stdout 私密前缀定级与四个域纳入矩阵的范围需用户裁定；真机回归未跑 | 用户裁定 |
 | #23 | [初版 GY-I23] 执行Android／iOS真机、时延容量及完整演示验收 | 部分交付 | `docs/verification/gy-i23-latency-capacity-local-20261020.md`；`docs/verification/gy-i23-integration-script-coverage-20261020.md` | Java/Android 与 iOS 真机、时延容量全是本地或脚本读数，真机取证未取得 | 真机 |
 | #24 | [初版 GY-I24] 部署联网比赛版、备份恢复并交付完整材料 | 部分交付 | `tools/release-gate.mjs:GATE_IDS`；`tools/verify-release-materials.mjs`；`docs/verification/gy-i24-release-materials-index-20261017.md` | 生产与比赛环境零部署（须单独授权）；`--pg` 全跑读数未取得 | 部署环境 |
@@ -96,7 +96,7 @@
 - 判定：部分交付（卡点＝真机）。
 
 ### #7 · 科普／除草剂查询、详情与来源版本展示
-- 已交付证据：`packages/reference/query.mjs:normalizeQuery`／`evaluateEligibility`／`isSimulatedSource`、`packages/reference/service.mjs` 的 `traceable_authority=false` 口径；证据页 `docs/verification/gy-r29-i07-closure-20261022.md`、`docs/verification/gy-r31-i07-sort-20261022.md`、`docs/verification/gy-i07-knowledge-query-20261014.md`。
+- 已交付证据：`packages/reference/query.mjs:normalizeQuery`／`evaluateEligibility`／`isSimulatedSource`、`packages/reference/seed.mjs:seedMeta`（单条种子记录统一附 `traceable_authority: false`、`label = 待核实·非权威`）；证据页 `docs/verification/gy-r29-i07-closure-20261022.md`、`docs/verification/gy-r31-i07-sort-20261022.md`、`docs/verification/gy-i07-knowledge-query-20261014.md`。
 - 缺什么：列表排序口径（登记号升序 vs 名称）需一次用户裁定；详情页真 PG 读面的读数未取得。
 - 谁能推动：用户/监工裁定排序口径；指挥补真 PG 读数。
 - 判定：部分交付（卡点＝用户裁定）。
@@ -145,7 +145,9 @@
 
 ### #15 · 真实社区发帖、评论、点赞、筛选与举报
 - 已交付证据：`services/api/src/community/store-pg.ts:createPostgresCommunityStore`、迁移 `0022`/`0030`/`0032`、`services/api/src/community/service.ts:countLikes`；筛选下推 SQL 与注销清社区行已在 main。证据页 `docs/verification/gy-i15-community-pg-20261018.md`、`docs/verification/gy-r29-i15-community-filter-20261022.md`、`docs/verification/gy-r32-i15-f13-retention-20261022.md`。
-- 缺什么：真实审核供应商（现在只有规则/替身路径）；点赞计数无读面（契约只有 `likePosts`/`unlikePosts`/`likeComments`/`unlikeComments`）；`linked_knowledge_ref` 落 `createUnwiredKnowledgeAvailabilityPort()` ⇒ 带知识引用的发帖必 409。
+- S4（资料关联）**已交付**：`services/api/src/app.ts` 现在按 `pool === null` 二分——无池才落 `createUnwiredKnowledgeAvailabilityPort`，有池则落 `createKnowledgeAvailabilityPort({ read: (target) => communityKnowledgeRowOf(target) })`，`communityKnowledgeRowOf` 读 `catalog_read.current_knowledge`（`WHERE id = $1::uuid`，查询异常折 `null`）。接线来自 PR #505（`3b61ae16`），守卫测试 `tests/unit/community-knowledge-wiring.test.mjs` 在 main。
+- 剩余 409 只出现在两种情形：①无数据库连接池；②目标未进公开读面（未发布／来源未核对／被新修订取代／模拟来源／类型或版本不符）。二者都不是缺口。
+- 缺什么：S7 点赞对外读取面（`likeCount|like_count` 在 `packages/contracts` 与 `services/api/src` 实测 0 命中，契约只有 like/unlike 四个端点）——另有切片在飞；真实审核供应商（现在只有规则/替身路径）——这是本行的卡点。
 - 谁能推动：用户授权审核供应商；监工裁定「点赞计数是否属首版」。
 - 判定：部分交付（卡点＝真实供应商）。
 
@@ -181,7 +183,9 @@
 
 ### #21 · 持续评估真实 AI 能力并汇总首版验收门槛
 - 已交付证据：`packages/evaluation/src/targets.mjs:METRIC_GATES`（18 条门槛）、`docs/evaluation/acceptance-thresholds-summary.md` 的汇总口径；证据页 `docs/verification/gy-r34-tencent-ai-samples-20261023.md`、`docs/verification/gy-i27-live-ai-20261018.md`。
-- 缺什么：18 条门槛的 basis 全部是 provisional，需真实供应商持续读数才能转正；跨供应商矩阵读数未取得。
+- 门槛构成（本轮逐条数过，非抄汇总）：`packages/evaluation/src/targets.mjs:METRIC_GATES` 共 18 条，每条都带 `basis.kind`——**12 条 `kind: 'requirement'`**（直接取 `docs/implementation-requirements.md` 第 6.1 节原文：`top1`、`top3`、`registrationNumberExact`、`fieldExact`、`scenarioPass`、`riskRecall`、`normalFalseIsolationRate`、`ttsAllCorrect`、`cer`、`keyFieldExact`、`answerableCorrectWithSource`、`expectedBehaviorPass`）、**6 条 `kind: 'provisional'`**（`outOfCoverageHighConfidenceRate`、`lowQualityUncertainRate`、`perClassMinTop1`、`registrationMatchPerForm`、`hardRulePass`、`qaExpectedBehaviorPerClass`，标注串取自 `PROVISIONAL_MARKER`）。
+- 「6 条」的旁证：`docs/evaluation/acceptance-thresholds-summary.md` 的门槛表把第 3、4、15、16、17、18 行的「证据现状」写成「未取得…（取值暂定）」，与上条逐条数出的 6 条一一对应。
+- 缺什么：那 6 条 `provisional` 要真实读数才能转正；跨供应商矩阵读数未取得。
 - 谁能推动：用户授权持续付费；监工复核门槛转正条件。
 - 判定：部分交付（卡点＝真实供应商）。
 
@@ -238,6 +242,12 @@
 - 真实供应商（腾讯云 tms/ims/ASR/TTS/OCR、DeepSeek）的产品级调用读数与付费授权。
 - 真实样本：真实杂草图片、真实标签、50 段普通话音频、200+200 审核样本。
 - 生产/比赛环境部署与备份恢复演练的真实介质与第三方回执。
+
+**门禁盲区（如实记录，别把绿灯当证据）**
+
+- 本页与订正页共引用 **116 个不同文件路径**（其中 **39 条**写成 `路径:符号`）、**22 个提交 SHA**，**0 条数字行号**。不写行号是刻意的：行号会随改动漂移，`路径:符号` 才能抗漂移。
+- 代价：`tools/verify-doc-anchors.mjs` **只守「`路径:行号`」这一种形态**，对 `路径:符号` 与 commit SHA **零覆盖**——把任一条证据换成幽灵路径＋假 SHA，`--strict` 依旧 PASS、`EXIT=0`；只有写成 `路径:行号` 才会转红。因此**不能拿 `doc-anchors PASS` 当作「假读数已被拦」的证据**。
+- 这两页的唯一防线是人工核验：逐条 `git cat-file -e upstream/main:<path>` 与 `git log upstream/main --grep=`／`git show upstream/main:<path>` 复核内容，而不是看门禁颜色。
 
 ## 5 读数
 

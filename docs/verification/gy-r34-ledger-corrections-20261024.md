@@ -1,12 +1,12 @@
 # R34 旧台账订正（`gy-r31-closure-matrix-20261022.md` → main 现状）
 
 - 采样时间：2026-10-24（HKT，UTC+8）
-- 订正基线：`upstream/main = 4b87e1d9`（`Reviewed PR #525`）。旧页基线是 `d4d48088`，其后经 `e3c3af05` 做过一次 P2 订正；本页比较的是**旧页现存文案**与**当前 main**。
+- 订正基线：`upstream/main = 4b87e1d9`（`Reviewed PR #525`）。旧页基线是 `d4d48088`；旧页的 P2 订正以 `e3c3af05` 为**复核基线**（该提交只加了 `docs/verification/gy-r31-i22-failure-matrix-20261022.md`，没有改旧矩阵页本身）；本页比较的是**旧页现存文案**与**当前 main**。
 - 方向约束：本页**只做「旧说法说未做、实际已在 main 落地」这一个方向**。旧页说过期而实际仍未做的，一条都不写进来；反过来，本页也**不**把任何「还没做」写成「做了」——反向边界集中在 §3 列出，供监工对着查。
 - 复核口径：判「是否已在 main」不用 `git merge-base --is-ancestor`（上游 squash ⇒ 原提交永不是祖先）。做法是 `git log upstream/main --grep=<标题片段>` 定位提交 + `git show upstream/main:<path>` 读内容核对语义；每条现状锚点都过 `git cat-file -e upstream/main:<path>`。
 - 全页不写行号：引用一律 `文件路径:符号名`。
 - 旧说法出处一律引旧页的**小节标题**（`## 2 关单就绪度矩阵（24 张）`、`## 3 只差最后一步的 issue（按可关性排序）`、`### 3.1 按监工批复移出本档的两张（原记 差一片能关）`、`## 4 过期台账文案清单（只列不改）`），不写行号、也不复制旧页里的行号锚点。
-- 本页共订正 **13 条**（14 个旧说法点，其中两条属同一 issue 的两处独立说法）。
+- 本页共订正 **14 条**（15 个旧说法点，其中两条属同一 issue 的两处独立说法）。
 
 ## 1 订正索引
 
@@ -25,6 +25,7 @@
 | 11 | #12 | `## 2` 的 #12 行 | `services/api/src/ai/chat-live-adapter.ts:renderSources` | `8a295504` |
 | 12 | #17 | `## 2` 的 #17 行 | `miniprogram/pages/messages/messages.wxml:onRetryUnread` | `ac848d9d` ＋ `56ed9f2c` |
 | 13 | #15 | `## 2` 的 #15 行 | `services/api/src/community/store-pg.ts:createPostgresCommunityStore` | `1fbe7572`／`f3921dca`／`b1e8fb3e`／`791b34a8` |
+| 14 | #15 | `## 2` 的 #15 行（S4 半句） | `services/api/src/app.ts:communityKnowledgeRowOf` | `3b61ae16` |
 
 ## 2 逐条订正
 
@@ -118,7 +119,14 @@
 - 旧说法：`## 2` 的 #15 行 —— 「代码 8 条：S1…S8」。
 - 现状：四类已落地 —— ①社区 PG 仓储 `services/api/src/community/store-pg.ts:createPostgresCommunityStore`（迁移 `0022`）；②注销清社区行 + 举报状态机推进（`#474`）；③列表筛选下推 SQL + 分页确定性 + 越权负控制（`#461`）；④注销时断开举报 `reporter_id`（迁移 `0032`）与行级作者引用（迁移 `0030`，`author_id` 可空 + `anonymized_author_ref`）。
 - 依据 commit：`1fbe7572`（#474）、`f3921dca`（#461）、`b1e8fb3e`（#492）、`791b34a8`（#483）。
-- 仍然缺：真实审核供应商未接；点赞计数无读面（服务层有 `services/api/src/community/service.ts:countLikes`，契约只有 like/unlike 四个 operation、没有计数读取端点）；`linked_knowledge_ref` 落 `createUnwiredKnowledgeAvailabilityPort()` ⇒ 带知识引用的发帖必 409。**S4／S7 这两条旧说法仍然成立。**
+- 仍然缺：真实审核供应商未接；点赞计数无对外读面（服务层有 `services/api/src/community/service.ts:countLikes`，契约只有 like/unlike 四个 operation、没有计数读取端点）。**S7 这条旧说法仍然成立；S4 已订正，见 §2.14。**
+
+### 2.14 #15 S4「资料关联未接线」
+
+- 旧说法：`## 2` 的 #15 行 —— 「代码 8 条：… S4 资料关联未接线 …」。
+- 现状：`services/api/src/app.ts` 按 `pool === null` 二分装配 —— 有 `pool` 落 `createKnowledgeAvailabilityPort({ read: (target) => communityKnowledgeRowOf(target) })`；`communityKnowledgeRowOf` 用同一条 `pool` 逐次现查公开读视图 `catalog_read.current_knowledge`（`SELECT id, revision, type, title, source_kind ... WHERE id = $1::uuid`），异常一律折 `null` ⇒ 该端口按不可用（不 500、不默认可用）；无 `pool` 才落 `createUnwiredKnowledgeAvailabilityPort`。守卫测试 `tests/unit/community-knowledge-wiring.test.mjs` 在 main。
+- 依据 commit：`3b61ae16`（Reviewed PR #505，#15 S4 装配层接线；代码注释自述「接线前：装配层只 `import type` + 留一个注入位 ⇒ 生产路径从不构造真实端口」）。
+- 仍然缺：S7 点赞对外读取面（契约侧 `likeCount|like_count` 实测 0 命中）；真实审核供应商未接。
 
 ## 3 反向边界：旧页说过期但本轮核到**仍然成立**的
 
@@ -126,7 +134,7 @@
 
 - #18：资料域 27 条路由 real 全 503 —— `services/api/src/admin/store.ts` 仍 `persistent: false`，`services/api/src/admin/fail-closed-services.ts` 与 `services/api/src/admin/service.ts` 都还在用 `createAdminContentStore()` 的内存实现。
 - #14：人审队列 `services/api/src/admin/human-review.ts` 仍 `wired: false`（多处），没有真人复核入口。
-- #15：点赞计数无读面（契约只有 like/unlike）；`linked_knowledge_ref` 仍 409。
+- #15：**S7** 点赞计数仍无对外读面（契约只有 like/unlike 四个 operation，`likeCount|like_count` 实测 0 命中）。S4 已订正进 §2.14，不再算这条。
 - #11：MP3→WAV 仍无解码器 —— main 上只有 `tests/unit/i11-audio-mp3-wav-guard.test.mjs` 这条**拒绝路径**守卫。
 - #10：注入口有了，但默认装配不注入，real 下 OCR 读私有字节仍 fail-closed。
 - #16：级联只到 `partial`（媒体对象与外发撤销两条腿未接）。
