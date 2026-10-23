@@ -42,12 +42,26 @@ const FAMILY_ACCEPTANCE = Object.freeze({
   D4: 'AC22/AC29（内容版本变更 ⇒ 旧结论不复用）',
 });
 
-/** 文档声明的条数；生成结果与之不符即失败（防止有人删用例让矩阵「变绿」）。 */
+/**
+ * 文档声明的条数；生成结果与之不符即失败（防止有人删用例让矩阵「变绿」）。
+ *
+ * 口径（三项都必须对得上才放行）：
+ *   - `total` 数的是**失败矩阵的用例条数**：`run.mjs --json` 机读结果里「一行一条用例」的
+ *     `rows.length`，本版 `totals.total` 与 `rows.length` 同为 230，逐族求和与逐批求和也都是 230。
+ *   - `families` / `batches` 是同一批行的**分组计数**，各自的全集必须等于 `total`：
+ *     C1…C7 + E1 + E2 + C10 + C11 + D1…D4 = 230；B1…B5 = 230。
+ *   - `negativeControls` 数的是 `tests/failmatrix/mutations.mjs` 的 `MUTATIONS.length`（26）。
+ *
+ * 时点：`168` 是 R29 建页时点（只有 C1…C7 + E1 + E2 + D1…D4，见 `docs/verification/gy-i22-failmatrix-20261022.md`）
+ * 的**同一口径旧读数**，不是另一个维度；R31 补上异步 AI 域 C10(23) + C11(39) ⇒ 168 + 23 + 39 = 230，
+ * R34 负控制 23 → 26。本常量跟**当前**矩阵走。
+ * ⚠️ `PAGE` 指的仍是那份 R29 归档页（表里只可能有 168 行 / 23 条）：**别拿本常量去 `--write` 那份归档页**。
+ */
 const EXPECTED = Object.freeze({
-  families: { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, E1: 3, E2: 3, D1: 11, D2: 4, D3: 2, D4: 3 },
-  batches: { B1: 106, B2: 36, B3: 17, B4: 9 },
-  total: 168,
-  negativeControls: 23,
+  families: { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, E1: 3, E2: 3, C10: 23, C11: 39, D1: 11, D2: 4, D3: 2, D4: 3 },
+  batches: { B1: 106, B2: 36, B3: 17, B4: 9, B5: 62 },
+  total: 230,
+  negativeControls: 26,
 });
 
 function parseArgs(argv) {
