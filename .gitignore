@@ -48,3 +48,6 @@ project.private.config.json
 # Online-purge cross-run cursor: machine-local progress state, never committed
 /.gengyun-online-purge-cursor.json
 /.gengyun-online-purge-cursor.json.tmp-*
+
+# Release-gate report (tools/release-gate.mjs default output): a run artifact, never committed
+/release-gate-report.json
