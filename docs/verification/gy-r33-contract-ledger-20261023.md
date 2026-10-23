@@ -82,7 +82,7 @@
 | 「内存记录 store（本片无持久化实现）」 | PG 实现已存在且自述 `persistent: true`；装配点按 `real` + 连接池 + `MEDIA_OBJECT_REF_KEY` 三者齐备选 PG store，其余模式用内存 store | `services/api/src/media/store-pg.ts:153`、`:240`、`:304`；`services/api/src/app.ts:1413-1416`；内存实现 `persistent:false` 见 `services/api/src/media/store.ts:257` |
 | 「85 条路径 / 112 条 operation」 | 实测 `paths=86 / operations=113`（`node -e` 读 `packages/contracts/openapi.json`） | `packages/contracts/openapi.json` |
 | 「没有 owner 私有媒体字节读取那条 operation」 | 仍成立：媒体域路由只有 `/media/:id`（元数据）与社区取图 `/community/media/:grant_id/content` | `services/api/src/routes/media.ts:260-261`、`:337-338` |
-| 「`GET /media/{id}/content` ⇒ 404」 | 仍成立：未注册路径统一 `NOT_FOUND`「未实现的路径」 | `services/api/src/app.ts:2039` |
+| 「`GET /media/{id}/content` ⇒ 404」 | 仍成立：未注册路径统一 `NOT_FOUND`「未实现的路径」 | `services/api/src/app.ts:2119` |
 | 「owner 短效句柄 URL 由部署期访问网关承担，未接线未验收」 | 仍成立（本片未取得网关/真实取图证据） | 保留原句 |
 
 **处置：订正（部分过时）**：只改「内存记录 store」与两处计数；owner 同形 404、契约缺 operation、句柄网关未接线等**仍属实，原样保留**。
@@ -108,6 +108,8 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 | 保留项：资料关联默认 fail-closed | 仍成立：默认 `createUnwiredKnowledgeAvailabilityPort` | `services/api/src/community/knowledge.ts:72`；装配见 `services/api/src/app.ts:1146` |
 | 保留项：`createPost/editPost` 图片审核细节 | 仍成立：`IMAGE_MODERATION_UNAVAILABLE`、`MEDIA_NOT_EVALUATED_BY_RULE_LAYER`、媒体元数据只传 `media_id`（→ `MODEL_PAYLOAD_INVALID`） | `services/api/src/community/service.ts:367`、`:370`、`:573`、`:200-201`；`packages/moderation/merge.mjs:539` |
 | 保留项：正式微信身份/真机/发布环境；测试≠验收 | 仍成立 | 保留原句 |
+
+> **后续变更（R33-I15-S4 片，2026-10-23）**：上表「保留项：资料关联默认 fail-closed」一行**已不再成立** —— 装配层现在**有连接池**时用同一条 `pool` 查公开读视图 `catalog_read.current_knowledge` 构造真实 `createKnowledgeAvailabilityPort`（`services/api/src/app.ts:1202`），**仅无池**时才保持未接线 fail-closed；错误码（409 `OBJECT_UNAVAILABLE`）与「不泄露存在性」语义一字未改，装配级回归见 `tests/unit/community-knowledge-wiring.test.mjs`。`docs/architecture/contract-status.json` 里 16 条社区 blocker 的同款子句已同步订正（`status` / `baseline` 未动）。上表其余行保持 R33 台账片的当时读数。
 
 **处置：16 条全部订正（部分过时）**：只替换「真实持久存储未交付（real 模式整域 503）」这一子句为「持久化已交付 + 放行判据」；其余未取得项原样保留。`status` 未动。
 
