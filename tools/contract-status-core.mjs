@@ -66,7 +66,7 @@ export function runtimeMountedRoutes(root,operations){
  const allowed=new Set(['systemroot','windir','path','temp','tmp','home','userprofile','appdata','localappdata','lang']);
  const env=Object.fromEntries(Object.entries(process.env).filter(([name])=>allowed.has(name.toLowerCase())));
  const output=execFileSync(process.execPath,[fileURLToPath(new URL('./contract-status-runtime.mjs',import.meta.url)),root],{
-  env,input:JSON.stringify(operations),encoding:'utf8',timeout:15000,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  env,input:JSON.stringify(operations),encoding:'utf8',timeout:runtimeTimeoutMs(),windowsHide:true,stdio:['pipe','pipe','pipe']});
  const data=JSON.parse(output);
  if(!Array.isArray(data)||data.some(k=>typeof k!=='string'))throw Error('Invalid runtime route inventory');
  return new Set(data);
@@ -190,4 +190,25 @@ export function renderStatusTables(status){
  const counts=list=>['implemented','partial','planned'].map(s=>list.filter(e=>e.status===s).length);
  const dimensions=status.dimensions.map(d=>`| ${cell(d.title)} | ${cell(d.source_anchor)} | \`${d.status}\` | ${cell(evidence(d.evidence))||'—'} | ${cell(d.blocker)} |`).join('\n');
  return `${TABLE_START}\n## 2 横切约定\n\n| 维度 | 来源锚点 | 状态 | 证据 | 缺口 / 条件 |\n| --- | --- | --- | --- | --- |\n${dimensions}\n\n## 3 已装配操作（${mounted.length} 条）\n\n装配只表示存在产品路由；请同时读状态和限制。\n\n${header}\n${rows(mounted)}\n\n## 4 未装配操作（${unmounted.length} 条）\n\n以下 HTTP 路径当前返回 NOT_FOUND；partial 项只有独立服务 / 参考组件，不能直接调用这些 HTTP 接口。\n\n${header}\n${rows(unmounted)}\n\n## 5 计数\n\n| 范围 | implemented | partial | planned | 合计 |\n| --- | --- | --- | --- | --- |\n| 契约操作 | ${counts(status.operations).join(' | ')} | ${status.operations.length} |\n| 横切维度 | ${counts(status.dimensions).join(' | ')} | ${status.dimensions.length} |\n${TABLE_END}`;
+}
+
+// 子进程预算：本机实测冷启动 `contract-status-runtime.mjs`（加载 app.ts + buildApp + hasRoute）
+// 单次 13.566s，旧值 15000 只剩 10% 余量；机器被并发占用时 execFileSync 直接 ETIMEDOUT，
+// 把整片契约门禁（含 `tests/unit/contract-status-tool.test.mjs` 的运行时用例）一起打红。
+export const DEFAULT_RUNTIME_TIMEOUT_MS=60000;
+
+const TIMEOUT_ENV_NAME='GY_CONTRACT_STATUS_TIMEOUT_MS';
+
+/** 预算可被 `GY_CONTRACT_STATUS_TIMEOUT_MS` 覆盖；非法值回退默认并在 stderr 说明，不抛栈。 */
+export function runtimeTimeoutMs(env=process.env){
+ const raw=env?.[TIMEOUT_ENV_NAME];
+ if(raw===undefined||raw===null)return DEFAULT_RUNTIME_TIMEOUT_MS;
+ const text=String(raw).trim();
+ if(text==='')return DEFAULT_RUNTIME_TIMEOUT_MS;
+ const value=Number(text);
+ if(!/^\d+$/.test(text)||!Number.isSafeInteger(value)||value<=0){
+  process.stderr.write(`contract-status: ${TIMEOUT_ENV_NAME}=${JSON.stringify(String(raw))} 非法（需正整数），回退默认 ${DEFAULT_RUNTIME_TIMEOUT_MS}ms\n`);
+  return DEFAULT_RUNTIME_TIMEOUT_MS;
+ }
+ return value;
 }

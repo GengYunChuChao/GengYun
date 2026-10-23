@@ -411,3 +411,51 @@ test('语义辅助：注册块归属、断言实参范围与操作 id 边界', (
   assert.deepEqual(operationMentions('verifyOcr 200', ['verifyOCR', 'getOCR']), ['verifyOCR']);
   assert.deepEqual(operationMentions('unlikePosts', ['likePosts']), []);
 });
+
+// ——— runtime 子进程预算（R34 同源第二处）———
+// 断言只读「导出的默认预算 / 解析结果」，不做「跑一遍看多久」的计时断言：
+// 实测冷启动 `contract-status-runtime.mjs` 单次要 13.566s，旧预算 15000ms 只剩 10% 余量，
+// 机器被并发占用时 `spawnSync ... ETIMEDOUT` 就会把整片契约门禁一起打红。
+// 用动态 import 而不是新增顶层 import 行：本文件被 `docs/**` 的行号锚点引用（195/381/389），
+// 顶部多插一行会让 `node tools/verify-doc-anchors.mjs --strict` 判定锚点漂到空行。
+const TIMEOUT_ENV='GY_CONTRACT_STATUS_TIMEOUT_MS';
+const coreModule=()=>import('../../tools/contract-status-core.mjs');
+const budgetFor=async value=>{
+  const core=await coreModule();
+  return core.runtimeTimeoutMs(value===undefined?{}:{[TIMEOUT_ENV]:value});
+};
+
+test('runtime 子进程默认预算 ≥ 60000ms', async () => {
+  const core=await coreModule();
+  assert.equal(typeof core.DEFAULT_RUNTIME_TIMEOUT_MS,'number','必须导出默认预算常量供断言');
+  assert.ok(Number.isSafeInteger(core.DEFAULT_RUNTIME_TIMEOUT_MS));
+  assert.ok(core.DEFAULT_RUNTIME_TIMEOUT_MS>=60000,
+    `默认预算 ${core.DEFAULT_RUNTIME_TIMEOUT_MS}ms 低于 60000ms，冷启动 13.566s 只剩 10% 余量`);
+  // 环境变量未设置（含空串）时解析结果就是默认值。
+  assert.equal(await budgetFor(),core.DEFAULT_RUNTIME_TIMEOUT_MS);
+  assert.equal(await budgetFor(''),core.DEFAULT_RUNTIME_TIMEOUT_MS);
+});
+
+test('GY_CONTRACT_STATUS_TIMEOUT_MS 覆盖生效，且调用点真的把解析结果交给子进程', async () => {
+  assert.equal(await budgetFor('1234'),1234);
+  assert.equal(await budgetFor(' 45000 '),45000);
+  const source=readFileSync(join(ROOT,'tools/contract-status-core.mjs'),'utf8');
+  // 接线断言：解析结果必须真的进 execFileSync，不能只导出一个没人用的常量。
+  assert.match(source,/timeout:\s*runtimeTimeoutMs\(\)/,'runtimeMountedRoutes 必须用 runtimeTimeoutMs() 作为子进程预算');
+  assert.doesNotMatch(source,/timeout:\s*15000\b/,'不得残留写死的 15000ms 子进程预算');
+});
+
+test('GY_CONTRACT_STATUS_TIMEOUT_MS 非法值回退默认：stderr 说明，不抛栈', async () => {
+  const core=await coreModule();
+  const notes=[];
+  const write=process.stderr.write;
+  process.stderr.write=chunk=>{notes.push(String(chunk));return true;};
+  try{
+    for(const value of ['abc','0','-5','1e3','12.5','0x10','60000ms','   ']){
+      assert.equal(await budgetFor(value),core.DEFAULT_RUNTIME_TIMEOUT_MS,`非法值 ${JSON.stringify(value)} 必须回退默认`);
+    }
+  }finally{process.stderr.write=write;}
+  const text=notes.join('');
+  assert.match(text,/GY_CONTRACT_STATUS_TIMEOUT_MS/,'回退时必须在 stderr 说明是哪个变量');
+  assert.doesNotMatch(text,/\n\s+at /,'非法值只需说明，不得抛异常栈');
+});
