@@ -43,7 +43,7 @@ node tools/release-gate.mjs --list
 | `--pg` | 开启真库臂 | 见 §4 为何默认跳过 |
 | `--plan <json>` | 用计划文件覆盖门禁定义 | 故障注入/自动化测试用；不是日常入口 |
 | `--root <dir>` | 指定仓库根 | 默认取脚本上一级目录 |
-| `--list` / `-h` | 列门禁 id / 帮助 | `--list` 把 `{"gates":[…]}` 写 **stdout**（可直接 `| jq .gates`）；`-h` 写 stderr |
+| `--list` / `-h` | 列门禁 id / 帮助 | `--list` 把 `{"gates":[…]}` 写 **stdout**（可直接交给 `jq` 取 `.gates`）；`-h` 写 stderr |
 
 ## 2 各项含义
 

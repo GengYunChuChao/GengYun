@@ -16,7 +16,7 @@
  * | `typecheck` | 工作区递归类型检查 | 跑 |
  * | `unit` | 单元测试（根 `test:unit` 优先，其次工作区递归） | 跑 |
  * | `contract` | 契约测试 `test:contract` ＋（存在时）`tools/verify-contract-status.mjs` | 跑 |
- * | `secrets` | 待发布 diff 新增行的私密信息扫描（`sk-`／`SecretKey`／`BEGIN PRIVATE KEY`／本机绝对路径） | 跑 |
+ * | `secrets` | 待发布 diff 新增行的私密信息扫描（`sk-`／`SecretKey`／`BEGIN … PRIVATE KEY`／本机绝对路径） | 跑 |
  * | `artifacts` | 待发布 diff 新增文件的大文件与二进制检查 | 跑 |
  * | `pg` | 真库臂（`test:integration:*-pg`） | **跳过并标注理由**，`--pg` 才跑 |
  *
