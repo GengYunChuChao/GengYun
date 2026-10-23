@@ -21,7 +21,7 @@ export function loadPrivateEnvironment(file, baseEnv = {}) {
   if (!data || data.appid !== 'wx4407a4b908a69a54') fail('PRIVATE_ACCOUNT_MISMATCH');
   const env = { ...baseEnv };
   for (const [field, variable] of PRIVATE_ENV_PAIRS) if (validText(data[field])) env[variable] = data[field];
-  return Object.defineProperty(env, 'missingFields', { value: MISSING_REQUIRED_FIELDS, enumerable: false, writable: false }); // Never log or serialize this object. Caller owns its in-memory lifetime.
+  return Object.defineProperty(applyChatProviderDefaults(env), 'missingFields', { value: MISSING_REQUIRED_FIELDS, enumerable: false, writable: false }); // Never log or serialize this object. Caller owns its in-memory lifetime.
 }
 export function providerFor(config, key) {
   const spec = AI_ENDPOINTS[key];
@@ -223,4 +223,43 @@ export function parseJsonc(text) {
   if (typeof text !== 'string') fail('PRIVATE_FILE_UNAVAILABLE');
   const source = text.replace(/^\uFEFF/, '');
   try { return JSON.parse(stripTrailingCommas(stripComments(source))); } catch (_) { fail('PRIVATE_FILE_UNAVAILABLE'); }
+}
+
+// ── `deepseekApiKey` 之后 `CHAT_LLM_*` 的两个公开默认值 ────────────────────────────
+// `services/api/src/config.ts` 的 `asChatProvider()` 把 `DEEPSEEK_API_KEY` 当作 `CHAT_LLM_API_KEY`
+// 的替代（`apiKeyFallback`）：私密文件一旦提供 `deepseekApiKey`，`CHAT_LLM_ENDPOINT` 与
+// `CHAT_LLM_MODEL` 就升级为「有 key 则必须有」的必需项，缺任一即抛 `ConfigError`，real 模式直接起不来。
+// 这两个值是**公开的**（端点与模型名都不是秘密），且早已登记在 `AI_ENDPOINTS.llm` 白名单里，
+// 所以默认值从那张表取、不另造第二份常量：改白名单即改默认值，两处不可能分叉。
+// 仍然**只补默认、不覆盖**：调用方显式给的 `CHAT_LLM_ENDPOINT` / `CHAT_LLM_MODEL` 一个字符都不改。
+export const CHAT_LLM_DEFAULT_ENV = Object.freeze({
+  CHAT_LLM_ENDPOINT: AI_ENDPOINTS.llm.endpoint,
+  CHAT_LLM_MODEL: AI_ENDPOINTS.llm.model,
+});
+
+/**
+ * 原地补齐 `CHAT_LLM_*` 的公开默认值，返回同一个对象（由 `loadPrivateEnvironment()` 在返回前调用）。
+ * 生效条件：已经拿到 chat 的 key（显式 `CHAT_LLM_API_KEY` 或私密文件的 `deepseekApiKey`）。
+ * 没有 key 时一个都不补——`asChatProvider()` 会返回 `null`，凭空补上端点只会把「没配 LLM」
+ * 误判成「配错了 LLM」。优先级：显式环境变量 > 私密文件 `deepseekApiKey` > 本默认值。
+ */
+export function applyChatProviderDefaults(env = {}) {
+  if (!validText(env.CHAT_LLM_API_KEY) && !validText(env.DEEPSEEK_API_KEY)) return env;
+  for (const [name, value] of Object.entries(CHAT_LLM_DEFAULT_ENV)) if (!validText(env[name])) env[name] = value;
+  return env;
+}
+
+/** 真实模式必需项在给定 env 里为空/未设的**变量名**（只列名，绝不返回值）。 */
+export function missingRealModeEnv(env = {}) {
+  return REQUIRED_WHEN_REAL_FIELDS.filter(name => !validText(env[name]));
+}
+
+/**
+ * real 模式起服务前的缺口闸门：缺项时报 `MISSING_REAL_MODE_ENV:<逗号分隔的变量名>`。
+ * 文案刻意只带变量名——报错会进日志与工单，塞进任何一个值都等于泄密。
+ */
+export function assertRealModeEnv(env = {}) {
+  const missing = missingRealModeEnv(env);
+  if (missing.length > 0) fail('MISSING_REAL_MODE_ENV:' + missing.join(','));
+  return env;
 }
