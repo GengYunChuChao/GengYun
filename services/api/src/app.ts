@@ -185,8 +185,13 @@ import { createPostgresCommunityStore } from './community/store-pg.ts';
 import { createLocalPseudonymousAuthorDirectory } from './community/authors.ts';
 // #15 社区域注销保留/去身份端口：清社区行（F13 保留/脱敏/媒体）＋ 作者换随机注销引用。
 import { createCommunityOwnerPurgePort } from './community/purge.ts';
-import type { AuthorDirectory } from './community/types.ts';
-import type { KnowledgeAvailabilityPort } from './community/knowledge.ts';
+import type { AuthorDirectory, KnowledgeTarget } from './community/types.ts';
+// #15 S4（R33）：装配层**真的**构造资料可用性端口（此前只有 `import type` + 注入位）。
+import {
+  createKnowledgeAvailabilityPort,
+  createUnwiredKnowledgeAvailabilityPort,
+  type KnowledgeAvailabilityPort,
+} from './community/knowledge.ts';
 import {
   createMessagesCommunityEventsPort,
   createUnwiredCommunityEventsPort,
@@ -490,12 +495,14 @@ export interface BuildAppOptions {
   // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
   //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
   //   * 作者投影用**明确标注的本地假名投影**（不是真实 `public_authors`）；
-  //   * 「杂草／药剂关联」可用性端口**未接线** ⇒ 新增/替换引用一律 `OBJECT_UNAVAILABLE`；
-  //     （真实接线需要请求会话身份进入社区服务，属跨线决定，见 PR 正文"未取得"）
+  //   * 「杂草／药剂关联」可用性端口**已于 #15 S4（R33）接线**：有 `pool` ⇒ 用同一条 `pool` 查
+  //     公开读视图 `catalog_read.current_knowledge`（见下方 `communityKnowledge`）；无 `pool`
+  //     （没配 `DATABASE_URL`）⇒ 仍是**未接线**端口 ⇒ 新增/替换引用一律 409 `OBJECT_UNAVAILABLE`；
   //   * 事件端口接到本进程的消息服务公开创建口；消息服务为 null（real）时端口 `wired:false`。
   communityInjection?: {
     store?: CommunityStore;
     authors?: AuthorDirectory;
+    /** 显式注入优先（测试钉住接线点 / 故障注入用）；缺省按有没有 `pool` 二分，见 `communityKnowledge`。 */
     knowledge?: KnowledgeAvailabilityPort;
     events?: CommunityEventsPort;
     /** 测试注入：替换发布闸门（默认出厂规则集；注入自定义规则集会真实改变派生 `rule_version`）。 */
@@ -669,6 +676,11 @@ function withModerationTakedownLink(
  * （索引签名），对象字面量别名才有隐式索引签名（与 `db/catalog.ts` 的既有写法一致）。
  */
 type PublicKnowledgeReadRow = { id: string; revision: number; type: string };
+/**
+ * 社区关联读取口（#15 S4）用的最小投影：比 `PublicKnowledgeReadRow` 多取 `title`（关联摘要只
+ * 允许 `title`）与 `source_kind`（端口要拒绝模拟来源）。视图自身已只含「已发布 + 已核对 + 当前生效」。
+ */
+type CommunityKnowledgeReadRow = { id: string; revision: number; type: string; title: string; source_kind: string };
 
 /**
  * GY-I13 缩片（合成 → 播放 · 受理链路打通）：`stub`/`preset_demo` 下注入的**替身核对条目**。
@@ -1128,6 +1140,74 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     (messagesService === null
       ? createUnwiredCommunityEventsPort('消息服务未接线（real 模式）：审核结果/下架事件无法投递')
       : createMessagesCommunityEventsPort({ messages: messagesService }));
+  // ---------------------------------------------------------------------------
+  // **#15 S4（R33）· 「杂草／药剂关联」可用性端口的装配层接线**
+  //
+  // 接线前：装配层只 `import type` + 留一个注入位 ⇒ 生产路径**从不**构造真实端口，服务层缺省
+  // 落到 `createUnwiredKnowledgeAvailabilityPort()` ⇒ 任何 `linked_knowledge_ref` 必 409
+  // `OBJECT_UNAVAILABLE`（`community/service.ts` 的 `requireAvailableLink`）。
+  //
+  // 现在：缺省按「**有没有真库**」二分，判据只有一条 `pool === null`（与 `communityStore`、
+  // 收藏/历史的可见性端口同一写法）：
+  //   * 有 `pool` ⇒ 用**同一条 `pool`** 查与 `/knowledge` **同一张**公开读视图
+  //     `catalog_read.current_knowledge`（迁移 0010 + 0012）。该视图的 WHERE 已经把
+  //     「`visibility='published'` + 来源 `validity='valid'`/`review_status='verified'` +
+  //     当前生效版本（无更新修订、`valid_from<=now<valid_to`）+ 非模拟来源（0005 只放行
+  //     `database`/`verified_seed`）」全部写在里面 ⇒ 命中即按 `available` 投影；
+  //     未命中／视图缺失／无权限／查询失败一律 `unavailable`（`createKnowledgeAvailabilityPort`
+  //     把任何异常折叠为不可用，不会变成 500，也不会"默认可用"）。
+  //   * 无 `pool` ⇒ 保持**未接线**端口（一律 `unavailable`）⇒ 新增/替换引用仍 409
+  //     `OBJECT_UNAVAILABLE`，绝不因为"没有数据库"就假装可用。
+  //
+  // 语义与错误码**逐字不变**：目标不存在／不可见（下架、失效、被新修订替换、未核对、模拟资料）／
+  // 类型或版本不符，一律同一条 409，响应**不区分**原因、不泄露资料是否存在。
+  // 授权已具备：`deploy/postgres-cvm/sql/20-login-roles.sql` 已把 `gengyun_knowledge_runtime`
+  // 授给 `gengyun_api_runtime` ⇒ 本接线**不需要新迁移、不需要新授权**。
+  //
+  // 读取口**逐次现查**（不缓存、不落库）：下架/失效后同一条帖子的投影立刻转 `unavailable`，
+  // 符合「读取时重查当前可见性」的既有口径。
+  // ---------------------------------------------------------------------------
+  /**
+   * 关联目标在公开读视图里的**当前**投影（只取判定与 `summary.title` 所需列）。
+   *
+   * 命中 ⇒ 视图已保证「已发布 + 来源已核对 + 当前生效 + 非模拟来源」，故按可用投影返回；
+   * 读不到（无视图／无权限／查询失败／目标不在读面）⇒ `null` ⇒ 端口按 `unavailable` 处理。
+   * 位置参数形式（`pool.query(text, values)`）与 `publicKnowledgeRowOf`、`privacy/ledger-pg.ts`
+   * 一致（测试夹具的 PGlite 只支持该形式，`{text,values}` 会打断协议流）。
+   */
+  async function communityKnowledgeRowOf(target: KnowledgeTarget): Promise<unknown> {
+    if (pool === null) return null;
+    let row: CommunityKnowledgeReadRow | undefined;
+    try {
+      const result = await pool.query<CommunityKnowledgeReadRow>(
+        'SELECT id, revision, type, title, source_kind FROM catalog_read.current_knowledge WHERE id = $1::uuid',
+        [target.id],
+      );
+      row = result.rows[0];
+    } catch {
+      // 读面不可核对（缺视图/权限不足/超时/非法 id）⇒ 一律"核不到"，不把异常带进帖子响应。
+      return null;
+    }
+    if (row === undefined) return null;
+    return {
+      id: String(row.id),
+      type: String(row.type),
+      revision: Number(row.revision),
+      title: String(row.title),
+      reference_state: 'available',
+      // 视图只收 `validity='valid'` 且 `review_status='verified'` 的来源（0005 的 WHERE）⇒ 如实标注。
+      source: { validity: 'valid', review_status: 'verified', source_kind: String(row.source_kind) },
+    };
+  }
+  const communityKnowledge: KnowledgeAvailabilityPort =
+    communityInjection?.knowledge ??
+    (pool === null
+      ? createUnwiredKnowledgeAvailabilityPort('无数据库连接池：资料可用性读取口没有可核对的公开读面')
+      : createKnowledgeAvailabilityPort({
+          note: '资料可用性端口已接线到公开读面：逐次现查 catalog_read.current_knowledge'
+            + '（已发布 + 来源已核对 + 当前生效 + 非模拟），id/type/revision 逐项一致才判可用',
+          read: (target) => communityKnowledgeRowOf(target),
+        }));
   // **放行判据 = `communityStore.persistent`**（不是"某处注入了什么"）：内存实现在 real 下
   // 一律 503，PG 实现在 real + 连接池时放行；持久化改造后这条判据仍然成立且更严。
   const communityRealUnwired = config.executionMode === 'real' && !communityStore.persistent;
@@ -1143,7 +1223,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // **必填**：不提供默认值，避免某个接线点忘了接作者来源时悄悄用假名当真实作者。
       authors: communityAuthors,
       gate: communityInjection?.gate,
-      knowledge: communityInjection?.knowledge,
+      knowledge: communityKnowledge,
       events: communityEvents,
       // GY-I14 ⇄ GY-I15 联动接线：投稿/评论/编辑在落内容行前送审审核域；明确驳回一律不得公开。
       ...(communityModerationLink === null ? {} : { moderation: communityModerationLink }),
