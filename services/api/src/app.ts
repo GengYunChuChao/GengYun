@@ -1979,7 +1979,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
   // GY-I19（#19）：`listExports`（`GET /me/exports`）装配（无池 ⇒ 503 fail-closed，见 `routes/exports.ts`）。
-  // ⚠ 两处改动刻意不增行：`app.ts` 行号被 7 份历史证据页当锚点（`tools/verify-doc-anchors.mjs --strict`）。
+  // ⚠ 新 import 与上一条 import 同行：独占一行会推移 `app.ts` 行号，令历史证据页的引用锚点判 SUSPECT。
   registerExportRoutes(app, config, pool, guards);
   registerProfileRoutes(app, config, pool, guards);
   // 本片起：以下域的输出面受**全局开关**控制（受控面与其 `operationId` 的权威清单见
