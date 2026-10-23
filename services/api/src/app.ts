@@ -903,7 +903,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 替身/演示用固定桩密钥。
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
   });
-  const guards = createAuthGuards({ store: authStore, now: clock });
+  const guards = createRateLimiter({ config: config.rateLimit, now: clock }).mount(app).wrapGuards(createAuthGuards({ store: authStore, now: clock }));
 
   // ---------------------------------------------------------------------------
   // GY-I27 隐私域装配（两片接线；**必须早于识别域服务构造** —— 识别域的提供者包装发生在此处）。
@@ -2195,4 +2195,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   return app;
 }
+// GY-R34 限流器同理追加在末尾，但排在识别 PG store 那行 import **之前**：那一行必须仍是本文件最后一行
+// （见 tests/unit/recognitions-store-pg-wiring.test.mjs 的结构钉子）。装配点保持单行
+// `createRateLimiter(...).mount(app).wrapGuards(...)`，既有行号一行不动；规则表/存储/取舍都在 rate-limit/limiter.ts 里。
+import { createRateLimiter } from './rate-limit/limiter.ts';
 import { createPostgresRecognitionStore } from './recognitions/store-pg.ts'; // 追加在文件末尾：app.ts 行号是契约台账锚点，顶部 import 区零插入（ESM 提升，语义等价）
