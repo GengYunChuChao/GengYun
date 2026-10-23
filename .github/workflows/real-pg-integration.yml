@@ -465,7 +465,7 @@ jobs:
       # 2026-10-19 仍在线）+ 包名钉死大版本 `postgresql-17`。⛔ 不写 `postgresql-17=17.11-…`：PGDG 只保留每个
       # 大版本的最新小版本，写死小版本会在 17.12 发布当天变成「依赖无法满足」——那是另一种假门禁（步骤永远红）。
       # 作为交换，装完**断言大版本真的是 17**：装错了大版本 ⇒ 本步立刻红，而不是等脚本在 initdb 处神秘失败。
-      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge / online-purge 需要 initdb/pg_ctl）
+      - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge / online-purge / retention-purge 需要 initdb/pg_ctl）
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -547,6 +547,28 @@ jobs:
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
+          PGCLIENTENCODING: UTF8
+      # 保留策略到期清理（`#19` 的**保留策略侧**，GY-R34 的脚本 `retention-purge-pg.mjs`，R34 接入）：
+      # 与上四步同属**自起集群**类——自己 `initdb` 出临时 17 集群（端口 55432–55467 且**先探活再起**，
+      # 可用 `GY_PG_PORT` 钉死）、只监听 127.0.0.1、自建 `gengyun_retention_purge_test`、跑完 `pg_ctl stop`
+      # 并删数据目录，**不**连 service 里的库、**不**建组角色、**不**碰集群级对象 ⇒ 对前后脚本零耦合；
+      # 复用装包 step 装出来的 `/usr/lib/postgresql/17/bin`，且同样**不** `CREATE DATABASE`。
+      # 它自证 8 组（全链迁移后两张策略表在岗／过期·未过期·贴边造数／`--dry-run` 不写库／真执行只删过期／
+      # 标记与匿名化复核／第二轮 0 行／匿名化机制臂 `revision+1`／受限角色 `PERMISSION_DENIED`），
+      # 缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，
+      # 也不加任何吞红开关）。
+      # ⚠️ 数据根目录键是 `GY_R34_PG_ROOT`（脚本 `:51` 的 `process.env.GY_R34_PG_ROOT ?? tmpdir()`），
+      # ⛔ 不是 `GY_I19_PG_ROOT`／`GY_W11_PG_ROOT`；守卫按脚本源码交叉核对（`SELF_CLUSTERED_ROOT_KEY`），
+      # 给错键即红（那样 root 只是一条装饰性 env，数据目录照样落 `os.tmpdir()`）。
+      # 排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
+      # 其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
+      # 本地取证（本机 PG 17.11 + 独立数据根 `E:\GengYunCommander\.pg17\tmp`）：`GY_PG_PORT=55435` 时
+      # exit=0、`PASS 1..8`，跑完 `gy-r34-retention-*` 目录零残留。
+      - name: 保留策略到期清理（#19 保留策略侧 / 两张有出处的表 / 分批 500 / 幂等重跑 / 匿名化 revision+1）
+        run: node tests/integration/retention-purge-pg.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_R34_PG_ROOT: ${{ runner.temp }}/gy-r34-pg
           PGCLIENTENCODING: UTF8
       # 识别端到端链路（GY-I06／I08／I09／I10，R28-S65）：库名硬钉 `gengyun_recognition_chain_test`，
       # 脚本同样要求**空库**（`preparePg()` 先数 `public` 下的表，非 0 直接断言失败）。

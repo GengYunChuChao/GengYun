@@ -84,7 +84,7 @@
 | 「内存记录 store（本片无持久化实现）」 | PG 实现已存在且自述 `persistent: true`；装配点按 `real` + 连接池 + `MEDIA_OBJECT_REF_KEY` 三者齐备选 PG store，其余模式用内存 store | `services/api/src/media/store-pg.ts:153`、`:240`、`:304`；`services/api/src/app.ts:1413-1416`；内存实现 `persistent:false` 见 `services/api/src/media/store.ts:257` |
 | 「85 条路径 / 112 条 operation」 | 实测 `paths=86 / operations=113`（`node -e` 读 `packages/contracts/openapi.json`） | `packages/contracts/openapi.json` |
 | 「没有 owner 私有媒体字节读取那条 operation」 | 仍成立：媒体域路由只有 `/media/:id`（元数据）与社区取图 `/community/media/:grant_id/content` | `services/api/src/routes/media.ts:260-261`、`:337-338` |
-| 「`GET /media/{id}/content` ⇒ 404」 | 仍成立：未注册路径统一 `NOT_FOUND`「未实现的路径」 | `services/api/src/app.ts:2119` |
+| 「`GET /media/{id}/content` ⇒ 404」 | 仍成立：未注册路径统一 `NOT_FOUND`「未实现的路径」 | `services/api/src/app.ts:2168` |
 | 「owner 短效句柄 URL 由部署期访问网关承担，未接线未验收」 | 仍成立（本片未取得网关/真实取图证据） | 保留原句 |
 
 **处置：订正（部分过时）**：只改「内存记录 store」与两处计数；owner 同形 404、契约缺 operation、句柄网关未接线等**仍属实，原样保留**。

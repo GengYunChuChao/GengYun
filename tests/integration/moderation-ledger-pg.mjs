@@ -177,8 +177,16 @@ async function migrationTriple() {
 
   // ① 0001..0026（即"本片之前的一切"）：0027 与 0028 都留到后面按序单独应用，
   //    这样"0027 应用前 before_value 不存在"的顺序自证才有个可观测的 before。
+  //    ⛔ 相位边界必须按**号段**切（`version < 27`），不能写成"除 0027／0028 外全应用"：
+  //    0029 起的后续迁移可以**依赖 0027 补的列**（如 R34／#525 的
+  //    `0033_admin_audit_log_read.sql` 建的 `list_admin_audit_logs()` 读
+  //    `admin_audit_events.before_value`），把它们排在 0027 之前应用会以
+  //    `42703 column e.before_value does not exist` 直接炸掉——那与本臂要判的
+  //    「0027 改写 / 0028 读写面 / 回滚 / 重放」毫无关系。整链按号顺跑（含 0033）由
+  //    `tests/integration/admin-audit-logs-pg.mjs`（走 `migrate.ts up`）与
+  //    `migrations-negative-pg.mjs` 等臂负责，覆盖没有减少。
   for (const migration of discovered) {
-    if (migration.filename === MIGRATION || migration.filename === RESERVED_FILENAME) continue;
+    if (migration.version >= 27) continue;
     await owner.query(readSql(`migrations/${migration.filename}`));
   }
   let state = await objects();
@@ -265,8 +273,9 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
-    // 末项取树上的真实最大号：#19 的 0031（在线清理证据）与 #15 的 0032（举报者行级注销引用）都已在树上
-    // ⇒ 目录 `0001..0032` 连续、**无缺号**，真实台账回到空数组（31 号保留条目已按 remove_when 删除）。
+    // 末项取树上的真实最大号：#19 的 0031（在线清理证据）、#15 的 0032（举报者行级注销引用）与
+    // R34/#525 的 0033（管理端审计日志读函数）都已在树上
+    // ⇒ 目录 `0001..0033` 连续、**无缺号**，真实台账回到空数组（31 号保留条目已按 remove_when 删除）。
     // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
       if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) {
@@ -286,7 +295,7 @@ function forwardMergeNumbering() {
     assert.deepEqual(
       numbering.undeclaredGaps.map(formatMigrationVersion),
       [],
-      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19 与 0032/本片都已在树上，台账无保留号）',
+      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15 与 0033/#525 都已在树上，台账无保留号）',
     );
     assert.equal(
       numbering.maxVersion,
@@ -295,8 +304,8 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0032',
-      '合流树末项是 0032（#15 举报者行级注销引用；0031 是 #19 的在线清理证据，已在树上）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0033',
+      '合流树末项是 0033（R34/#525 管理端审计日志读函数；0032 是 #15 举报者行级注销引用、0031 是 #19 的在线清理证据，均已在树上）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,

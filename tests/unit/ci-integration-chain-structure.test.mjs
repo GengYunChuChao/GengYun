@@ -91,6 +91,21 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/admin-audit-logs-pg.mjs',
+    reason: '需真实 PG 17.11，且是**自起集群**脚本（R34 / #18 交付）：要求 `GY_PG_BIN` 指向服务端'
+      + '二进制目录，自行 `initdb`/`pg_ctl` 起一次性集群（仅回环；端口在 55436–55467 里**先探活再起**，'
+      + '数据目录父目录走可选的 `GY_R34_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），再 apply 迁移 0033 起的读面：'
+      + '`public.list_admin_audit_logs()` 的七参数绑定、键集 `(created_at, id)` 分页、'
+      + '同一毫秒不同微秒不漏行，并断言运行时角色直读 `admin_audit_events` 仍恰好 42501（零新增授权）。'
+      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
+      + '本片（R34）**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
+      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／'
+      + '`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，'
+      + '须由指挥裁定），故在此如实登记为未接线；本地已用本机 PG 17.11 二进制跑通该臂。'
+      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
+      + '接进真库 job 不等于进 `test:integration:http`。',
+  },
+  {
     path: 'tests/integration/admin-community-posts-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_community_posts_test`：脚本要求**空库**'
       + '（先断言 `public` 下 0 张表），只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段：'
@@ -334,6 +349,22 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + ' `.github/workflows/real-pg-integration.yml`，由该 workflow 的独立真库 job（`postgres:17.11` service）里'
       + '一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_recognitions_test` 空库，脚本自己 apply「除 0025 外全部 → 0025」）；'
       + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+  },
+  {
+    // R34（#19 的**保留策略侧**，GY-R34-RETENTION）：按路径序落在 `recognitions-pg` 与 `source-lifecycle-pg`
+    // 之间登记。它与 `messages-purge-pg`／`online-purge-pg` **同族**：自起临时集群、自建库、跑完即删。
+    path: 'tests/integration/retention-purge-pg.mjs',
+    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时 17 集群'
+      + '（端口 55432–55467 且**先探活再起**，可用 `GY_PG_PORT` 钉死）、只监听 127.0.0.1、'
+      + '自建 `gengyun_retention_purge_test`，跑全链迁移后造「过期／未过期／贴边」三类真数据，'
+      + '再经 `npm run purge:retention` 的执行器取「只删过期、未过期零改动、第二轮删 0 行」的读数；'
+      + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），'
+      + '故不进无 PG 的回环链。R34 已把它接进 `.github/workflows/real-pg-integration.yml`：'
+      + '复用该 job 里装 `postgresql-17`（PGDG）那条 step 装出来的 `/usr/lib/postgresql/17/bin`（`GY_PG_BIN`），'
+      + '以**独立 step** 真跑，⛔ 不自己 `CREATE DATABASE`（库名由脚本在自己临时集群里建）。'
+      + '⚠️ 它的数据根目录键是 `GY_R34_PG_ROOT`（脚本取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`），'
+      + '⛔ 不是同族脚本的 `GY_I19_PG_ROOT`／`GY_W11_PG_ROOT`——守卫按脚本映射键名并与源码真值交叉核对，'
+      + '给错键即红。但接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/source-lifecycle-pg.mjs',

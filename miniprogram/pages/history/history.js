@@ -43,6 +43,9 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
+    // 重新进入本页即丢弃上一轮的定位快照：门禁/读取还没返回时，旧行 id 不应继续可用。
+    self._rawItems = []
+    historyApi.clearSelection()
     self.setData({
       gatePassed: false, checking: true, items: [], nextCursor: null,
       errorText: '', errorCode: '', message: '', failedCount: 0
@@ -68,7 +71,11 @@ Page({
       })
       const merged = cursor ? self.data.items.concat(items) : items
       // 列表页写入**引用快照**：详情页只把它用于定位，不把它当状态来源。
-      historyApi.remember(result.items)
+      // 必须累积**已加载的每一页**原始行：`remember()` 每次整体替换快照，若只传当前页，
+      // 翻到第 2 页后第 1 页的记录会从快照里消失；详情页的实时读取只覆盖第一页（limit=50），
+      // 于是仍存在于列表里的记录会被误判成「不存在、已删除」。
+      self._rawItems = (cursor ? (self._rawItems || []).concat(result.items) : result.items.slice())
+      historyApi.remember(self._rawItems)
       self.setData({
         busy: false, loading: false, items: merged, nextCursor: result.nextCursor, mode: result.mode,
         failedCount: merged.filter(function (entry) { return entry.failed }).length,
@@ -76,6 +83,7 @@ Page({
       })
     }).catch(function (error) {
       // 失败时不保留旧记录；错误码原样带出，401/403/404 分别由状态组件呈现，不折叠成空列表成功。
+      self._rawItems = []
       self.setData({
         busy: false, loading: false, items: [], nextCursor: null, failedCount: 0,
         errorText: historyApi.messageFor(error), errorCode: (error && error.code) || ''

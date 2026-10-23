@@ -1,12 +1,14 @@
 /**
  * GY-I18 后台资料／运营／开关 · HTTP 路由（阶段 2：产品装配）。
  *
- * 覆盖契约 `packages/contracts/openapi.json` 里 **34 个 operationId**：
+ * 覆盖契约 `packages/contracts/openapi.json` 里 **36 个 operationId**：
  * - 阶段 1（已合并 #96）25 个：四类资料 × 6（list/create/get/edit/publish/withdraw）
  *   + `listAuditEvents`；
  * - 阶段 1b（已合并 #101）9 个：`listAdminCategories`/`editCategory`、
  *   `listAdminUsers`/`suspendUser`、`listAdminJobs`/`cancelAdminJob`、
- *   `listFlags`/`setFlag`、`hidePost`。
+ *   `listFlags`/`setFlag`、`hidePost`；
+ * - R33 1 个：`listFlagAuditEvents`（迁移 0027 的只读函数，scope `flags:read`）；
+ * - R34 1 个：`listAuditLogs`（迁移 0033 的只读函数，scope `audit:read`）。
  *
  * **本文件只做「搬运 + 契约映射」**：鉴权/权限、审计、幂等、CAS、可见性、
  * 契约字段校验、fail-closed 判定**全部复用服务层既有实现**
@@ -46,6 +48,8 @@ import type { AdminContentService } from '../admin/service.ts';
 import { OPS_SCOPES } from '../admin/ops/service.ts';
 import type { AdminOpsService } from '../admin/ops/service.ts';
 import { CONTRACT_FLAG_KEYS } from '../admin/ops/flags.ts';
+import { AUDIT_LOG_SCOPE } from '../admin/audit/catalog.ts';
+import type { AdminAuditLogService } from '../admin/audit/service.ts';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
 
@@ -128,6 +132,13 @@ export interface AdminDomainServices {
   readonly content: AdminContentService;
   /** 阶段 1b：运营与开关（9 个 operationId）。 */
   readonly ops: AdminOpsService;
+  /**
+   * R34：库内审计日志只读查询（1 个 operationId：`listAuditLogs`）。
+   *
+   * 单列一个域而不是塞进 `ops`：`AdminOpsService` 被用例钉住「恰好 10 个 operationId」，
+   * 把只读审计面挂上去会让那条钉子失焦，也会把「运营写面」与「审计读面」的接线判据混成一个。
+   */
+  readonly audit: AdminAuditLogService;
 }
 
 /**
@@ -256,6 +267,20 @@ export function registerAdminRoutes(
     `${API_PREFIX}/admin/audit-events`,
     { preHandler: [guards.requireAdmin, guards.requireScope('audit:read')] },
     async (request, reply) => send(reply, await listAudit(callerOf(request), request.query)),
+  );
+
+  // -------------------------------------------------------------------------
+  // R34：库内审计日志只读查询（1 个 operationId：`listAuditLogs`）
+  // 读的是迁移 0033 的 `public.list_admin_audit_logs()`：运行时角色对 `admin_audit_events`
+  // 是**零表级权限**（0017 的裁定），所以只能经 `SECURITY DEFINER` 函数读。
+  // 未接线（stub 默认 / real 无库池）⇒ 服务层 503 PROVIDER_UNAVAILABLE，本层不改写、不返回空页。
+  // 权限复用既有后台 scope `audit:read`（与 `listAuditEvents` 同一把门，不新造一套角色判定）。
+  // -------------------------------------------------------------------------
+  const listAuditLogs = methodOf(services.audit, 'listAuditLogs');
+  app.get(
+    `${API_PREFIX}/admin/audit-logs`,
+    { preHandler: [guards.requireAdmin, guards.requireScope(AUDIT_LOG_SCOPE)] },
+    async (request, reply) => send(reply, await listAuditLogs(callerOf(request), request.query)),
   );
 
   // -------------------------------------------------------------------------
@@ -389,4 +414,6 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   'setFlag',
   'listFlagAuditEvents',
   'hidePost',
+  // R34：库内审计日志只读查询（迁移 0033 的 `public.list_admin_audit_logs()`）。
+  'listAuditLogs',
 ]);

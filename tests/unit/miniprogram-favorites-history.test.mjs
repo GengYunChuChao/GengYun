@@ -780,6 +780,48 @@ test('收藏页：服务端 403 时交给统一状态组件呈现 denied，不�
   assert.match(wxml, /<state-view[\s\S]{0,200}errorCode="\{\{errorCode\}\}"[\s\S]{0,200}title="收藏读取失败"/);
 });
 
+test('收藏页：「加载更多」拿到空页时不得把已有收藏说成「尚无收藏」', async () => {
+  const f = fixture({ route: 'pages/favorites/favorites' });
+  f.load(FAVORITES_PAGE);
+  assert.equal(await login(f), true);
+  await passGate(f, () => f.page.onShow());
+
+  // 第一页有 1 条并给出游标；资料列表同时作答（本用例不关心它）。
+  f.requests.filter((r) => r.url.includes('/favorites')).at(-1)
+    .success({ statusCode: 200, data: { data: { items: [favorite()], next_cursor: 'opaque.cursor' }, meta: meta() } });
+  await flush();
+  f.requests.filter((r) => r.url.includes('/knowledge')).at(-1)
+    .success({ statusCode: 200, data: { data: { items: [], next_cursor: null }, meta: meta() } });
+  await flush();
+  assert.equal(f.page.data.items.length, 1);
+  assert.equal(f.page.data.message, '');
+
+  // 第二页为空（例如翻页期间最后一条被取消）：列表里仍有 1 条，提示不得说"尚无收藏"。
+  f.page.onMore();
+  const more = f.requests.filter((r) => r.url.includes('/favorites')).at(-1);
+  assert.match(more.url, /cursor=opaque\.cursor/);
+  more.success({ statusCode: 200, data: { data: { items: [], next_cursor: null }, meta: meta() } });
+  await flush();
+  assert.equal(f.page.data.items.length, 1, '已有收藏不得被空页清掉');
+  assert.equal(f.page.data.nextCursor, null);
+  assert.equal(f.page.data.message, '', '空页不等于空列表：不得提示"尚无收藏。"');
+  assert.equal(f.page.data.busy, false);
+
+  // 反向对照：第一页就是空时仍给空态文案（不是把提示永久吞掉）。
+  const g = fixture({ route: 'pages/favorites/favorites' });
+  g.load(FAVORITES_PAGE);
+  assert.equal(await login(g), true);
+  await passGate(g, () => g.page.onShow());
+  g.requests.filter((r) => r.url.includes('/favorites')).at(-1)
+    .success({ statusCode: 200, data: { data: { items: [], next_cursor: null }, meta: meta() } });
+  await flush();
+  g.requests.filter((r) => r.url.includes('/knowledge')).at(-1)
+    .success({ statusCode: 200, data: { data: { items: [], next_cursor: null }, meta: meta() } });
+  await flush();
+  assert.equal(g.page.data.items.length, 0);
+  assert.equal(g.page.data.message, '尚无收藏。');
+});
+
 test('历史页：服务端 403 ACCOUNT_INACTIVE 时仍呈现 denied 文案，但会话已清（令牌永久失效）', async () => {
   const f = fixture({ route: 'pages/history/history' });
   f.load(HISTORY_PAGE);
@@ -898,3 +940,213 @@ test('历史删除客户端：契约 202 才算成功（200|202 白名单），2
   answer(f, forbiddenPayload('NOT_FOUND'), 404);
   await assert.rejects(() => missing, (e) => e.code === 'NOT_FOUND');
 });
+
+// ============ 历史详情「重新实时读取」的状态收口（Refs #16/#28 状态审查） ============
+//
+// 修复前三个可复现缺口（都用本文件的 vm 夹具在页面上复现过）：
+//   1. 成功读到详情后重读失败 ⇒ 旧「任务状态／目标当前可读」面板与「删除这条记录」入口仍留在页面上，
+//      用户会对着一条本次没核对成功的记录点删除（版本可能已变，只能靠服务端 409 兜底）；
+//   2. 删除成功后再点「重新实时读取」⇒ `locateHistory` 退回列表页写入的定位快照，已删记录被重新
+//      当成"可定位"，并继续请求 `GET /recognitions/{id}` 把旧详情又渲染出来；
+//   3. 连续两次重读、旧响应后到 ⇒ 旧响应把较新的结论覆盖掉（旧响应可能还带删除前的 succeeded 行）。
+
+/** 打开历史详情到"识别详情已渲染"。`remember` 复现列表页写入定位快照的真实路径。 */
+async function openHistoryDetailWithRecognition(f) {
+  f.history.remember([historyItem()]);
+  const list = await openHistoryDetail(f, UUID_B);
+  answer(f, { items: [historyItem()], next_cursor: null });
+  await flush();
+  answer(f, recognition());
+  await flush();
+  assert.equal(f.page.data.locatedBy, 'live');
+  assert.equal(f.page.data.canDelete, true);
+}
+
+test('历史详情：重读失败后撤掉上一次的状态面板与删除入口，只留失败态', async () => {
+  const f = fixture({ route: 'pages/historydetail/historydetail' });
+  f.load(HISTORY_DETAIL_PAGE);
+  assert.equal(await login(f), true);
+  await openHistoryDetailWithRecognition(f);
+
+  f.page.onRefresh();
+  answer(f, forbiddenPayload('PROVIDER_UNAVAILABLE'), 503);
+  await flush();
+
+  assert.equal(f.page.data.errorText, f.history.messageFor({ code: 'PROVIDER_UNAVAILABLE' }));
+  assert.equal(f.page.data.errorCode, 'PROVIDER_UNAVAILABLE');
+  assert.equal(f.page.data.canDelete, false, '本次没核对成功 ⇒ 不得留删除入口（不猜 revision）');
+  assert.equal(f.page.data.historyRevision, null, '旧 revision 不得继续显示为可操作版本');
+  assert.equal(f.page.data.stateKnown, false, '不得继续显示上一次的「识别完成／目标当前可读」');
+  assert.equal(f.page.data.stateLabel, '');
+  assert.equal(f.page.data.referenceLabel, '');
+  assert.equal(f.page.data.busy, false);
+  // 失败态渲染时，任务状态面板必须与失败态互斥（否则旧结论会挂在失败提示上方）。
+  const wxml = readFileSync(root + '/miniprogram/pages/historydetail/historydetail.wxml', 'utf8');
+  assert.match(wxml, /<view class="section" wx:if="\{\{!errorText\}\}">/);
+  assert.match(wxml, /wx:elif="\{\{!stateKnown && !errorText\}\}"/);
+});
+
+test('历史详情：删除成功后重试不得用定位快照把已删记录复活，也不发目标详情请求', async () => {
+  const f = fixture({ route: 'pages/historydetail/historydetail' });
+  f.load(HISTORY_DETAIL_PAGE);
+  assert.equal(await login(f), true);
+  await openHistoryDetailWithRecognition(f);
+
+  f.page.onDelete();
+  const del = f.requests.filter((r) => r.method === 'DELETE').at(-1);
+  del.success({ statusCode: 202, data: { data: { accepted: true }, meta: meta() }, header: { 'X-GY-Cascade': 'unwired' } });
+  await flush();
+  assert.equal(f.page.data.invalid, true);
+  assert.equal(f.page.data.canDelete, false);
+
+  const before = f.requests.length;
+  f.page.onRefresh();
+  assert.equal(f.requests.length, before + 1, '重试只发实时列表读取，不得先发目标详情');
+  answer(f, { items: [], next_cursor: null });
+  await flush();
+  await flush();
+
+  assert.equal(f.page.data.invalid, true, '已删除的记录重试后仍是不可用');
+  assert.equal(f.page.data.locatedBy, '');
+  assert.equal(f.page.data.canDelete, false);
+  assert.equal(f.page.data.recognized, false);
+  assert.equal(f.page.data.modelCandidates.length, 0);
+  assert.equal(f.page.data.manualSelection, null);
+  assert.equal(f.page.data.historyRevision, null);
+  assert.equal(
+    f.requests.filter((r) => r.url.includes('/recognitions/')).length,
+    1,
+    '删除后重试不得再请求目标详情（唯一一次是删除前的正常读取）'
+  );
+});
+
+test('历史详情：连续重读时旧响应后到不得覆盖较新的结论', async () => {
+  const f = fixture({ route: 'pages/historydetail/historydetail' });
+  f.load(HISTORY_DETAIL_PAGE);
+  assert.equal(await login(f), true);
+  await openHistoryDetailWithRecognition(f);
+
+  f.page.onRefresh();
+  const first = f.requests.filter((r) => r.url.includes('/history?')).at(-1);
+  f.page.onRefresh();
+  const second = f.requests.filter((r) => r.url.includes('/history?')).at(-1);
+  assert.notEqual(first, second, '两次重读各发一条请求');
+
+  // 较新的那次先返回：实时列表已没有该记录（只剩快照定位，不带状态、不给删除入口）。
+  second.success({ statusCode: 200, data: { data: { items: [], next_cursor: null }, meta: meta() } });
+  await flush();
+  answer(f, recognition());
+  await flush();
+  assert.equal(f.page.data.locatedBy, 'snapshot');
+  assert.equal(f.page.data.stateKnown, false);
+  assert.equal(f.page.data.canDelete, false);
+
+  // 较旧的那次后返回，且是失败（旧请求的失败不得把已经拿到的新结论改成失败态）。
+  first.success({ statusCode: 503, data: forbiddenPayload('PROVIDER_UNAVAILABLE') });
+  await flush();
+  await flush();
+  assert.equal(f.page.data.errorText, '', '旧请求的失败不得覆盖较新的成功结论');
+  assert.equal(f.page.data.errorCode, '');
+  assert.equal(f.page.data.locatedBy, 'snapshot', '旧响应的定位不得覆盖新结论');
+  assert.equal(f.page.data.stateKnown, false);
+  assert.equal(f.page.data.stateLabel, '任务状态未从实时读取取得');
+  assert.equal(f.page.data.canDelete, false);
+
+  // 反向对照：再点一次重读并让这次的响应失败 ⇒ 失败态照常呈现（不是把失败永久吞掉）。
+  f.page.onRefresh();
+  answer(f, forbiddenPayload('PROVIDER_UNAVAILABLE'), 503);
+  await flush();
+  assert.equal(f.page.data.errorCode, 'PROVIDER_UNAVAILABLE');
+  assert.equal(f.page.data.canDelete, false);
+});
+
+// ============ 历史列表翻页后的定位快照（Refs #16/#28 状态审查） ============
+//
+// 修复前：`history.js` 每次 `load(cursor)` 只把**当前页**交给 `historyApi.remember()`，
+// 而 `remember()` 是整体替换快照 ⇒ 翻到第 2 页后第 1 页的记录从快照里消失。详情页的实时读取
+// 只覆盖第一页（`PAGE_LIMIT_MAX = 50`），因此列表里明明还在、也能点开的记录会被判成
+// 「不存在、已删除、或不属于当前账号」。用 20 条/页 × 4 页复现：第 55 条（第 3 页）判成已删除。
+
+/** 造 N 条历史行（id 递增，便于按序号断言）。 */
+function historyRow(n) {
+  const id = '00000000-0000-4000-8b00-' + String(n).padStart(12, '0');
+  return historyItem({ id, target_ref: { type: 'recognition', id, revision: 1 } });
+}
+
+test('历史列表：翻页后详情定位快照累积每一页，第 2 页之后的记录不被误判为已删除', async () => {
+  const f = fixture({ route: 'pages/history/history' });
+  f.load(HISTORY_PAGE);
+  assert.equal(await login(f), true);
+  await passGate(f, () => f.page.onShow());
+
+  const answerPage = (from, next) => {
+    const items = Array.from({ length: 20 }, (_, i) => historyRow(from + i));
+    f.requests.filter((r) => r.url.includes('/history')).at(-1)
+      .success({ statusCode: 200, data: { data: { items, next_cursor: next }, meta: meta() } });
+  };
+
+  answerPage(1, 'cursor-2');
+  await flush();
+  for (const [from, next] of [[21, 'cursor-3'], [41, 'cursor-4'], [61, null]]) {
+    f.page.onMore();
+    answerPage(from, next);
+    await flush();
+  }
+  assert.equal(f.page.data.items.length, 80);
+  assert.equal(f.page.data.nextCursor, null);
+
+  // 快照必须同时含第 1 页与最后一页的行（修复前只剩最后一页的 20 条）。
+  for (const n of [1, 25, 55, 75]) {
+    assert.notEqual(f.history.expected(historyRow(n).id), null, `第 ${n} 条必须仍在定位快照里`);
+  }
+
+  // 详情页：实时读取只回第一页 50 条（不含第 55 条）⇒ 仍须靠快照定位，不得报「已删除」。
+  const detail = fixture({ route: 'pages/historydetail/historydetail' });
+  detail.history.remember(Array.from({ length: 80 }, (_, i) => historyRow(i + 1)));
+  detail.load(HISTORY_DETAIL_PAGE);
+  assert.equal(await login(detail), true);
+  const list = await openHistoryDetail(detail, historyRow(55).id);
+  answer(detail, { items: Array.from({ length: 50 }, (_, i) => historyRow(i + 1)), next_cursor: 'cursor-51' });
+  await flush();
+  // 快照定位只提供定位信息，详情正文仍来自服务端实时读取（`GET /recognitions/{id}`）。
+  const target = detail.requests.filter((r) => r.url.includes('/recognitions/')).at(-1);
+  assert.ok(target, '快照定位后仍要实时读取目标详情');
+  target.success({ statusCode: 200, data: { data: recognition(), meta: meta() } });
+  await flush();
+  assert.equal(detail.page.data.invalid, false, '仍在列表里的记录不得被判成已删除');
+  assert.equal(detail.page.data.locatedBy, 'snapshot');
+  assert.equal(detail.page.data.canDelete, false, '快照定位不给删除入口（revision 不是实时读到的）');
+  assert.equal(detail.page.data.stateKnown, false, '快照不携带状态');
+
+  // 反向对照：确实不在快照里的记录仍按「不可用」收口（不是把所有 id 都放行）。
+  const gone = fixture({ route: 'pages/historydetail/historydetail' });
+  gone.load(HISTORY_DETAIL_PAGE);
+  assert.equal(await login(gone), true);
+  await openHistoryDetail(gone, historyRow(999).id);
+  answer(gone, { items: [], next_cursor: null });
+  await flush();
+  assert.equal(gone.page.data.invalid, true);
+  assert.match(gone.page.data.invalidReason, /不存在|已删除|不属于当前账号/);
+});
+
+test('历史列表：重新进入页面即丢弃上一轮的定位快照（门禁未放行也不残留他人/旧账号的行 id）', async () => {
+  const f = fixture({ route: 'pages/history/history' });
+  f.load(HISTORY_PAGE);
+  assert.equal(await login(f), true);
+  await passGate(f, () => f.page.onShow());
+  f.requests.filter((r) => r.url.includes('/history')).at(-1)
+    .success({ statusCode: 200, data: { data: { items: [historyRow(1)], next_cursor: 'cursor-2' }, meta: meta() } });
+  await flush();
+  f.page.onMore();
+  f.requests.filter((r) => r.url.includes('/history')).at(-1)
+    .success({ statusCode: 200, data: { data: { items: [historyRow(21)], next_cursor: null }, meta: meta() } });
+  await flush();
+  assert.notEqual(f.history.expected(historyRow(21).id), null);
+
+  // 再次进入本页：在门禁/读取还没返回前，上一轮的快照就必须已经丢弃。
+  f.page.onShow();
+  assert.equal(f.history.expected(historyRow(1).id), null, '重新进入页面即丢弃旧快照');
+  assert.equal(f.history.expected(historyRow(21).id), null);
+});
+
+

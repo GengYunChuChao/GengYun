@@ -10,7 +10,7 @@
  *      ✅ 挪到同行**别的列**（核验列写成 `❌ 未核验`）同样不算收录（2026-10-18 复审实测：只判
  *      `row.line.includes('✅')` 时这种页仍 exit 0 / 15/15，故判据必须约束列位，只认末列）；
  *      同一项里还核 `N/N` 覆盖计数：分子分母都必须等于在册文件数（旧的 `30/30` 无人核对）；
- *   2. 索引里的相对链接都能解析、被索引文件都非空；
+ *   2. 索引里的相对链接都能解析、被索引的条目都非空（普通文件判 size；**目录条目按目录核验**：目录存在且 `readdir` 非空才通过——Windows 上目录的 `st.size` 恒为 0，按 size 判会把目录全判成空文件）；
  *   3. 5 个 CVM 脚本：`bash -n` 语法、`set -euo pipefail`、**提交内容（blob）为 LF**；
  *   4. 云托管环境变量模板 ⊇ 配置面（`REQUIRED_WHEN_REAL` ∪ config.ts 实际读取的键），且无多余键；
  *   5. Dockerfile 的 Node 版本与根 `package.json` 的 `engines.node` 一致；
@@ -288,11 +288,47 @@ try {
   check('索引相对链接全部可解析', brokenLinks.length === 0,
     brokenLinks.length === 0 ? `${links.length} 个链接全部可解析` : `坏链接：${brokenLinks.join(', ')}`);
 
-  const emptyFiles = indexedDeployPaths.filter((p) => {
-    try { return statSync(join(ROOT, p)).size === 0; } catch { return true; }
-  });
-  check('被索引文件全部非空', emptyFiles.length === 0,
-    emptyFiles.length === 0 ? '无非空文件' : `空文件：${emptyFiles.join(', ')}`);
+  // 判「空」必须**先判目录、再判 size**：Windows 上目录的 `st.size` 恒为 0，只看 size 会把索引里写成
+  // 目录的条目（本仓真实形状：正文用反引号写的 `deploy/purge-schedule/`）判成「空文件」；而 Linux 上
+  // 目录 size 非 0，同一条判据在 CI 里一直是绿的 ⇒ 同一棵树两个结论（2026-10-23 本机 unit 常红的根因）。
+  // 处置分四类，只有第 1 类沿用原来的「空文件」语义，四类里除「目录且非空」外都判不通过：
+  //   1. 普通文件且 size === 0            ⇒ 空文件；
+  //   2. 目录存在但 readdir 为空          ⇒ 空目录（⛔ 不静默放行：目录真空了是真问题，得报出来）；
+  //   3. stat 拿不到（不存在 / ENOTDIR / 权限）⇒ 缺失（沿用原 `catch ⇒ 算空` 的判定，不放宽）；
+  //   4. 目录存在且 readdir 非空          ⇒ 通过，并在读数里**单列**「目录 N 个」，不混进文件计数。
+  const emptyFiles = [];
+  const emptyDirs = [];
+  const missingEntries = [];
+  const indexedDirs = [];
+  for (const p of indexedDeployPaths) {
+    const abs = join(ROOT, p);
+    let st;
+    try {
+      st = statSync(abs, { throwIfNoEntry: false });
+    } catch {
+      // `throwIfNoEntry: false` 只挡 ENOENT；`deploy/x.txt/`（ENOTDIR）之类仍会抛 ⇒ 与「不存在」同判。
+      st = undefined;
+    }
+    if (st === undefined) { missingEntries.push(p); continue; }
+    if (!st.isDirectory()) {
+      if (st.size === 0) emptyFiles.push(p);
+      continue;
+    }
+    let entries = null;
+    try { entries = readdirSync(abs); } catch { entries = null; }
+    if (entries === null) missingEntries.push(p);        // 目录读不到 = 核验不了，不能当通过
+    else if (entries.length === 0) emptyDirs.push(p);
+    else indexedDirs.push(p);
+  }
+  const emptyDetail = [
+    emptyFiles.length === 0 ? '' : `空文件：${emptyFiles.join('、')}`,
+    emptyDirs.length === 0 ? '' : `空目录：${emptyDirs.join('、')}`,
+    missingEntries.length === 0 ? '' : `缺失：${missingEntries.join('、')}`,
+  ].filter((part) => part !== '');
+  check('被索引文件全部非空', emptyDetail.length === 0,
+    emptyDetail.length === 0
+      ? `无非空文件${indexedDirs.length === 0 ? '' : `（目录 ${indexedDirs.length} 个按目录核验：${indexedDirs.join('、')}）`}`
+      : emptyDetail.join('；'));
 
   // ---------------------------------------------------------------- 4. 脚本三件套
   const scripts = gitFiles('deploy').filter((p) => p.endsWith('.sh'));

@@ -158,7 +158,7 @@ Error: EPERM, Permission denied: \\?\E:\GengYunCommander\.pg17\tmp\arms-audit\_c
 
 1. `tests/unit/ci-real-pg-wiring.test.mjs` 的四个数组（`MANAGED_SCRIPTS` / `FROZEN_MANAGED_SCRIPTS` / `REQUIRED_STEP_ORDER` / `SELF_CLUSTERED_SCRIPTS`）**都不含**它。
 2. `.github/workflows/**` 里**没有任何** `run:` 提到它（对 23 个臂名做字面命中的全量扫描，只有它 0 命中）。
-3. 它自己的原因条目就写在白名单里 —— `tests/unit/ci-integration-chain-structure.test.mjs:182-187`（数组 `UNWIRED_DECLARATIONS`，定义在 `:67`）逐字：
+3. 它自己的原因条目就写在白名单里 —— `tests/unit/ci-integration-chain-structure.test.mjs:197-202`（数组 `UNWIRED_DECLARATIONS`，定义在 `:67`）逐字：
 
 ```
 path: 'tests/integration/messages-purge-pg.mjs',
