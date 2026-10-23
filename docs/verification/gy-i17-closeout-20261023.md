@@ -6,7 +6,7 @@
 - 本页性质：关闭材料（读数页）。只记录「已经取得什么读数、还差什么」，不替代监工裁定，也**不把任何未取得项写成已通过**。
 - 与既有页面的关系：`#445` 的只读复盘（[gy-r31-i17-recon-20261022.md](gy-r31-i17-recon-20261022.md)）、G2 裁定（[gy-r31-i17-g2-ruling-20261022.md](gy-r31-i17-g2-ruling-20261022.md)）、G5（[gy-r31-i17-g5-20261022.md](gy-r31-i17-g5-20261022.md)）、G6／G7／G8（[gy-r31-i17-g678-20261022.md](gy-r31-i17-g678-20261022.md)）、真库注销臂（[gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md)）都是**当时时点**的快照；本页按 `7dd3d699` 重新逐条核过，**不复制**它们的结论。
 
-**一行结论**：按监工裁定 `6333028693` 给出的 `Closes #17` 前置（A 跳转入口 ＋ C 里 G3 ＋ **台账重生成**），A 与 G3 已随 #448 落地，**台账重生成未落地**——`docs/architecture/contract-status.json` 里三条消息 operation 仍是 `partial`，`blocker` 仍写「真实事件/目标端口、PG/注销及页面/Android仍待验收」，而其中「真实事件／目标端口／PG／注销」四项已分别随 #422／#425／#452 落地（§3.3 给出逐字 diff 读数）⇒ **#17 不可关**；缺口 ① 属**工程/流程**（台账口径，本页 docs-only 不能改），缺口 ② 属**外部依赖/契约**（真机走查、真 PG `system` 形状、通知重试 outbox、停用期间不可读，§5）。
+**一行结论**：按监工裁定 `6333028693` 给出的 `Closes #17` 前置（A 跳转入口 ＋ C 里 G3 ＋ **台账重生成**），A 与 G3 已随 #448 落地，**台账重生成未落地**——`docs/architecture/contract-status.json` 里三条消息 operation 仍是 `partial`，`blocker` 仍写「真实事件/目标端口、PG/注销及页面/Android仍待验收」，而其中「真实事件／目标端口／注销」三项已随 #422／#425／#452 落地、**PG 一项只到「代码在位＋契约形状单测」（真库臂本轮未跑）**（§3.3 给出逐字读数）⇒ **#17 不可关**；缺口 ① 属**工程/流程**（台账口径，本页 docs-only 不能改），缺口 ② 属**外部依赖/契约**（真机走查、真 PG `system` 形状、通知重试 outbox、停用期间不可读，§5）。
 
 ---
 
@@ -44,18 +44,18 @@
 | 重复调度不重复创建 | 已具备 | 去重键由**数据库唯一约束**裁决：`services/api/db/migrations/0019_messages_persistence.sql:68` `CONSTRAINT messages_owner_event_key UNIQUE (owner_id, event_key)`；写入是单条 `INSERT ... ON CONFLICT DO NOTHING RETURNING id`（`services/api/src/messages/store-pg.ts:250`），按「有没有返回行」判 `inserted`／`duplicate`（同文件 `:263`）；内存实现同义（`services/api/src/messages/store.ts` 的去重表） |
 | 服务层不靠「先查后写」 | 已具备 | `services/api/src/messages/service.ts:424` 先 `findByEventKey` 命中即 `created:false`；`:439` 并发同键时**回读**既有记录，不产生第二条（`:441` 若仍查不到即按内部不变式违反报错，不臆造） |
 | 事件键确定性（重复调度同键） | 已具备 | 社区事件 `community:<event>:<type>:<id>:r<revision>[:后缀]`（`services/api/src/community/events.ts:112`，后缀按身份取值见 `:115`／`:116`）；账号事件 `system:account:<suspend\|restore>:<userId>:e<authEpoch>`（`services/api/src/admin/ops/account-events.ts:68`） |
-| 未读计数可复核（派生量，无计数器列） | 已具备 | `services/api/src/messages/store-pg.ts:326` 每次现算 `SELECT count(*)::bigint ... WHERE owner_id = $1::uuid AND read_at IS NULL`；迁移头注释明写「本迁移**没有**任何未读计数器列」（`services/api/db/migrations/0019_messages_persistence.sql:17`）；服务层 `services/api/src/messages/service.ts:350`；契约口径「消息未读数量服务端聚合，不从当前页估计」（`docs/architecture/state-contract.md:32`） |
+| 未读计数可复核（派生量，无计数器列） | 已具备 | `services/api/src/messages/store-pg.ts:326` 每次现算 `SELECT count(*)::bigint ... WHERE owner_id = $1::uuid AND read_at IS NULL`；迁移头注释明写「本迁移**没有**任何未读计数器列」（`services/api/db/migrations/0019_messages_persistence.sql:18`）；服务层 `services/api/src/messages/service.ts:350`；契约口径「消息未读数量服务端聚合，不从当前页估计」（`docs/architecture/state-contract.md:32`） |
 | 读数 | 已取得 | 定向单测 `node --test tests/unit/messages-*.test.mjs` ⇒ **100 pass / 0 fail**（含 `tests/unit/messages-store-pg-contract.test.mjs:223`「countUnread：每次现算 count(*)，没有计数器列也没有写回」、`tests/unit/messages-concurrency.test.mjs:244`「未读数只减不增…且等于派生值」）；真库侧的「同一快照内一致」读数见既有页 [gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md) §2(a)（本页未复跑，见 §5-U5） |
 
 ### 1.2 AC2「发送或创建不当作已读；游客和其他用户不可读」——**已具备**
 
 | 子句 | 判定 | 证据（`路径:行号` ＋ 原文片段） |
 | --- | --- | --- |
-| 创建恒为未读 | 已具备 | `services/api/src/messages/service.ts:432` `read_at: null,`（内部创建口构造记录处；`:429` 起 `revision: 1`）；迁移侧 `read_at` 无默认值、注释「未读 = NULL」（`services/api/db/migrations/0019_messages_persistence.sql:57`） |
+| 创建恒为未读 | 已具备 | `services/api/src/messages/service.ts:432` `read_at: null,`（内部创建口构造记录处；`:428` `revision: 1`）；迁移侧 `read_at` 无默认值、注释「未读 = NULL」（`services/api/db/migrations/0019_messages_persistence.sql:57`） |
 | 客户端不能自带已读 | 已具备 | 创建口只收 4 个合法键，传 `read_at`／`id`／`revision`／`reference_state` 一律 400 `UNKNOWN_FIELD`（`services/api/src/messages/validate.ts:187` 说明、`:196` 落点）；用例 `tests/unit/messages-security.test.mjs:208` |
 | 已读只能显式操作 | 已具备 | 唯一写入口是 `PUT /messages/{id}/read`（`services/api/src/routes/messages.ts:59`）＋存储侧 CAS（`services/api/src/messages/store-pg.ts:296` 起的 `UPDATE ... WHERE ... AND read_at IS NULL`）；契约「播放成功不记为理解或已读；消息已读须单独操作」（`docs/architecture/state-contract.md:64`） |
 | 游客不可读 | 已具备 | 三条路由全部 `preHandler: guards.requireUser`：`services/api/src/routes/messages.ts:44`（列表）、`:54`（未读）、`:60`（标读）；用例 `tests/unit/messages-http.test.mjs:88`「游客/后台/过期会话拒绝，他人与不存在同形，账号epoch变化立即拒绝」 |
-| 其他用户不可读（与不存在同形） | 已具备 | 存储层所有读/写带 `owner_id = $1::uuid` 谓词（列表 `services/api/src/messages/store-pg.ts:272`、未读 `:325`、标读 `:299`）；服务层非本人一律走同一个 `notFound()`（`services/api/src/messages/service.ts:105`，`:382` 判定处）；契约「私有对象非本人统一404，与不存在同形」（`docs/architecture/state-contract.md:13`）；用例 `tests/unit/messages-security.test.mjs:38`（「标记报错与"不存在"逐字节同形」） |
+| 其他用户不可读（与不存在同形） | 已具备 | 三条语句的归属谓词形状不同、但都在 SQL 里：列表 `services/api/src/messages/store-pg.ts:274` 是 `WHERE owner_id = $1::uuid`；未读 `:327` 是 `WHERE owner_id = $1::uuid AND read_at IS NULL`；标读先 `:298` 的 `WHERE id = $1::uuid`、再 `:299` 的 `AND ($2::uuid IS NULL OR owner_id = $2::uuid)`（owner 走 `$2` 且允许 NULL 逃逸——归属由存储层 `:312-313` 比对后返回 `OWNER_CHANGED`、服务层 `services/api/src/messages/service.ts:382` 再复核兜住）；服务层非本人一律走同一个 `notFound()`（`services/api/src/messages/service.ts:105`）；契约「私有对象非本人统一404，与不存在同形」（`docs/architecture/state-contract.md:13`）；用例 `tests/unit/messages-security.test.mjs:38`（「标记报错与"不存在"逐字节同形」） |
 
 ### 1.3 AC3「首版不接微信外部推送，不虚构真人互动消息」——**已具备**
 
@@ -178,25 +178,25 @@
 
 ### 3.1 PR 状态与内容核对
 
-下表 `state`／`mergeCommit`／`mergedAt` 均来自 `gh pr view <n> -R GengYunChuChao/GengYun --json state,mergeCommit,mergedAt,headRefName,title`（本页写作时实跑）；「内容证据」列是本页在 `upstream/main` 上实读到的落点。
+下表 `state`／`mergeCommit`／`mergedAt` 均来自 `gh pr view <n> -R GengYunChuChao/GengYun --json state,mergeCommit,mergedAt,headRefName,title`（本页写作时实跑）；`mergeCommit` 一律写 **40 位全量 OID**（不缩写）。「在 main 祖先链」列是 `git merge-base --is-ancestor <oid> upstream/main` 的退出码读数（`0`＝在链上／`1`＝不在链上），两种取值都由 `git cat-file -t <oid>` ＝ `commit` 佐证——**不在链上 ≠ 未合并**，原因见 §3.4。「内容证据」列是本页在 `upstream/main` 上实读到的落点。
 
-| PR | state | mergeCommit（短） | 标题要点 | 内容证据（实读） |
-| --- | --- | --- | --- | --- |
-| #138 | MERGED | `—`（不在 main 可见历史内，见 §3.4） | 接通消息三端点与固定期限分页 | `services/api/src/routes/messages.ts:43`／`:53`／`:59` |
-| #191 | MERGED | `—`（同上） | 消息页真实读面与未读角标 | `miniprogram/pages/messages/messages.js:298`（`_applyUnread`） |
-| #215 | MERGED | `—`（同上） | 修复微信端标为已读被误判 400 | `services/api/src/routes/messages.ts:36`（`dropEmptyBodyContentType`） |
-| #278 | MERGED | `—`（同上） | 消息域接入 PostgreSQL 持久化 | `services/api/db/migrations/0019_messages_persistence.sql:49`、`services/api/src/messages/store-pg.ts:246` |
-| #422 | MERGED | `50e3bf40` | 他人评论/点赞真落库，类型按来源取值 | `services/api/src/community/events.ts:136`、`:173` |
-| #425 | MERGED | `88942df4` | 接线跳转目标可用性 | `services/api/src/messages/reference-community.ts:49`（`createCommunityReferencePort`）、`services/api/src/app.ts:810` |
-| #445 | MERGED | `7afabe8a` | 只读复盘与九条缺口（文档） | [gy-r31-i17-recon-20261022.md](gy-r31-i17-recon-20261022.md) |
-| #448 | MERGED | `ac848d9d` | 消息行可跳转 ＋ 未读数可重试 ＋ 过期文案（**A／G3／G7／G8**） | `miniprogram/pages/messages/messages.js:310`、`:244`、`miniprogram/pages/messages/messages.wxml:101` |
-| #452 | MERGED | `174b547c` | 消息域「注销即删」真库读数（**G4**） | [gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md)、`tests/integration/messages-pg.mjs` |
-| #468 | MERGED | `56ed9f2c` | 未读数失败不再静默清空角标（**G6**） | `miniprogram/custom-tab-bar/index.js:55`、`miniprogram/pages/messages/messages.js:226` |
-| #470 | MERGED | `36c6d067` | 幂等台账前缀单点化 ＋ 跨域守卫（**G5**） | [gy-r31-i17-g5-20261022.md](gy-r31-i17-g5-20261022.md) |
-| #477 | MERGED | `693142eb` | G2 裁定：跳转范围仅 `post`/`comment`（文档） | [gy-r31-i17-g2-ruling-20261022.md](gy-r31-i17-g2-ruling-20261022.md)、`tests/unit/messages-target-scope.test.mjs:62` |
-| #479 | MERGED | `1aa310fa` | 台账锚点支持符号形态（Refs #17） | §3.3 给出的「装配锚点由第 757 行改为 `services/api/src/app.ts:802-806`」重锚读数 |
-| #484 | MERGED | `c728648a` | **`fix(i16)`: real 模式终态历史端口接真库**（Refs #16） | 与 #17 无代码交集；任务书把它列为「#17 相关」，**实读纠正：它属 #16** |
-| #485 | MERGED | `5b4292f2` | 账号级系统事件（停用/恢复 → `system`，**G9**） | `services/api/src/admin/ops/account-events.ts:68`、`:144`；装配 `services/api/src/app.ts:1270` |
+| PR | state | mergeCommit（40 位） | 在 main 祖先链 | 标题要点 | 内容证据（实读） |
+| --- | --- | --- | --- | --- | --- |
+| #138 | MERGED | `1865c64e6ed4e5f4bbdcd939865785f6e7b513dc` | 1（不在） | 接通消息三端点与固定期限分页 | `services/api/src/routes/messages.ts:43`／`:53`／`:59` |
+| #191 | MERGED | `e1e1e4ad91c02bab938602d4cf0ab7ca8b353558` | 1（不在） | 消息页真实读面与未读角标 | `miniprogram/pages/messages/messages.js:298`（`_applyUnread`） |
+| #215 | MERGED | `cc07de8fd2fabfcd51b11c37962994631ecfbed5` | 1（不在） | 修复微信端标为已读被误判 400 | `services/api/src/routes/messages.ts:36`（`dropEmptyBodyContentType`） |
+| #278 | MERGED | `293fbefa600f64c3a33e5404352f97a97a6ac829` | 1（不在） | 消息域接入 PostgreSQL 持久化 | `services/api/db/migrations/0019_messages_persistence.sql:49`、`services/api/src/messages/store-pg.ts:246` |
+| #422 | MERGED | `50e3bf40346811a72cb511f19e4b49f035a5a020` | 1（不在） | 他人评论/点赞真落库，类型按来源取值 | `services/api/src/community/events.ts:136`、`:173` |
+| #425 | MERGED | `88942df44666e6061244465bc5f03ba1bae1c349` | 1（不在） | 接线跳转目标可用性 | `services/api/src/messages/reference-community.ts:49`（`createCommunityReferencePort`）、`services/api/src/app.ts:810` |
+| #445 | MERGED | `7afabe8a8c4fbe5258351dee6e516b6c9b9521a3` | 0（在） | 只读复盘与九条缺口（文档） | [gy-r31-i17-recon-20261022.md](gy-r31-i17-recon-20261022.md) |
+| #448 | MERGED | `ac848d9d2325c382f97d918e4e43a95abec17260` | 0（在） | 消息行可跳转 ＋ 未读数可重试 ＋ 过期文案（**A／G3／G7／G8**） | `miniprogram/pages/messages/messages.js:310`、`:244`、`miniprogram/pages/messages/messages.wxml:101` |
+| #452 | MERGED | `174b547c65ed3106928820aecc9782ee2744898b` | 0（在） | 消息域「注销即删」真库读数（**G4**） | [gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md)、`tests/integration/messages-pg.mjs` |
+| #468 | MERGED | `56ed9f2c8f89494a8bb02e03830a134cb8a0e2af` | 0（在） | 未读数失败不再静默清空角标（**G6**） | `miniprogram/custom-tab-bar/index.js:55`、`miniprogram/pages/messages/messages.js:226` |
+| #470 | MERGED | `36c6d0677c5845fe5f9b7951437fa5f215b26053` | 0（在） | 幂等台账前缀单点化 ＋ 跨域守卫（**G5**） | [gy-r31-i17-g5-20261022.md](gy-r31-i17-g5-20261022.md) |
+| #477 | MERGED | `693142eb750be07d0b904239110520ff22f69457` | 0（在） | G2 裁定：跳转范围仅 `post`/`comment`（文档） | [gy-r31-i17-g2-ruling-20261022.md](gy-r31-i17-g2-ruling-20261022.md)、`tests/unit/messages-target-scope.test.mjs:62` |
+| #479 | MERGED | `1aa310fa5509d7fa741270a5dbc36072b41951f6` | 0（在） | 台账锚点支持符号形态（Refs #17） | §3.3 给出的那三处装配括注重锚读数 |
+| #484 | MERGED | `c728648a74ede69181d875d0c7f32ee2ad126a3d` | 0（在） | **`fix(i16)`: real 模式终态历史端口接真库**（Refs #16） | 与 #17 无代码交集；任务书把它列为「#17 相关」，**实读纠正：它属 #16** |
+| #485 | MERGED | `5b4292f2bd7237abe3ff3257f606e90d60487537` | 0（在） | 账号级系统事件（停用/恢复 → `system`，**G9**） | `services/api/src/admin/ops/account-events.ts:68`、`:144`；装配 `services/api/src/app.ts:1270` |
 
 ### 3.2 监工裁定 `6333028693`（`gh api repos/GengYunChuChao/GengYun/issues/comments/6333028693` 实读，`bodyLength=773`，`user=Sek1ro-oka`，`created_at=2026-10-22T04:53:20Z`）
 
@@ -213,8 +213,8 @@
 ### 3.3 台账现状（`docs/architecture/contract-status.json`，本页只读、不改）
 
 - 三条 operation 的 `status` 全部仍是 `partial`：`listMessages`（`get /messages`）、`getUnreadCount`（`get /messages/unread-count`）、`markMessageRead`（`put /messages/{id}/read`）。
-- 三条的 `blocker` 逐字相同，末段为：「…**真实事件/目标端口、PG/注销及页面/Android仍待验收**，不虚构真人消息」。其中前四项按本页实读**已不成立**：真实事件＝#422（`services/api/src/community/events.ts:136`）、目标端口＝#425（`services/api/src/app.ts:810`）、PG＝迁移 0019 ＋ `services/api/src/messages/store-pg.ts:244`、注销＝#452 的真库读数页；只有「页面/Android」仍成立（§5-U1）。
-- **「自根提交以来只重锚过行号」的逐字读数**：`git diff 903ad629..upstream/main -- docs/architecture/contract-status.json` 里 `listMessages`／`getUnreadCount`／`markMessageRead`／`真实事件/目标端口` 共 9 处命中，其中唯一的语义差异是装配锚点由「第 757 行」改为 `services/api/src/app.ts:802-806`（锚点重校准，与 `#479` 的主题一致）；`status` 与那句「真实事件/目标端口…仍待验收」**一字未变**。
+- 三条的 `blocker` 逐字相同，末段为：「…**真实事件/目标端口、PG/注销及页面/Android仍待验收**，不虚构真人消息」。其中三项按本页实读**已不成立**：真实事件＝#422（`services/api/src/community/events.ts:136`）、目标端口＝#425（`services/api/src/app.ts:810`）、注销＝#452 的真库读数页。**「PG」一项只能算「代码在位」**——迁移 0019 ＋ `services/api/src/messages/store-pg.ts:244` 的 `persistent: true` ＋ PG 存储的契约形状单测（`tests/unit/messages-store-pg-contract.test.mjs`），**真库臂本轮未跑**（§5-U5）⇒ 证据强度比前三项**弱一档**，本页不把它写成等强。只有「页面/Android」仍成立（§5-U1）。
+- **「自根提交以来只重锚过行号」的逐字读数**：`git diff 903ad629..upstream/main -- docs/architecture/contract-status.json` 里 `listMessages`／`getUnreadCount`／`markMessageRead`／`真实事件/目标端口` 共 9 处命中，其中唯一的语义差异是那三处装配括注的锚点重校准（与 `#479` 的主题一致）：旧值在 `903ad629` 的台账里写作 `app\.ts:757` 这个锚点（**转义只为避开文档行号闸门的路径识别，台账原文没有反斜线**；复现：`git show 903ad629:docs/architecture/contract-status.json | grep -c 'app\.ts:757'` ⇒ **3** 次；⚠ 那个行号在**当前** `services/api/src/app.ts` 上是收尾括号 `}`、不是装配代码，所以**不能**当代码引用核——写成字面 `路径:行号` 会被闸门判 SUSPECT），新值写作 `services/api/src/app.ts:802-806`（同一份台账命中 **3** 次）；`status` 与那句「真实事件/目标端口…仍待验收」**一字未变**。
 - 因此本页对台账的判定只有一句：**「未按已落地事实重生成」**。本页**不**判「status 应为 `implemented`」——那是监工/台账片的口径裁定（`node tools/verify-contract-status.mjs` 只校验锚点与生成表字节一致，**不校验语义**）。
 
 ### 3.4 一处必须写明的历史事实（否则并入判定会错）
@@ -223,8 +223,8 @@
 
 后果与口径：
 
-- #422／#425 的 `mergeCommit`（`50e3bf40`／`88942df4`）**不在** `upstream/main` 的祖先链上（`git merge-base --is-ancestor` 两次均 exit=1），但它们的内容**确在当前 main**（`services/api/src/messages/reference-community.ts:49` 存在、`services/api/src/community/events.ts:136` 的类型映射在位）⇒ **并入判定一律用内容核对，不用祖先关系**（与 `AGENT.md` §5 第 6 条／§7 的口径一致；本页因此**不**把 ancestry 当作任何证据）。
-- 同理，上面这些早于 import 的 PR（#138／#191／#215／#278 等）只按内容核对，`mergeCommit` 一栏写「不在 main 可见历史内」，不写成「未合并」。
+- 边界正好落在 import 点上：#138／#191／#215／#278／#422／#425 的 `mergeCommit`（`1865c64e…`／`e1e1e4ad…`／`cc07de8f…`／`293fbefa…`／`50e3bf40…`／`88942df4…`，全量见 §3.1）**都不在** `upstream/main` 的祖先链上（`git merge-base --is-ancestor` 六个均 exit=1），而 #445 起的九个均 exit=0；但这两组的内容**都在当前 main**（`services/api/src/messages/reference-community.ts:49` 存在、`services/api/src/community/events.ts:136` 的类型映射在位）⇒ **并入判定一律用内容核对，不用祖先关系**（与 `AGENT.md` §5 第 6 条／§7 的口径一致；本页因此**不**把 ancestry 当作任何证据）。
+- 同理，早于 import 的 PR（#138／#191／#215／#278／#422／#425）只按内容核对：`mergeCommit` 照实填 40 位 OID，「祖先链」列写 `1（不在）`，**不**写成「未合并」。
 
 ---
 
