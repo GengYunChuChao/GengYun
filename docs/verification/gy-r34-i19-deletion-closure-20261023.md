@@ -111,7 +111,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 | 13 | `exports` | `user_id`/`recipient_id` | 2 张（`third_party_deletions`、`export_writebacks`，均 `NO ACTION`） | — | **排除**：导出请求台账，是「第三方到底收到过什么」的证据链头；删除会连带毁掉第三方删除证据 |
 | 14 | `export_writebacks` | `user_id` | 无 | — | **排除**：同上（导出回写结果） |
 | 15 | `third_party_deletions` | `recipient_id` | 无 | — | **排除**：第三方删除证据（在线/备份两态 + 证据引用），`#19` 的 30 日备份义务要靠它取证 |
-| 16 | `jobs` | `owner_id`（`REFERENCES users (id)`，且有 `jobs_single_actor` 约束：`owner_id` 与 `actor_admin_id` 恰一） | 自引用（`retry_of` → `jobs`，`NO ACTION`） | — | **排除（下一片候选）**：`0001_initial_schema.sql:203-228` 的 `jobs` 是**早期媒体任务队列**（含 `input_hash` / `result_ref` / `provider_config_version` 等元数据），`owner_id` 非空时确实是用户维度的一行（`consent-pg.ts:174`、`grant-pg.ts:86` 还按 `WHERE owner_id = $1` 读它）；但识别/语音域已各有专表（0025/0026），这张表**是否仍在写**需先定性——若已停写就只余历史行，删与不删都要先定方案，故本片不接 |
+| 16 | `jobs` | `owner_id`（`REFERENCES users (id)`，且有 `jobs_single_actor` 约束：`owner_id` 与 `actor_admin_id` 恰一） | 自引用（`retry_of` → `jobs`，`NO ACTION`） | — | **排除（死表，另开一片下线）**：`0001_initial_schema.sql:203-228` 的 `jobs` 是**通用作业台账**（`0001:202` 分节标题即「任务台账」，不是媒体专用队列）；生产代码零写入（全仓唯一 `INSERT INTO … jobs` 在 `tests/integration/consent-grant-pg.mjs:175` 测试 fixture，`admin/ops/jobs-pg.ts:6` 亦自述「没有任何代码向它 INSERT」），权限层 `90-assert-least-privilege.sql:1533-1535` 的 `t_sel`/`t_ins`/`t_upd`/`t_del` 四位全 `false`（列级只留 `sel = ARRAY['owner_id']`，与 `services/api/db/roles/auth_privacy.sql:39` 的 `GRANT SELECT (owner_id) ON jobs,media` 同源）；现存读面仅 `consent-pg.ts:174-177` 与 `grant-pg.ts:86-89` 两处四表并查。下线 = 先摘这两处 SELECT 再 `DROP TABLE`，另开一片，不在本片范围 |
 | 17 | `media` | `owner_id` | 3 张（`media_derivatives` CASCADE、`content_media_refs` NO ACTION、`community_media_grants` NO ACTION） | — | **排除**：媒体本体是对象存储指针 + 状态机，真正的清理面是 `public.media_object_cleanup` 与桶确认；只删行会留下孤儿对象（比删不干净更糟），需要独立片 |
 | 18 | `public.user_backup_copies` | `user_id` | 无 | — | **排除**：备份副本清单由备份清除端口在 30 日窗口处理（`backupPurge`），在线闭集不碰；本片两新域的 `backup_state` 如实停在 `pending` |
 | 19 | `sessions` | `user_id` | 无 | — | **排除**：注销受理时由 `public.request_account_deletion()`（SECURITY DEFINER）置 `revoked_at`，行保留作登录审计；属于账号状态迁移而非删除 |
@@ -219,7 +219,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 配套的直接读数（同一集群，库属主视角）：
 
-| 表 | `has_table_privilege('gengyun_api_runtime','public.'||tbl,'DELETE')` |
+| 表 | `has_table_privilege('gengyun_api_runtime','public.'\|\|tbl,'DELETE')` |
 | --- | --- |
 | `recognition_jobs` / `recognition_records` / `recognition_selections` | `t` / `t` / `t` |
 | `speech_jobs` / `transcriptions` | `t` / `t` |
