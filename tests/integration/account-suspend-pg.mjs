@@ -304,7 +304,9 @@ async function provisionRoles() {
     await owner.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePasswordSql}'`);
   } else {
     // `resetRoles()` 已经尽力删过：走到这里说明该角色被**别的数据库**的对象依赖 ⇒ 删不掉，也不能删；
-    // 只重置口令复用，保证本脚本连跑幂等（与 admin-flags-pg.mjs 的 provisionRoles 同范式）。
+    // 只重置口令复用，保证本脚本连跑幂等。⚠️ 这是本脚本**自己**的复用范式 —— `admin-flags-pg.mjs` 的
+    // `provisionRoles` 已按 #428 同族收口（同名角色已存在即由 `preflightRuntimeRole` 硬拒、只 CREATE 不 ALTER）
+    // ⇒ ⛔ 不要把这里的 ALTER 复用搬回 flags 臂。
     await owner.query(`ALTER ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePasswordSql}'`);
     note(`[P] 复用已存在的运行时角色 ${RUNTIME_ROLE}（跨库依赖使其不可 DROP；非本轮残留）`);
   }

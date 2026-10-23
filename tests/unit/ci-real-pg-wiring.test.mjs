@@ -114,8 +114,9 @@ const REAL_PG_WORKFLOW = `${WORKFLOW_DIR}/real-pg-integration.yml`;
  * 只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段；⛔ 不是全链，也不引 0007 的 pgcrypto 扩展），
  * argv 只给 owner URL（不建组角色）；读数覆盖〔列表读面（分页/过滤/计数/契约形状）／单条读面
  * （越权与不存在同形）／下架处置（真库行 visibility+revision、`post.hide` 审计留痕、社区可见性联动）／
- * 失败隔离（八条被拒路径逐列不动 + 并发只成功一笔）〕。排在 `admin-flags` 之后、`ocr-jobs` 之前：
- * 与后台域那三条并排读，且它对集群级角色零依赖（`admin-flags` 收尾会把自建角色清掉）。
+ * 失败隔离（八条被拒路径逐列不动 + 并发只成功一笔）〕。排在 `admin-accounts-read` 之后、`ocr-jobs` 之前
+ * （后台域三条 `admin-jobs → admin-flags → admin-accounts-read` 那条**有角色前提**的链原样保留，本脚本对
+ * 集群级角色零依赖 ⇒ 放在会把运行时角色 + 6 个组角色留下的 `admin-accounts-read` 之后不受影响）。
  */
 const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/conversations-pg.mjs',
@@ -184,12 +185,16 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
  *      `CREATE ROLE`，开头**没有** `resetRoles()`），收尾按 `pg_roles` 快照差集把本轮新建的角色全部
  *      DROP 并复核为空 ⇒ 必须排在 `admin-accounts-read-pg` **之前**（后者收尾不清理，会把
  *      `gengyun_api_runtime` + 6 个组角色留在集群里，实测 7 个）。
- *   6. `admin-accounts-read-pg`：开头 `resetRoles()` 只 `DROP OWNED BY` **本库**再加 `DROP ROLE`，
- *      并 `catch(() => {})` 吞掉失败；它**不**在收尾清理自己建的 7 个角色 ⇒ 必须排在注销之后。
- *   7. `admin-flags-pg`：argv[3] 省略时「存在则 ALTER、不存在则 CREATE」复用 `gengyun_api_runtime`
- *      （:249-263），且**不执行任何角色文件**（不建组角色）、收尾按基线差集清掉自己建的角色
- *      （实测 `[ALL PASS]` 后只剩 `gengyun_ci_owner`）⇒ 是这批里唯一能容忍前面留下运行时角色的
- *      脚本，排最后最安全。
+ *   6. `admin-flags-pg`：argv[3] 省略时**只接受自己本轮新建**的 `gengyun_api_runtime` —— `preflightRuntimeRole`
+ *      在**任何写库动作之前**硬拒「同名角色已存在」，收尾再复读 `pg_authid` 指纹比对「既有角色的认证材料
+ *      一字不差」（#428 的同族收口，R33-i18 把这条臂的 `ALTER ROLE … LOGIN PASSWORD '<随机>'` 删掉）。
+ *      它**不执行任何角色文件**（不建组角色）、收尾按基线差集清掉自己建的角色（本机 PG 17.11 空集群实测：
+ *      `[ALL PASS]` 后 `pg_roles` 只剩库 owner；CI 上同一读数只剩 `gengyun_ci_owner`）⇒ 与第 5 条的
+ *      `account-deletion-pg`、紧邻的 `admin-jobs-pg` **同前提**：要求集群里没有该角色，故必须排在
+ *      `admin-accounts-read-pg` **之前**（后者会把 7 个角色留在集群里）。
+ *   7. `admin-accounts-read-pg`：开头 `resetRoles()` 只 `DROP OWNED BY` **本库**再加 `DROP ROLE`，
+ *      并 `catch(() => {})` 吞掉失败；它**不**在收尾清理自己建的 7 个角色 ⇒ 必须排在注销与 `admin-flags`
+ *      之后（三条 I18 后台真库臂并排读，唯一会把角色留在集群里的这一条自然排在三者最后）。
  *
  * 与 `MANAGED_SCRIPTS` 的关系：**成员集合必须相同、顺序必须等于这里的顺序**，两条都由下面的断言钉住。
  */
@@ -214,18 +219,27 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    并把随机口令写进自己的运行时 URL（`admin-jobs-pg.mjs:276-298`），给了 argv[3] 反而要求角色**已存在**
   //    （`:252-274`，存在且非本轮创建即「拒绝接管」）。它前面正是「收尾按 `pg_roles` 快照差集 DROP 并复核为空」的
   //    `account-deletion-pg` ⇒ 排在两者之间；它自己收尾同样按快照差集 DROP（`:859-871`），故后面的
-  //    `admin-accounts-read-pg` 又能从「不存在」开始（本机负控制：角色在时它 exit=1 且打印「拒绝接管既有角色」）。
+  //    `admin-flags-pg` 又能从「不存在」开始（本机负控制：角色在时它 exit=1 且打印「拒绝接管既有角色」）。
   'tests/integration/admin-jobs-pg.mjs',
-  'tests/integration/admin-accounts-read-pg.mjs',
+  // R33-i18. `admin-flags-pg`（#18 全局开关真库臂，R28-S14 接入）与上一条**同族收口**（#428 的做法）：
+  //    argv[3] 省略时它**只接受自己本轮新建**的 `gengyun_api_runtime`（`preflightRuntimeRole` 在任何写库
+  //    动作之前硬拒「同名角色已存在」，收尾 `checkRoleCredentials` 复读 `pg_authid` 比对既有角色认证材料），
+  //    ⛔ 不再「存在即 `ALTER ROLE … LOGIN PASSWORD '<随机>'`」接管它。⇒ 前提从「能容忍残留角色」变成
+  //    「残留即 exit=1」，与 `admin-jobs-pg` 完全一致，故必须紧跟其后（前一步收尾已把角色清空）、并排在
+  //    会把 `gengyun_api_runtime` + 6 个组角色**留在集群里**的 `admin-accounts-read-pg` **之前**。
+  //    ⛔ 不要把它挪回 `admin-accounts-read-pg` 之后：那一步之后角色一直在，本臂会当场 exit=1。
   'tests/integration/admin-flags-pg.mjs',
+  'tests/integration/admin-accounts-read-pg.mjs',
   // 3d. `admin-community-posts-pg`（R34 接入，#18 的后台**社区帖**域——这是「后台四域真 PG 联调」里
   //    此前**唯一**没有真库臂的一域：账号读/开关/作业三条已有臂，社区帖的 `hidePost`（契约 109）
   //    只在社区域脚本 `community-pg.mjs` 第 13 节被顺带读到，且那一段明确不证明审计留痕）。
   //    它要求**空库**，只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段，⛔ 不是全链），
   //    再用 real 装配 + 真库池跑列表/单条读面、下架处置（真库行 + 审计台账 + 社区可见性联动）
-  //    与失败隔离（八条被拒路径逐列不动 + 并发只成功一笔）。argv 只给 owner URL，不建组角色。
-  //    位置：紧跟后台域那三条（并排读），`admin-flags` 收尾会清掉自建角色而本脚本对角色零依赖
-  //    ⇒ 放在这一组内前后都不受角色残留影响；⛔ 不要挪到 messages 域那两条附近（顺序判据逐条比对）。
+  //    与失败隔离（八条被拒路径逐列不动 + 并发只成功一笔）。argv 只给 owner URL，**不建任何角色**。
+  //    位置：后台域三条（jobs → flags → accounts-read）之后、`ocr-jobs` 之前。⛔ 不要挪进
+  //    `admin-jobs → admin-flags → admin-accounts-read` 这条**有角色前提**的链中间（flags 要求前一步
+  //    收尾把角色清空、accounts-read 之后会把运行时角色 + 6 个组角色留在集群里）；本脚本对角色零依赖
+  //    （只用 owner URL、不 `CREATE ROLE`、不读 `pg_authid`）⇒ 排在 accounts-read **之后**不受影响。
   'tests/integration/admin-community-posts-pg.mjs',
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合（R28-S36 之后它不再是最后一步）。
@@ -1035,7 +1049,8 @@ function assertStepOrder(problems) {
       `期望顺序：${REQUIRED_STEP_ORDER.join(' → ')}`,
       '顺序是硬要求（不是审美）：`account-deletion-pg.mjs` 要求集群里没有同名角色并在收尾按快照差集清空；',
       '`admin-accounts-read-pg.mjs` 会把运行时角色＋6 个组角色**留在集群里**（收尾不 DROP）；',
-      '`admin-flags-pg.mjs` 是唯一「存在即 ALTER、不存在才 CREATE」因而能容忍前面残留运行时角色的脚本 ⇒ 排最后。',
+      '`admin-jobs-pg.mjs` 与 `admin-flags-pg.mjs` 都**只接受自己本轮新建**的运行时角色（`preflightRuntimeRole`：'
+        + '角色已存在即 exit=1 拒跑，⛔ 不再 `ALTER ROLE … PASSWORD` 接管），故两者都必须排在 `admin-accounts-read-pg.mjs` 之前。',
     ].join('\n'),
   );
 }

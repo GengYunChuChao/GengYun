@@ -1,11 +1,17 @@
 # GY-I18（#18）· 后台「社区帖」域真库集成臂（读面 / 下架处置 / 失败隔离）
 
-- 片号：R34-I18 ｜ 分支：`test/gy-r34-i18-admin-community-posts-pg` ｜ 基线：`upstream/main` `765b6a31d993995e5dacbf6a3227ebcbb97fd8df`
+- 片号：R34-I18 ｜ 分支：`test/gy-r34-i18-admin-community-posts-pg` ｜ 开工基线：`upstream/main` `765b6a31d993995e5dacbf6a3227ebcbb97fd8df`
+- **主线已前进 ⇒ 已 `git merge --no-ff upstream/main`（`f3a5f24d7427f5c2e40b9c8278312aa4827157ca`，⛔ 未 rebase/force）**：
+  唯一冲突在 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `REQUIRED_STEP_ORDER`（主线把 `admin-flags` 前移到
+  `admin-jobs` 之后、`admin-accounts-read` 之前），按**并集**解：保留主线那条「有角色前提」的链序，本脚本作为一个
+  独立条目排在 `admin-accounts-read` **之后**、`ocr-jobs` 之前（它只用 owner URL、不建角色、不读 `pg_authid`
+  ⇒ 不受 `admin-accounts-read` 留在集群里的运行时角色影响）；workflow 侧同序，自动合并无冲突。
+*合流后已重跑全部门禁与真库臂（读数见 §3；真库臂 exit=0 / 23 组 / `[ALL PASS]`）。*
 - 新增脚本：`tests/integration/admin-community-posts-pg.mjs`
   （`node tests/integration/admin-community-posts-pg.mjs <ownerUrl>`；也接受 env `ADMIN_COMMUNITY_POSTS_PG_TEST_URL`。
   库名硬钉 `gengyun_admin_community_posts_test`，要求**空库**；缺 URL 时打印 `SKIP` 并以 **77** 退出 ⇒ 未取得，不是通过）
-- 接线：`.github/workflows/real-pg-integration.yml`（**紧跟后台域那三条**：`admin-jobs` → `admin-accounts-read` →
-  `admin-flags` → **本 step** → `ocr-jobs`；⛔ 不追加到文件末尾）
+- 接线：`.github/workflows/real-pg-integration.yml`（**贴在后台域那三条之后**：`admin-jobs` → `admin-flags` →
+  `admin-accounts-read` → **本 step** → `ocr-jobs`；⛔ 不追加到文件末尾，也⛔ 不插进那条有角色前提的链中间）
 - 同步更新：`tests/unit/ci-real-pg-wiring.test.mjs`（`MANAGED_SCRIPTS` / `FROZEN_MANAGED_SCRIPTS` /
   `REQUIRED_STEP_ORDER` 三处，均插在 `admin-flags-pg.mjs` 与 `ocr-jobs-pg.mjs` **之间**）、
   `tests/unit/ci-integration-chain-structure.test.mjs`（`UNWIRED_DECLARATIONS` 一条，与后台域条目相邻）
@@ -82,7 +88,7 @@
   各自的最小权限面，本片不重复、也不据此推断社区帖域的授权面已验收）。
 - **真实媒体、真实网格/多副本、超规模数据**：未取得（夹具 8 条；本片不构成容量或并发压测结论）。
 
-## 3. 门禁读数（本机，worktree 内实测）
+## 3. 门禁读数（本机，worktree 内实测；**合流 `f3a5f24d` 之后重跑**）
 
 | 门禁 | 结果 |
 | --- | --- |

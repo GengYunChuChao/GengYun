@@ -36,8 +36,15 @@ export interface HistoryRecord {
   event_key: string;
 }
 
-/** 删除的级联披露（内部字段，**不出契约**）：只区分"已启动/未接线/启动失败"，绝不声称完成。 */
-export type CascadeDisclosure = 'initiated' | 'unwired' | 'failed';
+/**
+ * 删除的级联披露（内部字段，**不出契约**）：只区分"已启动／部分已删／未接线／启动失败"，绝不声称完成。
+ *
+ * `'partial'`（R33 裁定新增）语义**严格**为：历史行已删除 ＋ **至少一项**关联对象
+ * （识别结果 / OCR 记录）**已删除** ＋ **未全部删除成功**（媒体与外发删除仍跨线未接）。
+ * ⛔ 「一项都没删成功」仍是 `'failed'`；⛔ 未接线仍是 `'unwired'`，不得改写。
+ * 与 `history/cascade.ts` 的 `CascadeOutcome` 同值。
+ */
+export type CascadeDisclosure = 'initiated' | 'partial' | 'unwired' | 'failed';
 
 /** 幂等结果引用（不含任何凭据；重放时按引用重新读取并重新鉴权）。 */
 export interface IdempotencyOutcome {

@@ -660,8 +660,16 @@ try {
   assert.equal(delHistOk.status, 202, JSON.stringify(delHistOk.body));
   assert.deepEqual(delHistOk.body.data, { accepted: true });
   assert.ok(
-    ['initiated', 'unwired', 'failed'].includes(delHistOk.headers.get('x-gy-cascade')),
+    ['initiated', 'partial', 'unwired', 'failed'].includes(delHistOk.headers.get('x-gy-cascade')),
     'DELETE 必须披露级联状态（非契约头 X-GY-Cascade）',
+  );
+  // R33 片起生产默认装配是**已接线**的（识别/OCR 两腿）：本行 `target_ref.id` 是合成串
+  // `rec-pg-c-1`（不是 uuid、库里也没有这条识别记录）⇒ 读不到 ⇒ 一项都没删成功 ⇒ `failed`。
+  // 这正是裁定要的下限口径：⛔ 不得因为"端口已接线"就把它记成 `partial`。
+  assert.equal(
+    delHistOk.headers.get('x-gy-cascade'),
+    'failed',
+    '目标核不到 ⇒ 一项都没删成功 ⇒ failed（⛔ 不得记 partial、⛔ 不得仍是 unwired）',
   );
   assert.equal(await histCount(c.user.id), 4, '删除后真库行数 5 → 4');
 
@@ -828,6 +836,170 @@ try {
 
   await app.close();
   app = null;
+
+  // =======================================================================
+  // 15. 删历史 ⇒ 关联识别记录被**真的软删**（R33-I16 级联接线；真库 + 真 HTTP）
+  // =======================================================================
+  // 授权：`.pg17/ruling-r33-i16-history-cascade-partial-20261023.md` 第 1、2 条
+  // （允许新增披露值 `partial`，语义严格为「历史行已删 ＋ 至少一项关联已删 ＋ 未全部删成功」；
+  //  只接 recognitions 与 ocr 两类；⛔「一项都没删成功」仍是 failed）。
+  //
+  // 本节覆盖（补入文件头「覆盖」清单的第 15 项）：删历史 ⇒ 关联识别记录被**真的软删**。
+  //   - 走**生产默认接线**（不注入 `historyInjection.cascade`）⇒ 202 + `X-GY-Cascade: partial`；
+  //   - 真库 `history` 行真的删掉（0 行）、识别 store 里那行 `deleted=true` 且 `revision+1`、
+  //     `GET /recognitions/{id}` 变 404 且与"从未存在"逐字同形；
+  //   - 同键重放回放同一披露且**不再删一次**；反例（目标核不到）必须披露 `failed` 而**不是** `partial`。
+  //   - ⚠ **OCR 腿**在本文件里没有 app 级臂（`buildApp` 没有 OCR store 注入点，要走完整 OCR 任务链），
+  //     由 `tests/unit/history-cascade-wiring.test.mjs` 的适配器级用例覆盖。
+  //
+  // 装配口径（如实登记，不得读成全量生产装配）：
+  //   1. **不注入** `historyInjection.cascade` ⇒ 本节读数就是 `services/api/src/app.ts` 里那条
+  //      生产默认值的行为（改回 `createUnwiredHistoryCascadePort()` 时本节必红）；
+  //   2. 历史 store 是**真 PG**（与生产同一实现：行真的落库、`DELETE` 后真的消失）；
+  //   3. 识别 store 是**内存**实现 —— 本文件只应用 0001/0008/0018，识别域 PG 表不在本库
+  //      （识别域持久化由 `tests/integration/recognitions-pg.mjs` 负责）。因此本节能证明的是
+  //      「真库里的历史行 → 经生产接线 → 识别域那条记录被软删」这条链路，不是"识别域也落 PG"。
+  //   4. 与本文件 §14 的差别：这里必须给 app 一个**带 `connect()`** 的池 —— `DELETE /history/{id}`
+  //      走 `withTransaction`（`history/store-pg.ts` 的 CAS 删除与幂等台账都在事务里），
+  //      只给 `{query}` 会在 `pool.connect()` 处炸成 503 `历史数据库暂不可用`。
+  //      带 `connect()` 会同时让 app 装配外发账本/授权门（构造期不查库），本节不派发任务，故无影响。
+  const cascadePool = {
+    query: (text, values) => pool.query(text, values),
+    connect: () => pool.connect(),
+  };
+  const cascadeRecognitionStore = createMemoryRecognitionStore();
+  const cascadeApp = buildApp({
+    config,
+    store: auth,
+    pool: cascadePool,
+    recognitionStore: cascadeRecognitionStore,
+    now: () => new Date(),
+  });
+  let cascadeAppOpen = false;
+  try {
+    const e = await account('e');
+    const recognitionId = randomUUID();
+    const jobId = randomUUID();
+    // 一条真实的（内存）识别行：`getRecognition` / `deleteRecognition` 读写的就是它。
+    await cascadeRecognitionStore.insertJob({
+      id: jobId,
+      revision: 2,
+      kind: 'recognition',
+      ownerUserId: e.user.id,
+      recognitionId,
+      mediaId: randomUUID(),
+      mediaRevision: 1,
+      state: 'succeeded',
+      deadlineAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      errorCode: null,
+    });
+    await cascadeRecognitionStore.insertRecognition({
+      id: recognitionId,
+      revision: 2,
+      ownerUserId: e.user.id,
+      mediaId: randomUUID(),
+      mediaRevision: 1,
+      candidates: [{ species_id: 'synthetic_cascade_weed', rank: 1, model_score: 0.77 }],
+      uncertaintyReasons: [],
+      selectedSpeciesId: null,
+      modelVersion: 'synthetic-cascade-v1',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      deleted: false,
+    });
+    const cascadeRow = await cascadeApp.historyService.appendHistory({
+      owner_id: e.user.id,
+      kind: 'recognition',
+      target_ref: { type: 'recognition', id: recognitionId, revision: 2 },
+      job_id: jobId,
+      job_state: 'succeeded',
+      event_key: `recognition:${jobId}`,
+    });
+    assert.equal(cascadeRow.created, true, '前置：历史行必须真的新建');
+    assert.equal(await histCount(e.user.id), 1, '前置：历史行真的落进真库');
+
+    await cascadeApp.listen({ host: '127.0.0.1', port: 0 });
+    cascadeAppOpen = true;
+    const cascadeBase = `http://127.0.0.1:${cascadeApp.server.address().port}`;
+    const cascadeCall = async (method, path, extra = {}) => {
+      const response = await fetch(cascadeBase + path, {
+        method,
+        headers: {
+          authorization: `Bearer ${e.token}`,
+          ...(extra.headers ?? {}),
+        },
+      });
+      return { status: response.status, body: await response.json(), headers: response.headers };
+    };
+
+    const beforeDelete = await cascadeCall('GET', `/api/v1/recognitions/${recognitionId}`);
+    assert.equal(beforeDelete.status, 200, '前置：识别记录此刻对本人可读');
+
+    const delCascade = await cascadeCall('DELETE', `/api/v1/history/${cascadeRow.history.id}`, {
+      headers: { 'idempotency-key': 'hist-pg-e-del-01', 'if-match': '"1"' },
+    });
+    assert.equal(delCascade.status, 202, JSON.stringify(delCascade.body));
+    assert.deepEqual(delCascade.body.data, { accepted: true });
+    assert.equal(
+      delCascade.headers.get('x-gy-cascade'),
+      'partial',
+      '识别腿已删 + 媒体/外发未接 ⇒ 必须是 partial（unwired 说明接线没装上；failed 说明没删成）',
+    );
+
+    // ① 真库：历史行真的被删（不是只改了披露）。
+    assert.equal(await histCount(e.user.id), 0, '真库 history 行必须 0 行（历史行已删）');
+    // ② 识别域：那条记录被**真的软删**（deleted=true、revision 恰好 +1）。
+    const deletedRecognition = await cascadeRecognitionStore.getRecognition(recognitionId);
+    assert.equal(deletedRecognition.deleted, true, '级联必须把识别记录置 deleted=true');
+    assert.equal(deletedRecognition.revision, 3, '软删按目标域自己的口径 revision 恰好 +1（2 → 3）');
+    // ③ 读面：变 404，且与"从未存在"逐字同形（不泄露存在性）。
+    const afterDelete = await cascadeCall('GET', `/api/v1/recognitions/${recognitionId}`);
+    const neverExisted = await cascadeCall('GET', `/api/v1/recognitions/${randomUUID()}`);
+    assert.equal(afterDelete.status, 404, '已软删的识别记录必须 404');
+    assert.deepEqual(afterDelete.body.error, neverExisted.body.error, '已删与从未存在必须同形');
+    say(
+      '删历史 ⇒ 真库历史行 0 行 + 识别记录 deleted=true/revision 2→3 + GET 识别 404 同形；披露 partial',
+    );
+
+    // ④ 同键重放：回放**同一份**披露，且**不再删第二次**（revision 仍 3）。
+    const replayDelete = await cascadeCall('DELETE', `/api/v1/history/${cascadeRow.history.id}`, {
+      headers: { 'idempotency-key': 'hist-pg-e-del-01', 'if-match': '"1"' },
+    });
+    assert.equal(replayDelete.status, 202, JSON.stringify(replayDelete.body));
+    assert.equal(replayDelete.headers.get('x-gy-cascade'), 'partial', '重放必须回放首次那份披露');
+    assert.equal(
+      (await cascadeRecognitionStore.getRecognition(recognitionId)).revision,
+      3,
+      '重放不得再触发一次关联删除（revision 不得再 +1）',
+    );
+    say('级联幂等重放：同键 ⇒ 同一份 partial 披露且不再删第二次（识别 revision 仍 3）');
+
+    // ⑤ 反例：目标核不到（识别行不存在）⇒ 一项都没删成功 ⇒ `failed`，⛔ 不得记 `partial`。
+    const missingHistory = await cascadeApp.historyService.appendHistory({
+      owner_id: e.user.id,
+      kind: 'recognition',
+      target_ref: { type: 'recognition', id: randomUUID(), revision: 1 },
+      job_id: randomUUID(),
+      job_state: 'failed',
+      event_key: `recognition:${randomUUID()}`,
+    });
+    assert.equal(missingHistory.created, true);
+    const delMissing = await cascadeCall('DELETE', `/api/v1/history/${missingHistory.history.id}`, {
+      headers: { 'idempotency-key': 'hist-pg-e-del-02', 'if-match': '"1"' },
+    });
+    assert.equal(delMissing.status, 202, JSON.stringify(delMissing.body));
+    assert.equal(
+      delMissing.headers.get('x-gy-cascade'),
+      'failed',
+      '目标核不到 ⇒ 一项都没删成功 ⇒ failed（⛔ 不得因"端口已接线"就记 partial）',
+    );
+    assert.equal(await histCount(e.user.id), 0, '这条历史行同样真的被删（级联失败不回滚历史行删除）');
+    say('级联下限：目标核不到 ⇒ failed（不是 partial），历史行删除照常生效（不回滚）');
+  } finally {
+    if (cascadeAppOpen) await cascadeApp.close().catch(() => {});
+  }
 
   // ---- 8. 进程重连 -------------------------------------------------------
   await pool.end();

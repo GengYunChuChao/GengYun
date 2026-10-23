@@ -4,16 +4,18 @@ import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
 import AuditEventsView from './views/AuditEventsView.vue';
 import ContentAdminView from './views/ContentAdminView.vue';
+import FlagAuditView from './views/FlagAuditView.vue';
 import FlagsView from './views/FlagsView.vue';
 import JobsView from './views/JobsView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
-type TabKey = 'accounts' | 'content' | 'flags' | 'audit' | 'jobs' | 'review';
+type TabKey = 'accounts' | 'content' | 'flags' | 'flagAudit' | 'audit' | 'jobs' | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
   { key: 'content', label: '资料管理', note: '来源 / 科普 / 分类' },
   { key: 'flags', label: '功能开关', note: '读写已接入' },
+  { key: 'flagAudit', label: '开关留痕（只读）', note: '读面已接入' },
   { key: 'audit', label: '审计事件（只读）', note: '读面已接入' },
   { key: 'jobs', label: '作业台', note: '读 + 取消已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
@@ -47,6 +49,7 @@ const active = ref<TabKey>('accounts');
     <AccountsView v-if="active === 'accounts'" />
     <ContentAdminView v-else-if="active === 'content'" />
     <FlagsView v-else-if="active === 'flags'" />
+    <FlagAuditView v-else-if="active === 'flagAudit'" />
     <AuditEventsView v-else-if="active === 'audit'" />
     <JobsView v-else-if="active === 'jobs'" />
     <ReviewPlaceholderView v-else />
@@ -68,6 +71,11 @@ const active = ref<TabKey>('accounts');
         <dd>
           读写页：GET /admin/feature-flags（flags:read）；PUT /admin/feature-flags/{key} 带 If-Match 与
           Idempotency-Key（flags:write），失败按服务端错误码如实展示
+        </dd>
+        <dt>开关留痕</dt>
+        <dd>
+          只读页：GET /admin/flag-audit-events（scope=flags:read，键集游标 created_at DESC, id DESC，游标 15
+          分钟有效）；行内容是同契约的 AuditEvent，开关行另带 actor / target_hint / 前后值，缺失时如实显示「未提供」
         </dd>
         <dt>审计事件</dt>
         <dd>只读页：GET /admin/audit-events（游标分页，scope=audit:read）；除契约 8 个必填字段外，另展示 R29-S5 新增的可选留痕字段（actor / target_hint / 前后值），不做本片没有的写操作</dd>

@@ -118,10 +118,11 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/admin-flags-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_flags_test`：argv[3] 省略时脚本自建/ALTER 运行时角色、'
-      + '把随机口令写进它自己的 URL（`admin-flags-pg.mjs:249-262`）⇒ scram 下自洽（这也正是 workflow 里'
-      + '只传一个参数的原因）；由 `.github/workflows/real-pg-integration.yml` 的独立真库 job'
-      + '（`postgres:17.11` service）运行，不进无 PG 的回环链。',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_flags_test`：argv[3] 省略时脚本自己 `CREATE ROLE`（**只接受'
+      + '自己本轮新建的角色** —— `preflightRuntimeRole` 在任何写库动作之前硬拒「同名角色已存在」，⛔ 不再'
+      + '`ALTER ROLE … PASSWORD` 接管）并把随机口令写进它自己的 URL（`admin-flags-pg.mjs` 的 `provisionRoles`）'
+      + '⇒ scram 下自洽（这也正是 workflow 里只传一个参数的原因）；由 `.github/workflows/real-pg-integration.yml` '
+      + '的独立真库 job（`postgres:17.11` service）运行，不进无 PG 的回环链。',
   },
   {
     path: 'tests/integration/auth-privacy-pg.mjs',

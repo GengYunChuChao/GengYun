@@ -165,7 +165,7 @@ pages/messages/messages  pages/profile/profile  pages/login/login
 
 ## 6. 取证口径声明
 
-- 本索引为 **`Refs #7`** 口径的**部分交付**；**不写 `Closes #7`**。
+- 本索引为 **`Refs #7`** 口径的**部分交付**；**不写关单字面串 `Closes`＋`#7`**。
 - **未改动** `miniprogram/config/runtime.js`（`mode='disabled'` **保持不变**）；本轮**零功能代码改动**，仅新增本索引文档。
 - **不推上游 main、不合并、不代审、不关闭 #7**；CI 与本地证据分列。
 - 边界不变：`data_origin=seed_unverified`、`authority=none`、强制「待核实·非权威」；不显示真实用量、不授专家认证标签、缺项不补写。
