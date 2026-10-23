@@ -12,7 +12,7 @@
  * - `tools/purge-expired-backup-copies.mjs`（`npm run purge:backup-copies`）：注销**备份 30 日**到期，
  *   判据是 `public.user_backup_copies` 的行状态，同理。
  *
- * 本模块补的是**第三类**：与注销无关、**按日历自然老化**的运维数据（幂等台账、会话、举报证据…）。
+ * 本模块补的是**第三类**：与注销无关、**按日历自然老化**的数据（幂等台账、过期会话）。
  * 这类数据此前没有任何声明式登记，删不删、留多久、凭什么，只散落在各域实现与口头约定里。
  * 保留判定与执行器分别在
  * `packages/privacy/retention-policy.mjs`（本文件）与 `tools/purge-retention-expired.mjs`（执行器）。
@@ -28,7 +28,11 @@
  *    两种语义都在 `ageColumn` 里显式写出来，绝不由读者猜「7 天是从哪一刻算起」。
  * 3. **处理方式只有三种，且必须是可执行的**：
  *    - `delete`：整行物理删除（行本身无留存义务）；
- *    - `anonymize`：只把 `targetColumn` 置 `NULL`，行保留（审计/统计还要用，但内容已最小化）；
+ *    - `anonymize`：把 `targetColumn` 置 `NULL`，行保留（审计/统计还要用，但内容已最小化）；
+ *      并**必须**声明 `revisionColumn`，改写时同步 `revision = revision + 1` —— 与既有注销路径
+ *      （`services/api/src/community/store-pg.ts:1005-1011`）同一口径：以 revision 做 CAS／失效判定的
+ *      读者只有看到版本推进才知道「这行的内容已经不是原来那份」。⛔ 不推进 revision 的匿名化等于
+ *      静默改历史，比不删更糟。
  *    - `archive_marker`：只把 `markerSource` 指向的列（本表就是年龄列 `expires_at`）抄进
  *      `targetColumn`，行保留（审计线索不得删，只把「已不可用」这件事显式化）。
  *    三种都**不读时钟**（`archive_marker` 抄的是行内既有值），因此重复执行天然幂等：
@@ -36,11 +40,18 @@
  *
  * ## 为什么表清单这么短（刻意不做的事）
  *
- * 只登记**用现有列就能真执行**的表。`RETENTION_EXCLUSIONS` 逐条写清被排除的表与理由，
- * 其中 `public.admin_audit_events` 是**最值得记的一条**：它在迁移 0017 里是 append-only
- * （`BEFORE UPDATE OR DELETE` 触发器直接 `RAISE EXCEPTION … 'AUDIT_IMMUTABLE'`），
- * 所以「审计行保留、擦掉身份提示」这种匿名化**在库层面根本做不到**，
- * 只能排除并另立机制，而不是在策略表里写一条跑不动的愿望。
+ * 只登记**天数有出处、且用现有列就能真执行**的表；每条 `basisRef` 指向的那一行必须能读出该天数
+ * （单测逐条解析 `文件:行` 校验，防止「90 天」这种凭感觉写下的数字混进策略表）。
+ * `RETENTION_EXCLUSIONS` 逐条写清被排除的表与理由，其中三条最值得记：
+ * - `public.admin_audit_events`：迁移 0017 里是 append-only（`BEFORE UPDATE OR DELETE` 触发器直接
+ *   `RAISE EXCEPTION … 'AUDIT_IMMUTABLE'`），所以「审计行保留、擦掉身份提示」这种匿名化
+ *   **在库层面根本做不到**，只能排除并另立机制，而不是在策略表里写一条跑不动的愿望。
+ * - `public.admin_sessions`（90 天）、`public.community_reports`（180 天）：两个天数在仓内**没有任何
+ *   出处**（`docs/implementation-requirements.md:284` 只有「合法必要证据如有保留义务须单独限定目的、
+ *   最小字段和时限」这句原则，没有数字、也没点这两张表）。凭感觉定的天数一旦写进策略表就会被
+ *   执行器当真销毁数据，因此本片把它们移出可执行清单，等口径确定后再立项。
+ *   匿名化/标记的**机制**仍然保留（`anonymize` + `revisionColumn`、`archive_marker` + `markerSource`），
+ *   并由单测用合成策略行覆盖 —— 将来启用时只需补一条有出处的策略行。
  *
  * ## 时间口径
  *
@@ -89,6 +100,8 @@ export const MAX_RETENTION_MAX_BATCHES = 50;
  * @property {string} basisRef               依据出处（仓内 `文件:行` 或需求条目），必填
  * @property {'delete' | 'anonymize' | 'archive_marker'} disposition
  * @property {string | null} targetColumn    `anonymize` / `archive_marker` 必填，`delete` 必须为 null
+ * @property {string | null} revisionColumn  `anonymize` 必填（改写时同步 `revision = revision + 1`），
+ *                                           其余必须为 null
  * @property {'age_column' | null} markerSource `archive_marker` 必填，其余必须为 null
  * @property {string} why                    一句话说明「为什么是这个天数」（供评审与审计阅读）
  * @property {boolean} idempotent   `anonymize` / `archive_marker` 的实际实现是否靠「置 NULL /
@@ -96,9 +109,13 @@ export const MAX_RETENTION_MAX_BATCHES = 50;
  */
 
 /**
- * 策略表本体（4 张表，覆盖三种处理方式）。
+ * 策略表本体（2 张表，都是 `delete`；另外两种处理方式的**机制**由合成策略行在单测里覆盖）。
  *
  * 排序即执行顺序（无依赖，但保持稳定以便审计逐行对照）。
+ *
+ * 为什么只有两条：本表登记的每个天数都必须能指到一段写着这个数字的原文。
+ * `public.admin_sessions`（90 天）与 `public.community_reports`（180 天）在仓内找不到出处，
+ * 已移入 `RETENTION_EXCLUSIONS`（见其理由），不在本表。
  *
  * @type {ReadonlyArray<Readonly<RetentionPolicyEntry>>}
  */
@@ -111,10 +128,12 @@ export const RETENTION_POLICY = Object.freeze([
     basisRef: 'services/api/src/auth/idempotency.ts:32-33',
     disposition: 'delete',
     targetColumn: null,
+    revisionColumn: null,
     markerSource: null,
     why:
-      '幂等回执的 TTL 是 24 小时（IDEMPOTENCY_TTL_SECONDS），过期后重放不可能再命中；'
-      + '再留 1 天只为排障/对账余量，之后该键既无凭据价值也无业务价值。',
+      '幂等回执的 TTL 是 24 小时（IDEMPOTENCY_TTL_SECONDS = 24 × 60 × 60），过期后重放不可能再命中；'
+      + '再留 1 天只为排障/对账余量，之后该键既无凭据价值也无业务价值。'
+      + '注意既有 claim/purge 已按同一列清过期行（idempotency.ts:234、:261），本表只是把它纳入统一台账。',
     idempotent: true,
   }),
   Object.freeze({
@@ -122,42 +141,15 @@ export const RETENTION_POLICY = Object.freeze([
     ageColumn: 'expires_at',
     retentionDays: 30,
     basis: 'audit',
-    basisRef: 'docs/implementation-requirements.md:281',
+    basisRef: 'docs/implementation-requirements.md:278',
     disposition: 'delete',
     targetColumn: null,
+    revisionColumn: null,
     markerSource: null,
     why:
-      '过期会话只留不可逆 token_hash，用途是安全事件回溯；回溯窗口与「备份 30 日」对齐，'
-      + '超窗后无保留义务，按最小化原则整行删除。',
-    idempotent: true,
-  }),
-  Object.freeze({
-    table: 'public.admin_sessions',
-    ageColumn: 'expires_at',
-    retentionDays: 90,
-    basis: 'audit',
-    basisRef: 'docs/implementation-requirements.md:284',
-    disposition: 'archive_marker',
-    targetColumn: 'revoked_at',
-    markerSource: 'age_column',
-    why:
-      '后台会话是审计线索，**不物理删除**；过期 90 天后把 revoked_at 置为 expires_at，'
-      + '让「已过期但未撤销」的后台会话收敛为 0（幂等：第二次跑匹配 0 行）。'
-      + '运行时角色对该列有列级 UPDATE 授权（services/api/db/roles/auth_privacy.sql:31），无需新授权。',
-    idempotent: true,
-  }),
-  Object.freeze({
-    table: 'public.community_reports',
-    ageColumn: 'created_at',
-    retentionDays: 180,
-    basis: 'legal',
-    basisRef: 'docs/implementation-requirements.md:284',
-    disposition: 'anonymize',
-    targetColumn: 'detail',
-    markerSource: null,
-    why:
-      '举报记录（状态/对象/理由码）要留作社区治理台账，但 `detail` 是举报人手写的自由文本，'
-      + '可能含个人信息；180 天后只把该列置 NULL、行与其状态机保留，符合「保留台账但最小字段」。',
+      '过期会话只留不可逆 token_hash，用途是安全事件回溯；回溯窗口与「备份30日内滚动清理」'
+      + '（docs/implementation-requirements.md:278）对齐，超窗后无保留义务，按最小化原则整行删除。'
+      + '删过期会话不影响注销：注销撤的是未过期会话（同一条 :278 的「注销立即撤会话和角色」）。',
     idempotent: true,
   }),
 ]);
@@ -175,8 +167,34 @@ export const RETENTION_EXCLUSIONS = Object.freeze([
       + '在库层面无法匿名化或删除；擦除归档需另立机制（本片不伪造一个跑不动的策略行）。',
   }),
   Object.freeze({
-    table: 'public.transcriptions / public.conversations / public.messages / public.favorites / public.history',
-    reason: '私有会话与识别记录按 F13 保留至注销（docs/implementation-requirements.md:380），不走日历保留。',
+    table: 'public.admin_sessions',
+    reason:
+      '后台会话原拟「过期 90 天后置 revoked_at = expires_at」（archive_marker）。'
+      + '90 天这个数字在仓内**没有任何出处**：docs/implementation-requirements.md:284 只有'
+      + '「合法必要证据如有保留义务须单独限定目的、最小字段和时限」这句原则，既没有数字也没点这张表。'
+      + '无出处⇒本片不销毁、不标记；待口径（后台会话回溯窗口）确定后另行立项，'
+      + '届时补一条带出处的策略行即可（机制已在：archive_marker + markerSource=age_column）。',
+  }),
+  Object.freeze({
+    table: 'public.community_reports',
+    reason:
+      '举报记录原拟「180 天后 detail 置 NULL」（anonymize）。180 天同样无出处'
+      + '（docs/implementation-requirements.md:284 无数字），且该表的 detail 清空已有既有注销路径'
+      + '（services/api/src/community/store-pg.ts:1005-1011：SET detail = NULL, revision = revision + 1），'
+      + '两套口径必须一致。本片不销毁该表；若将来启用日历匿名化，必须走 revision + 1'
+      + '（策略行要写 revisionColumn: "revision"），否则以 revision 做 CAS 的读者看不到变化。',
+  }),
+  Object.freeze({
+    table: 'public.transcriptions / public.conversations / public.messages',
+    reason:
+      '私有识别记录原则保存至注销（docs/implementation-requirements.md:277），'
+      + '私有会话及音频按 F13 保留至注销（docs/implementation-requirements.md:380）；不走日历保留。',
+  }),
+  Object.freeze({
+    table: 'public.favorites / public.history',
+    reason:
+      '用户自有内容：仓内没有给这两张表定日历保留期的产品/法务出处，本片不按日历销毁；'
+      + '它们的生命周期由注销链（deletion modules）负责，不并入本策略表。',
   }),
   Object.freeze({
     table: 'public.user_backup_copies',
@@ -188,7 +206,9 @@ export const RETENTION_EXCLUSIONS = Object.freeze([
   }),
   Object.freeze({
     table: 'public.deletion_requests / public.deletion_handlers / public.third_party_deletions',
-    reason: '注销工单与完成证据，保留期须覆盖 30 日备份与恢复演练（data-dictionary:92），归 #19 口径，不并入日历策略。',
+    reason:
+      '注销工单与完成证据（docs/architecture/data-dictionary.md:89-91），保留期须覆盖 30 日备份与恢复演练'
+      + '（docs/architecture/data-dictionary.md:92），归 #19 口径，不并入日历策略。',
   }),
   Object.freeze({
     table: 'public.exports / public.export_writebacks',
@@ -208,6 +228,7 @@ export const RETENTION_POLICY_ERROR_CODES = Object.freeze({
   BASIS_REF: 'RETENTION_BASIS_REF_MISSING',
   DISPOSITION: 'RETENTION_DISPOSITION_INVALID',
   TARGET_COLUMN: 'RETENTION_TARGET_COLUMN_INVALID',
+  REVISION_COLUMN: 'RETENTION_REVISION_COLUMN_INVALID',
   MARKER_SOURCE: 'RETENTION_MARKER_SOURCE_INVALID',
   WHY: 'RETENTION_WHY_MISSING',
   IDEMPOTENCE: 'RETENTION_IDEMPOTENCE_NOT_DECLARED',
@@ -257,8 +278,8 @@ function parseInstant(value) {
  *   - `table` 形如 `schema.table`（小写标识符），且**全表唯一**（无重复表）；
  *   - `retentionDays` 是 ≥ 1 的整数（「天数>0」；`0` 与 `1.5` 都拒绝 —— 抽样口径不猜）；
  *   - `basis` 在闭集内 **且** `basisRef` 非空（依据必填）；
- *   - `disposition` 在闭集内；`delete` 不得带 `targetColumn`/`markerSource`，
- *     `anonymize` 必须带 `targetColumn`、不得带 `markerSource` 以外的值，
+ *   - `disposition` 在闭集内；`delete` 不得带 `targetColumn`/`revisionColumn`/`markerSource`，
+ *     `anonymize` 必须带 `targetColumn` 与 `revisionColumn`（且两者不同列）、不得带 `markerSource`，
  *     `archive_marker` 必须同时带 `targetColumn` 与 `markerSource`；
  *   - `why` 非空（评审要能读到理由）；
  *   - `idempotent` 必须显式为 `true`（不允许「大概幂等」）。
@@ -344,6 +365,39 @@ export function assertRetentionPolicy(policy = RETENTION_POLICY) {
       );
     }
 
+    // 匿名化必须推进 revision：以 revision 做 CAS/失效判定的读者只有看到版本变化才知道内容已被改写
+    // （与 services/api/src/community/store-pg.ts:1005-1011 的注销路径同口径）。
+    const revisionColumn = entry.revisionColumn ?? null;
+    if (
+      revisionColumn !== null
+      && (typeof revisionColumn !== 'string' || !COLUMN_PATTERN.test(revisionColumn))
+    ) {
+      throw policyError(
+        RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
+        `${at}（${entry.table}）的 revisionColumn 必须是合法列名（收到 ${JSON.stringify(entry.revisionColumn)}）`,
+      );
+    }
+    if (entry.disposition === 'anonymize') {
+      if (revisionColumn === null) {
+        throw policyError(
+          RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
+          `${at}（${entry.table}）的 disposition=anonymize 必须声明 revisionColumn`
+            + '（改写时同步 revision = revision + 1，否则读者看不到变化）',
+        );
+      }
+      if (revisionColumn === entry.targetColumn) {
+        throw policyError(
+          RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
+          `${at}（${entry.table}）的 revisionColumn 不得与 targetColumn 相同`,
+        );
+      }
+    } else if (revisionColumn !== null) {
+      throw policyError(
+        RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
+        `${at}（${entry.table}）的 disposition=${entry.disposition} 不得声明 revisionColumn`,
+      );
+    }
+
     const markerSource = entry.markerSource ?? null;
     if (entry.disposition === 'archive_marker') {
       if (!RETENTION_MARKER_SOURCES.includes(markerSource)) {
@@ -416,7 +470,7 @@ export function retentionCutoffIso({ now, retentionDays } = {}) {
 export function retentionDuePredicate(entry) {
   const { table, ageColumn, disposition, targetColumn } = entry;
   assertPolicyEntryForSql(entry);
-  const base = `"${table.split('.')[0]}"."${table.split('.')[1]}" WHERE "${ageColumn}" < $1`;
+  const base = `${quotedTable(table)} WHERE "${ageColumn}" < $1`;
   if (disposition === 'delete') return base;
   // 匿名化/标记：只处理「还没被处理过」的行 —— 幂等判据的第二半（第一半是 WHERE 条件本身会消失）。
   return `${base} AND "${targetColumn}" IS ${disposition === 'anonymize' ? 'NOT NULL' : 'NULL'}`;
@@ -447,13 +501,48 @@ export function buildRetentionCountSql(entry) {
 export function buildRetentionMutationSql(entry) {
   assertPolicyEntryForSql(entry);
   const predicate = retentionDuePredicate(entry);
-  const { table, ageColumn, disposition, targetColumn } = entry;
+  const { table, ageColumn, disposition, targetColumn, revisionColumn } = entry;
+  const quoted = quotedTable(table);
   const inner = `SELECT ctid FROM ${predicate} ORDER BY "${ageColumn}" ASC LIMIT $2`;
   if (disposition === 'delete') {
-    return `DELETE FROM "${table.split('.')[0]}"."${table.split('.')[1]}" WHERE ctid IN (${inner})`;
+    return `DELETE FROM ${quoted} WHERE ctid IN (${inner})`;
   }
-  const value = disposition === 'anonymize' ? 'NULL' : `"${ageColumn}"`;
-  return `UPDATE "${table.split('.')[0]}"."${table.split('.')[1]}" SET "${targetColumn}" = ${value} WHERE ctid IN (${inner})`;
+  if (disposition === 'anonymize') {
+    // 最后一道闸：直接调本函数（跳过 assertRetentionPolicy）也必须带上 revisionColumn，
+    // 否则「置 NULL 但不推进 revision」这种静默改写会被当成合法 SQL 发进库。
+    if (typeof revisionColumn !== 'string' || !COLUMN_PATTERN.test(revisionColumn)) {
+      throw policyError(
+        RETENTION_POLICY_ERROR_CODES.REVISION_COLUMN,
+        `anonymize 必须声明 revisionColumn（表 ${table}），改写时同步 revision + 1`,
+      );
+    }
+    // 置 NULL 的同时推进 revision：内容被改写这件事必须让以 revision 做 CAS/失效判定的读者看见。
+    const bump = `, "${revisionColumn}" = "${revisionColumn}" + 1`;
+    return `UPDATE ${quoted} SET "${targetColumn}" = NULL${bump} WHERE ctid IN (${inner})`;
+  }
+  return `UPDATE ${quoted} SET "${targetColumn}" = "${ageColumn}" WHERE ctid IN (${inner})`;
+}
+
+/**
+ * 把 `schema.table` 拆成带引号的标识符：拼 SQL 的**唯一**入口。
+ *
+ * 只认两段小写标识符（`COLUMN_PATTERN` 逐段再校验一次）。⛔ 不走 `split('.')[1]` 那种写法：
+ * 裸表名会拆出 `undefined` 并拼成 `"undefined"."sessions"` —— 看着像 SQL、跑起来是 42P01，
+ * 排查成本高且会掩盖真正的策略表拼写错误。
+ *
+ * @param {string} table
+ * @returns {string} 形如 `"public"."sessions"`
+ */
+function quotedTable(table) {
+  const parts = typeof table === 'string' ? table.split('.') : [];
+  if (parts.length !== 2) {
+    throw policyError(RETENTION_POLICY_ERROR_CODES.TABLE_NAME, `非法表名：${JSON.stringify(table)}`);
+  }
+  const [schema, name] = parts;
+  if (!COLUMN_PATTERN.test(schema) || !COLUMN_PATTERN.test(name)) {
+    throw policyError(RETENTION_POLICY_ERROR_CODES.TABLE_NAME, `非法表名：${JSON.stringify(table)}`);
+  }
+  return `"${schema}"."${name}"`;
 }
 
 /**
@@ -468,7 +557,7 @@ function assertPolicyEntryForSql(entry) {
   if (typeof entry.table !== 'string' || !TABLE_PATTERN.test(entry.table)) {
     throw policyError(RETENTION_POLICY_ERROR_CODES.TABLE_NAME, `非法表名：${JSON.stringify(entry.table)}`);
   }
-  for (const column of [entry.ageColumn, entry.targetColumn]) {
+  for (const column of [entry.ageColumn, entry.targetColumn, entry.revisionColumn]) {
     if (column === null || column === undefined) continue;
     if (typeof column !== 'string' || !COLUMN_PATTERN.test(column)) {
       throw policyError(RETENTION_POLICY_ERROR_CODES.COLUMN_NAME, `非法列名：${JSON.stringify(column)}`);

@@ -7,15 +7,19 @@
 // 没给 `GY_PG_BIN` ⇒ 打印 SKIP 并 **exit 77**（刻意不提供 `--allow-skip`：CI 一旦跳过就必须是红的，
 // 不能让「没装 PG」静默变成绿）。
 //
-// 本臂自起临时集群（端口 55432–55467，避开发脑上 55436 的遗留集群），不碰任何已存在的库：
-// 空库 ⇒ 跑全链迁移（0001…0032）⇒ 造过期/未过期数据 ⇒ dry-run ⇒ 真执行 ⇒ 再执行一次 ⇒ 权限失败。
+// 本臂自起临时集群（端口 55432–55467，避开发脑上 55436 的遗留集群；可用 `GY_PG_PORT` 钉死）：
+// 空库 ⇒ 跑全链迁移（0001…0032）⇒ 造过期/未过期数据 ⇒ dry-run ⇒ 真执行 ⇒ 再执行一次
+// ⇒ 机制臂（合成策略行：archive_marker / anonymize+revision）⇒ 权限失败。
 //
 // 断言的是**用户可见的承诺**，不是实现细节：
-//   1. dry-run 一行都不写（四种处理方式的表计数在 dry-run 前后完全一致）；
-//   2. 真执行只动「年龄 ≥ 保留天数」的行，未过期行（含 1 小时/1 天/12 小时贴边行）原样不动；
-//   3. 三种处理方式各自的行为：delete 行消失、archive_marker 行仍在但标记置位、anonymize 行仍在但目标列清空；
+//   1. dry-run 一行都不写（所有相关表的计数在 dry-run 前后完全一致）；
+//   2. 真执行只动「年龄 ≥ 保留天数」的行，未过期行（含 12 小时/29 天贴边行）原样不动；
+//   3. 真实策略表只登记 2 张表且都是 delete ⇒ 另外两张（`admin_sessions` / `community_reports`，
+//      天数无出处已在 `RETENTION_EXCLUSIONS` 里）**一行都不许动**：行数、标记、detail 全部原样；
 //   4. 重复执行第二次删 0 行（退出码 0，不是失败）；
-//   5. 没有 DELETE 授权时表级失败被如实分类（PERMISSION_DENIED），其余表照跑，失败表一行未动。
+//   5. 机制臂（合成策略行，不是仓内口径）证明 archive_marker / anonymize 的 SQL 在真库上可执行，
+//      且匿名化确实把 `revision` 推进了 1（与 store-pg.ts:1005-1011 同口径）、第二轮 0 行；
+//   6. 没有 DELETE 授权时表级失败被如实分类（PERMISSION_DENIED），另一张表照跑，失败表一行未动。
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from 'node:fs';
@@ -26,6 +30,9 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
+
+// 机制臂（[6]）要在进程内跑同一套执行器 + 合成策略行，所以直接 import（工具末尾有 invokedDirectly 闸门，不会自己跑）。
+import { runRetentionPurge } from '../../tools/purge-retention-expired.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 if (binDir === '') {
@@ -72,8 +79,23 @@ function portIsFree(candidate) {
 /**
  * 保留策略片的端口区间是 **55432–55467**（派单硬约束）。
  * 55436 在开发机上曾遗留一个临时集群：范围包含它，但这里硬挡一次，防止踩到别人的库。
+ *
+ * 同机并行跑多个臂时必须能钉死端口（否则两个臂各自「先探活再绑定」会撞在同一个端口上，
+ * 表现为 pg_ctl 报 `could not bind IPv4 address "127.0.0.1": Permission denied`）：
+ * 给 `GY_PG_PORT` 就直接用它（仍校验区间外可用性），不给才随机挑。
  */
 async function pickPort() {
+  const fixed = process.env.GY_PG_PORT;
+  if (fixed !== undefined && fixed.trim() !== '') {
+    const candidate = Number(fixed.trim());
+    assert.ok(
+      Number.isInteger(candidate) && candidate >= 1024 && candidate <= 65535,
+      `GY_PG_PORT 不是合法端口：${JSON.stringify(fixed)}`,
+    );
+    assert.notEqual(candidate, 55436, 'GY_PG_PORT 不得用 55436（该端口有遗留集群）');
+    assert.ok(await portIsFree(candidate), `GY_PG_PORT=${candidate} 已被占用（换一个空闲端口）`);
+    return candidate;
+  }
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const candidate = 55432 + randomInt(0, 36);
     if (candidate === 55436) continue;
@@ -245,8 +267,8 @@ try {
     sessions: 'sessions',
     admin_sessions: 'admin_sessions',
     reports: 'community_reports',
-  }, '策略表登记的四张表必须都在迁移后真实存在');
-  say(`[0] 全链迁移 ${discovered.length} 个已应用；策略表的 4 张表全部在岗`);
+  }, '策略表登记的两张表 + 机制臂引用的两张表必须都在迁移后真实存在');
+  say(`[0] 全链迁移 ${discovered.length} 个已应用；策略表 2 张表 + 机制臂 2 张表全部在岗`);
 
   // ---- [1] 造数：每张表都造「过期 / 未过期 / 贴边」三档，贴边档是最容易被写错的地方 ----
   const userId = (await owner.query("INSERT INTO public.users (nickname) VALUES ('r34-retention-subject') RETURNING id")).rows[0].id;
@@ -367,13 +389,14 @@ try {
   assert.match(dry.text, /mode=dry-run/);
   const dryReport = parseReport(dry.text);
   assert.equal(dryReport.dry_run, true);
-  assert.equal(dryReport.totals.rows, 1215, 'dry-run 汇总 = 1200 幂等台账 + 5 会话 + 4 后台会话 + 6 举报');
+  assert.equal(dryReport.entries.length, 2, '真实策略表只有 2 张表');
+  assert.equal(dryReport.totals.rows, 1205, 'dry-run 汇总 = 1200 幂等台账 + 5 会话（另外两张表已降级为排除项）');
   assert.equal(dryReport.totals.batches, 0, 'dry-run 不许开批次');
   assert.equal(dryReport.totals.failures, 0);
   assert.deepEqual(await snapshot(), before, 'dry-run 之后库里的行数与标记必须一模一样');
   assert.doesNotMatch(dry.text, /tx=committed/, 'dry-run 不许提交任何事务');
   assert.doesNotMatch(dry.text, /postgres(ql)?:\/\//, '输出不得回显连接串');
-  say('[2] dry-run：报告 rows=1215 batches=0，库内计数与标记前后完全一致（一行未写）');
+  say('[2] dry-run：报告 rows=1205 batches=0，库内计数与标记前后完全一致（一行未写）');
 
   // ---- [3] 真执行：只动过期行，三种处置各按本分做事 ----
   const real = runPurge(['--yes', '--batch', '500', '--max-batches', '10', '--json'], { url: ownerBase, label: '[3] --yes' });
@@ -382,60 +405,67 @@ try {
   const realReport = parseReport(real.text);
   assert.equal(realReport.totals.failures, 0);
   const byTable = Object.fromEntries(realReport.entries.map((entry) => [entry.table, entry]));
+  assert.equal(realReport.entries.length, 2);
   assert.equal(byTable['public.idempotency_keys'].rows, 1200);
   assert.equal(byTable['public.idempotency_keys'].batches, 3, '1200 行按 500/500/200 三批');
   assert.equal(byTable['public.idempotency_keys'].drained, true);
   assert.equal(byTable['public.sessions'].rows, 5);
-  assert.equal(byTable['public.admin_sessions'].rows, 4, 'archive_marker 也是「处理了 4 行」');
-  assert.equal(byTable['public.community_reports'].rows, 6);
-  assert.equal(realReport.totals.rows, 1215);
-  assert.equal(realReport.totals.batches, 6, '幂等台账 3 批（500/500/200）+ 其余三表各 1 批');
-  assert.equal(realReport.totals.drained, 4);
+  assert.equal(realReport.totals.rows, 1205);
+  assert.equal(realReport.totals.batches, 4, '幂等台账 3 批（500/500/200）+ 会话 1 批');
+  assert.equal(realReport.totals.drained, 2);
   assert.match(real.text, /tx=committed/);
 
   const after = await snapshot();
   assert.deepEqual(after, {
     keys: 47, // 40 未过期 + 7 贴边（过期 12h，仍在 1 天宽限内）
     sessions: 8, // 5 未过期 + 3 贴边（过期 29 天 < 30 天窗口）
-    admin_sessions: 8, // 一行都没少：仅归档标记
-    reports: 12, // 一行都没少：仅匿名化
-    admin_marked: 4, // 正好 4 行过期后台会话被标记
-    reports_scrubbed: 8, // 原有 2 + 这次 6
-  }, '真执行后：过期行消失，未过期/贴边行原样，标记类表行数不变且标记数增加');
-  say('[3] 真执行：删 1200+5 行、标记 4 行、匿名化 6 行；未过期与贴边行一行未动（keys=47 / sessions=8）');
+    admin_sessions: 8, // 一行都没少：本片不登记它（90 天无出处）
+    reports: 12, // 一行都没少：本片不登记它（180 天无出处）
+    admin_marked: 0, // 一行都没标记
+    reports_scrubbed: 2, // 仍是造数时那 2 行「早已匿名」，本片没再动
+  }, '真执行后：过期行消失，未过期/贴边行原样；两张降级表的行数、标记、detail 全部零改动');
+  say('[3] 真执行：删 1200+5 行；未过期与贴边行一行未动（keys=47 / sessions=8）；两张降级表零改动');
 
-  // 逐条复核「三种处置各自的行为」，而不是只看行数
+  // 逐条复核「只删过期、降级表不动」，而不是只看行数
   const leftovers = (
     await owner.query(
       `SELECT (SELECT count(*) FROM public.idempotency_keys WHERE expires_at < now() - interval '1 day') AS stale_keys,
               (SELECT count(*) FROM public.sessions WHERE expires_at < now() - interval '30 days') AS stale_sessions,
-              (SELECT count(*) FROM public.admin_sessions WHERE expires_at < now() - interval '90 days' AND revoked_at IS NULL) AS unmarked_admins,
-              (SELECT count(*) FROM public.community_reports WHERE created_at < now() - interval '180 days' AND detail IS NOT NULL) AS unscrubbed_reports,
+              (SELECT count(*) FROM public.admin_sessions WHERE revoked_at IS NOT NULL) AS admin_marked,
               (SELECT count(*) FROM public.admin_sessions
-                WHERE expires_at < now() - interval '90 days' AND revoked_at IS DISTINCT FROM expires_at) AS bad_markers,
-              (SELECT count(*) FROM public.community_reports WHERE detail IS NOT NULL AND created_at < now() - interval '180 days') AS still_leaky`,
+                WHERE expires_at < now() - interval '90 days' AND revoked_at IS NULL) AS stale_unmarked_admins,
+              (SELECT count(*) FROM public.community_reports
+                WHERE detail IS NOT NULL AND created_at < now() - interval '180 days') AS stale_report_details,
+              (SELECT count(*) FROM public.community_reports WHERE revision <> 1) AS bumped_revisions`,
     )
   ).rows[0];
   assert.deepEqual(
     {
       stale_keys: Number(leftovers.stale_keys),
       stale_sessions: Number(leftovers.stale_sessions),
-      unmarked_admins: Number(leftovers.unmarked_admins),
-      unscrubbed_reports: Number(leftovers.unscrubbed_reports),
-      bad_markers: Number(leftovers.bad_markers),
-      still_leaky: Number(leftovers.still_leaky),
+      admin_marked: Number(leftovers.admin_marked),
+      stale_unmarked_admins: Number(leftovers.stale_unmarked_admins),
+      stale_report_details: Number(leftovers.stale_report_details),
+      bumped_revisions: Number(leftovers.bumped_revisions),
     },
-    { stale_keys: 0, stale_sessions: 0, unmarked_admins: 0, unscrubbed_reports: 0, bad_markers: 0, still_leaky: 0 },
+    {
+      stale_keys: 0,
+      stale_sessions: 0,
+      admin_marked: 0,
+      stale_unmarked_admins: 4, // 4 行超期后台会话仍是「过期未标记」：本片不登记该表
+      stale_report_details: 6, // 6 行超期举报的 detail 仍非空：本片不登记该表
+      bumped_revisions: 0, // revision 一动没动
+    },
   );
-  say('[4] 复核：过期行清零、后台会话标记值 = expires_at、超期举报的 detail 全部为 NULL');
+  say('[4] 复核：过期行清零；降级表一行未动（admin_sessions 4 行超期未标记 / community_reports 6 行 detail 非空，revision 全为 1）');
 
   // ---- [5] 再跑一次：0 行、退出 0（幂等；cron 的日常读数就长这样）----
   const again = runPurge(['--yes', '--json'], { url: ownerBase, label: '[5] 重复执行' });
   assert.equal(again.status, 0, `重复执行必须退出 0（0 行不是失败）：\n${again.text}`);
   const againReport = parseReport(again.text);
   assert.equal(againReport.totals.rows, 0);
-  // 第二轮的 batches 是「尝试过的批次」= 每表一次空批（4 张表 ⇒ 4），行数必须是 0。
-  assert.equal(againReport.totals.batches, 4, '空批也是一批：每张表都会试一次，然后第一轮就 drained');
+  // 第二轮的 batches 是「尝试过的批次」= 每表一次空批（2 张表 ⇒ 2），行数必须是 0。
+  assert.equal(againReport.totals.batches, 2, '空批也是一批：每张表都会试一次，然后第一轮就 drained');
   for (const entry of againReport.entries) {
     assert.equal(entry.rows, 0, `${entry.table} 第二轮必须 0 行`);
     assert.equal(entry.drained, true);
@@ -443,19 +473,93 @@ try {
   }
   assert.deepEqual(await snapshot(), after, '重复执行不改任何行');
   assert.match(again.text, /没有到期行/);
-  say('[5] 重复执行：rows=0（每表一次空批）exit=0，库内状态与上一轮完全一致');
+  say('[5] 重复执行：rows=0（2 张表各一次空批）exit=0，库内状态与上一轮完全一致');
 
-  // ---- [6] 权限失败：没有 DELETE 授权的表必须如实报 PERMISSION_DENIED，其余表照跑 ----
-  // 只给「幂等台账 DELETE + 两张标记/匿名化表的列级 UPDATE」，**故意不给** sessions 的 DELETE。
+  // ---- [6] 机制臂：真实策略表已不登记这两张表，但 archive_marker / anonymize+revision 的 SQL
+  // 必须仍然可执行、可重复。用**合成策略行**（不是仓内口径；仓内口径在 RETENTION_EXCLUSIONS 里）
+  // 在这同一个临时库上走一遍 in-process API，证明机制没坏、将来启用时不必重写 SQL。
+  const MARKER_ENTRY = Object.freeze({
+    table: 'public.admin_sessions',
+    ageColumn: 'expires_at',
+    retentionDays: 90,
+    basis: 'audit',
+    basisRef: 'docs/implementation-requirements.md:284',
+    disposition: 'archive_marker',
+    targetColumn: 'revoked_at',
+    markerSource: 'age_column',
+    revisionColumn: null,
+    why: '机制臂合成行：只为证明归档标记 SQL 在真库可执行（仓内策略表不登记本表）',
+    idempotent: true,
+  });
+  const ANONYMIZE_ENTRY = Object.freeze({
+    table: 'public.community_reports',
+    ageColumn: 'created_at',
+    retentionDays: 180,
+    basis: 'legal',
+    basisRef: 'docs/implementation-requirements.md:284',
+    disposition: 'anonymize',
+    targetColumn: 'detail',
+    markerSource: null,
+    revisionColumn: 'revision',
+    why: '机制臂合成行：只为证明匿名化 SQL 会按 store-pg.ts:1005-1011 同口径推进 revision（仓内策略表不登记本表）',
+    idempotent: true,
+  });
+  const mechClient = new pg.Client({ connectionString: ownerBase });
+  await mechClient.connect();
+  try {
+    const mechNow = (await mechClient.query('SELECT now() AS now')).rows[0].now;
+    const mechRun = () => runRetentionPurge({
+      connect: async () => ({
+        query: (text, params) => mechClient.query(text, params),
+        release: () => {},
+      }),
+      now: mechNow,
+      dryRun: false,
+      policy: [MARKER_ENTRY, ANONYMIZE_ENTRY],
+    });
+
+    const mechReport = await mechRun();
+    assert.equal(mechReport.totals.failures, 0, `机制臂不该失败：${JSON.stringify(mechReport.entries)}`);
+    assert.equal(mechReport.totals.rows, 10, '4 行超期后台会话被标记 + 6 行超期举报被匿名化');
+    assert.equal(mechReport.entries[0].disposition, 'archive_marker');
+    assert.equal(mechReport.entries[1].revision_column, 'revision');
+
+    const mechState = (
+      await owner.query(
+        `SELECT (SELECT count(*) FROM public.admin_sessions WHERE revoked_at IS NOT NULL) AS marked_admins,
+                (SELECT count(*) FROM public.admin_sessions
+                  WHERE revoked_at IS NOT NULL AND revoked_at IS DISTINCT FROM expires_at) AS bad_markers,
+                (SELECT count(*) FROM public.community_reports
+                  WHERE created_at < now() - interval '180 days' AND detail IS NULL) AS scrubbed_reports,
+                (SELECT count(*) FROM public.community_reports
+                  WHERE created_at < now() - interval '180 days' AND detail IS NULL AND revision = 2) AS bumped,
+                (SELECT count(*) FROM public.community_reports
+                  WHERE detail IS NULL AND revision = 1) AS untouched_revisions`,
+      )
+    ).rows[0];
+    assert.equal(Number(mechState.marked_admins), 4);
+    assert.equal(Number(mechState.bad_markers), 0, 'archive_marker 写入的值必须恰好是 age 列的值');
+    assert.equal(Number(mechState.scrubbed_reports), 8, '原有 2 + 本次 6');
+    assert.equal(Number(mechState.bumped), 6, '本次被匿名化的 6 行 revision 必须 1→2');
+    assert.equal(Number(mechState.untouched_revisions), 2, '早已匿名的 2 行 detail 本就为 NULL ⇒ 不该被再次清理、revision 仍为 1');
+
+    const mechAgain = await mechRun();
+    assert.equal(mechAgain.totals.rows, 0, '机制臂第二轮必须 0 行（两条谓词各自带 IS NULL 闸门）');
+    assert.equal(mechAgain.totals.failures, 0);
+  } finally {
+    await mechClient.end().catch(() => {});
+  }
+  say('[6] 机制臂（合成策略行）：标记 4 行（值 = expires_at）、匿名化 6 行且 revision 1→2、早已匿名 2 行未再动、第二轮 0 行');
+
+  // ---- [7] 权限失败：没有 DELETE 授权的表必须如实报 PERMISSION_DENIED，另一张表照跑 ----
+  // 只给「幂等台账 DELETE + 两张表的 SELECT」，**故意不给** sessions 的 DELETE。
   const limitedPassword = randomBytes(18).toString('hex');
   await owner.query(`DROP ROLE IF EXISTS ${LIMITED_ROLE}`);
   await owner.query(`CREATE ROLE ${LIMITED_ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${limitedPassword}'`);
-  await owner.query(`GRANT SELECT ON public.idempotency_keys, public.sessions, public.admin_sessions, public.community_reports TO ${LIMITED_ROLE}`);
+  await owner.query(`GRANT SELECT ON public.idempotency_keys, public.sessions TO ${LIMITED_ROLE}`);
   await owner.query(`GRANT DELETE ON public.idempotency_keys TO ${LIMITED_ROLE}`);
-  await owner.query(`GRANT UPDATE (revoked_at) ON public.admin_sessions TO ${LIMITED_ROLE}`);
-  await owner.query(`GRANT UPDATE (detail) ON public.community_reports TO ${LIMITED_ROLE}`);
 
-  // 重新造一轮「各表都有一条到期行」，这样失败表能证明「一行未动」，能跑的表证明「照跑」。
+  // 重新造一轮「两张表各有一条到期行」，这样失败表能证明「一行未动」，能跑的表证明「照跑」。
   await owner.query(
     `INSERT INTO public.sessions (user_id, token_hash, auth_epoch, created_at, expires_at)
      VALUES ($1::uuid, decode(md5('s-perm') || md5('sp'), 'hex'), 1, now() - interval '40 days', now() - interval '35 days')`,
@@ -466,32 +570,18 @@ try {
      VALUES ('r34/permission', decode(md5('perm') || md5('pk'), 'hex'), repeat('d', 64), 200,
              now() - interval '3 days', now() - interval '2 days')`,
   );
-  await owner.query(
-    `INSERT INTO public.admin_sessions (admin_id, token_hash, auth_epoch, created_at, expires_at)
-     VALUES ($1::uuid, decode(md5('a-perm') || md5('ap'), 'hex'), 1, now() - interval '100 days', now() - interval '95 days')`,
-    [adminId],
-  );
-  await owner.query(
-    `INSERT INTO public.community_reports (id, revision, reporter_id, target_type, target_id, target_revision,
-                                           state, reason_code, detail, created_at)
-     VALUES (gen_random_uuid(), 1, $1::uuid, 'post', gen_random_uuid(), 1, 'closed', 'privacy',
-             'permission-private-detail', now() - interval '200 days')`,
-    [userId],
-  );
 
   const limitedUrl = `postgresql://${LIMITED_ROLE}:${limitedPassword}@127.0.0.1:${port}/${DB_NAME}`;
-  const denied = runPurge(['--yes', '--json'], { url: limitedUrl, label: '[6] 受限角色' });
+  const denied = runPurge(['--yes', '--json'], { url: limitedUrl, label: '[7] 受限角色' });
   assert.equal(denied.status, 1, `有表失败时退出码必须是 1（实际 ${denied.status}）：\n${denied.text}`);
   const deniedReport = parseReport(denied.text);
   const deniedByTable = Object.fromEntries(deniedReport.entries.map((entry) => [entry.table, entry]));
   assert.equal(deniedReport.totals.failures, 1);
-  assert.equal(deniedReport.totals.rows, 3, '失败表拖不动别人：三张有授权的表各处理 1 行');
+  assert.equal(deniedReport.totals.rows, 1, '失败表拖不动别人：有授权的那张表照样处理 1 行');
   assert.equal(deniedByTable['public.sessions'].error, 'PERMISSION_DENIED', '缺 DELETE 授权必须分类为 PERMISSION_DENIED');
   assert.equal(deniedByTable['public.sessions'].rows, 0);
   assert.equal(deniedByTable['public.idempotency_keys'].error, null);
   assert.equal(deniedByTable['public.idempotency_keys'].rows, 1, '失败了别的表也要照跑');
-  assert.equal(deniedByTable['public.admin_sessions'].rows, 1);
-  assert.equal(deniedByTable['public.community_reports'].rows, 1);
   assert.match(denied.text, /FAIL table=public\.sessions code=PERMISSION_DENIED/);
   assert.doesNotMatch(denied.text, new RegExp(limitedPassword), '输出不得回显口令');
 
@@ -503,7 +593,7 @@ try {
   ).rows[0];
   assert.equal(Number(permState.stale_sessions), 1, '失败表必须一行未动（事务回滚）');
   assert.equal(Number(permState.perm_keys), 0, '有授权的表照常处理');
-  say('[6] 受限角色：sessions 报 PERMISSION_DENIED 且一行未动，其余三表照跑；exit=1');
+  say('[7] 受限角色：sessions 报 PERMISSION_DENIED 且一行未动，幂等台账照跑；exit=1');
 
   console.log(`\n全绿：${passed} 个断言组通过（临时集群端口 ${port}，日志 ${logFile}）`);
   process.exitCode = 0;

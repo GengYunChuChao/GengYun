@@ -42,9 +42,14 @@
  *
  * ## 明确不做的事
  *
- * - ⛔ 不改迁移、不动任何角色授权：`public.sessions` / `public.community_reports` 的 DELETE/UPDATE
- *   需要**属主/运维角色**（运行时角色对这两张表没有 DELETE，这是 `auth_privacy.sql` 的有意设计），
- *   本命令只声明这个前提，不替运行时代角色扩权；
+ * - ⛔ 不改迁移、不动任何角色授权：`public.sessions` 的 `DELETE` 没授予运行时角色
+ *   （`services/api/db/roles/auth_privacy.sql:24-26` 只有列级 SELECT/INSERT/UPDATE，这是有意设计），
+ *   所以本命令要用**属主/运维连接串**跑；`public.idempotency_keys` 反过来对运行时角色已开
+ *   `GRANT SELECT,INSERT,DELETE`（同文件 `:33`）。本命令只声明这些前提，不替任何角色扩权。
+ * - ⛔ 不与 `services/api/src/auth/idempotency.ts` 的即时清扫抢语义：那里按 `expires_at` 清过期
+ *   幂等键是**请求路径上的顺手清理**（`:233-236` 的 `purge`、`:261` 的 `claim` 先删同键过期行），
+ *   本命令是**离线兜底**：把同一判据纳入统一台账、带 dry-run 与读数。两者判据一致
+ *   （`expires_at < cutoff` 与 `<= now()`），所以不会互相「复活」任何行——谁先删都一样。
  * - ⛔ 不合并既有的两条域专用命令（`purge:online-data` / `purge:backup-copies`）：
  *   它们的判据是注销工单，不是表的日历保留期；
  * - ⛔ 不读系统时钟：cutoff 一律取库时钟 `SELECT now()`，证据链里只有一个时刻源。
@@ -182,6 +187,7 @@ export async function runRetentionPurge({
         basis_ref: entry.basisRef,
         age_column: entry.ageColumn,
         target_column: entry.targetColumn,
+        revision_column: entry.revisionColumn ?? null,
         cutoff,
         batches: 0,
         rows: 0,
@@ -432,7 +438,8 @@ function describeFatal(error) {
     case RETENTION_PURGE_FAILURES.MISSING_TABLE:
       return '缺少策略表里的某张表：迁移未执行到该版本（不是「没有到期行」）';
     case RETENTION_PURGE_FAILURES.PERMISSION_DENIED:
-      return '当前连接角色权限不足：本命令需属主/运维角色（运行时角色对 sessions/community_reports 无 DELETE，这是有意设计）';
+      return '当前连接角色权限不足：本命令需属主/运维角色（`public.sessions` 的 DELETE 未授予运行时角色，'
+        + '`services/api/db/roles/auth_privacy.sql:24-26` 只有列级 SELECT/INSERT/UPDATE，这是有意设计）';
     case RETENTION_PURGE_FAILURES.CONNECTION_FAILED:
       return '连不上数据库或认证失败（网络/端口/库名/口令）';
     default:
