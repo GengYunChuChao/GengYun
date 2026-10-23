@@ -267,7 +267,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    （`services/api/src/media/service.ts:526-528`），其 `countFor()` 恒返 `null`
    （`services/api/src/media/service.ts:293-299`；`:296` 自述「拒绝 community_image 上传（fail-closed）」）。
    生产装配**没有**从 env／配置注入计数器的路径，只能由调用方选项透传
-   （`services/api/src/app.ts:1047`；`:1041` 是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
+   （`services/api/src/app.ts:1510`；`:1481` 是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
    同处还有整域闸门：`real` 下 `createAppMediaService` 必须收到显式批准能力，否则整域 503
    （`services/api/src/app.ts:1036-1039`）。
    ⇒ 现状：`stub`／`preset_demo` 走替身计数器（`countFor()` 直接返回存活社区图片数，

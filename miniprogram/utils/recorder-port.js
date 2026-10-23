@@ -19,16 +19,32 @@
 //   `RECORD_FAILED` / `RECORD_INTERRUPTED`），由页面如实呈现；本文件不自己编结论、不重试。
 // - **所有失败都 resolve**（不 reject）成 `{ ok:false, code, errMsg }`：`start()` 是同步返回、
 //   由 `onError` 异步报错的，两种失败必须同形，否则调用方容易在某一支里漏掉如实提示。
+// - **录音容器**：默认 `wav` —— 转写档位**只收 WAV**（见下方 `RECORD_FORMAT` 的依据）。端口只
+//   **如实回传**平台给的 `format`（`productOf`）：平台若回了别的容器，端口照实报出、**不谎报成
+//   wav**；"拿到非 WAV 就不上传"是**页面**的收尾校验（`pages/voice/voice.js` 的 `stopAndUpload`），
+//   端口不替它决定、也不裁剪/转码。
 // - 真机录音权限弹窗与真实音频证据属 issue #23，本文件不构成任何真机验收。
 'use strict'
 
 /** 契约上限：单次录音最长 60 秒（UploadInput.duration_ms.maximum）。 */
 const MAX_DURATION_MS = 60000
 
-/** 录音采样率（语音问答场景的单声道候选；采样率适配属另一验收项，本文件不做供应商适配）。 */
+/**
+ * 录音采样率 / 声道 / 容器：**逐项取自冻结的 ASR 档位**，本文件不另立一套数值。
+ *
+ * 事实源：`services/api/src/ai/asr-live-adapter.ts` 的 `LIVE_ASR_FROZEN_PROFILE`
+ * （`voiceFormat: 'wav'`、`sampleRate: 16000`、`channels: 1`）＋ `tools/ai-config.mjs` 的 asr 剖面
+ * 校验（`voiceFormat==='wav' && sampleRate===16000 && channels===1`），以及同一份档位的 WAV 头要求
+ * （PCM / 单声道 / 16000Hz / **字节率 32000** / 块对齐 2 / 16bit，见 `requireLiveAsrWav()`）。
+ * ⇒ 录 WAV 时码率不是"另设一个参数"：16kHz × 单声道 × 16bit 就等于 **32000 字节/秒**，
+ *   与上面的校验同值；因此 WAV 会话**不传** `encodeBitRate`（见 `COMPRESSED_ENCODE_BIT_RATE`）。
+ */
 const SAMPLE_RATE = 16000
 
 const NUMBER_OF_CHANNELS = 1
+
+/** 录音容器：ASR 档位只有 WAV 一种载体（`LIVE_ASR_FROZEN_PROFILE.voiceFormat`）。 */
+const RECORD_FORMAT = 'wav'
 
 /**
  * 编码格式 → 契约 `UploadInput.mime`。
@@ -61,14 +77,22 @@ const CODES = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT'
 })
 
-/** 默认录音选项：严格由契约上限推导，页面不得放宽。 */
+/** 默认录音选项：严格由契约上限与冻结 ASR 档位推导，页面不得放宽。 */
 const DEFAULT_OPTIONS = Object.freeze({
   duration: MAX_DURATION_MS,
   sampleRate: SAMPLE_RATE,
   numberOfChannels: NUMBER_OF_CHANNELS,
-  encodeBitRate: 48000,
-  format: 'aac'
+  format: RECORD_FORMAT
 })
+
+/**
+ * 压缩编码（mp3/aac）的码率参数：**只**对压缩编码有意义。
+ *
+ * WAV 是未压缩 PCM：实际字节率被 `sampleRate × numberOfChannels × 16bit` 钉死为 32000 B/s，
+ * 传 `encodeBitRate` 既改不了产物，又会让人误以为档位另有一套"码率"口径 ⇒ WAV 会话一律不传。
+ * （平台是否对 WAV 忽略该参数属**外部文档、本仓未实测**，登记在证据页的"未取得"里。）
+ */
+const COMPRESSED_ENCODE_BIT_RATE = 48000
 
 /**
  * 失败出参：**一律 resolve**（不 reject），页面与内部兑现器只需传递同一种形状。
@@ -331,13 +355,16 @@ function createRecorderPort() {
           pendingStart = finish
           recording = true
           try {
-            instance.start({
+            // 采样率/声道/容器一律取自冻结 ASR 档位；调用方只能选编码格式，不能改这三项。
+            const startOptions = {
               duration: duration,
               sampleRate: SAMPLE_RATE,
               numberOfChannels: NUMBER_OF_CHANNELS,
-              encodeBitRate: DEFAULT_OPTIONS.encodeBitRate,
               format: format
-            })
+            }
+            // 只有压缩编码才带码率；WAV（默认容器）不带 —— 理由见 `COMPRESSED_ENCODE_BIT_RATE`。
+            if (format !== RECORD_FORMAT) startOptions.encodeBitRate = COMPRESSED_ENCODE_BIT_RATE
+            instance.start(startOptions)
           } catch (error) {
             recording = false
             finish(failure(CODES.FAILED, error && error.message ? error.message : '录音启动异常'))
@@ -438,6 +465,8 @@ function createRecorderPort() {
 module.exports = {
   MAX_DURATION_MS: MAX_DURATION_MS,
   SAMPLE_RATE: SAMPLE_RATE,
+  NUMBER_OF_CHANNELS: NUMBER_OF_CHANNELS,
+  RECORD_FORMAT: RECORD_FORMAT,
   ALLOWED_FORMATS: ALLOWED_FORMATS.slice(),
   CODES: CODES,
   mimeForFormat: mimeForFormat,

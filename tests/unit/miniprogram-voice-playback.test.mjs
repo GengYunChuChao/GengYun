@@ -27,6 +27,9 @@ import vm from 'node:vm';
 // 服务端**装配层**注入的替身核对条目（`ruling-451` 缩片）：与客户端替身样本是同一对夹具，
 // 这里直接比对两者，锁定「id / revision / 正文」不会单边漂移。
 import { SYNTHESIS_SUBSTITUTE_CHECKED_CONTENT } from '../../services/api/src/app.ts';
+// GY-R34-I11：录音容器必须与**冻结的 ASR 档位**同源（`voiceFormat`/`sampleRate`/`channels` 逐项比对，
+// 不在测试里另写一套数值）。
+import { LIVE_ASR_FROZEN_PROFILE } from '../../services/api/src/ai/asr-live-adapter.ts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -461,7 +464,8 @@ test('真机端口缺能力 ⇒ 如实失败（不伪造播放完成、不记已
  *   - `deny: true`        ⇒ `wx.getSetting` 报 `scope.record=false`；
  *   - `failStart: '…'`    ⇒ `start()` 后立刻抛 `onError`（含授权类文案）；
  *   - `interrupt: true`   ⇒ `start()` 后抛 `onInterruptionBegin`；
- *   - `format`/`duration` ⇒ `onStop` 回传的产物形状（默认 aac / 1234ms）。
+ *   - `format`/`duration` ⇒ `onStop` 回传的产物形状（`format` 默认**回显 `start()` 请求的容器**、
+ *     路径随容器走、时长默认 1234ms）。
  *
  * **`_autoStop()`：平台自行停止（`duration` 上限到达／系统回收）** —— 按平台语义，此时
  * `onStop` 会被触发**而不经调用方 `stop()`**。这是唯一能结构上覆盖"平台自动停止"的形态：
@@ -480,12 +484,23 @@ function observableRecorderManager(options = {}) {
     if (Object.prototype.hasOwnProperty.call(options, key)) return options[key];
     return fallback;
   };
-  const productOf = (overrides = {}) => ({
-    tempFilePath: pick(overrides, 'tempFilePath', 'wxfile://tmp/voice-question-test.aac'),
-    duration: Number.isFinite(pick(overrides, 'duration', NaN)) ? pick(overrides, 'duration', NaN) : 1234,
-    fileSize: Number.isFinite(pick(overrides, 'fileSize', NaN)) ? pick(overrides, 'fileSize', NaN) : 4096,
-    format: pick(overrides, 'format', 'aac')
-  });
+  /**
+   * 产物形状。`format` **回显 `start()` 请求的容器**（真实平台给的就是被请求的编码），
+   * 临时文件路径跟着容器走；显式 override / `recorderOptions.format` 优先 —— 用来构造
+   * "平台没按请求给 WAV" 的反例（页面的收尾校验必须就地失败、零上传）。
+   */
+  const productOf = (overrides = {}) => {
+    const requested = lastStart !== null && typeof lastStart.format === 'string' && lastStart.format !== ''
+      ? lastStart.format
+      : 'wav';
+    const format = pick(overrides, 'format', requested);
+    return {
+      tempFilePath: pick(overrides, 'tempFilePath', 'wxfile://tmp/voice-question-test.' + format),
+      duration: Number.isFinite(pick(overrides, 'duration', NaN)) ? pick(overrides, 'duration', NaN) : 1234,
+      fileSize: Number.isFinite(pick(overrides, 'fileSize', NaN)) ? pick(overrides, 'fileSize', NaN) : 4096,
+      format: format
+    };
+  };
   const manager = {
     onStart: (fn) => { handlers.start = fn },
     onStop: (fn) => { handlers.stop = fn },
@@ -661,7 +676,9 @@ function loadPageHarness(options = {}) {
     // GY-I11：转写核对消费层是**真代码**（内含真实的 wx.request 调用），与 voice-api 同口径加载。
     if (base === 'speech-transcript') return loadReal(bySuffix('speech-transcript.js'), resolveDep);
     // GY-I11：录音端口是**真代码**（内含真实的 wx.getRecorderManager 调用），只把平台换成探针。
-    if (base === 'recorder-port') return loadReal(bySuffix('recorder-port.js'), resolveDep);
+    // 传 `recorderPort` ⇒ 换成**假端口模块**：用来构造"端口回报非 WAV / 缺 format"的收尾校验反例
+    //（真端口在这种情况下产不出 `ok:true` 的产物，只能由假端口把这种产物喂给页面）。
+    if (base === 'recorder-port') return options.recorderPort || loadReal(bySuffix('recorder-port.js'), resolveDep);
     // 上传链路：`uploadVoiceQuestion` 的真实实现（requests/wxCalls 记录其发出的每一个请求）。
     if (base === 'identify-api') return identifyApi;
     throw new Error('unexpected require: ' + id);
@@ -1144,7 +1161,7 @@ test('验收1·探针下桩 wx.getRecorderManager ⇒ 确实调用了 start/stop
   assert.equal(h.recorder.isRecording(), true, '平台录音器必须真的在录');
 
   const start = h.recorder._lastStart();
-  assert.equal(start.format, 'aac', '编码必须是契约允许的 aac（容器 m4a ⇒ audio/aac）');
+  assert.equal(start.format, 'wav', '容器必须是冻结 ASR 档位要求的 WAV（非 WAV 一律不上传）');
   assert.equal(start.duration, 60000, '时长上限必须由契约收口（duration_ms.maximum = 60000）');
   assert.equal(start.numberOfChannels, 1, '单声道');
   assert.equal(start.sampleRate, 16000);
@@ -1194,15 +1211,15 @@ test('验收1反例·录音启动失败/中断 ⇒ 如实呈现，不伪造「�
 });
 
 test('验收2·上传参数：purpose=voice_question 在场且带真实 duration_ms（贴请求摘要，不打印音频体）', async () => {
-  const h = bootPage({ recorderOptions: { duration: 4321, format: 'aac' } });
+  const h = bootPage({ recorderOptions: { duration: 4321, format: 'wav' } });
   await h.page.onRecord();
   await h.page.onRecord();
 
   assert.equal(h.uploads(), 1, '恰好多一次上传调用');
   const upload = h.requests.filter((r) => r.stage === 'uploadVoiceQuestion')[0];
   assert.ok(upload, '必须经既有私有媒体上传通道（uploadVoiceQuestion）');
-  assert.equal(upload.tempFilePath, 'wxfile://tmp/voice-question-test.aac', '上传的是平台真实产物路径');
-  assert.equal(upload.declaration.mime, 'audio/aac');
+  assert.equal(upload.tempFilePath, 'wxfile://tmp/voice-question-test.wav', '上传的是平台真实产物路径');
+  assert.equal(upload.declaration.mime, 'audio/wav');
   assert.equal(upload.declaration.durationMs, 4321, 'duration_ms 必须是平台真实时长');
   assert.equal(upload.declaration.bytes, 4096, 'bytes 来自 wx.getFileInfo');
   assert.equal(upload.declaration.sha256, 'a'.repeat(64), 'sha256 来自 wx.getFileInfo');
@@ -1402,7 +1419,7 @@ test('验收F2a·端口层：平台按 duration 自行 onStop（不经 stop()）
 });
 
 test('验收F2b·页面层：录满上限时平台自动停止 ⇒ 页面到点出口接收产物并**恰一次**上传（duration_ms 为平台值）', async () => {
-  const h = bootPage({ recorderOptions: { duration: 60000, format: 'aac' } });
+  const h = bootPage({ recorderOptions: { duration: 60000, format: 'wav' } });
   await h.page.onRecord();
   assert.equal(h.page.data.recording, true);
   assert.equal(h.recorder.isRecording(), true);
@@ -1420,7 +1437,7 @@ test('验收F2b·页面层：录满上限时平台自动停止 ⇒ 页面到点�
   const upload = h.requests.filter((r) => r.stage === 'uploadVoiceQuestion')[0];
   assert.ok(upload, '必须走既有私有媒体上传通道');
   assert.equal(upload.declaration.durationMs, 60000, 'duration_ms 仍取平台真实值');
-  assert.equal(upload.declaration.mime, 'audio/aac');
+  assert.equal(upload.declaration.mime, 'audio/wav');
   assert.equal(h.page.data.recordDurationMs, 60000);
   assert.equal(h.page.data.recordState, 'stopped', '应落在「已录音」而非失败态');
   assert.equal(h.page.data.uploadErrorCode, '', '不得出现任何失败码');
@@ -1478,6 +1495,114 @@ test('验收F2e·端口层：平台自行报错（无在途 stop()）⇒ 结果�
   } finally {
     delete globalThis.wx;
   }
+});
+
+// ============================================================ 5b-2. GY-R34-I11 容器与冻结 ASR 档位一致（WAV）
+
+/**
+ * 假端口模块：只把**页面注入的那一层**换掉，其余（页面、`utils/voice-api.js`）都是真代码。
+ *
+ * 为什么必须假端口：收尾校验的输入是"端口回报的产物"。真端口对 `format` 缺失/不在契约枚举内的
+ * 产物直接返回失败（`RECORD_FAILED`），**产不出** `ok:true` 的异常容器 ⇒ 只有假端口才能把
+ * "平台回了 aac/mp3/空 format" 这种产物喂到页面，覆盖"拿不到 WAV 就如实失败"这一条。
+ */
+function fakeRecorderPortModule(product) {
+  const calls = { start: 0, stop: 0, released: 0 };
+  return {
+    calls,
+    module: {
+      support: () => ({
+        ok: true, code: null, maxDurationMs: 60000, formats: ['mp3', 'wav', 'aac'], note: '假端口（离线用例）'
+      }),
+      createRecorderPort: () => ({
+        kind: 'recorder',
+        available: true,
+        maxDurationMs: 60000,
+        start: () => { calls.start += 1; return Promise.resolve({ ok: true, maxDurationMs: 60000 }); },
+        stop: () => { calls.stop += 1; return Promise.resolve(product); },
+        cancel: () => Promise.resolve({ ok: true, code: null }),
+        release: () => { calls.released += 1; },
+        isRecording: () => false
+      })
+    }
+  };
+}
+
+test('容器①·端口回报 wav ⇒ 走通上传路径（恰一次），声明 mime 为 audio/wav', async () => {
+  const fake = fakeRecorderPortModule({
+    ok: true, tempFilePath: 'wxfile://tmp/fake-voice.wav', durationMs: 1234, format: 'wav', mime: 'audio/wav'
+  });
+  const h = bootPage({ recorderPort: fake.module });
+  await h.page.onRecord();
+  await h.page.onRecord();
+
+  assert.equal(fake.calls.start, 1, '必须真的经端口请求过一次录音');
+  assert.equal(fake.calls.stop, 1, '停止必须经端口（产物由端口如实交出）');
+  assert.equal(h.uploads(), 1, 'WAV 产物必须走通上传，且恰一次');
+  const upload = h.requests.filter((r) => r.stage === 'uploadVoiceQuestion')[0];
+  assert.ok(upload, '必须经既有私有媒体上传通道');
+  assert.equal(upload.tempFilePath, 'wxfile://tmp/fake-voice.wav');
+  assert.equal(upload.declaration.mime, 'audio/wav');
+  assert.equal(upload.declaration.durationMs, 1234);
+  assert.equal(h.page.data.recordState, 'stopped', 'WAV 产物应落在「已录音」');
+  assert.equal(h.page.data.uploadErrorCode, '', 'WAV 路径不得出现失败码');
+  assert.equal(h.page.data.uploadedPurpose, 'voice_question');
+  h.page.onUnload();
+});
+
+test('容器②·端口回报非 WAV（aac / mp3 / 缺 format）⇒ 零上传 + 点名 WAV 的如实提示', async () => {
+  const cases = [
+    { label: 'aac', format: 'aac', mime: 'audio/aac', product: { ok: true, tempFilePath: 'wxfile://tmp/fake.aac', durationMs: 1234, format: 'aac', mime: 'audio/aac' } },
+    { label: 'mp3', format: 'mp3', mime: 'audio/mpeg', product: { ok: true, tempFilePath: 'wxfile://tmp/fake.mp3', durationMs: 1234, format: 'mp3', mime: 'audio/mpeg' } },
+    { label: '缺 format', format: '（平台未回传）', mime: '（平台未回传）', product: { ok: true, tempFilePath: 'wxfile://tmp/fake-unknown', durationMs: 1234, format: '', mime: '' } }
+  ];
+  for (const item of cases) {
+    const fake = fakeRecorderPortModule(item.product);
+    const h = bootPage({ recorderPort: fake.module });
+    await h.page.onRecord();
+    await h.page.onRecord();
+
+    assert.equal(fake.calls.start, 1, '录音确实请求过（不是没开始）：' + item.label);
+    assert.equal(fake.calls.stop, 1, '产物确实经端口交出：' + item.label);
+    assert.equal(h.uploads(), 0, '非 WAV 一律不得上传：' + item.label);
+    assert.equal(h.requests.length, 0, '连一个请求都不许发出（含上传前的任何探测）：' + item.label);
+    assert.equal(h.page.data.recordState, 'failed', '必须落在可分辨的失败态：' + item.label);
+    assert.equal(h.page.data.uploadErrorCode, 'RECORD_FORMAT_NOT_WAV', item.label);
+    assert.equal(h.page.data.recordedMime, '', '不得把非 WAV 记成已录容器：' + item.label);
+    assert.equal(h.page.data.hasRecording, false, '不得留下「有录音可上传」的假象：' + item.label);
+    assert.equal(h.page.data.uploadedMediaId, null, '不得伪造 media_id：' + item.label);
+
+    const note = h.page.data.recordStageNote;
+    assert.equal(note.includes('WAV'), true, '提示必须点名 WAV：' + note);
+    assert.equal(note.includes('16kHz'), true, '提示必须点名档位采样率：' + note);
+    assert.equal(note.includes('16bit'), true, '提示必须点名位深：' + note);
+    assert.equal(note.includes('没有上传任何音频'), true, '必须明说没有上传：' + note);
+    assert.equal(note.includes('本次录音的类型是 ' + item.format + ' / ' + item.mime), true,
+      `提示必须如实带出实际拿到的容器（${item.label}）：${note}`);
+    h.page.onUnload();
+  }
+});
+
+test('容器③·录音请求参数与冻结 ASR 档位逐项一致（format / sampleRate / 声道 / 时长上限 / 码率）', async () => {
+  const h = bootPage();
+  await h.page.onRecord();
+  const start = h.recorder._lastStart();
+  assert.ok(start, '必须真的调用过平台 start()');
+
+  // 唯一事实源：冻结的 ASR 档位 + 契约上限（不在测试里另写一套数值）。
+  assert.equal(start.format, LIVE_ASR_FROZEN_PROFILE.voiceFormat, '容器必须等于冻结档位的 voiceFormat');
+  assert.equal(start.sampleRate, LIVE_ASR_FROZEN_PROFILE.sampleRate);
+  assert.equal(start.numberOfChannels, LIVE_ASR_FROZEN_PROFILE.channels);
+  assert.equal(start.duration, h.voiceApi.RECORD_MAX_DURATION_MS, '时长上限取契约 duration_ms.maximum');
+  // WAV 是未压缩 PCM：码率由 16kHz × 单声道 × 16bit 固定为 32000 B/s（`requireLiveAsrWav` 的同值），
+  // 不是另一个可设参数 ⇒ WAV 会话不得带 `encodeBitRate`。
+  assert.equal('encodeBitRate' in start, false, 'WAV 会话不得传 encodeBitRate（码率由采样率/声道/位深固定）');
+
+  // 端口默认值、页面用到的容器常量、冻结档位三者必须同源（任一处漂移即红）。
+  assert.equal(h.portModule.RECORD_FORMAT, LIVE_ASR_FROZEN_PROFILE.voiceFormat);
+  assert.equal(h.voiceApi.ASR_RECORD_FORMAT, LIVE_ASR_FROZEN_PROFILE.voiceFormat);
+  assert.equal(h.voiceApi.ASR_RECORD_MIME, 'audio/wav', '容器 → 契约 mime 的映射');
+  h.page.onUnload();
 });
 
 // ============================================================ 5d. r3 返修：读摘要在途离页（F1-R2）／作废原因文案（OBS-1）

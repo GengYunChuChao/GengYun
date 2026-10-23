@@ -31,9 +31,9 @@
  * 且 `createPost`/`editPost` 在"新增/替换引用"时直接拒绝（`OBJECT_UNAVAILABLE`），
  * 绝不静默丢弃关联（契约：「创建遗漏关联等于无关联」，静默丢弃会让客户端以为关联已保存）。
  *
- * 真实接线（`createKnowledgeAvailabilityPort()`)由**装配层**完成：资料读取是**会话域**能力
- * （`knowledge/service.ts` 的 `read()` 要求 `Identity`：用户 id + authEpoch + 会话 id + 原始令牌，
- * 并在同一事务内复核账号/会话有效期），因此装配层用**当前请求的会话身份**构造读取闭包。
+ * 真实接线（`createKnowledgeAvailabilityPort()`)由**装配层**完成：`services/api/src/app.ts` 在**有连接池**时
+ * 用**同一条 `pool`** 查公开读视图 `catalog_read.current_knowledge`（已发布 + 来源已核对 + 当前生效 + 非模拟；
+ * 与 `/knowledge` 同一张视图）构造读取闭包；**无池**时保持本文件的未接线端口（fail-closed，不假装可用）。
  * 本模块不 import 资料域，只依赖结构性端口（仓库既有分层：特征域不互相 import）。
  */
 import type { KnowledgeTarget, KnowledgeLinkSummary } from './types.ts';

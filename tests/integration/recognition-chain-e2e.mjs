@@ -475,7 +475,10 @@ async function runChain(arm) {
   assert.deepEqual(removed.body.data, { accepted: true });
   assert.equal(removed.body.meta.execution_mode, 'stub');
   assert.ok(
-    ['initiated', 'unwired', 'failed'].includes(removed.cascade),
+    // R33-I16 级联接线后，生产装配对"识别腿删成功"给出的**正确**取值是 `partial`
+    // （至少一项关联已删、媒体/外发未接 ⇒ 不可能"全部删成功"），见
+    // `.pg17/ruling-r33-i16-history-cascade-partial-20261023.md`。
+    ['initiated', 'partial', 'unwired', 'failed'].includes(removed.cascade),
     `X-GY-Cascade 必须在闭集内，实测 ${removed.cascade}`,
   );
   const afterFirstDelete = await listHistory(origin, tokenA);
