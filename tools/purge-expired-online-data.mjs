@@ -17,7 +17,9 @@
  *    每页上限 `--limit`，默认 200、硬顶 5000）；
  * 3. 逐请求逐模块调四域 PG store 的既有清理原语（`purgeOwnerData` 优先，`conversations` 退回
  *    `deleteAllByOwner`），并在**同一轮里继续翻页**直到队尾或用满 `--max-batches`：
- *    成功行产出 `sha256:` 证据；一行失败只影响该行，**不阻塞**同请求其余模块、后续请求与后续页；
+ *    成功行产出 `sha256:` 证据并**落库**（迁移 0031 的唯一写函数 `record_online_purge_evidence`；
+ *    回执的在线态据此推导）；一行失败只影响该行，**不阻塞**同请求其余模块、后续请求与后续页；
+ *    证据写不进去也记该行失败（删除已发生但无凭据，⛔ 不谎称成功）；
  * 4. 把"处理到哪一行"写回游标文件（`--dry-run` 不写；`--no-cursor` 不写也不读）。
  *
  * ## 批次为什么会推进（[P1] 监工 1021/1806 的闭环点）
@@ -29,7 +31,7 @@
  *
  * ## 退出码（cron 的唯一判据）
  * - `0`：本轮没有失败行（**含 0 个到期请求**——重复跑第二次就是 `already_purged` + 0 行）；
- * - `1`：有失败行（某个模块清不掉，需要人看）；
+ * - `1`：有失败行（某个模块清不掉，或**证据没落库**，需要人看）；
  * - `2`：参数/配置/连接类错误（缺 `DATABASE_URL`、`--limit` 非法、缺表 42P01、缺列级授权 42501…）。
  *
  * ## 为什么不用 `setInterval`
@@ -39,8 +41,9 @@
  *
  * ## 明确不做的事
  * - ⛔ 不改 `deletion_requests.state`，也不改写回执 —— 完成判定只归协调器（`packages/privacy/deletion.mjs`）；
- * - ⛔ 不改迁移、不加任何 SQL 授权（运行时角色已有四域 DELETE；`deletion_requests` 的读取走属主/运维角色，
- *   见证据页待裁决项）；
+ * - ⛔ 不改迁移、不给运行时角色加任何表/列授权：证据落库用的是**迁移 0031 已建**的
+ *   `SECURITY DEFINER` 写函数（`deletion_requests` 对运行时仍是 forbidden）；
+ *   `deletion_requests` 的候选枚举走属主/运维角色（见证据页待裁决项）；
  * - ⛔ 不删备份副本行（那是 `purge:backup-copies` 的 30 日窗口，两件事不合并）。
  */
 import { parseArgs } from 'node:util';
@@ -68,6 +71,7 @@ import {
   resolveOnlinePurgeCursorPath,
   writeOnlinePurgeCursor,
 } from '../services/api/src/privacy/online-purge-cursor.ts';
+import { createPostgresOnlinePurgeEvidenceRecorder } from '../services/api/src/privacy/online-purge-evidence.ts';
 import { USER_DATA_DELETION_MODULES } from '../services/api/src/privacy/user-data-deletion.ts';
 
 const TAG = '[purge-expired-online-data]';
@@ -258,6 +262,10 @@ try {
       }
 
       // ---- 3. 从游标之后连续翻页清除（同一轮里推进到队尾或用满 --max-batches） ----
+      // 证据落库（迁移 0031）：每个成功 (request, module) 行写一条 `sha256:` 证据，
+      // 之后回执的在线态就能按它推导 completed/pending/blocked（不再只活在 cron 日志里）。
+      // 写入走唯一窄口径函数（属主默认可执行；不新增任何表/列授权）。
+      const evidence = createPostgresOnlinePurgeEvidenceRecorder({ pool, now: () => cutoff });
       const report = await drainDueOnlineDeletions({
         cutoff,
         limit,
@@ -265,6 +273,7 @@ try {
         dryRun: values['dry-run'],
         modules: USER_DATA_DELETION_MODULES,
         purge: createFourDomainPurgePort(pool),
+        evidence,
         after: cursor,
         fetchPage: (page) => listDueOnlineDeletions(pool, page),
       });

@@ -265,7 +265,7 @@ function forwardMergeNumbering() {
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
     // 末项取树上的真实最大号：`origin/main = 056cf424` 之后 0029（#419 media_object_cleanup）与
-    // 0030（本片 F13 行级作者注销引用）都已在树上 ⇒ 目录 `0001..0030` 连续、无缺号。
+    // 0030（F13 行级作者注销引用）与 0031（#19 片B 在线清理证据）都已在树上 ⇒ 目录 `0001..0031` 连续、无缺号。
     // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
       if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) {
@@ -292,8 +292,8 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0030',
-      '合流树末项是 0030（F13 行级作者注销引用）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0031',
+      '合流树末项是 0031（#19 片B 在线清理证据落库）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,

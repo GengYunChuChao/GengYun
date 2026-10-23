@@ -60,6 +60,9 @@ import type {
 import type { BackupCopySeedSource, BackupCopySqlClient } from './backup-copies-pg.ts';
 import type { BackupStateDerivationPort, DerivedBackupStates } from './backup-state-derivation.ts';
 import { unreadableBackupStates } from './backup-state-derivation.ts';
+import type { OnlinePurgeEvidenceRecorder } from './online-purge-evidence.ts';
+import type { DerivedOnlineStates, OnlineStateDerivationPort } from './online-state-derivation.ts';
+import { unreadableOnlineStates } from './online-state-derivation.ts';
 
 /** 注册到 F13 协议的模块名（闭集；`createDeletionCoordinator` 只接受闭集内的名字）。 */
 export const FAVORITES_DELETION_MODULE = 'favorites';
@@ -309,6 +312,22 @@ export interface UserDataDeletionDeps {
    * （判定见 `services/api/src/privacy/backup-state-derivation.ts`）。
    */
   backupStates?: BackupStateDerivationPort;
+  /**
+   * GY-R32（#19 片B）· **在线清理证据的落库端口**（迁移 0031 的唯一写路径）。
+   *
+   * 不传 ⇒ 逐字保持既有行为（证据只进命令报告 `stdout`，回执在线态只反映处理器本次结果）。
+   * 接线后 `makeHandler` 对**闭集四域**的每个成功行先写证据、再把该模块判 `completed`：
+   * 写失败 ⇒ 抛错由协议折叠成 `blocked`（⛔ 不把"写不进去"当完成）。
+   */
+  onlineEvidence?: OnlinePurgeEvidenceRecorder;
+  /**
+   * GY-R32（#19 片B）· 回执**在线态**的只读推导端口（迁移 0031 的窄口径读函数）。
+   *
+   * 接线后 `refreshOnlineStates()` 从 `deletion_requests.online_purge_evidence` 的落库证据推导：
+   * 四域各有可复算证据 ⇒ `completed`；无证据且未到期 ⇒ `pending`；无证据且已到期 ⇒ `blocked`
+   * （⛔ 不判 `pending`）。读不到 ⇒ 四域 `blocked` + `STORE_UNREACHABLE`。
+   */
+  onlineStates?: OnlineStateDerivationPort;
   now?: () => Date;
 }
 
@@ -350,6 +369,20 @@ export interface BackupStateRefresh {
   stateReset: boolean;
 }
 
+/**
+ * 一次「回执在线态刷新」的结果（诊断用；不出契约）。
+ *
+ * 只陈述这次读取到的事实与改写了哪些模块；整体完成与否仍由协调器
+ * （`packages/privacy/deletion.mjs::completionStatus`）判定。
+ */
+export interface OnlineStateRefresh {
+  requestId: string;
+  /** 推导出的四域在线态（`overall` 表示四域聚合）。 */
+  derived: DerivedOnlineStates;
+  /** 真正被改写的模块名（未改写＝结论与账本一致）。 */
+  changed: readonly string[];
+}
+
 export interface UserDataDeletionRegistry {
   readonly coordinator: DeletionCoordinator;
   /** 必需模块闭集。 */
@@ -369,6 +402,13 @@ export interface UserDataDeletionRegistry {
    * 判定。未接线推导端口、反查不到主体或请求 ⇒ 返回 `null`（保持既有行为，不假装刷新过）。
    */
   refreshBackupStates?(requestId: string): Promise<BackupStateRefresh | null>;
+  /**
+   * GY-R32（#19 片B）· 按 `deletion_requests.online_purge_evidence` 的落库证据刷新**在线**列。
+   *
+   * 只读库、只改进程内账本的在线列（备份列与证据串的 `backup-*` 段一字不动）；整体完成仍由
+   * `completionStatus()` 判定。未接线推导端口、反查不到主体或请求 ⇒ 返回 `null`。
+   */
+  refreshOnlineStates?(requestId: string): Promise<OnlineStateRefresh | null>;
   /** 请求 → 各模块证据串（诊断；契约回执不含证据，这里给出与协调器行同源的完整证据）。 */
   evidenceOf(requestId: string): Record<string, string>;
   /** 诊断审计（内部；只含模块名/行数/状态，不含任何私有正文或凭据）。 */
@@ -563,6 +603,24 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
           evidenceRef = `${evidenceRef};${module}:blocked-reasons:${blockedReasons.join(',')}`;
         }
       }
+      // GY-R32（#19 片B / 迁移 0031）：**在线成功行写证据**（不是只进命令报告 stdout）。
+      //   - 只对**闭集四域**写：社区域是"保留 + 脱敏"，没有"清空行数"这个事实，⛔ 不冒充在线清除证据；
+      //   - `blocked > 0`（该模块有未完成项）⇒ 不写（没完成就没有凭据）；
+      //   - 写失败 ⇒ 抛错，由协议折叠 blocked（⛔ 不把"写不进去"当 completed）；
+      //   - 证据时刻用装配时钟（与回执期限/到期判定同源），不另读一次 `now()`。
+      if (
+        input.onlineEvidence !== undefined &&
+        blocked === 0 &&
+        (USER_DATA_DELETION_MODULES as readonly string[]).includes(module)
+      ) {
+        await input.onlineEvidence.record({
+          requestId,
+          module,
+          removed: onlineRemoved,
+          idempotency: purged.idempotency,
+          purgedAt: now(),
+        });
+      }
       if (backupPurge.available) {
         const backup = await backupPurge.purge({ userId, module, onlineRemoved, requestId });
         const backupEvidence = typeof backup.evidenceRef === 'string' ? backup.evidenceRef.trim() : '';
@@ -668,6 +726,20 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   function withBackupSegment(evidenceRef: unknown, module: string, segment: string | null): string | null {
     const parts = evidenceSegments(evidenceRef).filter((part) => !part.startsWith(`${module}:backup-`));
     if (segment !== null) parts.push(segment);
+    return parts.length === 0 ? null : parts.join(';');
+  }
+
+  /**
+   * 只替换 `<module>:online-*` 与 `<module>:idempotency-*` 段：备份侧证据（`backup-*`）**一字不动**。
+   *
+   * 为什么连 `idempotency-*` 一起换：那一段也是**在线阶段**的结果读数（正文表 + 幂等台账），
+   * 由落库证据重建时必须与 `removed/idempotency` 说同一个数，否则同一行会出现两套行数。
+   */
+  function withOnlineSegments(evidenceRef: unknown, module: string, segments: readonly string[]): string | null {
+    const parts = evidenceSegments(evidenceRef).filter(
+      (part) => !part.startsWith(`${module}:online-`) && !part.startsWith(`${module}:idempotency-`),
+    );
+    parts.push(...segments);
     return parts.length === 0 ? null : parts.join(';');
   }
 
@@ -820,6 +892,120 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     return { requestId, derived, changed, skipped, stateReset };
   }
 
+  /**
+   * 回执**在线态**的读路径刷新（GY-R32 / 迁移 0031）。
+   *
+   * 为什么需要它：在线清理证据在受理路径里被写进 `deletion_requests.online_purge_evidence`
+   * （每个成功行一条 `sha256:`），但回执的在线列原先只在 `executeHandlers()` 那次推进里被改写；
+   * 到期驱动（cron，另一个进程）清完在线数据后，进程内账本既看不到它、重启后更是一无所有。
+   * 本函数按**落库证据**重新推导四域，把"已经清完但没凭据"和"到期了还没清"区分开。
+   *
+   * 四条硬约束（⛔ 都不是"顺手放宽"的）：
+   * 1. **不写库**：没有 UPDATE/INSERT/DELETE，也没有 `BEGIN`；改的只是进程内账本的在线列。
+   * 2. **证据优先**：`completed` 只能来自"该域有可复算证据"（`deriveOnlineStates`）；
+   *    `blocked` 只在"到期且没有证据"或"证据对不上/形状非法/读不到"时给出。
+   * 3. **不掩盖已知失败**：`pending`（还没到期）**不覆盖**账本里已是 `completed`/`blocked` 的行 ——
+   *    那两种状态各有事实依据，不能被"还没轮到"抹掉。
+   * 4. **不自己宣布完成**：写入完毕后交给协调器 `completionStatus()` 判定整体状态。
+   */
+  async function refreshOnlineStates(requestId: string): Promise<OnlineStateRefresh | null> {
+    const derivation = input.onlineStates ?? null;
+    if (derivation === null || !derivation.available) return null;
+    const userId = subjectByRequest.get(requestId);
+    if (userId === undefined) return null;
+    const requestsById = (registry as unknown as { _requests?: unknown })._requests;
+    if (!(requestsById instanceof Map)) return null;
+    const request = requestsById.get(requestId) as Record<string, unknown> | undefined;
+    if (request === undefined) return null;
+
+    const modules = [...USER_DATA_DELETION_MODULES];
+    let derived: DerivedOnlineStates;
+    try {
+      derived = await derivation.derive({ requestId, userId, modules });
+    } catch {
+      // 读不到 ≠ 清完了（也 ≠ 还没轮到）：如实折叠成 blocked，⛔ 不返回 pending。
+      derived = unreadableOnlineStates({ requestId, modules });
+    }
+
+    const changed: string[] = [];
+    for (const one of derived.modules) {
+      const row = handlerRowsOf(requestId).find((candidate) => candidate['module'] === one.module);
+      if (row === undefined) continue;
+      const beforeState = row['onlineState'];
+      const before = {
+        onlineState: beforeState,
+        evidenceRef: row['evidenceRef'],
+        errorCode: row['errorCode'],
+        status: row['status'],
+      };
+      if (one.state === 'completed') {
+        row['onlineState'] = 'completed';
+        row['errorCode'] = null;
+        row['evidenceRef'] = withOnlineSegments(before.evidenceRef, one.module, [
+          `${one.module}:online-purged:${one.removed ?? 0}`,
+          `${one.module}:idempotency-purged:${one.idempotency ?? 0}`,
+          `${one.module}:online-evidence:${one.evidenceRef as string}`,
+        ]);
+      } else if (one.state === 'blocked') {
+        const code = one.errorCode ?? 'STORE_REJECTED';
+        row['onlineState'] = 'blocked';
+        row['errorCode'] = code;
+        row['evidenceRef'] = withOnlineSegments(before.evidenceRef, one.module, [
+          `${one.module}:online-blocked:${code}`,
+        ]);
+      } else if (beforeState !== 'completed' && beforeState !== 'blocked') {
+        // 「还没到期」只覆盖 pending/running 这类"还没结论"的行；已有事实的行不动（约束 3）。
+        row['onlineState'] = 'pending';
+        row['errorCode'] = null;
+        row['evidenceRef'] = withOnlineSegments(before.evidenceRef, one.module, []);
+      }
+      recomputeRowStatus(row);
+      row['updatedAt'] = now();
+      if (
+        before.onlineState !== row['onlineState'] ||
+        before.evidenceRef !== row['evidenceRef'] ||
+        before.errorCode !== row['errorCode'] ||
+        before.status !== row['status']
+      ) {
+        changed.push(one.module);
+      }
+    }
+
+    // 证据账本同步（与备份刷新同一条理由：`evidenceOf()` 必须与账本行说同一件事）。
+    if (changed.length > 0) {
+      const ledger = evidenceByRequest.get(requestId) ?? {};
+      for (const module of changed) {
+        const row = handlerRowsOf(requestId).find((candidate) => candidate['module'] === module);
+        const value = row === undefined ? '' : String(row['evidenceRef'] ?? '');
+        if (value === '') delete ledger[module];
+        else ledger[module] = value;
+      }
+      evidenceByRequest.set(requestId, ledger);
+    }
+
+    if (request['state'] === 'blocked') {
+      const handlerBlocked = handlerRowsOf(requestId).some(
+        (row) => row['onlineState'] === 'blocked' || row['backupState'] === 'blocked',
+      );
+      const thirdPartyBlocked = thirdPartyRowsOf(requestId).some(
+        (row) =>
+          row['onlineStatus'] === 'failed' ||
+          row['backupStatus'] === 'failed' ||
+          row['onlineStatus'] === 'unsupported' ||
+          row['backupStatus'] === 'unsupported',
+      );
+      // 旧 blocked 是「上一次执行看到的事实」：读完新证据后无人再 blocked ⇒ 复位，交给协议重判。
+      if (!handlerBlocked && !thirdPartyBlocked) {
+        request['state'] = 'processing';
+        request['revision'] = Number(request['revision'] ?? 0) + 1;
+      }
+    }
+
+    // 整体完成判定仍只由协议做（并负责写 `state`/`completedAt`/`revision`）。
+    coordinator.completionStatus(requestId);
+    return { requestId, derived, changed };
+  }
+
   return {
     coordinator,
     requiredModules: () => coordinator.requiredModules(),
@@ -844,6 +1030,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     completionStatus: (requestId) => coordinator.completionStatus(requestId),
     receipt: (requestId) => coordinator.receipt(requestId),
     refreshBackupStates,
+    refreshOnlineStates,
     evidenceOf: (requestId) => ({ ...(evidenceByRequest.get(requestId) ?? {}) }),
     audit: () => auditLog.map((entry) => ({ ...entry })),
   };

@@ -28,7 +28,7 @@
  * | **批量上限可配** | `--limit`（默认 200，硬顶 5000）；非法/超顶**抛** `RangeError`（不夹取，夹取会静默少做事） |
  * | **批次会推进** | keyset 游标（`(date_trunc('milliseconds', online_due_at), id) > 游标`）+ `--max-batches`：超出 `--limit` 的到期集合**连跑即可全部处理**，队尾不再被已清空的队首挡住（见下节） |
  * | **失败不阻塞** | 每个 (request, module) 单独 try/catch；一行失败只记该行 `failed`，同请求其余模块与后续请求照跑；失败行**越过游标**，下一整轮再试（不是每轮原地撞同一批） |
- * | **每个成功行写证据** | 每个 `removed/idempotency` 成功行产出一条 `sha256:` 证据（`onlinePurgeEvidenceRef()`），进报告与退出码口径 |
+ * | **每个成功行写证据** | 每个 `removed/idempotency` 成功行产出一条 `sha256:` 证据（`onlinePurgeEvidenceRef()`）：**落库**（迁移 0031 的 `record_online_purge_evidence`，供回执推导）＋进报告与退出码口径；落库失败的行记 `EVIDENCE_WRITE_FAILED` 失败（删除已发生但无凭据） |
  * | **不谎称完成** | 本驱动**不写** `deletion_requests.state`，也不改回执；它只删在线行并报告事实（完成判定仍归协调器） |
  *
  * ## 批次推进：为什么必须带游标（keyset），而不是固定取队首 `LIMIT` 条
@@ -37,7 +37,8 @@
  * `deletion_requests.state`（完成判定归协调器），所以被清空的 A/B 在库里仍是非 `completed`，
  * 每一轮都排在最前面 ⇒ 超出 `--limit` 的 C、D、E 永远进不了候选（饿死）。三条约束同时成立：
  *   1. 不能写请求状态（否则就是用"只清了在线四域"冒充整笔 `completed`）；
- *   2. 不能新增迁移/加列（本片红线，`0003_privacy_consent.sql:146-163` 没有"在线已清"列）；
+ *   2. 当时不能新增迁移/加列（`0003_privacy_consent.sql:146-163` 没有"在线已清"列；W6 的
+ *     红线如此。迁移 0031 之后新增的是**证据**列，仍然不写请求状态 ⇒ 本条约束的结论不变）；
  *   3. 但后续批次必须能继续推进到剩余到期请求。
  *
  * 解法：进度放在**命令侧**，候选查询改成 keyset 分页 + 单轮可连推多页（`drainDueOnlineDeletions`）：
@@ -57,17 +58,26 @@
  * 只有 `receipt_hash` 唯一索引），顺序靠排序而不是索引序；`OFFSET` 又表达不了"从哪一行之后"，
  * 中途插入新到期行会整体错位。keyset 用行值比较，插入新行不影响已推进的位置。
  *
- * ## 证据为什么只进报告、不落库（如实登记的未取得项）
- * 在线域的"每个成功行写证据"目前**没有落地列**：`deletion_handlers` 对运行时角色是 `forbidden`
- * （`90-assert-least-privilege.sql:1068-1070` + 第 48 项反向控制），`admin_audit_events` 运行时连
- * `SELECT` 都没有，`deletion_requests` 没有任何"在线已清"状态列。落库需要**新增迁移**（本片红线：
- * 不改迁移号、不新增迁移）⇒ 证据以 `sha256:` 摘要形式进**命令报告**（stdout，可被 cron 日志留存），
- * 并在证据页「未取得」里写明「审计落地未做」。⛔ 不用"UPDATE 没报错"替代证据。
+ * ## 证据落库与回执（迁移 0031 / GY-R32 片B）
+ * 本文件此前如实登记过一个未取得项：在线域的"每个成功行写证据"**没有落地列**，证据只以
+ * `sha256:` 摘要进命令报告 stdout。迁移 0031（`0031_online_purge_evidence.sql`）补上了这一层：
+ *   - `public.deletion_requests.online_purge_evidence`（append-only jsonb 数组）+ `online_purged_at`；
+ *   - 唯一写路径 `public.record_online_purge_evidence(...)`（SECURITY DEFINER，触发器钉死只可追加）；
+ *   - 唯一读路径 `public.read_online_purge_evidence(uuid, uuid)`（按主体过滤的窄口径只读函数）。
+ * 运行时角色对 `deletion_requests` **仍然零表级零列级权限**（90-assert 的 protected_columns 与
+ * 第 48 项逐字不动），只多这两个函数的 EXECUTE。读路径见
+ * `services/api/src/privacy/online-state-derivation.ts`：用落库的 `removed/idempotency` 复算
+ * `sha256:` 摘要，按「到期 + 四域证据齐备 ⇒ completed；未到期 ⇒ pending；到期未清 ⇒ blocked」推导。
+ *
+ * 本驱动只负责**写**：`evidence` 端口缺省不注入 ⇒ 逐字保持"只进报告"的旧行为（旧装配/单测零改动）；
+ * 注入后每个成功行必须先落库、再进报告 —— 落库失败时该行记 `EVIDENCE_WRITE_FAILED` 失败
+ * （删除已经发生，但这行没有凭据；⛔ 不把"写不进去"当成功）。
  *
  * ## 需要的数据库角色
  * 候选查询要读 `deletion_requests`，而运行时角色 `gengyun_api_runtime` 对该表**零表级零列级**权限
  * （`90-assert` 第 48 项），必然 `42501`。因此本命令用 `DATABASE_URL`（属主/运维角色，与 `db:migrate`
- * 同源口径），并把它列为证据页的待裁决项（是否新增 `SECURITY DEFINER` 的到期列举函数）。
+ * 同源口径）；证据写入则走 0031 的唯一写函数（属主默认可执行，运行时角色亦有 EXECUTE）——
+ * 两条路径都**不需要**给运行时角色补任何表/列权限。
  */
 import { createHash } from 'node:crypto';
 
@@ -111,6 +121,14 @@ export const ONLINE_PURGE_DRIVER_ERROR_CODES = {
   RESULT_MISSING: 'RESULT_MISSING',
   /** 返回值形状非法（负数/非整数/NaN）。 */
   RESULT_INVALID: 'RESULT_INVALID',
+  /**
+   * 删除成功但**证据没落库**（迁移 0031 的唯一写路径失败）。
+   *
+   * 为什么算失败而不是"下次再写"：证据是"这一行清过了"的唯一凭据；写不进去就等于本次没有凭据。
+   * 这一行记 failed ⇒ 退出码 1 把人叫来；⛔ 不把它折成 succeeded（那会让回执永远推导不出 completed
+   * 却看不出原因）。
+   */
+  EVIDENCE_WRITE_FAILED: 'EVIDENCE_WRITE_FAILED',
 } as const;
 
 /** 只用到 `query` 的最小 SQL 客户端形状（不把 pg 的完整类型灌进主域）。 */
@@ -299,6 +317,47 @@ export interface OnlinePurgePort {
   }): Promise<{ removed: number; idempotency: number }>;
 }
 
+/**
+ * 证据落库端口（迁移 0031 的唯一写路径的结构化形状）。
+ *
+ * 驱动只依赖这个形状、不 import `online-purge-evidence.ts`：
+ *   - 生产实现 `createPostgresOnlinePurgeEvidenceRecorder()` 调
+ *     `public.record_online_purge_evidence(...)`（SECURITY DEFINER）；
+ *   - 单测注入内存替身，断言"每个成功行恰好写一次、失败行不写"。
+ *
+ * 抛错语义：这一行的证据没落库 ⇒ 驱动把它记 `EVIDENCE_WRITE_FAILED` 失败行（不吞、不谎称成功）。
+ */
+export interface OnlinePurgeEvidenceSink {
+  record(input: {
+    requestId: string;
+    module: string;
+    removed: number;
+    idempotency: number;
+    /** 本轮**唯一** cutoff（驱动不各自读时钟：证据时刻必须与到期判定同源）。 */
+    purgedAt: Date | string;
+  }): Promise<void>;
+  /**
+   * **只补不覆盖**的可选能力：该域已经有证据 ⇒ `already-present`（一条都不写）；
+   * 没有证据 ⇒ 补写一条「本轮实测为空」的证据（`removed`/`idempotency` 用本轮读数、时刻用本轮 cutoff）。
+   *
+   * 为什么需要它（监工 1023 [P2]）：首轮「删除成功 + 证据写失败」之后，真实存储已经空了，
+   * 第二轮四域读数全 0 会被 `already_purged` 分支**在写证据之前**跳过 ⇒ 证据永远补不回来、
+   * 回执在线态永远 blocked。补写的这一条是**当前事实**（本轮实测 0 行），
+   * ⛔ 不回填首轮的删除行数或原始时刻（那没有凭据），⛔ 也不把"补上凭据"说成"当初删了 N 行"。
+   *
+   * 缺省（不实现）⇒ 驱动保持旧行为：`already_purged` 且不写证据。
+   */
+  recordVerifiedEmpty?(input: {
+    requestId: string;
+    module: string;
+    /** 读函数按 (request_id, user_id) 过滤 ⇒ 补写前必须知道主体，否则读不到该行。 */
+    userId: string;
+    removed: number;
+    idempotency: number;
+    purgedAt: Date | string;
+  }): Promise<'recorded' | 'already-present'>;
+}
+
 export interface OnlinePurgeEvidenceRow {
   requestId: string;
   module: string;
@@ -322,6 +381,11 @@ export interface OnlinePurgeRunInput {
   totalDue: number;
   dryRun: boolean;
   purge: OnlinePurgePort;
+  /**
+   * 证据落库端口（迁移 0031）。缺省 ⇒ 证据只进报告（既有装配/单测逐字兼容）；
+   * 接线后**每个成功 (request, module) 行都写一条**，写失败的行记 `EVIDENCE_WRITE_FAILED` 失败。
+   */
+  evidence?: OnlinePurgeEvidenceSink;
   /** 必需模块闭集；缺省用 `USER_DATA_DELETION_MODULES`（四域）。 */
   modules?: readonly string[];
 }
@@ -508,6 +572,89 @@ export async function runOnlinePurgeBatch(input: OnlinePurgeRunInput): Promise<O
       }
     }
 
+    // 请求级结论先定：四域全 0 行且无失败 = 这个主体本轮**没有行可清**（多半已经清过）。
+    // 旧口径：记 skipped、**一条证据都不写**（⛔ 不谎称本次干了活；重跑第二轮的读数就在这里）。
+    //
+    // 监工 1023 [P2] 补口：首轮「删除成功 + 证据写失败」之后，真实存储已经空了 —— 若这里无脑跳过，
+    // 证据永远补不回来（第二轮开始在写证据之前就被跳掉），在线态永久 blocked。
+    // 因此当端口声明了 `recordVerifiedEmpty` 时，**只对缺证据的域**补写一条「本轮实测为空」的证据：
+    //   · `removed`/`idempotency` = **本轮**真实读数（全 0），时刻 = 本轮 cutoff；
+    //   · ⛔ 不伪造首轮的删除行数，也不回填首轮时刻（那没有凭据）；
+    //   · 已有证据 ⇒ `already-present`，一条不写 ⇒ 既有「全 0 不写证据」口径逐字不变；
+    //   · ⛔ 不因此判 completed（completed 只由落库证据在推导层给出）。
+    if (failureThisRequest === 0 && rowsThisRequest === 0 && idempotencyThisRequest === 0) {
+      const sink = input.evidence;
+      if (sink?.recordVerifiedEmpty !== undefined && evidenceThisRequest.length > 0) {
+        let recovered = 0;
+        for (const row of evidenceThisRequest) {
+          try {
+            const outcome = await sink.recordVerifiedEmpty({
+              requestId: row.requestId,
+              module: row.module,
+              userId: candidate.userId,
+              removed: row.removed,
+              idempotency: row.idempotency,
+              purgedAt: cutoffIso,
+            });
+            if (outcome === 'recorded') {
+              report.evidence.push(row);
+              recovered += 1;
+            }
+          } catch {
+            // 补不进凭据 ⇒ 如实记失败行（回执不得据此判 completed），同请求其余行不阻塞。
+            failureThisRequest += 1;
+            report.failures.push({
+              requestId: row.requestId,
+              module: row.module,
+              errorCode: ONLINE_PURGE_DRIVER_ERROR_CODES.EVIDENCE_WRITE_FAILED as string,
+              reason: '证据补写失败：本轮实测为空但凭据补不进台账（回执不会据此判 completed）',
+            });
+          }
+        }
+        if (recovered > 0 && failureThisRequest === 0) {
+          // 补上了凭据 ⇒ 这个请求本轮**收口**（0 行可清、在线证据齐），不计 already_purged。
+          report.succeeded += 1;
+          continue;
+        }
+        if (failureThisRequest > 0) {
+          report.failed += 1;
+          continue;
+        }
+      }
+      skip(ONLINE_PURGE_SKIP_REASONS.ALREADY_PURGED);
+      continue;
+    }
+
+    // 证据落库（每个成功行一条）。放在这里而不是循环体内：先要知道"这一请求到底有没有干活"，
+    // 否则 already_purged 也会写 0 行证据（把"没干"记成"干了 0 行"）。
+    // 落库失败 ⇒ 该 (request,module) 从证据里剔除并记 failed（删除已发生但没有凭据 ⇒ 回执不得据此
+    // 判 completed），同请求其余行与后续请求**不阻塞**（与模块抛错同一套逐行隔离）。
+    if (input.evidence !== undefined) {
+      const recorded: OnlinePurgeEvidenceRow[] = [];
+      for (const row of evidenceThisRequest) {
+        try {
+          await input.evidence.record({
+            requestId: row.requestId,
+            module: row.module,
+            removed: row.removed,
+            idempotency: row.idempotency,
+            purgedAt: cutoffIso,
+          });
+          recorded.push(row);
+        } catch {
+          failureThisRequest += 1;
+          report.failures.push({
+            requestId: row.requestId,
+            module: row.module,
+            errorCode: ONLINE_PURGE_DRIVER_ERROR_CODES.EVIDENCE_WRITE_FAILED as string,
+            reason: '证据落库失败：删除已发生但无凭据（回执不会据此判 completed）',
+          });
+        }
+      }
+      evidenceThisRequest.length = 0;
+      evidenceThisRequest.push(...recorded);
+    }
+
     if (failureThisRequest > 0) {
       report.failed += 1;
       // 失败请求的"已成功模块"证据照样保留（这就是"每个成功行写证据"）；
@@ -515,12 +662,6 @@ export async function runOnlinePurgeBatch(input: OnlinePurgeRunInput): Promise<O
       report.evidence.push(...evidenceThisRequest);
       report.rowsPurged += rowsThisRequest;
       report.idempotencyPurged += idempotencyThisRequest;
-      continue;
-    }
-    if (rowsThisRequest === 0 && idempotencyThisRequest === 0) {
-      // 四域都 0 行 ⇒ 这个主体的在线数据已经清过（或本来就没有）。**不谎称本次清过**：
-      // 记 skipped、证据丢弃、`rowsPurged` 不动 —— 重复跑第二轮的读数就在这里。
-      skip(ONLINE_PURGE_SKIP_REASONS.ALREADY_PURGED);
       continue;
     }
     report.evidence.push(...evidenceThisRequest);
@@ -554,6 +695,8 @@ export interface OnlinePurgeDrainInput {
   maxBatches?: number;
   dryRun: boolean;
   purge: OnlinePurgePort;
+  /** 证据落库端口（与 `runOnlinePurgeBatch` 同一个；缺省 ⇒ 只进报告）。 */
+  evidence?: OnlinePurgeEvidenceSink;
   modules?: readonly string[];
   /** 上一轮的游标（`null`/缺省 ⇒ 从队首）。 */
   after?: OnlinePurgeCursor | null;
@@ -638,6 +781,7 @@ export async function drainDueOnlineDeletions(input: OnlinePurgeDrainInput): Pro
       totalDue: page.totalDue,
       dryRun: merged.dryRun,
       purge: input.purge,
+      ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
       ...(input.modules === undefined ? {} : { modules: input.modules }),
     });
     batches += 1;

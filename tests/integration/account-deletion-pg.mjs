@@ -67,6 +67,19 @@ const SESSION_PROBE_PATH = `${API}/auth/session`;
 const ACCOUNT_DELETION_FUNCTION = 'public.request_account_deletion';
 const NEW_MIGRATION = '0016_account_deletion_persistence.sql';
 const DOWN_MIGRATION = 'migrations/rollback/0016_account_deletion_persistence.down.sql';
+/**
+ * `0031_online_purge_evidence.sql` 的读函数 `read_online_purge_evidence(uuid,uuid)` 是 `LANGUAGE sql`
+ * ⇒ **建函数时**就解析函数体里的表/列；它按 `deletion_requests.user_id` 过滤，而该列由 **0016** 添加
+ * （`0016_account_deletion_persistence.sql` 的 `ADD COLUMN user_id`）。
+ *
+ * 本文件刻意把 0016 留到下面「UP → ROLLBACK → REPLAY」单独演练，于是 0031 **必须推迟**到 0016
+ * 重放完成之后再应用 —— 否则建函数即 `42703 column r.user_id does not exist`，并把 `owner` 连接
+ * 留在**已中止的事务**里（后续语句全变 `25P02`，反而盖掉真错误）。
+ *
+ * 这不是"跳过 0031"：它照旧在全量清单里、照旧被应用、照旧报唯一索引与函数计数；只是把它放回
+ * `db:migrate` 的真实版本序（0016 < 0031），与 0016 的回滚/重放顺序一致。
+ */
+const AFTER_REPLAY_MIGRATION = '0031_online_purge_evidence.sql';
 const HOUR_MS = 3600 * 1000;
 
 const serverNow = () => new Date();
@@ -111,6 +124,37 @@ function deletionGrantRegion() {
   assert.ok(region.includes('REVOKE ALL ON FUNCTION public.request_account_deletion'), '区域必须含 REVOKE … FROM PUBLIC');
   assert.equal((region.match(/GRANT EXECUTE ON FUNCTION/g) ?? []).length, 1, '区域必须**恰好一条** GRANT EXECUTE');
   assert.ok(region.includes(`TO ${runtimeRole};`), 'EXECUTE 只能授予运行时登录角色');
+  assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
+  return region;
+}
+
+/**
+ * 从**出厂文件**同一份 `20-login-roles.sql` 抽取 **0031 在线证据**的 EXECUTE 授权区域并原样执行。
+ *
+ * 为什么要执行它：受理路径（`executeHandlers()`）现在会用迁移 0031 的唯一写函数落证据，
+ * 运行时角色若没有 `record_online_purge_evidence(...)` 的 EXECUTE ⇒ 每次受理都 `42501`
+ * 并把模块折成 blocked。不复制粘贴 SQL（区域被删/被改宽 ⇒ 本测试必须变红）。
+ */
+function onlineEvidenceGrantRegion() {
+  const matched = deploySqlFile('20-login-roles.sql').match(
+    /-- #region gy-r32-i19-online-evidence-grant\r?\n([\s\S]*?)\r?\n\s*-- #endregion gy-r32-i19-online-evidence-grant/,
+  );
+  assert.ok(matched !== null, '20-login-roles.sql 必须含 gy-r32-i19-online-evidence-grant 区域');
+  const region = matched[1];
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.record_online_purge_evidence'),
+    '区域必须撤 PUBLIC 对写函数的执行权',
+  );
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.read_online_purge_evidence'),
+    '区域必须撤 PUBLIC 对读函数的执行权',
+  );
+  assert.equal((region.match(/GRANT EXECUTE ON FUNCTION/g) ?? []).length, 2, '区域必须**恰好两条** GRANT EXECUTE');
+  assert.equal(
+    (region.match(new RegExp(`TO ${runtimeRole};`, 'g')) ?? []).length,
+    2,
+    '两条 EXECUTE 都只能授予运行时登录角色',
+  );
   assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
   return region;
 }
@@ -176,7 +220,7 @@ function makeHttp(origin) {
   };
 }
 
-/** 装机：迁移（跳过 0016，它单独演练）+ 后面再装最小权限角色与运行时 LOGIN。 */
+/** 装机：迁移（跳过 0016，它单独演练；0031 依赖 0016 的列 ⇒ 也推迟到 0016 重放之后）+ 后面再装最小权限角色与运行时 LOGIN。 */
 async function applyMigrations() {
   const discovered = readdirSync(migrationsDir)
     .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
@@ -186,7 +230,9 @@ async function applyMigrations() {
   assert.ok(discovered.includes(NEW_MIGRATION), `迁移清单必须含 ${NEW_MIGRATION}`);
   note(`迁移清单（${discovered.length} 个）：${discovered.join(' ')}`);
   for (const name of discovered) {
-    if (name === NEW_MIGRATION) continue; // 0016 由下面的 UP→ROLLBACK→REPLAY 单独演练
+    // 0016 由下面的 UP→ROLLBACK→REPLAY 单独演练；0031 依赖 0016 新加的列（见 AFTER_REPLAY_MIGRATION）。
+    if (name === NEW_MIGRATION) continue;
+    if (name === AFTER_REPLAY_MIGRATION) continue;
     await owner.query(sqlFile(`migrations/${name}`));
   }
   return discovered;
@@ -370,7 +416,28 @@ try {
   await owner.query(sqlFile(`migrations/${NEW_MIGRATION}`));
   assert.equal(await functionCount(), 1, 'REPLAY 后函数必须回来');
   assert.equal(await columnCount(), 3);
-  say(`迁移三连（真库）：全量 up（跳过 0016）⇒ ${NEW_MIGRATION} UP(函数 1/列 3/索引 1/约束 1) → ROLLBACK(全 0) → REPLAY(全回来)，版本号无重复`);
+  say(`迁移三连（真库）：全量 up（跳过 0016；0031 依赖它的列，见下条按版本序补）⇒ ${NEW_MIGRATION} UP(函数 1/列 3/索引 1/约束 1) → ROLLBACK(全 0) → REPLAY(全回来)，版本号无重复`);
+
+  // 0016 重放完成后，按**真实版本序**补上 0031（读函数引用 0016 的 `user_id`，见 AFTER_REPLAY_MIGRATION）。
+  await owner.query(sqlFile(`migrations/${AFTER_REPLAY_MIGRATION}`));
+  const evidenceFunctions = Number(
+    (
+      await owner.query(
+        "SELECT count(*)::int n FROM pg_proc p JOIN pg_namespace ns ON ns.oid=p.pronamespace WHERE ns.nspname='public' AND p.proname=ANY(ARRAY['record_online_purge_evidence','read_online_purge_evidence'])",
+      )
+    ).rows[0].n,
+  );
+  assert.equal(evidenceFunctions, 2, '0031 的两条窄口径函数必须已建成（在线证据唯一写/读路径）');
+  assert.equal(
+    (
+      await owner.query(
+        "SELECT count(*)::int n FROM information_schema.columns WHERE table_name='deletion_requests' AND column_name=ANY(ARRAY['online_purged_at','online_purge_evidence'])",
+      )
+    ).rows[0].n,
+    2,
+    '0031 的两个可空列必须已存在',
+  );
+  say(`迁移依赖序（真库）：${AFTER_REPLAY_MIGRATION} 在 0016 重放之后应用 ⇒ 两函数（record/read）+ 两列（online_purged_at/online_purge_evidence）就位`);
 
   // ---------------------------------------------------------------- [3] 最小权限
   // 与出厂 provisioning 同形：先装域组角色文件，再建运行时 LOGIN 并授组，最后**原样执行**
@@ -383,6 +450,8 @@ try {
   createdRoles.push(runtimeRole);
   await owner.query(`GRANT ${groups.join(', ')} TO ${runtimeRole}`);
   await owner.query(deletionGrantRegion());
+  // 0031 的两条窄口径函数：EXECUTE 同样从出厂文件原样抽取执行（受理时写证据、回执照证据推导都要它）。
+  await owner.query(onlineEvidenceGrantRegion());
   pool = createPool(runtimeUrl().href);
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
   assert.ok(Object.values(flags).every((value) => value === false));
@@ -393,6 +462,17 @@ try {
     )
   ).rows[0].ok;
   assert.equal(executables, true, '运行时角色必须能执行注销受理函数（唯一写路径）');
+  const evidenceExecutables = (
+    await pool.query(
+      `SELECT has_function_privilege(current_user, 'record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz)', 'EXECUTE')
+          AND has_function_privilege(current_user, 'read_online_purge_evidence(uuid,uuid)', 'EXECUTE') AS ok`,
+    )
+  ).rows[0].ok;
+  assert.equal(
+    evidenceExecutables,
+    true,
+    '运行时角色必须能执行 0031 的写/读函数（受理时落证据、回执照证据推导都只有这一条路径）',
+  );
   const acl = (await owner.query(`SELECT coalesce(array_to_string(proacl, ','), '') acl FROM pg_proc WHERE proname='request_account_deletion'`)).rows[0].acl;
   assert.equal(/(^|,)=/.test(acl), false, `proacl 不得含 PUBLIC 授权：${acl}`);
   const definer = (await owner.query(`SELECT prosecdef, proconfig, pg_get_userbyid(proowner) owner FROM pg_proc WHERE proname='request_account_deletion'`)).rows[0];

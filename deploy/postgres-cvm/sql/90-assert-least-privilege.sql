@@ -1678,6 +1678,13 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'admin_account_display_name',         'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R32（#19 片B / 迁移 0031）：在线清理证据的唯一写路径与唯一读路径。
+    -- 运行时对 `deletion_requests` 仍是 forbidden（本清单只登记**函数**面），
+    -- 两函数都 SECURITY DEFINER + 固定 search_path，EXECUTE 只授运行时（断言 30a–30e 钉死）。
+    ('public',         'record_online_purge_evidence',       'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'read_online_purge_evidence',         'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -2464,6 +2471,110 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND NOT has_table_privilege('gengyun_api_runtime', 'public.admin_audit_events', 'TRUNCATE')
          AND NOT has_table_privilege('gengyun_api_runtime', 'public.admin_audit_events', 'SELECT'),
          '审计台账必须只可追加（append-only 触发器在岗），且运行时角色对其没有任何直接权限（插入只发生在 SECURITY DEFINER 函数内）'
+
+  -- ---------------------------------------------------------------------------
+  -- GY-R32（#19 片B / 迁移 0031）追加：在线清理证据的**唯一写/读路径**与 append-only 只读面。
+  -- 背景：在线域「每个成功行写证据」此前没有落库列，证据只以 sha256 摘要进命令报告 stdout；
+  -- 回执在线态也因此不可推导（受理后重启/换进程就看不见）。0031 把证据落到
+  -- `deletion_requests.online_purge_evidence`（append-only jsonb 数组），并把读写各收进**一个**
+  -- 窄口径 SECURITY DEFINER 函数；运行时对 `deletion_requests` 仍然零表级零列级权限
+  -- （上面 protected_columns 与第 48 项逐字不动）。⛔ 这 6 条**不**给运行时补任何表/列权限。
+  -- ---------------------------------------------------------------------------
+  UNION ALL
+  -- 30a. 在线证据唯一写/读路径必须各恰存在一个（名字 + 精确签名）
+  SELECT 'online_evidence_functions_exist',
+         to_regprocedure(
+           'public.record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz)'
+         ) IS NOT NULL
+         AND to_regprocedure('public.read_online_purge_evidence(uuid,uuid)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'record_online_purge_evidence'
+                 AND pronamespace = 'public'::regnamespace) = 1
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'read_online_purge_evidence'
+                 AND pronamespace = 'public'::regnamespace) = 1,
+         '在线证据必须恰有 record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz) 与 read_online_purge_evidence(uuid,uuid) 各一个'
+
+  UNION ALL
+  -- 30b. 两条都必须是 SECURITY DEFINER（否则运行时直写/直读 deletion_requests 必然 42501）
+  SELECT 'online_evidence_functions_security_definer',
+         (SELECT count(*) FROM pg_proc
+           WHERE pronamespace = 'public'::regnamespace
+             AND proname IN ('record_online_purge_evidence', 'read_online_purge_evidence')
+             AND prosecdef) = 2,
+         '在线证据的写/读函数必须都是 SECURITY DEFINER'
+
+  UNION ALL
+  -- 30c. search_path 固定 pg_catalog、时区固定 UTC（与同族函数同口径）
+  SELECT 'online_evidence_functions_search_path',
+         (SELECT count(*) FROM pg_proc
+           WHERE pronamespace = 'public'::regnamespace
+             AND proname IN ('record_online_purge_evidence', 'read_online_purge_evidence')
+             AND proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']) = 2,
+         '在线证据的写/读函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 30d. 属主正确：必须能读写 deletion_requests 的证据列，且运行时既不是它、也不能 SET ROLE 成为它
+  SELECT 'online_evidence_functions_owner',
+         (SELECT count(*) FROM pg_proc
+           WHERE pronamespace = 'public'::regnamespace
+             AND proname IN ('record_online_purge_evidence', 'read_online_purge_evidence')) = 2
+         AND (SELECT bool_and(
+                       pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                       AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                       AND has_column_privilege(pg_get_userbyid(p.proowner),
+                                                'public.deletion_requests', 'online_purge_evidence', 'UPDATE')
+                       AND has_column_privilege(pg_get_userbyid(p.proowner),
+                                                'public.deletion_requests', 'online_purge_evidence', 'SELECT'))
+                FROM pg_proc p
+               WHERE p.pronamespace = 'public'::regnamespace
+                 AND p.proname IN ('record_online_purge_evidence', 'read_online_purge_evidence')),
+         '函数属主必须是能读写 deletion_requests 在线证据列的运营方角色，且运行时无法成为它'
+
+  UNION ALL
+  -- 30e. EXECUTE 只授予运行时：PUBLIC 与任何其它角色一律不得执行
+  SELECT 'online_evidence_functions_execute',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           'public.record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz)',
+           'EXECUTE'
+         )
+         AND has_function_privilege(
+           'gengyun_api_runtime',
+           'public.read_online_purge_evidence(uuid,uuid)',
+           'EXECUTE'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('record_online_purge_evidence', 'read_online_purge_evidence')
+              AND a.privilege_type = 'EXECUTE'
+              AND (a.grantee = 0
+                   OR a.grantee NOT IN ('gengyun_api_runtime'::regrole, p.proowner))
+         ),
+         '在线证据写/读函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
+
+  UNION ALL
+  -- 30f. append-only 触发器在岗 + 运行时对 deletion_requests（含两个证据列）仍零直接权限
+  SELECT 'online_evidence_append_only',
+         to_regprocedure('public.deletion_requests_online_evidence_append_only()') IS NOT NULL
+         AND EXISTS (
+           SELECT 1
+             FROM pg_trigger t
+            WHERE t.tgrelid = to_regclass('public.deletion_requests')
+              AND t.tgname = 'deletion_requests_online_evidence_append_only'
+              AND t.tgenabled <> 'D'
+         )
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.deletion_requests', 'SELECT')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.deletion_requests', 'INSERT')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.deletion_requests', 'UPDATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.deletion_requests', 'DELETE')
+         AND NOT has_column_privilege('gengyun_api_runtime', 'public.deletion_requests',
+                                      'online_purge_evidence', 'SELECT')
+         AND NOT has_column_privilege('gengyun_api_runtime', 'public.deletion_requests',
+                                      'online_purged_at', 'SELECT'),
+         '在线证据必须只可追加（0031 触发器在岗），且运行时对 deletion_requests（含两个证据列）仍无任何直接权限'
 
   UNION ALL
   -- 31. 展示名投影函数：纯投影（非 SECURITY DEFINER，不可借它提权），search_path 固定

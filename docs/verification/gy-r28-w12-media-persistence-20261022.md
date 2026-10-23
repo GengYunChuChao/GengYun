@@ -243,7 +243,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 | `OcrMediaPort` | `services/api/src/ocr/media.ts:77` | OCR 媒体引用校验 | 同上 |
 | `RecognitionMediaPort` | `services/api/src/recognitions/media.ts:76` | 识别媒体引用校验 | 同上 |
 
-装配点：TTS `app.ts:1016`、ASR `app.ts:1738`（`media: speechMedia`，无缺省工厂）、OCR `app.ts:1756-1757`
+装配点：TTS `app.ts:1085`、ASR `app.ts:1738`（`media: speechMedia`，无缺省工厂）、OCR `app.ts:1756-1757`
 （`ocrPersistencePool` 是 **OCR 自己的 PG 持久化**，不是媒体端口）。
 
 ⇒ **`#404 + #419` 都合流后，ASR 转写是 503 → 409，不是 503 → 200**。`services/api/src/speech/media.ts:14-19`

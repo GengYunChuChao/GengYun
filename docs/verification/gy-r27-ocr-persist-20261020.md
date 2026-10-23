@@ -400,7 +400,7 @@ CI 里 `conversations-pg.mjs:57` 只应用**子集迁移** `['0001','0002','0005
 ### 12.2 机制链（逐环，按代码位置）
 
 1. `services/api/src/routes/ocr.ts:193-196`：`real` + 有池 ⇒ `createPostgresOcrStore({ pool })`（不再退回内存）。
-2. `services/api/src/app.ts:1763` 计算 `ocrPersistencePool`，`:1794` 把 OCR 源登记进 `jobs` 注册表（顺序：recognition → transcription → moderation → synthesis → **OCR** → answer）。
+2. `services/api/src/app.ts:1946` 计算 `ocrPersistencePool`，`:1794` 把 OCR 源登记进 `jobs` 注册表（顺序：recognition → transcription → moderation → synthesis → **OCR** → answer）。
 3. `services/api/src/jobs/routes.ts` 的 `GET /jobs/:id` 直接调 `registry.get`；`services/api/src/jobs/registry.ts:275-282` 按登记顺序逐个源取，**只有全部为 `null` 才**抛 `NOT_FOUND`。
 4. `services/api/src/jobs/sources.ts` 的 OCR 源只把 `isNotFound(error)` 折成 `null`，**其它错误原样上抛**。
 5. 旧 `store-pg.ts` 的读类没有「表未迁移」分支：`42P01` 被 `classifyOcrDatabaseError` 折成 `PROVIDER_UNAVAILABLE`（`retryable:true`，"OCR 数据库暂不可用"）。
