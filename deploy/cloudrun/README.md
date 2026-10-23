@@ -81,6 +81,28 @@ docker build -f deploy/cloudrun/Dockerfile -t gengyun-api:local .
   **空值是刻意的**：导入但未填值时进程会 fail-closed 并列出字段名，不会静默用默认值顶替。
 - **真实密钥只经私密渠道交接**：不写进仓库、PR、文档或聊天。本目录内只有变量名与空值。
 
+### 4.1 客户端 IP 与限流（R34）：`API_TRUST_PROXY` 固定填 `true`
+
+- **本服务在云托管固定填 `API_TRUST_PROXY=true`**（代码默认 `false`）。理由：云托管把所有外部流量经
+  **平台网关**送入容器；不信任代理时 Fastify 的 `request.ip` 恒为**网关地址**，`RATE_LIMIT_*` 里
+  `auth-ip` 的 20 次/分钟会退化成**全站共享**的登录额度——一波流量就能让所有人登录 429。
+  **网关后必须为 `true`（或 ≥1 的整数跳数）；`false` 只适用于直连/本地。**
+- 取值形态（启动期校验，非法值 `ConfigError` 一次性报出，不夹取）：`true`＝信任整条链并取最左；
+  `false`（默认）＝只认 socket 对端、忽略 `X-Forwarded-For`；`N`（0..32）＝只信最近 N 跳、取最右可信项。
+- **前提**：只有网关能被外部访问，容器不要额外暴露直连入口。否则客户端自带
+  `X-Forwarded-For` 就能伪造 `request.ip` **绕过限流**（并污染日志的 `remoteAddress`）。
+  口径细节见 [../../docs/architecture/rate-limit-policy.md](../../docs/architecture/rate-limit-policy.md) §8「代理与 IP 语义」。
+- **验收（部署后做一次，缺一不可）**：
+  1. 容器日志（stdout）里同一时间窗的 `remoteAddress` 应是**真实客户端公网 IP**，不是网关/内网地址
+     （如 `10.x`、`172.16-31.x`、`100.64.x`）；
+  2. 用一个客户端把登录接口打到 429（`Retry-After` 有值），**同时另一个客户端登录仍应成功**——
+     若两边互相拖累，说明 `API_TRUST_PROXY` 没生效；
+  3. `POST <域名>/api/v1/auth/wechat` 的正常响应应带 `X-RateLimit-Limit: 20`；`/health` 这类
+     **豁免路径不带任何限流头是正常的**（豁免/白名单请求不写头，见同一份文档 §3）。
+- **多副本**：实例数 > 1 时实际额度约为 `N × limit`（每个副本各有自己的进程内桶），
+  `Retry-After` / `X-RateLimit-Reset` 只反映**本实例**的窗口；要么按「单副本额度 ≈ 期望额度 ÷ N」反推
+  `RATE_LIMIT_*_LIMIT`，要么上外置存储（本片未做，见文档 §5）。
+
 ## 5 迁移与初始化
 
 ### 5.1 事实（读代码确认）
@@ -145,7 +167,8 @@ docker build -f deploy/cloudrun/Dockerfile -t gengyun-api:local .
 2. **新建服务**（服务名、是否允许公网访问）。
 3. **服务设置-基础信息**：容器规格、实例副本数、扩缩容条件、日志采集路径 `stdout`。
 4. **服务设置-私有网络**：启用 VPC 并选择与上海 CVM **同一 VPC/子网**（保存后会发布新版本）。
-5. **服务设置-环境变量**：按 [service-settings.md](service-settings.md) §3 填写（含全部机密值）。
+5. **服务设置-环境变量**：按 [service-settings.md](service-settings.md) §3 填写（含全部机密值）；
+   另补一条 **`API_TRUST_PROXY=true`**（云托管网关后必须，作用与验收见 §4.1）。
 6. **服务设置-流水线**：授权代码源、选分支、目标目录＝仓库根、端口＝`3000`、
    DockerFile 路径＝`deploy/cloudrun/Dockerfile`、推送触发先关闭。
 7. **触发构建与发布**（首次建议全量发布到测试/灰度，或先发一个版本再验收）。
@@ -182,6 +205,9 @@ Invoke-RestMethod https://<服务域名>/api/v1/public/home
 
 其他可选只读确认：`GET /health` 连续两次（排除冷启动偶发）、服务日志中无 `database health check failed`。
 **不要**用「能打开域名」代替上述两条；也不要把 stub 模式下的 503 当失败（stub 下 `/api/v1/public/home` 必然 503，本机已实测）。
+
+限流/IP 口径另做一次抽检（三步，详见 §4.1）：`API_TRUST_PROXY=true` 后，容器日志的 `remoteAddress` 应为真实客户端 IP；
+单个客户端把登录打到 429（`Retry-After` 有值）时，**另一个客户端登录仍应成功**；`/health` 这类豁免路径不带限流头是正常的。
 
 ## 7 回滚
 

@@ -210,9 +210,43 @@ function newIdempotencyKey() {
   return 'gy-' + Date.now().toString(36) + '-' + rand
 }
 
+/**
+ * `Retry-After`（秒数，或 HTTP 日期）→ 「请 N 秒后再试」；拿不到可解释的值就返回 null。
+ * 微信小程序的响应头 key 一律小写，这里两种写法都认。
+ */
+function retryAfterText(response) {
+  const header = response && response.header
+  if (!header) return null
+  const raw = header['retry-after'] !== undefined ? header['retry-after'] : header['Retry-After']
+  if (raw === undefined || raw === null || raw === '') return null
+  const seconds = Number(raw)
+  if (Number.isFinite(seconds) && seconds > 0) return '请求过于频繁，请 ' + Math.ceil(seconds) + ' 秒后再试'
+  const at = Date.parse(String(raw))
+  if (!Number.isNaN(at)) {
+    const delta = Math.ceil((at - Date.now()) / 1000)
+    if (delta > 0) return '请求过于频繁，请 ' + delta + ' 秒后再试'
+  }
+  return null
+}
+
+/**
+ * 失败原因的可读文本。
+ *
+ * 429（契约码 `RATE_LIMITED`）是唯一要特殊处理的分支：限流不是"错误码"，而是"等一会儿再来"。
+ * 服务端在 `error.message` 里已经写了「请求过于频繁，请 N 秒后再试」，响应头 `Retry-After`
+ * 又给了同一个 N（秒）——优先用头重拼一句，保证提示里的秒数与限流器算出的窗口一致；
+ * 拿不到头就退回服务端 message。**其余错误码维持原样**（回错误码，便于对问题）。
+ */
 function statusText(response) {
   const body = response && response.data
-  if (body && body.error && typeof body.error.code === 'string') return body.error.code
+  const error = body && body.error
+  if (response && (response.statusCode === 429 || (error && error.code === 'RATE_LIMITED'))) {
+    const retryAfter = retryAfterText(response)
+    if (retryAfter !== null) return retryAfter
+    if (error && typeof error.message === 'string' && error.message !== '') return error.message
+    return '请求过于频繁，请稍后再试'
+  }
+  if (error && typeof error.code === 'string') return error.code
   return 'HTTP ' + (response ? response.statusCode : '?')
 }
 

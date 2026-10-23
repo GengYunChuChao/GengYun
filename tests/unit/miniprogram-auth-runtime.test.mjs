@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 /**
  * miniprogram/utils/auth.js 的**运行期**回归（Node + 模拟 wx），覆盖：
  * - P2-④ 伪造缓存不构成认证；会话状态须经 GET /auth/session 核实；
- * - P2-⑤ 退出仅在契约成功 Ack 时报「服务端已撤销」，否则保留「撤销未确认」。
+ * - P2-⑤ 退出仅在契约成功 Ack 时报「服务端已撤销」，否则保留「撤销未确认」；
+ * - GY-R34（返修）登录 429 的文案：显示「请求过于频繁，请 N 秒后再试」（秒数优先取
+ *   `Retry-After` 头，缺头时退回服务端 `error.message`），其余错误码仍回错误码。
  *
  * 注意：这是 Node 侧对纯 JS 逻辑的验证，**不是**微信编译器或真机/开发者工具验证。
  * 共享源码 runtime.mode='disabled'，故这里在临时目录生成一份 mode:'local' 的副本加载，
@@ -185,6 +187,55 @@ test('登录响应缺少可解释的执行模式 → 不落盘、不视为已登
   assert.ok(typeof error === 'string' && error !== '');
   assert.equal(auth.isLoggedIn(), false);
   assert.equal(b.storage.has(SESSION_KEY), false);
+});
+
+// ---------------------------------------------------------------------------
+// GY-R34（返修）· 429 文案：不能只甩 RATE_LIMITED，要给出「请 N 秒后再试」
+// ---------------------------------------------------------------------------
+
+test('GY-R34 登录 429 → 提示「请 N 秒后再试」（秒数取 Retry-After 头），且不落盘', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+  let error = null;
+  auth.login((e) => { error = e; });
+  b.requests[0].success({
+    statusCode: 429,
+    header: { 'retry-after': '60', 'content-type': 'application/json' },
+    data: {
+      error: { code: 'RATE_LIMITED', message: '请求过于频繁，请 60 秒后再试', retryable: true, retry_after_seconds: 60 },
+      meta: { execution_mode: 'stub' },
+    },
+  });
+  assert.equal(error, '登录失败：请求过于频繁，请 60 秒后再试');
+  assert.equal(auth.isLoggedIn(), false, '被限流不得落盘会话');
+  assert.equal(b.storage.has(SESSION_KEY), false);
+});
+
+test('GY-R34 登录 429 但响应头缺 Retry-After → 退回服务端 message（秒数仍来自服务端）', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+  let error = null;
+  auth.login((e) => { error = e; });
+  b.requests[0].success({
+    statusCode: 429,
+    header: {},
+    data: { error: { code: 'RATE_LIMITED', message: '请求过于频繁，请 42 秒后再试', retryable: true } },
+  });
+  assert.equal(error, '登录失败：请求过于频繁，请 42 秒后再试');
+  assert.equal(auth.isLoggedIn(), false);
+});
+
+test('GY-R34 其它错误码的老行为不变：仍显示错误码（便于对问题）', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+  let error = null;
+  auth.login((e) => { error = e; });
+  b.requests[0].success({
+    statusCode: 401,
+    header: { 'retry-after': '60' },
+    data: { error: { code: 'SESSION_EXPIRED', message: '会话已过期' } },
+  });
+  assert.equal(error, '登录失败：SESSION_EXPIRED', '非 429 不套用「请 N 秒后再试」');
 });
 
 // ---------------------------------------------------------------------------

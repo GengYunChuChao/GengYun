@@ -7,6 +7,7 @@
 // - 计数在进程内**单实例**（本文件不断言多实例一致，因为那正是未做的部分）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig, RATE_LIMIT_DEFAULTS } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
@@ -189,11 +190,16 @@ test('认证端点按 IP 计数：超限抛 RATE_LIMITED(429)，并写出三个 
 });
 
 test('豁免路径与白名单 IP 不计数；不在规则表里的方法/路径也不计数', () => {
+  // 豁免用例必须用**本来会命中规则**的路径才有牙齿：早先版本配 `exemptPaths:['/health']`
+  // 打 `/health`，而 `/health` 不在任何规则的前缀里 ⇒ 删掉 `isExempt` 也照样过（断言不可证伪）。
+  // 现在改成豁免 `/api/v1/auth` 前缀、打真实的 `POST /api/v1/auth/wechat`（会命中 auth-ip 规则）。
+  // 白名单与对照组换到 `/api/v1/admin/auth/session`：同属 auth-ip 规则，但**不在**豁免前缀下。
+  const ADMIN_LOGIN_URL = '/api/v1/admin/auth/session';
   const limiter = createRateLimiter({
     config: rateConfig({
       authIp: { limit: 1, windowMs: 60_000 },
       writeUser: { limit: 1, windowMs: 60_000 },
-      exemptPaths: ['/health'],
+      exemptPaths: ['/api/v1/auth'],
       allowlistIps: ['198.51.100.7'],
     }),
     now: () => new Date(START),
@@ -202,14 +208,14 @@ test('豁免路径与白名单 IP 不计数；不在规则表里的方法/路径
   // 豁免路径：连打 5 次都不计数（也不写头）。
   for (let i = 0; i < 5; i += 1) {
     const reply = fakeReply();
-    limiter.checkIpRules(fakeRequest({ url: '/health' }), reply);
+    limiter.checkIpRules(fakeRequest({ url: LOGIN_URL }), reply);
     assert.equal(reply.headers.size, 0);
   }
 
-  // 白名单 IP：同一 IP 连打 5 次登录也不计数。
+  // 白名单 IP：同一 IP 连打 5 次登录（非豁免路径）也不计数。
   for (let i = 0; i < 5; i += 1) {
     const reply = fakeReply();
-    limiter.checkIpRules(fakeRequest({ url: LOGIN_URL, ip: '198.51.100.7' }), reply);
+    limiter.checkIpRules(fakeRequest({ url: ADMIN_LOGIN_URL, ip: '198.51.100.7' }), reply);
     assert.equal(reply.headers.size, 0);
   }
 
@@ -220,9 +226,9 @@ test('豁免路径与白名单 IP 不计数；不在规则表里的方法/路径
     assert.equal(reply.headers.size, 0);
   }
 
-  // 对照：不在豁免/白名单里的登录请求，第 2 次就被拒。
-  limiter.checkIpRules(fakeRequest({ url: LOGIN_URL, ip: '203.0.113.9' }), fakeReply());
-  assert.throws(() => limiter.checkIpRules(fakeRequest({ url: LOGIN_URL, ip: '203.0.113.9' }), fakeReply()), ApiError);
+  // 对照：既不在豁免前缀、也不在白名单里的同一路径，第 2 次就被拒。
+  limiter.checkIpRules(fakeRequest({ url: ADMIN_LOGIN_URL, ip: '203.0.113.9' }), fakeReply());
+  assert.throws(() => limiter.checkIpRules(fakeRequest({ url: ADMIN_LOGIN_URL, ip: '203.0.113.9' }), fakeReply()), ApiError);
 });
 
 test('IPv4-mapped IPv6 与裸 IPv4 共用同一把桶（同一客户端不会拿到两份额度）', () => {
@@ -394,6 +400,38 @@ test('配置：非法 RATE_LIMIT_* 一次性报出（字段名 + INVALID_VALUE�
 });
 
 // ---------------------------------------------------------------------------
+// 5b. 代理语义：API_TRUST_PROXY 的取值面与非法值（默认 false）
+// ---------------------------------------------------------------------------
+
+test('配置：API_TRUST_PROXY 默认 false；true/false/非负整数跳数都按字面解析', () => {
+  const base = { APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' };
+  assert.equal(loadConfig(base).trustProxy, false, '未配置 ⇒ 不信任任何代理（直连/本地口径不变）');
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: '' }).trustProxy, false, '空串等同未配置');
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: 'true' }).trustProxy, true);
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: 'TRUE' }).trustProxy, true, '大小写不敏感');
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: 'false' }).trustProxy, false);
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: '0' }).trustProxy, 0, '0 按跳数解析（与 false 等价）');
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: '1' }).trustProxy, 1, '数字按跳数解析，不按布尔解析');
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: ' 2 ' }).trustProxy, 2, '两侧空白不算非法');
+  assert.equal(loadConfig({ ...base, API_TRUST_PROXY: '32' }).trustProxy, 32);
+});
+
+test('配置：非法 API_TRUST_PROXY 报错不夹取（yes / -1 / 2.5 / 越界跳数）', () => {
+  for (const bad of ['yes', '-1', '2.5', '33', '1.0', 'true,false']) {
+    assert.throws(
+      () => loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', API_TRUST_PROXY: bad }),
+      (error) => {
+        assert.equal(error.name, 'ConfigError', `API_TRUST_PROXY=${bad} 应报 ConfigError`);
+        assert.deepEqual(error.issues.map((issue) => issue.field), ['API_TRUST_PROXY']);
+        assert.equal(error.issues[0].code, 'INVALID_VALUE');
+        return true;
+      },
+    );
+  }
+});
+
+
+// ---------------------------------------------------------------------------
 // 6. 端到端（真实 Fastify 实例）：认证端点 429、窗口过期恢复、写接口按用户
 // ---------------------------------------------------------------------------
 
@@ -474,6 +512,60 @@ test('端到端：不同 IP 互不影响（同一窗口内 A 超限不影响 B�
   assert.equal(other.statusCode, 200);
 });
 
+// ---------------------------------------------------------------------------
+// 6b. 代理语义端到端：默认忽略 X-Forwarded-For；开了 API_TRUST_PROXY 才生效
+//     （用 `app.inject({ remoteAddress, headers })` 造「socket = 网关」的形态，不必真起端口）
+// ---------------------------------------------------------------------------
+
+/** 同一条 socket 对端（= 网关地址）、可变的 `X-Forwarded-For`。 */
+function viaProxy(app, { code, xff, socket }) {
+  return app.inject({
+    method: 'POST',
+    url: LOGIN_URL,
+    headers: { 'idempotency-key': `idem-${code}`, ...(xff === undefined ? {} : { 'x-forwarded-for': xff }) },
+    payload: { code },
+    remoteAddress: socket,
+  });
+}
+
+test('端到端：默认不信任代理 ⇒ 换 X-Forwarded-For 不换 socket 仍是同一把桶', async (t) => {
+  const { app } = newApp(t, { env: { RATE_LIMIT_AUTH_LIMIT: '2' } });
+  const socket = '198.51.100.20';
+
+  assert.equal((await viaProxy(app, { code: 'code-xff-off-1', xff: '203.0.113.1', socket })).statusCode, 200);
+  assert.equal((await viaProxy(app, { code: 'code-xff-off-2', xff: '203.0.113.2', socket })).statusCode, 200);
+  const denied = await viaProxy(app, { code: 'code-xff-off-3', xff: '203.0.113.3', socket });
+  assert.equal(denied.statusCode, 429, '默认口径下 XFF 被忽略：三个不同 XFF 共用 socket 这一把桶');
+  assert.equal(denied.headers['x-ratelimit-limit'], '2');
+  assert.equal(denied.headers['x-ratelimit-remaining'], '0');
+});
+
+test('端到端：API_TRUST_PROXY=true ⇒ X-Forwarded-For 生效，换 XFF 即换桶', async (t) => {
+  const { app } = newApp(t, { env: { RATE_LIMIT_AUTH_LIMIT: '1', API_TRUST_PROXY: 'true' } });
+  const socket = '198.51.100.21';
+
+  // 两个不同客户端（都经同一网关进来）各拿一份额度。
+  assert.equal((await viaProxy(app, { code: 'code-xff-on-a', xff: '203.0.113.11', socket })).statusCode, 200);
+  assert.equal((await viaProxy(app, { code: 'code-xff-on-b', xff: '203.0.113.12', socket })).statusCode, 200);
+  // 同一个客户端第二次：429（证明额度确实是按 XFF 里那个地址分的，而不是按 socket）。
+  const denied = await viaProxy(app, { code: 'code-xff-on-a2', xff: '203.0.113.11', socket });
+  assert.equal(denied.statusCode, 429);
+  assert.equal(denied.headers['retry-after'], '60');
+});
+
+test('端到端：API_TRUST_PROXY=1（跳数）⇒ 只信最近一跳，取 XFF 最右一项', async (t) => {
+  const { app } = newApp(t, { env: { RATE_LIMIT_AUTH_LIMIT: '1', API_TRUST_PROXY: '1' } });
+  const socket = '198.51.100.22';
+
+  // 最右项（网关观测到的客户端）不同 ⇒ 不同桶。
+  assert.equal((await viaProxy(app, { code: 'code-hop-1', xff: '9.9.9.9, 203.0.113.31', socket })).statusCode, 200);
+  assert.equal((await viaProxy(app, { code: 'code-hop-2', xff: '9.9.9.9, 203.0.113.32', socket })).statusCode, 200);
+  // 只改客户端自带的**最左**一项（伪造项）⇒ 仍是同一把桶，绕不过去。
+  // （这正是跳数比 `true` 更抗伪造的地方：`true` 取最左，客户端自带的值会变成 request.ip。）
+  const spoofed = await viaProxy(app, { code: 'code-hop-3', xff: '1.1.1.1, 203.0.113.31', socket });
+  assert.equal(spoofed.statusCode, 429);
+});
+
 test('端到端：写接口按用户计数，且 GET 与豁免路径 /health 永不计数', async (t) => {
   const { app, store } = newApp(t, { env: { RATE_LIMIT_WRITE_LIMIT: '1' } });
 
@@ -492,6 +584,24 @@ test('端到端：写接口按用户计数，且 GET 与豁免路径 /health 永
   const tokenA = await account('a');
   const tokenB = await account('b');
 
+  /** 管理端会话（`hidePost` 需要 `sources:write`）。 */
+  async function adminAccount(subject) {
+    const adminId = await store.createAdmin({
+      loginName: `r34-${subject}-${Math.random().toString(36).slice(2, 8)}`,
+      credentialHash: 'synthetic-not-a-real-credential-hash',
+      scopes: ['sources:write'],
+    });
+    const token = `synthetic-r34-admin-token-${subject}`;
+    await store.createSession({
+      userId: adminId,
+      tokenHashHex: hashToken(token),
+      authEpoch: 1,
+      expiresAt: new Date(START + 48 * 3_600_000),
+      audience: 'admin',
+    });
+    return token;
+  }
+
   async function favorite(token) {
     return app.inject({ method: 'POST', url: FAVORITES, headers: { authorization: `Bearer ${token}` }, payload: FAVORITE_BODY });
   }
@@ -507,6 +617,33 @@ test('端到端：写接口按用户计数，且 GET 与豁免路径 /health 永
 
   const firstB = await favorite(tokenB);
   assert.notEqual(firstB.statusCode, 429, '另一个用户有独立额度');
+
+  // 真实管理端写路由（`POST /api/v1/admin/posts/:id/hide`，`OPS_SCOPES.hidePost`）走同一条链：
+  // 先跑守卫、再计数 ⇒ **业务 404 也照样消耗额度**，同一管理员第二次直接 429。
+  // 早先只有假守卫的对照，断言落不到真实路由上；这条把端到端补齐（审查者曾用探针验证该序列）。
+  const adminToken = await adminAccount('h');
+  const postId = randomUUID();
+  let hideSeq = 0;
+  const hide = () =>
+    app.inject({
+      method: 'POST',
+      url: `/api/v1/admin/posts/${postId}/hide`,
+      headers: {
+        authorization: `Bearer ${adminToken}`,
+        'if-match': '"1"',
+        'idempotency-key': `idem-r34-hide-${(hideSeq += 1)}`,
+      },
+      // 契约要求 `reason`（缺了是 400，测不到限流），`If-Match` 是管理端写请求的必备头（缺了 428）。
+      payload: { reason: '限流端到端：失败响应也计数' },
+    });
+
+  const firstHide = await hide();
+  assert.equal(firstHide.statusCode, 404, `未知帖子按社区 CAS 语义如实回答不存在（响应：${firstHide.body}）`);
+  assert.equal(firstHide.headers['x-ratelimit-limit'], '1');
+  assert.equal(firstHide.headers['x-ratelimit-remaining'], '0', '失败的写请求也计了数');
+  const secondHide = await hide();
+  assert.equal(secondHide.statusCode, 429);
+  assert.equal(secondHide.json().error.code, 'RATE_LIMITED');
 
   // GET 不在写规则里：连打 5 次都不产生 429 / 也不带头。
   for (let i = 0; i < 5; i += 1) {

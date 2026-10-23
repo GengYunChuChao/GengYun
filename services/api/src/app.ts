@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { CONTRACT_VERSION } from './contract.ts';
-import type { AppConfig } from './config.ts';
+import type { AppConfig, TrustProxyConfig } from './config.ts';
 import { ApiError, buildErrorEnvelope, retryAfterSecondsFor } from './errors.ts';
 import { createJsonSchema2020ValidatorCompiler, RUNTIME_AJV_CUSTOM_OPTIONS } from './schema-validator.ts';
 import type { PgPool } from './db/pool.ts';
@@ -719,7 +719,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // 仅测试注入；不传时逐字节保持默认行为（写进程 stdout，不新建文件、不改级别与格式）。
       ...(logStream === undefined ? {} : { stream: logStream }),
     },
-    genReqId: () => randomUUID(),
+    genReqId: () => randomUUID(), trustProxy: trustProxyOption(config.trustProxy ?? false),
     // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；
     // Fastify 默认 removeAdditional:true 会静默剔除多余字段，这里改为拒绝，
     // 以确保「客户端不可指定 openid / 角色 / 用户 id」在 API 层被显式拦下（400）。
@@ -2195,6 +2195,37 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   return app;
 }
+
+/**
+ * GY-R34（返修）· 把 `API_TRUST_PROXY` 的三种取值翻译成 Fastify 的 `trustProxy` 选项。
+ *
+ * `true` / `false` 原样交出；**跳数必须自己编译成谓词**，因为 Fastify 5 已经不再支持数字：
+ * `node_modules/fastify/lib/request.js:43-62` 的 `getTrustProxyFn` 对 `typeof tp === 'number'`
+ * 走「fail closed ⇒ 一律 `() => false`」分支（注释原文：hop-count-only trust cannot validate the
+ * immediate peer），`@fastify/proxy-addr` 的 `compile` 对 number 直接
+ * `TypeError: unsupported trust argument`。也就是说：把数字原样传下去，配置**看着生效、
+ * 实际等于没配**——云托管网关后仍是全站共享一份登录额度，正是本次要修的坑。
+ *
+ * 谓词语义与旧版跳数一致：`hop` 是「从 socket 对端数起的第几跳」，只有第 `hop` 跳是可信代理
+ * 才继续往 `X-Forwarded-For` 里取值。`hop < N` ⇒ 只信最近 N 跳、客户端地址取第 N 跳；
+ * `N = 0` 与 `false` 等价。实测（`app.inject({ remoteAddress: '198.51.100.5', headers: {
+ * 'x-forwarded-for': '1.2.3.4, 203.0.113.7' } })`）：`false` ⇒ `request.ip = 198.51.100.5`；
+ * `(_, hop) => hop < 1` ⇒ `203.0.113.7`；`(_, hop) => hop < 2` ⇒ `1.2.3.4`；`true` ⇒ `1.2.3.4`。
+ *
+ * 与 `true` 的差别（也是跳数更好的地方）：`true` 信任整条链、取**最左**一项，网关只追加不覆盖时
+ * 客户端自带的 `X-Forwarded-For` 会变成 `request.ip`（可伪造换额度）；跳数只信最近一跳、取**最右**
+ * 一项，客户端自己写的最左项进不了 `request.ip`。代价：跳数不校验对端地址 ⇒ 容器**不能**被绕过
+ * 网关直连（直连客户端自带够多跳数即可伪造），且 `N` 必须与真实跳数一致（多了 ⇒ 取到代理地址，
+ * 又是共享桶）。装配点：`buildApp` 的 `Fastify({...})` 选项里与 `genReqId` **同一行**（不新增行——
+ * `app.ts` 的行号是文档与台账的锚点，见 `docs/architecture/contract-status.json` 与 `tools/verify-doc-anchors.mjs`）。
+ */
+export function trustProxyOption(
+  trustProxy: TrustProxyConfig,
+): boolean | ((address: string, hop: number) => boolean) {
+  if (typeof trustProxy !== 'number') return trustProxy;
+  return (_address: string, hop: number) => hop < trustProxy;
+}
+
 // GY-R34 限流器同理追加在末尾，但排在识别 PG store 那行 import **之前**：那一行必须仍是本文件最后一行
 // （见 tests/unit/recognitions-store-pg-wiring.test.mjs 的结构钉子）。装配点保持单行
 // `createRateLimiter(...).mount(app).wrapGuards(...)`，既有行号一行不动；规则表/存储/取舍都在 rate-limit/limiter.ts 里。
