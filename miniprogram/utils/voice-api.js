@@ -387,6 +387,37 @@ const RECORD_MAX_DURATION_MS = 60000
 const VOICE_MAX_BYTES = 10 * 1048576
 
 /**
+ * ASR 档位要求的录音容器（**唯一事实源**：`services/api/src/ai/asr-live-adapter.ts` 的
+ * `LIVE_ASR_FROZEN_PROFILE` 与 `tools/ai-config.mjs` 的 asr 剖面 —— `voiceFormat:'wav'`、
+ * 16000Hz、单声道、16bit PCM、≤60s、base64 后 ≤3145728 字节）。
+ *
+ * 客户端**只上传这一种容器**：平台若不按请求回 WAV，就在客户端**就地如实失败**（不上传）。
+ * 为什么必须在这一层拦住：转写档位非 WAV 会在**服务端本地**被拒（零发包），作业落 `failed`
+ * 且**不写**转写行 ⇒ `GET /speech/transcriptions/{id}` 只会 404，用户永远看不到"请上传 WAV"。
+ */
+const ASR_RECORD_FORMAT = 'wav'
+const ASR_RECORD_MIME = 'audio/wav'
+
+/**
+ * 端口回报的录音产物是否**就是** ASR 档位要求的那一种容器。
+ *
+ * `format` 与 `mime` 都必须对上：`format` 缺失/空串（平台没回传）、或 mime 与容器不一致，
+ * 一律判"不是"（宁可如实失败，也不把非 WAV 说成 WAV 上传）。
+ */
+function isAsrWavRecording(product) {
+  if (product === null || typeof product !== 'object') return false
+  return product.format === ASR_RECORD_FORMAT && product.mime === ASR_RECORD_MIME
+}
+
+/** 非 WAV 产物的如实说明：先写**实际拿到的是什么**（format/mime 之一缺失也照实说），再接按码文案。 */
+function recordFormatMessageFor(product) {
+  const raw = product !== null && typeof product === 'object' ? product : {}
+  const said = (value) => (typeof value === 'string' && value !== '' ? value : '（平台未回传）')
+  return '本次录音的类型是 ' + said(raw.format) + ' / ' + said(raw.mime) + '，'
+    + RECORD_UPLOAD_MESSAGES.RECORD_FORMAT_NOT_WAV
+}
+
+/**
  * 录音上传失败的**如实归因**文案（按契约错误码逐码给词，**不**把不同的 403 折叠成同一句话）。
  *
  * 红线（与仓库既有口径一致，见 `utils/identify-api.js` 的 `forbiddenOrSessionLoss` 注释）：
@@ -405,6 +436,9 @@ const RECORD_UPLOAD_MESSAGES = Object.freeze({
   RECORD_INTERRUPTED: '录音被中断（来电／其它应用抢占／系统回收）：本次未上传任何音频，请重新录制。',
   RECORD_NOT_STARTED: '当前没有正在进行的录音。',
   RECORD_ALREADY_RUNNING: '已在录音中，请先停止再开始下一次。',
+  // 本地收尾校验：容器必须与冻结 ASR 档位一致（非 WAV 一律不上传）
+  RECORD_FORMAT_NOT_WAV: '录音编码不是 ASR 要求的 WAV（16kHz / 单声道 / 16bit PCM WAV，服务端只收这一种容器）：'
+    + '本条没有上传任何音频（不裁剪、不转码，也不把非 WAV 谎报成 WAV），请重新录制。',
   // 会话 / 门禁
   SESSION_REQUIRED: '登录状态已失效，请重新登录后再录音上传。',
   SESSION_EXPIRED: '登录状态已过期，请重新登录后再录音上传。',
@@ -492,6 +526,10 @@ module.exports = {
   EXIT_CANCELLATION_NOTE: EXIT_CANCELLATION_NOTE,
   RECORD_MAX_DURATION_MS: RECORD_MAX_DURATION_MS,
   VOICE_MAX_BYTES: VOICE_MAX_BYTES,
+  ASR_RECORD_FORMAT: ASR_RECORD_FORMAT,
+  ASR_RECORD_MIME: ASR_RECORD_MIME,
+  isAsrWavRecording: isAsrWavRecording,
+  recordFormatMessageFor: recordFormatMessageFor,
   RECORD_UPLOAD_MESSAGES: RECORD_UPLOAD_MESSAGES,
   recordUploadMessageFor: recordUploadMessageFor,
   substituteSamplesEnabled: substituteSamplesEnabled,
