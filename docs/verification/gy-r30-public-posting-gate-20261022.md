@@ -36,7 +36,7 @@
 | 4 | `packages/privacy/constants.mjs:94` | `community_image: ['media_processing', 'public_posting', 'external_inference']`——**媒体上传**侧对 `public_posting` 的间接要求 | ✅ **是**（第 5 条消费路径，见 §1.3） |
 | 5 | `services/api/src/privacy/grant-pg.ts:33` | 授予口校验 `purpose ∈ {…,'public_posting'}` | ✅ 是（写入侧） |
 
-另有登记/注释类命中（不构成校验）：`services/api/db/migrations/0001_initial_schema.sql:239,321`（`public_posting_epoch` 列）、`0003_privacy_consent.sql:35`（`consent_purpose` 枚举值）、`services/api/src/app.ts:1966`、`services/api/src/routes/media.ts:153,169`（注释）、`services/api/src/routes/community.ts:364,371,385,394,399`（注释）。
+另有登记/注释类命中（不构成校验）：`services/api/db/migrations/0001_initial_schema.sql:239,321`（`public_posting_epoch` 列）、`0003_privacy_consent.sql:35`（`consent_purpose` 枚举值）、`services/api/src/app.ts:2104`、`services/api/src/routes/media.ts:153,169`（注释）、`services/api/src/routes/community.ts:364,371,385,394,399`（注释）。
 
 ### 1.2 挂载点：16 条社区路由里只有 4 条挂闸
 

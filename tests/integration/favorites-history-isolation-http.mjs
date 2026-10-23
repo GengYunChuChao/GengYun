@@ -417,14 +417,21 @@ async function testDeleteIsFinal(h, ctx) {
   assert.deepEqual(foreignAfterDelete.body.error, ownerSecondDelete.body.error);
   assert.deepEqual(listItems((await http(FAVORITES, json(sessionA.token))).body), []);
 
-  // 历史：A 删除该条 ⇒ A/B 再取同 id 皆非成功；A 的识别记录本身不受影响（两域各自管辖）。
+  // 历史：A 删除该条 ⇒ A/B 再取同 id 皆非成功。
+  //
+  // ⚠ 行为变更（R33-I16 级联接线，授权 `.pg17/ruling-r33-i16-history-cascade-partial-20261023.md`）：
+  // 删除历史行**现在会级联软删它携带的那条识别记录**（契约 `deleteHistory.description` 的要求）。
+  // 本臂在此之前断言的是"删除历史不得连带删除识别记录"（那是级联未接线时代的读数），
+  // 现按新口径改为：识别记录被**真的软删** ⇒ `GET /recognitions/{id}` 变 404，且与"从未存在"同形；
+  // 披露必须是 `partial`（识别腿已删、媒体/外发未接 ⇒ 不可能"全部删成功"）。
   const removeHistory = await h.deleteHistory(sessionA.token, history.id, history.revision, 'hist-a-del');
   assert.equal(removeHistory.status, 202, JSON.stringify(removeHistory.body));
   assert.deepEqual(removeHistory.body.data, { accepted: true });
   assert.equal(removeHistory.body.meta.execution_mode, 'stub');
-  assert.ok(
-    ['initiated', 'unwired', 'failed'].includes(removeHistory.cascade),
-    `X-GY-Cascade=${removeHistory.cascade}`,
+  assert.equal(
+    removeHistory.cascade,
+    'partial',
+    `X-GY-Cascade=${removeHistory.cascade}：识别腿已删 + 媒体/外发未接 ⇒ partial（unwired 说明接线没装上）`,
   );
 
   const ownerSecondHistoryDelete = await h.deleteHistory(sessionA.token, history.id, history.revision, 'hist-a-del');
@@ -434,16 +441,19 @@ async function testDeleteIsFinal(h, ctx) {
   assert.deepEqual(foreignHistoryAfterDelete.body.error, ownerSecondHistoryDelete.body.error);
   assert.deepEqual(listItems((await http(HISTORY, json(sessionA.token))).body), []);
 
-  // 历史删除**不**级联删除识别记录；识别终态也不因历史被删而重投递（event_key 去重 ⇒ 历史仍为空）。
-  const recognitionStillThere = await http(`${RECOGNITIONS}/${recognitionId}`, json(sessionA.token));
-  assert.equal(recognitionStillThere.status, 200, '删除历史不得连带删除识别记录');
-  assert.equal(recognitionStillThere.body.data.id, recognitionId);
+  // 级联的两条读数：① 识别记录已软删（404）；② 与"从未存在"逐字同形（软删不泄露存在性）。
+  const recognitionAfterDelete = await http(`${RECOGNITIONS}/${recognitionId}`, json(sessionA.token));
+  const recognitionNever = await http(`${RECOGNITIONS}/${ABSENT_ID}`, json(sessionA.token));
+  assert.equal(recognitionAfterDelete.status, 404, '删除历史必须级联软删对应识别记录（GET 变 404）');
+  assert.equal(recognitionAfterDelete.body.error.code, 'NOT_FOUND');
+  assert.deepEqual(recognitionAfterDelete.body.error, recognitionNever.body.error, '已软删与从未存在必须同形');
+  // 识别终态不因历史被删而重投递（event_key 去重 ⇒ 历史仍为空）。
   assert.deepEqual(listItems((await http(HISTORY, json(sessionA.token))).body), []);
   // B 的越权尝试全程没有改动任何东西。
   assert.deepEqual(listItems((await http(HISTORY, json(sessionB.token))).body), []);
   assert.deepEqual(listItems((await http(FAVORITES, json(sessionB.token))).body), []);
 
-  note('case2', `A 删收藏后 A/B 再取同 id=${ownerSecondDelete.status}/${foreignAfterDelete.status}；A 删历史后 A/B 再取同 id=${ownerSecondHistoryDelete.status}/${foreignHistoryAfterDelete.status}；X-GY-Cascade=${removeHistory.cascade}；历史删除未连带识别（GET 识别=${recognitionStillThere.status}） job=${jobId}`);
+  note('case2', `A 删收藏后 A/B 再取同 id=${ownerSecondDelete.status}/${foreignAfterDelete.status}；A 删历史后 A/B 再取同 id=${ownerSecondHistoryDelete.status}/${foreignHistoryAfterDelete.status}；X-GY-Cascade=${removeHistory.cascade}；历史删除已级联软删识别（GET 识别=${recognitionAfterDelete.status}，与不存在同形） job=${jobId}`);
 }
 
 /** ③ 失效/下架不因缓存或旧链接重新公开（逐次重查；含逐账号可见性与 revision 口径）。 */

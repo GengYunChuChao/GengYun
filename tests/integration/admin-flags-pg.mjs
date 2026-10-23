@@ -12,6 +12,18 @@
  * 第二个参数（运行时角色 URL）可省略：省略时读面/写面仍以 owner 跑通（[M][A][B][C][D]），
  * 但最小权限反向控制（[P]）与真实 HTTP 装配（[E][F]）记为「未取得」。
  *
+ * 角色口径（与 `admin-jobs-pg.mjs` 的 #428 收口同族）：角色与口令落在**集群级** `pg_authid`，硬钉库名只护住
+ * 「库」、护不住「角色身份」——同集群别的库里复用该角色的既有客户端会在新连接时认证失败，而收尾只按
+ * `pg_roles` 差集 DROP 本轮新建的角色，不会把既有的口令/LOGIN 位回滚。因此本臂**只允许动自己本轮新建的角色**：
+ *   - 默认路径（省略 argv[3]）在任何写库动作之前先跑 `preflightRuntimeRole`：发现 `gengyun_api_runtime`
+ *     已在本集群存在 ⇒ 硬失败（exit 1），⛔ 不再 `ALTER ROLE … LOGIN PASSWORD '<随机>'` 接管它；
+ *   - `provisionRoles()` 只 `CREATE ROLE`（建之前断言此刻角色必不存在），角色由收尾按 `pg_roles` 差集
+ *     DROP 回原状；
+ *   - 要复用既有测试角色必须用 argv[3] 显式给出它的**既有**凭据，本臂对该角色零 DDL
+ *     （不 CREATE / 不 ALTER / 不改 LOGIN / 不改口令）；
+ *   - 收尾用 `checkRoleCredentials` 复读 `pg_authid`，给出「既有角色（含别的业务角色）的认证材料一字不差」的
+ *     负控制读数；失败路径也打印读数（strict=false 只打印不抛，⛔ 不冒充通过）。
+ *
  * 覆盖（裁定 §4 的 ①–⑥）：
  *   [M] 迁移三连：UP → 三行全 false/revision=1 → DOWN（函数与表消失、审计表不越界）→ REPLAY
  *   [A] 表结构（闭集 CHECK / revision CHECK / changed_by FK 指向 admin_accounts）
@@ -58,6 +70,11 @@ const DOWN = 'migrations/rollback/0020_feature_flags.down.sql';
 const FUNCTION_SIGNATURE = 'public.set_feature_flag(text,integer,boolean,uuid,uuid,uuid,text,text)';
 const RUNTIME_ROLE = 'gengyun_api_runtime';
 const GRANT_REGION = 'gy-i18-flags-grant';
+/** 集群级角色认证材料（`pg_authid` 仅超管可读；读不到时记「未取得」，不冒充通过）。 */
+const ROLE_FINGERPRINT_SQL =
+  "SELECT rolname, rolcanlogin, rolvaliduntil, rolpassword FROM pg_authid WHERE rolname !~ '^pg_' ORDER BY rolname";
+/** 指纹口径：LOGIN 位 / 口令哈希 / 到期时间，任一变化都算「这个角色的身份被改过」。 */
+const roleFingerprint = (row) => JSON.stringify([row.rolcanlogin, row.rolvaliduntil ?? null, row.rolpassword ?? null]);
 
 const ownerUrl = new URL(process.argv[2] ?? `postgres://postgres@127.0.0.1:5432/${DB}`);
 assert.equal(ownerUrl.hostname, '127.0.0.1', '本测试只允许回环地址');
@@ -91,6 +108,19 @@ const registeredPools = [];
 
 await owner.connect();
 const baselineRoles = new Set((await owner.query('SELECT rolname FROM pg_roles')).rows.map((row) => row.rolname));
+/**
+ * 既有角色认证材料快照。角色与其口令是**集群级**对象：同一个 `gengyun_api_runtime` 完全可能同时被别的库的
+ * 客户端用来登录，硬钉库名只护住「库」、护不住「角色身份」。所以本臂只允许动自己本轮新建的角色，
+ * 收尾前逐项比对这份快照（`checkRoleCredentials`）。
+ */
+let baselineCredentials = null;
+try {
+  baselineCredentials = new Map(
+    (await owner.query(ROLE_FINGERPRINT_SQL)).rows.map((row) => [row.rolname, roleFingerprint(row)]),
+  );
+} catch (error) {
+  unread('[P] 既有角色认证材料快照', `owner 连接读不到 pg_authid（${error.code ?? error.message}），本轮不作「别的角色密码未被改动」比对`);
+}
 const ownerPool = new pg.Pool({ connectionString: ownerUrl.href });
 registeredPools.push(ownerPool);
 const seedStore = createPostgresAuthStore({ query: (text, params) => ownerPool.query(text, params) });
@@ -240,6 +270,38 @@ function grantRegion() {
   return matched[1];
 }
 
+/**
+ * [P1] 开跑前的角色接管闸门（在任何写库动作之前，包括 `resetDatabase()`）。
+ *
+ * 机制：`CREATE ROLE` / `ALTER ROLE … PASSWORD …` 落的是**集群**的 `pg_authid`，不是本库的 schema。
+ * 硬钉库名只能证明「我连的是专用库」，证明不了「这个角色是本测试独占的」：别的库（乃至同名的业务
+ * 运行时角色）也在用同一份口令登录。因此默认路径**只接受自己新建**，发现同名角色已存在就硬失败，
+ * 并给出两条可核验的出路 —— 绝不为了「重复跑通」去重置一个未知角色的密码或 LOGIN 状态。
+ */
+async function preflightRuntimeRole() {
+  const existing = await owner.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [RUNTIME_ROLE]);
+  if (providedRuntimeUrl !== null) {
+    assert.equal(
+      existing.rowCount,
+      1,
+      `argv[3] 显式复用要求角色 ${RUNTIME_ROLE} 在本集群已存在（口令由 argv[3] 提供，本脚本不改它）`,
+    );
+    note(`[P] argv[3] 提供既有测试凭据 ⇒ 复用 ${RUNTIME_ROLE}；本轮对它零 DDL（不 CREATE/不 ALTER/不改 LOGIN/不改口令）`);
+    return;
+  }
+  if (existing.rowCount === 0) return;
+  throw new Error(
+    `拒绝接管既有角色 ${RUNTIME_ROLE}：它已在本集群存在、且不是本轮创建的。\n`
+    + '  角色与认证口令属于整个 PG 集群（别的库的客户端也用同一份口令登录），专用测试库不授权本臂'
+    + '重置它的密码、LOGIN 位或删除重建。\n'
+    + '  二选一：\n'
+    + '   (a) 用一次性专用集群跑（`initdb` 新目录 ⇒ 角色天然不存在，本臂自己建、收尾自己 DROP）；\n'
+    + `   (b) 若它确实是一次性测试角色，用 argv[3] 显式提供它的**既有**凭据：\n`
+    + `       node tests/integration/admin-flags-pg.mjs <ownerUrl> postgres://${RUNTIME_ROLE}:<既有口令>@127.0.0.1:<port>/${DB}\n`
+    + `  上一次运行被强杀留下的同名角色也走 (b)；或由人确认后用 \`DROP ROLE ${RUNTIME_ROLE}\` 清掉再跑。`,
+  );
+}
+
 async function provisionRoles() {
   const region = grantRegion();
   assert.equal(/^\s*(\\(echo|set|pset|if|endif|getenv|gexec))/m.test(region), false, '区域不得含 psql 元命令');
@@ -247,19 +309,15 @@ async function provisionRoles() {
   assert.equal((region.match(/GRANT SELECT ON TABLE public\.feature_flags/g) ?? []).length, 1, '区域必须恰好一条 SELECT 授权');
 
   if (providedRuntimeUrl === null) {
+    // `preflightRuntimeRole()` 已在开跑前挡住「同名角色已存在」；能走到这里的角色必然是**本轮新建**的。
     const existing = await owner.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [RUNTIME_ROLE]);
-    if (existing.rowCount === 0) {
-      await owner.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePassword}'`);
-    } else {
-      // 上一轮（或其它片）留下的同名角色可能被**别的数据库**的对象依赖 ⇒ 删不掉，也不能删；
-      // 只重置密码复用，保证本脚本连跑幂等。
-      await owner.query(`ALTER ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePassword}'`);
-      note(`[P] 复用已存在的运行时角色 ${RUNTIME_ROLE}（跨库依赖使其不可 DROP；非本轮残留）`);
-    }
+    assert.equal(existing.rowCount, 0, `${RUNTIME_ROLE} 已存在：本臂不得接管既有运行时身份（见 preflightRuntimeRole）`);
+    await owner.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${runtimePassword}'`);
     const derived = new URL(ownerUrl.href);
     derived.username = RUNTIME_ROLE;
     derived.password = runtimePassword;
     runtimeUrl = derived;
+    note(`[P] 新建运行时角色 ${RUNTIME_ROLE}（口令只在本进程内存里；收尾按 pg_roles 差集 DROP 回原状）`);
   }
   // 出厂文件的基础段落还会 `GRANT USAGE ON SCHEMA public`（角色在迁移后才创建）；这里只补这一条，
   // 其余权限一律来自区域本身，避免测试悄悄放宽最小权限面。
@@ -823,6 +881,43 @@ async function armingArm() {
 }
 
 // ---------------------------------------------------------------------------
+// [P1] 负控制：既有角色的认证材料必须一字不差
+// ---------------------------------------------------------------------------
+let credentialsReported = false;
+/**
+ * 复读 `pg_authid`，与开跑前的快照逐项比对：**既有角色的口令哈希 / LOGIN 位 / 到期时间不得有任何变化**。
+ * 这是「本臂只在专用角色命名空间里动手」的可复现读数 —— 老实现会在角色已存在时
+ * `ALTER ROLE … PASSWORD '<随机>'`，本断言当场判红。
+ * `strict=false` 只打印读数不抛（失败路径用；⛔ 不得用它冒充通过）。
+ */
+async function checkRoleCredentials(strict) {
+  if (credentialsReported) return;
+  if (baselineCredentials === null) {
+    note('[P] 既有角色认证材料比对：未取得（owner 读不到 pg_authid），本轮不作结论');
+    credentialsReported = true;
+    return;
+  }
+  const now = new Map((await owner.query(ROLE_FINGERPRINT_SQL)).rows.map((row) => [row.rolname, roleFingerprint(row)]));
+  const drifted = [];
+  for (const [role, before] of baselineCredentials) {
+    if (!now.has(role)) drifted.push(`${role}（已消失）`);
+    else if (now.get(role) !== before) drifted.push(`${role}（认证材料被改）`);
+  }
+  credentialsReported = true;
+  if (drifted.length > 0) {
+    const message = `既有角色的认证材料被改动（本臂只允许建/删自己本轮新建的角色）：${drifted.join('、')}`;
+    if (strict) assert.deepEqual(drifted, [], message);
+    note(`[FAIL] ${message}`);
+    return;
+  }
+  const bystanders = [...baselineCredentials.keys()].filter((role) => role !== RUNTIME_ROLE);
+  note(
+    `[P] 负控制：既有角色 ${baselineCredentials.size} 个（其中非 ${RUNTIME_ROLE} 的其它角色 ${bystanders.length} 个：`
+    + `${bystanders.slice(0, 4).join('、') || '无'}）的 LOGIN 位/口令哈希/到期时间与开跑前逐字节相同`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 收尾
 // ---------------------------------------------------------------------------
 async function cleanup() {
@@ -851,6 +946,7 @@ async function resetDatabase() {
 }
 
 try {
+  await preflightRuntimeRole();
   await resetDatabase();
   await migrationTriple();
   await tableShape();
@@ -860,6 +956,10 @@ try {
   await httpArm();
   await nullPoolArm();
   await armingArm();
+
+  // 全绿之前再过一道身份闸：既有角色（含别的库在用的运行时角色）的认证材料必须一字不差。
+  await checkRoleCredentials(true);
+
   note('[ALL PASS] feature_flags 持久化真库验收 ①–⑥ + 行锁判别 + 武装就绪探测 全部取得');
 } catch (error) {
   process.exitCode = 1;
@@ -867,5 +967,7 @@ try {
   console.error(error?.stack ?? '');
   throw error;
 } finally {
+  // 失败路径也把读数打出来（只打印不抛，免得盖掉真正的失败原因）。
+  await checkRoleCredentials(false).catch(() => {});
   await cleanup();
 }

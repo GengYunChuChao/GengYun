@@ -133,7 +133,7 @@ test('voice-api·401 SESSION_EXPIRED 归到会话失效（这是唯一该清会�
 
 /**
  * 加载真实语音页。`options`：
- *   - `stopResult`：端口 `stop()` 交回的产物覆盖（默认一条 3.2 秒的 aac）；
+ *   - `stopResult`：端口 `stop()` 交回的产物覆盖（默认一条 3.2 秒的 WAV —— 与冻结 ASR 档位同容器）；
  *   - `uploadError`：`uploadVoiceQuestion` 的失败码；
  *   - `serverMode`：`identifyApi.serverMode()` 的读数（默认 `real`）；
  *   - `noFs`：平台**不提供**文件系统能力（老基础库）；
@@ -155,7 +155,7 @@ function loadVoicePage(options = {}) {
   const fontScale = { applyFontScale: () => {}, currentFontScale: () => 1, DEFAULT_FONT_SCALE: 1 }
 
   const product = Object.assign(
-    { ok: true, tempFilePath: 'wxfile://tmp/record-1.aac', durationMs: 3200, mime: 'audio/mp4', format: 'aac' },
+    { ok: true, tempFilePath: 'wxfile://tmp/record-1.wav', durationMs: 3200, mime: 'audio/wav', format: 'wav' },
     options.stopResult || {}
   )
   const recorderPort = {
@@ -256,7 +256,7 @@ test('上传成功 ⇒ 本机临时录音被回收（正文只在服务端，用
     assert.equal(harness.uploads[0].declaration.durationMs, 3200)
     assert.equal(harness.page.data.uploadedMediaId, MEDIA_ID)
     assert.equal(harness.page.data.uploadedMediaRevision, 1)
-    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.aac'], '上传成功后本机副本必须被删掉')
+    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.wav'], '上传成功后本机副本必须被删掉')
     assert.equal(harness.page._recTempFilePath, '', '登记的临时路径必须一并清空（否则会重复删/泄漏）')
   } finally {
     harness.unload()
@@ -274,7 +274,7 @@ test('上传失败 ⇒ 仍须回收本机临时录音，并如实给出错误码
     assert.equal(harness.uploads.length, 1)
     assert.equal(harness.page.data.recordState, 'failed')
     assert.equal(harness.page.data.uploadErrorCode, 'PROVIDER_UNAVAILABLE')
-    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.aac'], '失败路径同样不许留临时文件')
+    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.wav'], '失败路径同样不许留临时文件')
     assert.equal(harness.page.data.uploadedMediaId, null)
     assert.equal(harness.page.data.uploadedMediaRevision, 0, '失败后 revision 不得残留（会拼出伪引用）')
   } finally {
@@ -293,7 +293,7 @@ test('非 real 执行模式 ⇒ 不上传、不发明 media_id，且丢弃本机
     assert.equal(harness.uploads.length, 0, 'stub 模式下没有真实对象存储，不得假装上传')
     assert.equal(harness.page.data.uploadedMediaId, null)
     assert.equal(harness.page.data.recordStageNote.includes('未接线'), true)
-    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.aac'])
+    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.wav'])
   } finally {
     harness.unload()
   }
@@ -309,7 +309,7 @@ test('时长超过契约上限 ⇒ 零上传请求且丢弃本机临时录音', 
 
     assert.equal(harness.uploads.length, 0, '超限录音不得发出 POST /media/uploads')
     assert.equal(harness.page.data.uploadErrorCode, 'INVALID_INPUT')
-    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.aac'])
+    assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.wav'])
   } finally {
     harness.unload()
   }

@@ -238,12 +238,6 @@
       "reference": "services/api/src/privacy/ledger-pg.ts:99999"
     },
     {
-      "path": "tests/integration/ocr-jobs-pg.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/integration/ocr-jobs-pg.mjs:848"
-    },
-    {
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
       "reason": "SUSPECT",
       "owner": "deploy",
@@ -344,12 +338,6 @@
       "reason": "SUSPECT",
       "owner": "miniprogram",
       "reference": "miniprogram/pages/voice/voice.js:392"
-    },
-    {
-      "path": "miniprogram/pages/voice/voice.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "voice.js:1009"
     },
     {
       "path": "miniprogram/utils/auth.js",
@@ -550,6 +538,12 @@
       "reference": "migrations-negative-pg.mjs:198"
     },
     {
+      "path": "tests/integration/ocr-jobs-pg.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/integration/ocr-jobs-pg.mjs:848"
+    },
+    {
       "path": "tests/integration/recognition-chain-e2e.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
@@ -596,12 +590,6 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "miniprogram-favorites-history.test.mjs:141"
-    },
-    {
-      "path": "tests/unit/miniprogram-voice-playback.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/miniprogram-voice-playback.test.mjs:907"
     },
     {
       "path": "tests/unit/recognitions-candidates-selection.test.mjs",
