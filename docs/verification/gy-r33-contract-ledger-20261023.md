@@ -144,7 +144,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 
 | 台账词 | 实测 | 证据 |
 | --- | --- | --- |
-| 真实事件 | **已落地**：`#422`（merge `50e3bf40`，`git cat-file -t` ⇒ commit）把他人评论/点赞真落库到消息域；事件类型按来源取 `comment`/`like`/`moderation` | `services/api/src/community/service.ts:1364`、`:1805`；装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件 `:1270-1273` |
+| 真实事件 | **已落地**：`#422`（merge `50e3bf40`，`git cat-file -t` ⇒ commit）把他人评论/点赞真落库到消息域；事件类型按来源取 `comment`/`like`/`moderation` | `services/api/src/community/service.ts:1364`、`:1808`；装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件 `:1270-1273` |
 | 目标端口 | **已落地（限 `post`/`comment`）**：`#425`（merge `88942df4`）接线 `createCommunityReferencePort`；`TargetRef.type` 共 16 型，`post`/`comment` 之外的 14 型按 `unavailable` 降级 | `services/api/src/messages/reference-community.ts:49-59`；装配 `services/api/src/app.ts:810-811`；契约枚举 `packages/contracts/openapi.json#/components/schemas/TargetRef` |
 | PG | **已落地**：迁移 `0019` + `store-pg.ts`（`persistent: true`）+ `real` 无池整域 503 | `services/api/db/migrations/0019_messages_persistence.sql`；`services/api/src/messages/store-pg.ts:244`；`services/api/src/app.ts:802-806` |
 | 注销 | **已落地并取得真库读数**：`#452`（`174b547c`）扩写 `tests/integration/messages-pg.mjs` 的注销臂；真库证据串 `messages:online-purged:9;messages:idempotency-purged:3`，在 CI `real-pg` job 真跑 | 注销装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543`（断言串 `:525`）；CI `.github/workflows/real-pg-integration.yml:144-147` |
@@ -152,6 +152,8 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 | Android/真机 | **仍属实**：真机行状态逐字「未验证」 | `docs/verification/platform-checklist.md:40`（真机设备）、`:48`（Android 真机联网）、`:49`（iOS 真机联网） |
 
 > 旁证：`docs/verification/gy-r31-i17-recon-20261022.md:186-191` 已把「真实事件/目标端口」判为过时、「Android/真机」判为未过时；本片不照抄其行号，逐条按现行文件与 PR/commit 复核。
+>
+> N2（合流后行号）：`b1e8fb3e`（`#492`）在 `services/api/src/community/service.ts` 的 `:1546` 前插入 3 行；`like_created` 由片前基线 `7dd3d699` 的 `:1805` 漂到 **`:1808`**（`comment_created` `:1364` 未漂）。本页其余行号仍按片前基线 `7dd3d699` 实测；台账消息 blocker 已按合流后的 `:1808` 写。
 
 **处置：三条订正（部分过时）**：删去「真实事件/目标端口、PG/注销」与「页面」中已落地的子句，保留「Android/iOS 真机 + 真机页面证据」与「不虚构真人消息」；`status` 未动。
 
@@ -427,9 +429,9 @@ other changes=0
 
 定向文件：`knowledge-ledger-sort-drift`、`knowledge-api`、`messages-http`、`community-http`、`media-http-access`、`contract-status-tool`、`contract-status-anchors`、`doc-anchors-guard`。
 
-另实测 `--write-doc` **幂等**：同一命令再跑一次，`git hash-object docs/architecture/contract-implementation-status.md` 前/后均为 `56f2d6abfa4e0a194f0b91331802e13b3842aefe`（`BYTE_IDENTICAL=True`），exit `0` ⇒ 生成区字节一致。
+另实测 `--write-doc` **幂等**：同一命令再跑一次，`git hash-object docs/architecture/contract-implementation-status.md` 前/后均为 `b764c6189ef7fe7ca2c04f21dff5e0112b038d0a`（`BYTE_IDENTICAL=True`），exit `0` ⇒ 生成区字节一致。
 
-第二次提交相对第一次只再改 **2 条** blocker（`operations.listKnowledge`、`dimensions.pagination`，加亚毫秒限定）；其余 20 条订正与 5 条保留未动；`git diff HEAD^` 实测 `blockers=2 / other=0`。
+第二次提交相对第一次只再改 **2 条** blocker（`operations.listKnowledge`、`dimensions.pagination`，加亚毫秒限定）；其余 20 条订正与 5 条保留未动；`git diff HEAD^` 实测 `blockers=2 / other=0`。第三次提交（N2）只把 3 条消息 blocker 里的 `community/service.ts:1805` 改为合流后基线 `b1e8fb3e` 的 `:1808`（`#492` 插入 3 行），并同步本页同一引用；其余未动。
 
 ## 6 生成区、人工摘要与防漂移登记
 
