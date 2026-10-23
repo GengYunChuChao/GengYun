@@ -48,6 +48,7 @@ const RECORD_PERMISSION_HINT = '未获得麦克风授权时，本页不会开始
   + '可在微信「设置 → 授权管理 → 录音」中开启后返回本页重试。'
 
 const RECORD_NOTE = '录音走小程序原生能力（wx.getRecorderManager）：需要麦克风授权，拒绝即如实提示，不假装在录。'
+  + '录音容器固定为 WAV（16kHz / 单声道 / 16bit PCM）：转写档位只收 WAV，拿不到 WAV 就如实失败、不上传。'
   + '录到的音频按契约用途 voice_question 走既有私有媒体上传通道，并带真实时长 duration_ms。'
   + '录音控件与播报控件是两个独立控件，互不复用；播报的内容一律来自服务端已核对正文。'
 
@@ -766,7 +767,9 @@ Page({
 
     let started
     try {
-      started = await port.start({ format: 'aac' })
+      // 容器取 `voiceApi.ASR_RECORD_FORMAT`（= 冻结 ASR 档位的 `voiceFormat`），不在这里另写一个字符串：
+      // 档位是 wav，客户端就必须录 wav；平台若不认这个容器，`start()` 会如实失败（不假装在录）。
+      started = await port.start({ format: voiceApi.ASR_RECORD_FORMAT })
     } catch (error) {
       started = { ok: false, code: error && error.code ? error.code : 'RECORD_FAILED', errMsg: error && error.message }
     }
@@ -840,6 +843,24 @@ Page({
     const epoch = this._uploadEpoch || 0
     const generation = this.beginOperation()
     if (this.uploadStillValid(generation, epoch) !== true) { this.discardRecordFile(); return }
+
+    // **容器收尾校验**（GY-R34-I11）：只有 ASR 档位要求的那一种容器（WAV）才允许上传。
+    //
+    // 为什么必须在客户端拦：转写档位是**冻结**的 WAV（16kHz / 单声道 / 16bit PCM），平台若没按
+    // `format:'wav'` 给产物，服务端会在**本地**把录音拒收（零发包、不裁不转），作业落 `failed`
+    // 且**不写**转写行 ⇒ `GET /speech/transcriptions/{id}` 之后只会 404，用户永远看不到
+    // 「请上传 WAV」。所以在这里**就地**如实失败：不上传、不谎报 mime、并点名要求 WAV。
+    if (voiceApi.isAsrWavRecording(result) !== true) {
+      // 本条不会上传：本机临时录音没有保留理由，就地丢弃（与时长超限分支同口径）。
+      this.discardRecordFile()
+      this._recPending = false
+      this.setData({
+        recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'RECORD_FORMAT_NOT_WAV',
+        recordStageNote: voiceApi.recordFormatMessageFor(result),
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
+      })
+      return
+    }
 
     this.setData({
       recordDurationMs: result.durationMs,
