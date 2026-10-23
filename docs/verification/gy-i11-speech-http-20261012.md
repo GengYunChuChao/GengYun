@@ -136,7 +136,7 @@ PASS 11 loopback HTTP groups; production pipeline (buildApp) with only the speec
 
 > **校订注（2026-10-16 实测）**：本节的 1–6 条是**本片当年**（2026-10-12）的登记，标题里的"缺口"是**当时**事实，逐条保留。
 > 其中**第 1 条**的现在时断言已过期：`getJob` / 取消**已装配**——运行期存在 `GET,HEAD /api/v1/jobs/:id` 与
-> `POST /api/v1/jobs/:id/cancel`（注册点 `services/api/src/app.ts:1313` `registerJobRoutes(...)`）。
+> `POST /api/v1/jobs/:id/cancel`（注册点 `services/api/src/app.ts:1953` `registerJobRoutes(...)`）。
 > 因此"`getJob` 未装配 ⇒ 失败终态不可经 HTTP 轮询"**不再成立**；但本片当年**脚本里**的 `[gap] … 404` 观测与
 > "未覆盖 `running`/`cancelled`"的**声明**属历史证据，⛔ 不据此重跑或改写。第 2–6 条未复核出过期，保持原样。
 

@@ -149,8 +149,9 @@ import {
 } from './privacy/user-data-deletion.ts';
 // GY-I19（#19）本片：逐用户备份副本域的**真实**清除端口（有真库时接线；无真库不静默退回内存/unwired）。
 import { createPostgresBackupPurgePort } from './privacy/backup-copies-pg.ts';
-import type { BackupStateDerivationPort } from './privacy/backup-state-derivation.ts';
-import { createPostgresBackupStateReader } from './privacy/backup-state-derivation.ts';
+import { createPostgresBackupStateReader, type BackupStateDerivationPort } from './privacy/backup-state-derivation.ts';
+import { createPostgresOnlinePurgeEvidenceRecorder, type OnlinePurgeEvidenceRecorder } from './privacy/online-purge-evidence.ts';
+import { createPostgresOnlineStateReader, type OnlineStateDerivationPort } from './privacy/online-state-derivation.ts';
 // GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
 // （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
 //   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
@@ -475,6 +476,16 @@ export interface BuildAppOptions {
      * 缺省按「真库 + 受理已接线」自动装配，见下方 `backupStatesWiring`。
      */
     backupStates?: BackupStateDerivationPort;
+    /**
+     * GY-R32（#19 片B）：在线证据落库端口注入（测试与故障注入用）。
+     * 缺省按「真库 + 受理已接线」自动装配，见下方 `onlineEvidenceWiring`。
+     */
+    onlineEvidence?: OnlinePurgeEvidenceRecorder;
+    /**
+     * GY-R32（#19 片B）：回执在线态的**只读推导端口**注入。
+     * 缺省按「真库 + 受理已接线」自动装配，见下方 `onlineStatesWiring`。
+     */
+    onlineStates?: OnlineStateDerivationPort;
   };
   // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
   //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
@@ -1624,6 +1635,24 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : durableDeletionRequests !== null && pool !== null
         ? { backupStates: createPostgresBackupStateReader({ pool, now: clock }) }
         : {};
+  // GY-R32（#19 片B）：在线证据落库 + 回执在线态推导（迁移 0031）。
+  // 门与 `backupPurgeWiring`/`backupStatesWiring` **严格同门**：
+  //   - 有真库且受理已接线 ⇒ 真实端口（写走 0031 唯一写函数；读走 0031 唯一读函数）；
+  //   - 受理未接线 / 无真库 ⇒ **不接线**：没有请求行就没有证据可写/可读，
+  //     回执照旧由处理器结果投影（既有反向控制用例锁这条：`requests: null` 时在线态不得被"推导"改写）；
+  //   - 显式注入优先（测试与故障注入）。
+  const onlineEvidenceWiring: { onlineEvidence?: OnlinePurgeEvidenceRecorder } =
+    userDataDeletionInjection?.onlineEvidence !== undefined
+      ? { onlineEvidence: userDataDeletionInjection.onlineEvidence }
+      : durableDeletionRequests !== null && pool !== null
+        ? { onlineEvidence: createPostgresOnlinePurgeEvidenceRecorder({ pool, now: clock }) }
+        : {};
+  const onlineStatesWiring: { onlineStates?: OnlineStateDerivationPort } =
+    userDataDeletionInjection?.onlineStates !== undefined
+      ? { onlineStates: userDataDeletionInjection.onlineStates }
+      : durableDeletionRequests !== null && pool !== null
+        ? { onlineStates: createPostgresOnlineStateReader({ pool, now: clock }) }
+        : {};
   // #12 会话域存储（**提前声明**）：注销清理把会话域并进同一本账，而备份清单是「全有或全无」
   // —— `backupCopySources()` 需要在**装配期**就知道该 store 有没有 `snapshotOwner`，因此这份
   // store 必须先于注销装配就位；后面的问答子域装配**复用**同一实例（不再重复创建）。
@@ -1706,6 +1735,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     now: clock,
     ...backupPurgeWiring,
     ...backupStatesWiring,
+    ...onlineEvidenceWiring,
+    ...onlineStatesWiring,
     ...(durableDeletionRequests === null
       ? {}
       : { requests: durableDeletionRequests, receiptTtlMs: RECEIPT_TTL_MS }),

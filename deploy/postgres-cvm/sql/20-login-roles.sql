@@ -250,6 +250,38 @@ REVOKE ALL ON FUNCTION public.request_account_deletion(uuid,uuid,text,integer,ti
 GRANT EXECUTE ON FUNCTION public.request_account_deletion(uuid,uuid,text,integer,timestamptz,timestamptz,timestamptz,timestamptz,timestamptz) TO gengyun_api_runtime;
 -- #endregion gy-i19-deletion-grant
 
+-- --- D2. 在线清理证据：唯一写/读路径的 EXECUTE（GY-R32 / 迁移 0031）------------
+-- 迁移 0031 把「在线清理的成功行证据」从命令报告 stdout 落进
+-- `public.deletion_requests.online_purge_evidence`（append-only jsonb 数组），并提供两条**窄口径**
+-- `SECURITY DEFINER` 函数（属主＝迁移管理员），两函数都已 `REVOKE ALL ... FROM PUBLIC`：
+--   · `record_online_purge_evidence(...)` —— 唯一写路径（受理时的处理器与到期驱动共用）；
+--   · `read_online_purge_evidence(...)`   —— 唯一读路径（回执在线态推导，按 user_id 过滤）。
+-- 此处把 EXECUTE **只**授予运行时登录角色：运行时对 `public.deletion_requests` **仍然没有**
+-- 任何表级/列级权限（`90-assert-least-privilege.sql` 的 protected_columns、domain_manifest 的
+-- forbidden 分类与第 48 项逐字不动），因此「写证据」与「读回执」都只能经这两条可断言的路径。
+-- 前置：函数必须已存在；顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败。
+-- #region gy-r32-i19-online-evidence-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）。
+DO $$
+BEGIN
+  IF to_regprocedure(
+       'public.record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz)'
+     ) IS NULL THEN
+    RAISE EXCEPTION '缺少 public.record_online_purge_evidence(...)：迁移 0031 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+  IF to_regprocedure('public.read_online_purge_evidence(uuid,uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.read_online_purge_evidence(...)：迁移 0031 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.read_online_purge_evidence(uuid,uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_online_purge_evidence(uuid,text,text,integer,integer,timestamptz) TO gengyun_api_runtime;
+GRANT EXECUTE ON FUNCTION public.read_online_purge_evidence(uuid,uuid) TO gengyun_api_runtime;
+-- #endregion gy-r32-i19-online-evidence-grant
+\echo '20-login-roles.sql：已授予 record_online_purge_evidence(...) / read_online_purge_evidence(...) 的 EXECUTE（在线证据唯一写/读路径；未授予任何表/列权限）。'
+
 -- --- E. 账号停用/恢复：唯一写路径的 EXECUTE（GY-I22 / 迁移 0017）--------------
 -- 迁移 0017 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
 -- `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：

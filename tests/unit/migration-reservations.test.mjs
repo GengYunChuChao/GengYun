@@ -33,10 +33,16 @@
  *
  * **R32（2026-10-23，#15 在 #483 之后的去身份残留 / 迁移 `0032_community_report_reporter_ref.sql`）**：
  * 裁定 `.pg17/ruling-r32-migration-0031-allocation.md` 把 **31 锁给 #19**，本片只许用 32
- * ⇒ 树上第一次出现「有依据的缺号」：`gaps=[31] / reserved=[31]`、`maxVersion=32`、
- * 31 个文件 + 1 保留 === 32（三条不变量照旧全部成立）。这也是本台账存在的原始用途
+ * ⇒ **本片单独在树上时**出现过「有依据的缺号」：`gaps=[31] / reserved=[31]`、`maxVersion=32`、
+ * 31 个文件 + 1 保留 === 32（三条不变量当时全部成立）。这也是本台账存在的原始用途
  * （跨 PR 缺号），⛔ 不是为了让判据放行而新加的白名单：缺 31 但**没登记**，`undeclaredGaps`
  * 仍然会判红 —— 负控制①逐字不动地证明了这一点。
+ *
+ * **合流后状态（2026-10-23，先合 #494 的 `0031_online_purge_evidence.sql`、再合本片）**：
+ * `0001..0032` **连续无缺号**、`gaps=[] / reserved=[]`、`maxVersion=0032`、32 个文件 + 0 保留 === 32；
+ * 31 号条目按它自己的 `remove_when` **删除**（0031 已真实落盘，留着会让 `reservedButPresent` 判红）。
+ * 「当前仓库」用例同时把真实 0031 文件的存在性期望**翻成 `true`** —— 那条断言原来期望 `false`，
+ * 0031 一落盘它就该变红；继续写 `false` 就是假通过，方向必须与「已落盘」的事实一致。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -80,7 +86,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0031 由裁定预留给 #19 ⇒ 台账登记 31（缺号有依据）、末项 0032、三条不变量成立', () => {
+test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号（缺号 0）、末项 0032、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -89,11 +95,11 @@ test('迁移编号/当前仓库：0031 由裁定预留给 #19 ⇒ 台账登记 3
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [31],
-    `0031 由裁定预留给 #19、本片只许用 0032 ⇒ 树上应有且只有 31 这一个缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    [],
+    `0031 已随 #494 落盘、0032 在本片 ⇒ 0001..0032 连续，树上不应再有任何缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
-  assert.deepEqual(numbering.reserved, [31], '缺号必须**登记**在台账里（否则与「漏片」无法区分）');
-  assert.deepEqual(reservations.map((item) => item.version), [31], '保留台账当前只应有 31 这一条');
+  assert.deepEqual(numbering.reserved, [], '0031 已落盘 ⇒ 保留号必须清零（保留项不许躺平）');
+  assert.deepEqual(reservations, [], '保留台账必须回到空数组：0031 落盘后不应再有任何「有意缺号」');
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -129,17 +135,23 @@ test('迁移编号/当前仓库：0031 由裁定预留给 #19 ⇒ 台账登记 3
   );
   // ⚠️ 这里的文件名必须是 **#494 真实落盘的那一支**（`0031_online_purge_evidence.sql`）。
   // 本断言曾把文件名多写一段 `i19_` 前缀 ⇒ 0031 真落盘后名字对不上、断言恒为 false 而「通过」，
-  // 防线形同虚设（假通过）。改名后它与 `gaps` / `reservedButPresent` 两条一起咬：0031 一落盘，
-  // 本行立刻变红。
+  // 防线形同虚设（假通过）。真名已订正；0031 随 #494 落盘后**期望方向也必须从「不存在」翻成「存在」**
+  // —— 若仍写 false，这条会重新退化成假通过（落盘了也看不见）。
   assert.equal(
     files.includes('0031_online_purge_evidence.sql'),
-    false,
-    '#19 的 0031 尚未落盘（本轮期望仍为 false）；0031 真落盘后本行必须改成 true，'
-      + '并同步删掉台账里的 31 条目（届时 reservedButPresent 会先判红）',
+    true,
+    '#19 的 0031 已随 #494 落盘 ⇒ 真实文件必须在清单里，且台账里的 31 条目必须已删'
+      + '（否则 reservedButPresent 会先把这条判红）',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),
     '台账的 filename 前缀必须与 version 一致（防止「登记 29 却写成 0030_…」这种自欺）',
+  );
+  // 台账清空后上面那条对**空数组**天然为真 ⇒ 会退化成空转。这条把同一条不变量对**真实迁移清单**
+  // 再判一次，让「文件名前缀与解析出的版本号一致」在台账为空时依然咬得住。
+  assert.ok(
+    migrations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),
+    '真实清单的 filename 前缀必须与解析出的 version 一致（防止「0031_… 却被解析成 30」这种自欺）',
   );
 });
 
@@ -256,12 +268,12 @@ test('迁移编号/躺平判据回归：0027 已在真实目录里 + 台账仍�
   // 本用例模拟 **#434 合流那一时刻**的目录（0028 为末项、1..28 连续）。
   // 后续片（0030 / F13 行级作者引用）刻意不纳入：它会让 29 成为「有意缺号」，
   // 而这条用例判的是「补齐后仍登记 ⇒ 判红」的机制，不是当前树的缺号快照
-  // （当前树用 29 号保留台账，由上面「当前仓库」那条守护）。
+  // （当前树的真实台账读数 —— 合流后为空数组 —— 由上面「当前仓库」那条守护）。
   const realNames = readdirSync(DEFAULT_MIGRATIONS_DIR)
     .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
     .filter((name) => Number(name.slice(0, 4)) <= 28);
   const dir = makeMigrationsDir([...realNames, '0027_admin_audit_observability.sql']);
-  // 真实台账按 #419 在途登记的 29 与这条负控制无关：判的是**机制还咬不咬人**，
+  // 真实台账的内容与这条负控制无关：判的是**机制还咬不咬人**，
   // 不是当前台账内容（台账内容由上面「当前仓库」那条守护）。
   const ledger = makeReservationsFile([reservation()]);
   try {
