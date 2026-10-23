@@ -4,9 +4,9 @@
 
 - 基线：分支 `feat/gy-r34-i19-deletion-closure` 的推送头 `e44c2990`（`docs(verification): 订正 jobs 为通用作业台账并判定死表`）；本页读数在它之上追加的提交上实测
 - 工作树：`E:\GengYunCommander\wt-r34-i19-closure2`
-- 上游 `upstream/main` 现为 `3c7fc19e`（`Reviewed PR #518` 之后又并入 #519/#520/#504/#524/#523）；本分支从 `3c7fc19e` 长出 `090820c8 → f1c0b102 → e44c2990` 三个提交
+- 基线时上游 `upstream/main` 为 `3c7fc19e`（`Reviewed PR #518` 之后又并入 #519/#520/#504/#524/#523）；本分支从 `3c7fc19e` 长出 `090820c8 → f1c0b102 → e44c2990` 三个提交。**2026-10-24 合流后**：`upstream/main` = `4b87e1d9`（「Reviewed PR #525」，#525 于 2026-10-24T00:54:49+08:00 合入），本页所在树 = 合并提交 `c70836de`（第二父 `4b87e1d9`；合并前那版合并提交 `d172cff5` 已本地丢弃、从未推送）
 - 前置页：`docs/verification/gy-r29-i19-closure-20261022.md`（八项检查清单与四域闭集的历史口径）
-- **编号让渡（2026-10-23 复审后追加）**：本片迁移由 `0033` 改为 **`0034`** —— 0033 让给并行分支 #525（`feat/gy-admin-audit-query`，head `04199ac9`）的 `0033_admin_audit_log_read.sql`。主线此刻仍只有 `0001..0032`，合流后为 `0001..0032` + 本片 0034（0033 归 #525 的审计读表）。理由与全量改动面见 §7。
+- **编号让渡（2026-10-23 复审后追加）**：本片迁移由 `0033` 改为 **`0034`** —— 0033 让给并行分支 #525（`feat/gy-admin-audit-query`，head `04199ac9`）的 `0033_admin_audit_log_read.sql`。让号当时主线只有 `0001..0032`；**2026-10-24 #525 已合入 `upstream/main`（`4b87e1d9`）**，目录现在是 `0001..0034` **连续无缺号**（34 个正向 + 33 个 down，末项 `0034`），`migration-reservations.json` 的 `reservations` 回到 **`[]`** —— 合并前那条 `version: 33` 保留项已按它自己的 `remove_when` 删除（§7.3.1）。理由与全量改动面见 §7。
 
 ---
 
@@ -103,7 +103,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 ## 2. 基线未接入的 23 张表：逐张判定
 
-口径：迁移目录（`services/api/db/migrations/`，33 个文件）里**带归属列**的表共 33 张（26 张 `user_id`/`owner_id`/`author_id`/`reporter_id`/… + 7 张 `owner_user_id`）。基线 `af0fb36e` 闭集覆盖其中 10 张 ⇒ **23 张未接入**。本片接入 5 张，另把 2 张无主体列的域内台账纳入模块覆盖；**其余 18 张保持排除**。
+口径：迁移目录（`services/api/db/migrations/`，**34 个文件** —— 本节的表数口径在合流 main@`4b87e1d9` 之前量得，当时是 33 个文件；#525 的 `0033` 只加函数、不加表，故表数不变）里**带归属列**的表共 33 张（26 张 `user_id`/`owner_id`/`author_id`/`reporter_id`/… + 7 张 `owner_user_id`）。基线 `af0fb36e` 闭集覆盖其中 10 张 ⇒ **23 张未接入**。本片接入 5 张，另把 2 张无主体列的域内台账纳入模块覆盖；**其余 18 张保持排除**。
 
 | # | 表 | 归属列 | 有 FK 指向它 | 删除顺序位置 | 判定与理由 |
 | --- | --- | --- | --- | --- | --- |
@@ -187,7 +187,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 | # | 断言 | 本次实测读数 |
 | --- | --- | --- |
-| 1 | 全链迁移 + 表/函数在岗 | `全链迁移 33 个已应用；识别域四表 + 语音域三表 + users 共查 8 张真实表，外加迁移 0034 的两条清理函数 purge_owner_recognitions / purge_owner_speech，全部在岗` |
+| 1 | 全链迁移 + 表/函数在岗 | `全链迁移 33 个已应用；识别域四表 + 语音域三表 + users 共查 8 张真实表，外加迁移 0034 的两条清理函数 purge_owner_recognitions / purge_owner_speech，全部在岗`（**合并前读数**：那时 #525 的 `0033` 未落盘，全链就是 33 个；合流 `4b87e1d9` 后同一臂的 `PASS 1` 应为「全链迁移 34 个已应用」，本页未重跑真库臂，见 §7.4） |
 | 2 | 生产身份授权实测（**成对**：能执行函数、但没有表级 DELETE） | `purge_owner_recognitions EXECUTE=true、purge_owner_speech EXECUTE=true；recognition_selections / recognition_jobs / recognition_records / speech_jobs / transcriptions DELETE=false；users DELETE=false` |
 | 3 | 反向控制（同身份直接 `DELETE`） | `直接 DELETE ... 全部 42501 ⇒ 清理的 0 行只能来自迁移 0034 的 definer 函数，不是表权限` |
 | 4 | 清理前读数 | `A 识别域 2/2/2 行（jobs/records/selections）+ 台账 2 行；A 语音域 2/2 行 + 台账 2 行；两本域内台账合计 4/4 行` |
@@ -253,7 +253,7 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 | 4 | `psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/20-login-roles.sql`（env `GENGYUN_API_RUNTIME_PASSWORD` = 48 位小写十六进制合成值） | 文件头 `\getenv` + 口令形状校验；库名/owner 校验 |
 | 5 | `psql -X -q -v ON_ERROR_STOP=1 -f deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | 需要超级用户（读 `pg_authid`） |
 
-实测读数（迁移入库后重跑；当时本片迁移的文件名还是 `0033_r34_owner_content_purge.sql`，见 §7）：`STEP2_MIGRATE_EXIT=0`（`已应用：0001…0033`，33 个）、`STEP3_*` 五个角色文件均 `exit 0`、`STEP4_20_LOGIN_EXIT=0`、`STEP5_90ASSERT_EXIT=0`、输出非空行 **28** 行、**末行逐字 `ok`** ⇒ 判据（退出码 0 **且** 末行 `ok`）双双满足。日志里的 12 条 `ERROR: permission denied` 是脚本**设计内的** 42501 探针（识别域 `:726/:732/:738`、语音域 `:962/:968` 五张正文表的整行 `DELETE`，选了 `FOR UPDATE` 的 `:720`，以及 `catalog_ops`/`staging_intake` 两个 schema 与 `users` 表），不改退出码 —— 也就是说**表级禁区在本机真库上逐条仍成立**。让号到 `0034` 只改文件名与编号，**SQL 内容一个字没动**、迁移总数仍是 33（号段变成 `0001..0032` ＋ `0034`），故上面这组读数按改名前的原样保留；改名后对 canary 相关两臂的真库复跑见 §7.4。
+实测读数（迁移入库后重跑；当时本片迁移的文件名还是 `0033_r34_owner_content_purge.sql`，见 §7）：`STEP2_MIGRATE_EXIT=0`（`已应用：0001…0033`，33 个）、`STEP3_*` 五个角色文件均 `exit 0`、`STEP4_20_LOGIN_EXIT=0`、`STEP5_90ASSERT_EXIT=0`、输出非空行 **28** 行、**末行逐字 `ok`** ⇒ 判据（退出码 0 **且** 末行 `ok`）双双满足。日志里的 12 条 `ERROR: permission denied` 是脚本**设计内的** 42501 探针（识别域 `:726/:732/:738`、语音域 `:962/:968` 五张正文表的整行 `DELETE`，选了 `FOR UPDATE` 的 `:720`，以及 `catalog_ops`/`staging_intake` 两个 schema 与 `users` 表），不改退出码 —— 也就是说**表级禁区在本机真库上逐条仍成立**。让号到 `0034` 只改文件名与编号，**SQL 内容一个字没动**、迁移总数仍是 33（号段变成 `0001..0032` ＋ `0034`），故上面这组读数按改名前的原样保留；改名后对 canary 相关两臂的真库复跑见 §7.4。**2026-10-24 合流后**：目录是 `0001..0034` 连续无缺号（34 个正向 + 33 个 down，含 #525 的 `0033_admin_audit_log_read.sql`）⇒「迁移总数 33」只对合并前成立，本组读数按当时原样保留、未重跑。
 
 配套的直接读数（同一集群，库属主视角）：
 
@@ -316,7 +316,7 @@ git diff upstream/main...HEAD -- deploy/postgres-cvm/sql/20-login-roles.sql |
 - `services/api/db/migrations/0033_admin_audit_log_read.sql`
 - `services/api/db/migrations/rollback/0033_admin_audit_log_read.down.sql`
 
-`main` 上此刻只有 `0001..0032`，两张 `0033` 又都落在 `0033`（`verify-migrations-unique` 的 `[dup]` 与 `tests/integration/moderation-ledger-pg.mjs` 的合流 canary 都按编号唯一判），**先合入的那张会占掉编号、后合入的直接撞**。两片不可能同时以 `0033` 落地。
+`main` 当时只有 `0001..0032`，两张 `0033` 又都落在 `0033`（`verify-migrations-unique` 的 `[dup]` 与 `tests/integration/moderation-ledger-pg.mjs` 的合流 canary 都按编号唯一判），**先合入的那张会占掉编号、后合入的直接撞**。两片不可能同时以 `0033` 落地。
 
 ### 7.2 裁定与让号结果
 
@@ -327,26 +327,33 @@ git diff upstream/main...HEAD -- deploy/postgres-cvm/sql/20-login-roles.sql |
 
 改动范围只有文件名与「自述编号」，**SQL 正文一行未改**（两条 `SECURITY DEFINER` 窄函数、`REVOKE ALL … FROM PUBLIC`、只授 `EXECUTE` 全保持原样）。本迁移在树上**必排在 `0032` 之后**，与 `0033` 之间**没有任何内容依赖**（它只依赖 `0016` / `0025` / `0026` / `0031`），所以让号不影响语义。
 
-号段现状：**主线 `0001..0032` + 本片 `0034`（`0033` 归 #525 的审计读表）**；合流后就是 `0001..0034` 十五位对齐、无重复。
+号段现状（**2026-10-24 合流后**）：**`0001..0034` 连续、无缺号、无重号** —— #525 的 `0033_admin_audit_log_read.sql` 与 `rollback/0033_admin_audit_log_read.down.sql` 已随 `upstream/main` `4b87e1d9` 落盘，本片 `0034` 紧随其后。让号当时的状态是「主线 `0001..0032` + 本片 `0034`（`0033` 归 #525 的审计读表）」—— 那正是 `0033` 一度空着的由来。
 
-### 7.3 为什么本树上 `0033` 是「有依据的缺号」而不是漏号
+### 7.3 `0033` 曾经是「有依据的缺号」而不是漏号（**合并前**口径；该登记已随 #525 落盘删除）
 
-本分支上必然**缺** `0033`（文件号 `0001..0032` ＋ `0034`）。仓库对这种情况已有先例（R32 片的 `0031`、更早的 `0029`）：**跨 PR 缺号 ⇒ 保留号台账登记 + `migrations/README.md` 写一行依据**，三条不变量才成立（`migrate.ts` 的 `gaps` / `undeclaredGaps` / `countMatchesMax`）。⚠️ 两者的守卫**不是同一个**：`node tools/verify-migrations-unique.mjs --strict` 只读 `migrations/` 下的 `.md` 依据（`[gap]` 判据），**不读** `migration-reservations.json` —— 把「台账会判红」指给它等于**假证据**；台账真正的守卫是 `services/api/src/db/migrate.ts` 的 `reservedButPresent` / `countMatchesMax` 不变量，以及 `tests/unit/migration-reservations.test.mjs`（负控制①~④ + 「当前仓库」快照断言）。本轮照此办理：
+**合并前**本分支必然**缺** `0033`（文件号 `0001..0032` ＋ `0034`）。仓库对这种情况已有先例（R32 片的 `0031`、更早的 `0029`）：**跨 PR 缺号 ⇒ 保留号台账登记 + `migrations/README.md` 写一行依据**，三条不变量才成立（`migrate.ts` 的 `gaps` / `undeclaredGaps` / `countMatchesMax`）。⚠️ 两者的守卫**不是同一个**：`node tools/verify-migrations-unique.mjs --strict` 只读 `migrations/` 下的 `.md` 依据（`[gap]` 判据），**不读** `migration-reservations.json` —— 把「台账会判红」指给它等于**假证据**；台账真正的守卫是 `services/api/src/db/migrate.ts` 的 `reservedButPresent` / `countMatchesMax` 不变量，以及 `tests/unit/migration-reservations.test.mjs`（负控制①~④ + 「当前仓库」快照断言）。本轮据此办理（以下是**合并前**的办理记录，保留为「为什么曾经登记过 33」的有效证据）：
 
-- `services/api/db/migration-reservations.json` 的 `reservations` 加一条：`version: 33`、`filename: "0033_admin_audit_log_read.sql"`、`owner` = #525、`remove_when` = 「#525 合入 `origin/main` 即删」。
-- `services/api/db/migrations/README.md` 写「`0033` 预留」依据行，并把「当前状态」改成实测事实（33 个正向 ＋ 32 个 down、缺 `0033`、`33 + 1 === 34`）。
-- `tests/unit/migration-reservations.test.mjs` 里那条「当前仓库」快照断言的**值**随之更新（`gaps → [33]`、`reserved → [33]`、台账恰好 1 条 `version 33`），其余不变量（`countMatchesMax`、负控制①~④、躺平回归）一条未动；并新增两条方向断言：`0034_r34_owner_content_purge.sql` **在**清单里、`0033_r34_owner_content_purge.sql` **不在**。
+- 合并前：`services/api/db/migration-reservations.json` 的 `reservations` 加一条：`version: 33`、`filename: "0033_admin_audit_log_read.sql"`、`owner` = #525、`remove_when` = 「#525 合入 `origin/main` 即删」。
+- 合并前：`services/api/db/migrations/README.md` 写「`0033` 预留」依据行，并把「当前状态」改成当时的实测事实（33 个正向 ＋ 32 个 down、缺 `0033`、`33 + 1 === 34`）。
+- 合并前：`tests/unit/migration-reservations.test.mjs` 里那条「当前仓库」快照断言的**值**随之更新（`gaps → [33]`、`reserved → [33]`、台账恰好 1 条 `version 33`），其余不变量（`countMatchesMax`、负控制①~④、躺平回归）一条未动；并新增两条方向断言：`0034_r34_owner_content_purge.sql` **在**清单里、`0033_r34_owner_content_purge.sql` **不在**。
 
-⚠️ `0033` 落盘（#525 合入）那天，这条登记**必须删**——否则 `reservedButPresent` 会立刻判红（这也是 #525 那条 `remove_when` 的意义）。
+⚠️ 到期条件已触发：**#525 于 2026-10-24T00:54:49+08:00 合入 `origin/main`（`4b87e1d9`）**，`0033_admin_audit_log_read.sql` 真实落盘 ⇒ 合并前那条 `version: 33` 保留项按它自己的 `remove_when` **删除**（不删则 `reservedButPresent` 立刻判红 —— 这正是 `remove_when` 的意义）。
 
-### 7.4 改名后的实跑读数
+### 7.3.1 合并后的实测事实（2026-10-24，合并提交 `c70836de`）
+
+- `services/api/db/migration-reservations.json`：`"reservations": []` —— `$comment` 里追加一段记录本次到期删除，更早的历史段落（R32 段、本片让号段）**原样保留**，好让人看出「33 号当初为什么登记」。
+- `services/api/db/migrations/`：`0001..0034` **连续无缺号**、**34 个正向** ＋ **33 个 down**（无 `0001` 的 down），末项 `0034`；`migrations/README.md` 的「当前状态」段已是这一读数（原来那段「0033 预留」的当前状态表述已作废，0033 的叙述只留在历史小节）。
+- `tests/unit/migration-reservations.test.mjs`：「当前仓库」快照回到 `gaps = []` / `reserved = []` / `34 + 0 === 34`，并新增「`0033_admin_audit_log_read.sql` **在**清单里」的正向断言。
+- `node tools/verify-migrations-unique.mjs --strict`：`[gap]` 由合并前的「缺 1 个：0033」变成「`0001..0034` 连续（首尾之间无缺口）」，尾行 `PASS：5 项判据全部满足`（读数见 §7.4 第 1 行注记）。
+
+### 7.4 改名后的实跑读数（**合并前**；合并后的读数见 §7.3.1 与各行注记）
 
 | 臂 | 命令 | 读数 |
 | --- | --- | --- |
-| 编号唯一门禁 | `node tools/verify-migrations-unique.mjs --strict` | **exit 0**：`[surface] 33 条正向`、`[dup] 33 条占 33 个编号（0001..0034）`、`[coexist] rollback 32 条`、`[rollback] 已配对 32、允许缺省 1（0001）、缺回滚 0、孤儿 0`、`[gap] 0001..0034 缺 1 个：0033`（已登记依据 1 / 未登记 0）、`0034 ← rollback/0034_r34_owner_content_purge.down.sql`、`PASS：5 项判据全部满足` |
+| 编号唯一门禁 | `node tools/verify-migrations-unique.mjs --strict` | **合并前 exit 0**：`[surface] 33 条正向`、`[dup] 33 条占 33 个编号（0001..0034）`、`[coexist] rollback 32 条`、`[rollback] 已配对 32、允许缺省 1（0001）、缺回滚 0、孤儿 0`、`[gap] 0001..0034 缺 1 个：0033`（已登记依据 1 / 未登记 0）、`0034 ← rollback/0034_r34_owner_content_purge.down.sql`、`PASS：5 项判据全部满足`。**合并后重跑（2026-10-24，合并提交 `c70836de`）exit 0**：`[surface] 顶层 .sql 34 条：合 ^\d{4}_.*\.sql$ 的正向迁移 34 条 / 不合规 0 条`、`[runner] 守卫 34 条 ↔ 产品发现器 34 条：差集 0 条`、`[dup] 34 条正向迁移占用 34 个编号（0001..0034）：同号多文件 0 处`、`[coexist] rollback/ .sql 33 条：合 <NNNN>_<name>.down.sql 33 条 / 同号多份 0 处`、`[rollback] 已配对 33 条 / 允许缺省 1 条（0001） / 缺回滚 0 条 / 孤儿回滚 0 条`、`[gap] 编号连续性：0001..0034 连续（首尾之间无缺口）`、`PASS：5 项判据全部满足（surface / runner / dup / coexist / rollback）；33 条配对 + 1 条登记允许缺省 = 34 条正向迁移逐条有交代。` |
 | 台账单测 | `node --test tests/unit/migration-reservations.test.mjs` | `ℹ tests 8 · pass 8 · fail 0`（exit 0） |
-| 合流 canary 真库臂 | `node tests/integration/moderation-ledger-pg.mjs <临时 PG 17.11>` | **ALL PASS**（exit 0）：`[M] 迁移清单 33 个（0001..0034），无未声明缺号；保留号 [0033]；count＋保留 === max`、`[F] 保留号躺平判据回归：…reservedButPresent=[0027]…`、`[R] real 模式…零写入` |
-| 注销闭集真库臂 | `node tests/integration/recognitions-speech-purge-pg.mjs`（`GY_R34_PG_ROOT` 指临时目录） | **ALL PASS：10 条真库断言**（exit code 0）；PASS 1 逐字 `全链迁移 33 个已应用；…外加迁移 0034 的两条清理函数 purge_owner_recognitions / purge_owner_speech，全部在岗`；PASS 3 逐字含「只能来自迁移 0034 的 definer 函数」 |
+| 合流 canary 真库臂 | `node tests/integration/moderation-ledger-pg.mjs <临时 PG 17.11>` | **合并前读数**（当时 `0033` 未落盘、台账登记着 33）：**ALL PASS**（exit 0）：`[M] 迁移清单 33 个（0001..0034），无未声明缺号；保留号 [0033]；count＋保留 === max`、`[F] 保留号躺平判据回归：…reservedButPresent=[0027]…`、`[R] real 模式…零写入`。**合并后未重跑**（本页不起 PG 集群）：该臂 `[M]` 的期望值随之变成「迁移清单 **34** 个（`0001..0034`）、无未声明缺号；保留号 **`[]`**；`count === max`（34 + 0 === 34）」—— 这三条由 `tests/unit/migration-reservations.test.mjs` 8/8 在静态侧覆盖，真库重跑留待 CI 的 `real-pg-integration` workflow |
+| 注销闭集真库臂 | `node tests/integration/recognitions-speech-purge-pg.mjs`（`GY_R34_PG_ROOT` 指临时目录） | **ALL PASS：10 条真库断言**（exit code 0）；PASS 1 逐字 `全链迁移 33 个已应用；…外加迁移 0034 的两条清理函数 purge_owner_recognitions / purge_owner_speech，全部在岗`；PASS 3 逐字含「只能来自迁移 0034 的 definer 函数」（**合并前读数**：全链 33 个；合流 `4b87e1d9` 后同一条应为「全链迁移 34 个已应用」，未重跑） |
 
 两条真库臂都在本机自建临时集群上跑（`postgres:17.11` 同版本二进制、端口取 55551 与 55888，避开本机已占段与 Windows 排除段），跑完 `pg_ctl -m fast stop` 并删净临时目录（复查 `Test-Path` 为 `False`）。
 
@@ -354,5 +361,5 @@ git diff upstream/main...HEAD -- deploy/postgres-cvm/sql/20-login-roles.sql |
 
 - `services/api/src/recognitions/store-pg.ts`、`services/api/src/speech/store-pg.ts`：`… 迁移 0034 的 SECURITY DEFINER 函数`、「（`0025`/`0034` 缺）」「（`0026`/`0034` 缺）」。
 - `deploy/postgres-cvm/sql/20-login-roles.sql`、`deploy/postgres-cvm/sql/90-assert-least-privilege.sql`：具名区注释与 `RAISE` 文案里的迁移号（⛔ 函数名仍是 `purge_owner_recognitions` / `purge_owner_speech`，未改）。
-- `tests/integration/account-deletion-http.mjs`、`tests/integration/moderation-ledger-pg.mjs`（`:298` 的 `'0033'` → `'0034'`，断言意图不变）、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/unit/favorites-history-fixtures.mjs`、`tests/unit/least-privilege-expected-parity.test.mjs`、`tests/unit/sql-column-coverage.test.mjs`。
+- `tests/integration/account-deletion-http.mjs`、`tests/integration/moderation-ledger-pg.mjs`（让号时把 `:298` 的 `'0033'` → `'0034'`，断言意图不变；**合流后该期望值在 `:307`、值为 `'0034'`**。同一处还随 #525 把循环的「按文件名切」换成 `if (migration.version >= 27) continue;`（`:189`）—— 0033 的 `list_admin_audit_logs()` 读 0027 添加的 `admin_audit_events.before_value` 列，按文件名切会把 0033 提前 apply 而成 `42703 column e.before_value does not exist`，故采用主干那版）、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/unit/favorites-history-fixtures.mjs`、`tests/unit/least-privilege-expected-parity.test.mjs`、`tests/unit/sql-column-coverage.test.mjs`。
 - 本分支自己加进别人页面的并流读数：`docs/verification/gy-i24-release-materials-index-20261017.md`、`docs/verification/gy-r28-favorites-history-grants-20261020.md`、`docs/verification/gy-r29-i19-closure-20261022.md`（**只**改本片这几行，那三页的其它历史读数一律按原样保留）。
