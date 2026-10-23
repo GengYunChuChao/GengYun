@@ -49,8 +49,13 @@ export function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
-/** loopback 端点只认这一种字面形态：`http://127.0.0.1:<1024..65535>`（无路径/查询/片段）。 */
-const LOOPBACK_ENDPOINT_PATTERN = /^http:\/\/127\.0\.0\.1:(\d{4,5})$/;
+/**
+ * loopback 端点只认这一种字面形态：`http://127.0.0.1:<1024..65535>`（无路径/查询/片段）。
+ *
+ * 端口段以 `[1-9]` 开头 ⇒ **任何前导零写法一律拒绝**（`01024`、`041234`、`000080` 都不匹配）。
+ * 不能只靠 `Number()` 落区间：`Number('01024') === 1024` 会让"唯一字面形态"名不副实。
+ */
+const LOOPBACK_ENDPOINT_PATTERN = /^http:\/\/127\.0\.0\.1:([1-9]\d{3,4})$/;
 
 /**
  * **端点审计**：只允许两种端点。
@@ -79,7 +84,7 @@ export function resolveModerationVendorTarget(endpoint: unknown, service: Modera
     }
   }
   throw new ModerationWiringError(
-    `真实审核端点的 endpoint 不在白名单（只允许 ${production} 或 http://127.0.0.1:<port>）⇒ fail-closed，未发包`,
+    `真实审核端点的 endpoint 不在白名单（只允许 ${production} 或 http://127.0.0.1:<1024..65535>，端口不得有前导零）⇒ fail-closed，未发包`,
   );
 }
 

@@ -309,6 +309,52 @@ export interface ModerationLivePort extends ModerationPortLike {
   };
   readonly seams: ModerationPortSeams;
   readonly evaluate: (request: unknown) => Promise<ModerationVerdict>;
+  /**
+   * **脱敏**投影：`JSON.stringify(port)` 与任何"把端口整体打进日志/证据"的写法都走这里。
+   *
+   * 为什么需要它：`seams.credentials` 是端口对象的一部分，默认序列化会把 `secretKey` 原样打出来。
+   * 凭据只允许在内存里被签名函数按字段读取，**绝不**允许出现在序列化结果中。
+   */
+  toJSON(): ModerationPortRedactedView;
+}
+
+/** `JSON.stringify(port)` 能看到的全部内容（凭据只剩一个标记，`.kind === 'redacted'`）。 */
+export interface ModerationPortRedactedView {
+  readonly kind: ModerationVendorKind;
+  readonly model_version: string;
+  readonly provider: ModerationLivePort['provider'];
+  readonly seams: {
+    readonly credentials: { readonly kind: 'redacted' };
+    readonly liveGate: OpenModerationPolicy;
+    readonly fetchImpl: 'function';
+    readonly now: 'function';
+  };
+  readonly evaluate: 'function';
+}
+
+/**
+ * 构造端口的**脱敏投影**（`toJSON()` 的唯一实现，两个适配器共用）。
+ *
+ * ⛔ 这里**不得**加入 `seams.credentials` 的任何字段值（连 secretId 都不行）。
+ */
+export function moderationPortRedactedView(input: {
+  kind: ModerationVendorKind;
+  modelVersion: string;
+  provider: ModerationLivePort['provider'];
+  liveGate: OpenModerationPolicy;
+}): ModerationPortRedactedView {
+  return Object.freeze({
+    kind: input.kind,
+    model_version: input.modelVersion,
+    provider: input.provider,
+    seams: Object.freeze({
+      credentials: Object.freeze({ kind: 'redacted' as const }),
+      liveGate: input.liveGate,
+      fetchImpl: 'function' as const,
+      now: 'function' as const,
+    }),
+    evaluate: 'function' as const,
+  });
 }
 
 /** 真实文本端口（TMS）的全部向外能力。字段全部必填（除 fetch/now）。 */
@@ -339,6 +385,20 @@ export interface RealModerationImagePorts {
 
 function numberInRange(value: unknown, min: number, max: number): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max;
+}
+
+/**
+ * 构造期**快照**：复制一份并冻结，端口从此只读这一份（不再看调用方手里的原对象）。
+ *
+ * 为什么不能只保留引用：`profile` / `credentials` 若按引用持有，构造之后改写 `bizType` /
+ * `secretKey` / `timeoutMs` 会**真的**改变线上行为（换 BizType、换签名密钥、改超时），
+ * 而 `port.provider.biz_type` 仍报构造期的旧值 ⇒ 自述与线上字节分叉。
+ *
+ * 本文件的两份剖面与凭据三元组的字段**全部是标量** ⇒ 展开复制即深拷贝（没有嵌套引用可逃逸）；
+ * 冻结让"构造之后再改写"直接抛 `TypeError`，而不是悄悄生效。
+ */
+export function snapshotModerationRecord<T extends object>(record: T): Readonly<T> {
+  return Object.freeze({ ...record });
 }
 
 /**

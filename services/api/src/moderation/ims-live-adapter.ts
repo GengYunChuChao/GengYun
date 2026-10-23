@@ -28,6 +28,8 @@ import {
   assertModerationCredentials,
   assertModerationImageProfile,
   assertModerationPolicyOpen,
+  moderationPortRedactedView,
+  snapshotModerationRecord,
   type ModerationLivePort,
   type ModerationPortSeams,
   type ModerationVerdict,
@@ -57,9 +59,10 @@ export function createLiveModerationImagePort(ports: RealModerationImagePorts): 
     throw new ModerationWiringError('真实图片审核端口缺失（真实分支默认关闭，应用装配路径必须显式给端口）');
   }
   const policy = assertModerationPolicyOpen(ports.policy);
-  const profile = assertModerationImageProfile(ports.profile);
+  // 复制＋冻结：构造后改调用方的 profile/credentials 不再影响线上字节或超时。
+  const profile = snapshotModerationRecord(assertModerationImageProfile(ports.profile));
   const target = resolveModerationVendorTarget(profile.endpoint, 'ims');
-  const credentials = assertModerationCredentials(ports.credentials);
+  const credentials = snapshotModerationRecord(assertModerationCredentials(ports.credentials));
   const imageSource = ports.imageSource;
   if (imageSource === null || typeof imageSource !== 'object' || typeof imageSource.read !== 'function') {
     throw new ModerationWiringError('真实图片审核缺少图片字节来源端口（没有它就拿不到要审的图）');
@@ -67,6 +70,12 @@ export function createLiveModerationImagePort(ports: RealModerationImagePorts): 
   const fetchImpl = ports.fetchImpl ?? globalThis.fetch;
   const now = ports.now ?? ((): number => Date.now());
   const seams: ModerationPortSeams = { fetchImpl, credentials, liveGate: policy, now };
+  const provider = Object.freeze({
+    biz_type: profile.bizType,
+    biz_type_selection_verified: true as const,
+    synthetic: false as const,
+    timeout_ms: profile.timeoutMs,
+  });
 
   /**
    * 取一张图的字节并送审一次。**恰好一次**：不重试、不跟随重定向。
@@ -130,13 +139,16 @@ export function createLiveModerationImagePort(ports: RealModerationImagePorts): 
   return {
     kind: 'ims',
     model_version: LIVE_MODERATION_IMAGE_MODEL_VERSION,
-    provider: {
-      biz_type: profile.bizType,
-      biz_type_selection_verified: true,
-      synthetic: false,
-      timeout_ms: profile.timeoutMs,
-    },
+    provider,
     seams,
+    toJSON() {
+      return moderationPortRedactedView({
+        kind: 'ims',
+        modelVersion: LIVE_MODERATION_IMAGE_MODEL_VERSION,
+        provider,
+        liveGate: policy,
+      });
+    },
     async evaluate(request: unknown): Promise<ModerationVerdict> {
       const refs = requireModerationMediaRefs(request);
       const samples: VendorSample[] = [];

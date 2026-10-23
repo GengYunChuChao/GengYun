@@ -16,12 +16,16 @@
    **不接线**：`provider.ts` 一个字符都没动，`real` 行为逐字节不变。
 2. **适配器是"注入式、默认关闭"的**：策略快照 / 被校验配置快照 / 凭据三元组 / 图片字节来源全部必填、
    零默认实现；`policySelectionVerified !== true` 或 `executionAllowed !== true` ⇒ **构造期硬拒**
-   （`services/api/src/moderation/live-ports.ts:208-231`）。拿不到端口对象，就不可能发出请求。
+   （`services/api/src/moderation/live-ports.ts:208-226`）。拿不到端口对象，就不可能发出请求。
 3. **失败绝不产出通过**：`Review`／未知 `Suggestion` 映射为 `unsure`（合流层记 `MODEL_NOT_EVALUATED` ⇒ 隔离）；
    其余失败一律抛 `ModerationPortError`，类别落在与既有分类器**逐项相同**的六值闭集上。
 4. **未取得**（必须连同结论一起读）：零真实外呼、无真实凭据、BizType 未核（`policySelectionVerified`
    在 `tools/ai-config.mjs` 里对审核**恒为 `false`**）、无真实样本、预算/台账闸门未接。
    ⇒ 本片**不构成**「AI 审核已上线」，也不产生任何准确率/召回率/误放行率结论。
+5. **R34 返修（本提交）**：订正 §4 第 3 条把 ⑥ 说成"会因 `app.ts` 变红"的**错误可执行指导**（审查 B1），
+   把结构判据升级为 `moderation/**` **目录级**（两个真实装配点首次被覆盖，注入探针实测 **1 fail**，见 §4.1）；
+   同时收紧 N1（端口字面拒绝前导零）、N2（构造期深拷贝＋冻结）、N5（`JSON.stringify` 脱敏），
+   并订正 N3/N4/N6 的表述（见 §5 / §6）。**行为未变**：`real` 仍恒空端口表、零真实外呼。
 
 ## 1 已实现什么
 
@@ -30,12 +34,12 @@
 
 | 文件 | 内容 | 关键实现 |
 | --- | --- | --- |
-| `services/api/src/moderation/live-ports.ts` | 注入契约 + 冻结剖面 + 策略闸门 | 端点数/动作/版本/区域/上限逐字对齐 `tools/ai-config.mjs`；`assertModerationPolicyOpen` 只认 `=== true`；`ModerationLivePort` **编译器强制**扩展 `provider.ts` 的 `ModerationPortLike`（`live-ports.ts:301-313`） |
-| `services/api/src/moderation/live-tc3.ts` | TC3-HMAC-SHA256 签名（`tms`/`ims` 共用） | 只用 `node:crypto`；签名绑定**实际发出的那串字节**；端点审计只放行生产端点或 `http://127.0.0.1:<port>`（`live-tc3.ts:66-89`、`live-tc3.ts:139-165`） |
+| `services/api/src/moderation/live-ports.ts` | 注入契约 + 冻结剖面 + 策略闸门 | 端点数/动作/版本/区域/上限逐字对齐 `tools/ai-config.mjs`；`assertModerationPolicyOpen` 只认 `=== true`；`ModerationLivePort` **编译器强制**扩展 `provider.ts` 的 `ModerationPortLike`（`live-ports.ts:301-319`） |
+| `services/api/src/moderation/live-tc3.ts` | TC3-HMAC-SHA256 签名（`tms`/`ims` 共用） | 只用 `node:crypto`；签名绑定**实际发出的那串字节**；端点审计只放行生产端点或 `http://127.0.0.1:<1024..65535>`（端口**无前导零**）（`live-tc3.ts:71-89`、`live-tc3.ts:144-172`） |
 | `services/api/src/moderation/live-vendor.ts` | 供应商回报 → 本仓闭集的唯一映射点 | 只回 `label`/`reason_codes`/`summary` 三键；控制字段整条拒绝；HTTP/供应商码 → 失败类别（`live-vendor.ts:86-95`、`live-vendor.ts:204-229`） |
-| `services/api/src/moderation/tms-live-adapter.ts` | TMS 文本端口 | `createLiveModerationTextPort()`：build(本地) → sign → send 恰好一次 → 解析（`tms-live-adapter.ts:58-136`） |
-| `services/api/src/moderation/ims-live-adapter.ts` | IMS 图片端口 | `createLiveModerationImagePort()`：多图逐张各一次，任一 `Block` ⇒ `block`；2 MiB 上限（`ims-live-adapter.ts:55-147`） |
-| `tests/unit/moderation-live-adapter.test.mjs` | 全离线回归（29 条） | `node:http` 假服务器跑在 `127.0.0.1` 随机端口；签名用**独立第二实现**复算 |
+| `services/api/src/moderation/tms-live-adapter.ts` | TMS 文本端口 | `createLiveModerationTextPort()`：build(本地) → sign → send 恰好一次 → 解析（`tms-live-adapter.ts:60-152`） |
+| `services/api/src/moderation/ims-live-adapter.ts` | IMS 图片端口 | `createLiveModerationImagePort()`：多图逐张各一次，任一 `Block` ⇒ `block`；2 MiB 上限（`ims-live-adapter.ts:57-161`） |
+| `tests/unit/moderation-live-adapter.test.mjs` | 全离线回归（**34 条**；其中 5 条为 R34 返修新增：目录级结构 1 ＋ 构造期快照 3 ＋ 脱敏序列化 1） | `node:http` 假服务器跑在 `127.0.0.1` 随机端口；签名用**独立第二实现**复算 |
 
 ### 1.1 端口形状与回报闭集
 
@@ -60,6 +64,9 @@
   自由文本（空格/引号/换行/中文/链接）一个字都进不来，认不出的形态一律落
   `MODERATION_PROVIDER_LABEL_UNRECOGNIZED`。
 - `Score` 只进 `summary`（合流层只保留 summary 的**长度**），**不得**成为任何控制字段。
+- `summary` 会含**供应商原文**（`Label` 自由文本、`Score`、换行等），**仅受 200 字符长度限制**，未做出圈
+  字符清洗；合流层当前只消费 `summary_length`，故不外泄，但将来任何展示 `summary` 的消费者都必须把它
+  当作不可信文本（见 §6 第 4 条）。
 
 ### 1.3 失败映射（逐条对齐既有分类器，见 `live-vendor.ts:86-95`）
 
@@ -90,6 +97,14 @@ $ git grep -n --untracked -E "createLiveModerationTextPort|createLiveModerationI
 去注释后对 `app.ts`、`server.ts`、`moderation/index.ts` 逐个断言
 `tms-live-adapter` / `ims-live-adapter` / `live-tc3` / `live-vendor` / `createLiveModeration*` 零命中。
 这与 `tests/integration/tts-http.mjs` 的 S01（「app.ts（去注释）不 import 真实适配器端口构造器」）同一条纪律。
+
+**R34 返修起，判据升级为目录级规则**（原判据只硬编码三份文件，`provider.ts` / `service.ts` 不在其中，
+见 §4 第 3 条与 §4.1）：用例用 `readdir` **动态枚举** `services/api/src/moderation/**`（**不写死文件清单**，
+将来新增的文件自动进入扫描面），断言除本片 `live-*` 库件（`live-ports.ts` / `live-tc3.ts` / `live-vendor.ts` /
+`tms-live-adapter.ts` / `ims-live-adapter.ts`）外，任何文件出现 `createLiveModerationTextPort` /
+`createLiveModerationImagePort` / `tms-live-adapter` / `ims-live-adapter` 字样即**红**；
+`app.ts` / `server.ts` / `index.ts` 的既有断言保留。两个点名的装配点（`provider.ts` / `service.ts`）
+因此首次真正被机器判据覆盖。
 
 `git diff upstream/main --stat` 也证明本片**只新增文件**、不改任何既有文件（`provider.ts` 的 `real` 分支逐字节不变）。
 
@@ -126,10 +141,54 @@ $ git grep -n --untracked -E "createLiveModerationTextPort|createLiveModerationI
    在 `real` 下仍恒返回空端口表；② 更前一道是 `services/api/src/moderation/service.ts` 的
    `createModerationService()` —— 它在 `deps.executionMode === 'real'` 时**直接**返回
    `createFailClosedModerationService()`，**连端口解析都不会走到**。⇒ 真实接线必须**同时**改这两处，
-   属本片明确排除的范围；改完要重跑 `⑥ 结构回归` 那两条用例（它们会因 `app.ts` 出现 import 而变红，
-   这正是"接线发生了"的机器信号，届时应同步更新判据而不是删断言）。
+   属本片明确排除的范围。
+   **「接线发生了」的机器信号（R34 返修后已订正）**：⑥ 结构回归现在覆盖 `services/api/src/moderation/**`
+   **全目录**——只有本片 `live-*` 库件自身可以出现真实构造器/模块名，`provider.ts` / `service.ts` / `index.ts`
+   及任何未来新增的非 `live-*` 文件都必须 0 命中（§2）。**上一版**本条写的「改完重跑 ⑥ 会因 `app.ts`
+   出现 import 而变红」**不成立**：当时 ⑥ 只硬编码扫 `app.ts` / `server.ts` / `index.ts`，按本条点名的
+   两个装配点注入真实构造器 import 后全部门禁仍然全绿（审查报告 P9 / B1）。返修后的注入探针读数见 §4.1。
 4. **付费授权**：真实外呼需要用户**单独授权**（`AGENTS.md`：新增付费验证需用户单独授权）。
    ⇒ 在那之前，`real` 模式继续整域 503 `PROVIDER_UNAVAILABLE`，这是当前**正确**的行为。
+
+### 4.1 R34 返修：阻塞项的注入探针（A2，原始输出）
+
+目的：证明「接线发生了」的机器信号真的存在，而不是只覆盖 `app.ts` 一处。做法：在 §4 第 3 条点名的
+**两个装配点**各加**一行真实构造器 import**（并 `export const` 引用以免被当成未使用），跑 ⑥ 的新目录级用例。
+
+```
+$ git hash-object services/api/src/moderation/provider.ts services/api/src/moderation/service.ts
+# 注入前
+807e8bc82142fd1a93ba79f1413fcdcef5bc8789
+89e9f8566f4a6c4bf196a0135a417145c7064d83
+
+# 注入（各一行，均为真实构造器 import）：
+#   provider.ts: import { createLiveModerationTextPort } from './tms-live-adapter.ts';
+#   service.ts : import { createLiveModerationImagePort } from './ims-live-adapter.ts';
+$ git hash-object …（注入后）
+1d59edc89b97d8aac52737576f998974090fabac
+b73e5882d2232d657f451538dbabfcdec84ecd1d
+
+$ node --test --test-reporter=tap tests/unit/moderation-live-adapter.test.mjs
+not ok 26 - ⑥ 结构回归：moderation/** 目录级 —— 除本片 live-* 库件（含 tms/ims-live-adapter）外，真实适配器符号与模块名必须 0 命中
+    真实适配器只允许出现在本片 live-* 库件内部：provider.ts → createLiveModerationTextPort;
+    provider.ts → tms-live-adapter; service.ts → createLiveModerationImagePort; service.ts → ims-live-adapter
+# tests 34
+# pass 33
+# fail 1
+EXIT=1
+$ npx tsc -p services/api/tsconfig.json --noEmit ⇒ exit 0（注入后的接线形态类型合法，红的是结构判据）
+
+$ git checkout -- services/api/src/moderation/provider.ts services/api/src/moderation/service.ts
+$ git hash-object …（还原后）
+807e8bc82142fd1a93ba79f1413fcdcef5bc8789
+89e9f8566f4a6c4bf196a0135a417145c7064d83   ⇒ 与注入前逐字一致
+$ git grep -n "__PROBE_A2__" -- services/api/src/moderation   ⇒ 零命中（exit 1）
+$ git status --short ⇒ 6 行（仅本片本轮改动；注入探针自身零残留）
+```
+
+> 说明：注入探针运行时的 `git status` 行数 = **8**（本轮 6 处未提交改动：4 个实现文件 ＋ 1 个用例文件
+> ＋ 证据页，另加 2 个被注入的装配点）；`git checkout --` 还原后回到 **6**，两个文件 blob 与注入前
+> 逐字一致（`807e8bc8…` / `89e9f856…`），`__PROBE_A2__` 标记零命中。
 
 ## 5 本片实测读数（可复现命令）
 
@@ -138,10 +197,10 @@ Node `v24.16.0`，工作树 `wt-r34-i14-adapter`，`npm ci --prefer-offline --no
 
 | 命令 | 读数 |
 | --- | --- |
-| `node --test tests/unit/moderation-live-adapter.test.mjs` | tests **29** / pass **29** / fail **0**（exit 0） |
+| `node --test tests/unit/moderation-live-adapter.test.mjs` | tests **34** / pass **34** / fail **0**（exit 0） |
 | `node --test tests/unit/community-moderation-gate-wiring.test.mjs tests/unit/community-moderation-publish.test.mjs` | tests **16** / pass **16** / fail **0**（exit 0） |
-| `node --test tests/moderation/model-ports.test.mjs` | tests **39** / pass **39** / fail **0**（exit 0）——含"未列出的新文件命中仍判失败"的白名单扫描 |
-| `node --test tests/unit/retryable-fallback-inventory.test.mjs tests/unit/runtime-strings-truth.test.mjs tests/unit/gy-i22-identity-headers.test.mjs tests/unit/error-retryable-static-guard.test.mjs` | tests **16** / pass **16** / fail **0**（exit 0）——四份**全 `services/api/src` 扫描**的静态守卫 |
+| `node --test` 枚举 `tests/moderation/*.test.mjs`（**20 个文件**） | tests **364** / pass **364** / fail **0**（exit 0）；单跑 `model-ports.test.mjs` = **39 / 39**（含"未列出的新文件命中仍判失败"的白名单扫描） |
+| `node --test tests/unit/retryable-fallback-inventory.test.mjs tests/unit/runtime-strings-truth.test.mjs tests/unit/gy-i22-identity-headers.test.mjs tests/unit/error-retryable-static-guard.test.mjs` | tests **16** / pass **16** / fail **0**（exit 0）——**三份全 `services/api/src` 扫描**（`retryable-fallback-inventory` / `runtime-strings-truth` / `gy-i22-identity-headers`）＋ **一份范围不含 `moderation`**（`error-retryable-static-guard` 的 `SCOPE_DIRS = ['db','privacy','conversations','admin/ops','ocr','speech','recognitions','media']`，不含 `moderation` ⇒ 对本片零覆盖） |
 | `npx tsc -p services/api/tsconfig.json --noEmit` | exit **0** |
 | `node tools/verify-doc-anchors.mjs --strict` | exit **0**（本文新增的行号锚点全部落在实存文件与合法区间内） |
 | `node tools/verify-contract-status.mjs` | PASS（契约台账未被本片触碰） |
@@ -150,8 +209,10 @@ Node `v24.16.0`，工作树 `wt-r34-i14-adapter`，`npm ci --prefer-offline --no
 
 1. **为什么端点审计额外允许 `http://127.0.0.1:<port>`**：离线用例要把请求真的打到本地假服务器，
    才能证明"签名绑定的是实际发出的那串字节"。回环目的地**不可能**把待审内容外泄给第三方，
-   因此放行它在安全性上是中性的；形态被钉死成唯一一种字面（`127.0.0.1` + 端口 1024..65535 + 无路径/查询）。
-   生产端点仍然**逐字**等于 `tools/ai-config.mjs` 的值，差一个字符即拒绝。
+   因此放行它在安全性上是中性的；形态被钉死成**唯一主机＋唯一端口区间**（`127.0.0.1` + 端口
+   **1024..65535** + 无路径/查询/片段），且**拒绝任何前导零写法**（`01024` / `041234` 均 REJECT；
+   正则端口段以 `[1-9]` 开头，不靠 `Number()` 归一）。生产端点仍然**逐字**等于
+   `tools/ai-config.mjs` 的值，差一个字符即拒绝。
 2. **为什么不复用 `services/api/src/tts/tc3.ts` 的签名函数**：那份实现从端点主机名首段取 TC3 service，
    无法表达回环端点（`127.0.0.1` 的首段是 `127`）。本片把 service 与 host 显式分开，生产口径与它逐字节一致。
    ⛔ 本片**没有**去合并/抽取既有 asr/ocr 的重复签名（派单明确禁止）。
@@ -159,6 +220,15 @@ Node `v24.16.0`，工作树 `wt-r34-i14-adapter`，`npm ci --prefer-offline --no
    **逐文件白名单**限制 `moderation/**` 里哪些文件可以引用模型合流符号，并写明"该目录里未列出的新文件命中仍判失败"。
    本片**不申请扩大那份白名单**（放宽门禁不是本片该做的事），改为留局部副本 + 在用例里**逐项断言**它与上游相等——
    漂移会立刻变红。
-4. **供应商回报也过控制字段扫描**：供应商回体是外部不可信输入，自带角色/来源/可见性等字段时**整条拒绝**
-   （不是静默忽略）。扫描复用 `nonbypass.ts` 的既有实现，因此限额语义一致（**未检查 ≠ 干净**）。
+4. **供应商回报也过控制字段扫描**：供应商回体是外部不可信输入，**`Response` 内**自带角色/来源/可见性等
+   字段时**整条拒绝**（不是静默忽略）。**边界如实说明**：`Response` **之外**（根级）的同名字段**不触发
+   拒绝**，也不会传播——返回值只从 `Response` 白名单取 3 个标量**重建**，根级字段根本没有进入结果的路径。
+   扫描复用 `nonbypass.ts` 的既有实现，因此限额语义一致（**未检查 ≠ 干净**）。
    送审文本被限在 200 码点以内，正是为了让正常回报的键数远低于该扫描上界。
+5. **构造期快照（深拷贝＋冻结）**：`profile` / `credentials` 在构造时**复制并冻结**，端口只读这份拷贝；
+   构造之后改写调用方对象里的 `bizType` / `secretKey` / `timeoutMs` **不再影响**已构造端口的线上字节、
+   签名与超时，`port.provider.biz_type` / `timeout_ms` 也从拷贝取。三条用例分别钉住这三项（N2）。
+6. **`JSON.stringify(port)` 已脱敏**：端口实现 `toJSON()`，只返回 `kind` / `model_version` / `provider` /
+   脱敏的 `seams`（`credentials: { kind: 'redacted' }`）/ 方法标记；`secretId` / `secretKey` /
+   `sessionToken` 一个都不出现（用例断言序列化结果不含合成密钥与 SecretId）。端口对象自身仍按字段
+   持有凭据（签名需要），只是不参与序列化（N5）。

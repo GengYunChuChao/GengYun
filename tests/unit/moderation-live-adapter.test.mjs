@@ -21,7 +21,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -882,6 +882,56 @@ test('⑥ 结构回归：app.ts / server.ts 与统一出口都不 import 本片�
   assert.equal(barrel.includes('live-'), false, 'moderation/index.ts 不得 re-export 真实适配器');
 });
 
+const MODERATION_SRC_DIR = join(repoRoot, 'services/api/src/moderation');
+
+/** 动态枚举 `services/api/src/moderation/**`：**不写死文件清单**，将来新增的文件同样进扫描面。 */
+function listModerationSourceFiles(dir = MODERATION_SRC_DIR, prefix = '') {
+  const files = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
+    if (entry.isDirectory()) files.push(...listModerationSourceFiles(join(dir, entry.name), relative));
+    else if (entry.isFile()) files.push(relative);
+  }
+  return files;
+}
+
+test('⑥ 结构回归：moderation/** 目录级 —— 除本片 live-* 库件（含 tms/ims-live-adapter）外，真实适配器符号与模块名必须 0 命中', () => {
+  const files = listModerationSourceFiles();
+  // 反空转：枚举必须真的覆盖目录内容，且证据页点名的两个装配点必须在扫描面里。
+  assert.ok(files.length >= 10, `扫描面异常：只枚举到 ${files.length} 个文件`);
+  for (const required of ['provider.ts', 'service.ts', 'index.ts', 'types.ts', 'decisions.ts', 'nonbypass.ts']) {
+    assert.equal(files.includes(required), true, `扫描面缺失 ${required}（枚举失效会让本用例假绿）`);
+  }
+  // 允许出现这些字样的文件只有本片的 live-* 库件本身：`live-ports/live-tc3/live-vendor`
+  // 与两个适配器 `tms-live-adapter` / `ims-live-adapter`（白名单逐名，未来新增的 `*-live-adapter`
+  // 也必须显式登记，不能因为命名相似就默认放行）。
+  const isLiveAdapterFile = (relative) => {
+    const name = relative.slice(relative.lastIndexOf('/') + 1);
+    return /^live-.+\.ts$/.test(name) || name === 'tms-live-adapter.ts' || name === 'ims-live-adapter.ts';
+  };
+  const liveFiles = files.filter(isLiveAdapterFile);
+  assert.ok(liveFiles.length >= 2, `至少应枚举到 live-*.ts，实际 ${liveFiles.join(',')}`);
+
+  // 模块名与构造器名：出现在 `provider.ts` / `service.ts` / `index.ts` / 任何未来新增的非 live-* 文件里
+  // 都意味着"真实适配器已经能被装配路径拿到" ⇒ 必须红。
+  const symbols = [
+    'createLiveModerationTextPort',
+    'createLiveModerationImagePort',
+    'tms-live-adapter',
+    'ims-live-adapter',
+  ];
+  const offenders = [];
+  for (const relative of files) {
+    if (isLiveAdapterFile(relative)) continue;
+    const source = readFileSync(join(MODERATION_SRC_DIR, relative), 'utf8');
+    for (const symbol of symbols) {
+      if (source.includes(symbol)) offenders.push(`${relative} → ${symbol}`);
+    }
+  }
+  assert.deepEqual(offenders, [], `真实适配器只允许出现在本片 live-* 库件内部：${offenders.join('; ')}`);
+  assert.ok(files.length > liveFiles.length, '扫描面必须包含 live-* 之外的文件');
+});
+
 // ===========================================================================
 // 9. ⑦ 策略闸门：构造硬拒
 // ===========================================================================
@@ -964,7 +1014,7 @@ test('⑦ 闸门：配置/凭据/端点/字节来源任一不合法同样构造�
   );
 });
 
-test('⑦ 端点审计：生产端点逐字放行、loopback 只认那一种字面形态', () => {
+test('⑦ 端点审计：生产端点逐字放行、loopback 只认 127.0.0.1 + 1024..65535（端口无前导零）', () => {
   const production = resolveModerationVendorTarget(MODERATION_VENDOR_ENDPOINTS.tms, 'tms');
   assert.deepEqual(production, {
     endpoint: MODERATION_VENDOR_ENDPOINTS.tms,
@@ -975,12 +1025,19 @@ test('⑦ 端点审计：生产端点逐字放行、loopback 只认那一种字�
   const loopback = resolveModerationVendorTarget('http://127.0.0.1:41234', 'tms');
   assert.equal(loopback.kind, 'loopback');
   assert.equal(loopback.host, '127.0.0.1:41234');
+  // 区间两端仍放行（收紧只针对字面形态，不是缩小合法端口区间）。
+  for (const endpoint of ['http://127.0.0.1:1024', 'http://127.0.0.1:65535']) {
+    assert.equal(resolveModerationVendorTarget(endpoint, 'tms').kind, 'loopback', `应放行：${endpoint}`);
+  }
   for (const endpoint of [
     'https://tms.tencentcloudapi.com/',
     'http://127.0.0.1:80',
     'https://127.0.0.1:41234',
     'http://0.0.0.0:41234',
     'http://[::1]:41234',
+    // N1：`Number('01024') === 1024` 会把前导零写法放进来 ⇒ 字面必须钉死（端口段以 [1-9] 开头）。
+    'http://127.0.0.1:01024',
+    'http://127.0.0.1:041234',
     '',
     null,
   ]) {
@@ -1010,4 +1067,84 @@ test('⑦ 文本本地闸门：空/超长/非字符串/串端口 ⇒ payload_inv
   } finally {
     await server.close();
   }
+});
+
+// ===========================================================================
+// 10. 构造期快照（N2）与脱敏序列化（N5）
+// ===========================================================================
+
+test('N2 快照：构造后改写 profile.bizType 不影响线上 BizType 与端口自述', async () => {
+  const server = await startFakeServer(() => vendorPass());
+  try {
+    const profile = { endpoint: server.base, ...TEXT_PROFILE_BASE };
+    const port = createLiveModerationTextPort({ policy: POLICY, profile, credentials: { ...CREDENTIALS } });
+    profile.bizType = 'mutated BAD/biz';
+    await port.evaluate(tmsRequest());
+    assert.equal(JSON.parse(server.state.requests[0].body).BizType, TEXT_PROFILE_BASE.bizType);
+    assert.equal(port.provider.biz_type, TEXT_PROFILE_BASE.bizType);
+    assert.equal(Object.isFrozen(port.provider), true);
+    assert.equal(Object.isFrozen(profile), false, '快照是拷贝：不得反过来冻结调用方对象');
+  } finally {
+    await server.close();
+  }
+});
+
+test('N2 快照：构造后改写 credentials.secretKey 不改签名（端口持有的是拷贝）', async () => {
+  const server = await startFakeServer(() => vendorPass());
+  try {
+    const credentials = { ...CREDENTIALS };
+    const port = createLiveModerationTextPort({
+      policy: POLICY,
+      profile: { endpoint: server.base, ...TEXT_PROFILE_BASE },
+      credentials,
+      now: () => 1_700_000_000_000,
+    });
+    await port.evaluate(tmsRequest());
+    credentials.secretKey = 'mutated-secret-key-must-not-sign';
+    await port.evaluate(tmsRequest());
+    assert.equal(server.state.requests.length, 2);
+    assert.equal(server.state.requests[1].body, server.state.requests[0].body);
+    assert.equal(server.state.requests[1].headers.authorization, server.state.requests[0].headers.authorization);
+    assert.equal(port.seams.credentials.secretKey, CREDENTIALS.secretKey);
+    assert.equal(Object.isFrozen(port.seams.credentials), true);
+    assert.equal(Object.isFrozen(credentials), false);
+  } finally {
+    await server.close();
+  }
+});
+
+test('N2 快照：构造后改写 profile.timeoutMs 不会缩短已构造端口的超时', async () => {
+  let captured = null;
+  const fetchImpl = async (_url, init) => {
+    captured = init;
+    return new Response(
+      JSON.stringify({ Response: { RequestId: 'req-1', Suggestion: 'Pass', Label: 'Normal', Score: 99 } }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  };
+  const profile = { endpoint: 'http://127.0.0.1:41234', ...TEXT_PROFILE_BASE };
+  const port = createLiveModerationTextPort({ policy: POLICY, profile, credentials: { ...CREDENTIALS }, fetchImpl });
+  profile.timeoutMs = 1;
+  await port.evaluate(tmsRequest());
+  assert.equal(port.provider.timeout_ms, TEXT_PROFILE_BASE.timeoutMs);
+  await new Promise((done) => setTimeout(done, 50));
+  assert.equal(captured.signal.aborted, false, '超时信号仍是构造期快照的 1000ms，不应在 1ms 后中止');
+});
+
+test('N5 脱敏序列化：JSON.stringify(port) 不含 SecretKey/SecretId，凭据只留 redacted 标记', () => {
+  const port = createLiveModerationTextPort({
+    policy: POLICY,
+    profile: { endpoint: 'http://127.0.0.1:41234', ...TEXT_PROFILE_BASE },
+    credentials: CREDENTIALS,
+  });
+  const text = JSON.stringify(port);
+  assert.equal(text.includes(CREDENTIALS.secretKey), false, 'SecretKey 不得出现在序列化结果里');
+  assert.equal(text.includes(CREDENTIALS.secretId), false, 'SecretId 也不得出现在序列化结果里');
+  const view = JSON.parse(text);
+  assert.equal(view.seams.credentials.kind, 'redacted');
+  assert.equal(view.kind, 'tms');
+  assert.equal(view.provider.biz_type, TEXT_PROFILE_BASE.bizType);
+  assert.equal(view.seams.liveGate.source, POLICY.source);
+  // 端口自己仍然按字段持有凭据（签名需要），只是不参与序列化。
+  assert.equal(port.seams.credentials.secretKey, CREDENTIALS.secretKey);
 });
