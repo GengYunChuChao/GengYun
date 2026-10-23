@@ -77,7 +77,8 @@ Page({
       self.setData({
         busy: false, loading: false, items: items, total: items.length,
         nextCursor: result.nextCursor, mode: result.mode,
-        message: result.items.length ? '' : '尚无收藏。'
+        // 空态文案看**合并后**的列表：翻页拿到空页时列表里仍有收藏，不能说"尚无收藏"。
+        message: items.length ? '' : '尚无收藏。'
       })
       self.reconcileTargets()
     }).catch(function (error) {
