@@ -85,7 +85,10 @@ try {
   const flags=(await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0]; assert.ok(Object.values(flags).every(v=>v===false));
   for(const sql of ["UPDATE consent_policies SET enabled=true","UPDATE consent_policies SET source_kind='verified'","INSERT INTO consent_policies(purpose) VALUES('recording')","DELETE FROM consent_policies","UPDATE recipients SET deletion_verified=true","UPDATE users SET state='deleted'",'SELECT object_ref_cipher FROM media','CREATE TEMP TABLE forbidden(x int)','CREATE ROLE forbidden']) await assert.rejects(pool.query(sql),e=>e.code==='42501');
   say('separate grant LOGIN cannot publish authority, alter proofs/recipients/accounts, read media secrets or DDL');
-  const config={...loadConfig({APP_EXECUTION_MODE:'stub',LOG_LEVEL:'silent'}),executionMode:'real',sessionSigningKey:key};
+  // This harness drives 21+ logins from loopback inside one minute; the default per-IP auth
+  // limit (20/60s) would shadow the consent assertions with 429 RATE_LIMITED. Whitelist the
+  // harness peer only: the limiter path stays enabled and is covered by tests/unit/rate-limit.test.mjs.
+  const config={...loadConfig({APP_EXECUTION_MODE:'stub',LOG_LEVEL:'silent',RATE_LIMIT_ALLOWLIST_IPS:'127.0.0.1'}),executionMode:'real',sessionSigningKey:key};
   const provider={exchange:async code=>({subjectLookupHex:subject(code)})};
   app=buildApp({config,pool,wechat:provider,consentGrantTestOptions:{allowSyntheticGrantPolicy:true}});
   defaultApp=buildApp({config,pool,wechat:provider});

@@ -524,6 +524,13 @@ export function loadConfig(env: Env = process.env): AppConfig {
     }
   }
 
+  // 限流配置（GY-R34 切片）：缺省值即默认策略；给了就必须能用——非法值并入 issues，
+  // 与其它字段在同一处一次性抛出（⛔ 不在装配层静默退回默认值）。
+  const rateLimit = readRateLimitConfig(env, issues);
+  // 反代信任度（GY-R34 返修）：决定 `request.ip` 是「真实客户端」还是「网关地址」，
+  // 而认证端点的限流键就是它（见 `rate-limit/limiter.ts`）。同样并入 issues 一次性抛出。
+  const trustProxy = readTrustProxyConfig(env, issues);
+
   if (issues.length > 0) {
     throw new ConfigError(issues);
   }
@@ -545,6 +552,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     objectStorage,
     mediaObjectRefKey,
     chatProvider,
+    rateLimit,
+    trustProxy,
   };
 }
 
@@ -833,4 +842,268 @@ export interface AiProvidersConfig {
   readonly tts: TtsProviderConfig | null;
   readonly ocr: OcrProviderConfig | null;
   readonly asr: AsrProviderConfig | null;
+}
+
+// ===========================================================================
+// GY-R34 · API 层限流配置（认证端点按 IP、写接口按用户）
+//
+// 为什么放在 `loadConfig` **之后**（按追加而非插入）：`docs/architecture/contract-status.json`
+// 把 `loadConfig` 的行号区间当作证据锚点（容差 ±2 行），理由与上方 AI 真实提供者区块一致；
+// 类型与解析函数在 TS 里可以先使用后声明（函数声明提升、接口纯类型），因此追加即可，锚点不动。
+//
+// 口径唯一事实源＝本区块的 `RATE_LIMIT_DEFAULTS`：`services/api/src/rate-limit/limiter.ts`
+// 的规则表与 `docs/architecture/rate-limit-policy.md` 的表格都照它抄写，⛔ 不在别处另立数值。
+// ===========================================================================
+
+/**
+ * `AppConfig.rateLimit` 用**接口声明合并**追加，而不是插进上方 `AppConfig` 本体：
+ * 本文件的行号是 `docs/**` 里手写锚点的指向对象（如 `config.ts:237` 的 `asHttpsChatEndpoint`），
+ * 在接口里加字段会把它们整片推走。合并后与「直接在原接口里写一行字段」类型等价，
+ * 手工构造的精简 `AppConfig` 字面量（健康检查等既有单测）仍可省略它。
+ */
+export interface AppConfig {
+  /**
+   * API 层限流（认证端点按客户端 IP、写接口按用户）。
+   *
+   * 可省略 ⇒ 视为「按默认策略限流」（`RATE_LIMIT_DEFAULTS`）；`loadConfig()` 永远给出该字段。
+   * **不是** real 模式的启动必填项：默认值即可上线，调参只走 `RATE_LIMIT_*` 环境变量。
+   */
+  readonly rateLimit?: RateLimitConfig;
+
+  /**
+   * 反代信任度（Fastify `trustProxy` 的取值面），来自 `API_TRUST_PROXY`。
+   *
+   * 决定 `request.ip` 取的是 socket 对端地址还是 `X-Forwarded-For` 里的客户端地址：
+   * - `false`（默认）：不信任任何代理 ⇒ `request.ip` = socket 地址。直连/本地开发口径。
+   * - `true`：信任整条链 ⇒ `request.ip` = `X-Forwarded-For` **最左**一项。
+   * - 非负整数 `n`：只信任最近 `n` 跳（`0` 与 `false` 等价；`1` = 恰好一层网关）。
+   *
+   * 为什么是 `API_*` 前缀而不是 `RATE_LIMIT_*`：它是**服务器级**的代理语义（与 `API_HOST`/
+   * `API_PORT` 同类），`request.ip` 除限流键外还进请求日志的 `remoteAddress`
+   * （`app.ts` 的 `requestLogFields`）。当前**唯一**的业务消费者是限流器的 IP 键。
+   *
+   * 可省略 ⇒ 视为 `false`（直连）；`loadConfig()` 永远给出该字段。
+   */
+  readonly trustProxy?: TrustProxyConfig;
+}
+
+/** 一个限流窗口：`windowMs` 内最多放行 `limit` 次。 */
+export interface RateLimitWindowConfig {
+  readonly limit: number;
+  readonly windowMs: number;
+}
+
+/** API 层限流配置（全部来自 `RATE_LIMIT_*`，缺省值见 `RATE_LIMIT_DEFAULTS`）。 */
+export interface RateLimitConfig {
+  /** 总开关；`false` ⇒ 中间件直通（不计数、不写头、不产生 429）。 */
+  readonly enabled: boolean;
+  /** `POST /api/v1/auth/*`、`POST /api/v1/admin/auth/*`：按客户端 IP 计数。 */
+  readonly authIp: RateLimitWindowConfig;
+  /** 其余写方法（POST/PUT/PATCH/DELETE）：按服务端解析出的用户 id 计数。 */
+  readonly writeUser: RateLimitWindowConfig;
+  /** 豁免路径前缀（默认只豁免 `/health`：健康检查不应因同机其它流量被判超限）。 */
+  readonly exemptPaths: readonly string[];
+  /** 豁免 IP（精确匹配；给运维探针/压测机留口子，默认空）。 */
+  readonly allowlistIps: readonly string[];
+  /** 进程内计数器的 key 上限（超出后淘汰最久未用的 key，见 `rate-limit/store.ts`）。 */
+  readonly maxKeys: number;
+}
+
+/** 各数值字段的允许区间：超出即 `INVALID_VALUE`（⛔ 不静默夹取）。 */
+export const RATE_LIMIT_LIMIT_RANGE = [1, 100_000] as const;
+export const RATE_LIMIT_WINDOW_MS_RANGE = [100, 3_600_000] as const;
+export const RATE_LIMIT_MAX_KEYS_RANGE = [1, 1_000_000] as const;
+
+/**
+ * 默认策略（规则表与文档都从它派生）。
+ *
+ * 取值依据（完整推导与调参见 `docs/architecture/rate-limit-policy.md`）：
+ * - `POST /auth/wechat` 一次调用对应一次小程序登录，正常人一分钟远到不了 20 次；
+ *   20 次/分钟足以挡住换 code 刷会话与撞库，又不会卡住弱网重试。
+ * - 写接口 120 次/分钟 ≈ 2 次/秒，是本仓界面操作节奏（一次点按＝一次写）的上限带余量，
+ *   同时把「脚本狂刷社区/留言」压到人工量级。
+ * - 两侧窗口都取 60 秒：与 `Retry-After` 的整数秒粒度一致，运维只需记一个数。
+ */
+export const RATE_LIMIT_DEFAULTS: RateLimitConfig = Object.freeze({
+  enabled: true,
+  authIp: Object.freeze({ limit: 20, windowMs: 60_000 }),
+  writeUser: Object.freeze({ limit: 120, windowMs: 60_000 }),
+  exemptPaths: Object.freeze(['/health']),
+  allowlistIps: Object.freeze([]),
+  maxKeys: 5_000,
+});
+
+/** 环境变量名（本区块唯一读取面）。 */
+export const RATE_LIMIT_ENV = Object.freeze({
+  enabled: 'RATE_LIMIT_ENABLED',
+  authLimit: 'RATE_LIMIT_AUTH_LIMIT',
+  authWindowMs: 'RATE_LIMIT_AUTH_WINDOW_MS',
+  writeLimit: 'RATE_LIMIT_WRITE_LIMIT',
+  writeWindowMs: 'RATE_LIMIT_WRITE_WINDOW_MS',
+  exemptPaths: 'RATE_LIMIT_EXEMPT_PATHS',
+  allowlistIps: 'RATE_LIMIT_ALLOWLIST_IPS',
+  maxKeys: 'RATE_LIMIT_MAX_KEYS',
+});
+
+function readRateLimitBoolean(env: Env, field: string, fallback: boolean, issues: ConfigIssue[]): boolean {
+  const raw = trimmed(env, field);
+  if (raw === undefined) return fallback;
+  const lowered = raw.toLowerCase();
+  if (lowered === 'true' || lowered === '1') return true;
+  if (lowered === 'false' || lowered === '0') return false;
+  issues.push({ field, code: 'INVALID_VALUE', reason: '必须是 true/false（或 1/0）' });
+  return fallback;
+}
+
+function readRateLimitInteger(
+  env: Env,
+  field: string,
+  fallback: number,
+  range: readonly [number, number],
+  unit: string,
+  issues: ConfigIssue[],
+): number {
+  const raw = trimmed(env, field);
+  if (raw === undefined) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < range[0] || parsed > range[1]) {
+    issues.push({ field, code: 'INVALID_VALUE', reason: `必须是 ${range[0]}..${range[1]} 的整数${unit}` });
+    return fallback;
+  }
+  return parsed;
+}
+
+/**
+ * 列表型变量用逗号分隔。
+ *
+ * 与 `trimmed()` 的差别：这里看**原始值**，因此显式空串（`RATE_LIMIT_EXEMPT_PATHS=`）
+ * 表示「清空默认豁免」，能与「未配置」区分开；未配置才回落到 `fallback`。
+ */
+function readRateLimitList(env: Env, field: string, fallback: readonly string[]): string[] {
+  const raw = env[field];
+  if (raw === undefined) return [...fallback];
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item !== '');
+}
+
+/** 读 `RATE_LIMIT_*`：缺省即默认策略；非法值只记 issue，由 `loadConfig` 统一抛 `ConfigError`。 */
+export function readRateLimitConfig(env: Env, issues: ConfigIssue[]): RateLimitConfig {
+  const enabled = readRateLimitBoolean(env, RATE_LIMIT_ENV.enabled, RATE_LIMIT_DEFAULTS.enabled, issues);
+
+  const authIp = {
+    limit: readRateLimitInteger(env, RATE_LIMIT_ENV.authLimit, RATE_LIMIT_DEFAULTS.authIp.limit, RATE_LIMIT_LIMIT_RANGE, '', issues),
+    windowMs: readRateLimitInteger(
+      env,
+      RATE_LIMIT_ENV.authWindowMs,
+      RATE_LIMIT_DEFAULTS.authIp.windowMs,
+      RATE_LIMIT_WINDOW_MS_RANGE,
+      '（毫秒）',
+      issues,
+    ),
+  };
+
+  const writeUser = {
+    limit: readRateLimitInteger(env, RATE_LIMIT_ENV.writeLimit, RATE_LIMIT_DEFAULTS.writeUser.limit, RATE_LIMIT_LIMIT_RANGE, '', issues),
+    windowMs: readRateLimitInteger(
+      env,
+      RATE_LIMIT_ENV.writeWindowMs,
+      RATE_LIMIT_DEFAULTS.writeUser.windowMs,
+      RATE_LIMIT_WINDOW_MS_RANGE,
+      '（毫秒）',
+      issues,
+    ),
+  };
+
+  const exemptPaths: string[] = [];
+  for (const candidate of readRateLimitList(env, RATE_LIMIT_ENV.exemptPaths, RATE_LIMIT_DEFAULTS.exemptPaths)) {
+    // 只接受以 `/` 开头的纯路径：带查询串/空格的写法在 `onRequest` 里永远匹配不上，属配置错误。
+    if (!candidate.startsWith('/') || /[\s?#]/.test(candidate)) {
+      issues.push({ field: RATE_LIMIT_ENV.exemptPaths, code: 'INVALID_VALUE', reason: `「${candidate}」不是以 / 开头的纯路径` });
+      continue;
+    }
+    exemptPaths.push(candidate);
+  }
+
+  const allowlistIps: string[] = [];
+  for (const candidate of readRateLimitList(env, RATE_LIMIT_ENV.allowlistIps, RATE_LIMIT_DEFAULTS.allowlistIps)) {
+    // 只做形状校验（IPv4 / IPv6 字面量），不做网段解析：本字段是精确匹配的运维口子。
+    if (!/^[0-9a-fA-F:.]+$/.test(candidate)) {
+      issues.push({ field: RATE_LIMIT_ENV.allowlistIps, code: 'INVALID_VALUE', reason: `「${candidate}」不是 IP 字面量` });
+      continue;
+    }
+    allowlistIps.push(candidate);
+  }
+
+  const maxKeys = readRateLimitInteger(env, RATE_LIMIT_ENV.maxKeys, RATE_LIMIT_DEFAULTS.maxKeys, RATE_LIMIT_MAX_KEYS_RANGE, '', issues);
+
+  return { enabled, authIp, writeUser, exemptPaths, allowlistIps, maxKeys };
+}
+
+// ===========================================================================
+// GY-R34（返修）· 代理与客户端 IP 语义：`API_TRUST_PROXY`
+//
+// 为什么必须有它：部署目标是微信云托管（容器在平台网关后）。不声明信任代理时，Fastify 的
+// `request.ip` 是**网关地址**，于是 `auth-ip` 规则（20 次/分钟）的键对全站所有用户都是同一个
+// ⇒ 变成「全站共享的登录额度」，一波流量就能让所有人登录 429。反过来，开了 `trustProxy`
+// 却没有可信网关，客户端可以自带 `X-Forwarded-For` 伪造 IP ⇒ 换一个头就换一份额度（限流被绕过）。
+// 两种错法的取舍写在 `docs/architecture/rate-limit-policy.md` 的「代理与 IP 语义」段。
+//
+// 为什么放在这里（`loadConfig` 之后追加）：与上方 R34 限流区块同一理由——`docs/**` 的手写
+// 行号锚点指向 `config.ts` 前部，追加式实现不动既有锚点。合并 `AppConfig` 的字段见上方接口。
+// ===========================================================================
+
+/**
+ * `trustProxy` 的取值面：`false` / `true` / 非负整数跳数。
+ *
+ * 类型与 Fastify `FastifyServerOptions.trustProxy` 的可赋值子集一致（字符串/CIDR/谓词形态
+ * 本仓不暴露：它们需要运维手写网段，属外置网关的职责，且容易被读成「any」）。
+ */
+export type TrustProxyConfig = boolean | number;
+
+/** 跳数上限：比 32 更深的代理链属配置错误（每家网关最多几跳），⛔ 不静默夹取。 */
+export const TRUST_PROXY_HOPS_RANGE = [0, 32] as const;
+
+/** `API_TRUST_PROXY`（本区块唯一读取面）。 */
+export const TRUST_PROXY_ENV = 'API_TRUST_PROXY';
+
+/**
+ * 读 `API_TRUST_PROXY`。
+ *
+ * 取值：`true` / `false`（大小写不敏感）、或 `0..32` 的非负整数（跳数）。
+ * **`1`/`0` 按跳数解释，不按布尔解释**——与 `RATE_LIMIT_ENABLED` 等布尔变量不同：这里是
+ * 三态量，`1` = 「只信任最近一跳」，`0` = 「一跳也不信任」（等价于 `false`）。想表达
+ * 「信任整条链」必须写 `true`。
+ *
+ * 非法值（`yes`、`-1`、`2.5`、`>32` 的跳数）⇒ 记 `INVALID_VALUE` 并**保持默认 `false`**，
+ * 由 `loadConfig` 统一抛 `ConfigError`（⛔ 不夹取成合法值、不静默降级）。
+ * 未配置与空串（`API_TRUST_PROXY=`，平台模板的常见形态）都等同于未配置 ⇒ `false`。
+ */
+export function readTrustProxyConfig(env: Env, issues: ConfigIssue[]): TrustProxyConfig {
+  const raw = trimmed(env, TRUST_PROXY_ENV);
+  if (raw === undefined) return false;
+
+  const lowered = raw.toLowerCase();
+  if (lowered === 'true') return true;
+  if (lowered === 'false') return false;
+
+  // 非负整数跳数。`Number.isInteger` 会放过 `1e3`/`0x10` 之类写法，因此先按十进制字面量卡形状。
+  if (/^\d+$/.test(lowered)) {
+    const hops = Number(lowered);
+    if (hops >= TRUST_PROXY_HOPS_RANGE[0] && hops <= TRUST_PROXY_HOPS_RANGE[1]) return hops;
+    issues.push({
+      field: TRUST_PROXY_ENV,
+      code: 'INVALID_VALUE',
+      reason: `跳数必须是 ${TRUST_PROXY_HOPS_RANGE[0]}..${TRUST_PROXY_HOPS_RANGE[1]} 的整数`,
+    });
+    return false;
+  }
+
+  issues.push({
+    field: TRUST_PROXY_ENV,
+    code: 'INVALID_VALUE',
+    reason: '必须是 true/false 或非负整数跳数（例如 true、false、1、2）',
+  });
+  return false;
 }

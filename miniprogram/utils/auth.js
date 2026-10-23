@@ -210,9 +210,90 @@ function newIdempotencyKey() {
   return 'gy-' + Date.now().toString(36) + '-' + rand
 }
 
+/** 等待秒数的上限：服务端限流窗口最长 1 小时，更长的值一律按 3600 处理。 */
+const RETRY_AFTER_MAX_SECONDS = 3600
+
+/** 候选值 → 正整数秒：非法/≤0 ⇒ null；小数向上取整；再截断到上限。 */
+function positiveSeconds(value) {
+  const seconds = Number(value)
+  if (!Number.isFinite(seconds) || seconds <= 0) return null
+  return Math.min(RETRY_AFTER_MAX_SECONDS, Math.ceil(seconds))
+}
+
+/**
+ * 429 的等待秒数（纯函数，不读全局状态）：`headers`（响应头，两种大小写都认）×
+ * `body`（响应体）× `now`（毫秒时间戳）→ 正整数秒；取不到可解释的值 ⇒ null。
+ *
+ * 取值顺序与 `retryAfterText` 同一套：`retry-after` 秒数 → `retry-after` 的 HTTP 日期 →
+ * body 里的 `retry_after_seconds`/`retryAfter` → body 文案里的「N 秒」→ null。
+ * **头优先**：头里的秒数与限流器算出的窗口同源，body 文案可能来自别的路径或已经过期。
+ * 非法/≤0 一律 null（不拿 0 秒去「冷却」），上限截断到 `RETRY_AFTER_MAX_SECONDS`。
+ */
+function retryAfterSeconds(headers, body, now) {
+  const header = headers && typeof headers === 'object' ? headers : {}
+  const raw = header['retry-after'] !== undefined ? header['retry-after'] : header['Retry-After']
+  // 头优先（1/2）：先按秒数解释，再按 HTTP 日期解释——`Number(<HTTP 日期>)` 是 NaN，两条不互相抢。
+  const fromHeaderSeconds = positiveSeconds(raw)
+  if (fromHeaderSeconds !== null) return fromHeaderSeconds
+  if (raw !== undefined && raw !== null && raw !== '') {
+    const at = Date.parse(String(raw))
+    if (!Number.isNaN(at)) {
+      const base = typeof now === 'number' && Number.isFinite(now) ? now : Date.now()
+      const fromHeaderDate = positiveSeconds((at - base) / 1000)
+      if (fromHeaderDate !== null) return fromHeaderDate
+    }
+  }
+  const error = body && typeof body === 'object' ? body.error : null
+  const explicit = [
+    error && error.retry_after_seconds,
+    error && error.retryAfter,
+    body && typeof body === 'object' && body.retry_after_seconds,
+    body && typeof body === 'object' && body.retryAfter
+  ]
+  for (let i = 0; i < explicit.length; i += 1) {
+    const seconds = positiveSeconds(explicit[i])
+    if (seconds !== null) return seconds
+  }
+  const messages = [error && error.message, body && typeof body === 'object' && body.message]
+  for (let i = 0; i < messages.length; i += 1) {
+    if (typeof messages[i] !== 'string') continue
+    const match = /([0-9]+)\s*秒/.exec(messages[i])
+    if (match) {
+      const seconds = positiveSeconds(match[1])
+      if (seconds !== null) return seconds
+    }
+  }
+  return null
+}
+
+/**
+ * `Retry-After`（秒数，或 HTTP 日期）→ 「请 N 秒后再试」；拿不到可解释的值就返回 null。
+ * 微信小程序的响应头 key 一律小写，这里两种写法都认。
+ */
+function retryAfterText(response) {
+  const seconds = retryAfterSeconds(response && response.header, response && response.data, Date.now())
+  if (seconds === null) return null
+  return '请求过于频繁，请 ' + seconds + ' 秒后再试'
+}
+
+/**
+ * 失败原因的可读文本。
+ *
+ * 429（契约码 `RATE_LIMITED`）是唯一要特殊处理的分支：限流不是"错误码"，而是"等一会儿再来"。
+ * 服务端在 `error.message` 里已经写了「请求过于频繁，请 N 秒后再试」，响应头 `Retry-After`
+ * 又给了同一个 N（秒）——优先用头重拼一句，保证提示里的秒数与限流器算出的窗口一致；
+ * 拿不到头就退回服务端 message。**其余错误码维持原样**（回错误码，便于对问题）。
+ */
 function statusText(response) {
   const body = response && response.data
-  if (body && body.error && typeof body.error.code === 'string') return body.error.code
+  const error = body && body.error
+  if (response && (response.statusCode === 429 || (error && error.code === 'RATE_LIMITED'))) {
+    const retryAfter = retryAfterText(response)
+    if (retryAfter !== null) return retryAfter
+    if (error && typeof error.message === 'string' && error.message !== '') return error.message
+    return '请求过于频繁，请稍后再试'
+  }
+  if (error && typeof error.code === 'string') return error.code
   return 'HTTP ' + (response ? response.statusCode : '?')
 }
 
@@ -312,12 +393,17 @@ function verifySession(callback) {
  * 成功回调在写会话（`setSession` / `serverVerified`）**之前**校验二者未变。若期间发生
  * 退出 / 清会话 / 切换账号 / 更新的登录，则丢弃该响应（不写会话、不放行），避免旧登录结果
  * 复活已被清除的会话或覆盖较新的（尤其是**退出**）意图。
- * callback(errorMessageOrNull)
+ * callback(errorMessageOrNull, navigationEpoch, retryAfterSecondsOrNull)
+ * 第三个参数只在 429/RATE_LIMITED 时非空，供页面按秒冷却；其余失败一律 null。
  */
 function login(callback) {
   const done = typeof callback === 'function' ? callback : function () {}
   const opNavigation = navigation.epoch()
-  const finishError = function (message) { navigation.clearReturnTo(opNavigation); done(message) }
+  // 第三个参数只在 429 时给值：登录页用它给按钮上冷却（`retryAfterSeconds` 的读数）。
+  const finishError = function (message, retryAfter) {
+    navigation.clearReturnTo(opNavigation)
+    done(message, undefined, retryAfter === undefined ? null : retryAfter)
+  }
   if (!networkEnabled()) {
     finishError('当前未启用联网（共享源码默认关闭）。请在本地或正式环境启用后再登录。')
     return
@@ -350,7 +436,11 @@ function login(callback) {
           const data = body && body.data
           const meta = body && body.meta
           if (response.statusCode !== 200 || !data || typeof data.access_token !== 'string') {
-            finishError('登录失败：' + statusText(response))
+            // 429 把等待秒数一并交出：文案照旧走 statusText，冷却时长走纯函数（同一套取值顺序）。
+            const limited = response.statusCode === 429 ||
+              (body && body.error && body.error.code === 'RATE_LIMITED')
+            finishError('登录失败：' + statusText(response),
+              limited ? retryAfterSeconds(response.header, body, Date.now()) : null)
             return
           }
           const executionMode = meta && typeof meta.execution_mode === 'string' ? meta.execution_mode : ''
@@ -519,6 +609,8 @@ module.exports = {
   isLoggedIn: isLoggedIn,
   networkEnabled: networkEnabled,
   verifySession: verifySession,
+  // 429 的等待秒数（纯函数）：登录页据此按秒冷却，单测直接钉「头优先」的取值顺序。
+  retryAfterSeconds: retryAfterSeconds,
   login: login,
   logout: logout,
   requireLogin: requireLogin,
