@@ -194,8 +194,10 @@ public.favorites 的 UPDATE 被标记 kind=table（整表）；被吞的同类�
 改前红字原文：
 
 ```
-services/api/src/speech/store-pg.ts:642 → public.speech_idempotency.payload 缺 UPDATE（UPDATE SET）；授权面现状：只授了 [pending]
+services/api/src/speech/store-pg.ts:695 → public.speech_idempotency.payload 缺 UPDATE（UPDATE SET）；授权面现状：只授了 [pending]
 ```
+
+> 行号说明（GY-R34-I19 补）：上框是负控制的红字样例，行号已按当前树重取 —— 该 `UPDATE … SET` 现于 `speech/store-pg.ts:695`（测量 R28 时为 `:642`；后续片在文件上半部新增按主体清空的原语，行号下移）。四要素的**语义**（文件、表.列、缺的权限、子句类型）不变。
 
 红字精确点名了「文件:行 → 表.列 + 缺的权限 + 子句类型」四要素。复原证明：把真实文本还原后 `problems.length` 回到 **0**。
 

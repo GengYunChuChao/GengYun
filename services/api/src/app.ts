@@ -1822,6 +1822,60 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     store: communityStore,
     authors: communityAuthors,
   });
+  // #19 延续片 · 语音域：注销必须清**路由正在用的那一份**数据。
+  // ⚠️ 语音 store 的解析点是 `routes/speech.ts:128`（注入优先 → real 且真池 用 PG → 否则内存），
+  // 而且那里**刻意不外露 store 实例**：`tests/unit/speech-store-pg-wiring.test.mjs` 的源码钉子
+  // 要求本文件对语音存储层只允许 `import type`（⛔ 不得在装配层 import 值实现）。
+  // 因此这里不复制那份三态解析，也不另建第二个 store 实例（那会清到另一份缓存/另一个实例的
+  // 表探测状态），而是用启动后 `app.decorate('speechService', …)` 暴露的服务在**调用期**取原语
+  // （`routes/speech.ts:145`）。注销请求必然晚于装配完成，所以调用期一定拿得到；真拿不到就抛，
+  // 由删除协议折叠成 `blocked` + `HANDLER_FAILED`，⛔ 不静默算完成。
+  const speechPurgeOwnerData = async (
+    ownerId: string,
+  ): Promise<{ records: number; idempotency: number }> => {
+    const service = app.speechService as
+      | { purgeOwnerData?: (id: string) => Promise<{ records: number; idempotency: number }> }
+      | undefined;
+    const purge = service?.purgeOwnerData;
+    if (typeof purge !== 'function') {
+      throw new Error('语音域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+    }
+    return purge.call(service, ownerId);
+  };
+  // #19 延续片 · 识别域：同一套理由与做法。识别 store 的解析点是上面 `createRecognitionService`
+  // 的内联三段式（`recognitionStore ?? (real && 有池 ? PG : 内存)`），那份表达式被
+  // `tests/unit/recognitions-store-pg-wiring.test.mjs` 的源码钉子**逐字**钉住，本文件也不许再
+  // 另建第二个实例（内存模式下等于清另一份空数据，却照报「已清 N 行」）。
+  // 所以：从 `app.decorate('recognitionService', …)`（:2009）暴露的服务在**调用期**取原语。
+  const recognitionPurgeOwnerData = async (
+    ownerId: string,
+  ): Promise<{ records: number; idempotency: number }> => {
+    const service = app.recognitionService as unknown as
+      | { purgeOwnerData?: (id: string) => Promise<{ records: number; idempotency: number }> }
+      | undefined;
+    const purge = service?.purgeOwnerData;
+    if (typeof purge !== 'function') {
+      throw new Error('识别域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+    }
+    return purge.call(service, ownerId);
+  };
+  // #19 延续片：把两个端口收窄成注销协议要的 `OwnerPurgeStore`（照 `messagesDeletionStore` 的
+  // 做法：**缺原语时调用即抛**，由协议折叠 `blocked` + `HANDLER_FAILED`）。
+  // ⛔ 不在这里静默跳过这两个域 —— 「表里没接」正是本片要消掉的缺口；「接了但不会清」必须喊出来。
+  // 注：本片**不**为这两域提供 `snapshotOwner`（备份副本只对收藏/历史/消息/会话四域生成行），
+  // 因此它们的备份列如实保持 `pending`，⛔ 不冒充完成。
+  const recognitionsDeletionStore: OwnerPurgeStore = {
+    async deleteAllByOwner(ownerId) {
+      return (await recognitionPurgeOwnerData(ownerId)).records;
+    },
+    purgeOwnerData: (ownerId: string) => recognitionPurgeOwnerData(ownerId),
+  };
+  const speechDeletionStore: OwnerPurgeStore = {
+    async deleteAllByOwner(ownerId) {
+      return (await speechPurgeOwnerData(ownerId)).records;
+    },
+    purgeOwnerData: (ownerId: string) => speechPurgeOwnerData(ownerId),
+  };
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -1854,6 +1908,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 端口同时提供 `deleteAllByOwner`（= `records`）与分表计数的 `purgeOwnerData`；
     // `makeHandler` 优先走后者，因此保留/脱敏/媒体/台账读数都不会丢。
     communityStore: communityPurgePort,
+    // #19 延续片 · 识别域（四表）：**无条件注入** —— 只要识别 store 在装配期存在（本文件已解析成
+    // `recognitionsPersistenceStore`，三种执行模式都有实例），注销就必须清它。
+    // 走 `purgeOwnerData` ⇒ 证据串带 `recognitions:online-purged:<n>` / `:idempotency-purged:<n>`
+    // 并落库 0031（`ONLINE_EVIDENCE_MODULES` 已含该模块名）。
+    recognitionsStore: recognitionsDeletionStore,
+    // #19 延续片 · 语音域（三表）：同上，无条件注入。转写原文是最敏感的一类个人数据，不留副本。
+    speechStore: speechDeletionStore,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,

@@ -59,7 +59,7 @@ services\api\src\jobs\routes.ts:39:    `${API_PREFIX}/jobs/:id`,
 services\api\src\jobs\routes.ts:48:    `${API_PREFIX}/jobs/:id/cancel`,
 共 2 处：routes.ts:39 , routes.ts:48
 ```
-`git grep 'API_PREFIX}/jobs'` 在 main 上另有一处 `recognitions/service.ts:539` —— 那是**幂等 scope 字符串**（`POST ${API_PREFIX}/jobs/{id}/cancel`），**不是路由注册**。
+`git grep 'API_PREFIX}/jobs'` 在 main 上另有一处 `recognitions/service.ts:776`（GY-R34-I19 树重取） —— 那是**幂等 scope 字符串**（`POST ${API_PREFIX}/jobs/{id}/cancel`），**不是路由注册**。
 ⇒ 路由注册点计数 = **1 处路径 × 2 个操作**，无重复注册；运行时亦不冲突（所有集成脚本都在真实装配上跑通；若重复，Fastify 装配期即抛 `FST_ERR_DUPLICATED_ROUTE`）。
 
 ## 「改前 404 → 改后 200」对照（本片核心）

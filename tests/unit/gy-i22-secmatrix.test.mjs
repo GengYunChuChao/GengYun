@@ -786,11 +786,12 @@ test('C4 会话与注销：退出立即失效、重复退出不复活、注销�
   const d = await account(world, 'c4-deletion');
   const first = await requestDeletion(world, d, 'i22-c4-del-0001');
   assert.equal(first.deletion.state, 'blocked', `备份未接线 ⇒ 必须如实 blocked：${first.deletion.state}`);
-  // C1b / C1b-3 起闭集含消息域与会话域；GY-I15（#15 · R31-S6）起社区域也进闭集（扩大而非替换）：
-  // `app.ts` 无条件注入社区清理原语 ⇒ 真实装配的必需模块闭集恒为 5 项，社区行一定会被清理。
+  // C1b / C1b-3 起闭集含消息域与会话域；GY-I15（#15 · R31-S6）起社区域也进闭集（扩大而非替换）；
+  // GY-R34-I19（#19 · R34）起识别域与语音域也进闭集（同样只扩大、不替换）：
+  // `app.ts` 无条件注入社区／识别／语音三域清理原语 ⇒ 真实装配的必需模块闭集恒为 7 项。
   assert.deepEqual(
     first.deletion.handlers.map((row) => row.module).sort(),
-    ['community', 'conversations', 'favorites', 'history', 'messages'],
+    ['community', 'conversations', 'favorites', 'history', 'messages', 'recognitions', 'speech'],
   );
   const firstRead = await call(world.app, 'GET', `${API}/account/deletions/${first.id}`, { token: first.receiptToken });
   assert.equal(firstRead.status, 200, firstRead.text);

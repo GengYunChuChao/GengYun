@@ -36,6 +36,12 @@ const SUBJECT_COLUMNS = ['user_id', 'owner_id', 'author_user_id', 'subject_user_
  * `COMMUNITY_DELETION_MODULE`）：F13 要求**保留**帖子/评论正文（不是删光），所以这里的"覆盖"
  * 指"该模块按主体处理这些表"——安全正文保留、个人信息清除、媒体引用移除、点赞物理删、
  * 举报清自由文本。⛔ 不要把它读成"这些表会被清空"。
+ *
+ * `recognitions` / `speech` 是 #19 延续片接入的第六/第七域（同样条件追加，`app.ts` 无条件注入）：
+ * 与社区域不同，这两域**真的是清空**（按主体物理删），顺序由迁移 0025/0026 的外键钉死：
+ * 识别域 `recognition_selections`（子，`0025:163` CASCADE 指向 records）→
+ * `recognition_jobs` → `recognition_records` → `recognition_idempotency`（无主体列，按 scope 前缀）；
+ * 语音域 `speech_jobs` → `transcriptions` → `speech_idempotency`（无主体列，按 scope 前缀）。
  */
 const MODULE_TABLE_COVERAGE = Object.freeze({
   community: [
@@ -49,6 +55,13 @@ const MODULE_TABLE_COVERAGE = Object.freeze({
   favorites: ['favorites', 'favorites_idempotency'],
   history: ['history', 'history_idempotency'],
   messages: ['messages', 'idempotency_keys'],
+  recognitions: [
+    'recognition_selections',
+    'recognition_jobs',
+    'recognition_records',
+    'recognition_idempotency',
+  ],
+  speech: ['speech_jobs', 'transcriptions', 'speech_idempotency'],
 });
 
 /**
@@ -61,6 +74,8 @@ const SATELLITE_TABLES = Object.freeze({
   history_idempotency: 'scope 同形（0018:120），由 history 模块按 scope 前缀清空',
   idempotency_keys: 'scope 同形（auth/idempotency.ts 口径），由 messages 模块按主体清空',
   community_idempotency: 'scope 同形（community/store.ts 用「主体 id + 换行」前缀匹配），由 community 模块按主体清空',
+  recognition_idempotency: 'scope 同形（0025:180 只有 scope/key_hash/payload，无主体列），由 recognitions 模块按 `left(scope, len+1) = 主体||chr(10)` 精确前缀清空',
+  speech_idempotency: 'scope 同形（0026:137），由 speech 模块按同一前缀口径清空',
 });
 
 /**
@@ -80,13 +95,8 @@ const DECLARED_UNREGISTERED = Object.freeze({
   export_writebacks: '回写台账同上，作为「回写 0 行」的证据保留；保留期归 #19',
   user_training_consents: '训练授权证据须保留，且首版不开启用户训练；归 #19',
   user_backup_copies: '备份副本由 `backup-copies-pg.ts` 的清除端口驱动，不属于模块闭集；7/30 日集成归 #19',
-  ocr_jobs: 'OCR 域无按主体清理原语；归 #19',
-  ocr_records: 'OCR 域无按主体清理原语；归 #19',
-  recognition_jobs: '识别域无按主体清理原语；归 #19',
-  recognition_records: '识别域无按主体清理原语；归 #19',
-  recognition_selections: '识别域无按主体清理原语；归 #19',
-  speech_jobs: '语音域无按主体清理原语；归 #19',
-  transcriptions: '语音转写正文无按主体清理原语；归 #19',
+  ocr_jobs: 'OCR 域与识别/语音同形，但 `ocr/store-pg.ts` 仍未实现按主体清空原语 ⇒ 本片（#19 延续片）**有意不接**，留给独立片以免一次审阅跨三个域；归 #19',
+  ocr_records: '同上：OCR 结果表无按主体清空原语，与 recognition_records 同形；归 #19',
 });
 
 /** 静态枚举迁移文件里 `CREATE TABLE` 的表与列体（不执行 SQL）。 */
@@ -143,18 +153,42 @@ function declaredClosure() {
 }
 
 /**
- * 装配处**条件追加**的模块（社区域）：从源码读出，不在这里复制常量。
+ * 装配处**条件追加**的模块：从源码读出，不在这里复制常量。
  *
- * `createUserDataDeletion` 在注入 `communityStore` 时把 `COMMUNITY_DELETION_MODULE` 追加进
- * 生效闭集（`app.ts` 无条件注入 ⇒ 真实注销路径是 5 项）；既有替身不注入 ⇒ 常量闭集仍是 4 项。
- * 本断言因此同时检查"常量闭集"与"装配处追加"，避免"加了处理器但覆盖映射没跟上"。
+ * `createUserDataDeletion` 在注入对应 store 时把这些模块追加进生效闭集。`app.ts` **无条件**注入
+ * 社区/识别/语音三个 store ⇒ 真实注销路径的生效闭集 = 4 + 3 = **7 项**；
+ * 既有替身不注入 ⇒ 常量闭集仍是 4 项。
+ *
+ * 三处必须一致（"改了追加点却忘了改清单"会让覆盖断言静默漏掉整个域）：
+ *   1. 声明处：`CONDITIONAL_DELETION_MODULES`（导出常量，人读的顺序表）；
+ *   2. 真实追加点：`conditionalStores` 里的 `[<模块常量>, input.<store>]` 二元组；
+ *   3. 追加动作本身：`if (conditionalStore !== undefined) requiredModules.push(conditionalModule)`。
  */
 function declaredConditionalModules() {
   const source = readFileSync(USER_DATA_DELETION_SRC, 'utf8');
-  const constant = source.match(/export const COMMUNITY_DELETION_MODULE\s*=\s*'([a-z_]+)'/);
-  assert.ok(constant, '必须能从源码读到 COMMUNITY_DELETION_MODULE 的字符串声明');
-  const appended = /input\.communityStore === undefined[\s\S]{0,400}?COMMUNITY_DELETION_MODULE/.test(source);
-  return appended ? [constant[1]] : [];
+  const constants = new Map();
+  for (const match of source.matchAll(/export const ([A-Z_]+_DELETION_MODULE)\s*=\s*'([a-z_]+)'/g)) {
+    constants.set(match[1], match[2]);
+  }
+  const declared = source.match(/export const CONDITIONAL_DELETION_MODULES\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  assert.ok(declared, '必须能从源码读到 CONDITIONAL_DELETION_MODULES 字面量（装配处条件追加的模块清单）');
+  const declaredNames = [...declared[1].matchAll(/([A-Z_]+_DELETION_MODULE)/g)].map((m) => m[1]);
+  assert.ok(declaredNames.length > 0, 'CONDITIONAL_DELETION_MODULES 不得为空');
+  // 真实追加点只看 `conditionalStores` 这一块（源码里另有一份「四域 → store」的备份快照来源表，
+  // 未限定范围会把那份也匹配进来，让断言的读数变成噪声）。
+  const block = source.match(/const conditionalStores[\s\S]*?\n  \];/);
+  assert.ok(block, '必须能找到 `conditionalStores` 声明块');
+  const appendPairs = [...block[0].matchAll(/\[\s*([A-Z_]+_DELETION_MODULE),\s*input\.(\w+)\s*\]/g)]
+    .map((match) => ({ constant: match[1], store: match[2] }));
+  assert.ok(appendPairs.length > 0, '必须能找到 `conditionalStores` 里的 `[模块常量, input.xxx]` 追加点');
+  assert.deepEqual(appendPairs.map((pair) => pair.constant), declaredNames,
+    '真实追加点与 CONDITIONAL_DELETION_MODULES 的内容/顺序必须逐项一致（改一处漏一处 ⇒ 闭集与清单分叉）');
+  assert.match(source, /if \(conditionalStore !== undefined\)\s*requiredModules\.push\(conditionalModule\)/,
+    '条件追加必须真的作用在 requiredModules 上（⛔ 不是只在注释里声明）');
+  return declaredNames.map((name) => {
+    assert.ok(constants.has(name), `条件追加清单里的常量 ${name} 必须能找到其字符串声明`);
+    return constants.get(name);
+  });
 }
 
 const TABLES = migrationTables();
@@ -164,10 +198,29 @@ const COVERED = new Set(Object.values(MODULE_TABLE_COVERAGE).flat());
 test('闭集（USER_DATA_DELETION_MODULES）与覆盖映射逐项对齐，不多不少', () => {
   const closure = declaredClosure();
   assert.deepEqual(closure, ['favorites', 'history', 'messages', 'conversations'], '闭集内容与顺序：扩大闭集须同步本断言');
-  const effective = [...closure, ...declaredConditionalModules()];
-  assert.ok(effective.includes('community'), '装配处条件追加的社区域必须被覆盖映射声明');
+  const conditional = declaredConditionalModules();
+  assert.deepEqual(conditional, ['community', 'recognitions', 'speech'],
+    '装配处条件追加的模块与顺序：改造装配方式须同步本断言');
+  const effective = [...closure, ...conditional];
+  assert.equal(effective.length, 7, '生产生效闭集 = 四域 + community + recognitions + speech = 7 项');
   assert.deepEqual(Object.keys(MODULE_TABLE_COVERAGE).sort(), [...effective].sort(),
     '每个已注册模块都必须在这里声明「它按主体处理哪些表」，否则覆盖断言会漏掉整个域');
+});
+
+test('在线清除证据名单含识别/语音两域、不含社区域，且落库门真的用它', () => {
+  const source = readFileSync(USER_DATA_DELETION_SRC, 'utf8');
+  const list = source.match(/export const ONLINE_EVIDENCE_MODULES\s*=\s*\[([\s\S]*?)\]\s*as const/);
+  assert.ok(list, '必须能读到 ONLINE_EVIDENCE_MODULES 字面量');
+  const entries = [...list[1].matchAll(/\.\.\.USER_DATA_DELETION_MODULES|([A-Z_]+_DELETION_MODULE)/g)]
+    .map((match) => match[1] ?? '...USER_DATA_DELETION_MODULES');
+  assert.ok(entries.includes('...USER_DATA_DELETION_MODULES'), '四域必须整体展开在内（⛔ 不手抄四遍，抄了就会漂）');
+  assert.ok(entries.includes('RECOGNITIONS_DELETION_MODULE'), '识别域按行清空 ⇒ 必须有在线清除证据');
+  assert.ok(entries.includes('SPEECH_DELETION_MODULE'), '语音域按行清空 ⇒ 必须有在线清除证据');
+  assert.ok(!entries.includes('COMMUNITY_DELETION_MODULE'),
+    '社区域是「保留 + 脱敏」，没有"清空行数"这个事实 ⇒ ⛔ 不得进在线清除证据名单');
+  // 落库门若继续用常量四域，新增两域即使清了也永远留不下凭据（清而无证 = 又一次静默缺口）。
+  assert.match(source, /\(ONLINE_EVIDENCE_MODULES as readonly string\[\]\)\.includes\(module\)/,
+    '证据落库门必须用 ONLINE_EVIDENCE_MODULES，而不是常量四域');
 });
 
 test('每张用户数据表都必须：被已注册模块覆盖，或显式声明未注册（棘轮）', () => {

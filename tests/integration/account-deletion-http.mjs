@@ -273,8 +273,10 @@ async function main() {
     // GY-I15（#15）· R31-S6：社区域并入同一本账（闭集只许扩大）——四个既有域一个不少，
     // 新增的是 `community`：装配处无条件注入社区清理原语，因此真实注销路径一定清
     // 帖子/评论/点赞/举报，回执也必须把它摊开。
-    ['community', 'conversations', 'favorites', 'history', 'messages'],
-    '回执必须逐模块摊开（未报告的必需模块也要出现；C1b 起含消息域与会话域，S6 起含社区域，原有两域一条不少）',
+    // GY-R34-I19：再并入识别域与语音域（`recognitions` / `speech`）——装配处同样无条件注入
+    // 两个按主体清空的端口（走迁移 0034 的 SECURITY DEFINER 函数），所以回执必须摊成七项。
+    ['community', 'conversations', 'favorites', 'history', 'messages', 'recognitions', 'speech'],
+    '回执必须逐模块摊开（未报告的必需模块也要出现；C1b 起含消息域与会话域，S6 起含社区域，R34 起含识别域与语音域，原有各域一条不少）',
   );
   for (const row of acceptedData.deletion.handlers) {
     assert.equal(row.online_state, 'completed', `${row.module} 在线清理真的跑过`);

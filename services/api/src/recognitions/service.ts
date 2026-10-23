@@ -59,7 +59,12 @@ import {
   type Decision,
   type JobState,
 } from './state.ts';
-import type { JobRow, RecognitionRow, RecognitionStore } from './store.ts';
+import type {
+  JobRow,
+  RecognitionOwnerPurgeCounts,
+  RecognitionRow,
+  RecognitionStore,
+} from './store.ts';
 
 /** 任务截止时间（毫秒）：超过即 timed_out，且迟到结果不复活任务。 */
 export const DEFAULT_JOB_DEADLINE_MS = 30 * 1000;
@@ -826,6 +831,23 @@ export function createRecognitionService(options: RecognitionServiceOptions) {
      */
     branchGuide,
     settle,
+    /**
+     * 账号注销清理（GY-R34-I19）：按主体清空识别域四表（selections → jobs → records → 台账前缀）。
+     *
+     * 为什么在这个层：识别存储的解析点是装配处的内联三段式，且本服务是唯一持有该实例的地方
+     * （装配层把服务装饰成 `app.recognitionService`）。注销只能用它手里这一份 store，另建实例
+     * 会清到另一份数据（内存模式下更是空数据），却照样报「已清 N 行」—— 那是静默假账。
+     *
+     * 存储缺原语时**抛错**，不返回 0 假装清空：删除协议会把异常折叠成回执 `blocked` +
+     * `HANDLER_FAILED`，⛔ 不会把该域标成 `completed`。
+     */
+    async purgeOwnerData(ownerId: string): Promise<RecognitionOwnerPurgeCounts> {
+      const purge = store.purgeOwnerData;
+      if (purge === undefined) {
+        throw new Error('识别域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+      }
+      return purge.call(store, ownerId);
+    },
     /** 供证据文档/诊断：当前提供者与媒体端口标注。 */
     describe: () => ({
       executionMode: provider.executionMode,

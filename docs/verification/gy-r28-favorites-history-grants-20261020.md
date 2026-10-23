@@ -458,9 +458,14 @@ favorites relacl = {gengyun_cvm_owner=arwdDxtm/gengyun_cvm_owner,gengyun_api_run
    （外加 `recognition_jobs` / `recognition_records` / `recognition_idempotency`）。这四张表对
    `gengyun_api_runtime` 是**整张零授权**——`deploy/postgres-cvm/sql/20-login-roles.sql` 至今没有任何
    `recognition_*` 授权区（S24 的分支只对它们做了软守卫）。
-2. 运行时**真的会写**这几张表（`services/api/src/recognitions/store-pg.ts:820` / `:830` 的
-   `DELETE FROM public.recognition_idempotency` 等）⇒ 真部署上必然 `42501`。S13 的
+2. 运行时**真的会写**这几张表（`services/api/src/recognitions/store-pg.ts:626` —— 当时是
+   `:820` / `:830` 两条 `DELETE FROM public.recognition_idempotency` 等语句）⇒ 真部署上必然 `42501`。S13 的
    `tests/integration/egress-ledger-pg.mjs:255-256` 已经把这个缺口写在注释里并因此红过。
+   **行号说明（GY-R34-I19 之后补注）**：`:626` 是今天该域按主体清空的调用点
+   （`SELECT public.purge_owner_recognitions($1::uuid) AS counts`）；写路径本身已迁到迁移
+   `services/api/db/migrations/0034_r34_owner_content_purge.sql` 的
+   `SECURITY DEFINER` 函数，运行时只拿 `EXECUTE`、对四张表仍零 `DELETE`。
+   本条其余事实（当时整张零授权、必然 42501）保持原文不改。
 3. S24 的 `domain_manifest` 里那四行 `'forbidden', false` 是**权宜快照**（「当下确实没给」，不是
    「设计上不给」）。**下一片（S27）必须把它们翻成 `granted`，并补 `20-login-roles.sql` 的授权区与
    `expected` 行**；本片只加了 `('recognition_selections','forbidden',false)` 一行，让装了 0025 的库上
