@@ -197,9 +197,9 @@ jobs:
       # 给了 argv[3] 反而要求该角色**已存在**（`:252-274`，存在且不是本轮创建的即拒绝接管）⇒ 这里只传 argv[2]，
       # 这是它唯一自洽的调用形态，也正好用上上一步 `account-deletion` 收尾「按 `pg_roles` 快照差集 DROP、
       # 复核为空」的结果（本机负控制：角色在时它 exit=1 且打印「拒绝接管既有角色」）。
-      # 它收尾同样按开跑时 `pg_authid` 快照差集 DROP 本轮新建的角色（`:859-871`；实测跑完 `gengyun_api_runtime`
-      # 计数回到 0）⇒ 不把角色留给下一步 `admin-accounts-read`（后者本来也先 `DROP IF EXISTS` 再重建，对残留
-      # 容忍度最高）——这才是它排在这两步**之间**的理由，⛔ 不要挪到 `admin-accounts-read` 之后。
+      # 它收尾同样按 `pg_roles` 快照差集 DROP 本轮新建的角色（`:859-871`；实测跑完 `gengyun_api_runtime`
+      # 计数回到 0）⇒ 不把角色留给下一步 `admin-flags`（后者同样只接受自己新建的角色，见下一步的注释）
+      # ——这才是它排在这一步**之前**的理由，⛔ 不要挪到 `admin-accounts-read` 之后。
       # 读数：跑**全链迁移 0001→0027** 再打真 HTTP，`[M]/[P]/[A]/[J]/[C]/[E]` 六组，末行固定 `[ALL PASS]`。
       # 它没有 77 跳过分支（连不上即非 0），下面仍显式断言「末行 `[ALL PASS]` + 至少一条 `[X]` 读数」，
       # 让「exit 0 但什么都没证明」也不可能变绿。⛔ 不传任何放宽开关。
@@ -227,25 +227,30 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
-      # 后台账号读取域（I18，R28-S14）：库名硬钉 `gengyun_admin_accounts_read_test`；argv[2]=owner URL、
-      # argv[3]=运行时角色 URL。运行时角色的口令是脚本**从 argv[3] 解出来再 `CREATE ROLE`** 的
-      # （`admin-accounts-read-pg.mjs:190-192`）⇒ scram 下自洽（argv[3] 的合成口令必须与这里逐字一致）。
-      # 注意：本 step 会把 `gengyun_api_runtime` 与 6 个组角色**留在集群里**（脚本不 DROP），
-      # 故它必须排在同样自建角色的 `account-deletion` 之后（后者要求角色不存在且收尾会清空）。
-      # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，迁移三连/最小权限/HTTP 全过。
-      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_admin_accounts_read_test' && node tests/integration/admin-accounts-read-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_admin_accounts_read_test postgres://gengyun_api_runtime:synthetic-ci-runtime-only@127.0.0.1:5432/gengyun_admin_accounts_read_test
+      # 全局开关域（I18，R28-S14 接入；R33-i18 按 #428 同族收口）：库名硬钉 `gengyun_flags_test`；**只给 argv[2]**。
+      # argv[3] 省略时脚本自己 `CREATE ROLE` 并把随机口令写进它自己的 URL ⇒ scram 下自洽；但它**只接受自己
+      # 本轮新建的角色** —— `preflightRuntimeRole` 在任何写库动作之前硬拒「`gengyun_api_runtime` 已存在」，
+      # 收尾 `checkRoleCredentials` 复读 `pg_authid` 比对既有角色的 LOGIN 位/口令哈希/到期时间一字不差
+      # （⛔ 不再「存在即 `ALTER ROLE … LOGIN PASSWORD '<随机>'`」接管）。给了 argv[3] 反而要求该角色**已存在**
+      # （脚本对它零 DDL：不 CREATE/不 ALTER/不改 LOGIN/不改口令）⇒ 所以这一条只传一个参数。
+      # 位置：必须紧跟 `admin-jobs`（它收尾已按快照差集把角色 DROP 回空），并排在会把运行时角色＋6 个组角色
+      # **留在集群里**的 `admin-accounts-read` 之前 —— 本机负控制：角色在时它 exit=1 且打印「拒绝接管既有角色」。
+      # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，`[H]` 等锁 4007ms ⇒ 504 PROVIDER_TIMEOUT。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_flags_test' && node tests/integration/admin-flags-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_flags_test
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
-      # 全局开关域（I18，R28-S14）：库名硬钉 `gengyun_flags_test`；**只给 argv[2]**（owner URL）。
-      # argv[3] 省略时脚本自己 `CREATE`/`ALTER` 运行时角色、把随机口令写进它自己的 URL
-      # （`admin-flags-pg.mjs:249-262`）⇒ scram 下自洽；若给了 argv[3]，脚本会跳过角色创建、直接拿 URL 连
-      # （角色必须已存在）。所以这一条只传一个参数——这是它唯一自洽的调用形态。
-      # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，`[H]` 等锁 4007ms ⇒ 504 PROVIDER_TIMEOUT。
-      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_flags_test' && node tests/integration/admin-flags-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_flags_test
+      # 后台账号读取域（I18，R28-S14）：库名硬钉 `gengyun_admin_accounts_read_test`；argv[2]=owner URL、
+      # argv[3]=运行时角色 URL。运行时角色的口令是脚本**从 argv[3] 解出来再 `CREATE ROLE`** 的
+      # （`admin-accounts-read-pg.mjs:190-192`）⇒ scram 下自洽（argv[3] 的合成口令必须与这里逐字一致）。
+      # 注意：本 step 会把 `gengyun_api_runtime` 与 6 个组角色**留在集群里**（脚本不 DROP），
+      # 故它必须排在同样自建角色的 `account-deletion`、`admin-jobs`、`admin-flags` 之后 —— 那三步都要求
+      # 集群里没有该角色（各自收尾清空），而本步是三条 I18 后台真库臂里唯一会把角色留下来的，故排在三者最后。
+      # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，迁移三连/最小权限/HTTP 全过。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_admin_accounts_read_test' && node tests/integration/admin-accounts-read-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_admin_accounts_read_test postgres://gengyun_api_runtime:synthetic-ci-runtime-only@127.0.0.1:5432/gengyun_admin_accounts_read_test
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'

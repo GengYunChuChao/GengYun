@@ -12,26 +12,26 @@ export interface KnowledgeQuery {
 type Row = Record<string, any>;
 
 /**
- * 读取层排序 —— 与冻结契约 `(created_at DESC, id DESC)` 逐字对应
- * （`docs/architecture/state-contract.md:32`），并与 `pagination.ts` 的游标自述
- * `sort='created_at_desc'` 同一口径。四点纪律：
- *   1. SQL 的 `ORDER BY` 与下面的 JS 比较器**必须同序**，否则数据库投影与并入种子的
- *      归并次序会与分页切片错位；
- *   2. 排序键来自行自身的 `created_at`（0012 迁移落到 `knowledge_versions` 并由
- *      `catalog_read.current_knowledge` 投影出来），**不再用 id、也不复用 `updated_at`**；
- *   3. `created_at` 必须按**时间点**比较：驱动（pg / PGlite）把 timestamptz 解成 `Date`，
- *      直接字符串化会退化成 `"Wed Oct 14 2026 …"` 这类**星期名**字典序
- *      （实测 `Thu > Sat > Fri`），与 SQL 的 `ORDER BY created_at DESC` 不同序 ——
- *      故先取毫秒时间戳，只在无法解析时退到 `-Infinity`（确定性排最后，不抛错）；
- *   4. `id` 是 UUID 文本，全序比较必须逐码元（不用 `localeCompare`，避免区域设置改变结果）。
+ * 读取层排序 —— 与冻结契约 `(created_at DESC, id DESC)` 逐字对应（`docs/architecture/state-contract.md:32`），
+ * 与 `pagination.ts` 游标自述的 `sort='created_at_desc'` 同口径。四点纪律：① SQL `ORDER BY` 与下面 JS 比较器
+ * **必须同序**（否则投影/种子归并次序会与分页切片错位）；② 键＝行自身 `created_at`（0012 落表、读视图投影），
+ * **精度必须是微秒**：驱动（pg / PGlite）把它解成毫秒 `Date` ⇒ 同毫秒两行在 JS 侧变「同刻」并退 `id DESC`、
+ * 与 SQL **相反**（`#7` 已复现，r33 台账 §3.6；字符串化更会退化成星期名字典序）⇒ 读语句额外投影**内部**列 `created_at_micros`（见 `:76` 的
+ * LATERAL，与 SQL 同源同精度）；种子行无该列 ⇒ 解析自身 `created_at`（0–6 位小数、`Date` 取毫秒，解析不出
+ * ⇒ `-Infinity` 排最后且不抛错）；③ `id` 是 UUID 文本，全序比较逐码元（不用 `localeCompare`）。
  */
-function instantOf(value: unknown): number {
-  if (value instanceof Date) return value.getTime();
-  const parsed = Date.parse(String(value));
-  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+const ISO_INSTANT = /^([+-]?\d{4,6}-\d{2}-\d{2})[Tt ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?([Zz]|[+-]\d{2}(?::?\d{2})?)?$/;
+function microsOf(row: Row): number {
+  const inner = row.created_at_micros, value = row.created_at;
+  if (typeof inner === 'string' ? /^-?\d+$/.test(inner) && Number.isSafeInteger(Number(inner)) : Number.isSafeInteger(inner)) return Number(inner);
+  if (value instanceof Date) return value.getTime() * 1000;
+  const match = typeof value === 'string' ? ISO_INSTANT.exec(value.trim()) : null;
+  const sub = ((match?.[3] ?? '') + '000000').slice(0, 6);
+  const millis = match === null ? Date.parse(String(value)) : Date.parse(`${match[1]}T${match[2]}.${sub.slice(0, 3)}${match[4] ?? ''}`);
+  return Number.isNaN(millis) ? Number.NEGATIVE_INFINITY : millis * 1000 + (match === null ? 0 : Number(sub.slice(3)));
 }
-function compareKnowledgeRows(a: Row, b: Row): number {
-  const left = instantOf(a.created_at), right = instantOf(b.created_at);
+export function compareKnowledgeRows(a: Row, b: Row): number {
+  const left = microsOf(a), right = microsOf(b);
   if (left !== right) return left > right ? -1 : 1;
   const aid = String(a.id), bid = String(b.id);
   return aid === bid ? 0 : aid < bid ? 1 : -1;
@@ -70,10 +70,10 @@ export function createKnowledgeService(pool: PgPool, key: string, options: Knowl
       if (!session.rows.length) throw new ApiError('SESSION_EXPIRED', '会话已失效');
       // One fresh statement snapshot includes body, source version, validity and
       // latest revision. No process cache or static seed fallback is consulted.
-      // 排序由**查询自身**给出（不依赖视图定义顺序）：冻结契约的
-      // `(created_at DESC, id DESC)` —— created_at 由 0012 迁移落到表并投影出来。
+      // 排序由**查询自身**给出（不依赖视图定义顺序）：冻结契约的 `(created_at DESC, id DESC)`
+      // —— created_at 由 0012 迁移落到表并投影出来。LATERAL 只补一列**内部**微秒键（见 `:14-22`；读面仍是 `SELECT * FROM <唯一读视图>`、列授权面不变，`created_at_micros` 不进响应封套）。
       const dbResult = await client.query(
-        'SELECT * FROM catalog_read.current_knowledge ORDER BY created_at DESC, id DESC');
+        'SELECT * FROM catalog_read.current_knowledge, LATERAL (SELECT (extract(epoch from created_at) * 1000000)::bigint::text AS created_at_micros) micro ORDER BY created_at DESC, id DESC');
       // GY-I07：把已合入的真实种子资料（浙江首批，未发布/未核对）并入**同一份**快照。
       // 同 id 以数据库投影为准（视图只含已核对+已发布，种子只含未核对+未发布，正常不重叠）。
       // 归并后按契约排序 `(created_at DESC, id DESC)` 重排 —— 与游标自述的
