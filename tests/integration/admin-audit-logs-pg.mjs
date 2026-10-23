@@ -8,7 +8,7 @@
  * 把多余键裁掉。这些只有真 PG 才能回答。
  *
  * 本臂自己起**一次性集群**（`initdb` 新目录），因此不依赖本机既有实例；端口在
- * 55432–55467 里探活后取空闲者，收尾 `pg_ctl stop` + 删目录。
+ * 55436–55467 里探活后取空闲者（55432–55435 留给已存在的兄弟集群），收尾 `pg_ctl stop` + 删目录。
  *
  * 怎么跑
  * ------
@@ -139,7 +139,7 @@ let ownerPool = null;
 let runtimePool = null;
 
 /**
- * 起一次性集群：在 55432–55467 里逐个候选试（派单指定的空闲端口区间）。
+ * 起一次性集群：在 55436–55467 里逐个候选试（55432–55435 已被兄弟切片占用，不碰）。
  *
  * 为什么不是「探到一个空闲端口就 initdb」：Windows 还有**保留/排除端口区间**
  * （`netsh int ipv4 show excludedportrange protocol=tcp`，本机 55441–55540 在列），
@@ -148,7 +148,7 @@ let runtimePool = null;
  */
 async function startCluster() {
   const tried = [];
-  for (let candidate = 55432; candidate <= 55467; candidate += 1) {
+  for (let candidate = 55436; candidate <= 55467; candidate += 1) {
     if (await portBusy(candidate)) {
       tried.push(`${candidate}:已有人监听`);
       continue;
@@ -195,7 +195,7 @@ async function startCluster() {
     }
     return;
   }
-  throw new Error(`55432–55467 内没有可用端口：${tried.join('；')}`);
+  throw new Error(`55436–55467 内没有可用端口：${tried.join('；')}`);
 }
 
 function stopCluster() {
@@ -501,6 +501,75 @@ async function main() {
   );
   pass('脱敏：target_ref 只留 type/id/revision；无 ip / user_agent / 凭据字段；actor_id 映射为 actor');
 
+  // 5b) **同一毫秒、不同微秒**：游标位置必须保留微秒，否则「微秒更晚」的行会被整片跳过。
+  //     这一组是审查发现的真缺陷的回归钉子，正反两侧都要有读数（见下）。
+  const SAME_MS_ROWS = [
+    { id: 'a0040000-0000-4000-8000-000000000000', created_at: '2026-10-22T10:00:10.123456Z' },
+    { id: 'a0010000-0000-4000-8000-000000000000', created_at: '2026-10-22T10:00:10.123001Z' },
+    { id: 'a0020000-0000-4000-8000-000000000000', created_at: '2026-10-22T10:00:10.123000Z' },
+  ];
+  for (const row of SAME_MS_ROWS) {
+    await ownerPool.query(
+      `INSERT INTO public.admin_audit_events
+         (id, actor_id, action, scope, target_hint, reason_code, request_id, result, created_at)
+       VALUES ($1::uuid, $2::uuid, 'account.restore', 'accounts:suspend', $3, 'account_restored', $4::uuid, 'accepted', $5::timestamptz)`,
+      [row.id, ADMIN_ID, `account:${row.id}`, REQUEST_ID, row.created_at],
+    );
+  }
+  const sameMsWindow = { from: '2026-10-22T10:00:10Z', to: '2026-10-22T10:00:11Z' };
+  const sameMsAll = await service.listAuditLogs(context, { limit: 50, ...sameMsWindow });
+  assert.deepEqual(
+    sameMsAll.body.data.items.map(item => item.id),
+    [
+      'a0040000-0000-4000-8000-000000000000',
+      'a0010000-0000-4000-8000-000000000000',
+      'a0020000-0000-4000-8000-000000000000',
+    ],
+    '同一毫秒内按微秒降序：.123456 > .123001 > .123000',
+  );
+  // 三行的 `created_at` 在 JSON 出口里都是 `.123Z`（契约只到毫秒），所以这三行**无法**
+  // 靠 `created_at` 区分 —— 位置若取它，就必然把 .123000 判成「已翻过」。
+  assert.deepEqual(
+    [...new Set(sameMsAll.body.data.items.map(item => item.created_at))],
+    ['2026-10-22T10:00:10.123Z'],
+    '三行在契约出口里必须是同一个毫秒（这正是缺陷现场）',
+  );
+
+  const msPage1 = await service.listAuditLogs(context, { limit: 2, ...sameMsWindow });
+  assert.deepEqual(
+    msPage1.body.data.items.map(item => item.id),
+    ['a0040000-0000-4000-8000-000000000000', 'a0010000-0000-4000-8000-000000000000'],
+  );
+  const msPage2 = await service.listAuditLogs(context, {
+    limit: 2, ...sameMsWindow, cursor: msPage1.body.data.next_cursor,
+  });
+  assert.deepEqual(
+    msPage2.body.data.items.map(item => item.id),
+    ['a0020000-0000-4000-8000-000000000000'],
+    '同一毫秒内微秒更小的行必须出现在下一页：不得因毫秒截断被跳过（漏行回归）',
+  );
+  assert.equal(msPage2.body.data.next_cursor, null);
+
+  // 反例（旧实现的形态）：拿毫秒截断的位置继续翻页 ⇒ 下一页为空，a002 静默消失。
+  const truncated = await ownerPool.query(
+    `SELECT id FROM public.list_admin_audit_logs(
+       $1::integer, $2::timestamptz, $3::timestamptz, NULL, NULL, $4::timestamptz, $5::uuid)`,
+    [2, sameMsWindow.from, sameMsWindow.to, '2026-10-22T10:00:10.123Z', 'a0010000-0000-4000-8000-000000000000'],
+  );
+  assert.deepEqual(truncated.rows, [], '毫秒位置（.123）必须复现漏行：下一页 0 行');
+  // 正例：同一位置换成微秒精度 ⇒ a002 回来了。
+  const precise = await ownerPool.query(
+    `SELECT id FROM public.list_admin_audit_logs(
+       $1::integer, $2::timestamptz, $3::timestamptz, NULL, NULL, $4::timestamptz, $5::uuid)`,
+    [2, sameMsWindow.from, sameMsWindow.to, '2026-10-22T10:00:10.123001Z', 'a0010000-0000-4000-8000-000000000000'],
+  );
+  assert.deepEqual(
+    precise.rows.map(row => row.id),
+    ['a0020000-0000-4000-8000-000000000000'],
+    '微秒位置（.123001）必须能取回 a002（正反两侧读数）',
+  );
+  pass('同毫秒不同微秒：微秒位置翻页收全 3 行；毫秒位置复现漏行（下一页 0 行），微秒位置取回 a002');
+
   // 6) 真实数据量下的读面代价（只打印读数，不设阈值：这里的数字是给索引取舍用的证据）。
   await ownerPool.query(
     `INSERT INTO public.admin_audit_events
@@ -516,7 +585,7 @@ async function main() {
     [ADMIN_ID, REQUEST_ID],
   );
   const total = await ownerPool.query('SELECT count(*)::int AS n FROM public.admin_audit_events');
-  note(`规模：表内 ${total.rows[0].n} 行（含 6 行夹具）`);
+  note(`规模：表内 ${total.rows[0].n} 行（含 9 行夹具：6 行基础夹具 + 3 行同毫秒不同微秒）`);
 
   const explain = async (label, sql, params) => {
     const { rows } = await ownerPool.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${sql}`, params);

@@ -25,10 +25,28 @@ import type { AuditResult, TargetRefValue } from '../types.ts';
 /** 库内只读函数（迁移 0033）。 */
 export const LIST_AUDIT_LOG_FUNCTION = 'public.list_admin_audit_logs';
 
-/** 唯一一条 SQL：常量文本，七个占位符全部显式转型（避免默认值把实参推断成别的类型）。 */
-const SELECT_AUDIT_LOG_SQL = `SELECT id, actor_id, action, scope, target_ref, target_hint, reason_code, request_id, result::text AS result, before_value, after_value, created_at FROM public.list_admin_audit_logs($1::integer, $2::timestamptz, $3::timestamptz, $4::text[], $5::text[], $6::timestamptz, $7::uuid)`;
+/**
+ * 唯一一条 SQL：常量文本，七个占位符全部显式转型（避免默认值把实参推断成别的类型）。
+ *
+ * `cursor_position` 是**只给游标用**的微秒精度文本列（`to_char(…, '…SS.US…')`）：
+ * `created_at` 走 JSON 出口时必须保持契约的 `date-time`（毫秒 ISO 即可），而键集位置
+ * 一旦被截到毫秒就会漏行 —— 见 `AdminAuditLogPage.nextPosition` 的注释。
+ * 这一列不进 `AdminAuditLogEntry`，所以契约 `additionalProperties: false` 不受影响。
+ */
+const SELECT_AUDIT_LOG_SQL = `SELECT l.id, l.actor_id, l.action, l.scope, l.target_ref, l.target_hint, l.reason_code, l.request_id, l.result::text AS result, l.before_value, l.after_value, l.created_at, to_char(l.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_position FROM public.list_admin_audit_logs($1::integer, $2::timestamptz, $3::timestamptz, $4::text[], $5::text[], $6::timestamptz, $7::uuid) AS l`;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * 键集位置的时间串：`YYYY-MM-DDTHH:MM:SS.uuuuuuZ`（**恰好 6 位微秒**，UTC）。
+ *
+ * 为什么必须六位：PG 的 `timestamptz` 精度是微秒，而 JS 的 `Date` 只有毫秒。用毫秒位置
+ * 继续翻页时，「同一毫秒内、微秒更晚」的行会被整片跳过（`(created_at,id) < (位置,id)`
+ * 把 .123456 截成 .123，于是 .123001…123999 全部落在「已经翻过」的那一侧）。
+ * 只接受六位是**故意 fail-closed**：三位位置无法知道它截掉了哪些行，宁可让调用方
+ * 从第一页重来（`INVALID_CURSOR`），也不静默漏数据。
+ */
+export const AUDIT_LOG_POSITION_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 
 /** 契约 `AuditEvent.result` 闭集（逐值抄自 `packages/contracts/openapi.json`）。 */
 const AUDIT_RESULTS = ['accepted', 'denied', 'failed'] as const;
@@ -55,7 +73,12 @@ export interface AdminAuditLogEntry {
   readonly after_value: AuditLogReading | null;
 }
 
-/** 键集位置：上一页最后一条的 `(created_at, id)`。 */
+/**
+ * 键集位置：上一页最后一条的 `(位置时间, id)`。
+ *
+ * `createdAt` 是**六位微秒的 UTC 文本**（`AUDIT_LOG_POSITION_RE`），不是契约里的
+ * `created_at`：后者为了 JSON 形状只能给毫秒。
+ */
 export interface AdminAuditLogCursor {
   readonly createdAt: string;
   readonly id: string;
@@ -76,6 +99,14 @@ export interface AdminAuditLogFilters {
 export interface AdminAuditLogPage {
   readonly items: AdminAuditLogEntry[];
   readonly hasMore: boolean;
+  /**
+   * 下一页的键集位置（**微秒精度**），`hasMore` 为真时必须给。
+   *
+   * ⛔ 不要用 `items[last].created_at` 拼这个位置：那个字段是契约字段（毫秒 ISO），
+   * 用它继续翻页会漏掉同一毫秒内微秒更大的行 —— 真库臂 `同毫秒不同微秒` 用例专门盯这条。
+   * `null` 只在 `hasMore === false` 时合法（服务层会拒绝「还有下一页却没有位置」）。
+   */
+  readonly nextPosition: AdminAuditLogCursor | null;
 }
 
 export interface AdminAuditLogPort {
@@ -203,6 +234,33 @@ export function toAuditLogRow(raw: unknown): AdminAuditLogEntry {
 }
 
 /**
+ * 从原始行取「游标专用」位置：`(cursor_position, id)`，微秒精度。
+ *
+ * 为什么不让服务层拿 `items[last].created_at` 拼位置：那是契约字段，只能是毫秒 ISO；
+ * 用它做键集条件会把同一毫秒内微秒更大的行整片跳过（真库臂有正反两侧读数）。
+ * 位置列缺失/形状不符 ⇒ 503（fail-closed），⛔ 不退化成毫秒位置继续翻页。
+ */
+export function toAuditLogPosition(raw: unknown): AdminAuditLogCursor {
+  if (!isRecord(raw)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '审计日志返回不是对象', { retryable: false });
+  }
+  const id = raw['id'];
+  const position = raw['cursor_position'];
+  if (
+    typeof id !== 'string' ||
+    !UUID_RE.test(id) ||
+    typeof position !== 'string' ||
+    !AUDIT_LOG_POSITION_RE.test(position) ||
+    Number.isNaN(Date.parse(position))
+  ) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '审计日志缺少可用的游标位置（cursor_position）', {
+      retryable: false,
+    });
+  }
+  return { createdAt: position, id };
+}
+
+/**
  * 读面失败的 `retryable` + `details` 唯一来源（口径与 `ops/flags-pg.ts` 的 `flagReadFailure` 同）。
  *
  * `retryable` **只认证据**：判据统一走 `db/pool.ts` 的 `isTransientDatabaseError`
@@ -261,8 +319,8 @@ export function createPostgresAdminAuditLogPort(options: { readonly pool: PgPool
       const before = filters.before;
       if (before !== null) {
         // 游标位置由服务层解签后给出；这里再判一次，避免把会撞 cast 错误的字符串送进库。
-        const at = new Date(before.createdAt);
-        if (Number.isNaN(at.getTime()) || !UUID_RE.test(before.id)) {
+        // 必须是六位微秒（毫秒位置会漏行，见 AUDIT_LOG_POSITION_RE 的注释）。
+        if (!AUDIT_LOG_POSITION_RE.test(before.createdAt) || !UUID_RE.test(before.id)) {
           throw new ApiError('INVALID_CURSOR', '游标位置不可解析');
         }
       }
@@ -286,7 +344,13 @@ export function createPostgresAdminAuditLogPort(options: { readonly pool: PgPool
         throw new ApiError('PROVIDER_UNAVAILABLE', '审计日志返回不是数组', { retryable: false });
       }
       const hasMore = rows.length > limit;
-      return { items: rows.slice(0, limit).map((row) => toAuditLogRow(row)), hasMore };
+      const page = rows.slice(0, limit);
+      return {
+        items: page.map((row) => toAuditLogRow(row)),
+        hasMore,
+        // 位置取「本页最后一行」的微秒列，而不是 `items` 里的毫秒 `created_at`。
+        nextPosition: hasMore ? toAuditLogPosition(page[page.length - 1]) : null,
+      };
     },
   };
 }

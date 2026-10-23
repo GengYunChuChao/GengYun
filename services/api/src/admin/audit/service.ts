@@ -49,6 +49,7 @@ import {
   scopeOfAuditEntity,
 } from './catalog.ts';
 import type { AdminAuditEntity } from './catalog.ts';
+import { AUDIT_LOG_POSITION_RE } from './pg.ts';
 import type { AdminAuditLogCursor, AdminAuditLogEntry, AdminAuditLogPort } from './pg.ts';
 
 /** 查询参数（路由层原样透传；判定全部在服务层，避免出现第二套会漂移的契约副本）。 */
@@ -145,8 +146,11 @@ function parseEntityParam(raw: unknown): AdminAuditEntity | null {
 }
 
 /**
- * 游标位置 `<created_at>|<id>` 解析。
+ * 游标位置 `<位置时间>|<id>` 解析。
  *
+ * 位置时间必须是**六位微秒**（`AUDIT_LOG_POSITION_RE`）：毫秒位置会让同一毫秒内
+ * 微秒更晚的行被整片跳过，所以这里宁可把三位位置当脏串拒掉（`INVALID_CURSOR`，
+ * 让调用方从第一页重来），也不拿它去查库。
  * 不可解析一律 `INVALID_CURSOR`：⛔ 不把脏串传给 SQL 的 cast（那会变成 500 而不是 400）。
  */
 function decodeAuditLogPosition(after: string | null): AdminAuditLogCursor | null {
@@ -157,7 +161,7 @@ function decodeAuditLogPosition(after: string | null): AdminAuditLogCursor | nul
   }
   const createdAt = after.slice(0, separator);
   const id = after.slice(separator + 1);
-  if (!UUID_RE.test(id) || Number.isNaN(Date.parse(createdAt))) {
+  if (!UUID_RE.test(id) || !AUDIT_LOG_POSITION_RE.test(createdAt) || Number.isNaN(Date.parse(createdAt))) {
     throw new ApiError('INVALID_CURSOR', '游标位置不可解析');
   }
   return { createdAt, id };
@@ -245,13 +249,20 @@ export function createAdminAuditLogService(options: AdminAuditLogServiceOptions)
     });
 
     const last = items[items.length - 1];
+    // 位置只认端口给的 `nextPosition`（微秒精度）；缺了它就不发 next_cursor：
+    // 用 `last.created_at`（毫秒）拼游标会漏行，而「有下一页却没有位置」直接 503 更诚实。
+    if (page.hasMore && page.nextPosition === null) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '审计日志分页位置缺失（cursor_position）', {
+        retryable: false,
+      });
+    }
     const nextCursor =
-      page.hasMore && last !== undefined
+      page.hasMore && page.nextPosition !== null && last !== undefined
         ? cursors.encode({
             kind: 'audit',
             subject: context.identity.userId,
             family: AUDIT_LOG_CURSOR_FAMILY,
-            after: `${last.created_at}|${last.id}`,
+            after: `${page.nextPosition.createdAt}|${page.nextPosition.id}`,
             watermark,
             expires: now().getTime() + CURSOR_TTL_MS,
           })

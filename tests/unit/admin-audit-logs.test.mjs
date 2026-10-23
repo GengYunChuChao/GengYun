@@ -9,7 +9,8 @@
  *    ⛔ **不返回空页**（空页会被读成"平台没有任何后台审计记录"）。
  * 3. **分页边界**：`limit` 缺省 20、上限 50（契约里 `Cursor` + `Limit` 共用参数，`validate_contracts.py`
  *    对带 `cursor` 的操作强制 `limit.maximum === 50`）；越界/非整数一律 400 且 field=`limit`；
- *    `next_cursor` 只在 `hasMore` 时给出，且能把 `(created_at,id)` 位置喂回端口。
+ *    `next_cursor` 只在 `hasMore` 时给出，且位置必须是**微秒精度**：拿 `created_at`（毫秒）
+ *    拼游标会跳过「同一毫秒内微秒更晚」的行（真库臂有正反两侧读数）。
  * 4. **筛选组合**：`action` / `entity` 各自转成端口入参（`actions` / `scopes`）、`from`/`to` 归一化后下传；
  *    未知枚举值 400（不静默返回空页）；`from > to` 400；游标与**当次筛选组合**绑定，换筛选必 `INVALID_CURSOR`。
  * 5. **脱敏**：端口行经**允许列表投影**（`toAuditLogRow`）—— 库里即使多出 `ip` / `user_agent` /
@@ -71,8 +72,18 @@ function adminContext({ scopes = [AUDIT_LOG_SCOPE], role = 'admin', userId = ADM
   return { identity: { userId, authEpoch: 1, role, scopes }, requestId: REQUEST_ID };
 }
 
-/** 假只读端口：记录每次入参，按 `pages` 顺序返回固定页。 */
-function makeFakePort({ items = [auditRow()], hasMore = false } = {}) {
+/** 毫秒 ISO → 六位微秒文本（`2026-10-20T10:00:01.000Z` → `…01.000000Z`）。 */
+function toMicros(iso) {
+  return iso.replace(/\.(\d{3})Z$/, '.$1000Z');
+}
+
+/**
+ * 假只读端口：记录每次入参，返回固定页。
+ *
+ * `nextPosition` 默认按「本页最后一行的 `created_at` 补三位零」升到微秒；也可以显式传入，
+ * 用来钉住「服务层必须用端口给的微秒位置，不许自己拿 `items[].created_at`（毫秒）拼」。
+ */
+function makeFakePort({ items = [auditRow()], hasMore = false, nextPosition } = {}) {
   const calls = [];
   const port = {
     persistent: true,
@@ -81,7 +92,14 @@ function makeFakePort({ items = [auditRow()], hasMore = false } = {}) {
       calls.push(filters);
       const rows = typeof items === 'function' ? items(filters) : items;
       const more = typeof hasMore === 'function' ? hasMore(filters) : hasMore;
-      return { items: rows, hasMore: more };
+      const lastRow = rows[rows.length - 1];
+      const position =
+        nextPosition !== undefined
+          ? nextPosition
+          : more && lastRow !== undefined
+            ? { createdAt: toMicros(lastRow.created_at), id: lastRow.id }
+            : null;
+      return { items: rows, hasMore: more, nextPosition: position };
     },
   };
   return port;
@@ -204,9 +222,60 @@ test('GET /admin/audit-logs：分页边界（limit 缺省 20、上限 50、越�
 
   await paged.listAuditLogs(adminContext(), { limit: '2', cursor: page1.body.data.next_cursor });
   assert.deepEqual(pagedPort.calls[1].before, {
-    createdAt: '2026-10-20T10:00:01.000Z',
+    createdAt: '2026-10-20T10:00:01.000000Z',
     id: UUIDS[1],
   });
+});
+
+/**
+ * 3b. **同毫秒不同微秒不得漏行**（审查发现的真缺陷的回归钉子）。
+ *
+ * 缺陷形态：游标位置若取 `items[last].created_at`（契约字段，毫秒 ISO），PG 的微秒会被
+ * 截断成 `.123`，于是同一毫秒内 `.123001…123999` 的行全部落在「已翻过」的一侧被跳过。
+ * 这里让端口故意给出「毫秒 created_at = .123 但微秒位置 = .123001」的一页：
+ * 服务层必须把 `.123001` 写进游标，而不是 `.123`。
+ */
+test('GET /admin/audit-logs：同毫秒不同微秒 ⇒ 游标位置必须保留微秒（不得按毫秒截断）', async () => {
+  const a004 = auditRow({ id: UUIDS[2], created_at: '2026-10-20T10:00:10.123Z' });
+  const a001 = auditRow({ id: UUIDS[0], created_at: '2026-10-20T10:00:10.123Z' });
+  const port = makeFakePort({
+    items: [a004, a001],
+    hasMore: true,
+    // 端口从 `cursor_position` 列拿到的真实位置：微秒级，且与毫秒 `created_at` 不同。
+    nextPosition: { createdAt: '2026-10-20T10:00:10.123001Z', id: UUIDS[0] },
+  });
+  const service = makeService(port);
+  const page1 = await service.listAuditLogs(adminContext(), { limit: '2' });
+  const cursor = page1.body.data.next_cursor;
+  assert.ok(typeof cursor === 'string', 'hasMore ⇒ 必须给出游标');
+
+  await service.listAuditLogs(adminContext(), { limit: '2', cursor });
+  assert.deepEqual(
+    port.calls[1].before,
+    { createdAt: '2026-10-20T10:00:10.123001Z', id: UUIDS[0] },
+    '游标位置必须来自端口的微秒位置，不得用毫秒 created_at 拼',
+  );
+
+  // 反证：毫秒位置会被服务层拒掉（fail-closed），而不是拿它去查库漏掉同一毫秒的行。
+  const msPort = makeFakePort({
+    items: [a004, a001],
+    hasMore: true,
+    nextPosition: { createdAt: '2026-10-20T10:00:10.123Z', id: UUIDS[0] },
+  });
+  const msService = makeService(msPort);
+  const msPage = await msService.listAuditLogs(adminContext(), { limit: '2' });
+  await assert.rejects(
+    () => msService.listAuditLogs(adminContext(), { limit: '2', cursor: msPage.body.data.next_cursor }),
+    (error) => expectApiError(error, 'INVALID_CURSOR'),
+  );
+  assert.equal(msPort.calls.length, 1, '毫秒位置不得进入第二次查询');
+
+  // 端口说「还有下一页」却不给位置 ⇒ 503，绝不发一个空游标把后面的行吞掉。
+  const brokenPort = makeFakePort({ items: [a004], hasMore: true, nextPosition: null });
+  await assert.rejects(
+    () => makeService(brokenPort).listAuditLogs(adminContext(), {}),
+    (error) => expectApiError(error, 'PROVIDER_UNAVAILABLE'),
+  );
 });
 
 /** 4. 筛选组合：下传入参 + 未知枚举 400 + 区间顺序 400 + 游标绑定筛选。 */
@@ -316,6 +385,7 @@ test('GET /admin/audit-logs：权限矩阵、筛选组合、分页边界与脱�
     user_agent: 'Mozilla/5.0 (x)',
     credential: 'Bearer secret-token',
     session_token_hash: 'deadbeef',
+    cursor_position: '2026-10-20T10:00:00.000000Z',
   };
   const projected = toAuditLogRow(rawRow);
   assert.deepEqual(Object.keys(projected).sort(), [
@@ -367,9 +437,19 @@ test('GET /admin/audit-logs：权限矩阵、筛选组合、分页边界与脱�
 test('GET /admin/audit-logs：PG 适配器（参数化 SQL、limit+1 判 hasMore、行投影）', async () => {
   const queries = [];
   const rows = [
-    { ...auditRow({ id: UUIDS[0], created_at: new Date('2026-10-20T10:00:02.000Z') }), ip: '10.0.0.1' },
-    { ...auditRow({ id: UUIDS[1], created_at: '2026-10-20T10:00:01.000Z' }) },
-    { ...auditRow({ id: UUIDS[2], created_at: '2026-10-20T10:00:00.000Z' }) },
+    {
+      ...auditRow({ id: UUIDS[0], created_at: new Date('2026-10-20T10:00:02.000Z') }),
+      ip: '10.0.0.1',
+      cursor_position: '2026-10-20T10:00:02.000123Z',
+    },
+    {
+      ...auditRow({ id: UUIDS[1], created_at: '2026-10-20T10:00:01.000Z' }),
+      cursor_position: '2026-10-20T10:00:01.000456Z',
+    },
+    {
+      ...auditRow({ id: UUIDS[2], created_at: '2026-10-20T10:00:00.000Z' }),
+      cursor_position: '2026-10-20T10:00:00.000789Z',
+    },
   ];
   const pool = {
     async query(text, values) {
@@ -384,26 +464,33 @@ test('GET /admin/audit-logs：PG 适配器（参数化 SQL、limit+1 判 hasMore
     to: null,
     actions: ['set_flag'],
     scopes: null,
-    before: { createdAt: '2026-10-21T00:00:00.000Z', id: UUIDS[2] },
+    before: { createdAt: '2026-10-21T00:00:00.000000Z', id: UUIDS[2] },
   });
 
   assert.equal(queries.length, 1);
   const [{ text, values }] = queries;
   assert.ok(text.includes('FROM public.list_admin_audit_logs('), '只能经只读函数读，不得直接 SELECT 表');
   assert.ok(!text.includes('admin_audit_events'), '运行时不得直接查审计表');
+  assert.ok(text.includes('AS cursor_position'), '必须另取微秒位置列（毫秒 created_at 不能当游标位置）');
   assert.deepEqual(values, [
     3,
     '2026-10-01T00:00:00.000Z',
     null,
     ['set_flag'],
     null,
-    '2026-10-21T00:00:00.000Z',
+    '2026-10-21T00:00:00.000000Z',
     UUIDS[2],
   ]);
   assert.equal(page.hasMore, true, 'limit+1 行 ⇒ hasMore');
   assert.equal(page.items.length, 2, '返回行数必须被截回 limit');
   assert.equal(page.items[0].created_at, '2026-10-20T10:00:02.000Z');
   assert.ok(!('ip' in page.items[0]));
+  assert.ok(!('cursor_position' in page.items[0]), '游标位置列不得进契约条目');
+  assert.deepEqual(
+    page.nextPosition,
+    { createdAt: '2026-10-20T10:00:01.000456Z', id: UUIDS[1] },
+    'nextPosition 取「本页最后一行」的微秒位置',
+  );
 
   // 参数化：SQL 文本里不得出现任何用户输入拼接。
   for (const value of ['set_flag', '2026-10-01T00:00:00.000Z', UUIDS[2]]) {
@@ -428,4 +515,28 @@ test('GET /admin/audit-logs：PG 适配器（参数化 SQL、limit+1 判 hasMore
     (error) => expectApiError(error, 'INVALID_CURSOR'),
   );
   assert.equal(queries.length, 1, '参数非法时不得发起查询');
+
+  // 库/驱动没给微秒位置列 ⇒ 503（fail-closed）：⛔ 不退化成毫秒位置继续翻页（那会漏行）。
+  const noPositionPool = {
+    async query() {
+      return {
+        rows: [
+          { ...auditRow({ id: UUIDS[0], created_at: '2026-10-20T10:00:02.000Z' }) },
+          { ...auditRow({ id: UUIDS[1], created_at: '2026-10-20T10:00:01.000Z' }) },
+        ],
+      };
+    },
+  };
+  await assert.rejects(
+    () =>
+      createPostgresAdminAuditLogPort({ pool: noPositionPool }).listAuditLogs({
+        limit: 1,
+        from: null,
+        to: null,
+        actions: null,
+        scopes: null,
+        before: null,
+      }),
+    (error) => expectApiError(error, 'PROVIDER_UNAVAILABLE'),
+  );
 });

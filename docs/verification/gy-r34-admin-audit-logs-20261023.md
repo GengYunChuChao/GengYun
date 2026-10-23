@@ -13,8 +13,9 @@
 5. **分页是键集游标**（`(created_at, id) < (…, …)`，`ORDER BY created_at DESC, id DESC`），不提供深 `offset`；游标把「筛选组合 + 管理员主体 + 15 分钟过期」都绑进 HMAC，改筛选或用别人的游标一律 `INVALID_CURSOR`。
 6. **枚举闭集来自既有写入点**：`action ∈ {account.suspend, account.restore, set_flag}`、`entity ∈ {account, flag}`（映射 `scope` 列 `accounts:suspend` / `flags:write`）。未知取值 **400 `INVALID_REQUEST`**，不静默返回空页。
 7. **脱敏**：出口按允许列表投影，`target_ref` 只留 `type` / `id` / `revision`；`actor_id` 映射为契约字段 `actor`。表里**没有** `ip` / `user_agent` / 任何凭据列，故响应形状不含它们（不是「有意隐去」，是本来就没有）。
-8. **未新增索引**：0033 的迁移**不含** `CREATE INDEX`，理由与真实数据量读数见 §7（20006 行上三种查询形状都是 `Function Scan`）。
-9. **读数**：单测 8/8、三个受影响的既有后台用例 11/11、真库臂 PASS（PG 17.11，端口 55434）、`tsc --noEmit` exit 0、`verify-contract-status.mjs` exit 0、`verify-doc-anchors.mjs --strict` exit 0、`validate_contracts.py` `PASS: 114 operations`、`verify-migrations-unique.mjs --strict` 5 项全满足。
+8. **未新增索引**：0033 的迁移**不含** `CREATE INDEX`，理由与真实数据量读数见 §7（20009 行上三种查询形状都是 `Function Scan`）。
+9. **读数**：单测 9/9、三个受影响的既有后台用例 11/11、真库臂 PASS（PG 17.11，端口 55436）、`tsc --noEmit` exit 0、`verify-contract-status.mjs` exit 0、`verify-doc-anchors.mjs --strict` exit 0、`validate_contracts.py` `PASS: 114 operations`、`verify-migrations-unique.mjs --strict` 5 项全满足。
+10. **修过一个真缺陷（审查发现）**：游标位置原先取契约字段 `created_at`（毫秒），会把同一毫秒内微秒更晚的行整片跳过；现改为 SQL 额外取微秒位置列 `cursor_position`，游标只接受六位微秒位置（§5「微秒精度」）。同模式的 `ops/flags-pg.ts` **未改**（属别的切片），已在 §5 与 §9 如实登记。
 
 ## 1 与既有两个审计读面的差异（为什么不复用它们）
 
@@ -111,11 +112,13 @@ curl -sS -X GET \
 
 ## 5 筛选、分页与排序语义
 
-- **排序**：`ORDER BY created_at DESC, id DESC`。同一毫秒写入的多行靠 `id DESC` 定序，翻页不会重复或漏行（真库臂专门造了两行同一 `created_at` 的并列组）。
+- **排序**：`ORDER BY created_at DESC, id DESC`。`created_at` 完全并列的行靠 `id DESC` 定序，翻页不会重复；**「不会漏行」只在「游标位置保留微秒」时成立** —— 见下面「微秒精度」一段（这是本片修过的一个真缺陷）。
+- **微秒精度（审查发现并已修）**：PG 的 `timestamptz` 精度是微秒，而契约字段 `created_at` 与 JS `Date` 都只到毫秒。若拿 `items[last].created_at`（`.123Z`）当键集位置，`(created_at,id) < ('.123', …)` 会把同一毫秒内 `.123001…123999` 的行整片判成「已翻过」并静默跳过。修法：SQL 额外取一列 `to_char(l.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_position`（**只给游标用，不进契约条目**），端口把它作为 `nextPosition` 交给服务层拼游标；`decodeAuditLogPosition` 只接受**恰好六位微秒**的位置，三位（毫秒）位置一律 `INVALID_CURSOR`（fail-closed：无法知道它截掉了哪些行，宁可让调用方从第一页重来）。真库臂同一组数据两侧读数：微秒位置 `limit=2` 翻两页收全 3 行（含 `a002`）；毫秒位置 `.123` 翻下一页**0 行**（复现漏行），同位置换 `.123001` 则取回 `a002`。
+- **已知缺口（同模式）**：`services/api/src/admin/ops/flags-pg.ts` 的 `listAudit` 用的是同一种「毫秒 `created_at` 拼游标」形态，落在 `set_flag` 留痕读面上；本片**没有动它**（属于别的切片，改动需单独评审）。影响：同一毫秒内多次改开关时，该读面可能跳过其中若干行；时间窗极窄（1ms），但存在。
 - **键集条件**：`(e.created_at, e.id) < (p_before_created_at, p_before_id)`，行比较而非字符串比较；`p_before_*` 任一为 `NULL` 时退化为「第一页」。
-- **游标载荷**：`{kind:'audit', subject:<管理员 id>, family:'audit_logs', after:'<created_at>|<id>', watermark:Hmac([from,to,action,entity]), expires:now+15min}`，整体 `<base64url(json)>.<HMAC-SHA256>`。四道校验依次是：签名 → 归属（`subject`）→ 过期 → `watermark`（筛选未变）。
-- **`limit` 取 `limit + 1` 行**判 `hasMore`，因此「末页 `next_cursor: null`」不需要额外 `COUNT(*)`。
-- **`from`/`to` 为标准化的 UTC**：入参接受任意带偏移的 RFC 3339，服务端统一 `new Date(raw).toISOString()` 后下传。
+- **游标载荷**：`{kind:'audit', subject:<管理员 id>, family:'audit_logs', after:'<微秒位置>|<id>', watermark:Hmac([from,to,action,entity]), expires:now+15min}`，整体 `<base64url(json)>.<HMAC-SHA256>`。四道校验依次是：签名 → 归属（`subject`）→ 过期 → `watermark`（筛选未变）。
+- **`limit` 取 `limit + 1` 行**判 `hasMore`，因此「末页 `next_cursor: null`」不需要额外 `COUNT(*)`。端口若说「还有下一页」却没给 `nextPosition`，服务层 503 而不是发空游标（那会把剩余行吞掉）。
+- **`from`/`to` 为标准化的 UTC**：入参接受任意带偏移的 RFC 3339，服务端统一 `new Date(raw).toISOString()` 后下传。⇒ **筛选边界精度是毫秒**（亚毫秒会向下截断）：`to` 若写成 `.123456`，边界行会被当作 `.123` 处理。这是有意的口径（与契约 `date-time` 一致），不是漏行；需要精确边界时按整毫秒给。
 
 ## 6 脱敏与投影（允许列表，不是黑名单）
 
@@ -132,14 +135,15 @@ curl -sS -X GET \
 
 - 正向：`services/api/db/migrations/0033_admin_audit_log_read.sql`（建函数 + `REVOKE ALL … FROM PUBLIC`）。
 - 回滚：`services/api/db/migrations/rollback/0033_admin_audit_log_read.down.sql`（只 `DROP FUNCTION`，不动表/索引/既有读函数/审计行；回滚后 HTTP 面仍 503，而不是伪造空页）。
+- ⚠ **回滚口径（实测 `services/api/src/db/migrate.ts:288-310`）**：迁移器只有 `up | status | list`，**没有 `down`**。手工执行 `rollback/0033_*.down.sql` 之后 `schema_migrations` 里仍记着 0033，再 `up` 会按「已存在 ⇒ 跳过」不重建函数。正确顺序是：手动跑 down SQL → **手删 `schema_migrations` 里 0033 那一行** → `db:migrate up`。否则运维会发现「回滚了但再升级不回来」。
 - 授权：`deploy/postgres-cvm/sql/20-login-roles.sql` 新增 `gy-r34-audit-logs-grant` 段（存在性检查 → `REVOKE` → `GRANT EXECUTE TO gengyun_api_runtime`）；`deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 的函数面兜底清单补一行 `('public','list_admin_audit_logs','runtime',ARRAY['gengyun_api_runtime'])`。
-- **不新增索引**：表上已有 `admin_audit_events_created_idx (created_at DESC, id DESC)`，正好是本函数的排序与键集形状。20006 行实测（`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`，owner 身份、单条 SQL 两次预热后的稳定读数）：
+- **不新增索引**：表上已有 `admin_audit_events_created_idx (created_at DESC, id DESC)`，正好是本函数的排序与键集形状。20009 行实测（`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`，owner 身份、两条独立运行的稳定读数）：
 
-| 查询形状 | 计划 | 执行时间 |
+| 查询形状 | 计划 | 执行时间（两次实测） |
 | --- | --- | --- |
-| 首页无筛选（`limit=20`） | `Function Scan on list_admin_audit_logs` | 14.10 ms（首跑 13.67 ms） |
-| `action='account.suspend'`（约 2%） | `Function Scan` | 4.30 ms（首跑 3.56 ms） |
-| 键集深翻页（第 200 页） | `Function Scan` | 4.44 ms（首跑 3.04 ms） |
+| 首页无筛选（`limit=50`） | `Function Scan on list_admin_audit_logs` | 14.10 ms / 9.58 ms |
+| `action='account.suspend'`（约 2%） | `Function Scan` | 4.30 ms / 4.85 ms |
+| 键集深翻页（第 200 页） | `Function Scan` | 4.44 ms / 3.52 ms |
 
   `Function Scan` 说明过滤发生在函数体内部：时间区间与键集走既有 `created_idx`，`action`/`scope` 过滤在函数内做（2 万行量级可接受）。**若未来单表过百万行且以 `action` 为主的查询变热**，再加一条 `(action, created_at DESC, id DESC)` 的**可逆**索引迁移即可；现在加只会让每次 `INSERT` 多维护一棵树，而写入点只有三个低频管理动作。这个取舍写在这里，是为了让下一步的人不必重新论证。
 
@@ -147,9 +151,10 @@ curl -sS -X GET \
 
 | 项 | 命令 | 读数 |
 | --- | --- | --- |
-| 本片单测 | `node --test tests/unit/admin-audit-logs.test.mjs` | `tests 8 / pass 8 / fail 0` |
+| 本片单测 | `node --test tests/unit/admin-audit-logs.test.mjs` | `tests 9 / pass 9 / fail 0`（含「同毫秒不同微秒」回归用例） |
 | 受影响的既有用例 | `node --test tests/unit/admin-contract-conformance.test.mjs tests/unit/admin-routes-nail.test.mjs tests/unit/admin-real-mode-fail-closed.test.mjs` | `tests 11 / pass 11 / fail 0` |
-| 真库臂（PG 17.11，端口 55434） | `$env:GY_PG_BIN=…; node tests/integration/admin-audit-logs-pg.mjs` | `真库臂 PASS：读通道的 SQL、权限、键集、筛选、脱敏全部在真 PG 17.11 上取得读数`，exit 0 |
+| 真库臂（PG 17.11，端口 55436） | `$env:GY_PG_BIN=…; node tests/integration/admin-audit-logs-pg.mjs` | `真库臂 PASS：读通道的 SQL、权限、键集、筛选、脱敏全部在真 PG 17.11 上取得读数`，exit 0 |
+| 漏行缺陷正反两侧 | 同上（真库臂 §5b） | 微秒位置：`limit=2` 两页收全 `a004/a001/a002`；毫秒位置 `.123`：下一页 **0 行**（复现漏行）；毫秒换微秒 `.123001`：取回 `a002` |
 | 类型检查 | `node .\node_modules\typescript\bin\tsc -p services/api/tsconfig.json --noEmit` | exit 0（零输出） |
 | 契约一致性 | `node tools/run-python.mjs tools/validate_contracts.py` | `PASS: 114 operations; contract consistency; 29 fixtures; …` |
 | 契约台账/中文表 | `node tools/verify-contract-status.mjs` | exit 0（形状 0 / 语义 0 / 表格漂移 0） |
@@ -166,3 +171,5 @@ curl -sS -X GET \
 4. **枚举扩张是破坏性变更**：新增写入点若不更新 `AUDIT_ACTIONS` / `AUDIT_ENTITY_SCOPES` 与契约 `enum`，新 `action` 将无法被筛选（只能全量翻页看到），单测 `契约闭集一致` 会在 CI 里先响。
 5. **`SECURITY DEFINER` 函数的既定风险**：函数固定 `search_path = pg_catalog`、`TimeZone='UTC'`，`REVOKE ALL FROM PUBLIC` 后仅授运行时角色；但函数体一旦被改成拼接 SQL（`EXECUTE format(...)`）就会重新引入注入面——本片全部为静态 SQL + 参数绑定，真库臂断言了 `queries[0].text` 不含任何拼接值。
 6. **临时集群清理**：Windows 上 `pg_ctl -m immediate -w stop` 返回后 `server.log` 句柄可能滞留，真库臂改为「等 `postmaster.pid` 消失 → 重试删目录 → 删不掉只告警不判失败」，因此 `.pg17/tmp` 下偶尔会留下 `gy-r34-audit-logs-pg-<port>-<rand>` 目录，需人工清理（不影响读数）。
+7. **同模式的未修缺口**：`services/api/src/admin/ops/flags-pg.ts` 的 `listAudit` 仍用毫秒 `created_at` 拼键集游标（`set_flag` 留痕读面），同一毫秒内多次改开关时可能跳过若干行。本片**没有动它**：那是另一个切片的模块，改动需单独评审与真库臂。修法与本片一致（多取一列微秒位置 + 游标只收六位微秒），可作为后续小切片的直接模板。
+8. **回滚需要额外一步**：迁移器无 `down` 子命令，回滚必须「手跑 down SQL + 手删 `schema_migrations` 里 0033 那行 + `up`」，见 §7。
