@@ -1,10 +1,26 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+/**
+ * 授权列表（`GET /me/consents`）的分页：**快照水位 + 签名游标**。
+ *
+ * 签名/解码核在 `signed-list-cursor.ts`（唯一实现，外发清单 `GET /me/exports` 共用同一份）。
+ * 本文件只保留授权域自己的两件事：
+ *   1. 水位 = 调用方给的**完整当前快照**的签名（新增/撤回/改版本都会改变水位 ⇒ 旧游标失效）；
+ *   2. 游标锚点 = 快照内的记录 id（uuid），翻页从该 id 之后继续。
+ */
 import { ApiError } from '../errors.ts';
+import {
+  LIST_CURSOR_TTL_MS,
+  decodeListCursor,
+  encodeListCursor,
+  invalidListCursor,
+  signCursorValue,
+  type ListCursorBinding,
+} from './signed-list-cursor.ts';
 
-const CURSOR_TTL_MS = 15 * 60 * 1000;
 const SORT = 'granted_at_desc_id_desc';
+const KIND = 'consents';
+const DOMAIN = 'consent-list/v1';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const CURSOR_KEYS = ['v', 'kind', 'user', 'auth_epoch', 'filter', 'sort', 'watermark', 'after', 'expires'];
+const INVALID_MESSAGE = '授权分页游标无效、已过期或授权记录已变化';
 
 interface PageOptions {
   userId: string;
@@ -15,10 +31,6 @@ interface PageOptions {
   now?: number;
 }
 
-function invalidCursor(): ApiError {
-  return new ApiError('INVALID_CURSOR', '授权分页游标无效、已过期或授权记录已变化');
-}
-
 /** Caller supplies the current DTO snapshot in DB granted_at DESC, id DESC order, under its identity/record locks. */
 export function paginateConsentRecords<T extends { id: string }>(items: readonly T[], options: PageOptions) {
   if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > 50) {
@@ -26,40 +38,31 @@ export function paginateConsentRecords<T extends { id: string }>(items: readonly
   }
   if (!options.hmacKey) throw new ApiError('PROVIDER_UNAVAILABLE', '授权游标签名配置不可用');
   const now = options.now ?? Date.now();
-  // Domain separation prevents a cursor/signature from another API from being accepted here.
-  const sign = (value: string) => createHmac('sha256', options.hmacKey).update(`consent-list/v1\n${value}`).digest('base64url');
-  const watermark = sign(JSON.stringify(items));
-  let start = 0, expires = now + CURSOR_TTL_MS;
+  const binding: ListCursorBinding = {
+    domain: DOMAIN,
+    kind: KIND,
+    sort: SORT,
+    userId: options.userId,
+    authEpoch: options.authEpoch,
+    hmacKey: options.hmacKey,
+    filter: null,
+  };
+  const watermark = signCursorValue(binding, JSON.stringify(items));
+  let start = 0, expires = now + LIST_CURSOR_TTL_MS;
   if (options.cursor !== undefined) {
-    try {
-      if (typeof options.cursor !== 'string' || options.cursor.length > 2048) throw invalidCursor();
-      const [encoded, signature, extra] = options.cursor.split('.');
-      if (!encoded || !signature || extra !== undefined || !/^[A-Za-z0-9_-]+$/.test(encoded)
-          || !/^[A-Za-z0-9_-]{43}$/.test(signature)) throw invalidCursor();
-      const expected = Buffer.from(sign(encoded), 'base64url');
-      const received = Buffer.from(signature, 'base64url');
-      if (received.length !== expected.length || received.toString('base64url') !== signature
-          || !timingSafeEqual(expected, received)) throw invalidCursor();
-      const bytes = Buffer.from(encoded, 'base64url');
-      if (bytes.toString('base64url') !== encoded) throw invalidCursor();
-      const value = JSON.parse(bytes.toString('utf8'));
-      if (!value || Array.isArray(value) || typeof value !== 'object'
-          || Object.keys(value).length !== CURSOR_KEYS.length || CURSOR_KEYS.some(key => !Object.hasOwn(value, key))
-          || value.v !== 1 || value.kind !== 'consents' || value.user !== options.userId
-          || value.auth_epoch !== options.authEpoch || value.filter !== null || value.sort !== SORT
-          || value.watermark !== watermark || !Number.isSafeInteger(value.expires) || value.expires <= now
-          || typeof value.after !== 'string' || !UUID.test(value.after)) throw invalidCursor();
-      const index = items.findIndex(item => item.id === value.after);
-      if (index < 0) throw invalidCursor();
-      start = index + 1;
-      expires = value.expires;
-    } catch { throw invalidCursor(); }
+    const decoded = decodeListCursor(binding, options.cursor, {
+      now,
+      watermark,
+      afterPattern: UUID,
+      message: INVALID_MESSAGE,
+    });
+    const index = items.findIndex((item) => item.id === decoded.after);
+    if (index < 0) throw invalidListCursor(INVALID_MESSAGE);
+    start = index + 1;
+    expires = decoded.expires;
   }
   const page = items.slice(start, start + options.limit);
-  if (start + page.length >= items.length) return { items: page, next_cursor: null };
-  const encoded = Buffer.from(JSON.stringify({
-    v: 1, kind: 'consents', user: options.userId, auth_epoch: options.authEpoch, filter: null,
-    sort: SORT, watermark, after: page.at(-1)?.id, expires,
-  })).toString('base64url');
-  return { items: page, next_cursor: `${encoded}.${sign(encoded)}` };
+  const last = page.at(-1);
+  if (start + page.length >= items.length || last === undefined) return { items: page, next_cursor: null };
+  return { items: page, next_cursor: encodeListCursor(binding, { after: last.id, watermark, expires }) };
 }

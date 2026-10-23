@@ -39,7 +39,7 @@ const PLANNED_EXEMPT = Object.freeze({
   }),
   listExports: Object.freeze({
     owner: 'GY-I19 导出与注销',
-    why: '账本读面 listExportsForUser 与真实用例已存在，但 egress.mjs 自述「不注册 HTTP 路由」，装配属接线方，HTTP 层无实现证据可引。',
+    why: '路由已装配（`route_mounted=true`，app.ts 一处 import ＋ 一处注册），`status`/`evidence` 待监工改判，故仍列 planned 豁免；plan_ref 指向账本读面 listExportsForUser。',
     plan_ref: Object.freeze({ path: 'packages/privacy/egress.mjs', lines: '402-404', symbol: 'listExportsForUser' }),
   }),
   verifyRegistration: Object.freeze({

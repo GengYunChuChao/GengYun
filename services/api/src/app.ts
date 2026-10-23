@@ -32,7 +32,7 @@ import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
 import { registerUserAuthRoutes } from './routes/auth.ts';
 import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
-import { registerConsentRoutes } from './routes/consents.ts';
+import { registerConsentRoutes } from './routes/consents.ts'; import { registerExportRoutes } from './routes/exports.ts';
 import { registerProfileRoutes } from './routes/profile.ts';
 import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { registerRecognitionRoutes } from './routes/recognitions.ts';
@@ -1978,6 +1978,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(consentGrantTestOptions ?? {}),
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
+  // GY-I19（#19）：`listExports`（`GET /me/exports`）装配（无池 ⇒ 503 fail-closed，见 `routes/exports.ts`）。
+  // ⚠ 新 import 与上一条 import 同行：独占一行会推移 `app.ts` 行号，令历史证据页的引用锚点判 SUSPECT。
+  registerExportRoutes(app, config, pool, guards);
   registerProfileRoutes(app, config, pool, guards);
   // 本片起：以下域的输出面受**全局开关**控制（受控面与其 `operationId` 的权威清单见
   // `admin/ops/flag-gate.ts` 的 `FLAG_GATED_SURFACES`：除草剂列表／详情、社区 `createPost`／
