@@ -6,7 +6,10 @@ import { join } from 'node:path';
 import {
   AI_ENDPOINTS, auditAIConfiguration, loadPrivateEnvironment, parseJsonc, prepareOfflineRequest, describeOfflineRequest,
   PRIVATE_ENV_PAIRS, MAPPED_ENV_NAMES, REQUIRED_WHEN_REAL_FIELDS, MISSING_REQUIRED_FIELDS, envMappingIssues,
+  CHAT_LLM_DEFAULT_ENV, applyChatProviderDefaults, missingRealModeEnv, assertRealModeEnv,
 } from '../tools/ai-config.mjs';
+// 半配置必须由 `asChatProvider()` 报 `ConfigError`：直接用真判定，不在这里复述一份判据。
+import { loadConfig } from '../services/api/src/config.ts';
 const example = JSON.parse(readFileSync(new URL('../docs/verification/config.example.json', import.meta.url), 'utf8'));
 const fixture = () => { const config = structuredClone(example); config.providers.moderation.bizType = 'synthetic_text'; config.providers.moderation.image.bizType = 'synthetic_image'; return config; };
 const env = { TOKENHUB_API_KEY: 'synthetic-tokenhub-secret', DEEPSEEK_API_KEY: 'synthetic-deepseek-secret', TENCENTCLOUD_SECRET_ID: 'synthetic-id', TENCENTCLOUD_SECRET_KEY: 'synthetic-tencent-secret' };
@@ -231,4 +234,123 @@ test('two-sided guard rejects a mapping added without pruning missingFields even
   assert.deepEqual(envMappingIssues({ mapped, missing: ['GAMMA_KEY'], required }), ['MISSING_NOT_REQUIRED:GAMMA_KEY']);
   // 空问题数组只属于真正一致的三元组。
   assert.deepEqual(envMappingIssues({ mapped: ['ALPHA_KEY'], missing: ['BETA_KEY'], required }), []);
+});
+
+// ── real 模式起服务：私密文件 13 键全映射、9 项前置、只含字段名的报错、默认值与优先级 ──────────
+// 以下全部是合成值：不读、不引用任何真实凭据文件；断言只比对合成标记，不把任何值写进输出。
+const PRIVATE_DOC_KEYS = Object.freeze([
+  'appid', 'appsecret', 'deepseekApiKey', 'tencentSecretId', 'tencentSecretKey', 'tokenhubApiKey', 'databaseUrl',
+  'sessionSigningKey', 'deletionLedgerKey',
+  'objectStorageEndpoint', 'objectStorageBucket', 'objectStorageAccessKey', 'objectStorageSecretKey',
+]);
+// 映射表里另有 4 个可选字段：私密文件不写就不导出，写了也不参与真实模式判定。
+const PRIVATE_OPTIONAL_KEYS = Object.freeze(['tencentAsrSecretId', 'tencentAsrSecretKey', 'tencentAsrSessionToken', 'tencentSessionToken']);
+const syntheticPrivate = (extra = {}) => {
+  const data = { appid: SYNTHETIC_APPID };
+  for (const key of PRIVATE_DOC_KEYS) if (key !== 'appid') data[key] = 'synthetic-' + key + '-value';
+  return { ...data, ...extra };
+};
+// 17 键版（13 个真有键的 + 4 个可选）：只为逐对验证映射，不代表真实文件里一定有那 4 个。
+const syntheticFull = () => syntheticPrivate(Object.fromEntries(PRIVATE_OPTIONAL_KEYS.map(key => [key, 'synthetic-' + key + '-value'])));
+const withPrivateFile = (data, run) => {
+  const dir = mkdtempSync(join(tmpdir(), 'gy25-real-'));
+  try { const file = join(dir, 'synthetic.json'); writeFileSync(file, JSON.stringify(data)); return run(file); }
+  finally { rmSync(dir, { recursive: true, force: true }); }
+};
+test('all thirteen documented private keys map to allowlisted variable names, none to zero', () => {
+  const unique = [...new Set(PRIVATE_ENV_PAIRS.map(([field]) => field))];
+  // 13 键逐一有映射：漏一个，real 模式就得靠外部脚本逐对补环境变量。
+  assert.deepEqual(PRIVATE_DOC_KEYS.filter(key => !unique.includes(key)), []);
+  // 表内字段名恰好是「13 个真有键的 + 4 个可选」：多一个少一个都要同步改这里与文档。
+  assert.deepEqual([...unique].sort(), [...PRIVATE_DOC_KEYS, ...PRIVATE_OPTIONAL_KEYS].sort());
+  // 只有 databaseUrl 一个字段出两个变量名（旧名保留、新名追加），其余一对一。
+  assert.deepEqual(PRIVATE_ENV_PAIRS.filter(([field]) => field === 'databaseUrl').map(([, variable]) => variable), ['GENGYUN_DATABASE_URL', 'DATABASE_URL']);
+  assert.equal(PRIVATE_ENV_PAIRS.length, unique.length + 1);
+  for (const name of MAPPED_ENV_NAMES) assert.match(name, /^[A-Z][A-Z0-9_]*$/);
+});
+test('thirteen-key private file alone satisfies every required real-mode variable with the right value', () => {
+  withPrivateFile(syntheticFull(), (file) => {
+    const loaded = loadPrivateEnvironment(file, {});
+    // 每个字段的合成标记落在它自己的变量名上：证明的是映射对不对，不是「有没有值」。
+    // `appid` 例外：它必须逐字等于白名单账号，否则 loader 直接 `PRIVATE_ACCOUNT_MISMATCH`。
+    const marker = field => field === 'appid' ? SYNTHETIC_APPID : 'synthetic-' + field + '-value';
+    for (const [field, variable] of PRIVATE_ENV_PAIRS) assert.equal(loaded[variable], marker(field), variable);
+    assert.deepEqual([...loaded.missingFields], []);
+  });
+  // 真实文件的 13 键版：4 个可选字段缺席不影响 9/9。
+  withPrivateFile(syntheticPrivate(), (file) => {
+    const loaded = loadPrivateEnvironment(file, {});
+    for (const [field, variable] of PRIVATE_ENV_PAIRS) if (PRIVATE_OPTIONAL_KEYS.includes(field)) assert.equal(Object.hasOwn(loaded, variable), false, variable);
+    // 9/9 前置项：只给私密文件、不补任何环境变量，全部 nonempty（不需要调用方逐对补映射）。
+    assert.deepEqual(missingRealModeEnv(loaded), []);
+    assert.deepEqual(REQUIRED_WHEN_REAL_FIELDS.filter(name => !loaded[name].trim()), []);
+    assert.equal(assertRealModeEnv(loaded), loaded);
+    assert.deepEqual([...loaded.missingFields], []);
+  });
+});
+test('the real-mode gap report names variables only and never echoes a value', () => {
+  withPrivateFile(syntheticPrivate(), (file) => {
+    const loaded = loadPrivateEnvironment(file, {});
+    for (const name of ['SESSION_SIGNING_KEY', 'OBJECT_STORAGE_BUCKET']) delete loaded[name];
+    assert.deepEqual(missingRealModeEnv(loaded), ['SESSION_SIGNING_KEY', 'OBJECT_STORAGE_BUCKET']);
+    let error;
+    try { assertRealModeEnv(loaded); } catch (caught) { error = caught; }
+    assert.equal(error.message, 'MISSING_REAL_MODE_ENV:SESSION_SIGNING_KEY,OBJECT_STORAGE_BUCKET');
+    assert.match(error.message, /^MISSING_REAL_MODE_ENV:[A-Z][A-Z0-9_]*(?:,[A-Z][A-Z0-9_]*)*$/);
+    // 报错进日志/工单：任何一个私密值出现在里面都算泄密，逐条合成值反查（消息里只带下标，不带值）。
+    Object.values(syntheticPrivate()).forEach((value, index) => assert.equal(error.message.includes(value), false, 'synthetic value #' + index));
+  });
+});
+// 只问「chat 相关还差哪个字段」：stub 模式下 `loadConfig()` 仍无条件校验聊天模型（real 前置才按模式追加），
+// 把私密文件导出的合成 `DATABASE_URL` 换成形状合法的合成连接串，避免无关的 INVALID_VALUE 混进 issue 列表。
+const chatConfigIssueFields = (env) => {
+  try {
+    loadConfig({ ...env, APP_EXECUTION_MODE: 'stub', DATABASE_URL: 'postgres://synthetic.invalid:5432/synthetic' });
+  } catch (error) {
+    return error.issues.map(issue => issue.field);
+  }
+  return [];
+};
+test('CHAT_LLM defaults come from the allowlist, lose to explicit env, and never appear without a key', () => {
+  assert.deepEqual({ ...CHAT_LLM_DEFAULT_ENV }, { CHAT_LLM_ENDPOINT: AI_ENDPOINTS.llm.endpoint, CHAT_LLM_MODEL: AI_ENDPOINTS.llm.model });
+  assert.equal(Object.isFrozen(CHAT_LLM_DEFAULT_ENV), true);
+  assert.match(CHAT_LLM_DEFAULT_ENV.CHAT_LLM_ENDPOINT, /^https:\/\//);
+  // 没有 key 的 env 原样返回（同一个对象、一个键都不加）：不凭空制造「配错了 LLM」。
+  const untouched = {};
+  assert.equal(applyChatProviderDefaults(untouched), untouched);
+  assert.deepEqual(untouched, {});
+  withPrivateFile(syntheticPrivate(), (file) => {
+    // 显式环境变量 > 私密文件默认值：给足两个就一个字符都不改。
+    const full = loadPrivateEnvironment(file, { CHAT_LLM_ENDPOINT: 'https://explicit.invalid/chat', CHAT_LLM_MODEL: 'synthetic-explicit-model' });
+    assert.equal(full.CHAT_LLM_ENDPOINT, 'https://explicit.invalid/chat');
+    assert.equal(full.CHAT_LLM_MODEL, 'synthetic-explicit-model');
+    // 半配置不补另一半：只给模型时端点保持未设，缺的那半交给 `asChatProvider()` 报 `ConfigError`。
+    const partial = loadPrivateEnvironment(file, { CHAT_LLM_MODEL: 'synthetic-explicit-model' });
+    assert.equal(partial.CHAT_LLM_MODEL, 'synthetic-explicit-model');
+    assert.equal(partial.CHAT_LLM_ENDPOINT, undefined);
+    assert.equal(Object.hasOwn(partial, 'CHAT_LLM_ENDPOINT'), false);
+    assert.deepEqual(chatConfigIssueFields(partial), ['CHAT_LLM_ENDPOINT']);
+    // 反方向同样一个都不补：只给端点时模型也不补，缺的是模型。
+    const reverse = loadPrivateEnvironment(file, { CHAT_LLM_ENDPOINT: 'https://explicit.invalid/chat' });
+    assert.equal(reverse.CHAT_LLM_ENDPOINT, 'https://explicit.invalid/chat');
+    assert.equal(reverse.CHAT_LLM_MODEL, undefined);
+    assert.equal(Object.hasOwn(reverse, 'CHAT_LLM_MODEL'), false);
+    assert.deepEqual(chatConfigIssueFields(reverse), ['CHAT_LLM_MODEL']);
+    // 空白串算未设（与 `applyChatProviderDefaults()` 的 `!validText` 同口径）：两个都只有空白时照旧补默认。
+    const blank = loadPrivateEnvironment(file, { CHAT_LLM_ENDPOINT: '   ', CHAT_LLM_MODEL: '' });
+    assert.equal(blank.CHAT_LLM_ENDPOINT, AI_ENDPOINTS.llm.endpoint);
+    assert.equal(blank.CHAT_LLM_MODEL, AI_ENDPOINTS.llm.model);
+  });
+  withPrivateFile({ appid: SYNTHETIC_APPID }, (file) => {
+    // 私密文件只有 appid：没有 chat key ⇒ 不补端点/模型，也不凭空虚造 CHAT_LLM_API_KEY。
+    const bare = loadPrivateEnvironment(file, {});
+    assert.equal(bare.CHAT_LLM_ENDPOINT, undefined);
+    assert.equal(bare.CHAT_LLM_MODEL, undefined);
+    assert.equal(Object.hasOwn(bare, 'CHAT_LLM_API_KEY'), false);
+    // 显式 CHAT_LLM_API_KEY 也算拿到 key，默认值同样生效。
+    const viaExplicitKey = loadPrivateEnvironment(file, { CHAT_LLM_API_KEY: 'synthetic-chat-key' });
+    assert.equal(viaExplicitKey.CHAT_LLM_API_KEY, 'synthetic-chat-key');
+    assert.equal(viaExplicitKey.CHAT_LLM_ENDPOINT, AI_ENDPOINTS.llm.endpoint);
+    assert.equal(viaExplicitKey.CHAT_LLM_MODEL, AI_ENDPOINTS.llm.model);
+  });
 });
