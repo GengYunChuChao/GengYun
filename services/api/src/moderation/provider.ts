@@ -4,9 +4,9 @@
  * 口径（与本仓既有约定一致，**不新造**）：
  *   - 真实 `tms`/`ims` 供应商**未授权付费**（`tools/ai-config.mjs` 的
  *     `policySelectionVerified` 恒为 `false`，BizType 是自描述占位值），因此本片**不内置任何真实端口**，
- *     也不读环境变量、不发网络请求。
- *   - `execution_mode === 'real'`：**永不回退替身**；缺真实端口即 fail-closed
- *     （服务边界抛契约 503 `PROVIDER_UNAVAILABLE` + `retryable: false`）。
+ *     也不读环境变量、不发网络请求。真实端口只能经 `live`（`live-wiring.ts` 装配）**显式**注入。
+ *   - `execution_mode === 'real'`：**永不回退替身**；缺真实端口（未接线/无凭据/策略未显式打开）
+ *     即 fail-closed（服务边界抛契约 503 `PROVIDER_UNAVAILABLE` + `retryable: false`）。
  *   - `stub` / `preset_demo`：使用**明确标注的替身**端口；替身对任何内容一律回报 `unsure`
  *     （**无结论**）⇒ 合流层按 fail-closed 判 `quarantined`。
  *     **替身不会放行任何内容**：它只能用来跑通链路与隔离回归，不能用来产出"审核通过"。
@@ -99,17 +99,30 @@ function guardIfPort(value: unknown): unknown {
  * 按执行模式解析端口。
  *
  * `injected` 只应出现在**测试/演示**装配路径（生产 `server.ts` 从不注入）；
- * real 模式下即使注入端口也会被本函数**忽略**（真实端口必须由真实适配器提供并经显式接线变更）。
+ * real 模式下 `injected` 被本函数**忽略**（那些只可能是合成替身）。
+ * 真实端口必须由真实适配器（tms/ims live-adapter）经 `live-wiring.ts` 装配后，
+ * 以 `live` **显式**注入（`createLiveModerationPortsFromWiring` 的产物）；缺任一即整域 fail-closed。
  */
 export function resolveModerationPorts(options: {
   executionMode: ModerationExecutionMode;
   injected?: { tms?: unknown; ims?: unknown };
+  live?: { tms?: unknown; ims?: unknown };
 }): ResolvedModerationPorts {
   const injected = options.injected ?? {};
   if (options.executionMode === 'real') {
-    // real：**忽略**调用方注入的任何端口（那些只可能是合成替身），也**永不**回退替身；
-    // 真实端口必须由真实适配器 + 一次显式、可审查的接线变更提供（本阶段不存在这样的适配器）
-    // ⇒ 恒 fail-closed。注入与否不改变 real 的行为（这正是"不靠自述标志放行"的口径）。
+    // real：**忽略** `injected`、也**永不**回退替身；真实端口只从 `live` 取。
+    // 缺任一真实端口（未接线/无凭据/策略未显式打开）⇒ 整域 fail-closed，绝不替身冒充。
+    const live = options.live ?? {};
+    const tms = live.tms;
+    const ims = live.ims;
+    if (tms !== undefined && tms !== null && ims !== undefined && ims !== null) {
+      return {
+        execution_mode: 'real',
+        ports: { tms: guardIfPort(tms), ims: guardIfPort(ims) },
+        substitutes: [],
+        fail_closed: false,
+      };
+    }
     return { execution_mode: 'real', ports: {}, substitutes: [], fail_closed: true };
   }
   const ports: { tms?: unknown; ims?: unknown } = {};

@@ -1,13 +1,14 @@
 /**
  * GY-I14（#14）· 真实审核端口（TMS 文本 / IMS 图片）**离线**回归。Refs #14。
  *
- * 目标：证明「真实审核端口」这一库件在**不接线**的前提下是可审、可测、且**失败绝不产出通过**：
+ * 目标：证明「真实审核端口」库件＋接线框架**默认关闭**（无凭据 fail-closed 503、永不回退替身），
+ * 且任何失败**绝不产出通过**：
  *   ① 签名绑定的是**实际发出的那串字节**（用独立第二实现复算 canonical request 与 Authorization）；
  *   ② 请求形状逐字段钉死（Action/Version/Region/BizType/Content|FileContent，无多余字段）；
  *   ③ `Suggestion` 三档 + 未知标签的映射（`Review`／未知**绝不**是"通过"）；
  *   ④ 失败矩阵逐条不通过（超时／429／401／400／5xx／非 JSON／缺 `Response`）；
  *   ⑤ 控制字段注入（供应商回体自带角色/来源/可见性…）⇒ **整条拒绝**，且合流层不发布；
- *   ⑥ 结构回归：`resolveModerationPorts({executionMode:'real'})` 仍 `fail_closed:true` 且 `ports` 为空；
+ *   ⑥ 结构回归：`resolveModerationPorts({executionMode:'real'})` 默认 `fail_closed:true`；`live` 显式接线才打开，**永不回退替身**；
  *   ⑦ 策略闸门：`policySelectionVerified`/`executionAllowed` 任一不为 `true` ⇒ **构造硬拒**。
  *
  * **全离线**：所有请求都打到 `127.0.0.1` 上由本文件用 `node:http` 起的假服务器（随机端口），
@@ -72,6 +73,8 @@ import {
   createLiveModerationImagePort,
 } from '../../services/api/src/moderation/ims-live-adapter.ts';
 import { createUnwiredModerationImageSource } from '../../services/api/src/moderation/live-vendor.ts';
+import { createLiveModerationPortsFromWiring } from '../../services/api/src/moderation/live-wiring.ts';
+import { createModerationService } from '../../services/api/src/moderation/service.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -844,11 +847,12 @@ test('图片：失败矩阵同样不通过（5xx / 非 JSON / 缺 Response）', 
 // 8. ⑥ 结构回归：real 行为一字不变
 // ===========================================================================
 
-test('⑥ 结构回归：resolveModerationPorts({executionMode:"real"}) 仍 fail_closed 且 ports 为空', () => {
+test('⑥ 结构回归：resolveModerationPorts({executionMode:"real"}) 默认 fail_closed；live 显式接线才打开', () => {
+  // 默认关闭：无 live ⇒ 仍整域 fail-closed（ports 恒空）。
   const bare = resolveModerationPorts({ executionMode: 'real' });
   assert.deepEqual(bare, { execution_mode: 'real', ports: {}, substitutes: [], fail_closed: true });
 
-  // 真实端口注入了也不改变 real 的行为（"真实端口必须由显式接线变更提供"这条口径没被本片动过）。
+  // `injected` 在 real 下仍被忽略（那些只可能是合成替身）。
   const fakePort = {
     kind: 'tms',
     model_version: 'synthetic-x@1',
@@ -859,6 +863,19 @@ test('⑥ 结构回归：resolveModerationPorts({executionMode:"real"}) 仍 fail
   const injected = resolveModerationPorts({ executionMode: 'real', injected: { tms: fakePort, ims: fakePort } });
   assert.deepEqual(injected, { execution_mode: 'real', ports: {}, substitutes: [], fail_closed: true });
   assert.equal(Object.keys(injected.ports).length, 0);
+
+  // 缺任一真实端口（只给 tms）⇒ 仍整域 fail-closed，**绝不**为缺失的 ims 回退替身。
+  const partial = resolveModerationPorts({ executionMode: 'real', live: { tms: fakePort } });
+  assert.deepEqual(partial, { execution_mode: 'real', ports: {}, substitutes: [], fail_closed: true });
+
+  // 显式给全 tms+ims ⇒ 打开（fail_closed:false、substitutes 恒空、两端口都有守卫包装）。
+  const realTms = { ...fakePort, provider: { ...fakePort.provider, synthetic: false } };
+  const realIms = { ...fakePort, kind: 'ims', provider: { ...fakePort.provider, synthetic: false } };
+  const wired = resolveModerationPorts({ executionMode: 'real', live: { tms: realTms, ims: realIms } });
+  assert.equal(wired.fail_closed, false);
+  assert.deepEqual(wired.substitutes, []);
+  assert.equal(wired.ports.tms !== undefined && wired.ports.tms !== null, true);
+  assert.equal(wired.ports.ims !== undefined && wired.ports.ims !== null, true);
 });
 
 test('⑥ 结构回归：app.ts / server.ts 与统一出口都不 import 本片的真实适配器', () => {
@@ -930,6 +947,134 @@ test('⑥ 结构回归：moderation/** 目录级 —— 除本片 live-* 库件�
   }
   assert.deepEqual(offenders, [], `真实适配器只允许出现在本片 live-* 库件内部：${offenders.join('; ')}`);
   assert.ok(files.length > liveFiles.length, '扫描面必须包含 live-* 之外的文件');
+});
+
+// ===========================================================================
+// 8b. 接线框架：默认关闭 / 显式打开 / 无凭据 503 / 脱敏观测
+// ===========================================================================
+
+test('接线框架：无凭据/未显式打开 ⇒ null（默认关闭，不回退替身）', () => {
+  assert.equal(createLiveModerationPortsFromWiring(null), null);
+  assert.equal(createLiveModerationPortsFromWiring(undefined), null);
+  // 无凭据（缺 credentials 字段）。
+  assert.equal(
+    createLiveModerationPortsFromWiring({
+      policy: POLICY,
+      textProfile: { endpoint: MODERATION_VENDOR_ENDPOINTS.tms, ...TEXT_PROFILE_BASE },
+      imageProfile: { endpoint: MODERATION_VENDOR_ENDPOINTS.ims, ...IMAGE_PROFILE_BASE },
+    }),
+    null,
+  );
+  // 有凭据但策略未显式打开（executionAllowed !== true）。
+  assert.equal(
+    createLiveModerationPortsFromWiring({
+      policy: { ...POLICY, executionAllowed: false },
+      textProfile: { endpoint: MODERATION_VENDOR_ENDPOINTS.tms, ...TEXT_PROFILE_BASE },
+      imageProfile: { endpoint: MODERATION_VENDOR_ENDPOINTS.ims, ...IMAGE_PROFILE_BASE },
+      credentials: CREDENTIALS,
+    }),
+    null,
+  );
+});
+
+test('接线框架：有凭据 + 显式打开 ⇒ tms/ims 真实端口（synthetic:false），文本单次真调用', async () => {
+  const server = await startFakeServer(() => vendorPass());
+  try {
+    const ports = createLiveModerationPortsFromWiring({
+      policy: POLICY,
+      textProfile: { endpoint: server.base, ...TEXT_PROFILE_BASE },
+      imageProfile: { endpoint: server.base, ...IMAGE_PROFILE_BASE },
+      credentials: CREDENTIALS,
+      imageSource: wiredImageSource(new Map([['media-a', FAKE_PNG]])),
+    });
+    assert.notEqual(ports, null);
+    assert.equal(ports.tms.kind, 'tms');
+    assert.equal(ports.ims.kind, 'ims');
+    assert.equal(ports.tms.provider.synthetic, false);
+    assert.equal(ports.ims.provider.synthetic, false);
+    const verdict = await ports.tms.evaluate(tmsRequest());
+    assert.equal(verdict.label, 'pass');
+    assert.equal(server.state.requests.length, 1, '文本恰好一次外呼');
+  } finally {
+    await server.close();
+  }
+});
+
+test('接线框架：createModerationService real 无凭据 ⇒ 整域 503；有 liveWiring ⇒ 接线', async () => {
+  // 无凭据/未接线：整域 fail-closed（写操作 503 PROVIDER_UNAVAILABLE + retryable:false）。
+  const closed = createModerationService({ executionMode: 'real' });
+  assert.equal(closed.execution_mode, 'real');
+  assert.deepEqual(closed.capabilities(), {
+    execution_mode: 'real',
+    text: { content_kind: 'text', port_kind: 'tms', state: 'none', ready: false, origin: 'none' },
+    image: { content_kind: 'image', port_kind: 'ims', state: 'none', ready: false, origin: 'none' },
+  });
+  await assert.rejects(
+    () =>
+      closed.submitScreening({
+        actor: { userId: 'u-1', role: 'user', authEpoch: 1 },
+        content: { target_ref: { type: 'post', id: 'p-1', revision: 1 }, text: 'x', media: [] },
+      }),
+    (error) => error?.code === 'PROVIDER_UNAVAILABLE' && error?.retryable === false,
+  );
+
+  // 有凭据 + 显式打开：文本/图片能力 ready，端口是真实端口（非替身）。
+  const server = await startFakeServer(() => vendorPass());
+  try {
+    const wired = createModerationService({
+      executionMode: 'real',
+      liveWiring: {
+        policy: POLICY,
+        textProfile: { endpoint: server.base, ...TEXT_PROFILE_BASE },
+        imageProfile: { endpoint: server.base, ...IMAGE_PROFILE_BASE },
+        credentials: CREDENTIALS,
+        imageSource: wiredImageSource(new Map([['media-a', FAKE_PNG]])),
+      },
+    });
+    assert.equal(wired.execution_mode, 'real');
+    const caps = wired.capabilities();
+    assert.equal(caps.text.state, 'wired');
+    assert.equal(caps.text.ready, true);
+    assert.equal(caps.text.origin, 'injected');
+    assert.equal(caps.image.state, 'wired');
+    assert.equal(caps.image.ready, true);
+    assert.deepEqual(wired.counts().substitutes, []);
+  } finally {
+    await server.close();
+  }
+});
+
+test('观测：RequestId/耗时脱敏登记（不含密钥/明文）', async () => {
+  const observations = [];
+  const server = await startFakeServer(() => ({
+    json: { Response: { RequestId: '3c140219-cfe9-470e-b241-907877d6fb03', Suggestion: 'Pass', Label: 'Normal', Score: 99 } },
+  }));
+  try {
+    const ports = createLiveModerationPortsFromWiring({
+      policy: POLICY,
+      textProfile: { endpoint: server.base, ...TEXT_PROFILE_BASE },
+      imageProfile: { endpoint: server.base, ...IMAGE_PROFILE_BASE },
+      credentials: CREDENTIALS,
+      imageSource: wiredImageSource(new Map()),
+      onObservation: (observation) => observations.push(observation),
+      now: () => 1_700_000_000_000,
+    });
+    const verdict = await ports.tms.evaluate(tmsRequest());
+    assert.equal(verdict.label, 'pass');
+    assert.equal(observations.length, 1);
+    const obs = observations[0];
+    assert.equal(obs.kind, 'tms');
+    assert.equal(obs.requestId, '3c140219-cfe9-470e-b241-907877d6fb03');
+    assert.equal(obs.elapsedMs, 0, '固定时钟下耗时为 0');
+    assert.equal(obs.modelFailure, null);
+    assert.equal(obs.httpStatus, 200);
+    const serialized = JSON.stringify(obs);
+    assert.equal(serialized.includes(CREDENTIALS.secretKey), false, '观测不得含 SecretKey');
+    assert.equal(serialized.includes(CREDENTIALS.secretId), false, '观测不得含 SecretId');
+    assert.equal(serialized.includes(SAMPLE_TEXT), false, '观测不得含待审文本');
+  } finally {
+    await server.close();
+  }
 });
 
 // ===========================================================================
