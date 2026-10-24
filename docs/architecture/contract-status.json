@@ -1059,14 +1059,14 @@
         {
           "path": "services/api/src/routes/speech.ts",
           "symbol": "service.createTranscription(",
-          "lines": "160-194"
+          "lines": "209-239"
         },
         {
           "test": "tests/integration/speech-http.mjs",
           "name": "[1] POST 202 + JobEnvelope 形状与头部（ETag/Cache-Control/meta，additionalProperties:false）"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；**受理期的媒体引用端口已于 GY-I11 接线**（`Refs #11`）：`--approve-real-media-wiring` + `OBJECT_STORAGE_*` 四键 + `MEDIA_ACCESS_GRANT_ORIGIN` + `MEDIA_OBJECT_REF_KEY` 齐备且媒体域构造期裁决为「已打开」时，受理前读**真实媒体登记册**（归属/版本/就绪/音频用途/对象键）后建任务；缺任一条件仍 409 `OBJECT_UNAVAILABLE`（实测读数：反向 7 条媒体路由 503 + 受理 409 + 零外呼；正向真实桶 201/202/200 + 真实 ASR 200 + RequestId；见 `docs/verification/gy-i11-real-media-wiring-20261025.md`）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "getTranscription",
@@ -1081,14 +1081,14 @@
         {
           "path": "services/api/src/routes/speech.ts",
           "symbol": "service.getTranscription(",
-          "lines": "196-208"
+          "lines": "247-247"
         },
         {
           "test": "tests/integration/speech-http.mjs",
           "name": "[+] 正控制：经真实装配受理 → succeeded → GET 200 读到转写七字段"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；**受理期的媒体引用端口已于 GY-I11 接线**（`Refs #11`）：`--approve-real-media-wiring` + `OBJECT_STORAGE_*` 四键 + `MEDIA_ACCESS_GRANT_ORIGIN` + `MEDIA_OBJECT_REF_KEY` 齐备且媒体域构造期裁决为「已打开」时，受理前读**真实媒体登记册**（归属/版本/就绪/音频用途/对象键）后建任务；缺任一条件仍 409 `OBJECT_UNAVAILABLE`（实测读数：反向 7 条媒体路由 503 + 受理 409 + 零外呼；正向真实桶 201/202/200 + 真实 ASR 200 + RequestId；见 `docs/verification/gy-i11-real-media-wiring-20261025.md`）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "deleteTranscription",
@@ -1103,14 +1103,14 @@
         {
           "path": "services/api/src/routes/speech.ts",
           "symbol": "service.deleteTranscription(",
-          "lines": "210-228"
+          "lines": "261-266"
         },
         {
           "test": "tests/integration/speech-http.mjs",
           "name": "[4] If-Match：缺失 ⇒ 428 REVISION_REQUIRED；格式非法 ⇒ 400 INVALID_REQUEST；不匹配 ⇒ 409 REVISION_CONFLICT"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；**受理期的媒体引用端口已于 GY-I11 接线**（`Refs #11`）：`--approve-real-media-wiring` + `OBJECT_STORAGE_*` 四键 + `MEDIA_ACCESS_GRANT_ORIGIN` + `MEDIA_OBJECT_REF_KEY` 齐备且媒体域构造期裁决为「已打开」时，受理前读**真实媒体登记册**（归属/版本/就绪/音频用途/对象键）后建任务；缺任一条件仍 409 `OBJECT_UNAVAILABLE`（实测读数：反向 7 条媒体路由 503 + 受理 409 + 零外呼；正向真实桶 201/202/200 + 真实 ASR 200 + RequestId；见 `docs/verification/gy-i11-real-media-wiring-20261025.md`）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "confirmTranscription",
@@ -1125,14 +1125,14 @@
         {
           "path": "services/api/src/routes/speech.ts",
           "symbol": "service.confirmTranscription(",
-          "lines": "230-248"
+          "lines": "281-287"
         },
         {
           "test": "tests/integration/speech-http.mjs",
           "name": "[6] 确认只写 confirmed_text/confirmed_at：raw_text 与 uncertain_spans 逐项不变，revision +1"
         }
       ],
-      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实 ASR 评估、媒体持久化和注销清理待验收"
+      "blocker": "录音转写四端点与确认分离已装配；默认内存 store，stub/preset_demo 为明确替身，real 提供者/媒体未接线时拒绝；公共 Job 读取已消费转写域（#106），**取消**已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:660` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；**受理期的媒体引用端口已于 GY-I11 接线**（`Refs #11`）：`--approve-real-media-wiring` + `OBJECT_STORAGE_*` 四键 + `MEDIA_ACCESS_GRANT_ORIGIN` + `MEDIA_OBJECT_REF_KEY` 齐备且媒体域构造期裁决为「已打开」时，受理前读**真实媒体登记册**（归属/版本/就绪/音频用途/对象键）后建任务；缺任一条件仍 409 `OBJECT_UNAVAILABLE`（实测读数：反向 7 条媒体路由 503 + 受理 409 + 零外呼；正向真实桶 201/202/200 + 真实 ASR 200 + RequestId；见 `docs/verification/gy-i11-real-media-wiring-20261025.md`）；真实 ASR 评估、媒体持久化和注销清理待验收"
     },
     {
       "id": "createSynthesis",
