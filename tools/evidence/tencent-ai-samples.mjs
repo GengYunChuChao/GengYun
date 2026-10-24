@@ -985,11 +985,16 @@ export function estimateReserveCostCny(calls) {
  */
 export const MIN_SECRET_LENGTH = 8;
 
-/** 脱敏自检：序列化结果里不得出现任何凭据值、BizType 值或数据库连接串。 */
+/** 脱敏自检：序列化结果里不得出现任何凭据值、BizType 值或数据库连接串，也不得出现其 ≥MIN_SECRET_LENGTH 的前缀。 */
 export function assertNoSecretLeak(serialized, secrets) {
   for (const [name, value] of secrets) {
-    if (typeof value === 'string' && value.length >= MIN_SECRET_LENGTH && serialized.includes(value)) {
-      throw new Error(`REDACTION_FAILED:${name}`);
+    if (typeof value !== 'string' || value.length < MIN_SECRET_LENGTH) continue;
+    // 全值子串（既有口径）
+    if (serialized.includes(value)) throw new Error(`REDACTION_FAILED:${name}`);
+    // 任意长度前缀（≥ MIN_SECRET_LENGTH）：打印 value.slice(0, n)（n ≥ MIN_SECRET_LENGTH）也算泄漏。
+    // 只需比对最短前缀 value.slice(0, MIN_SECRET_LENGTH)：任何更长前缀都包含它，一个判据即可覆盖所有前缀长度。
+    if (serialized.includes(value.slice(0, MIN_SECRET_LENGTH))) {
+      throw new Error(`REDACTION_FAILED_PREFIX:${name}`);
     }
   }
   return true;
