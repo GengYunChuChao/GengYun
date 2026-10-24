@@ -20,9 +20,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
+import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
+import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
+import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 
 const MIGRATIONS_DIR = new URL('../../services/api/db/migrations/', import.meta.url);
 const USER_DATA_DELETION_SRC = new URL('../../services/api/src/privacy/user-data-deletion.ts', import.meta.url);
+/** 装配处（防缩回闸门要静态核对"app.ts 到底注没注入"；源码文本与运行期闭集是两条独立的腿）。 */
+const APP_SRC = new URL('../../services/api/src/app.ts', import.meta.url);
 
 /** 主体列名闭集：出现其一即视为「按用户归属的数据表」。 */
 const SUBJECT_COLUMNS = ['user_id', 'owner_id', 'author_user_id', 'subject_user_id', 'grantee_user_id'];
@@ -42,6 +49,13 @@ const SUBJECT_COLUMNS = ['user_id', 'owner_id', 'author_user_id', 'subject_user_
  * 识别域 `recognition_selections`（子，`0025:163` CASCADE 指向 records）→
  * `recognition_jobs` → `recognition_records` → `recognition_idempotency`（无主体列，按 scope 前缀）；
  * 语音域 `speech_jobs` → `transcriptions` → `speech_idempotency`（无主体列，按 scope 前缀）。
+ *
+ * `ocr` 是 R34 片 3（#19 / #10）接入的第八域（同样条件追加 + `app.ts` 无条件注入）：
+ * `ocr_records` → `ocr_jobs` → `ocr_idempotency`（无主体列，按 scope 前缀）。两表之间**没有**
+ * 互相外键（`0024` 里各自只指向 `public.users`），因此"先子后父"按语义排（记录是任务的产物）。
+ * ⚠️ 与前两域方向相反的一条事实：识别/语音域刻意零表级 DELETE（走 0034 的 `SECURITY DEFINER`
+ * 函数），OCR 三表则是**用户 2026-10-24 批准**的表级 `GRANT DELETE` 例外（`20-login-roles.sql`
+ * 的 R34 段 + `90-assert` 的 `allow_table_dml` 三元组），存储层就是真 `DELETE … RETURNING`。
  */
 const MODULE_TABLE_COVERAGE = Object.freeze({
   community: [
@@ -62,6 +76,7 @@ const MODULE_TABLE_COVERAGE = Object.freeze({
     'recognition_idempotency',
   ],
   speech: ['speech_jobs', 'transcriptions', 'speech_idempotency'],
+  ocr: ['ocr_records', 'ocr_jobs', 'ocr_idempotency'],
 });
 
 /**
@@ -76,6 +91,7 @@ const SATELLITE_TABLES = Object.freeze({
   community_idempotency: 'scope 同形（community/store.ts 用「主体 id + 换行」前缀匹配），由 community 模块按主体清空',
   recognition_idempotency: 'scope 同形（0025:180 只有 scope/key_hash/payload，无主体列），由 recognitions 模块按 `left(scope, len+1) = 主体||chr(10)` 精确前缀清空',
   speech_idempotency: 'scope 同形（0026:137），由 speech 模块按同一前缀口径清空',
+  ocr_idempotency: 'scope 同形（0024:133-144 只有 scope/key_hash/payload，无主体列；scope = `<主体>\\n<METHOD>\\n<路径>`），由 ocr 模块按 `left(scope, len+1) = 主体||chr(10)` 精确前缀清空',
 });
 
 /**
@@ -95,8 +111,6 @@ const DECLARED_UNREGISTERED = Object.freeze({
   export_writebacks: '回写台账同上，作为「回写 0 行」的证据保留；保留期归 #19',
   user_training_consents: '训练授权证据须保留，且首版不开启用户训练；归 #19',
   user_backup_copies: '备份副本由 `backup-copies-pg.ts` 的清除端口驱动，不属于模块闭集；7/30 日集成归 #19',
-  ocr_jobs: 'OCR 域与识别/语音同形，但 `ocr/store-pg.ts` 仍未实现按主体清空原语 ⇒ 本片（#19 延续片）**有意不接**，留给独立片以免一次审阅跨三个域；归 #19',
-  ocr_records: '同上：OCR 结果表无按主体清空原语，与 recognition_records 同形；归 #19',
 });
 
 /** 静态枚举迁移文件里 `CREATE TABLE` 的表与列体（不执行 SQL）。 */
@@ -156,7 +170,7 @@ function declaredClosure() {
  * 装配处**条件追加**的模块：从源码读出，不在这里复制常量。
  *
  * `createUserDataDeletion` 在注入对应 store 时把这些模块追加进生效闭集。`app.ts` **无条件**注入
- * 社区/识别/语音三个 store ⇒ 真实注销路径的生效闭集 = 4 + 3 = **7 项**；
+ * 社区/识别/语音/OCR 四个 store ⇒ 真实注销路径的生效闭集 = 4 + 4 = **8 项**；
  * 既有替身不注入 ⇒ 常量闭集仍是 4 项。
  *
  * 三处必须一致（"改了追加点却忘了改清单"会让覆盖断言静默漏掉整个域）：
@@ -199,15 +213,15 @@ test('闭集（USER_DATA_DELETION_MODULES）与覆盖映射逐项对齐，不多
   const closure = declaredClosure();
   assert.deepEqual(closure, ['favorites', 'history', 'messages', 'conversations'], '闭集内容与顺序：扩大闭集须同步本断言');
   const conditional = declaredConditionalModules();
-  assert.deepEqual(conditional, ['community', 'recognitions', 'speech'],
+  assert.deepEqual(conditional, ['community', 'recognitions', 'speech', 'ocr'],
     '装配处条件追加的模块与顺序：改造装配方式须同步本断言');
   const effective = [...closure, ...conditional];
-  assert.equal(effective.length, 7, '生产生效闭集 = 四域 + community + recognitions + speech = 7 项');
+  assert.equal(effective.length, 8, '生产生效闭集 = 四域 + community + recognitions + speech + ocr = 8 项');
   assert.deepEqual(Object.keys(MODULE_TABLE_COVERAGE).sort(), [...effective].sort(),
     '每个已注册模块都必须在这里声明「它按主体处理哪些表」，否则覆盖断言会漏掉整个域');
 });
 
-test('在线清除证据名单含识别/语音两域、不含社区域，且落库门真的用它', () => {
+test('在线清除证据名单含识别/语音/OCR 三域、不含社区域，且落库门真的用它', () => {
   const source = readFileSync(USER_DATA_DELETION_SRC, 'utf8');
   const list = source.match(/export const ONLINE_EVIDENCE_MODULES\s*=\s*\[([\s\S]*?)\]\s*as const/);
   assert.ok(list, '必须能读到 ONLINE_EVIDENCE_MODULES 字面量');
@@ -216,6 +230,7 @@ test('在线清除证据名单含识别/语音两域、不含社区域，且落�
   assert.ok(entries.includes('...USER_DATA_DELETION_MODULES'), '四域必须整体展开在内（⛔ 不手抄四遍，抄了就会漂）');
   assert.ok(entries.includes('RECOGNITIONS_DELETION_MODULE'), '识别域按行清空 ⇒ 必须有在线清除证据');
   assert.ok(entries.includes('SPEECH_DELETION_MODULE'), '语音域按行清空 ⇒ 必须有在线清除证据');
+  assert.ok(entries.includes('OCR_DELETION_MODULE'), 'OCR 域按行清空（表级 DELETE + RETURNING）⇒ 必须有在线清除证据');
   assert.ok(!entries.includes('COMMUNITY_DELETION_MODULE'),
     '社区域是「保留 + 脱敏」，没有"清空行数"这个事实 ⇒ ⛔ 不得进在线清除证据名单');
   // 落库门若继续用常量四域，新增两域即使清了也永远留不下凭据（清而无证 = 又一次静默缺口）。
@@ -257,4 +272,74 @@ test('覆盖映射里的表必须确实承载用户数据：有主体列、指�
     `覆盖映射里的表既没有主体列/外键，也不是已声明的卫星表（按主体清空对它无意义）：${notUserTables.join(', ')}`);
   const staleSatellites = Object.keys(SATELLITE_TABLES).filter((table) => !TABLES.has(table));
   assert.deepEqual(staleSatellites, [], `卫星表声明引用了不存在的表：${staleSatellites.join(', ')}`);
+});
+
+/**
+ * R34 片 3 追加（#19 / #10）· **闭集防缩回闸门**：少注入一个 store 不许悄悄缩小闭集。
+ *
+ * 缺口形态：`packages/privacy/deletion-modules.mjs` 只校验模块名形状（迁移 0031 的
+ * `p_module ~ '^[a-z][a-z0-9_]{0,63}$'`），**没有**模块白名单 ⇒ 装配处漏注入 `ocrStore` 时
+ * `requiredModules()` 静默退回 7 项，协议层不报错、请求照样完成，只是凭据里少一截：
+ *   - 证据串少 `ocr:online-purged:<n>`、`ocr:idempotency-purged:<n>`
+ *     与 `ocr:tables:ocr_records=<n>,ocr_jobs=<n>` 三段；
+ *   - `deletion_module_evidence` 落库门按 `requiredModules.includes('ocr')` 过滤 ⇒ 审计面上
+ *     "OCR 域清了几行"整行消失（这才是最危险的一点：**清没清**变成不可核）；
+ *   - 本文件其它用例都只读源码文本，抓不到"注没注"这件事（文本里有 `ocrStore?: OwnerPurgeStore`
+ *     声明不等于装配处真的传了实参）。
+ *
+ * 两条腿一起用：
+ *   * **运行时腿**：真调 `createUserDataDeletion` —— 全注入 ⇒ 逐字 8 项（含 `ocr`）；缺 `ocrStore`
+ *     ⇒ 逐字 7 项且不含 `ocr`（把"静默缩回"这个形态本身钉成断言）。
+ *   * **静态腿**：`app.ts` 必须恰好注入一次 `ocrStore: ocrDeletionStore,`，且端口缺原语必须抛
+ *     （⛔ 不许"没有就跳过"——那会把 `blocked` 折成 `completed`/0 行）。
+ * 抓得住：装配处删掉/注释掉注入、把注入挪进条件分支、端口改成静默跳过、模块名或顺序被改、项数被改。
+ * 抓不住：`deletion-modules.mjs` 将来加模块白名单后的形状校验（那归 0031 的 CHECK 与本文件的静态腿）。
+ */
+test('生产生效闭集恰 8 项且含 ocr：漏注入 ocrStore 会静默缩回 7 项（防缩回闸门）', () => {
+  const now = () => Date.parse('2026-10-24T03:00:00.000Z');
+  const base = {
+    favoritesStore: createMemoryFavoritesStore({ now }),
+    historyStore: createMemoryHistoryStore({ now }),
+    messagesStore: createMemoryMessagesStore({ now }),
+    conversationsStore: createMemoryConversationStore(),
+  };
+  // 条件追加的三域只需"不缺席"，内容不是本断言的对象。
+  const purgeStub = { async deleteAllByOwner() { return 0; } };
+
+  const full = createUserDataDeletion({
+    ...base,
+    communityStore: purgeStub,
+    recognitionsStore: purgeStub,
+    speechStore: purgeStub,
+    ocrStore: purgeStub,
+  });
+  assert.deepEqual(full.requiredModules(), [
+    'favorites', 'history', 'messages', 'conversations',
+    'community', 'recognitions', 'speech', 'ocr',
+  ], '生产生效闭集必须逐字是这 8 项、且顺序与追加顺序一致（⛔ 不用 includes/length 放过）');
+  assert.equal(full.requiredModules().length, 8, '闭集项数必须恰好 8（四域 + 四个条件追加域）');
+  assert.deepEqual(full.coordinator.missingRegistrations(), [],
+    '每个被追加的模块都必须真有处理器（注入了 store 却没注册 ⇒ 受理即拒）');
+
+  const withoutOcr = createUserDataDeletion({
+    ...base,
+    communityStore: purgeStub,
+    recognitionsStore: purgeStub,
+    speechStore: purgeStub,
+  });
+  assert.deepEqual(withoutOcr.requiredModules(), [
+    'favorites', 'history', 'messages', 'conversations',
+    'community', 'recognitions', 'speech',
+  ], '不注入 ocrStore ⇒ 闭集静默缩回 7 项：这就是要防的形态，`app.ts` 必须永久无条件注入');
+
+  const appSource = readFileSync(APP_SRC, 'utf8');
+  const injections = [...appSource.matchAll(/^\s*ocrStore: ocrDeletionStore,\s*$/gm)];
+  assert.equal(injections.length, 1,
+    '`app.ts` 必须恰好注入一次 `ocrStore: ocrDeletionStore,`'
+    + '（删掉或挪进条件分支 ⇒ 闭集缩回 7 项，而协议层与其它用例都不会报错）');
+  assert.match(
+    appSource,
+    /if \(typeof purge !== 'function'\) \{\s*\n\s*throw new Error\('OCR 域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空'\);/,
+    'OCR 端口缺原语必须抛（⛔ 不许"没有就跳过"：那会把 blocked 折成 completed/0 行）',
+  );
 });

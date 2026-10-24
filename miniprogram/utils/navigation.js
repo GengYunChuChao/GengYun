@@ -19,7 +19,10 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/kn
   'pages/voice/voice',
   // GY-I12：文字提问页（文字输入 + 显式发送 + 有界轮询 + 回答闸门）。同样须与 app.json 的
   // pages 逐项一致；不是 Tab，也不接受任何查询参数（提问正文只来自用户输入，见 pages/qa/qa.js）。
-  'pages/qa/qa']
+  'pages/qa/qa',
+  // GY-R34 / #29 P1：授权清单页（只读，GET /me/consents）。同样须与 app.json 的 pages 逐项一致；
+  // 不是 Tab，也不接受任何查询参数（清单只按当前会话读自己的授权，不认链接参数）。
+  'pages/consent/consent']
 const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identify/identify',
   'pages/messages/messages', 'pages/profile/profile']
 const HOME = '/pages/home/home'
