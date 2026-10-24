@@ -7,10 +7,20 @@
  * 让媒体行**真的消失**的路径，所以它的安全性不靠"调用方守规矩"，只靠三处硬编码事实：
  *   ① 入队先于删行（缺 `media_object_cleanup` 意图行 ⇒ `G0007` 整批不删）；
  *   ② 只删终态（`state IN ('rejected','deleted')`）；
- *   ③ 不越过别人的引用（`content_media_refs` / `community_media_grants` / 头像三面都留原地）。
+ *   ③ **不越过任何一处引用**（**11 列 / 8 类**引用面全部留原地）。
  * 这三条**只存在于函数体谓词里**——一旦有人在评审时删掉一个 `EXISTS`、或把 `IN` 列表放宽成
  * `'ready'`，真库上不会有任何断言变红（`90-assert` 管的是 ACL，不是函数体语义），
- * 而后果是永久无主孤儿或删掉别人正在用的头像。故此处把它钉成**纯静态**结构契约。
+ * 而后果是永久无主孤儿，或一串**悬空 media uuid**（第 4–11 处没有外键 ⇒ 数据库连 23503
+ * 都不会报，删了也查不回来）。故此处把它钉成**纯静态**结构契约。
+ *
+ * ## 判据形态：列级逐条，不数总数
+ * 引用面清单是**列级 11 条**（`REFERENCE_SURFACES`），每条按「表名 + 别名 + 列条件」拼成**完整
+ * SQL 片段**再计数：
+ *   · 目标集里必须**恰好一次** `NOT EXISTS (… )`；
+ *   · 同一条 `EXISTS (… )`（不含 `NOT`）在整个文件里必须**恰好两次** —— 一次被 `NOT` 包住、
+ *     一次在分层读数的子查询里。
+ * ⛔ 不许退化成「文件里 `NOT EXISTS` 至少出现 N 次」：那种写法删掉**任何一条**都还能过，
+ * 而删掉的后果正是本测试存在的理由。负数/下标写法（`ANY`、`p.media_ids[1]`）同理逐条钉。
  *
  * ## 为什么是静态文本而不是 PGlite
  * 本仓有些迁移测试用 PGlite（内存 PostgreSQL 内核）真跑 DDL。这里刻意不用：
@@ -22,8 +32,7 @@
  * ## 判据形态
  * `collectForwardViolations` / `collectRollbackViolations` / `collectGrantViolations` 三个
  * **纯函数**返回问题清单（空 = 合格）。把判定写成"返回清单"而不是直接 assert，是为了让每条
- * 判据都能被**负控制**打一遍（见最后一个 test：逐条破坏必须逐条判红）。
- * ⛔ 不要把这些判据换成"文件里出现过某字符串就绿"——那测不出极性（NOT EXISTS 改成 EXISTS 会照样绿）。
+ * 判据都能被**负控制**打一遍（见负控制 test：逐条破坏必须逐条判红）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -43,8 +52,8 @@ const roles = readFileSync(ROLES_URL, 'utf8');
 /**
  * 去掉整行注释。
  *
- * 为什么必须去：本迁移的头注释里**故意**写着 `GRANT`、`deleting`、`ready` 这些词来讲道理，
- * 拿原文做关键字判据会把文档当成违规（也会让"删掉注释里的说明"变成假红）。
+ * 为什么必须去：本迁移的头注释里**故意**写着 `GRANT`、`deleting`、`ready`、`LOCK TABLE` 这些词
+ * 来讲道理（也逐个列了 11 处引用面的 `表.列`），拿原文做关键字判据会把文档当成违规。
  */
 function stripComments(sql) {
   return sql
@@ -53,14 +62,111 @@ function stripComments(sql) {
     .join('\n');
 }
 
+/** 把连续空白压成一个空格：判据按**内容**钉死，不因换行/缩进漂移而假红。 */
+function squash(sql) {
+  return sql.replace(/\s+/g, ' ');
+}
+
+/** 子串出现次数（`split` 计数，不做正则解释）。 */
+function occurrences(haystack, needle) {
+  return haystack.split(needle).length - 1;
+}
+
 const forwardCode = stripComments(forward);
 
-/** 三条引用面：必须**同时**出现在目标集（NOT EXISTS）与跳过读数（EXISTS）里。 */
+/**
+ * 引用面清单：**列级 11 条**（迁移:列 → 桶）。
+ * 桶是**聚合口径**（调用方用它判断「该先跑哪个模块」），列是**判定口径**（每一列都必须真被排除）。
+ * 8 个桶：content / grants / avatar / user_avatar / ocr / recognition / speech / community。
+ */
 const REFERENCE_SURFACES = [
-  { table: 'public.content_media_refs', note: '社区内容引用' },
-  { table: 'public.community_media_grants', note: '取图授权' },
-  { table: 'public.public_authors', note: '作者头像（avatar_media_id，无外键）' },
+  {
+    bucket: 'content',
+    table: 'public.content_media_refs',
+    alias: 'r',
+    condition: 'r.media_id = m.id',
+    note: '社区内容引用（0001:298，有外键、无级联）',
+  },
+  {
+    bucket: 'grants',
+    table: 'public.community_media_grants',
+    alias: 'g',
+    condition: 'g.media_id = m.id',
+    note: '取图授权（0001:315，有外键、无级联）',
+  },
+  {
+    bucket: 'avatar',
+    table: 'public.public_authors',
+    alias: 'a',
+    condition: 'a.avatar_media_id = m.id',
+    note: '作者头像（0001:236，无外键）',
+  },
+  {
+    bucket: 'user_avatar',
+    table: 'public.users',
+    alias: 'u',
+    condition: 'u.avatar_media_id = m.id',
+    note: '账号头像（0001:40，无外键）',
+  },
+  {
+    bucket: 'ocr',
+    table: 'public.ocr_jobs',
+    alias: 'j',
+    condition: 'j.media_id = m.id',
+    note: 'OCR 任务（0024:90，无外键）',
+  },
+  {
+    bucket: 'ocr',
+    table: 'public.ocr_records',
+    alias: 'j',
+    condition: 'j.media_id = m.id',
+    note: 'OCR 记录（0024:113，无外键）',
+  },
+  {
+    bucket: 'recognition',
+    table: 'public.recognition_jobs',
+    alias: 'j',
+    condition: 'j.media_id = m.id',
+    note: '识别任务（0025:113，无外键）',
+  },
+  {
+    bucket: 'recognition',
+    table: 'public.recognition_records',
+    alias: 'j',
+    condition: 'j.media_id = m.id',
+    note: '识别记录（0025:135，无外键）',
+  },
+  {
+    bucket: 'speech',
+    table: 'public.speech_jobs',
+    alias: 'j',
+    condition: 'j.media_id = m.id',
+    note: '语音任务（0026:95，无外键）',
+  },
+  {
+    bucket: 'speech',
+    table: 'public.transcriptions',
+    alias: 'j',
+    condition: 'j.media_id = m.id',
+    note: '转写记录（0026:116，无外键）',
+  },
+  {
+    bucket: 'community',
+    table: 'public.community_posts',
+    alias: 'p',
+    condition: 'm.id::text = ANY (p.media_ids)',
+    note: '社区帖子 media_ids（0022:70，text[] 数组、无外键）',
+  },
 ];
+
+/** 桶的闭集与**声明顺序**（读数里 `skipped_referenced_by` 的键序、FILTER 与 INTO 的顺序都按它）。 */
+const REFERENCE_BUCKETS = ['content', 'grants', 'avatar', 'user_avatar', 'ocr', 'recognition', 'speech', 'community'];
+
+/** 一条引用面的两条正负片段（`NOT ` 前缀是唯一的差别 ⇒ 极性判据不会自我满足）。 */
+function surfaceFragments({ table, alias, condition }) {
+  const positive = `EXISTS (SELECT 1 FROM ${table} ${alias} WHERE ${condition})`;
+  return { positive, negated: `NOT ${positive}` };
+}
 
 /** 只允许删这两张表：任何别的 `DELETE FROM` 都判违规。 */
 const ALLOWED_DELETE_TARGETS = ['public.media', 'public.media_derivatives'];
@@ -72,6 +178,7 @@ const ALLOWED_DELETE_TARGETS = ['public.media', 'public.media_derivatives'];
 export function collectForwardViolations(sql) {
   const bad = [];
   const code = stripComments(sql);
+  const flat = squash(code);
 
   // ---- A. 三件套 + 返回类型（与 0034 同形；少一件就是可劫持的 SECURITY DEFINER）----
   if (!/SECURITY\s+DEFINER/.test(code)) bad.push('缺少 SECURITY DEFINER');
@@ -117,18 +224,72 @@ export function collectForwardViolations(sql) {
     }
   }
 
-  // ---- E. 硬条件 ③：三处引用面在两条查询里**极性成对**出现 ----
-  // ⚠ `positive` 必须用 lookbehind 排掉 `NOT ` 前缀：`NOT EXISTS (...)` 里就含 `EXISTS (`，
-  //   不排的话 `positive` 只在 `negated` 成立时才成立——极性判据退化成一条，删掉读数会照样绿。
-  for (const { table, note } of REFERENCE_SURFACES) {
-    const escaped = table.replace(/\./g, '\\.');
-    const negated = new RegExp(`NOT\\s+EXISTS\\s*\\(\\s*SELECT\\s+1\\s+FROM\\s+${escaped}\\s`);
-    const positive = new RegExp(`(?<!NOT\\s)EXISTS\\s*\\(\\s*SELECT\\s+1\\s+FROM\\s+${escaped}\\s`);
-    if (!negated.test(code)) bad.push(`${table}（${note}）缺少 NOT EXISTS 排除：被引用的行会被删掉`);
-    if (!positive.test(code)) bad.push(`${table}（${note}）缺少 EXISTS 读数：被跳过多少行将无法解释`);
+  // ---- E. 硬条件 ③：**11 列**引用面逐条「一处 NOT EXISTS + 一处读数」----
+  // 逐列拼完整片段再计数：删掉任何一条 NOT EXISTS ⇒ 被引用的行会被删成悬空 uuid（无外键时
+  // 数据库不会报错）；删掉任何一处读数 EXISTS ⇒ 分层计数少报、调用方看不出该先跑哪个模块。
+  for (const surface of REFERENCE_SURFACES) {
+    const { positive, negated } = surfaceFragments(surface);
+    const negatedCount = occurrences(flat, negated);
+    const positiveCount = occurrences(flat, positive);
+    if (negatedCount !== 1) {
+      bad.push(
+        `${surface.table}（${surface.note}）在目标集里应恰好 NOT EXISTS 一次，实际 ${negatedCount}：`
+          + '被它引用的行会被删成悬空 media uuid',
+      );
+    }
+    if (positiveCount !== 2) {
+      bad.push(
+        `${surface.table}（${surface.note}）的 EXISTS 应恰好出现 2 次（NOT EXISTS 内 1 次 + 读数子查询 1 次），`
+          + `实际 ${positiveCount}：少的那一处会让分层跳过计数少报`,
+      );
+    }
   }
 
-  // ---- F. 只删两张表；越过 users / jobs / 三张引用表一律判红 ----
+  // ---- E2. 数组列不许退化成猜格式（拼接 / LIKE / position / 取下标）----
+  for (const banned of ['|| p.media_ids', 'LIKE', 'position(', 'p.media_ids[', 'p.media_ids @>']) {
+    if (flat.includes(banned)) {
+      bad.push(`community_posts.media_ids 的比较里出现被禁止的写法「${banned}」：必须是 m.id::text = ANY (p.media_ids)`);
+    }
+  }
+
+  // ---- E3. 分层读数：8 个桶各一条 FILTER，顺序与闭集逐字一致 ----
+  const filterSequence = [...flat.matchAll(/count\(\*\) FILTER \(WHERE t\.(ref_[a-z_]+)\)/g)].map((m) => m[1]);
+  const expectedFilters = REFERENCE_BUCKETS.map((bucket) => `ref_${bucket}`);
+  if (filterSequence.join(',') !== expectedFilters.join(',')) {
+    bad.push(
+      `分层 FILTER 的顺序/闭集应逐字为 [${expectedFilters.join(', ')}]，实际 [${filterSequence.join(', ')}]：`
+        + '顺序错位会把一类引用记到另一类头上',
+    );
+  }
+  // 桶别名必须真的在子查询里定义（否则 FILTER 引用的列不存在，函数根本建不起来）。
+  for (const bucket of REFERENCE_BUCKETS) {
+    if (occurrences(flat, `AS ref_${bucket}`) !== 1) {
+      bad.push(`子查询缺少桶别名 AS ref_${bucket}（或者出现了不止一次）`);
+    }
+    if (occurrences(flat, `x_ref_${bucket} integer := 0;`) !== 1) {
+      bad.push(`DECLARE 里缺少 x_ref_${bucket} integer := 0;（分层计数的落点）`);
+    }
+  }
+  // `skipped_referenced` 必须是 8 个桶的 OR（少一个桶 ⇒ 那一类引用会被"看不见地"跳过）。
+  const chainMatch = flat.match(/count\(\*\) FILTER \(WHERE (t\.ref_[a-z_]+(?: OR t\.ref_[a-z_]+)+)\)/);
+  const chain = chainMatch ? chainMatch[1].split(' OR ') : [];
+  const expectedChain = expectedFilters.map((filter) => `t.${filter}`);
+  if (chain.join(',') !== expectedChain.join(',')) {
+    bad.push(
+      `skipped_referenced 的 OR 链应逐字为 [${expectedChain.join(', ')}]，实际 [${chain.join(', ')}]：`
+        + '「community」等桶漏进 OR 链会让总数少报',
+    );
+  }
+  // SELECT 的 9 个输出必须按同一顺序落进 9 个变量（错位 = 把 OCr 的数记成语音的数）。
+  const intoExpected = [
+    ...REFERENCE_BUCKETS.map((bucket) => `x_ref_${bucket}`),
+    'x_skipped',
+  ].join(', ');
+  if (occurrences(flat, `INTO ${intoExpected}`) !== 1) {
+    bad.push(`分层读数的 INTO 目标应逐字为 [${intoExpected}]：错位会把一类引用记到另一类头上`);
+  }
+
+  // ---- F. 只删两张表；越过 users / jobs / 引用表一律判红 ----
   for (const match of code.matchAll(/DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_.]*)/g)) {
     if (!ALLOWED_DELETE_TARGETS.includes(match[1])) {
       bad.push(`不允许的 DELETE 目标 ${match[1]}：本片只删 ${ALLOWED_DELETE_TARGETS.join(' / ')}`);
@@ -139,9 +300,15 @@ export function collectForwardViolations(sql) {
   // ---- G. 零授权：迁移里一条 GRANT 都不许有（授权只在 20-login-roles.sql 里成对出现）----
   if (/\bGRANT\b/i.test(code)) bad.push('迁移里不允许出现 GRANT（授权面只许在 20-login-roles.sql）');
 
-  // ---- H. 读数：jsonb 四个键（调用方要把这几个数写进注销证据串）----
-  for (const key of ['media', 'derivatives', 'queued', 'skipped_referenced']) {
+  // ---- H. 读数：jsonb 键（调用方要把这几个数写进注销证据串）----
+  for (const key of ['media', 'derivatives', 'queued', 'skipped_referenced', 'skipped_referenced_by']) {
     if (!new RegExp(`'${key}'\\s*,`).test(code)) bad.push(`jsonb 读数缺少键 '${key}'`);
+  }
+  // 分层键必须**每个桶一个**且落进同名变量（摊平成一个数就等于没分层）。
+  for (const bucket of REFERENCE_BUCKETS) {
+    if (!flat.includes(`'${bucket}', x_ref_${bucket}`)) {
+      bad.push(`skipped_referenced_by 里缺少 '${bucket}': x_ref_${bucket}（分层计数没接到读数上）`);
+    }
   }
 
   // ---- I. 单事务 ----
@@ -180,7 +347,7 @@ export function collectGrantViolations(sql) {
     bad.push(`GRANT EXECUTE ON FUNCTION public.purge_owner_media(uuid) TO gengyun_api_runtime 应恰好 1 条，实际 ${grants.length}`);
   }
   if (/\bGRANT\s+DELETE\b/i.test(code)) {
-    // ⛔ 这是本片的裁定红线：PG 没有列级 DELETE ⇒ 表级 DELETE 会把四个谓词一起送掉。
+    // ⛔ 这是本片的裁定红线：PG 没有列级 DELETE ⇒ 表级 DELETE 会把所有谓词一起送掉。
     const mediaDeletes = [...code.matchAll(/GRANT\s+DELETE\s+ON\s+([\s\S]*?)\s+TO\s+/gi)]
       .flatMap((m) => m[1].split(',').map((part) => part.trim()))
       .filter((name) => /^public\.media$/i.test(name));
@@ -198,6 +365,7 @@ test('迁移 0035 的形状：三件套 / 窄签名 / jsonb 读数 / 零授权 /
 });
 
 test('迁移 0035 的三条硬条件都能在函数体里被指认', () => {
+  const flat = squash(forwardCode);
   // ① 入队先于删行：G0007 出现在两条 DELETE 之前。
   assert.match(forwardCode, /'G0007'/, '硬条件①需要 G0007');
   assert.ok(
@@ -206,15 +374,39 @@ test('迁移 0035 的三条硬条件都能在函数体里被指认', () => {
   );
   // ② 只删终态。
   assert.match(forwardCode, /state\s+IN\s*\(\s*'rejected'\s*,\s*'deleted'\s*\)/, '硬条件②需要终态闭集');
-  // ③ 三处引用面极性成对：每处**恰好**一次排除 + 一次读数（用 lookbehind 排掉 `NOT ` 前缀，
-  //    否则「读数那一处」会被「排除那一处」冒充，只剩一条判据）。
-  for (const { table, note } of REFERENCE_SURFACES) {
-    const escaped = table.replace(/\./g, '\\.');
-    const negated = forwardCode.match(new RegExp(`NOT\\s+EXISTS\\s*\\(\\s*SELECT\\s+1\\s+FROM\\s+${escaped}\\s`, 'g')) ?? [];
-    const positive = forwardCode.match(new RegExp(`(?<!NOT\\s)EXISTS\\s*\\(\\s*SELECT\\s+1\\s+FROM\\s+${escaped}\\s`, 'g')) ?? [];
-    assert.equal(negated.length, 1, `硬条件③：${table}（${note}）在目标集里必须恰好排除一次`);
-    assert.equal(positive.length, 1, `硬条件③：${table}（${note}）在跳过读数里必须恰好统计一次`);
+  // ③ 11 列引用面逐条：目标集里否定一次、读数里肯定一次（总数 2 = 1 否定 + 1 肯定）。
+  assert.equal(REFERENCE_SURFACES.length, 11, '引用面清单必须是 11 列（3 处既有 + 7 处补强 + users 头像）');
+  for (const surface of REFERENCE_SURFACES) {
+    const { positive, negated } = surfaceFragments(surface);
+    assert.equal(
+      occurrences(flat, negated),
+      1,
+      `硬条件③：${surface.table}（${surface.note}）在目标集里必须恰好排除一次`,
+    );
+    assert.equal(
+      occurrences(flat, positive),
+      2,
+      `硬条件③：${surface.table}（${surface.note}）必须同时出现在目标集（被 NOT 包住）与读数子查询里`,
+    );
   }
+  // 删行的三段顺序不许变：派生行先、媒体行后，且都在 G0007 之后。
+  const derivativesDeleteAt = flat.indexOf('DELETE FROM public.media_derivatives');
+  const mediaDeleteAt = flat.indexOf('DELETE FROM public.media m');
+  assert.ok(derivativesDeleteAt > 0, '缺少 DELETE FROM public.media_derivatives');
+  assert.ok(mediaDeleteAt > derivativesDeleteAt, '派生行必须排在媒体行之前删除');
+  assert.ok(flat.indexOf("'G0007'") < derivativesDeleteAt, '两条 DELETE 都必须在 G0007 之后');
+});
+
+test('分层计数：8 个桶各一条 FILTER，OR 链与 INTO 顺序与闭集一致', () => {
+  assert.deepEqual(REFERENCE_BUCKETS.length, 8, '桶闭集必须是 8 类');
+  assert.deepEqual(
+    [...new Set(REFERENCE_SURFACES.map((surface) => surface.bucket))],
+    REFERENCE_BUCKETS,
+    '11 列必须恰好覆盖 8 个桶，且桶的顺序与闭集一致',
+  );
+  const flat = squash(forwardCode);
+  const filters = [...flat.matchAll(/count\(\*\) FILTER \(WHERE t\.(ref_[a-z_]+)\)/g)].map((m) => m[1]);
+  assert.deepEqual(filters, REFERENCE_BUCKETS.map((bucket) => `ref_${bucket}`), 'FILTER 顺序必须与桶闭集一致');
 });
 
 test('回滚 0035 的形状：DROP FUNCTION IF EXISTS，且不伪造数据、不动表', () => {
@@ -246,9 +438,8 @@ test('跨文件一致：迁移建的函数签名与授权面引用的签名逐�
  * 只在**代码行**上做替换。
  *
  * 为什么必须有这一层：本迁移的头注释里**故意**写着 `SECURITY DEFINER` / `SET search_path =
- * pg_catalog` / `SET TimeZone = 'UTC'` 这些词来讲道理。直接对全文 `replace` 会先命中注释、
- * 代码一个字没动，负控制就变成"改了注释所以必红"的假绿（第一次写这条负控制时正是如此：
- * 「去掉 SECURITY DEFINER」被判全绿，因为删掉的是第 35 行注释里的那个词）。
+ * pg_catalog` / `SET TimeZone = 'UTC'` / 11 处 `表.列` 这些词来讲道理。直接对全文 `replace`
+ * 会先命中注释、代码一个字没动，负控制就变成"改了注释所以必红"的假绿。
  */
 function mutateCode(sql, pattern, replacement) {
   return sql
@@ -273,17 +464,63 @@ test('负控制：破坏任意一条硬条件/铁律都必须被点名', () => {
       mutateCode(forward, /state IN \('rejected', 'deleted'\)/g, "state IN ('rejected', 'deleted', 'ready')"),
       /ready/,
     ],
+    // ---- 以下 7 条是**本版新增**引用面的负控制：每一条都对应一个真实的漏删路径 ----
     [
-      '目标集漏掉头像引用面',
+      '目标集漏掉作者头像引用面',
       mutateCode(forward, 'AND NOT EXISTS (SELECT 1 FROM public.public_authors a WHERE a.avatar_media_id = m.id)', ''),
       /public_authors/,
     ],
     [
-      '跳过读数漏掉取图授权',
-      mutateCode(forward, 'OR EXISTS (SELECT 1 FROM public.community_media_grants g WHERE g.media_id = m.id)', ''),
+      '目标集漏掉 OCR 记录引用面（删掉一条 NOT EXISTS ⇒ 必须红）',
+      mutateCode(forward, 'AND NOT EXISTS (SELECT 1 FROM public.ocr_records j WHERE j.media_id = m.id)', ''),
+      /public\.ocr_records/,
+    ],
+    [
+      '目标集漏掉账号头像引用面（无写入方也不许漏）',
+      mutateCode(forward, 'AND NOT EXISTS (SELECT 1 FROM public.users u WHERE u.avatar_media_id = m.id)', ''),
+      /public\.users/,
+    ],
+    [
+      '把数组列条件写坏（只取第一个元素 ⇒ 必须红）',
+      mutateCode(forward, 'm.id::text = ANY (p.media_ids)', 'm.id::text = p.media_ids[1]'),
+      /community_posts/,
+    ],
+    [
+      '把转写记录从「跳过」改成「继续删」（删掉读数那一处 EXISTS ⇒ 必须红）',
+      mutateCode(forward, 'OR EXISTS (SELECT 1 FROM public.transcriptions j WHERE j.media_id = m.id)', ''),
+      /public\.transcriptions/,
+    ],
+    [
+      // lookbehind 排掉目标集那一行：`AND NOT EXISTS (…)` 里也含 `EXISTS (…)`，直接拿字符串删
+      // 会把两处一起删掉，负控制就变成「一次改两处」，说不清是哪条判据红了。
+      '跳过读数漏掉取图授权（只删读数子查询里那一处 EXISTS）',
+      mutateCode(
+        forward,
+        /(?<!NOT )EXISTS \(SELECT 1 FROM public\.community_media_grants g WHERE g\.media_id = m\.id\)/,
+        '',
+      ),
       /community_media_grants/,
     ],
-    ['读数少一个键', mutateCode(forward, "'skipped_referenced', x_skipped", "'skipped', x_skipped"), /skipped_referenced/],
+    [
+      '把 community 桶从 skipped_referenced 的 OR 链里删掉',
+      mutateCode(forward, 'OR t.ref_ocr OR t.ref_recognition OR t.ref_speech OR t.ref_community)', 'OR t.ref_ocr OR t.ref_recognition OR t.ref_speech)'),
+      /community/,
+    ],
+    [
+      '把 INTO 目标顺序打乱（ocr 与 speech 对调）',
+      mutateCode(forward, 'x_ref_ocr, x_ref_recognition, x_ref_speech, x_ref_community, x_skipped', 'x_ref_speech, x_ref_recognition, x_ref_ocr, x_ref_community, x_skipped'),
+      /INTO/,
+    ],
+    [
+      '把分层读数摊平成一个键',
+      mutateCode(forward, "'skipped_referenced_by'", "'skipped_total'"),
+      /skipped_referenced_by/,
+    ],
+    [
+      '读数少一个键',
+      mutateCode(forward, "'skipped_referenced',    x_skipped", "'skipped',    x_skipped"),
+      /skipped_referenced/,
+    ],
     [
       '偷偷加一条 GRANT',
       mutateCode(forward, 'COMMIT;', 'GRANT DELETE ON public.media TO gengyun_api_runtime;\n\nCOMMIT;'),

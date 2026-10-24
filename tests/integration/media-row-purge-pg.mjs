@@ -1,6 +1,6 @@
 // GY-R34 / #19 片 2：public.purge_owner_media(uuid) 的真库集成臂。
 //
-// 为什么必须有这条臂：0035 的四谓词（本人 + 终态 + 未被三条引用面指向 + 已入队）与
+// 为什么必须有这条臂：0035 的四谓词（本人 + 终态 + 未被**任何一处**引用面指向 + 已入队）与
 // 「public.media 对运行时零表级 DELETE」这两件事，静态测试只能证明「SQL 文本长这样」，
 // 证明不了 PG 真跑起来会这样。本脚本用一次性集群把整条链跑一遍：
 //   全链迁移 → 建运行时角色 → 应用 20-login-roles.sql 段 M（媒体域生产授权面）
@@ -11,16 +11,24 @@
 //   [1] 权限面：media 无表级 DELETE；media_derivatives / media_object_cleanup 有；
 //       purge_owner_media 的 EXECUTE 只落在运行时身上（0034 两条函数未被本片顺手放开）。
 //   [1b] 反向控制：运行时对 public.media 直接发 DELETE ⇒ 42501。
-//   [2] 正常批：读数逐键对账 + 逐行核对「该删的三行没了、非终态三行还在」。
+//   [2] 正常批：读数逐键对账（含分层计数 skipped_referenced_by）+ 逐行核对「该删的三行没了、
+//       非终态三行还在」。
 //   [3] 硬条件 ①：一个终态媒体缺清理意图行 ⇒ G0007，且**同批本来可删的行也必须还在**（整批不删）。
 //   [4] 硬条件 ②：initiated/uploaded/processing/ready/deleting 一行都不许动。
-//   [5] 硬条件 ③：三条引用面（content_media_refs / community_media_grants /
-//       public_authors.avatar_media_id）指向的行留原地，skipped_referenced 逐条对得上。
+//   [5] 硬条件 ③（有外键的三处）：content_media_refs / community_media_grants /
+//       public_authors.avatar_media_id 指向的行留原地，skipped_referenced 逐条对得上。
+//   [5b] 硬条件 ③（**无外键的八列**，返修新增）：ocr_jobs / ocr_records / recognition_jobs /
+//       recognition_records / speech_jobs / transcriptions / community_posts.media_ids /
+//       users.avatar_media_id 指向的行留原地。这八列**没有外键** ⇒ 删了也不会 42501/23503，
+//       只会静默留悬空 uuid，所以必须逐行核对「行还在」+ 分层计数逐桶对账。
 //   [6] 幂等：第二次调用读数全 0，被引用的行仍然在（不报成「删干净了」）。
 //   [7] 参数域：p_owner IS NULL ⇒ G0001。
 //   [8] 台账不随父行消失（0029 的 media_object_cleanup 故意无外键）：桶对象回收仍归清理器。
 //
 // ⛔ 本脚本刻意不提供 --allow-skip；缺 GY_PG_BIN 就 exit 77（未取得 ≠ 通过）。
+// ⚠ `pg` 必须**在** GY_PG_BIN 闸门之后动态加载：静态 `import pg from 'pg'` 会被提升到闸门
+//   之上，在没有 node_modules 的树里直接 ERR_MODULE_NOT_FOUND（exit 1）——那样「缺 GY_PG_BIN
+//   时 exit 77」这句就变成假话，而 skipped 与 failed 在 CI 上语义完全不同。
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -30,7 +38,6 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import pg from 'pg';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 if (binDir === '') {
@@ -38,6 +45,17 @@ if (binDir === '') {
   console.log('      本次**未验证** purge_owner_media 的真库语义（未取得，不是通过）。');
   console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本脚本刻意不提供 --allow-skip）。');
   process.exit(77);
+}
+
+// GY_PG_BIN 已设置 ⇒ 这条臂**本该跑起来**：此处缺 pg 依赖是环境坏（不是「未取得」），
+// 因此 exit 1 并让日志自己说话，⛔ 不要用 77 把它伪装成跳过。
+let pg;
+try {
+  pg = (await import('pg')).default;
+} catch (error) {
+  console.error(`FAIL: GY_PG_BIN 已设置（${binDir}）但本树解析不到 pg 依赖：${error?.message ?? error}`);
+  console.error('EXITCODE=1（环境缺依赖，不是 skipped）');
+  process.exit(1);
 }
 
 const DB_NAME = 'gengyun_media_row_purge_test';
@@ -374,7 +392,8 @@ async function main() {
   const subjectA = randomUUID();
   const subjectB = randomUUID();
   const subjectC = randomUUID();
-  for (const id of [subjectA, subjectB, subjectC]) {
+  const subjectD = randomUUID();
+  for (const id of [subjectA, subjectB, subjectC, subjectD]) {
     await owner.query('INSERT INTO public.users (id) VALUES ($1::uuid)', [id]);
   }
 
@@ -391,7 +410,7 @@ async function main() {
   const aUploaded = await seedMedia(subjectA, 'uploaded', CLEARED_CIPHER);
   const aDeleting = await seedMedia(subjectA, 'deleting', CLEARED_CIPHER);
 
-  // A：三条引用面各指向一行终态媒体（③ 的口径）
+  // A：三处**有外键**的引用面各指向一行终态媒体（③ 的老口径；无外键的 8 列在 D 组）
   const aRefContent = await seedMedia(subjectA, 'rejected', LIVE_CIPHER);
   await seedCleanup(aRefContent);
   await owner.query(
@@ -427,13 +446,97 @@ async function main() {
   const cUnqueued = await seedMedia(subjectC, 'rejected', LIVE_CIPHER);
   const cCleanable = await seedMedia(subjectC, 'deleted', CLEARED_CIPHER);
 
+  // D：**无外键的 8 列**引用面（本版新增的第 4–11 列）各指向一行终态媒体（③ 的新口径）。
+  // 关键点：这八列**没有外键** ⇒ 删掉这些 media 行时数据库不会 42501、也不会 23503，
+  // 只会静默留下一串悬空 uuid。所以这一批的断言是「行还在」+「分层计数逐桶对得上」，
+  // 而不是「数据库报错了」。每行都先入队（硬条件①），否则 G0007 会让整批不删、测不出引用面。
+  const dRefOcrJob = await seedMedia(subjectD, 'rejected', LIVE_CIPHER);
+  await seedCleanup(dRefOcrJob);
+  await owner.query(
+    `INSERT INTO public.ocr_jobs
+       (id, revision, kind, owner_user_id, ocr_id, media_id, media_revision, state, deadline_at, created_at, updated_at)
+     VALUES ($1::uuid, 1, 'ocr', $2::uuid, $3::uuid, $4::uuid, 1, 'queued',
+             now() + interval '5 minutes', now(), now())`,
+    [randomUUID(), subjectD, randomUUID(), dRefOcrJob],
+  );
+
+  const dRefOcrRecord = await seedMedia(subjectD, 'deleted', CLEARED_CIPHER); // 密文已清空 ⇒ 无需入队
+  await owner.query(
+    `INSERT INTO public.ocr_records
+       (id, revision, owner_user_id, media_id, media_revision, raw_fields, corrected_fields,
+        verification, model_version, created_at, updated_at, deleted)
+     VALUES ($1::uuid, 1, $2::uuid, $3::uuid, 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+             'test-model', now(), now(), false)`,
+    [randomUUID(), subjectD, dRefOcrRecord],
+  );
+
+  const dRefCommunity = await seedMedia(subjectD, 'rejected', LIVE_CIPHER);
+  await seedCleanup(dRefCommunity);
+  // 同一条帖子引用**两行**：`dRefOcrJob`（同时被 ocr_jobs 指着）与 `dRefCommunity`。
+  // 这是分层计数「桶之间互不排斥」的口径证明：桶和(7) > skipped_referenced(6)。
+  await owner.query(
+    `INSERT INTO public.community_posts
+       (id, author_id, revision, title, body, media_ids, visibility, audit_state, created_at, updated_at)
+     VALUES ($1::uuid, $2::uuid, 1, '媒体引用面探针', 'body', ARRAY[$3::text, $4::text],
+             'published', 'approved', now(), now())`,
+    [randomUUID(), subjectD, dRefOcrJob, dRefCommunity],
+  );
+
+  const dRefRecognition = await seedMedia(subjectD, 'rejected', LIVE_CIPHER);
+  await seedCleanup(dRefRecognition);
+  await owner.query(
+    `INSERT INTO public.recognition_records
+       (id, revision, owner_user_id, media_id, media_revision, candidates, uncertainty_reasons,
+        model_version, created_at, updated_at, deleted)
+     VALUES ($1::uuid, 1, $2::uuid, $3::uuid, 1, '[]'::jsonb, '[]'::jsonb, 'test-model', now(), now(), false)`,
+    [randomUUID(), subjectD, dRefRecognition],
+  );
+
+  const dRefSpeech = await seedMedia(subjectD, 'rejected', LIVE_CIPHER);
+  await seedCleanup(dRefSpeech);
+  await owner.query(
+    `INSERT INTO public.transcriptions
+       (id, revision, owner_user_id, media_id, media_revision, raw_text, uncertain_spans,
+        model_version, created_at, updated_at, deleted)
+     VALUES ($1::uuid, 1, $2::uuid, $3::uuid, 1, 'raw', '[]'::jsonb, 'test-model', now(), now(), false)`,
+    [randomUUID(), subjectD, dRefSpeech],
+  );
+
+  const dRefUserAvatar = await seedMedia(subjectD, 'rejected', LIVE_CIPHER);
+  await seedCleanup(dRefUserAvatar);
+  await owner.query('UPDATE public.users SET avatar_media_id = $2::uuid WHERE id = $1::uuid', [
+    subjectD,
+    dRefUserAvatar,
+  ]);
+
+  // D：一行**没有**任何引用的终态媒体 ⇒ 必须照样删掉（证明新判据不是「一律不删」）。
+  const dGoneClean = await seedMedia(subjectD, 'rejected', LIVE_CIPHER);
+  await seedCleanup(dGoneClean);
+
   const aBefore = await idsOfMedia(subjectA);
   assert.equal(aBefore.length, 6, `A 的媒体行应为 6 条，实际 ${aBefore.length}`);
 
   // ---- [2] 正常批 ---------------------------------------------------------------
   const first = await callPurge(subjectA);
-  assert.deepEqual(first, { media: 3, derivatives: 1, queued: 2, skipped_referenced: 3 });
-  say('[2] 正常批读数：media=3 / derivatives=1 / queued=2 / skipped_referenced=3');
+  assert.deepEqual(first, {
+    media: 3,
+    derivatives: 1,
+    queued: 2,
+    skipped_referenced: 3,
+    // 分层计数：A 的三行终态媒体各被**一处有外键的引用面**指着（且互不重叠）⇒ 三个桶各 1，
+    // 其余六桶 0（本版新增的 8 列在 A 里一条都没写，这是「桶闭集全在读数里」的对照读数）。
+    skipped_referenced_by: {
+      content: 1,
+      grants: 1,
+      avatar: 1,
+      user_avatar: 0,
+      ocr: 0,
+      recognition: 0,
+      speech: 0,
+      community: 0,
+    },
+  });
+  say('[2] 正常批读数：media=3 / derivatives=1 / queued=2 / skipped_referenced=3（分层 content=1 grants=1 avatar=1）');
 
   const aAfter = await idsOfMedia(subjectA);
   assert.deepEqual(aAfter, [aReady, aUploaded, aDeleting, aRefContent, aRefGrant, aRefAvatar].sort());
@@ -482,16 +585,90 @@ async function main() {
     assert.equal(await countOf('SELECT count(*) AS v FROM public.media WHERE id = $1::uuid', [id]), 1,
       `被 ${label} 引用的媒体行被删了 —— 越过了引用面`);
   }
-  say('[5] 硬条件③：三条引用面指向的行全部留原地，且 skipped_referenced=3 与逐条核对一致');
+  say('[5] 硬条件③（有外键的三处）：指向的行全部留原地，且 skipped_referenced=3 与逐条核对一致');
 
   // B 完全没被碰过
   assert.deepEqual(await idsOfMedia(subjectB), [bRejected, bDeleted].sort());
   say('[5] 未被调用的一方（subject B）两行原样保留：函数只作用于 p_owner 本人');
 
+  // ---- [5b] 硬条件 ③（无外键的 8 列，返修新增）----------------------------------
+  const dBuckets = {
+    content: 0,
+    grants: 0,
+    avatar: 0,
+    user_avatar: 1,
+    ocr: 2, // ocr_jobs + ocr_records 两列各指一行（同一桶由两列合成）
+    recognition: 1,
+    speech: 1,
+    community: 2, // 一条帖子引用两行（其中一行同时被 ocr_jobs 指着 ⇒ 与 ocr 桶重叠）
+  };
+  const dPurge = await callPurge(subjectD);
+  assert.deepEqual(dPurge, {
+    media: 1, // 只有 dGoneClean 该删
+    derivatives: 0,
+    queued: 1,
+    skipped_referenced: 6, // 6 行终态媒体被引用（含重叠的那行，只计一次）
+    skipped_referenced_by: dBuckets,
+  });
+  const dBucketSum = Object.values(dPurge.skipped_referenced_by).reduce((sum, value) => sum + value, 0);
+  assert.equal(
+    dBucketSum,
+    7,
+    `分层桶和应为 7（8 个桶：0+0+0+1+2+1+1+2），实际 ${dBucketSum}：桶是「按类计数」而不是「按行去重」`,
+  );
+  assert.ok(
+    dBucketSum > dPurge.skipped_referenced,
+    '桶和必须 ≥ skipped_referenced：同一行被两类引用时两个桶各 +1，而 skipped_referenced 只 +1',
+  );
+  say('[5b] 分层读数：skipped_referenced=6，桶和=7（一行同时被 ocr 与 community 引用 ⇒ 桶互不排斥）');
+
+  for (const [label, id] of [
+    ['ocr_jobs.media_id', dRefOcrJob],
+    ['ocr_records.media_id', dRefOcrRecord],
+    ['community_posts.media_ids', dRefCommunity],
+    ['recognition_records.media_id', dRefRecognition],
+    ['transcriptions.media_id', dRefSpeech],
+    ['users.avatar_media_id', dRefUserAvatar],
+  ]) {
+    assert.equal(
+      await countOf('SELECT count(*) AS v FROM public.media WHERE id = $1::uuid', [id]),
+      1,
+      `被 ${label} 引用的媒体行被删了 —— 越过了引用面（这八列没有外键，数据库不会替我们报错）`,
+    );
+  }
+  assert.equal(
+    await countOf('SELECT count(*) AS v FROM public.media WHERE id = $1::uuid', [dGoneClean]),
+    0,
+    '没有任何引用的终态行没被删：判据退化成「一律不删」',
+  );
+  assert.equal(
+    await countOf('SELECT count(*) AS v FROM public.community_posts WHERE $1::text = ANY(media_ids)',
+      [dRefCommunity]),
+    1,
+    '帖子里的 media_ids 被改动了（本函数不写社区表）',
+  );
+  say('[5b] 逐行核对：六类无外键引用面指向的行全部留原地，无引用的那一行照删，社区帖子一字未动');
+
   // ---- [6] 幂等 -----------------------------------------------------------------
   const second = await callPurge(subjectA);
-  assert.deepEqual(second, { media: 0, derivatives: 0, queued: 0, skipped_referenced: 3 });
-  say('[6] 幂等：第二次调用读数 media/derivatives/queued 全 0，skipped_referenced 仍如实报 3');
+  assert.deepEqual(second, {
+    media: 0,
+    derivatives: 0,
+    queued: 0,
+    skipped_referenced: 3,
+    // 桶读数与第一批**逐字相同**：被跳过的是同一批行，它们没有因为「已跑过一次」而消失。
+    skipped_referenced_by: {
+      content: 1,
+      grants: 1,
+      avatar: 1,
+      user_avatar: 0,
+      ocr: 0,
+      recognition: 0,
+      speech: 0,
+      community: 0,
+    },
+  });
+  say('[6] 幂等：第二次调用读数 media/derivatives/queued 全 0，skipped_referenced 仍如实报 3（分层同第一批）');
 
   // ---- [7] 参数域 ---------------------------------------------------------------
   const nullError = (
