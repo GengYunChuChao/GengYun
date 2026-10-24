@@ -266,7 +266,7 @@ const describeLoadPath = (parentUrl, specifier, url) => {
   return `经 ${prefix}（装载者 ${owner}）装载了 '${specifier}' → ${url}`;
 };
 /**
- * **冻结基线**（r7，逐条实测量于**未改动**的 `app.ts` 引用图；r7 时点 9 条，2026-10-20 S10 起 11 条）：
+ * **冻结基线**（r7，逐条实测量于**未改动**的 `app.ts` 引用图；r7 时点 9 条，2026-10-20 S10 起 11 条，2026-10-25 GY-I04 起 12 条）：
  * 本仓装配路径今天合法装载的 OCR 域装载边。
  *
  * 为什么必须有基线（实测结论，不得读成"放宽"）：派单的字面要求是「登记集合内**无任何** OCR 域条目」，
@@ -302,7 +302,7 @@ const OCR_REGISTRY_BASELINE_EDGES = [
   { loader: 'services/api/src/ocr/service.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
   { loader: 'services/api/src/ocr/store.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
   { loader: 'services/api/src/ocr/store-pg.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
-  { loader: 'services/api/src/ocr/reference.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' },
+  { loader: 'services/api/src/ocr/reference.ts', specifier: './state.ts', target: 'services/api/src/ocr/state.ts' }, { loader: 'services/api/src/registrations/service.ts', specifier: '../ocr/state.ts', target: 'services/api/src/ocr/state.ts' }, // ⚠ 2026-10-25（GY-I04，#4 登记核对）**合法装配变化 ⇒ 显式更新基线（1 条）**：`registrations/service.ts` 直接复用 GY-I10 已合并、已审的核对内核 `ocr/state.ts`（`decideMatchState` / `sanitizeRegistryLookup` / `gateDoseCards` / `normalizeComparableText`）—— 不复制内核、不改内核、不新增第二套匹配规则；`routes/registrations.ts` 对同一模块只有 `import type` 的类型引用（运行期被擦除）⇒ 不产生装载边（已用 `git grep "ocr/" services/api/src/registrations services/api/src/routes/registrations.ts` 逐条核对）。⛔ 不是放宽判据：`collectOcrRegistryFindings` 仍判「基线之外任何 OCR 域边 ⇒ 红」，r9 的「基线全部命中 + 计数相等」照旧（计数 11 → 12 已一并显式更新）。本条目与上面那位同写一行、理由写成行尾注释：**纯为保持本文件行数不变**（该文件被 docs 按行号引用，多一行即让 `docs/verification/gy-r31-i22-failure-matrix-20261022.md` 的三处引用变成 SUSPECT —— 实测 +1 行即复现）。
 ];
 const OCR_REGISTRY_BASELINE_KEYS = new Set(
   OCR_REGISTRY_BASELINE_EDGES.map((edge) => `${edge.loader}|${edge.specifier}|${edge.target}`),
@@ -2100,11 +2100,11 @@ try {
   //     `assert.equal(registrySummary.baselineEdges, 9, …)` 的同义实现）。表若有**有意**变化，必须连这个字面量
   //     一起改 —— 这点"摩擦"是故意的（与主判据"合法装配变化时要求人复核"同口径）。
   //   ⚠ 2026-10-20（GY-R27 S10，#10 OCR 持久化）：合法装配变化（新增 `ocr/store-pg.ts` 与其 `./state.ts` 边）
-  //     ⇒ 字面量 9 → **11** 显式更新。判据的鉴别力**不变**：仍要求"基线之外 0 条"＋"基线内全部命中"＋"计数相等"。
+  //     ⇒ 字面量 9 → **11** 显式更新。判据的鉴别力**不变**：仍要求"基线之外 0 条"＋"基线内全部命中"＋"计数相等"。 ⚠ 2026-10-25（GY-I04，#4 登记核对）：合法装配变化（`registrations/service.ts` 复用 `ocr/state.ts` 内核）⇒ 字面量 11 → **12** 显式更新；三段鉴别力同上，未放宽。
   assert.equal(
     OCR_REGISTRY_BASELINE_EDGES.length,
-    11,
-    `r9 基线表本身被改动：冻结记录是 11 条（r7 时点 9 条；S10 起 ＋2 条 OCR 持久化边），实际 ${OCR_REGISTRY_BASELINE_EDGES.length} 条（若确为合法装配变化，请连同本断言的 11 一并显式更新）`,
+    12,
+    `r9 基线表本身被改动：冻结记录是 12 条（r7 时点 9 条；S10 起 ＋2 条 OCR 持久化边；GY-I04 起 ＋1 条登记核对复用边），实际 ${OCR_REGISTRY_BASELINE_EDGES.length} 条（若确为合法装配变化，请连同本断言的 12 一并显式更新）`,
   );
   const missingBaselineEdges = collectMissingBaselineEdges();
   assert.equal(
