@@ -1928,6 +1928,38 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     },
     purgeOwnerData: (ownerId: string) => speechPurgeOwnerData(ownerId),
   };
+  // R34 片 3（#19 / #10）· OCR 域（三表）：**无条件注入**，手法同语音/识别两域 —— 存储实例在
+  // `routes/ocr.ts` 内部构造（本文件刻意不 import 任何 OCR 存储/提供者适配器，见
+  // `tests/integration/ocr-http.mjs` 的原文子串判据与 `tests/unit/ocr-store-pg-wiring.test.mjs`），
+  // 因此这里用启动后 `decorate` 暴露的**服务**在**调用期**取原语；注销请求必然晚于装配完成。
+  // ⚠️ 与前两域**方向相反**：OCR 三表的表级 DELETE 是**用户 2026-10-24 批准**的例外
+  // （`deploy/postgres-cvm/sql/20-login-roles.sql` 的 R34 段 + `90-assert` 的 `allow_table_dml`），
+  // 存储层因此是真 `DELETE … RETURNING`（`store-pg.ts` 的 `purgeOwnerRows`：同一事务、
+  // 先 `ocr_records` 后 `ocr_jobs`、再按 scope 首段清台账）。
+  // 缺权（42501）/连接失败/原语缺失 ⇒ 调用即抛 ⇒ 协议折叠 `blocked` + `HANDLER_FAILED`，
+  // ⛔ 不折成 `completed`，也不折成"0 行"。
+  const ocrPurgeOwnerData = async (ownerId: string) => {
+    const service = (app as unknown as {
+      ocrService?: {
+        purgeOwnerData?: (id: string) => Promise<{
+          records: number;
+          idempotency: number;
+          tableCounts?: Readonly<Record<string, number>>;
+        }>;
+      };
+    }).ocrService;
+    const purge = service?.purgeOwnerData;
+    if (typeof purge !== 'function') {
+      throw new Error('OCR 域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+    }
+    return purge.call(service, ownerId);
+  };
+  const ocrDeletionStore: OwnerPurgeStore = {
+    async deleteAllByOwner(ownerId) {
+      return (await ocrPurgeOwnerData(ownerId)).records;
+    },
+    purgeOwnerData: (ownerId: string) => ocrPurgeOwnerData(ownerId),
+  };
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -1967,6 +1999,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     recognitionsStore: recognitionsDeletionStore,
     // #19 延续片 · 语音域（三表）：同上，无条件注入。转写原文是最敏感的一类个人数据，不留副本。
     speechStore: speechDeletionStore,
+    // R34 片 3 · OCR 域（三表）：同上，无条件注入。走 `purgeOwnerData` ⇒ 证据串带
+    // `ocr:online-purged:<n>` / `:idempotency-purged:<n>` / `:tables:ocr_records=<n>,ocr_jobs=<n>`，
+    // 并落库 0031（`ONLINE_EVIDENCE_MODULES` 已含该模块名）。
+    ocrStore: ocrDeletionStore,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,
