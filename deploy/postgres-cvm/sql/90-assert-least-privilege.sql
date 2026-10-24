@@ -120,7 +120,9 @@ BEGIN;
 SET LOCAL ROLE gengyun_api_runtime;
 \set r28_probe_role :ERROR
 
--- 表级 DELETE：只允许四张表（idempotency_keys 为既有豁免，另三张见 20-login-roles.sql 段 H）
+-- 表级 DELETE：只允许六张表（idempotency_keys 为既有豁免；另五张见 20-login-roles.sql 段 H）。
+-- R34 片 3（#19 / #10）：`ocr_records` / `ocr_jobs` 是用户 2026-10-24 批准的**表级 DELETE 例外**
+-- （PG 无列级 DELETE ⇒ 此前运行时删不掉自己主体的 OCR 行），因此它们进正向探针，⛔ 不进禁止面。
 SAVEPOINT r28_probe;
 DELETE FROM public.idempotency_keys WHERE false;
 \set r28_probe_del_idempotency_keys :ERROR
@@ -139,6 +141,16 @@ ROLLBACK TO SAVEPOINT r28_probe;
 SAVEPOINT r28_probe;
 DELETE FROM public.ocr_idempotency WHERE false;
 \set r28_probe_del_ocr_idempotency :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.ocr_records WHERE false;
+\set r28_probe_del_ocr_records :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.ocr_jobs WHERE false;
+\set r28_probe_del_ocr_jobs :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
 -- 列级读面：逐表跑一次零行 SELECT（列清单 = 授权清单里的 SELECT 列）
@@ -1230,7 +1242,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','revision','kind','owner_user_id','ocr_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['revision','state','deadline_at','updated_at','error_code'],
-     false),
+     true),
     ('ocr_records',
      ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_fields',
            'corrected_fields','verification','model_version','created_at','updated_at','deleted'],
@@ -1238,7 +1250,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            'corrected_fields','verification','model_version','created_at','updated_at','deleted'],
      ARRAY['revision','raw_fields','corrected_fields','verification','model_version',
            'updated_at','deleted'],
-     false),
+     true),
     ('ocr_idempotency',
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
@@ -1455,7 +1467,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 「桶删除被确认成功 ⇒ 删掉那一行」，且按对象键摘要整行删（PG 无列级 DELETE）。
     -- 若这里判红（即有人给别的表加了表级写权），先查是不是把清理台账改成了只增不删。
     -- 本片新增后，表级写授权白名单为 16 个三元组。
-    ('public', 'media_object_cleanup',  'DELETE')
+    ('public', 'media_object_cleanup',  'DELETE'),
+    -- R34 片 3（#19 / #10）：OCR 三表统一走**表级** DELETE（用户 2026-10-24 批准的例外，
+    -- 也是本清单唯一一处新增的删除面）。理由：PG 没有列级 DELETE，而 `ocr_jobs` /
+    -- `ocr_records` 此前只有列级 SELECT/INSERT/UPDATE ⇒ 运行时角色**删不掉**这两张表的任何行，
+    -- 账号注销的 OCR 闭集只能绕 `SECURITY DEFINER`；批准后改由 `ocr/store-pg.ts` 的
+    -- `purgeOwnerData` 直接 DELETE（先 `ocr_records` 后 `ocr_jobs`，再按 scope 首段清
+    -- `ocr_idempotency`，三表同一事务、行数如实回报）。
+    -- ⛔ 例外**仅限**这两张表：`public.media` 仍然完全不授 DELETE（状态机删除 / 0035 窄函数），
+    -- 若这里判红，先查是不是有人把别的表也改成了表级写权。
+    -- 本片新增后，表级写授权白名单为 18 个三元组。
+    ('public', 'ocr_jobs',              'DELETE'),
+    ('public', 'ocr_records',           'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（16 张表，不在 domain_manifest 里）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
@@ -1703,6 +1726,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public',         'purge_owner_recognitions',           'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'purge_owner_speech',                 'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R34（#19 片2 / 迁移 0035）：媒体行**物理删除**的唯一写路径（窄口径 SECURITY DEFINER 函数）。
+    -- `public.media` 对运行时仍然是零表级 DELETE（段 M 的 \echo 与 domain_manifest 逐字未动），
+    -- 「本人 + 终态 + 未被引用 + 已入队」四个谓词只存在于这条函数里；EXECUTE 只授运行时。
+    ('public',         'purge_owner_media',                  'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
@@ -2125,6 +2153,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- 从「一张表、全部类型」改成「(schema, 表, 权限类型) 三元组白名单」：
   --   表在清单里但类型不在 ⇒ 仍然失败（例：GRANT UPDATE ON community_likes ⇒ 红）。
   -- 表级 INSERT/UPDATE 仍处处禁止（它们都有列级替代；GREATEST 语义不适用）。
+  -- R34 片 3（#19 / #10）扩写：**OCR 三表统一走表级 DELETE**（`ocr_idempotency` 原本就是，
+  -- `ocr_jobs` / `ocr_records` 本片补上）——这是**用户 2026-10-24 批准的例外**，理由同上
+  -- （PG 无列级 DELETE；注销闭集要按主体物理删除，而这两张表此前只有列级 SELECT/INSERT/UPDATE
+  -- ⇒ 运行时删不掉任何行）。白名单因此从 16 个三元组长到 18 个；⛔ 判据本身没放松：
+  -- 白名单以外的任何表级写权限（含给 `public.media` 加 DELETE）照样判红。
   -- 注：PG17 的 MAINTAIN 属于维护类而非写入类，且 PG16 无此记号（写死会
   -- 让旧版本 psql 直接报错），故不纳入本断言。
   SELECT 'table_dml_allowlist',
@@ -2859,16 +2892,20 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '运行时对 public.admin_audit_events 必须仍无任何直接权限（开关审计只经唯一写路径写入）'
 
   UNION ALL
-  -- 45. R28-S24 真执行探针（表级 DELETE）：四张白名单表必须在运行时身份下真能删（零行）
+  -- 45. R28-S24 真执行探针（表级 DELETE）：六张白名单表必须在运行时身份下真能删（零行）。
   --     为什么不用 has_table_privilege 就够：它只回答权限位；这里回答“语句真能跑通”。
   --     变量来自上方探针段（成功=false、失败=true，故断言写成 = 'false'）。
+  --     R34 片 3（#19 / #10）：`ocr_records` / `ocr_jobs` 补进正向探针 —— 它们新获表级 DELETE
+  --     （用户 2026-10-24 批准的例外），只有真跑一次才能证明「授了、也确实能用」。
   SELECT 'runtime_domain_delete_exec',
          :'r28_probe_role' = 'false'
          AND :'r28_probe_del_idempotency_keys' = 'false'
          AND :'r28_probe_del_community_likes' = 'false'
          AND :'r28_probe_del_community_idempotency' = 'false'
-         AND :'r28_probe_del_ocr_idempotency' = 'false',
-         'SET LOCAL ROLE gengyun_api_runtime 后，四张白名单表的 DELETE … WHERE false 必须成功；任一 42501 即失败'
+         AND :'r28_probe_del_ocr_idempotency' = 'false'
+         AND :'r28_probe_del_ocr_records' = 'false'
+         AND :'r28_probe_del_ocr_jobs' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，六张白名单表的 DELETE … WHERE false 必须成功；任一 42501 即失败'
 
   UNION ALL
   -- 46. R28-S24 真执行探针（列级读面）：十张表按授权列 SELECT … LIMIT 0 必须成功。

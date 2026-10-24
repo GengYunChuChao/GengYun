@@ -149,6 +149,50 @@ export async function inject(app, { method, path, actor = null, body, headers = 
   };
 }
 
+/**
+ * 发一条 loopback **真实 HTTP** 请求并归一化成与 `inject` 完全同形的读数。
+ * `origin` 是 `app.listen({ host: '127.0.0.1', port: 0 })` 返回的 base URL。
+ *
+ * 与 `inject` 的差别只在传输层：这里真的走 TCP（覆盖真实 body 大小上限、真实网络超时
+ * 与连接生命周期），其余字段逐字段对齐，`run.mjs` 的 `judge` 才能两臂共用同一套判定。
+ */
+export async function loopbackInject(origin, { method, path, actor = null, body, headers = {} }) {
+  const merged = {
+    ...(actor && actor.token ? { authorization: `Bearer ${actor.token}` } : {}),
+    ...headers,
+  };
+  const hasBody = body !== undefined;
+  if (hasBody) merged['content-type'] = merged['content-type'] ?? 'application/json';
+  const response = await fetch(`${origin}${path}`, {
+    method,
+    headers: merged,
+    ...(hasBody ? { body: JSON.stringify(body) } : {}),
+  });
+  const text = await response.text();
+  let parsed = null;
+  try {
+    parsed = text === '' ? null : JSON.parse(text);
+  } catch {
+    parsed = null;
+  }
+  // `inject` 的 `response.headers` 是普通对象、缺头时读数为 `undefined`；这里用 `?? undefined`
+  // 把 fetch 的 `null` 缺头归一化掉，保证 `judge` 里 `exp.etag === false` 等判定两臂一致。
+  const header = (name) => response.headers.get(name) ?? undefined;
+  const rawHeaders = {};
+  for (const [key, value] of response.headers.entries()) rawHeaders[key] = value;
+  return {
+    status: response.status,
+    body: parsed,
+    text,
+    bytes: Buffer.byteLength(text),
+    headers: rawHeaders,
+    etag: header('etag'),
+    cache: header('cache-control'),
+    mode: header('x-execution-mode'),
+    contentType: header('content-type'),
+  };
+}
+
 /** 错误封套指纹：去掉 `request_id`／`message` 后的形状（逐字节可比）。 */
 export function envelopeShape(result) {
   const error = { ...(result.body?.error ?? {}) };

@@ -269,6 +269,30 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
   },
   {
+    path: 'tests/integration/media-row-purge-pg.mjs',
+    reason: '需真实 PG 17.11，且是**自起集群**脚本（R34 / #19 片 2 交付）：要求 `GY_PG_BIN` 指向服务端'
+      + '二进制目录，自行 `initdb`/`pg_ctl` 起一次性集群（仅回环；端口在 55700–55799 里**先探活再起**，'
+      + '数据目录父目录走可选的 `GY_R34_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），再应用全链迁移并把'
+      + '`20-login-roles.sql` 的段 M（媒体域生产授权面）与本片新增的段 D4（仅一条 EXECUTE）切出来真跑：'
+      + '断言运行时对 `public.media` 仍**零表级 DELETE/TRUNCATE**（直删恰好 42501）而'
+      + '`media_derivatives`/`media_object_cleanup` 的表级 DELETE 仍在；再以运行时身份调'
+      + '`public.purge_owner_media(uuid)`，逐键核对读数 `media/derivatives/queued/skipped_referenced/skipped_referenced_by`，'
+      + '并把三条硬条件各钉一段：缺清理意图行 ⇒ `G0007` 且**整批不删**、非终态五行一行不动、'
+      + '**11 列 / 8 类**引用面（有外键的 `content_media_refs`／`community_media_grants`／`public_authors.avatar_media_id`，'
+      + '加上**无外键**的 `users.avatar_media_id`／`ocr_jobs`／`ocr_records`／`recognition_jobs`／`recognition_records`／'
+      + '`speech_jobs`／`transcriptions`／`community_posts.media_ids`）'
+      + '指向的行留原地；另测幂等第二次全 0、`p_owner IS NULL` ⇒ `G0001`、清理台账不随父行消失'
+      + '（0029 故意不建外键）。缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**'
+      + '（未取得，⛔ 不是通过；也不认 --allow-skip）；⚠ `pg` 只在这道闸门**之后**动态加载 —— '
+      + '静态 import 会被提升到闸门之上，在无 `node_modules` 的树里以 exit 1 死在 SKIP 之前（把「未取得」报成「失败」）。'
+      + '本片（R34 / #19 片 2）**未**把它接进 `.github/workflows/real-pg-integration.yml`：'
+      + '`.github/workflows/**` 不在本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的'
+      + '`MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页'
+      + '（那是独立的一次门禁变更，须由指挥裁定），故在此如实登记为未接线。'
+      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
+      + '接进真库 job 不等于进 `test:integration:http`。',
+  },
+  {
     path: 'tests/integration/messages-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
   },
@@ -310,6 +334,18 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + 'R29 已把它接进 `.github/workflows/real-pg-integration.yml`：由该 workflow 的独立真库 job（`postgres:17.11` service）'
       + '里一个**独立 step**（先 `CREATE DATABASE gengyun_moderation_test` 再 `node …`）真跑，'
       + '接进真库 job 不等于进回环链，故在此如实登记为未接线。',
+  },
+  {
+    path: 'tests/integration/moderation-full-chain-pg.mjs',
+    reason: '需真实 PG 17.11 且是**自起集群**脚本（GY-I14 片 C / #14 交付）：要求 `GY_PG_BIN` 指向服务端'
+      + '二进制目录（自行 `initdb`/`pg_ctl` 起一次性集群，仅回环、端口 55600–55999 先探活再起、数据目录父目录'
+      + '可选 `GY_I14C_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），只 apply 0001+0022+0028+0030+0032，'
+      + '再用 stub 装配 + 真 pool + 合成模型端口（`provider.synthetic === true`）跑 post→edit→review→takedown'
+      + ' 全链，真库证明三态：编辑后旧结论不套新版本（rev1/rev2 各绑定各自正文摘要 + 审核域两条版本级任务）、'
+      + '超时/结构错误不发布（RULE_TIMEOUT / RULE_ENGINE_ERROR ⇒ 422 且内容行零落库）、下架驱动缓存失效'
+      + '（审核域读缓存 1→0 + `moderation_withdrawals` 落库）。缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77'
+      + '（⛔ 不是通过，不认 --allow-skip）；本片未把它接进任何 workflow（`.github/workflows/**` 不在本片授权范围），'
+      + '故不进无 PG 的回环链，如实登记为未接线。',
   },
   {
     path: 'tests/integration/ocr-corrections-pg.mjs',
