@@ -64,7 +64,12 @@ export interface LinkActor {
 export interface LinkContent {
   target_ref: LinkTargetRef;
   text: string;
-  media: Array<{ media_id: string }>;
+  /**
+   * 送审媒体引用。`mime`/`kind` 由社区侧媒体元数据投影补齐（#14 片A）：
+   * 读得到 mime 时两字段都在（`kind` ∈ `image`/`video`/`other`）；读不到时只有 `media_id`，
+   * 审核域归一仍判 `MODEL_MEDIA_UNSUPPORTED`（fail-closed，不伪造）。
+   */
+  media: Array<{ media_id: string; mime?: string; kind?: string }>;
 }
 
 export type LinkAuditState = 'pending' | 'approved' | 'rejected' | 'quarantined';
