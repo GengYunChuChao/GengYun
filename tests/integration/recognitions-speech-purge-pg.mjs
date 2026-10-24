@@ -51,6 +51,7 @@ import { idempotencyKeyHashHex, idempotencyScope } from '../../services/api/src/
 import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createPostgresOcrStore } from '../../services/api/src/ocr/store-pg.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 import { createPostgresRecognitionStore } from '../../services/api/src/recognitions/store-pg.ts';
 import { createPostgresSpeechStore } from '../../services/api/src/speech/store-pg.ts';
@@ -507,6 +508,8 @@ try {
   // ---- [2] 造数：三主体（A=被注销、B=他人、C=负控制），各若干识别/语音行 + 各若干台账行 ----
   const recognitionStore = createPostgresRecognitionStore({ pool });
   const speechStore = createPostgresSpeechStore({ pool });
+  // R34 片 3：OCR 三表（0024）也在 `[1]` 的全量迁移里就位，直接用运行时池接真库 store。
+  const ocrStore = createPostgresOcrStore({ pool });
   const subjectA = randomUUID();
   const subjectB = randomUUID();
   const subjectC = randomUUID();
@@ -616,32 +619,46 @@ try {
     },
     purgeOwnerData: (ownerId) => speechStore.purgeOwnerData(ownerId),
   };
+  // R34 片 3：OCR 域也接真库（三表 `ocr_jobs` / `ocr_records` / `ocr_idempotency`）。
+  // ⚠️ 与前两域方向**相反**：识别/语音零表级 DELETE、只能走 0034 的 definer 函数；
+  // OCR 三表是用户 2026-10-24 批准的**表级** `GRANT DELETE` 例外，所以这里跑的是真 DELETE。
+  // 本臂不造 OCR 行（行数口径由 `tests/unit/user-data-deletion-ocr.test.mjs` 与 PGlite 用例覆盖），
+  // 但**语句会真的执行** ⇒ 一旦那两条 GRANT 回退，运行时会拿到 42501、该域折叠 blocked，下面全红。
+  const ocrDeletionStore = {
+    async deleteAllByOwner(ownerId) {
+      return (await ocrStore.purgeOwnerData(ownerId)).records;
+    },
+    purgeOwnerData: (ownerId) => ocrStore.purgeOwnerData(ownerId),
+  };
   const deletion = createUserDataDeletion({
     favoritesStore: createMemoryFavoritesStore(),
     historyStore: createMemoryHistoryStore(),
-    // 消息/会话域在本片不接真库：用内存实现占位，本脚本只量识别/语音两域的行数。
+    // 消息/会话域在本片不接真库：用内存实现占位，本脚本只量识别/语音/OCR 三域的行数。
     messagesStore: { deleteAllByOwner: async () => 0 },
     conversationsStore: createMemoryConversationStore(),
     recognitionsStore: recognitionsDeletionStore,
     speechStore: speechDeletionStore,
+    ocrStore: ocrDeletionStore,
   });
   const requiredModules = deletion.requiredModules();
   assert.deepEqual(
     requiredModules,
-    ['favorites', 'history', 'messages', 'conversations', 'recognitions', 'speech'],
-    `必需模块闭集必须是四域 + 识别 + 语音（现场 ${requiredModules.join('/')}）`,
+    ['favorites', 'history', 'messages', 'conversations', 'recognitions', 'speech', 'ocr'],
+    `必需模块闭集必须是四域 + 识别 + 语音 + OCR（现场 ${requiredModules.join('/')}）`,
   );
   assert.deepEqual(deletion.coordinator.missingRegistrations(), [], '闭集内每个模块都必须已注册处理器');
-  say(`[3] 注销闭集：${requiredModules.join(' / ')}（六项，missingRegistrations 为空）`);
+  say(`[3] 注销闭集：${requiredModules.join(' / ')}（七项，missingRegistrations 为空）`);
 
-  // ---- [4] 跑注销清理：走**真实协调器** → 两个真实 `purgeOwnerData`（运行时角色）----
+  // ---- [4] 跑注销清理：走**真实协调器** → 三个真实 `purgeOwnerData`（运行时角色）----
   const requestA = deletion.requestDeletionFor(subjectA);
   await deletion.executeHandlers(requestA.id);
   const evidenceA = deletion.evidenceOf(requestA.id);
   const evidenceRecognition = String(evidenceA['recognitions'] ?? '');
   const evidenceSpeech = String(evidenceA['speech'] ?? '');
+  const evidenceOcr = String(evidenceA['ocr'] ?? '');
   note(`[4] recognitions 证据串逐字：${evidenceRecognition}`);
   note(`[4] speech 证据串逐字：${evidenceSpeech}`);
+  note(`[4] ocr 证据串逐字：${evidenceOcr}`);
 
   const recognitionMatch = evidenceRecognition.match(/^recognitions:online-purged:(\d+);recognitions:idempotency-purged:(\d+)$/);
   assert.ok(
@@ -659,8 +676,27 @@ try {
   const speechRowsBefore = baseline.speechA.reduce((sum, value) => sum + value, 0);
   assert.equal(Number(speechMatch[1]), speechRowsBefore, `语音域 online-purged 必须等于清理前 A 的两表行数之和（${speechRowsBefore}）`);
   assert.equal(Number(speechMatch[2]), baseline.ledgerSpeechA, `语音域 idempotency-purged 必须等于清理前 A 的台账行数（${baseline.ledgerSpeechA}）`);
+  // OCR 域（R34 片 3）：三表是**表级 DELETE**，所以证据串比前两域多一段 `tables:` 分表读数
+  // （键序 = 删除顺序：先 `ocr_records` 后 `ocr_jobs`）。本臂不造 OCR 行 ⇒ 逐表都是 0；
+  // ⚠️ 这条同时是授权面哨兵：若两条 GRANT DELETE 回退 ⇒ 42501 ⇒ 该域折叠 blocked ⇒ 这里与
+  // 回执的 `online_state=completed` 一起红（不会静默变成"0 行 = 清完了"）。
+  assert.equal(
+    evidenceOcr,
+    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+    `OCR 域证据串必须带 tables 分表读数（现场 ${JSON.stringify(evidenceOcr)}）`,
+  );
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.ocr_jobs WHERE owner_user_id = $1::uuid', [subjectA]),
+    0,
+    'OCR 域清理后本主体 ocr_jobs 必须 0 行',
+  );
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.ocr_records WHERE owner_user_id = $1::uuid', [subjectA]),
+    0,
+    'OCR 域清理后本主体 ocr_records 必须 0 行',
+  );
   say(
-    `[4] 证据串：${evidenceRecognition} / ${evidenceSpeech}（计数取自 DELETE … RETURNING 的实际行数，且逐项等于清理前读数）`,
+    `[4] 证据串：${evidenceRecognition} / ${evidenceSpeech} / ${evidenceOcr}（计数取自 DELETE … RETURNING 的实际行数，且逐项等于清理前读数）`,
   );
 
   // ---- [5] 断言一：本主体七表按 FK 先子后父删到 0 行；他人行原样；users 行仍在 ----
@@ -738,12 +774,17 @@ try {
       + `两本台账整表 ${ledgerTotalBefore.recognition}/${ledgerTotalBefore.speech} → ${ledgerTotalAfter.recognition}/${ledgerTotalAfter.speech} 行（不是整表清空）`,
   );
 
-  // ---- [7] 重放幂等：对同一主体再跑一次 ⇒ 四个计数都是 0（计数真的来自 RETURNING）----
+  // ---- [7] 重放幂等：对同一主体再跑一次 ⇒ 各域计数都是 0（计数真的来自 RETURNING）----
   const requestA2 = deletion.requestDeletionFor(subjectA);
   await deletion.executeHandlers(requestA2.id);
   const replay = deletion.evidenceOf(requestA2.id);
   assert.equal(String(replay['recognitions'] ?? ''), 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
   assert.equal(String(replay['speech'] ?? ''), 'speech:online-purged:0;speech:idempotency-purged:0');
+  // OCR 域重放：第三段 `tables:` 也必须如实归 0（不是把整段省略掉）。
+  assert.equal(
+    String(replay['ocr'] ?? ''),
+    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+  );
   assert.deepEqual(
     {
       recognition: [
@@ -760,16 +801,16 @@ try {
   );
   say('重放幂等：同一主体第二次清理 = 四个计数全 0；他人七表原样');
 
-  // ---- [8] 回执形状：两域在线清除 completed、备份态 pending（未接线端口不谎称完成）----
+  // ---- [8] 回执形状：三域在线清除 completed、备份态 pending（未接线端口不谎称完成）----
   const receiptA = deletion.receipt(requestA.id);
-  for (const module of ['recognitions', 'speech']) {
+  for (const module of ['recognitions', 'speech', 'ocr']) {
     const row = receiptA.handlers.find((entry) => entry.module === module);
     assert.ok(row !== undefined, `回执必须含 ${module} 处理器行`);
     assert.equal(row.online_state, 'completed', `${module} 在线清除必须 completed`);
     assert.equal(row.backup_state, 'pending', `${module} 备份态在本片未接线 ⇒ 只能是 pending（不谎称完成）`);
   }
   assert.equal(deletion.completionStatus(requestA.id).completed, false, '备份态 pending ⇒ 整笔未完成（如实）');
-  say('回执：recognitions / speech 的 online_state = completed（证据串即行数）；backup_state = pending（本片未接备份端口，不谎称完成）');
+  say('回执：recognitions / speech / ocr 的 online_state = completed（证据串即行数）；backup_state = pending（本片未接备份端口，不谎称完成）');
 
   console.log(`\nALL PASS：${passed} 条真库断言（exit code 0）`);
   console.log('EXITCODE=0');

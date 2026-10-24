@@ -25,6 +25,7 @@ import { createPostgresHistoryStore } from '../../services/api/src/history/store
 import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
 import {
   COMMUNITY_DELETION_MODULE,
+  OCR_DELETION_MODULE,
   RECOGNITIONS_DELETION_MODULE,
   SPEECH_DELETION_MODULE,
   USER_DATA_DELETION_MODULES,
@@ -250,15 +251,17 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   assert.equal(await communityLedgerRows(others.id), 1);
 
   // 模块闭集（C1b / C1b-3 起扩到含 messages 与 conversations；R31-S6 起再扩到 community；
-  // GY-R34-I19 起再扩到 recognitions 与 speech）：既没有把 favorites/history 从闭集里摘掉，
-  // 也不是"随便加了个名字"——消息域、会话域、社区域、识别域与语音域必须真的在闭集内
-  // （同一条路、同一 requestId、同一回执行）。后三者都是**装配期无条件注入**的
-  // （`app.ts` 的 `createUserDataDeletion({...})` 实参），所以真实注销路径的闭集就是 7 项。
+  // GY-R34-I19 起再扩到 recognitions 与 speech；R34 片 3 起再扩到 ocr）：既没有把
+  // favorites/history 从闭集里摘掉，也不是"随便加了个名字"——消息域、会话域、社区域、
+  // 识别域、语音域与 OCR 域必须真的在闭集内（同一条路、同一 requestId、同一回执行）。
+  // 后四者都是**装配期无条件注入**的（`app.ts` 的 `createUserDataDeletion({...})` 实参），
+  // 所以真实注销路径的闭集就是 8 项。
   assert.deepEqual(app.userDataDeletion.requiredModules(), [
     ...USER_DATA_DELETION_MODULES,
     COMMUNITY_DELETION_MODULE,
     RECOGNITIONS_DELETION_MODULE,
     SPEECH_DELETION_MODULE,
+    OCR_DELETION_MODULE,
   ]);
   assert.deepEqual(app.userDataDeletion.requiredModules(), [
     'favorites',
@@ -268,6 +271,7 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
     'community',
     'recognitions',
     'speech',
+    'ocr',
   ]);
   for (const legacy of ['favorites', 'history']) {
     assert.ok(app.userDataDeletion.requiredModules().includes(legacy), `闭集不得丢掉既有模块 ${legacy}`);
@@ -357,7 +361,7 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
 
   // 行数进证据：favorites 1 行、history 2 行、messages 1 行、conversations 0 行、
   // community **2 行真实改动**（1 举报自述 + 1 点赞；帖子/评论是保留，不是删除，故不进 online-purged）、
-  // recognitions / speech 各 0 行（本用例没造这两域的行，但**必须**照实出现 0 —— 缺项说明该域没被驱动）。
+  // recognitions / speech / ocr 各 0 行（本用例没造这三域的行，但**必须**照实出现 0 —— 缺项说明该域没被驱动）。
   // 会话域本用例没造行，但**必须**照实出现 0 —— 缺项说明该域没被驱动。
   const audit = app.userDataDeletion.audit().filter((entry) => entry.requestId === requestId);
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
@@ -369,6 +373,8 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
     community: 2,
     recognitions: 0,
     speech: 0,
+    // OCR 域（R34 片 3）：本用例同样没造这三表的行，但**必须**照实出现 0 —— 缺项说明该域没被驱动。
+    ocr: 0,
   });
   const communityAudit = audit.find((entry) => entry.module === 'community');
   assert.equal(communityAudit.retained, 2, 'F13：1 帖 + 1 评论保留（单列读数）');
@@ -382,12 +388,14 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   );
   assert.deepEqual(
     audit.map((entry) => entry.userId),
-    [mine.id, mine.id, mine.id, mine.id, mine.id, mine.id, mine.id],
-    '审计只记目标主体',
+    [mine.id, mine.id, mine.id, mine.id, mine.id, mine.id, mine.id, mine.id],
+    '审计只记目标主体（八个模块各一条，不掺他人、不合并）',
   );
 
-  // 回执：七个模块的在线行**都**如实 `completed`（社区域的"行级作者引用未替换/引用未持久化"
+  // 回执：八个模块的在线行**都**如实 `completed`（社区域的"行级作者引用未替换/引用未持久化"
   // 两项已由迁移 0030 + 列级授权消除；识别/语音两域在 GY-R34-I19 接入，表已随迁移 0025/0026 就位；
+  // OCR 域在 R34 片 3 接入，表随迁移 0024 就位，且它走的是**表级 DELETE 权限**（用户批准的例外），
+  // 授权面一回退就会 42501 → 该域折叠 blocked，这条 `completed` 就是那个哨兵；
   // 能力缺失/生成失败仍会 blocked，见 retention 的反向控制）。
   const receipt = app.userDataDeletion.receipt(requestId);
   const byModule = new Map(receipt.handlers.map((row) => [row.module, row]));
@@ -398,6 +406,7 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
     'conversations',
     RECOGNITIONS_DELETION_MODULE,
     SPEECH_DELETION_MODULE,
+    OCR_DELETION_MODULE,
   ]) {
     assert.equal(byModule.get(module).online_state, 'completed', `${module} 必须 completed`);
     assert.equal(byModule.get(module).backup_state, 'pending');
@@ -420,6 +429,13 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
   // 两域的台账是各自独立的 `*_idempotency` 表（无主体列、按 scope 前缀删），所以计数字段同样在。
   assert.equal(evidence.recognitions, 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
   assert.equal(evidence.speech, 'speech:online-purged:0;speech:idempotency-purged:0');
+  // OCR 域（R34 片 3）：因为走的是**表级 DELETE + RETURNING**（不是 0034 的函数返回复合计数），
+  // 证据串除合计外还多一段 `tables:` 分表读数 —— 审计看得出"哪张表 0 行"，而不是只看到一个合计 0。
+  // 键序 = 删除顺序（先子后父：`ocr_records` 在 `ocr_jobs` 之前），不是字典序。
+  assert.equal(
+    evidence.ocr,
+    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+  );
   assert.ok(
     evidence.community.startsWith(
       'community:online-purged:2;community:idempotency-purged:2;community:retained:2;community:redacted:0;'
@@ -461,8 +477,17 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   const removed = Object.fromEntries(audit.map((entry) => [entry.module, entry.onlineRemoved]));
   assert.deepEqual(
     removed,
-    { favorites: 0, history: 0, messages: 0, conversations: 0, community: 0, recognitions: 0, speech: 0 },
-    '无行时七个模块都记 0（不是缺项）',
+    {
+      favorites: 0,
+      history: 0,
+      messages: 0,
+      conversations: 0,
+      community: 0,
+      recognitions: 0,
+      speech: 0,
+      ocr: 0,
+    },
+    '无行时八个模块都记 0（不是缺项）',
   );
   const receipt = app.userDataDeletion.receipt(requestId);
   for (const row of receipt.handlers) assert.equal(row.online_state, 'completed');
@@ -474,6 +499,12 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
   assert.equal(evidence.conversations, 'conversations:online-purged:0');
   assert.equal(evidence.recognitions, 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
   assert.equal(evidence.speech, 'speech:online-purged:0;speech:idempotency-purged:0');
+  // OCR 域（R34 片 3）：同上，0 行也照实回 0，且 `tables:` 分表读数同样逐表写出（缺表时会 42P01/42501
+  // 折叠成 blocked，这里能看到的就是"表在、权限在、真跑了语句但没行"）。
+  assert.equal(
+    evidence.ocr,
+    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+  );
   // 社区：0 行也照实回 0，保留/脱敏/媒体/作者指针替换四段同样在（不是"表都没有"折叠成 blocked）。
   // 注意 `author-refs-replaced:0` 必须**写出来**：0 与"没做/没这一段"是两件事（否则真库缺 0030 时
   // 会被误读成"替换了 0 行"而不是"语句根本跑不了"）。

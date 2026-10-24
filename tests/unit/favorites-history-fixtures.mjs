@@ -110,6 +110,13 @@ export const PG_MIGRATIONS_WITH_COMMUNITY = [
  */
 export const PG_MIGRATIONS_WITH_DELETION_DOMAINS = [
   ...PG_MIGRATIONS_WITH_COMMUNITY,
+  // R34 片 3（#19 / #10）：闭集再扩到 OCR 域三表（`ocr_jobs` / `ocr_records` /
+  // `ocr_idempotency`，迁移 `0024_ocr_persistence`）之后，同一条规则照旧成立 —— 缺 0024 ⇒
+  // `requireTables()` 判 missing、写类 fail-closed（存储层刻意这样设计）⇒ 协调器把该域
+  // 折叠成 `blocked`，用例会看到 `completed` 变 `blocked`。0024 只依赖 `public.users`（`0001` 已建）。
+  // ⚠️ 与前两域方向**相反**：识别/语音靠 0034 的 definer 函数（零表级 DELETE），OCR 三表是
+  // 用户 2026-10-24 批准的**表级** `GRANT DELETE` 例外 —— 所以这里的 DELETE 是真表权限。
+  '0024_ocr_persistence',
   '0025_recognitions_persistence',
   '0026_speech_persistence',
   // 0034 是本片清理的唯一写路径（两条 SECURITY DEFINER 函数）。PG 存储的 `purgeOwnerData`
