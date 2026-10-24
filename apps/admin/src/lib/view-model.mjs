@@ -1,14 +1,17 @@
 /**
- * 后台账号只读页的展示状态机——纯 ESM，无 Vue／DOM 依赖。
+ * 后台账号页的展示状态机（读面 + 停用写面）——纯 ESM，无 Vue／DOM 依赖。
  *
- * 目的：把「加载中／空／错误／已就绪／未登录」这些**会骗人的**状态收进一个纯函数里，
- * 由测试钉住三条不下假的规则：
+ * 目的：把「加载中／空／错误／已就绪／未登录／停用确认中／停用写入中／停用失败」
+ * 这些**会骗人的**状态收进一个纯函数里，由测试钉住以下不下假的规则：
  *  1. 没有会话就不可能出现行（`LOAD_OK` 在未登录态被丢弃）；
  *  2. 刷新失败时保留旧行但必须标 `stale`，不许把旧数据当新数据；
- *  3. 「接口返回 0 行」与「筛选后 0 行」是两种空态，文案不得混用。
+ *  3. 「接口返回 0 行」与「筛选后 0 行」是两种空态，文案不得混用；
+ *  4. 停用写入失败**保留服务端状态码与错误码**（428／409／503…）原样展示；
+ *  5. 「可重试」只给真正幂等安全的情形（同一 If-Match + 同一 Idempotency-Key）。
  */
 import { describeFailure } from './admin-api.mjs';
 import { ACCOUNTS_SCOPE } from './admin-contract.mjs';
+import { ACCOUNTS_SUSPEND_SCOPE, etagForRevision, reasonProblem } from './account-suspend-api.mjs';
 
 /** 账号状态 → 中文标签（与契约 enum 一一对应）。 */
 export const STATE_LABELS = Object.freeze({
@@ -37,6 +40,18 @@ export function initialState() {
     selectedId: null,
     stale: false,
     scopeWarning: false,
+    /** 会话 scope 里是否缺少 accounts:suspend（true = 缺，停用按钮禁用，不伪造写权限）。 */
+    suspendScopeWarning: false,
+    /** 停用理由（契约 ReasonInput.reason，1..500）；进服务端审计。 */
+    suspendReason: '',
+    /** 正在确认停用的账号 id；null = 未在确认态。 */
+    suspendTargetId: null,
+    /** 停用写面状态：idle | confirming | saving | saved | failed。 */
+    suspendStatus: 'idle',
+    /** 停用写失败对象（可重试时保留写意向，同一幂等键 + 同一 If-Match 重发）。 */
+    suspendFailure: null,
+    /** 可重试的写意向：{ id, revision, reason, idempotencyKey }。 */
+    suspendWrite: null,
   };
 }
 
@@ -64,6 +79,7 @@ export function reduce(state, action) {
         phase: 'loading',
         failure: null,
         scopeWarning: action.scopesProvided === true && !arrayContainsScope(action.scopes, ACCOUNTS_SCOPE),
+        suspendScopeWarning: action.scopesProvided === true && !arrayContainsScope(action.scopes, ACCOUNTS_SUSPEND_SCOPE),
       };
 
     case 'SIGN_OUT':
@@ -129,6 +145,75 @@ export function reduce(state, action) {
 
     case 'CLOSE_SUMMARY':
       return { ...state, selectedId: null };
+
+    case 'SET_SUSPEND_REASON':
+      return { ...state, suspendReason: typeof action.value === 'string' ? action.value : '' };
+
+    case 'SUSPEND_BEGIN': {
+      // 只有登录后、且目标行确实处于 active 才进入确认态（不猜、不伪造写权限）。
+      if (!state.signedIn) return state;
+      const id = action.id;
+      if (typeof id !== 'string') return state;
+      const row = state.collection.items.find((item) => item.id === id);
+      if (row === undefined || row.state !== 'active') return state;
+      return { ...state, suspendTargetId: id, suspendStatus: 'confirming', suspendFailure: null };
+    }
+
+    case 'SUSPEND_CANCEL':
+      return { ...state, suspendTargetId: null, suspendStatus: 'idle', suspendFailure: null, suspendWrite: null };
+
+    case 'SUSPEND_START': {
+      if (!state.signedIn) return state;
+      if (typeof action.id !== 'string') return state;
+      // 本地校验不过 ⇒ 不发请求、不改状态（理由必须满足 ReasonInput，If-Match 必须可推出）。
+      if (reasonProblem(action.reason) !== null) return state;
+      if (etagForRevision(action.revision) === null) return state;
+      return {
+        ...state,
+        suspendStatus: 'saving',
+        suspendFailure: null,
+        suspendWrite: {
+          id: action.id,
+          revision: action.revision,
+          reason: action.reason,
+          idempotencyKey: action.idempotencyKey,
+        },
+      };
+    }
+
+    case 'SUSPEND_OK': {
+      if (!state.signedIn) return state;
+      const account = action.account;
+      const items =
+        account && typeof account.id === 'string'
+          ? state.collection.items.map((row) => (row.id === account.id ? account : row))
+          : state.collection.items;
+      return {
+        ...state,
+        collection: { ...state.collection, items },
+        suspendStatus: 'saved',
+        suspendWrite: null,
+        suspendFailure: null,
+        suspendTargetId: null,
+      };
+    }
+
+    case 'SUSPEND_FAIL': {
+      if (!state.signedIn) return state;
+      const failure = action.failure ?? { ok: false, kind: 'http_error', retriable: false, message: '未知错误' };
+      if (failure.kind === 'signed_out') return { ...initialState(), failure };
+      return {
+        ...state,
+        suspendStatus: 'failed',
+        suspendFailure: failure,
+        // 可重试 ⇒ 保留写意向（同一幂等键 + 同一 If-Match 重发）；否则丢弃，逼用户重新读取。
+        suspendWrite: failure.retriable === true ? state.suspendWrite : null,
+        stale: true,
+      };
+    }
+
+    case 'SUSPEND_CLEAR':
+      return { ...state, suspendStatus: 'idle', suspendWrite: null, suspendFailure: null, suspendTargetId: null };
 
     default:
       return state;
@@ -254,6 +339,94 @@ export function formatRow(view) {
 
 export function visibleRowViews(state) {
   return visibleRows(state).map(formatRow);
+}
+
+/** 停用理由是否可用；返回错误文案或 null。 */
+export function suspendReasonProblem(state) {
+  return reasonProblem(state.suspendReason);
+}
+
+/**
+ * 本会话能否发起停用。
+ *
+ * - 未登录 / 未就绪 ⇒ 否；
+ * - 会话 scope 明确不含 `accounts:suspend` ⇒ 否（服务端会 403，不必先发一次必失败的请求）；
+ * - 理由不合法 ⇒ 否（契约 `ReasonInput.reason` 必填）；
+ * - 正在写入 ⇒ 否。
+ */
+export function canSuspend(state) {
+  if (!state.signedIn) return false;
+  if (state.phase !== 'ready') return false;
+  if (state.suspendScopeWarning) return false;
+  if (state.suspendStatus === 'saving') return false;
+  return reasonProblem(state.suspendReason) === null;
+}
+
+/** 正在确认停用的目标行视图；非确认态或目标不存在返回 null。 */
+export function suspendTargetView(state) {
+  if (state.suspendTargetId === null) return null;
+  const row = state.collection.items.find((item) => item.id === state.suspendTargetId);
+  if (row === undefined) return null;
+  return {
+    id: row.id,
+    displayName: row.display_name,
+    revision: row.revision,
+    etag: etagForRevision(row.revision) ?? '—',
+  };
+}
+
+/** 停用写失败 → 面板文案；`status`／`code` 原样带上，不用泛化文案顶替。 */
+export function describeSuspendFailure(failure) {
+  if (!failure || failure.ok !== false) return null;
+  const codeTag = [failure.status === null || failure.status === undefined ? null : `HTTP ${failure.status}`, failure.code]
+    .filter((part) => part !== null && part !== '')
+    .join(' · ');
+  const suffix = codeTag === '' ? '' : `（${codeTag}）`;
+  const out = (title, detail, action, retriable) => ({
+    title: `${title}${suffix}`,
+    detail,
+    action,
+    retriable: retriable === true,
+    code: failure.code ?? null,
+    status: failure.status ?? null,
+  });
+  switch (failure.kind) {
+    case 'signed_out':
+      return out('未登录或会话已过期', '请重新登录后台后再试', 'sign_in', false);
+    case 'forbidden':
+      return out('权限不足（缺少 accounts:suspend）', '后台会话有效，但停用要求 scope accounts:suspend', 'none', false);
+    case 'revision_required':
+      return out('缺少 If-Match', '服务端要求强 ETag（形如 "3"）；请「重新读取」拿到最新 revision 后再停用', 'reload', false);
+    case 'revision_conflict':
+      return out('账号已被改动（修订冲突）', '本次 If-Match 与服务端当前 ETag 不一致；请「重新读取」后再决定是否停用', 'reload', false);
+    case 'idempotency_conflict':
+      return out('同一幂等键的请求内容不一致', '本页复用了幂等键但换了请求体；请「重新读取」后重新发起', 'reload', false);
+    case 'idempotency_key_required':
+      return out('缺少 Idempotency-Key', '写操作必须带幂等键；请「重新读取」后重试', 'reload', false);
+    case 'in_progress':
+      return out('同一操作正在处理中', '服务端判定该幂等键的在途请求未完成；稍后用同一幂等键重试会命中同一结果', 'retry', true);
+    case 'not_found':
+      return out('账号不存在', '服务端返回 404；请「重新读取」确认当前账号集合', 'reload', false);
+    case 'invalid_request':
+      return out('请求被拒绝', failure.message || '服务端判定请求体/参数不合法', 'none', false);
+    case 'rate_limited':
+      return out(
+        '请求过于频繁',
+        failure.retryAfterSeconds === null || failure.retryAfterSeconds === undefined
+          ? '稍后重试'
+          : `约 ${failure.retryAfterSeconds} 秒后重试`,
+        'retry',
+        true,
+      );
+    case 'unavailable':
+      return out('服务暂不可用', '账号停用端口未接线或暂时不可用（不返回伪造的成功值）；稍后重试', 'retry', true);
+    case 'network_error':
+      return out('网络请求失败', failure.message || '检查 API 基地址与网络后重试', 'retry', true);
+    case 'invalid_response':
+      return out('响应不符合契约', failure.message || '未渲染任何猜测值', 'none', false);
+    default:
+      return out('请求失败', failure.message || '未知错误', 'none', false);
+  }
 }
 
 /**

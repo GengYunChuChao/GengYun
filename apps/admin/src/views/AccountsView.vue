@@ -1,15 +1,29 @@
 <script setup>
 /**
- * 账号目录只读页（GY-I18）。
+ * 账号目录页（GY-I18）：读面 + 停用写面。
  *
- * 只调用契约里存在的读面：GET {API_BASE_URL}/admin/accounts（operationId `listAdminUsers`，scope `accounts:read`）。
+ * 读面：GET {API_BASE_URL}/admin/accounts（operationId `listAdminUsers`，scope `accounts:read`）。
+ * 写面：POST {API_BASE_URL}/admin/accounts/{id}/suspend（operationId `suspendUser`，scope
+ * `accounts:suspend`；必带 `If-Match` 强 ETag 与 `Idempotency-Key`，body 为 `{ reason }`）。
  * 鉴权复用 `src/auth/session.ts` 的既有实现（Bearer + sessionStorage），本页不新造一套登录。
  * 纯逻辑都在 `src/lib/*.mjs`，本组件只负责把状态机接到 DOM。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { API_BASE_URL, loadAdminSession, signInAdmin, signOutAdmin } from '../auth/session';
 import { appendPage, emptyCollection, fetchAccountsPage } from '../lib/admin-api.mjs';
-import { canLoadMore, describe, initialState, reduce, summaryOf, visibleRowViews } from '../lib/view-model.mjs';
+import { newIdempotencyKey, suspendAccount } from '../lib/account-suspend-api.mjs';
+import {
+  canLoadMore,
+  canSuspend,
+  describe,
+  describeSuspendFailure,
+  initialState,
+  reduce,
+  summaryOf,
+  suspendReasonProblem,
+  suspendTargetView,
+  visibleRowViews,
+} from '../lib/view-model.mjs';
 
 const state = ref(initialState());
 const session = ref(null);
@@ -17,7 +31,7 @@ const loginName = ref('');
 const password = ref('');
 const busy = ref(false);
 
-// 每次换会话/重载递增；晚到的旧响应一律丢弃（避免把上一会话的数据画到当前会话）。
+// 每次换会话/重载/写入递增；晚到的旧响应一律丢弃（避免把上一会话的数据画到当前会话）。
 let requestSeq = 0;
 let currentToken = null;
 
@@ -27,6 +41,12 @@ const summary = computed(() => (state.value.selectedId === null ? null : summary
 const signedIn = computed(() => state.value.signedIn);
 const canRetry = computed(() => view.value.canRetry === true);
 const restartNeeded = computed(() => view.value.action === 'restart');
+const suspendTarget = computed(() => suspendTargetView(state.value));
+const suspendProblem = computed(() => suspendReasonProblem(state.value));
+const suspendFailureView = computed(() => describeSuspendFailure(state.value.suspendFailure));
+const suspendable = computed(() => canSuspend(state.value));
+const suspendSaving = computed(() => state.value.suspendStatus === 'saving');
+const suspendSaved = computed(() => state.value.suspendStatus === 'saved');
 
 function dispatch(action) {
   state.value = reduce(state.value, action);
@@ -110,6 +130,73 @@ function refresh() {
   requestPage(null, { reset: true });
 }
 
+/** 进入停用确认态：目标行必须是 active，否则状态机直接丢弃（不猜、不伪造写权限）。 */
+function beginSuspend(row) {
+  dispatch({ type: 'SUSPEND_BEGIN', id: row.id });
+}
+
+function cancelSuspend() {
+  dispatch({ type: 'SUSPEND_CANCEL' });
+}
+
+function dismissSuspendResult() {
+  dispatch({ type: 'SUSPEND_CLEAR' });
+}
+
+/** 发一次停用：`idempotencyKey` 每次新生成；重试必须复用同一个键（见 retrySuspend）。 */
+async function sendSuspend(intent) {
+  const token = currentToken;
+  if (token === null) {
+    dispatch({ type: 'SUSPEND_FAIL', failure: { ok: false, kind: 'signed_out', status: null, retriable: false } });
+    return;
+  }
+  const seq = ++requestSeq;
+  busy.value = true;
+  dispatch({
+    type: 'SUSPEND_START',
+    id: intent.id,
+    revision: intent.revision,
+    reason: intent.reason,
+    idempotencyKey: intent.idempotencyKey,
+  });
+  const result = await suspendAccount({
+    baseUrl: API_BASE_URL,
+    token,
+    id: intent.id,
+    reason: intent.reason,
+    revision: intent.revision,
+    idempotencyKey: intent.idempotencyKey,
+  });
+  if (seq !== requestSeq) return; // 过期响应：丢弃，不改状态
+  busy.value = false;
+  if (result.ok) {
+    dispatch({ type: 'SUSPEND_OK', account: result.account });
+    refresh(); // 停用会改变行状态/修订，成功后就地刷新第一页
+  } else {
+    dispatch({ type: 'SUSPEND_FAIL', failure: result });
+  }
+}
+
+/** 确认停用：If-Match 取自已加载那一行的 revision，不猜；幂等键本次新生成。 */
+function confirmSuspend() {
+  const target = state.value.suspendTargetId;
+  const row = target === null ? undefined : state.value.collection.items.find((item) => item.id === target);
+  if (row === undefined) return;
+  sendSuspend({
+    id: row.id,
+    revision: row.revision,
+    reason: state.value.suspendReason,
+    idempotencyKey: newIdempotencyKey(),
+  });
+}
+
+/** 重试可重试的停用失败：复用挂起意向里的幂等键与 If-Match。 */
+function retrySuspend() {
+  const intent = state.value.suspendWrite;
+  if (intent === null) return;
+  sendSuspend(intent);
+}
+
 onMounted(async () => {
   const existing = await loadAdminSession();
   if (existing === null) {
@@ -128,10 +215,12 @@ onBeforeUnmount(() => {
   <section class="accounts">
     <header class="head">
       <div>
-        <h2>账号目录（只读）</h2>
+        <h2>账号目录</h2>
         <p class="sub">
           数据源 <code>GET {{ API_BASE_URL }}/admin/accounts</code>（契约 <code>listAdminUsers</code>，scope
-          <code>accounts:read</code>）。本页只读，不提供停用/注销等写操作。
+          <code>accounts:read</code>）；停用走
+          <code>POST {{ API_BASE_URL }}/admin/accounts/{id}/suspend</code>（契约 <code>suspendUser</code>，scope
+          <code>accounts:suspend</code>）。注销/恢复等其它写操作本页仍不提供。
         </p>
       </div>
       <button v-if="signedIn" class="ghost" type="button" :disabled="busy" @click="signOut">退出登录</button>
@@ -160,6 +249,10 @@ onBeforeUnmount(() => {
         当前会话的 scope 列表里没有 <code>accounts:read</code>：请求大概率返回
         <code>403 SCOPE_DENIED</code>。以服务端返回为准，本页不猜权限。
       </p>
+      <p v-if="state.suspendScopeWarning" class="banner warn">
+        当前会话的 scope 列表里没有 <code>accounts:suspend</code>：停用按钮已禁用（服务端也会回
+        <code>403 SCOPE_DENIED</code>），本页不伪造写权限。
+      </p>
 
       <div class="toolbar">
         <input
@@ -185,6 +278,59 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <div v-if="suspendTarget" class="suspend-confirm" role="dialog" aria-label="确认停用账号">
+        <header>
+          <strong>确认停用账号</strong>
+          <span class="mono" :title="suspendTarget.id">{{ suspendTarget.id }}</span>
+        </header>
+        <p class="hint">
+          将停用 <strong>{{ suspendTarget.displayName }}</strong>（当前 revision
+          <code>{{ suspendTarget.revision }}</code>，If-Match <code>{{ suspendTarget.etag }}</code>）。
+          服务端会在单事务内完成：写 state、递增 auth_epoch、撤销会话、写审计。
+        </p>
+        <label class="reason">
+          <span>停用理由（必填，进服务端审计；契约 <code>ReasonInput.reason</code> 1–500 字符）</span>
+          <input
+            :value="state.suspendReason"
+            name="suspend_reason"
+            type="text"
+            maxlength="500"
+            placeholder="例如：违反社区规范，按运营裁定停用"
+            :disabled="suspendSaving"
+            @input="dispatch({ type: 'SET_SUSPEND_REASON', value: $event.target.value })"
+          />
+        </label>
+        <p v-if="suspendProblem" class="foot warn-text">理由不可用：{{ suspendProblem }}</p>
+        <div class="actions">
+          <button class="primary" type="button" :disabled="suspendSaving || suspendProblem !== null || busy" @click="confirmSuspend">
+            {{ suspendSaving ? '停用中…' : '确认停用' }}
+          </button>
+          <button class="ghost" type="button" :disabled="suspendSaving" @click="cancelSuspend">取消</button>
+        </div>
+      </div>
+
+      <div v-if="suspendSaved" class="banner ok" role="status">
+        停用已生效：服务端返回了新的 <code>revision</code>，列表正在重新读取（不是本地推断）。
+        <button class="link" type="button" @click="dismissSuspendResult">知道了</button>
+      </div>
+
+      <div v-if="suspendFailureView" class="banner error" role="alert">
+        <strong>{{ suspendFailureView.title }}</strong>
+        <span>{{ suspendFailureView.detail }}</span>
+        <span v-if="suspendFailureView.code" class="code">code={{ suspendFailureView.code }}</span>
+        <span v-if="suspendFailureView.status !== null" class="code">status={{ suspendFailureView.status }}</span>
+        <span class="actions">
+          <button v-if="suspendFailureView.retriable" class="link" type="button" :disabled="busy" @click="retrySuspend">
+            用同一幂等键重试
+          </button>
+          <button v-if="suspendFailureView.action === 'reload'" class="link" type="button" :disabled="busy" @click="refresh">
+            重新读取后再试
+          </button>
+          <button v-if="suspendFailureView.action === 'sign_in'" class="link" type="button" @click="signOut">重新登录</button>
+          <button class="link" type="button" :disabled="busy" @click="dismissSuspendResult">忽略</button>
+        </span>
+      </div>
+
       <table v-if="rows.length > 0" class="grid">
         <thead>
           <tr>
@@ -206,7 +352,19 @@ onBeforeUnmount(() => {
             <td><span class="pill" :class="row.stateTone">{{ row.stateLabel }}</span></td>
             <td class="mono">{{ row.revisionLabel }}</td>
             <td class="mono" :title="row.id">{{ row.shortId }}…</td>
-            <td class="right"><button class="link" type="button">详情摘要</button></td>
+            <td class="right">
+              <button
+                v-if="row.state === 'active'"
+                class="link danger"
+                type="button"
+                :disabled="!suspendable || busy"
+                :title="suspendable ? '带 If-Match 与 Idempotency-Key 停用' : '需要 accounts:suspend 与合法的停用理由'"
+                @click.stop="beginSuspend(row)"
+              >
+                停用
+              </button>
+              <button class="link" type="button">详情摘要</button>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -279,7 +437,8 @@ code {
   border-radius: 10px;
   background: #fff;
 }
-.signin label {
+.signin label,
+.suspend-confirm .reason {
   display: grid;
   gap: 0.25rem;
   font-size: 0.9rem;
@@ -325,15 +484,63 @@ button:disabled {
   padding: 0.1rem 0.25rem;
   text-decoration: underline;
 }
+.link.danger {
+  color: #c53030;
+}
 .banner {
   margin: 0;
   padding: 0.6rem 0.8rem;
   border-radius: 8px;
   font-size: 0.88rem;
+  line-height: 1.7;
 }
 .banner.warn {
   background: #fffbeb;
   border-left: 4px solid #b7791f;
+}
+.banner.ok {
+  background: #f0fdf4;
+  border-left: 4px solid #2f855a;
+}
+.banner.error {
+  background: #fff5f5;
+  border-left: 4px solid #c53030;
+}
+.banner .code {
+  display: inline-block;
+  margin-left: 0.5rem;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  color: #742a2a;
+}
+.banner .actions {
+  display: inline-flex;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
+}
+.suspend-confirm {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  background: #fff;
+  display: grid;
+  gap: 0.6rem;
+}
+.suspend-confirm header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.suspend-confirm header strong {
+  font-size: 1rem;
+}
+.suspend-confirm .reason {
+  max-width: 34rem;
+}
+.suspend-confirm .actions {
+  display: flex;
+  gap: 0.5rem;
 }
 .status {
   display: flex;
