@@ -34,7 +34,7 @@
 | `x-scope: accounts:read`，`x-version-required: false` | [`openapi.json:9931-9932`](../../packages/contracts/openapi.json) | 403/`SCOPE_DENIED` ⇒ `kind: 'forbidden'`（不可重试），文案直接写缺少的 scope |
 | `cursor`（string，≤2048） | [`openapi.json:10898-10903`](../../packages/contracts/openapi.json) | `CURSOR_MAX_LENGTH` 越界 ⇒ `kind: 'invalid_cursor'`，不发请求 |
 | `limit`（integer 1..50，默认 20） | [`openapi.json:10906-10913`](../../packages/contracts/openapi.json) | `clampLimit` 钳到 1..50，非整数回落到 20 |
-| 200 ⇒ `AdminAccountViewPageEnvelope` | [`openapi.json:9875`](../../packages/contracts/openapi.json)、`:16169-16184` | 缺 `data`/`meta` ⇒ `kind: 'invalid_response'`（不把半截响应当成功） |
+| 200 ⇒ `AdminAccountViewPageEnvelope` | [`openapi.json:10041`](../../packages/contracts/openapi.json)、`:16169-16184` | 缺 `data`/`meta` ⇒ `kind: 'invalid_response'`（不把半截响应当成功） |
 | `AdminAccountViewPage`：`items` ≤50、`next_cursor` string\|null（末页显式 null） | [`openapi.json:16140-16168`](../../packages/contracts/openapi.json) | `validateAccountPage` 校验后 `appendPage` 合并；缺 `next_cursor`／空串／超长 ⇒ error，`items` >50 只记 warning；`next_cursor === null` ⇒ 不再翻页 |
 | `AdminAccountView`：`id` uuid、`revision` ≥1、`state` 闭集三值、`display_name` 1..80、`additionalProperties: false` | [`openapi.json:14397-14426`](../../packages/contracts/openapi.json) | 缺 `id`/`revision`/`state`/`display_name`、`revision` <1 或非整数、`state` 越界 ⇒ **error**（整页判 `invalid_response`）；uuid 形态不符、`display_name` >80、多余字段 ⇒ **warning**（行仍渲染，但 warning 不外显：多余字段直接丢弃、不推断含义，页面没有提示位——`warnings` 只留在函数返回值与单测断言里，是**静默忽略**，不是「显式标注」） |
 | 错误码闭集 | [`openapi.json:11037-11065`](../../packages/contracts/openapi.json) | `readErrorEnvelope` 标 `inContract`；闭集外 code 原样保留并标 `false`，不猜语义 |

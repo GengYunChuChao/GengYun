@@ -226,6 +226,13 @@ export function registerAccountDeletionRoutes(
       schema: { querystring: emptyQuery },
     },
     async (request, reply) => {
+      // 契约参数 `Idempotency-Key`（写操作一律 required，8..128）⇒ 缺失/越界 400。
+      // 与 `routes/consents.ts` 的 `DELETE /me/consents/{purpose}` 同一写法；顺序同 POST：
+      // 鉴权 → 头部（400）→ 未装配（503）。取消的幂等由状态机给出（再取消 ⇒ 409），不写 24h 台账。
+      const key = request.headers['idempotency-key'];
+      if (typeof key !== 'string' || key.length < 8 || key.length > 128) {
+        throw new ApiError('IDEMPOTENCY_KEY_REQUIRED', '缺少有效幂等键');
+      }
       const wired = requireWired();
       const userId = readIdentity(request).userId;
       let cancelled: Record<string, unknown> | null;
