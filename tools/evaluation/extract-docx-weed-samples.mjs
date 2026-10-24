@@ -596,7 +596,7 @@ function main() {
     writeFileSync(String(args.report), `${JSON.stringify(report, null, 2)}\n`);
   }
 
-  process.stdout.write(`docx=${basename(String(args.docx))} sha256=${docxSha256}\n`);
+  process.stdout.write(`docx sha256=${docxSha256}（源文件名不打印）\n`);
   process.stdout.write(`文档条目=${docEntries.length}  抽取图片=${media.length}  原始媒体字节=${report.extraction.mediaBytes}\n`);
   process.stdout.write(`去重：distinct contentSha256=${byHash.size}  重复内容组=${dupGroups.length}  重复条数=${report.dedupe.duplicateContentCount}\n`);
   process.stdout.write(`dHash 近重复对（汉明≤8）=${nearPairs.length}\n`);
