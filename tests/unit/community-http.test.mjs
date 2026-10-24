@@ -266,6 +266,74 @@ test('HTTP 正控制：投稿、作物地区筛选、详情、评论、点赞幂
 });
 
 // ---------------------------------------------------------------------------
+// 1b. 点赞读取面（`GET /posts/{id}/like` ⇒ 契约 LikeStatus）
+// ---------------------------------------------------------------------------
+
+test('HTTP 点赞读取面：GET /posts/{id}/like 的 count/liked_by_me、无 ETag、鉴权与错误码同既有读帖路径', async (t) => {
+  const h = await fixture(t);
+  const post = await h.publish(h.a);
+
+  // 0 赞：两个身份都读得到，`liked_by_me=false`；`LikeStatus` 不是资源表示 ⇒ 不写 ETag。
+  const zero = await h.call('GET', `${API}/posts/${post.id}/like`, h.a);
+  assert.equal(zero.status, 200);
+  assert.equal(zero.etag, null, '点赞状态没有 revision ⇒ 不写 ETag');
+  assert.equal(zero.cache, 'no-store');
+  assert.equal(zero.body.meta.contract_version, '1.0.0');
+  assert.deepEqual(
+    Object.keys(zero.body.data).sort(),
+    ['count', 'liked_by_me'],
+    '字段集合必须与契约 LikeStatus 完全一致（additionalProperties:false）',
+  );
+  assert.deepEqual(zero.body.data, { count: 0, liked_by_me: false });
+
+  // A 点赞 ⇒ A 看到 1/true，B 看到 1/false：计数是公共量，liked_by_me 只反映请求方。
+  const liked = await h.call('PUT', `${API}/posts/${post.id}/like`, h.a, { headers: write('gy-http-like-read-0001', '"1"') });
+  assert.equal(liked.status, 200);
+  assert.deepEqual((await h.call('GET', `${API}/posts/${post.id}/like`, h.a)).body.data, { count: 1, liked_by_me: true });
+  assert.deepEqual((await h.call('GET', `${API}/posts/${post.id}/like`, h.b)).body.data, { count: 1, liked_by_me: false });
+
+  // N 赞 + 同人重复点赞不重复计数（新幂等键 ⇒ 真走第二次 INSERT，仍被唯一键裁决为 no-op）。
+  await h.call('PUT', `${API}/posts/${post.id}/like`, h.b, { headers: write('gy-http-like-read-0002', '"1"') });
+  assert.deepEqual((await h.call('GET', `${API}/posts/${post.id}/like`, h.a)).body.data, { count: 2, liked_by_me: true });
+  await h.call('PUT', `${API}/posts/${post.id}/like`, h.a, { headers: write('gy-http-like-read-0003', '"1"') });
+  assert.deepEqual((await h.call('GET', `${API}/posts/${post.id}/like`, h.a)).body.data, { count: 2, liked_by_me: true });
+
+  // 取消后回落。
+  await h.call('DELETE', `${API}/posts/${post.id}/like`, h.b, { headers: write('gy-http-like-read-0004', '"1"') });
+  assert.deepEqual((await h.call('GET', `${API}/posts/${post.id}/like`, h.a)).body.data, { count: 1, liked_by_me: true });
+  await h.call('DELETE', `${API}/posts/${post.id}/like`, h.a, { headers: write('gy-http-like-read-0005', '"1"') });
+  assert.deepEqual((await h.call('GET', `${API}/posts/${post.id}/like`, h.a)).body.data, { count: 0, liked_by_me: false });
+
+  // 读取面不改变内容 revision：读端点不写 ETag，Post 的 ETag 仍是 "1"。
+  assert.equal((await h.call('GET', `${API}/posts/${post.id}`, h.a)).etag, '"1"');
+
+  // 鉴权/错误面与 `GET /posts/{id}` **逐条**同形：游客 401、后台会话 401、不存在 404、非 uuid 400。
+  error(await h.call('GET', `${API}/posts/${post.id}/like`, null), 401, 'SESSION_REQUIRED');
+  const admin = await h.admin();
+  error(await h.call('GET', `${API}/posts/${post.id}/like`, admin), 401, 'SESSION_EXPIRED');
+  error(await h.call('GET', `${API}/posts/${ABSENT}/like`, h.a), 404, 'NOT_FOUND');
+  error(await h.call('GET', `${API}/posts/not-a-uuid/like`, h.a), 400, 'INVALID_REQUEST');
+  // 与既有读帖路径对照：同样的请求在 `${API}/posts/{id}` 上得到同样的状态码与错误码。
+  error(await h.call('GET', `${API}/posts/${ABSENT}`, h.a), 404, 'NOT_FOUND');
+  error(await h.call('GET', `${API}/posts/not-a-uuid`, h.a), 400, 'INVALID_REQUEST');
+
+  // 下架（站点外状态变化）：他人 404、作者本人 200 —— 与 `GET /posts/{id}` 同一道闸门。
+  const hidden = await h.community.commitPostIfCurrent(
+    post.id,
+    { revision: 1, visibility: 'published' },
+    { revision: 2, visibility: 'hidden' },
+    null,
+  );
+  assert.equal(hidden.ok, true);
+  error(await h.call('GET', `${API}/posts/${post.id}/like`, h.b), 404, 'NOT_FOUND');
+  error(await h.call('GET', `${API}/posts/${post.id}`, h.b), 404, 'NOT_FOUND');
+  const mine = await h.call('GET', `${API}/posts/${post.id}/like`, h.a);
+  assert.equal(mine.status, 200);
+  assert.deepEqual(Object.keys(mine.body.data).sort(), ['count', 'liked_by_me']);
+  assert.equal(mine.cache, 'no-store');
+});
+
+// ---------------------------------------------------------------------------
 // 2. 游客与越权
 // ---------------------------------------------------------------------------
 
@@ -559,7 +627,7 @@ test('HTTP 消息事件：投稿/评论/下架投递到消息域公开端口，�
 // 6. real 模式 fail-closed（未接真实持久存储）
 // ---------------------------------------------------------------------------
 
-test('HTTP real 模式：16 条社区路由一律 503 PROVIDER_UNAVAILABLE（不返回空页、不假成功）', async (t) => {
+test('HTTP real 模式：17 条社区路由一律 503 PROVIDER_UNAVAILABLE（不返回空页、不假成功）', async (t) => {
   const h = await fixture(t, { real: true });
   assert.equal(h.app.communityService, null);
   const id = ABSENT;
@@ -574,6 +642,7 @@ test('HTTP real 模式：16 条社区路由一律 503 PROVIDER_UNAVAILABLE（不
     ['GET', `${API}/comments/${id}`, h.a, {}],
     ['PATCH', `${API}/comments/${id}`, h.a, { headers: write('gy-real-cmt-02', '"1"'), payload: { body: 'x' } }],
     ['DELETE', `${API}/comments/${id}`, h.a, { headers: write('gy-real-cmt-03', '"1"') }],
+    ['GET', `${API}/posts/${id}/like`, h.a, {}],
     ['PUT', `${API}/posts/${id}/like`, h.a, { headers: write('gy-real-like-01', '"1"') }],
     ['DELETE', `${API}/posts/${id}/like`, h.a, { headers: write('gy-real-like-02', '"1"') }],
     ['PUT', `${API}/comments/${id}/like`, h.a, { headers: write('gy-real-like-03', '"1"') }],
@@ -581,7 +650,7 @@ test('HTTP real 模式：16 条社区路由一律 503 PROVIDER_UNAVAILABLE（不
     ['POST', `${API}/reports`, h.a, { headers: write('gy-real-rep-01'), payload: { target_ref: { type: 'post', id, revision: 1 }, reason_code: 'other' } }],
     ['GET', `${API}/reports/${id}`, h.a, {}],
   ];
-  assert.equal(rows.length, 16, '必须覆盖契约 16 个社区 operationId');
+  assert.equal(rows.length, 17, '必须覆盖契约 17 个社区 operationId');
   for (const [method, path, actor, options] of rows) {
     const result = await h.call(method, path, actor, options);
     error(result, 503, 'PROVIDER_UNAVAILABLE');

@@ -36,7 +36,7 @@ GRANT SELECT ON consent_records,privacy_epochs TO gengyun_auth_privacy;
 GRANT UPDATE (state,withdrawn_at,revision) ON consent_records TO gengyun_auth_privacy;
 GRANT UPDATE (current_epoch,state,revision,updated_at) ON privacy_epochs TO gengyun_auth_privacy;
 -- Only existence checks for conservative withdrawal refusal. No content access or mutation.
-GRANT SELECT (owner_id) ON jobs,media TO gengyun_auth_privacy;
+GRANT SELECT (owner_id) ON media TO gengyun_auth_privacy;
 GRANT SELECT (user_id) ON exports,author_links TO gengyun_auth_privacy;
 -- GY-I19（#19）· 逐用户备份副本清单（迁移 0023，设计 §4/§7.2）。
 -- 受理事务里要写清单行、清除时要重读状态并落证据，所以运行时角色需要这三类权限；

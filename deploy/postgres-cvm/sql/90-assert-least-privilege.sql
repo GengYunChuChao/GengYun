@@ -1492,11 +1492,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 本片新增后，表级写授权白名单为 16 个三元组。
     ('public', 'media_object_cleanup',  'DELETE')
   ),
-  -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里）。
+  -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（16 张表，不在 domain_manifest 里）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
   -- 授给 gengyun_auth_privacy / gengyun_consent_granter / gengyun_profile_runtime 等组、
   -- 再由 20-login-roles.sql 的 GRANT … TO gengyun_api_runtime 带进来的。旧清单只覆盖 20-login-roles
-  -- 的域段落，这 17 张表在断言里**完全不可见**——本片把它们冻成快照，让漂移可见。
+  -- 的域段落，这 16 张表在断言里**完全不可见**——本片把它们冻成快照，让漂移可见。
   --
   -- 快照来源（2026-10-21，PG 17.11，HEAD=4e93d7b 的 26 个迁移 + 8 个角色文件 + 20-login-roles.sql
   -- 全量应用后的干净集群实测，不是抄文档）：表级 has_table_privilege 逐 priv 读；列级取
@@ -1509,7 +1509,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- source_group 用五个组的 has_table_privilege / has_any_column_privilege 逐个定位
   -- （两源混授记 `A+B`，全不命中记 direct）。
   -- 本批表级：idempotency_keys 有 SELECT+INSERT+DELETE，另外 5 张（consent_policies / consent_records /
-  -- feature_flags / privacy_epochs / recipients）只有 SELECT；其余 12 张表级全无。
+  -- feature_flags / privacy_epochs / recipients）只有 SELECT；其余 10 张表级全无。
   external_manifest(tbl, source_group, t_sel, t_ins, t_upd, t_del, sel, ins, upd) AS (VALUES
     ('admin_accounts',   'auth_privacy', false, false, false, false,
      ARRAY['id','login_name','credential_hash','state','auth_epoch','revision']::text[],
@@ -1544,15 +1544,17 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY[]::text[],
      ARRAY[]::text[],
      ARRAY['response_status','outcome']::text[]),
-    ('jobs',             'auth_privacy', false, false, false, false,
-     ARRAY['owner_id']::text[],
-     ARRAY[]::text[], ARRAY[]::text[]),
+    -- R34（2026-10-24）：'jobs' 这一行**移出**本清单。裁定 3：public.jobs 零读者、零入向外键、
+    -- 无外发账本关联——**不是**「零写入」：恢复演练至今仍有文档化手工 INSERT 种子
+    -- （gy-i24-restore-drill-local-20261018.md 第 81 行），本片撤的是授权面与判定臂，不是写入能力。
+    -- 已下线组授权（services/api/db/roles/auth_privacy.sql:39 现在只授 media）与两条 fail-closed
+    -- 依赖判定里的 jobs 分支；表仍在库里，DROP 留作 0035 之后的独立片，见本片证据页。
     -- R28-W12（2026-10-22）：'media' 从这里**移出**，改由 domain_manifest + expected 的
     -- 内部授权面覆盖。原因：媒体域换成 PG 仓储后，运行时对 media 的权限来自
     -- 20-login-roles.sql 段 M 的**直授**（14/14/12 列），而本清单的判定 (c) 规定
     -- 「非 direct 行不得有直授 runtime 的权限」；同时 (a) 又要求 source_group 必须是
     -- 真实存在的组（services/api/db/roles/auth_privacy.sql:39 只给过
-    -- `GRANT SELECT (owner_id) ON jobs,media`，所以这一行不能改写成 'direct'）。
+    -- `GRANT SELECT (owner_id) ON media`，所以这一行不能改写成 'direct'）。
     -- 两条判据无法同时满足，唯一自洽的做法是：media 不再属于「经组继承」的那类表。
     -- 代价（如实记）：本清单不再断言「组对 media 的可见面恰好只有 owner_id」——
     -- 该断言现在由内部授权面的 expected 行（owner_id 在允许列内）与
@@ -1580,8 +1582,8 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['wechat_subject_cipher','wechat_subject_lookup']::text[],
      ARRAY['updated_at']::text[])
   ),
-  -- R28-S43：external_manifest 的逐条违规明细。断言 69-86 的 ok 与 detail 共用这一份定义：
-  -- 一条违规一行（表名 + 一句人话），detail 里 string_agg 出来就能点名到列。
+  -- R28-S43：external_manifest 的逐条违规明细。断言 69-84 的 ok 与 detail 共用这一份定义：
+  -- 一条违规一行（表名 + 一句人话），detail 里 string_agg 出来就能点名到列；编号槽 85/86 随 media（R28-W12）/ jobs（R34）退役留空号，不复用（复用会让旧证据页的编号指向错行）。
   -- 语义分界（本片最容易被后人误解的地方）：正向用 has_column_privilege（**有效权限**，含
   -- 表级投影）；反向必须读 pg_attribute.attacl（**直接列级 ACL**）—— 表级 SELECT 会让
   -- has_column_privilege 对每一列都返回 true，拿它做反向判据，「又给某列单独 GRANT 了一条」
@@ -1622,7 +1624,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
             OR (x.privilege_type = 'UPDATE' AND NOT (a.attname::text = ANY (e.upd))))
     UNION ALL
     -- (c) 反向：runtime 本体的**直授**只允许出现在 source_group = 'direct' 的行（feature_flags）。
-    --     其余 17 张表的权限必须来自组；给 runtime 加一条直授（哪怕授的是已声明的列）就是漂移。
+    --     其余 15 张表的权限必须来自组；给 runtime 加一条直授（哪怕授的是已声明的列）就是漂移。
     SELECT e.tbl, '直授 runtime（表级 ' || x.privilege_type || '）'
       FROM external_manifest e
       JOIN pg_class c ON c.oid = to_regclass('public.'||e.tbl)
@@ -1749,7 +1751,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- R28-S52：跨 schema 关系面兜底清单（与 S43 的 external_manifest、S51 的
   -- function_surface_manifest 同构：把"点过名的关系"升级为"必须分类的关系面"）。
   -- 为什么需要：domain_manifest（public 表 21 granted + 1 granted_external + 4 forbidden）、
-  --   external_manifest（S43 的 17 张 public 表）、function_surface_manifest（S51 的 11 个函数）
+  --   external_manifest（S43 的 16 张 public 表）、function_surface_manifest（S51 的 11 个函数）
   --   三张清单覆盖的**全都只有 public**。非 public 的 4 个 schema（catalog_ops / catalog_read /
   --   knowledge_staging / staging_intake）里还有 9 个关系带组授权，而本切片之前只有
   --   preview_reader_scope（管 catalog_read.home_species）与 knowledge_runtime_scope
@@ -3230,7 +3232,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
 
   UNION ALL
-  -- 69-86. R28-S43 逐表范围断言（17 张经 NOLOGIN 组继承来的 public 表）：
+  -- 69-84. R28-S43 逐表范围断言（16 张经 NOLOGIN 组继承来的 public 表）：
   --     与 49-58 同形，差异只在快照来源 —— 这些权限来自 services/api/db/roles/*.sql 的五个组，
   --     不是 20-login-roles.sql 的域段落，所以不在 expected 清单里，49-58 对它们是完全盲的。
   --     判据全部收在 external_violations（一条违规一行明细）：ok 只问「这张表有没有违规」，
@@ -3297,9 +3299,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 88. R28-S43 反向控制（PUBLIC 面）：external_manifest 的 17 张表在表级 relacl 与列级
+  -- 88. R28-S43 反向控制（PUBLIC 面）：external_manifest 的 16 张表在表级 relacl 与列级
   --     attacl 里都不许出现 grantee = 0。66 号只遍历 domain_manifest 的 granted /
-  --     granted_external，这 17 张表不在清单里，旧断言覆盖不到它们。
+  --     granted_external，这 16 张表不在清单里，旧断言覆盖不到它们。
   SELECT 'runtime_surface_no_public_leak',
          NOT EXISTS (
            SELECT 1
@@ -3321,7 +3323,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                        AND a.grantee = 0
                   )
          ),
-         'external_manifest 的 17 张表对 PUBLIC 必须零权限（表级 relacl + 列级 attacl 两处都查）；越界表：' ||
+         'external_manifest 的 16 张表对 PUBLIC 必须零权限（表级 relacl + 列级 attacl 两处都查）；越界表：' ||
          COALESCE((
            SELECT string_agg(e.tbl, ' / ' ORDER BY e.tbl)
              FROM external_manifest e
@@ -3728,13 +3730,22 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：120 条断言全红时标签合计约 3.8K 字符（2026-10-24 R34 实测：总 120 条、
--- sum(length(label)+2)=3814、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：断言全红时标签合计约 3.6K–3.8K 字符（2026-10-21 合流后真库实测 117 条 / 3693；
+-- 2026-10-24 R34 实测 120 条 / 3814；最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
+-- 口径（静态可数，用来核对上面的实测数）：断言行 = 带编号的字面断言行 + 逐表展开行
+-- （external_manifest 每行一条 `runtime_grants_external_<tbl>`；allow_table_dml 只进 detail
+-- 文案、不增减断言行，现为 16 个三元组）。编号槽位 1..102 中 49-61 与 69-84 是逐行展开区。
+-- R34（2026-10-24）：external_manifest 去掉 jobs 行（17→16）。**总数没有定论，只有静态可算值**：
+-- 上面记的「117 条 / 3693」（2026-10-21 口径）写下时清单是 **18 行**（media + jobs 都在）；
+-- 同日 R28-W12 删 media 行（18→17）只改了「18 张→17 张」的文本，**没有扣** 117/3693。
+-- 按同一静态扣减法：删 media（label 29 + 2 = 31）得 116 条 / 3662；再删 jobs（label 28 + 2 = 30）
+-- 得 **115 条 / 3632** —— 精确值待真库 psql count(*) 复核（本树无 PG，未本地执行）。
+-- 附注：本注释上一版写「116 条 / 3663」，是把 18 行时代的 117/3693 只扣了 jobs、漏掉 W12 那次，前提错，已改正。
 -- R28-S45 更新：本片新增 runtime_users_login_insert_path（第 89 条）。R28-S51 合流后本文件共
 -- 108 条（S43 时 103 条 / 3239、S45 后 104 条 / 3272、S51 合流后 108 条 / 3404，均为实测）；
 -- R28-S52 又追加四条跨 schema 面（94–97），共 112 条 / 3553 实测；
--- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693。
+-- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693（R34 起静态值 115 条 / 3632，见上）。
 -- R34 · #18（迁移 0036）：expected 增三张后台内容域表 ⇒ 数据驱动的 49–58 各多一条，
 -- 合流后共 120 条 / 3814（+121 = 三条新标签的长度贡献）；`allow_table_dml` 与 49–58 的
 -- 硬否定一句未动（列级授权下三表都没有表级 INSERT/UPDATE/DELETE）。

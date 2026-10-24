@@ -167,6 +167,21 @@ export interface ListCommentsQuery {
   limit?: number | null;
 }
 
+/**
+ * 点赞的**读取面**（契约 `LikeStatus`）：`GET /posts/{id}/like` 的响应体。
+ *
+ * - `count`：该目标点赞总数，`count(*)` 现算（集合大小派生，**没有计数器列**，因此不存在计数漂移）。
+ * - `liked_by_me`：请求方是否已赞；本服务所有社区读写都要求用户会话（`guards.requireUser`），
+ *   因此身份恒可得 ⇒ 恒为布尔，不做「匿名时置 null」的自创变体。
+ *
+ * 刻意**不**把这两个字段挂进 `Post`/`Comment`：那要改 `POST_COLUMNS` 与列表 SELECT，
+ * 列表页每条帖子多一次相关子查询（N+1），且会把「派生量」写进内容契约的 `additionalProperties:false` 形状里。
+ */
+export interface LikeStatus {
+  count: number;
+  liked_by_me: boolean;
+}
+
 /** 内容重审结果（内部操作，供阶段 2 的巡检任务与测试使用）。 */
 export interface ReReviewReport {
   re_reviewed: boolean;
@@ -1515,6 +1530,29 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       return like(actor, 'comment', id, 'DELETE', options);
     },
 
+    /**
+     * `getPostLike`：`GET /posts/{id}/like` —— 点赞的**只读**读取面（issue #15 的 S7 读面）。
+     *
+     * 与 `getPost` **同一道**鉴权/可见性闸门：
+     *   1. `requireUserActor`（游客 401 `SESSION_REQUIRED`；后台会话 403 `SCOPE_DENIED`）；
+     *   2. `requireUuidParam(id, 'id')`（非 uuid ⇒ 400 `VALIDATION_FAILED`，与既有读路径同一校验）；
+     *   3. `readablePost(user, postId)`：不存在／已删除／未发布／审核未通过的他人内容 ⇒
+     *      **同一个** `NOT_FOUND`（`内容不存在或不可用`，不泄露存在性），作者本人仍可读自己的非删除内容。
+     * 不新造任何错误码：可读性判据与 `getPost` 逐字复用同一函数，因此错误面必然一致。
+     *
+     * 计数走既有 `countLikes`（`count(*)`，目标索引 `(target_type,target_id,user_id)`），
+     * 「我赞过没」走 `hasLiked`（同一索引前缀上的集合成员判定）；
+     * 两条都是只读语句，**不加计数器列、不改任何 GRANT**。
+     */
+    async getPostLike(actor: unknown, id: unknown): Promise<LikeStatus> {
+      const user = requireUserActor(actor);
+      const postId = requireUuidParam(id, 'id');
+      await readablePost(user, postId);
+      const count = await store.countLikes('post', postId);
+      const likedByMe = await store.hasLiked('post', postId, user.userId);
+      return { count, liked_by_me: likedByMe };
+    },
+
     /** `createReport`：`POST /reports`。目标是当前公开可见版本；举报者身份只存库、不投影。 */
     async createReport(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Report> {
       const user = requireUserActor(actor);
@@ -1745,7 +1783,13 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       };
     },
 
-    /** 诊断用：点赞计数（契约 `Post`/`Comment` **没有**点赞计数字段，故无对外读取口）。 */
+    /**
+     * 诊断用：任意目标的点赞计数。
+     *
+     * 注意：这是**内部**诊断口，不是对外读取面 —— 对外读点赞数走独立读端点
+     * `getPostLike`（`GET /posts/{id}/like`）。契约 `Post`/`Comment` **仍然没有**
+     * 点赞计数字段（`additionalProperties:false`），加字段等价于改内容契约形状 + 列表 N+1。
+     */
     async countLikes(kind: 'post' | 'comment', id: string): Promise<number> {
       return store.countLikes(kind, id);
     },

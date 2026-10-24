@@ -370,12 +370,6 @@
       "reference": "miniprogram/utils/reference.js:1006"
     },
     {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:13268"
-    },
-    {
       "path": "packages/evaluation/samples/README.md",
       "reason": "SUSPECT",
       "owner": "contracts",
@@ -548,12 +542,6 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/moderation/model-ports.test.mjs:156"
-    },
-    {
-      "path": "tests/unit/community-http.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/community-http.test.mjs:506"
     },
     {
       "path": "tests/unit/gy-i22-identity-headers.test.mjs",
