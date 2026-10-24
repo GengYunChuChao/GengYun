@@ -362,6 +362,20 @@ export function canSuspend(state) {
   return reasonProblem(state.suspendReason) === null;
 }
 
+/**
+ * 停用入口（每行「停用」按钮）是否可达：只要能打开确认对话框即可，**不要求理由非空**。
+ *
+ * 理由只在确认对话框里输入；入口若拿理由判禁用会死锁（理由空 → 入口禁用 → 打不开框 → 输不了理由）。
+ * 因此这里只判登录／就绪／写面 scope／未在写入；行级 `state === 'active'` 由模板的 v-if 承担。
+ */
+export function canOpenSuspendDialog(state) {
+  if (!state.signedIn) return false;
+  if (state.phase !== 'ready') return false;
+  if (state.suspendScopeWarning) return false;
+  if (state.suspendStatus === 'saving') return false;
+  return true;
+}
+
 /** 正在确认停用的目标行视图；非确认态或目标不存在返回 null。 */
 export function suspendTargetView(state) {
   if (state.suspendTargetId === null) return null;

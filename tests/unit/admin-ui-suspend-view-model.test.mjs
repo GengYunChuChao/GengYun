@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 
 import { etagForRevision } from '../../apps/admin/src/lib/account-suspend-api.mjs'
 import {
+  canOpenSuspendDialog,
   canSuspend,
   describe,
   describeSuspendFailure,
@@ -164,6 +165,35 @@ test('canSuspend：登录 + 就绪 + 有 scope + 理由合法才可停用', () =
   const readyNoScope = reduce(state, { type: 'LOAD_OK', collection: collectionOf([ROW_A]) })
   const noScopeWithReason = reduce(readyNoScope, { type: 'SET_SUSPEND_REASON', value: '违规' })
   assert.equal(canSuspend(noScopeWithReason), false) // 缺 accounts:suspend
+})
+
+test('canOpenSuspendDialog：入口可达只与 scope/phase/saving 相关，与理由无关', () => {
+  assert.equal(canOpenSuspendDialog(initialState()), false) // 未登录
+  assert.equal(canOpenSuspendDialog(signedIn()), false) // 仍在 loading
+
+  const state = reduce(initialState(), { type: 'SIGNED_IN', scopes: ['accounts:read'], scopesProvided: true })
+  const readyNoScope = reduce(state, { type: 'LOAD_OK', collection: collectionOf([ROW_A]) })
+  assert.equal(canOpenSuspendDialog(readyNoScope), false) // 缺 accounts:suspend
+
+  // 理由为空时入口仍可开——这是本次修复的核心：入口不能再被理由判成死锁。
+  assert.equal(canOpenSuspendDialog(ready([ROW_A])), true)
+
+  // saving 态入口不可开（避免并发打开第二张确认框）。
+  const saving = reduce(ready([ROW_A]), {
+    type: 'SUSPEND_START',
+    id: ROW_A.id,
+    revision: ROW_A.revision,
+    reason: '违规',
+    idempotencyKey: 'account-12345678',
+  })
+  assert.equal(canOpenSuspendDialog(saving), false)
+})
+
+test('入口可开、确认需理由：理由为空时入口可达但确认仍被拦（反例）', () => {
+  const state = ready([ROW_A])
+  assert.equal(canOpenSuspendDialog(state), true) // 入口可达
+  assert.notEqual(suspendReasonProblem(state), null) // 确认仍需理由
+  assert.equal(canSuspend(state), false) // 含理由的整页 gate 仍拦（确认路径语义保留）
 })
 
 test('suspendTargetView：确认态返回目标行视图（含 ETag），否则 null', () => {

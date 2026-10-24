@@ -14,7 +14,7 @@ import { appendPage, emptyCollection, fetchAccountsPage } from '../lib/admin-api
 import { newIdempotencyKey, suspendAccount } from '../lib/account-suspend-api.mjs';
 import {
   canLoadMore,
-  canSuspend,
+  canOpenSuspendDialog,
   describe,
   describeSuspendFailure,
   initialState,
@@ -44,7 +44,7 @@ const restartNeeded = computed(() => view.value.action === 'restart');
 const suspendTarget = computed(() => suspendTargetView(state.value));
 const suspendProblem = computed(() => suspendReasonProblem(state.value));
 const suspendFailureView = computed(() => describeSuspendFailure(state.value.suspendFailure));
-const suspendable = computed(() => canSuspend(state.value));
+const canOpenSuspend = computed(() => canOpenSuspendDialog(state.value));
 const suspendSaving = computed(() => state.value.suspendStatus === 'saving');
 const suspendSaved = computed(() => state.value.suspendStatus === 'saved');
 
@@ -357,8 +357,8 @@ onBeforeUnmount(() => {
                 v-if="row.state === 'active'"
                 class="link danger"
                 type="button"
-                :disabled="!suspendable || busy"
-                :title="suspendable ? '带 If-Match 与 Idempotency-Key 停用' : '需要 accounts:suspend 与合法的停用理由'"
+                :disabled="!canOpenSuspend || busy"
+                :title="canOpenSuspend ? '带 If-Match 与 Idempotency-Key 停用' : '需要 accounts:suspend 且列表已就绪（理由在确认框里填写）'"
                 @click.stop="beginSuspend(row)"
               >
                 停用
