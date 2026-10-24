@@ -484,23 +484,33 @@ const OPAQUE_ALLOWLIST = [
  * SELECT 72→**74**（两条函数调用）、columnRequirements 1255→**1241**（回到补授权前）、
  * 逐文件 `recognitions` 24→**21**、`speech` 19→**17**；INSERT/UPDATE、引用表数、
  * `SELECT *`/无顶层 FROM 处数**不变**。授权面：五张正文表对运行时**零**表级 DELETE
- * （由 `tests/unit/least-privilege-expected-parity.test.mjs` 正向锁住）。
+ * （由 `tests/unit/least-privilege-expected-parity.test.mjs` 正向锁住）——R34 片 3 起
+ * `ocr_jobs` / `ocr_records` 两表是**用户 2026-10-24 批准的**唯一例外，见下段。
  *
- * 合并 upstream/main@997e8e5f（2026-10-24，R34 点赞只读端点）：本分支新增的
+ * R34 片 3（2026-10-24，#19 / #10 · OCR 注销闭集）：`ocr/store-pg.ts` 新增 `purgeOwnerRows`
+ * 的 3 条整表 DELETE（`ocr_records` / `ocr_jobs` 按 `owner_user_id`，`ocr_idempotency` 按 scope
+ * 前缀），三条都带 `RETURNING`；授权面同步补 `GRANT DELETE ON public.ocr_jobs` 与
+ * `... public.ocr_records`（与已有的 `ocr_idempotency` 合成「OCR 三表一条路线」）。
+ *
+ * 合并 upstream/main@997e8e5f（2026-10-24，R34 点赞只读端点）：上游新增的
  * `GET /api/v1/posts/{id}/like` 在 `community/store-pg.ts` 里只多一条 `SELECT`（读
- * `community_likes` 计数与本人点赞标记），与上面「R34 第 2 轮」叠加后实测：
- * 字面量 159→**160**、SELECT 74→**75**、逐文件 `community` 42→**43**；
- * DELETE 29 / RETURNING 62 / 列要求 1241 及授权面均**不变**（未新增表级权限）。
+ * `community_likes` 计数与本人点赞标记），**零**表级权限变更。
+ *
+ * 两笔增量**在合并树上重新实测**（不是把任一侧的旧值相加，也不是拿某一侧当基线硬减）：
+ * 字面量 159→**163**、SELECT 74→**75**（点赞读面）、DELETE 29→**32**、RETURNING 62→**65**
+ * （OCR 三表整表 DELETE 的三条 `RETURNING`）、columnRequirements 1241→**1247**、
+ * 逐文件 `ocr` 16→**19**、`community` 42→**43**；INSERT/UPDATE、引用表 25 张、
+ * `SELECT *`/无顶层 FROM 处数**不变**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 160,
-  statements: { INSERT: 27, UPDATE: 29, SELECT: 75, DELETE: 29 },
-  returningClauses: 62,
+  sqlLiterals: 163,
+  statements: { INSERT: 27, UPDATE: 29, SELECT: 75, DELETE: 32 },
+  returningClauses: 65,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1241,
+  columnRequirements: 1247,
   opaqueExpressions: 2,
 };
 
@@ -511,7 +521,7 @@ const EXPECTED_PER_FILE = {
   favorites: 15,
   history: 16,
   messages: 15,
-  ocr: 16,
+  ocr: 19,
   recognitions: 21,
   speech: 17,
 };
@@ -640,6 +650,14 @@ const TABLE_WIDE_COLUMN = '*';
  *   无顶层 FROM 11 → **13**（两条函数调用没有顶层 FROM）、逐文件 `recognitions` 24 → **21**、
  *   `speech` 19 → **17**；INSERT/UPDATE 42/47、引用表 44 张、`rowLocks` 分桶、onConflict、
  *   `SELECT *` 均不变。授权面：五张正文表对运行时**零**表级 DELETE（禁止面维持 18 条 42501 / 9 个对象）。
+ * ⑬ 2026-10-24 R34 片 3（#19 / #10 OCR 注销闭集）：`ocr/store-pg.ts` +3 条整表 DELETE（都带
+ *   RETURNING），授权面补 `GRANT DELETE ON public.ocr_jobs` / `... public.ocr_records`
+ *   （**用户 2026-10-24 批准**的表级例外，替换此前设想的 SECURITY DEFINER 路线）。
+ *   ⇒ 字面量 268 → **271**、DELETE 36 → **39**、RETURNING 82 → **85**、列要求 1720 → **1726**、
+ *   已覆盖 1666 → **1672**（缺口仍 0：两表的整表 DELETE 已在 `20-login-roles.sql` 授权）、
+ *   逐文件 `ocr` 16 → **19**；INSERT/UPDATE/SELECT 42/47/143、引用表 44 张、`rowLocks` 分桶、
+ *   onConflict、无顶层 FROM、`SELECT *` 均不变。禁止面（18 条 42501 / 9 个对象）**一字未改** ——
+ *   探针原本就不探这两张表的 DELETE（见证据页 ④）。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  * ⑬ 2026-10-24 合并 upstream/main@997e8e5f：叠加本分支 `GET /api/v1/posts/{id}/like` 的那条
@@ -649,9 +667,9 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 269,
-  statements: { INSERT: 42, UPDATE: 47, SELECT: 144, DELETE: 36 },
-  returningClauses: 82,
+  sqlLiterals: 272,
+  statements: { INSERT: 42, UPDATE: 47, SELECT: 144, DELETE: 39 },
+  returningClauses: 85,
   onConflictClauses: 26,
   selectStar: 15,
   qualifiedStar: 4,
@@ -659,8 +677,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 13,
   referencedTables: 44,
-  columnRequirements: 1720,
-  coveredRequirements: 1666,
+  columnRequirements: 1726,
+  coveredRequirements: 1672,
   ledgerExemptions: 33,
   rowLockRequirements: 41,
   rowLockExemptions: 1,
@@ -680,7 +698,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'media': 17,
   'messages': 15,
   'moderation/ledger-pg.ts': 5,
-  'ocr': 16,
+  'ocr': 19,
   'privacy/backup-copies-pg.ts': 4,
   'privacy/consent-pg.ts': 14,
   'privacy/grant-pg.ts': 12,

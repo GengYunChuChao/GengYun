@@ -29,6 +29,9 @@
 --   改前 → messages / community_* / ocr_* 全部 `ERROR: 42501: permission denied`，
 --          而对照臂 public.user_backup_copies 成功（证明"连得上、角色在、只是没授权"）。
 --   改后 → 同上全部成功（写语句打印 `INSERT 0 0` / `UPDATE 0` / `DELETE 0`）。
+--   R34 片 3（#19 / #10，用户批准的表级 DELETE 例外）→ `ocr_jobs` / `ocr_records`
+--          的 DELETE 是**正向**探针（第 2 段末尾，`WHERE false` 零行），不属于任何禁止面；
+--          禁止面因此**一条未增**，workflow 的 `expected_42501` 仍是 18。
 --- ============================================================================
 
 \set ON_ERROR_STOP 0
@@ -235,13 +238,13 @@ SELECT gen_random_uuid(), 1, NULL, NULL, NULL, NULL, NULL,
  WHERE false
 ON CONFLICT (id) DO NOTHING;
 
-\echo '-- [ocr_jobs] UPDATE 认领（store-pg.ts:520 的 SET revision,state,deadline_at,updated_at,error_code）'
+\echo '-- [ocr_jobs] UPDATE 认领（store-pg.ts 的 updateJob 的 SET revision,state,deadline_at,updated_at,error_code）'
 UPDATE public.ocr_jobs
    SET revision = revision + 1, state = NULL, deadline_at = NULL,
        updated_at = now(), error_code = NULL
  WHERE false;
 
-\echo '-- [ocr_jobs] SELECT ... FOR UPDATE（store-pg.ts:540）'
+\echo '-- [ocr_jobs] SELECT ... FOR UPDATE（store-pg.ts 的 commitTerminal：认领行的 SELECT … FOR UPDATE）'
 SELECT id FROM public.ocr_jobs WHERE false FOR UPDATE;
 
 \echo '-- [ocr_records] INSERT 12 列（store-pg.ts:RECORD_COLUMNS）'
@@ -259,18 +262,18 @@ SELECT id, revision, owner_user_id, media_id, media_revision, raw_fields,
   FROM public.ocr_records
  WHERE owner_user_id = '00000000-0000-4000-8000-000000000000';
 
-\echo '-- [ocr_records] UPDATE 7 列（store-pg.ts:598）'
+\echo '-- [ocr_records] UPDATE 7 列（store-pg.ts 的 updateOcr）'
 UPDATE public.ocr_records
    SET revision = revision + 1, raw_fields = NULL, corrected_fields = NULL,
        verification = NULL, model_version = NULL, updated_at = now(), deleted = false
  WHERE false;
 
-\echo '-- [ocr_idempotency] SELECT 回执（store-pg.ts:632）'
+\echo '-- [ocr_idempotency] SELECT 回执（store-pg.ts 的 findIdempotent）'
 SELECT request_hash, payload, pending, expires_at
   FROM public.ocr_idempotency
  WHERE scope = NULL AND key_hash = NULL;
 
-\echo '-- [ocr_idempotency] INSERT 6 列 + ON CONFLICT DO UPDATE（store-pg.ts:655）'
+\echo '-- [ocr_idempotency] INSERT 6 列 + ON CONFLICT DO UPDATE（store-pg.ts 的 claimIdempotent）'
 INSERT INTO public.ocr_idempotency
        (scope, key_hash, request_hash, payload, pending, expires_at)
 SELECT NULL, NULL, NULL, NULL, NULL, now()
@@ -281,13 +284,19 @@ ON CONFLICT (scope, key_hash) DO UPDATE
        pending = EXCLUDED.pending,
        expires_at = EXCLUDED.expires_at;
 
-\echo '-- [ocr_idempotency] UPDATE 放行（store-pg.ts:674）'
+\echo '-- [ocr_idempotency] UPDATE 放行（store-pg.ts 的 finalizeIdempotent）'
 UPDATE public.ocr_idempotency
    SET payload = NULL, pending = false
  WHERE false;
 
-\echo '-- [ocr_idempotency] DELETE 释放/清理（store-pg.ts:686/693）'
+\echo '-- [ocr_idempotency] DELETE 释放/清理（store-pg.ts 的 releaseIdempotent / purgeIdempotent）'
 DELETE FROM public.ocr_idempotency WHERE false;
+
+\echo '-- [ocr_records] DELETE 注销闭集（store-pg.ts 的 purgeOwnerRows；R34 片 3 用户批准的表级例外，先子后父 ⇒ records 在前）'
+DELETE FROM public.ocr_records WHERE false;
+
+\echo '-- [ocr_jobs] DELETE 注销闭集（store-pg.ts 的 purgeOwnerRows；同上，records 删完才轮到 jobs）'
+DELETE FROM public.ocr_jobs WHERE false;
 
 \echo ''
 \echo '### 3) 对照臂（control）：同一角色下【已有授权】的表必须成功 —— 证明缺权是"没授权"而非"连不上"'
@@ -301,7 +310,7 @@ SELECT count(*) AS idempotency_keys_rows FROM public.idempotency_keys;
 RESET ROLE;
 
 \echo ''
-\echo '### 4) 收尾：运行时在【库内全部关系】上的表级 DML 清单（应当只有 90-assert 豁免的那张）'
+\echo '### 4) 收尾：运行时在【库内全部关系】上的表级 DML 清单（R34 片 3 起应恰好 17 张关系：16 张表级 DELETE 授权 + idempotency_keys 的 INSERT 豁免；与 90-assert 的 allow_table_dml 18 个三元组一一对应）'
 SELECT n.nspname || '.' || c.relname AS relation_with_table_level_dml,
        has_table_privilege('gengyun_api_runtime', c.oid, 'INSERT')   AS ins,
        has_table_privilege('gengyun_api_runtime', c.oid, 'UPDATE')   AS upd,

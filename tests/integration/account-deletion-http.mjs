@@ -274,9 +274,11 @@ async function main() {
     // 新增的是 `community`：装配处无条件注入社区清理原语，因此真实注销路径一定清
     // 帖子/评论/点赞/举报，回执也必须把它摊开。
     // GY-R34-I19：再并入识别域与语音域（`recognitions` / `speech`）——装配处同样无条件注入
-    // 两个按主体清空的端口（走迁移 0034 的 SECURITY DEFINER 函数），所以回执必须摊成七项。
-    ['community', 'conversations', 'favorites', 'history', 'messages', 'recognitions', 'speech'],
-    '回执必须逐模块摊开（未报告的必需模块也要出现；C1b 起含消息域与会话域，S6 起含社区域，R34 起含识别域与语音域，原有各域一条不少）',
+    // 两个按主体清空的端口（走迁移 0034 的 SECURITY DEFINER 函数）。
+    // R34 片 3：OCR 域（`ocr`）也进闭集 —— 它走的是**表级 DELETE 权限**（用户 2026-10-24 批准的
+    // 例外），stub 模式下由内存 store 的 `purgeOwnerData` 承接，所以回执必须摊成八项。
+    ['community', 'conversations', 'favorites', 'history', 'messages', 'ocr', 'recognitions', 'speech'],
+    '回执必须逐模块摊开（未报告的必需模块也要出现；C1b 起含消息域与会话域，S6 起含社区域，R34 起含识别/语音/OCR 三域，原有各域一条不少）',
   );
   for (const row of acceptedData.deletion.handlers) {
     assert.equal(row.online_state, 'completed', `${row.module} 在线清理真的跑过`);
