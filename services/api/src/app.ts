@@ -1224,6 +1224,23 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
             + '（已发布 + 来源已核对 + 当前生效 + 非模拟），id/type/revision 逐项一致才判可用',
           read: (target) => communityKnowledgeRowOf(target),
         }));
+  // **媒体域持久化端口**（W12，#6）：登记册 / 短效授权 / 幂等台账三者的**事实源**。
+  // ⚠ 本块**前移**到社区服务装配之前（原在下方媒体装配块）：#14 片A 社区送审要读 mime，
+  // 必须与社区服务共用**同一份** `mediaStore`（登记册事实源），不能自建第二份。
+  // 判据与 favorites/history 逐字同形（`real` 才接 PG，否则内存），但多一个非它不可的前置条件：
+  // `media.object_ref_cipher` 是 `text NOT NULL`，落库前必须加密，因此**没有键就不接 PG**。
+  // 键的「有没有」判据：`config.ts` 给出的正常形状是 `string`／`null`，但既有测试夹具直接
+  // 拼 `{ ...baseConfig(), executionMode: 'real' }` 之类的字面量配置，新字段可能是 `undefined`／空白。
+  // 这里统一归一化一次：**只有非空字符串才算有键**，其余一律按「未配置」走 fail-closed，
+  // ⛔ 不得因为 `undefined !== null` 就当成有键去做加密（那会让缺键在构造期抛错，而不是 503）。
+  const mediaObjectRefKeyMaterial: string | null =
+    typeof config.mediaObjectRefKey === 'string' && config.mediaObjectRefKey.trim() !== ''
+      ? config.mediaObjectRefKey
+      : null;
+  const mediaStore: MediaStore = mediaStoreOption
+    ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
+      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
+      : createMemoryMediaStore({ now: () => clock().getTime() }));
   // **放行判据 = `communityStore.persistent`**（不是"某处注入了什么"）：内存实现在 real 下
   // 一律 503，PG 实现在 real + 连接池时放行；持久化改造后这条判据仍然成立且更严。
   const communityRealUnwired = config.executionMode === 'real' && !communityStore.persistent;
@@ -1243,6 +1260,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       events: communityEvents,
       // GY-I14 ⇄ GY-I15 联动接线：投稿/评论/编辑在落内容行前送审审核域；明确驳回一律不得公开。
       ...(communityModerationLink === null ? {} : { moderation: communityModerationLink }),
+      // #14 片A：送审 media 载荷补齐 mime/kind —— 把媒体域 `MediaStore.getMedia` 适配成社区侧
+      // 窄端口 `CommunityMediaMetadataSource.mimeOf`（读不到 mime ⇒ 只回 media_id，fail-closed）。
+      mediaMetadata: { mimeOf: async (id) => (await mediaStore.getMedia(id))?.mime ?? null },
       signingKey: communitySigningKey,
       now: clock,
     });
@@ -1523,21 +1543,6 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // **不传该属性**，服务层落回不可解析占位域 `https://media.placeholder.invalid`。
   // 它只改句柄的 host，**不**是真实端口的门（端口仍只由上面的显式注入决定）。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
-  // **持久化端口**（W12，#6）：登记册 / 短效授权 / 幂等台账三者的**事实源**。
-  // 判据与 favorites/history 逐字同形（`real` 才接 PG，否则内存），但多一个非它不可的前置条件：
-  // `media.object_ref_cipher` 是 `text NOT NULL`，落库前必须加密，因此**没有键就不接 PG**。
-  // 键的「有没有」判据：`config.ts` 给出的正常形状是 `string`／`null`，但既有测试夹具直接
-  // 拼 `{ ...baseConfig(), executionMode: 'real' }` 之类的字面量配置，新字段可能是 `undefined`／空白。
-  // 这里统一归一化一次：**只有非空字符串才算有键**，其余一律按「未配置」走 fail-closed，
-  // ⛔ 不得因为 `undefined !== null` 就当成有键去做加密（那会让缺键在构造期抛错，而不是 503）。
-  const mediaObjectRefKeyMaterial: string | null =
-    typeof config.mediaObjectRefKey === 'string' && config.mediaObjectRefKey.trim() !== ''
-      ? config.mediaObjectRefKey
-      : null;
-  const mediaStore: MediaStore = mediaStoreOption
-    ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
-      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
-      : createMemoryMediaStore({ now: () => clock().getTime() }));
   // `real` + 有数据库池 + **缺** `MEDIA_OBJECT_REF_KEY` ⇒ 媒体域整域 fail-closed（503），
   // **不是**降级：拿不到键就无法如实写 `object_ref_cipher`，用进程内 `Map` 顶替等于向客户端
   // 谎报「已持久化」——这正是 W12 要消灭的那种假持久化。

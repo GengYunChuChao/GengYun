@@ -15,15 +15,18 @@
  *
  * 声明：模型端口全是**合成端口**（`provider.synthetic === true`），本文件**不发起任何真实
  * 模型/付费调用**；断言只证明"接线与产品路径"，不构成图片审核准确率或供应商可用性证据。
- * 另：本片**没有**解决"媒体引用缺 `mime`/`media_revision`"（媒体域投影未接线），
- * 因此图片端口此刻仍不会被真正求值——这是如实记录的**未取得项**，由 I1 的结论码钉住。
+ * 另：本文件同时钉住 #14 片A 的媒体元数据投影——I1 播种媒体 store 的 mime 后，
+ * 送审 media 载荷补齐 `mime`/`kind`、ims 端口被真正求值（不再报 `MODEL_MEDIA_UNSUPPORTED`）；
+ * I1b 负例（媒体 store 无该行 ⇒ 缺 mime）仍拒绝，证明投影不是"伪造 mime/kind"。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createMemoryMediaStore } from '../../services/api/src/media/store.ts';
 import { CLEAN_TITLE, DANGEROUS_BODY, idem } from './community-fixtures.mjs';
 import {
   CLEAN_BODY,
   USER_A,
+  countingPort,
   expectApiError,
   makeHarness,
   makeWiredHarness,
@@ -36,6 +39,30 @@ const MEDIA = '22222222-2222-4222-8222-222222222222';
 /** 带媒体投稿的入参（`media_ids` 走契约 `uuid` 形态，条数上限 3）。 */
 function mediaPostInput(overrides = {}) {
   return postInput({ media_ids: [MEDIA], ...overrides });
+}
+
+/** 播种一张 `image/jpeg` 媒体登记册行（#14 片A 正例：社区据此投影 mime/kind）。 */
+async function seededImageMediaStore(overrides = {}) {
+  const store = createMemoryMediaStore({ now: () => 0 });
+  await store.createMedia({
+    id: MEDIA,
+    ownerId: 'owner-1',
+    revision: 1,
+    purpose: 'community_image',
+    mime: 'image/jpeg',
+    bytes: 0,
+    duration_ms: null,
+    sha256: '0'.repeat(64),
+    state: 'ready',
+    failure_code: null,
+    rawRef: null,
+    derivativeRef: null,
+    createdAt: 0,
+    updatedAt: 0,
+    expiresAt: 0,
+    ...overrides,
+  });
+  return store;
 }
 
 /** 自建"已放行媒体"的规则闸门替身（只为证明第二道不变式仍然生效）。 */
@@ -81,9 +108,11 @@ function linkThatApproves() {
 // I1 能力就绪 ⇒ 进入审核链路（已提交审核）
 // ---------------------------------------------------------------------------
 
-test('I1. 图片审核能力就绪（tms+ims 均已接线）⇒ 带媒体投稿受理为「私有/待审」并留在审核链路', async () => {
+test('I1. 图片审核能力就绪（tms+ims 均已接线）+ mime 可得 ⇒ 带媒体投稿受理为「私有/待审」且 ims 端口被真正求值', async () => {
+  const ims = countingPort(passingPort({ kind: 'ims' }));
   const h = makeWiredHarness({
-    ports: { tms: passingPort({ kind: 'tms' }), ims: passingPort({ kind: 'ims' }) },
+    mediaStore: await seededImageMediaStore(),
+    ports: { tms: passingPort({ kind: 'tms' }), ims: ims.port },
   });
 
   // 能力位读数：两条 kind 都是 `wired` + `ready`（这不是"猜"，是审核域自己的口径）。
@@ -113,6 +142,20 @@ test('I1. 图片审核能力就绪（tms+ims 均已接线）⇒ 带媒体投稿�
   assert.deepEqual([...h.calls.screen[0].result.task_kinds].sort(), ['image', 'text']);
   assert.equal(h.moderation.counts().tasks, 2, 'text 与 image 各一条任务');
 
+  // #14 片A：送审 media 载荷补齐 mime/kind（读媒体 store 的 mime，kind 由 mime 推导）。
+  assert.deepEqual(
+    h.calls.screen[0].input.content.media,
+    [{ media_id: MEDIA, mime: 'image/jpeg', kind: 'image' }],
+    '送审 media 载荷必须投影 mime 与 kind',
+  );
+
+  // ims 端口被真正求值（离线合成端口）：收到带 mime 的 media_refs（归一通过）。
+  assert.equal(ims.requests.length, 1, 'ims 端口必须被求值');
+  assert.equal(ims.requests[0].kind, 'ims');
+  assert.equal(ims.requests[0].content.media_refs.length, 1);
+  assert.equal(ims.requests[0].content.media_refs[0].media_id, MEDIA);
+  assert.equal(ims.requests[0].content.media_refs[0].mime, 'image/jpeg');
+
   // 发布闸门**一次都没被调用**：带媒体内容留在审核链路里，不发布。
   assert.equal(h.calls.publish.length, 0, '带媒体内容不得调用发布闸门');
 
@@ -120,17 +163,48 @@ test('I1. 图片审核能力就绪（tms+ims 均已接线）⇒ 带媒体投稿�
   const verdict = await h.store.getModeration('post', created.id, 1);
   assert.notEqual(verdict, null);
   assert.equal(verdict.decision, 'quarantined');
-  assert.equal(verdict.contract_complete, false, '模型层未真正求值时不得声称契约完整');
+  assert.equal(verdict.contract_complete, false, '社区侧结论记录不产出模型层契约字段（由审核域读面负责）');
   assert.ok(
     verdict.reason_codes.includes('MEDIA_NOT_EVALUATED_BY_RULE_LAYER'),
     '规则层不评估媒体的声明码必须如实保留',
   );
+  // 补齐 mime 后不再报"图片不可支持"（归一通过，ims 端口真的被调用了）。
+  assert.equal(
+    verdict.reason_codes.includes('MODEL_MEDIA_UNSUPPORTED'),
+    false,
+    '媒体 mime 补齐后不得再报 MODEL_MEDIA_UNSUPPORTED',
+  );
+});
 
-  // 未取得项（如实钉住）：媒体引用缺 `mime`/`media_revision`（媒体域投影未接线），
-  // 因此图片端口此刻仍不会被真正求值 —— 这是记录，不是断言"已审图片"。
+// ---------------------------------------------------------------------------
+// I1b 负例：mime 不可得 ⇒ 归一仍拒绝（fail-closed，不伪造 mime/kind）
+// ---------------------------------------------------------------------------
+
+test('I1b. 媒体 store 无该媒体行（缺 mime）⇒ 仍报 MODEL_MEDIA_UNSUPPORTED、ims 端口不被求值', async () => {
+  const ims = countingPort(passingPort({ kind: 'ims' }));
+  const h = makeWiredHarness({
+    // 不注入媒体 store ⇒ 装配层自建的空内存 store 里没有 MEDIA 行 ⇒ mimeOf 返回 null。
+    ports: { tms: passingPort({ kind: 'tms' }), ims: ims.port },
+  });
+
+  const created = await h.service.createPost(USER_A, mediaPostInput(), { idempotencyKey: idem(911) });
+
+  // 送审载荷只有 media_id（缺 mime/kind），证明投影没有"伪造"。
+  assert.deepEqual(
+    h.calls.screen[0].input.content.media,
+    [{ media_id: MEDIA }],
+    '缺 mime 时送审 media 载荷必须只回 media_id',
+  );
+
+  // 归一失败 ⇒ ims 端口不被求值。
+  assert.equal(ims.requests.length, 0, '缺 mime 时 ims 端口不得被求值');
+
+  const verdict = await h.store.getModeration('post', created.id, 1);
+  assert.notEqual(verdict, null);
+  assert.equal(verdict.decision, 'quarantined');
   assert.ok(
     verdict.reason_codes.includes('MODEL_MEDIA_UNSUPPORTED'),
-    '未接媒体投影时必须如实报 MODEL_MEDIA_UNSUPPORTED（不得伪造成"已求值"）',
+    '缺 mime 时必须如实报 MODEL_MEDIA_UNSUPPORTED（fail-closed）',
   );
 });
 
