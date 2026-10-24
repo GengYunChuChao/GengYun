@@ -271,18 +271,6 @@
       "path": "docs/architecture/contract-status.json",
       "reason": "SUSPECT",
       "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:1771"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:1771"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
       "reference": "docs/architecture/contract-status.json:370"
     },
     {

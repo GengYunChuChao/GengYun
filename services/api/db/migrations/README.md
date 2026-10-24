@@ -4,14 +4,19 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态：`0001..0034` 连续，无缺号
+## 当前状态：本分支 = `0001..0034` + `0036`（`upstream/main` 侧到 `0034` 为止）
 
-迁移 `0001..0034` 已全部真实落盘：**34 个正向 + 33 个 down**（无 `0001` 的 down），末项 `0034`。
-保留台账 `services/api/db/migration-reservations.json` 的 `reservations` 为**空数组**
-（`count + 保留数 === max` ⇒ **34 + 0 === 34**），
-`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据为「`0001..0034` 连续、无缺口」。
-（本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations` ⇒
-正向 `.sql` 34 条、`rollback/` 33 条、`0001..0034` 无缺号。）
+迁移 `0001..0034` 已全部真实落盘；本分支在 `0034` 之后新增 `0036_r34_admin_content_persistence.sql`
+⇒ 树上共 **35 个正向 + 34 个 down**（无 `0001` 的 down），末项 `0036`。
+保留台账 `services/api/db/migration-reservations.json` 的 `reservations` 仍是**空数组**
+（`count + 保留数 === max` ⇒ **35 + 0 === 36** 不成立，差的那一个正是 `0035`）。
+`node tools/verify-migrations-unique.mjs` 因此会点名 `WARN[gap] 0035`；这是本分支**基于一条在途
+迁移号**的真实后果，不是发现器漏片：`0035` 属「媒体行侧物理删除」片（分支
+`feat/gy-r34-media-purge`，在飞），本片的前提是它先落 `main`，届时 `0001..0036` 自然连成一段。
+本段**刻意不**为 `0035` 写「有依据的缺号」那类声明：那会把「在途号尚未落盘」冻结成已裁定事实，
+而保留台账的既有纪律恰恰是「落盘即删，不许躺平」（`#525` / `#419` 两轮教训，见下）。
+（本段数字为实测：`git ls-tree -r --name-only HEAD -- services/api/db/migrations` ⇒
+正向 `.sql` 35 条、`rollback/` 34 条。）
 
 - `0033_admin_audit_log_read.sql`（R34 · 后台审计日志查询面，Refs #18）接在 `0032` 之后：
   编号前核对过全部 refs 与在途 PR（`003[3-9]_` 零命中）⇒ 直接用最大号 +1，**台账仍为空数组**。
@@ -22,6 +27,9 @@
   `remove_when` **删除**；本文件此前那行「该号待落盘、先挂保留台账」的当前状态表述**随之作废并删除**（保留项不许躺平：落盘即删），
   现本目录 `0001..0034` 连续、无缺号，`reservations` 为空数组。
 
+- `0036_r34_admin_content_persistence.sql`（R34 · #18 后台内容/资料域落库 + **列级**授权）接在 `0034` 之后：
+  `0035` 归在途的「媒体行侧物理删除」片、`0037` 由 `#14` 使用 ⇒ 本片取 `0036`，
+  **前提是 `0035` 先落 `main`**（合流顺序反过来即出现缺号，见上一段的 `WARN[gap]`）。
 - `0031_online_purge_evidence.sql`（#19 片B · 在线清理证据落库）与
   `0032_community_report_reporter_ref.sql`（#15 去身份残留 · 举报者行级注销引用）按裁定
   `.pg17/ruling-r32-migration-0031-allocation.md` 的归属落位：**0031 属 #19、0032 属 #15**。

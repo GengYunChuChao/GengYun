@@ -27,7 +27,7 @@ import type { ExecutionMode } from '../contract.ts';
 import { assertContractInput, collectIssues, MAX_FIELD_ERRORS } from './fields.ts';
 import { projectAuditEvent } from './audit.ts';
 import { createAdminContentStore } from './store.ts';
-import type { AdminContentStore } from './store.ts';
+import type { AdminContentStoreLike } from './store.ts';
 import { createCursorCodec } from './cursor.ts';
 import {
   CACHE_CONTROL_NO_STORE,
@@ -56,7 +56,7 @@ import {
   targetRefFor,
 } from './families.ts';
 import type { FamilyDescriptor } from './families.ts';
-import { DEPENDENT_FAMILIES, createReferenceIntegrity } from './reference-integrity.ts';
+import { DEPENDENT_FAMILIES, createAsyncReferenceIntegrity } from './reference-integrity.ts';
 import type { AdminCallContext, ServiceResponse } from './types.ts';
 
 /** 契约 `Meta` 与各信封共用；定义已抽到 `identity.ts`，此处只做转发以保持既有引用路径。 */
@@ -96,8 +96,11 @@ export interface WithdrawBody {
 }
 
 export interface AdminContentServiceOptions {
-  /** 允许注入 store（测试用）；缺省新建内存 store。 */
-  store?: AdminContentStore;
+  /**
+   * 允许注入 store（测试用）；缺省新建内存 store。
+   * 类型是 `AdminContentStoreLike`：内存实现（同步）与真库实现（异步）都能注入。
+   */
+  store?: AdminContentStoreLike;
   now?: () => Date;
   /** 幂等请求摘要与游标签名用的服务端密钥；只经内存传入，不入库。 */
   signingKey: string;
@@ -113,7 +116,7 @@ export interface AdminContentServiceOptions {
  * `operationsByFamily` 是同一份映射的机读形式，供测试断言「25 个 operationId 全部就位」。
  */
 export interface AdminContentService {
-  readonly store: AdminContentStore;
+  readonly store: AdminContentStoreLike;
   /** 本片实现的 operationId 全集（应恰好 25 个）。 */
   readonly operationIds: readonly string[];
 
@@ -167,19 +170,26 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
   const cursors = createCursorCodec(signingKey);
   // **引用完整性**（本片）：来源 → 引用 的同步失效。判定**每次读取重算**、不缓存，
   // 因此"下架/改版后旧链接与缓存里不得复活"由构造保证，而不是靠清缓存的动作。
-  const integrity = createReferenceIntegrity(store);
+  // 走异步支：真库 store 只有异步 API；内存 store 在 `await` 下语义逐字不变，
+  // 判定表与错误文案两侧共用（见 `reference-integrity.ts` 的 `resolveAgainst`）。
+  const integrity = createAsyncReferenceIntegrity(store);
 
   /**
    * 审计「范围」：来源类实体写清"这次变更影响了几条引用、其中几条失效"。
    * 依赖类实体写清"引用的是哪个来源版本、当前判定是什么"。
    * 只落在内部字段 `target_hint` 上（契约投影严格只有合同的 8 个字段）。
    */
-  function rangeHint(descriptor: FamilyDescriptor, entity: { id: string }, revisionNumber: number, content: unknown): string {
+  async function rangeHint(
+    descriptor: FamilyDescriptor,
+    entity: { id: string },
+    revisionNumber: number,
+    content: unknown,
+  ): Promise<string> {
     if (descriptor.family === 'sources') {
-      const impact = integrity.describeSourceChange(entity.id);
+      const impact = await integrity.describeSourceChange(entity.id);
       return `source:${entity.id}:rev=${revisionNumber}:live=${impact.liveVersion ?? 'none'}:refs=${impact.references}:invalidated=${impact.invalidated}`;
     }
-    const resolution = integrity.resolve(descriptor.family, content);
+    const resolution = await integrity.resolve(descriptor.family, content);
     return `${descriptor.noun}:${entity.id}:rev=${revisionNumber}:source=${resolution.sourceId ?? 'none'}@${resolution.referencedVersion ?? 'none'}:state=${resolution.state}`;
   }
 
@@ -191,9 +201,9 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
    * 解析「本主体管辖的」目标。三种情况对外同形，一律 NOT_FOUND：
    * 目标不存在、目标属于别的家族、目标由别的管理主体管辖。
    */
-  function resolveOwned(descriptor: FamilyDescriptor, context: ResolvedContext, rawId: unknown) {
+  async function resolveOwned(descriptor: FamilyDescriptor, context: ResolvedContext, rawId: unknown) {
     const id = normalizeIdParam(rawId);
-    const entity = store.getEntity(id);
+    const entity = await store.getEntity(id);
     if (entity === undefined || entity.family !== descriptor.family || entity.stewardId !== context.identity.userId) {
       throw new ApiError('NOT_FOUND', '资料不存在');
     }
@@ -204,14 +214,14 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
   // 四类资料共用的六个动作（就是「一套引擎」）
   // -------------------------------------------------------------------------
 
-  function listFamily(
+  async function listFamily(
     descriptor: FamilyDescriptor,
     context: ResolvedContext,
     query: PageQuery,
-  ): ServiceResponse<PageEnvelope> {
+  ): Promise<ServiceResponse<PageEnvelope>> {
     const limit = parseLimit(query.limit);
     const rawCursor = parseCursorParam(query.cursor);
-    const entities = store.listEntities(descriptor.family, context.identity.userId);
+    const entities = await store.listEntities(descriptor.family, context.identity.userId);
     const ids = entities.map((entity) => entity.id);
     const watermark = cursors.watermarkOf(ids);
 
@@ -271,14 +281,14 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
       context,
       { method: 'POST', path: descriptor.path, expectedStatus: 201 },
       body,
-      () => {
+      async () => {
         const issuedAt = now();
-        const entity = store.createEntity({
+        const entity = await store.createEntity({
           family: descriptor.family,
           stewardId: context.identity.userId,
           createdAt: issuedAt,
         });
-        const revision = store.appendRevision({
+        const revision = await store.appendRevision({
           entity,
           // 存储边界（`store.appendRevision`）自己负责深拷贝 + 深冻结：
           // 调用方事后改自己的对象、或改任何响应都动不了库里的修订内容。
@@ -292,13 +302,13 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
     );
   }
 
-  function getDraft(
+  async function getDraft(
     descriptor: FamilyDescriptor,
     ctx: AdminCallContext,
     id: string,
-  ): ServiceResponse<DraftEnvelope> {
+  ): Promise<ServiceResponse<DraftEnvelope>> {
     const context = resolveContext(ctx, descriptor.readScope);
-    const entity = resolveOwned(descriptor, context, id);
+    const entity = await resolveOwned(descriptor, context, id);
     const head = headRevision(entity);
     return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));
   }
@@ -320,12 +330,12 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
       context,
       { method: 'PATCH', path: `${descriptor.path}/${normalizedId}`, expectedStatus: 200 },
       body,
-      () => {
-        const entity = resolveOwned(descriptor, context, normalizedId);
+      async () => {
+        const entity = await resolveOwned(descriptor, context, normalizedId);
         const head = headRevision(entity);
         assertIfMatchMatches(expectedRevision, head.revision);
         // **只追加新修订**：已发布修订的正文（以及它上面的任何修订）都不会被改写。
-        const revision = store.appendRevision({
+        const revision = await store.appendRevision({
           entity,
           content: body,
           authorId: context.identity.userId,
@@ -346,7 +356,7 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           requestId: context.requestId,
           result: 'accepted',
           createdAt: revision.createdAt,
-          targetHint: rangeHint(descriptor, entity, revision.revision, revision.content),
+          targetHint: await rangeHint(descriptor, entity, revision.revision, revision.content),
         });
         return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, revision), etagOf(revision.revision));
       },
@@ -371,8 +381,8 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
       context,
       { method: 'POST', path: `${descriptor.path}/${normalizedId}/publish`, expectedStatus: 200 },
       body,
-      () => {
-        const entity = resolveOwned(descriptor, context, normalizedId);
+      async () => {
+        const entity = await resolveOwned(descriptor, context, normalizedId);
         const head = headRevision(entity);
         // 「revision 不一致」由 If-Match 承担：契约的发布体里没有 revision 字段。
         assertIfMatchMatches(expectedRevision, head.revision);
@@ -405,7 +415,7 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
         // 只拦"确认失效"（来源未发布/已撤回/版本不一致）；`unverifiable`（未接真实库、
         // 库外来源）**不拦** —— 详见 `reference-integrity.ts` 的口径表。
         if (DEPENDENT_FAMILIES.includes(descriptor.family)) {
-          const reference = integrity.resolve(descriptor.family, head.content);
+          const reference = await integrity.resolve(descriptor.family, head.content);
           if (reference.state === 'unavailable') {
             store.audit.append({
               actorId: context.identity.userId,
@@ -416,14 +426,15 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
               requestId: context.requestId,
               result: 'denied',
               createdAt: now(),
-              targetHint: rangeHint(descriptor, entity, head.revision, head.content),
+              targetHint: await rangeHint(descriptor, entity, head.revision, head.content),
             });
             // 抛契约闭集内的 422 SOURCE_CONFLICT（"来源条件冲突"），不新增错误码。
-            integrity.assertPublishable(descriptor.family, head.content);
+            await integrity.assertPublishable(descriptor.family, head.content);
           }
         }
 
-        // 全有或全无：以下提交是同步的，中间没有 await ⇒ 不存在部分发布。
+        // 全有或全无：字段赋值之间**没有** await，收尾的 `commitLifecycle` 才落库
+        // （真库在 `transaction()` 里 UPDATE，失败即整体回滚）⇒ 不存在部分发布。
         const committedAt = now();
         entity.publishedRevision = head.revision;
         entity.lifecycle = 'published';
@@ -431,6 +442,7 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
         entity.publishedById = context.identity.userId;
         entity.publishedEvidenceRef = publishBody.evidence_ref;
         entity.publishedReason = publishBody.reason;
+        await store.commitLifecycle(entity);
 
         store.audit.append({
           actorId: context.identity.userId,
@@ -442,7 +454,7 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           result: 'accepted',
           createdAt: committedAt,
           // 来源发布 ⇒ 生效版本变化 ⇒ 记录这次变化**影响到的引用范围**（含失效条数）。
-          targetHint: rangeHint(descriptor, entity, head.revision, head.content),
+          targetHint: await rangeHint(descriptor, entity, head.revision, head.content),
         });
 
         return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));
@@ -467,8 +479,8 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
       context,
       { method: 'POST', path: `${descriptor.path}/${normalizedId}/withdraw`, expectedStatus: 200 },
       body,
-      () => {
-        const entity = resolveOwned(descriptor, context, normalizedId);
+      async () => {
+        const entity = await resolveOwned(descriptor, context, normalizedId);
         const head = headRevision(entity);
         assertIfMatchMatches(expectedRevision, head.revision);
 
@@ -485,12 +497,13 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           throw new ApiError('OBJECT_UNAVAILABLE', '资料尚未发布，没有可撤回的公开视图');
         }
 
-        // 全有或全无：同步提交。
+        // 全有或全无：字段赋值连续、无 await，收尾的 `commitLifecycle` 才落库。
         const committedAt = now();
         entity.lifecycle = 'withdrawn';
         entity.withdrawnAt = committedAt;
         entity.withdrawnById = context.identity.userId;
         entity.withdrawnReason = withdrawBody.reason;
+        await store.commitLifecycle(entity);
 
         store.audit.append({
           actorId: context.identity.userId,
@@ -504,7 +517,7 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           createdAt: committedAt,
           // 撤回来源 ⇒ 该来源不再生效 ⇒ 记录这次下架**失效掉的引用范围**（下架后不得复活，
           // 公开读由 `public-view.ts` 在每次读取时按同一判定重算）。
-          targetHint: rangeHint(descriptor, entity, head.revision, head.content),
+          targetHint: await rangeHint(descriptor, entity, head.revision, head.content),
         });
 
         return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));

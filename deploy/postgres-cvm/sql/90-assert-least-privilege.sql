@@ -1160,7 +1160,13 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 碰不了。段 M3 补列级授权，同时把两行登记进本清单：第 47 条元断言要求"public 下每个运行时
     -- 可见关系都被分类"，漏登记即判红；required=true 表示缺表（0028 未执行）直接失败。
     ('moderation_decisions',           'granted',          true),
-    ('moderation_withdrawals',         'granted',          true)
+    ('moderation_withdrawals',         'granted',          true),
+    -- 迁移 0036（R34 · #18）：后台内容／资料域三表。0036 只建表、零 GRANT ⇒ 本片在
+    -- 20-login-roles.sql 段 gy-r34-content-grant 逐列授权（无表级 DML、无 DELETE），
+    -- 并在这里同时补分类与下面 expected 的独立列清单复述。required=true：缺表（0036 未执行）直接失败。
+    ('admin_content_entities',         'granted',          true),
+    ('admin_content_revisions',        'granted',          true),
+    ('admin_content_idempotency',      'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -1412,6 +1418,35 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['target_type','target_id','target_revision'],
      ARRAY['target_type','target_id','target_revision','withdrawn_at'],
      ARRAY[]::text[],
+     false),
+    -- R34 · #18（迁移 0036）：后台内容／资料域三表。列清单与 20-login-roles.sql 段
+    -- gy-r34-content-grant 的列级 GRANT 是同一事实的两次写法（少一列/多一列/换个顺序都会被
+    -- 断言 49-58 与 tests/unit/least-privilege-expected-parity.test.mjs 抓住）。
+    -- sel 13 列 = admin/ops/content-pg.ts 的 ENTITY_COLUMNS（整行快照回给服务层）；
+    -- ins 5 列 = createEntity 的 INSERT 清单（其余列吃表默认值）；upd 9 列 = commitLifecycle 的
+    -- SET 清单（发布与撤回共用这一条语句，也是 SELECT … FOR UPDATE 的行锁载体）；
+    -- del=false：撤回是 lifecycle 状态位，本域没有任何整行删除。
+    ('admin_content_entities',
+     ARRAY['id','family','steward_id','lifecycle','published_revision','published_at','published_by_id',
+           'published_evidence_ref','published_reason','withdrawn_at','withdrawn_by_id','withdrawn_reason',
+           'created_at'],
+     ARRAY['id','family','steward_id','lifecycle','created_at'],
+     ARRAY['lifecycle','published_revision','published_at','published_by_id','published_evidence_ref',
+           'published_reason','withdrawn_at','withdrawn_by_id','withdrawn_reason'],
+     false),
+    -- 版本表：只追加（冻结的正文快照，正文是 jsonb 不可变）⇒ 没有任何 UPDATE 语句，upd 空数组。
+    ('admin_content_revisions',
+     ARRAY['entity_id','revision','content','author_id','derived_from_revision','created_at'],
+     ARRAY['entity_id','revision','content','author_id','derived_from_revision','created_at'],
+     ARRAY[]::text[],
+     false),
+    -- 幂等台账：形状照 favorites_idempotency（迁移 0018）。没有 DELETE —— release 把到期时刻推成
+    -- '-infinity'、purge 把过期结果清回占位（outcome = NULL），两者都是 UPDATE，
+    -- 故 upd 只有 4 列、del=false（这张 false 就是「不许为了省事改成表级 DELETE」的钉子）。
+    ('admin_content_idempotency',
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
+     ARRAY['request_hash','response_status','outcome','expires_at'],
      false)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
@@ -3693,13 +3728,16 @@ SELECT CASE
 -- R28-S33：判决行之后把「有失败」变成真正的 psql 错误。全绿时 DO 块静默（末行仍是 ok、
 -- 退出码 0）；有失败时 RAISE EXCEPTION ⇒ psql 以非零（3）退出，异常文本带 `FAIL` 与
 -- 失败的断言名。这是本片唯一改变退出码的语句；文本判决保持不变（给人看、给旧调用方兜底）。
--- 上限 4000：117 条断言全红时标签合计约 3.6K 字符（2026-10-21 合流后实测：总 117 条、
--- sum(length(label)+2)=3693、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
+-- 上限 4000：120 条断言全红时标签合计约 3.8K 字符（2026-10-24 R34 实测：总 120 条、
+-- sum(length(label)+2)=3814、最长 label 50 字符），正常不会截断；若未来断言数暴涨到上限，
 -- 判决行里仍有**完整**明细可查。
 -- R28-S45 更新：本片新增 runtime_users_login_insert_path（第 89 条）。R28-S51 合流后本文件共
 -- 108 条（S43 时 103 条 / 3239、S45 后 104 条 / 3272、S51 合流后 108 条 / 3404，均为实测）；
 -- R28-S52 又追加四条跨 schema 面（94–97），共 112 条 / 3553 实测；
 -- R28-S58 再追加五条身份与账本面（98–102），合流后共 117 条 / 3693。
+-- R34 · #18（迁移 0036）：expected 增三张后台内容域表 ⇒ 数据驱动的 49–58 各多一条，
+-- 合流后共 120 条 / 3814（+121 = 三条新标签的长度贡献）；`allow_table_dml` 与 49–58 的
+-- 硬否定一句未动（列级授权下三表都没有表级 INSERT/UPDATE/DELETE）。
 DO $$
 DECLARE
   v_failed integer;

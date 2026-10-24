@@ -1213,3 +1213,56 @@ GRANT INSERT (target_type,target_id,target_revision,withdrawn_at)
 
 \echo '20-login-roles.sql：已授予 public.moderation_decisions / public.moderation_withdrawals 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 moderation/ledger-pg.ts；SELECT 只给 WHERE 与 ON CONFLICT 冲突目标读到的列；无表级写权限）。'
 \echo '20-login-roles.sql：审核判定台账不授 DELETE（不可变审计面；ledger-pg.ts 无任何物理删除语句）。'
+-- --- 后台内容/资料域（R34 · #18 · 迁移 0036）：列级 SELECT/INSERT/UPDATE ---------
+-- 为什么是列级（本文件的一贯口径）：写面逐列反推自 services/api/src/admin/ops/content-pg.ts 的真实语句，
+-- 只给"语句真的碰到的那几列"。实体表的 9 个 UPDATE 列全是发布/撤回的状态机字段，revisions 是纯追加
+-- （无 UPDATE），幂等台账只改 request_hash/response_status/outcome/expires_at。
+-- 为什么没有 DELETE/TRUNCATE/REFERENCES/TRIGGER：撤回 = lifecycle 状态位；幂等台账的 release/purge
+-- 用 UPDATE 表达（到期时刻推成 '-infinity' / 把过期结果清回占位），业务上不存在"删一行内容"的操作。
+-- PG 也没有列级 DELETE，一旦授出就是整表可删、不可逆 —— 本域宁可不给。
+-- 注意：SELECT ... FOR UPDATE（实体快照读取）要 UPDATE 列级权限，上面的 UPDATE 清单已覆盖。
+-- 前置：迁移 0036 必须先执行（缺表即显式失败，绝不留"看似收敛、点开 503"的运行态）。
+-- #region gy-r34-content-grant
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['admin_content_entities','admin_content_revisions','admin_content_idempotency']) AS t(name)
+   WHERE to_regclass('public.'||t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少后台内容域表：%（迁移 0036_r34_admin_content_persistence.sql 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+REVOKE ALL ON TABLE public.admin_content_entities, public.admin_content_revisions,
+                   public.admin_content_idempotency FROM PUBLIC;
+
+-- 实体表（迁移 0036）：content-pg.ts 的 ENTITY_COLUMNS 是 13 列；INSERT 只写 5 列（其余是状态机默认值）。
+GRANT SELECT (id,family,steward_id,lifecycle,published_revision,published_at,published_by_id,
+              published_evidence_ref,published_reason,withdrawn_at,withdrawn_by_id,withdrawn_reason,created_at)
+  ON public.admin_content_entities TO gengyun_api_runtime;
+GRANT INSERT (id,family,steward_id,lifecycle,created_at)
+  ON public.admin_content_entities TO gengyun_api_runtime;
+-- 发布/撤回是唯一的两条 UPDATE（commitLifecycle 的 9 列）。
+GRANT UPDATE (lifecycle,published_revision,published_at,published_by_id,published_evidence_ref,
+              published_reason,withdrawn_at,withdrawn_by_id,withdrawn_reason)
+  ON public.admin_content_entities TO gengyun_api_runtime;
+
+-- 版本表（迁移 0036）：只追加，永不改写（冻结的正文快照）。
+GRANT SELECT (entity_id,revision,content,author_id,derived_from_revision,created_at)
+  ON public.admin_content_revisions TO gengyun_api_runtime;
+GRANT INSERT (entity_id,revision,content,author_id,derived_from_revision,created_at)
+  ON public.admin_content_revisions TO gengyun_api_runtime;
+
+-- 幂等台账（迁移 0036）：形状照 favorites_idempotency（0018）；无 DELETE，释放/清理都走 UPDATE。
+GRANT SELECT (scope,key_hash,request_hash,response_status,outcome,expires_at)
+  ON public.admin_content_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope,key_hash,request_hash,response_status,outcome,expires_at)
+  ON public.admin_content_idempotency TO gengyun_api_runtime;
+GRANT UPDATE (request_hash,response_status,outcome,expires_at)
+  ON public.admin_content_idempotency TO gengyun_api_runtime;
+-- #endregion gy-r34-content-grant
+
+\echo '20-login-roles.sql：已授予 public.admin_content_entities（13/5/9 列）、public.admin_content_revisions（6/6/0 列）、public.admin_content_idempotency（6/6/4 列）的列级 SELECT/INSERT/UPDATE（逐列反推自 admin/ops/content-pg.ts；无表级 DML、无 INSERT/UPDATE 的表级授权）。'
+\echo '20-login-roles.sql：后台内容域不授 DELETE —— 撤回是 lifecycle 状态位，幂等台账的释放/清理走 UPDATE（PG 无列级 DELETE，授出即整表可删）。'

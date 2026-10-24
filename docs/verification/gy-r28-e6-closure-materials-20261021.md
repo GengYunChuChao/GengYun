@@ -184,7 +184,7 @@
 
 | 编号 | 缺什么 | 原因与前置 |
 | --- | --- | --- |
-| B1 | 排序口径在**台账**仍未收口（与 A7 方向相反） | `docs/architecture/contract-status.json:716`（`GET /knowledge` 条目 blocker 逐字「当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留」）、`:3164`（跨切面条目同义）；`docs/architecture/contract-implementation-status.md:72`（`listKnowledge` 记 `partial`）。本片红线不改 JSON／台账 ⇒ 只登记口径差 |
+| B1 | 排序口径在**台账**仍未收口（与 A7 方向相反） | `docs/architecture/contract-status.json:715`（`GET /knowledge` 条目 blocker 逐字「当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留」）、`:3164`（跨切面条目同义）；`docs/architecture/contract-implementation-status.md:72`（`listKnowledge` 记 `partial`）。本片红线不改 JSON／台账 ⇒ 只登记口径差 |
 | B2 | 真实来源与真实消费者读数 | [知识小程序接线盘点](gy-i07-knowledge-miniprogram-wiring-20261021.md) §8；其中 `source.updated_at` 由 `retrieved_at`（日期）转 `date-time` 的服务端投影**未实测**（同页 §5） |
 | B3 | 真机／开发者工具渲染读数 | 同页 §7（`cli.bat` 返回 `EPERM`／未安装）；`platform-checklist.md:40`「未验证」 |
 | B4 | 「实际来源」的审核与许可事实 | `packages/knowledge/zhejiang/materials-zhejiang-v1.json:42`／`:71`（`review_status: "unverified"`）、`:46`／`:75`（`licensed: false`）⇒ 展示面只能按未核对呈现；取得核准来源属 #3／#10 线 |
@@ -284,7 +284,7 @@
 | `real` 模式注销 503 | `app.ts:1731` | #16／#17 的 C5 到不了端到端 |
 | issue 前置 | #4 OPEN；#9／#10／#14／#15／#28／#29 OPEN；#3 CLOSED | 四张的 issue 正文都写了「缺前置不关闭整项」 |
 
-**本片对「哪一张的材料最齐」的判断（这是判断，不是结论，关闭权仍在监工）**：**#7 最齐**。理由是它的三条验收在代码与测试两层都有锚点（§3.2 A1–A7），唯一像「缺陷」的排序问题在代码侧已于 PR `b56ba9d` 对齐冻结契约（`service.ts:76`），剩下的只是台账仍记 `partial`（`contract-status.json:716`）——属口径/文档收口，不是行为缺口。还差的两项是：
+**本片对「哪一张的材料最齐」的判断（这是判断，不是结论，关闭权仍在监工）**：**#7 最齐**。理由是它的三条验收在代码与测试两层都有锚点（§3.2 A1–A7），唯一像「缺陷」的排序问题在代码侧已于 PR `b56ba9d` 对齐冻结契约（`service.ts:76`），剩下的只是台账仍记 `partial`（`contract-status.json:715`）——属口径/文档收口，不是行为缺口。还差的两项是：
 
 1. **B1 排序台账收口**：监工确认 `partial` 可撤 + 台账更新（本片红线不改 `contract-status.json`）。
 2. **B2 真实来源与消费者读数**：`source.updated_at` 日期→`date-time` 投影实测，加真机/开发者工具页面读数。
