@@ -74,7 +74,7 @@ export const THIRD_PARTY_STATES = Object.freeze([
 ]);
 
 /** states.DeletionState。 */
-export const DELETION_STATES = Object.freeze(['requested', 'processing', 'blocked', 'completed']);
+export const DELETION_STATES = Object.freeze(['requested', 'processing', 'blocked', 'completed', 'cancelled']);
 
 /** 删除 handler 状态（online / backup 各自独立）。 */
 export const HANDLER_STATES = Object.freeze(['pending', 'running', 'completed', 'blocked']);

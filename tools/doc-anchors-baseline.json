@@ -316,12 +316,6 @@
       "reference": "utils/auth.js:205"
     },
     {
-      "path": "miniprogram/utils/community-api.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/utils/community-api.js:366"
-    },
-    {
       "path": "miniprogram/utils/history-api.js",
       "reason": "SUSPECT",
       "owner": "miniprogram",

@@ -103,7 +103,7 @@
 | **到期未清 ⇒ `blocked`** | `purge/PURGE_DUE` ⇒ `blocked` + `STORE_REJECTED` + reason `BACKUP_PURGE_DUE_NOT_EXECUTED` | [11] +31 天后副本仍在 ⇒ 四域 `blocked`、`error_code=STORE_REJECTED`、整体 blocked |
 | **缺清单行 ⇒ `blocked`（不是 pending）** | 该域 0 行 ⇒ `blocked` + `EVIDENCE_REQUIRED`（reason `BACKUP_MANIFEST_MISSING`）；`failed` 行 ⇒ `blocked` + `STORE_REJECTED`；行输入非法 ⇒ `POLICY_BLOCKED` | 单测 19 条逐类 |
 | **不与在线侧抢结论** | `refreshBackupStates` 对 `onlineState !== 'completed'` 的模块**直接 skip**（不越过在线侧），只改备份列与备份证据段，在线证据段一字不动 | 单测；[12] 证据串形如 `favorites:online-purged:1;favorites:idempotency-purged:0;favorites:backup-purged:sha256:…` |
-| **不自己宣布整体完成** | 刷新完仍调 `coordinator.completionStatus()` 让协议判；只把「上一次执行留下的过期 `blocked`」复位成 `processing`（`deletion.mjs:311` 要求 `state!=='blocked'` 才可能升 completed） | [12] 整体 `completed` 由协议给出（不是本模块写的） |
+| **不自己宣布整体完成** | 刷新完仍调 `coordinator.completionStatus()` 让协议判；只把「上一次执行留下的过期 `blocked`」复位成 `processing`（`deletion.mjs:334` 要求 `state!=='blocked'` 才可能升 completed） | [12] 整体 `completed` 由协议给出（不是本模块写的） |
 | **读不到 ≠ 清完了** | `derive()` 抛错 ⇒ 折叠 `unreadableBackupStates()`（四域 `blocked` + `STORE_UNREACHABLE`），⛔ 不返回 pending | 单测 |
 | **回执可见性** | 刷新插在 `GET /account/deletions/:id` 取回执**之前**（`routes/account-deletion.ts:199` 之前一行）与 POST replay 之前 | 代码位置；HTTP 面读数未取得（§7） |
 
@@ -425,7 +425,7 @@ npm run purge:online-data -- --cursor-file /var/lib/gengyun/online-purge-cursor.
 
 | 候选 | 为什么不选 / 为什么选 |
 | --- | --- |
-| ① 清完就把 `state` 写成 `completed` | **直接违反监工原话**，也与既有语义冲突：在线四域只是整笔注销的一环，30 日备份副本还在等，整笔完成由 `deletion_handlers` 协调器判（`deletion.mjs:311`），命令侧无权代它下结论 |
+| ① 清完就把 `state` 写成 `completed` | **直接违反监工原话**，也与既有语义冲突：在线四域只是整笔注销的一环，30 日备份副本还在等，整笔完成由 `deletion_handlers` 协调器判（`deletion.mjs:334`），命令侧无权代它下结论 |
 | ② 每轮把已清的请求"藏起来"（例如写一个新状态 `online_purged`） | 要 **新迁移 + 新授权面**（`deletion_state` 枚举、`20-login-roles.sql`、`90-assert-least-privilege.sql` 三处同改），与本片「不新增迁移」的裁决（D1）直接冲突；而且把"清到哪儿"和"这笔注销到哪一步"混成同一个状态位，后续协调器更难判 |
 | ③ keyset 游标 + 机器本地游标文件（**选中**） | 不改迁移、不改授权面、不碰请求状态；`(online_due_at, id)` 严格大于就能保证"下一页一定是没选过的行"，天然幂等、天然可重放；走到队尾删文件 ⇒ 下一轮从队首重扫一整轮，把所有 `already_purged` 重新核一遍。代价只是"进度跟着机器走"（§7-10） |
 

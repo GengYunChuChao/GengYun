@@ -75,7 +75,7 @@
 
 | 检查 | 读数 | 结论 |
 | --- | --- | --- |
-| 契约 operation | `packages/contracts/openapi.json:7022`（`GET /messages`）、`:7110`（`GET /messages/unread-count`）、`:7191`（`PUT /messages/{id}/read`） | messages 只有**这 3 条**；全文件**没有任何** `DELETE` 路径或 `deleteMessages` 类 operationId ⇒ **面向用户的删除仍「契约未通」** |
+| 契约 operation | `packages/contracts/openapi.json:7188`（`GET /messages`）、`:7276`（`GET /messages/unread-count`）、`:7357`（`PUT /messages/{id}/read`） | messages 只有**这 3 条**；全文件**没有任何** `DELETE` 路径或 `deleteMessages` 类 operationId ⇒ **面向用户的删除仍「契约未通」** |
 | HTTP 面 | `services/api/src/routes/messages.ts`（全文 71 行） | 只有 `app.get`×2 + `app.put`×1；无 `app.delete` |
 | store 原语（**合流后状态**） | `services/api/src/messages/store.ts:103-105`（`PurgeableMessagesStore`：`deleteAllByOwner`/`purgeOwnerData`）、`:290-297`（内存实现）、`store-pg.ts:414-421`（PG 真删） | **已有注销清理原语**（C1 片随 main 合入，**不是本片**）；但**未注册进注销闭集**：`services/api/src/privacy/user-data-deletion.ts:67` 的 `USER_DATA_DELETION_MODULES` 仍只有 `favorites`/`history` ⇒ B4 页的 **G1 已补、G2 仍在** |
 | 客户端 | `messages.wxml`（151 行）、`messages-api.js`（导出 12 项） | 无删除入口、无 delete 方法 —— 与契约一致，**不是漏做 UI** |
