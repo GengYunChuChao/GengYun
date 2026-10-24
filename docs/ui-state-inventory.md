@@ -30,10 +30,10 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 | 状态 | key | 触发条件 | 图标 | 主色 | 默认操作 | 当前页面使用 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 未登录 | `guest` | 未接入真实会话 | 锁 | 主题绿 | 去登录 | 社区、消息、我的、收藏、历史、知识、识别、specimen、科普资料查询（`reference`，会话失效时） |
-| 空结果 | `empty` | 查询无数据 | 空箱 | 中性 | 可由页面指定 | 社区、消息（列表空／筛选空）、知识、收藏、历史、社区详情、历史详情、specimen、科普资料浏览（`referenceseed`） |
+| 未登录 | `guest` | 未接入真实会话 | 锁 | 主题绿 | 去登录 | 社区、消息、我的、收藏、历史、知识、识别、specimen、科普资料查询（`reference`，会话失效时）、授权清单（`pages/consent`） |
+| 空结果 | `empty` | 查询无数据 | 空箱 | 中性 | 可由页面指定 | 社区、消息（列表空／筛选空）、知识、收藏、历史、社区详情、历史详情、specimen、科普资料浏览（`referenceseed`）、授权清单（服务端确实 0 条授权时） |
 | 处理中 | `loading` | 请求进行中 | 沙漏 | 蓝 | 无 | 五 Tab（社区/识别/消息/我的/首页诊断）与知识、收藏、历史、详情页、科普资料查询与详情（`reference`／`referencedetail`） |
-| 失败 | `error` | 网络或服务失败 | 警告 | 红 | 可由页面指定 | 五 Tab 与知识、收藏、历史、详情页、科普资料查询与详情（`reference`「重试查询」／`referencedetail`「重试读取」）；**2026-10-21 起可传 `error-code` 补分类标签与可重试性** |
+| 失败 | `error` | 网络或服务失败 | 警告 | 红 | 可由页面指定 | 五 Tab 与知识、收藏、历史、详情页、科普资料查询与详情（`reference`「重试查询」／`referencedetail`「重试读取」）、授权清单（失败不折叠成空列表）；**2026-10-21 起可传 `error-code` 补分类标签与可重试性** |
 | 已取消 | `cancelled` | 用户主动取消 | 禁止 | 中性 | 无 | 识别（`JobState=cancelled`）、specimen |
 | 已删除／失效 | `invalid` | 来源下架或过期 | 禁止 | 暗黄 | 无 | 社区详情、历史详情、specimen |
 | 替身数据 | `stub` | 开发模式下的示例数据（另接受别名 `mock`） | 试管 | 紫 | 无，固定标注 | 首页、识别、我的、specimen；社区与消息用置顶 `notice--stub` 标注 |
@@ -42,6 +42,8 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 **当前实际使用九种**（`guest`／`empty`／`loading`／`error`／`cancelled`／`invalid`／`stub`／`denied`／`ready`）——
 2026-10-21 B7 收尾时重新核对：早期「实际使用四种」的说法已落后于页面实现，此处更正。
+
+**2026-10-24 增补（#29 P1 只读授权清单）**：`pages/consent` 读契约 `GET /me/consents`，只用 `guest`（登录门禁）／`loading`／`error`（含 `error-code` 透传）／`empty` 四态；**读取失败一律落 `error`，不得折叠成 `empty`**——「没读到」与「没授权」必须是两件可区分的事。该页本片只读，不提供 `denied` 的「去授权」动作，也不放授予／撤回开关（P2）。
 
 **B7 增补（2026-10-21，Refs #28）**：
 

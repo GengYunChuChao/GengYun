@@ -306,10 +306,10 @@
       "route": "/api/v1/me/privacy-policy",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "未装配"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [{ "path": "services/api/src/routes/consents.ts", "symbol": "app.get(`${API_PREFIX}/me/privacy-policy`", "lines": "90-97" }, { "path": "services/api/src/privacy/privacy-policy.ts", "symbol": "export function createPostgresPrivacyPolicyReader", "lines": "186-215" }, { "test": "tests/unit/privacy-policy-read.test.mjs", "name": "空态诚实：没有政策行 ⇒ 200 + version=unpublished，不编造政策文本也不 5xx" }],
+      "blocker": "已装配读面；生产政策与接收方清单尚未落种子（NON-PRODUCTION 占位待补）"
     },
     {
       "id": "listConsents",
@@ -324,7 +324,7 @@
         {
           "path": "services/api/src/routes/consents.ts",
           "symbol": "app.get(`${API_PREFIX}/me/consents`",
-          "lines": "40-49"
+          "lines": "54-59"
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
@@ -384,7 +384,7 @@
         {
           "path": "services/api/src/routes/consents.ts",
           "symbol": "app.delete(`${API_PREFIX}/me/consents/:purpose`",
-          "lines": "50-64"
+          "lines": "64-78"
         },
         {
           "path": "services/api/src/privacy/consent-pg.ts",
@@ -3280,7 +3280,7 @@
         {
           "path": "services/api/src/routes/consents.ts",
           "symbol": "REVISION_REQUIRED",
-          "lines": "59-63"
+          "lines": "74-74"
         },
         {
           "path": "services/api/src/routes/knowledge.ts",

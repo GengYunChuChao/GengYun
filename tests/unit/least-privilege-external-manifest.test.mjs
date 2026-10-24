@@ -61,7 +61,13 @@ const EXTERNAL_MANIFEST_TABLES = [
   'users',
 ];
 
-/** `allow_table_dml` 的 16 个三元组（本文件是表级写权限的唯一事实来源）。 */
+/**
+ * `allow_table_dml` 的 18 个三元组（本文件是表级写权限的唯一事实来源）。
+ *
+ * R34 片 3（#19 / #10）起从 16 长到 18：`ocr_jobs` / `ocr_records` 补表级 `DELETE`，
+ * 与早已表级的 `ocr_idempotency` 统一成「OCR 三表一条路线」（PG 无列级 DELETE）。
+ * 这两条是**用户 2026-10-24 批准**的唯一删除面例外；其它任何表加进本清单都必须先改裁定。
+ */
 const ALLOW_TABLE_DML_TRIPLES = [
   'public.community_idempotency.DELETE',
   'public.community_likes.DELETE',
@@ -77,6 +83,8 @@ const ALLOW_TABLE_DML_TRIPLES = [
   'public.media_object_cleanup.DELETE',
   'public.messages.DELETE',
   'public.ocr_idempotency.DELETE',
+  'public.ocr_jobs.DELETE',
+  'public.ocr_records.DELETE',
   'public.recognition_idempotency.DELETE',
   'public.speech_idempotency.DELETE',
 ];
@@ -107,7 +115,7 @@ test('external_manifest 恰是 16 张具名表，且 jobs / media 不在其中',
   }
 });
 
-test('allow_table_dml 恰是 16 个三元组，且不含 jobs', () => {
+test('allow_table_dml 恰是 18 个三元组，且不含 jobs', () => {
   const body = valuesBlock(SOURCE, /allow_table_dml\(sch, tbl, priv\) AS \(VALUES/);
   const triples = [];
   for (const line of body) {
@@ -115,7 +123,7 @@ test('allow_table_dml 恰是 16 个三元组，且不含 jobs', () => {
     if (m) triples.push(`${m[1]}.${m[2]}.${m[3]}`);
   }
 
-  assert.equal(triples.length, 16, `allow_table_dml 当前 ${triples.length} 组（应为 16）`);
+  assert.equal(triples.length, 18, `allow_table_dml 当前 ${triples.length} 组（应为 18）`);
   assert.deepEqual(
     [...triples].sort(),
     ALLOW_TABLE_DML_TRIPLES,

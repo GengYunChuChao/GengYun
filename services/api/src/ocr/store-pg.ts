@@ -67,7 +67,7 @@ import {
   type OcrVerificationDocument,
   type RegistryHerbicide,
 } from './state.ts';
-import type { IdempotencyRow, OcrJobRow, OcrRow, OcrStore } from './store.ts';
+import type { IdempotencyRow, OcrJobRow, OcrOwnerPurgeCounts, OcrRow, OcrStore } from './store.ts';
 
 /** `pg` 连接池/连接的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容）。 */
 export interface SqlRunner {
@@ -510,6 +510,49 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     }
   }
 
+  /**
+   * 注销闭集（R34 片 3 / #19）：按主体清空 OCR 域三表 —— **真删除、真行数**。
+   *
+   * 语句（三条 DELETE 在**同一事务**里，任一条失败整批回滚）：
+   *   `DELETE FROM public.ocr_records     WHERE owner_user_id = $1::uuid RETURNING id`
+   *   `DELETE FROM public.ocr_jobs        WHERE owner_user_id = $1::uuid RETURNING id`
+   *   `DELETE FROM public.ocr_idempotency WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10) RETURNING scope`
+   *
+   * 为什么现在能直接 DELETE：R34 片 3 起 OCR 三表 DELETE 是**用户批准的表级例外**
+   * （`deploy/postgres-cvm/sql/20-login-roles.sql` 的 R34 段 + `90-assert` 的
+   * `allow_table_dml` 三元组），替换此前的 `SECURITY DEFINER` 路线。授权面若被收紧，这里会拿到
+   * `42501` 并由 `classifyOcrDatabaseError` 折叠成可诊断的数据库错误 ⇒ 协议记 `blocked` +
+   * `HANDLER_FAILED`，⛔ 不会被读成"清完了"。
+   *
+   * 行数口径：`RETURNING` 的行数 = **实际删除**的行数（不是"匹配行数"，也不是"执行了语句"）。
+   * 顺序：**先子后父** —— `ocr_records` 是 `ocr_jobs` 的产物（两表之间没有外键，顺序按语义）。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<OcrOwnerPurgeCounts> {
+    await requireTables();
+    return withTransaction(async (sql) => {
+      const records = await sql.query(
+        'DELETE FROM public.ocr_records WHERE owner_user_id = $1::uuid RETURNING id',
+        [ownerId],
+      );
+      const jobs = await sql.query(
+        'DELETE FROM public.ocr_jobs WHERE owner_user_id = $1::uuid RETURNING id',
+        [ownerId],
+      );
+      // 幂等台账没有主体列：scope 首段恒为主体 uuid + 换行（与迁移 0034 的同一条判据）。
+      const idempotency = await sql.query(
+        `DELETE FROM public.ocr_idempotency
+          WHERE left(scope, char_length($1::text) + 1) = $1::text || chr(10)
+      RETURNING scope`,
+        [ownerId],
+      );
+      return {
+        records: records.rows.length + jobs.rows.length,
+        idempotency: idempotency.rows.length,
+        tableCounts: { ocr_records: records.rows.length, ocr_jobs: jobs.rows.length },
+      };
+    });
+  }
+
   return {
     persistent: true,
 
@@ -714,6 +757,13 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
         [now],
       );
       return rows.length;
+    },
+
+    purgeOwnerData: purgeOwnerRows,
+
+    async deleteAllByOwner(ownerId) {
+      // 注销协议的简化形态：只回报正文表行数（幂等台账行数由 `purgeOwnerData` 单独给）。
+      return (await purgeOwnerRows(ownerId)).records;
     },
   };
 }

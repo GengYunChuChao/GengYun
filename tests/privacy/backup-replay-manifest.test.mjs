@@ -754,3 +754,86 @@ test('第三方待删重播：未接线 fail-closed；requested 绝不等于 con
   assert.equal(pendingTp.restore_safe, false);
   assert.equal(JSON.stringify(pendingTp).includes('"restore_safe":true'), false);
 });
+
+test('风险A：带密钥 HMAC 摘要 —— 篡改后重算无密钥摘要仍被拒（零调用）', async () => {
+  const hmacKey = 'test-manifest-hmac-key';
+  const mkKeyed = () => buildBackupReplayManifest({
+    snapshot: snapshot({ watermark: DAY30, contains_object_refs: ['opaque:obj-1', 'opaque:obj-2'] }),
+    tombstones: [
+      tombstone({ object_ref: 'opaque:obj-1' }),
+      tombstone({ object_ref: 'opaque:obj-2', scope: 'media' }),
+    ],
+    now: DAY30,
+    hmacKey,
+  });
+
+  const manifest = mkKeyed();
+  assert.equal(manifest.entries_required, 2);
+
+  // 带密钥摘要必须区别于无密钥摘要（同一内容）—— 证明 digest 已被密钥绑定。
+  const unkeyed = buildBackupReplayManifest({
+    snapshot: snapshot({ watermark: DAY30, contains_object_refs: ['opaque:obj-1', 'opaque:obj-2'] }),
+    tombstones: [
+      tombstone({ object_ref: 'opaque:obj-1' }),
+      tombstone({ object_ref: 'opaque:obj-2', scope: 'media' }),
+    ],
+    now: DAY30,
+  });
+  assert.notEqual(manifest.manifest_digest, unkeyed.manifest_digest, '带密钥摘要必须不同于无密钥摘要');
+
+  // 攻击者：把条目裁剪为 1 条，并用**无密钥 sha256** 重算摘要（他不知道密钥）。
+  // 这里用「同内容、无密钥重建清单」的 digest 当作攻击者伪造的摘要。
+  const forgedOne = buildBackupReplayManifest({
+    snapshot: snapshot({ watermark: DAY30, contains_object_refs: ['opaque:obj-1'] }),
+    tombstones: [tombstone({ object_ref: 'opaque:obj-1' })],
+    now: DAY30,
+  });
+  const forged = Object.freeze({
+    ...manifest,
+    entries: Object.freeze([manifest.entries[0]]),
+    manifest_digest: forgedOne.manifest_digest,
+  });
+
+  const target = fakeTarget({ live: ['opaque:obj-1'] });
+  const result = await executeBackupReplay({ manifest: forged, target, hmacKey });
+  assertReplayInvariants(result, '风险A 伪造摘要');
+  assert.equal(result.reason_code, REASON.MANIFEST_TAMPERED);
+  assert.deepEqual([...result.entries], []);
+  assert.equal(result.restore_safe, false);
+  assert.equal(target.calls.length, 0, '伪造摘要 ⇒ 零调用，绝不进入重放');
+
+  // 正向对照：同一密钥、未篡改清单 ⇒ 正常重放，可安全。
+  const ok = await executeBackupReplay({ manifest, target: fakeTarget({ live: ['opaque:obj-1', 'opaque:obj-2'] }), hmacKey });
+  assertReplayInvariants(ok, '风险A 正向');
+  assert.equal(ok.restore_safe, true);
+  assert.equal(ok.reason_code, null);
+});
+
+test('风险B：isVisible 返回非布尔 ⇒ fail-closed（不静默放行，视作无法验证）', async () => {
+  const manifest = buildBackupReplayManifest({
+    snapshot: snapshot({ watermark: DAY30, contains_object_refs: ['opaque:obj-1'] }),
+    tombstones: [tombstone({ object_ref: 'opaque:obj-1' })],
+    now: DAY30,
+  });
+  assert.equal(manifest.entries[0].needed, true);
+
+  for (const [label, nonBool] of [['undefined', undefined], ['null', null], ['字符串', 'yes'], ['数字', 1]]) {
+    const target = fakeTarget({ live: ['opaque:obj-1'] });
+    target.isVisible = () => nonBool;
+    const result = await executeBackupReplay({ manifest, target });
+    assertReplayInvariants(result, `isVisible=${label}`);
+    assert.equal(result.entries[0].visible_after, null, `isVisible 返回 ${label} ⇒ 视作无法验证`);
+    assert.equal(result.entries[0].restore_safe, false, label);
+    assert.equal(result.entries[0].reason_code, REASON.VERIFY_UNAVAILABLE, label);
+    assert.equal(result.verified_no_revival, false, label);
+    assert.equal(result.restore_safe, false, label);
+    assert.equal(result.isolation_required, true, label);
+    assert.ok([...result.reasons].includes(REASON.VERIFY_UNAVAILABLE), label);
+  }
+
+  // 正向对照：isVisible 严格布尔 false ⇒ 正常安全。
+  const ok = await executeBackupReplay({ manifest, target: fakeTarget({ live: ['opaque:obj-1'] }) });
+  assertReplayInvariants(ok, 'isVisible=false');
+  assert.equal(ok.entries[0].visible_after, false);
+  assert.equal(ok.restore_safe, true);
+});
