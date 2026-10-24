@@ -35,6 +35,16 @@
 // PG 没有列级 DELETE ⇒ 清理只能经 `SECURITY DEFINER` 函数（迁移 0034），
 // 由 `20-login-roles.sql` 的 `gy-r34-i19-owner-content-purge-grant` 区域只授 EXECUTE。
 // 清理**跑在运行时角色上**，并在断言里实测两侧：能执行函数 ≠ 能删表。
+//
+// ## R34 片 3 的分岔（别把两域的口径套到 OCR 上）
+//
+// 同一个闭集里 `ocr` 域走的是**相反**的路：`ocr_jobs` / `ocr_records` 拿到的是
+// **表级 `GRANT DELETE`**（用户 2026-10-24 批准的**唯一**例外，与早已表级的
+// `ocr_idempotency` 统一成一条路线），由 `ocr/store-pg.ts` 的 `purgeOwnerRows` 直接
+// `DELETE … RETURNING`，不经 definer 函数。所以本臂对这两张表断言的是
+// `has_table_privilege(...,'DELETE') = true`，并真的把模板里那两条 GRANT 跑一遍
+// （`ocrGrantBlock()`）—— 少了授权，`ocr` 域会 fail-closed 折成 `blocked`，
+// 下面的回执断言立刻红。⛔ 这两条授权**只限**这两张表：`public.media` 与五张禁止面一律不变。
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -51,6 +61,7 @@ import { idempotencyKeyHashHex, idempotencyScope } from '../../services/api/src/
 import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createPostgresOcrStore } from '../../services/api/src/ocr/store-pg.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 import { createPostgresRecognitionStore } from '../../services/api/src/recognitions/store-pg.ts';
 import { createPostgresSpeechStore } from '../../services/api/src/speech/store-pg.ts';
@@ -67,6 +78,12 @@ if (binDir === '') {
 
 const DB_NAME = 'gengyun_recs_speech_purge_test';
 const RUNTIME_ROLE = 'gengyun_api_runtime';
+/**
+ * R34 片 3 起运行时**真的有**表级 `DELETE` 的两张表（用户 2026-10-24 批准的例外）。
+ * 与 `OWNER_PURGE_TABLES`（识别/语音的五张禁止面，`DELETE` 必须 `false`）方向相反：
+ * 这里是 `true` 才是设计。`ocr_idempotency` 本来就有表级 DELETE，不在本表里。
+ */
+const OCR_DELETE_GRANT_TABLES = ['ocr_jobs', 'ocr_records'];
 const serverLog =
   process.env.GY_R34_PG_LOG ?? join(tmpdir(), `gy-r34-rec-speech-pg-${randomBytes(3).toString('hex')}.log`);
 
@@ -323,6 +340,9 @@ async function seedLedger(table, entries) {
 /**
  * 运行时角色的授权实测 —— 本片最关键的一条：生产身份**能执行清理函数**，
  * 但对五张正文/任务表**一条 DELETE 都没有**（禁止面），对 `public.users` 也没有。
+ *
+ * R34 片 3 起多测两列（`ocr_jobs` / `ocr_records` 的 `DELETE`）：这两张是**用户 2026-10-24
+ * 批准**的表级 DELETE 例外，`true` 才是设计（与上面五张的 `false` 方向相反，别抄错）。
  */
 const grantReadingsOfRuntime = async () => {
   const selected = OWNER_PURGE_TABLES
@@ -330,10 +350,80 @@ const grantReadingsOfRuntime = async () => {
     .concat(PURGE_FUNCTIONS.map(
       (name) => `has_function_privilege(current_user, 'public.${name}(uuid)', 'EXECUTE') AS ${name}_execute`,
     ))
+    .concat(OCR_DELETE_GRANT_TABLES.map(
+      (table) => `has_table_privilege(current_user, 'public.${table}', 'DELETE') AS ${table}`,
+    ))
     .concat("has_table_privilege(current_user, 'public.users', 'DELETE') AS users")
     .join(',\n              ');
   return (await pool.query(`SELECT current_user AS role,\n              ${selected}`)).rows[0];
 };
+
+/**
+ * 部署脚本里 OCR 三表**整段**授权（`20-login-roles.sql` 的 `gy-r28-runtime-domain-grants` 区内，
+ * OCR 相关的 SELECT/INSERT/UPDATE 列级 + 本片新增的两条表级 `DELETE`）。
+ *
+ * 为什么整段而不是只抽两条 `DELETE`：`purgeOwnerRows` 写的是
+ * `DELETE FROM public.ocr_records WHERE owner_user_id = $1::uuid RETURNING id` ——
+ * PG 要求 `WHERE` / `RETURNING` 引用的列也有 SELECT 权（否则照样 42501）。
+ * 只授表级 DELETE、不授列级 SELECT，本臂就会把「授权面不完整」误报成「fail-closed 生效」。
+ *
+ * 抽法：在 region 内按 `;` 切语句，只保留「语句里出现 public.ocr_*」且以 GRANT 开头的那些，
+ * 丢 `\echo`（纯输出）。断言三张表各有一条 SELECT / INSERT / UPDATE / DELETE，
+ * 且每条都只授给运行时角色 —— 少了、多了、授错对象都直接失败。
+ */
+function ocrGrantBlock() {
+  const text = deploySqlFile('20-login-roles.sql');
+  const startMarker = '-- #region gy-r28-runtime-domain-grants';
+  const endMarker = '-- #endregion gy-r28-runtime-domain-grants';
+  const start = text.indexOf(startMarker);
+  assert.ok(start > 0, `20-login-roles.sql 必须含运行时域授权区（锚点 ${startMarker}）`);
+  const end = text.indexOf(endMarker, start);
+  assert.ok(end > start, `运行时域授权区必须有结尾（锚点 ${endMarker}）`);
+  const region = text.slice(text.indexOf('\n', start) + 1, end);
+  const statements = region
+    .split(';')
+    .map((chunk) => chunk
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*\\echo\b/.test(line))
+      .join('\n')
+      .trim())
+    .filter((chunk) => /^\s*GRANT\s/m.test(chunk) && /public\.ocr_(jobs|records|idempotency)\b/.test(chunk));
+
+  for (const table of ['ocr_jobs', 'ocr_records', 'ocr_idempotency']) {
+    for (const priv of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+      const matched = statements.filter(
+        (statement) => statement.includes(`public.${table}`) && new RegExp(`GRANT\\s+${priv}\\b`).test(statement),
+      );
+      assert.equal(
+        matched.length,
+        1,
+        `20-login-roles.sql 里 public.${table} 的 ${priv} 授权必须恰好一条（实测 ${matched.length} 条）：`
+          + '少一条 ⇒ 运行时要么删不掉、要么连 WHERE/RETURNING 的列都读不到（一样是 42501）',
+      );
+      assert.match(
+        matched[0],
+        new RegExp(`TO\\s+${RUNTIME_ROLE}\\b`),
+        `public.${table} 的 ${priv} 只能授给运行时角色 ${RUNTIME_ROLE}`,
+      );
+    }
+  }
+  for (const table of OCR_DELETE_GRANT_TABLES) {
+    const statement = `GRANT DELETE ON public.${table} TO ${RUNTIME_ROLE};`;
+    assert.equal(
+      text.split(statement).length - 1,
+      1,
+      `20-login-roles.sql 必须恰好有一条 \`${statement}\``,
+    );
+  }
+  const block = `${statements.join(';\n')};`;
+  assert.equal(
+    /\\(set|gset|pset|if|endif|getenv|gexec|copytable)/.test(block),
+    false,
+    'OCR 授权段不得含 psql 元命令（\\echo 已丢弃）',
+  );
+  return block;
+}
+
 
 /**
  * 部署脚本里的识别域 + 语音域授权段（`20-login-roles.sql` 的 J 段 + K 段）。
@@ -461,6 +551,8 @@ try {
   await owner.query(`GRANT gengyun_auth_privacy TO ${RUNTIME_ROLE}`);
   await owner.query(deployGrants());
   await owner.query(purgeGrantBlock());
+  // R34 片 3：OCR 三表的整段授权（列级 SELECT/INSERT/UPDATE + 两条表级 DELETE，缺一条 test 就红）
+  await owner.query(ocrGrantBlock());
 
   pool = new pg.Pool({ connectionString: `postgresql://${RUNTIME_ROLE}:${password}@127.0.0.1:${port}/${DB_NAME}`, max: 6 });
   const grants = await grantReadingsOfRuntime();
@@ -481,9 +573,19 @@ try {
     );
   }
   assert.equal(grants.users, false, '运行时角色不得能 DELETE public.users（否则下面的 0 行可能是级联带走的）');
+  for (const table of OCR_DELETE_GRANT_TABLES) {
+    assert.equal(
+      grants[table],
+      true,
+      `运行时角色必须能 DELETE public.${table}：R34 片 3 起它是**用户 2026-10-24 批准**的表级例外`
+        + '（`20-login-roles.sql` 的 OCR 段末两条 GRANT）；这里是 false 就说明授权面回退了',
+    );
+  }
   say(
     `[1] 授权实测（生产身份 ${RUNTIME_ROLE}）：${PURGE_FUNCTIONS.map((name) => `${name} EXECUTE=${grants[`${name}_execute`]}`).join('、')}；`
-      + `${OWNER_PURGE_TABLES.map((table) => `${table} DELETE=${grants[table]}`).join('、')}；users DELETE=false`,
+      + `${OWNER_PURGE_TABLES.map((table) => `${table} DELETE=${grants[table]}`).join('、')}；`
+      + `${OCR_DELETE_GRANT_TABLES.map((table) => `${table} DELETE=${grants[table]}`).join('、')}（R34 片 3 例外）；`
+      + 'users DELETE=false',
   );
 
   // ---- [1b] 成对的反向控制：运行时直接 DELETE 这五张表必须恰好 42501 ----
@@ -507,6 +609,8 @@ try {
   // ---- [2] 造数：三主体（A=被注销、B=他人、C=负控制），各若干识别/语音行 + 各若干台账行 ----
   const recognitionStore = createPostgresRecognitionStore({ pool });
   const speechStore = createPostgresSpeechStore({ pool });
+  // R34 片 3：OCR 三表（0024）也在 `[1]` 的全量迁移里就位，直接用运行时池接真库 store。
+  const ocrStore = createPostgresOcrStore({ pool });
   const subjectA = randomUUID();
   const subjectB = randomUUID();
   const subjectC = randomUUID();
@@ -616,32 +720,46 @@ try {
     },
     purgeOwnerData: (ownerId) => speechStore.purgeOwnerData(ownerId),
   };
+  // R34 片 3：OCR 域也接真库（三表 `ocr_jobs` / `ocr_records` / `ocr_idempotency`）。
+  // ⚠️ 与前两域方向**相反**：识别/语音零表级 DELETE、只能走 0034 的 definer 函数；
+  // OCR 三表是用户 2026-10-24 批准的**表级** `GRANT DELETE` 例外，所以这里跑的是真 DELETE。
+  // 本臂不造 OCR 行（行数口径由 `tests/unit/user-data-deletion-ocr.test.mjs` 与 PGlite 用例覆盖），
+  // 但**语句会真的执行** ⇒ 一旦那两条 GRANT 回退，运行时会拿到 42501、该域折叠 blocked，下面全红。
+  const ocrDeletionStore = {
+    async deleteAllByOwner(ownerId) {
+      return (await ocrStore.purgeOwnerData(ownerId)).records;
+    },
+    purgeOwnerData: (ownerId) => ocrStore.purgeOwnerData(ownerId),
+  };
   const deletion = createUserDataDeletion({
     favoritesStore: createMemoryFavoritesStore(),
     historyStore: createMemoryHistoryStore(),
-    // 消息/会话域在本片不接真库：用内存实现占位，本脚本只量识别/语音两域的行数。
+    // 消息/会话域在本片不接真库：用内存实现占位，本脚本只量识别/语音/OCR 三域的行数。
     messagesStore: { deleteAllByOwner: async () => 0 },
     conversationsStore: createMemoryConversationStore(),
     recognitionsStore: recognitionsDeletionStore,
     speechStore: speechDeletionStore,
+    ocrStore: ocrDeletionStore,
   });
   const requiredModules = deletion.requiredModules();
   assert.deepEqual(
     requiredModules,
-    ['favorites', 'history', 'messages', 'conversations', 'recognitions', 'speech'],
-    `必需模块闭集必须是四域 + 识别 + 语音（现场 ${requiredModules.join('/')}）`,
+    ['favorites', 'history', 'messages', 'conversations', 'recognitions', 'speech', 'ocr'],
+    `必需模块闭集必须是四域 + 识别 + 语音 + OCR（现场 ${requiredModules.join('/')}）`,
   );
   assert.deepEqual(deletion.coordinator.missingRegistrations(), [], '闭集内每个模块都必须已注册处理器');
-  say(`[3] 注销闭集：${requiredModules.join(' / ')}（六项，missingRegistrations 为空）`);
+  say(`[3] 注销闭集：${requiredModules.join(' / ')}（七项，missingRegistrations 为空）`);
 
-  // ---- [4] 跑注销清理：走**真实协调器** → 两个真实 `purgeOwnerData`（运行时角色）----
+  // ---- [4] 跑注销清理：走**真实协调器** → 三个真实 `purgeOwnerData`（运行时角色）----
   const requestA = deletion.requestDeletionFor(subjectA);
   await deletion.executeHandlers(requestA.id);
   const evidenceA = deletion.evidenceOf(requestA.id);
   const evidenceRecognition = String(evidenceA['recognitions'] ?? '');
   const evidenceSpeech = String(evidenceA['speech'] ?? '');
+  const evidenceOcr = String(evidenceA['ocr'] ?? '');
   note(`[4] recognitions 证据串逐字：${evidenceRecognition}`);
   note(`[4] speech 证据串逐字：${evidenceSpeech}`);
+  note(`[4] ocr 证据串逐字：${evidenceOcr}`);
 
   const recognitionMatch = evidenceRecognition.match(/^recognitions:online-purged:(\d+);recognitions:idempotency-purged:(\d+)$/);
   assert.ok(
@@ -659,8 +777,27 @@ try {
   const speechRowsBefore = baseline.speechA.reduce((sum, value) => sum + value, 0);
   assert.equal(Number(speechMatch[1]), speechRowsBefore, `语音域 online-purged 必须等于清理前 A 的两表行数之和（${speechRowsBefore}）`);
   assert.equal(Number(speechMatch[2]), baseline.ledgerSpeechA, `语音域 idempotency-purged 必须等于清理前 A 的台账行数（${baseline.ledgerSpeechA}）`);
+  // OCR 域（R34 片 3）：三表是**表级 DELETE**，所以证据串比前两域多一段 `tables:` 分表读数
+  // （键序 = 删除顺序：先 `ocr_records` 后 `ocr_jobs`）。本臂不造 OCR 行 ⇒ 逐表都是 0；
+  // ⚠️ 这条同时是授权面哨兵：若两条 GRANT DELETE 回退 ⇒ 42501 ⇒ 该域折叠 blocked ⇒ 这里与
+  // 回执的 `online_state=completed` 一起红（不会静默变成"0 行 = 清完了"）。
+  assert.equal(
+    evidenceOcr,
+    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+    `OCR 域证据串必须带 tables 分表读数（现场 ${JSON.stringify(evidenceOcr)}）`,
+  );
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.ocr_jobs WHERE owner_user_id = $1::uuid', [subjectA]),
+    0,
+    'OCR 域清理后本主体 ocr_jobs 必须 0 行',
+  );
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.ocr_records WHERE owner_user_id = $1::uuid', [subjectA]),
+    0,
+    'OCR 域清理后本主体 ocr_records 必须 0 行',
+  );
   say(
-    `[4] 证据串：${evidenceRecognition} / ${evidenceSpeech}（计数取自 DELETE … RETURNING 的实际行数，且逐项等于清理前读数）`,
+    `[4] 证据串：${evidenceRecognition} / ${evidenceSpeech} / ${evidenceOcr}（计数取自 DELETE … RETURNING 的实际行数，且逐项等于清理前读数）`,
   );
 
   // ---- [5] 断言一：本主体七表按 FK 先子后父删到 0 行；他人行原样；users 行仍在 ----
@@ -738,12 +875,17 @@ try {
       + `两本台账整表 ${ledgerTotalBefore.recognition}/${ledgerTotalBefore.speech} → ${ledgerTotalAfter.recognition}/${ledgerTotalAfter.speech} 行（不是整表清空）`,
   );
 
-  // ---- [7] 重放幂等：对同一主体再跑一次 ⇒ 四个计数都是 0（计数真的来自 RETURNING）----
+  // ---- [7] 重放幂等：对同一主体再跑一次 ⇒ 各域计数都是 0（计数真的来自 RETURNING）----
   const requestA2 = deletion.requestDeletionFor(subjectA);
   await deletion.executeHandlers(requestA2.id);
   const replay = deletion.evidenceOf(requestA2.id);
   assert.equal(String(replay['recognitions'] ?? ''), 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
   assert.equal(String(replay['speech'] ?? ''), 'speech:online-purged:0;speech:idempotency-purged:0');
+  // OCR 域重放：第三段 `tables:` 也必须如实归 0（不是把整段省略掉）。
+  assert.equal(
+    String(replay['ocr'] ?? ''),
+    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+  );
   assert.deepEqual(
     {
       recognition: [
@@ -760,16 +902,16 @@ try {
   );
   say('重放幂等：同一主体第二次清理 = 四个计数全 0；他人七表原样');
 
-  // ---- [8] 回执形状：两域在线清除 completed、备份态 pending（未接线端口不谎称完成）----
+  // ---- [8] 回执形状：三域在线清除 completed、备份态 pending（未接线端口不谎称完成）----
   const receiptA = deletion.receipt(requestA.id);
-  for (const module of ['recognitions', 'speech']) {
+  for (const module of ['recognitions', 'speech', 'ocr']) {
     const row = receiptA.handlers.find((entry) => entry.module === module);
     assert.ok(row !== undefined, `回执必须含 ${module} 处理器行`);
     assert.equal(row.online_state, 'completed', `${module} 在线清除必须 completed`);
     assert.equal(row.backup_state, 'pending', `${module} 备份态在本片未接线 ⇒ 只能是 pending（不谎称完成）`);
   }
   assert.equal(deletion.completionStatus(requestA.id).completed, false, '备份态 pending ⇒ 整笔未完成（如实）');
-  say('回执：recognitions / speech 的 online_state = completed（证据串即行数）；backup_state = pending（本片未接备份端口，不谎称完成）');
+  say('回执：recognitions / speech / ocr 的 online_state = completed（证据串即行数）；backup_state = pending（本片未接备份端口，不谎称完成）');
 
   console.log(`\nALL PASS：${passed} 条真库断言（exit code 0）`);
   console.log('EXITCODE=0');

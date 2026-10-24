@@ -1,16 +1,18 @@
 /**
- * GY-I22（#22）失败回归矩阵 · loopback 传输臂的单元测试包装（片B）。
+ * GY-I22（#22）失败回归矩阵 · 两条臂的单元测试包装（并集）。
  *
- * 与 `gy-i22-failmatrix.test.mjs`（默认进程内 `app.inject` 臂）并列：
- *   - 这里真跑一遍**同一份矩阵**，但走 `--transport=loopback`（`listen(0)` + 全局 `fetch`），
- *     要求退出码 0、`FAIL 0`、条数不少于 `MIN_CASES`，且每条都有**真实读数**；
- *   - 额外断言机读结果里的 `transport` 与 `loopback_origin`，证明真的绑了 127.0.0.1 端口、
- *     真的走 TCP，而不是退化成 `app.inject`。
+ * 臂 1 · loopback 传输臂（片B）：与 `gy-i22-failmatrix.test.mjs`（默认进程内 `app.inject` 臂）并列，
+ *   这里真跑一遍**同一份矩阵**，但走 `--transport=loopback`（`listen(0)` + 全局 `fetch`），
+ *   要求退出码 0、`FAIL 0`、条数不少于 `MIN_CASES`，且每条都有**真实读数**；
+ *   额外断言机读结果里的 `transport` 与 `loopback_origin`，证明真的绑了 127.0.0.1 端口、
+ *   真的走 TCP，而不是退化成 `app.inject`。
+ *   （只跑 harness，不发真实外呼、不碰数据库、不启外部端口——loopback 端口由 runner 自选并即刻关闭。）
  *
- * 两条臂共用同一份 `CASES` / `SEAM_CASES` / 期望值，所以「同一矩阵」由完全一致的
- * 族条数 / 批次条数基线（与 `gy-i22-failmatrix.test.mjs` 逐字相同）来钉死。
- *
- * 只跑 harness，不发真实外呼、不碰数据库、不启外部端口（loopback 端口由 runner 自选并即刻关闭）。
+ * 臂 2 · 真实 PostgreSQL 17 运行臂：这组测试**不碰真库**（不需要 GY_PG_BIN），只锁住 `run-real.mjs` 的两条**闸门契约**：
+ *   1) 没有 `GY_PG_BIN` 时必须退出 **77**（POSIX「skipped」＝未取得，⛔ 不是通过），
+ *      并显式打印「未取得，不是通过」；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0；
+ *   2) 权限面覆盖范围与 stub 用例表同源（C1–C4 / C10 / C11，共 168 条），不另写一套用例。
+ *   （真 PG 臂的价值是逐条记录 stub 期望 vs 真 PG 实际的差异，不要求 168 条在真库上全绿；真 PG 读数由 run-real.mjs 实跑取得。）
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -20,10 +22,14 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { BATCHES, CASES } from '../failmatrix/cases.mjs';
+import { BATCHES, CASES, FAMILIES } from '../failmatrix/cases.mjs';
 import { SEAM_CASES } from '../failmatrix/seams.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// ---------------------------------------------------------------------------
+// 臂 1 · loopback 传输臂（#543）
+// ---------------------------------------------------------------------------
 const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
 
 /**
@@ -110,4 +116,51 @@ test('GY-I22 失败矩阵 loopback 臂：同一 230 条矩阵走真实 TCP 全�
     const total = payload.rows.filter((row) => spec.families.includes(row.family)).length;
     assert.equal(total, expected, `批次 ${batch} 条数与基线不一致`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 臂 2 · 真实 PostgreSQL 17 运行臂（#540）
+// ---------------------------------------------------------------------------
+const RUN_REAL = path.join(ROOT, 'tests', 'failmatrix', 'run-real.mjs');
+
+/** 真 PG 臂覆盖的权限面族（与 README 的「至少 C1-C4/C10/C11」一致）。 */
+const PERMISSION_FAMILIES = ['C1', 'C2', 'C3', 'C4', 'C10', 'C11'];
+
+/** 抹掉本机可能泄漏的 PG 环境变量，确保测的是「缺 GY_PG_BIN」这条真实路径。 */
+function runReal(args = []) {
+  const env = { ...process.env };
+  delete env.GY_PG_BIN;
+  delete env.GY_I22_PG_ROOT;
+  delete env.GY_ALLOW_SKIP;
+  return spawnSync(process.execPath, [RUN_REAL, ...args], { cwd: ROOT, encoding: 'utf8', env });
+}
+
+test('GY-I22 真 PG 臂：缺 GY_PG_BIN 退出 77（未取得，不是通过），不得伪装 PASS', () => {
+  const result = runReal();
+  const stdout = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  assert.equal(
+    result.status,
+    77,
+    `缺 GY_PG_BIN 必须退出 77（未取得），实际 ${result.status}：\n${stdout.slice(-3000)}`,
+  );
+  assert.match(stdout, /未取得/);
+  assert.match(stdout, /不是通过/);
+  assert.match(stdout, /GY_PG_BIN/);
+  // 没有显式 --allow-skip / GY_ALLOW_SKIP=1 时，绝不降级成 0。
+  assert.doesNotMatch(stdout, /EXITCODE=0/);
+});
+
+test('GY-I22 真 PG 臂：只有显式 --allow-skip 才把「未取得」降级为 0（本机开发专用，⛔ 不得接门禁）', () => {
+  const result = runReal(['--allow-skip']);
+  const stdout = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  assert.equal(result.status, 0, `--allow-skip 应显式降级为 0，实际 ${result.status}：\n${stdout.slice(-2000)}`);
+  assert.match(stdout, /EXITCODE=0/);
+});
+
+test('GY-I22 真 PG 臂：权限面覆盖范围与 stub 用例表同源（C1–C4/C10/C11，168 条，不另写一套用例）', () => {
+  for (const family of PERMISSION_FAMILIES) {
+    assert.ok(FAMILIES[family] !== undefined, `权限面族 ${family} 不在 stub 用例表 FAMILIES 里`);
+  }
+  const permissionCases = CASES.filter((one) => PERMISSION_FAMILIES.includes(one.family));
+  assert.equal(permissionCases.length, 168, '权限面 C1–C4/C10/C11 必须是 168 条（与 stub 用例表同源）');
 });

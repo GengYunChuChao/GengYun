@@ -1,0 +1,97 @@
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">授权清单</view>
+      <view class="page-heading__sub">各用途的授权状态按服务端记录如实列出；本页只读。</view>
+    </view>
+  </view>
+
+  <state-view
+    wx:if="{{checking || !gatePassed}}"
+    status="guest"
+    title="请先登录"
+    desc="登录后才能查看自己的授权清单。清单只与你的账号绑定，不会公开。"
+    actionText="去登录"
+    bind:action="onLogin"
+  ></state-view>
+
+  <block wx:else>
+    <view class="notice notice--warn" wx:if="{{networkOff}}">
+      <text class="notice__icon">⚠️</text>
+      <text class="notice__text">当前未启用联网（共享源码默认关闭）。授权清单完全来自服务端，本页在没有联网时不会用本地数据顶替。请在本机或正式环境启用后再查看。</text>
+    </view>
+
+    <view class="section" wx:if="{{!networkOff}}">
+      <view class="section-head">
+        <text class="section-head__title">授权记录</text>
+        <text class="section-head__meta">{{items.length}} 条</text>
+      </view>
+
+      <view class="row-actions">
+        <gy-ui-button label="重新读取" variant="secondary" disabled="{{busy || !gatePassed}}" bind:tap="onRefresh"></gy-ui-button>
+      </view>
+
+      <state-view wx:if="{{loading && !items.length}}" status="loading" title="正在读取授权清单"></state-view>
+
+      <state-view
+        wx:elif="{{errorText}}"
+        status="error"
+        errorCode="{{errorCode}}"
+        title="授权清单读取失败"
+        desc="{{errorText}}"
+      ></state-view>
+
+      <state-view
+        wx:elif="{{!items.length}}"
+        status="empty"
+        title="尚未授权任何用途"
+        desc="服务端返回的授权记录为 0 条：你还没有对任何用途授予过权限，所以这里没有可以列出的条目。"
+      ></state-view>
+
+      <block wx:else>
+        <view class="panel">
+          <view class="info-list">
+            <view class="info-row consent-row" wx:for="{{items}}" wx:key="id">
+              <view class="info-row__copy">
+                <text class="info-row__title">{{item.purposeLabel}}（{{item.purpose}}）</text>
+                <text class="info-row__desc">状态 {{item.stateLabel}}{{item.withdrawnAt ? ' · 撤回时间 ' + item.withdrawnAt : ''}}</text>
+                <text class="info-row__desc">政策版本 {{item.policyVersion}} · 最近更新 {{item.changedAt}}</text>
+                <text class="info-row__desc">接收方标识 {{item.recipientCount}} 个</text>
+              </view>
+            </view>
+          </view>
+        </view>
+
+        <gy-ui-button
+          wx:if="{{nextCursor}}"
+          label="加载更多"
+          variant="secondary"
+          block="{{true}}"
+          disabled="{{busy}}"
+          bind:tap="onMore"
+        ></gy-ui-button>
+      </block>
+
+      <view class="demo-caption" wx:if="{{modeText}}">{{modeText}}</view>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <text class="section-head__title">关于这份清单</text>
+      </view>
+      <view class="panel">
+        <view class="card-text">
+          清单只来自服务端 `GET /me/consents` 的返回：本页不做本地缓存，也不会在读取失败时用旧数据或本地样例顶替。
+          读取失败时这里显示失败原因，而不是"没有授权"——「没读到」和「没授权」是两件事。
+        </view>
+        <view class="card-text">
+          「政策版本」是服务端在该次授权时记录的 `policy_version`，本页原样展示，不判断它是否为最新版本。
+          契约没有单独的 `updated_at`：「最近更新」取最后一次状态变化的时间——已撤回取 `withdrawn_at`，已授权取 `granted_at`。
+        </view>
+        <view class="card-text">
+          本页只读：授予与撤回（`POST` / `DELETE /me/consents`）尚未接入，所以这里没有开关，本页的展示也不会改变任何授权状态。
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

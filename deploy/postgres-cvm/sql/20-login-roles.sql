@@ -318,6 +318,40 @@ GRANT EXECUTE ON FUNCTION public.purge_owner_speech(uuid) TO gengyun_api_runtime
 -- #endregion gy-r34-i19-owner-content-purge-grant
 \echo '20-login-roles.sql：已授予 purge_owner_recognitions(uuid) / purge_owner_speech(uuid) 的 EXECUTE（注销内容清理的唯一写路径；五张正文表对运行时仍然零 DELETE）。'
 
+-- --- D4. 注销媒体域：媒体行物理删除的 EXECUTE（GY-R34 / #19 片2 / 迁移 0035）---
+-- `public.media` 的删除语义原来是**状态机**（deleting → deleted，UPDATE state），运行时的
+-- 表级 DELETE 为零；段 M 的 `\echo` 把这条不变量写死了：
+--   「media 故意不授 DELETE —— 删除是状态机（deleting→deleted，UPDATE state），
+--     媒体行是审计与计费事实，不物理删。」
+-- 注销/撤回要真删**行**时，仍然不走表级授权，而是走迁移 0035 的一条**窄口径**
+-- `SECURITY DEFINER` 函数（属主＝迁移管理员，`REVOKE ALL ... FROM PUBLIC`）：
+--   · `purge_owner_media(uuid)` —— 只删该主体 `state IN ('rejected','deleted')` 的
+--     `media` 行及其 `media_derivatives`，且**必须先有** `media_object_cleanup` 的清理意图行
+--     （缺则 `G0007` 整批不删），并**跳过**被 `content_media_refs` / `community_media_grants` /
+--     `public_authors.avatar_media_id` 引用的行（读数 `skipped_referenced`）。
+-- 为什么必须这样（而不是加一条表级 GRANT DELETE）：PG 没有列级 DELETE ⇒ 表级 DELETE 会连
+-- 「本人 + 终态 + 未被引用 + 已入队」这四个谓词一起送掉；而这条函数正是那四个谓词的唯一载体。
+-- 因此这里**只**授 EXECUTE：`media` / `media_derivatives` 对运行时的授权面**逐字未变**
+-- （`90-assert` 的 `domain_manifest` 与表级写授权白名单不动，媒体域只由
+-- `function_surface_manifest` 登记函数面）。若把 DELETE 授出去，等于改掉一条安全不变量，
+-- 那要走安全评审，不是发权限的顺手活。
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败
+-- （绝不留一个「看似已收敛、实际注销删不动媒体行」的运行态）。
+-- #region gy-r34-i19-media-row-purge-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）。
+DO $$
+BEGIN
+  IF to_regprocedure('public.purge_owner_media(uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.purge_owner_media(uuid)：迁移 0035 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.purge_owner_media(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.purge_owner_media(uuid) TO gengyun_api_runtime;
+-- #endregion gy-r34-i19-media-row-purge-grant
+\echo '20-login-roles.sql：已授予 purge_owner_media(uuid) 的 EXECUTE（注销媒体行物理删除的唯一写路径；public.media / media_derivatives 对运行时仍然零**表级** DELETE 变更，一张表都没加）。'
+
 -- --- E. 账号停用/恢复：唯一写路径的 EXECUTE（GY-I22 / 迁移 0017）--------------
 -- 迁移 0017 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
 -- `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：
@@ -514,11 +548,20 @@ GRANT UPDATE (payload,state,purged_at,evidence_ref,last_error_code,purge_attempt
 --   * SELECT 的列 = 上述语句**读或返回**的列。PG 要求 DELETE/UPDATE 的 `WHERE` 与
 --     `RETURNING` 引用列也有 SELECT 权（实测：`DELETE … WHERE b=…` 在只有 `SELECT(a)` 时
 --     `42501 permission denied for table`），所以读面列清单不是「可选的」；
---   * DELETE **无法列级化**（PG 没有列级 DELETE），只给三张表：
+--   * DELETE **无法列级化**（PG 没有列级 DELETE），只给五张表：
 --     `community_likes`（取消点赞，`community/store-pg.ts:587`）、
 --     `community_idempotency`（幂等台账先删后插，`:703/:732/:761`）、
---     `ocr_idempotency`（`:686/:693`）。允许清单由 `90-assert-least-privilege.sql` 的
---     `table_dml_allowlist` **结构化**钉住 —— 其它表的任何表级写权限照样判红；
+--     `ocr_idempotency`（`:686/:693`）、
+--     `ocr_jobs` / `ocr_records`（R34 片 3 起：注销闭集按主体物理删除，见 OCR 段末条注释）。
+--     允许清单由 `90-assert-least-privilege.sql` 的 `table_dml_allowlist` **结构化**钉住 ——
+--     其它表的任何表级写权限照样判红；
+--   * ⚠️ `ocr_jobs` / `ocr_records` 的表级 DELETE 是本文件**唯一**新增删除面：
+--     用户于 2026-10-24 在指挥会话中明确批准：把 `ocr_jobs` / `ocr_records` 的表级 `DELETE`
+--     作为本仓**唯一例外**（`public.media` 表级 `DELETE` 仍禁止）。批示记录见
+--     `.pg17/ruling-r34-user-decisions-20261024.md` §U-2（指挥侧工作区文件，不入库）；
+--     **仓内无第三方书面凭证**。这两张表此前只有列级 SELECT/INSERT/UPDATE ⇒ 运行时**删不掉**
+--     任何行，注销闭集只能绕 `SECURITY DEFINER`；批准后 OCR 三表统一走表级 DELETE。
+--     ⛔ 例外**仅限**这两张表：`public.media` 仍然不给 DELETE（媒体域走 `0035` 的窄函数）；
 --   * ⛔ TRUNCATE / REFERENCES / TRIGGER 一律不给；⛔ 消息/帖子/评论/举报/审核决定**没有 DELETE**
 --     （删除是 `visibility='deleted'` 的单向门，store-pg.ts 里没有任何物理 DELETE）。
 --
@@ -678,6 +721,19 @@ GRANT INSERT (scope,key_hash,request_hash,payload,pending,expires_at)
 GRANT UPDATE (request_hash,payload,pending,expires_at)
   ON public.ocr_idempotency TO gengyun_api_runtime;
 GRANT DELETE ON public.ocr_idempotency TO gengyun_api_runtime;
+-- R34 片 3（#19 / #10）· **表级 DELETE 的唯一例外**：
+--   用户于 2026-10-24 在指挥会话中明确批准：把 `ocr_jobs` / `ocr_records` 的表级 `DELETE` 作为
+--   本仓**唯一例外**（`public.media` 表级 `DELETE` 仍禁止）。批示记录见
+--   `.pg17/ruling-r34-user-decisions-20261024.md` §U-2（指挥侧工作区文件，不入库）；
+--   **仓内无第三方书面凭证**（⛔ 不得描述成一手书面批准或"已过安全评审"）。
+-- 注销闭集要按 `owner_user_id` 物理删除任务行与识别结果行（先 `ocr_records` 后 `ocr_jobs`，
+-- 见 `services/api/src/ocr/store-pg.ts` 的 `purgeOwnerData`）。PG 没有列级 DELETE，而这两张表
+-- 此前只有列级 SELECT/INSERT/UPDATE ⇒ 运行时**删不掉**任何行，闭集只能绕 `SECURITY DEFINER`。
+-- 批准后与上面的 `ocr_idempotency` 统一成表级 DELETE（三表一条路线），替换原来的
+-- SECURITY DEFINER 路线。允许清单仍由 90-assert 的 `table_dml_allowlist` 结构化钉住。
+-- ⛔ 例外**仅限**这两张表：`public.media` 等其它表一律不授 DELETE（媒体域走 0035 的窄函数）。
+GRANT DELETE ON public.ocr_jobs TO gengyun_api_runtime;
+GRANT DELETE ON public.ocr_records TO gengyun_api_runtime;
 -- #endregion gy-r28-runtime-domain-grants
 
 \echo '20-login-roles.sql：gengyun_api_runtime 已就位并授予 5 个既有 NOLOGIN 组。'
@@ -687,7 +743,7 @@ GRANT DELETE ON public.ocr_idempotency TO gengyun_api_runtime;
 \echo '20-login-roles.sql：已授予 public.feature_flags 的 SELECT 与 public.set_feature_flag(...) 的 EXECUTE（唯一写路径；未授予任何表级写权限）。'
 \echo '20-login-roles.sql：已授予 public.user_backup_copies 的列级 SELECT/INSERT/UPDATE（运行时自写的备份副本清单；无表级 DML、无 DELETE/TRUNCATE）。'
 \echo '20-login-roles.sql：已授予 public.messages、public.community_*（六张）、public.ocr_*（三张）的列级 SELECT/INSERT/UPDATE（写面列由 store-pg.ts 真实语句反推；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.community_likes / public.community_idempotency / public.ocr_idempotency（PG 无列级 DELETE；其余表的 DELETE 一律未授）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.community_likes / public.community_idempotency / public.ocr_idempotency / public.ocr_jobs / public.ocr_records（PG 无列级 DELETE；其中 OCR 三表为 R34 片 3 起**由用户批准**的表级例外，替换此前的 SECURITY DEFINER 路线；其余表的 DELETE 一律未授）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'
 

@@ -264,7 +264,7 @@ online-purged 证据并报 completed ⇒ 局部清空被写成模块在线清除
 
 - 单测（PGlite）：`✖ 注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，清空后真表为 0 且行数进证据`；
   `AssertionError [ERR_ASSERTION]: 注销清空后本主体收藏台账残留 0 行`；`2 !== 0`
-  （`tests/unit/favorites-history-deletion-registration.test.mjs:282`）。
+  （`tests/unit/favorites-history-deletion-registration.test.mjs:293`）。
 - 真库：`AssertionError [ERR_ASSERTION]: 注销后 A 的四张表残留均为 0（含未完成 claim、未过期行）`；
   actual `{favorites:0, history:0, favorites_idempotency:2, history_idempotency:1}`
   （`tests/integration/favorites-history-pg.mjs:460` 的 `deepEqual` 调用处）。
