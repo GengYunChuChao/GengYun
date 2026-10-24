@@ -14,7 +14,7 @@
 （本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations`
 ⇒ 正向 `.sql` 37 条、`rollback/` 36 条、缺号 `0036`/`0037` 均已登记保留。）
 
-- `0036` 预留：**#538** `feat/gy-r34-i18-content-pg`（`0036_r34_i18_content_pg.sql`，管理端内容/资料域 PG 落点，已开 PR，在飞）。
+- `0036` 预留：**#538** `feat/gy-r34-i18-content-pg`（`0036_r34_admin_content_persistence.sql`，管理端内容/资料域 PG 落点，已开 PR，在飞）。
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
 - `0038_r34_deletion_receipt_persistence.sql`（#19 片B，已随 #553 落盘）：回执 bearer 摘要落
   `deletion_requests.receipt_bearer_hash` ＋ 三条窄口径 SECURITY DEFINER 函数（set/resolve/count）；
@@ -52,4 +52,3 @@
 - `0030_community_author_ref.sql` 当时取的是 0028 之后的第一个空号（29 被 #419 占着），**不是随便跳号**。
 - `0032_community_report_reporter_ref.sql` 接在 `0031_online_purge_evidence.sql` 之后（0031 属 #19，已落盘）。
 - 后续迁移从最大号之后连续编号；确需跨 PR 缺号时，**同时**在保留台账登记并在本文件写一行依据。
-

@@ -44,12 +44,12 @@
     "本片（#22 片C）落 0039_r34_deletion_state_cancelled.sql ⇒ 现存「有依据的缺号」只剩 0036",
     "（#538 feat/gy-r34-i18-content-pg，在飞）与 0037（#14 已裁定分配、尚无分支/文件）：",
     "37 个文件 + 2 保留 === max 39，三条不变量成立；0036/0037 一落盘 reservedButPresent 立刻判红，条目按 remove_when 删。",
-    "README 的同两条依据见 services/api/db/migrations/README.md 的「当前状态（2026-10-25 · 迁移 0039 · #22 片C）」段。"
+    "README 的同两条依据见 services/api/db/migrations/README.md 的「当前状态（2026-10-25 · 合流后：`0001..0039`，缺 `0036`/`0037`）」段。"
   ],
   "reservations": [
     {
       "version": 36,
-      "filename": "0036_r34_i18_content_pg.sql",
+      "filename": "0036_r34_admin_content_persistence.sql",
       "owner": "PR #538（feat/gy-r34-i18-content-pg）",
       "reason": "0036 由 #538 在飞分支占用（管理端内容/资料域 PG 落点）；本合流树缺 0036 ⇒ 保留登记",
       "remove_when": "#538 合入即删"
