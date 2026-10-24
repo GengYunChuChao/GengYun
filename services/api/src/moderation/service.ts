@@ -51,6 +51,8 @@ import type { CallbackOutcome, CallbackReplayGuard } from './callback.ts';
 import { humanReviewQueue } from './nonbypass.ts';
 import { declaredModelVersion, declaredProvider, resolveModerationPorts } from './provider.ts';
 import type { ResolvedModerationPorts, PortKind } from './provider.ts';
+import { createLiveModerationPortsFromWiring, type ModerationLiveWiring } from './live-wiring.ts';
+import type { ModerationLivePort } from './live-ports.ts';
 import {
   PORT_KIND_BY_CONTENT_KIND,
   PROMPT_ID_BY_CONTENT_KIND,
@@ -124,6 +126,12 @@ export interface ModerationServiceDeps {
   executionMode: ModerationExecutionMode;
   /** 注入端口（**仅测试/演示**；`real` 下被忽略，见 `resolveModerationPorts`）。 */
   ports?: { tms?: unknown; ims?: unknown };
+  /**
+   * real 下的显式真实端口接线（`live-wiring.ts` 的注入点）。
+   * 无凭据 / 未显式打开 ⇒ 本服务整域 fail-closed 503（**永不回退替身**）；
+   * 有凭据且策略显式打开 ⇒ 装配 tms/ims 真实端口走完整服务。
+   */
+  liveWiring?: ModerationLiveWiring;
   /** 内容权威端口（默认：real ⇒ 未接线 fail-closed；其余 ⇒ 明确标注的替身）。 */
   authority?: ContentAuthorityPort;
   /** 决策台账（默认新建内存台账）。 */
@@ -442,10 +450,25 @@ async function restoreWrittenVisibility(
 
 export function createModerationService(deps: ModerationServiceDeps): ModerationService {
   if (deps.executionMode === 'real') {
-    // **不**注入任何替身：real 一律走 fail-closed 服务（含未接线权威端口，读面也不可能"看起来可用"）。
-    return createFailClosedModerationService();
+    // real：**永不**回退替身。有凭据且显式打开（`liveWiring`）⇒ 用真实端口走完整服务；
+    // 否则（无凭据/未显式打开/装配失败）⇒ 整域 fail-closed 服务（含未接线权威端口，读面也不"看似可用"）。
+    const livePorts = deps.liveWiring === undefined ? null : createLiveModerationPortsFromWiring(deps.liveWiring);
+    if (livePorts === null) {
+      return createFailClosedModerationService();
+    }
+    return createModerationServiceResolved(deps, livePorts);
   }
+  return createModerationServiceResolved(deps, null);
+}
 
+/**
+ * 通用服务构造（real 与 stub/preset_demo 共用）：real 走 `livePorts`（真实端口，不回退替身），
+ * 其余走 `deps.ports`（测试/演示注入，缺省替身）。
+ */
+function createModerationServiceResolved(
+  deps: ModerationServiceDeps,
+  livePorts: { tms: ModerationLivePort; ims: ModerationLivePort } | null,
+): ModerationService {
   const executionMode = deps.executionMode;
   const ledger = deps.store ?? createModerationLedger();
   /**
@@ -491,10 +514,11 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
   const newLeaseToken = deps.newLeaseToken ?? (() => randomUUID());
   const callbackKey = deps.callbackKey ?? null;
   const replayGuard: CallbackReplayGuard = createCallbackReplayGuard();
-  const resolved: ResolvedModerationPorts = resolveModerationPorts({
-    executionMode,
-    ...(deps.ports === undefined ? {} : { injected: deps.ports }),
-  });
+  const resolved: ResolvedModerationPorts = resolveModerationPorts(
+    executionMode === 'real'
+      ? { executionMode, live: livePorts ?? undefined }
+      : { executionMode, ...(deps.ports === undefined ? {} : { injected: deps.ports }) },
+  );
   const ruleOptions = deps.ruleOptions ?? {};
   const nowIso = (): string => clock().toISOString();
   const screeningDeadlineMs = deps.modelDeadlineMs ?? DEFAULT_SCREENING_DEADLINE_MS;
