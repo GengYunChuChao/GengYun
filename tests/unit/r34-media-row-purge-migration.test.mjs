@@ -317,6 +317,77 @@ export function collectForwardViolations(sql) {
   if (begins.length !== 1) bad.push(`应有且仅有一处 BEGIN;，实际 ${begins.length}`);
   if (commits.length !== 1) bad.push(`应有且仅有一处 COMMIT;，实际 ${commits.length}`);
 
+  // ---- J. 逐桶**列集合绑定**（不只比总数/顺序）----
+  // 为什么单列一条：E3 钉的是 FILTER 顺序、INTO 顺序与 OR 链，**聚合体本身没有任何判据**。
+  // 把 `ref_ocr` 与 `ref_speech` 的 EXISTS 整块对调（只换桶标签、列不动）之后，E/E2/E3 全绿、
+  // 总数不变 ⇒ 真库上 OCR 的数会记进语音桶，调用方按读数「先跑语音」，而真正该跑的 OCR
+  // 压根没有清理器。所以桶与列必须**逐桶**对上，不能只对总账。
+  const bucketBlock = flat.match(/SELECT EXISTS \(SELECT 1 FROM public\.[\s\S]*?\) t;/);
+  if (!bucketBlock) {
+    bad.push('找不到分层读数的派生表子查询（`SELECT EXISTS (…) … ) t;`）：8 个桶的落点无法校验');
+  } else {
+    // 派生表尾部的 `FROM public.media m WHERE …` 属于外层扫描，不属于任何桶：先切掉再分段。
+    const body = bucketBlock[0].split(/\sFROM public\.media m\b/)[0];
+    const segments = new Map();
+    const parts = body.split(/AS ref_([a-z_]+)/);
+    for (let i = 1; i < parts.length; i += 2) {
+      const bucket = parts[i];
+      if (segments.has(bucket)) bad.push(`派生表里桶 ref_${bucket} 出现了不止一次`);
+      // 一个桶的子查询就是**它自己的标签之前**那一段（`AS ref_x` 后缀式）。
+      segments.set(bucket, parts[i - 1]);
+    }
+    for (const bucket of REFERENCE_BUCKETS) {
+      const surfaces = REFERENCE_SURFACES.filter((surface) => surface.bucket === bucket);
+      const expectedTables = surfaces.map((surface) => `${surface.table} ${surface.alias}`);
+      const segment = segments.get(bucket);
+      if (segment === undefined) {
+        bad.push(`派生表里缺少桶 ref_${bucket} 的子查询（该桶的引用会被记成 0）`);
+        continue;
+      }
+      for (const surface of surfaces) {
+        const fragment = `FROM ${surface.table} ${surface.alias} WHERE ${surface.condition}`;
+        if (!segment.includes(fragment)) {
+          bad.push(
+            `桶 ref_${bucket} 的子查询里缺少「${fragment}」：桶与列**绑错了**`
+              + `（${bucket} 桶必须正好覆盖 [${expectedTables.join(', ')}]）`,
+          );
+        }
+      }
+      const found = [...segment.matchAll(/FROM (public\.[a-z_]+) ([a-z]+) WHERE/g)]
+        .map((m) => `${m[1]} ${m[2]}`);
+      if (found.join(' | ') !== expectedTables.join(' | ')) {
+        bad.push(
+          `桶 ref_${bucket} 读的列集合应逐字为 [${expectedTables.join(', ')}]，实际 [${found.join(', ')}]：`
+            + '列集合与桶绑错会把一类引用记到另一类头上（总数不变 ⇒ 只比总数抓不住）',
+        );
+      }
+    }
+  }
+
+  // ---- K. 队列守卫的**位置 + 形态**（复审自测 M3/M4 的补丁）----
+  // M3「把守卫整块搬到两条 DELETE 之后」与 M4「把条件改成 IF false」在 A–J 之外都能蒙过：
+  // 前者只在 `'G0007'` 仍早于 DELETE 时才由 C 兜住（守卫文本可被拆开写绕过），后者干脆一条判据都不碰。
+  const guardShape = /IF x_unqueued > 0 THEN RAISE EXCEPTION USING ERRCODE = 'G0007'/;
+  if (!guardShape.test(flat)) {
+    bad.push(
+      "队列守卫必须逐字为「IF x_unqueued > 0 THEN RAISE EXCEPTION USING ERRCODE = 'G0007'」"
+        + '：恒真/恒假条件、拆成两句、或先 RAISE 后判断，都等于没有入队检查',
+    );
+  }
+  if (/\bIF (?:false|true)\b/i.test(flat)) {
+    bad.push('函数体里出现恒真/恒假 IF：守卫被短路了（`IF false THEN RAISE …` 只是装饰）');
+  }
+  const unqueuedCountAt = flat.indexOf('SELECT count(*) INTO x_unqueued');
+  const guardAt = flat.search(guardShape);
+  const firstDeleteInFlat = flat.search(/DELETE FROM public\./);
+  if (unqueuedCountAt < 0) bad.push('缺少 `SELECT count(*) INTO x_unqueued`（硬条件①的计数没落点）');
+  if (guardAt >= 0) {
+    if (unqueuedCountAt > guardAt) bad.push('x_unqueued 的计数必须排在守卫之前（先算再判，不能先判后算）');
+    if (firstDeleteInFlat < 0 || guardAt > firstDeleteInFlat) {
+      bad.push('队列守卫（G0007）必须排在**所有** DELETE 之前：守卫挪到删行之后等于没有守卫');
+    }
+  }
+
   return bad;
 }
 
@@ -448,6 +519,21 @@ function mutateCode(sql, pattern, replacement) {
     .join('\n');
 }
 
+/**
+ * 把 `[start, end]` 这几行（0 基、闭区间）整块搬到 `before` 行之前，其余行序不变。
+ *
+ * 为什么要一个"搬行"helper：负控制要证明的是**位置**判据，而位置是行的属性；用字符串 `replace`
+ * 搬代码块既要求缩进逐字对得上，也容易在还原时留下多余空行 —— 那样"逐字节还原 ⇒ 绿"就变成
+ * "差不多还原 ⇒ 绿"，证明力归零。
+ */
+function moveLineRange(sql, start, end, before) {
+  const lines = sql.split('\n');
+  const block = lines.splice(start, end - start + 1);
+  const target = before > start ? before - block.length : before;
+  lines.splice(target, 0, ...block);
+  return lines.join('\n');
+}
+
 test('负控制：破坏任意一条硬条件/铁律都必须被点名', () => {
   const mutations = [
     ['去掉 SECURITY DEFINER', mutateCode(forward, 'SECURITY DEFINER', ''), /SECURITY DEFINER/],
@@ -538,6 +624,66 @@ test('负控制：破坏任意一条硬条件/铁律都必须被点名', () => {
       `负控制「${label}」的报错没有点名预期项 ${expected}：${bad.join(' / ')}`,
     );
   }
+});
+
+test('负控制：逐桶列绑定与守卫形态（改坏必红，逐字节还原必绿）', () => {
+  // 这一组对应复审自测的 M2b / M3 / M4：三条在旧判据下**都是 GREEN**（真实盲区，不是措辞问题）。
+  // 每条都做双向证明：改坏 ⇒ 必须被**点名**；逆变换逐字节还原 ⇒ 必须重新全绿。
+  // 只证明"改坏会红"是不够的 —— 一个恒报错的判据也能让负控制全红，却毫无防守力。
+
+  // ---- M2b：ocr 桶 ↔ speech 桶整块对调（只换桶标签，列一个字没动，总数不变）----
+  const swapBuckets = (sql) =>
+    mutateCode(
+      mutateCode(mutateCode(sql, 'AS ref_ocr', 'AS ref_swap'), 'AS ref_speech', 'AS ref_ocr'),
+      'AS ref_swap',
+      'AS ref_speech',
+    );
+  const swapped = swapBuckets(forward);
+  assert.notEqual(swapped, forward, '桶对调没改动任何字节（锚点已漂移，负控制失效）');
+  const swappedBad = collectForwardViolations(swapped);
+  assert.ok(
+    swappedBad.some((line) => /桶 ref_ocr/.test(line) && /绑错|列集合/.test(line)),
+    `「ocr 桶 ↔ speech 桶对调」必须由逐桶绑定判据点名 ref_ocr，实际：${swappedBad.join(' / ') || '（全绿）'}`,
+  );
+  assert.ok(
+    swappedBad.some((line) => /桶 ref_speech/.test(line)),
+    `对调必须同时点名 ref_speech，实际：${swappedBad.join(' / ') || '（全绿）'}`,
+  );
+  const swappedBack = swapBuckets(swapped);
+  assert.equal(swappedBack, forward, '逆变换必须**逐字节**还原原文（否则「还原后变绿」证明不了任何事）');
+  assert.deepEqual(collectForwardViolations(swappedBack), [], '还原后必须重新全绿');
+
+  // ---- M3：把队列守卫整块搬到两条 DELETE 之后（位置盲区）----
+  const forwardLines = forward.split('\n');
+  const guardFrom = forwardLines.findIndex((line) => /^\s*IF x_unqueued > 0 THEN\s*$/.test(line));
+  assert.ok(guardFrom > 0, '找不到守卫起始行 `IF x_unqueued > 0 THEN`（负控制锚点漂移）');
+  const guardTo = forwardLines.findIndex((line, index) => index > guardFrom && /^\s*END IF;\s*$/.test(line));
+  assert.ok(guardTo > guardFrom, '找不到守卫的 `END IF;`（负控制锚点漂移）');
+  const commitLine = forwardLines.findIndex((line) => /^COMMIT;$/.test(line));
+  assert.ok(commitLine > guardTo, '找不到 `COMMIT;` 行（负控制锚点漂移）');
+  const guardLength = guardTo - guardFrom + 1;
+  const movedGuard = moveLineRange(forward, guardFrom, guardTo, commitLine);
+  assert.notEqual(movedGuard, forward, '搬迁守卫没改动任何字节');
+  const movedBad = collectForwardViolations(movedGuard);
+  assert.ok(
+    movedBad.some((line) => /DELETE 之前/.test(line)),
+    `守卫搬到删行之后必须判红，实际：${movedBad.join(' / ') || '（全绿）'}`,
+  );
+  const movedBack = moveLineRange(movedGuard, commitLine - guardLength, commitLine - 1, guardFrom);
+  assert.equal(movedBack, forward, '守卫搬回原位必须**逐字节**还原');
+  assert.deepEqual(collectForwardViolations(movedBack), [], '还原后必须重新全绿');
+
+  // ---- M4：守卫条件改成恒假（`IF false THEN` 仍在 DELETE 之前 ⇒ 位置判据全绿）----
+  const shortedGuard = mutateCode(forward, 'IF x_unqueued > 0 THEN', 'IF false THEN');
+  assert.notEqual(shortedGuard, forward, '短路守卫没改动任何字节');
+  const shortedBad = collectForwardViolations(shortedGuard);
+  assert.ok(
+    shortedBad.filter((line) => /守卫|恒真\/恒假/.test(line)).length >= 2,
+    `守卫改成 IF false 必须被点名（形态 + 恒假两条），实际：${shortedBad.join(' / ') || '（全绿）'}`,
+  );
+  const shortedBack = mutateCode(shortedGuard, 'IF false THEN', 'IF x_unqueued > 0 THEN');
+  assert.equal(shortedBack, forward, '还原必须逐字节');
+  assert.deepEqual(collectForwardViolations(shortedBack), [], '还原后必须重新全绿');
 });
 
 test('负控制：回滚与授权面被破坏时同样判红', () => {

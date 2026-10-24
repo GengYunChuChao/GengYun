@@ -11,7 +11,7 @@
 | `services/api/db/migrations/rollback/0035_r34_media_row_purge.down.sql` | 新增：`DROP FUNCTION IF EXISTS`（只有函数可逆） |
 | `deploy/postgres-cvm/sql/20-login-roles.sql` | 新增段 D4：`REVOKE ALL` + **仅** `GRANT EXECUTE`，一张表都没加权限 |
 | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | `function_surface_manifest` 17 → 18 行（`purge_owner_media` = `runtime`） |
-| `tests/unit/r34-media-row-purge-migration.test.mjs` | 新增：迁移/回滚/授权面静态形状测试（**11 列引用面逐条断言** + 19 条正向负控制 + 回滚/授权面 3 条） |
+| `tests/unit/r34-media-row-purge-migration.test.mjs` | 新增：迁移/回滚/授权面静态形状测试（**11 列引用面逐条断言** + **逐桶列绑定** + **守卫位置/形态** + 22 条负控制，其中 3 条做「改坏⇒红 / 逐字节还原⇒绿」双向自证 + 回滚/授权面 3 条） |
 | `tests/unit/least-privilege-expected-parity.test.mjs` | 扩写：`media` 进「禁止 DELETE」清单 + 新增第 6 个成对测试 |
 | `tests/integration/media-row-purge-pg.mjs` | 新增：真库臂（缺 `GY_PG_BIN` 显式 77 退出，见 §8）；返修补 `[5b]` **无外键八列**引用面 case |
 | `tests/unit/ci-integration-chain-structure.test.mjs` | 未接线白名单登记上面那条真库臂 |
@@ -95,10 +95,16 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
   · 数组列（第 11 处）用 `m.id::text = ANY (p.media_ids)`：把 **uuid 侧**转文本后与数组元素直接比（`text = text`），
     **不拼字符串、不猜分隔符、不取下标**；等价于 `EXISTS (SELECT 1 FROM unnest(p.media_ids) e WHERE e = m.id::text)`。
     第 4 处（`users.avatar_media_id`）今天**没有写入方**，仍并入口径：口径按「库里有这一列」定，不按「今天有人写」定。
-  · **刻意不算引用**（免得下一轮当漏项）：`media_derivatives.media_id`（同一个删除单元的子行，本函数先删它）、
-    `media_object_cleanup.media_id`（**入队台账**，算成引用会自锁成「什么也不删」）、`jobs.target_id`（多态列，`0013:19`
-    已记明 `INSERT INTO jobs` 在 `services/api/src` 为空）、`exports.object_id`（外发**账本**，`object_type='media'` 确有写入，
-    但它是计费/外发事实、注销后刻意保留；算成引用会让「外发过一次的媒体」永远删不掉）。
+  · **刻意不算引用**（免得下一轮当漏项）：
+    `media_derivatives.media_id`（同一个删除单元的子行，本函数先删它）；
+    `media_object_cleanup.media_id`（**入队台账**，算成引用会自锁成「什么也不删」）；
+    `jobs.target_id`（多态列，`0013:19` 已记明 `INSERT INTO jobs` 在 `services/api/src` 为空）；
+    `jobs.result_ref`（`0001:223` 的 `uuid` 列，今天**0 个写入方**：`services/api/src` 与迁移里都没有写它的语句；
+    等多态目标侧真长出来再并入）；
+    `exports.object_id`（外发**账本**：`services/api/src/privacy/ledger-pg.ts:52-56` 的哨兵注释与 `:106-111` 的 `toRecord`
+    注释都写明**媒体维确实把 media uuid 写进 `object_id`**（非媒体维才走 `object_key` + 全零哨兵）⇒ 注销后账本行确实会
+    **指向一条已被删掉的 media 行**；但 `0003:120` 的 `object_id` **没有外键**，而外发证据属**保留要求**（注销后 30 日证据），
+    ⇒ 刻意保留这个悬空指针，不把它算成「活引用」：否则「外发过一次的媒体」永远删不掉、账本也永远关不掉）。
   · 索引现状如实披露：第 3–11 处**都没有索引**（本片不建；补索引属于各域自己的 schema 变更）⇒ 这些 `EXISTS` 是逐目标行的
     顺序扫描，边界由「单个 owner 的终态 media 行数」兜住。
 - **子先父后**：先删 `public.media_derivatives`，再删 `public.media`，两个 `GET DIAGNOSTICS ROW_COUNT` 分开报。
@@ -134,30 +140,37 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
 | `node --test tests/unit/deploy-sql-gate-probe.test.mjs` | 7 pass / 0 fail |
 | `node --test tests/unit/least-privilege-expected-parity.test.mjs` | 6 pass / 0 fail |
 | `node --test tests/unit/roles-file-disposition.test.mjs` | 11 pass / 0 fail |
-| `node --test tests/unit/r34-media-row-purge-migration.test.mjs` | **8 pass / 0 fail**（返修后：11 列引用面逐条断言 + 分层计数判据） |
+| `node --test tests/unit/r34-media-row-purge-migration.test.mjs` | **9 pass / 0 fail**（11 列引用面逐条断言 + 分层计数 + **逐桶列绑定** + **守卫位置/形态**，后两条各带双向变异自证） |
 | `node --test tests/unit/doc-anchors-guard.test.mjs` | 10 pass / 0 fail |
 | `node tools/verify-doc-anchors.mjs --strict` | EXIT 0；`BASELINE: … 登记 103 条；本次命中 103 条、基线外新增 0 条、陈旧 0 条` |
 | `node tools/verify-contract-status.mjs` | EXIT 0；`符号形态锚点 1 条` / `行号区间 244 条` / `中文表格一致` |
 | `node --check tests/integration/media-row-purge-pg.mjs` | EXIT 0（返修后重跑） |
 | `node tests/integration/media-row-purge-pg.mjs`（无 `GY_PG_BIN`） | **EXITCODE=77**，3 行 SKIP：`SKIP: 未设置 GY_PG_BIN…` / `本次**未验证**…（未取得，不是通过）` / `EXITCODE=77 表示未取得…` |
+| `node tests/integration/media-row-purge-pg.mjs`（**真跑**，便携 PG 17.11） | **EXITCODE=0**，`PASS 1`…`PASS 18` + `ALL PASS：18 条真库断言（exit code 0）`；`server_version=17.11`；回环端口取自 55700–55799（两次实跑 55998 / 55830，读数一致）；收尾集群已停、数据目录已删（`GY_R34_PG_ROOT` 下只剩空目录、端口无监听） |
 | `git diff --check` | EXIT 0 |
 | `git merge-tree --write-tree upstream/main HEAD` | EXIT 0，无冲突 |
 
-⚠ 本树**没有 `node_modules`**（依赖靠 CI）：`migrations-constraint.test.mjs`（PGlite 臂）等需要依赖的用例本机跑不了 ——
-这也是我把 0035 的形状测试写成**纯静态**的原因：不让「依赖缺失 ⇒ 静默跳过」变成假绿。
+⚠ 门禁本身**不依赖 `node_modules`**（`r34-media-row-purge-migration.test.mjs` 是纯静态形状测试，正是为了让「依赖缺失 ⇒ 静默跳过」
+不变成假绿）；真库臂单独用便携 PG 17.11 跑，见上表倒数第三行。
 ## 8. 未取得项（⛔ 都不是通过）
 
-1. **真库未跑**：`tests/integration/media-row-purge-pg.mjs` 已写好，但本机无 PG 二进制、且本片明令不起 PostgreSQL ⇒ 它没有被
-   真库验证过。缺 `GY_PG_BIN` 时打印 3 行 SKIP 并 **exit 77**（未取得，不是通过；不认 `--allow-skip`）；它也**未**接进
-   `.github/workflows/real-pg-integration.yml`（`.github/**` 不在本片授权范围）。
-   ⚠ 返修时实测出一个**真缺陷**：原文件把 `import pg from 'pg'` 写在 GY_PG_BIN 闸门**之前**，静态 import 被提升到闸门之上 ⇒
-   在没有 `node_modules` 的树里它 `ERR_MODULE_NOT_FOUND` 以 **exit 1** 退出，**根本没走到** SKIP 分支（`skipped` 与 `failed`
-   在 CI 上语义完全不同，等于把「未取得」报成「失败」）。已改成闸门之后 `await import('pg')`：`GY_PG_BIN` 缺 ⇒ exit 77（本次
-   实测读数见 §7 最后一行）；`GY_PG_BIN` 已设置但缺依赖 ⇒ exit 1（环境坏，不许伪装成跳过）。
+1. **真库臂已真跑绿（本机便携 PG 17.11）**：`EXITCODE=0`，`PASS 1`…`PASS 18`。缺 `GY_PG_BIN` 时仍打印 3 行 SKIP 并 **exit 77**
+   （未取得，不是通过；不认 `--allow-skip`）；它仍**未**接进 `.github/workflows/real-pg-integration.yml`（`.github/**` 不在本片
+   授权范围，且它登记在 `UNWIRED_DECLARATIONS` 里 ⇒ CI 上恒 exit 77，所以**这条臂的缺陷在 CI 上永远不会暴露**）。
+   ⚠ 真跑时抓出**三处「只有真跑才会暴露」的缺陷**，都已修：
+   · ① `pg_ctl -o` 拿到数组 ⇒ `spawnSync` 用 `,` 拼接成单个字符串，postgres 收到 `-p 55902,-c listen_addresses=…`，日志逐字
+     `FATAL:  invalid value for parameter "port": "55902,-c"` + `pg_ctl: could not start server`；改成 `serverOptions().join(' ')`。
+   · ② 夹具计数与断言不符：`idsOfMedia()` 只按 `owner_id` 过滤、**不区分 state**，A 组共 **9** 行（3 终态可删 + 3 非终态 +
+     3 被引用），原断言写 **6**（把「终态 6 条」当成了「全部行数」）⇒ `A 的媒体行应为 6 条，实际 9`；改成 9，并另加一条
+     「终态恰好 6 条」的独立断言，让两个口径各自钉住。
+   · ③ `import pg from 'pg'` 写在 `GY_PG_BIN` 闸门**之前**：静态 import 被提升到闸门之上，无 `node_modules` 的树里
+     `ERR_MODULE_NOT_FOUND` 以 **exit 1** 退出、**根本没走到** SKIP（`skipped` 与 `failed` 在 CI 上语义完全不同）；改成闸门之后
+     `await import('pg')`：缺 `GY_PG_BIN` ⇒ 77，设了但缺依赖 ⇒ exit 1（环境坏，不许伪装成跳过）。
 2. **桶对象回收仍归 `cleanupOrphans`**：本片只删数据库行，`media_object_cleanup` 台账行**刻意保留**（0029 故意不建外键）——
    字节回收不在本片范围内，台账行留下来正是为了让清理器还能枚举到它们。
 3. **运行时接线未做**（理由见 §9）：`services/api/src/privacy/user-data-deletion.ts` 目前**还没有**媒体模块，函数的唯一调用方还不存在。
-4. 0035 的 `up` 在真实 PG 17.11 上的行为、以及 `G0007` / `G0001` 的 SQLSTATE 传播，都只在静态测试里被断言过形状。
+4. `0035` 的 `up`、`G0007`（缺入队 ⇒ 整批不删）、`G0001`（NULL 主体）、`42883`（本片未测，需 down 之后）已在真库上验证；
+   `23503` 分支**仍未取得**（11 列里只有前 2 列有外键、且它们的引用行本来就被 `NOT EXISTS` 排除 ⇒ 构造不出该错误）。
 ## 9. 为什么本片不接线（留作下一片）
 
 要做「media 模块」至少牵动五处，且第 ⑤ 条需要产品裁定，不是写手能单方面定的：
@@ -169,8 +182,10 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
 3. `services/api/src/app.ts` 的注销装配区注入 port（至少一行 import + 一处构造）；
 4. `tests/unit/deletion-registration-coverage.test.mjs` 的三处硬编码清单（`['community','recognitions','speech']` → 四域、
    `effective.length === 7` → 8、`MODULE_TABLE_COVERAGE` / `DECLARED_UNREGISTERED` 的 `media` 处置）；
-5. **语义裁定**：`skipped_referenced > 0` 意味着「被引用的行刻意留在原地」。映射成 `blocked` 会让所有「有社区引用媒体」的注销
-   常态 blocked；映射成 `completed` 则是谎称清完。这是删除协议的对外语义，必须先定，再写代码。
+5. **语义裁定（已定，见文末「语义裁定」段）**：`skipped_referenced > 0` 意味着「被引用的行刻意留在原地」。D-9 + U-11 已裁定为
+   **两态**：非 0 仍算 `completed`，但证据串必须如实带非零计数（⛔ 不许说「已清干净」）；`partial` **不在冻结协议里**
+   （`packages/privacy/constants.mjs:80` 的 `HANDLER_STATES` 只有 `pending/running/completed/blocked`），写它会落非法态分支、
+   把 `evidenceRef` 置 null、整条证据串丢掉。
 
 本片只交付「函数 + 授权面 + 清单 + 测试」这一层：可编译、可回滚、可单独上线，且不给后续接线留需要返工的形状。
 
@@ -196,29 +211,39 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
 判定方法（给接线与复审用，两句话即可执行）：
 
 1. 在同一主体的注销里，等**其它模块全部跑完之后**再调媒体模块，比较两次调用的 `skipped_referenced`：
-   **它应当随其它模块跑完而单调下降**（0034 的识别/语音清理、社区域清 `media_ids` 各自让对应桶掉下来）。
-   若两轮之间**一点都不降**，说明顺序反了、某个模块没跑、或那一桶压根没有清理器（OCR 就是这种）。
+   **它必须单调不增**（⛔ 不是「必然下降」—— 有一类桶恒不降，见下）。0034 的识别/语音清理、社区域清 `media_ids`
+   各自让对应桶掉下来是**预期**；但 **`ocr` 桶（今天没有清理器，死桶）与 `community` 的软删行
+   （`store-pg.ts:916` 对 `visibility='deleted'` 行 `continue`）这两类恒不降**，所以判据只能是「不增」而不是「下降」。
+   若某个**有清理器**的桶两轮之间一点都不降，才说明顺序反了或那个模块没跑。
 2. 用 `skipped_referenced_by` 定位**该先跑哪个模块**：哪个桶非 0 就去看那个域有没有清理器 —— 这比只看总数能省一轮排查。
    `media` 读数偏小 + 某个桶长期非 0 = 顺序问题，不是函数 bug。
 
 ⛔ 不要用「把 `skipped_referenced` 从读数里去掉」或「把跳过改成照删」来消掉这个现象：前者让顺序问题彻底不可见，后者就是本片
 返修前的那条悬空 uuid 缺陷。
 
-## 语义裁定（指挥 D-9，2026-10-24）
+## 语义裁定（指挥 D-9 + U-11，2026-10-24）
 
-§9 第 ⑤ 条列出的语义空白，已由指挥 D-9 裁定，落成可执行口径（本片不实现运行时，只把口径钉在证据页）：
+§9 第 ⑤ 条列出的语义空白，已由指挥 D-9 裁定、**U-11 把三态收敛成两态**，落成可执行口径（本片不实现运行时，只把口径钉在证据页）：
 
 - `skipped_referenced > 0` **不等于**失败：被 §4③ 那 **11 列 / 8 类**引用面（`content_media_refs`、`community_media_grants`、
   `public_authors.avatar_media_id`、`users.avatar_media_id`、`ocr_jobs`、`ocr_records`、`recognition_jobs`、`recognition_records`、
   `speech_jobs`、`transcriptions`、`community_posts.media_ids`）中任一处引用的行本就该留原地。返修只扩了「引用面」的枚举，
   **没有**改这条语义。
-- 未来运行时媒体模块的映射（唯一口径，三态）：
-  · `completed` —— 仅当函数正常返回且 `skipped_referenced === 0`；
-  · `partial` —— 函数正常返回且 `skipped_referenced > 0`（刻意留原地，不是失败）；
+- 未来运行时媒体模块的映射（唯一口径，**两态**，指挥 U-11 裁定；`partial` 已删除）：
+  · `completed` —— 函数正常返回，**无论 `skipped_referenced` 是否为 0**。`> 0` 时**仍然** `completed`，但证据串里
+    `media_skipped_referenced` 与 `;media_skipped_by:…` 必须如实写非零，且**不许在证据文案里说「已清干净」**
+    （「被引用 ⇒ 留原地」是设计，不是失败）。
   · `blocked` + `HANDLER_FAILED` —— 函数抛 **`G0007`（未入队）/ `G0001`（NULL 主体）/ `42883`（down 之后函数不在岗）**
     **或 `23503`（外键拒绝）**。⛔ 不许折成 `completed`，也不许折成「0 行」。
     `23503` 今天碰不到（11 列里只有前 2 列有外键，且它们指向的行本来就会被 `NOT EXISTS` 排除），但**将来给第 3–11 列补外键
     就会走这里**：那时「先查后删」之间的并发插入会以 `23503` 整批回滚 —— 这是**安全失败**，必须映射成 `blocked`，不能吞。
+  · 为什么**不能**用 `partial`：冻结协议里根本没有这个值 —— `packages/privacy/constants.mjs:80` 的
+    `HANDLER_STATES = ['pending','running','completed','blocked']`、`0003:46` 的
+    `deletion_state ENUM('requested','processing','blocked','completed')`，`git grep partial -- packages/privacy services/api/src/privacy`
+    **0 命中**。写 `partial` 会落 `deletion.mjs` 的非法态分支 ⇒ `status='blocked'`、`errorCode='INVALID_HANDLER_RESULT'`、
+    **`evidenceRef` 被置 null（证据串整条丢掉）**——正好是我们要避免的结果。⛔ 本片不扩 `HANDLER_STATES` / `deletion_state` /
+    协调器聚合（跨包契约变更，另立片）。
+  · `G0001` / `G0007` / `23503` 都不在 `SAFE_ERROR_CODES` 里 ⇒ 会**自动**折叠成 `HANDLER_FAILED`，运行时侧不需要为它们写分支。
 - 证据串格式（**新旧对照，逐字**）：
 
   | | 证据串 |

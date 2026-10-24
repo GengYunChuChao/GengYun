@@ -154,7 +154,10 @@ async function startCluster() {
   const start = runTool('pg_ctl', [
     '-D', dataDir,
     '-l', join(dataDir, 'server.log'),
-    '-o', serverOptions(),
+    // ⚠ 必须 `join(' ')` 成**一个**参数：`spawnSync` 会把数组 arg 用 `,` 拼成单个字符串，
+    // 直接传 `serverOptions()` 会让 postgres 收到 `-p 55902,-c listen_addresses=…`，日志逐字是
+    // `FATAL:  invalid value for parameter "port": "55902,-c"` + `pg_ctl: could not start server`。
+    '-o', serverOptions().join(' '),
     '-t', '60',
     '-w', 'start',
   ]);
@@ -514,7 +517,19 @@ async function main() {
   await seedCleanup(dGoneClean);
 
   const aBefore = await idsOfMedia(subjectA);
-  assert.equal(aBefore.length, 6, `A 的媒体行应为 6 条，实际 ${aBefore.length}`);
+  // 9 = 3 条终态可删 + 3 条非终态（② 的口径）+ 3 条终态被引用（③ 的口径）。
+  // ⚠ `idsOfMedia` 只按 `owner_id` 过滤、**不区分 state** ⇒ 这里数的是 A 的**全部**媒体行。
+  // （修前写的是 6，把「终态 6 条」当成了「全部行数」，臂一跑就红在 9≠6。）
+  assert.equal(aBefore.length, 9, `A 的媒体行应为 9 条（终态 6 + 非终态 3），实际 ${aBefore.length}`);
+  assert.equal(
+    await countOf(
+      `SELECT count(*) AS v FROM public.media
+        WHERE owner_id = $1::uuid AND state IN ('rejected', 'deleted')`,
+      [subjectA],
+    ),
+    6,
+    'A 的终态行应为 6 条（3 可删 + 3 被引用）',
+  );
 
   // ---- [2] 正常批 ---------------------------------------------------------------
   const first = await callPurge(subjectA);

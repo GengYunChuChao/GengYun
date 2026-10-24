@@ -91,7 +91,8 @@
 -- 运行时接线必须把**媒体模块排在 `community` / `recognitions` / `speech` 之后**（`ocr` 目前
 -- **连模块都没有**，见下），排在前面只会不断跳过、永远删不干净。证据页
 -- `docs/verification/gy-r34-i19-media-row-purge-20261024.md` 的「运行顺序前提」一节与本段同形，
--- 判据（`skipped_referenced` 是否随其它模块跑完单调下降）写在那里，不重复。
+-- 判据（`skipped_referenced` 必须随其它模块跑完**单调不增** —— 不是「必然下降」：`ocr` 死桶
+-- 与 `community` 的软删行恒不降）写在那里，不重复。
 --
 -- ## 函数体铁律（与 0034 同形，缺一即被审查打回）
 -- `SECURITY DEFINER` + `SET search_path = pg_catalog` + `SET TimeZone = 'UTC'`；函数体内所有业务
