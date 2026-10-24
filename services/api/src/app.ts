@@ -2126,7 +2126,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerProfileRoutes(app, config, pool, guards);
   // 本片起：以下域的输出面受**全局开关**控制（受控面与其 `operationId` 的权威清单见
   // `admin/ops/flag-gate.ts` 的 `FLAG_GATED_SURFACES`：除草剂列表／详情、社区 `createPost`／
-  // `createComment`、识别、OCR、转写、合成），因此传入 `gatedGuards`（= 原守卫 + 开关门；
+  // `createComment`、识别、OCR、转写、合成、文字问答），因此传入 `gatedGuards`（= 原守卫 + 开关门；
   // 先鉴权、后判开关）。守卫链语义与错误码次序不变。
   // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
   // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
@@ -2257,7 +2257,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 这一段刻意**排在 `registerJobRoutes` 之后**：作业源在注册表构造时就捕获了
   // `app.conversationService` 的求值闭包，而路由注册只影响 HTTP 面的可见性，两者无次序耦合。
   // `real` 且无 `DATABASE_URL` ⇒ `conversationService === null` ⇒ 整域 503（不假成功）。
-  registerConversationRoutes(app, config, guards, conversationService);
+  // 本片起：问答受理面（`POST /conversations/:id/turns`，operationId `createTurn`）纳入全局开关
+  // `ai_enabled`（受控面清单里的 `createTurn`），因此传 `gatedGuards`；其余 6 条会话/轮次
+  // 读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，行为与
+  // `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
+  registerConversationRoutes(app, config, gatedGuards, conversationService);
 
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：

@@ -479,6 +479,77 @@ test('E4. 跨端点：关闭 ai_enabled ⇒ AI 任务受理面拒绝；未受控
   }
 });
 
+test('E4b. 跨端点：关闭 ai_enabled ⇒ 文字问答受理面（createTurn）拒绝；未受控的问答读面不受影响', async () => {
+  const { app, store } = newApp();
+  try {
+    const adminToken = await seedAdmin(store);
+    const userToken = await loginUser(app);
+
+    // 先建一个会话（问答受理的前置资源，与开关无关）。
+    const created = await app.inject({
+      method: 'POST',
+      url: `${API}/conversations`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-conv-0001' },
+      payload: { conditions: { crop_id: 'rice', region_code: '330100' } },
+    });
+    assert.equal(created.statusCode, 201, created.body);
+    const conversationId = created.json().data.id;
+    const turnBody = { input_type: 'text', text: '稻田杂草怎么防除？' };
+
+    // 关闭前：问答受理面真实可用（202 受理）。
+    const before = await app.inject({
+      method: 'POST',
+      url: `${API}/conversations/${conversationId}/turns`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-turn-open-0001', 'if-match': '"1"' },
+      payload: turnBody,
+    });
+    assert.equal(before.statusCode, 202, before.body);
+
+    // 后台关闭 ai_enabled。
+    const closed = await app.inject({
+      method: 'PUT',
+      url: `${API}/admin/feature-flags/ai_enabled`,
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-ai-close-0002', 'if-match': '"1"' },
+      payload: { enabled: false, reason: '示例：停止 AI 任务受理' },
+    });
+    assert.equal(closed.statusCode, 200, closed.body);
+
+    // 关闭后：createTurn 拒绝（409），且不产出回答。
+    const blocked = await app.inject({
+      method: 'POST',
+      url: `${API}/conversations/${conversationId}/turns`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-turn-closed-0001', 'if-match': '"1"' },
+      payload: turnBody,
+    });
+    assert.equal(blocked.statusCode, 409, blocked.body);
+    assert.equal(blocked.json().error.code, 'OBJECT_UNAVAILABLE');
+    assert.equal(blocked.json().error.retryable, false, '确定性关闭不得声称可重试');
+    assert.equal(blocked.json().data, undefined, '不得返回成功封套');
+
+    // 读面（不在受控清单里）不受影响：会话列表照旧 200（不是 409）。
+    const list = await app.inject({ method: 'GET', url: `${API}/conversations`, headers: { authorization: `Bearer ${userToken}` } });
+    assert.equal(list.statusCode, 200, list.body);
+
+    // 重新开启 ⇒ 立即恢复受理（无"负缓存"）。
+    const reopened = await app.inject({
+      method: 'PUT',
+      url: `${API}/admin/feature-flags/ai_enabled`,
+      headers: { authorization: `Bearer ${adminToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-ai-open-0002', 'if-match': '"2"' },
+      payload: { enabled: true, reason: '示例：恢复 AI 任务受理' },
+    });
+    assert.equal(reopened.statusCode, 200, reopened.body);
+    const recovered = await app.inject({
+      method: 'POST',
+      url: `${API}/conversations/${conversationId}/turns`,
+      headers: { authorization: `Bearer ${userToken}`, 'content-type': 'application/json', 'idempotency-key': 'gyi18-flaggate-turn-reopen-0001', 'if-match': '"1"' },
+      payload: turnBody,
+    });
+    assert.equal(recovered.statusCode, 202, recovered.body);
+  } finally {
+    await app.close();
+  }
+});
+
 test('E5. 端到端 fail-closed：开关行被写坏（enabled 非布尔）⇒ 受控面 503 而不是放行', async () => {
   const config = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', SESSION_SIGNING_KEY: SESSION_KEY });
   const store = createMemoryAuthStore();
