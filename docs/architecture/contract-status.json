@@ -402,9 +402,28 @@
       "scope": "user",
       "version_required": false,
       "route_mounted": true,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "HTTP 路由已装配：`registerExportRoutes` 在 app.ts 一处 import ＋ 一处注册，`GET /api/v1/me/exports` 由 routes/exports.ts 提供（无连接池 ⇒ 503 fail-closed）；`status` 仍 planned、`evidence` 仍为空，改判待监工裁定。真实 PG17 集成臂与运行时角色对 `public.exports` 的读授权面未取得，真实外发账本数据与小程序/真机链路亦未取得（GY-I19）"
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/exports.ts",
+          "symbol": "app.get(`${API_PREFIX}/me/exports`",
+          "lines": "42-62"
+        },
+        {
+          "path": "services/api/src/privacy/exports-list.ts",
+          "symbol": "createExportsListService",
+          "lines": "60-129"
+        },
+        {
+          "test": "tests/unit/exports-route-http.test.mjs",
+          "name": "契约：列表无 ETag 头"
+        },
+        {
+          "test": "tests/unit/exports-privacy-redlines.test.mjs",
+          "name": "Export 键集必须与契约 properties 逐项相同"
+        }
+      ],
+      "blocker": "HTTP 面已交付：`services/api/src/routes/exports.ts:registerExportRoutes` 注册 `GET ${API_PREFIX}/me/exports`（`x-scope: user` 判 `role !== 'user'` ⇒ 403、`Cache-Control: no-store`、列表按契约不发 ETag），读面 `services/api/src/privacy/exports-list.ts:createExportsListService` 经 `packages/privacy/egress.mjs:listExportsForUser` 投影成契约 `ExportPage`（8 键逐项、`additionalProperties:false`），游标复用 `services/api/src/privacy/signed-list-cursor.ts`（主体/登录版本/域/TTL 绑定）。fail-closed 三形态与本人隔离由 `tests/unit/exports-route-http.test.mjs`、`tests/unit/exports-privacy-redlines.test.mjs` 覆盖：无池 / 连接池形状不合 / 运行时角色缺 `public.exports` 读面 / 游标签名密钥缺失 ⇒ 503 PROVIDER_UNAVAILABLE（retryable=false），且不返回空清单冒充成功；`?user_id=` 等任意用户参数 ⇒ 400 INVALID_REQUEST（身份只来自会话存储）。**仍判 partial 而非 implemented 的实测理由（@46dc7e0d）**：① 部署侧 `deploy/postgres-cvm/sql/20-login-roles.sql` 明确记载不执行 `services/api/db/roles/egress_ledger.sql`，运行时角色目前对 `public.exports` 只有 `user_id` 一列的读面 ⇒ 真实 PG17 上本操作只能证到 503，happy path 仅在 PGlite ＋ 补授 SELECT 的合成臂里跑通；② 真实 PG17 集成臂（`tests/integration/`）未新增；③ 真实外发账本数据与小程序/真机链路未取得。契约 `Export` 是外发账本条目的投影，本条**没有**导出文件打包/下载面，不得读成「用户数据打包导出已实现」（GY-I19）"
     },
     {
       "id": "requestAccountDeletion",
