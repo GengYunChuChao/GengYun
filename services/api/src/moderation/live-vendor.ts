@@ -165,6 +165,25 @@ function readSample(response: Record<string, unknown>): VendorSample {
   return { suggestion, labelToken, score };
 }
 
+/** Tencent Cloud RequestId 形状（UUID 或十六进制连字符串）；只记录合法形态，否则 `null`。 */
+const MODERATION_REQUEST_ID_PATTERN = /^[a-fA-F0-9-]{8,64}$/;
+
+/**
+ * 从供应商回报里取 **脱敏** 的 RequestId（只用于登记/对账，不含待审正文）。
+ *
+ * 取不到或形态不合法 ⇒ `null`（绝不猜一个值）；该值只进 `ModerationLiveObservation`，
+ * 不进 `ModerationVerdict`（合流层回报仍是闭集三键）。
+ */
+export function moderationRequestIdFromPayload(payload: unknown): string | null {
+  const responseRead = readOwn(payload, 'Response');
+  if (!responseRead.ok || !responseRead.present || responseRead.value === null || typeof responseRead.value !== 'object') {
+    return null;
+  }
+  const requestIdRead = readOwn(responseRead.value, 'RequestId');
+  const value = requestIdRead.value;
+  return typeof value === 'string' && MODERATION_REQUEST_ID_PATTERN.test(value) ? value : null;
+}
+
 function summarize(samples: readonly VendorSample[]): string {
   const suggestions = samples.map((sample) => (sample.suggestion === null ? 'unknown' : sample.suggestion));
   const labels = samples.map((sample) => (sample.labelToken === null ? 'unknown' : sample.labelToken));
