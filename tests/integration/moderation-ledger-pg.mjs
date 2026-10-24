@@ -296,7 +296,7 @@ function forwardMergeNumbering() {
     assert.deepEqual(
       numbering.undeclaredGaps.map(formatMigrationVersion),
       [],
-      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15、0033/#525、0034/#19 与 0035/#535 都已在树上，台账无保留号）',
+      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15、0033/#525、0034/#19 与 0035/#535 都已在树上；0036/#538、0037/#14、0038/#19片B 在台账保留；0039/#22片C 已落盘）',
     );
     assert.equal(
       numbering.maxVersion,
@@ -305,8 +305,8 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0035',
-      '合流树末项是 0035（#535 的 0035_r34_media_row_purge.sql，R34 媒体行清理；0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0039',
+      '合流树末项是 0039（#22 片C 的 0039_r34_deletion_state_cancelled.sql，deletion_state 增 cancelled；0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数、0035 是 #535 的媒体行清理，均已在树上；0036=#538、0037=#14、0038=#19片B 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,

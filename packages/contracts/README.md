@@ -36,6 +36,7 @@ OpenAPI使用JSON表示，可由支持3.1的工具读取。响应data/meta或err
 | listExports | `GET /me/exports` | user | 否 |
 | requestAccountDeletion | `POST /me/account/deletion` | user | 否 |
 | getDeletionReceipt | `GET /account/deletions/{id}` | receipt | 否 |
+| cancelDeletion | `DELETE /me/account/deletion` | user | 否 |
 | createUpload | `POST /media/uploads` | user | 否 |
 | completeUpload | `POST /media/uploads/{id}/complete` | user | 是 |
 | getMedia | `GET /media/{id}` | user | 否 |

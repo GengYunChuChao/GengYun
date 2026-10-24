@@ -38,7 +38,35 @@
     "remove_when **删除**，台账回到空数组：**34 个文件 + 0 保留 === max 34**、缺号 0",
     "（verify-migrations-unique --strict PASS）。上一条（R34-I19 让号段的 33 个文件 + 1 保留 === max 34）",
     "是让号当时的事实，保留项一落盘就必须删 —— 本次合流正是它自己的 remove_when 到期，⛔ 不是放宽判据。",
-    "README 的「0033 预留」当前状态段已随本合流删除，历史叙述留在 README 的 R34-I19 段。"
+    "README 的「0033 预留」当前状态段已随本合流删除，历史叙述留在 README 的 R34-I19 段。",
+    "【2026-10-24 R34/#22 片C · 取号 0039 · 登记 0036/0037/0038】main 最大号 0035；本片新增 0039",
+    "（0039_r34_deletion_state_cancelled.sql）⇒ 树上出现 0036/0037/0038 三个「有依据的缺号」：",
+    "0036 = #538 feat/gy-r34-i18-content-pg（已开 PR，在飞）；0037 = #14 人工复核（已裁定分配、尚无分支）；",
+    "0038 = #19 片B 回执 bearer 台账持久化（已裁定分配、尚无分支，见 ruling-r34-migration-0038-allocation）。",
+    "三条保留项 remove_when = 各自落盘即删；reservedButPresent 会逼删。36 个文件 + 3 保留 === max 39，",
+    "三条不变量成立。裁定依据：ruling-r34-migration-0039-cancelled-20261024.md 与 ruling-r34-migration-0038-allocation-20261024.md。"
   ],
-  "reservations": []
+  "reservations": [
+    {
+      "version": 36,
+      "filename": "0036_r34_admin_content_persistence.sql",
+      "owner": "PR #538（feat/gy-r34-i18-content-pg）",
+      "reason": "0036 属 #538 管理端内容/资料域 PG 落点（已开 PR，在飞）",
+      "remove_when": "#538 合入即删"
+    },
+    {
+      "version": 37,
+      "filename": "0037_r34_moderation_manual_review.sql",
+      "owner": "#14（人工复核）",
+      "reason": "0037 已裁定分配给 #14 人工复核（尚无分支/文件，文件名待该片落定时核）",
+      "remove_when": "#14 片落盘即删"
+    },
+    {
+      "version": 38,
+      "filename": "0038_r34_deletion_receipt_persistence.sql",
+      "owner": "#19 片B（回执 bearer 台账持久化）",
+      "reason": "0038 已裁定分配给 #19 片B（见 ruling-r34-migration-0038-allocation-20261024.md）",
+      "remove_when": "#19 片B 落盘即删"
+    }
+  ]
 }

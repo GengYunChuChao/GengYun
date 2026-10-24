@@ -217,6 +217,32 @@ export function registerAccountDeletionRoutes(
         .send({ data: projected, meta: buildMeta(request, config) });
     },
   );
+
+  app.delete(
+    `${API_PREFIX}/me/account/deletion`,
+    {
+      // 鉴权 = 用户会话（**不是**回执 bearer）：取消是「本人取消自己的在途注销」，非本人无入口。
+      preHandler: guards.requireUser,
+      schema: { querystring: emptyQuery },
+    },
+    async (request, reply) => {
+      const wired = requireWired();
+      const userId = readIdentity(request).userId;
+      let cancelled: Record<string, unknown> | null;
+      try {
+        cancelled = wired.deletion.cancelDeletion(userId);
+      } catch (error) {
+        throw toContractError(error);
+      }
+      if (cancelled === null) throw new ApiError('NOT_FOUND', '没有可取消的在途注销删除请求');
+      const projected = projectReceipt(cancelled);
+      if (projected === null) throw new ApiError('NOT_FOUND', '注销删除请求不存在');
+      return reply
+        .headers(noStore)
+        .header('ETag', `"${String(projected['revision'])}"`)
+        .send({ data: projected, meta: buildMeta(request, config) });
+    },
+  );
 }
 
 /** 只读诊断：本次请求是否携带 bearer（不读值、不写日志；供集成脚本的对照臂使用）。 */

@@ -4,14 +4,21 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态：`0001..0034` 连续，无缺号
+## 当前状态：`0001..0035` + `0039`；`0036/0037/0038` 有意缺号（已登记保留）
 
-迁移 `0001..0034` 已全部真实落盘：**34 个正向 + 33 个 down**（无 `0001` 的 down），末项 `0034`。
-保留台账 `services/api/db/migration-reservations.json` 的 `reservations` 为**空数组**
-（`count + 保留数 === max` ⇒ **34 + 0 === 34**），
-`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据为「`0001..0034` 连续、无缺口」。
+迁移 `0001..0035` 已全部真实落盘（35 个正向 + 34 个 down，无 `0001` 的 down）；本片（#22 片C）新增
+`0039_r34_deletion_state_cancelled.sql` ⇒ 目录出现 `0036/0037/0038` 三个**有意缺号**，已同时登记
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **36 + 3 === 39**），
+`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对每个缺号都有依据（见下）。
 （本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations` ⇒
-正向 `.sql` 34 条、`rollback/` 33 条、`0001..0034` 无缺号。）
+正向 `.sql` 36 条、`rollback/` 35 条、缺号 `0036/0037/0038` 均已登记保留。）
+
+- `0036` 预留：**#538** `feat/gy-r34-i18-content-pg`（管理端内容/资料域 PG 落点，已开 PR，在飞）。
+- `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0038` 预留：**#19 片B** 回执 bearer 台账持久化（`0038_r34_deletion_receipt_persistence.sql`，已裁定分配、尚无分支）。
+- `0039_r34_deletion_state_cancelled.sql`（#22 片C · 在途取消：`ALTER TYPE deletion_state ADD VALUE 'cancelled'`）接在
+  上述三个保留号之后；裁定 `.pg17/ruling-r34-migration-0039-cancelled-20261024.md` 分配本号，
+  `0036→0037→0038→0039` 串行合入（迁移号互斥）。
 
 - `0033_admin_audit_log_read.sql`（R34 · 后台审计日志查询面，Refs #18）接在 `0032` 之后：
   编号前核对过全部 refs 与在途 PR（`003[3-9]_` 零命中）⇒ 直接用最大号 +1，**台账仍为空数组**。

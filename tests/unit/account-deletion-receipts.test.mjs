@@ -301,3 +301,38 @@ test('GY-I19：回执投影只做形状归一 —— 非法枚举折叠，错误
     /requested_at/,
   );
 });
+
+test('GY-I22：在途取消 —— 本人可取消、非本人无入口、终态不可取消、取消后状态可核', async () => {
+  const clock = scriptedClock();
+  const { favoritesStore, historyStore, messagesStore, conversationsStore } = await seed(clock);
+  const deletion = createUserDataDeletion({ favoritesStore, historyStore, messagesStore, conversationsStore, now: clock.now });
+
+  // 两个主体各建一个在途注销请求（requested 即「在途」，尚未进入处理）。
+  const reqA = deletion.requestDeletionFor(USER_A.userId, { receiptInput: 'cancel-a' });
+  const idA = String(reqA['id']);
+  const reqB = deletion.requestDeletionFor(USER_B.userId, { receiptInput: 'cancel-b' });
+  const idB = String(reqB['id']);
+  assert.equal(reqA['state'], 'requested');
+
+  // 本人可取消：state → cancelled、revision +1，回执与完成判定都可核。
+  const cancelledA = deletion.cancelDeletion(USER_A.userId);
+  assert.ok(cancelledA !== null, '本人有在途请求时取消不得返回 null');
+  assert.equal(cancelledA['id'], idA);
+  assert.equal(cancelledA['state'], 'cancelled', '取消后回执必须如实 state=cancelled');
+  assert.equal(deletion.receipt(idA)['state'], 'cancelled');
+  assert.equal(deletion.completionStatus(idA).state, 'cancelled');
+  assert.equal(deletion.completionStatus(idA).completed, false, '取消不是完成');
+
+  // 非本人无入口：取消 A 不影响 B 的在途请求（B 仍停留在 requested，未被 A 的取消动过）。
+  assert.equal(deletion.completionStatus(idB).state, 'requested');
+  assert.notEqual(deletion.receipt(idB)['state'], 'cancelled');
+
+  // 终态不可取消：A 已是 cancelled（终态），再取消 → OBJECT_UNAVAILABLE(409)。
+  assert.throws(
+    () => deletion.cancelDeletion(USER_A.userId),
+    (error) => error !== null && typeof error === 'object' && error.code === 'OBJECT_UNAVAILABLE',
+  );
+
+  // 无在途请求的未知主体 → null（调用方据此 404，不编造回执）。
+  assert.equal(deletion.cancelDeletion('no-such-user'), null);
+});
