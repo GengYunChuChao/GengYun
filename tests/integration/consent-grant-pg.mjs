@@ -170,12 +170,11 @@ try {
   await error(grant(receiptFailure),503,'PROVIDER_UNAVAILABLE'); assert.deepEqual(await counts(receiptFailure),{records:0,epochs:0,receipts:0});
   await owner.query('DROP TRIGGER test_grant_receipt_failure ON idempotency_keys; DROP FUNCTION test_grant_receipt_failure()');
   say('native receipt insertion failure rolls back already-written record and epoch');
-  for(const kind of ['media','jobs','exports','author_links']) {
+  for(const kind of ['media','exports','author_links']) {
     for (const alreadyGranted of [false,true]) {
     const u=await login('dependency-'+kind+'-'+alreadyGranted);
     if (alreadyGranted) assert.equal((await grant(u)).status,201);
     if(kind==='media') await owner.query("INSERT INTO media(owner_id,purpose,mime,bytes,sha256,object_ref_cipher) VALUES($1,'weed_recognition','image/png',1,$2,'fixture')",[u.id,'0'.repeat(64)]);
-    if(kind==='jobs') await owner.query("INSERT INTO jobs(owner_id,kind,target_type,target_id,entity_revision,input_hash,auth_epoch,deadline_at) VALUES($1,'fixture','fixture',$2,1,$3,1,now()+interval '1 hour')",[u.id,randomUUID(),'0'.repeat(64)]);
     if(kind==='exports') await owner.query("INSERT INTO exports(user_id,object_type,object_id,object_revision,purpose,consent_epoch,recipient_id,recipient_config_version,auth_epoch) VALUES($1,'fixture',$2,1,'external_inference',1,'fixture-llm','fixture-config-v1',1)",[u.id,randomUUID()]);
     if(kind==='author_links') {const author=(await owner.query("INSERT INTO public_authors(display_name) VALUES('fixture') RETURNING id")).rows[0].id; await owner.query('INSERT INTO author_links(user_id,public_author_id) VALUES($1,$2)',[u.id,author]);}
     await error(grant(u),409,'OBJECT_UNAVAILABLE');
@@ -183,7 +182,7 @@ try {
     if (alreadyGranted) assert.equal((await epoch(u)).current_epoch,'1');
     }
   }
-  say('all four unimplemented business dependency classes refuse initial/replacement authorization without fake cancellation');
+  say('all three unimplemented business dependency classes refuse initial/replacement authorization without fake cancellation');
   await assert.rejects(owner.query("UPDATE consent_policies SET source_ref='fixture://changed' WHERE id=$1",[currentPolicy]),e=>e.code==='23514');
   await assert.rejects(owner.query('DELETE FROM consent_policies WHERE id=$1',[currentPolicy]),e=>e.code==='23514');
   await owner.query('UPDATE consent_policies SET enabled=false WHERE id=$1',[currentPolicy]);

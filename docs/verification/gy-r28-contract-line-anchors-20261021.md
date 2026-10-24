@@ -154,7 +154,7 @@
 | 020 | listConsents | services/api/src/privacy/consent-pg.ts:109-120 | 「consentStore」 | 1 / 1 |  |
 | 021 | listConsents | services/api/src/privacy/consent-pagination.ts:24-65 | 「paginateConsentRecords」 | 1 / 0（±2 内 1） | 同区间共用 2 条 |
 | 022 | grantConsent | services/api/src/routes/consents.ts:24-39 | 「app.post(`${API_PREFIX}/me/consents`」 | 1 / 1 |  |
-| 023 | grantConsent | services/api/src/privacy/grant-pg.ts:32-113 | 「persistConsentGrant」 | 1 / 1 |  |
+| 023 | grantConsent | services/api/src/privacy/grant-pg.ts:32-112 | 「persistConsentGrant」 | 1 / 1 |  |
 | 024 | withdrawConsent | services/api/src/routes/consents.ts:50-64 | 「app.delete(`${API_PREFIX}/me/consents/:purpose`」 | 1 / 1 |  |
 | 025 | withdrawConsent | services/api/src/privacy/consent-pg.ts:135-179 | 「requireConsent」 | 2 / 2 |  |
 | 026 | requestAccountDeletion | services/api/src/routes/account-deletion.ts:128-181 | 「`${API_PREFIX}/me/account/deletion`」 | 2 / 1 |  |

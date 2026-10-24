@@ -361,7 +361,7 @@
         {
           "path": "services/api/src/privacy/grant-pg.ts",
           "symbol": "persistConsentGrant",
-          "lines": "32-113"
+          "lines": "32-112"
         },
         {
           "test": "tests/integration/consent-grant-pg.mjs",
@@ -392,7 +392,7 @@
           "lines": "135-179"
         }
       ],
-      "blocker": "PG撤回在 jobs/media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed；#128提供外发账本/在途守卫/模块删除注册协议，但本基线尚未接入撤回消费者。真实政策/接收方与注销全链未验；#133未合不计入本基线"
+      "blocker": "PG撤回在 media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed（R34 起 `public.jobs` 已从依赖判定与授权面下线：该表零读者、零入向外键、零外发账本关联，见 docs/verification/gy-r34-jobs-retire-20261024.md）；#128提供外发账本/在途守卫/模块删除注册协议，但本基线尚未接入撤回消费者。真实政策/接收方与注销全链未验；#133未合不计入本基线"
     },
     {
       "id": "listExports",
