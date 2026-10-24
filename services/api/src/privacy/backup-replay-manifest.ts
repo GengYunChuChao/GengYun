@@ -32,8 +32,9 @@
  *    「清单没做」「做了没证据」「第三方没确认」「快照还没到位」。本片为每条、每类给**必非空**
  *    `reason_code`（`restore_safe === true` 时才为 `null`）。
  * 4. **清单可能被裁剪**：漏重放最常见的成因不是"worker 懒"，而是**清单被裁剪/篡改**（少一条就少删一份）。
- *    本片给清单一个 `manifest_digest`（覆盖每条 `seq|replay_key|needed`），重放前**重新计算并比对**；
- *    不一致 ⇒ `REPLAY_MANIFEST_TAMPERED` fail-closed，**不进入重放**。
+ *    本片给清单一个 `manifest_digest`（覆盖每条 `seq|replay_key|needed`；带密钥时用 HMAC-SHA256，密钥经
+ *    环境变量/配置注入），重放前**用同一密钥重新计算并比对**；不一致 ⇒ `REPLAY_MANIFEST_TAMPERED`
+ *    fail-closed，**不进入重放**。
  *
  * ## 四条铁律（默认按「不得谎称恢复安全」设计）
  * 1. **恢复后不得复活**：重放完成后逐条回查对象是否仍可见/可用；任一仍可见 ⇒ `REPLAY_REVIVED`，
@@ -75,7 +76,7 @@
  *   - 清单条目只含 **opaque** 引用与哈希键，**不含**任何用户可识别信息
  *     （state-contract：「清单不可恢复出用户关联数据」）。
  */
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { HANDLER_STATES, THIRD_PARTY_STATES } from '../../../../packages/privacy/constants.mjs';
 import { SAFE_ERROR_CODES } from '../../../../packages/privacy/deletion.mjs';
 import { AGING_REASON_CODES, evaluateDeletionAging } from './deletion-aging.ts';
@@ -261,6 +262,11 @@ export interface BackupReplayManifestInput {
   requestId?: string;
   /** 可选：`requestId → 主体` 绑定读取器（核实归属用）。 */
   ownerOf?: (requestId: string) => string | null | undefined;
+  /**
+   * 清单完整性摘要的 HMAC 密钥（经环境变量/配置注入；**绝不写进代码或提交**）。
+   * 提供非空字符串 ⇒ `manifest_digest` 用 HMAC-SHA256（可防篡改）；缺省 ⇒ 无密钥 sha256（仅损坏校验）。
+   */
+  hmacKey?: string | null;
 }
 
 /** 清单中的一条（**计划**，不是结论）。 */
@@ -319,7 +325,7 @@ export interface BackupReplayManifest {
   readonly entries_total: number;
   readonly entries_required: number;
   readonly entries_covered: number;
-  /** 清单完整性摘要（sha256，覆盖版本/快照/水位/每条 `seq|replay_key|needed`）。 */
+  /** 清单完整性摘要（带密钥时 HMAC-SHA256、否则 sha256，覆盖版本/快照/水位/每条 `seq|replay_key|needed`）。 */
   readonly manifest_digest: string;
   /** `ready` = 有可重放条目且清单完整；`blocked` = 清单不可用于重放。 */
   readonly state: string;
@@ -363,7 +369,9 @@ export interface BackupReplayTargetPort {
   readonly available: boolean;
   /** 原子幂等重放：同一 `replay_key` 重复调用**不得产生第二份事实**。 */
   apply(entry: BackupReplayEntryRequest): Promise<BackupReplayApplyResult> | BackupReplayApplyResult;
-  /** 恢复后该对象是否仍可见/可用（「验证无复活」用；应为 `false`）。 */
+  /** 恢复后该对象是否仍可见/可用（「验证无复活」用；应为 `false`）。
+   * **必须返回布尔**：`true` = 仍可见、`false` = 不可见；返回非布尔（null/undefined/其它）
+   * 一律视作「无法验证」，按 fail-closed 处理，**不静默放行**。 */
   isVisible(objectRef: string): Promise<boolean> | boolean;
   /** 第三方待删重播端口；**未接线 ⇒ fail-closed**（零真实第三方调用）。 */
   thirdParty?: {
@@ -445,6 +453,17 @@ function sha256(input: string): string {
 }
 
 /**
+ * 清单完整性标签：带密钥时用 HMAC-SHA256（防篡改），无密钥时回退无密钥 sha256
+ * （仅损坏校验，**不能**防篡改）。密钥必须经环境变量/配置注入，⛔ 绝不写进代码或提交。
+ */
+function manifestTag(input: string, hmacKey?: string | null): string {
+  if (typeof hmacKey === 'string' && hmacKey.length > 0) {
+    return createHmac('sha256', hmacKey).update(input, 'utf8').digest('hex');
+  }
+  return sha256(input);
+}
+
+/**
  * 幂等键：只由**对象身份**与**删除代次**决定（不含快照 id、不含时间）
  * ⇒ 跨快照、跨重放稳定，重复重放可被目标端识别为同一键（PK 冲突 ⇒ `duplicate`）。
  */
@@ -452,15 +471,17 @@ export function replayKeyOf(objectRef: string, deleteGeneration: number): string
   return sha256(`gengyun/backup-replay/v1\0${objectRef}\0${deleteGeneration}`);
 }
 
-/** 清单完整性摘要：覆盖版本/快照/水位与每条 `seq|replay_key|needed`。 */
+/** 清单完整性摘要：覆盖版本/快照/水位与每条 `seq|replay_key|needed`（带密钥时用 HMAC-SHA256）。 */
 function manifestDigestOf(
   snapshotId: string,
   watermarkIso: string | null,
   entries: readonly { seq: number; replay_key: string; needed: boolean }[],
+  hmacKey?: string | null,
 ): string {
   const lines = entries.map((entry) => `${entry.seq}|${entry.replay_key}|${entry.needed ? '1' : '0'}`);
-  return sha256(
+  return manifestTag(
     [`v${REPLAY_MANIFEST_VERSION}`, snapshotId, watermarkIso ?? '', ...lines].join('\n'),
+    hmacKey,
   );
 }
 
@@ -500,8 +521,9 @@ function blockedManifest(input: {
   reasonCode: string;
   detail: string;
   subjectVerified: boolean;
+  hmacKey?: string | null;
 }): BackupReplayManifest {
-  const digest = manifestDigestOf(input.snapshotId, input.watermarkIso, []);
+  const digest = manifestDigestOf(input.snapshotId, input.watermarkIso, [], input.hmacKey);
   return Object.freeze({
     manifest_version: REPLAY_MANIFEST_VERSION,
     snapshot_id: input.snapshotId,
@@ -537,12 +559,14 @@ function blockedManifest(input: {
 export function buildBackupReplayManifest(input: BackupReplayManifestInput): BackupReplayManifest {
   const now = resolveNow(input?.now);
   const nowIso = now?.iso ?? null;
+  const hmacKey = input?.hmacKey ?? null;
   if (now === null) {
     return blockedManifest({
       snapshotId: '', lineage: null, watermarkIso: null, createdAtIso: null, nowIso: null,
       reasonCode: REASON_CODE_VALUES.INPUT_INVALID,
       detail: 'now 不是可用的严格 ISO-8601 时刻',
       subjectVerified: false,
+      hmacKey,
     });
   }
 
@@ -558,7 +582,7 @@ export function buildBackupReplayManifest(input: BackupReplayManifestInput): Bac
   const createdAtIso = createdAtMs === null ? null : new Date(createdAtMs).toISOString();
 
   const blocked = (reasonCode: string, detail: string, subjectVerified = false): BackupReplayManifest =>
-    blockedManifest({ snapshotId, lineage, watermarkIso, createdAtIso, nowIso, reasonCode, detail, subjectVerified });
+    blockedManifest({ snapshotId, lineage, watermarkIso, createdAtIso, nowIso, reasonCode, detail, subjectVerified, hmacKey });
 
   if (snapshotId === '') {
     return blocked(REASON_CODE_VALUES.INPUT_INVALID, '快照缺少非空 snapshot_id');
@@ -711,7 +735,7 @@ export function buildBackupReplayManifest(input: BackupReplayManifestInput): Bac
   const ordered = entries.map((entry, index) => Object.freeze({ ...entry, seq: index }));
 
   const required = ordered.filter((entry) => entry.needed);
-  const digest = manifestDigestOf(snapshotId, watermarkIso, ordered);
+  const digest = manifestDigestOf(snapshotId, watermarkIso, ordered, hmacKey);
 
   const reasons: string[] = [];
   if (ordered.length === 0) reasons.push(REASON_CODE_VALUES.NONE);
@@ -752,6 +776,12 @@ export interface BackupReplayExecutionInput {
   target?: BackupReplayTargetPort | null;
   /** 可注入的当前时间；缺省取清单里的 `now`。 */
   now?: string | number | Date;
+  /**
+   * 与产出清单时**同一** HMAC 密钥（经环境变量/配置注入；绝不写进代码或提交）。
+   * 用于重放前重算并核对 `manifest_digest`；缺省 ⇒ 无密钥 sha256（与带密钥清单必然不符 ⇒
+   * `REPLAY_MANIFEST_TAMPERED`，fail-closed）。
+   */
+  hmacKey?: string | null;
 }
 
 /** fail-closed 的空重放结论。 */
@@ -836,7 +866,7 @@ function classifyApply(
  * 失败保持隔离」。
  *
  * 铁律：
- *   - 入口先核对 `manifest_digest`（被裁剪/篡改 ⇒ `REPLAY_MANIFEST_TAMPERED`，**不进入重放**）；
+ *   - 入口先核对 `manifest_digest`（带密钥 HMAC 时被裁剪/篡改 ⇒ `REPLAY_MANIFEST_TAMPERED`，**不进入重放**）；
  *   - 未接线/不可用端口 ⇒ `REPLAY_TARGET_UNAVAILABLE` / `REPLAY_THIRD_PARTY_UNWIRED`，**零调用**；
  *   - 重放后逐条回查可见性；任一仍可见 ⇒ `REPLAY_REVIVED`，`restore_safe: false`、`isolation_required: true`；
  *   - **不得仅凭时钟判完成**：没有完成证据时，仍在期限内 ⇒ `REPLAY_UNDUE_NO_EVIDENCE`、
@@ -853,6 +883,7 @@ export async function executeBackupReplay(input: BackupReplayExecutionInput): Pr
   const manifest = input?.manifest as BackupReplayManifest | undefined;
   const now = resolveNow(input?.now ?? manifest?.now);
   const nowIso = now?.iso ?? null;
+  const hmacKey = input?.hmacKey ?? null;
 
   if (now === null) {
     return blockedReplayResult({
@@ -879,8 +910,8 @@ export async function executeBackupReplay(input: BackupReplayExecutionInput): Pr
     });
   }
 
-  // 清单完整性：重新计算 digest 并比对（漏重放最常见的根因是清单被裁剪）。
-  const expectedDigest = manifestDigestOf(manifest.snapshot_id, manifest.watermark, manifest.entries);
+  // 清单完整性：重新计算 digest 并比对（漏重放最常见的根因是清单被裁剪；带密钥时不可伪造）。
+  const expectedDigest = manifestDigestOf(manifest.snapshot_id, manifest.watermark, manifest.entries, hmacKey);
   if (expectedDigest !== manifest.manifest_digest) {
     return blockedReplayResult({
       manifest,
@@ -944,7 +975,10 @@ export async function executeBackupReplay(input: BackupReplayExecutionInput): Pr
     let visibleAfter: boolean | null = null;
     if (targetAvailable) {
       try {
-        visibleAfter = (await (target as BackupReplayTargetPort).isVisible(entry.object_ref)) === true;
+        const observed = await (target as BackupReplayTargetPort).isVisible(entry.object_ref);
+        // fail-closed：只认严格布尔。true→true、false→false；非布尔（null/undefined/其它）
+        // ⇒ 视作「无法验证」，保持 `null`，绝不静默放行。
+        visibleAfter = typeof observed === 'boolean' ? observed : null;
       } catch {
         visibleAfter = null;
       }

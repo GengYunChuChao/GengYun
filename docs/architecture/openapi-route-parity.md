@@ -15,13 +15,13 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 113 |
+| 已挂载路由（不含 HEAD） | 114 |
 | 契约操作（paths × method） | 115 |
-| 实现 ∩ 契约 | 112 |
+| 实现 ∩ 契约 | 113 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
-| 未实现但台账已标 `planned` | 3 |
+| 未实现但台账已标 `planned` | 2 |
 | 台账 `route_mounted` 与运行时不一致 | 0 |
 
 ### 多出（实现有、契约无）
@@ -43,7 +43,6 @@
 | 操作 | operationId | 阻塞说明 |
 | --- | --- | --- |
 | `get /api/v1/catalog/species` | listSpecies | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
-| `get /api/v1/me/privacy-policy` | getPrivacyPolicy | 未装配 |
 | `post /api/v1/registrations/verify` | verifyRegistration | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
 
 ### 台账 route_mounted 与运行时不一致
@@ -130,7 +129,7 @@
 | POST | `/me/consents` | grantConsent | user | 不要求 | 是 | partial | 一致 |
 | DELETE | `/me/consents/{purpose}` | withdrawConsent | user | 需要 | 是 | partial | 一致 |
 | GET | `/me/exports` | listExports | user | 不要求 | 是 | planned | planned（台账 planned 但已挂载） |
-| GET | `/me/privacy-policy` | getPrivacyPolicy | user | 不要求 | 否 | planned | 计划中 |
+| GET | `/me/privacy-policy` | getPrivacyPolicy | user | 不要求 | 是 | partial | 一致 |
 | GET | `/me/profile` | getProfile | user | 不要求 | 是 | implemented | 一致 |
 | PUT | `/me/profile` | putProfile | user | 需要 | 是 | implemented | 一致 |
 | DELETE | `/media/{id}` | deleteMedia | user | 需要 | 是 | partial | 一致 |

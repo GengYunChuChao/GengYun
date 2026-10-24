@@ -76,6 +76,8 @@ Page({
   },
   openFavorites: function () { wx.navigateTo({ url: '/pages/favorites/favorites' }) },
   openHistory: function () { wx.navigateTo({ url: '/pages/history/history' }) },
+  // 授权清单页（GY-R34 / #29 P1，只读）：本页只负责跳转；读取失败、空态与登录门禁都由该页自己收口。
+  openConsent: function () { wx.navigateTo({ url: '/pages/consent/consent' }) },
   /**
    * 「我的发布」（demo profile 的 `data-action="my-posts"`）：小程序没有独立的「我的发布」页，
    * 如实跳到**既有路由**社区页并预选「我的投稿」筛选（同一契约查询 `mine=true`），
