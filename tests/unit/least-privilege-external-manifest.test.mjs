@@ -6,7 +6,12 @@
  * 11 个单测 + `verify-migrations-unique --strict` + `verify-doc-anchors --strict` +
  * `verify-contract-status` **全部 EXIT=0** —— 清单的行集合本身没有任何门禁覆盖，
  * 「后人静默把一张已下线的表加回可见面」可以一路绿灯合入。本测试只读文本、不连库，
- * 把行集合钉成具名清单；多一行、少一行、换一张表都会红。
+ * 钉住清单的**规范写法**（行首小写裸表名 `('jobs', …)` + 固定顺序）：按规范写法写进清单就红。
+ *
+ * 保证边界（R34 对抗性复审变异实测）：`('JOBS', …)`、`('public.jobs', …)` 这类大小写 / schema
+ * 限定的**变体写法**会被行首正则放过，3/3 仍绿 ⇒ 「换个写法说同一件事」不归本文件管。兜底是真库
+ * 87 号元断言 `runtime_surface_parity`（用 `to_regclass('public.'||e.tbl)` 校验清单每行真存在、
+ * 且 public 下每个运行时可见关系都被分类）。本测试只挡已登记的写法面，不构成对全部变体的保证。
  *
  * 判红自证（R34 返修时实测）：把 `('jobs', 'auth_privacy', …)` 三行加回 `external_manifest`
  * ⇒ 本文件第 1 条测试转红（`external_manifest 当前 17 行（应为 16）`，EXIT=1），其余 2 条仍绿
