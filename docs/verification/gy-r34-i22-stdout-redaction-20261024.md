@@ -32,7 +32,7 @@
    - ① 作者所报：**构成一次已发生的、范围极小的私密前缀外泄**（两个 BizType 的部分字符，通道是本机终端）。「两个 BizType」「范围极小」均为作者自报，本页未独立复核其字符内容（见 §6 ④）。
    - ② 本次扫描所得：在本页扫描面（@`f59596c6`）内，`Authorization` / `SecretId` / `SecretKey` / `SessionToken` / `session_key` / 手机号 / openid **未检出值级打印**。
    - **限定（必读）**：「未检出值级打印」**不等于**「未构成凭据外泄」。判定「未构成」需要 ③ 类材料（历史运行日志、云托管实际日志、终端与转录），本次未核；本页只给「当前扫描面未检出」，不给「不存在」。原文的「未构成凭据外泄」一句已按此收窄，不得再被引用为结论。
-6. 【②＋待裁定】倾向性区间（不是定级，也不排除更严重）。 已发生那一次：**「一般」偏下**（处置是重置两个 BizType，成本为零；暴露面限于本机终端与会话转录）。其余打印面：**「可接受残余」**。据 ② 类读数，本页只能说：扫描面内**未检出**能把可用凭据或可识别个人信息送出**仓外**的值级打印，故**本页不提出「严重」这一档**；但**不能**据此排除「严重」——③ 类未查、④ 类未取得。若用户把「终端 / agent 转录」判为长期留存面，可整体上调到「一般」。档位本身由用户裁定，本页不下结论。
+6. 【②＋待裁定】倾向性区间（不是定级，也不排除更严重）。 已发生那一次：**倾向「一般」偏下**（处置是重置两个 BizType，成本为零；暴露面限于本机终端与会话转录）。其余打印面：**倾向「可接受残余」**。据 ② 类读数，本页只能说：扫描面内**未检出**能把可用凭据或可识别个人信息送出**仓外**的值级打印，故**本页不提出「严重」这一档**；但**不能**据此排除「严重」——③ 类未查、④ 类未取得。若用户把「终端 / agent 转录」判为长期留存面，可整体上调到「一般」。档位本身由用户裁定，本页不下结论。
 
 ## §2 打印面清单表
 
@@ -55,7 +55,7 @@
 | `services/api/src/server.ts` · `main().catch` | `console.error('API 启动失败：', error)` 整对象（含 `stack`） | 仅启动期未分类异常 | 容器 stdout | 可接受残余：`DATABASE_URL` 已在 `services/api/src/config.ts` 的 `isPostgresUrl()` 前置校验，非法串走 `ConfigError` 分支且只打**字段名 + 固定原因**，不带值；能漏的只剩驱动栈本身 |
 | `services/api/src/ocr/service.ts`、`recognitions/service.ts` · `recordTerminalHistory()` 的 `console.warn` | 端口 `kind`、`job_state`、`error.message` | 仅历史端口写入异常 | 容器 stdout | 无风险（该函数注释即声明「不含归属身份 / 媒体引用 / 候选」） |
 | `services/api/src/app.ts` · `requestLogFields()` / `logSafePath()` | `method`、去掉查询串的站内相对路径、`host`、远端地址 | 每个请求 | 容器 stdout | 无风险：**已脱敏**；查询串整条丢弃，坐标形态路径 fail-closed 丢弃 |
-| `.github/workflows/*` · 各步 `echo` | 退出码、标记命中数、末行、`has_column_privilege` 布尔 | 每步 | Actions 日志（**公开可见**） | 无风险（值级）；另注：`run:` 块内联了 `synthetic-ci-owner-only` 这类**合成**口令，本就随 workflow 文件公开，不构成新泄露 |
+| `.github/workflows/*` · 各步 `echo` | 退出码、标记命中数、末行、`has_column_privilege` 布尔 | 每步 | Actions 日志（**公开可见**） | 无风险（值级）；另注：`run:` 块内联了 `synthetic-ci-owner-only` 这类**合成**口令，本就随 workflow 文件公开，在本页扫描面内未见新增暴露面 |
 | `miniprogram/utils/messages-api.js` · `console.warn` | 消息模块告警条目 | 客户端运行期 | 微信开发者工具控制台 | 无风险（带 `typeof console` 存在性判断） |
 
 ## §3 通道与可见性
@@ -74,6 +74,8 @@
 
 ## §4 处置选项对照（只给成本与风险，不给结论）
 
+本节属 ② 类（本页扫描面 × `f59596c6` 的静态阅读）；不表示实施后即「无残余」。
+
 | 选项 | 成本 | 覆盖面 | 风险 / 代价 |
 | --- | --- | --- | --- |
 | ① 统一脱敏工具 `maskPrefix(s)`：保留前 N 位 + 省略 | 中：新增 `packages/privacy/` 一侧的工具 + 逐处替换 + 用例 | 所有 `console.*` / `note()` / `say()` | **语义上仍保留前缀**——与头注释第 6 条「任何长度前缀」直接冲突；且现有 `assertNoSecretLeak()` 用全值包含判定，**拦不住**前缀，等于没有闸 |
@@ -82,9 +84,11 @@
 | ④ 靠 CI 侧 `::add-mask::` | 低 | **仅** Actions | 本地终端、云托管、agent 转录**全部无效**；扫描面内当前一处 `add-mask` 都没有，等于从零建；且 mask 是按值匹配，前缀本身要先被知道才能 mask |
 | ⑤ 不改 | 零 | —— | 残余风险 = 「诊断式打印」这条**人为**通道仍在：纪律只写在一条评论区注释里，没有 lint、没有闸、没有用例；下一个 ad-hoc 命令可以原样重演 |
 
-补充读数（供选项 ③ 判断）：`services/api/src` 侧唯一可复用的**已落地**脱敏设施是 `packages/privacy/redact.mjs` 的 `redactForLog()`（键名黑名单含 `object_ref` / `object_ref_cipher` / `authorization` / `openid` / `phone`，值形态拦 data URI、长 base64、Bearer、坐标对）；但它在 `services/api/src` 的**运行期**只有 Fastify 请求日志经由 `requestLogFields()` 这一条路在用（@`f59596c6` 的静态阅读），`console.*` 与 `tools/`、`tests/` 全都没有走它。
+补充读数（供选项 ③ 判断）：`services/api/src` 侧可复用的**已落地**脱敏设施是 `packages/privacy/redact.mjs` 的 `redactForLog()`（键名黑名单含 `object_ref` / `object_ref_cipher` / `authorization` / `openid` / `phone`，值形态拦 data URI、长 base64、Bearer、坐标对）。运行期已有一个**结构化对象脱敏先例**正是选项 ③ 想复用的形态：`services/api/src/privacy/ledger-pg.ts` 的 `summarizeEgressOutcome()` 先按枚举白名单只取 `kind` / `code` / `substitute` 等短 token（其余一律丢弃、并标 `content_class: 'structural_only'`），再 `return redactForLog(out)`；它被 `services/api/src/privacy/synthesis-egress.ts` 与 `services/api/src/privacy/task-egress.ts` 复用，属**真实运行期路径**。
 
-本节的「覆盖面」只描述该选项管到哪一类打印面，**不表示实施后即「无残余」**；本节不下任何档位判断。
+**更正（上一版的这句话是事实错误，已作废）**：旧文写「运行期只有 Fastify 请求日志经由 `requestLogFields()` 这一条路在用」。实读 `f59596c6` 的 `services/api/src/app.ts`：`requestLogFields()` **不调用** `redactForLog`（只取 `method` / `logSafePath(url)` / `host` / `ip` / `socket.remotePort`），`app.ts` 内 `redactForLog` 命中 **0**。其余读数（@`f59596c6` 静态检索）：`redactForLog` 的命中为 `services/api/src/privacy/ledger-pg.ts` 的 import 与 `summarizeEgressOutcome()` 内的 `return redactForLog(out)`、`services/api/src/privacy/ledger-pg-reference.d.ts` 的一处类型声明，以及 `tests/privacy/redact.test.mjs` 的 1 处 import + 8 处调用（单元测试，**非打印路径**）；`tools/` 与 `console.*` 在**本页扫描面内未见调用**；**不排除扫描面外**。
+
+本节的「覆盖面」只描述该选项管到哪一类打印面；本节不下任何档位判断。
 
 ## §5 待用户裁定的三个分叉（不是定级批准）
 
