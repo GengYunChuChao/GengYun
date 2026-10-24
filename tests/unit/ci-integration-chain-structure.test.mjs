@@ -312,6 +312,18 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '接进真库 job 不等于进回环链，故在此如实登记为未接线。',
   },
   {
+    path: 'tests/integration/moderation-full-chain-pg.mjs',
+    reason: '需真实 PG 17.11 且是**自起集群**脚本（GY-I14 片 C / #14 交付）：要求 `GY_PG_BIN` 指向服务端'
+      + '二进制目录（自行 `initdb`/`pg_ctl` 起一次性集群，仅回环、端口 55600–55999 先探活再起、数据目录父目录'
+      + '可选 `GY_I14C_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），只 apply 0001+0022+0028+0030+0032，'
+      + '再用 stub 装配 + 真 pool + 合成模型端口（`provider.synthetic === true`）跑 post→edit→review→takedown'
+      + ' 全链，真库证明三态：编辑后旧结论不套新版本（rev1/rev2 各绑定各自正文摘要 + 审核域两条版本级任务）、'
+      + '超时/结构错误不发布（RULE_TIMEOUT / RULE_ENGINE_ERROR ⇒ 422 且内容行零落库）、下架驱动缓存失效'
+      + '（审核域读缓存 1→0 + `moderation_withdrawals` 落库）。缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77'
+      + '（⛔ 不是通过，不认 --allow-skip）；本片未把它接进任何 workflow（`.github/workflows/**` 不在本片授权范围），'
+      + '故不进无 PG 的回环链，如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/ocr-corrections-pg.mjs',
     reason: '需真实 PG 17.11（硬钉空库名 `gengyun_ocr_corrections_test`，开头断言 `public` 下 0 张表并 `applyMigrations()` 跑全链；'
       + '未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：未取得，不是通过）：R31 已把它接进'
