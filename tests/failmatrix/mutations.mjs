@@ -15,6 +15,16 @@
  *   404 = 期望值，反而绿）。
  *
  * `find` 必须**在文件里恰好出现一次**（执行器会数），且逐字照抄仓库里的字节（含中文注释）。
+ *
+ * ## 两种「必须变红」的靶子（R34 追加）
+ * 一条负控制至少要有一类靶子，两类可以并存：
+ * - `watch`：矩阵用例 id（`cases.mjs` / `seams.mjs` 里的 C/E/D 用例），执行器跑 `run.mjs --only=`；
+ * - `unitWatch`：`tests/unit/*.test.mjs` 里**已存在**的单元测试，`{ file, pattern }`，`pattern` 是
+ *   测试名的**字面子串**（执行器会先转义成正则再传给 `--test-name-pattern`）。
+ *
+ * 为什么要第二类：有些读面（`GET /me/exports`、`GET /api/v1/home`…）本来就不进 HTTP 矩阵，
+ * 守着它们的是单元测试。**不为了喂负控制去新写测试**——`unitWatch` 只允许指向既有测试，
+ * 执行器与 `tests/unit/gy-i22-failmatrix.test.mjs` 都会核对 `pattern` 在该文件里逐字存在。
  */
 export const MUTATIONS = [
   {
@@ -227,5 +237,36 @@ export const MUTATIONS = [
     find: '    if (snapshot !== null && snapshot.current_revision !== target.revision) {',
     replace: '    if (false && snapshot !== null && snapshot.current_revision !== target.revision) { // 负控制：历史版本可发布',
     watch: ['D4-03'],
+  },
+  // ——— R34 追加（基线 commit 4b87e1d9）：3 个此前没有负控制的读面。靶子是**既有**单元测试。 ———
+  {
+    id: 'NC-22',
+    title: 'me/exports：放松「账本读面解析失败」的 fail-closed（折成 503 → 原始错误直接抛给调用方）',
+    file: 'services/api/src/privacy/exports-list.ts',
+    find: "      } catch {\n        throw new ApiError('PROVIDER_UNAVAILABLE', '外发账本连接池不可用');\n      }",
+    replace:
+      "      } catch (error) {\n        throw error; // 负控制：池形状不合不再 fail-closed 成 503，原始错误直接上抛\n      }",
+    watch: [],
+    unitWatch: [{ file: 'tests/unit/exports-route-http.test.mjs', pattern: '连接池形状不合：装配期不抛' }],
+  },
+  {
+    id: 'NC-23',
+    title: 'public/home：删掉语句超时单独分级（504 PROVIDER_TIMEOUT 退化成 503）',
+    file: 'services/api/src/db/catalog.ts',
+    find: "    const timeout = classifyDatabaseError(error) === 'timeout' || (error as { code?: unknown })?.code === '57014';",
+    replace: '    const timeout = false; // 负控制：语句超时不再单独分级，超时被当成不可用',
+    watch: [],
+    unitWatch: [{ file: 'tests/unit/public-home.test.mjs', pattern: 'database failures use safe contract errors' }],
+  },
+  {
+    id: 'NC-24',
+    title: 'registrations/verify：非 matched 不再 fail-closed 成 4xx（登记校验结论退化成 500）',
+    file: 'services/api/src/knowledge/applicability-screen.ts',
+    find: '    const mapped = (MATCH_ERROR_MAP[state] ?? UNMAPPED_BLOCK_ERROR) as ErrorCode;',
+    replace: "    const mapped = 'INTERNAL' as ErrorCode; // 负控制：非 matched 不再 fail-closed 成 4xx",
+    watch: [],
+    unitWatch: [
+      { file: 'tests/unit/knowledge-applicability-screen.test.mjs', pattern: 'GY-I08 装配：登记匹配非 matched 一律带 4xx' },
+    ],
   },
 ];

@@ -59,7 +59,7 @@
 
 ### 2.2 `#7` · `dimensions.pagination`
 
-**台账原文（HEAD 的 `docs/architecture/contract-status.json:3199`）**
+**台账原文（HEAD 的 `docs/architecture/contract-status.json:3230`）**
 
 ```
 授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识id_asc仍偏离冻结(created_at DESC,id DESC)，缺历史创建时点字段；后台/社区/消息分页须按模块验收，不记整维度完成
@@ -150,7 +150,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 
 | 台账词 | 实测 | 证据 |
 | --- | --- | --- |
-| 真实事件 | **已落地**：`#422`（merge `50e3bf40`，`git cat-file -t` ⇒ commit）把他人评论/点赞真落库到消息域；事件类型按来源取 `comment`/`like`/`moderation` | `services/api/src/community/service.ts:1364`、`:1808`；装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件 `:1270-1273` |
+| 真实事件 | **已落地**：`#422`（merge `50e3bf40`，`git cat-file -t` ⇒ commit）把他人评论/点赞真落库到消息域；事件类型按来源取 `comment`/`like`/`moderation` | `services/api/src/community/service.ts:1379`、`:1852`；装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件 `:1270-1273` |
 | 目标端口 | **已落地（限 `post`/`comment`）**：`#425`（merge `88942df4`）接线 `createCommunityReferencePort`；`TargetRef.type` 共 16 型，`post`/`comment` 之外的 14 型按 `unavailable` 降级 | `services/api/src/messages/reference-community.ts:49-59`；装配 `services/api/src/app.ts:810-811`；契约枚举 `packages/contracts/openapi.json#/components/schemas/TargetRef` |
 | PG | **已落地**：迁移 `0019` + `store-pg.ts`（`persistent: true`）+ `real` 无池整域 503 | `services/api/db/migrations/0019_messages_persistence.sql`；`services/api/src/messages/store-pg.ts:244`；`services/api/src/app.ts:802-806` |
 | 注销 | **已落地并取得真库读数**：`#452`（`174b547c`）扩写 `tests/integration/messages-pg.mjs` 的注销臂；真库证据串 `messages:online-purged:9;messages:idempotency-purged:3`，在 CI `real-pg` job 真跑 | 注销装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543`（断言串 `:525`）；CI `.github/workflows/real-pg-integration.yml:144-147` |

@@ -16,7 +16,10 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/kn
   'pages/favorites/favorites', 'pages/history/history', 'pages/historydetail/historydetail',
   // GY-I13：播报页（语音球与播放生命周期）。同样须与 app.json 的 pages 逐项一致；
   // 不是 Tab，也不接受任何查询参数（本页不从链接取内容来源，见 pages/voice/voice.js）。
-  'pages/voice/voice']
+  'pages/voice/voice',
+  // GY-I12：文字提问页（文字输入 + 显式发送 + 有界轮询 + 回答闸门）。同样须与 app.json 的
+  // pages 逐项一致；不是 Tab，也不接受任何查询参数（提问正文只来自用户输入，见 pages/qa/qa.js）。
+  'pages/qa/qa']
 const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identify/identify',
   'pages/messages/messages', 'pages/profile/profile']
 const HOME = '/pages/home/home'

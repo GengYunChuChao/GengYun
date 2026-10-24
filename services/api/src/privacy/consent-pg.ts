@@ -171,8 +171,7 @@ export function createPostgresConsentService(pool: PgPool, hmacKey: string, serv
         if (record.state === 'granted') {
           // 撤回消费者（接线单）：注入后**先撤销在途外发**再完成撤回（撤回递增 epoch 使旧凭据失效）。
           // 未注入 ⇒ 保持既有 fail-closed 兜底，绝不伪造取消成功。
-          const dependencies = await client.query(`SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
-            OR EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1::uuid)
+          const dependencies = await client.query(`SELECT EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1::uuid)
             OR EXISTS(SELECT 1 FROM public.exports WHERE user_id=$1::uuid)
             OR EXISTS(SELECT 1 FROM public.author_links WHERE user_id=$1::uuid) AS present`, [input.identity.userId]);
           if (dependencies.rows[0]?.present) {
