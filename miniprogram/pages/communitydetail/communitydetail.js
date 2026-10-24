@@ -155,13 +155,15 @@ Page({
   },
 
   _decoratePost: function (post) {
+    const author = api.authorView(post.author)
     return {
       id: post.id,
       revision: post.revision,
       title: post.title,
       body: post.body,
-      author: post.author.display_name,
-      authorState: post.author.state,
+      author: author.name,
+      authorAvatar: author.avatar,
+      authorAnonymized: author.anonymized,
       time: post.created_at,
       updated: post.updated_at,
       crop_id: post.crop_id,
@@ -179,10 +181,13 @@ Page({
 
   _decorateComments: function (items) {
     return items.map(function (comment) {
+      const author = api.authorView(comment.author)
       return {
         id: comment.id,
         revision: comment.revision,
-        author: comment.author.display_name,
+        author: author.name,
+        authorAvatar: author.avatar,
+        authorAnonymized: author.anonymized,
         body: comment.body,
         time: comment.created_at,
         stateLabel: comment.visibility === 'hidden' ? '已隐藏（仅本人可见）' : ''

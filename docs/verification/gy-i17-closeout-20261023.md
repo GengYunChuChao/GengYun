@@ -75,7 +75,7 @@
 | 跳转目标判定的唯一来源 | 已具备 | 端口只转接社区「公开可读」判据：`services/api/src/messages/reference-community.ts:53`（只 `post`／`comment`）→ `:56` `isPubliclyVisible`；社区侧闸门 `services/api/src/community/service.ts:893`（`publiclyVisibleTarget`）＋发布谓词 `:619`（`published && approved`）；只读谓词 `services/api/src/community/service.ts:1852` |
 | 下架/失效**立即**反映（同一 id 的真实迁移） | 已取得 | 用例 `tests/unit/messages-reference-community.test.mjs:113`（「删除前 available → 删除后 unavailable，读取时重查」）、`tests/unit/messages-security.test.mjs:182`（「reference_state 不入库、逐次派生」）；不区分「隐藏/不存在」由 `:77` 用例钉住 |
 | 不因缓存重新公开 | 已具备 | 三条路由全挂 `Cache-Control: no-store`（`services/api/src/routes/messages.ts:21` 定义、`:44`／`:54`／`:60` 挂载）；契约「消息只存事件类型与对象引用，不保存受限正文缩略；跳转时重验目标权限」（`docs/architecture/state-contract.md:99`） |
-| 注销不复活 | 已具备（服务端 + 真库既有读数） | 注销原语同事务删消息与本人幂等行：`services/api/src/messages/store-pg.ts:220`（`purgeOwnerRows`）→ `:230` `DELETE FROM public.messages WHERE owner_id = $1::uuid RETURNING id`；装配 `services/api/src/app.ts:1668`；真库读数（A 的 9 条 → 0、B 逐 id 原样、台账 3→0）见 [gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md) §3 |
+| 注销不复活 | 已具备（服务端 + 真库既有读数） | 注销原语同事务删消息与本人幂等行：`services/api/src/messages/store-pg.ts:220`（`purgeOwnerRows`）→ `:230` `DELETE FROM public.messages WHERE owner_id = $1::uuid RETURNING id`；装配 `services/api/src/app.ts:1920`（`messagesStore: messagesDeletionStore`）；真库读数（A 的 9 条 → 0、B 逐 id 原样、台账 3→0）见 [gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md) §3 |
 | 「详情」子句对消息域 | **不适用（非缺口）** | 契约里消息只有列表/未读/标读 3 条 operation，**没有**消息详情端点 ⇒ 无「详情」对象可核；`gh issue view 17` 正文的「详情」指其它域页面 |
 | 「收藏历史」子句 | **不在本片范围** | 属 #16 验收面；本页不代为断言（其关闭材料 [gy-r31-i16-closeout-20261022.md](gy-r31-i16-closeout-20261022.md) 自陈 AC4 整条未闭合，其中「消息」那一条注明「属 #17」）。补记：`#484`（`fix(i16)`，`c728648a`）把 `real` 模式终态历史端口接真库——**它是 #16 的 PR，不是 #17 相关 PR**（§3.1 更正） |
 
@@ -169,7 +169,7 @@
 | changed-only（幂等分支不投递） | `services/api/src/admin/ops/account-events.ts:205` | `if (outcome.changed !== true) {` |
 | 账号事件投递 | `services/api/src/admin/ops/account-events.ts:144` | `const result = await options.messages.appendMessage({` |
 | 装配：社区事件端口 | `services/api/src/app.ts:1128` | `(messagesService === null`（`:1130` `createMessagesCommunityEventsPort({ messages: messagesService })`） |
-| 装配：账号事件装饰器 | `services/api/src/app.ts:1270` | `const accountEvents: AccountEventsPort =`（`:1280` `withAccountSystemEvents(accountAuthorityBase, { events: accountEvents, log: app.log })`） |
+| 装配：账号事件装饰器 | `services/api/src/app.ts:1388` | `const accountEvents: AccountEventsPort =`（`:1398` `withAccountSystemEvents(accountAuthorityBase, { events: accountEvents, log: app.log })`） |
 | 路由注册（唯一处） | `services/api/src/app.ts:2236` | `registerMessageRoutes(app, config, guards, messagesService);` |
 | 创建口入参闭集 | `services/api/src/messages/validate.ts:43` | `export const EVENT_KEY_MAX = 200;` |
 
@@ -197,7 +197,7 @@
 | #477 | MERGED | `693142eb750be07d0b904239110520ff22f69457` | 0（在） | G2 裁定：跳转范围仅 `post`/`comment`（文档） | [gy-r31-i17-g2-ruling-20261022.md](gy-r31-i17-g2-ruling-20261022.md)、`tests/unit/messages-target-scope.test.mjs:62` |
 | #479 | MERGED | `1aa310fa5509d7fa741270a5dbc36072b41951f6` | 0（在） | 台账锚点支持符号形态（Refs #17） | §3.3 给出的那三处装配括注重锚读数 |
 | #484 | MERGED | `c728648a74ede69181d875d0c7f32ee2ad126a3d` | 0（在） | **`fix(i16)`: real 模式终态历史端口接真库**（Refs #16） | 与 #17 无代码交集；任务书把它列为「#17 相关」，**实读纠正：它属 #16** |
-| #485 | MERGED | `5b4292f2bd7237abe3ff3257f606e90d60487537` | 0（在） | 账号级系统事件（停用/恢复 → `system`，**G9**） | `services/api/src/admin/ops/account-events.ts:68`、`:144`；装配 `services/api/src/app.ts:1270` |
+| #485 | MERGED | `5b4292f2bd7237abe3ff3257f606e90d60487537` | 0（在） | 账号级系统事件（停用/恢复 → `system`，**G9**） | `services/api/src/admin/ops/account-events.ts:68`、`:144`；装配 `services/api/src/app.ts:1388` |
 
 ### 3.2 指挥历史记录 `6333028693`（`gh api repos/GengYunChuChao/GengYun/issues/comments/6333028693` 实读：`user.login=Sek1ro-oka`（`type=User`）、首行「指挥裁定（GY-I17，2026-10-22）」、`bodyLength=773`、`created_at=2026-10-22T04:53:20Z`）——属**指挥侧评论**，不是任何形式的批复或判决
 
