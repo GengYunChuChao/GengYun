@@ -41,38 +41,86 @@ function readFailure(code) {
 const NOT_READY = '档案还没有读取成功，暂时不能进入编辑。请先点“重试读取档案”。'
 const REREAD_REQUIRED = '档案需要重新读取后才能编辑。请先点“重新读取档案”。'
 const REFERENCE_NOT_READY = '档案还没有读取成功，暂时不能按档案查资料。请先点“重试读取档案”。'
+// 三项计数的独立状态：idle（尚未读取）/ loading / ready / error。
+// 每一项只写自己的状态与条数，一项失败不覆盖其他项已成功的条数；重试也只重读该项。
+const COUNT_KINDS = ['favorite', 'history', 'myPost']
 Page({
-  data: Object.assign({ fontScale: 1, guest: true, favoriteCount: '—', historyCount: '—', myPostCount: '—' }, empty()),
+  data: Object.assign({ fontScale: 1, guest: true, favoriteCount: '—', historyCount: '—', myPostCount: '—', favoriteState: 'idle', historyState: 'idle', myPostState: 'idle' }, empty()),
   onLoad: function () { fontScale.applyFontScale(this) },
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
-    // 计数一律清零：不把上一个会话的条数留在界面上。
-    this.setData({ favoriteCount: '—', historyCount: '—', myPostCount: '—' })
+    // 计数一律清零：不把上一个会话的条数留在界面上；同时让离页/旧会话的在途响应失效。
+    this.invalidateCounts()
+    this.setData({ favoriteCount: '—', historyCount: '—', myPostCount: '—', favoriteState: 'idle', historyState: 'idle', myPostState: 'idle' })
     pageGate.start(this, function (ok) {
       self.invalidate()
       self.setData(Object.assign({ guest: !ok }, empty()))
       if (ok) { self.loadProfile(); self.loadCounts() }
     })
   },
+  /** 让三项计数此前的在途响应全部失效（离页、重新进入、换会话时调用）。 */
+  invalidateCounts: function () {
+    const ops = this._countOps || (this._countOps = {})
+    COUNT_KINDS.forEach(function (kind) { ops[kind] = (ops[kind] || 0) + 1 })
+  },
   /**
    * 收藏／识别历史／我的发布的**已加载条数**（不是总数，契约封套没有计数字段）：
    * 只读第一页，`N+` 表示还有下一页；读不到就如实显示 `—`（绝不用本地数据凑数）。
+   * 三项各自独立结算：失败只把该项置 error，其他项的成功条数原样保留。
    */
   loadCounts: function () {
     const self = this
-    if (!auth.networkEnabled()) return
-    favoritesApi.listFavorites('', 20).then(function (result) {
-      self.setData({ favoriteCount: result.items.length + (result.nextCursor ? '+' : '') })
-    }).catch(function () { self.setData({ favoriteCount: '—' }) })
-    historyApi.listHistory('', 20).then(function (result) {
-      self.setData({ historyCount: result.items.length + (result.nextCursor ? '+' : '') })
-    }).catch(function () { self.setData({ historyCount: '—' }) })
+    COUNT_KINDS.forEach(function (kind) { self.loadCount(kind) })
+  },
+  countRequest: function (kind) {
+    if (kind === 'favorite') return favoritesApi.listFavorites('', 20)
+    if (kind === 'history') return historyApi.listHistory('', 20)
     // GY-I28：契约既有 `GET /posts?mine=true`（community-api listPosts 的 `mine` 参数，
     // 与社区页「我的投稿」同一查询），不新增后端接口。
-    communityApi.listPosts({ mine: true, limit: 20 }).then(function (result) {
-      self.setData({ myPostCount: result.items.length + (result.nextCursor ? '+' : '') })
-    }).catch(function () { self.setData({ myPostCount: '—' }) })
+    return communityApi.listPosts({ mine: true, limit: 20 })
+  },
+  /** 只重读一项计数；不触碰档案数据、编辑表单或另外两项的条数。 */
+  loadCount: function (kind) {
+    if (COUNT_KINDS.indexOf(kind) === -1) return
+    const ops = this._countOps || (this._countOps = {})
+    const op = ops[kind] = (ops[kind] || 0) + 1
+    const epoch = auth.sessionEpoch()
+    const patch = {}
+    patch[kind + 'State'] = 'loading'
+    patch[kind + 'Count'] = '—'
+    this.setData(patch)
+    const self = this
+    if (!auth.networkEnabled()) { this.settleCount(kind, op, epoch, null, true); return }
+    this.countRequest(kind).then(function (result) {
+      self.settleCount(kind, op, epoch, result, false)
+    }).catch(function () {
+      self.settleCount(kind, op, epoch, null, true)
+    })
+  },
+  /** 旧会话、离页后或已被更新一次重试取代的响应不得写回页面。 */
+  countLive: function (kind, op, epoch) {
+    return this._gateActive !== false && !!this._countOps && this._countOps[kind] === op && auth.sessionEpoch() === epoch
+  },
+  settleCount: function (kind, op, epoch, result, failed) {
+    if (!this.countLive(kind, op, epoch)) return
+    const patch = {}
+    if (failed || !result || !Array.isArray(result.items)) {
+      patch[kind + 'State'] = 'error'
+      patch[kind + 'Count'] = '—'
+    } else {
+      patch[kind + 'State'] = 'ready'
+      patch[kind + 'Count'] = result.items.length + (result.nextCursor ? '+' : '')
+    }
+    this.setData(patch)
+  },
+  /** 失败项的显式重试入口（catchtap，不触发整卡跳转）。 */
+  retryCount: function (event) {
+    const dataset = event && event.currentTarget && event.currentTarget.dataset
+    const kind = dataset && dataset.kind
+    if (COUNT_KINDS.indexOf(kind) === -1) return
+    if (this.data.guest || this._gateActive === false) return
+    this.loadCount(kind)
   },
   openFavorites: function () { wx.navigateTo({ url: '/pages/favorites/favorites' }) },
   openHistory: function () { wx.navigateTo({ url: '/pages/history/history' }) },
@@ -90,8 +138,8 @@ Page({
     })
   },
   invalidate: function () { this._operation = (this._operation || 0) + 1; this._pendingSave = null; this._subjectBinding = null },
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  onHide: function () { this.invalidateCounts(); pageGate.cancel(this) },
+  onUnload: function () { this.invalidateCounts(); pageGate.cancel(this) },
   live: function (op, b) { return this._gateActive !== false && this._operation === op && api.current(b) },
   identityFailure: function (op) {
     if (this._operation !== op || this._gateActive === false) return
