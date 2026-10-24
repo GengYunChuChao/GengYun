@@ -267,6 +267,24 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
   }
 
   /**
+   * 在途取消：仅 requested / processing / blocked 可取消（终态 completed / cancelled 不可再取消）。
+   *
+   * 为什么是「状态机终态」而不是「删掉请求」：注销请求是审计事实，取消要保留行与时间线；
+   * 取消只是把状态推进到 cancelled 并递增 revision（强 ETag 随之失效，旧读/旧写都靠 revision 对不上被拒）。
+   * 取消后迟到回调不得复活：completionStatus 对 cancelled 直接短路返回，不再做完成判定。
+   */
+  function cancelDeletion(requestId) {
+    const request = requests.get(requestId);
+    if (!request) throw new PrivacyError('NOT_FOUND', '删除请求不存在');
+    if (request.state === 'completed' || request.state === 'cancelled') {
+      throw new PrivacyError('OBJECT_UNAVAILABLE', '删除请求已处于终态，不可取消');
+    }
+    request.state = 'cancelled';
+    request.revision += 1;
+    return { ...request };
+  }
+
+  /**
    * 删除完成状态（派生，不回写不推断）：
    *   completed 仅当：请求已进入处理（非 requested）、存在实际工作（handler 或第三方）、
    *   所有 handler 的 online 与 backup 均 completed、所有第三方均 confirmed（有证据）、
@@ -277,6 +295,11 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
   function completionStatus(requestId) {
     const request = requests.get(requestId);
     if (!request) throw new PrivacyError('NOT_FOUND', '删除请求不存在');
+
+    // 取消是终态：不再做任何完成判定（迟到回调不得把 cancelled 推回 processing/blocked/completed）。
+    if (request.state === 'cancelled') {
+      return { state: 'cancelled', completed: false };
+    }
 
     const rows = handlerRows.filter((r) => r.requestId === requestId);
     const thirdParties = thirdPartyRows.filter((r) => r.requestId === requestId);
@@ -357,6 +380,7 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
     confirmThirdPartyDeletion,
     failThirdPartyDeletion,
     markUnsupported,
+    cancelDeletion,
     completionStatus,
     receiptProjection,
     _handlers: handlers,

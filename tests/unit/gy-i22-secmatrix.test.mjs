@@ -824,15 +824,17 @@ test('C4 会话与注销：退出立即失效、重复退出不复活、注销�
   assert.equal(duringSession.status, 200, duringSession.text);
   note('C4 注销期间：本人会话仍 200（异步 7 日窗口设计；与「退出登录即时失效」是两条不同机制）');
 
-  // ---- 取消注销：契约无入口 ⇒ 未取得（如实断言「没有这条路」，不伪造实现） ----
+  // ---- 取消注销：DELETE /me/account/deletion ⇒ 200 state=cancelled；PATCH 仍不存在（契约只有 DELETE） ----
   const cancel = await call(world.app, 'DELETE', `${API}/me/account/deletion`, d, { headers: wkey('i22-c4-cancel-0001') });
-  assert.equal(cancel.status, 404, `契约里没有取消注销入口，实际 ${cancel.status}：${cancel.text}`);
+  assert.equal(cancel.status, 200, `取消注销必须 200，实际 ${cancel.status}：${cancel.text}`);
+  assert.equal(cancel.body.data.state, 'cancelled', `取消后回执必须 state=cancelled：${cancel.text}`);
+  assert.equal(cancel.body.data.id, first.id, '取消必须作用于本人在途的那一条请求');
   const cancelPatch = await call(world.app, 'PATCH', `${API}/me/account/deletion`, d, {
     payload: { state: 'cancelled' },
     headers: wkey('i22-c4-cancel-0002', '"1"'),
   });
-  assert.equal(cancelPatch.status, 404, `PATCH 也不存在（实际 ${cancelPatch.status}）`);
-  note('C4 取消注销：DELETE/PATCH /me/account/deletion → 404（契约无 operation、DeletionState 无 cancelled）⇒ 记「未取得」，不伪造');
+  assert.equal(cancelPatch.status, 404, `PATCH 不存在（实际 ${cancelPatch.status}）`);
+  note('C4 取消注销：DELETE /me/account/deletion → 200 state=cancelled；PATCH 仍 404（契约只有 DELETE）');
 });
 
 // ===========================================================================

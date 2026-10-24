@@ -156,6 +156,10 @@ export function createDeletionCoordinator({ registry, requiredModules, now = () 
   function completionStatus(requestId) {
     const request = registry.getRequest(requestId);
     if (!request) throw new PrivacyError('NOT_FOUND', '删除请求不存在');
+    // 取消是终态：即使仍有未报告模块，也如实回 cancelled（缺模块不影响「已取消」这一事实）。
+    if (request.state === 'cancelled') {
+      return Object.freeze({ state: 'cancelled', completed: false, missingModules: Object.freeze([]) });
+    }
     const missing = missingModules(requestId);
     if (missing.length === 0) {
       const base = registry.completionStatus(requestId);
@@ -243,6 +247,7 @@ export function createDeletionCoordinator({ registry, requiredModules, now = () 
     createDeletionRequest,
     getRequest: (requestId) => registry.getRequest(requestId),
     executeHandlers,
+    cancel: (requestId) => registry.cancelDeletion(requestId),
     completionStatus,
     receipt,
     thirdPartyStatuses,

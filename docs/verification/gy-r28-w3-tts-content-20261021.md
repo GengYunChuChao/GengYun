@@ -31,7 +31,7 @@
 - `packages/contracts/openapi.json:13225-13255` — `SynthesisTarget`：
   `{ type: SynthesisTargetType（闭集）, id: string(1..80), revision: integer >= 1 }`。
 - `packages/contracts/openapi.json:13260-13261` — `checked_content_ref: { $ref: SynthesisTarget }`。
-- `packages/contracts/openapi.json:13268` — `checked_content_ref` 是 **required**，与 `locale` 并列。
+- `packages/contracts/openapi.json:13649-13652` — `checked_content_ref` 是 **required**，与 `locale` 并列。
 - `services/api/src/tts/content.ts:4-6` — 本域头注：「本域**不接受**任何自由文本入参：`SynthesisInput`
   只有一个 `checked_content_ref`，因此服务端必须自己把「这个目标当前是否经核对通过、当前 revision
   是多少、正文是什么」读出来」。

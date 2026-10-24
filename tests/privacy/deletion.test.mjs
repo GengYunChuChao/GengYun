@@ -287,3 +287,39 @@ test('R2 白名单内的安全错误码按原样保留', async () => {
   await reg.executeHandlers(req.id);
   assert.equal(reg._handlerRows[0].errorCode, 'STORE_UNREACHABLE');
 });
+
+// ---- R34 / #22 片C · 在途取消（cancelDeletion + completionStatus 短路） ----
+
+test('在途取消：requested 可取消、revision 递增、completionStatus 短路为 cancelled', () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: 'ev-media' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+
+  const cancelled = reg.cancelDeletion(req.id);
+  assert.equal(cancelled.state, 'cancelled');
+  assert.ok(cancelled.revision > req.revision, '取消必须递增 revision（强 ETag 随之失效）');
+  assert.deepEqual(reg.completionStatus(req.id), { state: 'cancelled', completed: false });
+
+  // 终态 cancelled 不可再取消。
+  assert.throws(
+    () => reg.cancelDeletion(req.id),
+    (error) => error instanceof PrivacyError && error.code === 'OBJECT_UNAVAILABLE',
+  );
+});
+
+test('在途取消：completed 不可取消；不存在的请求 NOT_FOUND', async () => {
+  const reg = createDeletionRegistry();
+  reg.registerModule('media', async () => ({ onlineState: 'completed', backupState: 'completed', evidenceRef: 'ev-media' }));
+  const req = reg.createDeletionRequest({ generation: 1 });
+  await reg.executeHandlers(req.id);
+  assert.equal(reg.completionStatus(req.id).completed, true);
+
+  assert.throws(
+    () => reg.cancelDeletion(req.id),
+    (error) => error instanceof PrivacyError && error.code === 'OBJECT_UNAVAILABLE',
+  );
+  assert.throws(
+    () => reg.cancelDeletion('missing-request-id'),
+    (error) => error instanceof PrivacyError && error.code === 'NOT_FOUND',
+  );
+});

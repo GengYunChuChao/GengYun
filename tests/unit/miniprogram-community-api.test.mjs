@@ -665,3 +665,60 @@ test('适配层未登记说明符：显式失败并带名，零近似命中', ()
       '近似说明符 ' + spec + ' 未被显式拒绝');
   }
 });
+
+// ---------------------------------------------------------------------------
+// 片C（Refs #19）：社区帖子/评论「已注销用户」前端展示面 —— 默认头像 + 「已注销用户」显示
+// + 正文脱敏投影，与已合服务端（`community/authors.ts::anonymize`、`community/personal-info.ts`、
+// `community/purge.ts` 的 `anonymized_author_ref`）对齐。
+//
+// 服务端去身份后的数据形状（本片不改服务端，只按契约消费）：
+//   - 注销作者：`display_name='已注销用户'`、`state='anonymized'`、`avatar_media_id=null`、
+//     `avatar_media=null`；`display_id` 是 `gy-anon-<16hex>`（内部引用，前台**不展示**）；
+//   - 正文个人信息被替换为 `_[个人信息已清除]_`，不能可靠脱敏的媒体 `media_ids` 被移除。
+// 本片断言的只是**展示投影**（单一实现 `community-api.authorView` + 三个页面的 `_decorate*`），
+// 不把服务端行为复制到客户端；真机/微信工具渲染未取得（本仓库无真实微信编译器）。
+// ---------------------------------------------------------------------------
+function anonAuthor() {
+  return { display_name: '已注销用户', display_id: 'gy-anon-0123456789abcdef', state: 'anonymized', avatar_media_id: null, revision: 1, avatar_media: null };
+}
+
+test('片C authorView：注销作者投影为「已注销用户」+ 固定默认头像；活跃假名取显示名首字', () => {
+  const h = load(() => ({ statusCode: 200, data: envelope({ items: [], next_cursor: null }) }));
+  assert.deepEqual(plain(h.api.authorView(anonAuthor())), { name: '已注销用户', anonymized: true, avatar: '已' });
+  assert.deepEqual(plain(h.api.authorView(author())), { name: '耕云用户abcd', anonymized: false, avatar: '耕' });
+});
+
+test('片C 列表/详情/评论投影：注销作者显示「已注销用户」+ 默认头像，正文脱敏占位原样透传、不投影附件', async () => {
+  const h = load(() => DEFER);
+  const anonPost = post({ author: anonAuthor(), body: '联系电话：_[个人信息已清除]_，欢迎交流。' });
+  const list = loadPage(h, 'community')._decorate([anonPost])[0];
+  assert.equal(list.author, '已注销用户');
+  assert.equal(list.authorAvatar, '已');
+  assert.equal(list.authorAnonymized, true);
+  assert.equal(list.body, '联系电话：_[个人信息已清除]_，欢迎交流。');
+  assert.equal('media_ids' in list, false, '附件引用不得进入展示投影');
+  assert.equal('authorState' in list, false, '旧的死字段 authorState 已被 authorAvatar/authorAnonymized 取代');
+
+  const detail = loadPage(h, 'communitydetail')._decoratePost(anonPost);
+  assert.equal(detail.author, '已注销用户');
+  assert.equal(detail.authorAvatar, '已');
+  assert.equal(detail.authorAnonymized, true);
+  assert.equal(detail.body, '联系电话：_[个人信息已清除]_，欢迎交流。');
+
+  const row = loadPage(h, 'communitydetail')._decorateComments([comment({ author: anonAuthor(), body: '也遇到过，手机 13800000000。' })])[0];
+  assert.equal(row.author, '已注销用户');
+  assert.equal(row.authorAvatar, '已');
+  assert.equal(row.authorAnonymized, true);
+  assert.equal(row.body, '也遇到过，手机 13800000000。');
+});
+
+test('片C 负控制：活跃作者的展示投影不出现任何「已注销」标记', async () => {
+  const h = load(() => DEFER);
+  const list = loadPage(h, 'community')._decorate([post()])[0];
+  assert.equal(list.author, '耕云用户abcd');
+  assert.equal(list.authorAvatar, '耕');
+  assert.equal(list.authorAnonymized, false);
+  const row = loadPage(h, 'communitydetail')._decorateComments([comment()])[0];
+  assert.equal(row.author, '耕云用户abcd');
+  assert.equal(row.authorAnonymized, false);
+});
