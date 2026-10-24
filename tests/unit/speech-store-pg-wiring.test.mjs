@@ -107,16 +107,29 @@ test('非 real 不换实现：stub / preset_demo 即使有池也用内存 store'
   }
 });
 
-test('结构钉子：装配行恰七键、池以位置实参传入、app.ts 只 import type 语音存储、路由三态仍在', () => {
-  // ① 装配行仍是「guards + 历史域三个端口 + 隐私域 consent/egress」七个键。
+test('结构钉子：装配行恰八键、池以位置实参传入、app.ts 只 import type 语音存储、路由三态仍在', () => {
+  // ① 装配行仍是「guards + 历史域三个端口 + 隐私域 consent/egress + 录音字节来源 audioMedia」八个键。
   //    `tests/integration/speech-http.mjs:495-521` 用同一条判据（本文件只是让它在 unit 层也红得起来）。
+  //    GY-I11 录音字节来源片新增的唯一一个键是 `audioMedia`（两个媒体端口：对象存储 + 登记册），
+  //    它的取值被下面逐字钉死 —— 只放宽"键集有它"，不放宽"它只能是这两个端口"。
   const registrationLine = APP_SOURCE.split(/\r?\n/).find((line) => line.includes('registerSpeechRoutes(app, config,'));
   assert.notEqual(registrationLine, undefined, 'app.ts 必须有语音域装配行');
   const keys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
   assert.deepEqual(
     keys,
-    ['consent', 'egress', 'guards', 'jobDeadlineMs', 'media', 'provider', 'store'],
-    `装配行只允许这七个键（不得塞入 pool 等适配器端口）：${registrationLine.trim()}`,
+    ['audioMedia', 'consent', 'egress', 'guards', 'jobDeadlineMs', 'media', 'provider', 'store'],
+    `装配行只允许这八个键（不得塞入 pool 等适配器端口）：${registrationLine.trim()}`,
+  );
+  // 录音字节来源只能是「既有端口原样转交」，不得在这里新建/派生对象存储或登记册。
+  assert.match(
+    registrationLine,
+    /audioMedia: speechAudioMedia/,
+    `audioMedia 只允许转发那个既有端口变量：${registrationLine.trim()}`,
+  );
+  assert.match(
+    APP_SOURCE,
+    /const speechAudioMedia = \{ objectStore: mediaObjectStore, mediaRecords: mediaStore \};/,
+    '录音字节来源必须由「既有对象存储端口 + 既有媒体登记册」原样拼成（不得新建端口）',
   );
   // 池必须以位置实参传进去（不是 deps 的键），否则键集判据会被绕过/打红。
   assert.match(
