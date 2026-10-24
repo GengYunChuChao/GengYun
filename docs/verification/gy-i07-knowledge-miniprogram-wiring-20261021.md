@@ -73,7 +73,7 @@
 前端不参与排序：`listKnowledge`／`listHerbicides` 的契约里**没有任何排序参数**（`packages/contracts/openapi.json:2375`、`:2669` 的 parameters 只有 `Cursor`／`Limit` 与筛选字段），页面照契约不传排序，也不在 UI 上声称任何排序（无「最新优先」字样）。所以这不是前端缺陷，而是服务端契约面未冻结完的口径差：
 
 - 冻结口径为 `(created_at DESC, id DESC)`：`docs/architecture/state-contract.md:32`「游标列表统一 items + next_cursor（null 结束），limit 默认 20、最大 50，排序 (created_at DESC,id DESC)」。
-- 现行实现为 `id_asc`：`docs/architecture/contract-status.json:716`（本轮实测行号）blocker 原文「当前 id_asc 排序仍不同于冻结 (created_at DESC, id DESC)，实际表/投影无 created_at，排序及历史数据方案未完成，按 partial 保留」；台账同项记 `partial`（`docs/architecture/contract-implementation-status.md:72`，证据 `services/api/src/routes/knowledge.ts:188-192`、`services/api/src/knowledge/service.ts:56-123`、`services/api/src/knowledge/pagination.ts:30-72`）；历史判据见 `docs/verification/gy-i01-knowledge-cursor-20261013.md:46`。
+- 现行实现为 `id_asc`：`docs/architecture/contract-status.json:782`（本轮实测行号；合流按内容重锚，原记 `:716`）blocker 原文「当前 id_asc 排序仍不同于冻结 (created_at DESC, id DESC)，实际表/投影无 created_at，排序及历史数据方案未完成，按 partial 保留」（⚠ 引文为 R33 订正前原文，该行现文已按代码事实订正，见 `docs/verification/gy-r33-contract-ledger-20261023.md`）；台账同项记 `partial`（`docs/architecture/contract-implementation-status.md:72`，证据 `services/api/src/routes/knowledge.ts:188-192`、`services/api/src/knowledge/service.ts:56-123`、`services/api/src/knowledge/pagination.ts:30-72`）；历史判据见 `docs/verification/gy-i01-knowledge-cursor-20261013.md:46`。
 - README 的 #7 行（`README.md:212`）已按同一表述记录「契约面仍 partial」，本页不升格该结论。
 
 后续若要消除这处口径差，属于服务端排序／历史数据方案（不改前端即可生效）。本轮**没有**在页面里加 `TODO` 注释：类 C 交付明确不动代码，且页面上任何「排序」注释都属无消费者备注，不如把事实留在本页与台账里。

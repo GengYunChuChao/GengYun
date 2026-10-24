@@ -5,17 +5,28 @@ const TTL_MS = 15 * 60 * 1000;
 const KEYS = ['v', 'kind', 'user', 'auth_epoch', 'filter', 'sort', 'watermark', 'after', 'expires'];
 interface CatalogItem { [key: string]: string | null }
 interface Options {
-  kind: 'crops' | 'regions';
+  kind: 'crops' | 'regions' | 'species';
   userId: string;
   authEpoch: number;
   hmacKey: string;
   limit: number;
   parentCode?: string;
+  /**
+   * 物种目录的 `q`。它与 `parentCode` 是同一件事：**一条会签进游标的收窄条件**
+   * （换关键词即旧游标失效），不是「客户端自己过滤」的自由参数。
+   */
+  q?: string;
+  /** `q` 的检索面；`kind='species'` 时必须给出。归一化在本文内部完成，调用方只给原文。 */
+  searchText?: (item: CatalogItem) => string;
   cursor?: string;
   now?: number;
 }
 function invalid(): ApiError {
   return new ApiError('INVALID_CURSOR', '目录游标无效或已失效，请重新查询');
+}
+/** `q` 归一化：折叠空白 + 小写化，与 packages/reference/catalog.mjs 的 normalizeText 同口径（只用于比较）。 */
+function normalizeTerm(value: string | undefined | null): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, '').toLowerCase() : '';
 }
 
 /** Caller supplies the fresh key-ordered catalog under its authenticated DB transaction. */
@@ -28,9 +39,16 @@ export function paginateCatalog<T extends CatalogItem>(items: readonly T[], opti
   const sign = (value: string) => createHmac('sha256', options.hmacKey)
     .update(`profile-catalog/v1\n${value}`).digest('base64url');
   const watermark = sign(JSON.stringify(items));
-  const filter = options.parentCode ?? null;
-  const field = options.kind === 'crops' ? 'id' : 'code';
-  const visible = items.filter(item => filter === null || item['parent_code'] === filter);
+  // 物种目录没有父级：`q` 占同一个 `filter` 槽位，于是「换关键词重放旧游标」= INVALID_CURSOR。
+  // 归一化后为空的关键词按「未收窄」处理（与 reference 层 q 的口径一致，不当作必空条件）。
+  const term = options.kind === 'species' ? normalizeTerm(options.q) : '';
+  // 接线缺失时不许「静默 0 条」——那正是「空数组冒充成功」的另一种写法。
+  if (term !== '' && options.searchText === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '目录检索面未装配');
+  const filter = options.kind === 'species' ? (term === '' ? null : term) : (options.parentCode ?? null);
+  const field = options.kind === 'regions' ? 'code' : 'id';
+  const visible = filter === null ? items : items.filter(item => options.kind === 'species'
+    ? normalizeTerm(options.searchText?.(item)).includes(filter)
+    : item['parent_code'] === filter);
   let start = 0, expires = now + TTL_MS;
   if (options.cursor !== undefined) {
     try {
