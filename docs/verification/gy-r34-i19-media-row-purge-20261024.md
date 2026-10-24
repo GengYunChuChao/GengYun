@@ -146,31 +146,42 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
 | `node tools/verify-contract-status.mjs` | EXIT 0；`符号形态锚点 1 条` / `行号区间 244 条` / `中文表格一致` |
 | `node --check tests/integration/media-row-purge-pg.mjs` | EXIT 0（返修后重跑） |
 | `node tests/integration/media-row-purge-pg.mjs`（无 `GY_PG_BIN`） | **EXITCODE=77**，3 行 SKIP：`SKIP: 未设置 GY_PG_BIN…` / `本次**未验证**…（未取得，不是通过）` / `EXITCODE=77 表示未取得…` |
-| `node tests/integration/media-row-purge-pg.mjs`（**真跑**，便携 PG 17.11） | **EXITCODE=0**，`PASS 1`…`PASS 18` + `ALL PASS：18 条真库断言（exit code 0）`；`server_version=17.11`；回环端口取自 55700–55799（两次实跑 55998 / 55830，读数一致）；收尾集群已停、数据目录已删（`GY_R34_PG_ROOT` 下只剩空目录、端口无监听） |
+| `node tests/integration/media-row-purge-pg.mjs`（**真跑**，便携 PG 17.11） | **EXITCODE=0**，`PASS 1`…`PASS 18` + `ALL PASS：18 条真库断言（exit code 0）`；`server_version=17.11`；回环端口取自 **55700–55999**（`pickPort()` 逐字 `55700 + randomInt(0, 300)`；三次实跑 55998 / 55830 / 合并后一次，读数一致 —— 旧版此处误写上界 55799，而 55998 本身就越界，故更正）；收尾集群已停、数据目录已删（`GY_R34_PG_ROOT` 下只剩空目录、端口无监听） |
 | `git diff --check` | EXIT 0 |
 | `git merge-tree --write-tree upstream/main HEAD` | EXIT 0，无冲突 |
 
 ⚠ 门禁本身**不依赖 `node_modules`**（`r34-media-row-purge-migration.test.mjs` 是纯静态形状测试，正是为了让「依赖缺失 ⇒ 静默跳过」
 不变成假绿）；真库臂单独用便携 PG 17.11 跑，见上表倒数第三行。
-## 8. 未取得项（⛔ 都不是通过）
+## 8. 已取得 / 未取得
 
-1. **真库臂已真跑绿（本机便携 PG 17.11）**：`EXITCODE=0`，`PASS 1`…`PASS 18`。缺 `GY_PG_BIN` 时仍打印 3 行 SKIP 并 **exit 77**
-   （未取得，不是通过；不认 `--allow-skip`）；它仍**未**接进 `.github/workflows/real-pg-integration.yml`（`.github/**` 不在本片
-   授权范围，且它登记在 `UNWIRED_DECLARATIONS` 里 ⇒ CI 上恒 exit 77，所以**这条臂的缺陷在 CI 上永远不会暴露**）。
-   ⚠ 真跑时抓出**三处「只有真跑才会暴露」的缺陷**，都已修：
+> 取得与未取得分开写：把「已真跑绿」挂在「未取得项（⛔ 都不是通过）」标题下面，读起来是反的。
+
+### 8.1 已取得（本次实测，仅此一条）
+
+1. **真库臂本机真跑绿（便携 PG 17.11）**：`EXITCODE=0`，`PASS 1`…`PASS 18` + `ALL PASS：18 条真库断言（exit code 0）`。
+   缺 `GY_PG_BIN` 时仍打印 3 行 SKIP 并 **exit 77**（未取得，不是通过；不认 `--allow-skip`）——同一个脚本两种环境给两种答案，
+   这正是它该有的形状。**取得的是「本机真跑」，未取得的是「接进 CI」**，后者见 §8.2 第 1 条。
+   ⚠ 真跑共抓到**三处「只有真跑才会暴露」的缺陷**；其中 ① ② 属本 commit，③ **早于本 commit 已修，本 commit 只是复验**：
    · ① `pg_ctl -o` 拿到数组 ⇒ `spawnSync` 用 `,` 拼接成单个字符串，postgres 收到 `-p 55902,-c listen_addresses=…`，日志逐字
      `FATAL:  invalid value for parameter "port": "55902,-c"` + `pg_ctl: could not start server`；改成 `serverOptions().join(' ')`。
    · ② 夹具计数与断言不符：`idsOfMedia()` 只按 `owner_id` 过滤、**不区分 state**，A 组共 **9** 行（3 终态可删 + 3 非终态 +
      3 被引用），原断言写 **6**（把「终态 6 条」当成了「全部行数」）⇒ `A 的媒体行应为 6 条，实际 9`；改成 9，并另加一条
      「终态恰好 6 条」的独立断言，让两个口径各自钉住。
-   · ③ `import pg from 'pg'` 写在 `GY_PG_BIN` 闸门**之前**：静态 import 被提升到闸门之上，无 `node_modules` 的树里
-     `ERR_MODULE_NOT_FOUND` 以 **exit 1** 退出、**根本没走到** SKIP（`skipped` 与 `failed` 在 CI 上语义完全不同）；改成闸门之后
-     `await import('pg')`：缺 `GY_PG_BIN` ⇒ 77，设了但缺依赖 ⇒ exit 1（环境坏，不许伪装成跳过）。
+   · ③ **不是本 commit 的战果**：`import pg from 'pg'` 写成静态 import 会被提升到 `GY_PG_BIN` 闸门**之前**，无 `node_modules`
+     的树里 `ERR_MODULE_NOT_FOUND` 以 **exit 1** 退出、**根本没走到** SKIP（`skipped` 与 `failed` 在 CI 上语义完全不同）。
+     `git show cc89825a:tests/integration/media-row-purge-pg.mjs` 第 54 行交付时**已是** `pg = (await import('pg')).default;`，
+     本 commit 的 diff 只动 `startCluster()` 与夹具断言 ⇒ 该修**先在 `cc89825a` 落地**，本轮只复验「闸门后动态 import」这个形状仍在
+     （缺 `GY_PG_BIN` ⇒ 77，设了但缺依赖 ⇒ exit 1）。
+
+### 8.2 未取得项（⛔ 都不是通过）
+
+1. **真库臂未接进 CI**：它登记在 `tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 白名单里
+   ⇒ CI 上恒 exit 77，**这条臂的缺陷在 CI 上永远不会暴露**（本轮 ①② 两处就是这么活到现在的）；`.github/**` 不在本片授权范围。
 2. **桶对象回收仍归 `cleanupOrphans`**：本片只删数据库行，`media_object_cleanup` 台账行**刻意保留**（0029 故意不建外键）——
    字节回收不在本片范围内，台账行留下来正是为了让清理器还能枚举到它们。
 3. **运行时接线未做**（理由见 §9）：`services/api/src/privacy/user-data-deletion.ts` 目前**还没有**媒体模块，函数的唯一调用方还不存在。
-4. `0035` 的 `up`、`G0007`（缺入队 ⇒ 整批不删）、`G0001`（NULL 主体）、`42883`（本片未测，需 down 之后）已在真库上验证；
-   `23503` 分支**仍未取得**（11 列里只有前 2 列有外键、且它们的引用行本来就被 `NOT EXISTS` 排除 ⇒ 构造不出该错误）。
+4. **`23503` 分支仍未取得**：11 列里只有前 2 列有外键、且它们的引用行本来就被 `NOT EXISTS` 排除 ⇒ 构造不出该错误。
+   已真库验证的是 `up`、`G0007`（缺入队 ⇒ 整批不删）、`G0001`（NULL 主体）；`42883`（回滚后调用）需先 down 一次，本片未跑。
 ## 9. 为什么本片不接线（留作下一片）
 
 要做「media 模块」至少牵动五处，且第 ⑤ 条需要产品裁定，不是写手能单方面定的：

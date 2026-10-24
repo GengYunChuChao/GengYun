@@ -630,6 +630,11 @@ test('负控制：逐桶列绑定与守卫形态（改坏必红，逐字节还�
   // 这一组对应复审自测的 M2b / M3 / M4：三条在旧判据下**都是 GREEN**（真实盲区，不是措辞问题）。
   // 每条都做双向证明：改坏 ⇒ 必须被**点名**；逆变换逐字节还原 ⇒ 必须重新全绿。
   // 只证明"改坏会红"是不够的 —— 一个恒报错的判据也能让负控制全红，却毫无防守力。
+  //
+  // ⚠ 文案限定：「（全绿）」在这组里只表示**改坏后没被点名**，不表示代码没问题。极端情形是 forward 基线本身已被改坏
+  // （主正例先红）——此时「桶对调」会二次对调抵消，本条照样打印「（全绿）」。行为是 fail-closed（确实红了），
+  // 但读数顺序必须是：先看主正例，再看本条。
+  const RED_HINT = '（若主正例已红，先看主正例再看本条：「（全绿）」只说明改坏没被点名）';
 
   // ---- M2b：ocr 桶 ↔ speech 桶整块对调（只换桶标签，列一个字没动，总数不变）----
   const swapBuckets = (sql) =>
@@ -643,11 +648,11 @@ test('负控制：逐桶列绑定与守卫形态（改坏必红，逐字节还�
   const swappedBad = collectForwardViolations(swapped);
   assert.ok(
     swappedBad.some((line) => /桶 ref_ocr/.test(line) && /绑错|列集合/.test(line)),
-    `「ocr 桶 ↔ speech 桶对调」必须由逐桶绑定判据点名 ref_ocr，实际：${swappedBad.join(' / ') || '（全绿）'}`,
+    `「ocr 桶 ↔ speech 桶对调」必须由逐桶绑定判据点名 ref_ocr，实际：${swappedBad.join(' / ') || '（全绿）'}${RED_HINT}`,
   );
   assert.ok(
     swappedBad.some((line) => /桶 ref_speech/.test(line)),
-    `对调必须同时点名 ref_speech，实际：${swappedBad.join(' / ') || '（全绿）'}`,
+    `对调必须同时点名 ref_speech，实际：${swappedBad.join(' / ') || '（全绿）'}${RED_HINT}`,
   );
   const swappedBack = swapBuckets(swapped);
   assert.equal(swappedBack, forward, '逆变换必须**逐字节**还原原文（否则「还原后变绿」证明不了任何事）');
