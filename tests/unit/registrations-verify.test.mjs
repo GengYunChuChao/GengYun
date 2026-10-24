@@ -10,13 +10,18 @@
 //   D. 重放：同一请求重复调用得到**逐字节一致**的结论（纯函数、无台账、无状态）。
 //   E. 信息泄露：响应里不得出现内部标识（`record_id` / `source_version` / `identity_hash`）。
 //   F. 模拟 / 下架记录不进入核对面（不得作为真实依据、与读面同口径）。
+//   G. **待核维度齐备性（R1）**：缺 `dosage_form` / `ingredients` ⇒ 非 matched（`insufficient`）
+//      且 `missing_fields` 逐项点名；内核已判 `conflict` / `no_match` / `ambiguous` / `unavailable`
+//      时**不降级**（缺失维度只反映在 `missing_fields`）；三维齐备且一致仍是 `matched`（正控制）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   createRecordsRegistryPort,
   createRegistrationVerifyService,
+  missingVerifiableDimensions,
   UNWIRED_REGISTRY_REASON,
+  VERIFY_DIMENSION_FIELDS,
 } from '../../services/api/src/registrations/service.ts';
 import { loadHerbicideRecords } from '../../packages/reference/index.mjs';
 
@@ -230,11 +235,19 @@ test('B2. 被驳回（review_status=rejected）记录 ⇒ conflict + source.revi
 test('B3. 有效期正常的记录 ⇒ matched（正控制：上两条不是「一律 conflict」）', async () => {
   const service = serviceWith(portOf([fixtureRecord()]));
   const data = await service.verify({
-    fields: { registration_number: 'PDFIXTURE1', name: '夹具草甘膦', ingredients: [], dosage_form: null },
+    // 三维齐备且与夹具记录一致（`水剂` / 草甘膦 41%）：本片起「缺待核维度不得报 matched」，
+    // 故这条正控制必须给出**完整**的标签读取结果，否则它证明的是「缺项也 matched」。
+    fields: {
+      registration_number: 'PDFIXTURE1',
+      name: '夹具草甘膦',
+      ingredients: [{ name: '草甘膦', content_text: '41%', unit_text: '%' }],
+      dosage_form: '水剂',
+    },
     conditions: null,
   });
   assert.equal(data.match_state, 'matched');
   assert.deepEqual(data.conflict_fields, []);
+  assert.deepEqual(data.missing_fields, []);
 });
 
 // ---------------------------------------------------------------------------
@@ -374,4 +387,143 @@ test('F3. 仓内真实记录装载数（防「拿空集当 no_match」的假绿�
   assert.equal(items.length, 20, '仓内公开登记公告记录 20 条');
   assert.equal(items.every((item) => item.visibility === 'published'), true, '本批记录全部已发布');
   assert.equal(items.some((item) => item.simulated === true), false, '本批记录不含模拟数据');
+});
+
+// ---------------------------------------------------------------------------
+// G. 待核维度齐备性（R1：缺 dosage_form / ingredients 不得报 matched）
+//
+// 契约承诺（该 operation description）：「登记号+成分含量剂型精确核对，缺失/冲突不matched」；
+// `docs/architecture/state-contract.md` 亦写明「必须登记号+全部可见成分/含量/剂型精确一致，
+// 缺字段为 insufficient 而非 matched」。共享内核 `decideMatchState` 的必要字段只含
+// 登记号/名称 ⇒ 缺剂型/成分时它不进入冲突检查、会给出 `matched` + `missing_fields: []`，
+// 调用方会把未核对的维度读成核对完成。以下用例钉死本片服务层的补位口径。
+// ---------------------------------------------------------------------------
+
+test('G1. 缺 dosage_form（null）⇒ 非 matched（insufficient），missing_fields 明确含 dosage_form', async () => {
+  const service = createRegistrationVerifyService({ executionMode: 'stub' });
+  const data = await service.verify({ fields: fieldsOf({ dosage_form: null }), conditions: null });
+
+  assert.notEqual(data.match_state, 'matched', '缺待核维度绝不得报核对通过');
+  assert.equal(data.match_state, 'insufficient');
+  assert.deepEqual(data.missing_fields, ['dosage_form']);
+  assert.deepEqual(data.conflict_fields, [], '缺失不是冲突（不得混用两个清单）');
+  assert.equal(data.registration, null, '未核对完成不得带出候选记录（否则会被读成「已命中」）');
+  assert.deepEqual(data.dose_cards, []);
+  assert.deepEqual(Object.keys(data).sort(), VERIFICATION_KEYS, '改判后仍严格是契约五键');
+  assert.equal(schemas.MatchState.enum.includes(data.match_state), true, '不得新造枚举值');
+});
+
+test('G2. dosage_form 为空串 / 纯空白 ⇒ 同一结论（空读归一为未采集，不报 conflict）', async () => {
+  const service = createRegistrationVerifyService({ executionMode: 'stub' });
+  // `''` 在 HTTP 层会被 minLength 1 挡掉，但服务层是导出面；`'   '` / 全角空格在两个面都能到。
+  for (const value of ['', '   ', '\t\n　']) {
+    const data = await service.verify({ fields: fieldsOf({ dosage_form: value }), conditions: null });
+    assert.equal(
+      data.match_state,
+      'insufficient',
+      `dosage_form=${JSON.stringify(value)} 必须落「未采集」而不是 matched/conflict`,
+    );
+    assert.deepEqual(data.missing_fields, ['dosage_form'], `dosage_form=${JSON.stringify(value)}`);
+    assert.deepEqual(data.conflict_fields, [], '空读不是「读到的剂型不一致」⇒ 不得报 conflict');
+    assert.equal(data.registration, null);
+  }
+});
+
+test('G3. ingredients=[] ⇒ 非 matched（insufficient），missing_fields 明确含 ingredients', async () => {
+  const service = createRegistrationVerifyService({ executionMode: 'stub' });
+  const data = await service.verify({ fields: fieldsOf({ ingredients: [] }), conditions: null });
+
+  assert.notEqual(data.match_state, 'matched');
+  assert.equal(data.match_state, 'insufficient');
+  assert.deepEqual(data.missing_fields, ['ingredients']);
+  assert.deepEqual(data.conflict_fields, []);
+  assert.equal(data.registration, null);
+  assert.deepEqual(data.dose_cards, []);
+});
+
+test('G4. 两者都缺 ⇒ missing_fields 同时含两者；与内核缺项合并时互不覆盖（内核在前）', async () => {
+  const service = createRegistrationVerifyService({ executionMode: 'stub' });
+  const both = await service.verify({ fields: fieldsOf({ dosage_form: null, ingredients: [] }), conditions: null });
+  assert.equal(both.match_state, 'insufficient');
+  assert.deepEqual(both.missing_fields, ['dosage_form', 'ingredients']);
+
+  // 合并口径：内核必要字段（登记号/名称）在前，待核维度在后，一个都不删。
+  const merged = await service.verify({
+    fields: fieldsOf({ registration_number: null, dosage_form: null, ingredients: [] }),
+    conditions: null,
+  });
+  assert.equal(merged.match_state, 'insufficient');
+  assert.deepEqual(merged.missing_fields, ['registration_number', 'dosage_form', 'ingredients']);
+
+  // 口径本身也钉死（清单与顺序固定 ⇒ `missing_fields` 读数可逐字节复现）。
+  assert.deepEqual([...VERIFY_DIMENSION_FIELDS], ['dosage_form', 'ingredients']);
+  assert.deepEqual(
+    missingVerifiableDimensions(fieldsOf({ dosage_form: '   ', ingredients: [] })),
+    ['dosage_form', 'ingredients'],
+    '空读与空数组都由同一处口径判缺',
+  );
+});
+
+test('G5. 正控制：三维齐备且一致 ⇒ 仍是 matched；带前后空白的**已读到**值不被改判', async () => {
+  const service = createRegistrationVerifyService({ executionMode: 'stub' });
+
+  const exact = await service.verify({ fields: fieldsOf(), conditions: null });
+  assert.equal(exact.match_state, 'matched', '本片不得把正常路径改坏');
+  assert.deepEqual(exact.missing_fields, []);
+  assert.deepEqual(exact.conflict_fields, []);
+  assert.equal(exact.registration.formulation.registration_number, RECORD.registration_number);
+  assert.deepEqual(exact.dose_cards, []);
+
+  // 边界：本片只把「归一后为空」当缺失；有内容的取值一律原样交给内核比对
+  // （前后空白/全角由 `normalizeComparableText` 消除 ⇒ 仍是同一值）。
+  const padded = await service.verify({
+    fields: fieldsOf({
+      dosage_form: '  水分散粒剂  ',
+      ingredients: [{ name: ' 唑草酮 ', content_text: '40%', unit_text: '%' }],
+    }),
+    conditions: null,
+  });
+  assert.equal(padded.match_state, 'matched');
+  assert.deepEqual(padded.missing_fields, []);
+});
+
+test('G6. 优先级：内核已判 conflict ⇒ 不降级为 insufficient，缺失维度仍如实进 missing_fields', async () => {
+  const service = createRegistrationVerifyService({ executionMode: 'stub' });
+  const data = await service.verify({ fields: fieldsOf({ dosage_form: '乳油', ingredients: [] }), conditions: null });
+
+  assert.equal(data.match_state, 'conflict', '强结论不得因「另有缺项」被降级');
+  assert.deepEqual(data.conflict_fields, ['dosage_form']);
+  assert.deepEqual(data.missing_fields, ['ingredients'], '缺失维度仍须体现，不得被强结论吞掉');
+  assert.notEqual(data.registration, null, '冲突时仍如实带出记录供复核（内核既有口径）');
+});
+
+test('G7. 优先级：no_match 与缺项同时存在 ⇒ 保持 no_match（缺失不把强结论降级）', async () => {
+  const service = createRegistrationVerifyService({ executionMode: 'stub' });
+  const data = await service.verify({
+    fields: fieldsOf({ registration_number: 'PD00000000', name: '不存在的药剂名称', dosage_form: null, ingredients: [] }),
+    conditions: null,
+  });
+
+  assert.equal(data.match_state, 'no_match');
+  assert.equal(data.registration, null);
+  assert.deepEqual(data.conflict_fields, []);
+  assert.deepEqual(data.missing_fields, ['dosage_form', 'ingredients']);
+});
+
+test('G8. 优先级（其余结论）：ambiguous / unavailable 同样不降级，缺失维度只进 missing_fields', async () => {
+  // ambiguous：名称命中多条不同制剂（仓内「烯草酮」两条）。
+  const stub = createRegistrationVerifyService({ executionMode: 'stub' });
+  const ambiguous = await stub.verify({
+    fields: fieldsOf({ registration_number: 'PD99999999', name: '烯草酮', dosage_form: null, ingredients: [] }),
+    conditions: null,
+  });
+  assert.equal(ambiguous.match_state, 'ambiguous');
+  assert.deepEqual(ambiguous.missing_fields, ['dosage_form', 'ingredients']);
+
+  // unavailable：real 模式真实登记库未接线（不可用绝不被「缺项」掩盖）。
+  const real = createRegistrationVerifyService({ executionMode: 'real' });
+  const unavailable = await real.verify({ fields: fieldsOf({ dosage_form: null, ingredients: [] }), conditions: null });
+  assert.equal(unavailable.match_state, 'unavailable');
+  assert.equal(unavailable.registration, null);
+  assert.deepEqual(unavailable.missing_fields, ['dosage_form', 'ingredients']);
 });

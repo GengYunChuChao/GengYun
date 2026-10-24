@@ -429,3 +429,34 @@ test('I1. real 模式 ⇒ 200 + match_state=unavailable（不伪装成 no_match 
     await app.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// J. 待核维度缺失（R1）：HTTP 面同样不得报 matched
+// ---------------------------------------------------------------------------
+
+test('J1. ingredients=[] / 纯空白 dosage_form ⇒ 200 非 matched（insufficient）且 missing_fields 点名该维度', async () => {
+  const { app } = await newApp();
+  try {
+    const token = await login(app);
+    // 两条都是**契约合法请求**（`ingredients` 无 minItems；`dosage_form` 的 minLength 只挡空串），
+    // 因此它们必须走到业务层并由业务层给出「未核对完成」的结论，而不是 400 或 matched。
+    for (const [label, payload, expectedField] of [
+      ['ingredients 空数组', bodyOf({ ingredients: [] }), 'ingredients'],
+      ['dosage_form 纯空白', bodyOf({ dosage_form: '   ' }), 'dosage_form'],
+    ]) {
+      const res = await post(app, { token, payload });
+      assert.equal(res.statusCode, 200, `${label}：${res.body}`);
+      const data = res.json().data;
+      assert.notEqual(data.match_state, 'matched', `${label} 不得报核对通过：${res.body}`);
+      assert.equal(data.match_state, 'insufficient', `${label}：${res.body}`);
+      assert.deepEqual(data.missing_fields, [expectedField], `${label} 必须点名缺失维度`);
+      assert.equal(data.registration, null, `${label} 未核对完成不得带出登记记录`);
+      assert.deepEqual(data.conflict_fields, [], `${label} 缺失不是冲突`);
+      assert.deepEqual(data.dose_cards, [], `${label}`);
+      assert.deepEqual(Object.keys(data).sort(), VERIFICATION_KEYS, `${label} 仍严格是契约五键`);
+      assert.equal(res.headers['cache-control'], 'no-store');
+    }
+  } finally {
+    await app.close();
+  }
+});
