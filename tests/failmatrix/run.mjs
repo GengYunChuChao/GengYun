@@ -10,14 +10,16 @@
  *   3) 成功用例：必须有 `data`；`expect.etag === true` 时必须是强修订号 `"n"`；
  *   4) 用例自带的 `check()`（形状/字段/跨用例对照）与 `sameShapeAs` 同形对照（后置跑）。
  *
- * 为什么是进程内 `app.inject` 而不是 loopback HTTP：见 `world.mjs` 顶部注释（零端口、零外呼、
+ * 为什么默认是进程内 `app.inject` 而不是 loopback HTTP：见 `world.mjs` 顶部注释（零端口、零外呼、
  * 失败可复现到行；代价是没有传输层覆盖）。
+ * `--transport=loopback` 臂走真实 TCP（`listen(0)` + `fetch`），补上 body 上限 / 真实网络超时等传输面。
  *
  * 用法：
  *   node tests/failmatrix/run.mjs                    # 全跑
  *   node tests/failmatrix/run.mjs --only=C1,C2-01    # 族或用例 id（前缀匹配）
  *   node tests/failmatrix/run.mjs --json=out.json    # 另存机读结果
  *   node tests/failmatrix/run.mjs --list             # 只列用例
+ *   node tests/failmatrix/run.mjs --transport=loopback  # 同一矩阵走真实 TCP
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -31,6 +33,7 @@ import {
   createAccount,
   createAdmin,
   inject,
+  loopbackInject,
   envelopeShape,
   seedOwnerRows,
 } from './world.mjs';
@@ -55,9 +58,9 @@ const ALL_SCOPES = [
   'session:logout',
 ];
 
-/** CLI 解析：只认 --only/--json/--list，多写的参数直接报错（避免「以为筛了」）。 */
+/** CLI 解析：只认 --only/--json/--list/--transport，多写的参数直接报错（避免「以为筛了」）。 */
 function parseArgs(argv) {
-  const out = { only: null, json: null, list: false };
+  const out = { only: null, json: null, list: false, transport: 'inject' };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--list') out.list = true;
@@ -65,13 +68,19 @@ function parseArgs(argv) {
     else if (arg === '--only') out.only = argv[++i] ?? '';
     else if (arg.startsWith('--json=')) out.json = arg.slice('--json='.length);
     else if (arg === '--json') out.json = argv[++i] ?? '';
-    else throw new Error(`未知参数：${arg}（只支持 --only= / --json= / --list）`);
+    else if (arg.startsWith('--transport=')) out.transport = arg.slice('--transport='.length);
+    else if (arg === '--transport') out.transport = argv[++i] ?? '';
+    else throw new Error(`未知参数：${arg}（只支持 --only= / --json= / --list / --transport=）`);
   }
   if (out.only !== null && out.only.trim() === '') throw new Error('--only 不能为空');
+  if (out.transport !== 'inject' && out.transport !== 'loopback') {
+    throw new Error(`未知 transport：${out.transport}（只支持 inject / loopback）`);
+  }
   return out;
 }
 
 const opts = parseArgs(process.argv.slice(2));
+let loopbackApp = null;
 
 function baseCommit() {
   try {
@@ -168,6 +177,18 @@ async function main() {
     return 0;
   }
 
+  // 传输臂：默认进程内 `app.inject`；`--transport=loopback` 则先 `listen(0)`，同一条矩阵走真实 TCP。
+  const transport = opts.transport;
+  let dispatch;
+  let loopbackOrigin = null;
+  if (transport === 'loopback') {
+    loopbackOrigin = await world.app.listen({ host: '127.0.0.1', port: 0 });
+    loopbackApp = world.app;
+    dispatch = (request) => loopbackInject(loopbackOrigin, request);
+  } else {
+    dispatch = (request) => inject(world.app, request);
+  }
+
   // ------------------------------------------------------------ 夹具：账号与属主行
   ctx.a = await createAccount(world, 'mx-a');
   ctx.b = await createAccount(world, 'mx-b');
@@ -179,7 +200,7 @@ async function main() {
   ctx.actors.adminRead = await createAdmin(world, ['sources:read'], 'read');
 
   // 后台隐藏用例要一帖**专属**目标：C3-25/26/27 会把它隐藏，不能污染其它族用的 seeded.postId。
-  const hideTarget = await inject(world.app, {
+  const hideTarget = await dispatch({
     method: 'POST',
     path: `${API}/posts`,
     actor: ctx.b,
@@ -191,7 +212,7 @@ async function main() {
 
   // 注销回执线：deleter 的注销单与回执（C4-12..18 全部围绕它）。
   const deleter = await createAccount(world, 'mx-deleter');
-  const deletion = await inject(world.app, {
+  const deletion = await dispatch({
     method: 'POST',
     path: `${API}/me/account/deletion`,
     actor: deleter,
@@ -221,7 +242,7 @@ async function main() {
       await world.auth.bumpUserAuthEpoch(built.userId);
     } else if (name === 'logout') {
       built = await createAccount(world, `mx-logout-${caseId}`);
-      const logout = await inject(world.app, {
+      const logout = await dispatch({
         method: 'POST',
         path: `${API}/auth/logout`,
         actor: built,
@@ -261,10 +282,10 @@ async function main() {
     let result;
     let results;
     if (c.concurrent !== undefined) {
-      results = await Promise.all(Array.from({ length: c.concurrent }, () => inject(world.app, request)));
+      results = await Promise.all(Array.from({ length: c.concurrent }, () => dispatch(request)));
       result = results[0];
     } else {
-      result = await inject(world.app, request);
+      result = await dispatch(request);
       results = [result];
     }
     ctx.results.set(c.id, c.concurrent === undefined ? result : results);
@@ -311,7 +332,10 @@ async function main() {
   // ------------------------------------------------------------------ 打报告
   const commit = baseCommit();
   const totalCases = CASES.length + SEAM_CASES.length;
-  console.log(`GY-I22 失败回归矩阵 · 进程内 app.inject + 受信 seam 调用 · execution_mode=stub · 基线 ${commit.slice(0, 12)}`);
+  const transportLabel = transport === 'loopback'
+    ? 'loopback 真实 HTTP（listen(0)+fetch）+ 受信 seam 调用'
+    : '进程内 app.inject + 受信 seam 调用';
+  console.log(`GY-I22 失败回归矩阵 · ${transportLabel} · execution_mode=stub · 基线 ${commit.slice(0, 12)}`);
   console.log(`时间 ${new Date().toISOString()} · node ${process.version} · 本跑 ${selected.length + selectedSeams.length}/${totalCases} 条（HTTP ${selected.length} + seam ${selectedSeams.length}）\n`);
 
   let lastFamily = null;
@@ -426,7 +450,8 @@ async function main() {
       node: process.version,
       base_commit: commit,
       execution_mode: 'stub',
-      transport: 'app.inject+trusted-seam',
+      transport: transport === 'loopback' ? 'loopback-http+trusted-seam' : 'app.inject+trusted-seam',
+      loopback_origin: loopbackOrigin,
       filter: opts.only,
       totals: { total: rows.length, pass, fail },
       families: Object.fromEntries([...familyTally].map(([family, tally]) => [family, tally])),
@@ -445,6 +470,9 @@ async function main() {
     console.log(`机读结果：${opts.json}`);
   }
 
+  if (transport === 'loopback') {
+    await world.app.close().catch(() => {});
+  }
   return fail === 0 ? 0 : 1;
 }
 
@@ -453,8 +481,13 @@ function requestPath(entry) {
 }
 
 main()
-  .then((code) => process.exit(code))
-  .catch((error) => {
+  .then((code) => {
+    if (opts.transport === 'loopback') process.exitCode = code;
+    else process.exit(code);
+  })
+  .catch(async (error) => {
     console.error(`runner 自身失败：${error?.stack ?? error}`);
-    process.exit(2);
+    if (loopbackApp !== null) await loopbackApp.close().catch(() => {});
+    if (opts.transport === 'loopback') process.exitCode = 2;
+    else process.exit(2);
   });
