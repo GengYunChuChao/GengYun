@@ -642,3 +642,233 @@ Node.js v24.16.0
 | `E2-02`@279 | 291 | +12 | 同一凭据去读一个不存在的媒体 id ⇒ 404，与上一条完全同形 |
 
 订正后逐条复核：65 个 id 全部命中**该 id 的用例行**（`hit=65 / miss=0`），不再有「行号对、指错用例」的情形。
+
+## R34 追加：4 域负控制覆盖（2026-10-24）
+
+**本节基线 commit = `4b87e1d9`**（`git rev-parse upstream/main` = `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`，`Reviewed PR #525`；工作树分支 `feat/gy-r34-i22-failmatrix-4domains`）。开工三读数：`git rev-parse HEAD` = `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`、`git rev-parse upstream/main` = 同值、`git status --porcelain -uall` = 0 行。
+
+### 口径：两类靶子（为什么这 3 个域要用单元测试当靶子）
+
+`mutations.mjs` 原来每条负控制只有一类靶子 `watch`（矩阵用例 id，执行器跑 `run.mjs --only=<id>`，要求全红）。本轮 4 个域里有 3 个**不进 HTTP 失败矩阵**（矩阵是 `execution_mode=stub` 下的失败注入表，不覆盖这几个读面），守着它们的是 `tests/unit/*.test.mjs` 里**既有**的测试。于是执行器新增第二类靶子：
+
+| 靶子 | 字段 | 「真红」判据 | 「转绿」判据 |
+| --- | --- | --- | --- |
+| 矩阵用例 | `watch: ['C2-05']` | `run.mjs --only=C2-05` 的每条都必须 `FAIL` | 恢复原字节后复跑全 `PASS` |
+| 既有单元测试 | `unitWatch: [{ file, pattern }]` | `node --test --test-name-pattern=<pattern> <file>` 必须 `# fail ≥ 1` **且** `# pass = 0`（恰好那一条红，不许有 PASS 混在里面） | 恢复原字节后必须 `# fail = 0` **且** `# pass = 1`（恰好一条转绿；pattern 变宽顺手盖住别的测试不算） |
+
+`pattern` 是测试名的**字面子串**，执行器转义成正则后传给 `--test-name-pattern`。`tests/unit/gy-i22-failmatrix.test.mjs` 同时加了反向闸门：`unitWatch.file` 必须在 `tests/unit/` 下、`pattern` 必须在该文件里**逐字出现**——测试改名或删除 ⇒ 负控制必须同步，不能让一条指向空气的负控制继续绿。
+
+⛔ **没有为任何域新写测试来喂负控制**：`unitWatch` 指向的 3 个测试文件在本轮之前就存在，`git diff` 里它们一个字节都没动。
+
+### 逐域结果
+
+| # | 域 | 变异点（文件:函数名） | 目标测试（既有） | 红（改后实测） | 绿（恢复后实测） | 是否成立 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `me/exports` | `services/api/src/privacy/exports-list.ts:createExportsListService` 内 `ledger()` 的懒建 catch | `tests/unit/exports-route-http.test.mjs`「连接池形状不合：装配期不抛（buildApp 能起），请求期 fail-closed 503」 | `# tests 1 / # pass 0 / # fail 1`；`The validation function is expected to return "true". Received false`（`assert.rejects` 的校验函数判否：原始错误不再是 `PROVIDER_UNAVAILABLE` 503） | `# fail 0 / # pass 1` | ✅ 成立（NC-22） |
+| 2 | `public/home` | `services/api/src/db/catalog.ts:readHomePreviews` 的「语句超时单独分级」那一行 | `tests/unit/public-home.test.mjs`「database failures use safe contract errors, including statement timeout」 | `# fail 1 / # pass 0`；`expected: 504` / `actual: 503` | `# fail 0 / # pass 1` | ✅ 成立（NC-23） |
+| 3 | `privacy-policy` | ——（无守卫代码可改） | ——（无守护测试） | —— | —— | ❌ **不成立：该域没有实现**，见 3.1 |
+| 4 | `registrations/verify` | `services/api/src/knowledge/applicability-screen.ts:screenRegistrationMatch` 的阻断码 fail-closed 映射 | `tests/unit/knowledge-applicability-screen.test.mjs`「GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 保留记录但资格另判」 | `# fail 1 / # pass 0`；`error: '契约错误码没有对应 HTTP 状态：INTERNAL'` | `# fail 0 / # pass 1` | ✅ 成立（NC-24），但域口径需订正，见 4.1 |
+
+每条都过了完整闭包：改前 / 改后 / 恢复后三次 sha256 逐字节比对一致（`NC-22` `services/api/src/privacy/exports-list.ts` = `65dfc495c3c3014b6a869571e674f368173088da27ff54e6184c22683432c587`、`NC-23` `services/api/src/db/catalog.ts` = `3fd779cc9be18f7bb85470633f03dfe3bdc8b961c1be4ca02ea78a04936554c2`、`NC-24` `services/api/src/knowledge/applicability-screen.ts` = `45cad9090813c2f231e64fc8b9c849e05069474b9c67f138fc97f9145136ea43`），恢复用**原始字节**回写，不经过字符串重编码。
+
+#### 3.1 `privacy-policy` 为什么不成立（缺口性质＝缺实现，比缺测试更上游）
+
+查证事实（三处互相独立）：
+
+1. `services/api/src/routes/` 下**没有**任何实现 `GET /me/privacy-policy`（或 `/privacy-policy`）的路由文件：`Select-String -Path services/api/src/routes/*.ts -Pattern 'privacy'` 的命中全部是 `import … from '../privacy/*.ts'` 与内容举报枚举 `'privacy'`，**没有一条是路由声明**。
+2. 契约侧该行仍标「待接入」：`docs/ui-contract-binding.md` 绑定表的「隐私说明 | `GET /me/privacy-policy` | 静态文案」一行写着「界面读取待接入」。
+3. 仓内既有测试把它登记为**计划证据**而不是已实现能力：`tests/unit/contract-planned-exemptions.test.mjs` 的 `getPrivacyPolicy` 条目 `why: '无任何 policy 内容模块、无路由、无用例；仅有界面绑定的需求侧要求，因此只能记计划证据并标明是需求侧依据。'`；`services/api/src/privacy/backup-replay-manifest.ts` 的注释同样写明「**未自造任何路由/字段**」。
+
+结论：**该域无守护测试，负控制无法成立，缺口性质＝缺实现（连路由都没有；退一步讲也是缺测试）**。按本轮规则**没有**为它新写一条弱断言去喂负控制——那种做法只会产出一条「无论如何都红不了」的假负控制。
+
+#### 4.1 `registrations/verify` 的域口径订正
+
+任务书给的域名叫 `registrations/verify`。实测：`services/api/src/routes/` 下**没有** `/registrations/verify` 路由，只有 `/admin/registrations` 系列读面（`routes/admin.ts`）。真正承担「登记校验」语义的是 `services/api/src/knowledge/applicability-screen.ts` 的 `screenRegistrationMatch`：登记匹配状态 `state` 经 `MATCH_ERROR_MAP` 折成阻断错误码，未登记的 `state` 一律折成 `UNMAPPED_BLOCK_ERROR`（`OBJECT_UNAVAILABLE` 409）——即「非 matched 一律 fail-closed 成 4xx，绝不放行成 200/500」。NC-24 改的就是这一行（把折档结果钉成 `INTERNAL`），由既有单元测试「GY-I08 装配：登记匹配非 matched 一律带 4xx」检出。**域成立，但成立在模块函数上、不在路由上**，故在此如实记账。
+
+### 本轮跑过的命令与读数（定向 + 一次全量）
+
+| 命令 | 读数 |
+| --- | --- |
+| `node --test tests/unit/gy-i22-failmatrix.test.mjs` | `# tests 3 / # pass 3 / # fail 0`（含新增的 `unitWatch` 闸门与 `MUTATIONS.length >= 26`） |
+| `node --test tests/unit/exports-route-http.test.mjs` | `pass 3 / fail 0`（干净树） |
+| `node --test tests/unit/public-home.test.mjs` | `pass 4 / fail 0`（干净树） |
+| `node --test tests/unit/knowledge-applicability-screen.test.mjs` | `pass 9 / fail 0`（干净树） |
+| `node tools/i22-failmatrix-negative-control.mjs --only=NC-22,NC-23,NC-24` | `PASS 3 / FAIL 0`（首轮 NC-22 曾 `FAIL`，见下「被否掉的候选」） |
+| `node tools/i22-failmatrix-negative-control.mjs --only=NC-01,NC-21` | `PASS 2 / FAIL 0`（回归自检：执行器改了红/绿分支后，老条目的 `watch` 通道必须照旧） |
+| `node --test "tests/unit/*.test.mjs"`（**一次**，串行） | `ℹ tests 3264 / pass 3261 / fail 0 / cancelled 0 / skipped 1 / todo 2 / duration_ms 79427.9506`，exit 0；末尾 `✖ failing tests:` 段只列出 `tests/unit/i11-audio-mp3-wav-guard.test.mjs` 的 2 条**既有 `todo`**（I11 缺口本体未修，本版不动），不计入 fail |
+
+#### 被否掉的候选（留档，免得下一片重走）
+
+`me/exports` 的第一个候选变异点是 `services/api/src/privacy/ledger-pg.ts` 里「无法归类的库错误 ⇒ `PROVIDER_UNAVAILABLE`(503, retryable=false)」那行兜底。实测**不红**：`--only=NC-22` 跑出 `fail=0 pass=1`。原因：`GET /me/exports` 的**列表读面**根本不走那条兜底（它是账本写入/回放路径的分档），列表面自己的 fail-closed 在 `exports-list.ts` 的 `ledger()` catch 里。换成后者后一次命中。教训：负控制挑的必须是**该测试真的走到**的那一行，不是「名字听起来对」的那一行。
+
+### 没有削弱已有负控制（可复核）
+
+- `git diff --numstat tests/failmatrix/mutations.mjs` = `41 0`：**新增 41 行、删除 0 行**——`NC-01…NC-21`（**R29 时点 23 条**；本轮共 **26** 条，`NC-22/23/24` 为本轮新增）的 `find` / `replace` / `watch` 一个字节都没动，只在其后追加 `NC-22/23/24` 并补了文件头关于 `unitWatch` 的说明。上游 `gy-r34-closure-matrix-20261024.md` 里「`mutations.mjs` 的 23 条负控制」是 **R29 时点读数**，与本轮 26 条不冲突。
+- 计数只上调：`tests/unit/gy-i22-failmatrix.test.mjs` 里负控制条数下限 `MUTATIONS.length >= 20` → `>= 26`（= 现有全部负控制条数）；`MIN_CASES` 仍为 `230`（本轮没有新增矩阵用例，故不上调）。
+- 收尾 `git status --porcelain -uall` 只剩 5 个有意改动的文件（`tests/failmatrix/mutations.mjs`、`tests/failmatrix/README.md`、`tests/unit/gy-i22-failmatrix.test.mjs`、`tools/i22-failmatrix-negative-control.mjs`、本页），任何变异残留都没有（这是 `3825d60f` 收尾时的读数；其后的 `ef35b3fa` 与「拒绝改写归档快照」那个提交又各动了 `tools/i22-failmatrix-evidence-table.mjs` 等文件，见本节末尾「订正」）。
+
+### 本轮没动的（避免与其它分片相撞；`tools/i22-failmatrix-evidence-table.mjs` 不在此列，见下「订正」）
+
+`.github/**`、`services/api/db/migrations/**`、`migration-reservations.json` 一律没碰；未起 PG 集群、未占端口（`exports-route-http.test.mjs` 自己 `app.listen({ port: 0 })` 的临时环回口是它原有形态）。
+
+### 订正：计数口径**已由本分支校正**（此前那句「本轮不碰 EXPECTED」说过头了）
+
+本节此前写的是「`tools/i22-failmatrix-evidence-table.mjs` 的 `EXPECTED`（`total: 168`、`negativeControls: 23`）与本轮实测（矩阵 230 条 / 负控制 26 条）已对不上，属既有陈旧账，本轮不碰、如实记录」。这句话在 `ef35b3fa`（`chore(test): 校正 i22 负控制证据表计数口径`）落盘后就不成立了——那个提交改的正是 `EXPECTED`：`total` 168 → 230、`negativeControls` 23 → 26，并补 `C10: 23`、`C11: 39`、`B5: 62` 三个分组（`families` 与 `batches` 都是全 230 的分组计数）。校正依据：R29 建页时 13 族之和 = 168（**同一口径**的旧读数，不是另一个维度），加上 R31 补的同步 AI 域 23 + 39 后 = 168 + 23 + 39 = 230；负控制 23 + 3 = 26。
+
+同一提交暴露出连带风险，本次一并拦下（判据＝真实路径比较 + 仓库内包含性校验，不是靠字符串比路径）：`PAGE` 常量仍指向本页之外的归档页 `docs/verification/gy-i22-failmatrix-20261022.md`（R29 快照，表格 168 行 / 负控制 23 条），`EXPECTED` 上调之后**裸跑 `--write` 会无报错把那份归档快照重写成 230 行**，而且原来的写盘位于 `problems` 对账**之前**。现在的口径（不是注释提醒，是可被负控制测试证伪的拦截）：
+
+- `--write` 不再有隐式默认页：裸 `--write` 一律 exit 1 并打印原因；目标页必须显式 `--page=`，且 `--page=` 按仓库根解析并校验包含性（越界拒绝）。
+- 目标页就是归档页（按**文件身份** `dev` + `ino` 判定；`./`、`..`、Windows 大小写、符号链接、硬链接都指向同一个文件）时，没给 `--i-know-this-rewrites-archive` 会先被拦一道提示；**即使给了旗标也仍受条数一致性约束**——页内矩阵表行数 / 负控制表行数必须与 `EXPECTED`（230 / 26）逐项相等才写。旗标不提供「刷新历史快照」的路径，归档快照只允许「同一基线刷新读数」，不允许被换成另一份快照。今天它就被拒（`条数 168 与 EXPECTED 230 不一致`）。
+- 写盘挪到 `problems` 判定之后：对账不通过一律不写盘、exit 1。
+- 只读路径不变：不带 `--write` 时照旧把两张表打到 stdout、末行「自洽：矩阵 230 条全 PASS、负控制 26 条全 PASS，与文档声明一致」、exit 0（对账不通过则 exit 1）；`--matrix=` / `--nc=` 按仓库根解析并校验包含性（越界拒绝；读不到时只打一行，不打 node 栈）。
+- 守卫由 `tests/unit/i22-failmatrix-evidence-table-guard.test.mjs` 兜底：工件自洽时 `--write` 真的写盘（正控制，证明守卫不是「永远红」）、工件与 `EXPECTED` 不一致时不写盘且 exit 1、真实归档页在「裸 `--write`」「显式 `--page=`」「再加双钥匙」三种调用下字节不变，归档页的 `./` / `..` / 大小写别名与仓库外目标（`../outside.md`）同样 exit 1 且字节不变。
+
+## R34 订正（第二轮）：归档页保护改用路径归一 + 仓库内包含性校验
+
+### 一、审查者实测到的漏洞
+
+上一轮的归档页保护判的是**归一化字符串**（`rel === ARCHIVE_PAGE`），那条归一化只做 `\`→`/`、剥开头 `./`、剥结尾 `/`。于是下面三种 `--page=` 全部 **exit 0 且真把 R29 归档页从 168 / 23 改写成 230 / 26**——上一轮那句「归档页写不进去」的口径是错的，实测否证。页字节数**不是固定读数**：它随 `--matrix=` / `--nc=` 夹具（头部时间戳与逐行读数）浮动——本分支用自己的夹具实测 43462 → **47056**（连跑两次同值、幂等），审查者用自己的夹具实测 43462 → **48699**；可变的不变量只有「168 / 23 → 230 / 26」。（本小节初版写「43462 → 49678」是一次抄错的读数，已删。）
+
+| `--page=` 写法 | 修复前（审查者实测） | 修复后（本轮实测） |
+| --- | --- | --- |
+| `docs/verification/./gy-i22-failmatrix-20261022.md` | exit 0，写盘 230 行 | exit 1，`拒绝写入归档快照`，字节不变 |
+| `docs/verification/../verification/gy-i22-failmatrix-20261022.md` | exit 0，写盘 230 行 | exit 1，`拒绝写入归档快照`，字节不变 |
+| `DOCS/verification/gy-i22-failmatrix-20261022.md`（Windows 大小写不敏感） | exit 0，写盘 230 行 | exit 1，`拒绝写入归档快照`，字节不变 |
+| `../outside.md`（仓库外） | exit 0，改写**仓库外**文件 | exit 1，`拒绝写入：目标不在仓库内`，仓库外文件字节不变 |
+
+（旧行为的反例：`--page=./docs/…` 反而被拦——归一化正好剥掉了开头的 `./`。也就是说上一轮的拦截只挡住了一种写法，不是一条规则。）
+
+### 二、现在的判据（三件事，缺一条就退化成字符串比较）
+
+1. **路径归一 + 文件身份比较**：`--page=` 先按仓库根解析成绝对路径，再取真实路径（`realpathSync.native`；目标不存在时先解父目录、再拼 basename）。`./`、`..`、大小写、符号链接、junction、`\\?\` 前缀都在这一步归一。**第三轮把最后那步「是不是同一个文件」改判文件身份**（`statSync` 的 `dev` + `ino`）：realpath 归一路径、归不了硬链接（同一 inode 的另一个目录项），见下节「R34 订正（第三轮）」。
+2. **仓库内包含性校验**：目标的真实路径必须以 `<仓库根><分隔符>` 开头，否则在**打开文件之前**就拒绝——stderr 明确打印 `拒绝写入：目标不在仓库内` 并 exit 1。所以 `../outside.md`、`docs/../../outside.md` 都写不出去，仓库外不存在的目标也不会被创建。
+3. **负控制测试扩到别名与越界**：在原 4 条之上加 2 条——三种归档页别名必须 exit 1 且归档页前后 `readFileSync` 逐字节相等（大小写别名只在大小写不敏感的文件系统上断言「被识别成归档页」，POSIX 上它是另一个不存在的路径、由「读不到目标页」拦住，仍断言 exit 1 与字节不变）；`../<名字>.md`、`docs/../../<名字>.md` 必须 exit 1 且仓库外受害者文件逐字节不变。**保留**原有的「工件自洽时 `--write --page=<合法新页>` 真的写盘」正控制——守卫不能是「永远红」。
+
+### 三、死参数的处理：选 (a)，保留旗标但把提示语改成与实际一致
+
+`--i-know-this-rewrites-archive` 现在**永远成功不了**：它只关掉「没给旗标」那道提示，条数校验仍然在，而本页是 168 / 23 的冻结快照、`EXPECTED` 是 230 / 26，两者必然不等。上一轮的提示语却承诺「加旗标就能刷新归档页」，等于给了一条不存在的路径。现在两处提示语（没给旗标 / 给了旗标）都写明：**即使给了旗标也仍受条数一致性约束；本页当前条目已过期 ⇒ 需要先迁移台账口径**，并在生成器里用注释记下这个选择（选 (a) 而不是删旗标：删参数会让已经按旧口径调用的人只看到「不认识该参数」，噪声更大）。旗标并不解锁改写，这一点有测试断言着。
+
+### 四、门禁读数（第二轮实测；第三轮读数见下节，本表保留为历史）
+
+本分支的 merge-base = `4b87e1d98f405b55c9fda46ac772f4ffcbc13a5e`（= 本轮开工时的 `upstream/main`，`Reviewed PR #525`）；**审阅时 `upstream/main` 已前进到 `997e8e5f43473d82a79314a2336103110bc5087e`**（`Reviewed PR #529`，含 #527 / #528 / #529 三个提交），`git rev-list --left-right --count upstream/main...HEAD` = `3	4`。下表的「本轮实测」以 merge-base 为基线。
+
+| 门禁 | 读数 |
+| --- | --- |
+| 裸 `--write`（无隐式默认页） | exit 1，`拒绝写入：--write 必须显式指定 --page=` |
+| `./` 别名 / `..` 别名 / `DOCS/` 别名 | 各 exit 1，`拒绝写入归档快照` |
+| `./` 开头（旧行为本来就拦） | exit 1，`拒绝写入归档快照` |
+| 明文正确路径（无旗标 / 带双钥匙） | exit 1 / exit 1（后者 `条数 168 与 EXPECTED 230 不一致`） |
+| `../i22-outside-probe.md`、`docs/../../i22-outside-probe.md` | 各 exit 1，`拒绝写入：目标不在仓库内`；仓库外无新文件 |
+| 正控制：工件自洽 + 合法新页 `--write` | 真的写盘（guard 测试内断言） |
+| `node tools/i22-failmatrix-evidence-table.mjs`（只读自洽） | exit 0，266 行输出，`自洽：矩阵 230 条全 PASS、负控制 26 条全 PASS`，不写盘 |
+| `node --test tests/unit/i22-failmatrix-evidence-table-guard.test.mjs` | 6 / 6 pass（原 4 条 + 新 2 条） |
+| `node --test tests/unit/gy-i22-failmatrix.test.mjs` | 3 / 3 pass |
+| `node --test tests/unit/doc-anchors-guard.test.mjs` | 10 / 10 pass |
+| `node tools/verify-doc-anchors.mjs --strict` | 基线 103 条命中 103，基线外新增 0，exit 0 |
+| 全量 `node --test "tests/unit/*.test.mjs"` | 3270 tests / pass 3267 / fail 0 / skipped 1，exit 0 |
+| `git merge-tree --write-tree upstream/main HEAD`（先 `git fetch upstream --prune`） | EXIT 0 |
+
+### 五、变异自证（证明测试真的盯住了这两条判据）
+
+- 把路径比较临时改回字符串比较（`samePath(...)` → `rel === ARCHIVE_PAGE`）⇒ 别名测试立刻转红，断言文本就是审查者给的那个形态（实测逐字）：`AssertionError: 中间插 './'（--page=docs/verification/./gy-i22-failmatrix-20261022.md）应 exit 1，实际 0：`，并打印出被写进去的 230 行表格。
+- 把包含性校验临时关掉（`isInside(...)` → `false` 分支永不进入）⇒ 越界测试转红：`../<名字>.md` 应 exit 1、实际 0，仓库外受害者文件被真改写。
+- 两次都改回后逐字节还原：生成器文件当时的 `sha256 = 76DC949DCE10EE0B96AFDB5E17B224C5C669B446250A5E2EB2764D73C6281C49`，与备份一致；guard 测试复跑 6 / 6 绿。**此 sha 是第二轮时点的读数**——第三轮改了判据（`samePath` 比 `dev` + `ino`），生成器字节已变，第三轮的 sha 与变异自证见下节。归档页在变异期间被写入的那次由测试自带的 `t.after` 兜底还原，事后核对仍是矩阵 168 行 / 负控制 23 条。
+- 说明「为什么第二轮那次变红是『真实原因』」：第二轮改判据时，别名用例跑在**真仓库**里、仓库里缺 `--matrix=` 工件，所以「守卫坏了」也照样 exit 1（同码异因）。第三轮把别名用例搬进**夹具树**（树里同时有自洽工件 230 / 26 和归档页副本 168 / 23），exit 1 只可能来自「被识别成归档页」，并在 stderr 上断言 `拒绝写入归档快照`。
+
+### 六、本轮同时改掉的措辞（不改就还是下一轮）
+
+- 凡写「机械拒绝改写归档快照」的地方，一律改成：**归档页保护基于真实路径比较 + 文件身份（`dev` + `ino`）+ 仓库内包含性校验；`--write` 无隐式默认页**。本节第一节那句旧口径（「本次一并机械拦住」）已同步改掉，本页不再出现「机械拒绝」这种说法。
+- 「`--page` 按仓库根解析」一律改成「按仓库根解析并校验包含性（越界拒绝）」——生成器里的参数说明、报错文案、`README` 与本页都是这个口径。
+- 归档页 `docs/verification/gy-i22-failmatrix-20261022.md` 只改了讲这套保护的那一句散文（净 1 行、43462 → 43642 字节），**没有动任何读数行**：矩阵仍 168 行、负控制仍 23 条。
+
+### 七、仍未取得（不许当成绿）
+
+- 归档页仍是 168 / 23 的 R29 时点快照，`EXPECTED` 是 230 / 26：**要么迁移台账口径另建新页，要么人工建页**，本轮只保证「生成器不再能改写它」，不负责把这份快照刷新成新读数。
+- 大小写别名只在 Windows 上实测（本机 Windows）；POSIX 上同一写法是另一个不存在的路径，测试只断言 exit 1 与字节不变，没有在大小写敏感文件系统上验证「别名等价」。
+- 未起 PG 集群、未占端口；本轮没有跑 HTTP / DB 层用例（不在这次改动的爆炸半径内）。
+
+## R34 订正（第三轮）：归档页判定改比文件身份（`dev` + `ino`），工件参数补包含性校验
+
+第二轮把归档页判定从字符串比较改成真实路径比较，挡住了 `./` / `..` / 大小写三类别名；但那条线只归一**路径**、归一不了**文件身份**——硬链接是同一 inode 的另一个目录项，`realpath` 仍返回它自己那条路径。对抗性审查正是从这个缺口进去的。
+
+### 一、审查者实测到的绕过：硬链接
+
+```
+cmd /c mklink /H h-archive.md docs\verification\gy-i22-failmatrix-20261022.md
+node tools/i22-failmatrix-evidence-table.mjs --write --page=h-archive.md --matrix=… --nc=…
+```
+
+审查者实测：**exit 0**，归档页 43642 B（168 / 23）→ 48879 B（230 / 26），两次复跑一致。根因：硬链接没命中「归档页」分支，而「非归档页」分支没有条数校验——所以第二轮的「真实路径比较」只是必要条件，不是充分条件。
+
+修复后本轮实测（同一手法：`cmd /c mklink /H` 在 `.pg17/tmp/hl2/` 下建硬链接到归档页，跑完即删，`Test-Path` 为 False）：**exit 1**，stderr 命中 `拒绝写入归档快照：页 .pg17/tmp/hl2/h-archive.md（真实路径 …\hl2\h-archive.md）是基线 a515503976 的归档快照（页内表格 168 行 / 负控制 23 条）`；归档页 sha256 `5F71550F205219F25B1F70FE5E805376CA54329EB04F55A6B4D580B0FD485FC2` 前后相同、字节数仍 43642。
+
+### 二、判据变更：`samePath` 比 inode
+
+```js
+function samePath(left, right) {
+  try {
+    const a = statSync(left);
+    const b = statSync(right);
+    return a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
+  }
+}
+```
+
+- 任一侧 `stat` 失败（不存在 / EACCES / 已删）一律返回 `false`：让调用方走原有的 `readFileSync` / ENOENT 错误路径，不在这里抛未捕获异常（否则「目标不存在」会从「拒绝写入：读不到目标页」退化成栈回溯）。
+- `realPathOf`（`realpathSync.native`）**保留**，仍用于 `isInside` 的包含性校验与报错回显——「把路径归一」和「认出是同一个文件」是两件事，各归各位。
+- `CASE_INSENSITIVE_FS` 收成只 win32 生效，注释如实写：它是 belt-and-braces，不是拦别名的主因（NTFS 上 `realpathSync.native` 已把 `DOCS/…` 归一成盘上真实大小写，删掉折大小写别名照样被 inode 比较拦住）；darwin 那一支没有条件在大小写敏感 APFS 上验，故不折（折了反而会把两个真实不同的文件误判成同一个）。
+
+### 三、`--matrix=` / `--nc=` 与 `--page=` 对齐
+
+`readJson` 先 `path.resolve(ROOT, relative)`、再 `isInside(ROOT, …)`：不在仓库内 exit 1、文案 `拒绝运行：运行结果不在仓库内`；读不到时单行 `拒绝运行：读不到运行结果 …（ENOENT: …）`，由 `main` 捕获后打 `✗ …`——不再把 node 栈甩给只用工具的人。实测 `--matrix=../outside-matrix.json` 与 `--nc=<仓库外绝对路径>` 各 exit 1，stderr 只有一行。
+
+### 四、guard 测试 4 → 9 条
+
+| # | 用例 | 关键断言 |
+| --- | --- | --- |
+| 1 | 正控制：工件自洽 + 合法新页 `--write` | 真写盘、exit 0、末行自洽读数、两表行数 = 230 / 26（守卫不是「永远红」） |
+| 2 | 工件与 `EXPECTED` 不一致 | exit 1、不写盘、stderr `对账不通过` |
+| 3 | 真实归档页：裸 `--write` / 显式 `--page=` / 再加双钥匙 | 三种各 exit 1、`拒绝写入`、归档页字节不变；双钥匙那条必须点明「条数 168 与 EXPECTED 230 不一致」 |
+| 4 | 缺生成器标记 | exit 1、不写盘 |
+| 5 | 真仓库里的归档页别名（`./`、`..`、`DOCS/`） | 各 exit 1、归档页字节不变（真仓库那份的只读断言） |
+| 6 | 仓库外目标（`../x.md`、`docs/../../x.md`、越界且不存在） | 各 exit 1、`拒绝写入：目标不在仓库内`、仓库外受害者字节不变、越界目标不被创建 |
+| 7 | **夹具树**里的归档页别名 | 树里同时有自洽工件（230 / 26）与归档页副本（168 / 23）⇒ exit 1 **只可能**来自「被识别成归档页」；断言 stderr `拒绝写入归档快照` + 副本字节不变（拆掉「同码异因」） |
+| 8 | **硬链接**别名（`fs.linkSync` 建在夹具树里，`t.after` 清理） | exit 1、`拒绝写入归档快照`、归档页 sha256 不变；无权建硬链接的环境 `t.skip`（不假绿） |
+| 9 | `--matrix=` / `--nc=` 越界与工件缺失 | 各 exit 1、单行报错、stderr 不含 node 栈行 |
+
+### 五、门禁读数（第三轮实测，`git rev-parse upstream/main` = `997e8e5f43473d82a79314a2336103110bc5087e`）
+
+| 门禁 | 读数 |
+| --- | --- |
+| 裸 `--write`（无隐式默认页） | exit 1，`拒绝写入：--write 必须显式指定 --page=` |
+| `./` 别名 / `..` 别名 / `DOCS/` 别名 | 各 exit 1，`拒绝写入归档快照`（真实路径回显指向同一个归档页） |
+| 硬链接 `--page=.pg17/tmp/hl2/h-archive.md` | exit 1，`拒绝写入归档快照`；归档页 sha256 不变 |
+| `--page=../i22-outside-probe.md` | exit 1，`拒绝写入：目标不在仓库内`；仓库外无新文件 |
+| `--matrix=../outside-matrix.json`、`--nc=<仓库外绝对路径>` | 各 exit 1，`拒绝运行：运行结果不在仓库内`，单行 |
+| 正控制：工件自洽 + 合法新页 `--write` | 真的写盘（guard 用例 1 内断言） |
+| `node tools/i22-failmatrix-evidence-table.mjs`（只读自洽） | exit 0，266 行输出，末行 `自洽：矩阵 230 条全 PASS、负控制 26 条全 PASS，与文档声明一致` |
+| `node --test tests/unit/i22-failmatrix-evidence-table-guard.test.mjs` | 9 / 9 pass，exit 0 |
+| `node --test tests/unit/gy-i22-failmatrix.test.mjs` | 3 / 3 pass，exit 0 |
+| `node --test tests/unit/doc-anchors-guard.test.mjs` | 10 / 10 pass，exit 0 |
+| `node tools/verify-doc-anchors.mjs --strict` | 基线 103 条命中 103，基线外新增 0、陈旧 0，exit 0 |
+| `node tools/verify-contract-status.mjs` | exit 0（行号区间 244 条、中文表格一致） |
+| 全量 `node --test "tests/unit/*.test.mjs"` | 3273 tests / pass 3270 / fail 0 / skipped 1 / todo 2，exit 0 |
+| `git diff --check` | 无输出、exit 0（四个改动文件 `git ls-files --eol` 均为 `i/lf w/lf`） |
+| `git merge-tree --write-tree upstream/main HEAD`（先 `git fetch upstream --prune`） | EXIT=0，冲突行 0 |
+
+### 六、变异自证（第三轮，两条都做，逐字节还原）
+
+| 变异 | 结果 | 断言原文 |
+| --- | --- | --- |
+| `samePath` 改回 `realPathOf` 比较（去掉 inode） | 9 条里 8 pass / **1 fail**，只有硬链接用例转红 | `AssertionError [ERR_ASSERTION]: 硬链接目标应 exit 1，实际 0：` |
+| 归档判定改回 `rel === ARCHIVE_PAGE`（字符串） | 9 条里 6 pass / **3 fail**：两条别名用例 + 硬链接用例转红 | `AssertionError: 中间插 './'（--page=docs/verification/./gy-i22-failmatrix-20261022.md）应 exit 1，实际 0：` |
+
+两次改回后逐字节还原：生成器 `sha256 = 8AC4AA796D96A2FAEE751E5B4C758C918F666728BC70D7C215C21AA7A1DD0C6A`、guard 测试 `sha256 = 42E2A55EA4810B92C034E985BE7B01D2AA11C749ED4E4CDFB2175685A238C0DA`，与备份一致；还原后 guard 复跑 9 / 9 绿。归档页 sha256 全程 `5F7155…`、字节数全程 43642（变异只动生成器源码，没让归档页承受任何一次写盘）。
+
+### 七、仍未取得
+
+- 归档页仍是 168 / 23 的 R29 时点快照。inode 比较能保证「生成器写不进这个文件」（含硬链接、symlink、junction 等一切指向它的名字），但**不保护「把整个文件删了再用同名重建」**这类跨进程操作——那需要在 CI 里加只读校验（例如对归档页做 `git diff --exit-code` 断言），不在本轮爆炸半径内。
+- 硬链接用例在 NTFS 上实测通过；在禁止建硬链接的环境（部分容器 / 网络盘）会走 `t.skip`，那时这条负控制是「未验证」而不是「通过」。
+- `--matrix=` / `--nc=` 的包含性校验只挡「路径越界」，工件内容仍由 `EXPECTED` 对账兜底；本轮没有给工件加 schema 校验。
