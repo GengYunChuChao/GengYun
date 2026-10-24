@@ -927,7 +927,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //  1. 授权中间件：注入的 `privacyInjection.consent` 优先；否则**仅当配置了数据库**时
   //     复用已合并的 `consent-pg.requireConsent` 单事务读取口（不新写 SQL、不新造事实源）。
   //     无数据库（本地 stub/回环测试、以及所有既有集成脚本）⇒ 不挂 ⇒ 行为与接线前逐字相同。
-  //  2. 撤回/注销消费者：注入优先；否则**配置了数据库**时由持久账本现建（撤回/授予时撤销在途外发）。
+  //  2. 撤回/注销消费者：注入优先；否则**配置了数据库且 `real` 模式**时由持久账本现建（撤回/授予时撤销在途外发；非 `real` 无真实外发 ⇒ 不注入，回落无撤销）。
   //  3. **持久外发账本**（第二片）：仅当配置了数据库时装配；提交边界在**单事务**内完成
   //     「校验读取 + 实际写入」（见 privacy/ledger-pg.ts）。`real` 未接真实传输 ⇒
   //     受理处在**任何账本变更之前** 503 `PROVIDER_UNAVAILABLE`，**零 sent 记录**；
@@ -958,7 +958,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : null;
   const egressRevoker: EgressRevoker | undefined =
     privacyInjection?.egressRevoker ??
-    (egressLedger === null ? undefined : createEgressRevoker({ ledger: egressLedger }));
+    (egressLedger === null || config.executionMode !== 'real' ? undefined : createEgressRevoker({ ledger: egressLedger }));
   const mediaEgress = (dataType: string, capability: string): MediaJobEgress | undefined =>
     egressLedger === null || privacyInFlight === null
       ? undefined
