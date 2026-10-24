@@ -162,6 +162,42 @@ function onlineEvidenceGrantRegion() {
   return region;
 }
 
+/**
+ * 从**出厂文件**同一份 `20-login-roles.sql` 抽取 **0038 回执台账**的 EXECUTE 授权区域并原样执行。
+ *
+ * 为什么要执行它：回执签发/反查/诊断读数只走迁移 0038 的三条窄口径函数
+ * （`set_deletion_receipt` / `resolve_deletion_receipt` / `count_deletion_receipts`），
+ * 运行时角色若没有它们的 EXECUTE ⇒ 回执签发与回执 GET 都 `42501`，被折成 503
+ * 「回执台账暂不可用」。不复制粘贴 SQL（区域被删/被改宽 ⇒ 本测试必须变红）。
+ */
+function deletionReceiptGrantRegion() {
+  const matched = deploySqlFile('20-login-roles.sql').match(
+    /-- #region gy-r34-i19-deletion-receipt-grant\r?\n([\s\S]*?)\r?\n\s*-- #endregion gy-r34-i19-deletion-receipt-grant/,
+  );
+  assert.ok(matched !== null, '20-login-roles.sql 必须含 gy-r34-i19-deletion-receipt-grant 区域');
+  const region = matched[1];
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.set_deletion_receipt'),
+    '区域必须撤 PUBLIC 对 set_deletion_receipt 的执行权',
+  );
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.resolve_deletion_receipt'),
+    '区域必须撤 PUBLIC 对 resolve_deletion_receipt 的执行权',
+  );
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.count_deletion_receipts'),
+    '区域必须撤 PUBLIC 对 count_deletion_receipts 的执行权',
+  );
+  assert.equal((region.match(/GRANT EXECUTE ON FUNCTION/g) ?? []).length, 3, '区域必须**恰好三条** GRANT EXECUTE');
+  assert.equal(
+    (region.match(new RegExp(`TO ${runtimeRole};`, 'g')) ?? []).length,
+    3,
+    '三条 EXECUTE 都只能授予运行时登录角色',
+  );
+  assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
+  return region;
+}
+
 /** 回执摘要＝回执 bearer 的 sha256（**独立**用 node:crypto 算，不复用被测代码）。 */
 const sha256Hex = (text) => createHash('sha256').update(text).digest('hex');
 /** 登录主体：三个 code 映射到**同一个** subject ⇒ 同一账号、三个会话（分离变量需要多会话）。 */
@@ -457,6 +493,8 @@ try {
   await owner.query(deletionGrantRegion());
   // 0031 的两条窄口径函数：EXECUTE 同样从出厂文件原样抽取执行（受理时写证据、回执照证据推导都要它）。
   await owner.query(onlineEvidenceGrantRegion());
+  // 0038 的三条回执台账函数：EXECUTE 同样从出厂文件原样抽取执行（回执签发/反查/诊断读数只有这三条路径）。
+  await owner.query(deletionReceiptGrantRegion());
   pool = createPool(runtimeUrl().href);
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
   assert.ok(Object.values(flags).every((value) => value === false));
@@ -477,6 +515,18 @@ try {
     evidenceExecutables,
     true,
     '运行时角色必须能执行 0031 的写/读函数（受理时落证据、回执照证据推导都只有这一条路径）',
+  );
+  const receiptExecutables = (
+    await pool.query(
+      `SELECT has_function_privilege(current_user, 'set_deletion_receipt(uuid,text,timestamptz,timestamptz)', 'EXECUTE')
+          AND has_function_privilege(current_user, 'resolve_deletion_receipt(text)', 'EXECUTE')
+          AND has_function_privilege(current_user, 'count_deletion_receipts()', 'EXECUTE') AS ok`,
+    )
+  ).rows[0].ok;
+  assert.equal(
+    receiptExecutables,
+    true,
+    '运行时角色必须能执行 0038 的三条回执台账函数（签发/反查/诊断读数都只有这三条路径）',
   );
   const acl = (await owner.query(`SELECT coalesce(array_to_string(proacl, ','), '') acl FROM pg_proc WHERE proname='request_account_deletion'`)).rows[0].acl;
   assert.equal(/(^|,)=/.test(acl), false, `proacl 不得含 PUBLIC 授权：${acl}`);
@@ -682,12 +732,19 @@ try {
   await login(rolledBack.http, codeD, 3);
   const userD = await userIdOf(codeD);
   assert.equal(await activeSessions(userD), 3);
+  // 回执台账是**全局**计数（`count_deletion_receipts()` 跨所有账号）：此前的成功臂（臂 1/臂 3）
+  // 已各自签发了回执，所以这里不能断言「全库 0 回执」，只能断言「这次失败受理不得新增回执」。
+  const receiptsBeforeRollback = await rolledBack.app.deletionReceipts.liveCount();
   const failed = await requestDeletion(rolledBack.http, tokenD1, 'i19-del-d-key-1');
   assert.notEqual(failed.status, 202, `中途失败绝不能回 202：${failed.text}`);
   assert.equal(failed.status, 503, JSON.stringify(failed.body));
   assert.equal(failed.body.error.code, 'PROVIDER_UNAVAILABLE');
   assert.equal(failed.body.error.retryable, true);
-  assert.equal(await rolledBack.app.deletionReceipts.liveCount(), 0, '失败不得签发任何回执');
+  assert.equal(
+    await rolledBack.app.deletionReceipts.liveCount(),
+    receiptsBeforeRollback,
+    '失败不得签发任何回执（回执台账计数不得增长）',
+  );
   const dRow = await userRow(userD);
   assert.equal(dRow.state, 'active', '整体回滚：状态必须原样');
   assert.equal(Number(dRow.auth_epoch), 1, '整体回滚：auth_epoch 必须原样');
@@ -780,6 +837,9 @@ try {
   const realOrigin = await realApp.listen({ host: '127.0.0.1', port: 0 });
   const realHttp = makeHttp(realOrigin);
   assert.equal(realApp.accountDeletion.available, false, 'real 模式下注销域必须不可用（即使装配了真库）');
+  // 回执台账是**全局**计数（`count_deletion_receipts()` 跨所有账号）：此前成功臂已签发过回执，
+  // 所以这里不能断言「全库 0 回执」，只能断言「real 模式的 POST/GET 不得新增回执」。
+  const receiptsBeforeReal = await realApp.deletionReceipts.liveCount();
   const realPost = await requestDeletion(realHttp, tokenI1, 'i19-del-i-key-1');
   assert.equal(realPost.status, 503, JSON.stringify(realPost.body));
   assert.equal(realPost.body.error.code, 'PROVIDER_UNAVAILABLE');
@@ -794,7 +854,11 @@ try {
   assert.equal(Number(iRow.auth_epoch), 1);
   assert.equal(await activeSessions(userI), 1);
   assert.equal(await requestCount(userI), 0);
-  assert.equal(await realApp.deletionReceipts.liveCount(), 0);
+  assert.equal(
+    await realApp.deletionReceipts.liveCount(),
+    receiptsBeforeReal,
+    'real 模式不得签发任何回执（回执台账计数不得增长）',
+  );
   say('real 模式（真库）：`available === false`，POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false：未接线不可重试)，且该账号零状态变化、零回执 ⇒ 真库存在也不放行 real 域');
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外付费请求；发现迁移 ${discovered.length} 个`);
