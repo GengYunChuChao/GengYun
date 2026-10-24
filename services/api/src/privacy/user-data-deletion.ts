@@ -502,6 +502,13 @@ export interface UserDataDeletionRegistry {
   completionStatus(requestId: string): { state: string; completed: boolean; missingModules: readonly string[] };
   receipt(requestId: string): Record<string, unknown> | null;
   /**
+   * GY-R34 / #22 片C · 在途取消：取消**该用户**当前在途的注销请求（按主体反查，非本人无入口）。
+   *
+   * 只有 requested / processing / blocked 可取消；终态（completed / cancelled）由协调器抛
+   * `OBJECT_UNAVAILABLE`(409)。反查不到该用户的任何在途请求 ⇒ 返回 `null`（调用方据此 404）。
+   */
+  cancelDeletion(userId: string): Record<string, unknown> | null;
+  /**
    * GY-R28 W6（G5/G11）· 按 `public.user_backup_copies` 的真实行刷新**备份**列。
    *
    * 只读库、只改进程内账本的备份列（在线列与在线证据一字不动）；整体完成仍由 `completionStatus()`
@@ -574,6 +581,8 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   });
   /** 请求 → 主体绑定（已合并协议的处理器入参不含主体，故在此绑定）。 */
   const subjectByRequest = new Map<string, string>();
+  /** 主体 → 请求 id（按创建顺序，取消时取**最近一次**在途请求）。 */
+  const requestsByUser = new Map<string, string[]>();
   const auditLog: PurgeAuditEntry[] = [];
   /** 请求 → 各模块最终证据串（诊断用；契约回执形状不含证据，故在此留存完整证据）。 */
   const evidenceByRequest = new Map<string, Record<string, string>>();
@@ -1194,6 +1203,9 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const request = coordinator.createDeletionRequest(options);
       const id = String(request['id']);
       subjectByRequest.set(id, userId);
+      const owned = requestsByUser.get(userId) ?? [];
+      owned.push(id);
+      requestsByUser.set(userId, owned);
       if (requests !== null) {
         durableByRequest.set(id, startDurableAcceptance(id, userId, request, backupCopySources()));
       }
@@ -1204,6 +1216,21 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const pending = durableByRequest.get(requestId);
       if (pending !== undefined) await pending;
       return coordinator.executeHandlers(requestId);
+    },
+    cancelDeletion(userId) {
+      if (typeof userId !== 'string' || userId.length === 0) {
+        throw new Error('取消注销需要非空主体');
+      }
+      // 非本人无入口：只反查**该用户自己**的请求，跨主体的 requestId 永远不会进入候选集。
+      const owned = requestsByUser.get(userId) ?? [];
+      if (owned.length === 0) return null;
+      const latestId = owned[owned.length - 1];
+      // 反查不到在途请求 id ⇒ 与「没有可取消请求」同义（fail-closed），不把 undefined 传给协调器。
+      if (latestId === undefined) return null;
+      // 终态（completed / cancelled）时由协调器抛 OBJECT_UNAVAILABLE(409)；否则推进到 cancelled。
+      coordinator.cancel(latestId);
+      // 返回契约形状回执（state=cancelled），与 `receipt()` 同源，供路由直接投影。
+      return coordinator.receipt(latestId);
     },
     completionStatus: (requestId) => coordinator.completionStatus(requestId),
     receipt: (requestId) => coordinator.receipt(requestId),

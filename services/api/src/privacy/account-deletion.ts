@@ -387,7 +387,7 @@ export function projectReceipt(receipt: Record<string, unknown> | null): Record<
   };
 }
 
-const DELETION_STATES = ['requested', 'processing', 'blocked', 'completed'] as const;
+const DELETION_STATES = ['requested', 'processing', 'blocked', 'completed', 'cancelled'] as const;
 const HANDLER_STATES = ['pending', 'running', 'completed', 'blocked'] as const;
 const THIRD_PARTY_STATES = ['not_requested', 'requested', 'confirmed', 'failed', 'unsupported'] as const;
 
