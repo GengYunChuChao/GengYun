@@ -72,7 +72,7 @@
 | 子句 | 判定 | 证据 |
 | --- | --- | --- |
 | 「消息」在读取时重查 | 已具备 | 投影逐条重派生：`services/api/src/messages/service.ts:238` `projectMessage` → `:244` `reference_state: await referenceStateFor(...)`，列表 `:345` 对每条现算；`:227` 三道保守取值（无 target／端口未接线／非 `available` 一律 `unavailable`）；不缓存由端口契约钉住（`services/api/src/messages/reference.ts:23`） |
-| 跳转目标判定的唯一来源 | 已具备 | 端口只转接社区「公开可读」判据：`services/api/src/messages/reference-community.ts:53`（只 `post`／`comment`）→ `:56` `isPubliclyVisible`；社区侧闸门 `services/api/src/community/service.ts:834`（`publiclyVisibleTarget`）＋发布谓词 `:560`（`published && approved`）；只读谓词 `services/api/src/community/service.ts:1760` |
+| 跳转目标判定的唯一来源 | 已具备 | 端口只转接社区「公开可读」判据：`services/api/src/messages/reference-community.ts:53`（只 `post`／`comment`）→ `:56` `isPubliclyVisible`；社区侧闸门 `services/api/src/community/service.ts:893`（`publiclyVisibleTarget`）＋发布谓词 `:619`（`published && approved`）；只读谓词 `services/api/src/community/service.ts:1852` |
 | 下架/失效**立即**反映（同一 id 的真实迁移） | 已取得 | 用例 `tests/unit/messages-reference-community.test.mjs:113`（「删除前 available → 删除后 unavailable，读取时重查」）、`tests/unit/messages-security.test.mjs:182`（「reference_state 不入库、逐次派生」）；不区分「隐藏/不存在」由 `:77` 用例钉住 |
 | 不因缓存重新公开 | 已具备 | 三条路由全挂 `Cache-Control: no-store`（`services/api/src/routes/messages.ts:21` 定义、`:44`／`:54`／`:60` 挂载）；契约「消息只存事件类型与对象引用，不保存受限正文缩略；跳转时重验目标权限」（`docs/architecture/state-contract.md:99`） |
 | 注销不复活 | 已具备（服务端 + 真库既有读数） | 注销原语同事务删消息与本人幂等行：`services/api/src/messages/store-pg.ts:220`（`purgeOwnerRows`）→ `:230` `DELETE FROM public.messages WHERE owner_id = $1::uuid RETURNING id`；装配 `services/api/src/app.ts:1668`；真库读数（A 的 9 条 → 0、B 逐 id 原样、台账 3→0）见 [gy-r31-i17-pg-arm-20261022.md](gy-r31-i17-pg-arm-20261022.md) §3 |
@@ -151,7 +151,7 @@
 | 未接线端口（诊断用） | `services/api/src/messages/reference.ts:59` | `export function createUnwiredReferencePort(` |
 | 只接社区域两型（裁定 B 的落点） | `services/api/src/messages/reference-community.ts:53` | `if (target_ref.type !== 'post' && target_ref.type !== 'comment') return 'unavailable';` |
 | 社区权威判据（注入） | `services/api/src/messages/reference-community.ts:56` | `const readable = await community.isPubliclyVisible(target_ref.type, target_ref.id);` |
-| 社区只读谓词（不进路由/不进 OpenAPI） | `services/api/src/community/service.ts:1760` | `visibility: Object.freeze({` |
+| 社区只读谓词（不进路由/不进 OpenAPI） | `services/api/src/community/service.ts:1851` | `visibility: Object.freeze({` |
 | 装配：后绑定读取器 | `services/api/src/app.ts:810` | `const messageReference: MessageReferencePort =`（`:811` `createCommunityReferencePort({ community: () => communityVisibility })`；`:1154` 补赋值） |
 | 页面可点判据（唯一） | `miniprogram/pages/messages/messages.js:310` | `const canOpen = message.reference_state === 'available' && target !== null &&` |
 | 页面跳转（post 直跳／comment 先取父帖） | `miniprogram/pages/messages/messages.js:277`／`:278` | `if (item.targetType === 'post') { open(item.targetId); return }`／`communityApi.getComment(item.targetId).then(function (result) {` |
