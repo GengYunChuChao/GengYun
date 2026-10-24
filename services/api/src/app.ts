@@ -2146,7 +2146,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     service: knowledgeQueryFace,
   });
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
-  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress }, config.executionMode === 'real' ? pool : null);
+  // GY-I11 录音字节来源（本片唯一接线点）：把**已经按既有口径解析好的**对象存储端口与媒体
+  // 登记册交给转写域，真实 AudioSource 据此按 `media_id` + `revision` 取字节并做归属校验。
+  //   - 这里只**转发**既有端口，不构造新存储、不读 env、**不**走 `approveRealMediaWiring()`
+  //     （真实对象存储的开启仍只由上面的 `mediaObjectStore` 显式注入决定）；
+  //   - `real` 且未注入真实存储 ⇒ 转发的是 `unwired` 端口：`getObject` 抛
+  //     `PROVIDER_UNAVAILABLE` ⇒ 字节来源 fail-closed（未发包），与接线前同一结局；
+  //   - 真实存储与批准能力都到位时，同一条装配**无需再改**即可取到真实字节。
+  const speechAudioMedia = { objectStore: mediaObjectStore, mediaRecords: mediaStore };
+  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, audioMedia: speechAudioMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress }, config.executionMode === 'real' ? pool : null);
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate, synthesisEgress);
   // GY-R27 S10（#10）· OCR 域的**持久化接线**（迁移 `0024_ocr_persistence.sql`）。
   //

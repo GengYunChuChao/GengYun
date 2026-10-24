@@ -97,6 +97,8 @@ export interface SpeechRouteDeps {
   provider?: SpeechProvider;
   store?: SpeechStore;
   media?: SpeechMediaPort;
+  /** GY-I11 录音字节来源的两个媒体端口（对象存储 + 媒体登记册）；缺省 ⇒ 端口未配置 ⇒ 真实分支仍 fail-closed。 */
+  audioMedia?: Parameters<typeof createSpeechProvider>[0]['audioMedia'];
   /** 幂等请求摘要密钥；缺省取 `config.sessionSigningKey`，再缺省为替身桩密钥。 */
   idempotencyHmacKey?: string;
   now?: () => Date;
@@ -124,8 +126,13 @@ export interface SpeechRouteDeps {
  * `stub` / `preset_demo` 走明确标注的替身。
  */
 export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, deps: SpeechRouteDeps, persistencePool: TransactionalPool | null = null): SpeechService {
-  const provider = deps.provider ?? createSpeechProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders?.asr ?? null });
   const store = deps.store ?? (config.executionMode === 'real' && persistencePool !== null ? createPostgresSpeechStore({ pool: persistencePool }) : createMemorySpeechStore());
+  // 顺序即语义：录音字节来源要按 `jobId` 复查任务归属，所以 store 必须先于 provider 就绪。
+  const provider = deps.provider ?? createSpeechProvider({
+    executionMode: config.executionMode,
+    aiProviders: config.aiProviders?.asr ?? null,
+    audioMedia: deps.audioMedia === undefined ? undefined : { ...deps.audioMedia, jobs: store },
+  });
   const media = deps.media ?? createSpeechMediaPort(config.executionMode);
   // GY-I27 第二片：`real` 模式下由持久外发账本接管派发（执行前/保存前重查 + 结果写回）。
   // 其余模式（替身/演示）**不记账**：替身不发生真实外发，账本里不得出现 sent。
