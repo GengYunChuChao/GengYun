@@ -41,7 +41,7 @@ function valuesBlock(text, headPattern) {
   return lines.slice(start + 1, end);
 }
 
-/** R34 落定后的 `external_manifest` 表集合（16 张；jobs 于 R34 下线、media 于 R28-W12 下线）。 */
+/** R34 落定后的 `external_manifest` 表集合（17 张；jobs 于 R34 下线、media 于 R28-W12 下线；`species` 由 GY-I07（Refs #7）加入）。 */
 const EXTERNAL_MANIFEST_TABLES = [
   'admin_accounts',
   'admin_scopes',
@@ -58,6 +58,7 @@ const EXTERNAL_MANIFEST_TABLES = [
   'regions',
   'sessions',
   'single_profiles',
+  'species',
   'users',
 ];
 
@@ -89,7 +90,7 @@ const ALLOW_TABLE_DML_TRIPLES = [
   'public.speech_idempotency.DELETE',
 ];
 
-test('external_manifest 恰是 16 张具名表，且 jobs / media 不在其中', () => {
+test('external_manifest 恰是 17 张具名表，且 jobs / media 不在其中', () => {
   const body = valuesBlock(SOURCE, /external_manifest\(tbl/);
   const names = body
     .map((line) => (/^\s*\('([a-z_][a-z0-9_]*)',/.exec(line) || [])[1])
@@ -97,8 +98,8 @@ test('external_manifest 恰是 16 张具名表，且 jobs / media 不在其中',
 
   assert.equal(
     names.length,
-    16,
-    `external_manifest 当前 ${names.length} 行（应为 16）：行数一变，断言 69-84 的逐表展开区与总数口径都要跟着变`,
+    17,
+    `external_manifest 当前 ${names.length} 行（应为 17）：行数一变，断言 69-85 的逐表展开区与总数口径都要跟着变`,
   );
   assert.deepEqual(
     [...names].sort(),
