@@ -1,0 +1,110 @@
+/* GY-I12 文字提问页样式（页面级）。
+ *
+ * 硬约束（与 GY-I13 播报页同口径）：
+ * - 触控下限沿用全局令牌 `var(--tap-min, 44px)`（px，不用 rpx；窄屏 320px 下仍 ≥44px）；
+ * - 字号一律 `calc(Npx * var(--font-scale, 1))`，跟随微信字体设置放大，不裁切文字；
+ * - **不含 position:fixed/absolute**：发送按钮与回答区走正常文档流，不会互相遮挡。
+ */
+
+/* 发送／清空／重试按钮：长文案允许换行、不裁切。 */
+.qa-submit {
+  min-height: var(--tap-min, 44px);
+  font-size: calc(18px * var(--font-scale, 1));
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* 本页所有成组按钮：允许换行、不重叠（字号放大后仍可读可点）。 */
+.panel .row-actions__item {
+  min-height: var(--tap-min, 44px);
+  white-space: normal;
+  word-break: break-word;
+  font-size: calc(16px * var(--font-scale, 1));
+}
+
+/* 提问输入框：与全局 .input 同底色/边框/圆角，只增加高度与行距；跟随字体放大，不用固定高度裁切。 */
+.textarea {
+  width: 100%;
+  min-height: calc(120px * var(--font-scale, 1));
+  border: 1px solid var(--green-field);
+  background: var(--green-paper-soft);
+  border-radius: 8px;
+  padding: calc(10px * var(--font-scale, 1));
+  font-size: calc(15px * var(--font-scale, 1));
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+/* 回答气泡：只呈现服务端已检查正文（纯文本，不转富文本）。 */
+.chat-bubble {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--green-paper-soft);
+  padding: calc(12px * var(--font-scale, 1));
+  margin: 8px 0;
+}
+
+.chat-bubble__text {
+  font-size: calc(16px * var(--font-scale, 1));
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* 来源条目：与识别页同形态（.knowledge 在 identify.wxss 是页面级样式，这里自带一份，避免跨页依赖）。 */
+.knowledge {
+  padding: 16px;
+  margin-top: 11px;
+  border-radius: var(--radius-sm);
+  background: #FFFFFF;
+  border: 1px solid var(--line);
+  box-sizing: border-box;
+}
+
+.knowledge__name {
+  font-size: calc(18px * var(--font-scale, 1));
+  font-weight: 600;
+}
+
+.knowledge__meta {
+  margin-top: 6rpx;
+  font-size: calc(16px * var(--font-scale, 1));
+  color: var(--color-text-sub);
+  line-height: 1.7;
+}
+
+.knowledge__url {
+  font-size: calc(13px * var(--font-scale, 1));
+  color: var(--color-text-muted);
+  word-break: break-all;
+  margin-top: 6rpx;
+}
+
+/* 用量守卫：与识别页同口径（只报条数与资格判定，不渲染任何用量正文）。 */
+.dose-guard {
+  margin-top: 11px;
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  background: #FFF8E6;
+  border: 1px solid #F0D9A0;
+}
+
+.dose-guard__row {
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.dose-guard__tag {
+  font-size: calc(16px * var(--font-scale, 1));
+  font-weight: 600;
+  color: #8A5A00;
+}
+
+.dose-guard__reason {
+  font-size: calc(15px * var(--font-scale, 1));
+  color: var(--color-text-sub);
+  line-height: 1.7;
+  white-space: normal;
+  word-break: break-word;
+}

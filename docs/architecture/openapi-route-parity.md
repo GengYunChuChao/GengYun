@@ -15,9 +15,9 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 113 |
-| 契约操作（paths × method） | 114 |
-| 实现 ∩ 契约 | 112 |
+| 已挂载路由（不含 HEAD） | 114 |
+| 契约操作（paths × method） | 115 |
+| 实现 ∩ 契约 | 113 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
@@ -153,6 +153,7 @@
 | GET | `/posts/{id}/comments` | listComments | user | 不要求 | 是 | partial | 一致 |
 | POST | `/posts/{id}/comments` | createComment | user | 需要 | 是 | partial | 一致 |
 | DELETE | `/posts/{id}/like` | unlikePosts | user | 需要 | 是 | partial | 一致 |
+| GET | `/posts/{id}/like` | getPostLike | user | 不要求 | 是 | partial | 一致 |
 | PUT | `/posts/{id}/like` | likePosts | user | 需要 | 是 | partial | 一致 |
 | GET | `/public/home` | getPublicHome | public | 不要求 | 是 | partial | 一致 |
 | POST | `/recognitions` | createRecognition | user | 不要求 | 是 | partial | 一致 |

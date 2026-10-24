@@ -16,6 +16,8 @@ const pageGate = require('../../utils/page-gate')
 const auth = require('../../utils/auth')
 const fontScale = require('../../utils/font-scale')
 const identifyApi = require('../../utils/identify-api')
+// GY-I12：文字提问入口跳转用（一次性返回意图 + 按 Tab 与否选择正确的路由 API）。
+const navigation = require('../../utils/navigation')
 // 标签正文读面（`GET /ocr/{id}`）的**既有**消费层（#10 + #16 已合并）：逐字段校验 + 原样文本/更正/核对
 // 三分 + "不显示用量与配比"口径。本片**复用**它，不重造第二套 OCR 校验（避免两套口径漂移）。
 const historyApi = require('../../utils/history-api')
@@ -168,7 +170,9 @@ Page({
     modes: [
       { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍照片识别田里的杂草，给出至多 3 个候选', action: '拍照识别' },
       { key: 'ocr', iconClass: 'gy-icon--tag', title: '标签识别', desc: '拍农药包装读出标签文字（机器读数，非权威判读）', action: '拍照识别' },
-      { key: 'text', iconClass: 'gy-icon--chat', title: '文字提问', desc: '打字提问入口尚未接入（本页此处不发起）', action: '尚未接入' }
+      // GY-I12：文字提问入口已接真实的 `/pages/qa/qa`（门禁与登录口径同本页其余入口，
+      // 见 onShoot 的 'text' 分支；该页文字输入、显式发送、有界轮询与回答闸门均已实现）。
+      { key: 'text', iconClass: 'gy-icon--chat', title: '文字提问', desc: '打字提问：只整体展示服务端已通过检查的回答', action: '去提问' }
     ],
     guest: true,
     busy: false,
@@ -294,8 +298,11 @@ Page({
     if (key === 'weed') { this.choosePhoto(); return }
     // GY-I10：标签识别入口已接入（走既有 `POST /ocr` + `GET /jobs/{id}` + `GET /ocr/{id}`）。
     if (key === 'ocr') { this.chooseOcrPhoto(); return }
-    // 文字提问入口未接入：不指向语音页（该页无任何文字输入控件、也不接受查询参数），不新增跳转。
-    wx.showToast({ title: '文字提问入口尚未接入；本页此处不发起', icon: 'none' })
+    // GY-I12：文字提问入口已接入真实的 `/pages/qa/qa`（文字轮次契约 `TextTurnInput`，
+    // 与语音转写链路的 `SpeechTurnInput` 是两条互不冒充的输入形状）。
+    // 门禁口径与本页其余入口完全一致：未核实会话先引导登录（`navigation.beginReturnTo` +
+    // `auth.verifySession`），不放行任何私有数据；`pages/qa/qa` 已在 utils/navigation.js 白名单内。
+    if (key === 'text') { this.openQa(); return }
   },
 
   /** 录音入口：**尚未接入真实录音**，只切换按钮文案；不调用任何录音能力、不采集、不上传。 */
@@ -1061,6 +1068,46 @@ Page({
   onOpenServerHistory: function () {
     if (this.data.guest === true) return
     wx.navigateTo({ url: '/pages/history/history' })
+  },
+
+  /**
+   * GY-I12：打开**文字提问页**（`/pages/qa/qa`）。
+   *
+   * 门禁口径（与首页能力卡、本页其余入口逐字一致）：
+   *   1. `beginReturnTo` 记下**本页为qa目标**的一次性意图，然后 `verifySession` 用服务端核实会话；
+   *   2. 已核实 ⇒ 消费该意图并 `navigateTo`（qa 页不是底部 Tab，故不走 switchTab）；
+   *   3. 未核实 ⇒ `wx.showModal` 询问是否登录，确认才 `goLogin`（登录成功后回到 qa 页），
+   *      取消则清掉意图。**不**在客户端放行任何私有数据，也不用游客态打开 qa 页。
+   */
+  openQa: function () {
+    if (this.data.guest === true) return
+    const self = this
+    const op = navigation.beginReturnTo('/pages/qa/qa')
+    const action = (this._action || 0) + 1
+    this._action = action
+    const current = function () { return self._action === action && self.data.guest !== true }
+    auth.verifySession(function (verified, stale) {
+      if (!current() || stale) return
+      // 当前被拒的核实可能已清掉旧意图：重新登记一次，不让意图悬空。
+      if (!navigation.isCurrent(op.id)) { op.id = navigation.beginReturnTo(op.target).id }
+      if (verified !== true) {
+        wx.showModal({
+          title: '需要登录',
+          content: '文字提问需要微信登录后使用，现在去登录吗？',
+          confirmText: '去登录',
+          cancelText: '暂不',
+          success: function (result) {
+            if (!current()) return
+            if (result && result.confirm) navigation.goLogin(op.id)
+            else navigation.clearReturnTo(op.id)
+          }
+        })
+        return
+      }
+      navigation.openTarget(navigation.consumeReturnTo(op.id), false, function (error) {
+        if (current() && error) self.setData({ errorText: error })
+      })
+    })
   }
 })
 
