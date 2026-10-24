@@ -59,7 +59,7 @@
 
 ### 2.2 `#7` · `dimensions.pagination`
 
-**台账原文（`docs/architecture/contract-status.json:3294` 的 `blocker`；本片取证时原文如下，其后已被订正——同一登记条目的现行文本与下列引文不同）**
+**台账原文（`docs/architecture/contract-status.json:3314` 的 `blocker`；本片取证时原文如下，其后已被订正——同一登记条目的现行文本与下列引文不同）**
 
 ```
 授权列表（#109）、科普（#115）及作物/地区目录（#119）已签名、绑定主体版本和水位、固定15分钟期限；目录按稳定键排序。知识id_asc仍偏离冻结(created_at DESC,id DESC)，缺历史创建时点字段；后台/社区/消息分页须按模块验收，不记整维度完成
