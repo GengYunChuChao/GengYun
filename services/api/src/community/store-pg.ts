@@ -719,6 +719,19 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       return row === undefined ? 0 : Number(row.count);
     },
 
+    async hasLiked(kind, targetId, userId) {
+      // 集合成员判定：命中唯一键 `(user_id, target_type, target_id)` 即已赞，`LIMIT 1` 早停。
+      // 只读已授权的三列（`deploy/postgres-cvm/sql/20-login-roles.sql`）⇒ 不需要任何 GRANT 变更；
+      // 也不读改写、不新增计数列。
+      const rows = await run(
+        `SELECT 1 AS liked FROM community_likes
+          WHERE user_id = $1::uuid AND target_type = $2::text AND target_id = $3::uuid
+          LIMIT 1`,
+        [userId, kind, targetId],
+      );
+      return rows.length > 0;
+    },
+
     async putRefusalVerdict(record) {
       // 三条判据与写入是**同一条语句**：同键已有结论 ⇒ 不覆盖；该 revision 的内容已存在 ⇒ 不补录。
       const rows = await run(
