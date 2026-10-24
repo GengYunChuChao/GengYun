@@ -24,3 +24,27 @@
 .post-author__tag {
   margin-left: 0;
 }
+
+/* C1：翻页失败的持久提示与显式重试入口。沿用 demo 的 notice 语气，不新造页面色板。 */
+.load-more-error {
+  margin-top: 16px;
+  padding: 13px 16px;
+  border-radius: 10px;
+  background: var(--tone-warn-bg);
+  color: var(--tone-warn-ink);
+  font-size: calc(16px * var(--font-scale, 1));
+  line-height: 1.9;
+}
+
+.load-more-error__title {
+  font-weight: 600;
+}
+
+.load-more-error__hint {
+  margin-top: 4px;
+  opacity: 0.9;
+}
+
+.load-more-error__retry {
+  margin-top: 10px;
+}
