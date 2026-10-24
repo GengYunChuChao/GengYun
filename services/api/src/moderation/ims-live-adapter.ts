@@ -30,6 +30,7 @@ import {
   assertModerationPolicyOpen,
   moderationPortRedactedView,
   snapshotModerationRecord,
+  type ModerationLiveObservation,
   type ModerationLivePort,
   type ModerationPortSeams,
   type ModerationVerdict,
@@ -40,6 +41,7 @@ import {
   imageSampleFromVendorPayload,
   moderationFailureFromHttpStatus,
   moderationFailureFromThrown,
+  moderationRequestIdFromPayload,
   moderationVerdictFromImageSamples,
   requireModerationImageBytes,
   requireModerationMediaRefs,
@@ -69,6 +71,7 @@ export function createLiveModerationImagePort(ports: RealModerationImagePorts): 
   }
   const fetchImpl = ports.fetchImpl ?? globalThis.fetch;
   const now = ports.now ?? ((): number => Date.now());
+  const onObservation = ports.onObservation;
   const seams: ModerationPortSeams = { fetchImpl, credentials, liveGate: policy, now };
   const provider = Object.freeze({
     biz_type: profile.bizType,
@@ -82,58 +85,89 @@ export function createLiveModerationImagePort(ports: RealModerationImagePorts): 
    * 返回该图的供应商结论摘要（只含三档字面 + 令牌 + 分数）。
    */
   async function evaluateOne(ref: ModerationMediaRefInput) {
-    let raw: Uint8Array | null;
+    const startedAt = now();
+    let requestId: string | null = null;
+    const observe = (partial: Partial<ModerationLiveObservation>): void => {
+      onObservation?.(
+        Object.freeze({
+          kind: 'ims' as const,
+          requestId,
+          elapsedMs: now() - startedAt,
+          httpStatus: null,
+          providerErrorCode: null,
+          modelFailure: null,
+          resultMayHaveBeenProcessed: true,
+          ...partial,
+        }),
+      );
+    };
     try {
-      raw = await imageSource.read({ mediaId: ref.mediaId, mediaRevision: ref.mediaRevision });
-    } catch {
-      throw new ModerationPortError('payload_invalid', 'image_source_threw', { resultMayHaveBeenProcessed: false });
-    }
-    // 取不到字节 / 超 2 MiB / 头部不是 PNG/JPEG ⇒ 本地 fail-closed，**不压缩、不裁剪**、不外呼。
-    const bytes = requireModerationImageBytes(raw, profile.maxImageBytes);
-    const body = JSON.stringify({
-      FileContent: Buffer.from(bytes).toString('base64'),
-      BizType: profile.bizType,
-    });
-    const frozen = MODERATION_VENDOR_ACTIONS.ims;
-    const headers = signModerationTc3Request({
-      target,
-      action: frozen.action,
-      apiVersion: frozen.apiVersion,
-      region: MODERATION_VENDOR_REGION,
-      timestampSeconds: Math.floor(now() / 1000),
-      body,
-      credentials,
-    });
-    let response: Response;
-    try {
-      response = await fetchImpl(target.endpoint, {
-        method: 'POST',
+      let raw: Uint8Array | null;
+      try {
+        raw = await imageSource.read({ mediaId: ref.mediaId, mediaRevision: ref.mediaRevision });
+      } catch {
+        throw new ModerationPortError('payload_invalid', 'image_source_threw', { resultMayHaveBeenProcessed: false });
+      }
+      // 取不到字节 / 超 2 MiB / 头部不是 PNG/JPEG ⇒ 本地 fail-closed，**不压缩、不裁剪**、不外呼。
+      const bytes = requireModerationImageBytes(raw, profile.maxImageBytes);
+      const body = JSON.stringify({
+        FileContent: Buffer.from(bytes).toString('base64'),
+        BizType: profile.bizType,
+      });
+      const frozen = MODERATION_VENDOR_ACTIONS.ims;
+      const headers = signModerationTc3Request({
+        target,
+        action: frozen.action,
+        apiVersion: frozen.apiVersion,
+        region: MODERATION_VENDOR_REGION,
+        timestampSeconds: Math.floor(now() / 1000),
         body,
-        headers,
-        redirect: 'manual',
-        signal: AbortSignal.timeout(profile.timeoutMs),
+        credentials,
       });
+      let response: Response;
+      try {
+        response = await fetchImpl(target.endpoint, {
+          method: 'POST',
+          body,
+          headers,
+          redirect: 'manual',
+          signal: AbortSignal.timeout(profile.timeoutMs),
+        });
+      } catch (error) {
+        throw new ModerationPortError(moderationFailureFromThrown(error), 'send_threw', {
+          resultMayHaveBeenProcessed: true,
+        });
+      }
+      if (!response.ok) {
+        throw new ModerationPortError(moderationFailureFromHttpStatus(response.status), 'http_status', {
+          httpStatus: response.status,
+          resultMayHaveBeenProcessed: true,
+        });
+      }
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        throw new ModerationPortError('port_error', 'bad_json', {
+          httpStatus: response.status,
+          resultMayHaveBeenProcessed: true,
+        });
+      }
+      requestId = moderationRequestIdFromPayload(payload);
+      const sample = imageSampleFromVendorPayload({ payload, httpStatus: response.status });
+      observe({ httpStatus: response.status, resultMayHaveBeenProcessed: true });
+      return sample;
     } catch (error) {
-      throw new ModerationPortError(moderationFailureFromThrown(error), 'send_threw', {
-        resultMayHaveBeenProcessed: true,
-      });
+      if (error instanceof ModerationPortError) {
+        observe({
+          httpStatus: error.http_status,
+          providerErrorCode: error.provider_error_code,
+          modelFailure: error.model_failure,
+          resultMayHaveBeenProcessed: error.result_may_have_been_processed,
+        });
+      }
+      throw error;
     }
-    if (!response.ok) {
-      throw new ModerationPortError(moderationFailureFromHttpStatus(response.status), 'http_status', {
-        httpStatus: response.status,
-        resultMayHaveBeenProcessed: true,
-      });
-    }
-    let payload: unknown;
-    try {
-      payload = await response.json();
-    } catch {
-      throw new ModerationPortError('port_error', 'bad_json', {
-        httpStatus: response.status,
-        resultMayHaveBeenProcessed: true,
-      });
-    }
-    return imageSampleFromVendorPayload({ payload, httpStatus: response.status });
   }
 
   return {

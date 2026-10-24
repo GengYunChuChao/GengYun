@@ -170,7 +170,7 @@ export function registerAccountDeletionRoutes(
             // 台账引用的删除请求已不可达（进程内台账随重启清空）⇒ 如实 409，不编造回执。
             throw new ApiError('OBJECT_UNAVAILABLE', '注销删除请求已不可达（进程内台账已失效）');
           }
-          const issued = wired.receipts.issue(deletionId);
+          const issued = await wired.receipts.issue(deletionId);
           return {
             status: 202,
             body: {
@@ -199,7 +199,7 @@ export function registerAccountDeletionRoutes(
       const token = readBearerToken(request.headers.authorization);
       if (token === null) throw new ApiError('SESSION_REQUIRED', '需要注销回执 bearer');
       const id = (request.params as { id: string }).id;
-      const boundId = wired.receipts.resolveRequestId(token);
+      const boundId = await wired.receipts.resolveRequestId(token);
       // 未知 / 已过期 / 已换发 / 跨请求使用：一律按「凭据不可用」如实拒绝，不泄露该 id 是否存在（防探测）。
       if (boundId === null || boundId !== id) throw new ApiError('SESSION_EXPIRED', '注销回执凭据已失效');
       // GY-R32（#19 片B）：回执的**在线态**先按落库证据推导（迁移 0031），再推导备份态 ——

@@ -104,7 +104,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0031/#494、0032/#15、0033/#525 均已落盘、本片 0034 ⇒ 台账空、0001..0034 连续、三条不变量成立', () => {
+test('迁移编号/当前仓库：0038 落 #19 片B、0036/0037 为在飞缺号 ⇒ 台账登记 36/37、0001..0035 连续 + 0038、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -113,16 +113,16 @@ test('迁移编号/当前仓库：0031/#494、0032/#15、0033/#525 均已落盘�
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [],
-    `0031 随 #494、0032 随 #15、0033 随 #525（4b87e1d9）、0034 在本片 ⇒ 0001..0034 连续无缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    [36, 37],
+    `0036 由 #538 在飞分支占用、0037 已分配 #14 ⇒ 本片单独在树上时缺号必须恰为 [36,37]（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(
     numbering.reserved,
-    [],
-    '0033 已随 #525 合入 origin/main（4b87e1d9）落盘 ⇒ 那条 remove_when 到期的保留项必须删除，台账回到空数组',
+    [36, 37],
+    '0036/0037 缺号必须都在台账登记（否则 undeclaredGaps 会把它们判成发现器静默漏项）',
   );
-  assert.equal(reservations.length, 0, '台账眼下必须是空数组（0027／0029／0031／0033 四条保留项都已按各自的 remove_when 删除）');
-  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
+  assert.equal(reservations.length, 2, '台账眼下必须恰有两条保留项（0036 #538、0037 #14；0027/0029/0031/0033 四条都已按各自 remove_when 删除）');
+  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（0036/0037 已登记）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
     numbering.countMatchesMax,
@@ -182,6 +182,28 @@ test('迁移编号/当前仓库：0031/#494、0032/#15、0033/#525 均已落盘�
     true,
     '#525 的 0033 已随 origin/main（4b87e1d9）落盘 ⇒ 真实文件必须在清单里，且台账不得再登记 33'
       + '（否则 reservedButPresent 会先把这条判红）',
+  );
+  // R34（#19 片2）0035 已落盘（媒体行物理删除窄函数）⇒ 真实文件必须在清单里。
+  assert.equal(
+    files.includes('0035_r34_media_row_purge.sql'),
+    true,
+    '#19 片2 的 0035 已落盘 ⇒ 真实文件必须在清单里',
+  );
+  // R34（#19 片B）本片落 0038（回执 bearer 台账持久化）⇒ 真实文件必须在清单里。
+  assert.equal(
+    files.includes('0038_r34_deletion_receipt_persistence.sql'),
+    true,
+    '#19 片B 的 0038 已在本片落盘 ⇒ 真实文件必须在清单里，且台账不得登记 38',
+  );
+  assert.equal(
+    files.includes('0036_r34_i18_content_pg.sql'),
+    false,
+    '0036 属 #538（在飞分支）⇒ 本片树上不得出现 0036 前缀的文件',
+  );
+  assert.equal(
+    files.some((name) => /^0037_/.test(name)),
+    false,
+    '0037 属 #14（号空出）⇒ 本片树上不得出现 0037 前缀的文件',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),

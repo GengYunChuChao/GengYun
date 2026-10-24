@@ -232,6 +232,8 @@ export function makeHarness(options = {}) {
     config,
     store: auth,
     now: () => new Date(time),
+    // #14 片A：可注入媒体 store（供"送审 media 载荷补齐 mime/kind"用例播种 mime）。
+    mediaStore: options.mediaStore,
     privacyInjection: { consent: publicPosting.gate },
     communityInjection: {
       store,

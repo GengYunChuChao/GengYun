@@ -91,7 +91,24 @@
         </view>
       </view>
 
-      <view class="row-actions">
+      <!-- C1：普通网络／服务失败的翻页错误**持久**留在列表底部，不只弹一次 toast。
+           已加载的 posts 与合法 nextCursor 都保留；重试按钮复用 onLoadMore，请求同一条下一游标。
+           重试在飞时本块让位给下方「正在加载…」按钮，loadingMore 同时拦住重复点击／重复追加。 -->
+      <view class="load-more-error" wx:if="{{loadMoreError}}" aria-role="alert">
+        <view class="load-more-error__title">加载更多没有成功</view>
+        <view class="load-more-error__text">{{loadMoreError}}</view>
+        <view class="load-more-error__hint">已加载的内容仍然保留；重试只会继续读取同一页，不会从头开始。</view>
+        <gy-ui-button
+          class="load-more-error__retry"
+          label="{{loadingMore ? '正在重试…' : '重试加载更多'}}"
+          variant="ghost"
+          disabled="{{loadingMore}}"
+          loading="{{loadingMore}}"
+          bind:tap="onLoadMore"
+        ></gy-ui-button>
+      </view>
+
+      <view class="row-actions" wx:if="{{!loadMoreError}}">
         <gy-ui-button
           wx:if="{{nextCursor}}"
           label="{{loadingMore ? '正在加载…' : '加载更多'}}"

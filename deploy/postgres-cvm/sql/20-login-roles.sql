@@ -352,6 +352,36 @@ GRANT EXECUTE ON FUNCTION public.purge_owner_media(uuid) TO gengyun_api_runtime;
 -- #endregion gy-r34-i19-media-row-purge-grant
 \echo '20-login-roles.sql：已授予 purge_owner_media(uuid) 的 EXECUTE（注销媒体行物理删除的唯一写路径；public.media / media_derivatives 对运行时仍然零**表级** DELETE 变更，一张表都没加）。'
 
+-- --- D2. 回执 bearer 台账：唯一读/写路径的 EXECUTE（GY-I19 片B / 迁移 0038）--------
+-- 迁移 0038 建了三条**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
+-- `REVOKE ALL ... FROM PUBLIC`：`set_deletion_receipt`（set/clear 回执 bearer 摘要）、
+-- `resolve_deletion_receipt`（按摘要反查请求 id）、`count_deletion_receipts`（诊断读数）。
+-- 此处把 EXECUTE **只**授予运行时登录角色：运行时对 `public.deletion_requests`
+-- **仍然零表级、零列级直接权限**（`90-assert-least-privilege.sql` 的 protected_columns 与
+-- 函数级断言逐字不动），回执 bearer 的读/写只有这三条函数这一个面。
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败。
+-- #region gy-r34-i19-deletion-receipt-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）。
+DO $$
+BEGIN
+  IF to_regprocedure('public.set_deletion_receipt(uuid,text,timestamptz,timestamptz)') IS NULL
+     OR to_regprocedure('public.resolve_deletion_receipt(text)') IS NULL
+     OR to_regprocedure('public.count_deletion_receipts()') IS NULL THEN
+    RAISE EXCEPTION '缺少回执台账函数：迁移 0038 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.set_deletion_receipt(uuid,text,timestamptz,timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.resolve_deletion_receipt(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.count_deletion_receipts() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.set_deletion_receipt(uuid,text,timestamptz,timestamptz) TO gengyun_api_runtime;
+GRANT EXECUTE ON FUNCTION public.resolve_deletion_receipt(text) TO gengyun_api_runtime;
+GRANT EXECUTE ON FUNCTION public.count_deletion_receipts() TO gengyun_api_runtime;
+-- #endregion gy-r34-i19-deletion-receipt-grant
+\echo '20-login-roles.sql：已授予 set_deletion_receipt/resolve_deletion_receipt/count_deletion_receipts 的 EXECUTE（回执 bearer 台账唯一读写路径；运行时对 public.deletion_requests 仍然零表级、零列级直接权限）。'
+
+
 -- --- E. 账号停用/恢复：唯一写路径的 EXECUTE（GY-I22 / 迁移 0017）--------------
 -- 迁移 0017 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
 -- `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：

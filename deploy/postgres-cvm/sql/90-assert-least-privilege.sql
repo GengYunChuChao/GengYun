@@ -1732,6 +1732,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 「本人 + 终态 + 未被引用 + 已入队」四个谓词只存在于这条函数里；EXECUTE 只授运行时。
     ('public',         'purge_owner_media',                  'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R34（#19 片B / 迁移 0038）：回执 bearer 台账唯一读写路径（三条窄函数）。
+    -- 运行时对 `deletion_requests` 仍是零表级、零列级直接权限（protected_columns 逐字未动），
+    -- 回执 bearer 摘要的 set/clear/resolve/count 都只经这三条 SECURITY DEFINER 函数。
+    ('public',         'set_deletion_receipt',              'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'resolve_deletion_receipt',          'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'count_deletion_receipts',           'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -2707,6 +2716,92 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND NOT has_column_privilege('gengyun_api_runtime', 'public.deletion_requests',
                                       'online_purged_at', 'SELECT'),
          '在线证据必须只可追加（0031 触发器在岗），且运行时对 deletion_requests（含两个证据列）仍无任何直接权限'
+
+  UNION ALL
+  -- 30g. 回执 bearer 台账（GY-R34 #19 片B / 迁移 0038）唯一读写路径必须恰各存在一个（名字 + 精确签名）
+  SELECT 'deletion_receipt_functions_exist',
+         to_regprocedure('public.set_deletion_receipt(uuid,text,timestamptz,timestamptz)') IS NOT NULL
+         AND to_regprocedure('public.resolve_deletion_receipt(text)') IS NOT NULL
+         AND to_regprocedure('public.count_deletion_receipts()') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'set_deletion_receipt'
+                 AND pronamespace = 'public'::regnamespace) = 1
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'resolve_deletion_receipt'
+                 AND pronamespace = 'public'::regnamespace) = 1
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'count_deletion_receipts'
+                 AND pronamespace = 'public'::regnamespace) = 1,
+         '回执台账必须恰有 set_deletion_receipt(uuid,text,timestamptz,timestamptz) / resolve_deletion_receipt(text) / count_deletion_receipts() 各一个'
+
+  UNION ALL
+  -- 30h. 三条都必须是 SECURITY DEFINER（否则运行时直写/直读 deletion_requests 必然 42501）
+  SELECT 'deletion_receipt_functions_security_definer',
+         (SELECT count(*) FROM pg_proc
+           WHERE pronamespace = 'public'::regnamespace
+             AND proname IN ('set_deletion_receipt', 'resolve_deletion_receipt', 'count_deletion_receipts')
+             AND prosecdef) = 3,
+         '回执台账的写/读/计数函数必须都是 SECURITY DEFINER'
+
+  UNION ALL
+  -- 30i. search_path 固定 pg_catalog、时区固定 UTC（与同族函数同口径）
+  SELECT 'deletion_receipt_functions_search_path',
+         (SELECT count(*) FROM pg_proc
+           WHERE pronamespace = 'public'::regnamespace
+             AND proname IN ('set_deletion_receipt', 'resolve_deletion_receipt', 'count_deletion_receipts')
+             AND proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']) = 3,
+         '回执台账函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 30j. 属主正确：必须能读写 deletion_requests 的回执列，且运行时既不是它、也不能 SET ROLE 成为它
+  SELECT 'deletion_receipt_functions_owner',
+         (SELECT count(*) FROM pg_proc
+           WHERE pronamespace = 'public'::regnamespace
+             AND proname IN ('set_deletion_receipt', 'resolve_deletion_receipt', 'count_deletion_receipts')) = 3
+         AND (SELECT bool_and(
+                       pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                       AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                       AND has_column_privilege(pg_get_userbyid(p.proowner),
+                                                'public.deletion_requests', 'receipt_bearer_hash', 'UPDATE')
+                       AND has_column_privilege(pg_get_userbyid(p.proowner),
+                                                'public.deletion_requests', 'receipt_bearer_hash', 'SELECT')
+                       AND has_column_privilege(pg_get_userbyid(p.proowner),
+                                                'public.deletion_requests', 'receipt_expires_at', 'SELECT')
+                       AND has_column_privilege(pg_get_userbyid(p.proowner),
+                                                'public.deletion_requests', 'receipt_issued_at', 'UPDATE'))
+                FROM pg_proc p
+               WHERE p.pronamespace = 'public'::regnamespace
+                 AND p.proname IN ('set_deletion_receipt', 'resolve_deletion_receipt', 'count_deletion_receipts')),
+         '函数属主必须是能读写 deletion_requests 回执列的运营方角色，且运行时无法成为它'
+
+  UNION ALL
+  -- 30k. EXECUTE 只授予运行时：PUBLIC 与任何其它角色一律不得执行
+  SELECT 'deletion_receipt_functions_execute',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           'public.set_deletion_receipt(uuid,text,timestamptz,timestamptz)',
+           'EXECUTE'
+         )
+         AND has_function_privilege(
+           'gengyun_api_runtime',
+           'public.resolve_deletion_receipt(text)',
+           'EXECUTE'
+         )
+         AND has_function_privilege(
+           'gengyun_api_runtime',
+           'public.count_deletion_receipts()',
+           'EXECUTE'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('set_deletion_receipt', 'resolve_deletion_receipt', 'count_deletion_receipts')
+              AND a.privilege_type = 'EXECUTE'
+              AND (a.grantee = 0
+                   OR a.grantee NOT IN ('gengyun_api_runtime'::regrole, p.proowner))
+         ),
+         '回执台账写/读/计数函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
 
   UNION ALL
   -- 31. 展示名投影函数：纯投影（非 SECURITY DEFINER，不可借它提权），search_path 固定
