@@ -21,7 +21,8 @@
  *    （`tests/unit/admin-flag-gate.test.mjs` 的不变量用例）。
  *
  * ## 为什么用「装饰 + 守卫包装」而不是改别人的文件
- * 受控面分属不同线（`/herbicides` 属 #7、`/posts` 属 #15、识别/OCR/转写/合成属 #9/#10/#11/#13）。
+ * 受控面分属不同线（`/herbicides` 属 #7、`/posts` 属 #15、识别/OCR/转写/合成属 #9/#10/#11/#13、
+ * 文字问答属 #12）。
  * 本片**不改**这些线的实现文件，只在**装配层**（`app.ts`）把它们的守卫链与产出方包一层：
  * - HTTP 面：`createFlagGatedGuards()` 包装 `AuthGuards.requireUser`，**先鉴权、后判开关**
  *   （顺序刻意如此：401/403 语义与错误码次序与接线前逐字相同，开关只在**已鉴权**后生效）。
@@ -318,13 +319,20 @@ export const FLAG_GATED_SURFACES: readonly FlagGatedSurface[] = Object.freeze([
     routePattern: `${API_PREFIX}/speech/synthesis`,
     surface: '语音合成任务受理',
   }),
+  Object.freeze({
+    key: 'ai_enabled',
+    operationId: 'createTurn',
+    method: 'POST',
+    routePattern: `${API_PREFIX}/conversations/:id/turns`,
+    surface: '文字问答受理',
+  }),
 ]);
 
 /**
  * 装配基线的**唯一来源**：把「开关」与「该输出面当前是否真的在产出」对齐。
  *
  * 为什么需要它：阶段 1b 的出厂默认是 3 键全 `false`（最严格一侧），而 `/herbicides`、
- * 识别/OCR/转写/合成受理面在当前装配下是**真实可用**的。若把"默认 false"直接接到门上，
+ * 识别/OCR/转写/合成/文字问答受理面在当前装配下是**真实可用**的。若把"默认 false"直接接到门上，
  * 结果不是更安全，而是**接口自述与产出现实不一致**（`listFlags` 说关闭、`/herbicides` 照常产出），
  * 也就是开关根本没生效 —— 正是本片要修的问题。
  *
@@ -345,7 +353,7 @@ export const FLAG_WIRING_BASELINE: Readonly<Record<FlagKey, boolean>> = Object.f
   submissions_enabled: true,
   /** 药剂/制剂输出面（`/herbicides`）当前真实可用（#7 已合并）⇒ 基线开启，可由后台一键收紧。 */
   specific_herbicide_output_enabled: true,
-  /** AI 任务受理面（识别/OCR/转写/合成）当前真实可用 ⇒ 基线开启，可由后台一键收紧。 */
+  /** AI 任务受理面（识别/OCR/转写/合成/文字问答）当前真实可用 ⇒ 基线开启，可由后台一键收紧。 */
   ai_enabled: true,
 });
 
