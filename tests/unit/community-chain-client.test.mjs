@@ -341,6 +341,68 @@ test('社区列表页「加载更多」：403 ⇒ 整页 denied（不是一句 t
   assert.equal(h.cleared.count, 0, 'CONSENT_REQUIRED 不清会话');
 });
 
+test('社区列表页「加载更多」：普通网络失败 ⇒ 保留已加载行与合法游标，页尾持久提示可重试同一下一页', async () => {
+  const SECOND_ID = '33333333-3333-4333-8333-333333333333';
+  const h = loadApi((request, index) => {
+    if (index === 1) return { statusCode: 200, data: envelope({ items: [post()], next_cursor: 'cursor-1' }) };
+    if (index === 2) return { fail: true };
+    if (index === 3) return DEFER;
+    return { statusCode: 200, data: envelope({ items: [post({ id: SECOND_ID })], next_cursor: 'cursor-2' }) };
+  });
+  const page = loadPage(h, 'community');
+  page.onLoad();
+  page.onShow();
+  await flush();
+  assert.equal(page.data.nextCursor, 'cursor-1');
+
+  page.onLoadMore();
+  await flush();
+  assert.equal(h.calls.length, 2);
+  assert.equal(new URL(h.calls[1].url).searchParams.get('cursor'), 'cursor-1');
+  assert.equal(page.data.posts.length, 1, '翻页失败不得丢掉已加载的行');
+  assert.equal(page.data.nextCursor, 'cursor-1', '普通失败不得清掉仍然合法的游标');
+  assert.equal(page.data.loadingMore, false);
+  assert.match(page.data.loadMoreError, /已加载的内容仍然保留/, '失败提示必须如实说明已加载内容仍在');
+  assert.doesNotMatch(page.data.loadMoreError, /已清空/, '翻页失败没有清空列表，提示不得沿用「已清空」口径');
+  assert.equal(h.toasts.length, 0, '不再只用会消失的 toast 报错');
+
+  // 显式重试：只请求**同一条**下一游标；在飞期间重复点击不得再发请求或重复追加。
+  page.onLoadMore();
+  assert.equal(h.calls.length, 3, '重试必须复用同一条游标再请求一次');
+  assert.equal(new URL(h.calls[2].url).searchParams.get('cursor'), 'cursor-1');
+  page.onLoadMore();
+  assert.equal(h.calls.length, 3, 'loadingMore 期间重复点击不得重复请求');
+  h.calls[2].success({ statusCode: 200, data: envelope({ items: [post({ id: SECOND_ID })], next_cursor: 'cursor-2' }) });
+  await flush();
+  assert.equal(page.data.posts.length, 2, '成功重试只追加一次新页');
+  assert.equal(page.data.nextCursor, 'cursor-2');
+  assert.equal(page.data.loadMoreError, '');
+  assert.equal(page.data.loadingMore, false);
+
+  const wxml = def('miniprogram/pages/community/community.wxml');
+  assert.match(wxml, /wx:if="\{\{loadMoreError\}\}"/, '页尾必须有持久的翻页失败提示块');
+  assert.match(wxml, /class="load-more-error__retry"[\s\S]*?bind:tap="onLoadMore"/, '提示块内必须有显式重试入口');
+});
+
+test('社区列表页「加载更多」：401 ⇒ 仍回登录门禁，不把会话失效留在翻页错误提示里', async () => {
+  const h = loadApi((request, index) => {
+    if (index === 1) return { statusCode: 200, data: envelope({ items: [post()], next_cursor: 'cursor-1' }) };
+    return { statusCode: 401, data: errorEnvelope('SESSION_EXPIRED') };
+  });
+  const page = loadPage(h, 'community');
+  page.onLoad();
+  page.onShow();
+  await flush();
+  page.onLoadMore();
+  await flush();
+
+  assert.equal(page.data.guest, true);
+  assert.equal(page.data.status, 'idle');
+  assert.equal(page.data.loadMoreError, '');
+  assert.equal(h.cleared.count, 1);
+  assert.equal(h.toasts.length, 0);
+});
+
 // --------------------------------------------------------------------------- 详情页
 test('社区详情页：403 ⇒ denied 语气 + 「返回社区」不被收起（不把用户困在一个回不去的页面）', async () => {
   const h = loadApi(() => ({ statusCode: 403, data: errorEnvelope('SCOPE_DENIED') }));

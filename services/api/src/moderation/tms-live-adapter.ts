@@ -28,6 +28,7 @@ import {
   assertModerationTextProfile,
   moderationPortRedactedView,
   snapshotModerationRecord,
+  type ModerationLiveObservation,
   type ModerationLivePort,
   type ModerationPortSeams,
   type ModerationVerdict,
@@ -37,6 +38,7 @@ import { resolveModerationVendorTarget, signModerationTc3Request } from './live-
 import {
   moderationFailureFromHttpStatus,
   moderationFailureFromThrown,
+  moderationRequestIdFromPayload,
   moderationVerdictFromVendorPayload,
   requireModerationText,
 } from './live-vendor.ts';
@@ -71,6 +73,7 @@ export function createLiveModerationTextPort(ports: RealModerationTextPorts): Mo
   const credentials = snapshotModerationRecord(assertModerationCredentials(ports.credentials));
   const fetchImpl = ports.fetchImpl ?? globalThis.fetch;
   const now = ports.now ?? ((): number => Date.now());
+  const onObservation = ports.onObservation;
   const seams: ModerationPortSeams = { fetchImpl, credentials, liveGate: policy, now };
   // 端口自述的 provider 绑定：`biz_type`/`timeout_ms` 一律取**拷贝**，不取调用方手里的原对象。
   const provider = Object.freeze({
@@ -96,57 +99,88 @@ export function createLiveModerationTextPort(ports: RealModerationTextPorts): Mo
       });
     },
     async evaluate(request: unknown): Promise<ModerationVerdict> {
-      // ① build（本地）——本地拒绝不产生任何外呼。
-      const text = requireModerationText(request);
-      const body = JSON.stringify({
-        Content: Buffer.from(text, 'utf8').toString('base64'),
-        BizType: profile.bizType,
-        Type: TMS_REQUEST_TYPE,
-        SourceLanguage: TMS_SOURCE_LANGUAGE,
-      });
-      const frozen = MODERATION_VENDOR_ACTIONS.tms;
-      // ② sign：签名对象是**上面那串字节**，同一个字符串直接作为 `init.body`（不做二次序列化）。
-      const headers = signModerationTc3Request({
-        target,
-        action: frozen.action,
-        apiVersion: frozen.apiVersion,
-        region: MODERATION_VENDOR_REGION,
-        timestampSeconds: Math.floor(now() / 1000),
-        body,
-        credentials,
-      });
-      // ③ send：恰好一次，零重试；不跟随重定向（跟随会把待审内容送去另一个 host）。
-      let response: Response;
+      const startedAt = now();
+      let requestId: string | null = null;
+      const observe = (partial: Partial<ModerationLiveObservation>): void => {
+        onObservation?.(
+          Object.freeze({
+            kind: 'tms' as const,
+            requestId,
+            elapsedMs: now() - startedAt,
+            httpStatus: null,
+            providerErrorCode: null,
+            modelFailure: null,
+            resultMayHaveBeenProcessed: true,
+            ...partial,
+          }),
+        );
+      };
       try {
-        response = await fetchImpl(target.endpoint, {
-          method: 'POST',
+        // ① build（本地）——本地拒绝不产生任何外呼。
+        const text = requireModerationText(request);
+        const body = JSON.stringify({
+          Content: Buffer.from(text, 'utf8').toString('base64'),
+          BizType: profile.bizType,
+          Type: TMS_REQUEST_TYPE,
+          SourceLanguage: TMS_SOURCE_LANGUAGE,
+        });
+        const frozen = MODERATION_VENDOR_ACTIONS.tms;
+        // ② sign：签名对象是**上面那串字节**，同一个字符串直接作为 `init.body`（不做二次序列化）。
+        const headers = signModerationTc3Request({
+          target,
+          action: frozen.action,
+          apiVersion: frozen.apiVersion,
+          region: MODERATION_VENDOR_REGION,
+          timestampSeconds: Math.floor(now() / 1000),
           body,
-          headers,
-          redirect: 'manual',
-          signal: AbortSignal.timeout(profile.timeoutMs),
+          credentials,
         });
+        // ③ send：恰好一次，零重试；不跟随重定向（跟随会把待审内容送去另一个 host）。
+        let response: Response;
+        try {
+          response = await fetchImpl(target.endpoint, {
+            method: 'POST',
+            body,
+            headers,
+            redirect: 'manual',
+            signal: AbortSignal.timeout(profile.timeoutMs),
+          });
+        } catch (error) {
+          throw new ModerationPortError(moderationFailureFromThrown(error), 'send_threw', {
+            resultMayHaveBeenProcessed: true,
+          });
+        }
+        if (!response.ok) {
+          throw new ModerationPortError(moderationFailureFromHttpStatus(response.status), 'http_status', {
+            httpStatus: response.status,
+            resultMayHaveBeenProcessed: true,
+          });
+        }
+        // ④ 解析：非 JSON / 缺 `Response` ⇒ port_error（"我们不知道" ≠ "没检出问题"）。
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch {
+          throw new ModerationPortError('port_error', 'bad_json', {
+            httpStatus: response.status,
+            resultMayHaveBeenProcessed: true,
+          });
+        }
+        requestId = moderationRequestIdFromPayload(payload);
+        const verdict = moderationVerdictFromVendorPayload({ payload, httpStatus: response.status });
+        observe({ httpStatus: response.status, resultMayHaveBeenProcessed: true });
+        return verdict;
       } catch (error) {
-        throw new ModerationPortError(moderationFailureFromThrown(error), 'send_threw', {
-          resultMayHaveBeenProcessed: true,
-        });
+        if (error instanceof ModerationPortError) {
+          observe({
+            httpStatus: error.http_status,
+            providerErrorCode: error.provider_error_code,
+            modelFailure: error.model_failure,
+            resultMayHaveBeenProcessed: error.result_may_have_been_processed,
+          });
+        }
+        throw error;
       }
-      if (!response.ok) {
-        throw new ModerationPortError(moderationFailureFromHttpStatus(response.status), 'http_status', {
-          httpStatus: response.status,
-          resultMayHaveBeenProcessed: true,
-        });
-      }
-      // ④ 解析：非 JSON / 缺 `Response` ⇒ port_error（"我们不知道" ≠ "没检出问题"）。
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch {
-        throw new ModerationPortError('port_error', 'bad_json', {
-          httpStatus: response.status,
-          resultMayHaveBeenProcessed: true,
-        });
-      }
-      return moderationVerdictFromVendorPayload({ payload, httpStatus: response.status });
     },
   };
 }

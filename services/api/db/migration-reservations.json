@@ -38,7 +38,25 @@
     "remove_when **删除**，台账回到空数组：**34 个文件 + 0 保留 === max 34**、缺号 0",
     "（verify-migrations-unique --strict PASS）。上一条（R34-I19 让号段的 33 个文件 + 1 保留 === max 34）",
     "是让号当时的事实，保留项一落盘就必须删 —— 本次合流正是它自己的 remove_when 到期，⛔ 不是放宽判据。",
-    "README 的「0033 预留」当前状态段已随本合流删除，历史叙述留在 README 的 R34-I19 段。"
+    "README 的「0033 预留」当前状态段已随本合流删除，历史叙述留在 README 的 R34-I19 段。",
+    "【2026-10-24 #19 片B · 迁移 0038 · 登记 36/37】本片落 0038_r34_deletion_receipt_persistence.sql。",
+    "0036 由 #538（feat/gy-r34-i18-content-pg）在飞分支占用；0037 已分配给 #14（号空出、尚无文件）。",
+    "故本片单独在树上时「有依据的缺号」为 36/37：36 个文件 + 2 保留 === max 38（三条不变量成立）。",
+    "合入顺序 0036 → 0037 → 0038 依次推进；0036/0037 一落盘 reservedButPresent 立刻判红，条目按 remove_when 删。",
+    "README 的同两条依据见 services/api/db/migrations/README.md 的「当前状态（2026-10-24 · 迁移 0038）」段。",
+    "【2026-10-25 #538 合流 · 迁移 0036 落盘 · 36 号条目已按 remove_when 删除】#538（feat/gy-r34-i18-content-pg）",
+    "把 0036_r34_admin_content_persistence.sql（后台内容/资料域落库）带上了树 ⇒ 该条目按它自己的 remove_when",
+    "**删除**（保留项一落盘就 reservedButPresent 判红，不许躺平）。合并后实测：文件 37 个（0001..0035 + 0036 + 0038）、",
+    "max=0038、保留 = [0037] ⇒ 37 + 1 === 38 且未声明缺号 0（缺号只有 0037，已由 #14 登记）。",
+    "37 号条目继续按它自己的 remove_when 保留（#14 落 0037 即删）。"
   ],
-  "reservations": []
+  "reservations": [
+    {
+      "version": 37,
+      "filename": "0037_issue_14_allocated.sql",
+      "owner": "#14（已分配，号空出、尚无文件）",
+      "reason": "0037 已分配给 #14；本片 #19 片B 落 0038，缺号 0037 登记保留",
+      "remove_when": "#14 落 0037 即删"
+    }
+  ]
 }

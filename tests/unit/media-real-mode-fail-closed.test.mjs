@@ -1009,6 +1009,10 @@ test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— �
   );
 
   // 端口名在全文件的**每一处**出现都必须落在枚举角色里（多一处即红）。
+  // GY-I11 录音字节来源片：语音域装配新增**唯一一处**转交
+  // （`audioMedia: { objectStore: <端口>, mediaRecords: <媒体登记册> }`，见 `speech/provider.ts`
+  // 的 `createObjectStoreAudioSource`）⇒ `property-assignment:objectStore` 由 1 处变 2 处。
+  // 该处被**逐行钉死**在 `registerSpeechRoutes(...)` 那一行：多出第三处、或挪到别的行 ⇒ 红。
   assert.deepEqual(
     audit.identifierRoles.map((entry) => entry.role).sort(),
     [
@@ -1016,11 +1020,27 @@ test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— �
       'call-argument:app.decorate',
       'declaration',
       'property-assignment:objectStore',
+      'property-assignment:objectStore',
       'property-signature',
       'property-signature',
     ],
-    '端口名只允许出现在：类型声明（注入选项/装饰）×2、解构绑定（唯一输入）、端口声明、objectStore 实参、测试装饰',
+    '端口名只允许出现在：类型声明（注入选项/装饰）×2、解构绑定（唯一输入）、端口声明、objectStore 实参 ×2（媒体服务装配 + 语音域音频字节来源）、测试装饰',
   );
+  {
+    const objectStoreArguments = audit.identifierRoles.filter((entry) => entry.role === 'property-assignment:objectStore');
+    const speechAudioMediaLine =
+      app.text.split(/\r?\n/).findIndex((line) => line.includes('const speechAudioMedia = {')) + 1;
+    assert.ok(speechAudioMediaLine > 0, 'app.ts 必须有 speechAudioMedia 端口转发行');
+    assert.equal(
+      objectStoreArguments.filter((entry) => entry.line === speechAudioMediaLine).length,
+      1,
+      '第二处 objectStore 必须就在 speechAudioMedia 转发行上（录音字节来源的端口转交），不得出现在别处',
+    );
+    assert.ok(
+      app.text.includes('const speechAudioMedia = { objectStore: mediaObjectStore, mediaRecords: mediaStore };'),
+      'speechAudioMedia 只允许原样转发既有端口（不得新建/派生存储端口）',
+    );
+  }
   // 唯一输入：解构绑定必须把 `BuildAppOptions.mediaObjectStore` 绑定为 `mediaObjectStoreOption`。
   assert.ok(
     audit.identifierRoles.some((entry) => entry.role === 'binding-element:propertyName→mediaObjectStoreOption'),

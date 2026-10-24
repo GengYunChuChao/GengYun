@@ -106,6 +106,18 @@ export const IDEMPOTENCY_TTL_MS = 5 * 60 * 1000;
 /** 同键并发等待上界：超过即 409 REQUEST_IN_PROGRESS。 */
 export const IDEMPOTENCY_WAIT_MS = 2000;
 
+/**
+ * 社区侧声明的媒体元数据读取端口（**不 import 媒体域实现**；由装配层把 `MediaStore.getMedia`
+ * 适配进来，见 `services/api/src/app.ts`）。#14 片A：送审 media 载荷据此补齐 mime/kind。
+ */
+export interface CommunityMediaMetadataSource {
+  /**
+   * 读某媒体的 mime；未接线 / 查无该媒体 / 无 mime ⇒ null。
+   * 返回 null 时送审载荷保持「只有 media_id」（缺 mime ⇒ 审核域归一仍判 `MODEL_MEDIA_UNSUPPORTED`，fail-closed）。
+   */
+  mimeOf(mediaId: string): Promise<string | null>;
+}
+
 export interface CommunityServiceDeps {
   store: CommunityStore;
   /** 作者投影（阶段 2 接 `public_authors`）。**必填**：不提供默认值，避免悄悄伪造作者。 */
@@ -143,6 +155,11 @@ export interface CommunityServiceDeps {
    * 本服务的结论台账照旧保持 `contract_complete:false` + `missing_contract_fields`（见 `buildVerdict`）。
    */
   moderation?: CommunityModerationLink;
+  /**
+   * 媒体元数据投影来源（#14 片A：送审 media 载荷补齐 mime/kind）。
+   * 不传 ⇒ 送审载荷只回 `media_id`（缺 mime ⇒ 审核域归一仍判 `MODEL_MEDIA_UNSUPPORTED`，fail-closed）。
+   */
+  mediaMetadata?: CommunityMediaMetadataSource;
   now?: () => Date;
   newId?: () => string;
   idempotencyTtlMs?: number;
@@ -216,6 +233,31 @@ function mediaInputs(mediaIds: readonly string[]): Array<{ media_id: string }> {
   return mediaIds.map((media_id) => ({ media_id }));
 }
 
+/** mime → kind：图片 `image`、视频 `video`、其余 `other`（送审 media 载荷的 kind 推导口径）。 */
+function mediaKindOf(mime: string): 'image' | 'video' | 'other' {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return 'other';
+}
+
+/**
+ * 送审媒体引用投影：读 mime（来自装配层注入的媒体元数据源）并据此推导 `kind`。
+ * 读不到 mime（未接线 / 查无 / 无 mime）⇒ 只回 `{ media_id }`，让审核域归一继续判
+ * `MODEL_MEDIA_UNSUPPORTED`（fail-closed，**不**伪造 mime/kind）。
+ */
+async function mediaRefs(
+  source: CommunityMediaMetadataSource | null,
+  mediaIds: readonly string[],
+): Promise<Array<{ media_id: string; mime?: string; kind?: string }>> {
+  return Promise.all(
+    mediaIds.map(async (media_id) => {
+      const mime = source === null ? null : await source.mimeOf(media_id);
+      if (typeof mime !== 'string' || mime.length === 0) return { media_id };
+      return { media_id, mime, kind: mediaKindOf(mime) };
+    }),
+  );
+}
+
 export function createCommunityService(deps: CommunityServiceDeps) {
   const store = deps.store;
   const authors = deps.authors;
@@ -223,6 +265,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   const knowledge = deps.knowledge ?? createUnwiredKnowledgeAvailabilityPort();
   const events = deps.events ?? createUnwiredCommunityEventsPort();
   const moderationLink: CommunityModerationLink | null = deps.moderation ?? null;
+  const mediaMetadata: CommunityMediaMetadataSource | null = deps.mediaMetadata ?? null;
   const signingKey = deps.signingKey;
   const clock = deps.now ?? (() => new Date());
   const newId = deps.newId ?? (() => randomUUID());
@@ -345,7 +388,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     return moderationLink.screen({
       actor: linkActorOf(user),
       // 送审内容与"同一构造函数"口径一致：帖子 = title + LF + body；媒体**显式**声明。
-      content: { target_ref: { ...target }, text, media: mediaInputs(mediaIds) },
+      // #14 片A：媒体载荷补齐 mime/kind（读不到 mime 时仍只回 media_id，fail-closed）。
+      content: { target_ref: { ...target }, text, media: await mediaRefs(mediaMetadata, mediaIds) },
     });
   }
 
@@ -1039,7 +1083,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             // 不静默丢弃、也不留 published），错误原样上抛（fail-closed）。
             await link.publish({
               actor: linkActorOf(user),
-              content: { target_ref: target, text, media: mediaInputs(body.media_ids) },
+              content: { target_ref: target, text, media: await mediaRefs(mediaMetadata, body.media_ids) },
             });
             const published = await store.getPost(id);
             if (published === null) {
@@ -1169,7 +1213,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
             // （私有 / 待审，不静默丢弃、也不留 published），错误原样上抛（fail-closed）。
             await link.publish({
               actor: linkActorOf(user),
-              content: { target_ref: target, text, media: mediaInputs(body.media_ids) },
+              content: { target_ref: target, text, media: await mediaRefs(mediaMetadata, body.media_ids) },
             });
             const published = await store.getPost(postId);
             if (published === null) {

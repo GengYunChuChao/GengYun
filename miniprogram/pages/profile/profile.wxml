@@ -19,20 +19,28 @@
     </view>
   </view>
 
+  <!-- 三项计数各自加载、各自失败：失败项显示「加载失败 · 重试」，重试只重读该项，
+       其余项已成功的条数保留。条数仍是第一页已加载条数（N+ 表示还有下一页），不是总数。 -->
   <view class="stat-grid">
     <view class="stat" bindtap="openFavorites" role="button" aria-label="我的收藏">
       <text class="stat__value">{{favoriteCount}}</text>
       <text class="stat__label">我的收藏</text>
+      <text class="stat__state" wx:if="{{favoriteState === 'loading'}}">加载中…</text>
+      <view class="stat__state stat__state--error" wx:elif="{{favoriteState === 'error'}}" catchtap="retryCount" data-kind="favorite" role="button" aria-label="重试加载我的收藏条数">加载失败 · 重试</view>
     </view>
     <view class="stat" bindtap="openHistory" role="button" aria-label="识别历史">
       <text class="stat__value">{{historyCount}}</text>
       <text class="stat__label">识别历史</text>
+      <text class="stat__state" wx:if="{{historyState === 'loading'}}">加载中…</text>
+      <view class="stat__state stat__state--error" wx:elif="{{historyState === 'error'}}" catchtap="retryCount" data-kind="history" role="button" aria-label="重试加载识别历史条数">加载失败 · 重试</view>
     </view>
     <!-- demo .stat-grid 的三项都是可点的 <button class="stat">：我的发布 → 社区页「我的投稿」。
          小程序没有独立的「我的发布」页，故跳既有路由并按契约 `mine` 预选筛选（不新建页面）。 -->
     <view class="stat" bindtap="openMyPosts" role="button" aria-label="我的发布（在社区页按我的投稿查看）">
       <text class="stat__value">{{myPostCount}}</text>
       <text class="stat__label">我的发布</text>
+      <text class="stat__state" wx:if="{{myPostState === 'loading'}}">加载中…</text>
+      <view class="stat__state stat__state--error" wx:elif="{{myPostState === 'error'}}" catchtap="retryCount" data-kind="myPost" role="button" aria-label="重试加载我的发布条数">加载失败 · 重试</view>
     </view>
   </view>
 

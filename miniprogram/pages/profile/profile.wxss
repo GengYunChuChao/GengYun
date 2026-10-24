@@ -24,3 +24,20 @@
   min-height: var(--tap-min, 44px);
   box-sizing: border-box;
 }
+
+/* 计数项的加载/失败状态：失败项必须可点重试，触控高度沿用 --tap-min。 */
+.stat__state {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: calc(12px * var(--font-scale, 1));
+  line-height: 1.6;
+}
+
+.stat__state--error {
+  min-height: var(--tap-min, 44px);
+  padding: 4px 0;
+  box-sizing: border-box;
+  color: var(--tone-danger-ink);
+  text-decoration: underline;
+}

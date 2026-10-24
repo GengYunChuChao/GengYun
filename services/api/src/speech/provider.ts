@@ -21,7 +21,8 @@
  */
 import { createHash } from 'node:crypto';
 import type { ExecutionMode } from '../contract.ts';
-import { createLiveSpeechProviderFromConfig, createUnwiredAudioSource } from '../ai/asr-live-adapter.ts';
+import { createLiveSpeechProviderFromConfig } from '../ai/asr-live-adapter.ts';
+import { createObjectStoreAudioSource, type ObjectStoreAudioSourceOptions } from '../ai/asr-audio-source.ts';
 import { PRODUCT_GATE_AUTHORIZATION } from '../ai/live-gate.ts';
 import type { AsrProviderConfig } from '../config.ts';
 
@@ -217,14 +218,26 @@ export function createRealSpeechProvider(
  * `aiProviders`（GY-R28-W1）：`loadConfig()` 搬来的**被校验快照**（`config.aiProviders.asr`）。
  * - 不传 / `null` ⇒ 与接线前**逐字节相同**（`real` 走 fail-closed 实现）；
  * - 传了 ⇒ `real` 装上真实适配器（`createLiveSpeechProviderFromConfig`）；端口装配失败则回落成
- *   接线前的 fail-closed（**绝不**回退替身）。录音字节由端口提供，产品装配注入的是**未接线**来源
- *   （对象存储属媒体域），因此真实发送是否可达仍由媒体端口把关。
+ *   接线前的 fail-closed（**绝不**回退替身）。
+ *
+ * **录音字节来源（GY-I11 本片）**：`audioSource` 一律由
+ * `createObjectStoreAudioSource({@link audioMedia})` 构造 —— 注入端口齐备时它按
+ * `jobId → 任务归属 → media_id+revision → 媒体登记册 → 对象存储` 取字节（含归属校验与
+ * 字节身份校验）；端口未配置时它**仍是同一个实现**的 `unwired` 形态，恒返回 `null`
+ * ⇒ 适配器按既有口径落 `failed PROVIDER_UNAVAILABLE`（未发包、不占预算）。
+ * ⛔ 任何情况下都不读 ambient env、不回退磁盘默认路径、不返回"猜的"字节。
  */
 export function createSpeechProvider(input: {
   executionMode: ExecutionMode;
   endpoint?: string | null;
   apiKey?: string | null;
   aiProviders?: AsrProviderConfig | null;
+  /**
+   * 录音字节来源的三个注入端口（`speech/store.ts` 的 store、`media/store.ts` 的登记册、
+   * `media/object-store.ts` 的对象存储）。**未给 / 给不全 ⇒ 端口未配置 ⇒ fail-closed**
+   * （`PROVIDER_UNAVAILABLE`），绝不用替身或空字节顶上。
+   */
+  audioMedia?: ObjectStoreAudioSourceOptions;
 }): SpeechProvider {
   if (input.executionMode === 'real') {
     const live = input.aiProviders ?? null;
@@ -232,7 +245,7 @@ export function createSpeechProvider(input: {
       try {
         return createLiveSpeechProviderFromConfig(live, {
           authorization: PRODUCT_GATE_AUTHORIZATION,
-          audioSource: createUnwiredAudioSource('真实对象存储未接线：取不到待转写的私有录音字节'),
+          audioSource: createObjectStoreAudioSource(input.audioMedia),
         });
       } catch {
         return createRealSpeechProvider({}, '真实 ASR 端口装配失败（配置不合法；fail-closed，未发包，不回退替身）');

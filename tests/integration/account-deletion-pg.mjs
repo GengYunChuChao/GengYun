@@ -68,18 +68,21 @@ const ACCOUNT_DELETION_FUNCTION = 'public.request_account_deletion';
 const NEW_MIGRATION = '0016_account_deletion_persistence.sql';
 const DOWN_MIGRATION = 'migrations/rollback/0016_account_deletion_persistence.down.sql';
 /**
- * `0031_online_purge_evidence.sql` 的读函数 `read_online_purge_evidence(uuid,uuid)` 是 `LANGUAGE sql`
- * ⇒ **建函数时**就解析函数体里的表/列；它按 `deletion_requests.user_id` 过滤，而该列由 **0016** 添加
- * （`0016_account_deletion_persistence.sql` 的 `ADD COLUMN user_id`）。
+ * 这两个迁移的读函数是 `LANGUAGE sql` ⇒ **建函数时**就解析函数体里的表/列，而它们引用的列都由
+ * **0016** 添加：
+ *   - `0031_online_purge_evidence.sql` 的 `read_online_purge_evidence(uuid,uuid)` 按
+ *     `deletion_requests.user_id` 过滤（`0016_account_deletion_persistence.sql` 的 `ADD COLUMN user_id`）；
+ *   - `0038_r34_deletion_receipt_persistence.sql` 的 `resolve_deletion_receipt` / `count_deletion_receipts`
+ *     引用 `deletion_requests.receipt_expires_at`（0016 添加）。
  *
- * 本文件刻意把 0016 留到下面「UP → ROLLBACK → REPLAY」单独演练，于是 0031 **必须推迟**到 0016
- * 重放完成之后再应用 —— 否则建函数即 `42703 column r.user_id does not exist`，并把 `owner` 连接
+ * 本文件刻意把 0016 留到下面「UP → ROLLBACK → REPLAY」单独演练，于是这两个迁移**必须推迟**到 0016
+ * 重放完成之后再应用 —— 否则建函数即 `42703 column ... does not exist`，并把 `owner` 连接
  * 留在**已中止的事务**里（后续语句全变 `25P02`，反而盖掉真错误）。
  *
- * 这不是"跳过 0031"：它照旧在全量清单里、照旧被应用、照旧报唯一索引与函数计数；只是把它放回
- * `db:migrate` 的真实版本序（0016 < 0031），与 0016 的回滚/重放顺序一致。
+ * 这不是"跳过"它们：照旧在全量清单里、照旧被应用、照旧报唯一索引与函数计数；只是把它们放回
+ * `db:migrate` 的真实版本序（0016 < 0031 < 0038），与 0016 的回滚/重放顺序一致。
  */
-const AFTER_REPLAY_MIGRATION = '0031_online_purge_evidence.sql';
+const AFTER_REPLAY_MIGRATIONS = ['0031_online_purge_evidence.sql', '0038_r34_deletion_receipt_persistence.sql'];
 const HOUR_MS = 3600 * 1000;
 
 const serverNow = () => new Date();
@@ -159,6 +162,42 @@ function onlineEvidenceGrantRegion() {
   return region;
 }
 
+/**
+ * 从**出厂文件**同一份 `20-login-roles.sql` 抽取 **0038 回执台账**的 EXECUTE 授权区域并原样执行。
+ *
+ * 为什么要执行它：回执签发/反查/诊断读数只走迁移 0038 的三条窄口径函数
+ * （`set_deletion_receipt` / `resolve_deletion_receipt` / `count_deletion_receipts`），
+ * 运行时角色若没有它们的 EXECUTE ⇒ 回执签发与回执 GET 都 `42501`，被折成 503
+ * 「回执台账暂不可用」。不复制粘贴 SQL（区域被删/被改宽 ⇒ 本测试必须变红）。
+ */
+function deletionReceiptGrantRegion() {
+  const matched = deploySqlFile('20-login-roles.sql').match(
+    /-- #region gy-r34-i19-deletion-receipt-grant\r?\n([\s\S]*?)\r?\n\s*-- #endregion gy-r34-i19-deletion-receipt-grant/,
+  );
+  assert.ok(matched !== null, '20-login-roles.sql 必须含 gy-r34-i19-deletion-receipt-grant 区域');
+  const region = matched[1];
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.set_deletion_receipt'),
+    '区域必须撤 PUBLIC 对 set_deletion_receipt 的执行权',
+  );
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.resolve_deletion_receipt'),
+    '区域必须撤 PUBLIC 对 resolve_deletion_receipt 的执行权',
+  );
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.count_deletion_receipts'),
+    '区域必须撤 PUBLIC 对 count_deletion_receipts 的执行权',
+  );
+  assert.equal((region.match(/GRANT EXECUTE ON FUNCTION/g) ?? []).length, 3, '区域必须**恰好三条** GRANT EXECUTE');
+  assert.equal(
+    (region.match(new RegExp(`TO ${runtimeRole};`, 'g')) ?? []).length,
+    3,
+    '三条 EXECUTE 都只能授予运行时登录角色',
+  );
+  assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
+  return region;
+}
+
 /** 回执摘要＝回执 bearer 的 sha256（**独立**用 node:crypto 算，不复用被测代码）。 */
 const sha256Hex = (text) => createHash('sha256').update(text).digest('hex');
 /** 登录主体：三个 code 映射到**同一个** subject ⇒ 同一账号、三个会话（分离变量需要多会话）。 */
@@ -220,7 +259,7 @@ function makeHttp(origin) {
   };
 }
 
-/** 装机：迁移（跳过 0016，它单独演练；0031 依赖 0016 的列 ⇒ 也推迟到 0016 重放之后）+ 后面再装最小权限角色与运行时 LOGIN。 */
+/** 装机：迁移（跳过 0016，它单独演练；0031/0038 依赖 0016 的列 ⇒ 也推迟到 0016 重放之后）+ 后面再装最小权限角色与运行时 LOGIN。 */
 async function applyMigrations() {
   const discovered = readdirSync(migrationsDir)
     .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
@@ -230,9 +269,9 @@ async function applyMigrations() {
   assert.ok(discovered.includes(NEW_MIGRATION), `迁移清单必须含 ${NEW_MIGRATION}`);
   note(`迁移清单（${discovered.length} 个）：${discovered.join(' ')}`);
   for (const name of discovered) {
-    // 0016 由下面的 UP→ROLLBACK→REPLAY 单独演练；0031 依赖 0016 新加的列（见 AFTER_REPLAY_MIGRATION）。
+    // 0016 由下面的 UP→ROLLBACK→REPLAY 单独演练；0031/0038 依赖 0016 新加的列（见 AFTER_REPLAY_MIGRATIONS）。
     if (name === NEW_MIGRATION) continue;
-    if (name === AFTER_REPLAY_MIGRATION) continue;
+    if (AFTER_REPLAY_MIGRATIONS.includes(name)) continue;
     await owner.query(sqlFile(`migrations/${name}`));
   }
   return discovered;
@@ -416,10 +455,12 @@ try {
   await owner.query(sqlFile(`migrations/${NEW_MIGRATION}`));
   assert.equal(await functionCount(), 1, 'REPLAY 后函数必须回来');
   assert.equal(await columnCount(), 3);
-  say(`迁移三连（真库）：全量 up（跳过 0016；0031 依赖它的列，见下条按版本序补）⇒ ${NEW_MIGRATION} UP(函数 1/列 3/索引 1/约束 1) → ROLLBACK(全 0) → REPLAY(全回来)，版本号无重复`);
+  say(`迁移三连（真库）：全量 up（跳过 0016；0031/0038 依赖它的列，见下条按版本序补）⇒ ${NEW_MIGRATION} UP(函数 1/列 3/索引 1/约束 1) → ROLLBACK(全 0) → REPLAY(全回来)，版本号无重复`);
 
-  // 0016 重放完成后，按**真实版本序**补上 0031（读函数引用 0016 的 `user_id`，见 AFTER_REPLAY_MIGRATION）。
-  await owner.query(sqlFile(`migrations/${AFTER_REPLAY_MIGRATION}`));
+  // 0016 重放完成后，按**真实版本序**补上 0031/0038（读函数引用 0016 的列，见 AFTER_REPLAY_MIGRATIONS）。
+  for (const migration of AFTER_REPLAY_MIGRATIONS) {
+    await owner.query(sqlFile(`migrations/${migration}`));
+  }
   const evidenceFunctions = Number(
     (
       await owner.query(
@@ -437,7 +478,7 @@ try {
     2,
     '0031 的两个可空列必须已存在',
   );
-  say(`迁移依赖序（真库）：${AFTER_REPLAY_MIGRATION} 在 0016 重放之后应用 ⇒ 两函数（record/read）+ 两列（online_purged_at/online_purge_evidence）就位`);
+  say(`迁移依赖序（真库）：${AFTER_REPLAY_MIGRATIONS.join(' / ')} 在 0016 重放之后应用 ⇒ 两函数（record/read）+ 两列（online_purged_at/online_purge_evidence）就位`);
 
   // ---------------------------------------------------------------- [3] 最小权限
   // 与出厂 provisioning 同形：先装域组角色文件，再建运行时 LOGIN 并授组，最后**原样执行**
@@ -452,6 +493,8 @@ try {
   await owner.query(deletionGrantRegion());
   // 0031 的两条窄口径函数：EXECUTE 同样从出厂文件原样抽取执行（受理时写证据、回执照证据推导都要它）。
   await owner.query(onlineEvidenceGrantRegion());
+  // 0038 的三条回执台账函数：EXECUTE 同样从出厂文件原样抽取执行（回执签发/反查/诊断读数只有这三条路径）。
+  await owner.query(deletionReceiptGrantRegion());
   pool = createPool(runtimeUrl().href);
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
   assert.ok(Object.values(flags).every((value) => value === false));
@@ -472,6 +515,18 @@ try {
     evidenceExecutables,
     true,
     '运行时角色必须能执行 0031 的写/读函数（受理时落证据、回执照证据推导都只有这一条路径）',
+  );
+  const receiptExecutables = (
+    await pool.query(
+      `SELECT has_function_privilege(current_user, 'set_deletion_receipt(uuid,text,timestamptz,timestamptz)', 'EXECUTE')
+          AND has_function_privilege(current_user, 'resolve_deletion_receipt(text)', 'EXECUTE')
+          AND has_function_privilege(current_user, 'count_deletion_receipts()', 'EXECUTE') AS ok`,
+    )
+  ).rows[0].ok;
+  assert.equal(
+    receiptExecutables,
+    true,
+    '运行时角色必须能执行 0038 的三条回执台账函数（签发/反查/诊断读数都只有这三条路径）',
   );
   const acl = (await owner.query(`SELECT coalesce(array_to_string(proacl, ','), '') acl FROM pg_proc WHERE proname='request_account_deletion'`)).rows[0].acl;
   assert.equal(/(^|,)=/.test(acl), false, `proacl 不得含 PUBLIC 授权：${acl}`);
@@ -677,12 +732,19 @@ try {
   await login(rolledBack.http, codeD, 3);
   const userD = await userIdOf(codeD);
   assert.equal(await activeSessions(userD), 3);
+  // 回执台账是**全局**计数（`count_deletion_receipts()` 跨所有账号）：此前的成功臂（臂 1/臂 3）
+  // 已各自签发了回执，所以这里不能断言「全库 0 回执」，只能断言「这次失败受理不得新增回执」。
+  const receiptsBeforeRollback = await rolledBack.app.deletionReceipts.liveCount();
   const failed = await requestDeletion(rolledBack.http, tokenD1, 'i19-del-d-key-1');
   assert.notEqual(failed.status, 202, `中途失败绝不能回 202：${failed.text}`);
   assert.equal(failed.status, 503, JSON.stringify(failed.body));
   assert.equal(failed.body.error.code, 'PROVIDER_UNAVAILABLE');
   assert.equal(failed.body.error.retryable, true);
-  assert.equal(rolledBack.app.deletionReceipts.liveCount(), 0, '失败不得签发任何回执');
+  assert.equal(
+    await rolledBack.app.deletionReceipts.liveCount(),
+    receiptsBeforeRollback,
+    '失败不得签发任何回执（回执台账计数不得增长）',
+  );
   const dRow = await userRow(userD);
   assert.equal(dRow.state, 'active', '整体回滚：状态必须原样');
   assert.equal(Number(dRow.auth_epoch), 1, '整体回滚：auth_epoch 必须原样');
@@ -775,6 +837,9 @@ try {
   const realOrigin = await realApp.listen({ host: '127.0.0.1', port: 0 });
   const realHttp = makeHttp(realOrigin);
   assert.equal(realApp.accountDeletion.available, false, 'real 模式下注销域必须不可用（即使装配了真库）');
+  // 回执台账是**全局**计数（`count_deletion_receipts()` 跨所有账号）：此前成功臂已签发过回执，
+  // 所以这里不能断言「全库 0 回执」，只能断言「real 模式的 POST/GET 不得新增回执」。
+  const receiptsBeforeReal = await realApp.deletionReceipts.liveCount();
   const realPost = await requestDeletion(realHttp, tokenI1, 'i19-del-i-key-1');
   assert.equal(realPost.status, 503, JSON.stringify(realPost.body));
   assert.equal(realPost.body.error.code, 'PROVIDER_UNAVAILABLE');
@@ -789,7 +854,11 @@ try {
   assert.equal(Number(iRow.auth_epoch), 1);
   assert.equal(await activeSessions(userI), 1);
   assert.equal(await requestCount(userI), 0);
-  assert.equal(realApp.deletionReceipts.liveCount(), 0);
+  assert.equal(
+    await realApp.deletionReceipts.liveCount(),
+    receiptsBeforeReal,
+    'real 模式不得签发任何回执（回执台账计数不得增长）',
+  );
   say('real 模式（真库）：`available === false`，POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false：未接线不可重试)，且该账号零状态变化、零回执 ⇒ 真库存在也不放行 real 域');
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外付费请求；发现迁移 ${discovered.length} 个`);

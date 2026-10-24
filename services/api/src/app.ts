@@ -175,6 +175,7 @@ import { registerAccountDeletionRoutes } from './routes/account-deletion.ts';
 import {
   createAccountDeletionRequestService,
   createDeletionReceiptRegistry,
+  createPostgresDeletionReceiptRegistry,
   RECEIPT_TTL_MS,
   type AccountDeletionRequestService,
   type DeletionReceiptRegistry,
@@ -928,7 +929,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //  1. 授权中间件：注入的 `privacyInjection.consent` 优先；否则**仅当配置了数据库**时
   //     复用已合并的 `consent-pg.requireConsent` 单事务读取口（不新写 SQL、不新造事实源）。
   //     无数据库（本地 stub/回环测试、以及所有既有集成脚本）⇒ 不挂 ⇒ 行为与接线前逐字相同。
-  //  2. 撤回/注销消费者：注入优先；否则**配置了数据库**时由持久账本现建（撤回/授予时撤销在途外发）。
+  //  2. 撤回/注销消费者：注入优先；否则**配置了数据库且 `real` 模式**时由持久账本现建（撤回/授予时撤销在途外发；非 `real` 无真实外发 ⇒ 不注入，回落无撤销）。
   //  3. **持久外发账本**（第二片）：仅当配置了数据库时装配；提交边界在**单事务**内完成
   //     「校验读取 + 实际写入」（见 privacy/ledger-pg.ts）。`real` 未接真实传输 ⇒
   //     受理处在**任何账本变更之前** 503 `PROVIDER_UNAVAILABLE`，**零 sent 记录**；
@@ -959,7 +960,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : null;
   const egressRevoker: EgressRevoker | undefined =
     privacyInjection?.egressRevoker ??
-    (egressLedger === null ? undefined : createEgressRevoker({ ledger: egressLedger }));
+    (egressLedger === null || config.executionMode !== 'real' ? undefined : createEgressRevoker({ ledger: egressLedger }));
   const mediaEgress = (dataType: string, capability: string): MediaJobEgress | undefined =>
     egressLedger === null || privacyInFlight === null
       ? undefined
@@ -1226,6 +1227,23 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
             + '（已发布 + 来源已核对 + 当前生效 + 非模拟），id/type/revision 逐项一致才判可用',
           read: (target) => communityKnowledgeRowOf(target),
         }));
+  // **媒体域持久化端口**（W12，#6）：登记册 / 短效授权 / 幂等台账三者的**事实源**。
+  // ⚠ 本块**前移**到社区服务装配之前（原在下方媒体装配块）：#14 片A 社区送审要读 mime，
+  // 必须与社区服务共用**同一份** `mediaStore`（登记册事实源），不能自建第二份。
+  // 判据与 favorites/history 逐字同形（`real` 才接 PG，否则内存），但多一个非它不可的前置条件：
+  // `media.object_ref_cipher` 是 `text NOT NULL`，落库前必须加密，因此**没有键就不接 PG**。
+  // 键的「有没有」判据：`config.ts` 给出的正常形状是 `string`／`null`，但既有测试夹具直接
+  // 拼 `{ ...baseConfig(), executionMode: 'real' }` 之类的字面量配置，新字段可能是 `undefined`／空白。
+  // 这里统一归一化一次：**只有非空字符串才算有键**，其余一律按「未配置」走 fail-closed，
+  // ⛔ 不得因为 `undefined !== null` 就当成有键去做加密（那会让缺键在构造期抛错，而不是 503）。
+  const mediaObjectRefKeyMaterial: string | null =
+    typeof config.mediaObjectRefKey === 'string' && config.mediaObjectRefKey.trim() !== ''
+      ? config.mediaObjectRefKey
+      : null;
+  const mediaStore: MediaStore = mediaStoreOption
+    ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
+      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
+      : createMemoryMediaStore({ now: () => clock().getTime() }));
   // **放行判据 = `communityStore.persistent`**（不是"某处注入了什么"）：内存实现在 real 下
   // 一律 503，PG 实现在 real + 连接池时放行；持久化改造后这条判据仍然成立且更严。
   const communityRealUnwired = config.executionMode === 'real' && !communityStore.persistent;
@@ -1245,6 +1263,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       events: communityEvents,
       // GY-I14 ⇄ GY-I15 联动接线：投稿/评论/编辑在落内容行前送审审核域；明确驳回一律不得公开。
       ...(communityModerationLink === null ? {} : { moderation: communityModerationLink }),
+      // #14 片A：送审 media 载荷补齐 mime/kind —— 把媒体域 `MediaStore.getMedia` 适配成社区侧
+      // 窄端口 `CommunityMediaMetadataSource.mimeOf`（读不到 mime ⇒ 只回 media_id，fail-closed）。
+      mediaMetadata: { mimeOf: async (id) => (await mediaStore.getMedia(id))?.mime ?? null },
       signingKey: communitySigningKey,
       now: clock,
     });
@@ -1575,21 +1596,6 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // **不传该属性**，服务层落回不可解析占位域 `https://media.placeholder.invalid`。
   // 它只改句柄的 host，**不**是真实端口的门（端口仍只由上面的显式注入决定）。
   const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });
-  // **持久化端口**（W12，#6）：登记册 / 短效授权 / 幂等台账三者的**事实源**。
-  // 判据与 favorites/history 逐字同形（`real` 才接 PG，否则内存），但多一个非它不可的前置条件：
-  // `media.object_ref_cipher` 是 `text NOT NULL`，落库前必须加密，因此**没有键就不接 PG**。
-  // 键的「有没有」判据：`config.ts` 给出的正常形状是 `string`／`null`，但既有测试夹具直接
-  // 拼 `{ ...baseConfig(), executionMode: 'real' }` 之类的字面量配置，新字段可能是 `undefined`／空白。
-  // 这里统一归一化一次：**只有非空字符串才算有键**，其余一律按「未配置」走 fail-closed，
-  // ⛔ 不得因为 `undefined !== null` 就当成有键去做加密（那会让缺键在构造期抛错，而不是 503）。
-  const mediaObjectRefKeyMaterial: string | null =
-    typeof config.mediaObjectRefKey === 'string' && config.mediaObjectRefKey.trim() !== ''
-      ? config.mediaObjectRefKey
-      : null;
-  const mediaStore: MediaStore = mediaStoreOption
-    ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
-      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
-      : createMemoryMediaStore({ now: () => clock().getTime() }));
   // `real` + 有数据库池 + **缺** `MEDIA_OBJECT_REF_KEY` ⇒ 媒体域整域 fail-closed（503），
   // **不是**降级：拿不到键就无法如实写 `object_ref_cipher`，用进程内 `Map` 顶替等于向客户端
   // 谎报「已持久化」——这正是 W12 要消灭的那种假持久化。
@@ -2028,11 +2034,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //     202 只表示「已受理」：备份副本清除未接线 ⇒ 该请求此刻**确实无法完成** ⇒ `state: 'blocked'`
   //     （`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期当完成」），
   //     绝不回 `completed`。
-  const deletionReceipts = createDeletionReceiptRegistry({ now: clock });
+  // 回执 bearer 台账：有真库且**受理已接线**（`durableDeletionRequests !== null`）⇒ 走迁移 0038
+  // 的持久化读写（重启后旧回执仍可反查，不再因进程内台账清空而不可达）；否则进程内实现
+  // （stub/demo 无真库时行为与追加前逐字一致）。
+  const deletionReceipts: DeletionReceiptRegistry =
+    durableDeletionRequests !== null && pool !== null
+      ? createPostgresDeletionReceiptRegistry({ pool, now: clock })
+      : createDeletionReceiptRegistry({ now: clock });
   const accountDeletion = createAccountDeletionRequestService({
     deletion: userDataDeletion,
     receipts: deletionReceipts,
     available: config.executionMode !== 'real',
+    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；
+    // 不注入 ⇒ 行为与接线前逐字一致（见 account-deletion.ts 的 AccountEgressRevoker 注释）。
+    ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
 
   // =====================================================================================
@@ -2201,7 +2216,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     service: knowledgeQueryFace,
   });
   registerRecognitionRoutes(app, config, gatedGuards, recognitionService, { consent: consentGate, egress: recognitionEgress });
-  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress }, config.executionMode === 'real' ? pool : null);
+  // GY-I11 录音字节来源（本片唯一接线点）：把**已经按既有口径解析好的**对象存储端口与媒体
+  // 登记册交给转写域，真实 AudioSource 据此按 `media_id` + `revision` 取字节并做归属校验。
+  //   - 这里只**转发**既有端口，不构造新存储、不读 env、**不**走 `approveRealMediaWiring()`
+  //     （真实对象存储的开启仍只由上面的 `mediaObjectStore` 显式注入决定）；
+  //   - `real` 且未注入真实存储 ⇒ 转发的是 `unwired` 端口：`getObject` 抛
+  //     `PROVIDER_UNAVAILABLE` ⇒ 字节来源 fail-closed（未发包），与接线前同一结局；
+  //   - 真实存储与批准能力都到位时，同一条装配**无需再改**即可取到真实字节。
+  const speechAudioMedia = { objectStore: mediaObjectStore, mediaRecords: mediaStore };
+  registerSpeechRoutes(app, config, { guards: gatedGuards, store: speechStore, provider: speechProvider, media: speechMedia, audioMedia: speechAudioMedia, jobDeadlineMs: speechJobDeadlineMs, consent: consentGate, egress: speechEgress }, config.executionMode === 'real' ? pool : null);
   registerSynthesisRoutes(app, config, gatedGuards, synthesisService, consentGate, synthesisEgress);
   // GY-R27 S10（#10）· OCR 域的**持久化接线**（迁移 `0024_ocr_persistence.sql`）。
   //
