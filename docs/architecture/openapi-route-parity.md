@@ -15,13 +15,13 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 116 |
+| 已挂载路由（不含 HEAD） | 117 |
 | 契约操作（paths × method） | 116 |
-| 实现 ∩ 契约 | 115 |
+| 实现 ∩ 契约 | 116 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
-| 未实现但台账已标 `planned` | 1 |
+| 未实现但台账已标 `planned` | 0 |
 | 台账 `route_mounted` 与运行时不一致 | 0 |
 
 ### 多出（实现有、契约无）
@@ -40,9 +40,7 @@
 
 ### 未实现但台账已标 planned
 
-| 操作 | operationId | 阻塞说明 |
-| --- | --- | --- |
-| `get /api/v1/catalog/species` | listSpecies | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
+无。
 
 ### 台账 route_mounted 与运行时不一致
 
@@ -97,7 +95,7 @@
 | POST | `/auth/wechat` | loginWechat | public | 不要求 | 是 | implemented | 一致 |
 | GET | `/catalog/crops` | listCrops | user | 不要求 | 是 | implemented | 一致 |
 | GET | `/catalog/regions` | listRegions | user | 不要求 | 是 | implemented | 一致 |
-| GET | `/catalog/species` | listSpecies | user | 不要求 | 否 | planned | 计划中 |
+| GET | `/catalog/species` | listSpecies | user | 不要求 | 是 | implemented | 一致 |
 | DELETE | `/comments/{id}` | deleteComment | user | 需要 | 是 | partial | 一致 |
 | GET | `/comments/{id}` | getComment | user | 不要求 | 是 | partial | 一致 |
 | PATCH | `/comments/{id}` | editComment | user | 需要 | 是 | partial | 一致 |

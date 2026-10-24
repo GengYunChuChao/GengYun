@@ -664,23 +664,30 @@ const TABLE_WIDE_COLUMN = '*';
  *   `SELECT`（`community/store-pg.ts`）⇒ 字面量 268 → **269**、SELECT 143 → **144**；
  *   DELETE 36、RETURNING 82、列要求 1720／已覆盖 1666、引用表 44 张、`rowLocks` 分桶、
  *   INSERT/UPDATE 42/47 均不变。零迁移、零 GRANT 变更。
+ * ⑭ 2026-10-25 GY-I07（Refs #7）`GET /catalog/species`：`profile/service.ts` 新增一条
+ *   `SELECT … FROM public.species … FOR SHARE` ⇒ 逐文件 `profile/service.ts` 11 → **12**、
+ *   字面量 272 → **273**、SELECT 144 → **145**、`rowLocks.SHARE` 16 → **17**、
+ *   行锁要求 41 → **42**、引用表 44 → **45**（新增 `public.species`）、
+ *   列要求 1726 → **1730**／已覆盖 1672 → **1676**（缺口仍 **0**：同步在
+ *   `services/api/db/roles/profile_runtime.sql` 补了四个契约列的 SELECT 与锁列 UPDATE）。
+ *   RETURNING／ON CONFLICT／`SELECT *`／函数调用／无顶层 FROM／INSERT／UPDATE／DELETE 均不变。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 272,
-  statements: { INSERT: 42, UPDATE: 47, SELECT: 144, DELETE: 39 },
+  sqlLiterals: 273,
+  statements: { INSERT: 42, UPDATE: 47, SELECT: 145, DELETE: 39 },
   returningClauses: 85,
   onConflictClauses: 26,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 25, SHARE: 16 },
+  rowLocks: { UPDATE: 25, SHARE: 17 },
   functionCalls: 2,
   noTargetTable: 13,
-  referencedTables: 44,
-  columnRequirements: 1726,
-  coveredRequirements: 1672,
+  referencedTables: 45,
+  columnRequirements: 1730,
+  coveredRequirements: 1676,
   ledgerExemptions: 33,
-  rowLockRequirements: 41,
+  rowLockRequirements: 42,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
@@ -703,7 +710,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'privacy/consent-pg.ts': 14,
   'privacy/grant-pg.ts': 12,
   'privacy/ledger-pg.ts': 24,
-  'profile/service.ts': 11,
+  'profile/service.ts': 12,
   'recognitions': 21,
   'speech': 17,
 };
@@ -751,6 +758,7 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.single_profiles',
   'public.speech_idempotency',
   'public.speech_jobs',
+  'public.species',
   'public.transcriptions',
   'public.user_backup_copies',
   'public.users',

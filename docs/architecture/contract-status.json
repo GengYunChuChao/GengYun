@@ -197,7 +197,7 @@
         {
           "path": "services/api/src/profile/service.ts",
           "symbol": "async get(input: Identity) {",
-          "lines": "66-71"
+          "lines": "83-88"
         },
         {
           "test": "tests/unit/profile-api.test.mjs",
@@ -294,10 +294,30 @@
       "route": "/api/v1/catalog/species",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+      "route_mounted": true,
+      "status": "implemented",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/profile.ts",
+          "symbol": "app.get(`${API_PREFIX}/catalog/species`",
+          "lines": "56-64"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "symbol": "async function speciesDirectory(client: PoolClient): Promise<CatalogItem[]> {",
+          "lines": "71-81"
+        },
+        {
+          "path": "services/api/src/profile/service.ts",
+          "symbol": "async listSpecies(input: Identity, options: {cursor?: string; limit: number; q?: string}) {",
+          "lines": "133-145"
+        },
+        {
+          "test": "tests/unit/catalog-species-api.test.mjs",
+          "name": "GY-I07 正常返回：真实 SQL × 批准目录逐字段一致，且只出现契约四字段"
+        }
+      ],
+      "blocker": "需 DATABASE_URL 且已执行 db/seeds/seed_reference.sql（8 条 species 行，与 packages/knowledge/catalog/species.json 逐字段一致）；不一致或目录外的库行不出现；q 只匹配目录里的 canonical_name/scientific_name/group_name/aliases（这些别名不进响应）；本地 stub 夹具 tools/local-dev/profile-bootstrap.mjs 目前只铺 crops/regions，本地空库会返回空列表"
     },
     {
       "id": "getPrivacyPolicy",
@@ -3289,7 +3309,7 @@
         {
           "path": "services/api/src/profile/service.ts",
           "symbol": "async list(input: Identity, kind: 'crops' | 'regions', options: {cursor?: string; limit: number; parent_code?: string}) {",
-          "lines": "104-113"
+          "lines": "122-132"
         },
         {
           "path": "services/api/src/privacy/consent-pagination.ts",
