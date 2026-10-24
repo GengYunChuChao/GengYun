@@ -415,7 +415,11 @@ test('G1. 缺 dosage_form（null）⇒ 非 matched（insufficient），missing_f
 
 test('G2. dosage_form 为空串 / 纯空白 ⇒ 同一结论（空读归一为未采集，不报 conflict）', async () => {
   const service = createRegistrationVerifyService({ executionMode: 'stub' });
-  // `''` 在 HTTP 层会被 minLength 1 挡掉，但服务层是导出面；`'   '` / 全角空格在两个面都能到。
+  // 服务层是**导出面**，三种空读都直达本层。
+  // ⚠ 修前这条注释写的是「`''` 在 HTTP 层会被 minLength 1 挡掉」——**与事实不符**：运行时 Ajv 开了
+  // `coerceTypes: 'array'`，HTTP 面会把 `''` 先转成 `null`（实测修前 200 + insufficient）。现在
+  // HTTP 面改由路由的 `preValidation` 在归一化前拒空串（400，见 registrations-verify-http.test.mjs
+  // 的 K1）；纯空白（长度 ≥ 1、契约合法）仍照旧到本层并被归一为未采集。
   for (const value of ['', '   ', '\t\n　']) {
     const data = await service.verify({ fields: fieldsOf({ dosage_form: value }), conditions: null });
     assert.equal(

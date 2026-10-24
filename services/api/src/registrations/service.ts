@@ -48,6 +48,9 @@
  *      纯空白（按 `normalizeComparableText` 归一后为空）⇒ 归一成 `null`（未采集）；
  *      `ingredients` 缺失/非数组 ⇒ `[]`。归一**只删空读**，不改任何实质内容，
  *      并保证内核不会把「没读到」错归因成「读到的剂型不一致」。
+ *      ⚠ 空串在 **HTTP 面**已被路由的 `preValidation` 提前拒绝（400，见 `routes/registrations.ts`
+ *      文件头：Ajv `coerceTypes` 会把 `''` 转成 `null`，schema 的 `minLength: 1` 因此失效）；
+ *      本层仍按「导出面」口径处理 `''`，因为服务层调用不经过 HTTP schema。
  *   2) **缺失判定**（`missingVerifiableDimensions`）：`dosage_form === null` ⇒ 缺失；
  *      `ingredients` 为空数组 ⇒ 缺失。**只判「有没有」，不判「对不对」**
  *      （对不对仍由内核的冲突检查负责）。
@@ -256,7 +259,12 @@ export type VerifyDimensionField = (typeof VERIFY_DIMENSION_FIELDS)[number];
  *   （把「没读到」错归因成「读到的剂型不一致」），同时 `missing_fields` 又说它缺失，
  *   同一字段既冲突又缺失自相矛盾。归一后内核只会跳过该维度，缺失由
  *   `missingVerifiableDimensions` 如实报出。
- *   HTTP 层 schema 的 `minLength 1` 只挡得住空串、**挡不住纯空白** ⇒ 这里必须再判一次。
+ *   HTTP 层 schema 的 `minLength: 1` 在本运行时**挡不住空串**（`schema-validator` 沿用
+ *   `coerceTypes: 'array'`，`''` 先被转成 `null` ⇒ 契约 `anyOf` 的 `null` 分支命中，`minLength`
+ *   永不执行）⇒ HTTP 面的空串/非字符串由 `routes/registrations.ts` 的 `preValidation` 在归一化
+ *   **之前**拒绝（400 `INVALID_REQUEST`，见该文件头）。本层仍必须再判一次，因为：
+ *   ① 本函数是**导出面**，服务层调用不受 HTTP schema 约束、`''` 可以直达；
+ *   ② 契约允许、HTTP 也放行的**纯空白**（`'   '` 长度 ≥ 1，不违反 `minLength`）只有这里能归一为未采集。
  * - `ingredients` 缺失/非数组 ⇒ 归一为 `[]`（未采集）。契约 `LabelFields.ingredients` 只有
  *   `maxItems 20`、**没有 `minItems`** ⇒ 空数组本身是**合法请求**，内核的冲突检查也已对
  *   空数组跳过比较 ⇒ 与 `dosage_form` 的口径保持一致。

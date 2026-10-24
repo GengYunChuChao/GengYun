@@ -11,6 +11,10 @@
 //   G. 重放：同一 `Idempotency-Key` 同体两次结论一致（纯函数、无台账）；换键同体也一致；
 //   H. 信息泄露：响应不含幂等键原值、内部标识、bearer；错误封套形状仍守契约；
 //   I. real 模式（真实登记库未接线）⇒ 200 `unavailable`（fail-closed，不伪装成 no_match）。
+//   J. 待核维度缺失（R1）：`ingredients=[]` / 纯空白剂型 ⇒ 200 非 matched（insufficient）。
+//   K. **空串 / 非字符串 ⇒ 400**：运行时 Ajv `coerceTypes: 'array'` 会把 `''` 转成 `null`、
+//      把数字/布尔转成字符串，契约 `minLength: 1` 因此失效 ⇒ 本路由在 `preValidation`
+//      （归一化**之前**）按原始值拒绝，错误码沿用既有的 `INVALID_REQUEST`。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -438,8 +442,11 @@ test('J1. ingredients=[] / 纯空白 dosage_form ⇒ 200 非 matched（insuffici
   const { app } = await newApp();
   try {
     const token = await login(app);
-    // 两条都是**契约合法请求**（`ingredients` 无 minItems；`dosage_form` 的 minLength 只挡空串），
-    // 因此它们必须走到业务层并由业务层给出「未核对完成」的结论，而不是 400 或 matched。
+    // 两条都是**契约合法请求**（`ingredients` 无 minItems；`dosage_form` 的 `'   '` 长度 ≥ 1、
+    // 满足 minLength），因此它们必须走到业务层并由业务层给出「未核对完成」的结论，而不是 400 或 matched。
+    // ⚠ 修前这条注释写的是「`dosage_form` 的 minLength 只挡空串」——**与事实不符**：运行时 Ajv 的
+    // `coerceTypes: 'array'` 会把 `''` 转成 `null`，`minLength` 从不执行（实测修前 200）。空串现由
+    // 本路由的 `preValidation` 拒绝（见 K1）；纯空白不违反 `minLength`，仍按「空读」走本用例。
     for (const [label, payload, expectedField] of [
       ['ingredients 空数组', bodyOf({ ingredients: [] }), 'ingredients'],
       ['dosage_form 纯空白', bodyOf({ dosage_form: '   ' }), 'dosage_form'],
@@ -456,6 +463,76 @@ test('J1. ingredients=[] / 纯空白 dosage_form ⇒ 200 非 matched（insuffici
       assert.deepEqual(Object.keys(data).sort(), VERIFICATION_KEYS, `${label} 仍严格是契约五键`);
       assert.equal(res.headers['cache-control'], 'no-store');
     }
+  } finally {
+    await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// K. 空串 / 非字符串 ⇒ 400（契约 `minLength: 1` + 「必须是字符串」的运行时补位）
+//
+// 为什么这条用例必须存在：运行时校验器沿用 `coerceTypes: 'array'`（`schema-validator.ts`），
+// 它会在校验前改写请求体 —— `''` ⇒ `null`（于是 `anyOf` 的 `null` 分支命中，`minLength` 永不执行）、
+// `42` / `true` ⇒ `'42'` / `'true'`、`['水分散粒剂']` ⇒ `'水分散粒剂'`。修前的实测读数是：
+// `dosage_form=''` / `registration_number=''` / `name=''` 全部 **200**（insufficient 或 matched），
+// `dosage_form=42` **200 conflict**、`name=true` **200 matched** —— 与契约 `minLength: 1` 相反。
+// 修法是在 `routes/registrations.ts` 的 `preValidation`（Ajv **之前**）按原始值拒绝；本组用例把
+// 修后口径钉住，并给出两条正控制证明「允许 null」「空数组=未采集」没有被改坏。
+// ---------------------------------------------------------------------------
+
+test('K1. 空串 / 非字符串 ⇒ 400 INVALID_REQUEST（归一化前拒绝），且不产出任何核对结论', async () => {
+  const { app } = await newApp();
+  try {
+    const token = await login(app);
+    const cases = [
+      ["dosage_form=''", bodyOf({ dosage_form: '' }), '/fields/dosage_form'],
+      ["registration_number=''", bodyOf({ registration_number: '' }), '/fields/registration_number'],
+      ["name=''", bodyOf({ name: '' }), '/fields/name'],
+      ['dosage_form=42（数字）', bodyOf({ dosage_form: 42 }), '/fields/dosage_form'],
+      ['dosage_form=true（布尔）', bodyOf({ dosage_form: true }), '/fields/dosage_form'],
+      ["dosage_form=['水分散粒剂']（单元素数组）", bodyOf({ dosage_form: ['水分散粒剂'] }), '/fields/dosage_form'],
+      ["ingredients[0].name=''", bodyOf({ ingredients: [{ name: '', content_text: '40%', unit_text: '%' }] }), '/fields/ingredients/0/name'],
+      [
+        'ingredients[0].content_text=42（数字）',
+        bodyOf({ ingredients: [{ name: '唑草酮', content_text: 42, unit_text: '%' }] }),
+        '/fields/ingredients/0/content_text',
+      ],
+    ];
+    for (const [label, payload, field] of cases) {
+      const res = await post(app, { token, payload });
+      assert.equal(res.statusCode, 400, `${label} 必须 400（契约 minLength:1 / 字符串类型）：${res.body}`);
+      assertErrorEnvelope(res.json(), 'INVALID_REQUEST');
+      const body = res.json();
+      assert.equal(body.data, undefined, `${label} 400 分支不得产出核对结论`);
+      assert.equal(
+        body.error.details.some((item) => item.field === field),
+        true,
+        `${label} details 必须点名 ${field}：${res.body}`,
+      );
+      // 400 不得顺带带出任何制剂数据：错误封套里除 `details[].field` 的路径外没有业务字段。
+      for (const forbidden of ['formulation', 'dose_cards', 'match_state', 'PD20161371', '水分散粒剂', '唑草酮']) {
+        assert.equal(JSON.stringify(body).includes(forbidden), false, `${label} 响应里不得出现 ${forbidden}`);
+      }
+      assert.equal(res.headers['cache-control'], 'no-store');
+    }
+
+    // 正控制 1：契约允许 `null`（代表「未采集」）⇒ 必须仍 200 + insufficient，不能被形状校验误伤。
+    const nullable = await post(app, { token, payload: bodyOf({ dosage_form: null }) });
+    assert.equal(nullable.statusCode, 200, `dosage_form=null 必须仍放行到业务层：${nullable.body}`);
+    assert.equal(nullable.json().data.match_state, 'insufficient');
+    assert.deepEqual(nullable.json().data.missing_fields, ['dosage_form']);
+
+    // 正控制 2：`ingredients=[]` 是合法请求（契约无 minItems）⇒ 200；「未采集」不等于「非法」。
+    const emptyIngredients = await post(app, { token, payload: bodyOf({ ingredients: [] }) });
+    assert.equal(emptyIngredients.statusCode, 200, `ingredients=[] 必须仍放行：${emptyIngredients.body}`);
+    assert.equal(emptyIngredients.json().data.match_state, 'insufficient');
+    assert.deepEqual(emptyIngredients.json().data.missing_fields, ['ingredients']);
+
+    // 边界：纯空白长度 ≥ 1、契约合法 ⇒ 不被形状校验拦下（只拒空串），仍由服务层按「空读」判 insufficient。
+    const blank = await post(app, { token, payload: bodyOf({ dosage_form: '   ' }) });
+    assert.equal(blank.statusCode, 200, `纯空白不是空串，不得 400：${blank.body}`);
+    assert.equal(blank.json().data.match_state, 'insufficient');
+    assert.deepEqual(blank.json().data.missing_fields, ['dosage_form']);
   } finally {
     await app.close();
   }
