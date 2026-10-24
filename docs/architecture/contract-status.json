@@ -361,7 +361,7 @@
         {
           "path": "services/api/src/privacy/grant-pg.ts",
           "symbol": "persistConsentGrant",
-          "lines": "32-113"
+          "lines": "32-112"
         },
         {
           "test": "tests/integration/consent-grant-pg.mjs",
@@ -392,7 +392,7 @@
           "lines": "135-179"
         }
       ],
-      "blocker": "PG撤回在 jobs/media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed；#128提供外发账本/在途守卫/模块删除注册协议，但本基线尚未接入撤回消费者。真实政策/接收方与注销全链未验；#133未合不计入本基线"
+      "blocker": "PG撤回在 media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed（R34 起 `public.jobs` 已从依赖判定与授权面下线：该表零读者、零入向外键、零外发账本关联，见 docs/verification/gy-r34-jobs-retire-20261024.md）；#128提供外发账本/在途守卫/模块删除注册协议，但本基线尚未接入撤回消费者。真实政策/接收方与注销全链未验；#133未合不计入本基线"
     },
     {
       "id": "listExports",
@@ -1416,7 +1416,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
-          "lines": "1047-1051"
+          "lines": "1062-1066"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1470,7 +1470,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deletePost",
-          "lines": "1160-1192"
+          "lines": "1175-1207"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1551,7 +1551,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getComment(actor: unknown, id: unknown): Promise<Comment> {",
-          "lines": "1381-1385"
+          "lines": "1396-1400"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1605,7 +1605,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deleteComment",
-          "lines": "1440-1471"
+          "lines": "1455-1486"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1613,6 +1613,37 @@
         }
       ],
       "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+    },
+    {
+      "id": "getPostLike",
+      "method": "get",
+      "path": "/posts/{id}/like",
+      "route": "/api/v1/posts/:id/like",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().getPostLike(",
+          "lines": "313-319"
+        },
+        {
+          "path": "services/api/src/community/service.ts",
+          "symbol": "async getPostLike(actor: unknown, id: unknown): Promise<LikeStatus> {",
+          "lines": "1547-1547"
+        },
+        {
+          "test": "tests/unit/community-like-read.test.mjs",
+          "name": "GET /posts/{id}/like 的行为：0 赞 / N 赞 / 同人重复点赞不重复计数 / 取消后回落"
+        },
+        {
+          "test": "tests/unit/community-http.test.mjs",
+          "name": "HTTP 点赞读取面：GET /posts/{id}/like 的 count/liked_by_me、无 ETag、鉴权与错误码同既有读帖路径"
+        }
+      ],
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts，GET /api/v1/posts/:id/like），真实回环回归 tests/unit/community-http.test.mjs：与 getPost **同一道** readablePost 闸门（同一 guards.requireUser、同一 404 NOT_FOUND、同一 400 INVALID_REQUEST、后台会话同一 403 SCOPE_DENIED），Cache-Control: no-store，不写 ETag（LikeStatus 不是资源表示、没有 revision）；**计数读面已交付**：count 走既有 store.countLikes 的 SELECT count(*)::int（目标索引 community_likes_target_idx，**没有计数器列**，故不存在计数漂移），liked_by_me 走新增只读 store.hasLiked 的 SELECT 1 ... LIMIT 1（只读已授权的 user_id/target_type/target_id 三列 ⇒ 本次零 GRANT 变更）；**未取得**：小程序/前端尚未接入该读端点（本任务只交付后端读面）；真库行为（索引命中、并发收敛）未在本会话验证 —— tests/integration/community-pg.mjs 需起真库，本任务明令禁止起 PostgreSQL；相关测试不等于页面或真机验收（GY-I15）"
     },
     {
       "id": "likePosts",
@@ -1627,12 +1658,12 @@
        {
         "path": "services/api/src/routes/community.ts",
         "symbol": "ready().likePosts(",
-        "lines": "305-312"
+        "lines": "321-328"
        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1502-1502"
+          "lines": "1517-1517"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1654,12 +1685,12 @@
        {
         "path": "services/api/src/routes/community.ts",
         "symbol": "ready().unlikePosts(",
-        "lines": "314-321"
+        "lines": "330-337"
        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1506-1506"
+          "lines": "1521-1521"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1681,12 +1712,12 @@
        {
         "path": "services/api/src/routes/community.ts",
         "symbol": "ready().likeComments(",
-        "lines": "323-330"
+        "lines": "339-346"
        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1510-1510"
+          "lines": "1525-1525"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1708,12 +1739,12 @@
        {
         "path": "services/api/src/routes/community.ts",
         "symbol": "ready().unlikeComments(",
-        "lines": "332-339"
+        "lines": "348-355"
        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1514-1514"
+          "lines": "1529-1529"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1735,12 +1766,12 @@
        {
         "path": "services/api/src/routes/community.ts",
         "symbol": "ready().createReport(",
-        "lines": "341-351"
+        "lines": "357-367"
        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createReport",
-          "lines": "1491-1528"
+          "lines": "1529-1566"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1762,12 +1793,12 @@
        {
         "path": "services/api/src/routes/community.ts",
         "symbol": "ready().getOwnReport(",
-        "lines": "353-360"
+        "lines": "369-376"
        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getOwnReport(actor: unknown, id: unknown): Promise<Report> {",
-          "lines": "1559-1565"
+          "lines": "1597-1603"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1939,7 +1970,7 @@
           "name": "消息列表实际HTTP：整链固定15min，读状态不改变水位，每页重查引用"
         }
       ],
-      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，`real` 且无连接池 ⇒ 整域 503，`real` + 池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql` 与 `services/api/src/messages/store-pg.ts`（装配 `services/api/src/app.ts:802-806`）。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件端口已接线（审核结果/下架事件既有生产路径；#422，merge `50e3bf40` 补他人评论/点赞真落库：经 `services/api/src/community/service.ts:1364`、`:1808` 写入消息域，装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件经 `:1270-1273`）；跳转目标可用性端口已接线（#425，merge `88942df4`：`services/api/src/messages/reference-community.ts`，仅 `post`/`comment` 可判 available，其余 14 型按不可用降级）；PG 与注销即删已取真库读数（`services/api/src/messages/store-pg.ts` 的 `deleteAllByOwner`/`purgeOwnerData`，装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543` 在 CI `.github/workflows/real-pg-integration.yml:144-147` 真跑，证据串 `messages:online-purged:9;messages:idempotency-purged:3`）；消息页与页面门禁已落地（`miniprogram/pages/messages/*`、`tests/unit/miniprogram-ui-auth-integration.test.mjs`）。仍待验收：Android/iOS 真机与真机页面证据（`docs/verification/platform-checklist.md:40`、`:48`、`:49` 状态「未验证」）；不虚构真人消息"
+      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，`real` 且无连接池 ⇒ 整域 503，`real` + 池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql` 与 `services/api/src/messages/store-pg.ts`（装配 `services/api/src/app.ts:802-806`）。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件端口已接线（审核结果/下架事件既有生产路径；#422，merge `50e3bf40` 补他人评论/点赞真落库：经 `services/api/src/community/service.ts:1379`、`:1852` 写入消息域，装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件经 `:1270-1273`）；跳转目标可用性端口已接线（#425，merge `88942df4`：`services/api/src/messages/reference-community.ts`，仅 `post`/`comment` 可判 available，其余 14 型按不可用降级）；PG 与注销即删已取真库读数（`services/api/src/messages/store-pg.ts` 的 `deleteAllByOwner`/`purgeOwnerData`，装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543` 在 CI `.github/workflows/real-pg-integration.yml:144-147` 真跑，证据串 `messages:online-purged:9;messages:idempotency-purged:3`）；消息页与页面门禁已落地（`miniprogram/pages/messages/*`、`tests/unit/miniprogram-ui-auth-integration.test.mjs`）。仍待验收：Android/iOS 真机与真机页面证据（`docs/verification/platform-checklist.md:40`、`:48`、`:49` 状态「未验证」）；不虚构真人消息"
     },
     {
       "id": "getUnreadCount",
@@ -1961,7 +1992,7 @@
           "name": "消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致"
         }
       ],
-      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，`real` 且无连接池 ⇒ 整域 503，`real` + 池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql` 与 `services/api/src/messages/store-pg.ts`（装配 `services/api/src/app.ts:802-806`）。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件端口已接线（审核结果/下架事件既有生产路径；#422，merge `50e3bf40` 补他人评论/点赞真落库：经 `services/api/src/community/service.ts:1364`、`:1808` 写入消息域，装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件经 `:1270-1273`）；跳转目标可用性端口已接线（#425，merge `88942df4`：`services/api/src/messages/reference-community.ts`，仅 `post`/`comment` 可判 available，其余 14 型按不可用降级）；PG 与注销即删已取真库读数（`services/api/src/messages/store-pg.ts` 的 `deleteAllByOwner`/`purgeOwnerData`，装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543` 在 CI `.github/workflows/real-pg-integration.yml:144-147` 真跑，证据串 `messages:online-purged:9;messages:idempotency-purged:3`）；消息页与页面门禁已落地（`miniprogram/pages/messages/*`、`tests/unit/miniprogram-ui-auth-integration.test.mjs`）。仍待验收：Android/iOS 真机与真机页面证据（`docs/verification/platform-checklist.md:40`、`:48`、`:49` 状态「未验证」）；不虚构真人消息"
+      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，`real` 且无连接池 ⇒ 整域 503，`real` + 池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql` 与 `services/api/src/messages/store-pg.ts`（装配 `services/api/src/app.ts:802-806`）。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件端口已接线（审核结果/下架事件既有生产路径；#422，merge `50e3bf40` 补他人评论/点赞真落库：经 `services/api/src/community/service.ts:1379`、`:1852` 写入消息域，装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件经 `:1270-1273`）；跳转目标可用性端口已接线（#425，merge `88942df4`：`services/api/src/messages/reference-community.ts`，仅 `post`/`comment` 可判 available，其余 14 型按不可用降级）；PG 与注销即删已取真库读数（`services/api/src/messages/store-pg.ts` 的 `deleteAllByOwner`/`purgeOwnerData`，装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543` 在 CI `.github/workflows/real-pg-integration.yml:144-147` 真跑，证据串 `messages:online-purged:9;messages:idempotency-purged:3`）；消息页与页面门禁已落地（`miniprogram/pages/messages/*`、`tests/unit/miniprogram-ui-auth-integration.test.mjs`）。仍待验收：Android/iOS 真机与真机页面证据（`docs/verification/platform-checklist.md:40`、`:48`、`:49` 状态「未验证」）；不虚构真人消息"
     },
     {
       "id": "markMessageRead",
@@ -1983,7 +2014,7 @@
           "name": "消息实际HTTP：内部事件去重、并发首次读推进版本、重复读与未读一致"
         }
       ],
-      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，`real` 且无连接池 ⇒ 整域 503，`real` + 池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql` 与 `services/api/src/messages/store-pg.ts`（装配 `services/api/src/app.ts:802-806`）。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件端口已接线（审核结果/下架事件既有生产路径；#422，merge `50e3bf40` 补他人评论/点赞真落库：经 `services/api/src/community/service.ts:1364`、`:1808` 写入消息域，装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件经 `:1270-1273`）；跳转目标可用性端口已接线（#425，merge `88942df4`：`services/api/src/messages/reference-community.ts`，仅 `post`/`comment` 可判 available，其余 14 型按不可用降级）；PG 与注销即删已取真库读数（`services/api/src/messages/store-pg.ts` 的 `deleteAllByOwner`/`purgeOwnerData`，装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543` 在 CI `.github/workflows/real-pg-integration.yml:144-147` 真跑，证据串 `messages:online-purged:9;messages:idempotency-purged:3`）；消息页与页面门禁已落地（`miniprogram/pages/messages/*`、`tests/unit/miniprogram-ui-auth-integration.test.mjs`）。仍待验收：Android/iOS 真机与真机页面证据（`docs/verification/platform-checklist.md:40`、`:48`、`:49` 状态「未验证」）；不虚构真人消息"
+      "blocker": "消息列表/未读数/读标记HTTP已装配；stub/preset_demo使用空内存，`real` 且无连接池 ⇒ 整域 503，`real` + 池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql` 与 `services/api/src/messages/store-pg.ts`（装配 `services/api/src/app.ts:802-806`）。列表游标绑定主体/账号版本/消息水位，整链固定15min；新增消息使旧链400，读状态不改水位，每页重查引用。真实事件端口已接线（审核结果/下架事件既有生产路径；#422，merge `50e3bf40` 补他人评论/点赞真落库：经 `services/api/src/community/service.ts:1379`、`:1852` 写入消息域，装配 `services/api/src/app.ts:1126-1130`；账号停用/恢复事件经 `:1270-1273`）；跳转目标可用性端口已接线（#425，merge `88942df4`：`services/api/src/messages/reference-community.ts`，仅 `post`/`comment` 可判 available，其余 14 型按不可用降级）；PG 与注销即删已取真库读数（`services/api/src/messages/store-pg.ts` 的 `deleteAllByOwner`/`purgeOwnerData`，装配 `services/api/src/app.ts:1668-1704`；`tests/integration/messages-pg.mjs:500-543` 在 CI `.github/workflows/real-pg-integration.yml:144-147` 真跑，证据串 `messages:online-purged:9;messages:idempotency-purged:3`）；消息页与页面门禁已落地（`miniprogram/pages/messages/*`、`tests/unit/miniprogram-ui-auth-integration.test.mjs`）。仍待验收：Android/iOS 真机与真机页面证据（`docs/verification/platform-checklist.md:40`、`:48`、`:49` 状态「未验证」）；不虚构真人消息"
     },
     {
       "id": "listAdminSources",

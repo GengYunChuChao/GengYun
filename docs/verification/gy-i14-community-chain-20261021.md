@@ -97,7 +97,7 @@
 | 面 | 位置 | 读数 | 判定 |
 |---|---|---|---|
 | 路由 | `routes/community.ts:211-221` | `POST /posts`，`preHandler: guards.requireUser` + `onRequest: noStoreHook`，201 带强 `ETag` | 通 |
-| 入参闭集 | `community/service.ts:822`（`validatePostInput`） | `title` 1..120、`body` 1..8000、`crop_id` 1..80、`region_code` ^33[0-9]{4}$、`media_ids` ≤3 | 通 |
+| 入参闭集 | `community/service.ts:837`（`validatePostInput`） | `title` 1..120、`body` 1..8000、`crop_id` 1..80、`region_code` ^33[0-9]{4}$、`media_ids` ≤3 | 通 |
 | 幂等 | `service.ts:823-831`（`withIdempotency`）、`:215-290` | 同键同体复用结果、同键异体 409 | 通 |
 | 先审后发 | `service.ts:843-848` | 规则层 `gate.evaluate` **在任何内容行落库之前**；不通过 ⇒ 只补录结论 + 拒绝发布 | 通 |
 | 审核域联动 | `service.ts:852-853`、`:886-898` | 送审审核域；未获明确放行不落行；发布闸门拒绝 ⇒ 行保留 `pending_review`（私有/待审） | 通 |

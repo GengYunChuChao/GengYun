@@ -140,12 +140,17 @@ test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、exp
 });
 
 test('GY-I22 负控制清单与当前产品代码同步（每条 find 恰好命中一次）', () => {
-  assert.ok(MUTATIONS.length >= 20, `负控制只剩 ${MUTATIONS.length} 条（基线 20 条）`);
+  // 基线只准上调：R34 追加 3 条单元靶子（NC-22/23/24），23 → 26。
+  assert.ok(MUTATIONS.length >= 26, `负控制只剩 ${MUTATIONS.length} 条（基线 26 条）`);
   const seen = new Set();
   for (const mutation of MUTATIONS) {
     assert.ok(!seen.has(mutation.id), `负控制 id 重复：${mutation.id}`);
     seen.add(mutation.id);
-    assert.ok(mutation.watch.length > 0, `${mutation.id} 没有 watch 用例`);
+    // 靶子两类：矩阵用例（watch）或**既有**单元测试（unitWatch），至少有一类。
+    assert.ok(
+      mutation.watch.length > 0 || (mutation.unitWatch ?? []).length > 0,
+      `${mutation.id} 既没有 watch 用例也没有 unitWatch 靶子`,
+    );
     const editList = mutation.edits ?? [{ file: mutation.file, find: mutation.find, replace: mutation.replace }];
     for (const edit of editList) {
       assert.equal(typeof edit.file, 'string', `${mutation.id} 缺 file`);
@@ -160,6 +165,22 @@ test('GY-I22 负控制清单与当前产品代码同步（每条 find 恰好命�
     }
     // watch 里的用例必须真的存在于用例表。
     for (const id of mutation.watch) assert.ok(ids().has(id), `${mutation.id} 的 watch 含不存在的用例 ${id}`);
+
+    // 单元靶子只准指向**既有**测试：文件在、测试名在该文件里逐字出现。
+    // 反过来的意思：某个域没有守卫测试时，**不许新写一条弱断言去喂负控制**，只能如实记为「缺测试」。
+    for (const target of mutation.unitWatch ?? []) {
+      assert.match(
+        target.file,
+        /^tests\/unit\/[\w-]+\.test\.mjs$/,
+        `${mutation.id} 的 unitWatch.file 形状不对：${target.file}`,
+      );
+      assert.equal(typeof target.pattern, 'string', `${mutation.id} 的 unitWatch 缺 pattern`);
+      const source = readFileSync(path.join(ROOT, target.file), 'utf8');
+      assert.ok(
+        source.includes(target.pattern),
+        `${mutation.id} 的 unitWatch 指向 ${target.file} 里不存在的测试名「${target.pattern}」——测试改名或删了，负控制必须同步`,
+      );
+    }
   }
 
   function ids() {

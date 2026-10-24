@@ -118,11 +118,13 @@ test('isolated packaging excludes private files and rejects release overrides/st
   const release = join(project, '.local/wechat-release');
   assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
   assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
-  // —— F2 回归：打包允许清单须随 app.json（20 页 = 13 页 + GY-I15 社区投稿/详情 + GY-I16 收藏/历史/历史详情
-  // + GY-I13 播报页 + GY-R34 授权清单页）
+  // —— F2 回归：打包允许清单须随 app.json（21 页 = 13 页 + GY-I15 社区投稿/详情 + GY-I16 收藏/历史/历史详情
+  // + GY-I13 播报页 + GY-I12 文字提问页 + GY-R34 授权清单页）
   // 同步，且参考域/社区域依赖须一并复制 ——
   const appJson = JSON.parse(readFileSync(join(release, 'miniprogram/app.json'), 'utf8'));
-  assert.equal(appJson.pages.length, 20);
+  assert.equal(appJson.pages.length, 21);
+  assert.ok(appJson.pages.includes('pages/qa/qa'), 'release package must include the text question page');
+  assert.ok(appJson.pages.includes('pages/consent/consent'), 'release package must include the consent page');
   for (const page of appJson.pages) {
     for (const suffix of ['.js', '.json', '.wxml']) {
       assert.equal(existsSync(join(release, 'miniprogram', page + suffix)), true, `打包缺失页面文件 ${page}${suffix}`);
@@ -152,6 +154,8 @@ test('isolated packaging excludes private files and rejects release overrides/st
     // 收藏与识别历史适配层（GY-I16）：收藏/历史/历史详情三页依赖它们
     'utils/favorites-api.js',
     'utils/history-api.js',
+    // 文字问答域适配层（GY-I12）：qa 页依赖它，漏打包会让标准包 MODULE_NOT_FOUND
+    'utils/qa-api.js',
     // 授权清单读取层（GY-R34 / #29 P1，只读）：consent 页依赖它，漏打包会让标准包 MODULE_NOT_FOUND
     'utils/consent-api.js',
     'utils/font-scale.js',

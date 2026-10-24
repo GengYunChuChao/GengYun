@@ -73,7 +73,7 @@ node tests/failmatrix/run.mjs
 ## 3 用例三列表（id → #22 acceptance → 实际读数）
 
 下表由 `tools/i22-failmatrix-evidence-table.mjs` 从一次真跑的 `--json` 结果生成（重跑即复核）：
-`node tests/failmatrix/run.mjs --json=tests/failmatrix/.artifacts/matrix.json && node tools/i22-failmatrix-evidence-table.mjs --write`。
+`node tests/failmatrix/run.mjs --json=tests/failmatrix/.artifacts/matrix.json && node tools/i22-failmatrix-evidence-table.mjs`（**只打印不写盘**：本页是 R29 建页时的归档快照，`EXPECTED` 已随当前矩阵校正到 230 / 26。归档页保护基于真实路径比较 + 仓库内包含性校验；`--write` 无隐式默认页——显式点名本页（含 `./`、`..`、大小写别名）一律被拒，加 `--i-know-this-rewrites-archive` 也仍受条数一致性约束，页内条目必须与 `EXPECTED` 一致才放行，本页 168 / 23 已过期 ⇒ 要先迁移台账口径。见 `tools/i22-failmatrix-evidence-table.mjs` 的 `EXPECTED` 注释与 `docs/verification/gy-r31-i22-failure-matrix-20261022.md` 的 R34「订正」一节）。
 `#22 acceptance` 列是**片内自评映射**（AC 编号取自 `docs/initial-issues.json` 的 GY-I22 acceptance_ids），最终由监工裁决。
 
 <!-- BEGIN:MATRIX-TABLE -->

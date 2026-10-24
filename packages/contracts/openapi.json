@@ -5987,6 +5987,89 @@
       }
     },
     "/posts/{id}/like": {
+      "get": {
+        "operationId": "getPostLike",
+        "summary": "getPostLike",
+        "description": "点赞的只读读取面。count 为该帖点赞总数（count(*) 现算，没有计数器列）；liked_by_me 为请求方是否已赞。可读性闸门与 getPost 同一道：不存在/已删除/未发布/审核未通过一律同一个 404（不泄露存在性），不新增错误码；点赞计数不进 Post/Comment 字段。",
+        "tags": [
+          "posts"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LikeStatusEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      },
       "put": {
         "operationId": "likePosts",
         "summary": "likePosts",
@@ -15115,6 +15198,39 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Ack"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "LikeStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "liked_by_me": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "count",
+          "liked_by_me"
+        ]
+      },
+      "LikeStatusEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/LikeStatus"
           },
           "meta": {
             "$ref": "#/components/schemas/Meta"

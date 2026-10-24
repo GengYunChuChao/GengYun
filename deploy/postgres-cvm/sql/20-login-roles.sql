@@ -1060,7 +1060,7 @@ REVOKE ALL ON FUNCTION public.consent_policy_immutable() FROM PUBLIC;
 -- docs/verification/gy-r28-w2-media-ports-20261021.md 把它记为「剩余断点：重启即丢」），
 -- 从来没有 SQL 语句去过这两张表，所以 deploy 侧也就没有列级授权面。
 -- services/api/db/roles/auth_privacy.sql:39 只给组 gengyun_auth_privacy 授过
--- `GRANT SELECT (owner_id) ON jobs,media` —— 那是注销/隐私域读「谁是属主」用的单列，
+-- `GRANT SELECT (owner_id) ON media` —— 那是注销/隐私域读「谁是属主」用的单列，
 -- 不是媒体域的读写面。
 --
 -- R28-W12 把登记册换成了 PG 仓储（services/api/src/media/store-pg.ts），列清单不是抄的：
