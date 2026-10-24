@@ -13,8 +13,9 @@
   color: var(--ink);
 }
 
-/* 作者行：demo 为 avatar + 文案块 + 状态 pill；小程序不展示头像（未接线 public_authors），
- * 因此文案块需要自己占满剩余宽度。 */
+/* 作者行：demo 为 avatar + 文案块 + 状态 pill。头像走 styles/components.wxss 的 `.avatar`，
+ * 值由 `community-api.authorView` 投影：注销作者固定「已」字默认头像，活跃假名取显示名首字；
+ * 未接线 `public_authors` 时不展示真实头像，只回落默认头像（F13「头像默认」）。 */
 .post-author__copy {
   flex: 1;
   min-width: 0;

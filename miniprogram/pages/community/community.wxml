@@ -74,10 +74,12 @@
       <view class="feed">
         <view class="post" wx:for="{{posts}}" wx:key="id">
           <view class="post-author">
+            <view class="avatar post-author__avatar">{{item.authorAvatar}}</view>
             <view class="post-author__copy">
               <view class="post-author__title">{{item.author}}</view>
               <view class="post-author__meta">{{item.time}}{{item.crop_id ? ' · ' + item.crop_id : ''}}{{item.region_code ? ' · ' + item.region_code : ''}}</view>
             </view>
+            <view wx:if="{{item.authorAnonymized}}" class="post-author__tag pill pill--gray">已注销</view>
             <view wx:if="{{item.stateLabel}}" class="post-author__tag pill pill--amber">{{item.stateLabel}}</view>
           </view>
           <view class="post-title">{{item.title}}</view>

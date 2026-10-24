@@ -152,13 +152,15 @@ Page({
   /** 列表项展示字段：只做**展示**派生（可见性/审核状态如实标注），不改契约语义。 */
   _decorate: function (items) {
     return items.map(function (post) {
+      const author = api.authorView(post.author)
       return {
         id: post.id,
         revision: post.revision,
         title: post.title,
         body: post.body,
-        author: post.author.display_name,
-        authorState: post.author.state,
+        author: author.name,
+        authorAvatar: author.avatar,
+        authorAnonymized: author.anonymized,
         time: post.created_at,
         crop_id: post.crop_id,
         region_code: post.region_code,
