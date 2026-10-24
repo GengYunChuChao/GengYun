@@ -52,7 +52,16 @@ const OWNER_PURGE_DENY_DELETE_TABLES = [
 ];
 
 // 本片新增的两条窄函数：EXECUTE 只授运行时，五个正文表的清零经它们完成。
-const OWNER_PURGE_FUNCTIONS = ['purge_owner_recognitions', 'purge_owner_speech'];
+// GY-R34 #19 片2（迁移 0035）在此追加 `purge_owner_media`：媒体行的**物理删除**同样只走函数面，
+// 不在表面开 DELETE。加进这个常量是**防「两侧都没做」**——只靠下面那条「granted ⇒ 已登记」的
+// 单向判据，在授权与清单**同时缺失**时会静默为真（少一条函数的绿＝假绿）。
+const OWNER_PURGE_FUNCTIONS = ['purge_owner_recognitions', 'purge_owner_speech', 'purge_owner_media'];
+
+// GY-R34 #19 片2（迁移 0035）：`public.media` 是**第二条**禁止面，性质与上面五张表不同 ——
+// 五张正文表的禁止面由 `probe-runtime-grants.sql` 的 42501 探针钉死；`media` 的禁止面是
+// 「删除语义是状态机」这条裁定的直接后果（段 M 的 `\echo` 原句），本仓不给它表级 DELETE。
+// `media_derivatives` 反而**有**表级 DELETE（按 media_id 整行重建，见段 M），故⛔ 不进本清单。
+const MEDIA_TABLE_NO_TABLE_DELETE = 'media';
 
 /** 去掉注释行与 psql 元命令行：两者都参与「肉眼像授权、实际不执行」的误读。 */
 function stripNoise(sql) {
@@ -201,6 +210,42 @@ test('禁止面守住：五张正文表对运行时既无 GRANT DELETE、expecte
       `${table} 在 90-assert 的 expected 里必须是 del=false（与「无 GRANT DELETE」成对）`,
     );
   }
+});
+
+test('媒体行禁止面：public.media 无表级 GRANT DELETE、expected.del=false，删行只经函数面', () => {
+  const rolesSql = readFileSync(ROLES_SQL_URL, 'utf8');
+  const assertSql = readFileSync(ASSERT_SQL_URL, 'utf8');
+
+  // ①② 两侧一致：不许有表级 DELETE，且 expected 也说没有。
+  assert.equal(
+    grantedDeleteTables(rolesSql).has(MEDIA_TABLE_NO_TABLE_DELETE),
+    false,
+    `${MEDIA_TABLE_NO_TABLE_DELETE} 不允许有表级 GRANT DELETE：PG 没有列级 DELETE ⇒ 表级 DELETE 会把`
+      + '「本人 + 终态 + 未被引用 + 已入队」四个谓词一起送掉；物理删行只能经迁移 0035 的窄函数',
+  );
+  assert.equal(
+    expectedDeleteFlags(assertSql).get(MEDIA_TABLE_NO_TABLE_DELETE),
+    false,
+    `${MEDIA_TABLE_NO_TABLE_DELETE} 在 90-assert 的 expected 里必须是 del=false（与「无 GRANT DELETE」成对）`,
+  );
+
+  // ③ 删行必须经函数面：EXECUTE 只授运行时，且清单登记为 runtime。
+  assert.equal(
+    grantedRuntimeExecuteFunctions(rolesSql).has('purge_owner_media'),
+    true,
+    'purge_owner_media 必须有 GRANT EXECUTE … TO gengyun_api_runtime（媒体行唯一的物理删除入口）',
+  );
+  assert.equal(
+    functionManifestKinds(assertSql).get('purge_owner_media'),
+    'runtime',
+    'purge_owner_media 必须在 function_surface_manifest 里登记为 runtime',
+  );
+
+  // ④ 裁定的原句还在：只删注释、只留授权的形态，最容易被后来者读成「现在可以发 DELETE 了」。
+  assert.ok(
+    rolesSql.includes('media 故意不授 DELETE'),
+    '20-login-roles.sql 必须保留段 M 的原句「media 故意不授 DELETE」—— 它是这条禁止面的书面依据',
+  );
 });
 
 test('函数面成对：EXECUTE 授给运行时的函数必须都在 function_surface_manifest 里登记为 runtime', () => {
