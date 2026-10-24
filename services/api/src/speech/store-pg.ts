@@ -54,7 +54,14 @@ import type { ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import { canTransitionJob, isJobState, type JobState, type UncertainSpan } from './state.ts';
-import { sameSpans, type IdempotencyRow, type SpeechJobRow, type SpeechStore, type TranscriptionRow } from './store.ts';
+import {
+  sameSpans,
+  type IdempotencyRow,
+  type SpeechJobRow,
+  type SpeechOwnerPurgeCounts,
+  type SpeechStore,
+  type TranscriptionRow,
+} from './store.ts';
 
 /** `pg` 连接池/连接的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容）。 */
 export interface SqlRunner {
@@ -425,6 +432,32 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
     }
   }
 
+  /**
+   * 把 `public.purge_owner_speech(...)` 回的 jsonb 读数收敛成本域计数形状
+   * （`{ records, idempotency }`，字段名与 `packages/privacy` 的 `OwnerPurgeCounts` 逐字一致）。
+   *
+   * 这个读数是回执证据串（`speech:online-purged:<records>;speech:idempotency-purged:<idempotency>`）
+   * 的唯一来源，所以按契约对待：读不懂就抛——⛔ 绝不把「读不到行数」降级成「已清 0 行」。
+   */
+  function purgeCountsFromFunction(
+    row: Record<string, unknown> | undefined,
+    what: string,
+  ): SpeechOwnerPurgeCounts {
+    const raw = row?.['counts'];
+    if (raw === null || typeof raw !== 'object') {
+      throw new Error(`${what} 未返回结构化读数：拒绝把「读不到行数」当成「已清 0 行」`);
+    }
+    const source = raw as Record<string, unknown>;
+    const pick = (key: string): number => {
+      const value = source[key];
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+        throw new Error(`${what} 的 ${key} 读数非法（${String(value)}）：拒绝把「读不懂」当成「已清」`);
+      }
+      return value;
+    };
+    return { records: pick('records'), idempotency: pick('idempotency') };
+  }
+
   /** 事务包裹：`BEGIN` → `SET LOCAL lock_timeout` → 业务 → `COMMIT`；异常折叠为契约错误。 */
   async function withTransaction<T>(work: (sql: SqlRunner) => Promise<T>): Promise<T> {
     let connection: PgConnection | null = null;
@@ -452,6 +485,32 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
     } finally {
       connection?.release();
     }
+  }
+
+  /**
+   * 注销闭集（#19 延续片）· 按主体清空语音域三张表。
+   *
+   * 写路径是**迁移 0034 的 SECURITY DEFINER 函数** `public.purge_owner_speech(uuid)`，不是本文件
+   * 里的 DELETE：运行时角色对这五张正文表**没有任何** DELETE 权限，且那是刻意的安全不变量
+   * （`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 逐条探针要求「直接 DELETE 必须
+   * 恰好 42501」，deploy-sql-gate 钉死 18 条 / 9 个对象）。PG 没有列级 DELETE，所以收窄只能
+   * 是「不给表权限、给一条只删一个主体一个域的函数」。
+   * ⛔ 绝不能为了省事改回 `DELETE FROM public.speech_*` —— 那会同时打破禁止面与真库臂的
+   * 成对断言（函数可清 vs 直接 DELETE 仍 42501）。
+   *
+   * 顺序不再由本文件决定，而是钉在迁移里（`0026_speech_persistence.sql`）：
+   *   `:92`（`speech_jobs`）与 `:115`（`transcriptions`）各自 `owner_user_id`，两者之间
+   *   **没有**外键，按语义「任务先于其产物」；`speech_idempotency`（`:137`）没有主体列
+   *   ⇒ 按 scope 首段主体前缀删（`idempotencyScope` 恒以主体 uuid 开头）。
+   *
+   * 返回值仍是本域计数形状 `{ records, idempotency }`；函数回 jsonb 明细，这里只取这两个与
+   * 端口一致的字段。读数读不懂就抛（⛔ 不把「读不到」当「已清 0 行」）。
+   * ⚠️ 迁移没跑（0026/0034 缺）⇒ `requireTables()` / 函数不存在都会明确 fail-closed。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<SpeechOwnerPurgeCounts> {
+    await requireTables();
+    const rows = await run('SELECT public.purge_owner_speech($1::uuid) AS counts', [ownerId]);
+    return purgeCountsFromFunction(rows[0], '语音域按主体清空（public.purge_owner_speech）');
   }
 
   return {
@@ -670,6 +729,16 @@ export function createPostgresSpeechStore({ pool }: PostgresSpeechStoreOptions):
         [now],
       );
       return rows.length;
+    },
+
+    // ---- 注销闭集（#19 延续片）：按主体清空（三表同一事务；见 `purgeOwnerRows`） ----
+
+    async purgeOwnerData(ownerId) {
+      return purgeOwnerRows(ownerId);
+    },
+
+    async deleteAllByOwner(ownerId) {
+      return (await purgeOwnerRows(ownerId)).records;
     },
   };
 }

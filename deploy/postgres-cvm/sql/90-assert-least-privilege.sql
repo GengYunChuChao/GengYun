@@ -1293,7 +1293,13 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- R28-S28（迁移 0025）：识别域四表。列清单与 20-login-roles.sql 段 J 逐列一致，
     -- 但这里是**独立复述**（同一事实的第二次写法），任一处漂移都会被下面的逐表断言抓住。
     -- recognition_selections 的 upd 是空数组：store 只 INSERT / SELECT，不 UPDATE；
-    -- recognition_idempotency 的 del 是 true：PG 无列级 DELETE，两条整行删除见 store:820/:830。
+    -- recognition_idempotency 的 del 是 true：PG 无列级 DELETE，两条整行删除见
+    -- store-pg.ts:880 releaseIdempotent / :891 purgeIdempotent（release / 过期回收，与注销无关）。
+    -- ⚠️ 本块其余四张表（jobs / records / selections）的 del 必须是 false：运行时对它们**没有**
+    -- 表级 DELETE，注销清理只能经迁移 0034 的 SECURITY DEFINER 函数（本文件断言的
+    -- owner_purge_function_* 五条即为此设）；deploy/postgres-cvm/evidence/probe-runtime-grants.sql
+    -- 把「直接 DELETE 恰好 42501」锁成禁止面，两侧任一漂移都由
+    -- tests/unit/least-privilege-expected-parity.test.mjs 抓住。
     ('recognition_jobs',
      ARRAY['id','revision','kind','owner_user_id','recognition_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
@@ -1688,6 +1694,13 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public',         'record_online_purge_evidence',       'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'read_online_purge_evidence',         'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R34（#19 片2 / 迁移 0034）：注销内容清理**唯一写路径**（识别域 / 语音域各一条窄函数）。
+    -- 运行时对这五张正文表仍然一条 DELETE 都没有（domain_manifest 与表级写授权白名单逐字未动），
+    -- 清理只能经这两条 SECURITY DEFINER 函数；EXECUTE 只授运行时（断言 92 精确比对 grantee 集）。
+    ('public',         'purge_owner_recognitions',           'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'purge_owner_speech',                 'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
@@ -2308,6 +2321,86 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '注销受理函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
 
          '运行时应能连接业务库'
+
+  UNION ALL
+  -- ---------------------------------------------------------------------------
+  -- GY-R34（#19 片2 / 迁移 0034）追加：注销**内容清理**唯一写路径的函数级契约断言。
+  -- 背景：注销闭集从 5 项扩到 7 项（识别域四表 + 语音域三表），但运行时对这五张正文表
+  -- **一条 DELETE 都没有**，而且这是刻意的禁止面（probe-runtime-grants.sql 逐条探针要求
+  -- 「直接 DELETE 必须恰好 42501」，deploy-sql-gate 的 18 条 / 9 个对象）。PG 没有列级 DELETE
+  -- ⇒ 清理只能经两条窄口径 SECURITY DEFINER 函数完成，因此必须把「函数确实存在、确实是
+  -- SECURITY DEFINER、search_path 确实固定、属主确实能删这五张表、EXECUTE 确实只授予运行时」
+  -- 全部钉死。⛔ 这五条**不**给运行时角色补任何表权限，也**不**放松任何既有断言。
+  -- 反向控制（不在此文件断言，见真库臂）：以 gengyun_api_runtime 直接
+  -- `DELETE FROM public.recognition_records WHERE false` 仍必须 42501。
+  -- ---------------------------------------------------------------------------
+  -- 21. 两条窄函数必须恰各存在一个重载（名字 + 精确签名）
+  SELECT 'owner_purge_function_exists',
+         to_regprocedure('public.purge_owner_recognitions(uuid)') IS NOT NULL
+         AND to_regprocedure('public.purge_owner_speech(uuid)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE pronamespace = 'public'::regnamespace
+                 AND proname IN ('purge_owner_recognitions', 'purge_owner_speech')) = 2,
+         '注销内容清理必须恰为 public.purge_owner_recognitions(uuid) 与 public.purge_owner_speech(uuid) 各一个'
+
+  UNION ALL
+  -- 22. 必须真的是 SECURITY DEFINER（否则以运行时身份执行，DELETE 必然 42501）
+  SELECT 'owner_purge_function_security_definer',
+         (SELECT bool_and(p.prosecdef)
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')),
+         '注销内容清理函数必须声明 SECURITY DEFINER'
+
+  UNION ALL
+  -- 23. search_path 固定 pg_catalog + 时区固定 UTC（不做 search_path 劫持的入口）
+  SELECT 'owner_purge_function_search_path',
+         (SELECT bool_and(p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC'])
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')),
+         '注销内容清理函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 24. 属主正确：必须是这五张正文表的属主/可删角色，且运行时角色不是它、也不能 SET ROLE 成为它
+  SELECT 'owner_purge_function_owner',
+         (SELECT bool_and(
+                   pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                   AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.recognition_records', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.recognition_selections', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.recognition_jobs', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.speech_jobs', 'DELETE')
+                   AND has_table_privilege(pg_get_userbyid(p.proowner), 'public.transcriptions', 'DELETE'))
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')),
+         '清理函数属主必须能删这五张正文表，且运行时角色无法成为它（否则清不动或可绕过）'
+
+  UNION ALL
+  -- 25. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
+  SELECT 'owner_purge_function_execute',
+         has_function_privilege(
+           'gengyun_api_runtime', 'public.purge_owner_recognitions(uuid)', 'EXECUTE')
+         AND has_function_privilege(
+           'gengyun_api_runtime', 'public.purge_owner_speech(uuid)', 'EXECUTE')
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('purge_owner_recognitions', 'purge_owner_speech')
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '注销内容清理函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
 
   -- ---------------------------------------------------------------------------
   -- GY-I22（#22）追加：账号停用/恢复**唯一写路径**与审计台账的函数级/表级契约断言。
@@ -3024,8 +3117,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   UNION ALL
   -- 65. R28-S28 禁止面：这四条语句必须**恰好** 42501（运行时拿不到 UPDATE/DELETE）。
   --     selections 不授 UPDATE ⇒ FOR UPDATE 也拿不到（与 S26 三表的性质不同，别照抄那句
-  --     「UPDATE (revision) 行锁载体」的注释）；DELETE 四表一个都不授，注销清理走
-  --     request_account_deletion() 的属主级联（owner_user_id ON DELETE CASCADE）。
+  --     「UPDATE (revision) 行锁载体」的注释）；DELETE 四表一个都不授 —— GY-R34-I19 起，
+  --     账号注销的内容清理改由迁移 0034 的两条 SECURITY DEFINER 函数以属主身份执行
+  --     （`public.purge_owner_recognitions(uuid)`；若切成属主级联，`owner_user_id …
+  --     ON DELETE CASCADE` 也永不触发：`request_account_deletion()` 不删 `public.users` 行）。
+  --     本禁止面由 `tests/unit/least-privilege-expected-parity.test.mjs` 正向锁住。
   SELECT 'runtime_recognition_forbidden_surface',
          :'r28_probe_rec_sel_lock_forbidden' = 'true'
          AND :'r28_probe_rec_job_del_forbidden' = 'true'

@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import { CONTRACT_VERSION } from './contract.ts';
-import type { AppConfig } from './config.ts';
+import type { AppConfig, TrustProxyConfig } from './config.ts';
 import { ApiError, buildErrorEnvelope, retryAfterSecondsFor } from './errors.ts';
 import { createJsonSchema2020ValidatorCompiler, RUNTIME_AJV_CUSTOM_OPTIONS } from './schema-validator.ts';
 import type { PgPool } from './db/pool.ts';
@@ -735,7 +735,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // 仅测试注入；不传时逐字节保持默认行为（写进程 stdout，不新建文件、不改级别与格式）。
       ...(logStream === undefined ? {} : { stream: logStream }),
     },
-    genReqId: () => randomUUID(),
+    genReqId: () => randomUUID(), trustProxy: trustProxyOption(config.trustProxy ?? false),
     // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；
     // Fastify 默认 removeAdditional:true 会静默剔除多余字段，这里改为拒绝，
     // 以确保「客户端不可指定 openid / 角色 / 用户 id」在 API 层被显式拦下（400）。
@@ -919,7 +919,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 替身/演示用固定桩密钥。
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
   });
-  const guards = createAuthGuards({ store: authStore, now: clock });
+  const guards = createRateLimiter({ config: config.rateLimit, now: clock }).mount(app).wrapGuards(createAuthGuards({ store: authStore, now: clock }));
 
   // ---------------------------------------------------------------------------
   // GY-I27 隐私域装配（两片接线；**必须早于识别域服务构造** —— 识别域的提供者包装发生在此处）。
@@ -1822,6 +1822,60 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     store: communityStore,
     authors: communityAuthors,
   });
+  // #19 延续片 · 语音域：注销必须清**路由正在用的那一份**数据。
+  // ⚠️ 语音 store 的解析点是 `routes/speech.ts:128`（注入优先 → real 且真池 用 PG → 否则内存），
+  // 而且那里**刻意不外露 store 实例**：`tests/unit/speech-store-pg-wiring.test.mjs` 的源码钉子
+  // 要求本文件对语音存储层只允许 `import type`（⛔ 不得在装配层 import 值实现）。
+  // 因此这里不复制那份三态解析，也不另建第二个 store 实例（那会清到另一份缓存/另一个实例的
+  // 表探测状态），而是用启动后 `app.decorate('speechService', …)` 暴露的服务在**调用期**取原语
+  // （`routes/speech.ts:145`）。注销请求必然晚于装配完成，所以调用期一定拿得到；真拿不到就抛，
+  // 由删除协议折叠成 `blocked` + `HANDLER_FAILED`，⛔ 不静默算完成。
+  const speechPurgeOwnerData = async (
+    ownerId: string,
+  ): Promise<{ records: number; idempotency: number }> => {
+    const service = app.speechService as
+      | { purgeOwnerData?: (id: string) => Promise<{ records: number; idempotency: number }> }
+      | undefined;
+    const purge = service?.purgeOwnerData;
+    if (typeof purge !== 'function') {
+      throw new Error('语音域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+    }
+    return purge.call(service, ownerId);
+  };
+  // #19 延续片 · 识别域：同一套理由与做法。识别 store 的解析点是上面 `createRecognitionService`
+  // 的内联三段式（`recognitionStore ?? (real && 有池 ? PG : 内存)`），那份表达式被
+  // `tests/unit/recognitions-store-pg-wiring.test.mjs` 的源码钉子**逐字**钉住，本文件也不许再
+  // 另建第二个实例（内存模式下等于清另一份空数据，却照报「已清 N 行」）。
+  // 所以：从 `app.decorate('recognitionService', …)`（:2009）暴露的服务在**调用期**取原语。
+  const recognitionPurgeOwnerData = async (
+    ownerId: string,
+  ): Promise<{ records: number; idempotency: number }> => {
+    const service = app.recognitionService as unknown as
+      | { purgeOwnerData?: (id: string) => Promise<{ records: number; idempotency: number }> }
+      | undefined;
+    const purge = service?.purgeOwnerData;
+    if (typeof purge !== 'function') {
+      throw new Error('识别域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+    }
+    return purge.call(service, ownerId);
+  };
+  // #19 延续片：把两个端口收窄成注销协议要的 `OwnerPurgeStore`（照 `messagesDeletionStore` 的
+  // 做法：**缺原语时调用即抛**，由协议折叠 `blocked` + `HANDLER_FAILED`）。
+  // ⛔ 不在这里静默跳过这两个域 —— 「表里没接」正是本片要消掉的缺口；「接了但不会清」必须喊出来。
+  // 注：本片**不**为这两域提供 `snapshotOwner`（备份副本只对收藏/历史/消息/会话四域生成行），
+  // 因此它们的备份列如实保持 `pending`，⛔ 不冒充完成。
+  const recognitionsDeletionStore: OwnerPurgeStore = {
+    async deleteAllByOwner(ownerId) {
+      return (await recognitionPurgeOwnerData(ownerId)).records;
+    },
+    purgeOwnerData: (ownerId: string) => recognitionPurgeOwnerData(ownerId),
+  };
+  const speechDeletionStore: OwnerPurgeStore = {
+    async deleteAllByOwner(ownerId) {
+      return (await speechPurgeOwnerData(ownerId)).records;
+    },
+    purgeOwnerData: (ownerId: string) => speechPurgeOwnerData(ownerId),
+  };
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -1854,6 +1908,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 端口同时提供 `deleteAllByOwner`（= `records`）与分表计数的 `purgeOwnerData`；
     // `makeHandler` 优先走后者，因此保留/脱敏/媒体/台账读数都不会丢。
     communityStore: communityPurgePort,
+    // #19 延续片 · 识别域（四表）：**无条件注入** —— 只要识别 store 在装配期存在（本文件已解析成
+    // `recognitionsPersistenceStore`，三种执行模式都有实例），注销就必须清它。
+    // 走 `purgeOwnerData` ⇒ 证据串带 `recognitions:online-purged:<n>` / `:idempotency-purged:<n>`
+    // 并落库 0031（`ONLINE_EVIDENCE_MODULES` 已含该模块名）。
+    recognitionsStore: recognitionsDeletionStore,
+    // #19 延续片 · 语音域（三表）：同上，无条件注入。转写原文是最敏感的一类个人数据，不留副本。
+    speechStore: speechDeletionStore,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,
@@ -2244,4 +2305,39 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   return app;
 }
+
+/**
+ * GY-R34（返修）· 把 `API_TRUST_PROXY` 的三种取值翻译成 Fastify 的 `trustProxy` 选项。
+ *
+ * `true` / `false` 原样交出；**跳数必须自己编译成谓词**，因为 Fastify 5 已经不再支持数字：
+ * `node_modules/fastify/lib/request.js:43-62` 的 `getTrustProxyFn` 对 `typeof tp === 'number'`
+ * 走「fail closed ⇒ 一律 `() => false`」分支（注释原文：hop-count-only trust cannot validate the
+ * immediate peer），`@fastify/proxy-addr` 的 `compile` 对 number 直接
+ * `TypeError: unsupported trust argument`。也就是说：把数字原样传下去，配置**看着生效、
+ * 实际等于没配**——云托管网关后仍是全站共享一份登录额度，正是本次要修的坑。
+ *
+ * 谓词语义与旧版跳数一致：`hop` 是「从 socket 对端数起的第几跳」，只有第 `hop` 跳是可信代理
+ * 才继续往 `X-Forwarded-For` 里取值。`hop < N` ⇒ 只信最近 N 跳、客户端地址取第 N 跳；
+ * `N = 0` 与 `false` 等价。实测（`app.inject({ remoteAddress: '198.51.100.5', headers: {
+ * 'x-forwarded-for': '1.2.3.4, 203.0.113.7' } })`）：`false` ⇒ `request.ip = 198.51.100.5`；
+ * `(_, hop) => hop < 1` ⇒ `203.0.113.7`；`(_, hop) => hop < 2` ⇒ `1.2.3.4`；`true` ⇒ `1.2.3.4`。
+ *
+ * 与 `true` 的差别（也是跳数更好的地方）：`true` 信任整条链、取**最左**一项，网关只追加不覆盖时
+ * 客户端自带的 `X-Forwarded-For` 会变成 `request.ip`（可伪造换额度）；跳数只信最近一跳、取**最右**
+ * 一项，客户端自己写的最左项进不了 `request.ip`。代价：跳数不校验对端地址 ⇒ 容器**不能**被绕过
+ * 网关直连（直连客户端自带够多跳数即可伪造），且 `N` 必须与真实跳数一致（多了 ⇒ 取到代理地址，
+ * 又是共享桶）。装配点：`buildApp` 的 `Fastify({...})` 选项里与 `genReqId` **同一行**（不新增行——
+ * `app.ts` 的行号是文档与台账的锚点，见 `docs/architecture/contract-status.json` 与 `tools/verify-doc-anchors.mjs`）。
+ */
+export function trustProxyOption(
+  trustProxy: TrustProxyConfig,
+): boolean | ((address: string, hop: number) => boolean) {
+  if (typeof trustProxy !== 'number') return trustProxy;
+  return (_address: string, hop: number) => hop < trustProxy;
+}
+
+// GY-R34 限流器同理追加在末尾，但排在识别 PG store 那行 import **之前**：那一行必须仍是本文件最后一行
+// （见 tests/unit/recognitions-store-pg-wiring.test.mjs 的结构钉子）。装配点保持单行
+// `createRateLimiter(...).mount(app).wrapGuards(...)`，既有行号一行不动；规则表/存储/取舍都在 rate-limit/limiter.ts 里。
+import { createRateLimiter } from './rate-limit/limiter.ts';
 import { createPostgresRecognitionStore } from './recognitions/store-pg.ts'; // 追加在文件末尾：app.ts 行号是契约台账锚点，顶部 import 区零插入（ESM 提升，语义等价）

@@ -77,6 +77,7 @@ import type {
   IdempotencyClaimResult,
   IdempotencyRow,
   JobRow,
+  RecognitionOwnerPurgeCounts,
   RecognitionRow,
   RecognitionStore,
 } from './store.ts';
@@ -535,6 +536,34 @@ export function createPostgresRecognitionStore({ pool }: PostgresRecognitionStor
     }
   }
 
+  /**
+   * 把 `public.purge_owner_recognitions(...)` 回的 jsonb 读数收敛成本域的计数形状
+   * （`{ records, idempotency }`，字段名与 `packages/privacy` 的 `OwnerPurgeCounts` 逐字一致）。
+   *
+   * 为什么把它当**契约**而不是顺手解包：这个读数是回执证据串
+   * （`recognitions:online-purged:<records>;recognitions:idempotency-purged:<idempotency>`）
+   * 的唯一来源。读不懂就抛——⛔ 绝不把「读不到行数」降级成「已清 0 行」，
+   * 那会让一次完全没删成的调用在回执里长得跟「本来就干净」一模一样。
+   */
+  function purgeCountsFromFunction(
+    row: Record<string, unknown> | undefined,
+    what: string,
+  ): RecognitionOwnerPurgeCounts {
+    const raw = row?.['counts'];
+    if (raw === null || typeof raw !== 'object') {
+      throw new Error(`${what} 未返回结构化读数：拒绝把「读不到行数」当成「已清 0 行」`);
+    }
+    const source = raw as Record<string, unknown>;
+    const pick = (key: string): number => {
+      const value = source[key];
+      if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+        throw new Error(`${what} 的 ${key} 读数非法（${String(value)}）：拒绝把「读不懂」当成「已清」`);
+      }
+      return value;
+    };
+    return { records: pick('records'), idempotency: pick('idempotency') };
+  }
+
   /** 事务包裹：`BEGIN` → `SET LOCAL lock_timeout` → 业务 → `COMMIT`；数据库异常折叠为契约错误。 */
   async function withTransaction<T>(work: (sql: SqlRunner) => Promise<T>): Promise<T> {
     let connection: PgConnection | null = null;
@@ -569,6 +598,33 @@ export function createPostgresRecognitionStore({ pool }: PostgresRecognitionStor
     } finally {
       connection?.release();
     }
+  }
+
+  /**
+   * 注销闭集（#19 延续片）· 按主体清空识别域四张表。
+   *
+   * 写路径是**迁移 0034 的 SECURITY DEFINER 函数** `public.purge_owner_recognitions(uuid)`，
+   * 不是本文件里的 DELETE：运行时角色对这四张表**没有任何** DELETE 权限，而且那是刻意的
+   * 安全不变量（`deploy/postgres-cvm/evidence/probe-runtime-grants.sql` 逐条探针要求
+   * 「直接 DELETE 必须恰好 42501」，deploy-sql-gate 钉死 18 条 / 9 个对象）。PG 没有列级
+   * DELETE，所以收窄只能是「不给表权限、给一条只删一个主体一个域的函数」。
+   * ⛔ 这里绝不能为了省事改回 `DELETE FROM public.recognition_*` —— 那会同时打破禁止面与
+   * 真库臂的成对断言（函数可清 vs 直接 DELETE 仍 42501）。
+   *
+   * 顺序不再由本文件决定，而是钉在迁移里（外键唯一确定）：
+   *   `0025:163` `recognition_selections.recognition_id → recognition_records(id) ON DELETE CASCADE`
+   *   ⇒ 先删 selections（子）；`0025:110`/`:134` 的 jobs 与 records 各自 `owner_user_id`，
+   *   二者之间无外键，按语义「任务先于其产物」；`recognition_idempotency`（`0025:180`）
+   *   没有主体列 ⇒ 按 scope 首段主体前缀删（`idempotencyScope` 恒以主体 uuid 开头）。
+   *
+   * 返回值仍是本域的计数形状 `{ records, idempotency }`：函数回 jsonb 明细，这里只取这两个
+   * 与 `packages/privacy` 端口一致的字段。读数读不懂就抛（⛔ 不把「读不到」当「已清 0 行」）。
+   * ⚠️ 迁移没跑（0025/0034 缺）⇒ `requireTables()` / 函数不存在都会明确 fail-closed。
+   */
+  async function purgeOwnerRows(ownerId: string): Promise<RecognitionOwnerPurgeCounts> {
+    await requireTables();
+    const rows = await run('SELECT public.purge_owner_recognitions($1::uuid) AS counts', [ownerId]);
+    return purgeCountsFromFunction(rows[0], '识别域按主体清空（public.purge_owner_recognitions）');
   }
 
   return {
@@ -842,6 +898,16 @@ export function createPostgresRecognitionStore({ pool }: PostgresRecognitionStor
         [now],
       );
       return rows.length;
+    },
+
+    // ---- 注销闭集（#19 延续片）：按主体清空（四表同一事务、先子后父；见 `purgeOwnerRows`） ----
+
+    async purgeOwnerData(ownerId) {
+      return purgeOwnerRows(ownerId);
+    },
+
+    async deleteAllByOwner(ownerId) {
+      return (await purgeOwnerRows(ownerId)).records;
     },
   };
 }

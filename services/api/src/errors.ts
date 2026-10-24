@@ -38,18 +38,34 @@ export interface ErrorEnvelope {
  *
  * 契约不裁决本字段（`Error.retryable` 只有 `{"type":"boolean"}`）⇒ 口径由本注释承载，勿在调用点各写一套。
  */
+/**
+ * `ApiError` 的可选参数。
+ *
+ * `retryAfterSeconds`：**限流器**产出该类错误时能算出的剩余窗口（秒，正整数）。它不是响应头，
+ * 只是一个事实携带位——写头仍只发生在 `retryAfterSecondsFor`（`Retry-After` 的唯一出口）。
+ * 其余错误码不带它（不知道就说不知道，⛔ 不猜一个好看的秒数）。
+ */
+export interface ApiErrorOptions {
+  retryable?: boolean;
+  details?: FieldError[];
+  retryAfterSeconds?: number;
+}
+
 /** 业务错误：携带契约错误码，HTTP 状态由错误码映射决定（不接受调用方自定义）。 */
 export class ApiError extends Error {
   readonly code: ErrorCode;
   readonly retryable: boolean;
   readonly details: FieldError[];
+  /** 限流器给出的剩余窗口（整数秒，`null` = 未知）；只供 `retryAfterSecondsFor` 读取。 */
+  readonly retryAfterSeconds: number | null;
 
-  constructor(code: ErrorCode, message: string, options: { retryable?: boolean; details?: FieldError[] } = {}) {
+  constructor(code: ErrorCode, message: string, options: ApiErrorOptions = {}) {
     super(message);
     this.name = 'ApiError';
     this.code = code;
     this.retryable = options.retryable ?? false;
     this.details = options.details ?? [];
+    this.retryAfterSeconds = options.retryAfterSeconds ?? null;
   }
 
   get status(): number {
@@ -71,15 +87,20 @@ const DEFAULT_RETRY_AFTER_SECONDS = 1;
  *   （`{type:"integer", minimum:1}`，描述「仅可重试 409/429/503 返回」）⇒ 其余错误码**不写**该头。
  *
  * 取值（确定性、可解释、整数秒；⛔不用 HTTP-date 形式）：
- * 1. **优先用限流器给出的剩余窗口**：若该类错误由限流器产出且能算出剩余秒数，就用它（向上取整、最小 1，
- *    仍在本函数的 `return` 里落地，⛔不在调用点各自算）。
- * 2. **拿不到就给固定 1 秒**——这是**当前**实际走的一路：本仓没有本地限流器（`auth/wechat.ts:117-127`
- *    是把上游微信 errcode 45011 映射成 `RATE_LIMITED`，上游只给错误码、不给剩余窗口；其余 429 码均来自
- *    供应商错误映射），所以第 1 路取不到值。此时任何更大的数字都是编造；1 是 openapi `minimum: 1` 的
- *    最小合法值，语义是「至少等 1 秒再试」，客户端按退避序列自增重试即可。409 `REQUEST_IN_PROGRESS`
- *    同理：同一 Key 的前一个请求通常在毫秒级完成，1 秒与本仓既有口径（#108）一致。
+ * 1. **优先用限流器给出的剩余窗口**：`services/api/src/rate-limit/limiter.ts` 在拒绝请求时把
+ *    「窗口恢复还需多少毫秒」写进 `ApiError.retryAfterSeconds`（秒，已向上取整、最小 1），
+ *    这里直接采用——写头仍只发生在本函数，⛔ 调用点不各自算。
+ * 2. **拿不到就给固定 1 秒**：本仓其余 `RATE_LIMITED` 来自上游映射（`auth/wechat.ts:117-127` 把微信
+ *    45011 映射成 `RATE_LIMITED`，上游只给错误码、不给剩余窗口），`Provider` 侧 429 亦然；此时任何
+ *    更大的数字都是编造，1 是 openapi `minimum: 1` 的最小合法值，语义是「至少等 1 秒再试」。
+ *    409 `REQUEST_IN_PROGRESS` 同理：同一 Key 的前一个请求通常在毫秒级完成，1 秒与本仓既有口径（#108）一致。
  */
 export function retryAfterSecondsFor(error: ApiError): number | null {
+  const fromLimiter = error.retryAfterSeconds;
+  if (fromLimiter !== null && Number.isFinite(fromLimiter) && fromLimiter >= 1) {
+    // 已在限流器侧向上取整；这里再取整一次是防御（契约要求整数秒）。
+    return Math.ceil(fromLimiter);
+  }
   if (error.code === 'REQUEST_IN_PROGRESS') return DEFAULT_RETRY_AFTER_SECONDS;
   if (error.status === 429) return DEFAULT_RETRY_AFTER_SECONDS;
   return null;

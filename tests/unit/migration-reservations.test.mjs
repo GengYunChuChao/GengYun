@@ -45,6 +45,22 @@
  * 31 号条目按它自己的 `remove_when` **删除**（0031 已真实落盘，留着会让 `reservedButPresent` 判红）。
  * 「当前仓库」用例同时把真实 0031 文件的存在性期望**翻成 `true`** —— 那条断言原来期望 `false`，
  * 0031 一落盘它就该变红；继续写 `false` 就是假通过，方向必须与「已落盘」的事实一致。
+ *
+ * **R34-I19（2026-10-23，本片撞号后让号：0033 → `0034_r34_owner_content_purge.sql`）**：
+ * 本片原取 0033，与并行分支 #525（`feat/gy-admin-audit-query`）的 `0033_admin_audit_log_read.sql`
+ * 撞号。裁定**保留 #525 的 0033**（更早成形、且不动本片这套跨文件 canary）⇒ 本片整体改 0034，
+ * 树上因此出现「有依据的缺号」：`gaps=[33] / reserved=[33]`、`maxVersion=0034`、
+ * 33 个文件 + 1 保留 === 34（三条不变量全部成立）。0033 的台账条目 `owner: #525`，
+ * `remove_when: #525 合入即删` —— #525 一落盘 `reservedButPresent` 就会把它判红。
+ * 这与 R32 那次（`gaps=[31] / reserved=[31]`）是同一种形态：本台账存在的原始用途就是跨 PR 缺号，
+ * ⛔ 不是为了让判据放行而加的白名单；负控制①仍逐字证明「缺 33 但不登记 ⇒ 判红」。
+ *
+ * **合流后状态（2026-10-24，#525 已合入 `origin/main` = `4b87e1d9`）**：
+ * `0033_admin_audit_log_read.sql` 真实落盘 ⇒ 33 号条目按它自己的 `remove_when` **删除**，台账回到
+ * `reservations: []`；`0001..0034` **连续无缺号** ⇒ 快照读数为 `gaps=[] / reserved=[]`、
+ * `maxVersion=0034`、`34 个文件 + 0 保留 === 34`，三条不变量自然成立（`reservedButPresent` 也回到空）。
+ * 上面 R34-I19 段的 `gaps=[33]` 是**让号当时**的事实，⛔ 不是可以长期躺着的白名单：保留项一落盘就必须删，
+ * 本次合流正是它自己的 `remove_when` 到期 —— 判据与负控制①~④一条未动。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -88,7 +104,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号（缺号 0）、末项 0032、三条不变量成立', () => {
+test('迁移编号/当前仓库：0031/#494、0032/#15、0033/#525 均已落盘、本片 0034 ⇒ 台账空、0001..0034 连续、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -98,10 +114,14 @@ test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号
   assert.deepEqual(
     numbering.gaps,
     [],
-    `0031 已随 #494 落盘、0032 在本片 ⇒ 0001..0032 连续，树上不应再有任何缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
+    `0031 随 #494、0032 随 #15、0033 随 #525（4b87e1d9）、0034 在本片 ⇒ 0001..0034 连续无缺号（现场 ${JSON.stringify(numbering.gaps)}）`,
   );
-  assert.deepEqual(numbering.reserved, [], '0031 已落盘 ⇒ 保留号必须清零（保留项不许躺平）');
-  assert.deepEqual(reservations, [], '保留台账必须回到空数组：0031 落盘后不应再有任何「有意缺号」');
+  assert.deepEqual(
+    numbering.reserved,
+    [],
+    '0033 已随 #525 合入 origin/main（4b87e1d9）落盘 ⇒ 那条 remove_when 到期的保留项必须删除，台账回到空数组',
+  );
+  assert.equal(reservations.length, 0, '台账眼下必须是空数组（0027／0029／0031／0033 四条保留项都已按各自的 remove_when 删除）');
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（否则就是发现器静默漏项）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -143,6 +163,24 @@ test('迁移编号/当前仓库：0031 已随 #494 落盘 ⇒ 台账无保留号
     files.includes('0031_online_purge_evidence.sql'),
     true,
     '#19 的 0031 已随 #494 落盘 ⇒ 真实文件必须在清单里，且台账里的 31 条目必须已删'
+      + '（否则 reservedButPresent 会先把这条判红）',
+  );
+  // R34-I19：本片撞号后让号 0033 → 0034（0033 归 #525 的审计读表）。方向必须与事实一致：
+  // 0034 在清单里、0033 前缀属于 #525（它已随 origin/main `4b87e1d9` 落盘，故台账里那条 33 保留项已删）。
+  assert.equal(
+    files.includes('0034_r34_owner_content_purge.sql'),
+    true,
+    '本片清理迁移已让号到 0034 ⇒ 真实文件必须在清单里',
+  );
+  assert.equal(
+    files.includes('0033_r34_owner_content_purge.sql'),
+    false,
+    '0033 已让给 #525（0033_admin_audit_log_read.sql）⇒ 本片不得再出现 0033 前缀的文件',
+  );
+  assert.equal(
+    files.includes('0033_admin_audit_log_read.sql'),
+    true,
+    '#525 的 0033 已随 origin/main（4b87e1d9）落盘 ⇒ 真实文件必须在清单里，且台账不得再登记 33'
       + '（否则 reservedButPresent 会先把这条判红）',
   );
   assert.ok(

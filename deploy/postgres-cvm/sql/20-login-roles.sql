@@ -282,6 +282,42 @@ GRANT EXECUTE ON FUNCTION public.read_online_purge_evidence(uuid,uuid) TO gengyu
 -- #endregion gy-r32-i19-online-evidence-grant
 \echo '20-login-roles.sql：已授予 record_online_purge_evidence(...) / read_online_purge_evidence(...) 的 EXECUTE（在线证据唯一写/读路径；未授予任何表/列权限）。'
 
+-- --- D3. 注销内容清理：识别域/语音域按主体清空的 EXECUTE（GY-R34 / 迁移 0034）------
+-- 注销闭集从 5 项扩到 7 项（识别域四表 + 语音域三表），内容清理由各域 handler 在在线窗口内
+-- 各自执行并各自留证据串。清理写路径**不是**给运行时发表级 DELETE，而是迁移 0034 建的两条
+-- **窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员，`REVOKE ALL ... FROM PUBLIC`）：
+--   · `purge_owner_recognitions(uuid)` —— 只删该主体的 recognition_selections / jobs / records
+--     与 recognition_idempotency 台账；
+--   · `purge_owner_speech(uuid)`       —— 只删该主体的 speech_jobs / transcriptions 与
+--     speech_idempotency 台账。
+-- 为什么必须这样（而不是表级 GRANT DELETE）：PG 没有列级 DELETE，而运行时对这五张正文表的
+-- **整行 DELETE 是刻意的禁止面** —— `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`
+-- 逐条探针要求「直接 DELETE 必须恰好 42501」（deploy-sql-gate 的 18 条 / 9 个对象）。
+-- 因此这里**只**授 EXECUTE：五张表对运行时**仍然一条 DELETE 都没有**（90-assert 的
+-- `domain_manifest` 与表级写授权白名单逐字不动，函数面由 `function_surface_manifest` 登记）。
+-- 若把 DELETE 授出去，等于改掉一条安全不变量，那要走安全评审，不是发权限的顺手活。
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败
+-- （绝不留一个「看似已收敛、实际注销清不动」的运行态）。
+-- #region gy-r34-i19-owner-content-purge-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）。
+DO $$
+BEGIN
+  IF to_regprocedure('public.purge_owner_recognitions(uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.purge_owner_recognitions(uuid)：迁移 0034 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+  IF to_regprocedure('public.purge_owner_speech(uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.purge_owner_speech(uuid)：迁移 0034 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.purge_owner_recognitions(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.purge_owner_speech(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.purge_owner_recognitions(uuid) TO gengyun_api_runtime;
+GRANT EXECUTE ON FUNCTION public.purge_owner_speech(uuid) TO gengyun_api_runtime;
+-- #endregion gy-r34-i19-owner-content-purge-grant
+\echo '20-login-roles.sql：已授予 purge_owner_recognitions(uuid) / purge_owner_speech(uuid) 的 EXECUTE（注销内容清理的唯一写路径；五张正文表对运行时仍然零 DELETE）。'
+
 -- --- E. 账号停用/恢复：唯一写路径的 EXECUTE（GY-I22 / 迁移 0017）--------------
 -- 迁移 0017 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
 -- `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：
@@ -892,7 +928,7 @@ GRANT UPDATE (request_hash, payload, pending, expires_at)
 GRANT DELETE ON public.recognition_idempotency TO gengyun_api_runtime;
 
 \echo '20-login-roles.sql：已授予 public.recognition_jobs / public.recognition_records / public.recognition_selections / public.recognition_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 recognitions/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.recognition_idempotency（PG 无列级 DELETE；jobs / records / selections 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.recognition_idempotency（PG 无列级 DELETE；jobs / records / selections 不授 DELETE —— 账号注销的内容清理只能经迁移 0034 的 SECURITY DEFINER 函数 public.purge_owner_recognitions(uuid) 以属主身份执行，本段只授该函数的 EXECUTE）。'
 \echo '20-login-roles.sql：recognition_jobs / recognition_records 的 UPDATE 是业务写权限（认领、终态提交、改选），同时满足各自的 SELECT … FOR UPDATE；recognition_selections 不授 UPDATE。'
 
 -- ----------------------------------------------------------------------------
@@ -990,7 +1026,7 @@ GRANT UPDATE (payload, pending)
 GRANT DELETE ON public.speech_idempotency TO gengyun_api_runtime;
 
 \echo '20-login-roles.sql：已授予 public.speech_jobs / public.transcriptions / public.speech_idempotency 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 speech/store-pg.ts；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.speech_idempotency（PG 无列级 DELETE；speech_jobs / transcriptions 不授 DELETE，账号注销经 request_account_deletion() 的属主级联）。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.speech_idempotency（PG 无列级 DELETE；speech_jobs / transcriptions 不授 DELETE —— 账号注销的内容清理只能经迁移 0034 的 SECURITY DEFINER 函数 public.purge_owner_speech(uuid) 以属主身份执行，段 D3 只授该函数的 EXECUTE）。'
 \echo '20-login-roles.sql：speech_jobs 的 UPDATE 是业务写权限（认领、终态提交），同时满足 commitTerminal 的 SELECT … FOR UPDATE；transcriptions 不授 FOR UPDATE，speech_idempotency 的 SELECT 是全部 6 列（WHERE 与 RETURNING 需要）。'
 
 -- ----------------------------------------------------------------------------

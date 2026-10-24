@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 /**
  * miniprogram/utils/auth.js 的**运行期**回归（Node + 模拟 wx），覆盖：
  * - P2-④ 伪造缓存不构成认证；会话状态须经 GET /auth/session 核实；
- * - P2-⑤ 退出仅在契约成功 Ack 时报「服务端已撤销」，否则保留「撤销未确认」。
+ * - P2-⑤ 退出仅在契约成功 Ack 时报「服务端已撤销」，否则保留「撤销未确认」；
+ * - GY-R34（返修）登录 429 的文案：显示「请求过于频繁，请 N 秒后再试」（秒数优先取
+ *   `Retry-After` 头，缺头时退回服务端 `error.message`），其余错误码仍回错误码。
  *
  * 注意：这是 Node 侧对纯 JS 逻辑的验证，**不是**微信编译器或真机/开发者工具验证。
  * 共享源码 runtime.mode='disabled'，故这里在临时目录生成一份 mode:'local' 的副本加载，
@@ -185,6 +187,117 @@ test('登录响应缺少可解释的执行模式 → 不落盘、不视为已登
   assert.ok(typeof error === 'string' && error !== '');
   assert.equal(auth.isLoggedIn(), false);
   assert.equal(b.storage.has(SESSION_KEY), false);
+});
+
+// ---------------------------------------------------------------------------
+// GY-R34（返修）· 429 文案：不能只甩 RATE_LIMITED，要给出「请 N 秒后再试」
+// ---------------------------------------------------------------------------
+
+test('GY-R34 登录 429 → 提示「请 N 秒后再试」（秒数取 Retry-After 头），且不落盘', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+  let error = null;
+  auth.login((e) => { error = e; });
+  b.requests[0].success({
+    statusCode: 429,
+    header: { 'retry-after': '60', 'content-type': 'application/json' },
+    data: {
+      error: { code: 'RATE_LIMITED', message: '请求过于频繁，请 60 秒后再试', retryable: true, retry_after_seconds: 60 },
+      meta: { execution_mode: 'stub' },
+    },
+  });
+  assert.equal(error, '登录失败：请求过于频繁，请 60 秒后再试');
+  assert.equal(auth.isLoggedIn(), false, '被限流不得落盘会话');
+  assert.equal(b.storage.has(SESSION_KEY), false);
+});
+
+test('GY-R34 登录 429 但响应头缺 Retry-After → 退回服务端 message（秒数仍来自服务端）', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+  let error = null;
+  auth.login((e) => { error = e; });
+  b.requests[0].success({
+    statusCode: 429,
+    header: {},
+    data: { error: { code: 'RATE_LIMITED', message: '请求过于频繁，请 42 秒后再试', retryable: true } },
+  });
+  assert.equal(error, '登录失败：请求过于频繁，请 42 秒后再试');
+  assert.equal(auth.isLoggedIn(), false);
+});
+
+test('GY-R34 其它错误码的老行为不变：仍显示错误码（便于对问题）', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+  let error = null;
+  auth.login((e) => { error = e; });
+  b.requests[0].success({
+    statusCode: 401,
+    header: { 'retry-after': '60' },
+    data: { error: { code: 'SESSION_EXPIRED', message: '会话已过期' } },
+  });
+  assert.equal(error, '登录失败：SESSION_EXPIRED', '非 429 不套用「请 N 秒后再试」');
+});
+
+// ---------------------------------------------------------------------------
+// P3-4（测试无牙返修）· `retryAfterSeconds`：**头优先**必须真被钉住
+//
+// 原用例的 429 头与 body 写的是同一个秒数（60/60、42 只有 body），所以把 `retryAfterText`
+// 改成恒 return null 也全绿——区分不出「头优先」。这里让头与 body **给出不同的秒数**：
+// 真实现 ⇒ 90/120；谁改成「信 body 文案」「忽略头」，这两条立刻红。
+// ---------------------------------------------------------------------------
+
+test('P3-4 头优先：retry-after: 90 + body「60 秒」⇒ 90（改成信 body 立刻红）', () => {
+  const auth = loadAuth(makeWx().wx);
+  const body = { error: { code: 'RATE_LIMITED', message: '请求过于频繁，请 60 秒后再试', retry_after_seconds: 60 } };
+  assert.equal(auth.retryAfterSeconds({ 'retry-after': '90' }, body, Date.now()), 90,
+    '头里的 90 秒与限流器同源，不得被 body 的 60 覆盖');
+});
+
+test('P3-4 头优先（HTTP 日期形态）：retry-after: <now+120s> ⇒ 120，body「10 秒」不得抢先', () => {
+  const auth = loadAuth(makeWx().wx);
+  const now = Date.parse('2026-10-23T12:00:00Z');
+  const at = new Date(now + 120_000).toUTCString();
+  assert.equal(auth.retryAfterSeconds({ 'retry-after': at }, { error: { message: '请求过于频繁，请 10 秒后再试' } }, now), 120,
+    'HTTP 日期要先于 body 文案解释');
+});
+
+test('P3-4 retryAfterSeconds 取值表：秒 / 大写头 / 日期 / 非法 / ≤0 / 上限 / body / 空', () => {
+  const auth = loadAuth(makeWx().wx);
+  const now = Date.parse('2026-10-23T12:00:00Z');
+  const dateAt = (deltaSeconds) => new Date(now + deltaSeconds * 1000).toUTCString();
+  const table = [
+    [{ 'retry-after': '45' }, null, 45, '头：整数秒'],
+    [{ 'Retry-After': '45' }, null, 45, '头：大写写法也认'],
+    [{ 'retry-after': '1.2' }, null, 2, '头：小数向上取整'],
+    [{ 'retry-after': dateAt(120) }, null, 120, '头：HTTP 日期按 now 折算'],
+    [{ 'retry-after': dateAt(-60) }, null, null, '头：已经过去的日期 ⇒ null'],
+    [{ 'retry-after': '0' }, null, null, '头：0 秒不算等待 ⇒ null'],
+    [{ 'retry-after': '-5' }, null, null, '头：负数 ⇒ null'],
+    [{ 'retry-after': 'soon' }, null, null, '头：非法 ⇒ null（不抛）'],
+    [{ 'retry-after': '999999' }, null, 3600, '头：超过上限截断到 3600'],
+    [{}, { error: { retry_after_seconds: 30 } }, 30, 'body：显式秒'],
+    [{}, { error: { message: '请求过于频繁，请 12 秒后再试' } }, 12, 'body：error.message 里的秒'],
+    [{}, { retryAfter: 7200 }, 3600, 'body：retryAfter 也吃上限'],
+    [{}, { message: '请求过于频繁' }, null, 'body：文案里没有秒 ⇒ null'],
+    [null, null, null, '无头无 body ⇒ null'],
+  ];
+  for (const [headers, body, expected, label] of table) {
+    assert.equal(auth.retryAfterSeconds(headers, body, now), expected, label);
+  }
+});
+
+test('P3-4 登录 429 把等待秒数交给页面：回 90（头）而非 60（body），第三参数同值', () => {
+  const b = makeWx();
+  const auth = loadAuth(b.wx);
+  let seen = null;
+  auth.login((error, navigationId, retryAfter) => { seen = { error, retryAfter } });
+  b.requests[0].success({
+    statusCode: 429,
+    header: { 'retry-after': '90' },
+    data: { error: { code: 'RATE_LIMITED', message: '请求过于频繁，请 60 秒后再试', retry_after_seconds: 60 } },
+  });
+  assert.equal(seen.error, '登录失败：请求过于频繁，请 90 秒后再试');
+  assert.equal(seen.retryAfter, 90, '登录页按这个秒数给按钮上冷却');
 });
 
 // ---------------------------------------------------------------------------

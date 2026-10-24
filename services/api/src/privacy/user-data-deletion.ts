@@ -114,6 +114,30 @@ export const CONVERSATIONS_DELETION_MODULE = 'conversations';
  * 不会有「缺模块」提示。这是本片的已知弱化，已列为待裁定项（见证据页）。
  */
 export const COMMUNITY_DELETION_MODULE = 'community';
+/**
+ * #19（延续片）· 识别域：**第七个**进闭集的域（`recognition_jobs` / `recognition_records` /
+ * `recognition_selections` / `recognition_idempotency` 四张表）。
+ *
+ * 为什么以前不进：迁移 `0025_recognitions_persistence.sql` 只建了表，`recognitions/store-pg.ts`
+ * **没有任何按主体清空原语**（`deleteAllByOwner` / `purgeOwnerData` 零命中）⇒ 就算进了闭集，
+ * 协调器也只会驱动到一个"没有清理能力"的处理器。本片先把原语补在存储层（四表同一事务、
+ * 先子后父），再把它接进闭集 —— 顺序不能反。
+ *
+ * 为什么用「**装配处条件追加**」而不是写进 `USER_DATA_DELETION_MODULES` 常量：与
+ * `COMMUNITY_DELETION_MODULE` 同一折中（见上文），本片没有同时改写 4 个测试文件里
+ * 钉死「四域、不多不少」的既有断言。生产装配处（`app.ts`）**无条件**注入两个 store，
+ * 因此真实注销路径生效闭集 = 4 + community + recognitions + speech = **7 项**。
+ * ⚠️ 同一代价：装配处漏注入 ⇒ 静默回到更小的闭集（已列为待裁定，见证据页）。
+ */
+export const RECOGNITIONS_DELETION_MODULE = 'recognitions';
+/**
+ * #19（延续片）· 语音域：**第八个**进闭集的域（`speech_jobs` / `transcriptions` /
+ * `speech_idempotency` 三张表）。
+ *
+ * 理由与 {@link RECOGNITIONS_DELETION_MODULE} 逐条相同（迁移 `0026_speech_persistence.sql`，
+ * 存储层原本同样零命中按主体清空原语）。
+ */
+export const SPEECH_DELETION_MODULE = 'speech';
 
 /**
  * 必需模块闭集。
@@ -127,6 +151,41 @@ export const USER_DATA_DELETION_MODULES = [
   HISTORY_DELETION_MODULE,
   MESSAGES_DELETION_MODULE,
   CONVERSATIONS_DELETION_MODULE,
+] as const;
+
+/**
+ * **写落库在线清除证据**的模块（迁移 0031 的唯一写路径按模块名逐条追加）。
+ *
+ * 为什么不直接用 `USER_DATA_DELETION_MODULES` 当闸门：本片新增的识别/语音两域与社区域一样
+ * 走「装配处条件追加」，不在常量闭集里；但它们的在线清除**同样是**「按主体删了 N 行」这个事实，
+ * 必须能被审计按 `(requestId, module, removed, idempotency)` 独立复算 —— 所以证据照写。
+ *
+ * 为什么社区域**不在**本表：F13 要求「保留 + 脱敏」，它没有"清空行数"这个事实，
+ * 拿它的处理行数当在线清除证据就是冒充。
+ *
+ * 迁移 0031 的函数对模块名的唯一约束是形状（`^[a-z][a-z0-9_]{0,63}$`），
+ * 读路径（`online-state-derivation.ts`）按模块名过滤 ⇒ 新增两域的证据不会污染四域推导。
+ */
+export const ONLINE_EVIDENCE_MODULES = [
+  ...USER_DATA_DELETION_MODULES,
+  RECOGNITIONS_DELETION_MODULE,
+  SPEECH_DELETION_MODULE,
+] as const;
+
+/**
+ * 装配处**条件追加**的模块（注入对应 store 才进闭集；不注入时逐字保持旧闭集）。
+ *
+ * 为什么把这份顺序做成**导出常量**而不是散落的 `if`：`tests/unit/deletion-registration-coverage.test.mjs`
+ * 要能机器可读地知道「生效闭集到底是几项」，否则「加了处理器但覆盖映射没跟上」这类退化只能靠人眼。
+ * 该测试同时**核对真实追加点**（源码里 `requiredModules.push(...)` 的实参）与本常量一致，
+ * 因此"改了追加点却忘了改常量"照样红。
+ *
+ * 顺序 = 追加顺序 = 回执里 handler 行的顺序。
+ */
+export const CONDITIONAL_DELETION_MODULES = [
+  COMMUNITY_DELETION_MODULE,
+  RECOGNITIONS_DELETION_MODULE,
+  SPEECH_DELETION_MODULE,
 ] as const;
 
 /** 按主体清理的**分表**真实行数：正文表与幂等台账各计各的（两项都进在线清除证据）。 */
@@ -288,6 +347,17 @@ export interface UserDataDeletionDeps {
    * 折中的代价与裁定请求见 `COMMUNITY_DELETION_MODULE` 的注释。
    */
   communityStore?: OwnerPurgeStore;
+  /**
+   * #19（延续片）· 识别域（`recognition_*` 四表）。**可选**，但**生产装配处必须给**
+   * （`app.ts` 无条件注入：real 走 PG store、stub/preset_demo 走内存 store，且必须与路由用的是
+   * **同一个实例** —— 另建一个内存实例只会清空一份空数据，在线证据却报"已清 N 行"，那是静默假账）。
+   *
+   * 注入 ⇒ 闭集追加 `recognitions` 并注册处理器；不注入 ⇒ 逐字保持本片之前的行为。
+   * 折中的代价与裁定请求见 `RECOGNITIONS_DELETION_MODULE` 的注释。
+   */
+  recognitionsStore?: OwnerPurgeStore;
+  /** #19（延续片）· 语音域（`speech_jobs` / `transcriptions` / `speech_idempotency`）。可选，理由同上。 */
+  speechStore?: OwnerPurgeStore;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
   /**
@@ -448,10 +518,18 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
    * 为什么不在常量里直接加 `community`：见 `COMMUNITY_DELETION_MODULE` 的注释
    * （会推翻 14 条既有断言 + 44 处测试替身，属独立扩集动作）。
    */
-  const requiredModules: string[] =
-    input.communityStore === undefined
-      ? [...USER_DATA_DELETION_MODULES]
-      : [...USER_DATA_DELETION_MODULES, COMMUNITY_DELETION_MODULE];
+  // 生效闭集 = 常量四域 + 注入了 store 的条件域（顺序见 `CONDITIONAL_DELETION_MODULES`）。
+  // 每个条件域的两端是**双保险**：没进闭集就注册 ⇒ 协调器抛 INVALID_REQUEST；
+  // 进了闭集没注册 ⇒ 受理时抛 OBJECT_UNAVAILABLE（`packages/privacy/deletion-modules.mjs`）。
+  const requiredModules: string[] = [...USER_DATA_DELETION_MODULES];
+  const conditionalStores: ReadonlyArray<readonly [string, OwnerPurgeStore | undefined]> = [
+    [COMMUNITY_DELETION_MODULE, input.communityStore],
+    [RECOGNITIONS_DELETION_MODULE, input.recognitionsStore],
+    [SPEECH_DELETION_MODULE, input.speechStore],
+  ];
+  for (const [conditionalModule, conditionalStore] of conditionalStores) {
+    if (conditionalStore !== undefined) requiredModules.push(conditionalModule);
+  }
   const coordinator = createPrivacyDeletionCoordinator({
     registry,
     requiredModules,
@@ -604,14 +682,16 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
         }
       }
       // GY-R32（#19 片B / 迁移 0031）：**在线成功行写证据**（不是只进命令报告 stdout）。
-      //   - 只对**闭集四域**写：社区域是"保留 + 脱敏"，没有"清空行数"这个事实，⛔ 不冒充在线清除证据；
+      //   - 只对**真的"按主体清空"了的模块**写：社区域是"保留 + 脱敏"，没有"清空行数"这个事实，
+      //     ⛔ 不冒充在线清除证据；识别/语音两域（#19 延续片）是真正的按行清空 ⇒ 走
+      //     `ONLINE_EVIDENCE_MODULES`（见该常量的注释）；
       //   - `blocked > 0`（该模块有未完成项）⇒ 不写（没完成就没有凭据）；
       //   - 写失败 ⇒ 抛错，由协议折叠 blocked（⛔ 不把"写不进去"当 completed）；
       //   - 证据时刻用装配时钟（与回执期限/到期判定同源），不另读一次 `now()`。
       if (
         input.onlineEvidence !== undefined &&
         blocked === 0 &&
-        (USER_DATA_DELETION_MODULES as readonly string[]).includes(module)
+        (ONLINE_EVIDENCE_MODULES as readonly string[]).includes(module)
       ) {
         await input.onlineEvidence.record({
           requestId,
@@ -693,6 +773,30 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     coordinator.registerModule(
       COMMUNITY_DELETION_MODULE,
       makeHandler(COMMUNITY_DELETION_MODULE, input.communityStore),
+    );
+  }
+  // #19 延续片 · 识别域（四表：`recognition_selections` → `recognition_jobs` → `recognition_records`
+  // → `recognition_idempotency`，顺序由迁移 0025 的外键唯一钉死，见 `recognitions/store-pg.ts`
+  // 的 `purgeOwnerRows`）：**注入才注册**（闭集同步追加，见 `RECOGNITIONS_DELETION_MODULE` 注释）。
+  // 走 `purgeOwnerData` ⇒ 证据串带 `recognitions:online-purged:<三表真实删除行数之和>` 与
+  // `recognitions:idempotency-purged:<台账行数>`，并由 `ONLINE_EVIDENCE_MODULES` 放行落库（迁移 0031）。
+  // ⛔ 该域**没有**"保留/脱敏"这类业务留存：识别任务与识别结果都是该主体自己的数据，
+  // 注销即物理删；关联的 `media` 对象由媒体域另行清理（本片不接管，见证据页的排除表）。
+  if (input.recognitionsStore !== undefined) {
+    coordinator.registerModule(
+      RECOGNITIONS_DELETION_MODULE,
+      makeHandler(RECOGNITIONS_DELETION_MODULE, input.recognitionsStore),
+    );
+  }
+  // #19 延续片 · 语音域（三表：`speech_jobs` → `transcriptions` → `speech_idempotency`，理由同上，
+  // 见迁移 0026 与 `speech/store-pg.ts::purgeOwnerRows`）：**注入才注册**（闭集同步追加）。
+  // 走 `purgeOwnerData` ⇒ 证据串带 `speech:online-purged:<两表真实删除行数之和>` 与
+  // `speech:idempotency-purged:<台账行数>`。转写原文（`raw_text`）是本片最敏感的一类个人数据
+  // （语音转出的整段文字），因此这里**不留任何副本**、不做"脱敏保留"。
+  if (input.speechStore !== undefined) {
+    coordinator.registerModule(
+      SPEECH_DELETION_MODULE,
+      makeHandler(SPEECH_DELETION_MODULE, input.speechStore),
     );
   }
 
@@ -793,6 +897,10 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     const request = requestsById.get(requestId) as Record<string, unknown> | undefined;
     if (request === undefined) return null;
 
+    // ⚠️ 备份侧仍只推导**四域**：备份副本（`user_backup_copies`）目前只对收藏/历史/消息/会话
+    // 四域产生行（`backupCopySources()` 四域全有或全无），识别/语音两域**没有**备份副本源 ⇒
+    // 对它们做备份推导只会凭空得出「到期无副本 ⇒ blocked」。那两域的备份列因此保持 `pending`
+    // （如实"未接线"，⛔ 不冒充完成）；本片不改这一层，缺口写在证据页的「未做/风险」表里。
     const modules = [...USER_DATA_DELETION_MODULES];
     let derived: DerivedBackupStates;
     try {
@@ -920,7 +1028,13 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     const request = requestsById.get(requestId) as Record<string, unknown> | undefined;
     if (request === undefined) return null;
 
-    const modules = [...USER_DATA_DELETION_MODULES];
+    // 推导范围 = 「**本次装配实际进闭集**且会写在线证据」的模块（#19 延续片把识别/语音两域纳入，
+    // 它们确实按行清空、也真的写 0031 证据）。
+    // 为什么不直接用 `ONLINE_EVIDENCE_MODULES`：没注入的模块不在闭集里，对它们推导只会得到
+    // 「到期且无证据 ⇒ blocked」，把**根本没接入**的域报成阻塞。社区域不在
+    // `ONLINE_EVIDENCE_MODULES` 内（保留+脱敏，没有"清空行数"事实）⇒ 与改动前一致。
+    // 未注入新两域时本行与旧的 `[...USER_DATA_DELETION_MODULES]` **逐字等价**（零回归）。
+    const modules = [...ONLINE_EVIDENCE_MODULES].filter((module) => requiredModules.includes(module));
     let derived: DerivedOnlineStates;
     try {
       derived = await derivation.derive({ requestId, userId, modules });
