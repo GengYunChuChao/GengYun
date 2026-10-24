@@ -57,6 +57,12 @@ export interface AdminContentStore {
     derivedFromRevision: number | null;
   }): StoredRevision<unknown>;
   setLifecycle(entity: StoredEntity<unknown>, lifecycle: Lifecycle): void;
+  /**
+   * 生命周期落库。内存实现是**空操作**：`getEntity` 返回的就是库内那一个对象，
+   * 服务层已经在它上面原地改过字段（发布/撤回的全部字段），不存在"忘了写回去"的问题。
+   * 真库实现（`ops/content-pg.ts`）必须在这里 `UPDATE`，否则发布/撤回只改内存不落库。
+   */
+  commitLifecycle(entity: StoredEntity<unknown>): void;
 
   /** 已定型结果；占位中与不存在都返回 null。 */
   findIdempotent(scope: string, keyHash: string): IdempotencySettledRecord | null;
@@ -71,6 +77,56 @@ export interface AdminContentStore {
   /** 实际删除已到期行；返回删除数量。 */
   purgeExpiredIdempotent(now: Date): number;
   idempotentCount(): number;
+}
+
+/** 同步或异步返回值：内存实现同步、真库实现异步，服务层对两者一视同仁。 */
+export type MaybeAsync<T> = T | Promise<T>;
+
+/**
+ * 服务层依赖的**存储面**：形状与 `AdminContentStore` 相同，但允许异步返回。
+ *
+ * 两套实现都满足它：
+ * - `createAdminContentStore()`（本文件）：进程内内存，同步，`persistent === false`；
+ * - `createPostgresAdminContentStore()`（`admin/ops/content-pg.ts`）：真库，异步，`persistent === true`。
+ *
+ * 之所以把「同步/异步」放宽成 `MaybeAsync`：`pg` 只有异步 API，真库实现不可能同步返回。
+ * 服务层因此统一 `await`；内存实现多一个微任务，判定语义逐字不变。
+ *
+ * **不改的是**：`getEntity` 仍然"每次真读"（内存读 Map、PG 读库），不存在跨请求缓存。
+ */
+export interface AdminContentStoreLike {
+  /** 是否已接真实数据库。内存实现恒 `false`，真库实现恒 `true`。 */
+  readonly persistent: boolean;
+  transaction<T>(work: () => T | Promise<T>): Promise<T>;
+  readonly audit: AuditLog;
+
+  createEntity(input: { id?: string; family: AdminFamily; stewardId: string; createdAt: Date }): MaybeAsync<StoredEntity<unknown>>;
+  getEntity(id: string): MaybeAsync<StoredEntity<unknown> | undefined>;
+  listEntities(family: AdminFamily, stewardId: string): MaybeAsync<readonly StoredEntity<unknown>[]>;
+  listFamilyEntities(family: AdminFamily): MaybeAsync<readonly StoredEntity<unknown>[]>;
+  appendRevision(input: {
+    entity: StoredEntity<unknown>;
+    content: unknown;
+    authorId: string;
+    createdAt: Date;
+    derivedFromRevision: number | null;
+  }): MaybeAsync<StoredRevision<unknown>>;
+  setLifecycle(entity: StoredEntity<unknown>, lifecycle: Lifecycle): MaybeAsync<void>;
+  /** 生命周期落库（见 `AdminContentStore.commitLifecycle` 的说明）。 */
+  commitLifecycle(entity: StoredEntity<unknown>): MaybeAsync<void>;
+
+  findIdempotent(scope: string, keyHash: string): MaybeAsync<IdempotencySettledRecord | null>;
+  peekIdempotent(scope: string, keyHash: string): MaybeAsync<IdempotencyLedgerRow | null>;
+  claimIdempotent(scope: string, keyHash: string, claim: IdempotencyClaimInput): MaybeAsync<boolean>;
+  completeIdempotent(
+    scope: string,
+    keyHash: string,
+    outcome: ContentIdempotencyOutcome,
+    expiresAt: Date,
+  ): MaybeAsync<boolean>;
+  releaseIdempotent(scope: string, keyHash: string): MaybeAsync<void>;
+  purgeExpiredIdempotent(now: Date): MaybeAsync<number>;
+  idempotentCount(): MaybeAsync<number>;
 }
 
 export function createAdminContentStore(options: { runtime?: AdminRuntime } = {}): AdminContentStore {
@@ -146,6 +202,10 @@ export function createAdminContentStore(options: { runtime?: AdminRuntime } = {}
 
     setLifecycle(entity, lifecycle) {
       entity.lifecycle = lifecycle;
+    },
+
+    commitLifecycle() {
+      // 内存实现：`entity` 就是库内那一个对象，字段已原地改过，无需再写。
     },
 
     // ---- 幂等台账：整体委托给共享 runtime（阶段 1b 复用同一套实现）----

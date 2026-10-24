@@ -78,17 +78,19 @@ import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg
 import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts';
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
 import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
+import { createPostgresAdminContentStore } from './admin/ops/content-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
 import { createPostgresAdminJobPort } from './admin/ops/jobs-pg.ts';
 import { createAdminContentStore } from './admin/store.ts';
+import type { AdminContentStoreLike } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
-import { createFailClosedAdminServices } from './admin/fail-closed-services.ts';
+import { createFailClosedAdminServices, ADMIN_CONTENT_OPERATION_IDS } from './admin/fail-closed-services.ts';
 import { createAdminAuditLogService } from './admin/audit/service.ts';
 import type { AdminAuditLogService, AdminAuditLogServiceOptions } from './admin/audit/service.ts';
 import { createPostgresAdminAuditLogPort } from './admin/audit/pg.ts';
 import type { AdminAuditLogPort } from './admin/audit/pg.ts';
-import { createReferenceIntegrity } from './admin/reference-integrity.ts';
+import { createAsyncReferenceIntegrity } from './admin/reference-integrity.ts';
 import type { AdminCallContext } from './admin/types.ts';
 // GY-I18 本片：全局开关的**跨端点真实生效**（受控输出面清单 + 守卫包装 + 投稿面装饰）。
 import {
@@ -1255,7 +1257,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
   const adminSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
   const adminRuntime = createAdminRuntime();
-  const adminContentStore = adminInjection?.contentStore ?? createAdminContentStore({ runtime: adminRuntime });
+  // 内容 store 的装配下移到 `adminRealUnwired` 判定之后（与 `flagsPort`/`jobPort`/`auditLogPort`
+  // 同一门：判据要先看 `adminRealUnwired` 与 `pool`），见下方「GY-I18 内容域真库落点」。
   // **开关播种（本片新增）**：把 3 个开关与该输出面**当前是否真的在产出**对齐（见
   // `admin/ops/flag-gate.ts` 的 `FLAG_WIRING_BASELINE` 说明）。不播种的话，出厂默认（全 false）
   // 会让 `listFlags` 自述"药剂输出已关闭"而 `/herbicides` 照常产出 —— 开关等于没生效。
@@ -1265,6 +1268,17 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 全局开关门：读取**当前**开关状态。real 模式后台域整体 fail-closed ⇒ 开关没有权威来源，
   // 此时 `armed:false`（保持既有产出行为，不拿未接线的开关中断用户面）—— 见证据页「未取得项」。
   const adminRealUnwired = config.executionMode === 'real';
+  // **GY-I18 内容/资料域真库落点（#18，迁移 0036）**：与 `flagsPort` / `jobPort` / `auditLogPort`
+  // 同一门 —— 显式注入优先（测试用它钉住接线点，不依赖真库）；否则 `real` + **拿到真实库池**
+  // 才建真库 store（`persistent: true`，三表 `public.admin_content_{entities,revisions,idempotency}`）。
+  // `pool === null` 或非 real ⇒ 内存 store（自述 `persistent: false`）⇒ 下方 real 分支据此**继续
+  // fail-closed 503**。⛔ 绝不在无池时静默降级成"real 但用内存"：判据只看能力位与库池。
+  const adminContentStore: AdminContentStoreLike =
+    adminInjection?.contentStore ??
+    (adminRealUnwired && pool !== null
+      ? createPostgresAdminContentStore({ pool })
+      : createAdminContentStore({ runtime: adminRuntime }));
+  const adminContentWired = adminContentStore.persistent === true;
   // **GY-I18 接线（#18）**：`real` 且拿到真实库池 ⇒ 开关读写走迁移 0020 的 `public.feature_flags`
   // （读面 `listFlags`、写面 `setFlag`：单事务 CAS + 审计）。显式注入优先（测试用它钉住接线点，
   // 不依赖真库）；`pool === null` ⇒ `flagsPort` 为 null，开关面继续 503、开关门不武装
@@ -1337,7 +1351,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   if (adminRealUnwired) {
     const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
     const failClosed = createFailClosedAdminServices(reason);
-    adminContentService = failClosed.content;
+    // **GY-I18（#18）显式放行：内容/资料域读写**（本片新增）。判据是内容 store 的**能力位**
+    // `persistent === true`（迁移 0036 的 PG store 自述 true；内存实现恒 false）。放行面 =
+    // `ADMIN_CONTENT_OPERATION_IDS`（4 族 × 6 操作 + `listAuditEvents` = 25 条）：实体 / 修订 /
+    // 幂等三张表真读真写。⛔ 审计**追加**仍是进程内（`admin_audit_events` 对运行时零表级权限，
+    // 写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）—— 如实登记，不声称"审计已落库"。
+    // `pool === null` ⇒ 内存 store ⇒ 继续 `failClosed.content`（25 条逐条 503，与接线前逐字相同）。
+    adminContentService = adminContentWired
+      ? createAdminContentService({
+          store: adminContentStore,
+          now: clock,
+          signingKey: adminSigningKey,
+          executionMode: config.executionMode,
+        })
+      : failClosed.content;
     // **real 下的两条显式放行**（每条都必须有真实持久权威，逐个列出、不整对象透传）：
     // 1. **GY-I22（#22）账号停用**：迁移 0017 的 `public.suspend_account()`（`users.state` +
     //    `auth_epoch` + 撤会话 + 审计**同一事务**）；
@@ -1396,7 +1423,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     });
     if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
-      app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ 36 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
+      // 内容域已放行时，仍 503 的面只剩作业/账号类：条数按实测扣减（25 条内容操作不再算在内）。
+      const stillClosed = 36 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length : 0);
+      app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ ${stillClosed} 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
     } else {
       adminOpsService = restrictAdminOpsToAccountsAuthority(
         createAdminOpsService({
@@ -1424,13 +1453,35 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         },
       );
       const released: string[] = [];
-      if (realAccountAuthority !== null) released.push('账号停用');
-      if (realAccountsDirectory !== null) released.push('账号读面');
-      if (flagsWired) released.push('开关读写');
+      // 已放行的**路由条数**（与 `released` 的能力项不是同一口径：一项能力可能覆盖多条路由）。
+      let releasedRoutes = 0;
+      if (realAccountAuthority !== null) {
+        released.push('账号停用');
+        releasedRoutes += 2; // suspend / restore
+      }
+      if (realAccountsDirectory !== null) {
+        released.push('账号读面');
+        releasedRoutes += 1; // listAdminUsers
+      }
+      if (flagsWired) {
+        released.push('开关读写');
+        releasedRoutes += 2; // listFlags / setFlag
+      }
       // 只在**真的**放行时才把这个能力计入读数：未持久化时它仍属"逐条 503"的一员。
-      if (communityPostPortForAdmin.persistent === true) released.push('帖子下架');
+      if (communityPostPortForAdmin.persistent === true) {
+        released.push('帖子下架');
+        releasedRoutes += 1; // hidePost
+      }
       // R34：库内审计**读**面（迁移 0033 的只读函数）；审计**写**面仍未落库，不在此列。
-      if (realAuditLogPort !== null) released.push('库内审计读面');
+      if (realAuditLogPort !== null) {
+        released.push('库内审计读面');
+        releasedRoutes += 1; // listAuditLogs
+      }
+      // **本片**：内容/资料域（迁移 0036 的三表落点）—— 25 条按 operationId 计。
+      if (adminContentWired) {
+        released.push('内容/资料读写');
+        releasedRoutes += ADMIN_CONTENT_OPERATION_IDS.length;
+      }
       app.log.warn(
         {
           executionMode: config.executionMode,
@@ -1438,8 +1489,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           flagsWired,
           hidePostWired: communityPostPortForAdmin.persistent === true,
           auditLogReadWired: realAuditLogPort !== null,
+          contentWired: adminContentWired,
         },
-        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033）；其余 ${36 - released.length} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036）；其余 ${36 - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {
@@ -2131,15 +2183,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
   // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
   // GY-I07 第二片（跨线 **#7 公开读 × #18 引用失效**）：把**后台资料来源存储**里既有的
-  // 「读取时重算」解析器注入公开读**详情面**（`createReferenceIntegrity(store).resolve`）。
+  // 「读取时重算」解析器注入公开读**详情面**（`createAsyncReferenceIntegrity(store).resolve`）。
   // 接线点仅此一处、纯追加：用的是本函数上方**已经建好的那一个** `adminContentStore`
-  // （`adminInjection?.contentStore ?? createAdminContentStore(...)`，见上方装配），
-  // **不新建第二份 store**、不改它的创建或注入口径、不改任何既有实参。
+  // （`adminInjection?.contentStore ?? createPostgresAdminContentStore(...) ?? createAdminContentStore(...)`，
+  // 见上方装配），**不新建第二份 store**、不改它的创建或注入口径、不改任何既有实参。
   // 回退方式：删掉这里的第 5 个实参即可回到接线前行为（`deps.resolve === undefined` ⇒ 不判定）。
-  // 生产默认：该 store 在 `real` 模式下**空且只读**（后台写口整域 fail-closed）⇒ `resolve()` 恒
-  // `unverifiable` ⇒ 详情面照旧可见，即"失效拦截"在生产尚未全面生效（见 PR 正文"未取得项"）。
+  // **本片（#18，迁移 0036）**：解析器改用**异步孪生**（`createAsyncReferenceIntegrity`）—— 真实
+  // 落点下 `getEntity` 是库往返，同步版拿不到行；内存 store 下它是微任务，语义与同步版逐字相同
+  // （`await` 一个非 Promise 值）。`decidePublicVisibility` 随之异步（`routes/knowledge.ts` 单点 await）。
+  // 生产默认：内存 store 在 `real` 且无池下**空且只读** ⇒ `resolve()` 恒 `unverifiable` ⇒ 详情面
+  // 照旧可见（"失效拦截"在无池部署尚未全面生效，见证据页「未取得项」）。
   registerKnowledgeRoutes(app, config, pool, gatedGuards, {
-    resolve: createReferenceIntegrity(adminContentStore).resolve,
+    resolve: createAsyncReferenceIntegrity(adminContentStore).resolve,
     // GY-I12 复用缝（纯追加的两个覆盖项）：把上面建好的**同一个实例**交给读面，
     // 使文字问答域的检索集合与 `/knowledge` 逐字节同源。不传时本函数自建，行为不变。
     reference: publicKnowledgeSeedFace,

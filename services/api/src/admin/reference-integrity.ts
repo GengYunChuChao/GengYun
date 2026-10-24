@@ -33,7 +33,7 @@
  */
 import { ApiError } from '../errors.ts';
 import type { AdminFamily, StoredEntity } from './types.ts';
-import type { AdminContentStore } from './store.ts';
+import type { AdminContentStore, AdminContentStoreLike } from './store.ts';
 import { headRevision } from './families.ts';
 
 /** 会引用来源的家族（`sources` 自己不引用任何来源）。 */
@@ -104,6 +104,111 @@ function sourceFieldsOf(content: unknown): { sourceId: string | null; version: s
   return { sourceId, version };
 }
 
+/**
+ * 来源当前生效修订（`lifecycle === 'published'` 且存在 publishedRevision）。
+ * **纯函数**：不读存储，只认传进来的实体。
+ */
+function liveRevisionOf(entity: StoredEntity<unknown> | undefined): { revision: number; version: string | null } | null {
+  if (entity === undefined || entity.family !== 'sources') return null;
+  if (entity.lifecycle !== 'published' || entity.publishedRevision === null) return null;
+  const revision = entity.revisions.find((entry) => entry.revision === entity.publishedRevision);
+  if (revision === undefined) return null;
+  const content = revision.content as Record<string, unknown> | null;
+  const version = content !== null && typeof content === 'object' && typeof content.version === 'string' ? content.version : null;
+  return { revision: revision.revision, version };
+}
+
+/**
+ * 判定核心（**纯函数**，不做 IO）：`source` 由调用方读好传进来，
+ * `undefined` 表示"存储里没有这条来源"。
+ *
+ * 之所以把它抽出来：内存实现同步读、真库实现异步读，两侧**必须**共用同一张判定表
+ * （文件头那张），否则「发布门槛」与「公开读」会给出两套口径。
+ */
+function resolveAgainst(
+  family: AdminFamily,
+  content: unknown,
+  source: StoredEntity<unknown> | undefined,
+): ReferenceResolution {
+  if (!DEPENDENT_FAMILIES.includes(family)) {
+    return {
+      state: 'available',
+      reason: null,
+      dependent: false,
+      sourceId: null,
+      referencedVersion: null,
+      liveVersion: null,
+      sourceRevision: null,
+    };
+  }
+  const { sourceId, version } = sourceFieldsOf(content);
+  if (sourceId === null || version === null) {
+    // 依赖行本身写坏了：不能核对 ⇒ 明确判不可用（fail-closed），而不是放行。
+    return {
+      state: 'unavailable',
+      reason: 'source_reference_malformed',
+      dependent: true,
+      sourceId,
+      referencedVersion: version,
+      liveVersion: null,
+      sourceRevision: null,
+    };
+  }
+  if (source === undefined || source.family !== 'sources') {
+    // 未接真实库：库外来源无法核对。如实标 unverifiable，**不**谎称失效。
+    return {
+      state: 'unverifiable',
+      reason: 'source_not_in_store',
+      dependent: true,
+      sourceId,
+      referencedVersion: version,
+      liveVersion: null,
+      sourceRevision: null,
+    };
+  }
+  const live = liveRevisionOf(source);
+  if (live === null) {
+    return {
+      state: 'unavailable',
+      reason: source.lifecycle === 'withdrawn' ? 'source_withdrawn' : 'source_not_published',
+      dependent: true,
+      sourceId,
+      referencedVersion: version,
+      liveVersion: null,
+      sourceRevision: source.publishedRevision,
+    };
+  }
+  if (live.version === null || live.version !== version) {
+    return {
+      state: 'unavailable',
+      reason: 'source_version_mismatch',
+      dependent: true,
+      sourceId,
+      referencedVersion: version,
+      liveVersion: live.version,
+      sourceRevision: live.revision,
+    };
+  }
+  return {
+    state: 'available',
+    reason: null,
+    dependent: true,
+    sourceId,
+    referencedVersion: version,
+    liveVersion: live.version,
+    sourceRevision: live.revision,
+  };
+}
+
+/** 发布门槛不放行时的同一条错误（同步/异步两侧共用，文案与 details 一致）。 */
+function sourceConflict(family: AdminFamily, resolution: ReferenceResolution): ApiError {
+  return new ApiError(
+    'SOURCE_CONFLICT',
+    `发布门槛未通过：引用来源当前不可用（${resolution.reason}）——请先按来源新版本重新校验该引用`,
+    { details: [{ field: 'source_id', code: resolution.reason ?? 'REFERENCE_UNAVAILABLE' }] },
+  );
+}
+
 export function createReferenceIntegrity(store: AdminContentStore): ReferenceIntegrity {
   function findSource(sourceId: string): StoredEntity<unknown> | undefined {
     return store.getEntity(sourceId);
@@ -112,85 +217,15 @@ export function createReferenceIntegrity(store: AdminContentStore): ReferenceInt
   /** 来源当前生效修订（`lifecycle === 'published'` 且存在 publishedRevision）。 */
   function liveSourceRevision(sourceId: string): { entity: StoredEntity<unknown>; revision: number; version: string | null } | null {
     const entity = findSource(sourceId);
-    if (entity === undefined || entity.family !== 'sources') return null;
-    if (entity.lifecycle !== 'published' || entity.publishedRevision === null) return null;
-    const revision = entity.revisions.find((entry) => entry.revision === entity.publishedRevision);
-    if (revision === undefined) return null;
-    const content = revision.content as Record<string, unknown> | null;
-    const version = content !== null && typeof content === 'object' && typeof content.version === 'string' ? content.version : null;
-    return { entity, revision: revision.revision, version };
+    const live = liveRevisionOf(entity);
+    if (entity === undefined || live === null) return null;
+    return { entity, revision: live.revision, version: live.version };
   }
 
   function resolve(family: AdminFamily, content: unknown): ReferenceResolution {
-    if (!DEPENDENT_FAMILIES.includes(family)) {
-      return {
-        state: 'available',
-        reason: null,
-        dependent: false,
-        sourceId: null,
-        referencedVersion: null,
-        liveVersion: null,
-        sourceRevision: null,
-      };
-    }
-    const { sourceId, version } = sourceFieldsOf(content);
-    if (sourceId === null || version === null) {
-      // 依赖行本身写坏了：不能核对 ⇒ 明确判不可用（fail-closed），而不是放行。
-      return {
-        state: 'unavailable',
-        reason: 'source_reference_malformed',
-        dependent: true,
-        sourceId,
-        referencedVersion: version,
-        liveVersion: null,
-        sourceRevision: null,
-      };
-    }
-    const source = findSource(sourceId);
-    if (source === undefined || source.family !== 'sources') {
-      // 未接真实库：库外来源无法核对。如实标 unverifiable，**不**谎称失效。
-      return {
-        state: 'unverifiable',
-        reason: 'source_not_in_store',
-        dependent: true,
-        sourceId,
-        referencedVersion: version,
-        liveVersion: null,
-        sourceRevision: null,
-      };
-    }
-    const live = liveSourceRevision(sourceId);
-    if (live === null) {
-      return {
-        state: 'unavailable',
-        reason: source.lifecycle === 'withdrawn' ? 'source_withdrawn' : 'source_not_published',
-        dependent: true,
-        sourceId,
-        referencedVersion: version,
-        liveVersion: null,
-        sourceRevision: source.publishedRevision,
-      };
-    }
-    if (live.version === null || live.version !== version) {
-      return {
-        state: 'unavailable',
-        reason: 'source_version_mismatch',
-        dependent: true,
-        sourceId,
-        referencedVersion: version,
-        liveVersion: live.version,
-        sourceRevision: live.revision,
-      };
-    }
-    return {
-      state: 'available',
-      reason: null,
-      dependent: true,
-      sourceId,
-      referencedVersion: version,
-      liveVersion: live.version,
-      sourceRevision: live.revision,
-    };
+    if (!DEPENDENT_FAMILIES.includes(family)) return resolveAgainst(family, content, undefined);
+    const { sourceId } = sourceFieldsOf(content);
+    return resolveAgainst(family, content, sourceId === null ? undefined : findSource(sourceId));
   }
 
   function dependenciesOf(sourceId: string): readonly SourceDependency[] {
@@ -236,11 +271,84 @@ export function createReferenceIntegrity(store: AdminContentStore): ReferenceInt
     assertPublishable(family, content) {
       const resolution = resolve(family, content);
       if (resolution.state !== 'unavailable') return;
-      throw new ApiError(
-        'SOURCE_CONFLICT',
-        `发布门槛未通过：引用来源当前不可用（${resolution.reason}）——请先按来源新版本重新校验该引用`,
-        { details: [{ field: 'source_id', code: resolution.reason ?? 'REFERENCE_UNAVAILABLE' }] },
-      );
+      throw sourceConflict(family, resolution);
+    },
+  };
+}
+
+/**
+ * 真库（异步）侧的同一套判定：`admin/ops/content-pg.ts` 的 store 只有异步 API，
+ * 因此服务层在 real 模式用这一支。判定表、错误码与文案都与同步侧共用
+ * （`resolveAgainst` / `sourceConflict`），不存在两套口径。
+ */
+export interface AsyncReferenceIntegrity {
+  resolve(family: AdminFamily, content: unknown): Promise<ReferenceResolution>;
+  liveSourceVersionOf(sourceId: string): Promise<{ version: string; revision: number } | null>;
+  referencesOf(sourceId: string): Promise<readonly SourceDependency[]>;
+  describeSourceChange(sourceId: string): Promise<SourceChangeImpact>;
+  assertPublishable(family: AdminFamily, content: unknown): Promise<void>;
+}
+
+export function createAsyncReferenceIntegrity(store: AdminContentStoreLike): AsyncReferenceIntegrity {
+  function findSource(sourceId: string): Promise<StoredEntity<unknown> | undefined> {
+    return Promise.resolve(store.getEntity(sourceId));
+  }
+
+  async function resolve(family: AdminFamily, content: unknown): Promise<ReferenceResolution> {
+    if (!DEPENDENT_FAMILIES.includes(family)) return resolveAgainst(family, content, undefined);
+    const { sourceId } = sourceFieldsOf(content);
+    return resolveAgainst(family, content, sourceId === null ? undefined : await findSource(sourceId));
+  }
+
+  async function liveSourceVersionOf(sourceId: string): Promise<{ version: string; revision: number } | null> {
+    const live = liveRevisionOf(await findSource(sourceId.toLowerCase()));
+    if (live === null || live.version === null) return null;
+    return { version: live.version, revision: live.revision };
+  }
+
+  async function dependenciesOf(sourceId: string): Promise<readonly SourceDependency[]> {
+    const target = sourceId.toLowerCase();
+    // 来源读一次即可：所有依赖都指向同一条来源，逐个重读只是多发 N 次查询。
+    const source = await findSource(target);
+    const found: SourceDependency[] = [];
+    for (const family of DEPENDENT_FAMILIES) {
+      for (const entity of await store.listFamilyEntities(family)) {
+        const head = headRevision(entity);
+        const { sourceId: referenced } = sourceFieldsOf(head.content);
+        if (referenced !== target) continue;
+        const resolution = resolveAgainst(family, head.content, source);
+        found.push({
+          family,
+          id: entity.id,
+          revision: head.revision,
+          referencedVersion: resolution.referencedVersion,
+          state: resolution.state,
+        });
+      }
+    }
+    return Object.freeze(found.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)));
+  }
+
+  return {
+    resolve,
+    liveSourceVersionOf,
+    referencesOf: dependenciesOf,
+    async describeSourceChange(sourceId) {
+      const dependencies = await dependenciesOf(sourceId);
+      const invalidated = dependencies.filter((entry) => entry.state === 'unavailable');
+      const live = liveRevisionOf(await findSource(sourceId.toLowerCase()));
+      return {
+        sourceId: sourceId.toLowerCase(),
+        liveVersion: live === null ? null : live.version,
+        references: dependencies.length,
+        invalidated: invalidated.length,
+        invalidatedIds: Object.freeze(invalidated.map((entry) => entry.id)),
+      };
+    },
+    async assertPublishable(family, content) {
+      const resolution = await resolve(family, content);
+      if (resolution.state !== 'unavailable') return;
+      throw sourceConflict(family, resolution);
     },
   };
 }

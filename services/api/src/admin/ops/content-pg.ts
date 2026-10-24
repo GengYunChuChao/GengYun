@@ -1,0 +1,459 @@
+/**
+ * 后台资料域（内容/资料）：**真库落点**（`Refs #18`）。
+ *
+ * ## 解决什么问题
+ * 接线前，四类资料（`sources` / `knowledge` / `registrations` / `restrictions`）的
+ * 实体、修订与幂等台账全在进程内 `Map`（`admin/store.ts`，自述 `persistent: false`），
+ * 所以 `real` 模式下这些路由只能整体 fail-closed 返回 503。本文件把它们落到迁移
+ * `0036_r34_admin_content_persistence.sql` 的三张表：
+ *
+ * | 表 | 存什么 |
+ * |---|---|
+ * | `admin_content_entities` | 实体 + 生命周期（draft/published/withdrawn）与发布/撤回留痕 |
+ * | `admin_content_revisions` | 只可追加的修订（PK `(entity_id, revision)`） |
+ * | `admin_content_idempotency` | 幂等台账（PK `(scope, key_hash)`，形态同 `favorites_idempotency`） |
+ *
+ * ## 三条与内存实现**逐字对齐**的纪律
+ * 1. **每次真读库，不做跨请求缓存**：`getEntity` / `listEntities` 每次都发查询。
+ *    与 `community/store-pg.ts` 同一承诺 —— 后台改了立刻能被下一次读取看到，不靠清缓存。
+ * 2. **修订只可追加**：`appendRevision` 只 `INSERT`，从不 `UPDATE` 既有修订；
+ *    配合同一实体上的行锁（`SELECT … FOR UPDATE`）与 PK，重复编号直接被库拒绝。
+ * 3. **写路径原子**：`transaction()` 开真事务（`BEGIN`/`COMMIT`/`ROLLBACK`），
+ *    并在 `AsyncLocalStorage` 里绑定**同一个连接** —— 否则并发请求会串到别人的事务上。
+ *
+ * ## 不在这里做的事（如实说明）
+ * - **审计台账仍是进程内**：`admin_audit_events` 对运行时角色**零权限**（0017/0020/0027），
+ *   写入只能走独立的窄函数，属另一片。这里注入 `runtime.audit`（内存追加、只增不改），
+ *   因此 `listAuditEvents` 的记录**重启即丢**，与接线前完全一致 —— 不假装已落库。
+ * - 不做 `SECURITY DEFINER` 函数：本域是常规 CRUD，**列级** `SELECT/INSERT/UPDATE` 足够，
+ *   且**不授** `DELETE`/`TRUNCATE`/`REFERENCES`/`TRIGGER`（见 20-login-roles.sql 的 `gy-r34-content-grant` 段）。
+ * - 不做跨家族级联删除：撤回 = 状态迁移，不是删行（契约闭集里也没有删除操作）。
+ */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+import { ApiError } from '../../errors.ts';
+import { isTransientDatabaseError } from '../../db/pool.ts';
+import type { PgPool } from '../../db/pool.ts';
+import { createAdminRuntime } from '../runtime.ts';
+import type { AdminRuntime, IdempotencyClaimInput, IdempotencyLedgerRow, IdempotencySettledRecord } from '../runtime.ts';
+import type { AuditLog } from '../audit.ts';
+import type { AdminContentStoreLike } from '../store.ts';
+import type { AdminFamily, ContentIdempotencyOutcome, StoredEntity, StoredRevision } from '../types.ts';
+
+/** 事务作用域内的连接：`transaction()` 里所有查询必须走它，否则不在同一事务。 */
+/**
+ * 事务绑定连接的**最小面**（`pg.PoolClient` 结构上满足）。
+ *
+ * 为什么不写 `Awaited<ReturnType<PgPool['connect']>>`：`connect` 有重载，`ReturnType`
+ * 取到的是回调形式的 `void` 重载 ⇒ 推出 `void`，`client.query` 直接报"不存在于 never"。
+ * 这里只声明真正用到的两个成员（`query` / `release`），边界处一次显式断言。
+ */
+interface PgClient {
+  query(text: string, values?: readonly unknown[]): Promise<{ rows: unknown[] }>;
+  release(): void;
+}
+
+
+interface EntityRow {
+  id: string;
+  family: string;
+  steward_id: string;
+  lifecycle: string;
+  published_revision: number | null;
+  published_at: Date | null;
+  published_by_id: string | null;
+  published_evidence_ref: string | null;
+  published_reason: string | null;
+  withdrawn_at: Date | null;
+  withdrawn_by_id: string | null;
+  withdrawn_reason: string | null;
+  created_at: Date;
+}
+
+interface RevisionRow {
+  entity_id: string;
+  revision: number;
+  content: unknown;
+  author_id: string;
+  derived_from_revision: number | null;
+  created_at: Date;
+}
+
+interface IdempotencyRow {
+  scope: string;
+  key_hash: string;
+  request_hash: string;
+  response_status: number;
+  outcome: ContentIdempotencyOutcome | null;
+  expires_at: Date;
+}
+
+const ENTITY_COLUMNS =
+  'id, family, steward_id, lifecycle, published_revision, published_at, published_by_id, ' +
+  'published_evidence_ref, published_reason, withdrawn_at, withdrawn_by_id, withdrawn_reason, created_at';
+
+const REVISION_COLUMNS = 'entity_id, revision, content, author_id, derived_from_revision, created_at';
+const IDEMPOTENCY_COLUMNS = 'scope, key_hash, request_hash, response_status, outcome, expires_at';
+
+/** 数据库异常统一折叠成契约闭集内的 503/504，与社区/消息/收藏同口径。 */
+function foldDatabaseError(error: unknown): never {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code === 'string' && (code === '57014' || code === '55P03')) {
+    throw new ApiError('PROVIDER_TIMEOUT', '后台资料库响应超时', { retryable: true });
+  }
+  if (error instanceof ApiError) throw error;
+  throw new ApiError('PROVIDER_UNAVAILABLE', '后台资料库暂不可用', {
+    retryable: isTransientDatabaseError(error),
+  });
+}
+
+/** 契约闭集内的 family / lifecycle 才允许落库（库里的 CHECK 是最后一道，这里是快速失败）。 */
+function assertFamily(family: string): AdminFamily {
+  if (family === 'sources' || family === 'knowledge' || family === 'registrations' || family === 'restrictions') {
+    return family;
+  }
+  throw new ApiError('PROVIDER_UNAVAILABLE', `资料家族不在契约闭集内：${family}`, { retryable: false });
+}
+
+function assertLifecycle(lifecycle: string): StoredEntity<unknown>['lifecycle'] {
+  if (lifecycle === 'draft' || lifecycle === 'published' || lifecycle === 'withdrawn') return lifecycle;
+  throw new ApiError('PROVIDER_UNAVAILABLE', `资料生命周期不在契约闭集内：${lifecycle}`, { retryable: false });
+}
+
+/** 行 → 修订（每次从库里读出来都是新对象，不与任何请求共享引用）。 */
+function toRevision(row: RevisionRow): StoredRevision<unknown> {
+  return {
+    revision: row.revision,
+    content: row.content,
+    createdAt: row.created_at,
+    authorId: row.author_id,
+    derivedFromRevision: row.derived_from_revision,
+  };
+}
+
+function toEntity(row: EntityRow, revisions: StoredRevision<unknown>[]): StoredEntity<unknown> {
+  return {
+    id: row.id,
+    family: assertFamily(row.family),
+    stewardId: row.steward_id,
+    createdAt: row.created_at,
+    revisions,
+    publishedRevision: row.published_revision,
+    lifecycle: assertLifecycle(row.lifecycle),
+    publishedAt: row.published_at,
+    publishedById: row.published_by_id,
+    publishedEvidenceRef: row.published_evidence_ref,
+    publishedReason: row.published_reason,
+    withdrawnAt: row.withdrawn_at,
+    withdrawnById: row.withdrawn_by_id,
+    withdrawnReason: row.withdrawn_reason,
+  };
+}
+
+export interface PostgresAdminContentStoreOptions {
+  pool: PgPool;
+  /**
+   * 审计台账。缺省用内存实现（`createAdminRuntime().audit`）：`admin_audit_events`
+   * 对运行时零权限，落库要另开窄函数，属另一片 —— 这里**不**假装已落库。
+   */
+  audit?: AuditLog;
+  runtime?: AdminRuntime;
+}
+
+export function createPostgresAdminContentStore(options: PostgresAdminContentStoreOptions): AdminContentStoreLike {
+  const { pool } = options;
+  const runtime = options.runtime ?? createAdminRuntime();
+  const audit = options.audit ?? runtime.audit;
+  const scope = new AsyncLocalStorage<PgClient>();
+
+  /** 事务内的查询走绑定连接；事务外走池。两者都是"真读库"。 */
+  async function query<Row>(text: string, values: readonly unknown[] = []): Promise<Row[]> {
+    const bound = scope.getStore();
+    try {
+      const result = bound === undefined
+        ? await pool.query(text, values as unknown[])
+        : await bound.query(text, values as unknown[]);
+      return result.rows as Row[];
+    } catch (error) {
+      foldDatabaseError(error);
+    }
+  }
+
+  async function revisionsOf(entityIds: readonly string[]): Promise<Map<string, StoredRevision<unknown>[]>> {
+    const grouped = new Map<string, StoredRevision<unknown>[]>();
+    if (entityIds.length === 0) return grouped;
+    const rows = await query<RevisionRow>(
+      `SELECT ${REVISION_COLUMNS} FROM public.admin_content_revisions
+        WHERE entity_id = ANY($1::uuid[])
+        ORDER BY entity_id ASC, revision ASC`,
+      [entityIds],
+    );
+    for (const row of rows) {
+      const list = grouped.get(row.entity_id);
+      if (list === undefined) grouped.set(row.entity_id, [toRevision(row)]);
+      else list.push(toRevision(row));
+    }
+    return grouped;
+  }
+
+  /**
+   * 列清单 + 过滤条件都写成**整条静态语句**（不拼 `WHERE` 片段）：
+   * 这样每条语句的列面/表面对 `tests/unit/sql-column-coverage.test.mjs` 的解析器完全可判，
+   * 不会多出一条"不可判插值"要登记进 allowlist。
+   */
+  async function selectEntities(sql: string, values: readonly unknown[]): Promise<readonly StoredEntity<unknown>[]> {
+    // 稳定游标：按 id 升序（与内存实现逐字相同，游标才可跨实现互换）。
+    const rows = await query<EntityRow>(sql, values);
+    const revisions = await revisionsOf(rows.map((row) => row.id));
+    return Object.freeze(rows.map((row) => toEntity(row, revisions.get(row.id) ?? [])));
+  }
+
+  /**
+   * 生命周期落库：发布/撤回的全部字段一次写回（服务层先改内存对象，再调这里）。
+   * 目标行不存在 ⇒ 503（宁可报错也不静默丢写）。
+   */
+  async function commitLifecycle(entity: StoredEntity<unknown>): Promise<void> {
+    const rows = await query<{ id: string }>(
+      `UPDATE public.admin_content_entities
+          SET lifecycle = $2,
+              published_revision = $3,
+              published_at = $4,
+              published_by_id = $5,
+              published_evidence_ref = $6,
+              published_reason = $7,
+              withdrawn_at = $8,
+              withdrawn_by_id = $9,
+              withdrawn_reason = $10
+        WHERE id = $1::uuid
+        RETURNING id`,
+      [
+        entity.id,
+        entity.lifecycle,
+        entity.publishedRevision,
+        entity.publishedAt,
+        entity.publishedById,
+        entity.publishedEvidenceRef,
+        entity.publishedReason,
+        entity.withdrawnAt,
+        entity.withdrawnById,
+        entity.withdrawnReason,
+      ],
+    );
+    if (rows.length !== 1) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '资料生命周期未落库（目标行不存在）', { retryable: false });
+    }
+  }
+
+  return {
+    persistent: true,
+    audit,
+
+    async transaction<T>(work: () => T | Promise<T>): Promise<T> {
+      // 嵌套调用（服务层已在外层事务里）直接并入，绝不开第二个连接。
+      if (scope.getStore() !== undefined) return work();
+      let client: PgClient;
+      try {
+        client = (await pool.connect()) as unknown as PgClient;
+      } catch (error) {
+        // 连接失败如实折成固定错误类别（PROVIDER_TIMEOUT / PROVIDER_UNAVAILABLE），绝不静默降级。
+        foldDatabaseError(error);
+      }
+      return scope.run(client, async () => {
+        try {
+          await client.query('BEGIN');
+          const result = await work();
+          await client.query('COMMIT');
+          return result;
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => undefined);
+          throw error;
+        } finally {
+          client.release();
+        }
+      });
+    },
+
+    async createEntity(input) {
+      const id = input.id ?? randomUUID();
+      const rows = await query<EntityRow>(
+        `INSERT INTO public.admin_content_entities (id, family, steward_id, lifecycle, created_at)
+         VALUES ($1::uuid, $2, $3, 'draft', $4)
+         ON CONFLICT (id) DO NOTHING
+         RETURNING ${ENTITY_COLUMNS}`,
+        [id, input.family, input.stewardId, input.createdAt],
+      );
+      const row = rows[0];
+      // 与内存实现的 `资料 id 重复` 同义：这里如实报冲突，不静默覆盖既有实体。
+      if (row === undefined) throw new Error(`资料 id 重复：${id}`);
+      return toEntity(row, []);
+    },
+
+    async getEntity(id) {
+      // 事务内加行锁：同一实体的并发追加修订串行化，修订编号不会撞车。
+      // 锁与不锁是**两条静态语句**（不是一个字符串拼接），列面/表面对静态审计可判。
+      const sql =
+        scope.getStore() === undefined
+          ? `SELECT ${ENTITY_COLUMNS} FROM public.admin_content_entities WHERE id = $1::uuid`
+          : `SELECT ${ENTITY_COLUMNS} FROM public.admin_content_entities WHERE id = $1::uuid FOR UPDATE`;
+      const rows = await query<EntityRow>(sql, [id]);
+      const row = rows[0];
+      if (row === undefined) return undefined;
+      const revisions = await revisionsOf([row.id]);
+      return toEntity(row, revisions.get(row.id) ?? []);
+    },
+
+    async listEntities(family, stewardId) {
+      return selectEntities(
+        `SELECT ${ENTITY_COLUMNS} FROM public.admin_content_entities
+          WHERE family = $1 AND steward_id = $2
+          ORDER BY id ASC`,
+        [family, stewardId],
+      );
+    },
+
+    async listFamilyEntities(family) {
+      return selectEntities(
+        `SELECT ${ENTITY_COLUMNS} FROM public.admin_content_entities
+          WHERE family = $1
+          ORDER BY id ASC`,
+        [family],
+      );
+    },
+
+    async appendRevision(input) {
+      const { entity } = input;
+      const previous = entity.revisions.at(-1);
+      const revision = previous === undefined ? 1 : previous.revision + 1;
+      const rows = await query<RevisionRow>(
+        `INSERT INTO public.admin_content_revisions
+           (entity_id, revision, content, author_id, derived_from_revision, created_at)
+         VALUES ($1::uuid, $2, $3::jsonb, $4, $5, $6)
+         RETURNING ${REVISION_COLUMNS}`,
+        [
+          entity.id,
+          revision,
+          JSON.stringify(input.content ?? null),
+          input.authorId,
+          input.derivedFromRevision,
+          input.createdAt,
+        ],
+      );
+      const row = rows[0];
+      if (row === undefined) {
+        throw new ApiError('PROVIDER_UNAVAILABLE', '资料修订未写入（内部不变式违反）', { retryable: false });
+      }
+      return toRevision(row);
+    },
+
+    async setLifecycle(entity, lifecycle) {
+      entity.lifecycle = lifecycle;
+      await commitLifecycle(entity);
+    },
+
+    commitLifecycle,
+
+    // ---- 幂等台账：语义与 `auth/idempotency.ts` / `admin/runtime.ts` 的 claim/complete/release 一致 ----
+    async findIdempotent(scopeName, keyHash) {
+      const rows = await query<IdempotencyRow>(
+        `SELECT ${IDEMPOTENCY_COLUMNS} FROM public.admin_content_idempotency
+          WHERE scope = $1 AND key_hash = $2 AND outcome IS NOT NULL`,
+        [scopeName, keyHash],
+      );
+      const row = rows[0];
+      if (row === undefined || row.outcome === null) return null;
+      const settled: IdempotencySettledRecord = {
+        requestHash: row.request_hash,
+        responseStatus: row.response_status,
+        outcome: row.outcome,
+        expiresAt: row.expires_at,
+      };
+      return settled;
+    },
+
+    async peekIdempotent(scopeName, keyHash) {
+      const rows = await query<IdempotencyRow>(
+        `SELECT ${IDEMPOTENCY_COLUMNS} FROM public.admin_content_idempotency WHERE scope = $1 AND key_hash = $2`,
+        [scopeName, keyHash],
+      );
+      const row = rows[0];
+      if (row === undefined) return null;
+      const ledgerRow: IdempotencyLedgerRow = {
+        requestHash: row.request_hash,
+        responseStatus: row.response_status,
+        outcome: row.outcome,
+        expiresAt: row.expires_at,
+      };
+      return ledgerRow;
+    },
+
+    async claimIdempotent(scopeName, keyHash, claim: IdempotencyClaimInput) {
+      // 只有**已到期**的旧行才让位（与内存实现一致：未到期的占位/已定型结果都不许抢）。
+      const rows = await query<{ scope: string }>(
+        `INSERT INTO public.admin_content_idempotency AS ledger
+           (scope, key_hash, request_hash, response_status, outcome, expires_at)
+         VALUES ($1, $2, $3, $4, NULL, $5)
+         ON CONFLICT (scope, key_hash) DO UPDATE
+            SET request_hash = EXCLUDED.request_hash,
+                response_status = EXCLUDED.response_status,
+                outcome = NULL,
+                expires_at = EXCLUDED.expires_at
+          WHERE ledger.expires_at <= $6::timestamptz
+         RETURNING scope`,
+        [scopeName, keyHash, claim.requestHash, claim.responseStatus, claim.expiresAt, claim.now],
+      );
+      return rows.length === 1;
+    },
+
+    async completeIdempotent(scopeName, keyHash, outcome, expiresAt) {
+      const rows = await query<{ scope: string }>(
+        `UPDATE public.admin_content_idempotency
+            SET outcome = $3::jsonb, expires_at = $4
+          WHERE scope = $1 AND key_hash = $2 AND outcome IS NULL
+          RETURNING scope`,
+        [scopeName, keyHash, JSON.stringify(outcome), expiresAt],
+      );
+      return rows.length === 1;
+    },
+
+    async releaseIdempotent(scopeName, keyHash) {
+      /*
+       * 只释放未定型的占位；已定型结果不因后续失败被抹掉。
+       *
+       * ⛔ 这里**不能**用 DELETE：运行时角色对本表只有列级 SELECT/INSERT/UPDATE（最小权限口径，
+       * 见 `20-login-roles.sql` 的 gy-r34-content-grant 段）。等价做法是把占位行的到期时刻推到
+       * `-infinity`，于是下一次 `claimIdempotent` 的 `expires_at <= now` 判据立刻让它让位 ——
+       * 与内存实现「删掉占位行」对重放方完全等价，且不依赖注入时钟与库时钟的一致。
+       */
+      await query<never>(
+        `UPDATE public.admin_content_idempotency
+            SET outcome = NULL, expires_at = '-infinity'::timestamptz
+          WHERE scope = $1 AND key_hash = $2 AND outcome IS NULL`,
+        [scopeName, keyHash],
+      );
+    },
+
+    async purgeExpiredIdempotent(now) {
+      /*
+       * 物理删除同样不可用（无 DELETE 权限）⇒ 把**已到期的已定型结果**清成占位，
+       * 让它们对重放方彻底不可见（这正是内存实现"删掉过期行"要达到的效果）。
+       * 过期占位本来就不可见，不重复计数。表行数只增不减：物理保留属独立的保留期清理切片，
+       * 证据页「未取得」一节如实登记。
+       */
+      const rows = await query<{ scope: string }>(
+        `UPDATE public.admin_content_idempotency
+            SET outcome = NULL
+          WHERE expires_at <= $1::timestamptz AND outcome IS NOT NULL
+          RETURNING scope`,
+        [now],
+      );
+      return rows.length;
+    },
+
+    async idempotentCount() {
+      const rows = await query<{ count: string }>('SELECT count(*)::text AS count FROM public.admin_content_idempotency');
+      return Number(rows[0]?.count ?? '0');
+    },
+  };
+}
+
+/** `randomUUID` 与内存实现同源（`node:crypto`），实体 id 才可互换。 */
