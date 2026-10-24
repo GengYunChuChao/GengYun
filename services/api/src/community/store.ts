@@ -385,6 +385,14 @@ export interface CommunityStore {
   addLike(kind: 'post' | 'comment', targetId: string, userId: string): Promise<boolean>;
   removeLike(kind: 'post' | 'comment', targetId: string, userId: string): Promise<boolean>;
   countLikes(kind: 'post' | 'comment', targetId: string): Promise<number>;
+  /**
+   * 某主体**此刻是否已赞**该目标（集合成员判定，不是计数）。
+   *
+   * 只读、幂等、与 `addLike`/`removeLike` 同一份集合事实；供 `GET /posts/{id}/like` 的
+   * `liked_by_me` 使用。之所以是独立方法而不是把 `userId` 塞进 `countLikes`：计数是
+   * 「不随请求方变化」的派生量，混入请求方会让同一语义有两个签名。
+   */
+  hasLiked(kind: 'post' | 'comment', targetId: string, userId: string): Promise<boolean>;
   // ---- 审核结论台账 ----
   /**
    * **未提交内容**的结论补录（拒绝/隔离的写入请求）：仅当该 `(type,id,revision)`
@@ -687,6 +695,9 @@ export function createMemoryCommunityStore(
     },
     async countLikes(kind, targetId) {
       return likes.get(likeComposite(kind, targetId))?.size ?? 0;
+    },
+    async hasLiked(kind, targetId, userId) {
+      return likes.get(likeComposite(kind, targetId))?.has(userId) ?? false;
     },
 
     async putRefusalVerdict(record) {

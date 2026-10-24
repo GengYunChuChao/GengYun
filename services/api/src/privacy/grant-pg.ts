@@ -83,8 +83,7 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
   }
   const expected = current ? number(current.revision) : 1;
   // 授权变更消费者（接线单）：注入后先撤销在途外发；未注入 ⇒ 保持既有 fail-closed 兜底。
-  const deps = (await client.query(`SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1)
-    OR EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1)
+  const deps = (await client.query(`SELECT EXISTS(SELECT 1 FROM public.media WHERE owner_id=$1)
     OR EXISTS(SELECT 1 FROM public.exports WHERE user_id=$1)
     OR EXISTS(SELECT 1 FROM public.author_links WHERE user_id=$1) AS present`, [userId])).rows[0];
   if (deps?.present) {

@@ -478,15 +478,21 @@ const OPAQUE_ALLOWLIST = [
  * 的 3 条整表 DELETE（`ocr_records` / `ocr_jobs` 按 `owner_user_id`，`ocr_idempotency` 按 scope
  * 前缀），三条都带 `RETURNING`；授权面同步补 `GRANT DELETE ON public.ocr_jobs` 与
  * `... public.ocr_records`（与已有的 `ocr_idempotency` 合成「OCR 三表一条路线」）。
- * 实测合计：字面量 159→**162**、DELETE 29→**32**、RETURNING 62→**65**、
- * columnRequirements 1241→**1247**（3 条整表 DELETE 的 `*` 需求 + `owner_user_id`/`id`/`scope`
- * 谓词列，均已授权 ⇒ 缺口仍 0）、逐文件 `ocr` 16→**19**；INSERT/UPDATE/SELECT、引用表 25 张、
+ *
+ * 合并 upstream/main@997e8e5f（2026-10-24，R34 点赞只读端点）：上游新增的
+ * `GET /api/v1/posts/{id}/like` 在 `community/store-pg.ts` 里只多一条 `SELECT`（读
+ * `community_likes` 计数与本人点赞标记），**零**表级权限变更。
+ *
+ * 两笔增量**在合并树上重新实测**（不是把任一侧的旧值相加，也不是拿某一侧当基线硬减）：
+ * 字面量 159→**163**、SELECT 74→**75**（点赞读面）、DELETE 29→**32**、RETURNING 62→**65**
+ * （OCR 三表整表 DELETE 的三条 `RETURNING`）、columnRequirements 1241→**1247**、
+ * 逐文件 `ocr` 16→**19**、`community` 42→**43**；INSERT/UPDATE、引用表 25 张、
  * `SELECT *`/无顶层 FROM 处数**不变**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 162,
-  statements: { INSERT: 27, UPDATE: 29, SELECT: 74, DELETE: 32 },
+  sqlLiterals: 163,
+  statements: { INSERT: 27, UPDATE: 29, SELECT: 75, DELETE: 32 },
   returningClauses: 65,
   onConflictClauses: 17,
   selectStar: 0,
@@ -497,7 +503,7 @@ const EXPECTED_READINGS = {
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 42,
+  community: 43,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -610,6 +616,14 @@ const TABLE_WIDE_COLUMN = '*';
  *   `90-assert-least-privilege.sql` **成对**授权）、逐文件 `community` 41 → **42**；
  *   INSERT/SELECT/DELETE、引用表 44 张、`rowLocks` 分桶、onConflict、无顶层 FROM 全部不变
  *   （本片没有新增行锁语句 ⇒ 沿用 ⑨ 的 rowLockRequirements 41，口径不因本片回退）。
+ * ⑪ 2026-10-24 R34（#15 点赞读面：独立只读端点）：
+ *   本片在 `community/store-pg.ts::hasLiked` 新增一条只读
+ *   `SELECT 1 AS liked FROM community_likes WHERE user_id = $1::uuid AND target_type = $2::text
+ *    AND target_id = $3::uuid LIMIT 1`（`liked_by_me`；计数仍复用既有 `countLikes`，未加语句）。
+ *   ⇒ 字面量 266 → **267**、SELECT 141 → **142**、逐文件 `community` 42 → **43**；
+ *   列要求与已覆盖**不增**（`user_id`/`target_type`/`target_id` 三列的 SELECT 面早已被
+ *   `countLikes` 与 `removeLike` 计入），INSERT/UPDATE/DELETE、RETURNING、引用表 44 张、
+ *   行锁、onConflict、无顶层 FROM 全部不变；本片零迁移、零 GRANT 变更。
  * 每一项都是「解析器确实在看」的硬证据：静默丢语句/丢插值会立刻改变这些数。
  * ⑪ 2026-10-23 R34（#19 注销闭集扩展）：识别域 +4 条、语音域 +3 条整表 DELETE（都带 RETURNING），
  *   授权面同步补 `GRANT DELETE`。⇒ 字面量 266 → **273**、DELETE 36 → **43**、RETURNING 82 → **89**、
@@ -633,11 +647,15 @@ const TABLE_WIDE_COLUMN = '*';
  *   探针原本就不探这两张表的 DELETE（见证据页 ④）。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
+ * ⑬ 2026-10-24 合并 upstream/main@997e8e5f：叠加本分支 `GET /api/v1/posts/{id}/like` 的那条
+ *   `SELECT`（`community/store-pg.ts`）⇒ 字面量 268 → **269**、SELECT 143 → **144**；
+ *   DELETE 36、RETURNING 82、列要求 1720／已覆盖 1666、引用表 44 张、`rowLocks` 分桶、
+ *   INSERT/UPDATE 42/47 均不变。零迁移、零 GRANT 变更。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 19,
-  sqlLiterals: 271,
-  statements: { INSERT: 42, UPDATE: 47, SELECT: 143, DELETE: 39 },
+  sqlLiterals: 272,
+  statements: { INSERT: 42, UPDATE: 47, SELECT: 144, DELETE: 39 },
   returningClauses: 85,
   onConflictClauses: 26,
   selectStar: 15,
@@ -659,7 +677,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
-  'community': 42,
+  'community': 43,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

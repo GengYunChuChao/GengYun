@@ -436,6 +436,13 @@
       "version_required": true
     },
     {
+      "id": "getPostLike",
+      "path": "/posts/{id}/like",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
       "id": "likePosts",
       "path": "/posts/{id}/like",
       "method": "put",
