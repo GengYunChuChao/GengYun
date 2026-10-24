@@ -68,18 +68,21 @@ const ACCOUNT_DELETION_FUNCTION = 'public.request_account_deletion';
 const NEW_MIGRATION = '0016_account_deletion_persistence.sql';
 const DOWN_MIGRATION = 'migrations/rollback/0016_account_deletion_persistence.down.sql';
 /**
- * `0031_online_purge_evidence.sql` 的读函数 `read_online_purge_evidence(uuid,uuid)` 是 `LANGUAGE sql`
- * ⇒ **建函数时**就解析函数体里的表/列；它按 `deletion_requests.user_id` 过滤，而该列由 **0016** 添加
- * （`0016_account_deletion_persistence.sql` 的 `ADD COLUMN user_id`）。
+ * 这两个迁移的读函数是 `LANGUAGE sql` ⇒ **建函数时**就解析函数体里的表/列，而它们引用的列都由
+ * **0016** 添加：
+ *   - `0031_online_purge_evidence.sql` 的 `read_online_purge_evidence(uuid,uuid)` 按
+ *     `deletion_requests.user_id` 过滤（`0016_account_deletion_persistence.sql` 的 `ADD COLUMN user_id`）；
+ *   - `0038_r34_deletion_receipt_persistence.sql` 的 `resolve_deletion_receipt` / `count_deletion_receipts`
+ *     引用 `deletion_requests.receipt_expires_at`（0016 添加）。
  *
- * 本文件刻意把 0016 留到下面「UP → ROLLBACK → REPLAY」单独演练，于是 0031 **必须推迟**到 0016
- * 重放完成之后再应用 —— 否则建函数即 `42703 column r.user_id does not exist`，并把 `owner` 连接
+ * 本文件刻意把 0016 留到下面「UP → ROLLBACK → REPLAY」单独演练，于是这两个迁移**必须推迟**到 0016
+ * 重放完成之后再应用 —— 否则建函数即 `42703 column ... does not exist`，并把 `owner` 连接
  * 留在**已中止的事务**里（后续语句全变 `25P02`，反而盖掉真错误）。
  *
- * 这不是"跳过 0031"：它照旧在全量清单里、照旧被应用、照旧报唯一索引与函数计数；只是把它放回
- * `db:migrate` 的真实版本序（0016 < 0031），与 0016 的回滚/重放顺序一致。
+ * 这不是"跳过"它们：照旧在全量清单里、照旧被应用、照旧报唯一索引与函数计数；只是把它们放回
+ * `db:migrate` 的真实版本序（0016 < 0031 < 0038），与 0016 的回滚/重放顺序一致。
  */
-const AFTER_REPLAY_MIGRATION = '0031_online_purge_evidence.sql';
+const AFTER_REPLAY_MIGRATIONS = ['0031_online_purge_evidence.sql', '0038_r34_deletion_receipt_persistence.sql'];
 const HOUR_MS = 3600 * 1000;
 
 const serverNow = () => new Date();
@@ -220,7 +223,7 @@ function makeHttp(origin) {
   };
 }
 
-/** 装机：迁移（跳过 0016，它单独演练；0031 依赖 0016 的列 ⇒ 也推迟到 0016 重放之后）+ 后面再装最小权限角色与运行时 LOGIN。 */
+/** 装机：迁移（跳过 0016，它单独演练；0031/0038 依赖 0016 的列 ⇒ 也推迟到 0016 重放之后）+ 后面再装最小权限角色与运行时 LOGIN。 */
 async function applyMigrations() {
   const discovered = readdirSync(migrationsDir)
     .filter((name) => /^\d{4,}_[a-z0-9_]+\.sql$/.test(name))
@@ -230,9 +233,9 @@ async function applyMigrations() {
   assert.ok(discovered.includes(NEW_MIGRATION), `迁移清单必须含 ${NEW_MIGRATION}`);
   note(`迁移清单（${discovered.length} 个）：${discovered.join(' ')}`);
   for (const name of discovered) {
-    // 0016 由下面的 UP→ROLLBACK→REPLAY 单独演练；0031 依赖 0016 新加的列（见 AFTER_REPLAY_MIGRATION）。
+    // 0016 由下面的 UP→ROLLBACK→REPLAY 单独演练；0031/0038 依赖 0016 新加的列（见 AFTER_REPLAY_MIGRATIONS）。
     if (name === NEW_MIGRATION) continue;
-    if (name === AFTER_REPLAY_MIGRATION) continue;
+    if (AFTER_REPLAY_MIGRATIONS.includes(name)) continue;
     await owner.query(sqlFile(`migrations/${name}`));
   }
   return discovered;
@@ -416,10 +419,12 @@ try {
   await owner.query(sqlFile(`migrations/${NEW_MIGRATION}`));
   assert.equal(await functionCount(), 1, 'REPLAY 后函数必须回来');
   assert.equal(await columnCount(), 3);
-  say(`迁移三连（真库）：全量 up（跳过 0016；0031 依赖它的列，见下条按版本序补）⇒ ${NEW_MIGRATION} UP(函数 1/列 3/索引 1/约束 1) → ROLLBACK(全 0) → REPLAY(全回来)，版本号无重复`);
+  say(`迁移三连（真库）：全量 up（跳过 0016；0031/0038 依赖它的列，见下条按版本序补）⇒ ${NEW_MIGRATION} UP(函数 1/列 3/索引 1/约束 1) → ROLLBACK(全 0) → REPLAY(全回来)，版本号无重复`);
 
-  // 0016 重放完成后，按**真实版本序**补上 0031（读函数引用 0016 的 `user_id`，见 AFTER_REPLAY_MIGRATION）。
-  await owner.query(sqlFile(`migrations/${AFTER_REPLAY_MIGRATION}`));
+  // 0016 重放完成后，按**真实版本序**补上 0031/0038（读函数引用 0016 的列，见 AFTER_REPLAY_MIGRATIONS）。
+  for (const migration of AFTER_REPLAY_MIGRATIONS) {
+    await owner.query(sqlFile(`migrations/${migration}`));
+  }
   const evidenceFunctions = Number(
     (
       await owner.query(
@@ -437,7 +442,7 @@ try {
     2,
     '0031 的两个可空列必须已存在',
   );
-  say(`迁移依赖序（真库）：${AFTER_REPLAY_MIGRATION} 在 0016 重放之后应用 ⇒ 两函数（record/read）+ 两列（online_purged_at/online_purge_evidence）就位`);
+  say(`迁移依赖序（真库）：${AFTER_REPLAY_MIGRATIONS.join(' / ')} 在 0016 重放之后应用 ⇒ 两函数（record/read）+ 两列（online_purged_at/online_purge_evidence）就位`);
 
   // ---------------------------------------------------------------- [3] 最小权限
   // 与出厂 provisioning 同形：先装域组角色文件，再建运行时 LOGIN 并授组，最后**原样执行**

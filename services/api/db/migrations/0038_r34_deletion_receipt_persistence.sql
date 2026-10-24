@@ -13,6 +13,12 @@
 -- 直接权限**（`deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 的 protected_columns 与
 -- 函数级断言逐字不动），唯一读写路径收敛到可断言的函数。
 --
+-- ## 依赖 0016 的列（应用顺序硬约束）
+-- `resolve_deletion_receipt` / `count_deletion_receipts` 是 `LANGUAGE sql`（CREATE 即解析函数体），
+-- 引用 `deletion_requests.receipt_expires_at`（0016 添加）；`set_deletion_receipt` 写
+-- `receipt_issued_at` / `receipt_expires_at`（同为 0016 添加）。因此本迁移必须在 0016 之后应用；
+-- `tests/integration/account-deletion-pg.mjs` 把它与 0031 一起延后到 0016 的 UP→ROLLBACK→REPLAY 之后。
+--
 -- ## 为什么是单独的 `receipt_bearer_hash` 列而不是复用 `receipt_hash`
 -- `receipt_hash` 是 `requestDeletionFor()` 传入的**受理输入摘要**，被 `tests/integration/
 -- account-deletion-pg.mjs` 冻结为「库内摘要 ≠ 回执 bearer 明文摘要（两者是不同凭据）」；
@@ -84,7 +90,7 @@ END;
 $$;
 
 -- 唯一读路径：按摘要反查请求 id；过期即不可解析（不回放、不续期）。
--- `LANGUAGE sql`：函数体在建函数时解析（本迁移先加列、后建函数 ⇒ 列必已存在）。
+-- `LANGUAGE sql`：函数体在建函数时解析 ⇒ `receipt_expires_at` 必须已存在（由 0016 添加，见文件头「依赖 0016 的列」）。
 CREATE FUNCTION public.resolve_deletion_receipt(
   p_token_hash text
 ) RETURNS uuid

@@ -111,7 +111,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 | 保留项：`createPost/editPost` 图片审核细节 | 仍成立：`IMAGE_MODERATION_UNAVAILABLE`、`MEDIA_NOT_EVALUATED_BY_RULE_LAYER`、媒体元数据只传 `media_id`（→ `MODEL_PAYLOAD_INVALID`） | `services/api/src/community/service.ts:367`、`:370`、`:573`、`:200-201`；`packages/moderation/merge.mjs:539` |
 | 保留项：正式微信身份/真机/发布环境；测试≠验收 | 仍成立 | 保留原句 |
 
-> **后续变更（R33-I15-S4 片，2026-10-23）**：上表「保留项：资料关联默认 fail-closed」一行**已不再成立** —— 装配层现在**有连接池**时用同一条 `pool` 查公开读视图 `catalog_read.current_knowledge` 构造真实 `createKnowledgeAvailabilityPort`（`services/api/src/app.ts:1202`），**仅无池**时才保持未接线 fail-closed；错误码（409 `OBJECT_UNAVAILABLE`）与「不泄露存在性」语义一字未改，装配级回归见 `tests/unit/community-knowledge-wiring.test.mjs`。`docs/architecture/contract-status.json` 里 16 条社区 blocker 的同款子句已同步订正（`status` / `baseline` 未动）。上表其余行保持 R33 台账片的当时读数。
+> **后续变更（R33-I15-S4 片，2026-10-23）**：上表「保留项：资料关联默认 fail-closed」一行**已不再成立** —— 装配层现在**有连接池**时用同一条 `pool` 查公开读视图 `catalog_read.current_knowledge` 构造真实 `createKnowledgeAvailabilityPort`（`services/api/src/app.ts:1203`），**仅无池**时才保持未接线 fail-closed；错误码（409 `OBJECT_UNAVAILABLE`）与「不泄露存在性」语义一字未改，装配级回归见 `tests/unit/community-knowledge-wiring.test.mjs`。`docs/architecture/contract-status.json` 里 16 条社区 blocker 的同款子句已同步订正（`status` / `baseline` 未动）。上表其余行保持 R33 台账片的当时读数。
 
 **处置：16 条全部订正（部分过时）**：只替换「真实持久存储未交付（real 模式整域 503）」这一子句为「持久化已交付 + 放行判据」；其余未取得项原样保留。`status` 未动。
 
@@ -128,7 +128,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 | --- | --- | --- | --- |
 | `listFavorites` / `createFavorite` / `deleteFavorite` | 迁移 0018 + PG store；仅 `real && !persistent` 才 503 | `services/api/src/app.ts:1482-1486`（favorites store）、`:1571-1579`（服务门禁）；`services/api/src/favorites/store-pg.ts:187` | 保留 |
 | `listHistory` | 识别/OCR 终态写入「已随 R31-I16 接线（real 也写）」 | `services/api/src/app.ts:1010-1028`：判据 `historyDomainEnabled = config.executionMode !== 'real' \|\| historyStore.persistent`；`real` + 持久 store ⇒ `wired`；`#484`（`c728648a`）即此修正 | 保留 |
-| `deleteHistory` | 级联删除仍未接线，`historyCascadePort` 仍是 `createUnwiredHistoryCascadePort()` | `services/api/src/app.ts:1564` 逐字仍是 `historyInjection?.cascade ?? createUnwiredHistoryCascadePort()`；`createWiredHistoryCascadePort` 存在但生产装配未调用 | 保留 |
+| `deleteHistory` | 级联删除仍未接线，`historyCascadePort` 仍是 `createUnwiredHistoryCascadePort()` | `services/api/src/app.ts:1565` 逐字仍是 `historyInjection?.cascade ?? createUnwiredHistoryCascadePort()`；`createWiredHistoryCascadePort` 存在但生产装配未调用 | 保留 |
 
 > **R34 订正（2026-10-23）**：上表 `deleteHistory` 行「逐字仍是 `historyInjection?.cascade ?? createUnwiredHistoryCascadePort()`」是 `7dd3d699` 时点读数；`#503`（squash `869b0358`）合入后该句**已被代码推翻**，属「读数已假」而非行号漂移。现行装配为 `historyCascadePort = historyInjection?.cascade ?? createHistoryCascadePort({ recognitionService: () => app.recognitionService, ocrService: () => app.ocrService })`（`createHistoryCascadePort` 在 `services/api/src/history/cascade-wiring.ts` 内包装 `createWiredHistoryCascadePort`），`createUnwiredHistoryCascadePort` 在 `services/api/src/app.ts` 已 **0 命中**。按符号定位：`git grep -n 'createHistoryCascadePort\|createUnwiredHistoryCascadePort' -- services/api/src/app.ts`。`#503` 已把 `partial` 语义写清——识别与 OCR **两类**关联删除已接上，**媒体对象删除与共享引用核对仍属 `#6`／`#19`、外发撤销仍未接**，故 `status` 仍是 `partial`；出处见 `docs/architecture/contract-status.json` 的 `deleteHistory` 条目 blocker 与 `docs/architecture/contract-implementation-status.md` 同文，回归见 `tests/unit/history-cascade-wiring.test.mjs`、`tests/integration/favorites-history-pg.mjs`（第 15 组）。本注只订正事实，**不重新验收 `#16` 的任何 AC、不改任何 `status`**；原句与原读数保留为历史。
 
@@ -226,7 +226,7 @@ const recognitionTerminalHistory: RecognitionTerminalHistoryPort = historyDomain
     );
 ```
 
-`services/api/src/app.ts:1564`（`deleteHistory` 级联端口）：
+`services/api/src/app.ts:1565`（`deleteHistory` 级联端口）：
 
 ```ts
 const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createUnwiredHistoryCascadePort();

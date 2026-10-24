@@ -174,6 +174,18 @@ export const ALLOWED_RETRYABLE = [
       + '08xxx/53xxx/57P0x/40001/40P01，42501/3D000/28P01/42P01/42883 与无法归类一律 false'
       + '（注释原文见 media/store-pg.ts:77）。',
   },
+  {
+    file: 'services/api/src/privacy/account-deletion.ts',
+    function: 'mapReceiptError',
+    retryable: 'true',
+    message: '回执台账暂不可用',
+    owner: 'GY-I22',
+    reason:
+      '**有判据**（合法放宽）：注销回执台账读写的瞬时类分支（08xxx/53xxx/57P0x/40001/40P01，经 db/pool.ts '
+      + '的 `isTransientDatabaseError` 分档）：同一请求稍后重试确实可能成功；同一 `mapReceiptError` 的其余分支'
+      + '（G0001⇒INVALID_REQUEST、23505⇒REVISION_CONFLICT、42501/42883/无法归类⇒retryable:false 的 '
+      + 'PROVIDER_UNAVAILABLE）均不可重试，与 `deletion-requests-pg.ts::mapDeletionError` 同口径。',
+  },
 ];
 
 /** 条目声明的判据类别（缺省只对 `PROVIDER_UNAVAILABLE` 站点生效）。 */

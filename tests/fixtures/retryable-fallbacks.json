@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 38,
-    "has": 37,
+    "total": 40,
+    "has": 39,
     "none": 1
   },
   "entries": [
@@ -210,6 +210,20 @@
       "file": "services/api/src/ocr/store-pg.ts",
       "line": 138,
       "function": "classifyOcrDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/privacy/account-deletion.ts",
+      "line": 208,
+      "function": "mapReceiptError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/privacy/account-deletion.ts",
+      "line": 211,
+      "function": "mapReceiptError",
       "judgement": "has",
       "owner": "GY-I22"
     },
