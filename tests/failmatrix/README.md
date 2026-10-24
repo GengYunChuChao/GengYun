@@ -22,13 +22,21 @@ node tests/failmatrix/run.mjs --list           # 只列用例
 node tools/i22-failmatrix-negative-control.mjs               # 26 条负控制
 node tools/i22-failmatrix-negative-control.mjs --only=NC-09  # 只跑一条
 
+# 真实 PostgreSQL 17 臂（把权限面 C1–C4/C10/C11 跑在一次性真 PG 集群上，逐条记录 stub vs 真 PG 差异）
+$env:GY_PG_BIN = 'E:\GengYunCommander\.pg17\pgsql\bin'        # 必填：含 initdb/pg_ctl 的目录（PG 17.x）
+node tests/failmatrix/run-real.mjs                            # 缺 GY_PG_BIN ⇒ 退出 77（未取得，不是通过）
+node tests/failmatrix/run-real.mjs --json=out.json            # 另存机读结果
+
 # 证据页三列表（读上面两条命令的 --json，重跑即复核）
 node tools/i22-failmatrix-evidence-table.mjs                       # 只打印不写盘（对账）；要写页必须 --write --page=<目标页>
 ```
 
-进 CI/单测入口：`tests/unit/gy-i22-failmatrix.test.mjs`（`npm run test:unit` 会带上它）。
+进 CI/单测入口：`tests/unit/gy-i22-failmatrix.test.mjs`（stub 臂，`npm run test:unit` 会带上它）。
 它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 230，另加一条**静态同步检查**：负控制清单里
 每处 `find` 必须在当前产品代码里恰好出现一次（守卫被重构时这条先红，而不是等你发现矩阵不再变红）。
+
+真 PG 臂的闸门入口：`tests/unit/gy-i22-failmatrix-real.test.mjs`（只锁「缺 `GY_PG_BIN` ⇒ 退出 77、
+不伪装 PASS」与「权限面覆盖范围与 stub 用例表同源」两条契约，⛔ 不锁真库全绿——那是 `run.mjs` 的职责）。
 
 ## 为什么用进程内 `app.inject`，不用 loopback HTTP
 
@@ -55,6 +63,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | `cases.mjs` | HTTP 用例表：`id` / `method` / `path` / `headers` / `body` / `expect{status,code,etag}` / `check` / `sameShapeAs` / `concurrent` |
 | `seams.mjs` | 受信 seam 用例表：`invoke` + `expect{code}` + `check`（审核回调 / AI 失败 / 下架缓存 / 版本回写） |
 | `run.mjs` | 表驱动 runner：判定 + 拒绝不变量 + 同形对照 + 按族/批次汇总 + `--json` 机读结果 |
+| `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11 的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过） |
 | `mutations.mjs` | 26 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
 | `tools/i22-failmatrix-negative-control.mjs` | 负控制执行器：sha256 → 改 → 跑（必须全红）→ 原字节恢复 → sha256 复核 → 复跑（必须全绿） |
 | `tools/i22-failmatrix-evidence-table.mjs` | 证据表生成器：读 `--json` 结果生成三列表，条数与文档声明不符即失败；归档页保护基于真实路径比较 + 文件身份（`dev` + `ino`，硬链接也拦得住）+ 仓库内包含性校验，`--write` 无隐式默认页（必须显式 `--page=`，且目标必须在仓库内；点名归档页要 `--i-know-this-rewrites-archive`，带旗标也仍受条数一致性约束——页内条数必须等于 `EXPECTED`，所以当前 168 / 23 的归档页必被拒），对账不通过一律不写盘 |
@@ -159,8 +168,37 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
   正路走不通；本片只能覆盖它前面的 `400/404` 分支（C5）。
 - **消息与收藏的引用跳转**（内容下架后端上跳 `unavailable`）：只到接口层（下架后读帖 `404`、D3 缓存 `hidden`）。
 - **外部删除状态**（第三侧删除后的同步）：仓内无该能力接线。
-- **真实 PG 下的同一矩阵**：本矩阵固定 `execution_mode=stub`，内存 store 与 PG store 的行为差异未验
-  （`real-pg-17.11` job 跑的是别的集成测试，不跑本矩阵）。
+- **真实 PG 下的同一矩阵（R34 追加：已接真 PG 臂，差异见下节）**：`run-real.mjs` 已把权限面
+  C1–C4/C10/C11 跑在一次性真 PG 17 集群上，逐条记录 stub vs 真 PG 差异。**未取得的部分**：media /
+  社区投稿 / 异步 AI 作业（识别 / OCR / 转写 / 作业）在 real 模式下 fail-closed（对象存储、真实供应商、
+  真实媒体未接线），无法播种属主行，对应用例如实标 `not-runnable`（占 168 条里的 35 条），⛔ 不拿
+  「不存在」当「越权 404」的假同形。
+
+## 真实 PG 臂（`run-real.mjs`）· stub vs 真 PG 差异结论
+
+本臂把矩阵 world 的内存 store 换成真 PG store（`execution_mode=real` + 真 `pool`），在**一次性
+PostgreSQL 17.11 集群**上实跑权限面 168 条（C1 37 + C2 24 + C3 27 + C4 18 + C10 23 + C11 39），
+逐条比 `status`+`code`（stub 期望 vs 真 PG 实际）并校验 `meta.execution_mode === 'real'`。
+
+实测读数（本机 PG 17.11，基线 `d4a47206`）：**168 条 = same 114 / different 19 / not-runnable 35**。
+`same` 是「stub 与真 PG 行为逐条一致」的证据；`different` 是真实行为差异；`not-runnable` 是「real
+模式该域 fail-closed，无法播种夹具」。差异分五类：
+
+| 类别 | 用例 | stub | 真 PG | 为什么 |
+| --- | --- | --- | --- | --- |
+| 未接线面 fail-closed → 真接线 | C3-19 读账号、C3-20 读作业、C3-21 停用账号 | 503 | 200 | real + 真库时账号/作业/停用权威接 PG（stub 无账号写权威） |
+| 已接线面 → real fail-closed | C3-14 读内容族、C3-15/C3-26 读审计、C3-22 读不存在内容条目 | 200/404 | 503 | 后台内容 store / 审计只读口在 real 模式 fail-closed（无真实内容权威 / 运行时角色未授权审计函数） |
+| 媒体域 fail-closed | C2-11/12/13（不存在媒体读/删/访问） | 404 | 503 | 媒体对象存储 real 模式未接线，整域 503，连「不存在」也 503 |
+| 注销受理 fail-closed | C1-30、C4-11、C4-15 | 401/400/202 | 503 | real 模式注销执行链路（7 日在线/30 日备份）未实现 ⇒ 整域 503 |
+| 同意门先于存在性判定 | C2-18、C11-08/14/16/22（改/确认不存在资源） | 404 | 403 `CONSENT_REQUIRED` | real 模式同意门（`public_posting` 等）接 PG 后，PATCH/POST 面先撞 403 再判存在性 |
+
+**一条级联差异（如实记账）**：C3-21 在真 PG 下**真的停用了 B**（stub 该面 503 无副作用），因此排在其后的
+C11-39（「B 仍能读自己的会话」正控制）由 200 变为 401 `SESSION_EXPIRED`——这不是独立差异，而是 C3-21
+真实副作用的级联，正好证明「真 PG 停用面会真的让会话失效」而 stub 做不到。
+
+**同源保障**：本臂的用例表**直接复用 `cases.mjs`**（不另写一套），只换 world（真 PG store）+ 判定口径
+（`real` 而非 `stub`）。`tests/unit/gy-i22-failmatrix-real.test.mjs` 锁住「缺 `GY_PG_BIN` ⇒ 77」与
+「权限面覆盖范围 = 168 条同源」两条契约。
 
 ## 与 `#22` 的关系
 
