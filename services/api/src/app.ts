@@ -173,6 +173,7 @@ import { registerAccountDeletionRoutes } from './routes/account-deletion.ts';
 import {
   createAccountDeletionRequestService,
   createDeletionReceiptRegistry,
+  createPostgresDeletionReceiptRegistry,
   RECEIPT_TTL_MS,
   type AccountDeletionRequestService,
   type DeletionReceiptRegistry,
@@ -1976,11 +1977,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //     202 只表示「已受理」：备份副本清除未接线 ⇒ 该请求此刻**确实无法完成** ⇒ `state: 'blocked'`
   //     （`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期当完成」），
   //     绝不回 `completed`。
-  const deletionReceipts = createDeletionReceiptRegistry({ now: clock });
+  // 回执 bearer 台账：有真库且**受理已接线**（`durableDeletionRequests !== null`）⇒ 走迁移 0038
+  // 的持久化读写（重启后旧回执仍可反查，不再因进程内台账清空而不可达）；否则进程内实现
+  // （stub/demo 无真库时行为与追加前逐字一致）。
+  const deletionReceipts: DeletionReceiptRegistry =
+    durableDeletionRequests !== null && pool !== null
+      ? createPostgresDeletionReceiptRegistry({ pool, now: clock })
+      : createDeletionReceiptRegistry({ now: clock });
   const accountDeletion = createAccountDeletionRequestService({
     deletion: userDataDeletion,
     receipts: deletionReceipts,
     available: config.executionMode !== 'real',
+    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；
+    // 不注入 ⇒ 行为与接线前逐字一致（见 account-deletion.ts 的 AccountEgressRevoker 注释）。
+    ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
 
   // =====================================================================================

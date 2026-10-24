@@ -682,7 +682,7 @@ try {
   assert.equal(failed.status, 503, JSON.stringify(failed.body));
   assert.equal(failed.body.error.code, 'PROVIDER_UNAVAILABLE');
   assert.equal(failed.body.error.retryable, true);
-  assert.equal(rolledBack.app.deletionReceipts.liveCount(), 0, '失败不得签发任何回执');
+  assert.equal(await rolledBack.app.deletionReceipts.liveCount(), 0, '失败不得签发任何回执');
   const dRow = await userRow(userD);
   assert.equal(dRow.state, 'active', '整体回滚：状态必须原样');
   assert.equal(Number(dRow.auth_epoch), 1, '整体回滚：auth_epoch 必须原样');
@@ -789,7 +789,7 @@ try {
   assert.equal(Number(iRow.auth_epoch), 1);
   assert.equal(await activeSessions(userI), 1);
   assert.equal(await requestCount(userI), 0);
-  assert.equal(realApp.deletionReceipts.liveCount(), 0);
+  assert.equal(await realApp.deletionReceipts.liveCount(), 0);
   say('real 模式（真库）：`available === false`，POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false：未接线不可重试)，且该账号零状态变化、零回执 ⇒ 真库存在也不放行 real 域');
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外付费请求；发现迁移 ${discovered.length} 个`);
