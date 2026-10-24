@@ -24,7 +24,7 @@
 >    备份清单补 `snapshotOwner`（`conversations/store-pg.ts:445`）。
 >
 > **仍然有效、请照旧引用**：G4（`0019` 迁移注释宣称的级联永不触发）、G7（社区域无清理原语、无 scope）、
-> G10（`real` 模式**注销 HTTP 面**整域 503，`services/api/src/app.ts:1775-1783`）、G11（审计与回执台账仍在进程内，`user-data-deletion.ts:301`）、
+> G10（`real` 模式**注销 HTTP 面**整域 503，`services/api/src/app.ts:1775-1783`）、G11（审计与回执台账仍在进程内，`user-data-deletion.ts:577`）、
 > §4.1 第 2 条（再受理被 `G0003` 确定性拒绝，`0016:112-114`）。
 >
 > **另需澄清一处口径**（本页未写错，但容易被读错）：本页 G10 说的是**注销 HTTP 面**。**消息域**的 `real` 口径是
@@ -179,7 +179,7 @@
 | G4 迁移注释 | **未变**：`0019:24-25` 仍宣称级联 | `services/api/db/migrations/0019_messages_persistence.sql:24-25` |
 | G7 社区域 | **未变**：零原语、零 scope | `services/api/src/community/store-pg.ts`（无 `purgeOwnerData`／`deleteAllByOwner`／`snapshotOwner`） |
 | G10 real 注销面 503 | **未变**（按 P0-5 的顺序，应最后放开） | `services/api/src/app.ts:1775-1783` |
-| G11 审计/回执持久化 | **未变**：`auditLog` 仍是进程内数组 | `user-data-deletion.ts:301` |
+| G11 审计/回执持久化 | **未变**：`auditLog` 仍是进程内数组 | `user-data-deletion.ts:577` |
 
 ---
 
