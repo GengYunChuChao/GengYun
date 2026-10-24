@@ -20,8 +20,8 @@
  *
  * 归档页保护：真实路径比较 + **文件身份（dev + ino）** + 仓库内包含性校验；`--write` 无隐式默认页。
  * 本工具原来默认写 `docs/verification/gy-i22-failmatrix-20261022.md`——那是 R29 建页时的**归档快照**
- * （表格 168 行、负控制 23 条）。`EXPECTED` 随当前矩阵校正到 230 / 26 之后，
- * 那个默认值就变成「裸跑一次 --write 就把归档快照无报错重写成 230 行」，所以：
+ * （表格 168 行、负控制 23 条）。`EXPECTED` 随当前矩阵校正到 236 / 26 之后，
+ * 那个默认值就变成「裸跑一次 --write 就把归档快照无报错重写成 236 行」，所以：
  *   1. `--write` 无隐式默认页：裸 `--write` 一律 exit 1，必须显式 `--page=`；
  *   2. 目标页按仓库根解析成绝对路径后，**先判文件身份**（`statSync` 的 `dev` + `ino`）是不是归档页：
  *      `docs/verification/./x.md`、`docs/verification/../verification/x.md`、`DOCS/verification/x.md`
@@ -31,7 +31,7 @@
  *      不会写到仓库外）；
  *   4. 归档页只允许「同一基线刷新读数」：即便给了 `--i-know-this-rewrites-archive`，
  *      页内表格行数 / 负控制行数仍必须与 `EXPECTED` 逐项相等才放行。本页当前是 168 / 23、
- *      `EXPECTED` 是 230 / 26，所以带旗标也**必然被拒**——旗标只是一句「我知道这是归档页」的
+ *      `EXPECTED` 是 236 / 26，所以带旗标也**必然被拒**——旗标只是一句「我知道这是归档页」的
  *      确认，不是绕过条数校验的开关；要刷新得先迁移台账口径，不是加个旗标改写历史快照；
  *   5. 所有写盘都在 `problems` 对账**之后**：对账不通过一律不写盘、exit 1。
  *
@@ -48,7 +48,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  * 归档快照页：R29 建页时点（表格 168 行 / 负控制 23 条）的冻结记录。
  * 生成器**不再默认写它**；显式点名时按**文件身份**（`dev` + `ino`）识别——字符串别名、symlink、
  * junction、`\\?\` 前缀路径、硬链接都算同一个文件，不算另一个目标——且即便给了
- * `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 230 / 26
+ * `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 236 / 26
  * ⇒ 当前必然被拒（见 `planWrite`）。
  */
 const ARCHIVE_PAGE = 'docs/verification/gy-i22-failmatrix-20261022.md';
@@ -71,6 +71,7 @@ const FAMILY_ACCEPTANCE = Object.freeze({
   D2: 'AC21/AC23（F13/F20 AI 失败不得发布）',
   D3: 'AC22（G4 下架 ⇒ 缓存失效）',
   D4: 'AC22/AC29（内容版本变更 ⇒ 旧结论不复用）',
+  F1: 'AC22（下架 ⇒ 消息引用跳转 unavailable，同形不泄露存在性）',
 });
 
 /**
@@ -78,22 +79,22 @@ const FAMILY_ACCEPTANCE = Object.freeze({
  *
  * 口径（三项都必须对得上才放行）：
  *   - `total` 数的是**失败矩阵的用例条数**：`run.mjs --json` 机读结果里「一行一条用例」的
- *     `rows.length`，本版 `totals.total` 与 `rows.length` 同为 230，逐族求和与逐批求和也都是 230。
+ *     `rows.length`，本版 `totals.total` 与 `rows.length` 同为 236，逐族求和与逐批求和也都是 236。
  *   - `families` / `batches` 是同一批行的**分组计数**，各自的全集必须等于 `total`：
- *     C1…C7 + E1 + E2 + C10 + C11 + D1…D4 = 230；B1…B5 = 230。
+ *     C1…C7 + E1 + E2 + C10 + C11 + F1 + D1…D4 = 236；B1…B6 = 236。
  *   - `negativeControls` 数的是 `tests/failmatrix/mutations.mjs` 的 `MUTATIONS.length`（26）。
  *
  * 时点：`168` 是 R29 建页时点（只有 C1…C7 + E1 + E2 + D1…D4，见 `docs/verification/gy-i22-failmatrix-20261022.md`）
  * 的**同一口径旧读数**，不是另一个维度；R31 补上异步 AI 域 C10(23) + C11(39) ⇒ 168 + 23 + 39 = 230，
- * R34 负控制 23 → 26。本常量跟**当前**矩阵走。
- * ⚠️ 归档页那份 R29 快照（168 行 / 23 条）**不允许**被本常量改写成 230 行：`--write` 无隐式默认页，
+ * #546 补 F1(6) ⇒ 236，R34 负控制 23 → 26。本常量跟**当前**矩阵走。
+ * ⚠️ 归档页那份 R29 快照（168 行 / 23 条）**不允许**被本常量改写成 236 行：`--write` 无隐式默认页，
  * 显式点名时按**真实路径**识别归档页，并且页内条数必须已经等于本常量（见 `planWrite`）。
- * 也就是说 `--i-know-this-rewrites-archive` 也改写不了它：本页当前 168 / 23 与 230 / 26 不一致 ⇒ 必然被拒。
+ * 也就是说 `--i-know-this-rewrites-archive` 也改写不了它：本页当前 168 / 23 与 236 / 26 不一致 ⇒ 必然被拒。
  */
 const EXPECTED = Object.freeze({
-  families: { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, E1: 3, E2: 3, C10: 23, C11: 39, D1: 11, D2: 4, D3: 2, D4: 3 },
-  batches: { B1: 106, B2: 36, B3: 17, B4: 9, B5: 62 },
-  total: 230,
+  families: { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, E1: 3, E2: 3, C10: 23, C11: 39, D1: 11, D2: 4, D3: 2, D4: 3, F1: 6 },
+  batches: { B1: 106, B2: 36, B3: 17, B4: 9, B5: 62, B6: 6 },
+  total: 236,
   negativeControls: 26,
 });
 
@@ -179,7 +180,7 @@ function foldCase(value) {
  * `realpathSync.native` 能把 `.`、`..`、symlink、junction、`\\?\` 前缀、大小写都解成同一条路径，
  * 但对**硬链接**无效——硬链接是同一 inode 的另一个目录项，realpath 仍返回它自己那条路径。
  * 实测（对抗性审查）：`mklink /H h-archive.md <归档页>` 后 `--page=h-archive.md` 不进归档分支，
- * 而「非归档页」分支没有条数校验 ⇒ exit 0 把 168/23 的归档页整页改写成 230/26。比 inode 才堵得住。
+ * 而「非归档页」分支没有条数校验 ⇒ exit 0 把 168/23 的归档页整页改写成 236/26。比 inode 才堵得住。
  * 任一侧 stat 失败（不存在 / EACCES / 已删）一律返回 false：让调用方走原有的 `readFileSync` /
  * ENOENT 错误路径，不在这里抛未捕获异常。
  */
@@ -276,7 +277,7 @@ function planWrite(opts) {
   //    只比 realpath 又会被**硬链接**绕过（同一 inode 的另一个目录项，realpath 解不掉），故比 inode。
   //    死参数说明（选定方案 a：保留 `--i-know-this-rewrites-archive`，把提示语改成与实际行为一致）：
   //    该旗标现在**永远成功不了**——它只关掉「没给旗标」那道提示，条数校验仍然在；本页是 168 / 23 的
-  //    冻结快照、EXPECTED 是 230 / 26，两者必然不等。所以旗标的语义只剩「我确认这是归档页，请按条数
+  //    冻结快照、EXPECTED 是 236 / 26，两者必然不等。所以旗标的语义只剩「我确认这是归档页，请按条数
   //    规则判」，真正的刷新路径是**迁移台账口径另建新页**，不是加旗标改写历史。提示语必须与这条一致。
   if (samePath(pagePath, path.resolve(ROOT, ARCHIVE_PAGE))) {
     const baseline = declaredBaseline(page);
