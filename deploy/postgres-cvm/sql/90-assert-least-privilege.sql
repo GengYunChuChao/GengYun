@@ -1702,6 +1702,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'purge_owner_speech',                 'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R34（#19 片2 / 迁移 0035）：媒体行**物理删除**的唯一写路径（窄口径 SECURITY DEFINER 函数）。
+    -- `public.media` 对运行时仍然是零表级 DELETE（段 M 的 \echo 与 domain_manifest 逐字未动），
+    -- 「本人 + 终态 + 未被引用 + 已入队」四个谓词只存在于这条函数里；EXECUTE 只授运行时。
+    ('public',         'purge_owner_media',                  'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',

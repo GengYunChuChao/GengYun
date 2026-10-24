@@ -318,6 +318,40 @@ GRANT EXECUTE ON FUNCTION public.purge_owner_speech(uuid) TO gengyun_api_runtime
 -- #endregion gy-r34-i19-owner-content-purge-grant
 \echo '20-login-roles.sql：已授予 purge_owner_recognitions(uuid) / purge_owner_speech(uuid) 的 EXECUTE（注销内容清理的唯一写路径；五张正文表对运行时仍然零 DELETE）。'
 
+-- --- D4. 注销媒体域：媒体行物理删除的 EXECUTE（GY-R34 / #19 片2 / 迁移 0035）---
+-- `public.media` 的删除语义原来是**状态机**（deleting → deleted，UPDATE state），运行时的
+-- 表级 DELETE 为零；段 M 的 `\echo` 把这条不变量写死了：
+--   「media 故意不授 DELETE —— 删除是状态机（deleting→deleted，UPDATE state），
+--     媒体行是审计与计费事实，不物理删。」
+-- 注销/撤回要真删**行**时，仍然不走表级授权，而是走迁移 0035 的一条**窄口径**
+-- `SECURITY DEFINER` 函数（属主＝迁移管理员，`REVOKE ALL ... FROM PUBLIC`）：
+--   · `purge_owner_media(uuid)` —— 只删该主体 `state IN ('rejected','deleted')` 的
+--     `media` 行及其 `media_derivatives`，且**必须先有** `media_object_cleanup` 的清理意图行
+--     （缺则 `G0007` 整批不删），并**跳过**被 `content_media_refs` / `community_media_grants` /
+--     `public_authors.avatar_media_id` 引用的行（读数 `skipped_referenced`）。
+-- 为什么必须这样（而不是加一条表级 GRANT DELETE）：PG 没有列级 DELETE ⇒ 表级 DELETE 会连
+-- 「本人 + 终态 + 未被引用 + 已入队」这四个谓词一起送掉；而这条函数正是那四个谓词的唯一载体。
+-- 因此这里**只**授 EXECUTE：`media` / `media_derivatives` 对运行时的授权面**逐字未变**
+-- （`90-assert` 的 `domain_manifest` 与表级写授权白名单不动，媒体域只由
+-- `function_surface_manifest` 登记函数面）。若把 DELETE 授出去，等于改掉一条安全不变量，
+-- 那要走安全评审，不是发权限的顺手活。
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败
+-- （绝不留一个「看似已收敛、实际注销删不动媒体行」的运行态）。
+-- #region gy-r34-i19-media-row-purge-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）。
+DO $$
+BEGIN
+  IF to_regprocedure('public.purge_owner_media(uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.purge_owner_media(uuid)：迁移 0035 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.purge_owner_media(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.purge_owner_media(uuid) TO gengyun_api_runtime;
+-- #endregion gy-r34-i19-media-row-purge-grant
+\echo '20-login-roles.sql：已授予 purge_owner_media(uuid) 的 EXECUTE（注销媒体行物理删除的唯一写路径；public.media / media_derivatives 对运行时仍然零**表级** DELETE 变更，一张表都没加）。'
+
 -- --- E. 账号停用/恢复：唯一写路径的 EXECUTE（GY-I22 / 迁移 0017）--------------
 -- 迁移 0017 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并
 -- `REVOKE ALL ... FROM PUBLIC`。此处把 EXECUTE **只**授予运行时登录角色：
