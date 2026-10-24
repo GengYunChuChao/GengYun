@@ -14,6 +14,9 @@ export interface Profile { crop_id: string | null; region_code: string | null; r
 export interface CatalogItem { [key: string]: string | null }
 const crops = JSON.parse(readFileSync(new URL('../../../../packages/knowledge/catalog/crops.json', import.meta.url), 'utf8')).crops as Array<{id: string; name: string}>;
 const regions = JSON.parse(readFileSync(new URL('../../../../packages/knowledge/catalog/regions-zhejiang.json', import.meta.url), 'utf8')).regions as Array<{code: string; name: string; parent_code: string | null; catalog_version: string}>;
+const species = JSON.parse(readFileSync(new URL('../../../../packages/knowledge/catalog/species.json', import.meta.url), 'utf8')).species as Array<{id: string; group_name: string; canonical_name: string; scientific_name: string | null; aliases?: string[]; coverage_state: string}>;
+// 物种目录的 `q` 检索面：组名/俗名只作检索词，**不进响应**（契约 Species 只允许四个字段）。
+const speciesSearch = new Map(species.map(item => [item.id, [item.canonical_name, item.scientific_name, item.group_name, ...(item.aliases ?? [])].filter((value): value is string => typeof value === 'string').join(' ')]));
 const empty = (): Profile => ({ crop_id: null, region_code: null, region_catalog_version: null, revision: 1 });
 function profile(row: Row): Profile {
   const revision = Number(row['revision']);
@@ -65,6 +68,17 @@ export function createProfileService(pool: PgPool, key: string) {
     const {rows} = await client.query('SELECT code,name,parent_code,catalog_version FROM public.regions WHERE supported AND code=ANY($1::varchar[]) ORDER BY code FOR SHARE', [regions.map(item => item.code)]);
     return rows.filter(row => regions.some(item => item.code === row.code && item.name === row.name && item.parent_code === row.parent_code && item.catalog_version === row.catalog_version));
   }
+  /**
+   * 物种目录读面。与 crops/regions 同一条口径：库内行必须与批准目录
+   * (`packages/knowledge/catalog/species.json`) 逐字段一致，否则该行不出现（不猜、不补默认值）。
+   * 兄弟目录靠 active/supported 开关，物种没有开关可倚：`coverage_state` 本身就是状态位，
+   * 故「库里有、目录里没有或不一致」一律按不出现处理，绝不把库侧默认值兜底成合法枚举。
+   */
+  async function speciesDirectory(client: PoolClient): Promise<CatalogItem[]> {
+    const {rows} = await client.query('SELECT id,canonical_name,scientific_name,coverage_state FROM public.species WHERE id=ANY($1::varchar[]) ORDER BY id FOR SHARE', [species.map(item => item.id)]);
+    return rows.filter(row => species.some(item => item.id === row.id && item.canonical_name === row.canonical_name
+      && (item.scientific_name ?? null) === (row.scientific_name ?? null) && item.coverage_state === row.coverage_state));
+  }
   return {
     async get(input: Identity) {
       return transaction(input, async client => {
@@ -112,6 +126,19 @@ export function createProfileService(pool: PgPool, key: string) {
           kind, userId: input.identity.userId, authEpoch: input.identity.authEpoch, hmacKey: key,
           limit: options.limit,
           ...(options.parent_code === undefined ? {} : {parentCode: options.parent_code}),
+          ...(options.cursor === undefined ? {} : {cursor: options.cursor}),
+        });
+      });
+    },
+    /** `/catalog/species`：同一鉴权/事务/游标口径，收窄条件换成 `q`。 */
+    async listSpecies(input: Identity, options: {cursor?: string; limit: number; q?: string}) {
+      return transaction(input, async client => {
+        const items = await speciesDirectory(client);
+        return paginateCatalog(items, {
+          kind: 'species', userId: input.identity.userId, authEpoch: input.identity.authEpoch, hmacKey: key,
+          limit: options.limit,
+          searchText: item => speciesSearch.get(item['id'] ?? '') ?? '',
+          ...(options.q === undefined ? {} : {q: options.q}),
           ...(options.cursor === undefined ? {} : {cursor: options.cursor}),
         });
       });

@@ -51,4 +51,15 @@ export function registerProfileRoutes(app: FastifyInstance, config: AppConfig, p
       return reply.header('Cache-Control', 'no-store').send({data, meta: buildMeta(request, config)});
     });
   }
+  // 物种目录**不**并进上面的 kind 循环：`routeDeclarations` 只把 `${kind}` 展开成 crops/regions，
+  // 并进去会让静态盘点看不见这条路由；而且它多一个 `q` 收窄条件，形状本就与兄弟目录不同。
+  app.get(`${API_PREFIX}/catalog/species`, {preHandler: guards.requireUser, schema: {querystring: {
+    type: 'object', additionalProperties: false, properties: {
+      cursor: {type: 'string', minLength: 1, maxLength: 2048}, limit: {type: 'integer', minimum: 1, maximum: 50, default: 20},
+      q: {type: 'string', minLength: 1, maxLength: 80},
+    },
+  }}}, async (request, reply) => {
+    const data = await ready().listSpecies(input(request), request.query as {cursor?: string; limit: number; q?: string});
+    return reply.header('Cache-Control', 'no-store').send({data, meta: buildMeta(request, config)});
+  });
 }

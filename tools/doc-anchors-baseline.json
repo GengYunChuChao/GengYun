@@ -256,24 +256,6 @@
       "reference": "verify-cvm-postgres.sh:352"
     },
     {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "contract-status.json:370"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "contract-status.json:370"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:370"
-    },
-    {
       "path": "docs/evaluation/README.md",
       "reason": "SUSPECT",
       "owner": "docs",
@@ -428,12 +410,6 @@
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "services/api/src/ocr/service.ts:295"
-    },
-    {
-      "path": "services/api/src/profile/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/profile/service.ts:64"
     },
     {
       "path": "services/api/src/routes/community.ts",

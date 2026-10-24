@@ -16,10 +16,13 @@ ALTER ROLE gengyun_profile_runtime WITH NOLOGIN NOSUPERUSER NOCREATEDB NOCREATER
 GRANT USAGE ON SCHEMA public TO gengyun_profile_runtime;
 GRANT SELECT (id,name,active) ON public.crops TO gengyun_profile_runtime;
 GRANT SELECT (code,name,parent_code,catalog_version,supported) ON public.regions TO gengyun_profile_runtime;
+-- 物种目录（`GET /catalog/species`）只读四个契约字段；别名/组名不发给 API 角色，也不进响应。
+GRANT SELECT (id,canonical_name,scientific_name,coverage_state) ON public.species TO gengyun_profile_runtime;
 -- PostgreSQL FOR SHARE requires UPDATE on at least one column. Only name is
 -- granted for locking: no directory key/version/availability changes or DELETE.
 -- The HTTP component has no directory mutation endpoint.
 GRANT UPDATE (name) ON public.crops,public.regions TO gengyun_profile_runtime;
+GRANT UPDATE (canonical_name) ON public.species TO gengyun_profile_runtime;
 GRANT SELECT (user_id,crop_id,region_code,region_catalog_version,revision) ON public.single_profiles TO gengyun_profile_runtime;
 GRANT INSERT (user_id,crop_id,region_code,region_catalog_version,revision) ON public.single_profiles TO gengyun_profile_runtime;
 GRANT UPDATE (crop_id,region_code,region_catalog_version,revision,updated_at) ON public.single_profiles TO gengyun_profile_runtime;
