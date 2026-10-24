@@ -38,11 +38,23 @@
  * ```
  *
  * 配 200 —— 没有政策不等于读面故障，不能报 4xx/5xx。`UNPUBLISHED_POLICY_VERSION` 是**保留哨兵值**，
- * 语义是「尚无已发布政策」而不是版本号；它不可能等于任何真实 `policy_version`，也不会被回灌成授权记录：
+ * 语义是「尚无已发布政策」而不是版本号；它不可能等于任何真实 `policy_version`——库列没有 CHECK
+ * 约束，这条由 `readVersion` 用代码强制（真写进库里即 fail-closed，不冒充空态），
+ * 它也不会被回灌成授权记录：
  * `privacy/grant-pg.ts:52` 找不到生效政策行时直接抛 `CONSENT_REQUIRED`，
  * `privacy/grant-pg.ts:54` 再用 `policy.policy_version !== input.policy_version` 逐字比对。
  * 没有当前生效政策时 `recipients` 也返回空数组：接收方清单挂在 `recipients.policy_version` 上
  * （见契约 `Recipient.policy_version`），没有版本就没有可披露的清单 —— 不拿上一版凑数。
+ *
+ * ## 披露面比授权面宽 —— 刻意的，不是漏洞
+ *
+ * 本读面的 `recipients[]` = 当前版本上 `enabled` 的**全部**接收方；授权面（`privacy/grant-pg.ts`
+ * 与 `recipient_bindings`）还要额外满足 `no_training_verified AND deletion_verified`，并与该用户
+ * 已绑定的接收方求交。两边**故意不等**：授权面回答「此刻能不能把这位用户的数据交给它」，
+ * 披露面回答「这份政策允许哪些第三方处理数据」。少披露 = 用户看不到实际可能接触数据的一方
+ * （隐私缺陷）；多披露 = 用户看到尚未对他启用的一方（无害，且更保守）。因此取宽的一侧，
+ * **不**拿授权面的严格条件反向收窄披露。`no_training_verified` / `deletion_verified` 仍逐行
+ * 原样返回，由界面标注核验状态，读面不改写也不据此过滤。
  *
  * ## 错误分级（口径同 `errors.ts` 的 `ApiError` 注释）
  *
@@ -118,9 +130,18 @@ const unavailable = (message: string) => new ApiError('PROVIDER_UNAVAILABLE', me
 const purposeRank = (purpose: string): number => (CONSENT_PURPOSES as readonly string[]).indexOf(purpose);
 const byPurposeOrder = (purposes: string[]): string[] => [...purposes].sort((left, right) => purposeRank(left) - purposeRank(right));
 
-/** 版本串约束同契约 `minLength: 1` / `maxLength: 80`；越界即数据不可信。 */
+/**
+ * 版本串约束同契约 `minLength: 1` / `maxLength: 80`；越界即数据不可信。
+ *
+ * 同时把 `UNPUBLISHED_POLICY_VERSION` 当**保留值**守住：`consent_policies.policy_version` /
+ * `recipients.policy_version` 两列都没有 CHECK 约束，运维若真往库里写 `'unpublished'`，空态哨兵
+ * 就会被真实数据冒充 —— 用户看到「尚无已发布政策」，而库里其实有一行生效政策。库里没做的约束
+ * 在这里补上：撞车即 fail-closed（不静默当成空态，也不原样回显那个值）。
+ */
 function readVersion(value: unknown): string {
   if (typeof value !== 'string' || value.length < 1 || value.length > 80) throw unavailable('用途政策不可用');
+  // 哨兵是读面自己的保留值，不是合法 policy_version：库里出现它只能是数据/导入出错。
+  if (value === UNPUBLISHED_POLICY_VERSION) throw unavailable('库里的 policy_version 与空态哨兵 "unpublished" 撞车');
   return value;
 }
 

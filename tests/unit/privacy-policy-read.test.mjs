@@ -26,6 +26,7 @@ import {
 
 const CONTRACT = new URL('../../packages/contracts/openapi.json', import.meta.url);
 const ROUTES = new URL('../../services/api/src/routes/consents.ts', import.meta.url);
+const MODULE = new URL('../../services/api/src/privacy/privacy-policy.ts', import.meta.url);
 
 /**
  * 内存 SQL 桩：按语句首行分派，并记录「接收方查询收到的版本参数」，
@@ -107,6 +108,35 @@ test('有行时字段映射正确：版本/用途闭集顺序/接收方挂在当
   // 清单查询必须带上当前版本参数（防止把整表倒出来）。
   const recipientsQuery = seen.find(entry => entry.text.startsWith('SELECT id,display_name'));
   assert.deepEqual(recipientsQuery.values, ['v2']);
+});
+
+test('哨兵撞车：库里真存了 policy_version=unpublished ⇒ 503，不冒充空态', async () => {
+  // 库列没有 CHECK 约束，哨兵语义只由 readVersion 守；这里证明它真的被守住了。
+  await rejectsUnavailable(
+    createPostgresPrivacyPolicyReader({
+      query: stub({ policies: [{ purpose: 'recording', policy_version: UNPUBLISHED_POLICY_VERSION }] }).query,
+    }).read(),
+    '政策表撞哨兵',
+  );
+  await assert.rejects(
+    createPostgresPrivacyPolicyReader({
+      query: stub({ policies: [{ purpose: 'recording', policy_version: UNPUBLISHED_POLICY_VERSION }] }).query,
+    }).read(),
+    error => {
+      assert.match(error.message, /哨兵/, '错误文案必须点明「与空态哨兵撞车」，否则运维看不出该改数据');
+      return true;
+    },
+  );
+  // 接收方的 policy_version 走同一个守卫：接收方行也不会把哨兵带进响应。
+  // 这里故意绕开桩的版本过滤（直连查询函数），否则「policy_version 不等于当前版本」的行
+  // 会被 SQL 层滤掉，守卫在接收方这条路径上就测不到。
+  const mixedQuery = async (text) => (text.startsWith('SELECT purpose,policy_version')
+    ? { rows: [{ purpose: 'recording', policy_version: 'v2' }] }
+    : { rows: [recipient({ policy_version: UNPUBLISHED_POLICY_VERSION })] });
+  await rejectsUnavailable(
+    createPostgresPrivacyPolicyReader({ query: mixedQuery }).read(),
+    '接收方撞哨兵',
+  );
 });
 
 const rejectsUnavailable = (promise, label) => assert.rejects(promise, error => {
@@ -194,6 +224,20 @@ test('路由已装配：routes/consents.ts 里有路径、noStoreHook 与 requir
   assert.match(hook, /reply\.header\('Cache-Control', 'no-store'\)/);
   // 读面用未接线工厂装配：无连接池时 fail-closed，而不是让路由 500。
   assert.match(text, /createPrivacyPolicyReaderForPool\(pool\)/);
+});
+
+test('SQL 的生效条件与接收方过滤被源码文本钉住：删任一条必须红', () => {
+  // 为什么要在源码上钉：内存桩是按语句首行匹配的替身，删掉真实 SQL 里的
+  // `valid_until>clock_timestamp()` 或接收方的 `enabled`，上面所有行为测试仍然全绿
+  // （桩不看条件），于是一条过期政策 / 一个已下线接收方就能悄悄流到用户面前。
+  const policySrc = readFileSync(MODULE, 'utf8');
+  // 当前政策的三个生效条件：启用、已评审、在有效窗口内。
+  assert.match(policySrc, /WHERE enabled AND reviewed_at<=clock_timestamp\(\)/, '政策 SQL 丢了 enabled / reviewed_at 生效条件');
+  assert.match(policySrc, /AND valid_from<=clock_timestamp\(\)/, '政策 SQL 丢了 valid_from 下界（未来生效的政策会被提前当成生效）');
+  assert.match(policySrc, /valid_until>clock_timestamp\(\)/, '政策 SQL 丢了 valid_until 上界（过期政策会被当成仍在生效）');
+  assert.match(policySrc, /ORDER BY purpose/, '政策 SQL 丢了确定性排序（用途顺序由 byPurposeOrder 兜底，但查询本身也要稳定）');
+  // 接收方：必须同时有 enabled 与按当前版本过滤；漏 enabled 会披露已下线的接收方。
+  assert.match(policySrc, /WHERE enabled AND policy_version=\$1/, '接收方 SQL 丢了 enabled 或按 policy_version 过滤');
 });
 
 test('闭集与契约逐字一致：capability / ConsentPurpose / PrivacyPolicy 必填与上限', () => {

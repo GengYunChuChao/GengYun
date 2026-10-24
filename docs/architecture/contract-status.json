@@ -308,7 +308,7 @@
       "version_required": false,
       "route_mounted": true,
       "status": "partial",
-      "evidence": [{ "path": "services/api/src/routes/consents.ts", "symbol": "app.get(`${API_PREFIX}/me/privacy-policy`", "lines": "90-97" }, { "path": "services/api/src/privacy/privacy-policy.ts", "symbol": "export function createPostgresPrivacyPolicyReader", "lines": "169-194" }, { "test": "tests/unit/privacy-policy-read.test.mjs", "name": "空态诚实：没有政策行 ⇒ 200 + version=unpublished，不编造政策文本也不 5xx" }],
+      "evidence": [{ "path": "services/api/src/routes/consents.ts", "symbol": "app.get(`${API_PREFIX}/me/privacy-policy`", "lines": "90-97" }, { "path": "services/api/src/privacy/privacy-policy.ts", "symbol": "export function createPostgresPrivacyPolicyReader", "lines": "186-215" }, { "test": "tests/unit/privacy-policy-read.test.mjs", "name": "空态诚实：没有政策行 ⇒ 200 + version=unpublished，不编造政策文本也不 5xx" }],
       "blocker": "已装配读面；生产政策与接收方清单尚未落种子（NON-PRODUCTION 占位待补）"
     },
     {
