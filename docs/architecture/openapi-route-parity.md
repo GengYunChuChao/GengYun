@@ -128,7 +128,7 @@
 | GET | `/me/consents` | listConsents | user | 不要求 | 是 | partial | 一致 |
 | POST | `/me/consents` | grantConsent | user | 不要求 | 是 | partial | 一致 |
 | DELETE | `/me/consents/{purpose}` | withdrawConsent | user | 需要 | 是 | partial | 一致 |
-| GET | `/me/exports` | listExports | user | 不要求 | 是 | planned | planned（台账 planned 但已挂载） |
+| GET | `/me/exports` | listExports | user | 不要求 | 是 | partial | 一致 |
 | GET | `/me/privacy-policy` | getPrivacyPolicy | user | 不要求 | 是 | partial | 一致 |
 | GET | `/me/profile` | getProfile | user | 不要求 | 是 | implemented | 一致 |
 | PUT | `/me/profile` | putProfile | user | 需要 | 是 | implemented | 一致 |

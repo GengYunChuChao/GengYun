@@ -118,7 +118,7 @@
 | A6 | 401 与 403 分档 | `miniprogram/utils/auth.js:95-109`；消息侧 `miniprogram/utils/messages-api.js:123-124`；契约 403 闭集 `packages/contracts/openapi.json:16831-16835` |
 | A7 | 注销时点硬删消息域（正文＋共享幂等台账，同一事务） | `messages/store-pg.ts:220-241`（`DELETE FROM public.messages … RETURNING id` ＋ `DELETE FROM public.idempotency_keys … RETURNING scope`）；闭集 `privacy/user-data-deletion.ts:71`、`:93-98`、注册 `:449` |
 | A8 | 行数进证据（`records` 与 `idempotency` 分表计） | `privacy/user-data-deletion.ts:100-103`（`OwnerPurgeCounts`）；真表断言 `tests/unit/favorites-history-deletion-registration.test.mjs:288`（消息行必须真删）、`:290`（他人消息行不动）、`:426`（`messages:online-purged:1;messages:idempotency-purged:1`）、`:498`（`messages:online-purged:0;…` 同形） |
-| A9 | 不接外部推送、不虚构真人消息 | `services/api/src/messages/**` 与 `routes/messages.ts` 对 `subscribeMessage`／`webhook`／模板消息／`openid` **0 命中**（本片 grep 实跑）；`push` 命中均为数组 `push`（`messages/service.ts:345`、`:390`）；台账 blocker 逐字「…不虚构真人消息」（`docs/architecture/contract-status.json:1993`） |
+| A9 | 不接外部推送、不虚构真人消息 | `services/api/src/messages/**` 与 `routes/messages.ts` 对 `subscribeMessage`／`webhook`／模板消息／`openid` **0 命中**（本片 grep 实跑）；`push` 命中均为数组 `push`（`messages/service.ts:345`、`:390`）；台账 blocker 逐字「…不虚构真人消息」（`docs/architecture/contract-status.json:2039`；合流后按内容重锚，main 记 `:2019`＋本片插入 20 行） |
 | A10 | 备份副本 scope 已登记 `message`，注销后 30 日链有对象可清 | `packages/privacy/backup-copies.mjs:38-43`（`messages: 'message'`）；清单源 `privacy/user-data-deletion.ts:321-325` |
 
 补充可引的既有证据页（本片未重跑）：[阶段 2 消息域 PG 持久化](gy-i17-messages-pg-20261018.md)（真 PG 17.11 读数：`[D]`／`[R]`／`[N]`／`[C]`／`[U]`／`[P]` 六组全 PASS，见该页 §3）、[首版消息域服务层证据](gy-i17-messages-20261012.md)。
@@ -131,7 +131,7 @@
 | B2 | `real` 装配下注销链路可达 | 同 §1.3 B2：`app.ts:1731` ⇒ 真实环境注销 HTTP 面整域 503 |
 | B3 | 消息域在**真 PG 服务器**上的注销行数读数 | `tests/unit/messages-deletion-purge.test.mjs` 文件头自陈为记录型假池（非真 PG／非 PGlite）；真库 arm `tests/integration/favorites-history-pg.mjs:456-460` 逐字「本 arm 只应用 0001+0018…没有 `public.messages` 表」，消息域在该 arm 走内存 store 且证据恒 0 行；真表级证据只在 PGlite（`tests/unit/favorites-history-fixtures.mjs` 的 `PG_MIGRATIONS_WITH_MESSAGES`）。⇒「PGlite 真表有、真 PG 服务器无」。前置：把 0019＋0023 纳入同一条真库注销 arm |
 | B4 | 共享幂等台账前缀删的跨域副作用裁定 | `messages/store-pg.ts:206-215` 自陈：`public.idempotency_keys` 是共享表，前缀删会连带删本主体在 auth 等其它域写入的幂等行，「属副作用而非本域自清」。前置：监工/合规对该副作用的裁定 |
-| B5 | 台账与代码不同步 | `docs/architecture/contract-status.json:1993`（`:2015`／`:2037` 同文重复）仍把「PG/注销」记为待验收，而 HEAD 已有原语＋闭集＋注册＋备份 scope。本片红线不改该 JSON，只登记 |
+| B5 | 台账与代码不同步 | `docs/architecture/contract-status.json:2039`（`:2061`／`:2083` 同文重复）仍把「PG/注销」记为待验收，而 HEAD 已有原语＋闭集＋注册＋备份 scope。本片红线不改该 JSON，只登记。合流后三处按内容重锚（main 记 `:2019`／`:2041`／`:2063`，本片插入 20 行） |
 | B6 | issue 前置 5 项 | #17 正文列 #4／#14／#15／#28／#29，gh 读数全 `OPEN` |
 
 ### 2.4 C5 判据（同 §1.4 的 5 子项）
@@ -184,7 +184,7 @@
 
 | 编号 | 缺什么 | 原因与前置 |
 | --- | --- | --- |
-| B1 | 排序口径在**台账**仍未收口（与 A7 方向相反） | `docs/architecture/contract-status.json:716`（`GET /knowledge` 条目 blocker 逐字「当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留」）、`:3164`（跨切面条目同义）；`docs/architecture/contract-implementation-status.md:72`（`listKnowledge` 记 `partial`）。本片红线不改 JSON／台账 ⇒ 只登记口径差 |
+| B1 | 排序口径在**台账**仍未收口（与 A7 方向相反） | `docs/architecture/contract-status.json:782`（`GET /knowledge` 条目 blocker 逐字「当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留」；合流按内容重锚，原记 `:716`；⚠ 该 blocker 文本其后已由 R33 按代码事实订正，此处引文为订正前原文，现文见该行与 `docs/verification/gy-r33-contract-ledger-20261023.md`）、`:3164`（跨切面条目同义）；`docs/architecture/contract-implementation-status.md:72`（`listKnowledge` 记 `partial`）。本片红线不改 JSON／台账 ⇒ 只登记口径差 |
 | B2 | 真实来源与真实消费者读数 | [知识小程序接线盘点](gy-i07-knowledge-miniprogram-wiring-20261021.md) §8；其中 `source.updated_at` 由 `retrieved_at`（日期）转 `date-time` 的服务端投影**未实测**（同页 §5） |
 | B3 | 真机／开发者工具渲染读数 | 同页 §7（`cli.bat` 返回 `EPERM`／未安装）；`platform-checklist.md:40`「未验证」 |
 | B4 | 「实际来源」的审核与许可事实 | `packages/knowledge/zhejiang/materials-zhejiang-v1.json:42`／`:71`（`review_status: "unverified"`）、`:46`／`:75`（`licensed: false`）⇒ 展示面只能按未核对呈现；取得核准来源属 #3／#10 线 |
@@ -284,7 +284,7 @@
 | `real` 模式注销 503 | `app.ts:1731` | #16／#17 的 C5 到不了端到端 |
 | issue 前置 | #4 OPEN；#9／#10／#14／#15／#28／#29 OPEN；#3 CLOSED | 四张的 issue 正文都写了「缺前置不关闭整项」 |
 
-**本片对「哪一张的材料最齐」的判断（这是判断，不是结论，关闭权仍在监工）**：**#7 最齐**。理由是它的三条验收在代码与测试两层都有锚点（§3.2 A1–A7），唯一像「缺陷」的排序问题在代码侧已于 PR `b56ba9d` 对齐冻结契约（`service.ts:76`），剩下的只是台账仍记 `partial`（`contract-status.json:716`）——属口径/文档收口，不是行为缺口。还差的两项是：
+**本片对「哪一张的材料最齐」的判断（这是判断，不是结论，关闭权仍在监工）**：**#7 最齐**。理由是它的三条验收在代码与测试两层都有锚点（§3.2 A1–A7），唯一像「缺陷」的排序问题在代码侧已于 PR `b56ba9d` 对齐冻结契约（`service.ts:76`），剩下的只是台账仍记 `partial`（`contract-status.json:782`；合流按内容重锚，原记 `:716`）——属口径/文档收口，不是行为缺口。还差的两项是：
 
 1. **B1 排序台账收口**：监工确认 `partial` 可撤 + 台账更新（本片红线不改 `contract-status.json`）。
 2. **B2 真实来源与消费者读数**：`source.updated_at` 日期→`date-time` 投影实测，加真机/开发者工具页面读数。

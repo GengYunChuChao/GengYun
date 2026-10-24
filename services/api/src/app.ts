@@ -1993,8 +1993,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     deletion: userDataDeletion,
     receipts: deletionReceipts,
     available: config.executionMode !== 'real',
-    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；
-    // 不注入 ⇒ 行为与接线前逐字一致（见 account-deletion.ts 的 AccountEgressRevoker 注释）。
+    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；不注入 ⇒ 行为与接线前逐字一致。
+    // ⚠ 可达性（实测）：本项注入门是「real ⇒ 有」（见上方 `egressRevoker` 装配），`available`（real ⇒ false）与之**互斥** ⇒ real 下 `requireWired()` 先 503、非 real 装配期不建撤销器 ⇒ **两条路都到不了这里**（仅 `privacyInjection` 测试注入可达）；要生效须先开放 real 注销，见 tests/unit/account-deletion-egress-revoker-reachability.test.mjs。
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
 
