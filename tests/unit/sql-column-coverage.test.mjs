@@ -354,6 +354,19 @@ const UNAUDITED_SQL_HOSTS = [
       + '纳入本管线需 R28-S66 重定 16 文件读数，留给该片统一改。',
     owner: 'W3 / R28-W3 tts checked_content 端口；静态纳管待 R28-S66 重定读数',
   },
+  {
+    file: 'services/api/src/privacy/privacy-policy.ts',
+    reason: 'R34-S1（#29）新增的隐私政策读面，两条只读语句：'
+      + '(a) `SELECT purpose,policy_version FROM public.consent_policies WHERE enabled AND reviewed_at<=clock_timestamp() … ORDER BY purpose`；'
+      + '(b) `SELECT id,display_name,capability,policy_version,retention_online_days,retention_backup_days,'
+      + 'no_training_verified,deletion_verified FROM public.recipients WHERE enabled AND policy_version=$1 …`。'
+      + '列面**零新增授权**：`services/api/db/roles/consent_granter.sql:15` 已对这两张表授**表级** '
+      + '`GRANT SELECT ON consent_policies,recipients`，`deploy/postgres-cvm/sql/20-login-roles.sql` 的 '
+      + '`GRANT gengyun_consent_granter TO gengyun_api_runtime` 把该组传给运行时角色（本片零 GRANT、零迁移）。'
+      + '空表即空态：两张表当前无生产种子，读面返回 version=unpublished + 空数组，不编造政策文本、也不把'
+      + '「没有政策」表达成 5xx。纳入本管线需 R28-S66 重定 auditedFiles 读数（19→20 等），留给该片统一改。',
+    owner: 'R34-S1 / #29 隐私政策读面；静态纳管待 R28-S66 重定读数',
+  },
 ];
 
 /**
@@ -2365,11 +2378,11 @@ test('sql-column-coverage/扩展 19 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 11 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 12 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 30, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 31, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2388,6 +2401,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/privacy/backup-state-derivation.ts',
       'services/api/src/privacy/online-purge-driver.ts',
       'services/api/src/privacy/online-purge-evidence.ts',
+      'services/api/src/privacy/privacy-policy.ts',
       'services/api/src/privacy/consent-pg.ts',
       'services/api/src/privacy/grant-pg.ts',
       'services/api/src/privacy/ledger-pg.ts',
