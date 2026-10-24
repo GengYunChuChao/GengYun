@@ -3,9 +3,9 @@
 一套**能重复跑**的权限/安全失败回归：表驱动、每条用例给真实读数、每条关键守卫配**负控制**
 （故意放宽守卫 → 对应用例必须真红 → 原字节恢复 → sha256 前后一致 → 复跑转绿）。
 
-**本片不宣称 #22 完成。** 这里交付骨架 + 230 条用例 + 26 条负控制，覆盖「身份与权限面
+**本片不宣称 #22 完成。** 这里交付骨架 + 236 条用例 + 26 条负控制，覆盖「身份与权限面
 （游客/越权/后台/会话与注销）」「媒体归属与访问凭据」「重复请求」「无效输入」「审核回调与 AI 失败」
-「下架缓存」「版本回写」「提示注入」。**真实 AI 外呼、真机、微信端到端、真实对象存储签名过期、
+「下架缓存」「版本回写」「提示注入」「下架后引用跳转」。**真实 AI 外呼、真机、微信端到端、真实对象存储签名过期、
 断网重试、账号停用、注销到期清理、在途取消 409** 仍**未取得**（见末尾「未取得」一节，逐条写明为什么）。
 
 证据页：`docs/verification/gy-i22-failmatrix-20261022.md`（含「用例 id → #22 acceptance → 实际读数」三列表，
@@ -14,8 +14,8 @@
 ## 一条命令
 
 ```bash
-node tests/failmatrix/run.mjs                  # 全跑（HTTP 210 + 受信 seam 20 = 230 条）
-node tests/failmatrix/run.mjs --only=C2        # 只跑某族（前缀匹配，D/E 族同样适用）
+node tests/failmatrix/run.mjs                  # 全跑（HTTP 216 + 受信 seam 20 = 236 条）
+node tests/failmatrix/run.mjs --only=C2        # 只跑某族（前缀匹配，D/E/F 族同样适用）
 node tests/failmatrix/run.mjs --only=D1-01,C6-10 --json=out.json
 node tests/failmatrix/run.mjs --list           # 只列用例
 
@@ -32,7 +32,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 ```
 
 进 CI/单测入口：`tests/unit/gy-i22-failmatrix.test.mjs`（stub 臂，`npm run test:unit` 会带上它）。
-它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 230，另加一条**静态同步检查**：负控制清单里
+它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 236，另加一条**静态同步检查**：负控制清单里
 每处 `find` 必须在当前产品代码里恰好出现一次（守卫被重构时这条先红，而不是等你发现矩阵不再变红）。
 
 真 PG 臂的闸门入口：`tests/unit/gy-i22-failmatrix-real.test.mjs`（只锁「缺 `GY_PG_BIN` ⇒ 退出 77、
@@ -87,9 +87,10 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | D4 | 3 | 版本回写：改版后未筛查 ⇒ `INPUT_UNCERTAIN`；已筛查 ⇒ 可发布；历史版本 ⇒ `REVISION_CONFLICT` |
 | C10 | 23 | 异步 AI 域游客面（识别 / OCR / 转写 / 合成 / 作业 / 会话）：无凭据一律 `401 SESSION_REQUIRED`，且带 `no-store`（#449 引入） |
 | C11 | 39 | 异步 AI 域归属面：他人资源一律 `404`（与「不存在」同形，不泄露存在性）、列表隔离（#449 引入） |
+| F1 | 6 | 引用跳转：消息引用帖子/评论，删除目标后同一条消息 `reference_state` 从 `available` 迁到 `unavailable`（同形，不崩溃不泄露） |
 
 批次：**B1** = C1–C4，106 条（身份与权限面）· **B2** = C5–C7，36 条（媒体归属、重复请求与无效输入）·
-**B3** = D1–D3，17 条（受信 seam：回调 / AI 失败 / 下架缓存）· **B4** = D4+E1+E2，9 条（版本回写 / 提示注入 / 媒体凭据）· **B5** = C10+C11，62 条（异步 AI 域的游客面与归属面）。
+**B3** = D1–D3，17 条（受信 seam：回调 / AI 失败 / 下架缓存）· **B4** = D4+E1+E2，9 条（版本回写 / 提示注入 / 媒体凭据）· **B5** = C10+C11，62 条（异步 AI 域的游客面与归属面）· **B6** = F1，6 条（下架后引用跳转 unavailable）。
 
 ## 拒绝不变量（每条 4xx/5xx 都校验，不只是状态码）
 
@@ -166,7 +167,9 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 - **在途取消（`REQUEST_IN_PROGRESS` 409）与「注销-撤回」**：内存台账太快，未出现 409；契约无 cancel-deletion 入口。
 - **社区媒体授权全链路**：stub 下「带媒体的发帖」会被内容筛查判 `422 INPUT_UNCERTAIN`（`decision=quarantined`），
   正路走不通；本片只能覆盖它前面的 `400/404` 分支（C5）。
-- **消息与收藏的引用跳转**（内容下架后端上跳 `unavailable`）：只到接口层（下架后读帖 `404`、D3 缓存 `hidden`）。
+- **收藏的引用跳转**（内容下架后端上跳 `unavailable`）：收藏契约目标闭集是 `species|herbicide|scheme`
+  （不是帖子/评论），其下架形态（来源撤回 `SOURCE_WITHDRAWN`）需要知识公开读面，stub 世界无该读面 ⇒
+  端到端仍未取得；消息域引用帖子/评论的下架跳转已由 F1 族覆盖（作者删除后同一条消息 `reference_state` 迁 `unavailable`）。
 - **外部删除状态**（第三侧删除后的同步）：仓内无该能力接线。
 - **真实 PG 下的同一矩阵（R34 追加：已接真 PG 臂，差异见下节）**：`run-real.mjs` 已把权限面
   C1–C4/C10/C11 跑在一次性真 PG 17 集群上，逐条记录 stub vs 真 PG 差异。**未取得的部分**：media /
@@ -202,7 +205,7 @@ C11-39（「B 仍能读自己的会话」正控制）由 200 变为 401 `SESSION
 
 ## 与 `#22` 的关系
 
-`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 230 条真读数用例 + 26 条负控制**，
+`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 236 条真读数用例 + 26 条负控制**，
 并把「在 main 上一跑就绿」与「哪些还没取得」分开记账。后续批次直接在 `cases.mjs` 追加族
 `C8+`/`E3+`、在 `seams.mjs` 追加 `D5+`，并在 `mutations.mjs` 追加对应负控制；
 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` / `FAMILY_COUNTS` / `BATCH_COUNTS` 随之抬高——

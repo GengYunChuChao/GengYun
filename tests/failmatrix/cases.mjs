@@ -43,6 +43,7 @@ export const BATCHES = [
   { id: 'B3', title: '批次 3：审核回调 / AI 失败 / 下架缓存（受信 seam）', families: ['D1', 'D2', 'D3'] },
   { id: 'B4', title: '批次 4：版本回写、提示注入与媒体访问凭据', families: ['D4', 'E1', 'E2'] },
   { id: 'B5', title: '批次 5：异步 AI 域（识别 / OCR / 转写 / 合成 / 作业 / 会话）的游客面与归属面', families: ['C10', 'C11'] },
+  { id: 'B6', title: '批次 6：下架后引用跳转 unavailable（消息引用帖子/评论，删除目标后同一条消息变 unavailable）', families: ['F1'] },
 ];
 
 export const FAMILIES = {
@@ -57,6 +58,7 @@ export const FAMILIES = {
   E2: '媒体访问凭据：篡改/越权的 token 一律 404（与「不存在」同形，不泄露对象存在性）',
   C10: '异步 AI 域游客面：识别 / OCR / 转写 / 合成 / 作业 / 会话共 23 个 operation 在无凭据时一律 401 SESSION_REQUIRED',
   C11: '异步 AI 域归属面：A 碰 B 的作业 / 识别 / OCR / 转写 / 会话（含轮次）一律 404 且与「不存在」同形；越权写不得改动 B 的行',
+  F1: '引用跳转：帖子/评论被下架（删除）后，消息里的引用跳转显示 unavailable（同形，不崩溃不泄露存在性）',
 };
 
 export const CASES = [
@@ -382,4 +384,51 @@ export const CASES = [
   { id: 'C11-37', family: 'C11', title: '正控制：B 仍能读自己的 OCR 记录', actor: 'b', method: 'GET', path: (ctx) => `${API}/ocr/${ctx.seeded.ocrId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.ocrId ? [] : [`data.id 期望 ${ctx.seeded.ocrId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
   { id: 'C11-38', family: 'C11', title: '正控制：B 仍能读自己的转写记录', actor: 'b', method: 'GET', path: (ctx) => `${API}/speech/transcriptions/${ctx.seeded.transcriptionId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.transcriptionId ? [] : [`data.id 期望 ${ctx.seeded.transcriptionId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
   { id: 'C11-39', family: 'C11', title: '正控制：B 仍能读自己的会话', actor: 'b', method: 'GET', path: (ctx) => `${API}/conversations/${ctx.seeded.conversationId}`, expect: { status: 200 }, check: (result, ctx) => (result.body?.data?.id === ctx.seeded.conversationId ? [] : [`data.id 期望 ${ctx.seeded.conversationId} 实际 ${JSON.stringify(result.body?.data?.id)}`]) },
+
+  // ----------------------------- F1 引用跳转（下架/删除后消息引用 → unavailable）
+  // 期望值来源（stub 实跑读数）：消息域 `reference_state` 由 `createCommunityReferencePort` 在**每次
+  // 读取时**逐次重查社区公开读面（`visibility.isPubliclyVisible`）。帖子/评论被作者删除后公开读面判
+  // 不可读 ⇒ 同一条消息、同一个 id 的 `reference_state` 从 available 迁到 unavailable，且消息行不消失、
+  // 字段集合不变（消息契约无 `unavailable_reason`，与「不存在」同形，不泄露目标状态）。
+  // 消息的 `Message` 投影键集固定为 7 项（`additionalProperties:false`），见 messages/types.ts。
+  { id: 'F1-01', family: 'F1', title: '正控制：消息引用公开帖子 ⇒ reference_state=available', actor: 'b', method: 'GET', path: `${API}/messages`, expect: { status: 200 }, check: (result, ctx) => {
+    const row = (result.body?.data?.items ?? []).find((item) => item.id === ctx.refJump.postMessageId);
+    if (row === undefined) return [`缺少指向帖子的消息行 ${ctx.refJump.postMessageId}`];
+    return row.reference_state === 'available' ? [] : [`公开帖子的引用应为 available，实际 ${row.reference_state}`];
+  } },
+  { id: 'F1-02', family: 'F1', title: '正控制：消息引用公开评论 ⇒ reference_state=available', actor: 'b', method: 'GET', path: `${API}/messages`, expect: { status: 200 }, check: (result, ctx) => {
+    const row = (result.body?.data?.items ?? []).find((item) => item.id === ctx.refJump.commentMessageId);
+    if (row === undefined) return [`缺少指向评论的消息行 ${ctx.refJump.commentMessageId}`];
+    return row.reference_state === 'available' ? [] : [`公开评论的引用应为 available，实际 ${row.reference_state}`];
+  } },
+  { id: 'F1-03', family: 'F1', title: '作者删除评论（下架引用目标）', actor: 'b', method: 'DELETE', path: (ctx) => `${API}/comments/${ctx.refJump.commentId}`, headers: (ctx) => wkey('i22-f1-03', ctx.refJump.commentEtag), expect: { status: 200 }, check: (result) => (result.body?.data?.accepted === true ? [] : [`data.accepted 期望 true 实际 ${JSON.stringify(result.body?.data?.accepted)}`]) },
+  { id: 'F1-04', family: 'F1', title: '下架后消息引用评论 ⇒ reference_state=unavailable，且消息行不消失、字段集合同形', actor: 'b', method: 'GET', path: `${API}/messages`, expect: { status: 200 }, check: (result, ctx) => {
+    const row = (result.body?.data?.items ?? []).find((item) => item.id === ctx.refJump.commentMessageId);
+    const problems = [];
+    if (row === undefined) problems.push('评论删除后消息行本身不得消失（历史仍在，只是点不动）');
+    else {
+      if (row.reference_state !== 'unavailable') problems.push(`下架后引用应为 unavailable，实际 ${row.reference_state}`);
+      if (Object.keys(row).sort().join(',') !== 'created_at,id,read_at,reference_state,revision,target_ref,type') {
+        problems.push(`消息投影字段集合不符（不得多出 unavailable_reason 等字段）：${Object.keys(row).sort().join(',')}`);
+      }
+      if (row.revision !== 1) problems.push(`reference_state 变化不得推进消息自身 revision，实际 ${row.revision}`);
+    }
+    if (/unavailable_reason|deleted_at|not_found/i.test(JSON.stringify(result.body))) problems.push('响应体里出现了可区分目标状态的字样（存在性泄露）');
+    return problems;
+  } },
+  { id: 'F1-05', family: 'F1', title: '作者删除帖子（下架引用目标）', actor: 'b', method: 'DELETE', path: (ctx) => `${API}/posts/${ctx.refJump.postId}`, headers: (ctx) => wkey('i22-f1-05', ctx.refJump.postEtag), expect: { status: 200 }, check: (result) => (result.body?.data?.accepted === true ? [] : [`data.accepted 期望 true 实际 ${JSON.stringify(result.body?.data?.accepted)}`]) },
+  { id: 'F1-06', family: 'F1', title: '下架后消息引用帖子 ⇒ reference_state=unavailable，且消息行不消失、字段集合同形', actor: 'b', method: 'GET', path: `${API}/messages`, expect: { status: 200 }, check: (result, ctx) => {
+    const row = (result.body?.data?.items ?? []).find((item) => item.id === ctx.refJump.postMessageId);
+    const problems = [];
+    if (row === undefined) problems.push('帖子删除后消息行本身不得消失（历史仍在，只是点不动）');
+    else {
+      if (row.reference_state !== 'unavailable') problems.push(`下架后引用应为 unavailable，实际 ${row.reference_state}`);
+      if (Object.keys(row).sort().join(',') !== 'created_at,id,read_at,reference_state,revision,target_ref,type') {
+        problems.push(`消息投影字段集合不符（不得多出 unavailable_reason 等字段）：${Object.keys(row).sort().join(',')}`);
+      }
+      if (row.revision !== 1) problems.push(`reference_state 变化不得推进消息自身 revision，实际 ${row.revision}`);
+    }
+    if (/unavailable_reason|deleted_at|not_found/i.test(JSON.stringify(result.body))) problems.push('响应体里出现了可区分目标状态的字样（存在性泄露）');
+    return problems;
+  } },
 ];
