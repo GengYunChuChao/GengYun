@@ -521,8 +521,11 @@ GRANT UPDATE (payload,state,purged_at,evidence_ref,last_error_code,purge_attempt
 --     `ocr_jobs` / `ocr_records`（R34 片 3 起：注销闭集按主体物理删除，见 OCR 段末条注释）。
 --     允许清单由 `90-assert-least-privilege.sql` 的 `table_dml_allowlist` **结构化**钉住 ——
 --     其它表的任何表级写权限照样判红；
---   * ⚠️ `ocr_jobs` / `ocr_records` 的表级 DELETE 是本文件**唯一**新增删除面，且是**用户批准**
---     的例外（2026-10-24）：这两张表此前只有列级 SELECT/INSERT/UPDATE ⇒ 运行时**删不掉**
+--   * ⚠️ `ocr_jobs` / `ocr_records` 的表级 DELETE 是本文件**唯一**新增删除面：
+--     用户于 2026-10-24 在指挥会话中明确批准：把 `ocr_jobs` / `ocr_records` 的表级 `DELETE`
+--     作为本仓**唯一例外**（`public.media` 表级 `DELETE` 仍禁止）。批示记录见
+--     `.pg17/ruling-r34-user-decisions-20261024.md` §U-2（指挥侧工作区文件，不入库）；
+--     **仓内无第三方书面凭证**。这两张表此前只有列级 SELECT/INSERT/UPDATE ⇒ 运行时**删不掉**
 --     任何行，注销闭集只能绕 `SECURITY DEFINER`；批准后 OCR 三表统一走表级 DELETE。
 --     ⛔ 例外**仅限**这两张表：`public.media` 仍然不给 DELETE（媒体域走 `0035` 的窄函数）；
 --   * ⛔ TRUNCATE / REFERENCES / TRIGGER 一律不给；⛔ 消息/帖子/评论/举报/审核决定**没有 DELETE**
@@ -684,7 +687,11 @@ GRANT INSERT (scope,key_hash,request_hash,payload,pending,expires_at)
 GRANT UPDATE (request_hash,payload,pending,expires_at)
   ON public.ocr_idempotency TO gengyun_api_runtime;
 GRANT DELETE ON public.ocr_idempotency TO gengyun_api_runtime;
--- R34 片 3（#19 / #10）· **表级 DELETE 的唯一例外，由用户批准**（2026-10-24）：
+-- R34 片 3（#19 / #10）· **表级 DELETE 的唯一例外**：
+--   用户于 2026-10-24 在指挥会话中明确批准：把 `ocr_jobs` / `ocr_records` 的表级 `DELETE` 作为
+--   本仓**唯一例外**（`public.media` 表级 `DELETE` 仍禁止）。批示记录见
+--   `.pg17/ruling-r34-user-decisions-20261024.md` §U-2（指挥侧工作区文件，不入库）；
+--   **仓内无第三方书面凭证**（⛔ 不得描述成一手书面批准或"已过安全评审"）。
 -- 注销闭集要按 `owner_user_id` 物理删除任务行与识别结果行（先 `ocr_records` 后 `ocr_jobs`，
 -- 见 `services/api/src/ocr/store-pg.ts` 的 `purgeOwnerData`）。PG 没有列级 DELETE，而这两张表
 -- 此前只有列级 SELECT/INSERT/UPDATE ⇒ 运行时**删不掉**任何行，闭集只能绕 `SECURITY DEFINER`。

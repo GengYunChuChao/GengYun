@@ -86,12 +86,12 @@ recognition 实际授权。
 ```
 psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:82: ERROR:  42501: permission denied for table messages
 LOCATION:  aclcheck_error, aclchk.c:2845
-psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:89: ERROR:  42501: permission denied for table messages
-psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:94: ERROR:  42501: permission denied for table messages
-psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:101: ERROR:  42501: permission denied for table community_posts
-psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:111: ERROR:  42501: permission denied for table community_posts
-psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:119: ERROR:  42501: permission denied for table community_posts
-psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:124: ERROR:  42501: permission denied for table community_comments
+psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:92: ERROR:  42501: permission denied for table messages
+psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:97: ERROR:  42501: permission denied for table messages
+psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:104: ERROR:  42501: permission denied for table community_posts
+psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:114: ERROR:  42501: permission denied for table community_posts
+psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:122: ERROR:  42501: permission denied for table community_posts
+psql:deploy/postgres-cvm/evidence/probe-runtime-grants.sql:127: ERROR:  42501: permission denied for table community_comments
 ```
 
 按表统计被拒次数：`messages` 3、`community_posts` 3、`community_comments` 3、`community_likes` 3、

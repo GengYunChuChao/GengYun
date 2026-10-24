@@ -120,7 +120,9 @@ BEGIN;
 SET LOCAL ROLE gengyun_api_runtime;
 \set r28_probe_role :ERROR
 
--- 表级 DELETE：只允许四张表（idempotency_keys 为既有豁免，另三张见 20-login-roles.sql 段 H）
+-- 表级 DELETE：只允许六张表（idempotency_keys 为既有豁免；另五张见 20-login-roles.sql 段 H）。
+-- R34 片 3（#19 / #10）：`ocr_records` / `ocr_jobs` 是用户 2026-10-24 批准的**表级 DELETE 例外**
+-- （PG 无列级 DELETE ⇒ 此前运行时删不掉自己主体的 OCR 行），因此它们进正向探针，⛔ 不进禁止面。
 SAVEPOINT r28_probe;
 DELETE FROM public.idempotency_keys WHERE false;
 \set r28_probe_del_idempotency_keys :ERROR
@@ -139,6 +141,16 @@ ROLLBACK TO SAVEPOINT r28_probe;
 SAVEPOINT r28_probe;
 DELETE FROM public.ocr_idempotency WHERE false;
 \set r28_probe_del_ocr_idempotency :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.ocr_records WHERE false;
+\set r28_probe_del_ocr_records :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.ocr_jobs WHERE false;
+\set r28_probe_del_ocr_jobs :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
 -- 列级读面：逐表跑一次零行 SELECT（列清单 = 授权清单里的 SELECT 列）
@@ -2873,16 +2885,20 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '运行时对 public.admin_audit_events 必须仍无任何直接权限（开关审计只经唯一写路径写入）'
 
   UNION ALL
-  -- 45. R28-S24 真执行探针（表级 DELETE）：四张白名单表必须在运行时身份下真能删（零行）
+  -- 45. R28-S24 真执行探针（表级 DELETE）：六张白名单表必须在运行时身份下真能删（零行）。
   --     为什么不用 has_table_privilege 就够：它只回答权限位；这里回答“语句真能跑通”。
   --     变量来自上方探针段（成功=false、失败=true，故断言写成 = 'false'）。
+  --     R34 片 3（#19 / #10）：`ocr_records` / `ocr_jobs` 补进正向探针 —— 它们新获表级 DELETE
+  --     （用户 2026-10-24 批准的例外），只有真跑一次才能证明「授了、也确实能用」。
   SELECT 'runtime_domain_delete_exec',
          :'r28_probe_role' = 'false'
          AND :'r28_probe_del_idempotency_keys' = 'false'
          AND :'r28_probe_del_community_likes' = 'false'
          AND :'r28_probe_del_community_idempotency' = 'false'
-         AND :'r28_probe_del_ocr_idempotency' = 'false',
-         'SET LOCAL ROLE gengyun_api_runtime 后，四张白名单表的 DELETE … WHERE false 必须成功；任一 42501 即失败'
+         AND :'r28_probe_del_ocr_idempotency' = 'false'
+         AND :'r28_probe_del_ocr_records' = 'false'
+         AND :'r28_probe_del_ocr_jobs' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，六张白名单表的 DELETE … WHERE false 必须成功；任一 42501 即失败'
 
   UNION ALL
   -- 46. R28-S24 真执行探针（列级读面）：十张表按授权列 SELECT … LIMIT 0 必须成功。

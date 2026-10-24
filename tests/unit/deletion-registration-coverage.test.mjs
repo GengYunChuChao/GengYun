@@ -20,9 +20,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
+import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
+import { createMemoryFavoritesStore } from '../../services/api/src/favorites/store.ts';
+import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
+import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
+import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
 
 const MIGRATIONS_DIR = new URL('../../services/api/db/migrations/', import.meta.url);
 const USER_DATA_DELETION_SRC = new URL('../../services/api/src/privacy/user-data-deletion.ts', import.meta.url);
+/** 装配处（防缩回闸门要静态核对"app.ts 到底注没注入"；源码文本与运行期闭集是两条独立的腿）。 */
+const APP_SRC = new URL('../../services/api/src/app.ts', import.meta.url);
 
 /** 主体列名闭集：出现其一即视为「按用户归属的数据表」。 */
 const SUBJECT_COLUMNS = ['user_id', 'owner_id', 'author_user_id', 'subject_user_id', 'grantee_user_id'];
@@ -265,4 +272,74 @@ test('覆盖映射里的表必须确实承载用户数据：有主体列、指�
     `覆盖映射里的表既没有主体列/外键，也不是已声明的卫星表（按主体清空对它无意义）：${notUserTables.join(', ')}`);
   const staleSatellites = Object.keys(SATELLITE_TABLES).filter((table) => !TABLES.has(table));
   assert.deepEqual(staleSatellites, [], `卫星表声明引用了不存在的表：${staleSatellites.join(', ')}`);
+});
+
+/**
+ * R34 片 3 追加（#19 / #10）· **闭集防缩回闸门**：少注入一个 store 不许悄悄缩小闭集。
+ *
+ * 缺口形态：`packages/privacy/deletion-modules.mjs` 只校验模块名形状（迁移 0031 的
+ * `p_module ~ '^[a-z][a-z0-9_]{0,63}$'`），**没有**模块白名单 ⇒ 装配处漏注入 `ocrStore` 时
+ * `requiredModules()` 静默退回 7 项，协议层不报错、请求照样完成，只是凭据里少一截：
+ *   - 证据串少 `ocr:online-purged:<n>`、`ocr:idempotency-purged:<n>`
+ *     与 `ocr:tables:ocr_records=<n>,ocr_jobs=<n>` 三段；
+ *   - `deletion_module_evidence` 落库门按 `requiredModules.includes('ocr')` 过滤 ⇒ 审计面上
+ *     "OCR 域清了几行"整行消失（这才是最危险的一点：**清没清**变成不可核）；
+ *   - 本文件其它用例都只读源码文本，抓不到"注没注"这件事（文本里有 `ocrStore?: OwnerPurgeStore`
+ *     声明不等于装配处真的传了实参）。
+ *
+ * 两条腿一起用：
+ *   * **运行时腿**：真调 `createUserDataDeletion` —— 全注入 ⇒ 逐字 8 项（含 `ocr`）；缺 `ocrStore`
+ *     ⇒ 逐字 7 项且不含 `ocr`（把"静默缩回"这个形态本身钉成断言）。
+ *   * **静态腿**：`app.ts` 必须恰好注入一次 `ocrStore: ocrDeletionStore,`，且端口缺原语必须抛
+ *     （⛔ 不许"没有就跳过"——那会把 `blocked` 折成 `completed`/0 行）。
+ * 抓得住：装配处删掉/注释掉注入、把注入挪进条件分支、端口改成静默跳过、模块名或顺序被改、项数被改。
+ * 抓不住：`deletion-modules.mjs` 将来加模块白名单后的形状校验（那归 0031 的 CHECK 与本文件的静态腿）。
+ */
+test('生产生效闭集恰 8 项且含 ocr：漏注入 ocrStore 会静默缩回 7 项（防缩回闸门）', () => {
+  const now = () => Date.parse('2026-10-24T03:00:00.000Z');
+  const base = {
+    favoritesStore: createMemoryFavoritesStore({ now }),
+    historyStore: createMemoryHistoryStore({ now }),
+    messagesStore: createMemoryMessagesStore({ now }),
+    conversationsStore: createMemoryConversationStore(),
+  };
+  // 条件追加的三域只需"不缺席"，内容不是本断言的对象。
+  const purgeStub = { async deleteAllByOwner() { return 0; } };
+
+  const full = createUserDataDeletion({
+    ...base,
+    communityStore: purgeStub,
+    recognitionsStore: purgeStub,
+    speechStore: purgeStub,
+    ocrStore: purgeStub,
+  });
+  assert.deepEqual(full.requiredModules(), [
+    'favorites', 'history', 'messages', 'conversations',
+    'community', 'recognitions', 'speech', 'ocr',
+  ], '生产生效闭集必须逐字是这 8 项、且顺序与追加顺序一致（⛔ 不用 includes/length 放过）');
+  assert.equal(full.requiredModules().length, 8, '闭集项数必须恰好 8（四域 + 四个条件追加域）');
+  assert.deepEqual(full.coordinator.missingRegistrations(), [],
+    '每个被追加的模块都必须真有处理器（注入了 store 却没注册 ⇒ 受理即拒）');
+
+  const withoutOcr = createUserDataDeletion({
+    ...base,
+    communityStore: purgeStub,
+    recognitionsStore: purgeStub,
+    speechStore: purgeStub,
+  });
+  assert.deepEqual(withoutOcr.requiredModules(), [
+    'favorites', 'history', 'messages', 'conversations',
+    'community', 'recognitions', 'speech',
+  ], '不注入 ocrStore ⇒ 闭集静默缩回 7 项：这就是要防的形态，`app.ts` 必须永久无条件注入');
+
+  const appSource = readFileSync(APP_SRC, 'utf8');
+  const injections = [...appSource.matchAll(/^\s*ocrStore: ocrDeletionStore,\s*$/gm)];
+  assert.equal(injections.length, 1,
+    '`app.ts` 必须恰好注入一次 `ocrStore: ocrDeletionStore,`'
+    + '（删掉或挪进条件分支 ⇒ 闭集缩回 7 项，而协议层与其它用例都不会报错）');
+  assert.match(
+    appSource,
+    /if \(typeof purge !== 'function'\) \{\s*\n\s*throw new Error\('OCR 域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空'\);/,
+    'OCR 端口缺原语必须抛（⛔ 不许"没有就跳过"：那会把 blocked 折成 completed/0 行）',
+  );
 });
