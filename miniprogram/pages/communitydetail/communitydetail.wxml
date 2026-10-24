@@ -36,10 +36,12 @@
     <block wx:else>
       <view class="card">
         <view class="post-author">
+          <view class="avatar post-author__avatar">{{post.authorAvatar}}</view>
           <view class="post-author__copy">
             <view class="post-author__title">{{post.author}}</view>
             <view class="post-author__meta">{{post.time}}{{post.crop_id ? ' · ' + post.crop_id : ''}}{{post.region_code ? ' · ' + post.region_code : ''}}</view>
           </view>
+          <view wx:if="{{post.authorAnonymized}}" class="post-author__tag pill pill--gray">已注销</view>
           <view class="post-author__tag pill {{post.stateLabel ? 'pill--amber' : 'pill--gray'}}">{{post.stateLabel || post.publicLabel}}</view>
         </view>
         <view class="post-title">{{post.title}}</view>
@@ -100,11 +102,17 @@
 
         <state-view wx:elif="{{commentsStatus === 'empty'}}" status="empty" title="还没有评论" desc="欢迎留下第一条观察。"></state-view>
 
-        <view wx:for="{{comments}}" wx:key="id" class="comment-row">
-          <view class="comment-row__title">{{item.author}} · {{item.time}}</view>
-          <view wx:if="{{item.stateLabel}}" class="pill pill--amber">{{item.stateLabel}}</view>
-          <view class="comment-row__text">{{item.body}}</view>
-          <view class="row-actions">
+        <block wx:for="{{comments}}" wx:key="id">
+          <view class="comment-row">
+            <view class="avatar comment-row__avatar">{{item.authorAvatar}}</view>
+            <view class="comment-row__copy">
+              <view class="comment-row__title">{{item.author}} · {{item.time}}</view>
+              <view wx:if="{{item.authorAnonymized}}" class="pill pill--gray comment-row__tag">已注销</view>
+              <view wx:if="{{item.stateLabel}}" class="pill pill--amber comment-row__tag">{{item.stateLabel}}</view>
+              <view class="comment-row__text">{{item.body}}</view>
+            </view>
+          </view>
+          <view class="row-actions comment-row__actions">
             <gy-ui-button label="点赞" variant="ghost" data-id="{{item.id}}" bind:tap="onLikeComment"></gy-ui-button>
             <gy-ui-button label="取消点赞" variant="ghost" data-id="{{item.id}}" bind:tap="onUnlikeComment"></gy-ui-button>
             <gy-ui-button label="反馈" variant="ghost" data-id="{{item.id}}" bind:tap="onReportComment"></gy-ui-button>
@@ -117,7 +125,7 @@
               <gy-ui-button label="保存并重新审核" variant="primary" bind:tap="onSaveComment"></gy-ui-button>
             </view>
           </block>
-        </view>
+        </block>
 
         <view wx:if="{{nextCursor}}" class="row-actions">
           <gy-ui-button label="加载更多评论" variant="ghost" bind:tap="onLoadMoreComments"></gy-ui-button>

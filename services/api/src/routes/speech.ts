@@ -20,7 +20,10 @@
  * **装配（阶段 2b）**：`services/api/src/app.ts` **只加两行**（一行 `import` + 一行
  * `registerSpeechRoutes(app, config, { guards })`，紧随 `registerRecognitionRoutes` 之后）。
  * 产品装配路径**不做任何端口注入**：服务由本模块按 `config.executionMode` 自建
- * （`real` 走 fail-closed，`stub`/`preset_demo` 走明确标注的替身）。
+ * （`stub`/`preset_demo` 走明确标注的替身；`real` 缺凭据/未接线一律 fail-closed）。
+ * GY-I11 本片起，`real` 的**媒体引用端口**由本模块从既有注入面派生（对象存储端口 + 媒体登记册 +
+ * 媒体域构造期裁决），不再恒用未接线端口 —— 见 {@link mediaDomainRefusal} 与
+ * `speech/media.ts` 的四道门；缺任一条件仍有 409 `OBJECT_UNAVAILABLE`。
  *
  * **契约里与本域相邻、但不由本模块注册的操作**（不得越界注册，否则与既有路由重复）：
  * - `getJob` `GET /jobs/{id}` / `cancelJob` `POST /jobs/{id}/cancel`（`x-task: GY-I01`）：
@@ -41,6 +44,7 @@ import { createSpeechService, type SpeechService } from '../speech/service.ts';
 import { createMemorySpeechStore, type SpeechStore } from '../speech/store.ts';
 import { createSpeechProvider, type SpeechProvider } from '../speech/provider.ts';
 import { createSpeechMediaPort, type SpeechMediaPort } from '../speech/media.ts';
+import type { AppMediaService } from '../media/service.ts';
 import type { ConsentGate } from '../privacy/egress.ts';
 import { withPrivacyErrors } from '../privacy/egress.ts';
 import type { MediaJobEgress } from '../privacy/task-egress.ts';
@@ -119,10 +123,34 @@ export interface SpeechRouteDeps {
 }
 
 /**
+ * 媒体域构造期裁决的**只读**取值（`AppMediaService.failClosedReason`）。
+ *
+ * 为什么在路由层取它、而不是让装配层多传一个键：`app.ts` 的 `registerSpeechRoutes(...)` 调用行
+ * 被既有判据逐字钉成 8 个注入键（`tests/integration/speech-http.mjs` 的 `injectedKeys`），且
+ * `app.ts` 对 `./speech/media` 只允许 `import type`。媒体域服务在本注册点**之前**已
+ * `app.decorate('mediaService', …)`（`app.ts` 的装配顺序），所以这里直接读已发布的裁决，
+ * 既不新增装配面，也不让本层重新解释任何配置。
+ *
+ * 拿不到该装饰（装配顺序漂移／被单独调用）⇒ 按「媒体域未装配」**关闭**，绝不默认打开。
+ */
+export const SPEECH_MEDIA_DOMAIN_NOT_ASSEMBLED =
+  '媒体域服务未装配（拿不到 failClosedReason）：无法确认真实媒体端口已获显式批准';
+
+function mediaDomainRefusal(app: FastifyInstance): string | null {
+  const mediaDomain = (app as { readonly mediaService?: AppMediaService }).mediaService;
+  // ⚠ 这里**不能**写 `mediaDomain?.failClosedReason ?? SPEECH_MEDIA_DOMAIN_NOT_ASSEMBLED`：
+  // 媒体域「已打开」时的合法裁决就是 `null`，而 `??` 会把 `null` 当成缺省值 ⇒ 永远判成关闭。
+  // 必须把「服务没装配」与「服务已装配且裁决为 null」分开表达。
+  if (mediaDomain === undefined) return SPEECH_MEDIA_DOMAIN_NOT_ASSEMBLED;
+  return mediaDomain.failClosedReason;
+}
+
+/**
  * 注册转写路由；返回实际使用的服务实例（供装配方与证据文档引用）。
  *
- * 缺省组装：`provider` 与 `media` 均按 `config.executionMode` 选择 ⇒ `real` 模式走
- * fail-closed 实现（缺凭据 ⇒ 受理前 503 `PROVIDER_UNAVAILABLE`，**不回退替身**），
+ * 缺省组装：`provider`、`media` 均按 `config.executionMode` 选择 ⇒ `real` 模式走
+ * fail-closed 实现（缺凭据 ⇒ 受理前 503 `PROVIDER_UNAVAILABLE`，**不回退替身**；
+ * 真实媒体端口未接线／媒体域未打开 ⇒ 受理 409 `OBJECT_UNAVAILABLE`），
  * `stub` / `preset_demo` 走明确标注的替身。
  */
 export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, deps: SpeechRouteDeps, persistencePool: TransactionalPool | null = null): SpeechService {
@@ -133,7 +161,18 @@ export function registerSpeechRoutes(app: FastifyInstance, config: AppConfig, de
     aiProviders: config.aiProviders?.asr ?? null,
     audioMedia: deps.audioMedia === undefined ? undefined : { ...deps.audioMedia, jobs: store },
   });
-  const media = deps.media ?? createSpeechMediaPort(config.executionMode);
+  // GY-I11 本片：`real` 分支接上**真实媒体端口**（此前恒 `createUnwiredMediaPort()` ⇒ 受理恒 409）。
+  // 三个端口都来自本域已经拿到的注入面，判定全在 `speech/media.ts`（本层不解释配置、不读 env）：
+  //   ① `deps.audioMedia.objectStore` —— 媒体域的对象存储端口（`app.ts` 的 `speechAudioMedia` 原样转发）；
+  //   ② `deps.audioMedia.mediaRecords` —— 媒体登记册（`MediaStore`）；
+  //   ③ `app.mediaService.failClosedReason` —— 媒体域的**构造期裁决**（主闸门是 `approveRealMediaWiring()`
+  //      的批准能力；非 null 即媒体域整域关闭）。本域沿用该裁决，不自行铸造批准能力、不重复解释配置
+  //      ⇒ 不可能出现「媒体域拒绝、转写域却放行」的错位。
+  const media = deps.media ?? createSpeechMediaPort(config.executionMode, {
+    objectStore: deps.audioMedia?.objectStore ?? null,
+    mediaRecords: deps.audioMedia?.mediaRecords ?? null,
+    mediaDomainRefusal: mediaDomainRefusal(app),
+  });
   // GY-I27 第二片：`real` 模式下由持久外发账本接管派发（执行前/保存前重查 + 结果写回）。
   // 其余模式（替身/演示）**不记账**：替身不发生真实外发，账本里不得出现 sent。
   const guardedProvider = deps.egress === undefined ? provider : deps.egress.provider(provider, 'transcribe');

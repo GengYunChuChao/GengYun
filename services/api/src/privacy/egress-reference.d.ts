@@ -105,6 +105,7 @@ declare module '*packages/privacy/deletion-modules.mjs' {
     missingModules(requestId: string): string[];
     createDeletionRequest(input?: { generation?: number; receiptInput?: string | null }): Record<string, unknown>;
     executeHandlers(requestId: string): Promise<Record<string, unknown>>;
+    cancel(requestId: string): Record<string, unknown>;
     completionStatus(requestId: string): { state: string; completed: boolean; missingModules: readonly string[] };
     receipt(requestId: string): Record<string, unknown> | null;
     thirdPartyStatuses(requestId: string): Array<Record<string, unknown>>;

@@ -165,3 +165,47 @@ test('GY-I19 受理口：无会话 POST ⇒ 401 SESSION_REQUIRED（且不得先�
 
   await app.close();
 });
+
+// GY-I22（#22 片C）· 在途取消的**头部**契约面：`DELETE /me/account/deletion` 的
+// `Idempotency-Key` 一旦只写在 `packages/contracts/openapi.json` 而没接进处理器，契约就是假话；
+// 反过来若把键校验放到鉴权之前，越权者又能靠「缺键」探测路由存在。两个方向都在这里钉住。
+// 为什么落在这个文件：本文件已持有这两个 operation 的 `app.inject` 夹具（`makeHarness`）；
+// `tests/unit/account-deletion-receipts.test.mjs` 是纯服务/台账层，没有 HTTP 夹具，不为一条断言复制一套。
+test('GY-I22 取消注销：缺/过短 Idempotency-Key ⇒ 400 IDEMPOTENCY_KEY_REQUIRED（400 **不早于**鉴权 401）', async () => {
+  const { app, a } = await makeHarness();
+
+  // ① 无会话 + 无键 ⇒ 401：键校验必须排在鉴权**之后**（否则未登录者能靠「缺键」读出路由存在）。
+  const anonymous = await app.inject({ method: 'DELETE', url: DELETION_PATH });
+  assert.equal(anonymous.statusCode, 401, '未登录取消注销必须 401，不得先判 400');
+  assert.equal(pick(anonymous).code, 'SESSION_REQUIRED', '未登录的错误码必须是 SESSION_REQUIRED');
+
+  // ② 有会话、缺键 ⇒ 400（契约 `IdempotencyKey` required 8..128）。
+  const missing = await app.inject({
+    method: 'DELETE',
+    url: DELETION_PATH,
+    headers: { authorization: `Bearer ${a.token}` },
+  });
+  assert.equal(missing.statusCode, 400, '缺 Idempotency-Key 必须 400，不得放行到业务分支');
+  assert.equal(pick(missing).code, 'IDEMPOTENCY_KEY_REQUIRED', '缺键的错误码必须是 IDEMPOTENCY_KEY_REQUIRED');
+
+  // ③ 过短（7 字符，契约下限 8）⇒ 同一 400 档。
+  const tooShort = await app.inject({
+    method: 'DELETE',
+    url: DELETION_PATH,
+    headers: { authorization: `Bearer ${a.token}`, 'idempotency-key': 'k-short' },
+  });
+  assert.equal(tooShort.statusCode, 400, 'Idempotency-Key 少于 8 字符必须 400');
+  assert.equal(pick(tooShort).code, 'IDEMPOTENCY_KEY_REQUIRED', '过短键的错误码必须是 IDEMPOTENCY_KEY_REQUIRED');
+
+  // ④ 正控制：合法键（≥8）⇒ 放行到业务分支：本主体此刻没有在途注销请求 ⇒ 404 NOT_FOUND。
+  //    这一条同时证明 ②③ 的 400 不是「一律拒绝」；且 404 出现说明 `requireWired()` 之后的处理器真的跑到了。
+  const valid = await app.inject({
+    method: 'DELETE',
+    url: DELETION_PATH,
+    headers: { authorization: `Bearer ${a.token}`, 'idempotency-key': 'k-receipt-auth-cancel-1' },
+  });
+  assert.equal(valid.statusCode, 404, `合法 Idempotency-Key 不得被判 400，实际 ${valid.statusCode}：${valid.body}`);
+  assert.equal(pick(valid).code, 'NOT_FOUND', '合法键应落到「没有可取消的在途请求」这条业务分支');
+
+  await app.close();
+});

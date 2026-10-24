@@ -65,7 +65,8 @@
       "requested",
       "processing",
       "blocked",
-      "completed"
+      "completed",
+      "cancelled"
     ],
     "ThirdPartyState": [
       "not_requested",

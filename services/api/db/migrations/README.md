@@ -4,14 +4,24 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态：`0001..0034` 连续，无缺号
+## 当前状态（2026-10-25 · 合流后：`0001..0039`，缺 `0036`/`0037`）
 
-迁移 `0001..0034` 已全部真实落盘：**34 个正向 + 33 个 down**（无 `0001` 的 down），末项 `0034`。
-保留台账 `services/api/db/migration-reservations.json` 的 `reservations` 为**空数组**
-（`count + 保留数 === max` ⇒ **34 + 0 === 34**），
-`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据为「`0001..0034` 连续、无缺口」。
-（本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations` ⇒
-正向 `.sql` 34 条、`rollback/` 33 条、`0001..0034` 无缺号。）
+`0001..0035` 已连续落盘（35 个正向）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
+本片（#22 片C）落 `0039_r34_deletion_state_cancelled.sql` ⇒ 目录现为 **37 个正向 `.sql`** ＋
+`rollback/` **36 个**；缺号只剩 `0036`/`0037`，两条均已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **37 + 2 === 39**），
+`node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对每个缺号都有依据（见下）。
+（本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations`
+⇒ 正向 `.sql` 37 条、`rollback/` 36 条、缺号 `0036`/`0037` 均已登记保留。）
+
+- `0036` 预留：**#538** `feat/gy-r34-i18-content-pg`（`0036_r34_admin_content_persistence.sql`，管理端内容/资料域 PG 落点，已开 PR，在飞）。
+- `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0038_r34_deletion_receipt_persistence.sql`（#19 片B，已随 #553 落盘）：回执 bearer 摘要落
+  `deletion_requests.receipt_bearer_hash` ＋ 三条窄口径 SECURITY DEFINER 函数（set/resolve/count）；
+  按它自己的 `remove_when`，保留台账里的 38 号条目已删除（保留项不许躺平）。
+- `0039_r34_deletion_state_cancelled.sql`（#22 片C · 在途取消：`ALTER TYPE deletion_state ADD VALUE 'cancelled'`）接在
+  `0038` 之后；裁定 `.pg17/ruling-r34-migration-0039-cancelled-20261024.md` 分配本号，
+  其余保留号 `0036→0037` 串行合入（迁移号互斥）。
 
 - `0033_admin_audit_log_read.sql`（R34 · 后台审计日志查询面，Refs #18）接在 `0032` 之后：
   编号前核对过全部 refs 与在途 PR（`003[3-9]_` 零命中）⇒ 直接用最大号 +1，**台账仍为空数组**。
@@ -42,16 +52,3 @@
 - `0030_community_author_ref.sql` 当时取的是 0028 之后的第一个空号（29 被 #419 占着），**不是随便跳号**。
 - `0032_community_report_reporter_ref.sql` 接在 `0031_online_purge_evidence.sql` 之后（0031 属 #19，已落盘）。
 - 后续迁移从最大号之后连续编号；确需跨 PR 缺号时，**同时**在保留台账登记并在本文件写一行依据。
-
-## 当前状态（2026-10-24 · 迁移 0038 · #19 片B）
-
-`0038_r34_deletion_receipt_persistence.sql`（#19 片B · 回执 bearer 台账持久化）落 **0038**；
-`0001..0035` 已连续落盘，`0036`/`0037` 为**跨在途 PR 的有意缺号**（见下），本片**不占**。
-
-- **0036 预留**（`feat/gy-r34-i18-content-pg` / #538 在飞）：`0036_r34_i18_content_pg.sql`，本片不用 0036。
-- **0037 预留**（#14 已分配，号空出）：本片不用 0037。
-- `0038_r34_deletion_receipt_persistence.sql`（#19 片B 本片）：回执 bearer 摘要落
-  `deletion_requests.receipt_bearer_hash` + 三条窄口径 SECURITY DEFINER 函数（set/resolve/count）。
-- 合入顺序 0036 → 0037 → 0038 依次推进（迁移号互斥，串行）；本片单独在树上时，
-  0036/0037 为有依据的缺号（本文件本段即其 `.md` 依据，见 `verify-migrations-unique.mjs` 的 `[gap]` 判据）。
-

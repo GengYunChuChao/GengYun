@@ -1604,6 +1604,89 @@
             }
           }
         }
+      },
+      "delete": {
+        "operationId": "cancelDeletion",
+        "summary": "cancelDeletion",
+        "description": "取消本人在途的账号注销请求：仅 requested/processing/blocked 可取消；已终态（completed/cancelled）不可取消，非本人无入口。",
+        "tags": [
+          "me"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "已取消；返回取消后的回执（state=cancelled）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionReceiptEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": false,
+        "x-task": "GY-I22"
       }
     },
     "/account/deletions/{id}": {
@@ -11304,7 +11387,8 @@
           "requested",
           "processing",
           "blocked",
-          "completed"
+          "completed",
+          "cancelled"
         ]
       },
       "ThirdPartyState": {

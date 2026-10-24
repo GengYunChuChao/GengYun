@@ -15,9 +15,9 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 114 |
-| 契约操作（paths × method） | 115 |
-| 实现 ∩ 契约 | 113 |
+| 已挂载路由（不含 HEAD） | 115 |
+| 契约操作（paths × method） | 116 |
+| 实现 ∩ 契约 | 114 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
@@ -124,6 +124,7 @@
 | POST | `/jobs/{id}/cancel` | cancelJob | user | 需要 | 是 | partial | 一致 |
 | GET | `/knowledge` | listKnowledge | user | 不要求 | 是 | partial | 一致 |
 | GET | `/knowledge/{id}` | getKnowledge | user | 不要求 | 是 | implemented | 一致 |
+| DELETE | `/me/account/deletion` | cancelDeletion | user | 不要求 | 是 | partial | 一致 |
 | POST | `/me/account/deletion` | requestAccountDeletion | user | 不要求 | 是 | partial | 一致 |
 | GET | `/me/consents` | listConsents | user | 不要求 | 是 | partial | 一致 |
 | POST | `/me/consents` | grantConsent | user | 不要求 | 是 | partial | 一致 |

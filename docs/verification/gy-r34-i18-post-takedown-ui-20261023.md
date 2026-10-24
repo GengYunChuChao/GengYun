@@ -57,7 +57,7 @@ $ git diff --numstat upstream/main...HEAD -- apps/admin/src/views/ContentAdminVi
 | --- | --- | --- |
 | 路径 | `POST /admin/posts/{id}/hide`；`packages/contracts/openapi.json:10652`（path）、`:10527`（`operationId: hidePost`） | `post-takedown-api.mjs` 的 `POSTS_PATH`/`HIDE_ACTION` → `buildHidePostRequest` |
 | scope | `openapi.json:10744` `x-scope: sources:write`；`services/api/src/admin/ops/service.ts` `hidePost: 'sources:write'` | 常量 `SOURCES_WRITE_SCOPE`；缺 scope 只提示 ＋ 禁用按钮（不放行） |
-| 版本必需 | `openapi.json:10701` `x-version-required: true`；参数 `IfMatch`（pattern `^"[1-9][0-9]*"$`，`required: true`） | `buildIfMatch` / `checkIfMatchHeader` |
+| 版本必需 | `openapi.json:10911` `x-version-required: true`；参数 `IfMatch`（pattern `^"[1-9][0-9]*"$`，`required: true`） | `buildIfMatch` / `checkIfMatchHeader` |
 | **`*` 被拒** | `services/api/src/admin/identity.ts` 的 `parseIfMatchHeader`：缺 → **428 `REVISION_REQUIRED`**；形状不符 → **400 `INVALID_REQUEST`**，原文「If-Match 必须是形如 "12" 的强 ETag，且不允许 *」 | `validateRevision('*')` → `code: 'wildcard'`，**不发请求**；`buildHidePostRequest` 二次校验 |
 | 幂等键 | 参数 `IdempotencyKey`（8..128，required）；`services/api/src/admin/identity.ts` 的 `requireIdempotencyKeyValue`：缺 → 400 `IDEMPOTENCY_KEY_REQUIRED`，越界 → 400 `INVALID_REQUEST` | `newIdempotencyKey()`（前缀 `admin-post-takedown-`）＋ `planIdempotencyKey`（同指纹复用、换内容换键） |
 | 请求体 | `ReasonInput`（`reason` 1..500，`additionalProperties: false`，`requestBody.required: true`） | `buildReason`；请求体**只有** `{reason}` |
