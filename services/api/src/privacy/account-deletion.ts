@@ -65,6 +65,8 @@ import { mintOpaqueToken, hashToken } from '../auth/tokens.ts';
 // 回执是用户可见面，只允许白名单内的最小失败码，自由文本一律折叠。
 import { SAFE_ERROR_CODES } from '../../../../packages/privacy/deletion.mjs';
 import type { UserDataDeletionRegistry } from './user-data-deletion.ts';
+import { ApiError } from '../errors.ts';
+import { isTransientDatabaseError, type PgPool } from '../db/pool.ts';
 
 /** 回执 bearer 的有效期：35 日（`docs/architecture/state-contract.md:107`「有效期35日」）。 */
 export const RECEIPT_TTL_MS = 35 * 24 * 60 * 60 * 1000;
@@ -107,13 +109,25 @@ export interface DeletionReceiptRecord {
  */
 export interface DeletionReceiptRegistry {
   /** 为某个删除请求签发回执 bearer（明文返回一次；台账只存摘要）。 */
-  issue(requestId: string): { token: string; expiresAt: string };
+  issue(requestId: string): Promise<{ token: string; expiresAt: string }>;
   /** 按明文 bearer 反查删除请求 id；未知/已过期/已换发 ⇒ `null`（调用方据此 401 / 404）。 */
-  resolveRequestId(token: string): string | null;
+  resolveRequestId(token: string): Promise<string | null>;
   /** 作废某请求名下的全部 bearer（换发时内部使用；不删删除请求本身）。 */
-  forgetRequest(requestId: string): number;
+  forgetRequest(requestId: string): Promise<number>;
   /** 诊断：当前有效 bearer 条数（不含明文）。 */
-  liveCount(): number;
+  liveCount(): Promise<number>;
+}
+
+/**
+ * 注销/停用的在途外发撤销消费者（注入点）。
+ *
+ * 与 `services/api/src/privacy/consent-pg.ts` 的 `EgressRevoker` **同形**（只取注销这一半）：
+ * `packages/privacy/in-flight.mjs` 的 `createEgressRevoker`（app.ts 装配）的 `onAccountSuspendedOrDeleted`
+ * 天然满足本形状。**缺省不注入 ⇒ 行为与接线前逐字一致**
+ * （注销照旧受理，不撤销在途外发——账号状态迁移本身已使旧任务在回写前被守卫拒绝）。
+ */
+export interface AccountEgressRevoker {
+  onAccountSuspendedOrDeleted(input: { userId: string }): Promise<{ revokedInFlight: number }>;
 }
 
 /**
@@ -137,7 +151,7 @@ export function createDeletionReceiptRegistry(input: { now?: () => Date } = {}):
   }
 
   return {
-    issue(requestId) {
+    async issue(requestId) {
       if (typeof requestId !== 'string' || requestId.length === 0) {
         throw new Error('签发回执 bearer 需要非空删除请求 id');
       }
@@ -153,7 +167,7 @@ export function createDeletionReceiptRegistry(input: { now?: () => Date } = {}):
       hashesByRequest.set(requestId, hashes);
       return { token, expiresAt };
     },
-    resolveRequestId(token) {
+    async resolveRequestId(token) {
       if (typeof token !== 'string' || token.length === 0) return null;
       const record = byHash.get(hashToken(token));
       if (record === undefined) return null;
@@ -165,8 +179,103 @@ export function createDeletionReceiptRegistry(input: { now?: () => Date } = {}):
       }
       return record.requestId;
     },
-    forgetRequest,
-    liveCount: () => byHash.size,
+    async forgetRequest(requestId) {
+      return forgetRequest(requestId);
+    },
+    async liveCount() {
+      return byHash.size;
+    },
+  };
+}
+
+/** `set_deletion_receipt` 的返回行（`rowCount` 命名按函数体 `GET DIAGNOSTICS` 的赋值列）。 */
+const SET_RECEIPT_SQL = `SELECT public.set_deletion_receipt($1::uuid, $2::text, $3::timestamptz, $4::timestamptz) AS updated`;
+const RESOLVE_RECEIPT_SQL = `SELECT public.resolve_deletion_receipt($1::text) AS request_id`;
+const COUNT_RECEIPTS_SQL = `SELECT public.count_deletion_receipts() AS n`;
+
+/**
+ * PostgreSQL 错误 → 既有契约错误码（与 `deletion-requests-pg.ts::mapDeletionError` 同口径，
+ * 不新增契约错误码、不透出驱动原文）。权限缺失（42501）/函数缺失（42883）⇒ 不可重试的
+ * `PROVIDER_UNAVAILABLE`（需运维补权限或跑迁移，不是时间能解决的）。
+ */
+function mapReceiptError(error: unknown): never {
+  if (error instanceof ApiError) throw error;
+  const code = (error as { code?: unknown })?.code;
+  const sqlState = typeof code === 'string' ? code : '';
+  if (sqlState === 'G0001') throw new ApiError('INVALID_REQUEST', '回执台账参数非法');
+  if (sqlState === '23505') throw new ApiError('REVISION_CONFLICT', '回执摘要冲突');
+  if (sqlState === '57014' || sqlState === '55P03') {
+    throw new ApiError('PROVIDER_TIMEOUT', '回执台账事务超时', { retryable: true });
+  }
+  if (isTransientDatabaseError(error)) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '回执台账暂不可用', { retryable: true });
+  }
+  throw new ApiError('PROVIDER_UNAVAILABLE', '回执台账暂不可用', { retryable: false });
+}
+
+/**
+ * 建**持久化**回执 bearer 台账（迁移 0038 的唯一读写路径）。
+ *
+ * 与进程内实现同形状（`DeletionReceiptRegistry`），但读写在 `deletion_requests.receipt_bearer_hash`
+ * 上：`issue`/`forgetRequest` 走 `set_deletion_receipt`（SECURITY DEFINER），`resolveRequestId` 走
+ * `resolve_deletion_receipt`，`liveCount` 走 `count_deletion_receipts`。因此**进程重启后旧回执
+ * bearer 仍可反查**（不再因内存台账清空而不可达）。
+ *
+ * 构造期**不**探测函数是否存在（探测会把「迁移没跑」变成启动期崩溃）；函数缺失在**调用期**以
+ * `42501`/`42883` ⇒ `PROVIDER_UNAVAILABLE`(503, retryable:false) 如实失败，不伪造可解析。
+ */
+export function createPostgresDeletionReceiptRegistry(input: {
+  pool: PgPool;
+  now?: () => Date;
+}): DeletionReceiptRegistry {
+  const pool = input.pool;
+  const now = input.now ?? (() => new Date());
+
+  async function call(sql: string, params: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }> {
+    try {
+      return await pool.query(sql, params);
+    } catch (error) {
+      return mapReceiptError(error);
+    }
+  }
+
+  return {
+    async issue(requestId) {
+      if (typeof requestId !== 'string' || requestId.length === 0) {
+        throw new Error('签发回执 bearer 需要非空删除请求 id');
+      }
+      const token = mintOpaqueToken();
+      const tokenHash = hashToken(token);
+      const issuedAt = now();
+      const expiresAt = new Date(issuedAt.getTime() + RECEIPT_TTL_MS);
+      const result = await call(SET_RECEIPT_SQL, [
+        requestId,
+        tokenHash,
+        issuedAt.toISOString(),
+        expiresAt.toISOString(),
+      ]);
+      const updated = Number(result.rows[0]?.['updated'] ?? 0);
+      if (updated !== 1) {
+        // 删除请求不存在（受理未落库）⇒ 不签发、不伪造成功。
+        throw new ApiError('NOT_FOUND', '删除请求不存在', { retryable: false });
+      }
+      return { token, expiresAt: expiresAt.toISOString() };
+    },
+    async resolveRequestId(token) {
+      if (typeof token !== 'string' || token.length === 0) return null;
+      const result = await call(RESOLVE_RECEIPT_SQL, [hashToken(token)]);
+      const id = result.rows[0]?.['request_id'];
+      return typeof id === 'string' && id.length > 0 ? id : null;
+    },
+    async forgetRequest(requestId) {
+      if (typeof requestId !== 'string' || requestId.length === 0) return 0;
+      const result = await call(SET_RECEIPT_SQL, [requestId, null, null, null]);
+      return Number(result.rows[0]?.['updated'] ?? 0);
+    },
+    async liveCount() {
+      const result = await call(COUNT_RECEIPTS_SQL, []);
+      return Number(result.rows[0]?.['n'] ?? 0);
+    },
   };
 }
 
@@ -208,6 +317,8 @@ export function createAccountDeletionRequestService(input: {
   receipts: DeletionReceiptRegistry;
   available?: boolean;
   unavailableMessage?: string;
+  /** 注销/停用的在途外发撤销消费者；缺省不注入 ⇒ 行为与接线前逐字一致（见 {@link AccountEgressRevoker}）。 */
+  egressRevoker?: AccountEgressRevoker | null;
 }): AccountDeletionRequestService {
   const available = input.available ?? true;
   return {
@@ -221,12 +332,18 @@ export function createAccountDeletionRequestService(input: {
       if (typeof receiptInput !== 'string' || receiptInput.length === 0) {
         throw new Error('注销申请需要回执 bearer 明文');
       }
+      // 注销/停用的在途外发撤销（state-contract.md:105「冻结外发与写入」的一半）：
+      // 先撤在途、再受理；撤销失败 ⇒ 拒绝受理（fail-closed，不伪造「外发已冻结」）。
+      // 若受理随后回滚，「多撤」在途记录方向是**更安全的一侧**（禁止外发），且 revokeInFlight 幂等。
+      if (input.egressRevoker !== undefined && input.egressRevoker !== null) {
+        await input.egressRevoker.onAccountSuspendedOrDeleted({ userId });
+      }
       // 主体绑定 + 全模块受理检查都在既有装配里（缺模块 ⇒ OBJECT_UNAVAILABLE，不假装能完成）。
       const request = input.deletion.requestDeletionFor(userId, { receiptInput });
       const requestId = String(request['id']);
       // 驱动**既有**删除级联：注册表里每个已登记模块都会被执行一次（不跳过任何模块）。
       await input.deletion.executeHandlers(requestId);
-      const issued = input.receipts.issue(requestId);
+      const issued = await input.receipts.issue(requestId);
       const deletion = projectReceipt(input.deletion.receipt(requestId));
       if (deletion === null) throw new Error('删除请求创建后回执缺失');
       return { receipt_token: issued.token, receipt_expires_at: issued.expiresAt, deletion };

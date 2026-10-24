@@ -34,6 +34,9 @@ Page({
     posts: [],
     nextCursor: null,
     loadingMore: false,
+    // C1：普通翻页失败（网络／服务不可用等）的**持续可读**提示，渲染在列表底部。
+    // 失败时不清空 posts / nextCursor：已加载行保留，重试仍请求同一条下一游标。
+    loadMoreError: '',
     filterMine: false,
     cropOptions: [CROP_ALL].concat(CROPS.map(function (c) { return { id: c.id, name: c.name } })),
     cropLabels: [CROP_ALL.name].concat(CROPS.map(function (c) { return c.name })),
@@ -74,7 +77,7 @@ Page({
   reload: function (done) {
     const epoch = ++this._epoch
     const that = this
-    this.setData({ status: 'loading', errorText: '', errorCode: '', posts: [], nextCursor: null })
+    this.setData({ status: 'loading', errorText: '', errorCode: '', posts: [], nextCursor: null, loadMoreError: '' })
     api.listPosts(this._query(null)).then(function (page) {
       if (epoch !== that._epoch) return
       const mode = page.mode
@@ -99,27 +102,32 @@ Page({
    *   - 其余如实进 error 态并把契约错误码透传给 `state-view`（403 由统一状态层升级成 denied）。
    */
   _fail: function (error) {
-    if (api.sessionFailure(error)) { this.setData({ guest: true, status: 'idle' }); return }
+    if (api.sessionFailure(error)) { this.setData({ guest: true, status: 'idle', loadMoreError: '' }); return }
     this.setData({
       status: 'error',
       errorText: api.message(error),
       errorCode: (error && error.code) || '',
       modeNote: '',
-      stubNote: ''
+      stubNote: '',
+      loadMoreError: ''
     })
   },
 
   onLoadMore: function () {
     const that = this
+    // 防重复点击／重复追加：同一时刻只允许一个翻页请求在飞。
+    // 失败后 nextCursor 原样保留，所以「重试」再次调用本方法时请求的仍是**同一条**下一游标。
     if (this.data.loadingMore || !this.data.nextCursor) return
-    this.setData({ loadingMore: true })
+    const cursor = this.data.nextCursor
+    this.setData({ loadingMore: true, loadMoreError: '' })
     const epoch = this._epoch
-    api.listPosts(this._query(this.data.nextCursor)).then(function (page) {
+    api.listPosts(this._query(cursor)).then(function (page) {
       if (epoch !== that._epoch) return
       that.setData({
         posts: that.data.posts.concat(that._decorate(page.items)),
         nextCursor: page.nextCursor,
-        loadingMore: false
+        loadingMore: false,
+        loadMoreError: ''
       })
     }).catch(function (error) {
       if (epoch !== that._epoch) return
@@ -129,13 +137,25 @@ Page({
       // 失效游标：服务端已声明这条游标永不成功（15 分钟 TTL、期间有新内容、主体/世代变化）。
       // 改前只弹一句 toast，`nextCursor` 原样留着 ⇒ 用户每点一次「加载更多」都会看到同一句报错。
       if (error && error.code === 'INVALID_CURSOR') {
-        that.setData({ nextCursor: null })
+        that.setData({ nextCursor: null, loadMoreError: '' })
         wx.showToast({ title: '列表已过期，已重新载入', icon: 'none' })
         that.reload()
         return
       }
-      wx.showToast({ title: api.message(error), icon: 'none' })
+      // 普通网络／服务失败：保留已加载行与合法 cursor，在列表底部给出**持续可读**的
+      // 失败提示与显式重试入口（wxml 的 loadMoreError 块），不再只弹一句会消失的 toast。
+      // 文案由本页给出：适配层的 `api.message()` 带「已清空」口径，而翻页失败时我们**没有**清空，
+      // 直接复用会变成假陈述；这里只陈述「这一页没读到 + 已加载内容仍在」。
+      that.setData({ loadMoreError: that._loadMoreMessage(error) })
     })
+  },
+
+  _loadMoreMessage: function (error) {
+    if (error && error.code === 'NETWORK_UNCERTAIN') {
+      return '网络未能确认这次请求，已加载的内容仍然保留，可以重试这一页。'
+    }
+    const code = (error && error.code) || 'UNKNOWN'
+    return '服务暂时没有返回下一页（' + code + '），已加载的内容仍然保留，可以重试这一页。'
   },
 
   _query: function (cursor) {

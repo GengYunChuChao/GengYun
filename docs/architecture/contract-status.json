@@ -424,7 +424,7 @@
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "symbol": "createAccountDeletionRequestService",
-          "lines": "200-229"
+          "lines": "299-352"
         },
         {
           "path": "services/api/src/app.ts",
@@ -469,7 +469,7 @@
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "symbol": "projectReceipt",
-          "lines": "242-299"
+          "lines": "354-388"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -1385,7 +1385,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listPosts",
-          "lines": "834-900"
+          "lines": "915-915"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1443,7 +1443,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
-          "lines": "1062-1066"
+          "lines": "1106-1110"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1497,7 +1497,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deletePost",
-          "lines": "1175-1207"
+          "lines": "1243-1243"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1524,7 +1524,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listComments",
-          "lines": "1195-1245"
+          "lines": "1278-1278"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1578,7 +1578,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getComment(actor: unknown, id: unknown): Promise<Comment> {",
-          "lines": "1396-1400"
+          "lines": "1440-1444"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1605,7 +1605,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editComment",
-          "lines": "1360-1437"
+          "lines": "1447-1447"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1632,7 +1632,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deleteComment",
-          "lines": "1455-1486"
+          "lines": "1527-1527"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1659,7 +1659,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPostLike(actor: unknown, id: unknown): Promise<LikeStatus> {",
-          "lines": "1547-1547"
+          "lines": "1591-1598"
         },
         {
           "test": "tests/unit/community-like-read.test.mjs",
@@ -1690,7 +1690,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1517-1517"
+          "lines": "1561-1561"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1717,7 +1717,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1521-1521"
+          "lines": "1565-1565"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1744,7 +1744,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1525-1525"
+          "lines": "1569-1569"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1771,7 +1771,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1529-1529"
+          "lines": "1573-1573"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1798,7 +1798,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createReport",
-          "lines": "1529-1566"
+          "lines": "1601-1601"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1825,7 +1825,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getOwnReport(actor: unknown, id: unknown): Promise<Report> {",
-          "lines": "1597-1603"
+          "lines": "1644-1650"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",

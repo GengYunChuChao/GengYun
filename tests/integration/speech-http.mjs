@@ -516,8 +516,18 @@ try {
       const injectedKeys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
       assert.deepEqual(
         injectedKeys,
-        ['consent', 'egress', 'guards', 'jobDeadlineMs', 'media', 'provider', 'store'].sort(),
+        ['audioMedia', 'consent', 'egress', 'guards', 'jobDeadlineMs', 'media', 'provider', 'store'].sort(),
         `注册行不允许出现其它注入键：${injectedKeys.join(', ')}`,
+      );
+      // GY-I11 录音字节来源片：唯一新增的键是 `audioMedia`，且它只能**原样转发**两个既有端口
+      // （对象存储 + 媒体登记册）；⛔ 不得在这一行新建存储、读 env，或把替身端口塞进来。
+      assert.ok(
+        registrationLine.includes('audioMedia: speechAudioMedia'),
+        `audioMedia 只允许转发既有端口变量，实际：${registrationLine.trim()}`,
+      );
+      assert.ok(
+        appText.includes('const speechAudioMedia = { objectStore: mediaObjectStore, mediaRecords: mediaStore };'),
+        'app.ts 的 speechAudioMedia 必须由「既有对象存储端口 + 既有媒体登记册」原样拼成',
       );
       // 值断言（键存在 ≠ 值正确）：`guards` 槽位必须装**旗标门包装后的** `gatedGuards`，
       // 不是裸 `guards`（`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。

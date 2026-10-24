@@ -365,3 +365,81 @@ test('D2 页面装配·资源就位即自动接线：region_code 经两份目录
  assert.equal(JSON.stringify(put.data).includes('27.9013'),false);
  assert.equal(JSON.stringify(put.header).includes('27.9013'),false);
 });
+
+// —— P1（Refs #26）：「我的」页三项计数各自可读的加载/失败状态与显式重试 ——
+// 计数口径不变：只读第一页已加载条数，`N+` 表示还有下一页，服务端封套没有总数。
+const COUNT_META={request_id:'99999999-9999-4999-8999-999999999999',contract_version:'1.0.0',execution_mode:'stub'};
+const FAV_ITEM={id:'00000000-0000-4000-8a00-000000000001',revision:1,target_ref:{type:'species',id:'crop_rice',revision:1},reference_state:'available',unavailable_reason:null,created_at:'2026-10-14T06:00:00.000Z'};
+const HIST_ITEM={id:'00000000-0000-4000-8b00-000000000002',revision:1,kind:'recognition',target_ref:{type:'recognition',id:'11111111-1111-4111-8111-111111111111',revision:2},job_state:'succeeded',reference_state:'available',created_at:'2026-10-14T06:00:00.000Z'};
+const POST_ITEM={id:'11111111-1111-4111-8111-111111111111',revision:1,author:{display_name:'耕云用户abcd',display_id:'gy-abcdef012345',state:'active',avatar_media_id:null,revision:1,avatar_media:null},title:'合成标题',body:'合成正文。',crop_id:null,region_code:null,media_ids:[],visibility:'published',audit_state:'approved',created_at:'2026-10-20T04:00:00.000Z',updated_at:'2026-10-20T04:00:00.000Z',media:[],linked_knowledge_ref:null,linked_knowledge:null};
+function answerList(req,items,nextCursor,statusCode=200){
+ if(statusCode===200){req.success({statusCode,data:{data:{items,next_cursor:nextCursor},meta:COUNT_META}});return;}
+ req.success({statusCode,data:{error:{code:items,message:'synthetic',retryable:false,details:[]},meta:COUNT_META}});
+}
+const countPath=req=>new URL(req.url).pathname;
+test('三项计数各自结算：一项失败只把该项置为失败，其他项已加载条数保留且不假报总数',async()=>{
+ const f=fixture();await f.ready();
+ const fav=f.last('/favorites'),hist=f.last('/history'),posts=f.last('/posts');
+ assert.ok(fav&&hist&&posts,'三项计数应在进入页面后各自发起一次第一页读取');
+ assert.equal(new URL(fav.url).searchParams.get('limit'),'20');
+ assert.equal(new URL(hist.url).searchParams.get('limit'),'20');
+ assert.equal(new URL(posts.url).searchParams.get('mine'),'true');
+ assert.equal(new URL(posts.url).searchParams.get('limit'),'20');
+ answerList(fav,[FAV_ITEM],'opaque.next');
+ answerList(hist,[HIST_ITEM],null);
+ answerList(posts,'PROVIDER_UNAVAILABLE',null,503);
+ await flush();
+ assert.equal(f.page.data.favoriteState,'ready');assert.equal(f.page.data.favoriteCount,'1+');
+ assert.equal(f.page.data.historyState,'ready');assert.equal(f.page.data.historyCount,'1');
+ assert.equal(f.page.data.myPostState,'error');assert.equal(f.page.data.myPostCount,'—');
+ assert.equal(/总/.test(String(f.page.data.myPostCount)),false,'失败不得用任何本地数据或总数顶替');
+});
+test('失败项重试只重读该项，成功条数与档案编辑表单原样保留',async()=>{
+ const f=fixture();await f.ready();
+ f.page.onEdit();assert.equal(f.page.data.editing,true);
+ const form=JSON.stringify({crops:f.page.data.crops,regions:f.page.data.regions,cropIndex:f.page.data.cropIndex,cityIndex:f.page.data.cityIndex,counties:f.page.data.counties,countyIndex:f.page.data.countyIndex});
+ answerList(f.last('/favorites'),'PROVIDER_UNAVAILABLE',null,503);
+ answerList(f.last('/history'),[HIST_ITEM,HIST_ITEM],'opaque.history');
+ answerList(f.last('/posts'),[POST_ITEM],null);
+ await flush();
+ assert.equal(f.page.data.favoriteState,'error');
+ assert.equal(f.page.data.historyCount,'2+');assert.equal(f.page.data.myPostCount,'1');
+ const failedFav=f.last('/favorites');
+ const before={hist:f.requests.filter(r=>countPath(r)==='/api/v1/history').length,posts:f.requests.filter(r=>countPath(r)==='/api/v1/posts').length};
+ f.page.retryCount({currentTarget:{dataset:{kind:'favorite'}}});
+ assert.equal(f.page.data.favoriteState,'loading');assert.equal(f.page.data.favoriteCount,'—');
+ assert.equal(f.page.data.historyCount,'2+','重试一项不得清掉其他项已成功的条数');
+ assert.equal(f.page.data.myPostCount,'1');
+ const retry=f.last('/favorites');assert.notEqual(retry,failedFav);
+ assert.equal(f.requests.filter(r=>countPath(r)==='/api/v1/history').length,before.hist,'重试收藏不得重读识别历史');
+ assert.equal(f.requests.filter(r=>countPath(r)==='/api/v1/posts').length,before.posts,'重试收藏不得重读我的发布');
+ answerList(retry,[FAV_ITEM],null);await flush();
+ assert.equal(f.page.data.favoriteState,'ready');assert.equal(f.page.data.favoriteCount,'1');
+ assert.equal(f.page.data.historyCount,'2+');assert.equal(f.page.data.myPostCount,'1');
+ assert.equal(f.page.data.editing,true,'重试计数不得重置或修改档案表单');
+ assert.equal(JSON.stringify({crops:f.page.data.crops,regions:f.page.data.regions,cropIndex:f.page.data.cropIndex,cityIndex:f.page.data.cityIndex,counties:f.page.data.counties,countyIndex:f.page.data.countyIndex}),form);
+ assert.equal(f.requests.filter(r=>r.method==='PUT').length,0,'重试计数不得触发保存');
+});
+test('离页或换会话后的迟到计数响应不得写回页面',async()=>{
+ const f=fixture();await f.ready();
+ const fav=f.last('/favorites'),hist=f.last('/history');
+ f.page.onHide();
+ const snapshot=JSON.stringify(f.page.data);
+ answerList(fav,[FAV_ITEM],null);answerList(hist,[HIST_ITEM],null);await flush();
+ assert.equal(JSON.stringify(f.page.data),snapshot,'离页后迟到响应不得写回任何计数或状态');
+ const other=fixture();await other.ready();
+ const late=other.last('/favorites');
+ const before=JSON.stringify(other.page.data);
+ other.seed('synthetic-b');
+ answerList(late,[FAV_ITEM],null);await flush();
+ assert.equal(JSON.stringify(other.page.data),before,'旧会话的迟到响应不得写回');
+ assert.equal(other.page.data.favoriteCount,'—');
+});
+test('计数状态与重试入口已接线：失败可点重试且不冒泡触发整卡跳转',()=>{
+ const wxml=readFileSync(root+'/miniprogram/pages/profile/profile.wxml','utf8');
+ for(const kind of ['favorite','history','myPost']){
+  assert.match(wxml,new RegExp(kind+"State === 'loading'"),kind+' 缺少加载中状态');
+  assert.match(wxml,new RegExp(kind+"State === 'error'[\\s\\S]{0,220}catchtap=\"retryCount\" data-kind=\""+kind+"\""),kind+' 失败态缺少显式重试入口');
+ }
+ assert.equal(/bindtap="retryCount"/.test(wxml),false,'重试必须 catchtap，不能冒泡触发整卡跳转');
+});

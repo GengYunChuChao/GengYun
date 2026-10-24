@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 227
+      "files": 229
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 39,
-    "has": 38,
+    "total": 41,
+    "has": 40,
     "none": 1
   },
   "entries": [
@@ -210,6 +210,20 @@
       "file": "services/api/src/ocr/store-pg.ts",
       "line": 138,
       "function": "classifyOcrDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/privacy/account-deletion.ts",
+      "line": 208,
+      "function": "mapReceiptError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/privacy/account-deletion.ts",
+      "line": 211,
+      "function": "mapReceiptError",
       "judgement": "has",
       "owner": "GY-I22"
     },

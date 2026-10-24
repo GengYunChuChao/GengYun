@@ -273,10 +273,11 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
-    // 末项取树上的真实最大号：#19 的 0031（在线清理证据）、#15 的 0032（举报者行级注销引用）、
-    // R34/#525 的 0033（管理端审计日志读函数）、#19 的 0034（注销内容清理窄函数）与
-    // #535 的 0035（R34 媒体行清理）都已在树上
-    // ⇒ 目录 `0001..0035` 连续、**无缺号**，真实台账回到空数组（31 号与 33 号两条保留条目都已按各自的 remove_when 删除）。
+    // 末项取树上的真实最大号：本片 #22 片C 的 0039（deletion_state 增 cancelled）、#19 片B 的 0038（删除回执 bearer 台账持久化）、
+    // #535 的 0035（R34 媒体行清理）、#19 的 0031（在线清理证据）、#15 的 0032（举报者行级注销引用）、R34/#525 的 0033（管理端审计日志读函数）
+    // 与 #19 的 0034（注销内容清理窄函数）都已在树上
+    // ⇒ 目录 `0001..0039` 里 0036（#538）与 0037（#14）两条是在飞缺号、已在保留台账登记，其余**无缺号**；
+    //   真实台账眼下就登记着这两条（31 号与 33 号两条保留条目都已按各自的 remove_when 删除）。
     // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
       if (/^\d{4,}_[a-z0-9_]+\.sql$/.test(name)) {
@@ -285,7 +286,8 @@ function forwardMergeNumbering() {
     }
     assert.equal(readdirSync(tmp).includes(RESERVED_FILENAME), true, `临时目录必须含真实 ${RESERVED_FILENAME}（否则本臂是空的）`);
     const merged = discoverMigrations(tmp);
-    // 台账取「真实台账 + 夹具」：合流后真实台账已清空（31 号与 33 号两条保留条目都按各自的 remove_when 删除）⇒ 眼下等于只喂夹具；
+    // 台账取「真实台账 + 夹具」：真实台账眼下登记的是 0036/#538 与 0037/#14 两条在飞缺号（31 号与 33 号两条保留条目
+    // 都已按各自的 remove_when 删除），这两号在本臂的临时目录里同样缺位、不构成"躺平" ⇒ 躺平判据仍只由夹具的 0027 触发；
     // 保留双喂形态，是为了将来再有分支登记缺号时本臂不会把"已声明缺号"误判成「未声明缺号」（发现器漏项的形态）。
     const numbering = inspectMigrationNumbering(merged, [...loadMigrationReservations(), ...FIXTURE_RESERVATION]);
     assert.deepEqual(
@@ -296,7 +298,7 @@ function forwardMergeNumbering() {
     assert.deepEqual(
       numbering.undeclaredGaps.map(formatMigrationVersion),
       [],
-      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15、0033/#525、0034/#19 与 0035/#535 都已在树上；0036/#538、0037/#14、0038/#19片B 在台账保留；0039/#22片C 已落盘）',
+      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15、0033/#525、0034/#19、0035/#535、0038/#19片B 与 0039/#22片C 都已在树上；0036/#538 与 0037/#14 是在飞缺号并已在台账登记）',
     );
     assert.equal(
       numbering.maxVersion,
@@ -306,7 +308,7 @@ function forwardMergeNumbering() {
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
       '0039',
-      '合流树末项是 0039（#22 片C 的 0039_r34_deletion_state_cancelled.sql，deletion_state 增 cancelled；0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数、0035 是 #535 的媒体行清理，均已在树上；0036=#538、0037=#14、0038=#19片B 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
+      '合流树末项是 0039（#22 片C 的 0039_r34_deletion_state_cancelled.sql，deletion_state 增 cancelled；0038 是 #19 片B 的删除回执 bearer 台账持久化、0035 是 #535 的 R34 媒体行清理、0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上；0036=#538、0037=#14 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,

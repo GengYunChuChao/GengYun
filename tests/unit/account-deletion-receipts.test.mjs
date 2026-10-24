@@ -76,45 +76,45 @@ async function seed(clock) {
   return { favoritesStore, historyStore, messagesStore, conversationsStore };
 }
 
-test('GY-I19：回执 bearer 只按摘要可解析、35 日到期即作废、换发即作废旧摘要', () => {
+test('GY-I19：回执 bearer 只按摘要可解析、35 日到期即作废、换发即作废旧摘要', async () => {
   const clock = scriptedClock();
   const receipts = createDeletionReceiptRegistry({ now: clock.now });
   const requestId = '00000000-0000-4000-8f00-000000000001';
 
-  const first = receipts.issue(requestId);
+  const first = await receipts.issue(requestId);
   // 明文 bearer 不是删除请求 id 本身（不透明随机），且台账只按 sha256 摘要反查。
   assert.notEqual(first.token, requestId);
   assert.ok(first.token.length >= 32);
-  assert.equal(receipts.resolveRequestId(first.token), requestId);
-  assert.equal(receipts.liveCount(), 1);
+  assert.equal(await receipts.resolveRequestId(first.token), requestId);
+  assert.equal(await receipts.liveCount(), 1);
   // 有效期逐字为 35 日（`docs/architecture/state-contract.md:107`「有效期35日」）。
   assert.equal(Date.parse(first.expiresAt) - clock.ms, 35 * DAY_MS);
   assert.equal(RECEIPT_TTL_MS, 35 * DAY_MS);
 
   // 未知/空凭据一律 null（不泄露某个删除请求是否存在）。
-  assert.equal(receipts.resolveRequestId('not-a-real-bearer-token'), null);
-  assert.equal(receipts.resolveRequestId(''), null);
-  assert.equal(receipts.resolveRequestId(undefined), null);
+  assert.equal(await receipts.resolveRequestId('not-a-real-bearer-token'), null);
+  assert.equal(await receipts.resolveRequestId(''), null);
+  assert.equal(await receipts.resolveRequestId(undefined), null);
 
   // 到期边界：到期前一毫秒仍有效；到**恰好**到期时刻即作废，且台账里物理移除（不留悬垂摘要）。
   clock.advance(35 * DAY_MS - 1);
-  assert.equal(receipts.resolveRequestId(first.token), requestId);
+  assert.equal(await receipts.resolveRequestId(first.token), requestId);
   clock.advance(1);
-  assert.equal(receipts.resolveRequestId(first.token), null, '到期即作废，不续期');
-  assert.equal(receipts.liveCount(), 0);
+  assert.equal(await receipts.resolveRequestId(first.token), null, '到期即作废，不续期');
+  assert.equal(await receipts.liveCount(), 0);
 
   // 换发：同一删除请求任一时刻只保留一个有效 bearer ⇒ 旧 bearer 立刻失效（不回放旧凭据）。
-  const second = receipts.issue(requestId);
-  const third = receipts.issue(requestId);
-  assert.equal(receipts.resolveRequestId(second.token), null, '换发后旧 bearer 必须立即失效');
-  assert.equal(receipts.resolveRequestId(third.token), requestId);
-  assert.equal(receipts.liveCount(), 1);
+  const second = await receipts.issue(requestId);
+  const third = await receipts.issue(requestId);
+  assert.equal(await receipts.resolveRequestId(second.token), null, '换发后旧 bearer 必须立即失效');
+  assert.equal(await receipts.resolveRequestId(third.token), requestId);
+  assert.equal(await receipts.liveCount(), 1);
 
   // 显式遗忘（进程内台账的清理口）：返回被清掉的摘要数，之后一律不可解析。
-  assert.equal(receipts.forgetRequest(requestId), 1);
-  assert.equal(receipts.resolveRequestId(third.token), null);
-  assert.equal(receipts.liveCount(), 0);
-  assert.equal(receipts.forgetRequest(requestId), 0);
+  assert.equal(await receipts.forgetRequest(requestId), 1);
+  assert.equal(await receipts.resolveRequestId(third.token), null);
+  assert.equal(await receipts.liveCount(), 0);
+  assert.equal(await receipts.forgetRequest(requestId), 0);
 });
 
 test('GY-I19：受理即驱动既有级联（在线真删、只删绑定主体），备份未接线如实 pending', async () => {
@@ -133,7 +133,7 @@ test('GY-I19：受理即驱动既有级联（在线真删、只删绑定主体�
 
   // 回执 bearer 是**新的**、可反查到该删除请求，且有效期 35 日。
   const requestId = String(accepted.deletion.id);
-  assert.equal(receipts.resolveRequestId(accepted.receipt_token), requestId);
+  assert.equal(await receipts.resolveRequestId(accepted.receipt_token), requestId);
   assert.equal(Date.parse(accepted.receipt_expires_at) - clock.ms, 35 * DAY_MS);
 
   // 在线阶段确实跑了：A 清空、B 原样（主体绑定在既有装配里，不跨主体误删）。
@@ -181,7 +181,7 @@ test('GY-I19：空主体/空回执明文一律拒绝且不留任何状态；未�
   await assert.rejects(() => service.request({ userId: '', receiptInput: 'x' }), /非空主体/);
   await assert.rejects(() => service.request({ userId: USER_A.userId, receiptInput: '' }), /回执 bearer 明文/);
   // 被拒的调用不得留下回执或删除痕迹（A 的数据仍在）。
-  assert.equal(receipts.liveCount(), 0);
+  assert.equal(await receipts.liveCount(), 0);
   assert.equal((await favoritesStore.listFavoritesByOwner(USER_A.userId)).length, 1);
   assert.equal(deletion.audit().length, 0);
 
