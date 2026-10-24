@@ -1225,6 +1225,8 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const owned = requestsByUser.get(userId) ?? [];
       if (owned.length === 0) return null;
       const latestId = owned[owned.length - 1];
+      // 反查不到在途请求 id ⇒ 与「没有可取消请求」同义（fail-closed），不把 undefined 传给协调器。
+      if (latestId === undefined) return null;
       // 终态（completed / cancelled）时由协调器抛 OBJECT_UNAVAILABLE(409)；否则推进到 cancelled。
       coordinator.cancel(latestId);
       // 返回契约形状回执（state=cancelled），与 `receipt()` 同源，供路由直接投影。
