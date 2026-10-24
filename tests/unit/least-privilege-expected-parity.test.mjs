@@ -25,6 +25,16 @@
 //   ④ `GRANT EXECUTE ... TO gengyun_api_runtime` 的每个函数 ⇒ `function_surface_manifest`
 //      必须有一行 `kind = 'runtime'`（且本片两条清理函数必须两侧都在）。
 // 任一侧漂移都判红，并逐项点名（只说“不一致”无法定位）。
+//
+// R34 片 3（2026-10-24，#19 / #10 · OCR 注销闭集）加了**第三个**核对面：
+// `allow_table_dml(sch, tbl, priv)` 三元组清单。理由：`90-assert` 的断言 7 判的是「运行时在
+// `pg_class` 上实际持有的表级写权限 ⊆ 白名单」，而 `expected.del` 判的是「授权文本与清单一致」——
+// 两者是**两条独立判据**，漏一条就有第三种漂移形态：
+//   · 授了表级 DELETE、`expected.del = true`，但**忘了进** `allow_table_dml` ⇒ 断言 7 在真库上红，
+//     单测却全绿（这正是本片必须给 `ocr_jobs` / `ocr_records` 补三元组的原因）；
+//   · 白名单里写了三元组、但没有任何对应 GRANT ⇒ 白名单在描述一个不存在的权限（谎言式宽松）。
+// 本片的口径是**例外**：OCR 三表统一走表级 DELETE（用户 2026-10-24 批准，唯一例外）；
+// 识别/语音五张正文表的禁止面（0034 函数路线）**一字不动** —— 见上面那条禁止面测试。
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
@@ -284,4 +294,130 @@ test('反向控制：合成 SQL 任一侧漂移都会被点名（不是“永远
   assert.equal(kinds.get('delta'), 'runtime');
   assert.equal(kinds.get('epsilon'), 'internal', 'epsilon 登记成 internal ⇒ 与「授给运行时」冲突');
   assert.equal(kinds.get('zeta'), undefined, 'zeta 没有登记 ⇒ 必须被 unclassified 抓住');
+});
+
+/**
+ * 从 `90-assert` 的 `allow_table_dml(sch, tbl, priv) AS (VALUES …)` 取三元组。
+ *
+ * 形状：`    ('public', 'ocr_jobs',              'DELETE'),` —— 一行一条。
+ * 块边界 = 「起点」到其后第一处行首两个空格的 `),`（白名单内没有更深层的括号），
+ * 因此不会把 `expected` 里跨多行的记录或 `domain_manifest` 的单行三元组误收进来。
+ */
+export function allowTableDmlTriples(rawAssert) {
+  const sql = stripNoise(rawAssert);
+  const start = sql.indexOf('allow_table_dml(sch, tbl, priv) AS (VALUES');
+  if (start < 0) return [];
+  const end = sql.indexOf('\n  ),', start);
+  const block = end < 0 ? sql.slice(start) : sql.slice(start, end);
+  return [...block.matchAll(
+    /\(\s*'(public|catalog_ops|staging_intake)'\s*,\s*'([A-Za-z_][A-Za-z0-9_]*)'\s*,\s*'(INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER)'\s*\)/g,
+  )].map((match) => ({ schema: match[1], table: match[2], privilege: match[3] }));
+}
+
+/** OCR 三表：R34 片 3 起统一走**表级** DELETE（用户 2026-10-24 批准的例外，唯一一处新增删除面）。 */
+export const OCR_DELETE_TABLES = ['ocr_idempotency', 'ocr_jobs', 'ocr_records'];
+
+/**
+ * 三方核对面：授权文本（`GRANT DELETE`）/ `expected.del` / `allow_table_dml` 三元组。
+ * 三个方向各自返回**被点名的表名**，空数组才是绿。
+ */
+export function ocrDeleteParity(rawRoles, rawAssert) {
+  const granted = grantedDeleteTables(rawRoles);
+  const flags = expectedDeleteFlags(rawAssert);
+  const allowDelete = new Set(
+    allowTableDmlTriples(rawAssert)
+      .filter((row) => row.privilege === 'DELETE')
+      .map((row) => row.table),
+  );
+  return {
+    granted,
+    flags,
+    allowDelete,
+    /** 有授权/有登记但缺 `GRANT DELETE` 行。 */
+    missingGrant: OCR_DELETE_TABLES.filter((table) => !granted.has(table)),
+    /** 有 `GRANT DELETE` 但没进白名单 ⇒ 断言 7 会在真库上判红。 */
+    missingAllow: OCR_DELETE_TABLES.filter((table) => !allowDelete.has(table)),
+    /** 有 `GRANT DELETE` 但 `expected.del` 不是 true。 */
+    flagNotTrue: OCR_DELETE_TABLES.filter((table) => flags.get(table) !== true),
+  };
+}
+
+test('OCR 三表：GRANT DELETE ↔ expected.del ↔ allow_table_dml 三方一致（R34 片 3）', () => {
+  const rolesSql = readFileSync(ROLES_SQL_URL, 'utf8');
+  const assertSql = readFileSync(ASSERT_SQL_URL, 'utf8');
+  const parity = ocrDeleteParity(rolesSql, assertSql);
+
+  assert.deepEqual(parity.missingGrant, [],
+    `这些表在 expected / 白名单里登记了 DELETE，却没有 GRANT DELETE 行：${parity.missingGrant.join(' / ')}`);
+  assert.deepEqual(parity.missingAllow, [],
+    `这些表有表级 GRANT DELETE，却没进 allow_table_dml 白名单（断言 7 会在真库上判红）：`
+      + `${parity.missingAllow.join(' / ')}`);
+  assert.deepEqual(parity.flagNotTrue, [],
+    `这些表有表级 GRANT DELETE，90-assert 的 expected.del 却不是 true：${parity.flagNotTrue.join(' / ')}`);
+
+  // 覆盖方向**不止** OCR 三表：任何表级 DELETE 授权都不许漏登记。
+  assert.deepEqual([...parity.granted].filter((table) => !parity.allowDelete.has(table)).sort(), [],
+    '有表级 DELETE 却不在 allow_table_dml 白名单里 ⇒ 断言 7 必然在真库上红，单测必须先生红');
+
+  // 反向的「谎言式宽松」钉成读数：白名单里的 DELETE 只允许多出 `idempotency_keys`
+  // （它由 services/api/db/roles/auth_privacy.sql 授给运行时，不在 20-login-roles.sql 里）。
+  assert.deepEqual([...parity.allowDelete].filter((table) => !parity.granted.has(table)).sort(), ['idempotency_keys'],
+    '白名单里出现了没有任何 GRANT 支撑的 DELETE 三元组（白名单在描述一个不存在的权限）');
+});
+
+/** 合成变异用：把某张表 `expected` 记录里的 `del` 位（独占一行的 `true),`）改成 `false),`。 */
+function flipExpectedDelFlag(sql, table) {
+  // ⚠️ 必须锚在 `expected` 的记录头（表名独占一行、行尾逗号）—— `domain_manifest` 里也有
+  // `('ocr_records', 'granted', true),` 这种**单行**三元组，按子串找会锚错记录。
+  const startPattern = new RegExp(`\\n(\\s*)\\('${table}',\\s*\\n`);
+  const startMatch = startPattern.exec(sql);
+  assert.ok(startMatch !== null, `合成变异：${table} 必须出现在 expected 清单里（表名独占一行的记录头）`);
+  const flagPattern = /\n(\s+)true\),/g;
+  flagPattern.lastIndex = startMatch.index + startMatch[0].length;
+  const match = flagPattern.exec(sql);
+  assert.ok(match !== null, `合成变异：${table} 这条记录的 del 位必须是独占一行的 \`true),\``);
+  return `${sql.slice(0, match.index)}\n${match[1]}false),${sql.slice(match.index + match[0].length)}`;
+}
+
+test('反向变异自证：删 GRANT 行 / 把 del 改回 false / 抹掉白名单三元组 ⇒ 每一处都被点名', () => {
+  const rolesSql = readFileSync(ROLES_SQL_URL, 'utf8');
+  const assertSql = readFileSync(ASSERT_SQL_URL, 'utf8');
+
+  // 先证明基线确实是绿的（否则下面的"变异后变红"没有参照物）。
+  const baseline = ocrDeleteParity(rolesSql, assertSql);
+  assert.deepEqual([baseline.missingGrant, baseline.missingAllow, baseline.flagNotTrue], [[], [], []]);
+
+  // 变异 ①：删掉 `ocr_jobs` 的那一条表级 GRANT DELETE。
+  const droppedGrant = rolesSql.split('\n')
+    .filter((line) => !/^GRANT DELETE ON public\.ocr_jobs TO gengyun_api_runtime;$/.test(line.trim()))
+    .join('\n');
+  assert.notEqual(droppedGrant, rolesSql, '变异 ① 必须真的删掉了一行');
+  const afterDrop = ocrDeleteParity(droppedGrant, assertSql);
+  assert.deepEqual(afterDrop.missingGrant, ['ocr_jobs'], '删掉 GRANT 行后必须点名 ocr_jobs');
+  assert.deepEqual(afterDrop.missingAllow, [], '变异 ① 只该动"授权文本"这一面（白名单仍齐全）');
+
+  // 变异 ②：把 `ocr_records` 的 expected.del 改回 false（本片改动前就是这个值）。
+  const flipped = flipExpectedDelFlag(assertSql, 'ocr_records');
+  assert.notEqual(flipped, assertSql, '变异 ② 必须真的改了 del 位');
+  const afterFlip = ocrDeleteParity(rolesSql, flipped);
+  assert.deepEqual(afterFlip.flagNotTrue, ['ocr_records'], '把 del 改回 false 后必须点名 ocr_records');
+  assert.deepEqual(afterFlip.missingGrant, [], '变异 ② 只该动"expected 清单"这一面');
+
+  // 变异 ③：抹掉 allow_table_dml 里的 `('public','ocr_jobs','DELETE')` 三元组。
+  const droppedAllow = assertSql.split('\n')
+    .filter((line) => !/^\s*\('public', 'ocr_jobs',\s*'DELETE'\),?$/.test(line))
+    .join('\n');
+  assert.notEqual(droppedAllow, assertSql, '变异 ③ 必须真的删掉了一行');
+  const afterAllow = ocrDeleteParity(rolesSql, droppedAllow);
+  assert.deepEqual(afterAllow.missingAllow, ['ocr_jobs'], '抹掉三元组后必须点名 ocr_jobs（断言 7 会红）');
+  assert.deepEqual(afterAllow.missingGrant, [], '变异 ③ 只该动"白名单"这一面');
+
+  // 解析器自检：白名单块必须真被解析到（防「形状变了 ⇒ 返回空集 ⇒ missingAllow 恒为空」）。
+  const triples = allowTableDmlTriples(assertSql);
+  assert.ok(triples.length >= 18, `allow_table_dml 应至少 18 个三元组，实际解析到 ${triples.length} 个`);
+  assert.deepEqual(
+    triples.filter((row) => row.table.startsWith('ocr')).map((row) => `${row.table}:${row.privilege}`),
+    ['ocr_idempotency:DELETE', 'ocr_jobs:DELETE', 'ocr_records:DELETE'],
+    'OCR 三表在当前白名单里各恰好一条 DELETE 三元组',
+  );
 });

@@ -81,6 +81,19 @@ export interface IdempotencyRow {
 export type OcrJobMutation = (row: OcrJobRow) => OcrJobRow;
 export type OcrMutation = (row: OcrRow) => OcrRow;
 
+/**
+ * 按主体清空的**分表**真实行数（注销闭集，R34 片 3 / #19）。
+ *
+ * `records` = `ocr_jobs` + `ocr_records` 两表命中的行数之和（`ocr_records` 是 `ocr_jobs` 的产物，
+ * 语义上先删子行）；`idempotency` = 按 scope 首段清掉的幂等台账行数；`tableCounts` 逐表如实
+ * （键插入顺序 = 删除顺序），供证据串给审计看"到底哪张表删了几行"。
+ */
+export interface OcrOwnerPurgeCounts {
+  records: number;
+  idempotency: number;
+  tableCounts?: Readonly<Record<string, number>>;
+}
+
 export interface OcrStore {
   readonly persistent: boolean;
   insertJob(row: OcrJobRow): Promise<void>;
@@ -124,6 +137,21 @@ export interface OcrStore {
   releaseIdempotent(scope: string, keyHashHex: string): Promise<void>;
   /** 物理删除已到期台账条目。 */
   purgeIdempotent(now: Date): Promise<number>;
+  /**
+   * 按主体清空本域（账号注销闭集，R34 片 3 / #19）：**先子后父** `ocr_records` → `ocr_jobs`，
+   * 再按 scope 首段（主体 uuid + 换行）清 `ocr_idempotency`；三项同一事务，行数如实回报。
+   *
+   * 为什么可以直接 `DELETE`：本片起 OCR 三表 DELETE 走**表级**授权（用户 2026-10-24 批准的
+   * 例外，见 `deploy/postgres-cvm/sql/20-login-roles.sql` 的 R34 段与 `90-assert` 的
+   * `allow_table_dml` 三元组），因此这里是真删除、由 `RETURNING` 取真实行数，
+   * ⛔ 不用"影响 0 行"冒充"清完了"。
+   *
+   * **可选**：旧替身/注入实现不提供时，装配处「调用即抛」由删除协议折叠成
+   * `blocked` + `HANDLER_FAILED`（⛔ 不静默算完成、不记 0 行）。
+   */
+  purgeOwnerData?(ownerId: string): Promise<OcrOwnerPurgeCounts>;
+  /** 上一条的简化形态（注销协议的 `deleteAllByOwner`）：只回报正文表行数。 */
+  deleteAllByOwner?(ownerId: string): Promise<number>;
 }
 
 function cloneVerification(verification: OcrVerificationDocument): OcrVerificationDocument {
@@ -165,6 +193,39 @@ export function createMemoryOcrStore(): OcrStore {
   const ocrRows = new Map<string, OcrRow>();
   const idempotency = new Map<string, IdempotencyRow>();
   const composite = (scope: string, keyHashHex: string): string => `${scope}\u0000${keyHashHex}`;
+  /**
+   * 按主体清空（注销闭集，R34 片 3 / #19）：**先子后父** —— 先 `ocr_records` 再 `ocr_jobs`
+   * （records 是 jobs 的产物；两表之间没有外键，顺序按语义而非约束），最后按 scope 首段清台账。
+   * 行数逐表如实回报，⛔ 不把"内存里没有"记成"已清 0 行所以完成"。
+   */
+  const purgeOwnerData = async (ownerId: string): Promise<OcrOwnerPurgeCounts> => {
+    let recordsRemoved = 0;
+    for (const [ocrId, row] of [...ocrRows]) {
+      if (row.ownerUserId !== ownerId) continue;
+      ocrRows.delete(ocrId);
+      recordsRemoved += 1;
+    }
+    let jobsRemoved = 0;
+    for (const [jobId, row] of [...jobs]) {
+      if (row.ownerUserId !== ownerId) continue;
+      jobs.delete(jobId);
+      jobsRemoved += 1;
+    }
+    // 幂等台账没有主体列：`idempotencyScope()` 的 scope 首段恒为主体 uuid + `\n`，
+    // 而 Map 键是 `composite(scope, keyHash)` ⇒ 直接按前缀判断。
+    let idempotencyRemoved = 0;
+    const scopePrefix = `${ownerId}\n`;
+    for (const key of [...idempotency.keys()]) {
+      if (!key.startsWith(scopePrefix)) continue;
+      idempotency.delete(key);
+      idempotencyRemoved += 1;
+    }
+    return {
+      records: recordsRemoved + jobsRemoved,
+      idempotency: idempotencyRemoved,
+      tableCounts: { ocr_records: recordsRemoved, ocr_jobs: jobsRemoved },
+    };
+  };
   return {
     persistent: false,
     async insertJob(row) {
@@ -244,6 +305,10 @@ export function createMemoryOcrStore(): OcrStore {
         }
       }
       return removed;
+    },
+    purgeOwnerData,
+    async deleteAllByOwner(ownerId) {
+      return (await purgeOwnerData(ownerId)).records;
     },
   };
 }

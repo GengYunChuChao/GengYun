@@ -1230,7 +1230,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','revision','kind','owner_user_id','ocr_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],
      ARRAY['revision','state','deadline_at','updated_at','error_code'],
-     false),
+     true),
     ('ocr_records',
      ARRAY['id','revision','owner_user_id','media_id','media_revision','raw_fields',
            'corrected_fields','verification','model_version','created_at','updated_at','deleted'],
@@ -1238,7 +1238,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            'corrected_fields','verification','model_version','created_at','updated_at','deleted'],
      ARRAY['revision','raw_fields','corrected_fields','verification','model_version',
            'updated_at','deleted'],
-     false),
+     true),
     ('ocr_idempotency',
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
      ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
@@ -1455,7 +1455,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 「桶删除被确认成功 ⇒ 删掉那一行」，且按对象键摘要整行删（PG 无列级 DELETE）。
     -- 若这里判红（即有人给别的表加了表级写权），先查是不是把清理台账改成了只增不删。
     -- 本片新增后，表级写授权白名单为 16 个三元组。
-    ('public', 'media_object_cleanup',  'DELETE')
+    ('public', 'media_object_cleanup',  'DELETE'),
+    -- R34 片 3（#19 / #10）：OCR 三表统一走**表级** DELETE（用户 2026-10-24 批准的例外，
+    -- 也是本清单唯一一处新增的删除面）。理由：PG 没有列级 DELETE，而 `ocr_jobs` /
+    -- `ocr_records` 此前只有列级 SELECT/INSERT/UPDATE ⇒ 运行时角色**删不掉**这两张表的任何行，
+    -- 账号注销的 OCR 闭集只能绕 `SECURITY DEFINER`；批准后改由 `ocr/store-pg.ts` 的
+    -- `purgeOwnerData` 直接 DELETE（先 `ocr_records` 后 `ocr_jobs`，再按 scope 首段清
+    -- `ocr_idempotency`，三表同一事务、行数如实回报）。
+    -- ⛔ 例外**仅限**这两张表：`public.media` 仍然完全不授 DELETE（状态机删除 / 0035 窄函数），
+    -- 若这里判红，先查是不是有人把别的表也改成了表级写权。
+    -- 本片新增后，表级写授权白名单为 18 个三元组。
+    ('public', 'ocr_jobs',              'DELETE'),
+    ('public', 'ocr_records',           'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
@@ -2123,6 +2134,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- 从「一张表、全部类型」改成「(schema, 表, 权限类型) 三元组白名单」：
   --   表在清单里但类型不在 ⇒ 仍然失败（例：GRANT UPDATE ON community_likes ⇒ 红）。
   -- 表级 INSERT/UPDATE 仍处处禁止（它们都有列级替代；GREATEST 语义不适用）。
+  -- R34 片 3（#19 / #10）扩写：**OCR 三表统一走表级 DELETE**（`ocr_idempotency` 原本就是，
+  -- `ocr_jobs` / `ocr_records` 本片补上）——这是**用户 2026-10-24 批准的例外**，理由同上
+  -- （PG 无列级 DELETE；注销闭集要按主体物理删除，而这两张表此前只有列级 SELECT/INSERT/UPDATE
+  -- ⇒ 运行时删不掉任何行）。白名单因此从 16 个三元组长到 18 个；⛔ 判据本身没放松：
+  -- 白名单以外的任何表级写权限（含给 `public.media` 加 DELETE）照样判红。
   -- 注：PG17 的 MAINTAIN 属于维护类而非写入类，且 PG16 无此记号（写死会
   -- 让旧版本 psql 直接报错），故不纳入本断言。
   SELECT 'table_dml_allowlist',

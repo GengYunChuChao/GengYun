@@ -29,7 +29,7 @@
 | 3 | §5 G1／G2／G3、§7 P0-1 | 「消息域**没有按主体清理原语**」／「消息幂等台账**无按主体清理**」 | 已补（#390／#397）：`messages/store.ts:104,105,313,318` 与 `messages/store-pg.ts:430,437` 的 `deleteAllByOwner`／`purgeOwnerData`，同一事务内 `DELETE FROM public.messages WHERE owner_id = $1::uuid RETURNING id`（`:230`）＋ 按 scope 前缀删 `public.idempotency_keys`（`:234`） |
 | 4 | §5 G5／G6、§7 P0-3 | 「会话域注销协调器**已建未驱动**」 | 已按 P0-3 的**路径①**落地（#397）：`conversations` 进 `USER_DATA_DELETION_MODULES`（`user-data-deletion.ts:93-98` 四域）并注册（`:454`），备份清单亦有 `snapshotOwner`（`conversations/store-pg.ts:445`） |
 
-- **仍然有效、本片不动**的条目：G4（`0019` 迁移注释）／G7（社区域无原语、无 scope）／G10（`real` 注销 HTTP 面整域 503，`app.ts:1775-1783`）／G11（审计与回执台账仍在进程内，`user-data-deletion.ts:301`）；§4.1 第 2 条「再受理被 `G0003` 拒」（`0016:112-114`）也未变。
+- **仍然有效、本片不动**的条目：G4（`0019` 迁移注释）／G7（社区域无原语、无 scope）／G10（`real` 注销 HTTP 面整域 503，`app.ts:1775-1783`）／G11（审计与回执台账仍在进程内，`user-data-deletion.ts:328`）；§4.1 第 2 条「再受理被 `G0003` 拒」（`0016:112-114`）也未变。
 - **口径澄清（G10 旁）**：`real` 模式的「整域 503」只对**注销 HTTP 面**成立。**消息域**的现行口径是 `real` + 有连接池 ⇒ 接 PG（`services/api/src/app.ts:752-772`：`pool === null` 才把服务置 `null` ⇒ 503），与 `docs/architecture/contract-implementation-status.md` 的 `listMessages` 行「`real` 且无连接池 ⇒ 整域 503，`real` + 池 ⇒ 迁移 `0019` 与 `store-pg.ts`」一致。任何把「real 模式消息域整域 503」写成无条件的句子都是过期口径。
 
 ### 1.2 `README.md`

@@ -54,7 +54,7 @@ import {
   type OcrVerification,
   type RegistryLookup,
 } from './state.ts';
-import type { OcrJobRow, OcrRow, OcrStore } from './store.ts';
+import type { OcrJobRow, OcrOwnerPurgeCounts, OcrRow, OcrStore } from './store.ts';
 
 /** 任务截止时间（毫秒）：超过即 timed_out，且迟到结果不复活任务。 */
 export const DEFAULT_JOB_DEADLINE_MS = 30 * 1000;
@@ -952,6 +952,23 @@ export function createOcrService(options: OcrServiceOptions) {
     deleteOcr,
     deleteOcrWithRevision,
     settle,
+    /**
+     * 注销闭集（R34 片 3 / #19）：把**路由正在用的那一份** store 的按主体清空原语透出去。
+     *
+     * 为什么经服务转出、而不是让装配层直接拿 store：`app.ts` 不许引用 OCR 适配器模块
+     * （`tests/integration/ocr-http.mjs` 的原文子串禁项，注释也算），而 store 实例只在
+     * `routes/ocr.ts` 里按执行模式选定（内存 vs PG）。注销请求必然晚于装配完成，
+     * 因此装配层在**调用期**取本方法即可拿到同一实例（⛔ 不另建第二个 store，
+     * 否则内存模式下等于清另一份空数据却照报"已清 N 行"）。
+     * 缺原语 ⇒ **调用即抛**，由删除协议折叠成 `blocked` + `HANDLER_FAILED`（⛔ 不静默算完成）。
+     */
+    purgeOwnerData: async (ownerId: string): Promise<OcrOwnerPurgeCounts> => {
+      const purge = store.purgeOwnerData;
+      if (typeof purge !== 'function') {
+        throw new Error('OCR 域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空');
+      }
+      return purge.call(store, ownerId);
+    },
     /** 供证据文档/诊断：当前提供者与各端口标注。 */
     describe: () => ({
       executionMode: provider.executionMode,
