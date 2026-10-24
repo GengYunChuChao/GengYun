@@ -24,21 +24,25 @@ const STATUS_FILE = 'docs/architecture/contract-status.json';
 // 与 tools/verify-contract-status.mjs 的 ANCHOR_TOLERANCE 同口径：区间裁掉声明行后的空行/注释属常见形态。
 const ANCHOR_TOLERANCE = 2;
 
-// 2 条 planned operation 的豁免登记，**条数钉死**：新增/删除都必须改这里并在证据页留痕。
+// 1 条 planned operation 的豁免登记，**条数钉死**：新增/删除都必须改这里并在证据页留痕。
 // owner 取自主仓库任务台账（docs/initial-issues.json）的责任项；why 说明为什么只能给计划证据。
-// 2026-10-25（GY-I04）：`verifyRegistration` 已装配 HTTP 路由（`route_mounted=true`、`status=partial`），
-// 故从其豁免表移除；本守卫的「空证据 ⇒ 必须 planned 且已登记」规则不变，只随事实更新条数。
+// 2026-10-25 合流（GY-I04 ＋ GY-I19 取并集）：`verifyRegistration`（GY-I04）与 `listExports`（GY-I19）
+// 都已装配 HTTP 路由（`route_mounted=true`、`status=partial`）并各自补齐实现证据，故双双从豁免表移出；
+// 空证据操作由基座 `6fb0b131` 的 3 条 → 并集 1 条（只剩 `listSpecies`）。
+// 本守卫的「空证据 ⇒ 必须 planned 且已登记」规则不变，只随事实更新条数。
 const PLANNED_EXEMPT = Object.freeze({
   listSpecies: Object.freeze({
     owner: 'GY-I05 目录装配（crops/regions/species 同族）',
     why: '契约与参考层均已就位（packages/reference/service.mjs 有返回 PageEnvelope 的 listSpecies），但产品路由未装配，HTTP 层无实现证据可引。',
     plan_ref: Object.freeze({ path: 'packages/reference/service.mjs', lines: '61-71', symbol: 'listSpecies' }),
   }),
-  listExports: Object.freeze({
-    owner: 'GY-I19 导出与注销',
-    why: '路由已装配（`route_mounted=true`，app.ts 一处 import ＋ 一处注册），`status`/`evidence` 待监工改判，故仍列 planned 豁免；plan_ref 指向账本读面 listExportsForUser。',
-    plan_ref: Object.freeze({ path: 'packages/privacy/egress.mjs', lines: '402-404', symbol: 'listExportsForUser' }),
-  }),
+  // `verifyRegistration`（GY-I04）已从本豁免表**移出**：台账改判 `partial` 并补了 6 条实现证据
+  // （routes/registrations.ts 端点 + registrations/service.ts + verify/verify-http 各 2 条单测），
+  // 不再属「planned 零证据」，依据见 docs/architecture/contract-status.json 与 PR #561。
+  //
+  // `listExports`（GY-I19）已从本豁免表**移出**：台账改判 `partial` 并补了 4 条实现证据
+  // （routes/exports.ts + privacy/exports-list.ts + 两条单测），不再属「planned 零证据」。
+  // 改判依据与未取得项见 docs/verification/gy-r35-i19-exports-ledger-20261025.md。
 });
 
 const readText = path => readFileSync(resolve(ROOT, path), 'utf8');
@@ -110,17 +114,17 @@ export function audit(ledger, exemptions = PLANNED_EXEMPT) {
 
 const ledger = JSON.parse(readText(STATUS_FILE));
 
-test('f4 正控制：仓内台账与 2 条 planned 豁免登记自洽（0 违规）', () => {
+test('f4 正控制：仓内台账与 1 条 planned 豁免登记自洽（0 违规）', () => {
   assert.deepEqual(audit(ledger), []);
   // 守卫自身的反向断言：扫空台账/扫空集合都能「很绿」，所以先钉住扫描面。
   assert.ok(ledger.operations.length > 100, `解析出的 operations 只有 ${ledger.operations.length} 条，疑似读错台账`);
   const emptyEvidenceIds = ledger.operations.filter(entry => evidenceOf(entry).length === 0).map(entry => entry.id);
   assert.ok(emptyEvidenceIds.length > 0, '空证据集合为空：守卫没扫到任何 planned 缺口，等于没测');
-  assert.equal(Object.keys(PLANNED_EXEMPT).length, 2, '豁免登记条数钉死为 2；新增/删除必须同步证据页');
+  assert.equal(Object.keys(PLANNED_EXEMPT).length, 1, '豁免登记条数钉死为 1；新增/删除必须同步证据页');
   assert.deepEqual(
     ledger.operations.filter(entry => emptyEvidenceIds.includes(entry.id)).map(entry => entry.status),
-    ['planned', 'planned'],
-    '2 条空证据操作必须仍是 planned（verifyRegistration 已于 GY-I04 装配并转入 partial）',
+    ['planned'],
+    '1 条空证据操作必须仍是 planned（verifyRegistration 已于 GY-I04、listExports 已于 GY-I19 装配并转入 partial）',
   );
 });
 
@@ -158,7 +162,7 @@ test('f5 非空证据全是弱锚（只有 path）⇒ 红在「全部无锚」',
 });
 
 test('plan_ref 落点与工具同口径：symbol 必须落在引用区间 ±2 行内', () => {
-  // 直接核对 2 条登记在**当前仓库**里的实际行号，防止「路径对、行号飘」被正控制掩盖。
+  // 直接核对 1 条登记在**当前仓库**里的实际行号，防止「路径对、行号飘」被正控制掩盖。
   for (const [id, entry] of Object.entries(PLANNED_EXEMPT)) {
     assert.deepEqual(planRefViolations(id, entry), [], `${id} 的 plan_ref 不可核`);
     const text = readText(entry.plan_ref.path);
