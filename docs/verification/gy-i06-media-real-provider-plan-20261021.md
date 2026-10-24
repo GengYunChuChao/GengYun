@@ -49,7 +49,7 @@
 | --- | --- |
 | `services/api/src/config.ts` 里**没有**任何 `OCR_*` / `ASR_*` / `TTS_*` / `MODERATION_*` 键 | `grep OBJECT_STORAGE_`/`OCR_` 在 `services/api/src/config.ts` 零命中（媒体域是唯一在 `REQUIRED_WHEN_REAL` 里登记存储键的域） |
 | 模型的端点白名单不放在 `config.ts`，放在 `tools/ai-config.mjs` 的 `AI_ENDPOINTS`；发送前再断言 host + 全串相等 | 规范 §2.4 |
-| 全仓 `process.env` 直读只剩三处：`RECOGNITION_PROVIDER_URL`/`RECOGNITION_PROVIDER_KEY`（`services/api/src/app.ts:969-970`）、`APP_KNOWLEDGE_UNVERIFIED_SEED`（`services/api/src/app.ts:1331`、`services/api/src/routes/knowledge.ts:163`）、`DATABASE_URL`（`services/api/src/db/migrate.ts:277`） | 逐处 `grep` 实测 |
+| 全仓 `process.env` 直读只剩三处：`RECOGNITION_PROVIDER_URL`/`RECOGNITION_PROVIDER_KEY`（`services/api/src/app.ts:1062-1063`）、`APP_KNOWLEDGE_UNVERIFIED_SEED`（`services/api/src/app.ts:1620`、`services/api/src/routes/knowledge.ts:163`）、`DATABASE_URL`（`services/api/src/db/migrate.ts:277`） | 逐处 `grep` 实测（2026-10-25 按符号在 `upstream/main`=`46dc7e0d` 树重取行号） |
 
 **媒体域与四域的结构差异（这决定了方案形状）**：
 

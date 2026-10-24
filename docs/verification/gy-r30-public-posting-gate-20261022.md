@@ -212,7 +212,7 @@ git_dirty_lines=0
 | 5 | `listConsents` 的响应只回**已存在**的授权记录（含 `policy_version`）；从未授予过的用途**没有记录** ⇒ 拿不到版本号 | `packages/contracts/openapi.json:12368-12399`（`Consent` 形状）；`services/api/src/routes/consents.ts:40-49` |
 | 6 | 闸的判定读的是 `privacy_epochs`（`current_epoch>0`）；该类行**只有授予路径才会创建**，注册/登录不预置 | `services/api/src/privacy/consent-pg.ts:140-146`；全仓唯一写入点 `services/api/src/privacy/grant-pg.ts:106`（排除测试后 `INSERT INTO privacy_epochs` 仅此一处） |
 | 7 | 客户端对 `/me/consents` **零调用**（全仓仅注释引用） | `miniprogram/utils/identify-api.js:202`；`miniprogram/pages/profile/profile.wxml:162-165` |
-| 8 | 客户端 403 文案已写好，但**没有动作可给** | `miniprogram/utils/community-api.js:366`（"社区公开发布需要「公开发布」用途授权，未授权时不会发布"——只陈述，不给路径） |
+| 8 | 客户端 403 文案已写好，但**没有动作可给** | `miniprogram/utils/community-api.js:403`（"社区公开发布需要「公开发布」用途授权，未授权时不会发布"——只陈述，不给路径） |
 | 9 | 客户端自承"契约缺用途政策读取面"，且刻意不写"去授权"以免指向不存在的功能 | `miniprogram/utils/identify-api.js:960-961`、`:202-205`、`profile.wxml:162-165` |
 | 10 | 契约台账**已经**把 `grantConsent` 记为 `partial`，理由正是"该 purpose 的已核验可用政策行须先落入 `consent_policies`，否则 403" | `docs/architecture/contract-implementation-status.md:61`（另 `:60` 记 `listConsents` 为 partial） |
 
