@@ -173,7 +173,7 @@
         拍摄照片、录音和位置信息都需要您单独授权；未获得授权时不会上传或外发，也不会用替身结果顶替。
       </view>
       <view class="card-text">
-        应用内的授权与撤回入口尚未接入，因此本页暂不提供授权开关；在入口接入前不会默认替您授权。
+        应用内可以查看授权清单（只读，入口在本页末尾），但授予与撤回入口尚未接入，因此本页暂不提供授权开关；在入口接入前不会默认替您授权。
       </view>
     </view>
   </view>
@@ -189,5 +189,22 @@
       action-text="{{guest ? '去登录' : ''}}"
       bind:action="onLogin"
     ></state-view>
+  </view>
+
+  <!-- 授权清单入口（GY-R34 / #29 P1，只读）：跳到 pages/consent/consent 读 `GET /me/consents`。
+       只放入口、不放开关：授予与撤回（`POST` / `DELETE /me/consents`）属于 P2，
+       入口文案因此只说"查看"，不承诺能改授权。游客看该页时会被它自己的登录门禁拦住。 -->
+  <view class="section" wx:if="{{!guest}}">
+    <view class="section-head">
+      <view class="section-head__title">授权清单</view>
+    </view>
+    <view class="panel">
+      <view class="setting-row" bindtap="openConsent" role="button" aria-label="查看授权清单（只读）">
+        <text class="setting-row__label">各用途的授权状态</text>
+        <text class="setting-row__value">只读查看</text>
+        <view class="gy-icon gy-icon--arrow"></view>
+      </view>
+      <view class="demo-caption">清单由服务端按当前账号返回（用途、状态、政策版本与更新时间），本页不缓存、不代填；授予与撤回尚未接入。</view>
+    </view>
   </view>
 </view>

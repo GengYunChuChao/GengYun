@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.ts';
 import type { PgPool } from '../db/pool.ts';
 import type { AuthGuards } from '../auth/middleware.ts';
@@ -8,10 +8,24 @@ import { readBearerToken } from '../auth/tokens.ts';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { CONSENT_PURPOSES, createPostgresConsentService, type EgressRevoker } from '../privacy/consent-pg.ts';
+import { createPrivacyPolicyReaderForPool, type PrivacyPolicyReader } from '../privacy/privacy-policy.ts';
 import { buildMeta } from './support.ts';
+
+/**
+ * 只在 `onRequest` 写 `Cache-Control: no-store`：成功与错误分支（401/503 等）都必须 no-store，
+ * 只在 handler 里写会让错误响应失去该头。口径与 `routes/community.ts:181-183` 逐字一致。
+ *
+ * 同文件既有的三条 `/me/consents` 路由仍在 handler 里写同头（`consents.ts:38,48,63`）；本片只在
+ * **新路由**上采用 hook 口径，不改既有三条 —— 缩小 diff、不挪既有台账锚点。
+ */
+const noStoreHook = async (_request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+  reply.header('Cache-Control', 'no-store');
+};
 
 export function registerConsentRoutes(app: FastifyInstance, config: AppConfig, pool: PgPool | null, guards: AuthGuards, testOptions: { allowSyntheticGrantPolicy?: boolean; egressRevoker?: EgressRevoker } = {}): void {
   const service = pool === null ? null : createPostgresConsentService(pool, config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, testOptions);
+  // 未接线（无连接池）⇒ 读面 fail-closed 503，不返回「没有政策」冒充确定空态。
+  const policyReader: PrivacyPolicyReader = createPrivacyPolicyReaderForPool(pool);
   const input = (request: FastifyRequest) => {
     const token = readBearerToken(request.headers.authorization);
     if (token === null) throw new ApiError('SESSION_REQUIRED', '需要用户会话');
@@ -61,5 +75,24 @@ export function registerConsentRoutes(app: FastifyInstance, config: AppConfig, p
     if (typeof ifMatch !== 'string' || !/^"[1-9][0-9]*"$/.test(ifMatch)) throw new ApiError('INVALID_REQUEST', '授权版本格式无效');
     const data = await requireService().withdraw(input(request), { purpose: (request.params as { purpose: string }).purpose, ifMatch, idempotencyKey: key });
     return reply.header('ETag', `"${data.revision}"`).header('Cache-Control', 'no-store').send({ data, meta: buildMeta(request, config) });
+  });
+  /**
+   * 隐私政策读面（契约 `getPrivacyPolicy`；台账行见 `docs/architecture/contract-status.json`）。
+   *
+   * 为什么追加在本文件末尾而不是去 `app.ts` 里新注册：`app.ts` 当前被多条在飞分支同时修改，
+   * 且台账里大量证据锚点指向它；本路由与同文件的 `/me/consents` 同属 `me` scope
+   * （契约 `security: userSession`），追加进本文件零冲突，也不挪动既有锚点。
+   *
+   * 空态、错误分级与「多版本为何判错」见 `privacy/privacy-policy.ts` 文件头：
+   * 无政策行 ⇒ 200 + `version: 'unpublished'`（诚实空态）；无连接池或行不符契约形状 ⇒
+   * 503 `PROVIDER_UNAVAILABLE`（fail-closed）。
+   */
+  app.get(`${API_PREFIX}/me/privacy-policy`, {
+    onRequest: noStoreHook,
+    preHandler: guards.requireUser,
+    schema: { querystring: { type: 'object', additionalProperties: false } },
+  }, async (request, reply) => {
+    const data = await policyReader.read();
+    return reply.send({ data, meta: buildMeta(request, config) });
   });
 }

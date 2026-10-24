@@ -1,0 +1,17 @@
+/* 授权清单页的局部排版（GY-R34 / #29 P1，只读）。
+ *
+ * 只补样式层没有的两处：① 授权记录是多行元信息，行内需要顶对齐（`.info-row` 默认居中）；
+ * ② 说明区多段之间需要段间距。颜色与字号一律取 styles/tokens.wxss 的变量，本文件不新造色值，
+ * 也不写裸 px 字号（字号放大统一走 --font-scale）。
+ */
+.consent-row {
+  align-items: flex-start;
+}
+
+.consent-row .info-row__desc + .info-row__desc {
+  margin-top: 2px;
+}
+
+.card-text + .card-text {
+  margin-top: 10px;
+}

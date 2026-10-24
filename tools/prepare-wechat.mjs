@@ -197,6 +197,9 @@ try {
     //   qa-api：POST /conversations、POST /conversations/{id}/turns（TextTurnInput）、
     //           GET /jobs/{id}、GET /conversations/{id}/turns 的消费层 + 回答可展示性闸门。
     'utils/qa-api.js',
+    // 授权清单读取层（GY-R34 / #29 P1，只读 GET /me/consents）：consent 页依赖它；
+    // 漏加会导致标准包 MODULE_NOT_FOUND。（授予/撤回属 P2，届时才需要新的写层，本清单不预置。）
+    'utils/consent-api.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',
@@ -258,6 +261,8 @@ try {
     'pages/voice/voice',
     // 文字提问页（GY-I12）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
     'pages/qa/qa',
+    // 授权清单页（GY-R34 / #29 P1，只读）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
+    'pages/consent/consent',
   ];
   if (JSON.stringify(app.pages) !== JSON.stringify(pages)) throw new Error('Unexpected page routes; review packaging allowlist.');
   for (const page of pages) {

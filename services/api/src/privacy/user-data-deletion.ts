@@ -138,6 +138,21 @@ export const RECOGNITIONS_DELETION_MODULE = 'recognitions';
  * 存储层原本同样零命中按主体清空原语）。
  */
 export const SPEECH_DELETION_MODULE = 'speech';
+/**
+ * R34 片 3（#19 / #10）· OCR 域：条件追加的**第四个**域（`ocr_jobs` / `ocr_records` /
+ * `ocr_idempotency` 三张表）。
+ *
+ * 与前两片**方向相反**的一条事实，必须在代码里写清：识别/语音域刻意零表级 DELETE、清理走
+ * 迁移 0034 的 `SECURITY DEFINER` 函数；OCR 三表则由**用户 2026-10-24 批准**改走**表级**
+ * `GRANT DELETE`（唯一例外），因此本域的原语是**直接 DELETE**
+ * （`ocr/store-pg.ts` 的 `purgeOwnerRows`：同一事务、`RETURNING` 取真实行数、先 `ocr_records`
+ * 后 `ocr_jobs`、再按 scope 首段清台账）。
+ *
+ * 装配方式仍与社区/识别/语音域一致：**装配处条件追加**（注入了 `ocrStore` 才进闭集），
+ * 生产装配处（`app.ts`）无条件注入 ⇒ 真实注销路径的有效闭集 = 4 + community + recognitions +
+ * speech + ocr = **8 项**。⚠️ 同一代价：漏注入 ⇒ 静默回到更小的闭集（已列待裁定，见证据页）。
+ */
+export const OCR_DELETION_MODULE = 'ocr';
 
 /**
  * 必需模块闭集。
@@ -156,9 +171,10 @@ export const USER_DATA_DELETION_MODULES = [
 /**
  * **写落库在线清除证据**的模块（迁移 0031 的唯一写路径按模块名逐条追加）。
  *
- * 为什么不直接用 `USER_DATA_DELETION_MODULES` 当闸门：本片新增的识别/语音两域与社区域一样
- * 走「装配处条件追加」，不在常量闭集里；但它们的在线清除**同样是**「按主体删了 N 行」这个事实，
- * 必须能被审计按 `(requestId, module, removed, idempotency)` 独立复算 —— 所以证据照写。
+ * 为什么不直接用 `USER_DATA_DELETION_MODULES` 当闸门：条件追加的四个域（社区 / 识别 / 语音 /
+ * OCR）走「装配处条件追加」，不在常量闭集里；但它们的在线清除**同样是**「按主体删了 N 行」这个
+ * 事实，必须能被审计按 `(requestId, module, removed, idempotency)` 独立复算 —— 所以证据照写
+ * （OCR 域额外带 `tables:` 分表读数，见 {@link OwnerPurgeCounts.tableCounts}）。
  *
  * 为什么社区域**不在**本表：F13 要求「保留 + 脱敏」，它没有"清空行数"这个事实，
  * 拿它的处理行数当在线清除证据就是冒充。
@@ -170,6 +186,7 @@ export const ONLINE_EVIDENCE_MODULES = [
   ...USER_DATA_DELETION_MODULES,
   RECOGNITIONS_DELETION_MODULE,
   SPEECH_DELETION_MODULE,
+  OCR_DELETION_MODULE,
 ] as const;
 
 /**
@@ -186,12 +203,22 @@ export const CONDITIONAL_DELETION_MODULES = [
   COMMUNITY_DELETION_MODULE,
   RECOGNITIONS_DELETION_MODULE,
   SPEECH_DELETION_MODULE,
+  OCR_DELETION_MODULE,
 ] as const;
 
 /** 按主体清理的**分表**真实行数：正文表与幂等台账各计各的（两项都进在线清除证据）。 */
 export interface OwnerPurgeCounts {
   records: number;
   idempotency: number;
+  /**
+   * R34 片 3（#19 / #10）· **分表**真实行数（只给有多张正文表的域，当前只有 OCR）。
+   *
+   * 为什么单列：`records` 是 `ocr_jobs` + `ocr_records` 的**合计**，审计看不出"到底哪张表删了
+   * 几行"；而这三张表的 DELETE 是本片唯一一处新增授权面，行数必须能逐表复算。
+   * 证据串追加 `;<module>:tables:<k>=<n>,<k>=<n>`（键顺序 = 删除顺序，先子后父）。
+   * 缺省（旧模块/旧替身）⇒ 不追加任何字符，既有证据串逐字不变。
+   */
+  tableCounts?: Readonly<Record<string, number>>;
   /**
    * 社区域（F13 保留规则）追加的读数：正文原样保留的行数。**保留不是删除**，
    * 因此不并进 `records`；证据串里单列 `<module>:retained:<n>`，避免拿"处理行数"冒充保留结果。
@@ -358,6 +385,15 @@ export interface UserDataDeletionDeps {
   recognitionsStore?: OwnerPurgeStore;
   /** #19（延续片）· 语音域（`speech_jobs` / `transcriptions` / `speech_idempotency`）。可选，理由同上。 */
   speechStore?: OwnerPurgeStore;
+  /**
+   * R34 片 3（#19 / #10）· OCR 域（`ocr_jobs` / `ocr_records` / `ocr_idempotency`）。可选，理由同上。
+   *
+   * ⚠️ 与识别/语音域的一处关键差别：那两域零表级 DELETE（清理走 0034 的函数），OCR 三表则由
+   * **用户 2026-10-24 批准**走**表级** `GRANT DELETE` 例外 ⇒ 这里的原语是真 `DELETE`。
+   * 装配处仍须给**路由正在用的那一份** store（`app.ts` 经 `app.ocrService.purgeOwnerData`
+   * 调用期取，不另建实例）；不注入 ⇒ 闭集逐字保持本片之前的行为。
+   */
+  ocrStore?: OwnerPurgeStore;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
   /**
@@ -526,6 +562,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     [COMMUNITY_DELETION_MODULE, input.communityStore],
     [RECOGNITIONS_DELETION_MODULE, input.recognitionsStore],
     [SPEECH_DELETION_MODULE, input.speechStore],
+    [OCR_DELETION_MODULE, input.ocrStore],
   ];
   for (const [conditionalModule, conditionalStore] of conditionalStores) {
     if (conditionalStore !== undefined) requiredModules.push(conditionalModule);
@@ -668,6 +705,15 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
         // 台账也清了 ⇒ 两个计数都写进证据（不能只报正文行数就宣告该模块在线清除完成）。
         evidenceRef = `${evidenceRef};${module}:idempotency-purged:${purged.idempotency}`;
       }
+      // R34 片 3（#19 / #10）· 分表真实行数：只给提供了 `tableCounts` 的域（当前只有 OCR）。
+      // 键顺序 = 实现给出的删除顺序（先子后父），⛔ 不排序 —— 审计要能按顺序读回"先删子行"。
+      const tableCounts = purged.tableCounts;
+      if (tableCounts !== undefined) {
+        const parts = Object.entries(tableCounts)
+          .filter(([, count]) => typeof count === 'number' && Number.isSafeInteger(count) && count >= 0)
+          .map(([table, count]) => `${table}=${count}`);
+        if (parts.length > 0) evidenceRef = `${evidenceRef};${module}:tables:${parts.join(',')}`;
+      }
       if (retained !== null) evidenceRef = `${evidenceRef};${module}:retained:${retained}`;
       if (redacted !== null) evidenceRef = `${evidenceRef};${module}:redacted:${redacted}`;
       if (hiddenMedia !== null) evidenceRef = `${evidenceRef};${module}:media-hidden:${hiddenMedia}`;
@@ -797,6 +843,22 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     coordinator.registerModule(
       SPEECH_DELETION_MODULE,
       makeHandler(SPEECH_DELETION_MODULE, input.speechStore),
+    );
+  }
+  // R34 片 3 · OCR 域（三表：`ocr_records` → `ocr_jobs` → `ocr_idempotency`）：**注入才注册**
+  // （闭集同步追加，见 `OCR_DELETION_MODULE` 注释）。
+  // ⚠️ 与识别/语音域的**方向相反处**：本域的表级 DELETE 是**用户 2026-10-24 批准**的例外
+  // （`20-login-roles.sql` R34 段 + `90-assert` 的 `allow_table_dml` 三元组），所以存储原语是
+  // 真 `DELETE … RETURNING`（`ocr/store-pg.ts::purgeOwnerRows`），不是 0034 那类窄函数。
+  // 走 `purgeOwnerData` ⇒ 证据串带 `ocr:online-purged:<两表真实删除行数之和>`、
+  // `ocr:idempotency-purged:<台账行数>`，以及 `ocr:tables:ocr_records=<n>,ocr_jobs=<n>`
+  // （分表读数，键顺序 = 删除顺序）；并由 `ONLINE_EVIDENCE_MODULES` 放行落库（迁移 0031）。
+  // 缺权（42501）/连接失败 ⇒ 存储层抛错 ⇒ 协议记 `blocked` + `HANDLER_FAILED`，
+  // ⛔ 不折成 `completed`，也不折成"0 行"。
+  if (input.ocrStore !== undefined) {
+    coordinator.registerModule(
+      OCR_DELETION_MODULE,
+      makeHandler(OCR_DELETION_MODULE, input.ocrStore),
     );
   }
 

@@ -78,8 +78,8 @@ c0217a4:services/api/db/roles/staging_importer.sql:2        # 1+2+1+1+1+1+2+2 = 
 整文件跑完会看到两行：
 
 ```
-psql:deploy/postgres-cvm/sql/90-assert-least-privilege.sql:910: ERROR:  permission denied for table speech_jobs
-psql:deploy/postgres-cvm/sql/90-assert-least-privilege.sql:916: ERROR:  permission denied for table transcriptions
+psql:deploy/postgres-cvm/sql/90-assert-least-privilege.sql:973: ERROR:  permission denied for table speech_jobs
+psql:deploy/postgres-cvm/sql/90-assert-least-privilege.sql:979: ERROR:  permission denied for table transcriptions
 ok
 ```
 
