@@ -202,7 +202,35 @@ declare module '*packages/reference/index.mjs' {
     opts?: Record<string, unknown>,
   ): RegistrationMatch;
 
-  export function loadHerbicideRecords(): { items: readonly Record<string, unknown>[] };
+  /**
+   * 一条已过「契约前提门禁」的仓内登记记录（`packages/reference/records.mjs#projectHerbicideRecords`
+   * 的产出项）。只声明**被服务端消费**的字段；运行期对象还有 `index`/`content_hash`/`norm` 等
+   * 内部字段（本声明不覆盖它们，也不代表它们可对外下发）。
+   *
+   * `contract` 是契约 `Herbicide` 投影，但其形状**不在此假定**：消费方必须按不可信载荷处理
+   * （`ocr/state.ts#sanitizeRegistryLookup` 逐字段校验并重建）。
+   */
+  export interface ReferenceHerbicideItem {
+    readonly record_id: string;
+    readonly registration_number: string;
+    readonly registered_name: string;
+    readonly producer: string;
+    readonly dosage_form: string;
+    readonly ingredients_text: string;
+    readonly source_version: string;
+    /** 可见性（`published` / `hidden` / `deleted` / `private`）：非 published 退出对外核对面。 */
+    readonly visibility: string;
+    /** 模拟来源标记（`SIM-` 前缀或 `source_kind=simulation`）：不得作为真实登记依据。 */
+    readonly simulated: boolean;
+    readonly contract: Record<string, unknown>;
+  }
+
+  /** 装载全部记录：`items` 为可对外投影的条目，`skipped` 为被 fail-closed 排除的记录（含原因）。 */
+  export function loadHerbicideRecords(): {
+    items: readonly ReferenceHerbicideItem[];
+    skipped: readonly Record<string, unknown>[];
+    docMeta: Record<string, unknown>;
+  };
 
   export function loadZhejiangKnowledge(): ZhejiangKnowledge;
   export function queryZhejiangKnowledge(

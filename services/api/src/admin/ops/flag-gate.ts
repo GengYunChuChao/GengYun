@@ -326,6 +326,10 @@ export const FLAG_GATED_SURFACES: readonly FlagGatedSurface[] = Object.freeze([
     routePattern: `${API_PREFIX}/conversations/:id/turns`,
     surface: '文字问答受理',
   }),
+  // GY-I04：登记核对（`POST /registrations/verify`）同样输出契约 `Herbicide`（登记号/生产企业/剂型/成分），
+  // 与 `/herbicides` 属同一「药剂输出」受控面；不登记本条目，后台把「药剂输出」关掉后仍能从这个端点读到
+  // 制剂数据（绕过）。条目写成单行、紧贴清单末尾，纯为最小化既有引用行号的漂移（清单语义不受影响）。
+  Object.freeze({ key: 'specific_herbicide_output_enabled', operationId: 'verifyRegistration', method: 'POST', routePattern: `${API_PREFIX}/registrations/verify`, surface: '登记核对（标签字段）输出' }),
 ]);
 
 /**

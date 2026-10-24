@@ -42,7 +42,7 @@
 | 取消（Job 取消、原子递增 revision、撤租约与外发） | docs/architecture/state-contract.md:48；packages/contracts/states.json#/job_transitions | `partial` | services/api/src/recognitions/service.ts:757-797；tests/unit/recognitions-api.test.mjs::状态 7 cancelled：取消后**迟到的提供者结果不复活任务**；services/api/src/jobs/routes.ts:64-80；services/api/src/jobs/registry.ts:283-309；services/api/src/routes/admin.ts:341-346 | 共享作业面现由 `services/api/src/app.ts:1953` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:1954`）、transcription（`:1960`）、moderation（`:1963`）、synthesis（`:1969`）、ocr（`:1977`）、answer（`:1985`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收 |
 | 超时（数据库/健康检查/供应商调用截止） | docs/architecture/state-contract.md:50 | `partial` | services/api/src/db/pool.ts:27-53；services/api/src/auth/wechat.ts:32-33；services/api/src/knowledge/service.ts:86-89；tests/unit/api-health.test.mjs::/health 在 real 模式数据库不可达时返回 503 degraded；services/api/src/recognitions/service.ts:525-542；services/api/src/recognitions/service.ts:525-544；services/api/src/ocr/service.ts:53-59；services/api/src/speech/service.ts:598-616；services/api/src/tts/service.ts:819-842；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | 数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:70`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:798`，位于 `createTurn`，`:738`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:911`，位于 `jobViewOf`，`:903`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:959-967`，位于 `scheduleAnswer`，`:953`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2031`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过 |
 
-## 3 已装配操作（113 条）
+## 3 已装配操作（114 条）
 
 装配只表示存在产品路由；请同时读状态和限制。
 
@@ -77,6 +77,7 @@
 | `getKnowledge` | GET /knowledge/{id} | `implemented` | services/api/src/routes/knowledge.ts:193-199；services/api/src/knowledge/service.ts:57-121；tests/unit/knowledge-api.test.mjs::knowledge real projection and limited runtime over loopback HTTP | 需 DATABASE_URL；不可见/不存在统一 404，ETag 为 revision |
 | `listHerbicides` | GET /herbicides | `implemented` | services/api/src/routes/knowledge.ts:201-207；services/api/src/knowledge/reference-query.ts:168-176；packages/reference/zhejiang.mjs:97-160；tests/unit/knowledge-herbicides-http.test.mjs::/herbicides 列表：契约封套/实体形状对齐、no-store、列表不带 ETag、真实来源可追溯；tests/unit/admin-flag-gate.test.mjs::E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据** | 记录来自公开登记公告附表（packages/knowledge/herbicides/records-2026.json，20 条）：来源 review_status=unverified（未逐条复核标签原文），未采集用量/施用方法/注意事项/禁限用状态 ⇒ 无 DoseCard；真实登记库、制剂条件完整用量与正式端到端待验收 |
 | `getHerbicide` | GET /herbicides/{id} | `implemented` | services/api/src/routes/knowledge.ts:208-216；services/api/src/knowledge/reference-query.ts:177-185；tests/unit/knowledge-herbicides-http.test.mjs::/herbicides/{id} 详情：与列表同一条实体、强 ETag、来源版本一致；tests/unit/admin-flag-gate.test.mjs::E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据** | 未知/不可见 id 统一 404（不泄露是否存在），ETag 由记录身份 × source_version 派生，列表与详情同一 source_version；来源未核对与用量缺项口径同列表 |
+| `verifyRegistration` | POST /registrations/verify | `partial` | services/api/src/routes/registrations.ts:157-173；services/api/src/registrations/service.ts#createRegistrationVerifyService；tests/unit/registrations-verify.test.mjs::A1. matched：登记号+名称+剂型+成分全对 ⇒ matched，且 data 严格是契约 Verification 五键；tests/unit/registrations-verify.test.mjs::B1. 过期登记记录 ⇒ conflict + source.validity（失效来源不得给出「核对通过」）；tests/unit/registrations-verify-http.test.mjs::F1. 关闭「药剂输出」⇒ 409 OBJECT_UNAVAILABLE 且零制剂字段；重开 ⇒ 立即恢复；tests/unit/registrations-verify-http.test.mjs::G1. 同一 Idempotency-Key 重放 ⇒ 结论一致且无副作用；换键同体 ⇒ 结论也一致 | 路由与领域层已装配（用户会话 + Idempotency-Key 形状校验 8..128 + 请求体守 VerifyInput）；判定复用 GY-I10 已审内核 ocr/state.ts（decideMatchState / sanitizeRegistryLookup / gateDoseCards）。仍为 partial：① real 模式真实登记库未接线 ⇒ 恒 unavailable（不伪装 no_match、不回退仓内记录）；② 无已审用量来源 ⇒ dose_cards 恒 []；③ 非 real 模式用的是仓内 20 条公开登记公告记录，review_status=unverified 如实下发，不是已核对权威来源；④ 契约 200 声明的「资源 revision」ETag 未发（本操作不产生资源，硬凑内容哈希属自造语义）；⑤ 契约 Herbicide 无产品名字段，名称只用于登记号未命中时的候选收敛；⑥ 必要条件沿用 NECESSARY_LABEL_FIELDS（登记号/名称），缺失剂型/成分不计 missing_fields（既有口径，收紧须改 state.ts 并同步负例） |
 | `createRecognition` | POST /recognitions | `partial` | services/api/src/routes/recognitions.ts:79-116；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
 | `getRecognition` | GET /recognitions/{id} | `partial` | services/api/src/routes/recognitions.ts:118-128；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
 | `deleteRecognition` | DELETE /recognitions/{id} | `partial` | services/api/src/routes/recognitions.ts:148-160；tests/unit/recognitions-api.test.mjs::GY-I09 识别任务闭环 | HTTP 与内存任务/结果/选种/删除闭环已装配；stub/preset_demo 为合成替身；real 媒体/提供者未接线时明确拒绝；真实供应商与独立样本评估（GY-I25/GY-I21）、持久任务与删除集成尚待验收 |
@@ -162,20 +163,19 @@
 | `grantCommunityMediaAccess` | POST /community/media-access | `partial` | services/api/src/routes/media.ts:318-334；services/api/src/media/service.ts:1229-1347；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面 | 登录读者基于「当前 published 且 approved」的内容上下文取图已装配，If-Match 对应 content_ref.revision；公开内容来源默认**关闭**（统一 404，不误放行）：真实来源属社区/审核线（GY-I14/GY-I15），本任务未修改其已合并文件，须由其提供只读端口后在装配层显式注入 |
 | `readCommunityMediaContent` | GET /community/media/{grant_id}/content | `partial` | services/api/src/routes/media.ts:337-362；services/api/src/media/service.ts:1349-1395；tests/unit/media-http-access.test.mjs::GY-I06 HTTP 访问面；tests/unit/media-real-mode-fail-closed.test.mjs::GY-I06 real 模式 | 取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收 |
 
-## 4 未装配操作（2 条）
+## 4 未装配操作（1 条）
 
 以下 HTTP 路径当前返回 NOT_FOUND；partial 项只有独立服务 / 参考组件，不能直接调用这些 HTTP 接口。
 
 | 操作 id | 方法与路径 | 状态 | 证据 | 缺口 / 条件 |
 | --- | --- | --- | --- | --- |
 | `listSpecies` | GET /catalog/species | `planned` | — | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
-| `verifyRegistration` | POST /registrations/verify | `planned` | — | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
 
 ## 5 计数
 
 | 范围 | implemented | partial | planned | 合计 |
 | --- | --- | --- | --- | --- |
-| 契约操作 | 17 | 95 | 3 | 115 |
+| 契约操作 | 17 | 96 | 2 | 115 |
 | 横切维度 | 2 | 6 | 0 | 8 |
 <!-- contract-status-tables:end -->
 

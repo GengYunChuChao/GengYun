@@ -816,10 +816,10 @@
       "route": "/api/v1/registrations/verify",
       "scope": "user",
       "version_required": false,
-      "route_mounted": false,
-      "status": "planned",
-      "evidence": [],
-      "blocker": "领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配"
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [{ "path": "services/api/src/routes/registrations.ts", "symbol": "/registrations/verify", "lines": "157-173" }, { "path": "services/api/src/registrations/service.ts", "symbol": "createRegistrationVerifyService", "locator": { "symbol": "createRegistrationVerifyService" } }, { "test": "tests/unit/registrations-verify.test.mjs", "name": "A1. matched：登记号+名称+剂型+成分全对 ⇒ matched，且 data 严格是契约 Verification 五键" }, { "test": "tests/unit/registrations-verify.test.mjs", "name": "B1. 过期登记记录 ⇒ conflict + source.validity（失效来源不得给出「核对通过」）" }, { "test": "tests/unit/registrations-verify-http.test.mjs", "name": "F1. 关闭「药剂输出」⇒ 409 OBJECT_UNAVAILABLE 且零制剂字段；重开 ⇒ 立即恢复" }, { "test": "tests/unit/registrations-verify-http.test.mjs", "name": "G1. 同一 Idempotency-Key 重放 ⇒ 结论一致且无副作用；换键同体 ⇒ 结论也一致" }],
+      "blocker": "路由与领域层已装配（用户会话 + Idempotency-Key 形状校验 8..128 + 请求体守 VerifyInput）；判定复用 GY-I10 已审内核 ocr/state.ts（decideMatchState / sanitizeRegistryLookup / gateDoseCards）。仍为 partial：① real 模式真实登记库未接线 ⇒ 恒 unavailable（不伪装 no_match、不回退仓内记录）；② 无已审用量来源 ⇒ dose_cards 恒 []；③ 非 real 模式用的是仓内 20 条公开登记公告记录，review_status=unverified 如实下发，不是已核对权威来源；④ 契约 200 声明的「资源 revision」ETag 未发（本操作不产生资源，硬凑内容哈希属自造语义）；⑤ 契约 Herbicide 无产品名字段，名称只用于登记号未命中时的候选收敛；⑥ 必要条件沿用 NECESSARY_LABEL_FIELDS（登记号/名称），缺失剂型/成分不计 missing_fields（既有口径，收紧须改 state.ts 并同步负例）"
     },
     {
       "id": "createRecognition",

@@ -32,7 +32,7 @@ import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
 import { registerUserAuthRoutes } from './routes/auth.ts';
 import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
-import { registerConsentRoutes } from './routes/consents.ts'; import { registerExportRoutes } from './routes/exports.ts';
+import { registerConsentRoutes } from './routes/consents.ts'; import { registerExportRoutes } from './routes/exports.ts'; import { registerRegistrationVerifyRoutes } from './routes/registrations.ts';
 import { registerProfileRoutes } from './routes/profile.ts';
 import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { registerRecognitionRoutes } from './routes/recognitions.ts';
@@ -2285,7 +2285,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，行为与
   // `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
   registerConversationRoutes(app, config, gatedGuards, conversationService);
-
+  registerRegistrationVerifyRoutes(app, config, gatedGuards); // GY-I04：登记核对（POST /registrations/verify）唯一装配点；本行占用原有空行，避免推移既有证据锚点的行号
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：
     // 未匹配的 URL 可能携带被拒的坐标参数（同一 `logSafePath` 口径）。
