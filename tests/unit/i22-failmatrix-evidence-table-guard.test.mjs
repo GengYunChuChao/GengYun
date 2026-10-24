@@ -13,9 +13,17 @@
  *      三种调用下都**不被改写**——最后一种因为页内条数（168）≠ `EXPECTED`（230）同样被拒；
  *   3'. 负控制：归档页的**路径别名**（`docs/verification/./x.md`、`docs/verification/../verification/x.md`、
  *      `DOCS/verification/x.md`）修复前全部能从 `rel === ARCHIVE_PAGE` 的字符串比较里溜过去，EXIT 0
- *      把快照从 168 / 23 改写成 230 / 26；现在按真实路径比较，三种写法都必须 exit 1、字节不变；
+ *      把快照从 168 / 23 改写成 230 / 26；现在按**文件身份**（`dev` + `ino`）判定，三种写法都必须
+ *      exit 1、字节不变。别名用例在夹具树里跑（夹具树里有一份归档页的**副本**），真仓库那份只做
+ *      字节只读断言，顺带保证测试自身不会把归档页留成脏状态；
  *   3''. 负控制：`--page=../outside.md` 这类**越界目标**修复前 EXIT 0 能改仓库外文件；现在包含性
  *      校验早于读文件，仓库外的受害者文件必须一个字节都不变；
+ *   3'''. 负控制：归档页的**硬链接**别名（`fs.linkSync` 造同一 inode 的第二个目录项）修复前 EXIT 0
+ *      就能整页改写（对照性审查实测）：`realpathSync.native` 归一的是路径、归不了文件身份。现在
+ *      `samePath` 比 `dev` + `ino`，硬链接必须 exit 1、归档页 sha256 不变。无权建硬链接的环境
+ *      （某些 POSIX / 容器 / 非 NTFS）`t.skip`，不假绿；
+ *   3''''. 负控制：`--matrix=` / `--nc=` 越出仓库，或工件缺失，必须**单行**拒绝（exit 1，stderr 不许
+ *      出现 node 栈）——与 `--write` 侧的「拒绝写入：目标不在仓库内」口径对齐。
  *   4. 负控制：目标页缺生成器标记 ⇒ 拒绝写入且不写盘。
  *
  * 为什么用临时树：生成器的 `ROOT` 由脚本自身位置推导，`--matrix=` / `--nc=` / `--page=` 都按该
@@ -25,7 +33,8 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -135,6 +144,22 @@ function runTool(toolPath, args, cwd) {
   return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
 }
 
+function sha256Of(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/**
+ * 往夹具树里放一份归档页的**副本**（原字节照抄真仓库那份）。别名 / 硬链接用例都在副本上跑：
+ * 断言的是守卫行为，不是「真仓库那份刚好没被碰」；真仓库那份另由第 3 组做字节只读断言。
+ */
+function seedArchive(tree) {
+  const bytes = readFileSync(path.join(ROOT, ARCHIVE_PAGE), 'utf8');
+  const archive = path.join(tree.root, ARCHIVE_PAGE.split('/').join(path.sep));
+  mkdirSync(path.dirname(archive), { recursive: true });
+  writeFileSync(archive, bytes, 'utf8');
+  return { archive, bytes };
+}
+
 /** 页内某对生成器标记之间的表格行数（与工具判据一致：以 `| \`` 开头的数据行）。 */
 function countRowsBetweenMarkers(page, marker) {
   const begin = `<!-- BEGIN:${marker} -->`;
@@ -238,9 +263,8 @@ test('证据表生成器：目标页缺生成器标记时拒绝写入（不写�
  *   --page=docs/verification/../verification/gy-i22-failmatrix-20261022.md
  *   --page=DOCS/verification/gy-i22-failmatrix-20261022.md   （Windows 大小写不敏感）
  *
- * 全部 **EXIT 0 且真把归档页从 168 / 23 改写成 230 / 26**。现在判据是真实路径比较
- * （`realpathSync.native` + Windows 折叠大小写），三种写法必须与直接点名同一个结果：
- * exit 1、拒绝原因指向归档快照、归档页字节逐字不变。
+ * 全部 **EXIT 0 且真把归档页从 168 / 23 改写成 230 / 26**。现在判据是**文件身份**（`dev` + `ino`），
+ * 三种写法必须与直接点名同一个结果：exit 1、拒绝原因指向归档快照、归档页字节逐字不变。
  */
 test('证据表生成器：归档页的路径别名（./、..、大小写）按真实路径比较一律拒绝', (t) => {
   const archivePath = path.join(ROOT, ARCHIVE_PAGE);
@@ -309,4 +333,99 @@ test('证据表生成器：目标越出仓库（../outside.md）在打开文件�
     assert.equal(readFileSync(victim, 'utf8'), PAGE_FIXTURE, `${one.note} 改写了仓库外的文件`);
   }
   assert.ok(!existsSync(missing), '仓库外的 .missing.md 被创建了：越界目标必须在打开文件之前就拒绝');
+});
+
+/**
+ * 别名用例的**夹具版**：同一棵夹具树里同时有「自洽工件（230 / 26）」和「归档页副本（168 / 23）」，
+ * 于是「exit 1」不可能由缺工件造成（缺工件那条另有专项断言），只能是分类为归档页——审查者要的
+ * 「同码异因」拆开。三条别名都必须命中 `/拒绝写入归档快照/` 且字节不变。
+ */
+test('证据表生成器：归档页路径别名（./、..、大小写）在自洽工件下仍一律拒绝', (t) => {
+  const tree = makeTree(t);
+  const expected = readExpected();
+  tree.writeArtifacts(buildMatrix(expected), buildNegativeControls(expected));
+  const { archive, bytes } = seedArchive(tree);
+  const archiveRows = countRowsBetweenMarkers(bytes, 'MATRIX-TABLE');
+  assert.notEqual(archiveRows, expected.total, '归档页副本条数与 EXPECTED 相等了：负控制前提变了，需人工复核');
+
+  const dir = ARCHIVE_PAGE.slice(0, ARCHIVE_PAGE.lastIndexOf('/'));
+  const name = ARCHIVE_PAGE.slice(ARCHIVE_PAGE.lastIndexOf('/') + 1);
+  const aliases = [
+    { page: `${dir}/./${name}`, note: '中间插 `./`', archiveBranch: true },
+    { page: `${dir}/../verification/${name}`, note: '用 `..` 绕出去再回来', archiveBranch: true },
+    {
+      // 大小写只在大小写不敏感的文件系统上构成别名；POSIX 上它是另一个不存在的路径，
+      // 由「读不到目标页」拦住（同样 exit 1、同样一个字节不写）。
+      page: ARCHIVE_PAGE.replace(/^docs\//, 'DOCS/'),
+      note: '大写目录别名',
+      archiveBranch: process.platform === 'win32' || process.platform === 'darwin',
+    },
+  ];
+  for (const one of aliases) {
+    const result = runTool(tree.tool, ['--write', `--page=${one.page}`], tree.root);
+    assert.equal(result.status, 1, `${one.note}（--page=${one.page}）应 exit 1，实际 ${result.status}：\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, /拒绝写入/, `${one.note} 没有打印拒绝原因：\n${result.stderr}`);
+    if (one.archiveBranch) {
+      assert.match(result.stderr, /拒绝写入归档快照/, `${one.note} 没被识别成归档页（别名绕过了文件身份比较）：\n${result.stderr}`);
+    }
+    assert.equal(readFileSync(archive, 'utf8'), bytes, `${one.note} 改写了归档页副本`);
+  }
+});
+
+/**
+ * 硬链接：同一 inode 的第二个目录项。`realpathSync.native` 归一的是**路径**，归一不了**文件身份**，
+ * 所以只比 realpath 的守卫会被它绕过去——审查者实测 `mklink /H h-archive.md <归档页>` 后
+ * `--write --page=h-archive.md` exit 0 把 168 / 23 整页改写成 230 / 26。现在比 `dev` + `ino`。
+ */
+test('证据表生成器：归档页的硬链接别名按文件身份（dev+ino）拒绝', (t) => {
+  const tree = makeTree(t);
+  const expected = readExpected();
+  tree.writeArtifacts(buildMatrix(expected), buildNegativeControls(expected));
+  const { archive, bytes } = seedArchive(tree);
+  const link = path.join(tree.root, 'h-archive.md');
+  try {
+    linkSync(archive, link);
+  } catch (error) {
+    t.skip(`本环境不能建硬链接（${error.code ?? error.message}）：该用例在无法建硬链接的文件系统/容器上跳过，不算通过`);
+    return;
+  }
+  const shaBefore = sha256Of(bytes);
+  const rowsBefore = countRowsBetweenMarkers(bytes, 'MATRIX-TABLE');
+
+  const result = runTool(tree.tool, ['--write', '--page=h-archive.md'], tree.root);
+  assert.equal(result.status, 1, `硬链接目标应 exit 1，实际 ${result.status}：\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /拒绝写入归档快照/, `硬链接没被识别成归档页（文件身份比较失效）：\n${result.stderr}`);
+  const after = readFileSync(archive, 'utf8');
+  assert.equal(sha256Of(after), shaBefore, '硬链接把归档页改写了（sha256 变了）');
+  assert.equal(countRowsBetweenMarkers(after, 'MATRIX-TABLE'), rowsBefore, '硬链接把归档页的表格行数改掉了');
+});
+
+/**
+ * 工件侧口径对齐：`--matrix=` / `--nc=` 与 `--page=` 一样按仓库根解析并校验包含性；
+ * 读不到时也只打一行（不许把 node 栈甩给只用工具的人）。
+ */
+test('证据表生成器：--matrix/--nc 越界或缺失时单行拒绝（不打 node 栈）', (t) => {
+  const tree = makeTree(t);
+  tree.writeArtifacts(buildMatrix(readExpected()), buildNegativeControls(readExpected()));
+
+  const cases = [
+    { args: ['--matrix=../outside-matrix.json'], note: '--matrix 相对越界', expect: /拒绝运行：运行结果不在仓库内/ },
+    {
+      args: [`--nc=${path.join(tree.root, '..', 'outside-nc.json')}`],
+      note: '--nc 绝对路径越界',
+      expect: /拒绝运行：运行结果不在仓库内/,
+    },
+  ];
+  for (const one of cases) {
+    const result = runTool(tree.tool, one.args, tree.root);
+    assert.equal(result.status, 1, `${one.note} 应 exit 1，实际 ${result.status}：\n${result.stdout}\n${result.stderr}`);
+    assert.match(result.stderr, one.expect, `${one.note} 报错文案不对：\n${result.stderr}`);
+    assert.ok(!/\n\s+at /.test(result.stderr), `${one.note} 把 node 栈打出来了：\n${result.stderr}`);
+  }
+
+  const empty = makeTree(t);
+  const missing = runTool(empty.tool, [], empty.root);
+  assert.equal(missing.status, 1, `工件缺失应 exit 1，实际 ${missing.status}：\n${missing.stdout}\n${missing.stderr}`);
+  assert.match(missing.stderr, /拒绝运行：读不到运行结果 tests\/failmatrix\/\.artifacts\/matrix\.json/, `工件缺失的报错文案不对：\n${missing.stderr}`);
+  assert.ok(!/\n\s+at /.test(missing.stderr), `工件缺失时把 node 栈打出来了：\n${missing.stderr}`);
 });

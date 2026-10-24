@@ -18,16 +18,17 @@
  *   <!-- BEGIN:MATRIX-TABLE --> … <!-- END:MATRIX-TABLE -->
  *   <!-- BEGIN:NEGATIVE-CONTROL-TABLE --> … <!-- END:NEGATIVE-CONTROL-TABLE -->
  *
- * 归档页保护：真实路径比较 + 仓库内包含性校验；`--write` 无隐式默认页。本工具原来默认写
- * `docs/verification/gy-i22-failmatrix-20261022.md`——那是 R29 建页时的**归档快照**
+ * 归档页保护：真实路径比较 + **文件身份（dev + ino）** + 仓库内包含性校验；`--write` 无隐式默认页。
+ * 本工具原来默认写 `docs/verification/gy-i22-failmatrix-20261022.md`——那是 R29 建页时的**归档快照**
  * （表格 168 行、负控制 23 条）。`EXPECTED` 随当前矩阵校正到 230 / 26 之后，
  * 那个默认值就变成「裸跑一次 --write 就把归档快照无报错重写成 230 行」，所以：
  *   1. `--write` 无隐式默认页：裸 `--write` 一律 exit 1，必须显式 `--page=`；
- *   2. 目标页先按仓库根解析成绝对路径，再取**真实路径**（`realpathSync.native`）后才比是不是归档页，
- *      Windows 上再统一小写。`docs/verification/./x.md`、`docs/verification/../verification/x.md`、
- *      `DOCS/verification/x.md` 这类**字符串别名**因此归到同一个真实路径，绕不过去；
- *   3. 目标页必须**在仓库内**：真实路径不以 `<仓库根><分隔符>` 开头就拒绝写入
- *      （`../outside.md` 这种越界目标在打开文件之前就被拒，不会写到仓库外）；
+ *   2. 目标页按仓库根解析成绝对路径后，**先判文件身份**（`statSync` 的 `dev` + `ino`）是不是归档页：
+ *      `docs/verification/./x.md`、`docs/verification/../verification/x.md`、`DOCS/verification/x.md`
+ *      这类字符串别名与**硬链接**（同一 inode 的另一个目录项，`realpath` 解不掉）因此都指向同一个文件；
+ *   3. 目标页必须**在仓库内**：真实路径（`realpathSync.native`，解 `.`/`..`/symlink/junction/`\\?\`/大小写）
+ *      不以 `<仓库根><分隔符>` 开头就拒绝写入（`../outside.md` 这种越界目标在打开文件之前就被拒，
+ *      不会写到仓库外）；
  *   4. 归档页只允许「同一基线刷新读数」：即便给了 `--i-know-this-rewrites-archive`，
  *      页内表格行数 / 负控制行数仍必须与 `EXPECTED` 逐项相等才放行。本页当前是 168 / 23、
  *      `EXPECTED` 是 230 / 26，所以带旗标也**必然被拒**——旗标只是一句「我知道这是归档页」的
@@ -37,7 +38,7 @@
  * 退出码：0 = 生成成功且与运行结果自洽；1 = 条数/判定与文档声明不符，或写盘请求被拒绝
  * （不许悄悄少用例，也不许绕过上面的归档页保护）。
  */
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -45,8 +46,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * 归档快照页：R29 建页时点（表格 168 行 / 负控制 23 条）的冻结记录。
- * 生成器**不再默认写它**；显式点名时按**真实路径**识别（字符串别名不算另一个目标），
- * 且即便给了 `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 230 / 26
+ * 生成器**不再默认写它**；显式点名时按**文件身份**（`dev` + `ino`）识别——字符串别名、symlink、
+ * junction、`\\?\` 前缀路径、硬链接都算同一个文件，不算另一个目标——且即便给了
+ * `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 230 / 26
  * ⇒ 当前必然被拒（见 `planWrite`）。
  */
 const ARCHIVE_PAGE = 'docs/verification/gy-i22-failmatrix-20261022.md';
@@ -114,12 +116,19 @@ function parseArgs(argv) {
   return out;
 }
 
+/**
+ * 读机读结果：`--matrix=` / `--nc=` 与 `--page=` 对齐——同样按仓库根解析并校验包含性（越界拒绝），
+ * 失败一律收成**一行**（`main` 捕获后打印 `✗ …`，不再把 node 栈甩到 stderr）。
+ */
 function readJson(relative) {
-  const file = path.join(ROOT, relative);
+  const file = path.resolve(ROOT, relative);
+  if (!isInside(ROOT, file)) {
+    throw new Error(`拒绝运行：运行结果不在仓库内（${relative} ⇒ ${file}）。`);
+  }
   try {
     return JSON.parse(readFileSync(file, 'utf8'));
   } catch (error) {
-    throw new Error(`读不到运行结果 ${relative}：${error.message}\n先把矩阵与负控制各跑一遍并写 --json。`);
+    throw new Error(`拒绝运行：读不到运行结果 ${relative}（${error.message}）。先把矩阵与负控制各跑一遍并写 --json。`);
   }
 }
 
@@ -152,16 +161,36 @@ function realPathOf(absolute) {
   }
 }
 
-/** Windows（以及默认大小写不敏感的 macOS）上路径比较必须折叠大小写，否则 `DOCS/…` 能绕过。 */
-const CASE_INSENSITIVE_FS = process.platform === 'win32' || process.platform === 'darwin';
+/**
+ * 大小写折叠：**只用于 `isInside` 的路径前缀比较，是 belt-and-braces，不是拦截别名的主因**。
+ * `realpathSync.native` 在 NTFS 上已经把 `DOCS/verification/…` 归一成盘上真实大小写（实测：
+ * 删掉这里的折大小写，别名仍被 `samePath` 的 inode 比较拦住），所以 win32 上留着它只是兜底。
+ * 不给 darwin 无条件开：默认大小写不敏感的 APFS 由 realpath 归一，而**大小写敏感**的 APFS 上
+ * 折大小写会把两个真实不同的文件误判成同一个——这一支本轮没有条件验，宁可不折。
+ */
+const CASE_INSENSITIVE_FS = process.platform === 'win32';
 
 function foldCase(value) {
   return CASE_INSENSITIVE_FS ? value.toLowerCase() : value;
 }
 
-/** 两个路径是不是同一个文件（按真实路径比；大小写不敏感的文件系统上折叠大小写）。 */
+/**
+ * 两个路径是不是同一个**文件**：比文件身份（`dev` + `ino`），不是比路径字符串。
+ * `realpathSync.native` 能把 `.`、`..`、symlink、junction、`\\?\` 前缀、大小写都解成同一条路径，
+ * 但对**硬链接**无效——硬链接是同一 inode 的另一个目录项，realpath 仍返回它自己那条路径。
+ * 实测（对抗性审查）：`mklink /H h-archive.md <归档页>` 后 `--page=h-archive.md` 不进归档分支，
+ * 而「非归档页」分支没有条数校验 ⇒ exit 0 把 168/23 的归档页整页改写成 230/26。比 inode 才堵得住。
+ * 任一侧 stat 失败（不存在 / EACCES / 已删）一律返回 false：让调用方走原有的 `readFileSync` /
+ * ENOENT 错误路径，不在这里抛未捕获异常。
+ */
 function samePath(left, right) {
-  return foldCase(realPathOf(left)) === foldCase(realPathOf(right));
+  try {
+    const a = statSync(left);
+    const b = statSync(right);
+    return a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -215,8 +244,8 @@ function planWrite(opts) {
   }
 
   const rel = normalizeRel(opts.page);
-  // ① 按仓库根解析成绝对路径，再取真实路径：`.`、`..`、符号链接、Windows 大小写都在这一步归一，
-  //    后面「是不是归档页」「在不在仓库内」都判这个值，不再判用户原样给的字符串。
+  // ① 按仓库根解析成绝对路径：`.`、`..`、符号链接、Windows 大小写都在 `isInside` 的 realpath 那一步归一，
+  //    「是不是归档页」判的是**文件身份**（`samePath` = dev + ino），不再判用户原样给的字符串。
   const pagePath = path.resolve(ROOT, rel);
   // ② 包含性校验放在读文件之前：越界目标（如 ../outside.md）在被打开之前就拒绝，绝不写到仓库外。
   if (!isInside(ROOT, pagePath)) {
@@ -242,7 +271,9 @@ function planWrite(opts) {
     }
   }
 
-  // ③ 归档页判定：真实路径比较（`rel === ARCHIVE_PAGE` 那种字符串比较会被上面三种别名绕过）。
+  // ③ 归档页判定：比**文件身份**（`samePath` = dev + ino）。`rel === ARCHIVE_PAGE` 那种字符串比较会被
+  //    `docs/verification/./x.md`、`docs/verification/../verification/x.md`、`DOCS/verification/x.md` 绕过；
+  //    只比 realpath 又会被**硬链接**绕过（同一 inode 的另一个目录项，realpath 解不掉），故比 inode。
   //    死参数说明（选定方案 a：保留 `--i-know-this-rewrites-archive`，把提示语改成与实际行为一致）：
   //    该旗标现在**永远成功不了**——它只关掉「没给旗标」那道提示，条数校验仍然在；本页是 168 / 23 的
   //    冻结快照、EXPECTED 是 230 / 26，两者必然不等。所以旗标的语义只剩「我确认这是归档页，请按条数
@@ -254,7 +285,7 @@ function planWrite(opts) {
     if (!opts.rewriteArchive) {
       return {
         error: [
-          `拒绝写入归档快照：页 ${rel} 是基线 ${baseline} 的归档快照（页内表格 ${rows} 行 / 负控制 ${ncRows} 条），`,
+          `拒绝写入归档快照：页 ${rel}（真实路径 ${realPathOf(pagePath)}）是基线 ${baseline} 的归档快照（页内表格 ${rows} 行 / 负控制 ${ncRows} 条），`,
           `当前 EXPECTED 是 ${EXPECTED.total} 行 / ${EXPECTED.negativeControls} 条。这份快照是 R29 的时点记录，`,
           '  --write 不再默认写它，也不提供「一步刷新历史快照」的路径。',
           '  若只是要补一句「我知道这是归档页」的确认，可以加 --i-know-this-rewrites-archive；',
@@ -265,7 +296,7 @@ function planWrite(opts) {
     if (rows !== EXPECTED.total || ncRows !== EXPECTED.negativeControls) {
       return {
         error: [
-          `拒绝写入归档快照：页 ${rel} 是基线 ${baseline} 的快照，条数 ${rows} 与 EXPECTED ${EXPECTED.total} 不一致`,
+          `拒绝写入归档快照：页 ${rel}（真实路径 ${realPathOf(pagePath)}）是基线 ${baseline} 的快照，条数 ${rows} 与 EXPECTED ${EXPECTED.total} 不一致`,
           `（负控制 ${ncRows} 条 vs EXPECTED ${EXPECTED.negativeControls} 条）。`,
           '  即使给了 --i-know-this-rewrites-archive 也仍受条数一致性约束：本页当前条目已过期',
           '  （168 / 23 是 R29 时点读数），需要先迁移台账口径——把新口径落成新页或人工建页，',
@@ -342,8 +373,16 @@ function main(argv) {
     return 1;
   }
 
-  const matrix = readJson(opts.matrix);
-  const nc = readJson(opts.nc);
+  // ② 读机读结果：`--matrix=` / `--nc=` 同样按仓库根解析并校验包含性，失败收成一行（不打 node 栈）。
+  let matrix;
+  let nc;
+  try {
+    matrix = readJson(opts.matrix);
+    nc = readJson(opts.nc);
+  } catch (error) {
+    console.error(`✗ ${error.message}`);
+    return 1;
+  }
   const problems = [];
 
   check(EXPECTED.total, matrix.totals.total, '总条数', problems);
