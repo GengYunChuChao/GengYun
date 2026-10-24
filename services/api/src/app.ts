@@ -173,6 +173,7 @@ import { registerAccountDeletionRoutes } from './routes/account-deletion.ts';
 import {
   createAccountDeletionRequestService,
   createDeletionReceiptRegistry,
+  createPostgresDeletionReceiptRegistry,
   RECEIPT_TTL_MS,
   type AccountDeletionRequestService,
   type DeletionReceiptRegistry,
@@ -926,7 +927,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //  1. 授权中间件：注入的 `privacyInjection.consent` 优先；否则**仅当配置了数据库**时
   //     复用已合并的 `consent-pg.requireConsent` 单事务读取口（不新写 SQL、不新造事实源）。
   //     无数据库（本地 stub/回环测试、以及所有既有集成脚本）⇒ 不挂 ⇒ 行为与接线前逐字相同。
-  //  2. 撤回/注销消费者：注入优先；否则**配置了数据库**时由持久账本现建（撤回/授予时撤销在途外发）。
+  //  2. 撤回/注销消费者：注入优先；否则**配置了数据库且 `real` 模式**时由持久账本现建（撤回/授予时撤销在途外发；非 `real` 无真实外发 ⇒ 不注入，回落无撤销）。
   //  3. **持久外发账本**（第二片）：仅当配置了数据库时装配；提交边界在**单事务**内完成
   //     「校验读取 + 实际写入」（见 privacy/ledger-pg.ts）。`real` 未接真实传输 ⇒
   //     受理处在**任何账本变更之前** 503 `PROVIDER_UNAVAILABLE`，**零 sent 记录**；
@@ -957,7 +958,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : null;
   const egressRevoker: EgressRevoker | undefined =
     privacyInjection?.egressRevoker ??
-    (egressLedger === null ? undefined : createEgressRevoker({ ledger: egressLedger }));
+    (egressLedger === null || config.executionMode !== 'real' ? undefined : createEgressRevoker({ ledger: egressLedger }));
   const mediaEgress = (dataType: string, capability: string): MediaJobEgress | undefined =>
     egressLedger === null || privacyInFlight === null
       ? undefined
@@ -1981,11 +1982,20 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //     202 只表示「已受理」：备份副本清除未接线 ⇒ 该请求此刻**确实无法完成** ⇒ `state: 'blocked'`
   //     （`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期当完成」），
   //     绝不回 `completed`。
-  const deletionReceipts = createDeletionReceiptRegistry({ now: clock });
+  // 回执 bearer 台账：有真库且**受理已接线**（`durableDeletionRequests !== null`）⇒ 走迁移 0038
+  // 的持久化读写（重启后旧回执仍可反查，不再因进程内台账清空而不可达）；否则进程内实现
+  // （stub/demo 无真库时行为与追加前逐字一致）。
+  const deletionReceipts: DeletionReceiptRegistry =
+    durableDeletionRequests !== null && pool !== null
+      ? createPostgresDeletionReceiptRegistry({ pool, now: clock })
+      : createDeletionReceiptRegistry({ now: clock });
   const accountDeletion = createAccountDeletionRequestService({
     deletion: userDataDeletion,
     receipts: deletionReceipts,
     available: config.executionMode !== 'real',
+    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；
+    // 不注入 ⇒ 行为与接线前逐字一致（见 account-deletion.ts 的 AccountEgressRevoker 注释）。
+    ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
 
   // =====================================================================================

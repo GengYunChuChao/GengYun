@@ -42,3 +42,16 @@
 - `0030_community_author_ref.sql` 当时取的是 0028 之后的第一个空号（29 被 #419 占着），**不是随便跳号**。
 - `0032_community_report_reporter_ref.sql` 接在 `0031_online_purge_evidence.sql` 之后（0031 属 #19，已落盘）。
 - 后续迁移从最大号之后连续编号；确需跨 PR 缺号时，**同时**在保留台账登记并在本文件写一行依据。
+
+## 当前状态（2026-10-24 · 迁移 0038 · #19 片B）
+
+`0038_r34_deletion_receipt_persistence.sql`（#19 片B · 回执 bearer 台账持久化）落 **0038**；
+`0001..0035` 已连续落盘，`0036`/`0037` 为**跨在途 PR 的有意缺号**（见下），本片**不占**。
+
+- **0036 预留**（`feat/gy-r34-i18-content-pg` / #538 在飞）：`0036_r34_i18_content_pg.sql`，本片不用 0036。
+- **0037 预留**（#14 已分配，号空出）：本片不用 0037。
+- `0038_r34_deletion_receipt_persistence.sql`（#19 片B 本片）：回执 bearer 摘要落
+  `deletion_requests.receipt_bearer_hash` + 三条窄口径 SECURITY DEFINER 函数（set/resolve/count）。
+- 合入顺序 0036 → 0037 → 0038 依次推进（迁移号互斥，串行）；本片单独在树上时，
+  0036/0037 为有依据的缺号（本文件本段即其 `.md` 依据，见 `verify-migrations-unique.mjs` 的 `[gap]` 判据）。
+

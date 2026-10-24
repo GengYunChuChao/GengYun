@@ -424,7 +424,7 @@
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "symbol": "createAccountDeletionRequestService",
-          "lines": "200-229"
+          "lines": "299-352"
         },
         {
           "path": "services/api/src/app.ts",
@@ -469,7 +469,7 @@
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "symbol": "projectReceipt",
-          "lines": "242-299"
+          "lines": "354-388"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",

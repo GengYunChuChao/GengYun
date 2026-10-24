@@ -341,7 +341,7 @@ async function main() {
   // ---------------------------------------------------------------- [5b] 删除请求不可达 ⇒ 404（不是 200 空壳）
   // 进程内台账重启即空 ⇒ 「bearer 有效但删除请求不在了」是真实形状：如实 404，不编造回执。
   const orphanId = randomUUID();
-  const orphanToken = stubApp.deletionReceipts.issue(orphanId).token;
+  const orphanToken = (await stubApp.deletionReceipts.issue(orphanId)).token;
   const orphan = await http(`${API}/account/deletions/${orphanId}`, { token: orphanToken });
   assert.equal(orphan.status, 404, JSON.stringify(orphan.body));
   assert.equal(orphan.body.error.code, 'NOT_FOUND');
@@ -362,8 +362,8 @@ async function main() {
   assert.equal(staleBearer.body.error.code, 'SESSION_EXPIRED');
   const freshBearer = await http(`${API}/account/deletions/${receiptId}`, { token: replay.body.data.receipt_token });
   assert.equal(freshBearer.status, 200, JSON.stringify(freshBearer.body));
-  assert.equal(stubApp.deletionReceipts.liveCount(), 2, '孤儿 bearer + 重放后的现行 bearer');
-  note(`幂等重放：同 id=${receiptId}，bearer 换发（旧 401 / 新 200），台账 liveCount=${stubApp.deletionReceipts.liveCount()}`);
+  assert.equal(await stubApp.deletionReceipts.liveCount(), 2, '孤儿 bearer + 重放后的现行 bearer');
+  note(`幂等重放：同 id=${receiptId}，bearer 换发（旧 401 / 新 200），台账 liveCount=${await stubApp.deletionReceipts.liveCount()}`);
 
   // 同键异体：契约 `IdempotencyKey` 逐字「hash包含If-Match」⇒ 同键不同 If-Match 即异体。
   const conflicting = await http(DELETION_PATH, {
@@ -400,7 +400,7 @@ async function main() {
   const realHttp = makeHttp(realOrigin);
   try {
     assert.equal(realApp.accountDeletion.available, false, 'real 模式下注销请求存储未接线 ⇒ 整域不可用');
-    assert.equal(realApp.deletionReceipts.liveCount(), 0);
+    assert.equal(await realApp.deletionReceipts.liveCount(), 0);
     const { token: realToken } = await seedSession(realAuthStore, 'acct-del-real');
     const realAccepted = await realHttp(DELETION_PATH, {
       method: 'POST',
@@ -415,7 +415,7 @@ async function main() {
     const realReceipt = await realHttp(`${API}/account/deletions/${randomUUID()}`, { token: mintOpaqueToken() });
     assert.equal(realReceipt.status, 503, JSON.stringify(realReceipt.body));
     assert.equal(realReceipt.body.error.code, 'PROVIDER_UNAVAILABLE');
-    assert.equal(realApp.deletionReceipts.liveCount(), 0, '未装配路径不得留下任何状态');
+    assert.equal(await realApp.deletionReceipts.liveCount(), 0, '未装配路径不得留下任何状态');
     note('real 模式：POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false)，零状态变更');
   } finally {
     await realApp.close();

@@ -14,7 +14,7 @@
 | # | 门 | 现状事实（文件:行号） | 后果 |
 | --- | --- | --- | --- |
 | 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1308` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
-| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1397`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1431`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1460`（批准能力不可伪造/不可派生/不可默认化） |
+| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1557`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1431`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1460`（批准能力不可伪造/不可派生/不可默认化） |
 | 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（`services/api/src/media/service.ts:624-629`） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
 | 4 | **数据面缺口（部署件）** | 冻结契约内**没有**「owner 私有媒体字节读取」这一 operation；`MEDIA_ACCESS_GRANT_ORIGIN` 指向的访问网关在本仓库内**无实现** | 句柄签发得出来，但没人消费；本仓不能自称「契约已实现」 |
 
@@ -72,7 +72,7 @@
 | 3 | `services/api/src/app.ts:1308` | `mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode })` —— **不传 `env`** |
 | 4 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore`：real → `readObjectStorageConfig(NO_STORAGE_ENV)`（null 原型空表）⇒ 必然 `unwired`；非 real → `substitute` |
 | 5 | `services/api/src/app.ts:1269-1280` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
-| 6 | `services/api/src/app.ts:1715` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
+| 6 | `services/api/src/app.ts:2103` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
 | 7 | `services/api/src/app.ts:2142` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点（GY-R34-I19 树重取；此前后续片在 `app.ts` 上半部新增装配行，行号已上移） |
 | 8 | `services/api/src/server.ts:27` | 生产入口 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval` |
 
