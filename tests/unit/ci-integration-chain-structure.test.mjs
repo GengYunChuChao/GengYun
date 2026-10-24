@@ -398,6 +398,19 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + ' `docs/verification/gy-r34-i19-deletion-closure-20261023.md` §4），接 CI 留待总监安排。',
   },
   {
+    // GY-I19（#19 片B-演练）：加速时钟演练——把时间推到第 7/30 日边界，在 stub（纯逻辑，不碰 PG）与
+    // PG（一次性临时集群）两层各证一遍「未到期不删／刚好到期删（闭区间）／到期删」。按路径序落在
+    // `recognitions-speech-purge-pg` 与 `retention-purge-pg` 之间登记（同属 #19 的到期/保留族）。
+    path: 'tests/integration/retention-clock-drill-pg.mjs',
+    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起一次性临时集群'
+      + '（端口 55600+randomInt(0,300)、**先探活再起**、只监听 127.0.0.1，数据目录根 `GY_I19_PG_ROOT` 默认 `tmpdir()`、'
+      + '跑完 `pg_ctl stop` + 删目录），再把可注入时钟推到第 7/30 日边界，经在线/备份两份到期驱动取'
+      + '「未到期不删／刚好到期删（闭区间）／到期删」三态真库读数（stub 臂纯逻辑不碰 PG、不读墙钟）；'
+      + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（`--allow-skip`／`GY_ALLOW_SKIP=1` 仅降级为 0，'
+      + '⛔ 不得接进门禁）。本片只改 `tests/`、不新增 workflow（`.github/workflows/**` 不在本片授权范围），'
+      + '故不进无 PG 的回环链，如实登记为未接线。',
+  },
+  {
     // R34（#19 的**保留策略侧**，GY-R34-RETENTION）：按路径序落在 `recognitions-pg` 与 `source-lifecycle-pg`
     // 之间登记。它与 `messages-purge-pg`／`online-purge-pg` **同族**：自起临时集群、自建库、跑完即删。
     path: 'tests/integration/retention-purge-pg.mjs',

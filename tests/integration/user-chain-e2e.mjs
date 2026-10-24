@@ -96,7 +96,7 @@ function setEq(actual, expected, message) {
   assert.deepEqual([...actual].sort(), [...expected].sort(), `${message}；实测 ${JSON.stringify(actual)}`);
 }
 function masked(token) {
-  return typeof token === 'string' && token.length > 16 ? `${token.slice(0, 8)}…（${token.length} 字符）` : String(token);
+  return typeof token === 'string' ? `${token.length} 字符` : '<非字符串令牌>';
 }
 
 // ---------------------------------------------------------------------------

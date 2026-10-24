@@ -357,7 +357,31 @@ export function moderationPortRedactedView(input: {
   });
 }
 
-/** 真实文本端口（TMS）的全部向外能力。字段全部必填（除 fetch/now）。 */
+/**
+ * 一次真实调用的**安全观测**（供证据/取证登记；**不含凭据、请求头值、签名、待审文本或图片字节**）。
+ *
+ * 这是「脱敏登记 RequestId/耗时」的唯一载体：`requestId` 只在格式合法时记录（否则 `null`），
+ * `elapsedMs` 是从构造签名到响应解析完成的耗时（毫秒）。字段全部是安全标量，
+ * 取证/台账可以整体序列化而不会泄露密钥或明文。`onObservation` 只在构造期被注入，
+ * 缺省即无观测（不是把观测写进端口回报）。
+ */
+export interface ModerationLiveObservation {
+  readonly kind: ModerationVendorKind;
+  /** 供应商 RequestId（仅格式合法时记录，否则 `null`；不含任何明文）。 */
+  readonly requestId: string | null;
+  /** 从构造签名到响应解析完成的耗时（毫秒）。 */
+  readonly elapsedMs: number;
+  /** HTTP 状态码；未建连时为 `null`。 */
+  readonly httpStatus: number | null;
+  /** 供应商**原始**业务错误码（原样保留，便于对账；不是契约码）。 */
+  readonly providerErrorCode: string | null;
+  /** 失败类别（`MODERATION_FAILURE_CLASSES` 六值之一）；成功/无失败为 `null`。 */
+  readonly modelFailure: ModerationFailureClass | null;
+  /** 本次请求是否**无法排除**已被供应商处理。 */
+  readonly resultMayHaveBeenProcessed: boolean;
+}
+
+/** 真实文本端口（TMS）的全部向外能力。字段全部必填（除 fetch/now/onObservation）。 */
 export interface RealModerationTextPorts {
   readonly policy: ModerationPolicySnapshot;
   readonly profile: ModerationTextProfile;
@@ -366,6 +390,8 @@ export interface RealModerationTextPorts {
   readonly fetchImpl?: typeof fetch;
   /** 仅可注入时钟（毫秒）；默认 `Date.now`。 */
   readonly now?: () => number;
+  /** 取证钩子（**仅脱敏观测**）：只接收 `ModerationLiveObservation`，全是安全字段。 */
+  readonly onObservation?: (observation: ModerationLiveObservation) => void;
 }
 
 /** 真实图片端口（IMS）的全部向外能力：多一个字节来源。 */
@@ -377,6 +403,8 @@ export interface RealModerationImagePorts {
   readonly imageSource: ModerationImageSource;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
+  /** 取证钩子（**仅脱敏观测**）：只接收 `ModerationLiveObservation`，全是安全字段。 */
+  readonly onObservation?: (observation: ModerationLiveObservation) => void;
 }
 
 // ---------------------------------------------------------------------------
