@@ -166,97 +166,46 @@ node tools/prepare-wechat.mjs local --config config/api.local.json
 
 Demo 的识别、问答、语音输入和发布审核均为前端模拟；视频为本地 Canvas 动画，不输出真实 MP4、不预测药效。演示账号和本机存储不替代正式鉴权、隐私、来源或验收，也不计入 issue 完成数。独立网页后台继续使用现有架构，不套用小程序五 Tab。
 
-## 推荐任务推进列表
+## 当前进度与下一步（2026-10-25）
 
-建议接下来围绕 **“在 Android 手机上走通一段完整 Demo”** 推进。实测 `main` 基线为 `4122976`（2026-10-20，`412297636141562653ecbaa6b3fbbfecb05ecdd4`，提交时间 2026-10-20 12:11:28 +0000，即 #327 的 squash 提交，自前一基线 `8205cfc` 起 42 个提交）；已有组件可以直接接续，当前重点是页面接线、真实操作和缺项收尾。
+本次核对基线为 `main@b8f660b94829a94ee7533f58f5c259decd9afa1b`（[#574](https://github.com/GengYunChuChao/GengYun/pull/574)，香港时间 2026-10-25 16:56 合入）。远端 issue 实测 **3／27 已关闭（#1、#2、#3），24 项开放**；本次查询时**开放 PR 为 0**。这是带日期的快照，后续提交不自动计入；本节是推进建议，不派发、重领或修改现有 issue 验收条件。
 
-下面是建议顺序，沿用已有 issue 和负责人；组件开发可以并行，不必等前置整项关闭才开始。[现行依赖规则](https://github.com/GengYunChuChao/GengYun/blob/main/docs/development-order.md)
+**判断：主要界面、接口和持久化已有较多实现，当前应集中完成真实用户流程与交付验证。** 不按 PR 数或路由数换算完成率；此前约 60% 的讨论仅是工程估算，不是正式验收结果。#3 按披露口径关闭，不表示现有药剂资料已全部核准或可以展示真实用量。
 
-| 顺序 | 推进内容 | 本批完成标志 |
-|---|---|---|
-| **1．完成五 Tab Demo 的正常使用** | **#28**：复用已合入的 #142 组件，统一首页、社区、识别、消息、我的样式；补齐跳转、返回、空态、加载、失败和重试。游客按现有规则进入登录页 | 在微信工具及现有 Android 手机上确认关键页面能看、按钮能点、导航能返回；模拟内容标识明确 |
-| **2．贯通第一条用户链路** | **#4 → #5 → #7，接 #16 的知识收藏**：登录→手选作物／地区→搜索→详情→收藏／取消收藏→退出 | 用户能连续完成这段操作；退出或来源失效后，页面和接口处理一致。手选地区先完成，自动定位随后补 |
-| **3．把识别入口做成完整流程** | **#6、#9、#10、#8，接 #16 的识别历史**：上传／拍照→处理状态→结果核对→资料详情→历史。前端先复用明确标注的模拟数据；真实服务按依赖接入 | 先交付可操作的 Demo 流程，再分别证明真实识草、OCR 接入。无法确认来源或条件时不展示实际用量 |
-| **4．接文字问答，再增加语音** | **#12 → #11 → #13**：先完成输入文字、返回有来源回答和失败提示，再接语音转文字及播报 | 文字问答独立可用；语音逐步完成“录音→核对文字→发送→播放”。复用已有 OCR／ASR／TTS 调用证据，仅补产品链路缺项 |
-| **5．贯通社区、消息和必要后台** | **#14 → #15，配合 #17、#18**：先完成发帖与审核状态，再接评论、点赞、消息跳转及下架联动；后台优先支持这段流程必需的操作 | Demo 状态与真实审核清楚区分；真实发布满足审核要求，消息只能跳转到当前用户可访问的对象 |
-| **6．完成整体验收和交付** | **#19、#21、#22、#23、#24**：汇总真实能力、持久化、删除恢复、权限、Android 完整演示和部署准备 | 各项承诺都有对应证据，剩余限制明确；满足全部验收的 issue 才关闭 |
+| 工作面 | 当前可复用成果 | 仍需交付的结果 |
+| --- | --- | --- |
+| 小程序前端 | Demo 五 Tab、[#142](https://github.com/GengYunChuChao/GengYun/pull/142) 原生组件；档案、查询、收藏、历史、社区、消息、文字提问及语音页面；社区翻页与个人计数失败重试（#556、#557）、首页能力标记（#573）、授权只读页（#542）、注销用户展示（#544）已合 | 在同一版本、同一 Android 设备上完成关键操作、异常与返回走查；授权读面不等于完整撤回交互；保留模拟／未启用标识 |
+| API／PostgreSQL／后台 | 多业务域持久化；后台内容／资料 PG 落点（#538）、账号权限展示（#572）；物种目录（#563）与登记核对（#561、#567）已合 | 在目标运行配置下验证关键前后台流程、最小权限和重启后数据；不能用组件或本地 PG 检查替代生产部署 |
+| 真实登录与 AI | 已有[手机微信换身份并写入 PG 的记录](docs/verification/gy-r34-wechat-login-20261023.md)；[OCR、TTS、文字／图片审核真实响应样例](docs/verification/gy-r34-tencent-ai-samples-20261023.md)；媒体→ASR 产品接线（#558、#560）及审核接线框架（#552）已合 | 手机登录记录来自局域网开发副本，不证明正式 HTTPS 发布；ASR 旧样例凭据失败不因接线自动解除；审核违规样例曾未拦截，须核策略；真实调用、产品接通与质量达标分别验收 |
+| 隐私与发布 | 授权、外发账本、注销清理、删除回执持久化（#553）、取消删除状态（#554）、第三方删除框架（#555）、7／30 日加速演练（#551）与发布工具已有成果 | 取消状态不等于所有持久链已可撤销；第三方框架默认关闭不等于实际删除完成；生产调度、备份介质恢复与正式发布仍需获准环境和实际证据 |
 
-**有三条工作应从现在并行推进，避免后面等待：**
+更早的[进度文档](docs/development-progress.md)和[R34 自评](docs/verification/gy-r34-closure-matrix-20261024.md)保留历史读数，其中“#528 未合”“无授权页”“后台资料仍只在内存”等描述已有后续合入，不直接当作当前待办。自评不替代监工验收。
 
-- **基础收尾：#1、#2 已关闭（completed），不再列为本批工作。**
-- **资料与样本：#20（#3 已于 2026-10-19 按披露口径关闭）。** 持续准备核准资料、标签和独立样本；按能力分批准备，避免最后集中补齐。
-- **真实接入与隐私：#27、#29，以及 #6 的存储接入。** 按正在接入的功能补服务配置、用途授权和持久化。新增数据同步登记删除处理，完整删除恢复在集成阶段验收。
+## 推荐推进顺序
 
-可以同时推进**眼前最优先的三件事是：**
+目标是**每批新增一段手机上可以连续完成的操作**，复用当前 main 和已验组件，不再重复搭建骨架。Android／Demo 为当前范围，独立适老专项与 iOS 继续后置；现有字号及触控保护保留。
 
-1. **完成一次五 Tab 的正常操作走查。** 当前真机已经连通，旧冒烟脚本仍依赖过期页面结构。可先用简短人工走查取得有效证据；继续使用脚本时，只修正页面定位、Tab 顺序和登录态判断。[现场记录](https://github.com/GengYunChuChao/GengYun/issues/23#issuecomment-6182823911)
-2. **完成登录→手选档案→查询详情→收藏这条连续流程。** 每次提交交付一个用户能实际完成的操作。
-3. **#1／#2 已关闭，不再列为待办。** 下一步核对 #28 是否满足当前 Demo 阶段的完整条件，满足即可关闭；不要追加全业务、适老或完整 AI 质量验收。
+| 优先级 | 推进内容与关联 issue | 本批完成标志 |
+| --- | --- | --- |
+| P0：平台并行确认 | #27、#24：核现有小程序账号／AppID、管理员与主体、成员权限、实际服务类目、隐私配置、备案／认证／审核状态；确认比赛使用本地演示还是正式体验／发布环境 | 输出“已具备／待用户操作／不适用”清单；账号与云环境归属、合法网络访问方案明确。无授权不购买、改权限或部署，不等待平台确认才开发无关本地功能 |
+| P0：第一条用户链路收尾 | #4、#5、#7、#16、#28：登录→手选作物／地区→查询→详情→收藏／取消→退出；复用真实登录记录，补其尚未覆盖的操作 | 同一 main 版本在 Android 上连续走完；退出、来源失效、网络失败能清旧内容并恢复，游客不能越权。手选地区不等自动定位，查询不等识草或 DoseCard；记录必要截图／请求状态即可 |
+| P1：先接通一条真实 AI 流程 | #6、#11、#13，并行 #9、#10：先查现有端口与配置，选择可用性最高的一条闭环交付；语音可先验证“录音→合法媒体→ASR→核对文字”，再接发送与播报；识别／OCR 单独接续 | 确认实际录音格式、真实对象／字节来源、授权与撤回、当前凭据及真实结果；将手机、API、PG 和供应商请求关联。没有真实结果则保持未启用／失败，不能用旧调用样例或模拟数据顶替；新增付费调用另需用户授权 |
+| P1：问答与社区闭环 | #12：文字问答→来源→失败恢复；#14、#15、#17、#18：发帖→审核状态→评论／点赞→消息跳转→后台下架 | 真实模型与确定性摘录明确区分；社区必须先审后发，审核策略与违规样例验证后才能启用真实发布。消息只跳转到当前可访问对象，重用已合后台及失败处理 |
+| P1：资料与样本持续准备 | #8、#20、#21：补核准标签、条件、独立样本与答案复核；按已接通能力分批冻结并评估 | 真实样本／授权／评审状态与模型版本可追溯；指标按原门槛出报告，不用合成用例当质量成绩；条件或来源不足仍不展示实际用量 |
+| P2：整体验收与发布 | #19、#22、#23、#24、#29：集成权限、用途撤回／注销、第三方删除、备份恢复与 Android 完整演示；在获准目标上完成部署 | 在线 7 日／备份 30 日策略有实际执行与恢复不复活证据，第三方请求与完成分列。复用有效组件／CI证据，只补真实缺口；满足各 issue 全部必要条件后由监工决定关闭 |
 
-适老专项和 iOS 继续后置。情景视频的模板／播放器可在主链稳定后并行推进，先用合成输入，扫描入口再接 OCR。
+**近期先做三件事：** 核对现有 AppID 与平台状态；完成登录到收藏的 Android 连续走查；验证一条真实 AI 产品链路。各自形成小范围可审 PR 或验证记录，不把其余 AI、适老专项及全平台发布重复塞入每个局部 PR。模板视频在主链稳定后接续，不宣称药效预测。
 
-审查随每批交付进行：已有有效证据直接复用，只补本次变化对应的缺口。下一阶段最有价值的进度标志是：**手机上新增了哪一段可以连续完成的操作。**
+## AppID 与发布准备
 
-## 当前进度（2026-10-21）
+**现在就应确认并使用正式小程序账号的 AppID，不必等全部代码完成；已经注册过正确账号则不重复申请。** 项目已有 AppID 配置和真实登录记录，但本次没有登录微信后台核对主体、账号类型、认证、备案及类目状态，因此不能据仓库配置判断全部平台条件已就绪。
 
-本轮实测 `main` 基线 `ee46eb1`（`ee46eb1dc2b8a5a57acd9b8905b72863d45cfa4e`，`feat(privacy): 备份副本 30 日到期清除的驱动者（P0-4 / Refs #19） (#398)`）：开放 issue 24 项、已关闭 3 项（#1、#2、#3）、累计合入 PR 312 条、在飞 PR 3 条（`#400`／`#399` 非草稿、`#324` 草稿，可合并性均为 `MERGEABLE`；`gh issue list --state open`／`gh pr list --state open`／`gh api search/issues…is:merged` 于 **2026-10-21T14:56:42Z** 同一次实跑，迁移 26 个、`git rev-list --count HEAD`=366）。上一轮（2026-10-20 基线 `4122976`）记的是「在飞 2 条：#324 草稿、#328 非草稿」——`#328` 已于 2026-10-20T13:26:02Z 合入；本轮在飞清单换为 `#400`／`#399`／`#324`，且本轮核对期间由 2 条增至 3 条（`#400` 新建），一律以最后一次实测为准。功能面合入不少，但其余 24 项仍未走完验收；缺口集中在真机、真实 AI 调用、样本签核与部署这四类外部前提上。
+1. 管理员登录[微信公众平台](https://mp.weixin.qq.com/)，进入“开发与服务 → 开发管理 → 开发设置”，核对 AppID 与项目所用值一致；同时确认账号属于本项目可管理的小程序，非临时测试号。查看路径见[微信官方说明](https://pay.wechatpay.cn/doc/v3/merchant/4013289251)的小程序 AppID 章节，该引用仅说明查看路径，不代表本项目需要开通支付。
+2. 若该账号就是计划交付的主体，继续使用现有 AppID；若只有测试号、没有可管理的小程序账号，或主体不适用于当前功能，再先确定主体后注册。AppID、认证、备案和版本审核是不同事项，按后台实际要求分别办理，不把“拿到 AppID”当作“已可上线”。
+3. 并行确认开发／体验成员、服务类目、用户隐私保护指引及接口使用说明；网络访问按选定部署路线核准，普通 HTTPS API 和云托管调用方式分别核对，不以本地 `urlCheck=false` 作为发布配置。
+4. 核实云托管账号、地域／VPC及数据库实际资源，再确认运行配置与访问权限；保留“微信云托管 API＋上海 CVM PostgreSQL”的既定方向，若需变更由用户决定，不为 AppID 自动迁移数据库或新建付费资源。
 
-表分两层：`AC 判定` 是按 issue 正文验收条款逐条判定的结论，`工程缺口` 是代码与文档侧的 real 模式、partial、未接线事实；两层不互相替代。
-
-| issue | 功能 | AC 判定 | 工程缺口 | 依据 |
-| --- | --- | --- | --- | --- |
-| #3 | 浙江首批资料清单与可替换数据库适配 | 待裁定 | 外部材料未取得：用量／DoseCard、八组科普评估、云库／受控 HTTPS／正式 real／双手机真机；20 份独立登记标签取得 0 份、许可全为 `false` | `docs/verification/gy-i03-zhejiang-materials.md:13-14`；`docs/verification/gy-i03-i20-materials-gap-ledger-20261015.md:11` |
-| #4 | 微信登录、游客限制与服务端归属权限 | 待前置 | `loginWechat` 为 implemented，但 `stub`／`preset_demo` 用合成身份，不代表真实微信身份；真机微信身份与正式凭据未取得，换码适配器见 `services/api/src/auth/wechat.ts:9` | `docs/architecture/contract-status.json:46`；`docs/verification/gy-i05-region-profile-20261014.md:24` |
-| #5 | 单作物地区档案及授权定位／手动选择 | 未纳入索引 | 真机原生授权弹窗未取得；坐标→地区转换资源未取得（首版本就不内置，页面回退手选） | `docs/verification/gy-i05-region-profile-20261014.md:23`、`:25` |
-| #6 | 私有媒体上传、访问权限及 EXIF 清除 | 未纳入索引 | 句柄消费网关与真实对象存储适配器未接线，real 模式上传如实 503 `PROVIDER_UNAVAILABLE` | `docs/verification/gy-i06-private-media-20261014.md:25`、`:51` |
-| #7 | 科普／除草剂查询、详情与来源版本展示 | 待前置／待证据 | 验收前置 #3／#4 仍 OPEN，真实来源与实际消费者证据未取得；契约面仍 partial：排序仍不同于冻结的 `created_at DESC`，实际表／投影无该列，排序与历史数据方案未完成（按 partial 保留，不与 AC 判定互替） | `docs/architecture/contract-status.json:649`、`:668` |
-| #8 | 药剂适用过滤与标签原文用量安全边界 | 待前置／待证据 | 验收前置 #7 仍 OPEN；规则版本锚与 100 组场景用例已就位（局部条款证据，保留：用例集自述覆盖验收第 1、4 条，含计数断言）；用量侧外部资料与登记标签原文剂量仍缺（属 #3 线），登记标签 0 份、许可全为 `false` | `tests/reference/i08-scenarios-100.test.mjs:12`；`docs/verification/gy-i03-zhejiang-materials.md:13`；`docs/verification/gy-i03-i20-materials-gap-ledger-20261015.md:11` |
-| #9 | 实时拍草识别、Top3 核对及不确定处理 | 未纳入索引 | real 提供者／媒体未接线时明确拒绝，替身为 stub／preset_demo；真实准确率未取得，本片不产生准确率证据 | `docs/architecture/contract-status.json:777`；`docs/verification/gy-i09-identify-candidates-20261014.md:127` |
-| #10 | 实时标签 OCR、用户校正及登记精确核对 | 未纳入索引 | real 提供者／媒体／登记源未接线时拒绝；OCR 任务与记录已接 PostgreSQL（迁移 `0024_ocr_persistence.sql` 与 `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore` 随 [PR #323](https://github.com/GengYunChuChao/GengYun/pull/323) 合入，默认装配 `services/api/src/routes/ocr.ts:196`：`real` + 池走 PG（`persistent: true`）；`real` + 无池仍如实用内存 store 并回报 `persistent: false`（不冒充持久化），`real` 的 503 来自提供者 fail-closed（`services/api/src/ocr/service.ts:459-462`），与连接池无关）；真库脚本 `tests/integration/ocr-jobs-pg.mjs` **已接线并有 CI 常驻证据**（`#331` 接入，受管脚本第 8 条，跑全链迁移 `0001..0024`）——上一轮记的「已在主干但仍无 workflow 运行」已被推翻；同批未接的三条也已各自接线：`account-suspend-pg.mjs`（`#353`，脚本缺陷 SCRAM 28P01／42710 已修）、`recognitions-pg.mjs`（`#349`）、`speech-pg.mjs`（`#354`）、`backup-purge-pg.mjs`（`#360`，用 PGDG apt 装 PG 17 服务端二进制取 `initdb`/`pg_ctl` 真跑，故上一轮「CI 的 runner 与容器不共享该二进制 ⇒ 不可接」的判断过期）。`real-pg-integration.yml` 现跑 **13 条受管脚本**（12 条 `-pg` ＋ `recognition-chain-e2e.mjs` 端到端；`git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml` 实测 13 命中），另有在飞 PR（`#400`）把 `backup-copies-purge-pg.mjs` 也接进去（将成第 14 条，**未合入前不记作事实**）。台账 `createOCR`（`docs/architecture/contract-status.json:913`）仍未随 #323 更新（仍只写「持久/删除链待验收」），属生成区滞后 | `docs/architecture/contract-status.json:913`；`docs/verification/gy-r27-ocr-persist-20261020.md:9` |
-| #11 | 普通话录音、实时 ASR 转写和发送核对 | 未纳入索引 | 转写取消已接线（`services/api/src/jobs/sources.ts:107` 注销转写作业源取消，随 #321 合入）；真实 ASR 评估与 PG 持久化仍未取得；客户端切片 [PR #248](https://github.com/GengYunChuChao/GengYun/pull/248) 已于 2026-10-19 关闭、未合入，其内容不进 `main` | `docs/verification/gy-i11-speech-http-20261012.md:163`；`services/api/src/jobs/sources.ts:107` |
-| #12 | 有来源的语音／文字问答与回答安全检查 | 未纳入索引 | `unimplemented:no-real-` 前缀即「未接真实模型」；`createConversation` 仍 partial | `services/api/src/conversations/service.ts:82`、`:945`；`docs/architecture/contract-status.json:1061` |
-| #13 | 普通话 TTS、播放球及安全文本自动播报 | 未纳入索引 | 真实提供者与产物端口仍未在产品装配接线（`services/api/src/app.ts:968` 注明「应用装配路径永不注入真实适配器端口」，真实适配器只能经 `createLiveTtsProvider(ports)` 触达）；合成域取消已接线（`services/api/src/jobs/sources.ts:153`，随 #322 合入）；真机音频与交互未取得；台账 `:1051` 已随 #325 订正为「取消已接线」 | `docs/architecture/contract-status.json:1041`；`docs/verification/gy-i13-synthesis-jobs-20261014.md:322` |
-| #14 | 文字／图片 AI 筛查、版本重审和失败隔离 | 未纳入索引 | 本片不代表真实筛查上线或准确率；200 风险＋200 正常的独立评估由 GY-I21 执行 | `docs/verification/gy-i14-moderation-http-20261014.md:18`、`:288` |
-| #15 | 真实社区发帖、评论、点赞、筛选与举报 | 未纳入索引 | 社区已接 PG 持久化（`services/api/src/community/store-pg.ts:346`，迁移 `0022_community_persistence.sql` 随 #296 合入，装配 `services/api/src/app.ts:780`）；无连接池时 real 模式仍整域 503（`services/api/src/app.ts:1045`）；台账 `:1261` 仍写「真实持久存储未交付」，属旧读数；`#325` 的订正范围不含社区，本条仍是台账滞后 | `services/api/src/app.ts:780`、`:1045`；`services/api/src/community/store-pg.ts:346` |
-| #16 | 收藏与可浏览的识别历史 | 待前置 | 收藏／历史已落 PG（迁移 `0018_favorites_history.sql` 随 #272 合入），契约仍 partial；**注销链里的两件事已达成、此前漏记**：收藏/历史在注销时被**真删**（`services/api/src/favorites/store-pg.ts:169-183`、`services/api/src/history/store-pg.ts:157-168`），且注销清理闭集已扩到**四域**（favorites／history／messages／conversations，`services/api/src/privacy/user-data-deletion.ts:93-98`），真库臂「四域清单行齐 ⇒ 整体 `completed`」（`tests/integration/backup-purge-pg.mjs:397-465`，随 #397）；真机页面证据仍未取得（索引 §1.5 已把它列为前置） | `docs/architecture/contract-status.json` 的 `listFavorites`（`:1780`）与 `listHistory`（`:1861`）；`docs/verification/gy-i16-favorites-pg-20261017.md:210`；`docs/verification/gy-i16-i17-deletion-cascade-20261021.md` |
-| #17 | 首版应用内消息、未读状态与权限跳转 | 待前置 | 消息域已接 PG（迁移 `0019_messages_persistence.sql` 随 #278 合入，`services/api/src/messages/store-pg.ts:178`，装配 `services/api/src/app.ts:752-772`，路由注册 `:1766`）；`real` 模式下**仅无连接池时**整域 503（`pool === null` 才把服务置 `null`，`services/api/src/app.ts:752-772`）；**注销清理已补**（#390／#397）：`messages` 进四域闭集（`services/api/src/privacy/user-data-deletion.ts:93-98`），同一事务内删正文与按 scope 前缀删幂等台账（`messages/store-pg.ts:230`、`:234`），PGlite 真表断言「本主体 0 行、他人 1 行」（`tests/unit/favorites-history-deletion-registration.test.mjs:186`、`:188`）；**真 PG17 上的注销行数读数仍未取得**；真实事件／目标端口与真机页面待验收；台账 `listMessages`（`docs/architecture/contract-status.json:1915`）仍写「PG/注销…仍待验收」，属生成区滞后（本表不手改 JSON） | `services/api/src/app.ts:752-772`、`:1766`；`docs/architecture/contract-status.json:1915`；`tests/unit/favorites-history-deletion-registration.test.mjs:186`、`:188` |
-| #18 | 独立后台资料、账号、AI 任务及功能开关 | 未纳入索引 | #282、#279 已合入（`0020_feature_flags.sql`、`0021_admin_accounts_read.sql`）；`listAdminUsers` 台账仍记 partial、真实读数未复测（`#325` 的订正范围不含后台，本条仍是台账滞后）；后台真实端口、审计与 UI 联调待完成 | `docs/architecture/contract-status.json:2578-2604` |
-| #19 | 注销去身份、在线 7 日／备份 30 日删除与恢复 | 不可关 | 备份副本域已落地：`services/api/src/privacy/backup-copies-pg.ts` 与迁移 `0023_user_backup_copies.sql` 随 #295 合入，30 天后由真实 PG 端口清除 payload 并写清除证据；**30 日清除的执行者已补**（#398）：运维命令 `tools/purge-expired-backup-copies.mjs` ＋ 驱动 `services/api/src/privacy/backup-purge-driver.ts`，绕过受理函数、真库 14 臂 ALL PASS，但**真实 cron／CVM 调度与读数未取得**（刻意不做常驻定时器）；原「仍缺…『受理同一事务撤会话』」一句已撤——`services/api/db/migrations/0016_account_deletion_persistence.sql:132-134` 本就在**同一事务**内撤销该用户全部活跃会话；仍缺 **7 日在线的真实时钟执行**、**第三方删除证据**与恢复清单重放；台账 `requestAccountDeletion`（`docs/architecture/contract-status.json:410`，blocker `:447`）仍写「到期清除的唯一触发者是『请求重放』，无到期枚举器、无维护端点」——已被 #397（四域清单）与 #398（驱动）在代码层推翻，属**生成区滞后**（本表不手改 JSON，只能经 `node tools/verify-contract-status.mjs --write-doc` 重生成） | `docs/architecture/contract-status.json:410`、`:447`；`services/api/src/privacy/backup-copies-pg.ts`；`docs/verification/gy-i19-backup-purge-driver-20261021.md` |
-| #20 | 冻结独立评估样本、标准答案及评估程序 | 不可关 | 覆盖内 7 张、覆盖外 165 张，`isRealEvaluation=false`、门禁 `not_evaluated`、无任何模型成绩；样本标签 `reviewedBy` 为 `null`，独立复核未做 | `docs/evaluation/README.md:20-21`；`packages/evaluation/samples/gy-i20-weeds-labels.json:18` |
-| #21 | 持续评估真实 AI 能力并汇总首版验收门槛 | 不可关 | 无任何模型成绩；门槛汇总只覆盖「可离线部分」 | `docs/evaluation/README.md:20-21`；`docs/evaluation/acceptance-thresholds-summary.md:1` |
-| #22 | 权限、安全规则及首版端到端失败回归 | 待前置 | #279 已合入（`0021_admin_accounts_read.sql`，后台账号读面接真实 `users` 投影）；写面已接权威、`retryable` 口径随 #256 合入收口；读面真实读数仍未复测（本机无库；`#325` 的订正范围不含本条，故不按订正后记） | `docs/verification/gy-i22-closure-gap-20261018.md:59-80`、`:92`、`:112`、`:128` |
-| #23 | Android／iOS 真机、时延容量及完整演示验收 | 不可关 | 真机设备未验证，Android 真机联网与 iOS 均未验证 | `docs/verification/platform-checklist.md:40`、`:48-49` |
-| #24 | 部署联网比赛版、备份恢复并交付完整材料 | 不可关 | 演练脚本与本机恢复读数已合入（属本机演练，不等于 CVM 验收）；材料索引只做离线核验，部署目录只有准备物 | `docs/verification/gy-i24-release-materials-index-20261017.md:131`；`docs/verification/gy-i24-restore-drill-local-20261018.md:6`；`deploy/README.md:3` |
-| #27 | 提前验证正式 AppID、真机域名及 AI 和数据库服务接入 | 待前置 | `request` 合法域名仍为阻塞，缺已登记服务地址；`verify-env.mjs` 两项 FAIL（生产 API HTTPS 地址、数据库连接变量） | `docs/verification/platform-checklist.md:24`；`docs/verification/gy-i27-live-ai-20261018.md:110` |
-| #28 | 五 Tab 原生页面骨架、Demo 样式及统一失败状态 | 未纳入索引 | 开发者工具／模拟器／真机渲染与截图未取得；关闭还需消息页与「我的耕云」人工走查、两档演示数据 | `docs/verification/gy-i28-demo-parity-20261018.md:177-179`、`:208-213` |
-| #29 | 用途授权、外发账本与隐私撤回接口守卫 | 未纳入索引 | 判据一、判据三已满足，判据二因缺生产侧第三方删除登记面而只部分满足 | `docs/verification/gy-i29-closure-20261018.md:6`、`:229` |
-
-`AC 判定` 列取自按验收条款逐条判定的关闭材料索引（`docs/verification/gy-issue-closure-index-20261018.md`，已随 [PR #284](https://github.com/GengYunChuChao/GengYun/pull/284) 于 2026-10-19 合入 `main`；该索引生成于基线 `5250520`，本表基线为 `ee46eb1`，索引条目不随 `main` 前进自动更新，只作条款级线索）。索引只覆盖 13 项（#3、#4、#7、#8、#16、#17、#22、#27，以及明确不可关的 #19、#20、#21、#23、#24），其余 12 项尚无 AC 级判定，记「未纳入索引」，只列工程缺口。
-
-**索引自身已更正，本表随之一致，需明说**：合并版索引按 r2 作废了 #7／#8 的旧「可关」结论，分布为「可关 0／待前置 7（#4、#7、#8、#16、#17、#22、#27）／待裁 1（#3，附指挥裁定建议「可关」）／不可关 5」，本表逐项对齐；#7／#8 的条款级证据（AC 判真、100 组场景用例）原样保留，不因改记而删除。（1）#22 的读面已随 [PR #279](https://github.com/GengYunChuChao/GengYun/pull/279) 合入接真实 `users` 投影，真实读数仍未复测，故整项仍记待前置。（2）#3 已于 2026-10-19 按指挥建议「可关，附披露」以 `COMPLETED` 关闭；表中 AC 判定列按索引原文保留「待裁定」以便追溯，不据此再主张关闭待裁。关闭权仍只在监工与用户。
-
-在飞 PR 与迁移号：在飞 3 条（`gh pr list --state open` 于 2026-10-21T14:56:42Z 实测，三条 `mergeable` 均为 `MERGEABLE`）——`#400`（E5：把 `tests/integration/backup-copies-purge-pg.mjs` 接进真库门禁，受管脚本将成第 14 条，非草稿；**未合入，不记作已接线**）、`#399`（#15／#17／#28：消息域未读并发／游标／幂等键三处修复 + 401/403 收敛到会话层，非草稿；**其证据页尚未进 `main`**，故本表不引用它的读数）、`#324`（#12／#28 原生文字提问页与识别入口，**草稿**，未合入前不记作 main 事实）。上一轮在飞的 `#328`（台账跟随订正，只动台账、无迁移）已于 2026-10-20T13:26:02Z 合入。`#327` 已于 2026-10-20T12:11:28Z 合入（`real-pg-integration.yml` 扩到 7 条真库脚本；该文件现已 13 条，见下段）。`main` 现有 27 个迁移、最大号 `0027_admin_audit_observability.sql`（含 `0026_speech_persistence.sql`、`0025_recognitions_persistence.sql`；2026-10-22 复核：`origin/main` = `d4d48088` 实测 27 个迁移＋26 个 down 脚本，`0027` 随 `#428` 于 2026-10-22 合入，此后未再出新号；未合入 PR 的迁移号一律不计）；`#278`（0019）、`#282`（0020）、`#279`（0021）、`#296`（0022）、`#295`（0023）已按此顺序合入；`#323`（0024）、`#325`（台账订正）、`#326`（手机号判据）、`#327`（真库门禁第三批）、`#328`（台账订正）已于 2026-10-20T12:03:58Z～13:26:02Z 合入；2026-10-21 又合入 `#389`～`#399` 一批（`#395`／`#396`／`#397`／`#398` 分别对应语音输入接线、401/403 归因收敛、注销清理四域与备份清单、30 日到期驱动）。`#325` 订正了取消覆盖面（`:614`／`:639`／`:971`／`:1051` 与转写／合成四端点）与消息持久化（`:1771`）表述，状态零升级；`#326` 只改测试判据。`#248` 已于 2026-10-19 关闭、未合入，其内容不进 `main`。旧段登记的 `#282` 启动探测 fail-open 已随其合并修掉：现行装配走三态探测 `probeFeatureFlagsTable`（`services/api/src/admin/ops/flags-pg.ts:299-303`），`services/api/src/admin/ops/flag-gate.ts:425-430`／`:464-466` 只在 `missing`（确认未安装）时降级未武装，`unknown`（探测异常）保持武装并在下次判前重探。同期已合入 #256、#272、#288／#289／#290、#295～#296、#320～#322。未合入 PR 的结论一律不当作既成事实。
-
-**行号锚点提示（2026-10-21）**：本表「依据」列里的 `docs/architecture/contract-status.json:<行号>` 是各轮各自的读数，台账经 `#362`／`#369`／`#344`／`#356` 等扩写后**行号整体后移**（实测：`requestAccountDeletion` 现 `:410`、`createOCR` 现 `:913`、`listFavorites` 现 `:1780`、`listMessages` 现 `:1915`、`listPosts` 现 `:1344`、`listAdminUsers` 现 `:2795`；旧锚点如 `:419`／`:861`／`:1261`／`:1635`／`:1771` 现已落在别的 operation 区间内），旧锚点已指向别处。本轮只重测并订正 `#10`／`#16`／`#17`／`#19` 四行点到的锚点，其余行的锚点重测登记为后续片（见 `docs/verification/gy-r28-e4-stale-claims-20261021.md` §2 R5），**不据此认为那些行的结论有变化**。
-
-表内 `#27`／`#28`／`#29` 分别对应 `GY-I25`／`GY-I26`／`GY-I27`。`#1`、`#2` 已关闭（completed），`#3` 亦已于 2026-10-19 按披露口径关闭；上文推进列表已同步，不再把 `#1`／`#2` 列为待办。关联核对：`#2` 已 completed 关闭，本文档返修不重开 `#2`；`#7`／`#8` 保持 OPEN；`#22` 全链验收未完成。
-
-**按 AC 判定：可关 0 项；待前置／待证据 7 项（#4、#7、#8、#16、#17、#22、#27）；表中 1 项记「待裁定」（#3，按索引原文保留）。除 #3 外本轮不关闭任何 issue，开放 issue 仍 24 项，整项完成数 3／27（#1、#2、#3）；关闭权只在监工与用户。** #323 的 OCR 持久化与 #326 的判据收紧均未改变任何整项 AC：OCR 仍缺 real 提供者与真实标签评估，#326 只改测试票据。 #3 的待裁项是「20 条 `review_status: unverified`／`achieved: 20` 是否算关闭」，指挥已给出建议「可关，附披露：条目 20／来源 validity=valid 20／逐字段复核 0／licensed=false」，#3 于 2026-10-19 按此关闭（`COMPLETED`）；关闭不等于这 20 条已逐字段复核或授权已取得，工程缺口列如实保留。#22 的两个已登记发现经裁定不属「严重安全／权限缺陷」（一项是后台账号能力脱钩、方向更保守；一项是 `retryable` 语义不一致、已随 #256 收口），其 AC 判定由待裁转为待前置。#7、#8 的整项仍记「待前置／待证据」，是因为整项前置未满足：#7 待 #4（#3 已关闭）且缺真实来源与实际消费者证据，#8 待 #7 且缺登记标签原文剂量证据；两者条款级证据（AC 判真、100 组场景用例）保留不删。#4、#16、#17、#27 的卡点见上表与下文「四类外部前提」。
-
-仍卡在主干的四类外部前提：
-
-- **真机**：#23 的双平台真机与完整演示、#5 的授权弹窗与真机微信身份、#28 的开发者工具／真机渲染证据、#16 的真机页面证据。
-- **真实 AI 调用**：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`services/api/src/app.ts:968` 注明零端口注入；台账 `docs/architecture/contract-status.json:777`、`:861`、`:1061`、`:1041`）。取消与持久化这类接线不改变此条：#11／#13 的取消已接、#15／#17 已接 PG、#10 的 PG 已随 #323 合入，但服务侧 real 提供者仍未接线。
-- **样本签核**：#20 的独立复核与许可核实、#21 的真实能力评估。
-- **部署**：#24 的实际部署与 CVM 侧恢复演练（本机演练已合入，`docs/verification/gy-i24-restore-drill-local-20261018.md:6` 明确不等于 CVM 验收）、#27 的合法域名与生产环境变量。
-
-下一批最该推进三件事：
-
-1. 合入在飞三条：`#400`（把备份副本域的两个真库脚本都留在门禁里，受管脚本将成第 14 条）、`#399`（#15／#17／#28 消息域三处修复 + 401/403 收敛，非草稿）与 `#324`（#12／#28 页面，草稿）。上一轮列在这里的 `#328`（台账跟随订正）已于 2026-10-20T13:26:02Z 合入。**真库 CI 接线不再是缺口**：`#323`／`#325`／`#326`／`#327` 之后，`#331`（OCR／第 8 条）、`#349`（recognitions）、`#353`（account-suspend，脚本缺陷已修）、`#354`（speech）、`#360`（backup-purge，PGDG 装 PG 17 服务端二进制）陆续接线，`real-pg-integration.yml` 现跑 13 条受管脚本；另有在飞 PR（`test/gy-r28-e5-backup-driver-ci`）把 `backup-copies-purge-pg.mjs` 也接进去（将成第 14 条，**未合入前不记作事实**）。因此「`ocr-jobs-pg.mjs` 至今无 workflow 运行」「`account-suspend-pg.mjs` 待脚本修复」「`backup-purge-pg.mjs` 待 CI 环境前提」三句均已过期。
-2. 补 #6 的真实对象存储适配器与 #9／#12／#13／#14 的服务侧 real 提供者——这些 real 模式现在仍整域不可用（`services/api/src/app.ts:968`）。
-3. 推进 #20 的外部资料与独立签核（#3 已按披露口径关闭），它同时卡住 #8、#21、#24。
-
-逐项证据来源、取数命令与旧快照对照见 [开发进度](docs/development-progress.md) 的「2026-10-20 快照」（10-18 快照保留为历史读数）。
+AppSecret 等秘密只通过私密配置交接，不写 README、PR 或聊天。以上是核对清单，本次没有注册账号、改平台设置、触发供应商调用或执行生产部署。
 
 ## 当前范围与入口
 
