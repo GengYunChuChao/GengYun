@@ -290,8 +290,13 @@
 
 > R32 新增：把 `#19` 的「调度层」从**文档里的一行 cron 示例**变成仓内可判定的部署产物。
 > 判据入口是 `node tools/verify-purge-schedule.mjs`（`npm run verify:purge-schedule`，10 项判据，
-> 退出码 0/1/2）；单测 `node --test tests/unit/verify-purge-schedule.test.mjs`（正臂 + 10 条负控制）。
-> 两条命令的角色差异（在线＝属主/运维角色，备份＝运行时角色）写在各自 `.service` 的头注释里。
+> 退出码 0/1/2）；单测 `node --test tests/unit/verify-purge-schedule.test.mjs`（正臂 + 13 条负控制）。
+> 三条命令的角色差异（在线＝属主/运维角色，备份＝运行时角色，保留策略＝属主/运维角色）写在各自
+> `.service` 的头注释里。
+>
+> S4 新增（保留策略 `purge:retention` 接线）：`calendar` 判据的上界改为**按命令分档**
+> （分钟级 ≤ 60 分钟、日级 `tools/purge-retention-expired.mjs` ≤ 1440 分钟、未登记回落 60），
+> 因此下面多出的那条日级 timer 是**判据允许的最稀一档**，不是「随便多稀都行」。
 
 | 材料 | 作用 | 离线核验 |
 | --- | --- | --- |
@@ -300,6 +305,8 @@
 | [`../../deploy/purge-schedule/gengyun-purge-online-data.timer`](../../deploy/purge-schedule/gengyun-purge-online-data.timer) | 每 10 分钟（`OnCalendar=*-*-* *:00/10:00`） | ✅ 在册；判据 `calendar` **展开日历**实算最大间隔 **10 分钟** ≤ 60 |
 | [`../../deploy/purge-schedule/gengyun-purge-backup-copies.service`](../../deploy/purge-schedule/gengyun-purge-backup-copies.service) | 备份副本 30 日到期清除的 systemd 单元：`ExecStart=` 指向 `tools/purge-expired-backup-copies.mjs`（与 `purge:backup-copies` 同一入口）、运行时角色、非 root | ✅ 在册；判据 `execstart`/`secrets`/`hygiene` 逐条绿 |
 | [`../../deploy/purge-schedule/gengyun-purge-backup-copies.timer`](../../deploy/purge-schedule/gengyun-purge-backup-copies.timer) | 每 15 分钟（`:05`/`:20`/`:35`/`:50`，与在线那条错开 5 分钟） | ✅ 在册；判据 `calendar` 实算最大间隔 **15 分钟** ≤ 60 |
+| [`../../deploy/purge-schedule/gengyun-purge-retention.service`](../../deploy/purge-schedule/gengyun-purge-retention.service) | 保留策略日历到期清除的 systemd 单元：`ExecStart=` 指向 `tools/purge-retention-expired.mjs`（与 `purge:retention` 同一入口）、**`--yes --json`**（执行器默认 dry-run，缺 `--yes` 等于每天空转）、凭据走 `EnvironmentFile=/etc/gengyun/purge-retention.env`、属主/运维角色（`gengyun-ops`，`public.sessions` 的 `DELETE` 未授予运行时角色）、非 root | ✅ 在册；`execstart`/`secrets`/`hygiene` 逐条绿（本机 exit=0） |
+| [`../../deploy/purge-schedule/gengyun-purge-retention.timer`](../../deploy/purge-schedule/gengyun-purge-retention.timer) | **日级一次**（`OnCalendar=*-*-* 03:20:00`，`AccuracySec=1min`、`RandomizedDelaySec=300s`、`Persistent=true`） | ✅ 在册；判据 `calendar` 实算最大间隔 **1440 分钟**，正好等于日级上界（`> 1440` 才会红） |
 
 ## 3. 备份／恢复／回滚：证据与判据
 
@@ -324,7 +331,7 @@
 | # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 2／8 项按 2026-10-18 合流 `0856e49`、2026-10-19 合流 `d131e47`／main `31a746d`／`145ebe4`（含 #279 的 `0021`）／`607c03c`（含 #312）／叠在 #296 新 head（`71eda51`）、2026-10-20 合流 main `df043a7`（含 #296 的 `0022` 与 #313）／`ff1b39d`（含 #295 的 `0023`）／`d4d48088`（含 #428 的 `0027`）后的树复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
-| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 36 个文件全部在索引表行中（36/36 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出 `deploy/postgres-cvm/restore-drill.ps1`（I24 片）与 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`（R28-S24，2026-10-20）；R32 另增 `deploy/purge-schedule/` 下 5 件（4 个 systemd 单元 + README；cron 路线文件已按 R32 返修裁定删除） |
+| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 38 个文件全部在索引表行中（38/38 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出 `deploy/postgres-cvm/restore-drill.ps1`（I24 片）与 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`（R28-S24，2026-10-20）；R32 另增 `deploy/purge-schedule/` 下 5 件（4 个 systemd 单元 + README；cron 路线文件已按 R32 返修裁定删除）；S4 再增该目录 2 件（`gengyun-purge-retention.{service,timer}`） |
 | 3 | 索引相对链接全部可解析 | 链接目标按索引所在目录解析 | ✅ |
 | 4 | 脚本三件套：`bash -n`、`set -euo pipefail`、**blob 为 LF** | `bash -n`（**blob 内容喂 stdin，不传文件路径**）；`git cat-file blob` 数 CR 字节 | ✅ 5/5 通过；blob CR 字节数全部为 0 |
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |

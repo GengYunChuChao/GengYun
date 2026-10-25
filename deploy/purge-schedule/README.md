@@ -1,6 +1,6 @@
-# 到期清除的调度层（#19 · 在线 7 日 / 备份 30 日）
+# 到期清除的调度层（#19 · 在线 7 日 / 备份 30 日 / 保留策略日级）
 
-本目录是**部署产物**：把两条到期清除命令挂到**宿主机时钟**上。它不含业务代码、不含迁移、
+本目录是**部署产物**：把三条到期清除命令挂到**宿主机时钟**上。它不含业务代码、不含迁移、
 不含凭据。命令本体在 `tools/`，驱动模块在 `services/api/src/privacy/`，本目录只负责「谁来按点叫它」。
 
 ```
@@ -9,8 +9,14 @@ deploy/purge-schedule/
 ├── gengyun-purge-online-data.timer       # 每 10 分钟
 ├── gengyun-purge-backup-copies.service   # 备份副本 30 日到期清除（运行时角色）
 ├── gengyun-purge-backup-copies.timer     # 每 15 分钟（:05/:20/:35/:50，与上一条错开）
+├── gengyun-purge-retention.service       # 保留策略日历到期清除（属主/运维角色，--yes 真执行）
+├── gengyun-purge-retention.timer         # **日级一次**（每天 03:20，与上面两条错开）
 └── README.md
 ```
+
+三条 timer 的时间刻度不一样，这是**有意的**：前两条是「按主体的到期窗口」（在线 7 日 / 备份 30 日），
+漏一个刻度的代价是数据多留几分钟；第三条是「按日历的保留天数」（1 天 / 30 天尺度），
+按分钟刻度跑没有意义，**日级一次**就是它的正确刻面（门禁的上界也按命令分档，见文末「门禁」）。
 
 ## 为什么放在 `deploy/purge-schedule/`（而不是 `deploy/postgres-cvm/conf/`）
 
@@ -24,14 +30,15 @@ deploy/purge-schedule/
 - 目录名直接给出判据入口的扫描面：`tools/verify-purge-schedule.mjs` 默认只扫本目录的
   `*.service` / `*.timer`（`--dir` 可改，供负控制用）。
 
-## 两条命令的角色差异（本目录唯一一处「两条不一样」）
+## 三条命令的角色差异（本目录唯一一处「每条不一样」）
 
 | 单元 | 命令 | DB 角色 | 依据 |
 | --- | --- | --- | --- |
 | `gengyun-purge-online-data` | `tools/purge-expired-online-data.mjs` | **属主/运维角色**（必填） | 候选查询要读 `public.deletion_requests`，运行时角色对该表零表级零列级权限（`90-assert-least-privilege.sql` 第 48 项）⇒ 运行时角色跑必然 `42501`（`online-purge-driver.ts` 文件头「需要的数据库角色」） |
 | `gengyun-purge-backup-copies` | `tools/purge-expired-backup-copies.mjs` | **运行时角色即可** | 用到的列全在 `gengyun_api_runtime` 的列级授权里（`20-login-roles.sql` 的 `gy-i19-backup-copies-grant` 段），真库臂 `backup-copies-purge-pg.mjs` 就是用运行时角色实测的 |
+| `gengyun-purge-retention` | `tools/purge-retention-expired.mjs` | **属主/运维角色**（必填） | 策略表里 `public.sessions` 的 `DELETE` **刻意没给**运行时角色（`services/api/db/roles/auth_privacy.sql:24-26` 只有列级 `SELECT/INSERT/UPDATE`）⇒ 运行时角色跑必然 `PERMISSION_DENIED`、`sessions` 一行不动、退出码 1（真库臂 `retention-purge-pg.mjs` 的受限角色用例就是这个读数） |
 
-两条都⛔ **不以 root 运行**：OS 侧与 DB 侧各自按最小权限收敛，两层不互相替代。
+三条都⛔ **不以 root 运行**：OS 侧与 DB 侧各自按最小权限收敛，两层不互相替代。
 
 ## 安装（systemd timer 路线；本仓不支持 cron，理由见「为什么不再提供 cron 等价路线」）
 
@@ -58,13 +65,16 @@ sudo useradd --system --user-group --no-create-home --shell /usr/sbin/nologin ge
 # 两者结果一致（install -d 对已存在目录幂等，不会清空内容）。
 sudo install -d -m 0700 -o gengyun-ops -g gengyun-ops /var/lib/gengyun-purge-online-data
 sudo install -d -m 0700 -o gengyun-app -g gengyun-app /var/lib/gengyun-purge-backup-copies
+sudo install -d -m 0700 -o gengyun-ops -g gengyun-ops /var/lib/gengyun-purge-retention
 ```
 
 `/var/lib/gengyun-purge-online-data/` 里放**在线游标**（`ExecStart=` 的 `--cursor-file=` 落点）；
-`/var/lib/gengyun-purge-backup-copies/` 是备份单元的状态目录（该命令当前不写文件，保留给将来的
-日志/临时产物一个**非 root 可写**的落点）。两处都必须是**该用户可写**：systemd 会 chown 给 `User=`；
-手工预建时也必须按上面的 `-o <用户> -g <同名组>` 设属主，否则游标写不进去、每轮退出码 2。
-判据 `[cursor]` 会把「`--cursor-file` 归一化后落在 `StateDirectory=` 目录里」钉死。
+`/var/lib/gengyun-purge-backup-copies/` 与 `/var/lib/gengyun-purge-retention/` 是各自单元的状态目录
+（这两条命令当前不写文件，保留给将来的日志/临时产物一个**非 root 可写**的落点 —— 保留策略那条
+尤其需要：抄一份 `--json` 报告出去时不该往 `/opt/gengyun/app` 里写）。三处都必须是**该用户可写**：
+systemd 会 chown 给 `User=`；手工预建时也必须按上面的 `-o <用户> -g <同名组>` 设属主，
+否则游标写不进去、每轮退出码 2。判据 `[cursor]` 会把「`--cursor-file` 归一化后落在
+`StateDirectory=` 目录里」钉死。
 
 ### 2) 凭据：每条命令一个环境文件（`0600 root:root`）
 
@@ -76,9 +86,9 @@ sudo install -d -m 0755 -o root -g root /etc/gengyun
 # ⚠ 不要用 `install -m 0600 … /dev/null <env>` 建文件：它把 /dev/null 当源，**重复执行会把
 # 已写入的连接串截断清空**。这里用 touch（只更新时间戳、不截断）+ chown + chmod 三步，
 # 对已存在的文件重跑不会改动内容。
-sudo touch /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env
-sudo chown root:root /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env
-sudo chmod 0600 /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env
+sudo touch /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env /etc/gengyun/purge-retention.env
+sudo chown root:root /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env /etc/gengyun/purge-retention.env
+sudo chmod 0600 /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-copies.env /etc/gengyun/purge-retention.env
 ```
 
 > 若文件**已存在且已写入连接串**：只复核属主/权限（`ls -l`），⛔ 不要再用任何以 `/dev/null`
@@ -87,6 +97,7 @@ sudo chmod 0600 /etc/gengyun/purge-online-data.env /etc/gengyun/purge-backup-cop
 > 然后由持钥人把连接串写进对应文件（键名只有一个，命令只认环境变量）：
 >   `purge-online-data.env`   ← owner/运维角色的连接串
 >   `purge-backup-copies.env` ← 运行时角色的连接串
+>   `purge-retention.env`     ← **属主/运维**角色的连接串（`public.sessions` 的 `DELETE` 只给到这一层）
 > ⛔ 不要写进单元、README、issue 或任何提交物。
 
 ### 3) 日志：走 journald，不需要日志目录
@@ -99,25 +110,38 @@ systemd 把单元的 stdout/stderr 收进 journald（`journalctl -u gengyun-purg
 
 ```bash
 sudo install -m 0644 gengyun-purge-online-data.service gengyun-purge-online-data.timer \
-                    gengyun-purge-backup-copies.service gengyun-purge-backup-copies.timer /etc/systemd/system/
+                    gengyun-purge-backup-copies.service gengyun-purge-backup-copies.timer \
+                    gengyun-purge-retention.service gengyun-purge-retention.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now gengyun-purge-online-data.timer gengyun-purge-backup-copies.timer
+sudo systemctl enable --now gengyun-purge-online-data.timer gengyun-purge-backup-copies.timer \
+                              gengyun-purge-retention.timer
 ```
 
 `/opt/gengyun/app` 是本目录假设的**应用根**（`ExecStart=` 与 `--cursor-file=` 都按它写死绝对路径）。
-换了部署路径，四处要一起改：两个 `ExecStart=`、一个 `--cursor-file=`、一个 `WorkingDirectory=`，
+换了部署路径，五处要一起改：三个 `ExecStart=`、一个 `--cursor-file=`、一个 `WorkingDirectory=`，
 改完跑一次 `node tools/verify-purge-schedule.mjs`（它按**后缀**比对 npm script 的入口文件，
 所以换根不改名不会被判红；`--cursor-file` 的绝对性则是硬判据）。
+
+> **保留策略那条的 `--yes` 是硬要求**：`tools/purge-retention-expired.mjs` 默认 **dry-run**，
+> 只打印「这一轮该删多少」。单元里写的是 `--yes --json`：`--yes` 让它**真删**，`--json` 让末行是
+> 机读原件（含 `cutoff` 与逐表行数，便于按天留存）。⛔ 别在单元里只写 `--json` —— 那会每天绿、
+> 每天 0 行，而数据一行都没清（门禁 `[execstart]` 只比对入口文件，不替你检查参数语义，
+> 所以这条写在文档里，评审时按它逐字核对 `ExecStart=`）。
 
 ## 判读
 
 ```bash
-systemctl list-timers 'gengyun-purge-*'                  # 下一次触发时间 / 上次触发
+systemctl list-timers 'gengyun-purge-*'                  # 下一次触发时间 / 上次触发（三条一起看）
 journalctl -u gengyun-purge-online-data.service -n 50    # 单次运行日志
+journalctl -u gengyun-purge-retention.service -n 50      # 保留策略：末行是 --json 原件或 FAIL 行
 systemctl status gengyun-purge-online-data.service        # 上次运行的退出状态（failed 要看这里）
 ```
 
-退出码语义（两条命令一致，也是外部调度的**唯一**判据）：
+保留策略那条的**失败可见性**与另两条同构：单元不写 `SuccessExitStatus=`、不加吞红开关 ⇒
+`systemctl status` 的 `failed` 就是执行器退出码 1/2 的直接投影；`Persistent=true` 只会「补跑漏掉的那一次」，
+不会把失败变成成功。日级刻度下「上一次跑是 25 小时前」不比「刚才 failed」更值得关注：**先看 failed**。
+
+退出码语义（三条命令一致，也是外部调度的**唯一**判据）：
 
 | 码 | 含义 | 该做什么 |
 | --- | --- | --- |
@@ -161,7 +185,7 @@ npm run verify:purge-schedule                 # 等价入口
 ```
 
 判据（每条都会 `FAIL[<id>]` 点名文件）：`surface`（扫到 0 个单元也算红）/ `pair`（service ↔ timer 配对）/
-`calendar`（有 `OnCalendar=` 或 `OnUnitActiveSec=`，且**展开日历**算出的最大间隔 ≤ 60 分钟）/
+`calendar`（有 `OnCalendar=` 或 `OnUnitActiveSec=`，且**展开日历**算出的最大间隔 ≤ **它驱动的那条命令的上界**）/
 `execstart`（`ExecStart=` 目标**绝对路径**、指向**树上真实存在**的文件、且与 `package.json` 对应 script
 **同一个入口文件**）/ `cursor`（在线单元必须带**绝对路径** `--cursor-file`，且不得用 `--no-cursor`；
 与 `StateDirectory=` 比对前先做 POSIX 归一化，`..` 穿越会被判红）/ `secrets`（单元里不得出现内联连接串
@@ -170,10 +194,25 @@ npm run verify:purge-schedule                 # 等价入口
 （`services/api/src/**` 里 `setInterval(` 调用计数必须为 0，含 `globalThis.setInterval(`、`setInterval (`、
 `['setInterval'](` —— 把「无进程内调度器」变成机器可判）/
 `npm-script`（`GY-SCHEDULE: npm-script=` 指向的 script 必须存在于 `package.json`）/ `hygiene`
-（`User=` 非 root、`StateDirectory=`、`TimeoutStartSec=`）/ `coverage`（两条必需命令都被某个单元覆盖）。
+（`User=` 非 root、`StateDirectory=`、`TimeoutStartSec=`）/ `coverage`（**三条**必需命令都被某个单元覆盖）。
 
-单测：`node --test tests/unit/verify-purge-schedule.test.mjs`（正臂 + 10 个负控制用例 / 14 条控制臂，
-外加「cron 路线已删除」的仓库回归判据，已随 `npm run test:unit` 进 CI）。
+`calendar` 的**分档上界**（`INTERVAL_BUDGET_MINUTES`）写在这里，免得「日级例外」被误读成「随便多稀都行」：
+
+| timer 驱动的入口 | 上界 | 为什么 |
+| --- | --- | --- |
+| `tools/purge-expired-online-data.mjs` | ≤ **60** 分钟 | 在线 7 日窗口；每天一次 = 最多晚一天清 |
+| `tools/purge-expired-backup-copies.mjs` | ≤ **60** 分钟 | 备份 30 日窗口；同上 |
+| `tools/purge-retention-expired.mjs` | ≤ **1440** 分钟 | 保留策略是 1 天/30 天尺度的日历保留，日级一次**正好等于**这个上界（多一分钟就红） |
+| 未登记 / `Unit=` 解析不到入口 | ≤ **60** 分钟 | 回落最严一档：新增命令忘了登记，红面比绿面安全 |
+
+⇒ 上界由**入口文件**决定，而 `[execstart]` 已把「单元入口 == package.json script 入口」钉死，
+所以想拿日级预算只能真的去驱动那条日级命令：把 `Unit=` 换成分钟级命令、或把入口换成别的脚本，
+都会立刻回到 60 分钟并被 `FAIL[calendar]` 点名。
+
+单测：`node --test tests/unit/verify-purge-schedule.test.mjs`（正臂 + **13** 个负控制用例 / **17** 条控制臂，
+外加「cron 路线已删除」的仓库回归判据，已随 `npm run test:unit` 进 CI）。与日级那条直接相关的两条负控制：
+① 把保留策略 timer 的 `Unit=` 换成分钟级 service ⇒ `最大间隔 1440 分钟 > 60 分钟`；
+② 从夹具 `package.json` 删掉 `purge:retention` ⇒ `FAIL[npm-script]`。
 
 ## 授权来源：为什么不写 `docs/verification/**` 证据页（只允许动那张机器判据索引页）
 
@@ -197,13 +236,16 @@ npm run verify:purge-schedule                 # 等价入口
   `systemctl list-timers` 有读数、`journalctl` 里有单次运行日志，才算运行侧取得。
   这两项都是**运维动作**，仓库里没有它们的证据，本片也不声称有。
 - ⛔ 不证明目标宿主机上 `/opt/gengyun/app` 的路径与本文一致、`node` 在 `/usr/bin/node`；也不证明该目录
-  对两个运行用户**可读/可穿过**（两条命令都以非 root 运行，`tools/**` 与 `services/api/src/**` 要能被它们
+  对两个运行用户**可读/可穿过**（三条命令都以非 root 运行，`tools/**` 与 `services/api/src/**` 要能被它们
   读到 —— 属主与权限属部署面，本目录不代管）。
 - ⛔ 不证明 README 里的 `useradd` / `install -d` 在目标宿主上真的执行过（本片在 Windows 上开发，只做了
   静态核对）。`Group=` 依赖 `useradd --user-group` 建同名组；`StateDirectory=` 的属主由 systemd 按
   `User=`/`Group=` 设置，环境文件必须是 `0600 root:root` —— 装完请用 `id`、`ls -ld /var/lib/gengyun-purge-*`、
   `sudo ls -l /etc/gengyun/purge-*.env` 复核（⛔ 运行用户读不到 `0600` 的环境文件是**设计如此**，
   不要为了「能 cat」把它放宽）。
-- ⛔ 不证明两套角色真的能按上表连上库（那是真库臂 `tests/integration/online-purge-pg.mjs` 与
-  `backup-copies-purge-pg.mjs` 的事，它们跑的是**临时集群**，不是生产）。
+- ⛔ 不证明两套角色真的能按上表连上库（那是真库臂 `tests/integration/online-purge-pg.mjs`、
+  `backup-copies-purge-pg.mjs` 与 `retention-purge-pg.mjs` 的事，它们跑的是**临时集群**，不是生产；
+  保留策略那条的「受限角色 ⇒ `PERMISSION_DENIED` + `sessions` 一行未动 + 退出码 1」也是在那条臂里测的）。
+- ⛔ 不证明保留策略的**日级刻度**在生产上够用：`1 天 / 30 天` 的日历保留按天清是本片的设计判断，
+  真库臂只证明「按 cutoff 幂等删除」这件事本身；若将来有天级以下的保留需求，`calendar` 上界要重新定档。
 - ⛔ 调度层到位 ≠ #19 整项达标：本项还含「7 日到期」的受理/回执/审计落地等其它切片。

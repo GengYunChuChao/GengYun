@@ -1,0 +1,62 @@
+# GY-R34 · #19 · 数据保留策略「日历到期」清除的 **systemd 单元**
+# （驱动者 = tools/purge-retention-expired.mjs，npm script = purge:retention）。
+#
+# GY-SCHEDULE: npm-script=purge:retention
+# GY-SCHEDULE: role=owner
+#
+# ## 这个单元为什么存在
+# 保留策略是**日历保留**（packages/privacy/retention-policy.mjs 的 RETENTION_POLICY：按天数的
+# 年龄列 + cutoff），不是「进程活了多久」。仓内**故意**没有进程内定时器（services/api/src 至今
+# 零 setInterval，由 tools/verify-purge-schedule.mjs 的 [setinterval] 判据机器化守住）⇒ 到期
+# 清除只能由**外部调度**反复调用同一个运维命令；本单元 + 同名 .timer 就是那根时钟。
+# 形态与两条域专用单元（online-data / backup-copies）同族，差异只有两条：
+#   ① 周期是**日级一次**（1 天/30 天尺度的保留策略不需要 10 分钟一轮）；
+#   ② `ExecStart=` 必须带 `--yes` —— 该命令**缺省 dry-run**，少一个参数就变成「每轮数一遍、
+#      一行不清」的静默空转（这正是最难发现的一类调度假绿）。
+#
+# ## 角色：必须用**属主/运维角色**
+# 依据：tools/purge-retention-expired.mjs 文件头「明确不做的事」第 1 条 ——
+#   public.sessions 的 DELETE **没有**授予运行时角色
+#   （services/api/db/roles/auth_privacy.sql:24-26 只有列级 SELECT/INSERT/UPDATE，这是有意设计），
+#   所以本命令必须用属主/运维连接串跑；用运行时角色跑必然 42501（驱动把它归成 PERMISSION_DENIED）。
+#   对照：public.idempotency_keys 反过来对运行时角色已开 SELECT,INSERT,DELETE（同文件 :33）。
+#
+# ## 凭据：只从 EnvironmentFile 来
+# 单元里**不写**连接串、也不写任何口令：运维把 owner 角色的连接串放进
+# /etc/gengyun/purge-retention.env（root:root 0600），systemd 以 root 读入后再降权执行。
+# 命令侧也只认环境变量（工具不接受 argv 明文连接串，也不回显它）。
+# 判据 [secrets] 会对 .service/.timer 里出现连接串或口令键做硬红。
+#
+# ## 失败可见性：退出码是**唯一**判据
+# 0 干净 / 1 有失败表（权限、缺表、缺列、SQL 错误；单表失败只记该表并继续下一张，不整体中断）/
+# 2 参数或配置错（缺 DATABASE_URL、--batch 越界、--dry-run 与 --yes 同时给…）。
+# 所以这里不设任何重启或吞错策略：Type=oneshot + 非 0 退出 ⇒ 该次运行在 systemd 里记 failed，
+# 运维看 journal 就知道；⛔ 不写 SuccessExitStatus=、⛔ 不写 Restart=always。
+# `--json` 让每轮末行留一份机读报告（含 cutoff 与逐表行数，不含连接串）进 journal，作审计留档。
+
+[Unit]
+Description=耕云 数据保留策略到期清除（tools/purge-retention-expired.mjs）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 非 root：DB 侧已按最小权限收敛，OS 侧不再给 root。
+User=gengyun-ops
+Group=gengyun-ops
+# 凭据只从这里进（见上「凭据」一节）。
+EnvironmentFile=/etc/gengyun/purge-retention.env
+# 状态目录：本命令当前不写文件（幂等由策略表的年龄列 + cutoff 决定），保留给将来的日志/临时
+# 产物一个**非 root 可写**的落点；判据 [hygiene] 要求每个 .service 都声明它。
+StateDirectory=gengyun-purge-retention
+StateDirectoryMode=0700
+WorkingDirectory=/opt/gengyun/app
+# 入口文件必须与 package.json 的 purge:retention **同一个文件**（判据 [execstart] 核对）。
+# `--yes` 是硬要求（缺省 dry-run）；`--json` 让 journal 里每轮留一份机读报告（审计用）。
+# 批口径取命令缺省：每批 ≤500 行、单表单轮 ≤10 批 ⇒ 单次最多 5000 行/表，跑不完下一轮接着跑。
+ExecStart=/usr/bin/node /opt/gengyun/app/tools/purge-retention-expired.mjs --yes --json
+# 防重叠：oneshot 单元在跑时 systemd 不会为同一单元起第二个实例；这条再给「卡住的连接」
+# 一个上界 —— 超时即杀并把该次运行记 failed（不重试、不吞错）。
+# 30 分钟而不是 15 分钟：单轮要扫策略表里的全部表，每表最多 10 批。
+TimeoutStartSec=1800
+Nice=10

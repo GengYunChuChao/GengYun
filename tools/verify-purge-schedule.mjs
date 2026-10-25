@@ -23,10 +23,17 @@
  *                  只有 service 没 timer ⇒ 命令永远不会被叫醒（缺口原形）；只 timer 没 service
  *                  ⇒ systemd 起不来（`Unit=` 悬空）。
  *   [calendar]     每个 `.timer` 必须有 `OnCalendar=` 或 `OnUnitActiveSec=`，且**展开后的最大间隔
- *                  ≤ 60 分钟**。`OnCalendar` 是被**展开**算的（`*:00/10:00` ⇒ 10 分钟），
- *                  不是「写了 OnCalendar 就放行」：写 `*-*-* 02:00:00`（每天一次）也满足语法，
- *                  但对「7 日到期」等同于没有时钟。看不懂的日历形态（`hourly` / `Mon..Fri` /
- *                  非每天）一律红并点名，⛔ 不猜。
+ *                  ≤ 该 timer 所驱动命令的上界**（`INTERVAL_BUDGET_MINUTES`，按 `ExecStart=` 的
+ *                  **入口文件**分档，经 timer 的 `Unit=` → 对应 `.service` 解析）：
+ *                    · 分钟级命令（`tools/purge-expired-online-data.mjs` 在线 7 日、
+ *                      `tools/purge-expired-backup-copies.mjs` 备份 30 日）≤ 60 分钟；
+ *                    · 日级命令（`tools/purge-retention-expired.mjs` 保留策略日历）≤ 1440 分钟
+ *                      （＝至少每天一次；这是**唯一**一档日级例外）；
+ *                    · 未登记 / 未解析到入口 ⇒ 回落到 ≤ 60 分钟（红面比绿面安全，⛔ 不放宽）。
+ *                  `OnCalendar` 是被**展开**算的（`*:00/10:00` ⇒ 10 分钟），不是「写了 OnCalendar
+ *                  就放行」：用日级命令写 `*-*-* 02:00:00`（每天一次）合法且正好等于日级上界；
+ *                  但同样一行写在分钟级命令上就等同于没有时钟。看不懂的日历形态（`hourly` /
+ *                  `Mon..Fri` / 非每天）一律红并点名，⛔ 不猜间隔。
  *   [execstart]    每个 `.service` 的 `ExecStart=` 必须
  *                  ① 给出**绝对路径**的入口文件（systemd 本身也要求绝对路径）；
  *                  ② 该入口在**本树上真实存在**（按最长真实后缀映射回仓库相对路径）；
@@ -103,16 +110,50 @@ export const DEFAULT_SCHEDULE_DIR = 'deploy/purge-schedule';
 
 /**
  * 必须被调度覆盖的 npm script。加一条＝收紧门禁（同时要有一条对应的 `.service`），刻意留 diff。
- * 两条命令各对应一个到期窗口：在线 7 日（`deletion_requests.online_due_at`）与备份副本 30 日
- * （`user_backup_copies.retention_until`）。
+ * 三条命令各对应一个到期窗口：在线 7 日（`deletion_requests.online_due_at`）、备份副本 30 日
+ * （`user_backup_copies.retention_until`）、保留策略日历（`packages/privacy/retention-policy.mjs`
+ * 的策略表：1 天 / 30 天尺度的年龄列 + cutoff）。
  */
-export const REQUIRED_NPM_SCRIPTS = Object.freeze(['purge:online-data', 'purge:backup-copies']);
+export const REQUIRED_NPM_SCRIPTS = Object.freeze([
+  'purge:online-data',
+  'purge:backup-copies',
+  'purge:retention',
+]);
 
 /** 需要「绝对路径游标」的入口文件（仓库相对路径）。 */
 export const CURSOR_REQUIRED_ENTRY = 'tools/purge-expired-online-data.mjs';
 
-/** 调度间隔上界（分钟）：到期清除的「时钟」不能比这更稀。 */
+/**
+ * **分钟级**命令的调度间隔上界（分钟）：在线 7 日 / 备份 30 日两条的「时钟」不能比这更稀。
+ * 这仍是**默认**上界 —— 未登记、未解析到入口的 timer 一律按它判（见 `intervalBudgetMinutes`）。
+ */
 export const MAX_INTERVAL_MINUTES = 60;
+
+/**
+ * **日级**命令的调度间隔上界（分钟）= 24 小时，语义是「至少每天一次」。这是本仓允许的**最稀**一档：
+ * 保留策略是 1 天 / 30 天尺度的日历保留，按分钟刻度接线没有意义；但也⛔ 不是「随便多稀都行」——
+ * 超过 1440 分钟（＝一天跑不到一次）就判红。
+ */
+export const DAILY_INTERVAL_MINUTES = 24 * 60;
+
+/**
+ * 命令（＝`ExecStart=` 的**入口文件**，仓库相对路径）→ 间隔上界（分钟）。
+ *
+ * 为什么按**入口文件**分档，而不是按单元名 / timer 名 / 有没有写 `daily`：
+ * 上界必须跟着「这条命令多久清一次才不算漏」走。绑在入口文件上，`[execstart]` 的
+ * 「单元入口 === package.json 的 script 入口」判据就顺手把「单元 ↔ 上界」钉住了 ⇒
+ * ① 分钟级命令的 timer 写成 `OnCalendar=*-*-* 02:00:00`（每天一次）还是照旧判红；
+ * ② 把一个日级 timer 的 `Unit=` 换成分钟级命令，上界立刻回到 60 分钟并判红；
+ * ③ 想给自己换个日级预算，只能真的去驱动日级命令（那是一条要过 `[execstart]`/`[coverage]` 的改动）。
+ *
+ * ⛔ 未登记的命令**不**走「最宽一档」，而是回落到 `MAX_INTERVAL_MINUTES`（见 `intervalBudgetMinutes`）：
+ * 新增命令时忘了登记，红面比绿面安全。
+ */
+export const INTERVAL_BUDGET_MINUTES = Object.freeze({
+  'tools/purge-expired-online-data.mjs': MAX_INTERVAL_MINUTES,
+  'tools/purge-expired-backup-copies.mjs': MAX_INTERVAL_MINUTES,
+  'tools/purge-retention-expired.mjs': DAILY_INTERVAL_MINUTES,
+});
 
 /** `setInterval(` 禁令的扫描面（仓库相对目录）。 */
 export const SETINTERVAL_SCAN_DIR = 'services/api/src';
@@ -206,7 +247,9 @@ const USAGE = [
   '  node tools/verify-purge-schedule.mjs --help',
   '',
   `判据：${CRITERIA.join(' / ')} —— 详见文件头注释。`,
-  `每条 .timer 的间隔必须 ≤ ${MAX_INTERVAL_MINUTES} 分钟；${SETINTERVAL_SCAN_DIR}/** 的 setInterval 调用计数必须为 0。`,
+  `每条 .timer 的间隔必须 ≤ 它驱动的那条命令的上界：分钟级命令（在线 7 日 / 备份 30 日）≤ ${MAX_INTERVAL_MINUTES} 分钟，`
+    + `日级命令（purge:retention）≤ ${DAILY_INTERVAL_MINUTES} 分钟；未登记/未解析到入口一律按 ≤ ${MAX_INTERVAL_MINUTES} 分钟。`,
+  `${SETINTERVAL_SCAN_DIR}/** 的 setInterval 调用计数必须为 0。`,
   '退出码：0 = 全部满足；1 = 有硬错；2 = 用法错误。',
 ].join('\n');
 
@@ -327,6 +370,37 @@ export function maxGapSeconds(offsets) {
     max = Math.max(max, offsets[index] - offsets[index - 1]);
   }
   return Math.max(max, day - offsets[offsets.length - 1] + offsets[0]);
+}
+
+/**
+ * 某条命令允许的最大调度间隔（分钟）。
+ *
+ * @param {string|null|undefined} entry `ExecStart=` 的入口文件（仓库相对路径，也接受绝对路径的
+ *   真实后缀映射结果）；`null` / 空 / 未登记一律回落到 `MAX_INTERVAL_MINUTES`。
+ * @returns {number} 上界（分钟）
+ */
+export function intervalBudgetMinutes(entry) {
+  const normalized = typeof entry === 'string' ? normalizeRepoPath(entry) : '';
+  const budget = INTERVAL_BUDGET_MINUTES[normalized];
+  return typeof budget === 'number' ? budget : MAX_INTERVAL_MINUTES;
+}
+
+/**
+ * 上界的**出处**（写进 readings / 失败信息，让人看得见「这条 timer 按哪一档判的」）。
+ *
+ * @param {string|null|undefined} entry 同 {@link intervalBudgetMinutes}
+ * @returns {string} 人读文案（⛔ 不含具体分钟数 —— 调用处会一起印上界，免得印两遍）
+ */
+export function intervalBudgetLabel(entry) {
+  const normalized = typeof entry === 'string' ? normalizeRepoPath(entry) : '';
+  const budget = INTERVAL_BUDGET_MINUTES[normalized];
+  if (typeof budget !== 'number') {
+    return `入口未登记 ${normalized === '' ? '(未解析)' : normalized}，回落分钟级`;
+  }
+  if (budget > MAX_INTERVAL_MINUTES) {
+    return `日级命令 ${normalized}（每天至少一次）`;
+  }
+  return `分钟级命令 ${normalized}`;
 }
 
 /** 解析 systemd 时长（`10min` / `900` / `1h30m`）；解析不了返回 `null`。 */
@@ -727,7 +801,12 @@ export function verifyPurgeSchedule(options = {}) {
         + `  ⇒ 本目录只有 ${serviceNames.join('、') || '(无)'}。悬空的 Unit= 会让 timer 静默不做事。`);
     }
 
-    // ---- [calendar] 必须有周期 + 展开后的最大间隔 ≤ 60 分钟
+    // ---- [calendar] 必须有周期 + 展开后的最大间隔 ≤ **该 timer 所驱动命令**的上界
+    //      上界按入口文件分档（`INTERVAL_BUDGET_MINUTES`）：分钟级命令 ≤ 60 分钟，
+    //      日级命令 ≤ 1440 分钟；`Unit=` 解析不到 service / 入口没登记 ⇒ 回落 60 分钟。
+    const timerEntry = serviceEntries.get(target)?.entry ?? null;
+    const budgetMinutes = intervalBudgetMinutes(timerEntry);
+    const budgetLabel = intervalBudgetLabel(timerEntry);
     const onCalendar = firstDirective(directives, 'OnCalendar');
     const onUnitActive = firstDirective(directives, 'OnUnitActiveSec');
     if (onCalendar === null && onUnitActive === null) {
@@ -743,21 +822,26 @@ export function verifyPurgeSchedule(options = {}) {
       } else {
         const gap = maxGapSeconds(offsets);
         const minutes = gap === null ? null : gap / 60;
-        if (minutes === null || minutes > MAX_INTERVAL_MINUTES) {
-          fail('calendar', fileRel, `\`OnCalendar=\` 的最大间隔 ${minutes} 分钟 > ${MAX_INTERVAL_MINUTES} 分钟：${onCalendar.value}\n`
-            + '  ⇒ 到期清除的时钟不能比这更稀（每天一次 = 「7 日到期」实际最多晚一天清）。');
+        if (minutes === null || minutes > budgetMinutes) {
+          fail('calendar', fileRel, `\`OnCalendar=\` 的最大间隔 ${minutes} 分钟 > ${budgetMinutes} 分钟：${onCalendar.value}\n`
+            + `  ⇒ 上界来源：${budgetLabel}。这个时钟不能比它驱动的命令所允许的更稀`
+            + '（分钟级命令 = 「7 日到期 / 30 日备份」最多晚一个间隔清；'
+            + '日级命令 = 「按日历保留」最多晚一天清，且 1440 分钟正好是日级上界）。');
         } else {
-          readings.push(`[calendar] ${fileRel}：OnCalendar=${onCalendar.value} ⇒ 每天 ${offsets.length} 次触发，最大间隔 ${minutes} 分钟`);
+          readings.push(`[calendar] ${fileRel}：OnCalendar=${onCalendar.value} ⇒ 每天 ${offsets.length} 次触发，最大间隔 ${minutes} 分钟`
+            + `（上界 ${budgetMinutes} 分钟 · ${budgetLabel}）`);
         }
       }
     }
     if (onUnitActive !== null) {
       const seconds = parseSystemdDurationSeconds(onUnitActive.value);
       const minutes = seconds === null ? null : seconds / 60;
-      if (minutes === null || minutes > MAX_INTERVAL_MINUTES) {
-        fail('calendar', fileRel, `\`OnUnitActiveSec=\` 解析为 ${minutes} 分钟，必须 ≤ ${MAX_INTERVAL_MINUTES}：${onUnitActive.value}`);
+      if (minutes === null || minutes > budgetMinutes) {
+        fail('calendar', fileRel, `\`OnUnitActiveSec=\` 解析为 ${minutes} 分钟，必须 ≤ ${budgetMinutes}：${onUnitActive.value}\n`
+          + `  ⇒ 上界来源：${budgetLabel}。`);
       } else {
-        readings.push(`[calendar] ${fileRel}：OnUnitActiveSec=${onUnitActive.value} ⇒ 最大间隔 ${minutes} 分钟`);
+        readings.push(`[calendar] ${fileRel}：OnUnitActiveSec=${onUnitActive.value} ⇒ 最大间隔 ${minutes} 分钟`
+          + `（上界 ${budgetMinutes} 分钟 · ${budgetLabel}）`);
       }
     }
   }
@@ -833,6 +917,8 @@ export function buildJsonReport(result) {
     scheduleDir: result.scheduleDir,
     criteria: CRITERIA,
     maxIntervalMinutes: MAX_INTERVAL_MINUTES,
+    dailyIntervalMinutes: DAILY_INTERVAL_MINUTES,
+    intervalBudgets: INTERVAL_BUDGET_MINUTES,
     requiredNpmScripts: REQUIRED_NPM_SCRIPTS,
     cursorRequiredEntry: CURSOR_REQUIRED_ENTRY,
     setIntervalScanDir: SETINTERVAL_SCAN_DIR,
