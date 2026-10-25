@@ -512,7 +512,7 @@ test('消息页：目标不可用或评论取不到 ⇒ 不跳转、不猜（提
   h.requests.length = 0;
   const { page } = await openedMessagesPage(h);
   h.requests[1].success({ statusCode: 200, data: messageEnvelope({ items: [
-    // 1) 服务端判不可用（unavailable 是 14 型未接线目标的恒态，客户端不按类型猜语义）
+    // 1) 服务端判不可用（unavailable 是 15 型未接线目标的恒态，客户端不按类型猜语义）
     message({ target_ref: { type: 'species', id: 'species-1', revision: 1 }, reference_state: 'unavailable' }),
     // 2) 服务端判可查看，但评论已被取不到（下架/无权/不存在在服务端折叠成同一结果）
     message({ id: READ_MESSAGE, revision: 1, target_ref: { type: 'comment', id: COMMENT_ID, revision: 1 },
