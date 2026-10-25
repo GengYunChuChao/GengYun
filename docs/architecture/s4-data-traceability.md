@@ -35,7 +35,7 @@
 | `docs/implementation-requirements.md:278` | D08、D09 | 「注销即时」与「7/30 日到期」是两套时钟、两套执行器、两套证据 |
 | `docs/implementation-requirements.md:279` | D10 | 保留与去身份是同一事务里的同一件事，不拆 |
 | `docs/implementation-requirements.md:280` | D11 | 正文脱敏与媒体处置同属「保留下来但不可识别」 |
-| `docs/implementation-requirements.md:281` | D12、D13 | 外发记录（写面+读面+门禁都在）与第三方删除（零读写）差一个量级，必须分开判 |
+| `docs/implementation-requirements.md:281` | D12、D13 | 外发记录（写面+读面+门禁都在）与第三方删除（端口已接线、未装配）差一个量级，必须分开判 |
 | `docs/implementation-requirements.md:282` | D14 | 训练：产品裁定首版不做，单独一项才能挂「已搁置」 |
 | `docs/implementation-requirements.md:283` | D15 | 受影响模型：仓内零落点 |
 | `docs/implementation-requirements.md:284` | D16 | 匿名统计：仓内零落点 |
@@ -52,7 +52,7 @@
 | 过期引用 | 事实 |
 | --- | --- |
 | `docs/verification/gy-i29-closure-20261018.md:90` 引用的 `services/api/src/privacy/log-redaction.ts` | 该文件**不存在**；日志脱敏由 `packages/privacy/redact.mjs` 承担，`services/api/src` 内调用点只有账本一处 |
-| 第三方删除「只有适配器没接」的说法 | 不止没接：`third_party_deletions` 在 `services/api/src` 的读写是**零** |
+| 第三方删除「只有适配器没接」的说法 | 2026-10-26 前不止没接：`third_party_deletions` 在 `services/api/src` 的读写是**零**；现由 `services/api/src/privacy/third-party-deletion-pg.ts` 经 0044 两条函数读写（表仍不可直写，端口未装配） |
 
 ### 0.4 本页不构成关单依据
 
@@ -79,7 +79,7 @@
 | D10 | 帖评保留、去身份、已注销用户、不可反查 | 部分 | `docs/implementation-requirements.md:279` | `services/api/src/community/authors.ts:112` | 进程内 Map 仍以 userId 为键可反查 |
 | D11 | 保留正文脱敏、不能脱敏的媒体隐藏/移除 | 部分 | `docs/implementation-requirements.md:280` | `services/api/src/community/purge.ts:24` | 注销时媒体批量清除未接线 |
 | D12 | 外发记录与接收方门禁 | 已实现 | `docs/implementation-requirements.md:281` | `services/api/src/privacy/ledger-pg.ts:451` | 真实外发通路未接，真库零 sent 记录 |
-| D13 | 第三方删除请求/完成/失败与证据 | 未实现 | `docs/implementation-requirements.md:281` | `services/api/db/migrations/0003_privacy_consent.sql:185` | 应用侧零读写、未装配、证据不落 |
+| D13 | 第三方删除请求/完成/失败与证据 | 未实现 | `docs/implementation-requirements.md:281` | `services/api/db/migrations/0003_privacy_consent.sql:185` | 端口已接线（只经 0044 函数）、未装配、证据不落 |
 | D14 | 训练单独授权、撤回 7 日清理衍生物 | 已搁置 | `docs/implementation-requirements.md:282` | 无（产品裁定首版不做） | 无缺口；开启训练即降级为未实现 |
 | D15 | 受影响模型停部署、删权重、重训重验 | 未实现 | `docs/implementation-requirements.md:283` | 无（`model_version` 只是回答标注） | 无部署登记、无停用开关、无权重删除 |
 | D16 | 匿名统计可保留、明细删除后重算 | 未实现 | `docs/implementation-requirements.md:284` | 无（仓内无统计面） | 无统计投影，重算与证据限定均无落点 |
@@ -244,21 +244,24 @@
   `:252`（失败）、`:261`（不支持）；
   ③ 适配器在——`services/api/src/privacy/third-party-deletion-adapter.ts:134`，无凭据或无传输即不可用
   （`:147`），错误码 `OBJECT_UNAVAILABLE`（`:45`）；
-  ④ 回执投影在——`services/api/src/privacy/third-party-deletion-projection.ts:277`。
+  ④ 回执投影在——`services/api/src/privacy/third-party-deletion-projection.ts:277`；
+  ⑤ 真库端口在——`services/api/src/privacy/third-party-deletion-pg.ts`：只经 0044 两条 `SECURITY DEFINER` 函数进出
+  （表零 DML/SELECT），**尚未装配**进 `app.ts`（装配属 P2-b）。
 - **库层证据（2026-10-26 增补；判定与下面三条缺口均不变）**：迁移
   `services/api/db/migrations/0044_third_party_deletion_persistence.sql:97` 建了唯一写路径
-  `record_third_party_deletion(...)`（`SECURITY DEFINER` ＋ `SET search_path = pg_catalog`），`:270` 建了唯一读路径
+  `record_third_party_deletion_request(...)`（`SECURITY DEFINER` ＋ `SET search_path = pg_catalog`），`:270` 建了唯一读路径
   `list_third_party_deletions(...)`（只吐八个证据面列、固定排序、终态不可回退）；授权在
   `deploy/postgres-cvm/sql/20-login-roles.sql:414`（REVOKE PUBLIC）与 `:416`（GRANT EXECUTE 给 `gengyun_api_runtime`，
   该表对运行时仍 `forbidden`，见 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1134`），函数形状断言在同文件
   `:1803`；真库臂在 `tests/integration/third-party-deletion-pg.mjs:1`（自述 P1，子判据 E-S4-P1-A..E 见 `:27`），由
   `.github/workflows/real-pg-integration.yml:203` 在 CI 跑（PG 17.11、现建空库）。**但这是「库层记住」，不是运行面接线**：
-  同一迁移 `:4` 自陈「**不接电**」——`services/api/src/**` 一行未动，下面两条零命中 grep、三条缺口因此原样成立。
-- **证据（零命中）**：`git grep -n third_party_deletions -- services/api/src` = 0 行；
+  同一迁移 `:4` 自陈「**不接电**」——端口只被单测调用、`services/api/src/app.ts` 一行未装配，运行面仍无写入口。
+- **证据（2026-10-26 起）**：`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（全在端口
+  `privacy/third-party-deletion-pg.ts`：3 条注释 + 1 条常量 + 1 条 `FROM public.list_third_party_deletions(...)`，对表零 DML/SELECT）；
   `git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = 0 行。
-- **缺口**：三条同时成立。① 应用侧零读写：表建好了，但没有任何一行代码写它或读它（`deletion_state` 在 src 里只有
-  一处读、无 UPDATE）；② 适配器未在 `app.ts` 装配，因此「没有凭据就用 `OBJECT_UNAVAILABLE` 如实失败」这个设计
-  在运行面上也不存在；③ 投影只被单测调用（`tests/privacy/third-party-deletion-projection.test.mjs`），
+- **缺口**：① 已于 2026-10-26 收窄——应用侧读写由端口补齐（只经 0044 两条函数、表零直写），但**未装配**，
+  所以运行面上仍然没有写入口；② 适配器未在 `app.ts` 装配，因此「没有凭据就用 `OBJECT_UNAVAILABLE` 如实失败」
+  这个设计在运行面上也不存在；③ 投影只被单测调用（`tests/privacy/third-party-deletion-projection.test.mjs`），
   没接进 `/me/exports` 回执 ⇒ 「请求/完成/失败与证据」四件事在运行面上一个都取不到。
 
 ### D15 受影响模型停部署、删权重、重训重验
@@ -306,8 +309,8 @@
 
 ### ★G1 第三方删除（判据：D13）
 
-表、协议、适配器、投影都在，唯独**应用侧零读写 + 未装配 + 证据不落**。可复算：
-`git grep -n third_party_deletions -- services/api/src` = 0 行。修法可命名：把适配器注入 `app.ts`，
+表、协议、适配器、投影、真库端口都在，唯独**未装配 + 证据不落**（读写已由端口接上，只经 0044 两条函数、表零直写）。可复算：
+`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（就是那个端口；对表零 DML/SELECT）。修法可命名：把适配器注入 `app.ts`，
 在注销受理时按接收方建行、把投影接进 `/me/exports` 回执。这一条直接决定 AC23（`docs/implementation-requirements.md:585`）
 的「第三方证据」判不了。
 
@@ -349,7 +352,7 @@
 | --- | --- | --- |
 | 行号不腐烂 | `node tools/verify-doc-anchors.mjs --strict` | `exit 0`，基线外新增 0 |
 | 文档结构与链接 | `npm run test:docs` | `exit 0`；`PASS: … Markdown links and tables` 在第 5 行（第一个工具的输出），末行是 `PASS docs/research 结构校验…` |
-| D13 零读写 | `git grep -n third_party_deletions -- services/api/src` | 0 行 |
+| D13 读写接缝 | `git grep -n third_party_deletions -- services/api/src` | 5 行 / 1 文件（= 端口 `privacy/third-party-deletion-pg.ts`；表零 DML/SELECT） |
 | G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
 | G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **3/3**（`tools/verify-purge-schedule.mjs:117`；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列 |
 | D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'` |
@@ -362,7 +365,7 @@
 | --- | --- | --- | --- |
 | D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2076` |
 | D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:202` |
-| D13 | 未实现 | `third_party_deletions` 在 `services/api/src` 出现读写；适配器在 `app.ts` 装配；回执带第三方状态 | `services/api/src/app.ts:2076` 同侧装配区 |
+| D13 | 未实现 | 适配器与 0044 真库端口都在 `app.ts` 装配；注销受理时按接收方建行；回执带第三方状态 | `services/api/src/app.ts:2076` 同侧装配区 |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
 | G3 | **已消解（2026-10-26 复核）** | 已具备（撤条理由）：`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer` 在、`purge:retention` 已在必需清单、日级上界 1440 分钟已分档；若单元被删或必需清单回落到 2 项，按缺口重新记 | `tools/verify-purge-schedule.mjs:117` |
