@@ -77,7 +77,9 @@ function scanRouteRequireScopeArgs() {
         literalCalls += 1;
         continue;
       }
-      if (/^(?:descriptor\.(?:readScope|writeScope)|OPS_SCOPES\.\w+|AUDIT_LOG_SCOPE)$/.test(arg)) {
+      // R59：`routes/admin.ts` 用导出的常量 `ADMIN_POST_READ_SCOPE`（='sources:read'）守两条帖子读面，
+      // 与 `AUDIT_LOG_SCOPE` 同形——常量本身仍要经 `admin/scopes.ts` 的闭集核对，不是绕过。
+      if (/^(?:descriptor\.(?:readScope|writeScope)|OPS_SCOPES\.\w+|AUDIT_LOG_SCOPE|ADMIN_POST_READ_SCOPE)$/.test(arg)) {
         constantRefs += 1;
         continue;
       }

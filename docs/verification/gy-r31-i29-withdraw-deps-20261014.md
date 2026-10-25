@@ -21,7 +21,7 @@
 已核对：这 5 个提交**未触碰** `docs/architecture/state-contract.md`；对
 `contract-status.json` 的唯一改动是把某个 `profile/service.ts` 锚点从 `cropItems`(86-87)
 换成 `async put(...)`(75-106)，**与本页引用的 consent 行无关**；`withdrawConsent` 的 blocker
-在 `f971e35c` 上仍在 `contract-status.json:395`、`contract-implementation-status.md:62`，
+在 `f971e35c` 上仍在 `contract-status.json:410`、`contract-implementation-status.md:62`，
 与本页引用一致。本片不 rebase（分支已由指挥推送，禁强推），由合并方按 squash 合并。
 
 ## 1 契约与台账原文对照（逐字）
@@ -41,7 +41,7 @@
 
 ### 1.2 台账：`status` 保持 `partial`，`blocker` 写的是「仍 409、保留 fail-closed」
 
-`docs/architecture/contract-status.json:395`（`withdrawConsent`）`blocker` 原文：
+`docs/architecture/contract-status.json:410`（`withdrawConsent`）`blocker` 原文：
 
 > PG撤回在 jobs/media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed；
 > #128提供外发账本/在途守卫/模块删除注册协议，但**本基线尚未接入撤回消费者**。真实政策/接收方与注销全链未验；
@@ -111,7 +111,7 @@ SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
 ## 3 为什么本版**不加**新的 409（B 路径理由，一句话版）
 
 因为「有依赖 ⇒ 409」会与 `state-contract.md:103` 的冻结口径（撤回要终止在途外发、取消关联任务）
-相反，而台账 `contract-status.json:395` 记录的是**未接线基线**的 fail-closed 现状、
+相反，而台账 `contract-status.json:410` 记录的是**未接线基线**的 fail-closed 现状、
 并未要求新增该臂；真正的缺口是那句**过期文案**，不是缺代码。
 
 替代口径（现行、已实现、可执行钉死）：**消费者可用 ⇒ 真撤销并放行；消费者不可用 ⇒ 409 拒绝**。
@@ -187,7 +187,7 @@ $ node --test tests/unit/consent-withdraw-dependency.test.mjs → ℹ tests 5 �
 
 | op | 原文摘要 | 现况 |
 | -- | -------- | ---- |
-| `withdrawConsent`（`contract-status.json:395`） | 「…但**本基线尚未接入撤回消费者**」 | **已过期**：`app.ts:882-884` 装配 `createEgressRevoker` 并经 `:1684-1687` 注入；真库 PASS 8 撤回 200 + 在途 `failed` |
+| `withdrawConsent`（`contract-status.json:410`） | 「…但**本基线尚未接入撤回消费者**」 | **已过期**：`app.ts:882-884` 装配 `createEgressRevoker` 并经 `:1684-1687` 注入；真库 PASS 8 撤回 200 + 在途 `failed` |
 | `withdrawConsent`（`contract-implementation-status.md:62`） | 同上一句 | 同上（人工镜像同步过期） |
 | `listConsents`（`contract-status.json`，`listConsents.blocker`） | 「真实授权政策/接收方配置与用途链路仍须验收，grant 依赖运维导入 consent_policies」 | **仍成立**（真实政策/接收方未验），非过期 |
 | `grantConsent`（`contract-status.json`，`grantConsent.blocker`） | 「该 purpose 的已核验可用政策行须先落入 consent_policies，否则 403 CONSENT_REQUIRED；合成政策注入不等于真实授权来源」 | **仍成立**，非过期 |

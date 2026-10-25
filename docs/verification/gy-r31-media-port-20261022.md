@@ -22,7 +22,7 @@ Refs #9 #10 #11。**本片只补「装配层可选注入」**：`real` 下未注
 | --- | --- | --- | --- | --- |
 | 识别 | `services/api/src/app.ts:1074`（服务在 `:1067` 构造）`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)` | `BuildAppOptions.recognitionMedia`（`:351`，**已有**；原记 :332） | `createUnwiredMediaPort()`，`kind: 'unwired'` | 供应商闸门在前：503 `PROVIDER_UNAVAILABLE` `缺少真实识别供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
 | 语音 | `services/api/src/app.ts:2227`（基线 `1a333920` 时为 `:1711`；行号按符号重取）`registerSpeechRoutes(..., { …, media: speechMedia, … }, real ? pool : null)` | `BuildAppOptions.speechMedia`（`:362`，**已有**；原记 :343） | 同上，`kind: 'unwired'`（note 是「录音字节」版本） | 503 `PROVIDER_UNAVAILABLE` `缺少真实 ASR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
-| OCR | `services/api/src/app.ts:2250`（基线 `1a333920` 时为 `:1730`；合流 `bf649a6c` 后 `:2250`，行号按符号重取）`registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool)` —— **改前（基线）装配行没有 `media` 键；`BuildAppOptions`（基线 `:300-344`）无任何 OCR 媒体字段。本片补上后：`:384` 是 `ocrMedia?: OcrRouteDeps['media']`，装配行已传 `media: ocrMedia`** | 只能由 `services/api/src/routes/ocr.ts:197` 的 `deps.media ?? createOcrMediaPort(config.executionMode)` 域内自建 | `createUnwiredMediaPort()`，`kind: 'unwired'` | 503 `PROVIDER_UNAVAILABLE` `缺少真实 OCR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
+| OCR | `services/api/src/app.ts:2296`（基线 `1a333920` 时为 `:1730`；合流 `bf649a6c` 后 `:2250`，行号按符号重取）`registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool)` —— **改前（基线）装配行没有 `media` 键；`BuildAppOptions`（基线 `:300-344`）无任何 OCR 媒体字段。本片补上后：`:384` 是 `ocrMedia?: OcrRouteDeps['media']`，装配行已传 `media: ocrMedia`** | 只能由 `services/api/src/routes/ocr.ts:197` 的 `deps.media ?? createOcrMediaPort(config.executionMode)` 域内自建 | `createUnwiredMediaPort()`，`kind: 'unwired'` | 503 `PROVIDER_UNAVAILABLE` `缺少真实 OCR 供应商凭据（fail-closed，不回退替身）`；媒体步若可达 ⇒ 409 `OBJECT_UNAVAILABLE` `媒体引用不可用` |
 
 补充（如实记录，避免误判「三域都缺」）：
 
@@ -79,7 +79,7 @@ export interface MediaObjectStore {
    `ocrMedia?: OcrRouteDeps['media'];`（命名对齐既有 `recognitionMedia` / `speechMedia`），并写明「缺省 undefined ⇒ 域内
    按 `executionMode` 自建；默认装配不注入、`real` 仍 fail-closed」。
 3. `services/api/src/app.ts:731`：解构新增 `ocrMedia`。
-4. `services/api/src/app.ts:2250`：装配行改为
+4. `services/api/src/app.ts:2296`：装配行改为
    `registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool);`
    —— 行尾仍是 `}, ocrPersistencePool);`，`ocrPersistencePool` 仍是第 4 个位置实参。
 5. `tests/unit/ocr-store-pg-wiring.test.mjs:86-107`：结构判据的**允许键集**由四键扩为五键（新增 `media`），

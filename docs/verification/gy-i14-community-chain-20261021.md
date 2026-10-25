@@ -27,7 +27,7 @@
 | 403 → B7 `denied` | **列表页通／详情页与投稿页未通**：详情页无 `errorCode`，wxml 写死 `status="invalid"` 且不传 `error-code`；投稿页只有一条红字提示 | **通**（三页都落 denied） | 改前 `communitydetail.js:22-37`、`communitydetail.wxml:20-27`、`communitycreate.js:104-107`；改后见 §2.9 |
 | 401 归因 | **适配层已委托**（#396）；**页面**只认 `=== 'SESSION_REQUIRED'`，`SESSION_CHANGED`（同属会话类）被当成普通失败停在错误页 | **通**（页面改判 `api.sessionFailure`） | `auth.js:61-133`；改后 `community-api.js:339-344` |
 | 失效游标（`INVALID_CURSOR`） | **半通**：只弹 toast，`nextCursor` 原样留着 ⇒ 该游标永不成功，用户反复点「加载更多」只见同一句报错 | **通**（清游标 + 重取第一页） | 改后 `community.js:124-138`、`communitydetail.js:248-266` |
-| `public_posting` 用途闸 | **未挂**：`routes/community.ts` 16 处 `preHandler` 全只有 `guards.requireUser`；`app.ts:1789` 未传 consent | **未挂**（按裁决，本片只写结论与前置条件） | `routes/community.ts:201-360`；`app.ts:1789`；`privacy/egress.ts:14` |
+| `public_posting` 用途闸 | **未挂**：`routes/community.ts` 16 处 `preHandler` 全只有 `guards.requireUser`；`app.ts:1834` 未传 consent | **未挂**（按裁决，本片只写结论与前置条件） | `routes/community.ts:201-360`；`app.ts:1834`；`privacy/egress.ts:14` |
 
 一句话：**本片不动服务端、不动契约**；社区域剩下的真实缺口全在客户端「失败之后怎么说话」，
 以及一个**服务端**的用途闸还没挂（挂之前要先备授权夹具，否则 GY-I15 全部社区 HTTP 用例会先 403）。
@@ -187,7 +187,7 @@
   `createConsentPreHandler(guard, { purpose, dataType })`，且放在路由自身 `preHandler` **之后**。
 - 实际没挂：`routes/community.ts` 的 **16** 处 `preHandler` 全部只有 `guards.requireUser`
   （`:203, 213, 225, 234, 243, 253, 266, 278, 287, 296, 307, 316, 325, 334, 343, 355`），
-  `registerCommunityRoutes(app, config, gatedGuards, communityService)`（`app.ts:1789`）**也不收** consent 参数。
+  `registerCommunityRoutes(app, config, gatedGuards, communityService)`（`app.ts:1834`）**也不收** consent 参数。
 - 用途码在闭集里：`recording` / `media_processing` / `external_inference` / `public_posting`
   （`services/api/src/privacy/consent-pg.ts` 的 `CONSENT_PURPOSES`）；拒绝语义见 `privacy/egress.ts:88-105`
   （缺授权 ⇒ 403 `CONSENT_REQUIRED`，错用途 ⇒ 403 `SCOPE_DENIED`）。
@@ -361,7 +361,7 @@ exit=0
 | 编号 | 事项 | 为什么本片不做 | 建议归属 |
 |---|---|---|---|
 | E3-1 | 归因收敛本身：`community-api.js` 的 401/403 判定 | **已由 #396 完成**（改前 `:163-167` 的折叠已消失），本片只剩「页面别写字面量」这一层并补齐两个委托判定 | 已关闭（#396 + 本片） |
-| E3-2 | 社区投稿挂 `public_posting` 用途闸（`routes/community.ts` 16 处 preHandler；`app.ts:1789` 未传 consent） | 会先让 GY-I15 全部社区 HTTP 用例 403；需先备授权夹具 + 给 `registerCommunityRoutes` 加 consent 参数（§2.10 四条前置条件） | 独立片（#29 × #15 交汇） |
+| E3-2 | 社区投稿挂 `public_posting` 用途闸（`routes/community.ts` 16 处 preHandler；`app.ts:1834` 未传 consent） | 会先让 GY-I15 全部社区 HTTP 用例 403；需先备授权夹具 + 给 `registerCommunityRoutes` 加 consent 参数（§2.10 四条前置条件） | 独立片（#29 × #15 交汇） |
 | E3-3 | 图片帖：客户端上传 + 图片审核 + 媒体投影（`service.ts:619` 的 `media: []`） | 依赖模型层审核与真实供应商；写假上传只会造一条必然 503 的路径 | #14 供应商面（GY-I21 评估） |
 | E3-4 | 举报「处理状态」页面入口（`GET /reports/{id}` 已有、`getOwnReport` 已有消费者为零） | 属产品决定（入口放哪、多久回查、`isolated` 怎么向用户解释）；本片只登记缺口 | #15 后续片 |
 | E3-5 | 编辑帖子会**丢弃** `media_ids`：`communitydetail.js:312` 固定传 `media_ids: []` | 目前 `media_ids` 恒为空（无上传入口）⇒ 无实际影响；一旦 E3-3 落地就会静默丢附件，需随 E3-3 一起改成「沿用当前 `post.media_ids`」 | 随 E3-3 |
@@ -376,7 +376,7 @@ exit=0
 | 派发：「`tests/unit/miniprogram-community-api.test.mjs` 刚被 **#399** 加强过」 | **#399 尚未合入**（`gh pr view 399` → `state: OPEN`，`headRefName: feat/gy-r28-d4-messages-chain`，`headRefOid: 99a6ce9`）。基点上的该文件已是 **#396** 口径（403 ⇒ `SCOPE_DENIED` + `cleared.count===0`），本片按该口径对齐，只补了 2 行替身 | 「加强后的口径」= 403 不折叠/不清会话 + `ACCOUNT_INACTIVE` 码保留但清会话；本片的同源断言与 `ACCOUNT_INACTIVE` 覆盖放在新文件里，避免与 #399 抢同一段 |
 | 派发：同族体例页 `docs/verification/gy-i15-messages-chain-20261021.md`「刚合入」 | 在基点 `ee46eb1` 上**不存在**（`Get-ChildItem docs/verification -Filter '*messages-chain*'` 零命中）；它只存在于 `wt-d4-messages` 工作区／PR #399 分支 | 不是文件写错，而是派发时基点较旧。本页按 `gy-i04-login-chain-20261021.md` 的体例撰写，并参考了 #399 分支上那份的对齐方式（只读，未改其文件） |
 | 派发：`AGENTS.md`（仓库根；注意不是 `AGENT.md`） | 核对为**准确**（39 行） | 非漂移，记录以证明已核 |
-| `docs/verification/gy-i04-login-chain-20261021.md:24` 记「`app.ts:1735` 未注入 `consentGate`」 | 实际 `registerCommunityRoutes(app, config, gatedGuards, communityService)` 在 `app.ts:1789` | 行号漂移（中间合入 #397/#398 推移），**结论不变**：社区仍未注入 consent |
+| `docs/verification/gy-i04-login-chain-20261021.md:24` 记「`app.ts:1735` 未注入 `consentGate`」 | 实际 `registerCommunityRoutes(app, config, gatedGuards, communityService)` 在 `app.ts:1834` | 行号漂移（中间合入 #397/#398 推移），**结论不变**：社区仍未注入 consent |
 | `docs/verification/gy-i04-login-chain-20261021.md:23` 记 `community-api.js:163-167` | 现为 `:167-170`（本片未改该分支，只把上方注释加了一行说明） | 行号漂移 4 行；引用请用 `:167-170` |
 | `docs/verification/gy-i15-community-http-20261020.md`／`gy-i15-community-pg-20261018.md` 的服务端读数 | 本片逐条复核：路由条数 16、`preHandler` 全 `requireUser`、`effectiveState` 每次读重算，**仍准确** | 非漂移 |
 | `services/api/src/privacy/egress.ts:14` 挂载表含「社区投稿入口」 | 核对为**准确**（挂载表确实要求），但从未接线 | 非漂移；缺口记在 §2.10 |

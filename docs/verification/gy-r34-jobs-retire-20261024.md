@@ -118,7 +118,7 @@ code: 'ERR_MODULE_NOT_FOUND'
 - 第二轮修复前（复审在 `9157e032` 上实跑）：`COUNT: BROKEN 33 / OUT_OF_RANGE 8 / SUSPECT 65`，**基线外新增 3 条** ⇒ EXIT=1。
 - 第二轮修复三处后：`COUNT: BROKEN 33 / OUT_OF_RANGE 6 / SUSPECT 64`，**基线外新增 0 / 陈旧 0** ⇒ EXIT=0。差值 −2 OUT_OF_RANGE、−1 SUSPECT 与「两个 `32-113` 越界 + 一个 `:186` 行错」逐条对上。
 - 本轮（第三轮）又改了 4 个文件里的锚点/引文（§1.3 前三行 + `gy-r31…:131` 裸锚点转可解析），复跑后仍是 `COUNT: BROKEN 33 / OUT_OF_RANGE 6 / SUSPECT 64`、基线内命中 103、**基线外新增 0、陈旧 0** ⇒ EXIT=0（表 §3 第 14 行）。
-- `verify-contract-status.mjs` 第二轮**先红后绿**：首次 EXIT=1（`FAIL: 表格漂移 1` —— md 现状句已改、台账 JSON 未同步），成对改 `docs/architecture/contract-status.json:395` 后 EXIT=0。这条正是「只改一边 = 假绿」的实例，故在此留档。
+- `verify-contract-status.mjs` 第二轮**先红后绿**：首次 EXIT=1（`FAIL: 表格漂移 1` —— md 现状句已改、台账 JSON 未同步），成对改 `docs/architecture/contract-status.json:410` 后 EXIT=0。这条正是「只改一边 = 假绿」的实例，故在此留档。
 
 ### 3.4 臂集合 + 清单内容的变异验证（关掉复审 P1/P3 盲区）
 

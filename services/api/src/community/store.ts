@@ -304,17 +304,32 @@ export interface CommunityOwnerPurgeOptions {
  *     ⛔ 不要把它补成 `coalesce(author_id, anonymized_author_ref)`（那会把匿名行算回某个用户），
  *     也不要用 `IS NOT DISTINCT FROM`（两列都为 NULL 时会误命中）。
  *   - `scope: 'all'` ⇒ **不做任何可见性过滤**，只为测试夹具/诊断保留；生产调用方不得使用。
+ *   - `scope: 'admin'` ⇒ 后台读面的**管理视角候选集**：同样不做任何可见性/审核状态过滤
+ *     （`hidden` / `deleted` **都在**候选集里），与 `'all'` 的差别只在**用途**：`'all'` 是"测试/诊断
+ *     用的无筛选全表"，`'admin'` 是"生产后台读面"，允许叠加 `state` / `auditState` 做精确筛选。
+ *     ⛔ 不要把后台读面写成 `scope: 'public'` 再在内存里筛掉——可见性谓词不同是本读面的**定义**，
+ *     见 `admin/posts/service.ts` 的头注。
  *
  * 分页是 keyset：`after` 是上一页最后一行（`created_at` + `id`），排序用确定性的
  * `created_at DESC, id DESC`（`id` 是 tie-breaker，否则同秒内容翻页会重复/漏行）。
  * `limit` 在 `WHERE` **之后**生效——不存在「先取一页再过滤」那种页内缺行/跳行的读数。
  */
 export interface ListPostsFilter {
-  scope: 'public' | 'mine' | 'all';
+  scope: 'public' | 'mine' | 'admin' | 'all';
   /** `scope: 'mine'` 必填（主体自己的 id）；其余 scope 忽略。 */
   authorId?: string | null;
   cropId?: string | null;
   regionCode?: string | null;
+  /**
+   * 精确匹配行内 `visibility`（SQL 下推 `visibility = $n::visibility`）。
+   *
+   * 与 `scope` 的可见性谓词**正交**：`scope` 决定候选集，本字段只做等值收窄。
+   * 后台读面用它实现 `?state=`；`scope: 'public'` + `state: 'hidden'` 会得到空页（谓词叠加，
+   * 存储层不替调用方"纠正"矛盾筛选）。
+   */
+  state?: Visibility;
+  /** 精确匹配行内 `audit_state`（SQL 下推 `audit_state = $n::audit_state`）。语义同上。 */
+  auditState?: AuditState;
   after?: { createdAt: string; id: string } | null;
   /** `null` ⇒ 不限制（仅测试夹具/诊断用）。 */
   limit?: number | null;
@@ -621,6 +636,8 @@ export function createMemoryCommunityStore(
       const authorId = filter.authorId ?? null;
       const cropId = filter.cropId ?? null;
       const regionCode = filter.regionCode ?? null;
+      const state = filter.state ?? null;
+      const auditState = filter.auditState ?? null;
       const after = filter.after ?? null;
       const limit = filter.limit ?? null;
       if (scope === 'mine' && authorId === null) {
@@ -628,13 +645,17 @@ export function createMemoryCommunityStore(
       }
       const matched = [...posts.values()]
         .filter((record) => {
-          if (scope !== 'all') {
+          // `'all'` 与 `'admin'` 都不做可见性过滤（后台读面要能看到 hidden/deleted）；
+          // 两者差别只在用途，筛选口径一致，见 `ListPostsFilter` 头注。
+          if (scope !== 'all' && scope !== 'admin') {
             if (record.visibility === 'deleted') return false;
             if (scope === 'public' && record.visibility !== 'published') return false;
             if (scope === 'mine' && record.author_id !== authorId) return false;
           }
           if (cropId !== null && record.crop_id !== cropId) return false;
           if (regionCode !== null && record.region_code !== regionCode) return false;
+          if (state !== null && record.visibility !== state) return false;
+          if (auditState !== null && record.audit_state !== auditState) return false;
           if (after === null) return true;
           // 与 SQL 的 `(created_at, id) < ($n, $m)` 同义：created_at DESC 上的 keyset。
           return record.created_at < after.createdAt

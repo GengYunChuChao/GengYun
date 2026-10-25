@@ -11005,6 +11005,201 @@
         }
       }
     },
+    "/admin/posts": {
+      "get": {
+        "operationId": "listAdminPosts",
+        "summary": "listAdminPosts",
+        "description": "后台帖子读面（管理视角）：列出帖子，**含已隐藏与已删除**——与用户读面的可见性谓词不同，本读面不做任何可见性/审核状态过滤，只按请求参数精确筛选。游标分页，不返回总数。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "按 `visibility` 精确筛选（四值之一）。参数名与 `GET /admin/jobs` 的 `state` 同形。",
+            "schema": {
+              "$ref": "#/components/schemas/Visibility"
+            }
+          },
+          {
+            "name": "audit_state",
+            "in": "query",
+            "description": "按 `audit_state` 精确筛选（四值之一）。",
+            "schema": {
+              "$ref": "#/components/schemas/AuditState"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPostPageEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "sources:read",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      }
+    },
+    "/admin/posts/{id}": {
+      "get": {
+        "operationId": "getAdminPost",
+        "summary": "getAdminPost",
+        "description": "后台帖子详情（管理视角）：一条帖子的管理视图，**含已隐藏与已删除**。不存在返回 404（不用 403，避免泄露存在性）。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminPostEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "sources:read",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      }
+    },
     "/admin/posts/{id}/hide": {
       "post": {
         "operationId": "hidePost",
@@ -16223,6 +16418,188 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/TurnPage"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "AdminPost": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "后台帖子读面的条目形状（列表项与详情同形）。与用户读面的 `Post` **有意不同形**，三条原因：① 给 `author_id`（管理侧要能定位账号）而不给 `author` 伪装投影；② `visibility`/`audit_state` 是**库内存储值**，不是公开读面按规则版本重算后的生效值；③ 只给 `linked_knowledge_ref` 引用本身，不给 `linked_knowledge` 解析结果（本读面不接资料可用性）。",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "author_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "作者账号 id；注销后为 null（迁移 0030），此时改看 `anonymized_author_ref`。"
+          },
+          "anonymized_author_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "注销作者的行内引用（`gy-anon-<16 hex>`）；未注销为 null。两列恰好一个非空（0030 CHECK）。"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000
+          },
+          "crop_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "region_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^33[0-9]{4}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "media_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 3
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          },
+          "audit_state": {
+            "$ref": "#/components/schemas/AuditState"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "linked_knowledge_ref": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnowledgeTarget"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "author_id",
+          "anonymized_author_ref",
+          "title",
+          "body",
+          "crop_id",
+          "region_code",
+          "media_ids",
+          "visibility",
+          "audit_state",
+          "created_at",
+          "updated_at",
+          "linked_knowledge_ref"
+        ]
+      },
+      "AdminPostPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminPost"
+            },
+            "maxItems": 50
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ]
+      },
+      "AdminPostEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminPost"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "AdminPostPageEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminPostPage"
           },
           "meta": {
             "$ref": "#/components/schemas/Meta"

@@ -136,8 +136,13 @@ export const OPS_OUTPUT_SPECS = {
   },
 } as const satisfies Readonly<Record<string, FieldSpec>>;
 
-/** 分页 schema。 */
-function pageOf(itemRef: string): FieldSpec {
+/**
+ * 分页 schema。
+ *
+ * 导出给 `admin/posts/fields.ts` 复用（R59）：后台帖子读面的分页/信封形状与 ops 域
+ * **逐字相同**，再造一份就会漂移；复用同一工厂保证两边永远同形。
+ */
+export function pageOf(itemRef: string): FieldSpec {
   return {
     type: 'object',
     additionalProperties: false,
@@ -149,7 +154,8 @@ function pageOf(itemRef: string): FieldSpec {
   };
 }
 
-function envelopeOf(dataRef: string): FieldSpec {
+/** 信封 schema。同 `pageOf`：导出以便 `admin/posts/fields.ts` 复用同一形状。 */
+export function envelopeOf(dataRef: string): FieldSpec {
   return {
     type: 'object',
     additionalProperties: false,

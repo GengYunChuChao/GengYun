@@ -61,7 +61,7 @@
 | 存储 | **已通（real 走 PG）** | `services/api/src/app.ts:1507-1511`：`real` + 有 `pool` ⇒ `createPostgresConversationStore(pool)`；非 `real` ⇒ 内存 store。`app.ts:1545-1550` 的 `conversationStore === null \|\| (config.executionMode === 'real' && !conversationStore.persistent) ? null : createConversationService({...})` 明确：**即使测试注入内存 store，real 下也不能绕过 fail-closed** |
 | 检索 | **已接真实读面（但依赖 `DATABASE_URL`）** | `app.ts:1346-1350` 的 `knowledgeQueryFace`（与 `/knowledge` 同一实例）→ `app.ts:1522-1528` `createKnowledgeRetrievalPort({ face: knowledgeQueryFace })`；无库时退到 `guard.ts:78-89` 的 `createUnwiredRetrievalPort`（`available:false`、`read()` 恒 `null` ⇒ 一律 `insufficient`） |
 | 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:170`（原记 :152） `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:126` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:1666` 缺省启用（fail-closed） |
-| 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:250` `createAnswerGuard`，`:253` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1191`（原记 :1107） `createConversationGuard`（`app.ts:1534` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
+| 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:250` `createAnswerGuard`，`:253` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1191`（原记 :1107） `createConversationGuard`（`app.ts:1568` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
 
 ### 3.2 唯一断点：生成侧「没有模型」
 
@@ -323,7 +323,7 @@ services/api/src/app.ts:1346-1350                  knowledgeQueryFace（与 /kno
 services/api/src/app.ts:1507-1511                  conversationStore 解析（real ⇒ PG）
 services/api/src/app.ts:1522-1528                  conversationRetrieval 解析（wired / unwired）
 services/api/src/app.ts:1531                       conversationDose
-services/api/src/app.ts:1534                       conversationGuard
+services/api/src/app.ts:1568                       conversationGuard
 services/api/src/app.ts:2053                       conversationComposer（接线改动点）
 services/api/src/app.ts:1666                       conversationRiskScreen
 services/api/src/app.ts:1545-1550                  real 下非持久 store ⇒ 整域 null（fail-closed）

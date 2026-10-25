@@ -1,7 +1,7 @@
 /**
  * GY-I18 后台资料／运营／开关 · HTTP 路由（阶段 2：产品装配）。
  *
- * 覆盖契约 `packages/contracts/openapi.json` 里 **38 个 operationId**：
+ * 覆盖契约 `packages/contracts/openapi.json` 里 **40 个 operationId**：
  * - 阶段 1（已合并 #96）25 个：四类资料 × 6（list/create/get/edit/publish/withdraw）
  *   + `listAuditEvents`；
  * - 阶段 1b（已合并 #101）9 个：`listAdminCategories`/`editCategory`、
@@ -10,7 +10,9 @@
  * - R33 1 个：`listFlagAuditEvents`（迁移 0027 的只读函数，scope `flags:read`）；
  * - R34 1 个：`listAuditLogs`（迁移 0033 的只读函数，scope `audit:read`）；
  * - R37 `#18` S2 PR-2 2 个：`listAdministrators` / `listAdministratorScopes`
- *   （管理员目录与权限只读展示，scope `scopes:read`；库层闭集由迁移 0041 保证）。
+ *   （管理员目录与权限只读展示，scope `scopes:read`；库层闭集由迁移 0041 保证）；
+ * - R59 2 个：`listAdminPosts` / `getAdminPost`（后台帖子读面，scope `sources:read`；
+ *   管理视角候选集含 `hidden`/`deleted`，见 `admin/posts/service.ts` 文件头）。
  *
  * **本文件只做「搬运 + 契约映射」**：鉴权/权限、审计、幂等、CAS、可见性、
  * 契约字段校验、fail-closed 判定**全部复用服务层既有实现**
@@ -52,6 +54,8 @@ import type { AdminOpsService } from '../admin/ops/service.ts';
 import { CONTRACT_FLAG_KEYS } from '../admin/ops/flags.ts';
 import { AUDIT_LOG_SCOPE } from '../admin/audit/catalog.ts';
 import type { AdminAuditLogService } from '../admin/audit/service.ts';
+import { ADMIN_POST_READ_SCOPE } from '../admin/posts/service.ts';
+import type { AdminPostReadService } from '../admin/posts/service.ts';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
 
@@ -141,10 +145,19 @@ export interface AdminDomainServices {
    * 把只读审计面挂上去会让那条钉子失焦，也会把「运营写面」与「审计读面」的接线判据混成一个。
    */
   readonly audit: AdminAuditLogService;
+  /**
+   * R59：后台帖子读面（2 个 operationId：`listAdminPosts` / `getAdminPost`）。
+   *
+   * 单列一个域而不是塞进 `ops`：与 `audit` 同一理由——`AdminOpsService` 被用例钉住
+   * 「恰好 12 个 operationId」，把读面挂上去会让那条钉子失焦；而且这两个读面的
+   * **可见性谓词与用户读面不同**（管理视角，`hidden`/`deleted` 也在候选集里），
+   * 需要一个能写清这条差异的独立文件头，见 `admin/posts/service.ts`。
+   */
+  readonly posts: AdminPostReadService;
 }
 
 /**
- * 注册 34 个后台路由。
+ * 注册 40 个后台路由。
  *
  * 与 `registerSynthesisRoutes` / `registerRecognitionRoutes` 同形：
  * **只接收已装配好的服务**，因此本文件无法构造提供者、存储或端口——
@@ -423,6 +436,28 @@ export function registerAdminRoutes(
     async (request, reply) =>
       send(reply, await hidePost(callerOf(request), (request.params as { id: string }).id, request.body)),
   );
+
+  // -------------------------------------------------------------------------
+  // R59：后台帖子读面（2 个 operationId，门 `sources:read`）
+  // 管理员必须能「看到有哪些帖子、看到某条帖子长什么样」，否则社区的先审后发落不了地
+  // （此前 `/admin/posts` 只有 `hidePost` 一条写面）。可见性谓词**与用户读面不同**：
+  // 后台候选集里包含 `hidden` / `deleted` / 待审 / 拒审的帖子，理由与边界见
+  // `admin/posts/service.ts` 的文件头。单条不存在 ⇒ 服务层 404（⛔ 不用 403 泄露存在性）；
+  // 未接线 ⇒ 服务层 503，本层不返回空页。
+  // -------------------------------------------------------------------------
+  const listAdminPosts = methodOf(services.posts, 'listAdminPosts');
+  const getAdminPost = methodOf(services.posts, 'getAdminPost');
+  app.get(
+    `${API_PREFIX}/admin/posts`,
+    { preHandler: [guards.requireAdmin, guards.requireScope(ADMIN_POST_READ_SCOPE)] },
+    async (request, reply) => send(reply, await listAdminPosts(callerOf(request), request.query)),
+  );
+  app.get(
+    `${API_PREFIX}/admin/posts/:id`,
+    { preHandler: [guards.requireAdmin, guards.requireScope(ADMIN_POST_READ_SCOPE)], schema: { params: uuidIdParams } },
+    async (request, reply) =>
+      send(reply, await getAdminPost(callerOf(request), (request.params as { id: string }).id)),
+  );
 }
 
 /** 契约闭集的 3 个开关 key（供装配期自检与测试引用；判定仍在服务层）。 */
@@ -447,4 +482,7 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   'listAdministratorScopes',
   // R34：库内审计日志只读查询（迁移 0033 的 `public.list_admin_audit_logs()`）。
   'listAuditLogs',
+  // R59：后台帖子读面（管理视角，`hidden`/`deleted` 也在候选集里）。
+  'listAdminPosts',
+  'getAdminPost',
 ]);

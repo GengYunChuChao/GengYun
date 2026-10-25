@@ -169,6 +169,41 @@ export function parseCursorParam(raw: unknown): string | null {
 }
 
 /**
+ * 闭集参数的唯一判定点（`?state=` / `?audit_state=` / `?action=` 一类的具名枚举入参）。
+ *
+ * 口径（与 `admin/audit/service.ts`、`admin/ops/jobs.ts` 逐条一致）：
+ * - 缺省 / `null` / **空串** ⇒ 该字段不参与过滤（`?state=` 不该变成闭集外的 400）；
+ * - 非字符串（`?state=a&state=b` 会被查询串解析成数组）⇒ **400 `INVALID_REQUEST`**、`code: 'type'`；
+ * - 闭集外取值（含大小写不同、拼写错误）⇒ **400 `INVALID_REQUEST`**、`code: 'enum'`。
+ *
+ * ⛔ 不复用 503：`PROVIDER_UNAVAILABLE` 的含义是"端口未接线"或"读出来的值我们不认识"，
+ * 而这里错在**调用方入参**，属 400。⛔ 也不静默返回空页 —— 那会把拼错的状态说成
+ * "平台没有这类记录"，是一句我们无法确认的结论。
+ *
+ * R59：从 `admin/ops/jobs.ts` 原样搬到 `identity.ts`（纯搬移，文案未改），
+ * 后台帖子读面（`admin/posts/service.ts`）的 `state` / `audit_state` 用**同一套**判定，
+ * 而不是各写一份会漂移的副本。
+ */
+export function parseClosedSetParam<T extends string>(
+  raw: unknown,
+  field: string,
+  closed: readonly T[],
+): T | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') {
+    throw new ApiError('INVALID_REQUEST', `${field} 必须是字符串`, {
+      details: [{ field, code: 'type' }],
+    });
+  }
+  if (!(closed as readonly string[]).includes(raw)) {
+    throw new ApiError('INVALID_REQUEST', `${field} 必须是闭集之一：${closed.join(' / ')}`, {
+      details: [{ field, code: 'enum' }],
+    });
+  }
+  return raw as T;
+}
+
+/**
  * 校验并规范化幂等键（契约参数 Idempotency-Key，所有写操作 required）。
  * 缺失 ⇒ `IDEMPOTENCY_KEY_REQUIRED`(400)；长度非法 ⇒ `INVALID_REQUEST`(400)。
  */

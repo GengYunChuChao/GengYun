@@ -800,6 +800,20 @@
       "version_required": false
     },
     {
+      "id": "listAdminPosts",
+      "path": "/admin/posts",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
+      "id": "getAdminPost",
+      "path": "/admin/posts/{id}",
+      "method": "get",
+      "scope": "sources:read",
+      "version_required": false
+    },
+    {
       "id": "hidePost",
       "path": "/admin/posts/{id}/hide",
       "method": "post",
