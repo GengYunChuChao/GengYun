@@ -514,7 +514,7 @@ Node.js v24.16.0
 
 两处位移的原文片段（自算，勿照抄）：
 
-- `app.ts:2057` ⇒ `const retryAfterSeconds = retryAfterSecondsFor(error);`（`:2058` ⇒ `if (retryAfterSeconds !== null) reply.header('Retry-After', String(retryAfterSeconds));`）。初稿时点在 `1917-1918`；`7dd3d699` 上该文件共 2,116 行，整段下移。
+- `app.ts:2106` ⇒ `const retryAfterSeconds = retryAfterSecondsFor(error);`（`:2058` ⇒ `if (retryAfterSeconds !== null) reply.header('Retry-After', String(retryAfterSeconds));`）。初稿时点在 `1917-1918`；`7dd3d699` 上该文件共 2,116 行，整段下移。
 - `community-filter-pg.mjs:474-475` ⇒ `assert.equal((await call('GET', '/api/v1/reports/${reportId}')).status, 404,` + `'他人读他人举报必须 404（只回本人）');`。**原引的 `:422` 在 `1fbe7572` 上就已不是这条断言**（那一带是「crop/region/limit 占位符位序」的 SQL 断言，`:424` 是其中的 `const orderedStatements = statements`）⇒ 它**不是单纯行号漂移，是指错了地方**。
 
 #### 1.2 「同号同内容」证不出的「指错」：另查出 2 处
