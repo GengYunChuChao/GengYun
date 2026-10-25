@@ -157,6 +157,12 @@ implemented」的纪律取严的一方，并在 `blocker` 里把"已交付什么
 4. **failmatrix 未覆盖 `me/exports`**：`tests/failmatrix/cases.mjs` 的矩阵仍不含本域（既有四域未纳入之一），
    本片未扩写。
 5. **契约偏差（本片实测可达，未修，登记待裁定）—— 上一版把它写成"潜伏、非现网"是错的，已订正**：
+
+   > **2026-10-25 更新（GY-R35 · `#568`）**：本项已按裁定处置并合入——契约 `TargetRef.type` 补入 `conversation_turn`（16→17），
+   > `toContractExport` 已按 `EXPORT_OBJECT_TYPES` 逐项校验并把 `object_ref.id` 限到 1..80，写入侧 `OBJECT_KEY_MAX` 由 128 收到 80，
+   > `synthesis-egress.ts` 不再借用账本标签（按真实内容类型记账），历史越界键由迁移 `0040` 回填、不可如实回填时整条中止。
+   > **下文 5.1–5.6 保留的是当时的实测读数（16 值枚举、上限 128、只判 typeof），作为历史证据，不再是当前事实**；
+   > 未改的部分只剩库层 `0018_favorites_history.sql` 的 `target_type` CHECK（仍是旧 16 值，今日写入口不可达，已登记待另开迁移）。
    1. **写入方至少两处、`object_type` 至少三种**（都在产品装配里）：
       - `services/api/src/privacy/task-egress.ts`：`objectType: 'media'`（媒体作业外发），以及
         `objectType: CHAT_EGRESS_OBJECT_TYPE`，而 `CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn'`（问答外发）；
@@ -167,13 +173,13 @@ implemented」的纪律取严的一方，并在 `blocker` 里把"已交付什么
         在 `services/api/src/app.ts` 的合成域装配里（`egressLedger === null || privacyInFlight === null` 时才不建）。
         ⚠ 前提是**账本可用**（`real` + 有池），这一点与 §4"真库只能证 503"并不矛盾：装配存在、写入路径存在，
         只是当前真库的**读**面缺授权。
-   2. **`conversation_turn` 与 `checked_content` 都不在**契约 `TargetRef.type` 的 16 值枚举内
+   2. **当时**：`conversation_turn` 与 `checked_content` 都**不在**契约 `TargetRef.type` 的 **16 值**枚举内
       （枚举 = `species/herbicide/scheme/static_region/recognition/ocr/transcription/answer/post/comment/
       conversation/dose_card/media/synthesis/job/source`）；`media` 在枚举内，这两个不在。
    3. **投影不校验**：`packages/privacy/egress.mjs` 的 `toContractExport` 对 `objectType`、`objectId` **只判
       `typeof === 'string'`** —— 既不校验 `object_ref.type ∈ TargetRef.type`，也**不校验 `object_ref.id` 的
       1..80 上限（契约 `maxLength: 80`）**；作为对照，同一个函数校验了 `id.length === 0`、
-      `EXPORT_STATES.includes(state)`、`recipientId` 1..80。而**写入侧**的上限是 **128**
+      `EXPORT_STATES.includes(state)`、`recipientId` 1..80。而**当时的写入侧**上限是 **128**
       （`services/api/src/privacy/ledger-pg.ts` 的 `OBJECT_KEY_MAX = 128`，正则允许 0..126 中间字符）⇒
       **81..128 长度的对象键合法入库，并会原样出现在 `object_ref.id`**。
    4. **本片自造探针读数**（PGlite + 真实 `buildApp` HTTP + 与生产写入方同形的 4 行合成数据：`media` 1 条、
