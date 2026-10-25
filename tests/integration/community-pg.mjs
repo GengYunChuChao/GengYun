@@ -949,6 +949,153 @@ async function main() {
     );
     say('HTTP 面：stub + 真 pool 下 201/200 全部真落库（帖子/点赞/举报各一行），同 key 重放点赞仍是一行');
 
+    // ---- 12b. 点赞读取面 + 失败重试（#14/#15/#17 计数面：不翻倍、不回退成负数） ----------
+    // 本片**实测缺口**（不是重复造）：`GET /posts/{id}/like` 在 `tests/integration/**` 里从未被调用
+    // （只有 PUT 重放）；"点赞先失败一次、再用同一个幂等键重试"这条时序也没有任何真库断言
+    // （单元只验 409/404 本身，如 `tests/unit/community-service.test.mjs:466` 反例 19）。
+    // 两条都只有真库能证：计数是 `count(*)` 派生（没有计数器列 ⇒ 不可能漂），去重由唯一键
+    // `(user_id, target_type, target_id)` 裁决，失败释放占位由 `releaseIdempotency`
+    // （`DELETE … WHERE outcome IS NULL`）落库 —— 少了这一步，同键重试会被永久判成 IDEMPOTENCY_CONFLICT。
+    const likeReader = await account('r'); // 另一个真实用户：`liked_by_me` 是身份量，计数是公共量
+    const callAs = async (token, method, path, extra = {}) => {
+      const response = await fetch(base + path, {
+        method,
+        headers: {
+          authorization: `Bearer ${token}`,
+          ...(extra.payload === undefined ? {} : { 'content-type': 'application/json' }),
+          ...(extra.headers ?? {}),
+        },
+        ...(extra.payload === undefined ? {} : { body: JSON.stringify(extra.payload) }),
+      });
+      return { status: response.status, headers: response.headers, body: await response.json() };
+    };
+
+    // 12b.1 新开一条**经产品写路径**产生的帖子（计数从 0 起，不和上面那条 1 赞的帖混在一起）。
+    const likePost = await call('POST', '/api/v1/posts', {
+      payload: { title: CLEAN_TITLE, body: CLEAN_BODY, media_ids: [] },
+      headers: { 'idempotency-key': 'community-pg-http-post-2' },
+    });
+    assert.equal(likePost.status, 201, JSON.stringify(likePost.body));
+    const likeTarget = likePost.body.data.id;
+    const likeIfMatch = `"${likePost.body.data.revision}"`;
+    // 独立读数：计数以真库 `count(*)` 为准，读面与库必须逐次对得上（不靠返回值自证）。
+    const likeRowCount = async () =>
+      (
+        await owner.query(
+          "SELECT count(*)::int AS n FROM community_likes WHERE target_type = 'post' AND target_id = $1::uuid",
+          [likeTarget],
+        )
+      ).rows[0].n;
+
+    // 12b.2 0 赞读面：契约 `LikeStatus`（`count` 非负整数 + `liked_by_me` 布尔），且**不写 ETag**。
+    const zeroRaw = await fetch(`${base}/api/v1/posts/${likeTarget}/like`, {
+      headers: { authorization: `Bearer ${a.token}` },
+    });
+    assert.equal(zeroRaw.status, 200, '点赞读面与读帖同一道 200');
+    assert.equal(zeroRaw.headers.get('etag'), null, 'LikeStatus 不是资源表示（无 revision）⇒ 不写 ETag');
+    assert.match(String(zeroRaw.headers.get('cache-control')), /no-store/, '计数随他人点赞变化 ⇒ 必须 no-store');
+    const zeroLike = (await zeroRaw.json()).data;
+    assert.deepEqual(zeroLike, { count: 0, liked_by_me: false });
+    assert.equal(Number.isInteger(zeroLike.count) && zeroLike.count >= 0, true, 'count 必须是非负整数');
+    assert.equal(await likeRowCount(), 0, '0 赞必须对应真库零行');
+
+    // 12b.3 先**失败**一次（If-Match 与服务端版本不符 ⇒ 409，写之前比对）：不得留下任何计数。
+    const failedLike = await call('PUT', `/api/v1/posts/${likeTarget}/like`, {
+      headers: { 'idempotency-key': 'community-pg-like-retry-1', 'if-match': '"9"' },
+    });
+    assert.equal(failedLike.status, 409, JSON.stringify(failedLike.body));
+    assert.equal(failedLike.body.error.code, 'REVISION_CONFLICT');
+    assert.equal(failedLike.body.error.retryable, false);
+    assert.equal(await likeRowCount(), 0, '失败的点赞尝试不得留下点赞行');
+    assert.deepEqual(
+      (await call('GET', `/api/v1/posts/${likeTarget}/like`)).body.data,
+      { count: 0, liked_by_me: false },
+      '失败后计数不得变成 -1 或 1',
+    );
+
+    // 12b.4 **同一个幂等键 + 改正后的 If-Match 重试** ⇒ 必须成功（失败释放占位在真库生效），
+    //        且计数恰好 1 —— 这正是"失败重试不翻倍"的读数（此前没有任何断言覆盖这条时序）。
+    const retried = await call('PUT', `/api/v1/posts/${likeTarget}/like`, {
+      headers: { 'idempotency-key': 'community-pg-like-retry-1', 'if-match': likeIfMatch },
+    });
+    assert.equal(retried.status, 200, JSON.stringify(retried.body));
+    assert.deepEqual(retried.body.data, { accepted: true });
+    assert.equal(await likeRowCount(), 1, '失败重试成功后必须恰好一行（不得重复计数）');
+    assert.deepEqual(
+      (await call('GET', `/api/v1/posts/${likeTarget}/like`)).body.data,
+      { count: 1, liked_by_me: true },
+      '重试后读数必须是 1，不是 2',
+    );
+
+    // 12b.5 同键同体重放 ⇒ 回放首次结果，仍是一行（幂等台账不得再 INSERT 一次）。
+    const replayed = await call('PUT', `/api/v1/posts/${likeTarget}/like`, {
+      headers: { 'idempotency-key': 'community-pg-like-retry-1', 'if-match': likeIfMatch },
+    });
+    assert.equal(replayed.status, 200, JSON.stringify(replayed.body));
+    assert.equal(await likeRowCount(), 1, '重放同一 idempotency-key 不得再记一次');
+
+    // 12b.6 另一个用户点赞 ⇒ 计数 2；`liked_by_me` 按请求方身份各自如实。
+    const readerLike = await callAs(likeReader.token, 'PUT', `/api/v1/posts/${likeTarget}/like`, {
+      headers: { 'idempotency-key': 'community-pg-like-reader-1', 'if-match': likeIfMatch },
+    });
+    assert.equal(readerLike.status, 200, JSON.stringify(readerLike.body));
+    assert.equal(await likeRowCount(), 2);
+    assert.deepEqual((await callAs(a.token, 'GET', `/api/v1/posts/${likeTarget}/like`)).body.data, {
+      count: 2,
+      liked_by_me: true,
+    });
+    assert.deepEqual((await callAs(likeReader.token, 'GET', `/api/v1/posts/${likeTarget}/like`)).body.data, {
+      count: 2,
+      liked_by_me: true,
+    });
+
+    // 12b.7 取消两次：第二次是不同键、真走 `DELETE … 0 行` 的 no-op ⇒ 计数回落 1，**不回退成负数**。
+    const readerUnlike = await callAs(likeReader.token, 'DELETE', `/api/v1/posts/${likeTarget}/like`, {
+      headers: { 'idempotency-key': 'community-pg-like-reader-2', 'if-match': likeIfMatch },
+    });
+    assert.equal(readerUnlike.status, 200, JSON.stringify(readerUnlike.body));
+    const readerUnlikeAgain = await callAs(likeReader.token, 'DELETE', `/api/v1/posts/${likeTarget}/like`, {
+      headers: { 'idempotency-key': 'community-pg-like-reader-3', 'if-match': likeIfMatch },
+    });
+    assert.equal(readerUnlikeAgain.status, 200, JSON.stringify(readerUnlikeAgain.body));
+    assert.equal(await likeRowCount(), 1, '第二次取消（不同键）必须真执行且删 0 行');
+    assert.deepEqual((await callAs(likeReader.token, 'GET', `/api/v1/posts/${likeTarget}/like`)).body.data, {
+      count: 1,
+      liked_by_me: false,
+    });
+
+    // 12b.8 作者取消 ⇒ 0；再取消一次 ⇒ 仍是 0（不是 -1，也不是"多减一次"）。
+    for (const key of ['community-pg-like-author-1', 'community-pg-like-author-2']) {
+      const off = await call('DELETE', `/api/v1/posts/${likeTarget}/like`, {
+        headers: { 'idempotency-key': key, 'if-match': likeIfMatch },
+      });
+      assert.equal(off.status, 200, JSON.stringify(off.body));
+    }
+    assert.equal(await likeRowCount(), 0);
+    assert.deepEqual(
+      (await call('GET', `/api/v1/posts/${likeTarget}/like`)).body.data,
+      { count: 0, liked_by_me: false },
+      '取消到 0 之后不得出现 -1',
+    );
+
+    // 12b.9 不存在/不可见的目标：点赞读面与读帖同一道闸门（同一个 404，不新造错误码），且零计数行。
+    const absentLikeTarget = randomUUID();
+    const absentLike = await call('GET', `/api/v1/posts/${absentLikeTarget}/like`);
+    assert.equal(absentLike.status, 404, JSON.stringify(absentLike.body));
+    assert.equal(absentLike.body.error.code, 'NOT_FOUND');
+    assert.equal(
+      (
+        await owner.query('SELECT count(*)::int AS n FROM community_likes WHERE target_id = $1::uuid', [
+          absentLikeTarget,
+        ])
+      ).rows[0].n,
+      0,
+    );
+    say(
+      '点赞计数（真库）：GET /posts/{id}/like 首次真库读数（无 ETag + no-store）与 count(*) 逐次一致；' +
+        '失败(409)后同键重试恰好 1 行不翻倍、两次取消都不回退成负数、不可见目标同一道 404',
+    );
+
     await app.close();
     app = null;
 
