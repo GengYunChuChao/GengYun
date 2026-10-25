@@ -6,7 +6,7 @@
  * 不抛错、不给原因文案。本文件钉住这条裁定，防三种腐烂：
  *
  *   1. 契约闭集扩容而代码闭集不跟（或反之）⇒ 两组枚举必须逐项相等；
- *   2. 有人为了让 14 型「看起来可用」而在类型闸门后面加兜底/放宽 ⇒ 未支持类型必须
+ *   2. 有人为了让 15 型「看起来可用」而在类型闸门后面加兜底/放宽 ⇒ 未支持类型必须
  *      **一次都不问**可见性判据（闸门在判据之前，不存在"先问再降级"的旁路）；
  *   3. 有人把「不支持」实现成异常/500 ⇒ 端口层不抛错，HTTP 读面必须 200 且每行
  *      取值都在契约闭集内、字段不夹带原因。
@@ -23,7 +23,7 @@ import { API, idem, makeWiredHarness, passingPort, postInput } from './community
 
 /** 本版声明可跳转的目标类型（与 `services/api/src/messages/reference-community.ts` 闸门同源）。 */
 const SUPPORTED_TARGET_TYPES = ['post', 'comment'];
-/** 本版**显式登记**的不支持类型数量（契约闭集 16 − 支持 2）。 */
+/** 本版**显式登记**的不支持类型数量（契约闭集 17 − 支持 2）。 */
 const UNSUPPORTED_COUNT = 15;
 
 function readOpenApi() {
@@ -72,7 +72,7 @@ test('G2-1 契约闭集 = 代码闭集，且本版支持集恰为 post/comment�
     assert.ok(enumTypes.includes(type), `支持集里的 ${type} 必须在契约闭集内`);
   }
 
-  // 显式登记：本版不支持 = 16 − 2 = 14。改这里必须同步改裁定页。
+  // 显式登记：本版不支持 = 17 − 2 = 15。改这里必须同步改裁定页。
   const unsupported = unsupportedTargetTypes(enumTypes, SUPPORTED_TARGET_TYPES);
   assert.equal(
     unsupported.length, UNSUPPORTED_COUNT,
@@ -106,7 +106,7 @@ test('G2-2 未支持类型 ⇒ unavailable，且一次都不问可见性判据�
   });
   assert.equal(port.available, true, '本用例必须跑在已接线端口上，否则 unavailable 是接线缺失而非类型闸门');
 
-  // 2a. 14 型未支持：unavailable + 判据零调用 + 不抛错。
+  // 2a. 15 型未支持：unavailable + 判据零调用 + 不抛错。
   for (const type of unsupported) {
     const before = probes.length;
     const targetRef = { type, id: fixtureUuid('11111111', before) };
@@ -156,10 +156,10 @@ test('G2-3 判据自身抛错时，未支持类型仍 unavailable 且不抛错',
 });
 
 // ---------------------------------------------------------------------------
-// 3. HTTP 读面：14 型与对照组同页，200（不是 500），字段不夹带原因
+// 3. HTTP 读面：15 型与对照组同页，200（不是 500），字段不夹带原因
 // ---------------------------------------------------------------------------
 
-test('G2-4 读面同页：14 型全部 unavailable、同页 post 仍 available、整体 200 且字段合契约', async () => {
+test('G2-4 读面同页：15 型全部 unavailable、同页 post 仍 available、整体 200 且字段合契约', async () => {
   const h = makeWiredHarness({ ports: { tms: passingPort() } });
   const a = await h.session('g2');
   const unsupported = unsupportedTargetTypes(contractTargetTypes(), SUPPORTED_TARGET_TYPES);
@@ -167,7 +167,7 @@ test('G2-4 读面同页：14 型全部 unavailable、同页 post 仍 available�
   // 对照组：一条真实社区帖子（走真实生产者链路），证明"同页里 post 是 available"。
   const live = await h.service.createPost(a.actor, postInput(), { idempotencyKey: idem(1) });
 
-  // 14 型：存储层固定装置（本版生产者不会产出这些组合，这里只行使读路径）。
+  // 15 型：存储层固定装置（本版生产者不会产出这些组合，这里只行使读路径）。
   const createdAt = new Date(h.time + 1000).toISOString();
   for (const [index, type] of unsupported.entries()) {
     const inserted = await h.messages.insertMessage({
@@ -187,7 +187,7 @@ test('G2-4 读面同页：14 型全部 unavailable、同页 post 仍 available�
   assert.equal(response.status, 200, '未支持类型必须返回 200，不得 500');
 
   const rows = items(response);
-  assert.ok(Array.isArray(rows) && rows.length >= unsupported.length + 1, '读面应同时包含对照组与 14 型');
+  assert.ok(Array.isArray(rows) && rows.length >= unsupported.length + 1, '读面应同时包含对照组与 15 型');
 
   const byTargetId = new Map(
     rows.filter(row => row.target_ref !== null).map(row => [row.target_ref.id, row]),
@@ -199,7 +199,7 @@ test('G2-4 读面同页：14 型全部 unavailable、同页 post 仍 available�
   assert.ok(control !== undefined, '同页应含指向真实帖子的消息');
   assert.equal(control.reference_state, 'available', '同页 post 目标应为 available（证明这不是"整页不可用"的假象）');
 
-  // 3b. 14 型全部 unavailable，字段恰为契约必填集（不含原因/降级说明/target 内容）。
+  // 3b. 15 型全部 unavailable，字段恰为契约必填集（不含原因/降级说明/target 内容）。
   for (const [index, type] of unsupported.entries()) {
     const row = byTargetId.get(fixtureUuid('eeeeeeee', index));
     assert.ok(row !== undefined, `${type} 的消息行应出现在读面`);
