@@ -97,3 +97,110 @@ node tools/evaluation/run-evaluation.mjs \
    原始媒体与路径映射一律留在仓库外。
 7. 覆盖承诺类取自 **GY-I03 资料覆盖范围**（`coverage_state=planned`），
    它是本轮的可用绑定依据，但**不等于模型侧已完成的识别覆盖承诺**。
+
+## 5 最小真实评估路径（≥30 张真机照片 → 一次可复算的能力评估）
+
+本节写给后来人：怎样用**一批新拍的真机照片**把「覆盖内 7/300」往前推进，并跑出**能复算**的指标与 95% 置信区间。
+目标形态：**≥30 张真机拍摄的同物种照片**，推荐稗草（`species_barnyardgrass`）——它在冻结覆盖清单里是 `covered`，
+判据也最好写（与水稻的叶耳叶舌区分）。跑完一轮，覆盖内从 **7** 到 **37**（第6.1节要求 ≥300，每类 ≥30；见
+`docs/implementation-requirements.md:460`），稗草这一类由 1 张到 31 张，**逐类**才第一次可能达标；
+总量仍远不足 300，所以 `isRealEvaluation` 仍是 `false`，指标只能作为**能力评估**，不能当作效果承诺。
+
+### 5.1 照片放哪、怎么命名
+
+| 项 | 约定 |
+| --- | --- |
+| 原始照片 | **仓外**私有目录，例如 `<仓外>/phone-<YYYYMM>/barnyardgrass/`；只把 hash 与元数据入库（`rawMediaCommitted=false`） |
+| 文件命名 | `barnyard_<两位序号>_<角度>.jpg`，如 `barnyard_01_overview.jpg`、`barnyard_02_leaf.jpg`、`barnyard_03_base.jpg`；角度取整株／叶片／茎基部／田面背景 |
+| 一株多张 | 同一株的多角度或连拍**必须同一 `clusterId`**；去重按**独立对象**计数，同株多张只算 1 条独立证据 |
+| 因此 | 要 30 条独立证据，就要 **≥30 株独立植物**；同株拍 30 张，去重后仍然是 1 |
+| 索引（仓内） | `packages/evaluation/samples/gy-i20-weeds-phone-index.json`，一条一记录，字段照 [../../../docs/evaluation/sample-index-schema.md](../../../docs/evaluation/sample-index-schema.md) 第 1 节 |
+| 答案键（仓内） | 在 `gy-i20-weeds-labels.json` 追加条目（或新开同 schema 文件）：`criteria` 写该物种判据要点，`reviewedBy` 记独立复核人 |
+| 冻结清单与逐条台账 | **不许手写**，由 `freeze-real-samples.mjs` 生成（见 5.2 第 2 步） |
+
+最小可用记录（照现有 `gy-i20-weeds-001` 的形状，略去工具自填的媒体尺寸）：
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "sampleId": "gy-i20-phone-001",
+  "task": "weed_photo",
+  "split": "test",
+  "clusterId": "gy-i20-phone-cl-001",
+  "contentSha256": "<64 hex>",
+  "perceptualHash": "<16 hex>",
+  "sourceKind": "real_collected",
+  "sourceRef": "phone_2026_11#barnyard-001",
+  "labelClass": "species_barnyardgrass",
+  "coverage": "covered",
+  "quality": "clear",
+  "gold": { "speciesId": "species_barnyardgrass" },
+  "annotation": { "method": "independent_verification", "annotatorRef": "<脱敏采集人>", "reviewedBy": "<复核人>", "modelGenerated": false },
+  "rawMediaCommitted": false,
+  "rawMediaSha256": "<64 hex>"
+}
+```
+
+`sourceRef` 只写脱敏批次与序号，不写真实姓名、手机号、聊天目录或原始路径；`split` 必须是 `test`；
+`quality` 按实情取 `clear`／`blurry`／`occluded`／`dark`／`target_too_small`。
+
+### 5.2 跑哪条命令（按顺序，任一步退出码非 0 就停）
+
+评估核心在 `packages/evaluation/src/evaluate.mjs`（导出 `evaluateRun`），命令行包装是
+`tools/evaluation/run-evaluation.mjs`；**跑的是后者的 CLI**，不要直接调 `evaluate.mjs`。
+
+```bash
+# 1) 结构 + 硬红线 + 隔离（同簇／连拍／近重复不得跨 split）
+node tools/evaluation/validate-evaluation-samples.mjs \
+  --index packages/evaluation/samples/gy-i20-weeds-phone-index.json
+
+# 2) 生成冻结清单 + 逐条摘要台账 + 答案键绑定（样本一变就必须是新的 indexVersion）
+node tools/evaluation/freeze-real-samples.mjs \
+  --index packages/evaluation/samples/gy-i20-weeds-phone-index.json \
+  --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+  --index-version gy-i20-weeds-phone-<YYYY.MM.DD> \
+  --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
+  --digests packages/evaluation/samples/gy-i20-weeds-phone-frozen-digests.json \
+  --out packages/evaluation/samples/gy-i20-weeds-phone-frozen-manifest.json
+
+# 3) 评估：--predictions 必须是模型／规则的**原始输出**，不许手改
+#    （付费调用未获用户单独授权时就是空预测 {}，门禁保持 not_evaluated、无成绩）
+node tools/evaluation/run-evaluation.mjs \
+  --index packages/evaluation/samples/gy-i20-weeds-phone-index.json \
+  --predictions <predictions.json> \
+  --manifest packages/evaluation/samples/gy-i20-weeds-phone-frozen-manifest.json \
+  --coverage packages/evaluation/samples/gy-i20-weeds-coverage-manifest.json \
+  --digests packages/evaluation/samples/gy-i20-weeds-phone-frozen-digests.json \
+  --labels packages/evaluation/samples/gy-i20-weeds-labels.json \
+  --generated-at <ISO8601 带时区> \
+  --out <仓外>/reports/gy-i20-weeds-phone-<YYYYMMDD>.json
+
+# 4) 门禁读数快照（三份日志 + 可选报告 JSON）：给证据文件引用，不重算
+node tools/evaluation/verify-gate-readout.mjs <run-evaluation.log> <freeze.log> <validate.log> <report.json>
+```
+
+`--generated-at` 固定报告时间戳，同一输入两次运行逐字节相同——这是把报告当证据的前提。
+
+### 5.3 输出落到哪
+
+- 报告 JSON：**仓外**（体积大、含逐条明细）；证据文件写进 `docs/verification/gy-i20-<日期>.md`（沿用现有 `gy-i20-*` 命名），
+  只贴**命令、退出码、报告里可核对的字段**：`frozenIndexVersion`、`splits.test`、`duplicatesExcluded`、
+  `frozenVerified`、`coverageBinding.verified`、`isRealEvaluation`、`tasks.weed_photo.gateStatus` 与
+  `tasks.weed_photo.gates[].status`，以及 `tasks.weed_photo.metrics.top1` / `top3` 的 `p`、`low`、`high`、`n`
+  （`p/low/high` 是 Wilson 95% 区间；无模型输出时 `p=null`，**不得写 0 分或成绩**）。
+- `docs/evaluation/sample-gap-register.md` 第 1 节第 1、2 行的「实际到位」随新计数更新（那是唯一计数来源）。
+
+### 5.4 必须人工核对的事（程序核不了）
+
+1. 画面**确实是稗草**，不是水稻、千金子等近缘种；把区分判据写进 `criteria`（叶耳叶舌有无、叶片宽软、茎基部颜色等）。
+2. `coverage` 分对：稗草 = `covered`；拍到别的物种就 `out_of_coverage` + `labelClass=ext_<编号>`（目录外稳定标识），**不许改名凑覆盖内**。
+3. `quality` 如实分级：模糊、遮挡、过暗、目标过小不要填 `clear`，否则低质量桶被虚增、清晰桶被污染。
+4. 同株／连拍关系如实登记 `clusterId`（必要时补 `captureSeriesId`），不要靠"看起来不同"拆成多条独立样本。
+5. 来源与许可：`sourceRef` 脱敏；许可未核实就不得写"已许可"，原图与路径映射留在仓外。
+
+### 5.5 边界（做不到就不算）
+
+- **不许用合成图、截图或网络图冒充**真机拍摄；合成占位只能走 `make-synthetic-fixture.mjs` 的夹具路径。
+- **不许把演示视频帧当样本**：演示片明确不承担真实性／科学预测准确率要求（`docs/features/pesticide-demo-video.md:34`）。
+- 结果只作**能力评估**：覆盖内未达 300、逐类未达 30 之前，不得对外宣称"支持稗草识别"或给出任何准确率／效果承诺。
+- 真实模型／规则输出须有**用户单独授权的付费调用**；未授权就保持空预测、`not_evaluated`，不得用人工校正结果补成成绩。
