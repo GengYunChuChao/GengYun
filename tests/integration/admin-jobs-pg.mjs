@@ -1087,10 +1087,40 @@ try {
 //     —— 独立场景段，追加在本文件末尾；上方的 [M]/[P]/[A]/[J]/[C]/[E] 臂一行未改。
 // ===========================================================================
 /**
- * 判别力：改动前 `listSql` 没有 WHERE，`?state=failed` 会**静默返回全量**（5 条），
- * 于是下面每条「只回 N 条」的断言在改动前都是真红；闭集外取值在改动前不校验（同样真红）。
+ * 判别力：改动前 `listSql` 没有 WHERE，`?state=failed` 会**静默返回全量**（本臂开跑前查到的
+ * 真实全量，即下方 `expectedAll`），于是下面每条「只回 N 条」的断言在改动前都是真红；
+ * 闭集外取值在改动前不校验（同样真红）。
+ *
+ * ## 全量基线为什么**动态读库**、而不是写死「5 条」（#589 遗留行踩坑记录）
+ * 本臂是脚本最后一段，库内行数已经被前面的臂改变过：`[J]` 种 3 条夹具（`seedJobRows`）、
+ * `[C]` 把其中 recognition 那条从 queued 改成 cancelled、`[C2]`（#589 的同事务返修臂，
+ * `cancelAuditAtomicityArm` 在上方自行插入一条 recognition 探针行）把它自己的探针留在
+ * cancelled/revision=2。于是本臂开跑前真实是 4 条，写死「3 条既有 + 2 条种子 = 5」就假红
+ * （CI `real-pg-17.11` 实测 6 !== 5）。
+ *
+ * `[C2]` 那条行**不删**：它是「审计留痕 + 终态不可迁移」的证据 —— `admin_audit_events` 里的
+ * `job.cancel` 行 `target_ref` 指着它，删掉作业行等于让审计指向一条不存在的作业，正是 #589
+ * 要消灭的那类缺口。所以修在「读」这一侧：基线取开跑前库里三张作业表的真实行数，断言仍是
+ * **精确相等**（`不加过滤 == 基线 + 2`）：少一条即「过滤丢行」、多一条即「重复行」，判别力与
+ * 写死数字时一模一样，只是不再把别的臂的夹具当成自己的排他地盘。
  */
 async function jobsFilterArm(app, jobsToken, userId) {
+  // 三源行数只做 `count(*)`，不读任何列（静态列审计不覆盖 tests/，但仍按最小读面写）。
+  const countAllJobs = async () => {
+    const [row] = await q(
+      `SELECT (SELECT count(*)::int FROM public.ocr_jobs)
+            + (SELECT count(*)::int FROM public.recognition_jobs)
+            + (SELECT count(*)::int FROM public.speech_jobs) AS c`,
+    );
+    return row.c;
+  };
+  const baseline = await countAllJobs();
+  const expectedAll = baseline + 2;
+  assert.ok(
+    expectedAll <= ADMIN_JOB_LIST_LIMIT,
+    `本臂要求全量在端口硬上限内：${expectedAll} > ${ADMIN_JOB_LIST_LIMIT} 时「不加过滤」本就是一页装不下，先扩上限再谈丢行`,
+  );
+
   // 追加两行专用种子：同 state、不同 error_code，再加上一行别的 state —— 过滤才有「二选一」的判别力。
   // 只在本臂（脚本最后一段）插入，且新 id 不出现在任何既有断言里。
   const extra = { failed: randomUUID(), succeeded: randomUUID() };
@@ -1112,13 +1142,33 @@ async function jobsFilterArm(app, jobsToken, userId) {
   // ① 不加过滤 ≡ 改动前的全量读面（本片没有偷偷改变默认语义）
   const unfiltered = await injectCall(app, API_V1('/admin/jobs'), { token: jobsToken });
   assert.equal(unfiltered.status, 200);
-  assert.equal(unfiltered.body.data.items.length, 5, '不加过滤必须仍回全量（3 条既有 + 2 条本臂种子）');
-  note('[F] 不加过滤 ≡ 全量：5 条（三源合并 + 本臂两条种子），默认语义未变');
+  assert.equal(
+    unfiltered.body.data.items.length,
+    expectedAll,
+    `不加过滤必须仍回全量（开跑前库内 ${baseline} 条 + 本臂 2 条种子 = ${expectedAll}）：少一条是过滤丢行，多一条是重复行`,
+  );
+
+  // ①′ state 维度是**划分**：七个契约 state 的过滤读数之和必须回到同一个全量。
+  //     这比「某一条过滤只回 N 条」更难糊弄：任一 state 多丢一行，或全量本身悄悄漏一行，
+  //     和就对不上（`?state=failed` 的写死计数给不了这个保障）。
+  const contractStates = ['queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled', 'uncertain'];
+  let stateSum = 0;
+  for (const state of contractStates) {
+    const page = await injectCall(app, API_V1(`/admin/jobs?state=${state}`), { token: jobsToken });
+    assert.equal(page.status, 200, `?state=${state} 必须 200，实际 ${page.status}`);
+    stateSum += page.body.data.items.length;
+  }
+  assert.equal(
+    stateSum,
+    expectedAll,
+    `七个 state 过滤读数之和必须等于全量 ${expectedAll}（漏行/重行都会打破它），实际 ${stateSum}`,
+  );
+  note(`[F] 不加过滤 ≡ 全量：${expectedAll} 条（开跑前基线 ${baseline} + 本臂两条种子）；七个 state 过滤之和同为 ${expectedAll}（state 是划分，不漏不重），默认语义未变`);
 
   // ② state 过滤：库里两条 failed（ocr + 本臂 recognition），SQL 必须收敛到 2 条
   const byState = await injectCall(app, API_V1('/admin/jobs?state=failed'), { token: jobsToken });
   assert.equal(byState.status, 200, `?state=failed 必须 200，实际 ${byState.status} ${byState.text.slice(0, 200)}`);
-  assert.equal(byState.body.data.items.length, 2, '?state=failed 必须只回两条失败作业（改动前会回 5 条 ⇒ 真红）');
+  assert.equal(byState.body.data.items.length, 2, `?state=failed 必须只回两条失败作业（改动前会回全量 ${expectedAll} 条 ⇒ 真红）`);
   assert.deepEqual(byState.body.data.items.map((item) => item.state), ['failed', 'failed'], '过滤后每条都必须是 failed');
   assert.deepEqual(byState.body.data.items.map((item) => item.kind), ['recognition', 'ocr'], '过滤后仍按 created_at DESC 排序');
   note('[F] GET /admin/jobs?state=failed ⇒ 200 / 2 条（recognition, ocr），逐条 state=failed');
