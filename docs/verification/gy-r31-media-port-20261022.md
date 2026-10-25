@@ -75,7 +75,7 @@ export interface MediaObjectStore {
 
 1. `services/api/src/app.ts:46`：`import { registerOcrRoutes, type OcrRouteDeps } from './routes/ocr.ts';`
    —— 只取**类型** `OcrRouteDeps['media']`，**不** import `./ocr/media.ts`（`app.ts` 的 OCR 适配器 import 禁项因此逐字保持）。
-2. `services/api/src/app.ts:382`：`BuildAppOptions` 增可选字段
+2. `services/api/src/app.ts:333`（原记 `:382`）：`BuildAppOptions` 增可选字段
    `ocrMedia?: OcrRouteDeps['media'];`（命名对齐既有 `recognitionMedia` / `speechMedia`），并写明「缺省 undefined ⇒ 域内
    按 `executionMode` 自建；默认装配不注入、`real` 仍 fail-closed」。
 3. `services/api/src/app.ts:731`：解构新增 `ocrMedia`。

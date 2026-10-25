@@ -76,7 +76,7 @@
 | `SynthesisTarget.type` | 真实来源 | 核对状态怎么来 |
 | --- | --- | --- |
 | `answer` | `public.conversation_answers`（`services/api/db/migrations/0013_conversations.sql:103-123`；`check_state` 列见 `:110`，`checked_text` 列见 `:109`） | `check_state='passed'` ⇒ `approved`；`'blocked'` ⇒ `rejected`；**其它取值原样透出**（判定层按「取不到核对状态」拒绝，绝不规整成 approved） |
-| `species`/`herbicide`/`scheme`/`static_region` | `catalog_read.current_knowledge`（`services/api/db/migrations/0010_knowledge_read_views.sql:3-34`；来源版本须 `review_status='verified'`，见 `0002_knowledge_catalog.sql:214`） | **行存在即 `approved`**：该视图的 `WHERE` 强制 `visibility='published'` + 每 `knowledge_id` 仅最新 revision，未核对/未发布的知识**不在视图里** ⇒ 查不到行 ⇒ 404（fail-closed 的自然形状） |
+| `species`/`herbicide`/`scheme`/`static_region` | `catalog_read.current_knowledge`（`services/api/db/migrations/0010_knowledge_read_views.sql:3-30`（原记 `:3-34`）；来源版本须 `review_status='verified'`，见 `0002_knowledge_catalog.sql:214`） | **行存在即 `approved`**：该视图的 `WHERE` 强制 `visibility='published'` + 每 `knowledge_id` 仅最新 revision，未核对/未发布的知识**不在视图里** ⇒ 查不到行 ⇒ 404（fail-closed 的自然形状） |
 | `dose_card` | **没有**可核验来源 | 库内无逐卡核对结论，生产口径 `dose_cards` 恒为 `[]`（`services/api/src/ocr/reference.ts` 两处组装）⇒ 端口返回 `null` ⇒ 404，**不**从别处拼一张卡冒充 |
 
 **如实登记的残留口径差异**：知识读面**没有**逐行 `AuditState` 列，`pending`/`quarantined`

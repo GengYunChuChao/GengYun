@@ -47,7 +47,7 @@
 
 | 项 | 派单 | 自核 | 说明 |
 |---|---|---|---|
-| 实调用点数 | 24 | **26** | 少算 2：`verify-cvm-postgres.sh:326`、`:327`（`qs … \|\| true`）不在派单表内；两处都在「迁移台账」判定里，正是 B 类 |
+| 实调用点数 | 24 | **26** | 少算 2：`verify-cvm-postgres.sh:341`（原记 `:326`）、`:344`（原记 `:327`；`qs … \|\| true`）不在派单表内；两处都在「迁移台账」判定里，正是 B 类 |
 | `verify-cvm-postgres.sh:208` | 「只打印」 | **B（假绿）** | `grep -c` 在无输入时**输出 `0`**（rc=1 但被吞）⇒ `no_wildcard_listener` 判 PASS |
 | `restore-drill.sh:213/214` | 「213 只进文案、214 参与判定」 | **说反了** | 判定用的是 `-z "$errors"`（213）；`error_count`（214）只进 FAIL 文案与说明 |
 | 行数 | 545/310/338/183/244 | 675/404/423/258/316 | 派单是旧行数；但派单引用的**行号与当前文件一致**，已逐条核对 |
@@ -68,12 +68,12 @@
 | 10 | `install-postgres.sh:645` | A | `_final_ping="$(runuser … -tAc 'SELECT 1' \|\| true)"` | 不等于 `1` ⇒ `fail` | `:653` |
 | 11 | `provision-db.sh:117` | A | `RUNTIME_PASSWORD="$(read_secret_from_file … \|\| true)"` | 空 ⇒ 下一行 `[[ -n ]] \|\| fail` | `:118` |
 | 12 | `verify-cvm-postgres.sh:116` | A | `as_runtime`: `… 2>&1 \|\| true` | 保留 psql 的 stderr 供调用方判定：`report_denied` 只有见 `42501` 才 PASS、`report_num_runtime` 只有末行是非负整数才 PASS ⇒ 失败文本一律 FAIL | `:116` |
-| 13 | `verify-cvm-postgres.sh:186` | A | VPC IP 探测 `\| sort -u \| head -1 \|\| true` | 空 ⇒ `skip`（退出码 2），且 `listen_addresses` 的期望值变 `127.0.0.1,?` ⇒ 不可能 PASS | `:186` |
+| 13 | `verify-cvm-postgres.sh:187-188`（原记 `:186`） | A | VPC IP 探测 `\| sort -u \| head -1 \|\| true` | 空 ⇒ `skip`（退出码 2），且 `listen_addresses` 的期望值变 `127.0.0.1,?` ⇒ 不可能 PASS | `:187-188` |
 | 14 | `verify-cvm-postgres.sh:208` | **B** | `wild_count="$(ss … \| awk … \| grep -cE '^(0.0.0.0\|*\|\[::\]):' \|\| true)"` | `ss`/`awk` 失败 ⇒ `grep -c` 输出 **`0`** ⇒ `report_eq 'no_wildcard_listener' '0'` **PASS（假绿）** | 已修（§3.1） |
 | 15 | `verify-cvm-postgres.sh:308` | A | `… -c 'SELECT current_user' 2>&1 \| tr -d '\r' \| tail -n1 \|\| true` | 与角色名精确比较；失败文本/空 ⇒ 不相等 ⇒ FAIL | `:318` |
 | 16 | `verify-cvm-postgres.sh:326` | **B** | `applied_joined="$(qs "SELECT COALESCE(string_agg(…), '') FROM schema_migrations" \|\| true)"` | 失败落空串/错误文本直接成为报告里的「实际值」；期望值在「磁盘侧也读不到」时也是空串 ⇒ **两者相等 ⇒ PASS（假绿）** | 已修（§3.2） |
 | 17 | `verify-cvm-postgres.sh:327` | **B** | `checksum_nulls="$(qs 'SELECT count(*) … WHERE checksum IS NULL' \|\| true)"` | 失败落空串 ⇒ 实际值没有失败态，与「0 个 NULL」不可分 | 已修（§3.2） |
-| 18 | `verify-cvm-postgres.sh:352` | A | `newest_dump="$(find … \| sort -nr \| …)" \|\| true` | 空 ⇒ `backup_artifact` 记 `skip`（退出码 2），既不当「有备份」也不当 PASS | `:368` |
+| 18 | `verify-cvm-postgres.sh:369-370`（原记 `:352`） | A | `newest_dump="$(find … \| sort -nr \| …)" \|\| true` | 空 ⇒ `backup_artifact` 记 `skip`（退出码 2），既不当「有备份」也不当 PASS | `:368` |
 | 19 | `verify-cvm-postgres.sh:378` | A | `read -r DATA_SRC DATA_MNT <<<"$(df -P … \|\| true)"` | 空 ⇒ `_fail pgdata_separate_filesystem` | `:395` |
 | 20 | `backup-postgres.sh:201` | **B** | `TOCOBJ="$(runuser … --list "$DUMP" \| grep -c ';' \|\| true)"` | 失败 ⇒ `0` **写进备份清单** `restore_toc_entries`，与「真的 0 个 TOC 条目」不可分；下游 `restore-drill.sh` 还拿它当判据 | 已修（§3.3） |
 | 21 | `backup-postgres.sh:237` | A | `old="$(list_old_backups \|\| true)"` | 枚举失败 ⇒ 视为无旧备份 ⇒ **不删任何文件**（安全方向）；代价是保留期清理静默未执行（已知残留，§6） | `:245` |
@@ -262,7 +262,7 @@ done <<<"$_rows_lines"
 
 | 编号 | 注入 | 期望 | 实测 | 复原 |
 |---|---|---|---|---|
-| m1 | 在 `backup-postgres.sh` 末尾加一行 `echo x \|\| true` | 守卫红并点名该行 | **exit 1**：`发现未登记的 \|\| true（1 处）`，点名 `deploy/postgres-cvm/backup-postgres.sh:268  echo x \|\| true` | 删该行，sha256 复原为 `b5c6637e…62080` |
+| m1 | 在 `backup-postgres.sh` 末尾加一行 `echo x \|\| true` | 守卫红并点名该行 | **exit 1**：`发现未登记的 \|\| true（1 处）`，点名 `deploy/postgres-cvm/backup-postgres.sh` 第 268 行（该脚本现 267 行，第 268 行是测试时临时追加的一行）`echo x \|\| true` | 删该行，sha256 复原为 `b5c6637e…62080` |
 | m2 | 删掉 `install-postgres.sh:290` 的 `# best-effort:` 注释（`_pgdata_preview` 站点） | 守卫红并点名该站点 | **exit 1**：`这些 A 类吞失败缺少 # best-effort: <失败方向> 注释（同一行或紧邻上一行）`，点名 `deploy/postgres-cvm/install-postgres.sh:290  _pgdata_preview=…` | 插回，sha256 复原为 `09b7a493…65018` |
 | m3 | `RESTORE_LOG` 指向不存在路径 + `restore_rc=0`，跑「恢复输出判读」代码块 | 改前假绿 PASS / 改后 FAIL | 改前 `REPORT PASS pg_restore --exit-on-error expected=<0> actual=<0（非致命 WARNING/NOTICE 0 行…）>`；改后 `REPORT FAIL … actual=<exit=0，致命 error 行=grep-failed(rc=2)…>` + stderr `无法读取恢复日志（grep rc=2）⇒ 不能断言「没有 ERROR 行」，按失败处理` | 仅跑 harness，未改仓库文件 |
 | m4 | `qs` 静默失败（rc=1、无输出）+ `disk_joined=''`，跑「迁移台账取值」代码块 | 改前空串假绿 / 改后显式失败态 | 改前 `REPORT PASS migrations_applied expected=<> actual=<>`；改后 `REPORT FAIL migrations_applied expected=<> actual=<query-failed(rc=1)>`（`checksum_nulls` 同步为 `query-failed(rc=1)`） | 同上 |

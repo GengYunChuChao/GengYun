@@ -133,7 +133,7 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 
 | 步骤 | 请求 | 期望 | 实测 | 断言位置 | 对应 AC |
 | --- | --- | --- | --- | --- | --- |
-| 1 身份 A/B | `POST /api/v1/auth/wechat` + `Idempotency-Key`，body `{"code":"synthetic-recog-chain-a"}` | 200 且 `data.token_type=Bearer`；会话投影**不含** `user_id/userId/subject` | 200；两个合成主体各自登录成功 | `tests/integration/recognition-chain-e2e.mjs:120`（禁字段）、`:248`（登录调用） | `#9 AC3` 前置（主体可区分） |
+| 1 身份 A/B | `POST /api/v1/auth/wechat` + `Idempotency-Key`，body `{"code":"synthetic-recog-chain-a"}` | 200 且 `data.token_type=Bearer`；会话投影**不含** `user_id/userId/subject` | 200；两个合成主体各自登录成功 | `tests/integration/recognition-chain-e2e.mjs:130`（原记 `:120`，禁字段）、`:258`（原记 `:248`，登录调用） | `#9 AC3` 前置（主体可区分） |
 | 2 上传受理 | `POST /api/v1/recognitions`，`{"media_id":"11111111-1111-4111-8111-111111111111","media_revision":1}` + `Idempotency-Key` | 202；`data.state=queued`；`data.id`（jobId）与 `data.target_ref.id`（识别记录 id）都是 uuid 且互不相等；`meta.execution_mode=stub`；`Cache-Control: no-store` | `status=202 job=35692229-… recognition=b952b796-… state=queued cache=no-store` | `:254`（受理）、`:257`（两个 id 不相等） | `#9 AC3`；`#16 AC3`（识别不是「已使用」） |
 | 3 同键重放（创建） | 同一条请求原样再发一次 | 回放**同一个** job 与同一个识别记录；不产生第二个任务 | 同一 job；回放的是该任务**当前**投影（`state=succeeded`），不是受理瞬间快照 | `:262` | `#9 AC3` |
 | 4 拿结果 | `GET /api/v1/jobs/{jobId}`（≤3s 有界轮询） | 终态 `succeeded`；`error_code=null`；`target_ref` 指向识别记录；`result.kind=recognition` | `state=succeeded elapsed=2ms model_version=stub-v1`；候选 2 条：`synthetic_weed_a` 0.64 / `synthetic_weed_b` 0.28；`reasons=[]` | `:272`（终态）、`:274`（target_ref） | `#9 AC2` |

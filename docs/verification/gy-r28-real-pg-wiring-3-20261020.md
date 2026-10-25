@@ -60,8 +60,8 @@ error: password authentication failed for user "gengyun_api_runtime"
 EXITCODE=1
 ```
 
-- 首个失败行：`tests/integration/account-suspend-pg.mjs:199`（用 `runtimeUrl.href` 连库的那一条）；
-  栈经由 `pg-protocol/dist/parser.js:306` 抛 `DatabaseError`。
+- 首个失败行：`tests/integration/account-suspend-pg.mjs:340`（原记 `:199`）（用 `runtimeUrl.href` 连库的那一条）；
+  栈经由 `pg-protocol` 的 `dist/parser.js`（第 306 行，第三方依赖）抛 `DatabaseError`。
 - `[P]` 之后 **`[A]`–`[F]` 一条都没跑**（全部落在「未取得」）⇒ 这不是「断言红了」，是**连不上**。
 - 同一脚本在 `:55611`（`--auth=trust`）上是 exit=0 → **红的唯一变量是认证方式**：
   `:179` 建角色时用的是脚本内新生成的 `randomBytes(24)`，而连接用的是 argv[3] 里带的口令；

@@ -268,7 +268,7 @@ COVERAGE_EXEMPT 里登记的 public.exports.no_such_column（SELECT）已不再�
 ```
 
 ```
-ROW_LOCK_EXEMPT 登记的 services/api/src/privacy/ledger-pg.ts:99999 → public.exports 缺 UPDATE 在源码里已不成立（陈旧登记，删掉它以免守卫躺平）
+ROW_LOCK_EXEMPT 登记的 services/api/src/privacy/ledger-pg.ts 第 99999 行 → public.exports 缺 UPDATE 在源码里已不成立（陈旧登记，删掉它以免守卫躺平）
 ```
 
 ### 7.5 NC9 撤掉 `FOR UPDATE` 需要的 UPDATE 授权 ⇒ 行锁规则点名两处站点

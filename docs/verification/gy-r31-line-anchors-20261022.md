@@ -30,7 +30,7 @@
 
 为什么只拦前三类：`prose` 与注释不会因为「代码挪了两行」而变红 —— 拦它们要给 40+ 条写豁免，守卫立刻被噪音拖垮
 （这条教训来自 `tests/unit/migration-pin-guard.test.mjs` 头部写的「豁免一多守卫就会被顺手加一条拖垮」）。
-幻影锚点反而**必须**留着：`…:99999`、`nc1-fake-store-pg.ts:3` 是「登记了不存在的行 ⇒ 必须判红」的负控制。
+幻影锚点反而**必须**留着：`…:99999`、`nc1-fake-store-pg.ts`（第 3 行）是「登记了不存在的行 ⇒ 必须判红」的负控制（该夹具随 `tests/unit/fixtures/sql-column-coverage/` 一并删除，仓内 0 命中，未能定位最后出现位置）。
 
 读数（同一扫描器，改写前 vs 改写后；扫描面 399 → 401 个文件，多出来的两个是本片新增的 allowlist 与守卫文件）：
 
@@ -105,7 +105,7 @@ assert.ok(hit[0].includes(SITE.profileRegions), `红字必须点名语句站点 
 | `:355` | `…ocr.ts:11-13` | `R31` | 要的是「落在别人注册块内、又不覆盖本操作」的**部分重叠**形状，必须手挑 3 行，夹具里没有等价符号 |
 | `:363` | `…ocr.ts:2-16` | `R31` | 跨两个注册块的边界（`covered.length >= 2` 分支），起止都是手挑边界 |
 
-同一族里 `tests/unit/contract-status-anchors.test.mjs:149/181` 的 `services/api/src/jobs/store.ts:5-5 / 6-8` **没有**进 allowlist：
+同一族里 `tests/unit/contract-status-anchors.test.mjs:149/181` 的 `services/api/src/jobs/store.ts` 第 5-5 / 6-8 行**没有**进 allowlist：
 仓里根本没有这个文件（夹具在临时树里自造），源码怎么改都不会让它红，扫描器把它判成「幻影」而幻影不拦。
 
 ### 2.3 已无意义的：0 处
@@ -143,7 +143,7 @@ assert.ok(hit[0].includes('services/api/src/profile/service.ts:35'), '红字必�
 ```
 ✖ line-anchors/没有未登记的写死源文件:行号：新增即红并点名
 AssertionError [ERR_ASSERTION]: 断言里不许写死 `源文件:行号`（代码一改行就会假红）。请改成按源码实时定位（例如 sql-column-coverage.test.mjs 的 siteLine(siteRef)），确有必要才登记进 line-anchor-allowlist.mjs 并写清理由：
-tests/unit/zz-probe-hardcoded-anchor.test.mjs:4 → services/api/src/profile/service.ts:35（assert-operand / assert.ok，原文 "services/api/src/profile/service.ts:35"）
+tests/unit/zz-probe-hardcoded-anchor.test.mjs 第 4 行（临时探针已删除，仓内 0 命中）→ services/api/src/profile/service.ts:35（assert-operand / assert.ok，原文 "services/api/src/profile/service.ts:35"）
 ```
 
 删掉探针文件后再跑 ⇒ **exit 0**：`ℹ tests 7 / pass 7 / fail 0`。
@@ -184,7 +184,7 @@ AssertionError [ERR_ASSERTION]: 红字必须点名 profile/service.ts:61：servi
 | `node --test tests/unit/sql-column-coverage.test.mjs`（改写后） | 0 | 16 tests / 16 pass / 0 fail |
 | `node --test tests/unit/test-line-anchors-guard.test.mjs` | 0 | 7 / 7 / 0 |
 | `node --test tests/unit/contract-status-tool.test.mjs`（allowlist 所在文件，未改） | 0 | 18 / 18 / 0 |
-| 探针红：插入假硬编码后跑守卫 | 1 | 1 fail，点名 `zz-probe-hardcoded-anchor.test.mjs:4 → services/api/src/profile/service.ts:35` |
+| 探针红：插入假硬编码后跑守卫 | 1 | 1 fail，点名 `zz-probe-hardcoded-anchor.test.mjs` 第 4 行 → `services/api/src/profile/service.ts:35` |
 | 探针绿：删掉探针后跑守卫 | 0 | 7 / 7 / 0 |
 | 插 3 行后：改写版 `sql-column-coverage` | 0 | 16 / 16 / 0，红字为 `:64` |
 | 插 3 行后：旧写法（HEAD 版）对照 | 1 | 15 pass / 1 fail（`红字必须点名 profile/service.ts:61`） |
