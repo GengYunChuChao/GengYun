@@ -17,6 +17,7 @@
 | [数据保留策略表与清理执行器](gy-r34-retention-policy.md) | 跨表「日历保留」：策略表、排除清单、执行方式（dry-run 优先）、审计要求 | GY-R34 并行切片；策略表＋幂等执行器＋单测＋真库臂＋**日级调度单元**已落地，`verify:purge-schedule` 仍未进 CI，详见文内「未做项」 |
 | [逐用户备份副本域设计](gy-i19-user-backup-copies-design.md) | 「在线 7 日／备份 30 日」里的备份轴：表、写入、清除、契约映射 | GY-I19 后续片；**设计稿时点**未落地 DDL、未接线，**GY-R28 起已落地**（`0023_user_backup_copies.sql` ＋ `services/api/src/privacy/backup-copies-pg.ts`，有真库连接时装配）——**契约状态仍未改**，#19 的到期执行与第三方证据仍未取得 |
 | [API 层限流策略与调参](rate-limit-policy.md) | 认证端点按 IP／写接口按用户的限流：默认值表、429 与 `Retry-After`/`X-RateLimit-*` 口径、调参表 | GY-R34；**单实例内存计数，多实例需外置存储**（换 `RateLimitStore` 实现即可） |
+| [数据面需求-实现-证据矩阵（S4）](s4-data-traceability.md) | F13 拆成 16 个判定项，逐项给需求行号、实现落点、可复算证据与缺口 | S4 片；四档＝已实现 2／部分 9／未实现 4／已搁置 1，三条经门槛的真实缺口见文内 §6 |
 
 ## 怎么用
 
