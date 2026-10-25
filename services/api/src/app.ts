@@ -85,7 +85,7 @@ import { createAdminContentStore } from './admin/store.ts';
 import type { AdminContentStoreLike } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
 import { createAdminRuntime } from './admin/runtime.ts';
-import { createFailClosedAdminServices, ADMIN_CONTENT_OPERATION_IDS } from './admin/fail-closed-services.ts';
+import { createFailClosedAdminServices, ADMIN_CONTENT_OPERATION_IDS, restrictAdminContentAuditRead } from './admin/fail-closed-services.ts';
 import { createAdminAuditLogService } from './admin/audit/service.ts';
 import type { AdminAuditLogService, AdminAuditLogServiceOptions } from './admin/audit/service.ts';
 import { createPostgresAdminAuditLogPort } from './admin/audit/pg.ts';
@@ -1373,18 +1373,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
     const failClosed = createFailClosedAdminServices(reason);
     // **GY-I18（#18）显式放行：内容/资料域读写**（本片新增）。判据是内容 store 的**能力位**
-    // `persistent === true`（迁移 0036 的 PG store 自述 true；内存实现恒 false）。放行面 =
-    // `ADMIN_CONTENT_OPERATION_IDS`（4 族 × 6 操作 + `listAuditEvents` = 25 条）：实体 / 修订 /
-    // 幂等三张表真读真写。⛔ 审计**追加**仍是进程内（`admin_audit_events` 对运行时零表级权限，
-    // 写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）—— 如实登记，不声称"审计已落库"。
+    // `persistent === true`（迁移 0036 的 PG store 自述 true；内存实现恒 false）。放行面 = 4 族 × 6
+    // 操作 = **24 条内容 CRUD**：实体 / 修订 / 幂等三张表真读真写。**审计读面不在其中**（裁决 A）：
+    // `listAuditEvents` 读的仍是**进程内**台账（`admin_audit_events` 对运行时零表级权限，写入只能走
+    // 独立的窄 SECURITY DEFINER 函数，属另一片）⇒ 有池时它只会返回**内存空页**，而空页等于宣称
+    // 「平台从未发生任何管理动作」，那就是伪造读数 ⇒ 由 `restrictAdminContentAuditRead()` 把这一条
+    // 单独换回与整域替身**逐字同一 `reason`** 的 reject；其余 24 条照常放行。
     // `pool === null` ⇒ 内存 store ⇒ 继续 `failClosed.content`（25 条逐条 503，与接线前逐字相同）。
     adminContentService = adminContentWired
-      ? createAdminContentService({
-          store: adminContentStore,
-          now: clock,
-          signingKey: adminSigningKey,
-          executionMode: config.executionMode,
-        })
+      ? restrictAdminContentAuditRead(
+          createAdminContentService({ store: adminContentStore, now: clock, signingKey: adminSigningKey, executionMode: config.executionMode }),
+          reason,
+        )
       : failClosed.content;
     // **real 下的两条显式放行**（每条都必须有真实持久权威，逐个列出、不整对象透传）：
     // 1. **GY-I22（#22）账号停用**：迁移 0017 的 `public.suspend_account()`（`users.state` +
@@ -1444,8 +1444,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     });
     if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
-      // 内容域已放行时，仍 503 的面只剩作业/账号类：条数按实测扣减（25 条内容操作不再算在内）。
-      const stillClosed = 36 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length : 0);
+      // 内容域已放行时，仍 503 的面只剩作业/账号类 **＋ 审计读面**：按实测扣减（放行 24 条内容 CRUD；`listAuditEvents` 仍失闭、不计入放行 —— 见上方「裁决 A」）。
+      const stillClosed = 36 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
       app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ ${stillClosed} 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
     } else {
       adminOpsService = restrictAdminOpsToAccountsAuthority(
@@ -1498,10 +1498,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         released.push('库内审计读面');
         releasedRoutes += 1; // listAuditLogs
       }
-      // **本片**：内容/资料域（迁移 0036 的三表落点）—— 25 条按 operationId 计。
+      // **本片**：内容/资料域（迁移 0036 的三表落点）—— 放行 **24** 条内容 CRUD；审计读面 `listAuditEvents` **仍失闭**（裁决 A：台账未落库 ⇒ 放行只会返回内存空页），⛔ 不计入放行、日志不得宣称「内容域全放行」。
       if (adminContentWired) {
-        released.push('内容/资料读写');
-        releasedRoutes += ADMIN_CONTENT_OPERATION_IDS.length;
+        released.push('内容/资料读写（24 条内容 CRUD；审计读面 listAuditEvents 仍失闭，因台账未落库）');
+        releasedRoutes += ADMIN_CONTENT_OPERATION_IDS.length - 1;
       }
       app.log.warn(
         {

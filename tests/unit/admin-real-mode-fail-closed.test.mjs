@@ -6,13 +6,17 @@
  * （`data` + `meta.execution_mode='real'`），而落点只是**易失内存** —— 即"真实模式"下
  * 声称成功、重启即丢。**不能**用 `contract-status=partial` 之类文档披露替代运行时拒绝。
  *
- * 本文件钉住两件事：
+ * 本文件钉住三件事：
  * 1. **real 默认装配反例 ⇒ 36 条后台路由一律 fail-closed（503 `PROVIDER_UNAVAILABLE`）**，
  *    且**不产生任何内存副作用**（审计台账为空）、**路由保持注册**（契约面不缩水）；
- * 2. **stub 默认装配行为不变**（内存实现仍可用，且确会写内存）—— 说明改动只对外拒绝 real。
+ * 2. **stub 默认装配行为不变**（内存实现仍可用，且确会写内存）—— 说明改动只对外拒绝 real；
+ * 3. **有池臂（盲区，R34 裁决 A）**：内容 store 自述持久（`persistent === true`）时，内容域
+ *    24 条 CRUD 放行、但**审计读面 `listAuditEvents` 仍 503**，且 `reason`/`retryable` 与无池臂
+ *    **逐字相同** —— 台账仍进程内，放行只会返回内存空页（本文件第 1 条的反例正是此前漏掉这一臂）。
  *
  * 判定条件是 **`executionMode === 'real'` 本身**（刻意不依赖 store 自称持久化）：
- * 将来接真实持久后端时必须在 `app.ts` **显式放行**，因此本文件不需要"声明持久化即放行"的用例。
+ * 将来接真实持久后端时必须在 `app.ts` **显式放行**（一次可审查的接线变更）—— 第 3 条钉住的是
+ * 那次放行的**边界**：放行内容 CRUD，**不**顺带放行审计读面。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,6 +25,7 @@ import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
+import { createAdminContentStore } from '../../services/api/src/admin/store.ts';
 import { ADMIN_HTTP_OPERATION_IDS } from '../../services/api/src/routes/admin.ts';
 
 const API = '/api/v1';
@@ -236,5 +241,87 @@ test('stub 默认装配行为不变（内存实现仍可用且确会写内存）
     assert.equal(jobs.json().error.code, 'PROVIDER_UNAVAILABLE');
   } finally {
     await app.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// **有池臂（R34 裁决 A）**：本片此前只有"无池"一臂，于是「有真池 ⇒ 25 条一并放行、审计读面被
+// 顺带拖出失闭」这件事在单测里是**盲区**（只有真库臂才红）。本用例把这条边界钉在单测里：
+//   * 内容 store 自述持久（`persistent === true`，= 迁移 0036 的 PG store 能力位）⇒ 内容域放行；
+//   * 但**审计读面 `listAuditEvents` 仍 503**，`reason` / `retryable` 与无池臂**逐字相同**
+//     —— 台账仍在进程内（`admin_audit_events` 对运行时角色零表级权限），放行只会返回**内存空页**；
+//   * 同时断言 24 条内容 CRUD **没有**被误伤（四族列表读面 200、建草稿 201 且同一份 store 可见）。
+//
+// 能力位注入手法与 `tests/unit/admin-hide-post-gate.test.mjs` 同源：**同一份**内存 store 的浅拷贝，
+// 只覆写 `persistent`（改的仍是同一批闭包/同一份数据），因此"到底放行了哪几条"可以直接从 HTTP 读回。
+// ---------------------------------------------------------------------------
+test('有池臂（real + 内容 store 自述持久）：审计读面仍 503 且 reason 与无池臂逐字相同，24 条内容 CRUD 仍放行', async () => {
+  const withoutPoolAuth = createMemoryAuthStore();
+  const withoutPoolApp = buildApp({ config: loadConfig(REAL_ENV), store: withoutPoolAuth });
+  const wiredAuth = createMemoryAuthStore();
+  const wiredApp = buildApp({
+    config: loadConfig(REAL_ENV),
+    store: wiredAuth,
+    // ⛔ 这里注入的是**能力位臂**，不是真库：它只证明装配层按 `persistent` 分流放行面。
+    adminInjection: { contentStore: { ...createAdminContentStore(), persistent: true } },
+  });
+  const auditRow = { op: 'listAuditEvents', method: 'GET', url: `${API}/admin/audit-events` };
+  try {
+    const withoutPoolToken = await seedAdmin(withoutPoolAuth);
+    const wiredToken = await seedAdmin(wiredAuth);
+
+    // ① 两臂的审计读面都必须失闭，且**同一段 reason**、同一 `retryable`（逐字复用，不新造文案）。
+    const withoutPoolAudit = await inject(withoutPoolApp, withoutPoolToken, auditRow, 900);
+    const wiredAudit = await inject(wiredApp, wiredToken, auditRow, 901);
+    for (const [label, res] of [['无池臂', withoutPoolAudit], ['有池臂', wiredAudit]]) {
+      assert.equal(res.statusCode, 503, `${label} GET /admin/audit-events 必须 503，实际 ${res.statusCode} ${res.body}`);
+      assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE', `${label} 错误码`);
+      assert.equal(res.json().error.retryable, false, `${label} 台账未落库 ⇒ 重试不会成功`);
+      assert.equal(res.json().data, undefined, `${label} ⛔ 不得返回 items: [] 的内存空页`);
+    }
+    assert.equal(
+      wiredAudit.json().error.message,
+      withoutPoolAudit.json().error.message,
+      '有池臂的 reason 必须与整域替身**逐字相同**（裁决 A：复用原字符串，不新造文案）',
+    );
+
+    // ② 24 条内容 CRUD **没有**被一起关掉：四族列表读面仍 200。
+    for (const family of ['sources', 'knowledge', 'registrations', 'restrictions']) {
+      const res = await wiredApp.inject({
+        method: 'GET',
+        url: `${API}/admin/${family}`,
+        headers: { authorization: `Bearer ${wiredToken}` },
+      });
+      assert.equal(res.statusCode, 200, `有池臂 GET /admin/${family} 必须仍放行（只关审计读面），实际 ${res.statusCode} ${res.body}`);
+      assert.deepEqual(res.json().data.items, [], `有池臂 GET /admin/${family} 起点应为空页（能力位臂，不是真库）`);
+    }
+
+    // ③ 写面同样仍放行（放行面是 24 条，不是"只读"）：建草稿 201 且落进**同一份** store。
+    const created = await wiredApp.inject({
+      method: 'POST',
+      url: `${API}/admin/sources`,
+      headers: {
+        authorization: `Bearer ${wiredToken}`,
+        'content-type': 'application/json',
+        'idempotency-key': 'gyi18-wired-source-0001',
+      },
+      payload: sourceInput(),
+    });
+    assert.equal(created.statusCode, 201, `有池臂建草稿必须仍 201，实际 ${created.statusCode} ${created.body}`);
+    assert.equal(typeof created.json().data.id, 'string');
+    const afterCreate = await wiredApp.inject({
+      method: 'GET', url: `${API}/admin/sources`, headers: { authorization: `Bearer ${wiredToken}` },
+    });
+    assert.equal(afterCreate.json().data.items.length, 1, '放行的读面必须能读回同一份 store 里的那条草稿');
+
+    // ④ 服务对象形状不变：25 个 operationId 一个不少（关的只是运行时行为，不是契约面）。
+    assert.equal(wiredApp.adminContentService.operationIds.length, 25, '契约面不得缩水');
+    assert.equal(wiredApp.adminContentService.store.persistent, true, '本臂的内容 store 自述持久（= 有池）');
+    // 无池臂仍走整域替身（25 条一律 503）：本片没有改动那一臂。
+    assert.equal(withoutPoolApp.adminContentService.store.persistent, false);
+    assert.equal(withoutPoolApp.adminContentService.operationIds.length, 25);
+  } finally {
+    await withoutPoolApp.close();
+    await wiredApp.close();
   }
 });
