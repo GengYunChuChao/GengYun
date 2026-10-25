@@ -506,10 +506,12 @@ export async function probeAdminContentTables(
     // 连接/权限/超时：**状态未知**。⛔ 不得返回 `missing` —— 那会把故障当成"未配置"放行。
     return { state: 'unknown', reason: 'probe_error' };
   }
-  if (!Array.isArray(rows) || rows.length === 0) return { state: 'unknown', reason: 'unexpected_shape' };
+  // 聚合探测**恰好**一行一列。零行或多行都说明这条语句被换掉了／接口形状变了 ⇒ 读不懂 ⇒ 未知。
+  // （多行尤其不能只看第一行：那等于在"结果不合预期"时才按首行裁决定型，会把噪音读成结论。）
+  if (!Array.isArray(rows) || rows.length !== 1) return { state: 'unknown', reason: 'unexpected_shape' };
   const ready = (rows[0] as Record<string, unknown> | null | undefined)?.['ready'];
   if (ready === true) return { state: 'ready' };
   if (ready === false) return { state: 'missing' };
-  // 形状读不懂 ⇒ 不知道表在不在 ⇒ 未知（既不是「未配置」，更不是「可以放行」）。
+  // 形状读不懂（`'false'` 字符串、`null`、缺键…）⇒ 不知道表在不在 ⇒ 未知（既不是「未配置」，更不是「可以放行」）。
   return { state: 'unknown', reason: 'unexpected_shape' };
 }

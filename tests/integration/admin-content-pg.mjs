@@ -23,7 +23,9 @@
 // [7] 归属隔离：另一个 steward 的列表看不见本实体（steward_id 过滤在 SQL 里）；
 // [8] 授权面**负控制**（"列级而非表级"的硬证据）：运行时直接 DELETE / TRUNCATE / 改未授权列 steward_id
 //     ⇒ 一律 **42501**；改已授权列则在同一条语句上**通过**（对照）；
-// [9] 迁移回滚 rollback/0036_*.down.sql 能把三张表删净（在独立模板库里跑）。
+// [9] **公开读可见性（端到端）**：0036 就绪（onReady 探测 ready）＋ 来源已撤回 ⇒ `/herbicides`
+//     必须**隐藏**该条且仍 200（不是 503）—— 真实 PG + 真实解析器，不用桩；
+// [10] 迁移回滚 rollback/0036_*.down.sql 能把三张表删净（在独立模板库里跑）。
 //
 // ## 为什么是「自起临时集群」而不是接既有 env
 // 生产路径要两个身份：库属主（建表/迁移/造账号行）＋运行时角色（真正的读写者）。共享 CI 集群里
@@ -286,6 +288,10 @@ try {
   );
   const runtimeUrl = `postgresql://${RUNTIME_ROLE}:${password}@127.0.0.1:${port}/${DB_NAME}`;
   await owner.query(deployRegion('gy-r34-content-grant'));
+  // `/herbicides` 是受控输出面（开关门按库判定）。部署顺序是「migrate ⇒ 20-login-roles.sql」，
+  // 运行时角色对 `public.feature_flags` 的 SELECT 由 `gy-i18-flags-grant` 段授予（迁移里授不了：
+  // 那时角色还不存在）⇒ 本臂必须照部署口径补这一段，否则开关读不成 ⇒ 公开面一律 503。
+  await owner.query(deployRegion('gy-i18-flags-grant'));
   say('[1] 角色/授权：gengyun_api_runtime 已按列拿到内容域 SELECT/INSERT/UPDATE（区域 gy-r34-content-grant）');
 
   // ---- [2] 授权面读数：列级真、表级禁（负控制，见 [6]）----
@@ -481,7 +487,119 @@ try {
   }
   say('[8] 负控制：运行时 DELETE/TRUNCATE/改未授权列一律 42501；改已授权列成功（说明授权是列级精确的）');
 
-  // ---- [7] 回滚脚本：在独立库里跑 rollback/0036_*.down.sql，三张表必须消失 ----
+  // ---- [9] 公开读可见性（端到端：HTTP 公开面 × 真实 PG × 真实解析器）----
+  // 复审第 4 项：0036 **已就绪**（onReady 探测到 ready）+ 来源**已撤回** ⇒ 公开读必须**不可见**。
+  // 这里不用桩：拿公开面种子里**真实存在**的 `source_id`，在 0036 里以同一 id 建 source 实体并置
+  // withdrawn ⇒ `createAdminContentReferenceResolver` 会真的去 PG 问这一条 ⇒ unavailable ⇒ 隐藏。
+  const { createPostgresAdminContentStore } = await import('../../services/api/src/admin/ops/content-pg.ts');
+  const reader = await authStore.createUser('gy-i18-pg-public-reader');
+  const readerId = reader.id;
+  const readerToken = mintOpaqueToken();
+  await authStore.createSession({
+    userId: readerId,
+    tokenHashHex: hashToken(readerToken),
+    authEpoch: 1,
+    expiresAt: new Date(Date.now() + 3600 * 1000),
+    audience: 'user',
+  });
+  // `real` ＋有池时，用户状态／纪元以 **PG 为准**（会话守卫查 `SELECT state, auth_epoch FROM public.users`）
+  // ⇒ 光在内存 store 里造会话不够，必须落一行真账号，否则公开面一律 401 SESSION_EXPIRED。
+  await owner.query('INSERT INTO public.users (id, state, auth_epoch) VALUES ($1::uuid, $2, $3)', [
+    readerId,
+    'active',
+    1,
+  ]);
+  // 迁移 0020 默认三键全关（裁定 §1）⇒ `/herbicides` 会先被开关门判 409。本组测的是**可见性**，
+  // 所以先按管理员口径把 `specific_herbicide_output_enabled` 打开（revision 同步 +1，符合 CAS 语义）；
+  // 表级写权限只有库属主有，运行时角色仍是只读（见 [1]/[2]）。
+  await owner.query(
+    `UPDATE public.feature_flags SET enabled = true, revision = revision + 1
+      WHERE key = 'specific_herbicide_output_enabled'`,
+  );
+  const publicItems = async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: `${API}/herbicides`,
+      headers: { authorization: `Bearer ${readerToken}` },
+    });
+    assert.equal(
+      res.statusCode,
+      200,
+      `0036 已就绪且解析器真实接线 ⇒ 公开读必须 200（不得 503/409），实际 ${res.statusCode} ⇒ ${res.body}`,
+    );
+    return res.json().data.items;
+  };
+
+  const beforeItems = await publicItems();
+  assert.ok(beforeItems.length >= 1, '前置：公开面种子里必须有可见行，否则本组测不到解析器');
+  const target = beforeItems.find((item) => {
+    const source = item?.source;
+    return (
+      typeof source?.id === 'string'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(source.id)
+      && typeof source.version === 'string'
+      && source.version !== ''
+    );
+  });
+  assert.ok(target !== undefined, '前置：必须有一条带 uuid `source.id` + 非空 `source.version` 的种子行（判定输入来自响应投影）');
+  const withdrawnSourceId = target.source.id;
+  const targetId = String(target.id);
+  assert.ok(targetId !== '', '前置：目标行必须有自己的 `id`，供前后逐条比对');
+
+  const contentStore = createPostgresAdminContentStore({ pool });
+  const stewardId = await authStore.createAdmin({
+    loginName: `gyi18-pg-steward-${randomBytes(3).toString('hex')}`,
+    credentialHash: 'synthetic-not-a-real-credential-hash',
+    scopes: ADMIN_SCOPES,
+  });
+  const source = await contentStore.createEntity({
+    id: withdrawnSourceId,
+    family: 'sources',
+    stewardId,
+    createdAt: new Date(),
+  });
+  // 0036 的 `admin_content_entities_withdrawn_group` CHECK：`lifecycle='withdrawn'` 必须同时有
+  // `withdrawn_at` 与 `withdrawn_by_id` ⇒ 按服务层同样姿势先补齐撤回字段组再落库（否则 23514）。
+  await contentStore.setLifecycle(
+    {
+      ...source,
+      lifecycle: 'withdrawn',
+      withdrawnAt: new Date(),
+      withdrawnById: stewardId,
+      withdrawnReason: 'synthetic integration：来源撤回后公开读必须不可见',
+    },
+    'withdrawn',
+  );
+  const lifecycleRow = (
+    await owner.query('SELECT family, lifecycle FROM public.admin_content_entities WHERE id = $1::uuid', [
+      withdrawnSourceId,
+    ])
+  ).rows[0];
+  assert.equal(lifecycleRow.family, 'sources');
+  assert.equal(lifecycleRow.lifecycle, 'withdrawn', '前置：库里 lifecycle 必须是 withdrawn（不是 draft）');
+
+  // 判定是**逐条**的：先数清"受影响来源"到底覆盖了几条，再逐条判掉 ⇒ 不预设"只隐藏一条"。
+  const affectedCount = beforeItems.filter((item) => item?.source?.id === withdrawnSourceId).length;
+  assert.ok(affectedCount >= 1, '前置：至少要有一条行挂在这个来源上');
+  const afterItems = await publicItems();
+  assert.equal(
+    afterItems.some((item) => String(item.id) === targetId),
+    false,
+    '来源已撤回 ⇒ 该条公开读必须被隐藏（hidden 不许因接线而变可见）',
+  );
+  assert.equal(
+    afterItems.filter((item) => item?.source?.id === withdrawnSourceId).length,
+    0,
+    '同一来源的行必须逐条判掉，不得只看首条就放行整页',
+  );
+  assert.equal(
+    afterItems.length,
+    beforeItems.length - affectedCount,
+    `只隐藏该来源的 ${affectedCount} 条，其余照旧（判定逐条，不整页吞）`,
+  );
+  say('[9] 公开读可见性：0036 就绪 + 来源已撤回 ⇒ /herbicides 隐藏该条（200，不是 503；其余不变）');
+
+  // ---- [10] 回滚脚本：在独立库里跑 rollback/0036_*.down.sql，三张表必须消失 ----
   const downSql = readFileSync(new URL('rollback/0036_r34_admin_content_persistence.down.sql', migrationsDir), 'utf8');
   await owner.query(downSql);
   const gone = (
@@ -496,10 +614,10 @@ try {
     [null, null, null],
     '回滚后三张表必须全部消失（down 脚本与 up 成对）',
   );
-  say('[9] 回滚：rollback/0036_r34_admin_content_persistence.down.sql 把三张表删净（to_regclass 全为 NULL）');
+  say('[10] 回滚：rollback/0036_r34_admin_content_persistence.down.sql 把三张表删净（to_regclass 全为 NULL）');
 
   // 组数钉住：以后谁删掉一组证据（或把它降级成 note），这里立刻红 —— 不允许「悄悄少一组还报 ALL PASS」。
-  assert.equal(passed, 10, `通过组数必须正好 10 组（[0]…[9]），实际 ${passed}`);
+  assert.equal(passed, 11, `通过组数必须正好 11 组（[0]…[10]），实际 ${passed}`);
   console.log(`\nALL PASS：${passed} 组（内容域 PG 落点 · 真实 PostgreSQL 17）`);
 } finally {
   if (app !== undefined) await app.close().catch(() => {});

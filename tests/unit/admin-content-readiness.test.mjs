@@ -16,7 +16,9 @@
 //   B. 探测 `42501`（授权/连接故障）⇒ `/herbicides` **仍然 503**，且**真的**打了内容表（证明未降级）；
 //   C. `ready` ＋来源已撤回 ⇒ `resolve` 判 `unavailable` ⇒ 公开面**不可见**（hidden 不放宽）；
 //   D. 内存 store（`persistent: false`）⇒ **不探测**、行为逐字不变；
-//   E. `probeAdminContentTables` 的六种输入形状各自落在哪一态。
+//   E. `probeAdminContentTables` 的各种输入形状（缺池／`ready:true`／`ready:false`／探测抛错／空 rows／
+//      非单行 rows／`ready` 非布尔（`'false'` 字符串、`null`、缺键））各自落在哪一态；
+//   F. `missing` 定型后 20 次公开读**只探 1 次**（`missing`/`ready` 是定型结论，⛔ 不得退化成每请求重探）。
 //
 // 不连真库：本文件是单元层证据；真库行为由 `tests/integration/admin-flags-pg.mjs` 场景 1
 // （子集库，刻意无 0036）与 `tests/integration/admin-content-pg.mjs` 覆盖。
@@ -221,7 +223,7 @@ test('D2. 探测通过但库里其实没有表（ready ＋ 42P01）⇒ 仍 503�
   );
 });
 
-test('E. probeAdminContentTables：六种输入形状各自落在哪一态', async () => {
+test('E. probeAdminContentTables：十种输入形状各自落在哪一态', async () => {
   assert.deepEqual(await probeAdminContentTables(null), { state: 'unknown', reason: 'no_pool' });
   assert.deepEqual(await probeAdminContentTables(undefined), { state: 'unknown', reason: 'no_pool' });
   assert.deepEqual(
@@ -245,4 +247,51 @@ test('E. probeAdminContentTables：六种输入形状各自落在哪一态', asy
     await probeAdminContentTables({ async query() { return { rows: [{}] }; } }),
     { state: 'unknown', reason: 'unexpected_shape' },
   );
+  // 复审追加的三种"读不懂"的形状：都**不得**被判成 missing（missing 会直接降级放行，误判即等于放水）。
+  assert.deepEqual(
+    await probeAdminContentTables({ async query() { return { rows: [{ ready: 'false' }] }; } }),
+    { state: 'unknown', reason: 'unexpected_shape' },
+    "字符串 `'false'` 不是 `false`：⛔ 不得当成 missing 降级",
+  );
+  assert.deepEqual(
+    await probeAdminContentTables({ async query() { return { rows: [{ ready: false }, { ready: false }] }; } }),
+    { state: 'unknown', reason: 'unexpected_shape' },
+    '多行 rows 不合预期：聚合探测只该回一行，⛔ 不得只看首行就定 missing',
+  );
+  assert.deepEqual(
+    await probeAdminContentTables({ async query() { return { rows: [{ ready: null }] }; } }),
+    { state: 'unknown', reason: 'unexpected_shape' },
+    '`ready: null`（列存在但为空）⇒ 未知，⛔ 不得判 missing',
+  );
+});
+
+test('F. missing 定型后 20 次公开读只探 1 次（不得退化成每请求重探）', async () => {
+  let probes = 0;
+  const pool = {
+    async query() {
+      probes += 1;
+      return { rows: [{ ready: false }], rowCount: 1 };
+    },
+  };
+  let storeReads = 0;
+  const store = {
+    persistent: true,
+    async getEntity() {
+      storeReads += 1;
+      return undefined;
+    },
+  };
+  const host = createHookHost();
+  const resolve = createAdminContentReferenceResolver({ host, store, pool });
+  await host.runHooks();
+  assert.equal(probes, 1, 'onReady 探一次即定型');
+
+  const content = { source_id: 'a1b2c3d4-0000-4000-8000-000000000004', source_version: 'v1' };
+  for (let i = 0; i < 20; i += 1) {
+    const resolution = await resolve('knowledge', content);
+    assert.equal(resolution.state, 'unverifiable', 'missing 态照旧判"核对不到来源"（可见，不谎称失效）');
+    assert.equal(resolution.reason, 'source_not_in_store');
+  }
+  assert.equal(probes, 1, `missing 是定型结论：20 次公开读后探测次数必须仍是 1，实际 ${probes}（退化成每请求重探会放大库压）`);
+  assert.equal(storeReads, 0, 'missing 态必须短路，不得去问存储');
 });

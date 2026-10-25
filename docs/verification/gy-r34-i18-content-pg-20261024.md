@@ -19,7 +19,7 @@
 1. 内容/资料域（`sources` / `knowledge` / `registrations` / `restrictions` 四族 × 6 操作 = 24 条路由）**不再依赖进程内 `Map`**：`real` 且拿到连接池时，服务层注入的是 `services/api/src/admin/ops/content-pg.ts` 的 `createPostgresAdminContentStore`（自述 `persistent: true`），读写落在迁移 `0036_r34_admin_content_persistence.sql` 的三张表上。
 2. **无池仍然 fail-closed**：`real` + `pool === null` 时内容 store 仍是内存实现（`persistent: false`），`app.ts` 继续把 `adminContentService` 换成 `failClosed.content` ⇒ 25 条后台路由逐条 503 `PROVIDER_UNAVAILABLE`（`retryable: false`）。这条**没有被删掉**，并被新测试与既有测试双向钉住（§6）。
 3. 授权走**列级** `SELECT / INSERT / UPDATE`，三张表**零** `DELETE`/`TRUNCATE`/`REFERENCES`/`TRIGGER`；`allow_table_dml` 保持 16 个三元组不变、`90-assert` 的断言 49–58 与既有表列清单**一字未动**。
-4. 真库臂 `tests/integration/admin-content-pg.mjs` **本机实跑通过**：`EXITCODE=0`、10 组 `ALL PASS`（§6.4）。CI 侧仍是 77（无 `GY_PG_BIN`），已按仓内惯例登记进 `UNWIRED_DECLARATIONS` 并写明原因。
+4. 真库臂 `tests/integration/admin-content-pg.mjs` **本机实跑通过**：`EXITCODE=0`、11 组 `ALL PASS`（§6.4）。CI 侧仍是 77（无 `GY_PG_BIN`），已按仓内惯例登记进 `UNWIRED_DECLARATIONS` 并写明原因。
 5. 契约台账 24 条**仍是 `partial`**、`route_mounted` 仍为 `true`；blocker 文案改成真实剩余缺口（真库臂与后台 UI 联调未取得、审计写面未落库）。
 
 ## 2. 改动面
@@ -137,7 +137,7 @@
 
 - `tests/unit/admin-content-grant-parity.test.mjs`（5 条，见 §4.3）。
 - `tests/unit/admin-content-pg-wiring.test.mjs`（1 条）：桩池注入 `buildApp({ config: real, pool })` ⇒ `adminContentService.store.persistent === true`、四族 list 全 200 且 `items: []`、按 id 读 404 `NOT_FOUND`（不是 503）、SQL 真打 `public.admin_content_entities` 且 `family` 作为参数传下去；同一文件还钉住**成对反面**：同配置不传池 ⇒ 同路由 503 且 `persistent === false`。
-- `tests/integration/admin-content-pg.mjs`：自起一次性 PG 17.11 集群（`GY_PG_BIN` / `GY_I18_PG_ROOT`；端口 55600–55699 先探活、硬挡 55436/55437；`pg_ctl -o` 传单字符串；子进程输出重定向到文件），跑全链迁移 + `gy-r34-content-grant` + real 装配真库池的 10 组断言。缺 `GY_PG_BIN` 时打印 3 行 SKIP 并 **exit 77**，且 `pg` 依赖在闸门**之后**才 `await import`（防「静态 import 被提升 ⇒ 把跳过报成失败」）。
+- `tests/integration/admin-content-pg.mjs`：自起一次性 PG 17.11 集群（`GY_PG_BIN` / `GY_I18_PG_ROOT`；端口 55600–55699 先探活、硬挡 55436/55437；`pg_ctl -o` 传单字符串；子进程输出重定向到文件），跑全链迁移 + `gy-r34-content-grant` + `gy-i18-flags-grant` + real 装配真库池的 11 组断言。缺 `GY_PG_BIN` 时打印 3 行 SKIP 并 **exit 77**，且 `pg` 依赖在闸门**之后**才 `await import`（防「静态 import 被提升 ⇒ 把跳过报成失败」）。
 
 ### 6.3 变异自证（逐条实跑，改完即恢复并复跑确认绿）
 
@@ -153,7 +153,7 @@
 `node tests/integration/admin-content-pg.mjs`（`GY_PG_BIN` 指向本机 PG 17.11，`GY_I18_PG_ROOT` 与 `TEMP`/`TMP` 都指向仓库内目录）：
 
 ```
-PASS 1: [0] 全链迁移 35 个（含 0036_r34_admin_content_persistence.sql）；三张内容表在岗
+PASS 1: [0] 全链迁移 38 个（含 0036_r34_admin_content_persistence.sql）；三张内容表在岗
 PASS 2: [1] 角色/授权：gengyun_api_runtime 已按列拿到内容域 SELECT/INSERT/UPDATE（区域 gy-r34-content-grant）
 PASS 3: [2] 授权读数：列级 SELECT/INSERT/UPDATE 为真；表级 DELETE/TRUNCATE/REFERENCES/TRIGGER 全为假（三张表）
 PASS 4: [3] 建草稿 201 + 幂等重放逐字一致（PG 台账 1 行，不是内存 Map）
@@ -162,12 +162,14 @@ PASS 6: [5] 发布 200（published）→ 撤回 200（withdrawn）—— 状态�
 PASS 7: [6] 库内真值：实体 1 行（lifecycle=withdrawn，published_revision=2）、版本 2 行、台账 1 行
 PASS 8: [7] 归属隔离：他人列表为空、他人按 id 读 404（steward_id 过滤在 SQL 谓词里）
 PASS 9: [8] 负控制：运行时 DELETE/TRUNCATE/改未授权列一律 42501；改已授权列成功（说明授权是列级精确的）
-PASS 10: [9] 回滚：rollback/0036_r34_admin_content_persistence.down.sql 把三张表删净（to_regclass 全为 NULL）
-ALL PASS：10 组（内容域 PG 落点 · 真实 PostgreSQL 17）
+PASS 10: [9] 公开读可见性：0036 就绪 + 来源已撤回 ⇒ /herbicides 隐藏该条（200，不是 503；其余不变）
+PASS 11: [10] 回滚：rollback/0036_r34_admin_content_persistence.down.sql 把三张表删净（to_regclass 全为 NULL）
+
+ALL PASS：11 组（内容域 PG 落点 · 真实 PostgreSQL 17）
 EXITCODE=0
 ```
 
-（脚本自带 `assert.equal(passed, 10, …)`：以后谁删掉一组证据或把它降级成 `note`，这里会立刻红。）
+（脚本自带 `assert.equal(passed, 11, …)`：以后谁删掉一组证据或把它降级成 `note`，这里会立刻红。）
 
 ### 6.5 门禁逐条读数（提交前实跑）
 
