@@ -868,7 +868,7 @@ export function createOcrService(options: OcrServiceOptions) {
     try {
       if (row.revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', 'OCR 记录版本与 If-Match 不一致');
 
-      const verification = await verifyFields(verifyInput.fields, verifyInput.conditions);
+      const verification = await verifyVerifiableDimensions(verifyFields, verifyInput);
       const updated = await store.updateOcr(row.id, expectedRevision, (current) => ({
         ...current,
         // 核对只替换契约五字段，**不得**擦掉用户校正台账（台账只由 correctOCR 追加）。
@@ -1023,4 +1023,130 @@ export function createOcrServiceForMode(input: {
     idFactory: input.idFactory,
     jobDeadlineMs: input.jobDeadlineMs,
   });
+}
+
+// ============================================================================
+// GY-R34（#10）· `/ocr/{id}/verify` 的「待核维度齐备性」投影（→ 与登记核对对齐口径）
+// ============================================================================
+// 1) 为什么这段写在文件**末尾**：`docs/architecture/contract-status.json` 把
+//    `export const DEFAULT_JOB_DEADLINE_MS`（`53-59`）的行号当证据钉住（容差 ±2 行），
+//    在本文件顶部插入 import 会把它顶出范围。`import` 与函数声明都是提升的 ⇒ 放末尾与放
+//    顶部**语义等价**，本片因此**零行漂移**（`git diff`：`:871` 一行 + 本段追加）。
+// 2) 为什么要这段：契约 `MatchState` 有 `insufficient`（"要素不足"），而内核
+//    `decideMatchState` 只把**必要条件**（`registration_number` / `name`）的缺失判成
+//    insufficient —— 「登记号/名称都读到了，但剂型与成分表一个没读」此前会被判 **matched**，
+//    等于把「核对没做完」呈现成「核对通过」（最危险的一种误读）。`/registrations/verify`
+//    早已补上同一道投影（`registrations/service.ts` 的 `VERIFY_DIMENSION_FIELDS` /
+//    `normalizeVerifiableFields` / `missingVerifiableDimensions` / `projectVerification`），
+//    本片把那约 30 行**照抄进 OCR 域**，使两条路由同一口径。
+//    ⛔ 不 import 登记域的实现：那会新增 OCR 域 → 登记域的装载边，撞
+//    `tests/integration/ocr-http.mjs` 的 `OCR_REGISTRY_BASELINE_EDGES` 冻结基线（计数 12）。
+//    ⛔ 不动 `ocr/state.ts`：内核判定口径属 #10 已验收范围，本片只在**投影层**补一条规则。
+// 3) ⚠ 落点必须是 verify 专属路径（`verifyOcrWithRevision`），**不得**写进 `verifyFields`：
+//    后者被 `createOCR` / `correctOCR` / `verifyOCR` 三处共用，写进去会连带改判前两者落库的
+//    `verification`（`tests/integration/ocr-http.mjs` 的 matched 断言会红；语义上也越界 ——
+//    契约的分工是「识别结果」与「核对结论」两件事）。
+import { MAX_MISSING_FIELDS, normalizeComparableText } from './state.ts';
+
+/**
+ * 契约承诺要核对的**可判定维度**（实现层清单，**不是**契约字段，也不写进 `ocr/state.ts`）。
+ *
+ * 与内核的 `NECESSARY_LABEL_FIELDS`（`registration_number` / `name`）**互补**：那两项决定
+ * 「能不能开始核对」，本清单决定「核对是否**覆盖**了契约承诺的全部维度」。调整本清单属于核对
+ * 口径变化 ⇒ 必须同步新增/修改负例，**不得**用它把缺项抬成 `matched`。
+ */
+const VERIFY_DIMENSION_FIELDS = ['dosage_form', 'ingredients'] as const;
+
+/** 待核维度名（与 `LabelFields` 的键名逐字一致，便于调用方直接回填表单）。 */
+type VerifyDimensionField = (typeof VERIFY_DIMENSION_FIELDS)[number];
+
+/**
+ * 「读到的东西」→「可核对的东西」的**唯一归一化口径**（空读统一成未采集）。
+ *
+ * - `dosage_form` 为**空串或纯空白**（按全片唯一归一化口径 `normalizeComparableText` 归一后
+ *   为空）⇒ 归一为 `null`。空读**不是「另一种剂型」**：原样交给内核会让 `conflictFields`
+ *   因为 `'' !== '水剂'` 报 `conflict(dosage_form)`（把「没读到」错归因成「读到的剂型不一致」），
+ *   同时 `missing_fields` 又说它缺失 —— 同一字段既冲突又缺失，自相矛盾。
+ * - `ingredients` 缺失/非数组 ⇒ 归一为 `[]`（未采集）。契约 `LabelFields.ingredients` 只有
+ *   `maxItems 20`、**没有** `minItems` ⇒ 空数组本身是**合法请求**，内核的冲突检查也已对空数组
+ *   跳过比较 ⇒ 与 `dosage_form` 同口径。
+ *
+ * 只删空读、不改任何实质内容（「对不对」仍由内核的 `normalizeComparableText` + 冲突检查负责）。
+ */
+function normalizeVerifiableFields(fields: LabelFields): LabelFields {
+  const dosageForm = fields.dosage_form;
+  // `null` 与「非字符串」都按未采集处理（本函数是导出面；类型外的入参按 fail-closed 收敛，不抛 500）。
+  const normalizedDosageForm =
+    typeof dosageForm === 'string' && normalizeComparableText(dosageForm) !== '' ? dosageForm : null;
+  const normalizedIngredients = Array.isArray(fields.ingredients) ? fields.ingredients : [];
+  if (normalizedDosageForm === fields.dosage_form && normalizedIngredients === fields.ingredients) return fields;
+  return { ...fields, dosage_form: normalizedDosageForm, ingredients: normalizedIngredients };
+}
+
+/**
+ * 待核维度**未采集**清单（只判「有没有」，**不判**「对不对」）。
+ *
+ * 与 `normalizeVerifiableFields` **同一口径**（先归一，再判 `null` / 空数组）—— 因此「缺失」的
+ * 定义只有一处，不会出现两套互相打架的判据。顺序固定（`dosage_form` 在前），读数可逐字节复现。
+ */
+function missingVerifiableDimensions(fields: LabelFields): VerifyDimensionField[] {
+  const normalized = normalizeVerifiableFields(fields);
+  const missing: VerifyDimensionField[] = [];
+  if (normalized.dosage_form === null) missing.push('dosage_form');
+  if (normalized.ingredients.length === 0) missing.push('ingredients');
+  return missing;
+}
+
+/**
+ * 把内核判定**投影**成契约 `Verification`：只补「待核维度齐备性」这一条规则。
+ *
+ *   1. 待核维度缺失**一律并入** `missing_fields`：内核给的缺项一个都不删、不重排前置
+ *      （内核在前、待核维度在后）；
+ *   2. **只有** `match_state === 'matched'` 且确实有待核维度缺失时才改判 `insufficient`
+ *      （`registration: null` / `conflict_fields: []`，与内核 `insufficient` 分支同形）——
+ *      此时**不得**带出候选记录，否则「未核对完成」会被读成「命中了登记记录」；
+ *      `dose_cards` 同时清空：按文件头的 fail-closed 台账，用量只在「matched + 条件齐全 +
+ *      绑定同一登记制剂 + 来源可信」时非空，「核对没做完」不得带出任何用量；
+ *   3. 内核已判 `unavailable` / `insufficient` / `no_match` / `ambiguous` / `conflict` 时
+ *      **原样保留**（⛔ 不把强结论降级成 `insufficient`），缺失维度只反映在 `missing_fields`。
+ *
+ * 三条规则与 `registrations/service.ts:projectVerification` 逐条一致（本片只对齐口径）。
+ * `missing_fields` 仍按契约 `maxItems 20` 截断（本函数最多新增 2 项，截断只在防御极端入参时生效）。
+ */
+function projectVerifiableDimensions(verification: OcrVerification, fields: LabelFields): OcrVerification {
+  const missingDimensions = missingVerifiableDimensions(fields);
+  const merged = [...verification.missing_fields];
+  for (const field of missingDimensions) {
+    if (!merged.includes(field)) merged.push(field);
+  }
+  const missingFields = merged.slice(0, MAX_MISSING_FIELDS);
+  if (verification.match_state !== 'matched' || missingDimensions.length === 0) {
+    return { ...verification, missing_fields: missingFields };
+  }
+  return {
+    match_state: 'insufficient',
+    registration: null,
+    conflict_fields: [],
+    missing_fields: missingFields,
+    dose_cards: [],
+  };
+}
+
+/**
+ * `verifyOcrWithRevision` 的**唯一**核对入口：归一化 → 内核判定 → 待核维度投影。
+ *
+ * 为什么要先归一化再交给内核（顺序不可交换）：内核的冲突检查拿「读到的值」与登记库逐字段比对，
+ * 空读（`dosage_form: ''` / `ingredients: []`）一旦原样进去，`'' !== '水剂'` 会被报成
+ * `conflict(dosage_form)` —— 把「没读到」错归因成「读到的不一致」，同一字段还会同时出现在
+ * `missing_fields` 里，自相矛盾。归一化把空读收敛成「未采集」，内核只对真正读到的值判对错，
+ * 缺失则统一由投影层表达。
+ *
+ * ⚠ 只影响**本次判定**：路由落库的是 `verification`，不写回 `fields`，用户填的原值不被改写。
+ */
+async function verifyVerifiableDimensions(
+  runVerify: (fields: LabelFields, conditions: Conditions | null) => Promise<OcrVerification>,
+  verifyInput: { fields: LabelFields; conditions: Conditions | null },
+): Promise<OcrVerification> {
+  const verifiable = normalizeVerifiableFields(verifyInput.fields);
+  return projectVerifiableDimensions(await runVerify(verifiable, verifyInput.conditions), verifiable);
 }

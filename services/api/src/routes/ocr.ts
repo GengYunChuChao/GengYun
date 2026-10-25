@@ -291,7 +291,7 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
 
   app.post(
     `${API_PREFIX}/ocr/:id/verify`,
-    gated({ params: idParams, body: verifyBody }),
+    { ...gated({ params: idParams, body: verifyBody }), preValidation: requireVerifyFieldShapes },
     async (request, reply) => {
       const { verification, revision } = await service.verifyOcrWithRevision({
         userId: actorId(request),
@@ -351,3 +351,86 @@ export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps:
 //    ESM 的 `import` 声明是提升的（hoisted），放在文件末尾与放在顶部**语义等价** —— 用它换"注册块行号不变"：
 //    本文件的接线因此**逐行等长**（`git diff` 只有 2 行改动），`contract-status.json` 无需修改。
 import { createPostgresOcrStore, type TransactionalPool } from '../ocr/store-pg.ts';
+
+// ============================================================================
+// GY-R34（#10）· `/ocr/{id}/verify` 的**原始值形状校验**（与 `/registrations/verify` 同形）
+// ============================================================================
+// 1) 为什么写在文件**末尾**：本文件 5 个路由注册块的行号被 `docs/architecture/
+//    contract-status.json` 当证据钉住（理由见上一段说明）。`import` 与函数声明都是提升的
+//    ⇒ 放末尾与放顶部**语义等价**，而注册块行号**逐行不变**（`git diff` 只有 `:294` 一行）。
+// 2) 为什么需要它：运行时 Ajv 沿用 `coerceTypes: 'array'`，会在 schema 校验**之前**把
+//    `dosage_form: ''` 归一成 `null`、把 `42` / `true` / 单元素数组归一成字符串 ⇒ 契约
+//    `minLength: 1` 与「必须为字符串」在 HTTP 面失效（实测：`''` 原本会一路走到业务层，
+//    得到 404 或 200 而**不是** 400）。`/registrations/verify` 早就在 `preValidation`
+//    （归一化**之前**）按原始值拒绝并 400，本路由此前缺这一道 ⇒ 同一份 `VerifyInput` 在两条
+//    路由上出现两种口径。本片只补**形状**：`match_state` 怎么算仍完全由 `ocr/state.ts` 决定。
+// 3) 尺度与 `routes/registrations.ts` 的 `requireRawFieldShapes` **逐字一致**（照抄而不是
+//    import：那会新增 OCR 域 → 登记域的装载边，撞 `tests/integration/ocr-http.mjs` 的
+//    `OCR_REGISTRY_BASELINE_EDGES` 冻结基线）：
+//      · 键**缺失**不在这里报（`required` 由 schema 给 400）；`null` 是契约允许的「未采集」；
+//      · **纯空白刻意放行**（`minLength 1` 允许，服务层按「空读」归一，不是非法输入）；
+//      · 长度上限 / `maxItems` / 多余键 / `conditions` 一律交给 schema，本层不重复判。
+// 4) ⚠ **必须 `async … : Promise<void>`**：Fastify 的钩子运行器只在「钩子返回 thenable」或
+//    「三参钩子调用 `done`」时才继续；同步返回 `undefined` 的单参钩子会让请求**永久挂住**
+//    （实测：`app.inject` 永不 settle）。本函数不 `await` 任何东西，`async` 是协议要求。
+import { ApiError } from '../errors.ts';
+
+/** 契约 `LabelFields` 的三个**可空文本**维度（与登记核对的键集逐字一致）。 */
+const VERIFY_NULLABLE_TEXT_KEYS = ['registration_number', 'name', 'dosage_form'] as const;
+
+/** 契约 `Ingredient` 的三键（逐键 `minLength 1` / `maxLength 80`）。 */
+const VERIFY_INGREDIENT_TEXT_KEYS = ['name', 'content_text', 'unit_text'] as const;
+
+/**
+ * **原始值形状校验**：在 Ajv 归一化**之前**（`preValidation` 钩子）拒绝空串与非字符串。
+ *
+ * 只判 schema 在当前运行时判不到的那部分（理由见本节 2、3 两条）；错误码与 `details` 形状
+ * 对齐 `app.ts` 的 schema 失败分支（`INVALID_REQUEST` + `{field, code}`），使调用方无论被哪一层
+ * 拒绝都读到同一个封套形状；`field` 取 Ajv 风格的实例路径。
+ */
+async function requireVerifyFieldShapes(request: FastifyRequest): Promise<void> {
+  const body: unknown = request.body;
+  // 顶层不是对象 / 没有 `fields` / `fields` 不是对象 ⇒ 交给 schema（否则会与它的报错口径打架）。
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return;
+  const fields: unknown = (body as { fields?: unknown }).fields;
+  if (typeof fields !== 'object' || fields === null || Array.isArray(fields)) return;
+  const record = fields as Record<string, unknown>;
+
+  const details: Array<{ field: string; code: string }> = [];
+  for (const key of VERIFY_NULLABLE_TEXT_KEYS) {
+    const value = record[key];
+    if (value === undefined || value === null) continue; // 缺失 ⇒ schema；`null` ⇒ 契约允许（未采集）
+    if (typeof value !== 'string') {
+      details.push({ field: `/fields/${key}`, code: '必须是字符串或 null' });
+    } else if (value.length === 0) {
+      details.push({ field: `/fields/${key}`, code: '必须是长度不少于 1 的字符串（不得为空串）' });
+    }
+  }
+
+  const ingredients = record.ingredients;
+  // 缺失 / 空数组 = 未采集（契约无 `minItems`）⇒ 本层放行；缺失与 `null` 由 schema 判 400，
+  // 非数组（字符串/数字/单对象）实测也被 schema 拒（400）⇒ 本层不重复报错。
+  if (Array.isArray(ingredients)) {
+    ingredients.forEach((item: unknown, index: number) => {
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+        details.push({ field: `/fields/ingredients/${index}`, code: '成分项必须是对象' });
+        return;
+      }
+      const entry = item as Record<string, unknown>;
+      for (const key of VERIFY_INGREDIENT_TEXT_KEYS) {
+        const value = entry[key];
+        if (value === undefined) continue; // 缺键 ⇒ schema 的 `required`
+        if (typeof value !== 'string') {
+          details.push({ field: `/fields/ingredients/${index}/${key}`, code: '必须是字符串' });
+        } else if (value.length === 0) {
+          details.push({ field: `/fields/ingredients/${index}/${key}`, code: '必须是长度不少于 1 的字符串（不得为空串）' });
+        }
+      }
+    });
+  }
+  // 非数组（含字符串/数字/单对象）由 schema 拒绝；此处不重复报错。
+
+  if (details.length > 0) {
+    throw new ApiError('INVALID_REQUEST', '请求校验失败', { details: details.slice(0, 30) });
+  }
+}
