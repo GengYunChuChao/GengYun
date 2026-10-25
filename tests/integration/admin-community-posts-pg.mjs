@@ -743,6 +743,265 @@ async function main() {
     );
     note('[F] 收尾自证：全表 8 行终态 = 两次成功下架（P1/P5 → hidden:2）+ 六条原样，无半写状态');
 
+    // -----------------------------------------------------------------------
+    // [U] 下架后四类读面**立即**同步 + 无缓存复活路径（issue #18 的末项读数）
+    // -----------------------------------------------------------------------
+    /**
+     * 本节**只追加**读数：上面 [M]/[L]/[D]/[H]/[F] 的每一条断言一字未动。
+     *
+     * 补的是 issue #18「下架后详情/列表/收藏/消息同步」：
+     *   ① 下架**立即**（同一进程、同一个 pg pool、无 sleep、无重连）对四类读面生效；
+     *   ② 不存在"缓存复活"路径 —— 用**下架前捕获的 ETag** 去打条件请求，不得出现 304。
+     *
+     * ## 为什么另建一个 app 实例（同进程 / 同 pool / 同内存 auth store）
+     * 第 [M] 节的迁移子集刻意不含 0028（审核域台账），而 `real` 模式的审核域是 fail-closed 的
+     * （`app.ts:879-895`：未接真实 tms/ims ⇒ 没有明确放行结论），于是 `community/service.ts` 的
+     * `requireDomainClearance`（`community/service.ts:407` 起）会把**任何**投稿判成 422
+     * `INPUT_UNCERTAIN` —— 那样永远拿不到"一条公开的帖"，也就无从证明"下架前能看到"。
+     * 所以这个实例显式关掉**审核域联动**（`communityInjection.moderation: null`，
+     * `app.ts:533` 就是为这种对照提供的开关）。
+     *
+     * 关掉审核域联动**不削弱**本节要证的链路：下架通知走另一条线 —— `app.ts:1277` 在交给
+     * 后台的社区 store 上套 `withTakedownObserver`（`community/takedown.ts:58-95`），与本开关无关；
+     * 消息的可用性则来自 `messages/reference-community.ts:45-59` 的**读时重查**端口。
+     *
+     * 另两处注入同样是**本域之外**的替身，逐条标注：
+     *   - `communityInjection.gate`：合成审核闸门（与第 [M] 节**同一个实例**），不联网、无凭据；
+     *   - `privacyInjection.consent`：投稿面的 `public_posting` 授权闸（`routes/community.ts:417-423`）
+     *     依赖 `0003`/`0009` 的授权表，**不在**本臂迁移子集内；本读数与授权域无关，故注入放行替身
+     *     （类型见 `app.ts:447-452`：`consent?: ConsentGate`，该键注释即"仅测试或已核验的读取口"）。
+     */
+    // 0018（收藏/历史）与 0019（消息）是本节的**真实依赖**：缺表 ⇒ 读面 42703 ⇒ 503，
+    // 那样的读数不能证明"读面看不到该帖"。两段只 FK 到 `public.users`（0018:48/73、0019:51），
+    // 与已应用的 0001 组合即可，且台账 `schema_migrations` 只追加，先前四段不受影响。
+    // ⛔ 刻意**不加** 0008（`idempotency_keys`）：那张表只服务 `PUT /messages/{id}/read` 的
+    // 幂等台账（`messages/service.ts:169-207` → `messages/store-pg.ts:349-420`），而"下架后消息同步"
+    // 走的是 `appendMessage`（`messages/service.ts:422-444`：`findByEventKey` 查的是 `public.messages`，
+    // 不碰台账）。本节不依赖它 ⇒ 不把无依赖的迁移算进子集。
+    const EXTRA_MIGRATIONS = ['0018', '0019'];
+    const extraPicked = discovered.filter((migration) => EXTRA_MIGRATIONS.includes(migration.version));
+    assert.deepEqual(extraPicked.map((migration) => migration.version), EXTRA_MIGRATIONS,
+      '收藏/消息两段迁移必须按目录序取到（本节依赖 0019 的 messages 表与 0018 的 favorites 表）');
+    assert.deepEqual((await applyMigrations(owner, extraPicked)).applied, EXTRA_MIGRATIONS,
+      '0018/0019 必须逐条真正应用');
+    const extraTables = (await owner.query(
+      `SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name IN ('messages', 'favorites', 'history')
+        ORDER BY table_name`,
+    )).rows.map((row) => row.table_name);
+    assert.deepEqual(extraTables, ['favorites', 'history', 'messages'],
+      '收藏/消息两个读面的表必须在位（否则本节读到的是 503，而不是"看不到该帖"）');
+    note('[U] 追加迁移 0018+0019：messages/favorites/history 三表在位 ⇒ 收藏与消息两个读面能如实回答（不是 503）');
+
+    const primaryApp = app;
+    let syncApp = null;
+    try {
+      syncApp = buildApp({
+        config: realConfig,
+        store: auth,
+        pool,
+        now: () => new Date(),
+        communityInjection: { gate, moderation: null },
+        privacyInjection: { consent: () => async () => {} },
+      });
+      assert.notEqual(syncApp.messagesService, null,
+        'real + 真 pool ⇒ 消息持久存储必须接线（否则 GET /messages 503，本节读数无效）');
+      assert.notEqual(syncApp.favoritesService, null,
+        'real + 真 pool ⇒ 收藏域必须接线（否则 GET /favorites 503，收藏读面无法读数）');
+      assert.notEqual(syncApp.communityService, null, '社区服务必须在（读面）');
+      assert.equal(typeof syncApp.communityService.visibility?.isPubliclyVisible, 'function',
+        '社区公开可读判据必须在：它是消息域"读时重查"的唯一来源（messages/reference-community.ts:18-19）');
+      // 复用同一个 `call()`（同形注入、同形 headers），⛔ 不复制辅助函数。
+      app = syncApp;
+
+      // ---- ① 走真实写面建一条帖：POST /posts（契约 createPost）⇒ 201 ----
+      // 只追加、不改既有 import 行：本节要的干净文本从**同一份**权威夹具模块动态取，
+      // ⛔ 不复制字符串、不新增依赖（`CLEAN_TITLE`/`CLEAN_BODY` 见 `tests/unit/community-fixtures.mjs:86-87`）。
+      const { CLEAN_BODY, CLEAN_TITLE } = await import('../unit/community-fixtures.mjs');
+      // 先用**同一个**合成闸门预演一次：让 201 的前提是"干净文本真被放行"，而不是碰巧。
+      const cleanOutcome = gate.evaluate({ type: 'post', id: randomUUID(), revision: 1 }, `${CLEAN_TITLE}\n${CLEAN_BODY}`, []);
+      assert.equal(cleanOutcome.publishable, true, '合成闸门必须放行无命中的干净文本（否则 201 无从谈起）');
+      const created = await call(authorA.token, 'POST', `${API}/posts`, {
+        payload: { title: CLEAN_TITLE, body: CLEAN_BODY, media_ids: [] },
+        headers: { 'idempotency-key': 'i18-unpublish-create-1' },
+      });
+      assert.equal(created.status, 201, `POST ${API}/posts ⇒ ${created.status} ${created.text.slice(0, 400)}`);
+      const livePostId = created.body.data.id;
+      assert.equal(typeof livePostId, 'string');
+      assert.equal(created.body.data.revision, 1, '新建帖的初始版本必须是 1');
+      assert.equal(created.body.data.visibility, 'published', '干净文本 + 未接审核域联动 ⇒ 落 published');
+      assert.equal(created.body.data.audit_state, 'approved');
+      assert.equal(created.headers.etag, '"1"', '真实写面回写强 ETag "<revision>"（routes/community.ts:212-221）');
+      assert.equal(created.headers['cache-control'], 'no-store',
+        'onRequest 钩子让成功与失败响应都带 no-store（routes/community.ts:182 的 noStoreHook）');
+      const createdRow = await snapshotOf(livePostId);
+      assert.equal(createdRow.visibility, 'published', '库内同一行必须是 published（不是只在响应里）');
+      assert.equal(createdRow.revision, 1);
+      assert.equal(createdRow.author_id, authorA.user.id, '作者取会话主体，不取入参');
+      note(`[U] 真实写面建帖：POST ${API}/posts ⇒ 201（published/approved，revision=1，ETag "1"，no-store）；库内同一行 published:1`);
+
+      // ---- ② 下架前基线：四类读面都能看到它（或结构上不可能持有它） ----
+      const detailBefore = await call(otherB.token, 'GET', `${API}/posts/${livePostId}`);
+      assert.equal(detailBefore.status, 200, detailBefore.text.slice(0, 300));
+      assert.equal(detailBefore.headers.etag, '"1"', '详情是资源表示 ⇒ 强 ETag "<revision>"（routes/community.ts:224-231）');
+      assert.equal(detailBefore.headers['cache-control'], 'no-store', '详情同样 no-store');
+      assert.equal(detailBefore.headers['last-modified'], undefined, '不得给可复用的 Last-Modified');
+      /** 下架**前**捕获的验证器：下架后拿它打条件请求，见 ④。 */
+      const preHideEtag = detailBefore.headers.etag;
+
+      const listBefore = await call(otherB.token, 'GET', `${API}/posts`);
+      assert.equal(listBefore.status, 200);
+      assert.equal(idsOf(listBefore.body).includes(livePostId), true, '下架前他人列表必须含该帖');
+      assert.equal(listBefore.headers.etag, undefined, '契约明写"列表无此头"（routes/community.ts:202-210）');
+      assert.equal(listBefore.headers['last-modified'], undefined, '列表也不得给可复用的 Last-Modified');
+      assert.equal(listBefore.headers['cache-control'], 'no-store');
+
+      const favBefore = await call(authorA.token, 'GET', `${API}/favorites`);
+      assert.equal(favBefore.status, 200, favBefore.text.slice(0, 300));
+      assert.deepEqual(favBefore.body.data.items, [], '夹具主体没有收藏行');
+      assert.equal(favBefore.headers['cache-control'], 'no-store', '收藏列表全响应 no-store（routes/favorites.ts:89-92）');
+      assert.equal(favBefore.headers.etag, undefined, '收藏列表不给 ETag（只有单条 POST 才回写）');
+      const FAVORITE_TYPES = openapi.components.schemas.FavoriteTarget.properties.type.enum;
+      assert.deepEqual([...FAVORITE_TYPES], ['species', 'herbicide', 'scheme'],
+        '契约 FavoriteTarget.type 闭集只有资料类型（favorites/types.ts:24 同口径）');
+      assert.equal(FAVORITE_TYPES.includes('post'), false,
+        '收藏读面结构上不可能持有社区帖 ⇒ 下架不涉及该面，也没有任何收藏残留可"复活"');
+      assert.equal(JSON.stringify(favBefore.body).includes(livePostId), false, '收藏读面里不得出现该帖 id');
+
+      const msgBefore = await call(authorA.token, 'GET', `${API}/messages`);
+      assert.equal(msgBefore.status, 200, msgBefore.text.slice(0, 300));
+      const msgRowsBefore = msgBefore.body.data.items.filter((item) => item.target_ref?.id === livePostId);
+      assert.equal(msgRowsBefore.length, 1,
+        '建帖时投递的 moderation_result 必须落成**恰好一条**消息（community/events.ts:164-196 + messages/service.ts:422-444 同键去重）');
+      const liveMessage = msgRowsBefore[0];
+      assert.equal(liveMessage.type, 'moderation', '社区域只产出 comment/like/moderation（community/events.ts:136-140）');
+      assert.deepEqual(liveMessage.target_ref, { type: 'post', id: livePostId, revision: 1 });
+      assert.equal(liveMessage.reference_state, 'available',
+        '下架前目标当前公开可读 ⇒ available（messages/reference-community.ts:49-59）');
+      assert.equal(msgBefore.headers['cache-control'], 'no-store', '消息三个操作都挂 no-store（routes/messages.ts:21-23）');
+      assert.equal(msgBefore.headers.etag, undefined, '消息列表不给 ETag');
+      assert.equal(msgBefore.headers['last-modified'], undefined);
+      const unreadBefore = await call(authorA.token, 'GET', `${API}/messages/unread-count`);
+      assert.equal(unreadBefore.status, 200);
+      assert.equal(unreadBefore.body.data.count,
+        msgBefore.body.data.items.filter((item) => item.read_at === null).length,
+        '未读数是派生量（messages/service.ts:349-352 现算）⇒ 必须等于列表里 read_at=null 的条数');
+      note(`[U] 下架前基线：详情 200 + ETag ${preHideEtag}（no-store）/ 列表含该帖且无 ETag、无 Last-Modified / 收藏 200 空集且闭集不含 post / 消息 ${msgRowsBefore.length} 条 reference_state=available（未读 ${unreadBefore.body.data.count}）`);
+
+      // ---- ③ 走真实处置端点下架（scope sources:write，If-Match = 当前版本） ----
+      const hideLive = await hideOf(livePostId, { ifMatch: preHideEtag, key: 'i18-unpublish-hide-1' });
+      assert.equal(hideLive.status, 200, hideLive.text.slice(0, 300));
+      assert.deepEqual(hideLive.body.data, { accepted: true }, '契约 Ack 必须恰好是 {accepted:true}');
+      assert.equal(hideLive.headers.etag, '"2"', '下架把 revision 1→2 并回写 ETag');
+
+      // ---- ④ 下架后**立即**四类读面：同一进程、同一个 pool、没有任何等待或重连 ----
+      const detailAfter = await call(otherB.token, 'GET', `${API}/posts/${livePostId}`);
+      assert.equal(detailAfter.status, 404, `下架后他人读详情必须立即 404，实际 ${detailAfter.status}`);
+      assert.notEqual(detailAfter.status, 304, '不得用 304 回放旧表示');
+      assert.equal(detailAfter.body.error.code, 'NOT_FOUND');
+      assert.deepEqual(detailAfter.body.error, unknownByOther.body.error, '下架后的 404 必须与"不存在"逐字同形（不泄露存在性）');
+      assert.equal(detailAfter.headers['cache-control'], 'no-store',
+        '连 404 也带 no-store（onRequest 钩子对成功与失败一视同仁）');
+      assert.equal(detailAfter.headers.etag, undefined, '已不可读的资源不得再给强 ETag（没有"当前版本"可指）');
+
+      // 缓存复活反证 A：拿**下架前**捕获的 ETag 打条件请求 ⇒ 必须仍是 404，绝不是 304。
+      const detailRevalidate = await call(otherB.token, 'GET', `${API}/posts/${livePostId}`, {
+        headers: { 'if-none-match': preHideEtag },
+      });
+      assert.equal(detailRevalidate.status, 404,
+        `带下架前 ETag(${preHideEtag}) 的条件请求必须 404，实际 ${detailRevalidate.status}`);
+      assert.notEqual(detailRevalidate.status, 304,
+        '全仓无 if-none-match 读取点（ETag 只写不读）⇒ 条件请求不得被当成缓存命中');
+      assert.equal(detailRevalidate.headers.etag, undefined);
+      assert.equal(detailRevalidate.headers['cache-control'], 'no-store');
+
+      // 缓存复活反证 B：作者自己的详情仍是 200，但版本已前进 ⇒ 旧验证器不可能命中任何可读状态。
+      const authorAfterU = await call(authorA.token, 'GET', `${API}/posts/${livePostId}`);
+      assert.equal(authorAfterU.status, 200, '作者读自己被下架的内容必须 200（隐藏不是删除）');
+      assert.equal(authorAfterU.body.data.visibility, 'hidden');
+      assert.equal(authorAfterU.body.data.revision, 2, '读到的是下架后的版本');
+      assert.equal(authorAfterU.headers.etag, '"2"', 'ETag 绑 revision（routes/community.ts:32-46）');
+      assert.notEqual(authorAfterU.headers.etag, preHideEtag, '下架前后不得共用同一个强 ETag');
+      const authorRevalidate = await call(authorA.token, 'GET', `${API}/posts/${livePostId}`, {
+        headers: { 'if-none-match': preHideEtag },
+      });
+      assert.equal(authorRevalidate.status, 200, '旧验证器在作者视角也必须 200 全量返回（不得 304）');
+      assert.notEqual(authorRevalidate.status, 304);
+
+      const listAfter = await call(otherB.token, 'GET', `${API}/posts`);
+      assert.equal(listAfter.status, 200);
+      assert.equal(idsOf(listAfter.body).includes(livePostId), false, '下架后列表必须立即剔除该帖');
+      assert.deepEqual(idsOf(listAfter.body), await sqlPublic(), '仍与真库同条件 SELECT 逐位相等（读时重查，无缓存层）');
+      assert.equal(listAfter.headers.etag, undefined);
+      assert.equal(listAfter.headers['last-modified'], undefined);
+      assert.equal(listAfter.headers['cache-control'], 'no-store');
+      const listAgain = await call(otherB.token, 'GET', `${API}/posts`);
+      assert.deepEqual(idsOf(listAgain.body), idsOf(listAfter.body),
+        '同进程内连续两次读取必须一致（不存在"第一次读到旧缓存"的假同步）');
+      const listRevalidate = await call(otherB.token, 'GET', `${API}/posts`, { headers: { 'if-none-match': preHideEtag } });
+      assert.equal(listRevalidate.status, 200);
+      assert.notEqual(listRevalidate.status, 304);
+      assert.equal(idsOf(listRevalidate.body).includes(livePostId), false, '带旧验证器的列表请求也不得把它带回来');
+
+      const favAfter = await call(authorA.token, 'GET', `${API}/favorites`);
+      assert.equal(favAfter.status, 200);
+      assert.deepEqual(favAfter.body.data.items, [], '收藏读面仍为空');
+      assert.equal(JSON.stringify(favAfter.body).includes(livePostId), false,
+        '下架后收藏读面不得出现该帖 id（也不存在"下架前收藏过"的路径：闭集不含 post）');
+      assert.equal(favAfter.headers['cache-control'], 'no-store');
+
+      const msgAfter = await call(authorA.token, 'GET', `${API}/messages`);
+      assert.equal(msgAfter.status, 200);
+      const msgRowsAfter = msgAfter.body.data.items.filter((item) => item.target_ref?.id === livePostId);
+      const sameMessage = msgRowsAfter.find((item) => item.id === liveMessage.id);
+      assert.ok(sameMessage !== undefined, '同一条消息（同一个 id）必须仍在列表里 ⇒ 没有"下架即删消息"的假同步');
+      assert.equal(sameMessage.reference_state, 'unavailable',
+        '下架后同一条消息的目标立即不可得：可用性由读时重查派生（messages/reference-community.ts:18-19）');
+      assert.deepEqual(sameMessage.target_ref, liveMessage.target_ref,
+        'reference_state 变了、target_ref 一字未变 ⇒ 是同一引用的重算，不是换了一条消息');
+      assert.equal(sameMessage.revision, liveMessage.revision, '消息行自身的 revision 不因目标下架而变（可用性不是存储字段）');
+      const takedownMessages = msgRowsAfter.filter((item) => item.id !== liveMessage.id);
+      assert.equal(takedownMessages.length, 1, '下架本身也向作者投递一条消息（community/takedown.ts:77-92，去重键带 reason）');
+      assert.equal(takedownMessages[0].type, 'moderation', 'takedown 在契约里就是 moderation，不虚构 system（community/events.ts:129-140）');
+      assert.equal(takedownMessages[0].reference_state, 'unavailable', '新投递的下架通知同样立即不可跳转（目标已 hidden）');
+      assert.deepEqual(takedownMessages[0].target_ref, { type: 'post', id: livePostId, revision: 1 },
+        'takedown 的 target.revision 取**下架前**那一版（community/takedown.ts:49-57/85）');
+      assert.equal(msgRowsAfter.every((item) => item.reference_state === 'unavailable'), true);
+      assert.equal(msgAfter.headers['cache-control'], 'no-store');
+      const unreadAfter = await call(authorA.token, 'GET', `${API}/messages/unread-count`);
+      assert.equal(unreadAfter.body.data.count, unreadBefore.body.data.count + 1,
+        '未读数是派生量：下架通知让它恰好 +1（同键重放不会再加）');
+
+      // ---- ⑤ 库内状态必须与读面一致（不是"接口说没了、库里还 published"） ----
+      const rowAfter = await snapshotOf(livePostId);
+      assert.equal(rowAfter.visibility, 'hidden', '库内必须是 hidden');
+      assert.equal(rowAfter.revision, 2);
+      assert.equal(rowAfter.title, CLEAN_TITLE, '下架不得改写标题');
+      assert.equal(rowAfter.body, CLEAN_BODY, '下架不得改写正文');
+      const messageRows = (await owner.query(
+        `SELECT id::text AS id, type::text AS type, event_key,
+                target_ref->>'id' AS target_id, (target_ref->>'revision')::int AS target_revision
+           FROM public.messages WHERE owner_id = $1::uuid ORDER BY created_at ASC, id ASC`,
+        [authorA.user.id],
+      )).rows;
+      const liveRows = messageRows.filter((row) => row.target_id === livePostId);
+      assert.equal(liveRows.length, 2, '库内该帖的消息恰好两条（moderation_result + takedown，同键去重 ⇒ 不会更多）');
+      assert.equal(liveRows.every((row) => row.type === 'moderation'), true, '两条都是 moderation 类');
+      assert.equal(liveRows.every((row) => row.target_revision === 1), true, '两条都指向**下架前**那一版');
+      assert.equal(liveRows.some((row) => row.event_key === `community:takedown:post:${livePostId}:r1:admin_hide`), true,
+        'takedown 去重键＝community:<event>:<type>:<id>:r<revision>:<reason 前 80 字>（community/events.ts:100-118）');
+      assert.equal(liveRows.some((row) => row.event_key === `community:moderation_result:post:${livePostId}:r1:approved`), true);
+      const mineAfterUnpublish = await getList(`${API}/posts?mine=true`, authorA.token);
+      assert.equal(idsOf(mineAfterUnpublish).includes(livePostId), true,
+        '作者 mine 仍含该帖 ⇒ 处置是「隐藏」不是「删除」（与 [H] 同口径，独立再证一次）');
+      note(`[U] 库内对账：community_posts.visibility=hidden / revision=2 / 正文未动；public.messages 该帖恰好两条（target revision 均为 1，event_key 含 takedown:…:admin_hide）`);
+      note('[U] 下架后四类读面**立即**同步：详情 404（与不存在同形）/ 列表剔除且与真库 SELECT 相等 / 收藏空集（闭集不含 post）/ 消息同一条 reference_state available→unavailable；用下架前 ETag 打条件请求 ⇒ 404 与 200 全量，**零 304**');
+    } finally {
+      // 交回既有 `finally`：它关的是第一个实例；这里只负责关本节新建的那个。
+      app = primaryApp;
+      if (syncApp !== null) await syncApp.close().catch(() => {});
+    }
+
     console.log('[ALL PASS] 后台社区帖域真库臂：读面 / 单条 / 下架处置 / 失败隔离 全部读数通过');
     detail(`读数 ${readings} 组（[M]/[L]/[D]/[H]/[F]）；库内审计**未取得**（appendAudit 落进程内台账，real 下 HTTP 读面 503）`);
   } finally {
