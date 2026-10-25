@@ -138,7 +138,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 ### 仍未取得的主干（不分整项口径）
 
 - 真机：#23 的双平台真机与时延容量、#4 的真机微信身份、#5 的授权弹窗与坐标→地区转换、#16 的真机页面证据、#28 的开发者工具／真机渲染与截图（`docs/verification/platform-checklist.md:40`、`:48-49`；`docs/verification/gy-i05-region-profile-20261014.md:23-25`；`docs/verification/gy-i28-demo-parity-20261018.md:177-179`）。
-- 真实 AI 调用：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`services/api/src/app.ts:968` 注释「应用装配路径永不注入真实适配器端口」；台账 `docs/architecture/contract-status.json:777`、`:861`、`:1041`、`:1061`）。#10 的 PG 持久化已随 #323 合入，但不改变本类缺口的性质。
+- 真实 AI 调用：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`services/api/src/app.ts:886` 注释「应用装配路径永不注入真实适配器端口」；台账 `docs/architecture/contract-status.json:777`、`:861`、`:1041`、`:1061`）。#10 的 PG 持久化已随 #323 合入，但不改变本类缺口的性质。
 - 样本签核：#20 的独立复核与许可（`packages/evaluation/samples/gy-i20-weeds-labels.json:18` 的 `reviewedBy` 为 `null`）、#21 的真实能力评估（`docs/evaluation/README.md:20-21`）。
 - 部署：#24 的实际部署与 CVM 侧恢复演练、#27 的合法域名与生产环境变量（`docs/verification/platform-checklist.md:24`；`docs/verification/gy-i27-live-ai-20261018.md:110` 记 `verify-env.mjs` 两项 FAIL：生产 API HTTPS URL、数据库连接变量）。
 
@@ -202,7 +202,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 ### 仍未取得的主干（不分整项口径）
 
 - 真机：#23 的双平台真机与时延容量、#4 的真机微信身份、#5 的授权弹窗与坐标→地区转换、#16 的真机页面证据、#28 的开发者工具／真机渲染与截图（`docs/verification/platform-checklist.md:40`、`:48-49`；`docs/verification/gy-i05-region-profile-20261014.md:23-25`；`docs/verification/gy-i28-demo-parity-20261018.md:177-179`）。
-- 真实 AI 调用：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`services/api/src/app.ts:968` 注释「应用装配路径永不注入真实适配器端口」；台账 `createRecognition` / `createOCR` / `createSynthesis` / `createConversation` 条目）。#10 的 PG 持久化与 CI 接线已具备，但不改变本条缺口的性质。
+- 真实 AI 调用：#9／#10／#12／#13／#14 的服务侧 real 提供者仍未接线（`services/api/src/app.ts:886` 注释「应用装配路径永不注入真实适配器端口」；台账 `createRecognition` / `createOCR` / `createSynthesis` / `createConversation` 条目）。#10 的 PG 持久化与 CI 接线已具备，但不改变本条缺口的性质。
 - 样本签核：#20 的独立复核与许可（`packages/evaluation/samples/gy-i20-weeds-labels.json:18` 的 `reviewedBy` 为 `null`）、#21 的真实能力评估（`docs/evaluation/README.md:20-21`）。
 - 部署：#24 的实际部署与 CVM 侧恢复演练、#27 的合法域名与生产环境变量（`docs/verification/platform-checklist.md:24`；`docs/verification/gy-i27-live-ai-20261018.md:110` 记 `verify-env.mjs` 两项 FAIL：生产 API HTTPS URL、数据库连接变量）。
 

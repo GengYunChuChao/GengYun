@@ -207,3 +207,21 @@ export interface AdminJobCancelAuditInput {
  * ⇒ 没有真实持久落点时，real 下的下架照旧 fail-closed 503。
  */
 export type CommunityPostPort = Pick<CommunityStore, 'persistent' | 'getPost' | 'commitPostIfCurrent'>;
+
+/**
+ * 后台帖子**读面**端口（R59：`listAdminPosts` / `getAdminPost`）。
+ *
+ * 与 `CommunityPostPort` 同一纪律：用 `Pick<CommunityStore, ...>` 保证端口形状**就是**
+ * 社区存储的形状，admin 侧不引入会漂移的第二套读签名。
+ *
+ * 只要 `listPosts` + `getPost` 两个读原语：
+ * - `listPosts` 的 `scope: 'admin'` 由适配层强制注入（见 `admin/ops/community-posts.ts`），
+ *   调用方改不了"看得到已隐藏/已删除"这一口径；
+ * - `getPost` 是管理视角单条读，**不**复用公开读面的 `readablePost`/有效态重算，
+ *   两者可见性谓词不同（公开：非 published 不可见；后台：hidden/deleted 都要读得到）。
+ *
+ * 本端口**不**取 `persistent`：读面没有写入，不需要"真实落点"判据；
+ * 未接线（`undefined`）时服务层直接 fail-closed 503，而不是返回空列表
+ * （空列表会被误读成"库里没有帖子"）。
+ */
+export type CommunityPostReadPort = Pick<CommunityStore, 'listPosts' | 'getPost'>;

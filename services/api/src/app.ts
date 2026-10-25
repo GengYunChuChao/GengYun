@@ -88,6 +88,9 @@ import { createAdminRuntime } from './admin/runtime.ts';
 import { createFailClosedAdminServices, ADMIN_CONTENT_OPERATION_IDS, restrictAdminContentAuditRead } from './admin/fail-closed-services.ts';
 import { createAdminAuditLogService } from './admin/audit/service.ts';
 import type { AdminAuditLogService, AdminAuditLogServiceOptions } from './admin/audit/service.ts';
+import { createAdminPostReadService } from './admin/posts/service.ts';
+import type { AdminPostReadService } from './admin/posts/service.ts';
+import type { CommunityPostReadPort } from './admin/ops/types.ts';
 import { createPostgresAdminAuditLogPort } from './admin/audit/pg.ts';
 import type { AdminAuditLogPort } from './admin/audit/pg.ts';
 import { createAdminContentReferenceResolver } from './admin/content-readiness.ts';
@@ -269,6 +272,12 @@ declare module 'fastify' {
      * （读面只依赖迁移 0033 的只读函数，不依赖任何写权威）。
      */
     adminAuditLogService: AdminAuditLogService;
+    /**
+     * R59：后台帖子读面（2 个 operationId：`listAdminPosts` / `getAdminPost`）。
+     * 与 `adminOpsService`（写面）分开装配：读面只需要社区帖子 store（社区侧同一份），
+     * 且其可见性谓词与用户读面**不同**（管理视角，`hidden`/`deleted` 都在候选集里）。
+     */
+    adminPostReadService: AdminPostReadService;
     /**
      * GY-I18 本片：全局开关门（跨端点真实生效）。供回归测试核对"关闭 ⇒ 拒绝且零产出"、
      * "不可识别 ⇒ fail-closed"与"开关不改变适用判定结论"。
@@ -1275,6 +1284,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 否则"后台隐藏了帖子"在社区读取侧不生效）。上面套下架观察器只为发通知。
   const communityPostPortForAdmin =
     adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });
+  // R59：后台帖子**读**面的端口 —— 社区**同一份** store（绝不另建第二份）。
+  // ⚠️ 不能复用上面的 `communityPostPortForAdmin`：那是**写侧窄端口**
+  // （`persistent` / `getPost` / `commitPostIfCurrent`），类型上根本没有 `listPosts`；
+  // 而且 `adminInjection?.communityStore` 允许测试注入一个只够写面的假端口 —— 拿它当读端口
+  // 会让列表读面在注入场景下"装作能读"。读面必须读到真实候选集，所以取 store 本体：
+  // `withTakedownObserver` 只是转发并在下架后发通知，不改任何读语义。
+  const communityPostReadPortForAdmin: CommunityPostReadPort = communityStore;
 
   const adminSigningKey = config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY;
   const adminRuntime = createAdminRuntime();
@@ -1382,6 +1398,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   let adminContentService: AdminContentService;
   let adminOpsService: AdminOpsService;
   let adminAuditLogService: AdminAuditLogService;
+  let adminPostReadService: AdminPostReadService;
   if (adminRealUnwired) {
     const reason = 'real 模式未接真实持久后端：后台业务不可用（拒绝以内存 store 返回成功封套）';
     const failClosed = createFailClosedAdminServices(reason);
@@ -1455,10 +1472,22 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       signingKey: adminSigningKey,
       executionMode: config.executionMode,
     });
+    // **R59 显式放行：后台帖子读面**（`listAdminPosts` / `getAdminPost`）。判据与 `hidePost` 同源：
+    // 只有**真实持久**的社区帖子端口才放行（`persistent === true`，即迁移 0022 的 PG 社区 store）。
+    // real 模式下 `pool === null` ⇒ 社区 store 是内存实现 ⇒ 端口给 `undefined` ⇒ 两条读面逐条
+    // 503 `PROVIDER_UNAVAILABLE`（⛔ 不返回空页：空页会被读成"平台没有任何帖子"，那是伪造读数；
+    // 也⛔ 不拿内存播种数据冒充真实帖子库）。
+    const adminPostReadPort = communityStore.persistent === true ? communityPostReadPortForAdmin : undefined;
+    adminPostReadService = createAdminPostReadService({
+      port: adminPostReadPort,
+      now: clock,
+      signingKey: adminSigningKey,
+      executionMode: config.executionMode,
+    });
     if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
       // 内容域已放行时，仍 503 的面只剩作业/账号类 **＋ 审计读面**：按实测扣减（放行 24 条内容 CRUD；`listAuditEvents` 仍失闭、不计入放行 —— 见上方「裁决 A」）。
-      const stillClosed = 38 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
+      const stillClosed = 40 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
       app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ ${stillClosed} 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
     } else {
       adminOpsService = restrictAdminOpsToAccountsAuthority(
@@ -1517,6 +1546,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         released.push('库内审计读面');
         releasedRoutes += 1; // listAuditLogs
       }
+      // R59：后台帖子读面（判据同上：只有持久社区 store 才放行；两条路由）。
+      if (adminPostReadPort !== undefined) {
+        released.push('后台帖子读面');
+        releasedRoutes += 2; // listAdminPosts / getAdminPost
+      }
       // `#18` S2 PR-2：管理员目录与权限读面（`admin_accounts` + `admin_scopes` 的既有窄读，
       // 迁移 0041 已把闭集写进库层）。⛔ 写面（授予/撤销）属 PR-3，本片没有对应路由。
       if (administratorsDirectory !== null) {
@@ -1537,8 +1571,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           auditLogReadWired: realAuditLogPort !== null,
           administratorsWired: administratorsDirectory !== null,
           contentWired: adminContentWired,
+          postsReadWired: adminPostReadPort !== undefined,
         },
-        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036；管理员目录/权限读面经 admin_accounts + admin_scopes 的既有列授权，闭集由迁移 0041 保证）；其余 ${38 - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036；管理员目录/权限读面经 admin_accounts + admin_scopes 的既有列授权，闭集由迁移 0041 保证）；其余 ${40 - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {
@@ -1579,6 +1614,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // （未接线 ≠ 没有历史；空页会被读成"平台从未发生任何后台事件"）。
     adminAuditLogService = createAdminAuditLogService({
       port: adminInjection?.auditLogPort ?? null,
+      now: clock,
+      signingKey: adminSigningKey,
+      executionMode: config.executionMode,
+    });
+    // R59：后台帖子读面用社区**同一份** store（绝不另建第二份，否则后台看到的帖子与社区写入
+    // 的不是同一批）。与 `hidePost`（写面，判据必须持久）不同：这是**读**面，stub/preset_demo 域
+    // 读的是本进程播种的帖子，如实即可；若把读面也按持久性关掉，Demo 与联调根本没法看列表。
+    // real 域的判据（只有持久 store 才放行）在上面 `adminRealUnwired` 分支里，两者不冲突。
+    adminPostReadService = createAdminPostReadService({
+      port: communityPostReadPortForAdmin,
       now: clock,
       signingKey: adminSigningKey,
       executionMode: config.executionMode,
@@ -2183,6 +2228,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('adminContentService', adminContentService);
   app.decorate('adminOpsService', adminOpsService);
   app.decorate('adminAuditLogService', adminAuditLogService);
+  app.decorate('adminPostReadService', adminPostReadService);
   app.decorate('featureFlagGate', featureFlagGate);
   app.decorate('humanReviewDirectory', humanReviewDirectory);
   app.decorate('mediaService', mediaService);
@@ -2326,6 +2372,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     content: adminContentService,
     ops: adminOpsService,
     audit: adminAuditLogService,
+    posts: adminPostReadService,
   });
   // GY-I06 媒体域 7 条路由的**唯一注册点**（失败即整域 503；未装配路径仍由 404 处理器兜底）。
   // GY-I27 第三片（C7）：把与识别/转写/合成/OCR **同源的那一个** `consentGate` 交给媒体域，

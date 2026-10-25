@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 监工返修 P1（PR #121）：**real 默认装配反例**。
  *
  * 缺陷：后台服务默认建**内存** store，而 `app.ts` 把 `config.executionMode` 原样交给服务层。
@@ -97,7 +97,7 @@ function restrictionInput() {
   };
 }
 
-/** 38 个 operationId 的**合法形状**请求（real 下若未 fail-closed，其中一些会直接成功）。 */
+/** 40 个 operationId 的**合法形状**请求（real 下若未 fail-closed，其中一些会直接成功）。 */
 function adminRequests() {
   const families = [
     { path: `${API}/admin/sources`, input: sourceInput },
@@ -126,6 +126,10 @@ function adminRequests() {
   rows.push({ op: 'listFlagAuditEvents', method: 'GET', url: `${API}/admin/flag-audit-events` });
   rows.push({ op: 'listAuditLogs', method: 'GET', url: `${API}/admin/audit-logs` });
   rows.push({ op: 'hidePost', method: 'POST', url: `${API}/admin/posts/${UNKNOWN_UUID}/hide`, body: { reason: 'r' }, ifMatch: '"1"' });
+  // R59：后台帖子读面 2 条。real 默认装配下**同样必须 503** —— 判据是社区 store 的持久性
+  // （`pool === null` ⇒ 内存 store ⇒ 端口不给 ⇒ 503），⛔ 不得返回内存播种数据的"空页成功封套"。
+  rows.push({ op: 'listAdminPosts', method: 'GET', url: `${API}/admin/posts` });
+  rows.push({ op: 'getAdminPost', method: 'GET', url: `${API}/admin/posts/${UNKNOWN_UUID}` });
   rows.push({ op: 'listAdministrators', method: 'GET', url: `${API}/admin/administrators` });
   rows.push({ op: 'listAdministratorScopes', method: 'GET', url: `${API}/admin/administrators/${UNKNOWN_UUID}/scopes` });
   return rows;
@@ -159,13 +163,13 @@ function inject(app, token, row, index) {
   });
 }
 
-test('real 默认装配反例：38 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
+test('real 默认装配反例：40 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
   const authStore = createMemoryAuthStore();
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore });
   try {
     const token = await seedAdmin(authStore);
     const rows = adminRequests();
-    assert.equal(rows.length, 38, '反例必须覆盖全部 38 个 operationId');
+    assert.equal(rows.length, 40, '反例必须覆盖全部 40 个 operationId');
 
     const succeeded = [];
     for (const [index, row] of rows.entries()) {
@@ -179,8 +183,8 @@ test('real 默认装配反例：38 条后台路由一律 fail-closed（503 PROVI
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);
 
-    // 契约面不缩水：38 条路由**仍然注册**（只是运行时一律拒绝）。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 38);
+    // 契约面不缩水：40 条路由**仍然注册**（只是运行时一律拒绝）。
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 40);
     for (const opId of ADMIN_HTTP_OPERATION_IDS) {
       const route = CONTRACT_ROUTES.get(opId);
       const url = `${route.path}`.replaceAll('{id}', ':id').replaceAll('{key}', ':key');

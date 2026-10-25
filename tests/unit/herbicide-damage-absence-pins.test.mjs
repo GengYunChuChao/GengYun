@@ -15,7 +15,7 @@
  *
  * | # | 判据位置 | 断言什么 | 什么改动会让它红 |
  * | - | --- | --- | --- |
- * | 1 | `packages/contracts/openapi.json` 的 `paths`（`:20` 起，118 个 `operationId`，`:23`–`:11303`） | `operationId` 与 `path` **都不含** `damage` / `herbicide_damage` / `phytotox` / `injury`（大小写不敏感）；正向控制：`operationId` 总数 118、去重后 118、`admin` 子集恰好 17 条、herbicide 参照面恰好 `getHerbicide`/`listHerbicides`、`path` 总数 89 | 任何 damage 类 operation 被塞进契约（含把现成 operation **改名**成 `…Damage…`，总数不变也会红） |
+ * | 1 | `packages/contracts/openapi.json` 的 `paths`（`:20` 起，120 个 `operationId`，`:23`–`:11498`） | `operationId` 与 `path` **都不含** `damage` / `herbicide_damage` / `phytotox` / `injury`（大小写不敏感）；正向控制：`operationId` 总数 120、去重后 120、`admin` 子集恰好 19 条、herbicide 参照面恰好 `getHerbicide`/`listHerbicides`、`path` 总数 91 | 任何 damage 类 operation 被塞进契约（含把现成 operation **改名**成 `…Damage…`，总数不变也会红） |
  * | 2 | 同文件的 `operationId` 全集 | 不含 `observation` / `feedback` / `symptom` / `observe`（整条线**本无任何 operation**，连只读观察面都没有） | 给这条线补「观察/反馈/症状」端点，或把现成 operation 改名带这些词 |
  * | 3 | `tests/evaluation/fixtures/synthetic-index.json`（顶层**数组**，50 条，首条 `task` 在 `:5`） | `task` 取值集合 `deepEqual` 到实际七类 `['ai_moderation','asr','label_ocr','qa','registration_match','tts','weed_photo']`，且逐类条数 `deepEqual` 到 `{weed_photo:16,label_ocr:6,registration_match:4,ai_moderation:8,tts:4,asr:4,qa:8}`；并单独断 damage 零命中 | 往评测夹具里塞一条 `damage` 任务（哪怕同时删掉一条别的，逐类计数也会红） |
  * | 4 | `packages/evaluation/samples/gy-i20-weeds-labels.json` 的 `entries`（`:23` 起，172 条，`labelClass` 在 `:27`–`:1672`） | `labelClass` 前缀**只**有 `ext_weed`（165 条，`^\d{3}$`）与 `species`（7 条，`[a-z_]+`）两类，172 条**互不相同**；损伤类字面量（`damage`/`injury`/`phytotox`/`symptom`）零命中 | 给标签集加一个损伤类 `labelClass`（如 `damage_light`）——它既破前缀集合，也破计数 |
@@ -185,7 +185,7 @@ function scanLines(lines, pattern) {
  * 读契约并抽出 `{ paths, operations }`。
  *
  * 只抽 `paths[*][method].operationId` 为字符串的条目 —— 这正是「operation」的定义面。
- * 抽漏会在钉 1 的总数正向控制上直接红（118 条），不会静默空转。
+ * 抽漏会在钉 1 的总数正向控制上直接红（120 条），不会静默空转。
  *
  * @returns {{
  *   text: string,
@@ -241,15 +241,16 @@ function pathLineMap(lines) {
 const DAMAGE_NEEDLE = /damage|herbicide_damage|phytotox|injury/i;
 
 /** 基线实测：`operationId` 总数（`paths[*][method].operationId`）。 */
-const CONTRACT_OPERATION_COUNT = 118;
+const CONTRACT_OPERATION_COUNT = 120;
 
 /** 基线实测：`path` 总数（`Object.keys(doc.paths)`）。 */
-const CONTRACT_PATH_COUNT = 89;
+const CONTRACT_PATH_COUNT = 91;
 
-/** 基线实测：`operationId` 里含 `admin` 的**全部** 17 条（逐条钉住，⛔ 不是 `>=`）。 */
+/** 基线实测：`operationId` 里含 `admin` 的**全部** 19 条（逐条钉住，⛔ 不是 `>=`）。 */
 const ADMIN_OPERATION_IDS = [
   'cancelAdminJob',
   'getAdminKnowledge',
+  'getAdminPost',
   'getAdminRegistration',
   'getAdminRestriction',
   'getAdminSession',
@@ -257,6 +258,7 @@ const ADMIN_OPERATION_IDS = [
   'listAdminCategories',
   'listAdminJobs',
   'listAdminKnowledge',
+  'listAdminPosts',
   'listAdminRegistration',
   'listAdminRestriction',
   'listAdminSources',
@@ -279,7 +281,7 @@ test('钉 1 · 契约零 damage operation：operationId 与 path 都不含 damag
   const operationIds = operations.map((operation) => operation.operationId);
 
   // ── 正向控制（三条）────────────────────────────────────────────────────
-  // ① 总数：证明上面真的把 118 个 operation 抽出来了（不是 0 条空转）。
+  // ① 总数：证明上面真的把 120 个 operation 抽出来了（不是 0 条空转）。
   assert.equal(
     operationIds.length,
     CONTRACT_OPERATION_COUNT,
@@ -291,7 +293,7 @@ test('钉 1 · 契约零 damage operation：operationId 与 path 都不含 damag
       + PIN_HINT,
   );
 
-  // ② 去重后仍是 118：`operationId` 在契约里必须唯一（重复会让「按名判 damage」失真）。
+  // ② 去重后仍是 120：`operationId` 在契约里必须唯一（重复会让「按名判 damage」失真）。
   assert.equal(
     new Set(operationIds).size,
     CONTRACT_OPERATION_COUNT,
@@ -301,7 +303,7 @@ test('钉 1 · 契约零 damage operation：operationId 与 path 都不含 damag
       + PIN_HINT,
   );
 
-  // ③ admin 子集逐条相等（`deepEqual`：17 条，多一条/少一条/改名都红）。
+  // ③ admin 子集逐条相等（`deepEqual`：19 条，多一条/少一条/改名都红）。
   assert.deepEqual(
     operationIds.filter((id) => /admin/i.test(id)).sort(),
     ADMIN_OPERATION_IDS,
@@ -349,7 +351,7 @@ test('钉 1 · 契约零 damage operation：operationId 与 path 都不含 damag
         idHits.map((hit) => `packages/contracts/openapi.json:${idLineMap.get(hit.operationId) ?? '?'}`
           + ` ${hit.operationId}（${hit.method.toUpperCase()} ${hit.path}）`).sort(),
       )}`
-      + `\n  基线（${BASELINE_SHA}）：118 个 operation 里 damage / herbicide_damage / phytotox / injury **零命中** —— `
+      + `\n  基线（${BASELINE_SHA}）：120 个 operation 里 damage / herbicide_damage / phytotox / injury **零命中** —— `
       + '药害是「缺需求」，契约里从来没有这条线（证据：' + REGISTER + ':36、:43-48）。'
       + '\n  ⚠ 注意这条钉子连「**改名**」也能抓：把现成 operation 改成 `…Damage…`、总数不变，同样会红。'
       + '\n  处置：⛔ 不要删这条断言、也不要把判据改宽。先走需求评审（见下），再翻转本钉子。'
@@ -366,7 +368,7 @@ test('钉 1 · 契约零 damage operation：operationId 与 path 都不含 damag
       + `\n  实测命中：${JSON.stringify(
         pathHits.map((path) => `packages/contracts/openapi.json:${pathLines.get(path) ?? '?'} ${path}`).sort(),
       )}`
-      + `\n  基线（${BASELINE_SHA}）：89 条 path 里 damage / herbicide_damage / phytotox / injury **零命中**。`
+      + `\n  基线（${BASELINE_SHA}）：91 条 path 里 damage / herbicide_damage / phytotox / injury **零命中**。`
       + PIN_HINT,
   );
 });
@@ -382,7 +384,7 @@ test('钉 2 · 契约零观察/反馈面：operationId 不含 observation/feedba
   const { paths, operations } = readContract();
   const operationIds = operations.map((operation) => operation.operationId);
 
-  // 正向控制：总数仍是 118（口径同钉 1 ①；这条独立重算，避免两条钉子共用一次读取而互相掩盖）。
+  // 正向控制：总数仍是 120（口径同钉 1 ①；这条独立重算，避免两条钉子共用一次读取而互相掩盖）。
   assert.equal(
     operationIds.length,
     CONTRACT_OPERATION_COUNT,
@@ -401,7 +403,7 @@ test('钉 2 · 契约零观察/反馈面：operationId 不含 observation/feedba
       + `\n  实测命中：${JSON.stringify(
         idHits.map((hit) => `${hit.operationId}（${hit.method.toUpperCase()} ${hit.path}）`).sort(),
       )}`
-      + `\n  基线（${BASELINE_SHA}）：118 个 operation 里 observation / feedback / symptom / observe **零命中**。`
+      + `\n  基线（${BASELINE_SHA}）：120 个 operation 里 observation / feedback / symptom / observe **零命中**。`
       + '\n  这条钉的是取证结论的另一半：药害线不只是「没有 damage operation」，而是**整条线连一个 operation 都没有** —— '
       + '没有「药害观察记录」「药害反馈」「症状上报」这类只读面，故也不能用「只是加了个只读观察接口」来绕过钉 1。'
       + '\n  处置：先走需求评审，再翻转本钉子。'
@@ -415,7 +417,7 @@ test('钉 2 · 契约零观察/反馈面：operationId 不含 observation/feedba
     [],
     '【钉 2 破了】契约里出现了「观察/反馈/症状」类 `path`：'
       + `\n  实测命中：${JSON.stringify(pathHits.sort())}`
-      + `\n  基线（${BASELINE_SHA}）：89 条 path 里 observation / feedback / symptom / observe **零命中**。`
+      + `\n  基线（${BASELINE_SHA}）：91 条 path 里 observation / feedback / symptom / observe **零命中**。`
       + PIN_HINT,
   );
 });

@@ -16,7 +16,9 @@
  * 「对外可见 ⟺ `visibility === 'published'` 且 `audit_state === 'approved'`」，
  * 置为 `hidden` 后所有公开读（列表与详情）都会把它排除。
  */
-import type { CommunityPostPort } from './types.ts';
+import type { PostRecord } from '../../community/store.ts';
+import type { AuditState, Visibility } from '../../community/types.ts';
+import type { CommunityPostPort, CommunityPostReadPort } from './types.ts';
 
 export type HidePostResult =
   | { ok: true; changed: boolean; previousRevision: number; revision: number }
@@ -66,6 +68,57 @@ export function createHidePostAdapter(port: CommunityPostPort | undefined, now: 
         return { ok: false, reason: 'REVISION_CONFLICT' };
       }
       return { ok: true, changed: true, previousRevision: current.revision, revision: result.record.revision };
+    },
+  });
+}
+
+/* ------------------------------------------------------------------ *
+ * R59 · 后台帖子**读面**适配层（`listAdminPosts` / `getAdminPost`）
+ * ------------------------------------------------------------------ */
+
+/** 已解析的后台列表查询（游标已在服务层验签+解出，这里只做下推）。 */
+export interface AdminPostPageQuery {
+  readonly limit: number;
+  readonly after: { createdAt: string; id: string } | null;
+  readonly state: Visibility | null;
+  readonly auditState: AuditState | null;
+}
+
+export interface AdminPostReadAdapter {
+  /**
+   * 管理视角一页。**强制** `scope: 'admin'` —— 这是本读面的定义：
+   * 候选集里必须有 `hidden` / `deleted`（用户读面 `scope: 'public'` 会把它们全部排除），
+   * 否则管理员看不到自己要处置的行。`state` / `auditState` 只做**等值收窄**，不做可见性判定。
+   */
+  list(query: AdminPostPageQuery): Promise<{ items: PostRecord[]; hasMore: boolean }>;
+  /** 管理视角单条。`null` ⇒ 不存在（服务层映射 404，⛔ 不用 403 泄露存在性）。 */
+  get(id: string): Promise<PostRecord | null>;
+}
+
+/**
+ * `port` 未接线 ⇒ 返回 `null`（服务层 fail-closed 503）。
+ * ⛔ 不返回"空页适配器"：空列表会被读成「库里没有帖子」，那是伪造读数。
+ */
+export function createAdminPostReadAdapter(port: CommunityPostReadPort | undefined): AdminPostReadAdapter | null {
+  if (port === undefined) return null;
+  const community = port;
+
+  return Object.freeze({
+    async list(query: AdminPostPageQuery): Promise<{ items: PostRecord[]; hasMore: boolean }> {
+      // 多取一行判定 `next_cursor`，返回前截掉——比再跑一次 count 便宜，且不会给出总数
+      // （后台列表契约明确不返回总数，见 `AdminPostPageEnvelope` 描述）。
+      const rows = await community.listPosts({
+        scope: 'admin',
+        state: query.state ?? undefined,
+        auditState: query.auditState ?? undefined,
+        after: query.after,
+        limit: query.limit + 1,
+      });
+      const hasMore = rows.length > query.limit;
+      return { items: hasMore ? rows.slice(0, query.limit) : rows, hasMore };
+    },
+    async get(id: string): Promise<PostRecord | null> {
+      return community.getPost(id);
     },
   });
 }

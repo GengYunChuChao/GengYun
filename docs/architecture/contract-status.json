@@ -328,7 +328,22 @@
       "version_required": false,
       "route_mounted": true,
       "status": "partial",
-      "evidence": [{ "path": "services/api/src/routes/consents.ts", "symbol": "app.get(`${API_PREFIX}/me/privacy-policy`", "lines": "90-97" }, { "path": "services/api/src/privacy/privacy-policy.ts", "symbol": "export function createPostgresPrivacyPolicyReader", "lines": "186-215" }, { "test": "tests/unit/privacy-policy-read.test.mjs", "name": "空态诚实：没有政策行 ⇒ 200 + version=unpublished，不编造政策文本也不 5xx" }],
+      "evidence": [
+        {
+          "path": "services/api/src/routes/consents.ts",
+          "symbol": "app.get(`${API_PREFIX}/me/privacy-policy`",
+          "lines": "90-97"
+        },
+        {
+          "path": "services/api/src/privacy/privacy-policy.ts",
+          "symbol": "export function createPostgresPrivacyPolicyReader",
+          "lines": "186-215"
+        },
+        {
+          "test": "tests/unit/privacy-policy-read.test.mjs",
+          "name": "空态诚实：没有政策行 ⇒ 200 + version=unpublished，不编造政策文本也不 5xx"
+        }
+      ],
       "blocker": "已装配读面；生产政策与接收方清单尚未落种子（NON-PRODUCTION 占位待补）"
     },
     {
@@ -883,7 +898,52 @@
       "version_required": false,
       "route_mounted": true,
       "status": "partial",
-      "evidence": [{ "path": "services/api/src/routes/registrations.ts", "symbol": "/registrations/verify", "lines": "273-283" }, { "path": "services/api/src/registrations/service.ts", "symbol": "createRegistrationVerifyService", "locator": { "symbol": "createRegistrationVerifyService" } }, { "test": "tests/unit/registrations-verify.test.mjs", "name": "A1. matched：登记号+名称+剂型+成分全对 ⇒ matched，且 data 严格是契约 Verification 五键" }, { "test": "tests/unit/registrations-verify.test.mjs", "name": "B1. 过期登记记录 ⇒ conflict + source.validity（失效来源不得给出「核对通过」）" }, { "test": "tests/unit/registrations-verify-http.test.mjs", "name": "F1. 关闭「药剂输出」⇒ 409 OBJECT_UNAVAILABLE 且零制剂字段；重开 ⇒ 立即恢复" }, { "test": "tests/unit/registrations-verify-http.test.mjs", "name": "G1. 同一 Idempotency-Key 重放 ⇒ 结论一致且无副作用；换键同体 ⇒ 结论也一致" }, { "test": "tests/unit/registrations-verify.test.mjs", "name": "G1. 缺 dosage_form（null）⇒ 非 matched（insufficient），missing_fields 明确含 dosage_form" }, { "test": "tests/unit/registrations-verify.test.mjs", "name": "G6. 优先级：内核已判 conflict ⇒ 不降级为 insufficient，缺失维度仍如实进 missing_fields" }, { "test": "tests/unit/registrations-verify-http.test.mjs", "name": "J1. ingredients=[] / 纯空白 dosage_form ⇒ 200 非 matched（insufficient）且 missing_fields 点名该维度" }, { "test": "tests/unit/registrations-verify-http.test.mjs", "name": "K1. 空串 / 非字符串 ⇒ 400 INVALID_REQUEST（归一化前拒绝），且不产出任何核对结论" }],
+      "evidence": [
+        {
+          "path": "services/api/src/routes/registrations.ts",
+          "symbol": "/registrations/verify",
+          "lines": "273-283"
+        },
+        {
+          "path": "services/api/src/registrations/service.ts",
+          "symbol": "createRegistrationVerifyService",
+          "locator": {
+            "symbol": "createRegistrationVerifyService"
+          }
+        },
+        {
+          "test": "tests/unit/registrations-verify.test.mjs",
+          "name": "A1. matched：登记号+名称+剂型+成分全对 ⇒ matched，且 data 严格是契约 Verification 五键"
+        },
+        {
+          "test": "tests/unit/registrations-verify.test.mjs",
+          "name": "B1. 过期登记记录 ⇒ conflict + source.validity（失效来源不得给出「核对通过」）"
+        },
+        {
+          "test": "tests/unit/registrations-verify-http.test.mjs",
+          "name": "F1. 关闭「药剂输出」⇒ 409 OBJECT_UNAVAILABLE 且零制剂字段；重开 ⇒ 立即恢复"
+        },
+        {
+          "test": "tests/unit/registrations-verify-http.test.mjs",
+          "name": "G1. 同一 Idempotency-Key 重放 ⇒ 结论一致且无副作用；换键同体 ⇒ 结论也一致"
+        },
+        {
+          "test": "tests/unit/registrations-verify.test.mjs",
+          "name": "G1. 缺 dosage_form（null）⇒ 非 matched（insufficient），missing_fields 明确含 dosage_form"
+        },
+        {
+          "test": "tests/unit/registrations-verify.test.mjs",
+          "name": "G6. 优先级：内核已判 conflict ⇒ 不降级为 insufficient，缺失维度仍如实进 missing_fields"
+        },
+        {
+          "test": "tests/unit/registrations-verify-http.test.mjs",
+          "name": "J1. ingredients=[] / 纯空白 dosage_form ⇒ 200 非 matched（insufficient）且 missing_fields 点名该维度"
+        },
+        {
+          "test": "tests/unit/registrations-verify-http.test.mjs",
+          "name": "K1. 空串 / 非字符串 ⇒ 400 INVALID_REQUEST（归一化前拒绝），且不产出任何核对结论"
+        }
+      ],
       "blocker": "路由与领域层已装配（用户会话 + Idempotency-Key 形状校验 8..128 + 请求体守 VerifyInput）；判定复用 GY-I10 已审内核 ocr/state.ts（decideMatchState / sanitizeRegistryLookup / gateDoseCards）。仍为 partial：① real 模式真实登记库未接线 ⇒ 恒 unavailable（不伪装 no_match、不回退仓内记录）；② 无已审用量来源 ⇒ dose_cards 恒 []；③ 非 real 模式用的是仓内 20 条公开登记公告记录，review_status=unverified 如实下发，不是已核对权威来源；④ 契约 200 声明的「资源 revision」ETag 未发（本操作不产生资源，硬凑内容哈希属自造语义）；⑤ 契约 Herbicide 无产品名字段，名称只用于登记号未命中时的候选收敛；⑥ **待核维度齐备性已收口（R1）**：契约承诺「登记号+成分含量剂型精确核对，缺失/冲突不matched」＋ state-contract 的「缺字段为 insufficient 而非 matched」，故服务层投影（missingVerifiableDimensions / projectVerification，**不受** ocr/state.ts 必要字段清单限制、也**不改**该内核）把「缺 dosage_form（null/纯空白；服务层导出面还包括空串）或 ingredients（空数组）」判为未采集：仅当结论会是 matched 时改判 insufficient 且 registration=null，把缺失维度逐项并入 missing_fields；内核已判 conflict / no_match / ambiguous / unavailable 时不降级，缺失维度照旧列出 ⇒ 缺待核维度不再可能得到 matched，三维齐备且一致仍 matched；⑦ **空串/非字符串在 HTTP 层已收口（复审阻塞项）**：运行时 Ajv 沿用 `coerceTypes: 'array'`，会把 `''` 强转成 `null`（`minLength: 1` 因此永不执行）、把数字/布尔/单元素数组强转成字符串，故本路由在 `preValidation`（Ajv 归一化**之前**，实测该钩子仍能看到原始 `\"\"`）按原始值拒绝 `registration_number` / `name` / `dosage_form` 的空串与非字符串（`null` 仍允许）以及 `ingredients` 元素内三键的空串与非字符串，一律 400 `INVALID_REQUEST`（沿用 schema 失败的同一错误码与 details 形状，⛔ 不改全局 Ajv 配置、⛔ 不动 ocr/state.ts）；纯空白（长度 ≥ 1、契约合法）不在此层拒绝，仍按「空读」由服务层判 insufficient（用例 K1 钉住两端：8 条 400 + `dosage_form=null` 与 `ingredients=[]` 两条正控制仍 200）"
     },
     {
@@ -2094,7 +2154,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources`",
-          "lines": "185-185"
+          "lines": "198-198"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2138,7 +2198,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources`",
-          "lines": "188-188"
+          "lines": "201-201"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2182,7 +2242,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "191-191"
+          "lines": "204-204"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2226,7 +2286,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "194-194"
+          "lines": "207-207"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2274,7 +2334,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/publish`",
-          "lines": "197-197"
+          "lines": "210-210"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2318,7 +2378,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/withdraw`",
-          "lines": "200-200"
+          "lines": "213-213"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2362,7 +2422,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge`",
-          "lines": "205-205"
+          "lines": "218-218"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2406,7 +2466,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge`",
-          "lines": "208-208"
+          "lines": "221-221"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2450,7 +2510,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "211-211"
+          "lines": "224-224"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2494,7 +2554,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "214-214"
+          "lines": "227-227"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2538,7 +2598,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/publish`",
-          "lines": "217-217"
+          "lines": "230-230"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2586,7 +2646,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`",
-          "lines": "220-220"
+          "lines": "233-233"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2630,7 +2690,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations`",
-          "lines": "225-225"
+          "lines": "238-238"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2674,7 +2734,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations`",
-          "lines": "228-228"
+          "lines": "241-241"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2718,7 +2778,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "231-231"
+          "lines": "244-244"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2762,7 +2822,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "234-234"
+          "lines": "247-247"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2806,7 +2866,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/publish`",
-          "lines": "237-237"
+          "lines": "250-250"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2850,7 +2910,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/withdraw`",
-          "lines": "240-240"
+          "lines": "253-253"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2894,7 +2954,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions`",
-          "lines": "245-245"
+          "lines": "258-258"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2938,7 +2998,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions`",
-          "lines": "248-248"
+          "lines": "261-261"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2982,7 +3042,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "251-251"
+          "lines": "264-264"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3026,7 +3086,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "254-254"
+          "lines": "267-267"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3070,7 +3130,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/publish`",
-          "lines": "257-257"
+          "lines": "270-270"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3114,7 +3174,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`",
-          "lines": "260-260"
+          "lines": "273-273"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3158,7 +3218,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/categories`",
-          "lines": "294-296"
+          "lines": "307-309"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3189,7 +3249,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/categories/:id`",
-          "lines": "299-305"
+          "lines": "312-318"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3220,7 +3280,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/accounts`",
-          "lines": "315-317"
+          "lines": "328-330"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3251,7 +3311,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/accounts/:id/suspend`",
-          "lines": "320-325"
+          "lines": "333-338"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3282,7 +3342,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/administrators`",
-          "lines": "341-345"
+          "lines": "354-356"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
@@ -3319,7 +3379,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/administrators/:id/scopes`",
-          "lines": "346-354"
+          "lines": "359-364"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
@@ -3351,7 +3411,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs`",
-          "lines": "364-366"
+          "lines": "377-379"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3382,7 +3442,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "369-374"
+          "lines": "382-387"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3412,8 +3472,8 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "symbol": "listFlags",
-          "lines": "385-389"
+          "symbol": "`${API_PREFIX}/admin/feature-flags`",
+          "lines": "398-400"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3444,7 +3504,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/feature-flags/:key`",
-          "lines": "390-395"
+          "lines": "403-408"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3479,7 +3539,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/flag-audit-events`",
-          "lines": "405-407"
+          "lines": "418-420"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
@@ -3506,7 +3566,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/audit-logs`",
-          "lines": "281-287"
+          "lines": "295-297"
         },
         {
           "path": "services/api/src/admin/audit/service.ts",
@@ -3531,6 +3591,94 @@
       "blocker": "读面已装配（迁移 0033 的只读函数 public.list_admin_audit_logs()，scope audit:read；权限与 listAuditEvents 同一把门），真库臂已建数据→查询→断言；但**审计写面仍未落库**：库内写入点只有 suspend_account / restore_account / set_feature_flag 三处，其余 appendAudit 仍落内存 ops store（persistent=false，重启即丢），后台 UI 的审计页尚未消费本接口，表内无 ip / user_agent 列故响应不含该二字段。"
     },
     {
+      "id": "listAdminPosts",
+      "method": "get",
+      "path": "/admin/posts",
+      "route": "/api/v1/admin/posts",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/posts`",
+          "lines": "451-451"
+        },
+        {
+          "path": "services/api/src/admin/posts/service.ts",
+          "symbol": "async function listAdminPosts",
+          "lines": "187-232"
+        },
+        {
+          "path": "services/api/src/admin/ops/community-posts.ts",
+          "symbol": "createAdminPostReadAdapter",
+          "lines": "102-124"
+        },
+        {
+          "path": "services/api/src/admin/ops/types.ts",
+          "symbol": "CommunityPostReadPort",
+          "lines": "227-227"
+        },
+        {
+          "test": "tests/unit/admin-posts-read.test.mjs",
+          "name": "列表：keyset 游标翻页不重不漏，最后一页 next_cursor 为 null"
+        },
+        {
+          "test": "tests/unit/admin-posts-read.test.mjs",
+          "name": "过滤：state 闭集下推，闭集外 400（不静默返回空页）"
+        },
+        {
+          "test": "tests/unit/admin-posts-read.test.mjs",
+          "name": "过滤：audit_state 独立下推，且与 state 组合后收窄到单条"
+        },
+        {
+          "test": "tests/integration/admin-posts-read-pg.mjs",
+          "name": "[L] 列表（无筛选）：6/6 条与真库 SQL 逐位相等，含 hidden×1 / deleted×1 / private×1 / 待审×2"
+        }
+      ],
+      "blocker": "读面已装配：GET /admin/posts（scope sources:read，游标 keyset 分页，limit 缺省 20 / 上限 50，可选 state 与 audit_state 等值过滤），查询复用 community store 的 listPosts（scope=admin 下推 SQL，内存实现同义），管理视角可见性谓词与用户读面不同（hidden/deleted/private/待审都在候选集）。剩余缺口：后台前端（另开片，apps/** 未动）、审核动作（本片只读，不写）、真实审核供应商（真库臂用仓内合成 gate）、真实 UI 与运营验收；真库臂 tests/integration/admin-posts-read-pg.mjs 需 ADMIN_POSTS_READ_PG_TEST_URL，缺库记 77，未登记进 .github 工作流。"
+    },
+    {
+      "id": "getAdminPost",
+      "method": "get",
+      "path": "/admin/posts/{id}",
+      "route": "/api/v1/admin/posts/:id",
+      "scope": "sources:read",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/posts/:id`",
+          "lines": "456-456"
+        },
+        {
+          "path": "services/api/src/admin/posts/service.ts",
+          "symbol": "async function getAdminPost",
+          "lines": "247-265"
+        },
+        {
+          "path": "services/api/src/admin/posts/fields.ts",
+          "symbol": "ADMIN_POST_ALL_SPECS"
+        },
+        {
+          "test": "tests/unit/admin-posts-read.test.mjs",
+          "name": "单条：存在 ⇒ 200 + ETag；不存在 ⇒ 404 NOT_FOUND（不用 403 泄露存在性）"
+        },
+        {
+          "test": "tests/unit/admin-posts-read.test.mjs",
+          "name": "可见性谓词不同：后台读面看得到 hidden/deleted/待审，用户读面按生效值一律读不到"
+        },
+        {
+          "test": "tests/integration/admin-posts-read-pg.mjs",
+          "name": "[D] 详情：字段集合 = 契约 AdminPost 闭集，visibility/author_id/title/body 与真库行逐列相等，ETag=revision"
+        }
+      ],
+      "blocker": "读面已装配：GET /admin/posts/{id}（scope sources:read，返回库内存储值 visibility/audit_state/author_id/created_at/updated_at/media_ids/linked_knowledge_ref，ETag=revision；不存在返 404 NOT_FOUND，不用 403 以免泄露存在性）。复用 community store 的 getPost，未复制 SQL。剩余缺口：后台前端与详情页交互（另开片）、审核动作（只读片）、真实 UI 验收；真库臂缺库时记 77。"
+    },
+    {
       "id": "hidePost",
       "method": "post",
       "path": "/admin/posts/{id}/hide",
@@ -3542,8 +3690,8 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "symbol": "hidePost",
-          "lines": "417-425"
+          "symbol": "`${API_PREFIX}/admin/posts/:id/hide`",
+          "lines": "430-435"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3574,7 +3722,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/audit-events`",
-          "lines": "268-270"
+          "lines": "281-283"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3758,8 +3906,8 @@
         },
         {
           "path": "services/api/src/app.ts",
-          "symbol": "idempotencyStore",
-          "lines": "903-903"
+          "symbol": "const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));",
+          "lines": "912-912"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -3898,7 +4046,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "369-374"
+          "lines": "382-387"
         }
       ],
       "blocker": "共享作业面现由 `services/api/src/app.ts:2197` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:2198`）、transcription（`:2204`）、moderation（`:2207`）、synthesis（`:2213`）、ocr（`:2221`）、answer（`:2229`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"

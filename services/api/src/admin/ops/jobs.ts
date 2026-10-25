@@ -15,38 +15,14 @@ import { cloneDeep, freezeDeep } from '../immutable.ts';
 import { ApiError } from '../../errors.ts';
 import { ERROR_CODES } from '../../contract.ts';
 import { JOB_STATES, TERMINAL_JOB_STATES } from './types.ts';
+import { parseClosedSetParam } from '../identity.ts';
 import type { AdminJobFilter, AdminJobPort, AdminJobView, CancelJobOutcome } from './types.ts';
 
 /**
- * 闭集参数的唯一判定点：`state`（契约 `JobState` 7 值）与 `error_code`（契约 `ErrorCode` 24 值）。
- *
- * 口径与 `admin/audit/service.ts` 的 `action`/`entity` 逐条一致：
- * - 缺省 / `null` / **空串** ⇒ 该字段不参与过滤（`?state=` 不该变成闭集外的 400）；
- * - 非字符串（`?state=a&state=b` 会被查询串解析成数组）⇒ **400 `INVALID_REQUEST`**、`code: 'type'`；
- * - 闭集外取值（含大小写不同、拼写错误）⇒ **400 `INVALID_REQUEST`**、`code: 'enum'`。
- *
- * ⛔ 不复用 503：`PROVIDER_UNAVAILABLE` 的含义是"端口未接线"或"读出来的值我们不认识"，
- * 而这里错在**调用方入参**，属 400。⛔ 也不静默返回空页 —— 那会把拼错的状态说成
- * "平台没有这种作业"，是一句我们无法确认的结论。
+ * 闭集参数判定（`state`：契约 `JobState` 7 值；`error_code`：契约 `ErrorCode` 24 值）
+ * 已上移到 `admin/identity.ts` 的 `parseClosedSetParam`（R59，纯搬移、文案未改），
+ * 后台帖子读面的 `state`/`audit_state` 与之共用同一份判定。
  */
-function parseClosedSetParam<T extends string>(
-  raw: unknown,
-  field: string,
-  closed: readonly T[],
-): T | null {
-  if (raw === undefined || raw === null || raw === '') return null;
-  if (typeof raw !== 'string') {
-    throw new ApiError('INVALID_REQUEST', `${field} 必须是字符串`, {
-      details: [{ field, code: 'type' }],
-    });
-  }
-  if (!(closed as readonly string[]).includes(raw)) {
-    throw new ApiError('INVALID_REQUEST', `${field} 必须是闭集之一：${closed.join(' / ')}`, {
-      details: [{ field, code: 'enum' }],
-    });
-  }
-  return raw as T;
-}
 
 /**
  * `listAdminJobs` 的过滤入参 → 已判定的闭集过滤。

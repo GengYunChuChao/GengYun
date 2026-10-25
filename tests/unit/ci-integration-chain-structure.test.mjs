@@ -547,6 +547,17 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '⇒ 接进真库 job 不等于进 `test:integration:http`（回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`），'
       + '故在此如实登记为未接线。',
   },
+  {
+    path: 'tests/integration/admin-posts-read-pg.mjs',
+    reason: '需真实 PG 17（硬钉库名 `gengyun_admin_posts_read_test`，脚本自己断言 hostname=127.0.0.1、'
+      + 'pathname=/gengyun_admin_posts_read_test，apply 0001–0030 后自建 6 条社区帖夹具）：'
+      + '连不上就打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过，也不认 --allow-skip）；'
+      + 'R59 片**未**把它接进 `.github/workflows/real-pg-integration.yml`——`.github/workflows/**` 不在本片'
+      + '授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／'
+      + '`REQUIRED_STEP_ORDER` 三张清单和证据页（那是独立的一次门禁变更，须由指挥裁定），故在此如实登记为未接线；'
+      + '本地已用便携 PG 17.11（`E:\\GengYunCommander\\.pg17\\pgsql\\bin`）现建库跑通 12 个读数。'
+      + '它同样**不进**无 PG 的回环链：回环链里没有真 PG，接进真库 job 不等于进 `test:integration:http`。',
+  },
 ]);
 
 /** 读取并解析 `package.json` 真值。 */

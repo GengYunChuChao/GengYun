@@ -607,10 +607,17 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
         conditions.push("visibility <> 'deleted'");
         conditions.push(`author_id = ${bind(authorId)}::uuid`);
       }
+      // `scope: 'admin'`（后台读面）与 `scope: 'all'` 都**不加**可见性条件：`hidden`/`deleted`
+      // 必须在候选集里，否则管理视角看不到自己要处置的行（见 `ListPostsFilter` 头注）。
       const cropId = filter.cropId ?? null;
       if (cropId !== null) conditions.push(`crop_id = ${bind(cropId)}`);
       const regionCode = filter.regionCode ?? null;
       if (regionCode !== null) conditions.push(`region_code = ${bind(regionCode)}`);
+      const state = filter.state ?? null;
+      // 等值收窄（后台 `?state=`）：走 `community_posts_visibility_created_idx` 的前缀列。
+      if (state !== null) conditions.push(`visibility = ${bind(state)}::visibility`);
+      const auditState = filter.auditState ?? null;
+      if (auditState !== null) conditions.push(`audit_state = ${bind(auditState)}::audit_state`);
       const after = filter.after ?? null;
       if (after !== null) {
         // keyset：与 `ORDER BY created_at DESC, id DESC` 同序；行比较在
