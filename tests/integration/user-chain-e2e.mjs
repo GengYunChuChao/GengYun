@@ -306,7 +306,16 @@ async function main() {
     mkdirSync(dirname(dataDir), { recursive: true });
     run(pgTool(pgBin, 'initdb'), ['-D', dataDir, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--locale=C']);
     // `-l <log>` 把 postgres 的 stdout/stderr 重定向到文件：⛔ 不要让守护进程继承本进程的管道句柄（会永久挂住）。
-    runDetached(pgTool(pgBin, 'pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', `-p ${port} -c listen_addresses=127.0.0.1`, 'start']);
+    // ⚠ Debian/Ubuntu 的 `postgresql-17` 把编译默认 `unix_socket_directories` 钉在 `/var/run/postgresql`，
+    //   普通用户（CI 里的 `runner`）写不了它 ⇒ `pg_ctl start` 直接
+    //   `FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.<port>.lock": Permission denied`
+    //   （Windows 没有 unix socket，本机永远复现不了）。故显式把 socket 目录指到**数据目录**，
+    //   且只对非 win32 加（Windows 上传 `-k` 会报错）。同仓 10+ 个脚本同一写法（各自的 `serverOptions()`）。
+    // ⚠ `-o` 只收**一个**字符串：把数组直接当 arg 传会被 `String()` 用 `,` 拼起来，postgres 会报
+    //   `FATAL: invalid value for parameter "port": "55902,-c"`（见 `media-row-purge-pg.mjs:157-159`）⇒ 必须 `join(' ')`。
+    const startOptions = [`-p ${port}`, '-c listen_addresses=127.0.0.1', '-c max_connections=32'];
+    if (process.platform !== 'win32') startOptions.push(`-k ${dataDir}`);
+    runDetached(pgTool(pgBin, 'pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', startOptions.join(' '), 'start']);
     clusterUp = true;
     // `pg_ctl` 与它派生的 postgres 都不给我们任何输出，就绪与否以「能不能连上」为准。
     await waitForReady(connectionString, 60000);
