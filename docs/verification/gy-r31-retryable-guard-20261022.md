@@ -89,7 +89,7 @@ git merge --no-ff 0eaf1bde     # #455 的 head；ort 策略，无冲突
 | --- | --- | --- | --- | --- |
 | `services/api/src/admin/ops/flag-gate.ts:394`（现 `:420`） | `failClosedError` | `failClosedRetryableFor(cause)` | 有判据（合法放宽） | **仍存在，仍有判据** |
 | `services/api/src/admin/ops/flags-pg.ts:317` | `mapFlagReadError` | `true` | **兜底恒 true（真缺陷）** | **已被 `#455` 修掉**：现 `:347` 为 `flagReadFailure(error)`（走 `isTransientDatabaseError`） |
-| `services/api/src/admin/ops/service.ts:650` | `flagReadFailure` → 改名 `throwFlagReadFailure` | `true` | **兜底恒 true（真缺陷）** | **已被 `#455` 修掉**：`throwFlagReadFailure`，委托同一判据 |
+| `services/api/src/admin/ops/service.ts:842` | `flagReadFailure` → 改名 `throwFlagReadFailure` | `true` | **兜底恒 true（真缺陷）** | **已被 `#455` 修掉**：`throwFlagReadFailure`，委托同一判据 |
 | `services/api/src/ocr/store-pg.ts:137` | `classifyOcrDatabaseError` | `isTransientDatabaseError(error)` | 有判据 | **仍存在，仍有判据** |
 | `services/api/src/ocr/store-pg.ts:424` | `tablesReady` | `true` | **确定性失败却声称可重试** | **已被 `#455` 修掉**：`retryable: false` + `details: PROBE_SHAPE_UNKNOWN`（站点不再是非 false） |
 | `services/api/src/recognitions/store-pg.ts:150` | `classifyRecognitionDatabaseError` | `isTransientDatabaseError(error)` | 有判据 | **仍存在，仍有判据** |
@@ -109,7 +109,7 @@ git merge --no-ff 0eaf1bde     # #455 的 head；ort 策略，无冲突
 | --- | --- | --- |
 | `admin/ops/flag-gate.ts:420` | 有判据 | `retryable` 由 `FlagGateFailCause` 决定（`flag-gate.ts:81-83` `failClosedRetryableFor`）：`read_error`（读取抛错＝存储抖动/超时）⇒ true；`unrecognized`（行缺失 / `enabled` 非布尔 / `key` 越界 / `revision` 非法＝配置或数据事故，需运维修复）⇒ false。复核结论原文见 `flag-gate.ts:372-381`。**这是「确定性失败必须 false」的正确样板**，守卫只钉表达式文本。 |
 | `admin/ops/flags-pg.ts:347` | 有判据（`#455` 修后） | 原判定是「兜底恒 true（真缺陷）」。`#455` 把尾部兜底改为委托同文件导出的 `flagReadFailure(error)`：直接走 `db/pool.ts` 的 `isTransientDatabaseError`（08xxx/53xxx/57P0x/40001/40P01 ⇒ true；无 `code` 的无法归类错误、其余 SQLSTATE ⇒ false），原始 `code` 落 `details` 供排障。 |
-| `admin/ops/service.ts:650` | 有判据（`#455` 修后） | 原判定是「兜底恒 true（真缺陷）」。`#455` 把本地兜底改为委托 `flags-pg.ts` 的同一判据，并把函数改名 `throwFlagReadFailure`（避免与判据重名）。同一功能面于是只有一套口径，与 `flag-gate.ts` 的 `read_error`/`unrecognized` 分档不再互相矛盾。 |
+| `admin/ops/service.ts:842` | 有判据（`#455` 修后） | 原判定是「兜底恒 true（真缺陷）」。`#455` 把本地兜底改为委托 `flags-pg.ts` 的同一判据，并把函数改名 `throwFlagReadFailure`（避免与判据重名）。同一功能面于是只有一套口径，与 `flag-gate.ts` 的 `read_error`/`unrecognized` 分档不再互相矛盾。 |
 | `ocr/store-pg.ts:137` | 有判据 | 与 `messages/favorites/history/community/conversations` 的 `classify*DatabaseError` 逐条同口径：57014/55P03 已在上方折成 `PROVIDER_TIMEOUT`，此处 `isTransientDatabaseError` 只放行 08xxx/53xxx/57P0x/40001/40P01；42501/3D000/28P01/42P01/42883 与无法归类一律 false（注释原文 `ocr/store-pg.ts:133-136`）。 |
 | `recognitions/store-pg.ts:150` | 有判据 | 与 ocr/speech 同一分类器、同一条分档注释（瞬时类 true；权限/缺表/缺函数/无法归类 false）。 |
 | `speech/store-pg.ts:122` | 有判据 | 与 ocr/recognitions 同一分类器、同一条分档注释。 |
@@ -150,7 +150,7 @@ git merge --no-ff 0eaf1bde     # #455 的 head；ort 策略，无冲突
 | --- | --- | --- |
 | `services/api/src/auth/wechat.ts:109` | `exchange` | **合理（端口契约使然）**。`code` 已换发出去、对方可能已受理，此时网络异常属 `PROVIDER_OUTCOME_UNKNOWN`：重试**可能**成功，而谎称失败会让用户重复登录、产生歧义。这里 `true` 是「结果未知」的语义，不是「兜底」；要收紧只能改成 `false` + 引导用同一 `state` 核对，属于登录链路的行为改动，不在守卫片范围。 |
 
-并入 `#455` 之前的另外 2 处 `none`（`admin/ops/flags-pg.ts:317`、`admin/ops/service.ts:650`）当时判定为**不合理（真缺陷）**：前者把「无法归类的驱动错误」也说成可重试，与同族分类器「无法归类 ⇒ false」的口径冲突；后者声称「传输/超时类按可重试」但代码看不见错误类型，且与同一功能面 `flag-gate.ts` 的分档互相矛盾。两条判定都已被 `#455` 的修复消解 —— 判定保留在 §4，修复事实见 §3。
+并入 `#455` 之前的另外 2 处 `none`（`admin/ops/flags-pg.ts:317`、`admin/ops/service.ts:842`）当时判定为**不合理（真缺陷）**：前者把「无法归类的驱动错误」也说成可重试，与同族分类器「无法归类 ⇒ false」的口径冲突；后者声称「传输/超时类按可重试」但代码看不见错误类型，且与同一功能面 `flag-gate.ts` 的分档互相矛盾。两条判定都已被 `#455` 的修复消解 —— 判定保留在 §4，修复事实见 §3。
 
 ## 6. 非空证明（两条，原文）
 

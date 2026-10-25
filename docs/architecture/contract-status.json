@@ -3287,7 +3287,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministrators",
-          "lines": "555-567"
+          "lines": "577-589"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3324,7 +3324,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministratorScopes",
-          "lines": "583-596"
+          "lines": "605-618"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
