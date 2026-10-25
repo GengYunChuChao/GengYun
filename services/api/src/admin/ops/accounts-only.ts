@@ -76,6 +76,16 @@ export interface RestrictToAccountsAuthorityOptions {
    * `tests/unit/admin-real-mode-fail-closed.test.mjs` 的 35 条反例因此一行不改仍成立。
    */
   readonly hidePostWired?: boolean;
+  /**
+   * **`#18` S2 PR-2 · 放行表第 5 条**：管理员目录与权限读面（`listAdministrators` /
+   * `listAdministratorScopes`）是否已接上**认证存储**的窄读。
+   * 只能由 `app.ts` 在**确实构造出** `AdminAdministratorsDirectory` 时置 `true`；默认 `false`
+   * ⇒ 两条操作继续 503（⛔ 不返回空页"平台没有管理员"、⛔ 不返回空数组"这个人没有权限"）。
+   *
+   * 判据仍是能力对象存在：`authStore` 是持久实现（`persistent === true`）才放行 ——
+   * 内存 store 只是 stub/preset_demo 的种子，real 模式下拿它回答等于伪造结论。
+   */
+  readonly administratorsWired?: boolean;
 }
 
 /**
@@ -100,6 +110,8 @@ export function restrictAdminOpsToAccountsAuthority(
   // 作业面同理：外壳拿到的是**端口对象本身**，未接线的默认端口自述 `wired: false`。
   // 只有真端口（`createPostgresAdminJobPort`）才会自述 `wired: true`，此时才放行读写。
   const jobsWired = inner.jobPort.wired === true;
+  // **放行表第 5 条**：管理员目录/权限读面只在调用方证明"认证存储是真实持久的"之后放行。
+  const administratorsWired = options.administratorsWired === true;
 
   return {
     // 如实暴露底层 store/jobPort，使"接线状态"仍可被测试与回归直接核对。
@@ -125,5 +137,10 @@ export function restrictAdminOpsToAccountsAuthority(
     // 转发的是 inner.hidePost 本身：错误映射（404/409/503）与审计口径仍由服务层决定，
     // ⛔ 本外壳不自己拼可见性、不自己发成功封套。
     hidePost: hidePostWired ? inner.hidePost : reject,
+    // **放行 5**（需 `administratorsWired: true`）：管理员目录与权限读面。
+    // 转发 inner 的两个方法本身：404/503 分工、出口闭集守卫、去重+码元序都仍由服务层决定，
+    // ⛔ 本外壳不自己拼 scope 数组、不自己发成功封套。
+    listAdministrators: administratorsWired ? inner.listAdministrators : reject,
+    listAdministratorScopes: administratorsWired ? inner.listAdministratorScopes : reject,
   };
 }

@@ -24,6 +24,7 @@ import { BOOTSTRAP_ADMIN_SCOPES, sessionInfo } from '../../services/api/src/auth
 import { OPS_SCOPES } from '../../services/api/src/admin/ops/service.ts';
 import { FAMILIES } from '../../services/api/src/admin/families.ts';
 import { AUDIT_LOG_SCOPE } from '../../services/api/src/admin/audit/catalog.ts';
+import { ADMIN_SCOPES } from '../../services/api/src/admin/scopes.ts';
 
 const OPENAPI_URL = new URL('../../packages/contracts/openapi.json', import.meta.url);
 const OPERATIONS_URL = new URL('../../packages/contracts/operations.json', import.meta.url);
@@ -37,6 +38,16 @@ const USER_SESSION_SCOPE = 'user';
 
 /** 路由访问标记：只出现在 `x-scope` / operations.json 的 `scope`，不可授予、不属于会话权限。 */
 const ACCESS_MARKERS = Object.freeze(['public', 'receipt']);
+
+/**
+ * 已声明、但**暂无 operation 引用**的后台权限。
+ *
+ * `scopes:write`（管理授权写面）属 PR-3：本片明令不得有写端点，`operations.json` 里自然没有
+ * 引用它的 operation；但库层 CHECK（迁移 0041 的 `admin_scopes_scope_closed_set`）与契约
+ * `SessionInfo.scopes.items.enum` 都已含它。若这里不补，③ 的「代码闭集」会缺一项而与契约对不上。
+ * 判据不是本测试自造集合，而是应用层唯一的闭集常量 `ADMIN_SCOPES`（`admin/scopes.ts`）。
+ */
+const DECLARED_ONLY_SCOPES = Object.freeze(['scopes:write']);
 
 const SESSION_INFO_KEYS = ['audience', 'expires_at', 'revision', 'scopes'];
 
@@ -83,6 +94,8 @@ function codeAdminScopes() {
   assert.equal(calls, literalCalls + constantRefs, '每处 requireScope 调用都必须被分类统计');
   return sorted([
     ...Object.values(OPS_SCOPES),
+    ...ADMIN_SCOPES,
+    ...DECLARED_ONLY_SCOPES,
     ...FAMILIES.flatMap((family) => [family.readScope, family.writeScope]),
     AUDIT_LOG_SCOPE,
     ...BOOTSTRAP_ADMIN_SCOPES,
@@ -166,7 +179,10 @@ async function readSession(app, url, token) {
 test('① 管理员：返回的权限就是该账号实际持有的闭集成员（逆序播种，多一个少一个都红）', async () => {
   const { app, store } = await adminHarness();
   const held = codeAdminScopes();
-  assert.equal(held.length, 11, '后台闭集应为 11 项（逐处核对后固化，变动须同步契约）');
+  assert.equal(held.length, 13, '后台闭集应为 13 项（逐处核对后固化，变动须同步契约）');
+  // 应用层闭集常量必须与「从真实代码逐处推导」的结果逐项相等：
+  // 常量是出口守卫（读面返回值不在闭集内就 503）的唯一依据，⛔ 不能与推导分叉。
+  assert.deepEqual([...ADMIN_SCOPES], held, 'admin/scopes.ts 的 ADMIN_SCOPES 必须等于代码推导闭集');
   // 逆序播种：输出顺序不能是播种顺序的副作用。
   await store.createAdmin({
     loginName: 'scope-full',
@@ -225,12 +241,25 @@ test('② 只读展示调用者自己：不含他人权限、不含访问标记�
   await app.close();
 });
 
-test('②b 契约侧没有「查他人权限」的入口（AdminAccountView 不带权限字段，D3/D4）', () => {
+test('②b 账号视图不夹带权限字段：查他人权限走独立只读端点，不混进账号视图（D3/D4）', () => {
   const openapi = readJson(OPENAPI_URL);
   const accountView = openapi.components.schemas.AdminAccountView;
   assert.ok(accountView, '契约必须仍声明 AdminAccountView');
   assert.deepEqual(Object.keys(accountView.properties).sort(), ['display_name', 'id', 'revision', 'state']);
-  assert.ok(!JSON.stringify(accountView).includes('"scopes"'), '账号视图不得携带 scopes（S1 不暴露他人权限）');
+  assert.ok(!JSON.stringify(accountView).includes('"scopes"'), '账号视图不得携带 scopes（查他人权限是独立端点，不靠加宽账号视图）');
+  // 独立的读面是**另一批对象**（`admin_accounts.id`），且只看 scope 字符串：
+  // ⛔ 不含 granted_by/granted_at（运行时角色对 admin_scopes 只有三列 SELECT）。
+  const scopesView = openapi.components.schemas.AdminAdministratorScopesView;
+  assert.ok(scopesView, '契约必须声明 AdminAdministratorScopesView');
+  assert.deepEqual(Object.keys(scopesView.properties), ['scopes']);
+  assert.equal(scopesView.additionalProperties, false);
+  const view = openapi.components.schemas.AdminAdministratorView;
+  assert.ok(view, '契约必须声明 AdminAdministratorView');
+  assert.deepEqual(Object.keys(view.properties).sort(), ['id', 'login_name', 'scopes', 'state']);
+  // 出口只留 scope 字符串数组：`granted_by`/`granted_at` 连属性位都没有（不是「暂时不返回」）。
+  const declared = new Set([...Object.keys(scopesView.properties), ...Object.keys(view.properties)]);
+  assert.ok(!declared.has('granted_by'), '读面不得声明 granted_by');
+  assert.ok(!declared.has('granted_at'), '读面不得声明 granted_at');
 });
 
 test('③ 闭集三方一致：代码实参 ↔ 契约 enum ↔ operations.json scope', () => {
@@ -238,16 +267,18 @@ test('③ 闭集三方一致：代码实参 ↔ 契约 enum ↔ operations.json 
   const contract = contractClosedSet();
   const manifest = manifestClosedSet();
 
-  assert.equal(codeClosedSet.length, 12, '闭集应为 12 项（11 个后台权限 + user）');
+  assert.equal(codeClosedSet.length, 14, '闭集应为 14 项（13 个后台权限 + user）');
   assert.deepEqual(contract, codeClosedSet, '契约 enum 必须与代码闭集逐项一致');
-  assert.deepEqual(manifest, codeClosedSet, 'operations.json 的 scope 闭集必须与代码闭集逐项一致');
+  // operations.json 只收「有 operation 引用」的 scope：`scopes:write` 属 PR-3 写面，本片不得有端点，
+  // 故补上已声明的写面权限后再对拍（补的是声明，不是放宽断言）。
+  assert.deepEqual(sorted([...manifest, ...DECLARED_ONLY_SCOPES]), codeClosedSet, 'operations.json 的 scope 闭集必须与代码闭集逐项一致');
   assert.equal(new Set(contract).size, contract.length, '契约闭集不得重复');
   assert.deepEqual([...contract].sort(), contract, '契约闭集须按码元序（保证响应顺序稳定）');
   for (const marker of ACCESS_MARKERS) {
     assert.ok(!contract.includes(marker), `访问标记 ${marker} 不得进入会话权限闭集（D2）`);
   }
   assert.deepEqual(
-    ['accounts:read', 'accounts:suspend', 'audit:read', 'flags:read', 'flags:write', 'jobs:cancel', 'jobs:read', 'session:logout', 'session:read', 'sources:read', 'sources:write', 'user'],
+    ['accounts:read', 'accounts:suspend', 'audit:read', 'flags:read', 'flags:write', 'jobs:cancel', 'jobs:read', 'scopes:read', 'scopes:write', 'session:logout', 'session:read', 'sources:read', 'sources:write', 'user'],
     contract,
     '闭集成员须逐项对照（此处为人工复核后的快照，改动即有意识）',
   );

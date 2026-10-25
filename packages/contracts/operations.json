@@ -744,6 +744,20 @@
       "version_required": true
     },
     {
+      "id": "listAdministrators",
+      "path": "/admin/administrators",
+      "method": "get",
+      "scope": "scopes:read",
+      "version_required": false
+    },
+    {
+      "id": "listAdministratorScopes",
+      "path": "/admin/administrators/{id}/scopes",
+      "method": "get",
+      "scope": "scopes:read",
+      "version_required": false
+    },
+    {
       "id": "listAdminJobs",
       "path": "/admin/jobs",
       "method": "get",

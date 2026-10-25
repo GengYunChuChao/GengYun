@@ -68,6 +68,15 @@ export interface AuthStore {
 
   findAdminByLoginName(loginName: string): Promise<AdminCredentialRecord | null>;
   getAdmin(adminId: string): Promise<AdminRecord | null>;
+  /**
+   * 全部后台账号的最小视图（`#18` S2 PR-2 的管理员目录读面用）。
+   *
+   * 只含 `AdminRecord` 已有字段（`id / loginName / state / authEpoch / revision`）：
+   * ⛔ 不含 `credential_hash`。列全部落在运行时角色的既有列授权内
+   * （`services/api/db/roles/auth_privacy.sql:27`），**不新增任何授权**。
+   * 后台管理员是受控初始化的少量账号，故一次全量读；分页由服务层对数组切片负责。
+   */
+  listAdmins(): Promise<AdminRecord[]>;
   listAdminScopes(adminId: string): Promise<string[]>;
   countAdmins(): Promise<number>;
   createAdmin(input: CreateAdminInput): Promise<string>;
@@ -165,6 +174,18 @@ export function createMemoryAuthStore(): AuthStore {
       const admin = admins.get(adminId);
       if (admin === undefined) return null;
       return { id: admin.id, loginName: admin.loginName, state: admin.state, authEpoch: admin.authEpoch, revision: admin.revision };
+    },
+    async listAdmins() {
+      // 顺序固定为 id 码元序，与 PG 实现的 `ORDER BY id ASC` 逐字一致：游标分页才有可复现的位置。
+      return [...admins.values()]
+        .map((admin) => ({
+          id: admin.id,
+          loginName: admin.loginName,
+          state: admin.state,
+          authEpoch: admin.authEpoch,
+          revision: admin.revision,
+        }))
+        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
     },
     async listAdminScopes(adminId) {
       return [...(adminScopes.get(adminId) ?? new Set<string>())].sort();
@@ -339,6 +360,13 @@ export function createPostgresAuthStore(sql: SqlExecutor): AuthStore {
       );
       const row = rows[0];
       return row === undefined ? null : toAdmin(row);
+    },
+    async listAdmins() {
+      // 五列全在运行时角色的既有列授权内（`auth_privacy.sql:27`）；⛔ 不读 `credential_hash`。
+      const { rows } = await sql.query(
+        'SELECT id, login_name, state, auth_epoch, revision FROM admin_accounts ORDER BY id ASC',
+      );
+      return rows.map(toAdmin);
     },
     async listAdminScopes(adminId) {
       const { rows } = await sql.query(

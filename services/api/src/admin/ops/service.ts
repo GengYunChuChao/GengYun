@@ -1,6 +1,9 @@
 /**
- * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 10 个 operationId**）。
+ * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 12 个 operationId**）。
  * 第 10 个是本片新增的 `listFlagAuditEvents`（开关变更留痕 A→B，迁移 0027 提供读函数）。
+ * 第 11、12 个是 `#18` S2 PR-2 新增的 `listAdministrators`（管理员目录）与
+ * `listAdministratorScopes`（只读展示**他人**权限）；两者门都是 `scopes:read`，
+ * 数据源是认证存储的既有窄读，见 `administrators.ts`。
  *
  * 本文件**只做服务端**：不注册路由、不改 `app.ts`、不改 `apps/admin/**`、不改小程序、
  * 不改 `services/api/src/community/**`（只读依赖）。
@@ -48,6 +51,8 @@ import { createUnwiredAdminJobPort } from './jobs.ts';
 import { createHidePostAdapter } from './community-posts.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
+import type { AdminAdministratorsDirectory, AdministratorView } from './administrators.ts';
+import { isAdminScope } from '../scopes.ts';
 import { flagReadFailure, type FeatureFlagsPort, type FlagAuditRow } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
@@ -109,6 +114,15 @@ export interface AdminOpsServiceOptions {
    */
   accountsDirectory?: AdminAccountsDirectory | null;
   /**
+   * 管理员**目录与权限读面**（`#18` S2 PR-2 接线：`administrators.ts` 复用认证存储）。
+   * 给了它 ⇒ `listAdministrators` 读真实 `admin_accounts`（`id` 是**管理员**账号 id）、
+   * `listAdministratorScopes` 读真实 `admin_scopes`（只 `SELECT scope`），404/503 分明；
+   * 缺省/`null` ⇒ 这两个操作**一律 503** `PROVIDER_UNAVAILABLE`（`retryable: false`），
+   * ⛔ 不返回空数组/空页（空页会被读成"平台没有管理员"、空数组会被读成"这个人没有任何权限"，
+   * 都是本进程无权下的伪造结论）。
+   */
+  administrators?: AdminAdministratorsDirectory | null;
+  /**
    * 真实开关端口（GY-I18 接线，`flags-pg.ts`）。给了它 ⇒ `listFlags`/`setFlag` 的**读写都走库**：
    * 读面从 `public.feature_flags` 取三行（缺行/多行/闭集外 ⇒ 503 fail-closed，**不**返回三键全 false），
    * 写面经 `commitIfCurrent` 单事务 CAS + 审计。未给 ⇒ 与既有口径逐字一致地走内存 store
@@ -134,7 +148,7 @@ export interface AdminOpsService {
   readonly jobPort: AdminJobPort;
   /** 账号面是否已接线到认证权威（`false` ⇒ 账号读/写面 503 fail-closed）；供测试与接线回归直接核对。 */
   readonly accountsWired: boolean;
-  /** 本片实现的 operationId 全集（应恰好 9 个）。 */
+  /** 本片实现的 operationId 全集（应恰好 11 个）。 */
   readonly operationIds: readonly string[];
 
   listAdminCategories(ctx: AdminCallContext, query?: PageQuery): Promise<ServiceResponse<PageEnvelope<CategoryView>>>;
@@ -156,9 +170,31 @@ export interface AdminOpsService {
    * 未接线 ⇒ 503 `PROVIDER_UNAVAILABLE`（`retryable: false`），**不返回空页**。
    */
   listFlagAuditEvents(ctx: AdminCallContext, query?: PageQuery): Promise<ServiceResponse<PageEnvelope<FlagAuditRow>>>;
+
+  /**
+   * 管理员目录（`#18` S2 PR-2）：`GET /admin/administrators`。
+   *
+   * 存在的理由不是"列表好看"，而是**写面需要 `admin_accounts.id`**：既有 `GET /admin/accounts`
+   * 读的是 `public.users`（`0021_admin_accounts_read.sql`），给不出管理员账号 id，
+   * 授权端点 `.../administrators/:id/scopes` 的目标就无从取得。故本列表的 `id` **必须**是
+   * `admin_accounts.id`，与 `users.id` 同名不同源。
+   *
+   * 每项 `{id, login_name, state, scopes}`；未接线 ⇒ 503（**不返回空页**）。
+   */
+  listAdministrators(ctx: AdminCallContext, query?: PageQuery): Promise<ServiceResponse<PageEnvelope<AdministratorView>>>;
+
+  /**
+   * 管理员权限读面（`#18` S2 PR-2）：`GET /admin/administrators/:id/scopes`。
+   *
+   * - 返回体**只含 scope 字符串数组**（`data.scopes`），⛔ 无 `granted_by`/`granted_at`（见
+   *   `administrators.ts` 的授权面说明），也**不发 ETag**（权限集合无独立修订号）；
+   * - 目标不存在 ⇒ `NOT_FOUND`(404)；读面未接线 ⇒ `PROVIDER_UNAVAILABLE`(503, `retryable: false`)；
+   * - 门是 `scopes:read`，⛔ 与 `accounts:read` 无关（裁定④）；自查继续走会话接口。
+   */
+  listAdministratorScopes(ctx: AdminCallContext, id: string): Promise<ServiceResponse<SingleEnvelope<{ scopes: string[] }>>>;
 }
 
-/** 本片 operationId（机读形式，供测试断言"恰好 10 个、不越界"）。 */
+/** 本片 operationId（机读形式，供测试断言"恰好 12 个、不越界"）。 */
 export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -170,6 +206,8 @@ export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'setFlag',
   'listFlagAuditEvents',
   'hidePost',
+  'listAdministrators',
+  'listAdministratorScopes',
 ]);
 
 /** 契约 scope（来自 `packages/contracts/operations.json`）。 */
@@ -184,6 +222,9 @@ export const OPS_SCOPES = Object.freeze({
   setFlag: 'flags:write',
   listFlagAuditEvents: 'flags:read',
   hidePost: 'sources:write',
+  // `#18` S2 PR-2：读他人权限。⛔ 不是 `accounts:read`（裁定④：两者是不同能力）。
+  listAdministrators: 'scopes:read',
+  listAdministratorScopes: 'scopes:read',
 });
 
 interface Identified {
@@ -234,6 +275,9 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // 判据是**能力对象存在**（`app.ts` 只在真的构造出 `createPostgresAccountsDirectory()` 时传），
   // ⛔ 不读任何自述持久化布尔标志。
   const accountsDirectory: AdminAccountsDirectory | null = options.accountsDirectory ?? null;
+  // 管理员目录/权限读面（`#18` S2 PR-2）：判据同样是**能力对象存在**（`app.ts` 只在真的构造出
+  // `createAuthStoreAdministratorsDirectory()` 时传），⛔ 不读任何自述持久化布尔标志。
+  const administrators: AdminAdministratorsDirectory | null = options.administrators ?? null;
   const flagsPort: FeatureFlagsPort | null = options.flagsPort ?? null;
   const now = options.now ?? (() => new Date());
   const executionMode: ExecutionMode = options.executionMode ?? 'stub';
@@ -444,6 +488,111 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     }
     requireWiredAccountAuthority();
     return pageOf(context, store.listAccounts(), query, 'accounts', byId);
+  }
+
+  /**
+   * 出口守卫：库层读回来的 scope 必须落在**应用层闭集**内（`admin/scopes.ts` 的 `ADMIN_SCOPES`）。
+   *
+   * 一条越界（历史遗留值、手改过的行、或未来迁移先落地而应用层没跟上）就让整条读面 503：
+   * ⛔ 不静默丢弃该条（丢弃会让"权限不明"被读成"没有这项权限"）、
+   * ⛔ 不原样照抄给调用方（照抄会让契约 enum 被库里的脏值突破）。
+   * 形态与 `assertAccountsInContract()` 同口径：注入的是**能力对象**，出口要自己守。
+   */
+  function assertScopesInClosedSet(scopes: readonly string[]): void {
+    for (const scope of scopes) {
+      if (!isAdminScope(scope)) {
+        throw new ApiError(
+          'PROVIDER_UNAVAILABLE',
+          `管理员权限读面返回的 scope 不在闭集内：${String(scope)}`,
+          { retryable: false },
+        );
+      }
+    }
+  }
+
+  /**
+   * 规范化输出：去重 + 码元序（与 `sessionInfo()` 对会话 scope 的口径**逐字相同**），
+   * 使"自查接口"与"查他人接口"对同一集合给出同一个数组，而不是按存储插入序漂移。
+   */
+  function normalizeScopes(scopes: readonly string[]): string[] {
+    assertScopesInClosedSet(scopes);
+    return [...new Set(scopes)].sort();
+  }
+
+  /** `admin_state` 库层闭集（`0001_initial_schema.sql:16`）；契约枚举照此声明，越界即 503。 */
+  const ADMIN_STATES: readonly string[] = Object.freeze(['active', 'suspended']);
+
+  /**
+   * 出口守卫（管理员目录）：`admin_state` 库层只有两个成员（`0001_initial_schema.sql:16`
+   * `CREATE TYPE admin_state AS ENUM ('active','suspended')`），契约照库层声明 ⇒ 越界即 503，
+   * ⛔ 不折叠成 `active`、⛔ 不丢行（丢行会把"有管理员但状态未知"读成"平台没有管理员"）。
+   */
+  function assertAdministratorsInContract(items: readonly AdministratorView[]): void {
+    for (const item of items) {
+      if (!ADMIN_STATES.includes(item.state)) {
+        throw new ApiError(
+          'PROVIDER_UNAVAILABLE',
+          `管理员目录返回的 state 不在契约闭集内：${String(item.state)}`,
+          { retryable: false },
+        );
+      }
+      if (typeof item.login_name !== 'string' || item.login_name.length === 0) {
+        throw new ApiError('PROVIDER_UNAVAILABLE', '管理员目录返回的 login_name 为空', { retryable: false });
+      }
+    }
+  }
+
+  /**
+   * 管理员目录（`#18` S2 PR-2）：`GET /admin/administrators`。
+   *
+   * 为什么不复用 `listAdminUsers`：那个面读 `public.users`（终端用户），`id` 是 `users.id`；
+   * 授权端点的目标只能来自 `admin_accounts.id`，两者同名不同源。混用会把"给某终端用户授权"
+   * 当成合法请求发出去（裁定③明令禁止）。
+   *
+   * 残余限制（如实声明）：目录一次全表读 `admin_accounts`，再逐个 `listAdminScopes`（1+N 条
+   * 窄查询）；管理员是受控初始化的少量账号，分页在服务层对数组切片，**不是** SQL 侧分页。
+   */
+  async function listAdministrators(ctx: AdminCallContext, query: PageQuery = {}) {
+    const context = resolveContext(ctx, OPS_SCOPES.listAdministrators);
+    if (administrators === null) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '管理员目录尚未接线到认证权威', { retryable: false });
+    }
+    const items = await administrators.list();
+    assertAdministratorsInContract(items);
+    const normalized = items.map((item) => ({ ...item, scopes: normalizeScopes(item.scopes) }));
+    return pageOf(context, normalized, query, 'administrators', byId);
+  }
+
+  /**
+   * 管理员权限**读面**（`#18` S2 PR-2）：`GET /admin/administrators/:id/scopes`。
+   *
+   * 与 `listAdminUsers` 的分工：那个面读**终端用户**（`public.users`，路径 `/admin/accounts`），
+   * 本面读**后台管理员**（`admin_accounts` + `admin_scopes`，路径 `/admin/administrators`）。
+   * 裁定③明令两者的 id 不得混用，故不复用 `/admin/accounts/{id}` 的形状。
+   *
+   * 门是 `scopes:read`，⛔ **不是** `accounts:read`（裁定④：持 `accounts:read` 不自动获得查看
+   * 他人权限的能力）。自查继续走会话接口（`GET /admin/auth/session`），本片不另造。
+   *
+   * 顺序（与 `suspendUser` 的既有口径一致："形态校验先于接线状态"）：
+   *   `resolveContext`（401/400/403）→ `normalizeIdParam`（400）→ 未接线 503 → 读（404/200）。
+   * 校验放前面，是为了让"非法 id"在运维未接线时仍然报 400，而不是被 503 顶掉。
+   *
+   * 响应**不发 ETag**：`admin_scopes` 没有自己的修订号，`admin_accounts.revision` 涨落只代表
+   * 账号行（state/auth_epoch）变过，拿它当权限集合的强 ETag 会把"账号行没变"说成"权限集合没变"。
+   */
+  async function listAdministratorScopes(ctx: AdminCallContext, id: string) {
+    const context = resolveContext(ctx, OPS_SCOPES.listAdministratorScopes);
+    const normalizedId = normalizeIdParam(id);
+    if (administrators === null) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '管理员权限读面尚未接线到认证权威', { retryable: false });
+    }
+    const snapshot = await administrators.read(normalizedId);
+    if (snapshot === null) {
+      // 存在性由 `getAdmin()` 判定（内存 store 的 `listAdminScopes` 对未知 id 返回 `[]`，
+      // 拿它判存在会把"没有这个管理员"读成"这个人没有任何权限"）。
+      throw new ApiError('NOT_FOUND', '管理员不存在');
+    }
+    return singleResponse(context, executionMode, 200, { scopes: normalizeScopes(snapshot.scopes) }, null);
   }
 
   async function suspendUser(ctx: AdminCallContext, id: string, body: unknown) {
@@ -953,6 +1102,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     setFlag,
     listFlagAuditEvents,
     hidePost,
+    listAdministrators,
+    listAdministratorScopes,
   };
 }
 

@@ -277,7 +277,7 @@
 
 **结论：全部走 `guards.requireAdmin`，无裸路由。**
 
-守卫来源：`services/api/src/routes/admin.ts:145` 收 `guards: AuthGuards`，`:166-167` 定义
+守卫来源：`services/api/src/routes/admin.ts:158` 收 `guards: AuthGuards`，`:179-180` 定义
 `readGuards = { preHandler: [guards.requireAdmin, guards.requireScope(descriptor.readScope)] }`、
 `writeGuards = { preHandler: [guards.requireAdmin, guards.requireScope(descriptor.writeScope)] }`。
 
@@ -290,7 +290,7 @@
 | `admin.ts:192-207` | `/admin/knowledge` 6 条 | 同构（`knowledge.readGuards/writeGuards`） |
 | `admin.ts:212-227` | `/admin/registrations` 6 条 | 同构 |
 | `admin.ts:232-247` | `/admin/restrictions` 6 条 | 同构 |
-| `admin.ts:256` | GET `/admin/audit-events` | `requireAdmin + requireScope('audit:read')` |
+| `admin.ts:269` | GET `/admin/audit-events` | `requireAdmin + requireScope('audit:read')` |
 | `admin.ts:268/273` | GET `/admin/categories`、PATCH `/admin/categories/:id` | `requireAdmin + OPS_SCOPES.listAdminCategories/editCategory` |
 | `admin.ts:289/294` | GET `/admin/accounts`、POST `/admin/accounts/:id/suspend` | `listAdminUsers/suspendUser` |
 | `admin.ts:312/317` | GET `/admin/jobs`、POST `/admin/jobs/:id/cancel` | `listAdminJobs/cancelAdminJob` |

@@ -76,8 +76,8 @@ export const REVIEW_CODE_ANCHORS = Object.freeze([
   },
   {
     file: 'services/api/src/admin/ops/service.ts',
-    start: 155,
-    end: 165,
+    start: 197,
+    end: 211,
     mustInclude: ['OPS_OPERATION_IDS'],
   },
 ]);
