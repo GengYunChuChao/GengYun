@@ -39,7 +39,7 @@
 
 | 功能点 | 关键行号 | 说明 |
 | --- | --- | --- |
-| 驳回的 HTTP 路由 | `services/api/src/community/service.ts:1735` | `reReviewContent` 在 `services/api/src` 内只被定义、未被任何路由注册；全仓非 docs 命中都在测试 |
+| 驳回的 HTTP 路由 | `services/api/src/community/service.ts:1735` | `reReviewContent` 在 `services/api/src` 内只被定义（定义行即左列那一行）、未被任何路由注册；**除该定义行本身外**，全仓非 docs 命中都在测试 |
 | 写 `audit_state='rejected'` 的落点 | `services/api/src/community/service.ts:1774-1781` | 唯一**落库**写入口：`services/api/src/community/service.ts:1790-1798` 才提交；读面报 `rejected` 走实时投影、不落库也不发通知（`services/api/src/community/service.ts:583-616`） |
 | 驳回时的通知 | `services/api/src/community/service.ts:696-699` | 注释原文「被拒的写入请求**不投递**：那条 revision 从未落库」 |
 | 驳回时连内容都不写 | `services/api/src/community/moderation-link.ts:37` | 表格行原文：驳回 `vetoed` ⇒ **不落库**（400）+ 读取面退出公开面 |
