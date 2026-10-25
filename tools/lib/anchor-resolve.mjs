@@ -123,23 +123,154 @@ export function braceBlockEnd(text, openIndex) {
   return -1;
 }
 
-/** Index of the block body `{` that belongs to a declaration line, or -1 for a body-less line. */
-function blockBodyIndex(text, lineStart) {
-  let index = lineStart, paren = 0, lineBreaks = 0;
-  while (index < text.length && lineBreaks <= 20) {
+/**
+ * 候选块体 `{` 之后出现这些记号，说明这一行的**签名还没写完**，刚跳过的那个 `{ ... }` 只是签名里的一段：
+ *   `:` 返回类型／变量类型／属性类型；`=` 赋值右值、默认值、箭头；
+ *   `{` 后面还有一个真正的块体（前一个 `{ ... }` 是类型字面量）；
+ *   `|` `&` 联合／交叉类型继续；`<` `>` 泛型参数收尾（`Promise<{ items: Row[] }>` 的 `>`）。
+ */
+const SIGNATURE_CONTINUES = Object.freeze(new Set([':', '=', '{', '|', '&', '<', '>']));
+
+/**
+ * 光标停在这些记号上时本行**没写完**，下一行还是同一语句（`const x =`、`a +`、`f(` …）。
+ * 反之停在 `)`、`]`、`}`、标识符上，在**无分号（ASI）**文件里就是语句结束——这是 ASI 的判据。
+ */
+const CONTINUES_STATEMENT = Object.freeze(new Set([
+  '=', '+', '-', '*', '/', '%', '&', '|', '^', '!', '<', '>', '?', ':', ',', '.', '(', '[', '{', '~',
+]));
+
+/** 找块体时从声明行起最多看这么多行。预算按**行**算，且块内换行照样计入。 */
+const MAX_SCAN_LINES = 20;
+
+/** [from, to) 里的换行数。 */
+function countNewlines(text, from, to) {
+  let count = 0;
+  for (let index = from; index < to; index += 1) if (text[index] === '\n') count += 1;
+  return count;
+}
+
+/** 跳过空白与注释后的下一个有效字符；到文件尾返回 ''。 */
+function nextSignificantChar(text, start) {
+  let index = start;
+  while (index < text.length) {
     const char = text[index];
-    if (char === '\n') { lineBreaks += 1; index += 1; continue; }
-    if (char === '"' || char === "'") { index = skipQuoted(text, index, char); continue; }
-    if (char === '`') { index = skipTemplate(text, index); continue; }
+    if (char === ' ' || char === '\t' || char === '\r' || char === '\n') { index += 1; continue; }
     if (char === '/' && text[index + 1] === '/') { index = skipLineComment(text, index); continue; }
     if (char === '/' && text[index + 1] === '*') { index = skipBlockComment(text, index); continue; }
-    if (char === '(' || char === '[') { paren += 1; index += 1; continue; }
-    if (char === ')' || char === ']') { if (paren > 0) paren -= 1; index += 1; continue; }
-    if (char === ';' && paren <= 0) return -1; // 先遇到语句结束：这条声明没有块体
-    if (char === '{') return index;
-    index += 1;
+    return char;
   }
-  return -1;
+  return '';
+}
+
+/**
+ * 声明行里的候选块体：从行首扫到语句结束、ASI 换行、或行预算用尽。
+ * 每个 `{` 记一个候选并**整块跳过**（块内部的花括号不会被当候选），同时记下它所在的括号深度、
+ * 以及闭括号之后的第一个有效记号——后半段是判「参数解构／类型字面量」还是「真块体」的唯一依据。
+ *
+ * 两条硬约束（由 `miniprogram/pages/messages/messages.js:175` 那一类误归属促成）：
+ *   - **ASI**：无分号文件里，括号深度为 0、且光标停在「语句已完整」的记号上时，下一非空行若以
+ *     标识符／关键字开头就是**新语句**，立刻停——不许把下一条语句里的 `{` 当块体；
+ *   - **行预算**：块内换行照样计入（`index = close + 1` 之后不许重新起算）。否则跳过一个几十行的块
+ *     等于白送几十行预算，扫描能一路跨到别的方法上去。
+ *
+ * ⛔ ASI 判据里**不许有「本行已经出现过 `{` 就不再判 ASI」这类全局 latch**：声明行本身常含对象字面量
+ * （`const decision = …decide({`、`const ops = a || (b = {})`、`…filter(function (e) { … })[0]`），
+ * 一置真就把 ASI 永久关掉，扫描照样跨语句抓后面的块，再被「语句级候选立即返回」抢占
+ * （实测 `voice.js:571-574 → decision(566-575)`、`profile.js:67 → ops(64-75)`、
+ *  `messages.js:268-294 → item(267-276)` 六条误命中）。判据只看**当前行的括号深度**：
+ * 只有 `paren === 0` 且 `after` 不是续写记号的 `{` 才算本语句的块。
+ *
+ * 语句级（括号深度 0）且闭括号后不是签名续写记号的候选**一出现就返回**：它就是块体，不必再往远处找；
+ * 也正因如此，行预算只约束「被跳过的块」，不会误伤函数体本身有几千行的情况。
+ */
+function bodyCandidates(text, lineStart) {
+  const candidates = [];
+  let index = lineStart, paren = 0, line = 0, lastSignificant = '';
+  /** 跳过一段（字符串/模板/注释/块）后把其中的换行计入预算，超预算即停。 */
+  const skipSpan = (start, end) => {
+    line += countNewlines(text, start, end);
+    return line > MAX_SCAN_LINES;
+  };
+  while (index < text.length && line <= MAX_SCAN_LINES) {
+    const char = text[index];
+    if (char === ' ' || char === '\t' || char === '\r') { index += 1; continue; }
+    if (char === '\n') {
+      // ASI：括号深度 0、且停在「语句已完整」的记号上，下一行以标识符／关键字开头 ⇒ 新语句。
+      // （不设任何「本行出现过 `{`」的 latch——那会把无分号文件里的跨语句抓块放回来。）
+      if (paren === 0 && !CONTINUES_STATEMENT.has(lastSignificant)
+        && /[A-Za-z_$]/.test(nextSignificantChar(text, index + 1))) break;
+      line += 1;
+      index += 1;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      const end = skipQuoted(text, index, char);
+      if (skipSpan(index, end)) break;
+      lastSignificant = char;
+      index = end;
+      continue;
+    }
+    if (char === '`') {
+      const end = skipTemplate(text, index);
+      if (skipSpan(index, end)) break;
+      lastSignificant = '`';
+      index = end;
+      continue;
+    }
+    if (char === '/' && text[index + 1] === '/') { index = skipLineComment(text, index); continue; }
+    if (char === '/' && text[index + 1] === '*') {
+      const end = skipBlockComment(text, index);
+      if (skipSpan(index, end)) break;
+      index = end;
+      continue;
+    }
+    if (char === '(' || char === '[') { paren += 1; index += 1; lastSignificant = char; continue; }
+    if (char === ')' || char === ']') { if (paren > 0) paren -= 1; index += 1; lastSignificant = char; continue; }
+    if (char === ';' && paren <= 0) break; // 先遇到语句结束：这条声明没有块体
+    if (char === '{') {
+      const close = braceBlockEnd(text, index);
+      if (close < 0) break; // 配不平：不许假装定位到了，交给调用方按「没有块体」处理
+      const after = nextSignificantChar(text, close + 1);
+      // 只有「括号深度 0 且后面不是签名续写记号」的 `{` 才配当本语句的块体。
+      if (paren === 0 && !SIGNATURE_CONTINUES.has(after)) return [{ open: index, paren, after }];
+      candidates.push({ open: index, paren, after });
+      if (skipSpan(index, close)) break; // 跳过的块里的换行也计入预算，不许重新起算
+      lastSignificant = '}';
+      index = close + 1;
+      continue;
+    }
+    index += 1;
+    lastSignificant = char;
+  }
+  return candidates;
+}
+
+/**
+ * 哪个 `{` 是这条声明的块体：返回 `{open, fallback}`，没有块体时 `open` 为 -1。
+ *
+ * 修复前这里是「从声明行起遇到第一个 `{` 就返回」，于是三类声明全被算错（`tests/unit/anchor-resolve-block.test.mjs`）：
+ *   ① 参数解构 `export function buildApp({ config, ... }: BuildAppOptions) { ... }` —— 第一个 `{` 是解构模式，
+ *      块被算成声明行本身（单行块）。真实实例：`services/api/src/app.ts`。
+ *   ② 类型字面量 `function f(): { a: 1 } { ... }` / `const x: { a: 1 } = { ... }` / `Promise<{ items: Row[] }>`。
+ *   ③ 只补「括号深度必须为 0」也不行：路由回调的块体本来就在调用括号内
+ *      （`app.get('/x', async (req, reply) => { ... })`、`registerX(app, ..., { ... })`）。
+ *
+ * 分三档取：
+ *  1) **语句级候选优先**（括号深度 0）且闭括号之后不是签名续写记号：函数的块体、class/interface/type 的体、
+ *     `const x = { ... }` 的对象都在这一档。
+ *  2) 没有上面那种，才取括号内的候选：调用括号里的回调体／对象实参——不能因为它们「不在括号深度 0」被判成没有块体。
+ *  3) 全都不合格时**回退到第一个 `{`**（= 修复前的行为）并打 `bodyFallback` 标记：宁可把「块体可能不准」
+ *     标出来给人看，也不把原本能解析的符号变成 NO_BLOCK（那会让 `verify-contract-status` 整体 exit 1，
+ *     等于用这个解析器的改动去改另一道门禁的口径）。
+ */
+function locateBlockBody(text, lineStart) {
+  const candidates = bodyCandidates(text, lineStart);
+  if (candidates.length === 0) return { open: -1, fallback: false };
+  const statementLevel = candidates.find(candidate => candidate.paren === 0 && !SIGNATURE_CONTINUES.has(candidate.after));
+  if (statementLevel !== undefined) return { open: statementLevel.open, fallback: false };
+  const nested = candidates.find(candidate => !SIGNATURE_CONTINUES.has(candidate.after));
+  if (nested !== undefined) return { open: nested.open, fallback: false };
+  return { open: candidates[0].open, fallback: true };
 }
 
 const lineStarts = text => {
@@ -153,17 +284,21 @@ const lineText = (text, starts, line) => {
   return text.slice(start, end < 0 ? text.length : end).replace(/\r$/, '');
 };
 
-/** 该声明行**自己**的块体（不向上找）：`{start,end}` 或 null。 */
+/**
+ * 该声明行**自己**的块体（不向上找）：`{start,end}` 或 null。
+ * 块体判定只能靠 `locateBlockBody` 的三档（见其注释）；走了兜底回退时结果会带 `bodyFallback: true`，
+ * 调用方必须把它当成「块体可能不准」报出来，不许静默当对块用。
+ */
 export function declarationBlock(text, line, starts = lineStarts(text)) {
   if (!(line >= 1 && line <= starts.length)) return null;
   if (!isDeclarationLine(lineText(text, starts, line))) return null;
-  const open = blockBodyIndex(text, starts[line - 1]);
+  const { open, fallback } = locateBlockBody(text, starts[line - 1]);
   if (open < 0) return null;
   const close = braceBlockEnd(text, open);
   if (close < 0) return null;
   const endLine = text.slice(0, close).split('\n').length;
   if (endLine < line) return null;
-  return { start: line, end: endLine };
+  return fallback ? { start: line, end: endLine, bodyFallback: true } : { start: line, end: endLine };
 }
 
 /** Enclosing declaration block `{start,end,fallback}` of a 1-based hit line. */
@@ -250,4 +385,47 @@ export function resolveSymbolBlock(text, symbol) {
     };
   }
   return { ...empty, status: 'OK', hits, candidates, reason: '' };
+}
+
+/**
+ * 一份源码里所有**声明块**（按起始行升序）：`{start, end, symbol, bodyFallback?}`。
+ * 供「按每个引用的位置分别关联」的统计口径使用；不参与任何退出码。
+ * 走兜底回退的块带 `bodyFallback: true`，调用方必须把它当「块体可能不准」报出来。
+ */
+export function declarationBlocks(text) {
+  const starts = lineStarts(text);
+  const blocks = [];
+  for (let line = 1; line <= starts.length; line += 1) {
+    const block = declarationBlock(text, line, starts);
+    if (block === null) continue;
+    blocks.push({ ...block, symbol: declarationName(lineText(text, starts, line)) });
+  }
+  return blocks;
+}
+
+/**
+ * 把一个**引用位置**（`from`-`to`，1-based 行号）关联到唯一的声明块。返回 `{status, block, reason}`：
+ *  - `hit`         唯一的最内层声明块覆盖整段 `from-to`；
+ *  - `checkable`   唯一的最内层声明块覆盖了 `from`，但区间越过了块尾（符号确定、范围不确定）；
+ *  - `undecidable` 没有块覆盖该行，或最内层块并列无法定序 —— **不猜、不算通过**。
+ * 判定只认「覆盖该行的块里，没有被别的块严格包含的那一个」；不是最内层就不算关联成功，
+ * 否则同一个位置能同时属于两个符号，等于把猜测当结论。
+ */
+export function associateSymbol(blocks, { from, to }) {
+  const containing = blocks.filter(block => block.start <= from && from <= block.end);
+  if (containing.length === 0) return { status: 'undecidable', reason: '该行不在任何声明块内' };
+  const innermost = containing.filter(block => !containing.some(other => (
+    other !== block && other.start >= block.start && other.end <= block.end
+    && (other.start > block.start || other.end < block.end)
+  )));
+  if (innermost.length !== 1) {
+    return {
+      status: 'undecidable',
+      candidates: innermost,
+      reason: `覆盖该行的声明块并列、无法定序（${innermost.length} 个：${innermost.map(block => `${block.start}-${block.end}`).join('、')}）`,
+    };
+  }
+  const block = innermost[0];
+  if (to > block.end) return { status: 'checkable', block, reason: `引用区间超出所在声明块（第 ${block.start}-${block.end} 行）` };
+  return { status: 'hit', block, reason: '' };
 }
