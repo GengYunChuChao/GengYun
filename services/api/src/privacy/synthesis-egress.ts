@@ -48,12 +48,12 @@ export const SYNTHESIS_LEDGER_DATA_TYPE = 'checked_content';
 /*
  * 账本**对象类型** = 该条已核对正文的**真实内容类型**本身（`checked_content_ref.type`：
  * `answer`/`scheme`/`herbicide`/`species`/`static_region`/`dose_card`，闭集见
- * `services/api/src/tts/state.ts:53-60`，6 值全部在契约 `TargetRef.type` 的 16 值枚举内）。
+ * `services/api/src/tts/state.ts:53-60`，6 值全部在契约 `TargetRef.type` 的 17 值枚举内）。
  *
  * 为什么不再用常量 `checked_content`：`checked_content` 是**资料维度**（`data_type`，见
  * `SYNTHESIS_LEDGER_DATA_TYPE` 与 `packages/privacy/constants.mjs:45`），不是外发对象的实体类型。它被写进
  * `exports.object_type` 后会被 `/me/exports` 原样投影成契约 `object_ref.type`
- * （`packages/privacy/egress.mjs:388`），而 `TargetRef.type` 的 16 值闭集里没有它
+ * （`packages/privacy/egress.mjs:388`），而 `TargetRef.type` 的 17 值闭集里没有它
  * ⇒ 越枚举，整页投影失败（503）。改成真实内容类型后，(type,id) 二元组本身就能唯一
  * 定位对象，**不再需要**把类型编进 object_key 来区分同名 id。
  */

@@ -135,7 +135,7 @@ test('输入闸门不通过时，规则一条都不算求值（"没跑"≠"通�
   }
 });
 
-test('未覆盖的 target type：全部 16 个契约类型中，未声明覆盖的一律隔离', async () => {
+test('未覆盖的 target type：全部 17 个契约类型中，未声明覆盖的一律隔离', async () => {
   const { TARGET_TYPES, COVERED_TARGET_TYPES } = await import('../../packages/moderation/constants.mjs');
   const uncovered = TARGET_TYPES.filter((type) => !COVERED_TARGET_TYPES.includes(type));
   assert.ok(uncovered.length > 0, '至少应存在未覆盖类型以证明该闸门有效');

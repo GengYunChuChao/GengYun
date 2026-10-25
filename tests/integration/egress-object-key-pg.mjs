@@ -668,7 +668,7 @@ try {
   assert.equal(state, 'succeeded');
   const row = await exportRowFor(p.id);
   assert.ok(row !== null, '必须落账');
-  // GY-R35：`object_type` 是契约 `TargetRef.type` 的 16 值闭集成员 —— 取该条正文的**真实内容类型**
+  // GY-R35：`object_type` 是契约 `TargetRef.type` 的 17 值闭集成员 —— 取该条正文的**真实内容类型**
   // （`answer`），不再用资料维度名 `checked_content`（它是 `data_type`：只参与"必需哪些用途"的判定，
   // 不是对象类型，也从不落库到 exports 行上）。
   assert.equal(row.object_type, 'answer');

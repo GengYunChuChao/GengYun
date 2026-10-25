@@ -2,21 +2,32 @@
 //
 // 缺陷回顾：账本行被 `/me/exports` 原样投影成 `Export.object_ref`
 // （`packages/privacy/egress.mjs:388`：`type: record.objectType, id: record.objectId`），
-// 而契约 `TargetRef.type` 是 16 值闭集、`TargetRef.id` 是 `minLength: 1 / maxLength: 80`。
+// 而契约 `TargetRef.type` 是闭集、`TargetRef.id` 是 `minLength: 1 / maxLength: 80`。
 // 写入侧过去会写两个闭集外的类型（`conversation_turn` / `checked_content`），历史行由迁移
 // `services/api/db/migrations/0040_export_object_key_contract_backfill.sql` 回填。
+//
+// 2026-10-25 二轮（监工 R1）：两者的处置**不一样**。
+//   · `conversation_turn` 是**真实实体**——一次问答外发记的是轮次（id = 轮次 id、revision =
+//     轮次 revision，见 `services/api/src/conversations/service.ts:1105-1106`）。正确修法是把
+//     类型/标识/版本三者对齐，而不是把类型改写成近似容器 `conversation`（那会让 `object_ref`
+//     变成"容器类型 + 轮次 id + 轮次 revision"的错配）。契约 `TargetRef.type` 因此补了
+//     `conversation_turn` 成员（16 → 17 值）。
+//   · `checked_content` 是**资料维度**名（`exports.data_type`），不是对象类型 ⇒ 回填时改写成
+//     该条正文的真实内容类型（六值闭集）。
+//   裁定见 `.pg17/ruling-r34-exports-turn-identity-20261025.md`。
 //
 // 本文件钉的是**不变量**，逐条对应片自证要求：
 //   ① 契约镜像双向逐字相等 —— `EXPORT_OBJECT_TYPES` ⇄ `TargetRef.type.enum`（手写镜像，无生成器）；
 //   ② 长度上限同一个数 —— `EXPORT_OBJECT_ID_MAX` === `TargetRef.id.maxLength` === 写入侧 `OBJECT_KEY_MAX`；
-//   ③ 两个**旧的越界类型**各一条负例（`conversation_turn`、`checked_content`）⇒ `PROVIDER_UNAVAILABLE`；
+//   ③ `checked_content` 仍是**闭集外**取值 ⇒ `PROVIDER_UNAVAILABLE`；`conversation_turn` 已是
+//      **闭集内**成员 ⇒ 必须原样投影（类型/标识/版本同源，不许再近似改写）；
 //   ④ 去前缀后的裸 id：80 字符通过 / 81 字符拒绝 / 空串拒绝（契约 `minLength`）；
 //   ⑤ `media` 维行不受影响（`object_id` 真实 uuid、`object_key IS NULL` 的方言）—— 原样投影。
 //   ⑥ 写入侧源码不再产出闭集外类型（`checked_content` 的**合法**用途只剩 `data_type` 维度）。
 //
-// 否定方案（不要"修"成这两样，实测都会让整页 503）：
-//   · 扩契约枚举迁就账本（终态不允许，且账本会被反向绑死）；
-//   · 投影 fail-closed 到"跳过坏行"（整页 `page.items.map(toContractExport)` 单条抛错即整页 503）。
+// 仍被否定的方案（实测会让整页 503 或伪造读数）：
+//   · 投影 fail-closed 到"跳过坏行"（整页 `page.items.map(toContractExport)` 单条抛错即整页 503）；
+//   · 为了让旧标签"合法"而把轮次 id 标成容器类型 `conversation`（那是改审计引用的真实含义）。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -52,12 +63,12 @@ const MEDIA_RECORD = Object.freeze({
 });
 const unavailable = (err) => err instanceof PrivacyError && err.code === 'PROVIDER_UNAVAILABLE';
 
-test('契约镜像①：EXPORT_OBJECT_TYPES 与 TargetRef.type 双向逐字相等（16 值，含顺序）', () => {
-  assert.equal(CONTRACT_TYPES.length, 16, '契约 TargetRef.type 应是 16 值闭集');
+test('契约镜像①：EXPORT_OBJECT_TYPES 与 TargetRef.type 双向逐字相等（17 值，含顺序）', () => {
+  assert.equal(CONTRACT_TYPES.length, 17, '契约 TargetRef.type 应是 17 值闭集（含 2026-10-25 补入的 conversation_turn）');
   assert.deepEqual([...EXPORT_OBJECT_TYPES], [...CONTRACT_TYPES], '镜像必须逐字同序，多/少/改名都会让读面与契约脱节');
-  // 反向逐值存在性：上面 deepEqual 已覆盖，这里再钉一次"不许有第 17 个值"。
+  // 反向逐值存在性：上面 deepEqual 已覆盖，这里再钉一次"不许有第 18 个值"。
   for (const type of EXPORT_OBJECT_TYPES) assert.ok(CONTRACT_TYPES.includes(type), `镜像里多出契约外取值：${type}`);
-  assert.ok(Object.isFrozen(EXPORT_OBJECT_TYPES), '闭集必须冻结，防止运行期被塞进第 17 个值');
+  assert.ok(Object.isFrozen(EXPORT_OBJECT_TYPES), '闭集必须冻结，防止运行期被塞进第 18 个值');
 });
 
 test('契约镜像②：id 上限 80 是同一个数（契约 maxLength === EXPORT_OBJECT_ID_MAX === 写入侧 OBJECT_KEY_MAX）', () => {
@@ -89,9 +100,17 @@ test('投影①：media 行原样投影，不受本片改写影响', () => {
   assert.equal(exported.object_ref.id, MEDIA_RECORD.objectId, 'media 维的 id 就是 object_id（不走 object_key）');
 });
 
-test('投影②：conversation_turn 是闭集外取值 ⇒ PROVIDER_UNAVAILABLE（不许原样透传）', () => {
-  assert.ok(!EXPORT_OBJECT_TYPES.includes('conversation_turn'));
-  assert.throws(() => toContractExport({ ...MEDIA_RECORD, objectType: 'conversation_turn' }), unavailable);
+test('投影②：conversation_turn 是闭集内成员（轮次实体）⇒ 原样投影，类型/标识/版本同源', () => {
+  const turnId = '1f0e2d3c-0000-4000-8000-0000000000cd';
+  const exported = toContractExport({
+    ...MEDIA_RECORD,
+    objectType: 'conversation_turn',
+    objectId: turnId,
+    objectRevision: 5,
+  });
+  assert.deepEqual(exported.object_ref, { type: 'conversation_turn', id: turnId, revision: 5 });
+  // 反向钉：真正不在闭集里的名字必须拒绝，否则"补一个成员"就等于闭集失去意义。
+  assert.throws(() => toContractExport({ ...MEDIA_RECORD, objectType: 'turn' }), unavailable);
 });
 
 test('投影③：checked_content 是闭集外取值 ⇒ PROVIDER_UNAVAILABLE（它是 data_type，不是对象类型）', () => {
@@ -118,10 +137,10 @@ test('投影⑤：空 id / 非字符串 id / 非字符串 type 一律拒绝（�
   assert.throws(() => toContractExport({ ...MEDIA_RECORD, state: 'succeeded' }), unavailable);
 });
 
-test('写入侧①：task-egress 写 conversation + 裸 id（不再有 conversation_turn / turn: 前缀）', () => {
-  assert.match(TASK_EGRESS, /export const CHAT_EGRESS_OBJECT_TYPE = 'conversation';/);
-  // 判据只看**代码**（注释里保留 `conversation_turn` / `turn:` 是在解释"为什么不用它们"，不算产出）。
-  assert.ok(!/=\s*'conversation_turn'/.test(TASK_EGRESS), '写入侧不得再写闭集外的 conversation_turn');
+test('写入侧①：task-egress 写 conversation_turn + 裸轮次 uuid（保留真实身份，不再有 turn: 前缀）', () => {
+  assert.match(TASK_EGRESS, /export const CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn';/);
+  // 判据只看**代码**：常量取值必须是闭集内成员，且不得再退回近似容器类型。
+  assert.ok(!/=\s*'conversation'\s*;/.test(TASK_EGRESS), '写入侧不得把轮次标成容器类型 conversation');
   assert.ok(!/`turn:\$\{/.test(TASK_EGRESS), '键不得再带 turn: 前缀（它白占 id 预算，读侧会原样当 object_ref.id）');
   assert.match(TASK_EGRESS, /const objectKey = String\(input\.objectId\)\.toLowerCase\(\);/);
 });

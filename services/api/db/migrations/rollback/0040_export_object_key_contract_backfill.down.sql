@@ -4,7 +4,7 @@
 -- **只回滚约束，不回滚数据**。0040 的回填把
 --   `object_type='conversation_turn'` + `object_key='turn:<uuid>'` 改成了 `conversation` + `<uuid>`、
 --   `object_type='checked_content'` + `object_key='<内容类型>:<id>'` 改成了 `<内容类型>` + `<id>`。
--- 这些新取值是**契约口径**（`TargetRef.type` 的 16 值闭集 + `id` ≤ 80），回退会把库重新写回
+-- 这些新取值是**契约口径**（`TargetRef.type` 的 17 值闭集 + `id` ≤ 80），回退会把库重新写回
 -- 闭集外取值 —— 那正是 0040 修掉的缺陷（`/me/exports` 整页 503）。而且去前缀后信息不唯一可逆
 -- （`conversation` 下会话 id 与轮次 id 同域），无法逐行还原。
 -- ⇒ 需要「回到旧口径」时，正确的动作是**回滚应用版本**而不是回滚数据；库层闸门放宽到 1..128，

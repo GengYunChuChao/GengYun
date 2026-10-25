@@ -4,7 +4,7 @@
  * 契约来源（`packages/contracts/openapi.json`，本片只读消费、不新增字段/路径）：
  *   - `AuditState` = pending | approved | rejected | quarantined（闭集 4 值）
  *   - `Visibility` = private | published | hidden | deleted（闭集 4 值）
- *   - `TargetRef`  = { type(16 值闭集), id(1..80), revision(≥1) }
+ *   - `TargetRef`  = { type(17 值闭集), id(1..80), revision(≥1) }
  *   - `Moderation` = { id, target_ref, decision, reason_codes(≤30，每条 1..80),
  *                      hard_rule_passed, model_version(1..80), prompt_version(1..80), rule_version(1..80) }
  *   - `Job`/`JobResult`：`kind: 'moderation'` ⇒ `ModerationResult = { kind:'moderation', value: Moderation }`
@@ -17,7 +17,7 @@
  * **服务端受信 seam**（`callback.ts`），不是一条新路由。
  */
 
-/** 契约 `TargetRef.properties.type.enum`（16 值，逐项一致）。 */
+/** 契约 `TargetRef.properties.type.enum`（17 值，逐项一致）。 */
 export const TARGET_REF_TYPES = [
   'species',
   'herbicide',
@@ -29,7 +29,7 @@ export const TARGET_REF_TYPES = [
   'answer',
   'post',
   'comment',
-  'conversation',
+  'conversation', 'conversation_turn',
   'dose_card',
   'media',
   'synthesis',

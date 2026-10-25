@@ -12,7 +12,7 @@
  *     不保存受限正文缩略」一致：消息本体**不携带目标正文**，可跳转性只由
  *     `reference_state` 表达。因此本片**不伪造**标题/正文/actor，也不为其造替身。
  *   - `Message.type`：闭集 `comment|like|moderation|system`。
- *   - `TargetRef`：三字段全必填；`type` 闭集 16 项（见 `TARGET_REF_TYPES`）、
+ *   - `TargetRef`：三字段全必填；`type` 闭集 17 项（见 `TARGET_REF_TYPES`）、
  *     `id` 1..80、`revision` 整数 ≥1。
  *   - `ReferenceState`：闭集 `available|unavailable`（与 `packages/contracts/states.json`
  *     的 `states.ReferenceState` 同值；语义见 `services/api/src/messages/reference.ts`）。
@@ -30,7 +30,7 @@ export type MessageType = (typeof MESSAGE_TYPES)[number];
 export const REFERENCE_STATES = ['available', 'unavailable'] as const;
 export type ReferenceState = (typeof REFERENCE_STATES)[number];
 
-/** openapi.json -> TargetRef.type（16 项闭集，不得扩展）。 */
+/** openapi.json -> TargetRef.type（17 项闭集，不得扩展）。 */
 export const TARGET_REF_TYPES = [
   'species',
   'herbicide',
@@ -42,7 +42,7 @@ export const TARGET_REF_TYPES = [
   'answer',
   'post',
   'comment',
-  'conversation',
+  'conversation', 'conversation_turn',
   'dose_card',
   'media',
   'synthesis',

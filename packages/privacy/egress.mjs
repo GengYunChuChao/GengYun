@@ -359,7 +359,7 @@ export function createEgressConsumer({ ledger, transport, executionMode, logSink
  * 也不输出一个**自相矛盾**的账本条目（与 services/api 的 PG 读取层同口径）。
  *
  * `object_ref` 的判据（GY-R35）：`objectType` 必须落在 `EXPORT_OBJECT_TYPES`（= 契约
- * `TargetRef.type` 的 16 值闭集）、`objectId` 长度为 `1..EXPORT_OBJECT_ID_MAX`（= `TargetRef.id`
+ * `TargetRef.type` 的 17 值闭集）、`objectId` 长度为 `1..EXPORT_OBJECT_ID_MAX`（= `TargetRef.id`
  * 的 `minLength`/`maxLength`）。这两条是**读面最后一道闸门**：写入侧已改成只产出契约取值
  * （`conversation` / 六值正文类型，键为裸 id ≤ 80），历史行由迁移 0040 回填；这里若放行
  * 闭集外的值，`/me/exports` 就会继续吐出契约校验不过的条目。

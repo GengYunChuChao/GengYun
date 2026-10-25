@@ -174,19 +174,19 @@ export function createMediaJobEgress(deps: {
  * 为什么不用 `media`：媒体维要求 `object_id` 是 uuid 且 `dataType ∈ MEDIA_PURPOSES`，
  * 问答的资料类型是**非媒体维**的 `checked_content`（唯一闭集成员，其必需用途恰为
  * `external_inference`），对象标识必须走 `object_key`。因此对象维度按
- * `conversation` + `object_key = <turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
+ * `conversation_turn` + `object_key = <turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
  *
- * 为什么是 `conversation` 而不是 `conversation_turn`（GY-R35 写入侧改写）：账本行的
- * `object_type` 会被 `/me/exports` 原样投影成契约 `object_ref.type`
- * （`packages/privacy/egress.mjs:388`），而 `TargetRef.type` 是 16 值闭集
- * （`packages/contracts/openapi.json:11551-11570`），**没有**「轮次」这一实体类型 ——
- * 域外的值会让整页投影失败（503）。轮次属于会话，故取最贴近的容器类型。
- *
- * **已知代价（接受）**：`object_type='conversation'` 下会同时存在「会话 id」与「轮次 id」
- * 两种 `object_key`。两者都是 uuid、语义上都可读，读面只按 (type,id) 二元组原样投影，
- * 不存在把会话 id 误判成轮次 id 的判据；这是让轮次外发仍能如实记账而付的最小代价。
+ * 为什么是 `conversation_turn`（2026-10-25 二轮，监工 R1 否决了近似容器类型）：账本行会被
+ * `/me/exports` 原样投影成契约 `object_ref.type`（`packages/privacy/egress.mjs:388`），
+ * 而一次问答外发记的是**轮次**——`objectId` 是轮次 id、`objectRevision` 是**轮次** revision
+ * （`services/api/src/conversations/service.ts:1105-1106` 传的是 `claimed.id` / `claimed.revision`）。
+ * 若把类型写成容器 `conversation`，`object_ref` 就成了「会话类型 + 轮次 id + 轮次 revision」的错配：
+ * 类型、标识、版本不再指向同一真实实体。轮次是契约实体 `Turn`（id / revision），
+ * 因此契约 `TargetRef.type` 补了 `conversation_turn` 这一成员（16 → 17 值），
+ * 读面按枚举成员原样投影，不再做近似映射。裁定见
+ * `.pg17/ruling-r34-exports-turn-identity-20261025.md`。
  */
-export const CHAT_EGRESS_OBJECT_TYPE = 'conversation';
+export const CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn';
 
 /**
  * 非媒体维对象键的既有限制（`ledger-pg.ts` 的 `OBJECT_KEY`：1..80 小写字母/数字/`_-.`/`:`）。
