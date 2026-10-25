@@ -211,7 +211,11 @@ test('抽取口径：URL 与 IP:端口不是仓内引用，`路径:单行` 与 `
 test('基线 stale 反查：`tools/doc-anchors-baseline.json` 每条都必须仍然命中（修好一条就要求删一行）', () => {
   const baseline = loadBaseline(REPO_ROOT);
   assert.equal(baseline.missing, false, `${baseline.path} 必须受版本控制存在（它是门禁的一部分，不是本地产物）`);
-  assert.ok(baseline.entries.length >= 50, `基线只有 ${baseline.entries.length} 条：清空基线的效果是让所有历史遗留变成「新增」而整片红，不是修好它们`);
+  // 数量下限只防"把基线清空"。它不能当作"历史遗留条数不许下降"的守卫：
+  // 清空基线的真实后果是这些遗留全部变成「基线外新增」⇒ --strict 立刻红，并不会被静默吃掉；
+  // 因此把下限钉在固定数字，只会惩罚"真的把遗留修好"的 PR（2026-10-25 锚点批 A/B 修好 79 条后
+  // 从 92 条降到 13 条，撞到这个固定数字）。这里只要求基线非空，且下面仍逐条反查 stale。
+  assert.ok(baseline.entries.length >= 1, `基线被清空了（${baseline.entries.length} 条）：清空会让所有遗留变成「新增」而整片红，不是修好它们`);
 
   const { findings, stats } = collectFindings({ root: REPO_ROOT });
   assert.ok(stats.documents >= 100, `只扫到 ${stats.documents} 份文档，扫描面可能被改坏了`);

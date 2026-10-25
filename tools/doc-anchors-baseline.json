@@ -4,184 +4,16 @@
   "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
-      "path": ".../auth_privacy.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".../auth_privacy.sql:5"
-    },
-    {
-      "path": ".pg17/handoff/device-fullchain-a4-2044.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-fullchain-a4-2044.md:308-361"
-    },
-    {
-      "path": ".pg17/handoff/device-retest-final-2156.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-retest-final-2156.md:6"
-    },
-    {
-      "path": ".pg17/handoff/device-smoke-round3-1937.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-smoke-round3-1937.md:18"
-    },
-    {
-      "path": ".pg17/handoff/device-smoke-round3-1937.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/device-smoke-round3-1937.md:39-48"
-    },
-    {
-      "path": ".pg17/handoff/recon-issue1-2-close-readiness.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/handoff/recon-issue1-2-close-readiness.md:235"
-    },
-    {
-      "path": ".pg17/note-issue168-achieved-2026-10-15.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/note-issue168-achieved-2026-10-15.md:5-22"
-    },
-    {
-      "path": ".pg17/note-issue171-user-confirmed.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/note-issue171-user-confirmed.md:7-13"
-    },
-    {
-      "path": ".pg17/STATE-current.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": ".pg17/STATE-current.md:17"
-    },
-    {
-      "path": "audit-demo-parity-20261018.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "audit-demo-parity-20261018.md:63"
-    },
-    {
-      "path": "audit-issue-closure-20261018.md",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "audit-issue-closure-20261018.md:320-330"
-    },
-    {
-      "path": "deletion-registration.test.mjs",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "deletion-registration.test.mjs:186-188"
-    },
-    {
-      "path": "dist/styles.css",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "dist/styles.css:1"
-    },
-    {
-      "path": "experiment-locking.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "experiment-locking.sql:67"
-    },
-    {
-      "path": "nc1-fake-store-pg.ts",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "nc1-fake-store-pg.ts:3"
-    },
-    {
-      "path": "pg-protocol/dist/parser.js",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "pg-protocol/dist/parser.js:306"
-    },
-    {
-      "path": "pg-protocol/dist/parser.js",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "pg-protocol/dist/parser.js:306"
-    },
-    {
-      "path": "pg-raise.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "pg-raise.sql:14"
-    },
-    {
-      "path": "probe-reverse-control.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "probe-reverse-control.sql:19"
-    },
-    {
-      "path": "probe-reverse-control.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "probe-reverse-control.sql:52"
-    },
-    {
-      "path": "probe-reverse-control.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "probe-reverse-control.sql:81"
-    },
-    {
       "path": "sasl.js",
       "reason": "BROKEN",
       "owner": "repo",
       "reference": "sasl.js:67"
     },
     {
-      "path": "services/api/db/seeds/seed_reference.sql",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "services/api/db/seeds/seed_reference.sql:5-11"
-    },
-    {
-      "path": "services/api/src/db/roles/auth_privacy.sql",
-      "reason": "BROKEN",
-      "owner": "api-server",
-      "reference": "services/api/src/db/roles/auth_privacy.sql:59-66"
-    },
-    {
-      "path": "services/api/src/jobs/store.ts",
-      "reason": "BROKEN",
-      "owner": "api-server",
-      "reference": "services/api/src/jobs/store.ts:5-5"
-    },
-    {
-      "path": "services/api/src/media/media.ts",
-      "reason": "BROKEN",
-      "owner": "api-server",
-      "reference": "services/api/src/media/media.ts:467"
-    },
-    {
       "path": "services/api/src/ocr/retryable-proof-scratch.ts",
       "reason": "BROKEN",
       "owner": "api-server",
       "reference": "services/api/src/ocr/retryable-proof-scratch.ts:6"
-    },
-    {
-      "path": "tests/unit/fixtures/sql-column-coverage/nc1-fake-store-pg.ts",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "tests/unit/fixtures/sql-column-coverage/nc1-fake-store-pg.ts:3"
-    },
-    {
-      "path": "tests/unit/fixtures/sql-column-coverage/nc4-fake-store-pg.ts",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "tests/unit/fixtures/sql-column-coverage/nc4-fake-store-pg.ts:2"
-    },
-    {
-      "path": "tests/unit/zz-probe-hardcoded-anchor.test.mjs",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "tests/unit/zz-probe-hardcoded-anchor.test.mjs:4"
     },
     {
       "path": "WAServiceMainContext.js",
@@ -196,18 +28,6 @@
       "reference": "WASubContext.js:1"
     },
     {
-      "path": "zz-probe-hardcoded-anchor.test.mjs",
-      "reason": "BROKEN",
-      "owner": "repo",
-      "reference": "zz-probe-hardcoded-anchor.test.mjs:4"
-    },
-    {
-      "path": "deploy/postgres-cvm/backup-postgres.sh",
-      "reason": "OUT_OF_RANGE",
-      "owner": "deploy",
-      "reference": "deploy/postgres-cvm/backup-postgres.sh:268"
-    },
-    {
       "path": "README.md",
       "reason": "OUT_OF_RANGE",
       "owner": "repo",
@@ -220,64 +40,10 @@
       "reference": "README.md:459"
     },
     {
-      "path": "services/api/db/migrations/0010_knowledge_read_views.sql",
-      "reason": "OUT_OF_RANGE",
-      "owner": "repo",
-      "reference": "services/api/db/migrations/0010_knowledge_read_views.sql:3-34"
-    },
-    {
-      "path": "services/api/src/messages/store-pg.ts",
-      "reason": "OUT_OF_RANGE",
-      "owner": "api-server",
-      "reference": "services/api/src/messages/store-pg.ts:99999"
-    },
-    {
-      "path": "services/api/src/privacy/ledger-pg.ts",
-      "reason": "OUT_OF_RANGE",
-      "owner": "api-server",
-      "reference": "services/api/src/privacy/ledger-pg.ts:99999"
-    },
-    {
-      "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
-      "reason": "SUSPECT",
-      "owner": "deploy",
-      "reference": "verify-cvm-postgres.sh:186"
-    },
-    {
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
       "reason": "SUSPECT",
       "owner": "deploy",
       "reference": "verify-cvm-postgres.sh:326"
-    },
-    {
-      "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
-      "reason": "SUSPECT",
-      "owner": "deploy",
-      "reference": "verify-cvm-postgres.sh:352"
-    },
-    {
-      "path": "docs/evaluation/README.md",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/evaluation/README.md:76"
-    },
-    {
-      "path": "docs/evaluation/real-samples-weeds-docx.md",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "real-samples-weeds-docx.md:249"
-    },
-    {
-      "path": "docs/moderation/http-layer.md",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/moderation/http-layer.md:204"
-    },
-    {
-      "path": "docs/pr-review-policy.md",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/pr-review-policy.md:23"
     },
     {
       "path": "docs/verification/gy-i09-identify-loop-20261011.md",
@@ -298,190 +64,10 @@
       "reference": "messages.js:195"
     },
     {
-      "path": "miniprogram/pages/voice/voice.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/pages/voice/voice.js:392"
-    },
-    {
-      "path": "miniprogram/pages/voice/voice.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/pages/voice/voice.js:392"
-    },
-    {
-      "path": "miniprogram/utils/auth.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "utils/auth.js:205"
-    },
-    {
-      "path": "miniprogram/utils/history-api.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/utils/history-api.js:157"
-    },
-    {
-      "path": "miniprogram/utils/history-api.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/utils/history-api.js:193"
-    },
-    {
-      "path": "miniprogram/utils/history-api.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/utils/history-api.js:274"
-    },
-    {
-      "path": "miniprogram/utils/messages-api.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/utils/messages-api.js:36"
-    },
-    {
-      "path": "miniprogram/utils/reference.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "miniprogram/utils/reference.js:1006"
-    },
-    {
-      "path": "packages/evaluation/samples/README.md",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/evaluation/samples/README.md:27"
-    },
-    {
-      "path": "services/api/src/conversations/screen.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "screen.ts:152"
-    },
-    {
       "path": "services/api/src/conversations/screen.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "services/api/src/conversations/screen.ts:152"
-    },
-    {
-      "path": "services/api/src/conversations/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/service.ts:1107"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "conversations/store-pg.ts:87"
-    },
-    {
-      "path": "services/api/src/conversations/store.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/store.ts:156"
-    },
-    {
-      "path": "services/api/src/favorites/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "favorites/store-pg.ts:68"
-    },
-    {
-      "path": "services/api/src/media/object-store.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/media/object-store.ts:132"
-    },
-    {
-      "path": "services/api/src/ocr/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/service.ts:295"
-    },
-    {
-      "path": "services/api/src/routes/community.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/community.ts:200-200"
-    },
-    {
-      "path": "services/api/src/routes/community.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/community.ts:210-210"
-    },
-    {
-      "path": "services/api/src/routes/community.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/community.ts:222-222"
-    },
-    {
-      "path": "services/api/src/routes/community.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/community.ts:231-231"
-    },
-    {
-      "path": "services/api/src/routes/community.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/community.ts:240-240"
-    },
-    {
-      "path": "services/api/src/routes/favorites.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/favorites.ts:87"
-    },
-    {
-      "path": "services/api/src/routes/messages.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "routes/messages.ts:42"
-    },
-    {
-      "path": "services/api/src/routes/messages.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/messages.ts:42"
-    },
-    {
-      "path": "services/api/src/tts/provider.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/provider.ts:301"
-    },
-    {
-      "path": "services/api/src/tts/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/tts/service.ts:652"
-    },
-    {
-      "path": "tests/integration/account-suspend-pg.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/integration/account-suspend-pg.mjs:199"
-    },
-    {
-      "path": "tests/integration/backup-purge-pg.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/integration/backup-purge-pg.mjs:440"
-    },
-    {
-      "path": "tests/integration/catalog-pg.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/integration/catalog-pg.mjs:125"
-    },
-    {
-      "path": "tests/integration/migrations-negative-pg.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "migrations-negative-pg.mjs:198"
     },
     {
       "path": "tests/integration/ocr-jobs-pg.mjs",
@@ -490,70 +76,10 @@
       "reference": "tests/integration/ocr-jobs-pg.mjs:848"
     },
     {
-      "path": "tests/integration/recognition-chain-e2e.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/integration/recognition-chain-e2e.mjs:120"
-    },
-    {
-      "path": "tests/integration/user-chain-e2e.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/integration/user-chain-e2e.mjs:287"
-    },
-    {
-      "path": "tests/moderation/model-ports.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/moderation/model-ports.test.mjs:156"
-    },
-    {
-      "path": "tests/unit/gy-i22-identity-headers.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/gy-i22-identity-headers.test.mjs:567"
-    },
-    {
-      "path": "tests/unit/knowledge-api.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/knowledge-api.test.mjs:101"
-    },
-    {
-      "path": "tests/unit/miniprogram-favorites-history.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "miniprogram-favorites-history.test.mjs:141"
-    },
-    {
-      "path": "tests/unit/recognitions-candidates-selection.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/recognitions-candidates-selection.test.mjs:529"
-    },
-    {
-      "path": "tests/unit/release-materials-index.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/release-materials-index.test.mjs:145"
-    },
-    {
       "path": "tests/unit/tts-jobs-http.test.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/unit/tts-jobs-http.test.mjs:129"
-    },
-    {
-      "path": "tests/unit/tts-jobs-http.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/tts-jobs-http.test.mjs:129"
-    },
-    {
-      "path": "tests/unit/user-data-deletion.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/user-data-deletion.test.mjs:127"
     }
   ]
 }
