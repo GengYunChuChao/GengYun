@@ -823,7 +823,7 @@ test('G8：messages-api.js 头部注释不再称「端口未接线／reference_s
   //    闭集扩容时这条断言会红，避免注释里的 14 变成手写常量。
   const block = source.slice(source.indexOf('const TARGET_REF_TYPES')).split(']')[0];
   const types = block.match(/'[a-z_]+'/g) || [];
-  assert.equal(types.length, 16, 'TargetRef.type 闭集仍是 16 项');
+  assert.equal(types.length, 17, 'TargetRef.type 闭集是 17 项（含 conversation_turn，与契约同序）');
   assert.ok(head.includes('其余 ' + (types.length - 2) + ' 型恒为 `unavailable`'),
     '注释里的「其余 N 型」必须等于闭集条数减 2（只有 post/comment 可能 available）');
 

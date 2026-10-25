@@ -393,7 +393,7 @@ test('消息：Message 键集恰 7 项／闭集／时间戳不符即 INVALID_RES
     ['created_at 非法时间戳', msg({ created_at: '2026-10-16 04:00' })],
     ['read_at 非 null 且非时间戳', msg({ read_at: 'now' })],
     ['target_ref 缺 revision', msg({ target_ref: { type: 'post', id: 'post-1' } })],
-    ['target_ref.type 不在 17 项闭集', msg({ target_ref: { type: 'poster', id: 'post-1', revision: 1 } })],
+    ['target_ref.type 不在客户端闭集', msg({ target_ref: { type: 'poster', id: 'post-1', revision: 1 } })],
     ['无目标却声称 target 可用（服务端 fail-closed 不变式）', msg({ target_ref: null, reference_state: 'available' })],
   ];
   for (const [label, item] of cases) {
