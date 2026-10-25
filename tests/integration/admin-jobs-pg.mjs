@@ -12,6 +12,8 @@
  *        拆掉人为故障后同一作业能真取消（证明失败没留锁/占位/半提交）
  *   [E] submissions_enabled 关 ⇒ POST /posts 409 OBJECT_UNAVAILABLE(FLAG_CLOSED) + 零新增行；开 ⇒ 放行；
  *       同一 app 实例关→开→关立刻生效（反证读面无跨请求缓存）
+ *   [T] 作业 `target_ref.revision` 取**记录表的真实 revision**（SPEC-S5 片 S-4）：记录行 revision=5
+ *       ⇒ 列表/端口回 5（作业 revision 仍 2）；无记录的作业仍回初始版本 1；取消前后 target_ref 全等
  *
  * 用法：`node tests/integration/admin-jobs-pg.mjs [ownerUrl] [runtimeUrl]`
  *   ownerUrl 缺省 `postgres://postgres@127.0.0.1:5432/gengyun_admin_jobs_test`（只允许回环 + 硬钉库名）。
@@ -1067,10 +1069,14 @@ try {
   // [F] 作业台列表服务端过滤（本片新增；独立场景段，定义见文件末尾）。
   await jobsFilterArm(app, fullAdmin.token, user.id);
 
+  // [T] 作业 target_ref.revision 真实化（SPEC-S5 S-4；独立场景段，定义见文件末尾）。
+  //     放在 [F] 之后：本臂会追加两行作业，[F] 的「5 条全量」断言因此不受影响。
+  await jobsTargetRevisionArm(app, fullAdmin.token, user.id);
+
   // 全绿之前再过一道身份闸：既有角色（含别的库在用的运行时角色）的认证材料必须一字不差。
   await checkRoleCredentials(true);
 
-  note('[ALL PASS] R29-S5 真库臂 ①开关真实生效 ②作业/错误可见 ③变更留痕 A→B ④最小权限 全部取得');
+  note('[ALL PASS] R29-S5 真库臂 ①开关真实生效 ②作业/错误可见 ③变更留痕 A→B ④最小权限 ⑤作业目标记录版本真实透出 全部取得');
 } catch (error) {
   process.exitCode = 1;
   console.error('[FAIL]', error?.message ?? error);
@@ -1250,4 +1256,144 @@ async function jobsFilterArm(app, jobsToken, userId) {
     '端口直调闭集外取值也必须 400 INVALID_REQUEST',
   );
   note('[F] 端口直调 list({state:"failed"}) ⇒ 2 条；list({state:"FAILED"}) ⇒ 拒绝 INVALID_REQUEST（读面自带闭集校验）');
+}
+
+// ===========================================================================
+// [T] 作业 `target_ref.revision` 的真实来源（SPEC-S5 片 S-4）：取**记录表**的 revision
+//     —— 独立场景段，追加在 [F] 之后；上方 [M]/[P]/[A]/[J]/[C]/[C2]/[E]/[F] 的断言一行未改。
+//     与 #589 的 [C2] 无耦合：本臂的全量按库内行数量基线（不写死条数），#589 多留的那一条
+//     种子行因此不需要在本臂改任何数字。
+// ===========================================================================
+/**
+ * 判别力（每条都给「改前必红」的理由）：
+ * - 改动前 `target_ref.revision` 恒写 `1` ⇒ 「记录行 revision=5 ⇒ 接口必须回 5」这条断言必红（1 ≠ 5）；
+ * - 若把 `LEFT JOIN` 写成 `INNER JOIN`，**没有记录**的排队作业会整条消失 ⇒ 「排队作业仍在列表里且
+ *   revision=1」这条必红；
+ * - 若把 `target_ref.revision` 取成**作业行**的 `revision`（本臂种子里是 2，取消后 3），
+ *   「记录版本 5 ≠ 作业 revision 2」与「取消前后 target_ref 全等」两条都会红。
+ *
+ * 顺带把运行时授权面钉真库：读面走 `gengyun_api_runtime`（HTTP），JOIN 需要的
+ * `SELECT (revision) ON public.ocr_records` 已在 `deploy/postgres-cvm/sql/20-login-roles.sql:765`
+ * 授予；少这一列会让整页 42501 ⇒ 503，本臂的 200 + 5 就是它的真库证据。
+ */
+async function jobsTargetRevisionArm(app, jobsToken, userId) {
+  const now = Date.now();
+  const at = (offsetMs) => new Date(now + offsetMs).toISOString();
+  const seeded = { succeeded: randomUUID(), queued: randomUUID() };
+  const recordId = randomUUID();
+  const mediaId = randomUUID();
+
+  // 本臂要断言「列表 = 库内全部行」，所以先量库内行数做基线。**不写死条数**：前面几臂
+  // （[J] 3 条、#589 的 [C2] 1 条、[F] 2 条）各自留着自己的种子行，抄成常数等于把别臂的
+  // 细节钉进本臂 —— 与 [F] 同一手法，只钉「基线 + 本臂 2 条」。
+  const countAllJobs = async () => {
+    const [row] = await q(
+      `SELECT (SELECT count(*)::int FROM public.ocr_jobs)
+            + (SELECT count(*)::int FROM public.recognition_jobs)
+            + (SELECT count(*)::int FROM public.speech_jobs) AS c`,
+    );
+    return row.c;
+  };
+  const baseline = await countAllJobs();
+  const expectedAll = baseline + 2;
+
+  // ① 记录行先落库：succeeded 作业 + 它的 `ocr_records`（revision=5，模拟被用户校正过四次）。
+  //    作业行 revision=2 与记录 revision=5 **故意不同** —— 两条时钟若被混用，断言必红。
+  await q(
+    `INSERT INTO public.ocr_records (id, revision, owner_user_id, media_id, media_revision,
+                                     raw_fields, corrected_fields, verification, model_version,
+                                     created_at, updated_at, deleted)
+     VALUES ($1, 5, $2, $3, 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 's4-record', $4, $4, false)`,
+    [recordId, userId, mediaId, at(-1500)],
+  );
+  await q(
+    `INSERT INTO public.ocr_jobs (id, revision, kind, owner_user_id, ocr_id, media_id, media_revision,
+                                  state, deadline_at, created_at, updated_at, error_code)
+     VALUES ($1, 2, 'ocr', $2, $3, $4, 1, 'succeeded', $5, $5, $5, NULL)`,
+    [seeded.succeeded, userId, recordId, mediaId, at(-1500)],
+  );
+  // ② 另一条**没有**记录行的排队作业：LEFT JOIN 必须保住它（INNER JOIN 会连行一起丢）。
+  await q(
+    `INSERT INTO public.ocr_jobs (id, revision, kind, owner_user_id, ocr_id, media_id, media_revision,
+                                  state, deadline_at, created_at, updated_at, error_code)
+     VALUES ($1, 1, 'ocr', $2, $3, $4, 1, 'queued', $5, $5, $5, NULL)`,
+    [seeded.queued, userId, randomUUID(), randomUUID(), at(-1400)],
+  );
+
+  const truth = (await q('SELECT revision FROM public.ocr_records WHERE id = $1::uuid', [recordId]))[0];
+  assert.deepEqual(truth, { revision: 5 }, '种子记录行 revision 必须是 5（它就是"真实来源"）');
+
+  // ③ HTTP 读面（走**运行时角色**，不是 owner）：库里的 5 必须原样出网。
+  const listed = await injectCall(app, API_V1('/admin/jobs'), { token: jobsToken });
+  assert.equal(listed.status, 200, `GET /admin/jobs 必须 200，实际 ${listed.status} ${listed.text.slice(0, 300)}`);
+  const items = listed.body.data.items;
+  assert.equal(
+    items.length,
+    expectedAll,
+    `本臂之后列表必须回全量：开跑前库内 ${baseline} 条（[J] 3 + [C2] 1 + [F] 2）+ 本臂 2 条 = ${expectedAll}；少一条是 LEFT JOIN 把还没有记录的行丢了，多一条是重复行`,
+  );
+  // 逐 id 对账（比只数条数更严）：列表 id 集合必须与库内三表并集逐一相等，一行不多一行不少。
+  const dbIds = (
+    await q(
+      `SELECT id::text AS id FROM public.ocr_jobs
+       UNION ALL SELECT id::text FROM public.recognition_jobs
+       UNION ALL SELECT id::text FROM public.speech_jobs`,
+    )
+  ).map((row) => row.id);
+  assert.deepEqual(
+    items.map((item) => item.id).sort(),
+    [...dbIds].sort(),
+    '列表 id 集合必须与库内三表并集逐个相等（LEFT JOIN 丢行或重复行都会在这里现形）',
+  );
+
+  const succeeded = items.find((item) => item.id === seeded.succeeded);
+  assert.ok(succeeded !== undefined, '有记录的 succeeded 作业必须出现在列表里');
+  assert.deepEqual(
+    succeeded.target_ref,
+    { type: 'ocr', id: recordId, revision: 5 },
+    'target_ref.revision 必须等于记录行的真实 revision（改动前恒 1 ⇒ 真红）',
+  );
+  assert.equal(succeeded.revision, 2, 'AdminJob.revision 仍是作业行自己的状态迁移计数（2）');
+  assert.equal(
+    succeeded.target_ref.revision === succeeded.revision,
+    false,
+    '两条时钟必须不同：记录版本 5 ≠ 作业 revision 2',
+  );
+
+  const queuedItem = items.find((item) => item.id === seeded.queued);
+  assert.ok(queuedItem !== undefined, 'LEFT JOIN 必须保住还没有记录的排队作业');
+  assert.equal(queuedItem.target_ref.revision, 1, '记录尚未创建 ⇒ 记录行的初始版本 1（不是 0/null）');
+  assert.deepEqual(
+    items.filter((item) => item.id !== seeded.succeeded).map((item) => item.target_ref.revision),
+    new Array(expectedAll - 1).fill(1),
+    `除本臂那条有记录的作业外，其余 ${expectedAll - 1} 条都没有记录行 ⇒ 一律退回初始版本 1`,
+  );
+
+  // ④ 端口直读（owner 池，走 `getSql` 的同一条 JOIN）：单条读面与列表口径必须一致。
+  const port = createPostgresAdminJobPort({ pool: ownerPool });
+  const one = await port.get(seeded.succeeded);
+  assert.deepEqual(one.target_ref, { type: 'ocr', id: recordId, revision: 5 }, 'port.get 必须与列表同一条 JOIN');
+  const viaPort = await port.list();
+  assert.equal(
+    viaPort.find((job) => job.id === seeded.succeeded).target_ref.revision,
+    5,
+    'port.list 同样取记录表 revision',
+  );
+
+  // ⑤ 取消面零错位：`target_ref` 三字段取消前后必须全等（service.ts:801-808），作业 revision 只 +1（:818）。
+  //    这正是不许把 `target_ref.revision` 取成作业 revision 的原因 —— 那样每次取消都会 503。
+  const before = queuedItem.target_ref;
+  const cancelled = await injectCall(app, API_V1(`/admin/jobs/${seeded.queued}/cancel`), {
+    method: 'POST',
+    token: jobsToken,
+    headers: { 'idempotency-key': randomUUID(), 'if-match': '"1"' },
+    body: { reason: 'SPEC-S5 S-4 真库臂：取消排队作业（target_ref 不得跟着改版本）' },
+  });
+  assert.equal(cancelled.status, 200, `取消 queued 作业必须 200，实际 ${cancelled.status} ${cancelled.text.slice(0, 300)}`);
+  assert.equal(cancelled.body.data.revision, 2, '取消必须让作业 revision 1→2');
+  assert.deepEqual(cancelled.body.data.target_ref, before, '取消前后 target_ref 三字段必须全等');
+  const row = (await q('SELECT state, revision FROM public.ocr_jobs WHERE id = $1::uuid', [seeded.queued]))[0];
+  assert.deepEqual(row, { state: 'cancelled', revision: 2 }, '库内必须是 cancelled/revision=2');
+
+  note(`[T] target_ref.revision 真实化：记录行 revision=5 ⇒ 列表与端口都回 5（作业 revision 仍 2）；无记录的 ${expectedAll - 1} 条全回 1（LEFT JOIN 没丢行，列表 id 集合与库内三表并集逐个相等）；取消前后 target_ref 全等、revision 只 +1；HTTP 面由运行时角色读通（SELECT(revision) 授权足够）`);
 }

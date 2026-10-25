@@ -700,6 +700,17 @@ const TABLE_WIDE_COLUMN = '*';
  *   `admin/ops/jobs-pg.ts` 12 → **13**；auditedFiles 20、INSERT/UPDATE/DELETE 45/51/39、
  *   RETURNING 91、ON CONFLICT 28、`SELECT *` 15（`t.*` 4）、函数调用 2、引用表 48、
  *   列要求 1855／已覆盖 1801（缺口 **0**）、行锁 26+17、不可判插值 5 均不变。
+ * ⑱ 2026-10-26 SPEC-S5 S-4（`admin/ops/jobs-pg.ts` 的 `target_ref.revision` 真实化；
+ *   rebase 到含 #589 的 `bd3a5eaf` 后**重新实测**，⑰ 的字面量/SELECT/无顶层 FROM 三处增量独立保留）：
+ *   三源的 `listSelect` / `getSql` 各加一处 `LEFT JOIN public.<记录表> AS r ON r.id = j.<记录列>`
+ *   并投影 `r.revision AS target_revision` ⇒ **同一批 6 条语句**（不新增语句）各多读**一个** `revision`
+ *   （与 `j.revision` 同名列，本审计按条目计数、不去重）⇒ 列要求 1855 → **1861**／
+ *   已覆盖 1801 → **1807**（缺口仍 **0**：`revision` 早已在两张表的 SELECT 授权内）。
+ *   字面量 **290**、语句 INSERT／UPDATE／SELECT／DELETE 45／51／155／39、引用表 48 张、
+ *   无顶层 FROM **15**、逐文件 `admin/ops/jobs-pg.ts` **13**、行锁 26+17、不可判插值 5、
+ *   RETURNING 91、ON CONFLICT 28、`SELECT *` 15、函数调用 2 均不变
+ *   —— JOIN 的表不进表集、`ON r.id = j.…` 不被当列（`parseSqlText` 只读 `FROM` 后第一张表）。
+ *   零迁移、零 GRANT 变更。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 20,
@@ -713,8 +724,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 15,
   referencedTables: 48,
-  columnRequirements: 1855,
-  coveredRequirements: 1801,
+  columnRequirements: 1861,
+  coveredRequirements: 1807,
   ledgerExemptions: 33,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
