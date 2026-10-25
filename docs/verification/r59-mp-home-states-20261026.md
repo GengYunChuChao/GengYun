@@ -114,7 +114,7 @@
 
 ## 门禁读数
 
-环境：Windows，Node `v24.16.0`，npm `11.13.0`，worktree `wt-r59-mpstates` 基于 `f6c5866d`。
+环境：Windows，Node `v24.16.0`，npm `11.13.0`，worktree `wt-r59-mpstates` 基于 `f6c5866d`。下表是**那一版**（17 条断言）的读数：`#617` 合并后的新读数记在文末「补记」，两套数并存是有意的 —— 旧数不改成新数，新数也不回填旧表，各自绑定自己的 base。
 
 | 命令 | 读数 | 结论 |
 | --- | --- | --- |
@@ -162,4 +162,6 @@ L3 / X1 的判据已在上面两张表里各占一行，这里只记取舍与负
 | `npm run test:unit`（`GY_BASH=D:\Git\bin\bash.exe`） | `tests 4801` / `pass 4798` / `fail 0` / `skipped 1` / `todo 2` / 200s | exit 0 |
 | `node tools/verify-doc-anchors.mjs --strict` | 文档 294 份、引用 5439 条；`BROKEN 4 / OUT_OF_RANGE 2 / SUSPECT 7` 全部落在基线内，基线外新增 0 | exit 0 |
 
-相对上一段「门禁读数」的 `f6c5866d` 一版，套件条数 4793 → 4801（本片 +2，其余 6 条来自这两次基线之间的上游提交），skip 仍是同一条原生用例。引用条数没变，是因为 `home.wxml:112` / `:118` / `:119` 早已被本页的 `home.wxml:111-116`、`home.wxml:117-122`、`home.wxml:119-120` 范围引用覆盖，本片新增的只是同文件同行的重复引用。
+相对上一段「门禁读数」的 `f6c5866d` 一版，套件条数 4793 → 4801（本片 +2，其余 6 条来自这两次基线之间的上游提交），skip 仍是同一条原生用例。
+
+**引用条数为什么不变**（`da0b3003` 基线 + L3 / X1 那次复跑是 5439 条，与改动前完全一致）：原因不是本页原文说的「被 `home.wxml:111-116` 等范围引用覆盖」—— 那一条是错的，此处更正：本页所有 `*.wxml:行` 引用**根本不在锚点闸门的扩展名白名单里** —— `tools/verify-doc-anchors.mjs:45-48` 的 `ANCHOR_EXTENSIONS` 只认 `.mjs/.cjs/.js/.jsx/.ts/.tsx/.json/.jsonc/.sql/.md/.yml/.yaml/.css/.html/.py/.sh/.ps1/.toml`，**没有 `.wxml` / `.wxss`**（`html` 在，`wxml` 不在），所以 `home.wxml:112` 这类引用既不进抽取、也不进闸门。探针实证（改完即复原，未提交）：把本页 4 处 `home.wxml:112` 全改成越界的 `home.wxml:999`，读数一字不变（仍 5439 条引用、13 条基线内命中、exit 0）；同一个探针换成一条 `.ts` 假锚点（`services/api/src/definitely-missing-file.ts` 第 42 行），立刻 `BROKEN 4 → 5`、基线外新增 1、exit 1。⇒ 本页的 wxml 行号靠**人工逐条核对**，不是闸门保证的；好在 L3 / X1 的判据是全文正则（`wx:if="{{busy}}"` 这一行在文件里长什么样），不按行号定位，所以行号漂移不会让断言假绿。将来若要给 `miniprogram/**` 的行号上闸门，得先把 `wxml` / `wxss` 加进那份白名单（本节这次更正自己在上文新增了 1 条 `.mjs` 引用，所以更正后复跑是 5440 条；上面表格里的 5439 是那次交付的读数）。
