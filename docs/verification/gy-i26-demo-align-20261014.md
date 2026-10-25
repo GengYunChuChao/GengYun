@@ -26,7 +26,7 @@ Refs #28（**不关闭整项**）。分支 `feat/gy-i26-demo-align`；基线 `up
 
 `miniprogram/styles/tokens.wxss` 的 `page{}` 块（WXSS 无 `:root`，变量必须定义在 `page` 上才能被页面节点继承）。机检命令：`node tools/demo-align.mjs`（第 1 组输出）。
 
-| demo `:root` 令牌 | demo 值（`dist/styles.css:1`） | 本仓 WXSS | 结果 |
+| demo `:root` 令牌 | demo 值（`docs/ui-demo/dist/styles.css:1`，原记 :1；该文件是构建产物，路径须带仓库内目录） | 本仓 WXSS | 结果 |
 | --- | --- | --- | --- |
 | `--green` | `#176b50` | `--green` | 逐值一致 |
 | `--ink` | `#17352b` | `--ink` | 逐值一致 |

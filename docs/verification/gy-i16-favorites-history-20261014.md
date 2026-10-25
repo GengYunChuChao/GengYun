@@ -191,7 +191,7 @@ lint 通过（静态检查；不代表运行期或真实服务已通过）。
 ```
 
 > 唯一的 `skipped 1` 是**既有**子用例 `native separate-connection withdrawal and account state changes at
-> guarded read boundary`（`tests/unit/knowledge-api.test.mjs:101`，`skip: !f.native`：需要原生独立连接/PG），
+> guarded read boundary`（`tests/unit/knowledge-api.test.mjs:102`，原记 :101，`skip: !f.native`：需要原生独立连接/PG），
 > **与本片无关**，未被我改动。两次运行都**没有红项**。
 
 ```

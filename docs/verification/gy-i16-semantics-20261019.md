@@ -37,7 +37,7 @@
 
 - 收藏详情：小程序详情页用**列表响应**回填（`miniprogram/utils/favorites-api.js`），状态来自当次列表读取；
 - 历史详情：小程序 `locateHistory()` 用**实时列表读取**定位 + 实时状态，快照只用于定位且**不携带状态**
-  （`miniprogram/utils/history-api.js:274` 起）；识别正文走 `GET /recognitions/{id}`（#9，删除后 404）。
+  （`miniprogram/utils/history-api.js:277-285` 起，`locateHistory`；原记 :274）；识别正文走 `GET /recognitions/{id}`（#9，删除后 404）。
 
 这一点在集成脚本里也是如实登记的（`tests/integration/favorites-history-isolation-http.mjs:322-325`、`:376-378`
 断言 `GET /history/{id}` 未注册 ⇒ 404），本片**不伪造**详情路由。
@@ -56,7 +56,7 @@
 | 8 | 游标翻页不携带上一页的旧结论 | `favorites/service.ts:306` 每页逐行 `project()`；游标 watermark 只绑定 `(id, created_at)`，不含可行性结论 | `favorites-http.test.mjs:275`（跨页不重、篡改/跨主体 400、翻页中删行 ⇒ 400 INVALID_CURSOR） | **无断言**（可见性变化后第 2 页） → §4-A4 |
 | 9 | 模型候选与用户最终选择可区分存储与展示 | `services/api/src/recognitions/service.ts:598`（只写 `selected_species_id`）；`:634-645`（**不回写** candidates/model_score/model_version；人工选择永不进模型成绩） | `recognitions-candidates-selection.test.mjs:391`（独立记录、append-only、不计模型成绩、归属私有）；`:499`（选择后资料关联 + 用量被 GY-I08 守卫阻断）；`favorites-history-visibility.test.mjs:50`（历史投影恰 7 字段，无候选/选择字段）；`history-http.test.mjs:258`；`miniprogram-favorites-history.test.mjs:261`（详情视图两字段分离、失败不当成功、分数不是准确率） | **成立** |
 | 10 | 识别失败的历史条目必须真实可见（不被吞掉） | 终态接线：`services/api/src/app.ts:963` `appendHistory({ ...input, event_key: kind + ':' + job_id })`；`history/service.ts:426` `appendHistory` 原样写 `job_state`（含 failed/timed_out/cancelled/uncertain） | `history-http.test.mjs:339`（五类非成功终态逐类可见）；`:566`/`:606`（终态自动写入：成功/失败/超时各恰 1 条，`job_state` 与任务一致）；`:663`（OCR 同构）；`:894`（event_key 确定性）；`favorites-history-visibility.test.mjs:170`（五类终态原样可见） | **成立** |
-| 11 | 失败任务不得被自动记成「已使用事实」 | `favorites/service.ts:21-23`（投影恰 6 字段，不持任何用量/历史端口）；`history/service.ts:23-26` + `:426` 入参校验（未知字段即 400）；历史投影恰 7 字段 | `favorites-history-visibility.test.mjs:50`；`favorites-http.test.mjs:125-128`（断言无 `used/usage/used_at/last_used_at/count`）；`history-http.test.mjs:493`（含使用类字段的未知键一律 400）；`miniprogram-favorites-history.test.mjs:141`（多出契约外字段 ⇒ INVALID_RESPONSE）、页面无「标记已使用」入口 `:551` | **成立（结构性 + 断言）** |
+| 11 | 失败任务不得被自动记成「已使用事实」 | `favorites/service.ts:21-23`（投影恰 6 字段，不持任何用量/历史端口）；`history/service.ts:23-26` + `:426` 入参校验（未知字段即 400）；历史投影恰 7 字段 | `favorites-history-visibility.test.mjs:50`；`favorites-http.test.mjs:125-128`（断言无 `used/usage/used_at/last_used_at/count`）；`history-http.test.mjs:493`（含使用类字段的未知键一律 400）；`miniprogram-favorites-history.test.mjs:147-150`（原记 :141；多出契约外字段 ⇒ INVALID_RESPONSE）、页面无「标记已使用」入口 `:551` | **成立（结构性 + 断言）** |
 | 12 | 取消收藏语义的边界：同键异体 | `favorites/service.ts:188-190` 先比 `request_hash` ⇒ 409，绝不回放另一份请求的结果 | create 面有（`favorites-http.test.mjs:148-156`）；**delete 面无** | **无断言** → §4-A2 |
 
 ## 4 补测（本片唯一的代码改动：只加断言，不改产品代码）

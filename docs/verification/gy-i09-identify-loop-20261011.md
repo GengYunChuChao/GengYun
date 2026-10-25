@@ -492,7 +492,7 @@ node tests/integration/recognitions-http.mjs           PASS（含并发与取消
 **过程中一次真实门禁失败（如实记录）**：本轮首次跑 `npm run test:docs` 报
 `ERROR: gy-i09-identify-loop-20261011.md:334: inconsistent table` —— 原因是 §12.2 表格单元格里写了
 `SESSION_REQUIRED|SESSION_CHANGED|SESSION_EXPIRED`，竖线被 Markdown 解析成列分隔符。已改为顿号/斜杠分隔（不改任何断言），
-复跑 `test:docs` → `PASS`。
+复跑 `test:docs` → `PASS`。（上引 `ERROR:` 行是 pandoc 的原始报错转录，其中的行号是**报错当时**的位置，不是仓内行号锚点、不随库校验；转录原文一字未改。）
 
 > 返修轮 3 **未**宣布验收通过。仍未取得：真实供应商、真机、准确率、PG 持久化、`/media/**` 接线、CI 绿灯。
 > 关于 CI：监工提到"当前新 HEAD 的适用 CI 未取得全绿"；本机侧门禁输出如上，**CI 的 `action_required` 不等于通过**，

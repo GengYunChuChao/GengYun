@@ -40,7 +40,7 @@
 
 ### 3.2 (b) 消息分页 —— 服务端「通」，客户端「半通」，已补
 
-**先纠字段身份**：本仓**没有** `read_version` 这个字段。`grep -R read_version packages/contracts/openapi.json miniprogram services/api tests` **零命中**。契约 `Message` 的版本字段名是 `revision`（键集恰 7 项：`id/revision/type/target_ref/reference_state/read_at/created_at`，见 `miniprogram/utils/messages-api.js:36` 与 `services/api/src/messages/store.ts:29-45`）。游标的身份是**行身份 `(created_at, id)`**，不是任何版本字段——把「hunk 行号」或「read_version」当字段身份都会读错。
+**先纠字段身份**：本仓**没有** `read_version` 这个字段。`grep -R read_version packages/contracts/openapi.json miniprogram services/api tests` **零命中**。契约 `Message` 的版本字段名是 `revision`（键集恰 7 项：`id/revision/type/target_ref/reference_state/read_at/created_at`，见 `miniprogram/utils/messages-api.js:44`（`MESSAGE_FIELDS`，原记 :36）与 `services/api/src/messages/store.ts:29-45`）。游标的身份是**行身份 `(created_at, id)`**，不是任何版本字段——把「hunk 行号」或「read_version」当字段身份都会读错。
 
 | 面 | 位置 | 读数 | 判定 |
 | --- | --- | --- | --- |

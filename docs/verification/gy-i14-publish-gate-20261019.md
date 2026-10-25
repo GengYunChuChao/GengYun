@@ -1,4 +1,4 @@
-﻿# GY-I14 发布闸门接进产品路径 + 旧版本零副作用证据（离线，Refs #14）
+# GY-I14 发布闸门接进产品路径 + 旧版本零副作用证据（离线，Refs #14）
 
 - 日期：2026-10-19（UTC+8）
 - 分支：`fix/gy-i14-publish-gate`；worktree：`.pg17\wt-i14-gate`；基线 `upstream/main = 8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`
@@ -131,7 +131,7 @@
 > 评论路径**已在本片接线完成**（见 §1 缺陷 C、§5 对照、§2.2 断言），不再列为未做。
 
 1. **下架事件的 revision 口径差 1**（诊断 3-5，P2）：`services/api/src/app.ts:556-593` 用**处置前**版本调 `withdraw`，而 `hidePost` 已把 revision +1。本片为让它继续幂等，只对"**会真正改变**行/声明"的写做版本核对，纯 no-op 声明（可见性已是目标值、派生已发布版本已等于声明值）放行；未改该口径。
-2. **`invalidated_cache_keys` 恒空**（3-4）、**下架事件无订阅者**（3-5）、**版本变化不触发重评**（4-3）、**`assertSourceUnchanged` 死代码 + `moderation-authority.ts` 的 `source_kind:'database'` 硬编码**（2-3）、**合成预测可进评估计分**（4-5）、**台账仅内存**（3-6）、**`nonbypass.ts:163` 三元同分支**、**`nonbypass.ts:151` 死代码**、**`admin`/`human-review` 无 HTTP 消费者**、**`docs/moderation/http-layer.md:204` 过期**：均为 P2/后续项，本片未动。
+2. **`invalidated_cache_keys` 恒空**（3-4）、**下架事件无订阅者**（3-5）、**版本变化不触发重评**（4-3）、**`assertSourceUnchanged` 死代码 + `moderation-authority.ts` 的 `source_kind:'database'` 硬编码**（2-3）、**合成预测可进评估计分**（4-5）、**台账仅内存**（3-6）、**`nonbypass.ts:163` 三元同分支**、**`nonbypass.ts:151` 死代码**、**`admin`/`human-review` 无 HTTP 消费者**、**`docs/moderation/http-layer.md:184`（`invalidated_cache_keys` 定义行，原记 :204） 过期**：均为 P2/后续项，本片未动。
 3. **无真实供应商**：全部模型端口为合成替身；本页不证明真实 AI 能力，也不证明 AC08 的人工审核入口可用。
 4. 未 push、未开 PR、未评论、未改 `packages/contracts/**`、未改 `docs/architecture/contract-status.json`、未动迁移与 `miniprogram/**`、未新增依赖。
 

@@ -61,7 +61,7 @@
 | 8 | `node tests/integration/jobs-http.mjs` | 0 | 见 §5（**该脚本不在任何 CI glob 内**，故显式运行） |
 
 对照（修复前实测）：`npm run test:unit` 首次全量为 `1831 / fail 1`，唯一失败是
-`tests/moderation/model-ports.test.mjs:156` 的文书边界负控制；原因与处理见 §6.2（**前提被达成后的同步**）。
+`tests/moderation/model-ports.test.mjs:183`（原记 :156） 的文书边界负控制；原因与处理见 §6.2（**前提被达成后的同步**）。
 
 ## 3 新增用例原始输出（31/31，逐条）
 

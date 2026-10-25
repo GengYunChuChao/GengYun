@@ -170,6 +170,6 @@ tests 6 / pass 6 / fail 0
 | 文件 | 旧引用 | 现状 |
 | --- | --- | --- |
 | `docs/verification/gy-i02-stale-claims-20261016.md:62` | `miniprogram/pages/voice/voice.js:770`（「真实对象存储未接线」） | 现为 `voice.js:859` |
-| `docs/verification/gy-i13-tts-http-20261012.md:223` | `miniprogram/pages/voice/voice.js:392`（自动播放失败出口） | 已随 +40 行漂移（该断言内容仍成立，仅行号需重取） |
+| `docs/verification/gy-i13-tts-http-20261012.md:223` | `miniprogram/pages/voice/voice.js:571-574`（自动播放失败出口，原记 :392） | 已随 +179 行漂移（原记「+40 行」的读法不成立；该断言内容仍成立，仅行号需重取） |
 
 其余同族证据页（`gy-i11-speech-http-20261012.md`、`gy-i11-transcript-confirm-20261016.md`、`gy-r27-speech-cancel-20261020.md`、`gy-r28-speech-*.md`）引用的是**服务端**文件与契约，本片未触碰，行号不受影响。

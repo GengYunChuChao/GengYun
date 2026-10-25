@@ -252,7 +252,7 @@ node --test tests/unit/gy-i22-job-inflight-guard-and-ownership.test.mjs
 
 ### 4.1 拆掉**一个面**的鉴权守卫（模拟"单模块漏挂共享守卫"）
 
-改动：`services/api/src/routes/favorites.ts:87` 的 `guards.requireUser` → 空 `preHandler`。
+改动：`services/api/src/routes/favorites.ts:89`（原记 :87） 的 `guards.requireUser` → 空 `preHandler`。
 
 原始输出（节选）：
 

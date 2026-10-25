@@ -81,7 +81,7 @@ upstream/main                = 24fac034276c26b0e870e8ea8ea7f4349a8f8a89
 | 冻结清单绑定块 | `packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json` | #130 | `indexVersion=gy-i20-weeds-real-2026.10.14`、`split=test`、`recordCount=172`、`indexSha256=36053ceed50abbeb…c78f`、`frozenAt=2026-10-14T12:05:00+08:00`、`coverage.weedPhotoCoveredClasses` 8 个规范物种 ID + `coverageSha256` + `basisRef` |
 | 流程与红线 | `docs/evaluation/README.md:72-84` | 早于 #130 | 10 条程序强制硬红线（`:74` rawMediaCommitted=false；`:75` modelGenerated=false；`:76` 同簇不跨 split；`:81` 任一条件不满足即 `isRealEvaluation=false`；`:82` 原始媒体与令牌不入仓） |
 | 抽取方法文档 | `docs/evaluation/real-samples-weeds-docx.md`；`:16` 来源 `sha256`；`:17` 172 张 PNG；`:19` 原始件与媒体一律不入库；`:103-127` 答案键与核实状态；`:129-143` 覆盖口径 | #130 | 见 §1.3 与 §2.6 |
-| 近重复策略 / 评分规约 | `docs/evaluation/near-duplicate-policy.md`、`docs/evaluation/scoring-spec.md` | 早于 #130 | dHash 阈值 8（`near-duplicate-policy.md:15,28`）；两两最小汉明距离 14、近重复对 0 的**实测值**见 `docs/evaluation/real-samples-weeds-docx.md:52,78`、`packages/evaluation/samples/README.md:27`、`docs/evaluation/sample-gap-register.md:62`（`scoring-spec.md` 全文无此数值） |
+| 近重复策略 / 评分规约 | `docs/evaluation/near-duplicate-policy.md`、`docs/evaluation/scoring-spec.md` | 早于 #130 | dHash 阈值 8（`near-duplicate-policy.md:15,28`）；两两最小汉明距离 14、近重复对 0 的**实测值**见 `docs/evaluation/real-samples-weeds-docx.md:52,78`、`packages/evaluation/samples/README.md:34`（原记 :27）、`docs/evaluation/sample-gap-register.md:62`（`scoring-spec.md` 全文无此数值） |
 | 样本目录说明 | `packages/evaluation/samples/README.md:1-4`、`:67-81` | #130 | `:67-81` 明确列出"**不主张**"的事（含标准答案未经独立复核） |
 | 缺口清单（程序产出） | `docs/evaluation/sample-gap-register.md:16-34`、`:41-54`、`:86-99` | #130 | 17 个缺口桶；解除阻塞所需输入 10 条（`:86-99`） |
 | 证据页 | `docs/verification/gy-i20-real-samples-20261014.md` | #130 | 既有证据页 |
@@ -313,11 +313,11 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | G11 | **合成 / 演示样本冒充真实评估** | `docs/evaluation/README.md:81`；`docs/evaluation/sample-gap-register.md:54`（风险400/ASR50/问答120/TTS30及两类图片**均不可用演示样本替代**） |
 | G12 | **暂存行被标成 valid / verified / card_ready** | `workbook-staging-design.md:50`（CHECK 禁止） |
 | G13 | **暂存资料进 `v_active_source_version` / 用量卡 / 给 LLM** | `workbook-staging-design.md:39,56` |
-| G14 | **原图裁剪 / 连拍跨 split** | `sample.schema.json:40-48`；`docs/evaluation/README.md:76`；`docs/implementation-requirements.md:456` |
+| G14 | **原图裁剪 / 连拍跨 split** | `sample.schema.json:40-48`；`docs/evaluation/README.md:93`（原记 :76）；`docs/implementation-requirements.md:456` |
 | G15 | **付费 / 真实模型调用（未单独授权）** | `coverage-report.json:108-110`；`docs/evaluation/real-samples-weeds-docx.md:243`；`docs/pr-review-policy.md:42` |
 
 > **本台账相对侦察报告的勘误与修订（如实标注；`G8` 行依据已按第 2 条同步修正）**
-> 1. 侦察报告把 G3 / G4 与"数据样本只用获准脱敏索引"一并挂在 `docs/pr-review-policy.md:23`；基线复核后，该内容**不在** `:23`（`:23` 为空行，`:24` 起是"作者提交前清单"说明）。**实际对应**：`:29`（检查完整 diff，无意外文件、冲突标记、密钥／真实 .env、个人原始媒体、依赖或构建输出）、`:42`（真实能力／资料：版本、来源、失败证据及独立样本评估；新增真实付费请求须用户单独授权）。本台账按**勘误后**的行号给出。
+> 1. 侦察报告把 G3 / G4 与"数据样本只用获准脱敏索引"一并挂在 `docs/pr-review-policy.md` 第 23 行；基线复核后，该内容**不在** `:23`（`:23` 为空行，`:24` 起是"作者提交前清单"说明）。**实际对应**：`:29`（检查完整 diff，无意外文件、冲突标记、密钥／真实 .env、个人原始媒体、依赖或构建输出）、`:42`（真实能力／资料：版本、来源、失败证据及独立样本评估；新增真实付费请求须用户单独授权）。本台账按**勘误后**的行号给出。
 > 2. G8 的 `workbook-staging-design.md:75` 虽含"原文再发布许可…仍缺"字样，但**不含** G8 所需的"不得写为已许可"口径；本台账改用可复核的 `:25`（"来源许可和原文再发布未确认"）与 `packages/knowledge/zhejiang/README.md:99`（许可暂缓行，**不得写为已许可**），并在 §3 `L05` 给出三处可复核依据。
 > 3. **相对侦察报告的可复核化修订（语义不变；方向均为更可复核 / 更合规，无一处放宽口径）**：C 表第 3 列与 G 表依据列的多行已按基线 `24fac03` 勘误，类型为：① 行号校正（`:23`→`:29`、`:110`→`:108-110`、`:254,261`→`:254-255`）；② 补齐 / 改正路径与文件名（`sample-gap-report`→`sample-gap-register.md`、`real-samples-weeds-docx.md`→`docs/evaluation/real-samples-weeds-docx.md`、`packages/knowledge/README` / `zhejiang/README.md:98`→`packages/knowledge/zhejiang/README.md:98`）；③ 侦察报告的"本单"改为"侦察"；④ 删去私密区路径示例与归档 `AGENTS.md:34` 等引用。**本台账以本文件为准**；修订点分散在多行，此处只列类型、不逐一穷举计数。
 
@@ -450,7 +450,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | U3 | **许可状态** | **未确立** | `licensed=false`、`license_survey_status=not_established`（`gy-i03-public-label-index-20261011.json:41-42`）；`permission_status` 明示不构成再利用 / 训练许可（`gy-i03-label-evidence-increment-20261011.json:37`）；许可调查按用户要求暂缓 |
 | U4 | **真实已核对资料存量** | **未确立** | 现有资料 `review_status=unverified`（`coverage-report.json:64`）、`authority=none_asserted_by_source`（`packages/knowledge/zhejiang/README.md:97`）；无逐条权威出处（`gy-i03-zhejiang-materials.md:300`） |
 | U5 | **真实样本存量（除拍草域）** | **六域为 0** | `sample-gap-register.md:22-34`、`:43` |
-| U6 | **覆盖内真实手机照片** | **未取得** | 只有文档配图 7 张（每类 1 张，短边中位 540 px）；无不同角度 / 背景（`real-samples-weeds-docx.md:249`） |
+| U6 | **覆盖内真实手机照片** | **未取得** | 只有文档配图 7 张（每类 1 张，短边中位 540 px）；无不同角度 / 背景（`real-samples-weeds-docx.md:80,83`，原记 :249） |
 | U7 | **低质量样本 100 张与人工质量分级** | **未取得 / 未做** | `sample-gap-register.md:21`、`:48-49` |
 | U8 | **docx 图片的目视内容核对与像素尺寸复核** | **未做 / 未复核** | 未解出任何图片；只测字节体量与短边登记值（`real-samples-weeds-docx.md:83` 记短边 317–697 px，侦察未复核） |
 | U9 | **训练 / 测试隔离的外部证明** | **无法证明** | `real-samples-weeds-docx.md:254-255`；`packages/evaluation/samples/README.md:76-77` |
