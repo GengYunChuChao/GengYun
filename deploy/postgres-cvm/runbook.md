@@ -121,7 +121,7 @@
 > "**这台机器没有被纳入目标网段，装下去会让 `listen_addresses`/`pg_hba`/入站规则三者不一致**"。
 > 正确处理是二选一：把 CVM 放进 `10.21.0.0/16` 的子网；或确认网段后按
 > [README.md](README.md) §0.5 重做四处同改再跑。**不得**用 `GENGYUN_VPC_PRIVATE_IP` 硬塞一个网段外的 IP
-> （脚本会对网段外的覆盖值同样拒绝）。**判据：只有 ① 那种无 `[ERROR]` 的输出才算"计划可用"。**
+> （脚本会对网段外的覆盖值同样拒绝）。**判据：只有 ① 那种无 `[ERROR]` 的输出才算"计划可用"。**（本文件**不**覆盖的四类步骤 —— 代码分发、API 常驻载体、CI 部署流水线、迁移自动化 —— 见**文末附录 A**。）
 
 ## 1 角色分工（谁能做哪一步）
 
@@ -328,7 +328,7 @@ node services/api/src/db/migrate.ts up          # 再跑一次，验证幂等：
 unset DATABASE_URL
 ```
 
-期望 `up` 第一次列出全部 10 个版本为"已应用"，第二次为"（无）"。两个输出都要留档。
+期望 `up` 第一次列出**磁盘上全部未应用的迁移**为"已应用"（数量与清单以 `ls services/api/db/migrations/*.sql` 的实测为准，本文件不写死版本数），第二次为"（无）"。两个输出都要留档。
 
 ### 步骤 3 角色引导与最小权限断言
 
@@ -340,11 +340,11 @@ sudo deploy/postgres-cvm/provision-db.sh
 期望包含：
 
 ```text
-[provision-db.sh] 迁移校验通过：10 个版本已全部应用（0001 … 0010）。
+[provision-db.sh] 迁移校验通过：<磁盘版本数> 个版本已全部应用（<磁盘清单>）。
 [provision-db.sh] 最小权限断言通过：ok
 ```
 
-若报 `尚无 schema_migrations 表` 或 `以下迁移在磁盘上存在但未应用` ⇒ **回到步骤 2**，
+若报 `尚无 schema_migrations 表` 或 `以下迁移在磁盘上存在但未应用` ⇒ **回到步骤 2**；判据不是"到了某个号"——`status` 里磁盘清单的每一个版本都已应用才算通过，
 这正是"迁移必须在角色之前"的硬门禁。
 
 **口令与幂等（返修后语义）**：本步**默认不改口令**——首次创建才写入口令，重复执行保持
@@ -504,7 +504,7 @@ sudo systemctl restart gengyun-postgresql.service  # 重启（改非热载参数
 
 - `migrate.ts` 只实现 `up | status | list`，**没有 `down`**：传其它命令会明确报
   `未知命令：…（支持 up | status | list）`。
-- `services/api/db/migrations/rollback/*.down.sql` 存在（0002–0010，**没有 0001**），
+- `services/api/db/migrations/rollback/NNNN_*.down.sql` 存在（**没有 `0001` 的 down**；覆盖哪些版本以 `ls services/api/db/migrations/rollback/*.sql` 的实测为准，本文件不写死号段），
   但它们不是常规回滚工具：既有证据写明结构 down 在有审计/归属数据时会拒绝并保留对象
   （如 `AUDIT_ARCHIVE_REQUIRED`），且回滚后重新应用需要重新授权与转移函数所有权。
 - 因此：**迁移视为单向**。要"回滚"一次迁移，正确做法是**从备份恢复**（5.3），
@@ -558,3 +558,20 @@ sudo systemctl restart gengyun-postgresql.service  # 重启（改非热载参数
 | 备份文件为 0 字节或 `pg_restore --list` 失败 | 备份过程被打断/磁盘满 | `backup-postgres.sh --list`、`df -h` | 当次备份**不算数**，修好后重跑 |
 | 恢复演练 `PASS=n FAIL>0` | 备份与清单不一致或恢复报错 | 演练输出里的逐行期望/实际 | 按失败判据处理；**不得**宣称备份可用 |
 | 验证脚本退出码 `2` | 缺项（口令/备份/远端探针） | 输出里的 `SKIP` 行 | 补齐后重跑，别把 `2` 当通过。**本项目 2026-10-13 的那次 `SKIP`（远端 VPC 探针）已由平台侧实测满足**（[evidence §15](evidence/local-self-check.md)）；语义不变，有探针机时用 `--remote-host` 复跑取 `PASS` |
+
+## 附录 A 本文件**不**覆盖的步骤（如实登记缺口）
+
+> **位置说明**：本节刻意放在**文末**而不是正文中间——插在中间会让其后所有行号位移，而 `docs/verification/` 下有多处按行号引用本文件的**冻结证据**（例如 `gy-i19-backup-domain-20261018.md` 引用本节之前的 U9 行）。放在末尾，正文行号逐行不变。
+
+本文件从"机器已经在手、可以开始装库"写起。下面四件事**仓库里没有产物，本文件也不教怎么做**。
+照着本文件一路做到底，得到的是一台能连的 PostgreSQL 加一套迁过的 schema，**不是"已在生产提供服务的 API"**：
+
+| 缺口 | 仓库现状（可自行复核） | 后果 |
+| --- | --- | --- |
+| **把代码放到执行机** | `git clone` / `scp` / `rsync` 在 `deploy/`、`docs/release/` 下**零命中**：没有分发产物，也没有目标路径约定 | 执行机上不会有 `services/api/`，正文所有 `node …` 命令都无从执行 |
+| **给 API 一个常驻载体** | 全树没有 API 的 `systemd` unit、`pm2` ecosystem 或 compose 文件（现存的 unit 只服务 PostgreSQL 与清理任务）；正文步骤 5 只有**前台** `npm run start` | shell 一退出 API 就随之结束：没有重启策略、没有开机自启、没有日志轮转 |
+| **CI 无部署流水线** | `.github/workflows/` 下所有 workflow 的触发只有 `pull_request` / `push`；全仓 `secrets.*` **零处**，`ssh` / `scp` / `rsync` / `kubectl` / `gcloud` / `ansible` / `terraform` 等部署工具**零处** | 没有"合并即上线"这回事；上线只能人工做，且仓库里没有凭据交接路径 |
+| **迁移是纯手工步骤** | API 启动**不会**自动执行迁移（[../cloudrun/README.md](../cloudrun/README.md) §5.1：`server.ts` 不调用 `applyMigrations`） | 任何"部署完自然就迁了"的假设都不成立；漏掉步骤 2 就是缺表/缺视图的 500 |
+
+⇒ 这四项要么需要先拍板形态（进程载体、分发方式、凭据通道），要么属于尚未建立的能力。
+本文件**不**替业主选形态，也不含任何可直接执行的部署脚本；真要做部署，须在这四项各自定下来之后另行登记步骤。
