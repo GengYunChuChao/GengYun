@@ -47,7 +47,7 @@
 | 契约里的审核动作 | `packages/contracts/openapi.json:11008` | spec 里 `/admin/posts` 家族恰好一条 `/admin/posts/{id}/hide` |
 | 同上（被测试钉死） | `tests/unit/community-premoderation-invariants.test.mjs:234-246` | `assert.deepEqual` 直接比对 `['/admin/posts/{id}/hide']` |
 | `notifications` 表 / outbox 表 | `services/api/db/migrations/0016_account_deletion_persistence.sql:36` | 仓库自陈「main 上既无 outbox 表也无消费者，建表就是空承诺」 |
-| docs 侧的既有记录 | `docs/verification/gy-i15-community-http-20261020.md:247` | 全仓 docs 只有这一处提到 `reReviewContent`，且是「未接线/无路由」的记录 |
+| docs 侧的既有记录 | `docs/verification/gy-i15-community-http-20261020.md:247` | 该行记录的是「读取时重查负例·用例 6」（删除后 `reReviewContent` 返回 `re_reviewed:false / visibility:'deleted'`，**不复活**）——它是该函数唯一的**行为用例**覆盖处。**路由层零调用**：`git grep -n reReviewContent -- services/api/src` 只有定义 `services/api/src/community/service.ts:1735`，没有任何调用点 |
 
 ### 1.4 需迁移（要动库才能落的方向）
 
@@ -80,7 +80,7 @@
 - 审计台账是进程内数组：`services/api/src/admin/audit.ts:80-82`（注释原文「内存审计日志。进程内实现，**非**真实 PG 接线。」）。
 - 管理端 runtime 恒为 `persistent: false`：`services/api/src/admin/runtime.ts:77-84`。
 - 全仓没有 PG 版管理端 store：`git grep -n "createPostgresAdminOpsStore"` 命中 0。
-- 迁移里没有 `post.hide` 的落点：`git grep -n "post\.hide" -- services/api/db/migrations` 命中 0；该字符串全仓只有一处 `services/api/src/admin/ops/service.ts:1153`。
+- 迁移里没有 `post.hide` 的落点：`git grep -n "post\.hide" -- services/api/db/migrations` 命中 **0**。应用侧只有 1 处：`services/api/src/admin/ops/service.ts:1153`（写内存 ops store）。该字符串在 `tests/**`、`docs/**`、`apps/admin/**` 也有出现（测试与文档的引用、后台端展示文案）；**本页未读 `apps/**`，故不复述其内容**。
 - 迁移自己登记了这件事：`services/api/db/migrations/0036_r34_admin_content_persistence.sql:69-74`（真库臂里审计仍落在 `createAuditLog()` 进程内台账上，证据页如实写「审计落库未接」）。
 
 ⇒ 这条与执行模式无关：不接池不落库，接了池也不落库（没有 PG 实现、没有迁移落点）。
