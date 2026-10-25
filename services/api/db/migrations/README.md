@@ -4,17 +4,19 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-25 · `#538` 已合入 main（`6dbe83a3`）＋ GY-R35（`#568`）：`0001..0040`，缺 `0037`）
+## 当前状态（2026-10-25 · `#538` 已合入 main（`6dbe83a3`）＋ GY-R35（`#568`）＋ `#18` S2 片1：`0001..0041`，缺 `0037`）
 
 `0001..0035` 已连续落盘（35 个正向；`0035_r34_media_row_purge.sql` 已随上游真实落盘，本片旧段里那条
 `WARN[gap] 0035` 的前提随之作废）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
 #22 片C 落 `0039_r34_deletion_state_cancelled.sql`、#538 落 `0036_r34_admin_content_persistence.sql`、
-GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`
-⇒ 目录现为 **39 个正向 `.sql`** ＋ `rollback/` **38 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **39 + 1 === 40**），
+GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 片1 落
+`0041_admin_scope_write_authority.sql`
+⇒ 目录现为 **40 个正向 `.sql`** ＋ `rollback/` **39 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **40 + 1 === 41**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对该缺号有依据（见下）。
 （本段数字为实测：`git ls-tree -r --name-only HEAD -- services/api/db/migrations`
-⇒ 正向 `.sql` 39 条、`rollback/` 38 条；缺号恰为 `0037` 且已登记保留。）
+⇒ 正向 `.sql` 40 条、`rollback/` 39 条；缺号恰为 `0037` 且已登记保留。`0040` 已随 #568 真实落盘，
+故保留台账里**不得**再出现 40 号条目 —— 否则 `reservedButPresent` 会把它判红。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
 - `0036_r34_admin_content_persistence.sql`（R34 · #18 后台内容/资料域落库 + **列级**授权，已随 #538 落盘）：
@@ -40,6 +42,31 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`
   `exports_object_key_shape` 从 `{1,128}` 收紧到 `{1,80}`（与契约 `TargetRef.id` 的 `maxLength: 80` 同口径）。
   配对回滚 `rollback/0040_export_object_key_contract_backfill.down.sql` **只回滚约束、不回滚数据**
   （回退会把行写回契约闭集之外；去前缀后信息不唯一可逆），依据写在两个文件各自的头注释里。
+- `0041_admin_scope_write_authority.sql`（`#18` S2 片1 · **库层**：后台管理员 scope 的**唯一写路径** +
+  闭集约束，Refs #18）接在 `0040` 之后：取号依据是裁定
+  `.pg17/ruling-r37-issue18-s2-scope-admin-20261025.md`「`0040` 已被 `#568` 占用；S2 新迁移用 `0041`」，
+  ⛔ 不占 `0042`（留给后续切片）。迁移只做三件事：① **先预检后加约束** —— 扫 `public.admin_scopes.scope`，
+  出现后台权限闭集（13 项）之外的取值即 `RAISE EXCEPTION 'G0012'` 打出样例并中止（**只报告、不删行、
+  不自动映射**，裁定②）；② 建库层 CHECK `admin_scopes_scope_closed_set`（闭集只含后台权限，
+  **不含** `user`/`public`/`receipt`）；③ 建两条窄口径 `SECURITY DEFINER` 函数
+  `public.grant_admin_scope(uuid,uuid,text,text,uuid,uuid,integer)` /
+  `public.revoke_admin_scope(uuid,uuid,text,text,uuid,uuid,integer)`（固定 `search_path = pg_catalog`、
+  `REVOKE ALL … FROM PUBLIC`）：函数内校验「操作者 `state='active'` 且**当前有效**持 `scopes:write`」、
+  「只能授予自己当前有效持有的 scope」、「禁自授 / 允许自撤」、**最后授权者守卫**
+  （`pg_advisory_xact_lock` 事务级锁内重新核验操作者与有效授权者数量，⛔ 不做应用层先数后写），
+  成功变更与审计行同一事务提交（`admin_audit_events`，action=`admin_scope.grant`/`admin_scope.revoke`）。
+  运行时的 `EXECUTE` 在 `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r37-s2-scope-grant` 区域授予
+  （该区域**硬前置**：两条函数缺失即显式失败，不留「看似收敛、点开 42501」的运行态）；
+  `90-assert` 的 `function_surface_manifest` 追加两行并新增断言 103/104 钉住函数授权面与闭集。
+  **运行时对 `admin_scopes` 仍是零表级/零列级写**（`external_manifest:1540-1542` 与第 9 条
+  `protected_columns:2256-2263` 一句未动）。「拒绝也留痕」需要第二个事务（抛异常必然回滚本事务），
+  属 **PR-3 写面**，本片不实现也不假装实现；HTTP 端点（`POST /admin/administrators/{id}/scopes` /
+  `DELETE …/{scope}`）与 403 `SELF_SCOPE_GRANT_DENIED` / 409 `LAST_SCOPE_MANAGER` 同样属 PR-2/PR-3。
+  真库直调证据：`tests/integration/admin-scopes-authority-pg.mjs`（本机 PG 17.11，`GY_PG_BIN` 指向
+  `initdb`/`psql`/`pg_ctl` 所在目录；未设时按仓内口径 **exit 77 未取得**，不是通过）。
+  配对回滚 `rollback/0041_admin_scope_write_authority.down.sql` 逆序删两条函数与闭集约束，
+  **不回填数据、不删 `admin_scopes` 行、不碰审计台账**；它也不动 `20-login-roles.sql` 的 `EXECUTE`
+  ——函数一旦不在，该区域的硬前置会显式报错（生产回滚顺序：先撤部署 SQL 的该区域、再回滚迁移）。
 - **本片不修的库层遗留（已登记，勿当作已完成）**：`0018_favorites_history.sql` 的 `target_type` CHECK 仍是旧 16 值
   （不含 `conversation_turn`）。今日 favorites/history 写入口不可达该成员，但 `services/api/src/history/validate.ts`
   已按 17 类校验 ⇒ 一旦落轮次类型会撞库层 CHECK 报 500。修它需要新迁移改表，不在 `0040` 范围内；**也不要直接改 `0018` 的文本（连注释都不行）**——`services/api/src/db/migrate.ts:47` 对整份 SQL 取 SHA256（不剥注释）、`:193` 与已应用记录的 checksum 比对、`:241-243` 发现差异即拒绝，既有库升级会被拦住（当前 main 原文 SHA256 `a90385167b8ad1f84f76d0dcc3348aecfc94869c794de4edeb2c0734a7727ded`）。

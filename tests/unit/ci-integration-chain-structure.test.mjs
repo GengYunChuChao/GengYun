@@ -106,6 +106,25 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '接进真库 job 不等于进 `test:integration:http`。',
   },
   {
+    path: 'tests/integration/admin-scopes-authority-pg.mjs',
+    reason: '需真实 PG 17.11，且是**自起集群**脚本（R37 / `#18` S2 片1 交付）：要求 `GY_PG_BIN` 指向服务端'
+      + '二进制目录，自行 `initdb` 后以 `postgres -D … -p … -h 127.0.0.1` 前台进程起一次性集群'
+      + '（仅回环；端口在 55600–55639 里**先探活再起**，数据目录父目录走可选的 `GY_R37_PG_ROOT`，'
+      + '收尾 `pg_ctl stop -m fast` + 删目录），再按**生产顺序**跑 `migrate.ts up` ⇒ `roles/*.sql` ⇒'
+      + ' `20-login-roles.sql` ⇒ `90-assert-least-privilege.sql`（末行必须 ok、新增断言 103/104 必须为真），'
+      + '最后以 `gengyun_api_runtime` 身份直调迁移 0041 的 `grant_admin_scope` / `revoke_admin_scope`：'
+      + '正常授予与撤销、幂等（不写第二条审计、不 bump revision）、自授与「授予自己未持有的 scope」被拒、'
+      + '目标停用被拒、版本冲突、撤销后复活（重置 granted_at）、最后授权者守卫（含停用账号不计入）、'
+      + '审计撞主键整笔回滚（零写入）、闭集外取值由库层 CHECK 拒绝（23514）。'
+      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
+      + '本片**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
+      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／'
+      + '`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，'
+      + '须由指挥裁定），故在此如实登记为未接线；本地已用本机 PG 17.11 二进制跑通该臂。'
+      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
+      + '接进真库 job 不等于进 `test:integration:http`。',
+  },
+  {
     path: 'tests/integration/admin-community-posts-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_community_posts_test`：脚本要求**空库**'
       + '（先断言 `public` 下 0 张表），只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段：'

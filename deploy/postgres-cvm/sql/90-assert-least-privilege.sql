@@ -1781,6 +1781,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'count_deletion_receipts',           'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R37（`#18` S2 片1 / 迁移 0041）：后台管理员 scope 的**唯一写路径**（两条窄口径
+    -- SECURITY DEFINER 函数：授予 / 撤销）。运行时对 `admin_scopes` 仍是零表级、零列级写
+    -- （external_manifest 与槽 9 的 protected_columns 逐字未动），授权维护只能经这两条函数；
+    -- EXECUTE 只授运行时（断言 103 精确比对 grantee 集，断言 3 同时覆盖「多授 / 少授」）。
+    ('public',         'grant_admin_scope',                  'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'revoke_admin_scope',                 'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -3852,6 +3860,87 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                  || s.egress_role::text || '/' || s.egress_grant::text || '/'
                  || s.writebacks_present::text || '/' || s.writebacks_listed::text
             FROM ledger_readiness_state s)
+
+  UNION ALL
+  -- 103. GY-R37（`#18` S2 片1 / 迁移 0041）：后台管理员 scope 写面的两条窄口径函数，必须
+  --      「函数存在 + SECURITY DEFINER + PROACL 非空 + PUBLIC 无 EXECUTE + 非属主只有运行时」。
+  --      为什么不只靠断言 3：断言 3 判「manifest 行与实测 grantee 集相等」，函数缺失时它给的
+  --      读数是「少授」；这里把「建成了 SECURITY INVOKER」与「漏了 REVOKE ALL FROM PUBLIC」
+  --      两种半接通各自钉住 —— 前者会让运行时借调用者身份直接写 `admin_scopes`（本文件
+  --      external_manifest 钉死的红线），后者让任何能连库的角色都能改后台权限。
+  SELECT 'admin_scope_write_functions_execute_exact',
+         (SELECT count(*) = 2
+                 AND bool_and(
+                       f.prosecdef
+                   AND f.proacl IS NOT NULL
+                   AND has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')
+                   AND NOT has_function_privilege('public', f.oid, 'EXECUTE')
+                   -- 必须显式 ::text：`pg_roles.rolname` 的类型是 `name`，`COALESCE` 里那个
+                   -- 'PUBLIC' 伪角色是 unknown 字面量 ⇒ 不转型时得到 `name[]`，与右边的 `text[]`
+                   -- 没有 `=` 运算符（真库实测 `operator does not exist: name[] = text[]`）。
+                   AND (SELECT array_agg(DISTINCT COALESCE(g.rolname::text, 'PUBLIC')
+                                         ORDER BY COALESCE(g.rolname::text, 'PUBLIC'))
+                          FROM aclexplode(f.proacl) AS a
+                          LEFT JOIN pg_roles AS g ON g.oid = a.grantee
+                         WHERE a.privilege_type = 'EXECUTE'
+                           AND a.grantee <> f.proowner) = ARRAY['gengyun_api_runtime']::text[]
+                 )
+            FROM (VALUES ('grant_admin_scope'), ('revoke_admin_scope')) AS v(func_name)
+            JOIN pg_proc AS f
+              ON f.oid = to_regprocedure(
+                   'public.' || v.func_name || '(uuid,uuid,text,text,uuid,uuid,integer)'
+                 )),
+         '后台 scope 写面两条函数必须存在、SECURITY DEFINER、PUBLIC 无 EXECUTE、非属主只授 gengyun_api_runtime；实测 '
+         || COALESCE((
+              SELECT string_agg(
+                       v.func_name || '(secdef=' || COALESCE(f.prosecdef::text, '缺失')
+                       || ',proacl_null=' || COALESCE((f.proacl IS NULL)::text, 'n/a')
+                       || ',public_exec=' || COALESCE(has_function_privilege('public', f.oid, 'EXECUTE')::text, 'n/a')
+                       || ',runtime_exec=' || COALESCE(has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')::text, 'n/a')
+                       || ')',
+                       ' | ' ORDER BY v.func_name)
+                FROM (VALUES ('grant_admin_scope'), ('revoke_admin_scope')) AS v(func_name)
+                LEFT JOIN pg_proc AS f
+                  ON f.oid = to_regprocedure(
+                       'public.' || v.func_name || '(uuid,uuid,text,text,uuid,uuid,integer)'
+                     )
+            ), '（无）')
+
+  UNION ALL
+  -- 104. GY-R37（`#18` S2 片1 / 迁移 0041）：`public.admin_scopes.scope` 的**库层闭集**必须
+  --      恰为 13 个后台权限，且**不含** `user` / `public` / `receipt`（裁定②：库层 CHECK 只含
+  --      后台权限 —— 那三个是路由访问标记，不是可授予的后台权限）。
+  --      判据是「从 `admin_scopes_scope_closed_set` 的约束定义里抽字符串字面量，再与期望集合
+  --      做精确比对」，不是字面 `LIKE` 匹配：多一个值、少一个值、把 `scopes:write` 写成
+  --      `scopes:write:` 都会红。约束缺失 ⇒ 抽出空数组 ⇒ 与 13 项不等 ⇒ 红（fail-closed）。
+  SELECT 'admin_scopes_scope_check_closed_set',
+         COALESCE((
+           SELECT array_agg(DISTINCT m[1] ORDER BY m[1])
+             FROM pg_constraint AS c
+             CROSS JOIN LATERAL regexp_matches(
+                          pg_get_constraintdef(c.oid), '''([a-z][a-z0-9:]{0,39})''', 'g'
+                        ) AS m
+            WHERE c.conrelid = 'public.admin_scopes'::regclass
+              AND c.conname = 'admin_scopes_scope_closed_set'
+              AND c.contype = 'c'
+         ), ARRAY[]::text[]) = ARRAY[
+           'accounts:read', 'accounts:suspend', 'audit:read',
+           'flags:read', 'flags:write', 'jobs:cancel', 'jobs:read',
+           'scopes:read', 'scopes:write',
+           'session:logout', 'session:read',
+           'sources:read', 'sources:write'
+         ]::text[],
+         'admin_scopes.scope 的库层闭集必须恰为 13 个后台权限（不含 user/public/receipt）；实测 '
+         || COALESCE((
+              SELECT '[' || string_agg(DISTINCT m[1], ', ' ORDER BY m[1]) || ']'
+                FROM pg_constraint AS c
+                CROSS JOIN LATERAL regexp_matches(
+                             pg_get_constraintdef(c.oid), '''([a-z][a-z0-9:]{0,39})''', 'g'
+                           ) AS m
+               WHERE c.conrelid = 'public.admin_scopes'::regclass
+                 AND c.conname = 'admin_scopes_scope_closed_set'
+                 AND c.contype = 'c'
+            ), '（无 admin_scopes_scope_closed_set 约束）')
 )
 
 SELECT label, ok, detail
@@ -3872,7 +3961,7 @@ SELECT CASE
 -- 判决行里仍有**完整**明细可查。
 -- 口径（静态可数，用来核对上面的实测数）：断言行 = 带编号的字面断言行 + 逐表展开行
 -- （external_manifest 每行一条 `runtime_grants_external_<tbl>`；allow_table_dml 只进 detail
--- 文案、不增减断言行，现为 16 个三元组）。编号槽位 1..102 中 49-61 与 69-84 是逐行展开区。
+-- 文案、不增减断言行，现为 16 个三元组）。编号槽位 1..104 中 49-61 与 69-84 是逐行展开区。
 -- R34（2026-10-24）：external_manifest 去掉 jobs 行（17→16）。**总数没有定论，只有静态可算值**：
 -- 上面记的「117 条 / 3693」（2026-10-21 口径）写下时清单是 **18 行**（media + jobs 都在）；
 -- 同日 R28-W12 删 media 行（18→17）只改了「18 张→17 张」的文本，**没有扣** 117/3693。
@@ -3886,6 +3975,9 @@ SELECT CASE
 -- R34 · #18（迁移 0036）：expected 增三张后台内容域表 ⇒ 数据驱动的 49–58 各多一条，
 -- 合流后共 120 条 / 3814（+121 = 三条新标签的长度贡献）；`allow_table_dml` 与 49–58 的
 -- 硬否定一句未动（列级授权下三表都没有表级 INSERT/UPDATE/DELETE）。
+-- R37 · #18 S2 片1（迁移 0041）：再追加两条（103 后台 scope 写面函数授权面 / 104 `admin_scopes`
+-- 闭集约束面）⇒ 静态值 122 条；`external_manifest` 的 admin_scopes 行与槽 9 的
+-- protected_columns **一句未动**（运行时仍然零写入），新增的只有函数面与约束面。
 DO $$
 DECLARE
   v_failed integer;
