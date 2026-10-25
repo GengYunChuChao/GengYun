@@ -231,6 +231,51 @@ async function settle(ms) {
 }
 
 /**
+ * 有界轮询等待一个**可观测条件**成立（超时抛错并带上已等时长与上限）。
+ *
+ * 为什么不能只等固定墙钟：本测试把 `qaApi.POLL_INTERVAL_MS` 置为 5ms，页面的推进由
+ * `setInterval(5ms)` 这一串**定时器宏任务**驱动（受理 → 第 N 拍读到终态 → `settle()`）。
+ * 固定窗口（如 `settle(60)`）在满载/慢盘机器上遇到一次 >60ms 的同步停顿（GC、IO、OS 调度）时，
+ * 恢复 CPU 后的那一个 timers 相位只给重复定时器补**一拍**，紧接着到期的 60ms 定时器就放行了断言
+ * ⇒ 断言看到「只走了 1 拍」的中间态（空的门禁码、null 的回答）。改等条件后：机器慢只意味着等得久，
+ * 被验证的语义一点不放松（条件本身比"时间到了"更严）。
+ */
+async function waitFor(predicate, options) {
+  const opts = options || {}
+  const timeoutMs = opts.timeoutMs === undefined ? 2000 : opts.timeoutMs
+  const intervalMs = opts.intervalMs === undefined ? 2 : opts.intervalMs
+  const started = Date.now()
+  while (predicate() !== true) {
+    const waited = Date.now() - started
+    if (waited >= timeoutMs) {
+      throw new Error((opts.message || '等待条件超时') + '：已等 ' + waited + 'ms（上限 ' + timeoutMs + 'ms）')
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+}
+
+/** 等页面的轮询链把任务读到终态（`settle()` 已落定、发送中已解除）。 */
+async function waitSettled(page, message) {
+  await waitFor(() => page.data.stage === 'settled' && page.data.busy === false, {
+    message: message || '页面轮询链应把任务读到终态（stage=settled、busy=false；5ms 轮询拍未落地）'
+  })
+}
+
+/** 等页面因越过 `deadline_at` / 拍数上限而落到「未产出、可重试」态。 */
+async function waitNotProduced(page, message) {
+  await waitFor(() => page.data.taskErrorCode === 'ANSWER_NOT_PRODUCED', {
+    message: message || '轮询应越过 deadline_at 并落到 ANSWER_NOT_PRODUCED（5ms 轮询拍未落地）'
+  })
+}
+
+/** 等累计发出 n 个轮次请求且页面已解除发送中（「重试/改正文/清空 ⇒ 恰好 N 个轮次」用）。 */
+async function waitTurnCount(h, n, message) {
+  await waitFor(() => h.http.find('POST', h.paths.turns).length >= n && h.page.data.busy === false, {
+    message: message || ('应累计发出 ' + n + ' 个轮次请求且页面已解除发送中（5ms 轮询拍未落地）')
+  })
+}
+
+/**
  * 起一个带假传输的文字提问页（真实页面代码）。
  *
  * 返回 `{ page, http, qa, conversationId, turnId, paths }`；测试经 `page.onXxx` 驱动，
@@ -445,7 +490,7 @@ test('页面·提问全链路：请求形状逐项核对（两键闭集体 / If-
   const h = bootQaPage()
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page)
 
   // 建会话：恰好一次，带幂等键，请求体为空对象（契约 ConversationInput.required 为空）。
   const convos = h.http.find('POST', h.paths.conversations)
@@ -477,12 +522,14 @@ test('页面·会话复用：第二次提问不再建会话，只发新轮次', 
   const h = bootQaPage()
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page, '第一次提问应已落定（第二次发送前 busy 必须已解除）')
+  assert.equal(h.page.data.stage, 'settled', '前提：第一次提问已落定，busy 守卫不会吞掉第二次发送')
   const firstKey = h.http.find('POST', h.paths.turns)[0].header['Idempotency-Key']
 
   h.page.setData({ draft: EDITED_QUESTION })
   await h.page.onSend()
-  await settle(60)
+  assert.equal(h.page.data.busy, true, '前提：第二次发送真的被受理（busy 已置位，未被守卫吞掉）')
+  await waitSettled(h.page, '第二次提问也应被受理并落定（否则只发得出一个轮次）')
 
   assert.equal(h.http.find('POST', h.paths.conversations).length, 1, '会话必须复用，不得重复创建')
   const turns = h.http.find('POST', h.paths.turns)
@@ -531,7 +578,7 @@ test('页面·failed / timed_out / uncertain 三类终态逐类呈现，均不�
     })
     h.page.setData({ draft: QUESTION })
     await h.page.onSend()
-    await settle(60)
+    await waitSettled(h.page, state + ' 终态应已落定（5ms 轮询拍未落地）')
     assert.equal(h.page.data.answer, null, `${state} 不得展示任何回答正文`)
     assert.equal(h.page.data.answerGateCode, 'ANSWER_NOT_PRODUCED', `${state} 的闸门码必须一致`)
     assert.match(h.page.data.answerGateMessage, new RegExp(phrase))
@@ -561,14 +608,18 @@ test('页面·queued/running → failed：进行中提示随终态结束，成�
   // 202 受理为 queued：此刻进行中提示**应该**在场（修复不是把提示整个删掉）。
   assert.equal(h.page.data.taskNote, '问题已发送，正在查找答案…', 'queued 受理后必须显示进行中提示')
 
-  await settle(20)
+  await waitFor(() => h.page.data.job.state === 'running', {
+    message: '中途应读到 running 拍（5ms 轮询拍未落地）'
+  })
   assert.equal(h.page.data.job.state, 'running', '前提：中途读到 running')
   assert.equal(h.page.data.stage, 'pending', 'running 仍是进行中')
   assert.equal(h.page.data.taskNote, '问题已发送，正在查找答案…', 'running 期间进行中提示必须保留')
 
   // 任务转入 failed 终态。
   failNow = true
-  await settle(40)
+  await waitFor(() => h.page.data.job.state === 'failed', {
+    message: '任务应进入 failed 终态（5ms 轮询拍未落地）'
+  })
   assert.equal(h.page.data.job.state, 'failed', '前提：任务已进入 failed 终态')
   assert.equal(h.page.data.stage, 'settled', 'failed 必须落到终态')
   assert.equal(h.page.data.busy, false, '终态必须解除发送中状态')
@@ -586,7 +637,7 @@ test('页面·queued/running → failed：进行中提示随终态结束，成�
   const ok = bootQaPage()
   ok.page.setData({ draft: QUESTION })
   await ok.page.onSend()
-  await settle(80)
+  await waitSettled(ok.page, '成功路径应落到 succeeded 终态（5ms 轮询拍未落地）')
   assert.equal(ok.page.data.job.state, 'succeeded', '前提：成功路径仍落到 succeeded')
   assert.equal(ok.page.data.taskNote, '', '成功终态同样不得残留进行中提示')
   assert.equal(ok.page.data.answer !== null, true, '成功路径仍整体展示回答')
@@ -599,7 +650,7 @@ test('页面·succeeded 但 check_state=blocked ⇒ 不展示正文，只给真�
   const h = bootQaPage({ jobAnswer: answerFixture({ check_state: 'blocked' }) })
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page)
   assert.equal(h.page.data.answer, null, '安全检查未过不得展示回答正文')
   assert.equal(h.page.data.answerGateCode, 'ANSWER_NOT_CHECKED')
   assert.match(h.page.data.answerGateMessage, /安全检查未通过/)
@@ -612,7 +663,9 @@ test('页面·succeeded 但无引用 ⇒ ANSWER_NO_SOURCE（不把无出处正�
   const h = bootQaPage({ jobAnswer: answerFixture({ citations: [] }) })
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page, '无引用终态应已落定（5ms 轮询拍未落地）')
+  // 窗口：闸门码是按**读到的终态**算出来的，必须先真的走完 ≥2 拍读面（默认第 2 拍才 succeeded）。
+  assert.equal(h.http.find('GET', h.paths.job).length >= 2, true, '前提：轮询至少走过两拍读面')
   assert.equal(h.page.data.answer, null)
   assert.equal(h.page.data.answerGateCode, 'ANSWER_NO_SOURCE')
   h.page.onUnload()
@@ -635,7 +688,7 @@ test('页面·轮询越过 deadline_at ⇒ ANSWER_NOT_PRODUCED，且不自动重
   const h = bootQaPage({ deadlineInMs: -1000 }) // 截止时间已过：第一拍即越界
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(60)
+  await waitNotProduced(h.page)
   assert.equal(h.page.data.answer, null, '超边界不得展示回答')
   assert.equal(h.page.data.taskErrorCode, 'ANSWER_NOT_PRODUCED')
   assert.match(h.page.data.taskNote, /不会自动重发/)
@@ -649,7 +702,7 @@ test('页面·202 受理后轮询超时，点「重试」严格回放同一请�
   const h = bootQaPage({ deadlineInMs: -1000 })
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(80)
+  await waitNotProduced(h.page, '受理成功但 deadline 已过：第一拍就应越界（5ms 轮询拍未落地）')
   const firstTurnCalls = h.http.find('POST', h.paths.turns)
   assert.equal(firstTurnCalls.length, 1, '首次发送恰好一个轮次请求')
   assert.equal(h.page.data.taskErrorCode, 'ANSWER_NOT_PRODUCED', '超时必须落到可重试态')
@@ -657,7 +710,7 @@ test('页面·202 受理后轮询超时，点「重试」严格回放同一请�
 
   // 用户明确点「重试」：**同一个问题**，必须复用同一把 Idempotency-Key。
   h.page.onRetry()
-  await settle(80)
+  await waitTurnCount(h, 2, '重试应发出第 2 个轮次请求并落回可重试态（5ms 轮询拍未落地）')
   const turns = h.http.find('POST', h.paths.turns)
   assert.equal(turns.length, 2, '重试仍应发出一次（服务端同键回放）请求')
   assert.equal(turns[1].header['Idempotency-Key'], firstKey, '202 受理后的重试必须严格回放原键，不得产生新的任务身份')
@@ -666,7 +719,7 @@ test('页面·202 受理后轮询超时，点「重试」严格回放同一请�
 
   // 连续第二次重试同样不得换键。
   h.page.onRetry()
-  await settle(80)
+  await waitTurnCount(h, 3, '第二次重试应发出第 3 个轮次请求（5ms 轮询拍未落地）')
   const third = h.http.find('POST', h.paths.turns)
   assert.equal(third[2].header['Idempotency-Key'], firstKey, '多次重试都不得换键')
   h.page.onUnload()
@@ -676,13 +729,13 @@ test('页面·明确改正文后再发送 ⇒ 换新键（新意图才换身份�
   const h = bootQaPage({ deadlineInMs: -1000 })
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(80)
+  await waitNotProduced(h.page)
   const firstKey = h.http.find('POST', h.paths.turns)[0].header['Idempotency-Key']
 
   // 用户改了正文并重新发送：这才是一次新的提问。
   h.page.onDraftInput({ detail: { value: EDITED_QUESTION } })
   await h.page.onSend()
-  await settle(80)
+  await waitTurnCount(h, 2, '改了正文重新发送应发出第 2 个轮次请求（5ms 轮询拍未落地）')
   const turns = h.http.find('POST', h.paths.turns)
   assert.notEqual(turns[1].header['Idempotency-Key'], firstKey, '改了正文就是新提问，必须换新键')
   assert.equal(turns[1].data.text, EDITED_QUESTION)
@@ -693,14 +746,14 @@ test('页面·点「清空」重新开始同一句话 ⇒ 换新键（用户明�
   const h = bootQaPage({ deadlineInMs: -1000 })
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(80)
+  await waitNotProduced(h.page)
   const firstKey = h.http.find('POST', h.paths.turns)[0].header['Idempotency-Key']
 
   h.page.onClearDraft()
   assert.equal(h.page._sendAttempt, null, '清空必须丢弃本次尝试身份')
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(80)
+  await waitTurnCount(h, 2, '清空后重新提问应发出第 2 个轮次请求（5ms 轮询拍未落地）')
   const turns = h.http.find('POST', h.paths.turns)
   assert.notEqual(turns[1].header['Idempotency-Key'], firstKey, '明确重新开始才是新提问，必须换新键')
   h.page.onUnload()
@@ -722,7 +775,11 @@ test('页面·发送中重复点击 ⇒ 恰好一个轮次请求（防重复）'
   assert.equal(h.http.find('POST', h.paths.turns).length, 1, '重复点击不得产生第二个轮次请求')
   release({ status: 202, data: { data: answerJobFixture(h.job.target_ref.id, { deadline_at: h.job.deadline_at }), meta: metaFixture() }, headers: { ETag: '"1"' } })
   await first
-  await settle(60)
+  // 页面收到 202 后一定先置 busy：以「发送中已解除」为本次受理流程走完的条件。
+  // （本用例的假 202 回的是另一份 job，其轮询路径不在本测试的路由里，页面会如实落 NOT_FOUND。）
+  await waitFor(() => h.page.data.busy === false, {
+    message: '放行 202 后页面应把本次受理流程走完并解除发送中（5ms 轮询拍未落地）'
+  })
   assert.equal(h.http.find('POST', h.paths.turns).length, 1, '整个窗口仍只有一个轮次请求')
   h.page.onUnload()
 })
@@ -785,7 +842,7 @@ test('页面·门禁失效（游客）⇒ 关闭私有展示并丢弃会话缓�
   const h = bootQaPage()
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page)
   assert.ok(h.page._conversation !== null, '发送成功后本页应缓存会话')
   h.page.closePrivate('会话／门禁已失效：本次提问已作废，未发送任何内容。')
   assert.equal(h.page._conversation, null, '门禁失效必须丢弃会话缓存')
@@ -801,7 +858,7 @@ test('页面·onHide 立刻清空全部私有显示与会话缓存（不等下�
   const h = bootQaPage()
   h.page.onDraftInput({ detail: { value: QUESTION } })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page)
   assert.ok(h.page.data.answer !== null, '前提：先展示出一份回答')
   assert.ok(h.page.data.citations.length > 0, '前提：先展示出来源')
   assert.ok(h.page._conversation !== null, '前提：本页已缓存会话')
@@ -823,7 +880,7 @@ test('页面·隐藏后换成另一个账号返回：重新核实成功也不得
   const h = bootQaPage()
   h.page.onDraftInput({ detail: { value: QUESTION } })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page)
   const leakedAnswer = h.page.data.answer.checkedText
   assert.ok(leakedAnswer.length > 0, '前提：账号 A 已取得一份私有回答')
 
@@ -851,7 +908,7 @@ test('页面·未 onHide 但身份 epoch 变化后返回：同样清空旧账号
   const h = bootQaPage()
   h.page.onDraftInput({ detail: { value: QUESTION } })
   await h.page.onSend()
-  await settle(60)
+  await waitSettled(h.page)
   const leakedAnswer = h.page.data.answer.checkedText
 
   // 只有"另一页切了账号"这层变化（这里不调 onHide，直接模拟返回时的 epoch 变化）。
@@ -872,13 +929,17 @@ test('页面·旧账号在途响应在换人后不得回填（epoch 绑定）', 
   h.http.routeOf('GET', h.paths.job).handler = () => new Promise((r) => { release = r })
   h.page.setData({ draft: QUESTION })
   await h.page.onSend()
-  await settle(20)
+  await waitFor(() => typeof release === 'function', {
+    message: '轮询请求应已发出并扣在途（5ms 轮询拍未落地）'
+  })
   assert.equal(typeof release, 'function', '前提：轮询请求已发出并扣在途')
   // 换账号（另一个页面完成登录）后再兑现旧响应。
   h.identity.token = 'synthetic-token-b'
   h.identity.epoch = 'epoch-2'
   release({ status: 200, data: { data: h.job, meta: metaFixture() }, headers: { ETag: '"1"' } })
-  await settle(60)
+  await waitFor(() => h.page._pollTimer === null, {
+    message: '换人后的那一拍应被 epoch 判定拦下并停掉轮询（5ms 轮询拍未落地）'
+  })
   assert.equal(h.page.data.answer, null, '换人后旧回调不得回填私有内容')
   assert.equal(h.page.data.citations.length, 0, '换人后旧回调不得回填来源')
   h.page.onUnload()
