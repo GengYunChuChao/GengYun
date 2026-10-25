@@ -81,9 +81,9 @@ upstream/main                = 24fac034276c26b0e870e8ea8ea7f4349a8f8a89
 | 冻结清单绑定块 | `packages/evaluation/samples/gy-i20-weeds-frozen-manifest.json` | #130 | `indexVersion=gy-i20-weeds-real-2026.10.14`、`split=test`、`recordCount=172`、`indexSha256=36053ceed50abbeb…c78f`、`frozenAt=2026-10-14T12:05:00+08:00`、`coverage.weedPhotoCoveredClasses` 8 个规范物种 ID + `coverageSha256` + `basisRef` |
 | 流程与红线 | `docs/evaluation/README.md:72-84` | 早于 #130 | 10 条程序强制硬红线（`:74` rawMediaCommitted=false；`:75` modelGenerated=false；`:76` 同簇不跨 split；`:81` 任一条件不满足即 `isRealEvaluation=false`；`:82` 原始媒体与令牌不入仓） |
 | 抽取方法文档 | `docs/evaluation/real-samples-weeds-docx.md`；`:16` 来源 `sha256`；`:17` 172 张 PNG；`:19` 原始件与媒体一律不入库；`:103-127` 答案键与核实状态；`:129-143` 覆盖口径 | #130 | 见 §1.3 与 §2.6 |
-| 近重复策略 / 评分规约 | `docs/evaluation/near-duplicate-policy.md`、`docs/evaluation/scoring-spec.md` | 早于 #130 | dHash 阈值 8（`near-duplicate-policy.md:15,28`）；两两最小汉明距离 14、近重复对 0 的**实测值**见 `docs/evaluation/real-samples-weeds-docx.md:52,78`、`packages/evaluation/samples/README.md:34`（原记 :27）、`docs/evaluation/sample-gap-register.md:62`（`scoring-spec.md` 全文无此数值） |
+| 近重复策略 / 评分规约 | `docs/evaluation/near-duplicate-policy.md`、`docs/evaluation/scoring-spec.md` | 早于 #130 | dHash 阈值 8（`near-duplicate-policy.md:15,28`）；两两最小汉明距离 14、近重复对 0 的**实测值**见 `docs/evaluation/real-samples-weeds-docx.md:52,78`、`packages/evaluation/samples/README.md:34`（原记 :27）、`docs/evaluation/sample-gap-register.md:71`（`scoring-spec.md` 全文无此数值） |
 | 样本目录说明 | `packages/evaluation/samples/README.md:1-4`、`:67-81` | #130 | `:67-81` 明确列出"**不主张**"的事（含标准答案未经独立复核） |
-| 缺口清单（程序产出） | `docs/evaluation/sample-gap-register.md:16-34`、`:41-54`、`:86-99` | #130 | 17 个缺口桶；解除阻塞所需输入 10 条（`:86-99`） |
+| 缺口清单（程序产出） | `docs/evaluation/sample-gap-register.md:17-35`、`:50-63`、`:95-108` | #130 | 17 个缺口桶；解除阻塞所需输入 10 条（`:95-108`） |
 | 证据页 | `docs/verification/gy-i20-real-samples-20261014.md` | #130 | 既有证据页 |
 | 回归 | `tests/evaluation/gy-i20-real-samples.test.mjs` | #130 | 11 例（含 3 例负控制） |
 | 合成夹具（负控制） | `tools/evaluation/make-synthetic-fixture.mjs` → `tests/evaluation/fixtures/synthetic-index.json` | 早于 #130 | 全 `sourceKind=synthetic_placeholder` |
@@ -136,7 +136,7 @@ docx-only = 1 ; xlsx-only = 4
 | **严格同名（冻结 / 缺口采用）** | **7** | **165** | 稗草 / 马唐 / 狗尾草 / 牛筋草 / 看麦娘 / 藜 / 空心莲子草 **各 1 张**；`species_nettle_group`（荨麻类）**0** |
 | 并入同属近缘种（仅作参考） | 20 | 152 | 近缘种 13 条，**不改变**冻结口径 |
 
-依据：`docs/evaluation/real-samples-weeds-docx.md:80-83`、`:129-143`；`docs/evaluation/sample-gap-register.md:18-19`。
+依据：`docs/evaluation/real-samples-weeds-docx.md:80-83`、`:129-143`；`docs/evaluation/sample-gap-register.md:19-20`。
 
 ---
 
@@ -238,19 +238,19 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | --- | --- | --- | --- | --- | --- |
 | `L01` | **ICAMA 核准标签（用量 / 施用方法 / 注意事项 / 安全间隔期 / 登记有效期 / 禁限用规则）** | `packages/knowledge/coverage-report.json:99-104`（"用药量、施用方法、注意事项未采集（公告附表无此列）"；"未逐条与 ICAMA 登记详情 / 核准标签原文复核"；"ICAMA 登记查询接口本轮程序化访问返回服务器内部错误，未取得逐条详情"）；`docs/verification/gy-i03-zhejiang-materials.md:296`（`absent_in_source`，**严禁**推断或补造用量） | 用户（ICAMA 逐条导出或清晰标签全页）；资料审核人核对 | **否** —— 三份素材无此列；模型/推断补造被明文禁止（`gy-i03-zhejiang-materials.md:296`、`packages/knowledge/zhejiang/README.md:21-23`、`:98`） | **未取得（0 份）**；`dose_text=null`、`usable_as_dose=false`、`card_ready=false` 已如实落库；DoseCard = 0 |
 | `L02` | **20 份独立除草剂登记标签** | `#3` scope 原文「20份独立除草剂登记标签为资料目标，缺可靠来源则列不足，不造登记号」；`#3` acceptance 原文「缺失、过期、冲突和未核对不标为有效；不虚构20条已完成」；`docs/research/gy-i03-label-evidence-increment-20261011.md:47`（"20 份独立核准完整标签的目标未达到"，候选 24 条不变） | 用户（官方查询导出或完整清晰标签全页）；无则按"列不足"处理 | **否** —— 需仓外真实标签；研究索引不得自动放行（`…increment…md:49`） | **取得 0 / 20**；研究候选 24 条；此项目标**未达到** |
-| `L03` | **独立核实（样本 `reviewedBy` 全为 `null`）** | `packages/evaluation/samples/gy-i20-weeds-labels.json:18`（`"reviewedBy": null`）、`:19`（"尚未进行独立复核"）；`#20` acceptance 原文「独立核实标准答案，模型不得作为自己的答案」；`packages/evaluation/schema/sample.schema.json:102-105`（`modelGenerated` const `false`）；`docs/evaluation/README.md:75`；`docs/evaluation/real-samples-weeds-docx.md:248`；`docs/evaluation/sample-gap-register.md:50-51`、`:68`、`:97` | 独立复核人（植物分类专业人员 / 第二人复标）；资料审核人 | **否** —— 模型不得作为自己的答案（硬约束）；`reliable_label` 不等于 `independent_verification` | **未发生**；`annotation.method=reliable_label`，**不主张已独立核实** |
-| `L04` | **覆盖内样本量：7 / 300；逐类 7 / 30（荨麻类 0）** | `docs/evaluation/sample-gap-register.md:18-19`（`weed_photo_covered` 实际 7、缺口 293；`weed_photo_covered_per_class` 最小值口径 0）；`docs/evaluation/real-samples-weeds-docx.md:49-50`、`:80-81`、`:230-231`；`docs/implementation-requirements.md:460`（至少 300 张独立清晰照片且每类至少 30 张，含实际手机照片及不同角度／背景） | 用户提供真实手机实拍（含不同角度 / 背景）；验收方裁定文档配图是否计入（见 §4 `C5`） | **否** —— 需真实新增采集；`#20` scope 原文「均不可用演示样本替代」（`docs/evaluation/sample-gap-register.md:54`） | **缺口 293 张**；逐类**未满足**；`species_nettle_group=0` |
+| `L03` | **独立核实（样本 `reviewedBy` 全为 `null`）** | `packages/evaluation/samples/gy-i20-weeds-labels.json:18`（`"reviewedBy": null`）、`:19`（"尚未进行独立复核"）；`#20` acceptance 原文「独立核实标准答案，模型不得作为自己的答案」；`packages/evaluation/schema/sample.schema.json:102-105`（`modelGenerated` const `false`）；`docs/evaluation/README.md:75`；`docs/evaluation/real-samples-weeds-docx.md:248`；`docs/evaluation/sample-gap-register.md:59-60`、`:77`、`:106` | 独立复核人（植物分类专业人员 / 第二人复标）；资料审核人 | **否** —— 模型不得作为自己的答案（硬约束）；`reliable_label` 不等于 `independent_verification` | **未发生**；`annotation.method=reliable_label`，**不主张已独立核实** |
+| `L04` | **覆盖内样本量：7 / 300；逐类 7 / 30（荨麻类 0）** | `docs/evaluation/sample-gap-register.md:19-20`（`weed_photo_covered` 实际 7、缺口 293；`weed_photo_covered_per_class` 最小值口径 0）；`docs/evaluation/real-samples-weeds-docx.md:49-50`、`:80-81`、`:230-231`；`docs/implementation-requirements.md:460`（至少 300 张独立清晰照片且每类至少 30 张，含实际手机照片及不同角度／背景） | 用户提供真实手机实拍（含不同角度 / 背景）；验收方裁定文档配图是否计入（见 §4 `C5`） | **否** —— 需真实新增采集；`#20` scope 原文「均不可用演示样本替代」（`docs/evaluation/sample-gap-register.md:63`） | **缺口 293 张**；逐类**未满足**；`species_nettle_group=0` |
 | `L05` | **许可（全部 `licensed=false`）** | `packages/knowledge/coverage-report.json:105`（"许可调查本轮暂缓，所有来源 licensed=false"）；`docs/research/gy-i03-public-label-index-20261011.json:41-42`（`licensed:false`、`license_survey_status:"not_established"`）；`gy-i03-label-evidence-increment-20261011.json:37`（`permission_status`：公开可访问与落地页声明**不构成**再利用 / 训练许可）；`#3` acceptance 原文「许可调查本轮暂缓但不得写成已许可」；`docs/implementation-requirements.md:456` | 权利方 / 资料提供方；用户决定是否启动许可调查（见 §4 `C2`）；法律意见 | **否** —— 许可同意只能由权利方给出；AI 只能如实标 `licensed=false` | **未确立**；原文件不入库；**不得写为已许可** |
-| `L06` | **覆盖外 165 张的形态与分组条件** | `docs/evaluation/sample-gap-register.md:20`（程序桶 165 ≥ 100 已满足）、`:37-39`（"来源形态为文档配图而非手机实拍，是否计入由验收方裁定；**不据此主张该要求已达标**"；`quality` 一律 `clear`，仅为"未登记为低质量"）；`docs/implementation-requirements.md:461` | 验收方裁定（见 §4 `C5` / `C14`）；人工目视分级作业者 | **否** —— 需人工裁定与人工分级；本执行环境无图像输入能力（`sample-gap-register.md:49`） | **不主张达标**；`quality` 未人工分级 |
-| `L07` | **低质量样本 100 张** | `docs/evaluation/sample-gap-register.md:21`（`weed_photo_low_quality` 实际 0、缺口 100）；`docs/evaluation/real-samples-weeds-docx.md:245-246`（`quality` 一律 `clear`，低质量桶按 0 计） | 用户提供模糊 / 遮挡 / 过暗 / 目标过小照片并定义分组；人工目视分级 | **否** —— 需真实低质量样本与人工分级 | **0 / 100** |
-| `L08` | **其余六域真实样本（标签OCR / 登记匹配 / AI筛查 / 播报 / ASR / 问答）** | `docs/evaluation/sample-gap-register.md:22-34`（第 5 至 17 桶全部为 0）、`:43`、`:66`；`#20` scope 原文「AI200风险＋200正常；普通话50段≥10人；TTS30段；问答120题（60可答＋20不足＋20危险＋20注入）」 | 用户 / 采集方按域提供；`C8` 与 §6 切片 | **否** —— 需真实采集与标注；不得用演示样本替代（`sample-gap-register.md:54`） | **六域零真实样本**；冻结清单仅拍草域 |
+| `L06` | **覆盖外 165 张的形态与分组条件** | `docs/evaluation/sample-gap-register.md:21`（程序桶 165 ≥ 100 已满足）、`:39-41`（"来源形态为文档配图而非手机实拍，是否计入由验收方裁定；**不据此主张该要求已达标**"；`quality` 一律 `clear`，仅为"未登记为低质量"）；`docs/implementation-requirements.md:461` | 验收方裁定（见 §4 `C5` / `C14`）；人工目视分级作业者 | **否** —— 需人工裁定与人工分级；本执行环境无图像输入能力（`sample-gap-register.md:58`） | **不主张达标**；`quality` 未人工分级 |
+| `L07` | **低质量样本 100 张** | `docs/evaluation/sample-gap-register.md:22`（`weed_photo_low_quality` 实际 0、缺口 100）；`docs/evaluation/real-samples-weeds-docx.md:245-246`（`quality` 一律 `clear`，低质量桶按 0 计） | 用户提供模糊 / 遮挡 / 过暗 / 目标过小照片并定义分组；人工目视分级 | **否** —— 需真实低质量样本与人工分级 | **0 / 100** |
+| `L08` | **其余六域真实样本（标签OCR / 登记匹配 / AI筛查 / 播报 / ASR / 问答）** | `docs/evaluation/sample-gap-register.md:23-35`（第 5 至 17 桶全部为 0）、`:52`、`:75`；`#20` scope 原文「AI200风险＋200正常；普通话50段≥10人；TTS30段；问答120题（60可答＋20不足＋20危险＋20注入）」 | 用户 / 采集方按域提供；`C8` 与 §6 切片 | **否** —— 需真实采集与标注；不得用演示样本替代（`sample-gap-register.md:63`） | **六域零真实样本**；冻结清单仅拍草域 |
 | `L09` | **20 条已有登记记录的用量相关字段（6 项 0/20）** | `packages/knowledge/coverage-report.json:40-53`（8 字段 `20/20`；`dose_text` / `application_method` / `precautions_text` / `registration_valid_from` / `registration_valid_to` / `restriction_rules` 均 `0/20`）、`:55-57`（`usable_as_dose=0`，`card_eligible=0`，"非编造；但缺用药量…记录状态 partial，禁止作为用药量依据"） | 与 `L01` 同源：ICAMA 核准标签 | **否** —— 公告附表无此列 | **partial**；`usable_as_dose=0`；**禁止作为用药量依据** |
 | `L10` | **杂草总表 9 栏的受限暂存 `mapping_version`** | `docs/verification/gy-i03-zhejiang-materials.md:305`（`deferred`，需新 `mapping_version` 与相应校验扩展，本轮不改已合并工具）；`docs/architecture/workbook-staging-design.md:44` | 监工 / 用户确认是否本期做（见 §4 `C11`） | **否（本轮）** —— 越范围改已合并工具；**获 `C11` 确认后属可实现项**，但不在本台账执行范围 | **deferred** |
 | `L11` | **作物目录扩充（蔬菜 / 茶园 / 果园 / 蚕豆）** | `docs/verification/gy-i03-zhejiang-materials.md:302`（`blocked_on_scope`：首批 `crop_id` 目录只有 水稻 / 玉米 / 大豆 / 油菜；不自行扩目录，需需求确认） | 用户 / 需求方裁定（见 §4 `C9`） | **否** —— 扩目录等于改覆盖面与契约边界，须先获授权 | **blocked_on_scope**；已入库条目的这些场景 `crop_ids` 为空，正文保留原文 |
 | `L12` | **浙江适用性中的 10 行大区泛称（华东 / 南方 / 华南）** | `docs/verification/gy-i03-zhejiang-materials.md:316`（属区划常识推断，需人工复核）；`:304`（10 行大区泛称需人工复核，保留在清单但不入首批库） | 农业 / 区划专业人员或资料审核人复核（见 §4 `C10`） | **否** —— 属人工复核事项；AI 推断不得当作证据 | **需人工复核**；未入首批库 |
-| `L13` | **训练（调参）集隔离确认** | `docs/evaluation/real-samples-weeds-docx.md:254-255`（"仅有仓库内证据…**无法证明**该素材未进入任何模型的训练集"）；`packages/evaluation/samples/README.md:76-77`；`docs/evaluation/sample-gap-register.md:53`、`:99`；`docs/implementation-requirements.md:456` | 用户 / 被测模型供应商书面确认（见 §4 `C3`） | **否** —— 是否入训练集只能由素材使用方 / 供应商确认 | **无法证明**；不确认则**不能作独立测试集** |
-| `L14` | **付费真实模型实测（`isRealEvaluation=false`）** | `docs/evaluation/real-samples-weeds-docx.md:243-244`；`docs/evaluation/sample-gap-register.md:52`、`:67`；`docs/pr-review-policy.md:42`（新增真实付费请求须用户单独授权）；`packages/knowledge/coverage-report.json:108-110` | 用户单独授权（供应商 / 预算，见 §4 `C13`） | **否** —— 付费外发需用户单独授权 | **未授权、未做**；`gy-i20-weeds-predictions-none.json` 刻意留空；`top1` 必须为 `null` |
-| `L15` | **docx 图片的人工目视内容核对与质量分级** | `docs/evaluation/real-samples-weeds-docx.md:245-247`（未做人工目视分级；**未核对画面内容是否确为该物种**）；`docs/evaluation/sample-gap-register.md:48-49` | 人工目视作业者（有图像输入能力的执行环境） | **否** —— 需人工 / 具图像输入能力的环境；本轮不做 | **未做**；`quality` 一律 `clear` |
+| `L13` | **训练（调参）集隔离确认** | `docs/evaluation/real-samples-weeds-docx.md:254-255`（"仅有仓库内证据…**无法证明**该素材未进入任何模型的训练集"）；`packages/evaluation/samples/README.md:76-77`；`docs/evaluation/sample-gap-register.md:62`、`:108`；`docs/implementation-requirements.md:456` | 用户 / 被测模型供应商书面确认（见 §4 `C3`） | **否** —— 是否入训练集只能由素材使用方 / 供应商确认 | **无法证明**；不确认则**不能作独立测试集** |
+| `L14` | **付费真实模型实测（`isRealEvaluation=false`）** | `docs/evaluation/real-samples-weeds-docx.md:243-244`；`docs/evaluation/sample-gap-register.md:61`、`:76`；`docs/pr-review-policy.md:42`（新增真实付费请求须用户单独授权）；`packages/knowledge/coverage-report.json:108-110` | 用户单独授权（供应商 / 预算，见 §4 `C13`） | **否** —— 付费外发需用户单独授权 | **未授权、未做**；`gy-i20-weeds-predictions-none.json` 刻意留空；`top1` 必须为 `null` |
+| `L15` | **docx 图片的人工目视内容核对与质量分级** | `docs/evaluation/real-samples-weeds-docx.md:245-247`（未做人工目视分级；**未核对画面内容是否确为该物种**）；`docs/evaluation/sample-gap-register.md:57-58` | 人工目视作业者（有图像输入能力的执行环境） | **否** —— 需人工 / 具图像输入能力的环境；本轮不做 | **未做**；`quality` 一律 `clear` |
 | `L16` | **八组杂草科普评估内容** | `docs/verification/gy-i03-zhejiang-materials.md:297`（`not_done`；`coverage_state=planned`）；`packages/knowledge/coverage-report.json:106` | 需求方定义评估方案 + 资料审核人核对真实来源 | **否** —— 需既定评估方案与真实来源核对 | **未做** |
 | `L17` | **真机 / 双手机证据** | `docs/verification/gy-i03-zhejiang-materials.md:299`；`docs/evaluation/real-samples-weeds-docx.md:252`；`docs/verification/gy-i03-zhejiang-materials.md:313` | 有 Android 真机与联网环境的执行者 | **否** —— 无真机则无证据；模拟器 / Demo 不计真机（`docs/pr-review-policy.md:41`） | **未取得** |
 
@@ -269,16 +269,16 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | **C2** | 三份素材的**原始出处、著作权人、再分发与训练许可** | 全仓 `licensed=false`、`license_survey_status=not_established`；许可调查**按用户要求暂缓** | "是否现在启动许可调查？谁去问资料提供方？" | **是（硬阻塞）** |
 | **C3** | 素材**是否已进入任何模型的训练集** | `real-samples-weeds-docx.md:254-255` 明示"无法证明"；不确认则**不能作独立测试集** | "被测模型（哪家/哪版）是否用过这三份素材？" | **是（硬阻塞）** |
 | **C4** | 是否**放宽** `rawMediaCommitted=false` 以允许少量抽样图片入库？ | 硬红线 + `docs/pr-review-policy.md:29`；放宽等于改治理基线 | "保持 0 媒体入库，还是另开一条显式授权的例外通道？" | 否（但影响 §5.2 最小表示） |
-| **C5** | 第6.1节「覆盖内 ≥300 含**实际手机照片**及不同角度/背景」是否**接受文档配图**？ | `sample-gap-register.md:37-38,46-47` 明示"是否计入由验收方裁定" | "文档配图算不算？若不算，手机实拍从哪来？" | **是（硬阻塞）** |
+| **C5** | 第6.1节「覆盖内 ≥300 含**实际手机照片**及不同角度/背景」是否**接受文档配图**？ | `sample-gap-register.md:39-40,55-56` 明示"是否计入由验收方裁定" | "文档配图算不算？若不算，手机实拍从哪来？" | **是（硬阻塞）** |
 | **C6** | docx 的 `criteria` 与 xlsx 的「识别要点」**是否同源**？能否互为交叉核对？ | 侦察实测 170/172 同名（§1.4），但**同链来源不构成独立核实** | "两者是否同一作者整理？可否作 'cross_checked_original' 的依据？" | 否（影响做法，不构成独立核实） |
 | **C7** | 谁担任**独立复核人**（写 `reviewedBy`）？植物分类专业人员从哪来？ | `#20` AC 要求"独立核实标准答案"；`reviewedBy` 现为 `null` | "有无专家/植物志来源？没有则由谁承担？" | **是（硬阻塞）** |
 | **C8** | 20 份独立除草剂登记标签由**谁**提供？（ICAMA 逐条导出或清晰标签全页） | `…increment…md:47-49`：目标未达到、取得 0 份；研究索引不能自动放行 | "由用户提供 ICAMA 导出，还是改为列不足不达标？" | **是（硬阻塞）** |
 | **C9** | 作物目录是否**扩充**（蔬菜/茶园/果园/蚕豆）？ | `gy-i03-zhejiang-materials.md:302` `blocked_on_scope`：`crop_id` 目录只有 4 类，**不自行扩目录，需需求确认** | "扩目录还是接受 `crop_ids` 为空、正文保留原文？" | 否（部分条目受阻，非本线全阻） |
 | **C10** | 浙江适用性中"10 行大区泛称（华东/南方/华南）"是否**采纳**？ | `gy-i03-zhejiang-materials.md:316` 明示属"区划常识推断，需人工复核" | "采纳、剔除，还是单独标 `inferred` 不入首批？" | 否（仅需记录状态） |
 | **C11** | 是否为**杂草总表**开发新 `mapping_version` 的 staging 映射？ | `gy-i03-zhejiang-materials.md:305` `deferred`：需新映射版本 + 校验扩展；本轮**不越范围改已合并工具** | "本期做还是继续 deferred？" | 否（仅需记录状态） |
-| **C12** | `coverage_state=planned` 的 GY-I03 八组能否作为**模型侧覆盖承诺**？ | `coverage-manifest.json` 的 `note` + `sample-gap-register.md:90`：模型侧独立覆盖承诺**仍待冻结** | "模型侧覆盖承诺何时冻结？变了要新冻结版本" | 否（仅需记录状态） |
+| **C12** | `coverage_state=planned` 的 GY-I03 八组能否作为**模型侧覆盖承诺**？ | `coverage-manifest.json` 的 `note` + `sample-gap-register.md:99`：模型侧独立覆盖承诺**仍待冻结** | "模型侧覆盖承诺何时冻结？变了要新冻结版本" | 否（仅需记录状态） |
 | **C13** | 是否授权**付费真实模型调用**以产生 `#20` 的实测指标？ | `real-samples-weeds-docx.md:243`；`coverage-report.json:108-110`；**需用户单独授权** | "现在授权哪些供应商/预算多少？" | 否（属评估执行线） |
-| **C14** | 覆盖外 165 张（程序桶已满足 165≥100）**是否主张达标**？ | `sample-gap-register.md:20,37-39` 明示"不据此主张达标"，且 `quality` 一律 `clear` 未人工分级 | "主张、不主张，还是先做人工质量分级？" | 否（属验收裁定） |
+| **C14** | 覆盖外 165 张（程序桶已满足 165≥100）**是否主张达标**？ | `sample-gap-register.md:21,39-41` 明示"不据此主张达标"，且 `quality` 一律 `clear` 未人工分级 | "主张、不主张，还是先做人工质量分级？" | 否（属验收裁定） |
 
 ### 4.1 阻塞本线的少数几条（**`C2` / `C3` / `C5` / `C7` / `C8`**）
 
@@ -310,7 +310,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 | G8 | **未核实许可而写"已许可"** | `docs/verification/gy-i03-zhejiang-materials.md:301`（`licensed=false`，**不得写为已许可**）；`packages/knowledge/zhejiang/README.md:99` 同义；`coverage-report.json:105` |
 | G9 | **"绝对安全" / "零药害" 类文案** | `packages/knowledge/zhejiang/README.md:98`；`docs/evaluation/README.md` 相关红线 |
 | G10 | **模型生成的"标准答案"** | `sample.schema.json:102-105` `modelGenerated` const `false`；`docs/evaluation/README.md:75` |
-| G11 | **合成 / 演示样本冒充真实评估** | `docs/evaluation/README.md:81`；`docs/evaluation/sample-gap-register.md:54`（风险400/ASR50/问答120/TTS30及两类图片**均不可用演示样本替代**） |
+| G11 | **合成 / 演示样本冒充真实评估** | `docs/evaluation/README.md:81`；`docs/evaluation/sample-gap-register.md:63`（风险400/ASR50/问答120/TTS30及两类图片**均不可用演示样本替代**） |
 | G12 | **暂存行被标成 valid / verified / card_ready** | `workbook-staging-design.md:50`（CHECK 禁止） |
 | G13 | **暂存资料进 `v_active_source_version` / 用量卡 / 给 LLM** | `workbook-staging-design.md:39,56` |
 | G14 | **原图裁剪 / 连拍跨 split** | `sample.schema.json:40-48`；`docs/evaluation/README.md:93`（原记 :76）；`docs/implementation-requirements.md:456` |
@@ -421,7 +421,7 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 
 **验收口径**
 
-- 命令退出码 0，输出的 17 个缺口桶与 `docs/evaluation/sample-gap-register.md:16-34` 表**逐格一致**（覆盖内 7 / 293、逐类 0、覆盖外 165、低质量 0、其余 0）。
+- 命令退出码 0，输出的 17 个缺口桶与 `docs/evaluation/sample-gap-register.md:17-35` 表**逐格一致**（覆盖内 7 / 293、逐类 0、覆盖外 165、低质量 0、其余 0）。
 - **复算一致**：`indexSha256` 与冻结清单一致（`36053ceed50abbeb…c78f`）。
 - **负控制不少于 3 例**：① 删掉 1 条样本 ⇒ 计数变化且缺口 +1；② 缩减覆盖清单 ⇒ 拒绝（沿用既有"缩减一律拒绝"语义）；③ 篡改冻结清单 ⇒ 退出码 1。
 - 报告**不得**出现 `top1` / `top3` 成绩数值（`isRealEvaluation=false` ⇒ 必须为 `null` / `—`）；不得把 165 覆盖外写成"达标"。
@@ -445,16 +445,16 @@ sheet `说明与使用提示`（1 列 × 23 行，19 行有内容）：**保存�
 
 | 编号 | 未取得项 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| U1 | **独立核实的来源**（第二人 / 植物分类专业人员 / 资料审核人） | **未取得** | `reviewedBy` 全为 `null`（`gy-i20-weeds-labels.json:18`）；无权威植物志 / 分类库比对记录（`real-samples-weeds-docx.md:248`）；`sample-gap-register.md:97` 亦列为未完成 |
+| U1 | **独立核实的来源**（第二人 / 植物分类专业人员 / 资料审核人） | **未取得** | `reviewedBy` 全为 `null`（`gy-i20-weeds-labels.json:18`）；无权威植物志 / 分类库比对记录（`real-samples-weeds-docx.md:248`）；`sample-gap-register.md:106` 亦列为未完成 |
 | U2 | **ICAMA 访问** | **未取得** | 逐条详情未取得；程序化访问本轮返回服务器内部错误（`coverage-report.json:104`）；未与核准标签逐条比对（`gy-i03-zhejiang-materials.md:306`） |
 | U3 | **许可状态** | **未确立** | `licensed=false`、`license_survey_status=not_established`（`gy-i03-public-label-index-20261011.json:41-42`）；`permission_status` 明示不构成再利用 / 训练许可（`gy-i03-label-evidence-increment-20261011.json:37`）；许可调查按用户要求暂缓 |
 | U4 | **真实已核对资料存量** | **未确立** | 现有资料 `review_status=unverified`（`coverage-report.json:64`）、`authority=none_asserted_by_source`（`packages/knowledge/zhejiang/README.md:97`）；无逐条权威出处（`gy-i03-zhejiang-materials.md:300`） |
-| U5 | **真实样本存量（除拍草域）** | **六域为 0** | `sample-gap-register.md:22-34`、`:43` |
+| U5 | **真实样本存量（除拍草域）** | **六域为 0** | `sample-gap-register.md:23-35`、`:52` |
 | U6 | **覆盖内真实手机照片** | **未取得** | 只有文档配图 7 张（每类 1 张，短边中位 540 px）；无不同角度 / 背景（`real-samples-weeds-docx.md:80,83`，原记 :249） |
-| U7 | **低质量样本 100 张与人工质量分级** | **未取得 / 未做** | `sample-gap-register.md:21`、`:48-49` |
+| U7 | **低质量样本 100 张与人工质量分级** | **未取得 / 未做** | `sample-gap-register.md:22`、`:57-58` |
 | U8 | **docx 图片的目视内容核对与像素尺寸复核** | **未做 / 未复核** | 未解出任何图片；只测字节体量与短边登记值（`real-samples-weeds-docx.md:83` 记短边 317–697 px，侦察未复核） |
 | U9 | **训练 / 测试隔离的外部证明** | **无法证明** | `real-samples-weeds-docx.md:254-255`；`packages/evaluation/samples/README.md:76-77` |
-| U10 | **付费真实模型实测指标** | **未授权、未做** | `real-samples-weeds-docx.md:243`；`sample-gap-register.md:67`；`isRealEvaluation=false`、门禁 `not_evaluated`、`top1=null` |
+| U10 | **付费真实模型实测指标** | **未授权、未做** | `real-samples-weeds-docx.md:243`；`sample-gap-register.md:76`；`isRealEvaluation=false`、门禁 `not_evaluated`、`top1=null` |
 | U11 | **真机（双手机 / Android 真机）证据** | **未取得** | `gy-i03-zhejiang-materials.md:299`、`:313`；`real-samples-weeds-docx.md:252` |
 | U12 | **云库 / 受控 HTTPS / 正式 `real` 启动** | **未做** | `gy-i03-zhejiang-materials.md:298`；`coverage-report.json:108-110`（`database.connected=false`） |
 | U13 | **列映射的第一手复核** | **部分未做** | 侦察只读 sheet 名、维度、行数与**前 3 行表头**，**未导出任何数据行、未统计取值分布**；`#3` 侧学名 / 科属与权威学名的比对未做（§2.1） |

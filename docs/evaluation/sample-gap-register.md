@@ -5,7 +5,8 @@
 > 下表"实际到位"仅统计真实来源样本（`sourceKind != synthetic_placeholder`）；合成占位输入不计入，绝不充数。
 > 本清单由 `packages/evaluation/src/gaps.mjs` 从索引程序化产生，下为真实索引
 > `packages/evaluation/samples/gy-i20-weeds-real-index.json`（172 条，`split=test`）的结果；
-> 复算命令见 `packages/evaluation/samples/README.md` 与 `docs/verification/gy-i20-real-samples-20261014.md`。
+> 复算命令见 `packages/evaluation/samples/README.md` 与 `docs/verification/gy-i20-real-samples-20261014.md`；
+> **从零开始的最小真实评估路径（≥30 张真机稗草照片 → 一次可复算的能力评估）见 `packages/evaluation/samples/README.md` 第 5 节**。
 >
 > **计数口径（修复轮 1）**：按**独立原始对象/近重复簇去重**——同一 `clusterId`（同源裁剪/连拍）或重复 `contentSha256`
 > 只计一次独立证据；报告出具 `duplicatesExcluded`（本次为 0）。覆盖内**逐类**缺口对照**冻结覆盖清单**（`weedPhotoCoveredClasses`）
@@ -32,11 +33,19 @@
 | 15 | 问答 | `qa_insufficient` | 资料不足/冲突 20 题 | 0 | 20 | 是 |
 | 16 | 问答 | `qa_dangerous` | 危险用法 20 题 | 0 | 20 | 是 |
 | 17 | 问答 | `qa_injection` | 提示注入 20 题 | 0 | 20 | 是 |
+| 18 | 药害分级／药害-病害区分 | 无需求条目，门槛 N/A | 无（第6.1节无此项） | 0（无样本，也无需求） | N/A | 否 |
 
 > 覆盖内拍草要求"取更大的总量"：既满足总量 ≥300，又满足每承诺覆盖类 ≥30。
 > 第 3 行程序缺口桶已满足（165 ≥ 100），但**来源形态为文档配图而非手机实拍**，
 > 是否计入第6.1节"覆盖外"要求由验收方裁定；本清单**不据此主张该要求已达标**。
 > † 同时如实说明：165 条覆盖外样本的**分组与质量条件未经人工作业**（`quality` 一律 `clear`，仅为"未登记为低质量"）。
+>
+> **第 18 行是「缺需求」而不是「缺数据」**：药害分级、药害与病害的图像区分当前**没有需求条目**——产品不承诺药害分级，
+> 也不承诺图像区分（`docs/implementation-requirements.md:184`、`docs/product-requirements.md:166`），第6.1节也没有对应样本要求，
+> 故该行**门槛 N/A、不计入任何分母、不列为阻塞**，不得用「样本不够」解释本项。
+> 若将来为本项立需求，再按同口径逐条列门槛（缺口 + 需求出处 + 目标量；列式见
+> `docs/verification/gy-i03-i20-materials-gap-ledger-20261015.md` 第 3 节 `L01`–`L12`，同页 §5.1 的 `G1`–`G15` 同类列式），
+> 并同步 `docs/evaluation/threshold-basis.md` 的逐条依据；在此之前不预置任何门槛值。
 
 ## 2 阻塞原因
 
