@@ -61,9 +61,23 @@ async function submitLogin() {
   signingIn.value = true;
   loginError.value = null;
   try {
-    const signed = await signInAdmin({ loginName: loginForm.value.loginName.trim(), password: loginForm.value.password });
-    session.value = signed;
+    await signInAdmin({ loginName: loginForm.value.loginName.trim(), password: loginForm.value.password });
     loginForm.value = { loginName: '', password: '' };
+    // 登录响应不带 scope（session.ts:17）；按 AccountsView 的既有做法立刻用同一 token 再读一次
+    // GET /admin/auth/session，否则下面 4 个子页拿到的 scopes 恒为空，写/审计按钮全被禁用。
+    const loaded = await loadAdminSession();
+    if (loaded === null) {
+      // 网络失败或 401：不静默留空 scope，给出可见失败态（令牌若仍在，可点「重读会话」重试）。
+      session.value = null;
+      phase.value = 'signed_out';
+      loginError.value = {
+        title: '登录后读取会话失败',
+        detail: '登录已成功，但再读 GET /admin/auth/session 未返回会话（网络失败 / 401 / 本地令牌不可用）；scope 未知前不进入内容页，请点「重读会话」重试或重新登录。',
+        code: null,
+      };
+      return;
+    }
+    session.value = loaded;
     phase.value = 'ready';
   } catch (error) {
     loginError.value = { title: '登录失败', detail: messageOf(error), code: codeOf(error) };

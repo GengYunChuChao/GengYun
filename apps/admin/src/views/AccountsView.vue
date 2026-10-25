@@ -363,7 +363,6 @@ onBeforeUnmount(() => {
               >
                 停用
               </button>
-              <button class="link" type="button">详情摘要</button>
             </td>
           </tr>
         </tbody>
