@@ -4,9 +4,9 @@
  * ## 这个文件是什么
  *
  * 它不验证「功能对不对」（那要真库、真调度、真凭据），它验证**接线状态没有悄悄变**：
- * 把「哪三处还是缺口、哪三处已经接上」写成**可机读的结构事实**，于是
- *   · 谁**悄悄补上**仍是缺口的那三处（装配一行 / 直写该表 / 调媒体删除函数）⇒ 本文件红；
- *   · 谁**悄悄回退**已经接上的那三处（删一个 timer / 从必需清单拿掉命令 / 从 CI 摘掉校验）⇒ 本文件同样红。
+ * 把「哪两处还是缺口、哪四处已经接上」写成**可机读的结构事实**，于是
+ *   · 谁**悄悄补上**仍是缺口的那两处（装配适配器 / 调媒体删除函数）⇒ 本文件红；
+ *   · 谁**悄悄回退**已经接上的那四处（删端口文件 / 删一个 timer / 从必需清单拿掉命令 / 从 CI 摘掉校验）⇒ 本文件同样红。
  *
  * 红的时候**不是**「你写错了」，而是：**接线状态变了，请把这个钉子一起翻转**（见每条断言里的
  * 「👉 接线状态变了」）。这是刻意的 ——— 缺口与接线都是**登记过的事实**，不能靠一次顺手改动让登记失效。
@@ -14,13 +14,14 @@
  * ## 基线
  *
  * 本文件曾以 **`81d8e0b9943d7bd3b3d284a965e37caf92234883`** 为基线；正文与期望值已按**翻转后的现状**更新
- * （钉 3/4/5 于 2026-10-26 由「缺口」改为「已接线」），每条常数都由实测读数逐条核对过，不是抄文档。
+ * （钉 3/4/5 于 2026-10-26 由「缺口」改为「已接线」；钉 1 于同日随 S4-S3 P2-a 的端口落地由「缺口」改为
+ * 「已接线」——端口在库层之外，**尚未装配**，那条结论仍由钉 2 守着），每条常数都由实测读数逐条核对过，不是抄文档。
  *
  * ## 六条钉子（判据位置 / 断言什么 / 什么改动会让它红）
  *
  * | # | 判据位置 | 断言什么 | 什么改动会让它红 |
  * | - | --- | --- | --- |
- * | 1 | `services/api/src`、`packages`、`tools` 三处扫字面量 `third_party_deletions` | 命中**恰好一处** = `packages/privacy/retention-policy.mjs:208`，且那行是策略表自陈（`table:` 字段），不是查询 | 任何一处真的读写该表的代码（SQL 文本、`pool.query`、仓储/端口/映射器）；或那行被挪/改文本 |
+ * | 1 | `services/api/src`、`packages`、`tools` 三处扫字面量 `third_party_deletions` | 命中**恰好两个文件 / 六行**：`services/api/src/privacy/third-party-deletion-pg.ts:8/:14/:59/:79/:142`（S4-S3 P2-a 的真库端口，只经 0044 的两条 `SECURITY DEFINER` 函数进出，⛔ 文件里没有表级 DML）+ `packages/privacy/retention-policy.mjs:208`（策略表自陈，`table:` 字段，不是查询） | 出现**第四处**读写接缝（新 SQL 文本 / `pool.query` / 仓储）；端口文件里出现直写/直读该表的 SQL；或自陈行被挪/改文本 |
  * | 2 | `services/api/src` 扫 `createThirdPartyDeletionAdapter`；单独断 `app.ts` | 除 `privacy/third-party-deletion-adapter.ts` 自身外**零引用**；`app.ts` 里**零出现** ⇒ 未装配 | 任何装配（`app.ts` import/调用、新工厂、路由注入）；或适配器被移到别处 |
  * | 3 | `deploy/purge-schedule/` 的 `*.service` / `*.timer` 全集 | 全集**恰好六条**（online-data、backup-copies、retention 各一 service + 一 timer），retention 那对**在位** | 删掉现存任何一条（尤其 `gengyun-purge-retention.{service,timer}`）；或新出现 `media-*` 等第四族单元 |
  * | 4 | `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` | 唯一定义点 + 数组**恰好三条必需脚本** `['purge:online-data','purge:backup-copies','purge:retention']`，retention **在** | 从数组里拿掉 `purge:retention`；或把该常量挪到别处/复制一份 |
@@ -48,8 +49,9 @@ import { fileURLToPath } from 'node:url';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /**
- * 立文件时的基线 SHA（留档追溯）：缺口 1/2/6 的失败提示里写的「基线（81d8e0b9）」指的就是它。
- * 钉 3/4/5 的期望值已于 2026-10-26 按翻转后的现状更新，不再取自这个 SHA。
+ * 立文件时的基线 SHA（留档追溯）：仍处缺口态的钉 2/6、以及已翻转为「已接线 1」的钉 1 的失败提示里
+ * 写的「基线（81d8e0b9）」，指的都是它。
+ * 钉 1/3/4/5 的期望值已于 2026-10-26 按翻转后的现状更新，不再取自这个 SHA。
  */
 const BASELINE_SHA = '81d8e0b9943d7bd3b3d284a965e37caf92234883';
 
@@ -164,12 +166,31 @@ function scanTree(roots, needle) {
  */
 const occurrences = (text, needle) => text.split(needle).length - 1;
 
+/**
+ * 按**首次出现**去重的文件列表（顺序 = `scanTree` 的命中顺序，即「按根序、根内按路径排序」）。
+ *
+ * ⚠ 这里**只**给「文件集」那一条断言去重。行号信息**没有**被抹掉 —— 紧随其后的
+ * `deepEqual(hits.map((h) => `${h.file}:${h.line}`), …)` 把每条命中的 `文件:行` 逐条钉死；
+ * 两条断言各管一层（「哪些文件」与「哪几行」），删掉任何一条都会削弱判据。
+ *
+ * @param {Array<{ file: string, line: number, text: string }>} hits
+ * @returns {string[]}
+ */
+function dedupeByFirstSeen(hits) {
+  /** @type {string[]} */
+  const seen = [];
+  for (const hit of hits) if (!seen.includes(hit.file)) seen.push(hit.file);
+  return seen;
+}
+
 // ---------------------------------------------------------------------------
-// 缺口 1 · 第三方删除：应用侧零读写
+// 已接线 1 · 第三方删除：应用侧由真库端口接线（端口层，未装配进 app.ts）
 // ---------------------------------------------------------------------------
 
-test('缺口 1 · public.third_party_deletions 在应用侧零读写，唯一命中是保留策略的自陈', () => {
+test('已接线 1 · public.third_party_deletions 应用侧恰一处接线（端口层，只经函数）+ 保留策略自陈一处', () => {
   const ROOTS = ['services/api/src', 'packages', 'tools'];
+  const PORT = 'services/api/src/privacy/third-party-deletion-pg.ts';
+  const POLICY = 'packages/privacy/retention-policy.mjs';
   const { files, hits } = scanTree(ROOTS, 'third_party_deletions');
 
   // 扫描面前提：三个根都走到了该走的文件（否则下面的 deepEqual 可能只是「没扫到」）。
@@ -189,51 +210,82 @@ test('缺口 1 · public.third_party_deletions 在应用侧零读写，唯一命
     '扫描面没覆盖 tools/verify-purge-schedule.mjs ⇒ 三个根里有一个没走全。',
   );
 
-  // ① 文件集：只有保留策略那一处（多一个文件 ⇒ 有人真的接上了读写）。
+  // ① 文件集（**去重**：同一文件多行命中只算一次；顺序取首次出现 =「按根序、根内按路径排序」）：
+  //    恰两个文件 = 端口 + 保留策略自陈。冒出第三个文件 ⇒ 又出现了新的读写接缝。
   assert.deepEqual(
-    hits.map((h) => h.file),
-    ['packages/privacy/retention-policy.mjs'],
-    '【缺口 1 破了】应用侧出现了对 `third_party_deletions` 的**读写接缝**：'
-      + `\n  实测命中：${JSON.stringify(hits.map((h) => `${h.file}:${h.line}`))}`
-      + '\n  基线（81d8e0b9）只有保留策略里的一行**自陈**：'
-      + '`packages/privacy/retention-policy.mjs:208`（`table:` 字段里点名该表「不并入日历策略」）。'
-      + '\n  若你刚补的是一条合成读写路径（SQL / 仓储 / 端口 / 映射器）——这正是 #19 缺的那一段，'
-      + '  请同时翻转本钉子、并更新 docs/architecture/data-dictionary.md:91 与 '
-      + 'docs/verification/gy-i29-closure-20261018.md:99-100（后者的读数是「services/api/src 生产代码 0 行」）。'
+    dedupeByFirstSeen(hits),
+    [PORT, POLICY],
+    '【已接线 1 破了】应用侧对 `third_party_deletions` 的**文件集**又变了：'
+      + `\n  实测（去重后）：${JSON.stringify(dedupeByFirstSeen(hits))}`
+      + `\n  实测（逐条）：${JSON.stringify(hits.map((h) => `${h.file}:${h.line}`))}`
+      + `\n  基线（81d8e0b9）：只有保留策略里的一行**自陈**（\`${POLICY}:208\` 的 \`table:\` 字段）；`
+      + `\n  2026-10-26 起（S4-S3 P2-a）多了端口 \`${PORT}\`：只调 0044 的两条 SECURITY DEFINER 函数，未装配进 app.ts。`
+      + '\n  若这一处被**回退**（文件删了/改名/搬走）⇒ 请翻回「缺口 1」，把期望值改回只剩自陈那一条；'
+      + '  若又冒出**第四处**读写接缝（新 SQL / 仓储 / 映射器）⇒ 先确认它该不该存在，再改本常数。'
+      + '\n  两种翻转都要同步它点名的文档：docs/architecture/data-dictionary.md:91 与 '
+      + 'docs/verification/gy-i29-closure-20261018.md:99-100。'
       + FLIP_HINT,
   );
 
-  // ② 命中数：恰好 1 行（同一文件里多一行同样是「读写接缝」）。
-  assert.equal(
-    hits.length,
-    1,
-    '【缺口 1 破了】`third_party_deletions` 的命中数不再是 1。'
+  // ② 逐条「文件:行」：**不去重、不归并** —— 六条命中逐条钉死。
+  //    行号本身就是判据：同一文件里多出一行仍是新接缝，而「文件集」那条看不出来。
+  assert.deepEqual(
+    hits.map((h) => `${h.file}:${h.line}`),
+    [
+      `${PORT}:8`, `${PORT}:14`, `${PORT}:59`, `${PORT}:79`, `${PORT}:142`,
+      `${POLICY}:208`,
+    ],
+    '【已接线 1 破了】`third_party_deletions` 的逐条命中（文件:行）与登记的不一致。'
       + `\n  实测：${JSON.stringify(hits.map((h) => `${h.file}:${h.line}: ${h.text}`))}`
-      + '\n  基线只有 `packages/privacy/retention-policy.mjs:208` 那一行策略自陈。'
+      + '\n  登记：端口 5 行（:8 / :14 / :59 / :79 / :142）+ 保留策略自陈 1 行（:208）。'
+      + '\n  ① 若只是端口文件里**上下挪动**（文本与语义都没变）⇒ 把常数改成新行号，语义未变；'
+      + '\n  ② 若**多出/少掉**一条 ⇒ 那才是接线状态变了，按①的命令翻钉子。'
       + FLIP_HINT,
   );
 
-  // ③ 那一行是「策略表自陈」，不是查询/写库 —— 这条把「白名单条目」和「真的接线」区分开。
+  // ③ 保留策略那一行是「策略表自陈」，不是查询/写库 —— 这条把「白名单条目」和「真的接线」区分开。
+  //    按 file 定位（⛔ 不靠 hits[0]：端口落地后第一处命中已经不是它了）。
+  const policyHit = hits.find((h) => h.file === POLICY);
   assert.equal(
-    hits[0].text,
+    policyHit?.text,
     "table: 'public.deletion_requests / public.deletion_handlers / public.third_party_deletions',",
-    '【缺口 1 破了】白名单那一行的**内容**变了。'
-      + `\n  实测：${JSON.stringify(hits[0].text)}`
+    '【已接线 1 破了】白名单那一行的**内容**变了。'
+      + `\n  实测：${JSON.stringify(policyHit?.text)}`
       + '\n  基线：`    table: \'public.deletion_requests / public.deletion_handlers / public.third_party_deletions\',`'
       + '\n  若只是策略表改口径 ⇒ 同步改本常数；若这行不再是 `table:` 自陈 ⇒ 白名单不再是「自陈」，重新核定。'
       + FLIP_HINT,
   );
 
-  // ④ 行号：与 ①②③ 分开断言，好让「只是行号漂移」和「语义变了」红得不一样。
+  // ④ 保留策略那一行的行号：与 ①②③ 分开断言，好让「只是行号漂移」和「语义变了」红得不一样。
   assert.equal(
-    hits[0].line,
+    policyHit?.line,
     208,
-    `【缺口 1 · 行号漂移】\`third_party_deletions\` 的自陈行从 :208 挪到了 :${hits[0].line}。`
+    `【已接线 1 · 行号漂移】保留策略的自陈行从 :208 挪到了 :${policyHit?.line}。`
       + '\n  若文本没变（上一条仍然绿）⇒ 这只是一次无关编辑把它推下去/拉上来了，把常数改成新行号即可，'
       + '**语义未变**。'
-      + '\n  若文本也变了 ⇒ 那才是缺口被动了，按上一条的提示处理。'
+      + '\n  若文本也变了 ⇒ 那才是口径被动了，按上一条的提示处理。'
       + FLIP_HINT,
   );
+
+  // ⑤ 接线只能**经函数**（0044 的裁定：运行时对该表零 DML、零 SELECT，唯一入口是两条
+  //    SECURITY DEFINER 函数）。端口里一旦出现直写/直读该表的 SQL ⇒ 绕过授权面的接缝；
+  //    这条比「文件集」更硬：它管的是「怎么进出」，不只是「谁进来了」。
+  const portSource = readRepoText(PORT);
+  for (const needle of [
+    'INSERT INTO',
+    'UPDATE public.third_party_deletions',
+    'FROM public.third_party_deletions',
+    'DELETE FROM',
+  ]) {
+    assert.equal(
+      occurrences(portSource, needle),
+      0,
+      `【已接线 1 破了】端口 \`${PORT}\` 里出现了直写/直读该表的 SQL 片段：\`${needle}\`。`
+        + '\n  0044 的裁定是「该表对运行时零表级、零列级权限，只能经两条 SECURITY DEFINER 函数进出」，'
+        + '  端口里出现表级 DML ⇒ 不是接线问题，是权限面被绕过。'
+        + FLIP_HINT,
+    );
+  }
 });
 
 // ---------------------------------------------------------------------------

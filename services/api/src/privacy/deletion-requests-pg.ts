@@ -169,8 +169,8 @@ function toRecord(raw: unknown): DeletionRequestRecord {
   };
 }
 
-/** PostgreSQL 错误 → 既有契约错误码（不透出驱动原文；权限缺失按「不可用」如实失败）。 */
-function mapDeletionError(error: unknown): never {
+/** PostgreSQL 错误 → 既有契约错误码（不透出驱动原文；权限缺失按「不可用」如实失败）。导出供 `third-party-deletion-pg.ts` 复用，码表只此一份。 */
+export function mapDeletionError(error: unknown): never {
   if (error instanceof ApiError) throw error;
   const code = (error as { code?: unknown })?.code;
   const sqlState = typeof code === 'string' ? code : '';
