@@ -166,7 +166,7 @@
   **订正（绑实测 SHA `95b8e7cf`）**：此处原文写 `retryable === true`，与现行代码／断言不符。现行口径是
   「能力未装配／未接线造成的 `PROVIDER_UNAVAILABLE` 一律 `false`」（`services/api/src/errors.ts:32`，
   另见 `:35`），服务层的 fail-closed 构造器同样显式 `retryable: false`
-  （`services/api/src/media/service.ts:448`；槽位判定处 `:652-654`），测试断言
+  （`services/api/src/media/service.ts:448`；槽位判定处 `:848-852`，原记 :652-654），测试断言
   `tests/unit/media-real-mode-fail-closed.test.mjs:949`（同文件 `:126-127` 断言 503 ＋ `PROVIDER_UNAVAILABLE`）。
   §2 的 2026-10-14 探针输出与 §10 所记裁定原文**按原样保留**，不追改；口径差异见 §8.1 末段。
 
@@ -197,7 +197,7 @@ PASS 仓库卫生扫描（无禁用 TLS 写法 / 疑似硬编码密钥 / 真实 
 ℹ tests 1736   ℹ pass 1735   ℹ fail 0   ℹ skipped 1
 ```
 
-其中唯一跳过项来自**既有**用例 `tests/unit/knowledge-api.test.mjs:101`（`{skip: !f.native}`：
+其中唯一跳过项来自**既有**用例 `tests/unit/knowledge-api.test.mjs:102`（原记 :101；`{skip: !f.native}`：
 本机无原生 PG），本片新增的 3 个测试文件（22 + 12 + 5 = 39 条）**不含**任何 `skip`/`todo`。
 （1736 是**合入 `upstream/main` `1fc0308`（GY-I27 #128）之后**的全量数：
 本片返修前为 1687，合入后 +49 条来自 GY-I27 的隐私测试。）
@@ -258,16 +258,16 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 > **校准补记（2026-10-23）**：第 1 条的 `media/service.ts` 三处行号已按当时 `upstream/main`（`791b34a8`）重算——
 > `attachmentLimitFor` 现记第 840 行（原记 645，该行已是 `toProjection`）、
 > `throw` 现记第 848 行（原记 652）、`retryable: false` 现记第 851 行（原记 653-654）。
-> 本节其余 `file:line` 仍按上列 `95b8e7cf` blob，未逐条重算。
+> **重锚（2026-10-25）**：本节 `file:line` 已按符号在 `upstream/main`=`1d65b7ee` 树上重取，原值以 `（原记 :N）` 标注；第 3 条三组 `git grep` 的**命中条数**（12／9／0）仍是上列 `95b8e7cf` blob 上的历史读数，**未重算**；第 1 条的 `计数器未接线` 复现命令在现行树上已 0 命中（该字面量已改写），其命中数与行号保留为历史读数。
 
 1. **「每帖 ≤3 张」的权威计数器在 `real` 路径上不可得 ⇒ 该用途恒 503（既不是 201，也不是 400）**。
    槽位判定点是 `services/api/src/media/service.ts:840` 的 `attachmentLimitFor(actor, purpose)`：计数端口返回
    `null` 时，`services/api/src/media/service.ts:848` 抛 `ApiError('PROVIDER_UNAVAILABLE', ...)`
    （`:849-852` 明写「retryable 必须为 false」）⇒ 503。未显式注入时 `real` 取 `createUnwiredAttachmentCounter()`
    （`services/api/src/media/service.ts:526-528`），其 `countFor()` 恒返 `null`
-   （`services/api/src/media/service.ts:293-299`；`:296` 自述「拒绝 community_image 上传（fail-closed）」）。
+   （`services/api/src/media/service.ts:293-299`；`:330-332` 自述「该用途上传 503 fail-closed」，原记 :296）。
    生产装配**没有**从 env／配置注入计数器的路径，只能由调用方选项透传
-   （`services/api/src/app.ts:1560`；`:1481` 是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
+   （`services/api/src/app.ts:1560`；`:1546`，原记 :1481，是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
    同处还有整域闸门：`real` 下 `createAppMediaService` 必须收到显式批准能力，否则整域 503
    （`services/api/src/app.ts:1536-1539`）。
    ⇒ 现状：`stub`／`preset_demo` 走替身计数器（`countFor()` 直接返回存活社区图片数，
@@ -291,8 +291,8 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    本节实测（命中数按命令输出计数）：
 
    - `git grep -n -E "expireInitiated|cleanupOrphans" upstream/main -- services/ packages/ apps/ tools/ miniprogram/`
-     ⇒ **12 处命中**，全部是接口声明（`services/api/src/media/service.ts:238`／`:245`）、`real` 替身实现（`:479`／`:482`）、
-     真实实现（`:1123`／`:1134`）、注释（`:569`／`:587`）与 `packages/media/service.mjs` 的定义／导出
+     ⇒ **12 处命中**，全部是接口声明（`services/api/src/media/service.ts:225`／`:237`；原记 :238／:245）、`real` 替身实现（`:526`／`:529`；原记 :479／:482）、
+     真实实现（`:1412`／`:1424`；原记 :1123／:1134）、注释（`:708`／`:742`；原记 :569／:587）与 `packages/media/service.mjs` 的定义／导出
      （`:520`／`:536`／`:572`／`:573`）——无一处调用；
    - `git grep -n -E "\.(cleanupOrphans|expireInitiated)\(" upstream/main` ⇒ **9 处命中，全部在 `tests/`**
      （`tests/media/lifecycle.test.mjs:141`／`:146`、`tests/unit/media-http-upload.test.mjs:407`／`:410`／`:437`、
@@ -301,7 +301,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
      `setTimeout` 共 16 处，全是请求级超时／重试等待（如 `services/api/src/auth/wechat.ts:95`、
      `services/api/src/ocr/service.ts:610`、`services/api/src/recognitions/service.ts:533`），**无周期调度器**。
 
-   `services/api/src/media/service.ts:1108` 的注释标题「过期与清理」只是能力入口的分段线，不是触发点。
+   `services/api/src/media/service.ts:1397`（原记 :1108）的注释标题「过期与清理」只是能力入口的分段线，不是触发点。
 
 **与 §10 所记裁定的口径差异（不追改历史）**：§10 记的「2026-10-14 监工对 #121 的 P1 裁定」要求
 `retryable: true`；现行代码按 `services/api/src/errors.ts:32`／`:35` 收敛为 `false`，断言见

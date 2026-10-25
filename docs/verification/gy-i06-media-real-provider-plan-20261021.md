@@ -14,7 +14,7 @@
 | # | 门 | 现状事实（文件:行号） | 后果 |
 | --- | --- | --- | --- |
 | 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1546` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
-| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1562`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1431`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1460`（批准能力不可伪造/不可派生/不可默认化） |
+| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1562`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1451`（原记 :1431；四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1480`（原记 :1460；批准能力不可伪造/不可派生/不可默认化） |
 | 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（`services/api/src/media/service.ts:624-629`） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
 | 4 | **数据面缺口（部署件）** | 冻结契约内**没有**「owner 私有媒体字节读取」这一 operation；`MEDIA_ACCESS_GRANT_ORIGIN` 指向的访问网关在本仓库内**无实现** | 句柄签发得出来，但没人消费；本仓不能自称「契约已实现」 |
 
@@ -80,11 +80,13 @@
 
 | 阶段 | 服务方法（行号） | 实际发生 |
 | --- | --- | --- |
-| 受理 | `initiateUploadUnclaimed`（`services/api/src/media/service.ts:807-874`） | 幂等占位（`withKeyClaim` 在任何 await 之前同步取得，`:869-874`）→ `validateUploadInput` 校验用途/类型/字节/哈希 → `presignUpload({ key: rawRef, expiresInSeconds: 86400 })`（`:838-844`，句柄 = 本地拼的 `https://substitute.invalid/...`）→ 落 `records` + `idempotency` |
-| 完成 | `completeUploadUnclaimed`（`:876-953`） | `getObject(rawRef)` 取回字节（`:907`）→ `assertBytesMatchDeclaration`（`:916`，魔数/字节数/sha256/音频真实时长）→ 图片走 `stripImageMetadata`（`:928`）→ `putObject(derivativeRef, ...)`（`:935`）→ `ready`（`:943`） |
-| 读元数据 | `getMedia`（`:975-978`） | 只 owner 可读；非本人与不存在**逐字节同形** 404 |
-| 签句柄 | `grantMediaAccess`（`:1021-1052`） | 仅 owner 且仅 `ready`；`access_token` 是 HMAC 令牌，**不入 URL**；URL = `${accessGrantOrigin}/api/v1/media/${id}/content` |
-| 删除 | `deleteMediaUnclaimed`（`:980-1009`） | 强 ETag + 幂等；`dropObjects`（`:667`）只在 `deleteObject===true` 时清 `rawRef`/`derivativeRef`，`false`/抛错则**保留引用**待重试 |
+| 受理 | `initiateUploadUnclaimed`（`services/api/src/media/service.ts:936-1006`；原记 :807-874） | 幂等占位（`withKeyClaim` 在任何 await 之前同步取得，`:869-874`）→ `validateUploadInput` 校验用途/类型/字节/哈希 → `presignUpload({ key: rawRef, expiresInSeconds: 86400 })`（`:973-979`，原记 :838-844；句柄 = 本地拼的 `https://substitute.invalid/...`）→ 落 `records` + `idempotency` |
+| 完成 | `completeUploadUnclaimed`（`:1008-1133`；原记 :876-953） | `getObject(rawRef)` 取回字节（`:1048`，原记 :907）→ `assertBytesMatchDeclaration`（`:1057`，原记 :916，魔数/字节数/sha256/音频真实时长）→ 图片走 `stripImageMetadata`（`:1069`，原记 :928）→ `putObject(derivativeRef, ...)`（`:1076`，原记 :935）→ `ready`（`:1083`，原记 :943） |
+| 读元数据 | `getMedia`（`:1135-1138`；原记 :975-978） | 只 owner 可读；非本人与不存在**逐字节同形** 404 |
+| 签句柄 | `grantMediaAccess`（`:1194-1225`；原记 :1021-1052） | 仅 owner 且仅 `ready`；`access_token` 是 HMAC 令牌，**不入 URL**；URL = `${accessGrantOrigin}/api/v1/media/${id}/content` |
+| 删除 | `deleteMediaUnclaimed`（`:1140-1190`；原记 :980-1009） | 强 ETag + 幂等；`dropObjects`（`:722`，原记 :667）只在 `deleteObject===true` 时清 `rawRef`/`derivativeRef`，`false`/抛错则**保留引用**待重试 |
+
+⚠ **前提变更（2026-10-25 按符号重取，基线 `1d65b7ee`）**：本表的 `initiateUploadUnclaimed` / `completeUploadUnclaimed` / `deleteMediaUnclaimed` 三个符号在现行树上**已不存在**（`#419` `e5c38a2f` 起改名为 `initiateUpload` / `completeUpload` / `deleteMedia`，记录改由 PG 仓储持有），`withKeyClaim` 亦已不存在（幂等占位改由 `openIdempotentRequest` 落库原子占位）；表内行号已按现行同名语义重取，原值以 `（原记 :N）` 保留（`withKeyClaim` 那一处无对应符号，保留原值未动）；**行为描述仍是基线 `f7155d5a` 上的实测，不代表现行实现**。
 
 > 结论：stub 链路是**完整可用**的（7 条路由 + 幂等 + 强 ETag + EXIF 清除 + 归属判定都在跑），只是存储端口是内存替身、元数据不持久化。
 
@@ -92,15 +94,17 @@
 
 | operationId | 路由（`services/api/src/routes/media.ts`） | 服务入口（`services/api/src/media/service.ts`） | real 现状 | 接线缺口 |
 | --- | --- | --- | --- | --- |
-| `createUpload` | `:218-233` | `initiateUploadUnclaimed` `:807-874` | 503 `PROVIDER_UNAVAILABLE`（`retryable:false`，reason=空 env ⇒ `unwired`） | 配置搬运（门 1）+ 批准（门 2）+ 持久化（门 3）；`community_image` 另有每帖计数未接线（`:319`，`retryable:false`） |
-| `completeUpload` | `:236-257` | `completeUploadUnclaimed` `:876-953` | 同上（fail-closed 服务整体拒绝） | 同上；另需真实字节回取的大小/超时/并发保护（§9 R5） |
-| `getMedia` | `:260-275` | `getMedia` `:975-978` | 同上 | 元数据持久化（门 3）；无对象存储读操作 |
-| `deleteMedia` | `:278-295` | `deleteMediaUnclaimed` `:980-1009` | 同上 | 门 3 + 删除链（§9 R3）；`deleteObject` 未确认时保留引用的语义要能跨重启 |
-| `grantMediaAccess` | `:298-315` | `grantMediaAccess` `:1021-1052` | 同上 | 句柄消费网关（门 4）+ `MEDIA_ACCESS_GRANT_ORIGIN` 必须配成真实网关域 |
-| `grantCommunityMediaAccess` | `:318-334` | `grantCommunityMediaAccess` `:1056-1174` | 默认 404（内容来源关闭，`createClosedContentSource`，fail-closed 不误放行） | 属社区/审核线（GY-I14/I15）提供只读端口后在装配层注入；**不在本片范围** |
-| `readCommunityMediaContent` | `:337-362` | `readCommunityMediaContent` `:1176-1222` | 同上（仅出 `derivativeRef` 的去 EXIF 字节，`:1218`） | 同上；真实 CDN/网关与原桶 URL 重定向策略未验收 |
+| `createUpload` | `:218-233` | `initiateUploadUnclaimed` `:936-1006`（原记 :807-874） | 503 `PROVIDER_UNAVAILABLE`（`retryable:false`，reason=空 env ⇒ `unwired`） | 配置搬运（门 1）+ 批准（门 2）+ 持久化（门 3）；`community_image` 另有每帖计数未接线（`:327`，原记 :319；`retryable:false`） |
+| `completeUpload` | `:236-257` | `completeUploadUnclaimed` `:1008-1133`（原记 :876-953） | 同上（fail-closed 服务整体拒绝） | 同上；另需真实字节回取的大小/超时/并发保护（§9 R5） |
+| `getMedia` | `:260-275` | `getMedia` `:1135-1138`（原记 :975-978） | 同上 | 元数据持久化（门 3）；无对象存储读操作 |
+| `deleteMedia` | `:278-295` | `deleteMediaUnclaimed` `:1140-1190`（原记 :980-1009） | 同上 | 门 3 + 删除链（§9 R3）；`deleteObject` 未确认时保留引用的语义要能跨重启 |
+| `grantMediaAccess` | `:298-315` | `grantMediaAccess` `:1194-1225`（原记 :1021-1052） | 同上 | 句柄消费网关（门 4）+ `MEDIA_ACCESS_GRANT_ORIGIN` 必须配成真实网关域 |
+| `grantCommunityMediaAccess` | `:318-334` | `grantCommunityMediaAccess` `:1229-1347`（原记 :1056-1174） | 默认 404（内容来源关闭，`createClosedContentSource`，fail-closed 不误放行） | 属社区/审核线（GY-I14/I15）提供只读端口后在装配层注入；**不在本片范围** |
+| `readCommunityMediaContent` | `:337-362` | `readCommunityMediaContent` `:1349-1397`（原记 :1176-1222） | 同上（仅出 `derivativeRef` 的去 EXIF 字节，`:1391`，原记 :1218） | 同上；真实 CDN/网关与原桶 URL 重定向策略未验收 |
 
-补充事实：七条路由的契约面状态在 `docs/architecture/contract-status.json` 里均为 `partial`，逐条 `blocker` 与本表一致（`createUpload` 在 `:498`、`completeUpload` `:525`、`getMedia` `:552`、`deleteMedia` `:579`、`grantMediaAccess` `:606`、`grantCommunityMediaAccess` `:3047`、`readCommunityMediaContent` `:3074`）。
+⚠ **前提变更（同上）**：本表「服务入口」列的行号已按现行同名语义重取（原值见 `（原记 :N）`；`*Unclaimed` 三个符号已改名，现行实现见 `services/api/src/media/service.ts` 的 `initiateUpload` / `completeUpload` / `deleteMedia`）；「路由」列 `:218-233` 等七段仍在 `services/api/src/routes/media.ts` 上逐条命中。
+
+补充事实：七条路由的契约面状态在 `docs/architecture/contract-status.json` 里均为 `partial`，逐条 `blocker` 与本表一致（`createUpload` 在 `:564`、`completeUpload` `:591`、`getMedia` `:618`、`deleteMedia` `:645`、`grantMediaAccess` `:672`、`grantCommunityMediaAccess` `:3216`、`readCommunityMediaContent` `:3243`）。（以上七处 2026-10-25 按 `contract-status.json` 的 `id` 行重取；原记 `:498`／`:525`／`:552`／`:579`／`:606`／`:3047`／`:3074`）
 
 ## 5 接线三层
 
@@ -112,8 +116,8 @@
 | 修改 | `services/api/src/config.ts:251-260` | real 模式下把 `REQUIRED_WHEN_REAL` 的存在性检查升级为「产出结构化 config 或抛 `ConfigError`」：直接调用 `readObjectStorageConfig(env)`（`services/api/src/media/object-store.ts:197`）并把 `issues` 折进 `ConfigError`（复用既有 `ConfigIssue { field, code, reason }` 形状，`services/api/src/config.ts:44-51`） |
 | 修改 | `services/api/src/config.ts:69-79` | 保留 `OBJECT_STORAGE_*` 在 `REQUIRED_WHEN_REAL` 里（防止有人误删），但**判定权**移到上一行的结构化解析 |
 | 修改 | `services/api/src/app.ts:1546` | real 分支改为 `resolveMediaObjectStore({ executionMode, env: config.objectStorageEnv })`，其中 `objectStorageEnv` 是**从 `AppConfig` 派生的已解析配置**，**绝不能**是 ambient `process.env` |
-| ⛔ 禁止 | `services/api/src/app.ts:1546` | **不得**写成 `env: process.env`：`tests/unit/media-real-mode-fail-closed.test.mjs:329-337` 有静态断言逐字钉住（PR #193 的 P1 结论：配置即门控） |
-| ⛔ 约束 | `services/api/src/app.ts` 全文件 | ambient env 只允许 3 个非媒体键（`tests/unit/media-real-mode-fail-closed.test.mjs:1050` 的全文件审计 + `:1227` 运行期来源检查）；新增的「从 `AppConfig` 派生」取值**不是** ambient 读取，不受此限，但也不得借此新增第四个 `process.env[...]` |
+| ⛔ 禁止 | `services/api/src/app.ts:1546` | **不得**写成 `env: process.env`：`tests/unit/media-real-mode-fail-closed.test.mjs:519-541`（原记 :329-337）有静态断言逐字钉住（PR #193 的 P1 结论：配置即门控） |
+| ⛔ 约束 | `services/api/src/app.ts` 全文件 | ambient env 只允许 3 个非媒体键（`tests/unit/media-real-mode-fail-closed.test.mjs:1121`（原记 :1050）的全文件审计 + `:1298`（原记 :1227）运行期来源检查）；新增的「从 `AppConfig` 派生」取值**不是** ambient 读取，不受此限，但也不得借此新增第四个 `process.env[...]` |
 | ⛔ 禁止 | `services/api/src/media/**` | **不得**在媒体域内读 `process.env` / `import.meta.env`（`services/api/src/media/service.ts:281-283` 已把该约束写进注释，同上测试做 AST 级判违规） |
 | 保留 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore` 的「缺任一键 ⇒ `unwired`」语义**不改**：`tests/unit/media-real-mode-fail-closed.test.mjs` 的 1-A 用例逐键验证 |
 | 建议增强 | `services/api/src/media/object-store.ts:224`（`readObjectStorageConfig` 的 endpoint 校验） | 现正则 `/^https:\/\/[^\s/]+/i` 只挡 http 与空 host，`https://evil.example/whatever` 能过。建议补「无 path/query/fragment + host 白名单」（与 [规范 §2.4](provider-adapter-live-wiring.md) 的端点白名单同口径） |
@@ -134,10 +138,10 @@
 | 新增 | `services/api/src/media/store-pg.ts` | 形状照抄最近三片的 PG 存储（`services/api/src/ocr/store-pg.ts`、`services/api/src/speech/store-pg.ts`、`services/api/src/recognitions/store-pg.ts`）：`pool.connect()` → `BEGIN` → `SET LOCAL lock_timeout = '4s'` → SQL → `COMMIT`；`57014`/`55P03` ⇒ `PROVIDER_TIMEOUT`，其余数据库错误 ⇒ `PROVIDER_UNAVAILABLE`；缺表 ≠ 库坏（三态就绪判定） |
 | 新增 | `services/api/db/migrations/0027_media_persistence.sql` | 现有迁移止于 `0026_speech_persistence.sql`；本片新增 `media_records` / `media_grants` / `media_idempotency` / `media_pending_object_refs` 四张表。约束要点：`media_records(revision)` 由一条带 `WHERE revision=$2` 的原子 UPDATE 推进（CAS 唯一裁决点）；`media_idempotency UNIQUE(scope, key_hash)`；`media_pending_object_refs` 以 `(media_id, kind)` 唯一键登记未确认删除的引用。**状态迁移表不在 SQL 里抄第二份**，事实来源仍是 `packages/media` 的 `MEDIA_STATE_TRANSITIONS`（`packages/media/constants.mjs:87`） |
 | 修改 | `services/api/src/media/service.ts:263-289`（`AppMediaServiceOptions`） | 新增 `store?: AppMediaStore`（缺省仍用内存实现，保持 stub/preset_demo 与全部既有测试不变） |
-| 修改 | `services/api/src/media/service.ts:624-629` | 四个容器改为经 `store` 存取；`transition`（`:648`）与 `dropObjects`（`:667`）的判定逻辑**原样保留**，只换写入目标 |
+| 修改 | `services/api/src/media/service.ts:624-629` | 四个容器改为经 `store` 存取；`transition`（`:659`；原记 :648）与 `dropObjects`（`:722`；原记 :667）的判定逻辑**原样保留**，只换写入目标 |
 | 修改 | `services/api/src/app.ts`（`buildApp` 顶部 import 区按仓库惯例把新 import 追加到文件末尾，`services/api/src/app.ts:2406` 已有此先例） | 有 `pool` 时构造 PG store 并注入；无 `pool` 时保持内存实现（与 `community/store-pg.ts` 的装配口径一致） |
 | 修改 | `services/api/src/app.ts`（real 装配段） | **批准铸造点**：见 §10 D2 的三个选项；无论选哪个，必须①唯一铸造点②可审计（记 reason/approvedAt）③保留 `objectStore.kind==='s3_compatible'` 的第二道校验（`services/api/src/media/service.ts:595` 起） |
-| 新增（可选） | `services/api/src/media/cleanup.ts` | `expireInitiated`（`:1239`）/`cleanupOrphans`（`:1250`）今天无生产调用者。真实接线后必须有驱动方（定时器或外部 cron 打内部端点），否则 24h 过期对象永久计费、`pending` 引用永不重试 |
+| 新增（可选） | `services/api/src/media/cleanup.ts` | `expireInitiated`（`:1412`；原记 :1239）/`cleanupOrphans`（`:1424`；原记 :1250）今天无生产调用者。真实接线后必须有驱动方（定时器或外部 cron 打内部端点），否则 24h 过期对象永久计费、`pending` 引用永不重试 |
 
 ### 5.4 依赖顺序与「最小可用切片」
 
@@ -155,7 +159,7 @@
 | 维度 | 结论 |
 | --- | --- |
 | **哪一步** | `completeUpload`，即「客户端直传完成之后、服务端核验时」。**不在** `createUpload`（那时只有声明值，没有字节），**不在**读路径（读路径只挑对象） |
-| **代码位置** | `services/api/src/media/service.ts:876-953`；关键三行：`:907` `objectStore.getObject(record.rawRef as string)` → `:928` `stripImageMetadata(stored.bytes, detected.mime)` → `:935` `objectStore.putObject(derivativeRef, stripped.data, detected.mime)` |
+| **代码位置** | `services/api/src/media/service.ts:876-953`；关键三行：`:1048`（原记 :907）`objectStore.getObject(record.rawRef as string)` → `:1069`（原记 :928）`stripImageMetadata(stored.bytes, detected.mime)` → `:1076`（原记 :935）`objectStore.putObject(derivativeRef, stripped.data, detected.mime)` |
 | **字节级实现** | `packages/media/exif.mjs:432` 的 `stripImageMetadata(bytes, mime)`（441 行文件的最后一个导出）：按容器结构性移除元数据段——JPEG 去 `APP1:Exif` / `APP1:XMP` / `APP13:Photoshop`，PNG 去 `eXIf` / `tEXt` / `iTXt` / `zTXt`，WebP 去 `EXIF` / `XMP ` chunk（并重算 RIFF 声明长度）。同时**拒绝容器尾部多余字节**（PNG IEND 之后、JPEG EOI 之后、WebP RIFF 声明之外一律判失败），等价于禁尾部走私。`removed` 明细记进 `record.metadata_removed` |
 | **失败即拒** | 解码失败 ⇒ `reject(record, 'decode_failed')` + `MediaError('MEDIA_TYPE_UNSUPPORTED', '图片解码失败，无法去除元数据')`（415）；**不**放行原始字节 |
 | **两个对象** | `rawRef`（客户端直传的原件，**含元数据**）与 `derivativeRef`（去元数据件）。读路径只用 `derivativeRef`（`services/api/src/media/service.ts:1218`） |
@@ -220,8 +224,8 @@
 | real + 未接真实存储 ⇒ 整域 503 | `tests/unit/media-real-mode-fail-closed.test.mjs:102-137` | 这是 fail-closed 的主证据 |
 | 端口级 fail-closed（非 real 注入 unwired 也 503） | 同上 `:153-169` | 证明门在端口上，不只在模式开关上 |
 | 缺任一 `OBJECT_STORAGE_*` ⇒ 仍 `unwired`、reason 逐字不变 | 同上 `:279-410` | 防止「重新引入配置即门控」 |
-| `app.ts` 不得把 `process.env` 交给 resolver | 同上 `:329-337` | PR #193 P1 的静态钉子 |
-| `app.ts` 全文件 ambient env 审计：只允许 3 个非媒体键 | 同上 `:1050`（另有 `:1227` 运行期来源检查） | 实施片新增任何装配读取都不得突破这条白名单 |
+| `app.ts` 不得把 `process.env` 交给 resolver | 同上 `:519-541`（原记 :329-337） | PR #193 P1 的静态钉子 |
+| `app.ts` 全文件 ambient env 审计：只允许 3 个非媒体键 | 同上 `:1121`（原记 :1050；另有 `:1298` 原记 :1227 的运行期来源检查） | 实施片新增任何装配读取都不得突破这条白名单 |
 | 构造期拒绝（空桶 / http endpoint） | 同上 `:249-254` | 真实适配器不静默降级 |
 
 ## 9 风险清单
