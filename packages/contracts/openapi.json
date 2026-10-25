@@ -10721,7 +10721,8 @@
               "enum": [
                 "account.suspend",
                 "account.restore",
-                "set_flag"
+                "set_flag",
+                "job.cancel"
               ]
             }
           },
@@ -10732,7 +10733,8 @@
               "type": "string",
               "enum": [
                 "account",
-                "flag"
+                "flag",
+                "job"
               ]
             }
           }

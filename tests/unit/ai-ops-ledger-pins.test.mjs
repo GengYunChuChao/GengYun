@@ -4,15 +4,16 @@
  * ## 为什么存在
  * 账本三处形态今天是**结构事实**，不是行为约定：`public.jobs`（建表 `0001_initial_schema.sql:203`）
  * 全仓**没有写入者**；`provider_invocations` 只活在数据字典（`docs/architecture/data-dictionary.md:48`）
- * 里、**没有迁移**；审计 `action` 是三值闭集（`services/api/src/admin/audit/catalog.ts:31-35`）。
+ * 里、**没有迁移**；审计 `action` 是四值闭集（`services/api/src/admin/audit/catalog.ts:41-46`）。
  * 它们漂移时读面**静默分叉**而不报错：自建一套 `INSERT INTO jobs` 会让作业账本与 `/admin/jobs` 各说各话
- * （「零写入者」是 `0013_conversations.sql:19` 写下的裁定）；给 `AUDIT_ACTIONS` 加第 4 个值会让
+ * （「零写入者」是 `0013_conversations.sql:19` 写下的裁定）；给 `AUDIT_ACTIONS` 再加第 5 个值会让
  * 审计查询面 / 契约枚举 / 文档三处不同步。⚠ `tests/unit/admin-audit-logs.test.mjs:130` 只钉
- * 「契约 enum === 运行时 AUDIT_ACTIONS」，**两边同时加值它照样绿** ⇒ 这里必须单独钉死字面三值。
- * ⚠ 这个三值闭集是 `GET /admin/audit-logs?action=` 的**过滤器闭集**，不等于 `admin_audit_events`
- * 的全部写入者：`0043_admin_job_cancel_audit.sql:168-175` 已由 `SECURITY DEFINER` 函数写入
- * `action='job.cancel'`（闭集外；不传 `action` 筛选时通用读面会把它带出来）。本钉子只钉 catalog
- * 里那三个字面值，不替「闭集 = 全部写入点」这条旧口径背书。
+ * 「契约 enum === 运行时 AUDIT_ACTIONS」，**两边同时加值它照样绿** ⇒ 这里必须单独钉死字面四值。
+ * ⚠ 第 4 个值（`job.cancel`）是**带理由翻过去的**，不是幂等放宽：`0043_admin_job_cancel_audit.sql:168-175`
+ * 早已由 `SECURITY DEFINER` 函数写入 `action='job.cancel'` / `scope='jobs:cancel'`，而闭集此前只有三值，
+ * 读面因此「能看见（全量翻页）、不能筛（`?action=job.cancel` 一律 400）」。GY-R59 把闭集合法扩到四值
+ * （`job.cancel` 固定在**末位**，历史三值顺序不动）就是为了把那个 400 变成 200。所以本钉子从三值翻到
+ * 四值：**翻值现场必须留下"为什么"，否则下一个人只看见数字变了，看不见它曾经是一条 bug 的边界**。
  *
  * ## 判据形态（白名单式，不是「至少 N 次」）
  *   ① jobs 零 INSERT：**语句级**命中必须为空；**注释级**命中按 `文件:行` **逐条白名单登记**（今天 2 条，
@@ -21,8 +22,9 @@
  *   ② `provider_invocations` 无迁移、源码零引用，只有文档里有形状。
  *   ③ 正向迁移末项 = `0043`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
  *      main 时改 `LAST_MIGRATION` / `LAST_MIGRATION_NUMBER`；`0037` 是历史缺号，本断言不钉连续性）。
- *   ④ `AUDIT_ACTIONS` 恰为 `['account.suspend','account.restore','set_flag']`，**顺序也钉住**：
- *      新增 action 必须同步 admin-ops-job-integrity 相关断言与文档。
+ *   ④ `AUDIT_ACTIONS` 恰为 `['account.suspend','account.restore','set_flag','job.cancel']`，**顺序也钉住**：
+ *      第 4 项 `job.cancel` 的来历见上（GY-R59 修闭集漂移）；新增 action 仍必须同步 admin-ops-job-integrity
+ *      相关断言与文档。
  *   ⑤ 真库臂跳过面：`tests/integration/**` 里 14 个脚本以 `process.env.GY_PG_BIN` 为门，缺它就打印
  *      SKIP 并以 77 退出（POSIX「未取得」≠ 通过），这份清单是冻结的。
  *
@@ -164,7 +166,7 @@ test('钉子③：正向迁移末项就是 0043，且 rollback/ 下有同名回�
 // ---------------------------------------------------------------------------
 const AUDIT_CATALOG = 'services/api/src/admin/audit/catalog.ts';
 
-test('钉子④：AUDIT_ACTIONS 恰为三值闭集，顺序也钉住（account.suspend → account.restore → set_flag）', () => {
+test('钉子④：AUDIT_ACTIONS 恰为四值闭集，顺序也钉住（account.suspend → account.restore → set_flag → job.cancel）', () => {
   const catalog = read(AUDIT_CATALOG);
   const declared = new Map(
     [...catalog.matchAll(/export const (AUDIT_ACTION_[A-Z_]+) = '([^']+)';/g)].map((m) => [m[1], m[2]]),
@@ -179,16 +181,20 @@ test('钉子④：AUDIT_ACTIONS 恰为三值闭集，顺序也钉住（account.s
   const order = [...list[1].matchAll(/[A-Z][A-Z0-9_]+/g)].map((m) => m[0]);
   assert.deepEqual(
     order,
-    ['AUDIT_ACTION_ACCOUNT_SUSPEND', 'AUDIT_ACTION_ACCOUNT_RESTORE', 'AUDIT_ACTION_SET_FLAG'],
-    'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这三个值是 `GET /admin/audit-logs?action=` 的'
-      + '合法输入（⚠ 它不等于 `admin_audit_events` 的全部写入点，见头注 0043 的 `job.cancel`），'
+    ['AUDIT_ACTION_ACCOUNT_SUSPEND', 'AUDIT_ACTION_ACCOUNT_RESTORE', 'AUDIT_ACTION_SET_FLAG', 'AUDIT_ACTION_JOB_CANCEL'],
+    'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这四个值是 `GET /admin/audit-logs?action=` 的'
+      + '合法输入，必须与 `admin_audit_events` 的写入点一一对应。第 4 项 `job.cancel` 由 GY-R59 追加：'
+      + '0043_admin_job_cancel_audit.sql:168-175 早已写 `action=\'job.cancel\'` / `scope=\'jobs:cancel\'`，'
+      + '闭集漏登记导致 `?action=job.cancel` 恒 400 —— 加它就是为了让审计读面能按 action 筛。'
       + '多一个成员就必须同时有库内写入点、契约枚举与文档；新增 action 必须同步 admin-ops-job-integrity 相关断言与文档',
   );
   assert.deepEqual(
     order.map((id) => declared.get(id) ?? `<未声明的常量 ${id}>`),
-    ['account.suspend', 'account.restore', 'set_flag'],
-    'AUDIT_ACTIONS 的**取值**变了：这三个字符串就是 `GET /admin/audit-logs?action=` 的合法输入，'
-      + '改名等于让历史审计行的 action 列与查询参数对不上',
+    ['account.suspend', 'account.restore', 'set_flag', 'job.cancel'],
+    'AUDIT_ACTIONS 的**取值**变了：这四个字符串就是 `GET /admin/audit-logs?action=` 的合法输入，'
+      + '改名等于让历史审计行的 action 列与查询参数对不上。末位 `job.cancel` 来自 0043 的库内写入点'
+      + '（`record_admin_job_cancel_audit`，迁移 `0043_admin_job_cancel_audit.sql:174`）；它排在第 4 位而不是'
+      + '插进中间，是为了不打乱前三项的历史顺序',
   );
 });
 
