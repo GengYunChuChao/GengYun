@@ -458,6 +458,33 @@ export function registerAdminRoutes(
     async (request, reply) =>
       send(reply, await getAdminPost(callerOf(request), (request.params as { id: string }).id)),
   );
+
+  // -------------------------------------------------------------------------
+  // S3：人工通过 / 驳回帖子（2 个 operationId）
+  // 「以 `If-Match` 上的 CAS 落结论 + 写人工审核结论 + 通知作者」全在服务层；
+  // 未接线时服务层 503、硬规则否决时 422、版本冲突时 409，本层**不改写**任何返回码。
+  // -------------------------------------------------------------------------
+  const approvePost = methodOf(services.ops, 'approvePost');
+  app.post(
+    `${API_PREFIX}/admin/posts/:id/approve`,
+    {
+      preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.approvePost)],
+      schema: { params: uuidIdParams },
+    },
+    async (request, reply) =>
+      send(reply, await approvePost(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+
+  const rejectPost = methodOf(services.ops, 'rejectPost');
+  app.post(
+    `${API_PREFIX}/admin/posts/:id/reject`,
+    {
+      preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.rejectPost)],
+      schema: { params: uuidIdParams },
+    },
+    async (request, reply) =>
+      send(reply, await rejectPost(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
 }
 
 /** 契约闭集的 3 个开关 key（供装配期自检与测试引用；判定仍在服务层）。 */
@@ -477,6 +504,9 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   'setFlag',
   'listFlagAuditEvents',
   'hidePost',
+  // S3：人工通过 / 驳回（门同为 `sources:write`）。
+  'approvePost',
+  'rejectPost',
   // R37 `#18` S2 PR-2：管理员目录与权限只读展示（门 `scopes:read`）。
   'listAdministrators',
   'listAdministratorScopes',

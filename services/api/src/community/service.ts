@@ -223,7 +223,7 @@ function requireUuidParam(value: unknown, field: string): string {
 }
 
 /** 正文摘要：帖子 = title + LF + body（与送审文本一致），评论 = body。 */
-function postModerationText(record: Pick<PostRecord, 'title' | 'body'>): string {
+export function postModerationText(record: Pick<PostRecord, 'title' | 'body'>): string {
   return `${record.title}\n${record.body}`;
 }
 function commentModerationText(record: Pick<CommentRecord, 'body'>): string {

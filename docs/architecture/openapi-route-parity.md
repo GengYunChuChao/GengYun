@@ -15,9 +15,9 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 121 |
-| 契约操作（paths × method） | 120 |
-| 实现 ∩ 契约 | 120 |
+| 已挂载路由（不含 HEAD） | 123 |
+| 契约操作（paths × method） | 122 |
+| 实现 ∩ 契约 | 122 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
@@ -75,7 +75,9 @@
 | POST | `/admin/knowledge/{id}/withdraw` | withdrawKnowledge | sources:write | 需要 | 是 | partial | 一致 |
 | GET | `/admin/posts` | listAdminPosts | sources:read | 不要求 | 是 | partial | 一致 |
 | GET | `/admin/posts/{id}` | getAdminPost | sources:read | 不要求 | 是 | partial | 一致 |
+| POST | `/admin/posts/{id}/approve` | approvePost | sources:write | 需要 | 是 | partial | 一致 |
 | POST | `/admin/posts/{id}/hide` | hidePost | sources:write | 需要 | 是 | partial | 一致 |
+| POST | `/admin/posts/{id}/reject` | rejectPost | sources:write | 需要 | 是 | partial | 一致 |
 | GET | `/admin/registrations` | listAdminRegistration | sources:read | 不要求 | 是 | partial | 一致 |
 | POST | `/admin/registrations` | createRegistrationDraft | sources:write | 不要求 | 是 | partial | 一致 |
 | GET | `/admin/registrations/{id}` | getAdminRegistration | sources:read | 不要求 | 是 | partial | 一致 |

@@ -76,6 +76,16 @@ export interface ModerationRecord {
   text_digest: string;
   contract_complete: false;
   missing_contract_fields: string[];
+  /**
+   * 做出该结论的**运营者** `users.id`；缺省/`null` = **机器结论**（迁移 `0045`）。
+   *
+   * 只有人工审核（`POST /admin/posts/{id}/approve|reject`）会写非空；机器写入路径
+   * （`community/service.ts` 的 `buildVerdict`）**不传**该字段 ⇒ 落 `NULL`，零行为变化。
+   *
+   * 它**不参与**可见性判定（`effectiveState` 不读它）：审批人是谁不改变"能不能公开"，
+   * 只回答"这条结论是谁下的"。机器结论与人审结论的区分因此不需要新枚举、新表。
+   */
+  decided_by?: string | null;
   created_at: string;
 }
 

@@ -10,7 +10,7 @@
 | 项 | 结果 | 证据位置 |
 | --- | --- | --- |
 | 闸挂在哪 | **4 条投稿面**（见 §1），每条都在 `guards.requireUser` **之后** | `services/api/src/routes/community.ts:213,234,266,287` |
-| 注入位置 | `buildApp` 把**已有的那一个** `consentGate` 传给社区域，只加这一处 | `services/api/src/app.ts:1792` |
+| 注入位置 | `buildApp` 把**已有的那一个** `consentGate` 传给社区域，只加这一处 | `services/api/src/app.ts:1810` |
 | 无授权 ⇒ | 403 `CONSENT_REQUIRED`（`message` 指名 `public_posting`，`retryable=false`，`details=[]`，无成功封套，`no-store`）**且零内容写入** | §3.1 读数 |
 | 有授权 ⇒ | 201/200（发帖/编辑/评论/编辑评论），强 ETag 与 revision 与未挂闸同形 | §3.2 读数 |
 | 撤回后 ⇒ | 同 4 条面**再次 403**，已发布内容不被删除 | §3.3 读数 |
@@ -153,7 +153,7 @@ DELETE /comments/{id} → 200（本人内容）   DELETE /posts/{id} → 200（�
 ## 5 接口/装配纪律遵守情况
 
 - `registerCommunityRoutes` 新增第 5 个参数 `deps: { consent?: CommunityConsentPort } = {}`（`services/api/src/routes/community.ts:189`，**同一行内**改动，不改行号）。
-- `services/api/src/app.ts:1792` 只把**已存在的** `consentGate`（`app.ts:853-857`）传给社区域；`app.ts` 里既有的闸装配顺序**未动**。
+- `services/api/src/app.ts:1810` 只把**已存在的** `consentGate`（`app.ts:853-857`）传给社区域；`app.ts` 里既有的闸装配顺序**未动**。
 - 社区 16 条路由的 `preHandler` 行号**保持不变**：`:203,213,225,234,243,253,266,278,287,296,307,316,325,334,343,355`（`git diff --numstat` = `5 5`，逐行原位替换）。原因写在文件末尾的注释里 —— `docs` 侧台账把这份文件的行号当锚点，而它是本片不可改的红线文件，所以新增的类型/清单/组装函数**一律追加在文件末尾**（函数声明会提升）。
 - 不新增错误码：拒绝复用既有 403 `CONSENT_REQUIRED`。
 - 台账锚点回归：`node --test tests/unit/contract-status-anchors.test.mjs` ⇒ 11/11 通过。

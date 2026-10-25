@@ -11307,6 +11307,210 @@
         }
       }
     },
+    "/admin/posts/{id}/approve": {
+      "post": {
+        "operationId": "approvePost",
+        "summary": "approvePost",
+        "description": "人工审核通过：写运营通过结论（audit_state=approved），不改可见性；硬规则明确否决的内容不可通过（422）。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostReviewOutcomeEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "sources:write",
+        "x-version-required": true,
+        "x-task": "GY-I01"
+      }
+    },
+    "/admin/posts/{id}/reject": {
+      "post": {
+        "operationId": "rejectPost",
+        "summary": "rejectPost",
+        "description": "人工驳回：写运营驳回结论（reason_code 取自闭集），audit_state=rejected 且 visibility=hidden，并通知作者。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PostReviewOutcomeEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "sources:write",
+        "x-version-required": true,
+        "x-task": "GY-I01",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostRejectionInput"
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/audit-events": {
       "get": {
         "operationId": "listAuditEvents",
@@ -15734,6 +15938,106 @@
           "meta"
         ]
       },
+    "PostRejectionInput": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "reason_code": {
+          "type": "string",
+          "enum": [
+            "spam",
+            "harassment",
+            "adult_or_violent",
+            "illegal_or_political",
+            "privacy",
+            "misleading_agronomy",
+            "banned_agrochemical",
+            "off_topic",
+            "duplicate",
+            "other"
+          ],
+          "description": "运营驳回理由闭集。单一来源：services/api/src/admin/ops/types.ts 的 POST_REVIEW_REASON_CODES。"
+        }
+      },
+      "required": [
+        "reason_code"
+      ]
+    },
+    "PostReviewOutcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "audit_state": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "rejected"
+          ]
+        },
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "published",
+            "hidden",
+            "deleted"
+          ]
+        },
+        "decision": {
+          "type": "string",
+          "enum": [
+            "approved",
+            "rejected"
+          ]
+        },
+        "changed": {
+          "type": "boolean"
+        },
+        "notified": {
+          "type": "boolean"
+        },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "audit_state",
+        "visibility",
+        "decision",
+        "changed",
+        "notified",
+        "reason_codes"
+      ]
+    },
+    "PostReviewOutcomeEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "data": {
+          "$ref": "#/components/schemas/PostReviewOutcome"
+        },
+        "meta": {
+          "$ref": "#/components/schemas/Meta"
+        }
+      },
+      "required": [
+        "data",
+        "meta"
+      ]
+    },
       "LikeStatus": {
         "type": "object",
         "additionalProperties": false,

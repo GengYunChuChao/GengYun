@@ -821,6 +821,20 @@
       "version_required": true
     },
     {
+      "id": "approvePost",
+      "path": "/admin/posts/{id}/approve",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
+      "id": "rejectPost",
+      "path": "/admin/posts/{id}/reject",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": true
+    },
+    {
       "id": "listAuditEvents",
       "path": "/admin/audit-events",
       "method": "get",

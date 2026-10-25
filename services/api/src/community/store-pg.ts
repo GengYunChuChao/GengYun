@@ -120,7 +120,7 @@ const REPORT_COLUMNS =
   + ' state, reason_code, detail, created_at';
 const MODERATION_COLUMNS =
   'id, target_type, target_id, target_revision, decision, reason_codes, hard_rule_passed, rule_version,'
-  + ' text_digest, contract_complete, missing_contract_fields, created_at';
+  + ' text_digest, contract_complete, missing_contract_fields, decided_by, created_at';
 
 /** 闭集（与 `types.ts` 逐值一致）：读出时不在闭集内 ⇒ 内部不变式违反，**不静默降级**。 */
 const VISIBILITY_VALUES: readonly Visibility[] = ['private', 'published', 'hidden', 'deleted'];
@@ -254,6 +254,8 @@ export function moderationRecordFromRow(row: Record<string, unknown>): Moderatio
     // 台账只存"契约是否完整"这一个布尔；本片恒定 false（模型层版本未取得）。
     contract_complete: false,
     missing_contract_fields: asJsonArray(row.missing_contract_fields, '缺失契约字段'),
+    // 迁移 0045：NULL = 机器结论；非空 = 人工结论的运营者 users.id（只作溯源，不参与判定）。
+    decided_by: row.decided_by === null || row.decided_by === undefined ? null : String(row.decided_by),
     created_at: asIso(row.created_at),
   };
 }
@@ -313,9 +315,9 @@ async function writeModeration(
   await sql.query(
     `INSERT INTO community_moderation_decisions
        (target_type, target_id, target_revision, id, decision, reason_codes, hard_rule_passed,
-        rule_version, text_digest, contract_complete, missing_contract_fields, created_at)
+        rule_version, text_digest, contract_complete, missing_contract_fields, decided_by, created_at)
      VALUES ($1::text, $2::uuid, $3, $4::uuid, $5::audit_state, $6::jsonb, $7, $8, $9, $10, $11::jsonb,
-             $12::timestamptz)
+             $12::uuid, $13::timestamptz)
      ON CONFLICT (target_type, target_id, target_revision) DO UPDATE
        SET id = EXCLUDED.id,
            decision = EXCLUDED.decision,
@@ -325,6 +327,7 @@ async function writeModeration(
            text_digest = EXCLUDED.text_digest,
            contract_complete = EXCLUDED.contract_complete,
            missing_contract_fields = EXCLUDED.missing_contract_fields,
+           decided_by = EXCLUDED.decided_by,
            created_at = EXCLUDED.created_at`,
     [
       kind,
@@ -338,6 +341,7 @@ async function writeModeration(
       record.text_digest,
       record.contract_complete,
       JSON.stringify(record.missing_contract_fields),
+      record.decided_by ?? null,
       record.created_at,
     ],
   );

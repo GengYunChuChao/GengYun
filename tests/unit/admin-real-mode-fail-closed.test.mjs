@@ -53,7 +53,7 @@ const ALL_SCOPES = [
   'flags:read', 'flags:write', 'scopes:read',
 ];
 
-/** 契约里 38 个 operationId 的 method + path（从 openapi.json 原文取）。 */
+/** 契约里 42 个 operationId 的 method + path（从 openapi.json 原文取）。 */
 const CONTRACT = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'));
 const CONTRACT_ROUTES = new Map();
 for (const [path, item] of Object.entries(CONTRACT.paths)) {
@@ -97,7 +97,7 @@ function restrictionInput() {
   };
 }
 
-/** 40 个 operationId 的**合法形状**请求（real 下若未 fail-closed，其中一些会直接成功）。 */
+/** 42 个 operationId 的**合法形状**请求（real 下若未 fail-closed，其中一些会直接成功）。 */
 function adminRequests() {
   const families = [
     { path: `${API}/admin/sources`, input: sourceInput },
@@ -132,6 +132,9 @@ function adminRequests() {
   rows.push({ op: 'getAdminPost', method: 'GET', url: `${API}/admin/posts/${UNKNOWN_UUID}` });
   rows.push({ op: 'listAdministrators', method: 'GET', url: `${API}/admin/administrators` });
   rows.push({ op: 'listAdministratorScopes', method: 'GET', url: `${API}/admin/administrators/${UNKNOWN_UUID}/scopes` });
+  // S3：approve 按契约**没有**请求体；reject 只有 reason_code（闭集内的合法值）。
+  rows.push({ op: 'approvePost', method: 'POST', url: `${API}/admin/posts/${UNKNOWN_UUID}/approve`, ifMatch: '"1"' });
+  rows.push({ op: 'rejectPost', method: 'POST', url: `${API}/admin/posts/${UNKNOWN_UUID}/reject`, body: { reason_code: 'spam' }, ifMatch: '"1"' });
   return rows;
 }
 
@@ -156,20 +159,21 @@ function inject(app, token, row, index) {
     headers: {
       authorization: `Bearer ${token}`,
       ...(row.body === undefined ? {} : { 'content-type': 'application/json' }),
-      ...(row.body === undefined ? {} : { 'idempotency-key': `gyi18-real-${index}-${row.op}`.slice(0, 40) }),
+      // 写操作一律带幂等键（approve 没有请求体，但契约照样要求 IdempotencyKey）。
+      ...(row.method === 'GET' ? {} : { 'idempotency-key': `gyi18-real-${index}-${row.op}`.slice(0, 40) }),
       ...(row.ifMatch === undefined ? {} : { 'if-match': row.ifMatch }),
     },
     ...(row.body === undefined ? {} : { payload: row.body }),
   });
 }
 
-test('real 默认装配反例：40 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
+test('real 默认装配反例：42 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
   const authStore = createMemoryAuthStore();
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore });
   try {
     const token = await seedAdmin(authStore);
     const rows = adminRequests();
-    assert.equal(rows.length, 40, '反例必须覆盖全部 40 个 operationId');
+    assert.equal(rows.length, 42, '反例必须覆盖全部 42 个 operationId');
 
     const succeeded = [];
     for (const [index, row] of rows.entries()) {
@@ -183,8 +187,8 @@ test('real 默认装配反例：40 条后台路由一律 fail-closed（503 PROVI
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);
 
-    // 契约面不缩水：40 条路由**仍然注册**（只是运行时一律拒绝）。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 40);
+    // 契约面不缩水：42 条路由**仍然注册**（只是运行时一律拒绝）。
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 42);
     for (const opId of ADMIN_HTTP_OPERATION_IDS) {
       const route = CONTRACT_ROUTES.get(opId);
       const url = `${route.path}`.replaceAll('{id}', ':id').replaceAll('{key}', ':key');
@@ -197,7 +201,7 @@ test('real 默认装配反例：40 条后台路由一律 fail-closed（503 PROVI
     assert.equal(app.adminContentService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminOpsService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminContentService.operationIds.length, 25);
-    assert.equal(app.adminOpsService.operationIds.length, 12);
+    assert.equal(app.adminOpsService.operationIds.length, 14);
   } finally {
     await app.close();
   }

@@ -176,14 +176,14 @@ SELECT id, revision, reporter_id, target_type, target_id, target_revision,
   FROM public.community_reports
  WHERE reporter_id = '00000000-0000-4000-8000-000000000000';
 
-\echo '-- [community_moderation_decisions] INSERT 12 列 + ON CONFLICT DO UPDATE（store-pg.ts:274）'
+\echo '-- [community_moderation_decisions] INSERT 13 列 + ON CONFLICT DO UPDATE（store-pg.ts:316；decided_by 由迁移 0045 增加，机器结论恒 NULL）'
 INSERT INTO public.community_moderation_decisions
        (target_type, target_id, target_revision, id, decision, reason_codes,
         hard_rule_passed, rule_version, text_digest, contract_complete,
-        missing_contract_fields, created_at)
+        missing_contract_fields, decided_by, created_at)
 SELECT NULL, NULL, NULL, gen_random_uuid(), NULL, NULL,
        NULL, NULL, NULL, NULL,
-       NULL, now()
+       NULL, NULL, now()
  WHERE false
 ON CONFLICT (target_type, target_id, target_revision) DO UPDATE
    SET id = EXCLUDED.id,
@@ -194,12 +194,13 @@ ON CONFLICT (target_type, target_id, target_revision) DO UPDATE
        text_digest = EXCLUDED.text_digest,
        contract_complete = EXCLUDED.contract_complete,
        missing_contract_fields = EXCLUDED.missing_contract_fields,
+       decided_by = EXCLUDED.decided_by,
        created_at = EXCLUDED.created_at;
 
-\echo '-- [community_moderation_decisions] SELECT 12 列'
+\echo '-- [community_moderation_decisions] SELECT 13 列'
 SELECT id, target_type, target_id, target_revision, decision, reason_codes,
        hard_rule_passed, rule_version, text_digest, contract_complete,
-       missing_contract_fields, created_at
+       missing_contract_fields, decided_by, created_at
   FROM public.community_moderation_decisions
  WHERE id = '00000000-0000-4000-8000-000000000000';
 

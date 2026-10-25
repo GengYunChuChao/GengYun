@@ -3227,11 +3227,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminCategories",
-          "lines": "416-421"
+          "lines": "464-467"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3258,11 +3258,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "editCategory",
-          "lines": "421-426"
+          "lines": "469-504"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3289,11 +3289,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminUsers",
-          "lines": "502-513"
+          "lines": "550-561"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3320,11 +3320,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "suspendUser",
-          "lines": "620-625"
+          "lines": "668-727"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3347,7 +3347,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministrators",
-          "lines": "577-589"
+          "lines": "625-634"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3384,7 +3384,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministratorScopes",
-          "lines": "605-618"
+          "lines": "653-666"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3420,11 +3420,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminJobs",
-          "lines": "724-729"
+          "lines": "772-778"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3451,11 +3451,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "cancelAdminJob",
-          "lines": "745-750"
+          "lines": "793-909"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3482,11 +3482,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlags",
-          "lines": "969-973"
+          "lines": "1011-1015"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3513,11 +3513,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {",
-          "lines": "975-1041"
+          "lines": "1017-1083"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         },
         {
           "test": "tests/unit/admin-flag-gate.test.mjs",
@@ -3544,11 +3544,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlagAuditEvents",
-          "lines": "1059-1113"
+          "lines": "1101-1155"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "开关变更审计的只读查询已装配（读 public.admin_audit_events 的 set_flag 行，键集游标 (created_at,id) 降序）；后台 UI 已有「操作者/变更前后」列；人审隔离位仍属契约/范围外（AdminJob 9 字段无隔离位）"
@@ -3700,14 +3700,78 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "hidePost",
-          "lines": "1119-1164"
+          "lines": "1161-1206"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 12 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+    },
+    {
+      "id": "approvePost",
+      "method": "post",
+      "path": "/admin/posts/{id}/approve",
+      "route": "/api/v1/admin/posts/:id/approve",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "approvePost",
+          "lines": "467-476"
+        },
+        {
+          "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "approvePost",
+          "lines": "1346-1348"
+        },
+        {
+          "path": "services/api/src/admin/ops/community-posts.ts",
+          "symbol": "review",
+          "lines": "208-338"
+        },
+        {
+          "test": "tests/unit/admin-post-review-s3.test.mjs",
+          "name": "approve 正控制：private+pending ⇒ published+approved，结论带 decided_by，审计一条"
+        }
+      ],
+      "blocker": "服务端已实现（迁移 0045 的 decided_by + 同事务 CAS 结论）；未取得：后台 UI 的审核队列/按钮、真库集成回归（需 COMMUNITY_PG_TEST_URL）、审计库内写面（S3b）、驳回后作者申诉通道；双写通知为既有 takedown 观察器行为，去重属 S4"
+    },
+    {
+      "id": "rejectPost",
+      "method": "post",
+      "path": "/admin/posts/{id}/reject",
+      "route": "/api/v1/admin/posts/:id/reject",
+      "scope": "sources:write",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "rejectPost",
+          "lines": "478-487"
+        },
+        {
+          "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "rejectPost",
+          "lines": "1350-1352"
+        },
+        {
+          "path": "services/api/src/admin/ops/community-posts.ts",
+          "symbol": "review",
+          "lines": "208-338"
+        },
+        {
+          "test": "tests/unit/admin-post-review-s3.test.mjs",
+          "name": "approve 正控制：private+pending ⇒ published+approved，结论带 decided_by，审计一条"
+        }
+      ],
+      "blocker": "服务端已实现（迁移 0045 的 decided_by + 同事务 CAS 结论）；未取得：后台 UI 的审核队列/按钮、真库集成回归（需 COMMUNITY_PG_TEST_URL）、审计库内写面（S3b）、驳回后作者申诉通道；双写通知为既有 takedown 观察器行为，去重属 S4"
     },
     {
       "id": "listAuditEvents",

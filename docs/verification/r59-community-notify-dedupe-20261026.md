@@ -80,7 +80,7 @@
 - 审计台账是进程内数组：`services/api/src/admin/audit.ts:80-82`（注释原文「内存审计日志。进程内实现，**非**真实 PG 接线。」）。
 - 管理端 runtime 恒为 `persistent: false`：`services/api/src/admin/runtime.ts:77-84`。
 - 全仓没有 PG 版管理端 store：`git grep -n "createPostgresAdminOpsStore"` 命中 0。
-- 迁移里没有 `post.hide` 的落点：`git grep -n "post\.hide" -- services/api/db/migrations` 命中 **0**。应用侧只有 1 处：`services/api/src/admin/ops/service.ts:1153`（写内存 ops store）。该字符串在 `tests/**`、`docs/**`、`apps/admin/**` 也有出现（测试与文档的引用、后台端展示文案）；**本页未读 `apps/**`，故不复述其内容**。
+- 迁移里没有 `post.hide` 的落点：`git grep -n "post\.hide" -- services/api/db/migrations` 命中 **0**。应用侧只有 1 处：`services/api/src/admin/ops/service.ts:1195`（写内存 ops store）。该字符串在 `tests/**`、`docs/**`、`apps/admin/**` 也有出现（测试与文档的引用、后台端展示文案）；**本页未读 `apps/**`，故不复述其内容**。
 - 迁移自己登记了这件事：`services/api/db/migrations/0036_r34_admin_content_persistence.sql:69-74`（真库臂里审计仍落在 `createAuditLog()` 进程内台账上，证据页如实写「审计落库未接」）。
 
 ⇒ 这条与执行模式无关：不接池不落库，接了池也不落库（没有 PG 实现、没有迁移落点）。

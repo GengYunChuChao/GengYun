@@ -72,7 +72,7 @@
 | D03 | 定位仅到地区、清 EXIF | 部分 | `docs/implementation-requirements.md:275` | `services/api/src/media/service.ts:1069` | 无定位接口，「不存原始坐标」无从取证 |
 | D04 | 分用途授权 | 部分 | `docs/implementation-requirements.md:275` | `services/api/src/routes/consents.ts:38` | 缺 location 与 training 两个 purpose |
 | D05 | 传输/敏感字段/媒体/备份受保护 | 部分 | `docs/implementation-requirements.md:276` | `deploy/postgres-cvm/sql/20-login-roles.sql:350` | 仓内无 TLS/介质加密落点 |
-| D06 | 日志不带令牌/密码/媒体/联系方式 | 部分 | `docs/implementation-requirements.md:276` | `services/api/src/app.ts:588` | 无统一日志脱敏入口，只有请求层白名单 |
+| D06 | 日志不带令牌/密码/媒体/联系方式 | 部分 | `docs/implementation-requirements.md:276` | `services/api/src/app.ts:589` | 无统一日志脱敏入口，只有请求层白名单 |
 | D07 | 保存至注销、单条删除、撤回 | 部分 | `docs/implementation-requirements.md:277` | `services/api/src/routes/favorites.ts:109` | 消息无删除路由；识别/语音/OCR 只软删 |
 | D08 | 注销即时撤会话角色、停新外发、分对象删除任务 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/routes/account-deletion.ts:130` | 真实模式整域 503，仅替身模式可用 |
 | D09 | 在线 7 日、备份 30 日、恢复重放 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/privacy/deletion-aging.ts:60` | 恢复重放未装配；无生产安装证据 |
@@ -109,7 +109,7 @@
   接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:205`，授权落库要求两类证据引用见
   `services/api/src/privacy/grant-pg.ts:63`。
 - **证据**：契约 `packages/contracts/openapi.json:1426`（`GET /me/exports`）；装配 `services/api/src/app.ts:2219`。
-- **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接，`services/api/src/app.ts:927` 起的注释写清：real 模式
+- **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接，`services/api/src/app.ts:928` 起的注释写清：real 模式
   在任何账本变更**之前** 503（零 `sent` 记录），替身/演示模式**不记账**。因此真库上取不到一条真实外发记录，
   「记录得住」这件事只有结构与读面证据，没有一条真实数据流过。这一条不把 D12 降级：能力（表、写面、读面、
   门禁）都在生产装配路径上；缺的是传输这一侧的接线，属外发域而非记录域。
@@ -150,7 +150,7 @@
 ### D06 日志不带令牌/密码/媒体/联系方式
 
 - **判定**：部分。需求 `docs/implementation-requirements.md:276` 后半。
-- **实现**：请求日志白名单 `services/api/src/app.ts:588`（`requestLogFields`），`:608` 注释写清「整条查询串一律不落」，
+- **实现**：请求日志白名单 `services/api/src/app.ts:589`（`requestLogFields`），`:608` 注释写清「整条查询串一律不落」，
   挂载在 `:737`；账本回执脱敏 `packages/privacy/redact.mjs:68`（`redactForLog`）与 `:99`（`assertNoSensitiveLeak`），
   唯一调用点（限 `services/api/src`）是 `services/api/src/privacy/ledger-pg.ts:824`。
 - **证据**：`services/api/src/privacy/log-redaction.ts` 不存在（见 §0.3 表格）。

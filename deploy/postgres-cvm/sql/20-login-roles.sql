@@ -788,18 +788,19 @@ GRANT UPDATE (revision,reporter_id,anonymized_author_ref,target_type,target_id,t
               state,reason_code,detail,created_at)
   ON public.community_reports TO gengyun_api_runtime;
 
--- 审核决定（迁移 0022）：:274/:609 的 INSERT、:279 的 ON CONFLICT 三列主键 DO UPDATE。
+-- 审核决定（迁移 0022；`decided_by` 由迁移 0045 增加）：:274/:609 的 INSERT、:279 的 ON CONFLICT
+-- 三列主键 DO UPDATE。**人工审核**（S3）是这条表上唯一的"带人"写入：机器结论恒 NULL。
 GRANT SELECT (target_type,target_id,target_revision,id,decision,reason_codes,
               hard_rule_passed,rule_version,text_digest,contract_complete,
-              missing_contract_fields,created_at)
+              missing_contract_fields,decided_by,created_at)
   ON public.community_moderation_decisions TO gengyun_api_runtime;
 GRANT INSERT (target_type,target_id,target_revision,id,decision,reason_codes,
               hard_rule_passed,rule_version,text_digest,contract_complete,
-              missing_contract_fields,created_at)
+              missing_contract_fields,decided_by,created_at)
   ON public.community_moderation_decisions TO gengyun_api_runtime;
 -- 主键三列是冲突目标，不参与 DO UPDATE。
 GRANT UPDATE (id,decision,reason_codes,hard_rule_passed,rule_version,text_digest,
-              contract_complete,missing_contract_fields,created_at)
+              contract_complete,missing_contract_fields,decided_by,created_at)
   ON public.community_moderation_decisions TO gengyun_api_runtime;
 
 -- 社区幂等台账（迁移 0022）：:737 的 INSERT、:703/:732/:761 的 DELETE。

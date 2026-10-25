@@ -14,6 +14,7 @@ import {
   createSpecValidator,
   type FieldSpec,
 } from '../fields.ts';
+import { POST_REVIEW_REASON_CODES } from './types.ts';
 
 const str = (minLength: number, maxLength: number): FieldSpec => ({ type: 'string', minLength, maxLength });
 const enumOf = (...values: string[]): FieldSpec => ({ type: 'string', enum: values });
@@ -59,6 +60,25 @@ export const OPS_INPUT_SPECS = {
     properties: {
       enabled: { type: 'boolean' },
       reason: str(1, 500),
+    },
+  },
+
+  /**
+   * S3 `rejectPost` 的请求体：**只有** `reason_code` 一个字段。
+   *
+   * 刻意不加可选 `note`：契约里没有落点（`community_moderation_decisions` 无 note 列、
+   * `admin_audit_events.reason_code` 是闭集），收一个存不下的字段就是照抄 `hidePost`
+   * 「只收不落」的既有缺陷。
+   *
+   * `enum` 与 `types.ts` 的 `POST_REVIEW_REASON_CODES` **逐值相等**（顺序也一致），
+   * 由 `tests/unit/admin-post-review-contract.test.mjs` 双向钉死；这里不再手抄第二份字面量。
+   */
+  PostRejectionInput: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['reason_code'],
+    properties: {
+      reason_code: enumOf(...POST_REVIEW_REASON_CODES),
     },
   },
 } as const satisfies Readonly<Record<string, FieldSpec>>;
@@ -133,6 +153,33 @@ export const OPS_OUTPUT_SPECS = {
     additionalProperties: false,
     required: ['accepted'],
     properties: { accepted: { type: 'boolean' } },
+  },
+
+  /**
+   * S3 `approvePost` / `rejectPost` 的共同响应体。
+   *
+   * 键集合与 `types.ts` 的 `PostReviewOutcome` 逐字一致，且是**新增**的具名组件
+   * （不复用 `Ack`）：运营需要知道"打在了哪个版本上、结论是什么、作者是否被通知"，
+   * `{accepted:true}` 给不了这些。枚举一律**内联**（与 `Category.type` 同款纪律：
+   * 契约里内联的，镜像也必须内联，否则归一化比对不相等）。
+   */
+  PostReviewOutcome: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id', 'revision', 'audit_state', 'visibility', 'decision', 'changed', 'notified', 'reason_codes'],
+    properties: {
+      id: uuid(),
+      revision: integer(1),
+      audit_state: enumOf('approved', 'rejected'),
+      visibility: enumOf('private', 'published', 'hidden', 'deleted'),
+      decision: enumOf('approved', 'rejected'),
+      changed: { type: 'boolean' },
+      notified: { type: 'boolean' },
+      // 门禁原因码（机器码全大写 / 运营码小写 snake_case 混装，故不设 enum）。
+      // ⛔ 不得加 minLength/maxLength：契约里 `items` 只有 `{"type":"string"}`，
+      // 镜像多写一条约束就跟契约不同形（`admin-ops-contract` 逐字比对会红）。
+      reason_codes: { type: 'array', items: { type: 'string' } },
+    },
   },
 } as const satisfies Readonly<Record<string, FieldSpec>>;
 

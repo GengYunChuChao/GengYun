@@ -35,7 +35,7 @@ export const ALL_OPS_SCOPES = Object.freeze([
   'scopes:read',
 ]);
 
-/** 本片 12 个 operationId（10 个既有 + R37 `#18` S2 读面的管理员目录与权限读面）。 */
+/** 本片 14 个 operationId（10 个既有 + R37 `#18` S2 读面 + S3 人工通过/驳回）。 */
 export const OPS_IDS = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -49,6 +49,8 @@ export const OPS_IDS = Object.freeze([
   'hidePost',
   'listAdministrators',
   'listAdministratorScopes',
+  'approvePost',
+  'rejectPost',
 ]);
 
 /** 派单显式不做的 operationId（不得在本片出现）。 */
@@ -156,6 +158,8 @@ export function createOpsHarness(options = {}) {
     signingKey: OPS_SIGNING_KEY,
     jobPort,
     community: options.wireCommunity ? community.store : options.communityStore,
+    // S3：人工通过/驳回端口（不传 ⇒ 适配层缺省未接线 ⇒ 503，与本片其它能力位同口径）。
+    ...(options.postReview === undefined ? {} : { postReview: options.postReview }),
     flagEffects: options.flagEffects,
     idempotencyTtlSeconds: options.idempotencyTtlSeconds,
   });

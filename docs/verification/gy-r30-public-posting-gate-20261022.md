@@ -278,8 +278,8 @@ git_dirty_lines=0
 
 | 记注 | 原文 | 本次实测 | 结论 |
 | --- | --- | --- | --- |
-| `docs/verification/gy-r28-w10-posting-consent-20261021.md:13` | 注入位置 `services/api/src/app.ts:1792` | 现为 `:1967` | **行号漂移**（后续合入推移；本片测量时在 `:1808`），结论不变 |
-| `docs/verification/gy-i14-community-chain-20261021.md:190` | 「`registerCommunityRoutes(...)`（`app.ts:1834`）**也不收** consent 参数」 | 现 `app.ts:2332`（原记 `:1967`） **收** `{ consent: consentGate }` | **已不成立**：该页记的是 #406 之前的状态 |
+| `docs/verification/gy-r28-w10-posting-consent-20261021.md:13` | 注入位置 `services/api/src/app.ts:1792` | 现为 `:2426` | **行号漂移**（#621 与本片 S3-a 各推移一次；S3-a 合并后复测，`registerCommunityRoutes(..., { consent: consentGate })` 在 `:2426`），结论不变 |
+| `docs/verification/gy-i14-community-chain-20261021.md:190` | 「`registerCommunityRoutes(...)`（`app.ts:1834`）**也不收** consent 参数」 | 现 `app.ts:2426`（S3-a 合并后复测） **收** `{ consent: consentGate }` | **已不成立**：该页记的是 #406 之前的状态 |
 | 本工作树草稿 `gy-r30-public-posting-gate-20261022.md`（上个代理，未跟踪） | §5.1 引 `profile.wxml:163`、`:162-176` | 实际注释在 `profile.wxml:162-165`，用户可见那句在 `:176` | **行号修正**；并补两处草稿未列的事实：`0009` 无生产种子（§5.2 #1）、`consent_policies` 缺行使授予自身 403（§5.2 #2）、`privacy_epochs` 只在授予路径创建（§5.2 #6）、以及 §5.3 的文案互斥 |
 | `docs/verification/gy-i04-login-chain-20261021.md` 的「口径决定」第 6 条 | 契约无用途政策读取面 | 仍然成立（`operations.json:95-115` 只有 3 条） | 未漂移 |
 
