@@ -192,7 +192,7 @@ discoverSqlHosts() 的结果  ==  16 个已审计文件  ∪  5 条 UNAUDITED_SQ
 | 行锁 | `public.exports` 的 `UPDATE`，站点 `services/api/src/privacy/ledger-pg.ts:244` | 与上面 33 条同一范畴：`exports` 对运行时角色无任何 UPDATE 授权 |
 | 不可判插值 | `services/api/src/privacy/ledger-pg.ts:399` | 三元选择 `object_key=$3` / `object_id=$3::uuid`，两列都已在列面里 |
 | 不可判插值 | `services/api/src/privacy/ledger-pg.ts:549` | `byKey` 决定锁 `object_key` 还是 `object_id` |
-| 不可判插值 | `services/api/src/privacy/ledger-pg.ts:550` | `scoped` 时追加 `AND user_id=$4::uuid`，`user_id` 已在列面里 |
+| 不可判插值 | `services/api/src/privacy/ledger-pg.ts` 第 550 行（20261021 快照；N1 修复后 +6） | `scoped` 时追加 `AND user_id=$4::uuid`，`user_id` 已在列面里 |
 
 行锁豁免比列级豁免多一个 `ref: file:line`：行锁要求没有列名，若只按表豁免，同表上**新增**的 `FOR UPDATE` 语句会被一起放行（躺平）。反向核对：登记了却对不上任何行锁要求 ⇒ `staleExemptions` 判红（NC8 走一遍）。
 
@@ -318,11 +318,12 @@ services/api/src/profile/service.ts:35 → public.users 缺 UPDATE（行锁 FOR 
    services/api/src/privacy/grant-pg.ts:74     *
    services/api/src/privacy/ledger-pg.ts:244   *
    services/api/src/privacy/ledger-pg.ts:425   *
-   services/api/src/privacy/ledger-pg.ts:460   *
+   services/api/src/privacy/ledger-pg.ts 第 460 行   *
    services/api/src/privacy/ledger-pg.ts:477   *
    services/api/src/privacy/ledger-pg.ts:547   *
    ```
 
+   （以上为 20261021 快照行号；N1 修复在 `ledger-pg.ts` 插入 6 行，当前对应行号整体 +6。）
 
 3. **`FOR UPDATE` 的「任列 UPDATE 即可」只对本仓已验证形态成立**：本守卫判「表级 UPDATE 或该表任意列 UPDATE 存在」即通过；PG 是否接受某个具体的列集合作锁载体（例如权限来自 `WITH GRANT OPTION` 的间接授权、或行级安全策略叠加）未在真实库上逐一验证。
 4. **不覆盖 PL/pgSQL 函数体与数据库侧触发器**：`public.list_admin_accounts()` 的函数体里读什么列，本守卫看不见（只判「函数调用不是表访问」）。

@@ -29,6 +29,7 @@
 import type { PoolClient } from 'pg';
 import { PrivacyError } from '../../../../packages/privacy/errors.mjs';
 import {
+  EXPORT_OBJECT_TYPES,
   EXPORT_STATES,
   MEDIA_PURPOSES,
   requiredConsentsForDataType,
@@ -348,6 +349,12 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     const { userId, authEpoch, objectType, objectId, objectKey, objectRevision, dataType, purpose, recipientId, sourceVersion = null } = input ?? {};
     if (!objectType || typeof objectType !== 'string' || objectType.length > 40) {
       throw new PrivacyError('INVALID_REQUEST', 'object_type 缺失或过长');
+    }
+    // N1：`object_type` 是契约 `TargetRef.type` 的**闭集**（17 值，`EXPORT_OBJECT_TYPES` 逐项镜像）。
+    // 库层 `exports.object_type` 只是 `varchar(40)`（0040 明确未加枚举 CHECK），因此必须在
+    // **任何 SQL 之前**拒绝闭集外的值：否则非法值会写进账本，读面 `/me/exports` 整页 503。
+    if (!EXPORT_OBJECT_TYPES.includes(objectType)) {
+      throw new PrivacyError('INVALID_REQUEST', 'object_type 不在契约 TargetRef.type 闭集内');
     }
     if (!Number.isInteger(objectRevision) || objectRevision < 1) throw new PrivacyError('INVALID_REQUEST', 'object_revision 非法');
     if (!Number.isInteger(authEpoch) || authEpoch < 1) throw new PrivacyError('SESSION_REQUIRED', '缺少身份版本（auth_epoch）');

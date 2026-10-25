@@ -29,6 +29,8 @@ declare module '*packages/privacy/constants.mjs' {
   export const MEDIA_PURPOSES: readonly string[];
   export const CONSENT_STATES: readonly string[];
   export const EXPORT_STATES: readonly string[];
+  /** 契约 `TargetRef.type` 的 17 值闭集（写入端口 `reserve` 的 `object_type` 白名单）。 */
+  export const EXPORT_OBJECT_TYPES: readonly string[];
   export const THIRD_PARTY_STATES: readonly string[];
   export const DELETION_STATES: readonly string[];
   export const HANDLER_STATES: readonly string[];
