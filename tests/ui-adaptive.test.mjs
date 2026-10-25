@@ -146,6 +146,16 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
   const heroBadge = heroWxss.slice(heroWxss.indexOf('.hero__badge'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__badge')));
   assert.ok(/min-height:\s*calc\(26px\s*\*\s*var\(--font-scale/.test(heroBadge), '.hero__badge 高度未随字体放大');
   assert.ok(!/padding:\s*0\s+22rpx/.test(heroBadge), '.hero__badge 上下无内边距，换行会溢出圆角框');
+
+  // 普通视口回归：右侧装饰不能把 eyebrow 压成孤字；游客标记增高后，
+  // 英文口号仍须在文档流中跟随主按钮，不能绝对定位叠到按钮上。
+  const heroContent = heroWxss.slice(heroWxss.indexOf('.hero__content'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__content')));
+  assert.match(heroContent, /width:\s*100%/, '首页 Hero 正文仍被右侧装饰压缩，eyebrow 会出现孤字');
+  const heroCode = heroWxss.slice(heroWxss.indexOf('.hero__code'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__code')));
+  assert.match(heroCode, /position:\s*static/, '英文口号必须留在文档流中，避免覆盖主按钮');
+  assert.match(heroCode, /margin-top:\s*16px/, '英文口号与主按钮之间缺少稳定间距');
+  assert.doesNotMatch(heroCode, /(?:right|bottom):/, '英文口号不得再用绝对定位坐标参与布局');
+
   const badgeStart = appWxss.indexOf(String.fromCharCode(10) + '.badge {');
   const badge = appWxss.slice(badgeStart, appWxss.indexOf('}', badgeStart));
   assert.ok(/min-height:\s*calc\(24px\s*\*\s*var\(--font-scale/.test(badge), '.badge 高度未随字体放大');
