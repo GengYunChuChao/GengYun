@@ -7,7 +7,9 @@
  *   [P] 运行时角色最小权限：审计读函数可 EXECUTE、开关表可读；admin_audit_events 直读与作业表未授列直读 42501
  *   [A] A→B→A 两行审计的**行序与前后值**（不看这两项就等于只验了「有审计」）
  *   [J] GET /admin/jobs 真读三张域表；失败作业的 error_code 原样透出；普通账号 401/403；只读后台账号 cancel 403
- *   [C] 取消：revision 1→2、库内同值、审计 target_ref={job,id,revision:2}；对终态作业 409 且不改写
+ *   [C] 取消：revision 1→2、库内同值、`job.cancel` 审计**落库恰 1 行**（target_ref={job,id,revision:1}）；对终态作业 409 且不改写
+ *   [C2] 同事务返修（#589）：审计表拒绝 `job.cancel` 行 ⇒ 503 且作业**原样留在取消前状态**、审计零新增；
+ *        拆掉人为故障后同一作业能真取消（证明失败没留锁/占位/半提交）
  *   [E] submissions_enabled 关 ⇒ POST /posts 409 OBJECT_UNAVAILABLE(FLAG_CLOSED) + 零新增行；开 ⇒ 放行；
  *       同一 app 实例关→开→关立刻生效（反证读面无跨请求缓存）
  *
@@ -654,7 +656,7 @@ async function seedJobRows(userId) {
   return rows;
 }
 
-async function jobsArm(app, jobsToken, userToken, userScopesAdminToken) {
+async function jobsArm(app, jobsToken, userToken, userScopesAdminToken, jobsAdminId) {
   const port = createPostgresAdminJobPort({ pool: ownerPool });
   assert.equal(port.wired, true, '真库端口必须 wired=true');
   const viaPort = await port.list();
@@ -712,12 +714,45 @@ async function jobsArm(app, jobsToken, userToken, userScopesAdminToken) {
   // 内容审计（job.cancel 等内容/作业类操作）走平台既有的审计读面；PG 里的 admin_audit_events
   // 只承载开关变更（存储函数内写）。两条路径都要“可查”，但不得互相冒充。
   // 审计边界（真读数）：内容审计读面在 real 模式下由“账号依赖”边界失闭（503）。
-  // `job.cancel` 的审计行写在内存审计流，由 `tests/unit/admin-ops-job-integrity.test.mjs:161` 断言；
-  // 本臂不把它伪造成 HTTP 200，而是把边界本身钉住。
+  // **R18（迁移 0043）**：`job.cancel` 的审计行已从**进程内存落库** —— 成功取消时由
+  // `public.record_admin_job_cancel_audit(...)`（窄口径 SECURITY DEFINER，运行时不持有
+  // `admin_audit_events` 任何直写权）在同一请求里写一行。本臂因此不再拿“单元测试覆盖”替身，
+  // 而是直接钉「库内**恰 1 行** + 字段逐项正确」；内存路径仍由
+  // `tests/unit/admin-ops-job-integrity.test.mjs:161` 覆盖（stub 域口径未变）。
+  const cancelAudit = await q(
+    `SELECT actor_id, action, scope, target_ref, target_hint, reason_code, result, request_id
+       FROM public.admin_audit_events
+      WHERE action = 'job.cancel'`,
+  );
+  assert.equal(
+    cancelAudit.length,
+    1,
+    `job.cancel 审计必须**恰 1 行**落在 public.admin_audit_events，实际 ${cancelAudit.length} 行：${JSON.stringify(cancelAudit)}`,
+  );
+  assert.deepEqual(
+    cancelAudit[0].actor_id,
+    jobsAdminId,
+    '审计行 actor 必须是本次取消的后台账号 id（不得被调用方伪造）',
+  );
+  assert.equal(cancelAudit[0].action, 'job.cancel');
+  assert.equal(cancelAudit[0].scope, 'jobs:cancel');
+  assert.deepEqual(
+    cancelAudit[0].target_ref,
+    { type: 'job', id: target.id, revision: 1 },
+    `target_ref 必须是 {type:'job', id, revision}，且 revision 是**取消前**的 1，实际 ${JSON.stringify(cancelAudit[0].target_ref)}`,
+  );
+  assert.equal(cancelAudit[0].target_hint, null, '作业取消的 target_hint 必须是 null（不是 account:/flag 形态）');
+  assert.equal(cancelAudit[0].reason_code, 'job_cancelled');
+  assert.equal(cancelAudit[0].result, 'accepted');
+  assert.match(
+    String(cancelAudit[0].request_id),
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    '审计行 request_id 必须是本次请求的 uuid（NOT NULL 列，不是占位字符串）',
+  );
   const auditFeed = await injectCall(app, API_V1('/admin/audit-events?limit=20'), { token: jobsToken });
   assert.equal(auditFeed.status, 503, `real 模式内容审计读面必须失闭，实际 ${auditFeed.status}`);
   assert.equal(auditFeed.body.error.code, 'PROVIDER_UNAVAILABLE');
-  note('[C] POST /admin/jobs/{id}/cancel 200：state=cancelled、revision 1→2（库内同值）；审计边界如实钉住：real 模式下内容审计读面 503 PROVIDER_UNAVAILABLE（行由单元测试覆盖）');
+  note('[C] POST /admin/jobs/{id}/cancel 200：state=cancelled、revision 1→2（库内同值）；R18 起 job.cancel 审计行**落库恰 1 行**（actor=操作者、scope=jobs:cancel、target_ref={job,id,revision:1}、reason=job_cancelled、result=accepted）；内容审计读面仍如实失闭 503 PROVIDER_UNAVAILABLE');
 
   const terminal = items.find((item) => item.kind === 'ocr');
   const refused = await injectCall(app, API_V1(`/admin/jobs/${terminal.id}/cancel`), {
@@ -730,6 +765,101 @@ async function jobsArm(app, jobsToken, userToken, userScopesAdminToken) {
   const untouched = (await q('SELECT state, revision FROM public.ocr_jobs WHERE id = $1::uuid', [terminal.id]))[0];
   assert.deepEqual(untouched, { state: 'failed', revision: 1 }, '终态作业不得被改写');
   note(`[C] 终态作业取消 ⇒ 409 ${refused.body.error.code}，库内仍 failed/revision=1（终态不可迁移）`);
+}
+
+// ---------------------------------------------------------------------------
+// [C2] 同事务返修（监工 #589）：审计写失败 ⇒ 取消不生效、审计表零新增
+// ---------------------------------------------------------------------------
+/**
+ * 人为让审计写入失败（审计表上装一个只拦 `action='job.cancel'` 的 BEFORE INSERT 触发器），
+ * 然后证明三件事：
+ *   ① 请求 503 `PROVIDER_UNAVAILABLE`（不是 200 假成功）；
+ *   ② 作业**原样留在取消前状态**（state/revision 一个字节都没动）⇒ 取消没有"先提交"；
+ *   ③ `admin_audit_events` 零新增 ⇒ 不存在"补偿式补写"这种半拉子路径。
+ * 最后拆掉触发器，再用一个新的幂等键真取消一次：作业变成 cancelled/revision=2 且审计恰多一行 ——
+ * 证明上一次失败只伤在审计面，没有留下行锁、幂等占位或半提交（否则重试会 409/500）。
+ *
+ * 为什么用触发器而不是 `REVOKE INSERT`：`admin_audit_events` 对**运行时**本来就没有任何表级写权
+ * （写入口是 `SECURITY DEFINER` 函数），而本臂的 app 用的是 owner 池 —— 对 owner 执行
+ * `REVOKE INSERT` 会被"owner 隐含全部权限"抵消，探针会变成一条永远不触发的事故演习。
+ * 触发器是唯一能在 owner 身份下稳定制造"审计写不进去"的手段。
+ */
+async function cancelAuditAtomicityArm(app, jobsToken, userId) {
+  const jobId = randomUUID();
+  const countAudits = async () =>
+    (await q("SELECT count(*)::int AS c FROM public.admin_audit_events WHERE action = 'job.cancel'"))[0].c;
+  const jobState = async () =>
+    (await q('SELECT state, revision FROM public.recognition_jobs WHERE id = $1::uuid', [jobId]))[0];
+  const cancel = (key) =>
+    injectCall(app, API_V1(`/admin/jobs/${jobId}/cancel`), {
+      method: 'POST',
+      token: jobsToken,
+      headers: { 'idempotency-key': key, 'if-match': '"1"' },
+      body: { reason: 'R18 真库臂：审计写失败时取消必须不生效' },
+    });
+
+  await owner.query(
+    `INSERT INTO public.recognition_jobs (id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+                                          state, deadline_at, created_at, updated_at, error_code)
+     VALUES ($1, 1, 'recognition', $2, $3, $4, 1, 'queued', now() + interval '10 minutes', now(), now(), NULL)`,
+    [jobId, userId, randomUUID(), randomUUID()],
+  );
+  await owner.query(
+    `CREATE FUNCTION public.r18_reject_cancel_audit() RETURNS trigger LANGUAGE plpgsql AS $fn$
+     BEGIN
+       RAISE EXCEPTION USING ERRCODE = 'G0098', MESSAGE = 'R18_TEST_AUDIT_WRITE_REJECTED',
+         DETAIL = '真库臂人为故障：审计表拒绝 job.cancel 行，用来证明取消不生效';
+     END
+     $fn$`,
+  );
+  // 与迁移同一体例：探针函数同样收回 PUBLIC EXECUTE（用完即删，不给后面留口子）。
+  await owner.query('REVOKE ALL ON FUNCTION public.r18_reject_cancel_audit() FROM PUBLIC');
+  await owner.query(
+    `CREATE TRIGGER r18_reject_cancel_audit BEFORE INSERT ON public.admin_audit_events
+       FOR EACH ROW WHEN (NEW.action = 'job.cancel')
+       EXECUTE FUNCTION public.r18_reject_cancel_audit()`,
+  );
+  try {
+    const baseline = await countAudits();
+    assert.ok(baseline >= 1, `上一臂应已留下 job.cancel 审计行，实际 ${baseline} 行`);
+    assert.deepEqual(await jobState(), { state: 'queued', revision: 1 }, '探针起点必须是可取消的 queued/revision=1');
+
+    const failed = await cancel(randomUUID());
+    assert.equal(
+      failed.status,
+      503,
+      `审计写不进去时取消必须 503（不得假成功），实际 ${failed.status} ${failed.text.slice(0, 300)}`,
+    );
+    assert.equal(failed.body.error.code, 'PROVIDER_UNAVAILABLE');
+    assert.match(
+      String(failed.body.error.message),
+      /审计写入失败/,
+      `503 文案必须指出是审计写入失败，而不是作业冲突，实际 ${failed.body.error.message}`,
+    );
+    assert.deepEqual(
+      await jobState(),
+      { state: 'queued', revision: 1 },
+      '审计写失败时作业必须**原样留在取消前状态**（同事务回滚，不是"先提交再补审计"）',
+    );
+    assert.equal(await countAudits(), baseline, '审计写失败时 admin_audit_events 必须零新增');
+    note('[C2] 审计表拒绝 job.cancel ⇒ 503 PROVIDER_UNAVAILABLE；作业仍 queued/revision=1、审计表零新增（状态变更与审计同一事务，无补偿式补写）');
+  } finally {
+    await owner.query('DROP TRIGGER IF EXISTS r18_reject_cancel_audit ON public.admin_audit_events');
+    await owner.query('DROP FUNCTION IF EXISTS public.r18_reject_cancel_audit()');
+  }
+
+  const baseline = await countAudits();
+  const recovered = await cancel(randomUUID());
+  assert.equal(
+    recovered.status,
+    200,
+    `拆掉故障后同一作业必须能取消，实际 ${recovered.status} ${recovered.text.slice(0, 300)}`,
+  );
+  assert.equal(recovered.body.data.state, 'cancelled');
+  assert.equal(recovered.body.data.revision, 2);
+  assert.deepEqual(await jobState(), { state: 'cancelled', revision: 2 }, '恢复后库内必须是 cancelled/revision=2');
+  assert.equal(await countAudits(), baseline + 1, '恢复后审计必须恰多一行（失败那次没有留下任何行）');
+  note('[C2] 拆掉故障后重试 ⇒ 200 cancelled/revision=2，审计恰多 1 行（上一次失败没有留锁、没有留幂等占位、没有留半提交）');
 }
 
 // ---------------------------------------------------------------------------
@@ -907,7 +1037,8 @@ try {
   assert.equal(app.featureFlagGate.armed, true, '表就绪 ⇒ 开关门必须武装');
 
   const readOnlyAdmin = await seedAdmin(['jobs:read']);
-  await jobsArm(app, fullAdmin.token, user.token, readOnlyAdmin.token);
+  await jobsArm(app, fullAdmin.token, user.token, readOnlyAdmin.token, fullAdmin.adminId);
+  await cancelAuditAtomicityArm(app, fullAdmin.token, user.id);
   await postingsFlagArm(app, flagsPort, fullAdmin.adminId, user);
 
   const auditHttp = await injectCall(app, API_V1('/admin/flag-audit-events?limit=1'), { token: fullAdmin.token });
@@ -956,10 +1087,40 @@ try {
 //     —— 独立场景段，追加在本文件末尾；上方的 [M]/[P]/[A]/[J]/[C]/[E] 臂一行未改。
 // ===========================================================================
 /**
- * 判别力：改动前 `listSql` 没有 WHERE，`?state=failed` 会**静默返回全量**（5 条），
- * 于是下面每条「只回 N 条」的断言在改动前都是真红；闭集外取值在改动前不校验（同样真红）。
+ * 判别力：改动前 `listSql` 没有 WHERE，`?state=failed` 会**静默返回全量**（本臂开跑前查到的
+ * 真实全量，即下方 `expectedAll`），于是下面每条「只回 N 条」的断言在改动前都是真红；
+ * 闭集外取值在改动前不校验（同样真红）。
+ *
+ * ## 全量基线为什么**动态读库**、而不是写死「5 条」（#589 遗留行踩坑记录）
+ * 本臂是脚本最后一段，库内行数已经被前面的臂改变过：`[J]` 种 3 条夹具（`seedJobRows`）、
+ * `[C]` 把其中 recognition 那条从 queued 改成 cancelled、`[C2]`（#589 的同事务返修臂，
+ * `cancelAuditAtomicityArm` 在上方自行插入一条 recognition 探针行）把它自己的探针留在
+ * cancelled/revision=2。于是本臂开跑前真实是 4 条，写死「3 条既有 + 2 条种子 = 5」就假红
+ * （CI `real-pg-17.11` 实测 6 !== 5）。
+ *
+ * `[C2]` 那条行**不删**：它是「审计留痕 + 终态不可迁移」的证据 —— `admin_audit_events` 里的
+ * `job.cancel` 行 `target_ref` 指着它，删掉作业行等于让审计指向一条不存在的作业，正是 #589
+ * 要消灭的那类缺口。所以修在「读」这一侧：基线取开跑前库里三张作业表的真实行数，断言仍是
+ * **精确相等**（`不加过滤 == 基线 + 2`）：少一条即「过滤丢行」、多一条即「重复行」，判别力与
+ * 写死数字时一模一样，只是不再把别的臂的夹具当成自己的排他地盘。
  */
 async function jobsFilterArm(app, jobsToken, userId) {
+  // 三源行数只做 `count(*)`，不读任何列（静态列审计不覆盖 tests/，但仍按最小读面写）。
+  const countAllJobs = async () => {
+    const [row] = await q(
+      `SELECT (SELECT count(*)::int FROM public.ocr_jobs)
+            + (SELECT count(*)::int FROM public.recognition_jobs)
+            + (SELECT count(*)::int FROM public.speech_jobs) AS c`,
+    );
+    return row.c;
+  };
+  const baseline = await countAllJobs();
+  const expectedAll = baseline + 2;
+  assert.ok(
+    expectedAll <= ADMIN_JOB_LIST_LIMIT,
+    `本臂要求全量在端口硬上限内：${expectedAll} > ${ADMIN_JOB_LIST_LIMIT} 时「不加过滤」本就是一页装不下，先扩上限再谈丢行`,
+  );
+
   // 追加两行专用种子：同 state、不同 error_code，再加上一行别的 state —— 过滤才有「二选一」的判别力。
   // 只在本臂（脚本最后一段）插入，且新 id 不出现在任何既有断言里。
   const extra = { failed: randomUUID(), succeeded: randomUUID() };
@@ -981,13 +1142,33 @@ async function jobsFilterArm(app, jobsToken, userId) {
   // ① 不加过滤 ≡ 改动前的全量读面（本片没有偷偷改变默认语义）
   const unfiltered = await injectCall(app, API_V1('/admin/jobs'), { token: jobsToken });
   assert.equal(unfiltered.status, 200);
-  assert.equal(unfiltered.body.data.items.length, 5, '不加过滤必须仍回全量（3 条既有 + 2 条本臂种子）');
-  note('[F] 不加过滤 ≡ 全量：5 条（三源合并 + 本臂两条种子），默认语义未变');
+  assert.equal(
+    unfiltered.body.data.items.length,
+    expectedAll,
+    `不加过滤必须仍回全量（开跑前库内 ${baseline} 条 + 本臂 2 条种子 = ${expectedAll}）：少一条是过滤丢行，多一条是重复行`,
+  );
+
+  // ①′ state 维度是**划分**：七个契约 state 的过滤读数之和必须回到同一个全量。
+  //     这比「某一条过滤只回 N 条」更难糊弄：任一 state 多丢一行，或全量本身悄悄漏一行，
+  //     和就对不上（`?state=failed` 的写死计数给不了这个保障）。
+  const contractStates = ['queued', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled', 'uncertain'];
+  let stateSum = 0;
+  for (const state of contractStates) {
+    const page = await injectCall(app, API_V1(`/admin/jobs?state=${state}`), { token: jobsToken });
+    assert.equal(page.status, 200, `?state=${state} 必须 200，实际 ${page.status}`);
+    stateSum += page.body.data.items.length;
+  }
+  assert.equal(
+    stateSum,
+    expectedAll,
+    `七个 state 过滤读数之和必须等于全量 ${expectedAll}（漏行/重行都会打破它），实际 ${stateSum}`,
+  );
+  note(`[F] 不加过滤 ≡ 全量：${expectedAll} 条（开跑前基线 ${baseline} + 本臂两条种子）；七个 state 过滤之和同为 ${expectedAll}（state 是划分，不漏不重），默认语义未变`);
 
   // ② state 过滤：库里两条 failed（ocr + 本臂 recognition），SQL 必须收敛到 2 条
   const byState = await injectCall(app, API_V1('/admin/jobs?state=failed'), { token: jobsToken });
   assert.equal(byState.status, 200, `?state=failed 必须 200，实际 ${byState.status} ${byState.text.slice(0, 200)}`);
-  assert.equal(byState.body.data.items.length, 2, '?state=failed 必须只回两条失败作业（改动前会回 5 条 ⇒ 真红）');
+  assert.equal(byState.body.data.items.length, 2, `?state=failed 必须只回两条失败作业（改动前会回全量 ${expectedAll} 条 ⇒ 真红）`);
   assert.deepEqual(byState.body.data.items.map((item) => item.state), ['failed', 'failed'], '过滤后每条都必须是 failed');
   assert.deepEqual(byState.body.data.items.map((item) => item.kind), ['recognition', 'ocr'], '过滤后仍按 created_at DESC 排序');
   note('[F] GET /admin/jobs?state=failed ⇒ 200 / 2 条（recognition, ocr），逐条 state=failed');

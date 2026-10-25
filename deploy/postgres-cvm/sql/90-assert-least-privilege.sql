@@ -1789,6 +1789,13 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'revoke_admin_scope',                 'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-R18（`#18` / 迁移 0043）：后台「作业取消」审计的**唯一写路径**（一条窄口径
+    -- SECURITY DEFINER 函数）。运行时对 `admin_audit_events` 仍是零表级、零列级写
+    -- （external_manifest 与槽 9 的 protected_columns 逐字未动；append-only 触发器还在），
+    -- 并且写入的是**受保护审计面**：函数内固定 action/scope/result、重建 target_ref、
+    -- 重核验操作者存在 + active + 当前有效持 jobs:cancel ⇒ 调用方无法伪造 actor 或动作文本。
+    ('public',         'record_admin_job_cancel_audit',      'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',

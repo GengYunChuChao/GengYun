@@ -141,13 +141,51 @@ export interface AdminJobPort {
   /** 是否已接线。`false` ⇒ 服务层 fail-closed。 */
   readonly wired: boolean;
   /**
+   * 是否**持久化到库**（与 `CommunityPostPort.persistent` 同一口径：不是自述布尔，
+   * 内存实现恒 `false`、Postgres 实现恒 `true`）：
+   * - `false`：内存参考实现 / 未接线端口 ⇒ `cancel()` 只改进程内状态，
+   *   审计由服务层写既有的内存 `store.audit.append`；
+   * - `true`：Postgres 端口 ⇒ `cancel()` 在**自己的事务里**同时改状态与写审计，
+   *   服务层**不再**补写内存审计（补写会变成第二条口径，且掩盖库内已写的那一行）。
+   */
+  readonly persistent: boolean;
+  /**
    * 列表读面。`filter` 缺省（或两个字段都不给）⇒ 不过滤，行为与 R29 逐字相同。
    * 过滤**必须由读面自己下推到查询里**（真实现是 SQL `WHERE`），⛔ 不在内存里筛。
    */
   list(filter?: AdminJobFilter): Promise<AdminJobView[]> | AdminJobView[];
   get(id: string): Promise<AdminJobView | null> | AdminJobView | null;
-  /** 终态不可复活：`reason: 'TERMINAL'` 由端口负责判定。 */
-  cancel(id: string, expectedRevision: number): Promise<CancelJobOutcome> | CancelJobOutcome;
+  /**
+   * 终态不可复活：`reason: 'TERMINAL'` 由端口负责判定。
+   *
+   * `audit` 是本次取消要落的审计入参。**持久端口的契约是原子的**：状态变更与审计行
+   * 在同一个事务里提交 —— 审计写不进去就整体回滚，取消不生效。
+   * 不这么做的后果是监工 #589 指出的那种缺口：取消先提交、审计后写入，
+   * 写审计失败时留下一条**永远补不回来**的已取消作业（审计表 append-only，事后也无从补记）。
+   * 内存端口忽略该入参（服务层按 `persistent === false` 自己写内存审计流）。
+   */
+  cancel(
+    id: string,
+    expectedRevision: number,
+    audit: AdminJobCancelAuditInput,
+  ): Promise<CancelJobOutcome> | CancelJobOutcome;
+}
+
+/**
+ * 一次取消要落的审计入参。
+ *
+ * 刻意**不含** `jobId` / `jobRevision`：这两个值只能取自端口自己刚锁住的那一行
+ * （即 `cancel(id, expectedRevision, …)` 的入参），不让调用方另传一份可能与实际取消对象
+ * 不一致的副本。也不含 action / scope / result / target_hint / target_ref —— 那些在
+ * 迁移 0043 的函数内固定，调用方无从伪造。
+ */
+export interface AdminJobCancelAuditInput {
+  /** 操作者 `admin_accounts.id`（= 会话身份；函数内重核验存在 / `active` / 当前有效持 `jobs:cancel`）。 */
+  readonly actorId: string;
+  /** 理由码；当前闭集只有 `job_cancelled`。 */
+  readonly reasonCode: string;
+  /** 契约 `Meta.request_id`。 */
+  readonly requestId: string;
 }
 
 // ---------------------------------------------------------------------------

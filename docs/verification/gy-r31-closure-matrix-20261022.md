@@ -127,7 +127,7 @@
 
 **组 H：审计 UI 1 条（blocker 不成立）** —— `listFlagAuditEvents`
 - 原文摘要：「…后台 UI 已有「操作者/变更前后」列；人审隔离位仍属契约/范围外（AdminJob 9 字段无隔离位）」
-- 现况：这两句本身在 UI 侧成立（`apps/admin/src/views/AuditEventsView.vue:250` `<th>操作者（actor）</th>`、`:251` `<th>变更（before → after）</th>`），但「人审隔离位」是 **AdminJob 的字段问题，不属本 operation 的验收面**；本 op 的路由（`services/api/src/routes/admin.ts:353`）、服务（`services/api/src/admin/ops/service.ts:1027`）、审计表（`0027`）、UI 四件都在。⇒ 该 blocker 不构成本 op 未完成的理由。
+- 现况：这两句本身在 UI 侧成立（`apps/admin/src/views/AuditEventsView.vue:250` `<th>操作者（actor）</th>`、`:251` `<th>变更（before → after）</th>`），但「人审隔离位」是 **AdminJob 的字段问题，不属本 operation 的验收面**；本 op 的路由（`services/api/src/routes/admin.ts:353`）、服务（`services/api/src/admin/ops/service.ts:1059`）、审计表（`0027`）、UI 四件都在。⇒ 该 blocker 不构成本 op 未完成的理由。
 
 **组 I：GY-I18 模板 34 条（待逐条复核，未计入 33 条）** —— `listAdminSources`…`listAuditEvents`
 - 原文摘要：「…真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）」

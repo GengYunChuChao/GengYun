@@ -1474,6 +1474,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminJobPort,
+          // R18：`job.cancel` 的审计落点跟着 `jobPort` 走 —— 真库端口在它自己的取消事务里
+          // 写 `public.admin_audit_events`（迁移 0043 的窄口径函数）；内存端口由服务层写内存审计流。
           // GY-I15 接线同上：端口仍按**同一份**社区 store 装配；`hidePost` 是否放行由上面的
           // `hidePostWired`（= `persistent === true`）决定，本行不改变判据。
           community: communityPostPortForAdmin,

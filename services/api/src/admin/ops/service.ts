@@ -142,7 +142,13 @@ export interface AdminOpsServiceOptions {
   /** 内存 store 尚未接真实库，默认如实标注 `stub`。 */
   executionMode?: ExecutionMode;
   idempotencyTtlSeconds?: number;
-  /** 平台级作业端口；缺省 = **未接线**（fail-closed）。 */
+  /**
+   * 平台级作业端口；缺省 = **未接线**（fail-closed）。
+   *
+   * `job.cancel` 的审计落点跟着这个端口走，不再是独立选项：`persistent === true` 的端口
+   * 在自己的取消事务里写 `public.admin_audit_events`（迁移 0043），内存端口则由本服务
+   * 写内存 `store.audit.append`。两个落点**不会同时发生**（见 `cancelAdminJob` 尾段）。
+   */
   jobPort?: AdminJobPort;
   /** 社区帖子存储端口（`hidePost` 用）；缺省 = **未接线**（fail-closed）。 */
   community?: CommunityPostPort;
@@ -767,7 +773,11 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
         if (TERMINAL_JOB_STATES.includes(current.state as JobState)) {
           throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态（${current.state}），不可取消`);
         }
-        const outcome: CancelJobOutcome = await jobPort.cancel(normalizedId, current.revision);
+        const outcome: CancelJobOutcome = await jobPort.cancel(normalizedId, current.revision, {
+          actorId: context.identity.userId,
+          reasonCode: 'job_cancelled',
+          requestId: context.requestId,
+        });
         if (!outcome.ok) {
           switch (outcome.reason) {
             case 'NOT_FOUND':
@@ -820,15 +830,37 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
         }
 
         // ---- 校验全部通过，才登记成功：审计 + 幂等定型（要么全做，要么全不做）----
-        appendAudit(context, {
-          action: 'job.cancel',
-          scope: OPS_SCOPES.cancelAdminJob,
-          // 契约 `TargetRef.type` 闭集**有** job 成员 ⇒ 用合同口径，且带被取消的 revision。
-          targetRef: { type: 'job', id: normalizedId, revision: current.revision },
-          targetHint: null,
-          reasonCode: 'job_cancelled',
-          result: 'accepted',
-        });
+        // **R18：审计落点（迁移 0043）**。
+        //
+        // 持久端口（`persistent === true`，即 `createPostgresAdminJobPort`）的 `cancel()`
+        // **已经在自己的事务里**写过审计行了：窄口径 `SECURITY DEFINER` 函数把
+        // `public.admin_audit_events` 的那一行与 `state/revision` 的变更放在同一个
+        // `COMMIT` 里，审计写不进去就整体 `ROLLBACK`（取消不生效、审计零新增）。
+        // 所以这里**绝不能**再补写一次 —— 补写不是"更保险"，而是会多出第二行，
+        // 或者在审计已落库时让"一行"这个断言变成偶然。
+        //
+        // 代价是审计行早于下面四条完整性校验（监工 #589 要的正是这个方向：宁可让
+        // 一次形状异常的取消留下它自己的审计行，也不能出现"已取消但无审计"）。
+        // 校验失败时请求 500、取消与审计都已提交 —— 它们描述的是同一个事实。
+        //
+        // 内存端口（`persistent === false`：stub 模式 / 内存参考实现）没有库事务，
+        // 保持既有口径逐字不变：写内存 ops store。
+        //
+        // 两条路径的字段口径**同一个事实**：action=job.cancel、scope=jobs:cancel、
+        // target_ref.revision = **取消前** revision、reason_code=job_cancelled、result=accepted、
+        // target_hint=null（库内那一侧的 action/scope/result/target_ref/target_hint 由函数内固定，
+        // 调用方无从伪造，见 `services/api/db/migrations/0043_admin_job_cancel_audit.sql`）。
+        if (!jobPort.persistent) {
+          appendAudit(context, {
+            action: 'job.cancel',
+            scope: OPS_SCOPES.cancelAdminJob,
+            // 契约 `TargetRef.type` 闭集**有** job 成员 ⇒ 用合同口径，且带被取消的 revision。
+            targetRef: { type: 'job', id: normalizedId, revision: current.revision },
+            targetHint: null,
+            reasonCode: 'job_cancelled',
+            result: 'accepted',
+          });
+        }
         return singleResponse(context, executionMode, 200, cancelled, etagOf(cancelled.revision));
       },
     );
