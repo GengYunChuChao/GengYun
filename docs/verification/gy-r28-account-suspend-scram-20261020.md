@@ -40,7 +40,7 @@ exit **1**。日志 `before-red2-with-argv3.log`（48 行）：
 
 - `:1`–`:4` `[M]` 三连全过；`:5` `[P] 已按出厂区域 gy-i22-suspend-grant 授予 EXECUTE（恰好 3 条：suspend/restore/display_name）`
 - `:14` `FAIL：有运行时 URL 但读数未全部通过 —— 首个失败：password authentication failed for user "gengyun_api_runtime"`
-- `:19` `error: password authentication failed for user "gengyun_api_runtime"`；`:20` 起栈只落在 `pg-protocol/dist/parser.js:306`（客户端解析层），**没有脚本帧**
+- `:19` `error: password authentication failed for user "gengyun_api_runtime"`；`:20` 起栈只落在 `pg-protocol` 的 `dist/parser.js`（第 306 行，第三方依赖；客户端解析层），**没有脚本帧**
 - `:30` `severity: 'FATAL'`、`:31` `code: '28P01'`、`:43` `file: 'auth.c'`、`:44` `line: '332'`、`:45` `routine: 'auth_failed'`
 
 **失败代码行**：`tests/integration/account-suspend-pg.mjs:200`（`await client.connect();`；连接串取自 `:199` 的 `runtimeUrl.href`）。

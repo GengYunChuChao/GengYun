@@ -183,7 +183,7 @@ assert.equal(applied[applied.length - 1], '0017', …);
 ```
 [scan] 文件 40 个（实测，不写死数量），行 21604 行，断言行 3517 行
 [scan] 文件 40 个；命中 12 条；豁免 8 条；未登记 4 条；失效豁免 0 条
-  [NEW  ] tests/integration/ocr-jobs-pg.mjs:848 [last-index] assert.equal(names[names.length - 1], MIGRATION, `本片迁移必须是当前末位（现场 ${names[names.length - 1]}）`);
+  [NEW  ] tests/integration/ocr-jobs-pg.mjs 第 848 行（该臂已无此行：脚本第 275 行起注明不再断言末位）[last-index] 同形输入现为 tests/unit/migration-pin-guard.test.mjs:304 的夹具 F1: assert.equal(names[names.length - 1], MIGRATION, `本片迁移必须是当前末位（现场 ${names[names.length - 1]}）`);
   [NEW  ] tests/integration/ocr-jobs-pg.mjs:848 [wording] assert.equal(names[names.length - 1], MIGRATION, `本片迁移必须是当前末位（现场 ${names[names.length - 1]}）`);
   [NEW  ] tests/integration/recognitions-pg.mjs:1010 [last-index] assert.equal(names[names.length - 1], MIGRATION, `${MIGRATION} 必须是当前最后一条（本片新增的就是末位）`);
   [NEW  ] tests/integration/recognitions-pg.mjs:1010 [wording] assert.equal(names[names.length - 1], MIGRATION, `${MIGRATION} 必须是当前最后一条（本片新增的就是末位）`);

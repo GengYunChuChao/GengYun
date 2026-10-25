@@ -339,7 +339,7 @@ roles left: gengyun_cvm_owner
 `services/api/db/roles/*.sql` 用的是 `CREATE ROLE`（没有 `IF NOT EXISTS`）：
 
 ```
-psql:.../auth_privacy.sql:5: ERROR:  role "gengyun_auth_privacy" already exists
+psql:services/api/db/roles/auth_privacy.sql:5: ERROR:  role "gengyun_auth_privacy" already exists
 ```
 
 `provision-db.sh` 只在组**不存在**时才跑它们，所以线上不会撞；但**手工复现**时若集群里已有这些角色，

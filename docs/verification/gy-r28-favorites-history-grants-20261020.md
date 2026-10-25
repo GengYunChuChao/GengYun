@@ -94,7 +94,7 @@ GitHub runner 实跑。
 
 | # | 探针标签（原文） | 改前读数 |
 | --- | --- | --- |
-| 1 | favorites — SELECT 7 列（`FAVORITE_COLUMNS`, `favorites/store-pg.ts:68`） | `42501 permission denied for table favorites` |
+| 1 | favorites — SELECT 7 列（`FAVORITE_COLUMNS`, `favorites/store-pg.ts:73`（原记 `:68`）） | `42501 permission denied for table favorites` |
 | 2 | favorites — INSERT 7 列 … `ON CONFLICT DO NOTHING RETURNING id`（`store-pg.ts:187-190`） | 同上 |
 | 3 | favorites — `DELETE … RETURNING id`（`store-pg.ts:167` / `:248`） | 同上 |
 | 4 | favorites — `SELECT … FOR UPDATE`（`store-pg.ts:233`） | 同上 |
@@ -110,7 +110,7 @@ GitHub runner 实跑。
 | 14 | history_idempotency — `INSERT … ON CONFLICT DO UPDATE RETURNING scope`（`store-pg.ts:315-323`） | 同上 |
 | 15 | history_idempotency — `UPDATE … RETURNING scope`（`store-pg.ts:342-345`） | 同上 |
 | 16 | history_idempotency — `DELETE …`（`store-pg.ts:159-161` / `:295` / `:353`） | 同上 |
-| 17 | conversations — SELECT 6 列（`CONVERSATION_COLUMNS`, `conversations/store-pg.ts:87`） | `42501 … for table conversations` |
+| 17 | conversations — SELECT 6 列（`CONVERSATION_COLUMNS`, `conversations/store-pg.ts:88`（原记 `:87`）） | `42501 … for table conversations` |
 | 18 | conversations — INSERT 6 列 `RETURNING` 6 列（`store-pg.ts:222-224`） | 同上 |
 | 19 | conversations — `DELETE … RETURNING id`（`store-pg.ts:269` / `:432`） | 同上 |
 | 20 | conversations — `SELECT … FOR UPDATE`（`store-pg.ts:260`） | 同上 |
@@ -184,7 +184,7 @@ FAIL: runtime_domain_tables_classified (运行时域的每张表必须进分类�
 - **读面按列**，且 `DELETE`/`UPDATE` 的 `WHERE`、`RETURNING` 引用列也必须有 `SELECT` 权。
   两张幂等台账的 `SELECT` 必须是**全部 6 列**：`ON CONFLICT (scope, key_hash) … WHERE … RETURNING scope`
   在只有 `SELECT(request_hash, response_status, outcome, expires_at)` 时直接 `42501`
-  （`experiment-locking.sql:67`，实测）。
+  （`experiment-locking.sql` 第 67 行，实测；该脚本未入库，仓内 0 命中，未能定位最后出现位置）。
 - **写面按列**：`INSERT`/`UPDATE` 只给真实语句出现过的列；`conversation_turns` 的 `INSERT`
   一个 `answer_id` 都不写，所以不给。
 - **`DELETE` 在 PG 里没有列级形式** ⇒ 六张表只能表级给（§4.4）。
@@ -425,16 +425,16 @@ NC6 的中间态因此也是红的（`runtime_favorites_dml_exec` + `runtime_gra
 
 ```
 --- A1 plain SELECT must be 42501 ---
-psql:…probe-reverse-control.sql:19: ERROR:  42501: permission denied for table favorites
+psql:…probe-reverse-control.sql（临时输入，未入库；第 19 行）: ERROR:  42501: permission denied for table favorites
 LOCATION:  aclcheck_error, aclchk.c:2845
 ...
 --- B1c INSERT must still be 42501 ---
-psql:…probe-reverse-control.sql:52: ERROR:  42501: permission denied for table favorites
+psql:…probe-reverse-control.sql（临时输入，未入库；第 52 行）: ERROR:  42501: permission denied for table favorites
 ...
 INSERT 0 0                    ← B2：补上列级 INSERT 后，同一条 INSERT 就通了
 ...
 --- B3c DELETE must still be 42501 (DELETE has no column form) ---
-psql:…probe-reverse-control.sql:81: ERROR:  42501: permission denied for table favorites
+psql:…probe-reverse-control.sql（临时输入，未入库；第 81 行）: ERROR:  42501: permission denied for table favorites
 ...
 DELETE 0                      ← B4：补上表级 DELETE 后，同一条 DELETE 就通了
 ```
