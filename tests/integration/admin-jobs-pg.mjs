@@ -933,6 +933,9 @@ try {
   assert.notEqual(secondPage.body.data.items[0].id, row.id, '键集游标不得重复上一页的行');
   note('[E] GET /admin/flag-audit-events 走真实 HTTP：可选字段 actor/target_hint/before_value/after_value 全部出网；键集游标翻页不重不漏');
 
+  // [F] 作业台列表服务端过滤（本片新增；独立场景段，定义见文件末尾）。
+  await jobsFilterArm(app, fullAdmin.token, user.id);
+
   // 全绿之前再过一道身份闸：既有角色（含别的库在用的运行时角色）的认证材料必须一字不差。
   await checkRoleCredentials(true);
 
@@ -946,4 +949,124 @@ try {
   // 失败路径也把读数打出来（只打印不抛，免得盖掉真正的失败原因）。
   await checkRoleCredentials(false).catch(() => {});
   await cleanup();
+}
+
+// ===========================================================================
+// [F] 作业台列表服务端过滤（issue #18 本片新增）：`state` / `error_code` 下推到 SQL
+//     —— 独立场景段，追加在本文件末尾；上方的 [M]/[P]/[A]/[J]/[C]/[E] 臂一行未改。
+// ===========================================================================
+/**
+ * 判别力：改动前 `listSql` 没有 WHERE，`?state=failed` 会**静默返回全量**（5 条），
+ * 于是下面每条「只回 N 条」的断言在改动前都是真红；闭集外取值在改动前不校验（同样真红）。
+ */
+async function jobsFilterArm(app, jobsToken, userId) {
+  // 追加两行专用种子：同 state、不同 error_code，再加上一行别的 state —— 过滤才有「二选一」的判别力。
+  // 只在本臂（脚本最后一段）插入，且新 id 不出现在任何既有断言里。
+  const extra = { failed: randomUUID(), succeeded: randomUUID() };
+  const now = Date.now();
+  const at = (offsetMs) => new Date(now + offsetMs).toISOString();
+  await q(
+    `INSERT INTO public.recognition_jobs (id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+                                          state, deadline_at, created_at, updated_at, error_code)
+     VALUES ($1, 1, 'recognition', $2, $3, $4, 1, 'failed', $5, $5, $5, 'PROVIDER_QUOTA_EXCEEDED')`,
+    [extra.failed, userId, randomUUID(), randomUUID(), at(-500)],
+  );
+  await q(
+    `INSERT INTO public.speech_jobs (id, revision, kind, owner_user_id, transcription_id, media_id, media_revision,
+                                     state, deadline_at, created_at, updated_at, error_code)
+     VALUES ($1, 1, 'transcription', $2, $3, $4, 1, 'succeeded', $5, $5, $5, NULL)`,
+    [extra.succeeded, userId, randomUUID(), randomUUID(), at(-250)],
+  );
+
+  // ① 不加过滤 ≡ 改动前的全量读面（本片没有偷偷改变默认语义）
+  const unfiltered = await injectCall(app, API_V1('/admin/jobs'), { token: jobsToken });
+  assert.equal(unfiltered.status, 200);
+  assert.equal(unfiltered.body.data.items.length, 5, '不加过滤必须仍回全量（3 条既有 + 2 条本臂种子）');
+  note('[F] 不加过滤 ≡ 全量：5 条（三源合并 + 本臂两条种子），默认语义未变');
+
+  // ② state 过滤：库里两条 failed（ocr + 本臂 recognition），SQL 必须收敛到 2 条
+  const byState = await injectCall(app, API_V1('/admin/jobs?state=failed'), { token: jobsToken });
+  assert.equal(byState.status, 200, `?state=failed 必须 200，实际 ${byState.status} ${byState.text.slice(0, 200)}`);
+  assert.equal(byState.body.data.items.length, 2, '?state=failed 必须只回两条失败作业（改动前会回 5 条 ⇒ 真红）');
+  assert.deepEqual(byState.body.data.items.map((item) => item.state), ['failed', 'failed'], '过滤后每条都必须是 failed');
+  assert.deepEqual(byState.body.data.items.map((item) => item.kind), ['recognition', 'ocr'], '过滤后仍按 created_at DESC 排序');
+  note('[F] GET /admin/jobs?state=failed ⇒ 200 / 2 条（recognition, ocr），逐条 state=failed');
+
+  // ③ error_code 过滤：按 `varchar` 文本列比较，闭集值原样透出
+  const byError = await injectCall(app, API_V1('/admin/jobs?error_code=PROVIDER_QUOTA_EXCEEDED'), { token: jobsToken });
+  assert.equal(byError.status, 200);
+  assert.equal(byError.body.data.items.length, 1, '?error_code=… 必须只回一条');
+  assert.equal(byError.body.data.items[0].kind, 'recognition');
+  assert.equal(byError.body.data.items[0].error_code, 'PROVIDER_QUOTA_EXCEEDED');
+  note('[F] GET /admin/jobs?error_code=PROVIDER_QUOTA_EXCEEDED ⇒ 200 / 1 条（recognition），error_code 原样透出');
+
+  // ④ 两个条件同时给：AND 语义（$2/$3 顺序绑定）
+  const both = await injectCall(app, API_V1('/admin/jobs?state=failed&error_code=PROVIDER_TIMEOUT'), { token: jobsToken });
+  assert.equal(both.status, 200);
+  assert.equal(both.body.data.items.length, 1, 'state+error_code 必须 AND 收敛到一条');
+  assert.equal(both.body.data.items[0].kind, 'ocr');
+  note('[F] state=failed&error_code=PROVIDER_TIMEOUT ⇒ 200 / 1 条（ocr）：两条件 AND，不是 OR');
+
+  // ⑤ 匹配不到 ⇒ 200 空页（不是 404、不是 503）
+  const emptyHit = await injectCall(app, API_V1('/admin/jobs?state=queued'), { token: jobsToken });
+  assert.equal(emptyHit.status, 200, `匹配不到必须 200 空页，实际 ${emptyHit.status}`);
+  assert.deepEqual(emptyHit.body.data.items, [], 'queue 里已无作业（recognitions 那条已被上面的取消臂改成 cancelled）');
+  assert.equal(emptyHit.body.data.next_cursor, null, '空页不得给游标');
+  note('[F] ?state=queued ⇒ 200 空页（items=[]、next_cursor=null）：过滤不是 404 也不是 503');
+
+  // ⑥ 闭集外入参 ⇒ 400 INVALID_REQUEST（⛔ 不是 503：那是「读出来的值不认识」）
+  const badState = await injectCall(app, API_V1('/admin/jobs?state=FAILED'), { token: jobsToken });
+  assert.equal(badState.status, 400, `闭集外 state 必须 400，实际 ${badState.status}`);
+  assert.equal(badState.body.error.code, 'INVALID_REQUEST');
+  assert.ok(
+    (badState.body.error.details ?? []).some((detail) => detail.field === 'state' && detail.code === 'enum'),
+    '400 必须带 details[{field:state,code:enum}] 证据',
+  );
+  const badErrorCode = await injectCall(app, API_V1('/admin/jobs?error_code=NOT_A_CODE'), { token: jobsToken });
+  assert.equal(badErrorCode.status, 400, `闭集外 error_code 必须 400，实际 ${badErrorCode.status}`);
+  assert.equal(badErrorCode.body.error.code, 'INVALID_REQUEST');
+  assert.ok(
+    (badErrorCode.body.error.details ?? []).some((detail) => detail.field === 'error_code' && detail.code === 'enum'),
+    '400 必须带 details[{field:error_code,code:enum}] 证据',
+  );
+  note('[F] ?state=FAILED / ?error_code=NOT_A_CODE ⇒ 400 INVALID_REQUEST（details 指出字段与 enum），不是 503');
+
+  // ⑦ 游标绑「筛选组合」：换了筛选必须回第一页（沿用无过滤得到的游标 ⇒ INVALID_CURSOR）
+  const firstPage = await injectCall(app, API_V1('/admin/jobs?limit=2'), { token: jobsToken });
+  assert.equal(firstPage.status, 200);
+  assert.equal(firstPage.body.data.items.length, 2);
+  const cursor = firstPage.body.data.next_cursor;
+  assert.ok(typeof cursor === 'string' && cursor.length > 0, '还有下一页时首页必须给出 next_cursor');
+  const crossed = await injectCall(app, API_V1(`/admin/jobs?state=failed&limit=2&cursor=${encodeURIComponent(cursor)}`), {
+    token: jobsToken,
+  });
+  assert.equal(crossed.status, 400, `拿全量游标去翻过滤结果必须 400，实际 ${crossed.status}`);
+  assert.equal(crossed.body.error.code, 'INVALID_CURSOR');
+  note('[F] 游标绑筛选组合：全量页的 cursor 换到 ?state=failed 上 ⇒ 400 INVALID_CURSOR');
+
+  // ⑧ 过滤 + 分页：同一组筛选内翻页不重不漏
+  const pageOne = await injectCall(app, API_V1('/admin/jobs?state=failed&limit=1'), { token: jobsToken });
+  assert.equal(pageOne.status, 200);
+  assert.equal(pageOne.body.data.items.length, 1, 'limit=1 必须只回一行');
+  assert.ok(pageOne.body.data.next_cursor !== null, '还有一页时首页必须给出 next_cursor');
+  const pageTwo = await injectCall(
+    app,
+    API_V1(`/admin/jobs?state=failed&limit=1&cursor=${encodeURIComponent(pageOne.body.data.next_cursor)}`),
+    { token: jobsToken },
+  );
+  assert.equal(pageTwo.status, 200);
+  assert.equal(pageTwo.body.data.items.length, 1, '第二页必须仍有一行');
+  assert.notEqual(pageTwo.body.data.items[0].id, pageOne.body.data.items[0].id, '键集游标不得重复上一页的行');
+  note('[F] ?state=failed&limit=1 两页：1+1 行、不重不漏（游标在同一筛选组合内可用）');
+
+  // ⑨ 端口直调：过滤由端口下推到 SQL（不经 HTTP 也一样），非法值同样 400
+  const port = createPostgresAdminJobPort({ pool: ownerPool });
+  const viaPort = await port.list({ state: 'failed' });
+  assert.deepEqual(viaPort.map((job) => job.kind), ['recognition', 'ocr'], '端口 list({state}) 必须交出过滤后的两行');
+  await assert.rejects(
+    () => port.list({ state: 'FAILED' }),
+    (error) => error.code === 'INVALID_REQUEST',
+    '端口直调闭集外取值也必须 400 INVALID_REQUEST',
+  );
+  note('[F] 端口直调 list({state:"failed"}) ⇒ 2 条；list({state:"FAILED"}) ⇒ 拒绝 INVALID_REQUEST（读面自带闭集校验）');
 }

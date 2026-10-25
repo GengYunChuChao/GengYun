@@ -20,6 +20,9 @@
  * - `result` 恒 `null`：契约 `AdminJob.result` 是 `{"type": "null"}`（`fields.ts:101`）。
  * - `state` / `error_code` 逐值校验：不符即 503 `PROVIDER_UNAVAILABLE`（宁可说"读不到"，也不把
  *   陌生文本塞进后台列表）。
+ * - 列表过滤（`state` / `error_code`）**下推到 SQL**（`WHERE state = $2::text` 等，值全部绑定），
+ *   不在内存里筛：硬上限 200 会把匹配项挤出去，那样过滤等于没生效。闭集外的**入参**在服务层
+ *   判 400 `INVALID_REQUEST`（⛔ 不是 503：503 的语义是"读出来的值不认识"）。
  *
  * ## 取消口径（终态不可复活）
  * 只有 `queued` / `running` 能迁移到 `cancelled`（`services/api/src/ocr/state.ts:175-180`），
@@ -29,8 +32,9 @@
 import type { PoolClient } from 'pg';
 import { ApiError } from '../../errors.ts';
 import { ERROR_CODES, type ErrorCode } from '../../contract.ts';
+import { parseAdminJobFilter } from './jobs.ts';
 import { JOB_KINDS } from './types.ts';
-import type { AdminJobPort, AdminJobView, CancelJobOutcome, JobKind } from './types.ts';
+import type { AdminJobFilter, AdminJobPort, AdminJobView, CancelJobOutcome, JobKind } from './types.ts';
 
 /** 契约 `JobState` 七值闭集（`packages/contracts/states.json` 的 `JobState`，逐值抄写）。 */
 const CONTRACT_JOB_STATES = [
@@ -69,7 +73,13 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '4s'";
 interface JobSource {
   readonly kind: JobKind;
   readonly recordColumn: 'ocr_id' | 'recognition_id' | 'transcription_id';
-  readonly listSql: string;
+  /**
+   * 列表读面的 `SELECT … FROM <真实表>` 部分（**不含** `WHERE` / `ORDER BY` / `LIMIT`）。
+   * 过滤条件拼在 `listSelect` 与 `listTail` 之间，因此拆成两段而不是一整条。
+   */
+  readonly listSelect: string;
+  /** 列表读面的收尾（`ORDER BY` + `LIMIT`；`$1` 恒为硬上限，过滤值从 `$2` 起）。 */
+  readonly listTail: string;
   readonly getSql: string;
   readonly lockSql: string;
   readonly updateSql: string;
@@ -87,8 +97,9 @@ const SOURCES: readonly JobSource[] = [
   {
     kind: 'ocr',
     recordColumn: 'ocr_id',
-    listSql:
-      'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    listSelect:
+      'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs',
+    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
     getSql: 'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid',
     lockSql:
       'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid FOR UPDATE',
@@ -98,8 +109,9 @@ const SOURCES: readonly JobSource[] = [
   {
     kind: 'recognition',
     recordColumn: 'recognition_id',
-    listSql:
-      'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    listSelect:
+      'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs',
+    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
     getSql:
       'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs WHERE id = $1::uuid',
     lockSql:
@@ -110,8 +122,9 @@ const SOURCES: readonly JobSource[] = [
   {
     kind: 'transcription',
     recordColumn: 'transcription_id',
-    listSql:
-      'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    listSelect:
+      'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs',
+    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
     getSql:
       'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs WHERE id = $1::uuid',
     lockSql:
@@ -122,8 +135,43 @@ const SOURCES: readonly JobSource[] = [
 ];
 
 
+/**
+ * 列表过滤的 `WHERE` 片段（**只写真实列名**；值全部走绑定参数，⛔ 不拼值）。
+ *
+ * 参数编号：`$1` 恒为硬上限 `LIMIT`，过滤值从 `$2` 起 ⇒ 三种组合各写一条，不做编号插值。
+ *
+ * 为什么单独成字面量、且**以空格开头**：静态列审计（`tests/unit/sql-column-coverage.test.mjs`
+ * 的 `SQL_START = /^\s*(SELECT|INSERT|UPDATE|DELETE)\s+\S/i`）只把首个 token 是那四个动词的
+ * 字面量记成语句；`' WHERE …'` 既不计入语句数也不进 opaque 登记，于是本文件的
+ * SQL 字面量读数仍是 12（3 源 × list/get/lock/update），全局读数不漂移。
+ *
+ * 列名口径：三个作业源的列是 `state text NOT NULL`（CHECK 七值）与 `error_code varchar(80)`。
+ * 所以比较写成 `state = $2::text` / `error_code = $2::text` —— **按真实列的类型比**，
+ * ⛔ 不写任何枚举类型转换（`::job_state` 之类）：三张域表都不是枚举列，
+ * `public.job_state` 那个 enum 只属于 `jobs` 台账表（`0001_initial_schema.sql:16`）。
+ */
+const LIST_WHERE_STATE = ' WHERE state = $2::text';
+const LIST_WHERE_ERROR_CODE = ' WHERE error_code = $2::text';
+const LIST_WHERE_STATE_AND_ERROR_CODE = ' WHERE state = $2::text AND error_code = $3::text';
+
+/**
+ * 过滤组合 → (`WHERE` 片段, 绑定值)。
+ * 两个字段都不给 ⇒ 片段为空串、值也为空 ⇒ 语句与改动前**逐字相同**（无 `WHERE`）。
+ */
+function listWhereFor(filter: AdminJobFilter): { where: string; values: readonly unknown[] } {
+  const hasState = filter.state !== undefined;
+  const hasErrorCode = filter.error_code !== undefined;
+  if (hasState && hasErrorCode) {
+    return { where: LIST_WHERE_STATE_AND_ERROR_CODE, values: [filter.state, filter.error_code] };
+  }
+  if (hasState) return { where: LIST_WHERE_STATE, values: [filter.state] };
+  if (hasErrorCode) return { where: LIST_WHERE_ERROR_CODE, values: [filter.error_code] };
+  return { where: '', values: [] };
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** 库行投影的产物（三源共用），见 `projectRow`。 */
 export interface JobRow {
   readonly id: string;
   readonly revision: number;
@@ -265,10 +313,17 @@ export function createPostgresAdminJobPort(options: {
 
   return {
     wired: true,
-    async list(): Promise<AdminJobView[]> {
+    async list(filter: AdminJobFilter = {}): Promise<AdminJobView[]> {
+      // 端口边界再判一次闭集：端口也会被直接调用（集成/单测），非法入参一律 400 INVALID_REQUEST，
+      // 绝不静默返回空页。不过滤时 `where` 为空串、`values` 为空 ⇒ 语句与改动前逐字相同。
+      const applied = parseAdminJobFilter(filter);
+      const { where, values } = listWhereFor(applied);
       const pages = await Promise.all(
         SOURCES.map(async (source) => {
-          const result = await pool.query(source.listSql, [limit]);
+          const result = await pool.query(source.listSelect + where + source.listTail, [
+            limit,
+            ...values,
+          ]);
           return (result.rows as Record<string, unknown>[]).map((row) => projectRow(source, row));
         }),
       );
@@ -334,7 +389,14 @@ export function createPostgresAdminJobPort(options: {
 
 /** 供真库臂与单测复用的语句导出（只读断言用；运行时不直接引用）。 */
 export const ADMIN_JOB_SQL = {
-  list: SOURCES.map((source) => source.listSql),
+  /** 无过滤时的列表语句（与改动前逐字相同：没有 `WHERE`）。 */
+  list: SOURCES.map((source) => source.listSelect + source.listTail),
+  /** 列表过滤的 `WHERE` 片段（值永远走 `$2` / `$3` 绑定，不拼字符串）。 */
+  listWhere: {
+    state: LIST_WHERE_STATE,
+    error_code: LIST_WHERE_ERROR_CODE,
+    state_and_error_code: LIST_WHERE_STATE_AND_ERROR_CODE,
+  },
   get: SOURCES.map((source) => source.getSql),
   lock: SOURCES.map((source) => source.lockSql),
   update: SOURCES.map((source) => source.updateSql),

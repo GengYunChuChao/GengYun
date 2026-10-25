@@ -14,6 +14,7 @@
  */
 import type { TargetRefValue } from '../types.ts';
 import type { CommunityStore } from '../../community/store.ts';
+import type { ErrorCode } from '../../contract.ts';
 
 /** 契约 `Category.type` 闭集。 */
 export const CATEGORY_TYPES = ['crop', 'species'] as const;
@@ -84,6 +85,21 @@ export interface AdminJobView {
   result: null;
 }
 
+/**
+ * `listAdminJobs` 的服务端过滤（契约 `listAdminJobs` 的 `state` / `error_code` 查询参数）。
+ *
+ * 两个字段都**可选**：都不给 ⇒ 不过滤，读面与 R29 的列表逐字相同。
+ * 取值都是契约闭集（`JobState` / `ErrorCode`）：闭集外的入参在服务层就判 400
+ * `INVALID_REQUEST`（⛔ 不静默返回空页，也不复用 503 —— 503 是"读出来的值不认识"，
+ * 这里的含义是"入参非法"）。
+ */
+export interface AdminJobFilter {
+  /** 契约 `JobState` 闭集，对应三个作业源的真实列 `state`。 */
+  state?: JobState;
+  /** 契约 `ErrorCode` 闭集，对应真实列 `error_code`（`varchar(80)`，按文本比较）。 */
+  error_code?: ErrorCode;
+}
+
 /** 契约 `FlagInput`。 */
 export interface FlagInputValue {
   enabled: boolean;
@@ -124,7 +140,11 @@ export type CancelJobOutcome =
 export interface AdminJobPort {
   /** 是否已接线。`false` ⇒ 服务层 fail-closed。 */
   readonly wired: boolean;
-  list(): Promise<AdminJobView[]> | AdminJobView[];
+  /**
+   * 列表读面。`filter` 缺省（或两个字段都不给）⇒ 不过滤，行为与 R29 逐字相同。
+   * 过滤**必须由读面自己下推到查询里**（真实现是 SQL `WHERE`），⛔ 不在内存里筛。
+   */
+  list(filter?: AdminJobFilter): Promise<AdminJobView[]> | AdminJobView[];
   get(id: string): Promise<AdminJobView | null> | AdminJobView | null;
   /** 终态不可复活：`reason: 'TERMINAL'` 由端口负责判定。 */
   cancel(id: string, expectedRevision: number): Promise<CancelJobOutcome> | CancelJobOutcome;
