@@ -51,7 +51,7 @@
 
 | 过期引用 | 事实 |
 | --- | --- |
-| `docs/verification/gy-i29-closure-20261018.md:90` 引用的 `services/api/src/privacy/log-redaction.ts` | 该文件**不存在**；日志脱敏由 `packages/privacy/redact.mjs` 承担，调用点只有账本一处 |
+| `docs/verification/gy-i29-closure-20261018.md:90` 引用的 `services/api/src/privacy/log-redaction.ts` | 该文件**不存在**；日志脱敏由 `packages/privacy/redact.mjs` 承担，`services/api/src` 内调用点只有账本一处 |
 | 第三方删除「只有适配器没接」的说法 | 不止没接：`third_party_deletions` 在 `services/api/src` 的读写是**零** |
 
 ### 0.4 本页不构成关单依据
@@ -108,7 +108,7 @@
   写回 `:650`；读面 `services/api/src/routes/exports.ts:42`（无池即 503，不降级内存账本 `:55`）；
   接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:205`，授权落库要求两类证据引用见
   `services/api/src/privacy/grant-pg.ts:63`。
-- **证据**：契约 `packages/contracts/openapi.json:1426`（`GET /me/exports`）；装配 `services/api/src/app.ts:2217`。
+- **证据**：契约 `packages/contracts/openapi.json:1426`（`GET /me/exports`）；装配 `services/api/src/app.ts:2219`。
 - **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接，`services/api/src/app.ts:927` 起的注释写清：real 模式
   在任何账本变更**之前** 503（零 `sent` 记录），替身/演示模式**不记账**。因此真库上取不到一条真实外发记录，
   「记录得住」这件事只有结构与读面证据，没有一条真实数据流过。这一条不把 D12 降级：能力（表、写面、读面、
@@ -141,7 +141,7 @@
 
 - **判定**：部分。需求 `docs/implementation-requirements.md:276`。
 - **实现**：库侧最小授权是真做了的：`deploy/postgres-cvm/sql/20-login-roles.sql:350` 把 `purge_owner_media` 的
-  EXECUTE 只授给运行时角色，`public.media` 零表级 DELETE；密钥不提交见 `AGENTS.md:41`。
+  EXECUTE 只授给运行时角色，`public.media` 零表级 DELETE；密钥不提交见 `AGENTS.md:42`。
 - **证据**：`git grep -n -i hsts -- services/api/src` = 0 行。
 - **缺口**：仓内**没有**传输层与介质加密的实现落点（TLS 由部署前置终止、备份介质由环境承担），因此「传输受保护」
   「备份受保护」这两句在仓库内取不到证据。只把 D05 判成「部分」而不是「未实现」的理由：应用边界内的最小授权与
@@ -152,7 +152,7 @@
 - **判定**：部分。需求 `docs/implementation-requirements.md:276` 后半。
 - **实现**：请求日志白名单 `services/api/src/app.ts:588`（`requestLogFields`），`:608` 注释写清「整条查询串一律不落」，
   挂载在 `:737`；账本回执脱敏 `packages/privacy/redact.mjs:68`（`redactForLog`）与 `:99`（`assertNoSensitiveLeak`），
-  唯一调用点是 `services/api/src/privacy/ledger-pg.ts:824`。
+  唯一调用点（限 `services/api/src`）是 `services/api/src/privacy/ledger-pg.ts:824`。
 - **证据**：`services/api/src/privacy/log-redaction.ts` 不存在（见 §0.3 表格）。
 - **缺口**：没有统一日志脱敏入口。业务域自己 `logger.info({...})` 的对象没有被机械校验，只有两处防住了：
   请求层白名单与账本一处 `redactForLog`。要升档需要「所有日志出口经同一个脱敏函数」这个事实，现在没有。
@@ -183,9 +183,9 @@
   删除模块闭集 4 项固定 + 4 项条件追加（`services/api/src/privacy/user-data-deletion.ts:164-169`、`:202-207`），
   真实注销路径有效闭集 **8 项**（`:151-153` 自述）。
 - **证据**：`tests/integration/account-deletion-pg.mjs`，CI `.github/workflows/real-pg-integration.yml:189`。
-- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2074` 是 `available: config.executionMode !== 'real'`，
-  注释 `:2056-2063` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
-  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处 `:2076` 自陈
+- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2076` 是 `available: config.executionMode !== 'real'`，
+  注释 `:2058-2065` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
+  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处 `:2078` 自陈
   外发撤销器与 `available` 门互斥，「两条路都到不了这里」（仅测试注入可达）。
 
 ### D09 在线 7 日、备份 30 日、恢复重放
@@ -266,7 +266,7 @@
 
 - **判定**：未实现。需求 `docs/implementation-requirements.md:284`。
 - **实现**：无。`services/api/src/routes/public-home.ts:9` 只有首页读面；仓内没有统计投影，后台也刻意不给计数
-  （`services/api/src/admin/ops/service.ts:1025` 写明「不返回 COUNT(*)」）。
+  （`services/api/src/admin/ops/service.ts:1057` 写明「不返回 COUNT(*)」）。
 - **证据**：无。
 - **缺口**：「明细删除后重算」与「证据单独限定」都依附于一个不存在的统计面。若产品裁定不做统计，本项应按 §7
   改判「已搁置」并写明裁定出处；在此之前记未实现。
@@ -275,10 +275,10 @@
 
 ### D14 训练单独授权、撤回后 7 日清理衍生物
 
-- **判定**：已搁置。需求 `docs/implementation-requirements.md:282`；产品面 `docs/product-requirements.md:228`。
+- **判定**：已搁置。需求 `docs/implementation-requirements.md:282`；产品面 `docs/product-requirements.md:227`。
 - **实现**：无 training purpose（`packages/privacy/constants.mjs:12` 注释「首版无 training」），
   也没有对应列（`services/api/src/privacy/privacy-policy.ts:11`：`training_enabled` 恒 `false`）。
-- **证据**：`AGENTS.md:43`「首版不开启用户训练」。
+- **证据**：`AGENTS.md:44`「首版不开启用户训练」。
 - **为什么是搁置而不是未实现**：训练不是「漏做」，是产品已裁定的范围外。搁置也要留痕：一旦新增 training purpose，
   本项必须立刻降级为未实现——7 日清理衍生物与备份 30 日在代码里完全没有落点，届时那是一个真缺口，
   而不是一次裁定。
@@ -321,10 +321,10 @@
 
 | 编号 | 事实 | 可复算 |
 | --- | --- | --- |
-| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2074` |
+| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2076` |
 | E2 | 三条真库臂不在任何 workflow：`tests/integration/media-row-purge-pg.mjs`、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/integration/retention-clock-drill-pg.mjs` | 在 `.github` 下 grep 这三个脚本名，命中 0 行 |
 | E3 | 恢复重放只有纯函数，契约无恢复 operation | `services/api/src/privacy/backup-replay-manifest.ts:559` |
-| E4 | 加速演练 `exit 77` 是「未取得」，不是通过 | `tests/integration/retention-clock-drill-pg.mjs:3` |
+| E4 | 加速演练 `exit 77` 是「未取得」，不是通过 | `tests/integration/retention-clock-drill-pg.mjs:20` |
 
 ## 7. 复核命令与升降条件
 
@@ -333,7 +333,7 @@
 | 目的 | 命令 | 期望读数 |
 | --- | --- | --- |
 | 行号不腐烂 | `node tools/verify-doc-anchors.mjs --strict` | `exit 0`，基线外新增 0 |
-| 文档结构与链接 | `npm run test:docs` | `exit 0`，末行 `PASS: … Markdown links and tables` |
+| 文档结构与链接 | `npm run test:docs` | `exit 0`；`PASS: … Markdown links and tables` 在第 5 行（第一个工具的输出），末行是 `PASS docs/research 结构校验…` |
 | D13 零读写 | `git grep -n third_party_deletions -- services/api/src` | 0 行 |
 | G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
 | G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS`，但必需清单只有两项（看 `tools/verify-purge-schedule.mjs:109`） |
@@ -345,9 +345,9 @@
 
 | 项 | 现在 | 升档需要的事实 | 判据落点 |
 | --- | --- | --- | --- |
-| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2074` |
+| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2076` |
 | D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:202` |
-| D13 | 未实现 | `third_party_deletions` 在 `services/api/src` 出现读写；适配器在 `app.ts` 装配；回执带第三方状态 | `services/api/src/app.ts:2074` 同侧装配区 |
+| D13 | 未实现 | `third_party_deletions` 在 `services/api/src` 出现读写；适配器在 `app.ts` 装配；回执带第三方状态 | `services/api/src/app.ts:2076` 同侧装配区 |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
 | G3 | 缺口 | 补 `.service`/`.timer` 并把 `purge:retention` 加进必需清单，或按 `:122` 裁定仅手工执行 | `tools/verify-purge-schedule.mjs:109` |
