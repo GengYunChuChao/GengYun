@@ -368,6 +368,19 @@ const UNAUDITED_SQL_HOSTS = [
       + '「没有政策」表达成 5xx。纳入本管线需 R28-S66 重定 auditedFiles 读数（19→20 等），留给该片统一改。',
     owner: 'R34-S1 / #29 隐私政策读面；静态纳管待 R28-S66 重定读数',
   },
+  {
+    file: 'services/api/src/privacy/third-party-deletion-pg.ts',
+    reason: 'S4-S3 P2-a（P1 迁移 0044）新增的第三方删除真库端口，两条语句都只调 SECURITY DEFINER 函数：'
+      + '(a) 写 `SELECT public.record_third_party_deletion($1::uuid,$2::text,$3::uuid,$4::text,$5::text,$6::text,$7::timestamptz)`；'
+      + '(b) 读 `SELECT recipient_id,export_ref,online_state,backup_state,requested_at,confirmed_at,evidence_ref,error_code '
+      + 'FROM public.list_third_party_deletions($1::uuid)`。'
+      + '列面**零新增授权**：`public.third_party_deletions` 对 `gengyun_api_runtime` 没有 INSERT/UPDATE，'
+      + '**也没有 SELECT**（0044:17-22 的裁定：读写都只能过函数），0044:307-310 先 `REVOKE ALL … FROM PUBLIC`，'
+      + '唯一权限面是 `deploy/postgres-cvm/sql/20-login-roles.sql` 对这两个函数的 `EXECUTE`'
+      + '（本片零 GRANT、零迁移；列面已由 P1 的真库臂实测）。纳入本管线需 R28-S66 重定 auditedFiles 读数，'
+      + '留给该片统一改。',
+    owner: 'S4-S3 P2-a / 第三方删除真库端口；静态纳管待 R28-S66 重定读数',
+  },
 ];
 
 /**
@@ -2466,11 +2479,11 @@ test('sql-column-coverage/扩展 20 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 20 已审计 + 12 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 20 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 32, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 33, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2494,6 +2507,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/privacy/consent-pg.ts',
       'services/api/src/privacy/grant-pg.ts',
       'services/api/src/privacy/ledger-pg.ts',
+      'services/api/src/privacy/third-party-deletion-pg.ts',
       'services/api/src/profile/service.ts',
       'services/api/src/recognitions/store-pg.ts',
       'services/api/src/speech/store-pg.ts',
