@@ -4,19 +4,21 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-25 · `#538` 已合入 main（`6dbe83a3`）＋ GY-R35（`#568`）＋ `#18` S2 片1：`0001..0041`，缺 `0037`）
+## 当前状态（2026-10-25 · `#538` 已合入 main（`6dbe83a3`）＋ GY-R35（`#568`）＋ `#18` S2 片1＋ GY-R37 片（`0042`）：`0001..0042`，缺 `0037`）
 
 `0001..0035` 已连续落盘（35 个正向；`0035_r34_media_row_purge.sql` 已随上游真实落盘，本片旧段里那条
 `WARN[gap] 0035` 的前提随之作废）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
 #22 片C 落 `0039_r34_deletion_state_cancelled.sql`、#538 落 `0036_r34_admin_content_persistence.sql`、
 GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 片1 落
-`0041_admin_scope_write_authority.sql`
-⇒ 目录现为 **40 个正向 `.sql`** ＋ `rollback/` **39 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **40 + 1 === 41**），
+`0041_admin_scope_write_authority.sql`、GY-R37 片落
+`0042_favorites_history_target_type_conversation_turn.sql`
+⇒ 目录现为 **41 个正向 `.sql`** ＋ `rollback/` **40 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **41 + 1 === 42**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对该缺号有依据（见下）。
 （本段数字为实测：`git ls-tree -r --name-only HEAD -- services/api/db/migrations`
-⇒ 正向 `.sql` 40 条、`rollback/` 39 条；缺号恰为 `0037` 且已登记保留。`0040` 已随 #568 真实落盘，
-故保留台账里**不得**再出现 40 号条目 —— 否则 `reservedButPresent` 会把它判红。）
+⇒ 正向 `.sql` 41 条、`rollback/` 40 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041` 均已真实落盘，
+故保留台账里**不得**再出现 40/41 号条目 —— 否则 `reservedButPresent` 会把它判红。
+`0042` 是本片自己落盘的文件，**台账同样不新增条目**。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
 - `0036_r34_admin_content_persistence.sql`（R34 · #18 后台内容/资料域落库 + **列级**授权，已随 #538 落盘）：
@@ -45,7 +47,7 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 �
 - `0041_admin_scope_write_authority.sql`（`#18` S2 片1 · **库层**：后台管理员 scope 的**唯一写路径** +
   闭集约束，Refs #18）接在 `0040` 之后：取号依据是裁定
   `.pg17/ruling-r37-issue18-s2-scope-admin-20261025.md`「`0040` 已被 `#568` 占用；S2 新迁移用 `0041`」，
-  ⛔ 不占 `0042`（留给后续切片）。迁移只做三件事：① **先预检后加约束** —— 扫 `public.admin_scopes.scope`，
+  当时 ⛔ 不占 `0042`（该号后由 GY-R37 片占用，见下一条 0042 段）。迁移只做三件事：① **先预检后加约束** —— 扫 `public.admin_scopes.scope`，
   出现后台权限闭集（13 项）之外的取值即 `RAISE EXCEPTION 'G0012'` 打出样例并中止（**只报告、不删行、
   不自动映射**，裁定②）；② 建库层 CHECK `admin_scopes_scope_closed_set`（闭集只含后台权限，
   **不含** `user`/`public`/`receipt`）；③ 建两条窄口径 `SECURITY DEFINER` 函数
@@ -67,9 +69,28 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 �
   配对回滚 `rollback/0041_admin_scope_write_authority.down.sql` 逆序删两条函数与闭集约束，
   **不回填数据、不删 `admin_scopes` 行、不碰审计台账**；它也不动 `20-login-roles.sql` 的 `EXECUTE`
   ——函数一旦不在，该区域的硬前置会显式报错（生产回滚顺序：先撤部署 SQL 的该区域、再回滚迁移）。
-- **本片不修的库层遗留（已登记，勿当作已完成）**：`0018_favorites_history.sql` 的 `target_type` CHECK 仍是旧 16 值
+- `0042_favorites_history_target_type_conversation_turn.sql`（GY-R37 片 · **库层**：`favorites`/`history` 的
+  `target_type` CHECK 补齐契约第 17 值 `conversation_turn`）接在 `0041` 之后：取号依据是「最大号 +1」，
+  **台账不新增条目**（本片即落盘，不是有意缺号）。契约 `packages/contracts/openapi.json` 的 `TargetRef.type`
+  已是 **17 项**（第 17 项 `conversation_turn` 由 `#576` 的客户端镜像 17 引入），而 `0018` 的两条 CHECK 仍是旧
+  16 值 ⇒ 一旦落轮次类型就会撞库层 CHECK 报 500。⛔ **不改 `0018`（连注释都不行）**，原因见下面那条 checksum
+  警告 ⇒ 只能新开一支迁移改约束。迁移只做两件事：① **先预检后改约束** —— 扫 `public.favorites`、`public.history`
+  的 `target_type`，出现 17 值闭集之外的取值即 `RAISE EXCEPTION 'G0013'` 打出样例并中止（**只报告、不删行、
+  不映射**，与 `0040`/`0041` 同一条纪律）；② 用 `DROP CONSTRAINT <名字>; ADD CONSTRAINT <同名> CHECK
+  (target_type IN (…17 值…))` 把两表约束换成 17 值闭集，值序与契约枚举一致（`species, herbicide, scheme,
+  static_region, recognition, ocr, transcription, answer, post, comment, conversation, conversation_turn,
+  dose_card, media, synthesis, job, source`）。约束名 `favorites_target_type_check` / `history_target_type_check`
+  取自 PG 对列内联无名 CHECK 的默认命名 `<table>_<column>_check`：已在 **PGlite 0.5.8（WASM，内核 PostgreSQL
+  18.3）** 上真跑 `0018` 后由 `pg_constraint` 实测确认（favorites 的 4 条、history 的 8 条 CHECK 全部按此规则命名），
+  迁移内再用 `pg_constraint`+`pg_attribute` 双保险校验「名字对 + 列级 `conkey` + `contype='c'`」，不符即
+  `RAISE EXCEPTION 'G0014'` 并打印两表现有 CHECK 定义 —— ⛔ **刻意不写 `DROP CONSTRAINT IF EXISTS`**（那会把
+  「约束被改名」静默放过，改成一条什么都没换的假迁移）。配对回滚
+  `rollback/0042_favorites_history_target_type_conversation_turn.down.sql` 恢复 16 值 CHECK（顺序同 `0018`），
+  **先预检**：库里若已有 `target_type = 'conversation_turn'` 的行即 `RAISE EXCEPTION 'G0015'` 中止 ——
+  回滚不能把数据写回契约闭集之外（只报告、不删行、不映射）。
+- **本片不修的库层遗留（已由 `0042` 修复，2026-10-25）**：`0018_favorites_history.sql` 的 `target_type` CHECK 仍是旧 16 值
   （不含 `conversation_turn`）。今日 favorites/history 写入口不可达该成员，但 `services/api/src/history/validate.ts`
-  已按 17 类校验 ⇒ 一旦落轮次类型会撞库层 CHECK 报 500。修它需要新迁移改表，不在 `0040` 范围内；**也不要直接改 `0018` 的文本（连注释都不行）**——`services/api/src/db/migrate.ts:47` 对整份 SQL 取 SHA256（不剥注释）、`:193` 与已应用记录的 checksum 比对、`:241-243` 发现差异即拒绝，既有库升级会被拦住（当前 main 原文 SHA256 `a90385167b8ad1f84f76d0dcc3348aecfc94869c794de4edeb2c0734a7727ded`）。
+  已按 17 类校验 ⇒ 一旦落轮次类型会撞库层 CHECK 报 500。修它需要新迁移改表（本片 `0042` 即此），不改 `0018`；**也不要直接改 `0018` 的文本（连注释都不行）**——`services/api/src/db/migrate.ts:47` 对整份 SQL 取 SHA256（不剥注释）、`:193` 与已应用记录的 checksum 比对、`:241-243` 发现差异即拒绝，既有库升级会被拦住（当前 main 原文 SHA256 `a90385167b8ad1f84f76d0dcc3348aecfc94869c794de4edeb2c0734a7727ded`）。
 
 - `0033_admin_audit_log_read.sql`（R34 · 后台审计日志查询面，Refs #18）接在 `0032` 之后：
   编号前核对过全部 refs 与在途 PR（`003[3-9]_` 零命中）⇒ 直接用最大号 +1，**台账仍为空数组**。
