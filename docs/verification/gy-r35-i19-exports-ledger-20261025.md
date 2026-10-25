@@ -156,14 +156,14 @@ implemented」的纪律取严的一方，并在 `blocker` 里把"已交付什么
 3. **真实外发账本数据与真机/小程序链路未取得**；本片全部是合成账号 + 合成账本行。
 4. **failmatrix 未覆盖 `me/exports`**：`tests/failmatrix/cases.mjs` 的矩阵仍不含本域（既有四域未纳入之一），
    本片未扩写。
-5. **契约偏差（本片实测可达，未修，登记待裁定）—— 上一版把它写成"潜伏、非现网"是错的，已订正**：
+5. **契约偏差（本片当时实测可达、当时未修；GY-R35 `#568` 已处置，见下方更新块）—— 上一版把它写成"潜伏、非现网"是错的，已订正**：
 
-   > **2026-10-25 更新（GY-R35 · `#568`）**：本项已按裁定处置并合入——契约 `TargetRef.type` 补入 `conversation_turn`（16→17），
+   > **2026-10-25 更新（GY-R35 · `#568`）**：本项已按裁定处置，随本 PR 合入——契约 `TargetRef.type` 补入 `conversation_turn`（16→17），
    > `toContractExport` 已按 `EXPORT_OBJECT_TYPES` 逐项校验并把 `object_ref.id` 限到 1..80，写入侧 `OBJECT_KEY_MAX` 由 128 收到 80，
    > `synthesis-egress.ts` 不再借用账本标签（按真实内容类型记账），历史越界键由迁移 `0040` 回填、不可如实回填时整条中止。
    > **下文 5.1–5.6 保留的是当时的实测读数（16 值枚举、上限 128、只判 typeof），作为历史证据，不再是当前事实**；
-   > 未改的部分只剩库层 `0018_favorites_history.sql` 的 `target_type` CHECK（仍是旧 16 值，今日写入口不可达，已登记待另开迁移）。
-   1. **写入方至少两处、`object_type` 至少三种**（都在产品装配里）：
+   > 契约偏差面未改的部分只剩库层 `0018_favorites_history.sql` 的 `target_type` CHECK（仍是旧 16 值，今日写入口不可达，已登记待另开迁移）。
+   1. **当时**：写入方至少两处、`object_type` 至少三种（都在产品装配里）：
       - `services/api/src/privacy/task-egress.ts`：`objectType: 'media'`（媒体作业外发），以及
         `objectType: CHAT_EGRESS_OBJECT_TYPE`，而 `CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn'`（问答外发）；
       - `services/api/src/privacy/synthesis-egress.ts`：`SYNTHESIS_LEDGER_OBJECT_TYPE = 'checked_content'`，
@@ -188,7 +188,7 @@ implemented」的纪律取严的一方，并在 `blocker` 里把"已交付什么
       `checked_content`（idLen=96 > 80）、`checked_content`（inContractEnum=false）、`media`（inContractEnum=true）。
       ⇒ **200 可返回越枚举条目与超长 `object_ref.id`**，属**可达**的契约偏差（与审查者探针读数一致：
       4 条中 3 条越枚举、1 条 id 长 96）。探针脚本已在收工前删除，`git status` 复核干净。
-   5. **本片为什么不修**：① 改 `toContractExport` 属**他片领域**（`packages/privacy/egress.mjs` 是 GY-I27 外发账本
+   5. **当时本片为什么不修**：① 改 `toContractExport` 属**他片领域**（`packages/privacy/egress.mjs` 是 GY-I27 外发账本
       的共享投影），本片纪律是「不擅自扩领域」；② 两种修法都要**产品裁定**：把 `conversation_turn`/`checked_content`
       加进契约 `TargetRef.type`（**改契约**，会影响所有消费方），或让投影对未登记类型 **fail-closed**（后果是
       用户整页 `503`，比"列出条目"更差）；③ 长度面需与写入侧 `OBJECT_KEY_MAX` 一起定口径（收紧到 80？还是把契约
