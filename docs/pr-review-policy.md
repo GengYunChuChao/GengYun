@@ -159,14 +159,18 @@ Free／私有 Fork 流程不等于强制保护，CODEOWNERS 不能单独阻止�
 
 ### 10.1 A 档判定
 
-正面清单（必须**全部**满足）：只碰 `docs/**` 与 `tests/**`。
+**默认是 B 档；A 档是例外。** 判定写成正面清单（把「什么能自合并」列出来），而不是「把不能的排除掉」——2026-10-26 首版排除清单实测漏了 5 组（`docs/ui-demo/demo.html` 与范围依据四份），枚举式的否定清单结构性不可靠。
 
-排除清单（命中任一条即 B 档）：
+正面清单（改动路径必须**全部**落在其中一项内）：
 
-- `.github/**`、`packages/contracts/openapi.json`、`tools/**`；
-- 真实迁移目录 `services/api/db/migrations/**`（注意：仓内**不存在** `db/migrations/`）；
-- 任何产品行为代码：`services/**`、`apps/**`、`packages/**` 中非 `tests/**` 的部分；
-- **治理与台账类文档**：`AGENTS.md`、`docs/pr-review-policy.md` 本身、`docs/architecture/contract-status.json`（契约台账）、`docs/initial-issues.json`（27 项台账）、`docs/ui-demo/dist/**`（生成物）、`tools/doc-anchors-baseline.json`。依据 §3「不能只因文件位于 `docs/` 就视作纯文档」。
+- `tests/**`；
+- `docs/**` 下的**证据与进度记录**（现状页、验证页、进度行）。
+
+受保护文档（命中任一条即 B 档，不论是否在 `docs/**` 下）：`AGENTS.md`、`docs/pr-review-policy.md`、`docs/requirements.md`、`docs/product-requirements.md`、`docs/implementation-requirements.md`、`docs/development-plan.md`、`docs/features/**`、`docs/initial-issues.json`、`docs/architecture/contract-status.json`、`docs/research/**`、`docs/ui-demo/**`、`tools/doc-anchors-baseline.json`。
+
+其中三类必须单列理由：① `docs/ui-demo/demo.html` 是 `docs/ui-demo/package-demo.py` **打包生成**的单文件应用、`dist/**` 才是源（`AGENTS.md` 现行阶段产物即它）⇒ 整个 `docs/ui-demo/**` 按产品交付物对待；② `docs/requirements.md`／`docs/product-requirements.md`／`docs/implementation-requirements.md`／`docs/development-plan.md`／`docs/features/**` 被 `tools/validate_development_docs.py` 直接读取且决定范围与正式依赖；③ `docs/research/**` 由 `tools/verify-research-records.mjs` 校验，与 `contract-status.json` 同为台账。依据 §3「不能只因文件位于 `docs/` 就视作纯文档」。
+
+不在正面清单内的路径一律 B 档：`.github/**`、`tools/**`、`packages/contracts/openapi.json`、真实迁移目录 `services/api/db/migrations/**`（注意：仓内**不存在** `db/migrations/`）、任何产品行为代码（`services/**`、`apps/**`、`packages/**` 中非 `tests/**` 的部分）。
 
 判定以**合并时的最终 diff** 为准：包括 rebase、解冲突以及之后的追加提交，不只看首次提交的清单。
 
