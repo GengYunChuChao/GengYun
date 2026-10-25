@@ -30,6 +30,7 @@ import {
   API,
   START,
   createWorld,
+  createJobFilterWorld,
   createAccount,
   createAdmin,
   inject,
@@ -156,6 +157,22 @@ function judge(c, result) {
 
 async function main() {
   const world = createWorld();
+
+  /**
+   * S-6 · 作业过滤腿要「已接线的作业端口」才可能拿到 400（服务层顺序：接线 503 先于入参 400）。
+   * 第二个 app 共享同一 auth store ⇒ 同一批令牌两臂通用；默认世界保持未接线（`C3-20` 的 503 不变）。
+   * 用例用 `app: 'jobs'` 点名；缺省 `'main'` ⇒ 既有 240 条一条都不改道。
+   */
+  const jobsWorld = createJobFilterWorld(world);
+  const appTable = new Map([
+    ['main', world.app],
+    ['jobs', jobsWorld.app],
+  ]);
+  const appOf = (name) => {
+    const app = appTable.get(name ?? 'main');
+    if (app === undefined) throw new Error(`用例点名了未知 app：${name}（只支持 ${[...appTable.keys()].join(' / ')}）`);
+    return app;
+  };
   const ctx = {
     world,
     API,
@@ -182,12 +199,21 @@ async function main() {
   const transport = opts.transport;
   let dispatch;
   let loopbackOrigin = null;
+  /** loopback 臂：每个 app 各绑一个自选端口（`S-6` 的 jobs app 同样走真实 TCP）。 */
+  const origins = new Map();
   if (transport === 'loopback') {
-    loopbackOrigin = await world.app.listen({ host: '127.0.0.1', port: 0 });
+    for (const [name, app] of appTable) {
+      origins.set(name, await app.listen({ host: '127.0.0.1', port: 0 }));
+    }
+    loopbackOrigin = origins.get('main');
     loopbackApp = world.app;
-    dispatch = (request) => loopbackInject(loopbackOrigin, request);
+    dispatch = (request, appName = 'main') => {
+      const origin = origins.get(appName);
+      if (origin === undefined) throw new Error(`用例点名了未知 app：${appName}`);
+      return loopbackInject(origin, request);
+    };
   } else {
-    dispatch = (request) => inject(world.app, request);
+    dispatch = (request, appName = 'main') => inject(appOf(appName), request);
   }
 
   // ------------------------------------------------------------ 夹具：账号与属主行
@@ -328,10 +354,10 @@ async function main() {
     let result;
     let results;
     if (c.concurrent !== undefined) {
-      results = await Promise.all(Array.from({ length: c.concurrent }, () => dispatch(request)));
+      results = await Promise.all(Array.from({ length: c.concurrent }, () => dispatch(request, c.app)));
       result = results[0];
     } else {
-      result = await dispatch(request);
+      result = await dispatch(request, c.app);
       results = [result];
     }
     ctx.results.set(c.id, c.concurrent === undefined ? result : results);
@@ -419,6 +445,8 @@ async function main() {
       title: c.title,
       actor: c.actor ?? 'guest',
       method: c.method,
+      // 同一条 path 可能由不同 app 提供（`S-6` 的作业过滤腿走已接线端口的第二个 app）。
+      app: c.app ?? 'main',
       path: requestPath(entry),
       expected: c.expect,
       actual: c.concurrent === undefined
@@ -517,7 +545,7 @@ async function main() {
   }
 
   if (transport === 'loopback') {
-    await world.app.close().catch(() => {});
+    for (const app of appTable.values()) await app.close().catch(() => {});
   }
   return fail === 0 ? 0 : 1;
 }
