@@ -81,7 +81,6 @@ import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/
 import { createPostgresAdminContentStore } from './admin/ops/content-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
 import { createPostgresAdminJobPort } from './admin/ops/jobs-pg.ts';
-import { createPostgresJobCancelAudit } from './admin/ops/jobs-cancel-audit-pg.ts';
 import { createAdminContentStore } from './admin/store.ts';
 import type { AdminContentStoreLike } from './admin/store.ts';
 import { createAdminOpsStore } from './admin/ops/store.ts';
@@ -1314,14 +1313,6 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const adminJobPort =
     adminInjection?.jobPort ??
     (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);
-  // **R18：`job.cancel` 审计落库（迁移 0043）**。与作业端口**同一门**，再加一条「作业端口确实存在」：
-  // 没有作业取消面就没有 job.cancel 审计可写。两者都成立 ⇒ 审计行落 `public.admin_audit_events`
-  // （窄口径 `SECURITY DEFINER` 函数，运行时无该表任何直写权）；否则 `jobCancelAudit` 为 undefined，
-  // 服务层保持既有的内存 `store.audit.append` 路径（stub 域与未接库形态逐字不变）。
-  const adminJobCancelAudit =
-    adminRealUnwired && pool !== null && adminJobPort !== undefined
-      ? createPostgresJobCancelAudit({ pool })
-      : undefined;
   // **武装的前置条件（T-R12-08R）**：`real` + 有池 + **表确认可用**，三者缺一不可。
   // 只应用迁移子集的库（例如 `egress-ledger-pg.mjs` 只跑 0001/0003/0008/0009/0011）里没有
   // 0020 的 `public.feature_flags`；那种库上不能武装：否则首个受控面请求预取失败 ⇒ 503，
@@ -1483,8 +1474,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminJobPort,
-          // R18：库已接线 ⇒ 取消审计落 `public.admin_audit_events`（迁移 0043 的函数写入口）。
-          jobCancelAudit: adminJobCancelAudit,
+          // R18：`job.cancel` 的审计落点跟着 `jobPort` 走 —— 真库端口在它自己的取消事务里
+          // 写 `public.admin_audit_events`（迁移 0043 的窄口径函数）；内存端口由服务层写内存审计流。
           // GY-I15 接线同上：端口仍按**同一份**社区 store 装配；`hidePost` 是否放行由上面的
           // `hidePostWired`（= `persistent === true`）决定，本行不改变判据。
           community: communityPostPortForAdmin,
@@ -1571,8 +1562,6 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // GY-I18：stub 域**只**经显式注入接真实开关端口（默认仍是内存 store；不因"有 pool"自动接库）。
       ...(flagsPort === null ? {} : { flagsPort }),
       jobPort: adminJobPort,
-      // R18：stub 域里 `adminRealUnwired === false` ⇒ 恒为 undefined ⇒ 取消审计仍走内存台账。
-      jobCancelAudit: adminJobCancelAudit,
       // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
       community: communityPostPortForAdmin,
       flagEffects: adminInjection?.flagEffects,

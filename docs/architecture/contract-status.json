@@ -3422,7 +3422,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlags",
-          "lines": "937-941"
+          "lines": "969-973"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3453,7 +3453,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {",
-          "lines": "943-948"
+          "lines": "975-1041"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3484,7 +3484,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlagAuditEvents",
-          "lines": "1027-1032"
+          "lines": "1059-1113"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3552,7 +3552,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "hidePost",
-          "lines": "1087-1092"
+          "lines": "1119-1164"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",

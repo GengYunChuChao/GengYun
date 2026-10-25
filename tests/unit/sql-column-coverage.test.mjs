@@ -690,18 +690,28 @@ const TABLE_WIDE_COLUMN = '*';
  *   （`to_regclass` 是函数调用不是 FROM，不计引用表）、列要求 1855／已覆盖 1801（缺口 **0**）、
  *   INSERT/UPDATE/DELETE 45/51/39、RETURNING 91、ON CONFLICT 28、`SELECT *` 15、行锁 26+17、
  *   行锁要求 43、豁免 33 均不变。零迁移、零 GRANT 变更。
+ * ⑰ 2026-10-25 #589 返修（Refs #18 R18，迁移 0043）：`admin/ops/jobs-pg.ts` 新增一条
+ *   **取消审计调用** —— `SELECT public.record_admin_job_cancel_audit($1::uuid, $2::uuid,
+ *   $3::integer, $4::text, $5::uuid) AS audit_event_id`（`CANCEL_AUDIT_SQL`）。它**没有 FROM**，
+ *   所以按本文件的解析规则：table/functionCall 都算 null ⇒ 只让「无顶层 FROM」「SELECT」与字面量
+ *   各 +1，**不**新增引用表、**不**新增函数调用、**不**新增列权限要求（函数的 EXECUTE 由
+ *   `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 的函数面清单管，不归列覆盖管）。
+ *   ⇒ 字面量 289 → **290**、SELECT 154 → **155**、无顶层 FROM 14 → **15**、逐文件
+ *   `admin/ops/jobs-pg.ts` 12 → **13**；auditedFiles 20、INSERT/UPDATE/DELETE 45/51/39、
+ *   RETURNING 91、ON CONFLICT 28、`SELECT *` 15（`t.*` 4）、函数调用 2、引用表 48、
+ *   列要求 1855／已覆盖 1801（缺口 **0**）、行锁 26+17、不可判插值 5 均不变。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 20,
-  sqlLiterals: 289,
-  statements: { INSERT: 45, UPDATE: 51, SELECT: 154, DELETE: 39 },
+  sqlLiterals: 290,
+  statements: { INSERT: 45, UPDATE: 51, SELECT: 155, DELETE: 39 },
   returningClauses: 91,
   onConflictClauses: 28,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 14,
+  noTargetTable: 15,
   referencedTables: 48,
   columnRequirements: 1855,
   coveredRequirements: 1801,
@@ -716,7 +726,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
-  'admin/ops/jobs-pg.ts': 12,
+  'admin/ops/jobs-pg.ts': 13,
   'community': 43,
   'conversations': 17,
   'favorites': 15,

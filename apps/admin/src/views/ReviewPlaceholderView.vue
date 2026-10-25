@@ -58,7 +58,7 @@ const codeFacts = [
   },
   {
     symbol: 'OPS_OPERATION_IDS（9 项）',
-    file: 'services/api/src/admin/ops/service.ts:163-173',
+    file: 'services/api/src/admin/ops/service.ts:155-165',
     note: '后台运维面只有分类/账号/任务/开关/帖子 9 个 operationId，其中没有任何审核队列接口。',
   },
 ];

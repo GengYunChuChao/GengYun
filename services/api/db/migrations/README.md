@@ -117,11 +117,17 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 �
   但**先数** `action='job.cancel'` 的审计行：`>0` 即 `RAISE EXCEPTION 'G0016'
   （JOB_CANCEL_AUDIT_ROLLBACK_BLOCKED）` 中止 —— 删函数会留下「有行、无出处」的审计，且应用仍会调用它；
   回滚件的 HINT 明确「正确动作是回滚应用版本，不是回滚这条函数」，且审计台账本来也删不掉
-  （append-only 触发器把 DELETE 拦成 `G0006`）。应用侧接线：`services/api/src/admin/ops/jobs-cancel-audit-pg.ts`
-  （`SELECT public.record_admin_job_cancel_audit(…)`，**无 `FROM`** ⇒ 不触表列、不成为 SQL 宿主），
-  由 `app.ts` 在「`real` + 有池 + 作业端口已接线」时注入 `createAdminOpsService({ jobCancelAudit })`；
-  stub 与未接库形态保持既有的内存审计路径（判据不变）。真库直调证据：
-  `tests/integration/admin-jobs-pg.mjs` 的 `[C]` 臂（断言 **库内恰 1 行** + actor/scope/target_ref/reason/result 逐项正确）。
+  （append-only 触发器把 DELETE 拦成 `G0006`）。**应用侧接线（监工 #589 返修后）**：审计**不再**是
+  一个独立的审计端口，而是接在作业端口的取消事务里 —— `services/api/src/admin/ops/jobs-pg.ts` 的
+  `cancel()` 在 `updateSql` 之后、`COMMIT` **之前**用同一个 `client` 调
+  `SELECT public.record_admin_job_cancel_audit(…)`（字面量、**无 `FROM`** ⇒ 不触表列、不成为 SQL 宿主，
+  导出在 `ADMIN_JOB_SQL.cancelAudit` 供真库臂断言）；任一步失败即 `ROLLBACK` ⇒ 作业保持取消前状态、
+  审计 0 行、响应 503（`retryable: false`）。`AdminJobPort` 因此多了一个 `persistent` 判据
+  （与 `CommunityPostPort.persistent` 同口径）：`true` 的端口自己写库内审计，`false` 的（stub 内存实现）
+  仍由 `cancelAdminJob` 写内存 `store.audit.append` —— 两条落点互斥，不会重复记一行。
+  真库直调证据：`tests/integration/admin-jobs-pg.mjs` 的 `[C]` 臂（断言 **库内恰 1 行** +
+  actor/scope/target_ref/reason/result 逐项正确）与**同事务返修臂**（用审计表触发器人为制造写入失败，
+  断言作业仍是取消前状态、审计表零新增 —— 即「审计写失败 ⇒ 取消不生效」）。
 - **本片不修的库层遗留（已由 `0042` 修复，2026-10-25）**：`0018_favorites_history.sql` 的 `target_type` CHECK 仍是旧 16 值
   （不含 `conversation_turn`）。今日 favorites/history 写入口不可达该成员，但 `services/api/src/history/validate.ts`
   已按 17 类校验 ⇒ 一旦落轮次类型会撞库层 CHECK 报 500。修它需要新迁移改表（本片 `0042` 即此），不改 `0018`；**也不要直接改 `0018` 的文本（连注释都不行）**——`services/api/src/db/migrate.ts:47` 对整份 SQL 取 SHA256（不剥注释）、`:193` 与已应用记录的 checksum 比对、`:241-243` 发现差异即拒绝，既有库升级会被拦住（当前 main 原文 SHA256 `a90385167b8ad1f84f76d0dcc3348aecfc94869c794de4edeb2c0734a7727ded`）。

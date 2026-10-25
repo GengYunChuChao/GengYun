@@ -3,10 +3,10 @@
 --
 -- 为什么必须新增迁移、⛔ 不能改既有迁移
 -- ---------------------------------------------------------------
--- · 语义早已存在：`services/api/src/admin/ops/service.ts:629-637` 的 `cancelAdminJob` 成功后写
+-- · 语义早已存在：`cancelAdminJob`（`services/api/src/admin/ops/service.ts`） 成功后写
 --   `{ action: 'job.cancel', scope: 'jobs:cancel', targetRef: {type:'job', id, revision}, targetHint: null,
 --     reasonCode: 'job_cancelled', result: 'accepted' }`，但落点是进程内的 ops store
---   （`appendAudit` → `store.audit.append`，`service.ts:255-277`）⇒ **进程重启即丢**。
+--   （`appendAudit` → `store.audit.append`，`appendAudit`）⇒ **进程重启即丢**。
 -- · 库层**读**面已经存在：`0033_admin_audit_log_read.sql` 的 `public.list_admin_audit_logs(...)`
 --   只读全表（`admin_audit_events` 对运行时是零表级权限，只有那条函数的 `EXECUTE`）。
 --   于是今天的状态是「能查、但没有写入口」——取消动作的审计行永远进不了这张表。
@@ -52,7 +52,7 @@
 --   · `actor_id` 只能是入参 `p_actor_id`，且必须先过 ②③④ 三道核验；函数**不接收**任何
 --     「以谁的名义写」的旁路参数 ⇒ 没有"代写"入口。
 --   · `action` / `scope` / `result` 在函数体内是**字面量**（`'job.cancel'` / `'jobs:cancel'` /
---     `'accepted'`），调用方改不了；`target_hint` 固定 `NULL`（与 `service.ts:634` 的内存审计逐字段一致）。
+--     `'accepted'`），调用方改不了；`target_hint` 固定 `NULL`（与内存审计那条路径逐字段一致）。
 --   · `target_ref` 由**形参重建**（`jsonb_build_object('type','job','id',p_job_id::text,'revision',p_job_revision)`），
 --     不接受调用方直接塞 jsonb ⇒ 绕不过 `admin_audit_events_target_ref_shape`（0017）那条 CHECK。
 --   · `reason_code` 走**闭集**而不是自由文本：本动作目前只有一个合法理由码 `job_cancelled`。
@@ -63,21 +63,31 @@
 -- 与内存路径的逐字段对应（改造前后同一事实的两种落点，不新增字段语义）
 -- ---------------------------------------------------------------
 --   action=job.cancel / scope=jobs:cancel / reason_code=job_cancelled / result=accepted /
---   target_hint=NULL / actor_id=会话身份 / target_ref.revision=**取消前** revision（`service.ts:633`
+--   target_hint=NULL / actor_id=会话身份 / target_ref.revision=**取消前** revision（`cancelAdminJob` 的 `targetRef.revision = current.revision`，即
 --   写的是 `current.revision`，即 1→2 那次迁移之前的 1）。`before_value`/`after_value` 不写
 --   （本动作的"前后值"就是作业行的 state/revision，读面另有 `GET /admin/jobs`，不在这里重复一份）。
 --
+-- 调用点与事务边界（监工 #589 的返修点，这里是唯一正确姿势）
+-- ---------------------------------------------------------------
+--   本函数**只在作业取消的那个事务里**被调用：`services/api/src/admin/ops/jobs-pg.ts` 的
+--   `cancel()` 开 `BEGIN` → 锁行 → `updateSql`（`state='cancelled'`, `revision+1`）→
+--   `SELECT public.record_admin_job_cancel_audit(…)` → `COMMIT`，两者共用同一个 `client`。
+--   ⇒ 任何一步失败都走 `catch` 里的 `ROLLBACK`：作业保持取消前的 `state`/`revision`，
+--     审计表**零新增**，客户端收到 503（`PROVIDER_UNAVAILABLE`，`retryable: false`）。
+--   ⇒ 因此不存在「取消已提交、审计没写成」的缺口，`admin_audit_events` 是 append-only 的
+--     （触发器拦 UPDATE/DELETE，G0006），那条缺口事后也无从补记 —— 只能在事务里消灭它。
+--   ⛔ 不要在 `COMMIT` 之后补写审计（曾试过：那是"先成后败"的假成功），
+--     也⛔ 不要把本函数包进第二个事务（换了 `client` 就不再是同一个事务）。
+--
 -- 已知边界（如实登记，不在此迁移里偷偷绕过）
 -- ---------------------------------------------------------------
---   · 本函数**不复查作业行**：审计的是「服务层已经用四道完整性校验确认过的取消结果」
---     （`service.ts:599-626`）。三张作业表分属三个域，本函数不跨域再查一遍；
---     伪造一个"已取消"的作业 id 要能过那四道校验，成本高于直接改库。
---   · **作业行的取消与本函数的审计写入不在同一个事务里**：`jobs-pg.ts:290-331` 的
---     `cancel()` 自己 BEGIN/COMMIT，提交之后服务层才写审计。所以存在一个很窄的窗口：
---     取消已提交、审计写入失败 ⇒ 客户端收到 503（`PROVIDER_UNAVAILABLE`，`retryable: false`），
---     库内作业已是 `cancelled` 但没有这次的审计行。把两者并进一个事务需要改作业端口的接口形状
---     （跨进程边界传事务句柄），不属于本片；这里把它写成**可观测的失败**（503 + 日志），
---     ⛔ 而不是静默丢审计、也不是把审计写成"先成后败"的假成功。
+--   · 本函数**不复查作业行**（不查 `ocr_jobs` / `recognition_jobs` / `speech_jobs` 的
+--     `state='cancelled'`）：它与那一次 `UPDATE` 同事务，行锁在手，`UPDATE` 的
+--     `RETURNING` 已经证明迁移发生了；再跨域查一遍只会把"三张表的结构"耦合进审计函数，
+--     却证明不了更多。跨域的连接点由调用方保证（同一个 `client`、同一个事务）。
+--   · 本函数**不判定幂等**：重复取消在服务层就被拦下（`state === 'cancelled'` 直接回 200，
+--     不再迁移、不再记审计），端口层还有 `revision` CAS 兜底 —— 同一作业的取消审计行应当
+--     恰好一行，靠的是这两道判定，不是函数里的 `ON CONFLICT`（审计表没有幂等键可冲突）。
 --
 -- 错误码（都是**运行期**错误码：函数被调用时才可能抛出，不是迁移期预检）
 -- ---------------------------------------------------------------

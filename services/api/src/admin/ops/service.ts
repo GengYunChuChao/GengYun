@@ -58,7 +58,6 @@ import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
 import type {
   AccountView,
-  AdminJobCancelAuditPort,
   AdminJobPort,
   AdminJobView,
   CategoryView,
@@ -143,15 +142,14 @@ export interface AdminOpsServiceOptions {
   /** 内存 store 尚未接真实库，默认如实标注 `stub`。 */
   executionMode?: ExecutionMode;
   idempotencyTtlSeconds?: number;
-  /** 平台级作业端口；缺省 = **未接线**（fail-closed）。 */
-  jobPort?: AdminJobPort;
   /**
-   * `job.cancel` 的**库内审计落点**（迁移 0043 的窄口径 `SECURITY DEFINER` 函数，R18 接线）。
-   * 给了它 ⇒ 取消成功后审计行落 `public.admin_audit_events`；缺省/`null` ⇒ 与既有口径**逐字一致**
-   * 地走内存 `store.audit.append`（stub 域与未接作业端口的形态都不变）。
-   * `app.ts` 只在 `real` + 拿到真实库池 + 作业端口确实接线时才构造它。
+   * 平台级作业端口；缺省 = **未接线**（fail-closed）。
+   *
+   * `job.cancel` 的审计落点跟着这个端口走，不再是独立选项：`persistent === true` 的端口
+   * 在自己的取消事务里写 `public.admin_audit_events`（迁移 0043），内存端口则由本服务
+   * 写内存 `store.audit.append`。两个落点**不会同时发生**（见 `cancelAdminJob` 尾段）。
    */
-  jobCancelAudit?: AdminJobCancelAuditPort | null;
+  jobPort?: AdminJobPort;
   /** 社区帖子存储端口（`hidePost` 用）；缺省 = **未接线**（fail-closed）。 */
   community?: CommunityPostPort;
   /** flag 语义分类表；缺省为合同 3 键的"能力门"分类。构造时会自检不得放宽 fail-closed。 */
@@ -303,9 +301,6 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   }
   const cursors = createCursorCodec(signingKey);
   const jobPort: AdminJobPort = options.jobPort ?? createUnwiredAdminJobPort();
-  // 库内审计落点（迁移 0043）：只有 `app.ts` 在「real + 拿到真实库池 + 作业端口确实接线」时注入。
-  // 未注入 ⇒ `cancelAdminJob` 保持既有的内存审计路径（stub 域与逐条单测的行为逐字不变）。
-  const jobCancelAudit: AdminJobCancelAuditPort | null = options.jobCancelAudit ?? null;
   const hideAdapter = createHidePostAdapter(options.community, now);
 
   const writeDeps = { runtime: store.runtime, signingKey, ttlSeconds: idempotencyTtlSeconds, now };
@@ -778,7 +773,11 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
         if (TERMINAL_JOB_STATES.includes(current.state as JobState)) {
           throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态（${current.state}），不可取消`);
         }
-        const outcome: CancelJobOutcome = await jobPort.cancel(normalizedId, current.revision);
+        const outcome: CancelJobOutcome = await jobPort.cancel(normalizedId, current.revision, {
+          actorId: context.identity.userId,
+          reasonCode: 'job_cancelled',
+          requestId: context.requestId,
+        });
         if (!outcome.ok) {
           switch (outcome.reason) {
             case 'NOT_FOUND':
@@ -831,22 +830,27 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
         }
 
         // ---- 校验全部通过，才登记成功：审计 + 幂等定型（要么全做，要么全不做）----
-        // **R18：审计落点（迁移 0043）**。库已接线 ⇒ 审计行必须落 `public.admin_audit_events`
-        // （窄口径 `SECURITY DEFINER` 函数，运行时不持有该表任何直写权）；
-        // 未接线（stub / 无作业端口）⇒ 与既有口径逐字一致地写内存 ops store。
+        // **R18：审计落点（迁移 0043）**。
+        //
+        // 持久端口（`persistent === true`，即 `createPostgresAdminJobPort`）的 `cancel()`
+        // **已经在自己的事务里**写过审计行了：窄口径 `SECURITY DEFINER` 函数把
+        // `public.admin_audit_events` 的那一行与 `state/revision` 的变更放在同一个
+        // `COMMIT` 里，审计写不进去就整体 `ROLLBACK`（取消不生效、审计零新增）。
+        // 所以这里**绝不能**再补写一次 —— 补写不是"更保险"，而是会多出第二行，
+        // 或者在审计已落库时让"一行"这个断言变成偶然。
+        //
+        // 代价是审计行早于下面四条完整性校验（监工 #589 要的正是这个方向：宁可让
+        // 一次形状异常的取消留下它自己的审计行，也不能出现"已取消但无审计"）。
+        // 校验失败时请求 500、取消与审计都已提交 —— 它们描述的是同一个事实。
+        //
+        // 内存端口（`persistent === false`：stub 模式 / 内存参考实现）没有库事务，
+        // 保持既有口径逐字不变：写内存 ops store。
+        //
         // 两条路径的字段口径**同一个事实**：action=job.cancel、scope=jobs:cancel、
         // target_ref.revision = **取消前** revision、reason_code=job_cancelled、result=accepted、
         // target_hint=null（库内那一侧的 action/scope/result/target_ref/target_hint 由函数内固定，
-        // 见 `services/api/db/migrations/0043_admin_job_cancel_audit.sql`）。
-        if (jobCancelAudit !== null && jobCancelAudit.wired) {
-          await jobCancelAudit.record({
-            actorId: context.identity.userId,
-            jobId: normalizedId,
-            jobRevision: current.revision,
-            reasonCode: 'job_cancelled',
-            requestId: context.requestId,
-          });
-        } else {
+        // 调用方无从伪造，见 `services/api/db/migrations/0043_admin_job_cancel_audit.sql`）。
+        if (!jobPort.persistent) {
           appendAudit(context, {
             action: 'job.cancel',
             scope: OPS_SCOPES.cancelAdminJob,

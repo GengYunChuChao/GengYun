@@ -77,6 +77,8 @@ function matchesAdminJobFilter(job: AdminJobView, filter: AdminJobFilter): boole
 export function createUnwiredAdminJobPort(): AdminJobPort {
   return Object.freeze({
     wired: false,
+    // 进程内端口：没有库事务，取消与审计都不落库（服务层据此自己写内存审计流）。
+    persistent: false,
     list: () => [],
     get: () => null,
     cancel: (): CancelJobOutcome => ({ ok: false, reason: 'PORT_UNAVAILABLE' }),
@@ -101,6 +103,9 @@ export function createMemoryAdminJobPort(seed: readonly AdminJobView[] = []): Ad
 
   return {
     wired: true,
+    // 参考实现只改进程内 `Map`：没有库事务 ⇒ `cancel()` 的 `audit` 入参被忽略，
+    // 审计由服务层写既有内存 `store.audit.append`（stub 模式口径逐字不变）。
+    persistent: false,
     list(filter: AdminJobFilter = {}) {
       // 端口边界再判一次闭集：端口也会被直接调用（集成测试/单测），非法入参一律 400，
       // 绝不静默返回空页。内存实现没有 SQL，所以匹配在进程内做（见 `matchesAdminJobFilter`）。

@@ -8,6 +8,8 @@
  *   [A] A→B→A 两行审计的**行序与前后值**（不看这两项就等于只验了「有审计」）
  *   [J] GET /admin/jobs 真读三张域表；失败作业的 error_code 原样透出；普通账号 401/403；只读后台账号 cancel 403
  *   [C] 取消：revision 1→2、库内同值、`job.cancel` 审计**落库恰 1 行**（target_ref={job,id,revision:1}）；对终态作业 409 且不改写
+ *   [C2] 同事务返修（#589）：审计表拒绝 `job.cancel` 行 ⇒ 503 且作业**原样留在取消前状态**、审计零新增；
+ *        拆掉人为故障后同一作业能真取消（证明失败没留锁/占位/半提交）
  *   [E] submissions_enabled 关 ⇒ POST /posts 409 OBJECT_UNAVAILABLE(FLAG_CLOSED) + 零新增行；开 ⇒ 放行；
  *       同一 app 实例关→开→关立刻生效（反证读面无跨请求缓存）
  *
@@ -766,6 +768,101 @@ async function jobsArm(app, jobsToken, userToken, userScopesAdminToken, jobsAdmi
 }
 
 // ---------------------------------------------------------------------------
+// [C2] 同事务返修（监工 #589）：审计写失败 ⇒ 取消不生效、审计表零新增
+// ---------------------------------------------------------------------------
+/**
+ * 人为让审计写入失败（审计表上装一个只拦 `action='job.cancel'` 的 BEFORE INSERT 触发器），
+ * 然后证明三件事：
+ *   ① 请求 503 `PROVIDER_UNAVAILABLE`（不是 200 假成功）；
+ *   ② 作业**原样留在取消前状态**（state/revision 一个字节都没动）⇒ 取消没有"先提交"；
+ *   ③ `admin_audit_events` 零新增 ⇒ 不存在"补偿式补写"这种半拉子路径。
+ * 最后拆掉触发器，再用一个新的幂等键真取消一次：作业变成 cancelled/revision=2 且审计恰多一行 ——
+ * 证明上一次失败只伤在审计面，没有留下行锁、幂等占位或半提交（否则重试会 409/500）。
+ *
+ * 为什么用触发器而不是 `REVOKE INSERT`：`admin_audit_events` 对**运行时**本来就没有任何表级写权
+ * （写入口是 `SECURITY DEFINER` 函数），而本臂的 app 用的是 owner 池 —— 对 owner 执行
+ * `REVOKE INSERT` 会被"owner 隐含全部权限"抵消，探针会变成一条永远不触发的事故演习。
+ * 触发器是唯一能在 owner 身份下稳定制造"审计写不进去"的手段。
+ */
+async function cancelAuditAtomicityArm(app, jobsToken, userId) {
+  const jobId = randomUUID();
+  const countAudits = async () =>
+    (await q("SELECT count(*)::int AS c FROM public.admin_audit_events WHERE action = 'job.cancel'"))[0].c;
+  const jobState = async () =>
+    (await q('SELECT state, revision FROM public.recognition_jobs WHERE id = $1::uuid', [jobId]))[0];
+  const cancel = (key) =>
+    injectCall(app, API_V1(`/admin/jobs/${jobId}/cancel`), {
+      method: 'POST',
+      token: jobsToken,
+      headers: { 'idempotency-key': key, 'if-match': '"1"' },
+      body: { reason: 'R18 真库臂：审计写失败时取消必须不生效' },
+    });
+
+  await owner.query(
+    `INSERT INTO public.recognition_jobs (id, revision, kind, owner_user_id, recognition_id, media_id, media_revision,
+                                          state, deadline_at, created_at, updated_at, error_code)
+     VALUES ($1, 1, 'recognition', $2, $3, $4, 1, 'queued', now() + interval '10 minutes', now(), now(), NULL)`,
+    [jobId, userId, randomUUID(), randomUUID()],
+  );
+  await owner.query(
+    `CREATE FUNCTION public.r18_reject_cancel_audit() RETURNS trigger LANGUAGE plpgsql AS $fn$
+     BEGIN
+       RAISE EXCEPTION USING ERRCODE = 'G0098', MESSAGE = 'R18_TEST_AUDIT_WRITE_REJECTED',
+         DETAIL = '真库臂人为故障：审计表拒绝 job.cancel 行，用来证明取消不生效';
+     END
+     $fn$`,
+  );
+  // 与迁移同一体例：探针函数同样收回 PUBLIC EXECUTE（用完即删，不给后面留口子）。
+  await owner.query('REVOKE ALL ON FUNCTION public.r18_reject_cancel_audit() FROM PUBLIC');
+  await owner.query(
+    `CREATE TRIGGER r18_reject_cancel_audit BEFORE INSERT ON public.admin_audit_events
+       FOR EACH ROW WHEN (NEW.action = 'job.cancel')
+       EXECUTE FUNCTION public.r18_reject_cancel_audit()`,
+  );
+  try {
+    const baseline = await countAudits();
+    assert.ok(baseline >= 1, `上一臂应已留下 job.cancel 审计行，实际 ${baseline} 行`);
+    assert.deepEqual(await jobState(), { state: 'queued', revision: 1 }, '探针起点必须是可取消的 queued/revision=1');
+
+    const failed = await cancel(randomUUID());
+    assert.equal(
+      failed.status,
+      503,
+      `审计写不进去时取消必须 503（不得假成功），实际 ${failed.status} ${failed.text.slice(0, 300)}`,
+    );
+    assert.equal(failed.body.error.code, 'PROVIDER_UNAVAILABLE');
+    assert.match(
+      String(failed.body.error.message),
+      /审计写入失败/,
+      `503 文案必须指出是审计写入失败，而不是作业冲突，实际 ${failed.body.error.message}`,
+    );
+    assert.deepEqual(
+      await jobState(),
+      { state: 'queued', revision: 1 },
+      '审计写失败时作业必须**原样留在取消前状态**（同事务回滚，不是"先提交再补审计"）',
+    );
+    assert.equal(await countAudits(), baseline, '审计写失败时 admin_audit_events 必须零新增');
+    note('[C2] 审计表拒绝 job.cancel ⇒ 503 PROVIDER_UNAVAILABLE；作业仍 queued/revision=1、审计表零新增（状态变更与审计同一事务，无补偿式补写）');
+  } finally {
+    await owner.query('DROP TRIGGER IF EXISTS r18_reject_cancel_audit ON public.admin_audit_events');
+    await owner.query('DROP FUNCTION IF EXISTS public.r18_reject_cancel_audit()');
+  }
+
+  const baseline = await countAudits();
+  const recovered = await cancel(randomUUID());
+  assert.equal(
+    recovered.status,
+    200,
+    `拆掉故障后同一作业必须能取消，实际 ${recovered.status} ${recovered.text.slice(0, 300)}`,
+  );
+  assert.equal(recovered.body.data.state, 'cancelled');
+  assert.equal(recovered.body.data.revision, 2);
+  assert.deepEqual(await jobState(), { state: 'cancelled', revision: 2 }, '恢复后库内必须是 cancelled/revision=2');
+  assert.equal(await countAudits(), baseline + 1, '恢复后审计必须恰多一行（失败那次没有留下任何行）');
+  note('[C2] 拆掉故障后重试 ⇒ 200 cancelled/revision=2，审计恰多 1 行（上一次失败没有留锁、没有留幂等占位、没有留半提交）');
+}
+
+// ---------------------------------------------------------------------------
 // [E] 投稿开关真实阻断：关⇒409+零新增；开⇒真实写成功；同一实例立即生效
 // ---------------------------------------------------------------------------
 async function postingsFlagArm(app, flagsPort, adminId, user) {
@@ -941,6 +1038,7 @@ try {
 
   const readOnlyAdmin = await seedAdmin(['jobs:read']);
   await jobsArm(app, fullAdmin.token, user.token, readOnlyAdmin.token, fullAdmin.adminId);
+  await cancelAuditAtomicityArm(app, fullAdmin.token, user.id);
   await postingsFlagArm(app, flagsPort, fullAdmin.adminId, user);
 
   const auditHttp = await injectCall(app, API_V1('/admin/flag-audit-events?limit=1'), { token: fullAdmin.token });

@@ -37,7 +37,14 @@ import { ApiError } from '../../errors.ts';
 import { ERROR_CODES, type ErrorCode } from '../../contract.ts';
 import { parseAdminJobFilter } from './jobs.ts';
 import { JOB_KINDS } from './types.ts';
-import type { AdminJobFilter, AdminJobPort, AdminJobView, CancelJobOutcome, JobKind } from './types.ts';
+import type {
+  AdminJobCancelAuditInput,
+  AdminJobFilter,
+  AdminJobPort,
+  AdminJobView,
+  CancelJobOutcome,
+  JobKind,
+} from './types.ts';
 
 /** 契约 `JobState` 七值闭集（`packages/contracts/states.json` 的 `JobState`，逐值抄写）。 */
 const CONTRACT_JOB_STATES = [
@@ -59,6 +66,26 @@ export const ADMIN_JOB_LIST_LIMIT = 200;
 
 /** 写事务的锁等待上限（与 `flags-pg.ts` 的 4s 同口径）。 */
 const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '4s'";
+
+/**
+ * 取消审计的**同事务**写入点（迁移 `0043_admin_job_cancel_audit.sql`）。
+ *
+ * 为什么是这一条 `SELECT`、而不是"更新后再去写审计"：
+ * `updateSql` 与这条 `SELECT public.record_admin_job_cancel_audit(…)` 跑在**同一个**
+ * `client` / 同一个事务里，`COMMIT` 之前任何一步抛错都会整体 `ROLLBACK` —— 于是
+ * 「作业已 cancelled 但没有审计行」这种补不回来的缺口在库层就不可能出现
+ * （监工 #589）。反过来说，审计表是 append-only 的（触发器拦 UPDATE/DELETE，G0006），
+ * 事后补写这条路本来就走不通。
+ *
+ * **静态列审计（`tests/unit/sql-column-coverage.test.mjs`）为什么不会把这条当成漏登记**：
+ * 该工具按字面量解析语句，`SELECT` 里**没有 `FROM`** ⇒ 既不产生表名，也不产生列名
+ * （`parseSqlText` 的 `locate('FROM') === null ⇒ return [base]`），`public.` 前缀也不在
+ * `INSERT INTO|DELETE FROM|UPDATE|FROM|JOIN` 任一关键字之后。函数调用本身只需要
+ * `EXECUTE`，而 `EXECUTE` 在 `deploy/postgres-cvm/sql/20-login-roles.sql` 的
+ * `gy-r18-job-cancel-audit-grant` 区域授予运行时角色，表级直写权一行都没有。
+ */
+const CANCEL_AUDIT_SQL =
+  'SELECT public.record_admin_job_cancel_audit($1::uuid, $2::uuid, $3::integer, $4::text, $5::uuid) AS audit_event_id';
 
 /**
  * 三张域内作业表的**统一读面**。
@@ -263,6 +290,20 @@ function unavailable(why: string): ApiError {
   return new ApiError('PROVIDER_UNAVAILABLE', `作业存储不可用：${why}`, { retryable: false });
 }
 
+/**
+ * 取消事务里审计写不进去时的错误。
+ *
+ * 措辞刻意写全「已回滚，取消未生效」：调用方看到 503 时必须能判断出
+ * **作业状态没有变**，而不是"取消成功了但审计失败"（那种缺口本片就是为了消灭它）。
+ * `retryable: false` 与既有口径一致：同一请求重试能不能成，取决于审计面是否恢复，
+ * 不是这一条请求本身的问题。
+ */
+function auditUnavailable(why: string): ApiError {
+  return new ApiError('PROVIDER_UNAVAILABLE', `作业取消审计写入失败（已回滚，取消未生效）：${why}`, {
+    retryable: false,
+  });
+}
+
 function isContractJobState(value: unknown): value is ContractJobState {
   return typeof value === 'string' && (CONTRACT_JOB_STATES as readonly string[]).includes(value);
 }
@@ -361,8 +402,53 @@ export function createPostgresAdminJobPort(options: {
     return row === undefined ? null : projectRow(source, row);
   }
 
+  /**
+   * 在**取消事务内**写一行审计（`CANCEL_AUDIT_SQL`）。
+   *
+   * 任何一步不成立都抛 503：这条路径上「审计没写成」只可能是装配错、授权错或库错，
+   * 三者都该让整体回滚（取消不生效），而不是提交一次没有审计的取消。
+   */
+  async function recordCancelAudit(
+    client: PoolClient,
+    audit: AdminJobCancelAuditInput | undefined,
+    id: string,
+    expectedRevision: number,
+  ): Promise<void> {
+    if (
+      audit === undefined ||
+      typeof audit.actorId !== 'string' ||
+      !UUID_RE.test(audit.actorId) ||
+      typeof audit.requestId !== 'string' ||
+      !UUID_RE.test(audit.requestId) ||
+      typeof audit.reasonCode !== 'string' ||
+      audit.reasonCode === ''
+    ) {
+      throw auditUnavailable('取消审计入参缺失或不合法（actor / request / reason）');
+    }
+    let result: { rows: unknown[] };
+    try {
+      result = await client.query(CANCEL_AUDIT_SQL, [
+        audit.actorId,
+        id,
+        expectedRevision,
+        audit.reasonCode,
+        audit.requestId,
+      ]);
+    } catch (error) {
+      // 审计写不进去（函数抛 G 码 / 授权缺失 / 库错）⇒ 换成明确的"已回滚，取消未生效"。
+      // 不这样折的话，外层 catch 会把它说成"作业存储不可用：取消失败"，读起来像冲突而不是审计问题。
+      throw auditUnavailable((error as Error).message);
+    }
+    const row = (result.rows as Record<string, unknown>[])[0];
+    if (row === undefined || typeof row.audit_event_id !== 'string' || !UUID_RE.test(row.audit_event_id)) {
+      throw auditUnavailable('审计函数未回传审计行 id');
+    }
+  }
+
   return {
     wired: true,
+    // 唯一 `persistent: true` 的实现：取消走真事务，审计行与状态变更同一 `COMMIT`。
+    persistent: true,
     async list(filter: AdminJobFilter = {}): Promise<AdminJobView[]> {
       // 端口边界再判一次闭集：端口也会被直接调用（集成/单测），非法入参一律 400 INVALID_REQUEST，
       // 绝不静默返回空页。不过滤时 `where` 为空串、`values` 为空 ⇒ 语句与改动前逐字相同。
@@ -393,7 +479,11 @@ export function createPostgresAdminJobPort(options: {
       }
       return null;
     },
-    async cancel(id: string, expectedRevision: number): Promise<CancelJobOutcome> {
+    async cancel(
+      id: string,
+      expectedRevision: number,
+      audit: AdminJobCancelAuditInput,
+    ): Promise<CancelJobOutcome> {
       if (!UUID_RE.test(id) || !Number.isInteger(expectedRevision) || expectedRevision < 1) {
         return { ok: false, reason: 'NOT_FOUND' };
       }
@@ -425,6 +515,9 @@ export function createPostgresAdminJobPort(options: {
           await client.query('ROLLBACK');
           return { ok: false, reason: 'TERMINAL' };
         }
+        // **审计与状态变更同一事务**（监工 #589）：这一步失败 ⇒ 下面的 catch 整体 ROLLBACK，
+        // 作业保持取消前的 state/revision，审计表零新增。绝不在 COMMIT 之后补写。
+        await recordCancelAudit(client, audit, id, expectedRevision);
         await client.query('COMMIT');
         return { ok: true, job: toAdminJobView(updated) };
       } catch (error) {
@@ -451,5 +544,7 @@ export const ADMIN_JOB_SQL = {
   get: SOURCES.map((source) => source.getSql),
   lock: SOURCES.map((source) => source.lockSql),
   update: SOURCES.map((source) => source.updateSql),
+  /** 取消事务里的审计写入（迁移 0043 的函数调用；真库臂据此断言签名与表级零写入）。 */
+  cancelAudit: CANCEL_AUDIT_SQL,
   limit: ADMIN_JOB_LIST_LIMIT,
 } as const;
