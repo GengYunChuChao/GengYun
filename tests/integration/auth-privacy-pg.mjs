@@ -241,7 +241,12 @@ try {
   say('missing/unknown bearer and client-supplied identity are rejected');
   const adminPassword = randomBytes(20).toString('hex');
   const admin = (await owner.query('INSERT INTO admin_accounts(login_name,credential_hash) VALUES($1,$2) RETURNING id', ['synthetic-admin', hashPassword(adminPassword)])).rows[0];
-  await owner.query("INSERT INTO admin_scopes(admin_id,scope) VALUES($1,'moderation')", [admin.id]);
+  // scope 值必须是**后台权限闭集**成员：迁移 0041 给 `public.admin_scopes.scope` 加了库层 CHECK
+  // `admin_scopes_scope_closed_set`（13 项，`#18` S2 片1）。本臂只需要「这个管理员有一条真实 scope」
+  // ——它测的是「后台会话读不了用户同意记录」，与 scope 取值无关 ⇒ 用闭集内的 `accounts:read`。
+  // 旧值 `moderation` 从来不是本仓的后台权限（`openapi.json` 的 `SessionInfo.scopes` enum 里没有它），
+  // 0041 落盘后会被库层拒绝（23514），故不是放宽判据而是纠正夹具。
+  await owner.query("INSERT INTO admin_scopes(admin_id,scope) VALUES($1,'accounts:read')", [admin.id]);
   const adminLogin = await request('/admin/auth/session', null, { method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': 'synthetic-admin-login' }, body: JSON.stringify({ login_name: 'synthetic-admin', password: adminPassword }) });
   assert.equal(adminLogin.status, 200, JSON.stringify(adminLogin.body));
   await expectError('/me/consents', adminLogin.body.data.access_token, 401, 'SESSION_EXPIRED');

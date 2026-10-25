@@ -516,6 +516,36 @@ REVOKE ALL ON FUNCTION public.list_admin_audit_logs(integer, timestamptz, timest
 GRANT EXECUTE ON FUNCTION public.list_admin_audit_logs(integer, timestamptz, timestamptz, text[], text[], timestamptz, uuid) TO gengyun_api_runtime;
 -- #endregion gy-r34-audit-logs-grant
 
+-- ---------------------------------------------------------------------------
+-- F2. 后台管理员 scope 的授予/撤销（`#18` S2 片1 / 迁移 0041）
+--
+-- 为什么是「函数 EXECUTE」而不是「表写权限」：`admin_scopes` 对运行时是**零表级写、零列级写**
+-- （`90-assert-least-privilege.sql` 的 external_manifest 把表级 S/I/U/D 钉成 false 且列级
+-- ins/upd 为空数组；槽 9 的 protected_columns 再钉死 `scope` 列不可 UPDATE）。授权维护只能经
+-- 0041 的两条窄口径 SECURITY DEFINER 函数：函数内固定 `search_path = pg_catalog`、不接收任何
+-- SQL 片段、并自带「操作者有效且持 scopes:write」「只授自己当前有效持有的 scope」「禁自授、
+-- 允许自撤」「最后授权者守卫（事务级 advisory 锁内核验）」四条校验。
+--
+-- 前置：两条函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败，
+-- 绝不留「看似收敛、点开 503/42501」的运行态。
+-- #region gy-r37-s2-scope-grant
+DO $$
+BEGIN
+  IF to_regprocedure('public.grant_admin_scope(uuid,uuid,text,text,uuid,uuid,integer)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.grant_admin_scope(...)：迁移 0041 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+  IF to_regprocedure('public.revoke_admin_scope(uuid,uuid,text,text,uuid,uuid,integer)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.revoke_admin_scope(...)：迁移 0041 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.grant_admin_scope(uuid, uuid, text, text, uuid, uuid, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.revoke_admin_scope(uuid, uuid, text, text, uuid, uuid, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.grant_admin_scope(uuid, uuid, text, text, uuid, uuid, integer) TO gengyun_api_runtime;
+GRANT EXECUTE ON FUNCTION public.revoke_admin_scope(uuid, uuid, text, text, uuid, uuid, integer) TO gengyun_api_runtime;
+-- #endregion gy-r37-s2-scope-grant
+
 -- --- G. 逐用户备份副本清单：运行时**列级** DML（GY-I19 / 迁移 0023）-----------
 -- ---------------------------------------------------------------------------
 -- GY-I19（#19）· 逐用户备份副本清单（迁移 0023）的运行时**列级**授权
