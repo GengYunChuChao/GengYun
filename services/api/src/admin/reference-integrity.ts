@@ -201,15 +201,16 @@ function resolveAgainst(
 }
 
 /**
- * 「内容存储**确认未配置**」时的降级结论（`Refs #18`，三态里的 `missing` 一支）。
+ * 「内容存储**全域确认未配置**」时的降级结论（`Refs #18`，四态里的 `unwired` 一支）。
  *
  * 结论与"存储里没有这条来源"**同形**：`unverifiable` / `source_not_in_store` ⇒ 公开读
  * **保持可见**，且**不谎称失效**（判定表第 1 行，见文件头）。复用 `resolveAgainst` 的同一张表，
  * 因此依赖行本身写坏（`source_id` / `source_version` 缺失）时仍判 `unavailable` —— 降级只放宽
  * "核对不到来源"，**不**放宽"引用本身就坏"。
  *
- * ⛔ 只许用在就绪探测**确证** `to_regclass IS NULL`（`missing`）的情形。断连／权限故障
- * （`unknown`）必须走真实解析、由 `ops/content-pg.ts#foldDatabaseError` fail-closed 成 503；
+ * ⛔ 只许用在就绪探测**三张表全都不在**（`unwired`）的情形。断连／权限故障（`unknown`）必须走真实
+ * 解析、由 `ops/content-pg.ts#foldDatabaseError` fail-closed 成 503；**部分 schema（`incomplete`）
+ * 也不许用**——那时库里可能仍存着已 withdrawn 的来源，回落会把它重新变成可见（监工复核）。
  * 把库错误无差别吞成 `unverifiable` 后放行是**未授权**的（监工批复已明确否决）。
  */
 export function unresolvedReference(family: AdminFamily, content: unknown): ReferenceResolution {

@@ -1,24 +1,28 @@
-// GY-I18（#18）· **内容存储就绪探测（三态）× 公开读引用解析** 的单元层证据。
+// GY-I18（#18）· **内容存储就绪探测（四态）× 公开读引用解析** 的单元层证据。
 //
 // 为什么需要本文件：迁移 0036 之后，`real` ＋有池时内容域是 PG 实现（`persistent: true`）。
 // 部署里**没有**这三张表时（子集库、还没跑 0036 的环境），`foldDatabaseError` 会把 `42P01`
 // 折成 503 `PROVIDER_UNAVAILABLE`，把**公开读**（`/herbicides`、`/knowledge`）一起打成 503。
-// 本文件钉住的三态（⛔ 不许合并成两态、⛔ 不许把库错误无差别吞成 `unverifiable`）：
 //
-//   | 探测结论 | 含义 | 公开读行为 |
+// 本文件钉住的四态（⛔ 不许合并成三态/两态、⛔ 不许把库错误无差别吞成 `unverifiable`）：
+//
+//   | 探测结论 | 库形状 | 公开读行为 |
 //   |---|---|---|
-//   | `ready`   | 三张表都在 | 按已接线解析：引用不可用 ⇒ 隐藏（下架/失效**一律不可见**） |
-//   | `missing` | `to_regclass` 明确回 NULL ⇒ **确认未配置**（不是故障） | 退回接线前行为：不过滤、200 |
-//   | `unknown` | 探测出错（连接/权限/超时）或形状读不懂 ⇒ **未知 ≠ 未安装** | **不降级**，真实解析 fail-closed 503 |
+//   | `ready`      | `entities` ＋ `revisions` 都在（`idempotency` 可缺） | 按已接线解析：引用不可用 ⇒ 隐藏（下架/失效**一律不可见**） |
+//   | `unwired`    | 三张表**全都不在** ⇒ **全域确认未配置**（不是故障） | 退回接线前行为：不过滤、200 |
+//   | `incomplete` | 部分存在（半套 schema） | **明确 503 fail-closed**（⛔ 不得回落成"未配置"） |
+//   | `unknown`    | 探测出错（连接/权限/超时）或形状读不懂 ⇒ **未知 ≠ 未安装** | **不降级**，真实解析 fail-closed 503 |
 //
-// 覆盖点：
-//   A. `missing` ⇒ `/herbicides` 200，且**零** `public.admin_content_*` 查询（证明是短路，不是"查询失败但被吞"）；
-//   B. 探测 `42501`（授权/连接故障）⇒ `/herbicides` **仍然 503**，且**真的**打了内容表（证明未降级）；
-//   C. `ready` ＋来源已撤回 ⇒ `resolve` 判 `unavailable` ⇒ 公开面**不可见**（hidden 不放宽）；
-//   D. 内存 store（`persistent: false`）⇒ **不探测**、行为逐字不变；
-//   E. `probeAdminContentTables` 的各种输入形状（缺池／`ready:true`／`ready:false`／探测抛错／空 rows／
-//      非单行 rows／`ready` 非布尔（`'false'` 字符串、`null`、缺键））各自落在哪一态；
-//   F. `missing` 定型后 20 次公开读**只探 1 次**（`missing`/`ready` 是定型结论，⛔ 不得退化成每请求重探）。
+// 覆盖点（用例名对应监工 2026-10-25T04:15:22Z 复核给出的 U1–U6）：
+//   U1. 三张全缺 ⇒ `unwired` ⇒ `/herbicides` 200，且**零** `public.admin_content_*` 查询（短路，不是"查询失败但被吞"）；
+//   U2. **监工场景**：`entities`/`revisions` 都在、其中一条来源已 `withdrawn`、**仅 `idempotency` 缺**
+//       ⇒ 必须 `ready` ⇒ `unavailable`/`source_withdrawn` ⇒ `visible === false`（⛔ 断言它**不是** `unverifiable`）；
+//   U3. `entities` 在、`revisions` 缺 ⇒ `incomplete` ⇒ 503；U4. 反向 ⇒ 503；
+//   U5. 两张读表都缺、只有 `idempotency` 在 ⇒ 503（⛔ 不得判 `unwired`）；
+//   U6. 探测 `42501`（权限/连接故障）⇒ `/herbicides` **仍然 503**，且**真的**打了内容表（证明未降级）；
+//   D.  内存 store（`persistent: false`）⇒ **不探测**、行为逐字不变；
+//   E.  `probeAdminContentTables` 在三列布尔下的各种输入形状各自落在哪一态；
+//   F.  `unwired` 定型后 20 次公开读**只探 1 次**（定型结论，⛔ 不得退化成每请求重探）。
 //
 // 不连真库：本文件是单元层证据；真库行为由 `tests/integration/admin-flags-pg.mjs` 场景 1
 // （子集库，刻意无 0036）与 `tests/integration/admin-content-pg.mjs` 覆盖。
@@ -52,6 +56,11 @@ const REAL_ENV = {
 
 /** 内容表查询的正则：`to_regclass(...)` 探测语句里也出现表名，故只认"真读表"的三种写法。 */
 const CONTENT_QUERY = /\b(FROM|INTO|UPDATE)\s+public\.admin_content_[a-z_]+\b/;
+
+/** 三列布尔探测的**单行结果**（缺省全缺 ⇒ `unwired`）。 */
+function tableRow({ entities = false, revisions = false, idempotency = false } = {}) {
+  return { rows: [{ entities, revisions, idempotency }], rowCount: 1 };
+}
 
 /**
  * 桩池：**按语句分流**回答。
@@ -117,25 +126,116 @@ function createHookHost() {
   };
 }
 
-test('A. 确认未配置（missing）⇒ /herbicides 200，且零内容表查询（短路，不是吞错）', async () => {
+test('U1. 全域确认未配置（unwired：三张表全缺）⇒ /herbicides 200，且零内容表查询（短路，不是吞错）', async () => {
   const authStore = createMemoryAuthStore();
-  const pool = createStubPool({ contentProbe: () => ({ rows: [{ ready: false }], rowCount: 1 }) });
+  const pool = createStubPool({ contentProbe: () => tableRow() });
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore, pool });
   try {
     const token = await syntheticUserToken(authStore);
     const res = await get(app, `${API}/herbicides`, token);
-    assert.equal(res.statusCode, 200, `缺 0036 三表 ⇒ 公开读不得 503/409，实际 ${res.statusCode} ⇒ ${res.body}`);
+    assert.equal(res.statusCode, 200, `三表全缺（unwired）⇒ 公开读不得 503/409，实际 ${res.statusCode} ⇒ ${res.body}`);
     const items = res.json().data.items;
     assert.ok(items.length >= 1, '前置：种子里必须有行，否则 resolve 根本不会被调用（本用例就失去意义）');
     // 关键：一条内容表查询都没发出去 —— 证明 status 200 来自"降级短路"，而不是"查询失败被吞掉"。
     const touched = pool.statements.filter((entry) => CONTENT_QUERY.test(entry.text));
-    assert.deepEqual(touched, [], `missing 态必须短路、不得去读 0036 三表，实际：${touched.map((e) => e.text).join(' | ')}`);
+    assert.deepEqual(touched, [], `unwired 态必须短路、不得去读 0036 三表，实际：${touched.map((e) => e.text).join(' | ')}`);
   } finally {
     await app.close();
   }
 });
 
-test('B. 探测故障（unknown：42501）⇒ 仍 503，且真的打了内容表（未降级、未吞错）', async () => {
+test('U2. 监工场景：entities/revisions 在、仅 idempotency 缺 + 来源已撤回 ⇒ ready ⇒ unavailable ⇒ visible=false（不是 unverifiable）', async () => {
+  // 监工 2026-10-25T04:15:22Z 的原话场景：读失效真值所需的数据**仍在**（entities/revisions 都在），
+  // 只是 `admin_content_idempotency` 没建。旧实现把三表 AND 后判 missing ⇒ 回落 unverifiable ⇒
+  // 已下架内容**重新可见**。本用例就是那条红的回归钉：必须判 ready、必须判 unavailable、必须不可见。
+  const withdrawn = {
+    id: 'a1b2c3d4-0000-4000-8000-000000000001',
+    family: 'sources',
+    lifecycle: 'withdrawn',
+    publishedRevision: null,
+    revisions: [],
+  };
+  let reads = 0;
+  const store = {
+    persistent: true,
+    async getEntity() {
+      reads += 1;
+      return withdrawn;
+    },
+  };
+  const host = createHookHost();
+  const pool = {
+    async query() {
+      // 读面两张表都在；写侧幂等台账缺 —— 这正是监工指出的形状。
+      return tableRow({ entities: true, revisions: true, idempotency: false });
+    },
+  };
+  const resolve = createAdminContentReferenceResolver({ host, store, pool });
+  await host.runHooks();
+
+  const content = { source_id: withdrawn.id, source_version: 'v1' };
+  const resolution = await resolve('knowledge', content);
+  assert.equal(reads, 1, 'ready 态必须去问存储（不得短路）');
+  assert.notEqual(
+    resolution.state,
+    'unverifiable',
+    `⛔ 部分缺表不得回落成 unverifiable（那会让已撤回内容重新可见），实际 ${resolution.state}`,
+  );
+  assert.equal(resolution.state, 'unavailable', `已撤回来源的引用必须判不可用，实际 ${resolution.state}`);
+  assert.equal(resolution.reason, 'source_withdrawn');
+
+  const decision = await decidePublicVisibilityAsync({ family: 'knowledge', content, resolve });
+  assert.equal(decision.visible, false, '下架/失效内容**不得**因探测接线而变可见（监工复核的核心）');
+  assert.equal(decision.reason, 'unavailable');
+});
+
+test('U3. entities 在、revisions 缺 ⇒ incomplete ⇒ /herbicides 503（明确拒绝，不回落）', async () => {
+  const authStore = createMemoryAuthStore();
+  const pool = createStubPool({ contentProbe: () => tableRow({ entities: true }) });
+  const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore, pool });
+  try {
+    const token = await syntheticUserToken(authStore);
+    const res = await get(app, `${API}/herbicides`, token);
+    assert.equal(res.statusCode, 503, `半套 schema 必须 fail-closed，实际 ${res.statusCode} ⇒ ${res.body}`);
+    assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(res.json().error.retryable, false, 'schema 不完整需运维介入，不是"稍后自己会好"');
+    assert.match(res.json().error.message, /schema 不完整（就绪探测：entities=true, revisions=false）/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('U4. entities 缺、revisions 在 ⇒ incomplete ⇒ /herbicides 503', async () => {
+  const authStore = createMemoryAuthStore();
+  const pool = createStubPool({ contentProbe: () => tableRow({ revisions: true }) });
+  const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore, pool });
+  try {
+    const token = await syntheticUserToken(authStore);
+    const res = await get(app, `${API}/herbicides`, token);
+    assert.equal(res.statusCode, 503, `半套 schema 必须 fail-closed，实际 ${res.statusCode} ⇒ ${res.body}`);
+    assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE');
+    assert.match(res.json().error.message, /entities=false, revisions=true/);
+  } finally {
+    await app.close();
+  }
+});
+
+test('U5. 两张读表都缺、只有 idempotency 在 ⇒ incomplete ⇒ 503（⛔ 不得判 unwired）', async () => {
+  const authStore = createMemoryAuthStore();
+  const pool = createStubPool({ contentProbe: () => tableRow({ idempotency: true }) });
+  const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore, pool });
+  try {
+    const token = await syntheticUserToken(authStore);
+    const res = await get(app, `${API}/herbicides`, token);
+    assert.equal(res.statusCode, 503, `只挂了一张写侧台账不算"未配置"，实际 ${res.statusCode} ⇒ ${res.body}`);
+    assert.equal(res.json().error.code, 'PROVIDER_UNAVAILABLE');
+    assert.equal(res.json().error.retryable, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test('U6. 探测故障（unknown：42501）⇒ 仍 503，且真的打了内容表（未降级、未吞错）', async () => {
   const authStore = createMemoryAuthStore();
   const pool = createStubPool({
     contentProbe: () => {
@@ -154,39 +254,6 @@ test('B. 探测故障（unknown：42501）⇒ 仍 503，且真的打了内容表
   } finally {
     await app.close();
   }
-});
-
-test('C. 已接线（ready）＋来源已撤回 ⇒ resolve 判 unavailable ⇒ 公开面不可见（hidden 不放宽）', async () => {
-  // 来源已撤回：`liveRevisionOf` 回 null，判定表 ⇒ unavailable / source_withdrawn。
-  const withdrawn = {
-    id: 'a1b2c3d4-0000-4000-8000-000000000001',
-    family: 'sources',
-    lifecycle: 'withdrawn',
-    publishedRevision: null,
-    revisions: [],
-  };
-  let reads = 0;
-  const store = {
-    persistent: true,
-    async getEntity() {
-      reads += 1;
-      return withdrawn;
-    },
-  };
-  const host = createHookHost();
-  const pool = { async query() { return { rows: [{ ready: true }], rowCount: 1 }; } };
-  const resolve = createAdminContentReferenceResolver({ host, store, pool });
-  await host.runHooks();
-
-  const content = { source_id: withdrawn.id, source_version: 'v1' };
-  const resolution = await resolve('knowledge', content);
-  assert.equal(reads, 1, 'ready 态必须去问存储（不得短路）');
-  assert.equal(resolution.state, 'unavailable', `已撤回来源的引用必须判不可用，实际 ${resolution.state}`);
-  assert.equal(resolution.reason, 'source_withdrawn');
-
-  const decision = await decidePublicVisibilityAsync({ family: 'knowledge', content, resolve });
-  assert.equal(decision.visible, false, '下架/失效内容**不得**因探测接线而变可见');
-  assert.equal(decision.reason, 'unavailable');
 });
 
 test('D. 内存 store（persistent=false）⇒ 不探测、不降级，行为逐字不变', async () => {
@@ -210,7 +277,7 @@ test('D. 内存 store（persistent=false）⇒ 不探测、不降级，行为逐
 });
 
 test('D2. 探测通过但库里其实没有表（ready ＋ 42P01）⇒ 仍 503（不缓存"绿灯"）', async () => {
-  const pool = createStubPool({ contentProbe: () => ({ rows: [{ ready: true }], rowCount: 1 }) });
+  const pool = createStubPool({ contentProbe: () => tableRow({ entities: true, revisions: true }) });
   const store = createPostgresAdminContentStore({ pool });
   await assert.rejects(
     () => createAdminContentReferenceResolver({
@@ -223,54 +290,81 @@ test('D2. 探测通过但库里其实没有表（ready ＋ 42P01）⇒ 仍 503�
   );
 });
 
-test('E. probeAdminContentTables：十种输入形状各自落在哪一态', async () => {
+test('E. probeAdminContentTables：三列布尔下的各种输入形状各自落在哪一态', async () => {
   assert.deepEqual(await probeAdminContentTables(null), { state: 'unknown', reason: 'no_pool' });
   assert.deepEqual(await probeAdminContentTables(undefined), { state: 'unknown', reason: 'no_pool' });
   assert.deepEqual(
-    await probeAdminContentTables({ async query() { return { rows: [{ ready: true }] }; } }),
-    { state: 'ready' },
+    await probeAdminContentTables({ async query() { return tableRow({ entities: true, revisions: true }); } }),
+    { state: 'ready', tables: { entities: true, revisions: true, idempotency: false } },
+    '读面两张表都在即 ready —— `idempotency` 不参与读面判定（监工场景：仅它缺也必须是 ready）',
   );
   assert.deepEqual(
-    await probeAdminContentTables({ async query() { return { rows: [{ ready: false }] }; } }),
-    { state: 'missing' },
+    await probeAdminContentTables({ async query() { return tableRow({ entities: true, revisions: true, idempotency: true }); } }),
+    { state: 'ready', tables: { entities: true, revisions: true, idempotency: true } },
+  );
+  assert.deepEqual(
+    await probeAdminContentTables({ async query() { return tableRow(); } }),
+    { state: 'unwired', tables: { entities: false, revisions: false, idempotency: false } },
+    '三表全缺才是 unwired（唯一可回落的形状）',
+  );
+  assert.deepEqual(
+    await probeAdminContentTables({ async query() { return tableRow({ entities: true }); } }),
+    { state: 'incomplete', tables: { entities: true, revisions: false, idempotency: false } },
+    '半套 schema ⇒ incomplete（⛔ 不得判 unwired 后放行）',
+  );
+  assert.deepEqual(
+    await probeAdminContentTables({ async query() { return tableRow({ idempotency: true }); } }),
+    { state: 'incomplete', tables: { entities: false, revisions: false, idempotency: true } },
+    '只有写侧台账也不算未配置',
   );
   assert.deepEqual(
     await probeAdminContentTables({ async query() { throw Object.assign(new Error('boom'), { code: '42501' }); } }),
     { state: 'unknown', reason: 'probe_error' },
-    '连接/权限故障必须是 unknown（⛔ 不得折成 missing 后放行）',
+    '连接/权限故障必须是 unknown（⛔ 不得折成 unwired 后放行）',
+  );
+  const unknownShape = { state: 'unknown', reason: 'unexpected_shape' };
+  assert.deepEqual(await probeAdminContentTables({ async query() { return { rows: [] }; } }), unknownShape);
+  assert.deepEqual(await probeAdminContentTables({ async query() { return { rows: [{}] }; } }), unknownShape);
+  // 三列布尔下的"读不懂"：都**不得**被判成 unwired（unwired 会直接降级放行，误判即等于放水）。
+  assert.deepEqual(
+    await probeAdminContentTables({ async query() { return { rows: [{ entities: 'false', revisions: 'false', idempotency: 'false' }] }; } }),
+    unknownShape,
+    "字符串 `'false'` 不是 `false`：⛔ 不得当成缺表降级",
   );
   assert.deepEqual(
-    await probeAdminContentTables({ async query() { return { rows: [] }; } }),
-    { state: 'unknown', reason: 'unexpected_shape' },
+    await probeAdminContentTables({ async query() { return { rows: [{ entities: false, revisions: false }] }; } }),
+    unknownShape,
+    '缺列（`idempotency` 不在）⇒ 读不懂 ⇒ 未知',
   );
   assert.deepEqual(
-    await probeAdminContentTables({ async query() { return { rows: [{}] }; } }),
-    { state: 'unknown', reason: 'unexpected_shape' },
-  );
-  // 复审追加的三种"读不懂"的形状：都**不得**被判成 missing（missing 会直接降级放行，误判即等于放水）。
-  assert.deepEqual(
-    await probeAdminContentTables({ async query() { return { rows: [{ ready: 'false' }] }; } }),
-    { state: 'unknown', reason: 'unexpected_shape' },
-    "字符串 `'false'` 不是 `false`：⛔ 不得当成 missing 降级",
+    await probeAdminContentTables({
+      async query() { return { rows: [{ entities: false, revisions: false, idempotency: false, extra: false }] }; },
+    }),
+    unknownShape,
+    '多余列说明语句被换掉了 ⇒ 未知（不挑着用）',
   );
   assert.deepEqual(
-    await probeAdminContentTables({ async query() { return { rows: [{ ready: false }, { ready: false }] }; } }),
-    { state: 'unknown', reason: 'unexpected_shape' },
-    '多行 rows 不合预期：聚合探测只该回一行，⛔ 不得只看首行就定 missing',
+    await probeAdminContentTables({
+      async query() { return { rows: [tableRow().rows[0], tableRow().rows[0]] }; },
+    }),
+    unknownShape,
+    '多行 rows 不合预期：聚合探测只该回一行，⛔ 不得只看首行就定态',
   );
   assert.deepEqual(
-    await probeAdminContentTables({ async query() { return { rows: [{ ready: null }] }; } }),
-    { state: 'unknown', reason: 'unexpected_shape' },
-    '`ready: null`（列存在但为空）⇒ 未知，⛔ 不得判 missing',
+    await probeAdminContentTables({
+      async query() { return { rows: [{ entities: null, revisions: null, idempotency: null }] }; },
+    }),
+    unknownShape,
+    '`null`（列存在但为空）⇒ 未知，⛔ 不得判缺表',
   );
 });
 
-test('F. missing 定型后 20 次公开读只探 1 次（不得退化成每请求重探）', async () => {
+test('F. unwired 定型后 20 次公开读只探 1 次（不得退化成每请求重探）', async () => {
   let probes = 0;
   const pool = {
     async query() {
       probes += 1;
-      return { rows: [{ ready: false }], rowCount: 1 };
+      return tableRow();
     },
   };
   let storeReads = 0;
@@ -289,9 +383,9 @@ test('F. missing 定型后 20 次公开读只探 1 次（不得退化成每请�
   const content = { source_id: 'a1b2c3d4-0000-4000-8000-000000000004', source_version: 'v1' };
   for (let i = 0; i < 20; i += 1) {
     const resolution = await resolve('knowledge', content);
-    assert.equal(resolution.state, 'unverifiable', 'missing 态照旧判"核对不到来源"（可见，不谎称失效）');
+    assert.equal(resolution.state, 'unverifiable', 'unwired 态照旧判"核对不到来源"（可见，不谎称失效）');
     assert.equal(resolution.reason, 'source_not_in_store');
   }
-  assert.equal(probes, 1, `missing 是定型结论：20 次公开读后探测次数必须仍是 1，实际 ${probes}（退化成每请求重探会放大库压）`);
-  assert.equal(storeReads, 0, 'missing 态必须短路，不得去问存储');
+  assert.equal(probes, 1, `unwired 是定型结论：20 次公开读后探测次数必须仍是 1，实际 ${probes}（退化成每请求重探会放大库压）`);
+  assert.equal(storeReads, 0, 'unwired 态必须短路，不得去问存储');
 });

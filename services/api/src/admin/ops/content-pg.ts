@@ -459,40 +459,57 @@ export function createPostgresAdminContentStore(options: PostgresAdminContentSto
 /** `randomUUID` 与内存实现同源（`node:crypto`），实体 id 才可互换。 */
 
 /**
- * 就绪探测 SQL。`to_regclass` 对**不存在的表**返回 `NULL` 而**不报错**，也**不要求表级 SELECT
- * 权限**，且 schema 全限定 ⇒ 不受 `search_path` 影响 —— 与 `flags-pg.ts#probeFeatureFlagsTable`
- * 同一口径（那里是 `public.feature_flags`，这里是 0036 的三张表）。
+ * 就绪探测 SQL（`Refs #18`）：**一次查询、三列布尔**。`to_regclass` 对**不存在的表**返回 `NULL`
+ * 而**不报错**，也**不要求表级 SELECT 权限**，且 schema 全限定 ⇒ 不受 `search_path` 影响 ——
+ * 与 `flags-pg.ts#probeFeatureFlagsTable` 同一口径（那里是 `public.feature_flags`，这里是 0036 三表）。
  *
- * 三张表是**一个整体**（实体 + 只可追加修订 + 幂等台账），缺任一张该域都跑不完一次读写，
- * 因此 `AND` 成一条语句、判"部分存在"为 `missing` —— 宁可退回接线前行为，也不在半套 schema
- * 上把请求打成 500。写成**静态整句**（不拼插值）：`tests/unit/sql-column-coverage.test.mjs`
- * 才能静态判读列面/表面，不会多出一条"不可判插值"。
+ * 为什么是**三列**而不是一条 `AND`（监工 2026-10-25T04:15:22Z 复核，判「需修改」）：三张表在
+ * **读面**的地位并不相同。`entities`／`revisions` 是读失效真值的唯一来源；`idempotency` 是
+ * **写侧**幂等台账，公开读**根本不碰它**。把三者 `AND` 起来、再"任一 false ⇒ 整域未配置"，
+ * 就会出现监工指出的那个错误结论：库里明明存着**已 withdrawn** 的来源（读面数据齐全），只因
+ * `admin_content_idempotency` 还没建，就被判成"这域从未配置"，于是 `unverifiable` ⇒ 公开读
+ * **可见** ⇒ **下架内容复活**。三列分开读才能把"全域未配置"与"部分 schema 不完整"分开。
+ *
+ * 写成**静态整句**（不拼插值）：`tests/unit/sql-column-coverage.test.mjs` 才能静态判读列面/表面，
+ * 不会多出一条"不可判插值"。
  */
-const CONTENT_TABLES_READY_SQL = `SELECT (
-  to_regclass('public.admin_content_entities') IS NOT NULL
-  AND to_regclass('public.admin_content_revisions') IS NOT NULL
-  AND to_regclass('public.admin_content_idempotency') IS NOT NULL
-) AS ready`;
+const CONTENT_TABLES_READY_SQL = `SELECT to_regclass('public.admin_content_entities') IS NOT NULL AS entities,
+       to_regclass('public.admin_content_revisions') IS NOT NULL AS revisions,
+       to_regclass('public.admin_content_idempotency') IS NOT NULL AS idempotency`;
+
+/** 0036 三张表的在场读数（只回答"在不在"，不回答"能不能读"）。 */
+export interface AdminContentTables {
+  readonly entities: boolean;
+  readonly revisions: boolean;
+  readonly idempotency: boolean;
+}
 
 /**
- * 内容存储就绪**三态**（`Refs #18`）。
+ * 内容存储就绪**四态**（`Refs #18`；监工复核后从三态改为四态）。
  *
- * - `ready`：三张表都在 ⇒ 内容域按**已接线**运行（引用不可用 ⇒ 隐藏；下架/失效**一律不可见**）；
- * - `missing`：探测明确回 `NULL` ⇒ **确认未配置**，不是故障（子集库、未跑 0036 的部署就是这一态）；
+ * - `ready`：**读面所需的两张表**（`entities` + `revisions`）都在 ⇒ 内容域按**已接线**运行
+ *   （引用不可用 ⇒ 隐藏；下架/失效**一律不可见**）。⚠ `idempotency` **不参与**这个判定：
+ *   它是写侧幂等用的，读面不消费它；把它算进来就是上面那段"下架内容复活"的根因。
+ * - `unwired`：三张表**全都不在** ⇒ **全域确认未配置**（子集库、未跑 0036 的部署）⇒
+ *   这是**唯一**允许退回接线前行为的形状（`unverifiable` ⇒ 可见、200）。
+ * - `incomplete`：**部分存在**（只缺 `revisions`、只缺 `entities`、只有 `idempotency`…）⇒
+ *   半套 schema。既**不可以**回落（那会绕过已存来源的失效状态），也**不可以**当真读
+ *   （会撞 `42P01`）⇒ 调用方必须**明确 503 fail-closed**。
  * - `unknown`：探测本身出错（连接／超时／权限）或结果形状读不懂 ⇒ **未知 ≠ 未安装**，
- *   调用方**必须**保持 fail-closed，⛔ 不得据此放行，也⛔ 不得把它混同 `missing`。
+ *   调用方**必须**保持 fail-closed，⛔ 不得据此放行，也⛔ 不得混同 `unwired`。
  */
 export type AdminContentTablesProbe =
-  | { readonly state: 'ready' }
-  | { readonly state: 'missing' }
+  | { readonly state: 'ready'; readonly tables: AdminContentTables }
+  | { readonly state: 'unwired'; readonly tables: AdminContentTables }
+  | { readonly state: 'incomplete'; readonly tables: AdminContentTables }
   | { readonly state: 'unknown'; readonly reason: 'no_pool' | 'probe_error' | 'unexpected_shape' };
 
 /**
  * 探测 0036 的三张表是否就绪。**不抛**：任何异常都折成 `unknown`。
  *
  * 与 `foldDatabaseError` 的分工：那个把库错误折成对外 503（用来**拒绝**一次请求），
- * 这个只回答"表在不在"（用来**决定这一域要不要接线**）。`42P01` 不该在这里出现
- * （`to_regclass` 不报错），一旦从探测里冒出来说明探测语句本身坏了 ⇒ 同样是 `unknown`。
+ * 这个只回答"表在不在"（用来**决定这一域要不要接线／要不要明确拒绝**）。`42P01` 不该在这里
+ * 出现（`to_regclass` 不报错），一旦从探测里冒出来说明探测语句本身坏了 ⇒ 同样是 `unknown`。
  */
 export async function probeAdminContentTables(
   pool: Pick<PgPool, 'query'> | null | undefined,
@@ -503,15 +520,27 @@ export async function probeAdminContentTables(
     const result = await pool.query(CONTENT_TABLES_READY_SQL);
     rows = result?.rows;
   } catch {
-    // 连接/权限/超时：**状态未知**。⛔ 不得返回 `missing` —— 那会把故障当成"未配置"放行。
+    // 连接/权限/超时：**状态未知**。⛔ 不得返回 `unwired` —— 那会把故障当成"未配置"放行。
     return { state: 'unknown', reason: 'probe_error' };
   }
-  // 聚合探测**恰好**一行一列。零行或多行都说明这条语句被换掉了／接口形状变了 ⇒ 读不懂 ⇒ 未知。
+  // 聚合探测**恰好**一行三列。零行或多行都说明这条语句被换掉了／接口形状变了 ⇒ 读不懂 ⇒ 未知。
   // （多行尤其不能只看第一行：那等于在"结果不合预期"时才按首行裁决定型，会把噪音读成结论。）
   if (!Array.isArray(rows) || rows.length !== 1) return { state: 'unknown', reason: 'unexpected_shape' };
-  const ready = (rows[0] as Record<string, unknown> | null | undefined)?.['ready'];
-  if (ready === true) return { state: 'ready' };
-  if (ready === false) return { state: 'missing' };
-  // 形状读不懂（`'false'` 字符串、`null`、缺键…）⇒ 不知道表在不在 ⇒ 未知（既不是「未配置」，更不是「可以放行」）。
-  return { state: 'unknown', reason: 'unexpected_shape' };
+  const row = rows[0] as Record<string, unknown> | null | undefined;
+  const entities = row?.['entities'];
+  const revisions = row?.['revisions'];
+  const idempotency = row?.['idempotency'];
+  // 三列**都必须是真布尔**：`'false'` 字符串、`null`、缺键都算"读不懂" ⇒ 未知（⛔ 不得猜成缺表）。
+  if (typeof entities !== 'boolean' || typeof revisions !== 'boolean' || typeof idempotency !== 'boolean') {
+    return { state: 'unknown', reason: 'unexpected_shape' };
+  }
+  // 多出来的列说明这条语句被换掉了（不是我们那条三列 SELECT）⇒ 读不懂 ⇒ 未知，⛔ 不得挑着用。
+  if (Object.keys(row as object).length !== 3) return { state: 'unknown', reason: 'unexpected_shape' };
+  const tables: AdminContentTables = { entities, revisions, idempotency };
+  // 读面只消费 entities + revisions；`idempotency` 是写侧台账，缺它不影响"读失效真值"。
+  if (entities && revisions) return { state: 'ready', tables };
+  // 唯一的"确实没有真值可读"的形状：三张表全都不在。
+  if (!entities && !revisions && !idempotency) return { state: 'unwired', tables };
+  // 其余任何组合都是半套 schema：不能回落（会绕过已存失效状态），也不能真读（撞 42P01）。
+  return { state: 'incomplete', tables };
 }

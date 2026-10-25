@@ -681,8 +681,10 @@ const TABLE_WIDE_COLUMN = '*';
  *   （缺口仍 **0**）；auditedFiles 20、INSERT/UPDATE/DELETE 45/51/39、RETURNING 91、
  *   ON CONFLICT 28、`SELECT *` 15（`t.*` 4）、函数调用 2、无顶层 FROM 13、不可判插值 5 均不变。
  * ⑯ 2026-10-25 #538 修红（Refs #18）：`admin/ops/content-pg.ts` 新增一条 **就绪探测 SELECT**
- *   —— `SELECT (to_regclass('public.admin_content_entities') IS NOT NULL AND …) AS ready`
- *   （`CONTENT_TABLES_READY_SQL`，**静态整句、零插值**：写成 `${…}` 拼接会多出一条"不可判插值"）。
+ *   —— `SELECT to_regclass('public.admin_content_entities') IS NOT NULL AS entities, … AS revisions,
+ *   … AS idempotency`（`CONTENT_TABLES_READY_SQL`，**一次查询三列布尔**、**静态整句、零插值**：
+ *   写成 `${…}` 拼接会多出一条"不可判插值"；三列而非一条 `AND` 是监工复核的要求 —— 只有把
+ *   "全域未配置"与"部分 schema"分开，才判得准该不该回落）。
  *   ⇒ 字面量 288 → **289**、SELECT 153 → **154**、无顶层 FROM 13 → **14**、逐文件
  *   `admin/ops/content-pg.ts` 15 → **16**；不可判插值仍 **5**、引用表仍 **48** 张
  *   （`to_regclass` 是函数调用不是 FROM，不计引用表）、列要求 1855／已覆盖 1801（缺口 **0**）、

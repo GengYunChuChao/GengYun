@@ -2207,7 +2207,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 落点下 `getEntity` 是库往返，同步版拿不到行；内存 store 下它是微任务，语义与同步版逐字相同
   // （`await` 一个非 Promise 值）。`decidePublicVisibility` 随之异步（`routes/knowledge.ts` 单点 await）。
   // 生产默认：内存 store 在 `real` 且无池下**空且只读** ⇒ `resolve()` 恒 `unverifiable` ⇒ 可见（"失效拦截"
-  // 在无池部署尚未全面生效）。**三态探测**见 `admin/content-readiness.ts` 头注（`missing` 降级／`unknown` 仍 503）。
+  // 在无池部署尚未全面生效）。**四态探测**见 `admin/content-readiness.ts` 头注（`unwired` 降级／`incomplete` 与 `unknown` 仍 503）。
   registerKnowledgeRoutes(app, config, pool, gatedGuards, {
     resolve: createAdminContentReferenceResolver({ host: app, store: adminContentStore, pool }),
     // GY-I12 复用缝（纯追加的两个覆盖项）：把上面建好的**同一个实例**交给读面，
