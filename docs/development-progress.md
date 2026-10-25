@@ -283,3 +283,5 @@ API 专项包含 PGlite 限权与实际本机回环 HTTP，身份／资料为合
 [开发顺序](development-order.md) · [数据库组件交接](verification/database-run-handoff.md) · [旧进度存档](archive/development-2026-10-10/docs/development-progress.md)。
 
 2026-10-10 历史核查见[固定提交报告](verification/supervisor-audit-20261010.md)：报告中的 `c0069bb` 测试与旧 PR 阻塞只适用于当时 SHA。随后 #68／#69／#75 已修订合入，登录生命周期、界面接线和 Windows 换行误报已在 2026-10-11 前轮限定复验中解除，不能继续把历史阻塞写成当前主线状态。原报告保留追溯；任何一轮组件回归都不增加整项完成数。
+
+AI 与作业相关规格的逐条现状（已实现／部分实现／未实现／已搁置四档，含三条 P0 缺口与真实门槛清单）见[AI 与作业规格现状](architecture/ai-ops-spec-status.md)；本行只加索引，不改变任何完成数。
