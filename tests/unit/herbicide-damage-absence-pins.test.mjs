@@ -3,7 +3,8 @@
  *
  * ## 这个文件是什么
  *
- * 取证复核（基线 `d16a2178`，`origin/main`）：药害这条线是**零实现** ——
+ * 取证复核（基线提交 `d16a2178`：`origin/main` 现值 `45345d3b` 的**祖先**，
+ * 钉子读取的 5 个判据面自该提交起未变）：药害这条线是**零实现** ——
  * 真实样本 0、标注 0、契约 operation 0、端点 0、对样本的测试 0。
  * 仓库**有意**如此，不是遗漏：`docs/evaluation/sample-gap-register.md:36`（表 #18）把它登记成
  * 「无需求条目，门槛 N/A」，`:43-48` 的说明段原文是「第 18 行是「缺需求」而不是「缺数据」…
@@ -28,8 +29,10 @@
  * 所以这里全部用 `assert.equal` / `assert.deepEqual`（`node:assert/strict`），
  * 连正向控制都是**逐条集合相等**，不接受「至少 N 条」。
  *
- * 判据里的「关键词出现」同样用 `deepEqual(段落.filter(含该词), [原行])` 表达 ——
+ * 判据里的「关键词出现」同样用 `deepEqual(文档真实行.filter(含该词), [原行…])` 表达 ——
  * 既钉住「这个词还在」，也钉住「它没跑到别的行去」。
+ * ⚠ 过滤对象必须是**读进来的文档行**；过滤期望值常量自己是恒真判据（判据与数据同源，
+ * 永远不会失败），旧版就在这里翻了车（见钉 6 主断言 ③）。
  *
  * ## 红的时候怎么办
  *
@@ -44,6 +47,12 @@
  *   （**故意**：import 会让「文件还在、内容被换掉」这类漂移测不出来）。
  * - **零外部依赖**：只用 `node:fs` / `node:path` / `node:url` + `node:test` / `node:assert`。
  * - **断言只用严格相等**：⛔ 不用 `assert.ok(x.length >= 1)`、⛔ 不用 `assert.match` 兜模糊匹配。
+ * - **`includes` 只干两件事（实测，不是声称）**：本文件**代码里还剩 2 处** `includes` ——
+ *   ① **判据位 1 处**（钉 6 主断言 ③：`lines.filter((line) => line.includes(needle))`，在**文档
+ *   真实行**里挑出命中行），它**包在 `assert.deepEqual` 里做精确集合相等**：挑出来的行必须与
+ *   期望行**逐行逐字**相等 —— 多一行、少一行、改一个字都红，⛔ 不是「至少包含」式裸判据；
+ *   ② **行号换算 1 处**（`:623`：把命中的 `labelClass` 换算成 `文件:行号` 供失败文案打印），
+ *   不参与判据。其余 `includes` 只出现在注释与失败文案字符串里（文案里的 `includes` 不构成判据）。
  * - 用例数固定 6；⛔ 无 `skip` / `only` / `todo`。
  *
  * 单跑：`node --test tests/unit/herbicide-damage-absence-pins.test.mjs`
@@ -57,7 +66,18 @@ import { fileURLToPath } from 'node:url';
 /** 仓库根：由本文件位置推出（`tests/unit/` 的上两级），⛔ 不用 `process.cwd()`。 */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** 立钉子时的基线（`origin/main`）：所有期望值都是在这个 SHA 上**实测**出来的，不是抄文档。 */
+/**
+ * 基线提交（`origin/main` 的**祖先**；钉子读取的 5 个判据面自该提交起未变）：
+ * 所有期望值都是在这个 SHA 上**实测**出来的，不是抄文档。
+ *
+ * 实测依据（2026-10-26，`origin/main` = `45345d3b`）：
+ * `git merge-base --is-ancestor d16a2178 45345d3b` ⇒ 0（是祖先）；
+ * `git diff d16a2178 45345d3b -- packages/contracts/openapi.json
+ * tests/evaluation/fixtures/synthetic-index.json packages/evaluation/samples/gy-i20-weeds-labels.json
+ * services/api/src/routes docs/evaluation/sample-gap-register.md` ⇒ 空（5 个判据面未变），
+ * 该区间的差异只在 `docs/architecture/**`、`docs/verification/**` 与 `tests/unit/**`。
+ * ⛔ 别把本常量改成「现值」来「对齐」：期望值是在**这个** SHA 上测的。
+ */
 const BASELINE_SHA = 'd16a2178a4489101933c6907ccfa682da746f7a8';
 
 /** 药害线的登记处（钉 1/2/6 的「口径出处」）。 */
@@ -710,6 +730,23 @@ const GAP_PARAGRAPH = [
   "> 并同步 `docs/evaluation/threshold-basis.md` 的逐条依据；在此之前不预置任何门槛值。",
 ];
 
+/**
+ * 基线实测：四个口径关键词**在整份登记处里的落行**（期望值，逐行逐字）。
+ *
+ * 这是钉 6 主断言 ③ 的期望值 —— **只当期望值**，判据过滤的是读回来的文档真实行。
+ * （旧版把这里当过滤对象，写成 `GAP_PARAGRAPH.filter(...)`，判据与数据同源，恒真。）
+ *
+ * 实测（`docs/evaluation/sample-gap-register.md`）：
+ * 「缺需求」1 行（说明段首行 :43）；「门槛 N/A」2 行（表 #18 行内一格 :36 + 说明段第三行 :45）；
+ * 「不计入任何分母」「不列为阻塞」各 1 行（说明段第三行 :45）。
+ */
+const KEYWORD_ROWS = [
+  { needle: '缺需求', rows: [GAP_PARAGRAPH[0]] },
+  { needle: '门槛 N/A', rows: [GAP_ROW_18, GAP_PARAGRAPH[2]] },
+  { needle: '不计入任何分母', rows: [GAP_PARAGRAPH[2]] },
+  { needle: '不列为阻塞', rows: [GAP_PARAGRAPH[2]] },
+];
+
 test('钉 6 · 需求登记仍是「缺需求」：#18 门槛 N/A、不计入分母', () => {
   const lines = linesOf(readRepoText(REGISTER));
 
@@ -761,40 +798,35 @@ test('钉 6 · 需求登记仍是「缺需求」：#18 门槛 N/A、不计入分
       + PIN_HINT,
   );
 
-  // 主断言 ③：四个关键词各自**只**落在原行上（用「过滤后 deepEqual」表达，
-  //           既钉「词还在」，也钉「它没跑到别的行去」；⛔ 不用 includes 兜模糊存在性）。
-  const paragraph = GAP_PARAGRAPH;
+  // 主断言 ③：四个口径关键词各自**只**落在原行上 —— 过滤对象是**读回来的文档真实行**。
+  //
+  // 旧版（审查者 34d69578 的阻塞级观察，虽记为非阻塞但必须修）：
+  //   const paragraph = GAP_PARAGRAPH;                       // ← 过滤的是期望值常量自己
+  //   assert.deepEqual(paragraph.filter((l) => l.includes('缺需求')), [GAP_PARAGRAPH[0]]);
+  // 判据与数据同源 ⇒ 四条形同 `assert.ok(true)`，是「纸面钉子」，**永远不可能红**。
+  //
+  // 现版两处收紧：
+  //   ① 过滤对象换成 `lines`（`readRepoText(REGISTER)` 读回来的真实文档行）；
+  //      `GAP_ROW_18` / `GAP_PARAGRAPH` 退回**纯期望值**，不再参与挑行。
+  //   ② 扫描面从「说明段 6 行切片」扩到**整份登记处**：切片版与上面主断言 ②（六行逐行
+  //      `deepEqual`）完全同构 —— 切片内任何改动都先在 ② 红，留着只是重复；整份文档版能挡住
+  //      「关键词被搬到别的表行 / 第 2、3 节」这类 ② **看不见**的漂移，因此它能在 ② 之外独立真红。
+  // 判据形状：每个词 → 命中行**逐行逐字**相等（多一行、少一行、改一个字都红），⛔ 不是
+  // 「至少包含」式裸判据；`includes` 只负责挑行，相等由 `deepEqual` 判。
+  const keywordRows = KEYWORD_ROWS.map(({ needle }) => ({
+    needle,
+    rows: lines.filter((line) => line.includes(needle)),
+  }));
   assert.deepEqual(
-    paragraph.filter((line) => line.includes('缺需求')),
-    [GAP_PARAGRAPH[0]],
-    '【钉 6 破了】「缺需求」这个词不在说明段首行了（药害的定性被改）：'
-      + `\n  实测：${JSON.stringify(paragraph.filter((line) => line.includes('缺需求')))}`
-      + `\n  基线：只在首行 —— ${JSON.stringify(GAP_PARAGRAPH[0])}`
-      + PIN_HINT,
-  );
-  assert.deepEqual(
-    paragraph.filter((line) => line.includes('门槛 N/A')),
-    [GAP_PARAGRAPH[2]],
-    '【钉 6 破了】「门槛 N/A」不在说明段第三行了：'
-      + `\n  实测：${JSON.stringify(paragraph.filter((line) => line.includes('门槛 N/A')))}`
-      + `\n  基线：只在第三行 —— ${JSON.stringify(GAP_PARAGRAPH[2])}`
-      + '\n  「门槛 N/A」是「不计入任何分母」的前提：门槛一旦变成数字，药害就会凭空产生分母。'
-      + PIN_HINT,
-  );
-  assert.deepEqual(
-    paragraph.filter((line) => line.includes('不计入任何分母')),
-    [GAP_PARAGRAPH[2]],
-    '【钉 6 破了】「不计入任何分母」不在说明段第三行了：'
-      + `\n  实测：${JSON.stringify(paragraph.filter((line) => line.includes('不计入任何分母')))}`
-      + `\n  基线：只在第三行 —— ${JSON.stringify(GAP_PARAGRAPH[2])}`
-      + PIN_HINT,
-  );
-  assert.deepEqual(
-    paragraph.filter((line) => line.includes('不列为阻塞')),
-    [GAP_PARAGRAPH[2]],
-    '【钉 6 破了】「不列为阻塞」不在说明段第三行了：'
-      + `\n  实测：${JSON.stringify(paragraph.filter((line) => line.includes('不列为阻塞')))}`
-      + `\n  基线：只在第三行 —— ${JSON.stringify(GAP_PARAGRAPH[2])}`
+    keywordRows,
+    KEYWORD_ROWS,
+    '【钉 6 破了】四个口径关键词在登记处的落行变了（措辞被改，或词跑到了别的行）：'
+      + `\n  实测（词 → 命中行）：${JSON.stringify(keywordRows, null, 2)}`
+      + `\n  基线（${BASELINE_SHA}）：${JSON.stringify(KEYWORD_ROWS, null, 2)}`
+      + '\n  口径要求：「缺需求」只在说明段首行；「门槛 N/A」只在表 #18 行内一格与说明段第三行；'
+      + '「不计入任何分母」「不列为阻塞」只在说明段第三行 —— 多一行、少一行、改一个字都红。'
+      + '\n  这条与主断言 ② 不是重复：② 只看说明段 6 行，这条看**整份登记处**，'
+      + '能抓住「关键词被搬到别的表行 / 第 2、3 节」这类 ② 看不见的漂移。'
       + PIN_HINT,
   );
 });
