@@ -76,6 +76,9 @@
 --   2. 不动资料维度（`data_type`）：`checked_content` 在 `packages/privacy/constants.mjs`
 --      （`NON_MEDIA_DATA_TYPES`）上仍然是**合法**的资料类型 —— 它决定"必需哪些用途"以及
 --      "对象键是文本（非媒体）还是 uuid（媒体）"，与 `object_type` 是两个维度，不在本迁移范围内。
+--   3. 不同步库层 `0018_favorites_history.sql` 的 `target_type` CHECK（仍是旧 16 值、不含 `conversation_turn`）。
+--      今日 favorites/history 的写入口只落 3 型与 recognition/ocr、不可达该成员；但 `services/api/src/history/validate.ts`
+--      的内部创建口已按 17 类校验 ⇒ 一旦落轮次类型会撞库层 CHECK 报 500。改它需要另开迁移改表，本片只登记不改表。
 --
 -- ## 上线动作（运维必读）
 --   运行时角色 `gengyun_egress_ledger` **没有** `object_key` 的 UPDATE 权限（见 0014 头注释第 4 条：

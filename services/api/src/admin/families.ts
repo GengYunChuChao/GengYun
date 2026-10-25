@@ -14,7 +14,7 @@
  * 4. **TargetRef.type 的取值策略**：只有 `sources` 能直接命中闭集里的 `source`。
  *
  * 契约缺口（如实记录，不新增字段、不改 packages/contracts/**）：
- * - `TargetRef.type` 的 16 个闭集成员里**没有** knowledge / registration / restriction。
+ * - `TargetRef.type` 的 17 个闭集成员里**没有** knowledge / registration / restriction。
  *   为了既不新增闭集成员、又不丢掉 revision 追溯，本片用下面 `targetRefTypeFor()`
  *   的**临时映射**，并且**只使用闭集内已有的成员**；映射结果由
  *   `tests/unit/admin-contract-fields.test.mjs` 对着契约的 `TargetRef.type` 闭集断言。

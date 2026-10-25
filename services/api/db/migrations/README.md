@@ -40,6 +40,9 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`
   `exports_object_key_shape` 从 `{1,128}` 收紧到 `{1,80}`（与契约 `TargetRef.id` 的 `maxLength: 80` 同口径）。
   配对回滚 `rollback/0040_export_object_key_contract_backfill.down.sql` **只回滚约束、不回滚数据**
   （回退会把行写回契约闭集之外；去前缀后信息不唯一可逆），依据写在两个文件各自的头注释里。
+- **本片不修的库层遗留（已登记，勿当作已完成）**：`0018_favorites_history.sql` 的 `target_type` CHECK 仍是旧 16 值
+  （不含 `conversation_turn`）。今日 favorites/history 写入口不可达该成员，但 `services/api/src/history/validate.ts`
+  已按 17 类校验 ⇒ 一旦落轮次类型会撞库层 CHECK 报 500。修它需要新迁移改表，不在 `0040` 范围内。
 
 - `0033_admin_audit_log_read.sql`（R34 · 后台审计日志查询面，Refs #18）接在 `0032` 之后：
   编号前核对过全部 refs 与在途 PR（`003[3-9]_` 零命中）⇒ 直接用最大号 +1，**台账仍为空数组**。

@@ -133,7 +133,7 @@ function validateTranscription(value) {
 }
 
 /**
- * 契约 `TargetRef` 类型闭集（16 项，逐项一致，不得扩展）。
+ * 契约 `TargetRef` 类型闭集（17 项，逐项一致，不得扩展）。
  *
  * 本片只消费两类：转写任务 `transcription`（`POST /speech/transcriptions` 的 202）与
  * 回答任务 `answer`（`POST /conversations/{id}/turns` 的 202，`target_ref.id` 是轮次 id）。

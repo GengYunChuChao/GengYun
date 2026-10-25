@@ -12,7 +12,7 @@
  *   `id / action / scope / target_ref / reason_code / request_id / result / created_at`。
  * - `packages/contracts/openapi.json:16323-16367`：`AuditEventPage`（maxItems 50）与信封。
  * - `packages/contracts/openapi.json:11165-11205`：`TargetRef` = `{type, id, revision}`，
- *   `type` 为 16 项闭集，`revision` 为 integer >= 1。
+ *   `type` 为 17 项闭集，`revision` 为 integer >= 1。
  *
  * ## R29-S5 起：主体与前后值不再是缺口
  * `AuditEvent` 原有 8 个必填字段（`AUDIT_EVENT_FIELDS`），本片追加 4 个**可选且可空**字段

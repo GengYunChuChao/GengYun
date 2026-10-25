@@ -18,7 +18,7 @@
 //     契约里**没有** `title`/`body`/`actor`/`summary`/`unread` —— 本模块**不伪造**消息标题与正文，
 //     也不为它们造本地替身字段（页面只按 `type` 呈现固定标签，不假装服务端给了正文）；
 //   - `type` 闭集 `comment|like|moderation|system`；`reference_state` 闭集 `available|unavailable`；
-//     `TargetRef.type` 闭集 16 项；`read_at` 为 date-time 或 null；`UnreadCount` 为 `{count}`（整数 ≥0）；
+//     `TargetRef.type` 闭集 17 项；`read_at` 为 date-time 或 null；`UnreadCount` 为 `{count}`（整数 ≥0）；
 //   - 未读数是**派生量**（服务端每次现算 `read_at === null` 的行数，见 `messages/service.ts` 不变式 2）
 //     ⇒ 本模块**不维护本地计数器**，每次都向服务端重新读取。
 //
