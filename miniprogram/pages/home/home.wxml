@@ -37,7 +37,7 @@
         <view class="feature-card__icon"><view class="gy-icon {{item.iconClass}}"></view></view>
         <view class="feature-card__title">{{item.title}}</view>
         <view class="feature-card__desc">{{item.desc}}</view>
-        <view class="badge badge--stub feature-card__stub">演示</view>
+        <view class="badge badge--stub feature-card__stub">{{item.badge}}</view>
       </button>
     </view>
   </view>
