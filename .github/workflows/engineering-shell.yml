@@ -91,7 +91,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run test:contract
       - run: node tools/verify-contract-status.mjs
-      - run: node tools/verify-doc-anchors.mjs --strict
+      - run: node tools/verify-doc-anchors.mjs --strict --scan docs
 
   evaluation:
     name: evaluation-tests
