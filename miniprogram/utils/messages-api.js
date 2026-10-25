@@ -18,7 +18,7 @@
 //     契约里**没有** `title`/`body`/`actor`/`summary`/`unread` —— 本模块**不伪造**消息标题与正文，
 //     也不为它们造本地替身字段（页面只按 `type` 呈现固定标签，不假装服务端给了正文）；
 //   - `type` 闭集 `comment|like|moderation|system`；`reference_state` 闭集 `available|unavailable`；
-//     `TargetRef.type` 闭集 16 项；`read_at` 为 date-time 或 null；`UnreadCount` 为 `{count}`（整数 ≥0）；
+//     `TargetRef.type` 闭集 17 项；`read_at` 为 date-time 或 null；`UnreadCount` 为 `{count}`（整数 ≥0）；
 //   - 未读数是**派生量**（服务端每次现算 `read_at === null` 的行数，见 `messages/service.ts` 不变式 2）
 //     ⇒ 本模块**不维护本地计数器**，每次都向服务端重新读取。
 //
@@ -26,7 +26,7 @@
 //   - **real 模式服务端在消息持久存储未接线时整域 503 `PROVIDER_UNAVAILABLE`**（fail-closed）：
 //     页面必须按「服务未接线」如实展示，**绝不显示成「暂无消息」**，也不用本地数据顶替；
 //   - **目标可用性端口已接线**（`#425`，服务端 `services/api/src/messages/reference-community.ts`）：
-//     只有 `post`／`comment` 两型可能为 `available`，其余 14 型恒为 `unavailable`，
+//     只有 `post`／`comment` 两型可能为 `available`，其余 15 型恒为 `unavailable`，
 //     且**不泄露目标是否存在**（未接线类型不因目标有无而改变判定）。本模块只透传 `reference_state`；
 //     跳转入口与目标类型判据在页面侧（`pages/messages`），本模块**不**拼路由、不伪造目标标题；
 //   - 首版**不接**微信外部推送；`comment`／`like` 两类消息自 `#422` 起已有生产路径
@@ -37,9 +37,9 @@ const runtime = require('../config/runtime')
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MESSAGE_TYPES = ['comment', 'like', 'moderation', 'system']
 const REFERENCE_STATES = ['available', 'unavailable']
-/** openapi.json -> TargetRef.type（16 项闭集，不得扩展）。 */
+/** openapi.json -> TargetRef.type（17 项闭集，不得扩展）。 */
 const TARGET_REF_TYPES = ['species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr',
-  'transcription', 'answer', 'post', 'comment', 'conversation', 'dose_card', 'media', 'synthesis', 'job', 'source']
+  'transcription', 'answer', 'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source']
 /** openapi.json -> Message（`additionalProperties:false`，required 恰为 7 项）。 */
 const MESSAGE_FIELDS = ['id', 'revision', 'type', 'target_ref', 'reference_state', 'read_at', 'created_at']
 

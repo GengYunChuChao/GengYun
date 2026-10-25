@@ -17,10 +17,10 @@ const runtime = require('../config/runtime')
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const CONTRACT_VERSION = '1.0.0'
 const EXECUTION_MODES = ['real', 'stub', 'preset_demo']
-// 契约 FavoriteTarget.type（3 项闭集）与 TargetRef.type（16 项闭集）。
+// 契约 FavoriteTarget.type（3 项闭集）与 TargetRef.type（17 项闭集）。
 const FAVORITE_TARGET_TYPES = ['species', 'herbicide', 'scheme']
 const TARGET_REF_TYPES = ['species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr', 'transcription',
-  'answer', 'post', 'comment', 'conversation', 'dose_card', 'media', 'synthesis', 'job', 'source']
+  'answer', 'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source']
 const FAVORITE_KEYS = ['id', 'revision', 'target_ref', 'reference_state', 'unavailable_reason', 'created_at']
 const TARGET_REF_KEYS = ['type', 'id', 'revision']
 const REFERENCE_STATES = ['available', 'unavailable']
