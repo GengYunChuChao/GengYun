@@ -170,7 +170,7 @@ $ git grep -nE "^GRANT gengyun_[a-z_]+ +TO gengyun_api_runtime;" -- deploy/postg
 | 1③ | 与脚本逐条相等 | `parseRoleGroupFiles()` 的 `组:文件` 集合 == `DISPOSITION.base ∪ cli`；且 `+=` 仍在 `WITH_CLI_GROUPS` 条件里 | `ROLE_GROUP_FILES 多出 G:F（DISPOSITION.base ∪ cli 未登记…）`／`DISPOSITION 声明 G:F，但脚本里没有`／`不在 WITH_CLI_GROUPS 条件里` |
 | 2 | 两个具名常量 | 文件数 == 8、`CREATE ROLE` 条数 == 11、角色名不重复 | `文件数 N ≠ 8…`／`条数 M ≠ 11`／`角色名重复：…` |
 | 3 | 引用闭合 | `GRANT gengyun_<x> TO gengyun_api_runtime;` 的组 ⊆ 11 个 `CREATE ROLE` 角色 | `20-login-roles.sql:N 授权引用 X，但 … 里没有它（悬空引用）` |
-| 4 | 文档计数 | 两个文档里「N 个文件」== 8、「N 个 NOLOGIN 组/角色」== 11；**解析不到计数句同样判红** | `deploy/postgres-cvm/README.md:441 写「7 个文件」，实测 8 个：…`（原记 `README.md` 第 440 行：后缀匹配落到仓根 README，且根 README 仅 203 行）／`解析不到…（删掉句子不能当通过）` |
+| 4 | 文档计数 | 两个文档里「N 个文件」== 8、「N 个 NOLOGIN 组/角色」== 11；**解析不到计数句同样判红** | `deploy/postgres-cvm/README.md:441 写「7 个文件」，实测 8 个：…`（原记 `README.md` 第 440 行：后缀匹配落到仓根 README，且根 README 全文 272 行（非空 203））／`解析不到…（删掉句子不能当通过）` |
 | 5 | 活文档口径（第二提交） | `provision-db.sh` 与 `20-login-roles.sql` 的注释里不得再出现「7 个角色」／「7 个 NOLOGIN」；正则带数字边界 `(?<![0-9])7\s*个\s*(?:角色\|NOLOGIN)`，不误伤「17 个角色」 | `… 仍出现「7 个角色/NOLOGIN」口径：7 个 NOLOGIN` |
 
 **断言 1③ 为什么比"组名集合相等"更强**：比对的是 `组:文件` **配对**。只比组名的话，

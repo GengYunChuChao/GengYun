@@ -45,7 +45,7 @@
   "[Page 路由 错误] routeDone with a webviewId -1633183530 is not found"
 ```
 
-**逐条性质判定**（说明：上列转录与下表里的 `WASubContext.js`／`WAServiceMainContext.js`／`VM59` 均指微信小程序基础库的运行时内部脚本，不是本仓库文件，故不按仓内行号锚点核对、也不随库校验）：
+**逐条性质判定**（说明：上列转录与下表里的 `WASubContext.js`／`WAServiceMainContext.js`／`VM59` 均指微信小程序基础库的运行时内部脚本，不是本仓库文件，故不按仓内行号锚点核对；这两条会长期以 BROKEN 记在基线里，属已知豁免）：
 
 | # | 条目 | 来源 | 性质 |
 |---|---|---|---|

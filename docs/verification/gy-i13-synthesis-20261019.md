@@ -23,7 +23,7 @@
 
 审计覆盖 `services/api/src/tts/**`、`services/api/src/routes/{synthesis,media}.ts`、`services/api/src/jobs/**`、`services/api/src/app.ts` 与相关单测/集成脚本。结论：**受理、占位幂等、失败面、归属面在基线已相当完整**，真正的语义缺口只有两处，且都在「读面」这一侧：
 
-1. **读面无超时裁定（AC-2 后半不成立）**。`inspectJob`（`services/api/src/tts/service.ts:681`，原记 :652）在 `getOwnedJob` 之后直接投影；若执行器没落终态（受理后进程重启、`store.updateJob` 抛错/返回 null、执行器缺失），任务停在 `queued`/`running`，读面会**永远**回报 `queued` —— 与「任务失败/超时必须显式状态（不得静默变成功）」相冲突。既有断言只覆盖执行器自己的 deadline 竞速（`tests/unit/tts-service.test.mjs:640`：注入 `jobDeadlineMs: 30` 让 `runProviderWithDeadline` 自己超时），**没有**覆盖「执行器缺席时读面怎么呈现」。
+1. **读面无超时裁定（AC-2 后半不成立）**。`inspectJob`（`services/api/src/tts/service.ts:681`，原记 :652）在 `getOwnedJob` 之后直接投影（**改前**；本片已加 `adjudicateExpiredJob` 就地裁定超时，见 §3.1）；若执行器没落终态（受理后进程重启、`store.updateJob` 抛错/返回 null、执行器缺失），任务停在 `queued`/`running`，读面会**永远**回报 `queued` —— 与「任务失败/超时必须显式状态（不得静默变成功）」相冲突。既有断言只覆盖执行器自己的 deadline 竞速（`tests/unit/tts-service.test.mjs:640`：注入 `jobDeadlineMs: 30` 让 `runProviderWithDeadline` 自己超时），**没有**覆盖「执行器缺席时读面怎么呈现」。
 2. **模式交叉会撒谎（AC-4 后半不成立）**。任务行不记录受理时的执行模式（改前 `services/api/src/tts/store.ts:26-33` 无该字段），`real` 装配可以直接把 `stub` 受理的 `succeeded` 任务读成 `error_code: null` + `result` —— 替身标注产物就此冒充真实合成结果。既有断言只有「real 缺凭据 ⇒ 受理前 503」（`tests/unit/tts-jobs-http.test.mjs:307`），**没有**「已受理的任务标识在另一种装配下如何呈现」的断言。
 3. **音频访问受限成立（AC-3 后半）**。合成产物的 `media_id` 属 TTS 替身产物自持 Map（`services/api/src/tts/media.ts:67`），与媒体域（`services/api/src/media/` 的 `service.ts`／`object-store.ts`；原记的 `media.ts` 从未入库、未能定位最后出现位置，原记行号第 467 行不可复核）不同源；契约 85 条路径里**没有** owner 私有媒体字节读取 operation（唯一返回字节者要求 `community_image` + `published/approved`，且需 `X-Media-Access-Token`：`services/api/src/routes/media.ts:337-345`）。该事实已由裁定 `E:\GengYunCommander\.pg17\ruling-451-narrow-scope.md` 缩片，本片只补「无隐式出口」的断言，**不放开契约**。
 
