@@ -503,9 +503,12 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/user-chain-e2e.mjs',
     reason: '需真实 PostgreSQL 17：脚本自己用 `initdb` 起一次性隔离集群（随机端口、独立数据目录，'
-      + '跑完 `pg_ctl stop` 并逐个文件删除数据目录），依赖本机 PG 二进制（`USER_CHAIN_PG_BIN`，缺省走 PATH）；'
+      + '跑完 `pg_ctl stop` 并逐个文件删除数据目录），依赖本机 PG 二进制（`GY_PG_BIN`，缺省走 PATH）；'
       + '缺 PG17 时显式跳过并以 **77** 退出（未取得，⛔ 不是通过）；'
-      + '本片未新增对应 CI workflow（如实登记为未取得项），故不进无 PG 的回环链。',
+      + 'R18 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立 step（受管脚本第 15d 条：'
+      + '复用该 job 里装 `postgresql-17` 那条 step 装出来的 `/usr/lib/postgresql/17/bin`，'
+      + '数据根目录走 `GY_USER_CHAIN_PG_ROOT`＝`${{ runner.temp }}/gy-user-chain-pg`，⛔ 不自己 `CREATE DATABASE`），'
+      + '但它**仍不进**无 PG 的回环链 `test:integration:http`——接进真库 job 不等于进回环链，故在此如实登记为未接线。',
   },
   {
     path: 'tests/integration/online-purge-pg.mjs',

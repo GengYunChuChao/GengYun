@@ -159,6 +159,18 @@ const MANAGED_SCRIPTS = Object.freeze([
   // 两者同族（自起临时集群、自建库、跑完即删），并排读最省事；⛔ 不追加到清单末尾——那里紧邻识别链
   // `recognition-chain-e2e`，它必须始终排最后。
   'tests/integration/retention-purge-pg.mjs',
+  // 15d. `user-chain-e2e.mjs`（R18 接入，GY-I04／I05／I07／I16：登录→手选→搜索→详情→收藏/取消→退出
+  //    六步整链、119 条断言）。与第 13/14/15/15b/15c 条**同类**的自起集群脚本（自己 `initdb` 出临时 17
+  //    集群、空闲端口、自建库、跑完 `pg_ctl stop` 并逐个文件删数据目录），**不连** service 里的库、
+  //    **不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
+  //    它是**第二条** `-e2e.mjs`（另一条是第 16 条的识别链）：在原样 `buildApp` 真装配上 `listen({port:0})`
+  //    走真 HTTP，因此比 `-pg.mjs` 那几条多一份端口/装配成本，但仍在同量级（本机含 initdb ≈ 17 s）。
+  //    它的数据根目录键是 **`GY_USER_CHAIN_PG_ROOT`**（脚本取值点 `process.env.GY_USER_CHAIN_PG_ROOT ?? ''`），
+  //    ⛔ 与第 13/14/15b 条的 `GY_I19_PG_ROOT`、第 15 条的 `GY_W11_PG_ROOT`、第 15c 条的 `GY_R34_PG_ROOT`
+  //    都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
+  //    其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后。
+  'tests/integration/user-chain-e2e.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -190,6 +202,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/online-purge-pg.mjs',
   // R34：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合）。
   'tests/integration/retention-purge-pg.mjs',
+  // R18：同上（与 `MANAGED_SCRIPTS` 同位置插入，同一份集合，只允许顺序不同）。
+  'tests/integration/user-chain-e2e.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -362,8 +376,21 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    ⛔ 与第 13/14/15b 条都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步。
   'tests/integration/retention-purge-pg.mjs',
-  // 16. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**唯一一条不叫 `-pg.mjs`** 的受管脚本
-  //    （`-e2e.mjs`），跑的是仓内唯一的完整业务链路（上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
+  // 15d. `user-chain-e2e`（R18 接入，GY-I04／I05／I07／I16：登录→手选作物/地区→搜索→详情→收藏/取消→退出
+  //    六步整链、119 条断言）：与第 13/14/15/15b/15c 条**同类**的自起集群脚本（自己 `initdb` 出临时 17
+  //    集群、空闲端口且**先探活再起**、自建库、跑完 `pg_ctl stop` 并逐个文件删数据目录），**不连** service
+  //    里的库、**不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
+  //    它是**第二条** `-e2e.mjs`：在原样 `buildApp` 真装配上 `listen({port:0})` 走真 HTTP（不 mock 路由），
+  //    因此比 `-pg.mjs` 那几条多一份端口/装配成本，但仍在同量级（本机 PG 17.11 含 initdb ≈ 17 s，
+  //    `timeout-minutes: 15` 绰绰有余）⇒ 不需要像识别链那样靠「排最后」给它留独占读秒。
+  //    它的数据根目录键是 **`GY_USER_CHAIN_PG_ROOT`**（脚本取值点 `process.env.GY_USER_CHAIN_PG_ROOT ?? ''`），
+  //    ⛔ 与第 13/14/15b 条的 `GY_I19_PG_ROOT`、第 15 条的 `GY_W11_PG_ROOT`、第 15c 条的 `GY_R34_PG_ROOT`
+  //    都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步。
+  'tests/integration/user-chain-e2e.mjs',
+  // 16. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**两条不叫 `-pg.mjs`** 的受管脚本之一
+  //    （另一条是上面第 15d 条的 `user-chain-e2e`，同为 `-e2e.mjs`），跑的是仓内唯一的完整识别业务链路
+  //    （上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
   //    全程 loopback 真 HTTP）。前提三条：① 专用空库 `gengyun_recognition_chain_test`（脚本 `preparePg()` 先数
   //    `public` 下的表，非 0 直接断言失败）；② 只 apply 它需要的两段迁移（0001 身份 + 0018 历史）并断言
   //    「恰好一次 + 重复 no-op」——⛔ 与上面的 ocr-jobs／recognitions／speech **不同**，它不跑全链；
@@ -410,6 +437,11 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   // 跑完 `pg_ctl stop` 并删数据目录）。它读的数据根键是 **`GY_R34_PG_ROOT`**（源码取值点
   // `process.env.GY_R34_PG_ROOT ?? tmpdir()`），与上四条都不同 ⇒ 键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   'tests/integration/retention-purge-pg.mjs',
+  // R18：`user-chain-e2e.mjs`（GY-I04／I05／I07／I16 用户链路整链）同上（自起集群、`initdb -U postgres -A trust`、
+  // 空闲端口、自建库、跑完 `pg_ctl stop` 并逐个文件删数据目录）。它读的数据根键是
+  // **`GY_USER_CHAIN_PG_ROOT`**（源码取值点 `process.env.GY_USER_CHAIN_PG_ROOT ?? ''`，数据目录＝<root>/gengyun-user-chain-pg-<runId>），
+  // 与上五条都不同 ⇒ 键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  'tests/integration/user-chain-e2e.mjs',
 ]);
 
 /**
@@ -435,6 +467,11 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   // R34：`retention-purge-pg.mjs`（`#19` 保留策略侧）读 **`GY_R34_PG_ROOT`**（源码取值点
   // `process.env.GY_R34_PG_ROOT ?? tmpdir()`；日志键是 `GY_R34_PG_LOG`，不匹配根键形状，故不会误登记）。
   'tests/integration/retention-purge-pg.mjs': 'GY_R34_PG_ROOT',
+  // R18：`user-chain-e2e.mjs`（用户链路整链）读 **`GY_USER_CHAIN_PG_ROOT`**（源码取值点
+  // `process.env.GY_USER_CHAIN_PG_ROOT ?? ''`，数据目录＝<root>/gengyun-user-chain-pg-<runId>）。
+  // ⚠️ 旧键 `USER_CHAIN_PG_DATADIR`／`USER_CHAIN_PG_BIN` 仍被脚本当作过渡别名读取，但它们**不匹配**
+  // `SELF_CLUSTERED_ROOT_KEY_PATTERN`（不是 `GY_*_PG_ROOT`）⇒ 不会进 `detectedRootKeys()`，不是可给的根键。
+  'tests/integration/user-chain-e2e.mjs': 'GY_USER_CHAIN_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */
