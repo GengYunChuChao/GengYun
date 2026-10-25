@@ -142,6 +142,13 @@ const MANAGED_SCRIPTS = Object.freeze([
   // EXECUTE + 表仍 forbidden）。**紧挨着 `account-deletion-pg`**：两者是同一条「注销域」链的两端（自己注销
   // vs 第三方侧删除的受理与证据），并排读最省事。
   'tests/integration/third-party-deletion-pg.mjs',
+  // S4-P2-b：`third-party-deletion-sql-pg`（同一条注销域的**库层运行时语义**臂：自起临时集群、跑完全链迁移
+  // 0001→0044，直调两条 SECURITY DEFINER 函数钉 ①requested 落行与 requested_at 同形 ②重复写幂等
+  // ③闭集外 G0001 ④failed 缺 error_code ⇒ G0001 且零落行 ⑤confirmed 回退 ⇒ G0003 ⑥读面按 request_id
+  // 隔离 ⑦运行时直写表 42501 ⑧export_ref NULL/uuid 两支）。**紧挨着 S4-P1 的 `third-party-deletion-pg`**：
+  // 两条臂钉的是同一件事的两面（定义面+授权面 vs 运行时语义），并排读最省事。
+  // ⚠️ 它的 workflow step 与 S4-P1 那条**不同段**：它要 `GY_PG_BIN`，必须排在那条装包 step 之后。
+  'tests/integration/third-party-deletion-sql-pg.mjs',
   'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
@@ -190,6 +197,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/account-deletion-pg.mjs',
   // S4-P1：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/third-party-deletion-pg.mjs',
+  // S4-P2-b：同上（与 `MANAGED_SCRIPTS` 同位置插入，同一份集合）。
+  'tests/integration/third-party-deletion-sql-pg.mjs',
   'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
@@ -403,6 +412,20 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步。
   'tests/integration/user-chain-e2e.mjs',
+  // 15e. `third-party-deletion-sql-pg`（S4-P2-b 接入，迁移 0044 两条 SECURITY DEFINER 函数的**运行时语义**）：
+  //    与第 13/14/15/15b/15c/15d 条**同类**的自起集群脚本（自己 `initdb` 出临时 17 集群、
+  //    `56000–56499` 且**先探活再起**、只监听 127.0.0.1、`-c max_connections=32`、自建
+  //    `gengyun_third_party_deletion_sql_test`、跑完 `pg_ctl stop` 并删数据目录与两份日志），**不连** service
+  //    里的库、**不建**组角色（只自建一个 `gy_s4_p2b_runtime` 运行时身份）、也不碰集群级对象 ⇒ 对前后脚本
+  //    零耦合，位置只受「那条装包 step 在它之前」约束。
+  //    它钉的是 0044 的**库层运行时语义** 8 条（见脚本头注释的「8 条 ↔ 0044 行号」表），与 S4-P1 的
+  //    `third-party-deletion-pg`（定义面/授权面，走 service 集群）互补，⛔ 不是重复的一条。
+  //    它的数据根目录键是 **`GY_S4_PG_ROOT`**（脚本唯一取值点 `process.env.GY_S4_PG_ROOT ?? tmpdir()`），
+  //    ⛔ 与第 13/14/15b 条的 `GY_I19_PG_ROOT`、第 15 条的 `GY_W11_PG_ROOT`、第 15c 条的 `GY_R34_PG_ROOT`、
+  //    第 15d 条的 `GY_USER_CHAIN_PG_ROOT` 都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
+  //    其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后。
+  'tests/integration/third-party-deletion-sql-pg.mjs',
   // 16. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**两条不叫 `-pg.mjs`** 的受管脚本之一
   //    （另一条是上面第 15d 条的 `user-chain-e2e`，同为 `-e2e.mjs`），跑的是仓内唯一的完整识别业务链路
   //    （上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
@@ -457,6 +480,12 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   // **`GY_USER_CHAIN_PG_ROOT`**（源码取值点 `process.env.GY_USER_CHAIN_PG_ROOT ?? ''`，数据目录＝<root>/gengyun-user-chain-pg-<runId>），
   // 与上五条都不同 ⇒ 键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   'tests/integration/user-chain-e2e.mjs',
+  // S4-P2-b：`third-party-deletion-sql-pg.mjs`（迁移 0044 两条 SECURITY DEFINER 函数的运行时语义臂）同上
+  // （自起集群、`initdb -U postgres -A trust`、`56000–56499` 先探活再起、只监听 127.0.0.1、
+  // `-c max_connections=32`、自建 `gengyun_third_party_deletion_sql_test`、跑完 `pg_ctl stop` 并删数据目录
+  // 与两份日志）。它读的数据根键是 **`GY_S4_PG_ROOT`**（源码取值点 `process.env.GY_S4_PG_ROOT ?? tmpdir()`），
+  // 与上六条都不同 ⇒ 键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  'tests/integration/third-party-deletion-sql-pg.mjs',
 ]);
 
 /**
@@ -487,6 +516,11 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   // ⚠️ 旧键 `USER_CHAIN_PG_DATADIR`／`USER_CHAIN_PG_BIN` 仍被脚本当作过渡别名读取，但它们**不匹配**
   // `SELF_CLUSTERED_ROOT_KEY_PATTERN`（不是 `GY_*_PG_ROOT`）⇒ 不会进 `detectedRootKeys()`，不是可给的根键。
   'tests/integration/user-chain-e2e.mjs': 'GY_USER_CHAIN_PG_ROOT',
+  // S4-P2-b：`third-party-deletion-sql-pg.mjs`（0044 两条函数的运行时语义）读 **`GY_S4_PG_ROOT`**（源码唯一
+  // 取值点 `process.env.GY_S4_PG_ROOT ?? tmpdir()`；数据目录＝<root>/gy-s4-p2b-pg-<hex>，日志在**同一 root**
+  // 下的 `gy-s4-p2b-pg-<hex>.log`——`⛔` 不能放进 dataDir，否则 `openSync` 会把 initdb 的目标目录变成非空）。
+  // ⚠️ 它**没有** `GY_*_PG_LOG` 键（日志路径由 root 推导）⇒ `detectedRootKeys()` 只认这一个根键。
+  'tests/integration/third-party-deletion-sql-pg.mjs': 'GY_S4_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */

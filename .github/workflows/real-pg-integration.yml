@@ -609,6 +609,39 @@ jobs:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_USER_CHAIN_PG_ROOT: ${{ runner.temp }}/gy-user-chain-pg
           PGCLIENTENCODING: UTF8
+      # 第三方删除**库层语义**真库臂（S4-S3 P2-b，迁移 0044 的 `record_third_party_deletion` 与
+      # `list_third_party_deletions` 两条 SECURITY DEFINER 函数）：与上六步同属**自起集群**类——自己
+      # `initdb` 出一次性 PG 17 集群（`-U postgres -A trust`、`56000–56499` 先探活再起、只监听 127.0.0.1、
+      # `-c max_connections=32`）、自建 `gengyun_third_party_deletion_sql_test`、跑完全链迁移（0001→0044）、
+      # 自建运行时身份 `gy_s4_p2b_runtime`（只有两条函数的 EXECUTE、表上零权限），跑完 `pg_ctl stop` 并删
+      # 数据目录与两份日志；**不**连 service 里的库、**不**建组角色、**不**碰集群级对象 ⇒ 对前后脚本零耦合；
+      # 复用装包 step 装出来的 `/usr/lib/postgresql/17/bin`，且同样**不** `CREATE DATABASE`（判据⑦⑧ 走
+      # `SELF_CLUSTERED_SCRIPTS` 那组等价判据）。
+      # 它与 S4-P1 的 `third-party-deletion-pg`（上方 `#…` 那条）**不是**同一条臂：那条钉定义面与授权面
+      # （service 集群 + 从 `20-login-roles.sql` 原样抽 D5 区），这条钉**运行时语义**——8 组读数：①首次
+      # `requested` 落行且 `requested_at` 与 `p_at` UTC 同形；②重复写幂等且 `requested_at` 冻结；
+      # ③闭集外 `not_requested` ⇒ `G0001`；④`failed` 缺 `error_code` ⇒ `G0001` 且零落行；⑤`confirmed`
+      # 回退 ⇒ `G0003`；⑥读面按 `request_id` 隔离（⚠ 0044 的形参是 `p_request_id`，⛔ 不是 `p_recipient_id`）；
+      # ⑦运行时身份直 INSERT/SELECT/UPDATE/DELETE 表全 42501；⑧`export_ref` 为 NULL 与为 uuid 两支并存。
+      # 末行固定 `[ALL PASS]`，读数行是行首 `[A]`–`[H]`（`[ALL PASS]` 因此不会被 `awk` 数进去）。
+      # 缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，
+      # 也不加任何吞红开关）。
+      # ⚠️ 数据根目录键是 `GY_S4_PG_ROOT`（脚本唯一取值点），⛔ 不是 `GY_I19_PG_ROOT`／`GY_W11_PG_ROOT`／
+      # `GY_R34_PG_ROOT`／`GY_USER_CHAIN_PG_ROOT`；守卫按脚本源码交叉核对（`SELF_CLUSTERED_ROOT_KEY`），
+      # 给错键即红——那样 root 只是**装饰性 env**，数据目录照样落 `os.tmpdir()`。
+      # 排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
+      # 其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
+      # `timeout-minutes: 5`：本机实测整臂（initdb + 43 个迁移 + 8 组读数）≈ 40 s，5 分钟是它自己的封顶；
+      # ⛔ 不靠 job 级 15 分钟兜底——那会把「这一步卡死」混成「job 超时」。
+      # 本地取证（本机 PG 17.11 二进制 + 独立数据根 `E:\GengYunCommander\.pg17\tmp\s4-p2b`）：exit=0，
+      # `[A]`–`[H]` 8 组读数 + 末行 `[ALL PASS]`，跑完 `gy-s4-p2b-pg-*` 目录与日志零残留。
+      - name: 第三方删除库层语义（0044 / 闭集 G0001 / 终态 G0003 / 读面八列 / 运行时直写 42501）
+        timeout-minutes: 5
+        run: node tests/integration/third-party-deletion-sql-pg.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_S4_PG_ROOT: ${{ runner.temp }}/gy-s4-p2b-pg
+          PGCLIENTENCODING: UTF8
       # 识别端到端链路（GY-I06／I08／I09／I10，R28-S65）：库名硬钉 `gengyun_recognition_chain_test`，
       # 脚本同样要求**空库**（`preparePg()` 先数 `public` 下的表，非 0 直接断言失败）。
       # 它跑的是仓内**唯一**的完整业务链路：上传识别 → 拿到结果 → 看可信度与理由 → 加入识别历史 →

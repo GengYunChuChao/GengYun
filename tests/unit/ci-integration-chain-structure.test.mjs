@@ -533,6 +533,20 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     path: 'tests/integration/workbook-staging-pg.mjs',
     reason: '需真实 PG：由 `.github/workflows/workbook-staging.yml` 用独立测试集群运行。',
   },
+  {
+    // ⚠ 位置**固定在清单末尾**：本文件的登记行被证据页按手写行号引用（`docs/verification/**` 里
+    // 有 12 条 `…ci-integration-chain-structure.test.mjs:NN` 的手写锚点，其中 `:347` 必须仍落在
+    // 实质行上，否则 `tests/unit/doc-anchors-guard.test.mjs` 判 SUSPECT 直接红）。插在字母序位置上
+    // 会把后面每一条登记行整体下移、把这些锚点全部顶偏 ⇒ 新增条目一律追加在此，⛔ 不要插到中间。
+    path: 'tests/integration/third-party-deletion-sql-pg.mjs',
+    reason: '**自起集群**类真库臂（迁移 0044 两条 SECURITY DEFINER 函数的运行时语义）：缺 `GY_PG_BIN` 就打印 SKIP'
+      + ' 并 `exit(77)`，设了就自己 `initdb` 出一次性 PG 17 集群（`-U postgres -A trust`、56000–56499 先探活再起、'
+      + '只监听 127.0.0.1）、自建库 `gengyun_third_party_deletion_sql_test`、跑完全链迁移 0001→0044、自建运行时'
+      + '身份后直调两条函数；由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11`'
+      + ' service + 一条装 `postgresql-17` 二进制的 step）里一个**独立 step** 真跑（step 里**不** `CREATE DATABASE`）'
+      + '⇒ 接进真库 job 不等于进 `test:integration:http`（回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`），'
+      + '故在此如实登记为未接线。',
+  },
 ]);
 
 /** 读取并解析 `package.json` 真值。 */
