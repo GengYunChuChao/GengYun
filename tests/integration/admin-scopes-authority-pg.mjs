@@ -351,8 +351,8 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  assert.equal(applied.rows[0].version, '0043', '迁移 0043（#18 R18 片：后台作业取消审计落库，窄口径 SECURITY DEFINER 函数 + 只授运行时 EXECUTE）必须是最后一条已应用版本');
-  pass('schema_migrations 末项 = 0043');
+  assert.equal(applied.rows[0].version, '0044', '迁移 0044（#18 S4 片：第三方删除持久化，窄口径 SECURITY DEFINER 函数 + 只授运行时 EXECUTE）必须是最后一条已应用版本');
+  pass('schema_migrations 末项 = 0044');
 
   const hasCheck = await ownerPool.query(
     `SELECT count(*)::int AS n FROM pg_constraint
