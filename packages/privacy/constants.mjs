@@ -188,4 +188,3 @@ export const EXPORT_OBJECT_TYPES = Object.freeze([
 
 /** 外发账本 `object_key` 的字符上限 = 契约 `TargetRef.id` 的 `maxLength`（同一个数，不得各自漂移）。 */
 export const EXPORT_OBJECT_ID_MAX = 80;
-
