@@ -24,10 +24,13 @@
  *   node tools/verify-doc-anchors.mjs --emit-baseline      # 打印基线 JSON（不写盘）
  *   node tools/verify-doc-anchors.mjs --write-baseline     # 写 tools/doc-anchors-baseline.json
  *   node tools/verify-doc-anchors.mjs --root <目录>        # 指向夹具树（单测用）
+ *   node tools/verify-doc-anchors.mjs --symbol=count       # 符号关联统计（只统计，不参与退出码）
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { associateSymbol, declarationBlocks } from './lib/anchor-resolve.mjs';
 
 export const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 默认扫描面：架构文档 + 证据页。用 `--scan` 可加，不改这里也能扩。 */
@@ -388,6 +391,85 @@ export function ownerOf(targetPath) {
   return 'repo';
 }
 
+// —— 符号关联统计（--symbol=count：只统计，不参与退出码） ——————————————————
+/**
+ * 只有这些扩展名有「声明块」口径。JSON/SQL/MD/YML 的目标**不算无法判定**：
+ * 裁定 ④ 明确「不强制所有 JSON/SQL/历史读数都套函数符号」，硬套只会把合规引用记成红的。
+ */
+const SYMBOL_SOURCE_EXTENSIONS = new Set(['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs']);
+
+/**
+ * 逐条引用做符号关联：**每个引用位置分别关联**，不按行去重、也不取「一行一个」。
+ * 三档计数（`可核` 是 `命中` 的超集）：
+ *   可核   —— 能唯一关联到一个声明块；
+ *   命中   —— 可核且引用区间**完整**落在该声明块内；
+ *   无法判定 —— 路径找不到／路径不唯一／该行不在任何声明块内／声明块并列无法定序（**不猜、不算通过**）。
+ * 另记「不适用」（目标不是源码扩展名，裁定 ④ 不要求套函数符号）与「兜底回退」（块体可能不准，必须可见）。
+ * 返回值**不参与退出码**：`--strict` 的结构性判据（BROKEN／OUT_OF_RANGE／SUSPECT ＋ 基线）一切照旧。
+ */
+export function countSymbolAssociations({
+  root = TOOL_ROOT,
+  targets = DEFAULT_SCAN_TARGETS,
+  fileIndex = null,
+  documents = null,
+} = {}) {
+  const index = fileIndex ?? buildFileNameIndex(root);
+  const files = documents ?? resolveScanTargets(root, targets);
+  const blocksByFile = new Map();
+  const stats = { references: 0, checkable: 0, hit: 0, undecidable: 0, notApplicable: 0, fallback: 0 };
+  const reasons = new Map();
+  const undecidable = [];
+  const fallbacks = [];
+  const blocksOf = relativePath => {
+    if (!blocksByFile.has(relativePath)) {
+      blocksByFile.set(relativePath, declarationBlocks(readFileSync(join(root, relativePath), 'utf8')));
+    }
+    return blocksByFile.get(relativePath);
+  };
+  const recordUndecidable = (where, target, reason) => {
+    stats.undecidable += 1;
+    // 直方图按**类别**归并（剥掉括号里的具体行区间），否则「并列」的每一组都会自成一类，看不出主因。
+    const category = reason.replace(/（.*$/, '');
+    reasons.set(category, (reasons.get(category) ?? 0) + 1);
+    undecidable.push({ ...where, target, reason });
+  };
+  for (const docPath of files) {
+    const text = readFileSync(join(root, docPath), 'utf8');
+    // extractReferences 本来就是逐行 while 取**全部**匹配：一行里两条引用就是两条，不许退化成一行一条。
+    for (const reference of extractReferences(text)) {
+      stats.references += 1;
+      const where = { doc: docPath, docLine: reference.docLine };
+      const resolved = resolveTarget({ root, docPath, target: reference.target, fileIndex: index });
+      if (resolved.status !== 'resolved') {
+        recordUndecidable(
+          where,
+          reference.reference,
+          resolved.status === 'ambiguous' ? '引用路径不唯一（同名多文件），定不了目标文件' : '引用路径在仓库里找不到',
+        );
+        continue;
+      }
+      if (!SYMBOL_SOURCE_EXTENSIONS.has(extensionOf(resolved.relative))) {
+        stats.notApplicable += 1;
+        continue;
+      }
+      const association = associateSymbol(blocksOf(resolved.relative), { from: reference.from, to: reference.to });
+      const symbol = association.block?.symbol ?? '';
+      const target = `${resolved.relative}:${reference.from === reference.to ? reference.from : `${reference.from}-${reference.to}`}${symbol === '' ? '' : `（${symbol}）`}`;
+      if (association.status === 'undecidable') {
+        recordUndecidable(where, target, association.reason);
+        continue;
+      }
+      stats.checkable += 1;
+      if (association.status === 'hit') stats.hit += 1;
+      if (association.block?.bodyFallback === true) {
+        stats.fallback += 1;
+        fallbacks.push({ ...where, symbol, target, reason: association.reason });
+      }
+    }
+  }
+  return { stats, reasons, undecidable, fallbacks };
+}
+
 // —— 基线 ————————————————————————————————————————————————————————————
 export const baselineKey = entry => `${entry.path}|${entry.reason}|${entry.reference}`;
 
@@ -455,15 +537,19 @@ export function renderBaseline(findings) {
 }
 
 // —— CLI ——————————————————————————————————————————————————————————————
-const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--root <目录>] [--emit-baseline | --write-baseline]';
-const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--root', '--emit-baseline', '--write-baseline']);
+const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--root <目录>] [--symbol=count] [--emit-baseline | --write-baseline]';
+const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--root', '--symbol', '--emit-baseline', '--write-baseline']);
+/** `--symbol` 的取值是**白名单**：不认识的取值直接报错退出，绝不当成「没传、照旧绿灯」。 */
+const SYMBOL_MODES = new Set(['count']);
 const MAX_PRINTED = 300;
+const MAX_PRINTED_UNDECIDABLE = 500;
 
 export function parseArgs(argv) {
-  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, root: TOOL_ROOT, emit: false, write: false };
+  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, root: TOOL_ROOT, symbol: null, emit: false, write: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const [flag, inline] = argument.includes('=') ? [argument.slice(0, argument.indexOf('=')), argument.slice(argument.indexOf('=') + 1)] : [argument, undefined];
+    // 未知参数一律报错退出：参数被静静忽略却显示绿灯，比没有这个参数更糟。
     if (!KNOWN_FLAGS.has(flag)) throw new Error(`未知参数：${argument}\n${USAGE}`);
     const value = () => {
       if (inline !== undefined) return inline;
@@ -477,8 +563,16 @@ export function parseArgs(argv) {
     else if (flag === '--scan') options.scan.push(value());
     else if (flag === '--baseline') options.baseline = value();
     else if (flag === '--root') options.root = resolve(value());
+    else if (flag === '--symbol') {
+      const mode = value();
+      if (!SYMBOL_MODES.has(mode)) throw new Error(`--symbol 只支持 ${[...SYMBOL_MODES].join('|')}（收到：${mode}）\n${USAGE}`);
+      options.symbol = mode;
+    }
   }
   if (options.emit && options.write) throw new Error('--emit-baseline 与 --write-baseline 只能二选一');
+  if (options.symbol !== null && (options.emit || options.write)) {
+    throw new Error('--symbol=count 不能与 --emit-baseline／--write-baseline 同时用（生成基线时统计会被忽略）');
+  }
   if (options.scan.length === 0) options.scan = [...DEFAULT_SCAN_TARGETS];
   return options;
 }
@@ -516,6 +610,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     if (findings.length > printed.length) streams.log(`… 另有 ${findings.length - printed.length} 条未打印（清单同上格式）`);
   }
   printSummary(streams, { stats, unresolved, findings, fresh, covered, stale, baseline, strict: options.strict });
+  if (options.symbol === 'count') printSymbolCount(streams, countSymbolAssociations({ root: options.root, targets: options.scan }));
   if (baseline.missing) streams.log(`NOTE: 基线 ${options.baseline} 不存在，按空基线处理（等于所有问题都算新增）。`);
   if (stale.length > 0) {
     streams.log(`STALE: ${stale.length} 条基线已不再命中（引用被修好或路径改名）——删掉这些条目，否则基线会慢慢变成免罚名单：`);
@@ -538,6 +633,38 @@ function printSummary(streams, { stats, unresolved, findings, fresh, covered, st
   streams.log(`BASELINE: ${baseline.path} 登记 ${baseline.entries.length} 条；本次命中 ${covered.length} 条、基线外新增 ${fresh.length} 条、陈旧 ${stale.length} 条`);
   if (strict) streams.log('MODE: --strict（只在新增加非零时 exit 1）');
   else streams.log('MODE: dry-run（只打印，不判退出码）');
+}
+
+/**
+ * `--symbol=count` 的输出：三档计数 + **逐条**列出「无法判定」（文件:行 + 引用位置 + 原因），
+ * 便于按裁定 ③ 分派给文档所属模块；兜底回退的块体单独提示，不许静默当对块。
+ * 只打印，不改退出码。
+ */
+function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
+  streams.log('SYMBOL: --symbol=count 只统计不判红（退出码仍只由 --strict ＋ 基线外新增决定；结构性的 BROKEN／OUT_OF_RANGE／SUSPECT 判据一切照旧）');
+  streams.log(`SYMBOL-COUNT: 引用 ${stats.references} 条（每个引用位置分别关联，未按行去重）：可核 ${stats.checkable} 条（其中命中 ${stats.hit} 条）/ 无法判定 ${stats.undecidable} 条 / 不适用 ${stats.notApplicable} 条（目标不是源码扩展名，裁定 ④ 不强制套函数符号）`);
+  if (reasons.size > 0) {
+    streams.log(`SYMBOL-UNDECIDABLE-REASONS: ${[...reasons].map(([reason, count]) => `${reason} ${count} 条`).join('；')}`);
+    streams.log(`SYMBOL-UNDECIDABLE: ${undecidable.length} 条逐条列出（文档:行 → 引用位置；原因）——这些**不计入通过**，也不猜：`);
+    for (const item of undecidable.slice(0, MAX_PRINTED_UNDECIDABLE)) {
+      streams.log(`  · ${item.doc}:${item.docLine} → ${item.target}（${item.reason}）`);
+    }
+    if (undecidable.length > MAX_PRINTED_UNDECIDABLE) {
+      streams.log(`  … 另有 ${undecidable.length - MAX_PRINTED_UNDECIDABLE} 条未打印（格式同上）`);
+    }
+  }
+  if (stats.fallback > 0) {
+    streams.log(`SYMBOL-FALLBACK: ${stats.fallback} 条引用所属的符号块走了兜底回退（块体可能不准，必须人工看一眼）：`);
+    const seen = new Set();
+    for (const item of fallbacks) {
+      const key = `${item.symbol}|${item.target}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      streams.log(`  · 符号 ${item.symbol}（${item.target}）回退到首个 {，块体可能不准：${item.doc}:${item.docLine}`);
+      if (seen.size >= 20) break;
+    }
+    if (seen.size < stats.fallback) streams.log(`  … 其余 ${stats.fallback - seen.size} 条同理`);
+  }
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
