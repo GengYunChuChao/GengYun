@@ -35,7 +35,7 @@ export interface AuditAppendInput {
   /**
    * **内部专用**的目标标识（阶段 1b 新增）。
    *
-   * 起因（契约缺口）：`TargetRef.type` 的 16 个闭集成员里**没有** category / account / flag，
+   * 起因（契约缺口）：`TargetRef.type` 的 17 个闭集成员里**没有** category / account / flag，
    * 而契约又允许 `target_ref: null`。若只写 null，审计就丢掉了"改的是哪一个目标"。
    * 因此把目标标识放在**内部记录**上；契约投影（`projectAuditEvent`）严格只输出合同的 8 个字段，
    * `target_hint` 永不出现在响应里。

@@ -173,13 +173,26 @@ export function createMediaJobEgress(deps: {
  *
  * 为什么不用 `media`：媒体维要求 `object_id` 是 uuid 且 `dataType ∈ MEDIA_PURPOSES`，
  * 问答的资料类型是**非媒体维**的 `checked_content`（唯一闭集成员，其必需用途恰为
- * `external_inference`），对象标识必须走 `object_key`。因此对象维度按 `conversation_turn`
- * + `object_key = turn:<turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
+ * `external_inference`），对象标识必须走 `object_key`。因此对象维度按
+ * `conversation_turn` + `object_key = <turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
+ *
+ * 为什么是 `conversation_turn`（2026-10-25 二轮，监工 R1 否决了近似容器类型）：账本行会被
+ * `/me/exports` 原样投影成契约 `object_ref.type`（`packages/privacy/egress.mjs:397`），
+ * 而一次问答外发记的是**轮次**——`objectId` 是轮次 id、`objectRevision` 是**轮次** revision
+ * （`services/api/src/conversations/service.ts:1105-1106` 传的是 `claimed.id` / `claimed.revision`）。
+ * 若把类型写成容器 `conversation`，`object_ref` 就成了「会话类型 + 轮次 id + 轮次 revision」的错配：
+ * 类型、标识、版本不再指向同一真实实体。轮次是契约实体 `Turn`（id / revision），
+ * 因此契约 `TargetRef.type` 补了 `conversation_turn` 这一成员（16 → 17 值），
+ * 读面按枚举成员原样投影，不再做近似映射。裁定见
+ * `.pg17/ruling-r34-exports-turn-identity-20261025.md`。
  */
 export const CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn';
 
-/** 非媒体维对象键的既有限制（`ledger-pg.ts` 的 `OBJECT_KEY`：1..128 小写字母/数字/`_-.`/`:`）。 */
-const CHAT_OBJECT_KEY = /^[a-z0-9][a-z0-9_\-.:]{0,126}[a-z0-9]$/;
+/**
+ * 非媒体维对象键的既有限制（`ledger-pg.ts` 的 `OBJECT_KEY`：1..80 小写字母/数字/`_-.`/`:`）。
+ * 上限 80 与契约 `TargetRef.id` 的 `maxLength: 80` 同口径（DB 侧 CHECK 由迁移 0040 收到 80）。
+ */
+const CHAT_OBJECT_KEY = /^[a-z0-9][a-z0-9_\-.:]{0,78}[a-z0-9]$/;
 
 /**
  * 从抛出来的错误里取「账本可接受的安全错误码」。
@@ -274,7 +287,10 @@ export function createChatEgress(deps: {
           retryable: false,
         });
       }
-      const objectKey = `turn:${String(input.objectId).toLowerCase()}`;
+      // 裸 id、不带 `turn:` 前缀：账本 `object_key` 就是 `/me/exports` 的 `object_ref.id`
+      // （`ledger-pg.ts:110-112`），前缀会白占契约 `TargetRef.id` 的 80 字符预算，且会被
+      // 原样漏给客户端。轮次身份由 `object_type='conversation'` + uuid 共同表达。
+      const objectKey = String(input.objectId).toLowerCase();
       if (!CHAT_OBJECT_KEY.test(objectKey)) {
         throw new PrivacyError('INVALID_REQUEST', '外发对象键非法（只允许小写字母/数字/_-. :）');
       }

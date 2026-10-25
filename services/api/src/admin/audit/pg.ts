@@ -149,7 +149,7 @@ function toAuditLogReading(raw: unknown): AuditLogReading | null {
  *
  * 今天三类写入点都写 `NULL`（0017 的两处 INSERT 与 0027 的 `set_flag` 都是 `NULL`），
  * 非空值只会来自**未来**的写入点。因此这里按契约闭集严格校验：
- * `type` 必须是 `TargetRef.type` 的 16 个成员之一、`id` 1..80 字符、`revision` 正整数；
+ * `type` 必须是 `TargetRef.type` 的 17 个成员之一、`id` 1..80 字符、`revision` 正整数；
  * 不符 ⇒ 503（不把契约外的类型透给客户端，也不悄悄抹成 null 来"通过"）。
  */
 function toTargetRefValue(raw: unknown): TargetRefValue | null {

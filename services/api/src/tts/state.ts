@@ -17,7 +17,7 @@
  * 本文件承载的核心安全规则（派单 §2，逐条即回归用例）：
  *
  *   1. **只播报经核对的内容**：`checked_content_ref.type` 只能取契约 `SynthesisTarget` 的 **6 个值**。
- *      `TargetRef`（16 值）里的 `post` / `comment` / `conversation` / `transcription` / `ocr` /
+ *      `TargetRef`（17 值）里的 `post` / `comment` / `conversation` / `transcription` / `ocr` /
  *      `synthesis` / `job` / `source` / `media` / `recognition` **不在** `SynthesisTarget` 闭集内，
  *      因此社区帖、评论、会话、转写原文等一律 `INVALID_REQUEST`——那是「按文本念」，不是播报已核对内容。
  *   2. **未通过核对一律 fail-closed**：`decideCheckedContent` 要求核对状态**恰好**为 `approved`；
@@ -61,7 +61,7 @@ export const SYNTHESIS_TARGET_TYPES = [
 export type SynthesisTargetType = (typeof SYNTHESIS_TARGET_TYPES)[number];
 
 /**
- * `SynthesisTarget.type` 闭集之外、但存在于 `TargetRef`（16 值）的取值。
+ * `SynthesisTarget.type` 闭集之外、但存在于 `TargetRef`（17 值）的取值。
  * 逐项列出是为了在汇报里说清楚「哪些内容类型**不能**被合成」，而不是只写一句「不在闭集内」。
  */
 export const FORBIDDEN_SYNTHESIS_TARGET_TYPES = [
@@ -167,7 +167,7 @@ export function codePointLength(text: string): number {
 
 /**
  * 已核对目标引用（= `SynthesisTarget`）。
- * 注意：`Synthesis.checked_content_ref` 在契约里是 `TargetRef`（16 值），
+ * 注意：`Synthesis.checked_content_ref` 在契约里是 `TargetRef`（17 值），
  * 但本域只会写入 6 值闭集内的值，因此投影类型**收窄**为闭集类型——
  * 这让「不得回绑社区帖等未核对类型」在类型层面就写不进去。
  */

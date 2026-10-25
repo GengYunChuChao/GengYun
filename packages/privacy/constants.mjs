@@ -155,3 +155,42 @@ export function requiredConsentsForDataType(dataType) {
 export function isKnownDataType(dataType) {
   return requiredConsentsForDataType(dataType) !== null;
 }
+
+/**
+ * 外发账本 `object_type` 的**闭集**（GY-R35 写入侧改写；新常量一律追加在文件末尾，
+ * 免得把上面被文档按行号引用的既有定义整体下移 —— 行号漂移会让 `tools/verify-doc-anchors.mjs`
+ * 的引用变成空区间）。
+ *
+ * 逐字镜像契约 `TargetRef.type`（`packages/contracts/openapi.json:11551-11570`）—— 账本行会被
+ * `/me/exports` 原样投影成 `Export.object_ref`（`packages/privacy/egress.mjs:397`），所以
+ * `object_type` 必须**恰好**落在这 17 个值里；多一个或少一个都会让读面与契约脱节。
+ *
+ * 为什么补 `conversation_turn`（2026-10-25 二轮，监工 R1）：账本记的是**一次问答轮次**的外发，
+ * 而轮次是契约实体 `Turn`（id / revision）。早先把类型近似成容器 `conversation`，会让
+ * `object_ref` 出现「会话类型 + 轮次 id + 轮次 revision」的错配。类型、标识、revision 必须指向
+ * 同一真实实体 ⇒ 契约 `TargetRef.type` 补一个成员，读面按枚举成员原样投影，不做近似映射。
+ * 契约是手写的（**无生成器**）⇒ 这份常量是手抄镜像，改契约时必须同步改这里
+ * （由 `tests/unit/exports-object-ref-contract.test.mjs` 双向钉住）。
+ */
+export const EXPORT_OBJECT_TYPES = Object.freeze([
+  'species',
+  'herbicide',
+  'scheme',
+  'static_region',
+  'recognition',
+  'ocr',
+  'transcription',
+  'answer',
+  'post',
+  'comment',
+  'conversation',
+  'conversation_turn',
+  'dose_card',
+  'media',
+  'synthesis',
+  'job',
+  'source',
+]);
+
+/** 外发账本 `object_key` 的字符上限 = 契约 `TargetRef.id` 的 `maxLength`（同一个数，不得各自漂移）。 */
+export const EXPORT_OBJECT_ID_MAX = 80;

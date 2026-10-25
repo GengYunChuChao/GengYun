@@ -41,7 +41,7 @@ export const DOSE_SOURCE_KINDS = ['database', 'verified_seed'] as const;
 export const DOSE_EVIDENCE_KINDS = ['research', 'mixed'] as const;
 export const TARGET_REF_TYPES = [
   'species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr', 'transcription',
-  'answer', 'post', 'comment', 'conversation', 'dose_card', 'media', 'synthesis', 'job', 'source',
+  'answer', 'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source',
 ] as const;
 
 type Rule =

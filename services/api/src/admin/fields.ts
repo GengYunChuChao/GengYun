@@ -58,10 +58,10 @@ const SCALAR_SPECS = {
 /** 契约里 4 处 `review_status` 的内联枚举。 */
 const REVIEW_STATUS: FieldSpec = enumOf('unverified', 'verified', 'rejected');
 
-/** 契约 `TargetRef.type` 的 16 个成员（本片按此闭集校验审计目标类型）。 */
+/** 契约 `TargetRef.type` 的 17 个成员（本片按此闭集校验审计目标类型）。 */
 export const TARGET_REF_TYPES = [
   'species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr', 'transcription',
-  'answer', 'post', 'comment', 'conversation', 'dose_card', 'media', 'synthesis', 'job', 'source',
+  'answer', 'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source',
 ] as const;
 
 /**

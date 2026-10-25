@@ -473,8 +473,12 @@ test('外发口：成功路径严格按 reserve → assertExecutable → markSen
   assert.deepEqual(result, { status: 'answered' });
   assert.deepEqual(events.map((event) => event.step), ['reserve', 'assertExecutable', 'markSent', 'call', 'saveResult']);
   const reserved = events[0].input;
+  // GY-R35 二轮（监工 R1）：外发对象**保真轮次身份** —— 一次问答外发记的是轮次，
+  // 类型 `conversation_turn` 已作为契约 `TargetRef.type` 成员（16 → 17 值），
+  // id 是裸轮次 uuid（不带 `turn:` 前缀，`object_key` 就是 `object_ref.id`，上限 80），
+  // revision 是轮次 revision ⇒ 类型/标识/版本三者指向同一实体。
   assert.equal(reserved.objectType, 'conversation_turn');
-  assert.equal(reserved.objectKey, 'turn:5b0f4f4a-0000-4000-8000-000000000008');
+  assert.equal(reserved.objectKey, '5b0f4f4a-0000-4000-8000-000000000008');
   assert.equal(reserved.dataType, 'checked_content');
   assert.equal(reserved.purpose, 'external_inference');
   assert.equal(reserved.recipientId, 'recipient-llm-1');

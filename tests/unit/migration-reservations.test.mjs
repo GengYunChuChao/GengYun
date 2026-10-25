@@ -70,6 +70,12 @@
  * 「当前仓库」用例同时把「不得出现 `0036_` 前缀文件」的期望**翻成存在** —— 0036 一落盘那条断言
  * 就该变红；继续写「不存在」就是假通过。上面 R34-I19 段与 0036 让号段的历史读数只作叙述保留，
  * ⛔ 不是可以长期躺着的白名单。
+ *
+ * **合流后状态（2026-10-25，GY-R35 · `#568` 重定基到 `6dbe83a3`：`#538` 已合入 main）**：
+ * GY-R35 的 `0040_export_object_key_contract_backfill.sql` 落在 `0039` 之后 ⇒ 正向 **39** 个
+ * （`0001..0035` 连续 + `0036` + `0038` + `0039` + `0040`）、`rollback/` **38** 个；
+ * 缺号仍只有 `0037`，保留台账仍是那一行 ⇒ `39 个文件 + 1 保留 === max 40`，
+ * 三条不变量自然成立（**台账不因 0040 新增任何条目**：它是本片自己落盘的文件，不是"有意缺号"）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -113,7 +119,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036 已随 #538 落盘、仅 0037/#14 为在飞缺号；#22 片C 落 0039 ⇒ 38 文件 + 1 保留 === 39、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036 已随 #538 落盘、仅 0037/#14 为在飞缺号；GY-R35 落 0040 ⇒ 39 文件 + 1 保留 === 40、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -141,7 +147,7 @@ test('迁移编号/当前仓库：0036 已随 #538 落盘、仅 0037/#14 为在�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（38 = 39 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（39 = 40 − 1）',
   );
 
   const files = migrations.map((item) => item.filename);

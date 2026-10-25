@@ -6,7 +6,7 @@
  *
  * 逐项核对（2026-10-14，基线 `upstream/main = fcfa6de`）：
  *   - `TargetRef`：`additionalProperties:false`，required 恰为 `type`/`id`/`revision`；
- *     `type` 闭集 **16 项**；`id` 1..80；`revision` 整数 ≥1。
+ *     `type` 闭集 **17 项**；`id` 1..80；`revision` 整数 ≥1。
  *   - `ReferenceState`：闭集 `available|unavailable`（与 `states.json` 的
  *     `states.ReferenceState` 同值）。
  *
@@ -15,7 +15,7 @@
  * 供收藏与历史两个子域复用，避免同一片里出现第三、第四份逐字拷贝。
  */
 
-/** openapi.json -> TargetRef.type（16 项闭集，不得扩展）。 */
+/** openapi.json -> TargetRef.type（17 项闭集，不得扩展）。 */
 export const TARGET_REF_TYPES = [
   'species',
   'herbicide',
@@ -27,7 +27,7 @@ export const TARGET_REF_TYPES = [
   'answer',
   'post',
   'comment',
-  'conversation',
+  'conversation', 'conversation_turn',
   'dose_card',
   'media',
   'synthesis',

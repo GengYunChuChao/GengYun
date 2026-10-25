@@ -11,7 +11,7 @@
  *   3. 有人把「不支持」实现成异常/500 ⇒ 端口层不抛错，HTTP 读面必须 200 且每行
  *      取值都在契约闭集内、字段不夹带原因。
  *
- * `UNSUPPORTED_COUNT` 是**显式登记**：本版不支持 14 型。若本版真扩容（接线了新的
+ * `UNSUPPORTED_COUNT` 是**显式登记**：本版不支持 15 型。若本版真扩容（接线了新的
  * 目标类型），必须同时改这里与裁定页「范围与登记」一节，不允许只改代码。
  */
 
@@ -24,7 +24,7 @@ import { API, idem, makeWiredHarness, passingPort, postInput } from './community
 /** 本版声明可跳转的目标类型（与 `services/api/src/messages/reference-community.ts` 闸门同源）。 */
 const SUPPORTED_TARGET_TYPES = ['post', 'comment'];
 /** 本版**显式登记**的不支持类型数量（契约闭集 16 − 支持 2）。 */
-const UNSUPPORTED_COUNT = 14;
+const UNSUPPORTED_COUNT = 15;
 
 function readOpenApi() {
   return JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'));
@@ -59,14 +59,14 @@ const items = (response) => {
 // 1. 闭集一致性 + 显式登记
 // ---------------------------------------------------------------------------
 
-test('G2-1 契约闭集 = 代码闭集，且本版支持集恰为 post/comment（未支持 14 型）', async () => {
+test('G2-1 契约闭集 = 代码闭集，且本版支持集恰为 post/comment（未支持 15 型）', async () => {
   const { TARGET_REF_TYPES } = await import('../../services/api/src/messages/types.ts');
   const declared = [...TARGET_REF_TYPES];
   const enumTypes = contractTargetTypes();
 
   // 两个方向都断：契约扩了代码没跟 / 代码加了契约没有的类型，都要在这里红。
   assert.deepEqual([...declared].sort(), [...enumTypes].sort(), '代码闭集与 openapi TargetRef.type 枚举不一致');
-  assert.equal(enumTypes.length, 16, 'TargetRef.type 闭集应为 16 型');
+  assert.equal(enumTypes.length, 17, 'TargetRef.type 闭集应为 17 型');
 
   for (const type of SUPPORTED_TARGET_TYPES) {
     assert.ok(enumTypes.includes(type), `支持集里的 ${type} 必须在契约闭集内`);

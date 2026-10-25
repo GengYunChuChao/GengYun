@@ -7,7 +7,7 @@
  *   - `History`：`additionalProperties:false`，required 恰为 7 项
  *     `id`/`revision`/`kind`/`target_ref`/`job_state`/`reference_state`/`created_at`。
  *     `kind` 闭集 **2 项** `recognition|ocr`；`job_state` 为 `JobState` 闭集 **7 项**；
- *     `target_ref` 为 `TargetRef`（16 项闭集）。
+ *     `target_ref` 为 `TargetRef`（17 项闭集）。
  *     **没有** `title`/`summary`/`candidates`/`selected_species_id`/`model_version`/`used`
  *     之类的字段 —— 所以"候选与人工选择分开""OCR 核对""来源版本"必须在**详情**页由
  *     `GET /recognitions/{id}`、`GET /ocr/{id}` 提供（`#9`／`#10` 已合并的契约面），

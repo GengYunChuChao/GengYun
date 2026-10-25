@@ -17,7 +17,7 @@ export type Visibility = 'private' | 'published' | 'hidden' | 'deleted';
 /** openapi.json -> AuditState（闭集 4 值，与 packages/moderation 一致）。 */
 export type AuditState = 'pending' | 'approved' | 'rejected' | 'quarantined';
 
-/** openapi.json -> TargetRef.properties.type.enum（16 值）。 */
+/** openapi.json -> TargetRef.properties.type.enum（17 值）。 */
 export type TargetType =
   | 'species'
   | 'herbicide'
@@ -29,7 +29,7 @@ export type TargetType =
   | 'answer'
   | 'post'
   | 'comment'
-  | 'conversation'
+  | 'conversation' | 'conversation_turn'
   | 'dose_card'
   | 'media'
   | 'synthesis'

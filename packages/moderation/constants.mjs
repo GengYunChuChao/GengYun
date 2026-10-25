@@ -35,7 +35,7 @@ export const TARGET_TYPES = Object.freeze([
   'answer',
   'post',
   'comment',
-  'conversation',
+  'conversation', 'conversation_turn',
   'dose_card',
   'media',
   'synthesis',

@@ -156,8 +156,14 @@ implemented」的纪律取严的一方，并在 `blocker` 里把"已交付什么
 3. **真实外发账本数据与真机/小程序链路未取得**；本片全部是合成账号 + 合成账本行。
 4. **failmatrix 未覆盖 `me/exports`**：`tests/failmatrix/cases.mjs` 的矩阵仍不含本域（既有四域未纳入之一），
    本片未扩写。
-5. **契约偏差（本片实测可达，未修，登记待裁定）—— 上一版把它写成"潜伏、非现网"是错的，已订正**：
-   1. **写入方至少两处、`object_type` 至少三种**（都在产品装配里）：
+5. **契约偏差（本片当时实测可达、当时未修；GY-R35 `#568` 已处置，见下方更新块）—— 上一版把它写成"潜伏、非现网"是错的，已订正**：
+
+   > **2026-10-25 更新（GY-R35 · `#568`）**：本项已按裁定处置，随本 PR 合入——契约 `TargetRef.type` 补入 `conversation_turn`（16→17），
+   > `toContractExport` 已按 `EXPORT_OBJECT_TYPES` 逐项校验并把 `object_ref.id` 限到 1..80，写入侧 `OBJECT_KEY_MAX` 由 128 收到 80，
+   > `synthesis-egress.ts` 不再借用账本标签（按真实内容类型记账），历史越界键由迁移 `0040` 回填、不可如实回填时整条中止。
+   > **下文 5.1–5.6 保留的是当时的实测读数（16 值枚举、上限 128、只判 typeof），作为历史证据，不再是当前事实**；
+   > 契约偏差面未改的部分只剩库层 `0018_favorites_history.sql` 的 `target_type` CHECK（仍是旧 16 值，今日写入口不可达，已登记待另开迁移）。
+   1. **当时**：写入方至少两处、`object_type` 至少三种（都在产品装配里）：
       - `services/api/src/privacy/task-egress.ts`：`objectType: 'media'`（媒体作业外发），以及
         `objectType: CHAT_EGRESS_OBJECT_TYPE`，而 `CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn'`（问答外发）；
       - `services/api/src/privacy/synthesis-egress.ts`：`SYNTHESIS_LEDGER_OBJECT_TYPE = 'checked_content'`，
@@ -167,13 +173,13 @@ implemented」的纪律取严的一方，并在 `blocker` 里把"已交付什么
         在 `services/api/src/app.ts` 的合成域装配里（`egressLedger === null || privacyInFlight === null` 时才不建）。
         ⚠ 前提是**账本可用**（`real` + 有池），这一点与 §4"真库只能证 503"并不矛盾：装配存在、写入路径存在，
         只是当前真库的**读**面缺授权。
-   2. **`conversation_turn` 与 `checked_content` 都不在**契约 `TargetRef.type` 的 16 值枚举内
+   2. **当时**：`conversation_turn` 与 `checked_content` 都**不在**契约 `TargetRef.type` 的 **16 值**枚举内
       （枚举 = `species/herbicide/scheme/static_region/recognition/ocr/transcription/answer/post/comment/
       conversation/dose_card/media/synthesis/job/source`）；`media` 在枚举内，这两个不在。
    3. **投影不校验**：`packages/privacy/egress.mjs` 的 `toContractExport` 对 `objectType`、`objectId` **只判
       `typeof === 'string'`** —— 既不校验 `object_ref.type ∈ TargetRef.type`，也**不校验 `object_ref.id` 的
       1..80 上限（契约 `maxLength: 80`）**；作为对照，同一个函数校验了 `id.length === 0`、
-      `EXPORT_STATES.includes(state)`、`recipientId` 1..80。而**写入侧**的上限是 **128**
+      `EXPORT_STATES.includes(state)`、`recipientId` 1..80。而**当时的写入侧**上限是 **128**
       （`services/api/src/privacy/ledger-pg.ts` 的 `OBJECT_KEY_MAX = 128`，正则允许 0..126 中间字符）⇒
       **81..128 长度的对象键合法入库，并会原样出现在 `object_ref.id`**。
    4. **本片自造探针读数**（PGlite + 真实 `buildApp` HTTP + 与生产写入方同形的 4 行合成数据：`media` 1 条、
@@ -182,7 +188,7 @@ implemented」的纪律取严的一方，并在 `blocker` 里把"已交付什么
       `checked_content`（idLen=96 > 80）、`checked_content`（inContractEnum=false）、`media`（inContractEnum=true）。
       ⇒ **200 可返回越枚举条目与超长 `object_ref.id`**，属**可达**的契约偏差（与审查者探针读数一致：
       4 条中 3 条越枚举、1 条 id 长 96）。探针脚本已在收工前删除，`git status` 复核干净。
-   5. **本片为什么不修**：① 改 `toContractExport` 属**他片领域**（`packages/privacy/egress.mjs` 是 GY-I27 外发账本
+   5. **当时本片为什么不修**：① 改 `toContractExport` 属**他片领域**（`packages/privacy/egress.mjs` 是 GY-I27 外发账本
       的共享投影），本片纪律是「不擅自扩领域」；② 两种修法都要**产品裁定**：把 `conversation_turn`/`checked_content`
       加进契约 `TargetRef.type`（**改契约**，会影响所有消费方），或让投影对未登记类型 **fail-closed**（后果是
       用户整页 `503`，比"列出条目"更差）；③ 长度面需与写入侧 `OBJECT_KEY_MAX` 一起定口径（收紧到 80？还是把契约

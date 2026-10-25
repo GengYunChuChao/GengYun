@@ -30,7 +30,7 @@ check(entry.status === 'planned' ? entry.evidence.length === 0 : entry.evidence.
 |---|---|---|---|---|
 | `listSpecies` | `GET /catalog/species` | `contract-status.json:291` | `packages/reference/service.mjs:61-71` 的 `listSpecies` | 参考层领域实现，无产品路由 |
 | `getPrivacyPolicy` | `GET /me/privacy-policy` | `contract-status.json:303` | `docs/ui-contract-binding.md:85` 的界面绑定行 | 需求侧要求，无任何实现 |
-| `listExports` | `GET /me/exports` | `contract-status.json:398` | `packages/privacy/egress.mjs:402-404` 的 `listExportsForUser` | 账本读面领域实现，无 HTTP 路由 |
+| `listExports` | `GET /me/exports` | `contract-status.json:398` | `packages/privacy/egress.mjs:411-413` 的 `listExportsForUser` | 账本读面领域实现，无 HTTP 路由 |
 | `verifyRegistration` | `POST /registrations/verify` | `contract-status.json:813` | `packages/reference/deterministic.mjs:357` 的 `evaluateRegistrationMatch` | 匹配内核，无路由与 handler |
 
 逐条说明：

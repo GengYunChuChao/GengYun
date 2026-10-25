@@ -8,7 +8,7 @@
  *     不匹配 409 `REVISION_CONFLICT`（服务层比对）；
  *   - 路径参数 `id`：`format: uuid` ⇒ 非法 400 `INVALID_REQUEST`；
  *   - **内部创建口** `AppendHistoryInput`：`owner_id` uuid、`kind` 2 项闭集、
- *     `target_ref` 为 `TargetRef` 三字段（`type` 16 项闭集、`id` 1..80、`revision` ≥1）、
+ *     `target_ref` 为 `TargetRef` 三字段（`type` 17 项闭集、`id` 1..80、`revision` ≥1）、
  *     `job_id` 1..80、`job_state` **7 项闭集**、`event_key` 1..200；
  *     **未知字段一律拒绝**（不允许调用方预置 `id`/`revision`/`reference_state`/`created_at`，
  *     否则等于让调用方自证可见性或自定版本）。
@@ -132,7 +132,7 @@ export function parseListHistoryQuery(query: unknown): { cursor: string | null; 
   return { cursor: parseCursor(query['cursor']), limit: parseLimit(query['limit']) };
 }
 
-/** 校验 `TargetRef`（三字段全必填、`additionalProperties:false`、`type` 16 项闭集）。 */
+/** 校验 `TargetRef`（三字段全必填、`additionalProperties:false`、`type` 17 项闭集）。 */
 export function readTargetRef(value: unknown, field: string, details: ValidationDetail[]): TargetRef | null {
   if (!isPlainObject(value)) {
     details.push({ field, code: 'INVALID_TYPE' });

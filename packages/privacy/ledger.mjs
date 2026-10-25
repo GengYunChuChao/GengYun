@@ -50,10 +50,11 @@ import {
 } from './writeback.mjs';
 
 /**
- * 非媒体资料的对象键（`object_key`）形状：与 `ledger-pg.ts` 的 `OBJECT_KEY` 逐字同源
- * （1..128 字符、小写字母/数字/`_-.:`，首尾为字母或数字 ⇒ 拒空串、拒超长、拒空白与注入字符）。
+ * 非媒体资料的对象键（`object_key`）形状：与 `ledger-pg.ts` 的 `OBJECT_KEY`、迁移 0040 收的
+ * 库层 CHECK、契约 `TargetRef.id` 的 `maxLength` **同一个数**（1..80 字符；小写字母/数字/`_-.:`，
+ * 首尾为字母或数字 ⇒ 拒空串、拒超长、拒空白与注入字符）。三处任一漂移都会让写入侧与读面打架。
  */
-const OBJECT_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9_.:-]{0,126}[a-z0-9])?$/;
+const OBJECT_KEY_PATTERN = /^[a-z0-9](?:[a-z0-9_.:-]{0,78}[a-z0-9])?$/;
 
 /**
  * @param {{

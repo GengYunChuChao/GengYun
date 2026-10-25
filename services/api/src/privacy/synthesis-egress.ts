@@ -3,7 +3,9 @@
  *
  * 与 `task-egress.ts`（识别/转写/标签 OCR 三个媒体任务域）**同形、同口径**，差异只有三处：
  *   1. 对象标识是**文本型**（`checked_content_ref.id` 是 1..80 任意字符串，不是 uuid）⇒
- *      走 0014 新增的 `exports.object_key` 列，账本 `object_type` 用 `checked_content`；
+ *      走 0014 新增的 `exports.object_key` 列，并以**该条正文的真实内容类型**作为
+ *      账本 `object_type`（`answer`/`scheme`/… 六值闭集，见 `SYNTHESIS_LEDGER_DATA_TYPE`
+ *      下方的说明；`checked_content` 只用于资料维度 `data_type`）；
  *   2. 资料维度用**契约外第二维度** `NON_MEDIA_*`（合成不属四类媒体资料类型；复用媒体维度会
  *      多要 `recording`/`media_processing` 授权，见 `packages/privacy/constants.mjs` 的说明）；
  *   3. 提供者方法是 `synthesize`（TTS 域只有一个外发方法），且 `synthesize` 入参**不含**
@@ -36,24 +38,25 @@ import type { ExportRecord, PostgresExportLedger } from './ledger-pg.ts';
 import type { InFlightGuard } from '../../../../packages/privacy/in-flight.mjs';
 import type { CheckedContentPort } from '../tts/content.ts';
 
-/** 0014 `exports.object_key` 的形状（与 `ledger-pg.ts` 的 `OBJECT_KEY` 逐字同源，1..128 字符）。 */
-const OBJECT_KEY = /^[a-z0-9](?:[a-z0-9_.:-]{0,126}[a-z0-9])?$/;
-const OBJECT_KEY_MAX = 128;
+/** 0014 `exports.object_key` 的形状（与 `ledger-pg.ts` 的 `OBJECT_KEY` 逐字同源，1..80 字符）。 */
+const OBJECT_KEY = /^[a-z0-9](?:[a-z0-9_.:-]{0,78}[a-z0-9])?$/;
+const OBJECT_KEY_MAX = 80;
 
 /** 合成域在账本里的资料类型（契约外第二维度；见 `packages/privacy/constants.mjs`）。 */
 export const SYNTHESIS_LEDGER_DATA_TYPE = 'checked_content';
-/** 合成域在账本里的对象类型（与 `exports.object_type` 的既有取值空间并列，非新表）。 */
-export const SYNTHESIS_LEDGER_OBJECT_TYPE = 'checked_content';
 
-/**
- * 账本对象键 = `<已核对正文类型>:<已核对正文标识>`。
+/*
+ * 账本**对象类型** = 该条已核对正文的**真实内容类型**本身（`checked_content_ref.type`：
+ * `answer`/`scheme`/`herbicide`/`species`/`static_region`/`dose_card`，闭集见
+ * `services/api/src/tts/state.ts:53-60`，6 值全部在契约 `TargetRef.type` 的 17 值枚举内）。
  *
- * 为什么把类型也编进键：`exports.object_type` 对合成域是常量 `checked_content`（维度名），
- * 正文自身的类型（`answer`/`scheme`/`dose_card`…）不另有列；而不同正文类型可以有同名的 id
- * ⇒ 只用 id 会让两个不同对象的预留行互相命中。键**不加长上限判断**在这里做，
- * 超长（含类型后 > 128）一律拒绝而不截断（标识被静默改写比拒绝更危险）。
+ * 为什么不再用常量 `checked_content`：`checked_content` 是**资料维度**（`data_type`，见
+ * `SYNTHESIS_LEDGER_DATA_TYPE` 与 `packages/privacy/constants.mjs:45`），不是外发对象的实体类型。它被写进
+ * `exports.object_type` 后会被 `/me/exports` 原样投影成契约 `object_ref.type`
+ * （`packages/privacy/egress.mjs:397`），而 `TargetRef.type` 的 17 值闭集里没有它
+ * ⇒ 越枚举，整页投影失败（503）。改成真实内容类型后，(type,id) 二元组本身就能唯一
+ * 定位对象，**不再需要**把类型编进 object_key 来区分同名 id。
  */
-const ledgerObjectKey = (type: string, id: string): string => `${type}:${id}`;
 
 export interface SynthesisEgressReserveInput {
   userId: string;
@@ -145,10 +148,11 @@ export function createSynthesisEgress(deps: {
   const jobKey = (jobId: string): string => jobId;
 
   /**
-   * 重读已核对正文，返回**实际被朗读快照**派生出的账本对象键与 revision；
+   * 重读已核对正文，返回**实际被朗读快照**派生出的账本对象二元组 (类型, 键) 与 revision；
    * 取不到快照、类型不一致或标识不合法 ⇒ 拒绝派发（fail-closed，不产生任何外发）。
    */
   async function readSnapshot(targetRef: { type: string; id: string; revision: number }): Promise<{
+    objectType: string;
     objectKey: string;
     objectRevision: number;
   }> {
@@ -172,14 +176,16 @@ export function createSynthesisEgress(deps: {
     if (id.length > 80) {
       throw new PrivacyError('INVALID_REQUEST', '已核对正文标识超长（>80），禁止派发');
     }
-    const objectKey = ledgerObjectKey(type, id);
+    // 对象键 = 裸 id（不再拼 `<type>:` 前缀）：类型已作为对象类型单列，前缀只会白占
+    // 契约 `TargetRef.id` 的 80 字符预算。超长一律拒绝而不截断（标识被静默改写比拒绝更危险）。
+    const objectKey = id;
     if (objectKey.length > OBJECT_KEY_MAX || !OBJECT_KEY.test(objectKey)) {
-      throw new PrivacyError('INVALID_REQUEST', '已核对正文标识不是合法的账本对象键（1..128 小写字母/数字/_-.:）');
+      throw new PrivacyError('INVALID_REQUEST', '已核对正文标识不是合法的账本对象键（1..80 小写字母/数字/_-.:）');
     }
     if (!Number.isInteger(revision) || (revision as number) < 1) {
       throw new PrivacyError('INVALID_REQUEST', '已核对正文 revision 非法');
     }
-    return { objectKey, objectRevision: revision as number };
+    return { objectType: type, objectKey, objectRevision: revision as number };
   }
 
   /**
@@ -190,13 +196,18 @@ export function createSynthesisEgress(deps: {
    *   2. 任务未绑定属主 ⇒ **拒绝派发**（fail-closed）。绝不退化成「不按属主过滤」的全局查询 ——
    *      那正是跨用户串用预留行的入口（B 的派发消耗 A 的预留）。
    */
-  async function resolveObject(input: { jobId: string; objectKey: string; objectRevision: number }): Promise<ExportRecord | null> {
+  async function resolveObject(input: {
+    jobId: string;
+    objectType: string;
+    objectKey: string;
+    objectRevision: number;
+  }): Promise<ExportRecord | null> {
     const owner = jobOwners.get(jobKey(input.jobId));
     if (owner === undefined) {
       throw new PrivacyError('OBJECT_UNAVAILABLE', '本次派发未绑定属主，禁止派发（不按对象版本全局匹配预留行）');
     }
     return ledger.findReservedByObject({
-      objectType: SYNTHESIS_LEDGER_OBJECT_TYPE,
+      objectType: input.objectType,
       objectKey: input.objectKey,
       objectRevision: input.objectRevision,
       userId: owner,
@@ -238,7 +249,7 @@ export function createSynthesisEgress(deps: {
     const record = await ledger.reserve({
       userId,
       authEpoch: input.authEpoch,
-      objectType: SYNTHESIS_LEDGER_OBJECT_TYPE,
+      objectType: snapshot.objectType,
       objectKey: snapshot.objectKey,
       objectRevision: snapshot.objectRevision,
       dataType,
