@@ -3,7 +3,7 @@
 一套**能重复跑**的权限/安全失败回归：表驱动、每条用例给真实读数、每条关键守卫配**负控制**
 （故意放宽守卫 → 对应用例必须真红 → 原字节恢复 → sha256 前后一致 → 复跑转绿）。
 
-**本片不宣称 #22 完成。** 这里交付骨架 + 240 条用例 + 26 条负控制，覆盖「身份与权限面
+**本片不宣称 #22 完成。** 这里交付骨架 + 249 条用例 + 26 条负控制，覆盖「身份与权限面
 （游客/越权/后台/会话与注销）」「媒体归属与访问凭据」「重复请求」「无效输入」「审核回调与 AI 失败」
 「下架缓存」「版本回写」「提示注入」「下架后引用跳转」。**真实 AI 外呼、真机、微信端到端、真实对象存储签名过期、
 断网重试、账号停用、注销到期清理、在途取消 409** 仍**未取得**（见末尾「未取得」一节，逐条写明为什么）。
@@ -14,7 +14,7 @@
 ## 一条命令
 
 ```bash
-node tests/failmatrix/run.mjs                  # 全跑（HTTP 220 + 受信 seam 20 = 240 条）
+node tests/failmatrix/run.mjs                  # 全跑（HTTP 229 + 受信 seam 20 = 249 条）
 node tests/failmatrix/run.mjs --only=C2        # 只跑某族（前缀匹配，D/E/F 族同样适用）
 node tests/failmatrix/run.mjs --only=D1-01,C6-10 --json=out.json
 node tests/failmatrix/run.mjs --list           # 只列用例
@@ -32,7 +32,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 ```
 
 进 CI/单测入口：`tests/unit/gy-i22-failmatrix.test.mjs`（stub 臂，`npm run test:unit` 会带上它）。
-它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 240，另加一条**静态同步检查**：负控制清单里
+它真跑一遍全矩阵并断言 `FAIL 0` / 条数不少于 249，另加一条**静态同步检查**：负控制清单里
 每处 `find` 必须在当前产品代码里恰好出现一次（守卫被重构时这条先红，而不是等你发现矩阵不再变红）。
 
 真 PG 臂的闸门入口：`tests/unit/gy-i22-failmatrix-real.test.mjs`（只锁「缺 `GY_PG_BIN` ⇒ 退出 77、
@@ -51,6 +51,12 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 四个网络 seam **持有即抛错**——跑这套用例不可能偷偷打到真实供应商。执行模式固定 `stub`，
 运行器对每个响应额外校验 `meta.execution_mode === 'stub'`。
 
+**作业过滤腿（S-6）另建第二个 app**（`world.mjs` 的 `createJobFilterWorld`）：与默认世界**共享 auth store**、
+作业端口换成内存参考实现（`createMemoryAdminJobPort(ADMIN_JOB_SEED)`，`wired: true`）。原因是
+`listAdminJobs` 的判定顺序是「鉴权 → 端口接线(`503`) → 入参闭集(`400`)」（`admin/ops/service.ts:718-724`），
+默认世界未接线 ⇒ 过滤参数再错也**永远到不了 400**；而 `C3-20` 必须继续证明「未接线 ⇒ `503`」，所以不能把默认世界接线。
+用例用 `app: 'jobs'` 点名该 app，缺省 `'main'` ⇒ 既有用例一条都不改道（loopback 臂两个 app 各绑一个自选端口）。
+
 受信 seam（`seams.mjs`）：审核回调、AI 端口、下架缓存这三类失败**不经过 HTTP**，而是走
 `tests/moderation/_http-fixtures.mjs` 里已被其它套件使用的受信夹具（`makeHarness` / `signedCallback` /
 `makePort`），因此 D 族的读数来自**真实服务代码**，不是复刻一份同形实现。
@@ -60,7 +66,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | 文件 | 作用 |
 | --- | --- |
 | `world.mjs` | 世界装配 + 身份播种（直插会话，零登录外呼）+ 请求助手 + 响应指纹 |
-| `cases.mjs` | HTTP 用例表：`id` / `method` / `path` / `headers` / `body` / `expect{status,code,etag}` / `check` / `sameShapeAs` / `concurrent` |
+| `cases.mjs` | HTTP 用例表：`id` / `method` / `path` / `headers` / `body` / `expect{status,code,etag}` / `check` / `sameShapeAs` / `concurrent` / `app`（缺省 `'main'`；`'jobs'` = 已接线作业端口的第二个 app） |
 | `seams.mjs` | 受信 seam 用例表：`invoke` + `expect{code}` + `check`（审核回调 / AI 失败 / 下架缓存 / 版本回写） |
 | `run.mjs` | 表驱动 runner：判定 + 拒绝不变量 + 同形对照 + 按族/批次汇总 + `--json` 机读结果 |
 | `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11 的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过） |
@@ -74,7 +80,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | --- | --- | --- |
 | C1 | 37 | 游客面：无凭据一律 `401 SESSION_REQUIRED`（不是 403/404/500），且带 `no-store` |
 | C2 | 24 | 越权（IDOR）：A 读写 B 的私有行一律 `404`，与「不存在」同形；列表隔离；公开内容不得过度拦截 |
-| C3 | 27 | 后台：用户会话 `403 SCOPE_DENIED`；缺 scope `403`；有 scope 2xx；未接线面 fail-closed `503` |
+| C3 | 36 | 后台：用户会话 `403 SCOPE_DENIED`；缺 scope `403`；有 scope 2xx；未接线面 fail-closed `503`；作业过滤 `?state=`/`?error_code=` 闭集外 ⇒ `400 INVALID_REQUEST`（重复键 ⇒ `code:'type'`）、游标绑定筛选组合（换组合 ⇒ `400 INVALID_CURSOR`）、合法但无匹配 ⇒ `200` 空页（S-6 补 9 条） |
 | C4 | 21 | 会话与注销：注销/过期/旧 epoch/坏凭据的拒绝码；注销回执 bearer 的绑定、换发与重放；退出后 `/me/profile`、`/catalog/crops`、`/knowledge` 三面与 `/favorites` **同形** `401 SESSION_EXPIRED` |
 | C5 | 10 | 媒体归属与媒体访问凭据：跨主体 `404`、缺/错 token、内容-媒体不匹配 |
 | C6 | 11 | 重复请求：同键同体重放同一行、同键异体 `409`、缺键 `400`、并发只产生一行；已登录取消收藏缺 `If-Match` ⇒ `428 REVISION_REQUIRED` |
@@ -89,7 +95,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | C11 | 39 | 异步 AI 域归属面：他人资源一律 `404`（与「不存在」同形，不泄露存在性）、列表隔离（#449 引入） |
 | F1 | 6 | 引用跳转：消息引用帖子/评论，删除目标后同一条消息 `reference_state` 从 `available` 迁到 `unavailable`（同形，不崩溃不泄露） |
 
-批次：**B1** = C1–C4，109 条（身份与权限面）· **B2** = C5–C7，37 条（媒体归属、重复请求与无效输入）·
+批次：**B1** = C1–C4，118 条（身份与权限面）· **B2** = C5–C7，37 条（媒体归属、重复请求与无效输入）·
 **B3** = D1–D3，17 条（受信 seam：回调 / AI 失败 / 下架缓存）· **B4** = D4+E1+E2，9 条（版本回写 / 提示注入 / 媒体凭据）· **B5** = C10+C11，62 条（异步 AI 域的游客面与归属面）· **B6** = F1，6 条（下架后引用跳转 unavailable）。
 
 ## 拒绝不变量（每条 4xx/5xx 都校验，不只是状态码）
@@ -201,11 +207,12 @@ C11-39（「B 仍能读自己的会话」正控制）由 200 变为 401 `SESSION
 
 **同源保障**：本臂的用例表**直接复用 `cases.mjs`**（不另写一套），只换 world（真 PG store）+ 判定口径
 （`real` 而非 `stub`）。`tests/unit/gy-i22-failmatrix-real.test.mjs` 锁住「缺 `GY_PG_BIN` ⇒ 77」与
-「权限面覆盖范围 = 171 条同源」两条契约。
+「权限面覆盖范围 = 180 条同源」两条契约。其中 9 条作业过滤腿（`app: 'jobs'`）在本臂记「不跑」：
+它们依赖已接线的内存作业端口种子，real + 真库没有作业读权威可播种（stub 臂与单测里全跑）。
 
 ## 与 `#22` 的关系
 
-`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 240 条真读数用例 + 26 条负控制**，
+`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 249 条真读数用例 + 26 条负控制**，
 并把「在 main 上一跑就绿」与「哪些还没取得」分开记账。后续批次直接在 `cases.mjs` 追加族
 `C8+`/`E3+`、在 `seams.mjs` 追加 `D5+`，并在 `mutations.mjs` 追加对应负控制；
 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` / `FAMILY_COUNTS` / `BATCH_COUNTS` 随之抬高——

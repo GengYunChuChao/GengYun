@@ -21,6 +21,7 @@ import { createMemoryHistoryStore } from '../../services/api/src/history/store.t
 import { createMemoryMessagesStore } from '../../services/api/src/messages/store.ts';
 import { createMemoryCommunityStore } from '../../services/api/src/community/store.ts';
 import { createSubstituteObjectStore } from '../../services/api/src/media/object-store.ts';
+import { createMemoryAdminJobPort } from '../../services/api/src/admin/ops/jobs.ts';
 import { sha256Hex } from '../../packages/media/validate.mjs';
 import { pngPlain } from '../media/_fixtures.mjs';
 import { CLEAN_BODY, CLEAN_TITLE, makeGate, makeSyntheticPassPort } from '../unit/community-fixtures.mjs';
@@ -72,6 +73,10 @@ export function createWorld(options = {}) {
     config,
     store: auth,
     now: clock.now,
+    // 后台注入点（`app.ts:392-395`）：缺省不传 ⇒ 与改动前逐字相同（作业端口未接线 ⇒ 503）。
+    // S-6 的过滤腿要一个**已接线**作业端口，用 `createJobFilterWorld` 单独建第二个 app，
+    // ⛔ 不给默认世界接线：`C3-20` 的 503 必须继续成立。
+    ...(options.adminInjection === undefined ? {} : { adminInjection: options.adminInjection }),
     mediaObjectStore: objectStore,
     favoritesInjection: { store: favorites, visibility: visibility.port },
     historyInjection: { store: history, visibility: visibility.port },
@@ -250,6 +255,65 @@ export async function uploadReadyMedia(world, actor, key, options = {}) {
     derivativeKey: keys.derivativeRef,
     bytes,
   };
+}
+
+// ---------------------------------------------------------------------------
+// S-6 · 作业过滤的拒绝/降级语义（`/admin/jobs?state=…&error_code=…`）
+//
+// 为什么需要**第二个 app**：服务层的顺序是「鉴权(401/403) → 端口接线(503) → 入参闭集(400)」
+// （`services/api/src/admin/ops/service.ts:718-724`），默认世界的作业端口未接线 ⇒ 一律 503，
+// **永远到不了 400**。而 `C3-20` 必须继续证明「未接线 ⇒ 503」，所以不能把默认世界接线。
+// 这里另建一个共享同一 auth store 的 app（`adminInjection.jobPort` 注入内存参考实现），
+// 只给 S-6 的用例使用；令牌因此两臂通用，`C3-20` 的读数一字不动。
+// ---------------------------------------------------------------------------
+
+/** 种子的目标引用 id（`TargetRef.id` 只要求 1..80 字符串，不必是真资源）。 */
+const JOB_SEED_TARGET_ID = '00000000-0000-4000-8d00-0000000000b1';
+
+/**
+ * 一条契约合法的 `AdminJob`（`services/api/src/admin/ops/fields.ts:101-118` 的字段闭集：
+ * `additionalProperties:false` + 9 个必填位，`result` 恒 `null`）。
+ * `created_at` 随序号递增 ⇒ 读取顺序确定（端口按 `created_at` 降序、再按 `id` 降序）。
+ */
+function seedJob(ordinal, state, errorCode) {
+  return Object.freeze({
+    id: `00000000-0000-4000-8d00-00000000000${ordinal}`,
+    revision: 1,
+    kind: 'recognition',
+    target_ref: { type: 'recognition', id: JOB_SEED_TARGET_ID, revision: 1 },
+    state,
+    deadline_at: new Date(START + 3600_000).toISOString(),
+    created_at: new Date(START + ordinal * 1000).toISOString(),
+    error_code: errorCode,
+    result: null,
+  });
+}
+
+/**
+ * 6 条作业、5 个状态：
+ * - `queued` 正好 2 条（够撑出 `limit=1` 的第二页 ⇒ 真游标，而不是硬编码串）；
+ * - `timed_out` **一条都没有** ⇒ 合法但无匹配的降级腿（200 空页，⛔ 不是 503）；
+ * - 只有 1 条带 `error_code`（`PROVIDER_TIMEOUT`，503 段闭集成员）⇒ `error_code` 过滤的正控制。
+ */
+export const ADMIN_JOB_SEED = Object.freeze([
+  seedJob(1, 'queued', null),
+  seedJob(2, 'queued', null),
+  seedJob(3, 'running', null),
+  seedJob(4, 'succeeded', null),
+  seedJob(5, 'failed', 'PROVIDER_TIMEOUT'),
+  seedJob(6, 'cancelled', null),
+]);
+
+/**
+ * 建 S-6 专用 app：与 `base` **共享 auth store 与时钟**，作业端口换成内存参考实现
+ * （`createMemoryAdminJobPort(ADMIN_JOB_SEED)`，`wired: true`）。
+ * 其余 store 各自独立（本组用例只读 `/admin/jobs`，不依赖默认世界的业务行）。
+ */
+export function createJobFilterWorld(base, options = {}) {
+  const seed = options.seed ?? ADMIN_JOB_SEED;
+  const jobPort = createMemoryAdminJobPort(seed);
+  const world = createWorld({ store: base.auth, clock: base.clock, adminInjection: { jobPort } });
+  return { ...world, jobPort, jobSeed: seed };
 }
 
 /** 播种「另一个用户」的全部私有行（media/message/post/comment/favorite/history/report）。 */

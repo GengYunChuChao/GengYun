@@ -37,6 +37,24 @@ const SYNTHESIS_BODY = { checked_content_ref: { type: 'answer', id: ABSENT, revi
 /** 转写确认请求体（confirmed_text 1..8000，confirmation 固定枚举）。 */
 const CONFIRMATION_BODY = { confirmed_text: '合成确认文本（矩阵），非真实录音内容。', confirmation: 'checked_and_sendable' };
 
+// ---------------------------------------------------------------------------
+// S-6 · 作业过滤（`GET /admin/jobs?state=…&error_code=…`）的判定常量
+//
+// 语义来源是服务层的**唯一**判定点 `parseAdminJobFilter`
+// （`services/api/src/admin/ops/jobs.ts:32-62`）：闭集外的取值 ⇒ 400 `INVALID_REQUEST`，
+// 非字符串（`?state=a&state=b` 被查询串解析成数组）⇒ 400 `INVALID_REQUEST`/`code:'type'`，
+// 缺省 / `null` / **空串** ⇒ 该字段不参与过滤（⛔ 不是 400）；⚠️ 一律⛔不复用 503、
+// ⛔ 不静默返回空页。所以这些腿必须在**已接线**的作业端口上跑（否则先撞 503）：
+// 用 `app: 'jobs'` 点名 `world.mjs` 的 `createJobFilterWorld`（种子 `ADMIN_JOB_SEED`）。
+// ---------------------------------------------------------------------------
+
+/** 种子里的作业 id（`world.mjs` 的 `seedJob(ordinal, …)`：末 12 位 = 11 个 0 + 序号）。 */
+const jobId = (ordinal) => `00000000-0000-4000-8d00-00000000000${ordinal}`;
+/** 契约 `JobState` 的 7 个成员，按闭集顺序（400 的**措辞**判据，全小写）。 */
+const JOB_STATE_CLOSED_SET = 'queued / running / succeeded / uncertain / failed / timed_out / cancelled';
+/** 作业读面（查询串由各条腿自己拼）。 */
+const JOB_LIST = `${API}/admin/jobs`;
+
 export const BATCHES = [
   { id: 'B1', title: '批次 1：身份与权限面（游客 / 越权 / 后台 / 会话与注销）', families: ['C1', 'C2', 'C3', 'C4'] },
   { id: 'B2', title: '批次 2：媒体归属、重复请求与无效输入', families: ['C5', 'C6', 'C7'] },
@@ -171,6 +189,91 @@ export const CASES = [
     return problems;
   } },
   { id: 'C3-27', family: 'C3', title: '后台隐藏后该帖对普通用户不可见', actor: 'a', method: 'GET', path: (ctx) => `${API}/posts/${ctx.hideTargetPostId}`, expect: { status: 404, code: 'NOT_FOUND' }, note: '隐藏必须真生效：不是只写一条审计' },
+
+  // ----------------------------- S-6 · 作业过滤的拒绝 / 降级语义（已接线端口）
+  // 顺序有依赖：`C3-31` 先取一条**真游标**（页 2 存在），`C3-32`/`C3-33` 才拿它做对照；
+  // 若 `C3-31` 不再给游标，`C3-32` 会因 `ctx.jobFilterCursor` 不是字符串而判定失去意义（一并判红）。
+  // 判定点：`services/api/src/admin/ops/jobs.ts:32-62`（闭集/类型）、`service.ts:738`（游标绑筛选组合）。
+  { id: 'C3-28', family: 'C3', app: 'jobs', title: '作业过滤：state 大小写不符闭集 ⇒ 400 INVALID_REQUEST（enum）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=FAILED`, expect: { status: 400, code: 'INVALID_REQUEST' }, check: (result) => {
+    const problems = [];
+    const detail = result.body?.error?.details?.[0];
+    if (detail?.field !== 'state') problems.push(`details[0].field 期望 state 实际 ${JSON.stringify(detail?.field)}`);
+    if (detail?.code !== 'enum') problems.push(`details[0].code 期望 enum 实际 ${JSON.stringify(detail?.code)}`);
+    const message = result.body?.error?.message ?? '';
+    if (!message.includes(JOB_STATE_CLOSED_SET)) problems.push(`message 里没有 7 值闭集：${JSON.stringify(message)}`);
+    if (result.body?.data !== undefined) problems.push('400 响应不得带 data');
+    return problems;
+  }, note: '闭集全小写：`FAILED` 是大写 ⇒ 闭集外。变红条件：把大小写归一（toLowerCase）或对未知值静默返回空页 ⇒ 400 变成 200' },
+  { id: 'C3-29', family: 'C3', app: 'jobs', title: '作业过滤：重复 state 查询键 ⇒ 400 INVALID_REQUEST（type，不静默取首值）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=a&state=b`, expect: { status: 400, code: 'INVALID_REQUEST' }, check: (result) => {
+    const problems = [];
+    const detail = result.body?.error?.details?.[0];
+    if (detail?.field !== 'state') problems.push(`details[0].field 期望 state 实际 ${JSON.stringify(detail?.field)}`);
+    if (detail?.code !== 'type') problems.push(`details[0].code 期望 type（重复键解析成数组）实际 ${JSON.stringify(detail?.code)}`);
+    const message = result.body?.error?.message ?? '';
+    if (message !== 'state 必须是字符串') problems.push(`message 期望「state 必须是字符串」实际 ${JSON.stringify(message)}`);
+    return problems;
+  }, note: '查询串 `?state=a&state=b` 被解析成数组 ⇒ 非字符串。变红条件：加 querystring schema 收敛成「取最后一个」/「取第一个」⇒ 400 变成 200（静默降级）' },
+  { id: 'C3-30', family: 'C3', app: 'jobs', title: '作业过滤：error_code 不在 24 值闭集 ⇒ 400 INVALID_REQUEST（enum）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?error_code=NOT_A_CODE`, expect: { status: 400, code: 'INVALID_REQUEST' }, check: (result) => {
+    const problems = [];
+    const detail = result.body?.error?.details?.[0];
+    if (detail?.field !== 'error_code') problems.push(`details[0].field 期望 error_code 实际 ${JSON.stringify(detail?.field)}`);
+    if (detail?.code !== 'enum') problems.push(`details[0].code 期望 enum 实际 ${JSON.stringify(detail?.code)}`);
+    const message = result.body?.error?.message ?? '';
+    if (!message.startsWith('error_code 必须是闭集之一：')) problems.push(`message 前缀不符：${JSON.stringify(message)}`);
+    if (!message.includes('PROVIDER_TIMEOUT')) problems.push('闭集文本里缺 PROVIDER_TIMEOUT（闭集被截断？）');
+    return problems;
+  }, note: '`ErrorCode` 闭集共 24 值（`services/api/src/contract.ts:14-30`）。变红条件：把 error_code 校验降级成「未知码视为无过滤」或改成 503 ⇒ 状态码/码不对' },
+  { id: 'C3-31', family: 'C3', app: 'jobs', title: '作业过滤正控制：state=queued&limit=1 给出真游标（页 2 存在）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=queued&limit=1`, expect: { status: 200 }, check: (result) => {
+    const problems = [];
+    const items = result.body?.data?.items;
+    const cursor = result.body?.data?.next_cursor;
+    if (!Array.isArray(items)) problems.push('data.items 不是数组');
+    else if (items.length !== 1) problems.push(`items 期望恰 1 条（limit=1），实际 ${items.length}`);
+    if (items?.[0]?.id !== jobId(2)) problems.push(`首页应是种子里较新的 queued（#2），实际 ${JSON.stringify(items?.[0]?.id ?? null)}`);
+    if (typeof cursor !== 'string' || cursor.length === 0) problems.push('next_cursor 期望非空字符串（过滤后仍有第 2 页）');
+    return problems;
+  }, after: (result, ctx) => {
+    const cursor = result.body?.data?.next_cursor;
+    ctx.jobFilterCursor = typeof cursor === 'string' && cursor.length > 0 ? cursor : null;
+  }, note: '只把**真游标**交给后两条：拿不到就置 null，让 `C3-32` 如实判红，避免用硬编码串自证。变红条件：next_cursor 恒 null（分页退化）或首页顺序/过滤失效' },
+  { id: 'C3-32', family: 'C3', app: 'jobs', title: '作业过滤：游标换筛选组合复用 ⇒ 400 INVALID_CURSOR（不串页）', actor: 'adminFull', method: 'GET', path: (ctx) => `${JOB_LIST}?state=failed&cursor=${encodeURIComponent(ctx.jobFilterCursor ?? 'no-cursor')}`, expect: { status: 400, code: 'INVALID_CURSOR' }, check: (result, ctx) => {
+    const problems = [];
+    if (typeof ctx.jobFilterCursor !== 'string') problems.push('前置 C3-31 没拿到真游标 ⇒ 本条判定失去意义');
+    const message = result.body?.error?.message ?? '';
+    if (message !== '集合已变化，请重新开始分页') problems.push(`message 期望「集合已变化，请重新开始分页」实际 ${JSON.stringify(message)}`);
+    if (result.body?.data !== undefined) problems.push('400 响应不得带 data');
+    return problems;
+  }, note: '游标水印绑 `state/error_code`（`service.ts:738`、失败分支 `service.ts:360`）。变红条件（已实测）：删掉 watermark 判定 ⇒ 落到 `游标位置已失效`，message 不再是「集合已变化，请重新开始分页」；或游标被静默忽略 ⇒ 200 串页。⚠️ 光删 `jobFilterWatermarkParts` 仍是 400（两种组合的 id 集合本身不同，水印照样对不上），所以本条判的是**拒绝的措辞与状态**，不是「有没有把筛选绑进签名」' },
+  { id: 'C3-33', family: 'C3', app: 'jobs', title: '作业过滤：同一筛选组合下同一游标可用（页 2 = 剩下那条）', actor: 'adminFull', method: 'GET', path: (ctx) => `${JOB_LIST}?state=queued&cursor=${encodeURIComponent(ctx.jobFilterCursor ?? 'no-cursor')}`, expect: { status: 200 }, check: (result, ctx) => {
+    const problems = [];
+    if (typeof ctx.jobFilterCursor !== 'string') problems.push('前置 C3-31 没拿到真游标 ⇒ 本条判定失去意义');
+    const items = result.body?.data?.items ?? [];
+    if (items.length !== 1) problems.push(`页 2 期望 1 条，实际 ${items.length}`);
+    if (items[0]?.id !== jobId(1)) problems.push(`页 2 应是剩下那条 queued（#1），实际 ${JSON.stringify(items[0]?.id ?? null)}`);
+    if (result.body?.data?.next_cursor !== null) problems.push('页 2 之后 next_cursor 应为 null');
+    return problems;
+  }, note: '与 `C3-32` 成对：证明 400 是**组合变化**引起的，不是游标本身坏。变红条件：游标对所有筛选都拒绝（一刀切 400）⇒ 本条 200 变 400' },
+  { id: 'C3-34', family: 'C3', app: 'jobs', title: '作业过滤：合法但无匹配 ⇒ 200 空页（items:[] / next_cursor:null）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=timed_out`, expect: { status: 200 }, check: (result) => {
+    const problems = [];
+    const items = result.body?.data?.items;
+    if (!Array.isArray(items)) problems.push('data.items 不是数组');
+    else if (items.length !== 0) problems.push(`items 期望 []，实际 ${items.length} 条`);
+    if (result.body?.data?.next_cursor !== null) problems.push(`next_cursor 期望 null，实际 ${JSON.stringify(result.body?.data?.next_cursor)}`);
+    return problems;
+  }, note: '种子里没有 `timed_out` 作业。变红条件：把「闭集外」与「无匹配」混为一谈（无匹配返 400，或 404、或 503）⇒ 状态码不对；或空页时仍给 next_cursor' },
+  { id: 'C3-35', family: 'C3', app: 'jobs', title: '作业过滤降级：state=&error_code= 空串 ⇒ 不参与过滤（全量 6 条）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=&error_code=`, expect: { status: 200 }, check: (result) => {
+    const problems = [];
+    const items = result.body?.data?.items ?? [];
+    if (items.length !== 6) problems.push(`空串应等价于不过滤（6 条），实际 ${items.length} 条`);
+    return problems;
+  }, note: '`parseClosedSetParam` 对空串返回 null（`jobs.ts:33`）。变红条件：把空串当非法值 ⇒ 400；或空串被当作真实 state 过滤 ⇒ 0 条' },
+  { id: 'C3-36', family: 'C3', app: 'jobs', title: '作业过滤正控制：error_code=PROVIDER_TIMEOUT 只留 1 条', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?error_code=PROVIDER_TIMEOUT`, expect: { status: 200 }, check: (result) => {
+    const problems = [];
+    const items = result.body?.data?.items ?? [];
+    if (items.length !== 1) problems.push(`期望只留 1 条（种子 #5），实际 ${items.length} 条`);
+    if (items[0]?.id !== jobId(5)) problems.push(`留下的应是 #5，实际 ${JSON.stringify(items[0]?.id ?? null)}`);
+    return problems;
+  }, note: '证明 error_code 是**真过滤**而不是只校验不生效。变红条件：端口侧忽略 error_code（返回 6 条）⇒ 本条红' },
 
   // ------------------------------------------------------- C4 会话与注销
   { id: 'C4-01', family: 'C4', title: '注销缺幂等键', actor: 'fresh', method: 'POST', path: `${API}/auth/logout`, expect: { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' } },

@@ -2,7 +2,7 @@
 /**
  * GY-I22（#22）失败回归矩阵 · **真实 PostgreSQL 17 运行臂**。
  *
- * 干什么：把失败回归矩阵的**权限面用例**（C1–C4 / C10 / C11，共 171 条）跑在
+ * 干什么：把失败回归矩阵的**权限面用例**（C1–C4 / C10 / C11，共 180 条）跑在
  * **一次性真实 PostgreSQL 17 集群**上，把矩阵 world 的内存 store 换成真 PG store，
  * 逐条记录 `stub 期望`（cases.mjs 里的 `expect`）与 `真 PG 实际` 的差异。
  *
@@ -494,6 +494,14 @@ async function main() {
 
       if (c.concurrent !== undefined) {
         entry.reason = '并发用例在真 PG 臂不跑（stub 内存并发语义与真库不同源），保持未取得';
+        rows.push(entry);
+        continue;
+      }
+
+      if (c.app === 'jobs') {
+        // S-6 的作业过滤腿依赖 `createJobFilterWorld` 的**已接线内存作业端口 + 固定种子**（真 PG 侧没有
+        // 作业读权威可播种）。本臂如实记「未取得」，不算 same、也不伪装 PASS；stub 臂与单测里这 9 条全跑。
+        entry.reason = '作业过滤腿需要已接线的内存作业端口（stub 参考实现 + 固定种子）；real + 真库无作业读权威，本臂不跑';
         rows.push(entry);
         continue;
       }
