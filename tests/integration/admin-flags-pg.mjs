@@ -43,6 +43,11 @@
  *   [H] 行锁的行为分量（证伪 `SELECT … FOR UPDATE`）：外部会话持行锁 + 端口「值未变」短路
  *       ⇒ 等锁 ≥3000ms 后 504 PROVIDER_TIMEOUT(retryable:true)；删掉 FOR UPDATE 则数毫秒返回成功，
  *       耗时下界断言必红。HTTP 的 PUT 到不了这里（service 层「值未变」在端口之前就返回 200）。
+ *   [I] 开关**真库端到端**（#18「真实生效」的产出面证据，不是读面回显）：先显式 PUT 开启（revision 从读面取，
+ *       不假设种子）⇒ `POST /posts` 201 且 `community_posts` 恰 +1 行；再 PUT 关闭 ⇒ 同一路由 409
+ *       OBJECT_UNAVAILABLE（details 带 FLAG_CLOSED）且内容表**零新增**；重开 ⇒ 同一进程、无重启、无缓存等待
+ *       立刻再投 201；未登录仍 401 `SESSION_REQUIRED` 且响应不泄露 FLAG_CLOSED（鉴权先于开关）；
+ *       每次切换 `admin_audit_events` **恰 1 行**（action=set_flag / scope=flags:write）。
  *
  * 说明：[M] 段**不再断言**「迁移目录的最大号是几」——那是**随 main 前进就会变假的时点事实**
  * （旧写法写死 `0020`，main 的迁移走到 `0023` 后该断言必红，且没有任何门禁会跑到它）。
@@ -62,6 +67,16 @@ import { createMemoryAuthStore, createPostgresAuthStore } from '../../services/a
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
 import { createPostgresFeatureFlags } from '../../services/api/src/admin/ops/flags-pg.ts';
 import { CONTRACT_FLAG_KEYS } from '../../services/api/src/admin/ops/flags.ts';
+// GY-I18 新臂 [I]：投稿面 `public_posting` 授权闸的**合成授权夹具**（与 `community-pg.mjs` /
+// `moderation-full-chain-pg.mjs` 同一份，避免两套授权口径）。注入的是**前置授权**，不是被验证对象。
+import { createPublicPostingConsent } from '../unit/community-posting-consent-fixtures.mjs';
+// GY-I18 新臂 [I]：规则层（发布前内容筛查）的**确定性闸门夹具**（与 `community-pg.mjs:891` /
+// `moderation-full-chain-pg.mjs:274` 同一份）。规则层缺省按 **50ms 墙钟**预算判超时
+// （`services/api/src/conversations/screen.ts:127-128`），CI 机器负载高时会把干净的投稿抖成
+// 422 INPUT_UNCERTAIN(RULE_TIMEOUT)；`makeGate()` 冻结时钟（`tests/unit/community-fixtures.mjs:59`
+// `FROZEN_CLOCK = () => 0`）⇒ 本臂断言的「开关控制产出面」不再被无关的规则层时延抖动污染。
+// 注入的是**规则层**闸，被验证的开关门（`createFeatureFlagGate`）仍是真库真端口。
+import { makeGate } from '../unit/community-fixtures.mjs';
 
 const API = '/api/v1';
 const DB = 'gengyun_flags_test';
@@ -404,8 +419,8 @@ async function seedAdmin(scopes) {
 
 const subjectOf = (label) => randomBytes(32).toString('hex').replace(/^(.{56}).{8}$/, `$1${label.padStart(8, '0')}`);
 
-async function seedUserToken() {
-  const user = await seedStore.createUser(subjectOf('00001818'));
+async function seedUserAccount(label = '00001818') {
+  const user = await seedStore.createUser(subjectOf(label));
   const token = mintOpaqueToken();
   await seedStore.createSession({
     userId: user.id,
@@ -414,7 +429,11 @@ async function seedUserToken() {
     expiresAt: new Date(Date.now() + 3600 * 1000),
     audience: 'user',
   });
-  return token;
+  return { userId: user.id, token };
+}
+
+async function seedUserToken() {
+  return (await seedUserAccount()).token;
 }
 
 const REAL_ENV = {
@@ -881,6 +900,155 @@ async function armingArm() {
 }
 
 // ---------------------------------------------------------------------------
+// [I] 开关真库端到端（#18「真实生效」）：开关必须真的控制**产出面**，不只是读面回显
+// ---------------------------------------------------------------------------
+/**
+ * 跑在 `armingArm()` 之后 —— 那一步最后一次 `resetDatabase()` + 全部迁移 ⇒ `community_posts`（0022）
+ * 与 0020 的三行种子都在（种子 revision=1/全 false），所以本臂**先读真实 revision 再显式 PUT**，
+ * 不假设任何种子值。
+ *
+ * 装配口径：
+ *   - 只用 owner 池。`resetDatabase()` 连 `public` schema 一起重建，`20-login-roles.sql` 的授权随之失效；
+ *     开关端口的「最小权限」证据由 [P]/[E] 各自单独取证，本臂只证**行为**。
+ *   - 不注入 `adminInjection.flagsPort` ⇒ real + pool 时由 `app.ts` 自建 PG 端口（`armed=true`）。
+ *   - 注入 `privacyInjection.consent`（社区已有的合成授权夹具）：`public_posting` 是投稿的**前置授权**，
+ *     与本用例主题无关，用既有夹具补齐（真实 grant 链路，不跳过授权闸）。
+ *   - 注入 `communityInjection.moderation = null`：real 未接真实 tms/ims 时审核域整域 fail-closed（503），
+ *     会把 `POST /posts` 挡在开关判定之前；`app.ts` 的装配点显式支持这个注入（隔离用）。规则层闸照常参与。
+ *   - 注入 `communityInjection.gate = makeGate()`：规则层缺省 50ms 墙钟预算（`screen.ts:127-128`），
+ *     高负载机器上会把干净投稿抖成 422 RULE_TIMEOUT。冻结时钟只去掉**与本用例无关的时延抖动**，
+ *     开关门（`createFeatureFlagGate`）仍是真的：关闭时 409 由它抛出。
+ */
+async function flagSurfaceArm() {
+  const publicPosting = createPublicPostingConsent();
+  const app = buildApp({
+    config: loadConfig(REAL_ENV),
+    pool: ownerPool,
+    wechat: wechatPort,
+    now: () => new Date(),
+    privacyInjection: { consent: publicPosting.gate },
+    communityInjection: { moderation: null, gate: makeGate() },
+  });
+  registeredApps.push(app);
+  assert.equal(
+    app.featureFlagGate.armed,
+    true,
+    'real + 有池 ⇒ 开关门必须武装（不武装就等于没接开关，本臂的 409 会变成假绿）',
+  );
+  await app.ready();
+  assert.equal(app.featureFlagGate.armed, true, '全迁移库 ⇒ onReady 探测必须 ready（不得降级成未武装）');
+
+  const admin = await seedAdmin(['flags:read', 'flags:write']);
+  const author = await seedUserAccount('00001819');
+  await publicPosting.grant(author.userId);
+
+  /** 每次投稿换一个标题：既避开规则层的重复内容判定，也让「零落行」可以按标题精确查证。 */
+  const postPayload = (attempt) => ({
+    title: `GY-I18 开关端到端：第 ${attempt} 次投稿`,
+    body: '用于证明「关闭期间零落行、重开即恢复」的合成正文。',
+    media_ids: [],
+  });
+  /** 一次真实投稿。每次都换 `Idempotency-Key`，避免幂等重放把「到底有没有落库」掩盖成 201。 */
+  const submitPost = (token, attempt) =>
+    injectCall(app, `${API}/posts`, {
+      method: 'POST',
+      ...(token === undefined ? {} : { token }),
+      body: postPayload(attempt),
+      headers: { 'idempotency-key': randomUUID() },
+    });
+  const contentRows = async () => (await q('SELECT count(*)::int AS n FROM community_posts'))[0].n;
+  /** 按标题查某次投稿真的落了几行（行数相等之外的第二重证据）。 */
+  const titledRows = async (attempt) =>
+    (await q('SELECT count(*)::int AS n FROM community_posts WHERE title = $1', [postPayload(attempt).title]))[0].n;
+  const putFlag = (enabled, ifMatch, reason) =>
+    injectCall(app, `${API}/admin/feature-flags/submissions_enabled`, {
+      method: 'PUT',
+      token: admin.token,
+      body: { enabled, reason },
+      headers: { 'if-match': ifMatch, 'idempotency-key': randomUUID() },
+    });
+  /** 该键在 `admin_audit_events` 的 id 集合，用来按差集算「这次切换恰好写了 1 行」。 */
+  const auditIdSet = async () => new Set((await auditRows('submissions_enabled')).map((row) => row.id));
+  const auditRowsAdded = async (before) => (await auditRows('submissions_enabled')).filter((row) => !before.has(row.id));
+
+  // ① 先**显式** PUT 成开启：revision 取自读面，不假设种子。
+  const list = await injectCall(app, `${API}/admin/feature-flags`, { token: admin.token });
+  assert.equal(list.status, 200, `读面必须 200，实际 ${list.status} ${list.text.slice(0, 300)}`);
+  const listed = list.body.data.items.find((item) => item.key === 'submissions_enabled');
+  assert.notEqual(listed, undefined, '读面必须含 submissions_enabled');
+  const auditsBeforeOpen = await auditIdSet();
+  const opened = await putFlag(true, `"${listed.revision}"`, '显式开启社区投稿受理');
+  assert.equal(opened.status, 200, `显式开启必须 200，实际 ${opened.status} ${opened.text.slice(0, 300)}`);
+  assert.equal(opened.body.data.enabled, true, '显式 PUT 后开关必须是 true（本臂不依赖种子默认值）');
+  assert.equal((await flagRow('submissions_enabled')).enabled, true, '开启必须当场落到 feature_flags');
+  const openAudits = await auditRowsAdded(auditsBeforeOpen);
+  assert.equal(openAudits.length, 1, `一次切换必须恰写 1 行审计，实际 ${openAudits.length} 行`);
+
+  const contentAtOpen = await contentRows();
+  const firstPost = await submitPost(author.token, 1);
+  assert.equal(firstPost.status, 201, `开关开启时 POST /posts 必须 2xx，实际 ${firstPost.status} ${firstPost.text.slice(0, 400)}`);
+  assert.equal(firstPost.body.data.revision, 1, '首次投稿的 revision 必须是 1');
+  assert.equal(firstPost.body.data.visibility, 'published', '审核联动关闭（隔离注入）⇒ 无媒体投稿应直接 published');
+  assert.equal(await contentRows(), contentAtOpen + 1, '开启时一次投稿必须**恰好**落 1 行社区内容');
+  assert.equal(await titledRows(1), 1, '第 1 次投稿必须真的落库 1 行');
+  note('[I] 显式 PUT submissions_enabled=true（revision 取自读面）⇒ POST /posts 201，community_posts 恰 +1 行');
+
+  // ② 关闭 ⇒ 同一个产出面立刻 409 OBJECT_UNAVAILABLE（details 带 FLAG_CLOSED）。
+  const auditsBeforeClose = await auditIdSet();
+  const closed = await putFlag(false, opened.etag, '关闭社区投稿受理');
+  assert.equal(closed.status, 200, `关闭必须 200，实际 ${closed.status} ${closed.text.slice(0, 300)}`);
+  assert.equal(closed.body.data.enabled, false, '关闭必须落 enabled=false');
+  const closeAudits = await auditRowsAdded(auditsBeforeClose);
+  assert.equal(closeAudits.length, 1, `关闭一次必须恰写 1 行审计，实际 ${closeAudits.length} 行`);
+  assert.equal(closeAudits[0].action, 'set_flag', '审计 action 必须是 set_flag');
+  assert.equal(closeAudits[0].scope, 'flags:write', '审计 scope 必须是 flags:write');
+  assert.equal(closeAudits[0].target_hint, 'submissions_enabled', '审计 target_hint 必须钉住被切的键');
+  assert.equal(closeAudits[0].result, 'accepted', '审计 result 必须是 accepted');
+  assert.equal(closeAudits[0].actor_id, admin.adminId, '审计 actor 必须是这次操作的运营账号');
+
+  const contentAtClose = await contentRows();
+  const blocked = await submitPost(author.token, 2);
+  assert.equal(blocked.status, 409, `开关关闭时 POST /posts 必须 409，实际 ${blocked.status} ${blocked.text.slice(0, 400)}`);
+  assert.equal(blocked.body.error.code, 'OBJECT_UNAVAILABLE', '关闭口径必须是 OBJECT_UNAVAILABLE');
+  const blockedCodes = (blocked.body.error.details ?? []).map((detail) => detail?.code);
+  assert.ok(blockedCodes.includes('FLAG_CLOSED'), `409 的 details 必须带 FLAG_CLOSED，实际 ${JSON.stringify(blockedCodes)}`);
+  assert.equal(blocked.body.data, undefined, '被开关拒绝时不得返回任何内容对象');
+  note('[I] PUT submissions_enabled=false ⇒ POST /posts 409 OBJECT_UNAVAILABLE（details: FLAG_CLOSED），审计恰 1 行');
+
+  // ③ 关闭期间库内**零新增**：关前/关后各查一次行数，必须相等。
+  const contentAfterBlocked = await contentRows();
+  assert.equal(contentAfterBlocked, contentAtClose, '开关关闭期间 community_posts 不得新增任何行（零产出保证）');
+  assert.equal(await titledRows(2), 0, '被 409 拒绝的那次投稿不得在 community_posts 留下任何行（按标题精确查证）');
+  note('[I] 关闭期间 community_posts 行数前后相等 ⇒ 开关真的控制了产出面，不只是读面回显');
+
+  // ④ 未登录仍 401：**此刻开关是关的**，鉴权必须先于开关判定，且响应不得泄露开关状态。
+  assert.equal((await flagRow('submissions_enabled')).enabled, false, '前置：此刻库里该键确实是关闭的');
+  const anonymous = await submitPost(undefined, 4);
+  assert.equal(anonymous.status, 401, `未登录 POST /posts 必须 401（鉴权先于开关），实际 ${anonymous.status} ${anonymous.text.slice(0, 400)}`);
+  assert.equal(anonymous.body.error.code, 'SESSION_REQUIRED', '未登录的鉴权口径必须是 SESSION_REQUIRED');
+  assert.equal(anonymous.text.includes('FLAG_CLOSED'), false, '401 响应不得泄露开关状态（否则等于把开关当鉴权用）');
+  assert.equal(await titledRows(4), 0, '未登录被拒的那次投稿同样不得落行');
+  note('[I] 开关关闭时未登录 POST /posts ⇒ 401 SESSION_REQUIRED（不泄露 FLAG_CLOSED）：鉴权前置未被打乱');
+
+  // ⑤ 重开 ⇒ **同一进程、无重启、无缓存等待**：立刻再投必须恢复 2xx。
+  const auditsBeforeReopen = await auditIdSet();
+  const reopened = await putFlag(true, closed.etag, '恢复社区投稿受理');
+  assert.equal(reopened.status, 200, `重开必须 200，实际 ${reopened.status} ${reopened.text.slice(0, 300)}`);
+  assert.equal(reopened.body.data.enabled, true, '重开必须落 enabled=true');
+  assert.equal((await flagRow('submissions_enabled')).enabled, true, '重开必须当场落库');
+  const reopenAudits = await auditRowsAdded(auditsBeforeReopen);
+  assert.equal(reopenAudits.length, 1, `重开一次必须恰写 1 行审计，实际 ${reopenAudits.length} 行`);
+
+  const contentBeforeResume = await contentRows();
+  const resumed = await submitPost(author.token, 3);
+  assert.equal(resumed.status, 201, `重开后同一进程立刻投稿必须恢复 2xx，实际 ${resumed.status} ${resumed.text.slice(0, 400)}`);
+  assert.notEqual(resumed.body.data.id, firstPost.body.data.id, '恢复后的投稿必须是新内容（不是 409 前的旧对象回放）');
+  assert.equal(await contentRows(), contentBeforeResume + 1, '重开后投稿必须重新落 1 行');
+  assert.equal(await titledRows(3), 1, '第 3 次投稿（重开后）必须真的落库 1 行');
+  note('[I] 重开 ⇒ 同一进程、零重启、零等待，POST /posts 立刻回到 201 并重新落 1 行');
+}
+
+// ---------------------------------------------------------------------------
 // [P1] 负控制：既有角色的认证材料必须一字不差
 // ---------------------------------------------------------------------------
 let credentialsReported = false;
@@ -956,11 +1124,12 @@ try {
   await httpArm();
   await nullPoolArm();
   await armingArm();
+  await flagSurfaceArm();
 
   // 全绿之前再过一道身份闸：既有角色（含别的库在用的运行时角色）的认证材料必须一字不差。
   await checkRoleCredentials(true);
 
-  note('[ALL PASS] feature_flags 持久化真库验收 ①–⑥ + 行锁判别 + 武装就绪探测 全部取得');
+  note('[ALL PASS] feature_flags 持久化真库验收 ①–⑥ + 行锁判别 + 武装就绪探测 + 开关端到端产出面（[I]）全部取得');
 } catch (error) {
   process.exitCode = 1;
   console.error('[FAIL]', error?.message ?? error);
