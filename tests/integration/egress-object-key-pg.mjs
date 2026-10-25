@@ -14,12 +14,15 @@
  *      约束与列级权限的真库行为（含最小权限角色可 INSERT 该列、**不可** UPDATE 该列）；
  *   B. `0014` 回滚 → 结构如实消失、既有行仍可读 → 重放成功、结构复现；
  *   C. 合成域**正控制**：real + 账本 + 授权齐备 ⇒ 预留成功、`markSent` 落账、载荷出站（测试内替身传输）；
- *      账本如实登记 `object_key`（`<正文类型>:<正文标识>`，1..128 文本）+ 全零哨兵 `object_id` + 仅 `external_inference` 必需用途；
+ *      账本如实登记 `object_key`（**裸对象标识**，1..80；GY-R35 起不再编成 `<正文类型>:<标识>`）+ 全零哨兵 `object_id` + 仅 `external_inference` 必需用途；
  *   D. **负控制**：① 无预留就出站 ⇒ `OBJECT_UNAVAILABLE`；② 用途未授权 ⇒ `CONSENT_REQUIRED`；
- *      ③ 对象标识非法（空 / >128 / 非法字符 / 未登记）⇒ 拒绝；
+ *      ③ 对象标识非法（空 / >80 / 非法字符 / 未登记）⇒ 拒绝；
  *   E. **多要授权回归钉子**：新维度**不得**要求 `recording`（只授 `external_inference` ⇒ 受理成功）；
  *   F. **默认仍失败关闭**：real 未接真实传输（能力未接线／缺凭据）⇒ 受理处 503 `PROVIDER_UNAVAILABLE`(retryable=false)，
  *      且该用户**零账本行**（在任何账本变更之前拒绝）。
+ *   G. 迁移 `0040`（GY-R35 写入侧改写的收尾）：越界 `object_type`（`conversation_turn`/`checked_content`）历史行
+ *      回填成「真实内容类型 + 裸标识」（`media` 行不动），再把形状 CHECK 从 `{1,128}` 收紧到 `{1,80}`；81 拒绝、80 通过；
+ *      回滚只还原约束、不回滚数据。
  */
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID, createHmac } from 'node:crypto';
@@ -665,8 +668,11 @@ try {
   assert.equal(state, 'succeeded');
   const row = await exportRowFor(p.id);
   assert.ok(row !== null, '必须落账');
-  assert.equal(row.object_type, 'checked_content');
-  assert.equal(row.object_key, `answer:${APPROVED_ID}`, '账本登记的对象键必须由执行期重读的已核对正文快照 (type,id) 派生');
+  // GY-R35：`object_type` 是契约 `TargetRef.type` 的 16 值闭集成员 —— 取该条正文的**真实内容类型**
+  // （`answer`），不再用资料维度名 `checked_content`（它是 `data_type`：只参与"必需哪些用途"的判定，
+  // 不是对象类型，也从不落库到 exports 行上）。
+  assert.equal(row.object_type, 'answer');
+  assert.equal(row.object_key, APPROVED_ID, '账本登记的对象键就是快照 id 裸值（去 `<类型>:` 前缀；object_key 即 object_ref.id）');
   assert.equal(String(row.object_id), '00000000-0000-0000-0000-000000000000', '文本型对象用全零哨兵占位（uuid 列 NOT NULL 未放宽）');
   assert.equal(row.object_revision, 1);
   assert.equal(row.state, 'sent');
@@ -684,7 +690,7 @@ try {
   assert.equal(written.result.content_class, 'structural_only');
   assert.equal(JSON.stringify(written.result).includes('这段正文'), false, '回写不得落提供者载荷/正文');
   assert.equal(JSON.stringify(written.result).includes('替身占位产物'), false, '回写不得落产物字节');
-  say('正控制（真 PG）：real 合成域 reserve → assertExecutable → markSent → 传输 → saveResult；账本登记 object_key=<正文类型>:<快照 id>、哨兵 object_id、仅 external_inference');
+  say('正控制（真 PG）：real 合成域 reserve → assertExecutable → markSent → 传输 → saveResult；账本登记 object_type=正文真实类型(answer)、object_key=<快照 id 裸值>、哨兵 object_id、仅 external_inference');
 
   // P2-c 故障注入②（HTTP 端到端，**这就是「漏授 ⇒ 静默全失败」那条结论的真库证据**）：
   // 授权必须处于 REVOKE 状态 ⇒ 同一用户的**新**一次合成受理必须在任何账本变更之前 503
@@ -726,7 +732,7 @@ try {
   assert.equal(restoredState, 'succeeded', 'GRANT 复原后同一路径必须重新成功（证明 503 确由漏授引起）');
   const restoredRow = (await owner.query('SELECT state, object_key, job_id FROM exports WHERE job_id=$1', [restored.body.data.id])).rows[0];
   assert.equal(restoredRow.state, 'sent');
-  assert.equal(restoredRow.object_key, `answer:${APPROVED_ID}`);
+  assert.equal(restoredRow.object_key, APPROVED_ID);
   say('P2-c 复原（真 PG + HTTP）：GRANT 复原 ⇒ 同一路径重新受理成功并落账（负/正控制成对）');
 
   // ---------------------------------------------------------------- F. 负控制 ①：无预留就出站
@@ -776,7 +782,9 @@ try {
   // ---------------------------------------------------------------- H. 负控制 ③：对象标识非法 / 未登记
   const s = await login(fx('i27-syn-badkey'));
   await grant(s.token, 'external_inference', ['fixture-tts']);
-  const approvedKey = `answer:${APPROVED_ID}`;
+  // GY-R35 写入侧改写后：合成域的账本 `object_key` 是**裸对象标识**（不再编成 `<正文类型>:<id>`），
+  // `object_type` 是**该条正文的真实内容类型**（`answer`）而不是资料维度名 `checked_content`。
+  const approvedKey = APPROVED_ID;
   for (const bad of ['', 'k'.repeat(81), 'has space', 'UPPER_not_allowed', 'k'.repeat(80)]) {
     const res = await postSynthesis(s.token, { type: 'answer', id: bad, revision: 1 });
     assert.ok([400, 403, 404, 409].includes(res.status), `非法/未登记对象标识必须被拒：${bad.slice(0, 12)} ⇒ ${res.status} ${JSON.stringify(res.body)}`);
@@ -805,7 +813,7 @@ try {
   assert.equal(foreignRows.length, 1, '越权受理失败：预留必须被释放为终态（不得残留 reserved）');
   assert.equal(foreignRows[0].state, 'failed');
   assert.equal(foreignRows[0].error_code, 'ACCEPTANCE_FAILED');
-  assert.equal(foreignRows[0].object_key, `answer:${PRIVATE_ID}`, '审计行只记结构标识（正文键），不含载荷');
+  assert.equal(foreignRows[0].object_key, PRIVATE_ID, '审计行只记结构标识（正文标识裸值），不含载荷');
   assert.equal(await writebackCount(foreignRows[0].id), 0, '被拒的受理零回写');
   const u = await login(fx('i27-syn-replay'));
   await grant(u.token, 'external_inference', ['fixture-tts']);
@@ -834,13 +842,14 @@ try {
   const callsBefore = transport.calls.length;
   // 本用例之前的合成域账本行数（用于最后断言「被拒的派发零新增行」）。
   const foreignBaseline = Number(
-    (await owner.query("SELECT count(*)::int n FROM exports WHERE object_type='checked_content'")).rows[0].n,
+    (await owner.query("SELECT count(*)::int n FROM exports WHERE object_type='answer'")).rows[0].n,
   );
+  // 手工造的「他人预留行」也按改后口径落库：`object_type` 是真实内容类型、`object_key` 是裸 id。
   const foreignReservation = await owner.query(
     `INSERT INTO exports(user_id,object_type,object_id,object_key,object_revision,purpose,consent_epoch,recipient_id,recipient_config_version,state,auth_epoch)
-     VALUES($1,'checked_content',$2::uuid,$3,1,'external_inference',1,'fixture-tts','fixture-config-v1','reserved',1)
+     VALUES($1,'answer',$2::uuid,$3,1,'external_inference',1,'fixture-tts','fixture-config-v1','reserved',1)
      RETURNING id`,
-    [other.id, SENTINEL, `answer:${APPROVED_ID}`],
+    [other.id, SENTINEL, APPROVED_ID],
   );
   const rowsABefore = (await exportRowsFor(p.id)).length;
   const acceptedByA = await postSynthesis(p.token, { type: 'answer', id: APPROVED_ID, revision: 1 });
@@ -851,7 +860,7 @@ try {
   assert.equal(rowsA.length, rowsABefore + 1, 'A 的这次受理只新增自己的一行');
   const sentByA = rowsA.find((r) => r.state === 'sent' && r.job_id === acceptedByA.body.data.id);
   assert.ok(sentByA !== undefined, 'A 的派发必须把**A 自己的**预留行翻成 sent');
-  assert.equal(sentByA.object_key, `answer:${APPROVED_ID}`);
+  assert.equal(sentByA.object_key, approvedKey);
   assert.equal(
     rowsA.filter((r) => r.job_id === acceptedByA.body.data.id).length,
     1,
@@ -900,9 +909,9 @@ try {
   await grant(thirdOwner.token, 'external_inference', ['fixture-tts']);
   const ownReservation = await owner.query(
     `INSERT INTO exports(user_id,object_type,object_id,object_key,object_revision,purpose,consent_epoch,recipient_id,recipient_config_version,state,auth_epoch)
-     VALUES($1,'checked_content',$2::uuid,$3,1,'external_inference',1,'fixture-tts','fixture-config-v1','reserved',1)
+     VALUES($1,'answer',$2::uuid,$3,1,'external_inference',1,'fixture-tts','fixture-config-v1','reserved',1)
      RETURNING id`,
-    [thirdOwner.id, SENTINEL, `answer:${APPROVED_ID}`],
+    [thirdOwner.id, SENTINEL, APPROVED_ID],
   );
   const ownReservationId = ownReservation.rows[0].id;
   // 受害行：由受害者 `s` 经本实例**真实预留**产生（晚于派发者那行 ⇒ 它是该对象版本上最新的 reserved 行）。
@@ -917,9 +926,9 @@ try {
   const victimReservationId = victimReserved.exportId;
   // 构造前提（修前/修后都必须成立）：受害行确为该对象版本上**最新**的 `reserved` 行 —— 旧实现的退化查询取它。
   const newestReserved = await owner.query(
-    `SELECT id FROM exports WHERE object_type='checked_content' AND object_key=$1 AND object_revision=1
+    `SELECT id FROM exports WHERE object_type='answer' AND object_key=$1 AND object_revision=1
        AND state='reserved' ORDER BY created_at DESC LIMIT 1`,
-    [`answer:${APPROVED_ID}`],
+    [APPROVED_ID],
   );
   assert.equal(
     newestReserved.rows[0].id,
@@ -991,7 +1000,7 @@ try {
   assert.equal(aRowAfter.state, 'sent', '被拒的派发也不得改动 A 已派发行');
   assert.equal(aRowAfter.job_id, acceptedByA.body.data.id, 'A 的行必须仍挂着 A 自己的 job_id');
   assert.equal(
-    Number((await owner.query('SELECT count(*)::int n FROM exports WHERE object_type=$1', ['checked_content'])).rows[0].n),
+    Number((await owner.query('SELECT count(*)::int n FROM exports WHERE object_type=$1', ['answer'])).rows[0].n),
     foreignBaseline + 4,
     '被拒的派发不得新增账本行（基线已含 P2-c 复原那次受理；此后应有 4 行：A 的第二次受理、本用例直接写入的 B 预留行、回归②直接写入的派发者预留行与受害预留行）',
   );
@@ -1034,6 +1043,116 @@ try {
   await fallbackApp.close();
   http = makeHttp(origin);
   say('默认仍失败关闭：real 未接真实传输 ⇒ 503 PROVIDER_UNAVAILABLE(retryable=false)，该用户零账本行（任何账本变更之前拒绝）');
+
+  // ---------------------------------------------------------------- K. 迁移 0040：越界 object_type 的数据回填 + 形状收紧到 80
+  //
+  // 这是**数据迁移**的正臂。写入侧（`task-egress.ts` / `synthesis-egress.ts`）改到契约口径之后，库里
+  // 仍可能有旧形状的历史行：`object_type` 取 `conversation_turn` / `checked_content` —— 两者都**不是**
+  // 契约 `TargetRef.type` 的成员（一个描述「轮次」这个动作标签、一个是资料维度名），读面一旦照原样
+  // 投影就越枚举；`object_key` 也还是 `<类型>:<id>` / `turn:<uuid>` 的编缀形态（最坏 40 + 1 + 80 = 121，
+  // 超出契约的 `maxLength: 80`）。0040 就是清这批数据的迁移。
+  //
+  // 次序不可反（裁定 §4）：**先回填数据、再把形状收到 80**。反过来先收紧会让 121 字符的旧键撞上新
+  // CHECK ⇒ 整条迁移失败、数据停在越界状态（读面整页 503）。本段的第 5 条行就是给这个次序做的证据：
+  // 它的旧键是 91 字符（> 80、≤ 128），去前缀后恰好 80 ⇒ 只有「先回填后收紧」才可能成功。
+  //
+  // 前置清理：前面各段用 `object_type='checked_content'` 当**任意非媒体维度名**造过 XOR/形状夹具行
+  // （键形如 `sentinel-form-ok`、`runtime-insert-ok`、`a-z0-9._:-ok`），键里没有 `<类型>:` ⇒ 0040
+  // **无法如实回填**，会按设计 fail-closed 中止整条迁移。这里先把它们连同回写删干净（与 finally 的
+  // 收尾同一口径），删的只是本脚本自己造的夹具行。
+  await owner.query(
+    "DELETE FROM export_writebacks WHERE export_id IN (SELECT id FROM exports WHERE object_type IN ('checked_content','conversation_turn'))",
+  );
+  await owner.query("DELETE FROM exports WHERE object_type IN ('checked_content','conversation_turn')");
+
+  const legacyTurnRef = randomUUID();
+  const legacyAnswerRef = randomUUID();
+  const bareTurnRef = randomUUID();
+  const longTypeId = 'z'.repeat(80);
+  const insertLegacy = async (objectType, objectKey, objectId) => (
+    await owner.query(
+      `INSERT INTO exports(user_id,object_type,object_id,object_key,object_revision,purpose,consent_epoch,recipient_id,recipient_config_version,state,auth_epoch)
+       VALUES($1,$2,$3::uuid,$4,1,'external_inference',1,'fixture-tts','fixture-config-v1','sent',1)
+       RETURNING id,object_type,object_key`,
+      [p.id, objectType, objectId, objectKey],
+    )
+  ).rows[0];
+  const asPair = (row) => `${row.object_type}|${row.object_key ?? 'null'}`;
+  const legacyShapeRows = [
+    await insertLegacy('conversation_turn', `turn:${legacyTurnRef}`, SENTINEL),
+    await insertLegacy('conversation_turn', bareTurnRef, SENTINEL),
+    await insertLegacy('checked_content', `answer:${legacyAnswerRef}`, SENTINEL),
+    await insertLegacy('checked_content', `dose_card:${longTypeId}`, SENTINEL),
+    // 媒体维对照行：真实 uuid + NULL 键 —— 0040 **不得**动它（它本来就在契约内）。
+    await insertLegacy('media', null, randomUUID()),
+  ];
+  const legacyShapeIds = legacyShapeRows.map((row) => row.id);
+  assert.deepEqual(
+    legacyShapeRows.map(asPair),
+    [
+      `conversation_turn|turn:${legacyTurnRef}`,
+      `conversation_turn|${bareTurnRef}`,
+      `checked_content|answer:${legacyAnswerRef}`,
+      `checked_content|dose_card:${longTypeId}`,
+      'media|null',
+    ],
+    '前置：两类越界行（轮次标签 / 资料维度名）各就位，含一条「旧键 91 字符、去前缀后 80」的次序证据行，外加一条媒体维对照行',
+  );
+
+  psqlFile('migrations/0040_export_object_key_contract_backfill.sql');
+  const backfilled = (
+    await owner.query('SELECT id,object_type,object_key FROM exports WHERE id = ANY($1::uuid[])', [legacyShapeIds])
+  ).rows;
+  const byId = new Map(backfilled.map((row) => [row.id, row]));
+  assert.equal(backfilled.length, legacyShapeRows.length, '回填不得丢行（不可回填的行会让整条迁移中止，而不是被删）');
+  assert.deepEqual(
+    legacyShapeIds.map((id) => asPair(byId.get(id))),
+    [
+      `conversation|${legacyTurnRef}`,
+      `conversation|${bareTurnRef}`,
+      `answer|${legacyAnswerRef}`,
+      `dose_card|${longTypeId}`,
+      'media|null',
+    ],
+    '0040 回填：conversation_turn → conversation、checked_content → 该条正文的真实内容类型（answer／dose_card）、键去前缀成裸标识；media 行原样不动',
+  );
+
+  const shapeDefs = (
+    await owner.query("SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname='exports_object_key_shape'")
+  ).rows;
+  assert.equal(shapeDefs.length, 1, '收紧后形状约束必须仍恰有一条（同名 DROP + ADD，不得留两条）');
+  assert.match(
+    shapeDefs[0].def,
+    /\^\[a-z0-9\._:-\]\{1,80\}\$/,
+    '0040 必须把形状收到 1..80（= 契约 TargetRef.id 的 maxLength；旧口径 128 随写入侧改写作废）',
+  );
+  await expectReject(
+    owner.query(
+      `INSERT INTO exports(user_id,object_type,object_id,object_key,object_revision,purpose,consent_epoch,recipient_id,recipient_config_version,state,auth_epoch)
+       VALUES($1,'answer',$2::uuid,$3,1,'external_inference',1,'fixture-tts','fixture-config-v1','sent',1)`,
+      [p.id, SENTINEL, 'k'.repeat(81)],
+    ),
+    '23514',
+    '收紧到 80 之后，81 字符的对象键必须被 exports_object_key_shape 拒绝',
+  );
+  const eightyCharRow = await insertLegacy('answer', 'k'.repeat(80), SENTINEL);
+  legacyShapeIds.push(eightyCharRow.id);
+  assert.equal(eightyCharRow.object_key.length, 80, '边界：恰好 80 字符的对象键必须**可以**写入（不多不少）');
+
+  psqlFile('migrations/rollback/0040_export_object_key_contract_backfill.down.sql');
+  const shapeBack = (
+    await owner.query("SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname='exports_object_key_shape'")
+  ).rows;
+  assert.equal(shapeBack.length, 1, '0040 回滚后形状约束仍恰有一条');
+  assert.match(shapeBack[0].def, /\^\[a-z0-9\._:-\]\{1,128\}\$/, '0040 的回滚必须把形状还原成 0015 的 {1,128}');
+  const afterDown = (await owner.query('SELECT object_type, object_key FROM exports WHERE id=$1', [legacyShapeIds[0]])).rows[0];
+  assert.equal(
+    asPair(afterDown),
+    `conversation|${legacyTurnRef}`,
+    '0040 的回滚**只回滚约束、不回滚数据**（回退数据会把行写回契约闭集之外，且去前缀后信息不唯一可逆）',
+  );
+  await owner.query('DELETE FROM exports WHERE id = ANY($1::uuid[])', [legacyShapeIds]);
+  say('迁移 0040（真 PG）：conversation_turn/checked_content 历史行回填成「真实类型 + 裸标识」（含 91→80 字符的次序证据行）、media 行不动、形状收到 {1,80}（81 拒绝 / 80 通过）、回滚还原 {1,128} 且不回滚数据');
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求；未使用真实 TTS 供应商`);
 } finally {

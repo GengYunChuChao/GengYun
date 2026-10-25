@@ -473,8 +473,11 @@ test('外发口：成功路径严格按 reserve → assertExecutable → markSen
   assert.deepEqual(result, { status: 'answered' });
   assert.deepEqual(events.map((event) => event.step), ['reserve', 'assertExecutable', 'markSent', 'call', 'saveResult']);
   const reserved = events[0].input;
-  assert.equal(reserved.objectType, 'conversation_turn');
-  assert.equal(reserved.objectKey, 'turn:5b0f4f4a-0000-4000-8000-000000000008');
+  // GY-R35：外发对象必须是契约 `TargetRef` 里的取值 —— `conversation_turn` 不在 16 值闭集内
+  // （轮次属会话，取容器类型 `conversation`），键也不带 `turn:` 前缀（`object_key` 就是
+  // `object_ref.id`，上限 80）。
+  assert.equal(reserved.objectType, 'conversation');
+  assert.equal(reserved.objectKey, '5b0f4f4a-0000-4000-8000-000000000008');
   assert.equal(reserved.dataType, 'checked_content');
   assert.equal(reserved.purpose, 'external_inference');
   assert.equal(reserved.recipientId, 'recipient-llm-1');

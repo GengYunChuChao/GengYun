@@ -40,14 +40,15 @@ type Row = Record<string, unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_TOKEN = /^[a-z0-9_:-]{1,40}$/;
 /**
- * 非媒体资料的对象键形状（0014 的 `exports.object_key`，1..128 字符）：
+ * 非媒体资料的对象键形状（0014 的 `exports.object_key`，1..80 字符）：
  * 首尾为小写字母或数字，中间允许小写字母/数字/`_`/`-`/`.`/`:`。
- * 长度上限 128 = 「对象类型 ≤ 40 ＋ `:` ＋ 正文标识 ≤ 80」的最坏组合（合成域键形如 `<type>:<id>`），
- * 留出 7 字符余量；**不做截断**，超长一律拒绝（`INVALID_REQUEST`），避免静默改标识。
- * 逐字同源于 `packages/privacy/ledger.mjs` 的 `OBJECT_KEY_PATTERN`（内存参考实现与 PG 实现同口径）。
+ * 长度上限 80 = 契约 `TargetRef.id` 的 `maxLength: 80`（`packages/contracts/openapi.json:11575`）：账本的 `object_key`
+ * 会被 `/me/exports` 原样投影成 `object_ref.id`（本文件 `toRecord`）⇒ 写入侧与契约必须同一个上限，否则读面必 503。
+ * 前 78 = 80 − 首尾各 1 个锚字符。原 128（「类型 ≤ 40 ＋ `:` ＋ 标识 ≤ 80」）随写入侧改写作废：类型不再编进键。
+ * **不做截断**，超长一律拒绝（`INVALID_REQUEST`），避免静默改标识；DB 侧同口径 CHECK `{1,80}` 由迁移 0040 收紧。
  */
-const OBJECT_KEY = /^[a-z0-9](?:[a-z0-9_.:-]{0,126}[a-z0-9])?$/;
-const OBJECT_KEY_MAX = 128;
+const OBJECT_KEY = /^[a-z0-9](?:[a-z0-9_.:-]{0,78}[a-z0-9])?$/;
+const OBJECT_KEY_MAX = 80;
 /**
  * 非媒体（文本键）行的 `object_id` 占位值（**全零 uuid 哨兵**）。
  *
@@ -373,7 +374,7 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
         throw new PrivacyError('INVALID_REQUEST', '非媒体资料的对象标识用 object_key，不得传 object_id');
       }
       if (!hasObjectKey || !OBJECT_KEY.test(objectKey as string) || (objectKey as string).length > OBJECT_KEY_MAX) {
-        throw new PrivacyError('INVALID_REQUEST', 'object_key 缺失或非法（1..128 小写字母/数字/_-.:）');
+        throw new PrivacyError('INVALID_REQUEST', 'object_key 缺失或非法（1..80 小写字母/数字/_-.:）');
       }
     } else {
       if (objectKey !== undefined && objectKey !== null) {

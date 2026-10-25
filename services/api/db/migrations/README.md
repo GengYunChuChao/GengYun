@@ -4,15 +4,15 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-25 · 合流后：`0001..0039`，缺 `0036`/`0037`）
+## 当前状态（2026-10-25 · 合流后：`0001..0040`，缺 `0036`/`0037`）
 
 `0001..0035` 已连续落盘（35 个正向）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
-本片（#22 片C）落 `0039_r34_deletion_state_cancelled.sql` ⇒ 目录现为 **37 个正向 `.sql`** ＋
-`rollback/` **36 个**；缺号只剩 `0036`/`0037`，两条均已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **37 + 2 === 39**），
+本片（#22 片C）落 `0039_r34_deletion_state_cancelled.sql`、GY-R35 落 `0040_export_object_key_contract_backfill.sql` ⇒ 目录现为 **38 个正向 `.sql`** ＋
+`rollback/` **37 个**；缺号只剩 `0036`/`0037`，两条均已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **38 + 2 === 40**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对每个缺号都有依据（见下）。
 （本段数字为实测：`git ls-tree -r --name-only <合流树> -- services/api/db/migrations`
-⇒ 正向 `.sql` 37 条、`rollback/` 36 条、缺号 `0036`/`0037` 均已登记保留。）
+⇒ 正向 `.sql` 38 条、`rollback/` 37 条、缺号 `0036`/`0037` 均已登记保留。）
 
 - `0036` 预留：**#538** `feat/gy-r34-i18-content-pg`（`0036_r34_admin_content_persistence.sql`，管理端内容/资料域 PG 落点，已开 PR，在飞）。
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
@@ -22,6 +22,16 @@
 - `0039_r34_deletion_state_cancelled.sql`（#22 片C · 在途取消：`ALTER TYPE deletion_state ADD VALUE 'cancelled'`）接在
   `0038` 之后；裁定 `.pg17/ruling-r34-migration-0039-cancelled-20261024.md` 分配本号，
   其余保留号 `0036→0037` 串行合入（迁移号互斥）。
+
+- `0040_export_object_key_contract_backfill.sql`（GY-R35 · `/me/exports` 越枚举写入侧改写）接在 `0039` 之后：
+  取号前核对 `0036`/`0037` 已在保留台账、正向最大号为 `0039` ⇒ 用最大号 +1，**台账不新增条目**（本片即落盘）。
+  迁移只做三件事：① 把 `object_type IN ('checked_content','conversation_turn')` 的历史行回填成契约
+  `TargetRef.type` 里的真实类型（`conversation_turn → conversation`、`checked_content → 该条正文的真实内容类型`），
+  同一 `UPDATE` 内连 `object_key` 一起去前缀写裸 id（分两条语句写会撞 `exports_object_key_xor` 哨兵）；
+  ② 仍有不可如实回填的行则 `RAISE EXCEPTION` 中止（**刻意 fail-closed**，不猜、不丢行）；③ 把
+  `exports_object_key_shape` 从 `{1,128}` 收紧到 `{1,80}`（与契约 `TargetRef.id` 的 `maxLength: 80` 同口径）。
+  配对回滚 `rollback/0040_export_object_key_contract_backfill.down.sql` **只回滚约束、不回滚数据**
+  （回退会把行写回契约闭集之外；去前缀后信息不唯一可逆），依据写在两个文件各自的头注释里。
 
 - `0033_admin_audit_log_read.sql`（R34 · 后台审计日志查询面，Refs #18）接在 `0032` 之后：
   编号前核对过全部 refs 与在途 PR（`003[3-9]_` 零命中）⇒ 直接用最大号 +1，**台账仍为空数组**。

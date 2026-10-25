@@ -239,6 +239,25 @@ try {
   // 放在 0011 回滚演练**之后**单独应用：`0011 down` 的语义与 `:224`–`:233` 三条断言因此逐字不变，
   // 0025 也从不参与那次回滚演练（它是纯新增四表，与 exports 列无关）。
   await owner.query(sqlFile('migrations/0025_recognitions_persistence.sql'));
+  // GY-R35：`object_key` 的两步约束演进 —— 0015 先建形状（1..128），0040 再「回填越界类型 +
+  // 收到 1..80」（= 契约 `TargetRef.id` 的 `maxLength`）。顺序即版本序，0040 的语句依赖 0015 建的
+  // `exports_object_key_shape`（它 `DROP CONSTRAINT` 不带 `IF EXISTS`：缺 0015 就该整条失败，
+  // 而不是悄悄放过一个没有形状约束的库）。
+  // 本脚本只写 `object_type='media'` 行（`object_key IS NULL`）⇒ 0040 的回填不会碰到任何夹具行。
+  await owner.query(sqlFile('migrations/0015_export_object_key_shape.sql'));
+  await owner.query(sqlFile('migrations/0040_export_object_key_contract_backfill.sql'));
+  {
+    const shape = await owner.query(
+      "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname='exports_object_key_shape'",
+    );
+    assert.equal(shape.rows.length, 1, '0040 之后形状约束必须存在');
+    assert.match(shape.rows[0].def, /\^\[a-z0-9\._:-\]\{1,80\}\$/, '0040 必须把形状收到 1..80（契约 TargetRef.id maxLength）');
+    // 列宽仍 varchar(128)：收长度靠 CHECK，不改列类型（改列类型会重写表且回滚不可逆）。
+    const col = await owner.query(
+      "SELECT character_maximum_length AS len FROM information_schema.columns WHERE table_name='exports' AND column_name='object_key'",
+    );
+    assert.equal(Number(col.rows[0].len), 128, '0040 不改列宽（长度由 CHECK 兜底）');
+  }
   say('fresh native PG17.11：0001/0003/0008/0009/0011 up，0011 down 后表与列如实消失，再 up 成功');
 
   // ---------------------------------------------------------------- 2. 最小权限角色

@@ -173,13 +173,26 @@ export function createMediaJobEgress(deps: {
  *
  * 为什么不用 `media`：媒体维要求 `object_id` 是 uuid 且 `dataType ∈ MEDIA_PURPOSES`，
  * 问答的资料类型是**非媒体维**的 `checked_content`（唯一闭集成员，其必需用途恰为
- * `external_inference`），对象标识必须走 `object_key`。因此对象维度按 `conversation_turn`
- * + `object_key = turn:<turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
+ * `external_inference`），对象标识必须走 `object_key`。因此对象维度按
+ * `conversation` + `object_key = <turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
+ *
+ * 为什么是 `conversation` 而不是 `conversation_turn`（GY-R35 写入侧改写）：账本行的
+ * `object_type` 会被 `/me/exports` 原样投影成契约 `object_ref.type`
+ * （`packages/privacy/egress.mjs:388`），而 `TargetRef.type` 是 16 值闭集
+ * （`packages/contracts/openapi.json:11551-11570`），**没有**「轮次」这一实体类型 ——
+ * 域外的值会让整页投影失败（503）。轮次属于会话，故取最贴近的容器类型。
+ *
+ * **已知代价（接受）**：`object_type='conversation'` 下会同时存在「会话 id」与「轮次 id」
+ * 两种 `object_key`。两者都是 uuid、语义上都可读，读面只按 (type,id) 二元组原样投影，
+ * 不存在把会话 id 误判成轮次 id 的判据；这是让轮次外发仍能如实记账而付的最小代价。
  */
-export const CHAT_EGRESS_OBJECT_TYPE = 'conversation_turn';
+export const CHAT_EGRESS_OBJECT_TYPE = 'conversation';
 
-/** 非媒体维对象键的既有限制（`ledger-pg.ts` 的 `OBJECT_KEY`：1..128 小写字母/数字/`_-.`/`:`）。 */
-const CHAT_OBJECT_KEY = /^[a-z0-9][a-z0-9_\-.:]{0,126}[a-z0-9]$/;
+/**
+ * 非媒体维对象键的既有限制（`ledger-pg.ts` 的 `OBJECT_KEY`：1..80 小写字母/数字/`_-.`/`:`）。
+ * 上限 80 与契约 `TargetRef.id` 的 `maxLength: 80` 同口径（DB 侧 CHECK 由迁移 0040 收到 80）。
+ */
+const CHAT_OBJECT_KEY = /^[a-z0-9][a-z0-9_\-.:]{0,78}[a-z0-9]$/;
 
 /**
  * 从抛出来的错误里取「账本可接受的安全错误码」。
@@ -274,7 +287,10 @@ export function createChatEgress(deps: {
           retryable: false,
         });
       }
-      const objectKey = `turn:${String(input.objectId).toLowerCase()}`;
+      // 裸 id、不带 `turn:` 前缀：账本 `object_key` 就是 `/me/exports` 的 `object_ref.id`
+      // （`ledger-pg.ts:110-112`），前缀会白占契约 `TargetRef.id` 的 80 字符预算，且会被
+      // 原样漏给客户端。轮次身份由 `object_type='conversation'` + uuid 共同表达。
+      const objectKey = String(input.objectId).toLowerCase();
       if (!CHAT_OBJECT_KEY.test(objectKey)) {
         throw new PrivacyError('INVALID_REQUEST', '外发对象键非法（只允许小写字母/数字/_-. :）');
       }

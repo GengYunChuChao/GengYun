@@ -104,7 +104,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0038 已随上游 #553 落盘、0036/#538 与 0037/#14 为在飞缺号；本片 #22 片C 落 0039 ⇒ 37 文件 + 2 保留 === 39、三条不变量成立', () => {
+test('迁移编号/当前仓库：0038 已随上游 #553 落盘、0036/#538 与 0037/#14 为在飞缺号；本片 #22 片C 落 0039、GY-R35 落 0040 ⇒ 38 文件 + 2 保留 === 40、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -132,7 +132,7 @@ test('迁移编号/当前仓库：0038 已随上游 #553 落盘、0036/#538 与 
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（37 = 39 − 2）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（38 = 40 − 2）',
   );
 
   const files = migrations.map((item) => item.filename);
