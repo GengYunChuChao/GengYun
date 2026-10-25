@@ -288,7 +288,7 @@ CI 的 `test:unit` 只断言 `route_mounted` 一致性，不断言行号范围�
 
 ```text
 $ Select-String -Path tests/**/*.{mjs,cjs,js,ts}, tools/**  -Pattern 'api/v1/herbicides'
-tests/integration/catalog-pg.mjs:125            ← 唯一陈旧处（已修）
+tests/integration/catalog-pg.mjs（原记 :125）  ← 唯一陈旧处（已修；现值该处已无对应陈旧文本，故不再给出可校验行号）
 tests/unit/knowledge-herbicides-http.test.mjs:* ← 本片新增测试（正确断言 401）
 ```
 

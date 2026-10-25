@@ -210,7 +210,7 @@ $ node --experimental-strip-types tests/integration/media-persistence-pg.mjs \
 加注入 `pool`，新字段 `mediaObjectRefKey` 在字面量里是 `undefined`，而装配层判据写的是 `!== null`
 ⇒ 走了 `createObjectRefCipher(undefined)` ⇒ **构造期**抛
 `Error [MediaObjectRefKeyError]: MEDIA_OBJECT_REF_KEY 缺失：媒体对象引用加密键未配置`
-（栈顶 `services/api/src/media/object-ref-cipher.ts:86` ← `:109` ← `app.ts:1380`：`createPostgresMediaStore` 的 `cipher:` 实参处；本行随合流 main 从 `:1293` 移到 `:1380`，按符号重取而非平移），`buildApp` 直接失败。
+（栈顶 `services/api/src/media/object-ref-cipher.ts:86` ← `:109` ← `app.ts:1245`（原记 `:1380`）：`createPostgresMediaStore` 的 `cipher:` 实参处；本行随合流 main 从 `:1293` 移到 `:1380`，按符号重取而非平移），`buildApp` 直接失败。
 修法：装配层先归一化 `config.mediaObjectRefKey`（非空字符串才算配置，否则按「未配置」），
 `tests/unit/api-health.test.mjs` ⇒ tests 6 / pass 6。
 
@@ -243,7 +243,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 | `OcrMediaPort` | `services/api/src/ocr/media.ts:77` | OCR 媒体引用校验 | 同上 |
 | `RecognitionMediaPort` | `services/api/src/recognitions/media.ts:76` | 识别媒体引用校验 | 同上 |
 
-装配点：TTS `app.ts:1085`、ASR `app.ts:2168`（`media: speechMedia`，无缺省工厂）、OCR `app.ts:1756-1757`
+装配点：TTS `app.ts:1085`、ASR `app.ts:2227`（原记 `:2168`）（`media: speechMedia`，无缺省工厂）、OCR `app.ts:1756-1757`
 （`ocrPersistencePool` 是 **OCR 自己的 PG 持久化**，不是媒体端口）。
 
 ⇒ **`#404 + #419` 都合流后，ASR 转写是 503 → 409，不是 503 → 200**。`services/api/src/speech/media.ts:14-19`
@@ -253,7 +253,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 **接线处方（另派，本片不扩权）**：每个域的 `media.ts` 加一个包本片 `MediaStore` 的适配器，例如
 `createRegistryMediaPort(store: MediaStore)` → `store.getMedia(mediaId)` 判归属/版本/`state === 'ready'`
 与目的（ASR 要 `purpose === 'voice_question'`），返回 `NOT_FOUND`/`REVISION_CONFLICT`/`OBJECT_UNAVAILABLE`；
-装配处用**已建好的** `mediaStore`（`app.ts:1299`，同一块，不新增工厂调用），判据
+装配处用**已建好的** `mediaStore`（`app.ts:1243`（原记 `:1299`），同一块，不新增工厂调用），判据
 `config.executionMode === 'real' && mediaStore.persistent`；代价：四个端口的 `kind` 都是闭集
 `'substitute' | 'unwired'`，要加成员并同步各域测试。最小真库臂：在
 `tests/integration/media-persistence-pg.mjs` 增一段——real 装配 + PG 仓储 ⇒ 上传 `purpose='voice_question'`

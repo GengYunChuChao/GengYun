@@ -59,7 +59,7 @@
 | 调用 | 落盘文件 | 内容 | 退出码 |
 |---|---|---|---|
 | `psql … -f pg-raise.sql`（stdout 单落） | `raise.out` | 1 行 `FAIL: knowledge_runtime_scope (模拟：运行时多读了一张知识域之外的表)` | 3 |
-| 同上（stderr 单落） | `raise.err` | 2 行：`psql:pg-raise.sql:14: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope`、`CONTEXT:  PL/pgSQL function inline_code_block line 3 at RAISE` | — |
+| 同上（stderr 单落） | `raise.err` | 2 行：`psql:pg-raise.sql（临时输入脚本，未入库；第 14 行）: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope`、`CONTEXT:  PL/pgSQL function inline_code_block line 3 at RAISE` | — |
 | 脚本同形：`… 2>&1 \| tr -d '\r'` | `raise.piped` | **3 行，顺序 FAIL → ERROR → CONTEXT（末行 = `CONTEXT:`）** | 3 |
 | 同上，但 stdout 先吐 200 行再 RAISE | `big.piped` | 202 行；`ERROR` 在 201 行、`CONTEXT` 在 202 行（**大体量 stdout 也不改末行归属**） | 3 |
 | `psql … -f pg-ok.sql` | `ok.out` | 字节 `6f 6b 0d 0a`（`ok` + CRLF） | 0 |
@@ -206,11 +206,11 @@ report_eq 'least_privilege_assert' 'ok' "$verdict"
 【old × A】真实 psql 判红：exit=3，末行 CONTEXT: 行
 --- 输入（psql 合并流，退出码=3）---
     FAIL: knowledge_runtime_scope (模拟：运行时多读了一张知识域之外的表)
-    psql:pg-raise.sql:14: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
+    psql:pg-raise.sql（临时输入脚本，未入库；第 14 行）: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
     CONTEXT:  PL/pgSQL function inline_code_block line 3 at RAISE
 --- 片段自己的 stderr（判红诊断 / 完整输出）---
              FAIL: knowledge_runtime_scope (模拟：运行时多读了一张知识域之外的表)
-             psql:pg-raise.sql:14: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
+             psql:pg-raise.sql（临时输入脚本，未入库；第 14 行）: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
              CONTEXT:  PL/pgSQL function inline_code_block line 3 at RAISE
 --- 片段自己的 stdout（报告区）---
     --- 报告区（脚本真实 report_eq 产出）---
@@ -224,12 +224,12 @@ report_eq 'least_privilege_assert' 'ok' "$verdict"
 【new × A】真实 psql 判红：exit=3，末行 CONTEXT: 行
 --- 输入（psql 合并流，退出码=3）---
     FAIL: knowledge_runtime_scope (模拟：运行时多读了一张知识域之外的表)
-    psql:pg-raise.sql:14: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
+    psql:pg-raise.sql（临时输入脚本，未入库；第 14 行）: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
     CONTEXT:  PL/pgSQL function inline_code_block line 3 at RAISE
 --- 片段自己的 stderr（判红诊断 / 完整输出）---
     [verify-cvm-postgres.sh] 最小权限断言的完整输出（psql exit=3）：
              FAIL: knowledge_runtime_scope (模拟：运行时多读了一张知识域之外的表)
-             psql:pg-raise.sql:14: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
+             psql:pg-raise.sql（临时输入脚本，未入库；第 14 行）: ERROR:  90-assert-least-privilege FAIL: 1 条断言未通过：knowledge_runtime_scope
              CONTEXT:  PL/pgSQL function inline_code_block line 3 at RAISE
     [verify-cvm-postgres.sh] 判红原因①：psql 退出码 3 ≠ 0（90-assert 判决非 ok 时 RAISE EXCEPTION；stderr 的 ERROR:/CONTEXT: 排在 FAIL 文本之后）。
 --- 片段自己的 stdout（报告区）---

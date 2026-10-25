@@ -67,7 +67,7 @@
 另外两条夹具事实（不是猜的）：
 
 - 读面视图 JOIN `knowledge_dataset_modes` / `knowledge_dataset_config` 两表，而 `0002` **只建表不插值**
-  （种子在 `services/api/db/seeds/seed_reference.sql:5-11`）⇒ 测试必须自己把 `real` 模式与
+  （种子在 `db/seeds/seed_reference.sql:5-11`，原记 `services/api/db/...`）⇒ 测试必须自己把 `real` 模式与
   `active_mode`/`database_connected` 两行插上，否则读面恒空。
 - 视图准入即产品判据（`0005_catalog_read_views.sql:6-21`）：`validity='valid'` +
   `review_status='verified'` + `reviewed_by/reviewed_at` 非空 + 有效期覆盖 `now()` + `s.current_version_id = sv.id`。

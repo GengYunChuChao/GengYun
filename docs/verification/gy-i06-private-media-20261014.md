@@ -269,7 +269,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    生产装配**没有**从 env／配置注入计数器的路径，只能由调用方选项透传
    （`services/api/src/app.ts:1612`，原记 :1510；`:1598`，原记 :1481，是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
    同处还有整域闸门：`real` 下 `createAppMediaService` 必须收到显式批准能力，否则整域 503
-   （`services/api/src/app.ts:1588-1591`，原记 :1036-1039）。
+   （`services/api/src/app.ts:1614`，原记 :1588-1591）。
    ⇒ 现状：`stub`／`preset_demo` 走替身计数器（`countFor()` 直接返回存活社区图片数，
    `services/api/src/media/service.ts:306-314`，原记 :282-290）⇒ 第 4 张 400（即 §5 输出里 `:121` 那条用例）；
    `real` 下该用途**恒 503**，与 §9 第 3 条「`real` 下未接线即拒绝该用途」一致，**不是**「≤3 张已生效」。

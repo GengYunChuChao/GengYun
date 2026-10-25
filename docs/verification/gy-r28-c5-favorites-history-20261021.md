@@ -86,7 +86,7 @@
   - 401 ⇒ 清会话 + `SESSION_REQUIRED`（既有语义不变）；
   - 403 且码 ∈ 契约 403 集合 ⇒ 原样带出该码、`status = 403`、`retryable = false`、**不清会话**；
   - 403 但无错误体、或码不在契约 403 集合内 ⇒ 仍按会话失效处理（保守，不臆测语义）。
-- `miniprogram/utils/history-api.js:157` / `:161` / `:184`：同构实现（两处不各造一套语义）。
+- `miniprogram/utils/history-api.js`：401/403 分流已收敛为委托 `auth.failureFor`（`:171`），`:151-156` 留有收敛说明；原记 `:157` / `:161` / `:184` 的码表与 `forbiddenOrSessionLoss` 在本文件已不存在（未能定位最后出现位置），口径见下条 superseded 边界。
 - 补文案：`favorites-api.js` `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`、`history-api.js` 同两个码 —— 都是契约 `x-error-status-map` 里**既有**的错误码，**没有新增 ErrorCode**。
 
 > **superseded 边界（2026-10-21 裁决）**：本页 5.1 的**实现形态**（在本文件里自持 `FORBIDDEN_CODES` +

@@ -174,7 +174,7 @@ console.log([...buckets], 'missing', missing);
 PASS: 证据锚点 141 条引用自带锚点（区间内 0 条 + 仅整文件 141 条）；无锚点不可核 268 条（纯行号 229 + 无行号源文件 9 + 无用例名 30），只计数不判红
 WARN: 无锚点可疑引用前 5/268 条：getPublicHome services/api/src/routes/public-home.ts:9-16、getPublicHome services/api/src/db/catalog.ts:14-27、loginWechat services/api/src/routes/auth.ts:42-83、loginWechat services/api/src/auth/wechat.ts:66-131、loginAdmin services/api/src/routes/admin-auth.ts:46-86
 PASS: 纯行号区间 229 条（有实质内容 214 条；整段仅空白/收尾行 15 条、区间首行为空行 24 条，只计可疑不判红）
-WARN: 整段无实质内容的前 5/15 条：listPosts services/api/src/routes/community.ts:200-200、createPost services/api/src/routes/community.ts:210-210、getPost services/api/src/routes/community.ts:222-222、editPost services/api/src/routes/community.ts:231-231、deletePost services/api/src/routes/community.ts:240-240
+WARN: 整段无实质内容的前 5/15 条：listPosts services/api/src/routes/community.ts:202-202（原记 :200-200）、createPost services/api/src/routes/community.ts:212-212（原记 :210-210）、getPost services/api/src/routes/community.ts:224-224（原记 :222-222）、editPost services/api/src/routes/community.ts:233-233（原记 :231-231）、deletePost services/api/src/routes/community.ts:242-242（原记 :240-240）
 ```
 
 - 「仅整文件 141」与第 1 行「不可核 131 条片段」是**不同轴**：前者说的是「证据项有没有锚点、锚点能不能定位到行」，后者说的是「`name` 片段能不能落到断言实参里」。两者都不计入通过。

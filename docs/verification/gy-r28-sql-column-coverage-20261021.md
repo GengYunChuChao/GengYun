@@ -165,7 +165,7 @@ export function fake(pool) {
 改前红字原文：
 
 ```
-tests/unit/fixtures/sql-column-coverage/nc1-fake-store-pg.ts:3 → public.messages.not_granted_column 缺 SELECT（SELECT 列清单）；授权面现状：只授了 [id, revision, owner_id, type, target_ref, read_at, created_at, event_key]
+tests/unit/fixtures/sql-column-coverage/nc1-fake-store-pg.ts 第 3 行（该夹具目录在 HEAD 已不存在，仓内 0 命中）→ public.messages.not_granted_column 缺 SELECT（SELECT 列清单）；授权面现状：只授了 [id, revision, owner_id, type, target_ref, read_at, created_at, event_key]
 ```
 
 同一条断言还钉死 `covered === 2`：同一语句里已授权的 `id` / `revision` 仍然算覆盖，解析器不是乱杀。
@@ -215,13 +215,13 @@ COVERAGE_EXEMPT 里登记的 public.speech_idempotency.payload（UPDATE）已不
 改前红字原文（陈旧登记方向）：
 
 ```
-OPAQUE_ALLOWLIST 登记的 services/api/src/messages/store-pg.ts:99999 在源码里已不存在（陈旧登记，删掉它以免守卫躺平）
+OPAQUE_ALLOWLIST 登记的 services/api/src/messages/store-pg.ts 第 99999 行在源码里已不存在（陈旧登记，删掉它以免守卫躺平）
 ```
 
 反方向（新增未登记的插值）也判红，红字原文：
 
 ```
-未登记的不可判插值 tests/unit/fixtures/sql-column-coverage/nc4-fake-store-pg.ts:2（${dynamicFilter}）：要么让它可静态求值，要么登记进 OPAQUE_ALLOWLIST 并写清理由
+未登记的不可判插值 tests/unit/fixtures/sql-column-coverage/nc4-fake-store-pg.ts 第 2 行（同上，仓内 0 命中；插值 ${dynamicFilter}）：要么让它可静态求值，要么登记进 OPAQUE_ALLOWLIST 并写清理由
 ```
 
 两个方向各恰好 1 条，不多不少 —— 证明 `OPAQUE_ALLOWLIST` 与源码是一一对应的，不是「登记了就永不报警」。

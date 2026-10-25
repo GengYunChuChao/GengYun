@@ -171,13 +171,13 @@ export function retryableProofScratch(probe: () => unknown): { retryable: boolea
 }
 ```
 
-`node --test tests/unit/error-retryable-static-guard.test.mjs` 原文：
+`node --test tests/unit/error-retryable-static-guard.test.mjs` 原文（探针 `services/api/src/ocr/retryable-proof-scratch.ts` 已删除，仓内 0 命中，未能定位最后出现位置）：
 
 ```
 ℹ pass 3
 ℹ fail 1
 AssertionError [ERR_ASSERTION]: 受控范围内出现未登记的「兜底恒 retryable: true」站点（catch 分支里没有判据就声称可重试）：要么给出具体判据（如 isTransientDatabaseError），要么改成 false，要么登记白名单并写理由
-    actual: [ 'services/api/src/ocr/retryable-proof-scratch.ts:6 retryableProofScratch retryable=true' ]
+    actual: [ 'services/api/src/ocr/retryable-proof-scratch.ts 第 6 行 retryableProofScratch retryable=true' ]
   expected: []
 ```
 
