@@ -1,7 +1,7 @@
 // GY-R35 · `/me/exports` 越枚举的「写入侧改写」· 契约口径双钉（读 + 写两侧）。
 //
 // 缺陷回顾：账本行被 `/me/exports` 原样投影成 `Export.object_ref`
-// （`packages/privacy/egress.mjs:388`：`type: record.objectType, id: record.objectId`），
+// （`packages/privacy/egress.mjs:397`：`type: record.objectType, id: record.objectId`），
 // 而契约 `TargetRef.type` 是闭集、`TargetRef.id` 是 `minLength: 1 / maxLength: 80`。
 // 写入侧过去会写两个闭集外的类型（`conversation_turn` / `checked_content`），历史行由迁移
 // `services/api/db/migrations/0040_export_object_key_contract_backfill.sql` 回填。

@@ -177,7 +177,7 @@ export function createMediaJobEgress(deps: {
  * `conversation_turn` + `object_key = <turnId>` 登记 —— 与既有维度的**判据同源**，只是换了维度。
  *
  * 为什么是 `conversation_turn`（2026-10-25 二轮，监工 R1 否决了近似容器类型）：账本行会被
- * `/me/exports` 原样投影成契约 `object_ref.type`（`packages/privacy/egress.mjs:388`），
+ * `/me/exports` 原样投影成契约 `object_ref.type`（`packages/privacy/egress.mjs:397`），
  * 而一次问答外发记的是**轮次**——`objectId` 是轮次 id、`objectRevision` 是**轮次** revision
  * （`services/api/src/conversations/service.ts:1105-1106` 传的是 `claimed.id` / `claimed.revision`）。
  * 若把类型写成容器 `conversation`，`object_ref` 就成了「会话类型 + 轮次 id + 轮次 revision」的错配：

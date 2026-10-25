@@ -1,12 +1,12 @@
 -- 迁移 0040 回滚：把 `exports_object_key_shape` 从 1..80 放回 0015 的 1..128
 -- （即「0014 加列 + 0015 建形状约束」之后、0040 之前的样子）。
 --
--- **只回滚约束，不回滚数据**。0040 的回填把
---   `object_type='conversation_turn'` + `object_key='turn:<uuid>'` 改成了 `conversation` + `<uuid>`、
---   `object_type='checked_content'` + `object_key='<内容类型>:<id>'` 改成了 `<内容类型>` + `<id>`。
--- 这些新取值是**契约口径**（`TargetRef.type` 的 17 值闭集 + `id` ≤ 80），回退会把库重新写回
--- 闭集外取值 —— 那正是 0040 修掉的缺陷（`/me/exports` 整页 503）。而且去前缀后信息不唯一可逆
--- （`conversation` 下会话 id 与轮次 id 同域），无法逐行还原。
+-- **只回滚约束，不回滚数据**。0040 的回填只做两件事：
+--   `object_type='conversation_turn'` + `object_key='turn:<uuid>'` → 同类型 + 裸 `<uuid>`（**类型不改**，
+--   仍指向轮次这一真实实体）；`object_type='checked_content'` + `object_key='<内容类型>:<id>'` →
+--   `<内容类型>` + 裸 `<id>`。这些新取值是**契约口径**（`TargetRef.type` 的 17 值闭集 + `id` ≤ 80），
+-- 回退会把 `checked_content` 重新写回闭集外取值 —— 那正是 0040 修掉的缺陷（`/me/exports` 整页 503）。
+-- 而且去前缀后信息不唯一可逆，无法逐行还原。
 -- ⇒ 需要「回到旧口径」时，正确的动作是**回滚应用版本**而不是回滚数据；库层闸门放宽到 1..128，
 --   只是让旧实例在发布窗口里还能写入，不会让已回填的行变得不合形态。
 --

@@ -31,10 +31,12 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`
 
 - `0040_export_object_key_contract_backfill.sql`（GY-R35 · `/me/exports` 越枚举写入侧改写）接在 `0039` 之后：
   取号前核对 `0036`/`0037` 已在保留台账、正向最大号为 `0039` ⇒ 用最大号 +1，**台账不新增条目**（本片即落盘）。
-  迁移只做三件事：① 把 `object_type IN ('checked_content','conversation_turn')` 的历史行回填成契约
-  `TargetRef.type` 里的真实类型（`conversation_turn → conversation`、`checked_content → 该条正文的真实内容类型`），
+  迁移只做三件事：① **只回填可证明身份的历史行** —— 轮次行 `conversation_turn` + `turn:<uuid>` **类型保持不变**、
+  仅去 `turn:` 前缀成裸 uuid（类型/标识/版本指向同一真实实体）；`checked_content` + `<内容类型>:<id>` 仅在
+  「前缀属六值闭集 + 冒号后是 uuid 形状 + 去前缀后 ≤80」四条同真时才拆成真实内容类型 + 裸 id。
   同一 `UPDATE` 内连 `object_key` 一起去前缀写裸 id（分两条语句写会撞 `exports_object_key_xor` 哨兵）；
-  ② 仍有不可如实回填的行则 `RAISE EXCEPTION` 中止（**刻意 fail-closed**，不猜、不丢行）；③ 把
+  ② 仍有不可如实回填的行（残留 `checked_content`、键非裸 uuid 的 `conversation_turn`）则 `RAISE EXCEPTION`
+  中止并打印样例（**刻意 fail-closed**，不猜、不丢行、不靠删旧标签换通过），随后再做一遍长度预检；③ 最后才把
   `exports_object_key_shape` 从 `{1,128}` 收紧到 `{1,80}`（与契约 `TargetRef.id` 的 `maxLength: 80` 同口径）。
   配对回滚 `rollback/0040_export_object_key_contract_backfill.down.sql` **只回滚约束、不回滚数据**
   （回退会把行写回契约闭集之外；去前缀后信息不唯一可逆），依据写在两个文件各自的头注释里。

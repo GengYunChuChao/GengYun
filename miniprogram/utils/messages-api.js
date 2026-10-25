@@ -37,7 +37,7 @@ const runtime = require('../config/runtime')
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MESSAGE_TYPES = ['comment', 'like', 'moderation', 'system']
 const REFERENCE_STATES = ['available', 'unavailable']
-/** openapi.json -> TargetRef.type（16 项闭集，不得扩展）。 */
+/** openapi.json -> TargetRef.type（17 项闭集，不得扩展）。 */
 const TARGET_REF_TYPES = ['species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr',
   'transcription', 'answer', 'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source']
 /** openapi.json -> Message（`additionalProperties:false`，required 恰为 7 项）。 */

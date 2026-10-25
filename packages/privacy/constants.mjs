@@ -162,7 +162,7 @@ export function isKnownDataType(dataType) {
  * 的引用变成空区间）。
  *
  * 逐字镜像契约 `TargetRef.type`（`packages/contracts/openapi.json:11551-11570`）—— 账本行会被
- * `/me/exports` 原样投影成 `Export.object_ref`（`packages/privacy/egress.mjs:388`），所以
+ * `/me/exports` 原样投影成 `Export.object_ref`（`packages/privacy/egress.mjs:397`），所以
  * `object_type` 必须**恰好**落在这 17 个值里；多一个或少一个都会让读面与契约脱节。
  *
  * 为什么补 `conversation_turn`（2026-10-25 二轮，监工 R1）：账本记的是**一次问答轮次**的外发，

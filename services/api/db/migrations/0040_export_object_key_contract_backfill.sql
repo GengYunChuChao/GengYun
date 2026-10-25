@@ -24,6 +24,14 @@
 --   （`objectId = 轮次 id`、`objectRevision = 轮次 revision`），把它标成容器 `conversation` 会造出
 --   「会话类型 + 轮次 id + 轮次 revision」的错配。轮次本就是契约实体 `Turn`，因此改为
 --   **契约 `TargetRef.type` 增补 `conversation_turn` 成员**（16 → 17 值），账本类型保持原值。
+--
+-- ## 部署与复跑提示（二轮补充）
+--   * **不要把本版本号复用到旧库**：上一轮同编号的 0040 曾把轮次行写成 `conversation` + 裸 uuid。
+--     若某库跑过上一轮，本文件会因**内容校验和漂移**被 `services/api/src/db/migrate.ts` 拒绝（正确）；
+--     即便人工放行，本脚本也**不会**修正那些行（它们已合法、不被 ③ 残留预检捕获）⇒ 需人工审计
+--     `object_type='conversation'` 的账本行是否其实指向轮次。
+--   * **发布顺序**：必须先上线新代码（不再写 `checked_content` / `turn:` 前缀），再跑 0040；
+--     否则旧实例在发布窗口内继续写坏行，会让该用户 `/me/exports` 整页 503 且无在轨修复路径。
 --   本迁移对 `conversation_turn` 行**只做一件事**：去掉多余的 `turn:` 前缀（不改变类型、不猜 id）。
 --   裁定见 `.pg17/ruling-r34-exports-turn-identity-20261025.md`。
 --

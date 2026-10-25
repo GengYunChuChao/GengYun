@@ -140,7 +140,7 @@ function validateTranscription(value) {
  */
 const TARGET_REF_TYPES = [
   'species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr', 'transcription', 'answer',
-  'post', 'comment', 'conversation', 'dose_card', 'media', 'synthesis', 'job', 'source'
+  'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source'
 ]
 
 /** 校验契约 `TargetRef`（三键闭集；`type` 必须在闭集内）。 */

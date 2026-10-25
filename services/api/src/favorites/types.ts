@@ -10,7 +10,7 @@
  *   - `FavoriteInput`：required 恰为 `target_ref`。
  *   - `Favorite`：required 恰为 6 项 `id`/`revision`/`target_ref`/`reference_state`/
  *     `unavailable_reason`/`created_at`。注意 `Favorite.target_ref` 是 **`TargetRef`（17 项闭集）**
- *     而不是 `FavoriteTarget`（3 项）——写入侧只接受 3 类，读出侧按 16 类 `TargetRef` 投影。
+ *     而不是 `FavoriteTarget`（3 项）——写入侧只接受 3 类，读出侧按 17 类 `TargetRef` 投影。
  *     `unavailable_reason` 为 `anyOf [string(1..80), null]`。
  *   - `FavoritePage`：`items`（`maxItems:50`）+ `next_cursor`（1..2048 或 null）。
  *   - 封套：`{data, meta}`（`FavoritePageEnvelope` / `FavoriteEnvelope`）。
