@@ -267,24 +267,24 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    （`services/api/src/media/service.ts:526-528`），其 `countFor()` 恒返 `null`
    （`services/api/src/media/service.ts:293-299`；`:296` 自述「拒绝 community_image 上传（fail-closed）」）。
    生产装配**没有**从 env／配置注入计数器的路径，只能由调用方选项透传
-   （`services/api/src/app.ts:1510`；`:1481` 是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
+   （`services/api/src/app.ts:1560`；`:1481` 是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
    同处还有整域闸门：`real` 下 `createAppMediaService` 必须收到显式批准能力，否则整域 503
-   （`services/api/src/app.ts:1036-1039`）。
+   （`services/api/src/app.ts:1536-1539`）。
    ⇒ 现状：`stub`／`preset_demo` 走替身计数器（`countFor()` 直接返回存活社区图片数，
    `services/api/src/media/service.ts:282-290`）⇒ 第 4 张 400（即 §5 输出里 `:121` 那条用例）；
    `real` 下该用途**恒 503**，与 §9 第 3 条「`real` 下未接线即拒绝该用途」一致，**不是**「≤3 张已生效」。
    复现：`git grep -n "计数器未接线" upstream/main -- services/api/src/media/service.ts` ⇒ **2 处命中
    （`:296`／`:652`）**（按输出行计数为 2；`:296` 即上文 `:264` 已自引的那条 fail-closed 自述）。
 2. **媒体域与识别／合成域各持一套「按域」媒体端口，两套从未互接**。媒体域实例在
-   `services/api/src/app.ts:1041-1042`（`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
-   `services/api/src/app.ts:834`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
-   合成域在 `services/api/src/app.ts:1085`（`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
+   `services/api/src/app.ts:1546-1555`（`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
+   `services/api/src/app.ts:1072`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
+   合成域在 `services/api/src/app.ts:1114`（`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
    两处都只**按执行模式新建**，不接收也不引用媒体域的服务或对象存储。
    `services/api/src/recognitions/media.ts:16` 文件头逐字自述：「本文件这套**按域**媒体引用端口并未改接媒体域：
    `real` 下仍由 `createUnwiredMediaPort` 承担」；同文件 `:17-21` 说明该端口只在受理函数的媒体校验步骤被触达，
    `real` 缺供应商凭据时**先**返回 503，只有供应商判定可用时才轮到该端口 ⇒ 409 `OBJECT_UNAVAILABLE`。
    复现：`git grep -n "createRecognitionMediaPort\|createSynthesisMediaPort" upstream/main -- services/api/src/app.ts`
-   ⇒ **2 处命中（`:834`／`:873`）**（`services/api/src/app.ts:60`／`:64` 为导入行，不计）。
+   ⇒ **2 处命中（`:1072`／`:1114`）**（`services/api/src/app.ts:61`／`:66` 为导入行，不计）。
    ⇒ 上传面即使接线成功，也**不构成**识别／语音／TTS 可用的证据：三个消费域与本域不共享任何媒体事实。
 3. **生命周期清扫有机制、无生产触发点**：本片点到的 `expireInitiated()` 与 `cleanupOrphans()` 在全生产面
    **零调用点**，24h 过期回收与失败／取消后的孤立对象回收**在运行时永不发生**（只在测试里被直接调用）。

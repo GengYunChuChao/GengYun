@@ -13,8 +13,8 @@
 
 | # | 门 | 现状事实（文件:行号） | 后果 |
 | --- | --- | --- | --- |
-| 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1308` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
-| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1557`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1431`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1460`（批准能力不可伪造/不可派生/不可默认化） |
+| 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1546` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
+| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1562`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1431`（四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1460`（批准能力不可伪造/不可派生/不可默认化） |
 | 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（`services/api/src/media/service.ts:624-629`） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
 | 4 | **数据面缺口（部署件）** | 冻结契约内**没有**「owner 私有媒体字节读取」这一 operation；`MEDIA_ACCESS_GRANT_ORIGIN` 指向的访问网关在本仓库内**无实现** | 句柄签发得出来，但没人消费；本仓不能自称「契约已实现」 |
 
@@ -69,11 +69,11 @@
 | --- | --- | --- |
 | 1 | `services/api/src/config.ts:158-173` | 解析 `APP_EXECUTION_MODE`（`stub` \| `preset_demo` \| `real`），非法值进 `ConfigError` |
 | 2 | `services/api/src/config.ts:251-260` | real 模式逐项检查 `REQUIRED_WHEN_REAL`，缺项只登记字段名（不回显值） |
-| 3 | `services/api/src/app.ts:1308` | `mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode })` —— **不传 `env`** |
+| 3 | `services/api/src/app.ts:1546` | `mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode })` —— **不传 `env`** |
 | 4 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore`：real → `readObjectStorageConfig(NO_STORAGE_ENV)`（null 原型空表）⇒ 必然 `unwired`；非 real → `substitute` |
-| 5 | `services/api/src/app.ts:1269-1280` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
-| 6 | `services/api/src/app.ts:2103` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
-| 7 | `services/api/src/app.ts:2142` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点（GY-R34-I19 树重取；此前后续片在 `app.ts` 上半部新增装配行，行号已上移） |
+| 5 | `services/api/src/app.ts:1555-1569` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
+| 6 | `services/api/src/app.ts:2108` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
+| 7 | `services/api/src/app.ts:2250` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点（GY-R34-I19 树重取；此前后续片在 `app.ts` 上半部新增装配行，行号已上移） |
 | 8 | `services/api/src/server.ts:27` | 生产入口 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval` |
 
 ### 3.2 stub 下一次上传的完整走向
@@ -111,8 +111,8 @@
 | 修改 | `services/api/src/config.ts:20-42`（`AppConfig`） | 新增一等字段 `objectStorage: ObjectStorageConfig \| null`（类型从 `services/api/src/media/object-store.ts:179` 复用）。**不得**加「裸字符串四件套」，避免密钥散落 |
 | 修改 | `services/api/src/config.ts:251-260` | real 模式下把 `REQUIRED_WHEN_REAL` 的存在性检查升级为「产出结构化 config 或抛 `ConfigError`」：直接调用 `readObjectStorageConfig(env)`（`services/api/src/media/object-store.ts:197`）并把 `issues` 折进 `ConfigError`（复用既有 `ConfigIssue { field, code, reason }` 形状，`services/api/src/config.ts:44-51`） |
 | 修改 | `services/api/src/config.ts:69-79` | 保留 `OBJECT_STORAGE_*` 在 `REQUIRED_WHEN_REAL` 里（防止有人误删），但**判定权**移到上一行的结构化解析 |
-| 修改 | `services/api/src/app.ts:1308` | real 分支改为 `resolveMediaObjectStore({ executionMode, env: config.objectStorageEnv })`，其中 `objectStorageEnv` 是**从 `AppConfig` 派生的已解析配置**，**绝不能**是 ambient `process.env` |
-| ⛔ 禁止 | `services/api/src/app.ts:1308` | **不得**写成 `env: process.env`：`tests/unit/media-real-mode-fail-closed.test.mjs:329-337` 有静态断言逐字钉住（PR #193 的 P1 结论：配置即门控） |
+| 修改 | `services/api/src/app.ts:1546` | real 分支改为 `resolveMediaObjectStore({ executionMode, env: config.objectStorageEnv })`，其中 `objectStorageEnv` 是**从 `AppConfig` 派生的已解析配置**，**绝不能**是 ambient `process.env` |
+| ⛔ 禁止 | `services/api/src/app.ts:1546` | **不得**写成 `env: process.env`：`tests/unit/media-real-mode-fail-closed.test.mjs:329-337` 有静态断言逐字钉住（PR #193 的 P1 结论：配置即门控） |
 | ⛔ 约束 | `services/api/src/app.ts` 全文件 | ambient env 只允许 3 个非媒体键（`tests/unit/media-real-mode-fail-closed.test.mjs:1050` 的全文件审计 + `:1227` 运行期来源检查）；新增的「从 `AppConfig` 派生」取值**不是** ambient 读取，不受此限，但也不得借此新增第四个 `process.env[...]` |
 | ⛔ 禁止 | `services/api/src/media/**` | **不得**在媒体域内读 `process.env` / `import.meta.env`（`services/api/src/media/service.ts:281-283` 已把该约束写进注释，同上测试做 AST 级判违规） |
 | 保留 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore` 的「缺任一键 ⇒ `unwired`」语义**不改**：`tests/unit/media-real-mode-fail-closed.test.mjs` 的 1-A 用例逐键验证 |
@@ -135,7 +135,7 @@
 | 新增 | `services/api/db/migrations/0027_media_persistence.sql` | 现有迁移止于 `0026_speech_persistence.sql`；本片新增 `media_records` / `media_grants` / `media_idempotency` / `media_pending_object_refs` 四张表。约束要点：`media_records(revision)` 由一条带 `WHERE revision=$2` 的原子 UPDATE 推进（CAS 唯一裁决点）；`media_idempotency UNIQUE(scope, key_hash)`；`media_pending_object_refs` 以 `(media_id, kind)` 唯一键登记未确认删除的引用。**状态迁移表不在 SQL 里抄第二份**，事实来源仍是 `packages/media` 的 `MEDIA_STATE_TRANSITIONS`（`packages/media/constants.mjs:87`） |
 | 修改 | `services/api/src/media/service.ts:263-289`（`AppMediaServiceOptions`） | 新增 `store?: AppMediaStore`（缺省仍用内存实现，保持 stub/preset_demo 与全部既有测试不变） |
 | 修改 | `services/api/src/media/service.ts:624-629` | 四个容器改为经 `store` 存取；`transition`（`:648`）与 `dropObjects`（`:667`）的判定逻辑**原样保留**，只换写入目标 |
-| 修改 | `services/api/src/app.ts`（`buildApp` 顶部 import 区按仓库惯例把新 import 追加到文件末尾，`services/api/src/app.ts:1821` 已有此先例） | 有 `pool` 时构造 PG store 并注入；无 `pool` 时保持内存实现（与 `community/store-pg.ts` 的装配口径一致） |
+| 修改 | `services/api/src/app.ts`（`buildApp` 顶部 import 区按仓库惯例把新 import 追加到文件末尾，`services/api/src/app.ts:2406` 已有此先例） | 有 `pool` 时构造 PG store 并注入；无 `pool` 时保持内存实现（与 `community/store-pg.ts` 的装配口径一致） |
 | 修改 | `services/api/src/app.ts`（real 装配段） | **批准铸造点**：见 §10 D2 的三个选项；无论选哪个，必须①唯一铸造点②可审计（记 reason/approvedAt）③保留 `objectStore.kind==='s3_compatible'` 的第二道校验（`services/api/src/media/service.ts:595` 起） |
 | 新增（可选） | `services/api/src/media/cleanup.ts` | `expireInitiated`（`:1239`）/`cleanupOrphans`（`:1250`）今天无生产调用者。真实接线后必须有驱动方（定时器或外部 cron 打内部端点），否则 24h 过期对象永久计费、`pending` 引用永不重试 |
 
