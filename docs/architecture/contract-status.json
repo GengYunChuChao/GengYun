@@ -3167,7 +3167,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminCategories",
-          "lines": "394-399"
+          "lines": "416-421"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3198,7 +3198,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "editCategory",
-          "lines": "399-404"
+          "lines": "421-426"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3229,7 +3229,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminUsers",
-          "lines": "480-491"
+          "lines": "502-513"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3260,7 +3260,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "suspendUser",
-          "lines": "598-603"
+          "lines": "620-625"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3287,7 +3287,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministrators",
-          "lines": "555-567"
+          "lines": "577-589"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3324,7 +3324,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministratorScopes",
-          "lines": "583-596"
+          "lines": "605-618"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3360,7 +3360,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminJobs",
-          "lines": "693-698"
+          "lines": "724-729"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3391,7 +3391,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "cancelAdminJob",
-          "lines": "700-705"
+          "lines": "745-750"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3422,7 +3422,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlags",
-          "lines": "892-896"
+          "lines": "937-941"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3453,7 +3453,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {",
-          "lines": "898-903"
+          "lines": "943-948"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3484,7 +3484,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlagAuditEvents",
-          "lines": "982-987"
+          "lines": "1027-1032"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3552,7 +3552,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "hidePost",
-          "lines": "1042-1047"
+          "lines": "1087-1092"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",

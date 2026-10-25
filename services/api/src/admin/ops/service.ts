@@ -47,7 +47,7 @@ import type { AdminCallContext, AuditResult, ServiceResponse, TargetRefValue } f
 import { opsValidator } from './fields.ts';
 import { CONTRACT_FLAG_KEYS, classifyFlagKey, DEFAULT_FLAG_EFFECTS, assertNoFlagWeakensFailClosed } from './flags.ts';
 import type { FlagEffect, FlagKey } from './flags.ts';
-import { createUnwiredAdminJobPort } from './jobs.ts';
+import { createUnwiredAdminJobPort, parseAdminJobFilter } from './jobs.ts';
 import { createHidePostAdapter } from './community-posts.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
@@ -86,6 +86,13 @@ export interface SingleEnvelope<TData> {
 export interface PageQuery {
   cursor?: unknown;
   limit?: unknown;
+  /**
+   * 仅 `listAdminJobs` 消费：契约 `listAdminJobs` 的 `state` 查询参数（闭集 `JobState`）。
+   * HTTP 层只做"整包下传"，闭集判定与服务层一致地放在 `parseAdminJobFilter`（见 `jobs.ts`）。
+   */
+  state?: unknown;
+  /** 仅 `listAdminJobs` 消费：契约 `listAdminJobs` 的 `error_code` 查询参数（闭集 `ErrorCode`）。 */
+  error_code?: unknown;
 }
 
 export interface AdminOpsServiceOptions {
@@ -330,11 +337,18 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     listKey: string,
     subject: string,
     keyOf: CursorKeyOf<T>,
+    /**
+     * 绑进游标 watermark 的**筛选组合**（先于 id 列表参与签名）。
+     * 缺省 `[]` ⇒ 与不传过滤时的既有行为逐字相同（签名输入不变）。
+     * 理由见 `admin/audit/service.ts:28`：换了筛选就必须回第一页，否则游标
+     * 会把"上一组筛选里的最后一条 id"当成这组里的位置。
+     */
+    watermarkParts: readonly string[] = [],
   ): { page: T[]; nextCursor: string | null } {
     const limit = parseLimit(query.limit);
     const rawCursor = parseCursorParam(query.cursor);
     const ids = items.map((item) => keyOf(item));
-    const watermark = cursors.watermarkOf(ids);
+    const watermark = cursors.watermarkOf([...watermarkParts, ...ids]);
 
     let afterId: string | null = null;
     if (rawCursor !== null) {
@@ -374,8 +388,16 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     query: PageQuery,
     listKey: string,
     keyOf: CursorKeyOf<T>,
+    watermarkParts: readonly string[] = [],
   ): ServiceResponse<PageEnvelope<T>> {
-    const { page, nextCursor } = listWithCursor(items, query, listKey, context.identity.userId, keyOf);
+    const { page, nextCursor } = listWithCursor(
+      items,
+      query,
+      listKey,
+      context.identity.userId,
+      keyOf,
+      watermarkParts,
+    );
     // 出口深拷贝（阶段 1 的不可变边界）：存储侧对象已冻结，这里保证调用方拿到自有数据。
     return {
       status: 200,
@@ -690,11 +712,34 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     return job as AdminJobView;
   }
 
+  /**
+   * `listAdminJobs`：服务端过滤 + 服务端分页。
+   *
+   * 顺序（与 `admin/audit/service.ts` 一致）：鉴权/权限（401/403）→ 端口接线（503）→ **入参闭集（400）**。
+   * 未接线优先于入参非法：端口没接线时"这个状态有没有作业"本来就无法回答，先给 503 才是如实。
+   *
+   * 过滤**下推到端口**（真实现是 SQL `WHERE`），⛔ 不在这一层把全量拉回来再筛：
+   * 那样 200 条的硬上限会把匹配项挤掉，等于"过滤后仍看不到"。
+   */
   async function listAdminJobs(ctx: AdminCallContext, query: PageQuery = {}) {
     const context = resolveContext(ctx, OPS_SCOPES.listAdminJobs);
     requireWiredJobPort();
-    const jobs = (await jobPort.list()).map((job) => cloneDeep(assertJobContract(job)));
-    return pageOf(context, jobs, query, 'jobs', byId);
+    const filter = parseAdminJobFilter(query);
+    const jobs = (await jobPort.list(filter)).map((job) => cloneDeep(assertJobContract(job)));
+    return pageOf(context, jobs, query, 'jobs', byId, jobFilterWatermarkParts(filter));
+  }
+
+  /**
+   * 筛选组合 → 游标 watermark 的前缀部分。
+   * 不过滤时返回 `[]`（签名输入与改动前逐字相同，既有游标继续有效）；
+   * 一旦带过滤，换任何一组筛选条件都会让旧游标 `INVALID_CURSOR`（回第一页），
+   * 而不是把上一组筛选的位置错套到这一组上。
+   */
+  function jobFilterWatermarkParts(filter: ReturnType<typeof parseAdminJobFilter>): string[] {
+    const parts: string[] = [];
+    if (filter.state !== undefined) parts.push(`state=${filter.state}`);
+    if (filter.error_code !== undefined) parts.push(`error_code=${filter.error_code}`);
+    return parts;
   }
 
   async function cancelAdminJob(ctx: AdminCallContext, id: string, body: unknown) {

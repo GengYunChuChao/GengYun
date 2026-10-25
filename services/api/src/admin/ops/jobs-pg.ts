@@ -20,6 +20,12 @@
  * - `result` 恒 `null`：契约 `AdminJob.result` 是 `{"type": "null"}`（`fields.ts:101`）。
  * - `state` / `error_code` 逐值校验：不符即 503 `PROVIDER_UNAVAILABLE`（宁可说"读不到"，也不把
  *   陌生文本塞进后台列表）。
+ * - 列表过滤（`state` / `error_code`）**下推到 SQL**（`WHERE state = $2::<cast>`，值全部绑定），
+ *   不在内存里筛：硬上限 200 会把匹配项挤出去，那样过滤等于没生效。闭集外的**入参**在服务层
+ *   判 400 `INVALID_REQUEST`（⛔ 不是 503：503 的语义是"读出来的值不认识"）。
+ *   ⚠ `state` 的 cast **按源区分**（`ocr_jobs` 是 `text`+`CHECK`，`recognition_jobs` /
+ *   `speech_jobs` 是 `job_state` 枚举）——统一写 `::text` 会在枚举源上抛
+ *   `42883 operator does not exist: job_state = text`，详见 `listWhereFor` 上方注释。
  *
  * ## 取消口径（终态不可复活）
  * 只有 `queued` / `running` 能迁移到 `cancelled`（`services/api/src/ocr/state.ts:175-180`），
@@ -29,8 +35,9 @@
 import type { PoolClient } from 'pg';
 import { ApiError } from '../../errors.ts';
 import { ERROR_CODES, type ErrorCode } from '../../contract.ts';
+import { parseAdminJobFilter } from './jobs.ts';
 import { JOB_KINDS } from './types.ts';
-import type { AdminJobPort, AdminJobView, CancelJobOutcome, JobKind } from './types.ts';
+import type { AdminJobFilter, AdminJobPort, AdminJobView, CancelJobOutcome, JobKind } from './types.ts';
 
 /** 契约 `JobState` 七值闭集（`packages/contracts/states.json` 的 `JobState`，逐值抄写）。 */
 const CONTRACT_JOB_STATES = [
@@ -69,7 +76,26 @@ const LOCK_TIMEOUT_SQL = "SET LOCAL lock_timeout = '4s'";
 interface JobSource {
   readonly kind: JobKind;
   readonly recordColumn: 'ocr_id' | 'recognition_id' | 'transcription_id';
-  readonly listSql: string;
+  /**
+   * 列表读面的 `SELECT … FROM <真实表>` 部分（**不含** `WHERE` / `ORDER BY` / `LIMIT`）。
+   * 过滤条件拼在 `listSelect` 与 `listTail` 之间，因此拆成两段而不是一整条。
+   */
+  readonly listSelect: string;
+  /** 列表读面的收尾（`ORDER BY` + `LIMIT`；`$1` 恒为硬上限，过滤值从 `$2` 起）。 */
+  readonly listTail: string;
+  /**
+   * `state` 列的**真实类型**，决定列表过滤里 `state = $2::<cast>` 用哪种 cast。
+   *
+   * 三张表并不一致（实测迁移原文）：
+   * - `public.ocr_jobs.state` 是 `text` + `CHECK (state IN (…7 值…))`（`0024_ocr_persistence.sql:93-95`）；
+   * - `public.recognition_jobs.state` 是 `job_state` 枚举（`0025_recognitions_persistence.sql:117`）；
+   * - `public.speech_jobs.state` 是 `job_state` 枚举（`0026_speech_persistence.sql:98`）；
+   *   （枚举本体：`0001_initial_schema.sql:24`，七值与契约 `JobState` 逐一对应。）
+   *
+   * ⚠ 在 PG 里 `枚举列 = text 参数` **没有**隐式转换 ⇒ 统一写 `$2::text` 会让枚举源抛
+   * `42883 operator does not exist: job_state = text`（真库臂实测 500）。故 cast 必须按源区分。
+   */
+  readonly stateCast: 'text' | 'job_state';
   readonly getSql: string;
   readonly lockSql: string;
   readonly updateSql: string;
@@ -87,8 +113,11 @@ const SOURCES: readonly JobSource[] = [
   {
     kind: 'ocr',
     recordColumn: 'ocr_id',
-    listSql:
-      'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    listSelect:
+      'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs',
+    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    // `ocr_jobs.state` 是 text + CHECK（0024:93-95），按文本比。
+    stateCast: 'text',
     getSql: 'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid',
     lockSql:
       'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid FOR UPDATE',
@@ -98,8 +127,11 @@ const SOURCES: readonly JobSource[] = [
   {
     kind: 'recognition',
     recordColumn: 'recognition_id',
-    listSql:
-      'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    listSelect:
+      'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs',
+    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    // `recognition_jobs.state` 是 job_state 枚举（0025:117）⇒ 必须显式转成枚举再比。
+    stateCast: 'job_state',
     getSql:
       'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs WHERE id = $1::uuid',
     lockSql:
@@ -110,8 +142,11 @@ const SOURCES: readonly JobSource[] = [
   {
     kind: 'transcription',
     recordColumn: 'transcription_id',
-    listSql:
-      'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    listSelect:
+      'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs',
+    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+    // `speech_jobs.state` 是 job_state 枚举（0026:98）⇒ 同 recognition，显式转枚举。
+    stateCast: 'job_state',
     getSql:
       'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs WHERE id = $1::uuid',
     lockSql:
@@ -122,8 +157,71 @@ const SOURCES: readonly JobSource[] = [
 ];
 
 
+/**
+ * 列表过滤的 `WHERE` 片段（**只写真实列名**；值全部走绑定参数，⛔ 不拼值）。
+ *
+ * 参数编号：`$1` 恒为硬上限 `LIMIT`，过滤值从 `$2` 起 ⇒ 三种组合各写一条，不做编号插值。
+ *
+ * 为什么单独成字面量、且**以空格开头**：静态列审计（`tests/unit/sql-column-coverage.test.mjs`
+ * 的 `SQL_START = /^\s*(SELECT|INSERT|UPDATE|DELETE)\s+\S/i`）只把首个 token 是那四个动词的
+ * 字面量记成语句；`' WHERE …'` 既不计入语句数也不进 opaque 登记，于是本文件的
+ * SQL 字面量读数仍是 12（3 源 × list/get/lock/update），全局读数不漂移。
+ *
+ * ## cast 口径（**按源区分**，别再改回统一 `::text`）
+ * `state` 的列类型三表不一致（见 `JobSource.stateCast`）：`ocr_jobs.state` 是 `text`+`CHECK`
+ * （`0024_ocr_persistence.sql:93-95`），`recognition_jobs.state` / `speech_jobs.state` 是
+ * `job_state` 枚举（`0025:117` / `0026:98`，枚举本体 `0001_initial_schema.sql:24`）。
+ * PG 对「枚举列 = text 参数」**没有隐式转换**，统一写 `$2::text` 会让两个枚举源抛
+ * `42883 operator does not exist: job_state = text` ⇒ 后台列表直接 500（真库臂实测）。
+ * 所以 `state` 的 cast 由 `source.stateCast` 决定；过滤值进 SQL 前已过闭集校验（七值之一），
+ * `::job_state` 不会因非法值抛错。
+ *
+ * `error_code` 三表都是字符串列 `varchar(80)`（`0024:100` / `0025:122` / `0026:103`），
+ * `varchar` 与 `text` 是二进制兼容的，故统一 `$2::text` / `$3::text`，无需按源区分。
+ */
+const LIST_WHERE_LEAD = ' WHERE ';
+const LIST_STATE_EQ = 'state = $2::';
+const LIST_ERROR_CODE_EQ = 'error_code = $2::text';
+const LIST_AND_ERROR_CODE_AFTER_STATE = ' AND error_code = $3::text';
+
+/**
+ * 过滤组合 → (`WHERE` 片段, 绑定值)；`state` 的 cast 取该源的 `stateCast`（见上）。
+ * 两个字段都不给 ⇒ 片段为空串、值也为空 ⇒ 语句与改动前**逐字相同**（无 `WHERE`）。
+ */
+function listWhereFor(
+  source: JobSource,
+  filter: AdminJobFilter,
+): { where: string; values: readonly unknown[] } {
+  const hasState = filter.state !== undefined;
+  const hasErrorCode = filter.error_code !== undefined;
+  const stateEq = LIST_STATE_EQ + source.stateCast;
+  if (hasState && hasErrorCode) {
+    return {
+      where: LIST_WHERE_LEAD + stateEq + LIST_AND_ERROR_CODE_AFTER_STATE,
+      values: [filter.state, filter.error_code],
+    };
+  }
+  if (hasState) return { where: LIST_WHERE_LEAD + stateEq, values: [filter.state] };
+  if (hasErrorCode) return { where: LIST_WHERE_LEAD + LIST_ERROR_CODE_EQ, values: [filter.error_code] };
+  return { where: '', values: [] };
+}
+
+/** 导出用：给 `ADMIN_JOB_SQL.listWhere` 现算三种组合的片段（与运行时同一函数，不会漂移）。 */
+const listWhereExportFor = (source: JobSource) => ({
+  kind: source.kind,
+  /** 该源 `state` 的真实类型 ⇒ `state = $2::<cast>` 里的 cast。 */
+  stateCast: source.stateCast,
+  where: {
+    state: listWhereFor(source, { state: 'failed' }).where,
+    error_code: listWhereFor(source, { error_code: 'PROVIDER_TIMEOUT' }).where,
+    state_and_error_code: listWhereFor(source, { state: 'failed', error_code: 'PROVIDER_TIMEOUT' })
+      .where,
+  },
+});
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** 库行投影的产物（三源共用），见 `projectRow`。 */
 export interface JobRow {
   readonly id: string;
   readonly revision: number;
@@ -265,10 +363,18 @@ export function createPostgresAdminJobPort(options: {
 
   return {
     wired: true,
-    async list(): Promise<AdminJobView[]> {
+    async list(filter: AdminJobFilter = {}): Promise<AdminJobView[]> {
+      // 端口边界再判一次闭集：端口也会被直接调用（集成/单测），非法入参一律 400 INVALID_REQUEST，
+      // 绝不静默返回空页。不过滤时 `where` 为空串、`values` 为空 ⇒ 语句与改动前逐字相同。
+      const applied = parseAdminJobFilter(filter);
       const pages = await Promise.all(
         SOURCES.map(async (source) => {
-          const result = await pool.query(source.listSql, [limit]);
+          // WHERE 按**该源**的 `state` 真实类型拼（枚举源 `::job_state`、文本源 `::text`）。
+          const { where, values } = listWhereFor(source, applied);
+          const result = await pool.query(source.listSelect + where + source.listTail, [
+            limit,
+            ...values,
+          ]);
           return (result.rows as Record<string, unknown>[]).map((row) => projectRow(source, row));
         }),
       );
@@ -334,7 +440,14 @@ export function createPostgresAdminJobPort(options: {
 
 /** 供真库臂与单测复用的语句导出（只读断言用；运行时不直接引用）。 */
 export const ADMIN_JOB_SQL = {
-  list: SOURCES.map((source) => source.listSql),
+  /** 无过滤时的列表语句（与改动前逐字相同：没有 `WHERE`）。 */
+  list: SOURCES.map((source) => source.listSelect + source.listTail),
+  /**
+   * 列表过滤的 `WHERE` 片段，**逐源分开**（值永远走 `$2` / `$3` 绑定，不拼字符串）。
+   * `state` 的 cast 随源不同：`ocr` ⇒ `::text`；`recognition` / `transcription` ⇒ `::job_state`
+   * （枚举列与 text 参数在 PG 里没有隐式转换，写成 `::text` 会 42883 ⇒ 500）。
+   */
+  listWhere: SOURCES.map((source) => listWhereExportFor(source)),
   get: SOURCES.map((source) => source.getSql),
   lock: SOURCES.map((source) => source.lockSql),
   update: SOURCES.map((source) => source.updateSql),

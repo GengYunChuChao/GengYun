@@ -10399,6 +10399,20 @@
           },
           {
             "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/JobState"
+            }
+          },
+          {
+            "name": "error_code",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ErrorCode"
+            }
           }
         ],
         "responses": {

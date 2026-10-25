@@ -12,8 +12,66 @@
  *      **终态不可复活**（与 `states.json.job_transitions` 的守卫一致）。
  */
 import { cloneDeep, freezeDeep } from '../immutable.ts';
-import { TERMINAL_JOB_STATES } from './types.ts';
-import type { AdminJobPort, AdminJobView, CancelJobOutcome } from './types.ts';
+import { ApiError } from '../../errors.ts';
+import { ERROR_CODES } from '../../contract.ts';
+import { JOB_STATES, TERMINAL_JOB_STATES } from './types.ts';
+import type { AdminJobFilter, AdminJobPort, AdminJobView, CancelJobOutcome } from './types.ts';
+
+/**
+ * 闭集参数的唯一判定点：`state`（契约 `JobState` 7 值）与 `error_code`（契约 `ErrorCode` 24 值）。
+ *
+ * 口径与 `admin/audit/service.ts` 的 `action`/`entity` 逐条一致：
+ * - 缺省 / `null` / **空串** ⇒ 该字段不参与过滤（`?state=` 不该变成闭集外的 400）；
+ * - 非字符串（`?state=a&state=b` 会被查询串解析成数组）⇒ **400 `INVALID_REQUEST`**、`code: 'type'`；
+ * - 闭集外取值（含大小写不同、拼写错误）⇒ **400 `INVALID_REQUEST`**、`code: 'enum'`。
+ *
+ * ⛔ 不复用 503：`PROVIDER_UNAVAILABLE` 的含义是"端口未接线"或"读出来的值我们不认识"，
+ * 而这里错在**调用方入参**，属 400。⛔ 也不静默返回空页 —— 那会把拼错的状态说成
+ * "平台没有这种作业"，是一句我们无法确认的结论。
+ */
+function parseClosedSetParam<T extends string>(
+  raw: unknown,
+  field: string,
+  closed: readonly T[],
+): T | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') {
+    throw new ApiError('INVALID_REQUEST', `${field} 必须是字符串`, {
+      details: [{ field, code: 'type' }],
+    });
+  }
+  if (!(closed as readonly string[]).includes(raw)) {
+    throw new ApiError('INVALID_REQUEST', `${field} 必须是闭集之一：${closed.join(' / ')}`, {
+      details: [{ field, code: 'enum' }],
+    });
+  }
+  return raw as T;
+}
+
+/**
+ * `listAdminJobs` 的过滤入参 → 已判定的闭集过滤。
+ * 缺省的字段**不出现在**结果里（读面据此决定要不要下推 `WHERE`）。
+ */
+export function parseAdminJobFilter(raw: { state?: unknown; error_code?: unknown }): AdminJobFilter {
+  const state = parseClosedSetParam(raw.state, 'state', JOB_STATES);
+  const errorCode = parseClosedSetParam(raw.error_code, 'error_code', ERROR_CODES);
+  const filter: AdminJobFilter = {};
+  if (state !== null) filter.state = state;
+  if (errorCode !== null) filter.error_code = errorCode;
+  return filter;
+}
+
+/** 过滤是否为空（两个字段都没给）⇒ 读面必须给出与"不过滤"逐字相同的读面语句。 */
+export function isEmptyAdminJobFilter(filter: AdminJobFilter): boolean {
+  return filter.state === undefined && filter.error_code === undefined;
+}
+
+/** 内存参考实现的匹配（真实现是 SQL `WHERE`，这里是同一语义的进程内等价物）。 */
+function matchesAdminJobFilter(job: AdminJobView, filter: AdminJobFilter): boolean {
+  if (filter.state !== undefined && job.state !== filter.state) return false;
+  if (filter.error_code !== undefined && job.error_code !== filter.error_code) return false;
+  return true;
+}
 
 /** 默认端口：未接线。fail-closed 的单一来源。 */
 export function createUnwiredAdminJobPort(): AdminJobPort {
@@ -43,8 +101,12 @@ export function createMemoryAdminJobPort(seed: readonly AdminJobView[] = []): Ad
 
   return {
     wired: true,
-    list() {
+    list(filter: AdminJobFilter = {}) {
+      // 端口边界再判一次闭集：端口也会被直接调用（集成测试/单测），非法入参一律 400，
+      // 绝不静默返回空页。内存实现没有 SQL，所以匹配在进程内做（见 `matchesAdminJobFilter`）。
+      const applied = parseAdminJobFilter(filter);
       return [...jobs.values()]
+        .filter((job) => matchesAdminJobFilter(job, applied))
         .map(clone)
         .sort((a, b) => {
           if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
