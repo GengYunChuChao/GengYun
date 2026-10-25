@@ -96,16 +96,16 @@
 - 迁移自己在 `services/api/db/migrations/0044_third_party_deletion_persistence.sql:4` 写明「**不接电**：`services/api/src/**` 一行未动」。
 - 已知限制（P1 刻意）：`services/api/db/migrations/0044_third_party_deletion_persistence.sql:26` 起——签名只有一个 `p_state`，所以 `online_status` 与 `backup_status` **两列同时写同一个状态**；两面各自推进要等 P2 加 `p_phase`。
 
-### 4.3 与 S4 D13 的口径核对：**判定仍对，证据层已过期**
+### 4.3 与 S4 D13 的口径核对：**判定仍对，证据层已于 2026-10-26 补齐**
 
-`docs/architecture/s4-data-traceability.md:238` 的 D13 判定「未实现」，`:250` 的三条缺口（应用侧零读写、适配器未装配、投影没接进 `/me/exports`）**今天依然逐条成立**；`:248` 的两条零命中 grep 也依然准确。
+`docs/architecture/s4-data-traceability.md:238` 的 D13 判定「未实现」，`:259` 的三条缺口（应用侧零读写、适配器未装配、投影没接进 `/me/exports`）**今天依然逐条成立**；`:257` 的两条零命中 grep 也依然准确。
 
-但 `:240` 起的「实现（半成品，逐层都在但没接起来）」只列到 0003 表、内存协议、适配器、投影四层，**完全没有 0044 的库层读写路径、`20-login-roles.sql` 的授权、`90-assert-least-privilege.sql` 的断言、以及 `tests/integration/third-party-deletion-pg.mjs` 真库臂 + CI 接线**。⇒ 该改的是 S4：给 D13 增补「库层读/写路径已在 0044 落地，有授权、断言、真库臂并在 CI 跑；缺的是应用侧接线」这一层，**判定与缺口不动**。README 那一行（`:20`）不需要改。
+但 `:240` 起的「实现（半成品，逐层都在但没接起来）」原先只列到 0003 表、内存协议、适配器、投影四层，**完全没有 0044 的库层读/写路径、`20-login-roles.sql` 的授权、`90-assert-least-privilege.sql` 的断言、以及 `tests/integration/third-party-deletion-pg.mjs` 真库臂 + CI 接线**。该遗漏已在同分支补上：D13 现于 `docs/architecture/s4-data-traceability.md:248` 多出一段「库层证据（2026-10-26 增补；判定与下面三条缺口均不变）」，**判定列与三条缺口一字未动**。
 
 ## 5. 恢复清单（restore）与恢复重放（replay）：只有纯函数和一对脚本
 
 - 需求原文：`docs/implementation-requirements.md:278`「在线个人数据／私有原媒体 7 日内删除，备份 30 日内滚动清理，**恢复时重放删除清单**」；`:281` 第三方删除要「跟踪请求/完成/失败与证据，未获证据不记完成」；`:286` 的 AC23 验收含「恢复清单」。
-- 代码侧只有纯函数 + 端口：`services/api/src/privacy/backup-replay-manifest.ts:559` 的 `buildBackupReplayManifest(...)`、`:367` 的 `interface BackupReplayTargetPort`（**无任何适配器实现**）、`:85` 的 `REPLAY_MANIFEST_VERSION = 1`。S4 的 E3（`docs/architecture/s4-data-traceability.md:326`）就是这个事实。
+- 代码侧只有纯函数 + 端口：`services/api/src/privacy/backup-replay-manifest.ts:559` 的 `buildBackupReplayManifest(...)`、`:367` 的 `interface BackupReplayTargetPort`（**无任何适配器实现**）、`:85` 的 `REPLAY_MANIFEST_VERSION = 1`。S4 的 E3（`docs/architecture/s4-data-traceability.md:341`）就是这个事实。
 - 仓内**没有**任何 replay 驱动命令：`tools/`、`deploy/`、`.github/` 下都找不到对应入口。
 - 唯一能算「可执行步骤」的是 `deploy/postgres-cvm/backup-postgres.sh` → `deploy/postgres-cvm/restore-drill.sh` 这一对，而后者自陈从未真正恢复过任何备份（`deploy/postgres-cvm/restore-drill.sh:5`），并明说逐用户删除清单重放未实现（`:40`）。
 
@@ -138,16 +138,16 @@
 ## 7. 最小可执行的 3 件事
 
 1. **把 0044 接到应用侧最小一条腿**：在 `services/api/src/privacy/` 加 `third-party-deletions-pg.ts`（调 `record_third_party_deletion` / `list_third_party_deletions` 两条函数）、在 `services/api/src/app.ts` 装配，并在注销链的第三方分支调用它——单测可以照 `tests/privacy/third-party-deletion-adapter.test.mjs` 的替身写法，真库臂直接复用已有的 `tests/integration/third-party-deletion-pg.mjs` 夹具。**这是把 §4「库层有、运行面没有」这一刀补上的唯一一条。**
-2. **让 S4 D13 与本页口径对齐**（纯文档）：给 `docs/architecture/s4-data-traceability.md` 的 `:240` 增补 0044 那一层，判定保持「未实现」。顺带把 G3 与 `:339` 的过期说法撤掉（见 §8）。改动只在 `docs/**`，可按 A 档分层自合并。
+2. **（2026-10-26 已完成，保留原样备查）让 S4 D13 与本页口径对齐**（纯文档）：给 `docs/architecture/s4-data-traceability.md` 的 `:240` 增补 0044 那一层，判定保持「未实现」；同时把 ★G3 撤条、`s4-data-traceability.md:354` 的 `:109` 改成 `:117`，并同步 §6 计数与 §7.2 升档条件表（见 §8）。改动只在 `docs/**`，可按 A 档分层自合并。
 3. **给恢复演练留一条可复算读数**：不必上生产——在真实 PG 上用 `deploy/postgres-cvm/backup-postgres.sh` 备一次、`deploy/postgres-cvm/restore-drill.sh` 演一次，把两份输出（含 `pg_restore --list` 的清单行数）落到证据页。**这是把 `deploy/postgres-cvm/restore-drill.sh:5` 的「从未真正恢复过任何备份」从承诺变成读数的唯一动作。**
 
-## 8. 本页推翻的 3 条既有说法
+## 8. 本页推翻的 3 条既有说法（均已于 2026-10-26 在同一分支修正）
 
-| # | 说法 | 现状 | 该改哪边 |
+| # | 原说法（现已不成立） | 现状 | 改在哪 |
 | --- | --- | --- | --- |
-| 1 | `docs/architecture/s4-data-traceability.md:314` 称 `purge:retention`「**没有 `.service`/`.timer`**，也不在调度门禁的必需清单里」，`:315` 说 `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` 只有两项 | 单元在（`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer`），必需清单在 `tools/verify-purge-schedule.mjs:117` 已是 **3 项** | **改 s4**。同仓 `docs/architecture/gy-r34-retention-policy.md:118` 已写「调度接线（已做，2026-10-24）」、`:122` 写明日级单元与 `--yes --json`；s4 的 G3 是过期的那一边，应撤条而非补 timer |
-| 2 | `docs/architecture/s4-data-traceability.md:339` 说 G3「必需清单只有两项（看 `tools/verify-purge-schedule.mjs:109`）」 | `:109` 实际是 `DEFAULT_SCHEDULE_DIR`；必需清单在 `:117` | 改 s4 的行号与结论 |
-| 3 | `docs/architecture/README.md:17` 称「`verify:purge-schedule` **仍未进 CI**」 | 已进：`.github/workflows/engineering-shell.yml:140` 的 `retention-gates` job，`:153` 执行 | 改 README 该行；同页 `:18` 的「#19 的到期执行与第三方证据仍未取得」只剩「第三方证据」那半条成立 |
+| 1 | `docs/architecture/s4-data-traceability.md:321`（改动前是 `:312`）曾称 `purge:retention`「**没有 `.service`/`.timer`**，也不在调度门禁的必需清单里」，并称 `REQUIRED_NPM_SCRIPTS` 只有两项 | 单元在（`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer`），必需清单在 `tools/verify-purge-schedule.mjs:117` 已是 **3 项**；同仓 `docs/architecture/gy-r34-retention-policy.md:118` 早在 2026-10-24 就写了「调度接线（已做）」 | **已改 s4**：整条改标「★G3（已于 2026-10-26 复核消解，整条留档）」，原判原文留在 `:323` 作历史记录；§6 计数「三条→两条」（`:305`）与证据基础设施段标题（`:335`）同步 |
+| 2 | `docs/architecture/s4-data-traceability.md:354`（改动前是 `:339`）曾写「`PASS`，但必需清单只有两项（看 `tools/verify-purge-schedule.mjs:109`）」 | `:109` 实际是 `DEFAULT_SCHEDULE_DIR`；必需清单在 `:117`，实测覆盖 3/3 | **已改 s4**：`:354` 与 §7.2 升档条件表的 `:368` 均改为 `:117` ＋ 3/3，并把该行标为「已消解（2026-10-26 复核）」 |
+| 3 | `docs/architecture/README.md:17` 曾称「`verify:purge-schedule` **仍未进 CI**」，`:18` 曾称「#19 的到期执行与第三方证据仍未取得」 | 已进：`.github/workflows/engineering-shell.yml:140` 的 `retention-gates` job，`:153` 执行 | **已改 README**：`:17` 改为「已进 CI ＋ 三对单元在 `deploy/purge-schedule/`」，`:18` 改为只剩第三方证据未取得，同页 `:20` 的「三条缺口」随 G3 撤条改为「两条」 |
 
 ## 9. 复核命令
 
