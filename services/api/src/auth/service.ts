@@ -383,7 +383,7 @@ export function sessionInfo(input: {
   return {
     audience: input.audience,
     expires_at: input.expiresAt.toISOString(),
-    scopes: input.scopes,
+    scopes: [...new Set(input.scopes)].sort(), // 只读展示：去重 + 固定顺序（码元序），不参与鉴权判定
     revision: input.revision,
   };
 }

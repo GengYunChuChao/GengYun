@@ -12458,7 +12458,7 @@
             "items": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 80
+              "maxLength": 80, "enum": ["accounts:read", "accounts:suspend", "audit:read", "flags:read", "flags:write", "jobs:cancel", "jobs:read", "session:logout", "session:read", "sources:read", "sources:write", "user"], "description": "会话权限闭集（只读声明，不参与鉴权判定）：后台会话取该管理员 admin_scopes 现存 scope，普通账号固定 user；public / receipt 是路由访问标记（x-scope），不是可授予权限，故不在闭集内。"
             },
             "maxItems": 20
           },
