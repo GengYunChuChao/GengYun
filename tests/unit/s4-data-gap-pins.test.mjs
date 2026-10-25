@@ -1,20 +1,20 @@
 /**
- * S4 · 数据面**当前真实缺口**的结构钉子（六条）。
+ * S4 · 数据面「缺口 / 已接线」两态的结构钉子（六条）。
  *
  * ## 这个文件是什么
  *
- * 它不验证「功能对不对」（那要真库、真调度、真凭据），它验证**缺口现在仍然是缺口**：
- * 把「今天还没接线」这件事写成**可机读的结构事实**，于是
- *   · 谁**悄悄补上**（装配一行 / 加一个 timer / 把命令加进必需清单 / 在 CI 里引用校验）⇒ 本文件红；
- *   · 谁**悄悄恶化**（多一处绕过接缝的直写、适配器被别处偷偷 import、单元文件被删）⇒ 本文件同样红。
+ * 它不验证「功能对不对」（那要真库、真调度、真凭据），它验证**接线状态没有悄悄变**：
+ * 把「哪三处还是缺口、哪三处已经接上」写成**可机读的结构事实**，于是
+ *   · 谁**悄悄补上**仍是缺口的那三处（装配一行 / 直写该表 / 调媒体删除函数）⇒ 本文件红；
+ *   · 谁**悄悄回退**已经接上的那三处（删一个 timer / 从必需清单拿掉命令 / 从 CI 摘掉校验）⇒ 本文件同样红。
  *
- * 红的时候**不是**「你写错了」，而是：**缺口状态变了，请把这个钉子一起翻转**（见每条断言里的
- * 「👉 若你刚刚补上了」）。这是刻意的 ——— 缺口是**登记过的欠账**，不能靠一次顺手的接线让登记失效。
+ * 红的时候**不是**「你写错了」，而是：**接线状态变了，请把这个钉子一起翻转**（见每条断言里的
+ * 「👉 接线状态变了」）。这是刻意的 ——— 缺口与接线都是**登记过的事实**，不能靠一次顺手改动让登记失效。
  *
  * ## 基线
  *
- * 全部常数都是 **`81d8e0b9943d7bd3b3d284a965e37caf92234883`（远端 main）的实测值**，
- * 由 6 条 `git grep` / `readdir` 读数逐条核对过（不是抄文档）。基线之后任何漂移都要人工过一遍。
+ * 本文件曾以 **`81d8e0b9943d7bd3b3d284a965e37caf92234883`** 为基线；正文与期望值已按**翻转后的现状**更新
+ * （钉 3/4/5 于 2026-10-26 由「缺口」改为「已接线」），每条常数都由实测读数逐条核对过，不是抄文档。
  *
  * ## 六条钉子（判据位置 / 断言什么 / 什么改动会让它红）
  *
@@ -22,9 +22,9 @@
  * | - | --- | --- | --- |
  * | 1 | `services/api/src`、`packages`、`tools` 三处扫字面量 `third_party_deletions` | 命中**恰好一处** = `packages/privacy/retention-policy.mjs:208`，且那行是策略表自陈（`table:` 字段），不是查询 | 任何一处真的读写该表的代码（SQL 文本、`pool.query`、仓储/端口/映射器）；或那行被挪/改文本 |
  * | 2 | `services/api/src` 扫 `createThirdPartyDeletionAdapter`；单独断 `app.ts` | 除 `privacy/third-party-deletion-adapter.ts` 自身外**零引用**；`app.ts` 里**零出现** ⇒ 未装配 | 任何装配（`app.ts` import/调用、新工厂、路由注入）；或适配器被移到别处 |
- * | 3 | `deploy/purge-schedule/` 的 `*.service` / `*.timer` 全集 | 全集**恰好四条**（online-data、backup-copies 各一 service + 一 timer），**没有**任何 `*retention*` 单元 | 新增任何一个单元（尤其 `gengyun-purge-retention.{service,timer}`）；或删掉现存单元 |
- * | 4 | `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` | 唯一定义点 + 数组**恰好** `['purge:online-data','purge:backup-copies']`，**不含** `purge:retention` | 把 `purge:retention` 加进数组；或把该常量挪到别处/复制一份 |
- * | 5 | `.github/workflows/**` 扫 `verify:purge-schedule` / `tools/verify-purge-schedule`、`restore-drill` | 两组**零命中** ⇒ 调度门禁（无论经 npm script 还是直接调工具）与恢复演练都还没进 CI | 任何 workflow 里出现 `npm run verify:purge-schedule`、`node tools/verify-purge-schedule.mjs`，或引用 `deploy/postgres-cvm/restore-drill.*` |
+ * | 3 | `deploy/purge-schedule/` 的 `*.service` / `*.timer` 全集 | 全集**恰好六条**（online-data、backup-copies、retention 各一 service + 一 timer），retention 那对**在位** | 删掉现存任何一条（尤其 `gengyun-purge-retention.{service,timer}`）；或新出现 `media-*` 等第四族单元 |
+ * | 4 | `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` | 唯一定义点 + 数组**恰好三条必需脚本** `['purge:online-data','purge:backup-copies','purge:retention']`，retention **在** | 从数组里拿掉 `purge:retention`；或把该常量挪到别处/复制一份 |
+ * | 5 | `.github/workflows/**` 扫 `verify:purge-schedule` / `tools/verify-purge-schedule`、`restore-drill` | 调度门禁**恰一份引用**（= `engineering-shell.yml` 的 `retention-gates`）；`restore-drill` 仍**零命中** | 引用面扩大或消失（多接一份 / 整条摘掉）；或任何 workflow 引用 `deploy/postgres-cvm/restore-drill.*` |
  * | 6 | `services/api/src`、`packages` 扫 `purge_owner_media` | **零命中** ⇒ 媒体行物理删除的唯一入口（0035 的 `SECURITY DEFINER` 函数）至今没人调 | 任何应用侧写 `SELECT public.purge_owner_media($1)`；或迁移 0035 的函数定义消失（后者是恶化，同样要红） |
  *
  * ## 硬约束（改本文件时不许破）
@@ -47,23 +47,26 @@ import { fileURLToPath } from 'node:url';
 /** 仓库根：由本文件位置推出（`tests/unit/` 的上两级），⛔ 不用 `process.cwd()`。 */
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-/** 常数基线（本文件所有期望值都取自这个 SHA 的实测读数）。 */
+/**
+ * 立文件时的基线 SHA（留档追溯）：缺口 1/2/6 的失败提示里写的「基线（81d8e0b9）」指的就是它。
+ * 钉 3/4/5 的期望值已于 2026-10-26 按翻转后的现状更新，不再取自这个 SHA。
+ */
 const BASELINE_SHA = '81d8e0b9943d7bd3b3d284a965e37caf92234883';
 
 /**
  * 本文件自己的仓库相对路径。
  *
  * ⚠ 自指陷阱（实测踩过）：本文件在**失败提示里**逐字写了 `export const REQUIRED_NPM_SCRIPTS`，
- * 于是「全仓扫这个声明」会把钉子文件自己数进去 —— 缺口 4 因此假红。凡扫到 `tests/` 的判据
+ * 于是「全仓扫这个声明」会把钉子文件自己数进去 —— 钉 4 因此假红。凡扫到 `tests/` 的判据
  * 都必须把本文件排掉；排掉的只是**自己**，不是判据面。
  */
 const SELF_FILE = 'tests/unit/s4-data-gap-pins.test.mjs';
 
-/** 每条钉子红的时候都要说的同一句话：缺口状态变了，请**翻转钉子**，不是把判据改松。 */
-const FLIP_HINT = '\n\n👉 若你刚刚**补上**了这个缺口（这是好事，但也改变了已登记的欠账）：请把本钉子的期望值'
-  + '改成新事实、把标题里的「缺口 N」改成「已接线」，并同步它点名的文档/证据页。'
+/** 每条钉子红的时候都要说的同一句话：接线状态变了，请**翻转钉子**，不是把判据改松。 */
+const FLIP_HINT = '\n\n👉 接线状态变了（缺口**补上**、或已接线被**回退**，都算）：请把本钉子的期望值与标题'
+  + '改成新事实（「缺口 N」↔「已接线 N」），并同步它点名的文档/证据页。'
   + `\n⛔ 不要为了让本文件变绿而放宽判据（换成 \`includes\` / \`>=\` / 模糊正则都算），`
-  + `也不要删掉这一条 —— 本文件的全部价值就是「缺口一动就红」。基线 ${BASELINE_SHA}。`;
+  + `也不要删掉这一条 —— 本文件的全部价值就是「接线一动就红」。`;
 
 /**
  * 遍历时跳过的目录名：VCS、依赖、构建产物、本机证据目录。
@@ -298,7 +301,7 @@ test('缺口 2 · createThirdPartyDeletionAdapter 未装配：除自身文件外
 });
 
 // ---------------------------------------------------------------------------
-// 缺口 3 · 保留策略：没有调度单元
+// 已接线 3 · 保留策略：有 retention 调度单元（#604 / `34d40de1`）
 // ---------------------------------------------------------------------------
 
 test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10-26 #604 落地；原缺口 3 已补）', () => {
@@ -342,9 +345,9 @@ test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10
       + `\n  实测：${JSON.stringify(units.filter((name) => /retention/i.test(name)))}`
       + '\n  期望：`gengyun-purge-retention.service` + `gengyun-purge-retention.timer`（#604 落地）。'
       + '\n  删掉它们等于把保留策略退回「只能手工执行」——那要同时改回本钉子与它点名的文档。'
-      + '\n  ⚠ `[calendar]` 判据的日级例外已由 `tools/verify-purge-schedule.mjs` 按入口文件分档解决'
-      + '（retention 1440 分钟），见 '
-      + 'docs/verification/gy-r34-retention-20261023.md:122。'
+      + '\n  ⚠ `[calendar]` 判据的日级例外已按入口文件分档解决：`tools/verify-purge-schedule.mjs:152-156`'
+      + '（`INTERVAL_BUDGET_MINUTES`：retention ⇒ 1440 分钟，其余仍 60 分钟），口径与接线事实记在 '
+      + 'docs/architecture/gy-r34-retention-policy.md:173。'
       + FLIP_HINT,
   );
 
@@ -353,7 +356,7 @@ test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10
   assert.deepEqual(
     units.filter((name) => /media/i.test(name)),
     [],
-    '【缺口 3 · 事实更正】出现了 media 调度单元：'
+    '【已接线 3 · 事实更正】出现了 media 调度单元：'
       + `\n  实测：${JSON.stringify(units.filter((name) => /media/i.test(name)))}`
       + '\n  基线（81d8e0b9）：`deploy/purge-schedule/` 里**没有** `media-*` 单元（这条与派发时的假设不符，'
       + '已按实测登记）。若你新增了它 ⇒ 同步这一行；若只是改名 ⇒ 也同步这一行。'
@@ -379,13 +382,13 @@ test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10
 });
 
 // ---------------------------------------------------------------------------
-// 缺口 4 · purge:retention 不在必需脚本清单
+// 已接线 4 · purge:retention 在必需脚本清单（#604 / `34d40de1`）
 // ---------------------------------------------------------------------------
 
 test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention（2026-10-26 #604 落地；原缺口 4 已补）', () => {
   const DECL = 'tools/verify-purge-schedule.mjs';
 
-  // ① 唯一定义点：常量被挪走/复制一份都会红（否则「不含」这句话可以对着空气说）。
+  // ① 唯一定义点：常量被挪走/复制一份都会红（否则「恰好三条」这句话可以对着空气说）。
   //    ⚠ 排掉 `SELF_FILE`：本文件在失败提示里逐字写了这个声明，不排会自己数自己（见 SELF_FILE 注释）。
   const defining = ['tools', 'packages', 'services/api/src', 'tests']
     .flatMap((root) => walkFiles(root))
@@ -394,20 +397,20 @@ test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention（2026-10-26 #604 
   assert.deepEqual(
     defining,
     [DECL],
-    '【缺口 4 · 判据位置变了】`REQUIRED_NPM_SCRIPTS` 的定义点集合变了：'
+    '【已接线 4 · 判据位置变了】`REQUIRED_NPM_SCRIPTS` 的定义点集合变了：'
       + `\n  实测：${JSON.stringify(defining)}`
-      + `\n  基线（81d8e0b9）：只在 ${DECL} 定义一次（其余地方都是 import）。`
-      + '\n  若你把门禁搬家了 ⇒ 请把本钉子的 DECL 与新位置对齐，并确认「不含 purge:retention」在新位置仍然成立。'
+      + `\n  现状：只在 ${DECL}:117 定义一次（其余地方都是 import）。`
+      + '\n  若你把门禁搬家了 ⇒ 请把本钉子的 DECL 与新位置对齐，并确认「三条必需脚本（含 purge:retention）仍在新位置被冻结」。'
       + FLIP_HINT,
   );
 
-  // ② 形状：抓不到声明就是判据位置失效（不是「不含」）。
+  // ② 形状：抓不到声明就是判据位置失效（而不是清单内容变了）。
   const declaration = /export const REQUIRED_NPM_SCRIPTS = Object\.freeze\(\[([^\]]*)\]\)/.exec(readRepoText(DECL));
   assert.equal(
     declaration === null,
     false,
-    `【缺口 4 · 形状变了】在 ${DECL} 里抓不到 \`export const REQUIRED_NPM_SCRIPTS = Object.freeze([…])\`。`
-      + '\n  基线（81d8e0b9）在第 109 行，单行字面量数组。'
+    `【已接线 4 · 形状变了】在 ${DECL} 里抓不到 \`export const REQUIRED_NPM_SCRIPTS = Object.freeze([…])\`。`
+      + '\n  现状：`tools/verify-purge-schedule.mjs:117-121`，数组每条一行。'
       + '\n  若改成了多行/`new Set`/从别处汇总 ⇒ 请同步改本钉子的解析方式（⛔ 别直接删掉这条判据）。'
       + FLIP_HINT,
   );
@@ -437,25 +440,25 @@ test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention（2026-10-26 #604 
       + FLIP_HINT,
   );
 
-  // ⑤ 缺口是「未进清单 + 无单元」，**不是**「命令没写」——把这条钉住，免得被误诊成「缺脚本」。
+  // ⑤ 缺口补上的是「进清单 + 有单元」那一层，**不是**「命令没写」——把这条钉住，免得被误诊成「缺脚本」。
   const pkg = JSON.parse(readRepoText('package.json'));
   assert.equal(
     pkg.scripts['purge:retention'],
     'node tools/purge-retention-expired.mjs',
-    '【缺口 4 · 前提变了】`package.json` 的 `purge:retention` 不再是 '
+    '【已接线 4 · 前提变了】`package.json` 的 `purge:retention` 不再是 '
       + '`node tools/purge-retention-expired.mjs`：'
       + `\n  实测：${JSON.stringify(pkg.scripts['purge:retention'])}`
-      + '\n  基线（81d8e0b9）：命令**在**，只是没被门禁的必需清单覆盖、也没有调度单元。'
-      + '\n  若命令改名/挪走 ⇒ 同步这一行，并重核缺口 4 的结论。'
+      + '\n  现状：命令**在** `package.json` 里，且 `REQUIRED_NPM_SCRIPTS` 覆盖它、`gengyun-purge-retention.service` 驱动它。'
+      + '\n  若命令改名/挪走 ⇒ 同步这一行，并重核「已接线 4」的结论。'
       + FLIP_HINT,
   );
 });
 
 // ---------------------------------------------------------------------------
-// 缺口 5 · CI 未引用两条校验
+// 已接线 5 · CI 引用调度校验恰一份（#607 / `0bc8bfaa`）；恢复演练仍未进 CI
 // ---------------------------------------------------------------------------
 
-test('已接线 5 · .github/workflows/ 里能 grep 到 verify:purge-schedule（2026-10-26 #608 落地；原缺口 5 部分已补）', () => {
+test('已接线 5 · .github/workflows/ 里能 grep 到 verify:purge-schedule（2026-10-26 #607（`0bc8bfaa`）落地；原缺口 5 部分已补）', () => {
   const WF_DIR = '.github/workflows';
   const names = readdirSync(join(REPO_ROOT, ...WF_DIR.split('/')), { withFileTypes: true })
     .filter((entry) => entry.isFile() && /\.ya?ml$/.test(entry.name))
@@ -463,16 +466,16 @@ test('已接线 5 · .github/workflows/ 里能 grep 到 verify:purge-schedule（
     .sort();
   const files = names.map((name) => `${WF_DIR}/${name}`);
 
-  // 扫描面前提：三个已知 workflow 必须在位（否则「零命中」是空转）。
+  // 扫描面前提：三个已知 workflow 必须在位（否则「恰一份引用」是空转）。
   for (const anchor of ['engineering-shell.yml', 'migrations-guard.yml', 'real-pg-integration.yml']) {
     assert.equal(
       names.includes(anchor),
       true,
-      `扫描面里没有 ${WF_DIR}/${anchor} ⇒ workflow 目录搬家/改名了，本钉子的「零命中」不可信。`,
+      `扫描面里没有 ${WF_DIR}/${anchor} ⇒ workflow 目录搬家/改名了，本钉子的「恰一份引用」期望不可信。`,
     );
   }
 
-  // ① 调度门禁没进 CI。
+  // ① 调度门禁已进 CI（恰一份引用）。
   //    两条**同义针脚**都扫：npm 脚本名（`run: npm run verify:purge-schedule`）与入口路径
   //    （`node tools/verify-purge-schedule.mjs`）。只扫前者会漏掉「绕过 npm script 直接调工具」——
   //    那同样是把这条校验接进了 CI、缺口同样被补上；本钉子判的是「校验有没有进 CI」，
@@ -486,9 +489,10 @@ test('已接线 5 · .github/workflows/ 里能 grep 到 verify:purge-schedule（
     ['.github/workflows/engineering-shell.yml'],
     '【已接线 5 破了】CI 对调度门禁的引用面又变了：'
       + `\n  实测命中：${JSON.stringify(scheduleCiHits)}`
-      + '\n  当前事实（#608 落地后）：仅 `engineering-shell.yml` 引用（`node tools/verify-purge-schedule.mjs`），'
-      + '且该步带独立超时、不并入其他步骤，失败能单独判读。'
-      + '\n  若引用面扩大/消失 ⇒ 同步本钉子；若整条接回本地 ⇒ 那是回退，必须同时改回文档。'
+      + '\n  当前事实（#607 / `0bc8bfaa` 落地后）：仅 `engineering-shell.yml` 一处引用，形态是 `retention-gates` job 里的 '
+      + '`- run: npm run verify:purge-schedule`（`:153`）；该步**没有** step 级超时，靠 job 级 '
+      + '`timeout-minutes: 15`（`:143`）兜底 ⇒ 失败单列、能单独判读。'
+      + '\n  若命中数变化 ⇒ CI 接线被动过：同步本钉子；若整条摘回本地 ⇒ 那是回退，必须同时改回文档。'
       + FLIP_HINT,
   );
 
@@ -496,7 +500,7 @@ test('已接线 5 · .github/workflows/ 里能 grep 到 verify:purge-schedule（
   assert.deepEqual(
     files.filter((file) => readRepoText(file).includes('restore-drill')),
     [],
-    '【缺口 5 破了】CI 引用了 `restore-drill`：'
+    '【已接线 5 · 恢复演练仍是缺口】CI 引用了 `restore-drill`：'
       + `\n  实测命中：${JSON.stringify(files.filter((file) => readRepoText(file).includes('restore-drill')))}`
       + '\n  基线（81d8e0b9）：`.github/workflows/**` 零命中 ⇒ 恢复演练脚本'
       + '（`deploy/postgres-cvm/restore-drill.sh` / `.ps1`）在 CI 里从未被调用。'
