@@ -122,3 +122,32 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run build
+
+  # 数据保留／到期清除的**调度层**门禁（GY-R32 · #19 的 `tools/verify-purge-schedule.mjs`）。
+  # 缺口（接线前实测）：`package.json` 有 `verify:purge-schedule`，但 15 份 workflow 里
+  # `verify:purge-schedule` **0 命中** ⇒ 该门禁只能靠人记得在本地跑；删掉
+  # `deploy/purge-schedule/*.timer`（到期清除就没有时钟了）或往 API 进程里塞一个 `setInterval(`
+  # （多副本重复执行 + 与真库臂抢同一批行），全仓测试照样全绿。
+  # ⇒ 本 job 让它在每次 PR / 每次 push main 都跑，检查名固定为 `retention-gates`。
+  # 只接**纯静态**判据：脚本自陈「不连库、不起服务、不读凭据、不写任何文件、不联网、无第三方依赖」，
+  # 扫的就是 `deploy/purge-schedule/**` 与 `services/api/src/**` 的文本（10 项判据：surface / pair /
+  # calendar / execstart / cursor / secrets / setinterval / npm-script / hygiene / coverage）。
+  # 不接 `tests/integration/*-purge-pg.mjs` 那一批：它们要真的 PG 17 集群与 `GY_PG_BIN`
+  # （缺了按约定 exit 77 跳过），属于 `real-pg-integration.yml` 的真库臂；拖进这里等于让
+  # 「无需 PG」的这一层在没有库的 runner 上必然红。
+  # 不设 `needs:`：本 job 只读树内文本，与其它 job 不共享产物、不需要构建 ⇒ 无数据依赖；
+  # 加 `needs` 只会把本可并行的 PR 检查改成串行。
+  retention-gates:
+    name: retention-gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run verify:purge-schedule
