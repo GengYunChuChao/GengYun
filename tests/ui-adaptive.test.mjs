@@ -146,7 +146,6 @@ test('字号适配：微信设置回落、应用内开关、标签容器不溢�
   const heroBadge = heroWxss.slice(heroWxss.indexOf('.hero__badge'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__badge')));
   assert.ok(/min-height:\s*calc\(26px\s*\*\s*var\(--font-scale/.test(heroBadge), '.hero__badge 高度未随字体放大');
   assert.ok(!/padding:\s*0\s+22rpx/.test(heroBadge), '.hero__badge 上下无内边距，换行会溢出圆角框');
-
   const badgeStart = appWxss.indexOf(String.fromCharCode(10) + '.badge {');
   const badge = appWxss.slice(badgeStart, appWxss.indexOf('}', badgeStart));
   assert.ok(/min-height:\s*calc\(24px\s*\*\s*var\(--font-scale/.test(badge), '.badge 高度未随字体放大');
