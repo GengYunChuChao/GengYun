@@ -301,7 +301,7 @@ test('缺口 2 · createThirdPartyDeletionAdapter 未装配：除自身文件外
 // 缺口 3 · 保留策略：没有调度单元
 // ---------------------------------------------------------------------------
 
-test('缺口 3 · deploy/purge-schedule/ 没有任何 retention 调度单元（只有 online-data 与 backup-copies）', () => {
+test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10-26 #604 落地；原缺口 3 已补）', () => {
   const DIR = 'deploy/purge-schedule';
   assert.equal(
     existsSync(join(REPO_ROOT, ...`${DIR}/README.md`.split('/'))),
@@ -315,7 +315,7 @@ test('缺口 3 · deploy/purge-schedule/ 没有任何 retention 调度单元（�
     .sort();
   const units = entries.filter((name) => name.endsWith('.service') || name.endsWith('.timer'));
 
-  // ① 全集恰好四条：这条同时挡住「新增」与「删掉」（两侧都是缺口状态的改动）。
+  // ① 全集恰好六条：这条同时挡住「新增」与「删掉」（两侧都是状态改动）。
   assert.deepEqual(
     units,
     [
@@ -323,26 +323,27 @@ test('缺口 3 · deploy/purge-schedule/ 没有任何 retention 调度单元（�
       'gengyun-purge-backup-copies.timer',
       'gengyun-purge-online-data.service',
       'gengyun-purge-online-data.timer',
+      'gengyun-purge-retention.service',
+      'gengyun-purge-retention.timer',
     ],
-    '【缺口 3 破了】`deploy/purge-schedule/` 的调度单元全集变了：'
+    '【已接线 3 破了】`deploy/purge-schedule/` 的调度单元全集又变了：'
       + `\n  实测：${JSON.stringify(units)}`
-      + '\n  基线（81d8e0b9）：只有 online-data（在线 7 日）与 backup-copies（备份 30 日）各一对 service/timer；'
-      + '**没有任何 retention 单元** ⇒ 保留策略（`tools/purge-retention-expired.mjs`）至今只能手工执行。'
-      + '\n  若你刚加了 `gengyun-purge-retention.{service,timer}` ⇒ 请翻转本钉子，并把 '
-      + 'docs/architecture/gy-r34-retention-policy.md:121 与 docs/verification/gy-r34-retention-20261023.md:122 '
-      + '的「未做 / 未加」改掉。'
+      + '\n  当前事实（#604 落地后）：online-data/backup-copies/retention 各一对 service+timer，共六条；'
+      + 'retention 单元以 `OnCalendar=*-*-* 03:20:00` 日级触发 `purge:retention`。'
+      + '\n  若你**又**加了/删了单元 ⇒ 同步本钉子的期望值与标题；若只是改名 ⇒ 同样要同步。'
       + FLIP_HINT,
   );
 
-  // ② 单独一条 retention 判据：红的时候点得比 ① 更准。
+  // ② retention 单元必须在位：红的时候点得比 ① 更准。
   assert.deepEqual(
     units.filter((name) => /retention/i.test(name)),
-    [],
-    '【缺口 3 破了】出现了 retention 调度单元：'
+    ['gengyun-purge-retention.service', 'gengyun-purge-retention.timer'],
+    '【已接线 3 破了】retention 调度单元消失了（回退成缺口状态）：'
       + `\n  实测：${JSON.stringify(units.filter((name) => /retention/i.test(name)))}`
-      + '\n  基线（81d8e0b9）：零个。保留策略的到期清除**没有**宿主机时钟，只有手工 `npm run purge:retention`。'
-      + '\n  ⚠ 接线前要先解决 `[calendar]` 判据的冲突：`tools/verify-purge-schedule.mjs` 要求 '
-      + '`OnCalendar=` 展开后的最大间隔 ≤ 60 分钟，而保留任务是**日级**的 —— 见 '
+      + '\n  期望：`gengyun-purge-retention.service` + `gengyun-purge-retention.timer`（#604 落地）。'
+      + '\n  删掉它们等于把保留策略退回「只能手工执行」——那要同时改回本钉子与它点名的文档。'
+      + '\n  ⚠ `[calendar]` 判据的日级例外已由 `tools/verify-purge-schedule.mjs` 按入口文件分档解决'
+      + '（retention 1440 分钟），见 '
       + 'docs/verification/gy-r34-retention-20261023.md:122。'
       + FLIP_HINT,
   );
@@ -367,11 +368,11 @@ test('缺口 3 · deploy/purge-schedule/ 没有任何 retention 调度单元（�
   });
   assert.deepEqual(
     declared.map((item) => item.script),
-    ['purge:backup-copies', 'purge:online-data'],
-    '【缺口 3 · 自陈变了】`GY-SCHEDULE: npm-script=` 指向的命令集合变了：'
+    ['purge:backup-copies', 'purge:online-data', 'purge:retention'],
+    '【已接线 3 · 自陈变了】`GY-SCHEDULE: npm-script=` 指向的命令集合变了：'
       + `\n  实测：${JSON.stringify(declared)}`
-      + '\n  基线（81d8e0b9）：backup-copies.service ⇒ `purge:backup-copies`；'
-      + 'online-data.service ⇒ `purge:online-data`；**没有** `purge:retention`。'
+      + '\n  当前事实（#604 落地后）：backup-copies ⇒ `purge:backup-copies`；'
+      + 'online-data ⇒ `purge:online-data`；retention ⇒ `purge:retention`。'
       + '\n  （缺标记会得到 `null`，同样让这条红 —— 那是判据标记被删，不是缺口的进展。）'
       + FLIP_HINT,
   );
@@ -381,7 +382,7 @@ test('缺口 3 · deploy/purge-schedule/ 没有任何 retention 调度单元（�
 // 缺口 4 · purge:retention 不在必需脚本清单
 // ---------------------------------------------------------------------------
 
-test('缺口 4 · REQUIRED_NPM_SCRIPTS 不含 purge:retention（该常量只在 tools/verify-purge-schedule.mjs 定义一次）', () => {
+test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention（2026-10-26 #604 落地；原缺口 4 已补）', () => {
   const DECL = 'tools/verify-purge-schedule.mjs';
 
   // ① 唯一定义点：常量被挪走/复制一份都会红（否则「不含」这句话可以对着空气说）。
@@ -411,30 +412,28 @@ test('缺口 4 · REQUIRED_NPM_SCRIPTS 不含 purge:retention（该常量只在 
       + FLIP_HINT,
   );
 
-  // ③ 清单内容恰好两条（顺序也钉住：它同时决定报告里 joined 文案的顺序）。
+  // ③ 清单内容恰好三条（顺序也钉住：它同时决定报告里 joined 文案的顺序）。
   const names = [...declaration[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
   assert.deepEqual(
     names,
-    ['purge:online-data', 'purge:backup-copies'],
-    '【缺口 4 破了】`REQUIRED_NPM_SCRIPTS` 的内容变了：'
+    ['purge:online-data', 'purge:backup-copies', 'purge:retention'],
+    '【已接线 4 破了】`REQUIRED_NPM_SCRIPTS` 的内容又变了：'
       + `\n  实测：${JSON.stringify(names)}`
-      + '\n  基线（81d8e0b9）：`[\'purge:online-data\', \'purge:backup-copies\']` —— 只覆盖两条日历级命令。'
-      + '\n  若你刚把 `purge:retention` 加进去 ⇒ 那是收紧门禁，**必须先有对应的 `.service`**（否则 '
-      + '`[coverage]` 判据会连带红，见 tools/verify-purge-schedule.mjs:767 起）。'
+      + '\n  当前事实（#604 落地后）：`[\'purge:online-data\', \'purge:backup-copies\', \'purge:retention\']` —— '
+      + '三条日历级命令全覆盖，且 retention 已有对应 `.service`（否则 `[coverage]` 会连带红）。'
+      + '\n  若你删掉 `purge:retention` ⇒ 那是把缺口放回来，必须同时改回本钉子与文档。'
       + FLIP_HINT,
   );
 
   // ④ 单独一条 retention 判据（红的时候点得更准）。
   assert.equal(
     names.includes('purge:retention'),
-    false,
-    '【缺口 4 破了】`purge:retention` 进了 `REQUIRED_NPM_SCRIPTS`：'
+    true,
+    '【已接线 4 破了】`purge:retention` 从 `REQUIRED_NPM_SCRIPTS` 里消失了（回退成缺口状态）：'
       + `\n  实测：${JSON.stringify(names)}`
-      + '\n  基线（81d8e0b9）：**不在**。命令本体早在 package.json 里'
-      + '（`node tools/purge-retention-expired.mjs`），缺的是「必需覆盖」这条登记 —— '
-      + 'docs/architecture/gy-r34-retention-policy.md:121 原文：「（**当前没加**：还没有对应 `.service`，'
-      + '加了会直接红）」。'
-      + '\n  ⇒ 请翻转本钉子并同步该文档，同时补齐 `deploy/purge-schedule/` 的 retention 单元。'
+      + '\n  期望：**在**（#604 把 retention 日级调度接进必需覆盖清单）。'
+      + '\n  ⇒ 删掉它等于让保留策略重新失去必需覆盖；要改就连同本钉子与 '
+      + 'docs/architecture/gy-r34-retention-policy.md 一起改回。'
       + FLIP_HINT,
   );
 
@@ -456,7 +455,7 @@ test('缺口 4 · REQUIRED_NPM_SCRIPTS 不含 purge:retention（该常量只在 
 // 缺口 5 · CI 未引用两条校验
 // ---------------------------------------------------------------------------
 
-test('缺口 5 · .github/workflows/ 里 grep 不到 verify:purge-schedule 与 restore-drill', () => {
+test('已接线 5 · .github/workflows/ 里能 grep 到 verify:purge-schedule（2026-10-26 #608 落地；原缺口 5 部分已补）', () => {
   const WF_DIR = '.github/workflows';
   const names = readdirSync(join(REPO_ROOT, ...WF_DIR.split('/')), { withFileTypes: true })
     .filter((entry) => entry.isFile() && /\.ya?ml$/.test(entry.name))
@@ -484,12 +483,12 @@ test('缺口 5 · .github/workflows/ 里 grep 不到 verify:purge-schedule 与 r
   );
   assert.deepEqual(
     scheduleCiHits,
-    [],
-    '【缺口 5 破了】CI 引用了调度门禁（`verify:purge-schedule` 或 `tools/verify-purge-schedule`）：'
+    ['.github/workflows/engineering-shell.yml'],
+    '【已接线 5 破了】CI 对调度门禁的引用面又变了：'
       + `\n  实测命中：${JSON.stringify(scheduleCiHits)}`
-      + '\n  基线（81d8e0b9）：`.github/workflows/**` 对这两个字面量都是零命中 ⇒ 调度层的门禁（'
-      + '`tools/verify-purge-schedule.mjs`，10 项判据）只在本地/单测里跑，不在 CI 里跑。'
-      + '\n  若你刚把它接进 CI（无论经 npm script 还是直接 `node` 调工具）⇒ 请翻转本钉子。'
+      + '\n  当前事实（#608 落地后）：仅 `engineering-shell.yml` 引用（`node tools/verify-purge-schedule.mjs`），'
+      + '且该步带独立超时、不并入其他步骤，失败能单独判读。'
+      + '\n  若引用面扩大/消失 ⇒ 同步本钉子；若整条接回本地 ⇒ 那是回退，必须同时改回文档。'
       + FLIP_HINT,
   );
 
