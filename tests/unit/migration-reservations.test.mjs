@@ -77,14 +77,23 @@
  * 缺号仍只有 `0037`，保留台账仍是那一行 ⇒ `39 个文件 + 1 保留 === max 40`，
  * 三条不变量自然成立（**台账不因 0040 新增任何条目**：它是本片自己落盘的文件，不是"有意缺号"）。
  *
- * **当前树状态（2026-10-25，`#18` S2 片1 · 迁移 `0041` 落盘）**：
+ * **此前状态（2026-10-25，`#18` S2 片1 · 迁移 `0041` 落盘）**：
  * 裁定 `.pg17/ruling-r37-issue18-s2-scope-admin-20261025.md` 把 S2 的行内库层迁移定在 `0041`
- * （`0040` 已被 `#568` 占用、`0037` 留给 `#14`、⛔ 不占 `0042`）。本片落
+ * （`0040` 已被 `#568` 占用、`0037` 留给 `#14`、当时 ⛔ 不占 `0042`）。该片落
  * `0041_admin_scope_write_authority.sql` 后：正向 **40** 个（`0001..0035` 连续 + `0036` + `0038`
  * + `0039` + `0040` + `0041`）、`rollback/` **39** 个；缺号仍只有 `0037`，保留台账仍是那一行 ⇒
  * `40 个文件 + 1 保留 === max 41`。**台账不因 0041 新增条目**，也**不得**残留 40 号条目
  * （0040 已落盘 ⇒ `reservedButPresent` 会立刻判红）；「当前仓库」用例把 0040/0041 两条
  * 都断言为**必须出现**，方向与落盘事实一致。
+ *
+ * **当前树状态（2026-10-25，GY-R37 片 `#37` 的 `0042` 落盘 —— 上面 `0041` 段的「不占 0042」
+ * 只描述当时那一片的号位分配，已被本片取代）**：
+ * `0042_favorites_history_target_type_conversation_turn.sql` 落在 `0041` 之后 ⇒ 正向 **41** 个
+ * （`0001..0035` 连续 + `0036` + `0038` + `0039` + `0040` + `0041` + `0042`）、`rollback/` **40** 个；
+ * 缺号仍只有 `0037`，保留台账仍只有那一条 ⇒ `41 个文件 + 1 保留 === max 42`。
+ * **台账不因 0042 新增条目**（它是本片自己落盘的文件，不是"有意缺号"），也**不得**残留
+ * 41 号条目（0041 已落盘 ⇒ `reservedButPresent` 立刻判红）；「当前仓库」用例把
+ * 0040/0041/0042 三条都断言为**必须出现**，`0037_` 前缀仍断言为**必须不存在**。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -128,7 +137,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2 已落盘 ⇒ 40 文件 + 1 保留 === 41、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37 已落盘 ⇒ 41 文件 + 1 保留 === 42、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -138,7 +147,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.deepEqual(
     numbering.gaps,
     [37],
-    `0040（#568）与 0041（#18 S2 片1）都已落盘 ⇒ 合流树的缺号必须仍只有 [37]（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
+    `0040（#568）、0041（#18 S2 片1）与 0042（GY-R37 片）都已落盘 ⇒ 合流树的缺号必须仍只有 [37]（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(
     numbering.reserved,
@@ -156,7 +165,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（40 = 41 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（41 = 42 − 1）',
   );
 
   const files = migrations.map((item) => item.filename);
@@ -239,11 +248,17 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
     true,
     '#568 的 0040 已随上游落盘 ⇒ 真实文件必须在清单里，且台账不得再登记 40',
   );
-  // #18 S2 片1（R37）：裁定把 S2 的库层迁移定在 0041（0040 已归 #568，⛔ 不占 0042）。
+  // #18 S2 片1（R37）：裁定把 S2 的库层迁移定在 0041（0040 已归 #568，当时不占 0042）。
   assert.equal(
     files.includes('0041_admin_scope_write_authority.sql'),
     true,
     '#18 S2 片1 的 0041 已落盘 ⇒ 真实文件必须在清单里，且台账不得登记 41',
+  );
+  // GY-R37 片（#37）：0042 补 `favorites`/`history` 的 `target_type` 第 17 值，落在 0041 之后。
+  assert.equal(
+    files.includes('0042_favorites_history_target_type_conversation_turn.sql'),
+    true,
+    'GY-R37 片的 0042 已落盘 ⇒ 真实文件必须在清单里，且台账不得登记 42',
   );
   assert.equal(
     files.some((name) => /^0037_/.test(name)),

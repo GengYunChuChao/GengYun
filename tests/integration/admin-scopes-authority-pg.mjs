@@ -351,8 +351,8 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  assert.equal(applied.rows[0].version, '0041', '迁移 0041 必须是最后一条已应用版本');
-  pass('schema_migrations 末项 = 0041');
+  assert.equal(applied.rows[0].version, '0042', '迁移 0042（GY-R37 片：favorites/history 的 target_type 补第 17 值）必须是最后一条已应用版本');
+  pass('schema_migrations 末项 = 0042');
 
   const hasCheck = await ownerPool.query(
     `SELECT count(*)::int AS n FROM pg_constraint

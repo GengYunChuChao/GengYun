@@ -273,11 +273,12 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
-    // 末项取树上的真实最大号：#18 S2 片1 的 0041（后台管理员 scope 唯一写路径 + 闭集约束）、GY-R35 的 0040（exports 台账 object_key 契约回填）、#22 片C 的 0039（deletion_state 增 cancelled）、
+    // 末项取树上的真实最大号：GY-R37 片的 0042（`favorites`/`history` 的 `target_type` 闭集补第 17 值 `conversation_turn`）、
+    // #18 S2 片1 的 0041（后台管理员 scope 唯一写路径 + 闭集约束）、GY-R35 的 0040（exports 台账 object_key 契约回填）、#22 片C 的 0039（deletion_state 增 cancelled）、
     // #19 片B 的 0038（删除回执 bearer 台账持久化）、#538 的 0036（后台内容/资料域落库）、#535 的 0035（R34 媒体行清理）、
     // #19 的 0031（在线清理证据）、#15 的 0032（举报者行级注销引用）、R34/#525 的 0033（管理端审计日志读函数）
     // 与 #19 的 0034（注销内容清理窄函数）都已在树上
-    // ⇒ 目录 `0001..0041` 里只剩 0037（#14）一条是在飞缺号、已在保留台账登记，其余**无缺号**；
+    // ⇒ 目录 `0001..0042` 里只剩 0037（#14）一条是在飞缺号、已在保留台账登记，其余**无缺号**；
     //   真实台账眼下就登记着这一条（31/33/36 号三条保留条目都已按各自的 remove_when 删除）。
     // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
@@ -299,7 +300,7 @@ function forwardMergeNumbering() {
     assert.deepEqual(
       numbering.undeclaredGaps.map(formatMigrationVersion),
       [],
-      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15、0033/#525、0034/#19、0035/#535、0036/#538、0038/#19片B、0039/#22片C、0040/GY-R35 与 0041/#18 S2 片1 都已在树上；仅剩 0037 一条为 #14 的在飞缺号并已在台账登记）',
+      '0027 补齐后不应再有任何未声明缺号（0029/#419、0031/#19、0032/#15、0033/#525、0034/#19、0035/#535、0036/#538、0038/#19片B、0039/#22片C、0040/GY-R35、0041/#18 S2 片1 与 0042/GY-R37 片都已在树上；仅剩 0037 一条为 #14 的在飞缺号并已在台账登记）',
     );
     assert.equal(
       numbering.maxVersion,
@@ -308,8 +309,8 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0041',
-      '合流树末项是 0041（#18 S2 片1 库层的 0041_admin_scope_write_authority.sql，后台管理员 scope 的唯一写路径 + 闭集约束；0040 是 GY-R35 的 0040_export_object_key_contract_backfill.sql，exports 台账 object_key 按契约回填 + 收 80；0039 是 #22 片C 的 deletion_state 增 cancelled；0038 是 #19 片B 的删除回执 bearer 台账持久化、0036 是 #538 的后台内容/资料域落库、0035 是 #535 的 R34 媒体行清理、0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上；仅 0037=#14 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0042',
+      '合流树末项是 0042（GY-R37 片的 0042_favorites_history_target_type_conversation_turn.sql，`favorites`/`history` 的 `target_type` 闭集补第 17 值 `conversation_turn`；0041 是 #18 S2 片1 库层的 0041_admin_scope_write_authority.sql，后台管理员 scope 的唯一写路径 + 闭集约束；0040 是 GY-R35 的 0040_export_object_key_contract_backfill.sql，exports 台账 object_key 按契约回填 + 收 80；0039 是 #22 片C 的 deletion_state 增 cancelled；0038 是 #19 片B 的删除回执 bearer 台账持久化、0036 是 #538 的后台内容/资料域落库、0035 是 #535 的 R34 媒体行清理、0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上；仅 0037=#14 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,
