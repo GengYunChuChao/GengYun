@@ -20,9 +20,10 @@
  *   E. **多要授权回归钉子**：新维度**不得**要求 `recording`（只授 `external_inference` ⇒ 受理成功）；
  *   F. **默认仍失败关闭**：real 未接真实传输（能力未接线／缺凭据）⇒ 受理处 503 `PROVIDER_UNAVAILABLE`(retryable=false)，
  *      且该用户**零账本行**（在任何账本变更之前拒绝）。
- *   G. 迁移 `0040`（GY-R35 写入侧改写的收尾）：越界 `object_type`（`conversation_turn`/`checked_content`）历史行
- *      回填成「真实内容类型 + 裸标识」（`media` 行不动），再把形状 CHECK 从 `{1,128}` 收紧到 `{1,80}`；81 拒绝、80 通过；
- *      回滚只还原约束、不回滚数据。
+ *   G. 迁移 `0040`（GY-R35 写入侧改写的收尾，二轮按监工 R1/R2 重写）：轮次行**类型保持 `conversation_turn`**、键去
+ *      `turn:` 前缀成裸 uuid（类型/标识/版本指向同一实体）；`checked_content` 历史行只在「前缀属六值闭集 + 冒号后是
+ *      uuid 形状 + 去前缀后 ≤80」四条同真时才拆成真实内容类型 + 裸标识；`media` 行不动；不可证明的行整条中止并打印
+ *      样例；随后长度预检，最后把形状 CHECK 从 `{1,128}` 收到 `{1,80}`（81 拒绝、80 通过）；回滚只还原约束、不回滚数据。
  */
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID, createHmac } from 'node:crypto';
@@ -1052,9 +1053,9 @@ try {
   // 投影就越枚举；`object_key` 也还是 `<类型>:<id>` / `turn:<uuid>` 的编缀形态（最坏 40 + 1 + 80 = 121，
   // 超出契约的 `maxLength: 80`）。0040 就是清这批数据的迁移。
   //
-  // 次序不可反（裁定 §4）：**先回填数据、再把形状收到 80**。反过来先收紧会让 121 字符的旧键撞上新
-  // CHECK ⇒ 整条迁移失败、数据停在越界状态（读面整页 503）。本段的第 5 条行就是给这个次序做的证据：
-  // 它的旧键是 91 字符（> 80、≤ 128），去前缀后恰好 80 ⇒ 只有「先回填后收紧」才可能成功。
+  // 次序不可反（裁定 §4）：**先回填数据、再跑长度预检、最后才把形状收到 80**。R1 之后能如实回填的行
+  // 去前缀后一定是 uuid（36 字符）或裸 uuid，因此本段不再有「去前缀后仍很长的正臂行」；超长键只能落在
+  // ④ 的长度预检（见 L 段用例 Y），而先收紧会让那些行撞一句裸 CHECK 名、看不出是哪几行。
   //
   // 前置清理：前面各段用 `object_type='checked_content'` 当**任意非媒体维度名**造过 XOR/形状夹具行
   // （键形如 `sentinel-form-ok`、`runtime-insert-ok`、`a-z0-9._:-ok`），键里没有 `<类型>:` ⇒ 0040
@@ -1068,7 +1069,7 @@ try {
   const legacyTurnRef = randomUUID();
   const legacyAnswerRef = randomUUID();
   const bareTurnRef = randomUUID();
-  const longTypeId = 'z'.repeat(80);
+  const legacyDoseRef = randomUUID();
   const insertLegacy = async (objectType, objectKey, objectId) => (
     await owner.query(
       `INSERT INTO exports(user_id,object_type,object_id,object_key,object_revision,purpose,consent_epoch,recipient_id,recipient_config_version,state,auth_epoch)
@@ -1082,7 +1083,7 @@ try {
     await insertLegacy('conversation_turn', `turn:${legacyTurnRef}`, SENTINEL),
     await insertLegacy('conversation_turn', bareTurnRef, SENTINEL),
     await insertLegacy('checked_content', `answer:${legacyAnswerRef}`, SENTINEL),
-    await insertLegacy('checked_content', `dose_card:${longTypeId}`, SENTINEL),
+    await insertLegacy('checked_content', `dose_card:${legacyDoseRef}`, SENTINEL),
     // 媒体维对照行：真实 uuid + NULL 键 —— 0040 **不得**动它（它本来就在契约内）。
     await insertLegacy('media', null, randomUUID()),
   ];
@@ -1093,10 +1094,10 @@ try {
       `conversation_turn|turn:${legacyTurnRef}`,
       `conversation_turn|${bareTurnRef}`,
       `checked_content|answer:${legacyAnswerRef}`,
-      `checked_content|dose_card:${longTypeId}`,
+      `checked_content|dose_card:${legacyDoseRef}`,
       'media|null',
     ],
-    '前置：两类越界行（轮次标签 / 资料维度名）各就位，含一条「旧键 91 字符、去前缀后 80」的次序证据行，外加一条媒体维对照行',
+    '前置：两类历史行各就位 —— 轮次行（`turn:<uuid>` 与裸 uuid 各一）、资料维度行（`answer:<uuid>`／`dose_card:<uuid>`），外加一条媒体维对照行（真实 uuid + NULL 键）',
   );
 
   psqlFile('migrations/0040_export_object_key_contract_backfill.sql');
@@ -1108,13 +1109,13 @@ try {
   assert.deepEqual(
     legacyShapeIds.map((id) => asPair(byId.get(id))),
     [
-      `conversation|${legacyTurnRef}`,
-      `conversation|${bareTurnRef}`,
+      `conversation_turn|${legacyTurnRef}`,
+      `conversation_turn|${bareTurnRef}`,
       `answer|${legacyAnswerRef}`,
-      `dose_card|${longTypeId}`,
+      `dose_card|${legacyDoseRef}`,
       'media|null',
     ],
-    '0040 回填：conversation_turn → conversation、checked_content → 该条正文的真实内容类型（answer／dose_card）、键去前缀成裸标识；media 行原样不动',
+    '0040 回填：轮次行**类型保持 conversation_turn**（类型/标识/版本指向同一实体，不再用近似容器类型）、键去 `turn:` 前缀成裸 uuid；checked_content → 该条正文的真实内容类型（answer／dose_card）并去前缀；media 行原样不动',
   );
 
   const shapeDefs = (
@@ -1148,11 +1149,11 @@ try {
   const afterDown = (await owner.query('SELECT object_type, object_key FROM exports WHERE id=$1', [legacyShapeIds[0]])).rows[0];
   assert.equal(
     asPair(afterDown),
-    `conversation|${legacyTurnRef}`,
+    `conversation_turn|${legacyTurnRef}`,
     '0040 的回滚**只回滚约束、不回滚数据**（回退数据会把行写回契约闭集之外，且去前缀后信息不唯一可逆）',
   );
   await owner.query('DELETE FROM exports WHERE id = ANY($1::uuid[])', [legacyShapeIds]);
-  say('迁移 0040（真 PG）：conversation_turn/checked_content 历史行回填成「真实类型 + 裸标识」（含 91→80 字符的次序证据行）、media 行不动、形状收到 {1,80}（81 拒绝 / 80 通过）、回滚还原 {1,128} 且不回滚数据');
+  say('迁移 0040（真 PG）：轮次行保持 conversation_turn 且键去 turn: 前缀、checked_content 历史行回填成「真实类型 + 裸标识」、media 行不动、形状收到 {1,80}（81 拒绝 / 80 通过）、回滚还原 {1,128} 且不回滚数据');
 
   // ---------------------------------------------------------------- L. 迁移 0040 的两条 fail-closed 负控制（真 PG）
   //
@@ -1161,8 +1162,8 @@ try {
   //      会命中六值白名单，而 `substr(key, strpos(key,':') + 1)` = `substr('answer', 1)` = `'answer'`
   //      ⇒ 若不排除，迁移会写 `object_type='answer'` + `object_key='answer'`，把**类型名当成对象 id**
   //      （伪造标识）。0040 用 `strpos(object_key, ':') > 1` 让这类行不参与回填、由 DO 块报错中止。
-  //   Y. 去前缀后仍 > 80 的键（`dose_card:` + 82 字符）：必须由**长度预检**打印样例报错，而不是让最后
-  //      的 `ADD CONSTRAINT` 抛一句裸约束名（后者看不出是哪几行、多长）。
+  //   Y. 键仍 > 80 的**契约内类型**行（例：`answer` + 100 字符）：必须由**长度预检**打印样例报错，而不是
+  //      让最后的 `ADD CONSTRAINT` 抛一句裸约束名（后者看不出是哪几行、多长）。
   // 两条都必须验证「中止 ⇒ 前面两条 UPDATE 整体回滚」（BEGIN/COMMIT 生效，库不留半改状态）。
   const expectPsqlFileAbort = (relPath, pattern, label) => {
     try {
@@ -1201,14 +1202,16 @@ try {
   // 让 Y 拿到 X 的错误信息（Y 要验的是 ④ 的长度预检，两道预检的先后顺序本身也值得钉住）。
   await owner.query('DELETE FROM exports WHERE id = ANY($1::uuid[])', [[degenerateRow.id, rollbackProofRow.id]]);
 
-  const overlongId = 'y'.repeat(82);
-  const overlongRow = await insertLegacy('checked_content', `dose_card:${overlongId}`, SENTINEL);
+  // ④ 的长度预检只看「键仍超过 80」，而 ③ 已把两类越界行全部接住 ⇒ 这条预检只能由**契约内类型**的超长键
+  // 触发（例：合法 type=answer、键 100 字符）。这类行不该等到最后撞一句裸 CHECK 名。
+  const overlongKey = 'y'.repeat(100);
+  const overlongRow = await insertLegacy('answer', overlongKey, SENTINEL);
   const abortOutY = expectPsqlFileAbort(
     'migrations/0040_export_object_key_contract_backfill.sql',
     /行对象键超过 80 字符/,
     '用例 Y：去前缀后仍 > 80 的键必须由长度预检报错',
   );
-  assert.match(abortOutY, /dose_card/, '用例 Y：长度预检的样例必须点出真实内容类型（dose_card）与长度');
+  assert.match(abortOutY, /answer/, '用例 Y：长度预检的样例必须点出该行的类型（answer）与长度');
   assert.ok(
     !abortOutY.includes('exports_object_key_shape'),
     '用例 Y：必须是长度预检打印样例，而不是 ADD CONSTRAINT 撞出来的裸约束名',
@@ -1216,11 +1219,11 @@ try {
   const afterAbortY = (await owner.query('SELECT id,object_type,object_key FROM exports WHERE id=$1', [overlongRow.id])).rows[0];
   assert.equal(
     asPair(afterAbortY),
-    `checked_content|dose_card:${overlongId}`,
-    '用例 Y：长度预检中止同样必须整体回滚（该行未被改成 dose_card 裸 id）',
+    `answer|${overlongKey}`,
+    '用例 Y：长度预检中止同样必须整体回滚（该行未被改写）',
   );
   await owner.query('DELETE FROM exports WHERE id=$1', [overlongRow.id]);
-  say('用例 Y（真 PG）：checked_content + dose_card:<82 字符>（去前缀仍 82 > 80）⇒ 0040 由长度预检中止并打印「行对象键超过 80 字符」样例（非裸约束名），且整体回滚（该行仍 checked_content/dose_card:<82>）');
+  say('用例 Y（真 PG）：契约内类型 + 100 字符键 ⇒ 0040 由长度预检中止并打印「行对象键超过 80 字符」样例（非裸约束名），且整体回滚（该行仍 answer/<100 字符>）');
 
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求；未使用真实 TTS 供应商`);
