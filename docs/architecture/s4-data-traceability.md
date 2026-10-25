@@ -245,6 +245,15 @@
   ③ 适配器在——`services/api/src/privacy/third-party-deletion-adapter.ts:134`，无凭据或无传输即不可用
   （`:147`），错误码 `OBJECT_UNAVAILABLE`（`:45`）；
   ④ 回执投影在——`services/api/src/privacy/third-party-deletion-projection.ts:277`。
+- **库层证据（2026-10-26 增补；判定与下面三条缺口均不变）**：迁移
+  `services/api/db/migrations/0044_third_party_deletion_persistence.sql:97` 建了唯一写路径
+  `record_third_party_deletion(...)`（`SECURITY DEFINER` ＋ `SET search_path = pg_catalog`），`:270` 建了唯一读路径
+  `list_third_party_deletions(...)`（只吐八个证据面列、固定排序、终态不可回退）；授权在
+  `deploy/postgres-cvm/sql/20-login-roles.sql:414`（REVOKE PUBLIC）与 `:416`（GRANT EXECUTE 给 `gengyun_api_runtime`，
+  该表对运行时仍 `forbidden`，见 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1134`），函数形状断言在同文件
+  `:1803`；真库臂在 `tests/integration/third-party-deletion-pg.mjs:1`（自述 P1，子判据 E-S4-P1-A..E 见 `:27`），由
+  `.github/workflows/real-pg-integration.yml:203` 在 CI 跑（PG 17.11、现建空库）。**但这是「库层记住」，不是运行面接线**：
+  同一迁移 `:4` 自陈「**不接电**」——`services/api/src/**` 一行未动，下面两条零命中 grep、三条缺口因此原样成立。
 - **证据（零命中）**：`git grep -n third_party_deletions -- services/api/src` = 0 行；
   `git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = 0 行。
 - **缺口**：三条同时成立。① 应用侧零读写：表建好了，但没有任何一行代码写它或读它（`deletion_state` 在 src 里只有
@@ -293,7 +302,7 @@
 4. **修法可命名**：能写出要动哪几个文件、加哪张表、补哪个门禁。
 5. **不把文档缺陷混进实现缺口**：过期锚点（§0.3 表格两条）算文档缺陷，单独修。
 
-按这五条，全页只有三条够格：
+按这五条，全页只有两条够格（另有一条 ★G3 已于 2026-10-26 复核消解，整条留档见本节末）：
 
 ### ★G1 第三方删除（判据：D13）
 
@@ -309,15 +318,21 @@
 迁移自己写了「本片未接线」（`services/api/db/migrations/rollback/0035_r34_media_row_purge.down.sql:14`）。
 可复算：`git grep -n purge_owner_media -- services/api/src` = 0 行。
 
-### ★G3 保留策略（GY-R34）没有调度单元（判据：D09 的边角，但不属 D09 主体）
+### ★G3（**已于 2026-10-26 复核消解，整条留档**）保留策略（GY-R34）没有调度单元（判据：D09 的边角，但不属 D09 主体）
 
-`purge:retention` 有执行器、有真库臂、CI 已接，但**没有 `.service`/`.timer`**，也**不在** 调度门禁的必需清单里：
-`tools/verify-purge-schedule.mjs:109` 的 `REQUIRED_NPM_SCRIPTS` 只有 `purge:online-data` 与 `purge:backup-copies`。
-同一缺口在 [数据保留策略表与清理执行器](gy-r34-retention-policy.md) `:121` 已自陈，并与 `:122` 的日级频率冲突
-（门禁要求 `OnCalendar` 展开间隔 ≤60 分钟，保留策略天生按天）绑在一起 ⇒ 要么开日级例外，要么明确「仅手工执行」。
-**在裁定之前，这条不能靠「加个 timer」收掉。**
+原判称 `purge:retention` **没有 `.service`/`.timer`**，也**不在** 调度门禁的必需清单里（旧文引
+`tools/verify-purge-schedule.mjs:109` 的 `REQUIRED_NPM_SCRIPTS` 只有 `purge:online-data` 与 `purge:backup-copies`），
+并与日级频率冲突（门禁要求 `OnCalendar` 展开间隔 ≤60 分钟，保留策略天生按天）⇒ 要么开日级例外，要么明确「仅手工执行」。
 
-### 证据基础设施缺口（不计入上面三条，但会让三条长期不可关）
+**2026-10-26 复核：G3 所述三项均已落地，见 [数据保留／备份／第三方完成证据现状清单](gy-r59-retention-backup-thirdparty-map.md)。**
+① 单元在——`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer`（`OnCalendar=*-*-* 03:20:00` 日级一次，
+`ExecStart` 带 `--yes --json`，`User=gengyun-ops`）；② 必需清单已是 **3 项**，真实位置 `tools/verify-purge-schedule.mjs:117`
+（`:109` 实为 `DEFAULT_SCHEDULE_DIR`，旧文引错行）；③ 频率上界已按命令分档（`INTERVAL_BUDGET_MINUTES`，
+`tools/verify-purge-schedule.mjs:152`，日级 ≤1440 分钟），不再与 ≤60 分钟冲突。
+现读数：`node tools/verify-purge-schedule.mjs` = `PASS：10 项判据全部满足`，其中 `[npm-script]` 必需覆盖 3/3。
+⇒ 本条**撤出缺口列**，仅留档；§6 开头计数与 §7 两张表已同步。
+
+### 证据基础设施缺口（不计入上面两条，但会让两条长期不可关）
 
 | 编号 | 事实 | 可复算 |
 | --- | --- | --- |
@@ -336,7 +351,7 @@
 | 文档结构与链接 | `npm run test:docs` | `exit 0`；`PASS: … Markdown links and tables` 在第 5 行（第一个工具的输出），末行是 `PASS docs/research 结构校验…` |
 | D13 零读写 | `git grep -n third_party_deletions -- services/api/src` | 0 行 |
 | G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
-| G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS`，但必需清单只有两项（看 `tools/verify-purge-schedule.mjs:109`） |
+| G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **3/3**（`tools/verify-purge-schedule.mjs:117`；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列 |
 | D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'` |
 | D07 单条删除面 | `git grep -n "app.delete(" -- services/api/src/routes` | 14 条（13 条单条删除 + 1 条注销取消） |
 | D08 闭集 | `node --test tests/unit/deletion-registration-coverage.test.mjs` | 全绿；改闭集必须同步改常量 |
@@ -350,7 +365,7 @@
 | D13 | 未实现 | `third_party_deletions` 在 `services/api/src` 出现读写；适配器在 `app.ts` 装配；回执带第三方状态 | `services/api/src/app.ts:2076` 同侧装配区 |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
-| G3 | 缺口 | 补 `.service`/`.timer` 并把 `purge:retention` 加进必需清单，或按 `:122` 裁定仅手工执行 | `tools/verify-purge-schedule.mjs:109` |
+| G3 | **已消解（2026-10-26 复核）** | 已具备（撤条理由）：`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer` 在、`purge:retention` 已在必需清单、日级上界 1440 分钟已分档；若单元被删或必需清单回落到 2 项，按缺口重新记 | `tools/verify-purge-schedule.mjs:117` |
 
 ### 7.3 降档条件
 
