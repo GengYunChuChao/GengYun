@@ -353,8 +353,8 @@ services/api/db/migrations/0013_conversations.sql  三表 + 级联 + maxItems �
 
 | 位置 | 表述 | 实测 |
 | --- | --- | --- |
-| 派单 / 根 `README.md:217` | `services/api/src/conversations/service.ts:82`、`:945` 是前缀标记处 | `:82` 与 `:945` 都是**注释行**；常量在 `:85-86`、落库在 `:946-948` |
-| 根 `README.md:238` | 「main 现有 24 个迁移、最大号 `0024_ocr_persistence.sql`」 | 实测 **26** 个、最大 `0026_speech_persistence.sql` |
+| 派单 / [根 README 历史快照（本页基点 f7155d5）](https://github.com/GengYunChuChao/GengYun/blob/f7155d5ac1329974b20a6128e332bb84c19c733d/README.md#L217) | `services/api/src/conversations/service.ts:82`、`:945` 是前缀标记处 | `:82` 与 `:945` 都是**注释行**；常量在 `:85-86`、落库在 `:946-948` |
+| [根 README 历史快照（本页基点 f7155d5）](https://github.com/GengYunChuChao/GengYun/blob/f7155d5ac1329974b20a6128e332bb84c19c733d/README.md#L238) | 「main 现有 24 个迁移、最大号 `0024_ocr_persistence.sql`」 | 实测 **26** 个、最大 `0026_speech_persistence.sql` |
 | 派单自检项 | `npm run test:unit --workspace @gengyun/api` | `@gengyun/api` 的 scripts 只有 `dev/start/build/typecheck/db:migrate/db:status`，**没有 test 脚本**；根 `package.json` 也无 `test`。实际入口是根 `npm run test:unit` |
 | 派单自检项 | 「若加了 migration：`tests/migrations/` 下相关守卫通过」 | 本仓**没有** `tests/migrations/` 目录；迁移相关守卫在 `tests/unit/*-store-pg*.test.mjs` 与 `tests/integration/*.mjs` |
 
