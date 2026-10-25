@@ -96,7 +96,7 @@
 | 历史幂等 | `history_idempotency` | **✅ 硬删** | 同上 `:164-168` | ✅ | — | ❌ | **真删** |
 | 消息 #17 | `messages` | **❌ 一行不删** | **无**（`services/api/src/messages/store.ts:119` `MessagesStore` 只有 `insertMessage/getMessage/listMessagesByOwner/findByEventKey/markReadIfUnread/countUnread` + 幂等方法；`messages/store-pg.ts` 全文件无 `DELETE FROM messages`） | ❌ 不在闭集 | ❌ 无 scope | ❌ | **G1+G2**；HTTP 面无任何 `DELETE` 方法（`services/api/src/routes/messages.ts:43,53,59` 只有 GET×2 + PUT） |
 | 消息幂等 | `public.idempotency_keys`（共享表） | **❌ 只按 key 过期清** | `messages/store-pg.ts:260-263`、`:288-291` 只按 `(scope,key_hash)`；**无 owner 清理** | ❌ | — | ❌ | **G3**；表无 owner 列（`0008_auth_session.sql:46-58`），只能按 `scope` 前缀删（`scope` 由 `messages/service.ts:370` `idempotencyScope(user.userId, …)` 拼，口径同 0008:40） |
-| 会话 #12 | `conversations` / `conversation_turns` / `conversation_answers` | **❌ 有原语但无人调用** | `services/api/src/conversations/store-pg.ts:431-434`（`DELETE FROM conversations WHERE owner_id=$1::uuid RETURNING id`，子表靠 `0013_conversations.sql:64`（`conversation_turns.conversation_id`）与 `:105`（`conversation_answers.turn_id`）的 `ON DELETE CASCADE`） | ❌ 自建协调器**悬空**：`conversations/cascade.ts:192-203` 建好，`app.ts:1569-1570` 建出来、`:1600` 只 `decorate`；**全仓无调用点** | ❌ | ❌ | **G5**（`:1598-1599` 注释自陈「供回归测试与 GY-I19 统一编排驱动」，编排未实现） |
+| 会话 #12 | `conversations` / `conversation_turns` / `conversation_answers` | **❌ 有原语但无人调用** | `services/api/src/conversations/store-pg.ts:431-434`（`DELETE FROM conversations WHERE owner_id=$1::uuid RETURNING id`，子表靠 `0013_conversations.sql:64`（`conversation_turns.conversation_id`）与 `:105`（`conversation_answers.turn_id`）的 `ON DELETE CASCADE`） | ❌ 自建协调器**悬空**：`conversations/cascade.ts:192-203` 建好，`app.ts:1582-1583` 建出来、`:1600` 只 `decorate`；**全仓无调用点** | ❌ | ❌ | **G5**（`:1598-1599` 注释自陈「供回归测试与 GY-I19 统一编排驱动」，编排未实现） |
 | 会话备份态 | — | — | — | — | ❌ | — | **G6**：`backupState` 硬编码 `'pending'`（`conversations/cascade.ts:149`） |
 | 社区 #15 | `community_posts` / `community_comments` / `community_likes` / `community_reports` / `community_idempotency` | **❌ 一行不删** | **无**（`services/api/src/community/store-pg.ts` 无 `deleteAllByOwner`/`purgeOwnerData`/`snapshotOwner`） | ❌ | ❌ | ❌ | **G7**；`0022_community_persistence.sql:64,107,123,137` 全靠 `REFERENCES users(id) ON DELETE CASCADE` ⇒ 同样永不触发 |
 | 用户/会话行 | `users` / `sessions` | **软改**：`state='deletion_pending'`、`revoked_at=now()` | `0016:122-134` | — | — | — | 设计如此，**不是缺口**（7 日恢复窗口需要主体行在） |
@@ -155,7 +155,7 @@
 | **G2** | P0 | 消息域**未进注销模块闭集** | `services/api/src/privacy/user-data-deletion.ts:63-67`（`USER_DATA_DELETION_MODULES`）、`:394-395`（只注册两个 handler） | 即使有原语也不会被 `executeHandlers()` 驱动 |
 | **G3** | P0 | 消息幂等台账**无按主体清理**（共享 `public.idempotency_keys`，该表**没有 owner 列**） | `messages/store-pg.ts:232-292`；表结构 `0008_auth_session.sql:46-58`；scope 拼法 `messages/service.ts:370` | 注销后同主体消息请求的幂等记录仍在（含 `outcome={"kind":"message","id",…}` 引用），保留 5 分钟 TTL 内的可重放引用；**必须**按 `scope` 前缀删（范式见 `favorites/store-pg.ts:163-167` 注释） |
 | **G4** | P2 | 迁移注释**宣称**的重删机制永不触发 | `0019_messages_persistence.sql:24-25`（「注销删除主体时消息随之级联删除」）；全仓 migration 无 `DELETE FROM public.users` | 读注释会以为消息域已覆盖注销 ⇒ **文档与事实不符**（见 §8） |
-| **G5** | P0 | 会话域注销协调器**已建未驱动** | `conversations/cascade.ts:192-203`；`app.ts:1569-1570`、`:1600`（只 decorate）；注释 `:1598-1599` | 会话/轮次/回答**一行不删**；`conversations:online-purged` 证据不存在 |
+| **G5** | P0 | 会话域注销协调器**已建未驱动** | `conversations/cascade.ts:192-203`；`app.ts:1582-1583`、`:1600`（只 decorate）；注释 `:1598-1599` | 会话/轮次/回答**一行不删**；`conversations:online-purged` 证据不存在 |
 | **G6** | P1 | 会话域备份态硬编码 `pending` 且无 scope | `conversations/cascade.ts:149`、`:132` 注释（「属 GY-I19」） | 即便接线，回执也永远 `blocked/pending`（诚实，但不可完成） |
 | **G7** | P1 | 社区域**无清理原语、无注册** | `services/api/src/community/store-pg.ts`（零命中）；`0022:64,107,123,137` | 帖子/评论/点赞/举报行保留；`community_idempotency`（`0022:178`）同样保留 |
 | **G8** | P1 | 备份副本 scope 闭集只有两域 | `packages/privacy/backup-copies.mjs:38-41`、`:56-61`；`user-data-deletion.ts:272-288` | messages/conversations/community **没有副本清单行** ⇒ 30 天链对它们「无对象可清」（且不是"清完了"） |
@@ -222,7 +222,7 @@
 > （`user-data-deletion.ts:93-98`，注册 `:454`），`conversations/cascade.ts` 的自建闭集降级为「单域离线/单元验证」用途；
 > `tests/unit/conversation-deletion.test.mjs` 里那条「闭集不含 conversations」的反向锁已改为更强的正向断言。
 
-- 现成件已在：`conversations/cascade.ts:192-203` + `app.ts:1569-1570`。
+- 现成件已在：`conversations/cascade.ts:192-203` + `app.ts:1582-1583`。
 - 接线点在注销受理处：`services/api/src/privacy/account-deletion.ts:225-228` 之后再驱动一次 `conversationDeletion.executeHandlers(<同一 requestId>)`——但注意两套协调器各有自己的 `createDeletionRequest`（`cascade.ts:161-167`），**同一 `requestId` 不能跨协调器复用**，因此正确做法要么 ① 把 `conversations` 并入 `USER_DATA_DELETION_MODULES`（G2 那条路的扩展，同时删掉 `cascade.ts` 的自建闭集），要么 ② 在注销服务里为会话域单开一个 request 并把两份回执合并进 `handlers[]`。
 - 建议 ①：改动更小且消掉「自建闭集」这个历史妥协；代价是 `tests/unit/conversation-deletion.test.mjs:214-215`（断言 `USER_DATA_DELETION_MODULES` 不含 `conversations`）必须改写，且要说明理由。
 

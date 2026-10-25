@@ -546,6 +546,31 @@ GRANT EXECUTE ON FUNCTION public.grant_admin_scope(uuid, uuid, text, text, uuid,
 GRANT EXECUTE ON FUNCTION public.revoke_admin_scope(uuid, uuid, text, text, uuid, uuid, integer) TO gengyun_api_runtime;
 -- #endregion gy-r37-s2-scope-grant
 
+-- --- 后台作业取消审计（R18 / `#18` / 迁移 0043：`record_admin_job_cancel_audit`）----
+-- 为什么又是「函数 EXECUTE」而不是「表写权限」：`admin_audit_events` 对运行时是**零表级、
+-- 零列级**写权限（`90-assert-least-privilege.sql` 的 external_manifest 把表级 S/I/U/D 钉成 false，
+-- 槽 9 的 protected_columns 再钉死关键列），而且表上挂 `admin_audit_events_append_only`
+-- 触发器（UPDATE/DELETE 一律 `G0006`）——审计台账**只可追加**。
+-- `job.cancel` 的审计行因此只能经 0043 的窄口径 SECURITY DEFINER 函数写入：函数内固定
+-- `action='job.cancel'` / `scope='jobs:cancel'` / `result='accepted'`，`target_ref` 由形参
+-- 重建，并重核验「操作者存在 + `state='active'` + 当前有效持 `jobs:cancel`」三条 ⇒
+-- 调用方拿不到伪造 actor、伪造动作文本或伪造 target 的任何缝隙。
+--
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败，
+-- 绝不留「看似收敛、点开 503」的运行态（回滚 0043 时本段会在下次部署里显式报错 —— 这正是要的效果）。
+-- #region gy-r18-job-cancel-audit-grant
+DO $$
+BEGIN
+  IF to_regprocedure('public.record_admin_job_cancel_audit(uuid,uuid,integer,text,uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.record_admin_job_cancel_audit(...)：迁移 0043 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_admin_job_cancel_audit(uuid, uuid, integer, text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_admin_job_cancel_audit(uuid, uuid, integer, text, uuid) TO gengyun_api_runtime;
+-- #endregion gy-r18-job-cancel-audit-grant
+
 -- --- G. 逐用户备份副本清单：运行时**列级** DML（GY-I19 / 迁移 0023）-----------
 -- ---------------------------------------------------------------------------
 -- GY-I19（#19）· 逐用户备份副本清单（迁移 0023）的运行时**列级**授权

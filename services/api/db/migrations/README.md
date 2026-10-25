@@ -4,21 +4,22 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-25 · `#538` 已合入 main（`6dbe83a3`）＋ GY-R35（`#568`）＋ `#18` S2 片1＋ GY-R37 片（`0042`）：`0001..0042`，缺 `0037`）
+## 当前状态（2026-10-25 · `#538` 已合入 main（`6dbe83a3`）＋ GY-R35（`#568`）＋ `#18` S2 片1＋ GY-R37 片（`0042`）＋ `#18` R18 片（`0043`）：`0001..0043`，缺 `0037`）
 
 `0001..0035` 已连续落盘（35 个正向；`0035_r34_media_row_purge.sql` 已随上游真实落盘，本片旧段里那条
 `WARN[gap] 0035` 的前提随之作废）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
 #22 片C 落 `0039_r34_deletion_state_cancelled.sql`、#538 落 `0036_r34_admin_content_persistence.sql`、
 GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 片1 落
 `0041_admin_scope_write_authority.sql`、GY-R37 片落
-`0042_favorites_history_target_type_conversation_turn.sql`
-⇒ 目录现为 **41 个正向 `.sql`** ＋ `rollback/` **40 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **41 + 1 === 42**），
+`0042_favorites_history_target_type_conversation_turn.sql`、`#18` R18 片落
+`0043_admin_job_cancel_audit.sql`
+⇒ 目录现为 **42 个正向 `.sql`** ＋ `rollback/` **41 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **42 + 1 === 43**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对该缺号有依据（见下）。
 （本段数字为实测：`git ls-tree -r --name-only HEAD -- services/api/db/migrations`
-⇒ 正向 `.sql` 41 条、`rollback/` 40 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041` 均已真实落盘，
-故保留台账里**不得**再出现 40/41 号条目 —— 否则 `reservedButPresent` 会把它判红。
-`0042` 是本片自己落盘的文件，**台账同样不新增条目**。）
+⇒ 正向 `.sql` 42 条、`rollback/` 41 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
+故保留台账里**不得**再出现 40/41/42 号条目 —— 否则 `reservedButPresent` 会把它判红。
+`0043` 是本片自己落盘的文件，**台账同样不新增条目**。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
 - `0036_r34_admin_content_persistence.sql`（R34 · #18 后台内容/资料域落库 + **列级**授权，已随 #538 落盘）：
@@ -88,6 +89,39 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 �
   `rollback/0042_favorites_history_target_type_conversation_turn.down.sql` 恢复 16 值 CHECK（顺序同 `0018`），
   **先预检**：库里若已有 `target_type = 'conversation_turn'` 的行即 `RAISE EXCEPTION 'G0015'` 中止 ——
   回滚不能把数据写回契约闭集之外（只报告、不删行、不映射）。
+- `0043_admin_job_cancel_audit.sql`（`#18` R18 片 · **库层**：后台「作业取消」的审计**从进程内存落到库**，
+  Refs #18）接在 `0042` 之后：号位由任务方**预先分配**为 `0043`（不换号），台账不新增条目（本片即落盘）。
+  为什么必须新开一支迁移：`job.cancel` 的审计原先只写进程内 `store.audit.append`（重启即丢），而库层
+  `public.admin_audit_events` 对运行时是**零表级、零列级写**（`90-assert-least-privilege.sql` 的
+  `external_manifest` 与槽 9 `protected_columns` 钉死，表上还有 `admin_audit_events_append_only`
+  触发器 ⇒ 只可追加），所以只能沿用 `0041` 已裁定的第三条路：**窄口径 `SECURITY DEFINER` 函数 +
+  `REVOKE ALL … FROM PUBLIC` + 只授 `EXECUTE` 给运行时**，迁移里**不给**运行时任何表级/列级 INSERT。
+  迁移只做一件事：建 `public.record_admin_job_cancel_audit(p_actor_id uuid, p_job_id uuid,
+  p_job_revision integer, p_reason_code text, p_request_id uuid) RETURNS uuid`（`LANGUAGE plpgsql`,
+  `SECURITY DEFINER`, `SET search_path = pg_catalog`, `SET TimeZone = 'UTC'`），函数内依次校验
+  ①入参与理由码闭集（`p_reason_code <> 'job_cancelled'` ⇒ `G0001`）、②操作者存在（`admin_accounts`
+  查不到 ⇒ `G0002`）、③`state = 'active'`（⇒ `G0010`）、④**当前有效**持 `jobs:cancel`
+  （`admin_scopes` 中 `revoked_at IS NULL` 的那一行，⇒ `G0010`），然后同事务
+  `INSERT INTO public.admin_audit_events` 一行并 `RETURNING` 行 id：`action='job.cancel'`、
+  `scope='jobs:cancel'`、`result='accepted'`、`target_ref = jsonb_build_object('type','job','id',<job>::text,
+  'revision',<取消前 revision>)`、`target_hint = NULL`、`reason_code = 入参`、`request_id = 入参`
+  —— **动作文本 / scope / result / target_ref / target_hint 全在函数内固定或由形参重建**，
+  `actor_id` 只来自 `p_actor_id` 且要过上面四条校验 ⇒ 调用方没有伪造 actor 或伪造动作的缝隙。
+  `{type:'job', id, revision}` 形状已被 `0017` 的 `admin_audit_events_target_ref_shape` CHECK 接受
+  （该 CHECK 只要求 `type`/`id` 是字符串、`revision` 是数字），**不需要**扩白名单。
+  运行时的 `EXECUTE` 在 `deploy/postgres-cvm/sql/20-login-roles.sql` 的
+  `gy-r18-job-cancel-audit-grant` 区域授予（**硬前置**：函数缺失即显式失败），
+  `90-assert` 的 `function_surface_manifest` 追加一行 `runtime` 登记
+  （断言 90/91/92 双向钉住：`prosecdef` 必须登记、PUBLIC 不得可执行、grantee 集合须精确相等）。
+  配对回滚 `rollback/0043_admin_job_cancel_audit.down.sql` **只删函数**（照 `0042` 理由不写 `IF EXISTS`），
+  但**先数** `action='job.cancel'` 的审计行：`>0` 即 `RAISE EXCEPTION 'G0016'
+  （JOB_CANCEL_AUDIT_ROLLBACK_BLOCKED）` 中止 —— 删函数会留下「有行、无出处」的审计，且应用仍会调用它；
+  回滚件的 HINT 明确「正确动作是回滚应用版本，不是回滚这条函数」，且审计台账本来也删不掉
+  （append-only 触发器把 DELETE 拦成 `G0006`）。应用侧接线：`services/api/src/admin/ops/jobs-cancel-audit-pg.ts`
+  （`SELECT public.record_admin_job_cancel_audit(…)`，**无 `FROM`** ⇒ 不触表列、不成为 SQL 宿主），
+  由 `app.ts` 在「`real` + 有池 + 作业端口已接线」时注入 `createAdminOpsService({ jobCancelAudit })`；
+  stub 与未接库形态保持既有的内存审计路径（判据不变）。真库直调证据：
+  `tests/integration/admin-jobs-pg.mjs` 的 `[C]` 臂（断言 **库内恰 1 行** + actor/scope/target_ref/reason/result 逐项正确）。
 - **本片不修的库层遗留（已由 `0042` 修复，2026-10-25）**：`0018_favorites_history.sql` 的 `target_type` CHECK 仍是旧 16 值
   （不含 `conversation_turn`）。今日 favorites/history 写入口不可达该成员，但 `services/api/src/history/validate.ts`
   已按 17 类校验 ⇒ 一旦落轮次类型会撞库层 CHECK 报 500。修它需要新迁移改表（本片 `0042` 即此），不改 `0018`；**也不要直接改 `0018` 的文本（连注释都不行）**——`services/api/src/db/migrate.ts:47` 对整份 SQL 取 SHA256（不剥注释）、`:193` 与已应用记录的 checksum 比对、`:241-243` 发现差异即拒绝，既有库升级会被拦住（当前 main 原文 SHA256 `a90385167b8ad1f84f76d0dcc3348aecfc94869c794de4edeb2c0734a7727ded`）。

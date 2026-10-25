@@ -86,14 +86,14 @@
  * （0040 已落盘 ⇒ `reservedButPresent` 会立刻判红）；「当前仓库」用例把 0040/0041 两条
  * 都断言为**必须出现**，方向与落盘事实一致。
  *
- * **当前树状态（2026-10-25，GY-R37 片 `#37` 的 `0042` 落盘 —— 上面 `0041` 段的「不占 0042」
- * 只描述当时那一片的号位分配，已被本片取代）**：
- * `0042_favorites_history_target_type_conversation_turn.sql` 落在 `0041` 之后 ⇒ 正向 **41** 个
- * （`0001..0035` 连续 + `0036` + `0038` + `0039` + `0040` + `0041` + `0042`）、`rollback/` **40** 个；
- * 缺号仍只有 `0037`，保留台账仍只有那一条 ⇒ `41 个文件 + 1 保留 === max 42`。
- * **台账不因 0042 新增条目**（它是本片自己落盘的文件，不是"有意缺号"），也**不得**残留
- * 41 号条目（0041 已落盘 ⇒ `reservedButPresent` 立刻判红）；「当前仓库」用例把
- * 0040/0041/0042 三条都断言为**必须出现**，`0037_` 前缀仍断言为**必须不存在**。
+ * **当前树状态（2026-10-25，`#18` R18 片的 `0043` 落盘 —— 上面 `0041`/`0042` 段的号位叙述
+ * 只描述各自那一片的分配，已被本片取代）**：
+ * `0043_admin_job_cancel_audit.sql` 落在 `0042` 之后 ⇒ 正向 **42** 个
+ * （`0001..0035` 连续 + `0036` + `0038` + `0039` + `0040` + `0041` + `0042` + `0043`）、`rollback/` **41** 个；
+ * 缺号仍只有 `0037`，保留台账仍只有那一条 ⇒ `42 个文件 + 1 保留 === max 43`。
+ * **台账不因 0043 新增条目**（它是本片自己落盘的文件，不是"有意缺号"），也**不得**残留
+ * 42 号条目（0042 已落盘 ⇒ `reservedButPresent` 立刻判红）；「当前仓库」用例把
+ * 0040/0041/0042/0043 四条都断言为**必须出现**，`0037_` 前缀仍断言为**必须不存在**。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -137,7 +137,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37 已落盘 ⇒ 41 文件 + 1 保留 === 42、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18 已落盘 ⇒ 42 文件 + 1 保留 === 43、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -147,7 +147,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.deepEqual(
     numbering.gaps,
     [37],
-    `0040（#568）、0041（#18 S2 片1）与 0042（GY-R37 片）都已落盘 ⇒ 合流树的缺号必须仍只有 [37]（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
+    `0040（#568）、0041（#18 S2 片1）、0042（GY-R37 片）与 0043（#18 R18：作业取消审计落库）都已落盘 ⇒ 合流树的缺号必须仍只有 [37]（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(
     numbering.reserved,
@@ -165,7 +165,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（41 = 42 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（42 = 43 − 1）',
   );
 
   const files = migrations.map((item) => item.filename);
@@ -259,6 +259,12 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
     files.includes('0042_favorites_history_target_type_conversation_turn.sql'),
     true,
     'GY-R37 片的 0042 已落盘 ⇒ 真实文件必须在清单里，且台账不得登记 42',
+  );
+  // #18 R18 片：0043 把后台「作业取消」的审计从进程内存落到库（窄口径 SECURITY DEFINER 函数），落在 0042 之后。
+  assert.equal(
+    files.includes('0043_admin_job_cancel_audit.sql'),
+    true,
+    '#18 R18 片的 0043 已落盘 ⇒ 真实文件必须在清单里（号位是分配好的 0043，⛔ 不许换号），且台账不得登记 43',
   );
   assert.equal(
     files.some((name) => /^0037_/.test(name)),

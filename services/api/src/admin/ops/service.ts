@@ -58,6 +58,7 @@ import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
 import type {
   AccountView,
+  AdminJobCancelAuditPort,
   AdminJobPort,
   AdminJobView,
   CategoryView,
@@ -144,6 +145,13 @@ export interface AdminOpsServiceOptions {
   idempotencyTtlSeconds?: number;
   /** 平台级作业端口；缺省 = **未接线**（fail-closed）。 */
   jobPort?: AdminJobPort;
+  /**
+   * `job.cancel` 的**库内审计落点**（迁移 0043 的窄口径 `SECURITY DEFINER` 函数，R18 接线）。
+   * 给了它 ⇒ 取消成功后审计行落 `public.admin_audit_events`；缺省/`null` ⇒ 与既有口径**逐字一致**
+   * 地走内存 `store.audit.append`（stub 域与未接作业端口的形态都不变）。
+   * `app.ts` 只在 `real` + 拿到真实库池 + 作业端口确实接线时才构造它。
+   */
+  jobCancelAudit?: AdminJobCancelAuditPort | null;
   /** 社区帖子存储端口（`hidePost` 用）；缺省 = **未接线**（fail-closed）。 */
   community?: CommunityPostPort;
   /** flag 语义分类表；缺省为合同 3 键的"能力门"分类。构造时会自检不得放宽 fail-closed。 */
@@ -295,6 +303,9 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   }
   const cursors = createCursorCodec(signingKey);
   const jobPort: AdminJobPort = options.jobPort ?? createUnwiredAdminJobPort();
+  // 库内审计落点（迁移 0043）：只有 `app.ts` 在「real + 拿到真实库池 + 作业端口确实接线」时注入。
+  // 未注入 ⇒ `cancelAdminJob` 保持既有的内存审计路径（stub 域与逐条单测的行为逐字不变）。
+  const jobCancelAudit: AdminJobCancelAuditPort | null = options.jobCancelAudit ?? null;
   const hideAdapter = createHidePostAdapter(options.community, now);
 
   const writeDeps = { runtime: store.runtime, signingKey, ttlSeconds: idempotencyTtlSeconds, now };
@@ -820,15 +831,32 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
         }
 
         // ---- 校验全部通过，才登记成功：审计 + 幂等定型（要么全做，要么全不做）----
-        appendAudit(context, {
-          action: 'job.cancel',
-          scope: OPS_SCOPES.cancelAdminJob,
-          // 契约 `TargetRef.type` 闭集**有** job 成员 ⇒ 用合同口径，且带被取消的 revision。
-          targetRef: { type: 'job', id: normalizedId, revision: current.revision },
-          targetHint: null,
-          reasonCode: 'job_cancelled',
-          result: 'accepted',
-        });
+        // **R18：审计落点（迁移 0043）**。库已接线 ⇒ 审计行必须落 `public.admin_audit_events`
+        // （窄口径 `SECURITY DEFINER` 函数，运行时不持有该表任何直写权）；
+        // 未接线（stub / 无作业端口）⇒ 与既有口径逐字一致地写内存 ops store。
+        // 两条路径的字段口径**同一个事实**：action=job.cancel、scope=jobs:cancel、
+        // target_ref.revision = **取消前** revision、reason_code=job_cancelled、result=accepted、
+        // target_hint=null（库内那一侧的 action/scope/result/target_ref/target_hint 由函数内固定，
+        // 见 `services/api/db/migrations/0043_admin_job_cancel_audit.sql`）。
+        if (jobCancelAudit !== null && jobCancelAudit.wired) {
+          await jobCancelAudit.record({
+            actorId: context.identity.userId,
+            jobId: normalizedId,
+            jobRevision: current.revision,
+            reasonCode: 'job_cancelled',
+            requestId: context.requestId,
+          });
+        } else {
+          appendAudit(context, {
+            action: 'job.cancel',
+            scope: OPS_SCOPES.cancelAdminJob,
+            // 契约 `TargetRef.type` 闭集**有** job 成员 ⇒ 用合同口径，且带被取消的 revision。
+            targetRef: { type: 'job', id: normalizedId, revision: current.revision },
+            targetHint: null,
+            reasonCode: 'job_cancelled',
+            result: 'accepted',
+          });
+        }
         return singleResponse(context, executionMode, 200, cancelled, etagOf(cancelled.revision));
       },
     );

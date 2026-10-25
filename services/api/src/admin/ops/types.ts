@@ -150,6 +150,36 @@ export interface AdminJobPort {
   cancel(id: string, expectedRevision: number): Promise<CancelJobOutcome> | CancelJobOutcome;
 }
 
+/**
+ * `job.cancel` 成功后的**审计落点**端口（迁移 0043 的窄口径 `SECURITY DEFINER` 函数）。
+ *
+ * 语义边界刻意很窄：只有"把这一条已确认的取消结果登记成一行审计"这一个动作，
+ * 入参里没有任何"以谁的名义写"的旁路（`actorId` 就是本次会话身份，函数内还会再核验一次
+ * 存在 / `active` / 当前有效持 `jobs:cancel`）。
+ *
+ * `wired === false` 时调用方保持既有内存 `store.audit.append` 路径；本片只实现
+ * 「库已接线 ⇒ 走库」这一侧（`services/api/src/admin/ops/jobs-cancel-audit-pg.ts`）。
+ */
+export interface AdminJobCancelAuditPort {
+  /** 是否已接线。 */
+  readonly wired: boolean;
+  record(input: AdminJobCancelAuditInput): Promise<{ auditEventId: string }>;
+}
+
+/** 一条取消审计的登记入参（字段与 `admin_audit_events` 的 NOT NULL 列一一对应）。 */
+export interface AdminJobCancelAuditInput {
+  /** 操作者 `admin_accounts.id`（= 会话身份；函数内重核验）。 */
+  readonly actorId: string;
+  /** 被取消的作业 id（三源表之一的行 id）。 */
+  readonly jobId: string;
+  /** **取消前**的作业 revision（写进 `target_ref.revision`）。 */
+  readonly jobRevision: number;
+  /** 理由码；当前闭集只有 `job_cancelled`。 */
+  readonly reasonCode: string;
+  /** 契约 `Meta.request_id`。 */
+  readonly requestId: string;
+}
+
 // ---------------------------------------------------------------------------
 // 社区帖子可见性端口（`hidePost` 复用 #15 的 CAS 原语，不另写一套可见性判定）
 // ---------------------------------------------------------------------------

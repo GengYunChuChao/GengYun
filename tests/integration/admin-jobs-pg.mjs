@@ -7,7 +7,7 @@
  *   [P] 运行时角色最小权限：审计读函数可 EXECUTE、开关表可读；admin_audit_events 直读与作业表未授列直读 42501
  *   [A] A→B→A 两行审计的**行序与前后值**（不看这两项就等于只验了「有审计」）
  *   [J] GET /admin/jobs 真读三张域表；失败作业的 error_code 原样透出；普通账号 401/403；只读后台账号 cancel 403
- *   [C] 取消：revision 1→2、库内同值、审计 target_ref={job,id,revision:2}；对终态作业 409 且不改写
+ *   [C] 取消：revision 1→2、库内同值、`job.cancel` 审计**落库恰 1 行**（target_ref={job,id,revision:1}）；对终态作业 409 且不改写
  *   [E] submissions_enabled 关 ⇒ POST /posts 409 OBJECT_UNAVAILABLE(FLAG_CLOSED) + 零新增行；开 ⇒ 放行；
  *       同一 app 实例关→开→关立刻生效（反证读面无跨请求缓存）
  *
@@ -654,7 +654,7 @@ async function seedJobRows(userId) {
   return rows;
 }
 
-async function jobsArm(app, jobsToken, userToken, userScopesAdminToken) {
+async function jobsArm(app, jobsToken, userToken, userScopesAdminToken, jobsAdminId) {
   const port = createPostgresAdminJobPort({ pool: ownerPool });
   assert.equal(port.wired, true, '真库端口必须 wired=true');
   const viaPort = await port.list();
@@ -712,12 +712,45 @@ async function jobsArm(app, jobsToken, userToken, userScopesAdminToken) {
   // 内容审计（job.cancel 等内容/作业类操作）走平台既有的审计读面；PG 里的 admin_audit_events
   // 只承载开关变更（存储函数内写）。两条路径都要“可查”，但不得互相冒充。
   // 审计边界（真读数）：内容审计读面在 real 模式下由“账号依赖”边界失闭（503）。
-  // `job.cancel` 的审计行写在内存审计流，由 `tests/unit/admin-ops-job-integrity.test.mjs:161` 断言；
-  // 本臂不把它伪造成 HTTP 200，而是把边界本身钉住。
+  // **R18（迁移 0043）**：`job.cancel` 的审计行已从**进程内存落库** —— 成功取消时由
+  // `public.record_admin_job_cancel_audit(...)`（窄口径 SECURITY DEFINER，运行时不持有
+  // `admin_audit_events` 任何直写权）在同一请求里写一行。本臂因此不再拿“单元测试覆盖”替身，
+  // 而是直接钉「库内**恰 1 行** + 字段逐项正确」；内存路径仍由
+  // `tests/unit/admin-ops-job-integrity.test.mjs:161` 覆盖（stub 域口径未变）。
+  const cancelAudit = await q(
+    `SELECT actor_id, action, scope, target_ref, target_hint, reason_code, result, request_id
+       FROM public.admin_audit_events
+      WHERE action = 'job.cancel'`,
+  );
+  assert.equal(
+    cancelAudit.length,
+    1,
+    `job.cancel 审计必须**恰 1 行**落在 public.admin_audit_events，实际 ${cancelAudit.length} 行：${JSON.stringify(cancelAudit)}`,
+  );
+  assert.deepEqual(
+    cancelAudit[0].actor_id,
+    jobsAdminId,
+    '审计行 actor 必须是本次取消的后台账号 id（不得被调用方伪造）',
+  );
+  assert.equal(cancelAudit[0].action, 'job.cancel');
+  assert.equal(cancelAudit[0].scope, 'jobs:cancel');
+  assert.deepEqual(
+    cancelAudit[0].target_ref,
+    { type: 'job', id: target.id, revision: 1 },
+    `target_ref 必须是 {type:'job', id, revision}，且 revision 是**取消前**的 1，实际 ${JSON.stringify(cancelAudit[0].target_ref)}`,
+  );
+  assert.equal(cancelAudit[0].target_hint, null, '作业取消的 target_hint 必须是 null（不是 account:/flag 形态）');
+  assert.equal(cancelAudit[0].reason_code, 'job_cancelled');
+  assert.equal(cancelAudit[0].result, 'accepted');
+  assert.match(
+    String(cancelAudit[0].request_id),
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    '审计行 request_id 必须是本次请求的 uuid（NOT NULL 列，不是占位字符串）',
+  );
   const auditFeed = await injectCall(app, API_V1('/admin/audit-events?limit=20'), { token: jobsToken });
   assert.equal(auditFeed.status, 503, `real 模式内容审计读面必须失闭，实际 ${auditFeed.status}`);
   assert.equal(auditFeed.body.error.code, 'PROVIDER_UNAVAILABLE');
-  note('[C] POST /admin/jobs/{id}/cancel 200：state=cancelled、revision 1→2（库内同值）；审计边界如实钉住：real 模式下内容审计读面 503 PROVIDER_UNAVAILABLE（行由单元测试覆盖）');
+  note('[C] POST /admin/jobs/{id}/cancel 200：state=cancelled、revision 1→2（库内同值）；R18 起 job.cancel 审计行**落库恰 1 行**（actor=操作者、scope=jobs:cancel、target_ref={job,id,revision:1}、reason=job_cancelled、result=accepted）；内容审计读面仍如实失闭 503 PROVIDER_UNAVAILABLE');
 
   const terminal = items.find((item) => item.kind === 'ocr');
   const refused = await injectCall(app, API_V1(`/admin/jobs/${terminal.id}/cancel`), {
@@ -907,7 +940,7 @@ try {
   assert.equal(app.featureFlagGate.armed, true, '表就绪 ⇒ 开关门必须武装');
 
   const readOnlyAdmin = await seedAdmin(['jobs:read']);
-  await jobsArm(app, fullAdmin.token, user.token, readOnlyAdmin.token);
+  await jobsArm(app, fullAdmin.token, user.token, readOnlyAdmin.token, fullAdmin.adminId);
   await postingsFlagArm(app, flagsPort, fullAdmin.adminId, user);
 
   const auditHttp = await injectCall(app, API_V1('/admin/flag-audit-events?limit=1'), { token: fullAdmin.token });
