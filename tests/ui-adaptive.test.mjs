@@ -544,3 +544,14 @@ test('字体变量在页面根节点计算，使普通正文继承实际微信�
   const block = appWxss.slice(appWxss.indexOf('.page {'), appWxss.indexOf('}', appWxss.indexOf('.page {')));
   assert.match(block, /font-size:\s*calc\(18px\s*\*\s*var\(--font-scale/);
 });
+
+test('首页 Hero 普通视口不出现孤字或英文按钮重叠', () => {
+  // 独立放在文件末尾，避免移动既有文档锚点所引用的测试行号。
+  const heroWxss = read('miniprogram/pages/home/home.wxss');
+  const heroContent = heroWxss.slice(heroWxss.indexOf('.hero__content'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__content')));
+  assert.match(heroContent, /width:\s*100%/, '首页 Hero 正文仍被右侧装饰压缩，eyebrow 会出现孤字');
+  const heroCode = heroWxss.slice(heroWxss.indexOf('.hero__code'), heroWxss.indexOf('}', heroWxss.indexOf('.hero__code')));
+  assert.match(heroCode, /position:\s*static/, '英文口号必须留在文档流中，避免覆盖主按钮');
+  assert.match(heroCode, /margin-top:\s*16px/, '英文口号与主按钮之间缺少稳定间距');
+  assert.doesNotMatch(heroCode, /(?:right|bottom):/, '英文口号不得再用绝对定位坐标参与布局');
+});
