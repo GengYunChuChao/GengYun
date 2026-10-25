@@ -193,6 +193,20 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
+      # 第三方删除持久化（S4 P1，迁移 0044）：库名硬钉 `gengyun_third_party_deletion_test`，脚本要求空库（自己
+      # 断言 `public` 下无表）。它自建 5 个 NOLOGIN 域组 + 运行时 LOGIN（口令 `randomBytes(24)` 生成**并写进它
+      # 自己用的运行时 URL**）⇒ scram 认证下自洽；D5 授权区从 `deploy/postgres-cvm/sql/20-login-roles.sql`
+      # **原样抽取执行**（不复制粘贴 SQL：授权被删/被改宽就变红）；收尾按 `pg_roles` 快照差集 `DROP ROLE` 并复核
+      # 为空 ⇒ 跨 step 不留角色。本片只验「库先记住」：两条 SECURITY DEFINER 函数 + 运行时 EXECUTE + 表仍
+      # forbidden（运行时行为 P2 才接电，这条臂不装配 HTTP）。
+      # 本地取证（PG 17.11 + scram 认证 + `gengyun_ci_owner`）：PASS 13 组。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_third_party_deletion_test' && node tests/integration/third-party-deletion-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_third_party_deletion_test
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
       # 作业台域（#9，R29-S5 的臂，R31 接入）：库名硬钉 `gengyun_admin_jobs_test`，脚本要求空库（自己断言
       # `public` 下无表）。前提是**集群里还没有 `gengyun_api_runtime`**：只给 argv[2] 时脚本走
       # `provisionRoles()` 自己 `CREATE ROLE` 并把随机口令写进它自己的运行时 URL（`admin-jobs-pg.mjs:276-298`）；

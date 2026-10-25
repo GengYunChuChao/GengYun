@@ -138,6 +138,10 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/message-events-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
+  // S4-P1：`third-party-deletion-pg`（迁移 0044 的第三方删除持久化：两条 SECURITY DEFINER 函数 + 运行时
+  // EXECUTE + 表仍 forbidden）。**紧挨着 `account-deletion-pg`**：两者是同一条「注销域」链的两端（自己注销
+  // vs 第三方侧删除的受理与证据），并排读最省事。
+  'tests/integration/third-party-deletion-pg.mjs',
   'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
@@ -184,6 +188,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/message-events-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
+  // S4-P1：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/third-party-deletion-pg.mjs',
   'tests/integration/admin-jobs-pg.mjs',
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
@@ -258,6 +264,15 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/message-events-pg.mjs',
   'tests/integration/favorites-history-pg.mjs',
   'tests/integration/account-deletion-pg.mjs',
+  // S4-P1. `third-party-deletion-pg`（迁移 0044 接入，第三方删除持久化 P1）：「库先记住」这一片的真库臂——
+  //    断言两条 SECURITY DEFINER 函数各恰一个重载（prosecdef / proconfig 逐项、签名精确到类型）、运行时对它俩
+  //    有 EXECUTE 而对 `public.third_party_deletions` 零表级零列级权限（直插 / 直读 ⇒ 42501）、幂等与单调守卫
+  //    （重复 `requested` 不刷新 `requested_at`、终态不可回退、`failed` 可被 `confirmed` 覆盖、非法态 `accepted`
+  //    ⇒ G0001 而非 22P02）、UP ⇒ ROLLBACK ⇒ 再 UP 的出现—消失—再出现、以及读路径只吐八个预期列。
+  //    它自建专用空库（硬钉 `gengyun_third_party_deletion_test`）并**从 `20-login-roles.sql` 原样抽取** D5 授权区
+  //    执行（不复制 SQL）；收尾按 `pg_roles` 快照差集 DROP 并复核为空 ⇒ 与前后脚本零耦合，故紧跟同形的
+  //    `account-deletion-pg`（同样「自建角色 + 收尾清空」）。
+  'tests/integration/third-party-deletion-pg.mjs',
   // R31-b. `admin-jobs-pg`（R31 接入，#9 作业台：开关生效／作业与错误可见／变更留痕 A→B／最小权限）：
   //    **要求集群里没有 `gengyun_api_runtime`**——只给 argv[2] 时它走 `provisionRoles()` 自己 `CREATE ROLE`
   //    并把随机口令写进自己的运行时 URL（`admin-jobs-pg.mjs:276-298`），给了 argv[3] 反而要求角色**已存在**
