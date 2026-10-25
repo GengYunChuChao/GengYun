@@ -467,8 +467,7 @@
         },
         {
           "path": "services/api/src/app.ts",
-          "symbol": "accountDeletionWired",
-          "locator": { "symbol": "registerAccountDeletionRoutes" }
+          "symbol": "registerAccountDeletionRoutes"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -762,7 +761,7 @@
         {
           "path": "services/api/src/routes/knowledge.ts",
           "symbol": "app.get(`${API_PREFIX}/knowledge`",
-          "lines": "188-192"
+          "lines": "196-200"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
@@ -818,29 +817,29 @@
       "route_mounted": true,
       "status": "implemented",
       "evidence": [
-       {
-        "path": "services/api/src/routes/knowledge.ts",
-        "symbol": "reference.listHerbicides(",
-        "lines": "201-207"
-       },
-       {
-        "path": "services/api/src/knowledge/reference-query.ts",
-        "symbol": "listHerbicides",
-        "lines": "168-176"
-       },
-       {
-        "path": "packages/reference/zhejiang.mjs",
-        "symbol": "assertZhejiangDiscipline",
-        "lines": "97-160"
-       },
-       {
-        "test": "tests/unit/knowledge-herbicides-http.test.mjs",
-        "name": "/herbicides 列表：契约封套/实体形状对齐、no-store、列表不带 ETag、真实来源可追溯"
-       },
-       {
-         "test": "tests/unit/admin-flag-gate.test.mjs",
-         "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
-       }
+        {
+          "path": "services/api/src/routes/knowledge.ts",
+          "symbol": "reference.listHerbicides(",
+          "lines": "209-215"
+        },
+        {
+          "path": "services/api/src/knowledge/reference-query.ts",
+          "symbol": "listHerbicides",
+          "lines": "168-176"
+        },
+        {
+          "path": "packages/reference/zhejiang.mjs",
+          "symbol": "assertZhejiangDiscipline",
+          "lines": "97-160"
+        },
+        {
+          "test": "tests/unit/knowledge-herbicides-http.test.mjs",
+          "name": "/herbicides 列表：契约封套/实体形状对齐、no-store、列表不带 ETag、真实来源可追溯"
+        },
+        {
+          "test": "tests/unit/admin-flag-gate.test.mjs",
+          "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
+        }
       ],
       "blocker": "记录来自公开登记公告附表（packages/knowledge/herbicides/records-2026.json，20 条）：来源 review_status=unverified（未逐条复核标签原文），未采集用量/施用方法/注意事项/禁限用状态 ⇒ 无 DoseCard；真实登记库、制剂条件完整用量与正式端到端待验收"
     },
@@ -854,24 +853,24 @@
       "route_mounted": true,
       "status": "implemented",
       "evidence": [
-       {
-        "path": "services/api/src/routes/knowledge.ts",
-        "symbol": "reference.getHerbicide(",
-        "lines": "208-216"
-       },
-       {
-        "path": "services/api/src/knowledge/reference-query.ts",
-        "symbol": "getHerbicide",
-        "lines": "177-185"
-       },
-       {
-        "test": "tests/unit/knowledge-herbicides-http.test.mjs",
-        "name": "/herbicides/{id} 详情：与列表同一条实体、强 ETag、来源版本一致"
-       },
-       {
-         "test": "tests/unit/admin-flag-gate.test.mjs",
-         "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
-       }
+        {
+          "path": "services/api/src/routes/knowledge.ts",
+          "symbol": "reference.getHerbicide(",
+          "lines": "216-224"
+        },
+        {
+          "path": "services/api/src/knowledge/reference-query.ts",
+          "symbol": "getHerbicide",
+          "lines": "177-185"
+        },
+        {
+          "test": "tests/unit/knowledge-herbicides-http.test.mjs",
+          "name": "/herbicides/{id} 详情：与列表同一条实体、强 ETag、来源版本一致"
+        },
+        {
+          "test": "tests/unit/admin-flag-gate.test.mjs",
+          "name": "E2. 跨端点：关闭「药剂输出」⇒ /herbicides 列表与详情**拒绝且不产出任何制剂/用量数据**"
+        }
       ],
       "blocker": "未知/不可见 id 统一 404（不泄露是否存在），ETag 由记录身份 × source_version 派生，列表与详情同一 source_version；来源未核对与用量缺项口径同列表"
     },
@@ -1416,11 +1415,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().listPosts(",
-        "lines": "201-209"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().listPosts(",
+          "lines": "201-209"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listPosts",
@@ -1443,11 +1442,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().createPost(",
-        "lines": "211-221"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().createPost(",
+          "lines": "211-221"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createPost",
@@ -1474,11 +1473,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "`${API_PREFIX}/posts/:id`",
-        "lines": "223-230"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "`${API_PREFIX}/posts/:id`",
+          "lines": "223-230"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
@@ -1501,11 +1500,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().editPost(",
-        "lines": "232-239"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().editPost(",
+          "lines": "232-239"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editPost",
@@ -1528,11 +1527,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().deletePost(",
-        "lines": "241-249"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().deletePost(",
+          "lines": "241-249"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deletePost",
@@ -1555,11 +1554,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().listComments(",
-        "lines": "251-262"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().listComments(",
+          "lines": "251-262"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "listComments",
@@ -1582,11 +1581,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().createComment(",
-        "lines": "264-274"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().createComment(",
+          "lines": "264-274"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createComment",
@@ -1609,11 +1608,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().getComment(",
-        "lines": "276-283"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().getComment(",
+          "lines": "276-283"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getComment(actor: unknown, id: unknown): Promise<Comment> {",
@@ -1636,11 +1635,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().editComment(",
-        "lines": "285-292"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().editComment(",
+          "lines": "285-292"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editComment",
@@ -1663,11 +1662,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().deleteComment(",
-        "lines": "294-301"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().deleteComment(",
+          "lines": "294-301"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "deleteComment",
@@ -1721,11 +1720,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().likePosts(",
-        "lines": "321-328"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().likePosts(",
+          "lines": "324-327"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
@@ -1748,11 +1747,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().unlikePosts(",
-        "lines": "330-337"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().unlikePosts(",
+          "lines": "333-336"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
@@ -1775,11 +1774,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().likeComments(",
-        "lines": "339-346"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().likeComments(",
+          "lines": "342-345"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
@@ -1802,11 +1801,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().unlikeComments(",
-        "lines": "348-355"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().unlikeComments(",
+          "lines": "351-354"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
@@ -1829,11 +1828,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().createReport(",
-        "lines": "357-367"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().createReport(",
+          "lines": "360-366"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "createReport",
@@ -1856,11 +1855,11 @@
       "route_mounted": true,
       "status": "partial",
       "evidence": [
-       {
-        "path": "services/api/src/routes/community.ts",
-        "symbol": "ready().getOwnReport(",
-        "lines": "369-376"
-       },
+        {
+          "path": "services/api/src/routes/community.ts",
+          "symbol": "ready().getOwnReport(",
+          "lines": "372-375"
+        },
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getOwnReport(actor: unknown, id: unknown): Promise<Report> {",
@@ -2103,15 +2102,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "listAdminSources",
-          "lines": "574-579"
+          "symbol": "listAdminSources: async (ctx, query = {}) => listFamily(SOURCE_FAMILY, resolveContext(ctx, SOURCE_FAMILY.readScope), query),",
+          "lines": "587-587"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "createSourceDraft",
@@ -2134,15 +2146,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "createSourceDraft",
-          "lines": "575-580"
+          "symbol": "createSourceDraft: (ctx, body) => createDraft(SOURCE_FAMILY, ctx, body),",
+          "lines": "588-588"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "getAdminSource",
@@ -2165,15 +2190,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "getAdminSource",
-          "lines": "576-581"
+          "symbol": "getAdminSource: async (ctx, id) => getDraft(SOURCE_FAMILY, ctx, id),",
+          "lines": "589-589"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "editSourceDraft",
@@ -2196,8 +2234,8 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "editSourceDraft",
-          "lines": "577-582"
+          "symbol": "editSourceDraft: (ctx, id, body) => editDraft(SOURCE_FAMILY, ctx, id, body),",
+          "lines": "590-590"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2206,9 +2244,22 @@
         {
           "test": "tests/unit/admin-ops-governance.test.mjs",
           "name": "G1b. 四类资料的「版本修改」逐类留审计（此前不写 ⇒ 事后无法追责）"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "publishSource",
@@ -2231,15 +2282,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "publishSource",
-          "lines": "578-583"
+          "symbol": "publishSource: (ctx, id, body) => publishDraft(SOURCE_FAMILY, ctx, id, body),",
+          "lines": "591-591"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "withdrawSource",
@@ -2262,15 +2326,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "withdrawSource",
-          "lines": "579-584"
+          "symbol": "withdrawSource: (ctx, id, body) => withdrawDraft(SOURCE_FAMILY, ctx, id, body),",
+          "lines": "592-592"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "listAdminKnowledge",
@@ -2293,15 +2370,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "listAdminKnowledge",
-          "lines": "581-586"
+          "symbol": "listAdminKnowledge: async (ctx, query = {}) => listFamily(KNOWLEDGE_FAMILY, resolveContext(ctx, KNOWLEDGE_FAMILY.readScope), query),",
+          "lines": "594-594"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "createKnowledgeDraft",
@@ -2324,15 +2414,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "createKnowledgeDraft",
-          "lines": "582-587"
+          "symbol": "createKnowledgeDraft: (ctx, body) => createDraft(KNOWLEDGE_FAMILY, ctx, body),",
+          "lines": "595-595"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "getAdminKnowledge",
@@ -2355,15 +2458,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "getAdminKnowledge",
-          "lines": "583-588"
+          "symbol": "getAdminKnowledge: async (ctx, id) => getDraft(KNOWLEDGE_FAMILY, ctx, id),",
+          "lines": "596-596"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "editKnowledgeDraft",
@@ -2386,15 +2502,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "editKnowledgeDraft",
-          "lines": "584-589"
+          "symbol": "editKnowledgeDraft: (ctx, id, body) => editDraft(KNOWLEDGE_FAMILY, ctx, id, body),",
+          "lines": "597-597"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "publishKnowledge",
@@ -2417,8 +2546,8 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "publishKnowledge",
-          "lines": "585-590"
+          "symbol": "publishKnowledge: (ctx, id, body) => publishDraft(KNOWLEDGE_FAMILY, ctx, id, body),",
+          "lines": "598-598"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2427,9 +2556,22 @@
         {
           "test": "tests/unit/admin-reference-invalidity.test.mjs",
           "name": "5. 发布门槛：引用已下架来源的依赖发布 ⇒ 422 SOURCE_CONFLICT，且**不部分发布**、留 denied 审计"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "withdrawKnowledge",
@@ -2452,15 +2594,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "withdrawKnowledge",
-          "lines": "586-591"
+          "symbol": "withdrawKnowledge: (ctx, id, body) => withdrawDraft(KNOWLEDGE_FAMILY, ctx, id, body),",
+          "lines": "599-599"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "listAdminRegistration",
@@ -2483,15 +2638,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "listAdminRegistration",
-          "lines": "588-593"
+          "symbol": "listAdminRegistration: async (ctx, query = {}) => listFamily(REGISTRATION_FAMILY, resolveContext(ctx, REGISTRATION_FAMILY.readScope), query),",
+          "lines": "601-601"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "createRegistrationDraft",
@@ -2514,15 +2682,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "createRegistrationDraft",
-          "lines": "589-594"
+          "symbol": "createRegistrationDraft: (ctx, body) => createDraft(REGISTRATION_FAMILY, ctx, body),",
+          "lines": "602-602"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "getAdminRegistration",
@@ -2545,15 +2726,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "getAdminRegistration",
-          "lines": "590-595"
+          "symbol": "getAdminRegistration: async (ctx, id) => getDraft(REGISTRATION_FAMILY, ctx, id),",
+          "lines": "603-603"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "editRegistrationDraft",
@@ -2576,15 +2770,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "editRegistrationDraft",
-          "lines": "591-596"
+          "symbol": "editRegistrationDraft: (ctx, id, body) => editDraft(REGISTRATION_FAMILY, ctx, id, body),",
+          "lines": "604-604"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "publishRegistration",
@@ -2607,15 +2814,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "publishRegistration",
-          "lines": "592-597"
+          "symbol": "publishRegistration: (ctx, id, body) => publishDraft(REGISTRATION_FAMILY, ctx, id, body),",
+          "lines": "605-605"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "withdrawRegistration",
@@ -2638,15 +2858,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "withdrawRegistration",
-          "lines": "593-598"
+          "symbol": "withdrawRegistration: (ctx, id, body) => withdrawDraft(REGISTRATION_FAMILY, ctx, id, body),",
+          "lines": "606-606"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "listAdminRestriction",
@@ -2669,15 +2902,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "listAdminRestriction",
-          "lines": "595-600"
+          "symbol": "listAdminRestriction: async (ctx, query = {}) => listFamily(RESTRICTION_FAMILY, resolveContext(ctx, RESTRICTION_FAMILY.readScope), query),",
+          "lines": "608-608"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "createRestrictionDraft",
@@ -2700,15 +2946,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "createRestrictionDraft",
-          "lines": "596-601"
+          "symbol": "createRestrictionDraft: (ctx, body) => createDraft(RESTRICTION_FAMILY, ctx, body),",
+          "lines": "609-609"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "getAdminRestriction",
@@ -2731,15 +2990,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "getAdminRestriction",
-          "lines": "597-602"
+          "symbol": "getAdminRestriction: async (ctx, id) => getDraft(RESTRICTION_FAMILY, ctx, id),",
+          "lines": "610-610"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "editRestrictionDraft",
@@ -2762,15 +3034,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "editRestrictionDraft",
-          "lines": "598-603"
+          "symbol": "editRestrictionDraft: (ctx, id, body) => editDraft(RESTRICTION_FAMILY, ctx, id, body),",
+          "lines": "611-611"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "publishRestriction",
@@ -2793,15 +3078,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "publishRestriction",
-          "lines": "599-604"
+          "symbol": "publishRestriction: (ctx, id, body) => publishDraft(RESTRICTION_FAMILY, ctx, id, body),",
+          "lines": "612-612"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "withdrawRestriction",
@@ -2824,15 +3122,28 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "withdrawRestriction",
-          "lines": "600-605"
+          "symbol": "withdrawRestriction: (ctx, id, body) => withdrawDraft(RESTRICTION_FAMILY, ctx, id, body),",
+          "lines": "613-613"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
           "name": "只实现派单指定的 25 个 operationId"
+        },
+        {
+          "path": "services/api/src/admin/ops/content-pg.ts",
+          "symbol": "createPostgresAdminContentStore"
+        },
+        {
+          "path": "services/api/db/migrations/0036_r34_admin_content_persistence.sql",
+          "symbol": "CREATE TABLE IF NOT EXISTS public.admin_content_entities",
+          "lines": "79-109"
+        },
+        {
+          "test": "tests/unit/admin-content-pg-wiring.test.mjs",
+          "name": "real + 有池：内容域接 PG（persistent=true，list 200 / get 404，SQL 真打三表之一）"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "真实存储已改接 PostgreSQL：迁移 0036_r34_admin_content_persistence.sql 建 public.admin_content_entities/_revisions/_idempotency 三表，deploy/postgres-cvm/sql/20-login-roles.sql 的 gy-r34-content-grant 段按列授 SELECT/INSERT/UPDATE（无表级 DML，也没有 DELETE/TRUNCATE/REFERENCES/TRIGGER），实现见 services/api/src/admin/ops/content-pg.ts（execution_mode=real 且有连接池时接线；无池仍 503 PROVIDER_UNAVAILABLE，绝不静默降级成内存）；回归 tests/unit/admin-content-pg-wiring.test.mjs、tests/unit/admin-content-grant-parity.test.mjs、tests/integration/admin-content-pg.mjs（真库臂）。剩余缺口：真库臂与后台 UI 联调未取得；审计台账仍为进程内实现（public.admin_audit_events 对运行时零权限，写入只能走独立的窄 SECURITY DEFINER 函数，属另一片）"
     },
     {
       "id": "listAdminCategories",
@@ -3202,8 +3513,8 @@
         },
         {
           "path": "services/api/src/admin/service.ts",
-          "symbol": "listAuditEvents",
-          "lines": "602-607"
+          "symbol": "listAuditEvents: async (ctx, query = {}) => listAudit(resolveContext(ctx, 'audit:read'), query),",
+          "lines": "615-615"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -3379,7 +3690,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "idempotencyStore",
-          "lines": "900-900"
+          "lines": "903-903"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -3399,7 +3710,7 @@
         {
           "path": "services/api/src/admin/idempotent-write.ts",
           "symbol": "issuedAt",
-          "lines": "55-72"
+          "lines": "55-115"
         },
         {
           "test": "tests/unit/idempotency-retry-after-http.test.mjs",
@@ -3521,7 +3832,7 @@
           "lines": "341-346"
         }
       ],
-      "blocker": "共享作业面现由 `services/api/src/app.ts:1953` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:1954`）、transcription（`:1960`）、moderation（`:1963`）、synthesis（`:1969`）、ocr（`:1977`）、answer（`:1985`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
+      "blocker": "共享作业面现由 `services/api/src/app.ts:2197` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:2198`）、transcription（`:2204`）、moderation（`:2207`）、synthesis（`:2213`）、ocr（`:2221`）、answer（`:2229`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
     },
     {
       "key": "timeout",
@@ -3578,7 +3889,7 @@
           "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:70`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:798`，位于 `createTurn`，`:738`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:911`，位于 `jobViewOf`，`:903`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:959-967`，位于 `scheduleAnswer`，`:953`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2031`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
+      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:70`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:798`，位于 `createTurn`，`:738`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:911`，位于 `jobViewOf`，`:903`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:959-967`，位于 `scheduleAnswer`，`:953`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2279`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
     }
   ]
 }

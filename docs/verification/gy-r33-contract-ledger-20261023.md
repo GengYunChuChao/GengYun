@@ -28,7 +28,7 @@
 
 ### 2.1 `#7` · `listKnowledge`（`operations`）
 
-**台账原文（HEAD 的 `docs/architecture/contract-status.json:782`；合流按内容重锚，取证时原记 `:716`，下列引文为订正前文本，现文见该行）**
+**台账原文（HEAD 的 `docs/architecture/contract-status.json:781`；合流按内容重锚，取证时原记 `:716`，下列引文为订正前文本，现文见该行）**
 
 ```
 需DATABASE_URL与catalog_read.current_knowledge；签名/绑定/15分钟非滑动分页及失效后重新查询已合（#115）；当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留
@@ -71,7 +71,7 @@
 
 ### 2.3 `getMedia`（媒体域）
 
-**台账原文（HEAD 的 `docs/architecture/contract-status.json:576`）**
+**台账原文（HEAD 的 `docs/architecture/contract-status.json:575`）**
 
 ```
 仅 owner 可读私有元数据，非本人与不存在**逐字节同形** 404；内存记录 store（本片无持久化实现）；冻结契约（85 条路径 / 112 条 operation）内没有满足「owner 私有媒体字节读取」语义的那一条 operation（复现：GET /api/v1/media/{id}/content ⇒ 404「未实现的路径」）；owner 短效句柄 URL 由部署期访问网关承担，未接线未验收

@@ -65,6 +65,7 @@ const EXPECTED_STORE_FILES = [
  */
 const ADDITIONAL_SQL_HOST_FILES = [
   'admin/ops/accounts-pg.ts',
+  'admin/ops/content-pg.ts',
   'admin/ops/flags-pg.ts',
   'admin/ops/jobs-pg.ts',
   'knowledge/service.ts',
@@ -650,14 +651,16 @@ const TABLE_WIDE_COLUMN = '*';
  *   无顶层 FROM 11 → **13**（两条函数调用没有顶层 FROM）、逐文件 `recognitions` 24 → **21**、
  *   `speech` 19 → **17**；INSERT/UPDATE 42/47、引用表 44 张、`rowLocks` 分桶、onConflict、
  *   `SELECT *` 均不变。授权面：五张正文表对运行时**零**表级 DELETE（禁止面维持 18 条 42501 / 9 个对象）。
- * ⑬ 2026-10-24 R34 片 3（#19 / #10 OCR 注销闭集）：`ocr/store-pg.ts` +3 条整表 DELETE（都带
- *   RETURNING），授权面补 `GRANT DELETE ON public.ocr_jobs` / `... public.ocr_records`
- *   （**用户 2026-10-24 批准**的表级例外，替换此前设想的 SECURITY DEFINER 路线）。
- *   ⇒ 字面量 268 → **271**、DELETE 36 → **39**、RETURNING 82 → **85**、列要求 1720 → **1726**、
- *   已覆盖 1666 → **1672**（缺口仍 0：两表的整表 DELETE 已在 `20-login-roles.sql` 授权）、
- *   逐文件 `ocr` 16 → **19**；INSERT/UPDATE/SELECT 42/47/143、引用表 44 张、`rowLocks` 分桶、
- *   onConflict、无顶层 FROM、`SELECT *` 均不变。禁止面（18 条 42501 / 9 个对象）**一字未改** ——
- *   探针原本就不探这两张表的 DELETE（见证据页 ④）。
+ * ⑬ 2026-10-24 本片 #18（内容域 PG 落点，迁移 0036）与上游 #19/#10（OCR 注销闭集）在
+ *   合流树上**同时**存在：
+ *   - #18 新增 `admin/ops/content-pg.ts`（15 条字面量：INSERT 3 / UPDATE 4 / SELECT 8，
+ *     三张新表 `admin_content_entities|revisions|idempotency`）⇒ 审计文件 19 → **20**、
+ *     引用表 44 → **47**、`FOR UPDATE` 25 → **26**、rowLockRequirements 41 → **42**；
+ *     DELETE 不变（新域**没有**整表 DELETE、也没有任何表级 DML）。
+ *   - #19/#10 给 `ocr/store-pg.ts` +3 条整表 DELETE（都带 RETURNING），授权面补
+ *     `GRANT DELETE ON public.ocr_jobs` / `... public.ocr_records`（**用户 2026-10-24 批准**的
+ *     表级例外）⇒ DELETE 36 → **39**、逐文件 `ocr` 16 → **19**；禁止面一字未改。
+ *   合流树读数**重新实测**（不是把任一侧的旧值相加）：见下方 EXPECTED_EXTENDED_READINGS。
  * 历史读数（保留，勿据旧文案推导）：R28-S66 起始 18 文件／234 条；R31-S6/S1 社区域 +7（230→237，
  * RETURNING 71→76、行锁 +1）；R32-P2 保留/脱敏规则 +3（237→240，RETURNING 76→74、行锁 +2）。
  * ⑬ 2026-10-24 合并 upstream/main@997e8e5f：叠加本分支 `GET /api/v1/posts/{id}/like` 的那条
@@ -671,30 +674,47 @@ const TABLE_WIDE_COLUMN = '*';
  *   列要求 1726 → **1730**／已覆盖 1672 → **1676**（缺口仍 **0**：同步在
  *   `services/api/db/roles/profile_runtime.sql` 补了四个契约列的 SELECT 与锁列 UPDATE）。
  *   RETURNING／ON CONFLICT／`SELECT *`／函数调用／无顶层 FROM／INSERT／UPDATE／DELETE 均不变。
+ * ⑮ 2026-10-25 #538 解冲突合流 `upstream/main` = `1d65b7ee`（合并后**重新实测**，非两侧旧值相加）：
+ *   上游带入 `registrations` / `species` / 注销与隐私侧的 SQL 改动 ⇒ 相对本片上一版实测
+ *   字面量 287 → **288**、SELECT 152 → **153**、`rowLocks.SHARE` 16 → **17**、
+ *   行锁要求 42 → **43**、引用表 47 → **48**、列要求 1851 → **1855**／已覆盖 1797 → **1801**
+ *   （缺口仍 **0**）；auditedFiles 20、INSERT/UPDATE/DELETE 45/51/39、RETURNING 91、
+ *   ON CONFLICT 28、`SELECT *` 15（`t.*` 4）、函数调用 2、无顶层 FROM 13、不可判插值 5 均不变。
+ * ⑯ 2026-10-25 #538 修红（Refs #18）：`admin/ops/content-pg.ts` 新增一条 **就绪探测 SELECT**
+ *   —— `SELECT to_regclass('public.admin_content_entities') IS NOT NULL AS entities, … AS revisions,
+ *   … AS idempotency`（`CONTENT_TABLES_READY_SQL`，**一次查询三列布尔**、**静态整句、零插值**：
+ *   写成 `${…}` 拼接会多出一条"不可判插值"；三列而非一条 `AND` 是监工复核的要求 —— 只有把
+ *   "全域未配置"与"部分 schema"分开，才判得准该不该回落）。
+ *   ⇒ 字面量 288 → **289**、SELECT 153 → **154**、无顶层 FROM 13 → **14**、逐文件
+ *   `admin/ops/content-pg.ts` 15 → **16**；不可判插值仍 **5**、引用表仍 **48** 张
+ *   （`to_regclass` 是函数调用不是 FROM，不计引用表）、列要求 1855／已覆盖 1801（缺口 **0**）、
+ *   INSERT/UPDATE/DELETE 45/51/39、RETURNING 91、ON CONFLICT 28、`SELECT *` 15、行锁 26+17、
+ *   行锁要求 43、豁免 33 均不变。零迁移、零 GRANT 变更。
  */
 const EXPECTED_EXTENDED_READINGS = {
-  auditedFiles: 19,
-  sqlLiterals: 273,
-  statements: { INSERT: 42, UPDATE: 47, SELECT: 145, DELETE: 39 },
-  returningClauses: 85,
-  onConflictClauses: 26,
+  auditedFiles: 20,
+  sqlLiterals: 289,
+  statements: { INSERT: 45, UPDATE: 51, SELECT: 154, DELETE: 39 },
+  returningClauses: 91,
+  onConflictClauses: 28,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 25, SHARE: 17 },
+  rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 13,
-  referencedTables: 45,
-  columnRequirements: 1730,
-  coveredRequirements: 1676,
+  noTargetTable: 14,
+  referencedTables: 48,
+  columnRequirements: 1855,
+  coveredRequirements: 1801,
   ledgerExemptions: 33,
-  rowLockRequirements: 42,
+  rowLockRequirements: 43,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
 
-/** 逐文件读数（扩展 19 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
+/** 逐文件读数（扩展 20 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
 const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
+  'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
   'community': 43,
@@ -718,6 +738,9 @@ const EXPECTED_EXTENDED_PER_FILE = {
 /** 扩展审计引用到的表（44 张；含 catalog_read 视图，迁移期不判权限）。 */
 const EXPECTED_EXTENDED_TABLES = [
   'catalog_read.current_knowledge',
+  'public.admin_content_entities',
+  'public.admin_content_idempotency',
+  'public.admin_content_revisions',
   'public.community_comments',
   'public.community_idempotency',
   'public.community_likes',
@@ -2334,7 +2357,7 @@ function findHostSetProblems(hosts) {
   return problems;
 }
 
-test('sql-column-coverage/扩展 19 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5）', () => {
+test('sql-column-coverage/扩展 20 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5）', () => {
   const stats = extended.sql.stats;
   const perFile = Object.fromEntries(Object.entries(stats.byFile).map(([key, value]) => [key, value.sqlLiterals]));
   const starStatements = extended.sql.statements.filter((item) => item.selectStar);
@@ -2347,7 +2370,7 @@ test('sql-column-coverage/扩展 19 文件读数与列覆盖（R28-S66 / R28-W12
   console.log(`[sql-column-coverage] SELECT * 语句（列面不可判，只登记不判权限）：${starStatements.map((item) => `${item.file}:${item.line}${item.qualifiedStar ? '（t.*）' : ''}`).join('、')}`);
 
   assert.equal(extended.model.problems.length, 0, `扩展授权面解析出问题：\n${extended.model.problems.join('\n')}`);
-  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 19（8 store + 11 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts、R29 moderation/ledger-pg.ts）');
+  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 20（8 store + 12 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts、R29 moderation/ledger-pg.ts、R34-I18 admin/ops/content-pg.ts）');
   assert.equal(stats.sqlLiterals, EXPECTED_EXTENDED_READINGS.sqlLiterals, 'SQL 字面量条数变了：要么源文件真改了，要么解析器瞎了');
   assert.deepEqual(stats.statements, EXPECTED_EXTENDED_READINGS.statements, `语句条数变了（实际 ${JSON.stringify(stats.statements)}）`);
   assert.equal(stats.returningClauses, EXPECTED_EXTENDED_READINGS.returningClauses);
@@ -2422,16 +2445,17 @@ test('sql-column-coverage/扩展 19 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 19 已审计 + 12 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 20 已审计 + 12 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 31, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 32, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
     [
       'services/api/src/admin/ops/accounts-pg.ts',
+      'services/api/src/admin/ops/content-pg.ts',
       'services/api/src/admin/ops/flags-pg.ts',
       'services/api/src/admin/ops/jobs-pg.ts',
       'services/api/src/ai/checked-content-live-adapter.ts',

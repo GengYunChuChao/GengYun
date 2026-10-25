@@ -186,6 +186,19 @@ export const ALLOWED_RETRYABLE = [
       + '（G0001⇒INVALID_REQUEST、23505⇒REVISION_CONFLICT、42501/42883/无法归类⇒retryable:false 的 '
       + 'PROVIDER_UNAVAILABLE）均不可重试，与 `deletion-requests-pg.ts::mapDeletionError` 同口径。',
   },
+  {
+    file: 'services/api/src/admin/ops/content-pg.ts',
+    function: 'foldDatabaseError',
+    retryable: 'isTransientDatabaseError(error)',
+    message: '后台资料库暂不可用',
+    owner: 'GY-I18',
+    reason:
+      '**有判据**（合法放宽）：后台内容/资料域（R34/#18 的 PG 落点）数据库异常折叠，与 ocr/speech/recognitions/'
+      + 'messages/favorites/history/community/conversations/media 的 `classify*DatabaseError` 逐条同口径 ——'
+      + '57014/55P03 已在上方折成 `PROVIDER_TIMEOUT`（content-pg.ts:101-103 分支）；此处 '
+      + '`isTransientDatabaseError`（db/pool.ts）只放行 08xxx/53xxx/57P0x/40001/40P01，'
+      + '42501/3D000/28P01/42P01/42883 与无法归类一律 false（即 503 的 retryable 分档与其余域一致）。',
+  },
 ];
 
 /** 条目声明的判据类别（缺省只对 `PROVIDER_UNAVAILABLE` 站点生效）。 */

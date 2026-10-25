@@ -243,7 +243,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 | `OcrMediaPort` | `services/api/src/ocr/media.ts:77` | OCR 媒体引用校验 | 同上 |
 | `RecognitionMediaPort` | `services/api/src/recognitions/media.ts:76` | 识别媒体引用校验 | 同上 |
 
-装配点：TTS `app.ts:1085`、ASR `app.ts:1738`（`media: speechMedia`，无缺省工厂）、OCR `app.ts:1756-1757`
+装配点：TTS `app.ts:1085`、ASR `app.ts:2168`（`media: speechMedia`，无缺省工厂）、OCR `app.ts:1756-1757`
 （`ocrPersistencePool` 是 **OCR 自己的 PG 持久化**，不是媒体端口）。
 
 ⇒ **`#404 + #419` 都合流后，ASR 转写是 503 → 409，不是 503 → 200**。`services/api/src/speech/media.ts:14-19`
@@ -458,7 +458,7 @@ tests/unit/*sql-column*.test.mjs` ⇒ 89 pass / 0 fail；`node tools/verify-cont
    （`REQUIRED_STEP_ORDER` 第 12b 条）三处清单同步加入该脚本，另有 10 行注释写明「与第 12 条同型、独立库、零耦合」。
    判据 ⑦ 的「workflow 里执行的 `-pg.mjs` 集合与 `MANAGED_SCRIPTS` 双向相等」因此把新脚本也纳入管控 —— 这是**加严**：
    接线前它完全没人跑，接线后任何一方漏登记都红。
-3. `tests/unit/ci-integration-chain-structure.test.mjs:240`：`UNWIRED_DECLARATIONS` 增一条该脚本的 reason，写明
+3. `tests/unit/ci-integration-chain-structure.test.mjs:257`：`UNWIRED_DECLARATIONS` 增一条该脚本的 reason，写明
    「已接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job」「同型但不同库」「不进无 PG 回环链」。
 
 **为什么「接线 + 登记」不是二选一**：判据 4 的 `wired` 集合只来自 `package.json` 的 `test:integration:http` 链，

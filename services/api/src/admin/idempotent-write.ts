@@ -16,12 +16,30 @@ import { idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from 
 import { cloneDeep, freezeDeep } from './immutable.ts';
 import { requireIdempotencyKeyValue } from './identity.ts';
 import type { ResolvedContext } from './identity.ts';
-import type { AdminRuntime } from './runtime.ts';
+import type { AdminContentStoreLike } from './store.ts';
 import type { ContentIdempotencyOutcome, ServiceResponse } from './types.ts';
+
+/**
+ * 只需要 runtime 的**台账与临界区**能力（`AdminContentStore` 结构上满足）。
+ *
+ * 用 `Pick<AdminContentStoreLike, …>` 而不是 `Omit<AdminRuntime,'persistent'>`：真库实现的
+ * 返回值是 `T | Promise<T>`（`pg` 只有异步 API），比 `AdminRuntime` 的同步签名**更宽**，
+ * 只有放宽到 `MaybeAsync` 才能同时容下内存 runtime 与真库 store。
+ */
+export type IdempotencyRuntime = Pick<
+  AdminContentStoreLike,
+  | 'transaction'
+  | 'findIdempotent'
+  | 'peekIdempotent'
+  | 'claimIdempotent'
+  | 'completeIdempotent'
+  | 'releaseIdempotent'
+  | 'purgeExpiredIdempotent'
+>;
 
 export interface IdempotentWriteDeps {
   /** 只需要 runtime 的台账与临界区能力（`AdminContentStore` 结构上满足）。 */
-  runtime: AdminRuntime;
+  runtime: IdempotencyRuntime;
   signingKey: string;
   ttlSeconds: number;
   now: () => Date;
@@ -57,9 +75,9 @@ export async function runIdempotentWrite<TBody>(
     // 队列可能跨外部端口 await：获得临界区后取当前时刻，不能用排队前的时间。
     // 完成回执也必须实际到期清理，再查询；否则 findIdempotent 会无限重放旧成功结果。
     const issuedAt = deps.now();
-    deps.runtime.purgeExpiredIdempotent(issuedAt);
+    await deps.runtime.purgeExpiredIdempotent(issuedAt);
     const expiresAt = new Date(issuedAt.getTime() + deps.ttlSeconds * 1000);
-    const settled = deps.runtime.findIdempotent(scope, keyHash);
+    const settled = await deps.runtime.findIdempotent(scope, keyHash);
     if (settled !== null) {
       if (settled.requestHash !== requestHash) {
         throw new ApiError('IDEMPOTENCY_CONFLICT', '同一幂等键已用于不同请求体');
@@ -70,8 +88,8 @@ export async function runIdempotentWrite<TBody>(
         body: cloneDeep(settled.outcome.body) as TBody,
       };
     }
-    if (!deps.runtime.claimIdempotent(scope, keyHash, { requestHash, responseStatus: keyDomain.expectedStatus, expiresAt, now: issuedAt })) {
-      const row = deps.runtime.peekIdempotent(scope, keyHash);
+    if (!(await deps.runtime.claimIdempotent(scope, keyHash, { requestHash, responseStatus: keyDomain.expectedStatus, expiresAt, now: issuedAt }))) {
+      const row = await deps.runtime.peekIdempotent(scope, keyHash);
       if (row !== null && row.requestHash === requestHash) {
         throw new ApiError('REQUEST_IN_PROGRESS', '同一幂等键的请求正在处理中', { retryable: true });
       }
@@ -86,11 +104,11 @@ export async function runIdempotentWrite<TBody>(
         body: cloneDeep(response.body),
       };
       freezeDeep(outcome);
-      deps.runtime.completeIdempotent(scope, keyHash, outcome, expiresAt);
+      await deps.runtime.completeIdempotent(scope, keyHash, outcome, expiresAt);
       return response;
     } catch (error) {
       // 失败必须释放占位，否则同键重试会被自己的占位挡住。
-      deps.runtime.releaseIdempotent(scope, keyHash);
+      await deps.runtime.releaseIdempotent(scope, keyHash);
       throw error;
     }
   });
