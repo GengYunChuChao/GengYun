@@ -47,7 +47,7 @@
 | 契约里的审核动作 | `packages/contracts/openapi.json:11008` | spec 里 `/admin/posts` 家族恰好一条 `/admin/posts/{id}/hide` |
 | 同上（被测试钉死） | `tests/unit/community-premoderation-invariants.test.mjs:234-246` | `assert.deepEqual` 直接比对 `['/admin/posts/{id}/hide']` |
 | `notifications` 表 / outbox 表 | `services/api/db/migrations/0016_account_deletion_persistence.sql:36` | 仓库自陈「main 上既无 outbox 表也无消费者，建表就是空承诺」 |
-| docs 侧的既有记录 | `docs/verification/gy-i15-community-http-20261020.md:247` | 该行记录的是「读取时重查负例·用例 6」（删除后 `reReviewContent` 返回 `re_reviewed:false / visibility:'deleted'`，**不复活**）——它是该函数唯一的**行为用例**覆盖处。**路由层零调用**：`git grep -n reReviewContent -- services/api/src` 只有定义 `services/api/src/community/service.ts:1735`，没有任何调用点 |
+| docs 侧的既有记录 | `docs/verification/gy-i15-community-http-20261020.md:247` | 该行记录的是「读取时重查负例·用例 6」（删除后 `reReviewContent` 返回 `re_reviewed:false / visibility:'deleted'`，**不复活**）——属于「读取时重查」的行为用例之一。**路由层零调用**：`git grep -n reReviewContent -- services/api/src` 只有定义 `services/api/src/community/service.ts:1735`，没有任何调用点 |
 
 ### 1.4 需迁移（要动库才能落的方向）
 
