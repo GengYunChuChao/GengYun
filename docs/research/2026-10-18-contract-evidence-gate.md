@@ -58,8 +58,9 @@ git ls-files | grep -Ec '(^|/)(acorn|@babel/parser|es-module-lexer)(/|$)'
 命令 2（自研扫描器脚本的复用面，即 README §3「复用的目录／脚本与数量」的对应物）：
 
 ```text
+转录，不是文件锚点：以下为命令读数的抄录（git grep -c 的「文件:计数」输出，末尾数字是命中行数，不是行号）。
 git grep -c "export function " -- tools/contract-status-core.mjs
-⇒ tools/contract-status-core.mjs:10
+⇒ tools/contract-status-core.mjs 计数 = 10
 ```
 
 读数 **10**：该脚本共 10 个 `export function`。逐函数清单（`git grep -n "^export function " -- tools/contract-status-core.mjs`，实测 10 行）：`scanMountedRoutes`(15)、`mountedMismatches`(56)、`runtimeMountedRoutes`(62)、`evidenceWithinRepository`(72)、`routeDeclarations`(81)、`declarationSegments`(104)、`assertionArgumentRanges`(121)、`operationMentions`(153)、`replaceStatusTables`(166)、`renderStatusTables`(174)。
