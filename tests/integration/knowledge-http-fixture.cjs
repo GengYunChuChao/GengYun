@@ -5,7 +5,9 @@ function item(version = 'synthetic-v1') { return { id: ID, revision: version ===
  source: { id: '22222222-2222-4222-8222-222222222222', version, title: '合成测试来源', url: 'https://example.test/synthetic-source', publisher: '合成发布方', source_kind: 'simulation', evidence_kind: 'research', validity: 'valid', review_status: 'unverified', updated_at: '2026-10-11T01:00:00Z' }, conditions: null, reference_state: 'available', dose_cards: [] } }
 function envelope(data) { return { data, meta: { request_id: '33333333-3333-4333-8333-333333333333', contract_version: '1.0.0', execution_mode: 'stub' } } }
 function createFixture() {
- const state = { version: 'synthetic-v1', withdrawn: false, expiredCursor: false }, requests = [], token = 'gy-knowledge-synthetic-session'
+ // `divergentTitle` 是**负控制开关**，默认 false（正常路径逐字段不变）：只让「详情」这一条换标题，
+ // 于是 `fingerprint`（不含 title）仍相等，而 `knowledge-consumer-http.mjs` 的逐字段断言必须红。
+ const state = { version: 'synthetic-v1', withdrawn: false, expiredCursor: false, divergentTitle: false }, requests = [], token = 'gy-knowledge-synthetic-session'
  const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1'); res.setHeader('Content-Type', 'application/json; charset=utf-8'); res.setHeader('Cache-Control', 'no-store')
   const send = (status, body) => { res.statusCode = status; res.end(JSON.stringify(body)) }
@@ -30,7 +32,10 @@ function createFixture() {
   }
   if (url.pathname === '/api/v1/knowledge/' + ID) {
    if (state.withdrawn || url.searchParams.has('growth_stage') || url.searchParams.has('planting_method') || url.searchParams.has('use_scene')) { error(404, 'NOT_FOUND'); return }
-   send(200, envelope(item(state.version))); return
+   // 列表与详情**同源同形**（真实服务端也是同一个 `project()`，见 `services/api/src/knowledge/service.ts:98-111`）；
+   // `divergentTitle` 打开时只让这条详情换标题，用来证明逐字段断言不是恒真。
+   const payload = item(state.version); if (state.divergentTitle) payload.title += '（仅详情）'
+   send(200, envelope(payload)); return
   }
   error(404, 'NOT_FOUND')
  })
