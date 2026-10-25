@@ -2,9 +2,14 @@
  * GY-I18（#18）· 作业台列表**服务端过滤**（`state` / `error_code`）单元测试。
  *
  * 用假池（fake pool）+ 内存端口钉住三件事，全部离线可跑：
- * 1. **过滤下推到 SQL**：`WHERE state = $2::text` / `WHERE error_code = $2::text` /
- *    `WHERE state = $2::text AND error_code = $3::text` 出现在语句里，值只出现在**绑定参数**里
+ * 1. **过滤下推到 SQL**：`WHERE state = $2::<cast>` / `WHERE error_code = $2::text` /
+ *    `WHERE state = $2::<cast> AND error_code = $3::text` 出现在语句里，值只出现在**绑定参数**里
  *    （语句文本里不许出现过滤值本身 —— 那是字符串拼接的特征）；`$1` 恒为硬上限。
+ *    ⚠ `state` 的 cast **逐源不同**：`ocr_jobs.state` 是 `text`+`CHECK`（`0024:93-95`），
+ *    `recognition_jobs.state` / `speech_jobs.state` 是 `job_state` 枚举（`0025:117` / `0026:98`）。
+ *    PG 里「枚举列 = text 参数」没有隐式转换，统一 `::text` 会让枚举源抛
+ *    `42883 operator does not exist: job_state = text` ⇒ 真库臂 500（#587 CI 实测）。
+ *    本文件逐源断言 cast，专门挡「有人改回统一 `::text`」这类回归。
  * 2. **不传过滤 ≡ 改动前**：语句逐字相同（无 `WHERE`）、绑定只有 `[limit]`。
  * 3. **闭集外的入参 ⇒ 400 `INVALID_REQUEST`**（不是 503、不是静默空页）：
  *    `state` 用契约 `JobState` 七值、`error_code` 用契约 `ErrorCode` 二十四值；
@@ -73,9 +78,34 @@ const ROWS_BY_TABLE = {
   ],
 };
 
+/** 语句命中的是哪张域表 → 哪个作业源 kind（cast 期望按 kind 查）。 */
+const KIND_BY_TABLE = {
+  'public.ocr_jobs': 'ocr',
+  'public.recognition_jobs': 'recognition',
+  'public.speech_jobs': 'transcription',
+};
+
+/** 语句里出现的是哪张域表（三源语句各不相同，故可反查）。 */
+function tableOf(text) {
+  const table = Object.keys(KIND_BY_TABLE).find((candidate) => text.includes(candidate));
+  if (table === undefined) throw new Error(`语句不来自任何已知域表：${text}`);
+  return table;
+}
+
+function kindOf(text) {
+  return KIND_BY_TABLE[tableOf(text)];
+}
+
+/** 该源的 WHERE 片段表（导出的 `listWhere` 与运行时同一函数现算，见 jobs-pg.ts）。 */
+function fragmentsOf(kind) {
+  const entry = ADMIN_JOB_SQL.listWhere.find((candidate) => candidate.kind === kind);
+  if (entry === undefined) throw new Error(`ADMIN_JOB_SQL.listWhere 缺 ${kind} 源`);
+  return entry;
+}
+
 /** 语句里出现的是哪种 WHERE 组合（顺序重要：组合片段包含单条件片段）。 */
 function whereKind(text) {
-  const fragments = ADMIN_JOB_SQL.listWhere;
+  const fragments = fragmentsOf(kindOf(text)).where;
   if (text.includes(fragments.state_and_error_code)) return 'state_and_error_code';
   if (text.includes(fragments.state)) return 'state';
   if (text.includes(fragments.error_code)) return 'error_code';
@@ -119,15 +149,17 @@ function portWith(pool) {
 // 1. SQL 下推：WHERE 出现、值只走绑定、$1 恒为 limit
 // ---------------------------------------------------------------------------
 
-test('list(state)：三源语句都拼 WHERE state = $2::text，过滤值只出现在绑定参数里', async () => {
+test('list(state)：三源各自按真实列类型拼 WHERE（ocr ⇒ ::text，枚举源 ⇒ ::job_state）', async () => {
   const pool = fakePool();
   const jobs = await portWith(pool).list({ state: 'failed' });
 
   assert.equal(pool.calls.length, 3, '三张域表各一次查询');
   for (const call of pool.calls) {
+    const kind = kindOf(call.text);
+    const cast = kind === 'ocr' ? 'text' : 'job_state';
     assert.ok(
-      call.text.includes(' WHERE state = $2::text'),
-      `语句必须把 state 条件下推：${call.text}`,
+      call.text.includes(` WHERE state = $2::${cast}`),
+      `${kind} 源的 state 条件必须按真实列类型下推（::${cast}）：${call.text}`,
     );
     assert.ok(call.text.endsWith(' ORDER BY created_at DESC, id DESC LIMIT $1::integer'));
     assert.deepEqual(call.values, [ADMIN_JOB_LIST_LIMIT, 'failed'], '绑定顺序必须是 [$1=limit, $2=state]');
@@ -164,20 +196,74 @@ test('list(error_code)：三源语句都拼 WHERE error_code = $2::text，按文
   assert.deepEqual(jobs.map((job) => job.kind), ['ocr']);
 });
 
-test('list(state + error_code)：两个条件按 $2/$3 顺序绑定', async () => {
+test('list(state + error_code)：两个条件按 $2/$3 顺序绑定，state 的 cast 仍逐源区分', async () => {
   const pool = fakePool();
   const jobs = await portWith(pool).list({ state: 'failed', error_code: 'PROVIDER_TIMEOUT' });
 
   for (const call of pool.calls) {
+    const kind = kindOf(call.text);
+    const cast = kind === 'ocr' ? 'text' : 'job_state';
     assert.ok(
-      call.text.includes(' WHERE state = $2::text AND error_code = $3::text'),
-      `两个条件必须同时下推：${call.text}`,
+      call.text.includes(` WHERE state = $2::${cast} AND error_code = $3::text`),
+      `${kind} 源的两个条件必须同时下推且 cast 正确（::${cast}）：${call.text}`,
     );
     assert.deepEqual(call.values, [ADMIN_JOB_LIST_LIMIT, 'failed', 'PROVIDER_TIMEOUT']);
     assert.equal(call.text.includes('failed'), false);
     assert.equal(call.text.includes('PROVIDER_TIMEOUT'), false);
   }
   assert.deepEqual(jobs.map((job) => job.id), [makeUuid(901)]);
+});
+
+test('逐源 cast 钉子：枚举源绝不出现 state = $2::text（挡住「改回统一 ::text」的回归）', async () => {
+  // 三种组合 × 三个源全扫一遍：真库 42883 的触发条件就是「枚举列配 text 参数」。
+  for (const filter of [{ state: 'failed' }, { state: 'running', error_code: 'PROVIDER_TIMEOUT' }]) {
+    const pool = fakePool();
+    await portWith(pool).list(filter);
+    assert.equal(pool.calls.length, 3);
+    for (const call of pool.calls) {
+      const kind = kindOf(call.text);
+      const isEnumSource = kind === 'recognition' || kind === 'transcription';
+      if (isEnumSource) {
+        assert.equal(
+          call.text.includes('state = $2::text'),
+          false,
+          `${kind}.state 是 job_state 枚举，写 ::text 会 42883 ⇒ 500：${call.text}`,
+        );
+        assert.ok(
+          call.text.includes('state = $2::job_state'),
+          `${kind}.state 必须显式转成 job_state：${call.text}`,
+        );
+      } else {
+        assert.equal(
+          call.text.includes('state = $2::job_state'),
+          false,
+          `ocr_jobs.state 是 text+CHECK，不该转成枚举：${call.text}`,
+        );
+        assert.ok(call.text.includes('state = $2::text'), `ocr_jobs.state 按文本比：${call.text}`);
+      }
+      // 枚举源与文本源都不许把 state 值拼进语句（否则闭集校验就白做了）。
+      assert.equal(call.text.includes(filter.state), false);
+    }
+  }
+
+  // 导出的片段表也要逐源正确：它由运行时同一函数现算，改统一 ::text 会先在这里红。
+  assert.deepEqual(
+    ADMIN_JOB_SQL.listWhere.map((entry) => [entry.kind, entry.stateCast]),
+    [
+      ['ocr', 'text'],
+      ['recognition', 'job_state'],
+      ['transcription', 'job_state'],
+    ],
+    'state 的 cast 必须按源区分（0024:93-95 是 text+CHECK，0025:117 / 0026:98 是 job_state 枚举）',
+  );
+  for (const entry of ADMIN_JOB_SQL.listWhere) {
+    const cast = entry.stateCast;
+    assert.deepEqual(entry.where, {
+      state: ` WHERE state = $2::${cast}`,
+      error_code: ' WHERE error_code = $2::text',
+      state_and_error_code: ` WHERE state = $2::${cast} AND error_code = $3::text`,
+    });
+  }
 });
 
 test('list() 不传过滤：语句与改动前逐字相同（无 WHERE）、绑定只有 [limit]', async () => {
