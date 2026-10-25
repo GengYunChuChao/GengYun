@@ -34,9 +34,32 @@ const box = { exports: {} }; const wx = { request: o => { fetch(o.url, { method:
 // 依赖按**完整说明符**登记，不做 else 兜底：未登记（新增 require）⇒ 显式失败并带依赖名，而不是静默喂 `{ apiBaseUrl }` 空壳。
 const knowledgeApiDependencies = new Map([['./auth', auth], ['../config/runtime', { apiBaseUrl: base }]]);
 vm.runInNewContext(readFileSync(new URL('../../miniprogram/utils/knowledge-api.js', import.meta.url), 'utf8'), { module: box, wx, require: p => { if (!knowledgeApiDependencies.has(p)) throw Error('Unexpected page dependency ' + p); return knowledgeApiDependencies.get(p); } }); const api = box.exports;
+// ---- P0：详情与列表**逐字段一致** + `source` 深等 -----------------------------------------
+// 深度对齐 `tests/integration/user-chain-e2e.mjs:473-476`（那条断言只在需真 PG 的 `user-chain-e2e.mjs`
+// 里，而该文件有**未接任何 CI** 的缺口，见 `tests/unit/ci-integration-chain-structure.test.mjs` 的
+// `UNWIRED_DECLARATIONS`）⇒ 搬进这条已接 `test:integration:http` 的回环脚本。
+// 弱版只比 `api.fingerprint`（`miniprogram/utils/knowledge-api.js:64`）：指纹取 id/revision + source 十键，
+// **不含** type/title/body/reference_state/conditions/dose_cards，也看不见 source 上是否多出键。
+// 真实回归面在客户端边界：`list()` 原样返回 `p.items`、`detail()` 原样返回 `r.data`
+// （`knowledge-api.js:102` / `:110`）——任一侧开始做投影裁剪，指纹仍相等而字段已经不同。
+// `validItem` 的闭集校验（`knowledge-api.js:13-16`、`:45-54`）保证两侧键集相同，深等才不是同义反复。
+const DETAIL_FIELDS = ['id', 'revision', 'type', 'title', 'body', 'reference_state', 'conditions', 'dose_cards'];
+// `source` 逐键覆盖 `SourceRef` 的全部十键：id/version/title/url/publisher/source_kind/evidence_kind/
+// validity/review_status/updated_at —— 含与详情 `revision` **不同源**的 `source.version`。
+function sameAsList(detailItem, listItem) {
+  DETAIL_FIELDS.forEach(field => assert.deepEqual(detailItem[field], listItem[field], `详情 ${field} 必须与列表逐字段一致`));
+  assert.deepEqual(detailItem.source, listItem.source, '详情 source 必须与列表逐字段一致（含 version/validity/review_status）');
+}
 try {
  const p = await api.list({ q: '稗草 &水稻', crop_id: 'crop_rice', region_code: '330102', limit: 20 }); assert.equal(p.items[0].id, ID); assert.equal(p.mode, 'stub'); assert.equal(f.requests.at(-1).query.q, '稗草 &水稻');
  api.remember(p.items[0], { crop_id: 'crop_rice' }); const d = await api.detail(ID, { crop_id: 'crop_rice' }); assert.equal(api.fingerprint(d.item), api.expected(ID).fingerprint); assert.equal(d.item.conditions, null); assert.equal(d.item.dose_cards.length, 0);
+ sameAsList(d.item, p.items[0]);
+ // 负控制：同一份夹具、同一个查询条件，只把**详情**的标题换掉 ⇒ 旧判据（指纹）仍相等，
+ // 逐字段断言必须红 —— 否则上面那条「逐字段一致」就是恒真，P0 又变回弱版。
+ f.state.divergentTitle = true; const gapList = await api.list({ q: '稗草 &水稻' }), gapDetail = await api.detail(ID, {});
+ assert.equal(api.fingerprint(gapDetail.item), api.expected(ID).fingerprint);
+ assert.throws(() => sameAsList(gapDetail.item, gapList.items[0]), /详情 title 必须与列表逐字段一致/);
+ f.state.divergentTitle = false; sameAsList((await api.detail(ID, {})).item, gapList.items[0]);
  f.state.version = 'synthetic-v2'; const changed = await api.detail(ID, {}); assert.notEqual(api.fingerprint(changed.item), api.expected(ID).fingerprint);
  f.state.withdrawn = true; await assert.rejects(api.detail(ID, {}), e => e.code === 'NOT_FOUND'); assert.equal((await api.list({})).items.length, 0); f.state.withdrawn = false;
  assert.equal((await api.list({ q: '无结果' })).items.length, 0); assert.equal((await api.list({ growth_stage: '未采集' })).items.length, 0); await assert.rejects(api.detail(ID, { planting_method: '未采集' }), e => e.code === 'NOT_FOUND');
