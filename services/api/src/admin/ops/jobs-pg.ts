@@ -14,9 +14,19 @@
  * 不是 `UNAUDITED_SQL_HOSTS` 那种"登记即豁免"的桶。
  *
  * ## 读面口径（如实，不伪造）
- * - `target_ref.revision` 恒取 `1`：作业行只带 `media_revision`，记录本体的 revision 需要 JOIN
- *   `ocrs` / `recognitions` / `transcriptions` 三张记录表；本片只读作业表，故按契约允许的最小值
- *   占位，并登记为后续片处方（不假装拿到了真实记录版本）。
+ * - `target_ref` 指向**作业产出的记录**（`public.ocr_records` / `public.recognition_records` /
+ *   `public.transcriptions`），`revision` 取记录行的**真实版本列**（SQL 里 `r.revision`，投影成
+ *   `target_revision`）。作业行自己的 `revision` 是「状态迁移计数」，`target_ref.revision` 是
+ *   「目标记录版本」，**两条不同的时钟**，不能混用：
+ *   取消会让作业 `revision` 1→2，而 `service.ts:801-808` 要求取消前后 `target_ref` 三字段完全一致
+ *   ⇒ 用作业 revision 会让每次取消都以 503 收场。
+ * - 记录**尚未创建**时退回 `1`：记录行只由终态事务那一笔写入（`ocr/store-pg.ts:597` /
+ *   `recognitions/store-pg.ts:672` / `speech/store-pg.ts` 的 `commitTerminal`），初始 `revision`
+ *   恒为 1。这与三域自己的读面**同一口径**（`ocr/service.ts:282`、`recognitions/service.ts:266`、
+ *   `speech/service.ts:244-246`：`record === null ? 1 : record.revision`），不是"随便占位"。
+ *   取消面因此天然成立：只有 `queued` / `running` 能被取消（`jobs-pg.ts` 的 UPDATE `WHERE`），
+ *   这两个状态的行**必然还没有记录** ⇒ 取消前后都是 `1`，不存在"取消瞬间取到旧值"的错位。
+ *   ⚠ `lockSql` / `updateSql` **故意不 JOIN**：取消事务的语句与行锁口径不因本片改动半分毫。
  * - `result` 恒 `null`：契约 `AdminJob.result` 是 `{"type": "null"}`（`fields.ts:101`）。
  * - `state` / `error_code` 逐值校验：不符即 503 `PROVIDER_UNAVAILABLE`（宁可说"读不到"，也不把
  *   陌生文本塞进后台列表）。
@@ -99,6 +109,24 @@ const CANCEL_AUDIT_SQL =
  * 每条语句的列面都是 12 列里的 7 列（`id / revision / <record> / state / deadline_at /
  * created_at / error_code`），已在 `deploy/postgres-cvm/sql/20-login-roles.sql:527-534`
  * 等三处按列授予运行时角色。
+ *
+ * ## `target_ref.revision` 的真实来源：`LEFT JOIN <记录表>` 取 `revision`
+ * 读面（list / get）在作业表上 `LEFT JOIN` 对应记录表（`ocr_records` / `recognition_records` /
+ * `transcriptions`），投影 `r.revision AS target_revision`。四条硬约束决定了这个写法：
+ * 1. **必须 LEFT JOIN**：`*_jobs.<record>_id` 没有外键（记录由 `commitTerminal` 同一事务落库，
+ *    `0024_ocr_persistence.sql:80-101` 注释明说），未到终态的作业查记录表取不到行；INNER JOIN
+ *    会让排队中的作业从运维台**整条消失**。
+ * 2. **必须显式别名 `j` / `r`**：三张记录表也都有 `id` / `revision` / `created_at`
+ *    ⇒ 不限定会 `42702 column reference "id" is ambiguous`。故 `listTail` 的 `ORDER BY` 与
+ *    `getSql` 的 `WHERE` 都带 `j.` 前缀。
+ * 3. **`state` / `error_code` 不加前缀**：这两列在三张记录表里都不存在（`0024:109-126` /
+ *    `0025:131-151` / `0026:112-130`），不歧义；也就不动 `LIST_STATE_EQ` 那组字面量，
+ *    导出的 `ADMIN_JOB_SQL.listWhere` 与既有断言逐字不变。
+ * 4. **⛔ 不能改写成标量子查询**：静态列审计（`tests/unit/sql-column-coverage.test.mjs`）把
+ *    SELECT / RETURNING 里的 `public.ocr_records` 当成**列名**（限定名被剥成 `ocr_records`），
+ *    于是要求 `ocr_jobs.ocr_records` 列 ⇒ 必红。改成 JOIN 后，`parseSqlText` 只读 `FROM` 后的
+ *    第一张表（`:1653`），JOIN 的表不进表集、`ON r.id = j.ocr_id` 不被当列 ⇒ 语句数仍 12、
+ *    表集与列要求**零漂移**。
  */
 interface JobSource {
   readonly kind: JobKind;
@@ -124,7 +152,13 @@ interface JobSource {
    */
   readonly stateCast: 'text' | 'job_state';
   readonly getSql: string;
+  /**
+   * 取消事务里的行锁读（`FOR UPDATE`）。**故意不 JOIN 记录表**：取消只对 `queued` / `running`
+   * 成功，这两个状态的行必然还没有记录（记录由 `commitTerminal` 在终态那一笔事务里写），
+   * 多一次 JOIN 只换来一个恒为 `NULL` 的列。行锁口径（`FOR UPDATE` 的范围）也不因本片改动。
+   */
   readonly lockSql: string;
+  /** 取消的 CAS 更新。**故意不 JOIN**：`RETURNING` 里的表达式会被静态列审计当成列名（见上）。 */
   readonly updateSql: string;
 }
 
@@ -141,11 +175,12 @@ const SOURCES: readonly JobSource[] = [
     kind: 'ocr',
     recordColumn: 'ocr_id',
     listSelect:
-      'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs',
-    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+      'SELECT j.id, j.revision, j.ocr_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.ocr_jobs AS j LEFT JOIN public.ocr_records AS r ON r.id = j.ocr_id',
+    listTail: ' ORDER BY j.created_at DESC, j.id DESC LIMIT $1::integer',
     // `ocr_jobs.state` 是 text + CHECK（0024:93-95），按文本比。
     stateCast: 'text',
-    getSql: 'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid',
+    getSql:
+      'SELECT j.id, j.revision, j.ocr_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.ocr_jobs AS j LEFT JOIN public.ocr_records AS r ON r.id = j.ocr_id WHERE j.id = $1::uuid',
     lockSql:
       'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid FOR UPDATE',
     updateSql:
@@ -155,12 +190,12 @@ const SOURCES: readonly JobSource[] = [
     kind: 'recognition',
     recordColumn: 'recognition_id',
     listSelect:
-      'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs',
-    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+      'SELECT j.id, j.revision, j.recognition_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.recognition_jobs AS j LEFT JOIN public.recognition_records AS r ON r.id = j.recognition_id',
+    listTail: ' ORDER BY j.created_at DESC, j.id DESC LIMIT $1::integer',
     // `recognition_jobs.state` 是 job_state 枚举（0025:117）⇒ 必须显式转成枚举再比。
     stateCast: 'job_state',
     getSql:
-      'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs WHERE id = $1::uuid',
+      'SELECT j.id, j.revision, j.recognition_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.recognition_jobs AS j LEFT JOIN public.recognition_records AS r ON r.id = j.recognition_id WHERE j.id = $1::uuid',
     lockSql:
       'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs WHERE id = $1::uuid FOR UPDATE',
     updateSql:
@@ -170,12 +205,12 @@ const SOURCES: readonly JobSource[] = [
     kind: 'transcription',
     recordColumn: 'transcription_id',
     listSelect:
-      'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs',
-    listTail: ' ORDER BY created_at DESC, id DESC LIMIT $1::integer',
+      'SELECT j.id, j.revision, j.transcription_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.speech_jobs AS j LEFT JOIN public.transcriptions AS r ON r.id = j.transcription_id',
+    listTail: ' ORDER BY j.created_at DESC, j.id DESC LIMIT $1::integer',
     // `speech_jobs.state` 是 job_state 枚举（0026:98）⇒ 同 recognition，显式转枚举。
     stateCast: 'job_state',
     getSql:
-      'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs WHERE id = $1::uuid',
+      'SELECT j.id, j.revision, j.transcription_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.speech_jobs AS j LEFT JOIN public.transcriptions AS r ON r.id = j.transcription_id WHERE j.id = $1::uuid',
     lockSql:
       'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs WHERE id = $1::uuid FOR UPDATE',
     updateSql:
@@ -248,6 +283,17 @@ const listWhereExportFor = (source: JobSource) => ({
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * 目标记录**尚未创建**时的 `target_ref.revision`（契约下限 `revision >= 1` 的最小合法值）。
+ *
+ * 这是「记录行的初始版本」而不是"占位 1"：记录只在终态事务里以 `revision = 1` 写入
+ * （`ocr/store-pg.ts:597` / `recognitions/store-pg.ts:672` / `speech/store-pg.ts:558` 的
+ * `commitTerminal`），之后只由记录级 CAS 递增。三域自己的读面是同一口径
+ * （`ocr/service.ts:282`、`recognitions/service.ts:266`、`speech/service.ts:246`），
+ * 管理台读面必须与之对齐，否则同一个 target 在两个接口上会报出不同版本。
+ */
+const UNCREATED_RECORD_REVISION = 1;
+
 /** 库行投影的产物（三源共用），见 `projectRow`。 */
 export interface JobRow {
   readonly id: string;
@@ -258,6 +304,11 @@ export interface JobRow {
   readonly deadline_at: unknown;
   readonly created_at: unknown;
   readonly error_code: string | null;
+  /**
+   * 目标记录的真实 `revision`（SQL 的 `r.revision AS target_revision`）。
+   * `null` = **记录行尚不存在**（`LEFT JOIN` 无匹配，或该语句不读记录表：`lockSql` / `updateSql`）。
+   */
+  readonly target_revision: number | null;
 }
 
 /**
@@ -275,6 +326,9 @@ function projectRow(source: JobSource, row: Record<string, unknown>): JobRow {
     deadline_at: row.deadline_at,
     created_at: row.created_at,
     error_code: (row.error_code ?? null) as string | null,
+    // `undefined`（语句没读该列，如 `lockSql` / `updateSql`）与 `null`（LEFT JOIN 无匹配）同义：
+    // 都表示"这行没有可报的记录版本"，由 `toAdminJobView` 折成初始值。
+    target_revision: (row.target_revision ?? null) as number | null,
   };
 }
 
@@ -340,11 +394,24 @@ export function toAdminJobView(row: JobRow): AdminJobView {
   ) {
     throw unavailable('作业 error_code 不在契约闭集内');
   }
+  // 记录版本：`null` = 记录尚未创建（合法，见 `UNCREATED_RECORD_REVISION`）；
+  // 其余必须是契约下限内的整数 —— 库里读出 `0` / `2.5` / 字符串一律 503，不折算、不夹到 1。
+  const targetRevision = row.target_revision;
+  if (
+    targetRevision !== null &&
+    (!Number.isInteger(targetRevision) || targetRevision < 1)
+  ) {
+    throw unavailable('作业目标记录 revision 非法');
+  }
   return {
     id: row.id,
     revision: row.revision,
     kind: row.kind,
-    target_ref: { type: row.kind, id: row.record_id, revision: 1 },
+    target_ref: {
+      type: row.kind,
+      id: row.record_id,
+      revision: targetRevision ?? UNCREATED_RECORD_REVISION,
+    },
     state: row.state,
     deadline_at: isoAt(row.deadline_at, 'deadline_at'),
     created_at: isoAt(row.created_at, 'created_at'),
@@ -533,7 +600,7 @@ export function createPostgresAdminJobPort(options: {
 
 /** 供真库臂与单测复用的语句导出（只读断言用；运行时不直接引用）。 */
 export const ADMIN_JOB_SQL = {
-  /** 无过滤时的列表语句（与改动前逐字相同：没有 `WHERE`）。 */
+  /** 无过滤时的列表语句（没有 `WHERE`；`target_revision` 由 `LEFT JOIN <记录表>` 取真实值）。 */
   list: SOURCES.map((source) => source.listSelect + source.listTail),
   /**
    * 列表过滤的 `WHERE` 片段，**逐源分开**（值永远走 `$2` / `$3` 绑定，不拼字符串）。

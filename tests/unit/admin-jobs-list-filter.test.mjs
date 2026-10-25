@@ -10,10 +10,15 @@
  *    PG 里「枚举列 = text 参数」没有隐式转换，统一 `::text` 会让枚举源抛
  *    `42883 operator does not exist: job_state = text` ⇒ 真库臂 500（#587 CI 实测）。
  *    本文件逐源断言 cast，专门挡「有人改回统一 `::text`」这类回归。
- * 2. **不传过滤 ≡ 改动前**：语句逐字相同（无 `WHERE`）、绑定只有 `[limit]`。
+ * 2. **不传过滤 ≡ 没有 `WHERE`**：语句与 `ADMIN_JOB_SQL.list` 逐字相同、绑定只有 `[limit]`。
  * 3. **闭集外的入参 ⇒ 400 `INVALID_REQUEST`**（不是 503、不是静默空页）：
  *    `state` 用契约 `JobState` 七值、`error_code` 用契约 `ErrorCode` 二十四值；
  *    非字符串（重复查询参数会变数组）也是 400，但 `code` 是 `type` 而不是 `enum`。
+ *
+ * 末尾第 4 节钉住 `target_ref.revision` 的**真实来源**（`LEFT JOIN` 记录表取 `r.revision`）：
+ * 记录已存在时透出记录行的真实版本、记录未创建时退回初始值 `1`、库里读出非法版本一律 503，
+ * 以及取消面（`updateSql` 故意不 JOIN）回传前后 `target_ref` 三字段不变 —— 那正是
+ * `services/api/src/admin/ops/service.ts:801-818` 对端口的硬要求（`revision` +1 而 `target_ref` 不变）。
  *
  * 另外钉住容易回归的两条边界：
  * - **未接线端口（503）优先于入参非法（400）**：端口没接线时"这个状态有没有作业"本就无法回答；
@@ -132,6 +137,10 @@ function fakePool(rowsByTable = ROWS_BY_TABLE) {
       calls.push({ text, values: [...values] });
       const table = Object.keys(rowsByTable).find((candidate) => text.includes(candidate));
       if (table === undefined) throw new Error(`假池不认识这条语句：${text}`);
+      // `getSql` 的形状（`WHERE j.id = $1::uuid`）：按 id 定位单行，别拿 `$1` 当 LIMIT 截断。
+      if (text.includes('WHERE j.id = $1::uuid')) {
+        return { rows: rowsByTable[table].filter((row) => row.id === values[0]) };
+      }
       return { rows: rowsForStatement(text, values, rowsByTable[table]) };
     },
     async connect() {
@@ -161,7 +170,7 @@ test('list(state)：三源各自按真实列类型拼 WHERE（ocr ⇒ ::text，�
       call.text.includes(` WHERE state = $2::${cast}`),
       `${kind} 源的 state 条件必须按真实列类型下推（::${cast}）：${call.text}`,
     );
-    assert.ok(call.text.endsWith(' ORDER BY created_at DESC, id DESC LIMIT $1::integer'));
+    assert.ok(call.text.endsWith(' ORDER BY j.created_at DESC, j.id DESC LIMIT $1::integer'));
     assert.deepEqual(call.values, [ADMIN_JOB_LIST_LIMIT, 'failed'], '绑定顺序必须是 [$1=limit, $2=state]');
     assert.equal(call.text.includes('failed'), false, '过滤值不得被拼进语句文本（参数化）');
   }
@@ -266,11 +275,12 @@ test('逐源 cast 钉子：枚举源绝不出现 state = $2::text（挡住「改
   }
 });
 
-test('list() 不传过滤：语句与改动前逐字相同（无 WHERE）、绑定只有 [limit]', async () => {
+test('list() 不传过滤：语句与 ADMIN_JOB_SQL.list 逐字相同（无 WHERE）、绑定只有 [limit]', async () => {
   const pool = fakePool();
   const jobs = await portWith(pool).list();
 
-  // 与 `ADMIN_JOB_SQL.list`（"无过滤时的列表语句"）逐字比对：这才是"没变"的硬证据。
+  // 与 `ADMIN_JOB_SQL.list`（"无过滤时的列表语句"）逐字比对：拼段（listSelect + where + listTail）
+  // 不会多吐一个空 `WHERE`，也不会在无过滤时悄悄换成另一条语句。
   assert.deepEqual(
     pool.calls.map((call) => call.text).sort(),
     [...ADMIN_JOB_SQL.list].sort(),
@@ -457,4 +467,180 @@ test('游标 watermark 绑筛选组合：同一组筛选可翻页，换一组筛
     'INVALID_CURSOR',
   );
   assert.equal(error.message.includes('集合已变化'), true, `实际消息：${error.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// 4. target_ref.revision：真实来源 = 记录表的 revision（LEFT JOIN），不是恒 1 占位
+// ---------------------------------------------------------------------------
+
+/**
+ * 一条 **succeeded** 作业 + 它的记录行（真实形状）。
+ *
+ * 为什么必须是 `succeeded`：记录行只由终态事务那一笔写入（`ocr/store-pg.ts:597` 的
+ * `commitTerminal`），所以「记录存在」蕴含「作业已到终态」——两者不能各说各话。
+ * `revision: 3` 是作业的状态迁移计数，`target_revision: 4` 是记录被校正三次后的版本，
+ * **两条时钟故意取不同值**：写死 1 的占位实现在这条种子上必然红。
+ */
+const SUCCEEDED_OCR_JOB = {
+  id: makeUuid(921),
+  revision: 3,
+  ocr_id: makeUuid(931),
+  state: 'succeeded',
+  deadline_at: '2026-10-12T05:00:00.000Z',
+  created_at: '2026-10-12T00:04:00.000Z',
+  error_code: null,
+  target_revision: 4,
+};
+
+/** 三源的库行：ocr 是「已产出记录」的 succeeded，另两条是「记录尚未创建」的非终态。 */
+function rowsWithRecordRevision(ocrRow = {}) {
+  return {
+    'public.ocr_jobs': [{ ...SUCCEEDED_OCR_JOB, ...ocrRow }],
+    'public.recognition_jobs': [
+      { ...ROWS_BY_TABLE['public.recognition_jobs'][0], target_revision: null },
+    ],
+    'public.speech_jobs': [{ ...ROWS_BY_TABLE['public.speech_jobs'][0], target_revision: null }],
+  };
+}
+
+/** #589 起取消端口要带审计入参（`AdminJobCancelAuditInput`）：本臂只借它走进真实取消路径。 */
+const CANCEL_AUDIT = { actorId: makeUuid(941), reasonCode: 'job_cancelled', requestId: makeUuid(942) };
+
+/** 取消面的假池：事务外的读面同 `fakePool`，`connect()` 给出记调用的假事务客户端。 */
+function cancelPool(rowsByTable, updatedRowsByTable) {
+  const base = fakePool(rowsByTable);
+  const clientCalls = [];
+  const client = {
+    released: false,
+    async query(text, values = []) {
+      clientCalls.push({ text, values: [...values] });
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK)\s*$/i.test(text) || /^SET LOCAL\b/i.test(text)) {
+        return { rows: [] };
+      }
+      // #589 的取消审计调用（`CANCEL_AUDIT_SQL`，`SELECT public.record_admin_job_cancel_audit(…)`）：
+      // 它没有 `FROM`、不碰任何作业/记录表，假池只要回一个 uuid 回执即可。
+      if (text.includes('record_admin_job_cancel_audit')) {
+        return { rows: [{ audit_event_id: makeUuid(943) }] };
+      }
+      const table = Object.keys(rowsByTable).find((candidate) => text.includes(candidate));
+      if (table === undefined) throw new Error(`假池不认识这条语句：${text}`);
+      if (/^\s*UPDATE\b/i.test(text)) {
+        return { rows: updatedRowsByTable[table] ?? [] };
+      }
+      // `lockSql`：按 id 定位（三源按顺序试，命中的那一条就是来源）。
+      return { rows: rowsByTable[table].filter((row) => row.id === values[0]) };
+    },
+    release() {
+      client.released = true;
+    },
+  };
+  return { calls: base.calls, clientCalls, client, query: base.query, connect: async () => client };
+}
+
+test('list：记录已存在 ⇒ target_ref.revision 取记录行真实版本（≠ 作业行的 revision）', async () => {
+  const pool = fakePool(rowsWithRecordRevision());
+  const jobs = await portWith(pool).list();
+
+  // created_at DESC：succeeded ocr(00:04) → queued recognition(00:02) → running speech(00:01)。
+  assert.deepEqual(
+    jobs.map((job) => [job.kind, job.target_ref.revision]),
+    [
+      ['ocr', 4],
+      ['recognition', 1],
+      ['transcription', 1],
+    ],
+    '有记录的作业必须透出记录行的真实 revision；没记录的退回初始值 1',
+  );
+  // 两条时钟互不冒充：作业行 revision 是 3，目标记录版本是 4。
+  assert.equal(jobs[0].revision, 3, '作业行 revision 必须原样是状态迁移计数');
+  assert.equal(jobs[0].target_ref.revision, 4, 'target_ref.revision 必须来自记录表');
+  // 目标 id/type 与作业的产出记录一致（本片不动这两个字段）。
+  assert.deepEqual(jobs[0].target_ref, { type: 'ocr', id: makeUuid(931), revision: 4 });
+});
+
+test('list：记录尚未创建（LEFT JOIN 无匹配）⇒ 1（记录行初始版本），不是 0 也不是 null', async () => {
+  const pool = fakePool(); // 种子行不带 target_revision：模拟三张记录表零行
+  const jobs = await portWith(pool).list();
+  assert.deepEqual(jobs.map((job) => job.target_ref.revision), [1, 1, 1]);
+});
+
+test('get：单条读面同一条 JOIN 口径，透出记录真实版本', async () => {
+  const pool = fakePool(rowsWithRecordRevision());
+  const job = await portWith(pool).get(makeUuid(921));
+  assert.deepEqual(job.target_ref, { type: 'ocr', id: makeUuid(931), revision: 4 });
+  assert.ok(
+    pool.calls[0].text.includes('LEFT JOIN public.ocr_records AS r ON r.id = j.ocr_id'),
+    `get 语句必须走同一条 JOIN：${pool.calls[0].text}`,
+  );
+});
+
+test('库里读出非法记录版本（0 / 2.5 / "4" / -1）⇒ 503，不折算成 1、不夹到下限', async () => {
+  for (const bogus of [0, 2.5, '4', -1]) {
+    const pool = fakePool(rowsWithRecordRevision({ target_revision: bogus }));
+    const error = await expectApiError(() => portWith(pool).list(), 'PROVIDER_UNAVAILABLE');
+    assert.equal(error.status, 503, `非法记录版本必须是 503（不是静默改值）：${String(bogus)}`);
+    assert.equal(error.message.includes('目标记录 revision'), true, `实际消息：${error.message}`);
+  }
+});
+
+test('SQL 钉子：三源 list/get 用 LEFT JOIN 取 r.revision；⛔ 不许退成 INNER JOIN 或标量子查询', () => {
+  const expected = [
+    ['public.ocr_jobs', 'public.ocr_records', 'j.ocr_id'],
+    ['public.recognition_jobs', 'public.recognition_records', 'j.recognition_id'],
+    ['public.speech_jobs', 'public.transcriptions', 'j.transcription_id'],
+  ];
+  for (const [index, [jobTable, recordTable, joinKey]] of expected.entries()) {
+    for (const sql of [ADMIN_JOB_SQL.list[index], ADMIN_JOB_SQL.get[index]]) {
+      assert.ok(
+        sql.includes(`FROM ${jobTable} AS j LEFT JOIN ${recordTable} AS r ON r.id = ${joinKey}`),
+        `语句必须 LEFT JOIN 记录表（INNER 会让排队中的作业整条消失）：${sql}`,
+      );
+      assert.ok(sql.includes('r.revision AS target_revision'), sql);
+      assert.equal(/\bINNER\s+JOIN\b/i.test(sql), false, sql);
+      // 标量子查询会被静态列审计当成列名（`ocr_records` 会变成 `ocr_jobs` 的列）⇒ 必红。
+      assert.equal(sql.includes('(SELECT'), false, sql);
+    }
+  }
+  // 取消面故意不读记录表：可被取消的作业必然还没有记录（记录只由终态事务写）。
+  for (const sql of [...ADMIN_JOB_SQL.lock, ...ADMIN_JOB_SQL.update]) {
+    assert.equal(sql.includes('JOIN'), false, sql);
+    assert.equal(sql.includes('target_revision'), false, sql);
+  }
+});
+
+test('取消面：回传的 target_ref 与取消前全等，只有 revision 迁移 +1（service.ts:801-818 的硬要求）', async () => {
+  const queued = { ...ROWS_BY_TABLE['public.recognition_jobs'][0], target_revision: null };
+  const pool = cancelPool(
+    { ...rowsWithRecordRevision(), 'public.recognition_jobs': [queued] },
+    { 'public.recognition_jobs': [{ ...queued, revision: 2, state: 'cancelled' }] },
+  );
+  const port = portWith(pool);
+
+  const before = await port.get(queued.id);
+  assert.deepEqual(before.target_ref, { type: 'recognition', id: queued.recognition_id, revision: 1 });
+
+  const outcome = await port.cancel(queued.id, 1, CANCEL_AUDIT);
+  assert.equal(outcome.ok, true);
+  // service.ts:801-808：取消前后 target_ref 的 type / id / revision 必须完全一致。
+  assert.deepEqual(outcome.job.target_ref, before.target_ref, 'target_ref 三字段取消前后必须全等');
+  // service.ts:818：作业行自己的 revision 必须正好 +1。
+  assert.equal(outcome.job.revision, before.revision + 1);
+  assert.equal(outcome.job.state, 'cancelled');
+  assert.equal(
+    pool.clientCalls.some((call) => call.text.includes('target_revision')),
+    false,
+    '取消事务（lock/update）不得读记录表：记录只由终态事务写，可被取消的作业必然还没有记录',
+  );
+  // 两条时钟互不冒充：#589 的取消审计写进 `target_ref.revision` 的是**作业** revision（取消前 1），
+  // 而本片 `AdminJob.target_ref.revision` 是**记录**版本 —— 同一笔取消里两个数各走各的。
+  const auditCall = pool.clientCalls.find((call) =>
+    call.text.includes('record_admin_job_cancel_audit'),
+  );
+  assert.ok(auditCall, '取消事务里必须调用 #589 的审计函数（本片不改它的签名与迁移）');
+  assert.deepEqual(
+    auditCall.values,
+    [CANCEL_AUDIT.actorId, queued.id, 1, CANCEL_AUDIT.reasonCode, CANCEL_AUDIT.requestId],
+    'p_job_revision 必须是取消前的作业 revision（1），不是记录版本、也不是取消后的 2',
+  );
+  assert.equal(pool.client.released, true, '事务客户端必须 release');
 });
