@@ -381,6 +381,43 @@ GRANT EXECUTE ON FUNCTION public.count_deletion_receipts() TO gengyun_api_runtim
 -- #endregion gy-r34-i19-deletion-receipt-grant
 \echo '20-login-roles.sql：已授予 set_deletion_receipt/resolve_deletion_receipt/count_deletion_receipts 的 EXECUTE（回执 bearer 台账唯一读写路径；运行时对 public.deletion_requests 仍然零表级、零列级直接权限）。'
 
+-- --- D5. 第三方删除持久化：请求与证据的唯一读/写路径（S4 P1 / 迁移 0044）--------
+-- `public.third_party_deletions` 在 `90-assert-least-privilege.sql:1131-1134` 是
+-- **forbidden**（断言 48 `runtime_domain_forbidden_tables_untouched` 要求运行时对它零表级、
+-- 零列级权限），因为它记的是「第三方到底删没删、证据是什么」——那是审计面，不是业务草稿。
+-- 迁移 0044 建了两条**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员，
+-- `REVOKE ALL ... FROM PUBLIC`）：
+--   · `record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)` —— 唯一写路径
+--     （覆盖写 + 状态机单调守卫 + `confirmed` 必须一次带齐证据；两个面同时写同一状态）；
+--   · `list_third_party_deletions(uuid)` —— 唯一读路径（只吐八个证据面列，固定排序）。
+-- 为什么必须这样（而不是给运行时一条表级 INSERT/UPDATE）：表级写权限会连
+-- 「终态不可回退 / confirmed 必须有证据 / 一面写齐」这三条谓词一起送掉 —— 那三条谓词**只**
+-- 活在这条函数里；而且一旦有 SELECT，第三方删除的证据面就变成任意读。
+-- 因此这里**只**授 EXECUTE：`third_party_deletions` 对运行时的授权面**逐字未变**
+-- （`domain_manifest` 的 forbidden 行与断言 48 不动，本域只由 `function_surface_manifest`
+-- 登记函数面）。若要把表权限授出去，等于改掉一条安全不变量，那要走安全评审。
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败
+-- （绝不留一个「看似已收敛、实际第三方删除记不住」的运行态）。
+-- #region gy-s4-third-party-deletion-grant
+-- 下面这一段是**可被测试原样抽取执行**的纯 SQL 区域（不含 psql 元命令）。
+DO $$
+BEGIN
+  IF to_regprocedure('public.record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)：迁移 0044 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+  IF to_regprocedure('public.list_third_party_deletions(uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.list_third_party_deletions(uuid)：迁移 0044 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_third_party_deletion(uuid, text, uuid, text, text, text, timestamptz) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.list_third_party_deletions(uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_third_party_deletion(uuid, text, uuid, text, text, text, timestamptz) TO gengyun_api_runtime;
+GRANT EXECUTE ON FUNCTION public.list_third_party_deletions(uuid) TO gengyun_api_runtime;
+-- #endregion gy-s4-third-party-deletion-grant
+\echo '20-login-roles.sql：已授予 record_third_party_deletion(...) / list_third_party_deletions(uuid) 的 EXECUTE（第三方删除请求与证据的唯一读/写路径；public.third_party_deletions 对运行时仍然 forbidden，一条表级/列级权限都没加）。'
+
 
 -- --- E. 账号停用/恢复：唯一写路径的 EXECUTE（GY-I22 / 迁移 0017）--------------
 -- 迁移 0017 建了**窄口径** `SECURITY DEFINER` 函数（属主＝迁移管理员）并

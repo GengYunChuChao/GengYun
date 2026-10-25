@@ -1796,6 +1796,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 重核验操作者存在 + active + 当前有效持 jobs:cancel ⇒ 调用方无法伪造 actor 或动作文本。
     ('public',         'record_admin_job_cancel_audit',      'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- GY-S4（第三方删除持久化 P1 / 迁移 0044）：第三方删除请求与证据的**唯一**读/写路径
+    -- （两条窄口径 SECURITY DEFINER 函数）。运行时对 `third_party_deletions` 仍是
+    -- domain_manifest 的 forbidden（`public` 无表级、无列级权限；断言 48 与 106 双向钉住），
+    -- 请求与证据只能经这两条函数进出；EXECUTE 只授运行时（断言 3 / 106 精确比对 grantee 集）。
+    ('public',         'record_third_party_deletion',        'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'list_third_party_deletions',         'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -3948,6 +3956,97 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                  AND c.conname = 'admin_scopes_scope_closed_set'
                  AND c.contype = 'c'
             ), '（无 admin_scopes_scope_closed_set 约束）')
+  UNION ALL
+  -- 105. GY-S4（第三方删除持久化 P1 / 迁移 0044）：第三方删除请求与证据的**唯一**读/写函数
+  --      必须恰各存在一个（名字 + 精确签名；多一个重载即判红 —— 重载会让 20-login-roles.sql
+  --      的 `GRANT ... ON FUNCTION <完整签名>` 与调用方解析同时变含糊），且两条都是
+  --      SECURITY DEFINER + 固定 search_path=pg_catalog + TimeZone=UTC。
+  --      为什么必须 SECURITY DEFINER：`public.third_party_deletions` 在 domain_manifest 里是
+  --      forbidden（`:1131-1134`），运行时以调用者身份读写它必然 42501 —— 函数是唯一入口。
+  SELECT 'third_party_deletion_functions_defined',
+         to_regprocedure('public.record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)') IS NOT NULL
+         AND to_regprocedure('public.list_third_party_deletions(uuid)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'record_third_party_deletion'
+                 AND pronamespace = 'public'::regnamespace) = 1
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'list_third_party_deletions'
+                 AND pronamespace = 'public'::regnamespace) = 1
+         AND (SELECT count(*) FROM pg_proc
+               WHERE pronamespace = 'public'::regnamespace
+                 AND proname IN ('record_third_party_deletion', 'list_third_party_deletions')
+                 AND prosecdef) = 2
+         AND (SELECT count(*) FROM pg_proc
+               WHERE pronamespace = 'public'::regnamespace
+                 AND proname IN ('record_third_party_deletion', 'list_third_party_deletions')
+                 AND proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']) = 2,
+         '第三方删除持久化必须恰有 record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz) 与 list_third_party_deletions(uuid) 各一个，且都是 SECURITY DEFINER + search_path=pg_catalog + TimeZone=UTC；实测 '
+         || COALESCE((
+              SELECT string_agg(p.proname || '(secdef=' || p.prosecdef
+                              || ',proconfig=' || COALESCE(array_to_string(p.proconfig, ';'), 'NULL') || ')',
+                              ' | ' ORDER BY p.proname)
+                FROM pg_proc p
+               WHERE p.pronamespace = 'public'::regnamespace
+                 AND p.proname IN ('record_third_party_deletion', 'list_third_party_deletions')
+            ), '（两个函数都不存在）')
+
+  UNION ALL
+  -- 106. 授权面：EXECUTE 只授运行时（PUBLIC 与任何其它角色一律不得执行），**同时**
+  --      `public.third_party_deletions` 对运行时仍是 forbidden —— 表级零位、列级零位。
+  --      这是 105 的配对：只加函数、不顺手发一条表权限，否则 0044 的「唯一入口」就是空话
+  --      （有 INSERT 就能绕过状态机与证据约束，有 SELECT 就能任意读证据面）。
+  SELECT 'third_party_deletion_functions_execute_exact',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           'public.record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)',
+           'EXECUTE'
+         )
+         AND has_function_privilege(
+           'gengyun_api_runtime',
+           'public.list_third_party_deletions(uuid)',
+           'EXECUTE'
+         )
+         AND NOT has_function_privilege(
+           'public',
+           'public.record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)',
+           'EXECUTE'
+         )
+         AND NOT has_function_privilege(
+           'public',
+           'public.list_third_party_deletions(uuid)',
+           'EXECUTE'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname IN ('record_third_party_deletion', 'list_third_party_deletions')
+              AND a.privilege_type = 'EXECUTE'
+              AND (a.grantee = 0
+                   OR a.grantee NOT IN ('gengyun_api_runtime'::regrole, p.proowner))
+         )
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'SELECT')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'INSERT')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'UPDATE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'DELETE')
+         AND NOT has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'TRUNCATE')
+         AND NOT has_any_column_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'SELECT')
+         AND NOT has_any_column_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'INSERT')
+         AND NOT has_any_column_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'UPDATE'),
+         '第三方删除两函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行），且 public.third_party_deletions 对运行时必须仍是 forbidden（零表级、零列级权限）；实测 '
+         || COALESCE((
+              SELECT string_agg(p.proname
+                              || '(runtime_exec=' || has_function_privilege('gengyun_api_runtime', p.oid, 'EXECUTE')
+                              || ',public_exec=' || has_function_privilege('public', p.oid, 'EXECUTE')
+                              || ',proacl_null=' || (p.proacl IS NULL) || ')',
+                              ' | ' ORDER BY p.proname)
+                FROM pg_proc p
+               WHERE p.pronamespace = 'public'::regnamespace
+                 AND p.proname IN ('record_third_party_deletion', 'list_third_party_deletions')
+            ), '（两个函数都不存在）')
+         || '；表面 runtime INSERT=' || has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'INSERT')
+         || ' SELECT=' || has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'SELECT')
+         || ' 任一列 SELECT=' || has_any_column_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'SELECT')
 )
 
 SELECT label, ok, detail
@@ -3985,6 +4084,10 @@ SELECT CASE
 -- R37 · #18 S2 片1（迁移 0041）：再追加两条（103 后台 scope 写面函数授权面 / 104 `admin_scopes`
 -- 闭集约束面）⇒ 静态值 122 条；`external_manifest` 的 admin_scopes 行与槽 9 的
 -- protected_columns **一句未动**（运行时仍然零写入），新增的只有函数面与约束面。
+-- GY-S4（第三方删除持久化 P1 / 迁移 0044）：再追加两条（105 两函数定义面 / 106 授权面 +
+-- 表仍 forbidden）⇒ 静态值 124 条；`domain_manifest` 的 third_party_deletions forbidden 行
+-- 与断言 48 **一句未动**（运行时对它仍然零表级、零列级权限），新增的只有
+-- `function_surface_manifest` 的两行函数面。
 DO $$
 DECLARE
   v_failed integer;

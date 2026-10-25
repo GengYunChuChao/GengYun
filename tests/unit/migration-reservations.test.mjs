@@ -137,7 +137,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18 已落盘 ⇒ 42 文件 + 1 保留 === 43、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1 已落盘 ⇒ 43 文件 + 1 保留 === 44、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -147,7 +147,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.deepEqual(
     numbering.gaps,
     [37],
-    `0040（#568）、0041（#18 S2 片1）、0042（GY-R37 片）与 0043（#18 R18：作业取消审计落库）都已落盘 ⇒ 合流树的缺号必须仍只有 [37]（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
+    `0040（#568）、0041（#18 S2 片1）、0042（GY-R37 片）、0043（#18 R18：作业取消审计落库）与 0044（GY-S4 P1：第三方删除持久化）都已落盘 ⇒ 合流树的缺号必须仍只有 [37]（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(
     numbering.reserved,
@@ -165,7 +165,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（42 = 43 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（43 = 44 − 1）',
   );
 
   const files = migrations.map((item) => item.filename);
@@ -265,6 +265,13 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
     files.includes('0043_admin_job_cancel_audit.sql'),
     true,
     '#18 R18 片的 0043 已落盘 ⇒ 真实文件必须在清单里（号位是分配好的 0043，⛔ 不许换号），且台账不得登记 43',
+  );
+  // GY-S4 P1 片（第三方删除持久化）：0044 只加两条「读写唯一入口」的窄口径 SECURITY DEFINER 函数 +
+  // 把运行时 EXECUTE 交给 20-login-roles.sql 的 D5 区（表本身仍 forbidden，不加列、不加态），落在 0043 之后。
+  assert.equal(
+    files.includes('0044_third_party_deletion_persistence.sql'),
+    true,
+    'GY-S4 P1 片的 0044 已落盘 ⇒ 真实文件必须在清单里（号位是分配好的 0044，⛔ 不许换号），且台账不得登记 44',
   );
   assert.equal(
     files.some((name) => /^0037_/.test(name)),

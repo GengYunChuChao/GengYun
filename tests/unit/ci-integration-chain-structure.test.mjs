@@ -74,6 +74,17 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '不进无 PG 的回环链。',
   },
   {
+    path: 'tests/integration/third-party-deletion-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_third_party_deletion_test`（脚本自己断言 hostname=127.0.0.1、'
+      + 'pathname=/gengyun_third_party_deletion_test、public 下无表）：自建 5 个既有 NOLOGIN 域组 + 运行时 LOGIN'
+      + '（口令 `randomBytes(24)` 生成**并写进它自己用的运行时 URL**，scram 下自洽），D5 授权区从出厂文件'
+      + ' `deploy/postgres-cvm/sql/20-login-roles.sql` **原样抽取执行**（不复制 SQL：授权被删/被改宽就变红），'
+      + '收尾按 `pg_roles` 快照差集 DROP 并复核为空；由 `.github/workflows/real-pg-integration.yml` 的独立真库 job'
+      + '（`postgres:17.11` service）里一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_third_party_deletion_test`）'
+      + '⇒ 接进真库 job 不等于进 `test:integration:http`（回环链里既没有真 PG 也没有可建角色的超管连接），'
+      + '故在此如实登记为未接线。',
+  },
+  {
     path: 'tests/integration/account-suspend-pg.mjs',
     reason: '需真实 PG 17.11（硬钉库名 `gengyun_suspend_test`；脚本要求**空库**，自己 apply 0001–0017 后把 0017 '
       + '单独跑 UP/ROLLBACK/REPLAY 三连）：R28-S39 已把它接进 `.github/workflows/real-pg-integration.yml`，'

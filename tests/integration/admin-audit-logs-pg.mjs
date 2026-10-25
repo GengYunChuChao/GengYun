@@ -260,8 +260,8 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  assert.equal(applied.rows[0].version, '0043', '迁移 0043 必须是最后一条已应用版本');
-  pass('迁移 0043 经 migrate.ts up 落到真库（schema_migrations 末项 0043）');
+  assert.equal(applied.rows[0].version, '0044', '迁移 0044 必须是最后一条已应用版本');
+  pass('迁移 0044 经 migrate.ts up 落到真库（schema_migrations 末项 0044）');
 
   await ownerPool.query(`GRANT USAGE ON SCHEMA public TO ${RUNTIME_ROLE}, ${UNGRANTED_ROLE}`);
   const region = grantRegion('deploy/postgres-cvm/sql/20-login-roles.sql', 'gy-r34-audit-logs-grant');
