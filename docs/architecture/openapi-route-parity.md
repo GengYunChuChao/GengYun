@@ -15,13 +15,13 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 114 |
-| 契约操作（paths × method） | 115 |
-| 实现 ∩ 契约 | 113 |
+| 已挂载路由（不含 HEAD） | 117 |
+| 契约操作（paths × method） | 116 |
+| 实现 ∩ 契约 | 116 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
-| 未实现但台账已标 `planned` | 2 |
+| 未实现但台账已标 `planned` | 0 |
 | 台账 `route_mounted` 与运行时不一致 | 0 |
 
 ### 多出（实现有、契约无）
@@ -40,10 +40,7 @@
 
 ### 未实现但台账已标 planned
 
-| 操作 | operationId | 阻塞说明 |
-| --- | --- | --- |
-| `get /api/v1/catalog/species` | listSpecies | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
-| `post /api/v1/registrations/verify` | verifyRegistration | 领域库层已有实现或数据（packages/reference、packages/knowledge），HTTP 路由未装配 |
+无。
 
 ### 台账 route_mounted 与运行时不一致
 
@@ -98,7 +95,7 @@
 | POST | `/auth/wechat` | loginWechat | public | 不要求 | 是 | implemented | 一致 |
 | GET | `/catalog/crops` | listCrops | user | 不要求 | 是 | implemented | 一致 |
 | GET | `/catalog/regions` | listRegions | user | 不要求 | 是 | implemented | 一致 |
-| GET | `/catalog/species` | listSpecies | user | 不要求 | 否 | planned | 计划中 |
+| GET | `/catalog/species` | listSpecies | user | 不要求 | 是 | implemented | 一致 |
 | DELETE | `/comments/{id}` | deleteComment | user | 需要 | 是 | partial | 一致 |
 | GET | `/comments/{id}` | getComment | user | 不要求 | 是 | partial | 一致 |
 | PATCH | `/comments/{id}` | editComment | user | 需要 | 是 | partial | 一致 |
@@ -124,11 +121,12 @@
 | POST | `/jobs/{id}/cancel` | cancelJob | user | 需要 | 是 | partial | 一致 |
 | GET | `/knowledge` | listKnowledge | user | 不要求 | 是 | partial | 一致 |
 | GET | `/knowledge/{id}` | getKnowledge | user | 不要求 | 是 | implemented | 一致 |
+| DELETE | `/me/account/deletion` | cancelDeletion | user | 不要求 | 是 | partial | 一致 |
 | POST | `/me/account/deletion` | requestAccountDeletion | user | 不要求 | 是 | partial | 一致 |
 | GET | `/me/consents` | listConsents | user | 不要求 | 是 | partial | 一致 |
 | POST | `/me/consents` | grantConsent | user | 不要求 | 是 | partial | 一致 |
 | DELETE | `/me/consents/{purpose}` | withdrawConsent | user | 需要 | 是 | partial | 一致 |
-| GET | `/me/exports` | listExports | user | 不要求 | 是 | planned | planned（台账 planned 但已挂载） |
+| GET | `/me/exports` | listExports | user | 不要求 | 是 | partial | 一致 |
 | GET | `/me/privacy-policy` | getPrivacyPolicy | user | 不要求 | 是 | partial | 一致 |
 | GET | `/me/profile` | getProfile | user | 不要求 | 是 | implemented | 一致 |
 | PUT | `/me/profile` | putProfile | user | 需要 | 是 | implemented | 一致 |
@@ -160,7 +158,7 @@
 | DELETE | `/recognitions/{id}` | deleteRecognition | user | 需要 | 是 | partial | 一致 |
 | GET | `/recognitions/{id}` | getRecognition | user | 不要求 | 是 | partial | 一致 |
 | PATCH | `/recognitions/{id}/selection` | selectSpecies | user | 需要 | 是 | partial | 一致 |
-| POST | `/registrations/verify` | verifyRegistration | user | 不要求 | 否 | planned | 计划中 |
+| POST | `/registrations/verify` | verifyRegistration | user | 不要求 | 是 | partial | 一致 |
 | POST | `/reports` | createReport | user | 不要求 | 是 | partial | 一致 |
 | GET | `/reports/{id}` | getOwnReport | user | 不要求 | 是 | partial | 一致 |
 | POST | `/speech/synthesis` | createSynthesis | user | 不要求 | 是 | partial | 一致 |

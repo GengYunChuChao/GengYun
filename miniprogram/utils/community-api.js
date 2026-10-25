@@ -74,6 +74,28 @@ function validAuthor(author) {
   if (author.avatar_media_id !== null && !uuid(author.avatar_media_id)) throw failure('INVALID_RESPONSE')
   if (author.avatar_media !== null) mediaRef(author.avatar_media)
 }
+
+/** 注销作者默认头像字（与 `community/authors.ts::anonymize` 的 `display_name='已注销用户'` 对齐；固定值，不取原头像）。 */
+const ANONYMIZED_AVATAR = '已'
+
+/**
+ * 作者展示投影（**单一实现**，列表页/详情页/评论共用）：把契约 `Author` 投影成展示字段，
+ * 与已合服务端（`community/authors.ts::anonymize` / `community/personal-info.ts`）对齐：
+ *   - `name`：前台显示名。注销作者的服务端投影就是「已注销用户」，这里**原样透传**，
+ *     不另造第二套文案、不覆盖 `display_name`；
+ *   - `anonymized`：`state === 'anonymized'`（页面据此渲染默认头像与「已注销」标记）；
+ *   - `avatar`：默认头像字。契约 `avatar_media` 未接线／已注销时一律回落默认头像，
+ *     **不取原头像坐标**；注销作者用固定「已」，活跃假名作者取显示名首字（demo 同形态）。
+ */
+function authorView(author) {
+  const anonymized = author.state === 'anonymized'
+  return {
+    name: author.display_name,
+    anonymized: anonymized,
+    avatar: anonymized ? ANONYMIZED_AVATAR : author.display_name.slice(0, 1)
+  }
+}
+
 function mediaRef(ref) {
   keys(ref, ['media_id', 'media_revision'])
   if (!uuid(ref.media_id) || !Number.isSafeInteger(ref.media_revision) || ref.media_revision < 1) {
@@ -399,6 +421,7 @@ module.exports = {
   binding: binding,
   current: current,
   validId: uuid,
+  authorView: authorView,
   listPosts: listPosts,
   createPost: createPost,
   getPost: getPost,

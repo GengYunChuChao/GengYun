@@ -52,9 +52,14 @@ const ENV = 'CONVERSATIONS_PG_TEST_URL';
 const API = '/api/v1';
 
 // 迁移子集：0001（基础表/会话/幂等键）→ 0002（知识/来源表）→ 0005（读面来源视图）
-// → 0008（幂等键表）→ 0010（读面知识视图）→ 0012（`created_at` 列 + 视图重建）→ 0013（会话三表）。
+// → 0008（幂等键表）→ 0010（读面知识视图）→ 0012（`created_at` 列 + 视图重建）→ 0013（会话三表）
+// → 0036（后台内容域三表：`admin_content_entities|revisions|idempotency`）。
 // 0012 不是可选项：`catalog_read.current_knowledge` 在 0010 里**没有** `created_at`，读面 SQL 却按它排序。
-const MIGRATION_VERSIONS = Object.freeze(['0001', '0002', '0005', '0008', '0010', '0012', '0013']);
+// 0036 同样不是可选项：`app.ts` 把 `operations.listKnowledge` 的引用完整性解析器接到
+// `createAsyncReferenceIntegrity(adminContentStore)`（R34/#538 的 PG 实现），缺这三张表时
+// `/knowledge` 会经 `admin/ops/content-pg.ts` 的 `foldDatabaseError` 折成 503
+// `PROVIDER_UNAVAILABLE`「后台资料库暂不可用」——即整条知识读链假红（不是被测对象的行为缺口）。
+const MIGRATION_VERSIONS = Object.freeze(['0001', '0002', '0005', '0008', '0010', '0012', '0013', '0036']);
 
 // 问题与正文都用合成农业文本：不含危险混配/不定量用量/注入话术，保证筛查层放行（[N] 单独用注入话术）。
 const QUESTION = '稻田杂草怎么防除？';

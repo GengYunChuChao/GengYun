@@ -667,23 +667,36 @@ const TABLE_WIDE_COLUMN = '*';
  *   `SELECT`（`community/store-pg.ts`）⇒ 字面量 268 → **269**、SELECT 143 → **144**；
  *   DELETE 36、RETURNING 82、列要求 1720／已覆盖 1666、引用表 44 张、`rowLocks` 分桶、
  *   INSERT/UPDATE 42/47 均不变。零迁移、零 GRANT 变更。
+ * ⑭ 2026-10-25 GY-I07（Refs #7）`GET /catalog/species`：`profile/service.ts` 新增一条
+ *   `SELECT … FROM public.species … FOR SHARE` ⇒ 逐文件 `profile/service.ts` 11 → **12**、
+ *   字面量 272 → **273**、SELECT 144 → **145**、`rowLocks.SHARE` 16 → **17**、
+ *   行锁要求 41 → **42**、引用表 44 → **45**（新增 `public.species`）、
+ *   列要求 1726 → **1730**／已覆盖 1672 → **1676**（缺口仍 **0**：同步在
+ *   `services/api/db/roles/profile_runtime.sql` 补了四个契约列的 SELECT 与锁列 UPDATE）。
+ *   RETURNING／ON CONFLICT／`SELECT *`／函数调用／无顶层 FROM／INSERT／UPDATE／DELETE 均不变。
+ * ⑮ 2026-10-25 #538 解冲突合流 `upstream/main` = `1d65b7ee`（合并后**重新实测**，非两侧旧值相加）：
+ *   上游带入 `registrations` / `species` / 注销与隐私侧的 SQL 改动 ⇒ 相对本片上一版实测
+ *   字面量 287 → **288**、SELECT 152 → **153**、`rowLocks.SHARE` 16 → **17**、
+ *   行锁要求 42 → **43**、引用表 47 → **48**、列要求 1851 → **1855**／已覆盖 1797 → **1801**
+ *   （缺口仍 **0**）；auditedFiles 20、INSERT/UPDATE/DELETE 45/51/39、RETURNING 91、
+ *   ON CONFLICT 28、`SELECT *` 15（`t.*` 4）、函数调用 2、无顶层 FROM 13、不可判插值 5 均不变。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 20,
-  sqlLiterals: 287,
-  statements: { INSERT: 45, UPDATE: 51, SELECT: 152, DELETE: 39 },
+  sqlLiterals: 288,
+  statements: { INSERT: 45, UPDATE: 51, SELECT: 153, DELETE: 39 },
   returningClauses: 91,
   onConflictClauses: 28,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 26, SHARE: 16 },
+  rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
   noTargetTable: 13,
-  referencedTables: 47,
-  columnRequirements: 1851,
-  coveredRequirements: 1797,
+  referencedTables: 48,
+  columnRequirements: 1855,
+  coveredRequirements: 1801,
   ledgerExemptions: 33,
-  rowLockRequirements: 42,
+  rowLockRequirements: 43,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
@@ -707,7 +720,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'privacy/consent-pg.ts': 14,
   'privacy/grant-pg.ts': 12,
   'privacy/ledger-pg.ts': 24,
-  'profile/service.ts': 11,
+  'profile/service.ts': 12,
   'recognitions': 21,
   'speech': 17,
 };
@@ -758,6 +771,7 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.single_profiles',
   'public.speech_idempotency',
   'public.speech_jobs',
+  'public.species',
   'public.transcriptions',
   'public.user_backup_copies',
   'public.users',

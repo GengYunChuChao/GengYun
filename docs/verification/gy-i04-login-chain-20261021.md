@@ -21,7 +21,7 @@
 | (a) `wx.login` 取 code | **通** | 通（未改） | `miniprogram/utils/auth.js:317-324` |
 | (b) 小程序 → `POST /auth/wechat`（契约 operationId **`loginWechat`**，不是 `postAuthWechat`） | **通** | 通（未改） | `auth.js:325-329`；`services/api/src/routes/auth.ts:42-83` |
 | (c) 会话落地（token 存储 / 过期 / 401 vs 403 vs 5xx） | **半通**：令牌存储与过期正确；但 7 个适配层把 403 折叠成登录失效并**误清会话**；`GET /auth/session` 收到 503 也清会话 | **通**（本页范围内） | 改前 `favorites-api.js:93`、`history-api.js:164`、`knowledge-api.js:73`、`voice-api.js:199`、`profile-api.js:22-24`、`messages-api.js:123-127`、`community-api.js:163-167`；`auth.js` 改前 183-185 → 改后 **261-279** |
-| (d) 同意（consent）/ 隐私闸与登录的先后 | **半通**：服务端用途闸真实存在且挂在 5 个受理面；客户端**零授权入口**（全仓无 `me/consents` 调用），契约也无「读用途政策」面；社区投稿的 `public_posting` 闸未挂 | 未变（需裁决，见 §6） | `services/api/src/app.ts:850`、`:1640`、`:1641`、`:1642`、`:1660`、`:1711`；`routes/community.ts` 16 处 `preHandler` 只有 `guards.requireUser`；`app.ts:1735` |
+| (d) 同意（consent）/ 隐私闸与登录的先后 | **半通**：服务端用途闸真实存在且挂在 5 个受理面；客户端**零授权入口**（全仓无 `me/consents` 调用），契约也无「读用途政策」面；社区投稿的 `public_posting` 闸未挂 | 未变（需裁决，见 §6） | `services/api/src/app.ts:939`、`:1640`、`:1641`、`:1642`、`:1660`、`:1711`；`routes/community.ts` 16 处 `preHandler` 只有 `guards.requireUser`；`app.ts:1735` |
 
 ### 0.1 归因修复前后（本期唯一的行为变更）
 
@@ -397,7 +397,7 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 | `docs/verification/gy-i28-unified-states-20261021.md:26-28,238`「403 不再被折叠」 | 改前只在呈现层成立；传输层 7 个 `*-api.js` 仍在折叠 | 本期补齐并已在该页加边界注记（见 §6.1 第 6 行） |
 | `miniprogram/utils/identify-api.js:41` 与 `speech-transcript.js:229` 注释「同口径」 | 两份码表实际**不同**（前者不含 `ACCOUNT_INACTIVE`，后者含），对同一响应给出相反结论 | 已收敛到 `auth.attribution`，两处自持码表删除 |
 | `services/api/src/privacy/egress.ts:11-19` 挂载表含「社区投稿入口」 | `routes/community.ts` 16 处 preHandler 均未挂用途闸 | 见 §6.2 第 2 项 |
-| `services/api/src/auth/middleware.ts:7` 注释「供 GY-I27 的 requireConsent 直接消费」 | 核对为**准确**（`app.ts:850` 起已消费） | 非漂移，记录以证明已核 |
+| `services/api/src/auth/middleware.ts:7` 注释「供 GY-I27 的 requireConsent 直接消费」 | 核对为**准确**（`app.ts:939` 起已消费） | 非漂移，记录以证明已核 |
 
 ## 8. 不证明什么
 

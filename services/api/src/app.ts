@@ -32,7 +32,7 @@ import { registerHealthRoutes } from './routes/health.ts';
 import { registerPublicHomeRoute } from './routes/public-home.ts';
 import { registerUserAuthRoutes } from './routes/auth.ts';
 import { registerAdminAuthRoutes } from './routes/admin-auth.ts';
-import { registerConsentRoutes } from './routes/consents.ts'; import { registerExportRoutes } from './routes/exports.ts';
+import { registerConsentRoutes } from './routes/consents.ts'; import { registerExportRoutes } from './routes/exports.ts'; import { registerRegistrationVerifyRoutes } from './routes/registrations.ts';
 import { registerProfileRoutes } from './routes/profile.ts';
 import { registerKnowledgeRoutes } from './routes/knowledge.ts';
 import { registerRecognitionRoutes } from './routes/recognitions.ts';
@@ -2045,8 +2045,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     deletion: userDataDeletion,
     receipts: deletionReceipts,
     available: config.executionMode !== 'real',
-    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；
-    // 不注入 ⇒ 行为与接线前逐字一致（见 account-deletion.ts 的 AccountEgressRevoker 注释）。
+    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；不注入 ⇒ 行为与接线前逐字一致。
+    // ⚠ 可达性（实测）：本项注入门是「real ⇒ 有」（见上方 `egressRevoker` 装配），`available`（real ⇒ false）与之**互斥** ⇒ real 下 `requireWired()` 先 503、非 real 装配期不建撤销器 ⇒ **两条路都到不了这里**（仅 `privacyInjection` 测试注入可达）；要生效须先开放 real 注销，见 tests/unit/account-deletion-egress-revoker-reachability.test.mjs。
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
 
@@ -2340,7 +2340,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，行为与
   // `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
   registerConversationRoutes(app, config, gatedGuards, conversationService);
-
+  registerRegistrationVerifyRoutes(app, config, gatedGuards); // GY-I04：登记核对（POST /registrations/verify）唯一装配点；本行占用原有空行，避免推移既有证据锚点的行号
   app.setNotFoundHandler((request, reply) => {
     // 404 封套的 `message` 会原样回到调用方并被其日志/崩溃上报带走，因此同样不落查询串：
     // 未匹配的 URL 可能携带被拒的坐标参数（同一 `logSafePath` 口径）。

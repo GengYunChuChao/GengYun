@@ -1515,11 +1515,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('public', 'ocr_jobs',              'DELETE'),
     ('public', 'ocr_records',           'DELETE')
   ),
-  -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（16 张表，不在 domain_manifest 里）。
+  -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里；`species` 由 GY-I07 加入）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
   -- 授给 gengyun_auth_privacy / gengyun_consent_granter / gengyun_profile_runtime 等组、
   -- 再由 20-login-roles.sql 的 GRANT … TO gengyun_api_runtime 带进来的。旧清单只覆盖 20-login-roles
-  -- 的域段落，这 16 张表在断言里**完全不可见**——本片把它们冻成快照，让漂移可见。
+  -- 的域段落，这 17 张表在断言里**完全不可见**——本片把它们冻成快照，让漂移可见。
   --
   -- 快照来源（2026-10-21，PG 17.11，HEAD=4e93d7b 的 26 个迁移 + 8 个角色文件 + 20-login-roles.sql
   -- 全量应用后的干净集群实测，不是抄文档）：表级 has_table_privilege 逐 priv 读；列级取
@@ -1600,6 +1600,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['user_id','crop_id','region_code','region_catalog_version','revision']::text[],
      ARRAY['user_id','crop_id','region_code','region_catalog_version','revision']::text[],
      ARRAY['crop_id','region_code','region_catalog_version','revision','updated_at']::text[]),
+    -- GY-I07（Refs #7）：`GET /catalog/species` 的读面 = gengyun_profile_runtime 列级读四列
+    -- + 一列 UPDATE 作 `FOR SHARE` 锁列（与 crops/regions 同一族、同一形态）。
+    ('species',          'profile_runtime', false, false, false, false,
+     ARRAY['id','canonical_name','scientific_name','coverage_state']::text[],
+     ARRAY[]::text[], ARRAY['canonical_name']::text[]),
     ('users',            'auth_privacy', false, false, false, false,
      ARRAY['id','wechat_subject_lookup','state','auth_epoch','revision']::text[],
      ARRAY['wechat_subject_cipher','wechat_subject_lookup']::text[],
@@ -1788,7 +1793,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   -- R28-S52：跨 schema 关系面兜底清单（与 S43 的 external_manifest、S51 的
   -- function_surface_manifest 同构：把"点过名的关系"升级为"必须分类的关系面"）。
   -- 为什么需要：domain_manifest（public 表 21 granted + 1 granted_external + 4 forbidden）、
-  --   external_manifest（S43 的 16 张 public 表）、function_surface_manifest（S51 的 11 个函数）
+  --   external_manifest（S43 的 16 张 public 表 + GY-I07 的 `species` = 17 张）、function_surface_manifest（S51 的 11 个函数）
   --   三张清单覆盖的**全都只有 public**。非 public 的 4 个 schema（catalog_ops / catalog_read /
   --   knowledge_staging / staging_intake）里还有 9 个关系带组授权，而本切片之前只有
   --   preview_reader_scope（管 catalog_read.home_species）与 knowledge_runtime_scope
@@ -3364,7 +3369,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'speech_jobs / transcriptions 的整行 DELETE 必须全部 42501（DELETE 只授 speech_idempotency）；任一成功即越权'
 
   UNION ALL
-  -- 69-84. R28-S43 逐表范围断言（16 张经 NOLOGIN 组继承来的 public 表）：
+  -- 69-85. R28-S43 逐表范围断言（17 张经 NOLOGIN 组继承来的 public 表；`species` 由 GY-I07 插入在 single_profiles 之后，故其后的编辑序号注释整体后移一槽，仅作历史定位）：
   --     与 49-58 同形，差异只在快照来源 —— 这些权限来自 services/api/db/roles/*.sql 的五个组，
   --     不是 20-login-roles.sql 的域段落，所以不在 expected 清单里，49-58 对它们是完全盲的。
   --     判据全部收在 external_violations（一条违规一行明细）：ok 只问「这张表有没有违规」，
@@ -3431,9 +3436,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          ), '（无）')
 
   UNION ALL
-  -- 88. R28-S43 反向控制（PUBLIC 面）：external_manifest 的 16 张表在表级 relacl 与列级
+  -- 88. R28-S43 反向控制（PUBLIC 面）：external_manifest 的 17 张表在表级 relacl 与列级
   --     attacl 里都不许出现 grantee = 0。66 号只遍历 domain_manifest 的 granted /
-  --     granted_external，这 16 张表不在清单里，旧断言覆盖不到它们。
+  --     granted_external，这 17 张表不在清单里，旧断言覆盖不到它们。
   SELECT 'runtime_surface_no_public_leak',
          NOT EXISTS (
            SELECT 1
@@ -3455,7 +3460,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                        AND a.grantee = 0
                   )
          ),
-         'external_manifest 的 16 张表对 PUBLIC 必须零权限（表级 relacl + 列级 attacl 两处都查）；越界表：' ||
+         'external_manifest 的 17 张表对 PUBLIC 必须零权限（表级 relacl + 列级 attacl 两处都查）；越界表：' ||
          COALESCE((
            SELECT string_agg(e.tbl, ' / ' ORDER BY e.tbl)
              FROM external_manifest e

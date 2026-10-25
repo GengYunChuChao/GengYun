@@ -217,6 +217,39 @@ export function registerAccountDeletionRoutes(
         .send({ data: projected, meta: buildMeta(request, config) });
     },
   );
+
+  app.delete(
+    `${API_PREFIX}/me/account/deletion`,
+    {
+      // 鉴权 = 用户会话（**不是**回执 bearer）：取消是「本人取消自己的在途注销」，非本人无入口。
+      preHandler: guards.requireUser,
+      schema: { querystring: emptyQuery },
+    },
+    async (request, reply) => {
+      // 契约参数 `Idempotency-Key`（写操作一律 required，8..128）⇒ 缺失/越界 400。
+      // 顺序同 `routes/consents.ts` 的 `DELETE /me/consents/{purpose}`：鉴权 401 → 头部 400 → 未装配 503
+      // （与同文件 POST **相反**：POST 先 `requireWired()` 503、再 `runIdempotent()` 400）。取消的幂等由状态机给出（再取消 ⇒ 409），不写 24h 台账。
+      const key = request.headers['idempotency-key'];
+      if (typeof key !== 'string' || key.length < 8 || key.length > 128) {
+        throw new ApiError('IDEMPOTENCY_KEY_REQUIRED', '缺少有效幂等键');
+      }
+      const wired = requireWired();
+      const userId = readIdentity(request).userId;
+      let cancelled: Record<string, unknown> | null;
+      try {
+        cancelled = wired.deletion.cancelDeletion(userId);
+      } catch (error) {
+        throw toContractError(error);
+      }
+      if (cancelled === null) throw new ApiError('NOT_FOUND', '没有可取消的在途注销删除请求');
+      const projected = projectReceipt(cancelled);
+      if (projected === null) throw new ApiError('NOT_FOUND', '注销删除请求不存在');
+      return reply
+        .headers(noStore)
+        .header('ETag', `"${String(projected['revision'])}"`)
+        .send({ data: projected, meta: buildMeta(request, config) });
+    },
+  );
 }
 
 /** 只读诊断：本次请求是否携带 bearer（不读值、不写日志；供集成脚本的对照臂使用）。 */

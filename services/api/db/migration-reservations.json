@@ -44,10 +44,18 @@
     "故本片单独在树上时「有依据的缺号」为 36/37：36 个文件 + 2 保留 === max 38（三条不变量成立）。",
     "合入顺序 0036 → 0037 → 0038 依次推进；0036/0037 一落盘 reservedButPresent 立刻判红，条目按 remove_when 删。",
     "README 的同两条依据见 services/api/db/migrations/README.md 的「当前状态（2026-10-24 · 迁移 0038）」段。",
-    "【2026-10-25 #538 合流 · 迁移 0036 落盘 · 36 号条目已按 remove_when 删除】#538（feat/gy-r34-i18-content-pg）",
-    "把 0036_r34_admin_content_persistence.sql（后台内容/资料域落库）带上了树 ⇒ 该条目按它自己的 remove_when",
-    "**删除**（保留项一落盘就 reservedButPresent 判红，不许躺平）。合并后实测：文件 37 个（0001..0035 + 0036 + 0038）、",
-    "max=0038、保留 = [0037] ⇒ 37 + 1 === 38 且未声明缺号 0（缺号只有 0037，已由 #14 登记）。",
+    "【2026-10-25 #22 片C 解冲突合流（#553 已落 0038）· 迁移 0039 · 保留 36/37】上游 #553（#19 片B）已把",
+    "0038_r34_deletion_receipt_persistence.sql 真实落盘 ⇒ 它的保留条目按自己的 remove_when 删除；",
+    "本片（#22 片C）落 0039_r34_deletion_state_cancelled.sql ⇒ 现存「有依据的缺号」只剩 0036",
+    "（#538 feat/gy-r34-i18-content-pg，在飞）与 0037（#14 已裁定分配、尚无分支/文件）：",
+    "37 个文件 + 2 保留 === max 39，三条不变量成立；0036/0037 一落盘 reservedButPresent 立刻判红，条目按 remove_when 删。",
+    "README 的同两条依据见 services/api/db/migrations/README.md 的「当前状态（2026-10-25 · 合流后：`0001..0039`，缺 `0036`/`0037`）」段。",
+    "【2026-10-25 #538 合流 upstream/main@1d65b7ee · 迁移 0036 落盘 · 36 号条目已按 remove_when 删除】",
+    "#538（feat/gy-r34-i18-content-pg）把 0036_r34_admin_content_persistence.sql（后台内容/资料域落库）带上树 ⇒",
+    "该条目按它自己的 remove_when **删除**（保留项一落盘就 reservedButPresent 判红，不许躺平）。",
+    "本合流树实测：正向文件 38 个（0001..0035 连续 + 0036 + 0038 + 0039）、rollback/ 37 个、max=0039、",
+    "缺号只有 0037（#14 保留）⇒ 38 个文件 + 1 保留 === 39、未声明缺号 0（三条不变量成立）。",
+    "0035_r34_media_row_purge.sql 已随上游落盘 ⇒ 本片旧 README 段里那条 WARN[gap] 0035 的前提作废（届时一并删除）。",
     "37 号条目继续按它自己的 remove_when 保留（#14 落 0037 即删）。"
   ],
   "reservations": [
@@ -55,7 +63,7 @@
       "version": 37,
       "filename": "0037_issue_14_allocated.sql",
       "owner": "#14（已分配，号空出、尚无文件）",
-      "reason": "0037 已分配给 #14；本片 #19 片B 落 0038，缺号 0037 登记保留",
+      "reason": "0037 已分配给 #14（人工复核）；本合流树缺 0037 ⇒ 保留登记",
       "remove_when": "#14 落 0037 即删"
     }
   ]

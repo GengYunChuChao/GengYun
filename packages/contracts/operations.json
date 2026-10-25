@@ -135,6 +135,13 @@
       "version_required": false
     },
     {
+      "id": "cancelDeletion",
+      "path": "/me/account/deletion",
+      "method": "delete",
+      "scope": "user",
+      "version_required": false
+    },
+    {
       "id": "createUpload",
       "path": "/media/uploads",
       "method": "post",

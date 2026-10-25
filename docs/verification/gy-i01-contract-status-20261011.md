@@ -240,9 +240,9 @@ PASS: 状态为人工判定；本脚本只校验覆盖性、装配一致性与�
 
 **本表后续校订（2026-10-16 实测；测量基线 `3bc7451`；只订正被证伪的半句，⛔ 其余行与"未取得"结论一字未动）：**
 
-1. "对象存储"行括注的**「媒体路由本身也未装配」已过期**。实测 `services/api/src/app.ts:1354` `registerMediaRoutes(app, config, guards, mediaService);`，
+1. "对象存储"行括注的**「媒体路由本身也未装配」已过期**。实测 `services/api/src/app.ts:2250` `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate });`，
    媒体域 **7** 条路由全部已注册（`services/api/src/routes/media.ts:158/176/200/218/238/258/277`）。
-   （行号绑基线 `3bc7451`；对照读数：测量时 `upstream/main` = `1480aab3383b16daf7a5b5088c3e21cc12c422d3`，合流当前 main（`1fbe7572`）后同一调用现于 `services/api/src/app.ts:2142`；GY-R34-I19 树重取，该调用现在带 `{ consent: consentGate }` 形参。）
+   （行号：基线 `3bc7451` 时为 `:1354`；测量时 `upstream/main` = `1480aab3383b16daf7a5b5088c3e21cc12c422d3`，合流 main（`1fbe7572`）后同一调用在 `services/api/src/app.ts:2305`；**2026-10-25 在 `upstream/main` = `46dc7e0d` 树按符号 `registerMediaRoutes` 重取为 `:2250`**，该调用现带 `{ consent: consentGate }` 形参。）
 2. **该行的"未取得"结论仍成立，且理由更精确**：未取得的是**真实对象存储适配器**。装配点 `resolveMediaObjectStore`
    （`services/api/src/media/object-store.ts:447`）在 `real` 模式下于此返回未接线端口——同文件 `:450`：`if (config === null) return createUnwiredObjectStore();`；
    被调函数 `createUnwiredObjectStore`（同文件 `:143`）的默认理由常量 `UNWIRED_OBJECT_STORE_REASON`（同文件 `:136-137`）为

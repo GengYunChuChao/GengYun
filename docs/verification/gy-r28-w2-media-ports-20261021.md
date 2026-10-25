@@ -16,7 +16,7 @@
 
 接线前，`real` 模式下媒体域**整域 503**。确切落点（四步链条）：
 
-- `services/api/src/app.ts:1271`：`const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });`
+- `services/api/src/app.ts:1598`：`const mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode: config.executionMode });`
   —— 端口**只因显式注入而生**；生产启动路径从不注入，于是永远走回落分支。
 - `services/api/src/media/object-store.ts:448-451`：`resolveMediaObjectStore` 未收 `env` 时 `config === null` ⇒ `return createUnwiredObjectStore();`。
 - `services/api/src/media/object-store.ts:143`：`createUnwiredObjectStore` 的每个操作抛 `PROVIDER_UNAVAILABLE`（`retryable: false`，口径见同文件 `:10`）。
@@ -73,7 +73,7 @@
 
 1. **`tests/unit/media-real-mode-fail-closed.test.mjs`「唯一显式注入来源」**
    - 改前：`resolveMediaObjectStore` 调用点必须是 **1 处**（断言「生产码里不存在真实端口装配点」）
-   - 改后：允许 **2 处闭集**（`app.ts:1271` + `media/real-ports.ts`），同时**新增**三条更强的钉子——`approveRealMediaWiring` 调用点恰好 **1 处**、`app.ts` 只允许 `resolveMediaObjectStore({ executionMode })` 这一种带参形式、闭集外任何新调用点即红
+   - 改后：允许 **2 处闭集**（`app.ts:1598` + `media/real-ports.ts`），同时**新增**三条更强的钉子——`approveRealMediaWiring` 调用点恰好 **1 处**、`app.ts` 只允许 `resolveMediaObjectStore({ executionMode })` 这一种带参形式、闭集外任何新调用点即红
    - 理由：本片任务正是补那个装配点，只把 1 改成 2 是退化；故改成「点名两处 + 参数形状 + 铸造点唯一」的更强形状
 2. **`tests/unit/profile-log-redaction.test.mjs`**
    - 改前：`server.ts` 的 `buildApp({ config, pool })` 逐字钉子

@@ -203,7 +203,7 @@ discoverSqlHosts() 的结果  ==  16 个已审计文件  ∪  5 条 UNAUDITED_SQ
 | `FOR UPDATE` / `FOR NO KEY UPDATE` | **是** | PG 文档「must have `UPDATE` … for at least one column of each table so selected」；本仓用列级单列 `UPDATE`（如 `UPDATE (revision)`）作行锁载体，见下表「授权载体」列 |
 | `FOR SHARE` / `FOR KEY SHARE` | **否** | 派单 §2.5 明确「不需要额外权限」，本片按此判定 |
 
-**与仓库既有注释的差异（必须写清）**：`services/api/db/roles/consent_granter.sql:17` 与 `profile_runtime.sql:20-22` 的注释按「`FOR SHARE` 也需要 UPDATE」的旧口径多授了 `UPDATE(updated_at)` / `UPDATE(name)`。本片按派单口径判定，并做了**敏感性核对**：16 处 `FOR SHARE` 落在 9 张表上（`public.community_posts`、`public.consent_policies`、`public.consent_records`、`public.crops`、`public.privacy_epochs`、`public.recipients`、`public.regions`、`public.sessions`、`public.users`）。逐表核对「该表对运行时角色是否有任何 UPDATE 授权」：**没有任何一张表缺 UPDATE 授权（0 张）**。也就是说若按仓库注释的旧口径（`FOR SHARE` 也要 UPDATE）判定，会多出 0 条红字，与派单口径结论完全一致。
+**与仓库既有注释的差异（必须写清）**：`services/api/db/roles/consent_granter.sql:17` 与 `profile_runtime.sql:22-24` 的注释按「`FOR SHARE` 也需要 UPDATE」的旧口径多授了 `UPDATE(updated_at)` / `UPDATE(name)`。本片按派单口径判定，并做了**敏感性核对**：16 处 `FOR SHARE` 落在 9 张表上（`public.community_posts`、`public.consent_policies`、`public.consent_records`、`public.crops`、`public.privacy_epochs`、`public.recipients`、`public.regions`、`public.sessions`、`public.users`）。逐表核对「该表对运行时角色是否有任何 UPDATE 授权」：**没有任何一张表缺 UPDATE 授权（0 张）**。也就是说若按仓库注释的旧口径（`FOR SHARE` 也要 UPDATE）判定，会多出 0 条红字，与派单口径结论完全一致。
 
 19 条行锁要求逐条：
 

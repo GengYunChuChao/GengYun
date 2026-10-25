@@ -1,10 +1,10 @@
 {
   "schema": "gy-i07-ledger-lag-registry/v1",
-  "reviewed_at": "2026-10-23",
+  "reviewed_at": "2026-10-25",
   "original_reviewed_at": "2026-10-22",
   "base_commit": "a2ab0d9aff391a199142699038b01eda2f74d497",
   "resolved_base_commit": "7dd3d699d71ce5ce69b5254ea8a3e54aed4f7f79",
-  "note": "台账滞后登记（原：代码已更新、台账文字未更新）。2026-10-23 R33 已按代码事实订正两处 blocker 文本（第二次提交再为亚毫秒 tie-break 差异加限定）；本文件保留这两条逐字登记，作为「订正后文本仍与代码一致」的钉子（tests/unit/knowledge-ledger-sort-drift.test.mjs 的 ②③④ 仍逐字读取本文件）。本文件只登记事实，不改任何 status；status 变更属监工权限。见 docs/verification/gy-r33-contract-ledger-20261023.md 与 docs/verification/gy-r29-i07-closure-20261022.md；R34：#500 合入后已从「未修」订正为「已修」（改前/改后对照、代码判据与门禁读数见 docs/verification/gy-r34-ledger-microsync-20261023.md；测量 SHA f3a5f24d）。R34 合流重锚（2026-10-23）：R34 在 `operations` 里新增 `listAuditLogs` 一条（+37 行），`dimensions.pagination` 的 blocker/status 行随之整体下移 37 行（`ledger_line` 3199→3236、`status_field_line` 3168→3205），两条 blocker 的逐字文本未改、`status` 仍为 partial（改判属监工权限）。R34 点赞读面重锚（feat/gy-r34-likes-read）：`operations` 里新增 `getPostLike` 一条（+31 行），`dimensions.pagination` 的同一行再次整体下移 31 行（`ledger_line` 3236→3267、`status_field_line` 3205→3236），两条 blocker 的逐字文本与 `status` 均未改。",
+  "note": "台账滞后登记（原：代码已更新、台账文字未更新）。2026-10-23 R33 已按代码事实订正两处 blocker 文本（第二次提交再为亚毫秒 tie-break 差异加限定）；本文件保留这两条逐字登记，作为「订正后文本仍与代码一致」的钉子（tests/unit/knowledge-ledger-sort-drift.test.mjs 的 ②③④ 仍逐字读取本文件）。本文件只登记事实，不改任何 status；status 变更属监工权限。见 docs/verification/gy-r33-contract-ledger-20261023.md 与 docs/verification/gy-r29-i07-closure-20261022.md；R34：#500 合入后已从「未修」订正为「已修」（改前/改后对照、代码判据与门禁读数见 docs/verification/gy-r34-ledger-microsync-20261023.md；测量 SHA f3a5f24d）。R34 合流重锚（2026-10-23）：R34 在 `operations` 里新增 `listAuditLogs` 一条（+37 行），`dimensions.pagination` 的 blocker/status 行随之整体下移 37 行（`ledger_line` 3199→3236、`status_field_line` 3168→3205），两条 blocker 的逐字文本未改、`status` 仍为 partial（改判属监工权限）。R34 点赞读面重锚（feat/gy-r34-likes-read）：`operations` 里新增 `getPostLike` 一条（+31 行），`dimensions.pagination` 的同一行再次整体下移 31 行（`ledger_line` 3236→3267、`status_field_line` 3205→3236），两条 blocker 的逐字文本与 `status` 均未改。R34/#22 在途取消重锚（2026-10-24，@845b90e5 实测）：`operations` 里新增 `cancelDeletion` 一条（+27 行，`git diff --numstat 4f441ec4 HEAD` 实测 `27 0`），`operations.listKnowledge` 与 `dimensions.pagination` 两条的 blocker/status 行整体下移 27 行（`ledger_line` 716→743 / 3267→3294、`status_field_line` 694→721 / 3236→3263），两条 blocker 的逐字文本未改（test ② 的 `ledger_blocker_verbatim` 断言仍成立）、`status` 仍为 partial（改判属监工权限）。 GY-R35 合流重锚（2026-10-25，feat/gy-i19-me-exports ← upstream/main 6fb0b131）：`git merge --no-ff upstream/main` 后两侧插入并存（main 侧 `cancelDeletion` +27 行 与 本片 `listExports` planned→partial +19 行），两处登记的行号既不等于任一侧、也不是任一侧的 delta 平移：逐条按 `pointer` 的符号（operations 的 `id` / dimensions 的 `key`）＋字段名（`blocker` / `status`）在合并后的 `docs/architecture/contract-status.json` 里重新定位（实测归属块 `listKnowledge` 732-763 / `pagination` 3278-3314），得 `ledger_line` 762（=main 743+19 = HEAD 735+27，两条独立链同值）、`status_field_line` 740；`ledger_line` 3313（=main 3294+19 = HEAD 3286+27）、`status_field_line` 3282；合并后台账总行 3565（=main 3546+19 = HEAD 3538+27）；两条 blocker 的逐字文本与 `status` 均未改（test ② 的 `ledger_blocker_verbatim` 断言仍成立）。**实测更正（前提不成立）**：合流前推断「main 又插入 #554/#559/#560 条目 ⇒ 行号一定再次变化」经实测不成立 —— 这些提交在 `listKnowledge` 与 `pagination` 之前未新增 operations 条目（@6fb0b131 自身读数 743/721 与 3294/3263 恰与其登记一致）；本片合流后的行号变化只来自上述两处插入（+27 与 +19）的并集。 GY-I07 物种目录片合流重锚（2026-10-25，feat/gy-i07-catalog-species ← upstream/main 9669aa8a）：本分支先在本片内把 `operations.listSpecies` 新增一条（+20 行：`ledger_line` 743→763 / 3294→3314、`status_field_line` 721→741 / 3263→3283），main 侧同期把 `listExports` planned→partial（+19 行），两侧插入在合流后并存，两条登记的行号既不等于任一侧、也不是单侧 delta 平移：逐条按 `pointer` 的符号（operations 的 `id` / dimensions 的 `key`）＋字段名（`blocker` / `status`）在合并后的 `docs/architecture/contract-status.json` 里重新定位（实测归属块 `listKnowledge` 753-782 / `pagination` 3299-3333），得 `ledger_line` 782（=main 762+20 = HEAD 763+19，两条独立链同值）、`status_field_line` 760（=740+20 = 741+19）；`ledger_line` 3333（=3313+20 = 3314+19）、`status_field_line` 3302（=3282+20 = 3283+19）；合并后台账总行 3585（=main 3565+20 = HEAD 3566+19）；两条 blocker 的逐字文本与 `status` 均未改（test ② 的 `ledger_blocker_verbatim` 断言仍成立）。 **#538 解冲突合流重锚（2026-10-25，feat/gy-r34-i18-content-pg ← upstream/main 1d65b7ee，实测于合流树）**：本片（#538）在 `operations` 里把 `contentAdmin` 一族接进同一张台账（+66 行落在 `listKnowledge` 之前）⇒ 两条登记的行号既不能按 delta 平移、也不能继承任一侧旧值，逐条按 `pointer` 的符号＋字段名在合并后的台账里重新定位：`ledger_line` 782→**781**、`status_field_line` 760→**759**；`ledger_line` 3333→**3644**、`status_field_line` 3302→**3613**；合并后台账总行 3895；两条 blocker 的逐字文本与 `status` 均未改（test ② 的 `ledger_blocker_verbatim` 断言仍成立）。",
   "frozen_sort": {
     "pointer": "docs/architecture/state-contract.md:32",
     "clause": "created_at DESC, id DESC"
@@ -19,8 +19,8 @@
     {
       "ledger_file": "docs/architecture/contract-status.json",
       "pointer": "operations.listKnowledge.blocker",
-      "ledger_line": 716,
-      "status_field_line": 694,
+      "ledger_line": 781,
+      "status_field_line": 759,
       "status_value": "partial",
       "kind": "台账已订正（原滞后关闭；保留逐字登记以钉住订正后文本）",
       "claimed_sort_absent_from_code": "id_asc",
@@ -32,8 +32,8 @@
     {
       "ledger_file": "docs/architecture/contract-status.json",
       "pointer": "dimensions.pagination.blocker",
-      "ledger_line": 3267,
-      "status_field_line": 3236,
+      "ledger_line": 3644,
+      "status_field_line": 3613,
       "status_value": "partial",
       "kind": "台账已订正（原滞后关闭；保留逐字登记以钉住订正后文本）",
       "claimed_sort_absent_from_code": "id_asc",

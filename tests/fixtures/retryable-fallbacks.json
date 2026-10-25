@@ -4,16 +4,16 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 201
+      "files": 232
     },
     {
       "dir": "miniprogram",
-      "files": 26
+      "files": 28
     }
   ],
   "counts": {
-    "total": 40,
-    "has": 39,
+    "total": 43,
+    "has": 42,
     "none": 1
   },
   "entries": [
@@ -30,6 +30,20 @@
       "function": "mapAccountsReadError",
       "judgement": "has",
       "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/admin/ops/content-pg.ts",
+      "line": 102,
+      "function": "foldDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I18"
+    },
+    {
+      "file": "services/api/src/admin/ops/content-pg.ts",
+      "line": 106,
+      "function": "foldDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I18"
     },
     {
       "file": "services/api/src/admin/ops/flags-pg.ts",
@@ -61,14 +75,14 @@
     },
     {
       "file": "services/api/src/community/store-pg.ts",
-      "line": 91,
+      "line": 97,
       "function": "classifyCommunityDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/community/store-pg.ts",
-      "line": 98,
+      "line": 104,
       "function": "classifyCommunityDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -166,21 +180,21 @@
     },
     {
       "file": "services/api/src/media/service.ts",
-      "line": 364,
+      "line": 369,
       "function": "rethrowMediaError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/media/store-pg.ts",
-      "line": 81,
+      "line": 82,
       "function": "classifyMediaDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/media/store-pg.ts",
-      "line": 84,
+      "line": 85,
       "function": "classifyMediaDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -264,35 +278,42 @@
     },
     {
       "file": "services/api/src/profile/service.ts",
-      "line": 57,
+      "line": 60,
       "function": "transaction",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/recognitions/store-pg.ts",
-      "line": 145,
+      "line": 146,
       "function": "classifyRecognitionDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/recognitions/store-pg.ts",
-      "line": 151,
+      "line": 152,
       "function": "classifyRecognitionDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
+      "file": "services/api/src/routes/account-deletion.ts",
+      "line": 87,
+      "function": "toContractError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
       "file": "services/api/src/speech/store-pg.ts",
-      "line": 116,
+      "line": 123,
       "function": "classifySpeechDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/speech/store-pg.ts",
-      "line": 122,
+      "line": 129,
       "function": "classifySpeechDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
