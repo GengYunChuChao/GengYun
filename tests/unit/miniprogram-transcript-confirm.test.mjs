@@ -233,6 +233,29 @@ async function settle(ms) {
 }
 
 /**
+ * **有界轮询等待**：条件成立才返回，超时抛错（错误里带等了多久、上限多少）。
+ *
+ * 为什么必需：本文件用「把 GET 响应扣在途」制造"记录未就绪"的窗口，而页面的第一拍 GET 是由
+ * `setInterval(POLL_INTERVAL_MS)` 的**定时器宏任务**驱动——`miniprogram/pages/voice/voice.js`
+ * `startTranscriptPoll` 里 `setInterval(...)` 登记回调，回调里才 `refreshTranscript` 发出 GET。
+ * `flushMicrotasks`／`settle` 只排干微任务与 `setImmediate`，**不保证**该定时器已到期
+ * （机器快时 2 拍 `setImmediate` 只跑 ~2ms，早于 5ms 的第一拍）⇒ 用固定拍数等待会读到 `null`。
+ */
+async function waitFor(predicate, options) {
+  const opts = options || {}
+  const timeoutMs = opts.timeoutMs === undefined ? 2000 : opts.timeoutMs
+  const intervalMs = opts.intervalMs === undefined ? 2 : opts.intervalMs
+  const started = Date.now()
+  while (predicate() !== true) {
+    const waited = Date.now() - started
+    if (waited >= timeoutMs) {
+      throw new Error((opts.message || '等待条件超时') + '：已等 ' + waited + 'ms（上限 ' + timeoutMs + 'ms）')
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
+}
+
+/**
  * 起一个带假传输的播报页（真实页面代码）。
  *
  * 返回 `{ page, http, transcript, transcriptionId, paths }`；测试经 `page.onXxx` 驱动，
@@ -440,7 +463,16 @@ test('页面·记录就绪前与空草稿 ⇒ 零 PATCH、零轮次请求（未�
   h.page.onPickTranscriptSample({ currentTarget: { dataset: { id: 'sample-i11-normal' } } })
   // 受理后、记录就绪前：点确认发送必须零请求。
   const pending = h.page.onRequestTranscript()
-  await flushMicrotasks(2)
+  // **必须等"GET 真的已发出"再进窗口**：第一拍 GET 由 `setInterval(POLL_INTERVAL_MS)` 的定时器
+  // 宏任务驱动（`miniprogram/pages/voice/voice.js` 的 `startTranscriptPoll`），固定拍数的
+  // `flushMicrotasks(2)` 只排干微任务/`setImmediate`，机器快时跑不满 5ms ⇒ 定时器还没落地、
+  // `releaseGet` 仍是 `null`（CI 上的 `TypeError: releaseGet is not a function` 即此）。
+  // 此处有界等待，超时即带上下文失败，不会把"没等到"当成"没请求"。
+  await waitFor(() => releaseGet !== null, {
+    timeoutMs: 2000,
+    message: '记录 GET 应已发出并把响应扣在途（5ms 轮询拍未落地）'
+  })
+  assert.equal(h.page.data.transcriptStage, 'pending', '窗口正确：记录响应在途时应停在 pending')
   h.page.onConfirmAndSend()
   await flushMicrotasks(2)
   assert.equal(h.http.find('PATCH', h.paths.confirm).length, 0, '未取得记录不得确认')
