@@ -457,3 +457,59 @@ export function createPostgresAdminContentStore(options: PostgresAdminContentSto
 }
 
 /** `randomUUID` 与内存实现同源（`node:crypto`），实体 id 才可互换。 */
+
+/**
+ * 就绪探测 SQL。`to_regclass` 对**不存在的表**返回 `NULL` 而**不报错**，也**不要求表级 SELECT
+ * 权限**，且 schema 全限定 ⇒ 不受 `search_path` 影响 —— 与 `flags-pg.ts#probeFeatureFlagsTable`
+ * 同一口径（那里是 `public.feature_flags`，这里是 0036 的三张表）。
+ *
+ * 三张表是**一个整体**（实体 + 只可追加修订 + 幂等台账），缺任一张该域都跑不完一次读写，
+ * 因此 `AND` 成一条语句、判"部分存在"为 `missing` —— 宁可退回接线前行为，也不在半套 schema
+ * 上把请求打成 500。写成**静态整句**（不拼插值）：`tests/unit/sql-column-coverage.test.mjs`
+ * 才能静态判读列面/表面，不会多出一条"不可判插值"。
+ */
+const CONTENT_TABLES_READY_SQL = `SELECT (
+  to_regclass('public.admin_content_entities') IS NOT NULL
+  AND to_regclass('public.admin_content_revisions') IS NOT NULL
+  AND to_regclass('public.admin_content_idempotency') IS NOT NULL
+) AS ready`;
+
+/**
+ * 内容存储就绪**三态**（`Refs #18`）。
+ *
+ * - `ready`：三张表都在 ⇒ 内容域按**已接线**运行（引用不可用 ⇒ 隐藏；下架/失效**一律不可见**）；
+ * - `missing`：探测明确回 `NULL` ⇒ **确认未配置**，不是故障（子集库、未跑 0036 的部署就是这一态）；
+ * - `unknown`：探测本身出错（连接／超时／权限）或结果形状读不懂 ⇒ **未知 ≠ 未安装**，
+ *   调用方**必须**保持 fail-closed，⛔ 不得据此放行，也⛔ 不得把它混同 `missing`。
+ */
+export type AdminContentTablesProbe =
+  | { readonly state: 'ready' }
+  | { readonly state: 'missing' }
+  | { readonly state: 'unknown'; readonly reason: 'no_pool' | 'probe_error' | 'unexpected_shape' };
+
+/**
+ * 探测 0036 的三张表是否就绪。**不抛**：任何异常都折成 `unknown`。
+ *
+ * 与 `foldDatabaseError` 的分工：那个把库错误折成对外 503（用来**拒绝**一次请求），
+ * 这个只回答"表在不在"（用来**决定这一域要不要接线**）。`42P01` 不该在这里出现
+ * （`to_regclass` 不报错），一旦从探测里冒出来说明探测语句本身坏了 ⇒ 同样是 `unknown`。
+ */
+export async function probeAdminContentTables(
+  pool: Pick<PgPool, 'query'> | null | undefined,
+): Promise<AdminContentTablesProbe> {
+  if (!pool || typeof pool.query !== 'function') return { state: 'unknown', reason: 'no_pool' };
+  let rows: unknown;
+  try {
+    const result = await pool.query(CONTENT_TABLES_READY_SQL);
+    rows = result?.rows;
+  } catch {
+    // 连接/权限/超时：**状态未知**。⛔ 不得返回 `missing` —— 那会把故障当成"未配置"放行。
+    return { state: 'unknown', reason: 'probe_error' };
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return { state: 'unknown', reason: 'unexpected_shape' };
+  const ready = (rows[0] as Record<string, unknown> | null | undefined)?.['ready'];
+  if (ready === true) return { state: 'ready' };
+  if (ready === false) return { state: 'missing' };
+  // 形状读不懂 ⇒ 不知道表在不在 ⇒ 未知（既不是「未配置」，更不是「可以放行」）。
+  return { state: 'unknown', reason: 'unexpected_shape' };
+}

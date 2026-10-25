@@ -680,18 +680,26 @@ const TABLE_WIDE_COLUMN = '*';
  *   行锁要求 42 → **43**、引用表 47 → **48**、列要求 1851 → **1855**／已覆盖 1797 → **1801**
  *   （缺口仍 **0**）；auditedFiles 20、INSERT/UPDATE/DELETE 45/51/39、RETURNING 91、
  *   ON CONFLICT 28、`SELECT *` 15（`t.*` 4）、函数调用 2、无顶层 FROM 13、不可判插值 5 均不变。
+ * ⑯ 2026-10-25 #538 修红（Refs #18）：`admin/ops/content-pg.ts` 新增一条 **就绪探测 SELECT**
+ *   —— `SELECT (to_regclass('public.admin_content_entities') IS NOT NULL AND …) AS ready`
+ *   （`CONTENT_TABLES_READY_SQL`，**静态整句、零插值**：写成 `${…}` 拼接会多出一条"不可判插值"）。
+ *   ⇒ 字面量 288 → **289**、SELECT 153 → **154**、无顶层 FROM 13 → **14**、逐文件
+ *   `admin/ops/content-pg.ts` 15 → **16**；不可判插值仍 **5**、引用表仍 **48** 张
+ *   （`to_regclass` 是函数调用不是 FROM，不计引用表）、列要求 1855／已覆盖 1801（缺口 **0**）、
+ *   INSERT/UPDATE/DELETE 45/51/39、RETURNING 91、ON CONFLICT 28、`SELECT *` 15、行锁 26+17、
+ *   行锁要求 43、豁免 33 均不变。零迁移、零 GRANT 变更。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 20,
-  sqlLiterals: 288,
-  statements: { INSERT: 45, UPDATE: 51, SELECT: 153, DELETE: 39 },
+  sqlLiterals: 289,
+  statements: { INSERT: 45, UPDATE: 51, SELECT: 154, DELETE: 39 },
   returningClauses: 91,
   onConflictClauses: 28,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 13,
+  noTargetTable: 14,
   referencedTables: 48,
   columnRequirements: 1855,
   coveredRequirements: 1801,
@@ -704,7 +712,7 @@ const EXPECTED_EXTENDED_READINGS = {
 /** 逐文件读数（扩展 20 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
 const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
-  'admin/ops/content-pg.ts': 15,
+  'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 12,
   'community': 43,

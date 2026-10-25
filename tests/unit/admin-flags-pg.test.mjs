@@ -791,9 +791,19 @@ test('关键路径（真实装配）：onReady 探测异常 ⇒ /herbicides 仍�
   let probes = 0;
   // 真实装配里 `armingProbe` 用的就是 `probeFeatureFlagsTable(pool)`：这里让**池**抛错，
   // 即 #282 的触发条件（连接/权限抖动），而不是注入一个假的探测函数。
+  //
+  // ⚠ 计数口径（#538 / `Refs #18`）：`ready()` 阶段现在有**两条**就绪探测打同一个池 ——
+  // 开关门（`public.feature_flags`）与内容存储（`public.admin_content_*`，见
+  // `admin/content-readiness.ts`）。`probes` 只数**开关门**那条（断言口径逐字不变），
+  // 内容存储的那条单独记 `contentProbes`，否则两条探针会被混成一个读数。
+  let contentProbes = 0;
   const probePool = {
-    async query() {
-      probes += 1;
+    async query(text) {
+      if (typeof text === 'string' && text.includes('public.admin_content_')) {
+        contentProbes += 1;
+      } else {
+        probes += 1;
+      }
       const failure = new Error('connection reset by peer');
       failure.code = 'ECONNRESET';
       throw failure;
@@ -803,6 +813,11 @@ test('关键路径（真实装配）：onReady 探测异常 ⇒ /herbicides 仍�
   try {
     await app.ready();
     assert.equal(probes, 1, 'onReady 必须在服务接请求之前探测（不是懒到首个受控面请求）');
+    assert.equal(
+      contentProbes,
+      1,
+      '内容存储的就绪探测也在 onReady 跑一次（#538 / Refs #18）；它不得抢占开关门的读数',
+    );
     assert.equal(
       app.featureFlagGate.armed,
       true,

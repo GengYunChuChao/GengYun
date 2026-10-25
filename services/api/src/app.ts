@@ -90,7 +90,7 @@ import { createAdminAuditLogService } from './admin/audit/service.ts';
 import type { AdminAuditLogService, AdminAuditLogServiceOptions } from './admin/audit/service.ts';
 import { createPostgresAdminAuditLogPort } from './admin/audit/pg.ts';
 import type { AdminAuditLogPort } from './admin/audit/pg.ts';
-import { createAsyncReferenceIntegrity } from './admin/reference-integrity.ts';
+import { createAdminContentReferenceResolver } from './admin/content-readiness.ts';
 import type { AdminCallContext } from './admin/types.ts';
 // GY-I18 本片：全局开关的**跨端点真实生效**（受控输出面清单 + 守卫包装 + 投稿面装饰）。
 import {
@@ -2198,18 +2198,18 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 合并口径（与 `upstream/main` 的 GY-I27 外发账本接线**两侧全保留**）：
   // 保留 main 的调用签名与 `egress` 依赖，只把 `guards` 换成 `gatedGuards` —— 两者互不替代。
   // GY-I07 第二片（跨线 **#7 公开读 × #18 引用失效**）：把**后台资料来源存储**里既有的
-  // 「读取时重算」解析器注入公开读**详情面**（`createAsyncReferenceIntegrity(store).resolve`）。
+  // 「读取时重算」解析器注入公开读**详情面**（`createAdminContentReferenceResolver`，内部即异步孪生）。
   // 接线点仅此一处、纯追加：用的是本函数上方**已经建好的那一个** `adminContentStore`
   // （`adminInjection?.contentStore ?? createPostgresAdminContentStore(...) ?? createAdminContentStore(...)`，
   // 见上方装配），**不新建第二份 store**、不改它的创建或注入口径、不改任何既有实参。
   // 回退方式：删掉这里的第 5 个实参即可回到接线前行为（`deps.resolve === undefined` ⇒ 不判定）。
-  // **本片（#18，迁移 0036）**：解析器改用**异步孪生**（`createAsyncReferenceIntegrity`）—— 真实
+  // **本片（#18，迁移 0036）**：解析器改用**异步孪生**（`createAsyncReferenceIntegrity`，由上面的工厂持有）—— 真实
   // 落点下 `getEntity` 是库往返，同步版拿不到行；内存 store 下它是微任务，语义与同步版逐字相同
   // （`await` 一个非 Promise 值）。`decidePublicVisibility` 随之异步（`routes/knowledge.ts` 单点 await）。
-  // 生产默认：内存 store 在 `real` 且无池下**空且只读** ⇒ `resolve()` 恒 `unverifiable` ⇒ 详情面
-  // 照旧可见（"失效拦截"在无池部署尚未全面生效，见证据页「未取得项」）。
+  // 生产默认：内存 store 在 `real` 且无池下**空且只读** ⇒ `resolve()` 恒 `unverifiable` ⇒ 可见（"失效拦截"
+  // 在无池部署尚未全面生效）。**三态探测**见 `admin/content-readiness.ts` 头注（`missing` 降级／`unknown` 仍 503）。
   registerKnowledgeRoutes(app, config, pool, gatedGuards, {
-    resolve: createAsyncReferenceIntegrity(adminContentStore).resolve,
+    resolve: createAdminContentReferenceResolver({ host: app, store: adminContentStore, pool }),
     // GY-I12 复用缝（纯追加的两个覆盖项）：把上面建好的**同一个实例**交给读面，
     // 使文字问答域的检索集合与 `/knowledge` 逐字节同源。不传时本函数自建，行为不变。
     reference: publicKnowledgeSeedFace,
