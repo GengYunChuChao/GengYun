@@ -9,13 +9,17 @@
  * （「零写入者」是 `0013_conversations.sql:19` 写下的裁定）；给 `AUDIT_ACTIONS` 加第 4 个值会让
  * 审计查询面 / 契约枚举 / 文档三处不同步。⚠ `tests/unit/admin-audit-logs.test.mjs:130` 只钉
  * 「契约 enum === 运行时 AUDIT_ACTIONS」，**两边同时加值它照样绿** ⇒ 这里必须单独钉死字面三值。
+ * ⚠ 这个三值闭集是 `GET /admin/audit-logs?action=` 的**过滤器闭集**，不等于 `admin_audit_events`
+ * 的全部写入者：`0043_admin_job_cancel_audit.sql:168-175` 已由 `SECURITY DEFINER` 函数写入
+ * `action='job.cancel'`（闭集外；不传 `action` 筛选时通用读面会把它带出来）。本钉子只钉 catalog
+ * 里那三个字面值，不替「闭集 = 全部写入点」这条旧口径背书。
  *
  * ## 判据形态（白名单式，不是「至少 N 次」）
  *   ① jobs 零 INSERT：**语句级**命中必须为空；**注释级**命中按 `文件:行` **逐条白名单登记**（今天 2 条，
  *      都是迁移头注释在引用「grep `INSERT INTO jobs` 为空」这句判据本身）。⛔ 不退化成一概不看注释：
  *      将来哪怕只在注释里多提一句也要红，逼人回来改口径。
  *   ② `provider_invocations` 无迁移、源码零引用，只有文档里有形状。
- *   ③ 正向迁移末项 = `0042`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
+ *   ③ 正向迁移末项 = `0043`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
  *      main 时改 `LAST_MIGRATION` / `LAST_MIGRATION_NUMBER`；`0037` 是历史缺号，本断言不钉连续性）。
  *   ④ `AUDIT_ACTIONS` 恰为 `['account.suspend','account.restore','set_flag']`，**顺序也钉住**：
  *      新增 action 必须同步 admin-ops-job-integrity 相关断言与文档。
@@ -128,10 +132,10 @@ test('钉子②：provider_invocations 无迁移、源码零引用，只有数�
 // ---------------------------------------------------------------------------
 const FORWARD_MIGRATION = /^\d{4}_[a-z0-9_]+\.sql$/;
 /** 当前末项（**本断言随末项推进同步**：新迁移合并后改这两个常量，别让它们停在旧编号上）。 */
-const LAST_MIGRATION = '0042_favorites_history_target_type_conversation_turn.sql';
-const LAST_MIGRATION_NUMBER = 42;
+const LAST_MIGRATION = '0043_admin_job_cancel_audit.sql';
+const LAST_MIGRATION_NUMBER = 43;
 
-test('钉子③：正向迁移末项就是 0042，且 rollback/ 下有同名回滚件', () => {
+test('钉子③：正向迁移末项就是 0043，且 rollback/ 下有同名回滚件', () => {
   const forward = readdirSync(join(ROOT, MIGRATIONS_DIR))
     .filter((name) => FORWARD_MIGRATION.test(name))
     .sort();
@@ -176,7 +180,8 @@ test('钉子④：AUDIT_ACTIONS 恰为三值闭集，顺序也钉住（account.s
   assert.deepEqual(
     order,
     ['AUDIT_ACTION_ACCOUNT_SUSPEND', 'AUDIT_ACTION_ACCOUNT_RESTORE', 'AUDIT_ACTION_SET_FLAG'],
-    'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：闭集只反映「谁在写 admin_audit_events」，'
+    'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这三个值是 `GET /admin/audit-logs?action=` 的'
+      + '合法输入（⚠ 它不等于 `admin_audit_events` 的全部写入点，见头注 0043 的 `job.cancel`），'
       + '多一个成员就必须同时有库内写入点、契约枚举与文档；新增 action 必须同步 admin-ops-job-integrity 相关断言与文档',
   );
   assert.deepEqual(
