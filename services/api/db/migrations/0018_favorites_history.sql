@@ -46,7 +46,7 @@ BEGIN;
 CREATE TABLE favorites (
   id              uuid PRIMARY KEY,
   owner_id        uuid NOT NULL REFERENCES users (id),
-  -- 收藏目标的闭集（契约 `FavoriteTarget` 是 17 项 `TargetRef.type` 的子集，此处不额外收窄，
+  -- 收藏目标的闭集（契约 `FavoriteTarget` 是 16 项 `TargetRef.type` 的子集，此处不额外收窄，
   -- 由应用层校验 `species|herbicide|scheme`；数据库只守住"不得出现契约外类型"）。
   target_type     varchar(32) NOT NULL CHECK (target_type IN (
     'species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr',
