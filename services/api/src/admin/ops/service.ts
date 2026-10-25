@@ -1343,10 +1343,27 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     };
   }
 
+  /**
+   * `approvePost`：人工「通过」。
+   *
+   * ⚠️ v1 口径：**通过动作同时承担发布语义**（`private → published` + `audit_state='approved'`），
+   * 原因是待审帖在库里就是 private+pending、公开读面要求「published 且 approved」、而契约里没有
+   * 作者自助发布口；只翻 `audit_state` 会让「通过」变成黑洞。作者自助发布口是 S4 的独立能力，
+   * 届时若上线，通过动作是否仍翻 `visibility` 需重新裁定
+   * （口径页：docs/architecture/s3-community-review-design.md §1；落地代码在
+   * `admin/ops/community-posts.ts` 的 `review()`）。
+   * 不对称：`hidden`/`deleted` 不被通过动作翻案（单向门），命中时幂等返回当前状态（`changed:false`），
+   * 不写第二条结论、不重复通知。
+   */
   async function approvePost(ctx: AdminCallContext, id: string, body: unknown) {
     return commitPostReview(ctx, id, body, 'approved');
   }
 
+  /**
+   * `rejectPost`：人工「驳回」= `audit_state='rejected'` + `visibility='hidden'` + 理由码闭集。
+   * 置 `hidden` 的副作用是触发 `withTakedownObserver` 再发一条下架类事件（作者会收到两条消息），
+   * 属既有观察器行为，本片不去重（见口径页 §2）。
+   */
   async function rejectPost(ctx: AdminCallContext, id: string, body: unknown) {
     return commitPostReview(ctx, id, body, 'rejected');
   }

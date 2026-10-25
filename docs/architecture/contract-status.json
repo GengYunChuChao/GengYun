@@ -3727,12 +3727,12 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "approvePost",
-          "lines": "1346-1348"
+          "lines": "1358-1360"
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
           "symbol": "review",
-          "lines": "208-338"
+          "lines": "208-342"
         },
         {
           "test": "tests/unit/admin-post-review-s3.test.mjs",
@@ -3759,12 +3759,12 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "rejectPost",
-          "lines": "1350-1352"
+          "lines": "1367-1369"
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
           "symbol": "review",
-          "lines": "208-338"
+          "lines": "208-342"
         },
         {
           "test": "tests/unit/admin-post-review-s3.test.mjs",

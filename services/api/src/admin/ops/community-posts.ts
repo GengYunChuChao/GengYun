@@ -281,8 +281,12 @@ export function createPostReviewAdapter(options: PostReviewAdapterOptions): Post
         if (outcome.hard_rule_passed !== true) {
           return { ok: false, reason: 'RULE_VETOED', reasonCodes: [...outcome.reason_codes] };
         }
-        // 待审行（private）人工通过后要**真的能看见**：只翻 audit_state 会永远停在私有。
-        // hidden/deleted 一律原样保留（下架/删除是单向的，审核不为它翻案）。
+        // v1 口径：**通过动作同时承担发布语义**（`private → published` + `audit_state='approved'`）。
+        // 依据三条：待审帖在库里就是 private+pending；公开读面要求「published 且 approved」；契约里
+        // 没有作者自助发布口 ⇒ 只翻 audit_state 会让「通过」变成黑洞（运营点了通过、帖子永远不可见）。
+        // 作者自助发布口是 S4 的独立能力，届时若上线，通过动作是否仍翻 visibility 需重新裁定
+        // （口径页：docs/architecture/s3-community-review-design.md §1）。
+        // 不对称：hidden/deleted **不**为它们翻案（下架/删除是单向门），幂等返回当前状态。见下方幂等分支。
         const targetVisibility: PostRecord['visibility'] =
           current.visibility === 'private' ? 'published' : current.visibility;
         // 幂等：已经是"已通过"且可见性无需推进 ⇒ 不迁移、不再通知、不落第二条结论。

@@ -317,7 +317,7 @@ export type PostReviewResult =
       previousRevision: number;
       revision: number;
       auditState: 'approved' | 'rejected';
-      /** 审核**不**改变可见性（`approve` 保留原值、`reject` 置 `hidden`），故这里如实给全闭集。 */
+      /** v1 通过即发布：`approve` 可能把 `private` 推成 `published`；`reject` 置 `hidden`（见口径页 §1/§2）。 */
       visibility: 'private' | 'published' | 'hidden' | 'deleted';
       /** 作者通知是否送出。`false` 不回滚已提交的结论（见 `community/takedown.ts` 的既有纪律）。 */
       notified: boolean;
@@ -331,6 +331,10 @@ export type PostReviewResult =
  *
  * 与 `HidePostAdapter` 同形：`wired === false` ⇒ 服务层 503（fail-closed），
  * 而不是"悄悄成功"。真实实现见 `community-posts.ts` 的 `createPostReviewAdapter`。
+ *
+ * 溯源取舍：审核人只写 `community_moderation_decisions.decided_by`（迁移 0045），
+ * **故意不建外键**——账号注销后仍要能答"谁批过它"，强引用会让注销链卡死或把证据置空；
+ * 账号是否存在由应用层解释（写入来源是已认证的 `AdminCallContext.identity`）。
  */
 export interface PostReviewPort {
   readonly wired: boolean;
