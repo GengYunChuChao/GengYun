@@ -394,12 +394,6 @@
       "reference": "services/api/src/media/object-store.ts:132"
     },
     {
-      "path": "services/api/src/media/service.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/media/service.ts:1108"
-    },
-    {
       "path": "services/api/src/ocr/service.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
@@ -518,12 +512,6 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/unit/gy-i22-identity-headers.test.mjs:567"
-    },
-    {
-      "path": "tests/unit/knowledge-api.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/knowledge-api.test.mjs:101"
     },
     {
       "path": "tests/unit/knowledge-api.test.mjs",
