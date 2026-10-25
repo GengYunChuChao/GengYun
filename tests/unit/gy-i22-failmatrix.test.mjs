@@ -33,12 +33,14 @@ const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
  * 168 + 23 + 39 = 230；只增不减。
  * 230 → 236：#22 片 D 补「下架后引用跳转 unavailable」——F1 族 6 条（消息引用帖子/评论的
  * 正控制 2 条 + 删除目标 2 条 + 删除后 unavailable 同形 2 条）。只增不减。
+ * 236 → 240：R18 补两条 P0 链路——C4 扩容 3 条（退出后 `/me/profile`、`/catalog/crops`、
+ * `/knowledge` 三面与 C4-03 同形 401）+ C6 1 条（已登录取消收藏缺 `If-Match` ⇒ 428）。只增不减。
  */
-const MIN_CASES = 236;
+const MIN_CASES = 240;
 /** 每族条数（本片实跑快照：C/E/F 族走 HTTP，D 族走受信 seam）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39, F1: 6 };
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 21, C5: 10, C6: 11, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39, F1: 6 };
 /** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据 / B5 异步 AI 域游客面与归属面 / B6 下架后引用跳转）。 */
-const BATCH_COUNTS = { B1: 106, B2: 36, B3: 17, B4: 9, B5: 62, B6: 6 };
+const BATCH_COUNTS = { B1: 109, B2: 37, B3: 17, B4: 9, B5: 62, B6: 6 };
 
 function runMatrix() {
   const scratch = mkdtempSync(path.join(tmpdir(), 'i22-unit-'));
@@ -57,7 +59,7 @@ function runMatrix() {
   }
 }
 
-test('GY-I22 失败矩阵：全量真跑 236 条全绿，且每条都有真实读数', () => {
+test('GY-I22 失败矩阵：全量真跑 240 条全绿，且每条都有真实读数', () => {
   const payload = runMatrix();
 
   assert.equal(payload.execution_mode, 'stub');

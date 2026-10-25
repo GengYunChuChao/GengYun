@@ -11,8 +11,8 @@
  * 臂 2 · 真实 PostgreSQL 17 运行臂：这组测试**不碰真库**（不需要 GY_PG_BIN），只锁住 `run-real.mjs` 的两条**闸门契约**：
  *   1) 没有 `GY_PG_BIN` 时必须退出 **77**（POSIX「skipped」＝未取得，⛔ 不是通过），
  *      并显式打印「未取得，不是通过」；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0；
- *   2) 权限面覆盖范围与 stub 用例表同源（C1–C4 / C10 / C11，共 168 条），不另写一套用例。
- *   （真 PG 臂的价值是逐条记录 stub 期望 vs 真 PG 实际的差异，不要求 168 条在真库上全绿；真 PG 读数由 run-real.mjs 实跑取得。）
+ *   2) 权限面覆盖范围与 stub 用例表同源（C1–C4 / C10 / C11，共 171 条），不另写一套用例。
+ *   （真 PG 臂的价值是逐条记录 stub 期望 vs 真 PG 实际的差异，不要求 171 条在真库上全绿；真 PG 读数由 run-real.mjs 实跑取得。）
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -38,9 +38,9 @@ const RUNNER = path.join(ROOT, 'tests', 'failmatrix', 'run.mjs');
  */
 const MIN_CASES = 230;
 /** 每族条数（与 inject 臂同一份用例表，loopback 臂必须逐族一致）。 */
-const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 18, C5: 10, C6: 10, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39 };
+const FAMILY_COUNTS = { C1: 37, C2: 24, C3: 27, C4: 21, C5: 10, C6: 11, C7: 16, D1: 11, D2: 4, D3: 2, D4: 3, E1: 3, E2: 3, C10: 23, C11: 39 };
 /** 批次条数（B1 身份与权限面 / B2 媒体、重复请求与无效输入 / B3 审核回调与 AI 失败 / B4 版本回写、注入与媒体凭据 / B5 异步 AI 域游客面与归属面）。 */
-const BATCH_COUNTS = { B1: 106, B2: 36, B3: 17, B4: 9, B5: 62 };
+const BATCH_COUNTS = { B1: 109, B2: 37, B3: 17, B4: 9, B5: 62 };
 
 function runLoopbackMatrix() {
   const scratch = mkdtempSync(path.join(tmpdir(), 'i22-real-'));
@@ -60,7 +60,7 @@ function runLoopbackMatrix() {
   }
 }
 
-test('GY-I22 失败矩阵 loopback 臂：同一 230 条矩阵走真实 TCP 全绿，且每条都有真实读数', () => {
+test('GY-I22 失败矩阵 loopback 臂：同一 240 条矩阵走真实 TCP 全绿，且每条都有真实读数', () => {
   const payload = runLoopbackMatrix();
 
   assert.equal(payload.execution_mode, 'stub');
@@ -157,10 +157,10 @@ test('GY-I22 真 PG 臂：只有显式 --allow-skip 才把「未取得」降级�
   assert.match(stdout, /EXITCODE=0/);
 });
 
-test('GY-I22 真 PG 臂：权限面覆盖范围与 stub 用例表同源（C1–C4/C10/C11，168 条，不另写一套用例）', () => {
+test('GY-I22 真 PG 臂：权限面覆盖范围与 stub 用例表同源（C1–C4/C10/C11，171 条，不另写一套用例）', () => {
   for (const family of PERMISSION_FAMILIES) {
     assert.ok(FAMILIES[family] !== undefined, `权限面族 ${family} 不在 stub 用例表 FAMILIES 里`);
   }
   const permissionCases = CASES.filter((one) => PERMISSION_FAMILIES.includes(one.family));
-  assert.equal(permissionCases.length, 168, '权限面 C1–C4/C10/C11 必须是 168 条（与 stub 用例表同源）');
+  assert.equal(permissionCases.length, 171, '权限面 C1–C4/C10/C11 必须是 171 条（与 stub 用例表同源）');
 });
