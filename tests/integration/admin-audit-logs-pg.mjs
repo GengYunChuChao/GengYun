@@ -260,6 +260,12 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
+  // 版本钉是**字面量**，新增迁移落地时要把这里同步到新的末位号（本切片：仓库末位＝`0044`）。
+  // 演进史：曾钉 `'0033'`，迁移推到 0044 后陈旧了 11 号 —— 而本文件未接入
+  // `.github/workflows/real-pg-integration.yml`，没有 CI 来提醒，只能靠这条注释。
+  // ⛔ 也不要图省事改成「取迁移目录末项再比」：`tests/unit/migration-pin-guard.test.mjs` 把
+  // 「读迁移清单末位」整类列为仓库级红项（D1 末项索引 / D2 `.at(-1)` 等形态，跨 PR 互斥）——
+  // 本切片实测这样写会让该守卫用例直接变红。
   assert.equal(applied.rows[0].version, '0044', '迁移 0044 必须是最后一条已应用版本');
   pass('迁移 0044 经 migrate.ts up 落到真库（schema_migrations 末项 0044）');
 
