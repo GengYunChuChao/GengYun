@@ -20,6 +20,11 @@
  * 一旦后台域接上真实持久 store，必须在 `app.ts` **显式放行**（一次可审查的接线变更），
  * 而不是靠替身自我声明就自动启用 —— 否则"把替身记为真实成功"仍可能发生。
  * 测试 `tests/unit/admin-real-mode-fail-closed.test.mjs` 钉住当前行为。
+ *
+ * ## 部分放行时的**单条**失闭（裁决 A，R34）
+ * 内容 store 自述持久化后，放行面是 **24 条内容 CRUD**；`listAuditEvents` 读的仍是进程内台账，
+ * 有池时只会返回内存空页 ⇒ 由本文件的 `restrictAdminContentAuditRead()` 单独恢复失闭
+ * （`reason` 与整域替身逐字同源）。⛔ 不得因为"store 持久了"就顺带把这 25 条一并放行。
  */
 import { ApiError } from '../errors.ts';
 import { FAMILIES } from './families.ts';
@@ -75,4 +80,37 @@ export function createFailClosedAdminServices(reason: string): FailClosedAdminSe
   }) as unknown as AdminOpsService;
 
   return { content, ops };
+}
+
+/**
+ * **裁决 A（R34）· 只关一条**：内容域已接真库存储（`store.persistent === true`）时，
+ * `listAuditEvents` 仍必须失闭 —— 其余 **24 条内容 CRUD** 照常放行（本函数只覆写这一个方法）。
+ *
+ * ## 为什么不能顺带放行它
+ * 审计**写**面仍未落库：`admin_audit_events` 对运行时角色零表级权限，`appendAudit` 仍落
+ * **进程内** ops store（重启即丢）。因此这个读面能读到的只有内存里那一小段流水 ——
+ * 有池时它返回的 `items: []` 是**内存空页**，会被读成「平台从未发生任何管理动作」，
+ * 而 `app.ts` 已明写「⛔ 不返回空页……那是伪造读数」。放行它等于用 200 伪造结论。
+ *
+ * ## 授权没有被绕过
+ * `audit:read` 本就是后台 scope（路由层照旧鉴权 + 判 scope）；此前挡住这条读面的只有
+ * 上方的整域替身。本函数把**这一条**边界单独恢复：`reason` 由装配层传入，与整域替身
+ * **逐字同源**；`retryable: false` 同理（台账未落库＝能力未接线，重试不会成功）。
+ *
+ * ## 形制
+ * 与 `admin/ops/accounts-only.ts` 的 `restrictAdminOpsToAccountsAuthority` 同源：
+ * 在**已构造好的服务**上覆写**单个方法**，其余方法与 `store` / `operationIds` 原样转发
+ * —— ⛔ 不重新构造服务、⛔ 不改路由、⛔ 不改契约。
+ */
+export function restrictAdminContentAuditRead(
+  inner: AdminContentService,
+  reason: string,
+): AdminContentService {
+  const reject = async (): Promise<never> => {
+    // 与上方 `createFailClosedAdminServices()` 的 reject 同一形态：
+    // 台账未落库＝能力未接线，无运维介入下重试不可能成功 ⇒ retryable 必须为 false。
+    throw new ApiError('PROVIDER_UNAVAILABLE', reason, { retryable: false });
+  };
+  // 只覆写审计读面：24 条内容 CRUD 仍是**同一批闭包**（不是重新构造一份服务）。
+  return { ...inner, listAuditEvents: reject };
 }

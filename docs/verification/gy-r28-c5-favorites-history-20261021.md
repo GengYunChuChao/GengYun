@@ -32,13 +32,13 @@
   - `:233` `project(record, userId)` 每次读取重新 `deriveVisibility`（不入库、不缓存）
   - `:306`/`:359`/`:426` `listFavorites` / `createFavorite` / `deleteFavorite`
   - `:57`/`:59` `CURSOR_TTL_MS` / `IDEMPOTENCY_TTL_MS`
-- 落库（不是内存 Map）：`services/api/src/app.ts:1454` `favoritesService = config.executionMode === 'real' && !favoritesStore.persistent ? null : createFavoritesService(...)`；store 选择见同文件 store 装配处（`pool !== null ? createPostgresFavoritesStore(pool, { now }) : createMemoryFavoritesStore({ now })`），迁移 `services/api/db/migrations/0018_favorites_history.sql`。
+- 落库（不是内存 Map）：`services/api/src/app.ts:1747` `favoritesService = config.executionMode === 'real' && !favoritesStore.persistent ? null : createFavoritesService(...)`；store 选择见同文件 store 装配处（`pool !== null ? createPostgresFavoritesStore(pool, { now }) : createMemoryFavoritesStore({ now })`），迁移 `services/api/db/migrations/0018_favorites_history.sql`。
 - 已知运维缺口（上一片修好、本片未复验）：运行时角色对 `favorites`/`history` 等七张表曾整张零授权（`42501`），由 `deploy/postgres-cvm/sql/20-login-roles.sql` I 段修复，见 `docs/verification/gy-r28-favorites-history-grants-20261020.md`。
 
 ### 2.2 历史
 
 - 路由：`services/api/src/routes/history.ts` `:80`（`GET /history`）、`:85-87`（`DELETE /history/{id}`）；`:36` no-store；`:75` `'历史持久存储尚未接线'` 503 fail-closed。
-- 写入时机（识别完成时）：`services/api/src/app.ts:912` `recordHistoryTerminal`，`:928-934` `recognitionTerminalHistory`、`:936-942` `ocrTerminalHistory`，`:961` `history: recognitionTerminalHistory` 注入识别服务 —— 终态提交成功后才写，real 模式历史域关闭时退回未接线端口（不写、不伪造）。
+- 写入时机（识别完成时）：`services/api/src/app.ts:1016` `recordHistoryTerminal`，`:928-934` `recognitionTerminalHistory`、`:936-942` `ocrTerminalHistory`，`:961` `history: recognitionTerminalHistory` 注入识别服务 —— 终态提交成功后才写，real 模式历史域关闭时退回未接线端口（不写、不伪造）。
 - 服务层：`services/api/src/history/service.ts:319` `listHistory`（游标分页）、`:369`/`:389` `deleteHistory`（`revision` + `owner_id` CAS）、`:426` `appendHistory`；`:125` `notFound()`；`:16` 归属不变式注释（他人历史与不存在同形）。
 - 来源版本：历史行本身**不带**来源版本字段（`history-api.js` 的 `HISTORY_KEYS` 7 字段），来源版本由详情重新读取 `model_version` 提供 —— 见下 §4。
 

@@ -132,6 +132,23 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
   },
   {
+    path: 'tests/integration/admin-content-pg.mjs',
+    reason: '需真实 PG 17.11，且是**自起集群**脚本（R34 / #18 交付）：要求 `GY_PG_BIN` 指向服务端二进制目录，'
+      + '自行 `initdb`/`pg_ctl` 起一次性集群（仅回环；端口在 55600–55699 里**先探活再起**，并硬挡 55436/55437，'
+      + '数据目录父目录走可选的 `GY_I18_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），再 apply 全链迁移（含本片 0036）、'
+      + '跑 `deploy/postgres-cvm/sql` 的 `gy-r34-content-grant` 授权区域，然后用 **real 装配 + 真库池**走完'
+      + '内容域 24 条路由（建草稿/幂等重放/列表/读/改/发布/撤回）与归属隔离，并断言运行时角色直连'
+      + '`DELETE`/`TRUNCATE`/改未授权列一律 42501（列级而非表级的负控制），最后在独立库里跑 rollback 脚本确认三表删净。'
+      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip），'
+      + '`pg` 依赖在闸门之后才 `await import`，避免把「没二进制」报成「依赖缺失 ⇒ 失败」。'
+      + '本片（R34）**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
+      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／'
+      + '`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，须由指挥裁定），故在此如实登记为未接线；'
+      + '本地已用本机 PG 17.11 二进制跑通该臂（10 组 ALL PASS，EXITCODE=0）。'
+      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
+      + '接进真库 job 不等于进 `test:integration:http`。',
+  },
+  {
     path: 'tests/integration/admin-flags-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_flags_test`：argv[3] 省略时脚本自己 `CREATE ROLE`（**只接受'
       + '自己本轮新建的角色** —— `preflightRuntimeRole` 在任何写库动作之前硬拒「同名角色已存在」，⛔ 不再'

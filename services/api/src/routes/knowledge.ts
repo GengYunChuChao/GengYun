@@ -8,7 +8,7 @@ import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { createKnowledgeService, type KnowledgeQuery } from '../knowledge/service.ts';
 import { createReferenceQueryService, type ReferenceQueryService } from '../knowledge/reference-query.ts';
-import { decidePublicVisibility, type ReferenceResolver } from '../knowledge/public-invalidation.ts';
+import { decidePublicVisibilityAsync, type ReferenceResolver } from '../knowledge/public-invalidation.ts';
 import { buildMeta } from './support.ts';
 
 /**
@@ -62,7 +62,7 @@ const NOT_FOUND_MESSAGE = Object.freeze({
 /**
  * 从**响应投影**里还原判定输入：既有 `source_id` / `source_version`。
  *
- * `decidePublicVisibility` 的判定只读这两个字段（见 `knowledge/public-invalidation.ts`），
+ * `decidePublicVisibilityAsync` 的判定只读这两个字段（见 `knowledge/public-invalidation.ts`），
  * 而投影把它们放在契约既有的 `source.id` / `source.version` 上，故这里只做一次等价还原，
  * **不新增字段名**。投影里读不到可用引用（缺 `source` 或不是字符串）时返回 `null`
  * ⇒ 调用方**不判定**（保持可见）：投影缺字段说明"核不到"，而"核不到"**不得**被当成"已失效"。
@@ -93,27 +93,31 @@ function sourceReferenceOf(data: unknown): { source_id: string; source_version: 
 /**
  * **本文件唯一一处**公开可见性判定：详情面与列表面都走这里。
  *
- * 列表面接线（`Refs #7`）不再另写判据 —— 两侧共用同一个 `decidePublicVisibility` 与同一个
+ * 列表面接线（`Refs #7`）不再另写判据 —— 两侧共用同一个 `decidePublicVisibilityAsync` 与同一个
  * 注入的 `resolve`，因此"列表面返回了详情面会拒的记录"在结构上不可能出现。
  */
-function isPubliclyVisible(resolve: ReferenceResolver, family: 'knowledge', data: unknown): boolean {
+function isPubliclyVisible(
+  resolve: ReferenceResolver,
+  family: 'knowledge',
+  data: unknown,
+): Promise<boolean> {
   const content = sourceReferenceOf(data);
   // 投影还原不出引用 ⇒ 不判定（核不到 ≠ 失效）。
-  if (content === null) return true;
-  return decidePublicVisibility({ family, content, resolve }).visible;
+  if (content === null) return Promise.resolve(true);
+  return decidePublicVisibilityAsync({ family, content, resolve }).then((decision) => decision.visible);
 }
 
 /**
  * 详情面的公开读判定：`unavailable` 抛**同形** 404（与"不存在"同响应，不泄露存在性），
  * `available` / `unverifiable` 正常返回。
  */
-function assertPubliclyVisible(
+async function assertPubliclyVisible(
   resolve: ReferenceResolver,
   family: 'knowledge',
   data: unknown,
   message: string,
-): void {
-  if (isPubliclyVisible(resolve, family, data)) return;
+): Promise<void> {
+  if (await isPubliclyVisible(resolve, family, data)) return;
   throw new ApiError('NOT_FOUND', message);
 }
 
@@ -126,14 +130,18 @@ function assertPubliclyVisible(
  *
  * 最小接线：只过滤**本页**条目，分页游标仍由域层按过滤前的页派生 ⇒ 单页可见条数可能少于
  * `limit`（不新增分页实现，也不放宽判定）。
+ *
+ * 异步（#18 迁移 0036 起）：真实落点下每条判定是一次只读库往返，逐条并行 `await`；
+ * `Array.prototype.filter` 不接受 Promise ⇒ 先并发求可见性再按**原顺序**过滤（不重排、不丢序）。
  */
-function filterVisiblePage(data: unknown, resolve: ReferenceResolver | undefined): unknown {
+async function filterVisiblePage(data: unknown, resolve: ReferenceResolver | undefined): Promise<unknown> {
   if (resolve === undefined) return data;
   const items = (data as { items?: unknown } | null)?.items;
   if (!Array.isArray(items)) return data;
+  const visible = await Promise.all(items.map((item) => isPubliclyVisible(resolve, 'knowledge', item)));
   return {
     ...(data as Record<string, unknown>),
-    items: items.filter((item) => isPubliclyVisible(resolve, 'knowledge', item)),
+    items: items.filter((_item, index) => visible[index] === true),
   };
 }
 
@@ -188,13 +196,13 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
   app.get(`${API_PREFIX}/knowledge`,{preHandler:guards.requireUser,schema:{querystring:{type:'object',additionalProperties:false,properties:{...filters,
     q:text,...pagination}}}},async(request,reply)=>{
     const data = await ready().list(input(request),request.query as KnowledgeQuery);
-    return reply.header('Cache-Control','no-store').send({data:filterVisiblePage(data,resolveReference),meta:buildMeta(request,config)});
+    return reply.header('Cache-Control','no-store').send({data:await filterVisiblePage(data,resolveReference),meta:buildMeta(request,config)});
   });
   app.get(`${API_PREFIX}/knowledge/:id`,{preHandler:guards.requireUser,schema:{params:{type:'object',additionalProperties:false,required:['id'],properties:{id:{type:'string',format:'uuid'}}},
     querystring:{type:'object',additionalProperties:false,properties:filters}}},async(request,reply)=>{
     const data = await ready().get(input(request),(request.params as {id:string}).id,request.query as KnowledgeQuery) as {revision:number};
     // 本片接线：引用失效 ⇒ 抛在写响应头**之前**，故失败响应不带 ETag，旧 ETag/条件请求无从复活。
-    if (resolveReference !== undefined) assertPubliclyVisible(resolveReference,'knowledge',data,NOT_FOUND_MESSAGE.knowledge);
+    if (resolveReference !== undefined) await assertPubliclyVisible(resolveReference,'knowledge',data,NOT_FOUND_MESSAGE.knowledge);
     return reply.header('Cache-Control','no-store').header('ETag',`"${data.revision}"`).send({data,meta:buildMeta(request,config)});
   });
   // 契约 /herbicides：仅 q 与 registration_number 两个收窄条件（无额外字段）。
@@ -203,13 +211,13 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
     const {data} = reference.listHerbicides(queryOf(request));
     // 契约 200 头说明：授权访问 no-store；列表不带 ETag（与 /knowledge 列表一致）。
     // 与 `/knowledge` 列表面同一接线：整条剔除引用不可用的行（详见 `filterVisiblePage`）。
-    return reply.header('Cache-Control','no-store').send({data:filterVisiblePage(data,resolveReference),meta:buildMeta(request,config)});
+    return reply.header('Cache-Control','no-store').send({data:await filterVisiblePage(data,resolveReference),meta:buildMeta(request,config)});
   });
   app.get(`${API_PREFIX}/herbicides/:id`,{preHandler:guards.requireUser,schema:{params:{type:'object',additionalProperties:false,required:['id'],properties:{id:{type:'string',format:'uuid'}}},
     querystring:{type:'object',additionalProperties:false,properties:{}}}},async(request,reply)=>{
     const {data,etag} = reference.getHerbicide((request.params as {id:string}).id,queryOf(request));
     // 本片接线：与 `/knowledge/{id}` 同一判定、同形 404（文案与该域既有"查不到"一致）。
-    if (resolveReference !== undefined) assertPubliclyVisible(resolveReference,'knowledge',data,NOT_FOUND_MESSAGE.herbicide);
+    if (resolveReference !== undefined) await assertPubliclyVisible(resolveReference,'knowledge',data,NOT_FOUND_MESSAGE.herbicide);
     const headers = reply.header('Cache-Control','no-store');
     if (etag !== undefined) headers.header('ETag',etag);
     return headers.send({data,meta:buildMeta(request,config)});

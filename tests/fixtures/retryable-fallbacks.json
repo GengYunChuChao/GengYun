@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 229
+      "files": 232
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 41,
-    "has": 40,
+    "total": 43,
+    "has": 42,
     "none": 1
   },
   "entries": [
@@ -30,6 +30,20 @@
       "function": "mapAccountsReadError",
       "judgement": "has",
       "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/admin/ops/content-pg.ts",
+      "line": 102,
+      "function": "foldDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I18"
+    },
+    {
+      "file": "services/api/src/admin/ops/content-pg.ts",
+      "line": 106,
+      "function": "foldDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I18"
     },
     {
       "file": "services/api/src/admin/ops/flags-pg.ts",
@@ -264,7 +278,7 @@
     },
     {
       "file": "services/api/src/profile/service.ts",
-      "line": 57,
+      "line": 60,
       "function": "transaction",
       "judgement": "has",
       "owner": "GY-I22"
