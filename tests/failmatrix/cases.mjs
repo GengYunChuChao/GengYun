@@ -201,6 +201,12 @@ export const CASES = [
   { id: 'C4-16', family: 'C4', title: '换发后旧回执失效', actor: 'deleter', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.deleter.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.deleter.staleReceipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C4-17', family: 'C4', title: '换发后新回执可用', actor: 'deleter', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.deleter.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.deleter.receipt}` }), expect: { status: 200 } },
   { id: 'C4-18', family: 'C4', title: '冷静期内原会话仍可用（注销在线 7 日到期前）', actor: 'deleter', method: 'GET', path: `${API}/favorites`, expect: { status: 200 }, note: '契约：注销申请后在线数据保留 7 日（cooling-off），到期前会话仍可用；到期后的失效由 deletion 执行面负责（未取得）' },
+  // 退出后多面同形 401：C4-03 只钉了 /favorites 一面。这三条把同一张封套钉到个人资料 / 目录 /
+  // 资料库三个面上（`sameShapeAs` 与 C4-03 交叉引用：message 归一化，code/retryable/details + meta 逐字节比），
+  // 任一面的守卫「顺手放宽成 401 另一套封套」或「漏挂 requireUser 变成 200/其他码」都会独立转红。
+  { id: 'C4-19', family: 'C4', title: '注销后旧会话读个人资料（与 C4-03 同形）', actor: 'logout', method: 'GET', path: `${API}/me/profile`, expect: { status: 401, code: 'SESSION_EXPIRED' }, sameShapeAs: 'C4-03', note: '路径依据 services/api/src/routes/profile.ts:25（guards.requireUser）；会话已撤销由 auth/middleware.ts:78-80 判 SESSION_EXPIRED' },
+  { id: 'C4-20', family: 'C4', title: '注销后旧会话读目录（与 C4-03 同形）', actor: 'logout', method: 'GET', path: `${API}/catalog/crops`, expect: { status: 401, code: 'SESSION_EXPIRED' }, sameShapeAs: 'C4-03', note: '路径依据 services/api/src/routes/profile.ts:44（GET /catalog/:kind，同一条 requireUser 守卫）' },
+  { id: 'C4-21', family: 'C4', title: '注销后旧会话读资料库（与 C4-03 同形）', actor: 'logout', method: 'GET', path: `${API}/knowledge`, expect: { status: 401, code: 'SESSION_EXPIRED' }, sameShapeAs: 'C4-03', note: '路径依据 services/api/src/routes/knowledge.ts:196（preHandler: guards.requireUser）' },
 
   // ---------------------------------------------------------------- C5 媒体
   { id: 'C5-01', family: 'C5', title: '上传句柄带多余字段', actor: 'a', method: 'POST', path: `${API}/media/uploads`, body: { ...UPLOAD_BODY, object_key: 'evil/key' }, headers: key('i22-c5-01'), expect: { status: 400, code: 'INVALID_REQUEST' } },
@@ -254,6 +260,7 @@ export const CASES = [
     if (ids.size > 1) problems.push(`并发同键产生了多行：${[...ids].join(',')}`);
     return problems;
   } },
+  { id: 'C6-11', family: 'C6', title: '已登录取消收藏缺 If-Match：428', actor: 'b', method: 'DELETE', path: (ctx) => `${API}/favorites/${ctx.seeded.favoriteId}`, headers: key('i22-c6-11'), expect: { status: 428, code: 'REVISION_REQUIRED' }, note: '幂等键合法但不带 If-Match ⇒ favorites/service.ts:430 requireIfMatch 先抛 REVISION_REQUIRED（428 早于归属 404 与 revision 409：条件头是写路径的必备前置，不做 last-write-wins）；缺幂等键的 400 由 C6-04 覆盖' },
 
   // ------------------------------------------------------------ C7 无效输入
   { id: 'C7-01', family: 'C7', title: '帖子路径 id 非 uuid', actor: 'a', method: 'GET', path: `${API}/posts/not-a-uuid`, expect: { status: 400, code: 'INVALID_REQUEST' } },
