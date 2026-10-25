@@ -6,8 +6,8 @@
  * 并且断言红的时候**点名了那个文件**（否则红也定位不到人）。
  *
  * 夹具做法（照 `tests/unit/verify-migrations-unique.test.mjs` 的分层）：
- *   · 在 `os.tmpdir()` 下铺一棵**最小仓库镜像**：`package.json`（两条 purge script，
- *     从真仓 `package.json` 原样取命令）、`tools/` 下两个入口空文件、`services/api/src/` 下
+ *   · 在 `os.tmpdir()` 下铺一棵**最小仓库镜像**：`package.json`（三条 purge script，
+ *     从真仓 `package.json` 原样取命令）、`tools/` 下三个入口空文件、`services/api/src/` 下
  *     一个不含 `setInterval(` 的桩文件、以及 `deploy/purge-schedule/` 下的**真单元文件副本**；
  *   · 先证明「一字不改 ⇒ 退出码 0」（对照组），再逐条改坏一处 ⇒ 退出码 1 且点名；
  *   · 断言的是**退出码**与**关键输出** —— 门禁在 CI 里被判的就是这两样。
@@ -23,14 +23,16 @@
  *
  * 分层：
  *   §1 CLI 用法与退出码约定（0 / 1 / 2）；
- *   §2 真仓库正臂（并核对两条 timer 的**实算**间隔）；
+ *   §2 真仓库正臂（并核对三条 timer 的**实算**间隔与各自的上界档）；
  *   §3 夹具对照组（一字不改 ⇒ 绿）；
- *   §4 负控制（**10 个用例 / 14 条控制臂** —— 用例数与基线相同，臂数 +4：缺 OnCalendar / 间隔 > 60 /
- *      `--cursor-file` 相对路径 / `--cursor-file` 用 `..` 穿越出状态目录 / 内联 DSN / 非常见键名的
- *      内联口令键（`Environment=DB_PASS=…`）/ ExecStart 不存在 / 注入 `setInterval(` /
+ *   §4 负控制（**13 个用例 / 17 条控制臂** —— 基线 10 / 14，本片 +3 用例 / +3 臂：
+ *      retention timer 的 `Unit=` 换成分钟级命令（日级间隔立刻撞 60 分钟上界）/ 删掉 retention
+ *      那一对单元 / 夹具 `package.json` 删掉 `purge:retention` script。基线臂：缺 OnCalendar /
+ *      间隔 > 60 / `--cursor-file` 相对路径 / `--cursor-file` 用 `..` 穿越出状态目录 / 内联 DSN /
+ *      非常见键名的内联口令键（`Environment=DB_PASS=…`）/ ExecStart 不存在 / 注入 `setInterval(` /
  *      `globalThis.setInterval(` / 带空白的 `setInterval (` / npm script 不存在 / 删掉整条备份单元 /
  *      `User=root` / 调度目录整块消失）；
- *   §5 纯函数：日历展开、时长解析、入口解析、游标参数、部署根后缀映射。
+ *   §5 纯函数：日历展开、时长解析、入口解析、游标参数、部署根后缀映射、间隔上界分档。
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -41,13 +43,17 @@ import { fileURLToPath } from 'node:url';
 import {
   CRITERIA,
   CURSOR_REQUIRED_ENTRY,
+  DAILY_INTERVAL_MINUTES,
   DEFAULT_SCHEDULE_DIR,
+  INTERVAL_BUDGET_MINUTES,
   MAX_INTERVAL_MINUTES,
   REQUIRED_NPM_SCRIPTS,
   calendarFireSeconds,
   cursorArgs,
   execStartEntry,
   findSetIntervalCalls,
+  intervalBudgetLabel,
+  intervalBudgetMinutes,
   main,
   maxGapSeconds,
   npmScriptEntry,
@@ -162,6 +168,8 @@ const ONLINE_SERVICE = `${DEFAULT_SCHEDULE_DIR}/gengyun-purge-online-data.servic
 const ONLINE_TIMER = `${DEFAULT_SCHEDULE_DIR}/gengyun-purge-online-data.timer`;
 const BACKUP_SERVICE = `${DEFAULT_SCHEDULE_DIR}/gengyun-purge-backup-copies.service`;
 const BACKUP_TIMER = `${DEFAULT_SCHEDULE_DIR}/gengyun-purge-backup-copies.timer`;
+const RETENTION_SERVICE = `${DEFAULT_SCHEDULE_DIR}/gengyun-purge-retention.service`;
+const RETENTION_TIMER = `${DEFAULT_SCHEDULE_DIR}/gengyun-purge-retention.timer`;
 
 // ---------------------------------------------------------------------------
 // §1 CLI 用法与退出码约定
@@ -174,6 +182,10 @@ test('用法·--help 打印用法并以 0 退出（「帮我看一眼」不是�
   assert.match(stdout, /--root/);
   assert.match(stdout, /0 = 全部满足/);
   assert.match(stdout, new RegExp(`≤ ${MAX_INTERVAL_MINUTES} 分钟`));
+  // 上界是**分档**的：分钟级那一档仍是 60，日级那一档是 1440（用法里必须两档都说得出来）。
+  assert.match(stdout, new RegExp(`≤ ${DAILY_INTERVAL_MINUTES} 分钟`));
+  assert.match(stdout, /日级命令（purge:retention）/);
+  assert.match(stdout, /未登记\/未解析到入口一律按/);
 });
 
 test('用法·未知参数 ⇒ 退出码 2（用法错误 ≠ 判据不满足）', () => {
@@ -200,8 +212,11 @@ test('用法·--json 的 stdout 必须是纯 JSON，且带稳定契约字段', (
   assert.deepEqual(report.criteria, [...CRITERIA]);
   assert.deepEqual(report.requiredNpmScripts, [...REQUIRED_NPM_SCRIPTS]);
   assert.equal(report.cursorRequiredEntry, CURSOR_REQUIRED_ENTRY);
-  assert.equal(report.counts.services, 2);
-  assert.equal(report.counts.timers, 2);
+  assert.equal(report.maxIntervalMinutes, MAX_INTERVAL_MINUTES);
+  assert.equal(report.dailyIntervalMinutes, DAILY_INTERVAL_MINUTES);
+  assert.deepEqual(report.intervalBudgets, { ...INTERVAL_BUDGET_MINUTES });
+  assert.equal(report.counts.services, 3);
+  assert.equal(report.counts.timers, 3);
   assert.equal(report.counts.setIntervalHits, 0);
   assert.deepEqual(report.failures, []);
 });
@@ -214,19 +229,23 @@ test('正臂·真仓库：10 项判据全部满足，exit 0', () => {
   const { status, stdout } = runCli([]);
   assert.equal(status, 0, `真仓库必须绿（这是本片交付的调度产物本身）：\n${stdout}`);
   assert.match(stdout, new RegExp(`PASS：${CRITERIA.length} 项判据全部满足`));
-  assert.match(stdout, /\.service 2 个 \/ \.timer 2 个逐条有交代/);
-  // 判据不是「有 OnCalendar 就放行」：两条 timer 的**实算**间隔必须真的 ≤ 60 分钟。
+  assert.match(stdout, /\.service 3 个 \/ \.timer 3 个逐条有交代/);
+  // 判据不是「有 OnCalendar 就放行」：三条 timer 的**实算**间隔必须真的 ≤ 各自命令的上界。
   assert.match(stdout, /最大间隔 10 分钟/);
   assert.match(stdout, /最大间隔 15 分钟/);
+  // 日级那一档：只有驱动 `tools/purge-retention-expired.mjs` 的 timer 才按 1440 分钟判。
+  assert.match(stdout, /每天 1 次触发，最大间隔 1440 分钟（上界 1440 分钟 · 日级命令 tools\/purge-retention-expired\.mjs/);
+  assert.match(stdout, /（上界 60 分钟 · 分钟级命令 tools\/purge-expired-online-data\.mjs）/);
+  assert.match(stdout, /（上界 60 分钟 · 分钟级命令 tools\/purge-expired-backup-copies\.mjs）/);
   assert.match(stdout, /`setInterval\(` 命中 0 处/);
   assert.equal(failureIds(stdout).length, 0);
 });
 
-test('正臂·代码内联调用（不经 CLI）：真仓库 ok=true，且两条必须命令都被覆盖', () => {
+test('正臂·代码内联调用（不经 CLI）：真仓库 ok=true，且三条必须命令都被覆盖', () => {
   const result = verifyPurgeSchedule({});
   assert.equal(result.ok, true, `verifyPurgeSchedule 在真仓库上应 ok=true：${JSON.stringify(result.failures)}`);
-  assert.equal(result.counts.services, 2);
-  assert.equal(result.counts.timers, 2);
+  assert.equal(result.counts.services, 3);
+  assert.equal(result.counts.timers, 3);
   assert.equal(result.counts.setIntervalHits, 0);
   assert.ok(result.counts.setIntervalFiles > 100, `扫描面应覆盖 services/api/src 的代码文件，实际 ${result.counts.setIntervalFiles}`);
   assert.equal(result.counts.coveredNpmScripts, REQUIRED_NPM_SCRIPTS.length);
@@ -442,8 +461,48 @@ test('负控制⑩：调度目录整块消失 ⇒ FAIL[surface]（扫到 0 个�
   assert.match(stdout, /找不到调度目录/);
 });
 
+test('负控制⑪：日级 timer 换成分钟级命令 ⇒ FAIL[calendar] 把 1440 分钟撞回 60 分钟上界', () => {
+  // 上界**跟着命令走**，不是跟着单元名/文件名走：同一行 `OnCalendar=*-*-* 03:20:00`
+  // 驱动日级命令（`purge:retention`）是绿的，驱动分钟级命令就必须红。
+  const dir = makeFixture();
+  mutate(dir, RETENTION_TIMER, (text) => text.replace(
+    'Unit=gengyun-purge-retention.service',
+    'Unit=gengyun-purge-online-data.service',
+  ));
+  const { status, stdout } = runCli(['--root', dir]);
+  assert.equal(status, 1, stdout);
+  assert.ok(failureIds(stdout).includes('calendar'), `应点名 calendar，实际：${failureIds(stdout)}\n${stdout}`);
+  assert.match(stdout, /最大间隔 1440 分钟 > 60 分钟/);
+  assert.match(stdout, /分钟级命令 tools\/purge-expired-online-data\.mjs/);
+});
+
+test('负控制⑫：删掉 retention 那一对单元 ⇒ FAIL[coverage] 点名 purge:retention 没被驱动', () => {
+  const dir = makeFixture();
+  rmSync(join(dir, RETENTION_SERVICE));
+  rmSync(join(dir, RETENTION_TIMER));
+  const { status, stdout } = runCli(['--root', dir]);
+  assert.equal(status, 1, stdout);
+  assert.ok(failureIds(stdout).includes('coverage'), `应点名 coverage，实际：${failureIds(stdout)}\n${stdout}`);
+  assert.match(stdout, /purge:retention` 没有被任何/);
+});
+
+test('负控制⑬：package.json 少 purge:retention ⇒ FAIL[npm-script] 点名 service（必需清单是双向的）', () => {
+  const dir = makeFixture();
+  const packagePath = join(dir, 'package.json');
+  const manifest = JSON.parse(readFileSync(packagePath, 'utf8'));
+  delete manifest.scripts['purge:retention'];
+  writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+
+  const { status, stdout } = runCli(['--root', dir]);
+  assert.equal(status, 1, stdout);
+  assert.ok(failureIds(stdout).includes('npm-script'), `应点名 npm-script，实际：${failureIds(stdout)}\n${stdout}`);
+  assert.match(stdout, /gengyun-purge-retention\.service/);
+  assert.match(stdout, /purge:retention/);
+  assert.match(stdout, /不在 package\.json 的 scripts 里/);
+});
+
 // ---------------------------------------------------------------------------
-// §5 纯函数（日历展开是「间隔 ≤ 60 分钟」这条判据的心脏，单独钉住）
+// §5 纯函数（日历展开是「间隔 ≤ 各自上界」这条判据的心脏，单独钉住）
 // ---------------------------------------------------------------------------
 
 test('日历展开·*:00/10:00 ⇒ 每天 144 次、最大间隔 10 分钟（与真仓单元同值）', () => {
@@ -506,6 +565,33 @@ test('游标参数·两种写法 + --no-cursor，并区分「有没有给」', (
   });
   assert.deepEqual(cursorArgs('node a.mjs --no-cursor'), { files: [], noCursor: true });
   assert.deepEqual(cursorArgs('node a.mjs'), { files: [], noCursor: false });
+});
+
+test('间隔上界分档·分钟级 60 / 日级 1440 / 未登记回落 60（⛔ 不是「想多稀都行」）', () => {
+  assert.equal(MAX_INTERVAL_MINUTES, 60);
+  assert.equal(DAILY_INTERVAL_MINUTES, 24 * 60);
+  assert.equal(intervalBudgetMinutes('tools/purge-expired-online-data.mjs'), 60);
+  assert.equal(intervalBudgetMinutes('tools/purge-expired-backup-copies.mjs'), 60);
+  assert.equal(intervalBudgetMinutes('tools/purge-retention-expired.mjs'), 1440);
+  // 归一化：反斜杠与 `./` 前缀落到同一档（否则 Windows 上造夹具会被「格式不对」放过）。
+  assert.equal(intervalBudgetMinutes('tools\\purge-retention-expired.mjs'), 1440);
+  assert.equal(intervalBudgetMinutes('./tools/purge-retention-expired.mjs'), 1440);
+  // 未登记 / 未解析 ⇒ 回落分钟级：新增命令忘了登记时，红面比绿面安全。
+  assert.equal(intervalBudgetMinutes('tools/nope.mjs'), 60);
+  assert.equal(intervalBudgetMinutes(null), 60);
+  assert.equal(intervalBudgetMinutes(''), 60);
+  assert.deepEqual({ ...INTERVAL_BUDGET_MINUTES }, {
+    'tools/purge-expired-online-data.mjs': MAX_INTERVAL_MINUTES,
+    'tools/purge-expired-backup-copies.mjs': MAX_INTERVAL_MINUTES,
+    'tools/purge-retention-expired.mjs': DAILY_INTERVAL_MINUTES,
+  });
+  // 上界出处文案：日级 / 分钟级必须能分清（红的时候要让人看出按哪一档判的）。
+  assert.match(intervalBudgetLabel('tools/purge-retention-expired.mjs'), /日级命令 tools\/purge-retention-expired\.mjs（每天至少一次）/);
+  assert.match(intervalBudgetLabel('tools/purge-expired-online-data.mjs'), /分钟级命令 tools\/purge-expired-online-data\.mjs/);
+  assert.match(intervalBudgetLabel('tools/nope.mjs'), /入口未登记 tools\/nope\.mjs，回落分钟级/);
+  assert.match(intervalBudgetLabel(null), /入口未登记 \(未解析\)，回落分钟级/);
+  // 边界：日级上界正好等于「每天一次」的实算间隔 ⇒ 等于即通过，比它更稀在语法上写不出来。
+  assert.equal(maxGapSeconds(calendarFireSeconds('*-*-* 03:20:00')) / 60, DAILY_INTERVAL_MINUTES);
 });
 
 test('部署根映射·按最长真实后缀回到仓库相对路径（与 /opt/gengyun/app 无关）', () => {

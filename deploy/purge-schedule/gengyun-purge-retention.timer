@@ -1,0 +1,36 @@
+# GY-R34 · #19 · 数据保留策略到期清除的**调度**（配对 gengyun-purge-retention.service）。
+#
+# GY-SCHEDULE: npm-script=purge:retention
+#
+# ## 周期口径：日级一次（本目录唯一的日级单元）
+# 保留策略是 1 天 / 30 天尺度的**日历保留**（packages/privacy/retention-policy.mjs），与「在线
+# 7 日到期」那种「晚一小时就多留一小时」的刻度不同：日级一次足够，且刻意与两条分钟级单元分开写，
+# 让「谁按分钟跑、谁按天跑」在文件上一眼可读。
+# 判据 [calendar] 是按**命令**（`ExecStart=` 的入口文件）分档的，不是按 timer 分档：本单元驱动
+# tools/purge-retention-expired.mjs ⇒ 上界 1440 分钟（＝至少每天一次）；同一份 timer 若改成驱动的
+# 是在线/备份命令，上界立刻回到 60 分钟并判红。
+# OnCalendar 每天 03:20 一次 —— 与 `:00/10`（在线）、`:05/15`（备份）错开，且落在低峰；
+# 展开日历实算的最大间隔是 1440 分钟，**正好等于**上界（不是「随便写个 daily 就放行」）。
+#
+# ## 防重叠（两道）
+# ① Type=oneshot 的服务在**仍在运行**时，timer 触发的下一次启动会被 systemd 跳过
+#    （同名单实例语义）——这是单元级互斥；
+# ② 服务侧 TimeoutStartSec=1800 给单次运行一个上界，卡住的连接不会永远占着实例。
+# ⛔ 不要靠 RandomizedDelaySec 当互斥（它只是抖动）。
+#
+# Persistent=true：关机/停机期间错过的那一次，开机后补跑一次（日级任务尤其需要）。
+# RandomizedDelaySec=300s：多宿主机同时装本单元时把触发点摊开 5 分钟，避开同一秒的连接峰值
+# （日级任务对 5 分钟抖动不敏感；它不改变 1440 分钟这个上界判据）。
+
+[Unit]
+Description=耕云 数据保留策略到期清除 · 每天 03:20
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+AccuracySec=1min
+RandomizedDelaySec=300s
+Persistent=true
+Unit=gengyun-purge-retention.service
+
+[Install]
+WantedBy=timers.target

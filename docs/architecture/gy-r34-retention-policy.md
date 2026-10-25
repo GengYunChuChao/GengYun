@@ -1,8 +1,9 @@
 # 数据保留策略表与清理执行器（GY-R34）
 
-本片状态（2026-10-23）：**声明式策略表 + 幂等执行器 + 单测 + 真库臂 + CI 注册已落地**（读数见
-[证据页](../verification/gy-r34-retention-20261023.md)）。**调度接线**（`deploy/purge-schedule/` 的
-`.service`/`.timer`）仍未做，见 §8。
+本片状态（2026-10-23 策略/执行器；2026-10-24 调度接线）：**声明式策略表 + 幂等执行器 + 单测 + 真库臂 +
+CI 注册 + 宿主机日级调度已落地**（读数见[证据页](../verification/gy-r34-retention-20261023.md)）。
+**调度接线**（`deploy/purge-schedule/gengyun-purge-retention.{service,timer}`，日级一次）已做，
+见 §4「调度接线」表与 §8。
 
 ## 0. 一句话结论
 
@@ -114,12 +115,15 @@ DATABASE_URL=postgresql://… npm run purge:retention -- --yes --table public.se
 `sessions` 是当前唯一「要删但运行时角色删不了」的表。权限不足时不会「装作成功」：真库臂里专门有一个
 受限角色用例，`public.sessions` 报 `PERMISSION_DENIED`、该表一行未动、`public.idempotency_keys` 照跑、退出码 1。
 
-调度建议（本片未接线）：
+调度接线（已做，2026-10-24）：
 
 | 事项 | 现状 | 说明 |
 | --- | --- | --- |
-| 接线方式 | **未做** | 若要接 `deploy/purge-schedule/`，需同时补 `.service`（`ExecStart` 绝对路径 + `GY-SCHEDULE: npm-script=purge:retention`）与 `.timer`，并把 `purge:retention` 加进 `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS`（**当前没加**：还没有对应 `.service`，加了会直接红） |
-| **日级频率冲突** | **需先解决** | `tools/verify-purge-schedule.mjs` 的 `[calendar]` 判据要求每个 `.timer` 的 `OnCalendar` 展开间隔 **≤60 分钟**。保留策略天生是**日级**任务（1 天/30 天尺度的清理），按现有判据接线会直接红 ⇒ 要么先给该门禁开「日级例外」并写清判据，要么明确声明 `purge:retention` **仅手工/运维单次执行**、不进 timer 家族。在那之前按手工执行 |
+| 单元 | **已接线** | `deploy/purge-schedule/gengyun-purge-retention.service` + `.timer`（`# GY-SCHEDULE: npm-script=purge:retention`、`# GY-SCHEDULE: role=owner`）；`ExecStart` 是绝对路径的 `tools/purge-retention-expired.mjs --yes --json`（执行器默认 dry-run，⛔ 不带 `--yes` 的 timer 等于每天空转） |
+| 频率 | **日级一次** | `OnCalendar=*-*-* 03:20:00`（`AccuracySec=1min`、`RandomizedDelaySec=300s`、`Persistent=true`）。1 天/30 天尺度的日历保留按分钟刻度跑没有意义；`Persistent=true` 保证宿主机停机跨过 03:20 后开机补跑一次，不会因为「正好关机」漏掉整天 |
+| 门禁上界 | **已分档** | `tools/verify-purge-schedule.mjs` 的 `[calendar]` 从「一律 ≤60 分钟」改为**按命令分档**（`INTERVAL_BUDGET_MINUTES`，经 timer 的 `Unit=` → `.service` 的 `ExecStart=` 入口解析）：分钟级命令（`purge:online-data` / `purge:backup-copies`）仍 ≤ 60 分钟；日级命令 `tools/purge-retention-expired.mjs` ≤ **1440 分钟**（＝至少每天一次，正好是「每天一次」的实算间隔）；未登记/未解析到入口**回落 60 分钟**。所以日级例外**只有**驱动这条命令的 timer 才拿得到，换 `Unit=` 或换入口都不行 |
+| 失败可见性 | systemd 退出码 | 执行器退出码 0/1/2 直接成为 `systemctl` 状态：`journalctl -u gengyun-purge-retention.service` 看末行 `SUMMARY`/`FAIL table=… code=…`；**不设** `SuccessExitStatus=`、不加吞红开关 ⇒ 退出码是唯一判据。`--json` 末行原件建议按天留存（与 §5 第 2 条同口径） |
+| 角色 | 属主/运维（`gengyun-ops`） | `public.sessions` 的 `DELETE` 未授予运行时角色，timer 必须跑在属主/运维连接串上（见 §4 权限表与 §8「运行时角色授权」） |
 
 ## 5. 审计要求
 
@@ -166,7 +170,7 @@ DATABASE_URL=postgresql://… npm run purge:retention -- --yes --table public.se
 
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
-| 调度接线 | **未做** | 没往 `deploy/purge-schedule/` 加 `.service`/`.timer`；**且**现有 `[calendar]` ≤60 分钟判据与日级保留任务天然冲突，接线前需先定日级例外（见 §4 调度建议表） |
+| 调度接线 | **已做**（2026-10-24） | `deploy/purge-schedule/gengyun-purge-retention.{service,timer}`：属主/运维角色（`User=gengyun-ops`）、`EnvironmentFile=/etc/gengyun/purge-retention.env`、`ExecStart=/usr/bin/node /opt/gengyun/app/tools/purge-retention-expired.mjs --yes --json`、`TimeoutStartSec=1800`、`StateDirectory=gengyun-purge-retention`；timer **日级一次**（`OnCalendar=*-*-* 03:20:00`、`Persistent=true`）。`[calendar]` 判据同步改为**按命令分档**（日级 ≤ 1440 分钟，其余仍 ≤ 60 分钟，未登记回落 60），`purge:retention` 已进 `REQUIRED_NPM_SCRIPTS`。运维步骤见 `deploy/purge-schedule/README.md` |
 | CI 注册 | **已做** | 接进 `.github/workflows/real-pg-integration.yml` 的独立 step（自起集群、`GY_PG_BIN=/usr/lib/postgresql/17/bin`、`GY_R34_PG_ROOT=${{ runner.temp }}/gy-r34-pg`、⛔ 不 `CREATE DATABASE`、不加吞红开关），并在 `tests/unit/ci-real-pg-wiring.test.mjs` 里登记 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER`／`SELF_CLUSTERED_SCRIPTS`／`SELF_CLUSTERED_ROOT_KEY`；`tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 也写明它不进无 PG 的回环链。⛔ 它**不进** `test:integration:http`（那条链没有 PG，只会 `exit 77`） |
 | `admin_sessions` / `community_reports` 的处置 | **未启用（刻意）** | 90/180 天无出处 ⇒ 只进排除清单；`archive_marker` 与 `anonymize + revisionColumn` 的机制已在单测与真库臂覆盖，口径定了即可启用 |
 | 运行时角色授权 | **未做（刻意）** | `public.sessions` 的 `DELETE` 没给运行时角色，跑法是用属主/运维连接串；要不要开权限属独立评审 |
