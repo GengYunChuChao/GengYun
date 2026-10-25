@@ -249,7 +249,7 @@
   （表零 DML/SELECT），**尚未装配**进 `app.ts`（装配属 P2-b）。
 - **库层证据（2026-10-26 增补；判定与下面三条缺口均不变）**：迁移
   `services/api/db/migrations/0044_third_party_deletion_persistence.sql:97` 建了唯一写路径
-  `record_third_party_deletion_request(...)`（`SECURITY DEFINER` ＋ `SET search_path = pg_catalog`），`:270` 建了唯一读路径
+  `record_third_party_deletion(...)`（`SECURITY DEFINER` ＋ `SET search_path = pg_catalog`），`:270` 建了唯一读路径
   `list_third_party_deletions(...)`（只吐八个证据面列、固定排序、终态不可回退）；授权在
   `deploy/postgres-cvm/sql/20-login-roles.sql:414`（REVOKE PUBLIC）与 `:416`（GRANT EXECUTE 给 `gengyun_api_runtime`，
   该表对运行时仍 `forbidden`，见 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1134`），函数形状断言在同文件
