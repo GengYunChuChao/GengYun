@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { conversationFixture, CONVERSATIONS, JOBS, retrievalItem, retrievalSet } from './conversation-fixtures.mjs';
+import { ApiError } from '../../services/api/src/errors.ts';
 import { createWiredRetrievalPort } from '../../services/api/src/conversations/guard.ts';
 import { createMemoryConversationStore } from '../../services/api/src/conversations/store.ts';
 import {
@@ -166,6 +167,156 @@ test('重试幂等：同键同体重放同一作业、不产生第二条轮次�
   const byJob = new Map(turns.map((turn) => [turn.job_id, turn]));
   assert.equal(byJob.get(jobId).answer, null, '先前失败的轮次不得被后来的成功补写成有回答');
   assert.equal(byJob.get(retriedJobId).answer.status, 'answered');
+});
+
+// ---------------------------------------------------------------------------
+// ④-模型侧上游失败：与检索失败**同口径**（本片补的正是这段 loop 级口径）
+// ---------------------------------------------------------------------------
+// 缺口现场：`conversation-chat-live.test.mjs:321-392` 只钉适配器把供应商状态映射成契约错误码，
+// `:454-511` 只钉外发口的 reserve-then-send 与失败记账；上面三条用例只钉**检索**失败。
+// 也就是"回答器（模型）抛错之后 loop 怎么结算"此前没有任何用例：错误码可能被折叠成
+// `PROVIDER_UNAVAILABLE`、可能落出半截回答行、也可能把模型侧超时写成 `failed` —— 三种都是
+// "静默做错"，客户端会因此拿到错误的可重试性判断（回退到 `settleCodeOf` 的兜底分支就长这样）。
+const MODEL_QUOTA_ERROR = new ApiError('PROVIDER_QUOTA_EXCEEDED', '模拟供应商配额不足（测试替身）', {
+  retryable: true,
+});
+const MODEL_TIMEOUT_ERROR = new ApiError('PROVIDER_TIMEOUT', '模拟供应商超时（测试替身）', { retryable: true });
+
+test('模型上游失败 ⇒ failed/timed_out 且错误码原样透出、零回答行；恢复后重试恰好新增一条（旧失败轮次不被补写）', async (t) => {
+  const calls = [];
+  const script = [MODEL_QUOTA_ERROR, MODEL_TIMEOUT_ERROR];
+  const fixture = await conversationFixture(t, {
+    injection: {
+      ...flakyRetrieval(0),
+      // 真实模型的替身：前两次按脚本失败，恢复后扮演"守规矩的模型"（只引用它从本次检索集合里读到的条目）。
+      composer: {
+        async compose(input) {
+          calls.push(input);
+          const step = script[calls.length - 1];
+          if (step !== undefined) throw step;
+          const only = input.set.items[0];
+          return { text: `（替身模型已恢复）依据检索条目的回答：${only.title}`, citations: [only.source], dose_cards: [] };
+        },
+      },
+    },
+  });
+  const created = await fixture.createConversation({}, { tag: 'model' });
+  const conversationId = created.body.data.id;
+
+  // ① 供应商配额不足：`failed` + **原样**错误码（不得折成 PROVIDER_UNAVAILABLE）
+  const quotaJobId = await accept(fixture, conversationId, 'model-t1');
+  const quota = await fixture.call('GET', `${JOBS}/${quotaJobId}`);
+  assert.equal(quota.status, 200, `失败作业的读面必须仍是 200（不得 5xx）：${JSON.stringify(quota.body)}`);
+  assert.equal(quota.body.data.state, 'failed');
+  assert.equal(
+    quota.body.data.error_code,
+    'PROVIDER_QUOTA_EXCEEDED',
+    '模型侧错误码必须原样透出（折叠成 PROVIDER_UNAVAILABLE 会把"稍后重试可能成功"说成"供应商不可用"）',
+  );
+  assert.notEqual(quota.body.data.error_code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(quota.body.data.result, null, '模型失败不得携带任何回答或半截引用');
+  assert.equal(typeof quota.body.data.deadline_at, 'string', '失败也保留截止时间：可重试性可被读完');
+  assert.equal(fixture.conversationStore.snapshot().answers.length, 0, '模型失败不得落任何回答行');
+
+  // ② 同键重放：同一个作业、不多出轮次、不把失败改写成排队/成功、也**不**再问一次模型
+  fixture.clock.advance(1000);
+  const replay = await fixture.createTurn(
+    conversationId,
+    await conversationRevision(fixture, conversationId),
+    { input_type: 'text', text: QUESTION },
+    { tag: 'model-t1' },
+  );
+  assert.equal(replay.status, 202, '幂等重放必须仍是 202');
+  assert.equal(replay.body.data.id, quotaJobId, '同键同体必须返回同一个作业');
+  assert.equal(replay.body.data.state, 'failed', '重放不得把已失败的作业改写');
+  assert.equal((await turnsOf(fixture, conversationId)).length, 1, '重放不得新增轮次');
+  assert.equal(calls.length, 1, '重放不得再次调用模型（失败不得被"顺手重试"）');
+
+  // ③ 模型侧超时：`timed_out` + PROVIDER_TIMEOUT（与 `failed` 可区分，与"截止时间已过"同口径）
+  const timeoutJobId = await accept(fixture, conversationId, 'model-t2');
+  const timeout = await fixture.call('GET', `${JOBS}/${timeoutJobId}`);
+  assert.equal(timeout.body.data.state, 'timed_out', '模型侧超时必须落 timed_out（不是 failed）');
+  assert.equal(timeout.body.data.error_code, 'PROVIDER_TIMEOUT');
+  assert.equal(timeout.body.data.result, null);
+  assert.equal(fixture.conversationStore.snapshot().answers.length, 0, '超时同样不得落回答行');
+
+  // ④ 恢复后真正的重试：成功恰好一条新轮次，引用只来自本次检索集合
+  const retriedJobId = await accept(fixture, conversationId, 'model-t3');
+  const retried = await fixture.call('GET', `${JOBS}/${retriedJobId}`);
+  assert.equal(retried.body.data.state, 'succeeded', '模型恢复后重试应能成功');
+  const answer = retried.body.data.result.value;
+  assert.equal(answer.status, 'answered');
+  assert.deepEqual(answer.citations, [ITEM.source], '成功轮次的引用必须恰好是本次集合那一条（不掺失败轮次的残留）');
+
+  // ⑤ 落库与读面口径：失败/超时两轮零回答行、不被后来的成功补写
+  const turns = await turnsOf(fixture, conversationId);
+  assert.equal(turns.length, 3, '失败 + 超时 + 重试：恰好三条轮次（不重复、不丢）');
+  const byJob = new Map(turns.map((turn) => [turn.job_id, turn]));
+  assert.equal(byJob.get(quotaJobId).answer, null, '失败轮次不得被后来的成功补写成有回答');
+  assert.equal(byJob.get(timeoutJobId).answer, null, '超时轮次同样不得被补写');
+  assert.equal(byJob.get(retriedJobId).answer.status, 'answered');
+  const snapshot = fixture.conversationStore.snapshot();
+  assert.equal(snapshot.answers.length, 1, '两次失败零回答行 + 成功一行：恰好一行');
+  assert.equal(snapshot.answers[0].turn_id, byJob.get(retriedJobId).id, '唯一的回答行必须挂在成功那一轮');
+  assert.equal(snapshot.turns.filter((turn) => turn.job_state === 'failed').length, 1);
+  assert.equal(snapshot.turns.filter((turn) => turn.job_state === 'timed_out').length, 1);
+  assert.equal(snapshot.turns.find((turn) => turn.job_id === quotaJobId).job_error_code, 'PROVIDER_QUOTA_EXCEEDED');
+
+  // ⑥ 反向对照：三次受理都真的走到了模型（否则本用例可能因问题被筛查阻断而空转）
+  assert.equal(calls.length, 3, '三次受理各调用一次模型');
+  for (const input of calls) {
+    assert.notEqual(input.set, null, '模型失败发生在检索之后：回答器必须拿到检索集合');
+    assert.equal(input.set.items.length, 1);
+  }
+  assert.equal(typeof calls[0].egress.objectId, 'string', '外发记账上下文必须随调用传入（失败要能归因到具体轮次）');
+  const egressObjects = calls.map((input) => input.egress.objectId);
+  assert.equal(new Set(egressObjects).size, 3, '三次调用必须各自归因到不同轮次（失败不得共享一个记账对象）');
+  const egressRevisions = calls.map((input) => input.egress.objectRevision);
+  for (const revision of egressRevisions) {
+    assert.ok(Number.isInteger(revision) && revision >= 1, `轮次 revision 必须是正整数：${revision}`);
+  }
+  assert.deepEqual(
+    [...egressRevisions].sort((left, right) => left - right),
+    egressRevisions,
+    '失败/超时/重试分别落在递增的轮次 revision 上（不得复用同一轮次）',
+  );
+
+  // ⑦ 成功之后不得回头改写先前两次失败的作业读面
+  assert.equal((await fixture.call('GET', `${JOBS}/${quotaJobId}`)).body.data.state, 'failed');
+  assert.equal((await fixture.call('GET', `${JOBS}/${timeoutJobId}`)).body.data.state, 'timed_out');
+});
+
+test('模型产出不可交付（空正文 / 契约外超长正文）⇒ 作业 failed、零回答行（半成品绝不落库）', async (t) => {
+  /** 只换回答器（检索照常返回一条可用来源）：用来造"模型产出不可交付"的两种形态。 */
+  const withComposer = (compose) => conversationFixture(t, {
+    injection: { ...flakyRetrieval(0), composer: { compose } },
+  });
+
+  // 形态① 空正文却带结构化引用 ⇒ 守卫拒绝产出空回答（`guard.ts:413-416`）。
+  const empty = await withComposer(async () => ({ text: '   ', citations: [ITEM.source], dose_cards: [] }));
+  const emptyConversation = (await empty.createConversation({}, { tag: 'empty-answer' })).body.data.id;
+  const emptyJobId = await accept(empty, emptyConversation, 'empty-t1');
+  const emptyJob = await empty.call('GET', `${JOBS}/${emptyJobId}`);
+  assert.equal(emptyJob.status, 200);
+  assert.equal(emptyJob.body.data.state, 'failed', '空正文不得被结算成 succeeded');
+  assert.equal(emptyJob.body.data.error_code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(emptyJob.body.data.result, null, '空正文不得以"有回答"的形式交付');
+  assert.equal(empty.conversationStore.snapshot().answers.length, 0, '空正文不得落任何回答行（不落半成品）');
+  assert.equal((await turnsOf(empty, emptyConversation))[0].answer, null);
+
+  // 形态② 正文超出契约 `checked_text` 上限（16000）⇒ 落库前的契约形状闸门拒绝
+  // （`service.ts:1024-1041` → `assertAnswerContract`）：**不**"先存下再想办法"。
+  const tooLong = '合成正文'.repeat(4001);
+  assert.ok(tooLong.length > 16000, '前置：正文确实超契约上限');
+  const long = await withComposer(async () => ({ text: tooLong, citations: [ITEM.source], dose_cards: [] }));
+  const longConversation = (await long.createConversation({}, { tag: 'long-answer' })).body.data.id;
+  const longJobId = await accept(long, longConversation, 'long-t1');
+  const longJob = await long.call('GET', `${JOBS}/${longJobId}`);
+  assert.equal(longJob.body.data.state, 'failed', '契约外的正文不得被落库（也不得出现在 Turn.answer 里）');
+  assert.equal(longJob.body.data.error_code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(longJob.body.data.result, null);
+  assert.equal(long.conversationStore.snapshot().answers.length, 0, '契约形状过不了的回答绝不落库');
+  assert.equal((await turnsOf(long, longConversation))[0].answer, null);
 });
 
 test('依据正文超长时显式标注节选（不得静默返回半截文本）', async (t) => {
