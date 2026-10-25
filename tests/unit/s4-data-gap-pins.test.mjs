@@ -24,7 +24,7 @@
  * | 2 | `services/api/src` 扫 `createThirdPartyDeletionAdapter`；单独断 `app.ts` | 除 `privacy/third-party-deletion-adapter.ts` 自身外**零引用**；`app.ts` 里**零出现** ⇒ 未装配 | 任何装配（`app.ts` import/调用、新工厂、路由注入）；或适配器被移到别处 |
  * | 3 | `deploy/purge-schedule/` 的 `*.service` / `*.timer` 全集 | 全集**恰好四条**（online-data、backup-copies 各一 service + 一 timer），**没有**任何 `*retention*` 单元 | 新增任何一个单元（尤其 `gengyun-purge-retention.{service,timer}`）；或删掉现存单元 |
  * | 4 | `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` | 唯一定义点 + 数组**恰好** `['purge:online-data','purge:backup-copies']`，**不含** `purge:retention` | 把 `purge:retention` 加进数组；或把该常量挪到别处/复制一份 |
- * | 5 | `.github/workflows/**` 扫 `verify:purge-schedule`、`restore-drill` | 两条**零命中** ⇒ 调度门禁与恢复演练都还没进 CI | 任何 workflow 里出现 `npm run verify:purge-schedule` 或引用 `deploy/postgres-cvm/restore-drill.*` |
+ * | 5 | `.github/workflows/**` 扫 `verify:purge-schedule` / `tools/verify-purge-schedule`、`restore-drill` | 两组**零命中** ⇒ 调度门禁（无论经 npm script 还是直接调工具）与恢复演练都还没进 CI | 任何 workflow 里出现 `npm run verify:purge-schedule`、`node tools/verify-purge-schedule.mjs`，或引用 `deploy/postgres-cvm/restore-drill.*` |
  * | 6 | `services/api/src`、`packages` 扫 `purge_owner_media` | **零命中** ⇒ 媒体行物理删除的唯一入口（0035 的 `SECURITY DEFINER` 函数）至今没人调 | 任何应用侧写 `SELECT public.purge_owner_media($1)`；或迁移 0035 的函数定义消失（后者是恶化，同样要红） |
  *
  * ## 硬约束（改本文件时不许破）
@@ -271,10 +271,12 @@ test('缺口 2 · createThirdPartyDeletionAdapter 未装配：除自身文件外
     occurrences(appSource, 'createThirdPartyDeletionAdapter'),
     0,
     '【缺口 2 破了】`services/api/src/app.ts` 里出现了 `createThirdPartyDeletionAdapter` —— 装配发生了。'
-      + '\n  基线（81d8e0b9）：app.ts 1766 行里零出现（第三方删除只有**投影** '
+      + '\n  基线（81d8e0b9）：app.ts 2491 行里零出现（第三方删除只有**投影** '
       + '`privacy/third-party-deletion-projection.ts` 的只读消费，没有出站适配器）。'
-      + '\n  ⇒ 请翻转本钉子，并把 docs/architecture/gy-r34-retention-policy.md 的「接线方式」一栏从'
-      + '  「未做」改成新事实。'
+      + '\n  ⇒ 请翻转本钉子，并把**适配器文件头**的「接线方式」一节（'
+      + 'services/api/src/privacy/third-party-deletion-adapter.ts:22）从'
+      + '  「装配方按此（尚未接线）」改成新事实 —— 适配器接线目前没有别的登记处，'
+      + '  `docs/**` 里对它零命中，⛔ 不要去改 gy-r34-retention-policy.md:121（那讲的是**调度**接线）。'
       + FLIP_HINT,
   );
 
@@ -472,14 +474,22 @@ test('缺口 5 · .github/workflows/ 里 grep 不到 verify:purge-schedule 与 r
   }
 
   // ① 调度门禁没进 CI。
+  //    两条**同义针脚**都扫：npm 脚本名（`run: npm run verify:purge-schedule`）与入口路径
+  //    （`node tools/verify-purge-schedule.mjs`）。只扫前者会漏掉「绕过 npm script 直接调工具」——
+  //    那同样是把这条校验接进了 CI、缺口同样被补上；本钉子判的是「校验有没有进 CI」，
+  //    不是「这个 npm 名字有没有出现」。
+  const SCHEDULE_NEEDLES = ['verify:purge-schedule', 'tools/verify-purge-schedule'];
+  const scheduleCiHits = files.filter((file) =>
+    SCHEDULE_NEEDLES.some((needle) => readRepoText(file).includes(needle)),
+  );
   assert.deepEqual(
-    files.filter((file) => readRepoText(file).includes('verify:purge-schedule')),
+    scheduleCiHits,
     [],
-    '【缺口 5 破了】CI 引用了 `verify:purge-schedule`：'
-      + `\n  实测命中：${JSON.stringify(files.filter((file) => readRepoText(file).includes('verify:purge-schedule')))}`
-      + '\n  基线（81d8e0b9）：`.github/workflows/**` 零命中 ⇒ 调度层的门禁（'
+    '【缺口 5 破了】CI 引用了调度门禁（`verify:purge-schedule` 或 `tools/verify-purge-schedule`）：'
+      + `\n  实测命中：${JSON.stringify(scheduleCiHits)}`
+      + '\n  基线（81d8e0b9）：`.github/workflows/**` 对这两个字面量都是零命中 ⇒ 调度层的门禁（'
       + '`tools/verify-purge-schedule.mjs`，10 项判据）只在本地/单测里跑，不在 CI 里跑。'
-      + '\n  若你刚把它接进 CI ⇒ 请翻转本钉子。'
+      + '\n  若你刚把它接进 CI（无论经 npm script 还是直接 `node` 调工具）⇒ 请翻转本钉子。'
       + FLIP_HINT,
   );
 
