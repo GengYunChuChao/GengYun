@@ -138,12 +138,12 @@ function validateTargetRef(value) {
 }
 
 /**
- * 契约 `TargetRef` 类型闭集（17 项，逐项一致，不得扩展）。
+ * 契约 `TargetRef` 类型闭集（16 项，逐项一致，不得扩展）。
  * 本片只消费 `answer`（回答轮次任务）与 `conversation`（会话对象）。
  */
 const TARGET_REF_TYPES = [
   'species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr', 'transcription', 'answer',
-  'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source'
+  'post', 'comment', 'conversation', 'dose_card', 'media', 'synthesis', 'job', 'source'
 ]
 
 /** 校验契约 `SourceRef`（十键；url 必须 https——不生成、不补默认来源）。 */

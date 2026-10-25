@@ -29,7 +29,7 @@ const HISTORY_KINDS = ['recognition', 'ocr']
 const HISTORY_KEYS = ['id', 'revision', 'kind', 'target_ref', 'job_state', 'reference_state', 'created_at']
 const TARGET_REF_KEYS = ['type', 'id', 'revision']
 const TARGET_REF_TYPES = ['species', 'herbicide', 'scheme', 'static_region', 'recognition', 'ocr', 'transcription',
-  'answer', 'post', 'comment', 'conversation', 'conversation_turn', 'dose_card', 'media', 'synthesis', 'job', 'source']
+  'answer', 'post', 'comment', 'conversation', 'dose_card', 'media', 'synthesis', 'job', 'source']
 const REFERENCE_STATES = ['available', 'unavailable']
 const MATCH_STATES = ['matched', 'no_match', 'ambiguous', 'conflict', 'insufficient', 'unavailable']
 const PAGE_LIMIT_MAX = 50
