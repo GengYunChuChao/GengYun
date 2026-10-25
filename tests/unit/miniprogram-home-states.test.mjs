@@ -14,6 +14,20 @@
 //   ① 存在性/文案精确值 —— 现状就该这样，改坏即红（负控制已验证）。
 //   ② 缺失钉（absent pin）—— 钉住「现在没有」，等着被未来某片补齐时变红提醒更新证据，**不是期望**。
 //
+// #617 独立审查补的两处覆盖缺口（审查者自己的负控制证明它们原本真没被钉住）：
+//   L3 —— loading 分支的**门控**（`miniprogram/pages/home/home.wxml:112` 的 `wx:if="{{busy}}"`）：
+//         原 L1 只钉 `status="loading"` 的存在与顺序，把门控改成恒真（`{{true}}` / `{{1}}`）、
+//         删掉门控整行、或改成 `wx:elif` 时全绿 —— 「loading 会出现」被钉住了，「什么时候出现」没有。
+//   X1 —— **三态互斥**：原来只有 E1 里一条字面 `wx:elif` 正则间接覆盖，兜底 `wx:else` 与
+//         「同一时刻只可能命中一个分支」没有显式判据（把 elif 改成 if、把 status="error" 改成
+//         status="failed" 各有一条断言咬，但没有任何断言证明三条分支构成一条 if/elif/else 单链）。
+//
+// 取舍（已知会误红的等价写法，接受并在此说明）：L3 / X1 钉的是「元素 + 指令 + 属性名 + 属性值 + 块顺序」，
+//   **行首缩进不算**（块内一律用 `\n\s+` 连接，重排缩进不红）；但同一块内属性**换序**、把属性拆并成不同行数、
+//   把 `wx:else` 兜底从 `dev-status` 的 `view` 换成别的元素，以及语义等价但把「门控」写成「常量/恒等式」的
+//   写法（`wx:if="{{busy === true}}"`、`{{!!busy}}`、`{{1}}`）都会红 —— 后者正是本片要堵的口子：
+//   门控一旦退化成常量，loading 就会无条件出现，而这条断言不允许它悄悄退化。
+//
 // 只读源码字符串 + JSON.parse，不装载小程序运行时，不起 vm 夹具：首页没有可执行的数据流可跑。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -69,6 +83,41 @@ test('L2 诊断 loading 的触发方式与文案是精确值', () => {
   assert.ok(loadingIndex >= 0, 'loading 态必须存在')
   assert.ok(titleIndex > loadingIndex, 'loading 标题必须紧跟 loading 状态属性')
   assert.ok(descIndex > titleIndex, 'loading 说明必须紧跟标题')
+})
+
+test('L3 loading 分支的门控是 wx:if="{{busy}}"：整块逐字，且位于诊断按钮之后、error 之前', () => {
+  const wxml = read('miniprogram/pages/home/home.wxml')
+  // 门控行（`miniprogram/pages/home/home.wxml:112`）+ 整块（开标签、三个属性、收尾）逐字：
+  // 改成 {{true}} / {{1}} / {{busy === true}}、删掉门控行、改成 wx:elif 都必须红。
+  assert.match(
+    wxml,
+    /<state-view\n\s+wx:if="\{\{busy\}\}"\n\s+status="loading"\n\s+title="正在检查本地替身连接"\n\s+desc="正在读取本地诊断服务状态，请稍候。"\n\s+><\/state-view>/,
+    'loading 的 state-view 必须整块逐字带着 wx:if="{{busy}}" 门控'
+  )
+  // 门控全页恰好一处：删整行、换指令都变成 0 处。
+  assert.equal((wxml.match(/wx:if="\{\{busy\}\}"/g) || []).length, 1, 'busy 门控全页恰好一处')
+  // 位置关系（同一块内的兄弟顺序）：local 块 → 诊断按钮 → busy 门控 → error 的 elif → wx:else 兜底。
+  // 先钉每个锚点各恰好出现一次，indexOf 才不会被重复 token 骗过；再钉位置严格递增。
+  const anchors = [
+    'wx:if="{{local}}"',
+    'bindtap="diagnose"',
+    'wx:if="{{busy}}"',
+    'wx:elif="{{diagPassed === false}}"',
+    '<view class="dev-status" wx:else>'
+  ]
+  assert.deepEqual(
+    anchors.map((token) => wxml.split(token).length - 1),
+    [1, 1, 1, 1, 1],
+    '五个位置锚点各恰好出现一次'
+  )
+  const positions = anchors.map((token) => wxml.indexOf(token))
+  assert.deepEqual(
+    positions,
+    [...positions].sort((left, right) => left - right),
+    '分支文本顺序必须是 local → 诊断按钮 → busy → elif → else'
+  )
+  // 三个分支确实在这个 local 块里收尾，没有漂到块外：dev-status 之后只剩 panel / section / page 三层收尾到文件末。
+  assert.match(wxml, /<view class="dev-status" wx:else>\{\{status\}\}<\/view>\n\s+<\/view>\n\s+<\/view>\n<\/view>\n$/)
 })
 
 // —— 2. 出错态与重试 ————————————————————————————————————————————————
@@ -317,4 +366,65 @@ test('M1 home.json 声明 state-view；「当前状态」的替身标注逐字�
     read('miniprogram/pages/home/home.js'),
     /const badge = mode === 'stub' \|\| mode === 'preset_demo' \? '演示' : '未核实'/
   )
+})
+
+// —— 10. 三态互斥（同一条 if / elif / else 单链）———————————————————————
+
+test('X1 三态互斥：state-view 序列 stub → loading → error → wx:else 兜底，三条分支恰为 if/elif/else 单链', () => {
+  const wxml = read('miniprogram/pages/home/home.wxml')
+  const js = read('miniprogram/pages/home/home.js')
+  // ① state-view 依次出现、状态值恰为 stub → loading → error：多一个（插入 empty / failed）或少一个都红。
+  assert.deepEqual(
+    [...wxml.matchAll(/<state-view\b[^>]*?\bstatus="([^"]*)"/g)].map((match) => match[1]),
+    ['stub', 'loading', 'error'],
+    'state-view 的序列与状态值写死为 stub → loading → error'
+  )
+  // ② 分支链逐字：loading 用 wx:if({{busy}})、error 用 wx:elif({{diagPassed === false}})、
+  //    兜底用 wx:else（元素是 dev-status 的 view，不是第四个 state-view）。指令互换（elif→if）或条件改值都红。
+  const loadingAt = wxml.indexOf('wx:if="{{busy}}"')
+  assert.notEqual(loadingAt, -1, '必须找到 busy 的 loading 分支')
+  assert.deepEqual(
+    [
+      ...wxml
+        .slice(wxml.lastIndexOf('<state-view', loadingAt))
+        .matchAll(/<(state-view|view)\b[^>]*?\swx:(if|elif|else)(?:="([^"]*)")?/g)
+    ].map((match) => [match[1], `wx:${match[2]}`, match[3] === undefined ? null : match[3]]),
+    [
+      ['state-view', 'wx:if', '{{busy}}'],
+      ['state-view', 'wx:elif', '{{diagPassed === false}}'],
+      ['view', 'wx:else', null]
+    ],
+    'if / elif / else 三条分支的位置、元素与条件逐字固定'
+  )
+  // ③ 互斥的结构前提：三条分支必须是**相邻兄弟**（中间只允许空白），全页 elif / else 各恰 1 处
+  //    （多一条并列链就不再互斥）。wx:if / wx:elif / wx:else 只有在同一父节点的相邻兄弟上才互斥。
+  assert.match(
+    wxml,
+    /<\/state-view>\s+<state-view\n\s+wx:elif="\{\{diagPassed === false\}\}"/,
+    'error 的 elif 必须紧邻 loading 分支'
+  )
+  assert.match(
+    wxml,
+    /<\/state-view>\s+<view class="dev-status" wx:else>\{\{status\}\}<\/view>/,
+    '兜底的 wx:else 必须紧邻 error 分支'
+  )
+  assert.deepEqual(
+    [(wxml.match(/wx:elif=/g) || []).length, (wxml.match(/wx:else/g) || []).length],
+    [1, 1],
+    'elif / else 各恰好一处'
+  )
+  // ④ 互斥的数据前提：busy 与 diagPassed 只在这两处 setData 同时写 —— 置 busy 的同时把 diagPassed 清成 null
+  //    ⇒ `busy === true` 与 `diagPassed === false` 不可能同时成立；两者都假时才落进 wx:else 兜底。
+  assert.deepEqual(
+    [...js.matchAll(/this\.setData\(\{[^}]*\}\)/g)]
+      .map((match) => match[0])
+      .filter((call) => /busy|diagPassed/.test(call)),
+    [
+      "this.setData({ busy: true, diagPassed: null, status: '正在连接本地诊断服务…' })",
+      'this.setData({ busy: false, status: status, diagPassed: passed === true })'
+    ],
+    'busy 与 diagPassed 只在诊断开始/结束两处同时写'
+  )
+  // diagPassed 在 home.js 恰好 3 处（data 初值 + 上面两处 setData）：多一处单独写它就破坏互斥前提。
+  assert.equal((js.match(/diagPassed/g) || []).length, 3, 'diagPassed 在全文件恰好 3 处')
 })

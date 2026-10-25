@@ -70,12 +70,13 @@
 
 ## 断言了什么
 
-`tests/unit/miniprogram-home-states.test.mjs`，17 条，`node --test` 全绿。阈值全部写精确值（整行/整句相等或精确正则），没有 `includes('失败')` 这类松断言。
+`tests/unit/miniprogram-home-states.test.mjs`，19 条（原 17 条 + `#617` 审查后补的 L3 / X1，见文末「补记」），`node --test` 全绿。阈值全部写精确值（整行/整句相等或精确正则），没有 `includes('失败')` 这类松断言。
 
 | 断言 | 钉住的事实 | 负控制 |
 | --- | --- | --- |
 | L1 | 首页 0 处 `wx.request`；`status="` 顺序恰为 `stub,loading,error`；loading 在 `wx:if="{{local}}"` 之后；无 `skeleton\|spinner` | — |
 | L2 | 诊断按钮 `bindtap="diagnose"` + `loading`/`disabled` 双闸；loading 标题/描述逐字 | — |
+| L3 | loading 分支的**门控** `wx:if="{{busy}}"` 与所在块逐字（`<state-view>` / 门控 / `status` / `title` / `desc` / 收尾）；门控全页恰 1 处；五个位置锚点各恰 1 次且顺序严格递增；三分支在 local 块内收尾 | NC9 / NC10 |
 | E1 | error 态存在且文案逐字；**缺失钉**：首页不传 `action-text` / `bind:action` | NC7 |
 | E2 | `debug.js` 四句回调文案逐字 + `diagPassed: passed === true` | — |
 | S1 | `empty` / `error` / `loading` 三套图标+标题互不相同；error 预设 `actionText` 恰为空串 | NC3 |
@@ -91,6 +92,7 @@
 | C1 | 码表六条精确映射 + `session: false` / `unavailable: true`；`AUTH_REQUIRED` 在 `states.js` 与契约里都 0 次 | NC6 |
 | C2 | 首页不 require `utils/states`、不含 `errorCode`；wxml 无 `error-code=`；require 清单恰为 4 个精确路径 | — |
 | M1 | `home.json` 声明 `state-view`；常驻 `stub` 标注标题/描述逐字 | — |
+| X1 | 三态互斥显式化：三个 `<state-view>` 的状态值序列恰为 `stub → loading → error`；loading 起的三个兄弟恰为 `state-view[wx:if="{{busy}}"] → state-view[wx:elif="{{diagPassed === false}}"] → view[wx:else]`（元素名 / 指令名 / 条件值三元组逐个相等）；两处相邻兄弟正则；全页 `wx:elif=` / `wx:else` 各恰 1 处；数据侧 `busy` 与 `diagPassed` 只被两处 `setData` 整行同时写 | NC11 / NC12 |
 
 ## 负控制（7 条，全部在仓库外临时树手工验证）
 
@@ -133,3 +135,31 @@
 - `NETWORK_UNCERTAIN` / `INVALID_RESPONSE` 未进 `CODE_KIND` 是**检索计数**结论（`states.js` 里 0 次、`miniprogram/**` 里 29 / 244 次），没有逐页核对这些码最终渲染成什么文案。
 - 本轮不评估无障碍与适老（属后续阶段），也不评估真机验收。
 - 「首页应该有首屏数据」本身是产品判断，不在本轮：本页只记录「首页当前不取数据，因此三态不存在」这一事实。
+
+## 补记：`#617` 独立审查指出的两处覆盖缺口
+
+`#617` 的独立审查用两条负控制（N3 / N4）证明：上表之前的 17 条断言**没有**把「loading 的门控」和「三态互斥」钉住 —— 把 `miniprogram/pages/home/home.wxml:112` 的 `wx:if="{{busy}}"` 改成 `{{true}}`、或把整行删掉、把 `miniprogram/pages/home/home.wxml:118` 的 `wx:elif` 改成 `wx:if`、把 `miniprogram/pages/home/home.wxml:119` 的 `status="error"` 改成 `status="failed"`，原 17 条仍全绿（原 L1 只钉 `status="loading"` 的**存在与顺序**，E1 只用一条 `wx:elif` 字面正则间接沾到互斥，都不涉及门控条件本身）。补 L3 / X1 两条后文件是 19 条；上文 17/17 与 NC1–NC8 的读数属于 `f6c5866d` 那一版，按要求未改写。
+
+L3 / X1 的判据已在上面两张表里各占一行，这里只记取舍与负控制：
+
+- 取舍：钉的是**结构**（元素名 / 属性名 / 属性值 / 兄弟顺序 / 出现次数），不看缩进宽度、不看重排属性顺序、不看多余空行 —— 「实现没变但格式微调」基本不误红。而 `{{busy}}` 换成任何等价写法（`{{!!busy}}`、`{{busy === true}}`、`{{1}}`、`{{true}}`）都会红，这是**有意**的：门控表达式本身就是被审查的那件事，等价改写必须回来改断言和本页。这些取舍也写进了测试文件的头注释。
+- 做法：把 `miniprogram/`、`packages/contracts/openapi.json`、本测试文件复制到仓库外的 `%TEMP%\r59mp-neg`，配一个只按参数改一行的注入器；副本先跑一遍 19/19 绿，每次只注入一处 → 跑 `node --test` → 记红在哪条 → 从 pristine 副本复原（复原后复跑 19/19 绿）。全程没有触碰任何 checkout。
+
+| 编号 | 注入（改前 → 改后） | 红在哪条 | 失败信息首行 |
+| --- | --- | --- | --- |
+| NC9 | `miniprogram/pages/home/home.wxml:112` `wx:if="{{busy}}"` → `wx:if="{{true}}"` | L3、X1 | `AssertionError [ERR_ASSERTION]: loading 的 state-view 必须整块逐字带着 wx:if="{{busy}}" 门控`（X1：`必须找到 busy 的 loading 分支`） |
+| NC10 | `miniprogram/pages/home/home.wxml:112` 整行删除 | L3、X1 | 同 NC9 的两条首行 |
+| NC11 | `miniprogram/pages/home/home.wxml:118` `wx:elif` → `wx:if` | L3、E1、X1 | `五个位置锚点各恰好出现一次`（L3）；E1：`The input did not match the regular expression /wx:elif="\{\{diagPassed === false\}\}"/` |
+| NC12 | `miniprogram/pages/home/home.wxml:119` `status="error"` → `status="failed"` | L1、E1、X1 | `首页的 state-view 位置与顺序是写死的三处`（L1）；E1：`The input did not match the regular expression /status="error"/` |
+
+四次注入全部 `exit 1`：NC9 / NC10 是 tests 19 / pass 17 / fail 2，NC11 / NC12 是 tests 19 / pass 16 / fail 3。NC9 正是审查者指出此前会**误绿**的那一个，现在 L3 与 X1 同时咬住；NC11 / NC12 顺带把既有的 E1 与 L1 一起拉红，说明新断言与旧断言在同一个结构上互相印证而不是互相替代。
+
+**本片读数（worktree `wt-r59-mpbusy`，基线 `da0b3003`，Windows / Node `v24.16.0` / npm `11.13.0`）**
+
+| 命令 | 读数 | 结论 |
+| --- | --- | --- |
+| `node --test tests/unit/miniprogram-home-states.test.mjs` | `tests 19` / `pass 19` / `fail 0` / 174ms | exit 0 |
+| `npm run test:unit`（`GY_BASH=D:\Git\bin\bash.exe`） | `tests 4801` / `pass 4798` / `fail 0` / `skipped 1` / `todo 2` / 200s | exit 0 |
+| `node tools/verify-doc-anchors.mjs --strict` | 文档 294 份、引用 5439 条；`BROKEN 4 / OUT_OF_RANGE 2 / SUSPECT 7` 全部落在基线内，基线外新增 0 | exit 0 |
+
+相对上一段「门禁读数」的 `f6c5866d` 一版，套件条数 4793 → 4801（本片 +2，其余 6 条来自这两次基线之间的上游提交），skip 仍是同一条原生用例。引用条数没变，是因为 `home.wxml:112` / `:118` / `:119` 早已被本页的 `home.wxml:111-116`、`home.wxml:117-122`、`home.wxml:119-120` 范围引用覆盖，本片新增的只是同文件同行的重复引用。
