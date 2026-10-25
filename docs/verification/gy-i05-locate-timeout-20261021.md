@@ -52,7 +52,7 @@ $ git diff --stat 43fa6d5..HEAD
 | 小程序打包 | `npm run test:mini` | 0 | tests 6 / pass 6 / fail 0 |
 | 文档 | `npm run test:docs` | 0 | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables` |
 
-补充：全量单测首跑曾在 `tests/unit/release-materials-index.test.mjs:145` 红一次（报错里 `pid: 0`、`output: null`，即子进程未产出），该文件单独跑 5/5 绿、紧接着重跑全量 3199 条 0 红 ⇒ 判为并行负载下的偶发，与本轮改动（`miniprogram/utils` + 两个单测文件）无交集；不是本片引入，也不代表已修复该偶发。
+补充：全量单测首跑曾在 `tests/unit/release-materials-index.test.mjs:141-142`（原记 :145） 红一次（报错里 `pid: 0`、`output: null`，即子进程未产出），该文件单独跑 5/5 绿、紧接着重跑全量 3199 条 0 红 ⇒ 判为并行负载下的偶发，与本轮改动（`miniprogram/utils` + 两个单测文件）无交集；不是本片引入，也不代表已修复该偶发。
 
 ### 2.1 超时兜底的单元证据（`tests/unit/miniprogram-location-region.test.mjs`）
 

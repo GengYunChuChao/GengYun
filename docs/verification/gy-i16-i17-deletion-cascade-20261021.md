@@ -133,7 +133,7 @@
 
 1. **无调度**：清除函数只有调用方是「受理事务 + 处理器」（`account-deletion.ts:225-228`），GET 回执（`routes/account-deletion.ts` 第二个 operation）**不执行**处理器。
 2. **再受理被确定性拒绝**：`request_account_deletion` 对 `state='deletion_pending'` 直接 `RAISE … ERRCODE='G0003'`（`0016:112-114`）⇒ 同一账号「再发一次注销」以触发到期清除，在生产 PG 上**必然失败**。
-3. **即便调得动，也没有可清的 scope**：messages/conversations/community 无副本行；favorites/history 有行但只能在第 1 段那种调用里被清。测试里之所以能验证 31 天清除，靠的是**注入时钟 + 内存 store + 替身 requests**（`tests/integration/backup-purge-pg.mjs:440,447,536,597` 的 `advanceDays` 与多套 `createPostgresBackupPurgePort({ pool, now: () => clockX.now() })`），**不经过真实受理函数**。
+3. **即便调得动，也没有可清的 scope**：messages/conversations/community 无副本行；favorites/history 有行但只能在第 1 段那种调用里被清。测试里之所以能验证 31 天清除，靠的是**注入时钟 + 内存 store + 替身 requests**（`tests/integration/backup-purge-pg.mjs:470,477,625,688,733` 的 `advanceDays` 与 `:418,535,582,617,668,717` 的多套 `createPostgresBackupPurgePort({ pool, now: () => clockX.now() })`；原记 :440,447,536,597），**不经过真实受理函数**。
 
 > **superseded（2026-10-21 后续合入）**：第 1 段与第 3 段已被推翻——`#398` 补了**不经过受理函数**的驱动（运维命令 + `backup-purge-driver.ts`，
 > 只读 `user_backup_copies`、只调 `BackupPurgePort`），`#397` 把可清 scope 补到四域。**第 2 段（`G0003`）仍成立**，

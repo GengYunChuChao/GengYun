@@ -66,7 +66,7 @@ C3 的 8 种伪造头（矩阵行 11–18）打的是**后台面**。而后台�
 
 ### 2.3 反向证据：静态缝只有一个写入点
 
-`tests/unit/gy-i22-identity-headers.test.mjs:567` 起的静态用例直接读源码：扫描 `services/api/src` 下 186 个
+`tests/unit/gy-i22-identity-headers.test.mjs:568`（原记 :567） 起的静态用例直接读源码：扫描 `services/api/src` 下 186 个
 `.ts` 文件，断言（a）身份头名（`x-role` / `x-user-id` / `x-user-role` / `x-is-admin` / `x-scopes` 等）0 命中；
 （b）`request.headers['x-…']` 的读取只有媒体授权句柄一处；（c）对 `request.userId|role|authEpoch|sessionId|
 sessionExpiresAt|accountRevision|authScopes` 的赋值语句全部落在 `applyIdentity` 函数体内；（d）`applyIdentity`

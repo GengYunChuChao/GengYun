@@ -81,7 +81,7 @@
 
 ## 3 #22 三条验收：逐条（逐字引用审核表 → 证据 → 复现 → 判定）
 
-审核表原文见 `.pg17\audit-issue-closure-20261018.md:320-330`。
+审核表原文见 `.pg17/audit-issue-closure-20261018.md`（仓外本机件，从未入库，行号不可随库校验；本机实读原记 :320-330 即 `#22` 节）。
 
 ### C1（逐字）`NEEDS-FEATURE` 有限关键安全及权限用例全过，**未解决严重安全/权限缺陷 0**。
 
@@ -115,7 +115,7 @@
 
 - **证据路径＋符号锚**（绑定 `5250520`，本页未改）：
   - 剂量边界：`packages/reference/deterministic.mjs:511` `export function evaluateDoseBoundary(item, context = {}, opts = {})`；
-    小程序侧同源实现 `miniprogram/utils/reference.js:1006` `function evaluateDoseBoundary(item, context, opts)`。
+    小程序侧同源实现 `miniprogram/utils/reference.js:1079`（原记 :1006） `function evaluateDoseBoundary(item, context, opts)`。
   - 公开可见性/未审内容：`services/api/src/knowledge/public-invalidation.ts:81`
     `export function decidePublicVisibility(query: PublicVisibilityQuery): PublicVisibilityDecision`；
     `services/api/src/moderation/visibility.ts:17` `export const VISIBILITY_REASON_CODES = Object.freeze([`、
@@ -313,7 +313,7 @@ $ @(Get-Process postgres).Count                                      ⇒ 0（无
      Error: SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string
          at Object.continueSession (...\node_modules\pg\lib\crypto\sasl.js:67:11)
      ```
-     （`[M]` 在 `Client.connect` 之后才打印，故该变体**连库侧读数都取不到**。）
+     （`[M]` 在 `Client.connect` 之后才打印，故该变体**连库侧读数都取不到**。上一行栈帧里的 `sasl.js` 属本机 `node_modules/pg` 的第三方运行时文件，不是仓内锚点，故保留报文原样、不按仓内行号锚点核对。）
    - **变体 B（规则钉到运行时角色）**：首行 `host all gengyun_api_runtime 127.0.0.1/32 scram-sha-256`
      ⇒ 同一命令 **exit 1**；owner 走 trust 正常，`[M]` 四行与 `[P]` 一行照常打印，随后首个错误逐字：
      ```

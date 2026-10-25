@@ -191,11 +191,11 @@ c664435 fix(GY-I28): demo 对齐门禁补盲 —— video/chat 改为显式的�
    `<span class="pill gray">示例记录</span>` + `.mini-timeline` 三条写死文案「完成一次田间观察」「读懂标签上的信息」
    「看见二十年后的想象」）：**未实现**，按派单「无数据源则不做、不做假时间线」。边界与依据：
    - **小程序没有这个数据源**：`git grep -l 探索记录 upstream/main -- miniprogram` = **0 个文件**；
-     历史接口是 `miniprogram/utils/history-api.js:193` 的 `listHistory(cursor, limit)`（`GET /history`，
+     历史接口是 `miniprogram/utils/history-api.js:204`（原记 :193） 的 `listHistory(cursor, limit)`（`GET /history`，
      `PAGE_LIMIT_MAX = 50` 见 `:35`），只有游标与条数两个参数，**没有「今天」或任何日期区间的查询语义**，
      返回字段见 `history-api.js:29` `['id','revision','kind','target_ref','job_state','reference_state','created_at']`。
      照 demo 渲染这条时间线，只能由前端从历史流里自造「今天」口径、再补三条叙事文案 —— 属伪造数据源，红线禁止。
-   - **audit 同样记为卡点**：`audit-demo-parity-20261018.md:63`（H1「无该块；`mini-timeline` 类仅在
+   - **audit 同样记为卡点**：`.pg17/audit-demo-parity-20261018.md`（仓外本机件、从未入库、行号不可随库校验，原记 :63）（H1「无该块；`mini-timeline` 类仅在
      `components.wxss`」，判「结构性」）与 `:160`（`git grep -l 探索记录 upstream/main -- miniprogram` = 0
      →「需先定数据源，再补 Demo 示例口径」）。
    - **样式已在、无消费方**：`.mini-timeline` 定义于 `miniprogram/styles/components.wxss:608`（注释见 `:607`

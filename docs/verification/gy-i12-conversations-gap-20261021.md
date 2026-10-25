@@ -60,8 +60,8 @@
 | --- | --- | --- |
 | 存储 | **已通（real 走 PG）** | `services/api/src/app.ts:1507-1511`：`real` + 有 `pool` ⇒ `createPostgresConversationStore(pool)`；非 `real` ⇒ 内存 store。`app.ts:1545-1550` 的 `conversationStore === null \|\| (config.executionMode === 'real' && !conversationStore.persistent) ? null : createConversationService({...})` 明确：**即使测试注入内存 store，real 下也不能绕过 fail-closed** |
 | 检索 | **已接真实读面（但依赖 `DATABASE_URL`）** | `app.ts:1346-1350` 的 `knowledgeQueryFace`（与 `/knowledge` 同一实例）→ `app.ts:1522-1528` `createKnowledgeRetrievalPort({ face: knowledgeQueryFace })`；无库时退到 `guard.ts:78-89` 的 `createUnwiredRetrievalPort`（`available:false`、`read()` 恒 `null` ⇒ 一律 `insufficient`） |
-| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:152` `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:126` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:1666` 缺省启用（fail-closed） |
-| 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:250` `createAnswerGuard`，`:253` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1107` `createConversationGuard`（`app.ts:1534` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
+| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:170`（原记 :152） `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:126` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:1666` 缺省启用（fail-closed） |
+| 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:250` `createAnswerGuard`，`:253` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1191`（原记 :1107） `createConversationGuard`（`app.ts:1534` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
 
 ### 3.2 唯一断点：生成侧「没有模型」
 
@@ -112,7 +112,7 @@ const candidate = composer.compose({
 
 **③「`screen.ts` 的安全检查是 stub 还是 real」**
 
-**real**。`screen.ts:152` 的 `createModerationRiskScreen` 调 `packages/moderation` 的真规则层（`RISK_SCREEN_CATEGORIES = ['dangerous_usage','prompt_injection']` 在 `screen.ts:34`，`RISK_BLOCK_TEXT` 在 `:49`，规则版本由 `:126` 派生），筛查发生在 `service.ts:1027-1031`（生成与守卫**之前**），污染条目从本次检索集合剔除后才有 `safeSet`。未被授权的模型输出**不可能**绕过它，因为筛查在候选产生之前。
+**real**。`screen.ts:170`（原记 :152） 的 `createModerationRiskScreen` 调 `packages/moderation` 的真规则层（`RISK_SCREEN_CATEGORIES = ['dangerous_usage','prompt_injection']` 在 `screen.ts:34`，`RISK_BLOCK_TEXT` 在 `:49`，规则版本由 `:126` 派生），筛查发生在 `service.ts:1027-1031`（生成与守卫**之前**），污染条目从本次检索集合剔除后才有 `safeSet`。未被授权的模型输出**不可能**绕过它，因为筛查在候选产生之前。
 
 **小结**：断链只有一处 —— **「谁产生候选正文」**。检索、筛查、守卫、存储、级联、幂等台账、注销清理都在位。
 
@@ -299,7 +299,7 @@ services/api/src/conversations/service.ts:1035-1039 context.read
 services/api/src/conversations/service.ts:1041-1046 composer.compose（唯一插入点）
 services/api/src/conversations/service.ts:1047-1052 guard.check
 services/api/src/conversations/service.ts:1054-1066 catch ⇒ failed / timed_out（绝不 succeeded）
-services/api/src/conversations/service.ts:1107    createConversationGuard（包装 createAnswerGuard）
+services/api/src/conversations/service.ts:1191    createConversationGuard（包装 createAnswerGuard；原记 :1107）
 services/api/src/conversations/types.ts:52         UNIMPLEMENTED_VERSION_PREFIX = 'unimplemented:no-real-'
 services/api/src/conversations/guard.ts:64-76      interface RetrievalPort
 services/api/src/conversations/guard.ts:78-89      createUnwiredRetrievalPort
@@ -316,7 +316,7 @@ services/api/src/conversations/screen.ts:152       createModerationRiskScreen
 services/api/src/conversations/store-pg.ts:181     createPostgresConversationStore
 services/api/src/conversations/store-pg.ts:215     persistent: true
 services/api/src/conversations/store.ts:90         interface ConversationStore
-services/api/src/conversations/store.ts:156        createMemoryConversationStore（:174 persistent:false）
+services/api/src/conversations/store.ts:185        createMemoryConversationStore（:184 persistent:false；原记 :156 / :174）
 services/api/src/conversations/context.ts:29       CONTEXT_MAX_TURNS = 5
 services/api/src/app.ts:944-950                    createRecognitionProvider（env 取法样板；:948/:949 是 env）
 services/api/src/app.ts:1346-1350                  knowledgeQueryFace（与 /knowledge 同一实例）
