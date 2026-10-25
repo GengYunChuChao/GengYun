@@ -261,7 +261,7 @@ test('缺口 2 · createThirdPartyDeletionAdapter 未装配：除自身文件外
       + `\n  实测：${JSON.stringify(referencing)}`
       + `\n  基线（81d8e0b9）：只有 ${SELF} 自身（定义 + 文件头示例注释），app.ts 里零出现 ⇒ **未装配**。`
       + '\n  适配器文件头「接线方式」写着装配方要做的事（`const adapter = createThirdPartyDeletionAdapter({…})`），'
-      + '  若你刚做了这件事 ⇒ 请翻转本钉子，并同步 #19 的接线登记（docs/architecture/gy-r34-retention-policy.md）。'
+      + '  若你刚做了这件事 ⇒ 请翻转本钉子，并把适配器文件头「## 接线方式」一节（services/api/src/privacy/third-party-deletion-adapter.ts:22）同步成新事实。'
       + FLIP_HINT,
   );
 
