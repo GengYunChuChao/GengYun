@@ -1154,6 +1154,75 @@ try {
   await owner.query('DELETE FROM exports WHERE id = ANY($1::uuid[])', [legacyShapeIds]);
   say('迁移 0040（真 PG）：conversation_turn/checked_content 历史行回填成「真实类型 + 裸标识」（含 91→80 字符的次序证据行）、media 行不动、形状收到 {1,80}（81 拒绝 / 80 通过）、回滚还原 {1,128} 且不回滚数据');
 
+  // ---------------------------------------------------------------- L. 迁移 0040 的两条 fail-closed 负控制（真 PG）
+  //
+  // K 段是正臂（能如实回填的都到位）；本段是负臂：**不能如实回填的一律中止，且整体回滚**。
+  //   X. `object_type='checked_content'` + `object_key='answer'`（**无冒号**的退化键）：`split_part(key,':',1)`
+  //      会命中六值白名单，而 `substr(key, strpos(key,':') + 1)` = `substr('answer', 1)` = `'answer'`
+  //      ⇒ 若不排除，迁移会写 `object_type='answer'` + `object_key='answer'`，把**类型名当成对象 id**
+  //      （伪造标识）。0040 用 `strpos(object_key, ':') > 1` 让这类行不参与回填、由 DO 块报错中止。
+  //   Y. 去前缀后仍 > 80 的键（`dose_card:` + 82 字符）：必须由**长度预检**打印样例报错，而不是让最后
+  //      的 `ADD CONSTRAINT` 抛一句裸约束名（后者看不出是哪几行、多长）。
+  // 两条都必须验证「中止 ⇒ 前面两条 UPDATE 整体回滚」（BEGIN/COMMIT 生效，库不留半改状态）。
+  const expectPsqlFileAbort = (relPath, pattern, label) => {
+    try {
+      psqlFile(relPath);
+    } catch (error) {
+      const output = `${error.stderr ?? ''}${error.stdout ?? ''}${error.message ?? ''}`;
+      assert.match(output, pattern, `${label}：中止原因必须可读（实际输出：${output.slice(0, 300)}）`);
+      return output;
+    }
+    return assert.fail(`${label}：0040 必须中止整条迁移，而不是成功返回`);
+  };
+
+  const degenerateKey = 'answer';
+  const rollbackProofRef = randomUUID();
+  const degenerateRow = await insertLegacy('checked_content', degenerateKey, SENTINEL);
+  const rollbackProofRow = await insertLegacy('conversation_turn', `turn:${rollbackProofRef}`, SENTINEL);
+  const abortOutX = expectPsqlFileAbort(
+    'migrations/0040_export_object_key_contract_backfill.sql',
+    /无法如实回填/,
+    '用例 X：无冒号的退化键（checked_content｜answer）必须中止，不得被当成裸 id 回填',
+  );
+  assert.match(abortOutX, /checked_content\/answer/, '用例 X：中止样例必须点出那一行（checked_content/answer），运维才找得到');
+  const afterAbortX = (
+    await owner.query('SELECT id,object_type,object_key FROM exports WHERE id = ANY($1::uuid[])', [
+      [degenerateRow.id, rollbackProofRow.id],
+    ])
+  ).rows;
+  const byIdX = new Map(afterAbortX.map((row) => [row.id, row]));
+  assert.deepEqual(
+    [degenerateRow.id, rollbackProofRow.id].map((id) => asPair(byIdX.get(id))),
+    [`checked_content|${degenerateKey}`, `conversation_turn|turn:${rollbackProofRef}`],
+    '用例 X：中止必须连前面两条 UPDATE 一并回滚（BEGIN/COMMIT 生效，库不停在半改状态）',
+  );
+  say('用例 X（真 PG）：object_type=checked_content + object_key=answer（无冒号）⇒ 0040 中止（错误含「无法如实回填」并点出该行），且回填的两条 UPDATE 整体回滚（该行仍 checked_content/answer、conversation_turn 行仍带 turn: 前缀）');
+  // X 的夹具必须当场清掉：残留的 `checked_content|answer` 会先撞上 ③ 的「越界类型」预检，
+  // 让 Y 拿到 X 的错误信息（Y 要验的是 ④ 的长度预检，两道预检的先后顺序本身也值得钉住）。
+  await owner.query('DELETE FROM exports WHERE id = ANY($1::uuid[])', [[degenerateRow.id, rollbackProofRow.id]]);
+
+  const overlongId = 'y'.repeat(82);
+  const overlongRow = await insertLegacy('checked_content', `dose_card:${overlongId}`, SENTINEL);
+  const abortOutY = expectPsqlFileAbort(
+    'migrations/0040_export_object_key_contract_backfill.sql',
+    /行对象键超过 80 字符/,
+    '用例 Y：去前缀后仍 > 80 的键必须由长度预检报错',
+  );
+  assert.match(abortOutY, /dose_card/, '用例 Y：长度预检的样例必须点出真实内容类型（dose_card）与长度');
+  assert.ok(
+    !abortOutY.includes('exports_object_key_shape'),
+    '用例 Y：必须是长度预检打印样例，而不是 ADD CONSTRAINT 撞出来的裸约束名',
+  );
+  const afterAbortY = (await owner.query('SELECT id,object_type,object_key FROM exports WHERE id=$1', [overlongRow.id])).rows[0];
+  assert.equal(
+    asPair(afterAbortY),
+    `checked_content|dose_card:${overlongId}`,
+    '用例 Y：长度预检中止同样必须整体回滚（该行未被改成 dose_card 裸 id）',
+  );
+  await owner.query('DELETE FROM exports WHERE id=$1', [overlongRow.id]);
+  say('用例 Y（真 PG）：checked_content + dose_card:<82 字符>（去前缀仍 82 > 80）⇒ 0040 由长度预检中止并打印「行对象键超过 80 字符」样例（非裸约束名），且整体回滚（该行仍 checked_content/dose_card:<82>）');
+
+
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求；未使用真实 TTS 供应商`);
 } finally {
   await app?.close?.();

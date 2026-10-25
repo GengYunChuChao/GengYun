@@ -36,10 +36,16 @@
 --   （例如有人手工塞了 `object_type='checked_content'` + `object_key='some-label'`）。这种行
 --   **没有如实的映射目标**：猜一个内容类型就是伪造对象类型。本迁移因此 `RAISE EXCEPTION` 并
 --   打印样例，让运维先人工核对再上线（与 0015「宁可失败也不把不合形态的数据留在库里」同口径）。
+--   特别注意**无冒号的退化情形**：`object_key` 恰好等于 `'answer'`（或 `':answer'`）这类值时，
+--   `split_part(key, ':', 1)` 会命中白名单，但去前缀后取到的仍是 `'answer'` 本身 ⇒ 会写出
+--   `object_type='answer'` + `object_key='answer'`，等于把**类型名当成对象 id**（伪造标识）。
+--   因此 ② 额外要求 `strpos(object_key, ':') > 1`（首个冒号位于第 2 位之后，即真有非空前缀与
+--   非空 id）；不满足的行不参与回填，落进下面的 DO 块中止，绝不"猜"一个 id。
 --
 -- ## 收紧形状：`exports_object_key_shape` 由 0015 的 `{1,128}` 收到 `{1,80}`
---   **语句顺序即执行顺序**：先回填（上面两条 UPDATE）、再建约束。反过来会把回填前的
---   `turn:<uuid>`（41 字符）也放过、把 >80 的历史键留在库里，读面继续 503。
+--   **语句顺序即执行顺序**：先回填（上面两条 UPDATE）、再两道 fail-closed 预检（残留越界类型、
+--   回填后仍 >80 的键）、最后才建约束。反过来会把回填前的 `turn:<uuid>`（41 字符）也放过、
+--   把 >80 的历史键留在库里，读面继续 503。
 --   列宽仍是 `varchar(128)`：**不改列类型**（收列宽会重写表、且回滚不可逆），长度由 CHECK 兜底。
 --
 -- ## 本迁移**不做**的两件事（如实登记，见片报告「风险与未做」）
@@ -76,11 +82,14 @@ UPDATE public.exports
 
 -- ② `checked_content` ⇒ 该条正文的**真实内容类型**（键的首段），并去掉 `<类型>:` 前缀。
 --    只认六值闭集：其它首段不是内容类型（是任意标签），留给 DO 块报错，绝不猜。
+--    `strpos(object_key, ':') > 1` 排除无冒号的退化情形（键本身就是 `'answer'` 之类）：
+--    否则 `substr(key, 1)` 会把类型名原样当成对象 id 写回去 = 伪造标识。
 UPDATE public.exports
    SET object_type = split_part(object_key, ':', 1),
        object_key  = substr(object_key, strpos(object_key, ':') + 1)
  WHERE object_type = 'checked_content'
    AND object_key IS NOT NULL
+   AND strpos(object_key, ':') > 1
    AND split_part(object_key, ':', 1) IN
        ('answer', 'scheme', 'herbicide', 'species', 'static_region', 'dose_card');
 
@@ -108,7 +117,37 @@ BEGIN
 END
 $$;
 
--- ④ 最后才收紧形状：1..128 ⇒ 1..80（与契约 `TargetRef.id` 的 `maxLength`、与写入侧
+-- ④ 回填后再做一次**长度预检**，才动约束：超过 80 字符的键如果只剩「ADD CONSTRAINT 撞约束」
+--    这一步兜底，运维看到的只有裸约束名 `exports_object_key_shape`，看不出是哪几行、多长。
+--    本文件通篇的纪律是「宁可失败并打印样例」，最后一步也不破例。
+DO $$
+DECLARE
+  too_long_count integer;
+  sample text;
+BEGIN
+  SELECT count(*) INTO too_long_count
+    FROM public.exports
+   WHERE object_key IS NOT NULL
+     AND length(object_key) > 80;
+  IF too_long_count > 0 THEN
+    SELECT string_agg(
+             format('%s/%s…(len=%s)', s.object_type, left(s.object_key, 24), s.len),
+             ', ' ORDER BY s.len DESC)
+      INTO sample
+      FROM (SELECT object_type, object_key, length(object_key) AS len
+              FROM public.exports
+             WHERE object_key IS NOT NULL
+               AND length(object_key) > 80
+             ORDER BY length(object_key) DESC, object_type
+             LIMIT 5) s;
+    RAISE EXCEPTION
+      '迁移 0040 中止：仍有 % 行对象键超过 80 字符（样例：%）。这些行的键无法收到契约 TargetRef.id 的 maxLength=80；本迁移不做截断（静默改写标识比拒绝更危险），请先人工核对真实对象标识再重跑。',
+      too_long_count, sample;
+  END IF;
+END
+$$;
+
+-- ⑤ 最后才收紧形状：1..128 ⇒ 1..80（与契约 `TargetRef.id` 的 `maxLength`、与写入侧
 --    `ledger-pg.ts` 的 `OBJECT_KEY_MAX = 80` 三者同口径）。
 ALTER TABLE public.exports
   DROP CONSTRAINT exports_object_key_shape;
