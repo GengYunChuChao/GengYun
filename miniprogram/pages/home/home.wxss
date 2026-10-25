@@ -20,6 +20,24 @@
   border: 1px solid rgba(198, 241, 123, 0.45);
 }
 
+/* 首页 Hero 的装饰在右侧，但正文不能因此被压缩到 77%：普通视口下
+   eyebrow 的末字会孤行。只在本页放开内容宽度，不改其他页的 Hero。 */
+.hero__content {
+  width: 100%;
+}
+
+.hero__eyebrow {
+  line-height: 1.5;
+}
+
+/* 英文口号属于文档流内容。绝对定位会在游客标记增高后与主按钮重叠，
+   改为正常流并由 margin 建立间距，字号或文案变化时也能自然撑高。 */
+.hero__code {
+  position: static;
+  margin-top: 16px;
+  line-height: 1.5;
+}
+
 .home-login {
   margin-top: 17px;
 }
