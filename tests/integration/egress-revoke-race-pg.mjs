@@ -126,7 +126,9 @@ async function reserveAndSend(userId) {
   const record = await ledger.reserve({
     userId,
     authEpoch: 1,
-    objectType: 'weed_photo',
+    // `object_type` 必须是契约 TargetRef.type 闭集成员（packages/privacy/constants.mjs:175-193）：
+    // 非成员标签会让 /me/exports 经 packages/privacy/egress.mjs:379 整页 503。
+    objectType: 'media',
     objectId: randomUUID(),
     objectRevision: 1,
     dataType: 'weed_recognition',
