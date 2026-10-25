@@ -206,16 +206,16 @@ const INTEGRATION_DIR = 'tests/integration';
 const GY_PG_GATE = /process\.env\.GY_PG_BIN\b/;
 /** 缺闸门时的出口：`process.exit(77)`，或 `user-chain-e2e.mjs` 的 `return 77`（同一 POSIX 惯例）。 */
 const SKIP_EXIT_77 = /process\.exit\(\s*77\s*\)|return\s+77\b/;
-/** 冻结清单：缺 `GY_PG_BIN` 时打印 SKIP 并用 77 退出的真库脚本（14 个）。 */
+/** 冻结清单：缺 `GY_PG_BIN` 时打印 SKIP 并用 77 退出的真库脚本（15 个）。 */
 const GY_PG_SKIPPERS = Object.freeze([
   'admin-audit-logs-pg.mjs', 'admin-content-pg.mjs', 'admin-scopes-authority-pg.mjs',
   'admin-scopes-read-pg.mjs', 'backup-copies-purge-pg.mjs', 'backup-purge-pg.mjs',
   'media-row-purge-pg.mjs', 'messages-purge-pg.mjs', 'moderation-full-chain-pg.mjs',
   'online-purge-pg.mjs', 'recognitions-speech-purge-pg.mjs', 'retention-clock-drill-pg.mjs',
-  'retention-purge-pg.mjs', 'user-chain-e2e.mjs',
+  'retention-purge-pg.mjs', 'third-party-deletion-sql-pg.mjs', 'user-chain-e2e.mjs',
 ]);
 
-test('钉子⑤：14 个真库脚本以 GY_PG_BIN 为门，缺它就 SKIP + 77（未取得 ≠ 通过）', () => {
+test('钉子⑤：15 个真库脚本以 GY_PG_BIN 为门，缺它就 SKIP + 77（未取得 ≠ 通过）', () => {
   const skippers = readdirSync(join(ROOT, INTEGRATION_DIR))
     .filter((name) => name.endsWith('.mjs'))
     .map((name) => ({ name, text: read(`${INTEGRATION_DIR}/${name}`) }))
