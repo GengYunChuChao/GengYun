@@ -10,7 +10,7 @@
  * - 用户读面（`community/service.ts` 的 `listPosts`/`readablePost`，`scope: 'public'`）：
  *   「对外可见 ⟺ `visibility === 'published'` 且 `audit_state === 'approved'`」——
  *   `hidden` / `deleted` / 待审 / 拒审一律读不到（`readablePost` 对 `deleted` 直接 404）。
- * - 后台读面（`scope: 'admin'`）：`hidden` / `deleted` / 待审 / 拒审的帖子**都要看得到**，
+ * - 后台读面（`scope: 'admin'`）：`private` / `published` / `hidden` / `deleted` 四值**原样可见**（`scope: 'admin'` 不加任何可见性谓词，`state` / `auditState` 只做等值收窄），待审 / 拒审同样看得到——
  *   否则管理员看不到自己要处置、要复查的那一行，"先审后发"根本没法落地。
  * ⇒ 本服务**不**复用 `readablePost` / `effectiveState()` 的生效态重算，只把**库内存储值**原样给出。
  * `visibility` / `audit_state` 是库里的列值，不是公开读面按规则版本重算后的生效值——两者语义

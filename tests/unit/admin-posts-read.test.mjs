@@ -13,8 +13,8 @@
  *    而用户读面（`/posts`、`/posts/{id}`）按**生效值**判定，一律读不到。
  *
  * 声明（不得误读）：本文件是**合成夹具**——账号、正文、行值全部为结构性示例；
- * 它证明的是"两道读面的判定不同"，**不是**真库行为（真库臂见 `tests/integration/admin-posts-read-pg.mjs`，
- * 需要 `COMMUNITY_PG_TEST_URL`，缺库记 77）。
+ * 它证明的是"两道读面的判定不同"，**不是**真库行为——本文件用内存 store + 假端口，**不需要**数据库，
+ * 也不读任何 `*_PG_TEST_URL`（真库臂见 `tests/integration/admin-posts-read-pg.mjs`：那里要 `ADMIN_POSTS_READ_PG_TEST_URL`，缺库打印 `SKIP` 并以 77 退出）。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

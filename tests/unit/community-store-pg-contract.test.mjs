@@ -467,6 +467,45 @@ test('listPosts 把筛选（可见性/归属/作物/地区/keyset）下推成 WH
   await assert.rejects(store.listPosts({ scope: 'mine' }), /authorId/);
 });
 
+test('listPosts 把后台等值收窄 `?state=` / `?audit_state=` 下推成强类型列谓词（删掉任一条件就红）', async () => {
+  const pool = fakePool([[postRow()], [postRow()], [postRow()]]);
+  const store = storeWith(pool);
+
+  // ① 只给 `?state=`：后台候选集本身不加可见性谓词，收窄必须由 `visibility = $n::visibility` 承担。
+  await store.listPosts({ scope: 'admin', state: 'hidden' });
+  const stateCall = pool.businessCalls()[0];
+  const stateSql = flat(stateCall.text);
+  assert.equal(
+    stateSql.slice(stateSql.indexOf('FROM community_posts')),
+    'FROM community_posts WHERE visibility = $1::visibility ORDER BY created_at DESC, id DESC',
+    '`?state=` 必须下推成 `visibility = $n::visibility`：删掉这条条件，查询会退化成后台全量候选集',
+  );
+  assert.deepEqual(stateCall.values, ['hidden'], '状态值必须真的绑定下去（不是拼进 SQL 文本、也不是丢掉）');
+
+  // ② 只给 `?audit_state=`：同上，`audit_state = $n::audit_state`。
+  await store.listPosts({ scope: 'admin', auditState: 'pending' });
+  const auditCall = pool.businessCalls()[1];
+  const auditSql = flat(auditCall.text);
+  assert.equal(
+    auditSql.slice(auditSql.indexOf('FROM community_posts')),
+    'FROM community_posts WHERE audit_state = $1::audit_state ORDER BY created_at DESC, id DESC',
+    '`?audit_state=` 必须下推成 `audit_state = $n::audit_state`：删掉这条条件，待审队列会混进全量行',
+  );
+  assert.deepEqual(auditCall.values, ['pending'], '审核状态值必须真的绑定下去（不是拼进 SQL 文本、也不是丢掉）');
+
+  // ③ 两个筛选同时给：两条谓词都在，占位符编号按条件顺序递增（`state` 在 `auditState` 之前）。
+  await store.listPosts({ scope: 'admin', state: 'deleted', auditState: 'quarantined' });
+  const bothCall = pool.businessCalls()[2];
+  const bothSql = flat(bothCall.text);
+  assert.equal(
+    bothSql.slice(bothSql.indexOf('FROM community_posts')),
+    'FROM community_posts WHERE visibility = $1::visibility AND audit_state = $2::audit_state '
+      + 'ORDER BY created_at DESC, id DESC',
+    '两条筛选必须同时下推：少一条就只剩另一个谓词（组合筛选会静默放宽）',
+  );
+  assert.deepEqual(bothCall.values, ['deleted', 'quarantined']);
+});
+
 // ---------------------------------------------------------------------------
 // 4. 幂等点赞（集合语义，计数派生）
 // ---------------------------------------------------------------------------
