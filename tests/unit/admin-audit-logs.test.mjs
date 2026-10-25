@@ -131,10 +131,12 @@ test('GET /admin/audit-logs：action/entity 闭集与契约、库内写入点一
   assert.deepEqual(entity.schema.enum, [...AUDIT_ENTITIES]);
   assert.equal(operation['x-scope'], AUDIT_LOG_SCOPE);
   assert.equal(operation['x-version-required'], false);
-  // 库内写入点（迁移 0017 两处 + 迁移 0027 一处）写的 scope 就是 entity 的映射值。
-  assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), ['accounts:suspend', 'flags:write']);
+  // 库内写入点（迁移 0017 两处 + 迁移 0027 一处 + 迁移 0043 一处）写的 scope 就是 entity 的映射值。
+  assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), ['accounts:suspend', 'flags:write', 'jobs:cancel']);
   assert.equal(scopeOfAuditEntity('account'), 'accounts:suspend');
   assert.equal(scopeOfAuditEntity('flag'), 'flags:write');
+  // 0043 的 `record_admin_job_cancel_audit` 写的是 `jobs:cancel`（迁移 :175），不是 `jobs:read`。
+  assert.equal(scopeOfAuditEntity('job'), 'jobs:cancel');
   assert.deepEqual([...AUDIT_LOG_OPERATION_IDS], ['listAuditLogs']);
 });
 

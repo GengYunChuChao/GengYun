@@ -57,8 +57,8 @@
 
 | 核对项 | 实读结论 |
 | --- | --- |
-| `TextTurnInput` | `packages/contracts/openapi.json:13607`：恰两键 `input_type:'text'`（const）+ `text`（1..8000），`additionalProperties:false` |
-| `SpeechTurnInput` | 同文件 `:13625`：四键（`transcription_id`/`transcription_revision`/`confirmed`）——**本片一次都未发送** |
+| `TextTurnInput` | `packages/contracts/openapi.json:13609`：恰两键 `input_type:'text'`（const）+ `text`（1..8000），`additionalProperties:false` |
+| `SpeechTurnInput` | 同文件 `:13627`：四键（`transcription_id`/`transcription_revision`/`confirmed`）——**本片一次都未发送** |
 | `Answer` | 同文件 `:13664`：十一键闭集；`status` 闭集 `answered`/`insufficient`/`blocked`；`check_state` 闭集 `passed`/`blocked`；`citations` ≤20；`dose_cards` ≤10 |
 | `SourceRef` | 同文件 `:11420`：十键闭集；`url` pattern `^https://` |
 | `Job`/`JobState`/`JobResult` | `:14656`／`:10916`／`:14631`：九键；七类状态；`result` 为 `{kind,value}`，`answer` 分支 value 是 `Answer` |
