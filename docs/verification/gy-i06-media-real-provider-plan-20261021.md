@@ -15,7 +15,7 @@
 | --- | --- | --- | --- |
 | 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1546` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
 | 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1562`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1451`（原记 :1431；四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1480`（原记 :1460；批准能力不可伪造/不可派生/不可默认化） |
-| 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（`services/api/src/media/service.ts:624-629`） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
+| 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（原记 `:624-629`；该符号在 `1d65b7ee` 已不存在——`git grep -n "new Map<" 1d65b7ee -- services/api/src/media/service.ts` ⇒ 0 命中，最后见于 `1fbe7572:624-629`，`records`／`grants`／`idempotency`／`inflight` 四个容器；现行记录已改由 `persistence` 端口持有） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
 | 4 | **数据面缺口（部署件）** | 冻结契约内**没有**「owner 私有媒体字节读取」这一 operation；`MEDIA_ACCESS_GRANT_ORIGIN` 指向的访问网关在本仓库内**无实现** | 句柄签发得出来，但没人消费；本仓不能自称「契约已实现」 |
 
 **最关键的判断**：#6 的真实接线工作量**不在适配器层**（第一层可新增代码为 0 行），而在**配置搬运 + 批准铸造点 + PG 持久化 + 部署期网关**这四件。
@@ -134,11 +134,11 @@
 
 | 动作 | 文件:行号 | 说明 |
 | --- | --- | --- |
-| 新增 | `services/api/src/media/store.ts`（端口） | 从 `services/api/src/media/service.ts:624-629` 的四个进程内容器抽出端口：`records`（读/写/CAS by revision）、`grants`、`idempotency`（`claim/finalize/release/purge`）、`pendingObjectRefs`。方法集**逐条**对齐现有内存实现的语义，不做「大致等价」 |
+| 新增 | `services/api/src/media/store.ts`（端口） | 从 `services/api/src/media/service.ts` 的四个进程内容器（原记 `:624-629`；该符号在 `1d65b7ee` 已不存在——`git grep -n "new Map<" 1d65b7ee -- services/api/src/media/service.ts` ⇒ 0 命中，最后见于 `1fbe7572:624-629`）抽出端口：`records`（读/写/CAS by revision）、`grants`、`idempotency`（`claim/finalize/release/purge`）、`pendingObjectRefs`。方法集**逐条**对齐现有内存实现的语义，不做「大致等价」 |
 | 新增 | `services/api/src/media/store-pg.ts` | 形状照抄最近三片的 PG 存储（`services/api/src/ocr/store-pg.ts`、`services/api/src/speech/store-pg.ts`、`services/api/src/recognitions/store-pg.ts`）：`pool.connect()` → `BEGIN` → `SET LOCAL lock_timeout = '4s'` → SQL → `COMMIT`；`57014`/`55P03` ⇒ `PROVIDER_TIMEOUT`，其余数据库错误 ⇒ `PROVIDER_UNAVAILABLE`；缺表 ≠ 库坏（三态就绪判定） |
 | 新增 | `services/api/db/migrations/0027_media_persistence.sql` | 现有迁移止于 `0026_speech_persistence.sql`；本片新增 `media_records` / `media_grants` / `media_idempotency` / `media_pending_object_refs` 四张表。约束要点：`media_records(revision)` 由一条带 `WHERE revision=$2` 的原子 UPDATE 推进（CAS 唯一裁决点）；`media_idempotency UNIQUE(scope, key_hash)`；`media_pending_object_refs` 以 `(media_id, kind)` 唯一键登记未确认删除的引用。**状态迁移表不在 SQL 里抄第二份**，事实来源仍是 `packages/media` 的 `MEDIA_STATE_TRANSITIONS`（`packages/media/constants.mjs:87`） |
 | 修改 | `services/api/src/media/service.ts:263-289`（`AppMediaServiceOptions`） | 新增 `store?: AppMediaStore`（缺省仍用内存实现，保持 stub/preset_demo 与全部既有测试不变） |
-| 修改 | `services/api/src/media/service.ts:624-629` | 四个容器改为经 `store` 存取；`transition`（`:659`；原记 :648）与 `dropObjects`（`:722`；原记 :667）的判定逻辑**原样保留**，只换写入目标 |
+| 修改 | `services/api/src/media/service.ts` 的四个容器（原记 `:624-629`；该符号在 `1d65b7ee` 已不存在——`git grep -n "new Map<" 1d65b7ee -- services/api/src/media/service.ts` ⇒ 0 命中，最后见于 `1fbe7572:624-629`；现行记录已由 `persistence` 端口持有，见同文件 `:640`） | 四个容器改为经 `store` 存取；`transition`（`:659`；原记 :648）与 `dropObjects`（`:722`；原记 :667）的判定逻辑**原样保留**，只换写入目标 |
 | 修改 | `services/api/src/app.ts`（`buildApp` 顶部 import 区按仓库惯例把新 import 追加到文件末尾，`services/api/src/app.ts:2406` 已有此先例） | 有 `pool` 时构造 PG store 并注入；无 `pool` 时保持内存实现（与 `community/store-pg.ts` 的装配口径一致） |
 | 修改 | `services/api/src/app.ts`（real 装配段） | **批准铸造点**：见 §10 D2 的三个选项；无论选哪个，必须①唯一铸造点②可审计（记 reason/approvedAt）③保留 `objectStore.kind==='s3_compatible'` 的第二道校验（`services/api/src/media/service.ts:595` 起） |
 | 新增（可选） | `services/api/src/media/cleanup.ts` | `expireInitiated`（`:1412`；原记 :1239）/`cleanupOrphans`（`:1424`；原记 :1250）今天无生产调用者。真实接线后必须有驱动方（定时器或外部 cron 打内部端点），否则 24h 过期对象永久计费、`pending` 引用永不重试 |
@@ -159,7 +159,7 @@
 | 维度 | 结论 |
 | --- | --- |
 | **哪一步** | `completeUpload`，即「客户端直传完成之后、服务端核验时」。**不在** `createUpload`（那时只有声明值，没有字节），**不在**读路径（读路径只挑对象） |
-| **代码位置** | `services/api/src/media/service.ts:876-953`；关键三行：`:1048`（原记 :907）`objectStore.getObject(record.rawRef as string)` → `:1069`（原记 :928）`stripImageMetadata(stored.bytes, detected.mime)` → `:1076`（原记 :935）`objectStore.putObject(derivativeRef, stripped.data, detected.mime)` |
+| **代码位置** | `services/api/src/media/service.ts:1008-1133`（原记 :876-953；现行同名实现为 `completeUpload`）；关键三行：`:1048`（原记 :907）`objectStore.getObject(record.rawRef as string)` → `:1069`（原记 :928）`stripImageMetadata(stored.bytes, detected.mime)` → `:1076`（原记 :935）`objectStore.putObject(derivativeRef, stripped.data, detected.mime)` |
 | **字节级实现** | `packages/media/exif.mjs:432` 的 `stripImageMetadata(bytes, mime)`（441 行文件的最后一个导出）：按容器结构性移除元数据段——JPEG 去 `APP1:Exif` / `APP1:XMP` / `APP13:Photoshop`，PNG 去 `eXIf` / `tEXt` / `iTXt` / `zTXt`，WebP 去 `EXIF` / `XMP ` chunk（并重算 RIFF 声明长度）。同时**拒绝容器尾部多余字节**（PNG IEND 之后、JPEG EOI 之后、WebP RIFF 声明之外一律判失败），等价于禁尾部走私。`removed` 明细记进 `record.metadata_removed` |
 | **失败即拒** | 解码失败 ⇒ `reject(record, 'decode_failed')` + `MediaError('MEDIA_TYPE_UNSUPPORTED', '图片解码失败，无法去除元数据')`（415）；**不**放行原始字节 |
 | **两个对象** | `rawRef`（客户端直传的原件，**含元数据**）与 `derivativeRef`（去元数据件）。读路径只用 `derivativeRef`（`services/api/src/media/service.ts:1218`） |
@@ -258,7 +258,7 @@
 | --- | --- | --- |
 | ① 配置搬运 + 装配点（D1） | 1.0 | `config.ts` 结构化字段、`app.ts` 装配行、错误折进 `ConfigError`、补模板与 `docs/reference/configuration.md` |
 | ② 批准铸造点（D2） | 0.5 | 唯一铸造点 + 审计字段 + 双层门用例 |
-| ③ 元数据持久化：端口抽取 + 内存实现回填 | 2.0 | `services/api/src/media/store.ts` + `service.ts:624-629` 换写入目标；语义逐条对齐 |
+| ③ 元数据持久化：端口抽取 + 内存实现回填 | 2.0 | `services/api/src/media/store.ts` + `service.ts` 的四个容器（原记 `:624-629`；该符号在 `1d65b7ee` 已不存在——`git grep -n "new Map<" 1d65b7ee -- services/api/src/media/service.ts` ⇒ 0 命中，最后见于 `1fbe7572:624-629`）换写入目标；语义逐条对齐 |
 | ④ 元数据持久化：PG 实现 + 迁移 `0027` | 3.0 | 四张表 + CAS + 幂等唯一键 + 事务/错误折叠 + 三态就绪 |
 | ⑤ 装配与有/无 pool 双轨 | 0.5 | 与 `community/store-pg.ts` 同口径 |
 | ⑥ 清理器驱动（过期/孤儿/pending 重试） | 1.0 | `expireInitiated`/`cleanupOrphans` 的生产调用者 |

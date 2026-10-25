@@ -166,7 +166,7 @@
   **订正（绑实测 SHA `95b8e7cf`）**：此处原文写 `retryable === true`，与现行代码／断言不符。现行口径是
   「能力未装配／未接线造成的 `PROVIDER_UNAVAILABLE` 一律 `false`」（`services/api/src/errors.ts:32`，
   另见 `:35`），服务层的 fail-closed 构造器同样显式 `retryable: false`
-  （`services/api/src/media/service.ts:448`；槽位判定处 `:848-852`，原记 :652-654），测试断言
+  （`services/api/src/media/service.ts:495`，原记 :448；槽位判定处 `:848-852`，原记 :652-654），测试断言
   `tests/unit/media-real-mode-fail-closed.test.mjs:949`（同文件 `:126-127` 断言 503 ＋ `PROVIDER_UNAVAILABLE`）。
   §2 的 2026-10-14 探针输出与 §10 所记裁定原文**按原样保留**，不追改；口径差异见 §8.1 末段。
 
@@ -258,37 +258,37 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 > **校准补记（2026-10-23）**：第 1 条的 `media/service.ts` 三处行号已按当时 `upstream/main`（`791b34a8`）重算——
 > `attachmentLimitFor` 现记第 840 行（原记 645，该行已是 `toProjection`）、
 > `throw` 现记第 848 行（原记 652）、`retryable: false` 现记第 851 行（原记 653-654）。
-> **重锚（2026-10-25）**：本节 `file:line` 已按符号在 `upstream/main`=`1d65b7ee` 树上重取，原值以 `（原记 :N）` 标注；第 3 条三组 `git grep` 的**命中条数**（12／9／0）仍是上列 `95b8e7cf` blob 上的历史读数，**未重算**；第 1 条的 `计数器未接线` 复现命令在现行树上已 0 命中（该字面量已改写），其命中数与行号保留为历史读数。
+> **重锚（2026-10-25）**：本节 `file:line` 已按符号在 `upstream/main`=`1d65b7ee` 树上**部分重取**，原值以 `（原记 :N）` 标注；**未重取的引用**逐条列出（仍是上列 `95b8e7cf` blob 上的历史读数，2026-10-25 实测已漂移）：`services/api/src/ocr/service.ts` 的 `:610`（实测 `:626`）、`services/api/src/recognitions/service.ts` 的 `:533`（实测 `:538`）、`tests/unit/media-real-mode-fail-closed.test.mjs` 的 `:949`（实测 `:950`）；第 3 条三组 `git grep` 的**命中条数**（12／9／0）与 `setTimeout` 的 16 处同样是上列 `95b8e7cf` blob 上的历史读数（2026-10-25 在 `1d65b7ee` 复测为 25／17／4 与 23 处，见第 3 条标注）；第 1 条的 `计数器未接线` 复现命令在现行树上已 0 命中（该字面量已改写），其命中数与行号保留为历史读数。
 
 1. **「每帖 ≤3 张」的权威计数器在 `real` 路径上不可得 ⇒ 该用途恒 503（既不是 201，也不是 400）**。
    槽位判定点是 `services/api/src/media/service.ts:840` 的 `attachmentLimitFor(actor, purpose)`：计数端口返回
    `null` 时，`services/api/src/media/service.ts:848` 抛 `ApiError('PROVIDER_UNAVAILABLE', ...)`
    （`:849-852` 明写「retryable 必须为 false」）⇒ 503。未显式注入时 `real` 取 `createUnwiredAttachmentCounter()`
-   （`services/api/src/media/service.ts:526-528`），其 `countFor()` 恒返 `null`
-   （`services/api/src/media/service.ts:293-299`；`:330-332` 自述「该用途上传 503 fail-closed」，原记 :296）。
+   （`services/api/src/media/service.ts:625-627`，原记 :526-528），其 `countFor()` 恒返 `null`
+   （`services/api/src/media/service.ts:327-337`，原记 :293-299；`:330-332` 自述「该用途上传 503 fail-closed」，原记 :296）。
    生产装配**没有**从 env／配置注入计数器的路径，只能由调用方选项透传
-   （`services/api/src/app.ts:1560`；`:1546`，原记 :1481，是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
+   （`services/api/src/app.ts:1560`，原记 :1510；`:1546`，原记 :1481，是对象存储端口 —— 两者是**两个独立端口**，注入前者不解后者）；
    同处还有整域闸门：`real` 下 `createAppMediaService` 必须收到显式批准能力，否则整域 503
-   （`services/api/src/app.ts:1536-1539`）。
+   （`services/api/src/app.ts:1536-1539`，原记 :1036-1039）。
    ⇒ 现状：`stub`／`preset_demo` 走替身计数器（`countFor()` 直接返回存活社区图片数，
-   `services/api/src/media/service.ts:282-290`）⇒ 第 4 张 400（即 §5 输出里 `:121` 那条用例）；
+   `services/api/src/media/service.ts:306-314`，原记 :282-290）⇒ 第 4 张 400（即 §5 输出里 `:121` 那条用例）；
    `real` 下该用途**恒 503**，与 §9 第 3 条「`real` 下未接线即拒绝该用途」一致，**不是**「≤3 张已生效」。
    复现：`git grep -n "计数器未接线" upstream/main -- services/api/src/media/service.ts` ⇒ **2 处命中
    （`:296`／`:652`）**（按输出行计数为 2；`:296` 即上文 `:264` 已自引的那条 fail-closed 自述）。
 2. **媒体域与识别／合成域各持一套「按域」媒体端口，两套从未互接**。媒体域实例在
-   `services/api/src/app.ts:1546-1555`（`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
-   `services/api/src/app.ts:1072`（`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
-   合成域在 `services/api/src/app.ts:1114`（`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
+   `services/api/src/app.ts:1546-1555`（原记 :1041-1042；`mediaObjectStore` → `createAppMediaService`）；识别域的媒体引用端口在
+   `services/api/src/app.ts:1072`（原记 :834；`media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode)`），
+   合成域在 `services/api/src/app.ts:1114`（原记 :1085；`media: synthesisMedia ?? createSynthesisMediaPort(config.executionMode)`）——
    两处都只**按执行模式新建**，不接收也不引用媒体域的服务或对象存储。
    `services/api/src/recognitions/media.ts:16` 文件头逐字自述：「本文件这套**按域**媒体引用端口并未改接媒体域：
    `real` 下仍由 `createUnwiredMediaPort` 承担」；同文件 `:17-21` 说明该端口只在受理函数的媒体校验步骤被触达，
    `real` 缺供应商凭据时**先**返回 503，只有供应商判定可用时才轮到该端口 ⇒ 409 `OBJECT_UNAVAILABLE`。
    复现：`git grep -n "createRecognitionMediaPort\|createSynthesisMediaPort" upstream/main -- services/api/src/app.ts`
-   ⇒ **2 处命中（`:1072`／`:1114`）**（`services/api/src/app.ts:61`／`:66` 为导入行，不计）。
+   ⇒ **2 处命中（`:1072`／`:1114`；原记 :834／:873）**（`services/api/src/app.ts:61`／`:66` 为导入行，不计）。
    ⇒ 上传面即使接线成功，也**不构成**识别／语音／TTS 可用的证据：三个消费域与本域不共享任何媒体事实。
 3. **生命周期清扫有机制、无生产触发点**：本片点到的 `expireInitiated()` 与 `cleanupOrphans()` 在全生产面
    **零调用点**，24h 过期回收与失败／取消后的孤立对象回收**在运行时永不发生**（只在测试里被直接调用）。
-   本节实测（命中数按命令输出计数）：
+   本节实测（命中数按命令输出计数；2026-10-25 在 `1d65b7ee` 复测为 25／17／4，下列 12／9／0 为 `95b8e7cf` 时点读数）：
 
    - `git grep -n -E "expireInitiated|cleanupOrphans" upstream/main -- services/ packages/ apps/ tools/ miniprogram/`
      ⇒ **12 处命中**，全部是接口声明（`services/api/src/media/service.ts:225`／`:237`；原记 :238／:245）、`real` 替身实现（`:526`／`:529`；原记 :479／:482）、
@@ -298,7 +298,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
      （`tests/media/lifecycle.test.mjs:141`／`:146`、`tests/unit/media-http-upload.test.mjs:407`／`:410`／`:437`、
      `tests/unit/media-http-access.test.mjs:248`／`:278`／`:285`／`:348`）⇒ **生产代码 0 处**；
    - `git grep -n "setInterval" upstream/main -- services/api/src` ⇒ **0 处命中（exit 1）**；`services/api/src` 内
-     `setTimeout` 共 16 处，全是请求级超时／重试等待（如 `services/api/src/auth/wechat.ts:95`、
+     `setTimeout` 共 16 处（2026-10-25 在 `1d65b7ee` 复测为 23 处），全是请求级超时／重试等待（如 `services/api/src/auth/wechat.ts:95`、
      `services/api/src/ocr/service.ts:610`、`services/api/src/recognitions/service.ts:533`），**无周期调度器**。
 
    `services/api/src/media/service.ts:1397`（原记 :1108）的注释标题「过期与清理」只是能力入口的分段线，不是触发点。
