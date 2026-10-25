@@ -70,8 +70,8 @@ function harness() {
     instance.setData = (patch) => Object.assign(instance.data, patch);
     return instance;
   }
-  function seedCache() {
-    storage.set('gengyun.session', { accessToken: 'synthetic-token', audience: 'user', expiresAt: expires(), executionMode: 'stub' });
+  function seedCache(executionMode = 'stub') {
+    storage.set('gengyun.session', { accessToken: 'synthetic-token', audience: 'user', expiresAt: expires(), executionMode });
   }
   function acceptVerification(request) {
     request.success({ statusCode: 200, data: { data: { audience: 'user', expires_at: expires() } } });
@@ -126,6 +126,44 @@ test('首页允许游客预览，登录按钮和功能入口引导到独立登�
   page.onEntryTap();
   assert.deepEqual(h.launches, ['/pages/login/login', '/pages/login/login']);
   assert.equal(h.tabs.length, 0);
+});
+
+test('首页能力卡仅在已核实的替身模式下标演示，real 与未知模式保持未核实', () => {
+  for (const mode of ['stub', 'preset_demo']) {
+    const h = harness();
+    h.seedCache(mode);
+    const page = h.page('home');
+    page.onShow();
+    assert.ok(page.data.entries.every((entry) => entry.badge === '未核实'), '会话核实前不得采信缓存模式');
+    h.acceptVerification(h.requests.at(-1));
+    assert.deepEqual(Array.from(page.data.entries, (entry) => entry.key + ':' + entry.badge), [
+      'weed:演示', 'ocr:演示', 'voice:演示',
+    ], `${mode} 是明确替身环境，三个能力卡均应标演示`);
+  }
+
+  const h = harness();
+  h.seedCache('real');
+  const page = h.page('home');
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.ok(page.data.entries.every((entry) => entry.badge === '未核实'),
+    '全局 real 不是识草/OCR/语音分项供应商可用性证明');
+  assert.ok(!page.data.entries.some((entry) => entry.badge === '演示'),
+    'real 不得被机械改写成演示，也不得伪造成真实');
+});
+
+test('首页会话核实失败或重新进入时，能力卡回退未核实而不保留旧演示标记', () => {
+  const h = harness();
+  h.seedCache('stub');
+  const page = h.page('home');
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.ok(page.data.entries.every((entry) => entry.badge === '演示'));
+
+  page.onShow();
+  assert.ok(page.data.entries.every((entry) => entry.badge === '未核实'), '重新核实期间清除旧模式');
+  h.requests.at(-1).success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE' } } });
+  assert.ok(page.data.entries.every((entry) => entry.badge === '未核实'), '核实失败不得保留旧演示标记');
 });
 
 test('首页已核实用户进入识别 Tab，退出后的 onShow 恢复游客', () => {
@@ -187,6 +225,8 @@ test('home.wxml：能力卡逐一透传既有 key（未新增 key、未改导航
   const js = read('miniprogram/pages/home/home.js');
   assert.match(wxml, /data-key="\{\{item\.key\}\}"/, '能力卡需把既有 key 透传给 onEntryTap');
   assert.match(wxml, /bindtap="onEntryTap"/, '能力卡仍绑 onEntryTap');
+  assert.match(wxml, /feature-card__stub">\{\{item\.badge\}\}<\/view>/, '能力卡必须渲染按已核实模式生成的标记');
+  assert.doesNotMatch(wxml, /feature-card__stub">演示<\/view>/, '不得回退为无条件硬编码演示');
   assert.deepEqual([...js.matchAll(/key: '([a-z]+)'/g)].map((m) => m[1]), ['weed', 'ocr', 'voice'], '沿用既有 key 体系，不新造 key');
   const nav = harness().load(resolve(root, 'miniprogram/utils/navigation.js'));
   assert.ok(nav.PAGES.includes('pages/voice/voice'), '播报页已在既有导航白名单内');
