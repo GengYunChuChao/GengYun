@@ -40,7 +40,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, relative, sep } from 'node:path';
 import { AUDIT_ACTIONS } from '../../services/api/src/admin/audit/catalog.ts';
@@ -58,6 +58,7 @@ import {
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MIGRATIONS_DIR = join(REPO_ROOT, 'services', 'api', 'db', 'migrations');
 const SRC_DIR = join(REPO_ROOT, 'services', 'api', 'src');
+const CATALOG_PATH = join(SRC_DIR, 'admin', 'audit', 'catalog.ts');
 
 /** 翻钉指引：这里写全，失败时读者不需要再去翻文档。 */
 const FLIP_GUIDE =
@@ -87,6 +88,40 @@ function repoPath(absolute) {
   return relative(REPO_ROOT, absolute).split(sep).join('/');
 }
 
+/** **浅读一层**目录里的 `.sql`（不递归）—— 用来和 `walk()` 的递归读数互校。目录不存在 ⇒ 返回空。 */
+function listSqlFiles(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.sql'))
+    .map((entry) => join(dir, entry.name))
+    .sort();
+}
+
+/**
+ * 从 `services/api/src/admin/audit/catalog.ts` 的**源文本**解析出 `AUDIT_ACTIONS` 的成员取值
+ * （按数组字面量的书写顺序；成员是 `AUDIT_ACTION_*` 常量名，取值从同文件的 `export const` 读）。
+ *
+ * 为什么解析源文件而不是「把常量数组抄进测试」：抄出来的静态快照会与源文件各自漂移 ——
+ * 源文件改了、快照没改，这条钉就变成在断言一份**过期副本**上「没有 post.hide」。
+ * 这里改成「导入值 == 源文本解析值」的显式比对，源文件一旦换装配方式（二次组装、别名、
+ * 条件导出）就当场红灯，而不是悄悄绿。
+ *
+ * 返回 `null` = 源文件形状变了（找不到 `AUDIT_ACTIONS` 的 `Object.freeze([...] as const)` 字面量），
+ * 由调用方断言成红并提示跟着改本函数。
+ */
+function auditActionsFromCatalogSource() {
+  const text = readFileSync(CATALOG_PATH, 'utf8');
+  const declared = new Map();
+  for (const match of text.matchAll(/^export const (AUDIT_ACTION_[A-Z0-9_]+) = '([^']*)';$/gm)) {
+    declared.set(match[1], match[2]);
+  }
+  const block = text.match(/export const AUDIT_ACTIONS = Object\.freeze\(\[([\s\S]*?)\] as const\);/);
+  if (block === null) return null;
+  return [...block[1].matchAll(/AUDIT_ACTION_[A-Z0-9_]+/g)].map((match) =>
+    declared.has(match[0]) ? declared.get(match[0]) : `<未在当前源文件声明:${match[0]}>`,
+  );
+}
+
 /** 逐行扫描，返回 `path:line: 文本` 形式的命中清单（空数组 = 零命中）。 */
 function scanLines(files, pattern) {
   const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
@@ -106,10 +141,25 @@ const MIGRATION_FILES = walk(MIGRATIONS_DIR, (name) => name.endsWith('.sql'));
 const SRC_FILES = walk(SRC_DIR, (name) => name.endsWith('.ts'));
 
 test('钉③：`db/migrations` 里没有任何 `post.hide` 的 DDL / 函数 —— 下架审计今天没有落库通路', () => {
-  // 正控 1：扫描面非空（顶层 43 条 + `rollback/` 42 条 = 85，递归才不漏）。
+  // 正控 1：扫描面非空**且真的递归进了 `rollback/`**（递归到底才不漏，只读顶层会漏掉整个子目录）。
+  //
+  // 这里刻意**不把总数写成魔法数字**（曾写 `>= 80`，而注释说 85 —— 断言与注释各说一套）：
+  // 迁移会持续新增，锁死一个总数只会让「无关地多了一条迁移」把这条钉变红，那不是本钉要防的漂移。
+  // 改为两条**独立读数互校**：`walk()` 的递归总数必须等于「顶层直读 + `rollback/` 直读」之和 ——
+  // 总数随迁移数自由浮动，但「递归没漏层」这个性质被真正钉住了。
+  // 基线读数（2026-10，`ad869d75`）：顶层 43 条 + `rollback/` 42 条 = 85，两侧均为纯 `.sql`，无其它子目录。
+  const topLevelMigrations = listSqlFiles(MIGRATIONS_DIR);
+  const rollbackMigrations = listSqlFiles(join(MIGRATIONS_DIR, 'rollback'));
   assert.ok(
-    MIGRATION_FILES.length >= 80,
-    `扫描面必须非空：实际只看到 ${MIGRATION_FILES.length} 个 .sql（期望 ≥ 80，含 rollback/）`,
+    topLevelMigrations.length > 0 && rollbackMigrations.length > 0,
+    `扫描面必须两侧都非空：顶层 ${topLevelMigrations.length} 个 .sql、rollback/ ${rollbackMigrations.length} 个 .sql`,
+  );
+  assert.equal(
+    MIGRATION_FILES.length,
+    topLevelMigrations.length + rollbackMigrations.length,
+    `walk() 必须递归读到全部迁移（子目录不放过）：实际 ${MIGRATION_FILES.length} 个，` +
+      `顶层 ${topLevelMigrations.length} + rollback/ ${rollbackMigrations.length}。` +
+      '两者不等 ⇒ walk() 漏了某一层，或 `migrations/` 下多了别的子目录（新子目录要同时登记进本正控）',
   );
 
   // 正控 2：扫描器确实读到了内容 —— 社区内容本身是落库的。
@@ -141,7 +191,28 @@ test('钉③：`db/migrations` 里没有任何 `post.hide` 的 DDL / 函数 —�
 });
 
 test('钉④：审计读面的 `action` 闭集里没有 `post.hide` —— 读面认不出这个动作', () => {
-  // 正控：闭集非空且可枚举（它是「谁在写 admin_audit_events」反推出来的单一来源）。
+  // 正控 0：闭集必须**真的来自源文件**（不是把常量数组抄进测试的静态快照）。
+  const sourceActions = auditActionsFromCatalogSource();
+  assert.ok(
+    sourceActions !== null,
+    '正控：`services/api/src/admin/audit/catalog.ts` 里必须能读到 `AUDIT_ACTIONS` 的 ' +
+      '`Object.freeze([...] as const)` 数组字面量 —— 读不到说明源文件换了装配方式，' +
+      '`auditActionsFromCatalogSource()` 要跟着改（本钉不允许退回静态快照）',
+  );
+  assert.deepEqual(
+    AUDIT_ACTIONS,
+    sourceActions,
+    '读面闭集必须**逐项等于源文件里的数组字面量**（这里真读了一份 `catalog.ts` 文本，不是抄快照）：' +
+      `导入值 ${JSON.stringify(AUDIT_ACTIONS)}、源文本解析值 ${JSON.stringify(sourceActions)}。` +
+      '两者不等 ⇒ 闭集被二次装配/别名/条件导出改写，本钉的「闭集」已经不是源文件那一份',
+  );
+
+  // 正控 1：闭集非空、无重复且可枚举（它是「谁在写 admin_audit_events」反推出来的单一来源）。
+  assert.equal(
+    new Set(AUDIT_ACTIONS).size,
+    AUDIT_ACTIONS.length,
+    `读面闭集不得有重复项：实际 ${JSON.stringify(AUDIT_ACTIONS)}`,
+  );
   assert.ok(
     AUDIT_ACTIONS.length >= 4,
     `正控：\`AUDIT_ACTIONS\` 至少含 4 个库内写入动作，实际 ${JSON.stringify(AUDIT_ACTIONS)}`,
@@ -158,16 +229,25 @@ test('钉④：审计读面的 `action` 闭集里没有 `post.hide` —— 读�
   );
 });
 
-test('钉⑤：后台运维 store 是进程内内存实现 —— 全仓没有 PG 版 `createPostgresAdminOpsStore`，src 里没有一条写审计表的 SQL', () => {
-  // 钉 1/3：`admin/ops/store.ts` 自己声明非持久（接口 `:43` + 实现 `:139` 各一次）。
+test('钉⑤：后台运维 store 是进程内内存实现 —— `services/api/src` 里没有 PG 版 `createPostgresAdminOpsStore`，也没有一条写审计表的 SQL', () => {
+  // 钉 1/3：`admin/ops/store.ts` 自己声明非持久 —— **恰好两处**：内核接口
+  // `readonly persistent: false;`（`:43`）与实现体 `persistent: false,`（`:139`）。
+  //
+  // 为什么用精确相等而不是 `>= 2`：`>= 2` 只要求「这段文本里出现两次」，实现体改成
+  // `persistent: true` 之后若有别处凑巧再出现一次，`>= 2` 仍然是绿的 —— 那个口子让这条钉
+  // 可以被「无关改动」意外满足。精确相等把它关掉。
+  // 漂移风险评估：这份 200 行出头的 store 里 `persistent:` 只有这两处声明；真多出第三处，本身就说明
+  // 持久化口径变了，失败信息直接指到该看的那两处，不会让复核者猜。
   const storePath = join(SRC_DIR, 'admin', 'ops', 'store.ts');
   const storeText = readFileSync(storePath, 'utf8');
   const persistentFalse = storeText.match(/persistent:\s*false/g) ?? [];
-  assert.ok(
-    persistentFalse.length >= 2,
-    '`services/api/src/admin/ops/store.ts` 必须同时在内核接口与实现里声明 `persistent: false`：' +
-      `实际命中 ${persistentFalse.length} 处（接口 :43、实现 :139）。` +
-      '少一处意味着这份 store 可能已经改成持久实现，本钉必须复核',
+  assert.equal(
+    persistentFalse.length,
+    2,
+    '`services/api/src/admin/ops/store.ts` 必须**恰好两处**声明 `persistent: false`：' +
+      '内核接口（`:43` 的 `readonly persistent: false;`）与实现体（`:139` 的 `persistent: false,`）各一处；' +
+      `实际命中 ${persistentFalse.length} 处。少一处/多一处都意味着这份 store 的持久化口径变了 —— ` +
+      '实现改持久 ⇒ 本钉翻成正例；多出第三处声明 ⇒ 先看是不是新接口被加进来',
   );
 
   // 钉 2/3：这份 store 里没有任何 PG 痕迹（`store.ts` 只有内存 Map）。
@@ -194,12 +274,14 @@ test('钉⑤：后台运维 store 是进程内内存实现 —— 全仓没有 P
       '走迁移 0033 的 `public.list_admin_audit_logs()`）—— 本钉说的是**写**面没落库，不是「审计完全没有 PG 触点」',
   );
 
-  // 钉 3/3：全仓没有 PG 版运维 store 的工厂（`createAdminOpsStore` 是唯一实现）。
+  // 钉 3/3：`services/api/src` 里没有 PG 版运维 store 的工厂（`createAdminOpsStore` 是唯一实现）。
+  // 扫描面说明：本条只扫 `services/api/src`（`SRC_FILES`），不是「全仓」—— `tests/**` 里
+  // 本文件的断言文本会命中这个标识符，`docs/**` 也会引用它，所以标题与措辞一律写扫描面。
   const pgOpsStores = srcHits(/createPostgresAdminOpsStore/);
   assert.deepEqual(
     pgOpsStores,
     [],
-    `不得存在 PG 版运维 store 工厂 \`createPostgresAdminOpsStore\`：今天唯一实现是内存的 ` +
+    `\`services/api/src\` 里不得存在 PG 版运维 store 工厂 \`createPostgresAdminOpsStore\`：今天唯一实现是内存的 ` +
       `\`createAdminOpsStore()\`（services/api/src/admin/ops/store.ts:95）。实际命中 ${pgOpsStores.length} 处：\n` +
       `${pgOpsStores.join('\n')}\n\n${FLIP_GUIDE}`,
   );
@@ -251,13 +333,50 @@ test('钉⑥：真下架一次 ⇒ `post.hide` 审计只在内存台账里；换
   );
 
   // 缺口本体：「换一个进程就是零」—— 新建一份 store 等于新进程冷启动（内存台账没有回填来源）。
+  //
+  // 这一段不能写成光秃秃一句 `audit.count() === 0`：一份刚 new 出来的台账当然是空的 —— 那是
+  // 结构性近恒真（哪怕 `createAdminOpsStore()` 变成返回**单例**、哪怕 `audit` 是进程级全局表，
+  // 「刚建出来是空的」依然成立）。所以这里补齐三个**能判别**的读数：
+  //   ① 两份 store 与两份 audit 台账必须是**不同实例**（不是单例、不共享台账）；
+  //   ② 同一时刻两份台账的 `post.hide` 命中数必须是 **1 与 0** —— 台账被共享/单例化时两边会相等；
+  //   ③ 新那一份的空读数必须与前一份的**非空读数成对**出现（单看 `=== 0` 没有判别力，作为一对才有）。
+  const hitsOf = (auditLog) => auditLog.list().filter((record) => record.action === 'post.hide').length;
   const nextProcess = createAdminOpsStore();
+  assert.notEqual(
+    nextProcess,
+    store,
+    '钉子前提：每次 `createAdminOpsStore()` 必须是一份**新实例**（不是单例）。' +
+      '若它变成单例，下面「换一个进程就是零」的论证整条失效（新的一份就是旧的那一份）',
+  );
+  assert.notEqual(
+    nextProcess.audit,
+    store.audit,
+    '钉子前提：审计台账也必须是**新实例** —— 两份 store 不得共享同一个 `audit` 对象' +
+      '（共享即等于跨进程共享台账，「重启即丢」就不成立）',
+  );
+  assert.equal(
+    hitsOf(store.audit),
+    1,
+    `对照读数：当前进程的台账里必须有那次下架留下的 1 条 \`post.hide\`（实际 ${hitsOf(store.audit)} 条）`,
+  );
+  assert.equal(
+    hitsOf(nextProcess.audit),
+    0,
+    '钉子：新进程（新建 `createAdminOpsStore()`）里读不到那次下架 —— 因为下架审计从不落库，' +
+      `\`public.admin_audit_events\` 里从来没有这一行。实际 ${hitsOf(nextProcess.audit)} 条`,
+  );
+  assert.notEqual(
+    hitsOf(store.audit),
+    hitsOf(nextProcess.audit),
+    '钉子：两份台账的 `post.hide` 读数必须**不同**（1 与 0）—— 相等说明台账被共享/单例化，' +
+      '「换一个进程就是零」的判别力随之消失',
+  );
   assert.equal(
     nextProcess.audit.count(),
     0,
     '钉子：新进程（新建 `createAdminOpsStore()`）里的审计台账必须是**空**的 —— ' +
       '因为下架审计从不落库，`public.admin_audit_events` 里从来没有这一行。' +
-      `实际 ${nextProcess.audit.count()} 条`,
+      `实际 ${nextProcess.audit.count()} 条（同刻当前进程为 ${store.audit.count()} 条 —— 两者成对才有判别力）`,
   );
   assert.deepEqual(
     nextProcess.audit.list().filter((record) => record.action === 'post.hide'),
