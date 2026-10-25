@@ -16,7 +16,8 @@
 >   * 目标 CVM（Ubuntu 22.04 ／ 内网 `10.21.1.8` ／ 数据盘 `/dev/vdb → /data`）：
 >     `install-postgres.sh` **`INSTALL_EXIT=0`**；只监听 `127.0.0.1:5432` 与 `10.21.1.8:5432`；
 >     **收尾硬校验通过**；私密目录 `/etc/gengyun` = `drwxr-x--- root:postgres` 且 `postgres` **两级 `test -x` 通过**；
->   * `migrate.ts up` **`exit=0`**（`0001…0010`）；`provision-db.sh` **`exit=0`**（**家目录保持 `0750`**：无 `Permission denied`、无 `roles/0`；
+>   * `migrate.ts up` **`exit=0`**（**时点读数**：当时磁盘上的全部迁移为 `0001…0010`；迁移集合此后已扩展，
+>     现行清单以 `ls services/api/db/migrations/*.sql` 为准，本文件不复述）；`provision-db.sh` **`exit=0`**（**家目录保持 `0750`**：无 `Permission denied`、无 `roles/0`；
 >     5 组 + `20-login-roles.sql` + 90- 断言 `ok`）；复核 `migrations=10`／`tables=41`／`groups=5`／`login=true super=false`；
 >   * `backup-postgres.sh` **`exit=0`**；`restore-drill.sh --recreate` **`exit=0`、`PASS=24 FAIL=0`、结论「恢复演练【通过】」**；
 >   * `verify-cvm-postgres.sh`（带运行时口令环境变量）**`PASS=39 FAIL=0 SKIP=1`（`exit=2`）**。

@@ -159,7 +159,8 @@ docker build -f deploy/cloudrun/Dockerfile -t gengyun-api:local .
 - 角色脚本会执行 `REVOKE CREATE ON SCHEMA public FROM PUBLIC` 与
   `REVOKE CREATE, TEMPORARY ON DATABASE ... FROM PUBLIC`，因此**只能在全新专用库**上引导；
   库里已有其他使用者时先停下评估，不要接管或删除他人角色。
-- 种子（`db/seeds/*.sql`）与脱敏样例**不在本次最少步骤内**：不做则 `/api/v1/public/home` 返回空数组（正常）。
+- 种子在**仓库根** `db/seeds/*.sql`（点名说明：`services/api/db/` 下只有 `migrations/`、`roles/`，**没有** `seeds/`；
+  写 `db/seeds/` 时一律指仓库根那份），与脱敏样例**不在本次最少步骤内**：不做则 `/api/v1/public/home` 返回空数组（正常）。
   需要非空科普预览属于资料准备，另行授权。
 - 连接串细节：API 的 `DATABASE_URL` 与迁移运行器都把连接串整体交给 `pg`，
   因此可以带 `?sslmode=...`；来源／暂存 CLI 会拒绝带 query 的连接串（见 database-run-handoff），**不要复用同一条串**。
@@ -243,7 +244,7 @@ Invoke-RestMethod https://<服务域名>/api/v1/public/home
 | 改错了服务设置／环境变量 | 服务设置改动会发布新版本；把线上版本切回改动前的版本，再在服务设置里改回 | 官方《服务设置》：配置变更只影响之后的版本 |
 | 迁移本身出错 | 运行器为每个迁移开事务并在失败时 `ROLLBACK`；但多个迁移自带 `BEGIN/COMMIT`（0002/0003/0004/0008/0009）与外层事务嵌套，**不能**推定台账与结构一定整体原子回滚——先停 API、读日志、按对应验证页处理 | migrate.ts；database-run-handoff |
 | 需要结构级回退 | 人工执行 `services/api/db/migrations/rollback/*.down.sql`（运行器不扫描；保留审计时 0006/0007 的 down 可能拒绝并保留对象） | db/README.md、database-run-handoff |
-| 种子数据回退 | 人工执行 `db/seeds/rollback_seed.sql` | db/README.md |
+| 种子数据回退 | 人工执行**仓库根**的 `db/seeds/rollback_seed.sql` | db/README.md |
 | 需要立即停止对外服务 | 实例副本数最小值设 0（无流量即缩容）；彻底下线＝删除服务（**会永久删除该服务的版本、流水线、镜像**） | 官方《服务设置》 |
 
 数据库侧**没有**本轮新增的回滚语义；本 PR 未修改任何迁移或角色文件。

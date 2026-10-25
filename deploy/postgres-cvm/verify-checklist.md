@@ -155,7 +155,7 @@ SHOW password_encryption;   -- 期望 scram-sha-256
 
 | 判据标签 | 命令 | 期望 | 判读 |
 | --- | --- | --- | --- |
-| `migrations_applied` | 比对 `SELECT string_agg(version,',' ORDER BY version) FROM schema_migrations` 与 `services/api/db/migrations/*.sql` | 两者完全一致（0001…0010） | 不一致 ⇒ 迁移没跑完或跑了不同 HEAD；**角色引导的前提不成立** |
+| `migrations_applied` | 比对 `SELECT string_agg(version,',' ORDER BY version) FROM schema_migrations` 与 `services/api/db/migrations/*.sql` | 两者完全一致（逐版本比对；清单以磁盘实测为准，**不以号段判齐**） | 不一致 ⇒ 迁移没跑完或跑了不同 HEAD；**角色引导的前提不成立** |
 | `migrations_checksum_not_null` | `SELECT count(*) FROM schema_migrations WHERE checksum IS NULL` | `0` | 非 0 ⇒ 台账被外部手工写入，drift 检测会失效 |
 
 补充：`node services/api/src/db/migrate.ts status` 应输出 `待应用：（无）` 且**不出现** `drift：`。
