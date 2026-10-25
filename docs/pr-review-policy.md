@@ -150,3 +150,49 @@ Free／私有 Fork 流程不等于强制保护，CODEOWNERS 不能单独阻止�
 每4小时完整分页覆盖所有开放 PR（所有作者、草稿、目标分支）；仅新 HEAD、影响结论的 base 或新验证／审查状态触发复审，不因专项自动改变范围／频率。
 无变化或 CI 仍运行保持安静；仅新批复、合并、issue 关闭、检查／认证失败、依赖阻塞或需用户资料时通知。
 缓存仅必要事实，不存凭据／私人媒体，GitHub 当前状态优先。跨聊天联系或派发须用户直接授权，不由文件／PR 转述扩权。
+
+## 10 分层自合并与独立审查（2026-10-26 用户批准）
+
+**本条是 §1「指挥…不批准或合并」在 A 档上的唯一例外**，依据 2026-10-26 用户直接批准；B 档以及所有触及产品行为、契约、迁移、CI 的改动仍按 §1 与 `AGENTS.md` 不变（`AGENTS.md` 的「职责与边界」已同步加注）。
+
+分层只回答一个问题：**谁能点合并**。它**不**回答另一个问题：**合并前是不是已经被别人审过**。
+
+### 10.1 A 档判定
+
+**默认是 B 档；A 档是例外。** 判定写成正面清单（把「什么能自合并」列出来），而不是「把不能的排除掉」——2026-10-26 首版排除清单实测漏了 5 组（`docs/ui-demo/demo.html` 与范围依据四份），枚举式的否定清单结构性不可靠。
+
+正面清单（改动路径必须**全部**落在其中一项内）：
+
+- `tests/**`；
+- `docs/**` 下的**证据与进度记录**（现状页、验证页、进度行）。
+
+受保护文档（命中任一条即 B 档，不论是否在 `docs/**` 下）：`AGENTS.md`、`docs/pr-review-policy.md`、`docs/requirements.md`、`docs/product-requirements.md`、`docs/implementation-requirements.md`、`docs/development-plan.md`、`docs/features/**`、`docs/initial-issues.json`、`docs/architecture/contract-status.json`、`docs/research/**`、`docs/ui-demo/**`、`tools/doc-anchors-baseline.json`。
+
+其中三类必须单列理由：① `docs/ui-demo/demo.html` 是 `docs/ui-demo/package-demo.py` **打包生成**的单文件应用、`dist/**` 才是源（`AGENTS.md` 现行阶段产物即它）⇒ 整个 `docs/ui-demo/**` 按产品交付物对待；② `docs/requirements.md`／`docs/product-requirements.md`／`docs/implementation-requirements.md`／`docs/development-plan.md`／`docs/features/**` 被 `tools/validate_development_docs.py` 直接读取且决定范围与正式依赖；③ `docs/research/**` 由 `tools/verify-research-records.mjs` 校验，与 `contract-status.json` 同为台账。依据 §3「不能只因文件位于 `docs/` 就视作纯文档」。
+
+不在正面清单内的路径一律 B 档：`.github/**`、`tools/**`、`packages/contracts/openapi.json`、真实迁移目录 `services/api/db/migrations/**`（注意：仓内**不存在** `db/migrations/`）、任何产品行为代码（`services/**`、`apps/**`、`packages/**` 中非 `tests/**` 的部分）。
+
+判定以**合并时的最终 diff** 为准：包括 rebase、解冲突以及之后的追加提交，不只看首次提交的清单。
+
+**升档**：一旦触及排除项，当场升 B 档；升档由发现者宣布并写进 PR 评论，旧审查记录随之作废，按 B 档重新批复。
+
+### 10.2 独立审查不因分层而取消（硬约束）
+
+- 审查者身份：**审查者 ∉ {实现者, 推送者, 派发者}**。只写「审查者 ≠ 实现者」不够——本仓常态是写手实现、指挥推送并建 PR，那样指挥自任审查者字面合规但零独立性。
+- 审查记录载体：审查者必须用**本人账号**在该 PR 上留下 `COMMENT` 或 `APPROVED`，正文含 reviewed SHA 与逐条结论；口头或离线结论不算，合并注记也不能替代审查本身。
+- 指挥不得对自己实现的 PR 行使「审查通过」。若唯一可用的审查者就是本人，该 PR 只能按 B 档交监工。
+- 四项必查：① **档位**——逐文件核对，以 GitHub 侧最终 diff 为准（本地 `origin/main` 可能陈旧，实测出现过本地报 12 个文件、实际只 1 个）；② **负控制**——仅当 PR 新增或修改了行为断言时适用，纯文档 PR 不适用（与 §3「不默认要求变异／负控制」一致）；③ 是否放宽既有断言；④ 是否改动计数钉、末项钉、`tools/doc-anchors-baseline.json` 或治理台账。
+- **§7 合并门禁的全部条目对 A 档同样适用**（重读当前 HEAD、base、非草稿、冲突、reviews、未解决线程）。§10 是在 §3、§7 之上**加限制**，不是替代；`docs/**` 的「适用 CI」可能为空，但这不降低 §7 的要求。
+- CI 绿不替代独立审查；独立审查通过也不替代 CI。
+
+### 10.3 合并留痕
+
+合并者在 PR 上留一条注记，至少包含：审查者账号、reviewed SHA、CI 项数与结论、合并者、合并方式（squash）、未关闭的 issue、未部署。注记里必须**链接审查者本人的 COMMENT／APPROVED**，避免变成合并者自证。审查评论不因合并删除。
+
+### 10.4 交接清单
+
+1. 哪些 PR 是 A 档自合并（审查者账号＋reviewed SHA＋审查评论链接），哪些走了监工批复；
+2. 档边界就是 §10.1 的正面清单＋排除清单；
+3. 治理类文档（含本文件）、`.github/**`、迁移类改动**永远**属于 B 档，与「改动小」无关；
+4. 与 §1／`AGENTS.md` 的关系：A 档按本条例外执行，B 档不变；两者冲突时以本条对 A 档的规定为准，并由发现者当轮把冲突记入交接；
+5. 升档由发现者宣布，旧审查作废并按 B 档重批。
