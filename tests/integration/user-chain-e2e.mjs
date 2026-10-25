@@ -30,16 +30,23 @@
  *
  * 退出码（**跳过 ≠ 通过**）：
  *   0   真库起得来、6 步断言全绿；
- *   77  找不到 PostgreSQL 17（本机没装／没设 `USER_CHAIN_PG_BIN`）⇒ **未取得**，按 POSIX「skipped」惯例给 77；
+ *   77  找不到 PostgreSQL 17（本机没装／没设 `GY_PG_BIN`）⇒ **未取得**，按 POSIX「skipped」惯例给 77；
  *       ⛔ 任何 `&&` 串联、CI、本地一键脚本都会因此变红 —— 这正是本意：一条都没跑的运行不得被读成通过；
  *   其它非 0（通常 1）真失败。
  *   本机开发明知无真库、只想看跳过原因时，可显式加 `--allow-skip`（或 `GY_ALLOW_SKIP=1`）取 0 —— ⛔ 不得用于门禁。
  *
- * 可选环境变量：
- *   USER_CHAIN_PG_BIN      PG 17.11 bin 目录（默认 <repo>/.pg17/pgsql/bin，再回落到 PATH 里的 initdb）
- *   USER_CHAIN_PG_DATADIR  一次性数据目录（默认 <tmpdir>/gengyun-user-chain-pg-<runId>）
+ * 可选环境变量（键名对齐 `tests/unit/ci-real-pg-wiring.test.mjs` 的自起集群判据：
+ * PG bin 用 `GY_PG_BIN`，数据根目录用 `GY_USER_CHAIN_PG_ROOT`——后者必须是本脚本里**唯一**的
+ * `GY_*_PG_ROOT` 取值点，否则守卫判红：`SELF_CLUSTERED_ROOT_KEY` 与 `detectedRootKeys()` 交叉核对）：
+ *   GY_PG_BIN              PG 17.11 bin 目录（默认 <repo>/.pg17/pgsql/bin，再回落到 PATH 里的 initdb）
+ *   GY_USER_CHAIN_PG_ROOT  一次性数据目录的**父目录**（数据目录＝<root>/gengyun-user-chain-pg-<runId>；
+ *                          缺省父目录是 <tmpdir>）；⛔ CI 必须显式给一个可写目录，见下
  *   USER_CHAIN_PG_KEEP=1   保留数据目录与日志（排障用；默认逐个文件删干净）
  *   GY_ALLOW_SKIP=1        等同 `--allow-skip`：缺真库时把「未取得」降级为 0（仅本机开发）
+ * 过渡别名（仍被读取，新键优先）：`USER_CHAIN_PG_BIN` ＝ `GY_PG_BIN`；`USER_CHAIN_PG_DATADIR` 是**完整**数据目录。
+ * ⚠️ 缺省落 `<tmpdir>` 只在普通开发机可用：受限环境（本机实测的沙箱 ACL）里 `initdb` 会
+ * `could not create directory … Permission denied` ⇒ 必须显式给 `GY_USER_CHAIN_PG_ROOT`。CI 里由
+ * `.github/workflows/real-pg-integration.yml` 传 `${{ runner.temp }}/gy-user-chain-pg`。
  */
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -103,7 +110,8 @@ function masked(token) {
 // 一次性 PG 17 集群
 // ---------------------------------------------------------------------------
 function resolvePgBin() {
-  const configured = process.env.USER_CHAIN_PG_BIN;
+  // 新键 `GY_PG_BIN`（与仓内其它自起集群脚本同名，守卫按它核对 step env）；`USER_CHAIN_PG_BIN` 是过渡别名。
+  const configured = process.env.GY_PG_BIN ?? process.env.USER_CHAIN_PG_BIN;
   const candidates = configured
     ? [configured]
     : [join(REPO_ROOT, '.pg17', 'pgsql', 'bin'), ...(process.env.PATH ?? '').split(delimiter).filter((dir) => dir !== '')];
@@ -263,7 +271,7 @@ const errorShapeOf = (response) =>
 async function main() {
   const pgBin = resolvePgBin();
   if (pgBin === null) {
-    console.log('SKIP real PG17 user chain: 未找到 PostgreSQL 17 的 bin 目录（设 USER_CHAIN_PG_BIN，或把 initdb 放进 PATH）。');
+    console.log('SKIP real PG17 user chain: 未找到 PostgreSQL 17 的 bin 目录（设 GY_PG_BIN，或把 initdb 放进 PATH）。');
     console.log('     本次运行没有起库、没有跑链路 —— 不是通过，也不是失败。');
     if (ALLOW_SKIP) {
       console.log('EXITCODE=0（--allow-skip / GY_ALLOW_SKIP=1 已显式授权：仅本机开发，⛔ 不得接进门禁）。');
@@ -272,7 +280,13 @@ async function main() {
     console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本机明知无真库时可显式加 --allow-skip 取 0）。');
     return 77;
   }
-  const dataDir = process.env.USER_CHAIN_PG_DATADIR ?? join(tmpdir(), `gengyun-user-chain-pg-${RUN_ID}`);
+  // 数据根目录：CI 给 `GY_USER_CHAIN_PG_ROOT`（`${{ runner.temp }}/gy-user-chain-pg`），数据目录是它下面的
+  // 一次性子目录 ⇒ ⛔ 不往系统 TEMP 建库（受限环境里 `initdb: could not create directory … Permission denied`）。
+  // 过渡别名：旧键 `USER_CHAIN_PG_DATADIR` 给的是**完整**数据目录，仍被读取（新键优先，空串视同未设置）。
+  const dataRoot = process.env.GY_USER_CHAIN_PG_ROOT ?? '';
+  const dataDir = dataRoot !== ''
+    ? join(dataRoot, `gengyun-user-chain-pg-${RUN_ID}`)
+    : (process.env.USER_CHAIN_PG_DATADIR ?? join(tmpdir(), `gengyun-user-chain-pg-${RUN_ID}`));
   const keep = process.env.USER_CHAIN_PG_KEEP === '1';
   const logFile = join(dirname(dataDir), `gengyun-user-chain-pg-${RUN_ID}.log`);
   const port = await freePort();
@@ -288,11 +302,20 @@ async function main() {
   console.log(`[pg] bin=${pgBin}`);
   console.log(`[pg] dataDir=${dataDir} port=${port}`);
   try {
-    if (existsSync(dataDir)) throw new Error(`数据目录已存在，拒绝复用（请删掉或换 USER_CHAIN_PG_DATADIR）：${dataDir}`);
+    if (existsSync(dataDir)) throw new Error(`数据目录已存在，拒绝复用（请删掉，或换 GY_USER_CHAIN_PG_ROOT）：${dataDir}`);
     mkdirSync(dirname(dataDir), { recursive: true });
     run(pgTool(pgBin, 'initdb'), ['-D', dataDir, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--locale=C']);
     // `-l <log>` 把 postgres 的 stdout/stderr 重定向到文件：⛔ 不要让守护进程继承本进程的管道句柄（会永久挂住）。
-    runDetached(pgTool(pgBin, 'pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', `-p ${port} -c listen_addresses=127.0.0.1`, 'start']);
+    // ⚠ Debian/Ubuntu 的 `postgresql-17` 把编译默认 `unix_socket_directories` 钉在 `/var/run/postgresql`，
+    //   普通用户（CI 里的 `runner`）写不了它 ⇒ `pg_ctl start` 直接
+    //   `FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.<port>.lock": Permission denied`
+    //   （Windows 没有 unix socket，本机永远复现不了）。故显式把 socket 目录指到**数据目录**，
+    //   且只对非 win32 加（Windows 上传 `-k` 会报错）。同仓 10+ 个脚本同一写法（各自的 `serverOptions()`）。
+    // ⚠ `-o` 只收**一个**字符串：把数组直接当 arg 传会被 `String()` 用 `,` 拼起来，postgres 会报
+    //   `FATAL: invalid value for parameter "port": "55902,-c"`（见 `media-row-purge-pg.mjs:157-159`）⇒ 必须 `join(' ')`。
+    const startOptions = [`-p ${port}`, '-c listen_addresses=127.0.0.1', '-c max_connections=32'];
+    if (process.platform !== 'win32') startOptions.push(`-k ${dataDir}`);
+    runDetached(pgTool(pgBin, 'pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', startOptions.join(' '), 'start']);
     clusterUp = true;
     // `pg_ctl` 与它派生的 postgres 都不给我们任何输出，就绪与否以「能不能连上」为准。
     await waitForReady(connectionString, 60000);

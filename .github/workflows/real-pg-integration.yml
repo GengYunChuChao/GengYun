@@ -570,6 +570,31 @@ jobs:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_R34_PG_ROOT: ${{ runner.temp }}/gy-r34-pg
           PGCLIENTENCODING: UTF8
+      # 用户链路端到端（GY-I04／I05／I07／I16，`#4`／`#5`／`#7`／`#16`）：与上五步同属**自起集群**类——
+      # 自己 `initdb` 出一次性 PG 17 集群（`-U postgres -A trust`、空闲端口、只监听 127.0.0.1）、
+      # 跑完无论成败都 `pg_ctl stop` 并逐个文件删数据目录，**不**连 service 里的库、**不**建组角色、也**不**碰
+      # 集群级对象 ⇒ 对前后脚本零耦合；复用那条装包 step 装出来的 `/usr/lib/postgresql/17/bin`（装包只做一次），
+      # 且同样**不** `CREATE DATABASE`——它把夹具与全链迁移直接落在**自己临时集群**的 `postgres` 库里
+      # （连接串 `postgres://postgres@127.0.0.1:<port>/postgres`，见脚本 `:293`），所以没有「CI 建的库名」可核对，
+      # 判据⑦⑧ 对它走 `SELF_CLUSTERED_SCRIPTS` 那组等价判据。
+      # 它跑的是本轮唯一一条**用户视角**整链（登录→手选作物/地区→搜索→详情→收藏/取消→退出），119 条断言／6 步，
+      # 在**原样** `buildApp` 真装配上 `listen({port:0})` 走真 HTTP（不 mock 路由）；顺带钉住「未登录 401
+      # `SESSION_REQUIRED`／登出后同令牌 401 `SESSION_EXPIRED`／他人读不到也删不掉收藏（IDOR→404 同形）」。
+      # 缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，
+      # 也不加任何吞红开关：本 step 不吞失败，也不把 77 改写成 0）。
+      # ⚠️ 数据根目录键是 `GY_USER_CHAIN_PG_ROOT`（脚本 `:286` 的 `process.env.GY_USER_CHAIN_PG_ROOT ?? ''`），
+      # ⛔ 不是同族的 `GY_I19_PG_ROOT`／`GY_W11_PG_ROOT`／`GY_R34_PG_ROOT`；守卫按脚本源码交叉核对
+      # （`SELF_CLUSTERED_ROOT_KEY`），给错键即红——那样 root 只是一条**装饰性 env**，数据目录照样落
+      # `os.tmpdir()`，而受限 tmp 上 `initdb` 会直接
+      # `could not create directory … Permission denied`（本机实测过这个坑）⇒ 必须显式落在 `runner.temp` 下。
+      # 排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
+      # 其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
+      - name: 用户链路端到端（登录→手选→搜索→详情→收藏/取消→退出 / 119 条断言）
+        run: node tests/integration/user-chain-e2e.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_USER_CHAIN_PG_ROOT: ${{ runner.temp }}/gy-user-chain-pg
+          PGCLIENTENCODING: UTF8
       # 识别端到端链路（GY-I06／I08／I09／I10，R28-S65）：库名硬钉 `gengyun_recognition_chain_test`，
       # 脚本同样要求**空库**（`preparePg()` 先数 `public` 下的表，非 0 直接断言失败）。
       # 它跑的是仓内**唯一**的完整业务链路：上传识别 → 拿到结果 → 看可信度与理由 → 加入识别历史 →
