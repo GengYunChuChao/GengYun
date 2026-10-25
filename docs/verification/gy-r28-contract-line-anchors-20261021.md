@@ -259,7 +259,7 @@
 | 125 | createSourceDraft | services/api/src/admin/service.ts:575-580 | 「createSourceDraft」 | 2 / 1 |  |
 | 126 | getAdminSource | services/api/src/routes/admin.ts:178-180 | 「app.get(`${API_PREFIX}/admin/sources/:id`」 | 1 / 1 |  |
 | 127 | getAdminSource | services/api/src/admin/service.ts:576-581 | 「getAdminSource」 | 2 / 1 |  |
-| 128 | editSourceDraft | services/api/src/routes/admin.ts:181-183 | 「app.patch(`${API_PREFIX}/admin/sources/:id`」 | 1 / 1 |  |
+| 128 | editSourceDraft | services/api/src/routes/admin.ts:194-196 | 「app.patch(`${API_PREFIX}/admin/sources/:id`」 | 1 / 1 |  |
 | 129 | editSourceDraft | services/api/src/admin/service.ts:577-582 | 「editSourceDraft」 | 2 / 1 |  |
 | 130 | publishSource | services/api/src/routes/admin.ts:184-186 | 「app.post(`${API_PREFIX}/admin/sources/:id/publish`」 | 1 / 1 |  |
 | 131 | publishSource | services/api/src/admin/service.ts:578-583 | 「publishSource」 | 2 / 1 |  |

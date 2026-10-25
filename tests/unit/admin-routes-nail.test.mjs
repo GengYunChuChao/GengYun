@@ -101,10 +101,10 @@ test('钉子 1：两层分工 —— 非法 uuid ⇒ 400 INVALID_REQUEST，合�
   }
 });
 
-test('钉子 2：36 个 operationId 的方法与路径与契约逐条一致（读 openapi.json 原文核对）', async () => {
+test('钉子 2：38 个 operationId 的方法与路径与契约逐条一致（读 openapi.json 原文核对）', async () => {
   const { app, token } = await makeApp();
   try {
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 36, '本片应恰好暴露 36 个 operationId（34 + listFlagAuditEvents + listAuditLogs）');
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 38, '本片应恰好暴露 38 个 operationId（34 + listFlagAuditEvents + listAuditLogs + R37 读面 2 个）');
 
     // 从契约取出每个 operationId 的 method + path。
     const fromContract = new Map();

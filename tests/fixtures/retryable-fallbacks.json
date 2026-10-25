@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 232
+      "files": 235
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 43,
-    "has": 42,
+    "total": 44,
+    "has": 43,
     "none": 1
   },
   "entries": [
@@ -28,6 +28,13 @@
       "file": "services/api/src/admin/ops/accounts-pg.ts",
       "line": 105,
       "function": "mapAccountsReadError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/admin/ops/administrators.ts",
+      "line": 97,
+      "function": "mapAdministratorsReadError",
       "judgement": "has",
       "owner": "GY-I22"
     },
@@ -264,14 +271,14 @@
     },
     {
       "file": "services/api/src/privacy/ledger-pg.ts",
-      "line": 86,
+      "line": 87,
       "function": "mapPgError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/privacy/ledger-pg.ts",
-      "line": 90,
+      "line": 91,
       "function": "mapPgError",
       "judgement": "has",
       "owner": "GY-I22"

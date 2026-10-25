@@ -125,7 +125,7 @@ test('setFlag 的 key 是契约闭集枚举（依据取自契约原文，不是�
   }
 });
 
-test('恰好实现 10 个 operationId；显式不做的操作未被实现', async () => {
+test('恰好实现 12 个 operationId；显式不做的操作未被实现', async () => {
   const byId = new Map();
   for (const [path, item] of Object.entries(openapi.paths)) {
     for (const method of ['get', 'post', 'patch', 'put', 'delete']) {
@@ -134,17 +134,17 @@ test('恰好实现 10 个 operationId；显式不做的操作未被实现', asyn
     }
   }
   for (const id of OPS_IDS) assert.ok(byId.has(id), `契约里没有 ${id}`);
-  assert.equal(new Set(OPS_IDS).size, 10);
+  assert.equal(new Set(OPS_IDS).size, 12);
   const overlap = OPS_IDS.filter((id) => OPS_OUT_OF_SCOPE_IDS.includes(id));
   assert.deepEqual(overlap, [], '本片范围内外不得重叠');
 
   const { service } = createOpsHarness();
-  assert.equal(service.operationIds.length, 10);
+  assert.equal(service.operationIds.length, 12);
   assert.deepStrictEqual([...service.operationIds].sort(), [...OPS_IDS].sort());
   for (const id of OPS_IDS) assert.equal(typeof service[id], 'function', `${id} 未实现`);
   for (const id of OPS_OUT_OF_SCOPE_IDS) assert.equal(service[id], undefined, `本片不得实现 ${id}`);
 
-  // 契约里这 10 个的路径/方法与派单一致。
+  // 契约里这 12 个的路径/方法与派单一致。
   assert.equal(byId.get('listAdminCategories').path, '/admin/categories');
   assert.equal(byId.get('editCategory').method, 'PATCH');
   assert.equal(byId.get('listAdminUsers').path, '/admin/accounts');
@@ -156,6 +156,10 @@ test('恰好实现 10 个 operationId；显式不做的操作未被实现', asyn
   assert.equal(byId.get('listFlagAuditEvents').path, '/admin/flag-audit-events');
   assert.equal(byId.get('listFlagAuditEvents').method, 'GET');
   assert.equal(byId.get('hidePost').path, '/admin/posts/{id}/hide');
+  assert.equal(byId.get('listAdministrators').path, '/admin/administrators');
+  assert.equal(byId.get('listAdministrators').method, 'GET');
+  assert.equal(byId.get('listAdministratorScopes').path, '/admin/administrators/{id}/scopes');
+  assert.equal(byId.get('listAdministratorScopes').method, 'GET');
 });
 
 test('读写 scope 与 operations.json 一致', () => {
@@ -173,6 +177,8 @@ test('读写 scope 与 operations.json 一致', () => {
   assert.equal(scopeById.get('listFlags'), 'flags:read');
   assert.equal(scopeById.get('setFlag'), 'flags:write');
   assert.equal(scopeById.get('hidePost'), 'sources:write');
+  assert.equal(scopeById.get('listAdministrators'), 'scopes:read');
+  assert.equal(scopeById.get('listAdministratorScopes'), 'scopes:read');
 });
 
 test('响应体与契约出参 schema 同形（含分页信封与作业的 result:null）', async () => {

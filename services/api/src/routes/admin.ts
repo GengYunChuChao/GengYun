@@ -1,14 +1,16 @@
 /**
  * GY-I18 后台资料／运营／开关 · HTTP 路由（阶段 2：产品装配）。
  *
- * 覆盖契约 `packages/contracts/openapi.json` 里 **36 个 operationId**：
+ * 覆盖契约 `packages/contracts/openapi.json` 里 **38 个 operationId**：
  * - 阶段 1（已合并 #96）25 个：四类资料 × 6（list/create/get/edit/publish/withdraw）
  *   + `listAuditEvents`；
  * - 阶段 1b（已合并 #101）9 个：`listAdminCategories`/`editCategory`、
  *   `listAdminUsers`/`suspendUser`、`listAdminJobs`/`cancelAdminJob`、
  *   `listFlags`/`setFlag`、`hidePost`；
  * - R33 1 个：`listFlagAuditEvents`（迁移 0027 的只读函数，scope `flags:read`）；
- * - R34 1 个：`listAuditLogs`（迁移 0033 的只读函数，scope `audit:read`）。
+ * - R34 1 个：`listAuditLogs`（迁移 0033 的只读函数，scope `audit:read`）；
+ * - R37 `#18` S2 PR-2 2 个：`listAdministrators` / `listAdministratorScopes`
+ *   （管理员目录与权限只读展示，scope `scopes:read`；库层闭集由迁移 0041 保证）。
  *
  * **本文件只做「搬运 + 契约映射」**：鉴权/权限、审计、幂等、CAS、可见性、
  * 契约字段校验、fail-closed 判定**全部复用服务层既有实现**
@@ -326,6 +328,32 @@ export function registerAdminRoutes(
   );
 
   // -------------------------------------------------------------------------
+  // #18 S2 PR-2：管理员目录与权限读面（2 个 operationId，门 `scopes:read`）
+  // 与上面的 `/admin/accounts` **不是同一批对象**：那个读 `public.users`（终端用户，`id` 是
+  // `users.id`）；这里读 `admin_accounts` / `admin_scopes`（后台管理员，`id` 是 `admin_accounts.id`）。
+  // 授权端点的目标只能来自本目录，裁定③明令两者 id 不得混用 ⇒ 路径也不复用 `/admin/accounts`。
+  // 自查继续走 `GET /admin/auth/session`（会话接口本来就带 `scopes`），本片不另造自查端点。
+  // 返回体只含 scope 字符串数组，⛔ 不含 `granted_by`/`granted_at`（运行时角色对 `admin_scopes`
+  // 只有三列 SELECT 权限，`deploy/postgres-cvm/sql/20-login-roles.sql` 未授那两列）。
+  // -------------------------------------------------------------------------
+  const listAdministrators = methodOf(services.ops, 'listAdministrators');
+  const listAdministratorScopes = methodOf(services.ops, 'listAdministratorScopes');
+  app.get(
+    `${API_PREFIX}/admin/administrators`,
+    { preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.listAdministrators)] },
+    async (request, reply) => send(reply, await listAdministrators(callerOf(request), request.query)),
+  );
+  app.get(
+    `${API_PREFIX}/admin/administrators/:id/scopes`,
+    {
+      preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.listAdministratorScopes)],
+      schema: { params: uuidIdParams },
+    },
+    async (request, reply) =>
+      send(reply, await listAdministratorScopes(callerOf(request), (request.params as { id: string }).id)),
+  );
+
+  // -------------------------------------------------------------------------
   // 阶段 1b：平台级作业（2 个 operationId）
   // **默认未接线 ⇒ 读与写都 503 `PROVIDER_UNAVAILABLE`（不返回空页）**：
   // 空页会被读成「平台当前没有作业」，那是无法确认的结论。该判定在服务层，
@@ -414,6 +442,9 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   'setFlag',
   'listFlagAuditEvents',
   'hidePost',
+  // R37 `#18` S2 PR-2：管理员目录与权限只读展示（门 `scopes:read`）。
+  'listAdministrators',
+  'listAdministratorScopes',
   // R34：库内审计日志只读查询（迁移 0033 的 `public.list_admin_audit_logs()`）。
   'listAuditLogs',
 ]);

@@ -38,7 +38,7 @@ const ACCOUNT_ACTIVE = USER_A.userId;
 const ACCOUNT_DELETION_PENDING = makeUuid(301);
 const UNKNOWN_UUID = '00000000-0000-4000-a000-00000000ffff';
 
-/** 9 个操作的可调用形式（供权限反例参数化）。 */
+/** 12 个操作的可调用形式（供权限反例参数化）。 */
 function opCalls(service, ctx) {
   return [
     ['listAdminCategories', () => service.listAdminCategories(ctx)],
@@ -50,6 +50,9 @@ function opCalls(service, ctx) {
     ['listFlags', () => service.listFlags(ctx)],
     ['setFlag', () => service.setFlag({ ...ctx, idempotencyKey: opsKey('d'), ifMatch: '"1"' }, 'ai_enabled', { enabled: true, reason: 'r' })],
     ['hidePost', () => service.hidePost({ ...ctx, idempotencyKey: opsKey('e'), ifMatch: '"1"' }, UNKNOWN_UUID, { reason: 'r' })],
+    // R37 #18 S2 读面：门也是 scope，所以先过鉴权、再看读面是否接线（顺序不可颠倒）。
+    ['listAdministrators', () => service.listAdministrators(ctx)],
+    ['listAdministratorScopes', () => service.listAdministratorScopes(ctx, UNKNOWN_UUID)],
   ];
 }
 
@@ -64,13 +67,15 @@ const REQUIRED_SCOPE = {
   listFlags: 'flags:read',
   setFlag: 'flags:write',
   hidePost: 'sources:write',
+  listAdministrators: 'scopes:read',
+  listAdministratorScopes: 'scopes:read',
 };
 
 test('反例 1/2：非 admin 一律 SCOPE_DENIED；缺对应 scope 的 admin 逐个被拒', async () => {
   const { service } = createOpsHarness();
   const userCtx = { identity: { userId: USER_A.userId, authEpoch: 1, role: 'user', scopes: ['user'] } };
 
-  // 非 admin（用户会话）⇒ 9 个操作全部 403。
+  // 非 admin（用户会话）⇒ 12 个操作全部 403。
   for (const [name, call] of opCalls(service, userCtx)) {
     const error = await expectApiError(call, 'SCOPE_DENIED');
     assert.equal(error.status, 403, `${name} 应为 403`);

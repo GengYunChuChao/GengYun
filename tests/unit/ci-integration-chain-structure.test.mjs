@@ -125,6 +125,26 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '接进真库 job 不等于进 `test:integration:http`。',
   },
   {
+    path: 'tests/integration/admin-scopes-read-pg.mjs',
+    reason: '需真实 PG 17.11，且是**自起集群**脚本（R37 / `#18` S2 片2 读面交付）：要求 `GY_PG_BIN` 指向'
+      + '服务端二进制目录，自行 `initdb` 后 `pg_ctl start` 起一次性集群（仅回环；端口在 55468–55499 里'
+      + '**先探活再起**，数据目录父目录走可选的 `GY_R37_PG_ROOT`，收尾 `pg_ctl stop -m immediate` + 删目录），'
+      + '按**生产顺序**跑全链迁移（含 0041），再断言：`admin_scopes_scope_closed_set` 的取值集合与'
+      + ' `services/api/src/admin/scopes.ts` 的 `ADMIN_SCOPES` 逐项相等、闭集外取值插入即 23514；'
+      + '运行时角色（`gengyun_auth_privacy`）能读 `admin_scopes.scope` 与 `admin_accounts` 的窄列，'
+      + '但直读 `granted_by`/`granted_at` 一律 42501、`has_column_privilege` 为 false、表级 '
+      + '`INSERT`/`UPDATE`/`DELETE` 全 false（零新增授权）；最后以 real 装配 + 真库池跑两条读面：'
+      + '列表 / 单条只返 scope 字符串数组（⛔ 无 granted_by/granted_at）、列表 id 来自 `admin_accounts`'
+      + '（⛔ 不是 `users.id`）、缺 `scopes:read` 一律 403、不存在 404、无令牌 401。'
+      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
+      + '本片**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
+      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／'
+      + '`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，'
+      + '须由指挥裁定），故在此如实登记为未接线。'
+      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
+      + '接进真库 job 不等于进 `test:integration:http`。',
+  },
+  {
     path: 'tests/integration/admin-community-posts-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_community_posts_test`：脚本要求**空库**'
       + '（先断言 `public` 下 0 张表），只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段：'

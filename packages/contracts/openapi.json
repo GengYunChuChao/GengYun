@@ -10206,6 +10206,180 @@
         }
       }
     },
+    "/admin/administrators": {
+      "get": {
+        "operationId": "listAdministrators",
+        "summary": "listAdministrators",
+        "description": "后台管理员目录（admin_accounts）。id 是 **admin_accounts.id**，不是 users.id：/admin/accounts 读的是终端用户，两者同名不同源，不得混用。存在这一条读面的理由是授权端点 /admin/administrators/{id}/scopes 的目标只能来自这里。未接线（无持久认证存储）⇒ 503 PROVIDER_UNAVAILABLE，不返回空页。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAdministratorViewPageEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "scopes:read",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      }
+    },
+    "/admin/administrators/{id}/scopes": {
+      "get": {
+        "operationId": "listAdministratorScopes",
+        "summary": "listAdministratorScopes",
+        "description": "只读展示某后台管理员当前有效的权限（admin_scopes 中 revoked_at IS NULL 的 scope）。返回体**只含 scope 字符串数组**：不含 granted_by / granted_at（运行时角色对该表只有三列 SELECT 权限），因此本响应**不发 ETag**（权限集合没有独立修订号，用 admin_accounts.revision 会谎称集合未变）。门是 scopes:read，与 accounts:read 是两种能力（持 accounts:read 不自动获得读他人权限）；自查继续走 GET /admin/auth/session。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "admin_accounts.id（后台管理员账号 id，不是 users.id）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminAdministratorScopesViewEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "scopes:read",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      }
+    },
     "/admin/jobs": {
       "get": {
         "operationId": "listAdminJobs",
@@ -12458,7 +12632,7 @@
             "items": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 80, "enum": ["accounts:read", "accounts:suspend", "audit:read", "flags:read", "flags:write", "jobs:cancel", "jobs:read", "session:logout", "session:read", "sources:read", "sources:write", "user"], "description": "会话权限闭集（只读声明，不参与鉴权判定）：后台会话取该管理员 admin_scopes 现存 scope，普通账号固定 user；public / receipt 是路由访问标记（x-scope），不是可授予权限，故不在闭集内。"
+              "maxLength": 80, "enum": ["accounts:read", "accounts:suspend", "audit:read", "flags:read", "flags:write", "jobs:cancel", "jobs:read", "scopes:read", "scopes:write", "session:logout", "session:read", "sources:read", "sources:write", "user"], "description": "会话权限闭集（只读声明，不参与鉴权判定）：后台会话取该管理员 admin_scopes 现存 scope，普通账号固定 user；public / receipt 是路由访问标记（x-scope），不是可授予权限，故不在闭集内。"
             },
             "maxItems": 20
           },
@@ -14776,6 +14950,27 @@
           "reason"
         ]
       },
+      "AdminScope": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 80,
+        "enum": [
+          "accounts:read",
+          "accounts:suspend",
+          "audit:read",
+          "flags:read",
+          "flags:write",
+          "jobs:cancel",
+          "jobs:read",
+          "scopes:read",
+          "scopes:write",
+          "session:logout",
+          "session:read",
+          "sources:read",
+          "sources:write"
+        ],
+        "description": "后台权限闭集（可授予/可持有的全部后台权限，13 项）。与库层 CHECK 同源：迁移 0041 的 admin_scopes_scope_closed_set 逐项即本枚举；'user' 是普通账号标记、''public''/'receipt' 是路由访问标记（x-scope），三者都不是可授予权限，故不在闭集内。"
+      },
       "AdminAccountView": {
         "type": "object",
         "additionalProperties": false,
@@ -14808,6 +15003,42 @@
           "state",
           "display_name"
         ]
+      },
+      "AdminAdministratorView": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "login_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suspended"
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminScope"
+            },
+            "maxItems": 20
+          }
+        },
+        "required": [
+          "id",
+          "login_name",
+          "state",
+          "scopes"
+        ],
+        "description": "后台管理员账号视图。id 是 admin_accounts.id，**不是** users.id（/admin/accounts 读的是终端用户，两者同名不同源，不得混用）；state 照库层 admin_state 枚举（仅 active/suspended）；scopes 是该管理员当前有效（revoked_at IS NULL）的权限，去重 + 码元序，只含 scope 字符串，不含 granted_by/granted_at。"
       },
       "FlagInput": {
         "type": "object",
@@ -16602,6 +16833,84 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Category"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "AdminAdministratorViewPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminAdministratorView"
+            },
+            "maxItems": 50
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ]
+      },
+      "AdminAdministratorViewPageEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminAdministratorViewPage"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "AdminAdministratorScopesView": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminScope"
+            },
+            "maxItems": 20
+          }
+        },
+        "required": [
+          "scopes"
+        ],
+        "description": "只读展示某个后台管理员的当前有效权限：**只含 scope 字符串**（去重 + 码元序）。⛔ 不含 granted_by / granted_at —— 运行时角色对 admin_scopes 只有 (admin_id, scope, revoked_at) 三列 SELECT 权限（deploy/postgres-cvm/sql/20-login-roles.sql），这两列根本读不到，写进契约就成了无法兑现的承诺。"
+      },
+      "AdminAdministratorScopesViewEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminAdministratorScopesView"
           },
           "meta": {
             "$ref": "#/components/schemas/Meta"

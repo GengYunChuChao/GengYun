@@ -1366,6 +1366,19 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // （`adminRealUnwired` 已在上方与开关门一并判定：它决定是否进入「整域 fail-closed」分支；
   //   开关门是否武装、开关面是否放行，另由 `flagsWired` 单独决定。）
 
+  // **`#18` S2 PR-2 显式放行：管理员目录与权限读面**（`GET /admin/administrators`、
+  // `GET /admin/administrators/:id/scopes`）。判据是**认证存储的持久性能力位**
+  // （`authStore.persistent === true`：PG 实现自述 `true`，内存实现恒 `false`）——
+  // 与"配置里写了 DATABASE_URL"无关、与自述标志无关。
+  // 读的列全部落在运行时角色的**既有列授权**内（`services/api/db/roles/auth_privacy.sql:27-28`：
+  // `admin_accounts` 的 6 列、`admin_scopes` 的 `admin_id/scope/revoked_at`）⇒ ⛔ 不新增授权、
+  // ⛔ 不新增 SQL 函数、⛔ 不改部署断言。非持久存储 ⇒ 目录为 null ⇒ 两条路由保持 503
+  // （不拿内存种子冒充"平台只有这些管理员/这些权限"）。
+  const administratorsDirectory =
+    !adminRealUnwired || authStore.persistent
+      ? createAuthStoreAdministratorsDirectory({ store: authStore })
+      : null;
+
   let adminContentService: AdminContentService;
   let adminOpsService: AdminOpsService;
   let adminAuditLogService: AdminAuditLogService;
@@ -1445,7 +1458,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
       // 内容域已放行时，仍 503 的面只剩作业/账号类 **＋ 审计读面**：按实测扣减（放行 24 条内容 CRUD；`listAuditEvents` 仍失闭、不计入放行 —— 见上方「裁决 A」）。
-      const stillClosed = 36 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
+      const stillClosed = 38 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
       app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ ${stillClosed} 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
     } else {
       adminOpsService = restrictAdminOpsToAccountsAuthority(
@@ -1456,6 +1469,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           executionMode: config.executionMode,
           accountAuthority: realAccountAuthority,
           accountsDirectory: realAccountsDirectory,
+          // `#18` S2 PR-2：管理员目录/权限读面（只有持久认证存储才非 null）。
+          administrators: administratorsDirectory,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminJobPort,
@@ -1471,6 +1486,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           flagsWired,
           // 下架面的判据同理，且更严：**只有真实持久的社区帖子端口**才放行（内存实现恒 false）。
           hidePostWired: communityPostPortForAdmin.persistent === true,
+          // `#18` S2 PR-2：管理员目录/权限读面（判据＝持久认证存储，见上方定义处注释）。
+          administratorsWired: administratorsDirectory !== null,
         },
       );
       const released: string[] = [];
@@ -1498,6 +1515,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         released.push('库内审计读面');
         releasedRoutes += 1; // listAuditLogs
       }
+      // `#18` S2 PR-2：管理员目录与权限读面（`admin_accounts` + `admin_scopes` 的既有窄读，
+      // 迁移 0041 已把闭集写进库层）。⛔ 写面（授予/撤销）属 PR-3，本片没有对应路由。
+      if (administratorsDirectory !== null) {
+        released.push('管理员目录与权限读面');
+        releasedRoutes += 2; // listAdministrators / listAdministratorScopes
+      }
       // **本片**：内容/资料域（迁移 0036 的三表落点）—— 放行 **24** 条内容 CRUD；审计读面 `listAuditEvents` **仍失闭**（裁决 A：台账未落库 ⇒ 放行只会返回内存空页），⛔ 不计入放行、日志不得宣称「内容域全放行」。
       if (adminContentWired) {
         released.push('内容/资料读写（24 条内容 CRUD；审计读面 listAuditEvents 仍失闭，因台账未落库）');
@@ -1510,9 +1533,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           flagsWired,
           hidePostWired: communityPostPortForAdmin.persistent === true,
           auditLogReadWired: realAuditLogPort !== null,
+          administratorsWired: administratorsDirectory !== null,
           contentWired: adminContentWired,
         },
-        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036）；其余 ${36 - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036；管理员目录/权限读面经 admin_accounts + admin_scopes 的既有列授权，闭集由迁移 0041 保证）；其余 ${38 - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {
@@ -1530,6 +1554,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // GY-I22：**只经显式注入**开启真实停用权威（与 `mediaObjectStore` 同一口径：
       // 不读 ambient 配置、不因"有 pool"就自动在 stub 域里接真实写）。
       accountAuthority: adminInjection?.accountAuthority,
+      // `#18` S2 PR-2：stub/preset_demo 域的管理员目录/权限读面（判据同为持久认证存储；
+      // stub 下 `authStore` 是内存实现 ⇒ 目录非 null，读的是本进程播种的管理员，如实）。
+      administrators: administratorsDirectory,
       // GY-I18：stub 域**只**经显式注入接真实开关端口（默认仍是内存 store；不因"有 pool"自动接库）。
       ...(flagsPort === null ? {} : { flagsPort }),
       jobPort: adminJobPort,
@@ -2458,4 +2485,7 @@ export function trustProxyOption(
 // （见 tests/unit/recognitions-store-pg-wiring.test.mjs 的结构钉子）。装配点保持单行
 // `createRateLimiter(...).mount(app).wrapGuards(...)`，既有行号一行不动；规则表/存储/取舍都在 rate-limit/limiter.ts 里。
 import { createRateLimiter } from './rate-limit/limiter.ts';
+// `#18` S2 PR-2：管理员目录/权限读面（读 `admin_accounts` + `admin_scopes` 的既有窄列授权）。
+// ⛔ 与本文件末尾那行识别 PG store 的 import 换序：那一行必须仍是最后一行（结构钉子）。
+import { createAuthStoreAdministratorsDirectory } from './admin/ops/administrators.ts';
 import { createPostgresRecognitionStore } from './recognitions/store-pg.ts'; // 追加在文件末尾：app.ts 行号是契约台账锚点，顶部 import 区零插入（ESM 提升，语义等价）
