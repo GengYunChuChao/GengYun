@@ -23,7 +23,7 @@ GY-I01 / #1；契约 `1.0.0` 待审。[ADR](adr-001-initial-architecture.md)、[
 | F19 | messages事件去重、已读、跳转权限，无外推 | AC18 | GY-I17 |
 | F20 | conversations/turns，检索白名单、完整检查、无未审流 | AC29 | GY-I12/20/21 |
 
-F06/07/09/10/11、F08人审、F05专家、F12导航震动、F17真实预警、F19外推仅二月规划；AC03/04/05/10/20/24/25/26/27没有首版接口。AC23训练部分只规定启用前门槛，不实现训练。供应商实测、模型第6节指标、真机和运维不是契约schema验证所能证明。
+F06/07/09/10/11、F08人审、F05专家、F12导航震动、F17真实预警、F19外推仅二月规划；AC03/04/05/10/20/24/25/26/27没有首版接口。AC23训练部分只规定启用前门槛，不实现训练。供应商实测、模型第6节指标、真机和运维不是契约schema验证所能证明。上述缺口都是**当前无实现**，不是"永久禁止"：反向钉子已在 `tests/unit/admin-ui-review-state.test.mjs`、`tests/unit/admin-ops-governance.test.mjs`、`tests/moderation/http-callback.test.mjs` 条件化 —— 将来实现人审/票决面时须**同时**满足：审核/评审路径每条带 `x-scope`、响应 schema 不暴露他人票数、未接线（`wired: false`）时不得出现评审人/投票字段、合同出现票决路径时公开票决仍默认关闭（`publicVotingEnabled() === false`）；专家/认证字段在任何后台响应里仍**永久禁止**。⚠ "条件化"**不等于"实现只差一处"**：P3 落地时仍会变红的反向钉至少 9 处，逐条见文末「反向钉残留清单」。
 
 ## 消费者变更与前置
 
@@ -53,3 +53,30 @@ git diff --check
 第一项检查既有F/AC/Q、27任务依赖无环、Markdown链接/表格。第二项检查OpenAPI内部引用/操作权限/写入幂等/版本/字段约束与示例、状态字典/任务图及嵌套文档链接；第三项使用有意义的负例验证拒绝缺失引用、游客私有访问、缺幂等/版本、语音未确认、模拟来源DoseCard和社区旧审核。完整OpenAPI标准schema验证另用官方JSON Schema / 受控库执行并记录版本，不能把本项目检查器称完整规范validator。
 
 PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是否冻结。本聊天只实现和提交，不合并、不批准自己。提案可整体回退；无数据库或上线消费者，当前无数据迁移执行。
+
+## 反向钉残留清单（P3 人审/票决实现时必须同批改）
+
+本片（`test/gy-r64-s3b-pin-conditioning`）只把「绝对禁止人审概念出现」改成「若出现则必须诚实」，
+**没有**把 P3 的实现收窄成"只差一处"。下面逐条列出落地 P3 时**仍然会红**的反向钉 —— 至少 9 处，
+每一处都在本分支 HEAD 上复现过（不是推测）。⛔ 任何 PR 描述都不许再写"只差一处"或"钉子已全部条件化"。
+
+| # | 位置（用例 · 断言要点） | 它今天钉的是什么 | 为什么 P3 落地必须同批改 |
+| --- | --- | --- | --- |
+| 1 | `tests/unit/admin-ops-governance.test.mjs` · G6a：对 `HUMAN_REVIEW_COLLECTIONS` 逐个 `deepEqual(state[name], [])` ＋ `Object.isFrozen(...)` | 四个集合**恒空且冻结** | 真实人审目录一多一个集合或任一集合非空即红（实测：给闭集加第 5 个 `review_rounds`，红的是 `state[name]` 那条 ——「review_rounds 必须是空集合 / undefined !== []」）。⚠ 同一用例里的 `deepEqual([...directory.collections], [...HUMAN_REVIEW_COLLECTIONS])` 是**同源自比、恒真**，不构成闸；真正的"闭集字面锚"在 `tests/unit/admin-ui-review-state.test.mjs` 的「四集合名与 human-review.ts 的闭集一致」，同一变异实测红 —— 扩闭集时两处都要改 |
+| 2 | `tests/unit/admin-ops-governance.test.mjs` · G6a：`assert.equal(directory.wired, false)` ＋ `state.wired === false` | 运行时人审目录**未接线**（字面 `false`） | 真接线必须把 `human-review.ts` 的 `wired` 翻成真实结果，这条字面钉必须同批翻；它与 G6b「`wired: true` 声明数 = 运行时接线数」是同一处翻转，漏一处就红 |
+| 3 | `tests/unit/admin-ops-governance.test.mjs` · G8：`app.humanReviewDirectory.wired === false` ＋ `state().reviewers` 为空 | **HTTP 装配实例**上的同一空态 | 装配真实目录后 `wired`/`reviewers` 都变；G6a 只核工厂，G8 核 app 装饰，两处都要改 |
+| 4 | `tests/unit/admin-ui-review-state.test.mjs` · `humanReviewQueue 的 items 恒为空数组`：`assert.match(body, /return \{[^}]*items: \[\]/)` | `nonbypass.ts` **源码文本**里的 `items: []` | 队列返回真实条目就红。它是文本钉：只要文件里还有一处 `items: []` 就绿，**证明不了**"没人往队列里塞东西"，别当行为保证 |
+| 5 | `tests/unit/admin-ui-review-state.test.mjs` · `引用的行区间仍包含锚点`：`REVIEW_CODE_ANCHORS` 的 6 条**行区间锚**（人审相关 5 条：`nonbypass.ts` 的 161–168 行须含 `items: []`／`HUMAN_REVIEW_STATE`；`human-review.ts` 的 68–89 行须含 `wired: false`／`tasks: EMPTY`；`human-review.ts` 的 29–34 行须含四集合名；`moderation/types.ts` 的 110–115 行须含 `HUMAN_REVIEW_STATE = 'under_construction'`；`routes/public-home.ts` 的 10–15 行须含 `human_review_state: 'under_construction'`） | **行号区间 + 字面**双重锚（"页面出处"的可核验性） | 实现时字面必然变（队列非空、`wired` 变真接线、`under_construction` 变真实状态），且行号一定漂移 ⇒ 必须同批改锚点并复核。实测：只在 `humanReviewQueue` 上方加一行 `const`，本用例即红（「`nonbypass.ts:161-168` 不再包含 `items: []`」）。⛔ 不许把 `lines` 改小去凑容差（口径见 `AGENTS.md` 的「契约台账锚点维护」） |
+| 6 | `tests/unit/admin-ui-review-state.test.mjs` · `人审目录快照冻结且 wired 为 false`：`assert.match(source, /wired: false/)` | `human-review.ts` 源码里出现 `wired: false` | 是**弱钉**（任意一处命中即可，多写一个 `wired: false` 也绿）；`wired` 改由运行时推导时必然要改写法 |
+| 7 | `tests/unit/admin-ui-review-state.test.mjs` · `routes 目录里没有 review 路由`：`assert.equal(/human-review\|humanReview\)/.test(routesIndex), false)` | `admin.ts`/`public-home.ts` 里**没有**人审路由引用 | 真接线必然新增路由 ⇒ 红。**审查未列**、本轮复现时补入；它最容易被忽略，因为它钉的是"路由不存在"（实测：在 `routes/admin.ts` 里加一句注释含 `/admin/human-review` 即红） |
+| 8 | `tests/unit/admin-ui-review-state.test.mjs` · 页面事实：`REVIEW_COUNT === 0`、`REVIEW_COUNT_BADGE` 含 `wired: false`、`HUMAN_REVIEW_COLLECTIONS_COUNT === 4` | 后台占位页的"结构性零"与标签 | 读面一出现，页面必须改成真实计数与真实标签（改页面＝改这三条，且 `apps/**` 不在 `tests/**` 授权面内，需另派）。实测：`REVIEW_COUNT` 改 1 即红 |
+| 9 | `tests/moderation/http-callback.test.mjs` · `AI 不授权限/不改来源/不标专家…`：`queue.items === []`、`human_review_state === 'under_construction'`、`queue.voting === 'disabled'`、`publicVotingEnabled() === false` | 审核入口空态四连 | 真做审核入口/票决面时四条全要改：`items` 非空、状态离开 `under_construction`、`voting` 由开关派生、公开票决打开。实测：把 `human_review_state` 改成 `'ready'` 即红 |
+
+另有两条**本轮新加**、落地 P3 时也会红的闸 —— 它们是**故意的闸**，不属于"残留反向钉"，
+而是"实现必须与契约一起翻"的强制联动：
+
+- `tests/unit/admin-ops-governance.test.mjs` · G6b ③：契约里声明 `wired: true` 的响应数必须等于运行时真实接线数（今天两边都是 0，取自 `createHumanReviewDirectory().wired`，不是另一个自声明）。只改契约（自声明）或只改运行时都会红。
+- `tests/moderation/http-callback.test.mjs` · 契约全文属性名扫描：`components.schemas` 与所有 operation 响应 schema 的**属性名**不得命中 `/vote/i`（`description`/`title`/`example` 里的自然语言不算）。真做票决字段时必须在同一个 PR 里显式改这条扫描与运行时守卫；⛔ 不许退回"全文禁止 vote 子串"那种会误伤文案的写法。
+
+验证方式（跨平台可复现）：`node --test tests/unit/admin-ops-governance.test.mjs tests/unit/admin-ui-review-state.test.mjs tests/moderation/http-callback.test.mjs` 在 HEAD 上全绿；把上表任一条**单独**改成"已接线"（例如给 `/admin` 响应加 `wired: { const: true }`）即可看到对应用例变红。
+

@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { RULES } from '../../packages/moderation/index.mjs';
 import { guardModelPort, humanReviewQueue, scanForbiddenControlFields } from '../../services/api/src/moderation/nonbypass.ts';
 import { publicVotingEnabled } from '../../services/api/src/moderation/visibility.ts';
+import { createHumanReviewDirectory } from '../../services/api/src/admin/human-review.ts';
 import { createCommunityContentAuthority } from '../../services/api/src/community/moderation-authority.ts';
 import { createMemoryCommunityStore } from '../../services/api/src/community/store.ts';
 import { createLocalPseudonymousAuthorDirectory } from '../../services/api/src/community/authors.ts';
@@ -34,9 +35,66 @@ import {
   textContent,
 } from './_http-fixtures.mjs';
 
-/** 冻结契约里是否存在票决类 operationId（首版不进入 ⇒ 必须为 0）。 */
+/** 冻结契约里是否存在票决类 operationId／路径（首版契约里 0 条；判据见 `votingSurfaceViolations`）。 */
 function hasVoteLikeOperation(ids) {
   return ids.some((id) => /vote/i.test(id));
+}
+
+/**
+ * 票决面的**诚实判据**（S3b 钉子条件化，2026-10-26）：给定「契约里是否有票决面」与「运行时现状」，
+ * 返回违规项（空数组 = 合规）。
+ *
+ * 旧判据是「`openapi.json` 全文不得出现 `/vote/i`」—— 契约里连一个 `vote` 子串都不许有，
+ * 于是任何票决实现都必须先删钉子。现在换成条件守卫：**有票决面 ⇒ 运行时必须仍然关着且未接线**
+ * （有路径 ≠ 已上线；有 schema ≠ 已接线）。票决面不存在时判据恒空（今天的状态），
+ * 所以它**不是**"票决已禁用"的证据，别拿它冒充。
+ */
+function votingSurfaceViolations(surfaces, live) {
+  if (surfaces.length === 0) return [];
+  const violations = [];
+  if (live.publicVotingEnabled !== false) violations.push(`公开投票开关不是关闭状态（publicVotingEnabled() = ${live.publicVotingEnabled}）`);
+  if (live.voting !== 'disabled') violations.push(`人审入口回执 voting = ${live.voting}（应为 disabled）`);
+  if (live.wired !== false) violations.push(`人审入口回执 wired = ${live.wired}（应为 false）`);
+  return violations;
+}
+
+/**
+ * 收集一组 schema 根的**全部属性名** → 首次出现位置（`{ where, schema }` 的 `where`）。
+ *
+ * 只走**结构键**：`properties`（取键名）、`items` / `additionalProperties` / `oneOf` / `anyOf` /
+ * `allOf` / `not` / `prefixItems`（继续下钻），并跟随 `$ref`。
+ * ⛔ 刻意**不**读 `description` / `title` / `example` / `examples` / `default` / `enum` 的**值** ——
+ * 那些是自然语言与取值，"vote" 出现在文案里是正常的（例如「公众投票默认关闭」），不是字段名。
+ * 这条区分就是 F2 的要点：⛔ 不要退回"全文禁止 vote 子串"那种会误伤文案的写法。
+ */
+function collectPropertyNames(roots, spec) {
+  const names = new Map(); // 属性名 → 首次出现位置
+  const visitedRefs = new Set(); // 同一 `$ref` 只解析一次（不影响覆盖面，避免重复遍历）
+  let schemaNodes = 0;
+  const walk = (schema, where, depth = 0) => {
+    if (schema === null || typeof schema !== 'object' || depth > 16) return;
+    if (typeof schema.$ref === 'string') {
+      const name = schema.$ref.split('/').at(-1);
+      if (visitedRefs.has(name)) return;
+      visitedRefs.add(name);
+      walk(spec.components?.schemas?.[name], `components.schemas.${name}`, depth + 1);
+      return;
+    }
+    schemaNodes += 1;
+    if (schema.properties && typeof schema.properties === 'object' && !Array.isArray(schema.properties)) {
+      for (const [name, child] of Object.entries(schema.properties)) {
+        if (!names.has(name)) names.set(name, where);
+        walk(child, where, depth + 1);
+      }
+    }
+    for (const key of ['items', 'additionalProperties', 'oneOf', 'anyOf', 'allOf', 'not', 'prefixItems']) {
+      const child = schema[key];
+      if (Array.isArray(child)) child.forEach((entry) => walk(entry, where, depth + 1));
+      else if (child && typeof child === 'object') walk(child, where, depth + 1);
+    }
+  };
+  for (const root of roots) walk(root.schema, root.where);
+  return { names, schemaNodes };
 }
 
 /** 建一个"待回调"的版本级任务（异步供应商路径：模型层未求值）。 */
@@ -416,11 +474,95 @@ test('AI 不授权限/不改来源/不标专家，且公众票决不进入首版
   assert.equal(after, before);
   assert.equal(after, 'verified_seed');
 
-  // 契约里不存在公众票决 operationId/字段（首版不进入）
+  // 契约里的票决面：今天 0 条。这里**不再**要求「全文不得出现 vote」（那会让实现者先删钉子），
+  // 改成条件化的诚实判据：一旦出现票决路径/operationId，运行时必须仍然「关着」且「未接线」。
   const operations = JSON.parse(readFileSync(new URL('../../packages/contracts/operations.json', import.meta.url), 'utf8'));
   const openapiRaw = readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8');
-  assert.equal(hasVoteLikeOperation(operations.operations.map((item) => item.id)), false);
-  assert.equal(/vote/i.test(openapiRaw), false, '冻结契约不得出现票决字段/路径');
+  const votingSurfaces = [
+    ...Object.keys(JSON.parse(openapiRaw).paths ?? {}).filter((path) => hasVoteLikeOperation([path])),
+    ...operations.operations.map((item) => item.id).filter((id) => hasVoteLikeOperation([id])),
+  ];
+  const liveVoting = {
+    publicVotingEnabled: publicVotingEnabled(),
+    voting: humanReviewQueue().voting,
+    wired: createHumanReviewDirectory().wired,
+  };
+  assert.deepEqual(votingSurfaceViolations(votingSurfaces, liveVoting), [],
+    `契约出现票决面（${votingSurfaces.join(', ')}）时，公开投票必须默认关闭且人审入口必须仍 wired: false`);
+  // 反向控制（恒跑，不 skip）：把「有人偷偷把开关打开」的输入喂给同一判据 ⇒ 必须报满 3 条违规。
+  // 少了这一臂，上面的 deepEqual 在票决面上恒空，等于用一句"已禁用"换掉旧的全文禁令。
+  assert.equal(
+    votingSurfaceViolations(['postReviewVote'], { publicVotingEnabled: true, voting: 'enabled', wired: true }).length,
+    3,
+    '判据在「开关被打开」的输入下必须报 3 条违规，否则条件化把检测面削没了',
+  );
+  // 边界说明／不变量占位（**此臂恒真、不构成负控制** —— 别把它数进"反向控制"）：
+  // `votingSurfaceViolations` 首行就是 `if (surfaces.length === 0) return []`，所以只要输入是
+  // "无票决面"，运行时全开也返回 []。实测（S3b 修复轮变异 M4：把函数里三条违规判定全部短路）
+  // 本用例只在上面「必须报 3 条违规」那臂变红，**本臂照样绿** ⇒ 它对守卫逻辑没有任何判别力。
+  // 因此这条"空输入 ⇒ 空结果"的断言**已删除**（保留它只会在 assert 计数里注水，且容易被后来人
+  // 误读成一条有效负控制）；该函数契约由上面的「必须报 3 条违规」臂与本段注释共同说明。
+});
+
+/**
+ * F2（S3b 审查后修复轮，2026-10-26）：**补回契约全文的 `vote` 检测面**。
+ *
+ * 旧判据是 `assert.equal(/vote/i.test(openapiRaw), false)`（扫 `openapi.json` 全文）；
+ * 条件化后只剩「path 键 + operationId」两处 ⇒ **非 `/admin` 的基础 schema 里长出 `vote` 字段
+ * 不再有任何用例覆盖**。实测变异 M2a：给 `components.schemas.Home` 加 `public_vote_enabled`，
+ * 全量 `http-callback`（13 条）与 `admin-ops` G6b 全绿（改造前那条全文断言会红）。
+ *
+ * 本用例把检测面补回到「全部 `components.schemas` + 全部 operation 的 response schema 的**属性名**」，
+ * 并**只**看结构键名 —— `description` / `title` / `example` 里的自然语言不算（避免误伤文案）。
+ */
+test('契约全文：components.schemas 与所有响应 schema 的属性名都不得命中 /vote/i', () => {
+  const spec = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'));
+  const roots = [
+    ...Object.entries(spec.components?.schemas ?? {}).map(([name, schema]) => ({ where: `components.schemas.${name}`, schema })),
+    ...Object.entries(spec.paths ?? {}).flatMap(([path, item]) => Object.entries(item ?? {})
+      .flatMap(([method, operation]) => Object.entries(operation?.responses ?? {})
+        .flatMap(([status, response]) => Object.entries(response?.content ?? {})
+          .map(([mediaType, media]) => (media?.schema
+            ? { where: `${method.toUpperCase()} ${path} ${status} (${mediaType})`, schema: media.schema }
+            : null))
+          .filter(Boolean)))),
+  ];
+  const { names, schemaNodes } = collectPropertyNames(roots, spec);
+
+  // 反向控制 ①（必须有判别力）：合成一个票决字段 ⇒ 同一个收集器 + 同一个正则必须抓到。
+  const synthetic = collectPropertyNames([{
+    where: 'synthetic',
+    schema: { type: 'object', properties: { public_vote_enabled: { type: 'boolean' } } },
+  }], spec);
+  assert.deepEqual([...synthetic.names.keys()], ['public_vote_enabled'], '属性名收集器失灵：合成 schema 里只有一个字段');
+  assert.match([...synthetic.names.keys()][0], /vote/i, '判据失灵：public_vote_enabled 必须命中 /vote/i');
+
+  // 反向控制 ②（不得误伤自然语言）：`vote` 只出现在 description/title/example 里 ⇒ 一个字段都不许多报。
+  const prose = collectPropertyNames([{
+    where: 'prose',
+    schema: {
+      type: 'object',
+      title: 'VoteBallot',
+      description: '公众投票开关（public vote enabled）；首版恒关',
+      example: { public_vote_enabled: true, votes: [] },
+      properties: { enabled: { type: 'boolean', title: 'vote enabled', description: '是否开放 vote', example: true } },
+    },
+  }], spec);
+  assert.deepEqual([...prose.names.keys()], ['enabled'],
+    '收集器把自然语言/示例当成了字段：只有 properties 的键名算字段，description/title/example 里的 vote 不算');
+  assert.deepEqual([...prose.names.keys()].filter((name) => /vote/i.test(name)), [],
+    '自然语言被误判成票决字段 —— 这条红了就说明写法退回成"全文禁止 vote 子串"式的误伤');
+
+  // 覆盖面自检：扫到的节点/字段数必须像"契约全文"，否则这条断言会因"什么都没扫到"假绿。
+  assert.ok(schemaNodes > 100, `只遍历到 ${schemaNodes} 个 schema 节点，扫描面不像契约全文`);
+  assert.ok(names.size > 100, `只收集到 ${names.size} 个属性名，扫描面不像契约全文`);
+
+  const offending = [...names]
+    .filter(([name]) => /vote/i.test(name))
+    .map(([name, where]) => `${name}（${where}）`);
+  assert.deepEqual(offending, [],
+    `契约 schema 里出现了票决类字段：${offending.join('；')} —— 票决面一旦进契约就必须同 PR 改 `
+      + '`votingSurfaceViolations` 的运行时守卫与本文件的空态断言，不能靠"字段名叫 vote"偷偷长出来');
 });
 
 test('规则集版本变化后：迟到回调按"过期版本"拒绝（旧版本审核结果不得套新版本）', async () => {

@@ -8,7 +8,8 @@
 //       且不得因此多出一个开关行；
 //   G5. 语义表结构性不变量：任何"放宽 fail-closed"的分类都拒绝接线；
 //   G6. **人审入口空态**：任务/审核人/投票/专家认证四个集合恒空且冻结，未接线；
-//       34 个后台 operation 的响应 schema 里**没有任何**评审人/投票/专家认证字段（抗伪造扫描）；
+//       34 个后台 operation：专家/认证字段**全局禁止**；评审人/投票字段只在「未接线的空态」响应上禁止（抗伪造扫描）；
+//       而"未接线"的解锁键 `wired: true` 是**纯自声明** ⇒ 另有断言把它钉在运行时权威源上（今天两边都是 0）；
 //   G7. 不把基础账号管理说成人工评审已完成（审计动作/原因码与投影字段逐条核对）；
 //   G8. HTTP：普通用户会话访问后台 ⇒ 403 SCOPE_DENIED；人审空态在装配实例上同样成立。
 import { test } from 'node:test';
@@ -236,49 +237,125 @@ test('G6a. 人审入口空态：四个集合恒空且冻结、未接线、"声�
   assert.throws(() => directory.assertNoReviewClaim('来源 X'), (error) => error.code === 'OBJECT_UNAVAILABLE' && error.status === 409);
 });
 
-test('G6b. 抗伪造扫描：全部后台 operation 的响应 schema 里没有任何评审人/投票/专家认证字段', () => {
-  const FORBIDDEN = /reviewer|review_task|reviewed_by|votes?$|expert|certification/i;
+test('G6b. 抗伪造扫描：专家/认证字段全局禁止，评审人/投票字段只在未接线的空态响应上禁止', () => {
+  // S3b · 钉子条件化（2026-10-26）：原来是一条全量禁令
+  // `FORBIDDEN = /reviewer|review_task|reviewed_by|votes?$|expert|certification/i` 扫**所有** `/admin*`
+  // 响应 schema 的属性名 —— 人审工作台一落地就会撞上。现在分两层：
+  //   ① `expert|certification`：**与是否接线无关，永远禁止**。专家资格只能由「身份 + 领域」实际核实的
+  //      认证链路授予（需求 Q13／F05），让它在后台响应 schema 里出现就是伪造；
+  //   ② `reviewer|review_task|reviewed_by|votes?$`：**只在「未接线的空态」上禁止** ——
+  //      一段响应 schema 子树里显式声明 `wired: true` 才解锁；缺 `wired` 或 `wired: false` 一律按空态处理。
+  //      今天契约里没有任何 `wired` 声明（实测 0 处）⇒ ② 的判定面与旧的全量禁令**逐字等价**：
+  //      改造没有削弱今天的检测面，只是给将来的实现留了一个「如实声明自己接线了」的出口。
+  //
+  //   ③ **`wired: true` 是自声明，必须与运行时交叉校验**（S3b 审查后修复轮，2026-10-26）：
+  //      只靠 ② 的话，给任意 `/admin` 响应 schema 加一个 `wired: { const: true }` 键就能关掉投票
+  //      字段禁令 —— 实测（变异 M1：`FlagPageEnvelope` 加 `wired:{const:true}` + `votes`）旧判据报红
+  //      `["votes"]`、改造后的 ② 全绿，也就是说**一个 JSON 键**就能解禁。因此本用例末尾把
+  //      「契约里声明 `wired:true` 的响应数」钉在**运行时权威源**（`createHumanReviewDirectory().wired`，
+  //      来自 `services/api/src/admin/human-review.ts` 的代码，不是契约读出来的值）上：两边必须同真同假，
+  //      且今天两边都必须是 0。
+  const FORBIDDEN_ALWAYS = /expert|certification/i;
+  const FORBIDDEN_WHEN_UNWIRED = /reviewer|review_task|reviewed_by|votes?$/i;
   // 响应 schema 在 openapi.json（operations.json 只有 id/method/path/scope）。
   const adminPaths = Object.entries(openapi.paths).filter(([path]) => path.startsWith('/admin'));
   const adminOperations = adminPaths.flatMap(([, item]) => Object.values(item));
   assert.equal(adminOperations.length >= 34, true, `后台 operation 数量异常：${adminOperations.length}（路径 ${adminPaths.length} 条）`);
 
-  const seenSchemas = new Set();
-  const propertyNames = new Set();
-  function collectSchema(schema, depth = 0) {
-    if (schema === null || typeof schema !== 'object' || depth > 12) return;
-    if (typeof schema.$ref === 'string') {
-      const name = schema.$ref.split('/').at(-1);
-      if (seenSchemas.has(name)) return;
-      seenSchemas.add(name);
-      collectSchema(openapi.components.schemas[name], depth + 1);
-      return;
-    }
-    if (schema.properties && typeof schema.properties === 'object') {
-      for (const [name, child] of Object.entries(schema.properties)) {
-        propertyNames.add(name);
-        collectSchema(child, depth + 1);
+  /**
+   * 扫一段响应 schema 子树：收集属性名，并判定它是否**显式**声明 `wired: true`。
+   * `wired` 缺省／为 `false`／只在文字描述里出现，都不算解锁。
+   */
+  function scanSchema(root) {
+    const names = new Set();
+    const refNames = new Set();
+    let wiredTrue = false;
+    const walk = (schema, depth = 0) => {
+      if (schema === null || typeof schema !== 'object' || depth > 12) return;
+      if (typeof schema.$ref === 'string') {
+        const name = schema.$ref.split('/').at(-1);
+        if (refNames.has(name)) return;
+        refNames.add(name);
+        walk(openapi.components.schemas[name], depth + 1);
+        return;
       }
-    }
-    for (const key of ['items', 'additionalProperties', 'oneOf', 'anyOf', 'allOf']) {
-      const child = schema[key];
-      if (Array.isArray(child)) child.forEach((entry) => collectSchema(entry, depth + 1));
-      else if (child && typeof child === 'object') collectSchema(child, depth + 1);
-    }
+      if (schema.properties && typeof schema.properties === 'object') {
+        for (const [name, child] of Object.entries(schema.properties)) {
+          names.add(name);
+          if (name === 'wired') {
+            const declaredTrue = child?.const === true
+              || (Array.isArray(child?.enum) && child.enum.length === 1 && child.enum[0] === true);
+            if (declaredTrue) wiredTrue = true;
+          }
+          walk(child, depth + 1);
+        }
+      }
+      for (const key of ['items', 'additionalProperties', 'oneOf', 'anyOf', 'allOf']) {
+        const child = schema[key];
+        if (Array.isArray(child)) child.forEach((entry) => walk(entry, depth + 1));
+        else if (child && typeof child === 'object') walk(child, depth + 1);
+      }
+    };
+    walk(root);
+    return { names, refNames, wiredTrue };
   }
-  for (const [, item] of adminPaths) {
-    for (const operation of Object.values(item)) {
+
+  const propertyNames = new Set(); // 全部后台响应字段（① 的判定面 + 反向控制）
+  const unwiredPropertyNames = new Set(); // 落在「未声明 wired: true」的响应上的字段（② 的判定面）
+  const scannedSchemas = new Set(); // 解析到的 $ref schema 名（反向控制）
+  const declaredWiredResponses = []; // 显式声明 wired: true 的响应（`METHOD /path`）：③ 的判定面
+  for (const [path, item] of adminPaths) {
+    for (const [method, operation] of Object.entries(item)) {
       for (const response of Object.values(operation?.responses ?? {})) {
         const schema = response?.content?.['application/json']?.schema;
-        if (schema) collectSchema(schema);
+        if (!schema) continue;
+        const scanned = scanSchema(schema);
+        for (const name of scanned.names) propertyNames.add(name);
+        for (const name of scanned.refNames) scannedSchemas.add(name);
+        if (scanned.wiredTrue) declaredWiredResponses.push(`${method.toUpperCase()} ${path}`);
+        else for (const name of scanned.names) unwiredPropertyNames.add(name);
       }
     }
   }
-  // 反向控制：扫描确实收集到了字段（否则这个用例会因"什么都没扫到"而假通过）。
+  // 反向控制：扫描确实收集到了字段／schema（否则这个用例会因"什么都没扫到"而假通过）。
   assert.equal(propertyNames.size > 10, true, `扫描未生效，只收集到 ${propertyNames.size} 个字段`);
-  assert.equal(seenSchemas.size > 3, true, `只解析到 ${seenSchemas.size} 个 schema`);
-  const offending = [...propertyNames].filter((name) => FORBIDDEN.test(name));
-  assert.deepEqual(offending, [], `后台响应 schema 不得出现评审人/投票/专家认证类字段：${offending.join(', ')}`);
+  assert.equal(scannedSchemas.size > 3, true, `只解析到 ${scannedSchemas.size} 个 schema`);
+  // 反向控制 ②：今天仍存在「未声明 wired 的后台响应」⇒ ② 不是空转的免罚条款。
+  assert.equal(unwiredPropertyNames.size > 0, true,
+    '没有任何未接线的后台响应：② 的判定面空了，条件化已经退化成豁免');
+  const alwaysOffending = [...propertyNames].filter((name) => FORBIDDEN_ALWAYS.test(name));
+  assert.deepEqual(alwaysOffending, [], `后台响应 schema 不得出现专家/认证类字段（与是否接线无关）：${alwaysOffending.join(', ')}`);
+  const unwiredOffending = [...unwiredPropertyNames].filter((name) => FORBIDDEN_WHEN_UNWIRED.test(name));
+  assert.deepEqual(unwiredOffending, [],
+    `未接线的后台响应不得出现评审人/投票字段（要出现必须在该响应里显式声明 wired: true）：${unwiredOffending.join(', ')}`);
+
+  // ── ③ `wired: true` 必须与运行时权威源交叉校验（S3b 审查后修复轮，2026-10-26）──────────────
+  // 为什么需要它：② 的解锁键是契约自己写的 `wired: true`，没有任何运行时对象去核实它。实测变异 M1
+  // （`FlagPageEnvelope.properties` 加 `wired: { const: true }` + `votes`）：旧判据红 `["votes"]`，
+  // ② 全绿 —— **一个 JSON 键**就关掉了投票字段禁令。所以这里把声明数钉在运行时：唯一的人审运行时
+  // 对象是 `createHumanReviewDirectory()`，它的 `wired` 来自 `services/api/src/admin/human-review.ts`
+  // 的代码（今天写死 `false`），**不是**从契约读出来的第二个自声明。
+  //
+  // ⚠ 将来真接线时，这条钉子必须与实现**在同一个 PR 里**一起翻，且三处缺一处就红：
+  //   ① `human-review.ts` 的 `wired` 变成真实接线结果，并把下面 `runtimeWiring` 扩到实现的能力清单；
+  //   ② 契约里对应的响应子树显式声明 `wired: true`（否则 ② 仍按空态禁止评审人/投票字段）；
+  //   ③ 本段那句「今天必须恰 0 处」的字面锚改成对真实接线的断言。
+  // 只翻 ②（就是变异 M1 的形态）⇒ 下面第 1 句红：契约自声明了，运行时一个已接线能力都没有；
+  // 只翻 ① ⇒ 契约不许瞒报（声明数 0 ≠ 接线数 1）；只翻 ③ ⇒ 数字对不上。不存在"静默解禁"的路径。
+  const runtimeWiring = [
+    // 一个条目 = 一个**真的已接线**的运行时能力。今天只有人审目录，且它明说自己没接线。
+    // 若将来一个能力要暴露多个声明了 wired:true 的响应，把该能力按响应拆成多条（每条写明 surface），
+    // 或把本断言改成分能力的集合相等 —— 但⛔ 不得放宽成「声明数 ≥ 接线数」那种单向豁免。
+    { surface: 'human-review-directory', wired: createHumanReviewDirectory().wired === true },
+  ];
+  const runtimeWiredCount = runtimeWiring.filter((entry) => entry.wired).length; // 今天 0
+  assert.equal(declaredWiredResponses.length, runtimeWiredCount,
+    `契约里声明 wired:true 的响应数（${declaredWiredResponses.length}：${declaredWiredResponses.join(' / ') || '无'}）`
+      + ` 必须等于运行时真实接线数（${runtimeWiredCount}：${runtimeWiring.map((entry) => `${entry.surface}=${entry.wired}`).join(', ')}）`
+      + ' —— `wired` 是纯自声明，只靠它就能解禁评审人/投票字段，必须由运行时权威源核实');
+  assert.deepEqual(declaredWiredResponses, [],
+    `今天运行时 0 个已接线能力 ⇒ 契约里必须恰 0 处 wired:true（实际 ${declaredWiredResponses.length} 处：`
+      + `${declaredWiredResponses.join(' / ') || '无'}）：真接线时把这条字面锚与上面的运行时清单在同一个 PR 里一起翻`);
 });
 
 test('G7. 不把基础账号管理说成人工评审已完成（动作/原因码/投影字段逐条核对）', async () => {
