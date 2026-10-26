@@ -197,22 +197,61 @@ test('403 SCOPE_DENIED ⇒ forbidden（不是空目录）；视图标题写清�
   assert.equal(view.total, 0);
 });
 
-test('404 ⇒ not_found（管理员不存在）；503 ⇒ unavailable；401 ⇒ signed_out', async () => {
+test('404：列表只报「调用失败（HTTP 404）」、详情才说「管理员不存在」；503 的 retryable 用服务端声明', async () => {
+  // 详情（scopes）404 ⇒ 保留「该 id 已不存在」
   const missing = await readAdministratorScopesResponse(jsonResponse(404, { error: { code: 'NOT_FOUND', message: '管理员不存在' } }));
   assert.equal(missing.kind, 'not_found');
-  assert.match(describeAdministratorScopesView({ ...initialAdministratorsState(), scopesPhase: 'error', scopesFailure: missing }).title, /管理员不存在/u);
+  const detailView = describeAdministratorScopesView({ ...initialAdministratorsState(), scopesPhase: 'error', scopesFailure: missing });
+  assert.match(detailView.title, /管理员不存在/u);
+  assert.match(detailView.detail, /admin_accounts\.id/u);
 
-  const down = await readAdministratorsResponse(jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '管理员目录尚未接线到认证权威' } }));
+  // 列表 404 ⇒ 只能说路由/装配问题，⛔ 不得断言某个 admin_accounts.id 不存在
+  const listMissing = await readAdministratorsResponse(jsonResponse(404, { error: { code: 'NOT_FOUND', message: '管理员不存在' } }));
+  assert.equal(listMissing.kind, 'not_found');
+  const listView = describeAdministratorsView({ ...initialAdministratorsState(), signedIn: true, phase: 'error', failure: listMissing });
+  assert.match(listView.title, /404/u);
+  assert.match(listView.detail, /后端路由/u);
+  assert.doesNotMatch(listView.detail, /已不存在/u, '列表 404 ≠ 某个 admin_accounts.id 不存在');
+  assert.equal(listView.canRetry, false);
+
+  // 503：后端每条都显式 retryable:false ⇒ 不给重试，也不许诺「稍后重试」
+  const down = await readAdministratorsResponse(
+    jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '管理员目录尚未接线到认证权威', retryable: false } }),
+  );
   assert.equal(down.kind, 'unavailable');
-  assert.equal(down.retriable, true);
-  assert.match(describeAdministratorsView({ ...initialAdministratorsState(), signedIn: true, phase: 'error', failure: down }).detail, /503/u);
+  assert.equal(down.serverRetryable, false);
+  const downView = describeAdministratorsView({ ...initialAdministratorsState(), signedIn: true, phase: 'error', failure: down });
+  assert.match(downView.detail, /503/u);
+  assert.equal(downView.canRetry, false);
+  assert.doesNotMatch(downView.detail, /稍后重试/u);
+
+  // 声明缺省（信封缺失）⇒ 同样按不可重试
+  const noEnvelope = await readAdministratorsResponse(jsonResponse(503, null));
+  assert.equal(noEnvelope.serverRetryable, false);
+  assert.equal(describeAdministratorsView({ ...initialAdministratorsState(), signedIn: true, phase: 'error', failure: noEnvelope }).canRetry, false);
+
+  // 只有服务端明说 retryable:true 才给重试；列表与详情两条路径同规则
+  const retryable = await readAdministratorsResponse(
+    jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '暂时过载', retryable: true } }),
+  );
+  assert.equal(retryable.serverRetryable, true);
+  assert.equal(describeAdministratorsView({ ...initialAdministratorsState(), signedIn: true, phase: 'error', failure: retryable }).canRetry, true);
+
+  const retryableScopes = await readAdministratorScopesResponse(
+    jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '暂时过载', retryable: true } }),
+  );
+  assert.equal(describeAdministratorScopesView({ ...initialAdministratorsState(), scopesPhase: 'error', scopesFailure: retryableScopes }).canRetry, true);
+
+  const downScopes = await readAdministratorScopesResponse(jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '还没接线', retryable: false } }));
+  assert.equal(describeAdministratorScopesView({ ...initialAdministratorsState(), scopesPhase: 'error', scopesFailure: downScopes }).canRetry, false);
 
   const out = await readAdministratorsResponse(jsonResponse(401, { error: { code: 'SESSION_REQUIRED' } }));
   assert.equal(out.kind, 'signed_out');
 
-  const limited = await readAdministratorsResponse(jsonResponse(429, { error: { code: 'RATE_LIMITED' } }, { 'retry-after': '9' }));
+  const limited = await readAdministratorsResponse(jsonResponse(429, { error: { code: 'RATE_LIMITED', retryable: true } }, { 'retry-after': '9' }));
   assert.equal(limited.kind, 'rate_limited');
   assert.equal(limited.retryAfterSeconds, 9);
+  assert.equal(describeAdministratorsView({ ...initialAdministratorsState(), signedIn: true, phase: 'error', failure: limited }).canRetry, true);
 });
 
 test('fetchAdministratorsPage：GET + Bearer、不带幂等键；scopes 请求打到 {id}/scopes', async () => {
@@ -270,7 +309,7 @@ test('reducer：登录 → 列表 ready；空目录 ⇒ empty；失败保数据 
   assert.match(ready.title, /已读取 1 个管理员/u);
   assert.equal(canLoadMoreAdministrators(state), true);
 
-  const stale = reduceAdministrators(state, { type: 'LOAD_FAIL', failure: { ok: false, kind: 'unavailable', retriable: true, status: 503, code: 'PROVIDER_UNAVAILABLE', message: '' } });
+  const stale = reduceAdministrators(state, { type: 'LOAD_FAIL', failure: { ok: false, kind: 'unavailable', serverRetryable: true, status: 503, code: 'PROVIDER_UNAVAILABLE', message: '' } });
   assert.equal(stale.phase, 'ready');
   assert.equal(stale.collection.items.length, 1, '失败不清空已读数据');
   assert.equal(describeAdministratorsView(stale).tone, 'stale');
@@ -311,7 +350,7 @@ test('点开某人：SELECT_ADMIN → SCOPES_OK 渲染 scopes；404 落到面板
 
   const missing = reduceAdministrators(state, {
     type: 'SCOPES_FAIL',
-    failure: { ok: false, kind: 'not_found', retriable: false, status: 404, code: 'NOT_FOUND', message: '管理员不存在' },
+    failure: { ok: false, kind: 'not_found', serverRetryable: false, status: 404, code: 'NOT_FOUND', message: '管理员不存在' },
   });
   assert.equal(describeAdministratorScopesView(missing).tone, 'error');
   assert.match(describeAdministratorScopesView(missing).title, /管理员不存在/u);

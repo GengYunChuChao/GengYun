@@ -178,7 +178,7 @@ test('响应读取：403 SCOPE_DENIED ⇒ forbidden（不是空台账）', async
   assert.equal(result.kind, 'forbidden');
   assert.equal(result.status, 403);
   assert.equal(result.code, 'SCOPE_DENIED');
-  assert.equal(result.retriable, false);
+  assert.equal(result.serverRetryable, false);
 
   const view = describeAuditLogView({ ...initialAuditLogState(), signedIn: true, phase: 'error', failure: result });
   assert.notEqual(view.tone, 'empty', '403 不得被渲染成空台账');
@@ -203,10 +203,39 @@ test('响应读取：401 / 400 INVALID_CURSOR / 其它 400 / 429 / 503 分类', 
   assert.equal(limited.kind, 'rate_limited');
   assert.equal(limited.retryAfterSeconds, 7);
 
-  const unavailable = await readAuditLogsResponse(jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '审计日志读取尚未接线' } }));
+  const unavailable = await readAuditLogsResponse(
+    jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '审计日志读取尚未接线', retryable: false } }),
+  );
   assert.equal(unavailable.kind, 'unavailable');
-  assert.equal(unavailable.retriable, true);
-  assert.match(describeAuditLogView({ ...initialAuditLogState(), signedIn: true, phase: 'error', failure: unavailable }).detail, /503/u);
+  assert.equal(unavailable.serverRetryable, false, 'retryable 必须是服务端声明，不能本地猜');
+  const unavailableView = describeAuditLogView({ ...initialAuditLogState(), signedIn: true, phase: 'error', failure: unavailable });
+  assert.match(unavailableView.detail, /503/u);
+  assert.equal(unavailableView.canRetry, false, '服务端声明 retryable:false ⇒ 不给重试按钮');
+  assert.doesNotMatch(unavailableView.detail, /稍后重试/u, '不可重试时不得许诺「稍后重试」');
+
+  // 信封缺失（反代吐 HTML 之类）⇒ 服务端没声明 ⇒ 按不可重试处理
+  const noEnvelope = await readAuditLogsResponse(jsonResponse(503, null));
+  assert.equal(noEnvelope.kind, 'unavailable');
+  assert.equal(noEnvelope.serverRetryable, false);
+  assert.equal(describeAuditLogView({ ...initialAuditLogState(), signedIn: true, phase: 'error', failure: noEnvelope }).canRetry, false);
+
+  // 只有服务端明说 retryable:true 才给重试
+  const retryable = await readAuditLogsResponse(
+    jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '暂时过载', retryable: true } }),
+  );
+  assert.equal(retryable.serverRetryable, true);
+  const retryableView = describeAuditLogView({ ...initialAuditLogState(), signedIn: true, phase: 'error', failure: retryable });
+  assert.equal(retryableView.canRetry, true);
+  assert.match(retryableView.detail, /稍后重试/u);
+
+  // 网络层失败根本没有响应可读 ⇒ 可重试性由本地闭集决定（network_error 才允许重试）
+  const offline = describeAuditLogView({
+    ...initialAuditLogState(),
+    signedIn: true,
+    phase: 'error',
+    failure: { ok: false, kind: 'network_error', serverRetryable: null, status: null, message: '' },
+  });
+  assert.equal(offline.canRetry, true);
 });
 
 test('fetchAuditLogsPage：只发 GET、带 Bearer、不带 Idempotency-Key', async () => {
@@ -268,7 +297,7 @@ test('reducer：登录 → 读一页 → ready；空数组 → empty；失败保
   assert.match(ready.title, /已读取 1 条/u);
   assert.equal(canLoadMoreAuditLogs(state), true);
 
-  const failed = reduceAuditLog(state, { type: 'LOAD_FAIL', failure: { ok: false, kind: 'unavailable', retriable: true, status: 503, code: 'PROVIDER_UNAVAILABLE', message: '' } });
+  const failed = reduceAuditLog(state, { type: 'LOAD_FAIL', failure: { ok: false, kind: 'unavailable', serverRetryable: true, status: 503, code: 'PROVIDER_UNAVAILABLE', message: '' } });
   assert.equal(failed.phase, 'ready');
   assert.equal(failed.stale, true);
   assert.equal(failed.collection.items.length, 1, '失败不清空已读数据');

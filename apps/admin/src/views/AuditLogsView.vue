@@ -57,7 +57,6 @@ async function requestPage(cursor, { reset }) {
       failure: {
         ok: false,
         kind: 'signed_out',
-        retriable: false,
         status: null,
         code: null,
         inContract: false,

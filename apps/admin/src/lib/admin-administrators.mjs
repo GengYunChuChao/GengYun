@@ -249,7 +249,9 @@ function failure(kind, extra = {}) {
   return {
     ok: false,
     kind,
-    retriable: isRetriable(kind),
+    // 服务端声明（契约 `ErrorBody.retryable`）：null = 没有服务端响应可读（网络层失败）。
+    // ⛔ 不再保留本地「5xx 即可重试」的猜测字段，避免与 `canRetry` 互相矛盾。
+    serverRetryable: null,
     status: null,
     code: null,
     inContract: false,
@@ -257,6 +259,17 @@ function failure(kind, extra = {}) {
     message: '',
     ...extra,
   };
+}
+
+/**
+ * 能不能给用户「重试」：**服务端声明优先**，没有声明才回落到本地闭集。
+ *
+ * 后端 503（管理员目录未接线等）显式 `retryable:false`（`services/api/src/admin/ops/service.ts:583`
+ * 一路的 fail-closed 分支），所以不再用「5xx 就该重试」的本地猜法。
+ */
+function serverAllowsRetry(result) {
+  if (typeof result?.serverRetryable === 'boolean') return result.serverRetryable;
+  return isRetriable(result?.kind) === true;
 }
 
 /** 把校验问题渲染成一句话（`$.items[0].state 缺少 state`），避免报错里出现 `[object Object]`。 */
@@ -293,6 +306,8 @@ export function administratorFailureFromResponse(status, body) {
     code,
     inContract: error?.inContract === true,
     message: typeof error?.message === 'string' ? error.message : '',
+    // 信封缺失（例如反代吐 HTML）⇒ 服务端没声明可重试 ⇒ 按不可重试处理。
+    serverRetryable: error === null ? false : error.retryable === true,
   });
 }
 
@@ -429,9 +444,17 @@ export async function fetchAdministratorScopes({ fetchImpl, baseUrl, token, id, 
 }
 
 /** 失败态 → 标题/说明。 */
-export function describeAdministratorFailure(result) {
+/**
+ * 失败态 → 标题/说明。
+ *
+ * `context` 区分**列表**（`GET /admin/administrators`）与**详情**
+ * （`GET /admin/administrators/{id}/scopes`）：列表整体回 404 只可能是路由/装配问题，
+ * ⛔ 不能据此断言「某个 `admin_accounts.id` 不存在」——那是详情才有的语义。
+ */
+export function describeAdministratorFailure(result, { context = 'detail' } = {}) {
   const status = Number.isInteger(result?.status) ? result.status : null;
   const serverMessage = typeof result?.message === 'string' && result.message !== '' ? `后端说明：${result.message}` : '';
+  const listView = context === 'list';
   switch (result?.kind) {
     case 'signed_out':
       return {
@@ -448,31 +471,50 @@ export function describeAdministratorFailure(result) {
         canRetry: false,
       };
     case 'not_found':
-      return { tone: 'error', title: '管理员不存在', detail: '后端回 404 NOT_FOUND：该 admin_accounts.id 已不存在。', canRetry: false };
+      return listView
+        ? {
+            tone: 'error',
+            title: '调用失败（HTTP 404）',
+            detail: `列表接口 GET ${ADMINISTRATORS_PATH} 回 404：请确认后端路由与权限装配（这不代表某个 admin_accounts.id 不存在）。`,
+            canRetry: false,
+          }
+        : { tone: 'error', title: '管理员不存在', detail: '后端回 404 NOT_FOUND：该 admin_accounts.id 已不存在。', canRetry: false };
     case 'invalid_request':
       return { tone: 'error', title: '请求参数被后端拒绝', detail: serverMessage === '' ? '管理员 id 或分页参数不符合契约。' : serverMessage, canRetry: false };
     case 'rate_limited': {
       const wait = Number.isInteger(result?.retryAfterSeconds) ? `（建议等待 ${result.retryAfterSeconds} 秒）` : '';
-      return { tone: 'error', title: '请求过于频繁', detail: `后端限流，稍后重试${wait}。`, canRetry: true };
+      const retry = serverAllowsRetry(result);
+      return {
+        tone: 'error',
+        title: '请求过于频繁',
+        detail: retry ? `后端限流，稍后重试${wait}。` : `后端限流，且服务端声明不可自动重试（retryable=false），请稍后再确认状态${wait}。`,
+        canRetry: retry,
+      };
     }
-    case 'unavailable':
+    case 'unavailable': {
+      const retry = serverAllowsRetry(result);
       return {
         tone: 'error',
         title: '服务暂不可用',
-        detail: '管理员目录未接线到认证权威或数据库不可用（后端 503，不返回空页），稍后重试。',
-        canRetry: true,
+        detail: retry
+          ? '管理员目录未接线到认证权威或数据库不可用（后端 503，不返回空页），稍后重试。'
+          : '管理员目录未接线到认证权威或数据库不可用（后端 503，不返回空页）；服务端声明不可自动重试（retryable=false），请稍后再确认状态。',
+        canRetry: retry,
       };
+    }
     case 'network_error':
       return { tone: 'error', title: '网络请求失败', detail: serverMessage === '' ? '请求没有到达后端，检查网络或代理后重试。' : serverMessage, canRetry: true };
     case 'invalid_response':
       return { tone: 'error', title: '响应不符合契约', detail: serverMessage === '' ? '后端返回的形状不是 AdminAdministratorViewPage。' : serverMessage, canRetry: false };
-    default:
+    default: {
+      const retry = serverAllowsRetry(result);
       return {
         tone: 'error',
         title: '请求失败',
         detail: status === null ? serverMessage || '未知错误。' : `HTTP ${status}${serverMessage === '' ? '' : `：${serverMessage}`}`,
-        canRetry: true,
+        canRetry: retry,
       };
+    }
   }
 }
 
@@ -663,7 +705,7 @@ export function describeAdministratorsView(state) {
     };
   }
   if (current.failure != null) {
-    const described = describeAdministratorFailure(current.failure);
+    const described = describeAdministratorFailure(current.failure, { context: 'list' });
     const stale = current.failure.kind !== 'signed_out' && items.length > 0;
     return {
       ...base,
@@ -712,7 +754,7 @@ export function describeAdministratorScopesView(state) {
     };
   }
   if (current.scopesPhase === 'error') {
-    const described = describeAdministratorFailure(current.scopesFailure);
+    const described = describeAdministratorFailure(current.scopesFailure, { context: 'detail' });
     return {
       tone: described.tone,
       title: described.title,

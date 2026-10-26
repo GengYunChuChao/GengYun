@@ -203,8 +203,8 @@ function page(items, nextCursor = null) {
   return { data: { items, next_cursor: nextCursor }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } };
 }
 
-function errorEnvelope(code, message) {
-  return { error: { code, message, retryable: false, details: [] }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } };
+function errorEnvelope(code, message, retryable = false) {
+  return { error: { code, message, retryable, details: [] }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } };
 }
 
 function auditEvent(overrides = {}) {
@@ -344,6 +344,48 @@ test('筛选栏是契约的 entity（⛔ 不出现 entity_type），action 只�
       assert.match(pageText, new RegExp(action.replace('.', '\\.')), `action 闭集必须包含 ${action}`);
     }
     assert.match(pageText, /换筛选/, '必须写明换筛选会回第一页');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test('503（服务端 retryable:false）⇒ alert + 「服务暂不可用」，且**不得**伪装成空台账', async () => {
+  const fetchImpl = fakeFetch(() =>
+    jsonResponse(503, errorEnvelope('PROVIDER_UNAVAILABLE', '审计日志读取尚未接线', false)),
+  );
+  const mounted = await mountView({ fetchImpl });
+  try {
+    const status = findBy(mounted.container, byTestId('audit-log-status'));
+    assert.ok(status !== null, '503 必须有提示（不得白屏）');
+    assert.equal(status.props.role, 'alert', '503 必须是 alert 语义');
+    const statusText = textOf(status);
+    assert.match(statusText, /服务暂不可用/);
+    assert.match(statusText, /503/);
+    assert.match(statusText, /不伪造空页/);
+    // 这条是注入 9 的反面：后端 503 不许被渲染成「0 条事件」的空台账
+    assert.equal(findBy(mounted.container, byTestId('audit-log-empty')), null, '503 不得被渲染成空台账');
+    assert.doesNotMatch(textOf(mounted.container), /审计总台账为空/);
+    assert.equal(countOf(mounted.container, 'audit-log-row'), 0, '503 不得伪造数据行');
+    const code = findBy(mounted.container, byTestId('audit-log-error-code'));
+    assert.match(textOf(code), /PROVIDER_UNAVAILABLE/);
+    // 服务端声明 retryable:false ⇒ 不给「稍后重试」按钮，也不说「稍后重试」
+    assert.equal(countOf(mounted.container, 'audit-log-retry'), 0, '服务端声明不可重试时不得给重试按钮');
+    assert.doesNotMatch(textOf(status), /稍后重试/);
+    assert.match(textOf(status), /不可自动重试/);
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test('503 但服务端声明 retryable:true ⇒ 才给「重试」按钮', async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(503, errorEnvelope('PROVIDER_UNAVAILABLE', '暂时过载', true)));
+  const mounted = await mountView({ fetchImpl });
+  try {
+    const status = findBy(mounted.container, byTestId('audit-log-status'));
+    assert.equal(status.props.role, 'alert');
+    assert.equal(countOf(mounted.container, 'audit-log-retry'), 1, '服务端明说可重试时必须有重试按钮');
+    assert.match(textOf(status), /稍后重试/);
+    assert.equal(countOf(mounted.container, 'audit-log-row'), 0);
   } finally {
     mounted.unmount();
   }

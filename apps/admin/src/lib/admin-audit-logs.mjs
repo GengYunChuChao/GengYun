@@ -237,7 +237,9 @@ function failure(kind, extra = {}) {
   return {
     ok: false,
     kind,
-    retriable: isRetriable(kind),
+    // 服务端声明（契约 `ErrorBody.retryable`）：null = 没有服务端响应可读（网络层失败）。
+    // ⛔ 不再保留本地「5xx 即可重试」的猜测字段，避免与 `canRetry` 互相矛盾。
+    serverRetryable: null,
     status: null,
     code: null,
     inContract: false,
@@ -245,6 +247,19 @@ function failure(kind, extra = {}) {
     message: '',
     ...extra,
   };
+}
+
+/**
+ * 能不能给用户「重试」：**服务端声明优先**，没有声明才回落到本地闭集。
+ *
+ * 后端的 503 全都显式 `retryable:false`（`services/api/src/admin/audit/service.ts:33`、
+ * `:195`、`:243-244`、`:255-256`、`:275-276`），所以不能再用「5xx 就该重试」的本地猜法：
+ * 那会让页面许诺一件服务端明说不会自动好的事。只有**根本没拿到响应**的失败
+ * （网络错误）才由本地闭集决定。
+ */
+function serverAllowsRetry(result) {
+  if (typeof result?.serverRetryable === 'boolean') return result.serverRetryable;
+  return isRetriable(result?.kind) === true;
 }
 
 /** 把校验问题渲染成一句话（`$.items[0].result 不在闭集内`），避免报错里出现 `[object Object]`。 */
@@ -281,6 +296,8 @@ export function auditLogFailureFromResponse(status, body) {
     code,
     inContract: error?.inContract === true,
     message: typeof error?.message === 'string' ? error.message : '',
+    // 信封缺失（例如反代吐 HTML）⇒ 服务端没声明可重试 ⇒ 按不可重试处理。
+    serverRetryable: error === null ? false : error.retryable === true,
   });
 }
 
@@ -402,6 +419,8 @@ export function describeAuditLogFailure(result) {
         tone: 'error',
         title: '游标已失效',
         detail: '筛选条件变化或游标过期，需要从第一页重新读取。',
+        // 这里的「重试」是**回第一页重读**（客户端动作，按钮文案会变成「回第一页重读」），
+        // 不是重放同一个游标请求，所以不受服务端 retryable 约束。
         canRetry: true,
       };
     case 'invalid_request':
@@ -413,28 +432,40 @@ export function describeAuditLogFailure(result) {
       };
     case 'rate_limited': {
       const wait = Number.isInteger(result?.retryAfterSeconds) ? `（建议等待 ${result.retryAfterSeconds} 秒）` : '';
-      return { tone: 'error', title: '请求过于频繁', detail: `后端限流，稍后重试${wait}。`, canRetry: true };
+      const retry = serverAllowsRetry(result);
+      return {
+        tone: 'error',
+        title: '请求过于频繁',
+        detail: retry ? `后端限流，稍后重试${wait}。` : `后端限流，且服务端声明不可自动重试（retryable=false），请稍后再确认状态${wait}。`,
+        canRetry: retry,
+      };
     }
-    case 'unavailable':
+    case 'unavailable': {
+      const retry = serverAllowsRetry(result);
       return {
         tone: 'error',
         title: '服务暂不可用',
-        detail: '审计日志端口未接线或数据库不可用（后端 503，不伪造空页），稍后重试。',
-        canRetry: true,
+        detail: retry
+          ? '审计日志端口未接线或数据库不可用（后端 503，不伪造空页），稍后重试。'
+          : '审计日志端口未接线或数据库不可用（后端 503，不伪造空页）；服务端声明不可自动重试（retryable=false），请稍后再确认状态。',
+        canRetry: retry,
       };
+    }
     case 'network_error':
       return { tone: 'error', title: '网络请求失败', detail: serverMessage === '' ? '请求没有到达后端，检查网络或代理后重试。' : serverMessage, canRetry: true };
     case 'invalid_response':
       return { tone: 'error', title: '响应不符合契约', detail: serverMessage === '' ? '后端返回的形状不是 AuditEventPage。' : serverMessage, canRetry: false };
     case 'invalid_filter':
       return { tone: 'error', title: '筛选条件不合法', detail: serverMessage === '' ? '请修正筛选后再读取。' : serverMessage, canRetry: false };
-    default:
+    default: {
+      const retry = serverAllowsRetry(result);
       return {
         tone: 'error',
         title: '请求失败',
         detail: status === null ? serverMessage || '未知错误。' : `HTTP ${status}${serverMessage === '' ? '' : `：${serverMessage}`}`,
-        canRetry: true,
+        canRetry: retry,
       };
+    }
   }
 }
 

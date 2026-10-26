@@ -59,7 +59,6 @@ async function requestPage(cursor, { reset }) {
       failure: {
         ok: false,
         kind: 'signed_out',
-        retriable: false,
         status: null,
         code: null,
         inContract: false,
@@ -134,7 +133,7 @@ async function signOut() {
 /** 点某一行「查看权限」：读一次 /admin/administrators/{id}/scopes。 */
 async function openScopes(row) {
   if (currentToken === null) {
-    dispatch({ type: 'SCOPES_FAIL', failure: { ok: false, kind: 'signed_out', retriable: false, status: null, code: null, inContract: false, retryAfterSeconds: null, message: '没有后台会话令牌' } });
+    dispatch({ type: 'SCOPES_FAIL', failure: { ok: false, kind: 'signed_out', status: null, code: null, inContract: false, retryAfterSeconds: null, message: '没有后台会话令牌' } });
     return;
   }
   if (state.value.selectedId === row.id && state.value.scopesPhase === 'ready') {

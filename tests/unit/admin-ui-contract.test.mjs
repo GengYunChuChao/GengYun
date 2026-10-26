@@ -146,9 +146,14 @@ test('validateAccountPage: 续页游标原样取回，超出 maxItems 只记 war
   assert.match(over.warnings[0].problem, /maxItems/)
 })
 
-test('readErrorEnvelope: 契约内 code 标 inContract，未知 code 如实保留', () => {
-  const known = readErrorEnvelope({ error: { code: 'SCOPE_DENIED', message: 'no scope' }, meta: {} })
-  assert.deepEqual(known, { code: 'SCOPE_DENIED', inContract: true, message: 'no scope' })
+test('readErrorEnvelope: 契约内 code 标 inContract，未知 code 如实保留，retryable 只认服务端声明', () => {
+  const known = readErrorEnvelope({ error: { code: 'SCOPE_DENIED', message: 'no scope', retryable: false }, meta: {} })
+  assert.deepEqual(known, { code: 'SCOPE_DENIED', inContract: true, message: 'no scope', retryable: false })
+
+  // retryable 是契约 ErrorBody 的必填 boolean；缺失 ⇒ false（不替服务端许诺可重试）
+  assert.equal(readErrorEnvelope({ error: { code: 'PROVIDER_UNAVAILABLE', message: '尚未接线' } }).retryable, false)
+  assert.equal(readErrorEnvelope({ error: { code: 'PROVIDER_UNAVAILABLE', message: '尚未接线', retryable: true } }).retryable, true)
+  assert.equal(readErrorEnvelope({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'x', retryable: 'yes' } }).retryable, false)
 
   const unknown = readErrorEnvelope({ error: { code: 'WAT', message: '' } })
   assert.equal(unknown.code, 'WAT')

@@ -206,8 +206,8 @@ function scopesEnvelope(scopes) {
   return { data: { scopes }, meta };
 }
 
-function errorEnvelope(code, message) {
-  return { error: { code, message, retryable: false, details: [] }, meta };
+function errorEnvelope(code, message, retryable = false) {
+  return { error: { code, message, retryable, details: [] }, meta };
 }
 
 function administrator(overrides = {}) {
@@ -355,5 +355,69 @@ test('空数组 ⇒ 空态（说清「空目录，不是权限问题」）', asy
     assert.equal(countOf(mounted.container, 'administrators-retry'), 0, '空目录不是错误，不给重试按钮');
   } finally {
     mounted.unmount();
+  }
+});
+
+test('列表 404 ⇒ 「调用失败（HTTP 404）」，⛔ 不得断言某个 id 不存在', async () => {
+  const fetchImpl = fakeFetch(() => jsonResponse(404, errorEnvelope('NOT_FOUND', '管理员不存在')));
+  const mounted = await mountView({ fetchImpl });
+  try {
+    const status = findBy(mounted.container, byTestId('administrators-status'));
+    assert.ok(status !== null, '404 必须有提示（不得白屏）');
+    assert.equal(status.props.role, 'alert');
+    const statusText = textOf(status);
+    assert.match(statusText, /404/, '必须点明 HTTP 404');
+    assert.match(statusText, /后端路由/, '列表 404 只能指向路由/装配');
+    // 这条是审查指出的语义混淆：列表整体 404 不代表「某个 admin_accounts.id 已不存在」
+    assert.doesNotMatch(statusText, /已不存在/, '列表 404 不得断言某个 id 不存在');
+    assert.doesNotMatch(textOf(mounted.container), /管理员不存在/, '列表页不得出现「管理员不存在」');
+    assert.equal(countOf(mounted.container, 'administrators-row'), 0);
+    assert.equal(countOf(mounted.container, 'administrators-retry'), 0, '404 不给重试');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test('详情 404 才说「管理员不存在」；503 的 retryable 决定有没有重试按钮', async () => {
+  // 1) 详情 404：点开某人后 404 ⇒ 保留「管理员不存在」原文案
+  const detailMissing = fakeFetch(({ url }) =>
+    url.endsWith('/scopes')
+      ? jsonResponse(404, errorEnvelope('NOT_FOUND', '管理员不存在'))
+      : jsonResponse(200, administratorPage([administrator()], null)),
+  );
+  const first = await mountView({ fetchImpl: detailMissing });
+  try {
+    const button = findBy(first.container, byTestId('administrator-view-scopes'));
+    assert.ok(button !== null, '必须有「查看权限」入口');
+    await click(button);
+    const panel = findBy(first.container, byTestId('administrator-scopes-panel'));
+    assert.ok(panel !== null, '点开后必须有 scopes 面板');
+    assert.match(textOf(panel), /管理员不存在/);
+    assert.match(textOf(panel), /admin_accounts\.id/);
+    assert.equal(countOf(first.container, 'administrator-scopes-retry'), 0, '404 不给重试');
+  } finally {
+    first.unmount();
+  }
+
+  // 2) 列表 503 + retryable:true ⇒ 给重试；retryable:false ⇒ 不给
+  const retryableFalse = fakeFetch(() => jsonResponse(503, errorEnvelope('PROVIDER_UNAVAILABLE', '管理员目录尚未接线到认证权威', false)));
+  const second = await mountView({ fetchImpl: retryableFalse });
+  try {
+    const status = findBy(second.container, byTestId('administrators-status'));
+    assert.equal(status.props.role, 'alert');
+    assert.match(textOf(status), /服务暂不可用/);
+    assert.equal(countOf(second.container, 'administrators-retry'), 0, '服务端声明不可重试时不得给重试按钮');
+    assert.doesNotMatch(textOf(status), /稍后重试/);
+    assert.equal(findBy(second.container, byTestId('administrators-empty')), null, '503 不得被渲染成空目录');
+  } finally {
+    second.unmount();
+  }
+
+  const retryableTrue = fakeFetch(() => jsonResponse(503, errorEnvelope('PROVIDER_UNAVAILABLE', '暂时过载', true)));
+  const third = await mountView({ fetchImpl: retryableTrue });
+  try {
+    assert.equal(countOf(third.container, 'administrators-retry'), 1, '服务端明说可重试时必须有重试按钮');
+  } finally {
+    third.unmount();
   }
 });
