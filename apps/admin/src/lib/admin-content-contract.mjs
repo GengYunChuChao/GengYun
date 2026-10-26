@@ -7,11 +7,13 @@
  * - `/admin/sources/{id}`：GET `getAdminSource`（:7471）、PATCH `editSourceDraft`（:7560，
  *   `Idempotency-Key` + `If-Match`，200 `SourceDraftEnvelope`）。
  * - `/admin/sources/{id}/publish`：POST `publishSource`（:7667），请求体 `SourcePublishInput`（:14022），
- *   200 `SourceDraftEnvelope`。
- * - `/admin/sources/{id}/withdraw`：POST `withdrawSource`（:7774），请求体 `ReasonInput`，200 `SourceDraftEnvelope`。
+ *   200 `SourcePublicationOutcomeEnvelope`（同族出参 + 回执字段 `changed`）。
+ * - `/admin/sources/{id}/withdraw`：POST `withdrawSource`（:7774），请求体 `ReasonInput`，
+ *   200 `SourcePublicationOutcomeEnvelope`。
  * - `/admin/knowledge` 与 `/admin/knowledge/{id}…`：`listAdminKnowledge`（:7881）、`createKnowledgeDraft`（:7967）、
  *   `getAdminKnowledge`（:8062）、`editKnowledgeDraft`（:8151）、`publishKnowledge`（:8258，请求体同样是
- *   `SourcePublishInput`）、`withdrawKnowledge`（:8365）；200/201 用 `KnowledgeDraftPageEnvelope`／`KnowledgeDraftEnvelope`。
+ *   `SourcePublishInput`）、`withdrawKnowledge`（:8365）；列表/创建/详情/编辑用 `KnowledgeDraftPageEnvelope`／
+ *   `KnowledgeDraftEnvelope`，publish/withdraw 用 `KnowledgePublicationOutcomeEnvelope`（同族出参 + 回执字段 `changed`）。
  * - `/admin/categories`：GET `listAdminCategories`（scope `sources:read`）、PATCH `/admin/categories/{id}`
  *   `editCategory`（scope `sources:write`，`Idempotency-Key` + `If-Match`，`CategoryInput` :14359）。
  *   **路径就是 `/admin/categories`**，不存在 `/admin/admin-categories`。
@@ -218,6 +220,26 @@ export function validateSourceRef(value) {
   return { ok: errors.length === 0, errors, warnings };
 }
 
+/**
+ * publish / withdraw 的 200 出参 = 同族草稿字段 + 回执字段 `changed`
+ * （契约 `*PublicationOutcome`，如 `SourcePublicationOutcome`）。
+ *
+ * 契约把 `changed` 列进 `required`，所以这里同样按必填校验：缺它不是「未知字段」而是「不合契约」。
+ * 草稿校验器不认识 `changed`，会把它记成「契约外字段」的误报 warning——那一条在这里滤掉。
+ */
+function validatePublicationOutcome(draftValidator, value) {
+  const checked = draftValidator(value);
+  const warnings = checked.warnings.filter((warning) => warning.path !== '$.changed');
+  if (typeof value?.changed !== 'boolean') {
+    return {
+      ok: false,
+      errors: [...checked.errors, { path: '$.changed', problem: '缺少布尔 changed（本次调用是否真的改变了状态）' }],
+      warnings,
+    };
+  }
+  return { ok: checked.ok, errors: checked.errors, warnings };
+}
+
 /** 校验 `SourceDraft`（:13996）：`{id, revision, source, visibility}`。 */
 export function validateSourceDraft(value) {
   const errors = [];
@@ -236,6 +258,11 @@ export function validateSourceDraft(value) {
   for (const warning of source.warnings) warnings.push({ path: `$.source${warning.path.slice(1)}`, problem: warning.problem });
   pushExtras(value, ['id', 'revision', 'source', 'visibility'], '$', warnings);
   return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `SourcePublicationOutcome`（publish / withdraw 的 200 出参）：`SourceDraft` 字段 + `changed`。 */
+export function validateSourcePublicationOutcome(value) {
+  return validatePublicationOutcome(validateSourceDraft, value);
 }
 
 /** 校验 `KnowledgeDraftInput`（:14042）；`conditions` 为 null 或 `Conditions`（:11206，crop_id/region_code 必填）。 */
@@ -291,6 +318,11 @@ export function validateKnowledgeDraft(value) {
   for (const warning of content.warnings) warnings.push({ path: `$.content${warning.path.slice(1)}`, problem: warning.problem });
   pushExtras(value, ['id', 'revision', 'content', 'visibility', 'review_status'], '$', warnings);
   return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `KnowledgePublicationOutcome`（publish / withdraw 的 200 出参）：`KnowledgeDraft` 字段 + `changed`。 */
+export function validateKnowledgePublicationOutcome(value) {
+  return validatePublicationOutcome(validateKnowledgeDraft, value);
 }
 
 /** 校验 `Ingredient`（:12461）：`name`／`content_text`／`unit_text` 三个 1..80 的必填字符串。 */
@@ -401,6 +433,11 @@ export function validateRegistrationDraft(value) {
   return { ok: errors.length === 0, errors, warnings };
 }
 
+/** 校验 `RegistrationPublicationOutcome`（publish / withdraw 的 200 出参）：`RegistrationDraft` 字段 + `changed`。 */
+export function validateRegistrationPublicationOutcome(value) {
+  return validatePublicationOutcome(validateRegistrationDraft, value);
+}
+
 /**
  * 校验 `RestrictionInput`（:15189）：8 个必填字段；`formulation_id`／`valid_to` 可为 null，
  * 但 `conditions` **不可为 null**（契约 `{ $ref: Conditions }`，与 `KnowledgeDraftInput` 的
@@ -445,6 +482,11 @@ export function validateRestrictionDraft(value) {
   for (const warning of content.warnings) warnings.push({ path: `$.content${warning.path.slice(1)}`, problem: warning.problem });
   pushExtras(value, ['id', 'revision', 'content', 'review_status'], '$', warnings);
   return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `RestrictionPublicationOutcome`（publish / withdraw 的 200 出参）：`RestrictionDraft` 字段 + `changed`。 */
+export function validateRestrictionPublicationOutcome(value) {
+  return validatePublicationOutcome(validateRestrictionDraft, value);
 }
 
 /** 校验 `Category`（:14316）。 */

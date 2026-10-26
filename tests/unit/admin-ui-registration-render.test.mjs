@@ -239,9 +239,9 @@ test('新建草稿：POST /admin/registrations，带 Idempotency-Key、不带 If
   }
 });
 
-test('详情 → 发布：POST …/{id}/publish 带 If-Match "2"；200 同 revision 回放显示「已受理」而不是「发布成功」', async () => {
+test('详情 → 发布：POST …/{id}/publish 带 If-Match "2"；200 带 changed:false（内存幂等短路）⇒ 整页写「未改动」不写「发布成功」', async () => {
   const fetchImpl = fakeFetch(({ url, init }) => {
-    if (init.method === 'POST' && url.endsWith('/publish')) return jsonResponse(200, envelope(REGISTRATION), { etag: '"2"' });
+    if (init.method === 'POST' && url.endsWith('/publish')) return jsonResponse(200, envelope({ ...REGISTRATION, changed: false }), { etag: '"2"' });
     if (url === `${BASE_URL}/admin/registrations/${ID}`) return jsonResponse(200, envelope(REGISTRATION), { etag: '"2"' });
     return jsonResponse(200, envelope({ items: [REGISTRATION], next_cursor: null }));
   });
@@ -282,21 +282,51 @@ test('详情 → 发布：POST …/{id}/publish 带 If-Match "2"；200 同 revis
     assert.match(publishCall.init.headers['idempotency-key'], /^admin-content-/);
     assert.deepEqual(JSON.parse(publishCall.init.body), { evidence_ref: 'ev-reg-1', reason: '登记证已核验' });
 
+    // 契约真值 changed:false ⇒ outcome 写「未改动」并给出确认路径，不写「成功」。
     const outcome = requireTestId(container, 'outcome');
     const outcomeText = textOf(outcome);
-    assert.match(outcomeText, /服务端已受理/);
-    assert.match(outcomeText, /未知：本族契约没有 visibility／changed 字段/);
+    assert.match(outcomeText, /服务端未改动状态/);
+    assert.match(outcomeText, /未改动（changed:false/);
     assert.match(outcomeText, /已是该状态/);
     assert.doesNotMatch(outcomeText, /发布成功|撤回成功/);
 
-    // B1（整页级，不只是 outcome 节点）：changed 未知时**同一屏**不得再出现相反结论。
-    // 写回执面板（WriteReceipt）此前标题写「写操作成功回执」、结果行写「结果 成功（HTTP 200）」
-    // ⇒ 与这里的「已受理／changed 未知」互相打脸。断言对象是整页文本，覆盖所有子面板。
+    // B1（整页级，不只是 outcome 节点）：changed:false 时**同一屏**不得出现相反结论。
     const pageText = textOf(container);
-    assert.doesNotMatch(pageText, /成功回执|结果\s*成功/, 'publish 的 changed 未知：整页都不得出现「成功回执／结果 成功」');
-    assert.match(pageText, /写操作已受理回执/, '写回执面板标题必须是「写操作已受理回执」');
-    assert.match(pageText, /已受理（HTTP 200 · 是否生效未确认）/, '写回执的结果行必须写「已受理…是否生效未确认」');
-    assert.match(pageText, /服务端已受理/, '负面断言之外保留「已受理」正面断言');
+    assert.doesNotMatch(pageText, /成功回执|结果\s*成功/, 'changed:false ⇒ 整页都不得出现「成功回执／结果 成功」');
+    assert.match(pageText, /写操作已受理回执（本次未产生变更）/, '写回执面板标题必须点明本次未产生变更');
+    assert.match(pageText, /已受理（HTTP 200 · 本次未产生变更）/, '写回执的结果行必须写「已受理…本次未产生变更」');
+  } finally {
+    restore();
+    app.unmount();
+  }
+});
+
+test('详情 → 发布：回执 changed:true（真迁移）⇒ 文案写「已发布／已改动」，此时才出现「成功回执」', async () => {
+  const fetchImpl = fakeFetch(({ url, init }) => {
+    if (init.method === 'POST' && url.endsWith('/publish')) return jsonResponse(200, envelope({ ...REGISTRATION, changed: true }), { etag: '"2"' });
+    if (url === `${BASE_URL}/admin/registrations/${ID}`) return jsonResponse(200, envelope(REGISTRATION), { etag: '"2"' });
+    return jsonResponse(200, envelope({ items: [REGISTRATION], next_cursor: null }));
+  });
+  const restore = withFetch(fetchImpl);
+  const { app, container } = await mountView();
+  try {
+    clickNode(findRow(container));
+    await settle();
+    clickNode(requireTestId(container, 'open-publish'));
+    await settle();
+    typeInto(container, 'field-evidenceRef', 'ev-reg-1');
+    typeInto(container, 'field-reason', '登记证已核验');
+    await settle();
+    submitForm(container, 'publish-form');
+    await settle();
+
+    const outcomeText = textOf(requireTestId(container, 'outcome'));
+    assert.match(outcomeText, /服务端已发布/);
+    assert.match(outcomeText, /已改动（changed:true/);
+
+    const pageText = textOf(container);
+    assert.match(pageText, /写操作成功回执/, 'changed:true 才允许写「成功回执」');
+    assert.match(pageText, /成功（HTTP 200）/, '结果行写成功，与回执一致');
   } finally {
     restore();
     app.unmount();

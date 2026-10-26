@@ -7,8 +7,10 @@
  *  1. **URL + method 逐动作对齐契约**（路径是 `/admin/registrations`，不是 `/admin/sources`）；
  *  2. 写面一律带 `Idempotency-Key`；PATCH／publish／withdraw 另带 `If-Match: "<revision>"`，
  *     缺失**本地就拒绝**，不发出必然 428/400 的请求；
- *  3. `changed` 三值语义：编辑看修订是否前进（`true`/`false`），发布／撤回**不可判定**（`null`），
- *     且 2xx 文案里**不写「成功」**——幂等 no-op 不得被显示成新动作；
+ *  3. `changed` 三值语义：编辑看修订是否前进（`true`/`false`）；发布／撤回的 200 是
+ *     `RegistrationPublicationOutcome`，读**必填**布尔 `changed`（真迁移 `true`／内存幂等短路
+ *     `false`），回执里缺它才退回 `null`（未知），且幂等 no-op 的文案里**不写「成功」**
+ *     —— no-op 不得被显示成新动作；
  *  4. 503 `PROVIDER_UNAVAILABLE`（real 未接线 fail-closed）如实显示为「服务端未接线」，不给自动重试。
  */
 
@@ -54,6 +56,14 @@ function registrationDraft(overrides = {}) {
     content: REGISTRATION_INPUT,
     ...overrides,
   };
+}
+
+/**
+ * `RegistrationPublicationOutcome`（契约 :17553）= 同族出参 + **必填**布尔 `changed`：
+ * 服务端真迁移分支 `true`（状态已改、审计已写），内存幂等短路分支 `false`（一字未动）。
+ */
+function registrationOutcome(overrides = {}) {
+  return { ...registrationDraft(), changed: true, ...overrides };
 }
 
 function envelope(data) {
@@ -148,7 +158,7 @@ test('编辑草稿：PATCH /admin/registrations/{id}，If-Match 与 Idempotency-
 });
 
 test('发布／撤回：路径后缀正确，且都必须带 If-Match；请求体按契约共用形状', async () => {
-  const publishSpy = spy(() => jsonResponse(200, envelope(registrationDraft()), { etag: '"4"' }));
+  const publishSpy = spy(() => jsonResponse(200, envelope(registrationOutcome()), { etag: '"4"' }));
   const published = await publishRegistration({
     fetchImpl: publishSpy.fetchImpl,
     baseUrl: '/api/v1',
@@ -165,7 +175,7 @@ test('发布／撤回：路径后缀正确，且都必须带 If-Match；请求�
   assert.equal(publishSpy.calls[0].init.headers['idempotency-key'], 'key-reg-publish-1');
   assert.deepEqual(JSON.parse(publishSpy.calls[0].init.body), { evidence_ref: 'ev-reg-1', reason: '登记证已核验' });
 
-  const withdrawSpy = spy(() => jsonResponse(200, envelope(registrationDraft()), { etag: '"4"' }));
+  const withdrawSpy = spy(() => jsonResponse(200, envelope(registrationOutcome()), { etag: '"4"' }));
   const withdrawn = await withdrawRegistration({
     fetchImpl: withdrawSpy.fetchImpl,
     baseUrl: '/api/v1',
@@ -205,26 +215,45 @@ test('缺／过短幂等键 ⇒ 本地拒绝、不发请求（服务端会回 40
   assert.equal(calls.length, 0);
 });
 
-test('changed 三值：编辑按修订是否前进判定；发布／撤回**不可判定**（null），且文案不写「成功」', async () => {
+test('changed 三值：编辑按修订是否前进判定；发布／撤回读回执的必填 changed，缺它才退回 null', async () => {
   const bumped = { ok: true, status: 200, etag: '"5"', requestId: REQUEST_ID, item: registrationDraft({ revision: 5 }) };
   assert.equal(deriveChanged('edit', bumped, { previousRevision: 4 }), true);
   assert.equal(deriveChanged('edit', bumped, { previousRevision: 5 }), false);
   assert.equal(deriveChanged('edit', bumped), null, '没有操作前 revision 时不许猜');
 
-  // 幂等 no-op：发布 200 且回传的资源与操作前**完全一致**（同 revision／同 content）。
-  const replay = { ok: true, status: 200, etag: '"4"', requestId: REQUEST_ID, item: registrationDraft() };
-  assert.equal(deriveChanged('publish', replay), null, '发布不产生新修订 ⇒ 前端无法判定');
-  assert.equal(deriveChanged('withdraw', replay), null);
+  // 契约真值优先：回执带布尔 changed 就原样用，绝不回退到「比 revision」的推断。
+  const noop = { ok: true, status: 200, etag: '"4"', requestId: REQUEST_ID, item: registrationOutcome({ changed: false }) };
+  assert.equal(deriveChanged('publish', noop), false, 'changed:false ⇒ 内存幂等短路，本次未改动');
+  assert.equal(deriveChanged('withdraw', noop), false);
+  const migrated = { ...noop, item: registrationOutcome({ changed: true }) };
+  assert.equal(deriveChanged('publish', migrated), true, 'changed:true ⇒ 服务端真的做了迁移');
+  assert.equal(deriveChanged('withdraw', migrated), true);
 
-  const publishOutcome = describeWriteOutcome(replay, { action: 'publish', familyLabel: '注册资料' });
-  assert.equal(publishOutcome.changed, null);
-  assert.match(publishOutcome.title, /服务端已受理/);
-  assert.doesNotMatch(publishOutcome.title, /发布成功|撤回成功|已成功/, '不得把幂等 no-op 显示成成功');
-  assert.match(publishOutcome.changedLabel, /未知/);
-  assert.match(publishOutcome.advice, /已是该状态/, '必须给出确认「已是该状态」的路径');
+  // 回执里**没有** changed（create 的 201、或不合契约的响应）⇒ 不猜。
+  const missing = { ok: true, status: 200, etag: '"4"', requestId: REQUEST_ID, item: registrationDraft() };
+  assert.equal(deriveChanged('publish', missing), null, '拿不到契约真值 ⇒ null');
+
+  const noopOutcome = describeWriteOutcome(noop, { action: 'publish', familyLabel: '注册资料' });
+  assert.equal(noopOutcome.changed, false);
+  assert.match(noopOutcome.title, /服务端未改动状态/);
+  assert.doesNotMatch(noopOutcome.title, /发布成功|撤回成功|已成功/, '不得把幂等 no-op 显示成成功');
+  assert.match(noopOutcome.changedLabel, /未改动/);
+  assert.match(noopOutcome.advice, /已是该状态/, '必须给出确认「已是该状态」的路径');
+
+  // 真迁移 ⇒ changed:true ⇒ 才写「已撤回」。
+  const migratedOutcome = describeWriteOutcome(migrated, { action: 'withdraw', familyLabel: '注册资料' });
+  assert.equal(migratedOutcome.changed, true);
+  assert.match(migratedOutcome.title, /服务端已撤回/);
+  assert.match(migratedOutcome.changedLabel, /已改动/);
+
+  // 拿不到 changed ⇒ 只写「已受理」，不猜。
+  const unknownOutcome = describeWriteOutcome(missing, { action: 'publish', familyLabel: '注册资料' });
+  assert.equal(unknownOutcome.changed, null);
+  assert.match(unknownOutcome.title, /服务端已受理/);
+  assert.match(unknownOutcome.changedLabel, /无法判定/);
 
   // 编辑回传同一修订 ⇒ changed:false ⇒ 明写「已是该状态」，且不记为本次成功。
-  const sameRevision = describeWriteOutcome({ ...replay, status: 200 }, { action: 'edit', previousRevision: 4 });
+  const sameRevision = describeWriteOutcome(missing, { action: 'edit', previousRevision: 4 });
   assert.equal(sameRevision.changed, false);
   assert.match(sameRevision.title, /已是该状态/);
   assert.doesNotMatch(sameRevision.title, /编辑成功|已成功/);
@@ -233,6 +262,33 @@ test('changed 三值：编辑按修订是否前进判定；发布／撤回**不�
   assert.match(created.title, /已创建/);
   assert.doesNotMatch(created.title, /创建成功|已成功/);
   assert.equal(describeWriteOutcome({ ok: false, kind: 'forbidden' }, { action: 'publish' }), null, '失败不走 2xx 文案');
+});
+
+test('回执契约：发布／撤回的 200 缺 changed 或类型不对 ⇒ invalid_response（不拿草稿信封冒充回执）', async () => {
+  const draftEnvelope = await publishRegistration({
+    fetchImpl: async () => jsonResponse(200, envelope(registrationDraft()), { etag: '"4"' }),
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+    ifMatch: '"4"',
+    idempotencyKey: 'key-reg-publish-4',
+    body: { evidence_ref: 'ev-reg-1', reason: '登记证已核验' },
+  });
+  assert.equal(draftEnvelope.ok, false, '缺必填 changed 必须拦下');
+  assert.equal(draftEnvelope.kind, 'invalid_response');
+
+  const wrongType = await withdrawRegistration({
+    fetchImpl: async () => jsonResponse(200, envelope(registrationOutcome({ changed: 'true' })), { etag: '"4"' }),
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+    ifMatch: '"4"',
+    idempotencyKey: 'key-reg-withdraw-4',
+    body: { reason: '登记证到期' },
+  });
+  assert.equal(wrongType.ok, false, 'changed 必须是布尔，字符串不算契约真值');
+  assert.equal(wrongType.kind, 'invalid_response');
+  assert.match(wrongType.message, /changed/);
 });
 
 test('real 未接线：503 PROVIDER_UNAVAILABLE 如实显示为「服务端未接线」，且不给自动重试', async () => {

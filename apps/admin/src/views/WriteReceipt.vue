@@ -20,13 +20,14 @@ const props = defineProps({
   canReloadDetail: { type: Boolean, default: false },
   /**
    * **显式判定输入**（三值，由调用方用 `changedVerdict()` 从契约事实算出）：
-   *  - `'changed'`   确实改动了（例如编辑后 revision 前进）；
-   *  - `'unchanged'` 确定没改动；
-   *  - `'unknown'`   契约分不出「首次真的生效」与「幂等 no-op（已是该状态）」⇒ 只能写「已受理」。
+   *  - `'changed'`   确实改动了（publish／withdraw 回执的 `changed:true`，或编辑后 revision 前进）；
+   *  - `'unchanged'` 确定没改动（publish／withdraw 回执的 `changed:false`：服务端内存幂等短路）；
+   *  - `'unknown'`   回执没带布尔 `changed`（例如 create 的 201）⇒ 只能写「已受理」，不猜。
    *
-   * 默认 `'changed'` 只是**保留既有三族（sources／knowledge／categories）的原文案**：它们的
-   * `runWrite` 尚未产出 `changed`，本片不改它们的口径。注册／限制两族**必须显式传值**
-   * （它们恒为 `'unknown'`／编辑时的真值），否则违反「发布／撤回不写成功」的已定口径。
+   * 注册／限制两族**显式传值**（`RegistrationAdminView`／`RestrictionAdminView` 的 `receiptChanged`，
+   * 由 `deriveChanged()` 从 `*PublicationOutcome` 的必填 `changed` 算出）；sources／knowledge／
+   * categories 三页目前不传、走默认 `'changed'` 保留既有文案 —— 那三页的 `state.write` 还没接
+   * `changed`，接上属于另一片，本片不改。
    * ⛔ 不要在这里按 `status` 或 `ok` 猜成功 —— 那正是 B1 的成因。
    */
   changed: {

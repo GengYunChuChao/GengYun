@@ -52,6 +52,7 @@ test('正控制：四类资料 create → publish → 公开可见 → withdraw 
     // 2) 发布：公开读可见，且看到的是修订 1。
     const published = await publishRevision(caseEntry, service, id, 1);
     assert.equal(published.status, 200);
+    assert.equal(published.body.data.changed, true, '首次发布真的迁移了状态，回执必须自报 changed: true');
     const live = view.readPublished(family, id);
     assert.notEqual(live, null, '发布后必须公开可见');
     assert.equal(live.revision, 1);
@@ -66,6 +67,7 @@ test('正控制：四类资料 create → publish → 公开可见 → withdraw 
 
     const withdrawn = await withdrawRevision(caseEntry, service, id, 1);
     assert.equal(withdrawn.status, 200);
+    assert.equal(withdrawn.body.data.changed, true, '真实撤回真的迁出了公开视图，回执必须自报 changed: true');
     assert.equal(view.readPublished(family, id), null, '撤回后必须退出公开视图');
     assert.equal(view.isPubliclyVisible(family, id), false);
 
@@ -99,12 +101,13 @@ test('正控制：四类资料 create → publish → 公开可见 → withdraw 
     assert.deepStrictEqual(entry.headerKeys, first.headerKeys, `${entry.name} 响应头与 sources 不同`);
     assert.deepStrictEqual(entry.auditActions, [`${entry.name === 'sources' ? 'source' : entry.name.replace(/s$/, '')}.publish`, `${entry.name === 'sources' ? 'source' : entry.name.replace(/s$/, '')}.withdraw`]);
   }
-  // 出参形状的差异必须**恰好**是已记录的那一处（sources 用 source，knowledge 多 visibility）。
+  // 出参形状的差异必须**恰好**是已记录的那两处：sources 用 source、knowledge 多 visibility；
+  // 另外 publish / withdraw 的出参比 create/get 多一个回执字段 `changed`（R64）。
   const byName = Object.fromEntries(observed.map((entry) => [entry.name, entry.dataKeys]));
-  assert.deepStrictEqual(byName.sources, ['id', 'revision', 'source', 'visibility']);
-  assert.deepStrictEqual(byName.knowledge, ['content', 'id', 'review_status', 'revision', 'visibility']);
-  assert.deepStrictEqual(byName.registrations, ['content', 'id', 'review_status', 'revision']);
-  assert.deepStrictEqual(byName.restrictions, ['content', 'id', 'review_status', 'revision']);
+  assert.deepStrictEqual(byName.sources, ['changed', 'id', 'revision', 'source', 'visibility']);
+  assert.deepStrictEqual(byName.knowledge, ['changed', 'content', 'id', 'review_status', 'revision', 'visibility']);
+  assert.deepStrictEqual(byName.registrations, ['changed', 'content', 'id', 'review_status', 'revision']);
+  assert.deepStrictEqual(byName.restrictions, ['changed', 'content', 'id', 'review_status', 'revision']);
   // 只有 sources / knowledge 带 visibility；只有 sources 用 source 而不是 content。
   for (const name of ['registrations', 'restrictions']) {
     assert.equal(byName[name].includes('visibility'), false, `${name} 契约里没有 visibility`);
@@ -186,7 +189,9 @@ test('撤回后再发布：同一修订可重新进入公开视图，且审计�
     assert.notEqual(view.readPublished(family, id), null);
     await withdrawRevision(caseEntry, service, id, 1);
     assert.equal(view.readPublished(family, id), null);
-    await publishRevision(caseEntry, service, id, 1);
+    const republished = await publishRevision(caseEntry, service, id, 1);
+    // 撤回后再发布：状态真的从 withdrawn 迁回 published ⇒ 回执必须自报 changed: true。
+    assert.equal(republished.body.data.changed, true, '撤回后重新发布是真实状态迁移');
     const back = view.readPublished(family, id);
     assert.notEqual(back, null, '重新发布后必须再次公开可见');
     assert.equal(back.revision, 1);
@@ -210,6 +215,8 @@ test('重复 publish / 重复 withdraw 幂等：不再迁移状态、不重复�
     // 换一个幂等键再发布一次：状态已达成 ⇒ 幂等成功，不再追加审计。
     const repeatPublish = await publishRevision(caseEntry, service, id, 1);
     assert.equal(repeatPublish.status, 200);
+    // 诚实回执的负控制：状态本来就在目标状态 ⇒ `changed` 必须如实为 false（写死 true 会红）。
+    assert.equal(repeatPublish.body.data.changed, false, '重复 publish 什么都没改，回执必须自报 changed: false');
     const afterRepeatPublish = (await service.listAuditEvents(context())).body.data.items;
     assert.equal(afterRepeatPublish.length, 1, '重复 publish 不得产生第二条审计');
     assert.equal(view.readPublished(family, id).revision, 1);
@@ -217,6 +224,7 @@ test('重复 publish / 重复 withdraw 幂等：不再迁移状态、不重复�
     await withdrawRevision(caseEntry, service, id, 1);
     const repeatWithdraw = await withdrawRevision(caseEntry, service, id, 1);
     assert.equal(repeatWithdraw.status, 200);
+    assert.equal(repeatWithdraw.body.data.changed, false, '重复 withdraw 什么都没改，回执必须自报 changed: false');
     const afterRepeatWithdraw = (await service.listAuditEvents(context())).body.data.items;
     assert.equal(afterRepeatWithdraw.length, 2, '重复 withdraw 不得产生重复审计');
     assert.deepStrictEqual(

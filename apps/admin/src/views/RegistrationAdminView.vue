@@ -91,8 +91,10 @@ const busyWrite = computed(() => state.value.busyWrite === true);
 /**
  * 写回执的**显式判定**（喂给 `WriteReceipt` 的 `changed` prop）。
  *
- * `state.write.changed` 由 `deriveChanged()` 算出：发布／撤回／新建在契约里都拿不到
- * 「是否真的生效」的证据 ⇒ `null` ⇒ `'unknown'` ⇒ 回执只写「已受理」，与 outcome 同一结论。
+ * `state.write.changed` 由 `deriveChanged()` 算出：发布／撤回读回执里的**必填布尔** `changed`
+ * （`RegistrationPublicationOutcome`：真迁移 `true`、内存幂等短路 `false`），新建的 201 拿不到
+ * ⇒ `null` ⇒ `'unknown'` ⇒ 回执只写「已受理」。回执校验器已保证 publish／withdraw 的
+ * `changed` 一定存在且为布尔，所以这里不会把「契约里有」误当「拿不到」。
  */
 const receiptChanged = computed(() => changedVerdict(state.value.write?.changed));
 const detailRevision = computed(() => (state.value.detail === null ? null : state.value.detail.revision));
@@ -251,7 +253,11 @@ async function runWrite({ label, action, send, previousRevision = null }) {
     requestId: result.requestId ?? null,
     etag: result.etag ?? null,
     sentHeaders: result.sentHeaders ?? null,
-    /** 三值：`true`／`false`／`null`（未知）。回执面板据此决定写「成功」还是「已受理」。 */
+    /**
+     * 三值：`true`／`false`／`null`（拿不到契约真值）。publish／withdraw 读回执的必填布尔
+     * `changed`，edit 比 revision 前进；回执面板据此写「成功回执」「已受理（本次未产生变更）」
+     * 或只写「已受理」。
+     */
     changed: deriveChanged(action, result, { previousRevision }),
   };
   dispatch({ type: 'WRITE_SETTLED', receipt });

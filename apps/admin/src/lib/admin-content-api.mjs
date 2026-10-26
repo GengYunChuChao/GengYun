@@ -27,10 +27,10 @@ import {
   SOURCES_PATH,
   normalizeIdempotencyKey,
   validateAuditEvent,
-  validateCategory, validateKnowledgeDraft,
-  validatePage,
-  validateRegistrationDraft,
-  validateRestrictionDraft, validateSourceDraft,
+  validateCategory, validateKnowledgeDraft, validateKnowledgePublicationOutcome, validatePage,
+  validateRegistrationDraft, validateRegistrationPublicationOutcome,
+  validateRestrictionDraft, validateRestrictionPublicationOutcome,
+  validateSourceDraft, validateSourcePublicationOutcome,
 } from './admin-content-contract.mjs';
 
 /** 写操作的动作名（页面按钮与审计事件 `action` 的对照用；不是契约字段）。 */
@@ -456,7 +456,7 @@ export function publishSource({ fetchImpl, baseUrl, token, id, ifMatch, idempote
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateSourceDraft,
+    validate: validateSourcePublicationOutcome,
     signal,
   });
 }
@@ -473,7 +473,7 @@ export function withdrawSource({ fetchImpl, baseUrl, token, id, ifMatch, idempot
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateSourceDraft,
+    validate: validateSourcePublicationOutcome,
     signal,
   });
 }
@@ -529,7 +529,7 @@ export function publishKnowledge({ fetchImpl, baseUrl, token, id, ifMatch, idemp
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateKnowledgeDraft,
+    validate: validateKnowledgePublicationOutcome,
     signal,
   });
 }
@@ -546,7 +546,7 @@ export function withdrawKnowledge({ fetchImpl, baseUrl, token, id, ifMatch, idem
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateKnowledgeDraft,
+    validate: validateKnowledgePublicationOutcome,
     signal,
   });
 }
@@ -629,28 +629,33 @@ export async function findAuditEventsForRequest({
 /**
  * 从一次写回执推导「服务端是否真的改动了状态」——返回 `true` / `false` / `null`（未知）。
  *
- * 契约事实（决定了这里能推什么、不能推什么）：
- * - `RegistrationDraft`（:15158）与 `Restriction`（:15256）只有 `{id, revision, content, review_status}`：
- *   **没有** `visibility`（sources／knowledge 有），**也没有** `changed`（只有 `PostReviewOutcome` :15966 有）。
- * - `editXxxDraft` 每次成功都追加一条修订 ⇒ 回传 `revision` 与请求里的 `If-Match` 不同，
- *   这就是「确实改动了」的直接证据。
- * - `publishXxx` / `withdrawXxx` **不产生新修订**（`services/api/src/admin/service.ts` 的
- *   `publishDraft`／`withdrawDraft` 只改生命周期，投影里看不到）⇒ 首次成功与「已是该状态」的
- *   幂等 no-op 返回**同一份投影**，前端无法区分 ⇒ 如实返回 `null`，**不猜** `false` 冒充
- *   「已是该状态」，也**不猜** `true` 冒充「刚刚成功」。
+ * 判据按**优先级**排列，前一条能定就不看后一条：
+ * 1. **契约真值**：publish／withdraw 的 200 是 `*PublicationOutcome`（`SourcePublicationOutcome` 等 4 张），
+ *    带**必填**布尔 `changed` —— 服务端在真迁移分支回 `true`、在内存幂等短路分支回 `false`。
+ *    有它就原样返回，不做任何推断。
+ * 2. **修订前进**（仅 `edit`，回执是 `*Draft` 信封、契约里没有 `changed`）：`editXxxDraft` 每次成功都
+ *    追加一条修订 ⇒ 回传 `revision` 与请求里的 `If-Match` 不同，这就是「确实改动了」的直接证据。
+ * 3. 两条都拿不到 ⇒ `null`：如实返回未知，**不猜** `false` 冒充「已是该状态」，也**不猜** `true`
+ *    冒充「刚刚成功」。`create` 的 201 与读面（`RegistrationDraft`（:15158）、`Restriction`（:15256）
+ *    只有 `{id, revision, content, review_status}`、**没有** `changed`）走这一条。
  */
 export function deriveChanged(action, result, { previousRevision = null } = {}) {
   if (!result || result.ok !== true) return null;
+  // 1) 契约真值优先：回执自带布尔 changed 就不再推断（publish／withdraw 走这条）。
+  if (typeof result.item?.changed === 'boolean') return result.item.changed;
+  // 2) 回退：只有 edit 能从「修订是否前进」得出结论（create／读面没有可比修订）。
   const revision = Number.isInteger(result.item?.revision) ? result.item.revision : null;
   if (action === 'edit') {
     if (revision === null || !Number.isInteger(previousRevision)) return null;
     return revision !== previousRevision;
   }
+  // 3) 拿不到契约真值、也没有可比的修订 ⇒ 未知（不猜）。
   return null;
 }
 
 /**
- * 2xx 回执 → 页面文案。**不写「成功」二字**，也不把幂等 no-op 显示成新动作。
+ * 2xx 回执 → 页面文案。**幂等 no-op 一律不写成新动作**：`changed:false` 写「未改动」、拿不到
+ * `changed` 只写「已受理」；只有回执自带的 `changed:true` 才写「已发布／已撤回」。
  *
  * 与 `describeWriteFailure` 配对使用：`ok !== true` 一律走失败文案，这里只处理 2xx。
  */
@@ -707,15 +712,36 @@ export function describeWriteOutcome(result, { action, previousRevision = null, 
     };
   }
 
-  // publish / withdraw
+  // publish / withdraw：200 是 `*PublicationOutcome`，`changed` 是契约必填真值 —— 不再是「无法判定」。
+  const actionLabel = action === 'withdraw' ? '撤回' : '发布';
+  if (changed === true) {
+    return {
+      tone: 'ready',
+      changed,
+      changedLabel: `已改动（changed:true：服务端真的做了${actionLabel}的状态迁移，并写了 accepted 审计）`,
+      title: `服务端已${actionLabel}（HTTP ${status}）`,
+      detail,
+      advice: '回执的 changed:true 由服务端在真实迁移分支给出（状态已改、审计已写）；后续操作请用新的 If-Match 重读详情后再发。',
+    };
+  }
+  if (changed === false) {
+    return {
+      tone: 'warn',
+      changed,
+      changedLabel: '未改动（changed:false：资料本来就在目标状态，服务端走内存幂等短路）',
+      title: `服务端未改动状态（HTTP ${status} · 本次不记为成功）`,
+      detail,
+      advice: `回执的 changed:false 表示服务端这次没有迁移状态、也没写审计（多为同一幂等键重放或「已是该状态」）。请重读详情核对，不要据此认为这次${actionLabel}已生效。`,
+    };
+  }
   return {
     tone: 'ready',
     changed,
-    changedLabel: '未知：本族契约没有 visibility／changed 字段',
+    changedLabel: '无法判定（回执未带布尔 changed）',
     title: `服务端已受理（HTTP ${status}）`,
     detail,
     advice:
-      '注意口径：RegistrationDraft／Restriction 只有 id／revision／content／review_status，既没有 visibility 也没有 changed ⇒ 本页无法分辨「这次真的发布/撤回了」与「服务端幂等 no-op（已是该状态）」，所以只写「已受理」、不写「成功」。要确认是否已是该状态，点「按 request_id 查审计台账」：扫描范围内没有对应审计事件，说明服务端这次没有记录变更。',
+      'changed 是契约 `*PublicationOutcome` 的**必填**字段：回执里没有它说明服务端不合契约（客户端的回执校验器已按 invalid_response 拦下），本页不猜结论。要确认是否已是该状态，点「按 request_id 查审计台账」。',
   };
 }
 
@@ -834,7 +860,7 @@ export function publishRegistration({ fetchImpl, baseUrl, token, id, ifMatch, id
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateRegistrationDraft,
+    validate: validateRegistrationPublicationOutcome,
     signal,
   });
 }
@@ -851,7 +877,7 @@ export function withdrawRegistration({ fetchImpl, baseUrl, token, id, ifMatch, i
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateRegistrationDraft,
+    validate: validateRegistrationPublicationOutcome,
     signal,
   });
 }
@@ -907,7 +933,7 @@ export function publishRestriction({ fetchImpl, baseUrl, token, id, ifMatch, ide
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateRestrictionDraft,
+    validate: validateRestrictionPublicationOutcome,
     signal,
   });
 }
@@ -924,7 +950,7 @@ export function withdrawRestriction({ fetchImpl, baseUrl, token, id, ifMatch, id
     ifMatch,
     idempotencyKey,
     body,
-    validate: validateRestrictionDraft,
+    validate: validateRestrictionPublicationOutcome,
     signal,
   });
 }

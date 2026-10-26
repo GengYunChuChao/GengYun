@@ -27,8 +27,10 @@ import {
   validateAuditEvent,
   validateCategory,
   validateKnowledgeDraft,
+  validateKnowledgePublicationOutcome,
   validatePage,
   validateSourceDraft,
+  validateSourcePublicationOutcome,
 } from '../../apps/admin/src/lib/admin-content-contract.mjs';
 
 const UUID = '00000000-0000-4000-8000-000000000001';
@@ -275,6 +277,25 @@ test('validateKnowledgeDraft / validateCategory / validateAuditEvent：读面形
   assert.equal(validateAuditEvent(audit).ok, true);
   assert.equal(validateAuditEvent({ ...audit, target_ref: 'source:x' }).ok, false);
   assert.equal(validateAuditEvent({ ...audit, result: 'ok' }).ok, false);
+});
+
+test('validateSourcePublicationOutcome / validateKnowledgePublicationOutcome：回执字段 changed 必填且不产生误报 warning', () => {
+  const outcome = { ...validSourceDraft(), changed: false };
+  const checked = validateSourcePublicationOutcome(outcome);
+  assert.equal(checked.ok, true);
+  assert.deepEqual(checked.warnings, [], 'changed 在契约里，不该被记成契约外字段');
+
+  const missing = validateSourcePublicationOutcome(validSourceDraft());
+  assert.equal(missing.ok, false);
+  assert.equal(missing.errors.some((e) => e.path === '$.changed'), true);
+
+  const wrongType = validateSourcePublicationOutcome({ ...validSourceDraft(), changed: 'true' });
+  assert.equal(wrongType.ok, false);
+  assert.equal(wrongType.errors.some((e) => e.path === '$.changed'), true);
+
+  const knowledge = { id: UUID, revision: 1, visibility: 'hidden', review_status: 'unverified', content: { type: 'species', title: '稗草', body: '正文', source_id: UUID, source_version: '2026.1', conditions: null, formulation_id: null } };
+  assert.equal(validateKnowledgePublicationOutcome({ ...knowledge, changed: true }).ok, true);
+  assert.equal(validateKnowledgePublicationOutcome(knowledge).ok, false);
 });
 
 test('validatePage：next_cursor 必须显式出现（null 才是末页）', () => {

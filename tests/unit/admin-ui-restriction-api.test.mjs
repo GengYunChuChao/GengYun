@@ -52,6 +52,14 @@ function restriction(overrides = {}) {
   };
 }
 
+/**
+ * `RestrictionPublicationOutcome`（契约 :17589）= 同族出参 + **必填**布尔 `changed`
+ * （真迁移 `true`、内存幂等短路 `false`）。
+ */
+function restrictionOutcome(overrides = {}) {
+  return { ...restriction(), changed: true, ...overrides };
+}
+
 function envelope(data) {
   return { data, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'stub' } };
 }
@@ -136,7 +144,7 @@ test('编辑草稿：PATCH /admin/restrictions/{id}，If-Match 与 Idempotency-K
 });
 
 test('发布／撤回：路径后缀正确，且都必须带 If-Match', async () => {
-  const publishSpy = spy(() => jsonResponse(200, envelope(restriction()), { etag: '"2"' }));
+  const publishSpy = spy(() => jsonResponse(200, envelope(restrictionOutcome()), { etag: '"2"' }));
   const published = await publishRestriction({
     fetchImpl: publishSpy.fetchImpl,
     baseUrl: '/api/v1',
@@ -151,7 +159,7 @@ test('发布／撤回：路径后缀正确，且都必须带 If-Match', async ()
   assert.equal(publishSpy.calls[0].init.method, 'POST');
   assert.equal(publishSpy.calls[0].init.headers['if-match'], '"2"');
 
-  const withdrawSpy = spy(() => jsonResponse(200, envelope(restriction()), { etag: '"2"' }));
+  const withdrawSpy = spy(() => jsonResponse(200, envelope(restrictionOutcome()), { etag: '"2"' }));
   const withdrawn = await withdrawRestriction({
     fetchImpl: withdrawSpy.fetchImpl,
     baseUrl: '/api/v1',
@@ -179,22 +187,57 @@ test('缺 If-Match ⇒ 编辑／发布／撤回本地拒绝、一个请求都不
   assert.equal(calls.length, 0);
 });
 
-test('changed 三值：编辑看修订；发布／撤回不可判定（null）且不写「成功」', async () => {
+test('changed 三值：编辑看修订；发布／撤回读回执的必填 changed，缺它才退回 null 且不写「成功」', async () => {
   const replay = { ok: true, status: 200, etag: '"2"', requestId: REQUEST_ID, item: restriction() };
   assert.equal(deriveChanged('edit', { ...replay, item: restriction({ revision: 3 }) }, { previousRevision: 2 }), true);
   assert.equal(deriveChanged('edit', replay, { previousRevision: 2 }), false);
+
+  // 契约真值优先：回执自带布尔 changed 就原样用。
+  const noop = { ...replay, item: restrictionOutcome({ changed: false }) };
+  assert.equal(deriveChanged('publish', noop), false, 'changed:false ⇒ 内存幂等短路，本次未改动');
+  assert.equal(deriveChanged('withdraw', noop), false);
+  const migrated = { ...replay, item: restrictionOutcome({ changed: true }) };
+  assert.equal(deriveChanged('publish', migrated), true);
+  assert.equal(deriveChanged('withdraw', migrated), true);
+  // 回执里没有 changed（create 的 201／不合契约）⇒ 不猜。
   assert.equal(deriveChanged('publish', replay), null);
   assert.equal(deriveChanged('withdraw', replay), null);
 
-  const outcome = describeWriteOutcome(replay, { action: 'withdraw', familyLabel: '限制资料' });
-  assert.equal(outcome.changed, null);
-  assert.match(outcome.title, /服务端已受理/);
-  assert.doesNotMatch(outcome.title, /撤回成功|已成功/);
-  assert.match(outcome.advice, /已是该状态/);
+  const noopOutcome = describeWriteOutcome(noop, { action: 'withdraw', familyLabel: '限制资料' });
+  assert.equal(noopOutcome.changed, false);
+  assert.match(noopOutcome.title, /服务端未改动状态/);
+  assert.doesNotMatch(noopOutcome.title, /撤回成功|已成功/);
+  assert.match(noopOutcome.changedLabel, /未改动/);
+  assert.match(noopOutcome.advice, /已是该状态/);
+
+  const migratedOutcome = describeWriteOutcome(migrated, { action: 'publish', familyLabel: '限制资料' });
+  assert.equal(migratedOutcome.changed, true);
+  assert.match(migratedOutcome.title, /服务端已发布/);
+  assert.match(migratedOutcome.changedLabel, /已改动/);
+
+  const unknownOutcome = describeWriteOutcome(replay, { action: 'withdraw', familyLabel: '限制资料' });
+  assert.equal(unknownOutcome.changed, null);
+  assert.match(unknownOutcome.title, /服务端已受理/);
+  assert.match(unknownOutcome.changedLabel, /无法判定/);
 
   const edited = describeWriteOutcome(replay, { action: 'edit', previousRevision: 2 });
   assert.equal(edited.changed, false);
   assert.match(edited.title, /已是该状态/);
+});
+
+test('回执契约：撤回的 200 缺 changed ⇒ invalid_response（草稿信封不得冒充回执）', async () => {
+  const result = await withdrawRestriction({
+    fetchImpl: async () => jsonResponse(200, envelope(restriction()), { etag: '"2"' }),
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+    ifMatch: '"2"',
+    idempotencyKey: 'key-res-withdraw-2',
+    body: { reason: '限制已解除' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, 'invalid_response');
+  assert.match(result.message, /changed/);
 });
 
 test('闭集：conditions 缺失、effect 越界 ⇒ invalid_response（不渲染、不猜）', async () => {
