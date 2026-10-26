@@ -315,7 +315,7 @@
 | [`../../deploy/postgres-cvm/conf/gengyun-postgresql.service`](../../deploy/postgres-cvm/conf/gengyun-postgresql.service) | systemd 单元模板 | ✅ 在册 |
 | [`../../deploy/postgres-cvm/sql/20-login-roles.sql`](../../deploy/postgres-cvm/sql/20-login-roles.sql) | 登录角色授予 | ✅ 在册 |
 | [`../../deploy/postgres-cvm/sql/90-assert-least-privilege.sql`](../../deploy/postgres-cvm/sql/90-assert-least-privilege.sql) | 最小权限断言 | ✅ 在册 |
-| [`../../deploy/postgres-cvm/sql/30-bootstrap-admin.sql`](../../deploy/postgres-cvm/sql/30-bootstrap-admin.sql) | 管理员引导 seed（R64 裁定 C）：一次性创建首个管理员＋首个 `scopes:write` 授权＋对应首条审计；幂等（二次运行改 0 行）、先 `ON_ERROR_STOP` 中断再 `ROLLBACK`、口令只从 `psql` 变量传入 | ✅ 在册；`bash` 侧无脚本判据可覆盖（本文件是 SQL，不是 `.sh`），真库正/负臂读数见[PR #654](https://github.com/GengYunChuChao/GengYun/pull/654) 描述，**不代表已在 CVM 执行** |
+| [`../../deploy/postgres-cvm/sql/30-bootstrap-admin.sql`](../../deploy/postgres-cvm/sql/30-bootstrap-admin.sql) | 管理员引导 seed（R64 裁定 C）：一次性创建首个管理员＋逐条字面授予 3 个 scope（`scopes:write`／`session:read`／`session:logout`）＋落恰 1 行引导审计（`action='admin_scope.grant'`＋`reason_code='bootstrap'`，`before_value`/`after_value` 均为 `NULL`）；**不是幂等**——第二次运行 `RAISE EXCEPTION` ⇒ `ON_ERROR_STOP` 中断、整事务 `ROLLBACK`（非零退出、三张表 0 行变化），「表里已有管理员」必须报错而不是静默跳过；参数只从**环境变量** `GENGYUN_BOOTSTRAP_ADMIN_LOGIN`／`GENGYUN_BOOTSTRAP_ADMIN_CREDENTIAL_HASH` 经 `\getenv` 读入，且只收 **scrypt 摘要**、⛔ 不收明文口令 | ✅ 在册；`bash` 侧无脚本判据可覆盖（本文件是 SQL，不是 `.sh`），真库正/负臂读数见[PR #654](https://github.com/GengYunChuChao/GengYun/pull/654) 描述，**不代表已在 CVM 执行** |
 
 ## 2b. 调度层（#19：到期清除的 systemd timer）
 
