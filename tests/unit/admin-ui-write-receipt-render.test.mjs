@@ -102,6 +102,29 @@ test('渲染：回执没带布尔 changed（create 的 201）⇒ 只写「已受
   }
 });
 
+/**
+ * 默认值钉子：**调用点漏传 `changed`**（模拟将来新增调用点）时，组件默认值必须 fail-safe。
+ * 默认值若仍是历史的 `'changed'`，服务端幂等短路（`changed:false`）就会渲染成「写操作成功回执」，
+ * 正是 #651 的缺陷形态；五个调用点都显式传值后，漏传不会有第二个测试变红，只能由这一条守。
+ */
+test('渲染：不传 changed prop（调用点漏传）⇒ 默认值必须 fail-safe，只写「已受理」且整块不含「成功」', async () => {
+  const write = settledReceipt({ changed: false });
+  const component = await loadComponent('../../apps/admin/src/views/WriteReceipt.vue');
+  const { app, container } = await mountComponent(component, { write });
+  try {
+    const heading = headingOf(container);
+    assert.equal(heading, '写操作已受理回执', '漏传 changed 时默认判定必须是 unknown ⇒ 只写「已受理回执」');
+    assert.match(heading, /已受理/, '漏传 changed 时标题必须点明「已受理」');
+    assert.doesNotMatch(heading, /成功/, '漏传 changed 时标题不得自称成功');
+
+    const text = panelText(container);
+    assert.match(text, /结果已受理（HTTP 200 · 是否生效未确认）/, '漏传 changed 时结果行只能写「已受理…是否生效未确认」');
+    assert.doesNotMatch(text, /成功/, '漏传 changed 时整块回执不得出现「成功」（默认值不得 fail-open）');
+  } finally {
+    app.unmount();
+  }
+});
+
 test('渲染：回执 changed:true（真迁移）⇒ 才出现「写操作成功回执」＋「成功（HTTP 200）」', async () => {
   const write = settledReceipt({ changed: true });
   assert.equal(changedVerdict(write.changed), 'changed', '前置：true 必须判定成 changed');
@@ -119,7 +142,8 @@ test('渲染：回执 changed:true（真迁移）⇒ 才出现「写操作成功
 /**
  * 接线钉子（源码级）：五个用 `WriteReceipt` 的视图**都必须**显式喂 `receiptChanged`。
  * 渲染用例只能证明「传了值之后页面是对的」；这一条守的是「将来别把 `:changed` 又删掉/漏传」——
- * 漏传会静默退回组件默认值 `'changed'`，把 no-op 显示成成功回执，且不会有任何测试变红。
+ * 组件默认值已改成 fail-safe 的 `'unknown'`（漏传退化成「已受理」而非「成功」，见上面的默认值钉子），
+ * 但漏传仍然是语义错误：三值判定只有调用方算得出来，页面会丢失对 no-op 的真实结论。
  */
 test('接线：五个视图都传 :changed="receiptChanged"，且写操作都带 action（create/edit/publish/withdraw）', () => {
   const wiring = {
@@ -137,7 +161,7 @@ test('接线：五个视图都传 :changed="receiptChanged"，且写操作都带
       /const receiptChanged = computed\(\(\) => changedVerdict\(state\.value\.write\?\.changed\)\);/,
       `${view} 必须用 changedVerdict() 从回执算出三值，而不是另立判据`,
     );
-    assert.match(source, /:changed="receiptChanged"/, `${view} 必须把 receiptChanged 传给 WriteReceipt（漏传会静默退回默认 'changed'）`);
+    assert.match(source, /:changed="receiptChanged"/, `${view} 必须把 receiptChanged 传给 WriteReceipt（漏传会退回默认值 'unknown'，页面丢失真实判定）`);
     assert.match(
       source,
       /changed: deriveChanged\(action, result, \{ previousRevision \}\)/,

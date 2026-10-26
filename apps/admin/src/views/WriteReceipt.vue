@@ -29,14 +29,14 @@ const props = defineProps({
    * `SourcesView`／`KnowledgeAdminView`（publish／withdraw 同源，edit 比 revision，create 走 unknown）、
    * `CategoriesView`（只有 PATCH，比 revision 前进）。
    *
-   * `default: 'changed'` 只为兼容既有调用点**保留**，它**不再代表任何页面的实际行为** ——
-   * 不传 `changed` 的调用点会退化成「成功回执」，那是本组件历史上的默认值，不是判定结论。
-   * 新调用点必须显式传值；缺失时宁可传 `'unknown'`，也不要靠默认。
+   * 默认为 `'unknown'`（fail-safe）：拿不到判定时只能如实说「已受理」；任何漏传都会退化成
+   * 「已受理回执」而不是「成功回执」（历史默认值 `'changed'` 会把服务端幂等短路 `changed:false`
+   * 渲染成成功回执，那正是 #651 的缺陷形态）。新调用点仍必须显式传值，不要靠默认。
    * ⛔ 不要在这里按 `status` 或 `ok` 猜成功 —— 那正是 B1 的成因。
    */
   changed: {
     type: String,
-    default: 'changed',
+    default: 'unknown',
     validator: (value) => ['changed', 'unchanged', 'unknown'].includes(value),
   },
 });
