@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
+import AdministratorsView from './views/AdministratorsView.vue';
 import AuditEventsView from './views/AuditEventsView.vue';
 import AuditLogsView from './views/AuditLogsView.vue';
 import ContentAdminView from './views/ContentAdminView.vue';
@@ -17,6 +18,7 @@ type TabKey =
   | 'flagAudit'
   | 'audit'
   | 'auditLogs'
+  | 'administrators'
   | 'jobs'
   | 'review';
 
@@ -27,6 +29,7 @@ const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'flagAudit', label: '开关留痕（只读）', note: '读面已接入' },
   { key: 'audit', label: '审计事件（只读）', note: '读面已接入' },
   { key: 'auditLogs', label: '审计总台账（只读）', note: '读面已接入' },
+  { key: 'administrators', label: '管理员权限读面', note: '读面已接入' },
   { key: 'jobs', label: '作业台', note: '读 + 取消已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
@@ -62,6 +65,7 @@ const active = ref<TabKey>('accounts');
     <FlagAuditView v-else-if="active === 'flagAudit'" />
     <AuditEventsView v-else-if="active === 'audit'" />
     <AuditLogsView v-else-if="active === 'auditLogs'" />
+    <AdministratorsView v-else-if="active === 'administrators'" />
     <JobsView v-else-if="active === 'jobs'" />
     <ReviewPlaceholderView v-else />
 
@@ -94,6 +98,12 @@ const active = ref<TabKey>('accounts');
         <dd>
           只读页：GET /admin/audit-logs（operationId listAuditLogs，scope=audit:read，游标分页 + action / entity / from / to
           筛选）；游标与筛选组合绑定，换筛选回第一页；403 与空台账分开显示，缺省装配下 503 如实展示、不伪装成 0 条
+        </dd>
+        <dt>管理员权限读面</dt>
+        <dd>
+          只读页：GET /admin/administrators（operationId listAdministrators）与 GET /admin/administrators/{id}/scopes
+          （operationId listAdministratorScopes），scope 均为 scopes:read；列表项的 id 是 admin_accounts.id，不是 users.id；
+          本页不授权、不撤销（scopes:write 不在本片）
         </dd>
         <dt>作业台</dt>
         <dd>
