@@ -4,7 +4,7 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-25 · `#538` 已合入 main（`6dbe83a3`）＋ GY-R35（`#568`）＋ `#18` S2 片1＋ GY-R37 片（`0042`）＋ `#18` R18 片（`0043`）：`0001..0043`，缺 `0037`）
+## 当前状态（2026-10-26 · `#18` S2 收尾片（`0046`）落盘后实测：`0001..0046`，缺 `0037`）
 
 `0001..0035` 已连续落盘（35 个正向；`0035_r34_media_row_purge.sql` 已随上游真实落盘，本片旧段里那条
 `WARN[gap] 0035` 的前提随之作废）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
@@ -12,16 +12,30 @@
 GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 片1 落
 `0041_admin_scope_write_authority.sql`、GY-R37 片落
 `0042_favorites_history_target_type_conversation_turn.sql`、`#18` R18 片落
-`0043_admin_job_cancel_audit.sql`
-⇒ 目录现为 **42 个正向 `.sql`** ＋ `rollback/` **41 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **42 + 1 === 43**），
+`0043_admin_job_cancel_audit.sql`、GY-S4 P1 落 `0044_third_party_deletion_persistence.sql`、
+S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
+`0046_admin_scope_denial_trace.sql`
+⇒ 目录现为 **45 个正向 `.sql`** ＋ `rollback/` **44 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **45 + 1 === 46**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对该缺号有依据（见下）。
 （本段数字为实测：`git ls-tree -r --name-only HEAD -- services/api/db/migrations`
-⇒ 正向 `.sql` 42 条、`rollback/` 41 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
+⇒ 正向 `.sql` 45 条、`rollback/` 44 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
 故保留台账里**不得**再出现 40/41/42 号条目 —— 否则 `reservedButPresent` 会把它判红。
-`0043` 是本片自己落盘的文件，**台账同样不新增条目**。）
+`0043`/`0044`/`0045`/`0046` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0046_admin_scope_denial_trace.sql`（`#18` S2 收尾片 · **库层一半**：后台 scope 操作**被拒**时的留痕写入口，
+  Refs #18）接在 `0045` 之后，号位依据 `.pg17/ruling-r64-pr4-design-20261026.md` 裁定 B / D（max `0045` + 1；
+  `0037` 不动、**台账不新增条目**）。只建一条窄口径 `SECURITY DEFINER` 函数
+  `public.record_admin_scope_denial(uuid,uuid,text,text,uuid,uuid)`，写死 `action='admin_scope.deny'` /
+  `result='denied'` / `target_ref=NULL` / `target_hint='admin_account:<target>'`，`scope` 走后台权限 13 项闭集、
+  `reason_code` 走四值闭集（`self_scope_grant_denied`/`last_scope_manager`/`scope_denied`/`scope_not_held`，
+  对应 G0008/G0009/G0010/G0011），并有 `REVOKE ALL … FROM PUBLIC` + 只授运行时 `EXECUTE`（部署侧
+  `20-login-roles.sql` 的 `gy-r64-pr4a-denial-trace-grant` 区域 + `90-assert` 的 `function_surface_manifest` 一行）。
+  ⚠ 这是「应用层拒了一次」的**申报**，不是库层证明：主事务已 ROLLBACK、`0041` 的事务级 advisory 锁已释放，
+  库无从复算 —— 故**只**核 actor 存在，⛔ 不核 `active`、⛔ 不核是否持 `scopes:write`（理由写在迁移文件头）。
+  配对回滚 `rollback/0046_admin_scope_denial_trace.down.sql` **只删函数**（照 `0044` 体例 `DROP FUNCTION IF EXISTS`）；
+  审计行删不掉也回不去（append-only 触发器 `G0006`），正确动作是回滚应用版本。
 - `0036_r34_admin_content_persistence.sql`（R34 · #18 后台内容/资料域落库 + **列级**授权，已随 #538 落盘）：
   接在 `0035` 之后。落盘 ⇒ 保留台账里那条 `version: 36`（`owner: #538`、`remove_when: #538 合入即删`）
   按它自己的 `remove_when` **删除**（保留项不许躺平：0036 一落盘 `reservedButPresent` 就会把它判红）。

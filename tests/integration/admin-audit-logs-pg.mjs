@@ -260,15 +260,16 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  // 版本钉是**字面量**，新增迁移落地时要把这里同步到新的末位号（本切片：仓库末位＝`0045`）。
+  // 版本钉是**字面量**，新增迁移落地时要把这里同步到新的末位号（本切片：仓库末位＝`0046`）。
   // 演进史：曾钉 `'0033'`，迁移推到 0044 后陈旧了 11 号 —— 而本文件未接入
   // `.github/workflows/real-pg-integration.yml`，没有 CI 来提醒，只能靠这条注释；
   // 第二次：S3 片 A 的 0045（人工 approve/reject 的施动者快照列 `decided_by`）落地，末位随之前移到 0045。
   // ⛔ 也不要图省事改成「取迁移目录末项再比」：`tests/unit/migration-pin-guard.test.mjs` 把
   // 「读迁移清单末位」整类列为仓库级红项（D1 末项索引 / D2 `.at(-1)` 等形态，跨 PR 互斥）——
   // 本切片实测这样写会让该守卫用例直接变红。
-  assert.equal(applied.rows[0].version, '0045', '迁移 0045（S3 片 A：community_moderation_decisions.decided_by）必须是最后一条已应用版本');
-  pass('迁移 0045 经 migrate.ts up 落到真库（schema_migrations 末项 0045）');
+  // 第三次：`#18` S2 收尾片的 0046（scope 操作被拒的留痕写入口 `record_admin_scope_denial`）落地，末位随之前移到 0046。
+  assert.equal(applied.rows[0].version, '0046', '迁移 0046（`#18` S2 收尾片：record_admin_scope_denial，scope 被拒的留痕写入口；此前 0045 是 S3 片 A 的 community_moderation_decisions.decided_by）必须是最后一条已应用版本');
+  pass('迁移 0046 经 migrate.ts up 落到真库（schema_migrations 末项 0046）');
 
   await ownerPool.query(`GRANT USAGE ON SCHEMA public TO ${RUNTIME_ROLE}, ${UNGRANTED_ROLE}`);
   const region = grantRegion('deploy/postgres-cvm/sql/20-login-roles.sql', 'gy-r34-audit-logs-grant');

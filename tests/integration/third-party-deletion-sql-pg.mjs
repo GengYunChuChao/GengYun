@@ -35,12 +35,32 @@
  *    两列的 DEFAULT，但**不在函数的写白名单**里（`:112`）⇒ 写它必 `G0001`。这与 [C] 的期望一致，
  *    只是「闭集」指的是「函数可写的闭集」，不是「列类型的闭集」。
  *
+ * ## 0046 追加的四组读数（`[I]`–`[L]`，`#18` S2 收尾片的库层一半）
+ *
+ * | # | 读数 | 库层依据（0046 行号见迁移文件） |
+ * |---|------|------------------------------|
+ * | [I] | ⑨ 运行时身份**能**执行 `record_admin_scope_denial`，且恰好落一行：`action='admin_scope.deny'` / `result='denied'` / `scope` 原样 / `target_ref IS NULL` / `target_hint='admin_account:<target>'` / `reason_code` 原样 / `request_id` 原样；`p_audit_id` 给值就用调用方的 id、给 NULL 就由函数生成 | 写死的列与 `RETURNING` 的 id |
+ * | [J] | ⑩ 运行时身份**不能**直写 `admin_audit_events`：表级 S/I/U/D 全 `false`、函数 `EXECUTE` `true`；直接 `INSERT`/`SELECT`/`UPDATE`/`DELETE` 全部恰好 `42501`，被拒的直写**零落行**，且已落的那行 `result` 仍是 `denied`（证明它只能走函数，绕不过函数里写死的列） | 表上零授权（授 `EXECUTE` 只在 `20-login-roles.sql` 的 `gy-r64-pr4a-denial-trace-grant`） |
+ * | [K] | ⑪ 闭集外 `reason_code`（`scope_granted` / `job_cancelled` / 大写变体）与闭集外 `scope`（`user` / `public` / `receipt`）⇒ 一律 `G0001`，且**不落行**（行数不变） | 四值理由闭集 + 13 项 scope 闭集 + `RAISE … 'G0001'` |
+ * | [L] | ⑫ **只核 actor 存在**：`state='suspended'` 且**零** `scopes:write`（`admin_scopes` 全表 0 个有效持有者）的 actor **照样**留痕；actor 不存在 ⇒ `G0002`（⛔ 不核 active、⛔ 不核持有面 —— 被拒的正是这件事） | 0017/0041/0043 同形的 `G0002`，且函数体内无 `admin_scopes`/`state` |
+ *
+ * ## 为什么这四组读数**落在这个文件**（而不是新开一个 `admin-scope-denial-*-pg.mjs`）
+ * `.github/workflows/real-pg-integration.yml` 是**逐文件列举**跑 `tests/integration/*.mjs` 的
+ * （每个 step 一行 `psql -c 'CREATE DATABASE …' && node tests/integration/<脚本>.mjs`）⇒
+ * **新建**的集成脚本不会被任何 job 跑到，等于「写了断言、CI 上从未执行」。
+ * 而本文件恰好是仓内**形状最贴近**的那一条：它**自起一次性 PG 17 集群**（56000–56499 先探活再起）、
+ * 跑**全链迁移**（因此 0046 自动被应用）、建一个**只有 EXECUTE** 的运行时身份、并已经用
+ * 「表对运行时 forbidden + 函数对运行时放行」这一对判据钉住 `0044` 的两条窄函数 ——
+ * 0046 要证明的正是同一对判据在**审计面**上的版本（`admin_audit_events` 零表级权限 + 一条写函数）。
+ * 它不依赖 service 集群、不建组角色、跑完 `pg_ctl stop` 并删数据目录 ⇒ 追加在这里对前后 step 零耦合，
+ * 也不需要动 workflow（新增 step 会改 CI 门禁面，属另一类改动）。
+ *
  * ## 用法
  *   $env:GY_PG_BIN     = 'E:\GengYunCommander\.pg17\pgsql\bin'   # 必填：含 initdb/pg_ctl 的**服务端** bin 目录
  *   $env:GY_S4_PG_ROOT = 'E:\GengYunCommander\.pg17\tmp'         # 选填：数据目录根（默认 os.tmpdir()）
  *   node tests/integration/third-party-deletion-sql-pg.mjs
  *
- * 退出码：`0` = 8 条读数全取得且末行 `[ALL PASS]`；`1` = 断言失败或缺依赖；`77` = ⛔ 缺 `GY_PG_BIN`
+ * 退出码：`0` = 12 条读数（0044 的 ①–⑧ ＋ 0046 的 ⑨–⑫）全取得且末行 `[ALL PASS]`；`1` = 断言失败或缺依赖；`77` = ⛔ 缺 `GY_PG_BIN`
  * 未取得（POSIX skipped 惯例：**未取得 ≠ 通过**）。本脚本**刻意不提供** `--allow-skip` / `GY_ALLOW_SKIP`：
  * 取不到真库就没有读数，任何把 77 读成绿的开关都会把缺口重新藏起来。
  *
@@ -90,6 +110,11 @@ const DB_NAME = 'gengyun_third_party_deletion_sql_test';
 const RUNTIME_ROLE = 'gy_s4_p2b_runtime';
 const RECORD_SIGNATURE = 'public.record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)';
 const LIST_SIGNATURE = 'public.list_third_party_deletions(uuid)';
+/** 迁移 0046 的留痕写函数（读数 [I]–[L]）；同样只授运行时 EXECUTE，审计表本身仍零表级权限。 */
+const DENIAL_SIGNATURE = 'public.record_admin_scope_denial(uuid,uuid,text,text,uuid,uuid)';
+/** 后台权限闭集 + 拒绝理由闭集（读数 [K] 用它构造闭集外取值；取值必须与 0041/0046 反着来）。 */
+const DENIAL_BAD_REASONS = ['scope_granted', 'job_cancelled', 'LAST_SCOPE_MANAGER'];
+const DENIAL_BAD_SCOPES = ['user', 'public', 'receipt'];
 /** 读面八列：顺序即 `RETURNS TABLE` 声明序（0044:271-280），也必须是脚本读回的列序。 */
 const EIGHT_COLUMNS = Object.freeze([
   'recipient_id',
@@ -290,10 +315,19 @@ async function applyMigrations(db) {
 const RECORD_SQL =
   'SELECT public.record_third_party_deletion($1::uuid, $2::text, $3::uuid, $4::text, $5::text, $6::text, $7::timestamptz) AS rec';
 const LIST_SQL = 'SELECT * FROM public.list_third_party_deletions($1::uuid) AS t';
+/** 迁移 0046：六个位置参数（`$6` 传 NULL 等价于走函数的 `p_audit_id DEFAULT NULL` 分支）。 */
+const DENIAL_SQL =
+  'SELECT public.record_admin_scope_denial($1::uuid, $2::uuid, $3::text, $4::text, $5::uuid, $6::uuid) AS audit_id';
 
 /** 调写函数；返回 jsonb 解出来的对象（`pg` 会把 jsonb 解析成 JS 值）。 */
 const record = async (client, args) => (await client.query(RECORD_SQL, args)).rows[0].rec;
 const listRows = async (client, requestId) => (await client.query(LIST_SQL, [requestId])).rows;
+/** 调 0046 的留痕函数；返回写入行的 `admin_audit_events.id`。 */
+const recordDenial = async (client, args) => (await client.query(DENIAL_SQL, args)).rows[0].audit_id;
+/** 审计台账里 `action='admin_scope.deny'` 的行数（读数 [K] 的「不落行」判据）。 */
+const countDenials = async (client) =>
+  (await client.query("SELECT count(*)::int AS n FROM public.admin_audit_events WHERE action = 'admin_scope.deny'"))
+    .rows[0].n;
 
 /**
  * 钉住 SQLSTATE：库层用 `RAISE EXCEPTION USING ERRCODE = 'G0001'` 这类自定义五位码，`pg` 把 SQLSTATE
@@ -332,6 +366,21 @@ const RECIPIENT_EXPORT = 'zeta-export';
 const AT = '2026-04-01T00:00:00.000Z';
 const LATER = '2026-04-02T03:04:05.006Z';
 
+/**
+ * 迁移 0046 的夹具（读数 [I]–[L]）。
+ *
+ * 两个管理员都**刻意不持有任何 scope**（`seedFixtures` 一条 `admin_scopes` 都不插）——
+ * 这是 [L] 的判据：留痕函数必须**不**核「actor 是否持 `scopes:write`」，否则
+ * 「因为不持 `scopes:write` 而被拒」的行会被它自己再拒一次，一条也留不下。
+ * 第二个 actor 还特意是 `state='suspended'`：函数也**不**核 `active`（裁定 B 明写）。
+ */
+const ACTOR_ACTIVE = randomUUID();
+const ACTOR_SUSPENDED = randomUUID();
+const TARGET_ADMIN = randomUUID();
+const DENIAL_REQUEST = randomUUID();
+const EXPLICIT_AUDIT_ID = randomUUID();
+const DENIAL_TARGET_HINT = `admin_account:${TARGET_ADMIN}`;
+
 async function seedFixtures(db) {
   await db.query('INSERT INTO public.users (id) VALUES ($1)', [USER_ID]);
   for (const [requestId, hashChar] of [[REQ_A, 'a'], [REQ_B, 'b'], [REQ_C, 'c']]) {
@@ -350,6 +399,15 @@ async function seedFixtures(db) {
         recipient_id, recipient_config_version, auth_epoch)
      VALUES ($1, $2, 'recording', $3, 1, 'recording', 1, $4, 'cfg-1', 1)`,
     [EXPORT_REF, USER_ID, randomUUID(), RECIPIENT_MAIN],
+  );
+  // 迁移 0046：两个管理员（凭证是**明显的合成值**，不是任何真实凭据的哈希）+ 一个被操作目标。
+  // ⛔ 刻意不插 `admin_scopes` 行：本臂要证明「留痕函数不重核持有面」。
+  await db.query(
+    `INSERT INTO public.admin_accounts (id, login_name, credential_hash, state)
+     VALUES ($1, 'gy-r64-pr4a-actor-active', 'synthetic-not-a-credential', 'active'),
+            ($2, 'gy-r64-pr4a-actor-suspended', 'synthetic-not-a-credential', 'suspended'),
+            ($3, 'gy-r64-pr4a-target', 'synthetic-not-a-credential', 'active')`,
+    [ACTOR_ACTIVE, ACTOR_SUSPENDED, TARGET_ADMIN],
   );
 }
 
@@ -376,15 +434,31 @@ async function main() {
   console.log(`  - 全链迁移 ${migrations.length} 个文件已应用（${migrations[0]} → ${migrations.at(-1)}）`);
   await seedFixtures(db);
 
-  // 运行时身份：只有两条函数的 EXECUTE（表上零权限）。口令只在内存里。
+  // 运行时身份：只有三条函数的 EXECUTE（表上零权限）。口令只在内存里。
   const password = randomBytes(24).toString('hex');
   await db.query(`CREATE ROLE ${RUNTIME_ROLE} LOGIN PASSWORD '${password}'`);
   await db.query(`GRANT USAGE ON SCHEMA public TO ${RUNTIME_ROLE}`);
   await db.query(`GRANT EXECUTE ON FUNCTION ${RECORD_SIGNATURE} TO ${RUNTIME_ROLE}`);
   await db.query(`GRANT EXECUTE ON FUNCTION ${LIST_SIGNATURE} TO ${RUNTIME_ROLE}`);
+  // 迁移 0046 的留痕写函数（镜像 `20-login-roles.sql` 的 gy-r64-pr4a-denial-trace-grant：只授 EXECUTE）。
+  await db.query(`GRANT EXECUTE ON FUNCTION ${DENIAL_SIGNATURE} TO ${RUNTIME_ROLE}`);
   const runtime = await connectWithRetry(baseUrl(RUNTIME_ROLE, DB_NAME, password));
   clients.push(runtime);
-  because(`运行时身份 ${RUNTIME_ROLE}：只有两条函数的 EXECUTE（会话级，口令只在内存里）`);
+  because(`运行时身份 ${RUNTIME_ROLE}：只有三条函数的 EXECUTE（会话级，口令只在内存里）`);
+  // 夹具自证：`admin_scopes` 里一条行都没有 ⇒ 「不持 scopes:write」不是"恰好没查"，而是可读的事实。
+  // 若将来有人往夹具里补了一条 `scopes:write` 授权，[L] 的判据就失去依据 ⇒ 这里先把它钉死。
+  const scopeRows = await db.query(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE scope = 'scopes:write' AND revoked_at IS NULL)::int AS write_holders
+       FROM public.admin_scopes`,
+  );
+  assert.equal(scopeRows.rows[0].total, 0, `[I] 夹具里不得有任何 admin_scopes 行，实际 ${scopeRows.rows[0].total} 行`);
+  assert.equal(
+    scopeRows.rows[0].write_holders,
+    0,
+    `[I] 全表 scopes:write 有效持有者必须是 0，实际 ${scopeRows.rows[0].write_holders}`,
+  );
+  because('夹具自证：admin_scopes 全表 0 行 / scopes:write 有效持有者 0 个（[L] 的「不重核持有面」判据靠它）');
 
   // ── [A] ① 首次写 requested：落行 / requested_at == p_at / 读回八列 ─────────────────────────
   const first = await record(runtime, [REQ_A, RECIPIENT_MAIN, null, 'requested', null, null, AT]);
@@ -618,6 +692,173 @@ async function main() {
   );
   mark('H', '⑧ export_ref=NULL 与 export_ref=uuid 两条路都落行且并存 2 行（两条部分唯一索引各管一支）；未知 uuid ⇒ G0002 NOT_FOUND');
   because('依据 0044:172-196（NULL 支 ON CONFLICT (request_id, recipient_id) WHERE export_ref IS NULL）/ :198-221（三元组支）/ :165-169（exports 自检 ⇒ G0002）');
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 以下是**迁移 0046**（`#18` S2 收尾片的库层一半）的四组读数 [I]–[L]。
+  // 与上面 0044 那八组共用同一套前提（自起集群 / 全链迁移 / 只有 EXECUTE 的运行时身份），
+  // 因此不另开脚本 —— 新脚本不会被 `.github/workflows/real-pg-integration.yml` 逐文件列举跑到。
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── [I] ⑨ 留痕写入口：运行时**能**执行，且写死的列落库正确 ─────────────────────────────────
+  const denialId = await recordDenial(runtime, [ACTOR_ACTIVE, TARGET_ADMIN, 'scopes:write', 'last_scope_manager', DENIAL_REQUEST, null]);
+  assert.match(denialId ?? '', /^[0-9a-f-]{36}$/i, `[I] 函数必须返回一个 uuid（审计行 id），实际 ${JSON.stringify(denialId)}`);
+  const denialRow = (
+    await db.query(
+      `SELECT actor_id, action, scope, target_ref, target_hint, reason_code, request_id, result, created_at
+         FROM public.admin_audit_events WHERE id = $1`,
+      [denialId],
+    )
+  ).rows;
+  assert.equal(denialRow.length, 1, `[I] 一次调用必须恰好落 1 行，实际 ${denialRow.length} 行`);
+  const denial = denialRow[0];
+  assert.equal(denial.actor_id, ACTOR_ACTIVE, '[I] actor_id 必须等于 p_actor_id（函数不收「以谁的名义写」的旁路参数）');
+  assert.equal(denial.action, 'admin_scope.deny', '[I] action 必须是写死的 admin_scope.deny');
+  assert.equal(denial.result, 'denied', "[I] result 必须是写死的 'denied'（0017:87 的 CHECK 已经包含该值）");
+  assert.equal(denial.scope, 'scopes:write', '[I] scope 必须原样等于 p_scope');
+  assert.equal(denial.target_ref, null, '[I] target_ref 必须是 NULL（契约 TargetRef 闭集没有 account）');
+  assert.equal(denial.target_hint, DENIAL_TARGET_HINT, `[I] target_hint 必须是 admin_account:<target>，实际 ${denial.target_hint}`);
+  assert.equal(denial.reason_code, 'last_scope_manager', '[I] reason_code 必须原样等于 p_reason_code');
+  assert.equal(denial.request_id, DENIAL_REQUEST, '[I] request_id 必须原样等于 p_request_id');
+  assert.ok(denial.created_at instanceof Date, '[I] created_at 必须由库落值（审计行时刻）');
+
+  // `p_audit_id` 两支：给值 ⇒ 用调用方的 id；给 NULL ⇒ 函数内 `gen_random_uuid()`（回显的 id 与第 6 参无关）。
+  const explicitId = await recordDenial(runtime, [ACTOR_ACTIVE, TARGET_ADMIN, 'audit:read', 'scope_denied', DENIAL_REQUEST, EXPLICIT_AUDIT_ID]);
+  assert.equal(explicitId, EXPLICIT_AUDIT_ID, '[I] p_audit_id 给值时，返回的必须是这一个 id（不另生成）');
+  const explicitRow = await db.query(
+    "SELECT action, result, scope, reason_code FROM public.admin_audit_events WHERE id = $1",
+    [EXPLICIT_AUDIT_ID],
+  );
+  assert.equal(explicitRow.rows.length, 1, '[I] p_audit_id 指定的行必须真的落库');
+  assert.equal(explicitRow.rows[0].scope, 'audit:read', '[I] 第二支的 scope 同样原样落库');
+  assert.equal(explicitRow.rows[0].reason_code, 'scope_denied', '[I] 第二支的 reason_code 同样原样落库');
+  assert.notEqual(denialId, explicitId, '[I] p_audit_id 为 NULL 的那一支必须是**另一个** id（函数自己生成的）');
+  mark('I', '⑨ 运行时身份能执行 record_admin_scope_denial：写死 action=admin_scope.deny / result=denied / target_ref=NULL，target_hint=admin_account:<target>；p_audit_id 给值就用它、给 NULL 就由函数生成');
+  because('依据 0046 的 INSERT 字面量（action/result/target_ref 写死、target_hint 由 p_target_id 重建）+ x_audit_id := COALESCE(p_audit_id, gen_random_uuid())');
+
+  // ── [J] ⑩ 运行时**不能**直写审计表：它只能走这条函数，绕不过函数里写死的列 ─────────────────
+  const auditPrivs = (
+    await runtime.query(
+      `SELECT has_table_privilege(current_user, 'public.admin_audit_events', 'SELECT') AS sel,
+              has_table_privilege(current_user, 'public.admin_audit_events', 'INSERT') AS ins,
+              has_table_privilege(current_user, 'public.admin_audit_events', 'UPDATE') AS upd,
+              has_table_privilege(current_user, 'public.admin_audit_events', 'DELETE') AS del,
+              has_function_privilege(current_user, $1, 'EXECUTE') AS denial_exec`,
+      [DENIAL_SIGNATURE],
+    )
+  ).rows[0];
+  assert.equal(auditPrivs.sel, false, '[J] 运行时身份不得持有 admin_audit_events 的 SELECT');
+  assert.equal(auditPrivs.ins, false, '[J] 运行时身份不得持有 admin_audit_events 的 INSERT');
+  assert.equal(auditPrivs.upd, false, '[J] 运行时身份不得持有 admin_audit_events 的 UPDATE');
+  assert.equal(auditPrivs.del, false, '[J] 运行时身份不得持有 admin_audit_events 的 DELETE');
+  assert.equal(auditPrivs.denial_exec, true, '[J] 运行时身份必须持有留痕函数的 EXECUTE（否则 [I] 就是空转）');
+
+  const directDenial = [
+    'INSERT INTO public.admin_audit_events (id, actor_id, action, scope, target_ref, target_hint, reason_code, request_id, result)',
+    "VALUES ($1, $2, 'admin_scope.deny', 'scopes:write', NULL, $3, 'scope_denied', $4, 'denied')",
+  ].join(' ');
+  await expectSqlState(
+    runtime.query(directDenial, [randomUUID(), ACTOR_ACTIVE, DENIAL_TARGET_HINT, DENIAL_REQUEST]),
+    '42501',
+    '[J] 运行时身份直 INSERT 审计表（想绕过函数自己写一行 denied）',
+  );
+  await expectSqlState(
+    runtime.query('SELECT count(*) FROM public.admin_audit_events'),
+    '42501',
+    '[J] 运行时身份直 SELECT 审计表',
+  );
+  await expectSqlState(
+    runtime.query("UPDATE public.admin_audit_events SET result = 'accepted' WHERE id = $1", [denialId]),
+    '42501',
+    '[J] 运行时身份直 UPDATE 审计表（想把 denied 改成 accepted）',
+  );
+  await expectSqlState(
+    runtime.query('DELETE FROM public.admin_audit_events WHERE id = $1', [denialId]),
+    '42501',
+    '[J] 运行时身份直 DELETE 审计表',
+  );
+  const afterDirect = await db.query('SELECT result FROM public.admin_audit_events WHERE id = $1', [denialId]);
+  assert.equal(afterDirect.rows.length, 1, '[J] 被拒的直写/直改/直删都不得动到那一行');
+  assert.equal(afterDirect.rows[0].result, 'denied', '[J] 那一行的 result 必须仍是 denied（绕不过函数里写死的列）');
+  mark('J', '⑩ 运行时身份对 admin_audit_events 表级 S/I/U/D 全 false、留痕函数 EXECUTE true；直 INSERT/SELECT/UPDATE/DELETE 全部恰好 42501；被拒后那一行仍是 result=denied');
+  because('依据 0046 的 REVOKE ALL … FROM PUBLIC + 表上零授权（授 EXECUTE 只在 20-login-roles.sql 的 gy-r64-pr4a-denial-trace-grant）');
+
+  // ── [K] ⑪ 闭集外取值 ⇒ G0001，且**不落行** ────────────────────────────────────────────────
+  const denialsBefore = await countDenials(db);
+  for (const badReason of DENIAL_BAD_REASONS) {
+    // eslint-disable-next-line no-await-in-loop
+    await expectSqlState(
+      recordDenial(runtime, [ACTOR_ACTIVE, TARGET_ADMIN, 'scopes:write', badReason, DENIAL_REQUEST, null]),
+      'G0001',
+      `[K] 理由码闭集外的 reason_code=${badReason}`,
+    );
+  }
+  for (const badScope of DENIAL_BAD_SCOPES) {
+    // eslint-disable-next-line no-await-in-loop
+    await expectSqlState(
+      recordDenial(runtime, [ACTOR_ACTIVE, TARGET_ADMIN, badScope, 'scope_denied', DENIAL_REQUEST, null]),
+      'G0001',
+      `[K] 后台权限 13 项闭集外的 scope=${badScope}`,
+    );
+  }
+  // 空 scope / 空 uuid 一律 G0001（入参自检，与闭集判定同一条分支）。
+  await expectSqlState(
+    recordDenial(runtime, [ACTOR_ACTIVE, TARGET_ADMIN, '   ', 'scope_denied', DENIAL_REQUEST, null]),
+    'G0001',
+    '[K] 空白 scope',
+  );
+  await expectSqlState(
+    recordDenial(runtime, [null, TARGET_ADMIN, 'scopes:write', 'scope_denied', DENIAL_REQUEST, null]),
+    'G0001',
+    '[K] 空 p_actor_id',
+  );
+  await expectSqlState(
+    recordDenial(runtime, [ACTOR_ACTIVE, null, 'scopes:write', 'scope_denied', DENIAL_REQUEST, null]),
+    'G0001',
+    '[K] 空 p_target_id',
+  );
+  await expectSqlState(
+    recordDenial(runtime, [ACTOR_ACTIVE, TARGET_ADMIN, 'scopes:write', 'scope_denied', null, null]),
+    'G0001',
+    '[K] 空 p_request_id',
+  );
+  const denialsAfter = await countDenials(db);
+  assert.equal(
+    denialsAfter,
+    denialsBefore,
+    `[K] 被 G0001 拒掉的调用必须**不落行**：前后必须都是 ${denialsBefore} 行，实际 ${denialsAfter} 行`,
+  );
+  mark('K', `⑪ 理由码闭集外（${DENIAL_BAD_REASONS.join('/')}）与 scope 闭集外（${DENIAL_BAD_SCOPES.join('/')}）以及空 uuid/空 scope ⇒ 一律 G0001 INVALID_REQUEST，且**零落行**（admin_scope.deny 行数前后都是 ${denialsBefore}）`);
+  because('依据 0046 的入参自检：`NOT (p_scope = ANY (x_scope_allowed))` / `NOT (p_reason_code = ANY (x_reason_allowed))` ⇒ RAISE ERRCODE=G0001');
+
+  // ── [L] ⑫ 只核 actor **存在**：不核 active、不核 scopes:write ──────────────────────────────
+  // 为什么这条最重要：留痕的正是「你不持 / 会归零 / 越权」。若函数顺手重核一遍，
+  // 「因为不持 scopes:write 而被拒」的行会被它自己再拒一次 ⇒ 该记的行一条也留不下。
+  const suspendedId = await recordDenial(runtime, [ACTOR_SUSPENDED, TARGET_ADMIN, 'flags:write', 'scope_not_held', DENIAL_REQUEST, null]);
+  const suspendedRow = (
+    await db.query('SELECT actor_id, result, scope, reason_code FROM public.admin_audit_events WHERE id = $1', [suspendedId])
+  ).rows;
+  assert.equal(suspendedRow.length, 1, '[L] `state=suspended` 的 actor 也必须能留痕（⛔ 函数不核 active）');
+  assert.equal(suspendedRow[0].actor_id, ACTOR_SUSPENDED, '[L] 留痕的 actor 必须就是那个 suspended 的管理员');
+  assert.equal(suspendedRow[0].result, 'denied', '[L] suspended actor 的行同样是 result=denied');
+  assert.equal(suspendedRow[0].reason_code, 'scope_not_held', '[L] suspended actor 的行同样原样带 reason_code');
+
+  const suspendedState = await db.query('SELECT state::text AS st FROM public.admin_accounts WHERE id = $1', [ACTOR_SUSPENDED]);
+  assert.equal(suspendedState.rows[0].st, 'suspended', '[L] 夹具自证：那个 actor 真的是 suspended');
+  const stillNoHolders = await db.query(
+    "SELECT count(*)::int AS n FROM public.admin_scopes WHERE scope = 'scopes:write' AND revoked_at IS NULL",
+  );
+  assert.equal(
+    stillNoHolders.rows[0].n,
+    0,
+    '[L] 夹具自证：全表 scopes:write 有效持有者仍是 0 ⇒ 两个 actor 都不持元权限，留痕却照样成功（证明没有重核持有面）',
+  );
+  await expectSqlState(
+    recordDenial(runtime, [randomUUID(), TARGET_ADMIN, 'scopes:write', 'scope_denied', DENIAL_REQUEST, null]),
+    'G0002',
+    '[L] actor 不存在（唯一保留的那条核验）',
+  );
+  mark('L', '⑫ 只核 actor 存在：state=suspended 且全表 0 个 scopes:write 有效持有者的 actor 照样留痕（⛔ 不核 active、⛔ 不核持有面）；actor 不存在 ⇒ G0002 NOT_FOUND');
+  because('依据 0046 文件头「这是应用层申报，不是库层证明」+ 函数体只有 `SELECT 1 … FROM public.admin_accounts WHERE id = p_actor_id` 一条核验');
 }
 
 /**
@@ -665,5 +906,5 @@ if (failure !== null) {
   process.exit(1);
 }
 
-assert.equal(readings, 8, `读数行必须是 8 条（[A]–[H]），实际 ${readings} 条`);
-console.log(`[ALL PASS] 0044 两条库层函数运行时语义 ①–⑧ 全部取得（共 ${readings} 组读数，exit code 0）`);
+assert.equal(readings, 12, `读数行必须是 12 条（[A]–[H] = 0044 的 8 条，[I]–[L] = 0046 的 4 条），实际 ${readings} 条`);
+console.log(`[ALL PASS] 0044 两条库层函数运行时语义 ①–⑧ ＋ 0046 拒绝留痕 ⑨–⑫ 全部取得（共 ${readings} 组读数，exit code 0）`);
