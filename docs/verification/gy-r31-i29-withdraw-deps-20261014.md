@@ -87,7 +87,7 @@ SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
 - `services/api/src/app.ts:919-921`：`egressRevoker = privacyInjection?.egressRevoker ?? (egressLedger === null ? undefined : createEgressRevoker({ ledger: egressLedger }))`；
 - `services/api/src/app.ts:1839-1842`：`registerConsentRoutes(..., { ...consentGrantTestOptions, ...(egressRevoker === undefined ? {} : { egressRevoker }) })`；
   （以上三行行号为合流当前 main 后按符号重取：本条测量时为 `:884`／`:882-884`／`:1684-1687`。）
-- 拿到 service 的唯一入口 `services/api/src/routes/consents.ts:14`：`pool === null ? null : createPostgresConsentService(...)`
+- 拿到 service 的唯一入口 `services/api/src/routes/consents.ts:26`：`pool === null ? null : createPostgresConsentService(...)`
   —— 即**有 service 就必然有池**，而**有池就必然有 revoker**。
 - 消费者实现：`services/api/src/privacy/egress.ts:242`（`createApiEgressRevoker`）→
   `packages/privacy/in-flight.mjs:237`（`createEgressRevoker`）、`:254-261`（`onConsentWithdrawn`
