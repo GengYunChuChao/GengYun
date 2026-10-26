@@ -26,8 +26,8 @@
  *   - `OBJECT_CANCELLED`（`ledger-pg.ts:699/722` 的取消墓碑、`in-flight.mjs:210`）：语义是「该对象版本
  *     已被取消，迟到的回调不得复活它」，与 `OBJECT_UNAVAILABLE`（对象不可用）不是一回事。它被两条
  *     **真库集成臂**钉死：`tests/integration/egress-ledger-pg.mjs:420`、
- *     `tests/integration/egress-revoke-race-pg.mjs:355`；本片所在机器没有 `psql`／`GY_PG_BIN`，
- *     改字面量就是「改了不验」⇒ 留给后续切片连同真库臂一起改。
+ *     `tests/integration/egress-revoke-race-pg.mjs:355`。语义与该片修的 `OBJECT_UNAVAILABLE`（对象不可用）
+ *     不是一回事，改它必须在同一片里同步更新那两条真库臂并实跑；本片范围不含 ⇒ 留给后续切片。
  *   - `CONSENT_WITHDRAWN`（`ledger-pg.ts:741` 的撤回 SQL、`ledger.mjs:478` 的内存账本）：
  *     语义是「因同意被撤回而失败」，比 `CONSENT_REQUIRED`（403，缺授权）更准；同样被上面两条真库臂
  *     与 `tests/unit/account-deletion-egress-revoker-reachability.test.mjs:33` 的 SQL 正则钉住。
