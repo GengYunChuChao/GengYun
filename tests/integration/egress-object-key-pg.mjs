@@ -808,12 +808,12 @@ try {
   const foreign = await postSynthesis(t.token, { type: 'answer', id: PRIVATE_ID, revision: 1 });
   assert.equal(foreign.status, 404, JSON.stringify(foreign.body));
   // 越权目标：**受理期预留先于服务层判定**（与识别域的既有形状一致）⇒ 服务层 404 后路由把预留
-  // 释放为终态。留下的是**一条结构审计行**（failed / ACCEPTANCE_FAILED），不含任何载荷、无回写、
+  // 释放为终态。留下的是**一条结构审计行**（failed / OBJECT_UNAVAILABLE），不含任何载荷、无回写、
   // 绝不派发、绝不残留 reserved。
   const foreignRows = await exportRowsFor(t.id);
   assert.equal(foreignRows.length, 1, '越权受理失败：预留必须被释放为终态（不得残留 reserved）');
   assert.equal(foreignRows[0].state, 'failed');
-  assert.equal(foreignRows[0].error_code, 'ACCEPTANCE_FAILED');
+  assert.equal(foreignRows[0].error_code, 'OBJECT_UNAVAILABLE');
   assert.equal(foreignRows[0].object_key, PRIVATE_ID, '审计行只记结构标识（正文标识裸值），不含载荷');
   assert.equal(await writebackCount(foreignRows[0].id), 0, '被拒的受理零回写');
   const u = await login(fx('i27-syn-replay'));
@@ -827,10 +827,10 @@ try {
   const rowsU = await exportRowsFor(u.id);
   assert.equal(rowsU.length, 2, '两次受理各一行；重放那次必须被置终态（不残留 reserved）');
   assert.deepEqual(rowsU.map((row) => row.state).sort(), ['failed', 'sent'], '重放不得留下永不派发的 reserved 行');
-  assert.equal(rowsU.find((row) => row.state === 'failed').error_code, 'ACCEPTANCE_FAILED');
+  assert.equal(rowsU.find((row) => row.state === 'failed').error_code, 'OBJECT_UNAVAILABLE');
   assert.equal(rowsU.find((row) => row.state === 'sent').object_key, approvedKey);
   say('幂等重放（真 PG）：同键同体重放回放同一任务，且为那次不会派发的受理补写终态（无残留 reserved）');
-  say('越权目标 404：受理期预留被释放为 failed/ACCEPTANCE_FAILED 结构审计行（无载荷、零回写、零派发）');
+  say('越权目标 404：受理期预留被释放为 failed/OBJECT_UNAVAILABLE 结构审计行（无载荷、零回写、零派发）');
 
   // ---------------------------------------------------------------- I2. P1-1 回归：同对象版本的并发预留不得跨用户串用
   //
@@ -972,7 +972,7 @@ try {
   const foreignJobId = randomUUID();
   // 注意：不能用 `other`（B）当被拒属主 —— B 自己就持有该对象版本的 `reserved` 行（本用例直接写入的
   // `foreignReservation`），绑 B 是**合法命中 B 自己的行**，本就该放行。要证明「别人的预留不得被消耗」，
-  // 必须绑一个在该对象版本上**没有任何预留行**的第三属主（`t` 的唯一一行是 failed/ACCEPTANCE_FAILED）。
+  // 必须绑一个在该对象版本上**没有任何预留行**的第三属主（`t` 的唯一一行是 failed/OBJECT_UNAVAILABLE）。
   rawEgress.bindJobOwner({ jobId: foreignJobId, userId: t.id });
   await expectReject(
     rawProvider2.synthesize({
