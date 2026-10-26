@@ -18,6 +18,7 @@ import {
   newIdempotencyKey,
   reasonProblem,
   reduceJobs,
+  serverAllowsRetry,
   validateJob,
   validateJobPage,
 } from '../../apps/admin/src/lib/jobs-api.mjs'
@@ -27,6 +28,8 @@ import {
 // 说明：`apps/admin` 目前没有组件级测试基建（无 vitest／@vue/test-utils／jsdom；仓内前端测试
 // 一律是「直接 import src/lib/*.mjs 的纯函数测试」），故页面级无基建、本文件不测 SFC 渲染；
 // 页面依赖的可测逻辑（URL 组装／If-Match／错误分派／状态机／行视图）都在 jobs-api.mjs 里覆盖。
+// SFC 真正上屏的部分（几行、403 是不是 role="alert"、空数组是不是空态）见
+// tests/unit/admin-ui-jobs-render.test.mjs。
 
 const TOKEN = 'test-token-not-a-real-secret'
 const JOB_ID = '3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
@@ -239,14 +242,58 @@ test('listJobs: 错误分派 —— 401／403／428／503 各自成类，未知�
   assert.equal(unknown.inContract, false)
 })
 
-test('listJobs: 429 的 retry-after 转成秒数提示', async () => {
-  const fake = spy(() => jsonResponse(429, { error: { code: 'RATE_LIMITED', message: '太频繁' } }, { 'retry-after': '30' }))
-  const result = await listJobs({ fetchImpl: fake.impl, baseUrl: BASE, token: TOKEN })
+test('listJobs: 429 以服务端 retryable 为准（未声明 ⇒ 不写「稍后重试」、不给重试）', async () => {
+  const silent = spy(() => jsonResponse(429, { error: { code: 'RATE_LIMITED', message: '太频繁' } }, { 'retry-after': '30' }))
+  const blocked = await listJobs({ fetchImpl: silent.impl, baseUrl: BASE, token: TOKEN })
 
-  assert.equal(result.kind, 'rate_limited')
-  assert.equal(result.retriable, true)
-  assert.equal(result.retryAfterSeconds, 30)
-  assert.equal(describeFailure(result).detail, '约 30 秒后重试')
+  assert.equal(blocked.kind, 'rate_limited')
+  assert.equal(blocked.retriable, true) // 本地闭集猜测，仅兜底
+  assert.equal(blocked.serverRetryable, false) // 信封里没有 retryable:true
+  assert.equal(blocked.retryAfterSeconds, 30)
+  const blockedView = describeFailure(blocked)
+  assert.equal(blockedView.retriable, false)
+  assert.match(blockedView.detail, /不可自动重试/)
+  assert.doesNotMatch(blockedView.detail, /稍后重试/)
+
+  const declared = spy(() =>
+    jsonResponse(429, { error: { code: 'RATE_LIMITED', message: '太频繁', retryable: true } }, { 'retry-after': '30' }),
+  )
+  const allowed = await listJobs({ fetchImpl: declared.impl, baseUrl: BASE, token: TOKEN })
+  assert.equal(allowed.serverRetryable, true)
+  const allowedView = describeFailure(allowed)
+  assert.equal(allowedView.retriable, true)
+  assert.match(allowedView.detail, /稍后重试/)
+  assert.match(allowedView.detail, /约 30 秒后/)
+})
+
+test('listJobs: 503 的 retryable:false 不产生重试动作（「5xx 就该重试」是错的）', async () => {
+  const down = spy(() =>
+    jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '上游不可用', retryable: false } }),
+  )
+  const result = await listJobs({ fetchImpl: down.impl, baseUrl: BASE, token: TOKEN })
+
+  assert.equal(result.kind, 'unavailable')
+  assert.equal(result.serverRetryable, false)
+  const described = describeFailure(result)
+  assert.equal(described.retriable, false)
+  assert.equal(described.action, 'none')
+  assert.match(described.detail, /不可自动重试/)
+  assert.doesNotMatch(described.detail, /稍后重试/)
+
+  const upLater = spy(() => jsonResponse(503, { error: { code: 'PROVIDER_UNAVAILABLE', message: '上游不可用', retryable: true } }))
+  const retryable = await listJobs({ fetchImpl: upLater.impl, baseUrl: BASE, token: TOKEN })
+  assert.equal(retryable.serverRetryable, true)
+  assert.equal(describeFailure(retryable).action, 'retry')
+})
+
+test('listJobs: 网络异常没有服务端声明（serverRetryable === null）才回落到本地闭集', async () => {
+  const boom = spy(() => {
+    throw new TypeError('Failed to fetch')
+  })
+  const result = await listJobs({ fetchImpl: boom.impl, baseUrl: BASE, token: TOKEN })
+  assert.equal(result.serverRetryable, null)
+  assert.equal(serverAllowsRetry(result), true)
+  assert.equal(describeFailure(result).action, 'retry')
 })
 
 test('listJobs: 畸形响应（缺 meta／非 JSON／state 越界）判 invalid_response 且不可重试', async () => {
@@ -361,13 +408,27 @@ test('cancelJob: 取消语义的错误分派 —— 428／409 修订冲突／409
   })
   assert.equal(idempotency.kind, 'idempotency_conflict')
 
+  // 409 REQUEST_IN_PROGRESS 的重试动作由服务端 retryable 决定：契约 Error409 允许可重试，
+  // 但以该条响应的 `error.retryable` 为准（不可重试时只提示重新读取，不给重试按钮）。
   const inFlight = await cancelJob({
     ...base,
-    fetchImpl: spy(() => jsonResponse(409, { error: { code: 'REQUEST_IN_PROGRESS', message: '同一键在飞' } })).impl,
+    fetchImpl: spy(() =>
+      jsonResponse(409, { error: { code: 'REQUEST_IN_PROGRESS', message: '同一键在飞', retryable: true } }),
+    ).impl,
   })
   assert.equal(inFlight.kind, 'in_progress')
-  assert.equal(inFlight.retriable, true)
+  assert.equal(inFlight.serverRetryable, true)
   assert.equal(describeFailure(inFlight).action, 'retry')
+
+  const inFlightBlocked = await cancelJob({
+    ...base,
+    fetchImpl: spy(() =>
+      jsonResponse(409, { error: { code: 'REQUEST_IN_PROGRESS', message: '同一键在飞', retryable: false } }),
+    ).impl,
+  })
+  assert.equal(inFlightBlocked.serverRetryable, false)
+  assert.equal(describeFailure(inFlightBlocked).action, 'reload')
+  assert.doesNotMatch(describeFailure(inFlightBlocked).detail, /稍后重试/)
 })
 
 test('cancelJob: 结果不回显令牌（只留 If-Match／幂等键与请求 id）', async () => {

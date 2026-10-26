@@ -46,6 +46,10 @@ let requestSeq = 0;
 let currentToken = null;
 
 const view = computed(() => describeJobs(state.value));
+// 只有失败（error／stale）用 alert 语义：403 缺 scope 必须能被读屏当错误播报。
+// 加载中与正常读数是 role="status"；空态是另一个独立元素（也 role="status"），
+// 与失败提示互斥，结构上不可能同时出现 —— 403 不会被渲染成「暂无作业」。
+const statusRole = computed(() => (view.value.tone === 'error' || view.value.tone === 'stale' ? 'alert' : 'status'));
 const rows = computed(() => jobRowViews(state.value));
 const detail = computed(() => jobDetailOf(state.value));
 const writeView = computed(() => describeFailure(state.value.writeFailure));
@@ -228,7 +232,7 @@ onBeforeUnmount(() => {
           <code>jobs:cancel</code>，必带 <code>If-Match</code> 与 <code>Idempotency-Key</code>）。
         </p>
       </div>
-      <button v-if="signedIn" class="ghost" type="button" :disabled="busy" @click="signOut">退出登录</button>
+      <button v-if="signedIn" class="ghost" type="button" data-testid="jobs-sign-out" :disabled="busy" @click="signOut">退出登录</button>
     </header>
 
     <form v-if="!signedIn" class="signin" @submit.prevent="submitSignIn">
@@ -280,13 +284,39 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="reasonErr" class="foot warn-text">取消理由不可用：{{ reasonErr }}</p>
 
-      <div class="status" :class="view.tone" role="status">
+      <!--
+        错误与空态**不能混**：错误（含 403 缺 scope）是 role="alert" 的明确提示，
+        空数据是 role="status" 的空态。两者是互斥的两个元素，结构上不可能同时出现。
+      -->
+      <div
+        v-if="view.tone !== 'empty'"
+        class="status"
+        :class="view.tone"
+        :role="statusRole"
+        data-testid="jobs-status"
+      >
         <strong>{{ view.title }}</strong>
         <span>{{ view.detail }}</span>
-        <button v-if="retryRead || reloadNeeded" class="link" type="button" :disabled="busy" @click="reload">
+        <code v-if="view.errorCode" class="code" data-testid="jobs-error-code">{{ view.errorCode }}</code>
+        <button
+          v-if="retryRead || reloadNeeded"
+          class="link"
+          type="button"
+          data-testid="jobs-retry"
+          :disabled="busy"
+          @click="reload"
+        >
           {{ reloadNeeded ? '重新读取' : '重试' }}
         </button>
       </div>
+
+      <aside v-else class="note" role="status" data-testid="jobs-empty">
+        <strong>{{ view.title }}</strong>
+        <span>{{ view.detail }}</span>
+        <button class="link" type="button" data-testid="jobs-empty-reload" :disabled="busy" @click="reload">
+          重新读取
+        </button>
+      </aside>
 
       <div v-if="writeSucceeded" class="banner ok" role="status">
         取消已生效：服务端返回了该行的新 <code>state</code>／<code>revision</code>，表格已用响应值局部刷新
@@ -312,7 +342,7 @@ onBeforeUnmount(() => {
         </span>
       </div>
 
-      <table v-if="rows.length > 0" class="grid">
+      <table v-if="rows.length > 0" class="grid" data-testid="jobs-table">
         <thead>
           <tr>
             <th>kind</th>
@@ -328,6 +358,7 @@ onBeforeUnmount(() => {
           <tr
             v-for="row in rows"
             :key="row.id"
+            data-testid="jobs-row"
             :class="{ selected: row.selected }"
             @click="dispatch({ type: 'SELECT', id: row.id })"
           >
