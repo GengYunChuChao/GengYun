@@ -94,8 +94,8 @@ for (const [conditionalModule, conditionalStore] of conditionalStores) {
 
 | 域 | 服务装饰点 | 服务侧方法 | 注销端口 |
 | --- | --- | --- | --- |
-| 识别 | `app.ts` 的 `app.decorate('recognitionService', …)` | `recognitions/service.ts` 的 `purgeOwnerData(ownerId)` | `app.ts:1873` `recognitionsDeletionStore` |
-| 语音 | `routes/speech.ts:145` 的 `app.decorate('speechService', service)` | `speech/service.ts` 的 `purgeOwnerData(ownerId)` | `app.ts:1879` `speechDeletionStore` |
+| 识别 | `app.ts` 的 `app.decorate('recognitionService', …)` | `recognitions/service.ts` 的 `purgeOwnerData(ownerId)` | `app.ts:2066`（原记 `:1873`） `recognitionsDeletionStore` |
+| 语音 | `routes/speech.ts:145` 的 `app.decorate('speechService', service)` | `speech/service.ts` 的 `purgeOwnerData(ownerId)` | `app.ts:2072`（原记 `:1879`） `speechDeletionStore` |
 
 为什么不能「另建一个 store 实例来清」：内存模式下那是**另一份空数据**，却照样会回「已清 N 行」——静默假账。缺原语时一律**抛错**（`识别域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空` / 语音同形），由删除协议折叠成回执 `blocked` + `HANDLER_FAILED`，⛔ 不会把该域标成 `completed`；`tests/unit/user-data-deletion-recognitions-speech.test.mjs` 的反向控制即此。
 
