@@ -2,10 +2,13 @@
 /**
  * 「资料管理」tab 的容器（#18 核心，B8）。
  *
- * 内部用子 tab 切换三类资料，避免顶部 tab 过多：
- *  - 资料来源（sources）   `/admin/sources`
- *  - 科普内容（knowledge） `/admin/knowledge`
- *  - 分类（categories）    `/admin/categories`
+ * 内部用子 tab 切换资料族，避免顶部 tab 过多：
+ *  - 资料来源（sources）        `/admin/sources`
+ *  - 科普内容（knowledge）      `/admin/knowledge`
+ *  - 注册资料（registrations）  `/admin/registrations`
+ *  - 限制资料（restrictions）   `/admin/restrictions`
+ *  - 分类（categories）         `/admin/categories`
+ *  - 帖子下架（posts）          `/admin/posts/{id}/hide`
  *
  * 本组件只做两件事：**拿后台会话**、**把 baseUrl/token/scopes 传给子页**。
  * 权限判定不在前端：子页只用 scopes 提示「本会话有没有这个 scope」，真实 403 由服务端回。
@@ -15,11 +18,15 @@ import { API_BASE_URL, loadAdminSession, signInAdmin } from '../auth/session';
 import CategoriesView from './CategoriesView.vue';
 import KnowledgeAdminView from './KnowledgeAdminView.vue';
 import PostTakedownView from './PostTakedownView.vue';
+import RegistrationAdminView from './RegistrationAdminView.vue';
+import RestrictionAdminView from './RestrictionAdminView.vue';
 import SourcesView from './SourcesView.vue';
 
 const FAMILIES = [
   { key: 'sources', label: '资料来源', note: '/admin/sources' },
   { key: 'knowledge', label: '科普内容', note: '/admin/knowledge' },
+  { key: 'registrations', label: '注册资料', note: '/admin/registrations' },
+  { key: 'restrictions', label: '限制资料', note: '/admin/restrictions' },
   { key: 'categories', label: '分类', note: '/admin/categories' },
   { key: 'posts', label: '帖子下架（紧急处置）', note: '/admin/posts/{id}/hide' },
 ];
@@ -156,6 +163,20 @@ onMounted(refreshSession);
       />
       <KnowledgeAdminView
         v-else-if="active === 'knowledge'"
+        :base-url="baseUrl"
+        :token="session.accessToken"
+        :scopes="scopes"
+        @signed-out="handleSignedOut"
+      />
+      <RegistrationAdminView
+        v-else-if="active === 'registrations'"
+        :base-url="baseUrl"
+        :token="session.accessToken"
+        :scopes="scopes"
+        @signed-out="handleSignedOut"
+      />
+      <RestrictionAdminView
+        v-else-if="active === 'restrictions'"
         :base-url="baseUrl"
         :token="session.accessToken"
         :scopes="scopes"

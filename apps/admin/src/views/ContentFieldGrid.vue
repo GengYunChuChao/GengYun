@@ -36,6 +36,7 @@ function errorOf(key) {
       <select
         v-if="field.type === 'select'"
         :value="form[field.key]"
+        :data-testid="`field-${field.key}`"
         :disabled="disabled"
         @change="emit('update', field.key, $event.target.value)"
       >
@@ -46,6 +47,7 @@ function errorOf(key) {
         v-else-if="field.type === 'textarea'"
         :value="form[field.key]"
         rows="4"
+        :data-testid="`field-${field.key}`"
         :disabled="disabled"
         :placeholder="field.placeholder ?? ''"
         @input="emit('update', field.key, $event.target.value)"
@@ -55,6 +57,7 @@ function errorOf(key) {
         v-else-if="field.type === 'checkbox'"
         type="checkbox"
         :checked="form[field.key] === true"
+        :data-testid="`field-${field.key}`"
         :disabled="disabled"
         @change="emit('update', field.key, $event.target.checked)"
       />
@@ -63,6 +66,7 @@ function errorOf(key) {
         v-else
         :type="field.type ?? 'text'"
         :value="form[field.key]"
+        :data-testid="`field-${field.key}`"
         :disabled="disabled"
         :placeholder="field.placeholder ?? ''"
         @input="emit('update', field.key, $event.target.value)"

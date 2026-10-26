@@ -11,18 +11,35 @@
  * 也没有 scope／责任人字段，所以这里只能做关联查询，并在页面上写清这一缺口。
  */
 import { computed } from 'vue';
-import { AUDIT_SCOPE_NOTE, describeAuditLookup, receiptLines } from '../lib/admin-content-view-model.mjs';
+import { AUDIT_SCOPE_NOTE, describeAuditLookup, receiptHeading, receiptLines } from '../lib/admin-content-view-model.mjs';
 
 const props = defineProps({
   write: { type: Object, default: null },
   auditLookup: { type: Object, default: null },
   canAudit: { type: Boolean, default: false },
   canReloadDetail: { type: Boolean, default: false },
+  /**
+   * **显式判定输入**（三值，由调用方用 `changedVerdict()` 从契约事实算出）：
+   *  - `'changed'`   确实改动了（例如编辑后 revision 前进）；
+   *  - `'unchanged'` 确定没改动；
+   *  - `'unknown'`   契约分不出「首次真的生效」与「幂等 no-op（已是该状态）」⇒ 只能写「已受理」。
+   *
+   * 默认 `'changed'` 只是**保留既有三族（sources／knowledge／categories）的原文案**：它们的
+   * `runWrite` 尚未产出 `changed`，本片不改它们的口径。注册／限制两族**必须显式传值**
+   * （它们恒为 `'unknown'`／编辑时的真值），否则违反「发布／撤回不写成功」的已定口径。
+   * ⛔ 不要在这里按 `status` 或 `ok` 猜成功 —— 那正是 B1 的成因。
+   */
+  changed: {
+    type: String,
+    default: 'changed',
+    validator: (value) => ['changed', 'unchanged', 'unknown'].includes(value),
+  },
 });
 
 const emit = defineEmits(['lookup-audit', 'clear-receipt', 'reload-detail']);
 
-const lines = computed(() => receiptLines(props.write));
+const lines = computed(() => receiptLines(props.write, { verdict: props.changed }));
+const heading = computed(() => receiptHeading(props.write, props.changed));
 const lookup = computed(() => describeAuditLookup(props.auditLookup));
 const settled = computed(() => props.write !== null && props.write !== undefined && props.write.phase !== 'pending');
 const failed = computed(() => settled.value && props.write.ok !== true);
@@ -38,7 +55,7 @@ function eventTarget(event) {
 <template>
   <section v-if="write !== null" class="receipt" :class="{ failed }">
     <header>
-      <h4>{{ settled ? (failed ? '写操作失败回执' : '写操作成功回执') : '写操作进行中…' }}</h4>
+      <h4>{{ heading }}</h4>
       <div class="actions">
         <button v-if="failed && canReloadDetail" class="link" type="button" @click="emit('reload-detail')">重读详情刷新 revision</button>
         <button v-if="settled && canAudit" class="ghost small" type="button" :disabled="!auditAvailable || auditLookup?.phase === 'loading'" @click="emit('lookup-audit')">

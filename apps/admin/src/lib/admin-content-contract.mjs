@@ -21,14 +21,31 @@
  *   `SourceRef` :11420、`SourceDraftInput` :13928、`SourceDraft` :13996、`KnowledgeDraftInput` :14042、
  *   `KnowledgeDraft` :14106、`Category` :14316、`CategoryInput` :14359、`AuditEvent` :14474。
  *
+ * 注册资料／限制资料两族（行号按 `git show <sha>:packages/contracts/openapi.json` 实测，均带前缀计数）：
+ * - `/admin/registrations`：GET `listAdminRegistration` :8638、POST `createRegistrationDraft` :8724；
+ *   `/admin/registrations/{id}`：GET `getAdminRegistration` :8819、PATCH `editRegistrationDraft` :8908；
+ *   `/admin/registrations/{id}/publish` `publishRegistration` :9015、`/withdraw` `withdrawRegistration` :9122。
+ * - `/admin/restrictions`：GET `listAdminRestriction` :9229、POST `createRestrictionDraft` :9315；
+ *   详情 :9410 `getAdminRestriction`、:9499 `editRestrictionDraft`；发布 :9606、撤回 :9713。
+ * - 形状：`Conditions` :12177（**required: crop_id + region_code**）、`Ingredient` :12461、
+ *   `FormulationInput` :12527、`RegistrationDraftInput` :15112、`RegistrationDraft` :15158、
+ *   `RestrictionInput` :15189、`Restriction` :15256、`RegistrationDraftPage` :17360、
+ *   `RegistrationDraftPageEnvelope` :17389、`RegistrationDraftEnvelope` :17405、
+ *   `RestrictionPage` :17421、`RestrictionPageEnvelope` :17450、`RestrictionEnvelope` :17466。
+ * - **两族读面都没有 `visibility`**（与 sources／knowledge 不同）：`RegistrationDraft`／`Restriction`
+ *   只有 `{id, revision, content, review_status}`，即**读面看不出草稿／已发布／已撤回**，
+ *   也没有 `changed` 字段。页面据此**不推断生命周期**（见 `admin-content-view-model.mjs` 的族说明）。
+ *
  * 本模块只做**形状校验与表单 → 请求体的转换**：不发请求、不碰存储、不写日志、不猜权限。
  */
 
 import { CURSOR_MAX_LENGTH, ERROR_CODES, LIMIT_MAX, isPlainObject } from './admin-contract.mjs';
 
-/** 四类资料里的两族管理面路径（相对 API 基地址）。 */
+/** 四类资料里的四族管理面路径（相对 API 基地址）。 */
 export const SOURCES_PATH = '/admin/sources';
 export const KNOWLEDGE_PATH = '/admin/knowledge';
+export const REGISTRATIONS_PATH = '/admin/registrations';
+export const RESTRICTIONS_PATH = '/admin/restrictions';
 export const CATEGORIES_PATH = '/admin/categories';
 export const AUDIT_EVENTS_PATH = '/admin/audit-events';
 
@@ -45,6 +62,16 @@ export const VISIBILITIES = Object.freeze(['private', 'published', 'hidden', 'de
 export const REVIEW_STATUSES = Object.freeze(['unverified', 'verified', 'rejected']);
 export const CATEGORY_TYPES = Object.freeze(['crop', 'species']);
 export const SOURCE_VALIDITIES = Object.freeze(['valid', 'expired', 'conflicting', 'unknown', 'withdrawn']);
+
+/** `RestrictionInput.effect`（契约内联枚举，:15189 起）：闭集三值，**不许**出现别的值。 */
+export const RESTRICTION_EFFECTS = Object.freeze(['prohibited', 'restricted', 'unknown']);
+
+/** `FormulationInput.ingredients` 的条数边界（契约 minItems 1 / maxItems 20）。 */
+export const INGREDIENTS_MIN = 1;
+export const INGREDIENTS_MAX = 20;
+
+/** `Conditions` 里可选的三项（`crop_id`／`region_code` 之外；见 :12177）。 */
+export const CONDITION_OPTIONAL_KEYS = Object.freeze(['species_id', 'growth_stage', 'planting_method', 'use_scene']);
 
 /** `Idempotency-Key` 长度边界（契约 8..128）。 */
 export const IDEMPOTENCY_KEY_MIN = 8;
@@ -263,6 +290,160 @@ export function validateKnowledgeDraft(value) {
   for (const error of content.errors) errors.push({ path: `$.content${error.path.slice(1)}`, problem: error.problem });
   for (const warning of content.warnings) warnings.push({ path: `$.content${warning.path.slice(1)}`, problem: warning.problem });
   pushExtras(value, ['id', 'revision', 'content', 'visibility', 'review_status'], '$', warnings);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `Ingredient`（:12461）：`name`／`content_text`／`unit_text` 三个 1..80 的必填字符串。 */
+export function validateIngredient(value) {
+  const errors = [];
+  const warnings = [];
+  if (!isPlainObject(value)) {
+    errors.push({ path: '$', problem: '不是对象' });
+    return { ok: false, errors, warnings };
+  }
+  for (const key of ['name', 'content_text', 'unit_text']) {
+    checkString(value[key], `$.${key}`, { min: 1, max: 80 }, errors, warnings);
+  }
+  pushExtras(value, ['name', 'content_text', 'unit_text'], '$', warnings);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `FormulationInput`（:12527）：`ingredients` 是 1..20 条 `Ingredient`。 */
+export function validateFormulationInput(value) {
+  const errors = [];
+  const warnings = [];
+  if (!isPlainObject(value)) {
+    errors.push({ path: '$', problem: '不是对象' });
+    return { ok: false, errors, warnings };
+  }
+  checkString(value.registration_number, '$.registration_number', { min: 1, max: 80 }, errors, warnings);
+  checkString(value.producer, '$.producer', { min: 1, max: 200 }, errors, warnings);
+  checkString(value.dosage_form, '$.dosage_form', { min: 1, max: 80 }, errors, warnings);
+  if (!Array.isArray(value.ingredients)) {
+    errors.push({ path: '$.ingredients', problem: '缺少数组 ingredients' });
+  } else {
+    if (value.ingredients.length < INGREDIENTS_MIN || value.ingredients.length > INGREDIENTS_MAX) {
+      errors.push({
+        path: '$.ingredients',
+        problem: `ingredients 条数 ${value.ingredients.length} 不在契约范围 ${INGREDIENTS_MIN}..${INGREDIENTS_MAX}`,
+      });
+    }
+    value.ingredients.forEach((item, index) => {
+      const checked = validateIngredient(item);
+      for (const error of checked.errors) errors.push({ path: `$.ingredients[${index}]${error.path.slice(1)}`, problem: error.problem });
+      for (const warning of checked.warnings) warnings.push({ path: `$.ingredients[${index}]${warning.path.slice(1)}`, problem: warning.problem });
+    });
+  }
+  pushExtras(value, ['registration_number', 'producer', 'dosage_form', 'ingredients'], '$', warnings);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `Conditions`（:12177）：`crop_id` + `region_code` **必填**，其余四项可选。 */
+export function validateConditions(value) {
+  const errors = [];
+  const warnings = [];
+  if (!isPlainObject(value)) {
+    errors.push({ path: '$', problem: 'conditions 必须是对象（契约不可为 null）' });
+    return { ok: false, errors, warnings };
+  }
+  checkString(value.crop_id, '$.crop_id', { min: 1, max: 80 }, errors, warnings);
+  checkString(value.region_code, '$.region_code', { min: 1, pattern: REGION_CODE_RE }, errors, warnings);
+  for (const key of CONDITION_OPTIONAL_KEYS) {
+    if (value[key] !== undefined) checkString(value[key], `$.${key}`, { min: 1, max: 80 }, errors, warnings);
+  }
+  pushExtras(value, ['crop_id', 'region_code', ...CONDITION_OPTIONAL_KEYS], '$', warnings);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * 校验 `RegistrationDraftInput`（:15112）：6 个必填字段，`valid_to` 可为 null。
+ *
+ * 与 `SourceDraftInput` 的差别是本片最容易照抄错的地方：这里**没有** `title`／`url`／`publisher`／
+ * `content_hash`／`locator`／`source_kind`／`evidence_kind`，而是 `formulation` 一个嵌套对象 +
+ * `registered_name`。
+ */
+export function validateRegistrationInput(value) {
+  const errors = [];
+  const warnings = [];
+  if (!isPlainObject(value)) {
+    errors.push({ path: '$', problem: '不是对象' });
+    return { ok: false, errors, warnings };
+  }
+  const formulation = validateFormulationInput(value.formulation);
+  for (const error of formulation.errors) errors.push({ path: `$.formulation${error.path.slice(1)}`, problem: error.problem });
+  for (const warning of formulation.warnings) warnings.push({ path: `$.formulation${warning.path.slice(1)}`, problem: warning.problem });
+  checkString(value.source_id, '$.source_id', { min: 1, uuid: true }, errors, warnings);
+  checkString(value.source_version, '$.source_version', { min: 1, max: 80 }, errors, warnings);
+  checkString(value.registered_name, '$.registered_name', { min: 1, max: 200 }, errors, warnings);
+  checkString(value.valid_from, '$.valid_from', { min: 1, dateTime: true }, errors, warnings);
+  checkString(value.valid_to, '$.valid_to', { min: 1, dateTime: true, nullable: true }, errors, warnings);
+  pushExtras(value, ['formulation', 'source_id', 'source_version', 'registered_name', 'valid_from', 'valid_to'], '$', warnings);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `RegistrationDraft`（:15158）：`{id, revision, content, review_status}`——**契约没有 visibility**。 */
+export function validateRegistrationDraft(value) {
+  const errors = [];
+  const warnings = [];
+  if (!isPlainObject(value)) {
+    errors.push({ path: '$', problem: '不是对象' });
+    return { ok: false, errors, warnings };
+  }
+  checkString(value.id, '$.id', { min: 1, uuid: true }, errors, warnings);
+  if (!Number.isInteger(value.revision) || value.revision < 1) {
+    errors.push({ path: '$.revision', problem: '缺少 >= 1 的整数 revision' });
+  }
+  checkString(value.review_status, '$.review_status', { enum: REVIEW_STATUSES }, errors, warnings);
+  const content = validateRegistrationInput(value.content);
+  for (const error of content.errors) errors.push({ path: `$.content${error.path.slice(1)}`, problem: error.problem });
+  for (const warning of content.warnings) warnings.push({ path: `$.content${warning.path.slice(1)}`, problem: warning.problem });
+  pushExtras(value, ['id', 'revision', 'content', 'review_status'], '$', warnings);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/**
+ * 校验 `RestrictionInput`（:15189）：8 个必填字段；`formulation_id`／`valid_to` 可为 null，
+ * 但 `conditions` **不可为 null**（契约 `{ $ref: Conditions }`，与 `KnowledgeDraftInput` 的
+ * `nullable: true` 不同）。
+ */
+export function validateRestrictionInput(value) {
+  const errors = [];
+  const warnings = [];
+  if (!isPlainObject(value)) {
+    errors.push({ path: '$', problem: '不是对象' });
+    return { ok: false, errors, warnings };
+  }
+  checkString(value.source_id, '$.source_id', { min: 1, uuid: true }, errors, warnings);
+  checkString(value.source_version, '$.source_version', { min: 1, max: 80 }, errors, warnings);
+  checkString(value.formulation_id, '$.formulation_id', { min: 1, uuid: true, nullable: true }, errors, warnings);
+  const conditions = validateConditions(value.conditions);
+  for (const error of conditions.errors) errors.push({ path: `$.conditions${error.path.slice(1)}`, problem: error.problem });
+  for (const warning of conditions.warnings) warnings.push({ path: `$.conditions${warning.path.slice(1)}`, problem: warning.problem });
+  checkString(value.effect, '$.effect', { enum: RESTRICTION_EFFECTS }, errors, warnings);
+  checkString(value.reason, '$.reason', { min: 1, max: 2000 }, errors, warnings);
+  checkString(value.valid_from, '$.valid_from', { min: 1, dateTime: true }, errors, warnings);
+  checkString(value.valid_to, '$.valid_to', { min: 1, dateTime: true, nullable: true }, errors, warnings);
+  pushExtras(value, ['source_id', 'source_version', 'formulation_id', 'conditions', 'effect', 'reason', 'valid_from', 'valid_to'], '$', warnings);
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** 校验 `Restriction`（:15256）：`{id, revision, content, review_status}`——**契约没有 visibility**。 */
+export function validateRestrictionDraft(value) {
+  const errors = [];
+  const warnings = [];
+  if (!isPlainObject(value)) {
+    errors.push({ path: '$', problem: '不是对象' });
+    return { ok: false, errors, warnings };
+  }
+  checkString(value.id, '$.id', { min: 1, uuid: true }, errors, warnings);
+  if (!Number.isInteger(value.revision) || value.revision < 1) {
+    errors.push({ path: '$.revision', problem: '缺少 >= 1 的整数 revision' });
+  }
+  checkString(value.review_status, '$.review_status', { enum: REVIEW_STATUSES }, errors, warnings);
+  const content = validateRestrictionInput(value.content);
+  for (const error of content.errors) errors.push({ path: `$.content${error.path.slice(1)}`, problem: error.problem });
+  for (const warning of content.warnings) warnings.push({ path: `$.content${warning.path.slice(1)}`, problem: warning.problem });
+  pushExtras(value, ['id', 'revision', 'content', 'review_status'], '$', warnings);
   return { ok: errors.length === 0, errors, warnings };
 }
 
@@ -495,6 +676,189 @@ export function buildKnowledgeInput(form) {
   if (value.conditions !== null) {
     rule(value.conditions.crop_id !== '', 'crop_id', '带条件时作物 ID 必填');
     rule(REGION_CODE_RE.test(value.conditions.region_code), 'region_code', '带条件时地区码必须是 33 开头的 6 位数字');
+  }
+  return { ok: errors.length === 0, errors, value };
+}
+
+/** 空注册资料表单（新草稿）。`ingredients` 先给一条，因为契约 `minItems: 1`。 */
+export function emptyRegistrationForm() {
+  return {
+    registered_name: '',
+    source_id: '',
+    source_version: '',
+    valid_from: '',
+    valid_to: '',
+    // `RegistrationDraftInput.formulation`（:12527）拍平到表单键上，提交时再嵌回去。
+    registration_number: '',
+    producer: '',
+    dosage_form: '',
+    ingredients: [{ name: '', content_text: '', unit_text: '' }],
+  };
+}
+
+/**
+ * 详情 → 表单初值。
+ *
+ * `RegistrationDraft.content` 是完整 `RegistrationDraftInput`，因此这里**可以完整回填**
+ * （不像 sources 读面缺 content_hash／locator）。
+ */
+export function registrationFormFromDetail(draft) {
+  const form = emptyRegistrationForm();
+  const content = isPlainObject(draft) ? draft.content : null;
+  if (!isPlainObject(content)) return form;
+  if (typeof content.registered_name === 'string') form.registered_name = content.registered_name;
+  if (typeof content.source_id === 'string') form.source_id = content.source_id;
+  if (typeof content.source_version === 'string') form.source_version = content.source_version;
+  form.valid_from = dateTimeToLocal(content.valid_from);
+  form.valid_to = dateTimeToLocal(content.valid_to);
+  const formulation = isPlainObject(content.formulation) ? content.formulation : null;
+  if (formulation !== null) {
+    if (typeof formulation.registration_number === 'string') form.registration_number = formulation.registration_number;
+    if (typeof formulation.producer === 'string') form.producer = formulation.producer;
+    if (typeof formulation.dosage_form === 'string') form.dosage_form = formulation.dosage_form;
+    if (Array.isArray(formulation.ingredients) && formulation.ingredients.length > 0) {
+      form.ingredients = formulation.ingredients.map((item) => ({
+        name: typeof item?.name === 'string' ? item.name : '',
+        content_text: typeof item?.content_text === 'string' ? item.content_text : '',
+        unit_text: typeof item?.unit_text === 'string' ? item.unit_text : '',
+      }));
+    }
+  }
+  return form;
+}
+
+/** 表单 → `RegistrationDraftInput`（:15112）。空 `valid_to` 显式转 `null`。 */
+export function buildRegistrationInput(form) {
+  const errors = [];
+  const trim = (value) => (typeof value === 'string' ? value.trim() : '');
+  const ingredientsRaw = Array.isArray(form?.ingredients) ? form.ingredients : [];
+  const ingredients = ingredientsRaw.map((item) => ({
+    name: trim(item?.name),
+    content_text: trim(item?.content_text),
+    unit_text: trim(item?.unit_text),
+  }));
+  const value = {
+    formulation: {
+      registration_number: trim(form?.registration_number),
+      producer: trim(form?.producer),
+      dosage_form: trim(form?.dosage_form),
+      ingredients,
+    },
+    source_id: trim(form?.source_id).toLowerCase(),
+    source_version: trim(form?.source_version),
+    registered_name: trim(form?.registered_name),
+    valid_from: dateTimeFromLocal(form?.valid_from),
+    valid_to: dateTimeFromLocal(form?.valid_to),
+  };
+
+  const rule = (ok, field, message) => {
+    if (!ok) errors.push({ field, message });
+  };
+  rule(value.registered_name !== '' && charLength(value.registered_name) <= 200, 'registered_name', '登记名称必填，且 ≤200 字');
+  rule(UUID_RE.test(value.source_id), 'source_id', '来源 ID 必须是 uuid（可先用「来源」子页确认）');
+  rule(value.source_version !== '' && charLength(value.source_version) <= 80, 'source_version', '来源版本必填，且 ≤80 字');
+  rule(value.formulation.registration_number !== '' && charLength(value.formulation.registration_number) <= 80, 'registration_number', '登记证号必填，且 ≤80 字');
+  rule(value.formulation.producer !== '' && charLength(value.formulation.producer) <= 200, 'producer', '生产企业必填，且 ≤200 字');
+  rule(value.formulation.dosage_form !== '' && charLength(value.formulation.dosage_form) <= 80, 'dosage_form', '剂型必填，且 ≤80 字');
+  rule(ingredients.length >= INGREDIENTS_MIN && ingredients.length <= INGREDIENTS_MAX, 'ingredients', `有效成分 ${INGREDIENTS_MIN}..${INGREDIENTS_MAX} 条（当前 ${ingredients.length} 条）`);
+  ingredients.forEach((item, index) => {
+    for (const [key, label] of [['name', '成分名'], ['content_text', '含量'], ['unit_text', '单位']]) {
+      rule(item[key] !== '' && charLength(item[key]) <= 80, `ingredients[${index}].${key}`, `第 ${index + 1} 条${label}必填，且 ≤80 字`);
+    }
+  });
+  rule(value.valid_from !== null, 'valid_from', '生效时间必填（RFC 3339）');
+  if (form?.valid_to !== undefined && typeof form.valid_to === 'string' && form.valid_to.trim() !== '' && value.valid_to === null) {
+    errors.push({ field: 'valid_to', message: '失效时间无法解析为时间' });
+  }
+  if (value.valid_to !== null && value.valid_from !== null && Date.parse(value.valid_to) <= Date.parse(value.valid_from)) {
+    errors.push({ field: 'valid_to', message: '失效时间必须晚于生效时间' });
+  }
+  return { ok: errors.length === 0, errors, value };
+}
+
+/**
+ * 空限制资料表单（新草稿）。
+ *
+ * `conditions` 在契约里**不可为 null**（:15189），所以 `crop_id`／`region_code` 恒为必填，
+ * 不像科普内容的「可选带条件」。
+ */
+export function emptyRestrictionForm() {
+  return {
+    source_id: '',
+    source_version: '',
+    formulation_id: '',
+    effect: 'unknown',
+    reason: '',
+    valid_from: '',
+    valid_to: '',
+    crop_id: '',
+    region_code: '',
+    species_id: '',
+    growth_stage: '',
+    planting_method: '',
+    use_scene: '',
+  };
+}
+
+/** 详情 → 表单初值（`Restriction.content` 是完整输入，可完整回填）。 */
+export function restrictionFormFromDetail(draft) {
+  const form = emptyRestrictionForm();
+  const content = isPlainObject(draft) ? draft.content : null;
+  if (!isPlainObject(content)) return form;
+  if (typeof content.source_id === 'string') form.source_id = content.source_id;
+  if (typeof content.source_version === 'string') form.source_version = content.source_version;
+  if (typeof content.formulation_id === 'string') form.formulation_id = content.formulation_id;
+  if (RESTRICTION_EFFECTS.includes(content.effect)) form.effect = content.effect;
+  if (typeof content.reason === 'string') form.reason = content.reason;
+  form.valid_from = dateTimeToLocal(content.valid_from);
+  form.valid_to = dateTimeToLocal(content.valid_to);
+  if (isPlainObject(content.conditions)) {
+    for (const key of ['crop_id', 'region_code', ...CONDITION_OPTIONAL_KEYS]) {
+      if (typeof content.conditions[key] === 'string') form[key] = content.conditions[key];
+    }
+  }
+  return form;
+}
+
+/** 表单 → `RestrictionInput`（:15189）。可选条件项为空时**不写这个键**（契约 additionalProperties:false 但字段可选）。 */
+export function buildRestrictionInput(form) {
+  const errors = [];
+  const trim = (value) => (typeof value === 'string' ? value.trim() : '');
+  const conditions = {
+    crop_id: trim(form?.crop_id),
+    region_code: trim(form?.region_code),
+  };
+  for (const key of CONDITION_OPTIONAL_KEYS) {
+    const raw = trim(form?.[key]);
+    if (raw !== '') conditions[key] = raw;
+  }
+  const value = {
+    source_id: trim(form?.source_id).toLowerCase(),
+    source_version: trim(form?.source_version),
+    formulation_id: trim(form?.formulation_id) === '' ? null : trim(form?.formulation_id).toLowerCase(),
+    conditions,
+    effect: form?.effect,
+    reason: typeof form?.reason === 'string' ? form.reason.trim() : '',
+    valid_from: dateTimeFromLocal(form?.valid_from),
+    valid_to: dateTimeFromLocal(form?.valid_to),
+  };
+
+  const rule = (ok, field, message) => {
+    if (!ok) errors.push({ field, message });
+  };
+  rule(UUID_RE.test(value.source_id), 'source_id', '来源 ID 必须是 uuid（可先用「来源」子页确认）');
+  rule(value.source_version !== '' && charLength(value.source_version) <= 80, 'source_version', '来源版本必填，且 ≤80 字');
+  if (value.formulation_id !== null) rule(UUID_RE.test(value.formulation_id), 'formulation_id', '制剂 ID 必须是 uuid 或留空');
+  rule(value.conditions.crop_id !== '' && charLength(value.conditions.crop_id) <= 80, 'crop_id', '作物 ID 必填（契约 Conditions 的 required）');
+  rule(REGION_CODE_RE.test(value.conditions.region_code), 'region_code', '地区码必须是 33 开头的 6 位数字');
+  rule(RESTRICTION_EFFECTS.includes(value.effect), 'effect', '限制结论必须是 prohibited／restricted／unknown');
+  rule(value.reason !== '' && charLength(value.reason) <= 2000, 'reason', '限制理由必填，且 ≤2000 字');
+  rule(value.valid_from !== null, 'valid_from', '生效时间必填（RFC 3339）');
+  if (form?.valid_to !== undefined && typeof form.valid_to === 'string' && form.valid_to.trim() !== '' && value.valid_to === null) {
+    errors.push({ field: 'valid_to', message: '失效时间无法解析为时间' });
+  }
+  if (value.valid_to !== null && value.valid_from !== null && Date.parse(value.valid_to) <= Date.parse(value.valid_from)) {
+    errors.push({ field: 'valid_to', message: '失效时间必须晚于生效时间' });
   }
   return { ok: errors.length === 0, errors, value };
 }
