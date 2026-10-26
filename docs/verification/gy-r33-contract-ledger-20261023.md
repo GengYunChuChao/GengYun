@@ -107,7 +107,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 | 「real 模式整域 503」 | 放行判据是 **store 是否持久**，不是「有没有接线」：`config.executionMode === 'real' && !communityStore.persistent`；有连接池 ⇒ PG store ⇒ real 放行；仅 real 且无持久化落点（无池/注入内存 store）才整域 503 | `services/api/src/app.ts:831-838`、`:1133` |
 | 「筛选是否下推」 | `listPosts` 的 `visibility/author/crop_id/region_code/keyset/LIMIT` 全部写进 SQL，排序 `ORDER BY created_at DESC, id DESC` | `services/api/src/community/store-pg.ts:583-627` |
 | 保留项：模型层图文审核未接入 | 仍成立：应用装配不注入真实 tms/ims 端口，`real` 下无端口即 503 | `services/api/src/moderation/provider.ts`（`resolveModerationPorts`） |
-| 保留项：资料关联默认 fail-closed | 仍成立：默认 `createUnwiredKnowledgeAvailabilityPort` | `services/api/src/community/knowledge.ts:72`；装配见 `services/api/src/app.ts:1146` |
+| 保留项：资料关联默认 fail-closed | 仍成立：默认 `createUnwiredKnowledgeAvailabilityPort` | `services/api/src/community/knowledge.ts:72`；装配见 `services/api/src/app.ts:1258` |
 | 保留项：`createPost/editPost` 图片审核细节 | 仍成立：`IMAGE_MODERATION_UNAVAILABLE`、`MEDIA_NOT_EVALUATED_BY_RULE_LAYER`、媒体元数据只传 `media_id`（→ `MODEL_PAYLOAD_INVALID`） | `services/api/src/community/service.ts:367`、`:370`、`:573`、`:200-201`；`packages/moderation/merge.mjs:539` |
 | 保留项：正式微信身份/真机/发布环境；测试≠验收 | 仍成立 | 保留原句 |
 

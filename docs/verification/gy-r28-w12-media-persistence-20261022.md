@@ -253,7 +253,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 **接线处方（另派，本片不扩权）**：每个域的 `media.ts` 加一个包本片 `MediaStore` 的适配器，例如
 `createRegistryMediaPort(store: MediaStore)` → `store.getMedia(mediaId)` 判归属/版本/`state === 'ready'`
 与目的（ASR 要 `purpose === 'voice_question'`），返回 `NOT_FOUND`/`REVISION_CONFLICT`/`OBJECT_UNAVAILABLE`；
-装配处用**已建好的** `mediaStore`（`app.ts:1243`（原记 `:1299`），同一块，不新增工厂调用），判据
+装配处用**已建好的** `mediaStore`（`app.ts:1277-1280`（2026-10-26 按符号重取，原记 `:1243`／`:1299`），同一块，不新增工厂调用），判据
 `config.executionMode === 'real' && mediaStore.persistent`；代价：四个端口的 `kind` 都是闭集
 `'substitute' | 'unwired'`，要加成员并同步各域测试。最小真库臂：在
 `tests/integration/media-persistence-pg.mjs` 增一段——real 装配 + PG 仓储 ⇒ 上传 `purpose='voice_question'`
