@@ -51,6 +51,9 @@ const ALL_SCOPES = [
   'accounts:read', 'accounts:suspend',
   'jobs:read', 'jobs:cancel',
   'flags:read', 'flags:write', 'scopes:read',
+  // `#18` S2 PR-3：授予/撤销的门。本臂要证明的是「未接线 ⇒ 503」，
+  // 不是「缺权限 ⇒ 403」⇒ 必须先把门打开，否则 403 会盖住真正要看的 503。
+  'scopes:write',
 ];
 
 /** 契约里 42 个 operationId 的 method + path（从 openapi.json 原文取）。 */
@@ -135,6 +138,13 @@ function adminRequests() {
   // S3：approve 按契约**没有**请求体；reject 只有 reason_code（闭集内的合法值）。
   rows.push({ op: 'approvePost', method: 'POST', url: `${API}/admin/posts/${UNKNOWN_UUID}/approve`, ifMatch: '"1"' });
   rows.push({ op: 'rejectPost', method: 'POST', url: `${API}/admin/posts/${UNKNOWN_UUID}/reject`, body: { reason_code: 'spam' }, ifMatch: '"1"' });
+  // `#18` S2 PR-3：管理员 scope 写面 2 条。real 默认装配（`pool === null`）下**同样必须 503**
+  // —— `admin_scopes` 的唯一写路径是迁移 0041 的两条函数，没有内存替身可走；
+  // 判据是「写权威对象存在」（`app.ts` 只在真的构造出 `createPostgresAdminScopeAuthority()` 时构造它）。
+  // 形状按契约：授予是 POST + `{scope, reason}`；撤销是 DELETE、scope 在**路径**里、body 只有 reason。
+  // 两条都带 `If-Match`（缺了会先 428，那样就测不到 503 了）。
+  rows.push({ op: 'grantAdministratorScope', method: 'POST', url: `${API}/admin/administrators/${UNKNOWN_UUID}/scopes`, body: { scope: 'audit:read', reason: 'r' }, ifMatch: '"1"' });
+  rows.push({ op: 'revokeAdministratorScope', method: 'DELETE', url: `${API}/admin/administrators/${UNKNOWN_UUID}/scopes/audit:read`, body: { reason: 'r' }, ifMatch: '"1"' });
   return rows;
 }
 
@@ -167,13 +177,13 @@ function inject(app, token, row, index) {
   });
 }
 
-test('real 默认装配反例：42 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
+test('real 默认装配反例：44 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
   const authStore = createMemoryAuthStore();
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore });
   try {
     const token = await seedAdmin(authStore);
     const rows = adminRequests();
-    assert.equal(rows.length, 42, '反例必须覆盖全部 42 个 operationId');
+    assert.equal(rows.length, 44, '反例必须覆盖全部 44 个 operationId');
 
     const succeeded = [];
     for (const [index, row] of rows.entries()) {
@@ -187,11 +197,14 @@ test('real 默认装配反例：42 条后台路由一律 fail-closed（503 PROVI
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);
 
-    // 契约面不缩水：42 条路由**仍然注册**（只是运行时一律拒绝）。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 42);
+    // 契约面不缩水：44 条路由**仍然注册**（只是运行时一律拒绝）。
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 44);
     for (const opId of ADMIN_HTTP_OPERATION_IDS) {
       const route = CONTRACT_ROUTES.get(opId);
-      const url = `${route.path}`.replaceAll('{id}', ':id').replaceAll('{key}', ':key');
+      const url = `${route.path}`
+        .replaceAll('{id}', ':id')
+        .replaceAll('{key}', ':key')
+        .replaceAll('{scope}', ':scope');
       assert.equal(app.hasRoute({ method: route.method, url: `${API}${url}` }), true, `${opId} 必须仍注册`);
     }
 
@@ -201,7 +214,7 @@ test('real 默认装配反例：42 条后台路由一律 fail-closed（503 PROVI
     assert.equal(app.adminContentService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminOpsService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminContentService.operationIds.length, 25);
-    assert.equal(app.adminOpsService.operationIds.length, 14);
+    assert.equal(app.adminOpsService.operationIds.length, 16);
   } finally {
     await app.close();
   }

@@ -97,7 +97,7 @@ test('本片字段镜像表与契约逐字相等（含 AdminJob.result 的 type:
   }
   // 本片**新增**的镜像 schema：入参 3 + 出参 8 + 分页 4 + 信封 9 = 24（S3 增 PostRejectionInput / PostReviewOutcome）。
   // 其余 4 个（ReasonInput / Meta / ExecutionMode / TargetRef）直接复用阶段 1 的全表，不重复定义。
-  assert.equal(compared, 24, '本片新增镜像的 schema 数量应恰好 24');
+  assert.equal(compared, 27, '本片新增镜像的 schema 数量应恰好 27（PR-3 增 AdminScopeGrantInput / AdminScopeWriteView / AdminScopeWriteViewEnvelope）');
 
   // 反向确认归一化没把关键约束吃掉。
   const job = normalizeContractSchema(openapi.components.schemas.AdminJob);
@@ -125,7 +125,7 @@ test('setFlag 的 key 是契约闭集枚举（依据取自契约原文，不是�
   }
 });
 
-test('恰好实现 14 个 operationId；显式不做的操作未被实现', async () => {
+test('恰好实现 16 个 operationId；显式不做的操作未被实现', async () => {
   const byId = new Map();
   for (const [path, item] of Object.entries(openapi.paths)) {
     for (const method of ['get', 'post', 'patch', 'put', 'delete']) {
@@ -134,12 +134,12 @@ test('恰好实现 14 个 operationId；显式不做的操作未被实现', asyn
     }
   }
   for (const id of OPS_IDS) assert.ok(byId.has(id), `契约里没有 ${id}`);
-  assert.equal(new Set(OPS_IDS).size, 14);
+  assert.equal(new Set(OPS_IDS).size, 16);
   const overlap = OPS_IDS.filter((id) => OPS_OUT_OF_SCOPE_IDS.includes(id));
   assert.deepEqual(overlap, [], '本片范围内外不得重叠');
 
   const { service } = createOpsHarness();
-  assert.equal(service.operationIds.length, 14);
+  assert.equal(service.operationIds.length, 16);
   assert.deepStrictEqual([...service.operationIds].sort(), [...OPS_IDS].sort());
   for (const id of OPS_IDS) assert.equal(typeof service[id], 'function', `${id} 未实现`);
   for (const id of OPS_OUT_OF_SCOPE_IDS) assert.equal(service[id], undefined, `本片不得实现 ${id}`);

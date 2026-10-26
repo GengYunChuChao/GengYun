@@ -242,18 +242,21 @@ const DAMAGE_NEEDLE = /damage|herbicide_damage|phytotox|injury/i;
 
 /** 基线实测：`operationId` 总数（`paths[*][method].operationId`）。
  *
- *  历史：120（`#619` 立钉时的实测值，已含 `#621` 的两条后台读面）→ **122**
- *  （`S3-a` 追加 `approvePost`/`rejectPost` 两条人审动作）。本钉保护的事实是「damage 类零命中」，
+ *  历史：120（`#619` 立钉时的实测值，已含 `#621` 的两条后台读面）→ 122
+ *  （`S3-a` 追加 `approvePost`/`rejectPost` 两条人审动作）→ **124**
+ *  （`#18` S2 PR-3 追加 `grantAdministratorScope` / `revokeAdministratorScope` 两条管理员授权写面）。本钉保护的事实是「damage 类零命中」，
  *  总数只用于证明「抽取没空转」，故随契约增长同步更新。 */
-const CONTRACT_OPERATION_COUNT = 122;
+const CONTRACT_OPERATION_COUNT = 124;
 
 /** 基线实测：`path` 总数（`Object.keys(doc.paths)`）。
  *
- *  历史：91（`#619` 立钉时，已含 `#621` 的两条读面 path）→ **93**
- *  （`S3-a` 追加 `/admin/posts/{id}/approve` 与 `/admin/posts/{id}/reject` 两条 path）。 */
-const CONTRACT_PATH_COUNT = 93;
+ *  历史：91（`#619` 立钉时，已含 `#621` 的两条读面 path）→ 93
+ *  （`S3-a` 追加 `/admin/posts/{id}/approve` 与 `/admin/posts/{id}/reject` 两条 path）→ **94**
+ *  （`#18` S2 PR-3 的授予面复用既有 `/admin/administrators/{id}/scopes` 这个 path **键**，
+ *  只有撤销面新增了 `/admin/administrators/{id}/scopes/{scope}` 一条 ⇒ 键数 +1、operation 数 +2）。 */
+const CONTRACT_PATH_COUNT = 94;
 
-/** 基线实测：`operationId` 里含 `admin` 的**全部** 19 条（逐条钉住，⛔ 不是 `>=`）。 */
+/** 基线实测：`operationId` 里含 `admin` 的**全部** 21 条（逐条钉住，⛔ 不是 `>=`）。 */
 const ADMIN_OPERATION_IDS = [
   'cancelAdminJob',
   'getAdminKnowledge',
@@ -262,6 +265,7 @@ const ADMIN_OPERATION_IDS = [
   'getAdminRestriction',
   'getAdminSession',
   'getAdminSource',
+  'grantAdministratorScope',
   'listAdminCategories',
   'listAdminJobs',
   'listAdminKnowledge',
@@ -274,6 +278,7 @@ const ADMIN_OPERATION_IDS = [
   'listAdministrators',
   'loginAdmin',
   'logoutAdmin',
+  'revokeAdministratorScope',
 ];
 
 /**
@@ -310,7 +315,7 @@ test('钉 1 · 契约零 damage operation：operationId 与 path 都不含 damag
       + PIN_HINT,
   );
 
-  // ③ admin 子集逐条相等（`deepEqual`：19 条，多一条/少一条/改名都红）。
+  // ③ admin 子集逐条相等（`deepEqual`：21 条，多一条/少一条/改名都红）。
   assert.deepEqual(
     operationIds.filter((id) => /admin/i.test(id)).sort(),
     ADMIN_OPERATION_IDS,

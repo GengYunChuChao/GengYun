@@ -10378,6 +10378,293 @@
         "x-scope": "scopes:read",
         "x-version-required": false,
         "x-task": "GY-I01"
+      },
+      "post": {
+        "operationId": "grantAdministratorScope",
+        "summary": "grantAdministratorScope",
+        "description": "授予某后台管理员**一个** scope（裁定③：POST /admin/administrators/{id}/scopes，单条写入，⛔ 不做整集合覆盖 —— 请求体里没提到的 scope 一律不动）。id 是 admin_accounts.id，⛔ 不是 users.id（/admin/accounts 读的是终端用户，两者同名不同源）。门是 scopes:write，⛔ 不是 accounts:read。CAS：If-Match 必填（缺 428 REVISION_REQUIRED、格式非法 400、不匹配 409 REVISION_CONFLICT），比对的是 admin_accounts.revision；幂等：Idempotency-Key 必填，同键同体重放不再产生第二次变更、不再写第二条审计。错误：只允许授予操作者**自己当前有效持有**的 scope（向另一管理员委派元权限同样受此约束），否则 403 SCOPE_DENIED；自授 ⇒ 403 SELF_SCOPE_GRANT_DENIED（retryable:false）；目标不存在 ⇒ 404 NOT_FOUND；目标非 active ⇒ 409 OBJECT_UNAVAILABLE。成功授予（含对已撤销行的重新授予）真实写 granted_by/granted_at，变更与审计同一事务提交。未接线（real 无库池 / stub 无持久写端口）⇒ 503 PROVIDER_UNAVAILABLE，⛔ 不返回成功封套。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "admin_accounts.id（后台管理员账号 id，不是 users.id）"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；changed=false 表示幂等重放（未发生第二次状态变化、未写第二条审计）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminScopeWriteViewEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "description": "SCOPE_DENIED（缺 scopes:write，或所授 scope 不在操作者当前有效持有内）、SELF_SCOPE_GRANT_DENIED（自授；retryable:false）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "仅可重试409/429/503返回"
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "description": "REVISION_CONFLICT（If-Match 与 admin_accounts.revision 不符）、OBJECT_UNAVAILABLE（目标管理员非 active）、LAST_SCOPE_MANAGER（仅撤销面可能出现，授予面不产生该码）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "仅可重试409/429/503返回"
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "scopes:write",
+        "x-version-required": true,
+        "x-task": "GY-I01",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminScopeGrantInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/administrators/{id}/scopes/{scope}": {
+      "delete": {
+        "operationId": "revokeAdministratorScope",
+        "summary": "revokeAdministratorScope",
+        "description": "撤销某后台管理员的**一个** scope（裁定③：DELETE /admin/administrators/{id}/scopes/{scope}，被撤的 scope **在路径里**，⛔ 不是查询参数 —— 撤谁、撤哪个权限都必须能被访问日志与审计逐字复现）。id 是 admin_accounts.id，⛔ 不是 users.id。门是 scopes:write。**允许自撤**（那是降权，裁定④）；自撤同样受最后授权者守卫约束。CAS/幂等口径与授予面逐条相同：If-Match 必填（缺 428、非法 400、不匹配 409），Idempotency-Key 必填。撤销写 revoked_at；对「已撤销 / 本就没授过」的行是幂等空操作（changed=false，不写审计、不推进 revision）。硬拦：若被撤的是 scopes:write 且撤销后有效持有者归零 ⇒ 409 LAST_SCOPE_MANAGER（retryable:false，库层在事务级 advisory 锁内核验，不是应用层先数后写）。错误：缺 scopes:write ⇒ 403 SCOPE_DENIED；目标不存在 ⇒ 404 NOT_FOUND；目标非 active ⇒ 409 OBJECT_UNAVAILABLE。未接线（real 无库池 / stub 无持久写端口）⇒ 503 PROVIDER_UNAVAILABLE，⛔ 不返回成功封套。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "admin_accounts.id（后台管理员账号 id，不是 users.id）"
+          },
+          {
+            "name": "scope",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/AdminScope"
+            },
+            "description": "要撤销的后台 scope（闭集 AdminScope 成员）；空/闭集外 ⇒ 400 INVALID_REQUEST"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；changed=false 表示幂等空操作（该行本就没有有效授权）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminScopeWriteViewEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "description": "SCOPE_DENIED（缺 scopes:write）。撤销**不**产生 SELF_SCOPE_GRANT_DENIED：裁定④允许自撤，自撤只受最后授权者守卫约束",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "仅可重试409/429/503返回"
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "description": "REVISION_CONFLICT（If-Match 与 admin_accounts.revision 不符）、OBJECT_UNAVAILABLE（目标管理员非 active）、LAST_SCOPE_MANAGER（撤销会使 scopes:write 有效持有者归零；retryable:false）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "Retry-After": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "description": "仅可重试409/429/503返回"
+              }
+            }
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "428": {
+            "$ref": "#/components/responses/Error428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "scopes:write",
+        "x-version-required": true,
+        "x-task": "GY-I01",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReasonInput"
+              }
+            }
+          }
+        }
       }
     },
     "/admin/jobs": {
@@ -12031,7 +12318,9 @@
           "PROVIDER_QUOTA_EXCEEDED",
           "PROVIDER_UNAVAILABLE",
           "PROVIDER_OUTCOME_UNKNOWN",
-          "PROVIDER_TIMEOUT"
+          "PROVIDER_TIMEOUT",
+          "SELF_SCOPE_GRANT_DENIED",
+          "LAST_SCOPE_MANAGER"
         ]
       },
       "Meta": {
@@ -17618,6 +17907,72 @@
           "meta"
         ]
       },
+      "AdminScopeGrantInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/AdminScope"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "scope",
+          "reason"
+        ],
+        "description": "授予请求体：**单个** scope + 原因（裁定③「不做整集合覆盖」）。scope 必须在 AdminScope 闭集内（库层 CHECK 兜底，应用层先判 400）；reason 落审计 before/after 的 jsonb，⛔ 不新增自由文本列。"
+      },
+      "AdminScopeWriteView": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminScope"
+            },
+            "maxItems": 20
+          },
+          "changed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "scopes",
+          "changed"
+        ],
+        "description": "授予/撤销后的管理端快照：id 是被改的 admin_accounts.id，revision 是变更后的admin_accounts.revision（可直接拿去做下一次 If-Match）、scopes 是变更后的**有效**闭集成员（去重 + 码元序，与只读权限面 GET /admin/administrators/{id}/scopes 同口径）、changed=false 表示幂等重放（没有发生第二次状态变化，也没有第二条审计）。⛔ 不含 granted_by/granted_at：那是授权链（审计面的职责），且运行时角色对该表只有三列 SELECT，写进契约就是无法兑现的承诺。"
+      },
+      "AdminScopeWriteViewEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/AdminScopeWriteView"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
       "AdminAccountViewPage": {
         "type": "object",
         "additionalProperties": false,
@@ -18108,7 +18463,7 @@
         }
       },
       "Error403": {
-        "description": "SCOPE_DENIED, CONSENT_REQUIRED, ACCOUNT_INACTIVE",
+        "description": "SCOPE_DENIED, CONSENT_REQUIRED, ACCOUNT_INACTIVE, SELF_SCOPE_GRANT_DENIED",
         "content": {
           "application/json": {
             "schema": {
@@ -18146,7 +18501,7 @@
         }
       },
       "Error409": {
-        "description": "REVISION_CONFLICT, IDEMPOTENCY_CONFLICT, OBJECT_UNAVAILABLE, REQUEST_IN_PROGRESS",
+        "description": "REVISION_CONFLICT, IDEMPOTENCY_CONFLICT, OBJECT_UNAVAILABLE, REQUEST_IN_PROGRESS, LAST_SCOPE_MANAGER",
         "content": {
           "application/json": {
             "schema": {
@@ -18312,7 +18667,8 @@
     "403": [
       "SCOPE_DENIED",
       "CONSENT_REQUIRED",
-      "ACCOUNT_INACTIVE"
+      "ACCOUNT_INACTIVE",
+      "SELF_SCOPE_GRANT_DENIED"
     ],
     "404": [
       "NOT_FOUND"
@@ -18321,7 +18677,8 @@
       "REVISION_CONFLICT",
       "IDEMPOTENCY_CONFLICT",
       "OBJECT_UNAVAILABLE",
-      "REQUEST_IN_PROGRESS"
+      "REQUEST_IN_PROGRESS",
+      "LAST_SCOPE_MANAGER"
     ],
     "413": [
       "MEDIA_TOO_LARGE"

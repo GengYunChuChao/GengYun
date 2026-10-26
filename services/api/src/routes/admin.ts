@@ -1,7 +1,7 @@
 /**
  * GY-I18 后台资料／运营／开关 · HTTP 路由（阶段 2：产品装配）。
  *
- * 覆盖契约 `packages/contracts/openapi.json` 里 **40 个 operationId**：
+ * 覆盖契约 `packages/contracts/openapi.json` 里 **44 个 operationId**：
  * - 阶段 1（已合并 #96）25 个：四类资料 × 6（list/create/get/edit/publish/withdraw）
  *   + `listAuditEvents`；
  * - 阶段 1b（已合并 #101）9 个：`listAdminCategories`/`editCategory`、
@@ -9,8 +9,8 @@
  *   `listFlags`/`setFlag`、`hidePost`；
  * - R33 1 个：`listFlagAuditEvents`（迁移 0027 的只读函数，scope `flags:read`）；
  * - R34 1 个：`listAuditLogs`（迁移 0033 的只读函数，scope `audit:read`）；
- * - R37 `#18` S2 PR-2 2 个：`listAdministrators` / `listAdministratorScopes`
- *   （管理员目录与权限只读展示，scope `scopes:read`；库层闭集由迁移 0041 保证）；
+ * - R37 `#18` S2 PR-2 2 个：`listAdministrators` / `listAdministratorScopes`（只读，`scopes:read`）+ PR-3 2 个：
+ *   `grantAdministratorScope` / `revokeAdministratorScope`（写面，`scopes:write`；唯一写路径＝迁移 0041 两函数）；
  * - R59 2 个：`listAdminPosts` / `getAdminPost`（后台帖子读面，scope `sources:read`；
  *   管理视角候选集含 `hidden`/`deleted`，见 `admin/posts/service.ts` 文件头）。
  *
@@ -86,6 +86,25 @@ const flagKeyParams = {
   properties: { key: { type: 'string', minLength: 1, maxLength: 80 } },
 } as const;
 
+/**
+ * `DELETE /admin/administrators/:id/scopes/:scope` 的路径参数：
+ * `id` 按契约是 uuid；`scope` 按契约是 `AdminScope`（`minLength:1, maxLength:80` 的字符串）。
+ *
+ * 为什么 `scope` **不**在路由层按闭集枚举拦下（与 `setFlag` 的 `:key` 同一条理由）：
+ * 闭集判定在服务层做，那里能返回 `details[].field='scope'`、`code='enum'` 与逐项闭集文案；
+ * 路由层先 400 只会给出一个没有字段定位的形状错误。闭集本身仍有两道硬拦：应用层
+ * `isAdminScope()` 与库层 CHECK（迁移 0041 的 `admin_scopes_scope_closed_set`）。
+ */
+const administratorScopeParams = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['id', 'scope'],
+  properties: {
+    id: { type: 'string', format: 'uuid' },
+    scope: { type: 'string', minLength: 1, maxLength: 80 },
+  },
+} as const;
+
 /** 取请求头原值（可能是重复头的数组）：**形态由服务层判定**，本层不做第二次判定。 */
 function rawHeader(request: FastifyRequest, name: string): string | string[] | undefined {
   return request.headers[name];
@@ -157,7 +176,7 @@ export interface AdminDomainServices {
 }
 
 /**
- * 注册 40 个后台路由。
+ * 注册 44 个后台路由。
  *
  * 与 `registerSynthesisRoutes` / `registerRecognitionRoutes` 同形：
  * **只接收已装配好的服务**，因此本文件无法构造提供者、存储或端口——
@@ -367,6 +386,44 @@ export function registerAdminRoutes(
   );
 
   // -------------------------------------------------------------------------
+  // `#18` S2 PR-3：管理员 scope 的**写面**（2 个 operationId，门 `scopes:write`）
+  //
+  // 裁定③的形态逐字落地：授予 `POST /admin/administrators/{id}/scopes`（**单条**写入、
+  // ⛔ 不做整集合覆盖），撤销 `DELETE /admin/administrators/{id}/scopes/{scope}`
+  // （**scope 在路径里**，⛔ 不是查询参数 —— 撤谁、撤哪个权限必须能被访问日志与审计逐字复现）。
+  // 两条都挂在 `/admin/administrators` 名下：目标 id 只能是 `admin_accounts.id`，
+  // 裁定③明令复用 `/admin/accounts` 名下的 `users.id`。⛔ 本片**不**新增按名映射的路由。
+  //
+  // `If-Match` / `Idempotency-Key` **原样**交给服务层判定（缺 If-Match ⇒ 428、非法 ⇒ 400、
+  // 不匹配 ⇒ 409；缺 Idempotency-Key ⇒ 400 `IDEMPOTENCY_KEY_REQUIRED`），本层不重判。
+  // `:scope` 只收 `string 1..80`：闭集判定归服务层（那里能给出 `details[].field='scope'` 与
+  // 逐项闭集文案），⛔ 不让路由层先 400 掉一个其实是"闭集外但有形状"的取值。
+  // 未接线（real 无库池 / stub 无持久端口）⇒ 服务层 503，本层不改写、不返回成功封套。
+  // -------------------------------------------------------------------------
+  const grantAdministratorScope = methodOf(services.ops, 'grantAdministratorScope');
+  const revokeAdministratorScope = methodOf(services.ops, 'revokeAdministratorScope');
+  app.post(
+    `${API_PREFIX}/admin/administrators/:id/scopes`,
+    {
+      preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.grantAdministratorScope)],
+      schema: { params: uuidIdParams },
+    },
+    async (request, reply) =>
+      send(reply, await grantAdministratorScope(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.delete(
+    `${API_PREFIX}/admin/administrators/:id/scopes/:scope`,
+    {
+      preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.revokeAdministratorScope)],
+      schema: { params: administratorScopeParams },
+    },
+    async (request, reply) => {
+      const params = request.params as { id: string; scope: string };
+      return send(reply, await revokeAdministratorScope(callerOf(request), params.id, params.scope, request.body));
+    },
+  );
+
+  // -------------------------------------------------------------------------
   // 阶段 1b：平台级作业（2 个 operationId）
   // **默认未接线 ⇒ 读与写都 503 `PROVIDER_UNAVAILABLE`（不返回空页）**：
   // 空页会被读成「平台当前没有作业」，那是无法确认的结论。该判定在服务层，
@@ -510,6 +567,9 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   // R37 `#18` S2 PR-2：管理员目录与权限只读展示（门 `scopes:read`）。
   'listAdministrators',
   'listAdministratorScopes',
+  // R37 `#18` S2 PR-3：管理员 scope 的写面（门 `scopes:write`）。
+  'grantAdministratorScope',
+  'revokeAdministratorScope',
   // R34：库内审计日志只读查询（迁移 0033 的 `public.list_admin_audit_logs()`）。
   'listAuditLogs',
   // R59：后台帖子读面（管理视角，`hidden`/`deleted` 也在候选集里）。

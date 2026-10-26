@@ -42,12 +42,17 @@ const ACCESS_MARKERS = Object.freeze(['public', 'receipt']);
 /**
  * 已声明、但**暂无 operation 引用**的后台权限。
  *
- * `scopes:write`（管理授权写面）属 PR-3：本片明令不得有写端点，`operations.json` 里自然没有
- * 引用它的 operation；但库层 CHECK（迁移 0041 的 `admin_scopes_scope_closed_set`）与契约
- * `SessionInfo.scopes.items.enum` 都已含它。若这里不补，③ 的「代码闭集」会缺一项而与契约对不上。
+ * **本片（`#18` S2 PR-3）起为空**：PR-2 当时 `scopes:write` 属 PR-3、明令不得有写端点，
+ * `operations.json` 里自然没有引用它的 operation，所以这里补了一项，好让 ③ 的「代码闭集」
+ * 与契约 enum 对得上。PR-3 落地了 `grantAdministratorScope` / `revokeAdministratorScope`
+ * 两条写面 ⇒ `operations.json` 现在**真的**引用了 `scopes:write` ⇒ 这一项必须清空，
+ * 否则 ③ 就变成「用一份手写的补丁把两边的差抹平」，那正是这条断言本该抓到的东西。
+ *
  * 判据不是本测试自造集合，而是应用层唯一的闭集常量 `ADMIN_SCOPES`（`admin/scopes.ts`）。
+ * ⛔ 保留这个常量（而不是删掉）是为了让下一种"只声明、无端点"的权限仍有唯一落点，
+ * 并由 ③b 断言它**必须为空**——空不是"忘了填"，而是"今天对得上"。
  */
-const DECLARED_ONLY_SCOPES = Object.freeze(['scopes:write']);
+const DECLARED_ONLY_SCOPES = Object.freeze([]);
 
 const SESSION_INFO_KEYS = ['audience', 'expires_at', 'revision', 'scopes'];
 
@@ -271,9 +276,11 @@ test('③ 闭集三方一致：代码实参 ↔ 契约 enum ↔ operations.json 
 
   assert.equal(codeClosedSet.length, 14, '闭集应为 14 项（13 个后台权限 + user）');
   assert.deepEqual(contract, codeClosedSet, '契约 enum 必须与代码闭集逐项一致');
-  // operations.json 只收「有 operation 引用」的 scope：`scopes:write` 属 PR-3 写面，本片不得有端点，
-  // 故补上已声明的写面权限后再对拍（补的是声明，不是放宽断言）。
+  // operations.json 收「有 operation 引用」的 scope。PR-3 起 \`scopes:write\` 已被两条写面引用
+  // ⇒ \`DECLARED_ONLY_SCOPES\` 必须为空，否则下面的对拍就变成「用补丁抹平差集」。
+  assert.deepEqual([...DECLARED_ONLY_SCOPES], [], '已声明但无端点的 scope 必须为空：今天每个闭集成员都有 operation');
   assert.deepEqual(sorted([...manifest, ...DECLARED_ONLY_SCOPES]), codeClosedSet, 'operations.json 的 scope 闭集必须与代码闭集逐项一致');
+  assert.ok(manifest.includes('scopes:write'), 'operations.json 必须真的引用 scopes:write（PR-3 写面），而不是靠补丁');
   assert.equal(new Set(contract).size, contract.length, '契约闭集不得重复');
   assert.deepEqual([...contract].sort(), contract, '契约闭集须按码元序（保证响应顺序稳定）');
   for (const marker of ACCESS_MARKERS) {

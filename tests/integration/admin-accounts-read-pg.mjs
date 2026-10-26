@@ -26,6 +26,13 @@
 //       正文不含 wechat/cipher/lookup/auth_epoch/deletion_generation、游标翻页正确；
 //       负控制：只有 `accounts:suspend` 的管理员 ⇒ 403 `SCOPE_DENIED`；无令牌 ⇒ 401；
 //   [S] `90-assert-least-privilege.sql` 的整体 verdict（含本片新增的函数级/列级断言）。
+//   [W] `#18` S2 PR-3 管理员 scope **写面**（同一脚本，追加在最后）：授予后属主连接回读
+//       `granted_by`/`granted_at` 真的被写；幂等重放不写第二条审计；撤销写 `revoked_at` 且保留
+//       `granted_by`；**并发两会话互撤 `scopes:write` 恰好一方成功**（`pg_advisory_xact_lock`
+//       真的在起作用，事后有效持有者仍为 1）；**最后授权者自撤 ⇒ 409 `LAST_SCOPE_MANAGER`**
+//       且整笔回滚（`revoked_at` 仍为 NULL）；缺 `scopes:write` ⇒ 403、自授 ⇒ 403
+//       `SELF_SCOPE_GRANT_DENIED`。⛔ 为什么追加在这里而不是新建文件：
+//       `.github/workflows/real-pg-integration.yml` 是**逐文件列举**，新文件 CI 跑不到。
 //
 // 未取得（如实登记，见证据页与交接）：真机、后台 UI 联调、超 1 万账号规模、HTTP 层之外的审计。
 
@@ -200,6 +207,10 @@ async function provisionRoles() {
     { name: 'gy-i19-deletion-grant', grants: 1 },
     { name: 'gy-i22-suspend-grant', grants: 3 },
     { name: 'gy-i18-accounts-read-grant', grants: 1 },
+    // `#18` S2 PR-3：管理员 scope 写面的两条函数 EXECUTE（迁移 0041 的
+    // `grant_admin_scope` / `revoke_admin_scope`）。原样执行出厂区域，不复制粘贴 SQL ——
+    // 授权被删／被改宽就变红。
+    { name: 'gy-r37-s2-scope-grant', grants: 2 },
   ];
   for (const { name, grants } of REGIONS) {
     const matched = deploySql('20-login-roles.sql').match(
@@ -409,6 +420,224 @@ async function httpEvidence() {
   await runtimePool.end();
 }
 
+// ---------------------------------------------------------------------------
+// [W] `#18` S2 PR-3 · 管理员 scope 的**写面**（授予 / 撤销 / 最后授权者 / 并发）
+//
+// 为什么这些读数只能真库给：`granted_by` / `granted_at` / `revoked_at` 三列运行时角色**读不到**
+// （只有 `admin_id/scope/revoked_at` 三列 SELECT），所以"真的写了"必须用**属主连接**回读；
+// 「最后授权者」守卫在函数内的 `pg_advisory_xact_lock` 之后按当前行计数，应用层怎么数都重现不了；
+// 并发两会话互撤时"只有一方成功"更是只有真库的事务隔离 + advisory 锁能证明。
+//
+// 为什么不新建一个 `tests/integration/*.mjs`：`.github/workflows/real-pg-integration.yml`
+// 是**逐文件列举**跑 `tests/integration/*.mjs`，新文件 CI 根本不会执行（跑不到的臂 = 没验证）。
+// 因此本片把写面读数**追加进这个已接线的文件**（它本来就有真实运行时角色 + 真 HTTP 装配）。
+// ---------------------------------------------------------------------------
+async function seedScopeAdmin(loginName, scopes) {
+  const adminId = await seedStore.createAdmin({
+    loginName,
+    credentialHash: 'synthetic-not-a-real-credential-hash',
+    scopes,
+  });
+  const token = mintOpaqueToken();
+  await seedStore.createSession({
+    userId: adminId,
+    tokenHashHex: hashToken(token),
+    authEpoch: 1,
+    expiresAt: new Date(Date.now() + 3600 * 1000),
+    audience: 'admin',
+  });
+  return { adminId, token };
+}
+
+async function scopeWriteEvidence() {
+  if (runtimeUrl === null) {
+    unread('[W] 管理员 scope 写面', '未提供运行时角色 URL（argv[3]），无法以最小权限跑真实 HTTP');
+    return;
+  }
+  // 一次性集群可反复跑：按 FK 安全序清空身份/授权/审计面（只清本脚本自己要造的夹具）。
+  for (const table of ['public.admin_sessions', 'public.admin_scopes', 'public.admin_audit_events', 'public.admin_accounts']) {
+    await owner.query(`DELETE FROM ${table}`);
+  }
+
+  // actor 必须**自己持有**要授予的 scope（库层 G0011），所以它同时持 audit:read。
+  const actor = await seedScopeAdmin('gy-scope-actor', ['scopes:write', 'scopes:read', 'audit:read']);
+  const target = await seedScopeAdmin('gy-scope-target', ['scopes:write', 'accounts:read']);
+
+  const revisionOf = async (id) => Number((await one('SELECT revision FROM public.admin_accounts WHERE id = $1::uuid', [id])).revision);
+  const holders = async () => Number((await one(
+    `SELECT count(*)::int AS c
+       FROM public.admin_scopes AS s
+       JOIN public.admin_accounts AS a ON a.id = s.admin_id
+      WHERE s.scope = 'scopes:write' AND s.revoked_at IS NULL AND a.state = 'active'`,
+  )).c);
+
+  const runtimePool = createPool(runtimeUrl.href);
+  assert.ok(runtimePool !== null, '运行时 pool 必须建出来');
+  const { app, call } = await launchApp(runtimePool);
+  registeredApps.push(app);
+
+  const write = (token, body, revision, key) => ({
+    token,
+    body,
+    headers: { 'idempotency-key': key, 'if-match': `"${revision}"` },
+  });
+
+  // ── [W1] 授予：granted_by / granted_at 真的落库 ─────────────────────────
+  // `rev1` 只取一次：幂等请求摘要**包含 If-Match**（`idempotencyRequestHash`），
+  // 真正的重放必须原样重发同一个请求（同一个 `If-Match`），否则会正确地撞 `IDEMPOTENCY_CONFLICT`。
+  const rev1 = await revisionOf(target.adminId);
+  const grant = await call(
+    `${API}/admin/administrators/${target.adminId}/scopes`,
+    {
+      method: 'POST',
+      ...write(actor.token, { scope: 'audit:read', reason: '集成臂：交接授予审计读' }, rev1, 'gy-w-grant-0001'),
+    },
+  );
+  assert.equal(grant.status, 200, `授予必须 200，实际 ${grant.status} ${grant.text.slice(0, 300)}`);
+  assert.equal(grant.body.data.changed, true, '第一次授予必须 changed=true');
+  assert.deepEqual(grant.body.data.scopes, ['accounts:read', 'audit:read', 'scopes:write'], '响应里的有效集合必须含新授的 audit:read');
+  const grantedRow = await one(
+    "SELECT granted_by, granted_at, revoked_at FROM public.admin_scopes WHERE admin_id = $1::uuid AND scope = 'audit:read'",
+    [target.adminId],
+  );
+  assert.equal(grantedRow.granted_by, actor.adminId, 'granted_by 必须是被授予者的操作者 id（⛔ 不是 NULL、也不是被授者自己）');
+  assert.ok(grantedRow.granted_at instanceof Date, 'granted_at 必须真的写进去');
+  assert.equal(grantedRow.revoked_at, null, '新授行必须是有效态（revoked_at IS NULL）');
+  note(`[W1] 授予 ⇒ 200，changed=true；granted_by=${grantedRow.granted_by}，granted_at=${grantedRow.granted_at.toISOString()}（属主连接回读）`);
+
+  // 幂等重放：同键**同体同 If-Match** ⇒ 命中已定型结果、不再写第二条审计、不动 revision。
+  const replay = await call(
+    `${API}/admin/administrators/${target.adminId}/scopes`,
+    {
+      method: 'POST',
+      ...write(actor.token, { scope: 'audit:read', reason: '集成臂：交接授予审计读' }, rev1, 'gy-w-grant-0001'),
+    },
+  );
+  assert.equal(replay.status, 200, replay.text.slice(0, 200));
+  assert.equal(replay.body.data.changed, true, '幂等重放回放的是第一次的定型结果（changed=true）');
+  const auditsAfterReplay = Number((await one("SELECT count(*)::int AS c FROM public.admin_audit_events WHERE action = 'admin_scope.grant'")).c);
+  assert.equal(auditsAfterReplay, 1, `幂等重放不得写第二条审计（现场 ${auditsAfterReplay} 条）`);
+  note(`[W1b] 幂等重放 ⇒ 200（回放定型结果）；admin_scope.grant 审计行仍恰好 1 条`);
+
+  // ── [W2] 撤销：revoked_at 真的落库 ──────────────────────────────────────
+  const revoke = await call(
+    `${API}/admin/administrators/${target.adminId}/scopes/audit:read`,
+    {
+      method: 'DELETE',
+      ...write(actor.token, { reason: '集成臂：交接收回审计读' }, await revisionOf(target.adminId), 'gy-w-revoke-0001'),
+    },
+  );
+  assert.equal(revoke.status, 200, `撤销必须 200，实际 ${revoke.status} ${revoke.text.slice(0, 300)}`);
+  assert.equal(revoke.body.data.changed, true);
+  assert.deepEqual(revoke.body.data.scopes, ['accounts:read', 'scopes:write'], '撤销后有效集合不得再含 audit:read');
+  const revokedRow = await one(
+    "SELECT revoked_at, granted_by FROM public.admin_scopes WHERE admin_id = $1::uuid AND scope = 'audit:read'",
+    [target.adminId],
+  );
+  assert.ok(revokedRow.revoked_at instanceof Date, 'revoked_at 必须真的写进去');
+  assert.equal(revokedRow.granted_by, actor.adminId, '撤销是 UPDATE，不得抹掉 granted_by（授权链要留痕）');
+  note(`[W2] 撤销（scope 在路径里）⇒ 200，changed=true；revoked_at=${revokedRow.revoked_at.toISOString()}，granted_by 保留`);
+
+  // ── [W3] 并发：两会话同时互撤 scopes:write ⇒ 恰好一方成功 ────────────────
+  // 起手 2 个有效持有者（actor / target），两条请求各撤掉对方。
+  // 没有 advisory 锁时两边都还看得见对方的有效行 ⇒ 都提交 ⇒ 元权限归零（系统永久失去授权维护能力）。
+  // 有锁时按 scope 串行化：先提交的那条留下 1 个持有者；后到的那条要么因"归零"被 G0009 拒
+  // （409 LAST_SCOPE_MANAGER），要么因自己刚被撤掉 scopes:write 而在第 ③ 步被 G0010 拒
+  // （403 SCOPE_DENIED）—— 两种都是**拒绝**，共同性质是"恰好一方成功"。
+  const actorRevBefore = await revisionOf(actor.adminId);
+  const targetRevBefore = await revisionOf(target.adminId);
+  const [raceA, raceB] = await Promise.all([
+    call(
+      `${API}/admin/administrators/${target.adminId}/scopes/scopes:write`,
+      { method: 'DELETE', ...write(actor.token, { reason: '并发臂 A：撤对方' }, targetRevBefore, 'gy-w-race-a-0001') },
+    ),
+    call(
+      `${API}/admin/administrators/${actor.adminId}/scopes/scopes:write`,
+      { method: 'DELETE', ...write(target.token, { reason: '并发臂 B：撤对方' }, actorRevBefore, 'gy-w-race-b-0001') },
+    ),
+  ]);
+  const statuses = [raceA.status, raceB.status];
+  assert.equal(statuses.filter((status) => status === 200).length, 1,
+    `并发互撤必须恰好一方 200（现场 ${statuses.join(' / ')}）`);
+  const winners = [raceA, raceB].filter((r) => r.status === 200);
+  const losers = [raceA, raceB].filter((r) => r.status !== 200);
+  assert.equal(winners.length, 1, `并发互撤必须恰好一方成功（现场 ${raceA.status} / ${raceB.status}）`);
+  assert.equal(losers.length, 1);
+  assert.ok([403, 409].includes(losers[0].status), `失败方的状态必须是 403/409（现场 ${losers[0].status} ${losers[0].text.slice(0, 200)}）`);
+  assert.ok(
+    ['LAST_SCOPE_MANAGER', 'SCOPE_DENIED'].includes(losers[0].body?.error?.code),
+    `失败方的错误码必须是 LAST_SCOPE_MANAGER 或 SCOPE_DENIED（现场 ${losers[0].body?.error?.code}）`,
+  );
+  assert.equal(losers[0].body.error.retryable, false, '两种拒绝都不可重试');
+  assert.equal(await holders(), 1, '并发之后必须仍**恰好 1 个**有效 scopes:write 持有者（advisory 锁真的在起作用）');
+  note(`[W3] 并发两会话互撤 ⇒ ${raceA.status} / ${raceB.status}，成功 1 方、拒绝 1 方（${losers[0].body.error.code}），有效持有者仍为 1`);
+
+  // ── [W4] 最后授权者：唯一持有者自撤 ⇒ 409 LAST_SCOPE_MANAGER（确定性） ──
+  const survivors = [
+    { who: 'actor', admin: actor },
+    { who: 'target', admin: target },
+  ];
+  const survivor = [];
+  for (const item of survivors) {
+    const held = await one(
+      "SELECT 1 AS v FROM public.admin_scopes WHERE admin_id = $1::uuid AND scope = 'scopes:write' AND revoked_at IS NULL",
+      [item.admin.adminId],
+    );
+    if (held !== undefined) survivor.push(item);
+  }
+  assert.equal(survivor.length, 1, `并发后必须恰好 1 个持有者（现场 ${survivor.map((s) => s.who).join(',')}）`);
+  const last = survivor[0];
+  const beforeLast = await one(
+    "SELECT revoked_at FROM public.admin_scopes WHERE admin_id = $1::uuid AND scope = 'scopes:write'",
+    [last.admin.adminId],
+  );
+  assert.equal(beforeLast.revoked_at, null, '前置：自撤前该行必须仍有效');
+  const lastRes = await call(
+    `${API}/admin/administrators/${last.admin.adminId}/scopes/scopes:write`,
+    {
+      method: 'DELETE',
+      ...write(last.admin.token, { reason: '集成臂：最后授权者自撤' }, await revisionOf(last.admin.adminId), 'gy-w-last-0001'),
+    },
+  );
+  assert.equal(lastRes.status, 409, `最后授权者自撤必须 409，实际 ${lastRes.status} ${lastRes.text.slice(0, 300)}`);
+  assert.equal(lastRes.body.error.code, 'LAST_SCOPE_MANAGER', `错误码必须是 LAST_SCOPE_MANAGER，实际 ${lastRes.body.error.code}`);
+  assert.equal(lastRes.body.error.retryable, false, '裁定⑥：两个新码都必须 retryable:false');
+  const afterLast = await one(
+    "SELECT revoked_at FROM public.admin_scopes WHERE admin_id = $1::uuid AND scope = 'scopes:write'",
+    [last.admin.adminId],
+  );
+  assert.equal(afterLast.revoked_at, null, '409 必须整笔回滚：revoked_at 不得被写上（否则就是"报错但已生效"）');
+  assert.equal(await holders(), 1, '被拒的那次不得改变持有者数量');
+  note(`[W4] 最后授权者（${last.who}）自撤 ⇒ 409 LAST_SCOPE_MANAGER（retryable=false），revoked_at 仍为 NULL（整笔回滚）`);
+
+  // ── [W5] 越权与自授：应用层与库层两道 ───────────────────────────────────
+  // 缺 scopes:write 的操作者：用一个只持 accounts:read 的管理员。
+  const plain = await seedScopeAdmin('gy-scope-plain', ['accounts:read']);
+  const denied = await call(
+    `${API}/admin/administrators/${last.admin.adminId}/scopes`,
+    {
+      method: 'POST',
+      ...write(plain.token, { scope: 'accounts:read', reason: '不应生效' }, await revisionOf(last.admin.adminId), 'gy-w-denied-0001'),
+    },
+  );
+  assert.equal(denied.status, 403, `缺 scopes:write 必须 403，实际 ${denied.status}`);
+  assert.equal(denied.body.error.code, 'SCOPE_DENIED');
+  // 自授：唯一持有者给自己授一个**它自己没持有**的 scope ⇒ G0011（同样 403，但 details 指明 scope）。
+  const selfGrant = await call(
+    `${API}/admin/administrators/${last.admin.adminId}/scopes`,
+    {
+      method: 'POST',
+      ...write(last.admin.token, { scope: 'jobs:cancel', reason: '自授' }, await revisionOf(last.admin.adminId), 'gy-w-self-0001'),
+    },
+  );
+  assert.equal(selfGrant.status, 403, `自授必须 403，实际 ${selfGrant.status}`);
+  assert.equal(selfGrant.body.error.code, 'SELF_SCOPE_GRANT_DENIED', `自授必须是 SELF_SCOPE_GRANT_DENIED，实际 ${selfGrant.body.error.code}`);
+  assert.equal(selfGrant.body.error.retryable, false);
+  note('[W5] 缺 scopes:write ⇒ 403 SCOPE_DENIED；自授 ⇒ 403 SELF_SCOPE_GRANT_DENIED（均 retryable=false）');
+
+  await runtimePool.end();
+}
+
 try {
   await migrationTriple();
   await provisionRoles();
@@ -416,6 +645,9 @@ try {
   await leastPrivilege();
   await assertLeastPrivilegeFile();
   await httpEvidence();
+  // `#18` S2 PR-3：管理员 scope 写面（授予/撤销/幂等/并发/最后授权者/越权）。放在最后：
+  // 它会清空身份面并重建夹具，跑在前面会把 [H] 的用户夹具冲掉。
+  await scopeWriteEvidence();
 } finally {
   for (const app of registeredApps) {
     await app.close().catch(() => {});
@@ -428,5 +660,7 @@ if (runtimeUrl === null) {
   note('结论：库侧/权限侧证据全部通过；HTTP 一手证据未取得（缺运行时角色 URL）——不得读成「HTTP 已验证」。');
   process.exitCode = 0;
 } else {
-  note('结论：迁移三连 + 最小权限反向控制 + 真实模式 HTTP（三态/nickname 回退/游标翻页/两条负控制）全部通过；90 号断言由 psql -f 单独执行并回读 verdict。');
+  note('结论：迁移三连 + 最小权限反向控制 + 真实模式 HTTP（三态/nickname 回退/游标翻页/两条负控制）'
+    + ' + `#18` S2 PR-3 写面（授予落 granted_by/granted_at / 撤销落 revoked_at / 幂等 / 并发恰一方成功 / '
+    + '最后授权者 409 LAST_SCOPE_MANAGER / 缺权限与自授 403）全部通过；90 号断言由 psql -f 单独执行并回读 verdict。');
 }

@@ -74,6 +74,8 @@ import type { AdminContentService, AdminContentServiceOptions } from './admin/se
 import { createAdminOpsService } from './admin/ops/service.ts';
 import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/service.ts';
 import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
+// `#18` S2 PR-3：管理员 scope 的唯一写路径（迁移 0041 的两条 SECURITY DEFINER 函数）。
+import { createPostgresAdminScopeAuthority } from './admin/ops/scope-authority-pg.ts';
 // GY-I17（#17）系统事件：账号停用/恢复 → 消息域 `system` 消息（结构性端口，不 import 消息域）。
 import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts';
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
@@ -436,6 +438,13 @@ export interface BuildAppOptions {
      * 保持 503（⛔ 不返回空页）。注入优先（测试用它钉住接线点，不依赖真实库）。
      */
     auditLogPort?: AdminAuditLogServiceOptions['port'];
+    /**
+     * 管理员 scope 的**写权威**（`#18` S2 PR-3）：不传时 `real` 且 `pool !== null` 按
+     * `createPostgresAdminScopeAuthority({ pool })` 自建（迁移 0041 的两条
+     * `SECURITY DEFINER` 函数）；`pool === null` ⇒ 两条写面继续 503。
+     * 注入优先（测试用它钉住接线点与错误码映射，不依赖真实库）。
+     */
+    scopeAuthority?: AdminOpsServiceOptions['scopeAuthority'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
   // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
@@ -1491,6 +1500,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 之外的 `appendAudit` 仍落内存 ops store（`persistent:false`），此处只补**读**通道。
     const realAuditLogPort =
       adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));
+    // **`#18` S2 PR-3 显式放行：管理员 scope 的写面**（`grantAdministratorScope` /
+    // `revokeAdministratorScope`）。判据与读面不同且更严：读面只要认证存储的既有列授权，
+    // 写面必须拿到迁移 0041 的两条 `SECURITY DEFINER` 函数的 `EXECUTE`
+    // （`deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r37-s2-scope-grant` 区）。
+    // `pool === null` ⇒ 写权威为 null ⇒ 两条路由 503（⛔ 不返回成功封套、⛔ 不落内存、
+    // ⛔ 不占幂等位）。**没有内存实现是刻意的**：`admin_scopes` 的唯一写路径就是那两条函数。
+    const realScopeAuthority =
+      adminInjection?.scopeAuthority ?? (pool === null ? null : createPostgresAdminScopeAuthority({ pool }));
     adminAuditLogService = createAdminAuditLogService({
       port: realAuditLogPort,
       now: clock,
@@ -1525,6 +1542,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           accountsDirectory: realAccountsDirectory,
           // `#18` S2 PR-2：管理员目录/权限读面（只有持久认证存储才非 null）。
           administrators: administratorsDirectory,
+          // `#18` S2 PR-3：管理员 scope 的写权威（只有拿到真实库池/显式注入才非 null）。
+          scopeAuthority: realScopeAuthority,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminJobPort,
@@ -1548,6 +1567,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           hidePostWired: communityPostPortForAdmin.persistent === true,
           // `#18` S2 PR-2：管理员目录/权限读面（判据＝持久认证存储，见上方定义处注释）。
           administratorsWired: administratorsDirectory !== null,
+          // `#18` S2 PR-3：管理员 scope 写面（判据＝真实写权威对象存在，见上方定义处注释）。
+          scopeWriteWired: realScopeAuthority !== null,
           // S3：审核面单独一道门，判据同下架（只有真实持久的社区端口才放行）。
           postReviewWired: communityPostPortForAdmin.persistent === true,
         },
@@ -1594,6 +1615,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         released.push('管理员目录与权限读面');
         releasedRoutes += 2; // listAdministrators / listAdministratorScopes
       }
+      // `#18` S2 PR-3：管理员 scope 的**写面**（判据＝真实写权威；两条路由）。
+      // 与上面的读面是两条独立能力：读只要既有列授权，写要 0041 两条函数的 EXECUTE。
+      if (realScopeAuthority !== null) {
+        released.push('管理员权限写面（授予/撤销）');
+        releasedRoutes += 2; // grantAdministratorScope / revokeAdministratorScope
+      }
       // **本片**：内容/资料域（迁移 0036 的三表落点）—— 放行 **24** 条内容 CRUD；审计读面 `listAuditEvents` **仍失闭**（裁决 A：台账未落库 ⇒ 放行只会返回内存空页），⛔ 不计入放行、日志不得宣称「内容域全放行」。
       if (adminContentWired) {
         released.push('内容/资料读写（24 条内容 CRUD；审计读面 listAuditEvents 仍失闭，因台账未落库）');
@@ -1629,6 +1656,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // GY-I22：**只经显式注入**开启真实停用权威（与 `mediaObjectStore` 同一口径：
       // 不读 ambient 配置、不因"有 pool"就自动在 stub 域里接真实写）。
       accountAuthority: adminInjection?.accountAuthority,
+      // `#18` S2 PR-3：stub/preset_demo 域的管理员 scope 写权威**只经显式注入**（与 `accountAuthority` 同口径）。
+      // 不注入 ⇒ null ⇒ 两条写面如实 503（⛔ 没有内存实现，也没有"演示成功"分支）。
+      scopeAuthority: adminInjection?.scopeAuthority,
       // `#18` S2 PR-2：stub/preset_demo 域的管理员目录/权限读面（判据同为持久认证存储；
       // stub 下 `authStore` 是内存实现 ⇒ 目录非 null，读的是本进程播种的管理员，如实）。
       administrators: administratorsDirectory,

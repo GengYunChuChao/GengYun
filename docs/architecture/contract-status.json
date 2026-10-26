@@ -1054,7 +1054,7 @@
           "name": "1) createOCR 202 + JobEnvelope/Job 形状 + meta 齐备 + no-store/ETag + 提供者恰好 1 次调用（真实装配）"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2276` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2306` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "getOCR",
@@ -1076,7 +1076,7 @@
           "name": "9) 正控制 受理→完成→读回→校正（raw/corrected 在 HTTP 层严格分离）→落库读回→ETag 递增"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2276` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2306` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "deleteOCR",
@@ -1098,7 +1098,7 @@
           "name": "5b) deleteOCR 202 + Ack{accepted:true} + no-store/ETag；删除后 GET 404"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2276` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2306` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "correctOCR",
@@ -1120,7 +1120,7 @@
           "name": "9) 正控制 受理→完成→读回→校正（raw/corrected 在 HTTP 层严格分离）→落库读回→ETag 递增"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2276` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2306` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "verifyOCR",
@@ -1142,7 +1142,7 @@
           "name": "3) missing_fields 非空 ⇒ insufficient（绝不 matched）；verify 200 形状正确；替身路径 dose_cards 恒为 []；no_match 亦不给卡"
         }
       ],
-      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2276` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
+      "blocker": "OCR 五端点与原文/校正/登记核对分离已装配；real 提供者、媒体、登记源未接线时拒绝；两种模式用量端口恒空，不产出 dose_cards；OCR 任务**读取**已于 #183（1078566，kind=ocr 纯追加作业源）接入公共 Job 读面 ⇒ getJob 现可返回契约 Job 与各 JobState/error_code；**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、域内 services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；任务与记录的**持久化**已于 GY-R27（#323）接线：`real` + 连接池 ⇒ `services/api/src/ocr/store-pg.ts:359` 的 `createPostgresOcrStore`（`persistent: true`，`:494`），迁移 `services/api/db/migrations/0024_ocr_persistence.sql`（`ocr_jobs`／`ocr_records`／`ocr_idempotency` 三表），装配见 `services/api/src/app.ts:2306` 的 `ocrPersistencePool`；`stub`／`preset_demo` 或 `real` 无池 ⇒ 内存 store（`persistent: false`，如实标注、不冒充持久化）；真实标签评估与删除的级联／媒体链仍待验收"
     },
     {
       "id": "createTranscription",
@@ -2154,7 +2154,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources`",
-          "lines": "198-198"
+          "lines": "217-217"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2198,7 +2198,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources`",
-          "lines": "201-201"
+          "lines": "220-220"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2242,7 +2242,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "204-204"
+          "lines": "223-223"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2286,7 +2286,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "207-207"
+          "lines": "226-226"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2334,7 +2334,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/publish`",
-          "lines": "210-210"
+          "lines": "229-229"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2378,7 +2378,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/withdraw`",
-          "lines": "213-213"
+          "lines": "232-232"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2422,7 +2422,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge`",
-          "lines": "218-218"
+          "lines": "237-237"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2466,7 +2466,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge`",
-          "lines": "221-221"
+          "lines": "240-240"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2510,7 +2510,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "224-224"
+          "lines": "243-243"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2554,7 +2554,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "227-227"
+          "lines": "246-246"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2598,7 +2598,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/publish`",
-          "lines": "230-230"
+          "lines": "249-249"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2646,7 +2646,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`",
-          "lines": "233-233"
+          "lines": "252-252"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2690,7 +2690,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations`",
-          "lines": "238-238"
+          "lines": "257-257"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2734,7 +2734,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations`",
-          "lines": "241-241"
+          "lines": "260-260"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2778,7 +2778,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "244-244"
+          "lines": "263-263"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2822,7 +2822,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "247-247"
+          "lines": "266-266"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2866,7 +2866,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/publish`",
-          "lines": "250-250"
+          "lines": "269-269"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2910,7 +2910,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/withdraw`",
-          "lines": "253-253"
+          "lines": "272-272"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2954,7 +2954,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions`",
-          "lines": "258-258"
+          "lines": "277-277"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2998,7 +2998,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions`",
-          "lines": "261-261"
+          "lines": "280-280"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3042,7 +3042,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "264-264"
+          "lines": "283-283"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3086,7 +3086,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "267-267"
+          "lines": "286-286"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3130,7 +3130,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/publish`",
-          "lines": "270-270"
+          "lines": "289-289"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3174,7 +3174,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`",
-          "lines": "273-273"
+          "lines": "292-292"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3218,7 +3218,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/categories`",
-          "lines": "307-309"
+          "lines": "326-328"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3227,11 +3227,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminCategories",
-          "lines": "464-467"
+          "lines": "524-527"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3249,7 +3249,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/categories/:id`",
-          "lines": "312-318"
+          "lines": "331-337"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3258,11 +3258,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "editCategory",
-          "lines": "469-504"
+          "lines": "529-564"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3280,7 +3280,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/accounts`",
-          "lines": "328-330"
+          "lines": "347-349"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3289,11 +3289,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminUsers",
-          "lines": "550-561"
+          "lines": "610-621"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3311,7 +3311,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/accounts/:id/suspend`",
-          "lines": "333-338"
+          "lines": "352-357"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3320,11 +3320,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "suspendUser",
-          "lines": "668-727"
+          "lines": "728-787"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3342,12 +3342,12 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/administrators`",
-          "lines": "354-356"
+          "lines": "373-375"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministrators",
-          "lines": "625-634"
+          "lines": "685-694"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3379,12 +3379,12 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/administrators/:id/scopes`",
-          "lines": "359-364"
+          "lines": "378-383"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministratorScopes",
-          "lines": "653-666"
+          "lines": "713-726"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3399,6 +3399,70 @@
       "blocker": "读面已装配（门 scopes:read；运行时角色对 admin_scopes 只有 (admin_id, scope, revoked_at) 三列 SELECT，granted_by/granted_at 直读即 42501 ⇒ 响应里**不可能**出现这两个字段，不是\"暂时没做\"）：返回体只有 { data: { scopes: string[] }, meta }，去重 + 码元序（与 GET /admin/auth/session 的 scopes 同口径），不发 ETag（admin_scopes 没有自己的修订号，拿 admin_accounts.revision 冒充会把\"账号行没变\"说成\"权限集合没变\"）；目标不存在 ⇒ 既有 404 NOT_FOUND（不用空数组冒充\"这个人没有权限\"）；缺 scopes:read ⇒ 既有 403 SCOPE_DENIED；自查仍走会话接口，未另造端点。剩余缺口：一次性集群的真实 HTTP 证据见 tests/integration/admin-scopes-read-pg.mjs（无 GY_PG_BIN 时 77 未取得）；后台 UI 未消费（GY-I18）。"
     },
     {
+      "id": "grantAdministratorScope",
+      "method": "post",
+      "path": "/admin/administrators/{id}/scopes",
+      "route": "/api/v1/admin/administrators/:id/scopes",
+      "scope": "scopes:write",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/administrators/:id/scopes`",
+          "lines": "405-413"
+        },
+        {
+          "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "grantAdministratorScope",
+          "lines": "1482-1511"
+        },
+        {
+          "path": "services/api/src/admin/ops/scope-authority-pg.ts",
+          "symbol": "createPostgresAdminScopeAuthority",
+          "lines": "220-280"
+        },
+        {
+          "test": "tests/unit/admin-scopes-write.test.mjs",
+          "name": "禁止自授：403 SELF_SCOPE_GRANT_DENIED（retryable:false），且不触达写权威"
+        }
+      ],
+      "blocker": "写面已装配（门 scopes:write；唯一写路径是迁移 0041 的 public.grant_admin_scope()，运行时只拿 EXECUTE，admin_scopes 仍是零表级/零列级写权）。**单条写入、不做整集合覆盖**（裁定③）：请求体只有 { scope, reason }。CAS：If-Match 必填（缺 428、非法 400、不匹配 409 REVISION_CONFLICT），比对的是 admin_accounts.revision；幂等：Idempotency-Key 必填，同键同体重放不再产生第二次变更、不写第二条审计。自授 ⇒ 403 SELF_SCOPE_GRANT_DENIED（retryable:false）；只能授予自己当前有效持有的 scope（库层 G0011 ⇒ 403 SCOPE_DENIED）；目标不存在 ⇒ 404；目标非 active ⇒ 409 OBJECT_UNAVAILABLE。granted_by/granted_at 由函数**在事务内真实写入**，审计行与变更原子提交（应用层不再补写第二行）。未接线（real 无库池 / stub 无持久端口）⇒ 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回成功封套、⛔ 不占幂等位。剩余缺口：真库 HTTP 证据追加在 tests/integration/admin-accounts-read-pg.mjs（CI real-pg-integration.yml 逐文件列举，新建 integration 文件跑不到）；后台 UI 未消费本端点（属 GY-I18 联调）；拒绝侧留痕（裁定⑥后半句）不在本片。"
+    },
+    {
+      "id": "revokeAdministratorScope",
+      "method": "delete",
+      "path": "/admin/administrators/{id}/scopes/{scope}",
+      "route": "/api/v1/admin/administrators/:id/scopes/:scope",
+      "scope": "scopes:write",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/administrators/:id/scopes/:scope`",
+          "lines": "414-423"
+        },
+        {
+          "path": "services/api/src/admin/ops/service.ts",
+          "symbol": "revokeAdministratorScope",
+          "lines": "1523-1557"
+        },
+        {
+          "path": "services/api/src/admin/ops/scope-authority-pg.ts",
+          "symbol": "mapAdminScopeAuthorityError",
+          "lines": "180-211"
+        },
+        {
+          "test": "tests/unit/admin-scopes-write.test.mjs",
+          "name": "G0009（撤销最后一个 scopes:write 持有者）⇒ 409 LAST_SCOPE_MANAGER，retryable:false"
+        }
+      ],
+      "blocker": "写面已装配（门 scopes:write；唯一写路径是迁移 0041 的 public.revoke_admin_scope()）。**scope 在路径里**（裁定③：⛔ 不是查询参数 —— 撤谁、撤哪个权限必须能被访问日志与审计逐字复现）。**允许自撤**（裁定④，降权），自撤仍受最后授权者守卫约束。硬拦：撤销后 scopes:write 有效持有者归零 ⇒ 409 LAST_SCOPE_MANAGER（retryable:false，库层在事务级 advisory 锁内核验，⛔ 不是应用层先数后写）。已撤销/从未授过 ⇒ 幂等空操作（changed=false，不写审计、不推进 revision）。撤销写 revoked_at；目标不存在 ⇒ 404；目标非 active ⇒ 409 OBJECT_UNAVAILABLE；版本不符 ⇒ 409 REVISION_CONFLICT。停止/删除路径共享同一守卫（裁定⑤后半句）不在本片：那要在新迁移里包装 0017 的 suspend_account，属后续片。"
+    },
+    {
       "id": "listAdminJobs",
       "method": "get",
       "path": "/admin/jobs",
@@ -3411,7 +3475,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs`",
-          "lines": "377-379"
+          "lines": "434-436"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3420,11 +3484,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminJobs",
-          "lines": "772-778"
+          "lines": "832-838"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3442,7 +3506,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "382-387"
+          "lines": "439-444"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3451,11 +3515,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "cancelAdminJob",
-          "lines": "793-909"
+          "lines": "853-969"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3473,7 +3537,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/feature-flags`",
-          "lines": "398-400"
+          "lines": "455-457"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3482,11 +3546,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlags",
-          "lines": "1011-1015"
+          "lines": "1071-1075"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3504,7 +3568,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/feature-flags/:key`",
-          "lines": "403-408"
+          "lines": "460-465"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3513,11 +3577,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {",
-          "lines": "1017-1083"
+          "lines": "1077-1143"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         },
         {
           "test": "tests/unit/admin-flag-gate.test.mjs",
@@ -3539,16 +3603,16 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/flag-audit-events`",
-          "lines": "418-420"
+          "lines": "475-477"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlagAuditEvents",
-          "lines": "1101-1155"
+          "lines": "1161-1215"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "开关变更审计的只读查询已装配（读 public.admin_audit_events 的 set_flag 行，键集游标 (created_at,id) 降序）；后台 UI 已有「操作者/变更前后」列；人审隔离位仍属契约/范围外（AdminJob 9 字段无隔离位）"
@@ -3566,7 +3630,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/audit-logs`",
-          "lines": "295-297"
+          "lines": "314-316"
         },
         {
           "path": "services/api/src/admin/audit/service.ts",
@@ -3603,7 +3667,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/posts`",
-          "lines": "451-451"
+          "lines": "508-508"
         },
         {
           "path": "services/api/src/admin/posts/service.ts",
@@ -3652,7 +3716,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/posts/:id`",
-          "lines": "456-456"
+          "lines": "513-513"
         },
         {
           "path": "services/api/src/admin/posts/service.ts",
@@ -3691,7 +3755,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/posts/:id/hide`",
-          "lines": "430-435"
+          "lines": "487-492"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3700,11 +3764,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "hidePost",
-          "lines": "1161-1206"
+          "lines": "1221-1266"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 14 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3722,12 +3786,12 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "approvePost",
-          "lines": "467-476"
+          "lines": "524-533"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "approvePost",
-          "lines": "1358-1360"
+          "lines": "1418-1420"
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
@@ -3754,12 +3818,12 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "rejectPost",
-          "lines": "478-487"
+          "lines": "535-544"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "rejectPost",
-          "lines": "1367-1369"
+          "lines": "1427-1429"
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
@@ -3786,7 +3850,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/audit-events`",
-          "lines": "281-283"
+          "lines": "300-302"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3971,7 +4035,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));",
-          "lines": "936-936"
+          "lines": "945-945"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -4110,10 +4174,10 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "382-387"
+          "lines": "439-444"
         }
       ],
-      "blocker": "共享作业面现由 `services/api/src/app.ts:2197` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:2198`）、transcription（`:2204`）、moderation（`:2207`）、synthesis（`:2213`）、ocr（`:2221`）、answer（`:2229`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
+      "blocker": "共享作业面现由 `services/api/src/app.ts:2227` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:2228`）、transcription（`:2204`）、moderation（`:2207`）、synthesis（`:2213`）、ocr（`:2221`）、answer（`:2229`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
     },
     {
       "key": "timeout",
@@ -4170,7 +4234,7 @@
           "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:70`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:798`，位于 `createTurn`，`:738`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:911`，位于 `jobViewOf`，`:903`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:959-967`，位于 `scheduleAnswer`，`:953`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2279`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
+      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:70`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:798`，位于 `createTurn`，`:738`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:911`，位于 `jobViewOf`，`:903`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:959-967`，位于 `scheduleAnswer`，`:953`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2309`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
     }
   ]
 }

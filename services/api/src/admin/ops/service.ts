@@ -1,9 +1,12 @@
 /**
- * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 12 个 operationId**）。
+ * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 16 个 operationId**）。
  * 第 10 个是本片新增的 `listFlagAuditEvents`（开关变更留痕 A→B，迁移 0027 提供读函数）。
  * 第 11、12 个是 `#18` S2 PR-2 新增的 `listAdministrators`（管理员目录）与
  * `listAdministratorScopes`（只读展示**他人**权限）；两者门都是 `scopes:read`，
  * 数据源是认证存储的既有窄读，见 `administrators.ts`。
+ * 第 15、16 个是 `#18` S2 PR-3 新增的写面：`grantAdministratorScope` /
+ * `revokeAdministratorScope`（门 `scopes:write`）；真实写在迁移 0041 的两条
+ * `SECURITY DEFINER` 函数里，见 `scope-authority-pg.ts`。没有内存实现 ⇒ 无端口即 503。
  *
  * 本文件**只做服务端**：不注册路由、不改 `app.ts`、不改 `apps/admin/**`、不改小程序、
  * 不改 `services/api/src/community/**`（只读依赖）。
@@ -53,7 +56,8 @@ import { createHidePostAdapter, createPostReviewAdapter } from './community-post
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
 import type { AdminAdministratorsDirectory, AdministratorView } from './administrators.ts';
-import { isAdminScope } from '../scopes.ts';
+import type { AdminScopeAuthority, AdminScopeAuthorityOutcome } from './scope-authority-pg.ts';
+import { ADMIN_SCOPES, isAdminScope } from '../scopes.ts';
 import { flagReadFailure, type FeatureFlagsPort, type FlagAuditRow } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
@@ -135,6 +139,18 @@ export interface AdminOpsServiceOptions {
    * 都是本进程无权下的伪造结论）。
    */
   administrators?: AdminAdministratorsDirectory | null;
+  /**
+   * 管理员 scope 的**写权威**（`#18` S2 PR-3 接线：`scope-authority-pg.ts` 调迁移 0041 的两条
+   * `SECURITY DEFINER` 函数）。
+   *
+   * 给了它 ⇒ `grantAdministratorScope` / `revokeAdministratorScope` 走真实库；
+   * 缺省/`null` ⇒ 两个操作**一律 503** `PROVIDER_UNAVAILABLE`（`retryable: false`），
+   * ⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。
+   *
+   * **没有内存实现是刻意的**：`admin_scopes` 的唯一写路径就是那两条函数（运行时对表零写权），
+   * 内存 store 里根本没有这张表 —— 编一个"内存里成功了"的分支等于在"真实模式"下伪造成功。
+   */
+  scopeAuthority?: AdminScopeAuthority | null;
   /**
    * 真实开关端口（GY-I18 接线，`flags-pg.ts`）。给了它 ⇒ `listFlags`/`setFlag` 的**读写都走库**：
    * 读面从 `public.feature_flags` 取三行（缺行/多行/闭集外 ⇒ 503 fail-closed，**不**返回三键全 false），
@@ -238,6 +254,39 @@ export interface AdminOpsService {
    * - 门是 `scopes:read`，⛔ 与 `accounts:read` 无关（裁定④）；自查继续走会话接口。
    */
   listAdministratorScopes(ctx: AdminCallContext, id: string): Promise<ServiceResponse<SingleEnvelope<{ scopes: string[] }>>>;
+
+  /**
+   * 授予某后台管理员一个 scope（`#18` S2 PR-3）：`POST /admin/administrators/{id}/scopes`。
+   *
+   * 门是 `scopes:write`；**单条写入**（⛔ 不做整集合覆盖）。`If-Match`（`admin_accounts.revision`
+   * 的强 ETag）与 `Idempotency-Key` 都必填。
+   *
+   * 错误（逐条与库层 G 码对应，映射表见 `scope-authority-pg.ts` 文件头）：
+   * 自授 ⇒ 403 `SELF_SCOPE_GRANT_DENIED`；只能授予自己当前有效持有的 scope ⇒ 403 `SCOPE_DENIED`；
+   * 目标不存在 ⇒ 404；目标非 active ⇒ 409 `OBJECT_UNAVAILABLE`；版本不符 ⇒ 409 `REVISION_CONFLICT`；
+   * 未接线 ⇒ 503（`retryable: false`）。
+   *
+   * 成功时 `granted_by`/`granted_at` 由函数**真实写入**（不是"上层记一笔"），审计行与变更同一事务。
+   */
+  grantAdministratorScope(
+    ctx: AdminCallContext,
+    id: string,
+    body: unknown,
+  ): Promise<ServiceResponse<SingleEnvelope<{ id: string; revision: number; scopes: string[]; changed: boolean }>>>;
+
+  /**
+   * 撤销某后台管理员的一个 scope（`#18` S2 PR-3）：`DELETE /admin/administrators/{id}/scopes/{scope}`。
+   *
+   * `scope` **在路径里**（裁定③）。门是 `scopes:write`。**允许自撤**（裁定④），自撤仍受最后
+   * 授权者守卫约束：撤销会使 `scopes:write` 有效持有者归零 ⇒ 409 `LAST_SCOPE_MANAGER`
+   * （`retryable: false`，库层在事务级 advisory 锁内核验，⛔ 不是应用层先数后写）。
+   */
+  revokeAdministratorScope(
+    ctx: AdminCallContext,
+    id: string,
+    scope: string,
+    body: unknown,
+  ): Promise<ServiceResponse<SingleEnvelope<{ id: string; revision: number; scopes: string[]; changed: boolean }>>>;
 }
 
 /** 本片 operationId（机读形式，供测试断言"恰好 14 个、不越界"）。 */
@@ -257,6 +306,10 @@ export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   // S3：人工通过/驳回。**追加在尾部**（有用例按下标/顺序断言既有 12 项不变）。
   'approvePost',
   'rejectPost',
+  // `#18` S2 PR-3：管理员 scope 的写面（授予 / 撤销）。同样追加在尾部，
+  // 既有 14 项的下标与顺序**一格都不动**。
+  'grantAdministratorScope',
+  'revokeAdministratorScope',
 ]);
 
 /** 契约 scope（来自 `packages/contracts/operations.json`）。 */
@@ -278,6 +331,10 @@ export const OPS_SCOPES = Object.freeze({
   // `#18` S2 PR-2：读他人权限。⛔ 不是 `accounts:read`（裁定④：两者是不同能力）。
   listAdministrators: 'scopes:read',
   listAdministratorScopes: 'scopes:read',
+  // `#18` S2 PR-3：**管理授权**本身（授/撤他人 scope）。与 `scopes:read` 分开：
+  // 裁定②把读他人权限与维护授权列为两个 scope，持前者不自动获得后者。
+  grantAdministratorScope: 'scopes:write',
+  revokeAdministratorScope: 'scopes:write',
 });
 
 interface Identified {
@@ -331,6 +388,9 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // 管理员目录/权限读面（`#18` S2 PR-2）：判据同样是**能力对象存在**（`app.ts` 只在真的构造出
   // `createAuthStoreAdministratorsDirectory()` 时传），⛔ 不读任何自述持久化布尔标志。
   const administrators: AdminAdministratorsDirectory | null = options.administrators ?? null;
+  // 管理员 scope 的写权威（`#18` S2 PR-3）：判据同样是**能力对象存在**（`app.ts` 只在真的构造出
+  // `createPostgresAdminScopeAuthority()` 时传），⛔ 不读任何自述持久化布尔标志。
+  const scopeAuthority: AdminScopeAuthority | null = options.scopeAuthority ?? null;
   const flagsPort: FeatureFlagsPort | null = options.flagsPort ?? null;
   const now = options.now ?? (() => new Date());
   const executionMode: ExecutionMode = options.executionMode ?? 'stub';
@@ -1368,6 +1428,134 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     return commitPostReview(ctx, id, body, 'rejected');
   }
 
+  // -------------------------------------------------------------------------
+  // `#18` S2 PR-3：管理员 scope 的**写面**（授予 / 撤销）
+  //
+  // 为什么这两条不写审计、也不返回"我们自己拼的封套"：
+  //   库层 0041 的两条函数在**同一个事务**里完成「锁 → 重核验 → 变更 → revision 前进 → 写审计」，
+  //   应用层再补一条 `appendAudit` 就会变成两行（或在库里已落行时让"一行"这个断言变成偶然），
+  //   与 `cancelAdminJob` 对 `jobPort.persistent` 的处理逐字同源（见那里的长注释）。
+  //   ⇒ 本层只做「形态校验 → 调端口 → 把函数实测读数投影成契约」，⛔ 不自己算 scope 集合。
+  //
+  // 为什么没有内存实现：`admin_scopes` 的**唯一**写路径就是这两条 `SECURITY DEFINER` 函数
+  // （运行时不持表级/列级写权，改快照或给写权会让 `90-assert-least-privilege.sql` 同时红）。
+  // 内存 store 里根本没有这张表 ⇒ 没有端口就如实 503，⛔ 不伪造一条"内存里成功了"的路径。
+  // -------------------------------------------------------------------------
+
+  /**
+   * 写面未接线时的统一 fail-closed（措辞与 `requireWiredAccountAuthority` /
+   * 作业面 `requireWiredJobPort` 同一形态：503 `PROVIDER_UNAVAILABLE` 且 `retryable: false`）。
+   *
+   * 「接线」是**运维动作**：同一请求在无运维介入下稍后重试不可能成功，故不得宣称可重试。
+   * ⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位（本检查放在 `runIdempotentWrite` **之前**）。
+   */
+  function requireWiredScopeAuthority(): AdminScopeAuthority {
+    if (scopeAuthority === null) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '管理员权限写面尚未接线到数据库权威', { retryable: false });
+    }
+    return scopeAuthority;
+  }
+
+  /** 端口读数 → 契约 `AdminScopeWriteView`（去重 + 码元序与只读权限面同口径）。 */
+  function scopeWriteViewOf(outcome: AdminScopeAuthorityOutcome) {
+    return {
+      id: outcome.administratorId,
+      revision: outcome.revision,
+      scopes: normalizeScopes(outcome.scopes),
+      changed: outcome.changed,
+    };
+  }
+
+  /**
+   * `grantAdministratorScope`：`POST /admin/administrators/{id}/scopes`。
+   *
+   * 顺序（与 `suspendUser` 逐条一致）：`resolveContext`（401/400/403）→ `parseIfMatchHeader`（428/400）
+   * → 契约镜像校验（400）→ `normalizeIdParam`（400）→ 接线 503 → 自授 403 → 幂等外壳 → 真实写。
+   *
+   * 形态校验放在接线状态**之前**：接线是运维动作，若它先报 503，一切参数错误都会被顶掉，
+   * 调用方永远学不会「你少传了 reason」。
+   *
+   * 自授（`SELF_SCOPE_GRANT_DENIED`）放在接线**之后**：那是**业务规则**而不是形态，
+   * 未接线时本进程根本没有能力回答"这个授予是否合法"，先给 503 才是不越权作答；
+   * 接线后库层同样会拦（G0008），本层这一道只是让错误更早、且不必把请求送进事务。
+   */
+  async function grantAdministratorScope(ctx: AdminCallContext, id: string, body: unknown) {
+    const context = resolveContext(ctx, OPS_SCOPES.grantAdministratorScope);
+    const expectedRevision = parseIfMatchHeader(context.ifMatch);
+    opsValidator.assertInput('AdminScopeGrantInput', body);
+    const input = body as { scope: string; reason: string };
+    const normalizedId = normalizeIdParam(id);
+    requireWiredScopeAuthority();
+    if (normalizedId === context.identity.userId) {
+      // 裁定④：**禁止自授**。这不是"缺权限"，是"这条规则对任何人都不开口子"。
+      throw new ApiError('SELF_SCOPE_GRANT_DENIED', '不能把权限授予自己', { retryable: false });
+    }
+    return runIdempotentWrite(
+      writeDeps,
+      context,
+      { method: 'POST', path: `/admin/administrators/${normalizedId}/scopes`, expectedStatus: 200 },
+      body,
+      async () => {
+        const outcome = await requireWiredScopeAuthority().grant({
+          actorId: context.identity.userId,
+          auditId: randomUUID(),
+          targetId: normalizedId,
+          scope: input.scope,
+          reason: input.reason,
+          requestId: context.requestId,
+          expectedRevision,
+        });
+        return singleResponse(context, executionMode, 200, scopeWriteViewOf(outcome), etagOf(outcome.revision));
+      },
+    );
+  }
+
+  /**
+   * `revokeAdministratorScope`：`DELETE /admin/administrators/{id}/scopes/{scope}`。
+   *
+   * `scope` 是**路径参数**（裁定③：⛔ 不是查询参数）—— 撤谁、撤哪个权限必须能被访问日志与审计
+   * 逐字复现。空串/闭集外 ⇒ 400 `INVALID_REQUEST`（`details[].field='scope'`），⛔ 不静默当成
+   * "没有要撤的"。
+   *
+   * **允许自撤**（裁定④：那是降权）。自撤仍受最后授权者守卫约束 —— 库层在 advisory 锁内核验，
+   * 归零即 409 `LAST_SCOPE_MANAGER`；本层不预先计数（那正是裁定⑤禁止的"应用层先数后写"）。
+   */
+  async function revokeAdministratorScope(ctx: AdminCallContext, id: string, scopeParam: string, body: unknown) {
+    const context = resolveContext(ctx, OPS_SCOPES.revokeAdministratorScope);
+    const expectedRevision = parseIfMatchHeader(context.ifMatch);
+    opsValidator.assertInput('ReasonInput', body);
+    const input = body as { reason: string };
+    const normalizedId = normalizeIdParam(id);
+    if (!isAdminScope(scopeParam)) {
+      throw new ApiError('INVALID_REQUEST', `路径参数 scope 必须落在后台权限闭集内：${ADMIN_SCOPES.join(' / ')}`, {
+        details: [{ field: 'scope', code: 'enum' }],
+      });
+    }
+    requireWiredScopeAuthority();
+    return runIdempotentWrite(
+      writeDeps,
+      context,
+      {
+        method: 'DELETE',
+        path: `/admin/administrators/${normalizedId}/scopes/${scopeParam}`,
+        expectedStatus: 200,
+      },
+      body,
+      async () => {
+        const outcome = await requireWiredScopeAuthority().revoke({
+          actorId: context.identity.userId,
+          auditId: randomUUID(),
+          targetId: normalizedId,
+          scope: scopeParam,
+          reason: input.reason,
+          requestId: context.requestId,
+          expectedRevision,
+        });
+        return singleResponse(context, executionMode, 200, scopeWriteViewOf(outcome), etagOf(outcome.revision));
+      },
+    );
+  }
+
   return {
     store,
     jobPort,
@@ -1387,6 +1575,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     rejectPost,
     listAdministrators,
     listAdministratorScopes,
+    grantAdministratorScope,
+    revokeAdministratorScope,
   };
 }
 

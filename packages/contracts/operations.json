@@ -758,6 +758,20 @@
       "version_required": false
     },
     {
+      "id": "grantAdministratorScope",
+      "path": "/admin/administrators/{id}/scopes",
+      "method": "post",
+      "scope": "scopes:write",
+      "version_required": true
+    },
+    {
+      "id": "revokeAdministratorScope",
+      "path": "/admin/administrators/{id}/scopes/{scope}",
+      "method": "delete",
+      "scope": "scopes:write",
+      "version_required": true
+    },
+    {
       "id": "listAdminJobs",
       "path": "/admin/jobs",
       "method": "get",

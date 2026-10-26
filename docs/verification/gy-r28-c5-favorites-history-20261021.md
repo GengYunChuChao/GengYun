@@ -38,7 +38,7 @@
 ### 2.2 历史
 
 - 路由：`services/api/src/routes/history.ts` `:80`（`GET /history`）、`:85-87`（`DELETE /history/{id}`）；`:36` no-store；`:75` `'历史持久存储尚未接线'` 503 fail-closed。
-- 写入时机（识别完成时）：`services/api/src/app.ts:1016` `recordHistoryTerminal`，`:928-934` `recognitionTerminalHistory`、`:936-942` `ocrTerminalHistory`，`:961` `history: recognitionTerminalHistory` 注入识别服务 —— 终态提交成功后才写，real 模式历史域关闭时退回未接线端口（不写、不伪造）。
+- 写入时机（识别完成时）：`services/api/src/app.ts:1025` `recordHistoryTerminal`，`:928-934` `recognitionTerminalHistory`、`:936-942` `ocrTerminalHistory`，`:961` `history: recognitionTerminalHistory` 注入识别服务 —— 终态提交成功后才写，real 模式历史域关闭时退回未接线端口（不写、不伪造）。
 - 服务层：`services/api/src/history/service.ts:319` `listHistory`（游标分页）、`:369`/`:389` `deleteHistory`（`revision` + `owner_id` CAS）、`:426` `appendHistory`；`:125` `notFound()`；`:16` 归属不变式注释（他人历史与不存在同形）。
 - 来源版本：历史行本身**不带**来源版本字段（`history-api.js` 的 `HISTORY_KEYS` 7 字段），来源版本由详情重新读取 `model_version` 提供 —— 见下 §4。
 

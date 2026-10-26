@@ -332,16 +332,23 @@ test('真实投影：注入对象缺 listAdmins ⇒ 调用期 503（形状守卫
 
 // ---------------------------------------------------------------- 接线面：常量与路由
 
-test('两个新 operationId 已装配，且门 scope 逐字是 scopes:read', async () => {
+test('两个读面 operationId 已装配，且门 scope 逐字是 scopes:read', async () => {
   const { OPS_SCOPES } = await import('../../services/api/src/admin/ops/service.ts');
   assert.equal(OPS_SCOPES.listAdministrators, 'scopes:read');
   assert.equal(OPS_SCOPES.listAdministratorScopes, 'scopes:read');
   assert.ok(ADMIN_HTTP_OPERATION_IDS.includes('listAdministrators'));
   assert.ok(ADMIN_HTTP_OPERATION_IDS.includes('listAdministratorScopes'));
-  // 闭集里两个新成员都在（`scopes:write` 入闭集但本片**没有**写端点）。
+  // 闭集里两个新成员都在（`scopes:write` 入闭集由 PR-1 完成，PR-3 才落写端点）。
   assert.ok(ADMIN_SCOPES.includes('scopes:read'));
   assert.ok(ADMIN_SCOPES.includes('scopes:write'));
-  assert.ok(!ADMIN_HTTP_OPERATION_IDS.some((id) => /^(grant|revoke)/i.test(id)), '本片不得出现授予/撤销端点');
+  // **PR-3 翻转**：本片（PR-2）当时钉的是「不得出现授予/撤销端点」，那是对 PR-3 的**前瞻性钉子**。
+  // PR-3 落地后这条钉子的方向要反过来 —— 否则它会阻止裁定③要求的两个端点存在。
+  // 判据仍带牙齿：**恰好**两条，且门是 `scopes:write`（⛔ 不是读面的 `scopes:read`）。
+  const writeOps = ADMIN_HTTP_OPERATION_IDS.filter((id) => /^(grant|revoke)[A-Z]/.test(id));
+  assert.deepEqual(writeOps, ['grantAdministratorScope', 'revokeAdministratorScope'], '写面恰好两条授予/撤销端点');
+  assert.equal(OPS_SCOPES.grantAdministratorScope, 'scopes:write');
+  assert.equal(OPS_SCOPES.revokeAdministratorScope, 'scopes:write');
+  assert.notEqual(OPS_SCOPES.grantAdministratorScope, OPS_SCOPES.listAdministrators, '读与写是两种能力，门不得相同');
   assert.equal(
     ADMIN_HTTP_OPERATION_IDS.filter((id) => id.startsWith('listAdministrator')).length,
     2,

@@ -207,9 +207,9 @@ git_dirty_lines=0
 | --- | --- | --- |
 | 1 | 迁移**明确不提供**生产政策种子：「GY-I27 operator-reviewed grant authority. **No production policy or recipient seeds.**」 | `services/api/db/migrations/0009_consent_policy.sql:1`；表建于 `:4-23`；`enabled` 默认 `false`（`:17`） |
 | 2 | 授予时若该用途没有启用的政策行 ⇒ **403 `CONSENT_REQUIRED`「没有可用的已核验用途政策」** | `services/api/src/privacy/grant-pg.ts:47-49` |
-| 3 | 授予还要求客户端**自己带上** `policy_version`，且必须与服务端政策行**逐字相等** | `grant-pg.ts:54`（不等 ⇒ `REVISION_CONFLICT`）；契约必填：`packages/contracts/openapi.json:12362-12366`（`purpose`/`policy_version`/`recipient_ids` 三个 required）；入参校验 `services/api/src/routes/consents.ts:28-32` |
+| 3 | 授予还要求客户端**自己带上** `policy_version`，且必须与服务端政策行**逐字相等** | `grant-pg.ts:54`（不等 ⇒ `REVISION_CONFLICT`）；契约必填：`packages/contracts/openapi.json:12651-12655`（`purpose`/`policy_version`/`recipient_ids` 三个 required）；入参校验 `services/api/src/routes/consents.ts:28-32` |
 | 4 | 契约里只有 3 个 consent operation，**没有**"有哪些用途 / 各自政策版本与文案"的读取面 | `packages/contracts/operations.json:95-115`（`listConsents` / `grantConsent` / `withdrawConsent`，仅此三条） |
-| 5 | `listConsents` 的响应只回**已存在**的授权记录（含 `policy_version`）；从未授予过的用途**没有记录** ⇒ 拿不到版本号 | `packages/contracts/openapi.json:12368-12399`（`Consent` 形状）；`services/api/src/routes/consents.ts:40-49` |
+| 5 | `listConsents` 的响应只回**已存在**的授权记录（含 `policy_version`）；从未授予过的用途**没有记录** ⇒ 拿不到版本号 | `packages/contracts/openapi.json:12657-12688`（`Consent` 形状）；`services/api/src/routes/consents.ts:40-49` |
 | 6 | 闸的判定读的是 `privacy_epochs`（`current_epoch>0`）；该类行**只有授予路径才会创建**，注册/登录不预置 | `services/api/src/privacy/consent-pg.ts:140-146`；全仓唯一写入点 `services/api/src/privacy/grant-pg.ts:106`（排除测试后 `INSERT INTO privacy_epochs` 仅此一处） |
 | 7 | 客户端对 `/me/consents` **零调用**（全仓仅注释引用） | `miniprogram/utils/identify-api.js:202`；`miniprogram/pages/profile/profile.wxml:162-165` |
 | 8 | 客户端 403 文案已写好，但**没有动作可给** | `miniprogram/utils/community-api.js:403`（"社区公开发布需要「公开发布」用途授权，未授权时不会发布"——只陈述，不给路径） |
