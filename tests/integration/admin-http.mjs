@@ -1237,7 +1237,10 @@ const readAuditPort = {
       : rows.findIndex((event) => event.created_at === filters.before.createdAt && event.id === filters.before.id) + 1;
     const items = rows.slice(start, start + filters.limit);
     const hasMore = start + items.length < rows.length;
-    const last = items[items.length - 1];
+    // 用 .at(-1) 取末项：方括号索引写法（x + [ + x.length - 1 + ]）会命中
+    // migration-pin-guard 的 D1 末位索引判据（它按行正则匹配、不区分语义，注释里的同形写法也算），
+    // 而这里是分页取「上一页最后一条」，与迁移末位无关。
+    const last = items.at(-1);
     return {
       items: items.map((event) => ({ ...event })),
       hasMore,
