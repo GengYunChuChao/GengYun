@@ -10,11 +10,11 @@
 
 | 面 | 现在的事实 | 锚点 |
 | --- | --- | --- |
-| 服务端 admin 端点 | 42 条路由，对应契约 42 个 operationId；13 个 admin scope 中实际有路使用的 12 个 | services/api/src/routes/admin.ts:4 |
+| 服务端 admin 端点 | 42 条注册路由，对应契约 42 个 operationId（这个 42 是本页沿用的旧口径＝页首「闭集 44」减去 `getAdminSession`／`logoutAdmin` 两条鉴权自省／登出操作；按闭集全集口径就是页首那 44 条，两者不是矛盾的两套数）；13 个 admin scope 中实际有路使用的 12 个 | services/api/src/routes/admin.ts:198-487 |
 | 前端真实调用 | 30 个 operation、33 处物理调用点（含「审计总台账」与「管理员权限读面」两页，各 1／2 个），全部落在契约内 | apps/admin/src/lib/admin-content-api.mjs:409 |
 | 页面 | 17 个 `.vue`（壳 `App.vue` 1 + 主 tab 视图 10 + 子页 4 + 子组件 2）；「社区审核队列」已接入读 + 通过/驳回，「人工审核」仍是空占位 | apps/admin/src/App.vue:27-38 |
 | 死按钮 | 0 个；另有 6 个「详情/编辑」link 按钮自身无 handler，靠父行点击冒泡生效 | apps/admin/src/views/SourcesView.vue:469 |
-| 后端有面、UI 无入口 | 12 个 operation，只剩两族：注册资料 6、限制资料 6 | services/api/src/routes/admin.ts:225-242 |
+| 后端有面、UI 无入口 | 12 个 operation，只剩两族：注册资料 6、限制资料 6 | services/api/src/routes/admin.ts:238-255 |
 | 鉴权 | 登录响应**不含** scopes；9 个页面登录后再读一次 `GET /admin/auth/session` 补 scope | apps/admin/src/auth/session.ts:128 |
 | 两端都缺 | 「人工审核」工作台（审核人 / 投票 / 专家认证）：`ReviewPlaceholderView` 仍是空态说明页、服务层 `wired:false`。**帖子级**人工通过/驳回已不是缺口：`approvePost`/`rejectPost` 自 S3 起在契约内且有路由与页面（§1.1、§2.1） | apps/admin/src/views/ReviewPlaceholderView.vue:2-16 |
 
@@ -26,18 +26,18 @@
 
 | 域 | 条数 | operation id | scope | 注册行 |
 | --- | --- | --- | --- | --- |
-| 资料来源 | 6 | listAdminSources、createSourceDraft、getAdminSource、editSourceDraft、publishSource、withdrawSource | sources:read / sources:write | services/api/src/routes/admin.ts:185-202 |
-| 科普内容 | 6 | listAdminKnowledge、createKnowledgeDraft、getAdminKnowledge、editKnowledgeDraft、publishKnowledge、withdrawKnowledge | sources:read / sources:write | services/api/src/routes/admin.ts:205-222 |
-| 注册资料 | 6 | listAdminRegistration、createRegistrationDraft、getAdminRegistration、editRegistrationDraft、publishRegistration、withdrawRegistration | sources:read / sources:write | services/api/src/routes/admin.ts:225-242 |
-| 限制资料 | 6 | listAdminRestriction、createRestrictionDraft、getAdminRestriction、editRestrictionDraft、publishRestriction、withdrawRestriction | sources:read / sources:write | services/api/src/routes/admin.ts:245-262 |
-| 分类 | 2 | listAdminCategories、editCategory | sources:read / sources:write | services/api/src/routes/admin.ts:294-308 |
-| 账号 | 2 | listAdminUsers、suspendUser | accounts:read / accounts:suspend | services/api/src/routes/admin.ts:315-328 |
-| 管理员 | 2 | listAdministrators、listAdministratorScopes | scopes:read | services/api/src/routes/admin.ts:341-354 |
-| 作业 | 2 | listAdminJobs、cancelAdminJob | jobs:read / jobs:cancel | services/api/src/routes/admin.ts:364-377 |
-| 功能开关 | 2 | listFlags、setFlag | flags:read / flags:write | services/api/src/routes/admin.ts:385-398 |
-| 审计 | 2 | listAuditEvents、listAuditLogs | audit:read | services/api/src/routes/admin.ts:268-272、services/api/src/routes/admin.ts:282-286 |
-| 开关留痕 | 1 | listFlagAuditEvents | flags:read | services/api/src/routes/admin.ts:405-409 |
-| 社区帖子 | 5 | hidePost、listAdminPosts、getAdminPost、approvePost、rejectPost | sources:write / sources:read | services/api/src/routes/admin.ts:429-438、services/api/src/routes/admin.ts:448-460、services/api/src/routes/admin.ts:467-476、services/api/src/routes/admin.ts:478-487 |
+| 资料来源 | 6 | listAdminSources、createSourceDraft、getAdminSource、editSourceDraft、publishSource、withdrawSource | sources:read / sources:write | services/api/src/routes/admin.ts:198-215 |
+| 科普内容 | 6 | listAdminKnowledge、createKnowledgeDraft、getAdminKnowledge、editKnowledgeDraft、publishKnowledge、withdrawKnowledge | sources:read / sources:write | services/api/src/routes/admin.ts:218-235 |
+| 注册资料 | 6 | listAdminRegistration、createRegistrationDraft、getAdminRegistration、editRegistrationDraft、publishRegistration、withdrawRegistration | sources:read / sources:write | services/api/src/routes/admin.ts:238-255 |
+| 限制资料 | 6 | listAdminRestriction、createRestrictionDraft、getAdminRestriction、editRestrictionDraft、publishRestriction、withdrawRestriction | sources:read / sources:write | services/api/src/routes/admin.ts:258-275 |
+| 分类 | 2 | listAdminCategories、editCategory | sources:read / sources:write | services/api/src/routes/admin.ts:307-321 |
+| 账号 | 2 | listAdminUsers、suspendUser | accounts:read / accounts:suspend | services/api/src/routes/admin.ts:328-341 |
+| 管理员 | 2 | listAdministrators、listAdministratorScopes | scopes:read | services/api/src/routes/admin.ts:354-367 |
+| 作业 | 2 | listAdminJobs、cancelAdminJob | jobs:read / jobs:cancel | services/api/src/routes/admin.ts:377-390 |
+| 功能开关 | 2 | listFlags、setFlag | flags:read / flags:write | services/api/src/routes/admin.ts:398-411 |
+| 审计 | 2 | listAuditEvents、listAuditLogs | audit:read | services/api/src/routes/admin.ts:281-285、services/api/src/routes/admin.ts:295-299 |
+| 开关留痕 | 1 | listFlagAuditEvents | flags:read | services/api/src/routes/admin.ts:418-422 |
+| 社区帖子 | 5 | hidePost、listAdminPosts、getAdminPost、approvePost、rejectPost | sources:write / sources:read | services/api/src/routes/admin.ts:430-438、services/api/src/routes/admin.ts:450-460、services/api/src/routes/admin.ts:468-476、services/api/src/routes/admin.ts:479-487 |
 
 合计 6+6+6+6+2+2+2+2+2+2+1+5 ＝ 42。四类「资料」共用同一组 scope：文件名与 operationId 逐条写在 `services/api/src/admin/families.ts:122-216`；`hidePost` 借用 `sources:write` 是契约级粒度问题，前端只能如实标注（`apps/admin/src/views/PostTakedownView.vue:52`）。帖子读面与审核动作同理：契约给的是 `sources:read`（两个读面）与 `sources:write`（下架 + 通过/驳回），没有独立的 `posts:*` scope，页面只能按契约标注。
 
@@ -47,10 +47,10 @@
 
 | 端点 | 缺省分支的现状 | 锚点 |
 | --- | --- | --- |
-| GET /admin/audit-logs（listAuditLogs） | 端口为 null ⇒ 503 PROVIDER_UNAVAILABLE，不返回空页 | services/api/src/routes/admin.ts:275-286；services/api/src/app.ts:1485-1493 |
-| GET /admin/jobs、POST /admin/jobs/{id}/cancel | 端口不构造 ⇒ 读与写都 503 | services/api/src/routes/admin.ts:356-377；services/api/src/app.ts:1354-1356 |
-| POST /admin/posts/{id}/hide | 只有真实持久的社区帖子端口才放行（`hidePostWired`），内存实现恒 false ⇒ 503 | services/api/src/routes/admin.ts:411-425；services/api/src/app.ts:1310-1311、services/api/src/app.ts:1548 |
-| GET /admin/posts、GET /admin/posts/{id}、POST /admin/posts/{id}/approve、POST /admin/posts/{id}/reject | 后台帖子读面端口与运营审核端口未接线 ⇒ 服务层 503 PROVIDER_UNAVAILABLE，路由层不返回空页、也不伪造审核成功 | services/api/src/routes/admin.ts:441-487 |
+| GET /admin/audit-logs（listAuditLogs） | 端口为 null ⇒ 503 PROVIDER_UNAVAILABLE，不返回空页 | services/api/src/routes/admin.ts:295-299；services/api/src/app.ts:1485-1493 |
+| GET /admin/jobs、POST /admin/jobs/{id}/cancel | 端口不构造 ⇒ 读与写都 503 | services/api/src/routes/admin.ts:377-390；services/api/src/app.ts:1354-1356 |
+| POST /admin/posts/{id}/hide | 只有真实持久的社区帖子端口才放行（`hidePostWired`），内存实现恒 false ⇒ 503 | services/api/src/routes/admin.ts:430-438；services/api/src/app.ts:1310-1311、services/api/src/app.ts:1548 |
+| GET /admin/posts、GET /admin/posts/{id}、POST /admin/posts/{id}/approve、POST /admin/posts/{id}/reject | 后台帖子读面端口与运营审核端口未接线 ⇒ 服务层 503 PROVIDER_UNAVAILABLE，路由层不返回空页、也不伪造审核成功 | services/api/src/routes/admin.ts:450-487 |
 
 ## 2 前端真实调用了哪些端点
 
@@ -207,8 +207,8 @@
 
 ## 7 如果要做「后台最小可用」，先补这三件
 
-1. **注册资料与限制资料两页（12 个 operation）**。理由：这是 12 条无入口里的**全部**（12/12），且服务端四族共用同一批 scope、同一个 `familyOps()` 装配（`services/api/src/routes/admin.ts:171-182`），前端照 `SourcesView` 的既有模式复制即可，不需要新契约、不需要新 scope。
-2. **管理员权限「授/收权」写面（`scopes:write`）**。理由：`scopes:write` 在 `AdminScope.enum` 闭集里，但 44 条 operation **零使用**（`services/api/src/admin/scopes.ts:65-69` 的注释明写「只声明、不实现」）⇒ 控制台在结构上无法授权/收权，`AdministratorsView` 只能读。这是 §6「两端都缺」里唯一「契约位置已留、只差实现」的一条；前置是产品先定「谁能授权管理员」，否则会造出自提权面。
+1. **注册资料与限制资料两页（12 个 operation）**。理由：这是 12 条无入口里的**全部**（12/12），且服务端四族共用同一批 scope、同一个 `familyOps()` 装配（`services/api/src/routes/admin.ts:184-195`），前端照 `SourcesView` 的既有模式复制即可，不需要新契约、不需要新 scope。
+2. **管理员权限「授/收权」写面（`scopes:write`）**。理由：`scopes:write` 在 `AdminScope.enum` 闭集里，但 44 条 operation（闭集全集口径；本页 42 口径下即 42 条）**零使用**（`services/api/src/admin/scopes.ts:65-69` 的注释明写「只声明、不实现」）⇒ 控制台在结构上无法授权/收权，`AdministratorsView` 只能读。这是 §6「两端都缺」里唯一「契约位置已留、只差实现」的一条；前置是产品先定「谁能授权管理员」，否则会造出自提权面。
 3. **让 scopes 随登录一起到前端（1 处响应或守卫调整）**。理由：现在 9 个页面各抄一遍「登录后再读一次」，且没有 `session:read` 的管理员会直接卡在登录失败；把 scopes 放进登录响应（或允许无 `session:read` 也能读自己的会话）能同时消掉重复代码与这个单点。
 
 「审计总台账」与「管理员权限读面」已落地（页面见 §4 更正记录），不再需要补入口。遗留的只是**装配风险**而非 UI 缺口：`listAuditLogs` 在 `real` + 有库池时只读端口已构造（`services/api/src/app.ts:1485-1493`），只有缺省装配（stub / real 无池）才 503——运维侧确认运行模式即可。
