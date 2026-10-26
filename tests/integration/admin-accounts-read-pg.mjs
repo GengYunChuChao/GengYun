@@ -33,6 +33,11 @@
 //       且整笔回滚（`revoked_at` 仍为 NULL）；缺 `scopes:write` ⇒ 403、自授 ⇒ 403
 //       `SELF_SCOPE_GRANT_DENIED`。⛔ 为什么追加在这里而不是新建文件：
 //       `.github/workflows/real-pg-integration.yml` 是**逐文件列举**，新文件 CI 跑不到。
+//   [G] PR-4b · 停用守卫（裁定 A-b「无处可挂」）：`admin_accounts` 没有任何产品路径能改 `state`
+//       ⇒ 「停用最后一名 `scopes:write` 持有者会永久锁死」这条担忧**无触发面**。三组读数：
+//       实体分离（对 `public.users` 停用 2 行 ⇒ `admin_scopes` 计数不变、两名管理员仍 `active`）／
+//       零持有者下停用同样不变且不抛任何错误／负控制（事务内人为把「停用顺带撤销」做出来 ⇒
+//       计数变 0，`ROLLBACK` 复原）。同样追加在本文件，理由同上（新文件 CI 跑不到）。
 //
 // 未取得（如实登记，见证据页与交接）：真机、后台 UI 联调、超 1 万账号规模、HTTP 层之外的审计。
 
@@ -43,6 +48,7 @@ import pg from 'pg';
 
 import { loadConfig } from '../../services/api/src/config.ts';
 import { buildApp } from '../../services/api/src/app.ts';
+import { createPostgresAccountAuthority } from '../../services/api/src/admin/ops/account-authority-pg.ts';
 import { createPool } from '../../services/api/src/db/pool.ts';
 import { discoverMigrations } from '../../services/api/src/db/migrate.ts';
 import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
@@ -638,6 +644,195 @@ async function scopeWriteEvidence() {
   await runtimePool.end();
 }
 
+// ---------------------------------------------------------------------------
+// [G] PR-4b · 停用守卫（裁定 A-b）：把「无处可挂」钉成可执行断言
+//
+// ## 这一组钉的是什么（背景事实，逐条在仓内复核过，行号即复核位置）
+// * 后台管理员的 scope 存在 `public.admin_scopes`（`admin_id → public.admin_accounts.id`，
+//   `0001_initial_schema.sql:89-96`），写路径只有迁移 **`0041`** 的
+//   `public.grant_admin_scope()`（`0041_admin_scope_write_authority.sql:199`）/
+//   `public.revoke_admin_scope()`（同文件 `:352`）。
+// * `0041` 里有「最后一名 `scopes:write` 持有者不能撤」的守卫（同文件 `:439-457`），
+//   SQLSTATE **`G0009`**（`:450`），应用层映射 `LAST_SCOPE_MANAGER`(409)。计数只算
+//   `revoked_at IS NULL` **且** `admin_accounts.state = 'active'` 的管理员（`:440-446`）。
+// * 但**没有任何产品路径能停用一个 `admin_accounts` 行**：全仓对 `admin_accounts` 的写只有
+//   `0041:312` 与 `0041:466` 两处 `revision = revision + 1`（授权 / 撤销的 revision bump），
+//   以及 `services/api/src/auth/store.ts:383-386` 的一条 INSERT（建号，`state` 落默认值）；
+//   **没有** state 变更、**没有**删除。`admin_accounts` / `admin_scopes` 上也没有任何触发器
+//   （全迁移目录 `ON public.admin_accounts` / `ON public.admin_scopes` 命中 0 处）。
+// * 而迁移 **`0017`**（`0017_account_suspend_authority.sql:134-233`）的
+//   `public.suspend_account(p_actor_id, p_audit_id, p_user_id, p_expected_revision, p_request_id)`
+//   作用对象是 `public.users`（终端用户）+ `public.sessions` + `public.admin_audit_events`，
+//   函数体里一次都没有出现 `admin_accounts` / `admin_scopes` ⇒ 与 `admin_accounts`
+//   **不是同一实体**。
+// ⇒ 「停用最后一名 `scopes:write` 持有者导致永久锁死」这条担忧**没有触发面**。
+//   本组不改任何库代码、不改任何迁移、不碰 `0017`、不给 `suspend_account` 加 actor 权限核验
+//   （那会打红 `tests/integration/account-suspend-pg.mjs` 的合成 actor 直调），
+//   只把上面这段推理钉成可执行断言：任何一天真的出现「停用管理员」的产品路径，[G1] 会先红。
+//
+// ## 三组断言分别钉住什么
+//   [G1] 实体分离（主断言）：2 名 `state='active'` 且各持 `scopes:write` 的管理员 ⇒ 记下
+//        `admin_scopes` 里 `scope='scopes:write' AND revoked_at IS NULL` 的计数 = 2 ⇒ 对**同数量**
+//        的 `public.users` 行调停用（走产品端口，调用形态与 `account-suspend-pg.mjs` 一致）⇒
+//        再查同一个计数 ⇒ **仍是 2**，且那两行 `admin_accounts` 的 `state` 仍是 `'active'`、
+//        `revision` 一位没动（证明 `suspend_account` 一行都没碰）。
+//   [G2] 零持有者也不因停用而变：把 `scopes:write` 用**直接 SQL** 撤到 0 持有者（这是唯一能
+//        归零的方式：走 `revoke_admin_scope()` 必被 `G0009` 拒绝）⇒ 再停用 `public.users` 行 ⇒
+//        计数仍是 **0**，且**不抛任何错误**（证明停用路径上没有隐式守卫挂上来）。
+//   [G3] 负控制（必须红、且只红这一条）：在**独立事务**里把「停用会牵动 `admin_scopes`」这件事
+//        人为做出来（`UPDATE admin_scopes SET revoked_at = now() WHERE scope='scopes:write'`，
+//        模拟"停用顺带撤销"这种错误实现）⇒ 主断言口径必读到 0；`ROLLBACK` 复原 ⇒ 回到 2。
+//        ⛔ 这个变异只活在这一个事务里（随后 `ROLLBACK`），不留在代码里、不落库；
+//        它证明的是：**若把停用实现成顺带撤销，[G1] 的主断言会红**。
+//
+// ## 为什么这三组必须走真库
+// [G1]/[G2] 读的是 `admin_scopes` 与 `admin_accounts` 两表在**真实停用事务提交之后**的联合读数，
+// 内存替身无法呈现「`suspend_account` 的四步写完之后，另一张表有没有被牵动」；
+// [G3] 的「变 0 再复原」需要事务可见性与 `ROLLBACK` 语义，只有真库能给。
+// ---------------------------------------------------------------------------
+async function suspendGuardEvidence() {
+  /** 主断言口径：**逐字**按派单给出的计数 SQL（`admin_scopes` 侧，不折叠 `admin_accounts.state`）。 */
+  const writeHolders = async (client = owner) => Number((await client.query(
+    "SELECT count(*)::int AS c FROM public.admin_scopes WHERE scope = 'scopes:write' AND revoked_at IS NULL",
+  )).rows[0].c);
+  /** `0041:440-446` 守卫真正用的口径：再 JOIN `admin_accounts`，只算 `state='active'`。 */
+  const writeHoldersActive = async (client = owner) => Number((await client.query(
+    `SELECT count(*)::int AS c
+       FROM public.admin_scopes AS s
+       JOIN public.admin_accounts AS a ON a.id = s.admin_id
+      WHERE s.scope = 'scopes:write' AND s.revoked_at IS NULL AND a.state = 'active'`,
+  )).rows[0].c);
+
+  // 归一化起点：把前面用例留下的 `scopes:write` 有效持有者全部**直接 SQL** 撤销
+  // （⛔ 不走 `revoke_admin_scope()`：撤最后一名会被 `G0009` 拒绝；本组要的是"确定的 0 起手"）。
+  await owner.query("UPDATE public.admin_scopes SET revoked_at = now() WHERE scope = 'scopes:write' AND revoked_at IS NULL");
+  assert.equal(await writeHolders(), 0, '[G] 归一化后 scopes:write 有效持有者必须为 0（否则下面的计数不可信）');
+
+  // 造 2 名 `state='active'` 且各持 `scopes:write` 的管理员（走建号路径，`admin_state` 落默认 `active`）。
+  const holderA = await seedScopeAdmin(`gy-pr4b-holder-a-${randomUUID().slice(0, 8)}`, ['scopes:write']);
+  const holderB = await seedScopeAdmin(`gy-pr4b-holder-b-${randomUUID().slice(0, 8)}`, ['scopes:write']);
+  const holderIds = [holderA.adminId, holderB.adminId];
+
+  /** 两名持有者在 `admin_accounts` 侧的读数（`state` 与 `revision` 都要一字不动）。 */
+  const holderRows = async () => q(
+    'SELECT id, state::text AS state, revision FROM public.admin_accounts WHERE id = ANY($1::uuid[]) ORDER BY id',
+    [holderIds],
+  );
+  /** 造一行「可被停用」的终端用户（`state='active'`；与 [H] 夹具同一 INSERT 形状）。 */
+  const seedSuspendTarget = async () => {
+    const id = randomUUID();
+    await owner.query(
+      `INSERT INTO public.users (id, wechat_subject_lookup, state, revision, nickname)
+       VALUES ($1::uuid, $2, 'active'::public.user_state, 1, '停用守卫夹具')`,
+      [id, randomBytes(32)],
+    );
+    return id;
+  };
+  // 产品写路径：与 `tests/integration/account-suspend-pg.mjs` 同一调用形态
+  // （`createPostgresAccountAuthority({ pool }).suspend({ actorId, auditId, userId,
+  //   expectedRevision, requestId })`，端口内部就是 `SELECT public.suspend_account($1::uuid,
+  //   $2::uuid, $3::uuid, $4::integer, $5::uuid)` 那一条语句 + 显式事务）。
+  // ⛔ 不在这里另拼一份 `SELECT public.suspend_account(...)`：那样测的是"函数能跑"，
+  //    测不到"产品路径怎么调它"。
+  const authority = createPostgresAccountAuthority({ pool: ownerPool });
+  const suspendTarget = (userId) => authority.suspend({
+    actorId: holderA.adminId,
+    auditId: randomUUID(),
+    userId,
+    expectedRevision: null,
+    requestId: randomUUID(),
+  });
+
+  // ── [G1] 实体分离（主断言） ────────────────────────────────────────────────
+  const before = await holderRows();
+  assert.equal(before.length, 2, `[G1] 必须恰好 2 名持有者（现场 ${before.length}）`);
+  assert.deepEqual(before.map((row) => row.state), ['active', 'active'], '[G1] 两名持有者都必须 state=active（否则 0041 的守卫口径不计入）');
+  assert.equal(await writeHolders(), 2, '[G1] 停用前 scopes:write 有效持有者计数必须为 2');
+  assert.equal(await writeHoldersActive(), 2, '[G1] 停用前「守卫口径」（含 state=active）必须同为 2');
+
+  const usersG1 = [await seedSuspendTarget(), await seedSuspendTarget()];
+  assert.equal(usersG1.length, 2, '[G1] 必须对**同数量**（2 行）的 public.users 执行停用');
+  for (const userId of usersG1) {
+    const outcome = await suspendTarget(userId);
+    // 反向自证：停用**真的生效了**。否则「计数没变」是空断言（什么都没发生当然不会变）。
+    assert.equal(outcome.changed, true, `[G1] 夹具用户 ${userId} 的停用必须真的生效（否则「计数不变」是空断言）`);
+    assert.equal(outcome.account.state, 'suspended', '[G1] 停用后该 users 行的 state 必须是 suspended');
+  }
+  const suspendedG1 = Number((await one(
+    "SELECT count(*)::int AS c FROM public.users WHERE id = ANY($1::uuid[]) AND state = 'suspended'",
+    [usersG1],
+  )).c);
+  assert.equal(suspendedG1, 2, `[G1] 2 行 users 必须都已 suspended（现场 ${suspendedG1}）`);
+
+  assert.equal(await writeHolders(), 2, '[G1] 停用 2 行 public.users 后 scopes:write 有效持有者仍必须是 2（停用不牵动 admin_scopes）');
+  assert.equal(await writeHoldersActive(), 2, '[G1] 「守卫口径」同样仍必须是 2');
+  const after = await holderRows();
+  assert.deepEqual(after, before, '[G1] 停用后两名管理员的 admin_accounts 行必须逐列不变（state 仍 active、revision 未动）');
+  assert.deepEqual(after.map((row) => row.state), ['active', 'active'], '[G1] 两名管理员停用后必须仍是 state=active（suspend_account 一行都没碰）');
+  note(`[G1] 实体分离：停用前 holders=${before.length}（active 各 1 次 revision=${before.map((row) => row.revision).join('/')}）`
+    + ` ⇒ 对 ${usersG1.length} 行 public.users 停用（changed=true×2）⇒ holders 仍 ${await writeHolders()}，`
+    + `两名管理员 state 仍 active、revision 未动`);
+
+  // ── [G2] 零持有者也不因停用而变 ────────────────────────────────────────────
+  // 唯一的归零方式：直接 SQL。走 `revoke_admin_scope()` 会被 `G0009 LAST_SCOPE_MANAGER` 拒绝
+  // （[W4] 已经证明过那条路径），所以这里必须绕开函数才能造出"0 持有者"这个前置状态。
+  await owner.query("UPDATE public.admin_scopes SET revoked_at = now() WHERE scope = 'scopes:write' AND revoked_at IS NULL");
+  assert.equal(await writeHolders(), 0, '[G2] 直接 SQL 撤销后 scopes:write 有效持有者必须恰好为 0');
+  assert.equal(await writeHoldersActive(), 0, '[G2] 「守卫口径」同样必须为 0');
+
+  const usersG2 = [await seedSuspendTarget(), await seedSuspendTarget()];
+  const outcomesG2 = [];
+  let thrownG2 = null;
+  for (const userId of usersG2) {
+    try {
+      outcomesG2.push(await suspendTarget(userId));
+    } catch (error) {
+      thrownG2 = error;
+    }
+  }
+  // 「不抛任何错误」是本组的核心读数：停用路径上没有任何隐式守卫（不会因为元权限归零而拒绝）。
+  assert.equal(thrownG2, null, `[G2] 零持有者下停用不得抛任何错误（现场：${thrownG2?.code ?? ''} ${thrownG2?.message ?? ''}）`);
+  assert.deepEqual(outcomesG2.map((outcome) => outcome.changed), [true, true], '[G2] 两次停用都必须真的生效（证明调用真的落库，不是被静默跳过）');
+  assert.equal(await writeHolders(), 0, '[G2] 零持有者下停用之后仍是 0（停用不牵动 admin_scopes）');
+  assert.equal(await writeHoldersActive(), 0, '[G2] 「守卫口径」同样仍是 0');
+  note(`[G2] 零持有者：SQL 直撤到 0 ⇒ 再停用 ${usersG2.length} 行 public.users（changed=true×2、零错误）`
+    + ' ⇒ holders 仍 0（停用路径上没有隐式守卫）');
+
+  // ── [G3] 负控制：把「停用顺带撤销」人为做出来 ⇒ 主断言口径必变 0 ────────────
+  // 复原前置：[G2] 用直接 SQL 撤掉的那两行授权原样置回有效（只针对这两名持有者，
+  // ⛔ 不是 `WHERE scope='scopes:write'` 全表复活，那会把历史已撤销的行一起搬回来）。
+  await owner.query(
+    "UPDATE public.admin_scopes SET revoked_at = NULL WHERE scope = 'scopes:write' AND admin_id = ANY($1::uuid[])",
+    [holderIds],
+  );
+  assert.equal(await writeHolders(), 2, '[G3] 负控制起手必须是 2（否则下面的「变 0」不成立）');
+
+  // 独立事务（独立连接）：变异只在这个事务里存在，随后 `ROLLBACK` 复原。
+  const tx = new pg.Client({ connectionString: ownerUrl.href });
+  await tx.connect();
+  let mutated = null;
+  try {
+    await tx.query('BEGIN');
+    // 「错误实现」的样子：停用的同时把 `scopes:write` 顺带撤销。
+    // 与 `[G2]` 同形：只动**仍然有效**的行（`revoked_at IS NULL`），不改写历史已撤销行 ——
+    // 否则模拟的就不是「停用顺带撤销有效授权」，而是「停用顺带改写全部历史」，两者语义不同。
+    await tx.query("UPDATE public.admin_scopes SET revoked_at = now() WHERE scope = 'scopes:write' AND revoked_at IS NULL");
+    mutated = await writeHolders(tx);
+    const mutatedActive = await writeHoldersActive(tx);
+    // 负控制必须真的红：变异实现让主断言口径读到 0，否则这条负控制等于没验。
+    assert.equal(mutated, 0, '[G3] 「停用顺带撤销」的变异实现必须让主断言口径读到 0（否则负控制没红）');
+    assert.equal(mutatedActive, 0, '[G3] 「守卫口径」同样必须读到 0');
+  } finally {
+    await tx.query('ROLLBACK').catch(() => {});
+    await tx.end().catch(() => {});
+  }
+  const restored = await writeHolders();
+  assert.equal(restored, 2, '[G3] ROLLBACK 之后计数必须回到 2（变异只活在事务里，⛔ 不落库）');
+  assert.equal(await writeHoldersActive(), 2, '[G3] 「守卫口径」同样必须回到 2');
+  note(`[G3] 负控制：事务内「停用顺带撤销」⇒ 计数 2→${mutated}；ROLLBACK 后回到 ${restored}`
+    + '（若把停用实现成顺带撤销，[G1] 的主断言会红；变异未留在代码里）');
+}
+
 try {
   await migrationTriple();
   await provisionRoles();
@@ -648,6 +843,9 @@ try {
   // `#18` S2 PR-3：管理员 scope 写面（授予/撤销/幂等/并发/最后授权者/越权）。放在最后：
   // 它会清空身份面并重建夹具，跑在前面会把 [H] 的用户夹具冲掉。
   await scopeWriteEvidence();
+  // PR-4b · 停用守卫（裁定 A-b「无处可挂」）：实体分离 / 零持有者 / 负控制。同样放在最后：
+  // 它要先归一化 `scopes:write` 的持有者数量，跑在 [W] 前面会把写面用例的并发前置冲掉。
+  await suspendGuardEvidence();
 } finally {
   for (const app of registeredApps) {
     await app.close().catch(() => {});
@@ -657,10 +855,14 @@ try {
 }
 
 if (runtimeUrl === null) {
-  note('结论：库侧/权限侧证据全部通过；HTTP 一手证据未取得（缺运行时角色 URL）——不得读成「HTTP 已验证」。');
+  note('结论：库侧/权限侧证据全部通过（含 PR-4b 停用守卫三组：实体分离 / 零持有者 / 负控制）；'
+    + 'HTTP 一手证据未取得（缺运行时角色 URL）——不得读成「HTTP 已验证」。');
   process.exitCode = 0;
 } else {
   note('结论：迁移三连 + 最小权限反向控制 + 真实模式 HTTP（三态/nickname 回退/游标翻页/两条负控制）'
     + ' + `#18` S2 PR-3 写面（授予落 granted_by/granted_at / 撤销落 revoked_at / 幂等 / 并发恰一方成功 / '
-    + '最后授权者 409 LAST_SCOPE_MANAGER / 缺权限与自授 403）全部通过；90 号断言由 psql -f 单独执行并回读 verdict。');
+    + '最后授权者 409 LAST_SCOPE_MANAGER / 缺权限与自授 403）'
+    + ' + PR-4b 停用守卫（实体分离：停用 public.users 不牵动 admin_scopes、管理员 state 不被动 / '
+    + '零持有者下停用零错误 / 负控制事务内造变异必红后 ROLLBACK 复原）全部通过；'
+    + '90 号断言由 psql -f 单独执行并回读 verdict。');
 }

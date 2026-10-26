@@ -122,7 +122,7 @@ DETAIL:  1 object in database gengyun_hold
   assert.ok(runtimePassword.length > 0, '运行时 URL 必须带口令（scram 集群上没有口令必然 28P01）');
   const runtimePasswordSql = runtimePassword.replace(/'/g, "''");
   ```
-  （转义照 `tests/integration/admin-accounts-read-pg.mjs:190-192`。）
+  （转义照 `tests/integration/admin-accounts-read-pg.mjs:203-205`。）
 - 同一个 `runtimePassword` 既写进 `CREATE/ALTER ROLE … PASSWORD`，又在省略 `argv[3]` 时派生连接串：
   ```js
   const derived = new URL(ownerUrl.href);
@@ -215,7 +215,7 @@ gengyun_api_runtime,gengyun_auth_privacy,gengyun_ci_owner,gengyun_consent_grante
 
 ### 4.2 接线顺序：本脚本必须排在 `admin-accounts-read-pg` / `account-deletion-pg` **之后**
 
-那两个脚本对角色是**无条件** `CREATE ROLE`（`tests/integration/admin-accounts-read-pg.mjs:192`、`tests/integration/account-deletion-pg.mjs:523`），不容忍任何同名残留；本脚本对残留是「查 `pg_roles` 有则 ALTER/复用」（§2.2），能容忍它们留下的角色。因此接线时把本脚本排在这两条**之后**；若排在前且本脚本留下了角色（非超级 owner 场景、或本脚本中途失败），它们下一次必 `42710`。CI 的超级用户形态下本脚本清完不残留，顺序在功能上不敏感——但**不要依赖这个巧合**。
+那两个脚本对角色是**无条件** `CREATE ROLE`（`tests/integration/admin-accounts-read-pg.mjs:205`、`tests/integration/account-deletion-pg.mjs:523`），不容忍任何同名残留；本脚本对残留是「查 `pg_roles` 有则 ALTER/复用」（§2.2），能容忍它们留下的角色。因此接线时把本脚本排在这两条**之后**；若排在前且本脚本留下了角色（非超级 owner 场景、或本脚本中途失败），它们下一次必 `42710`。CI 的超级用户形态下本脚本清完不残留，顺序在功能上不敏感——但**不要依赖这个巧合**。
 
 ### 4.3 已知瑕疵：`[P] 复用…` 打在 `ALTER` 之前（失败时日志自相矛盾）
 
