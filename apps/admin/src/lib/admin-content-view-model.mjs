@@ -14,7 +14,7 @@
  * 本模块只翻译契约里**真实存在**的字段，不推断生命周期。
  */
 
-import { REVIEW_STATUSES, SOURCE_KINDS, EVIDENCE_KINDS, KNOWLEDGE_TYPES, CATEGORY_TYPES, VISIBILITIES } from './admin-content-contract.mjs';
+import { REVIEW_STATUSES, SOURCE_KINDS, EVIDENCE_KINDS, KNOWLEDGE_TYPES, CATEGORY_TYPES, VISIBILITIES, RESTRICTION_EFFECTS } from './admin-content-contract.mjs';
 
 /** `Visibility` → 中文标签（一一对应，不合并状态）。 */
 export const VISIBILITY_LABELS = Object.freeze({
@@ -74,6 +74,33 @@ export const VALIDITY_LABELS = Object.freeze({
   unknown: '未知',
   withdrawn: '已下架',
 });
+
+/** `RestrictionInput.effect`（契约内联枚举）：三值闭集，一一对应，**不合并**。 */
+export const EFFECT_LABELS = Object.freeze({
+  prohibited: '禁用',
+  restricted: '限用',
+  unknown: '结论未知',
+});
+
+export const EFFECT_TONES = Object.freeze({
+  prohibited: 'danger',
+  restricted: 'warn',
+  unknown: 'warn',
+});
+
+/**
+ * 注册资料族的固定页面说明。
+ *
+ * 与 sources／knowledge 的区别要写在页面上，否则操作员会以为「状态列丢了」：
+ * 契约 `RegistrationDraft` 只有 `{id, revision, content, review_status}` —— **没有 visibility**，
+ * 因此本族列表**没有状态列**，也**不推断**草稿／已发布／已撤回。
+ */
+export const REGISTRATION_NOTE =
+  '本族契约 RegistrationDraft 只有 id／revision／content／review_status：没有 visibility，也没有 changed。因此本页不显示「草稿／已发布／已撤回」状态，也不推断生命周期；发布与撤回的回执只表示「服务端受理了 200」，是否真的变更需按 request_id 查审计台账。';
+
+/** 限制资料族的固定页面说明（同上，另加 effect 闭集与 conditions 必填口径）。 */
+export const RESTRICTION_NOTE =
+  '本族契约 Restriction 同样只有 id／revision／content／review_status（没有 visibility／changed）。conditions 不可为 null：crop_id 与 region_code 恒为必填；effect 是闭集 prohibited／restricted／unknown，页面不接受其它值。';
 
 /** 页面固定说明：可见性 ≠ 生命周期（避免把 private 一律读成「草稿」）。 */
 export const LIFECYCLE_NOTE =
@@ -286,6 +313,30 @@ export function canLoadMoreFamily(state) {
   return state.phase === 'ready' && state.collection.nextCursor !== null;
 }
 
+/**
+ * `describeFamily` + **「服务端未接线」硬分支**。
+ *
+ * `real` 装配下没有库池时，这批内容操作一律 503 `PROVIDER_UNAVAILABLE`（fail-closed）。
+ * 那不是「服务端忙」，更不是「0 行」：必须显示成「未接线」，且在服务端 `retryable:false` 时
+ * **不给重试**（重试必然还是 503）。注册／限制两页用这个包装，其余三族保持原口径。
+ */
+export function describeFamilyView(state, options = {}) {
+  const view = describeFamily(state, options);
+  const failure = state.failure;
+  const unwired = failure !== null && failure !== undefined
+    && (failure.status === 503 || failure.code === 'PROVIDER_UNAVAILABLE');
+  if (!unwired) return view;
+  const tail = `${failure.code ?? '无错误码'}（HTTP ${failure.status ?? '—'}）${failure.message ?? ''}`;
+  return {
+    ...view,
+    phase: 'unwired',
+    tone: 'error',
+    title: '服务端未接线（HTTP 503 · fail-closed）',
+    detail: `${tail} · 后台内容域在 real 装配下没有真实存储时按 fail-closed 拒绝，这不是「没有数据」。`,
+    canRetry: failure.declaredRetryable === true,
+  };
+}
+
 function pad2(value) {
   return String(value).padStart(2, '0');
 }
@@ -441,17 +492,170 @@ export function categoryDetailView(item) {
   };
 }
 
+/** `FormulationInput.ingredients` → 一行「名称 含量 单位」串（条数为 0 时如实写 0 条）。 */
+export function ingredientLines(ingredients) {
+  if (!Array.isArray(ingredients) || ingredients.length === 0) return '0 条';
+  return ingredients.map((item) => `${item.name} ${item.content_text}${item.unit_text}`).join('、');
+}
+
+/**
+ * `RegistrationDraft`（:15158）→ 表格行。
+ *
+ * **没有状态列**：契约读面没有 visibility（见 `REGISTRATION_NOTE`），所以这里不生成
+ * `statusLabel`，页面上也不出现「草稿／已发布」，避免用 sources 族的字段凭空补一列。
+ */
+export function registrationRow(item) {
+  const content = item.content;
+  return {
+    id: item.id,
+    revision: item.revision,
+    revisionLabel: `"${item.revision}"`,
+    title: content.registered_name,
+    versionLabel: content.source_version,
+    reviewLabel: label(REVIEW_LABELS, item.review_status),
+    reviewTone: tone(REVIEW_TONES, item.review_status),
+    formulationLabel: `${content.formulation.registration_number} · ${content.formulation.producer} · ${content.formulation.dosage_form}`,
+    ingredientsLabel: `${content.formulation.ingredients.length} 种：${ingredientLines(content.formulation.ingredients)}`,
+    validityLabel: `${formatDateTime(content.valid_from)} → ${content.valid_to === null ? '长期（null）' : formatDateTime(content.valid_to)}`,
+    sourceLabel: shortId(content.source_id),
+    sourceVersionLabel: content.source_version,
+    shortId: shortId(item.id),
+  };
+}
+
+/** `RegistrationDraft` → 详情面板（逐字段对齐契约，读面没有的一律进 `missing`）。 */
+export function registrationDetailView(item) {
+  const content = item.content;
+  const formulation = content.formulation;
+  return {
+    id: item.id,
+    revision: item.revision,
+    etag: `"${item.revision}"`,
+    title: content.registered_name,
+    fields: [
+      { label: '注册资料 ID', value: item.id },
+      { label: '登记名称 registered_name', value: content.registered_name },
+      { label: '来源 ID source_id', value: content.source_id },
+      { label: '来源版本 source_version', value: content.source_version },
+      { label: '生效时间 valid_from', value: formatDateTime(content.valid_from) },
+      { label: '失效时间 valid_to', value: content.valid_to === null ? '无（null）' : formatDateTime(content.valid_to) },
+      { label: '登记证号 registration_number', value: formulation.registration_number },
+      { label: '生产企业 producer', value: formulation.producer },
+      { label: '剂型 dosage_form', value: formulation.dosage_form },
+      { label: '有效成分 ingredients', value: ingredientLines(formulation.ingredients) },
+      { label: '核验状态 review_status', value: label(REVIEW_LABELS, item.review_status) },
+      { label: '当前修订（If-Match）', value: `"${item.revision}"` },
+    ],
+    missing: ['可见性 visibility', '生命周期（草稿／已发布／已撤回）', 'changed', '创建时间', '更新时间', '操作者'],
+    note: '契约 RegistrationDraft 只有 id／revision／content／review_status 四个顶层字段：本页不显示可见性、不显示发布历史，也不显示操作者。',
+  };
+}
+
+/** `Restriction`（:15256）→ 表格行（同样没有状态列）。 */
+export function restrictionRow(item) {
+  const content = item.content;
+  return {
+    id: item.id,
+    revision: item.revision,
+    revisionLabel: `"${item.revision}"`,
+    title: label(EFFECT_LABELS, content.effect),
+    effectLabel: label(EFFECT_LABELS, content.effect),
+    effectTone: tone(EFFECT_TONES, content.effect),
+    conditionsLabel: `${content.conditions.crop_id} / ${content.conditions.region_code}`,
+    versionLabel: content.source_version,
+    reviewLabel: label(REVIEW_LABELS, item.review_status),
+    reviewTone: tone(REVIEW_TONES, item.review_status),
+    reasonLabel: content.reason,
+    validityLabel: `${formatDateTime(content.valid_from)} → ${content.valid_to === null ? '长期（null）' : formatDateTime(content.valid_to)}`,
+    formulationLabel: content.formulation_id === null ? '无（null）' : shortId(content.formulation_id),
+    sourceLabel: shortId(content.source_id),
+    sourceVersionLabel: content.source_version,
+    shortId: shortId(item.id),
+  };
+}
+
+/** `Restriction` → 详情面板。 */
+export function restrictionDetailView(item) {
+  const content = item.content;
+  const conditions = Object.entries(content.conditions).map(([key, value]) => `${key}=${String(value)}`).join('，');
+  return {
+    id: item.id,
+    revision: item.revision,
+    etag: `"${item.revision}"`,
+    title: label(EFFECT_LABELS, content.effect),
+    fields: [
+      { label: '限制资料 ID', value: item.id },
+      { label: '来源 ID source_id', value: content.source_id },
+      { label: '来源版本 source_version', value: content.source_version },
+      { label: '制剂 ID formulation_id', value: content.formulation_id === null ? '无（null）' : content.formulation_id },
+      { label: '条件 conditions', value: conditions },
+      { label: '限制结论 effect', value: label(EFFECT_LABELS, content.effect) },
+      { label: '理由 reason', value: content.reason },
+      { label: '生效时间 valid_from', value: formatDateTime(content.valid_from) },
+      { label: '失效时间 valid_to', value: content.valid_to === null ? '无（null）' : formatDateTime(content.valid_to) },
+      { label: '核验状态 review_status', value: label(REVIEW_LABELS, item.review_status) },
+      { label: '当前修订（If-Match）', value: `"${item.revision}"` },
+    ],
+    missing: ['可见性 visibility', '生命周期（草稿／已发布／已撤回）', 'changed', '创建时间', '更新时间', '操作者'],
+    note: '契约 Restriction 只有 id／revision／content／review_status：本页不显示可见性与发布历史，操作者同样不在读面里。',
+  };
+}
+
+/**
+ * `changed` 三值 → 回执用的**显式判定**（`'changed'` / `'unchanged'` / `'unknown'`）。
+ *
+ * 这里只做映射，**不做任何推断**：`null`／`undefined`（包括 publish／withdraw 这种契约
+ * 无法区分「首次真的生效」与「服务端幂等 no-op（已是该状态）」的情形）一律 `'unknown'`。
+ * 判定来源只有一个：`admin-content-api.mjs` 的 `deriveChanged()`（编辑比 revision 前进）；
+ * ⛔ 不得按 HTTP 状态码硬推成功 —— 200 既可能是首次生效，也可能是 no-op。
+ */
+export function changedVerdict(changed) {
+  if (changed === true) return 'changed';
+  if (changed === false) return 'unchanged';
+  return 'unknown';
+}
+
+/**
+ * 写回执标题。
+ *
+ * `'unknown'`（契约分不出首次生效与幂等 no-op）与 `'unchanged'`（编辑回传同一 revision，
+ * 例如同一幂等键重放）都写「已受理」：这一族的写回执与 outcome 必须给同一个结论，否则同一屏
+ * 会出现「写操作成功回执」+「已受理…changed 未知」两个相反的说法（B1）。`'unchanged'` 尤其
+ * 不能写「成功」——请求确实被受理，但 revision 没动，宣称「成功」等于宣称改了东西。
+ * 只有 `'changed'`（修订真的前进）才保留「成功回执」。
+ */
+export function receiptHeading(write, verdict = 'unknown') {
+  if (write === null || write === undefined) return '';
+  if (write.phase === 'pending') return '写操作进行中…';
+  if (write.ok !== true) return '写操作失败回执';
+  if (verdict === 'unknown') return '写操作已受理回执';
+  if (verdict === 'unchanged') return '写操作已受理回执（本次未产生变更）';
+  return '写操作成功回执';
+}
+
 /**
  * 写操作回执 → 展示行。
  *
  * 成功与失败都返回**同样的字段集**（失败多一条错误码），页面因此没有「静默成功」的分支。
+ * `options.verdict` 是**调用方给出的显式判定**（见 `changedVerdict`／`receiptHeading`）；
+ * 省略时按 `write.changed` 映射，缺省即 `'unknown'`（宁写「已受理」，不写「成功」）。
  */
-export function receiptLines(write) {
+export function receiptLines(write, options = {}) {
   if (write === null || write === undefined) return [];
   if (write.phase === 'pending') return [{ label: '进行中', value: write.label ?? '' }];
+  const verdict = options.verdict ?? changedVerdict(write.changed);
   const lines = [];
   lines.push({ label: '操作', value: write.label ?? '' });
-  lines.push({ label: '结果', value: write.ok === true ? `成功（HTTP ${write.status}）` : `失败（HTTP ${write.status ?? '—'}）` });
+  lines.push({
+    label: '结果',
+    value: write.ok !== true
+      ? `失败（HTTP ${write.status ?? '—'}）`
+      : verdict === 'unknown'
+        ? `已受理（HTTP ${write.status} · 是否生效未确认）`
+        : verdict === 'unchanged'
+          ? `已受理（HTTP ${write.status} · 本次未产生变更）`
+          : `成功（HTTP ${write.status}）`,
+  });
   if (write.ok !== true) {
     lines.push({ label: '错误码', value: write.code === null || write.code === undefined ? '服务端未返回错误码' : `${write.code}${write.inContract === false ? '（契约外码）' : ''}` });
     if (write.message !== undefined && write.message !== '') lines.push({ label: '服务端说明', value: write.message });
@@ -495,5 +699,6 @@ export function selfCheckLabelCoverage() {
   if (Object.keys(EVIDENCE_KIND_LABELS).length !== EVIDENCE_KINDS.length) problems.push('EvidenceKind 标签缺项');
   if (Object.keys(KNOWLEDGE_TYPE_LABELS).length !== KNOWLEDGE_TYPES.length) problems.push('KnowledgeDraftInput.type 标签缺项');
   if (Object.keys(CATEGORY_TYPE_LABELS).length !== CATEGORY_TYPES.length) problems.push('Category.type 标签缺项');
+  if (Object.keys(EFFECT_LABELS).length !== RESTRICTION_EFFECTS.length) problems.push('RestrictionInput.effect 标签缺项');
   return problems;
 }

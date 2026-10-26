@@ -12,12 +12,14 @@ import {
   canLoadMoreFamily,
   categoryDetailView,
   categoryRow,
+  changedVerdict,
   describeAuditLookup,
   describeFamily,
   formatDateTime,
   initialFamilyState,
   knowledgeDetailView,
   knowledgeRow,
+  receiptHeading,
   receiptLines,
   reduceFamily,
   selfCheckLabelCoverage,
@@ -170,6 +172,8 @@ test('写回执：成功/失败都带 request_id 与真实发出的写头；失�
     requestId: '00000000-0000-4000-9000-000000000009',
     etag: '"5"',
     sentHeaders: { 'idempotency-key': 'key-1', 'if-match': '"4"' },
+    // 显式判定「确实改动了」：成功文案只在这个前提下出现（缺省是 unknown ⇒ 只写「已受理」）。
+    changed: true,
   });
   const asMap = Object.fromEntries(success.map((line) => [line.label, line.value]));
   assert.equal(asMap['结果'], '成功（HTTP 200）');
@@ -199,6 +203,55 @@ test('写回执：成功/失败都带 request_id 与真实发出的写头；失�
   // 契约没有 audit event id：回执里不得出现「审计事件 ID」这种不存在的字段
   assert.equal(success.some((line) => line.label.includes('audit') || line.label.includes('审计事件')), false);
   assert.equal(AUDIT_SCOPE_NOTE.includes('没有 audit event id'), true);
+});
+
+test('写回执的判定是三值、缺省一律 unknown：分不出首次生效与幂等 no-op 时只写「已受理」', () => {
+  // 映射：只有真 `true` / 真 `false` 才给出确定判定，其余（含 undefined）都是 unknown。
+  assert.equal(changedVerdict(true), 'changed');
+  assert.equal(changedVerdict(false), 'unchanged');
+  assert.equal(changedVerdict(null), 'unknown');
+  assert.equal(changedVerdict(undefined), 'unknown');
+  assert.equal(changedVerdict('true'), 'unknown', '字符串不得被当成 true（不做隐式推断）');
+
+  const settled = {
+    phase: 'settled',
+    label: '发布注册资料（POST /admin/registrations/{id}/publish）',
+    ok: true,
+    status: 200,
+    requestUrl: '/api/v1/admin/registrations/x/publish',
+    requestId: '00000000-0000-4000-9000-00000000000a',
+    sentHeaders: { 'idempotency-key': 'key-1', 'if-match': '"2"' },
+    changed: null,
+  };
+  const unknownLines = Object.fromEntries(receiptLines(settled).map((line) => [line.label, line.value]));
+  assert.equal(unknownLines['结果'], '已受理（HTTP 200 · 是否生效未确认）', 'changed 未知时不得写「成功」');
+  assert.equal(receiptHeading(settled, 'unknown'), '写操作已受理回执');
+  assert.doesNotMatch(JSON.stringify(receiptLines(settled)), /成功/, '未知判定下整份回执都不得出现「成功」二字');
+
+  // 显式判定优先于 write.changed（调用方给什么就写什么，本函数不自己猜）。
+  assert.equal(receiptHeading(settled, 'changed'), '写操作成功回执');
+  assert.equal(Object.fromEntries(receiptLines(settled, { verdict: 'changed' }).map((line) => [line.label, line.value]))['结果'], '成功（HTTP 200）');
+
+  // unchanged（编辑回传同一 revision，多为同一幂等键重放）：请求**确实被受理**，但 revision 没动
+  // ⇒ 不得带入「成功」字样，否则与 outcome 的「未追加新修订…不记为本次成功」同一屏互相打脸。
+  assert.equal(receiptHeading(settled, 'unchanged'), '写操作已受理回执（本次未产生变更）', 'unchanged 不得写「成功回执」');
+  assert.doesNotMatch(receiptHeading(settled, 'unchanged'), /成功/);
+  const unchangedLines = Object.fromEntries(receiptLines(settled, { verdict: 'unchanged' }).map((line) => [line.label, line.value]));
+  assert.equal(unchangedLines['结果'], '已受理（HTTP 200 · 本次未产生变更）', 'unchanged 的结果行不得写「成功（HTTP 200）」');
+  assert.match(unchangedLines['结果'], /已受理/);
+  assert.match(unchangedLines['结果'], /本次未产生变更/);
+  assert.doesNotMatch(JSON.stringify(receiptLines(settled, { verdict: 'unchanged' })), /成功/, 'unchanged 下整份回执都不得出现「成功」二字');
+  // 本片只改 unchanged 一档：unknown 档的措辞必须原样保留。
+  assert.equal(Object.fromEntries(receiptLines(settled, { verdict: 'unknown' }).map((line) => [line.label, line.value]))['结果'], '已受理（HTTP 200 · 是否生效未确认）');
+
+  // 失败优先于三值：非 2xx 一律失败文案（不因为 changed 未知而写成「已受理」）。
+  const failedWrite = { phase: 'settled', label: '撤回注册资料', ok: false, status: 409, changed: null };
+  assert.equal(receiptHeading(failedWrite, 'unknown'), '写操作失败回执');
+  assert.equal(Object.fromEntries(receiptLines(failedWrite).map((line) => [line.label, line.value]))['结果'], '失败（HTTP 409）');
+
+  // 三态之外的两态：进行中 / 无回执。
+  assert.equal(receiptHeading({ phase: 'pending', label: '' }, 'unknown'), '写操作进行中…');
+  assert.equal(receiptHeading(null, 'unknown'), '');
 });
 
 test('审计查找：找不到时只说扫了多少条，明说「不等于没有审计记录」', () => {

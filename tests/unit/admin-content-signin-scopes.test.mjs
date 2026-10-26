@@ -3,7 +3,7 @@
  *
  * 为什么必须是渲染级用例：缺陷的现象整条都长在 `ContentAdminView.vue` 的 SFC 呈现路径上 ——
  * `signInAdmin` 的登录响应不带 scope（`apps/admin/src/auth/session.ts:17`），旧版 `submitLogin()`
- * 只把响应直接塞进 `session`，于是来源 / 知识库 / 分类 / 下架 4 个子页收到的 `scopes` 恒为 `[]`，
+ * 只把响应直接塞进 `session`，于是来源 / 知识库 / 注册 / 限制 / 分类 / 下架 6 个子页收到的 `scopes` 恒为 `[]`，
  * `canWrite` / `canAudit` 全 false，用户登录完必须手点「重读会话」或刷新才恢复。
  * 这段退化对 `tsc --noEmit` 与 `vite build` 都是绿的，纯函数测试也碰不到 `submitLogin()`，
  * 所以要靠真实组件渲染来钉。
@@ -14,14 +14,14 @@
  *      把 `ContentAdminView.vue` 编成 ESM 组件（`inlineTemplate: true`，关掉静态提升与事件缓存）；
  *   2. 用 `vue` 自带的 `createRenderer()` 造内存宿主（element／text／comment，元素带
  *      `addEventListener` 以满足 `v-model` 指令），挂载**真实组件**并派发真实事件；
- *   3. `../auth/session` 与 4 个子页换成 data: URL 桩模块：会话桩精确制造「登录成功但再读会话失败」
+ *   3. `../auth/session` 与 6 个子页换成 data: URL 桩模块：会话桩精确制造「登录成功但再读会话失败」
  *      与「登录成功且再读会话可用」两条路径，子页桩只记录父组件真正传下来的 `baseUrl` / `token` /
  *      `scopes`，并用**真实常量**（`admin-content-contract.mjs` 的 `SOURCES_WRITE_SCOPE` /
  *      `AUDIT_READ_SCOPE`）算出子页自己的 `canWrite` / `canAudit` 口径；
  *   4. 组件模块本身也走 data: URL，但 `vue` 与上述 .mjs 改写成绝对 file: URL，
  *      保证与测试进程共用**同一个** vue 实例（否则 runtime-core 与 vnode 的 Symbol 不匹配）。
  *
- * 断言口径：4 个子页 tab 逐个切过去都必须收到 3 项 scope 且 `canWrite` / `canAudit` 为 true；
+ * 断言口径：6 个子页 tab 逐个切过去都必须收到 3 项 scope 且 `canWrite` / `canAudit` 为 true；
  * 读不到会话时必须停在登录表单、给出可执行的中文失败态（而不是静默进内容页 + 空 scope）；
  * 顶部 scope 提示行必须显示真实 scope 列表。
  *
@@ -55,6 +55,8 @@ const CHILD_KEY = '__gyContentSigninScopesChildren';
 const FAMILIES = [
   ['sources', 'SourcesView'],
   ['knowledge', 'KnowledgeAdminView'],
+  ['registrations', 'RegistrationAdminView'],
+  ['restrictions', 'RestrictionAdminView'],
   ['categories', 'CategoriesView'],
   ['posts', 'PostTakedownView'],
 ];
@@ -65,6 +67,22 @@ const READY_SESSION = Object.freeze({
   // 登录响应本身不带 scope（session.ts:17）；这 3 项只能来自「登录后再读一次会话」。
   scopes: Object.freeze([SOURCES_READ_SCOPE, SOURCES_WRITE_SCOPE, AUDIT_READ_SCOPE]),
 });
+
+/**
+ * 真实子页的权限判定清单：`[文件名, 是否有 canAudit]`。
+ *
+ * 必须覆盖 `FAMILIES` 里的**全部**子页（下面有用例按集合同等钉住）；增减子页时只改这一处，
+ * ⛔ 不要再在用例标题里写死「N 个真实子页」这种会腐烂的字面数（R2）。
+ */
+const SCOPE_RULES = Object.freeze([
+  ['SourcesView.vue', true],
+  ['KnowledgeAdminView.vue', true],
+  ['RegistrationAdminView.vue', true],
+  ['RestrictionAdminView.vue', true],
+  ['CategoriesView.vue', true],
+  // 下架页只有写权限判定，没有 canAudit。
+  ['PostTakedownView.vue', false],
+]);
 
 function moduleUrl(source) {
   return `data:text/javascript;base64,${Buffer.from(source, 'utf8').toString('base64')}`;
@@ -340,7 +358,7 @@ async function signIn(container) {
   await settle();
 }
 
-test('登录成功后 4 个子页立刻拿到 3 项 scopes：canWrite / canAudit 不再恒 false', async () => {
+test('登录成功后 6 个子页立刻拿到 3 项 scopes：canWrite / canAudit 不再恒 false', async () => {
   const { hooks, calls } = makeHooks({
     // 登录响应本来就只带 token：scopes 为空（见 session.ts:17），真正的 scope 只能来自再读一次会话。
     signIn: async () => ({ accessToken: 'synthetic-token', expiresAt: '2099-01-01T00:00:00Z', scopes: [] }),
@@ -358,7 +376,7 @@ test('登录成功后 4 个子页立刻拿到 3 项 scopes：canWrite / canAudit
     assert.equal(findBy(container, (node) => node.kind === 'form'), null, '读到会话后登录表单必须消失');
 
     const tabs = subTabs(container);
-    assert.equal(tabs.length, FAMILIES.length, '4 个子页 tab 必须都在');
+    assert.equal(tabs.length, FAMILIES.length, '6 个子页 tab 必须都在');
     for (const [index, [key, component]] of FAMILIES.entries()) {
       tabs[index].props.onClick();
       await settle();
@@ -406,7 +424,7 @@ test('登录后读不到会话（网络 / 401）：停在登录表单、失败�
     assert.ok(inputByTestId(form, 'login-password') !== null, '口令输入框必须保留');
     assert.ok(findBy(form, (node) => node.kind === 'button' && node.props.type === 'submit') !== null, '提交按钮必须保留');
 
-    // 点「重读会话」→ 真的再读一次会话并恢复出 4 个子页。
+    // 点「重读会话」→ 真的再读一次会话并恢复出 6 个子页。
     const reread = findBy(container, (node) => node.kind === 'button' && node.props.type === 'button' && textOf(node).includes('重读会话'));
     assert.ok(reread !== null, '登录表单里必须有「重读会话」入口');
     reread.props.onClick();
@@ -443,22 +461,27 @@ test('顶部 scope 提示行：未读取时显示「（未读取）」，登录�
   }
 });
 
-test('4 个真实子页的 canWrite / canAudit 就是 props.scopes.includes(...)：口径被改动必须同步改本用例', () => {
+test(`真实子页的 canWrite / canAudit 就是 props.scopes.includes(...)：口径被改动必须同步改本用例（当前 ${SCOPE_RULES.length} 个）`, () => {
   // 子页桩按真实常量复算了 canWrite / canAudit；这里再钉住真实子页用的也是同一口径，
   // 避免「父页传对了、子页却换了判定方式」这种两侧各对一半的假绿。
-  const rules = [
-    ['SourcesView.vue', true],
-    ['KnowledgeAdminView.vue', true],
-    ['CategoriesView.vue', true],
-    // 下架页只有写权限判定，没有 canAudit。
-    ['PostTakedownView.vue', false],
-  ];
-  for (const [file, hasAudit] of rules) {
+  //
+  // 清单不许漏项：漏掉一个子页 ＝ 那个子页的权限判定彻底没有防线（R2 之前就漏了
+  // RegistrationAdminView / RestrictionAdminView 两个）。这里按 **集合相等** 钉住，
+  // 不写死数字（数字会腐烂）。
+  assert.deepEqual(
+    SCOPE_RULES.map(([file]) => file).slice().sort(),
+    FAMILIES.map(([, component]) => `${component}.vue`).slice().sort(),
+    '本清单必须与 ContentAdminView 的 FAMILIES 逐项相等（缺一个＝那个子页没有权限防线）',
+  );
+  assert.equal(new Set(SCOPE_RULES.map(([file]) => file)).size, SCOPE_RULES.length, '清单里不得出现重复子页');
+  for (const [file, hasAudit] of SCOPE_RULES) {
     const source = readFileSync(new URL(`../../apps/admin/src/views/${file}`, import.meta.url), 'utf8');
     assert.match(source, /props\.scopes\.includes\(SOURCES_WRITE_SCOPE\)/, `${file} 的 canWrite 必须仍由 props.scopes.includes(SOURCES_WRITE_SCOPE) 决定`);
     assert.match(source, /scopes: \{ type: Array, required: true \}/, `${file} 必须把 scopes 声明为必填 prop（不传就报错而不是静默空数组）`);
     if (hasAudit) {
       assert.match(source, /props\.scopes\.includes\(AUDIT_READ_SCOPE\)/, `${file} 的 canAudit 必须仍由 props.scopes.includes(AUDIT_READ_SCOPE) 决定`);
+    } else {
+      assert.doesNotMatch(source, /props\.scopes\.includes\(AUDIT_READ_SCOPE\)/, `${file} 标为「无 canAudit」，源码里就不该出现 canAudit 判定（否则清单与实现已经脱节）`);
     }
   }
 });

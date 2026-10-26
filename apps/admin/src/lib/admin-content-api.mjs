@@ -20,17 +20,17 @@ import {
 } from './admin-contract.mjs';
 import { clampLimit, normalizeBaseUrl } from './admin-api.mjs';
 import {
-  AUDIT_EVENTS_PATH,
-  CATEGORIES_PATH,
+  AUDIT_EVENTS_PATH, CATEGORIES_PATH,
   IF_MATCH_PATTERN,
-  KNOWLEDGE_PATH,
+  KNOWLEDGE_PATH, REGISTRATIONS_PATH,
+  RESTRICTIONS_PATH,
   SOURCES_PATH,
   normalizeIdempotencyKey,
   validateAuditEvent,
-  validateCategory,
-  validateKnowledgeDraft,
+  validateCategory, validateKnowledgeDraft,
   validatePage,
-  validateSourceDraft,
+  validateRegistrationDraft,
+  validateRestrictionDraft, validateSourceDraft,
 } from './admin-content-contract.mjs';
 
 /** 写操作的动作名（页面按钮与审计事件 `action` 的对照用；不是契约字段）。 */
@@ -118,7 +118,7 @@ function classifyHttpFailure({ status, envelope, body, requestUrl, sentHeaders }
   const base = {
     status,
     code,
-    inContract,
+    inContract, declaredRetryable: envelope?.retryable ?? null,
     requestUrl,
     requestId: readRequestId(body),
     sentHeaders,
@@ -625,6 +625,100 @@ export async function findAuditEventsForRequest({
   return { ok: true, events, scanned, truncated: true };
 }
 
+// ------------------------------------------------------------------ 2xx 回执 → 文案（changed 三值）
+/**
+ * 从一次写回执推导「服务端是否真的改动了状态」——返回 `true` / `false` / `null`（未知）。
+ *
+ * 契约事实（决定了这里能推什么、不能推什么）：
+ * - `RegistrationDraft`（:15158）与 `Restriction`（:15256）只有 `{id, revision, content, review_status}`：
+ *   **没有** `visibility`（sources／knowledge 有），**也没有** `changed`（只有 `PostReviewOutcome` :15966 有）。
+ * - `editXxxDraft` 每次成功都追加一条修订 ⇒ 回传 `revision` 与请求里的 `If-Match` 不同，
+ *   这就是「确实改动了」的直接证据。
+ * - `publishXxx` / `withdrawXxx` **不产生新修订**（`services/api/src/admin/service.ts` 的
+ *   `publishDraft`／`withdrawDraft` 只改生命周期，投影里看不到）⇒ 首次成功与「已是该状态」的
+ *   幂等 no-op 返回**同一份投影**，前端无法区分 ⇒ 如实返回 `null`，**不猜** `false` 冒充
+ *   「已是该状态」，也**不猜** `true` 冒充「刚刚成功」。
+ */
+export function deriveChanged(action, result, { previousRevision = null } = {}) {
+  if (!result || result.ok !== true) return null;
+  const revision = Number.isInteger(result.item?.revision) ? result.item.revision : null;
+  if (action === 'edit') {
+    if (revision === null || !Number.isInteger(previousRevision)) return null;
+    return revision !== previousRevision;
+  }
+  return null;
+}
+
+/**
+ * 2xx 回执 → 页面文案。**不写「成功」二字**，也不把幂等 no-op 显示成新动作。
+ *
+ * 与 `describeWriteFailure` 配对使用：`ok !== true` 一律走失败文案，这里只处理 2xx。
+ */
+export function describeWriteOutcome(result, { action, previousRevision = null, familyLabel = '资料' } = {}) {
+  if (!result || result.ok !== true) return null;
+  const changed = deriveChanged(action, result, { previousRevision });
+  const parts = [];
+  if (typeof result.etag === 'string' && result.etag !== '') parts.push(`响应 ETag ${result.etag}`);
+  else if (Number.isInteger(result.item?.revision)) parts.push(`回传修订 "${result.item.revision}"`);
+  else parts.push('响应未带修订号（无法核对当前 revision）');
+  if (typeof result.requestId === 'string' && result.requestId !== '') parts.push(`request_id ${result.requestId}`);
+  const detail = parts.join(' · ');
+  const status = result.status ?? null;
+
+  if (action === 'create') {
+    return {
+      tone: 'ready',
+      changed,
+      changedLabel: '不判定（新建：服务端返回该对象；同一幂等键重复提交会原样重放同一份 201）',
+      title: `服务端已创建并返回${familyLabel}草稿（HTTP ${status}）`,
+      detail,
+      advice: '本页只显示服务端回执。资源是否已发布不在契约读面里，需要发布请走「发布」动作。',
+    };
+  }
+
+  if (action === 'edit') {
+    if (changed === true) {
+      return {
+        tone: 'ready',
+        changed,
+        changedLabel: `已改动（修订 ${previousRevision} → ${result.item.revision}）`,
+        title: `服务端已追加新修订（HTTP ${status}）`,
+        detail,
+        advice: '修订号已前进，后续操作请用新的 If-Match 重读详情后再发。',
+      };
+    }
+    if (changed === false) {
+      return {
+        tone: 'warn',
+        changed,
+        changedLabel: `未改动（回传修订仍为 ${previousRevision}）`,
+        title: '服务端未追加新修订（按「已是该状态」处理，不记为本次成功）',
+        detail,
+        advice: '契约里编辑成功必然追加一条修订；回传修订与 If-Match 相同，说明服务端没有产生新修订（多为同一幂等键重放）。请重读详情核对，不要据此认为这次编辑已生效。',
+      };
+    }
+    return {
+      tone: 'ready',
+      changed,
+      changedLabel: '无法判定（缺少操作前的 revision 或响应未带 revision）',
+      title: `服务端已受理编辑（HTTP ${status}）`,
+      detail,
+      advice: '没有操作前的 revision 就无法判断修订是否前进；请重读详情核对。',
+    };
+  }
+
+  // publish / withdraw
+  return {
+    tone: 'ready',
+    changed,
+    changedLabel: '未知：本族契约没有 visibility／changed 字段',
+    title: `服务端已受理（HTTP ${status}）`,
+    detail,
+    advice:
+      '注意口径：RegistrationDraft／Restriction 只有 id／revision／content／review_status，既没有 visibility 也没有 changed ⇒ 本页无法分辨「这次真的发布/撤回了」与「服务端幂等 no-op（已是该状态）」，所以只写「已受理」、不写「成功」。要确认是否已是该状态，点「按 request_id 查审计台账」：扫描范围内没有对应审计事件，说明服务端这次没有记录变更。',
+  };
+}
+
 /** 写失败 → 页面文案（标题/说明/建议动作）。**错误码原样保留**，绝不吞掉。 */
 export function describeWriteFailure(result) {
   if (!result || result.ok !== false) return null;
@@ -654,11 +748,205 @@ export function describeWriteFailure(result) {
       return { title: '响应不符合契约', detail: detail || '未渲染任何行（不猜测缺字段）', action: 'none' };
     case 'rate_limited':
       return { title: '请求过于频繁', detail: detail, action: 'retry' };
-    case 'unavailable':
+    case 'unavailable': {
+      // `real` 装配下无库池 ⇒ 这批内容操作一律 fail-closed 503 `PROVIDER_UNAVAILABLE`
+      // （`services/api/src/admin/fail-closed-services.ts`）。它**不是**「服务端忙」，
+      // 也**不是**空列表：必须显示成「未接线」，且重试不会成功。
+      const unwired = result.status === 503 || result.code === 'PROVIDER_UNAVAILABLE';
+      if (unwired) {
+        return {
+          title: '服务端未接线（HTTP 503 · fail-closed）',
+          detail: detail || '服务端以 PROVIDER_UNAVAILABLE 拒绝了本次请求',
+          action: result.declaredRetryable === true ? 'retry' : 'none',
+        };
+      }
       return { title: '服务暂不可用', detail: detail, action: 'retry' };
+    }
     case 'network_error':
       return { title: '网络请求失败', detail: detail || '检查 API 基地址与开发代理后重试', action: 'retry' };
     default:
       return { title: '请求失败', detail: detail || '未知错误', action: 'none' };
   }
 }
+
+
+
+
+
+// ------------------------------------------------------------------ 注册资料 / 限制资料族（放在文件末尾的原因）
+// `docs/architecture/admin-console-capability-map.md` 用**行号锚点**引用本文件前 600 行的既有函数
+// （listSources:409、getSource:413、getKnowledge:486、editCategory:559、findAuditEventsForRequest:600，
+// 以及 writeFamilyResource 的 307-406 区间）。把新族的 12 个函数插到中间会整体推高这些行号、让
+// `tests/unit/doc-anchors-guard.test.mjs` 判红；而那份能力页由另一片维护，本片不得改动。
+// ⇒ 新族一律**追加到文件末尾**，写法与前面三族逐字同形（同样复用 fetchFamilyPage / fetchFamilyItem /
+// writeFamilyResource），不另造一套 HTTP 壳。
+
+// ------------------------------------------------------------------ 注册资料的 6 个操作
+// 形状按契约 `RegistrationDraft`（`{id, revision, content, review_status}`）——**没有 visibility**，
+// 因此这里的校验器不检查可见性，页面也不推断生命周期。
+export function listRegistration(options = {}) {
+  return fetchFamilyPage({ ...options, path: REGISTRATIONS_PATH, validateRow: validateRegistrationDraft });
+}
+
+export function getRegistration(options = {}) {
+  return fetchFamilyItem({ ...options, path: REGISTRATIONS_PATH, validate: validateRegistrationDraft });
+}
+
+export function createRegistration({ fetchImpl, baseUrl, token, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'POST',
+    path: REGISTRATIONS_PATH,
+    idempotencyKey,
+    body,
+    validate: validateRegistrationDraft,
+    signal,
+  });
+}
+
+export function editRegistration({ fetchImpl, baseUrl, token, id, ifMatch, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'PATCH',
+    path: REGISTRATIONS_PATH,
+    id,
+    ifMatch,
+    idempotencyKey,
+    body,
+    validate: validateRegistrationDraft,
+    signal,
+  });
+}
+
+export function publishRegistration({ fetchImpl, baseUrl, token, id, ifMatch, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'POST',
+    path: REGISTRATIONS_PATH,
+    id,
+    action: 'publish',
+    ifMatch,
+    idempotencyKey,
+    body,
+    validate: validateRegistrationDraft,
+    signal,
+  });
+}
+
+export function withdrawRegistration({ fetchImpl, baseUrl, token, id, ifMatch, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'POST',
+    path: REGISTRATIONS_PATH,
+    id,
+    action: 'withdraw',
+    ifMatch,
+    idempotencyKey,
+    body,
+    validate: validateRegistrationDraft,
+    signal,
+  });
+}
+
+// ------------------------------------------------------------------ 限制资料的 6 个操作
+export function listRestriction(options = {}) {
+  return fetchFamilyPage({ ...options, path: RESTRICTIONS_PATH, validateRow: validateRestrictionDraft });
+}
+
+export function getRestriction(options = {}) {
+  return fetchFamilyItem({ ...options, path: RESTRICTIONS_PATH, validate: validateRestrictionDraft });
+}
+
+export function createRestriction({ fetchImpl, baseUrl, token, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'POST',
+    path: RESTRICTIONS_PATH,
+    idempotencyKey,
+    body,
+    validate: validateRestrictionDraft,
+    signal,
+  });
+}
+
+export function editRestriction({ fetchImpl, baseUrl, token, id, ifMatch, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'PATCH',
+    path: RESTRICTIONS_PATH,
+    id,
+    ifMatch,
+    idempotencyKey,
+    body,
+    validate: validateRestrictionDraft,
+    signal,
+  });
+}
+
+export function publishRestriction({ fetchImpl, baseUrl, token, id, ifMatch, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'POST',
+    path: RESTRICTIONS_PATH,
+    id,
+    action: 'publish',
+    ifMatch,
+    idempotencyKey,
+    body,
+    validate: validateRestrictionDraft,
+    signal,
+  });
+}
+
+export function withdrawRestriction({ fetchImpl, baseUrl, token, id, ifMatch, idempotencyKey, body, signal } = {}) {
+  return writeFamilyResource({
+    fetchImpl,
+    baseUrl,
+    token,
+    method: 'POST',
+    path: RESTRICTIONS_PATH,
+    id,
+    action: 'withdraw',
+    ifMatch,
+    idempotencyKey,
+    body,
+    validate: validateRestrictionDraft,
+    signal,
+  });
+}
+
+/**
+ * 契约 `operationId` → 本模块导出的客户端函数名（**注册／限制两族共 12 条**）。
+ *
+ * 用途是防止「有面无人调」：`tests/unit/admin-ui-registration-restriction-parity.test.mjs`
+ * 从 `packages/contracts/openapi.json` 读出这两族路径上的全部 `operationId`，与本表的键做
+ * **集合双向相等**断言，并逐个核对值确实是本模块导出的函数。
+ */
+export const REGISTRATION_RESTRICTION_OPERATIONS = Object.freeze({
+  listAdminRegistration: 'listRegistration',
+  getAdminRegistration: 'getRegistration',
+  createRegistrationDraft: 'createRegistration',
+  editRegistrationDraft: 'editRegistration',
+  publishRegistration: 'publishRegistration',
+  withdrawRegistration: 'withdrawRegistration',
+  listAdminRestriction: 'listRestriction',
+  getAdminRestriction: 'getRestriction',
+  createRestrictionDraft: 'createRestriction',
+  editRestrictionDraft: 'editRestriction',
+  publishRestriction: 'publishRestriction',
+  withdrawRestriction: 'withdrawRestriction',
+});
