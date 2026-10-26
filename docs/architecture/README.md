@@ -18,7 +18,7 @@
 | [逐用户备份副本域设计](gy-i19-user-backup-copies-design.md) | 「在线 7 日／备份 30 日」里的备份轴：表、写入、清除、契约映射 | GY-I19 后续片；**设计稿时点**未落地 DDL、未接线，**GY-R28 起已落地**（`0023_user_backup_copies.sql` ＋ `services/api/src/privacy/backup-copies-pg.ts`，有真库连接时装配）——**契约状态仍未改**；「到期执行」的代码与调度已取得（三条 `purge:*` ＋ 三对 systemd 单元 ＋ 真库臂 ＋ CI），**仍未取得的只剩第三方删除完成证据**（逐项见 [现状清单](gy-r59-retention-backup-thirdparty-map.md)） |
 | [API 层限流策略与调参](rate-limit-policy.md) | 认证端点按 IP／写接口按用户的限流：默认值表、429 与 `Retry-After`/`X-RateLimit-*` 口径、调参表 | GY-R34；**单实例内存计数，多实例需外置存储**（换 `RateLimitStore` 实现即可） |
 | [数据面需求-实现-证据矩阵（S4）](s4-data-traceability.md) | F13 拆成 16 个判定项，逐项给需求行号、实现落点、可复算证据与缺口 | S4 片；四档＝已实现 2／部分 9／未实现 4／已搁置 1，两条经门槛的真实缺口（★G3 已于 2026-10-26 复核消解，整条留档）见文内 §6 |
-| [后台能力现状图（apps/admin）](admin-console-capability-map.md) | 后台现在能做什么、服务端已有什么、缺什么：42 条 admin 端点按域分组、27 个 operation 有 UI、15 个无入口、0 个死按钮 | 只读代码取证，基线 `23eb8fe4`；每条结论给「文件:行号」，不含运行证据 |
+| [后台能力现状图（apps/admin）](admin-console-capability-map.md) | 后台现在能做什么、服务端已有什么、缺什么：`/admin` 36 条 path、45 个 operation（其中 `x-scope` 落在 `AdminScope` 闭集内的 44 个）；该页正文沿用旧口径，按 42 条注册路由分域，UI 有入口 32 个（该页口径 30 个）、无入口 12 个、死按钮 0 个 | 只读代码取证，基线 `68dec742`；每条结论给「文件:行号」，不含运行证据 |
 | [数据保留／备份／第三方完成证据现状清单](gy-r59-retention-backup-thirdparty-map.md) | 保留期真源、三个执行者与调度单元、备份三义、第三方证据的库层/应用层分界、恢复清单 | GY-R59 切片；逐项给 `文件:行号`＋三档清点＋最小三件事；并记下 2026-10-26 复核后修正的 S4 ★G3、`s4-data-traceability.md:354`、本页 `:17` 三处过期说法 |
 
 ## 怎么用
