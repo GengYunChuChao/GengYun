@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 235
+      "files": 239
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 44,
-    "has": 43,
+    "total": 45,
+    "has": 44,
     "none": 1
   },
   "entries": [
@@ -63,6 +63,13 @@
       "file": "services/api/src/admin/ops/flags-pg.ts",
       "line": 359,
       "function": "mapFlagWriteError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/admin/ops/scope-authority-pg.ts",
+      "line": 206,
+      "function": "mapAdminScopeAuthorityError",
       "judgement": "has",
       "owner": "GY-I22"
     },
@@ -271,14 +278,14 @@
     },
     {
       "file": "services/api/src/privacy/ledger-pg.ts",
-      "line": 87,
+      "line": 88,
       "function": "mapPgError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/privacy/ledger-pg.ts",
-      "line": 91,
+      "line": 92,
       "function": "mapPgError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -306,7 +313,7 @@
     },
     {
       "file": "services/api/src/routes/account-deletion.ts",
-      "line": 87,
+      "line": 113,
       "function": "toContractError",
       "judgement": "has",
       "owner": "GY-I22"

@@ -9,6 +9,7 @@
  * 本片**不新增字段、不新增错误码、不修改 `packages/contracts/**`**。
  */
 import { ERROR_CODES } from '../../contract.ts';
+import { ADMIN_SCOPES } from '../scopes.ts';
 import {
   ALL_SPECS,
   createSpecValidator,
@@ -35,6 +36,14 @@ const SCALAR_SPECS = {
    * （该常量由 `tests/contract` 保证与契约一致），不在这里抄第二份。
    */
   ErrorCode: { type: 'string', enum: [...ERROR_CODES] },
+  /**
+   * `#18` S2 PR-3：契约 `AdminScope`（后台权限闭集 13 项）。
+   *
+   * 取值来自 `admin/scopes.ts` 的 `ADMIN_SCOPES`（应用层唯一闭集常量，与库层 CHECK
+   * `admin_scopes_scope_closed_set` 逐字同源），⛔ 不在这里抄第二份 ——
+   * `tests/unit/admin-scopes-write.test.mjs` 会把本镜像与契约 enum 逐项对拍。
+   */
+  AdminScope: { type: 'string', minLength: 1, maxLength: 80, enum: [...ADMIN_SCOPES] },
 } as const satisfies Readonly<Record<string, FieldSpec>>;
 
 /** 契约里 3 处 flag key 的内联枚举。 */
@@ -79,6 +88,23 @@ export const OPS_INPUT_SPECS = {
     required: ['reason_code'],
     properties: {
       reason_code: enumOf(...POST_REVIEW_REASON_CODES),
+    },
+  },
+
+  /**
+   * `#18` S2 PR-3：`grantAdministratorScope` 的请求体 —— **单个** scope + 原因。
+   *
+   * 为什么不是"整个 scope 集合"：裁定③明令「不做整集合覆盖」。整集合覆盖会让两个管理员
+   * 并发维护同一目标时互相清空对方刚授的权限，且无法从审计里读出"这一次到底加了哪一项"。
+   * `reason` 落审计 before/after 的 jsonb（`admin_audit_events` 没有自由文本列）。
+   */
+  AdminScopeGrantInput: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['scope', 'reason'],
+    properties: {
+      scope: { ref: 'AdminScope' },
+      reason: str(1, 500),
     },
   },
 } as const satisfies Readonly<Record<string, FieldSpec>>;
@@ -156,6 +182,27 @@ export const OPS_OUTPUT_SPECS = {
   },
 
   /**
+   * `#18` S2 PR-3：授予/撤销后的管理端快照（`grantAdministratorScope` /
+   * `revokeAdministratorScope` 的共同响应体）。
+   *
+   * 为什么带 `revision` 而**只读**权限面（`AdminAdministratorScopesView`）刻意不发 ETag：
+   * 写面**确实**推进了 `admin_accounts.revision`（迁移 0041 第 ⑧/⑨ 步），调用方要拿它做下一次
+   * `If-Match`；只读面不改任何行，拿同一个 revision 当"权限集合版本"才是谎称。
+   * `scopes` 走 `AdminScope` 具名引用（与契约同形），去重 + 码元序由服务层归一化。
+   */
+  AdminScopeWriteView: {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id', 'revision', 'scopes', 'changed'],
+    properties: {
+      id: uuid(),
+      revision: integer(1),
+      scopes: { type: 'array', items: { ref: 'AdminScope' }, maxItems: 20 },
+      changed: { type: 'boolean' },
+    },
+  },
+
+  /**
    * S3 `approvePost` / `rejectPost` 的共同响应体。
    *
    * 键集合与 `types.ts` 的 `PostReviewOutcome` 逐字一致，且是**新增**的具名组件
@@ -228,14 +275,23 @@ export const OPS_ENVELOPE_SPECS = {
   FlagEnvelope: envelopeOf('Flag'),
   FlagPageEnvelope: envelopeOf('FlagPage'),
   AckEnvelope: envelopeOf('Ack'),
+  // `#18` S2 PR-3：授予/撤销的单资源信封（data = AdminScopeWriteView）。
+  AdminScopeWriteViewEnvelope: envelopeOf('AdminScopeWriteView'),
 } as const satisfies Readonly<Record<string, FieldSpec>>;
 
 /**
  * 本片校验用注册表 = 阶段 1 的全表 + 本片新增。
  * 这样 `ReasonInput` / `Meta` / `TargetRef` / `ExecutionMode` 等**只有一份定义**。
+ *
+ * `...SCALAR_SPECS` 是 `#18` S2 PR-3 加的：`AdminScopeGrantInput.scope` 用 `ref: 'AdminScope'`
+ * 引用具名 schema，校验器必须在**同一张注册表**里找到它，否则会报 `spec_missing`。
+ * 它**不**进 `OPS_*_SPECS` 那四个被 `admin-ops-contract.test.mjs` 逐字比对的组 ——
+ * 与契约 enum 的逐项相等由 `tests/unit/admin-scopes-write.test.mjs` 单独钉（一条更锋利的判据：
+ * 那里比的是**成员**，不只是形状）。
  */
 export const OPS_ALL_SPECS: Readonly<Record<string, FieldSpec>> = {
   ...ALL_SPECS,
+  ...SCALAR_SPECS,
   ...OPS_INPUT_SPECS,
   ...OPS_OUTPUT_SPECS,
   ...OPS_PAGE_SPECS,

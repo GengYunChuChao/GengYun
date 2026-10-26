@@ -28,7 +28,8 @@
  *
  * 转发对象必须**逐个显式**列出：`inner.suspendUser`（真实停用权威）、`inner.listAdminUsers`
  * （真实读目录）、`inner.listFlags` / `inner.setFlag`（真实开关读写）、`inner.hidePost`
- * （真实持久社区 store 的 CAS 下架）。
+ * （真实持久社区 store 的 CAS 下架）、`inner.grantAdministratorScope` /
+ * `inner.revokeAdministratorScope`（`#18` S2 PR-3 的真实 scope 写权威）。
  * 新增可放行操作必须在 `app.ts` 再写一次显式放行
  * （与 `fail-closed-services.ts` 头部"接线点"要求一致），⛔ 不得改成"整对象透传"。
  *
@@ -101,6 +102,19 @@ export interface RestrictToAccountsAuthorityOptions {
    * ⛔ 不读自述布尔标志、⛔ 不因"注入了任意端口"放行。
    */
   readonly postReviewWired?: boolean;
+  /**
+   * **`#18` S2 PR-3 · 放行表第 7 条**：管理员 scope 的**写面**（`grantAdministratorScope` /
+   * `revokeAdministratorScope`）是否已接上真实写权威。
+   *
+   * 只能由 `app.ts` 在**确实构造出** `AdminScopeAuthority`（`createPostgresAdminScopeAuthority({ pool })`）
+   * 时置 `true`；默认 `false` ⇒ 两条操作继续 503（⛔ 不伪造成功、⛔ 不落内存、⛔ 不占幂等位）。
+   *
+   * 为什么不能复用 `administratorsWired`（读面那条）：读与写是两条不同的能力。
+   * 读面只需要认证存储的**既有列授权**；写面需要迁移 0041 的两条 `SECURITY DEFINER` 函数 +
+   * `20-login-roles.sql` 的 `EXECUTE` 授权。把两条绑在一个布尔上，就会出现"读得到、写却 42501"
+   * 的半开状态 —— 那种状态最糟：界面显示成功按钮，点下去 503。
+   */
+  readonly scopeWriteWired?: boolean;
 }
 
 /**
@@ -129,6 +143,8 @@ export function restrictAdminOpsToAccountsAuthority(
   const administratorsWired = options.administratorsWired === true;
   // **放行表第 6 条**（S3）：审核面单独一道门，默认关闭 ⇒ real 模式下与首版逐字相同（503）。
   const postReviewWired = options.postReviewWired === true;
+  // **放行表第 7 条**（`#18` S2 PR-3）：管理员 scope 写面单独一道门，默认关闭 ⇒ 两条写面 503。
+  const scopeWriteWired = options.scopeWriteWired === true;
 
   return {
     // 如实暴露底层 store/jobPort，使"接线状态"仍可被测试与回归直接核对。
@@ -164,5 +180,10 @@ export function restrictAdminOpsToAccountsAuthority(
     // ⛔ 本外壳不自己拼结论、不自己发成功封套。
     approvePost: postReviewWired ? inner.approvePost : reject,
     rejectPost: postReviewWired ? inner.rejectPost : reject,
+    // **放行 7**（需 `scopeWriteWired: true`，`#18` S2 PR-3）：管理员 scope 写面。
+    // 转发 inner 的两个方法本身：G 码映射（404/403/409/503）、自授拒绝、出口闭集守卫、
+    // 幂等与 CAS 口径仍由服务层与迁移 0041 的函数决定，⛔ 本外壳不自己判、也不发成功封套。
+    grantAdministratorScope: scopeWriteWired ? inner.grantAdministratorScope : reject,
+    revokeAdministratorScope: scopeWriteWired ? inner.revokeAdministratorScope : reject,
   };
 }

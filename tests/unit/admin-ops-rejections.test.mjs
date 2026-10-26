@@ -56,6 +56,9 @@ function opCalls(service, ctx) {
     // S3：人工通过/驳回。鉴权（scope）先于端口接线判定，所以未接线也能进这张反例表。
     ['approvePost', () => service.approvePost({ ...ctx, idempotencyKey: opsKey('f'), ifMatch: '"1"' }, UNKNOWN_UUID, undefined)],
     ['rejectPost', () => service.rejectPost({ ...ctx, idempotencyKey: opsKey('g'), ifMatch: '"1"' }, UNKNOWN_UUID, { reason_code: 'spam' })],
+    // `#18` S2 PR-3：管理员 scope 写面。鉴权（scope）先于接线判定，所以未接线也能进这张表。
+    ['grantAdministratorScope', () => service.grantAdministratorScope({ ...ctx, idempotencyKey: opsKey('h'), ifMatch: '"1"' }, UNKNOWN_UUID, { scope: 'audit:read', reason: 'r' })],
+    ['revokeAdministratorScope', () => service.revokeAdministratorScope({ ...ctx, idempotencyKey: opsKey('i'), ifMatch: '"1"' }, UNKNOWN_UUID, 'audit:read', { reason: 'r' })],
   ];
 }
 
@@ -74,13 +77,16 @@ const REQUIRED_SCOPE = {
   listAdministratorScopes: 'scopes:read',
   approvePost: 'sources:write',
   rejectPost: 'sources:write',
+  // `#18` S2 PR-3：授予/撤销均是**管理授权**本身，门是 scopes:write（⛔ 不是读面的 scopes:read）。
+  grantAdministratorScope: 'scopes:write',
+  revokeAdministratorScope: 'scopes:write',
 };
 
 test('反例 1/2：非 admin 一律 SCOPE_DENIED；缺对应 scope 的 admin 逐个被拒', async () => {
   const { service } = createOpsHarness();
   const userCtx = { identity: { userId: USER_A.userId, authEpoch: 1, role: 'user', scopes: ['user'] } };
 
-  // 非 admin（用户会话）⇒ 14 个操作全部 403。
+  // 非 admin（用户会话）⇒ 16 个操作全部 403。
   for (const [name, call] of opCalls(service, userCtx)) {
     const error = await expectApiError(call, 'SCOPE_DENIED');
     assert.equal(error.status, 403, `${name} 应为 403`);

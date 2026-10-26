@@ -139,7 +139,7 @@ Error [FastifyError]: Failed building the validation schema for POST: /api/v1/__
 | 契约文件差异 | `git diff --stat -- packages/contracts` 输出为空（零改动；只读不写） |
 | 契约回归 | `tests/reference/contract.test.mjs` 31/31 绿；`node tools/verify-contract-status.mjs` → `PASS: 覆盖 112 条契约操作；已装配 108 条；implemented 13 / partial 95 / planned 4；横切维度 8 条；中文表格一致` |
 | 全量单测 | `npm run test:unit` 全绿（读数见交接文件的六项门禁） |
-| `$id`/`$ref` 实测 | `services/api/src` 全树 `$(ref\|id)` 命中 8 处，**全部在注释**（`services/api/src/app.ts:642`、`admin/fields.ts:30/46/145`、`admin/ops/fields.ts:25/27`、`jobs/result-shape.ts:70`、`schema-validator.ts:22`），无一处是 schema 键 |
+| `$id`/`$ref` 实测 | `services/api/src` 全树 `$(ref\|id)` 命中 8 处，**全部在注释**（`services/api/src/app.ts:651`、`admin/fields.ts:30/46/145`、`admin/ops/fields.ts:26/27`、`jobs/result-shape.ts:70`、`schema-validator.ts:22`），无一处是 schema 键 |
 
 ## 6 未取得项（如实列出）
 

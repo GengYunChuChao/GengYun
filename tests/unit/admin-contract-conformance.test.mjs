@@ -62,6 +62,7 @@ const OUT_OF_SCOPE_OPERATION_IDS = [
   'hidePost', 'listAuditLogs',
   'listAdminPosts', 'getAdminPost',
   'listAdministrators', 'listAdministratorScopes',
+  'grantAdministratorScope', 'revokeAdministratorScope',
   'approvePost', 'rejectPost',
   'listKnowledge', 'getKnowledge',
 ];
@@ -148,24 +149,25 @@ test('契约镜像表与 openapi.json 逐字相等（35 个 schema，逐字段�
   assert.equal(draftInput.properties.title.maxLength, 200);
 });
 
-test('只实现派单指定的 25 个 operationId；另外 22 个未实现、未越界', async () => {
-  // 口径澄清：契约里 `/admin/**` 共 45 个操作（含 #621 帖子读面 2 个与本片通过/驳回 2 个）；派单说的「admin 共 41 个」
+test('只实现派单指定的 25 个 operationId；另外 24 个未实现、未越界', async () => {
+  // 口径澄清：契约里 `/admin/**` 共 47 个操作（含 #621 帖子读面 2 个、本片通过/驳回 2 个、
+  // `#18` S2 PR-3 管理员 scope 写面 2 个）；派单说的「admin 共 41 个」
   // = 这 39 个 + 公开知识读 GET /knowledge、GET /knowledge/{id}。
   // R37 `#18` S2 读面又加了 2 个（listAdministrators / listAdministratorScopes）；
   // R59 帖子读面再加 2 个（listAdminPosts / getAdminPost，独立域 admin/posts）。
   const adminPathOperations = collectAdminPathOperations();
-  assert.equal(adminPathOperations.length, 45, '契约里 /admin/** 操作应为 45 个（+ listFlagAuditEvents、+ listAuditLogs、+ R37 读面 2 个、+ R59 帖子读面 2 个、+ S3 通过/驳回 2 个）');
+  assert.equal(adminPathOperations.length, 47, '契约里 /admin/** 操作应为 47 个（+ listFlagAuditEvents、+ listAuditLogs、+ R37 读面 2 个、+ R59 帖子读面 2 个、+ S3 通过/驳回 2 个、+ S2 PR-3 管理员授权 2 个）');
   const adminScopeOperations = collectAdminScopeOperations();
-  assert.equal(adminScopeOperations.length, 47, '派单口径的 admin 相关操作应为 47 个（+ listFlagAuditEvents、+ listAuditLogs、+ R37 读面 2 个、+ R59 帖子读面 2 个、+ S3 通过/驳回 2 个）');
+  assert.equal(adminScopeOperations.length, 49, '派单口径的 admin 相关操作应为 49 个（+ listFlagAuditEvents、+ listAuditLogs、+ R37 读面 2 个、+ R59 帖子读面 2 个、+ S3 通过/驳回 2 个、+ S2 PR-3 管理员授权 2 个）');
   const contractIds = new Set(adminScopeOperations.map((entry) => entry.operationId));
 
   for (const id of IN_SCOPE_OPERATION_IDS) assert.ok(contractIds.has(id), `契约里没有 ${id}`);
   assert.equal(new Set(IN_SCOPE_OPERATION_IDS).size, 25);
-  assert.equal(new Set(OUT_OF_SCOPE_OPERATION_IDS).size, 22);
+  assert.equal(new Set(OUT_OF_SCOPE_OPERATION_IDS).size, 24);
   const overlap = IN_SCOPE_OPERATION_IDS.filter((id) => OUT_OF_SCOPE_OPERATION_IDS.includes(id));
   assert.deepEqual(overlap, [], '本片范围内外不得重叠');
-  assert.equal(IN_SCOPE_OPERATION_IDS.length + OUT_OF_SCOPE_OPERATION_IDS.length, 47, '25 + 22 必须恰好覆盖 47 个 admin 操作');
-  // 25 + 22 必须**恰好**是契约里那 47 个，一个不多一个不少。
+  assert.equal(IN_SCOPE_OPERATION_IDS.length + OUT_OF_SCOPE_OPERATION_IDS.length, 49, '25 + 24 必须恰好覆盖 49 个 admin 操作');
+  // 25 + 24 必须**恰好**是契约里那 49 个，一个不多一个不少。
   assert.deepStrictEqual(
     [...new Set([...IN_SCOPE_OPERATION_IDS, ...OUT_OF_SCOPE_OPERATION_IDS])].sort(),
     [...contractIds].sort(),

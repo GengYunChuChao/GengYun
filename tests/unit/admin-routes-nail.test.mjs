@@ -9,7 +9,7 @@
  *    既误导调用方，也让"越权与不存在同形"这条安全口径被污染。
  *    **与 #10/#106 的钉子同一口径**（那两处钉的也是"层级职责不许悄悄换位"）。
  *
- * 2. **36 个 operationId 的方法/路径必须与契约逐条一致**：直接读 `openapi.json`，
+ * 2. **44 个 operationId 的方法/路径必须与契约逐条一致**：直接读 `openapi.json`，
  *    对每个 operationId 取出契约的 `method` 与 `path`（`{id}`/`{key}` → `:id`/`:key`），
  *    断言装配后的 app 上**确实**存在这条路由。任何"少注册/路径写错/方法写错"都会失败。
  */
@@ -101,14 +101,15 @@ test('钉子 1：两层分工 —— 非法 uuid ⇒ 400 INVALID_REQUEST，合�
   }
 });
 
-test('钉子 2：40 个 operationId 的方法与路径与契约逐条一致（读 openapi.json 原文核对）', async () => {
+test('钉子 2：44 个 operationId 的方法与路径与契约逐条一致（读 openapi.json 原文核对）', async () => {
   const { app, token } = await makeApp();
   try {
-    // 现 42 条：34 + listFlagAuditEvents + listAuditLogs + R37 读面 2 个 + **R59 帖子读面 2 个
-    // （`listAdminPosts` / `getAdminPost`）** + **S3 人工通过/驳回 2 个（`approvePost` / `rejectPost`）**。
+    // 现 44 条：34 + listFlagAuditEvents + listAuditLogs + R37 读面 2 个 + **R59 帖子读面 2 个
+    // （`listAdminPosts` / `getAdminPost`）** + **S3 人工通过/驳回 2 个（`approvePost` / `rejectPost`）**
+    // + **`#18` S2 PR-3 管理员 scope 写面 2 个（`grantAdministratorScope` / `revokeAdministratorScope`）**。
     // 这条钉子钉的是「本文件暴露的路由条数 = 清单条数」，
     // 不是权限面：每个 id 仍必须能在契约里找到对应 operation、并在 app 上注册成同方法同路径。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 42, '本片应恰好暴露 42 个 operationId（40 + S3 人工通过/驳回 2 个）');
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 44, '本片应恰好暴露 44 个 operationId（42 + S2 PR-3 授予/撤销 2 个）');
 
     // 从契约取出每个 operationId 的 method + path。
     const fromContract = new Map();
@@ -122,8 +123,11 @@ test('钉子 2：40 个 operationId 的方法与路径与契约逐条一致（�
     for (const operationId of ADMIN_HTTP_OPERATION_IDS) {
       const contract = fromContract.get(operationId);
       assert.notEqual(contract, undefined, `契约里没有 ${operationId}`);
-      // 契约路径模板 → Fastify 参数语法。
-      const url = `${API}${contract.path}`.replaceAll('{id}', ':id').replaceAll('{key}', ':key');
+      // 契约路径模板 → Fastify 参数语法（`{scope}` 是 PR-3 撤销面的路径参数）。
+      const url = `${API}${contract.path}`
+        .replaceAll('{id}', ':id')
+        .replaceAll('{key}', ':key')
+        .replaceAll('{scope}', ':scope');
       assert.equal(
         app.hasRoute({ method: contract.method, url }),
         true,
@@ -136,6 +140,11 @@ test('钉子 2：40 个 operationId 的方法与路径与契约逐条一致（�
     assert.equal(app.hasRoute({ method: 'POST', url: `${API}/admin/posts/:id/hide` }), true);
     assert.equal(app.hasRoute({ method: 'POST', url: `${API}/admin/categories` }), false, '契约没有 createCategory ⇒ 不得注册');
     assert.equal(app.hasRoute({ method: 'DELETE', url: `${API}/admin/categories/:id` }), false, '契约没有 deleteCategory ⇒ 不得注册');
+    // `#18` S2 PR-3：授予与撤销**共用** `/admin/administrators/:id/scopes` 这个路径前缀，
+    // 但方法必须分开注册（POST 授予、DELETE 撤销、GET 只读），否则读面会被写方法顶掉。
+    assert.equal(app.hasRoute({ method: 'POST', url: `${API}/admin/administrators/:id/scopes` }), true);
+    assert.equal(app.hasRoute({ method: 'DELETE', url: `${API}/admin/administrators/:id/scopes/:scope` }), true);
+    assert.equal(app.hasRoute({ method: 'DELETE', url: `${API}/admin/administrators/:id/scopes` }), false, '契约的撤销面 scope 在路径里 ⇒ 不得注册无 scope 的 DELETE');
 
     // 列表路由必须真的可读（装配健全性）。
     const listed = await get(app, token, `${API}/admin/feature-flags`);

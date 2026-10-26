@@ -118,7 +118,8 @@
     "403": [
       "SCOPE_DENIED",
       "CONSENT_REQUIRED",
-      "ACCOUNT_INACTIVE"
+      "ACCOUNT_INACTIVE",
+      "SELF_SCOPE_GRANT_DENIED"
     ],
     "404": [
       "NOT_FOUND"
@@ -127,7 +128,8 @@
       "REVISION_CONFLICT",
       "IDEMPOTENCY_CONFLICT",
       "OBJECT_UNAVAILABLE",
-      "REQUEST_IN_PROGRESS"
+      "REQUEST_IN_PROGRESS",
+      "LAST_SCOPE_MANAGER"
     ],
     "413": [
       "MEDIA_TOO_LARGE"

@@ -22,7 +22,7 @@ export { USER_A, USER_B, idem, makeCommunityHarness, publishPost, COMMUNITY_ADMI
 
 export const OPS_SIGNING_KEY = 'gy-i18-phase1b-test-signing-key-0123456789';
 
-/** 本片全部 10 个操作所需的 scope 全集（R37 `#18` S2 读面加了 `scopes:read`）。 */
+/** 本片全部 10 个操作所需的 scope 全集（R37 `#18` S2 读面加了 `scopes:read`，PR-3 写面加了 `scopes:write`）。 */
 export const ALL_OPS_SCOPES = Object.freeze([
   'sources:read',
   'sources:write',
@@ -33,9 +33,13 @@ export const ALL_OPS_SCOPES = Object.freeze([
   'flags:read',
   'flags:write',
   'scopes:read',
+  'scopes:write',
 ]);
 
-/** 本片 14 个 operationId（10 个既有 + R37 `#18` S2 读面 + S3 人工通过/驳回）。 */
+/**
+ * 本片 16 个 operationId（10 个既有 + R37 `#18` S2 读面 2 个 + S3 人工通过/驳回 2 个
+ * + `#18` S2 PR-3 管理员 scope 写面 2 个）。
+ */
 export const OPS_IDS = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -51,6 +55,8 @@ export const OPS_IDS = Object.freeze([
   'listAdministratorScopes',
   'approvePost',
   'rejectPost',
+  'grantAdministratorScope',
+  'revokeAdministratorScope',
 ]);
 
 /** 派单显式不做的 operationId（不得在本片出现）。 */

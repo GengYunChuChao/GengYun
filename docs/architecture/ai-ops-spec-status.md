@@ -107,7 +107,7 @@
 | E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 24 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；`packages/contracts/` 下无源码文件 |
 | E38 | 后台作业台**真库端口**的产品装配：real + 有池 ⇒ `createPostgresAdminJobPort` | 已实现 | services/api/src/app.ts:1313-1315 | `adminRealUnwired` 只是「real 模式」的别名（同文件 :1291）；生产端口的 `persistent: true` 见 services/api/src/admin/ops/jobs-pg.ts:450-451 |
 | E39 | 真库臂回归：三域表读面、9 字段投影、取消 CAS 与审计恰 1 行、过滤下推、游标 | 已实现 | tests/integration/admin-jobs-pg.mjs:661 | 脚本在 CI 名单内（.github/workflows/real-pg-integration.yml:8），用 `postgres:17.11` 与全链迁移（同文件 :55） |
-| E40 | 审计 `action` 闭集登记作业取消：`AUDIT_ACTIONS` 恰四值，`?action=job.cancel` 由 400 转 200 | 已实现 | services/api/src/admin/audit/catalog.ts:41-46 | 锁它的用例：`tests/unit/admin-audit-action-jobs-cancel.test.mjs:159`（200 且只回该动作）、`:150`（恰四项）、`:213`（闭集外仍 400、零端口调用）；顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs:169` 钉住，契约枚举同步到四项（`packages/contracts/openapi.json:10721-10726`）。剩余边界：后台无页面消费该读面（P10） |
+| E40 | 审计 `action` 闭集登记作业取消：`AUDIT_ACTIONS` 恰四值，`?action=job.cancel` 由 400 转 200 | 已实现 | services/api/src/admin/audit/catalog.ts:41-46 | 锁它的用例：`tests/unit/admin-audit-action-jobs-cancel.test.mjs:159`（200 且只回该动作）、`:150`（恰四项）、`:213`（闭集外仍 400、零端口调用）；顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs:169` 钉住，契约枚举同步到四项（`packages/contracts/openapi.json:11008-11013`）。剩余边界：后台无页面消费该读面（P10） |
 
 ## 3 部分实现（12 条）
 
@@ -196,7 +196,7 @@
 
 1. 写：`jobPort.cancel(...)` 带上 `{ actorId, reasonCode: 'job_cancelled', requestId }`（`services/api/src/admin/ops/service.ts:776-780`）；持久端口不再由服务层写内存审计，而是 `if (!jobPort.persistent) { appendAudit(...) }`（同文件 :853-854）。
 2. 落：真库端口在同一事务里调库函数（`services/api/src/admin/ops/jobs-pg.ts:88`、`:518-519`），失败整体 `ROLLBACK`；真库臂钉住「恰 1 行」（`tests/integration/admin-jobs-pg.mjs:730`），并验证审计表被拒时作业保持原状态（同文件 :845）。
-3. 读：库函数本身支持按 action 过滤（`services/api/db/migrations/0033_admin_audit_log_read.sql:50`、`:98`），但 `GET /admin/audit-logs` 的 `action` 参数走闭集判定，`AUDIT_ACTIONS` 当时只有三个动作 ⇒ **`?action=job.cancel` 得 400 `INVALID_REQUEST` + `details[].code='enum'`**（闭集判定本身今天没变，见 `services/api/src/admin/audit/service.ts:121-131`；变的是它读的那张表）。#609 把 `job.cancel` 登记为第四项（`services/api/src/admin/audit/catalog.ts:41-46`），`entity=job` 映射到审计行实际写的 `jobs:cancel`（同文件 :57-68），契约两个枚举随之扩到四项与三项（`packages/contracts/openapi.json:10721-10726`、`:10733-10738`）；用例钉住「200 且只回该动作」「恰四项」「闭集外仍 400 且零端口调用」（`tests/unit/admin-audit-action-jobs-cancel.test.mjs:159`、`:150`、`:213`），顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs:169` 钉住。
+3. 读：库函数本身支持按 action 过滤（`services/api/db/migrations/0033_admin_audit_log_read.sql:50`、`:98`），但 `GET /admin/audit-logs` 的 `action` 参数走闭集判定，`AUDIT_ACTIONS` 当时只有三个动作 ⇒ **`?action=job.cancel` 得 400 `INVALID_REQUEST` + `details[].code='enum'`**（闭集判定本身今天没变，见 `services/api/src/admin/audit/service.ts:121-131`；变的是它读的那张表）。#609 把 `job.cancel` 登记为第四项（`services/api/src/admin/audit/catalog.ts:41-46`），`entity=job` 映射到审计行实际写的 `jobs:cancel`（同文件 :57-68），契约两个枚举随之扩到四项与三项（`packages/contracts/openapi.json:11008-11013`、`:10733-10738`）；用例钉住「200 且只回该动作」「恰四项」「闭集外仍 400 且零端口调用」（`tests/unit/admin-audit-action-jobs-cancel.test.mjs:159`、`:150`、`:213`），顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs:169` 钉住。
 
 **仍没做到的两处**（已从 P0 降级，本页不再按 P0 计）：
 
