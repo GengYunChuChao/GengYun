@@ -27,6 +27,7 @@ import {
 } from '../lib/admin-content-contract.mjs';
 import {
   createKnowledge,
+  deriveChanged,
   describeWriteFailure,
   editKnowledge,
   findAuditEventsForRequest,
@@ -40,6 +41,7 @@ import {
   KNOWLEDGE_TYPE_LABELS,
   LIFECYCLE_NOTE,
   canLoadMoreFamily,
+  changedVerdict,
   describeFamily,
   initialFamilyState,
   knowledgeDetailView,
@@ -84,6 +86,16 @@ const canWrite = computed(() => props.scopes.includes(SOURCES_WRITE_SCOPE));
 const canAudit = computed(() => props.scopes.includes(AUDIT_READ_SCOPE));
 const canLoadMore = computed(() => canLoadMoreFamily(state.value));
 const busyWrite = computed(() => state.value.busyWrite === true);
+/**
+ * 写回执的**显式判定**（喂给 `WriteReceipt` 的 `changed` prop）。
+ *
+ * `state.write.changed` 由 `deriveChanged()` 算出：发布／撤回读回执里的**必填布尔** `changed`
+ * （`KnowledgePublicationOutcome`：真迁移 `true`、内存幂等短路 `false`）；编辑比 revision 是否前进；
+ * 新建的 201 两样都没有 ⇒ `null` ⇒ `'unknown'` ⇒ 回执只写「已受理」。
+ * 回执校验器已保证 publish／withdraw 的 `changed` 一定存在且为布尔，所以这里不会把
+ * 「契约里有」误当「拿不到」；也**不按 HTTP 200／ok 猜成功** —— 200 既可能是真迁移也可能是 no-op。
+ */
+const receiptChanged = computed(() => changedVerdict(state.value.write?.changed));
 const detailRevision = computed(() => (state.value.detail === null ? null : state.value.detail.revision));
 const ifMatchPreview = computed(() => {
   try {
@@ -221,7 +233,13 @@ function applyPickedSource() {
   form.value = { ...form.value, source_id: picked.id, source_version: picked.source.version };
 }
 
-async function runWrite(label, send) {
+/**
+ * 执行一次写操作并把回执落到状态里。
+ *
+ * `action` 只用来算回执的 `changed` 三值（`'create' | 'edit' | 'publish' | 'withdraw'`）；
+ * `previousRevision` 是这次编辑**所基于**的 revision（即 If-Match 用的那个），不是响应回传的新值。
+ */
+async function runWrite({ label, action, send, previousRevision = null }) {
   dispatch({ type: 'WRITE_START', label });
   const result = await send();
   const receipt = {
@@ -236,6 +254,12 @@ async function runWrite(label, send) {
     requestId: result.requestId ?? null,
     etag: result.etag ?? null,
     sentHeaders: result.sentHeaders ?? null,
+    /**
+     * 三值：`true`／`false`／`null`（拿不到契约真值）。publish／withdraw 读回执的必填布尔
+     * `changed`，edit 比 revision 前进，create 的 201 两者都没有 ⇒ `null`。回执面板据此写
+     * 「成功回执」「已受理（本次未产生变更）」或只写「已受理」。
+     */
+    changed: deriveChanged(action, result, { previousRevision }),
   };
   dispatch({ type: 'WRITE_SETTLED', receipt });
   if (result.ok) {
@@ -253,24 +277,31 @@ async function submitForm() {
   if (!built.ok) return;
 
   if (formMode.value === 'create') {
-    const result = await runWrite('新建科普内容草稿（POST /admin/knowledge）', () =>
-      createKnowledge({ baseUrl: props.baseUrl, token: props.token, idempotencyKey: newIdempotencyKey(), body: built.value }),
-    );
+    const result = await runWrite({
+      label: '新建科普内容草稿（POST /admin/knowledge）',
+      action: 'create',
+      send: () => createKnowledge({ baseUrl: props.baseUrl, token: props.token, idempotencyKey: newIdempotencyKey(), body: built.value }),
+    });
     if (result.ok) formMode.value = null;
     return;
   }
 
+  // 这次编辑**所基于**的 revision（即 If-Match 用的那个），不是响应回传的新 revision。
+  const previousRevision = detailRevision.value;
   let ifMatch;
   try {
-    ifMatch = etagFor(detailRevision.value);
+    ifMatch = etagFor(previousRevision);
   } catch {
     formErrors.value = [{ field: 'title', message: '详情未加载到 revision，无法生成 If-Match：请先点开该行详情' }];
     return;
   }
   const id = state.value.detail.id;
-  const result = await runWrite('编辑科普内容草稿（PATCH /admin/knowledge/{id}）', () =>
-    editKnowledge({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
-  );
+  const result = await runWrite({
+    label: '编辑科普内容草稿（PATCH /admin/knowledge/{id}）',
+    action: 'edit',
+    previousRevision,
+    send: () => editKnowledge({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
+  });
   if (result.ok) formMode.value = null;
 }
 
@@ -294,9 +325,11 @@ async function submitPublish() {
     return;
   }
   const id = state.value.detail.id;
-  const result = await runWrite('发布科普内容（POST /admin/knowledge/{id}/publish）', () =>
-    publishKnowledge({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
-  );
+  const result = await runWrite({
+    label: '发布科普内容（POST /admin/knowledge/{id}/publish）',
+    action: 'publish',
+    send: () => publishKnowledge({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
+  });
   if (result.ok) publishOpen.value = false;
 }
 
@@ -320,9 +353,11 @@ async function submitWithdraw() {
     return;
   }
   const id = state.value.detail.id;
-  const result = await runWrite('下架科普内容（POST /admin/knowledge/{id}/withdraw）', () =>
-    withdrawKnowledge({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
-  );
+  const result = await runWrite({
+    label: '下架科普内容（POST /admin/knowledge/{id}/withdraw）',
+    action: 'withdraw',
+    send: () => withdrawKnowledge({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
+  });
   if (result.ok) withdrawOpen.value = false;
 }
 
@@ -506,6 +541,7 @@ onBeforeUnmount(() => {
 
     <WriteReceipt
       :write="state.write"
+      :changed="receiptChanged"
       :audit-lookup="state.auditLookup"
       :can-audit="canAudit"
       :can-reload-detail="state.selectedId !== null"
