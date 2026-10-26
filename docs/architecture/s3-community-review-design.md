@@ -40,6 +40,7 @@ S3 不去重；去重需要改观察器，属 S4 范围。
 
 结论行上的「谁批的」落在 `public.community_moderation_decisions.decided_by`（迁移
 `services/api/db/migrations/0045_community_post_review_actor.sql`，可空列，`NULL` = 机器结论）。
+值是做出结论的运营者 `admin_accounts.id` 的**快照**——不是外键、不加索引。
 
 **故意不建外键：注销后仍保留审核人溯源；账号是否存在由应用层解释。**
 
@@ -62,3 +63,20 @@ S3 不去重；去重需要改观察器，属 S4 范围。
   `GET /admin/audit-logs` 查不到审核动作——这是有意的路线选择，「谁批的」落在结论行上、与帖子状态同事务。
   要进审计读面留给 S3b（新迁移号 0046）。
 - **后台 UI**：S3-c 另做；`apps/admin` 的人审占位页在本片仍不发请求。
+
+## 6. 验证：哪些读数在内存里给不出
+
+内存 store 能证契约形状与错误码，证不了「写路径真的落库」。真库读数在**既有**臂
+`tests/integration/admin-community-posts-pg.mjs` 的 `[R]` 节（在 `[F]` 的「全表 8 行终态」自证之后
+才插入新帖，既有断言一字未动），证三件事：
+
+1. `decided_by` 落库：通过/驳回后 `public.community_moderation_decisions` 的结论行
+   `decided_by` = 发起动作的管理员 id，且 `target_revision` = 结论生效的那一版（不是送审版）；
+2. `private → published` 是真库行迁移（`visibility`/`audit_state`/`revision` 逐列核对），
+   且通过后公开读面（他人详情 200、公开列表含该帖）同步变化；
+3. CAS 的原子性由 PG 证明：旧 `If-Match` ⇒ 409 `REVISION_CONFLICT` 且行与结论行一字不动；
+   同 `If-Match` 并发只赢一笔（另一笔 409）；幂等重放 `changed:false` 不落第二条结论行。
+
+该臂需要 `ADMIN_COMMUNITY_POSTS_PG_TEST_URL`（无值 ⇒ `exit 77`，**不是通过**）：本机没有 PG 17 时
+只跑 `tests/unit/**` 与 `tests/contract/**`，真库读数由 CI 首次执行给出。
+

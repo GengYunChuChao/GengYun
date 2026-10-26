@@ -26,7 +26,8 @@
 -- 语义
 -- ---------------------------------------------------------------
 --   · `decided_by IS NULL`  ⇒ **机器结论**（规则层/审核域产出），口径与 0045 之前逐字一致；
---   · `decided_by IS NOT NULL` ⇒ **人工结论**，值是做出该结论的运营者 `users.id`。
+--   · `decided_by IS NOT NULL` ⇒ **人工结论**，值是做出该结论的运营者 `admin_accounts.id`
+--     （**快照值**：只作溯源，不建外键、不参与可见性判定）。
 --   ⇒ 「这条结论里有没有人的判断」在 SQL 与导出里**一眼可辨**，不需要新表/新枚举。
 --   ⇒ 机器写入路径（`community/service.ts` 的 `buildVerdict`）不传该字段，落 `NULL`，
 --      **零行为变化**（`ModerationRecord.decided_by` 是可选字段，缺省即无）。
@@ -60,8 +61,9 @@ ALTER TABLE public.community_moderation_decisions
   ADD COLUMN IF NOT EXISTS decided_by uuid NULL;
 
 COMMENT ON COLUMN public.community_moderation_decisions.decided_by IS
-  '做出该结论的运营者 users.id；NULL = 机器结论（规则层/审核域产出）。'
+  '做出该结论的运营者 admin_accounts.id 的快照值（非外键，账号删除后仍可溯源）；'
+  ' NULL = 机器结论（规则层/审核域产出）。'
   ' 人工通过/驳回（POST /admin/posts/{id}/approve|reject）写非空；'
-  ' 该列只作溯源，不加外键、不参与可见性判定。';
+  ' 该列只作溯源，不加外键、不加索引、不参与可见性判定。';
 
 COMMIT;

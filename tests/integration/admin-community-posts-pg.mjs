@@ -86,12 +86,14 @@ const HIDE_SCOPE = 'sources:write';
  *   0022 社区六表——其中 `community_moderation_decisions` 是**读面的必需依赖**
  *        （`effectiveState()` 每次读取都 `store.getModeration()` 并比对 `text_digest`；缺它 ⇒ 42703 ⇒ 503）；
  *   0030 帖/评行级作者注销引用（`POST_COLUMNS` 含 `anonymized_author_ref`，缺它 ⇒ 42703 ⇒ 503）；
- *   0032 举报者行内注销引用（同一套列口径的一致性；本脚本不写举报，但保持与社区域同形）。
+ *   0032 举报者行内注销引用（同一套列口径的一致性；本脚本不写举报，但保持与社区域同形）；
+ *   0045 `community_moderation_decisions.decided_by`（**人工**审核的运营者快照，S3 新增）。缺它 ⇒
+ *        通过/驳回写结论行时 42703 ⇒ 两个动作都 503 —— 第 [R] 节的读数正是"真库确实记得是谁批的"。
  * 刻意**不**引 0007（`CREATE EXTENSION pgcrypto`）等与本域无关的迁移，也不引 0028（审核**域**的
  * `moderation_decisions` 台账——本脚本的可见性判据来自社区自己的 `community_moderation_decisions`）：
  * 本脚本的读数是社区帖域，不是迁移链完整性（后者由跑全链的 `media-persistence-pg` / `ocr-jobs-pg` 等臂守住）。
  */
-const MIGRATIONS = ['0001', '0022', '0030', '0032'];
+const MIGRATIONS = ['0001', '0022', '0030', '0032', '0045'];
 
 const argvUrl = process.argv.slice(2).find((value) => /^postgres(ql)?:\/\//.test(value));
 const rawUrl = argvUrl ?? process.env[ENV];
@@ -193,8 +195,8 @@ async function main() {
       assert.ok(versions.includes(required), `迁移目录必须含 ${required}`);
     }
     const picked = discovered.filter((migration) => MIGRATIONS.includes(migration.version));
-    assert.deepEqual(picked.map((migration) => migration.version), MIGRATIONS, '本脚本依赖的四段迁移必须按目录序取到');
-    assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '四段迁移必须逐条真正应用');
+    assert.deepEqual(picked.map((migration) => migration.version), MIGRATIONS, '本脚本依赖的五段迁移必须按目录序取到');
+    assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '五段迁移必须逐条真正应用');
     assert.equal((await applyMigrations(owner, picked)).applied.length, 0, '重跑迁移必须是 no-op');
     note(`[M] 迁移子集 ${MIGRATIONS.join('+')} 逐条 apply 成功、二连跑 0 条（目录共 ${versions.length} 个迁移，版本号无重复）`);
 
@@ -213,10 +215,12 @@ async function main() {
       ['community_posts', 'anonymized_author_ref'],
       // 0022 才有：读面的可见性判据（`effectiveState()`）要拿它比对结论，缺它整域 503。
       ['community_moderation_decisions', 'text_digest'],
+      // 0045 才有：人工通过/驳回把运营者写进结论行；缺它 ⇒ 两个动作都 503（见 [R] 节）。
+      ['community_moderation_decisions', 'decided_by'],
     ]) {
       assert.equal(columnOf(table, name), true, `${table}.${name} 必须存在（否则读面 42703 ⇒ 503）`);
     }
-    note('[M] 依赖列在位：community_posts.{visibility,audit_state,revision,updated_at,anonymized_author_ref} 与 community_moderation_decisions.text_digest');
+    note('[M] 依赖列在位：community_posts.{visibility,audit_state,revision,updated_at,anonymized_author_ref} 与 community_moderation_decisions.{text_digest,decided_by}');
 
     // -----------------------------------------------------------------------
     // 夹具：三个真实用户（作者 A / 他人 B / 作者 C）＋ 一条后台管理员
@@ -744,6 +748,222 @@ async function main() {
     note('[F] 收尾自证：全表 8 行终态 = 两次成功下架（P1/P5 → hidden:2）+ 六条原样，无半写状态');
 
     // -----------------------------------------------------------------------
+    // [R] 人工通过 / 驳回：真库写路径（S3-a —「社区先审后发」的审核动作变成真的）
+    // -----------------------------------------------------------------------
+    /**
+     * 本节**只追加**读数：上面 [M]/[L]/[D]/[H]/[F] 的每条断言一字未动。
+     *
+     * 内存 store 证不了、只能由 PG 证的三件事：
+     *   ① 运营者身份真的落进 `community_moderation_decisions.decided_by`（**迁移 0045 的列**），
+     *      而且与帖子行**同一事务、同一版**（`community/store-pg.ts` 的 `writeModeration`）；
+     *   ② approve 的 `private → published` 是**真库行迁移**，不是返回值的表演；
+     *   ③ CAS 的原子性：同一 If-Match 并发只赢一笔，幂等重放不落第二条结论行、不动 revision。
+     *
+     * 位置说明：本节在 [F] 的「全表 8 行终态」自证**之后**才插入新帖 ⇒ 那条读数不受影响；
+     * 本节不新增迁移（0045 已在 [M] 的迁移子集里），也不改上面的既有臂。
+     */
+
+    /** 通过一次（契约：`POST …/approve` **无请求体**；`if-match` 与 `idempotency-key` 都是必填）。 */
+    const approveOf = (id, { token = hideAdmin.token, ifMatch, key } = {}) => call(
+      token,
+      'POST',
+      `${API}/admin/posts/${id}/approve`,
+      {
+        headers: {
+          ...(ifMatch === undefined ? {} : { 'if-match': ifMatch }),
+          ...(key === undefined ? {} : { 'idempotency-key': key }),
+        },
+      },
+    );
+
+    /** 驳回一次（契约：`reason_code` 是**必填**的闭集成员，见 `PostRejectionInput`）。 */
+    const rejectOf = (id, { token = hideAdmin.token, ifMatch, key, reasonCode = 'spam' } = {}) => call(
+      token,
+      'POST',
+      `${API}/admin/posts/${id}/reject`,
+      {
+        payload: { reason_code: reasonCode },
+        headers: {
+          ...(ifMatch === undefined ? {} : { 'if-match': ifMatch }),
+          ...(key === undefined ? {} : { 'idempotency-key': key }),
+        },
+      },
+    );
+
+    /**
+     * 该帖的结论行。`community_moderation_decisions` 的主键是
+     * `(target_type, target_id, target_revision)`（`0022_community_persistence.sql:172`）
+     * ⇒ 每版最多一行：幂等重放与并发落败都**不得**让行数增加。
+     */
+    const decisionsOf = async (id) => (await owner.query(
+      `SELECT target_revision, decision::text AS decision, hard_rule_passed,
+              reason_codes, decided_by::text AS decided_by
+         FROM public.community_moderation_decisions
+        WHERE target_type = 'post' AND target_id = $1::uuid
+        ORDER BY target_revision ASC`,
+      [id],
+    )).rows;
+    const auditsOf = (action) => auditEntries().filter((entry) => entry.action === action);
+
+    // 文案：与单测同一份「过得了硬规则层」的农事记录（不是随便写一句 —— 不过硬规则层的文案
+    // 会让 approve 按设计回 422 RULE_VETOED，后面的读数就全部无意义）。
+    const REVIEW_TITLE = '苗期观察记录';
+    const REVIEW_BODY = '这段时间天气转凉，我记录了田间长势，准备按标签说明处理。';
+    const reviewOutcome = gate.evaluate(
+      { type: 'post', id: randomUUID(), revision: 1 },
+      `${REVIEW_TITLE}\n${REVIEW_BODY}`,
+      [],
+    );
+    assert.equal(reviewOutcome.hard_rule_passed, true,
+      '本节文案必须过得了合成 gate 的硬规则层（否则 approve 被 422 拒绝，读数无意义）');
+
+    // 四条新帖：R1/R2/R4 = 待审（private + pending，**不写结论行**，与 P8 同形）；
+    // R3 = 已公开（用来证「通过不复活 hidden」）。
+    const R1 = postRecord(randomUUID(), authorA.user.id, {
+      tag: 'review-approve', visibility: 'private', audit_state: 'pending',
+      title: REVIEW_TITLE, body: REVIEW_BODY, created_at: AT(20), updated_at: AT(20),
+    });
+    const R2 = postRecord(randomUUID(), otherB.user.id, {
+      tag: 'review-reject', visibility: 'private', audit_state: 'pending',
+      title: REVIEW_TITLE, body: REVIEW_BODY, created_at: AT(21), updated_at: AT(21),
+    });
+    const R3 = postRecord(randomUUID(), authorA.user.id, {
+      tag: 'review-hidden', visibility: 'published',
+      title: REVIEW_TITLE, body: REVIEW_BODY, created_at: AT(22), updated_at: AT(22),
+    });
+    const R4 = postRecord(randomUUID(), otherB.user.id, {
+      tag: 'review-race', visibility: 'private', audit_state: 'pending',
+      title: REVIEW_TITLE, body: REVIEW_BODY, created_at: AT(23), updated_at: AT(23),
+    });
+    for (const record of [R1, R2, R3, R4]) {
+      const moderation = record === R3 ? verdictFor(record) : null;
+      assert.equal(await store.insertPost(record, moderation), true, `审核臂夹具 ${record.id} 必须落库`);
+    }
+    assert.equal((await decisionsOf(R1.id)).length, 0, '待审帖入库时**没有**结论行（「先审」的起点）');
+
+    // ---- ① 通过：private + pending ⇒ published + approved，且运营者落库 ----
+    const approveAuditsBefore = auditsOf('post.approve').length;
+    const approveRes = await approveOf(R1.id, { ifMatch: '"1"', key: 'i18-posts-approve-1' });
+    assert.equal(approveRes.status, 200, `通过必须 200，实际 ${approveRes.status} ${approveRes.text.slice(0, 240)}`);
+    assert.deepEqual(Object.keys(approveRes.body.data).sort(),
+      Object.keys(openapi.components.schemas.PostReviewOutcome.properties).sort(),
+      '回执字段集合必须与契约 PostReviewOutcome 逐字相等（不多不少）');
+    assert.equal(approveRes.body.data.id, R1.id);
+    assert.equal(approveRes.body.data.revision, 2, '通过把 revision 1→2');
+    assert.equal(approveRes.body.data.audit_state, 'approved');
+    assert.equal(approveRes.body.data.visibility, 'published', '通过同时承担发布语义（private → published）');
+    assert.equal(approveRes.body.data.decision, 'approved');
+    assert.equal(approveRes.body.data.changed, true);
+    assert.equal(approveRes.body.data.notified, false,
+      '本臂迁移子集里没有 0019 的消息表 ⇒ 通知如实为 false（不假装通知成功）');
+    assert.deepEqual(approveRes.body.data.reason_codes, []);
+    assert.equal(approveRes.headers.etag, '"2"', '通过把 revision 1→2 并回写 ETag');
+    assert.deepEqual(approveRes.body.meta.execution_mode, 'real');
+
+    const r1After = await snapshotOf(R1.id);
+    assert.equal(r1After.visibility, 'published', '真库行必须 private → published（不是只改返回值）');
+    assert.equal(r1After.audit_state, 'approved');
+    assert.equal(r1After.revision, 2);
+    assert.equal(r1After.title, R1.title, '通过不得改写标题');
+    assert.equal(r1After.body, R1.body, '通过不得改写正文');
+    assert.equal(r1After.author_id, authorA.user.id, '通过不得改写作者');
+
+    const r1Decisions = await decisionsOf(R1.id);
+    assert.equal(r1Decisions.length, 1, '通过后该帖恰好一条结论行');
+    assert.equal(r1Decisions[0].target_revision, 2, '结论行绑定**结论生效**的那一版（2），不是送审版（1）');
+    assert.equal(r1Decisions[0].decision, 'approved');
+    assert.equal(r1Decisions[0].hard_rule_passed, true, 'approved ⇒ hard_rule_passed 必须 true');
+    assert.deepEqual(r1Decisions[0].reason_codes, [], 'approved 不得带理由码');
+    assert.equal(r1Decisions[0].decided_by, hideAdmin.userId,
+      'decided_by 必须是发起该动作的管理员 id（0045 的列 —— 进程内台账替代不了的留痕）');
+    assert.equal(auditsOf('post.approve').length, approveAuditsBefore + 1, '成功通过恰好新增一条 post.approve 审计');
+    note('[R] 通过：private+pending ⇒ published+approved（rev 1→2、ETag "2"）；真库结论行 target_revision=2、decision=approved、decided_by=该管理员；post.approve 审计 +1');
+
+    assert.equal((await detailOf(R1.id)).status, 200, '通过后他人读得到（公开读面要求 published 且 approved，两条都真变了）');
+    assert.equal((await detailOf(R1.id, authorA.token)).body.data.visibility, 'published');
+    assert.equal(idsOf(await getList(`${API}/posts`)).includes(R1.id), true, '通过后出现在公开列表');
+    note('[R] 通过后的可见性：他人详情 200、公开列表含该帖、作者读到 visibility=published');
+
+    // ---- ② 幂等重放：同一动作再来一次（带当前 If-Match）⇒ changed:false，不落第二行 ----
+    const approveReplay = await approveOf(R1.id, { ifMatch: '"2"', key: 'i18-posts-approve-2' });
+    assert.equal(approveReplay.status, 200,
+      `已通过再通过必须幂等成功，实际 ${approveReplay.status} ${approveReplay.text.slice(0, 240)}`);
+    assert.equal(approveReplay.body.data.changed, false, '已通过且已公开 ⇒ changed:false，而不是再迁一版');
+    assert.equal(approveReplay.headers.etag, '"2"', 'changed:false 时 ETag 仍是当前版本');
+    assert.deepEqual(await snapshotOf(R1.id), r1After, '幂等重放不得再改真库行（逐列相等）');
+    assert.equal((await decisionsOf(R1.id)).length, 1, '幂等重放不得落第二条结论行（PK 同一版）');
+    assert.equal(auditsOf('post.approve').length, approveAuditsBefore + 1, '幂等重放不得新增审计（不把幂等成功记成一次处置）');
+    note('[R] 幂等重放：200 changed:false、ETag "2"、真库行逐列不变、结论行仍 1 条、审计不增');
+
+    // ---- ③ CAS 负例：拿旧版去通过 ⇒ 409，且一行不动 ----
+    const staleApprove = await approveOf(R1.id, { ifMatch: '"1"', key: 'i18-posts-approve-stale' });
+    assert.equal(staleApprove.status, 409, `旧 If-Match 必须 409，实际 ${staleApprove.status}`);
+    assert.equal(staleApprove.body.error.code, 'REVISION_CONFLICT');
+    assert.deepEqual(await snapshotOf(R1.id), r1After, 'CAS 落败不得改动真库行');
+    assert.equal((await decisionsOf(R1.id)).length, 1, 'CAS 落败不得落结论行');
+    note('[R] CAS 负例：旧版 If-Match ⇒ 409 REVISION_CONFLICT，真库行与结论行一字不动');
+
+    // ---- ④ 驳回：private + pending ⇒ hidden + rejected，理由码原样落库 ----
+    const rejectRes = await rejectOf(R2.id, {
+      ifMatch: '"1"', key: 'i18-posts-reject-1', reasonCode: 'misleading_agronomy',
+    });
+    assert.equal(rejectRes.status, 200, `驳回必须 200，实际 ${rejectRes.status} ${rejectRes.text.slice(0, 240)}`);
+    assert.equal(rejectRes.body.data.id, R2.id);
+    assert.equal(rejectRes.body.data.decision, 'rejected');
+    assert.equal(rejectRes.body.data.audit_state, 'rejected');
+    assert.equal(rejectRes.body.data.visibility, 'hidden', '驳回 ⇒ 不可公开：visibility 必须 hidden');
+    assert.equal(rejectRes.body.data.revision, 2);
+    assert.equal(rejectRes.body.data.changed, true);
+    assert.deepEqual(rejectRes.body.data.reason_codes, ['misleading_agronomy'], '理由码必须原样回执');
+    assert.equal(rejectRes.headers.etag, '"2"');
+
+    const r2After = await snapshotOf(R2.id);
+    assert.equal(r2After.visibility, 'hidden');
+    assert.equal(r2After.audit_state, 'rejected');
+    assert.equal(r2After.revision, 2);
+    const r2Decisions = await decisionsOf(R2.id);
+    assert.equal(r2Decisions.length, 1);
+    assert.equal(r2Decisions[0].target_revision, 2);
+    assert.equal(r2Decisions[0].decision, 'rejected');
+    assert.equal(r2Decisions[0].hard_rule_passed, false, 'rejected ⇒ hard_rule_passed 必须 false（Review 的硬约束）');
+    assert.deepEqual(r2Decisions[0].reason_codes, ['misleading_agronomy'], '理由码必须落进结论行（不是只回执）');
+    assert.equal(r2Decisions[0].decided_by, hideAdmin.userId, '驳回同样留运营者快照');
+    assert.equal((await detailOf(R2.id, otherB.token)).body.data.visibility, 'hidden', '作者读到自己被驳回的帖子仍是 200 + hidden');
+    assert.equal((await detailOf(R2.id, authorA.token)).status, 404, '他人的会话读不到被驳回的帖子');
+    note('[R] 驳回：private+pending ⇒ hidden+rejected（rev 1→2）；结论行 decision=rejected、hard_rule_passed=false、reason_codes=["misleading_agronomy"]、decided_by=该管理员；作者 200/他人 404');
+
+    // ---- ⑤ 不翻案：通过**不得**把已下架（hidden）的帖子复活 ----
+    const r3HiddenRes = await hideOf(R3.id, { ifMatch: '"1"', key: 'i18-posts-review-hide-1' });
+    assert.equal(r3HiddenRes.status, 200, `先下架必须 200，实际 ${r3HiddenRes.status}`);
+    const r3AfterHide = await snapshotOf(R3.id);
+    assert.equal(r3AfterHide.visibility, 'hidden');
+    const resurrect = await approveOf(R3.id, { ifMatch: '"2"', key: 'i18-posts-approve-hidden' });
+    assert.equal(resurrect.status, 200, `对已下架的帖子通过必须幂等成功，实际 ${resurrect.status}`);
+    assert.equal(resurrect.body.data.changed, false, '下架是单向门：通过不得为它翻案');
+    assert.equal(resurrect.body.data.visibility, 'hidden');
+    assert.deepEqual(await snapshotOf(R3.id), r3AfterHide, '不复活：真库行一字不动');
+    note('[R] 不翻案：已 hidden 的帖子再通过 ⇒ 200 changed:false、visibility 仍 hidden、真库行一字不动');
+
+    // ---- ⑥ 并发：两笔同 If-Match 的通过 ⇒ 恰好一笔 200 / 一笔 409，结论行只有一条 ----
+    const [raceApproveA, raceApproveB] = await Promise.all([
+      approveOf(R4.id, { ifMatch: '"1"', key: 'i18-posts-approve-race-a' }),
+      approveOf(R4.id, { ifMatch: '"1"', key: 'i18-posts-approve-race-b' }),
+    ]);
+    const raceApproveStatuses = [raceApproveA.status, raceApproveB.status].sort();
+    assert.deepEqual(raceApproveStatuses, [200, 409],
+      `并发两笔通过必须恰好一笔 200、一笔 409，实际 ${raceApproveStatuses.join('/')}`
+      + `（${raceApproveA.status}:${raceApproveA.body?.error?.code ?? 'ok'} /`
+      + ` ${raceApproveB.status}:${raceApproveB.body?.error?.code ?? 'ok'}）`);
+    const approveLoser = raceApproveA.status === 409 ? raceApproveA : raceApproveB;
+    assert.equal(approveLoser.body.error.code, 'REVISION_CONFLICT', '并发落败的一笔必须是 REVISION_CONFLICT（不是 500/503）');
+    const r4After = await snapshotOf(R4.id);
+    assert.equal(r4After.revision, 2, '并发两笔只能让 revision 前进**一次**');
+    assert.equal(r4After.visibility, 'published');
+    assert.equal((await decisionsOf(R4.id)).length, 1, '并发两笔只能留下**一条**结论行（真库 CAS 的原子性）');
+    note('[R] 并发隔离：两笔同 If-Match 的通过 ⇒ 恰好一笔 200 / 一笔 409 REVISION_CONFLICT；rev 只前进一次、结论行只一条');
+    note(`[R] 全节读数：审核臂 4 条新帖 + ${auditsOf('post.approve').length} 条 post.approve 审计；结论行由 community_moderation_decisions 逐列核对`);
+
+    // -----------------------------------------------------------------------
     // [U] 下架后四类读面**立即**同步 + 无缓存复活路径（issue #18 的末项读数）
     // -----------------------------------------------------------------------
     /**
@@ -773,7 +993,7 @@ async function main() {
      */
     // 0018（收藏/历史）与 0019（消息）是本节的**真实依赖**：缺表 ⇒ 读面 42703 ⇒ 503，
     // 那样的读数不能证明"读面看不到该帖"。两段只 FK 到 `public.users`（0018:48/73、0019:51），
-    // 与已应用的 0001 组合即可，且台账 `schema_migrations` 只追加，先前四段不受影响。
+    // 与已应用的 0001 组合即可，且台账 `schema_migrations` 只追加，先前五段不受影响。
     // ⛔ 刻意**不加** 0008（`idempotency_keys`）：那张表只服务 `PUT /messages/{id}/read` 的
     // 幂等台账（`messages/service.ts:169-207` → `messages/store-pg.ts:349-420`），而"下架后消息同步"
     // 走的是 `appendMessage`（`messages/service.ts:422-444`：`findByEventKey` 查的是 `public.messages`，

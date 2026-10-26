@@ -77,7 +77,7 @@ export interface ModerationRecord {
   contract_complete: false;
   missing_contract_fields: string[];
   /**
-   * 做出该结论的**运营者** `users.id`；缺省/`null` = **机器结论**（迁移 `0045`）。
+   * 做出该结论的**运营者** `admin_accounts.id`（快照值，**非外键**）；缺省/`null` = **机器结论**（迁移 `0045`）。
    *
    * 只有人工审核（`POST /admin/posts/{id}/approve|reject`）会写非空；机器写入路径
    * （`community/service.ts` 的 `buildVerdict`）**不传**该字段 ⇒ 落 `NULL`，零行为变化。
