@@ -115,7 +115,7 @@
 | 问题 | 答案 | 证据 |
 | --- | --- | --- |
 | 表与状态机 | `pending_purge → purged / failed`；`purged` 必须 `payload='null'` + `purged_at` + 非空 `evidence_ref` | `0023_user_backup_copies.sql:34-90`，`:69-76` |
-| scope 闭集 | **只有 `favorite`、`history`** | `packages/privacy/backup-copies.mjs:42-47`；`scopeForBackupModule()` 对未登记模块**直接抛 `RangeError`**（`:56-61`） |
+| scope 闭集 | **只有 `favorite`、`history`** | `packages/privacy/backup-copies.mjs:42-47`；`scopeForBackupModule()` 对未登记模块**直接抛 `RangeError`**（`:62-67`） |
 | 清单来源 | 装配层硬编码两对 `[favorites, favoritesStore]`、`[history, historyStore]`；任一 store 无 `snapshotOwner` ⇒ 整体不写清单行 | `services/api/src/privacy/user-data-deletion.ts:272-288` |
 | favorites/history 的 payload 覆盖 | ✅ 有（`snapshotOwner` 只回行 id 与计数，不回正文） | `favorites/store-pg.ts:279-285`、`history/store-pg.ts:280-285` |
 | **messages 的 payload 覆盖** | **❌ 完全没有**：无 `snapshotOwner` ⇒ `backupCopySources()` 都可能整体返回 null；即便返回，scope 闭集也没有 `message` | 同上两处 |
