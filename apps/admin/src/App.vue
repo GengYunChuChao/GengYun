@@ -9,6 +9,7 @@ import ContentAdminView from './views/ContentAdminView.vue';
 import FlagAuditView from './views/FlagAuditView.vue';
 import FlagsView from './views/FlagsView.vue';
 import JobsView from './views/JobsView.vue';
+import ModerationQueueView from './views/ModerationQueueView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
 type TabKey =
@@ -20,6 +21,7 @@ type TabKey =
   | 'auditLogs'
   | 'administrators'
   | 'jobs'
+  | 'moderation'
   | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
@@ -31,6 +33,7 @@ const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'auditLogs', label: '审计总台账（只读）', note: '读面已接入' },
   { key: 'administrators', label: '管理员权限读面', note: '读面已接入' },
   { key: 'jobs', label: '作业台', note: '读 + 取消已接入' },
+  { key: 'moderation', label: '社区审核队列', note: '读 + 通过/驳回已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
 
@@ -67,6 +70,7 @@ const active = ref<TabKey>('accounts');
     <AuditLogsView v-else-if="active === 'auditLogs'" />
     <AdministratorsView v-else-if="active === 'administrators'" />
     <JobsView v-else-if="active === 'jobs'" />
+    <ModerationQueueView v-else-if="active === 'moderation'" />
     <ReviewPlaceholderView v-else />
 
     <footer class="foot">
@@ -111,8 +115,16 @@ const active = ref<TabKey>('accounts');
           revision）与 Idempotency-Key（jobs:cancel），终态行（succeeded / uncertain / failed / timed_out /
           cancelled）按钮禁用，取消后按响应局部刷新该行
         </dd>
+        <dt>社区审核队列</dt>
+        <dd>
+          读 + 动作页：GET /admin/posts（operationId listAdminPosts，scope=sources:read，游标分页 + state / audit_state
+          筛选）、GET /admin/posts/{id}（getAdminPost，响应带 ETag）；动作走 POST /admin/posts/{id}/approve
+          （approvePost，无请求体）与 POST /admin/posts/{id}/reject（rejectPost，body 只有闭集内的 reason_code），
+          scope 均为 sources:write，两者都必带 If-Match 与 Idempotency-Key；重复提交同一结论时服务端回 changed:false，
+          页面如实显示「已是该状态」而不当成功；游标与筛选组合绑定，换筛选回第一页；403 不给重试，503 仅在 retryable:true 时给
+        </dd>
         <dt>人工审核</dt>
-        <dd>空入口占位，未实现；不伪造队列与审核人</dd>
+        <dd>空入口占位，未实现；不伪造队列与审核人（审核人 / 投票 / 专家认证属于另一套工作流，不在「社区审核队列」页）</dd>
       </dl>
       <p class="notice">
         后台与小程序端分别鉴权（audience=admin，独立令牌）；本页不读取任何生产密钥，不写日志、不把令牌放进 URL。
