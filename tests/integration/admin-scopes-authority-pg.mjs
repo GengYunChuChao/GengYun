@@ -351,8 +351,8 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  assert.equal(applied.rows[0].version, '0045', '迁移 0045（S3 片 A：给 community_moderation_decisions 增 decided_by uuid——人工 approve/reject 的施动者快照，非外键、不加索引）必须是最后一条已应用版本');
-  pass('schema_migrations 末项 = 0045');
+  assert.equal(applied.rows[0].version, '0046', '迁移 0046（`#18` S2 收尾片：后台 scope 操作被拒时的留痕写入口 record_admin_scope_denial；上一支 0045 是 S3 片 A 给 community_moderation_decisions 增 decided_by uuid——人工 approve/reject 的施动者快照，非外键、不加索引）必须是最后一条已应用版本');
+  pass('schema_migrations 末项 = 0046');
 
   const hasCheck = await ownerPool.query(
     `SELECT count(*)::int AS n FROM pg_constraint

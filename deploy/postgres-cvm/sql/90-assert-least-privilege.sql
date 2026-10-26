@@ -1804,6 +1804,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'list_third_party_deletions',         'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- `#18` S2 收尾片（迁移 0046）：后台 scope 操作**被拒**时的留痕唯一写路径（一条窄口径
+    -- SECURITY DEFINER 函数，`result='denied'`）。运行时对 `admin_audit_events` 仍是
+    -- 零表级、零列级写（external_manifest 与槽 9 的 protected_columns 逐字未动；append-only
+    -- 触发器还在），并且写入的是**受保护审计面**：函数内固定 action/result/target_ref、
+    -- 重建 target_hint、scope 与 reason_code 都走闭集 ⇒ 调用方伪造不了动作文本。
+    -- ⚠ 与 `record_admin_job_cancel_audit` 的**唯一差异**（刻意）：本函数**只**核 actor 存在，
+    -- ⛔ 不核 active、⛔ 不核是否持 scopes:write —— 被拒的正是这件事（0046 文件头有完整理由）。
+    ('public',         'record_admin_scope_denial',          'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
