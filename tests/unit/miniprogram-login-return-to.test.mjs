@@ -129,6 +129,14 @@ function fixture() {
     // 登记表随每次 b.page() 新建 ⇒ 与改前「每次 require 求值」一一对应，已登记项行为逐字不变。
     const pageDependencies = new Map([
       ['../../utils/font-scale', fontModule.exports],
+      // GY-I26 H1：home 页定义期 require 公开预览客户端。本组只验登录/回跳，不验公开预览，
+      // 因此给最小隔离替身：enabled=false 时 home.loadPreviews() 直接走 disabled，不发请求、
+      // 不触碰会话或回跳意图；未登记依赖仍由下面 require 显式失败。
+      ['../../utils/public-home-api', {
+        enabled: () => false,
+        load: () => Promise.resolve({ items: [], mode: 'stub', note: '' }),
+        message: () => ''
+      }],
       ['../../utils/page-gate', gateModule.exports],
       ['../../utils/profile-api', profile],
       ['../../utils/reference', requireHere(join(root, 'miniprogram/utils/reference.js'))],
