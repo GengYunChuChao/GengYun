@@ -215,7 +215,7 @@ export interface AnswerComposer {
 
 | 位置 | 改动 |
 | --- | --- |
-| `app.ts:2053` | `const conversationComposer = conversationInjection?.composer ?? createDeterministicAnswerComposer();` ⇒ 改为按 `config.executionMode` 解析 provider；**注入缝保留**（测试仍可注入确定性 composer） |
+| `app.ts:2102` | `const conversationComposer = conversationInjection?.composer ?? createDeterministicAnswerComposer();` ⇒ 改为按 `config.executionMode` 解析 provider；**注入缝保留**（测试仍可注入确定性 composer） |
 | `app.ts` 新增 provider 解析 | 抄 `app.ts:944-950` 的形态（`process.env['ANSWER_PROVIDER_URL'] ?? null` / `ANSWER_PROVIDER_KEY`），但**必须**同时满足 §6 R-1 的裁决（是否允许应用侧直接读 LLM allowlist） |
 | `app.ts:1545-1550` | 该处的 fail-closed 表达式**不改**：real 无持久 store ⇒ 整域 `null` |
 | `app.ts` 末尾 import 区 | 新 import **必须追加在最后一行**：`app.ts` 行号是台账锚点，只能整体后移，不能中间插入（`tests/unit/recognitions-store-pg-wiring.test.mjs:117` 的注释明确过这一点） |
@@ -324,7 +324,7 @@ services/api/src/app.ts:1507-1511                  conversationStore 解析（re
 services/api/src/app.ts:1522-1528                  conversationRetrieval 解析（wired / unwired）
 services/api/src/app.ts:1531                       conversationDose
 services/api/src/app.ts:1568                       conversationGuard
-services/api/src/app.ts:2053                       conversationComposer（接线改动点）
+services/api/src/app.ts:2102                       conversationComposer（接线改动点）
 services/api/src/app.ts:1666                       conversationRiskScreen
 services/api/src/app.ts:1545-1550                  real 下非持久 store ⇒ 整域 null（fail-closed）
 services/api/src/config.ts:158-168                 APP_EXECUTION_MODE 必填

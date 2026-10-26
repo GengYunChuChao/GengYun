@@ -152,11 +152,16 @@ import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visi
 import { createReferenceQueryService } from './knowledge/reference-query.ts';
 import {
   createUnavailableBackupPurgePort,
+  createUnavailableThirdPartyDeletionPort,
   createUserDataDeletion,
   type BackupPurgePort,
   type OwnerPurgeStore,
+  type ThirdPartyDeletionReadPort,
   type UserDataDeletionRegistry,
 } from './privacy/user-data-deletion.ts';
+// GY-R59（P2-b）：第三方删除完成态的**读侧**（真库端口已在 main；写侧 dispatch 属 P2-c，不在本片）。
+import { createPostgresThirdPartyDeletionPort } from './privacy/third-party-deletion-pg.ts';
+import type { ThirdPartyDeletionAdapter } from './privacy/third-party-deletion-adapter.ts';
 // GY-I19（#19）本片：逐用户备份副本域的**真实**清除端口（有真库时接线；无真库不静默退回内存/unwired）。
 import { createPostgresBackupPurgePort } from './privacy/backup-copies-pg.ts';
 import { createPostgresBackupStateReader, type BackupStateDerivationPort } from './privacy/backup-state-derivation.ts';
@@ -321,6 +326,14 @@ declare module 'fastify' {
     accountDeletion: AccountDeletionRequestService;
     /** GY-I19（#19）本片：回执 bearer 台账（只存 sha256 摘要；取证用，不暴露明文）。 */
     deletionReceipts: DeletionReceiptRegistry;
+    /**
+     * GY-R59（P2-b）· 本次装配的第三方删除**读侧**端口（取证用）。
+     *
+     * 四臂可据它判定：真库端口的 `persistent === true`；显式不可用端口的
+     * `listThirdPartyDeletions()` 抛 `PROVIDER_UNAVAILABLE`；未接线端口回 `null`。
+     * ⛔ 只读：本片不 dispatch、不落库（写侧 P2-c）。
+     */
+    thirdPartyDeletion: ThirdPartyDeletionReadPort;
     /**
      * GY-I15 社区服务（#15）。**未接线**（`real` 模式：真实持久存储未交付）
      * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
@@ -520,6 +533,17 @@ export interface BuildAppOptions {
      * 缺省按「真库 + 受理已接线」自动装配，见下方 `onlineStatesWiring`。
      */
     onlineStates?: OnlineStateDerivationPort;
+    /**
+     * GY-R59（P2-b）· 第三方删除完成态的**读侧端口**注入（测试与故障注入用）。
+     * 缺省按「有真库 ⇒ 真库端口 / real 且受理已接线 ⇒ 显式不可用 / 否则未接线」自动装配，
+     * 见下方 `thirdPartyWiring`。
+     */
+    thirdParty?: ThirdPartyDeletionReadPort;
+    /**
+     * GY-R59（P2-b）· 第三方删除**写侧适配器**注入（`config.ts` 没有第三方凭据键 ⇒
+     * 本期只支持注入，不新增环境变量、不伪造"已接线"）。见下方 `thirdPartyAdapterWiring`。
+     */
+    thirdPartyAdapter?: ThirdPartyDeletionAdapter;
   };
   // GY-I15 社区域注入项（阶段 2 装配）。**全部可选**：不传时——
   //   * 存储用空的进程内内存 store（`real` 模式下整域 503，见下）；
@@ -1895,6 +1919,31 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         : durableDeletionRequests !== null && config.executionMode === 'real'
           ? { backupPurge: createUnavailableBackupPurgePort() }
           : {};
+  // GY-R59（P2-b）· 第三方删除完成态的**读侧**装配（设计 §1.2 #7；门与 `backupPurgeWiring` 严格同门，
+  // 逐字照它的四臂形状）：
+  //   - 显式注入优先（测试与故障注入）；
+  //   - 有真库且**受理已接线** ⇒ 真库只读端口（`third-party-deletion-pg.ts` 与迁移 `0044`
+  //     都已在 main，见 P2-a；本片不新增 operation、不动迁移）；
+  //   - 受理已接线但**无真库**（只可能来自注入 store）且是 `real` 模式 ⇒ 显式不可用端口
+  //     （读即抛 `PROVIDER_UNAVAILABLE`），⛔ 不静默退回内存实现或 unwired；
+  //   - stub/demo 无真库 ⇒ 保持缺省 unwired（进程内协议行就是全部事实，行为与追加前逐字一致）。
+  // ⚠ 本片只接**读**：`unavailable` 端口不落库、不写任何行（设计 §5）；写侧（谁在何时 dispatch）
+  //   属 P2-c，不在本片。
+  const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =
+    userDataDeletionInjection?.thirdParty !== undefined
+      ? { thirdParty: userDataDeletionInjection.thirdParty }
+      : durableDeletionRequests !== null && pool !== null
+        ? { thirdParty: createPostgresThirdPartyDeletionPort({ pool }) }
+        : durableDeletionRequests !== null && config.executionMode === 'real'
+          ? { thirdParty: createUnavailableThirdPartyDeletionPort() }
+          : {};
+  // GY-R59（P2-b）· 第三方删除**写侧适配器**：本期**只支持注入**。
+  // `config.ts` 里没有第三方凭据键 ⇒ 装配层不会自造真实适配器（不新增环境变量、不伪造"已接线"）。
+  // 本片只把它接进删除注册表并透出取证（`app.userDataDeletion.thirdPartyAdapter`），⛔ 不 dispatch。
+  const thirdPartyAdapterWiring: { thirdPartyAdapter?: ThirdPartyDeletionAdapter } =
+    userDataDeletionInjection?.thirdPartyAdapter === undefined
+      ? {}
+      : { thirdPartyAdapter: userDataDeletionInjection.thirdPartyAdapter };
   // GY-R28 W6（G5/G11）：回执 `backupState` 的**只读推导**装配（门与 `backupPurgeWiring` 严格同门）。
   //   - 有真库且**受理已接线**（存在清单行）⇒ 真实只读端口：回执的备份态由 `user_backup_copies` 的
   //     真实行推导（四域全 `purged` 且证据可复算 ⇒ `completed`；未到期 ⇒ `pending`；到期未清 /
@@ -2108,6 +2157,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...backupStatesWiring,
     ...onlineEvidenceWiring,
     ...onlineStatesWiring,
+    // GY-R59（P2-b）：第三方完成态的读侧端口 + 写侧适配器（只登记，不 dispatch）。
+    ...thirdPartyWiring,
+    ...thirdPartyAdapterWiring,
     ...(durableDeletionRequests === null
       ? {}
       : { requests: durableDeletionRequests, receiptTtlMs: RECEIPT_TTL_MS }),
@@ -2259,6 +2311,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // GY-I19（#19）本片：注销装配的只读取证面（回执台账只含 sha256 摘要，不含明文 bearer）。
   app.decorate('accountDeletion', accountDeletion);
   app.decorate('deletionReceipts', deletionReceipts);
+  // GY-R59（P2-b）：第三方删除读侧端口的取证面（⛔ 只读：本片不 dispatch、不落库）。
+  app.decorate('thirdPartyDeletion', userDataDeletion.thirdParty);
   app.decorate('communityService', communityService);
   // GY-I12（#12）：问答服务。注销删除注册已并入 `userDataDeletion`（C1b-3 / P0-3 路径①），
   // 不再单独 decorate 第二个协调器（那是"两本账"的形状）。
@@ -2411,6 +2465,23 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     service: accountDeletionWired,
     receipts: accountDeletionWired === null ? null : deletionReceipts,
     deletion: accountDeletionWired === null ? null : userDataDeletion,
+    // GY-R59（P2-b）：回执第三方聚合态（`third_party_state`）的**只读来源**＝本进程同源的协议访问器
+    //（`deletion-modules.mjs` 的 `thirdPartyStatuses(requestId)` ⇒ 与回执的 handler 行同一本账）。
+    // 同步来源只是**兜底**：`thirdPartyRows`（下面的读侧端口）取不到行时才会用到它 ——
+    // 因为设计 §1.2 #9 把回执侧的来源类型定成同步访问器，而真库端口是
+    // `async listThirdPartyDeletions()`（设计 §1.2 #8）：两者互斥，本片按 (b) 的方案在**路由内**
+    // 先 `await` 端口取行、把行装进同步闭包再投影（见 `routes/account-deletion.ts::thirdPartyRowsFor()`），
+    // 这样 real 模式下真库里的接收方行才真的进得了回执（设计 §2 ④）。
+    thirdParty:
+      accountDeletionWired === null
+        ? null
+        : {
+            thirdPartyStatuses: (requestId: string) => userDataDeletion.coordinator.thirdPartyStatuses(requestId),
+          },
+    // 读侧端口（装配四臂的产物；未接线臂是 `createUnwiredThirdPartyDeletionPort()` ⇒ 回 `null`）。
+    // ⚠ `real` 模式下这两个 operation 整域 503（`available` 门是既有装配，本片明确不改）
+    // ⇒ 端口在这里的价值是"接线后一旦开门就能读到持久行"，以及 blocked 复位的读路径。
+    thirdPartyRows: thirdPartyWiring.thirdParty ?? null,
     // 幂等台账用既有认证服务（24h 台账；同键同体重新签发，不回放旧 bearer）。
     authService: service,
     now: clock,

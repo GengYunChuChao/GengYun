@@ -488,3 +488,35 @@ export function projectThirdPartyDeletion(input: ThirdPartyProjectionInput): Thi
 export function thirdPartyReceiptState(input: ThirdPartyProjectionInput): string | null {
   return projectThirdPartyDeletion(input).receipt_third_party_state;
 }
+
+/**
+ * GY-R59（P2-b）· 端口行 → **投影行**（`ThirdPartyProjectionSource.thirdPartyStatuses()` 的口径：snake_case）。
+ *
+ * 为什么需要它：读侧端口（`third-party-deletion-pg.ts::ThirdPartyDeletionRecord`）是 camelCase
+ * （`recipientId`/`exportRef`/`onlineState`/`backupState`/`requestedAt`/`confirmedAt`/`evidenceRef`/`errorCode`），
+ * 而投影只认 `recipient_id`/`export_ref`/`online_status`/`backup_status`/`requested_at`/`confirmed_at`/
+ * `evidence_ref`/`error_code`（见 `projectThirdPartyDeletion()` 的 `row[...]` 读取）。直接透传会**静默**
+ * 得到"没有接收方 ⇒ null"——正是设计 §2 ④ 那个"接线了却读不出值"的症状。
+ *
+ * 两种拼写都认（已是 snake_case 的行原样优先），未识别的键原样保留：
+ * 以后换端口实现（`thirdPartyStatuses()` 直接喂行）也不会读不到值。
+ *
+ * 缺键 → 该键 `null`；`recipient_id` 缺失由投影自己兜底成 `#<index>`，这里**不**编造接收方。
+ */
+export function toProjectionRows(rows: ReadonlyArray<unknown>): Array<Record<string, unknown>> {
+  return rows.map((raw) => {
+    const row = (raw ?? {}) as Record<string, unknown>;
+    const pick = (snake: string, camel: string): unknown => row[snake] ?? row[camel] ?? null;
+    return {
+      ...row,
+      recipient_id: pick('recipient_id', 'recipientId'),
+      export_ref: pick('export_ref', 'exportRef'),
+      online_status: pick('online_status', 'onlineState'),
+      backup_status: pick('backup_status', 'backupState'),
+      requested_at: pick('requested_at', 'requestedAt'),
+      confirmed_at: pick('confirmed_at', 'confirmedAt'),
+      evidence_ref: pick('evidence_ref', 'evidenceRef'),
+      error_code: pick('error_code', 'errorCode'),
+    };
+  });
+}

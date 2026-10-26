@@ -47,7 +47,7 @@
 // 已记录的错误行，不改任何断言）。
 
 import assert from 'node:assert/strict';
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import pg from 'pg';
 
@@ -193,6 +193,40 @@ function deletionReceiptGrantRegion() {
     (region.match(new RegExp(`TO ${runtimeRole};`, 'g')) ?? []).length,
     3,
     '三条 EXECUTE 都只能授予运行时登录角色',
+  );
+  assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
+  return region;
+}
+
+/**
+ * 从**出厂文件**同一份 `20-login-roles.sql` 抽取 **0044 第三方删除**的 EXECUTE 授权区域并原样执行。
+ *
+ * 为什么要执行它：回执读面现在会走 `public.list_third_party_deletions(uuid)` 取第三方完成态
+ * （`thirdPartyStateOf()` → 端口 → 该函数）。运行时角色若没有这两条函数的 EXECUTE ⇒ `42501`
+ * ⇒ 被 `mapDeletionError()` 兜底成 `PROVIDER_UNAVAILABLE(retryable:false)`「注销受理暂不可用」
+ * ⇒ **回执 GET 直接 503**，而 stub/demo 的单元测试全绿（它们不碰权限面）。
+ *
+ * 这条是真库臂唯一能证伪「授权区域被删/被改宽/被改窄」的地方：不复制粘贴 SQL，区域缺失即变红。
+ */
+function thirdPartyDeletionGrantRegion() {
+  const matched = deploySqlFile('20-login-roles.sql').match(
+    /-- #region gy-s4-third-party-deletion-grant\r?\n([\s\S]*?)\r?\n\s*-- #endregion gy-s4-third-party-deletion-grant/,
+  );
+  assert.ok(matched !== null, '20-login-roles.sql 必须含 gy-s4-third-party-deletion-grant 区域');
+  const region = matched[1];
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.record_third_party_deletion'),
+    '区域必须撤 PUBLIC 对 record_third_party_deletion 的执行权',
+  );
+  assert.ok(
+    region.includes('REVOKE ALL ON FUNCTION public.list_third_party_deletions'),
+    '区域必须撤 PUBLIC 对 list_third_party_deletions 的执行权',
+  );
+  assert.equal((region.match(/GRANT EXECUTE ON FUNCTION/g) ?? []).length, 2, '区域必须**恰好两条** GRANT EXECUTE');
+  assert.equal(
+    (region.match(new RegExp(`TO ${runtimeRole};`, 'g')) ?? []).length,
+    2,
+    '两条 EXECUTE 都只能授予运行时登录角色',
   );
   assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
   return region;
@@ -495,6 +529,9 @@ try {
   await owner.query(onlineEvidenceGrantRegion());
   // 0038 的三条回执台账函数：EXECUTE 同样从出厂文件原样抽取执行（回执签发/反查/诊断读数只有这三条路径）。
   await owner.query(deletionReceiptGrantRegion());
+  // 0044 的两条第三方删除函数：EXECUTE 同样从出厂文件原样抽取执行。顺序放在回执台账之后，
+  // 与 `migrate.ts up` ⇒ `20-login-roles.sql` 的真实次序一致（区域内的前置断言依赖函数已存在）。
+  await owner.query(thirdPartyDeletionGrantRegion());
   pool = createPool(runtimeUrl().href);
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
   assert.ok(Object.values(flags).every((value) => value === false));
@@ -528,6 +565,24 @@ try {
     true,
     '运行时角色必须能执行 0038 的三条回执台账函数（签发/反查/诊断读数都只有这三条路径）',
   );
+  // 0044：第三方删除的读面已被回执 GET 消费（`thirdPartyStateOf()` → `list_third_party_deletions`）。
+  // 这里既查权限位、也**真调一次**：只查 `has_function_privilege` 挡不住「函数体内部再引用
+  // 运行时无权限的对象」这类问题（那种情况权限位是 true、调用却 42501）。
+  const thirdPartyExecutables = (
+    await pool.query(
+      `SELECT has_function_privilege(current_user, 'record_third_party_deletion(uuid,text,uuid,text,text,text,timestamptz)', 'EXECUTE')
+          AND has_function_privilege(current_user, 'list_third_party_deletions(uuid)', 'EXECUTE') AS ok`,
+    )
+  ).rows[0].ok;
+  assert.equal(
+    thirdPartyExecutables,
+    true,
+    '运行时角色必须能执行 0044 的写/读函数（第三方删除请求与完成证据都只有这一条读写路径）',
+  );
+  const thirdPartyRows = (await pool.query('SELECT * FROM public.list_third_party_deletions($1)', [randomUUID()])).rows;
+  assert.equal(Array.isArray(thirdPartyRows), true, 'list_third_party_deletions(uuid) 必须对运行时角色可调用（42501 ⇒ 回执 GET 会静默 503）');
+  assert.equal(thirdPartyRows.length, 0, '随机 request id 下必须返回 0 行（不是报错、也不是别的请求的行）');
+  say('0044 授权区域（真库）：运行时角色可执行 record_third_party_deletion / list_third_party_deletions，且读函数真调返回 0 行（授权区域被删/改宽/改窄 ⇒ 本节变红）');
   const acl = (await owner.query(`SELECT coalesce(array_to_string(proacl, ','), '') acl FROM pg_proc WHERE proname='request_account_deletion'`)).rows[0].acl;
   assert.equal(/(^|,)=/.test(acl), false, `proacl 不得含 PUBLIC 授权：${acl}`);
   const definer = (await owner.query(`SELECT prosecdef, proconfig, pg_get_userbyid(proowner) owner FROM pg_proc WHERE proname='request_account_deletion'`)).rows[0];

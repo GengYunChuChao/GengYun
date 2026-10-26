@@ -63,6 +63,7 @@ import { unreadableBackupStates } from './backup-state-derivation.ts';
 import type { OnlinePurgeEvidenceRecorder } from './online-purge-evidence.ts';
 import type { DerivedOnlineStates, OnlineStateDerivationPort } from './online-state-derivation.ts';
 import { unreadableOnlineStates } from './online-state-derivation.ts';
+import type { ThirdPartyDeletionAdapter } from './third-party-deletion-adapter.ts';
 
 /** 注册到 F13 协议的模块名（闭集；`createDeletionCoordinator` 只接受闭集内的名字）。 */
 export const FAVORITES_DELETION_MODULE = 'favorites';
@@ -352,6 +353,76 @@ export function createUnavailableBackupPurgePort(
   };
 }
 
+/**
+ * 第三方完成态的**读侧端口**（GY-R59 / P2-b，设计 §1.2 #4/#6）。
+ *
+ * 与 `services/api/src/privacy/third-party-deletion-pg.ts::ThirdPartyDeletionPort` **结构兼容**：
+ * 真库端口多出的 `persistent` / `subscribeThirdPartyDeletion()`（写侧）本文件用不到，多出来不碍事。
+ * 这里刻意不直接引用那个接口——本文件只需要"读行"这一个能力，写侧的可用性判定由装配层决定。
+ *
+ * 返回 `null` 有明确语义：**本端口不提供任何持久行**（未接线）⇒ 调用方回退进程内协议行。
+ * ⛔ 不用 `[]` 表达"未接线"：空数组是「该请求确实没有接收方」这一**事实断言**，
+ * 没接线的端口无权替真库这么断言（这与备份域 `unwired` ⇒ `purged:false` 同向）。
+ */
+export interface ThirdPartyDeletionReadPort {
+  /** 读该请求已登记的接收方行；`null` ⇒ 本端口不提供持久行。 */
+  listThirdPartyDeletions(requestId: string): Promise<ReadonlyArray<unknown> | null>;
+}
+
+/**
+ * 未接线端口（缺省形态；照 `createUnwiredBackupPurgePort()` 的形）。
+ *
+ * 行为：不提供持久行 ⇒ `thirdPartyRowsOf()` 回退**进程内协议账本**
+ * （stub/demo 与追加前逐字一致：账本里没有第三方行就是"没有接收方"）。
+ * ⛔ 不在这里返回 `[]`（那会把「没接线」伪装成「查过了、没有接收方」）。
+ */
+export function createUnwiredThirdPartyDeletionPort(
+  note = '第三方删除完成态未接线：没有第三方完成证据的读侧端口，完成态只反映进程内协议行，不谎称已确认',
+): ThirdPartyDeletionReadPort {
+  void note;
+  return {
+    async listThirdPartyDeletions() {
+      return null;
+    },
+  };
+}
+
+/**
+ * 已接线但**当前不可用**的端口（`real` 模式没有真库连接时用它，与备份域同门）。
+ *
+ * 调用即抛 `PROVIDER_UNAVAILABLE`（契约内既有安全码）⇒ 读侧**不会**把"读不到"折叠成
+ * "没有接收方"：⛔ 不静默退回内存实现或 `unwired`（那会把「没接」伪装成「在等」）。
+ *
+ * 只在**读**路径抛，不落库、不写任何行（设计 §5：`unavailable` 端口不落库）。
+ */
+export function createUnavailableThirdPartyDeletionPort(
+  note = '第三方删除完成态需要数据库连接：real 模式未提供连接池，如实不可用',
+): ThirdPartyDeletionReadPort {
+  return {
+    async listThirdPartyDeletions() {
+      const error = new Error(note) as Error & { code?: string };
+      // 用契约内既有码（`SAFE_ERROR_CODES` 含它）⇒ 读路径据实 503，而不是"没有接收方"。
+      error.code = 'PROVIDER_UNAVAILABLE';
+      throw error;
+    },
+  };
+}
+
+/**
+ * 端口行 → **本文件的行口径**（camelCase `onlineStatus`/`backupStatus`，与协议账本
+ * `_thirdPartyRows` 的内存行同口径）。
+ *
+ * 端口（`third-party-deletion-pg.ts::ThirdPartyDeletionRecord`）是 camelCase
+ * `onlineState`/`backupState`；调用点的谓词只看 `onlineStatus`/`backupStatus`
+ * （既有两处谓词因此可以逐字不动）。三种拼写都认：以后换端口实现、或端口直接给
+ * `thirdPartyStatuses()` 的 snake_case 行时，都不会静默读不到值。
+ */
+function protocolThirdPartyRow(row: Record<string, unknown>): Record<string, unknown> {
+  const online = row['onlineStatus'] ?? row['online_status'] ?? row['onlineState'];
+  const backup = row['backupStatus'] ?? row['backup_status'] ?? row['backupState'];
+  return { ...row, onlineStatus: online ?? null, backupStatus: backup ?? null };
+}
+
 export interface UserDataDeletionDeps {
   favoritesStore: OwnerPurgeStore;
   historyStore: OwnerPurgeStore;
@@ -434,6 +505,25 @@ export interface UserDataDeletionDeps {
    * （⛔ 不判 `pending`）。读不到 ⇒ 四域 `blocked` + `STORE_UNREACHABLE`。
    */
   onlineStates?: OnlineStateDerivationPort;
+  /**
+   * GY-R59（P2-b）· 第三方删除完成态的**读侧端口**（设计 §1.2 #4/#6）。
+   *
+   * 不传 ⇒ 未接线（`createUnwiredThirdPartyDeletionPort()`）：读侧回退进程内协议行，
+   * stub/demo 下与追加前**逐字一致**（既有断言因此零改动）。
+   * 接线后 `thirdPartyRowsOf()` **优先问端口**：`refreshOnlineStates()`／`refreshBackupStates()`
+   * 的 blocked 复位判定改用**持久事实**，而不是进程内行。
+   *
+   * ⚠ 本片只接**读**：写侧（谁在何时向接收方发起删除）不在本片（P2-c）。
+   */
+  thirdParty?: ThirdPartyDeletionReadPort;
+  /**
+   * GY-R59（P2-b）· 第三方删除的**写侧适配器**（设计 §1.2 #4）。
+   *
+   * 本期**只支持注入**：`config.ts` 里没有第三方凭据键，装配层不会自己造一个真实适配器
+   * （不给它加环境变量，也不伪造"已接线"）。本片只登记注入面并**透出**给调用方取证，
+   * ⛔ 不 dispatch：谁在何时向接收方发起删除属 P2-c 的裁定。
+   */
+  thirdPartyAdapter?: ThirdPartyDeletionAdapter;
   now?: () => Date;
 }
 
@@ -522,6 +612,16 @@ export interface UserDataDeletionRegistry {
    * `completionStatus()` 判定。未接线推导端口、反查不到主体或请求 ⇒ 返回 `null`。
    */
   refreshOnlineStates?(requestId: string): Promise<OnlineStateRefresh | null>;
+  /**
+   * GY-R59（P2-b）· **本次实际装配**的第三方读侧端口（未接线时是 `createUnwiredThirdPartyDeletionPort()`）。
+   *
+   * 供装配层取证（`app.thirdPartyDeletion`）与测试判定"到底是哪一臂"：
+   * 真库端口的 `persistent === true`；显式不可用端口的 `listThirdPartyDeletions()` 会抛
+   * `PROVIDER_UNAVAILABLE`；未接线端口回 `null`。⛔ 它不写入任何行。
+   */
+  readonly thirdParty: ThirdPartyDeletionReadPort;
+  /** 第三方**写侧**适配器（本期只由注入给出；`null` ⇒ 未装配）。⛔ 本片不 dispatch。 */
+  readonly thirdPartyAdapter: ThirdPartyDeletionAdapter | null;
   /** 请求 → 各模块证据串（诊断；契约回执不含证据，这里给出与协调器行同源的完整证据）。 */
   evidenceOf(requestId: string): Record<string, string>;
   /** 诊断审计（内部；只含模块名/行数/状态，不含任何私有正文或凭据）。 */
@@ -547,6 +647,9 @@ export interface UserDataDeletionRegistry {
 export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDeletionRegistry {
   const now = input.now ?? (() => new Date());
   const backupPurge = input.backupPurge ?? createUnwiredBackupPurgePort();
+  // GY-R59（P2-b）：第三方完成态的读侧端口（缺省＝未接线 ⇒ 读进程内协议行，行为与追加前逐字一致）。
+  const thirdParty = input.thirdParty ?? createUnwiredThirdPartyDeletionPort();
+  const thirdPartyAdapter = input.thirdPartyAdapter ?? null;
   const requests = input.requests ?? null;
   const receiptTtlMs = input.receiptTtlMs ?? null;
   // 接线持久化受理 ⇒ 必须与受理服务的回执期限同源；缺参数就**拒绝装配**（fail closed），
@@ -881,7 +984,26 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     );
   }
 
-  function thirdPartyRowsOf(requestId: string): Array<Record<string, unknown>> {
+  /**
+   * 第三方接收方行（读侧）。
+   *
+   * GY-R59（P2-b）· **优先问端口**（设计 §1.2 #6）：真库接线的行才是持久事实。
+   * 三态逐条写清，避免"读不到"被当成"没有接收方"：
+   *   - 端口给行（真库 / 显式注入）⇒ 用端口的行（归一到协议口径）；
+   *   - 端口回 `null`（未接线）⇒ 回退进程内协议账本（追加前行为逐字不变）；
+   *   - 端口**抛**（显式不可用）⇒ 让异常冒泡：调用方（`refresh*States()` 的路由）据实 503，
+   *     ⛔ 不把"读不到"折叠成"没有接收方"（那会把 blocked 静默复位成 processing）。
+   */
+  async function thirdPartyRowsOf(requestId: string): Promise<Array<Record<string, unknown>>> {
+    const portRows = await thirdParty.listThirdPartyDeletions(requestId);
+    if (portRows !== null) {
+      return portRows
+        .filter(
+          (row): row is Record<string, unknown> =>
+            typeof row === 'object' && row !== null && !Array.isArray(row),
+        )
+        .map(protocolThirdPartyRow);
+    }
     const rows = (registry as unknown as { _thirdPartyRows?: unknown })._thirdPartyRows;
     if (!Array.isArray(rows)) return [];
     return rows.filter(
@@ -1052,7 +1174,9 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const handlerBlocked = handlerRowsOf(requestId).some(
         (row) => row['onlineState'] === 'blocked' || row['backupState'] === 'blocked',
       );
-      const thirdPartyBlocked = thirdPartyRowsOf(requestId).some(
+      // GY-R59（P2-b）：读侧优先问端口（真库行才是持久事实）⇒ 这里是异步的；
+      // 显式不可用端口在此抛出，由调用方据实 503（⛔ 不当成"没有接收方"）。
+      const thirdPartyBlocked = (await thirdPartyRowsOf(requestId)).some(
         (row) =>
           row['onlineStatus'] === 'failed' ||
           row['backupStatus'] === 'failed' ||
@@ -1174,7 +1298,9 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const handlerBlocked = handlerRowsOf(requestId).some(
         (row) => row['onlineState'] === 'blocked' || row['backupState'] === 'blocked',
       );
-      const thirdPartyBlocked = thirdPartyRowsOf(requestId).some(
+      // GY-R59（P2-b）：读侧优先问端口（真库行才是持久事实）⇒ 这里是异步的；
+      // 显式不可用端口在此抛出，由调用方据实 503（⛔ 不当成"没有接收方"）。
+      const thirdPartyBlocked = (await thirdPartyRowsOf(requestId)).some(
         (row) =>
           row['onlineStatus'] === 'failed' ||
           row['backupStatus'] === 'failed' ||
@@ -1195,6 +1321,10 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
 
   return {
     coordinator,
+    // GY-R59（P2-b）：把**实际装配**的读侧端口与写侧适配器透出给装配层取证
+    // （`app.thirdPartyDeletion`；⛔ 本片不调用适配器 dispatch）。
+    thirdParty,
+    thirdPartyAdapter,
     requiredModules: () => coordinator.requiredModules(),
     requestDeletionFor(userId, options = {}) {
       if (typeof userId !== 'string' || userId.length === 0) {

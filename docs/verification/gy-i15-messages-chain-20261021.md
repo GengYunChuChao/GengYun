@@ -77,7 +77,7 @@
 | --- | --- | --- |
 | 契约 operation | `packages/contracts/openapi.json:7188`（`GET /messages`）、`:7276`（`GET /messages/unread-count`）、`:7357`（`PUT /messages/{id}/read`） | messages 只有**这 3 条**；全文件**没有任何** `DELETE` 路径或 `deleteMessages` 类 operationId ⇒ **面向用户的删除仍「契约未通」** |
 | HTTP 面 | `services/api/src/routes/messages.ts`（全文 71 行） | 只有 `app.get`×2 + `app.put`×1；无 `app.delete` |
-| store 原语（**合流后状态**） | `services/api/src/messages/store.ts:103-105`（`PurgeableMessagesStore`：`deleteAllByOwner`/`purgeOwnerData`）、`:290-297`（内存实现）、`store-pg.ts:414-421`（PG 真删） | **已有注销清理原语**（C1 片随 main 合入，**不是本片**）；但**未注册进注销闭集**：`services/api/src/privacy/user-data-deletion.ts:67` 的 `USER_DATA_DELETION_MODULES` 仍只有 `favorites`/`history` ⇒ B4 页的 **G1 已补、G2 仍在** |
+| store 原语（**合流后状态**） | `services/api/src/messages/store.ts:103-105`（`PurgeableMessagesStore`：`deleteAllByOwner`/`purgeOwnerData`）、`:290-297`（内存实现）、`store-pg.ts:414-421`（PG 真删） | **已有注销清理原语**（C1 片随 main 合入，**不是本片**）；但**未注册进注销闭集**：`services/api/src/privacy/user-data-deletion.ts:68` 的 `USER_DATA_DELETION_MODULES` 仍只有 `favorites`/`history` ⇒ B4 页的 **G1 已补、G2 仍在** |
 | 客户端 | `messages.wxml`（151 行）、`messages-api.js`（导出 12 项） | 无删除入口、无 delete 方法 —— 与契约一致，**不是漏做 UI** |
 | 与 #17 的关系 | `docs/verification/gy-i16-i17-deletion-cascade-20261021.md` §3/§5 的 G1/G2/G3 | 注销时点的消息清理属**另一片（C1）**；本片按派单**不碰** `PurgeableMessagesStore`/`purgeOwnerData`/`withTransaction`（合流保留 main 版，未改一行） |
 
@@ -212,7 +212,7 @@ PASS docs/research 结构校验：命名＋记录级四项＋按项来源＋技�
 | 编号 | 事项 | 为什么本片不做 | 建议归属 |
 | --- | --- | --- | --- |
 | D1 | ~~`community-api.js:163-167` 同族 403 折叠~~ **已由 #396（D1 统一层）解决**：main 的 community-api 已改 `auth.failureFor`，本片合流后消息与社区两域都走同一归因 | 无需本片再做；本片只保证消息那条既有期望被加强（见 §4）并新增 `ACCOUNT_INACTIVE` 例外断言 | 已关闭（#396） |
-| D2 | 消息域注销清理：**合流后 G1 已落地**（`messages/store.ts:103-105`、`store-pg.ts:414-421` 的真删原语，C1 片）；**G2/G3 仍在**——未注册进 `USER_DATA_DELETION_MODULES`（`privacy/user-data-deletion.ts:67` 只有 favorites/history）、幂等台账按主体清理未接 | 派单明令：本片不动 C1 的 `PurgeableMessagesStore`/`purgeOwnerData`/`withTransaction`；注册属注销闭集那一侧 | C1 |
+| D2 | 消息域注销清理：**合流后 G1 已落地**（`messages/store.ts:103-105`、`store-pg.ts:414-421` 的真删原语，C1 片）；**G2/G3 仍在**——未注册进 `USER_DATA_DELETION_MODULES`（`privacy/user-data-deletion.ts:68` 只有 favorites/history）、幂等台账按主体清理未接 | 派单明令：本片不动 C1 的 `PurgeableMessagesStore`/`purgeOwnerData`/`withTransaction`；注册属注销闭集那一侧 | C1 |
 | D3 | `0019_messages_persistence.sql:24-25` 头注释宣称的「注销时消息随 `ON DELETE CASCADE` 级联」永不触发（B4 页 G4） | 迁移文件属禁改面 | 迁移/文档订正片 |
 | D4 | 契约是否新增「单条删除 / 会话删除」operation（含软删/硬删、`revision` 推进、删除行在分页水位中的表现） | `openapi.json`/`contracts/**` 只读；契约先行是硬前提 | 契约片 |
 | D5 | 服务端游标**不绑定 `limit`**（`service.ts:125-139` 的 `filter`/`sort` 都进了签名，`limit` 没进） | 契约未要求；客户端目前固定 20，换 `limit` 的调用方会得到页大小不同的同一条链。**判定：非缺口**，但若要"页大小可复现"则需服务端扩展 | 契约/服务端（低优先） |
@@ -227,7 +227,7 @@ PASS docs/research 结构校验：命名＋记录级四项＋按项来源＋技�
 | 位置 | 现措辞/旧读数 | 与本页读数的关系 |
 | --- | --- | --- |
 | 派单指定的体例页 `docs/verification/gy-r28-c5-favorites-history-20261021.md` | 派单称其为同族体例；本片开工时**在基点 7d1a429 上不存在**（零命中），合流 `167fd45` 后该文件已随 main 出现 | 本页仍是按 `gy-r28-*-20261021` 体例写的；**不重写**（重写只增加 diff，不增加证据）。此处如实记：早前「不存在」的读数是**基点事实**，不是笔误 |
-| `docs/verification/gy-i16-i17-deletion-cascade-20261021.md` §3 矩阵（消息行）/ G1 | 「`messages` 一行不删、无原语」 | **合流后部分漂移**：`messages/store.ts:103-105` + `store-pg.ts:414-421` 已有 `purgeOwnerData`/`deleteAllByOwner`（C1 落地）⇒ G1 已补；**G2（未注册进闭集）仍准确**（`user-data-deletion.ts:67`） |
+| `docs/verification/gy-i16-i17-deletion-cascade-20261021.md` §3 矩阵（消息行）/ G1 | 「`messages` 一行不删、无原语」 | **合流后部分漂移**：`messages/store.ts:103-105` + `store-pg.ts:414-421` 已有 `purgeOwnerData`/`deleteAllByOwner`（C1 落地）⇒ G1 已补；**G2（未注册进闭集）仍准确**（`user-data-deletion.ts:68`） |
 | 同上 §3 矩阵「HTTP 面无任何 `DELETE` 方法（`routes/messages.ts:43,53,59`）」 | 仍准确 | 该文件接口 71 行，三条路由正在 43/53/59；`app.delete` 仍 0 命中 |
 | 同上 G10 与 §1 第 6 条 | 「`real` 模式注销 HTTP 面整域 503」＋「消息域 real 全文 503」的口径 | **口径已漂移**：`app.ts:752-769` 现在是 `real` 且 `pool !== null` ⇒ `createPostgresMessagesStore`（真库）；只有 `pool === null` 才 503。注销面（G10）不在本片范围，未复核 |
 | `miniprogram/utils/messages-api.js` 旧行号 `:123`（403 折叠，本片第一版曾改成自建分支） | 两代旧读数 | 合流后该处**只剩一行委托**：`:131-136` 调 `auth.failureFor`；原「401 分支 / 两处 403 兜底」全部删除。引用请用 `:131-136` |

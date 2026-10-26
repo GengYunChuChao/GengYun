@@ -473,7 +473,7 @@
         {
           "path": "services/api/src/routes/account-deletion.ts",
           "symbol": "`${API_PREFIX}/me/account/deletion`",
-          "lines": "128-181"
+          "lines": "218-282"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
@@ -512,7 +512,7 @@
         {
           "path": "services/api/src/routes/account-deletion.ts",
           "symbol": "`${API_PREFIX}/account/deletions/:id`",
-          "lines": "183-205"
+          "lines": "284-322"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
@@ -560,12 +560,12 @@
         {
           "path": "services/api/src/routes/account-deletion.ts",
           "symbol": "`${API_PREFIX}/me/account/deletion`",
-          "lines": "221-245"
+          "lines": "324-361"
         },
         {
           "path": "services/api/src/privacy/user-data-deletion.ts",
           "symbol": "cancelDeletion",
-          "lines": "1220-1232"
+          "lines": "1350-1364"
         },
         {
           "test": "tests/unit/account-deletion-receipts.test.mjs",
@@ -3971,7 +3971,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));",
-          "lines": "912-912"
+          "lines": "936-936"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
