@@ -244,10 +244,10 @@ if (!answerProvider.available) {
 | --- | --- | --- | --- |
 | `APP_EXECUTION_MODE` | 已存在，**必填**（`config.ts:158-168`，取值 `real`/`stub`/`preset_demo`） | 决定是否走真实提供者 | 缺省报配置错误，不静默取 `stub` |
 | `DATABASE_URL` | 已存在（`config.ts:70`、`:220-228`，带 `isPostgresUrl` 校验） | real 下 PG store + 知识读面；缺则整域 `null` | 问答域要「真链路可用」**必须**有它 |
-| `ANSWER_PROVIDER_URL` | **不存在**（新） | 真实回答提供者 endpoint | 命名照 `RECOGNITION_PROVIDER_URL`（`app.ts:969`）；**是否允许任意 URL 需 §6 R-1 裁决** |
-| `ANSWER_PROVIDER_KEY` | **不存在**（新） | 真实回答提供者凭据 | 照 `app.ts:952`；凭据只在内存、不落日志 |
+| `ANSWER_PROVIDER_URL` | **不存在**（新） | 真实回答提供者 endpoint | 命名照 `RECOGNITION_PROVIDER_URL`（`app.ts:1074`）；**是否允许任意 URL 需 §6 R-1 裁决** |
+| `ANSWER_PROVIDER_KEY` | **不存在**（新） | 真实回答提供者凭据 | 照 `app.ts:1075`；凭据只在内存、不落日志 |
 | `DEEPSEEK_API_KEY` | 存在于 `tools/ai-config.mjs` 的 `ENV_FIELDS`，**应用侧不读** | 若允许复用 allowlist 端点，则用它 | 关键裁决点：应用消费者能否读它（§6 R-1） |
-| `APP_KNOWLEDGE_UNVERIFIED_SEED` | 已存在（`app.ts:1672`，real 下**强制关闭**） | 浙江首批未核验投影开关 | 与本片无关但会被检索集合影响：real 下它恒关 ⇒ 集合只含 `review_status=verified` 条目 |
+| `APP_KNOWLEDGE_UNVERIFIED_SEED` | 已存在（`app.ts:1788`，real 下**强制关闭**） | 浙江首批未核验投影开关 | 与本片无关但会被检索集合影响：real 下它恒关 ⇒ 集合只含 `review_status=verified` 条目 |
 
 ### 5.8 需要的测试改造
 

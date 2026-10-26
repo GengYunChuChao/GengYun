@@ -95,9 +95,9 @@ test('本片字段镜像表与契约逐字相等（含 AdminJob.result 的 type:
       compared += 1;
     }
   }
-  // 本片**新增**的镜像 schema：入参 2 + 出参 7 + 分页 4 + 信封 9 = 22。
+  // 本片**新增**的镜像 schema：入参 3 + 出参 8 + 分页 4 + 信封 9 = 24（S3 增 PostRejectionInput / PostReviewOutcome）。
   // 其余 4 个（ReasonInput / Meta / ExecutionMode / TargetRef）直接复用阶段 1 的全表，不重复定义。
-  assert.equal(compared, 22, '本片新增镜像的 schema 数量应恰好 22');
+  assert.equal(compared, 24, '本片新增镜像的 schema 数量应恰好 24');
 
   // 反向确认归一化没把关键约束吃掉。
   const job = normalizeContractSchema(openapi.components.schemas.AdminJob);
@@ -125,7 +125,7 @@ test('setFlag 的 key 是契约闭集枚举（依据取自契约原文，不是�
   }
 });
 
-test('恰好实现 12 个 operationId；显式不做的操作未被实现', async () => {
+test('恰好实现 14 个 operationId；显式不做的操作未被实现', async () => {
   const byId = new Map();
   for (const [path, item] of Object.entries(openapi.paths)) {
     for (const method of ['get', 'post', 'patch', 'put', 'delete']) {
@@ -134,17 +134,17 @@ test('恰好实现 12 个 operationId；显式不做的操作未被实现', asyn
     }
   }
   for (const id of OPS_IDS) assert.ok(byId.has(id), `契约里没有 ${id}`);
-  assert.equal(new Set(OPS_IDS).size, 12);
+  assert.equal(new Set(OPS_IDS).size, 14);
   const overlap = OPS_IDS.filter((id) => OPS_OUT_OF_SCOPE_IDS.includes(id));
   assert.deepEqual(overlap, [], '本片范围内外不得重叠');
 
   const { service } = createOpsHarness();
-  assert.equal(service.operationIds.length, 12);
+  assert.equal(service.operationIds.length, 14);
   assert.deepStrictEqual([...service.operationIds].sort(), [...OPS_IDS].sort());
   for (const id of OPS_IDS) assert.equal(typeof service[id], 'function', `${id} 未实现`);
   for (const id of OPS_OUT_OF_SCOPE_IDS) assert.equal(service[id], undefined, `本片不得实现 ${id}`);
 
-  // 契约里这 12 个的路径/方法与派单一致。
+  // 契约里这 14 个的路径/方法与派单一致。
   assert.equal(byId.get('listAdminCategories').path, '/admin/categories');
   assert.equal(byId.get('editCategory').method, 'PATCH');
   assert.equal(byId.get('listAdminUsers').path, '/admin/accounts');
@@ -160,6 +160,10 @@ test('恰好实现 12 个 operationId；显式不做的操作未被实现', asyn
   assert.equal(byId.get('listAdministrators').method, 'GET');
   assert.equal(byId.get('listAdministratorScopes').path, '/admin/administrators/{id}/scopes');
   assert.equal(byId.get('listAdministratorScopes').method, 'GET');
+  assert.equal(byId.get('approvePost').path, '/admin/posts/{id}/approve');
+  assert.equal(byId.get('approvePost').method, 'POST');
+  assert.equal(byId.get('rejectPost').path, '/admin/posts/{id}/reject');
+  assert.equal(byId.get('rejectPost').method, 'POST');
 });
 
 test('读写 scope 与 operations.json 一致', () => {

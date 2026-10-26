@@ -63,7 +63,7 @@ test('钉子 1：两层分工 —— 非法 uuid ⇒ 400 INVALID_REQUEST，合�
         `${API}/admin/jobs/${bad}/cancel`,
         `${API}/admin/posts/${bad}/hide`,
       ]) {
-        const isWrite = /(publish|withdraw|suspend|cancel|hide)$/.test(url);
+        const isWrite = /(publish|withdraw|suspend|cancel|hide|approve|reject)$/.test(url);
         const res = isWrite
           ? await app.inject({ method: 'POST', url, headers: { authorization: `Bearer ${token}`, 'idempotency-key': 'nail-key-0001', 'if-match': '"1"', 'content-type': 'application/json' }, payload: { reason: 'r' } })
           : await get(app, token, url);
@@ -104,10 +104,11 @@ test('钉子 1：两层分工 —— 非法 uuid ⇒ 400 INVALID_REQUEST，合�
 test('钉子 2：40 个 operationId 的方法与路径与契约逐条一致（读 openapi.json 原文核对）', async () => {
   const { app, token } = await makeApp();
   try {
-    // R59 起 40 条：34 + listFlagAuditEvents + listAuditLogs + R37 读面 2 个 + **R59 帖子读面 2 个
-    // （`listAdminPosts` / `getAdminPost`）**。这条钉子钉的是「本文件暴露的路由条数 = 清单条数」，
+    // 现 42 条：34 + listFlagAuditEvents + listAuditLogs + R37 读面 2 个 + **R59 帖子读面 2 个
+    // （`listAdminPosts` / `getAdminPost`）** + **S3 人工通过/驳回 2 个（`approvePost` / `rejectPost`）**。
+    // 这条钉子钉的是「本文件暴露的路由条数 = 清单条数」，
     // 不是权限面：每个 id 仍必须能在契约里找到对应 operation、并在 app 上注册成同方法同路径。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 40, '本片应恰好暴露 40 个 operationId（34 + listFlagAuditEvents + listAuditLogs + R37 读面 2 个 + R59 帖子读面 2 个）');
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 42, '本片应恰好暴露 42 个 operationId（40 + S3 人工通过/驳回 2 个）');
 
     // 从契约取出每个 operationId 的 method + path。
     const fromContract = new Map();

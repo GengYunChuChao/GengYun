@@ -138,17 +138,19 @@ async function main() {
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
-    const migrations = all.filter((m) => ['0001', '0019', '0022', '0028', '0030', '0032'].includes(m.version));
+    const migrations = all.filter((m) => ['0001', '0019', '0022', '0028', '0030', '0032', '0045'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0019', '0022', '0028', '0030', '0032'],
+      ['0001', '0019', '0022', '0028', '0030', '0032', '0045'],
       '0001（users/枚举底座）+ 0019（messages：GY-I18 admin 臂要证明"下架后消息跳转目标由 available 变 unavailable"，'
         + '该判据经消息域读取时重查，因此需要真消息表）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）'
         + ' + 0030（F13 行级作者注销引用：author_id 可空 + anonymized_author_ref）'
-        + ' + 0032（#15 去身份残留：举报者 reporter_id 可空 + 同一形态的匿名引用）',
+        + ' + 0032（#15 去身份残留：举报者 reporter_id 可空 + 同一形态的匿名引用）'
+        + ' + 0045（community_moderation_decisions.decided_by：人工 approve/reject 的运营者快照列，'
+        + '审核判定台账的 INSERT/SELECT 都会写读该列，故真实库臂必须把它 apply 进来）',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0019 + 0022 + 0028 + 0030 + 0032`);
+    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0019 + 0022 + 0028 + 0030 + 0032 + 0045`);
 
     const tables = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
@@ -849,6 +851,10 @@ async function main() {
     // 0032 同理：举报表的 `anonymized_author_ref` 也挂在 0022 的表上，缺了它读举报（`REPORT_COLUMNS`）
     // 就会 42703 —— 与 0030 是同一条"运行时依赖"，不是可选项。
     await owner.query(sqlFile('migrations/0032_community_report_reporter_ref.sql'));
+    // 0045 同理：`community_moderation_decisions.decided_by`（人工 approve/reject 的运营者快照列）是审核判定
+    // 台账 INSERT/SELECT 的列，而 0022 的 down 把整张表一起撤了 ⇒ 再 apply 若不补 0045，第 12 节的发布路径
+    // 会因该列不存在而 42703（脚本把它归成 PROVIDER_UNAVAILABLE 503）。
+    await owner.query(sqlFile('migrations/0045_community_post_review_actor.sql'));
     const afterReapply = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
     )).rows.map((row) => row.tablename);
@@ -857,7 +863,7 @@ async function main() {
       6,
       'rollback 之后必须能原地再 apply',
     );
-    say('apply → rollback → 再 apply 三步在同一个库上收敛（六表 + 0030 的两列/两条 CHECK 全部恢复）');
+    say('apply → rollback → 再 apply 三步在同一个库上收敛（六表 + 0030 的两列/两条 CHECK + 0032/0045 的列全部恢复）');
 
     // ---- 12. HTTP 面：路由 → 服务 → Postgres 真落库 ----------------------
     const auth = createMemoryAuthStore();

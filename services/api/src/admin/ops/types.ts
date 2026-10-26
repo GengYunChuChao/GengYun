@@ -225,3 +225,137 @@ export type CommunityPostPort = Pick<CommunityStore, 'persistent' | 'getPost' | 
  * （空列表会被误读成"库里没有帖子"）。
  */
 export type CommunityPostReadPort = Pick<CommunityStore, 'listPosts' | 'getPost'>;
+
+// ---------------------------------------------------------------------------
+// 社区帖子**人工审核**端口（S3：`approvePost` / `rejectPost`）
+// ---------------------------------------------------------------------------
+
+/**
+ * 驳回理由码闭集（**小写 snake_case**，10 值）。
+ *
+ * 为什么另立一套而不复用审核域的全大写码（`DECISION_INCONSISTENT` / `RULE_VERSION_CHANGED`…）：
+ * 同一个 `reason_codes` 数组里同时装"机器判定的失效原因"与"运营给出的处置理由"，
+ * 用大小写分治就能在日志与 SQL 里**一眼看出这条结论里有没有人的判断**，
+ * 不需要新字段、也不把两套语义焊死。
+ *
+ * **单一来源**：契约 `PostRejectionInput.properties.reason_code.enum` 必须与本数组
+ * **逐值相等（含顺序）**，由 `tests/unit/admin-post-review-contract.test.mjs` 钉死。
+ * 加值 = 改契约 + 改这里 + 改该用例，三件套，缺一即红。
+ *
+ * 与既有码的关系（避免被问"为什么又一套码"）：
+ * - `community_reports.reason_code`（举报理由）是**自由文本**，不合并：举报是用户主张，
+ *   处置是平台结论，合并会让举报侧被迫接受处置码表；
+ * - `admin_audit_events.reason_code` 是**每个 action 一个值**的闭集（例：迁移 0043 只允许
+ *   `job_cancelled`）；本片不写该表，故不冲突；
+ * - `moderation_decisions.reason_codes`（机器审核台账）不动。
+ */
+export const POST_REVIEW_REASON_CODES: readonly string[] = Object.freeze([
+  // —— 违法/不良信息类（生态治理口径）——
+  'spam',
+  'harassment',
+  'adult_or_violent',
+  'illegal_or_political',
+  'privacy',
+  // —— 本域特有（农事/农资）——
+  'misleading_agronomy',
+  'banned_agrochemical',
+  // —— 社区秩序类 ——
+  'off_topic',
+  'duplicate',
+  // —— 兜底（长期高频 ⇒ 说明闭集漏项，须在周报里审视）——
+  'other',
+]);
+
+/** 驳回理由码。类型层面即闭集：写错值 tsc 直接红。 */
+export type PostRejectionReasonCode = (typeof POST_REVIEW_REASON_CODES)[number];
+
+/** 人工审核的两个结论。与契约 `PostReviewOutcome.decision.enum` 逐值一致。 */
+export type PostReviewDecision = 'approved' | 'rejected';
+
+/**
+ * 一次人工审核请求（服务层 → 端口的完整入参）。
+ *
+ * `expectedRevision` 是 `If-Match`（契约 `ETag`）解析出来的**必填**版本：审核动作必须打在
+ * 运营读到的那个版本上，**不提供"不给 If-Match 也能过"的兼容**。
+ */
+export interface PostReviewRequest {
+  readonly postId: string;
+  readonly expectedRevision: number;
+  readonly decision: PostReviewDecision;
+  /** `decision === 'rejected'` 时必填且在闭集内；`approved` 时恒 `null`。 */
+  readonly reasonCode: PostRejectionReasonCode | null;
+  /** 做出结论的运营者 `admin_accounts.id`（= 会话身份）；落 `decided_by` 供溯源。 */
+  readonly actorId: string;
+}
+
+/**
+ * 审核结果。
+ *
+ * 失败面刻意复用 `hidePost` 已经映射好的那几个（`NOT_FOUND`/`DELETED`/
+ * `REVISION_CONFLICT`/`STORE_UNAVAILABLE`），只多两个**审核域特有**的：
+ * - `RULE_VETOED`：硬规则层明确否决（`hard_rule_passed === false`）⇒ 人工不能放行；
+ * - `RULE_VERSION_UNKNOWN`：当前规则集版本取不到（`null`）⇒ 写进去的结论会被读面判
+ *   `RULE_VERSION_UNKNOWN` 而落 `quarantined`，等于伪造"已通过/已驳回"，宁可拒绝。
+ *
+ * ⛔ 刻意**没有** `NOT_PUBLIC`：待审队列本身就是 `private`+`pending`
+ * （`community/service.ts:1066-1067` 的"联动发布未成"），若把 `private` 当"无审核可言"
+ * 就会把唯一需要人工审的那批行判成不可审——契约里也没有别的发布出口。
+ */
+export type PostReviewFailureReason =
+  | 'NOT_FOUND'
+  | 'DELETED'
+  | 'REVISION_CONFLICT'
+  | 'RULE_VETOED'
+  | 'RULE_VERSION_UNKNOWN'
+  | 'STORE_UNAVAILABLE';
+
+export type PostReviewResult =
+  | {
+      ok: true;
+      /** `false` = 幂等命中（状态本来就如此），不产生第二次写入与第二条通知。 */
+      changed: boolean;
+      previousRevision: number;
+      revision: number;
+      auditState: 'approved' | 'rejected';
+      /** v1 通过即发布：`approve` 可能把 `private` 推成 `published`；`reject` 置 `hidden`（见口径页 §1/§2）。 */
+      visibility: 'private' | 'published' | 'hidden' | 'deleted';
+      /** 作者通知是否送出。`false` 不回滚已提交的结论（见 `community/takedown.ts` 的既有纪律）。 */
+      notified: boolean;
+      /** 门禁给出的原因码（`approved` 且全清时为空数组）。 */
+      reasonCodes: readonly string[];
+    }
+  | { ok: false; reason: PostReviewFailureReason; reasonCodes?: readonly string[] };
+
+/**
+ * 帖子人工审核端口。
+ *
+ * 与 `HidePostAdapter` 同形：`wired === false` ⇒ 服务层 503（fail-closed），
+ * 而不是"悄悄成功"。真实实现见 `community-posts.ts` 的 `createPostReviewAdapter`。
+ *
+ * 溯源取舍：审核人只写 `community_moderation_decisions.decided_by`（迁移 0045），
+ * **故意不建外键**——账号注销后仍要能答"谁批过它"，强引用会让注销链卡死或把证据置空；
+ * 账号是否存在由应用层解释（写入来源是已认证的 `AdminCallContext.identity`）。
+ */
+export interface PostReviewPort {
+  readonly wired: boolean;
+  review(request: PostReviewRequest): Promise<PostReviewResult>;
+}
+
+/**
+ * 对外的审核结论视图（= 契约 `PostReviewOutcome`，逐字段一致）。
+ *
+ * 刻意**不**回帖子正文/标题：审核响应是"处置回执"，不是内容读面；
+ * 也不回 `target_ref` / `text_digest` / `hard_rule_passed` 这些内部判定料
+ * （运营不需要，且把内部判定暴露到 HTTP 面会让"人工结论"看起来像"机器结论"）。
+ */
+export interface PostReviewOutcome {
+  id: string;
+  revision: number;
+  audit_state: 'approved' | 'rejected';
+  visibility: 'private' | 'published' | 'hidden' | 'deleted';
+  decision: PostReviewDecision;
+  /** `false` = 幂等命中：本次没有产生新版本，也没有再发通知。 */
+  changed: boolean;
+  notified: boolean;
+  reason_codes: string[];
+}

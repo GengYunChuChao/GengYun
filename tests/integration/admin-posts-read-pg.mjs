@@ -21,7 +21,7 @@
  * - 对照臂：脚本自己写 `SELECT`（`ORDER BY created_at DESC, id DESC`）与读面逐位比对。
  *
  * ## 覆盖的读数
- *   [M] PG 主版本 17 / 空库前提 / 迁移子集 0001+0022+0030+0032 逐条 apply 且二连跑 0 条 /
+ *   [M] PG 主版本 17 / 空库前提 / 迁移子集 0001+0022+0030+0032+0045 逐条 apply 且二连跑 0 条 /
  *       `community_posts.{visibility,audit_state,anonymized_author_ref}` 与
  *       `community_moderation_decisions.text_digest` 在位 / real+真 pool ⇒ `adminPostReadService` 与
  *       `communityService` 都在；
@@ -70,9 +70,9 @@ const READ_SCOPE = 'sources:read';
  * 0001 身份底座（`users`、`visibility` / `audit_state` 枚举）；0022 社区六表
  * （`community_moderation_decisions` 是用户读面 `effectiveState()` 的必需依赖）；
  * 0030 帖/评行级作者注销引用（`POST_COLUMNS` 含 `anonymized_author_ref`，缺它 ⇒ 42703 ⇒ 503）；
- * 0032 举报者行内注销引用（与社区域同形，保持列口径一致）。
+ * 0032 举报者行内注销引用（与社区域同形，保持列口径一致）；0045 审核台账 `community_moderation_decisions.decided_by`（人工 approve/reject 的运营者快照列，审核台账 INSERT/SELECT 都写读它，缺它 ⇒ 42703 ⇒ 读面 503）。
  */
-const MIGRATIONS = ['0001', '0022', '0030', '0032'];
+const MIGRATIONS = ['0001', '0022', '0030', '0032', '0045'];
 
 const argvUrl = process.argv.slice(2).find((value) => /^postgres(ql)?:\/\//.test(value));
 const rawUrl = argvUrl ?? process.env[ENV];
@@ -161,8 +161,8 @@ async function main() {
     const versions = discovered.map((migration) => migration.version);
     assert.equal(new Set(versions).size, versions.length, `迁移版本号重复：${versions.join(',')}`);
     const picked = discovered.filter((migration) => MIGRATIONS.includes(migration.version));
-    assert.deepEqual(picked.map((migration) => migration.version), MIGRATIONS, '四段迁移必须按目录序取到');
-    assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '四段迁移必须逐条真正应用');
+    assert.deepEqual(picked.map((migration) => migration.version), MIGRATIONS, '五段迁移必须按目录序取到');
+    assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '五段迁移必须逐条真正应用');
     assert.equal((await applyMigrations(owner, picked)).applied.length, 0, '重跑迁移必须是 no-op');
     note(`[M] 迁移子集 ${MIGRATIONS.join('+')} 逐条 apply 成功、二连跑 0 条（目录共 ${versions.length} 个迁移）`);
 

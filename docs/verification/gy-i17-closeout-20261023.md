@@ -170,7 +170,7 @@
 | 账号事件投递 | `services/api/src/admin/ops/account-events.ts:144` | `const result = await options.messages.appendMessage({` |
 | 装配：社区事件端口 | `services/api/src/app.ts:1128` | `(messagesService === null`（`:1130` `createMessagesCommunityEventsPort({ messages: messagesService })`） |
 | 装配：账号事件装饰器 | `services/api/src/app.ts:1388` | `const accountEvents: AccountEventsPort =`（`:1398` `withAccountSystemEvents(accountAuthorityBase, { events: accountEvents, log: app.log })`） |
-| 路由注册（唯一处） | `services/api/src/app.ts:2236` | `registerMessageRoutes(app, config, guards, messagesService);` |
+| 路由注册（唯一处） | `services/api/src/app.ts:2254` | `registerMessageRoutes(app, config, guards, messagesService);` |
 | 创建口入参闭集 | `services/api/src/messages/validate.ts:43` | `export const EVENT_KEY_MAX = 200;` |
 
 ---

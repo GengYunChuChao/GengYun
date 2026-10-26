@@ -4,10 +4,12 @@
  * ## 这个文件是什么
  *
  * 它不验证「社区能不能用」（那要真库、真审核域、真小程序），它验证**登记过的现状没有悄悄变**：
- * 把「先审后发现在是两步、人审通过/驳回根本不存在、后台是结构性零、收藏不覆盖社区」写成
+ * 把「先审后发现在是两步、人审通过/驳回的契约形状、后台是结构性零、收藏不覆盖社区」写成
  * **可机读的结构事实**。于是
- *   · 谁**悄悄补上**人审动作（新增 `/admin/posts/{id}/approve`、让占位页开始发请求）⇒ 本文件红
- *     （只读读面已随 #621 落地，本条仍只管**审核动作**；见钉 1）；
+ *   · 谁**改了**人审动作的契约形状（`/admin/posts/{id}/approve` 换 method/改名/换 scope，
+ *     或再冒出第三条审核动作）⇒ 本文件红（S3-a 已把这两条**落地并逐条钉住**：只允许
+ *     `POST` + `sources:write` + operationId 恰为 `approvePost`/`rejectPost`，多一条也不行；
+ *     见钉 1 的 ①/①b/①c/①d）；
  *   · 谁**悄悄回退**先审后发（把 `private/pending` 改成 `published/approved`、绕过 `awaitingPublish`）⇒ 本文件红；
  *   · 谁**只搬运**代码（行号漂移）⇒ 本文件红，但失败提示会明说「只是漂移，改常数即可」。
  *
@@ -26,7 +28,7 @@
  *
  * | # | 判据位置 | 断言什么 | 什么改动会让它红 |
  * | - | --- | --- | --- |
- * | 1 | `packages/contracts/openapi.json`：数 `paths` 键（不是 grep 关键词） | 含 `/admin/posts` 的 path **恰好三条**：两条**只读读面** `GET /admin/posts`（`listAdminPosts`）+ `GET /admin/posts/{id}`（`getAdminPost`，各自只允许 `get`、`x-scope` 恰为 `sources:read`）+ 下架 `POST /admin/posts/{id}/hide`（`hidePost`，仍只允许 `post`）；全家方法全集恰为 `get`×2 + `post`×1 | 契约新增任何 `/admin/posts/...` 的**审核动作** path（approve/reject/…）、给这三条换 method/改名、或让读面带写 scope。③/③b 的 operationId 命名式负向扫描还能抓到「审核动作挂到别的 path 下」 |
+ * | 1 | `packages/contracts/openapi.json`：数 `paths` 键（不是 grep 关键词） | 含 `/admin/posts` 的 path **恰好五条**：两条**只读读面** `GET /admin/posts`（`listAdminPosts`）+ `GET /admin/posts/{id}`（`getAdminPost`，各自只允许 `get`、`x-scope` 恰为 `sources:read`）+ 下架 `POST /admin/posts/{id}/hide`（`hidePost`）+ 人审 `POST /admin/posts/{id}/approve`（`approvePost`）/ `POST /admin/posts/{id}/reject`（`rejectPost`）（三条写面都只允许 `post`、`x-scope` 恰为 `sources:write`）；全家方法全集恰为 `get`×2 + `post`×3；③/③b 的命名式扫描要求全 spec 审核类 operation **恰为那两条** | 契约新增任何**第三类** `/admin/posts/...` 审核动作 path（review/publish/moderate/…）、给这五条换 method/改名、或让读面带写 scope / 写面带读 scope |
  * | 2 | `services/api/src/community/service.ts`：`createPost`（:1052/:1066-1067）**与** `editPost`（:1188/:1197-1198）两处 | 每处三行都**逐字**钉住：`visibility` 三元组落 `'private' : 'published'`、`audit_state` 落 `'pending' : 'approved'`，`awaitingPublish` 定义为 `!mediaReview && screen !== null && link !== null`；且两处都是「先落库（`insertPost` / `commitPostIfCurrent`）→ 再 `link.publish` → 再回读」 | 初始写入被改回 `published/approved`（先审后发被拆掉）；把 `awaitingPublish` 恒置 `false`（三元组文本不变却永远不走待审）；两步顺序颠倒；或**只改一处**（发帖待审、改帖直接发） |
  * | 3 | `services/api/src/favorites/**`（`types.ts:24` 为闭集定义、`:74-76` 为唯一判定函数） | `FAVORITE_TARGET_TYPES` **逐字** `['species','herbicide','scheme']`；`isFavoriteTargetType` 仍由该常量派生；`favorites/**` 里**没有任何** `'post'` / `'comment'` 字面量 | 把社区帖子/评论加进收藏闭集（无论加在常量、判定函数还是别处的字面量） |
  * | 4 | `apps/admin/src/views/ReviewPlaceholderView.vue` 全文 | 该页**没有任何真网络调用形态**（`fetch(`/`axios`/`XMLHttpRequest`/`*Api.<method>`/`$fetch`/网络模块 import 等），数据仍只来自 `../lib/review-state.mjs` | **预期会红**：一旦人审后台真的实现（哪怕只是开始拉队列），这一页必须改成读真实数据 —— 届时先加契约读面，再翻转本钉子。⛔ 不要为了让本钉子变绿把模式改窄 |
@@ -209,7 +211,7 @@ function pinLines({ file, expectLines, expectText, why }) {
 }
 
 // ---------------------------------------------------------------------------
-// 钉 1 · 契约里 `/admin/posts` = 两条只读读面 + 一条下架（审核动作仍为零）
+// 钉 1 · 契约里 `/admin/posts` = 两条只读读面 + 一条下架 + 两条人审动作（S3-a 已落地）
 // ---------------------------------------------------------------------------
 
 /** OpenAPI path item 里算「操作」的键（`parameters`/`summary` 之类不算）。 */
@@ -218,7 +220,7 @@ const HTTP_METHODS = ['get', 'put', 'post', 'patch', 'delete', 'head', 'options'
 /** 人审动作的**命名式**负向扫描表（见断言 ③ 的自述风险）。 */
 const REVIEWY_OPERATION_ID = /^(?:approve|reject|review|publish|moderate)[A-Za-z]*Post$/;
 
-test('钉 1 · 契约里 `/admin/posts` = 两条只读读面（list/detail）+ 一条下架，没有审核动作', () => {
+test('钉 1 · 契约里 `/admin/posts` = 两条只读读面（list/detail）+ 一条下架 + 两条人审动作，形状逐条钉死', () => {
   const spec = JSON.parse(readRepoText('packages/contracts/openapi.json'));
   const paths = Object.keys(spec.paths ?? {});
   const methods = Object.keys(spec.paths ?? {}).length;
@@ -231,22 +233,30 @@ test('钉 1 · 契约里 `/admin/posts` = 两条只读读面（list/detail）+ �
       + '本钉子的「数 path 数量」判据失去前提。⛔ 不要改成 grep。',
   );
 
-  // ① 含 `/admin/posts` 的 path 恰好三条：两条**只读读面** + 一条下架。
-  //    历史：本钉最初钉的是「恰好一条 hide」（后台结构性零）。#621 把后台**只读**读面落地后翻转成三条，
-  //    但**审核动作仍然是零** —— ③ / ③b 的命名式负向扫描、以及 ①b / ①c 的 method·scope 严格断言
-  //    一条都没放宽（读面被偷偷扩成写面、或改名换 scope，下面每条都会红）。
+  // ① 含 `/admin/posts` 的 path 恰好五条：两条**只读读面** + 一条下架 + 两条人审动作。
+  //    历史：本钉最初钉的是「恰好一条 hide」（后台结构性零）。#621 把后台**只读**读面落地后翻转成三条；
+  //    S3-a 又把**人审动作**（approve/reject）落地 ⇒ 翻转成五条。翻转时**没有放宽任何一条**：
+  //    ①b / ①d 逐条钉死 method·operationId·x-scope，①c 把方法全集写死，③/③b 的命名式扫描仍然
+  //    要求「除这两条以外没有任何审核类 operation」。
   const adminPostPaths = paths.filter((path) => path.includes('/admin/posts'));
   assert.deepEqual(
     adminPostPaths,
-    ['/admin/posts', '/admin/posts/{id}', '/admin/posts/{id}/hide'],
+    [
+      '/admin/posts',
+      '/admin/posts/{id}',
+      '/admin/posts/{id}/hide',
+      '/admin/posts/{id}/approve',
+      '/admin/posts/{id}/reject',
+    ],
     '【钉 1 破了】契约里 `/admin/posts` 的 path 集合变了：'
       + `\n  实测：${JSON.stringify(adminPostPaths)}（全 spec 共 ${paths.length} 条 path）`
-      + '\n  现状：**三条** —— `GET /admin/posts`（`listAdminPosts`）、`GET /admin/posts/{id}`（`getAdminPost`）、'
-      + '`POST /admin/posts/{id}/hide`（`hidePost`）。后台读面**只读**；审核（通过/驳回）动作在契约里**仍然不存在**。'
-      + '\n  若你要加 `/admin/posts` 下的**审核动作**（approve/reject/review/publish/moderate）⇒ 那是**新产品能力**：'
+      + '\n  现状：**五条** —— `GET /admin/posts`（`listAdminPosts`）、`GET /admin/posts/{id}`（`getAdminPost`）、'
+      + '`POST /admin/posts/{id}/hide`（`hidePost`）、`POST /admin/posts/{id}/approve`（`approvePost`）、'
+      + '`POST /admin/posts/{id}/reject`（`rejectPost`）。读面**只读**；写面只有下架与这两条人审动作。'
+      + '\n  若你要再加 `/admin/posts` 下的**审核动作**（review/publish/moderate/…）⇒ 那是**新的产品能力**：'
       + '请同步 `packages/contracts/operations.json`、`services/api/src/admin/ops/service.ts` 的 operation 表、'
-      + '`apps/admin/src/lib/review-state.mjs` 的「结构性零」，并翻转本钉子和钉 4（走需求评审，别顺手改）。'
-      + because('契约新增/删除/改名任何 `/admin/posts` path，或把 hide/读面挪到别的路径下。'),
+      + '`apps/admin/src/lib/review-state.mjs` 的「结构性零」，并翻转本钉子（走需求评审，别顺手改）。'
+      + because('契约新增/删除/改名任何 `/admin/posts` path，或把 hide/读面/人审动作挪到别的路径下。'),
   );
 
   // ①b 两条读面逐条钉**死**：只允许 `get`、operationId 恰为期望值、`x-scope` 恰为 `sources:read`
@@ -290,17 +300,59 @@ test('钉 1 · 契约里 `/admin/posts` = 两条只读读面（list/detail）+ �
     );
   }
 
-  // ①c 独立断言：`/admin/posts` 家族的**方法全集**恰为 `get`×2 + `post`×1。
+  // ①d 两条人审动作逐条钉**死**（与 ①b 同形）：只允许 `post`、operationId 恰为期望值、
+  //    `x-scope` 恰为 `sources:write`。S3-a 的产物一旦被改名/换 scope/挪路径，这里立刻红。
+  /** 人审动作的期望形状（path → operationId），顺序即 `paths` 实序。 */
+  const ADMIN_POST_REVIEW_PATHS = [
+    ['/admin/posts/{id}/approve', 'approvePost'],
+    ['/admin/posts/{id}/reject', 'rejectPost'],
+  ];
+  for (const [path, operationId] of ADMIN_POST_REVIEW_PATHS) {
+    const item = spec.paths[path];
+    assert.equal(
+      typeof item === 'object' && item !== null,
+      true,
+      `契约里 \`${path}\` 的 path item 不是对象 ⇒ 判据位置失效了。`,
+    );
+    const reviewOperations = Object.entries(item).filter(([key]) => HTTP_METHODS.includes(key));
+    assert.deepEqual(
+      reviewOperations.map(([method]) => method),
+      ['post'],
+      `【钉 1 破了】\`${path}\` 的操作集合变了：`
+        + `\n  实测：${JSON.stringify(reviewOperations.map(([method]) => method))}`
+        + '\n  现状：人审动作只有 `post` 一个操作。'
+        + because('把审核动作改成 `patch`/`put`（例如伪装成「编辑帖子」），或给它加第二个 method。'),
+    );
+    assert.deepEqual(
+      reviewOperations.map(([, operation]) => operation?.operationId),
+      [operationId],
+      `【钉 1 破了】\`${path}\` 的 operationId 变了：`
+        + `\n  实测：${JSON.stringify(reviewOperations.map(([, operation]) => operation?.operationId))}`
+        + `\n  现状：\`${operationId}\`。`
+        + because('改掉审核动作的 operationId（例如合回单个 `reviewPost`），或把它挪到别的 path 下。'),
+    );
+    assert.deepEqual(
+      reviewOperations.map(([, operation]) => operation?.['x-scope']),
+      ['sources:write'],
+      `【钉 1 破了】\`${path}\` 的 x-scope 变了：`
+        + `\n  实测：${JSON.stringify(reviewOperations.map(([, operation]) => operation?.['x-scope']))}`
+        + '\n  现状：`sources:write`（改内容可见性 = 写能力；与下架 `hidePost` 同一 scope）。'
+        + because('把审核动作降成读 scope（`sources:read`），或删掉 `x-scope`。'),
+    );
+  }
+
+  // ①c 独立断言：`/admin/posts` 家族的**方法全集**恰为 `get`×2 + `post`×3。
   //    与 ①b/② 重叠是刻意的 —— 这一条把「整族多出第三类方法」变成一个不可能的改动。
   const adminPostMethods = adminPostPaths.flatMap((path) => Object.keys(spec.paths[path] ?? {})
     .filter((key) => HTTP_METHODS.includes(key)));
   assert.deepEqual(
     adminPostMethods,
-    ['get', 'get', 'post'],
+    ['get', 'get', 'post', 'post', 'post'],
     '【钉 1 破了】`/admin/posts` 家族的方法全集变了：'
       + `\n  实测：${JSON.stringify(adminPostMethods)}`
-      + '\n  现状：两条读面各 `get`、下架一条 `post` —— 家族内**不允许**出现非 `get` 的读面方法或额外的写方法。'
-      + because('在 `/admin/posts` 家族里新增/挪入任何除「读面 get」「下架 post」以外的方法。'),
+      + '\n  现状：两条读面各 `get`、下架一条 `post`、人审动作两条 `post` —— 家族内**不允许**出现'
+      + '额外的读面方法或第 4 个写方法。'
+      + because('在 `/admin/posts` 家族里新增/挪入任何除「读面 get」「下架 post」「人审 post」以外的方法。'),
   );
 
   // ② 下架那条 path 的 method 与 operationId（`hidePost` 是下架，不是审核通过）。
@@ -347,13 +399,17 @@ test('钉 1 · 契约里 `/admin/posts` = 两条只读读面（list/detail）+ �
   }
   assert.deepEqual(
     reviewyOperations,
-    [],
-    '【钉 1 破了】契约里出现了「通过/驳回/审核帖子」形态的 operationId：'
+    [
+      'POST /admin/posts/{id}/approve → approvePost',
+      'POST /admin/posts/{id}/reject → rejectPost',
+    ],
+    '【钉 1 破了】契约里「通过/驳回/审核帖子」形态的 operationId 集合变了：'
       + `\n  实测：${JSON.stringify(reviewyOperations)}`
-      + '\n  基线：全 spec **零命中** —— 人工通过/驳回这个动作在契约里从来不存在'
-      + '（内容要么在发布前由审核域自动放行，要么根本不落库）。'
-      + '\n  👉 这是**新增能力**，不是修 bug：请按 ① 的提示把三层（契约/服务/后台）一起做，并翻转钉 4。'
-      + because('新增任何名为 `approvePost` / `rejectPost` / `reviewPost` 形态的 operation（无论挂在哪个 path 下）。'
+      + '\n  现状：全 spec **恰两条** —— `approvePost` / `rejectPost`（S3-a 落地的两个动词；'
+      + '一个路径一个动词，不做 `reviewPost` 单点 + 动作参数的形状）。'
+      + '\n  👉 若你要**增删改**人审动作（合并成一个 `reviewPost`、加 `publishPost`/`moderatePost`、'
+      + '或改成别的命名），那是**契约形状变更**：请同步 ① / ①d / ③b 与本条的期望值，并在评审里说明形状。'
+      + because('新增/删除/改名任何名为 `approvePost` / `rejectPost` / `reviewPost` 形态的 operation。'
         + '\n  （本条是命名式判据：改名即可绕过，别把它当成完备保证。）'),
   );
 
@@ -375,12 +431,16 @@ test('钉 1 · 契约里 `/admin/posts` = 两条只读读面（list/detail）+ �
   }
   assert.deepEqual(
     familyReviewyOperations,
-    [],
-    '【钉 1 破了】`/admin/posts` 家族里出现了审核动作形态的 operationId：'
+    [
+      'POST /admin/posts/{id}/approve → approvePost',
+      'POST /admin/posts/{id}/reject → rejectPost',
+    ],
+    '【钉 1 破了】`/admin/posts` 家族里审核动作形态的 operationId 集合变了：'
       + `\n  实测：${JSON.stringify(familyReviewyOperations)}`
-      + '\n  现状：家族内只有 `listAdminPosts` / `getAdminPost` / `hidePost` —— **零**审核动作。'
-      + '\n  👉 这是**新增能力**，不是修 bug：走需求评审，并与 ① 的三层同步一起做（别只加契约）。'
-      + because('在 `/admin/posts` 家族下新增任何名字里带 approve/reject/review/publish/moderate 的 operation。'),
+      + '\n  现状：家族内恰两条审核动作（`approvePost` / `rejectPost`）+ 读面 `listAdminPosts`/`getAdminPost`'
+      + '+ 下架 `hidePost`（后三条**不**匹配审核动词）。'
+      + '\n  👉 增删改任何审核动作 ⇒ 先改 ① / ①d 的期望，再翻本条（别只放宽 regex）。'
+      + because('在 `/admin/posts` 家族下新增/删除/改名任何名字里带 approve/reject/review/publish/moderate 的 operation。'),
   );
 });
 

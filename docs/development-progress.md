@@ -108,7 +108,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 - 【仍滞后】`:419`（`requestAccountDeletion`）只写「本片只交付受理 HTTP 面」与「真实删除执行仍在进程内注册表」，未列 `0023_user_backup_copies.sql` 与 `services/api/src/privacy/backup-copies-pg.ts`（随 #295 合入）的备份副本域与 30 天清除链 ⇒ 台账未反映该域；仍缺 7／30 日到期的真实执行与第三方删除证据。
 - 【已订正】`:971`（`createTranscription`）「取消未接线」已由 #325 订正（转写取消随 #321 接线，`services/api/src/jobs/sources.ts:107`）；`:1051`（`createSynthesis`）同理（随 #322，`services/api/src/jobs/sources.ts:153`）。
-- 【仍滞后】`:1261`（`listPosts`／`createPost`）仍称「真实持久存储未交付」——社区已接 PG（迁移 `0022_community_persistence.sql` 随 #296 合入，`services/api/src/community/store-pg.ts:346`，装配 `services/api/src/app.ts:780`）；#325 未覆盖社区，此行仍滞后。
+- 【仍滞后】`:1261`（`listPosts`／`createPost`）仍称「真实持久存储未交付」——社区已接 PG（迁移 `0022_community_persistence.sql` 随 #296 合入，`services/api/src/community/store-pg.ts:390`，装配 `services/api/src/app.ts:878`（两处 R59 重记，原记 `:346`/`:780`））；#325 未覆盖社区，此行仍滞后。
 - 【已订正】`:1771`（`listMessages`）「real 未接持久存储」已由 #325 订正为「real + 池 ⇒ 迁移 0019 与 `messages/store-pg.ts`，real 无池才整域 503」；本节保留该更正记录。
 - 【仍滞后】`:1842`（`listAdminSources`）与 `listAdminUsers`（`:2578-2604`）仍写「真实存储……待完成」——后台路由确已装配（`services/api/src/routes/admin.ts:172-174`）；`#282`（0020 feature_flags）与 `#279`（0021 后台账号读面接真实 `users` 投影）已合入，真实读数仍未复测，故本条只记滞后、不改判。
 - 【仍滞后】`:861`（`createOCR`）仍只写「真实标签评估与持久/删除链待验收」——`#323` 已把 OCR 任务与记录接入 PG（迁移 `0024_ocr_persistence.sql`、`services/api/src/ocr/store-pg.ts:359`、装配 `services/api/src/routes/ocr.ts:196`），台账未反映该持久化；`tests/integration/ocr-jobs-pg.mjs` 已在主干但仍无 workflow 运行（`git grep -n ocr-jobs-pg -- .github/workflows` 零命中；#327 只接入了 account-deletion／admin-accounts-read／admin-flags 三条，`real-pg-integration.yml` 现有 7 条真库脚本、`MANAGED_SCRIPTS` 7 条）。

@@ -240,11 +240,18 @@ function pathLineMap(lines) {
 /** 药害面的禁用词（大小写不敏感）。`herbicide_damage` 被 `damage` 覆盖，留着是为了**自证**禁用词表。 */
 const DAMAGE_NEEDLE = /damage|herbicide_damage|phytotox|injury/i;
 
-/** 基线实测：`operationId` 总数（`paths[*][method].operationId`）。 */
-const CONTRACT_OPERATION_COUNT = 120;
+/** 基线实测：`operationId` 总数（`paths[*][method].operationId`）。
+ *
+ *  历史：120（`#619` 立钉时的实测值，已含 `#621` 的两条后台读面）→ **122**
+ *  （`S3-a` 追加 `approvePost`/`rejectPost` 两条人审动作）。本钉保护的事实是「damage 类零命中」，
+ *  总数只用于证明「抽取没空转」，故随契约增长同步更新。 */
+const CONTRACT_OPERATION_COUNT = 122;
 
-/** 基线实测：`path` 总数（`Object.keys(doc.paths)`）。 */
-const CONTRACT_PATH_COUNT = 91;
+/** 基线实测：`path` 总数（`Object.keys(doc.paths)`）。
+ *
+ *  历史：91（`#619` 立钉时，已含 `#621` 的两条读面 path）→ **93**
+ *  （`S3-a` 追加 `/admin/posts/{id}/approve` 与 `/admin/posts/{id}/reject` 两条 path）。 */
+const CONTRACT_PATH_COUNT = 93;
 
 /** 基线实测：`operationId` 里含 `admin` 的**全部** 19 条（逐条钉住，⛔ 不是 `>=`）。 */
 const ADMIN_OPERATION_IDS = [

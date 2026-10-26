@@ -86,6 +86,21 @@ export interface RestrictToAccountsAuthorityOptions {
    * 内存 store 只是 stub/preset_demo 的种子，real 模式下拿它回答等于伪造结论。
    */
   readonly administratorsWired?: boolean;
+  /**
+   * **S3 · 放行表第 6 条**：帖子**人工审核**面（`approvePost` / `rejectPost`）是否已接上
+   * 真实的社区审核端口。**默认 `false`** = 继续 503（与放行表前 5 条同一口径）。
+   *
+   * 为什么必须是**独立**开关而不是复用 `hidePostWired`：两者的真实前提不同——
+   * `hidePostWired` 只要"社区 store 是持久的"；审核还额外要求
+   * ① 发布门可用（写进去的 `rule_version` 必须能被读面认作当前版本），
+   * ② 作者通知端口已接线（否则审核成功但没人被告知）。
+   * 把两条能力绑在一个布尔上，就会出现"下架放行了、审核却写进了读面不认的版本"这种半开状态。
+   *
+   * 判据同样只能是能力对象存在：`app.ts` 只在真的构造出
+   * `createPostReviewAdapter({ port, events })`（且 `port.persistent === true`）时置 `true`。
+   * ⛔ 不读自述布尔标志、⛔ 不因"注入了任意端口"放行。
+   */
+  readonly postReviewWired?: boolean;
 }
 
 /**
@@ -112,6 +127,8 @@ export function restrictAdminOpsToAccountsAuthority(
   const jobsWired = inner.jobPort.wired === true;
   // **放行表第 5 条**：管理员目录/权限读面只在调用方证明"认证存储是真实持久的"之后放行。
   const administratorsWired = options.administratorsWired === true;
+  // **放行表第 6 条**（S3）：审核面单独一道门，默认关闭 ⇒ real 模式下与首版逐字相同（503）。
+  const postReviewWired = options.postReviewWired === true;
 
   return {
     // 如实暴露底层 store/jobPort，使"接线状态"仍可被测试与回归直接核对。
@@ -142,5 +159,10 @@ export function restrictAdminOpsToAccountsAuthority(
     // ⛔ 本外壳不自己拼 scope 数组、不自己发成功封套。
     listAdministrators: administratorsWired ? inner.listAdministrators : reject,
     listAdministratorScopes: administratorsWired ? inner.listAdministratorScopes : reject,
+    // **放行 6**（需 `postReviewWired: true`，S3）：人工通过/驳回。
+    // 转发 inner 的两个方法本身：422/409/503 的分工与审计口径仍由服务层决定，
+    // ⛔ 本外壳不自己拼结论、不自己发成功封套。
+    approvePost: postReviewWired ? inner.approvePost : reject,
+    rejectPost: postReviewWired ? inner.rejectPost : reject,
   };
 }

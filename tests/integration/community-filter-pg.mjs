@@ -189,15 +189,15 @@ async function main() {
     const versions = all.map((m) => m.version);
     assert.equal(versions.includes('0022'), true, '迁移目录里必须有 0022（社区六表）');
     // 0030（F13 帖/评行内注销引用）与 0032（#15 举报者行内注销引用）都是**运行时依赖**，不是可选项：
-    // `POST_COLUMNS`/`COMMENT_COLUMNS`/`REPORT_COLUMNS` 都含 `anonymized_author_ref`，缺任一支 ⇒ 42703 ⇒ 社区域 503。
-    const migrations = all.filter((m) => ['0001', '0022', '0030', '0032'].includes(m.version));
+    // `POST_COLUMNS`/`COMMENT_COLUMNS`/`REPORT_COLUMNS` 都含 `anonymized_author_ref`，缺任一支 ⇒ 42703 ⇒ 社区域 503；0045 同理：`community_moderation_decisions.decided_by`（人工 approve/reject 的运营者快照列）是审核台账 INSERT/SELECT 的列，本脚本用 `store.insertPost(record, verdict)` 造数据必走 `writeModeration`，缺它同样 42703。
+    const migrations = all.filter((m) => ['0001', '0022', '0030', '0032', '0045'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0022', '0030', '0032'],
-      '0001（users/枚举底座）+ 0022（社区六表）+ 0030（帖/评注销引用）+ 0032（举报注销引用）：筛选与举报只依赖这四支',
+      ['0001', '0022', '0030', '0032', '0045'],
+      '0001（users/枚举底座）+ 0022（社区六表）+ 0030（帖/评注销引用）+ 0032（举报注销引用）+ 0045（审核台账 decided_by）：筛选与举报依赖这五支',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：迁移目录 ${versions.length} 个，本脚本只取 0001 + 0022 + 0030 + 0032（PG ${version}）`);
+    say(`迁移 apply 可重入：迁移目录 ${versions.length} 个，本脚本只取 0001 + 0022 + 0030 + 0032 + 0045（PG ${version}）`);
 
     // ---- 2. 两个真实用户（作者 A / 他人 B） ------------------------------
     const auth = createMemoryAuthStore();

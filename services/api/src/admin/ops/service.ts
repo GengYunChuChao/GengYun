@@ -32,6 +32,7 @@ import {
   DEFAULT_IDEMPOTENCY_TTL_SECONDS,
   assertIfMatchMatches,
   etagOf,
+  isPlainRecord,
   metaFor,
   normalizeIdParam,
   normalizeStringIdParam,
@@ -48,7 +49,7 @@ import { opsValidator } from './fields.ts';
 import { CONTRACT_FLAG_KEYS, classifyFlagKey, DEFAULT_FLAG_EFFECTS, assertNoFlagWeakensFailClosed } from './flags.ts';
 import type { FlagEffect, FlagKey } from './flags.ts';
 import { createUnwiredAdminJobPort, parseAdminJobFilter } from './jobs.ts';
-import { createHidePostAdapter } from './community-posts.ts';
+import { createHidePostAdapter, createPostReviewAdapter } from './community-posts.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
 import type { AdminAdministratorsDirectory, AdministratorView } from './administrators.ts';
@@ -65,7 +66,12 @@ import type {
   FlagView,
   JobState,
   CancelJobOutcome,
+  PostReviewPort,
+  PostReviewRequest,
+  PostReviewOutcome,
 } from './types.ts';
+import type { PostRejectionReasonCode, PostReviewDecision, PostReviewResult } from './types.ts';
+import { POST_REVIEW_REASON_CODES } from './types.ts';
 import { TERMINAL_JOB_STATES } from './types.ts';
 import { ACCOUNT_STATES } from './types.ts';
 
@@ -152,6 +158,16 @@ export interface AdminOpsServiceOptions {
   jobPort?: AdminJobPort;
   /** 社区帖子存储端口（`hidePost` 用）；缺省 = **未接线**（fail-closed）。 */
   community?: CommunityPostPort;
+  /**
+   * 帖子**人工审核**端口（S3：`approvePost` / `rejectPost`）；缺省 = **未接线**（fail-closed）。
+   *
+   * 为什么不像 `hidePost` 那样直接收 `CommunityPostPort`：审核除了落库，还要
+   * ① 向发布门要当前 `rule_version`（否则写进去的结论会被读面判失效）；
+   * ② 向作者发通知（`community/events.ts`）。装配面（`app.ts`）用
+   * `createPostReviewAdapter({port, events})` 把这两件事一起注进来，服务层只当它是
+   * 一个"能审"的端口——这样 stub 模式与单测可以给假端口，不必装配社区事件总线。
+   */
+  postReview?: PostReviewPort;
   /** flag 语义分类表；缺省为合同 3 键的"能力门"分类。构造时会自检不得放宽 fail-closed。 */
   flagEffects?: Readonly<Record<string, FlagEffect>>;
 }
@@ -177,6 +193,23 @@ export interface AdminOpsService {
   setFlag(ctx: AdminCallContext, key: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<{ key: string; enabled: boolean; revision: number }>>>;
 
   hidePost(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<{ accepted: boolean }>>>;
+
+  /**
+   * 人工**通过**（S3）：`POST /admin/posts/{id}/approve`。
+   *
+   * 只把 `audit_state` 推到 `approved`（并写一条人工结论），**不改 `visibility`**；
+   * 必须带 `If-Match`（ETag）与 `Idempotency-Key`；未接线 ⇒ 503（fail-closed）。
+   * 硬规则明确否决的帖子**不可**通过（409 `RULE_VETOED`）——那是红线，不是运营权衡。
+   */
+  approvePost(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<PostReviewOutcome>>>;
+
+  /**
+   * 人工**驳回**（S3）：`POST /admin/posts/{id}/reject`。
+   *
+   * `audit_state='rejected'` **且** `visibility='hidden'`（驳回即不可公开，不交给读面去算）；
+   * `reason_code` 必填且在闭集 `POST_REVIEW_REASON_CODES` 内（422 `VALIDATION_FAILED`）。
+   */
+  rejectPost(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<PostReviewOutcome>>>;
 
   /**
    * 开关变更留痕（GY-I18 第一批 + 迁移 0027）：`GET /admin/flag-audit-events`。
@@ -207,7 +240,7 @@ export interface AdminOpsService {
   listAdministratorScopes(ctx: AdminCallContext, id: string): Promise<ServiceResponse<SingleEnvelope<{ scopes: string[] }>>>;
 }
 
-/** 本片 operationId（机读形式，供测试断言"恰好 12 个、不越界"）。 */
+/** 本片 operationId（机读形式，供测试断言"恰好 14 个、不越界"）。 */
 export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -221,6 +254,9 @@ export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'hidePost',
   'listAdministrators',
   'listAdministratorScopes',
+  // S3：人工通过/驳回。**追加在尾部**（有用例按下标/顺序断言既有 12 项不变）。
+  'approvePost',
+  'rejectPost',
 ]);
 
 /** 契约 scope（来自 `packages/contracts/operations.json`）。 */
@@ -235,6 +271,10 @@ export const OPS_SCOPES = Object.freeze({
   setFlag: 'flags:write',
   listFlagAuditEvents: 'flags:read',
   hidePost: 'sources:write',
+  // S3：人工审核与下架同属"内容写面"能力（来源治理），故复用 `sources:write`，
+  // 不新造 `posts:review` 之类的 scope（新 scope 要动 scope 闭集与授权迁移，本片不扩大面）。
+  approvePost: 'sources:write',
+  rejectPost: 'sources:write',
   // `#18` S2 PR-2：读他人权限。⛔ 不是 `accounts:read`（裁定④：两者是不同能力）。
   listAdministrators: 'scopes:read',
   listAdministratorScopes: 'scopes:read',
@@ -302,6 +342,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   const cursors = createCursorCodec(signingKey);
   const jobPort: AdminJobPort = options.jobPort ?? createUnwiredAdminJobPort();
   const hideAdapter = createHidePostAdapter(options.community, now);
+  // S3：审核端口缺省 ⇒ `wired: false`（`approvePost`/`rejectPost` 一律 503，不伪造结论）。
+  const postReviewPort: PostReviewPort = options.postReview ?? createPostReviewAdapter({ now });
 
   const writeDeps = { runtime: store.runtime, signingKey, ttlSeconds: idempotencyTtlSeconds, now };
 
@@ -1163,12 +1205,174 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     );
   }
 
+  // -------------------------------------------------------------------------
+  // 人工通过 / 驳回（S3）——两个 operation 共用一段实现
+  // -------------------------------------------------------------------------
+
+  /**
+   * `approvePost` / `rejectPost` 的公共实现。
+   *
+   * 形状与 `hidePost` 逐字同构：`resolveContext`（身份 + scope）→ `parseIfMatchHeader`
+   * （缺 `If-Match` ⇒ 428 `REVISION_REQUIRED`）→ 入参校验 → `runIdempotentWrite` 包壳
+   * → 端口 CAS → 错误映射 → **仅 `changed` 时**记审计 → 200 + 新 ETag。
+   *
+   * 审计口径（**这一片最容易被打回的点，已按证据裁好**）：
+   * - "谁在哪个版本上做了什么结论"落 `community_moderation_decisions.decided_by`
+   *   （迁移 0045，与帖子行**同一事务**）；这是可回溯、可 JOIN 到人的那份。
+   * - 本函数额外写内存 `store.audit.append`（`post.approve`/`post.reject`），与 `hidePost`
+   *   同款，作用是让 `GET /admin/audit-events` 立刻能看到这条动作；
+   *   ⛔ **不写** `public.admin_audit_events`：`AUDIT_ACTIONS` 是被用例钉死的四值闭集
+   *   （`tests/unit/admin-audit-logs.test.mjs`），扩值要动迁移 + 闭集 + 契约 enum 三件套，
+   *   属 S3b；`decided_by` 已经覆盖了审计目的。
+   */
+  async function commitPostReview(
+    ctx: AdminCallContext,
+    id: string,
+    body: unknown,
+    decision: PostReviewDecision,
+  ): Promise<ServiceResponse<SingleEnvelope<PostReviewOutcome>>> {
+    const operationId = decision === 'approved' ? 'approvePost' : 'rejectPost';
+    const scope = decision === 'approved' ? OPS_SCOPES.approvePost : OPS_SCOPES.rejectPost;
+    const action = decision === 'approved' ? 'post.approve' : 'post.reject';
+    const context = resolveContext(ctx, scope);
+    const expectedRevision = parseIfMatchHeader(context.ifMatch);
+    const normalizedId = normalizeIdParam(id);
+
+    // `approve` 契约里**没有** requestBody：给了 body 也不静默忽略，一律按入参非法处理。
+    let reasonCode: PostRejectionReasonCode | null = null;
+    if (decision === 'rejected') {
+      opsValidator.assertInput('PostRejectionInput', body);
+      reasonCode = (body as { reason_code: PostRejectionReasonCode }).reason_code;
+    } else if (body !== undefined && body !== null && !(isPlainRecord(body) && Object.keys(body).length === 0)) {
+      throw new ApiError('INVALID_REQUEST', 'approvePost 不接受请求体');
+    }
+
+    return runIdempotentWrite(
+      writeDeps,
+      context,
+      {
+        method: 'POST',
+        // 契约台账扫描按**字面量**匹配路由与 operationId，这里必须与 `routes/admin.ts`
+        // 注册的模板逐字一致（`${id}` 未注册模板变量的写法与 `hidePost` 相同）。
+        path: `/admin/posts/${normalizedId}${decision === 'approved' ? '/approve' : '/reject'}`,
+        expectedStatus: 200,
+      },
+      body ?? null,
+      async () => {
+        if (!postReviewPort.wired) {
+          // 未接线是运维动作，重试不可能成功 ⇒ `retryable: false`（与 `hidePost` 同口径）。
+          throw new ApiError('PROVIDER_UNAVAILABLE', '社区帖子人工审核尚未接线', { retryable: false });
+        }
+        const outcome = await postReviewPort.review({
+          postId: normalizedId,
+          expectedRevision,
+          decision,
+          reasonCode,
+          actorId: context.identity.userId,
+        });
+        if (!outcome.ok) {
+          switch (outcome.reason) {
+            case 'NOT_FOUND':
+              throw new ApiError('NOT_FOUND', '帖子不存在');
+            case 'DELETED':
+              throw new ApiError('OBJECT_UNAVAILABLE', '帖子已删除，不可审核（已删除内容不复活）');
+            case 'REVISION_CONFLICT':
+              throw new ApiError('REVISION_CONFLICT', '帖子修订已变化，If-Match 与当前 ETag 不匹配');
+            case 'RULE_VETOED':
+              // 硬规则明确否决（违禁/违法内容）**不可**由人工放行：这不是运营权衡的区间。
+              throw new ApiError('INPUT_UNCERTAIN', '硬规则已明确否决该内容，不允许人工通过', {
+                // 契约 `Error.details` 是 `{field, code}[]`（上限 30）——机器码放 `code`，
+                // 让运营/客服能看到"到底踩了哪条硬规则"，而不是只有一句人话。
+                details: (outcome.reasonCodes ?? []).slice(0, 30).map((code) => ({ field: 'reason_codes', code })),
+              });
+            case 'RULE_VERSION_UNKNOWN':
+              // 写进去也会被读面判失效 ⇒ 宁可 503，不伪造"已审"。
+              throw new ApiError('PROVIDER_UNAVAILABLE', '当前发布规则集版本不可用，无法落审核结论', {
+                retryable: false,
+              });
+            default:
+              throw new ApiError('PROVIDER_UNAVAILABLE', '社区帖子存储尚未接线', { retryable: false });
+          }
+        }
+        if (!outcome.changed) {
+          // 幂等命中：状态本来就如此 ⇒ 不再迁移、不再通知、**不记第二条审计**。
+          return singleResponse(
+            context,
+            executionMode,
+            200,
+            reviewOutcomeOf(normalizedId, decision, outcome, reasonCode),
+            etagOf(outcome.revision),
+          );
+        }
+        appendAudit(context, {
+          action,
+          scope,
+          // 契约 `TargetRef.type` 闭集有 `post` ⇒ 用合同口径，且带**被审核的那个**版本。
+          targetRef: { type: 'post', id: normalizedId, revision: outcome.previousRevision },
+          targetHint: null,
+          reasonCode: decision === 'approved' ? 'post_approved' : 'post_rejected',
+          result: 'accepted',
+        });
+        return singleResponse(
+          context,
+          executionMode,
+          200,
+          reviewOutcomeOf(normalizedId, decision, outcome, reasonCode),
+          etagOf(outcome.revision),
+        );
+      },
+    );
+  }
+
+  /** 端口结果 → 契约 `PostReviewOutcome`（逐字段，不夹带内部判定料）。 */
+  function reviewOutcomeOf(
+    postId: string,
+    decision: PostReviewDecision,
+    outcome: Extract<PostReviewResult, { ok: true }>,
+    reasonCode: PostRejectionReasonCode | null,
+  ): PostReviewOutcome {
+    return {
+      id: postId,
+      revision: outcome.revision,
+      audit_state: outcome.auditState,
+      visibility: outcome.visibility,
+      decision,
+      changed: outcome.changed,
+      notified: outcome.notified,
+      reason_codes: decision === 'approved' ? [] : reasonCode === null ? [] : [reasonCode],
+    };
+  }
+
+  /**
+   * `approvePost`：人工「通过」。
+   *
+   * ⚠️ v1 口径：**通过动作同时承担发布语义**（`private → published` + `audit_state='approved'`），
+   * 原因是待审帖在库里就是 private+pending、公开读面要求「published 且 approved」、而契约里没有
+   * 作者自助发布口；只翻 `audit_state` 会让「通过」变成黑洞。作者自助发布口是 S4 的独立能力，
+   * 届时若上线，通过动作是否仍翻 `visibility` 需重新裁定
+   * （口径页：docs/architecture/s3-community-review-design.md §1；落地代码在
+   * `admin/ops/community-posts.ts` 的 `review()`）。
+   * 不对称：`hidden`/`deleted` 不被通过动作翻案（单向门），命中时幂等返回当前状态（`changed:false`），
+   * 不写第二条结论、不重复通知。
+   */
+  async function approvePost(ctx: AdminCallContext, id: string, body: unknown) {
+    return commitPostReview(ctx, id, body, 'approved');
+  }
+
+  /**
+   * `rejectPost`：人工「驳回」= `audit_state='rejected'` + `visibility='hidden'` + 理由码闭集。
+   * 置 `hidden` 的副作用是触发 `withTakedownObserver` 再发一条下架类事件（作者会收到两条消息），
+   * 属既有观察器行为，本片不去重（见口径页 §2）。
+   */
+  async function rejectPost(ctx: AdminCallContext, id: string, body: unknown) {
+    return commitPostReview(ctx, id, body, 'rejected');
+  }
+
   return {
     store,
     jobPort,
     accountsWired: store.accountsWired,
     operationIds: OPS_OPERATION_IDS,
-
     listAdminCategories,
     editCategory,
     listAdminUsers,
@@ -1179,6 +1383,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     setFlag,
     listFlagAuditEvents,
     hidePost,
+    approvePost,
+    rejectPost,
     listAdministrators,
     listAdministratorScopes,
   };

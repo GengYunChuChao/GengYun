@@ -512,9 +512,13 @@ const OPAQUE_ALLOWLIST = [
  *
  * 两笔增量**在合并树上重新实测**（不是把任一侧的旧值相加，也不是拿某一侧当基线硬减）：
  * 字面量 159→**163**、SELECT 74→**75**（点赞读面）、DELETE 29→**32**、RETURNING 62→**65**
- * （OCR 三表整表 DELETE 的三条 `RETURNING`）、columnRequirements 1241→**1247**、
+ * （OCR 三表整表 DELETE 的三条 `RETURNING`）、columnRequirements 1241→1247→**1250**、
  * 逐文件 `ocr` 16→**19**、`community` 42→**43**；INSERT/UPDATE、引用表 25 张、
  * `SELECT *`/无顶层 FROM 处数**不变**。
+ *
+ * S3（迁移 0045）：`community_moderation_decisions.decided_by` 在 `store-pg.ts` 的
+ * INSERT 列清单、`ON CONFLICT DO UPDATE SET`、SELECT 列清单各出现一次 ⇒ 列要求 +3，
+ * 其余读数不变。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
@@ -524,7 +528,7 @@ const EXPECTED_READINGS = {
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1247,
+  columnRequirements: 1250,
   opaqueExpressions: 2,
 };
 
@@ -724,6 +728,12 @@ const TABLE_WIDE_COLUMN = '*';
  *   RETURNING 91、ON CONFLICT 28、`SELECT *` 15、函数调用 2 均不变
  *   —— JOIN 的表不进表集、`ON r.id = j.…` 不被当列（`parseSqlText` 只读 `FROM` 后第一张表）。
  *   零迁移、零 GRANT 变更。
+ *
+ * ⑲ 2026-10-26 S3（社区帖子人工通过/驳回；迁移 0045 加 `decided_by`）：
+ *   `community/store-pg.ts` 的 INSERT 列清单、`ON CONFLICT DO UPDATE SET`、SELECT 列清单
+ *   各多一列 ⇒ 列要求 1861 → **1864**、已覆盖 1807 → **1810**（缺口仍 **0**：
+ *   `decided_by` 已在 `20-login-roles.sql` 的列级授权与 `90-assert-least-privilege.sql`
+ *   的期望清单内同步登记）。字面量与语句条数**不变**（同一条 INSERT/SELECT 内加列）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 20,
@@ -737,8 +747,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 15,
   referencedTables: 48,
-  columnRequirements: 1861,
-  coveredRequirements: 1807,
+  columnRequirements: 1864,
+  coveredRequirements: 1810,
   ledgerExemptions: 33,
   rowLockRequirements: 43,
   rowLockExemptions: 1,

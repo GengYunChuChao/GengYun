@@ -165,7 +165,7 @@ PostgreSQL **没有列级 `DELETE`**，而这三处是**物理删除**（集合�
 
 | 表 | 出处 | 语义 |
 | --- | --- | --- |
-| `community_likes` | `community/store-pg.ts:710` | 取消点赞：唯一键 `(user_id,target_type,target_id)` 就是「点过没点过」 |
+| `community_likes` | `community/store-pg.ts:714` | 取消点赞：唯一键 `(user_id,target_type,target_id)` 就是「点过没点过」 |
 | `community_idempotency` | `community/store-pg.ts:1104/1133/1162` | 过期占位清理、放弃认领 |
 | `ocr_idempotency` | `ocr/store-pg.ts:745/752` | 释放认领、过期清理 |
 

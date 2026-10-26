@@ -68,7 +68,7 @@ import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
 import { createMemorySynthesisStore, type SynthesisStore } from './tts/store.ts';
 // GY-I18 后台域（阶段 2 装配）：路由 + 阶段 1／1b 两个已合并的服务。
-import { registerAdminRoutes } from './routes/admin.ts';
+import { ADMIN_HTTP_OPERATION_IDS, registerAdminRoutes } from './routes/admin.ts';
 import { createAdminContentService } from './admin/service.ts';
 import type { AdminContentService, AdminContentServiceOptions } from './admin/service.ts';
 import { createAdminOpsService } from './admin/ops/service.ts';
@@ -80,6 +80,7 @@ import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
 import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
 import { createPostgresAdminContentStore } from './admin/ops/content-pg.ts';
 import { restrictAdminOpsToAccountsAuthority } from './admin/ops/accounts-only.ts';
+import { createPostReviewAdapter } from './admin/ops/community-posts.ts';
 import { createPostgresAdminJobPort } from './admin/ops/jobs-pg.ts';
 import { createAdminContentStore } from './admin/store.ts';
 import type { AdminContentStoreLike } from './admin/store.ts';
@@ -1511,7 +1512,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     if (realAccountAuthority === null && !flagsWired) {
       adminOpsService = failClosed.ops;
       // 内容域已放行时，仍 503 的面只剩作业/账号类 **＋ 审计读面**：按实测扣减（放行 24 条内容 CRUD；`listAuditEvents` 仍失闭、不计入放行 —— 见上方「裁决 A」）。
-      const stillClosed = 40 - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
+      const stillClosed = ADMIN_HTTP_OPERATION_IDS.length - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
       app.log.warn({ executionMode: config.executionMode }, `GY-I18 后台域：${reason} ⇒ ${stillClosed} 条后台路由一律 503 PROVIDER_UNAVAILABLE`);
     } else {
       adminOpsService = restrictAdminOpsToAccountsAuthority(
@@ -1532,6 +1533,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           // GY-I15 接线同上：端口仍按**同一份**社区 store 装配；`hidePost` 是否放行由上面的
           // `hidePostWired`（= `persistent === true`）决定，本行不改变判据。
           community: communityPostPortForAdmin,
+          // S3：人工通过/驳回。与下架**共用同一份**社区 store（同一条 CAS 原语、同一个事务），
+          // 并把社区事件端口一并注入 —— 审核结论要投影成 `moderation_result` 通知作者；
+          // 事件端口未接线时审核**仍可用**，只是 `notified: false`（通知是副作用，不回滚结论）。
+          postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }),
           flagEffects: adminInjection?.flagEffects,
         }),
         reason,
@@ -1543,6 +1548,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           hidePostWired: communityPostPortForAdmin.persistent === true,
           // `#18` S2 PR-2：管理员目录/权限读面（判据＝持久认证存储，见上方定义处注释）。
           administratorsWired: administratorsDirectory !== null,
+          // S3：审核面单独一道门，判据同下架（只有真实持久的社区端口才放行）。
+          postReviewWired: communityPostPortForAdmin.persistent === true,
         },
       );
       const released: string[] = [];
@@ -1564,6 +1571,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       if (communityPostPortForAdmin.persistent === true) {
         released.push('帖子下架');
         releasedRoutes += 1; // hidePost
+      }
+      // S3：人工通过/驳回（路由 2 条）。判据与下架同源：只有真实持久的社区端口才放行。
+      const postReviewWired = communityPostPortForAdmin.persistent === true;
+      if (postReviewWired) {
+        released.push('帖子人工审核（通过/驳回）');
+        releasedRoutes += 2; // approvePost / rejectPost
       }
       // R34：库内审计**读**面（迁移 0033 的只读函数）；审计**写**面仍未落库，不在此列。
       if (realAuditLogPort !== null) {
@@ -1594,10 +1607,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           hidePostWired: communityPostPortForAdmin.persistent === true,
           auditLogReadWired: realAuditLogPort !== null,
           administratorsWired: administratorsDirectory !== null,
+          postReviewWired,
           contentWired: adminContentWired,
           postsReadWired: adminPostReadPort !== undefined,
         },
-        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036；管理员目录/权限读面经 admin_accounts + admin_scopes 的既有列授权，闭集由迁移 0041 保证）；其余 ${40 - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036；管理员目录/权限读面经 admin_accounts + admin_scopes 的既有列授权，闭集由迁移 0041 保证；人工审核经 community_moderation_decisions.decided_by，迁移 0045）；其余 ${ADMIN_HTTP_OPERATION_IDS.length - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {
@@ -1623,6 +1637,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       jobPort: adminJobPort,
       // GY-I15 接线：后台 `hidePost` 用社区**同一份** store（默认已套下架观察器）。
       community: communityPostPortForAdmin,
+      // S3：stub 域同样接同一份社区 store + 社区事件端口（内存实现），
+      // 因此本地/单测里「通过/驳回」是**真的会改行**的，而不是一律 503；
+      // 真正的 fail-closed 在 real 域（`postReviewWired`）与端口缺失（`wired:false`）两处。
+      postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }),
       flagEffects: adminInjection?.flagEffects,
     });
     // GY-I14 ⇄ GY-I15 联动接线：后台下架生效后**驱动审核域下架**（整链缓存失效 + 该版本永久不可复活）。
