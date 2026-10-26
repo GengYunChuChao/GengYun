@@ -99,13 +99,13 @@ export const IF_MATCH_RE = /^"[1-9][0-9]*"$/;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** 失败类型 → 是否值得原样重试（同一 If-Match + 同一幂等键再发一次不会造成二次写入）。 */
+/** 失败类型 → **本地**闭集猜测；只在拿不到服务端声明时兜底（判据是 `serverAllowsRetry`，别拿它替代）。 */
 export function isRetriable(kind) {
   return kind === 'rate_limited' || kind === 'unavailable' || kind === 'network_error' || kind === 'in_progress';
 }
 
 function failure(kind, extra = {}) {
-  return { ok: false, kind, retriable: isRetriable(kind), status: null, code: null, message: '', ...extra };
+  return { ok: false, kind, retriable: isRetriable(kind), serverRetryable: null, status: null, code: null, message: '', ...extra };
 }
 
 async function readJson(response) {
@@ -395,7 +395,7 @@ export async function listJobs({ fetchImpl, baseUrl, token, cursor = null, limit
   return failure(classify(status, code), {
     status,
     code,
-    inContract: envelope?.inContract ?? false,
+    inContract: envelope?.inContract ?? false, serverRetryable: envelope === null ? false : envelope.retryable === true,
     requestUrl,
     retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
     message: envelope?.message || `请求失败（HTTP ${status}）`,
@@ -500,24 +500,41 @@ export async function cancelJob({
   return failure(classify(status, code), {
     status,
     code,
-    inContract: envelope?.inContract ?? false,
+    inContract: envelope?.inContract ?? false, serverRetryable: envelope === null ? false : envelope.retryable === true,
     requestUrl,
     retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
     message: envelope?.message || `请求失败（HTTP ${status}）`,
   });
 }
 
+/**
+ * 服务端声明优先：`serverRetryable` 是 boolean 就照它，`null`（根本没拿到响应）才回落到本地闭集。
+ *
+ * 与 `admin-audit-logs.mjs` 的 `serverAllowsRetry()` 同一套写法：「重试」按钮和「稍后重试」字样
+ * 只许出现在服务端确实允许自动重试的时候。`failure()` 里 `serverRetryable` 默认 `null` =
+ * 没有服务端响应可读；拿到了响应就由 `listJobs`／`cancelJob` 从 `ErrorBody.retryable` 填，
+ * 信封形状不符（`envelope === null`）按「不可自动重试」处理。
+ */
+export function serverAllowsRetry(result) {
+  if (typeof result?.serverRetryable === 'boolean') return result.serverRetryable;
+  return isRetriable(result?.kind) === true;
+}
+
 /** 失败对象 → 页面文案（标题/说明/色调/是否可重试/可执行动作）。不伪造成功。 */
 export function describeFailure(result) {
   if (!result || result.ok !== false) return null;
   const suffix = result.status === null || result.status === undefined ? '' : `（HTTP ${result.status}）`;
+  // 服务端声明优先：不可自动重试时既不给「重试」按钮，也不出现「稍后重试」字样。
+  const retry = serverAllowsRetry(result);
+  const wait =
+    result.retryAfterSeconds === null || result.retryAfterSeconds === undefined ? '' : `（约 ${result.retryAfterSeconds} 秒后）`;
   switch (result.kind) {
     case 'signed_out':
       return { title: '未登录或会话已过期', detail: `请重新登录后台${suffix}`, tone: 'error', retriable: false, action: 'sign_in' };
     case 'forbidden':
       return {
         title: '权限不足（scope 不足）',
-        detail: `后台会话有效，但读面要求 jobs:read、取消要求 jobs:cancel${suffix}`,
+        detail: `后台会话有效，但读面要求 ${JOBS_READ_SCOPE}、取消要求 ${JOBS_CANCEL_SCOPE}${suffix}；需由持有 scopes:write 的管理员补授后重新登录，或先退出登录`,
         tone: 'error',
         retriable: false,
         action: 'none',
@@ -553,25 +570,43 @@ export function describeFailure(result) {
     case 'in_progress':
       return {
         title: '同一请求仍在处理中',
-        detail: '服务端识别到同一幂等键的请求在飞：用同一幂等键重试是安全的',
+        detail: retry
+          ? '服务端识别到同一幂等键的请求在飞：用同一幂等键重试是安全的'
+          : '服务端识别到同一幂等键的请求在飞，且服务端声明不可自动重试（retryable=false）；请先重新读取确认结果',
         tone: 'stale',
-        retriable: true,
-        action: 'retry',
+        retriable: retry,
+        action: retry ? 'retry' : 'reload',
       };
     case 'not_found':
       return { title: '作业不存在', detail: `服务端没有该作业（可能已被清理）${suffix}`, tone: 'stale', retriable: false, action: 'reload' };
     case 'rate_limited':
       return {
         title: '请求过于频繁',
-        detail: result.retryAfterSeconds === null || result.retryAfterSeconds === undefined ? '稍后重试' : `约 ${result.retryAfterSeconds} 秒后重试`,
+        detail: retry
+          ? `后端限流，稍后重试${wait}${suffix}`
+          : `后端限流，且服务端声明不可自动重试（retryable=false），请稍后再确认状态${wait}${suffix}`,
         tone: 'stale',
-        retriable: true,
-        action: 'retry',
+        retriable: retry,
+        action: retry ? 'retry' : 'none',
       };
     case 'unavailable':
-      return { title: '服务暂不可用', detail: `稍后重试${suffix}`, tone: 'stale', retriable: true, action: 'retry' };
+      return {
+        title: '服务暂不可用',
+        detail: retry
+          ? `稍后重试${suffix}`
+          : `服务端声明不可自动重试（retryable=false）${suffix}；本页不伪造空页，请稍后再确认状态`,
+        tone: 'stale',
+        retriable: retry,
+        action: retry ? 'retry' : 'none',
+      };
     case 'network_error':
-      return { title: '网络请求失败', detail: result.message || '检查 API 基地址与开发代理后重试', tone: 'error', retriable: true, action: 'retry' };
+      return {
+        title: '网络请求失败',
+        detail: result.message || (retry ? '检查 API 基地址与开发代理后重试' : '检查 API 基地址与开发代理后再试'),
+        tone: 'error',
+        retriable: retry,
+        action: retry ? 'retry' : 'none',
+      };
     case 'invalid_response':
       // 与 isRetriable 闭集一致：重试同一次请求不会改变响应形状，不给「必然失败」的重试入口。
       return { title: '响应不符合契约', detail: result.message || '未渲染任何行（不猜测缺字段）', tone: 'error', retriable: false, action: 'none' };
@@ -794,8 +829,19 @@ export function describeJobs(state) {
   }
   if (state.phase === 'error') {
     const described = describeFailure(state.failure);
-    if (described === null) return { title: '读取失败', detail: '未取得服务端响应', tone: 'error', canRetry: true, action: 'reload' };
-    return { title: described.title, detail: described.detail, tone: described.tone, canRetry: described.retriable === true, action: described.action };
+    // errorCode 只透传服务端信封里的值，供「缺 scope」这类提示点名具体错误码，不做任何推断。
+    const errorCode = state.failure?.code ?? '';
+    if (described === null) {
+      return { title: '读取失败', detail: '未取得服务端响应', tone: 'error', canRetry: true, action: 'reload', errorCode };
+    }
+    return {
+      title: described.title,
+      detail: described.detail,
+      tone: described.tone,
+      canRetry: described.retriable === true,
+      action: described.action,
+      errorCode,
+    };
   }
   const notes = [];
   if (state.hasReadScope === false) notes.push('当前会话 scope 里没有 jobs:read（请求大概率 403）');
