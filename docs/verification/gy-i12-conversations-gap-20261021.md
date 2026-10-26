@@ -6,7 +6,7 @@
 
 理由（按权重排序）：
 
-1. **B 已经过时**：对话持久化**早已合入 main**。`services/api/db/migrations/0013_conversations.sql` 在 `cf2f5ed`（`feat(GY-I12): 服务端问答闭环 … (Refs #12) (#214)`）里，建了 `conversations` / `conversation_turns` / `conversation_answers` 三张表；`services/api/src/conversations/store-pg.ts:181` 已有 `createPostgresConversationStore(`，`:215` 是 `persistent: true`。迁移总数已是 **26**、最大号 `0026_speech_persistence.sql`，不存在「需要补 0027 建表」这件事。派单里 B 的前提（「若 PG 持久化未合入」）不成立。
+1. **B 已经过时**：对话持久化**早已合入 main**。`services/api/db/migrations/0013_conversations.sql` 在 `cf2f5ed`（`feat(GY-I12): 服务端问答闭环 … (Refs #12) (#214)`）里，建了 `conversations` / `conversation_turns` / `conversation_answers` 三张表；`services/api/src/conversations/store-pg.ts:182` 已有 `createPostgresConversationStore(`，`:216` 是 `persistent: true`。迁移总数已是 **26**、最大号 `0026_speech_persistence.sql`，不存在「需要补 0027 建表」这件事。派单里 B 的前提（「若 PG 持久化未合入」）不成立。
 2. **C 的前提（「真跑通单测」）在本仓当前事实下不可能自证**：本片缺的不是「一个可以替换的 stub 函数」，而是**整个仓库里没有任何语言模型提供者、没有任何 LLM 外发通道、也没有可用的真实凭据**：
    - `services/api/src` 内 `provider.ts` 只有 `ocr` / `recognitions` / `speech` 三个，**没有** `conversations/provider.ts`；全目录对 `llm` / `DEEPSEEK` / `ai-config` 的引用只有两处注释（`tts/live-ports.ts:156`、`moderation/provider.ts:5`）。
    - LLM 端点确实存在，但**只给手工验证工具**：`tools/ai-config.mjs:10` 的 `llm` allowlist 条目（`https://api.deepseek.com/chat/completions` / `deepseek-flash` / `DEEPSEEK_API_KEY`），而 `tools/verify-llm-live.mjs:1` 头部逐字写着 "Manual synthetic-input LLM live verification only; never used by application consumers."。
@@ -59,9 +59,9 @@
 | 段 | 状态 | 证据 |
 | --- | --- | --- |
 | 存储 | **已通（real 走 PG）** | `services/api/src/app.ts:1507-1511`：`real` + 有 `pool` ⇒ `createPostgresConversationStore(pool)`；非 `real` ⇒ 内存 store。`app.ts:1545-1550` 的 `conversationStore === null \|\| (config.executionMode === 'real' && !conversationStore.persistent) ? null : createConversationService({...})` 明确：**即使测试注入内存 store，real 下也不能绕过 fail-closed** |
-| 检索 | **已接真实读面（但依赖 `DATABASE_URL`）** | `app.ts:1346-1350` 的 `knowledgeQueryFace`（与 `/knowledge` 同一实例）→ `app.ts:1522-1528` `createKnowledgeRetrievalPort({ face: knowledgeQueryFace })`；无库时退到 `guard.ts:78-89` 的 `createUnwiredRetrievalPort`（`available:false`、`read()` 恒 `null` ⇒ 一律 `insufficient`） |
-| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:170`（原记 :152） `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:126` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:1666` 缺省启用（fail-closed） |
-| 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:250` `createAnswerGuard`，`:253` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1191`（原记 :1107） `createConversationGuard`（`app.ts:1568` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
+| 检索 | **已接真实读面（但依赖 `DATABASE_URL`）** | `app.ts:1803-1807` 的 `knowledgeQueryFace`（与 `/knowledge` 同一实例）→ `app.ts:2218-2224` `createKnowledgeRetrievalPort({ face: knowledgeQueryFace })`；无库时退到 `guard.ts:78-89` 的 `createUnwiredRetrievalPort`（`available:false`、`read()` 恒 `null` ⇒ 一律 `insufficient`） |
+| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:170`（原记 :152） `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:144` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:2254` 缺省启用（fail-closed） |
+| 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:293` `createAnswerGuard`，`:296` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1191`（原记 :1107） `createConversationGuard`（`app.ts:2229` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
 
 ### 3.2 唯一断点：生成侧「没有模型」
 
@@ -120,7 +120,7 @@ const candidate = composer.compose({
 
 | 项 | 事实 |
 | --- | --- |
-| 对话持久化 store | **已合入**：`services/api/src/conversations/store-pg.ts:181` `createPostgresConversationStore(`，`:215` `persistent: true` |
+| 对话持久化 store | **已合入**：`services/api/src/conversations/store-pg.ts:182` `createPostgresConversationStore(`，`:216` `persistent: true` |
 | 迁移文件 | `services/api/db/migrations/0013_conversations.sql`（commit `cf2f5ed`，PR #214） |
 | 建了哪些表 | `conversations`、`conversation_turns`、`conversation_answers`；`conversation_turns.conversation_id → conversations(id) ON DELETE CASCADE`、`conversation_answers.turn_id → conversation_turns(id) ON DELETE CASCADE` |
 | 关键约束 | `revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1)`；`citations` 有 `jsonb_array_length(citations) <= 20`；`dose_cards <= 10`；`status IN ('answered','insufficient','blocked')`；`check_state IN ('passed','blocked')` |

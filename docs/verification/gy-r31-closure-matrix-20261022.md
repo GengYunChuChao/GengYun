@@ -205,7 +205,7 @@ grep -cE '真正还缺代码的只[有]|真正缺代码只[有]' "$F"          #
 3. **`listExports` 的 blocker 把「导出与注销」捆在一起**，而注销这条腿已经实现（受理行落 PG、路由已装配）；只有导出腿仍空。
 4. **#19 的 real 模式 503 不是「没实现」，是刻意门**：`services/api/src/app.ts:1558-1565` 的注释直接写明「real 模式整域不接线——真实执行链路尚未实现」，`available: executionMode !== 'real'`。台账把「刻意门」写成了「无持久化」。
 5. **`listFlagAuditEvents` 的 blocker 不成立**（组 H）：四件都在，剩下的「人审隔离位」是 AdminJob 的字段问题。
-6. **#13 的「一行注入替身即到 200」不等于验收可过**：`services/api/src/tts/media.ts:82-84` 连替身端口都拒 `substitute===false` 的真实产物，所以 real 链的产物存储是真缺口，不是配置问题。
+6. **#13 的「一行注入替身即到 200」不等于验收可过**：`services/api/src/tts/media.ts:141-143` 连替身端口都拒 `substitute===false` 的真实产物，所以 real 链的产物存储是真缺口，不是配置问题。
 7. **`docs/verification` 里没有任何真机页**：#23 的证据现状不是「过期」而是「从未存在」。
 8. **STATE 盘的开放 PR 自报 19 张，`gh` 实测 26 张**（#449–#455 未被计入）——盘面落后于 gh，排期时以 `gh pr list` 为准。
 

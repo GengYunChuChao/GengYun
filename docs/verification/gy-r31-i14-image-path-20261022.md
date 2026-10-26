@@ -88,7 +88,7 @@ function modelLayerReachable(rule: RuleLayerRead): boolean {
 ### 3.2 联动端口只读转发 + 唯一读法
 
 - `services/api/src/community/moderation-link.ts:145-190`：`LinkImageReadiness { ready, state: 'wired'|'substitute'|'none'|'unknown', origin, source }` 与 `readImageModerationReadiness(link: unknown)`。**只有 `state === 'wired' && ready === true` 才算就绪**；没有联动端口、端口没提供读法、读法抛错、返回值形状不对，一律 `ready:false`（`source` 分别记 `no-link`／`no-reader`／`threw`／`shape`）。
-- `services/api/src/community/moderation-link.ts:275`（`ModerationDomainPort` 加可选 `capabilities?()`）、`:594-620`（`imageReadiness()` 实现，读 `capabilities()` 再走同一套判据、不缓存）、`:627`（挂到 `CommunityModerationLink`）。
+- `services/api/src/community/moderation-link.ts:243`（`ModerationDomainPort` 加可选 `capabilities?()`）、`:599-620`（`imageReadiness()` 实现，读 `capabilities()` 再走同一套判据、不缓存）、`:632`（挂到 `CommunityModerationLink`）。
 
 ### 3.3 发布前的与门（核心）
 

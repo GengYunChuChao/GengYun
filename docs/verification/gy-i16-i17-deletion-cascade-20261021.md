@@ -90,9 +90,9 @@
 
 | 域 | 表 | 注销时**真删**？ | 原语（`文件:行`） | 注册进注销链？ | 备份副本 scope | 持久审计 | 判定 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 收藏 #16 | `favorites` | **✅ 硬删** | `services/api/src/favorites/store-pg.ts:169-183`（`DELETE FROM favorites WHERE owner_id=$1::uuid RETURNING id`，与台账同事务） | ✅ `user-data-deletion.ts:435` | ✅ `favorite`（`packages/privacy/backup-copies.mjs:38-41`） | ❌ 仅进程内 | **真删 + 计数证据**；备份态恒 `pending`（G9） |
+| 收藏 #16 | `favorites` | **✅ 硬删** | `services/api/src/favorites/store-pg.ts:169-183`（`DELETE FROM favorites WHERE owner_id=$1::uuid RETURNING id`，与台账同事务） | ✅ `user-data-deletion.ts:902` | ✅ `favorite`（`packages/privacy/backup-copies.mjs:42-47`） | ❌ 仅进程内 | **真删 + 计数证据**；备份态恒 `pending`（G9） |
 | 收藏幂等 | `favorites_idempotency` | **✅ 硬删** | 同上 `:175-180`（前缀 `left(scope, len+1) = $1::text\|\|chr(10)`，**不是** LIKE 模糊匹配） | ✅（随收藏域同事务） | — | ❌ | **真删** |
-| 历史 #16 | `history` | **✅ 硬删** | `services/api/src/history/store-pg.ts:157-168`（同形） | ✅ `user-data-deletion.ts:436` | ✅ `history` | ❌ | **真删** |
+| 历史 #16 | `history` | **✅ 硬删** | `services/api/src/history/store-pg.ts:157-168`（同形） | ✅ `user-data-deletion.ts:903` | ✅ `history` | ❌ | **真删** |
 | 历史幂等 | `history_idempotency` | **✅ 硬删** | 同上 `:164-168` | ✅ | — | ❌ | **真删** |
 | 消息 #17 | `messages` | **❌ 一行不删** | **无**（`services/api/src/messages/store.ts:119` `MessagesStore` 只有 `insertMessage/getMessage/listMessagesByOwner/findByEventKey/markReadIfUnread/countUnread` + 幂等方法；`messages/store-pg.ts` 全文件无 `DELETE FROM messages`） | ❌ 不在闭集 | ❌ 无 scope | ❌ | **G1+G2**；HTTP 面无任何 `DELETE` 方法（`services/api/src/routes/messages.ts:43,53,59` 只有 GET×2 + PUT） |
 | 消息幂等 | `public.idempotency_keys`（共享表） | **❌ 只按 key 过期清** | `messages/store-pg.ts:260-263`、`:288-291` 只按 `(scope,key_hash)`；**无 owner 清理** | ❌ | — | ❌ | **G3**；表无 owner 列（`0008_auth_session.sql:46-58`），只能按 `scope` 前缀删（`scope` 由 `messages/service.ts:370` `idempotencyScope(user.userId, …)` 拼，口径同 0008:40） |
@@ -115,7 +115,7 @@
 | 问题 | 答案 | 证据 |
 | --- | --- | --- |
 | 表与状态机 | `pending_purge → purged / failed`；`purged` 必须 `payload='null'` + `purged_at` + 非空 `evidence_ref` | `0023_user_backup_copies.sql:34-90`，`:69-76` |
-| scope 闭集 | **只有 `favorite`、`history`** | `packages/privacy/backup-copies.mjs:38-41`；`scopeForBackupModule()` 对未登记模块**直接抛 `RangeError`**（`:56-61`） |
+| scope 闭集 | **只有 `favorite`、`history`** | `packages/privacy/backup-copies.mjs:42-47`；`scopeForBackupModule()` 对未登记模块**直接抛 `RangeError`**（`:56-61`） |
 | 清单来源 | 装配层硬编码两对 `[favorites, favoritesStore]`、`[history, historyStore]`；任一 store 无 `snapshotOwner` ⇒ 整体不写清单行 | `services/api/src/privacy/user-data-deletion.ts:272-288` |
 | favorites/history 的 payload 覆盖 | ✅ 有（`snapshotOwner` 只回行 id 与计数，不回正文） | `favorites/store-pg.ts:279-285`、`history/store-pg.ts:280-285` |
 | **messages 的 payload 覆盖** | **❌ 完全没有**：无 `snapshotOwner` ⇒ `backupCopySources()` 都可能整体返回 null；即便返回，scope 闭集也没有 `message` | 同上两处 |
@@ -158,7 +158,7 @@
 | **G5** | P0 | 会话域注销协调器**已建未驱动** | `conversations/cascade.ts:192-203`；`app.ts:1582-1583`、`:1600`（只 decorate）；注释 `:1598-1599` | 会话/轮次/回答**一行不删**；`conversations:online-purged` 证据不存在 |
 | **G6** | P1 | 会话域备份态硬编码 `pending` 且无 scope | `conversations/cascade.ts:149`、`:132` 注释（「属 GY-I19」） | 即便接线，回执也永远 `blocked/pending`（诚实，但不可完成） |
 | **G7** | P1 | 社区域**无清理原语、无注册** | `services/api/src/community/store-pg.ts`（零命中）；`0022:64,107,123,137` | 帖子/评论/点赞/举报行保留；`community_idempotency`（`0022:178`）同样保留 |
-| **G8** | P1 | 备份副本 scope 闭集只有两域 | `packages/privacy/backup-copies.mjs:38-41`、`:56-61`；`user-data-deletion.ts:272-288` | messages/conversations/community **没有副本清单行** ⇒ 30 天链对它们「无对象可清」（且不是"清完了"） |
+| **G8** | P1 | 备份副本 scope 闭集只有两域 | `packages/privacy/backup-copies.mjs:42-47`、`:56-61`；`user-data-deletion.ts:272-288` | messages/conversations/community **没有副本清单行** ⇒ 30 天链对它们「无对象可清」（且不是"清完了"） |
 | **G9** | P0 | 30 日到期清除**无驱动者**；再受理被 `G0003` 拒 | §4.1；`0016:112-114`；`deletion-aging.ts:66,68`（只算不执行） | 生产环境 `pending_purge` 行**永久滞留**；`backupState` 永远到不了 `completed` |
 | **G10** | P0 | `real` 模式注销 HTTP 面**整域 503** | `app.ts:1490-1495`（`available: config.executionMode !== 'real'`）；注释 `:1482-1489` | 真实环境**无法发起注销**——这是当前最诚实的实现（不假装删除），但也就是「真实注销清理」尚未成立的总闸 |
 | **G11** | P2 | 审计不持久 + 回执台账进程内 | `user-data-deletion.ts:381-388`（`auditLog` 数组）；`account-deletion.ts:58-61`（Map + 35 日 TTL，重启 404） | 清理行数/阻断原因**重启即失**；无法向用户或监管出示 30 日证据链 |
@@ -211,7 +211,7 @@
 > `snapshotOwner` 见 `messages/store-pg.ts:341`。本段列的 5 处既定断言没有放宽，而是按「只加强」改写（逐条见 `#397` 提交记录）。
 
 - `services/api/src/privacy/user-data-deletion.ts:63-67`（加 `MESSAGES_DELETION_MODULE = 'messages'` 与 `USER_DATA_DELETION_MODULES`）、`:272-288`（`backupCopySources()` 的 `pairs` 加一对）、`:394-395`（`registerModule`）。
-- `packages/privacy/backup-copies.mjs:38-41`（`BACKUP_COPY_SCOPES` 加 `message: 'message'`）；`:56-61` 不再抛。
+- `packages/privacy/backup-copies.mjs:42-47`（`BACKUP_COPY_SCOPES` 加 `message: 'message'`）；`:56-61` 不再抛。
 - `services/api/src/messages/store-pg.ts` 需补 `snapshotOwner(ownerId, client)`（只回行 id 与计数，照 `favorites/store-pg.ts:279-285`）。
 - **migration：不需要**。`0023:55-58` 的 `module`/`scope` 只是正则形状 CHECK（`^[a-z][a-z0-9_]{0,31}$`），`message` 合法。
 - **必须同步放宽的既定断言**（不改就会被闭集锁死）：`tests/unit/user-data-deletion.test.mjs:56-57`、`tests/unit/favorites-history-deletion-registration.test.mjs:128-129`、`tests/unit/account-deletion-receipts.test.mjs:107,125`、`tests/unit/gy-i22-secmatrix.test.mjs:789`、`tests/integration/account-deletion-http.mjs:273`。放宽方式建议：断言由「逐字 `['favorites','history']`」改为「等于 `USER_DATA_DELETION_MODULES` 且包含 `favorites`/`history`/`messages`」，仍保留闭集性。

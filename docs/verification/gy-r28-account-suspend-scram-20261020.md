@@ -43,7 +43,7 @@ exit **1**。日志 `before-red2-with-argv3.log`（48 行）：
 - `:19` `error: password authentication failed for user "gengyun_api_runtime"`；`:20` 起栈只落在 `pg-protocol` 的 `dist/parser.js`（第 306 行，第三方依赖；客户端解析层），**没有脚本帧**
 - `:30` `severity: 'FATAL'`、`:31` `code: '28P01'`、`:43` `file: 'auth.c'`、`:44` `line: '332'`、`:45` `routine: 'auth_failed'`
 
-**失败代码行**：`tests/integration/account-suspend-pg.mjs:200`（`await client.connect();`；连接串取自 `:199` 的 `runtimeUrl.href`）。
+**失败代码行**：`tests/integration/account-suspend-pg.mjs:341`（`await client.connect();`；连接串取自 `:340` 的 `runtimeUrl.href`）。
 **根因行**：`:179`
 
 ```js
@@ -215,7 +215,7 @@ gengyun_api_runtime,gengyun_auth_privacy,gengyun_ci_owner,gengyun_consent_grante
 
 ### 4.2 接线顺序：本脚本必须排在 `admin-accounts-read-pg` / `account-deletion-pg` **之后**
 
-那两个脚本对角色是**无条件** `CREATE ROLE`（`tests/integration/admin-accounts-read-pg.mjs:192`、`tests/integration/account-deletion-pg.mjs:381`），不容忍任何同名残留；本脚本对残留是「查 `pg_roles` 有则 ALTER/复用」（§2.2），能容忍它们留下的角色。因此接线时把本脚本排在这两条**之后**；若排在前且本脚本留下了角色（非超级 owner 场景、或本脚本中途失败），它们下一次必 `42710`。CI 的超级用户形态下本脚本清完不残留，顺序在功能上不敏感——但**不要依赖这个巧合**。
+那两个脚本对角色是**无条件** `CREATE ROLE`（`tests/integration/admin-accounts-read-pg.mjs:192`、`tests/integration/account-deletion-pg.mjs:523`），不容忍任何同名残留；本脚本对残留是「查 `pg_roles` 有则 ALTER/复用」（§2.2），能容忍它们留下的角色。因此接线时把本脚本排在这两条**之后**；若排在前且本脚本留下了角色（非超级 owner 场景、或本脚本中途失败），它们下一次必 `42710`。CI 的超级用户形态下本脚本清完不残留，顺序在功能上不敏感——但**不要依赖这个巧合**。
 
 ### 4.3 已知瑕疵：`[P] 复用…` 打在 `ALTER` 之前（失败时日志自相矛盾）
 

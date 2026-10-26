@@ -71,9 +71,9 @@
 | 2 | `services/api/src/config.ts:251-260` | real 模式逐项检查 `REQUIRED_WHEN_REAL`，缺项只登记字段名（不回显值） |
 | 3 | `services/api/src/app.ts:1598` | `mediaObjectStore = mediaObjectStoreOption ?? resolveMediaObjectStore({ executionMode })` —— **不传 `env`** |
 | 4 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore`：real → `readObjectStorageConfig(NO_STORAGE_ENV)`（null 原型空表）⇒ 必然 `unwired`；非 real → `substitute` |
-| 5 | `services/api/src/app.ts:1607-1621` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
-| 6 | `services/api/src/app.ts:2160` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
-| 7 | `services/api/src/app.ts:2305` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点（GY-R34-I19 树重取；此前后续片在 `app.ts` 上半部新增装配行，行号已上移） |
+| 5 | `services/api/src/app.ts:1723-1733` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
+| 6 | `services/api/src/app.ts:2305` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
+| 7 | `services/api/src/app.ts:2453` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点（GY-R34-I19 树重取；此前后续片在 `app.ts` 上半部新增装配行，行号已上移） |
 | 8 | `services/api/src/server.ts:27` | 生产入口 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval` |
 
 ### 3.2 stub 下一次上传的完整走向
@@ -152,7 +152,7 @@
                     └─→ 清理器驱动 + 删除链闭环
 ```
 
-**为什么不能先接真实外呼再补持久化**：`completeUpload` 在真实桶下会产生两个真实对象（`rawRef` + `derivativeRef`），而 `dropObjects`（`services/api/src/media/service.ts:667`）只在 `deleteObject===true` 时清引用，未确认删除时**必须**保留引用待重试。若状态只在内存，进程重启即丢失重试依据 ⇒ 违反「未确认删除不得丢重试依据」的隐私红线（[#6 证据 §11](gy-i06-private-media-20261014.md)）。
+**为什么不能先接真实外呼再补持久化**：`completeUpload` 在真实桶下会产生两个真实对象（`rawRef` + `derivativeRef`），而 `dropObjects`（`services/api/src/media/service.ts:722`）只在 `deleteObject===true` 时清引用，未确认删除时**必须**保留引用待重试。若状态只在内存，进程重启即丢失重试依据 ⇒ 违反「未确认删除不得丢重试依据」的隐私红线（[#6 证据 §11](gy-i06-private-media-20261014.md)）。
 
 ## 6 EXIF 清除的落点（字节级）
 

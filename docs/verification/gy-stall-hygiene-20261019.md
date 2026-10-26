@@ -69,7 +69,7 @@ model_layer=not_wired），一律不得发布","retryable":false,"details":[{"fi
 
 | 层 | 位置 | 说明 |
 | --- | --- | --- |
-| 报错文案 | `services/api/src/community/service.ts:452-454` | `422 INPUT_UNCERTAIN`「内容未获审核域放行…」 |
+| 报错文案 | `services/api/src/community/service.ts:511-513` | `422 INPUT_UNCERTAIN`「内容未获审核域放行…」 |
 | 判定处 | `services/api/src/community/moderation-link.ts:272` | `model_layer=not_wired`（本片未接线真模型，属事实陈述） |
 | 原因码来源 | `services/api/src/community/moderation-link.ts:284` | `tasks.flatMap(task => task.reason_codes)` ⇒ 即**审核域**任务的原因码 |
 | 预算判定 | `packages/moderation/engine.mjs:373-375` | `if (now - started > budgetMs) failClosed.push('RULE_TIMEOUT')` |
@@ -93,7 +93,7 @@ model_layer=not_wired），一律不得发布","retryable":false,"details":[{"fi
 - `createFrozenRuleModeration({ executionMode, ports, store, authors })`：与 `app.ts:766-777` 默认装配逐字段同形（`ports` 原样透传、非 `real` 时挂**同源**内容权威 `createCommunityContentAuthority({ store, authors })`、`real` 时同 `app.ts:773-774` 刻意**不给**权威），唯一差别是 `ruleOptions.clock` 常量化；
 - `frozenModerationInjection(options)`：`moderationInjection` 形状的 `{ service }` 包装。
 
-`authors` 无需共用实例：`services/api/src/community/authors.ts:27` 的投影是 `sha256(DISPLAY_DOMAIN\0userId)` 的确定性函数，另建实例与 app 内那一支等价。
+`authors` 无需共用实例：`services/api/src/community/authors.ts:83` 的投影是 `sha256(DISPLAY_DOMAIN\0userId)` 的确定性函数，另建实例与 app 内那一支等价。
 
 ### 4.2 四个文件的注入点
 
