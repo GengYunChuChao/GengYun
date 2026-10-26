@@ -1222,8 +1222,8 @@ async function main() {
       if (syncApp !== null) await syncApp.close().catch(() => {});
     }
 
-    console.log('[ALL PASS] 后台社区帖域真库臂：读面 / 单条 / 下架处置 / 失败隔离 全部读数通过');
-    detail(`读数 ${readings} 组（[M]/[L]/[D]/[H]/[F]）；库内审计**未取得**（appendAudit 落进程内台账，real 下 HTTP 读面 503）`);
+    console.log('[ALL PASS] 后台社区帖域真库臂：读面 / 单条 / 下架处置 / 人工通过驳回 / 失败隔离 全部读数通过');
+    detail(`读数 ${readings} 组（[M]/[L]/[D]/[H]/[F]/[R]）；库内审计**未取得**（appendAudit 落进程内台账，real 下 HTTP 读面 503）`);
   } finally {
     if (app !== null) await app.close().catch(() => {});
     if (pool !== null) await pool.end().catch(() => {});

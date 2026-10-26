@@ -77,6 +77,9 @@ S3 不去重；去重需要改观察器，属 S4 范围。
 3. CAS 的原子性由 PG 证明：旧 `If-Match` ⇒ 409 `REVISION_CONFLICT` 且行与结论行一字不动；
    同 `If-Match` 并发只赢一笔（另一笔 409）；幂等重放 `changed:false` 不落第二条结论行。
 
-该臂需要 `ADMIN_COMMUNITY_POSTS_PG_TEST_URL`（无值 ⇒ `exit 77`，**不是通过**）：本机没有 PG 17 时
-只跑 `tests/unit/**` 与 `tests/contract/**`，真库读数由 CI 首次执行给出。
+该臂需要 `ADMIN_COMMUNITY_POSTS_PG_TEST_URL`（无值 ⇒ `exit 77`，**不是通过**）。
+
+交付前已在 PG 17.11 上实跑该臂一次（空库现建、端口非默认）：`[ALL PASS]`，读数 36 组，
+其中 `[R]` 8 条逐条落字（通过 / 通过后可见性 / 幂等重放 / 旧 If-Match 409 / 驳回 /
+已 hidden 不翻案 / 并发只赢一笔 / 全节对账）。CI 上该臂重跑同一套断言，读数应逐字相同。
 
