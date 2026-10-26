@@ -88,7 +88,7 @@
 | AC3 | **已具备** | 零推送代码、零创建路由、事件类型按来源取值、无种子消息 |
 | AC4 | **部分** | 消息域四子句齐（读时重查／no-store／注销）；「收藏历史」属 #16 |
 | 提交证据①（事件幂等与对象权限回归） | **已具备** | 幂等：`services/api/db/migrations/0019_messages_persistence.sql:68` ＋ `tests/unit/messages-security.test.mjs:279`；权限：`tests/unit/messages-security.test.mjs:38`、`tests/unit/messages-http.test.mjs:88` |
-| 提交证据②（列表／未读／跳转端到端证据） | **部分** | 列表/未读：`tests/unit/messages-http.test.mjs:203`、`:227`；跳转：服务端 `tests/unit/messages-target-scope.test.mjs:62`、页面 `tests/unit/miniprogram-ui-auth-integration.test.mjs:420`／`:445`／`:469`；**真机端到端未取得**（§5-U1） |
+| 提交证据②（列表／未读／跳转端到端证据） | **部分** | 列表/未读：`tests/unit/messages-http.test.mjs:203`、`:227`；跳转：服务端 `tests/unit/messages-target-scope.test.mjs:62`、页面 `tests/unit/miniprogram-ui-auth-integration.test.mjs:434`／`:459`／`:485`；**真机端到端未取得**（§5-U1） |
 
 ---
 
@@ -249,7 +249,7 @@
 
 | 编号 | 未取得的东西 | 为什么本片拿不到（实测依据） | 若要取得需要什么 |
 | --- | --- | --- | --- |
-| U1 | **真机／微信开发者工具**走查：行点击跳转、pill 点按重试、角标展示 | 本机无微信编译器与真机交互环境；页面侧证据只到 Node 下对页面 JS/WXML 的逻辑断言（`tests/unit/miniprogram-ui-auth-integration.test.mjs:420` 起 3 例） | 一台真机或开发者工具 ＋ 可登录账号 ＋ 至少一条 `available` 的 `post` 消息（或合成 stub 模式走查），记录截图与 network |
+| U1 | **真机／微信开发者工具**走查：行点击跳转、pill 点按重试、角标展示 | 本机无微信编译器与真机交互环境；页面侧证据只到 Node 下对页面 JS/WXML 的逻辑断言（`tests/unit/miniprogram-ui-auth-integration.test.mjs:434`／`:459`／`:485` 3 例） | 一台真机或开发者工具 ＋ 可登录账号 ＋ 至少一条 `available` 的 `post` 消息（或合成 stub 模式走查），记录截图与 network |
 | U2 | **真 PG 的 `system` 事件形状** | `git grep -n "system" -- tests/integration/messages-pg.mjs` ⇒ **命中 0**（真库臂不覆盖 `system`）；`#485` 的 PG 证据只到**假池语句形状**（`$4::jsonb` 收 NULL、`read_at` 恒 NULL） | 扩写真库臂：插入 `type='system'`＋`target_ref=NULL` 行，回读 `target_ref IS NULL`、`read_at IS NULL`、唯一约束命中；或由 DBA 侧给 `select` 读数 |
 | U3 | **通知重试 outbox** | `git grep -ni outbox -- services/api/src/messages services/api/src/admin/ops/account-events.ts services/api/src/community/events.ts` ⇒ **命中 0**：投递是**同步、fail-open、不重试**（失败只留 `delivered:false`＋计数＋`warn`，见 `services/api/src/admin/ops/account-events.ts:205` 起与 `:222`）；而契约要求「outbox 与业务更新同事务，dispatcher 消费去重键」（`docs/architecture/state-contract.md:52`） | 要么实现 outbox＋dispatcher（迁移＋端口＋重试语义），要么由监工出具「消息域不走 outbox」的裁定并把口径写进契约；两者都不是本页能做的 |
 | U4 | **停用期间的不可读**（S1 消息读不到） | `#485` 已核：停用会撤会话且 `user.state !== 'active'` ⇒ `/messages` 401/403；**恢复没有 HTTP 路由**（`packages/contracts/operations.json` 只有 `suspendUser`）⇒ 没有「恢复后读到 S2」的端到端读数 | 先补恢复路由（属 #18 边界），再做「停用→恢复→收件箱读到两条」的端到端读数 |
