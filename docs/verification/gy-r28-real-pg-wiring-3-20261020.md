@@ -134,7 +134,7 @@ EXITCODE=1
    去清，要么给每个 step 独立集群（与现有共享 `services.postgres` 的形状冲突）；否则 `resetRoles()`
    永远删不掉，只能靠第 1 层兜住。
 3. `:179` 改成：运行时角色口令**从 argv[3] 的 URL 解出**再 `CREATE ROLE`（与
-   `admin-accounts-read-pg.mjs:190-192` 同手法）；或先 `CREATE ROLE` 再
+   `admin-accounts-read-pg.mjs:203-205` 同手法）；或先 `CREATE ROLE` 再
    `ALTER ROLE … PASSWORD '<argv[3] 的口令>'` 把两边对齐。
 
 ⛔ **不允许的修法**：放宽 `[A]`–`[F]` 断言、加 `--allow-skip`、在 workflow 里塞 `|| true`。
