@@ -7864,7 +7864,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SourceDraftEnvelope"
+                  "$ref": "#/components/schemas/SourcePublicationOutcomeEnvelope"
                 }
               }
             },
@@ -7971,7 +7971,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SourceDraftEnvelope"
+                  "$ref": "#/components/schemas/SourcePublicationOutcomeEnvelope"
                 }
               }
             },
@@ -8455,7 +8455,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KnowledgeDraftEnvelope"
+                  "$ref": "#/components/schemas/KnowledgePublicationOutcomeEnvelope"
                 }
               }
             },
@@ -8562,7 +8562,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/KnowledgeDraftEnvelope"
+                  "$ref": "#/components/schemas/KnowledgePublicationOutcomeEnvelope"
                 }
               }
             },
@@ -9046,7 +9046,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationDraftEnvelope"
+                  "$ref": "#/components/schemas/RegistrationPublicationOutcomeEnvelope"
                 }
               }
             },
@@ -9153,7 +9153,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegistrationDraftEnvelope"
+                  "$ref": "#/components/schemas/RegistrationPublicationOutcomeEnvelope"
                 }
               }
             },
@@ -9637,7 +9637,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RestrictionEnvelope"
+                  "$ref": "#/components/schemas/RestrictionPublicationOutcomeEnvelope"
                 }
               }
             },
@@ -9744,7 +9744,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RestrictionEnvelope"
+                  "$ref": "#/components/schemas/RestrictionPublicationOutcomeEnvelope"
                 }
               }
             },
@@ -17758,6 +17758,213 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/Restriction"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "SourcePublicationOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "source": {
+            "$ref": "#/components/schemas/SourceRef"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "本次调用是否真的改变了资料状态：true = 生命周期或当前生效修订发生了迁移（并写入一条审计）；false = 资料本来就在目标状态，本次调用没有改变任何状态、也没有写审计。注意：同一 `Idempotency-Key` 的重放按幂等规则原样返回首次响应体，此时 `changed` 反映的是首次调用是否改变了状态，而不是重放这一次。"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "source",
+          "visibility",
+          "changed"
+        ]
+      },
+      "KnowledgePublicationOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content": {
+            "$ref": "#/components/schemas/KnowledgeDraftInput"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "unverified",
+              "verified",
+              "rejected"
+            ]
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "本次调用是否真的改变了资料状态：true = 生命周期或当前生效修订发生了迁移（并写入一条审计）；false = 资料本来就在目标状态，本次调用没有改变任何状态、也没有写审计。注意：同一 `Idempotency-Key` 的重放按幂等规则原样返回首次响应体，此时 `changed` 反映的是首次调用是否改变了状态，而不是重放这一次。"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "content",
+          "visibility",
+          "review_status",
+          "changed"
+        ]
+      },
+      "RegistrationPublicationOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content": {
+            "$ref": "#/components/schemas/RegistrationDraftInput"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "unverified",
+              "verified",
+              "rejected"
+            ]
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "本次调用是否真的改变了资料状态：true = 生命周期或当前生效修订发生了迁移（并写入一条审计）；false = 资料本来就在目标状态，本次调用没有改变任何状态、也没有写审计。注意：同一 `Idempotency-Key` 的重放按幂等规则原样返回首次响应体，此时 `changed` 反映的是首次调用是否改变了状态，而不是重放这一次。"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "content",
+          "review_status",
+          "changed"
+        ]
+      },
+      "RestrictionPublicationOutcome": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content": {
+            "$ref": "#/components/schemas/RestrictionInput"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": [
+              "unverified",
+              "verified",
+              "rejected"
+            ]
+          },
+          "changed": {
+            "type": "boolean",
+            "description": "本次调用是否真的改变了资料状态：true = 生命周期或当前生效修订发生了迁移（并写入一条审计）；false = 资料本来就在目标状态，本次调用没有改变任何状态、也没有写审计。注意：同一 `Idempotency-Key` 的重放按幂等规则原样返回首次响应体，此时 `changed` 反映的是首次调用是否改变了状态，而不是重放这一次。"
+          }
+        },
+        "required": [
+          "id",
+          "revision",
+          "content",
+          "review_status",
+          "changed"
+        ]
+      },
+      "SourcePublicationOutcomeEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SourcePublicationOutcome"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "KnowledgePublicationOutcomeEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/KnowledgePublicationOutcome"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "RegistrationPublicationOutcomeEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RegistrationPublicationOutcome"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "RestrictionPublicationOutcomeEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/RestrictionPublicationOutcome"
           },
           "meta": {
             "$ref": "#/components/schemas/Meta"

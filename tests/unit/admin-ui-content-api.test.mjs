@@ -197,7 +197,7 @@ test('缺少幂等键 ⇒ 本地拒绝、不发请求', async () => {
 });
 
 test('发布 / 下架：路径后缀正确，且都必须带 If-Match', async () => {
-  const publishSpy = spy(() => jsonResponse(200, envelope(sourceDraft({ revision: 5, visibility: 'published' })), { etag: '"5"' }));
+  const publishSpy = spy(() => jsonResponse(200, envelope(sourceDraft({ revision: 5, visibility: 'published', changed: true })), { etag: '"5"' }));
   const published = await publishSource({
     fetchImpl: publishSpy.fetchImpl,
     baseUrl: '/api/v1',
@@ -208,11 +208,13 @@ test('发布 / 下架：路径后缀正确，且都必须带 If-Match', async ()
     body: { evidence_ref: 'ev-1', reason: '资料已核验' },
   });
   assert.equal(published.ok, true);
+  assert.equal(published.item.changed, true, '回执字段 changed 必须原样交给调用方');
+  assert.deepEqual(published.warnings, [], 'changed 在契约里（*PublicationOutcome），不是契约外字段');
   assert.equal(publishSpy.calls[0].url, `/api/v1/admin/sources/${UUID}/publish`);
   assert.equal(publishSpy.calls[0].init.method, 'POST');
   assert.equal(publishSpy.calls[0].init.headers['if-match'], '"4"');
 
-  const withdrawSpy = spy(() => jsonResponse(200, envelope(sourceDraft({ revision: 6, visibility: 'hidden' })), { etag: '"6"' }));
+  const withdrawSpy = spy(() => jsonResponse(200, envelope(sourceDraft({ revision: 6, visibility: 'hidden', changed: true })), { etag: '"6"' }));
   const withdrawn = await withdrawSource({
     fetchImpl: withdrawSpy.fetchImpl,
     baseUrl: '/api/v1',
@@ -230,6 +232,34 @@ test('发布 / 下架：路径后缀正确，且都必须带 If-Match', async ()
   assert.equal(noMatch.kind, 'missing_if_match');
 });
 
+test('发布回执缺 changed ⇒ 判畸形响应（不许把"没说有没有改"当成成功）', async () => {
+  const { fetchImpl } = spy(() => jsonResponse(200, envelope(sourceDraft({ revision: 5, visibility: 'published' })), { etag: '"5"' }));
+  const result = await publishSource({
+    fetchImpl,
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+    ifMatch: '"4"',
+    idempotencyKey: 'key-publish-04',
+    body: { evidence_ref: 'ev-1', reason: '资料已核验' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, 'invalid_response');
+  assert.equal(result.message.includes('$.changed'), true, result.message);
+
+  const wrongType = await publishSource({
+    fetchImpl: spy(() => jsonResponse(200, envelope(sourceDraft({ revision: 5, visibility: 'published', changed: 'yes' })), { etag: '"5"' })).fetchImpl,
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+    ifMatch: '"4"',
+    idempotencyKey: 'key-publish-05',
+    body: { evidence_ref: 'ev-1', reason: '资料已核验' },
+  });
+  assert.equal(wrongType.ok, false);
+  assert.equal(wrongType.message.includes('$.changed'), true, wrongType.message);
+});
+
 test('科普内容：列表 / 编辑 / 发布走 /admin/knowledge，形状按 KnowledgeDraft 校验', async () => {
   const listSpy = spy(() => jsonResponse(200, envelope({ items: [knowledgeDraft()], next_cursor: null })));
   const page = await listKnowledge({ fetchImpl: listSpy.fetchImpl, baseUrl: '/api/v1', token: TOKEN, limit: 5 });
@@ -243,7 +273,7 @@ test('科普内容：列表 / 编辑 / 发布走 /admin/knowledge，形状按 Kn
   assert.equal(editSpy.calls[0].init.method, 'PATCH');
   assert.equal(editSpy.calls[0].init.headers['if-match'], '"2"');
 
-  const publishSpy = spy(() => jsonResponse(200, envelope(knowledgeDraft({ revision: 4, visibility: 'published' })), { etag: '"4"' }));
+  const publishSpy = spy(() => jsonResponse(200, envelope(knowledgeDraft({ revision: 4, visibility: 'published', changed: true })), { etag: '"4"' }));
   const published = await publishKnowledge({ fetchImpl: publishSpy.fetchImpl, baseUrl: '/api/v1', token: TOKEN, id: UUID, ifMatch: '"3"', idempotencyKey: 'key-k-pub-01', body: { evidence_ref: 'ev-2', reason: '科普已核验' } });
   assert.equal(published.ok, true);
   assert.equal(publishSpy.calls[0].url, `/api/v1/admin/knowledge/${UUID}/publish`);
@@ -519,7 +549,7 @@ test('撤回：POST /admin/knowledge/{id}/withdraw，If-Match 与 Idempotency-Ke
   assert.deepEqual(paramNames(KNOWLEDGE_WITHDRAW).sort(), ['IdempotencyKey', 'IfMatch', 'id']);
   assert.equal(KNOWLEDGE_WITHDRAW['x-version-required'], true);
 
-  const { fetchImpl, calls } = spy(() => jsonResponse(200, envelope(knowledgeDraft({ revision: 5, visibility: 'hidden' })), { etag: '"5"' }));
+  const { fetchImpl, calls } = spy(() => jsonResponse(200, envelope(knowledgeDraft({ revision: 5, visibility: 'hidden', changed: true })), { etag: '"5"' }));
   const result = await withdrawKnowledge({
     fetchImpl,
     baseUrl: '/api/v1',
@@ -538,6 +568,7 @@ test('撤回：POST /admin/knowledge/{id}/withdraw，If-Match 与 Idempotency-Ke
   assert.equal(calls[0].init.headers['idempotency-key'], 'key-knowledge-withdraw-1');
   assertContractBody(calls[0].init.body, REASON_INPUT_SCHEMA, { reason: '科普内容与已核验来源不一致' }, 'ReasonInput');
   assert.equal(result.item.visibility, 'hidden');
+  assert.equal(result.item.changed, true, '撤回回执同样带 changed');
   assert.deepEqual(result.sentHeaders, { 'idempotency-key': 'key-knowledge-withdraw-1', 'if-match': '"4"' });
 });
 

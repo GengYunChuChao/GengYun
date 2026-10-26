@@ -2,7 +2,7 @@
  * GY-I18 阶段 1 · 契约一致性（**读契约原文比对，只读，不修改 packages/contracts/**）。
  *
  * 这一组用例回答的问题是：「实现真的按 openapi.json 办事，而不是按写手的记忆办事吗？」
- * - 字段镜像表与契约逐字相等（35 个 schema）；
+ * - 字段镜像表与契约逐字相等（44 个 schema）；
  * - 只做派单指定的 25 个 operationId（内容域），其余 20 个后台操作不由内容域实现；
  * - TargetRef.type 的临时映射只落在契约闭集内；
  * - 响应体与契约出参 schema 同形；
@@ -15,6 +15,7 @@ import {
   ALL_SPECS,
   ENVELOPE_SPECS,
   INPUT_SPECS,
+  OUTCOME_SPECS,
   OUTPUT_SPECS,
   PAGE_SPECS,
   TARGET_REF_TYPES,
@@ -120,8 +121,8 @@ const collectAdminPathOperations = () => collectOperations((entry) => entry.path
 const collectAdminScopeOperations = () =>
   collectOperations((entry) => entry.path.startsWith('/admin/') || entry.operationId === 'listKnowledge' || entry.operationId === 'getKnowledge');
 
-test('契约镜像表与 openapi.json 逐字相等（35 个 schema，逐字段比对）', () => {
-  const groups = [['INPUT_SPECS', INPUT_SPECS], ['OUTPUT_SPECS', OUTPUT_SPECS], ['PAGE_SPECS', PAGE_SPECS], ['ENVELOPE_SPECS', ENVELOPE_SPECS]];
+test('契约镜像表与 openapi.json 逐字相等（44 个 schema，逐字段比对）', () => {
+  const groups = [['INPUT_SPECS', INPUT_SPECS], ['OUTPUT_SPECS', OUTPUT_SPECS], ['OUTCOME_SPECS', OUTCOME_SPECS], ['PAGE_SPECS', PAGE_SPECS], ['ENVELOPE_SPECS', ENVELOPE_SPECS]];
   let compared = 0;
   for (const [groupName, group] of groups) {
     assert.equal(typeof group, 'object');
@@ -140,7 +141,7 @@ test('契约镜像表与 openapi.json 逐字相等（35 个 schema，逐字段�
     }
   }
   assert.equal(compared, Object.keys(ALL_SPECS).length, '镜像表必须被完整覆盖');
-  assert.equal(compared, 36, '本片镜像的 schema 数量应恰好 36（+ FlagReading）');
+  assert.equal(compared, 44, '本片镜像的 schema 数量应恰好 44（+ FlagReading + 四张 *PublicationOutcome 回执）');
   // 反向确认归一化没有把契约的关键约束吃掉。
   const draftInput = normalizeContractSchema(openapi.components.schemas.SourceDraftInput);
   assert.equal(draftInput.additionalProperties, false);
@@ -250,7 +251,9 @@ test('所有响应体与契约出参 schema 同形（含分页信封与审计投
     const fetched = await caseEntry.ops(service).get(context(), id);
     assertMatchesContract(caseEntry.descriptor.envelopeSchema, fetched.body, `${caseEntry.name} 详情响应`);
 
-    await publishRevision(caseEntry, service, id, 1);
+    const published = await publishRevision(caseEntry, service, id, 1);
+    // publish / withdraw 的 200 出参是「同族出参 + changed」的回执信封，也必须与契约同形。
+    assertMatchesContract(caseEntry.descriptor.outcomeEnvelopeSchema, published.body, `${caseEntry.name} 发布响应`);
     const listed = await caseEntry.ops(service).list(context());
     assertMatchesContract(caseEntry.descriptor.pageEnvelopeSchema, listed.body, `${caseEntry.name} 列表响应`);
     // 列表响应不得带 ETag（契约 headers 描述：列表无此头）。
@@ -259,7 +262,9 @@ test('所有响应体与契约出参 schema 同形（含分页信封与审计投
     // 单资源响应必须带强 ETag。
     assert.equal(fetched.headers['ETag'], '"1"');
 
-    await withdrawRevision(caseEntry, service, id, 1);
+    const withdrawn = await withdrawRevision(caseEntry, service, id, 1);
+    assertMatchesContract(caseEntry.descriptor.outcomeEnvelopeSchema, withdrawn.body, `${caseEntry.name} 撤回响应`);
+    assert.equal(withdrawn.body.data.changed, true, `${caseEntry.name} 真实撤回必须自报 changed: true`);
   }
   const audit = await service.listAuditEvents(context());
   assertMatchesContract('AuditEventPageEnvelope', audit.body);

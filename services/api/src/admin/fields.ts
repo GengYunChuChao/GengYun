@@ -2,15 +2,16 @@
  * 契约字段镜像表 + 通用校验器（GY-I18 阶段 1）。
  *
  * 设计立场：**契约是权威**。本文件是一份**手写镜像**，逐字段复刻
- * `packages/contracts/openapi.json` 中本片用到的 21 个 schema 的
+ * `packages/contracts/openapi.json` 中本片用到的 schema 的
  * `type / format / pattern / minLength / maxLength / minimum / enum / const /
  * items / minItems / maxItems / required / additionalProperties:false`。
  *
- * 镜像**不靠人眼保证**：`tests/unit/admin-contract-fields.test.mjs` 会读契约原文
+ * 镜像**不靠人眼保证**：`tests/unit/admin-contract-conformance.test.mjs` 会读契约原文
  * （只读，不修改），用同一套归一化规则把两边化成同一形状后 `deepStrictEqual`，
  * 任何字段、必填项、长度上限、闭集成员的漂移都会让该用例失败。
  *
- * 本片**不新增字段、不新增错误码、不修改 `packages/contracts/**`**。
+ * 本片**不新增错误码**。R64 新增的 `*PublicationOutcome` 四张回执 schema 是
+ * 「publish / withdraw 的 200 出参 = 同族出参 + `changed`」的镜像，随契约同步新增。
  */
 import { ApiError } from '../errors.ts';
 import type { FieldError } from '../errors.ts';
@@ -349,6 +350,28 @@ export const PAGE_SPECS = {
   AuditEventPage: pageOf('AuditEvent', OUTPUT_SPECS.AuditEvent),
 } as const satisfies Readonly<Record<string, FieldSpec>>;
 
+/**
+ * 生命周期回执：publish / withdraw 的 200 出参 = **同族出参字段原样 + `changed`**。
+ *
+ * `changed` 回答的是「这次调用到底有没有改变状态」：契约里原先只有社区审核裁决
+ * （`PostReviewOutcome.changed`）能表达，其余写操作一律回同形成功体。
+ */
+function outcomeOf(resourceSpec: FieldSpec): FieldSpec {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [...(resourceSpec.required ?? []), 'changed'],
+    properties: { ...resourceSpec.properties, changed: { type: 'boolean' } },
+  };
+}
+
+export const OUTCOME_SPECS = {
+  SourcePublicationOutcome: outcomeOf(OUTPUT_SPECS.SourceDraft),
+  KnowledgePublicationOutcome: outcomeOf(OUTPUT_SPECS.KnowledgeDraft),
+  RegistrationPublicationOutcome: outcomeOf(OUTPUT_SPECS.RegistrationDraft),
+  RestrictionPublicationOutcome: outcomeOf(OUTPUT_SPECS.Restriction),
+} as const satisfies Readonly<Record<string, FieldSpec>>;
+
 export const ENVELOPE_SPECS = {
   SourceDraftEnvelope: envelopeOf('SourceDraft'),
   SourceDraftPageEnvelope: envelopeOf('SourceDraftPage'),
@@ -357,6 +380,10 @@ export const ENVELOPE_SPECS = {
   RegistrationDraftEnvelope: envelopeOf('RegistrationDraft'),
   RegistrationDraftPageEnvelope: envelopeOf('RegistrationDraftPage'),
   RestrictionEnvelope: envelopeOf('Restriction'),
+  SourcePublicationOutcomeEnvelope: envelopeOf('SourcePublicationOutcome'),
+  KnowledgePublicationOutcomeEnvelope: envelopeOf('KnowledgePublicationOutcome'),
+  RegistrationPublicationOutcomeEnvelope: envelopeOf('RegistrationPublicationOutcome'),
+  RestrictionPublicationOutcomeEnvelope: envelopeOf('RestrictionPublicationOutcome'),
   RestrictionPageEnvelope: envelopeOf('RestrictionPage'),
   AuditEventPageEnvelope: envelopeOf('AuditEventPage'),
 } as const satisfies Readonly<Record<string, FieldSpec>>;
@@ -365,6 +392,7 @@ export const ENVELOPE_SPECS = {
 export const ALL_SPECS: Readonly<Record<string, FieldSpec>> = {
   ...INPUT_SPECS,
   ...OUTPUT_SPECS,
+  ...OUTCOME_SPECS,
   ...PAGE_SPECS,
   ...ENVELOPE_SPECS,
 };

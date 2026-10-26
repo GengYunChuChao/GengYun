@@ -205,7 +205,7 @@ test('写回执：成功/失败都带 request_id 与真实发出的写头；失�
   assert.equal(AUDIT_SCOPE_NOTE.includes('没有 audit event id'), true);
 });
 
-test('写回执的判定是三值、缺省一律 unknown：分不出首次生效与幂等 no-op 时只写「已受理」', () => {
+test('写回执的判定是三值、缺省一律 unknown：回执没带布尔 changed 时只写「已受理」', () => {
   // 映射：只有真 `true` / 真 `false` 才给出确定判定，其余（含 undefined）都是 unknown。
   assert.equal(changedVerdict(true), 'changed');
   assert.equal(changedVerdict(false), 'unchanged');

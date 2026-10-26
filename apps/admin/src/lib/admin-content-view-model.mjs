@@ -92,15 +92,17 @@ export const EFFECT_TONES = Object.freeze({
  * 注册资料族的固定页面说明。
  *
  * 与 sources／knowledge 的区别要写在页面上，否则操作员会以为「状态列丢了」：
- * 契约 `RegistrationDraft` 只有 `{id, revision, content, review_status}` —— **没有 visibility**，
- * 因此本族列表**没有状态列**，也**不推断**草稿／已发布／已撤回。
+ * 契约 `RegistrationDraft`（读面／草稿信封）只有 `{id, revision, content, review_status}` —— **没有
+ * visibility**，因此本族列表**没有状态列**，也**不推断**草稿／已发布／已撤回。
+ * 「本次是否真的改动」不再靠猜：publish／withdraw 的 200 是 `RegistrationPublicationOutcome`，
+ * 带必填布尔 `changed`（读面没有它，回执有），页面按回执真值如实显示。
  */
 export const REGISTRATION_NOTE =
-  '本族契约 RegistrationDraft 只有 id／revision／content／review_status：没有 visibility，也没有 changed。因此本页不显示「草稿／已发布／已撤回」状态，也不推断生命周期；发布与撤回的回执只表示「服务端受理了 200」，是否真的变更需按 request_id 查审计台账。';
+  '本族契约 RegistrationDraft 只有 id／revision／content／review_status：没有 visibility，因此本页不显示「草稿／已发布／已撤回」状态，也不推断生命周期。发布与撤回的 200 回执是 RegistrationPublicationOutcome，带必填布尔 changed：changed:true 表示服务端真的做了迁移并写了 accepted 审计，changed:false 表示内存幂等短路、本次未改动 —— 本页按回执真值如实显示，不猜。';
 
 /** 限制资料族的固定页面说明（同上，另加 effect 闭集与 conditions 必填口径）。 */
 export const RESTRICTION_NOTE =
-  '本族契约 Restriction 同样只有 id／revision／content／review_status（没有 visibility／changed）。conditions 不可为 null：crop_id 与 region_code 恒为必填；effect 是闭集 prohibited／restricted／unknown，页面不接受其它值。';
+  '本族契约 Restriction 同样只有 id／revision／content／review_status（没有 visibility）；发布与撤回的 200 回执是 RestrictionPublicationOutcome，带必填布尔 changed，页面按它如实区分「已改动／未改动」。conditions 不可为 null：crop_id 与 region_code 恒为必填；effect 是闭集 prohibited／restricted／unknown，页面不接受其它值。';
 
 /** 页面固定说明：可见性 ≠ 生命周期（避免把 private 一律读成「草稿」）。 */
 export const LIFECYCLE_NOTE =
@@ -546,7 +548,7 @@ export function registrationDetailView(item) {
       { label: '核验状态 review_status', value: label(REVIEW_LABELS, item.review_status) },
       { label: '当前修订（If-Match）', value: `"${item.revision}"` },
     ],
-    missing: ['可见性 visibility', '生命周期（草稿／已发布／已撤回）', 'changed', '创建时间', '更新时间', '操作者'],
+    missing: ['可见性 visibility', '生命周期（草稿／已发布／已撤回）', 'changed（读面没有；只在 publish／withdraw 的 200 回执里）', '创建时间', '更新时间', '操作者'],
     note: '契约 RegistrationDraft 只有 id／revision／content／review_status 四个顶层字段：本页不显示可见性、不显示发布历史，也不显示操作者。',
   };
 }
@@ -596,7 +598,7 @@ export function restrictionDetailView(item) {
       { label: '核验状态 review_status', value: label(REVIEW_LABELS, item.review_status) },
       { label: '当前修订（If-Match）', value: `"${item.revision}"` },
     ],
-    missing: ['可见性 visibility', '生命周期（草稿／已发布／已撤回）', 'changed', '创建时间', '更新时间', '操作者'],
+    missing: ['可见性 visibility', '生命周期（草稿／已发布／已撤回）', 'changed（读面没有；只在 publish／withdraw 的 200 回执里）', '创建时间', '更新时间', '操作者'],
     note: '契约 Restriction 只有 id／revision／content／review_status：本页不显示可见性与发布历史，操作者同样不在读面里。',
   };
 }
@@ -604,10 +606,12 @@ export function restrictionDetailView(item) {
 /**
  * `changed` 三值 → 回执用的**显式判定**（`'changed'` / `'unchanged'` / `'unknown'`）。
  *
- * 这里只做映射，**不做任何推断**：`null`／`undefined`（包括 publish／withdraw 这种契约
- * 无法区分「首次真的生效」与「服务端幂等 no-op（已是该状态）」的情形）一律 `'unknown'`。
- * 判定来源只有一个：`admin-content-api.mjs` 的 `deriveChanged()`（编辑比 revision 前进）；
- * ⛔ 不得按 HTTP 状态码硬推成功 —— 200 既可能是首次生效，也可能是 no-op。
+ * 这里只做映射，**不做任何推断**：`null`／`undefined`（拿不到契约真值的回执，例如 create 的 201、
+ * 或不合契约而缺 `changed` 的响应）一律 `'unknown'`。
+ * 判定来源只有一个：`admin-content-api.mjs` 的 `deriveChanged()` —— publish／withdraw 读回执的
+ * **必填**布尔 `changed`，edit 比 revision 前进。四族 publish／withdraw 的 200 都带 `changed`：
+ * 服务端真迁移分支 `true`（并写 accepted 审计）、内存幂等短路分支 `false`。
+ * ⛔ 不得按 HTTP 状态码硬推成功 —— 200 既可能是真迁移（changed:true），也可能是 no-op（changed:false）。
  */
 export function changedVerdict(changed) {
   if (changed === true) return 'changed';
@@ -618,11 +622,12 @@ export function changedVerdict(changed) {
 /**
  * 写回执标题。
  *
- * `'unknown'`（契约分不出首次生效与幂等 no-op）与 `'unchanged'`（编辑回传同一 revision，
- * 例如同一幂等键重放）都写「已受理」：这一族的写回执与 outcome 必须给同一个结论，否则同一屏
- * 会出现「写操作成功回执」+「已受理…changed 未知」两个相反的说法（B1）。`'unchanged'` 尤其
- * 不能写「成功」——请求确实被受理，但 revision 没动，宣称「成功」等于宣称改了东西。
- * 只有 `'changed'`（修订真的前进）才保留「成功回执」。
+ * 三值各有自己的说法，且与 outcome 文案（`admin-content-api.mjs` 的 `describeWriteOutcome`）共用
+ * 同一套判据，否则同一屏会出现「写操作成功回执」+「未改动」两个相反的说法（B1）：
+ * - `'unknown'`：回执没带布尔 `changed` ⇒ 只写「已受理」，不猜结论。
+ * - `'unchanged'`：`changed:false`（服务端内存幂等短路：资料本来就在目标状态，或同一幂等键重放）
+ *   ⇒ 写「已受理（本次未产生变更）」—— 请求确实被受理，但状态没动，宣称「成功」等于宣称改了东西。
+ * - `'changed'`：`changed:true`（真的做了迁移、审计已写）或 edit 的 revision 真的前进 ⇒ 才写「成功回执」。
  */
 export function receiptHeading(write, verdict = 'unknown') {
   if (write === null || write === undefined) return '';
@@ -638,7 +643,7 @@ export function receiptHeading(write, verdict = 'unknown') {
  *
  * 成功与失败都返回**同样的字段集**（失败多一条错误码），页面因此没有「静默成功」的分支。
  * `options.verdict` 是**调用方给出的显式判定**（见 `changedVerdict`／`receiptHeading`）；
- * 省略时按 `write.changed` 映射，缺省即 `'unknown'`（宁写「已受理」，不写「成功」）。
+ * 省略时按 `write.changed` 映射，缺省即 `'unknown'`（回执没给布尔 changed 就只写「已受理」，不猜）。
  */
 export function receiptLines(write, options = {}) {
   if (write === null || write === undefined) return [];

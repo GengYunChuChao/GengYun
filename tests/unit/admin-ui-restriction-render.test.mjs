@@ -213,9 +213,9 @@ test('新建草稿：POST /admin/restrictions，conditions 嵌成对象、formul
   }
 });
 
-test('详情 → 撤回：POST …/{id}/withdraw 带 If-Match "3"；200 同 revision 回放只写「已受理」+「未知」', async () => {
+test('详情 → 撤回：POST …/{id}/withdraw 带 If-Match "3"；200 带 changed:false（内存幂等短路）⇒ 整页写「未改动」不写「撤回成功」', async () => {
   const fetchImpl = fakeFetch(({ url, init }) => {
-    if (init.method === 'POST' && url.endsWith('/withdraw')) return jsonResponse(200, envelope(RESTRICTION), { etag: '"3"' });
+    if (init.method === 'POST' && url.endsWith('/withdraw')) return jsonResponse(200, envelope({ ...RESTRICTION, changed: false }), { etag: '"3"' });
     if (url === `${BASE_URL}/admin/restrictions/${ID}`) return jsonResponse(200, envelope(RESTRICTION), { etag: '"3"' });
     return jsonResponse(200, envelope({ items: [RESTRICTION], next_cursor: null }));
   });
@@ -253,18 +253,48 @@ test('详情 → 撤回：POST …/{id}/withdraw 带 If-Match "3"；200 同 revi
     assert.equal(withdrawCall.init.headers['if-match'], '"3"');
     assert.deepEqual(JSON.parse(withdrawCall.init.body), { reason: '限制已解除' });
 
+    // 契约真值 changed:false ⇒ outcome 写「未改动」，不写「撤回成功」。
     const outcomeText = textOf(requireTestId(container, 'outcome'));
-    assert.match(outcomeText, /服务端已受理/);
-    assert.match(outcomeText, /未知：本族契约没有 visibility／changed 字段/);
+    assert.match(outcomeText, /服务端未改动状态/);
+    assert.match(outcomeText, /未改动（changed:false/);
     assert.match(outcomeText, /已是该状态/);
     assert.doesNotMatch(outcomeText, /撤回成功|已成功/);
 
-    // B1（整页级）：changed 未知时写回执面板与 outcome 必须同一结论，整页不得出现「成功回执／结果 成功」。
+    // B1（整页级）：changed:false 时写回执面板与 outcome 必须同一结论，整页不得出现「成功回执／结果 成功」。
     const pageText = textOf(container);
-    assert.doesNotMatch(pageText, /成功回执|结果\s*成功/, 'withdraw 的 changed 未知：整页都不得出现「成功回执／结果 成功」');
-    assert.match(pageText, /写操作已受理回执/, '写回执面板标题必须是「写操作已受理回执」');
-    assert.match(pageText, /已受理（HTTP 200 · 是否生效未确认）/, '写回执的结果行必须写「已受理…是否生效未确认」');
-    assert.match(pageText, /服务端已受理/, '负面断言之外保留「已受理」正面断言');
+    assert.doesNotMatch(pageText, /成功回执|结果\s*成功/, 'changed:false ⇒ 整页都不得出现「成功回执／结果 成功」');
+    assert.match(pageText, /写操作已受理回执（本次未产生变更）/, '写回执面板标题必须点明本次未产生变更');
+    assert.match(pageText, /已受理（HTTP 200 · 本次未产生变更）/, '写回执的结果行必须写「已受理…本次未产生变更」');
+  } finally {
+    restore();
+    app.unmount();
+  }
+});
+
+test('详情 → 撤回：回执 changed:true（真迁移）⇒ 文案写「已撤回／已改动」，此时才出现「成功回执」', async () => {
+  const fetchImpl = fakeFetch(({ url, init }) => {
+    if (init.method === 'POST' && url.endsWith('/withdraw')) return jsonResponse(200, envelope({ ...RESTRICTION, changed: true }), { etag: '"3"' });
+    if (url === `${BASE_URL}/admin/restrictions/${ID}`) return jsonResponse(200, envelope(RESTRICTION), { etag: '"3"' });
+    return jsonResponse(200, envelope({ items: [RESTRICTION], next_cursor: null }));
+  });
+  const restore = withFetch(fetchImpl);
+  const { app, container } = await mountView();
+  try {
+    clickNode(findRow(container));
+    await settle();
+    clickNode(requireTestId(container, 'open-withdraw'));
+    await settle();
+    typeInto(container, 'field-reason', '限制已解除');
+    await settle();
+    submitForm(container, 'withdraw-form');
+    await settle();
+
+    const outcomeText = textOf(requireTestId(container, 'outcome'));
+    assert.match(outcomeText, /服务端已撤回/);
+    assert.match(outcomeText, /已改动（changed:true/);
+
+    const pageText = textOf(container);
+    assert.match(pageText, /写操作成功回执/, 'changed:true 才允许写「成功回执」');
   } finally {
     restore();
     app.unmount();

@@ -52,6 +52,7 @@ import {
   SOURCE_FAMILY,
   headRevision,
   isLivePublishedRevision,
+  projectOutcomeData,
   projectRevisionData,
   targetRefFor,
 } from './families.ts';
@@ -388,8 +389,9 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
         assertIfMatchMatches(expectedRevision, head.revision);
 
         // 幂等：head 已经是**当前生效的**已发布修订 ⇒ 不再迁移状态、不再记审计。
+        // 回执必须诚实：这一次调用什么都没改 ⇒ `changed: false`。
         if (isLivePublishedRevision(entity, head)) {
-          return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));
+          return singleResponse(context, executionMode, 200, projectOutcomeData(descriptor, entity, head, false), etagOf(head.revision));
         }
 
         // 发布门槛 fail-closed：对**库里当前修订内容**按契约全量复检。
@@ -457,7 +459,8 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           targetHint: await rangeHint(descriptor, entity, head.revision, head.content),
         });
 
-        return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));
+        // 真的迁移了状态（草稿/已撤回 → 已发布，或把生效修订推进到 head）⇒ `changed: true`。
+        return singleResponse(context, executionMode, 200, projectOutcomeData(descriptor, entity, head, true), etagOf(head.revision));
       },
     );
   }
@@ -484,9 +487,9 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
         const head = headRevision(entity);
         assertIfMatchMatches(expectedRevision, head.revision);
 
-        // 幂等：已撤回 ⇒ 不再迁移、不再记审计、也不报错。
+        // 幂等：已撤回 ⇒ 不再迁移、不再记审计、也不报错。这一次调用什么都没改 ⇒ `changed: false`。
         if (entity.lifecycle === 'withdrawn') {
-          return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));
+          return singleResponse(context, executionMode, 200, projectOutcomeData(descriptor, entity, head, false), etagOf(head.revision));
         }
         const publishedRevisionNumber = entity.publishedRevision;
         const published = publishedRevisionNumber === null
@@ -520,7 +523,8 @@ export function createAdminContentService(options: AdminContentServiceOptions): 
           targetHint: await rangeHint(descriptor, entity, head.revision, head.content),
         });
 
-        return singleResponse(context, executionMode, 200, projectRevisionData(descriptor, entity, head), etagOf(head.revision));
+        // 真的撤下了公开视图 ⇒ `changed: true`。
+        return singleResponse(context, executionMode, 200, projectOutcomeData(descriptor, entity, head, true), etagOf(head.revision));
       },
     );
   }

@@ -101,6 +101,9 @@ export interface FamilyDescriptor {
   readonly pageSchema: string;
   readonly envelopeSchema: string;
   readonly pageEnvelopeSchema: string;
+  /** publish / withdraw 的 200 出参 schema（同族出参字段 + `changed`）。 */
+  readonly outcomeSchema: string;
+  readonly outcomeEnvelopeSchema: string;
   /** 契约里的集合路径，用作幂等键域的一部分。 */
   readonly path: string;
   readonly readScope: 'sources:read';
@@ -127,6 +130,8 @@ export const SOURCE_FAMILY: FamilyDescriptor = {
   pageSchema: 'SourceDraftPage',
   envelopeSchema: 'SourceDraftEnvelope',
   pageEnvelopeSchema: 'SourceDraftPageEnvelope',
+  outcomeSchema: 'SourcePublicationOutcome',
+  outcomeEnvelopeSchema: 'SourcePublicationOutcomeEnvelope',
   path: '/admin/sources',
   readScope: 'sources:read',
   writeScope: 'sources:write',
@@ -151,6 +156,8 @@ export const KNOWLEDGE_FAMILY: FamilyDescriptor = {
   pageSchema: 'KnowledgeDraftPage',
   envelopeSchema: 'KnowledgeDraftEnvelope',
   pageEnvelopeSchema: 'KnowledgeDraftPageEnvelope',
+  outcomeSchema: 'KnowledgePublicationOutcome',
+  outcomeEnvelopeSchema: 'KnowledgePublicationOutcomeEnvelope',
   path: '/admin/knowledge',
   readScope: 'sources:read',
   writeScope: 'sources:write',
@@ -175,6 +182,8 @@ export const REGISTRATION_FAMILY: FamilyDescriptor = {
   pageSchema: 'RegistrationDraftPage',
   envelopeSchema: 'RegistrationDraftEnvelope',
   pageEnvelopeSchema: 'RegistrationDraftPageEnvelope',
+  outcomeSchema: 'RegistrationPublicationOutcome',
+  outcomeEnvelopeSchema: 'RegistrationPublicationOutcomeEnvelope',
   path: '/admin/registrations',
   readScope: 'sources:read',
   writeScope: 'sources:write',
@@ -199,6 +208,8 @@ export const RESTRICTION_FAMILY: FamilyDescriptor = {
   pageSchema: 'RestrictionPage',
   envelopeSchema: 'RestrictionEnvelope',
   pageEnvelopeSchema: 'RestrictionPageEnvelope',
+  outcomeSchema: 'RestrictionPublicationOutcome',
+  outcomeEnvelopeSchema: 'RestrictionPublicationOutcomeEnvelope',
   path: '/admin/restrictions',
   readScope: 'sources:read',
   writeScope: 'sources:write',
@@ -252,7 +263,7 @@ function validityFor(entity: StoredEntity<unknown>, revision: StoredRevision<unk
 
 /**
  * 把（实体, 某个修订）投影成契约响应体 `data`。
- * 只按契约字段输出；不新增字段。
+ * 只按契约字段输出；不新增字段（唯一例外是 `projectOutcomeData` 的回执字段）。
  *
  * **出口不可变**（返修 1）：凡承载存储内容的字段一律 `cloneDeep`，
  * 绝不把 `revision.content` 原对象交给调用方。
@@ -307,6 +318,23 @@ export function projectRevisionData(
     content: cloneDeep(revision.content),
     review_status: reviewStatus,
   };
+}
+
+/**
+ * publish / withdraw 的 200 出参：同族出参 + `changed`。
+ *
+ * `changed` 必须由调用方按**这一次调用实际发生了什么**传入：
+ * 幂等短路（资料本来就在目标状态、库里一字未动、也没写审计）⇒ `false`；
+ * 真的迁移了生命周期 / 推进了当前生效修订 ⇒ `true`。
+ * 这里不猜、不兜底：两种分支的取值由 `service.ts` 的两个分支各自给出。
+ */
+export function projectOutcomeData(
+  descriptor: FamilyDescriptor,
+  entity: StoredEntity<unknown>,
+  revision: StoredRevision<unknown>,
+  changed: boolean,
+): Record<string, unknown> {
+  return { ...projectRevisionData(descriptor, entity, revision), changed };
 }
 
 /** 构造审计用的 `TargetRef`（含 revision）。 */

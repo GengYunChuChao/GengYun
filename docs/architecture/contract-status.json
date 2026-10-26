@@ -2163,7 +2163,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "listAdminSources: async (ctx, query = {}) => listFamily(SOURCE_FAMILY, resolveContext(ctx, SOURCE_FAMILY.readScope), query),",
-          "lines": "587-587"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2207,7 +2207,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "createSourceDraft: (ctx, body) => createDraft(SOURCE_FAMILY, ctx, body),",
-          "lines": "588-588"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2251,7 +2251,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "getAdminSource: async (ctx, id) => getDraft(SOURCE_FAMILY, ctx, id),",
-          "lines": "589-589"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2295,7 +2295,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "editSourceDraft: (ctx, id, body) => editDraft(SOURCE_FAMILY, ctx, id, body),",
-          "lines": "590-590"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2343,7 +2343,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "publishSource: (ctx, id, body) => publishDraft(SOURCE_FAMILY, ctx, id, body),",
-          "lines": "591-591"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2387,7 +2387,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "withdrawSource: (ctx, id, body) => withdrawDraft(SOURCE_FAMILY, ctx, id, body),",
-          "lines": "592-592"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2431,7 +2431,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "listAdminKnowledge: async (ctx, query = {}) => listFamily(KNOWLEDGE_FAMILY, resolveContext(ctx, KNOWLEDGE_FAMILY.readScope), query),",
-          "lines": "594-594"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2475,7 +2475,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "createKnowledgeDraft: (ctx, body) => createDraft(KNOWLEDGE_FAMILY, ctx, body),",
-          "lines": "595-595"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2519,7 +2519,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "getAdminKnowledge: async (ctx, id) => getDraft(KNOWLEDGE_FAMILY, ctx, id),",
-          "lines": "596-596"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2563,7 +2563,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "editKnowledgeDraft: (ctx, id, body) => editDraft(KNOWLEDGE_FAMILY, ctx, id, body),",
-          "lines": "597-597"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2607,7 +2607,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "publishKnowledge: (ctx, id, body) => publishDraft(KNOWLEDGE_FAMILY, ctx, id, body),",
-          "lines": "598-598"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2655,7 +2655,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "withdrawKnowledge: (ctx, id, body) => withdrawDraft(KNOWLEDGE_FAMILY, ctx, id, body),",
-          "lines": "599-599"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2699,7 +2699,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "listAdminRegistration: async (ctx, query = {}) => listFamily(REGISTRATION_FAMILY, resolveContext(ctx, REGISTRATION_FAMILY.readScope), query),",
-          "lines": "601-601"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2743,7 +2743,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "createRegistrationDraft: (ctx, body) => createDraft(REGISTRATION_FAMILY, ctx, body),",
-          "lines": "602-602"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2787,7 +2787,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "getAdminRegistration: async (ctx, id) => getDraft(REGISTRATION_FAMILY, ctx, id),",
-          "lines": "603-603"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2831,7 +2831,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "editRegistrationDraft: (ctx, id, body) => editDraft(REGISTRATION_FAMILY, ctx, id, body),",
-          "lines": "604-604"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2875,7 +2875,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "publishRegistration: (ctx, id, body) => publishDraft(REGISTRATION_FAMILY, ctx, id, body),",
-          "lines": "605-605"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2919,7 +2919,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "withdrawRegistration: (ctx, id, body) => withdrawDraft(REGISTRATION_FAMILY, ctx, id, body),",
-          "lines": "606-606"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -2963,7 +2963,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "listAdminRestriction: async (ctx, query = {}) => listFamily(RESTRICTION_FAMILY, resolveContext(ctx, RESTRICTION_FAMILY.readScope), query),",
-          "lines": "608-608"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -3007,7 +3007,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "createRestrictionDraft: (ctx, body) => createDraft(RESTRICTION_FAMILY, ctx, body),",
-          "lines": "609-609"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -3051,7 +3051,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "getAdminRestriction: async (ctx, id) => getDraft(RESTRICTION_FAMILY, ctx, id),",
-          "lines": "610-610"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -3095,7 +3095,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "editRestrictionDraft: (ctx, id, body) => editDraft(RESTRICTION_FAMILY, ctx, id, body),",
-          "lines": "611-611"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -3139,7 +3139,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "publishRestriction: (ctx, id, body) => publishDraft(RESTRICTION_FAMILY, ctx, id, body),",
-          "lines": "612-612"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -3183,7 +3183,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "withdrawRestriction: (ctx, id, body) => withdrawDraft(RESTRICTION_FAMILY, ctx, id, body),",
-          "lines": "613-613"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
@@ -3859,7 +3859,7 @@
         {
           "path": "services/api/src/admin/service.ts",
           "symbol": "listAuditEvents: async (ctx, query = {}) => listAudit(resolveContext(ctx, 'audit:read'), query),",
-          "lines": "615-615"
+          "lines": "587-620"
         },
         {
           "test": "tests/unit/admin-contract-conformance.test.mjs",
