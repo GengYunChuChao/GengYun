@@ -24,12 +24,12 @@
  * ## `DOCUMENTED_EXCEPTIONS` 为什么今天还留着 2 个值
  * 它们是**已登记、未在本片修**的既有缺口，不是"合法自造码"：
  *   - `OBJECT_CANCELLED`（`ledger-pg.ts:699/722` 的取消墓碑、`in-flight.mjs:210`）：语义是「该对象版本
- *     已被取消，迟到的回调不得复活它」，与 `OBJECT_UNAVAILABLE`（对象不可用）不是一回事。它被两条
- *     **真库集成臂**钉死：`tests/integration/egress-ledger-pg.mjs:420`、
- *     `tests/integration/egress-revoke-race-pg.mjs:355`。语义与该片修的 `OBJECT_UNAVAILABLE`（对象不可用）
- *     不是一回事，改它必须在同一片里同步更新那两条真库臂并实跑；本片范围不含 ⇒ 留给后续切片。
+ *     已被取消，迟到的回调不得复活它」，与 `OBJECT_UNAVAILABLE`（对象不可用）不是一回事，硬改字面量
+ *     会把语义差掩盖掉。它目前**没有臂级断言**（两条真库臂 `egress-ledger-pg.mjs:420`、
+ *     `egress-revoke-race-pg.mjs:355` 断言的是 `CONSENT_WITHDRAWN`，`OBJECT_CANCELLED` 零命中），
+ *     正确出路是给它一个契约内专用码并补臂，属契约文件改动 ⇒ 本片范围不含，留给后续切片。
  *   - `CONSENT_WITHDRAWN`（`ledger-pg.ts:741` 的撤回 SQL、`ledger.mjs:478` 的内存账本）：
- *     语义是「因同意被撤回而失败」，比 `CONSENT_REQUIRED`（403，缺授权）更准；同样被上面两条真库臂
+ *     语义是「因同意被撤回而失败」，比 `CONSENT_REQUIRED`（403，缺授权）更准；被上面两条真库臂
  *     与 `tests/unit/account-deletion-egress-revoker-reachability.test.mjs:33` 的 SQL 正则钉住。
  *
  * ## 负控制（仓库外临时副本，原始失败行见交付报告）
