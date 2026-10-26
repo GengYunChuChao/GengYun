@@ -150,7 +150,10 @@ export function createMediaJobEgress(deps: {
     async abandonReservation(input) {
       if (!engaged) return;
       // 受理在预留之后失败：把预留置终态（active→failed），避免残留 reserved 行被后续任务误用。
-      await ledger.markFailed(input.exportId, { errorCode: 'ACCEPTANCE_FAILED' }).catch(() => {});
+      // 失败原因用契约既有码 `OBJECT_UNAVAILABLE`（409，确定性、重试不改）：这里的语义是
+      // 「这一行外发不成立/对象不可用」，与同文件「未登记即派发被拒」用同一个码。
+      // ⛔ 不得写自造码（原写法 `ACCEPTANCE_FAILED` 不在 `ERROR_CODES` 内，契约外）。
+      await ledger.markFailed(input.exportId, { errorCode: 'OBJECT_UNAVAILABLE' }).catch(() => {});
     },
 
     async cancelForJob(input) {
