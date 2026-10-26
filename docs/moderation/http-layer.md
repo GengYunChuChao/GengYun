@@ -130,9 +130,9 @@ prompt 模板、结论行、租约），与数据字典 `moderation_decisions` �
 - **AI 不授权限**：端口回报一律先过 `guardModelPort`（在 `provider.resolveModerationPorts` 内统一加守卫），
   回报里出现控制类字段 ⇒ 整条回报按**形状不可信**拒绝 ⇒ 隔离（不是静默丢弃，事故形态不消失）；
 - **不改来源**：`source_kind` 只能由资料/人工链路写；审核前后逐字节一致（用例断言）；
-- **不标"专家已审"**：首版**没有**人审队列、审核人、专家认证；`humanReviewQueue()` 恒为空态
-  （`human_review_state = 'under_construction'`，取自契约 `Home.human_review_state` 的 `const`）；
-- **公众票决不进入首版**：`publicVotingEnabled() === false`，且用例扫描冻结契约断言 **0** 票决字段/路径；
+- **不标"专家已审"**：当前**无实现**（人审队列、审核人、专家认证）；`humanReviewQueue()` 恒为空态，钉子已在
+  `tests/unit/admin-ui-review-state.test.mjs`／`tests/unit/admin-ops-governance.test.mjs` 条件化：路径存在时必须带 `x-scope`、响应不暴露他人票数、未接线时不得出现评审人/投票字段（`human_review_state = 'under_construction'` 不变，取自契约 `Home.human_review_state` 的 `const`）。⚠ 条件化**不是**"实现只差一处"：P3 落地时仍会红的反向钉至少 9 处（含源码 `wired: false`／`items: []` 两处**弱钉**、`REVIEW_CODE_ANCHORS` 的行区间锚、"routes 目录里没有 review 路由"、页面 `REVIEW_COUNT === 0`、审核入口空态四连），逐条见 `docs/architecture/acceptance-map.md` 的「反向钉残留清单」；
+- **公众票决不进入首版**：`publicVotingEnabled() === false`；若契约出现票决路径，开关仍须默认关闭且回执 `wired: false`（钉子见 `tests/moderation/http-callback.test.mjs`）；
 - 模型回报里的**自由文本**（`summary` 等）不进结果、不进日志、不落库（沿用模型层"丢弃全部自由文本"）。
 
 ## 8 执行模式（`real` 一律 fail-closed）
@@ -206,5 +206,5 @@ prompt 模板、结论行、租约），与数据字典 `moderation_decisions` �
 - 真实持久层（PG）与持久租约／队列：未接线；
 - 社区发布/编辑链与后台 `hidePost` 的实际接线：**未做**（跨线待派单）；
 - 200 风险 + 200 正常的独立评估：由 **GY-I21** 执行，**不在本片**；
-- 人审：未上线（空态）；公众票决：首版不进入；
+- 人审：未上线（空态）；公众票决：首版不进入（钉子已在 `tests/**` 条件化，见 §7）；
 - 部署与真机：未取得（见证据页"未取得项"）。
