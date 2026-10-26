@@ -9,23 +9,47 @@
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import {
+  createKnowledge,
   createSource,
   editCategory,
   editKnowledge,
   editSource,
   fetchAuditEventPage,
   findAuditEventsForRequest,
+  getKnowledge,
   getSource,
   listCategories,
   listKnowledge,
   listSources,
   publishKnowledge,
   publishSource,
+  withdrawKnowledge,
   withdrawSource,
   describeWriteFailure,
 } from '../../apps/admin/src/lib/admin-content-api.mjs';
+
+/**
+ * R64 追加：知识族「取详情 / 建草稿 / 撤回」三个动作的契约事实一律在运行期从
+ * `packages/contracts/openapi.json` 取（不是抄记忆）——
+ *   - `GET  /admin/knowledge/{id}`         `getAdminKnowledge`   scope `sources:read`；请求头只有 authorization/accept
+ *   - `POST /admin/knowledge`              `createKnowledgeDraft` scope `sources:write`；参数**只有** IdempotencyKey
+ *                                          （`x-version-required: false` ⇒ 创建不带 If-Match），请求体 `KnowledgeDraftInput`
+ *   - `POST /admin/knowledge/{id}/withdraw` `withdrawKnowledge`   scope `sources:write`；参数 IdempotencyKey + IfMatch，
+ *                                          请求体 `ReasonInput = { reason }`
+ */
+const CONTRACT = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'));
+const KNOWLEDGE_ITEM = CONTRACT.paths['/admin/knowledge/{id}'].get;
+const KNOWLEDGE_CREATE = CONTRACT.paths['/admin/knowledge'].post;
+const KNOWLEDGE_WITHDRAW = CONTRACT.paths['/admin/knowledge/{id}/withdraw'].post;
+const KNOWLEDGE_INPUT_SCHEMA = CONTRACT.components.schemas.KnowledgeDraftInput;
+const REASON_INPUT_SCHEMA = CONTRACT.components.schemas.ReasonInput;
+
+function paramNames(operation) {
+  return operation.parameters.map((parameter) => ('$ref' in parameter ? parameter.$ref.split('/').pop() : parameter.name));
+}
 
 const TOKEN = 'test-token-not-a-real-secret';
 const UUID = '00000000-0000-4000-8000-000000000001';
@@ -361,4 +385,192 @@ test('审计台账：按 request_id 筛选，找不到时如实报告扫描条�
   const page = await fetchAuditEventPage({ fetchImpl: async () => jsonResponse(200, envelope({ items: events, next_cursor: null })), baseUrl: '/api/v1', token: TOKEN });
   assert.equal(page.ok, true);
   assert.equal(page.requestUrl, '/api/v1/admin/audit-events?limit=20');
+});
+
+// ---------------------------------------------------------------------------
+// R64 追加：知识族的「取详情 / 建草稿 / 撤回」三个动作
+//
+// 补的理由：R64 侦察核出的「有 UI 入口但无 admin-ui 测试」里，`getAdminKnowledge`(:154)、
+// `createKnowledgeDraft`(:257)、`withdrawKnowledge`(:324) 三条知识族 operation 一条断言都没有
+// —— 上面既有的科普用例只覆盖列表／编辑／发布。三条动作的差别**恰好在请求头**：
+// 取详情无写头、建草稿只有幂等键、撤回两个头都要 ⇒ 混了就会 428/409/400。
+// ---------------------------------------------------------------------------
+
+/** 请求体键集合逐字等于给定契约 schema 的 properties（`additionalProperties:false`）。 */
+function assertContractBody(bodyText, schema, expected, schemaName) {
+  assert.equal(typeof bodyText, 'string', `${schemaName} 请求必须带 JSON body`);
+  const body = JSON.parse(bodyText);
+  assert.equal(schema.additionalProperties, false, `契约 ${schemaName} 必须是 additionalProperties:false`);
+  assert.deepEqual(
+    Object.keys(body).sort(),
+    Object.keys(schema.properties).sort(),
+    `请求体键集合必须恰为契约 ${schemaName}.properties，实测 ${JSON.stringify(Object.keys(body))}`,
+  );
+  assert.deepEqual(Object.keys(body).sort(), Object.keys(expected).sort(), `${schemaName} 必填字段必须都在`);
+  for (const [key, value] of Object.entries(expected)) {
+    assert.deepEqual(body[key], value, `${schemaName}.${key} 必须原样发出`);
+  }
+  return body;
+}
+
+test('知识详情：GET /admin/knowledge/{id}，只带 authorization/accept，ETag 与 request_id 原样返回', async () => {
+  // 契约前提：读面只有 id 一个路径参数，scope 是 sources:read。
+  assert.equal(KNOWLEDGE_ITEM.operationId, 'getAdminKnowledge');
+  assert.equal(KNOWLEDGE_ITEM['x-scope'], 'sources:read');
+  assert.deepEqual(paramNames(KNOWLEDGE_ITEM), ['id']);
+
+  const { fetchImpl, calls } = spy(() => jsonResponse(200, envelope(knowledgeDraft({ revision: 5 })), { etag: '"5"' }));
+  const result = await getKnowledge({ fetchImpl, baseUrl: '/api/v1', token: TOKEN, id: UUID });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `/api/v1/admin/knowledge/${UUID}`, '路径必须逐字等于契约 GET /admin/knowledge/{id}');
+  assert.equal(calls[0].init.method, 'GET');
+  assert.equal(calls[0].init.headers.authorization, `Bearer ${TOKEN}`);
+  assert.equal(calls[0].init.headers.accept, 'application/json');
+  assert.equal('if-match' in calls[0].init.headers, false, '读面不得带 If-Match');
+  assert.equal('idempotency-key' in calls[0].init.headers, false, '读面不得带 Idempotency-Key');
+  assert.equal('body' in calls[0].init, false, 'GET 不得带请求体');
+  assert.equal(result.etag, '"5"', '详情必须带回强 ETag（后续编辑/发布/撤回都靠它）');
+  assert.equal(result.requestId, '00000000-0000-4000-9000-000000000009');
+  assert.equal(result.item.revision, 5);
+  assert.equal(result.item.content.title, KNOWLEDGE_INPUT.title);
+});
+
+test('知识详情：id 为空串 ⇒ 本地拒绝不发请求；404 ⇒ not_found；缺 visibility ⇒ 判畸形响应', async () => {
+  const { fetchImpl, calls } = spy(() => jsonResponse(200, envelope(knowledgeDraft())));
+  const emptyId = await getKnowledge({ fetchImpl, baseUrl: '/api/v1', token: TOKEN, id: '' });
+  assert.equal(emptyId.ok, false, 'id="" 应本地拒绝');
+  assert.equal(emptyId.kind, 'invalid_request');
+  assert.equal(calls.length, 0, '没有 id 的请求不得发出去');
+
+  // ⚠ 源码缺陷（只报告、不修）：`fetchFamilyItem()` 不校验 `id` **缺失**——`id: null`/`undefined`
+  // 会被 `buildFamilyUrl()` 当成「没有 id」而拼出**集合** URL（`/admin/knowledge`），于是
+  // 「取详情」退化成一次列表 GET，再被 `validateKnowledgeDraft` 判成 invalid_response。
+  // 结果不算错（不会渲染假详情），但错误类别是 misleading 的。修好后本条应变红 ⇒ 改成断言 invalid_request。
+  const missingIdCalls = spy(() => jsonResponse(200, envelope({ items: [], next_cursor: null })));
+  const missingId = await getKnowledge({ fetchImpl: missingIdCalls.fetchImpl, baseUrl: '/api/v1', token: TOKEN, id: null });
+  assert.equal(missingIdCalls.calls[0].url, '/api/v1/admin/knowledge', '缺陷现状：缺 id 时退回集合 URL');
+  assert.equal(missingId.ok, false, '集合分页不得被当成详情渲染');
+  assert.equal(missingId.kind, 'invalid_response');
+
+  const missing = await getKnowledge({ fetchImpl: async () => errorResponse(404, 'NOT_FOUND'), baseUrl: '/api/v1', token: TOKEN, id: UUID });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.kind, 'not_found');
+
+  const { visibility, ...withoutVisibility } = knowledgeDraft();
+  assert.equal(visibility, 'private');
+  const malformed = await getKnowledge({
+    fetchImpl: async () => jsonResponse(200, envelope(withoutVisibility)),
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+  });
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.kind, 'invalid_response');
+  assert.match(malformed.message, /\$\.visibility/);
+});
+
+test('建草稿：POST /admin/knowledge 只带 Idempotency-Key（契约 x-version-required:false ⇒ 不带 If-Match），请求体恰为 KnowledgeDraftInput', async () => {
+  // 契约前提：创建面只有 IdempotencyKey 一个写头参数，且不要求版本。
+  assert.equal(KNOWLEDGE_CREATE.operationId, 'createKnowledgeDraft');
+  assert.equal(KNOWLEDGE_CREATE['x-scope'], 'sources:write');
+  assert.deepEqual(paramNames(KNOWLEDGE_CREATE), ['IdempotencyKey']);
+  assert.equal(KNOWLEDGE_CREATE['x-version-required'], false);
+
+  const { fetchImpl, calls } = spy(() => jsonResponse(201, envelope(knowledgeDraft({ revision: 1 })), { etag: '"1"' }));
+  const result = await createKnowledge({
+    fetchImpl,
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    idempotencyKey: 'key-knowledge-create-01',
+    body: KNOWLEDGE_INPUT,
+    // 故意多传 ifMatch：创建面不吃它，也**不得**把它发出去（服务端会当成版本要求的误用）。
+    ifMatch: '"9"',
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/v1/admin/knowledge', '建草稿是集合 POST，不是 /research_knowledge');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers['idempotency-key'], 'key-knowledge-create-01');
+  assert.equal('if-match' in calls[0].init.headers, false, '创建面不得带 If-Match（契约只声明 IdempotencyKey）');
+  assert.equal(calls[0].init.headers['content-type'], 'application/json');
+  assertContractBody(calls[0].init.body, KNOWLEDGE_INPUT_SCHEMA, KNOWLEDGE_INPUT, 'KnowledgeDraftInput');
+  assert.equal(result.status, 201);
+  assert.equal(result.etag, '"1"');
+  assert.deepEqual(result.sentHeaders, { 'idempotency-key': 'key-knowledge-create-01' }, '回显真实发出的头');
+  assert.equal(result.item.visibility, 'private', '新建草稿必须是 private（契约不自动发布）');
+  assert.equal(result.item.review_status, 'unverified');
+});
+
+test('建草稿：缺幂等键 ⇒ 本地拒绝不发请求（不让服务端先回 400）', async () => {
+  const { fetchImpl, calls } = spy(() => jsonResponse(201, envelope(knowledgeDraft())));
+  for (const idempotencyKey of [undefined, '', 'short', 'k'.repeat(129)]) {
+    const result = await createKnowledge({ fetchImpl, baseUrl: '/api/v1', token: TOKEN, idempotencyKey, body: KNOWLEDGE_INPUT });
+    assert.equal(result.ok, false, `idempotencyKey=${String(idempotencyKey)} 应本地拒绝`);
+    assert.equal(result.kind, 'missing_idempotency_key');
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('撤回：POST /admin/knowledge/{id}/withdraw，If-Match 与 Idempotency-Key 都真的发出，请求体恰为 ReasonInput', async () => {
+  // 契约前提：撤回是写面，要求版本（x-version-required: true）+ 两个写头。
+  assert.equal(KNOWLEDGE_WITHDRAW.operationId, 'withdrawKnowledge');
+  assert.equal(KNOWLEDGE_WITHDRAW['x-scope'], 'sources:write');
+  assert.deepEqual(paramNames(KNOWLEDGE_WITHDRAW).sort(), ['IdempotencyKey', 'IfMatch', 'id']);
+  assert.equal(KNOWLEDGE_WITHDRAW['x-version-required'], true);
+
+  const { fetchImpl, calls } = spy(() => jsonResponse(200, envelope(knowledgeDraft({ revision: 5, visibility: 'hidden' })), { etag: '"5"' }));
+  const result = await withdrawKnowledge({
+    fetchImpl,
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+    ifMatch: '"4"',
+    idempotencyKey: 'key-knowledge-withdraw-1',
+    body: { reason: '科普内容与已核验来源不一致' },
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `/api/v1/admin/knowledge/${UUID}/withdraw`, '撤回路径后缀必须是 /withdraw（不是 /hide 或 /unpublish）');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers['if-match'], '"4"', 'If-Match 必须来自已读到的 revision');
+  assert.notEqual(calls[0].init.headers['if-match'], '*');
+  assert.equal(calls[0].init.headers['idempotency-key'], 'key-knowledge-withdraw-1');
+  assertContractBody(calls[0].init.body, REASON_INPUT_SCHEMA, { reason: '科普内容与已核验来源不一致' }, 'ReasonInput');
+  assert.equal(result.item.visibility, 'hidden');
+  assert.deepEqual(result.sentHeaders, { 'idempotency-key': 'key-knowledge-withdraw-1', 'if-match': '"4"' });
+});
+
+test('撤回：缺 If-Match 或传 * ⇒ 本地拒绝不发请求；409 保留错误码与已发头', async () => {
+  const { fetchImpl, calls } = spy(() => jsonResponse(200, envelope(knowledgeDraft())));
+  for (const ifMatch of [undefined, null, '', '4', '*', '"0"']) {
+    const result = await withdrawKnowledge({
+      fetchImpl,
+      baseUrl: '/api/v1',
+      token: TOKEN,
+      id: UUID,
+      ifMatch,
+      idempotencyKey: 'key-knowledge-withdraw-2',
+      body: { reason: '科普内容与已核验来源不一致' },
+    });
+    assert.equal(result.ok, false, `ifMatch=${String(ifMatch)} 应本地拒绝`);
+    assert.equal(result.kind, 'missing_if_match');
+  }
+  assert.equal(calls.length, 0, '必然 428/400 的请求不许发出去');
+
+  const conflict = await withdrawKnowledge({
+    fetchImpl: async () => errorResponse(409, 'REVISION_CONFLICT'),
+    baseUrl: '/api/v1',
+    token: TOKEN,
+    id: UUID,
+    ifMatch: '"4"',
+    idempotencyKey: 'key-knowledge-withdraw-3',
+    body: { reason: '科普内容与已核验来源不一致' },
+  });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.kind, 'revision_conflict');
+  assert.equal(conflict.code, 'REVISION_CONFLICT');
+  assert.equal(conflict.status, 409);
+  assert.deepEqual(conflict.sentHeaders, { 'idempotency-key': 'key-knowledge-withdraw-3', 'if-match': '"4"' });
+  assert.equal(describeWriteFailure(conflict).action, 'reload_detail');
 });
