@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 派单前提（只登记未消费） | **不成立**：`services/` 下 14 处命中，其中 **4 条路由的 preHandler + 1 条媒体动态校验**是真校验 | §1.1 |
 | 是否有现成中间件可复用 | 有，且**已经接上了**：`consent({ purpose }) → requireConsent`，PG 侧单事务读取口 | §1.4、§2 |
-| 是否"接线即完事" | 接线早已完成；全仓**唯一**调用点带 `{ consent: consentGate }` | `services/api/src/app.ts:2332`（原记 `:1967`） |
+| 是否"接线即完事" | 接线早已完成；全仓**唯一**调用点带 `{ consent: consentGate }` | `services/api/src/app.ts:2497`（原记 `:1967` → `:2332`） |
 | 闸是否真有牙 | **有**：摘掉 `community.ts:406` 那一行 ⇒ 3 条负控制全红；恢复后 `sha256` 逐字节一致 | §4 |
 | 正控制 | 有授权 ⇒ 发帖 **201**、评论 **201**（响应原文见 §3） | §3 |
 | 负控制 | 无授权 ⇒ 发帖 **403 `CONSENT_REQUIRED`**、评论 **403**，`message` 指名缺的那一码 | §3 |
@@ -88,7 +88,7 @@ function postingPreHandlers(
 
 ## 2 为什么本片**不改**产品代码（三条，缺一不可）
 
-1. **没有"接线"这件事可做**：`registerCommunityRoutes` 全仓只有一个调用点（`services/api/src/app.ts:2332`（原记 `:1967`）），且**已经**传了 `{ consent: consentGate }`。再改就是改动一个已正确接好的调用。
+1. **没有"接线"这件事可做**：`registerCommunityRoutes` 全仓只有一个调用点（`services/api/src/app.ts:2497`（原记 `:1967` → `:2332`）），且**已经**传了 `{ consent: consentGate }`。再改就是改动一个已正确接好的调用。
 2. **派单点名要的正/负测试已经存在**，并且覆盖比派单要求更全：负控制①（无授权投稿 403 + 零写入）、①-补（无授权发评论 403）、②（撤回后再 403）、③（12 条非投稿入口不得 403）、正控制（201/200）、闸清单（4 条逐字）。见 `tests/unit/community-posting-consent.test.mjs:120,133,157,179,214,262`。**重写一遍是第二套实现。**
 3. **真正剩下的洞不是"少一道闸"，而是"闸有牙、钥匙不存在"**——要补它必然牵动①契约 schema（新只读 operation 或改 `ConsentPage` 形状）、②生产库政策数据（运维导入，非代码）、③客户端 UI。前两项正是本片红线（⛔ 不改契约 schema、⛔ 不新增迁移）。按派单第 2 条后半句，**放弃改动，只出裁定材料**。
 
@@ -98,7 +98,7 @@ function postingPreHandlers(
 
 ## 3 正/负响应原文（本片实测，逐字）
 
-探针：`buildApp` + `privacyInjection: { consent: <合成闸> }` + `communityInjection`（内存 store、合成 pass 端口），`APP_EXECUTION_MODE=stub`。走的就是 `app.ts:2332`（原记 `:1967`） 那一条真实装配路径（合流当前 main 后的行号；本片测量时在 `:1808`）。**探针跑完即删，不入库**（`git status` 无残留，见 §10）。
+探针：`buildApp` + `privacyInjection: { consent: <合成闸> }` + `communityInjection`（内存 store、合成 pass 端口），`APP_EXECUTION_MODE=stub`。走的就是 `app.ts:2497`（原记 `:1967` → `:2332`） 那一条真实装配路径（合流当前 main 后的行号；本片测量时在 `:1808`）。**探针跑完即删，不入库**（`git status` 无残留，见 §10）。
 
 ### A. 无授权发帖 ⇒ 403
 
@@ -278,8 +278,8 @@ git_dirty_lines=0
 
 | 记注 | 原文 | 本次实测 | 结论 |
 | --- | --- | --- | --- |
-| `docs/verification/gy-r28-w10-posting-consent-20261021.md:13` | 注入位置 `services/api/src/app.ts:1792` | 现为 `:2426` | **行号漂移**（#621 与本片 S3-a 各推移一次；S3-a 合并后复测，`registerCommunityRoutes(..., { consent: consentGate })` 在 `:2426`），结论不变 |
-| `docs/verification/gy-i14-community-chain-20261021.md:190` | 「`registerCommunityRoutes(...)`（`app.ts:1834`）**也不收** consent 参数」 | 现 `app.ts:2426`（S3-a 合并后复测） **收** `{ consent: consentGate }` | **已不成立**：该页记的是 #406 之前的状态 |
+| `docs/verification/gy-r28-w10-posting-consent-20261021.md:13` | 注入位置 `services/api/src/app.ts:1792` | 现为 `:2497` | **行号漂移**（#621 与本片 S3-a 各推移一次；S3-a 合并后复测，`registerCommunityRoutes(..., { consent: consentGate })` 在 `:2497`），结论不变 |
+| `docs/verification/gy-i14-community-chain-20261021.md:190` | 「`registerCommunityRoutes(...)`（`app.ts:1834`）**也不收** consent 参数」 | 现 `app.ts:2497`（S3-a 合并后复测） **收** `{ consent: consentGate }` | **已不成立**：该页记的是 #406 之前的状态 |
 | 本工作树草稿 `gy-r30-public-posting-gate-20261022.md`（上个代理，未跟踪） | §5.1 引 `profile.wxml:163`、`:162-176` | 实际注释在 `profile.wxml:162-165`，用户可见那句在 `:176` | **行号修正**；并补两处草稿未列的事实：`0009` 无生产种子（§5.2 #1）、`consent_policies` 缺行使授予自身 403（§5.2 #2）、`privacy_epochs` 只在授予路径创建（§5.2 #6）、以及 §5.3 的文案互斥 |
 | `docs/verification/gy-i04-login-chain-20261021.md` 的「口径决定」第 6 条 | 契约无用途政策读取面 | 仍然成立（`operations.json:95-115` 只有 3 条） | 未漂移 |
 
