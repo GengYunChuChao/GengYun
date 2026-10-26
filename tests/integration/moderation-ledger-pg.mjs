@@ -273,7 +273,9 @@ function forwardMergeNumbering() {
   const tmp = mkdtempSync(join(tmpdir(), 'gy-r29-migrations-'));
   try {
     // 真实目录里 0027 已在岗（合流后），这里整目录复制即可，不再需要夹具覆盖。
-    // 末项取树上的真实最大号：GY-S4 P1 的 0044（第三方删除持久化：
+    // 末项取树上的真实最大号：S3 片 A 的 0045（`community_moderation_decisions` 增 `decided_by uuid`——
+    // 人工 approve/reject 的施动者快照列，非外键、不加索引、不参与可见性判定，回滚件同名 `.down.sql`）、
+    // GY-S4 P1 的 0044（第三方删除持久化：
     // `public.record_third_party_deletion(...)` / `list_third_party_deletions(uuid)` 两条窄口径 SECURITY DEFINER
     // + 只授运行时 EXECUTE + 终态不可回退的单调守卫）、R18（`#18`）的 0043（把后台「作业取消」的审计从进程内存落到库：
     // 窄口径 SECURITY DEFINER + 只授运行时 EXECUTE）、
@@ -282,7 +284,7 @@ function forwardMergeNumbering() {
     // #19 片B 的 0038（删除回执 bearer 台账持久化）、#538 的 0036（后台内容/资料域落库）、#535 的 0035（R34 媒体行清理）、
     // #19 的 0031（在线清理证据）、#15 的 0032（举报者行级注销引用）、R34/#525 的 0033（管理端审计日志读函数）
     // 与 #19 的 0034（注销内容清理窄函数）都已在树上
-    // ⇒ 目录 `0001..0044` 里只剩 0037（#14）一条是在飞缺号、已在保留台账登记，其余**无缺号**；
+    // ⇒ 目录 `0001..0045` 里只剩 0037（#14）一条是在飞缺号、已在保留台账登记，其余**无缺号**；
     //   真实台账眼下就登记着这一条（31/33/36 号三条保留条目都已按各自的 remove_when 删除）。
     // ⛔ 不要再按号段裁剪或写死末项：那会让本臂随"下一支迁移"过期，而它判的是**判据本身**。
     for (const name of readdirSync(migrationsDir)) {
@@ -313,8 +315,8 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0044',
-      '合流树末项是 0044（#18 S4 片的 0044_third_party_deletion_persistence.sql，第三方删除持久化：record_third_party_deletion / list_third_party_deletions 两条 SECURITY DEFINER 函数 + 状态闭集 requested/confirmed/failed/unsupported + 终态不可回退的单调守卫，表本身只授运行时 EXECUTE；0043 是 #18 R18 片的 0043_admin_job_cancel_audit.sql，把后台「作业取消」审计从进程内存落到库：窄口径 SECURITY DEFINER 函数 record_admin_job_cancel_audit + REVOKE PUBLIC + 只授运行时 EXECUTE，回滚件 G0016；0042 是 GY-R37 片的 0042_favorites_history_target_type_conversation_turn.sql，`favorites`/`history` 的 `target_type` 闭集补第 17 值 `conversation_turn`；0041 是 #18 S2 片1 库层的 0041_admin_scope_write_authority.sql，后台管理员 scope 的唯一写路径 + 闭集约束；0040 是 GY-R35 的 0040_export_object_key_contract_backfill.sql，exports 台账 object_key 按契约回填 + 收 80；0039 是 #22 片C 的 deletion_state 增 cancelled；0038 是 #19 片B 的删除回执 bearer 台账持久化、0036 是 #538 的后台内容/资料域落库、0035 是 #535 的 R34 媒体行清理、0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上；仅 0037=#14 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0045',
+      '合流树末项是 0045（S3 片 A 的 0045_community_post_review_actor.sql，给 community_moderation_decisions 增 decided_by uuid——人工 approve/reject 的施动者快照列，非外键、不加索引、不参与可见性判定，回滚件同名 .down.sql；0044 是 #18 S4 片的 0044_third_party_deletion_persistence.sql，第三方删除持久化：record_third_party_deletion / list_third_party_deletions 两条 SECURITY DEFINER 函数 + 状态闭集 requested/confirmed/failed/unsupported + 终态不可回退的单调守卫，表本身只授运行时 EXECUTE；0043 是 #18 R18 片的 0043_admin_job_cancel_audit.sql，把后台「作业取消」审计从进程内存落到库：窄口径 SECURITY DEFINER 函数 record_admin_job_cancel_audit + REVOKE PUBLIC + 只授运行时 EXECUTE，回滚件 G0016；0042 是 GY-R37 片的 0042_favorites_history_target_type_conversation_turn.sql，`favorites`/`history` 的 `target_type` 闭集补第 17 值 `conversation_turn`；0041 是 #18 S2 片1 库层的 0041_admin_scope_write_authority.sql，后台管理员 scope 的唯一写路径 + 闭集约束；0040 是 GY-R35 的 0040_export_object_key_contract_backfill.sql，exports 台账 object_key 按契约回填 + 收 80；0039 是 #22 片C 的 deletion_state 增 cancelled；0038 是 #19 片B 的删除回执 bearer 台账持久化、0036 是 #538 的后台内容/资料域落库、0035 是 #535 的 R34 媒体行清理、0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上；仅 0037=#14 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,
