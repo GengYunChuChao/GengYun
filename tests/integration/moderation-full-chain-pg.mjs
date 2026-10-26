@@ -75,9 +75,9 @@ const HIDE_SCOPE = 'sources:write';
  *   0022 社区六表（含 `community_moderation_decisions`，读面 `effectiveState()` 每次都要它）；
  *   0028 审核判定台账（`moderation_decisions` + `moderation_withdrawals`——审核域台账落库）；
  *   0030 帖/评行级作者注销引用（`POST_COLUMNS` 含 `anonymized_author_ref`）；
- *   0032 举报者行内注销引用（与 0030 同口径）。
+ *   0032 举报者行内注销引用（与 0030 同口径）；0045 审核台账 `community_moderation_decisions.decided_by`（人工 approve/reject 的运营者快照列，台账 INSERT/SELECT 都写读它，缺它 ⇒ 42703 ⇒ 社区域 503）。
  */
-const MIGRATIONS = ['0001', '0022', '0028', '0030', '0032'];
+const MIGRATIONS = ['0001', '0022', '0028', '0030', '0032', '0045'];
 
 // ---------------------------------------------------------------------------
 // GY_PG_BIN 闸门（含 initdb/pg_ctl 的目录）；缺 ⇒ SKIP + 77
@@ -219,8 +219,8 @@ try {
   assert.equal(new Set(versions).size, versions.length, `迁移版本号重复：${versions.join(',')}`);
   for (const required of MIGRATIONS) assert.ok(versions.includes(required), `迁移目录必须含 ${required}`);
   const picked = discovered.filter((m) => MIGRATIONS.includes(m.version));
-  assert.deepEqual(picked.map((m) => m.version), MIGRATIONS, '本脚本依赖的五段迁移必须按目录序取到');
-  assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '五段迁移必须逐条真正应用');
+  assert.deepEqual(picked.map((m) => m.version), MIGRATIONS, '本脚本依赖的六段迁移必须按目录序取到');
+  assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '六段迁移必须逐条真正应用');
   assert.equal((await applyMigrations(owner, picked)).applied.length, 0, '重跑迁移必须是 no-op');
   say(`[M] PG ${version} · 迁移子集 ${MIGRATIONS.join('+')} 逐条 apply、二连跑 0 条（目录共 ${versions.length} 个迁移，版本号无重复）`);
 
