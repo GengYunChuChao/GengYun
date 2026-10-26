@@ -362,8 +362,24 @@ export function createAccountDeletionRequestService(input: {
  *
  * `null` 入参 ⇒ `null`（调用方据此 404 `NOT_FOUND`，绝不返回空壳 200）。
  */
-export function projectReceipt(receipt: Record<string, unknown> | null): Record<string, unknown> | null {
+export function projectReceipt(
+  receipt: Record<string, unknown> | null,
+  options: {
+    /**
+     * GY-R59（P2-b）· 第三方聚合态（`DeletionHandler.third_party_state` 的**现算值**）。
+     *
+     * 由路由在投影前算好传入：`third-party-deletion-projection.ts::thirdPartyReceiptState()`
+     * 的输出（`not_requested`/`requested`/`confirmed`/`failed`/`unsupported`／无接收方 `null`）。
+     * 不传（`undefined`）或传 `null` ⇒ **逐字沿用**处理器行上报的值（追加前行为；
+     * 既有调用点与既有断言因此零改动）。⛔ 不在这里自己读库/读端口：本函数保持纯形状归一。
+     */
+    thirdPartyState?: string | null;
+  } = {},
+): Record<string, unknown> | null {
   if (receipt === null) return null;
+  // 传入值优先，但同样过闭集白名单（`THIRD_PARTY_STATES`）：
+  // 调用方给了非法字符串 ⇒ 等价于"没给"，回落到处理器行上报的值，而不是把脏值透出契约。
+  const thirdPartyOverride = pickThirdParty(options.thirdPartyState) ?? null;
   const rawHandlers = Array.isArray(receipt['handlers']) ? receipt['handlers'] : [];
   const handlers = rawHandlers.map((row) => {
     const handler = (row ?? {}) as Record<string, unknown>;
@@ -372,7 +388,9 @@ export function projectReceipt(receipt: Record<string, unknown> | null): Record<
       online_state: pickState(handler['online_state']),
       // 备份阶段未接线时既有装配如实给 `pending`（不谎称完成）；本文件不覆盖它。
       backup_state: pickState(handler['backup_state']),
-      third_party_state: pickThirdParty(handler['third_party_state']),
+      // GY-R59（P2-b）：优先级＝**现算的第三方聚合态** > 处理器行上报的值。
+      // 写成 `??` 而不是 `||`：`''` 之类不会被当成"有值"；`null`/`undefined` 才回落。
+      third_party_state: thirdPartyOverride ?? pickThirdParty(handler['third_party_state']),
       error_code: pickErrorCode(handler['error_code']),
     };
   });

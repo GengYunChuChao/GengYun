@@ -39,7 +39,13 @@ import {
   type AccountDeletionRequestService,
   type DeletionReceiptRegistry,
 } from '../privacy/account-deletion.ts';
-import type { UserDataDeletionRegistry } from '../privacy/user-data-deletion.ts';
+import type { ThirdPartyDeletionReadPort, UserDataDeletionRegistry } from '../privacy/user-data-deletion.ts';
+// GY-R59（P2-b）：回执的 `third_party_state` 由**现算的**第三方投影给出（设计 §1.2 #10）。
+import {
+  thirdPartyReceiptState,
+  toProjectionRows,
+  type ThirdPartyProjectionSource,
+} from '../privacy/third-party-deletion-projection.ts';
 import { buildMeta, runIdempotent } from './support.ts';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
@@ -71,6 +77,26 @@ export interface AccountDeletionRoutesDeps {
   deletion: UserDataDeletionRegistry | null;
   /** 幂等台账（`app.authService`）。 */
   authService: AuthService;
+  /**
+   * GY-R59（P2-b）· 回执第三方聚合态的**只读来源**（`app.thirdPartyDeletion` 同源）。
+   *
+   * `null` ⇒ 未装配：回执的 `third_party_state` 逐字沿用处理器行上报的值（追加前行为），
+   * ⛔ 不写成 `not_requested`（"没有来源"不等于"没有第三方接收方"）。
+   * 来源抛错 ⇒ 该字段降级为 `null`（见 `thirdPartyStateOf()`），**不影响回执其余字段**。
+   */
+  thirdParty: ThirdPartyProjectionSource | null;
+  /**
+   * GY-R59（P2-b）· 读侧端口（**当次请求内预取一次**）。可选：缺省 `undefined` ⇒ 只用上面的同步
+   * `thirdParty`（既有调用点不必改）。
+   *
+   * 有了它，`real` 模式下真库里的接收方行才进得了回执（设计 §2 ④ 的症状）：端口是**异步**的，
+   * 同步投影源表达不了；所以先 `await port.listThirdPartyDeletions(requestId)` 取行，把行塞进
+   * 一个同步闭包 source 再交给投影——⛔ 不改端口类型、⛔ 不把端口当同步源直接用。
+   *
+   * 端口回 `null`（未接线）或抛错（`real` 无池 / 真库故障）⇒ 回退上面的 `thirdParty`（如果有），
+   * 仍然取不到就 `null`：第三方只是回执的一个字段，⛔ 不因它 500。
+   */
+  thirdPartyRows?: ThirdPartyDeletionReadPort | null;
   now: () => Date;
 }
 
@@ -97,6 +123,68 @@ interface WiredDeletion {
   service: AccountDeletionRequestService;
   receipts: DeletionReceiptRegistry;
   deletion: UserDataDeletionRegistry;
+}
+
+/**
+ * 回执的第三方聚合态（契约 `DeletionHandler.third_party_state`，GY-R59 / P2-b 设计 §1.2 #10）。
+ *
+ * 四条硬约束（写在这里而不是散在调用点）：
+ * 1. **不得因第三方投影异常让回执 500**：任何异常（端口读失败/来源未装配/行形状不可信/
+ *    `requested_at` 不可解析/时钟异常）⇒ 本字段 `null`，回执的其余字段照常返回；
+ * 2. `null` 的语义是「**没有可信的第三方结论**」（契约允许 `null`；`third-party-deletion-projection.ts`
+ *    逐字："无接收方 ⇒ null，不得用 confirmed 表示"）——⛔ 不写成 `not_requested`；
+ * 3. **不传 `subject`/`ownerOf`**：本 operation 的归属已由**回执 bearer**核过
+ *    （`resolveRequestId(token) === id`，见上方 `boundId !== id` 那段），再让投影按主体
+ *    fail-closed 只会把已验证的请求误判成 `null`，等于把"核过了"降级成"不知道"；
+ * 4. **当次请求内只取一次行**（`thirdPartyRowsFor()`），取到的行装进同步闭包 source——
+ *    端口是异步的、投影源是同步的，中间这一层就是"端口行真的进得了回执"的全部机关。
+ */
+async function thirdPartyStateOf(
+  deps: AccountDeletionRoutesDeps,
+  requestId: string,
+  receipt: Record<string, unknown> | null,
+): Promise<string | null> {
+  if (receipt === null) return null;
+  const rows = await thirdPartyRowsFor(deps.thirdPartyRows ?? null, requestId);
+  // 端口没给行（未接线/读失败）⇒ 退回落装配的同步来源（与回执同一本账）；再没有就 null。
+  const source: ThirdPartyProjectionSource | null =
+    rows === null ? deps.thirdParty : { thirdPartyStatuses: () => toProjectionRows(rows) };
+  if (source === null) return null;
+  try {
+    return thirdPartyReceiptState({
+      source,
+      requestId,
+      requestedAt: receipt['requested_at'] as string,
+      // 窗口判定（7/30 日）必须与回执用**同一个时钟**：投影的 `now` 缺省取系统时间，
+      // 一旦装配层的时钟可注入（测试、时间旅行、审计重放）就会与 `requested_at` 错位，
+      // 把新鲜请求判成「requestedAt 晚于 now ⇒ 时间线不可信」而整段 fail-closed。
+      now: deps.now(),
+    });
+  } catch {
+    // 第三方只是回执的**一个字段**：异常降级为 `null`，其余字段照常返回（不是 500）。
+    return null;
+  }
+}
+
+/**
+ * 读侧端口取行（`null` = 没有持久行可读；⛔ 不是"查过了没有接收方"）。
+ *
+ * 端口抛错（`real` 无池的 explicit-unavailable 端口、或真库故障）在这里**就地降级为 `null`**：
+ * 回执的第三方字段不得把整个回执打成 500（本文件 `thirdPartyStateOf()` 约束 1）。
+ * 注意这与 `user-data-deletion.ts::thirdPartyRowsOf()` 的口径**不同且刻意不同**：那条路是
+ * `refreshBackupStates()`/`refreshOnlineStates()` 的 blocked 复位判定，读不到就**不许**复位
+ * （异常冒泡 ⇒ 503），两处的取舍各自成立。
+ */
+async function thirdPartyRowsFor(
+  port: ThirdPartyDeletionReadPort | null,
+  requestId: string,
+): Promise<ReadonlyArray<unknown> | null> {
+  if (port === null) return null;
+  try {
+    return await port.listThirdPartyDeletions(requestId);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -165,7 +253,12 @@ export function registerAccountDeletionRoutes(
             await wired.deletion.refreshBackupStates?.(deletionId);
           }
           const receipt = deletionId === null ? null : wired.deletion.receipt(deletionId);
-          const projected = projectReceipt(receipt);
+          // GY-R59（P2-b）：202 的回执同样按**现算的**第三方聚合态投影
+          //（来源异常 ⇒ 该字段 null，不因此把整个 202 打成 500）。
+          const projected = projectReceipt(receipt, {
+            thirdPartyState:
+              deletionId === null ? null : await thirdPartyStateOf(deps, deletionId, receipt),
+          });
           if (deletionId === null || projected === null) {
             // 台账引用的删除请求已不可达（进程内台账随重启清空）⇒ 如实 409，不编造回执。
             throw new ApiError('OBJECT_UNAVAILABLE', '注销删除请求已不可达（进程内台账已失效）');
@@ -205,11 +298,21 @@ export function registerAccountDeletionRoutes(
       // GY-R32（#19 片B）：回执的**在线态**先按落库证据推导（迁移 0031），再推导备份态 ——
       // 备份判定只接受"在线已完成"的模块，顺序反了会把刚清完的请求读成 blocked。
       // 两者都只读、都放在 `receipt()` 之前（`receipt()` 内部会按最新列做整体完成判定并写 revision）。
-      await wired.deletion.refreshOnlineStates?.(id);
-      // GY-R28 W6（G5/G11）：回执的备份态由**真实副本行**推导（只读），不照抄上次执行结论。
-      await wired.deletion.refreshBackupStates?.(id);
+      // 两条推导都可能读**端口**（0031 在线证据 / R59 第三方删除）。端口不可用时领域层**刻意抛出**
+      // （「读不到就保持 blocked」，⛔ 不静默当成"没有接收方"）⇒ 这里翻成契约错误码：
+      // 带契约码的异常 ⇒ 503 `PROVIDER_UNAVAILABLE`（与 POST 受理面同口径）；无契约码的异常原样冒泡（如实 500）。
+      try {
+        await wired.deletion.refreshOnlineStates?.(id);
+        // GY-R28 W6（G5/G11）：回执的备份态由**真实副本行**推导（只读），不照抄上次执行结论。
+        await wired.deletion.refreshBackupStates?.(id);
+      } catch (error: unknown) {
+        throw toContractError(error);
+      }
       const receipt = wired.deletion.receipt(id);
-      const projected = projectReceipt(receipt);
+      // GY-R59（P2-b）：第三方聚合态现算（来源异常 ⇒ 该字段 null；回执其余字段照常 200，⛔ 不 500）。
+      const projected = projectReceipt(receipt, {
+        thirdPartyState: await thirdPartyStateOf(deps, id, receipt),
+      });
       if (projected === null) throw new ApiError('NOT_FOUND', '注销删除请求不存在');
       return reply
         .headers(noStore)
@@ -242,7 +345,13 @@ export function registerAccountDeletionRoutes(
         throw toContractError(error);
       }
       if (cancelled === null) throw new ApiError('NOT_FOUND', '没有可取消的在途注销删除请求');
-      const projected = projectReceipt(cancelled);
+      // GY-R59（P2-b）：取消回执同样只有**一份**投影 ⇒ 这里一并传第三方聚合态。
+      // 为什么不是设计点名的两处之外的多余改动：不传 ⇒ 同一请求在「取消前」（GET，带现算值）与
+      // 「取消后」（DELETE，回落 handler 行的 null）会出现两套第三方口径；取消是终态，
+      // 取消前的第三方事实仍是审计事实，不应因为点了取消就消失。
+      const projected = projectReceipt(cancelled, {
+        thirdPartyState: await thirdPartyStateOf(deps, String(cancelled['id'] ?? ''), cancelled),
+      });
       if (projected === null) throw new ApiError('NOT_FOUND', '注销删除请求不存在');
       return reply
         .headers(noStore)
