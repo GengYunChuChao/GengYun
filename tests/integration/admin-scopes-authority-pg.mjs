@@ -9,7 +9,7 @@
  * 同一事务、运行时角色到底有没有偷偷拿到 `admin_scopes` 的写权。这些只有真 PG 才回答得了，
  * 单测用假 port 一条都证明不了。
  *
- * 本臂做两件事
+ * 本臂做三件事
  * ------------
  *   1) **部署形态**：迁移走生产路径（`migrate.ts up`），随后按 `provision-db.sh` 的顺序跑
  *      `services/api/db/roles/*.sql` ⇒ `20-login-roles.sql` ⇒ `90-assert-least-privilege.sql`，
@@ -17,6 +17,13 @@
  *   2) **直调**：以 `gengyun_api_runtime` 身份直调两条函数，覆盖正常授予/撤销、幂等、
  *      非 `scopes:write` 被拒、自授被拒、授予未持有的 scope 被拒、目标停用被拒、版本冲突、
  *      撤销后复活、最后授权者被拒（含「停用账号不计入」）、审计原子性（撞主键回滚）。
+ *   3) **应用层拒绝留痕**（`#18` S2 收尾片 PR-4 另一半，迁移 0046）：不经裸 SQL，而是装配
+ *      `createPostgresAdminScopeAuthority({ pool })` 真跑一次**必然被拒**的撤销（最后一名
+ *      `scopes:write` 持有者 ⇒ `G0009`），断言 ① 业务码 `LAST_SCOPE_MANAGER`/409；② `admin_scopes`
+ *      有效行数一字未变（拒绝 = 整笔回滚）；③ `admin_audit_events` **恰有 1 行**
+ *      `action='admin_scope.deny'`/`result='denied'`、actor/request/scope/reason 与本次请求逐字段一致，
+ *      且留痕成功时主响应不被改写（仍是 409，不是 200）。这一条只有真库答得了：假池能证顺序，
+ *      证不了「第二连接以 `gengyun_api_runtime` 身份真的被 `20-login-roles.sql` 授权过」。
  *
  * 起集群的方式与兄弟臂不同（按裁定：⛔ 不用 `pg_ctl start`）
  * ---------------------------------------------------------
@@ -45,6 +52,11 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
+
+// 应用层（不是库层）的写权威：本臂第 3 段要证的是「`scope-authority-pg.ts` 的 catch 真的会另开一条
+// 连接把拒绝写进 `admin_audit_events`」，所以必须用**产品代码本身**，不能用裸 SQL 模拟。
+// `.ts` 直接 import 是本仓集成测试的既有做法（Node 类型剥离），兄弟臂大半都这么引 services/**。
+import { createPostgresAdminScopeAuthority } from '../../services/api/src/admin/ops/scope-authority-pg.ts';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
@@ -545,6 +557,8 @@ const scopesOf = (state, adminId) => state.scopes
 // 主流程
 // ---------------------------------------------------------------------------
 let runtime = null;
+// 应用层拒绝留痕那一段用的池（产品代码要的是 `pool.connect()`，不是单条 Client）；`finally` 里关掉。
+let denialPool = null;
 
 try {
   await startCluster();
@@ -758,9 +772,81 @@ try {
   assert.equal(
     afterGuard.audits.filter(row => row.action === 'admin_scope.revoke' && row.scope === 'scopes:write').length,
     0,
-    '被拒路径不得留下审计行（拒绝留痕属 PR-3，本片不假装实现）',
+    '裸 SQL 被拒路径不得留下 grant/revoke 审计行（库层函数自己只回滚、不写留痕；'
+    + '「被拒留痕」是应用层的事，由下面 R64 那一段单独证）',
   );
   pass('最后授权者：自撤 scopes:write ⇒ G0009 LAST_SCOPE_MANAGER，且 A 的元权限原样保留（停用账号不计入）');
+
+  // ------------------------------------- 应用层拒绝留痕（迁移 0046 的接线）--
+  // 到这里夹具状态正好是本片需要的：B 已停用 ⇒ A 是唯一的**有效** scopes:write 持有者 ⇒
+  // 任何「撤掉 A 的 scopes:write」都必然撞 G0009。上一段用的是裸 SQL（只证库层拒绝），
+  // 这一段换**产品代码**跑同一个动作，看应用层有没有按纪律把这一笔拒绝留痕。
+  {
+    const validScopeRows = state => state.scopes.filter(row => row.revoked_at === null).length;
+    const beforeDenial = await readState();
+    const warns = [];
+    denialPool = new pg.Pool({ connectionString: runtimeUrl, max: 2, connectionTimeoutMillis: 2_000 });
+    const authority = createPostgresAdminScopeAuthority({
+      pool: denialPool,
+      // 留痕失败必须只 warn、⛔ 不得改主响应 —— 这里先收集，末尾断言「成功路径恰好一次都没有」。
+      log: { warn: (payload, message) => warns.push({ payload, message }) },
+    });
+    const denialRequest = REQUEST_2;
+    let denialError = null;
+    try {
+      await authority.revoke({
+        actorId: ACTOR_A,
+        auditId: randomUUID(),
+        targetId: ACTOR_A, // 自撤：目标 = 操作者本人
+        scope: 'scopes:write',
+        reason: 'R64：撤掉最后一个有效元权限（应用层必须拒绝并留痕）',
+        requestId: denialRequest,
+        expectedRevision: null,
+      });
+    } catch (error) {
+      denialError = error;
+    }
+    // ① 业务码：仍然必须是 409/LAST_SCOPE_MANAGER —— 留痕成功不得把 409 变成 200，
+    //    留痕出问题也不得把 409 升成 500。
+    assert.ok(denialError, '自撤最后一名元权限必须被拒绝（不得静默成功）');
+    assert.equal(denialError.code, 'LAST_SCOPE_MANAGER', `期望 LAST_SCOPE_MANAGER，实际 ${denialError.code}`);
+    assert.equal(denialError.status, 409, `期望 409，实际 ${denialError.status}`);
+    pass('应用层：自撤最后一名 scopes:write ⇒ 409 LAST_SCOPE_MANAGER（异常原样抛出，未被留痕改写）');
+
+    // ② 拒绝 = 整笔回滚：`admin_scopes` 的有效行数一字未变（主事务先 ROLLBACK 再留痕）。
+    const afterDenial = await readState();
+    assert.equal(
+      validScopeRows(afterDenial),
+      validScopeRows(beforeDenial),
+      '被拒后 admin_scopes 有效行数必须一字未变（拒绝 = 整笔回滚）',
+    );
+    assert.deepEqual(scopesOf(afterDenial, ACTOR_A), scopesOf(beforeDenial, ACTOR_A),
+      '被拒后 A 的 scope 集合必须原样保留');
+    assert.equal(
+      afterDenial.revisions.find(row => row.id === ACTOR_A).revision,
+      beforeDenial.revisions.find(row => row.id === ACTOR_A).revision,
+      '被拒后 A 的 revision 不得前进',
+    );
+    pass(`应用层：被拒后 admin_scopes 有效行数未变（${validScopeRows(afterDenial)} 行）、A 的 scope 与 revision 原样`);
+
+    // ③ 留痕：恰有 1 行 admin_scope.deny，且 actor/request/scope/reason 与本次请求逐字段一致。
+    //    「恰 1 行」是硬要求：多开一次连接、多写一遍、或把留痕写进主事务再随回滚一起消失，都会红。
+    const denyRows = afterDenial.audits.filter(row => row.action === 'admin_scope.deny');
+    assert.equal(denyRows.length, 1, `admin_scope.deny 必须恰有 1 行，实际 ${denyRows.length} 行`);
+    const denyRow = denyRows[0];
+    assert.equal(denyRow.result, 'denied', 'result 必须是 denied（0046 写死，不是应用层抄来的）');
+    assert.equal(denyRow.actor_id, ACTOR_A, 'actor 必须与本次请求一致');
+    assert.equal(denyRow.request_id, denialRequest, 'request_id 必须沿用本次请求的 request id');
+    assert.equal(denyRow.scope, 'scopes:write', 'scope 恒 scopes:write（0046 写死）');
+    assert.equal(denyRow.reason_code, 'last_scope_manager', 'G0009 ⇒ last_scope_manager');
+    assert.equal(denyRow.target_hint, `admin_account:${ACTOR_A}`, 'target_hint = admin_account:<目标管理员 id>');
+    pass('应用层：admin_audit_events 恰 1 行 admin_scope.deny/denied，actor·request·scope·reason·target_hint 逐字段一致');
+
+    // 留痕走的是「另一条连接 + 单语句自提交」：成功路径不许有任何 warn（有 warn 说明旁路其实失败了，
+    // 那 ③ 能过就是假绿）。
+    assert.deepEqual(warns, [], `留痕成功时不得有告警，实际 ${JSON.stringify(warns)}`);
+    pass('应用层：留痕全程零告警（第二条连接以 gengyun_api_runtime 身份真的写成了）');
+  }
 
   // 夹具复位：上一段刻意把 B 停用来证明「停用账号不计入有效授权者」；下面的审计原子性注入
   // 还要经函数往 B 的行上写（函数对 `state <> 'active'` 的目标一律 G0004 OBJECT_UNAVAILABLE）。
@@ -839,8 +925,11 @@ try {
   const finalState = await readState();
   note(`审计留痕（admin_scope.*）共 ${finalState.audits.length} 行：`
     + finalState.audits.map(row => `${row.action}/${row.scope}/${row.reason_code}`).join(' '));
-  pass('全链读数一致（授予/撤销/复活/委派各留下自己的审计行，被拒路径零行）');
+  // 口径：「被拒路径零行」指的是 **grant/revoke 写入点**（库层函数自己回滚、不写），
+  // 而 `admin_scope.deny` 恰恰相反 —— 被拒路径必须留且只留一行（应用层旁路，迁移 0046）。
+  pass('全链读数一致（授予/撤销/复活/委派各留下自己的审计行，库层被拒路径零行，应用层被拒恰 1 行 deny）');
 } finally {
+  if (denialPool) await denialPool.end().catch(() => {});
   if (runtime) await runtime.end().catch(() => {});
   cleanupCluster();
   // 自证：端口不再有人在听（postgres 已停）。

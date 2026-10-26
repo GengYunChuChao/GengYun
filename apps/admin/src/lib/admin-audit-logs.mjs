@@ -35,22 +35,34 @@ export const AUDIT_LOGS_SCOPE = 'audit:read';
 export const AUDIT_LOGS_OPERATION_ID = 'listAuditLogs';
 
 /** `action` 闭集：与 `services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS` 逐字同序。 */
-export const AUDIT_LOG_ACTIONS = Object.freeze(['account.suspend', 'account.restore', 'set_flag', 'job.cancel']);
+export const AUDIT_LOG_ACTIONS = Object.freeze([
+  'account.suspend',
+  'account.restore',
+  'set_flag',
+  'job.cancel',
+  'admin_scope.grant',
+  'admin_scope.revoke',
+  'admin_scope.deny',
+]);
 
 export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
   'account.suspend': '暂停账号',
   'account.restore': '恢复账号',
   set_flag: '改功能开关',
   'job.cancel': '取消作业',
+  'admin_scope.grant': '授予管理员能力',
+  'admin_scope.revoke': '撤销管理员能力',
+  'admin_scope.deny': '管理员操作被拒',
 });
 
 /** `entity` 闭集：与 `catalog.ts` 的 `AUDIT_ENTITIES` 逐字同序（⛔ 不是 `entity_type`）。 */
-export const AUDIT_LOG_ENTITIES = Object.freeze(['account', 'flag', 'job']);
+export const AUDIT_LOG_ENTITIES = Object.freeze(['account', 'flag', 'job', 'admin_scope']);
 
 export const AUDIT_LOG_ENTITY_LABELS = Object.freeze({
   account: '账号',
   flag: '功能开关',
   job: '作业',
+  admin_scope: '管理员能力',
 });
 
 /** entity → 事件落库时的 scope（`AUDIT_ENTITY_SCOPES`）。仅用于说明文案。 */
@@ -58,6 +70,7 @@ export const AUDIT_LOG_ENTITY_SCOPES = Object.freeze({
   account: 'accounts:suspend',
   flag: 'flags:write',
   job: 'jobs:cancel',
+  admin_scope: 'scopes:write',
 });
 
 export const AUDIT_LOG_LIMIT_OPTIONS = Object.freeze([LIMIT_DEFAULT, LIMIT_MAX].filter((value, index, list) => list.indexOf(value) === index));

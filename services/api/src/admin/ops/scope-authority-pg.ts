@@ -37,11 +37,22 @@
  * 运维的处置是换个目标或先改状态；`LAST_SCOPE_MANAGER` 说的是「这个动作会让系统**永久**失去
  * 授权维护能力」，处置是**先补一个元权限持有者**。把两者混成一个码，值班只能看到一句
  * 「目标状态不对」，而实际上系统正要被锁死。
+ *
+ * 被拒之后的留痕（`#18` S2 收尾片 · 应用层这一半，写入口是迁移 0046 的
+ * `public.record_admin_scope_denial`）**不在**本文件里：它必须落在主事务 `ROLLBACK` 与连接
+ * `release()` 之后的一条新连接上，失败还得全吞 —— 正好与这里的失败语义相反。见同目录
+ * `scope-denial-trace.ts`（那边文件头写了为什么必须第二连接、为什么只认四个 SQLSTATE、
+ * 为什么吞异常）。本文件只负责在失败分支里把这一棒交出去。
  */
 import type { PoolClient } from 'pg';
 import { ApiError } from '../../errors.ts';
 import type { PgPool } from '../../db/pool.ts';
 import { ADMIN_SCOPES, isAdminScope } from '../scopes.ts';
+import {
+  recordAdminScopeDenial,
+  sqlStateOf,
+  type AdminScopeDenialLogPort,
+} from './scope-denial-trace.ts';
 
 /** 授予：唯一写路径的精确签名（改动后必须同步 `90-assert-least-privilege.sql`）。 */
 export const GRANT_ADMIN_SCOPE_FUNCTION = 'public.grant_admin_scope';
@@ -211,13 +222,34 @@ export function mapAdminScopeAuthorityError(error: unknown): never {
 }
 
 /**
+ * 归还连接只许「尽力而为」：`release()` 抛错（连接已被池回收、池已关闭、重复释放）不得把
+ * 403/409 改写成 500。与留痕侧的 `warnQuietly` 是同一条不变量的两半 —— 「旁路与收尾都不得
+ * 改变主响应」。
+ */
+function releaseQuietly(client: PoolClient | undefined): void {
+  try {
+    client?.release();
+  } catch {
+    // 释放失败只影响这条连接能否回到池里，与本次业务结论无关。
+  }
+}
+
+/**
  * 建持久化的管理员 scope 写权威。
  *
  * 构造期**不**探测函数是否存在（探测会把「迁移没跑」变成启动期崩溃）；也**不**校验
  * `pool.connect` 的形状（既有装配里 `pool` 允许最小替身）。函数缺失/无事务能力在**调用期**
  * 以 `42501`/`42883`/无 `connect` ⇒ `PROVIDER_UNAVAILABLE` 如实失败，写面不会伪造成功。
+ *
+ * `log` 只用于**拒绝留痕**这条旁路的 `warn`；不给就静默吞（留痕失败本就不该影响主响应）。
  */
-export function createPostgresAdminScopeAuthority({ pool }: { pool: PgPool }): AdminScopeAuthority {
+export function createPostgresAdminScopeAuthority({
+  pool,
+  log,
+}: {
+  pool: PgPool;
+  log?: AdminScopeDenialLogPort;
+}): AdminScopeAuthority {
   async function call(sql: string, action: AdminScopeAuthorityAction): Promise<AdminScopeAuthorityOutcome> {
     if (!pool || typeof pool.connect !== 'function') {
       // 没有事务能力 ⇒ 如实不可用（fail closed，不是静默跳过持久化）。
@@ -263,10 +295,21 @@ export function createPostgresAdminScopeAuthority({ pool }: { pool: PgPool }): A
       raw = result.rows[0]?.['result'];
       await client.query('COMMIT');
     } catch (error) {
+      // 失败的三步**顺序即纪律**（裁定 B）：
+      // ① **先** ROLLBACK：被拒那一笔必须整笔消失（不留半成品 scope 行/审计行）。
       if (client !== undefined) await client.query('ROLLBACK').catch(() => {});
+      // ② **再**释放主连接：留痕一律在**另一条**新连接上写（纪律 1）。
+      //    ⛔ 不得在还占着这条连接时做旁路写：那样留痕行会跟主事务绑在一起被回滚掉。
+      //    置空是为了让下面的 `finally` 成为幂等的兜底（`release()` 重复调用会抛）。
+      //    `release()` 自己抛错（连接已被池回收、池已关闭）同样不得改写主响应 ⇒ 走收口函数。
+      releaseQuietly(client);
+      client = undefined;
+      // ③ 旁路留痕：只认四个 G 码、整段吞错、单独自提交（失败只 warn，不影响 ④）。
+      await recordAdminScopeDenial({ pool, subject: action, sqlState: sqlStateOf(error), log });
+      // ④ 原样抛出主错误：403/409 绝不因留痕的成败而升为 500 或变成 200。
       return mapAdminScopeAuthorityError(error);
     } finally {
-      client?.release();
+      releaseQuietly(client);
     }
     // 解析放在事务之外：返回形状不符 ⇒ 失败关闭，但不影响已提交的事务（不会误发 ROLLBACK 警告）。
     return toOutcome(raw);

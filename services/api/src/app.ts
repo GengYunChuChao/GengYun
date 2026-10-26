@@ -1507,7 +1507,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // `pool === null` ⇒ 写权威为 null ⇒ 两条路由 503（⛔ 不返回成功封套、⛔ 不落内存、
     // ⛔ 不占幂等位）。**没有内存实现是刻意的**：`admin_scopes` 的唯一写路径就是那两条函数。
     const realScopeAuthority =
-      adminInjection?.scopeAuthority ?? (pool === null ? null : createPostgresAdminScopeAuthority({ pool }));
+      adminInjection?.scopeAuthority ?? (pool === null ? null : createPostgresAdminScopeAuthority({ pool, log: app.log }));
     adminAuditLogService = createAdminAuditLogService({
       port: realAuditLogPort,
       now: clock,

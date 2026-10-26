@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 239
+      "files": 240
     },
     {
       "dir": "miniprogram",
@@ -68,7 +68,7 @@
     },
     {
       "file": "services/api/src/admin/ops/scope-authority-pg.ts",
-      "line": 206,
+      "line": 217,
       "function": "mapAdminScopeAuthorityError",
       "judgement": "has",
       "owner": "GY-I22"
