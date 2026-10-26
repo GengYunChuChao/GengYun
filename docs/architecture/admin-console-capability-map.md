@@ -1,7 +1,7 @@
 # 后台（apps/admin）能力现状：已挂端点、真实调用与缺口
 
 > 基线：`origin/main` = `f6c5866dd06683329ecfe96d9c489cd9a226502d`（2026-10-26 在 worktree `wt-r59-adminmap` 读取）。本页所有「文件:行号」都以该提交为准。
-> 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1291`。
+> 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1332`。
 > 可复跑：`node tools/verify-doc-anchors.mjs --strict`、`node tools/verify-contract-status.mjs`、`npm run test:docs`。
 
 ## 0 一页结论
@@ -41,13 +41,13 @@
 
 ### 1.2 三条只在缺省装配（stub / real 无池）下 503 的端点
 
-装配判据在 `services/api/src/app.ts`：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1291`），端口只在「`real` 且确实拿到库池」时构造——作业 `services/api/src/app.ts:1313-1315`，审计总台账 `services/api/src/app.ts:1450-1451`（其上 `services/api/src/app.ts:1443-1449` 的注释写明：只在确实拿到库池时构造只读端口，`pool === null` ⇒ 端口 null ⇒ `/admin/audit-logs` 保持 503）。所以下表描述的是**未注入端口且没有库池**这一缺省分支；`real` + 有池的生产装配端口已接，503 不适用。
+装配判据在 `services/api/src/app.ts`：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1332`），端口只在「`real` 且确实拿到库池」时构造——作业 `services/api/src/app.ts:1354-1356`，审计总台账 `services/api/src/app.ts:1492-1493`（其上 `services/api/src/app.ts:1485-1491` 的注释写明：只在确实拿到库池时构造只读端口，`pool === null` ⇒ 端口 null ⇒ `/admin/audit-logs` 保持 503）。所以下表描述的是**未注入端口且没有库池**这一缺省分支；`real` + 有池的生产装配端口已接，503 不适用。
 
 | 端点 | 缺省分支的现状 | 锚点 |
 | --- | --- | --- |
-| GET /admin/audit-logs（listAuditLogs） | 端口为 null ⇒ 503 PROVIDER_UNAVAILABLE，不返回空页 | services/api/src/routes/admin.ts:275-286；services/api/src/app.ts:1443-1451 |
-| GET /admin/jobs、POST /admin/jobs/{id}/cancel | 端口不构造 ⇒ 读与写都 503 | services/api/src/routes/admin.ts:356-377；services/api/src/app.ts:1313-1315 |
-| POST /admin/posts/{id}/hide | 只有真实持久的社区帖子端口才放行（`hidePostWired`），内存实现恒 false ⇒ 503 | services/api/src/routes/admin.ts:411-425；services/api/src/app.ts:1276-1277、services/api/src/app.ts:1490 |
+| GET /admin/audit-logs（listAuditLogs） | 端口为 null ⇒ 503 PROVIDER_UNAVAILABLE，不返回空页 | services/api/src/routes/admin.ts:275-286；services/api/src/app.ts:1485-1493 |
+| GET /admin/jobs、POST /admin/jobs/{id}/cancel | 端口不构造 ⇒ 读与写都 503 | services/api/src/routes/admin.ts:356-377；services/api/src/app.ts:1354-1356 |
+| POST /admin/posts/{id}/hide | 只有真实持久的社区帖子端口才放行（`hidePostWired`），内存实现恒 false ⇒ 503 | services/api/src/routes/admin.ts:411-425；services/api/src/app.ts:1310-1311、services/api/src/app.ts:1548 |
 
 ## 2 前端真实调用了哪些端点
 
@@ -180,7 +180,7 @@
 | --- | --- | --- |
 | 已可用 | 前端有入口 + 服务端有路由，且失败路径如实显示 | 资料来源 6、科普内容 6、分类 2、账号 2（读 + 停用）、功能开关 2、开关留痕 1、审计事件 1、作业 2（读 + 取消）、帖子下架 1 ＝ 23 |
 | 后端有余、UI 缺入口 | 服务端有 operation，前端零调用点 | 注册资料 6、限制资料 6、审计总台账 1、管理员权限读面 2 ＝ 15 |
-| 两端都缺 | 契约里本就没有写操作；或只在缺省装配（stub / real 无池）下服务层未接线 | 人工审核（无 review 写操作、`HUMAN_REVIEW_STATE` 为 `under_construction`：apps/admin/src/views/ReviewPlaceholderView.vue:38-60）；审计总台账与作业的 503 只出现在缺省装配，`real` + 有库池时端口已构造（services/api/src/app.ts:1313-1315、services/api/src/app.ts:1450-1451） |
+| 两端都缺 | 契约里本就没有写操作；或只在缺省装配（stub / real 无池）下服务层未接线 | 人工审核（无 review 写操作、`HUMAN_REVIEW_STATE` 为 `under_construction`：apps/admin/src/views/ReviewPlaceholderView.vue:38-60）；审计总台账与作业的 503 只出现在缺省装配，`real` + 有库池时端口已构造（services/api/src/app.ts:1354-1356、services/api/src/app.ts:1492-1493） |
 
 三档不是验收结论：第一档只表示「调用链与失败路径都在代码里」，没有对真实数据、真实 PROVIDER 或真实权限组合做过运行验证。
 
@@ -190,7 +190,7 @@
 2. **管理员权限读面（2 个 operation）**。理由：纯读、门是 `scopes:read`、实现量最小；但没有它，第 1 件落地后「为什么某人的按钮是灰的」在后台无从查证，只能查库。
 3. **让 scopes 随登录一起到前端（1 处响应或守卫调整）**。理由：现在 6 个页面各抄一遍「登录后再读一次」，且没有 `session:read` 的管理员会直接卡在登录失败；把 scopes 放进登录响应（或允许无 `session:read` 也能读自己的会话）能同时消掉重复代码与这个单点。
 
-排第四的是审计总台账（`listAuditLogs`）：缺的是 **UI 入口**，不是 provider——`real` + 有库池时只读端口已构造（`services/api/src/app.ts:1443-1451`）；只有缺省装配（stub / real 无池）才会 503，所以补页前先确认目标环境的运行模式。
+排第四的是审计总台账（`listAuditLogs`）：缺的是 **UI 入口**，不是 provider——`real` + 有库池时只读端口已构造（`services/api/src/app.ts:1485-1493`）；只有缺省装配（stub / real 无池）才会 503，所以补页前先确认目标环境的运行模式。
 
 ## 8 与既有取证、代码注释的差异
 
