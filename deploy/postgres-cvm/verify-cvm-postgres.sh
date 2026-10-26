@@ -392,7 +392,7 @@ fi
 #   action='admin_scope.grant' + scope='scopes:write' + result='accepted' + reason_code='bootstrap'。
 # `sql/30-bootstrap-admin.sql` 是唯一的写方（部署档、属主身份、一次性）。
 #
-# ⛔ 这两条**故意不给 `else skip` 兜底**：裁定 C 的意图是 fail-closed —— 引导没跑就应当红。
+# ⛔ 这四条**故意不给 `else skip` 兜底**：裁定 C 的意图是 fail-closed —— 引导没跑就应当红。
 #   若给了 skip，退出码会变成 2（缺项），运维很容易把"没引导"读成"只是缺项"。
 #   注意 `qs` 内部是 `… 2>&1 | tr -d '\r'`（管道最后一段是 tr）⇒ SQL 报错（例如表不存在）
 #   会以**文本**形式进到变量里，于是 report_eq/report_ge 拿到非数字 ⇒ 判 FAIL、不会假通过。
@@ -401,6 +401,17 @@ bootstrap_audit="$(qs "SELECT count(*) FROM public.admin_audit_events WHERE reas
 report_eq 'bootstrap_audit_exactly_one' '1' "${bootstrap_audit:-（空）}"
 scopes_write_holders="$(qs "SELECT count(*) FROM public.admin_scopes s JOIN public.admin_accounts a ON a.id = s.admin_id WHERE s.scope = 'scopes:write' AND s.revoked_at IS NULL AND a.state = 'active'")"
 report_ge 'scopes_write_active_holders' '1' "${scopes_write_holders:-（空）}"
+# 【审查 B1 回归】引导审计行的 `before_value`/`after_value` 必须是 **NULL**。
+#   契约 services/api/src/admin/fields.ts:305-306 把这两列定成 `FlagReading | null`
+#   （`{enabled, revision}`，additionalProperties:false），而 services/api/src/admin/audit/pg.ts:129-145
+#   的 `toAuditLogReading()` 遇到 `{"scopes": …}` 会抛 PROVIDER_UNAVAILABLE ⇒ `GET /admin/audit-logs` 整页 503；
+#   本表 append-only（0017:104-115）⇒ 写坏的行改不掉、删不掉，全新库引导后整表只有这一行 ⇒ 审计读面永久坏。
+#   两个判据分工：`payload_null` 查"两列都是 NULL"（行在不在、是否是空），
+#   `payload_no_object` 查"没有对象形状"（把 jsonb_typeof 的具体形态点出来，便于一眼定位）。
+bootstrap_payload_null="$(qs "SELECT count(*) FROM public.admin_audit_events WHERE reason_code = 'bootstrap' AND before_value IS NULL AND after_value IS NULL")"
+report_eq 'bootstrap_audit_payload_null' '1' "${bootstrap_payload_null:-（空）}"
+bootstrap_payload_object="$(qs "SELECT count(*) FROM public.admin_audit_events WHERE reason_code = 'bootstrap' AND (jsonb_typeof(before_value) = 'object' OR jsonb_typeof(after_value) = 'object')")"
+report_eq 'bootstrap_audit_payload_no_object' '0' "${bootstrap_payload_object:-（空）}"
 
 # ---------------------------------------------------------------------------
 # 10. 持久存储

@@ -387,7 +387,9 @@ printf '%s\n' "$GY_HASH" | cut -c1-19      # 自查：必须以 scrypt$16384$8$1
 
 仓库要求 Node ≥ 24.16（`package.json` 的 `engines`），原生可执行 `.ts`，不需要构建、不需要额外依赖。
 
-**② 以迁移属主身份执行一次**（两个变量都必填；不传即停，文件里**没有任何默认值**）：
+**② 以迁移属主身份执行一次**（两个变量都必填，文件里**没有任何默认值**）：
+变量**未设置** ⇒ §0 守卫当场停；变量**设置成空串** ⇒ §0 守卫**不拦**（`\getenv` 会把变量定义成空、
+`\if :{?var}` 仍为真），由 §① 的登录名/摘要形状判定停 —— 两条路径都是**非零退出**，但兜住空串的是形状判定。
 
 ```bash
 install -o postgres -g postgres -m 0400 \
@@ -422,8 +424,15 @@ echo "exit=$rc"     # 期望 0
 sudo deploy/postgres-cvm/verify-cvm-postgres.sh
 ```
 
-期望两行 `PASS`：`bootstrap_audit_exactly_one`（=1）、`scopes_write_active_holders`（>=1）。
-这两条**没有 `skip` 兜底**：引导没跑就应当红（退出码 1），不要把它读成"只是缺项"。
+期望四行 `PASS`：`bootstrap_audit_exactly_one`（=1）、`scopes_write_active_holders`（>=1）、
+`bootstrap_audit_payload_null`（=1）、`bootstrap_audit_payload_no_object`（=0）。
+这四条**没有 `skip` 兜底**：引导没跑就应当红（退出码 1），不要把它读成"只是缺项"。
+
+后两条盯的是审计行的**读数列形状**：契约把 `before_value`/`after_value` 定成 `FlagReading | null`
+（`{enabled, revision}`），所以本 seed 写 **NULL**。若看到 `bootstrap_audit_payload_null` 红而
+`bootstrap_audit_exactly_one` 绿，说明这一行是**改版前**的写法（`{"scopes": …}`）写进去的 ——
+那行不可改不可删（追加型触发器 `0017` 的 `G0006 AUDIT_IMMUTABLE`），修复要走 DBA 维护窗口并留痕，
+⛔ 不要靠重跑本 seed 修（重跑必失败）。
 
 **④ 重跑会失败，这是裁定要求的行为**：`30-bootstrap-admin.sql` 在 `public.admin_accounts` 非空时
 直接 `RAISE EXCEPTION`（"已有管理员必须报错，不许静默跳过"）。看到

@@ -19,7 +19,11 @@
 --   第一条 `INSERT INTO admin_accounts` 就是 `42501`。所以「首次属主」这一步只能落在部署档，
 --   由本文件在**角色引导之后**用属主身份跑一次 —— 这正是裁定 C 要的"一次性元权限引导"。
 --
--- 两个**必填**参数（⛔ 本文件不提供任何默认值；不传即停，不会"猜一个"）：
+-- 两个**必填**参数（⛔ 本文件不提供任何默认值，不会"猜一个"）：
+--   变量**未设置** ⇒ §0 守卫当场停（`1/0`，非零退出）；
+--   变量**设置成空串** ⇒ §0 守卫**拦不住**（`\getenv` 会把变量定义成空、`\if :{?var}` 为真），
+--   由 §① 的登录名/摘要形状判定停。两条路径都是非零退出：净效果 fail-closed，
+--   但兜住空串的是形状判定，不是守卫（确切语义见 §0 注释）。
 --   GENGYUN_BOOTSTRAP_ADMIN_LOGIN            登录名  → psql 变量 gy_admin_login
 --   GENGYUN_BOOTSTRAP_ADMIN_CREDENTIAL_HASH  scrypt 摘要 → psql 变量 gy_admin_credential_hash
 --   ⛔ **不接受明文口令**：本文件只收摘要。摘要由 services/api/src/auth/password.ts:16-20
@@ -43,18 +47,22 @@
 --   - 不改任何既有管理员/既有授权：本文件在"表里已经有管理员"时直接失败。
 --
 -- 自查：`sudo deploy/postgres-cvm/verify-cvm-postgres.sh` 的第 9.5 段
---   （`bootstrap_audit_exactly_one` = 1、`scopes_write_active_holders` >= 1）。
+--   （`bootstrap_audit_exactly_one` = 1、`scopes_write_active_holders` >= 1、
+--    `bootstrap_audit_payload_null` = 1、`bootstrap_audit_payload_no_object` = 0）。
 -- ============================================================================
 
 \set ON_ERROR_STOP on
 \pset pager off
 
 -- ---------------------------------------------------------------------------
--- §0 必填参数守卫（**早于任何写操作**；不传即停）
+-- §0 必填参数守卫（**早于任何写操作**）
 -- ---------------------------------------------------------------------------
--- 范式照抄 sql/20-login-roles.sql:74-99（`\getenv` + `\if :{?var}`）：
---   环境变量**未定义** ⇒ psql 变量保持未定义 ⇒ 走 `\else` 分支；
---   环境变量**定义为空串** ⇒ `\if :{?var}` 仍为真，由下面 §① 的形状判定兜住（⛔ 不静默通过）。
+-- 范式照抄 sql/20-login-roles.sql:74-99（`\getenv` + `\if :{?var}`）。`\getenv` 的**确切**语义
+-- （实测，别按"变量不存在即跳过"那种粗口径理解）：
+--   ① 环境变量**不存在** ⇒ psql 变量保持未定义 ⇒ `:{?var}` 为**假** ⇒ 走 `\else` ⇒ 守卫**拦住**；
+--   ② 环境变量**存在但为空串** ⇒ `\getenv` 把变量**定义成空串** ⇒ `:{?var}` 为**真** ⇒
+--      §0 守卫**不拦**（这一档由 §① 的登录名/摘要形状判定兜住，⛔ 仍然不会静默通过）。
+-- 也就是：§0 只负责"没传"，"传了空值"由 §① 的形状判定负责；两条路径都是非零退出。
 -- 分支体用 `SELECT 1/0` 而不是 `\quit`：`\quit` 的退出码是 **0**，会让"没传参数"在运维脚本
 --   里读起来像成功；`1/0` 在 `ON_ERROR_STOP=1` 下让 psql 以非零退出（20-login-roles.sql 同）。
 \getenv gy_admin_login GENGYUN_BOOTSTRAP_ADMIN_LOGIN
@@ -195,8 +203,21 @@ BEGIN
   --      契约 `TargetRef.type` 的闭集里**没有** `admin_account`（0017:78-79 已把这条记为契约缺口），
   --      所以与 0041 的 `grant_admin_scope`（0041:319-328）口径一致：target_ref 留 NULL，
   --      被授对象落在 target_hint='admin_account:<id>'。
-  --    before_value / after_value：0027:36-52 加的两个可空 jsonb（形状必须是对象或 NULL）；
-  --      这里如实写"引导前空 ⇒ 引导后 3 条"，让审计页看得懂这次变了什么。
+  --    before_value / after_value：**必须写 NULL**（0027:36-52 加的两个可空 jsonb）。
+  --      依据：契约 services/api/src/admin/fields.ts:305-306 把这两列定成 `FlagReading | null`
+  --      （`{enabled: boolean, revision: number}`，且 fields.ts:311-313 是 additionalProperties:false）；
+  --      services/api/src/admin/audit/pg.ts:129-145 的 `toAuditLogReading()` 遇到 `{"scopes": …}`
+  --      直接抛 PROVIDER_UNAVAILABLE（"审计日志的读数形状不符"），
+  --      services/api/src/admin/audit/service.ts:240-246 的 `collectIssues('AuditEvent', item)` 也拒，
+  --      而 0033 的 `list_admin_audit_logs` 是原样回列、不按 action 归零 ⇒
+  --      `GET /admin/audit-logs`（services/api/src/routes/admin.ts:314-318）**整页 503**。
+  --      而本表是 append-only（0017:104-115，BEFORE UPDATE OR DELETE ⇒ G0006 AUDIT_IMMUTABLE），
+  --      写坏的行既改不掉也删不掉；全新 CVM 引导后整表**只有这一行** ⇒ 第一页就 503，永久坏掉。
+  --      ⇒ 写 NULL：存量行本来就没有 before/after（fields.ts:300-302 的"可选+可空"口径），
+  --      伪造一个 `{enabled, revision}` 或硬塞 `{"scopes": …}` 都是错的。
+  --      与既有 0041:326-327 / 0041:479-480 的形状差异（那两处写的是 `{"scopes": …, "reason": …}`）是**有意为之**：
+  --      那是既有缺口（要"先授一次权"才触发），本片把它装进了**标准部署流程**，所以在本片里闭合。
+  --      ⛔ 本文件不去改 0041（属另一片）。
   --
   --    `admin_audit_events` 上有**追加型**触发器（0017:104-115，BEFORE UPDATE OR DELETE ⇒
   --    G0006 AUDIT_IMMUTABLE）：它只拦改/删，**不拦 INSERT**，所以本行不会踩它。
@@ -214,11 +235,12 @@ BEGIN
     'bootstrap',
     c_bootstrap_request_id,
     'accepted',
-    jsonb_build_object('scopes', '[]'::jsonb),
-    jsonb_build_object('scopes', to_jsonb(x_scopes))
+    NULL,   -- 见上 §③ 的 before_value/after_value 注：契约是 FlagReading | null，写成 {"scopes": …} 会让审计读面 503
+    NULL
   );
 
-  -- ④ 事务内自检：三条写入必须**同时**成立，否则整体回滚（fail-closed，不留半截引导）。
+  -- ④ 事务内自检：四条判据必须**同时**成立，否则整体回滚（fail-closed，不留半截引导）。
+  --    #1–#3 查三处写入的状态；#4 查审计行读数列的**形状**（审查 B1 的回归判据）。
   IF (SELECT count(*) FROM public.admin_accounts) <> 1 THEN
     RAISE EXCEPTION '引导自检失败：期望 public.admin_accounts 恰 1 行，实际 % 行；事务回滚。',
       (SELECT count(*) FROM public.admin_accounts);
@@ -232,6 +254,15 @@ BEGIN
   IF (SELECT count(*) FROM public.admin_audit_events WHERE reason_code = 'bootstrap') <> 1 THEN
     RAISE EXCEPTION '引导自检失败：期望 reason_code=bootstrap 的审计恰 1 行，实际 % 行；事务回滚。',
       (SELECT count(*) FROM public.admin_audit_events WHERE reason_code = 'bootstrap');
+  END IF;
+  -- #4 读数列必须是 NULL（审查 B1 的根因：契约里的类型是 FlagReading|null）。
+  --    作用：谁把上面两个 NULL 改回 jsonb，**引导当场回滚**，而不是把库写坏（写坏删不掉）。
+  IF (SELECT count(*) FROM public.admin_audit_events
+       WHERE reason_code = 'bootstrap'
+         AND before_value IS NULL AND after_value IS NULL) <> 1 THEN
+    RAISE EXCEPTION '引导自检失败：引导审计行的 before_value/after_value 必须都是 NULL（契约是 FlagReading|null，写成对象会让审计读面 503）；非空行数 %；事务回滚。',
+      (SELECT count(*) FROM public.admin_audit_events
+        WHERE reason_code = 'bootstrap' AND (before_value IS NOT NULL OR after_value IS NOT NULL));
   END IF;
 END
 $bootstrap$;
@@ -254,5 +285,5 @@ COMMIT;
 \echo '  管理员登录名：':gy_admin_login
 \echo '  实测读数：admin_accounts=':n_admin_accounts'  active_admin_scopes=':n_admin_scopes_active'  reason_code=bootstrap 审计行=':n_bootstrap_audit
 \echo '  引导审计复核：按文件内固定 request_id（见 §① 的 c_bootstrap_request_id）取 admin_audit_events 那一行。'
-\echo '  下一步：sudo deploy/postgres-cvm/verify-cvm-postgres.sh（第 9.5 段 bootstrap_audit_exactly_one / scopes_write_active_holders）'
+\echo '  下一步：sudo deploy/postgres-cvm/verify-cvm-postgres.sh（第 9.5 段 bootstrap_audit_exactly_one / scopes_write_active_holders / bootstrap_audit_payload_null / bootstrap_audit_payload_no_object）'
 \echo '  注意：本文件**一次性**，重跑会因"已存在管理员"而失败 —— 这是裁定 C 要求的行为，不是缺陷。'
