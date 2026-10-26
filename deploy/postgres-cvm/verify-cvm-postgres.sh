@@ -385,6 +385,24 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 9.5 首次元权限引导（裁定 C）
+# ---------------------------------------------------------------------------
+# 判据来自 `.pg17/ruling-r64-pr4-design-20261026.md:52-56`（裁定 C）+ 其修订
+#   `.pg17/ruling-r64-c-bootstrap-seed-20261027.md`：引导**不新增** action 值，审计行是
+#   action='admin_scope.grant' + scope='scopes:write' + result='accepted' + reason_code='bootstrap'。
+# `sql/30-bootstrap-admin.sql` 是唯一的写方（部署档、属主身份、一次性）。
+#
+# ⛔ 这两条**故意不给 `else skip` 兜底**：裁定 C 的意图是 fail-closed —— 引导没跑就应当红。
+#   若给了 skip，退出码会变成 2（缺项），运维很容易把"没引导"读成"只是缺项"。
+#   注意 `qs` 内部是 `… 2>&1 | tr -d '\r'`（管道最后一段是 tr）⇒ SQL 报错（例如表不存在）
+#   会以**文本**形式进到变量里，于是 report_eq/report_ge 拿到非数字 ⇒ 判 FAIL、不会假通过。
+#   9.5 的 `qs` 输出是 `-tA` 的裸数字，不需要 `tail -n1`（见本文件 qs 的定义）。
+bootstrap_audit="$(qs "SELECT count(*) FROM public.admin_audit_events WHERE reason_code = 'bootstrap'")"
+report_eq 'bootstrap_audit_exactly_one' '1' "${bootstrap_audit:-（空）}"
+scopes_write_holders="$(qs "SELECT count(*) FROM public.admin_scopes s JOIN public.admin_accounts a ON a.id = s.admin_id WHERE s.scope = 'scopes:write' AND s.revoked_at IS NULL AND a.state = 'active'")"
+report_ge 'scopes_write_active_holders' '1' "${scopes_write_holders:-（空）}"
+
+# ---------------------------------------------------------------------------
 # 10. 持久存储
 # ---------------------------------------------------------------------------
 # 【返修 11】原来直接 `read -r … <<<"$(df …)"`：当数据目录父级**不存在**时 `df` 失败 ⇒ 输入为空
