@@ -24,10 +24,14 @@ const props = defineProps({
    *  - `'unchanged'` 确定没改动（publish／withdraw 回执的 `changed:false`：服务端内存幂等短路）；
    *  - `'unknown'`   回执没带布尔 `changed`（例如 create 的 201）⇒ 只能写「已受理」，不猜。
    *
-   * 注册／限制两族**显式传值**（`RegistrationAdminView`／`RestrictionAdminView` 的 `receiptChanged`，
-   * 由 `deriveChanged()` 从 `*PublicationOutcome` 的必填 `changed` 算出）；sources／knowledge／
-   * categories 三页目前不传、走默认 `'changed'` 保留既有文案 —— 那三页的 `state.write` 还没接
-   * `changed`，接上属于另一片，本片不改。
+   * **五个用本组件的页面全部显式传值**（各自的 `receiptChanged`，由 `deriveChanged()` 算出）：
+   * `RegistrationAdminView`／`RestrictionAdminView`（`*PublicationOutcome` 的必填 `changed`）、
+   * `SourcesView`／`KnowledgeAdminView`（publish／withdraw 同源，edit 比 revision，create 走 unknown）、
+   * `CategoriesView`（只有 PATCH，比 revision 前进）。
+   *
+   * `default: 'changed'` 只为兼容既有调用点**保留**，它**不再代表任何页面的实际行为** ——
+   * 不传 `changed` 的调用点会退化成「成功回执」，那是本组件历史上的默认值，不是判定结论。
+   * 新调用点必须显式传值；缺失时宁可传 `'unknown'`，也不要靠默认。
    * ⛔ 不要在这里按 `status` 或 `ok` 猜成功 —— 那正是 B1 的成因。
    */
   changed: {

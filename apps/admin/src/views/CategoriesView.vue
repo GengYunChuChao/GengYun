@@ -21,6 +21,7 @@ import {
   newIdempotencyKey,
 } from '../lib/admin-content-contract.mjs';
 import {
+  deriveChanged,
   describeWriteFailure,
   editCategory,
   findAuditEventsForRequest,
@@ -31,6 +32,7 @@ import {
   canLoadMoreFamily,
   categoryDetailView,
   categoryRow,
+  changedVerdict,
   describeFamily,
   initialFamilyState,
   reduceFamily,
@@ -60,6 +62,15 @@ const canWrite = computed(() => props.scopes.includes(SOURCES_WRITE_SCOPE));
 const canAudit = computed(() => props.scopes.includes(AUDIT_READ_SCOPE));
 const canLoadMore = computed(() => canLoadMoreFamily(state.value));
 const busyWrite = computed(() => state.value.busyWrite === true);
+/**
+ * 写回执的**显式判定**（喂给 `WriteReceipt` 的 `changed` prop）。
+ *
+ * 本页契约只有一个写操作（`PATCH /admin/categories/{id}`），回执是 `Category`，**不带** `changed` 字段，
+ * 所以 `deriveChanged()` 只能走「编辑比 revision 是否前进」这一条：响应里的 `revision` 与本次编辑
+ * **所基于**的 `previousRevision`（列表行读到、也是 If-Match 用的那个）比较。
+ * 任一侧不是整数 ⇒ `null` ⇒ `'unknown'` ⇒ 回执只写「已受理」，**不按 HTTP 200 猜成功**。
+ */
+const receiptChanged = computed(() => changedVerdict(state.value.write?.changed));
 const ifMatchPreview = computed(() => {
   try {
     return etagFor(state.value.detail?.revision);
@@ -129,7 +140,13 @@ function updateField(key, value) {
   form.value = { ...form.value, [key]: value };
 }
 
-async function runWrite(label, send) {
+/**
+ * 执行一次写操作并把回执落到状态里。
+ *
+ * `action` 只用来算回执的 `changed` 三值（本页只有 `'edit'`）；`previousRevision` 是这次编辑
+ * **所基于**的 revision（即 If-Match 用的那个），不是响应回传的新值。
+ */
+async function runWrite({ label, action, send, previousRevision = null }) {
   dispatch({ type: 'WRITE_START', label });
   const result = await send();
   const receipt = {
@@ -144,6 +161,12 @@ async function runWrite(label, send) {
     requestId: result.requestId ?? null,
     etag: result.etag ?? null,
     sentHeaders: result.sentHeaders ?? null,
+    /**
+     * 三值：`true`／`false`／`null`（拿不到契约真值）。`Category` 回执没有 `changed` 字段，
+     * 只能比 revision 前进；两侧缺一不可比 ⇒ `null`。回执面板据此写「成功回执」
+     * 「已受理（本次未产生变更）」或只写「已受理」。
+     */
+    changed: deriveChanged(action, result, { previousRevision }),
   };
   dispatch({ type: 'WRITE_SETTLED', receipt });
   if (result.ok) {
@@ -159,17 +182,22 @@ async function submitForm() {
   const built = buildCategoryInput(form.value);
   formErrors.value = built.errors;
   if (!built.ok) return;
+  // 这次编辑**所基于**的 revision（列表行读到的那个，也是 If-Match 用的那个），不是响应回传的新值。
+  const previousRevision = state.value.detail?.revision ?? null;
   let ifMatch;
   try {
-    ifMatch = etagFor(state.value.detail?.revision);
+    ifMatch = etagFor(previousRevision);
   } catch {
     formErrors.value = [{ field: 'name', message: '没有可用的 revision，无法生成 If-Match：请重新读取列表后再选一次' }];
     return;
   }
   const id = state.value.detail.id;
-  const result = await runWrite('编辑分类（PATCH /admin/categories/{id}）', () =>
-    editCategory({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
-  );
+  const result = await runWrite({
+    label: '编辑分类（PATCH /admin/categories/{id}）',
+    action: 'edit',
+    previousRevision,
+    send: () => editCategory({ baseUrl: props.baseUrl, token: props.token, id, ifMatch, idempotencyKey: newIdempotencyKey(), body: built.value }),
+  });
   if (result.ok) formMode.value = null;
 }
 
@@ -281,6 +309,7 @@ onBeforeUnmount(() => {
 
     <WriteReceipt
       :write="state.write"
+      :changed="receiptChanged"
       :audit-lookup="state.auditLookup"
       :can-audit="canAudit"
       :can-reload-detail="false"
