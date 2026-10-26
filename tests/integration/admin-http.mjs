@@ -1019,6 +1019,419 @@ await group('[审计统一 · 回归] 装配后审计台账**唯一**（结构�
   assert.equal(portsAfter.length, portsBefore + 3, '三次写操作恰好三条新审计，且都在同一台账里');
 });
 
+// ---------------------------------------------------------------- R60：审计日志 / 管理员读面的真 HTTP 臂
+// 本片区补三条只读面的**真 HTTP + 真装配**证据（此前只有单元/契约镜像用例）：
+//   `GET /admin/audit-logs`                  → listAuditLogs
+//   `GET /admin/administrators`              → listAdministrators
+//   `GET /admin/administrators/{id}/scopes`  → listAdministratorScopes
+//
+// 断言的判据全部来自读代码（逐条标出处，不外推）：
+// - 审计日志：判据是"端口**能力对象**存在"（`services/api/src/admin/audit/service.ts:191-196`）⇒
+//   未注入 `auditLogPort` 的装配**一律 503** `PROVIDER_UNAVAILABLE` + `retryable:false`，⛔ 不返回空页。
+// - 管理员目录/权限：`stub` 域由 `services/api/src/app.ts:1418-1421` **自建**目录（接 authStore）⇒
+//   已接线，正常路径是 200 / 未知 id 是 404；**未接线**只发生在 real 域（`adminRealUnwired`，
+//   `services/api/src/app.ts:1332`）且认证存储不持久时 ⇒ 503（`services/api/src/admin/ops/service.ts:628`
+//   / `:657`）。⛔ 所以"缺省装配下三条都 503"**不是** stub 的形态：stub 只有审计那一条是 503。
+// - 判定顺序（两处服务层同口径：`admin/audit/service.ts:183-184`、`admin/ops/service.ts:646-648`）：
+//   权限门（401/403）→ 接线判定（503）→ 参数格式（400）→ 闭集（400）→ 游标（400 INVALID_CURSOR）→ 查询。
+//
+// 这三条路由**不进上面的 34 项映射表**：那张表是阶段 1/1b 的 operationId 台账（打印时 `/34` 是分母），
+// 本片这三条不在其中，塞进去会让分母变成假数。这里直接发请求逐条断言。
+const DEFAULT_SCOPES_READ = [...ALL_SCOPES, 'scopes:read'];
+const defaultScopesReadAdmin = await seedAdminSession(defaultAuth, 'default-scopes-read', DEFAULT_SCOPES_READ);
+
+await group('[正控制] 审计日志：**stub 缺省装配**未注入审计端口 ⇒ 503 + retryable:false（⛔ 不返回空页）', async () => {
+  const listed = await defaultHttp(`${API}/admin/audit-logs`, { token: defaultAdminAll.token });
+  assert.equal(
+    listed.status, 503,
+    `读 /admin/audit-logs 期望 503（stub 缺省装配未注入 auditLogPort），实得 ${listed.status}：${listed.text}`,
+  );
+  assert.equal(
+    listed.body.error.code, 'PROVIDER_UNAVAILABLE',
+    '期望错误码 PROVIDER_UNAVAILABLE（"能力未接线"是契约错误码闭集内的取值）',
+  );
+  assert.equal(
+    listed.body.error.retryable, false,
+    '接线是运维动作：同一请求在无运维介入下重试不可能成功 ⇒ retryable 必须为 false',
+  );
+  assert.equal(
+    listed.body.error.message, '审计日志读取尚未接线',
+    '期望服务层原文（services/api/src/admin/audit/service.ts:195）',
+  );
+  assert.equal(
+    listed.body.data, undefined,
+    '⛔ 不得返回空页：空页会被读成"平台从未发生过任何管理动作"',
+  );
+
+  // 接线判定先于参数格式：未接线时 `?limit=0` 仍是 503（不是 400）。
+  const badLimit = await defaultHttp(`${API}/admin/audit-logs?limit=0`, { token: defaultAdminAll.token });
+  assert.equal(
+    badLimit.status, 503,
+    `未接线时 ?limit=0 期望 503（接线判定先于参数格式），实得 ${badLimit.status}：${badLimit.text}`,
+  );
+  assert.equal(badLimit.body.error.code, 'PROVIDER_UNAVAILABLE');
+});
+
+await group('[正控制] 管理员目录/权限读面：**stub 缺省装配**由 app.ts 自建目录（接 authStore）⇒ 200 + 契约形状', async () => {
+  const listed = await defaultHttp(`${API}/admin/administrators?limit=50`, { token: defaultScopesReadAdmin.token });
+  assert.equal(
+    listed.status, 200,
+    `读 /admin/administrators 期望 200（stub 域目录由 app.ts 自建、接 authStore），实得 ${listed.status}：${listed.text}`,
+  );
+  assert.deepEqual(Object.keys(listed.body).sort(), ['data', 'meta'], '封套只允许 data + meta');
+  assert.equal(listed.body.meta.execution_mode, 'stub', '期望 meta.execution_mode 反映装配的执行模式');
+  assert.deepEqual(Object.keys(listed.body.data).sort(), ['items', 'next_cursor'], '列表信封只有 items + next_cursor');
+  assert.ok(Array.isArray(listed.body.data.items), 'items 必须是数组');
+  assert.equal(
+    listed.body.data.next_cursor, null,
+    `limit=50 且管理员少于 50 个 ⇒ 不应有下一页，实得 ${JSON.stringify(listed.body.data.next_cursor)}`,
+  );
+
+  const items = listed.body.data.items;
+  for (const item of items) {
+    assert.deepEqual(
+      Object.keys(item).sort(), ['id', 'login_name', 'scopes', 'state'],
+      `每项形状必须是 {id, login_name, state, scopes}，实得 ${Object.keys(item).join(',')}`,
+    );
+    assert.equal('granted_by' in item, false, '⛔ 列表不得带 granted_by（运行时角色读不到那两列）');
+    assert.equal('granted_at' in item, false, '⛔ 列表不得带 granted_at（运行时角色读不到那两列）');
+    assert.ok(
+      ['active', 'suspended'].includes(item.state),
+      `state 只允许 active/suspended（admin_state 枚举），实得 ${item.state}`,
+    );
+    assert.deepEqual(item.scopes, [...item.scopes].sort(), '契约：scopes 去重 + 码元序');
+  }
+
+  const self = items.find((item) => item.id === defaultScopesReadAdmin.adminId);
+  assert.ok(self !== undefined, `目录必须包含刚播种的管理员 ${defaultScopesReadAdmin.adminId}`);
+  assert.equal(self.state, 'active', '刚播种的管理员状态应是 active');
+  assert.deepEqual(
+    self.scopes, [...new Set(DEFAULT_SCOPES_READ)].sort(),
+    '该管理员的 scopes 必须与播种一致（去重 + 码元序）',
+  );
+
+  const panel = await defaultHttp(
+    `${API}/admin/administrators/${defaultScopesReadAdmin.adminId}/scopes`,
+    { token: defaultScopesReadAdmin.token },
+  );
+  assert.equal(panel.status, 200, `读权限面板期望 200，实得 ${panel.status}：${panel.text}`);
+  assert.deepEqual(
+    Object.keys(panel.body.data).sort(), ['scopes'],
+    '面板只允许 data.scopes（⛔ 无 granted_by/granted_at）',
+  );
+  assert.deepEqual(panel.body.data.scopes, [...new Set(DEFAULT_SCOPES_READ)].sort(), '面板 scopes 必须与播种一致');
+  assert.equal(panel.etag, null, '权限集合无独立修订号 ⇒ 本端点不发 ETag');
+  assert.equal(panel.cache, 'no-store', '后台读面一律 Cache-Control: no-store');
+
+  // 不存在 ≠ 没权限：未知（形状合法）的管理员 id 必须是 404，而不是"空数组 200"。
+  const missing = await defaultHttp(`${API}/admin/administrators/${UNKNOWN_UUID}/scopes`, {
+    token: defaultScopesReadAdmin.token,
+  });
+  assert.equal(missing.status, 404, `未知管理员期望 404（不是空数组 200），实得 ${missing.status}：${missing.text}`);
+  assert.equal(missing.body.error.code, 'NOT_FOUND');
+  assert.equal(missing.body.error.message, '管理员不存在', '期望服务层原文（admin/ops/service.ts:663）');
+  assert.equal(missing.body.data, undefined, '⛔ 不得把"没这个人"报成"这个人没有任何权限"');
+
+  // 路径参数形态由路由 schema 判（`services/api/src/routes/admin.ts:363` 的 `uuidIdParams`）⇒ 非 uuid 是 400。
+  const badId = await defaultHttp(`${API}/admin/administrators/not-a-uuid/scopes`, {
+    token: defaultScopesReadAdmin.token,
+  });
+  assert.equal(badId.status, 400, `非 uuid 的 id 期望 400（路由 schema 先判形态），实得 ${badId.status}：${badId.text}`);
+  assert.equal(badId.body.error.code, 'INVALID_REQUEST');
+});
+
+await group('[反例] 三条读面：未登录 401 先于缺 scope 403（两者都先于 503 与参数校验）', async () => {
+  // 只给 `sources:read`：三条路由的门（audit:read / scopes:read）全都不满足。
+  const noScopeAdmin = await seedAdminSession(defaultAuth, 'r60-no-scope', ['sources:read']);
+  // 裁定④：管理员的门是 `scopes:read`，**不是** `accounts:read`。
+  const accountsOnlyAdmin = await seedAdminSession(defaultAuth, 'r60-accounts-only', ['accounts:read']);
+  const plainUser = await seedUserSession(defaultAuth, 'r60-plain-user');
+
+  const routes = [
+    { op: 'listAuditLogs', path: '/admin/audit-logs', gate: 'audit:read' },
+    { op: 'listAdministrators', path: '/admin/administrators', gate: 'scopes:read' },
+    { op: 'listAdministratorScopes', path: `/admin/administrators/${UNKNOWN_UUID}/scopes`, gate: 'scopes:read' },
+  ];
+
+  for (const route of routes) {
+    // ① 未登录 ⇒ 401。即使路径参数是未知 id、即使审计端口未接线：权限门在最前。
+    const anon = await defaultHttp(`${API}${route.path}`);
+    assert.equal(
+      anon.status, 401,
+      `${route.op}：未登录期望 401（权限门先于接线判定与参数判定），实得 ${anon.status}：${anon.text}`,
+    );
+    assert.equal(anon.body.error.code, 'SESSION_REQUIRED', `${route.op}：未登录错误码必须是 SESSION_REQUIRED`);
+
+    // ② 终端用户会话（audience=user）⇒ 403。
+    const asUser = await defaultHttp(`${API}${route.path}`, { token: plainUser.token });
+    assert.equal(asUser.status, 403, `${route.op}：终端用户会话期望 403，实得 ${asUser.status}：${asUser.text}`);
+    assert.equal(asUser.body.error.code, 'SCOPE_DENIED', `${route.op}：越权错误码必须是 SCOPE_DENIED`);
+
+    // ③ 已登录但缺本面 scope ⇒ 403（晚于 401、早于 503/400）。
+    const noScope = await defaultHttp(`${API}${route.path}`, { token: noScopeAdmin.token });
+    assert.equal(
+      noScope.status, 403,
+      `${route.op}：缺 ${route.gate} 期望 403（接线状态不得顶掉越权判定），实得 ${noScope.status}：${noScope.text}`,
+    );
+    assert.equal(noScope.body.error.code, 'SCOPE_DENIED');
+  }
+
+  // 顺序实证：同一条审计路由上，未登录 + 非法 limit 是 401（而不是 400/503）。
+  const anonBadLimit = await defaultHttp(`${API}/admin/audit-logs?limit=0`);
+  assert.equal(
+    anonBadLimit.status, 401,
+    `未登录 + ?limit=0 期望 401（权限门先于参数校验），实得 ${anonBadLimit.status}：${anonBadLimit.text}`,
+  );
+  assert.equal(anonBadLimit.body.error.code, 'SESSION_REQUIRED');
+
+  for (const path of ['/admin/administrators', `/admin/administrators/${UNKNOWN_UUID}/scopes`]) {
+    const wrongGate = await defaultHttp(`${API}${path}`, { token: accountsOnlyAdmin.token });
+    assert.equal(
+      wrongGate.status, 403,
+      `只有 accounts:read 读 ${path} 期望 403（裁定④：accounts:read ≠ scopes:read），实得 ${wrongGate.status}：${wrongGate.text}`,
+    );
+    assert.equal(wrongGate.body.error.code, 'SCOPE_DENIED');
+  }
+});
+
+// —— 注入**内存只读端口**的第三个装配：验证已接线路径（200 形状 / 游标往返 / limit 边界） ——
+// 端口形状照 `services/api/src/admin/audit/pg.ts:112-115`（`persistent: true` + `listAuditLogs(filters)`；
+// filters = `{limit, from, to, actions, scopes, before}`）。位置时间必须是**六位微秒**
+// （`AUDIT_LOG_POSITION_RE`，`services/api/src/admin/audit/pg.ts:49`）——毫秒位置会被当脏串 400。
+const READ_AUDIT_EVENTS = Object.freeze([
+  {
+    id: uuid(1201), action: 'flag.set', scope: 'flags:write', target_ref: null, reason_code: 'flag_updated',
+    request_id: uuid(2201), result: 'accepted', created_at: '2026-10-20T01:02:03.456789Z',
+    actor: null, target_hint: 'flag:ai_enabled', before_value: null, after_value: null,
+  },
+  {
+    id: uuid(1202), action: 'job.cancel', scope: 'jobs:cancel',
+    target_ref: { type: 'job', id: uuid(1203), revision: 3 }, reason_code: 'job_cancelled',
+    request_id: uuid(2202), result: 'accepted', created_at: '2026-10-20T01:01:00.000001Z',
+    actor: null, target_hint: null, before_value: null, after_value: null,
+  },
+  {
+    id: uuid(1204), action: 'account.suspend', scope: 'accounts:suspend', target_ref: null,
+    reason_code: 'account_suspended', request_id: uuid(2203), result: 'accepted',
+    created_at: '2026-10-20T01:00:00.123456Z', actor: null,
+    target_hint: `account:${UNKNOWN_UUID}`, before_value: null, after_value: null,
+  },
+  {
+    id: uuid(1205), action: 'flag.set', scope: 'flags:write', target_ref: null,
+    reason_code: 'flag_weakening_denied', request_id: uuid(2204), result: 'denied',
+    created_at: '2026-10-19T23:59:59.999999Z', actor: null,
+    target_hint: 'flag:synthetic_weakening_key', before_value: null, after_value: null,
+  },
+]);
+const readAuditPort = {
+  persistent: true,
+  async listAuditLogs(filters) {
+    const rows = READ_AUDIT_EVENTS.filter((event) => {
+      if (filters.actions !== null && !filters.actions.includes(event.action)) return false;
+      if (filters.scopes !== null && !filters.scopes.includes(event.scope)) return false;
+      return true;
+    });
+    // `before` = 上一页最后一条的**位置**（微秒时间 + id），从它之后继续。
+    const start = filters.before === null
+      ? 0
+      : rows.findIndex((event) => event.created_at === filters.before.createdAt && event.id === filters.before.id) + 1;
+    const items = rows.slice(start, start + filters.limit);
+    const hasMore = start + items.length < rows.length;
+    const last = items[items.length - 1];
+    return {
+      items: items.map((event) => ({ ...event })),
+      hasMore,
+      nextPosition: hasMore ? { createdAt: last.created_at, id: last.id } : null,
+    };
+  },
+};
+const readAuth = createMemoryAuthStore();
+const readAdmin = await seedAdminSession(readAuth, 'audit-log-read', DEFAULT_SCOPES_READ);
+const readApp = buildApp({
+  config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+  store: readAuth,
+  // 只注入审计读端口：管理员目录在 stub 域仍由 app.ts 自建（与上面的默认装配同一条判据）。
+  adminInjection: { auditLogPort: readAuditPort },
+});
+const readOrigin = await readApp.listen({ host: '127.0.0.1', port: 0 });
+const readHttp = makeHttp(readOrigin);
+
+await group('[正控制] 审计日志：注入内存只读端口 ⇒ 200 + AuditEvent 形状 + 下一页游标可真往返', async () => {
+  const first = await readHttp(`${API}/admin/audit-logs`, { token: readAdmin.token });
+  assert.equal(
+    first.status, 200,
+    `注入 auditLogPort 后读 /admin/audit-logs 期望 200，实得 ${first.status}：${first.text}`,
+  );
+  assert.deepEqual(Object.keys(first.body).sort(), ['data', 'meta'], '封套只允许 data + meta');
+  assert.deepEqual(Object.keys(first.body.data).sort(), ['items', 'next_cursor'], '列表信封只有 items + next_cursor');
+  assert.deepEqual(
+    first.body.data.items.map((event) => event.id), READ_AUDIT_EVENTS.map((event) => event.id),
+    '默认 limit=20 且只有 4 条 ⇒ 一页读全，顺序按端口返回',
+  );
+  assert.equal(first.body.data.next_cursor, null, '一页读完 ⇒ 不得发 next_cursor');
+
+  // 形状：契约 `AuditEvent` 的 12 个字段（8 个必填 + 4 个可空），additionalProperties:false ⇒ 逐键对齐。
+  for (const event of first.body.data.items) {
+    assert.deepEqual(
+      Object.keys(event).sort(),
+      ['action', 'actor', 'after_value', 'before_value', 'created_at', 'id', 'reason_code', 'request_id',
+        'result', 'scope', 'target_hint', 'target_ref'],
+      `AuditEvent 字段集合不符（契约 additionalProperties:false），实得 ${Object.keys(event).join(',')}`,
+    );
+    assert.ok(['accepted', 'denied', 'failed'].includes(event.result), `result 闭集外取值：${event.result}`);
+    assert.match(event.id, UUID_PATTERN, 'id 必须是 uuid');
+    assert.match(event.request_id, UUID_PATTERN, 'request_id 必须是 uuid');
+  }
+  assert.deepEqual(
+    first.body.data.items[1].target_ref, { type: 'job', id: uuid(1203), revision: 3 },
+    '`target_ref` 必须原样透出端口给的位置对象（闭集 type + id + revision）',
+  );
+  assert.equal(first.body.data.items[3].result, 'denied', '`result=denied` 必须原样透出');
+
+  // 游标往返：limit=2 拿到的 next_cursor 必须能继续翻页，且与第一页不重不漏。
+  const pageOne = await readHttp(`${API}/admin/audit-logs?limit=2`, { token: readAdmin.token });
+  assert.equal(pageOne.status, 200, `limit=2 期望 200，实得 ${pageOne.status}：${pageOne.text}`);
+  assert.equal(pageOne.body.data.items.length, 2, 'limit=2 ⇒ 恰好两条');
+  const cursor = pageOne.body.data.next_cursor;
+  assert.equal(typeof cursor, 'string', '还有两条未读 ⇒ 必须发 next_cursor');
+
+  const pageTwo = await readHttp(`${API}/admin/audit-logs?limit=2&cursor=${encodeURIComponent(cursor)}`, {
+    token: readAdmin.token,
+  });
+  assert.equal(pageTwo.status, 200, `带合法游标翻页期望 200，实得 ${pageTwo.status}：${pageTwo.text}`);
+  assert.deepEqual(
+    [...pageOne.body.data.items, ...pageTwo.body.data.items].map((event) => event.id),
+    READ_AUDIT_EVENTS.map((event) => event.id),
+    '两页拼起来必须不重不漏地覆盖整份台账',
+  );
+  assert.equal(pageTwo.body.data.next_cursor, null, '第二页已到底 ⇒ next_cursor 必须是 null');
+});
+
+await group('[反例] 审计日志：limit / cursor / 时间 / 闭集边界一律 400（不夹紧、不静默成空页）', async () => {
+  // 契约 limit 1..50：越界不是夹紧，是 400（`services/api/src/admin/identity.ts:146-155`）。
+  for (const raw of ['0', '51', 'abc', '-1', '3.5']) {
+    const res = await readHttp(`${API}/admin/audit-logs?limit=${encodeURIComponent(raw)}`, { token: readAdmin.token });
+    assert.equal(
+      res.status, 400,
+      `limit=${raw} 期望 400（契约 1..50，越界不夹紧），实得 ${res.status}：${res.text}`,
+    );
+    assert.equal(res.body.error.code, 'INVALID_REQUEST', `limit=${raw} 的错误码期望 INVALID_REQUEST`);
+    assert.equal(res.body.error.message, 'limit 必须是 1..50 的整数', `limit=${raw} 期望服务层原文`);
+    assert.equal(res.body.data, undefined, `limit=${raw}：⛔ 不得静默返回一页`);
+  }
+  const maxLimit = await readHttp(`${API}/admin/audit-logs?limit=50`, { token: readAdmin.token });
+  assert.equal(maxLimit.status, 200, `上限 50 本身合法，期望 200，实得 ${maxLimit.status}：${maxLimit.text}`);
+
+  // 脏游标：400 `INVALID_CURSOR`（⛔ 不把脏串传给 SQL cast —— 那会变 500）。
+  const dirtyCursor = await readHttp(`${API}/admin/audit-logs?cursor=not-a-cursor`, { token: readAdmin.token });
+  assert.equal(
+    dirtyCursor.status, 400,
+    `脏游标期望 400（不是 500），实得 ${dirtyCursor.status}：${dirtyCursor.text}`,
+  );
+  assert.equal(dirtyCursor.body.error.code, 'INVALID_CURSOR', '脏游标错误码期望 INVALID_CURSOR');
+
+  // 超长游标是**契约参数违例**（不是"内容不可信"）⇒ INVALID_REQUEST，两种错因不混。
+  const longCursor = await readHttp(`${API}/admin/audit-logs?cursor=${'a'.repeat(4096)}`, { token: readAdmin.token });
+  assert.equal(
+    longCursor.status, 400,
+    `超长游标期望 400 INVALID_REQUEST，实得 ${longCursor.status}：${longCursor.text}`,
+  );
+  assert.equal(longCursor.body.error.code, 'INVALID_REQUEST', '超长游标错误码期望 INVALID_REQUEST');
+
+  // 时间参数必须带时区（`admin/audit/service.ts:103-118`）。
+  const badFrom = await readHttp(`${API}/admin/audit-logs?from=2026-10-01`, { token: readAdmin.token });
+  assert.equal(badFrom.status, 400, `无时区 from 期望 400，实得 ${badFrom.status}：${badFrom.text}`);
+  assert.equal(badFrom.body.error.code, 'INVALID_REQUEST');
+  const reversed = await readHttp(
+    `${API}/admin/audit-logs?from=2026-10-21T00:00:00Z&to=2026-10-20T00:00:00Z`,
+    { token: readAdmin.token },
+  );
+  assert.equal(reversed.status, 400, `from 晚于 to 期望 400，实得 ${reversed.status}：${reversed.text}`);
+  assert.equal(reversed.body.error.code, 'INVALID_REQUEST');
+
+  // 闭集参数：闭集外取值 400（⛔ 不静默返回空页冒充"没有这类事件"）。
+  const badAction = await readHttp(`${API}/admin/audit-logs?action=not-a-real-action`, { token: readAdmin.token });
+  assert.equal(badAction.status, 400, `action 闭集外期望 400，实得 ${badAction.status}：${badAction.text}`);
+  assert.equal(badAction.body.error.code, 'INVALID_REQUEST');
+
+  // 游标绑定筛选组合：换了 `from` 再用旧游标 ⇒ INVALID_CURSOR（`admin/audit/service.ts:224-226`）。
+  const pageOne = await readHttp(`${API}/admin/audit-logs?limit=2`, { token: readAdmin.token });
+  const cursor = pageOne.body.data.next_cursor;
+  assert.equal(typeof cursor, 'string', '前置：limit=2 必须拿到游标');
+  const changedFilter = await readHttp(
+    `${API}/admin/audit-logs?limit=2&from=2026-10-01T00:00:00Z&cursor=${encodeURIComponent(cursor)}`,
+    { token: readAdmin.token },
+  );
+  assert.equal(
+    changedFilter.status, 400,
+    `换筛选条件后复用旧游标期望 400 INVALID_CURSOR，实得 ${changedFilter.status}：${changedFilter.text}`,
+  );
+  assert.equal(changedFilter.body.error.code, 'INVALID_CURSOR');
+  assert.equal(changedFilter.body.error.message, '筛选条件已变化，请从第一页重新开始', '期望服务层原文');
+});
+
+// —— real 域缺省装配：三条读面**都**必须 503 + retryable:false（"真实缺省装配"的核心断言） ——
+// 判据：`adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1332`）；
+// real 域且认证存储不持久 ⇒ 管理员目录不接线（`app.ts:1418-1421`）；不传 `pool` ⇒ 审计读端口不接线
+// （`app.ts:1492-1493`，判据是 `pool === null`）。环境值照
+// `tests/unit/admin-real-mode-fail-closed.test.mjs:35-47` 的 REAL_ENV（占位串，绝不连库）。
+const REAL_ENV = {
+  APP_EXECUTION_MODE: 'real',
+  LOG_LEVEL: 'silent',
+  DATABASE_URL: 'postgres://synthetic_local_only@127.0.0.1:5432/gengyun_synthetic_never_connected',
+  SESSION_SIGNING_KEY: 'synthetic-not-a-real-signing-key',
+  DELETION_LEDGER_KEY: 'synthetic-not-a-real-ledger-key',
+  WECHAT_APP_ID: 'synthetic-not-a-real-appid',
+  WECHAT_APP_SECRET: 'synthetic-not-a-real-appsecret',
+  OBJECT_STORAGE_ENDPOINT: 'https://example.invalid',
+  OBJECT_STORAGE_BUCKET: 'synthetic-not-a-real-bucket',
+  OBJECT_STORAGE_ACCESS_KEY: 'synthetic-not-a-real-access-key',
+  OBJECT_STORAGE_SECRET_KEY: 'synthetic-not-a-real-secret-key',
+};
+
+await group('[正控制] real 缺省装配（无库池 / 认证存储不持久）⇒ 三条读面都 503 + retryable:false', async () => {
+  const realAuth = createMemoryAuthStore();
+  const realApp = buildApp({ config: loadConfig({ ...REAL_ENV }), store: realAuth });
+  const realOrigin = await realApp.listen({ host: '127.0.0.1', port: 0 });
+  const realHttp = makeHttp(realOrigin);
+  const realAdmin = await seedAdminSession(realAuth, 'real-read-face', DEFAULT_SCOPES_READ);
+
+  const realRoutes = [
+    { op: 'listAuditLogs', path: '/admin/audit-logs' },
+    { op: 'listAdministrators', path: '/admin/administrators' },
+    { op: 'listAdministratorScopes', path: `/admin/administrators/${UNKNOWN_UUID}/scopes` },
+  ];
+
+  for (const route of realRoutes) {
+    const res = await realHttp(`${API}${route.path}`, { token: realAdmin.token });
+    assert.equal(
+      res.status, 503,
+      `real 缺省装配下 ${route.op} 期望 503（未接线，⛔ 不返回内存空页的成功封套），实得 ${res.status}：${res.text}`,
+    );
+    assert.equal(
+      res.body.error.code, 'PROVIDER_UNAVAILABLE',
+      `${route.op}：期望错误码 PROVIDER_UNAVAILABLE`,
+    );
+    assert.equal(
+      res.body.error.retryable, false,
+      `${route.op}：接线是运维动作 ⇒ retryable 必须为 false（不得宣称"稍后重试就好"）`,
+    );
+    assert.equal(res.body.data, undefined, `${route.op}：503 不得带 data`);
+    assert.match(
+      String(res.body.error.message), /未接/,
+      `${route.op}：错误文案应自述"未接线"，实得 ${res.body.error.message}`,
+    );
+
+    // 同一 real 装配上，未登录仍然是 401（权限门先于接线判定，real 域同样成立）。
+    const anon = await realHttp(`${API}${route.path}`);
+    assert.equal(
+      anon.status, 401,
+      `${route.op}：real 域未登录期望 401（而不是 503），实得 ${anon.status}：${anon.text}`,
+    );
+    assert.equal(anon.body.error.code, 'SESSION_REQUIRED');
+  }
+});
+
 // ---------------------------------------------------------------- 汇总
 console.log('\n=== 34 项 HTTP 实测映射表（operationId / method / path / 实测状态码 / 错误码） ===');
 const seen = new Set();
