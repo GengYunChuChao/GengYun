@@ -93,7 +93,7 @@
 | apps/admin/src/views/FlagsView.vue（595） | listFlags@63、setFlag@147 | 2 |
 | apps/admin/src/views/FlagAuditView.vue（546） | listFlagAuditEvents@68 | 1 |
 | apps/admin/src/views/AuditEventsView.vue（541） | listAuditEvents@66 | 1 |
-| apps/admin/src/views/JobsView.vue（664） | listAdminJobs@76、cancelAdminJob@155 | 2 |
+| apps/admin/src/views/JobsView.vue（664） | listAdminJobs@80、cancelAdminJob@159 | 2 |
 | 合计 | 23 个 operation | 27 |
 
 `listAuditEvents` 被 4 处调用（`apps/admin/src/views/AuditEventsView.vue:66`、`apps/admin/src/views/SourcesView.vue:328`、`apps/admin/src/views/KnowledgeAdminView.vue:332`、`apps/admin/src/views/CategoriesView.vue:179`），`listAdminSources` 被 2 处调用（`apps/admin/src/views/SourcesView.vue:135`、`apps/admin/src/views/KnowledgeAdminView.vue:206`），所以调用点数比 operation 数多 4。
@@ -117,7 +117,7 @@
 | apps/admin/src/views/FlagsView.vue（595） | 开关列表 + 行内切换 + 详情侧栏 | PUT /admin/feature-flags/{key}（If-Match + Idempotency-Key） | 12 / 0 | flags:read 读；flags:write 决定可写（apps/admin/src/lib/flags-view-model.mjs:224） |
 | apps/admin/src/views/FlagAuditView.vue（546） | 开关变更留痕只读 + 加载下一页 | 无写操作 | 6 / 0 | flags:read |
 | apps/admin/src/views/AuditEventsView.vue（541） | 审计事件只读 + 客户端筛选 + 展开原文 | 无写操作 | 6 / 0 | audit:read |
-| apps/admin/src/views/JobsView.vue（664） | 作业列表 + 详情 + 取消 | 取消只在 queued / running 行可用，终态行按钮禁用 | 12 / 0 | jobs:read 读；jobs:cancel 决定可取消（apps/admin/src/lib/jobs-api.mjs:713） |
+| apps/admin/src/views/JobsView.vue（664） | 作业列表 + 详情 + 取消 | 取消只在 queued / running 行可用，终态行按钮禁用 | 13 / 0 | jobs:read 读；jobs:cancel 决定可取消（apps/admin/src/lib/jobs-api.mjs:713） |
 | apps/admin/src/views/ReviewPlaceholderView.vue（238） | 空态：不发起任何网络请求，不伪造队列与审核人 | 无 | 0 / 0 | 无 |
 | apps/admin/src/views/ContentFieldGrid.vue（138） | 纯子组件（字段网格），无请求 | 无 | 0 / 0 | 无 |
 | apps/admin/src/views/WriteReceipt.vue（198） | 纯子组件（写入回执），按钮全部 emit | 无网络请求 | 3 / 0 | 无 |
@@ -164,7 +164,7 @@
 
 5. `scopes` 的形状与排序在 `services/api/src/auth/service.ts:377-389`；服务端裁决在 `services/api/src/auth/middleware.ts:201-206`，缺 scope 固定回 `SCOPE_DENIED`「缺少所需权限：<scope>」；用户端会话打后台固定被拒（`services/api/src/auth/middleware.ts:110-117`）。
 6. scope 闭集 13 项见 `services/api/src/admin/scopes.ts:35-49`；`scopes:write` 只在常量里声明、没有任何路由以它为门（`services/api/src/admin/scopes.ts:65-69`），授/撤 scope 现状只有迁移 0041 的 SECURITY DEFINER 函数。
-7. 前端把 scope 只当「提前禁用按钮」：六个页面登录后立刻再读一次 `GET /admin/auth/session`（`apps/admin/src/views/AccountsView.vue:88-100`、`apps/admin/src/views/FlagsView.vue:88`、`apps/admin/src/views/FlagAuditView.vue:100`、`apps/admin/src/views/AuditEventsView.vue:98`、`apps/admin/src/views/JobsView.vue:101`、`apps/admin/src/views/ContentAdminView.vue:41-68`）。
+7. 前端把 scope 只当「提前禁用按钮」：六个页面登录后立刻再读一次 `GET /admin/auth/session`（`apps/admin/src/views/AccountsView.vue:88-100`、`apps/admin/src/views/FlagsView.vue:88`、`apps/admin/src/views/FlagAuditView.vue:100`、`apps/admin/src/views/AuditEventsView.vue:98`、`apps/admin/src/views/JobsView.vue:105`、`apps/admin/src/views/ContentAdminView.vue:41-68`）。
 
 缺 scope 的三种可见后果：
 
