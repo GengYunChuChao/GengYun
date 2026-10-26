@@ -49,36 +49,36 @@
         <!-- demo .home-bottom 第一个 panel 的 panel-head 里是 link('查看资料库 →','library')，
              即 <button class="text-btn" data-route="library">。这里落到既有路由 pages/knowledge/knowledge，
              与下方「科普知识」info-row 共用 goKnowledge 的门禁跳转（不新增页面、不新增接口）。 -->
-        <button class="text-btn" bindtap="goKnowledge">
+        <view class="text-btn" bindtap="goKnowledge">
           查看资料库
           <view class="gy-icon gy-icon--arrow"></view>
-        </button>
+        </view>
       </view>
       <view class="info-list">
-        <button class="info-row" bindtap="goKnowledge">
+        <view class="info-row" bindtap="goKnowledge">
           <view class="tiny-art"><view class="gy-icon gy-icon--leaf"></view></view>
           <view class="info-row__copy">
             <text class="info-row__title">科普知识（服务端查询）</text>
             <text class="info-row__desc">检索资料，核对来源与适用条件</text>
           </view>
           <view class="gy-icon gy-icon--arrow"></view>
-        </button>
-        <button class="info-row" bindtap="goReference">
+        </view>
+        <view class="info-row" bindtap="goReference">
           <view class="tiny-art"><view class="gy-icon gy-icon--leaf"></view></view>
           <view class="info-row__copy">
             <text class="info-row__title">识草查药（本地静态资料）</text>
             <text class="info-row__desc">按作物与地区查阅已整理的资料条目</text>
           </view>
           <view class="gy-icon gy-icon--arrow"></view>
-        </button>
-        <button class="info-row" bindtap="goReferenceSeed">
+        </view>
+        <view class="info-row" bindtap="goReferenceSeed">
           <view class="tiny-art"><view class="gy-icon gy-icon--leaf"></view></view>
           <view class="info-row__copy">
             <text class="info-row__title">科普种子资料库</text>
             <text class="info-row__desc">本地 · 待核实 · 非权威，仅供内部走查</text>
           </view>
           <view class="gy-icon gy-icon--arrow"></view>
-        </button>
+        </view>
       </view>
     </view>
   </view>
