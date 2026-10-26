@@ -2,6 +2,7 @@ const fontScale = require('../../utils/font-scale')
 const auth = require('../../utils/auth')
 const debug = require('../../utils/debug')
 const navigation = require('../../utils/navigation')
+const publicHome = require('../../utils/public-home-api')
 
 const HOME_ENTRIES = [
   { key: 'weed', iconClass: 'gy-icon--leaf', title: '拍草识别', desc: '拍一张照片，识别田里的杂草' },
@@ -26,12 +27,15 @@ function verifiedMode(verified) {
 Page({
   // 入口图标改用样式层的 demo 线性图标（styles/icons.wxss，几何取自 docs/ui-demo 的
   // SVG path 数据）；数量保持三个已确认入口，不为对齐 demo 的四宫格补虚构入口。
-  data: { fontScale: 1, guest: true, entries: entriesForMode(null), local: false, busy: false, loggedIn: false, diagPassed: null, status: '开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。' },
+  data: { fontScale: 1, guest: true, entries: entriesForMode(null), local: false, busy: false, loggedIn: false, diagPassed: null,
+    previewStatus: 'loading', previewItems: [], previewNote: '', previewMessage: '', previewErrorCode: '',
+    status: '开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。' },
   onShow: function () {
     this._active = true
     const action = this._action = (this._action || 0) + 1
     fontScale.applyFontScale(this)
     this.setData({ loggedIn: false, guest: true, entries: entriesForMode(null) })
+    this.loadPreviews()
     auth.verifySession((verified) => {
       if (this._active && this._action === action) {
         this.setData({ loggedIn: verified, guest: !verified, entries: entriesForMode(verifiedMode(verified)) })
@@ -42,10 +46,42 @@ Page({
   onHide: function () {
     this._active = false
     this._action = (this._action || 0) + 1
+    this._previewAction = (this._previewAction || 0) + 1
     if (!this._handoff) navigation.clearReturnTo(this._navigation)
     this._handoff = false
   },
   onUnload: function () { if (this._active !== false) this.onHide() },
+  // 公开预览不绑定会话；独立世代只防止离页或重新读取后的旧响应覆盖当前页面。
+  loadPreviews: function () {
+    const action = this._previewAction = (this._previewAction || 0) + 1
+    const current = () => this._active !== false && this._previewAction === action
+    if (!publicHome.enabled()) {
+      this.setData({ previewStatus: 'disabled', previewItems: [], previewNote: '', previewMessage: publicHome.message({ code: 'NETWORK_DISABLED' }), previewErrorCode: 'NETWORK_DISABLED' })
+      return Promise.resolve()
+    }
+    this.setData({ previewStatus: 'loading', previewItems: [], previewNote: '', previewMessage: '', previewErrorCode: '' })
+    return publicHome.load().then((result) => {
+      if (!current()) return
+      this.setData({
+        previewStatus: result.items.length ? 'ready' : 'empty',
+        previewItems: result.items,
+        previewNote: result.note,
+        previewMessage: '',
+        previewErrorCode: ''
+      })
+    }).catch((error) => {
+      if (!current()) return
+      this.setData({ previewStatus: 'error', previewItems: [], previewNote: '', previewMessage: publicHome.message(error), previewErrorCode: error && error.code ? error.code : 'UNAVAILABLE' })
+    })
+  },
+  retryPreviews: function () { return this.loadPreviews() },
+  onPreviewTap: function (event) {
+    const dataset = event && event.currentTarget && event.currentTarget.dataset
+    const kind = dataset && dataset.kind
+    // 预览 ID 不是详情读取授权或路由证明；只进入对应既有入口，继续走原游客门禁。
+    if (kind === 'knowledge') { this.openGated('/pages/knowledge/knowledge'); return }
+    if (kind === 'community') { this.openGated('/pages/community/community'); return }
+  },
   goLogin: function () {
     this._action = (this._action || 0) + 1
     const op = navigation.beginReturnTo(null)

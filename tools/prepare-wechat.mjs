@@ -166,6 +166,7 @@ try {
     // 'data/region-centroids.js',
     'utils/region-converter.js',
     'utils/knowledge-api.js',
+    'utils/public-home-api.js',
     // 识别域适配层（GY-I09）：识别页依赖它；漏加会导致标准包 MODULE_NOT_FOUND。
     'utils/identify-api.js',
     // 收藏与识别历史适配层（GY-I16）：新页面依赖它们；漏加同样会导致 MODULE_NOT_FOUND。

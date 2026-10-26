@@ -42,6 +42,61 @@
     </view>
   </view>
 
+  <view class="section home-preview">
+    <view class="section-head">
+      <view class="section-head__title">公开预览</view>
+      <view class="section-head__meta">无需登录 · 仅标题与摘要</view>
+    </view>
+    <state-view
+      wx:if="{{previewStatus === 'loading'}}"
+      status="loading"
+      title="正在读取公开预览"
+      desc="只读取公开标题与摘要，不要求登录。"
+    ></state-view>
+    <state-view
+      wx:elif="{{previewStatus === 'error'}}"
+      status="error"
+      title="公开预览读取失败"
+      desc="{{previewMessage}}"
+      error-code="{{previewErrorCode}}"
+      action-text="重试公开预览"
+      bind:action="retryPreviews"
+    ></state-view>
+    <state-view
+      wx:elif="{{previewStatus === 'empty'}}"
+      status="empty"
+      title="暂时没有公开预览"
+      desc="服务端返回了合法空列表；没有使用本地内容填充。"
+    ></state-view>
+    <state-view
+      wx:elif="{{previewStatus === 'disabled'}}"
+      status="stub"
+      title="公开预览未启用"
+      desc="{{previewMessage}}"
+    ></state-view>
+    <view wx:elif="{{previewStatus === 'ready'}}" class="panel preview-panel">
+      <view class="preview-note">{{previewNote}}</view>
+      <view class="info-list">
+        <button
+          wx:for="{{previewItems}}"
+          wx:key="id"
+          class="info-row preview-row"
+          style="width:100%;margin:0;text-align:left;"
+          data-kind="{{item.kind}}"
+          bindtap="onPreviewTap"
+        >
+          <view class="info-row__copy">
+            <text class="info-row__title">{{item.title}}</text>
+            <text class="info-row__desc">{{item.summary}}</text>
+            <text class="preview-source">{{item.typeLabel}} · {{item.sourceLabel}}</text>
+          </view>
+          <view class="gy-icon gy-icon--arrow"></view>
+        </button>
+      </view>
+    </view>
+    <view class="preview-human-review">人工审核入口建设中，暂不开放人工审核服务。</view>
+  </view>
+
   <view class="home-bottom">
     <view class="panel">
       <view class="panel-head">

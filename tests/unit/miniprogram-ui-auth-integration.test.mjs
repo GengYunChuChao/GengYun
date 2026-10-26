@@ -37,7 +37,7 @@ function harness() {
   function load(path) {
     path = resolve(path);
     if (path.endsWith('config\\runtime.js') || path.endsWith('config/runtime.js')) {
-      return { mode: 'local', apiBaseUrl: 'https://synthetic.invalid/api/v1' };
+      return { get mode() { return context.runtimeMode || 'local'; }, apiBaseUrl: 'https://synthetic.invalid/api/v1' };
     }
     if (cache.has(path)) return cache.get(path).exports;
     const module = { exports: {} };
@@ -82,7 +82,7 @@ function harness() {
     assert.equal(auth.isLoggedIn(), true);
   }
   // 并集：合并两侧对同一 helper 的改动 —— #191 的 `component` 与 upstream(#188/#190) 的 `navigates` 都在，字段一个不丢。
-  return { auth, page, component, seedCache, acceptVerification, login, requests, launches, tabs, navigates, toasts, warns, load, setSystemPx: (px) => { systemPx = px; }, getApp: () => app };
+  return { auth, page, component, seedCache, acceptVerification, login, requests, launches, tabs, navigates, toasts, warns, load, setSystemPx: (px) => { systemPx = px; }, setRuntimeMode: (mode) => { context.runtimeMode = mode; }, getApp: () => app };
 }
 
 for (const name of ['identify', 'community', 'messages', 'profile']) {
@@ -120,7 +120,7 @@ test('首页允许游客预览，登录按钮和功能入口引导到独立登�
   page.onLoad();
   page.onShow();
   assert.equal(page.data.guest, true);
-  assert.equal(h.requests.length, 0);
+  assert.equal(h.requests.filter((request) => !request.url.endsWith('/public/home')).length, 0);
   assert.equal(h.launches.length, 0);
   page.goLogin();
   page.onEntryTap();
@@ -210,7 +210,7 @@ test('未登录点语音卡与识别卡同口径被拦：引导登录页，不�
   page.onLoad();
   page.onShow();
   assert.equal(page.data.guest, true);
-  assert.equal(h.requests.length, 0);
+  assert.equal(h.requests.filter((request) => !request.url.endsWith('/public/home')).length, 0);
   page.onEntryTap(homeEntryTap('weed'));
   assert.equal(nav.peekReturnTo(), '/pages/identify/identify', '识别卡未登录时记下识别页为回跳目标');
   page.onEntryTap(homeEntryTap('voice'));
@@ -831,4 +831,138 @@ test('G8：messages-api.js 头部注释不再称「端口未接线／reference_s
   assert.match(head, /不泄露/);
 });
 
+// GY-I26 H1：公开预览测试只追加在文件末尾，避免移动既有文档锚点。
+const homePreviewMeta = (mode = 'real') => ({
+  request_id: '11111111-1111-4111-8111-111111111111',
+  contract_version: '1.0.0',
+  execution_mode: mode,
+});
+const homePreviewItem = (overrides = {}) => Object.assign({
+  id: '22222222-2222-4222-8222-222222222222',
+  title: '公开知识标题',
+  summary: '仅用于契约测试的公开摘要。',
+  content_type: 'knowledge',
+  source_kind: 'database',
+}, overrides);
+const homePreviewEnvelope = (items, mode = 'real') => ({
+  data: { previews: items, human_review_state: 'under_construction' },
+  meta: homePreviewMeta(mode),
+});
+
+test('首页公开预览：游客无令牌读取合法数据，类型与来源如实展示且不拼详情路由', async () => {
+  const h = harness(), page = h.page('home');
+  page.onLoad(); page.onShow();
+  assert.equal(h.requests.length, 1);
+  const request = h.requests[0];
+  assert.ok(request.url.endsWith('/public/home'));
+  assert.equal(request.method, 'GET');
+  assert.equal(request.header.authorization, undefined);
+  assert.equal(request.data, undefined);
+  request.success({ statusCode: 200, data: homePreviewEnvelope([
+    homePreviewItem(),
+    homePreviewItem({ id: '33333333-3333-4333-8333-333333333333', title: '社区公开摘要', content_type: 'community', source_kind: null }),
+  ], 'stub') });
+  await flush();
+  assert.equal(page.data.previewStatus, 'ready');
+  assert.equal(page.data.previewItems.length, 2);
+  assert.equal(page.data.previewItems[0].typeLabel, '科普知识');
+  assert.equal(page.data.previewItems[1].typeLabel, '社区公开内容');
+  assert.equal(page.data.previewItems[1].sourceLabel, '来源类型未提供');
+  assert.match(page.data.previewNote, /替身响应/);
+
+  page.onPreviewTap({ currentTarget: { dataset: { kind: 'knowledge' } } });
+  page.onPreviewTap({ currentTarget: { dataset: { kind: 'community' } } });
+  assert.deepEqual(h.launches, ['/pages/login/login', '/pages/login/login']);
+  assert.deepEqual(h.tabs, []);
+  assert.deepEqual(h.navigates, []);
+  assert.equal(h.requests.filter((item) => /knowledgedetail|communitydetail/.test(item.url)).length, 0);
+});
+
+test('首页公开预览：合法空列表不是失败，也不伪造填充', async () => {
+  const h = harness(), page = h.page('home');
+  page.onShow();
+  h.requests[0].success({ statusCode: 200, data: homePreviewEnvelope([]) });
+  await flush();
+  assert.equal(page.data.previewStatus, 'empty');
+  assert.deepEqual(page.data.previewItems, []);
+  assert.equal(page.data.previewMessage, '');
+});
+
+test('首页公开预览：服务失败可读且显式重试，重试后接受合法空态', async () => {
+  const h = harness(), page = h.page('home');
+  page.onShow();
+  h.requests[0].success({ statusCode: 503, data: { error: { code: 'PROVIDER_UNAVAILABLE' } } });
+  await flush();
+  assert.equal(page.data.previewStatus, 'error');
+  assert.equal(page.data.previewErrorCode, 'PROVIDER_UNAVAILABLE');
+  assert.match(page.data.previewMessage, /暂不可用/);
+
+  const retry = page.retryPreviews();
+  assert.equal(h.requests.length, 2);
+  h.requests[1].success({ statusCode: 200, data: homePreviewEnvelope([]) });
+  await retry;
+  assert.equal(page.data.previewStatus, 'empty');
+  assert.equal(page.data.previewErrorCode, '');
+});
+
+test('首页公开预览：畸形成功响应逐项拒绝，不渲染未核对内容', async () => {
+  const cases = [
+    (body) => { body.extra = true; },
+    (body) => { body.data.previews[0].extra = true; },
+    (body) => { delete body.data.previews[0].source_kind; },
+    (body) => { body.data.previews[0].id = 'not-a-uuid'; },
+    (body) => { body.data.previews = Array.from({ length: 11 }, (_, index) => homePreviewItem({ id: `22222222-2222-4222-8222-${String(index + 1).padStart(12, '0')}` })); },
+    (body) => { body.data.human_review_state = 'available'; },
+  ];
+  for (const mutate of cases) {
+    const h = harness(), page = h.page('home');
+    page.onShow();
+    const body = homePreviewEnvelope([homePreviewItem()]);
+    mutate(body);
+    h.requests[0].success({ statusCode: 200, data: body });
+    await flush();
+    assert.equal(page.data.previewStatus, 'error');
+    assert.equal(page.data.previewErrorCode, 'INVALID_RESPONSE');
+    assert.equal(page.data.previewItems.length, 0);
+  }
+});
+
+test('首页公开预览：共享网络 disabled 时零请求并说明配置状态', () => {
+  const h = harness();
+  h.setRuntimeMode('disabled');
+  const page = h.page('home');
+  page.onLoad(); page.onShow();
+  assert.equal(h.requests.length, 0);
+  assert.equal(page.data.previewStatus, 'disabled');
+  assert.match(page.data.previewMessage, /未启用联网/);
+});
+
+test('首页公开预览：重试与离页都会淘汰旧响应', async () => {
+  const h = harness(), page = h.page('home');
+  page.onShow();
+  const old = h.requests[0];
+  const retry = page.retryPreviews();
+  h.requests[1].success({ statusCode: 200, data: homePreviewEnvelope([homePreviewItem({ title: '当前结果' })]) });
+  await retry;
+  old.success({ statusCode: 200, data: homePreviewEnvelope([homePreviewItem({ title: '过期结果' })]) });
+  await flush();
+  assert.equal(page.data.previewItems[0].title, '当前结果');
+
+  page.onShow();
+  const hidden = h.requests.at(-1);
+  page.onHide();
+  hidden.success({ statusCode: 200, data: homePreviewEnvelope([homePreviewItem({ title: '离页结果' })]) });
+  await flush();
+  assert.equal(page.data.previewStatus, 'loading');
+  assert.equal(page.data.previewItems.length, 0, '离页响应不得填充本轮尚未完成的重新读取');
+});
+
+test('首页公开预览标记只传类型，不传预览 ID 或详情地址', () => {
+  const wxml = read('miniprogram/pages/home/home.wxml');
+  assert.match(wxml, /wx:for="\{\{previewItems\}\}"/);
+  assert.match(wxml, /data-kind="\{\{item\.kind\}\}"/);
+  assert.doesNotMatch(wxml, /data-id="\{\{item\.id\}\}"/);
+  assert.match(wxml, /bind:action="retryPreviews"/);
+  assert.match(wxml, /人工审核入口建设中/);
+});
 
