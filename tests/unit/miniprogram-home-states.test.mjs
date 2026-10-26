@@ -1,26 +1,26 @@
-// R59 首页多态（loading / 空 / 出错 / 游客 / 离线）现状钉。
+// R59 首页多态（公开预览 loading / ready / empty / error / disabled；诊断 loading / error；
+// 游客 / 离线）现状钉。
 //
-// 钉的是**当前检出**的事实，不是期望形态。本片只取证、不修缺口：
-//   首页 `pages/home/home.js` 一共只发两类请求——`auth.verifySession`（核实登录态，无 timeout）
-//   与 `debug.diagnose`（本地替身自检，5000ms，仅 mode=local + envVersion=develop 可见）。
-//   首页正文（hero / 三张能力卡 / 底部资料入口）是**写死的静态内容**，不取任何服务端数据，
-//   因此没有「首屏加载中」，没有「空结果」，也没有「正文加载失败」。
-//   服务端的数据面 `GET /public/home` 已建好（空 `previews: []` 与 503 可区分，
-//   见 `tests/unit/public-home.test.mjs`），但端上**只手读它的 `meta` 判断执行模式**
-//   （`miniprogram/utils/identify-api.js:776`），`data.previews` / `data.human_review_state`
-//   在整个 `miniprogram/` 里 0 次引用。
+// 2026-10-26 #648：首页新增公开预览区后，旧版「首页没有 loading/empty/error-code」的**全局**
+// 缺失钉不再成立。本文件改为**分区**取证，不删除门禁、也不把新状态混进原诊断区的断言：
+//   公开预览区：`home.js` 的 `loadPreviews()` → `utils/public-home-api.js` → `GET /public/home`，
+//     `previewStatus` 五态 loading / ready / empty / error / disabled；合法空列表不伪造填充，
+//     失败可读且可显式重试，游客无会话也走同一公开读面。
+//   原有诊断区：仅 local 开发块，`busy` / `diagPassed` 的 loading / error / wx:else 单链保持不变，
+//     仍没有重试入口、仍不消费错误码表。
+//   首页正文（hero / 三张能力卡 / 底部资料入口）仍是写死静态内容；`home.js` 自身仍不直接
+//     `wx.request`，公开读面请求集中在 `public-home-api.js`。
 //
-// 因此本文件的断言分两类，证据页 `docs/verification/r59-mp-home-states-20261026.md` 里逐条标明：
+// 因此本文件的断言仍分两类，证据页 `docs/verification/r59-mp-home-states-20261026.md` 里逐条标明：
 //   ① 存在性/文案精确值 —— 现状就该这样，改坏即红（负控制已验证）。
 //   ② 缺失钉（absent pin）—— 钉住「现在没有」，等着被未来某片补齐时变红提醒更新证据，**不是期望**。
 //
 // #617 独立审查补的两处覆盖缺口（审查者自己的负控制证明它们原本真没被钉住）：
-//   L3 —— loading 分支的**门控**（`miniprogram/pages/home/home.wxml:112` 的 `wx:if="{{busy}}"`）：
+//   L3 —— 诊断 loading 分支的**门控**（`miniprogram/pages/home/home.wxml` 的 `wx:if="{{busy}}"`）：
 //         原 L1 只钉 `status="loading"` 的存在与顺序，把门控改成恒真（`{{true}}` / `{{1}}`）、
 //         删掉门控整行、或改成 `wx:elif` 时全绿 —— 「loading 会出现」被钉住了，「什么时候出现」没有。
-//   X1 —— **三态互斥**：原来只有 E1 里一条字面 `wx:elif` 正则间接覆盖，兜底 `wx:else` 与
-//         「同一时刻只可能命中一个分支」没有显式判据（把 elif 改成 if、把 status="error" 改成
-//         status="failed" 各有一条断言咬，但没有任何断言证明三条分支构成一条 if/elif/else 单链）。
+//   X1 —— **互斥**：公开预览与诊断区各自必须是一条 if/elif(/else) 单链；把 elif 改成 if、
+//         把状态值改坏、或让两条链混在一起都必须红。
 //
 // 取舍（已知会误红的等价写法，接受并在此说明）：L3 / X1 钉的是「元素 + 指令 + 属性名 + 属性值 + 块顺序」，
 //   **行首缩进不算**（块内一律用 `\n\s+` 连接，重排缩进不红）；但同一块内属性**换序**、把属性拆并成不同行数、
@@ -28,7 +28,7 @@
 //   写法（`wx:if="{{busy === true}}"`、`{{!!busy}}`、`{{1}}`）都会红 —— 后者正是本片要堵的口子：
 //   门控一旦退化成常量，loading 就会无条件出现，而这条断言不允许它悄悄退化。
 //
-// 只读源码字符串 + JSON.parse，不装载小程序运行时，不起 vm 夹具：首页没有可执行的数据流可跑。
+// 只读源码字符串 + JSON.parse，不装载小程序运行时，不起 vm 夹具：首页模板与状态流可静态核对。
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -51,51 +51,77 @@ function miniprogramFiles(extension) {
   return collected
 }
 
+/** 从 start 截到 end（不含 end），用于把公开预览区与原有诊断区分开取证。 */
+function section(text, start, end) {
+  const from = text.indexOf(start)
+  assert.ok(from >= 0, `缺少区段起点：${start}`)
+  const to = end === null ? text.length : text.indexOf(end, from + start.length)
+  assert.ok(to > from, `缺少区段终点：${end}`)
+  return text.slice(from, to)
+}
+
+const previewSection = (wxml) =>
+  section(wxml, '<view class="section home-preview">', '<view class="home-bottom">')
+
+const diagnosticSection = (wxml) => {
+  const start = '<view class="section" wx:if="{{local}}">'
+  assert.equal(wxml.split(start).length - 1, 1, '本地诊断区必须恰好一处')
+  return section(wxml, start, null)
+}
+
+const stateStatuses = (text) =>
+  [...text.matchAll(/<state-view\b[^>]*?\bstatus="([^"]*)"/g)].map((match) => match[1])
+
 // —— 1. loading 态 ———————————————————————————————————————————————————
 
-test('L1 首页正文没有 loading 分支：全页只有一处 loading，且在 local 开发块内', () => {
+test('L1 首页不直接请求；公开预览与诊断区各自只有一处 loading', () => {
   const js = read('miniprogram/pages/home/home.js')
   const wxml = read('miniprogram/pages/home/home.wxml')
-  // 首页自己不发请求 ⇒ 不可能有首屏加载态。这不是遗漏，是当前实现的事实。
+  // 首页自己仍不发请求；公开读面由独立模块负责。首页正文没有首屏 loading。
   assert.equal((js.match(/wx\.request/g) || []).length, 0, 'home.js 当前 0 处 wx.request')
-  // 全页 status= 恰好三处，按出现顺序：stub（常驻说明）→ loading → error。
+  // 公开预览区：loading → error → empty → disabled，ready 用内容面板而不是 state-view。
+  const preview = previewSection(wxml)
   assert.deepEqual(
-    [...wxml.matchAll(/status="([^"]*)"/g)].map((match) => match[1]),
-    ['stub', 'loading', 'error'],
-    '首页的 state-view 位置与顺序是写死的三处'
+    stateStatuses(preview),
+    ['loading', 'error', 'empty', 'stub'],
+    '公开预览的 state-view 顺序固定为 loading → error → empty → disabled'
   )
-  // 唯一的 loading 只能在 `wx:if="{{local}}"` 之内（本地替身诊断，develop + mode=local 才可见）。
-  const localBlock = wxml.indexOf('wx:if="{{local}}"')
-  const loading = wxml.indexOf('status="loading"')
-  assert.ok(localBlock > 0, '必须找到本地工具块')
-  assert.ok(loading > localBlock, 'loading 不得出现在本地工具块之外')
+  // 原有诊断区仍只有 loading → error，且 loading 只能在 `wx:if="{{local}}"` 之内
+  // （本地替身诊断，develop + mode=local 才可见）。
+  const diagnostic = diagnosticSection(wxml)
+  assert.deepEqual(stateStatuses(diagnostic), ['loading', 'error'], '诊断区仍只有 loading → error')
+  const localBlock = diagnostic.indexOf('wx:if="{{local}}"')
+  const loading = diagnostic.indexOf('status="loading"')
+  assert.ok(localBlock >= 0, '必须找到本地工具块')
+  assert.ok(loading > localBlock, '诊断 loading 不得出现在本地工具块之外')
   // 没有骨架屏/转圈：整个页面模板不含 skeleton / spinner 类。
   assert.equal(/skeleton|spinner/.test(wxml), false)
 })
 
 test('L2 诊断 loading 的触发方式与文案是精确值', () => {
-  const wxml = read('miniprogram/pages/home/home.wxml')
+  const diagnostic = diagnosticSection(read('miniprogram/pages/home/home.wxml'))
   // 按钮自己带 loading 与 disabled 双闸，同一 busy 布尔。
-  assert.match(wxml, /bindtap="diagnose"\n\s+loading="\{\{busy\}\}"\n\s+disabled="\{\{busy\}\}"/)
-  const loadingIndex = wxml.indexOf('status="loading"')
-  const titleIndex = wxml.indexOf('title="正在检查本地替身连接"')
-  const descIndex = wxml.indexOf('desc="正在读取本地诊断服务状态，请稍候。"')
-  assert.ok(loadingIndex >= 0, 'loading 态必须存在')
+  assert.match(diagnostic, /bindtap="diagnose"\n\s+loading="\{\{busy\}\}"\n\s+disabled="\{\{busy\}\}"/)
+  const loadingIndex = diagnostic.indexOf('status="loading"')
+  const titleIndex = diagnostic.indexOf('title="正在检查本地替身连接"')
+  const descIndex = diagnostic.indexOf('desc="正在读取本地诊断服务状态，请稍候。"')
+  assert.ok(loadingIndex >= 0, '诊断 loading 态必须存在')
   assert.ok(titleIndex > loadingIndex, 'loading 标题必须紧跟 loading 状态属性')
   assert.ok(descIndex > titleIndex, 'loading 说明必须紧跟标题')
 })
 
-test('L3 loading 分支的门控是 wx:if="{{busy}}"：整块逐字，且位于诊断按钮之后、error 之前', () => {
+test('L3 诊断 loading 分支的门控是 wx:if="{{busy}}"：整块逐字，且位于诊断按钮之后、error 之前', () => {
   const wxml = read('miniprogram/pages/home/home.wxml')
-  // 门控行（`miniprogram/pages/home/home.wxml:112`）+ 整块（开标签、三个属性、收尾）逐字：
+  const diagnostic = diagnosticSection(wxml)
+  // 门控行 + 整块（开标签、三个属性、收尾）逐字：
   // 改成 {{true}} / {{1}} / {{busy === true}}、删掉门控行、改成 wx:elif 都必须红。
   assert.match(
-    wxml,
+    diagnostic,
     /<state-view\n\s+wx:if="\{\{busy\}\}"\n\s+status="loading"\n\s+title="正在检查本地替身连接"\n\s+desc="正在读取本地诊断服务状态，请稍候。"\n\s+><\/state-view>/,
-    'loading 的 state-view 必须整块逐字带着 wx:if="{{busy}}" 门控'
+    '诊断 loading 的 state-view 必须整块逐字带着 wx:if="{{busy}}" 门控'
   )
-  // 门控全页恰好一处：删整行、换指令都变成 0 处。
-  assert.equal((wxml.match(/wx:if="\{\{busy\}\}"/g) || []).length, 1, 'busy 门控全页恰好一处')
+  // 门控在诊断区恰好一处：删整行、换指令都变成 0 处。
+  assert.equal((diagnostic.match(/wx:if="\{\{busy\}\}"/g) || []).length, 1, 'busy 门控在诊断区恰好一处')
   // 位置关系（同一块内的兄弟顺序）：local 块 → 诊断按钮 → busy 门控 → error 的 elif → wx:else 兜底。
   // 先钉每个锚点各恰好出现一次，indexOf 才不会被重复 token 骗过；再钉位置严格递增。
   const anchors = [
@@ -106,33 +132,34 @@ test('L3 loading 分支的门控是 wx:if="{{busy}}"：整块逐字，且位于�
     '<view class="dev-status" wx:else>'
   ]
   assert.deepEqual(
-    anchors.map((token) => wxml.split(token).length - 1),
+    anchors.map((token) => diagnostic.split(token).length - 1),
     [1, 1, 1, 1, 1],
     '五个位置锚点各恰好出现一次'
   )
-  const positions = anchors.map((token) => wxml.indexOf(token))
+  const positions = anchors.map((token) => diagnostic.indexOf(token))
   assert.deepEqual(
     positions,
     [...positions].sort((left, right) => left - right),
     '分支文本顺序必须是 local → 诊断按钮 → busy → elif → else'
   )
   // 三个分支确实在这个 local 块里收尾，没有漂到块外：dev-status 之后只剩 panel / section / page 三层收尾到文件末。
-  assert.match(wxml, /<view class="dev-status" wx:else>\{\{status\}\}<\/view>\n\s+<\/view>\n\s+<\/view>\n<\/view>\n$/)
+  assert.match(diagnostic, /<view class="dev-status" wx:else>\{\{status\}\}<\/view>\n\s+<\/view>\n\s+<\/view>\n<\/view>\n$/)
 })
 
 // —— 2. 出错态与重试 ————————————————————————————————————————————————
 
-test('E1 诊断失败走 error 态，但页面上没有重试入口（现状缺口，非期望）', () => {
-  const wxml = read('miniprogram/pages/home/home.wxml')
-  assert.match(wxml, /wx:elif="\{\{diagPassed === false\}\}"/)
-  assert.match(wxml, /status="error"/)
-  assert.match(wxml, /title="本地诊断没有通过"/)
+test('E1 诊断失败走 error 态，但诊断区没有重试入口（现状缺口，非期望）', () => {
+  const diagnostic = diagnosticSection(read('miniprogram/pages/home/home.wxml'))
+  assert.match(diagnostic, /wx:elif="\{\{diagPassed === false\}\}"/)
+  assert.match(diagnostic, /status="error"/)
+  assert.match(diagnostic, /title="本地诊断没有通过"/)
   // 失败原因由页面 data.status 原样透传，不在模板里改写。
-  assert.match(wxml, /desc="\{\{status\}\}"/)
+  assert.match(diagnostic, /desc="\{\{status\}\}"/)
   // 缺失钉：state-view 的 error 预设 actionText 为空（state-view.js:52-57），
-  // 首页也没传 action-text / bind:action ⇒ 唯一的错误分支没有任何重试按钮。
-  assert.equal(wxml.includes('action-text='), false, '首页当前不传 action-text')
-  assert.equal(wxml.includes('bind:action='), false, '首页当前不监听 state-view 的 action 事件')
+  // 诊断区也没传 action-text / bind:action ⇒ 诊断错误分支没有任何重试按钮。
+  // 公开预览区的重试按钮属于另一条独立状态链，不能拿来冒充诊断区已有重试。
+  assert.equal(diagnostic.includes('action-text='), false, '诊断区当前不传 action-text')
+  assert.equal(diagnostic.includes('bind:action='), false, '诊断区当前不监听 state-view 的 action 事件')
 })
 
 test('E2 失败与成功文案逐字来自 utils/debug.js，用户不需要猜', () => {
@@ -178,24 +205,24 @@ test('S1 统一状态组件里空态与错误态的图标与标题都不同（�
   assert.match(errorBlock[0], /actionText: ''/)
 })
 
-test('S2 首页没有空态：/public/home 的空结果数据面在端上无人消费（现状缺口）', () => {
+test('S2 公开预览有独立空态：合法空列表不伪造填充，诊断区仍没有 empty', () => {
   const wxml = read('miniprogram/pages/home/home.wxml')
-  assert.equal(wxml.includes('status="empty"'), false, '首页当前没有空态')
-  // 服务端空态是有字段的（previews: []），而端上三个相关文件一次都没读过它。
-  for (const file of [
-    'miniprogram/pages/home/home.js',
-    'miniprogram/pages/home/home.wxml',
-    'miniprogram/utils/identify-api.js'
-  ]) {
-    const text = read(file)
-    assert.equal(text.includes('previews'), false, `${file} 当前不得消费 previews`)
-    assert.equal(text.includes('human_review_state'), false, `${file} 当前不得消费 human_review_state`)
-  }
-  // 唯一碰 /public/home 的地方只读封套 meta（执行模式），超时 15000。
-  assert.match(
-    read('miniprogram/utils/identify-api.js'),
-    /url: runtime\.apiBaseUrl \+ '\/public\/home', method: 'GET', timeout: 15000/
-  )
+  const js = read('miniprogram/pages/home/home.js')
+  const api = read('miniprogram/utils/public-home-api.js')
+  const preview = previewSection(wxml)
+  // 公开预览的空态是显式分支，且文案说明「服务端合法空列表」而不是本地兜底。
+  assert.match(preview, /wx:elif="\{\{previewStatus === 'empty'\}\}"/)
+  assert.match(preview, /status="empty"/)
+  assert.match(preview, /title="暂时没有公开预览"/)
+  assert.match(preview, /desc="服务端返回了合法空列表；没有使用本地内容填充。"/)
+  // 页面只把服务端返回的 items 放进列表；空数组保持空，不伪造内容。
+  assert.match(js, /previewStatus: result\.items\.length \? 'ready' : 'empty'/)
+  assert.match(js, /previewItems: result\.items/)
+  // 公开读面确实消费 previews / human_review_state，并对空列表保持合法响应。
+  assert.match(api, /data\.previews/)
+  assert.match(api, /data\.human_review_state/)
+  // 原有诊断区没有空态；空态只属于公开预览，不混进诊断链。
+  assert.equal(diagnosticSection(wxml).includes('status="empty"'), false, '诊断区仍没有空态')
 })
 
 // —— 4. 游客态与跳登录 ————————————————————————————————————————
@@ -205,7 +232,12 @@ test('G1 游客是首页默认态：guest 初值、徽标与登录按钮文案�
   const wxml = read('miniprogram/pages/home/home.wxml')
   assert.match(
     js,
-    /data: \{ fontScale: 1, guest: true, entries: entriesForMode\(null\), local: false, busy: false, loggedIn: false, diagPassed: null, status: /
+    /data: \{ fontScale: 1, guest: true, entries: entriesForMode\(null\), local: false, busy: false, loggedIn: false, diagPassed: null,/
+  )
+  // 公开预览的初值独立于诊断区：首帧 loading，列表为空，说明与错误码为空。
+  assert.match(
+    js,
+    /previewStatus: 'loading', previewItems: \[\], previewNote: '', previewMessage: '', previewErrorCode: '',/
   )
   assert.match(wxml, /<view class="hero__badge" wx:if="\{\{guest\}\}">游客仅可预览首页<\/view>/)
   assert.match(
@@ -230,17 +262,27 @@ test('G2 未登录点任何受控入口都弹同一句委派登录，文案逐�
   // 取消 / 弹窗失败都必须清掉 returnTo，不留悬空意图。
   assert.match(js, /else navigation\.clearReturnTo\(op\.id\)/)
   assert.match(js, /fail: \(\) => \{ if \(current\(\)\) navigation\.clearReturnTo\(op\.id\) \}/)
-  // 五个受控入口全部走 openGated（hero 开始识别 + 三张能力卡共用 onEntryTap、资料库、识草查药、种子库）。
-  assert.equal((js.match(/this\.openGated\(/g) || []).length, 5, '受控入口当前恰好 5 条')
+  // 原有五个受控入口全部走 openGated（hero 开始识别 + 三张能力卡共用 onEntryTap、资料库、识草查药、种子库），
+  // 新增的公开预览只把 knowledge / community 两类标记转交给同一条门禁，不直接导航、不凭预览 ID 放行。
+  assert.equal((js.match(/this\.openGated\(/g) || []).length, 7, '原有 5 条 + 预览 2 类入口，共 7 条')
+  const previewTap = /onPreviewTap: function \(event\) \{[\s\S]*?\n  \},/.exec(js)
+  assert.ok(previewTap, '必须能切出 onPreviewTap 函数体')
+  assert.equal((previewTap[0].match(/this\.openGated\(/g) || []).length, 2, '预览点击只转交两类门禁入口')
+  assert.doesNotMatch(previewTap[0], /navigateTo|switchTab|reLaunch/, '预览点击不得自行导航')
 })
 
 // —— 5. 离线 / 断网分支 ————————————————————————————————————————
 
-test('O1 断网在首页不可见：首页不发请求，且全仓没有任何网络状态监听', () => {
+test('O1 首页没有独立网络状态监听；公开预览失败进入 error，断网不冒充登录', () => {
   const js = read('miniprogram/pages/home/home.js')
-  assert.equal(/wx\.request/.test(js), false, 'home.js 当前 0 处 wx.request')
+  const api = read('miniprogram/utils/public-home-api.js')
+  assert.equal(/wx\.request/.test(js), false, 'home.js 自身当前 0 处 wx.request')
+  // 公开读面把网络失败映射成 NETWORK_UNCERTAIN，页面再落到公开预览 error，不伪造内容。
+  assert.match(api, /wx\.request\(\{/)
+  assert.match(api, /reject\(failure\('NETWORK_UNCERTAIN'\)\)/)
+  assert.match(js, /previewStatus: 'error'/)
   assert.equal(/onNetworkStatusChange|getNetworkType/.test(js), false)
-  // 全小程序范围内也不存在网络状态监听 ⇒ 断网无法被任何页面识别成独立态。
+  // 全小程序范围内也不存在网络状态监听 ⇒ 断网不能被任何页面识别成独立全局态。
   const watchers = miniprogramFiles('.js').filter((file) =>
     /onNetworkStatusChange|getNetworkType/.test(readFileSync(file, 'utf8'))
   )
@@ -335,16 +377,29 @@ test('C1 错误码映射表存在且取值精确：SESSION_REQUIRED→session、
   assert.equal(contract.includes('PROVIDER_UNAVAILABLE'), true)
 })
 
-test('C2 首页不消费这张表：不 require states.js、不传 error-code（现状缺口）', () => {
+test('C2 诊断区不消费错误码表；公开预览错误码由 public-home-api 独立映射', () => {
   const js = read('miniprogram/pages/home/home.js')
   const wxml = read('miniprogram/pages/home/home.wxml')
+  const diagnostic = diagnosticSection(wxml)
   assert.equal(js.includes('utils/states'), false)
-  assert.equal(js.includes('errorCode'), false)
-  assert.equal(wxml.includes('error-code='), false)
-  // 首页只 require 这四个模块，新增依赖会改变这里的精确清单。
+  assert.equal(diagnostic.includes('error-code='), false, '诊断区仍不传 error-code')
+  const diagnose = /diagnose: function \(\) \{[\s\S]*?\n  \}/.exec(js)
+  assert.ok(diagnose, '必须能切出 diagnose 函数体')
+  assert.equal(/errorCode|error-code/.test(diagnose[0]), false, '诊断处理不消费错误码')
+  // 公开预览区有独立的 error-code 绑定，错误码来自 public-home-api，不混入诊断区。
+  const preview = previewSection(wxml)
+  assert.match(preview, /error-code="\{\{previewErrorCode\}\}"/)
+  assert.match(js, /previewErrorCode: error && error\.code \? error\.code : 'UNAVAILABLE'/)
+  // 首页 require 清单精确固定；新增依赖会改变这里，必须显式审查。
   assert.deepEqual(
     [...js.matchAll(/require\('([^']+)'\)/g)].map((match) => match[1]),
-    ['../../utils/font-scale', '../../utils/auth', '../../utils/debug', '../../utils/navigation']
+    [
+      '../../utils/font-scale',
+      '../../utils/auth',
+      '../../utils/debug',
+      '../../utils/navigation',
+      '../../utils/public-home-api'
+    ]
   )
 })
 
@@ -368,53 +423,101 @@ test('M1 home.json 声明 state-view；「当前状态」的替身标注逐字�
   )
 })
 
-// —— 10. 三态互斥（同一条 if / elif / else 单链）———————————————————————
+// —— 10. 状态互斥（公开预览与诊断区各自一条 if / elif(/else) 单链）———————
 
-test('X1 三态互斥：state-view 序列 stub → loading → error → wx:else 兜底，三条分支恰为 if/elif/else 单链', () => {
+test('X1 公开预览与诊断区各自为单链，状态互斥', () => {
   const wxml = read('miniprogram/pages/home/home.wxml')
   const js = read('miniprogram/pages/home/home.js')
-  // ① state-view 依次出现、状态值恰为 stub → loading → error：多一个（插入 empty / failed）或少一个都红。
-  assert.deepEqual(
-    [...wxml.matchAll(/<state-view\b[^>]*?\bstatus="([^"]*)"/g)].map((match) => match[1]),
-    ['stub', 'loading', 'error'],
-    'state-view 的序列与状态值写死为 stub → loading → error'
-  )
-  // ② 分支链逐字：loading 用 wx:if({{busy}})、error 用 wx:elif({{diagPassed === false}})、
-  //    兜底用 wx:else（元素是 dev-status 的 view，不是第四个 state-view）。指令互换（elif→if）或条件改值都红。
-  const loadingAt = wxml.indexOf('wx:if="{{busy}}"')
-  assert.notEqual(loadingAt, -1, '必须找到 busy 的 loading 分支')
-  assert.deepEqual(
-    [
-      ...wxml
-        .slice(wxml.lastIndexOf('<state-view', loadingAt))
+  const chain = (text) => {
+    const at = text.indexOf('<state-view')
+    assert.ok(at >= 0, '区段内必须找到 state-view 链起点')
+    return [
+      ...text
+        .slice(at)
         .matchAll(/<(state-view|view)\b[^>]*?\swx:(if|elif|else)(?:="([^"]*)")?/g)
-    ].map((match) => [match[1], `wx:${match[2]}`, match[3] === undefined ? null : match[3]]),
+    ].map((match) => [match[1], `wx:${match[2]}`, match[3] === undefined ? null : match[3]])
+  }
+
+  const preview = previewSection(wxml)
+  // ① 公开预览：loading → error → empty → disabled 四条 state-view 分支，最后 ready 用内容面板承接。
+  assert.deepEqual(
+    chain(preview),
+    [
+      ['state-view', 'wx:if', "{{previewStatus === 'loading'}}"],
+      ['state-view', 'wx:elif', "{{previewStatus === 'error'}}"],
+      ['state-view', 'wx:elif', "{{previewStatus === 'empty'}}"],
+      ['state-view', 'wx:elif', "{{previewStatus === 'disabled'}}"],
+      ['view', 'wx:elif', "{{previewStatus === 'ready'}}"]
+    ],
+    '公开预览的五条分支位置、元素与条件逐字固定'
+  )
+  // ② 诊断区：loading 用 wx:if({{busy}})、error 用 wx:elif({{diagPassed === false}})、
+  //    兜底用 wx:else（元素是 dev-status 的 view，不是第四个 state-view）。
+  const diagnostic = diagnosticSection(wxml)
+  assert.deepEqual(
+    chain(diagnostic),
     [
       ['state-view', 'wx:if', '{{busy}}'],
       ['state-view', 'wx:elif', '{{diagPassed === false}}'],
       ['view', 'wx:else', null]
     ],
-    'if / elif / else 三条分支的位置、元素与条件逐字固定'
+    '诊断区 if / elif / else 三条分支的位置、元素与条件逐字固定'
   )
-  // ③ 互斥的结构前提：三条分支必须是**相邻兄弟**（中间只允许空白），全页 elif / else 各恰 1 处
-  //    （多一条并列链就不再互斥）。wx:if / wx:elif / wx:else 只有在同一父节点的相邻兄弟上才互斥。
+
+  // ③ 互斥的结构前提：每条链的分支必须是**相邻兄弟**（中间只允许空白）。
   assert.match(
-    wxml,
+    preview,
+    /<\/state-view>\s+<state-view\n\s+wx:elif="\{\{previewStatus === 'error'\}\}"/,
+    '预览 error 的 elif 必须紧邻 loading 分支'
+  )
+  assert.match(
+    preview,
+    /<\/state-view>\s+<state-view\n\s+wx:elif="\{\{previewStatus === 'empty'\}\}"/,
+    '预览 empty 的 elif 必须紧邻 error 分支'
+  )
+  assert.match(
+    preview,
+    /<\/state-view>\s+<state-view\n\s+wx:elif="\{\{previewStatus === 'disabled'\}\}"/,
+    '预览 disabled 的 elif 必须紧邻 empty 分支'
+  )
+  assert.match(
+    preview,
+    /<\/state-view>\s+<view wx:elif="\{\{previewStatus === 'ready'\}\}" class="panel preview-panel">/,
+    '预览 ready 的 elif 必须紧邻 disabled 分支'
+  )
+  assert.match(
+    diagnostic,
     /<\/state-view>\s+<state-view\n\s+wx:elif="\{\{diagPassed === false\}\}"/,
-    'error 的 elif 必须紧邻 loading 分支'
+    '诊断 error 的 elif 必须紧邻 loading 分支'
   )
   assert.match(
-    wxml,
+    diagnostic,
     /<\/state-view>\s+<view class="dev-status" wx:else>\{\{status\}\}<\/view>/,
-    '兜底的 wx:else 必须紧邻 error 分支'
+    '诊断兜底的 wx:else 必须紧邻 error 分支'
+  )
+  assert.deepEqual(
+    [(preview.match(/wx:elif=/g) || []).length, (preview.match(/wx:else/g) || []).length],
+    [4, 0],
+    '公开预览恰有 4 条 elif、没有 else'
+  )
+  assert.deepEqual(
+    [(diagnostic.match(/wx:elif=/g) || []).length, (diagnostic.match(/wx:else/g) || []).length],
+    [1, 1],
+    '诊断区 elif / else 各恰好一处'
   )
   assert.deepEqual(
     [(wxml.match(/wx:elif=/g) || []).length, (wxml.match(/wx:else/g) || []).length],
-    [1, 1],
-    'elif / else 各恰好一处'
+    [5, 1],
+    '全页只有公开预览与诊断区两条链'
   )
-  // ④ 互斥的数据前提：busy 与 diagPassed 只在这两处 setData 同时写 —— 置 busy 的同时把 diagPassed 清成 null
-  //    ⇒ `busy === true` 与 `diagPassed === false` 不可能同时成立；两者都假时才落进 wx:else 兜底。
+
+  // ④ 数据前提：公开预览的 previewStatus 只会落到五个显式状态，不靠多个布尔同时为真。
+  assert.match(js, /previewStatus: 'loading'/)
+  assert.match(js, /previewStatus: 'disabled'/)
+  assert.match(js, /previewStatus: result\.items\.length \? 'ready' : 'empty'/)
+  assert.match(js, /previewStatus: 'error'/)
+  // 诊断区：busy 与 diagPassed 只在这两处 setData 同时写 —— 置 busy 的同时把 diagPassed 清成 null
+  // ⇒ `busy === true` 与 `diagPassed === false` 不可能同时成立；两者都假时才落进 wx:else 兜底。
   assert.deepEqual(
     [...js.matchAll(/this\.setData\(\{[^}]*\}\)/g)]
       .map((match) => match[0])

@@ -49,6 +49,33 @@
   right: 13px;
 }
 
+.preview-panel {
+  padding-top: 16px;
+}
+
+.preview-note,
+.preview-human-review {
+  font-size: calc(14px * var(--font-scale, 1));
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.preview-note {
+  margin-bottom: 8px;
+}
+
+.preview-source {
+  display: block;
+  margin-top: 6px;
+  font-size: calc(14px * var(--font-scale, 1));
+  color: var(--color-text-sub, #52675e);
+  line-height: 1.6;
+}
+
+.preview-human-review {
+  margin-top: 12px;
+}
+
 .dev-status {
   margin-top: 16px;
   font-size: calc(16px * var(--font-scale, 1));
