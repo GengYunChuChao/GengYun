@@ -2,14 +2,25 @@
 import { ref } from 'vue';
 import { ADMIN_AUTH_API_IMPLEMENTED, API_BASE_URL } from './auth/session';
 import AccountsView from './views/AccountsView.vue';
+import AdministratorsView from './views/AdministratorsView.vue';
 import AuditEventsView from './views/AuditEventsView.vue';
+import AuditLogsView from './views/AuditLogsView.vue';
 import ContentAdminView from './views/ContentAdminView.vue';
 import FlagAuditView from './views/FlagAuditView.vue';
 import FlagsView from './views/FlagsView.vue';
 import JobsView from './views/JobsView.vue';
 import ReviewPlaceholderView from './views/ReviewPlaceholderView.vue';
 
-type TabKey = 'accounts' | 'content' | 'flags' | 'flagAudit' | 'audit' | 'jobs' | 'review';
+type TabKey =
+  | 'accounts'
+  | 'content'
+  | 'flags'
+  | 'flagAudit'
+  | 'audit'
+  | 'auditLogs'
+  | 'administrators'
+  | 'jobs'
+  | 'review';
 
 const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'accounts', label: '账号目录（只读）', note: '读面已接入' },
@@ -17,6 +28,8 @@ const tabs: Array<{ key: TabKey; label: string; note: string }> = [
   { key: 'flags', label: '功能开关', note: '读写已接入' },
   { key: 'flagAudit', label: '开关留痕（只读）', note: '读面已接入' },
   { key: 'audit', label: '审计事件（只读）', note: '读面已接入' },
+  { key: 'auditLogs', label: '审计总台账（只读）', note: '读面已接入' },
+  { key: 'administrators', label: '管理员权限读面', note: '读面已接入' },
   { key: 'jobs', label: '作业台', note: '读 + 取消已接入' },
   { key: 'review', label: '人工审核（占位）', note: '未实现' },
 ];
@@ -51,6 +64,8 @@ const active = ref<TabKey>('accounts');
     <FlagsView v-else-if="active === 'flags'" />
     <FlagAuditView v-else-if="active === 'flagAudit'" />
     <AuditEventsView v-else-if="active === 'audit'" />
+    <AuditLogsView v-else-if="active === 'auditLogs'" />
+    <AdministratorsView v-else-if="active === 'administrators'" />
     <JobsView v-else-if="active === 'jobs'" />
     <ReviewPlaceholderView v-else />
 
@@ -79,6 +94,17 @@ const active = ref<TabKey>('accounts');
         </dd>
         <dt>审计事件</dt>
         <dd>只读页：GET /admin/audit-events（游标分页，scope=audit:read）；除契约 8 个必填字段外，另展示 R29-S5 新增的可选留痕字段（actor / target_hint / 前后值），不做本片没有的写操作</dd>
+        <dt>审计总台账</dt>
+        <dd>
+          只读页：GET /admin/audit-logs（operationId listAuditLogs，scope=audit:read，游标分页 + action / entity / from / to
+          筛选）；游标与筛选组合绑定，换筛选回第一页；403 与空台账分开显示，缺省装配下 503 如实展示、不伪装成 0 条
+        </dd>
+        <dt>管理员权限读面</dt>
+        <dd>
+          只读页：GET /admin/administrators（operationId listAdministrators）与 GET /admin/administrators/{id}/scopes
+          （operationId listAdministratorScopes），scope 均为 scopes:read；列表项的 id 是 admin_accounts.id，不是 users.id；
+          本页不授权、不撤销（scopes:write 不在本片）
+        </dd>
         <dt>作业台</dt>
         <dd>
           读 + 取消页：GET /admin/jobs（jobs:read，游标分页）；POST /admin/jobs/{id}/cancel 带 If-Match（取该行

@@ -167,7 +167,13 @@ export function validateAccountPage(value) {
   return { ok: errors.length === 0, errors, warnings, items, nextCursor };
 }
 
-/** 解析错误信封 `{ error: { code, message? }, meta }`；形状不符返回 null（不猜 code）。 */
+/**
+ * 解析错误信封 `{ error: { code, message, retryable, details }, meta }`；形状不符返回 null（不猜 code）。
+ *
+ * `retryable` 取**服务端自己的声明**（契约 `ErrorBody.retryable` 是必填 boolean），
+ * 缺失或非 boolean 时按 `false` 处理：声明缺失时宁可不给用户「重试」按钮，
+ * 也不要替服务端许诺「稍后会自动好」——后端每条 503 都显式 `retryable:false`。
+ */
 export function readErrorEnvelope(body) {
   if (!isPlainObject(body)) return null;
   const error = body.error;
@@ -177,6 +183,7 @@ export function readErrorEnvelope(body) {
     code,
     inContract: ERROR_CODES.includes(code),
     message: typeof error.message === 'string' ? error.message : '',
+    retryable: error.retryable === true,
   };
 }
 
