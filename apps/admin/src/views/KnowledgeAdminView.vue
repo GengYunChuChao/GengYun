@@ -515,7 +515,11 @@ onBeforeUnmount(() => {
           v-for="row in rows"
           :key="row.id"
           :class="{ selected: row.id === state.selectedId }"
+          tabindex="0"
+          :aria-label="`打开科普内容《${row.title}》详情（${row.id}）`"
           @click="openDetail(row.id)"
+          @keydown.enter.self.prevent="openDetail(row.id)"
+          @keydown.space.self.prevent="openDetail(row.id)"
         >
           <td>{{ row.title }}</td>
           <td>{{ row.typeLabel }}</td>
@@ -524,7 +528,16 @@ onBeforeUnmount(() => {
           <td><span class="pill" :class="row.reviewTone">{{ row.reviewLabel }}</span></td>
           <td class="mono">{{ row.updatedLabel }}</td>
           <td class="mono" :title="row.id">{{ row.revisionLabel }}</td>
-          <td class="right"><button class="link" type="button">详情</button></td>
+          <td class="right">
+            <button
+              class="link"
+              type="button"
+              :aria-label="`打开科普内容《${row.title}》详情（${row.id}）`"
+              @click.stop="openDetail(row.id)"
+            >
+              详情
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>

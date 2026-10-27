@@ -419,7 +419,11 @@ onBeforeUnmount(() => {
             v-for="row in rows"
             :key="row.id"
             :class="{ selected: row.id === state.selectedId }"
+            tabindex="0"
+            :aria-label="`选中账号 ${row.displayName}（${row.id}）`"
             @click="dispatch({ type: 'SELECT', id: row.id })"
+            @keydown.enter.self.prevent="dispatch({ type: 'SELECT', id: row.id })"
+            @keydown.space.self.prevent="dispatch({ type: 'SELECT', id: row.id })"
           >
             <td>{{ row.displayName }}</td>
             <td><span class="pill" :class="row.stateTone">{{ row.stateLabel }}</span></td>

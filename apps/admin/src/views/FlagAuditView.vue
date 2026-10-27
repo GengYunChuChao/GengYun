@@ -252,7 +252,14 @@ onBeforeUnmount(() => {
         </thead>
         <tbody>
           <template v-for="row in rows" :key="row.id">
-            <tr :class="{ selected: row.id === state.expandedId }" @click="dispatch({ type: 'TOGGLE_ROW', id: row.id })">
+            <tr
+              :class="{ selected: row.id === state.expandedId }"
+              tabindex="0"
+              :aria-label="`展开或收起开关留痕原文：${row.flagKeyLabel}（${row.id}）`"
+              @click="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+              @keydown.enter.self.prevent="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+              @keydown.space.self.prevent="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+            >
               <td class="mono">{{ row.createdAt }}</td>
               <td class="mono" :title="row.targetHint === null ? '' : row.targetHint">{{ row.flagKeyLabel }}</td>
               <td class="mono" :title="row.actorLabel">{{ row.actor === null ? '—' : `${row.shortActor}…` }}</td>
@@ -263,7 +270,14 @@ onBeforeUnmount(() => {
               <td class="mono">{{ row.reasonCode }}</td>
               <td class="mono" :title="row.requestId">{{ row.shortRequestId }}…</td>
               <td class="right">
-                <button class="link" type="button">{{ row.id === state.expandedId ? '收起' : '展开原文' }}</button>
+                <button
+                  class="link"
+                  type="button"
+                  :aria-label="`${row.id === state.expandedId ? '收起' : '展开原文'}：开关留痕 ${row.flagKeyLabel}（${row.id}）`"
+                  @click.stop="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+                >
+                  {{ row.id === state.expandedId ? '收起' : '展开原文' }}
+                </button>
               </td>
             </tr>
             <tr v-if="row.id === state.expandedId" :key="`${row.id}-detail`" class="detail">

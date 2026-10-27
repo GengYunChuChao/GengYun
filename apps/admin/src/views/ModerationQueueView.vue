@@ -441,7 +441,11 @@ onBeforeUnmount(() => {
             :key="row.id"
             :class="{ selected: state.selectedId === row.id }"
             data-testid="moderation-row"
+            tabindex="0"
+            :aria-label="`打开帖子《${row.title}》查看详情（${row.id}）`"
             @click="selectRow(row)"
+            @keydown.enter.self.prevent="selectRow(row)"
+            @keydown.space.self.prevent="selectRow(row)"
           >
             <td>
               <span>{{ row.title }}</span>
@@ -453,7 +457,15 @@ onBeforeUnmount(() => {
             <td class="mono">{{ row.authorLabel }}</td>
             <td class="mono">{{ row.createdAtLabel }}</td>
             <td>
-              <button class="link" type="button" :data-testid="'moderation-open-' + row.id">查看详情</button>
+              <button
+                class="link"
+                type="button"
+                :data-testid="'moderation-open-' + row.id"
+                :aria-label="`打开帖子《${row.title}》查看详情（${row.id}）`"
+                @click.stop="selectRow(row)"
+              >
+                查看详情
+              </button>
             </td>
           </tr>
         </tbody>
