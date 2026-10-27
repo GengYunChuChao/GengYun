@@ -74,7 +74,7 @@
 | D05 | 传输/敏感字段/媒体/备份受保护 | 部分 | `docs/implementation-requirements.md:276` | `deploy/postgres-cvm/sql/20-login-roles.sql:350` | 仓内无 TLS/介质加密落点 |
 | D06 | 日志不带令牌/密码/媒体/联系方式 | 部分 | `docs/implementation-requirements.md:276` | `services/api/src/app.ts:679` | 无统一日志脱敏入口，只有请求层白名单 |
 | D07 | 保存至注销、单条删除、撤回 | 部分 | `docs/implementation-requirements.md:277` | `services/api/src/routes/favorites.ts:109` | 消息无删除路由；识别/语音/OCR 只软删 |
-| D08 | 注销即时撤会话角色、停新外发、分对象删除任务 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/routes/account-deletion.ts:130` | 真实模式整域 503，仅替身模式可用 |
+| D08 | 注销即时撤会话角色、停新外发、分对象删除任务 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/routes/account-deletion.ts:205` | 真实模式整域 503，仅替身模式可用 |
 | D09 | 在线 7 日、备份 30 日、恢复重放 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/privacy/deletion-aging.ts:60` | 恢复重放未装配；无生产安装证据 |
 | D10 | 帖评保留、去身份、已注销用户、不可反查 | 部分 | `docs/implementation-requirements.md:279` | `services/api/src/community/authors.ts:112` | 进程内 Map 仍以 userId 为键可反查 |
 | D11 | 保留正文脱敏、不能脱敏的媒体隐藏/移除 | 部分 | `docs/implementation-requirements.md:280` | `services/api/src/community/purge.ts:24` | 注销时媒体批量清除未接线 |
@@ -178,7 +178,7 @@
 ### D08 注销即时撤会话角色、停新外发、分对象删除任务
 
 - **判定**：部分。需求 `docs/implementation-requirements.md:278`；AC23 见 `:585`。
-- **实现**：受理 `services/api/src/routes/account-deletion.ts:130`、回执 `:191`、取消 `:221`；协议
+- **实现**：受理 `services/api/src/routes/account-deletion.ts:218`、回执 `:284`、取消 `:324`；协议
   `services/api/src/privacy/account-deletion.ts:287`（接口）、`:315`（工厂）、`:328`（受理，撤销在途外发在 `:338` 起）；
   删除模块闭集 4 项固定 + 4 项条件追加（`services/api/src/privacy/user-data-deletion.ts:164-169`、`:202-207`），
   真实注销路径有效闭集 **8 项**（`:151-153` 自述）。
@@ -364,7 +364,7 @@
 | 项 | 现在 | 升档需要的事实 | 判据落点 |
 | --- | --- | --- | --- |
 | D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2076` |
-| D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:202` |
+| D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:203` |
 | D13 | 未实现 | 适配器与 0044 真库端口都在 `app.ts` 装配；注销受理时按接收方建行；回执带第三方状态 | `services/api/src/app.ts:2076` 同侧装配区 |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
@@ -373,7 +373,7 @@
 ### 7.3 降档条件
 
 出现下列任一事实，已实现/部分要往下调，而不是「解释一下就好」：生产入口被 503 挡掉（D08 的形状）、
-闭集因装配漏注入静默收缩（`services/api/src/privacy/user-data-deletion.ts:151` 已警示）、
+闭集因装配漏注入静默收缩（`services/api/src/privacy/user-data-deletion.ts:156` 已警示）、
 真库臂从 CI 掉出去（E2 的形状）、证据只剩替身模式。
 
 ## 8. 相关页

@@ -35,9 +35,8 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -54,6 +53,7 @@ import {
   requeueFailedBackupCopyGroup,
   runBackupPurgeBatch,
 } from '../../services/api/src/privacy/backup-purge-driver.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
@@ -101,25 +101,11 @@ let adminBase = '';
 let targetUrl = '';
 const tool = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
 
-/** 端口空闲？（只探 127.0.0.1：集群也只监听回环） */
-function portIsFree(candidate) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => {
-      server.close(() => resolve(true));
-    });
-    server.listen(candidate, '127.0.0.1');
-  });
-}
-
-async function pickPort() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 55600 + randomInt(0, 300);
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('556xx 区间内找不到空闲端口（同机临时集群过多）');
-}
+// 端口：起集群时向内核要一个此刻空闲的（`lib/free-port.mjs` 的 `pickFreePort()`）。
+// ⛔ 不再用「`55600 + randomInt(0, 300)` + 先探活」：那套挑法整个落在 Linux 默认 ephemeral
+// 区间（32768–60999）里，被任何一条出站连接的源端口占住就会让 `pg_ctl start` 报
+// `could not bind IPv4 address "127.0.0.1": Address already in use`（本臂在 `real-pg-17.11`
+// 首跑即红在 55916 上）。「先探活」救不了：竞争窗口在探活之后。
 
 /**
  * 子进程统一把 stdout/stderr 重定向到**文件**：本机 sandbox 禁止命名管道，
@@ -156,7 +142,7 @@ function tailOfFile(file, maxLines = 15) {
 }
 
 async function startCluster() {
-  port = await pickPort();
+  port = await pickFreePort();
   adminBase = `postgresql://postgres@127.0.0.1:${port}`;
   targetUrl = `${adminBase}/${DB_NAME}`;
   assert.ok(existsSync(tool('initdb')), `GY_PG_BIN 下没有 initdb：${tool('initdb')}`);

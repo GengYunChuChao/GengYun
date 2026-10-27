@@ -46,9 +46,8 @@ const pg = (await import('pg')).default;
 
 const assert = (await import('node:assert/strict')).default;
 const { spawnSync } = await import('node:child_process');
-const { randomBytes, randomInt, randomUUID } = await import('node:crypto');
+const { randomBytes, randomUUID } = await import('node:crypto');
 const { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } = await import('node:fs');
-const net = (await import('node:net')).default;
 const { tmpdir } = await import('node:os');
 const { basename, join } = await import('node:path');
 const { setTimeout: sleep } = await import('node:timers/promises');
@@ -57,6 +56,7 @@ const { buildApp } = await import('../../services/api/src/app.ts');
 const { loadConfig } = await import('../../services/api/src/config.ts');
 const { createMemoryAuthStore } = await import('../../services/api/src/auth/store.ts');
 const { hashToken, mintOpaqueToken } = await import('../../services/api/src/auth/tokens.ts');
+const { pickFreePort } = await import('./lib/free-port.mjs');
 
 const API = '/api/v1';
 const DB_NAME = 'gengyun_admin_content_pg_test';
@@ -77,7 +77,9 @@ const say = (label) => {
 const note = (line) => console.log(`  - ${line}`);
 
 // ---------------------------------------------------------------------------
-// 临时集群（数据目录与端口都随机；端口取 55600–55699，避开 55436 的遗留集群与本机 5432）
+// 临时集群（数据目录随机；端口向内核要一个此刻空闲的 —— ⛔ 不再用「固定基址 + randomInt」：
+// 那套挑法落在 Linux 默认 ephemeral 区间 32768–60999 里，会被出站连接的源端口占住，
+// 起库时报 `could not bind IPv4 address "127.0.0.1": Address already in use`）
 // ---------------------------------------------------------------------------
 const rootDir = process.env.GY_I18_PG_ROOT ?? tmpdir();
 const dataDir = join(rootDir, `gy-i18-admin-content-pg-${randomBytes(4).toString('hex')}`);
@@ -85,26 +87,6 @@ let port = 0;
 let adminBase = '';
 let targetUrl = '';
 const tool = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
-
-function portIsFree(candidate) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => {
-      server.close(() => resolve(true));
-    });
-    server.listen(candidate, '127.0.0.1');
-  });
-}
-
-async function pickPort() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 55600 + randomInt(0, 100);
-    if (candidate === 55436 || candidate === 55437) continue; // 别人的遗留集群，硬挡
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('556xx 区间内找不到空闲端口（同机临时集群过多）');
-}
 
 /**
  * 子进程统一把 stdout/stderr 重定向到**文件**：本机 sandbox 禁止命名管道，
@@ -145,7 +127,7 @@ function tailOfFile(file, maxLines = 15) {
 }
 
 async function startCluster() {
-  port = await pickPort();
+  port = await pickFreePort();
   adminBase = `postgresql://postgres@127.0.0.1:${port}`;
   targetUrl = `${adminBase}/${DB_NAME}`;
   assert.ok(existsSync(tool('initdb')), `GY_PG_BIN 下没有 initdb：${tool('initdb')}`);

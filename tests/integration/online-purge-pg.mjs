@@ -35,7 +35,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
@@ -66,6 +66,7 @@ import { createPostgresFavoritesStore } from '../../services/api/src/favorites/s
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
 import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
 import { createPostgresConversationStore } from '../../services/api/src/conversations/store-pg.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 const ALLOW_SKIP = process.argv.includes('--allow-skip') || process.env.GY_ALLOW_SKIP === '1';
@@ -116,7 +117,6 @@ function portIsFree(candidate) {
 }
 
 async function pickPort() {
-  // 缺省 556xx：避开本机 5432 与本仓其它临时臂用的 55436；每次都先探活（同机可能已有别人的集群）。
   // `GY_I19_PG_PORT`：片 B 的派单要求「独立集群固定 55433」，只影响**本脚本自己**起的临时集群；
   // 端口被占时仍按失败处理（不静默换口，否则读数与派单对不上）。
   const pinned = process.env.GY_I19_PG_PORT ?? '';
@@ -128,11 +128,10 @@ async function pickPort() {
     if (!(await portIsFree(candidate))) throw new Error(`GY_I19_PG_PORT=${candidate} 已被占用（拒绝换口）`);
     return candidate;
   }
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 55600 + randomInt(0, 300);
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('556xx 区间内找不到空闲端口（同机临时集群过多）');
+  // 没有 env 才向内核要：⛔ 不再用 `55600 + randomInt(0, 300)`——那套挑法整段落在 Linux 默认
+  // ephemeral 区间（32768–60999）里，会被出站连接的源端口占住，起库时报
+  // `could not bind IPv4 address "127.0.0.1": Address already in use`。
+  return pickFreePort();
 }
 
 /** 子进程输出去**文件**：本机 sandbox 禁命名管道，用管道收集会等到超时。 */

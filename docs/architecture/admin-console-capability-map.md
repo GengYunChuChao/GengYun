@@ -184,7 +184,7 @@
 ```
 
 5. `scopes` 的形状与排序在 `services/api/src/auth/service.ts:377-389`；服务端裁决在 `services/api/src/auth/middleware.ts:201-206`，缺 scope 固定回 `SCOPE_DENIED`「缺少所需权限：<scope>」；用户端会话打后台固定被拒（`services/api/src/auth/middleware.ts:110-117`）。
-6. scope 闭集 13 项见 `services/api/src/admin/scopes.ts:35-49`；`scopes:write` 只在常量里声明、没有任何路由以它为门（`services/api/src/admin/scopes.ts:65-69`），授/撤 scope 现状只有迁移 0041 的 SECURITY DEFINER 函数。
+6. scope 闭集 13 项见 `services/api/src/admin/scopes.ts:38-50`；`scopes:write` 已经落写面，声明见 `services/api/src/admin/scopes.ts:88`，以它为门的写操作共 4 个 operationId（授/撤 scope 两个，管理员账号停用/启用两个；写路径仍是迁移 0041 的两个 SECURITY DEFINER 函数与迁移 0048）。
 7. 前端把 scope 只当「提前禁用按钮」：9 个页面登录后立刻再读一次 `GET /admin/auth/session`（`apps/admin/src/views/AccountsView.vue:91`、`apps/admin/src/views/AdministratorsView.vue:109`、`apps/admin/src/views/AuditEventsView.vue:98`、`apps/admin/src/views/AuditLogsView.vue:111`、`apps/admin/src/views/FlagsView.vue:88`、`apps/admin/src/views/FlagAuditView.vue:100`、`apps/admin/src/views/JobsView.vue:105`、`apps/admin/src/views/ContentAdminView.vue:41-68`、`apps/admin/src/views/ModerationQueueView.vue:179`）。
 
 缺 scope 的三种可见后果：
