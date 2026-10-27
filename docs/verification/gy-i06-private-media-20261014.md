@@ -164,8 +164,8 @@
   `error` 对象 `deepEqual`（含 `message` 与空 `details`）。
 - real fail-closed：7 条路由全部 503 且 `retryable === false`、**无 `data` 字段**（不得返回成功封套）。
   **订正（绑实测 SHA `95b8e7cf`）**：此处原文写 `retryable === true`，与现行代码／断言不符。现行口径是
-  「能力未装配／未接线造成的 `PROVIDER_UNAVAILABLE` 一律 `false`」（`services/api/src/errors.ts:32`，
-  另见 `:35`），服务层的 fail-closed 构造器同样显式 `retryable: false`
+  「能力未装配／未接线造成的 `PROVIDER_UNAVAILABLE` 一律 `false`」（`services/api/src/errors.ts:38`，
+  另见 `:41`），服务层的 fail-closed 构造器同样显式 `retryable: false`
   （`services/api/src/media/service.ts:495`，原记 :448；槽位判定处 `:848-852`，原记 :652-654），测试断言
   `tests/unit/media-real-mode-fail-closed.test.mjs:949`（同文件 `:126-127` 断言 503 ＋ `PROVIDER_UNAVAILABLE`）。
   §2 的 2026-10-14 探针输出与 §10 所记裁定原文**按原样保留**，不追改；口径差异见 §8.1 末段。
@@ -304,7 +304,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    `services/api/src/media/service.ts:1397`（原记 :1108）的注释标题「过期与清理」只是能力入口的分段线，不是触发点。
 
 **与 §10 所记裁定的口径差异（不追改历史）**：§10 记的「2026-10-14 监工对 #121 的 P1 裁定」要求
-`retryable: true`；现行代码按 `services/api/src/errors.ts:32`／`:35` 收敛为 `false`，断言见
+`retryable: true`；现行代码按 `services/api/src/errors.ts:38`／`:41` 收敛为 `false`，断言见
 `tests/unit/media-real-mode-fail-closed.test.mjs:949`。该裁定原文、§2 的 2026-10-14 探针输出与 §11 的批复原文
 **均按原样保留**；本片只在 §5 断言清单就地订正，见本文件 `:165` 起。
 
