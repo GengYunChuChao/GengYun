@@ -225,4 +225,44 @@ dd {
   font-size: 0.86rem;
   border-radius: 6px;
 }
+
+/* ── 键盘焦点可见性（审查 R67-B08）───────────────────────────────────────────
+ * 为什么写在这里：本文件是全应用**唯一**的非 scoped 样式块（各视图都是 `<style
+ * scoped>`，作用域只覆盖自己的模板），只有全局规则才能一次覆盖 19 个 SFC。
+ * 为什么以前键盘不可达：`apps/admin/src` 里此前 `:focus`／`:focus-visible`／`outline`
+ * 零命中，浏览器默认外框又被各页 `border: 0` 的链接样式按钮（`.link`）与无边框表格行
+ * 吃掉上下文，按 Tab 时屏幕上看不出焦点落在「重试／清除回执／退出登录」哪一颗。
+ *
+ * 口径：
+ *  - 颜色一律复用现有主色 #0f766e（`.tab.active`／`.primary`／`.link` 早就用的那个），
+ *    不新增色值、不改色板／字号／间距——这一片只解决「看得见焦点」。
+ *  - `:focus` 是兜底（不支持 `:focus-visible` 的旧内核也必须有外框）；
+ *    `:focus-visible` 是正题；`outline` 一律 2px + 2px offset——不许写
+ *    `outline: none` 顶掉外框，全文件只有下面两处（鼠标焦点、程序聚焦容器）有理由关。
+ *  - 鼠标点出来的焦点（`:focus:not(:focus-visible)`）关掉外框，避免每次点击都闪一圈。
+ */
+:focus {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+}
+:focus:not(:focus-visible) {
+  outline: none;
+}
+/* 程序聚焦容器（`<section tabindex="-1">` 这类「把焦点搬进来」的宿主）：
+ * 只关外框、不加 inset 环。理由是它本身已有 1px 边框与背景，再套一圈会被读成
+ * 「整个面板被选中了」；焦点搬进来只是为了让读屏先播报容器标题，键盘用户的下一站
+ * 就是框内第一个真正的控件。 */
+[tabindex='-1']:focus,
+[tabindex='-1']:focus-visible {
+  outline: none;
+}
+/* 表格行（B09 起 `<tr tabindex="0">` 是可聚焦行）：外框改画在行框**内侧**，
+ * 免得 2px offset 越过 border-collapse 的相邻行下边框、看着像断开的两截。 */
+tr:focus-visible {
+  outline-offset: -2px;
+}
 </style>
