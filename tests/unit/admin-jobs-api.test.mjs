@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   buildCancelUrl,
@@ -598,15 +599,59 @@ test('jobRowViews: state 徽标色调与终态禁用原因对齐既有 pill 闭�
 // 页面级（真实 SFC）用例在 `tests/unit/admin-ui-jobs-filter.test.mjs`。
 // ---------------------------------------------------------------------------
 
-test('P08 闭集派生：筛选取值复用既有契约镜像（JOB_STATES / ERROR_CODES）的同一个对象，不另抄数组', () => {
+// 契约里的两个闭集原文。**长度和取值都从它派生，用例里不写死码的数量**：
+// 契约（`packages/contracts/openapi.json`）加减一个 ErrorCode，这里跟着走；
+// 会红的只有「镜像 `apps/admin/src/lib/admin-contract.mjs` 与契约脱节」这一种情况。
+const CONTRACT_SCHEMAS = JSON.parse(
+  readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'),
+).components.schemas
+const CONTRACT_JOB_STATE_ENUM = CONTRACT_SCHEMAS.JobState.enum
+const CONTRACT_ERROR_CODE_ENUM = CONTRACT_SCHEMAS.ErrorCode.enum
+
+test('P08 闭集派生：筛选取值复用既有契约镜像的同一个对象；长度与取值都从契约派生（不写死码数）', () => {
+  // 第一层：同一引用 —— 筛选闭集不是拷贝，镜像改了筛选就跟着改
   assert.equal(jobsApi.JOB_FILTER_STATES, jobsApi.JOB_STATES, 'state 闭集必须就是 JOB_STATES 本身（同一引用，不是拷贝）')
   assert.equal(
     jobsApi.JOB_FILTER_ERROR_CODES,
     adminContract.ERROR_CODES,
     'error_code 闭集必须就是 admin-contract.mjs 的 ERROR_CODES（同一引用，不是拷贝）',
   )
-  assert.deepEqual([...jobsApi.JOB_FILTER_STATES], ['queued', 'running', 'succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'])
-  assert.equal(jobsApi.JOB_FILTER_ERROR_CODES.length, 27)
+
+  // 第二层：与契约双向对拍 —— 长度相等 + 集合相等；「加码只改契约不改镜像」或反之都会红。
+  // 只比集合不比顺序：契约里重排 enum 不算漂移（控件顺序由 UI 用例单独钉）。
+  assert.equal(
+    jobsApi.JOB_FILTER_ERROR_CODES.length,
+    adminContract.ERROR_CODES.length,
+    '筛选闭集长度必须等于镜像 ERROR_CODES 长度（派生，不是写死的数字）',
+  )
+  assert.equal(
+    jobsApi.JOB_FILTER_ERROR_CODES.length,
+    CONTRACT_ERROR_CODE_ENUM.length,
+    'error_code 闭集长度必须等于契约 ErrorCode enum 长度（从契约派生，不写死）',
+  )
+  assert.deepEqual(
+    [...jobsApi.JOB_FILTER_ERROR_CODES].sort(),
+    [...CONTRACT_ERROR_CODE_ENUM].sort(),
+    'error_code 闭集取值必须与契约 ErrorCode enum 集合相等',
+  )
+  assert.equal(
+    jobsApi.JOB_FILTER_STATES.length,
+    CONTRACT_JOB_STATE_ENUM.length,
+    'state 闭集长度必须等于契约 JobState enum 长度（从契约派生，不写死）',
+  )
+  assert.deepEqual(
+    [...jobsApi.JOB_FILTER_STATES].sort(),
+    [...CONTRACT_JOB_STATE_ENUM].sort(),
+    'state 闭集取值必须与契约 JobState enum 集合相等',
+  )
+
+  // 第三层：具名锚点。`INTERNAL_ERROR` 由 issue #688 加进契约，正是「27 与 28」的差别——
+  // 为了记住「数字会变、派生不会」，这里点一个具名码，而不是点一个总数。
+  assert.equal(
+    jobsApi.JOB_FILTER_ERROR_CODES.includes('INTERNAL_ERROR'),
+    true,
+    '契约里的 INTERNAL_ERROR 必须随镜像进入筛选闭集（提示文案也要能列出它）',
+  )
 })
 
 test('P08 buildJobsUrl：合法 state / error_code 逐字进查询串；空值不发；既有 limit／cursor 顺序不变', () => {
