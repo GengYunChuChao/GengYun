@@ -653,6 +653,148 @@ async function main() {
     [50, '2026-09-01T00:05:00.000Z', '00000000-0000-4000-8000-000000000000'],
   );
 
+  // 7) **P0 回归钉子：0041 形状的 `admin_scope.grant` 行不得再让整页 503**。
+  //    读函数 0033 只按时间/动作/scope/actor 过滤（`0033_admin_audit_log_read.sql:96-107`），
+  //    0041 写的 `jsonb_build_object('scopes', …, 'reason', …)`（`:326-327` / `:479-480`）必然流到解码器；
+  //    契约把 `before_value`/`after_value` 的类型钉成 `FlagReading | null` ⇒ 非开关动作的读数如实 `null`。
+  const GRANT_ROW_ID = '00555555-5555-4555-8555-555555555555';
+  const GRANT_WINDOW = { from: '2026-10-20T00:00:00Z', to: '2026-10-24T23:59:59Z' };
+  await ownerPool.query(
+    `INSERT INTO public.admin_audit_events
+       (id, actor_id, action, scope, target_ref, target_hint, reason_code,
+        request_id, result, before_value, after_value, created_at)
+     VALUES ($1::uuid, $2::uuid, 'admin_scope.grant', 'scopes:write', NULL, $3, 'admin_scope_granted',
+             $4::uuid, 'accepted',
+             jsonb_build_object('scopes', to_jsonb(ARRAY[]::text[]), 'reason', 'arm:grant'),
+             jsonb_build_object('scopes', to_jsonb(ARRAY['sources:write']::text[]), 'reason', 'arm:grant'),
+             $5::timestamptz)`,
+    [GRANT_ROW_ID, ADMIN_ID, `admin:${ADMIN_ID}`, REQUEST_ID, '2026-10-24T10:00:00.000Z'],
+  );
+  // 造数自检：库里这行**真的是** `{scopes, reason}`（否则下面"读成 null"可能是空断言）。
+  const grantStored = await ownerPool.query(
+    `SELECT before_value, after_value FROM public.admin_audit_events WHERE id = $1::uuid`,
+    [GRANT_ROW_ID],
+  );
+  assert.deepEqual(
+    grantStored.rows[0].before_value,
+    { scopes: [], reason: 'arm:grant' },
+    '造数：库里 before_value 必须是 0041 的 {scopes, reason} 形状',
+  );
+  assert.deepEqual(
+    grantStored.rows[0].after_value,
+    { scopes: ['sources:write'], reason: 'arm:grant' },
+    '造数：库里 after_value 必须是 0041 的 {scopes, reason} 形状',
+  );
+
+  // 7a) 不过滤的列表：整页必须 200（改前这里 503 读数形状不符），该行在结果里且读数为 null。
+  const allWithGrant = await service.listAuditLogs(context, { limit: 50 });
+  assert.equal(allWithGrant.status, 200, '结果集里有 0041 形状的 admin_scope.grant 行时整页必须 200');
+  const grantItem = allWithGrant.body.data.items.find(item => item.id === GRANT_ROW_ID);
+  assert.ok(grantItem !== undefined, '0041 形状的 admin_scope.grant 行必须在全量列表里（不得被静默丢弃）');
+  assert.equal(grantItem.before_value, null, '非开关动作的 before_value 必须如实为 null（⛔ 不 503、⛔ 不伪造读数）');
+  assert.equal(grantItem.after_value, null, '非开关动作的 after_value 必须如实为 null');
+  assert.equal(grantItem.action, 'admin_scope.grant');
+  assert.equal(grantItem.scope, 'scopes:write');
+  assert.equal(grantItem.actor, ADMIN_ID, '其余字段必须原样透出（actor_id → actor 映射）');
+  assert.equal(grantItem.target_hint, `admin:${ADMIN_ID}`);
+  pass('7a) 不过滤列表 200，0041 形状的 admin_scope.grant 行在结果里，before_value/after_value 均为 null，其余字段原样');
+
+  // 7b) `?action=admin_scope.grant` 也必须能返回它（action 维度不做 scope 收窄）。
+  const grantOnly = await service.listAuditLogs(context, { limit: 50, action: 'admin_scope.grant' });
+  assert.equal(grantOnly.status, 200);
+  assert.deepEqual(
+    grantOnly.body.data.items.map(item => item.id),
+    [GRANT_ROW_ID],
+    '?action=admin_scope.grant 必须精确取回这一行',
+  );
+  assert.equal(grantOnly.body.data.items[0].before_value, null);
+  assert.equal(grantOnly.body.data.items[0].after_value, null);
+  pass('7b) ?action=admin_scope.grant 精确取回该行（仅 1 行，无 scope 收窄），读数仍为 null');
+
+  // 7c) 同一次查询里既有「非开关行」又有 `set_flag` 行：开关读数**仍然**在（证明没有整体抹掉读数）。
+  const sameQuery = await service.listAuditLogs(context, { limit: 50, ...GRANT_WINDOW });
+  assert.equal(sameQuery.status, 200);
+  const sameQueryIds = sameQuery.body.data.items.map(item => item.id);
+  assert.deepEqual(sameQueryIds, [
+    GRANT_ROW_ID,
+    'a0040000-0000-4000-8000-000000000000',
+    'a0010000-0000-4000-8000-000000000000',
+    'a0020000-0000-4000-8000-000000000000',
+    '00200000-0000-4000-8000-000000000000',
+    '00100000-0000-4000-8000-000000000000',
+    '00333333-3333-4333-8333-333333333333',
+    '00222222-2222-4222-8222-222222222222',
+    '00111111-1111-4111-8111-111111111111',
+  ], '时间窗内 9 行（新增 1 行 + 3 行同毫秒 + 5 行 10-20 夹具）按 created_at DESC, id DESC');
+  const flagInSameQuery = sameQuery.body.data.items
+    .find(item => item.id === '00333333-3333-4333-8333-333333333333');
+  assert.deepEqual(
+    flagInSameQuery.before_value,
+    { enabled: false, revision: 3 },
+    '同一次查询里的 set_flag 行必须仍然带 before_value 读数（分派 ≠ 抹掉读数）',
+  );
+  assert.deepEqual(
+    flagInSameQuery.after_value,
+    { enabled: true, revision: 4 },
+    '同一次查询里的 set_flag 行必须仍然带 after_value 读数',
+  );
+  assert.equal(
+    sameQuery.body.data.items.find(item => item.id === GRANT_ROW_ID).before_value,
+    null,
+    '同一次查询里两类行必须各按自己的 action 解码（不是整页一刀切）',
+  );
+  pass('7c) 同一次查询 9 行顺序不变；set_flag 行仍带 {enabled:false,revision:3} / {enabled:true,revision:4}，grant 行仍为 null');
+
+  // 7d) 总行数与分页游标仍然正确（既有报文的语义不变，只是多了一行）。
+  const countAfterGrant = await ownerPool.query(
+    'SELECT count(*)::int AS n FROM public.admin_audit_events',
+  );
+  assert.equal(
+    countAfterGrant.rows[0].n,
+    20010,
+    '总行数 = 20000 批量 + 9 行夹具 + 1 行 0041 形状的 admin_scope.grant（新增行只加 1，没有删改既有行）',
+  );
+
+  const windowPaged = [];
+  let windowCursor = null;
+  let windowPages = 0;
+  do {
+    const page = await service.listAuditLogs(context, {
+      limit: 2,
+      ...GRANT_WINDOW,
+      ...(windowCursor === null ? {} : { cursor: windowCursor }),
+    });
+    assert.equal(page.status, 200, '含 0041 形状行的窗口翻页必须每页 200');
+    windowPaged.push(...page.body.data.items.map(item => item.id));
+    windowCursor = page.body.data.next_cursor;
+    windowPages += 1;
+    assert.ok(windowPages <= 10, '翻页次数异常（游标可能没有推进）');
+  } while (windowCursor !== null);
+  assert.deepEqual(windowPaged, sameQueryIds, '加入 0041 形状的行后键集翻页必须仍与全量顺序逐项一致');
+  assert.equal(new Set(windowPaged).size, windowPaged.length, '翻页不得重复');
+  assert.equal(windowPages, 5, '9 行 / 每页 2 行必须恰好 5 页');
+  assert.equal(windowPaged.length, 9);
+
+  // 全表第一页（无时间筛选）：新增行是**最新一行**，紧随其后的是同毫秒组里最大的一条。
+  const headPage = await service.listAuditLogs(context, { limit: 2 });
+  assert.equal(headPage.status, 200);
+  assert.deepEqual(
+    headPage.body.data.items.map(item => item.id),
+    [GRANT_ROW_ID, 'a0040000-0000-4000-8000-000000000000'],
+    '全表第一页（hasMore）顺序不变，新增行按 created_at DESC 排在最前',
+  );
+  assert.ok(headPage.body.data.next_cursor !== null);
+  const headPage2 = await service.listAuditLogs(context, {
+    limit: 2, cursor: headPage.body.data.next_cursor,
+  });
+  assert.deepEqual(
+    headPage2.body.data.items.map(item => item.id),
+    ['a0010000-0000-4000-8000-000000000000', 'a0020000-0000-4000-8000-000000000000'],
+    '游标继续翻页仍然正确（微秒位置生效）',
+  );
+  pass('7d) 总行数 20010；时间窗 limit=2 恰好 5 页收全 9 行、无重复、顺序与全量一致；全表首页与第二页游标正确');
+  pass('P0 回归：0041 形状的 admin_scope.grant 行整页 200、读数为 null、?action 精确命中；同查询 set_flag 读数仍在；总行数与游标不变');
+
   console.log('真库臂 PASS：读通道的 SQL、权限、键集、筛选、脱敏全部在真 PG 17.11 上取得读数。');
 }
 

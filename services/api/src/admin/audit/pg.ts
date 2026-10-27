@@ -11,6 +11,9 @@
  * ## 出口形状 = 契约 `AuditEvent`
  * 逐字段按 `packages/contracts/openapi.json` 的形状校验；**任何**形状不符都整页 503，
  * ⛔ 不静默丢字段、也不把陌生行当审计事实展示（审计面的"差不多"等于伪造）。
+ * 唯一例外是 `before_value` / `after_value`：它们**按 `action` 分派**（见 `AUDIT_READING_KIND` 与
+ * `toAuditLogReading`）—— 只有确实写开关读数的动作（今天只有 `set_flag`）走严格校验，
+ * 其余动作如实返回 `null`（契约只给这两个字段留了 `FlagReading | null` 一种类型）。
  * 注意列名映射：库里是 `actor_id`，契约里是 `actor`（`AuditEvent.actor`，uuid|null）。
  *
  * ## 分页
@@ -21,6 +24,17 @@ import { ApiError, type FieldError } from '../../errors.ts';
 import { isTransientDatabaseError, type PgPool } from '../../db/pool.ts';
 import { TARGET_REF_TYPES } from '../fields.ts';
 import type { AuditResult, TargetRefValue } from '../types.ts';
+import {
+  AUDIT_ACTION_ACCOUNT_RESTORE,
+  AUDIT_ACTION_ACCOUNT_SUSPEND,
+  AUDIT_ACTION_ADMIN_SCOPE_DENY,
+  AUDIT_ACTION_ADMIN_SCOPE_GRANT,
+  AUDIT_ACTION_ADMIN_SCOPE_REVOKE,
+  AUDIT_ACTION_JOB_CANCEL,
+  AUDIT_ACTION_POST_HIDE,
+  AUDIT_ACTION_SET_FLAG,
+} from './catalog.ts';
+import type { AdminAuditAction } from './catalog.ts';
 
 /** 库内只读函数（迁移 0033）。 */
 export const LIST_AUDIT_LOG_FUNCTION = 'public.list_admin_audit_logs';
@@ -55,6 +69,48 @@ const AUDIT_RESULTS = ['accepted', 'denied', 'failed'] as const;
 export interface AuditLogReading {
   readonly enabled: boolean;
   readonly revision: number;
+}
+
+/**
+ * 审计行读数的**语义分类**：`flag_reading` 是真的开关读数；`unexposed` 是今天不在契约读面上。
+ *
+ * 为什么必须显式分类：契约 `AuditEvent.before_value` / `after_value` 的类型是 `FlagReading`
+ * （`{enabled, revision}`，`additionalProperties: false`），但库里今天的 `jsonb` 有三种形状：
+ *   - `{enabled, revision}`：**只有** `set_flag`（迁移 0027 的 `set_feature_flag` 同事务写入）；
+ *   - `{scopes, reason}`：`admin_scope.grant` / `admin_scope.revoke`
+ *     （迁移 `0041_admin_scope_write_authority.sql:326-327` / `:479-480` 写的是
+ *     `jsonb_build_object('scopes', …, 'reason', …)`）；
+ *   - `NULL`：`account.suspend` / `account.restore`（0017）、`job.cancel`（0043）、
+ *     `admin_scope.deny`（0046）、`post.hide`（0047）。
+ * 读函数 `0033_admin_audit_log_read.sql:96-107` 只按时间/动作/scope/actor 过滤，**没有形状过滤**
+ * ⇒ 0041 的行必然流到这里，所以「哪些 action 带开关读数」必须是一张**显式映射**，不能按形状猜。
+ */
+type AuditReadingKind = 'flag_reading' | 'unexposed';
+
+/**
+ * `action` → 读数语义（**唯一一张表**，不写散落的字符串比较）。
+ *
+ * 为什么用 `Record<AdminAuditAction, …>`：闭集（`catalog.ts` 的 `AUDIT_ACTIONS`）新增动作时
+ * `tsc` 会在这里报缺项，逼着作者为它声明读数语义，而不是静默继承某个默认分支。
+ * 闭集外的 action（历史行里可能残留、后来移出 `AUDIT_ACTIONS` 的字符串）按 `unexposed` 处理。
+ *
+ * 导出只为一件事：`tests/unit/admin-audit-logs.test.mjs` 用 `Object.keys` 与 `AUDIT_ACTIONS`
+ * 做**集合与顺序**的双向比对（`Record` 的编译期检查只管「不漏」，构造方式一变就靠这条运行时钉子兜底）。
+ */
+export const AUDIT_READING_KIND: Readonly<Record<AdminAuditAction, AuditReadingKind>> = Object.freeze({
+  [AUDIT_ACTION_ACCOUNT_SUSPEND]: 'unexposed',
+  [AUDIT_ACTION_ACCOUNT_RESTORE]: 'unexposed',
+  [AUDIT_ACTION_SET_FLAG]: 'flag_reading',
+  [AUDIT_ACTION_JOB_CANCEL]: 'unexposed',
+  [AUDIT_ACTION_ADMIN_SCOPE_GRANT]: 'unexposed',
+  [AUDIT_ACTION_ADMIN_SCOPE_REVOKE]: 'unexposed',
+  [AUDIT_ACTION_ADMIN_SCOPE_DENY]: 'unexposed',
+  [AUDIT_ACTION_POST_HIDE]: 'unexposed',
+});
+
+/** 该 action 的读数语义；闭集外一律 `unexposed`（今天没有契约读面能表达它们的读数）。 */
+export function readingKindOf(action: string): AuditReadingKind {
+  return (AUDIT_READING_KIND as Readonly<Record<string, AuditReadingKind>>)[action] ?? 'unexposed';
 }
 
 /** 契约 `AuditEvent`（本片读面的条目形状；`actor_id` 在此改名为 `actor`）。 */
@@ -125,9 +181,12 @@ function pickAuditResult(raw: unknown): AuditResult {
   throw new ApiError('PROVIDER_UNAVAILABLE', '审计日志返回的 result 不在契约闭集内', { retryable: false });
 }
 
-/** jsonb 读数 → `{enabled, revision}`；非开关行历史为 NULL，如实保留 null。 */
-function toAuditLogReading(raw: unknown): AuditLogReading | null {
-  if (raw === null || raw === undefined) return null;
+/**
+ * 严格解码**开关读数**（只有 `flag_reading` 类 action 走到这里）。
+ *
+ * 形状不符 ⇒ 503（⛔ 分派不等于放宽：`set_flag` 行读不懂就是读不懂）。
+ */
+function toFlagReading(raw: unknown): AuditLogReading {
   if (!isRecord(raw)) {
     throw new ApiError('PROVIDER_UNAVAILABLE', '审计日志的读数不是对象', { retryable: false });
   }
@@ -142,6 +201,25 @@ function toAuditLogReading(raw: unknown): AuditLogReading | null {
     throw new ApiError('PROVIDER_UNAVAILABLE', '审计日志的读数形状不符', { retryable: false });
   }
   return { enabled, revision };
+}
+
+/**
+ * jsonb 读数 → 契约 `AuditEvent.before_value` / `after_value`（**按 `action` 分派**）。
+ *
+ * - `flag_reading` 类 action（今天只有 `set_flag`）：走 `toFlagReading` 严格校验，形状不符**仍然 503**；
+ * - 其余 action：`NULL` 如实保留 `null`；**库里有非 null 值也返回 `null`**。
+ *
+ * 为什么非开关动作不能 503、也不能硬塞：契约把这两个字段的类型钉成 `FlagReading`
+ * （`{enabled, revision}`，`additionalProperties: false`），只能表达**开关读数**；
+ * `{scopes, reason}`（0041 的授予/撤销行）今天**不在契约读面上** —— 等后续「契约扩展」片再暴露。
+ * ⛔ 不要在这里把 `{scopes, reason}` 硬塞进 `FlagReading`：契约镜像（`collectIssues('AuditEvent', …)`）
+ * 会照样拒，只是把 503 从解码器挪到下一道门，问题一点没解决；⛔ 也不要因为一条
+ * `admin_scope.grant` 行就让**整页** 503 —— 一条读不懂读数的行不该把其余审计事实一起藏起来。
+ */
+function toAuditLogReading(raw: unknown, action: string): AuditLogReading | null {
+  if (raw === null || raw === undefined) return null;
+  if (readingKindOf(action) === 'flag_reading') return toFlagReading(raw);
+  return null;
 }
 
 /**
@@ -228,8 +306,8 @@ export function toAuditLogRow(raw: unknown): AdminAuditLogEntry {
     created_at: createdAt.toISOString(),
     actor: typeof actor === 'string' ? actor : null,
     target_hint: typeof targetHint === 'string' ? targetHint : null,
-    before_value: toAuditLogReading(raw['before_value']),
-    after_value: toAuditLogReading(raw['after_value']),
+    before_value: toAuditLogReading(raw['before_value'], action),
+    after_value: toAuditLogReading(raw['after_value'], action),
   };
 }
 

@@ -31,7 +31,9 @@ import {
   scopeOfAuditEntity,
 } from '../../services/api/src/admin/audit/catalog.ts';
 import {
+  AUDIT_READING_KIND,
   createPostgresAdminAuditLogPort,
+  readingKindOf,
   toAuditLogRow,
 } from '../../services/api/src/admin/audit/pg.ts';
 import {
@@ -529,6 +531,132 @@ test('GET /admin/audit-logs：权限矩阵、筛选组合、分页边界与脱�
     () => badTargetRef.listAuditLogs(adminContext()),
     (error) => expectApiError(error, 'PROVIDER_UNAVAILABLE'),
   );
+});
+
+/**
+ * 5b. **读数形状按 action 分派**（P0 回归钉子：`admin_scope.grant` 整页 503）。
+ *
+ * 缺陷形态：读数解码曾对**每一行**无条件按 `{enabled, revision}` 严格校验，而迁移 0041 的
+ * `admin_scope.grant` / `admin_scope.revoke` 行写的是 `jsonb_build_object('scopes', …, 'reason', …)`
+ * （`0041_admin_scope_write_authority.sql:326-327` / `:479-480`）⇒ 结果集里只要出现一条这类行，
+ * 整页 503 `PROVIDER_UNAVAILABLE`（读函数 `0033_admin_audit_log_read.sql:96-107` 没有形状过滤）。
+ *
+ * 期望：**非开关动作**的非 null 读数如实返回 `null`（契约 `before_value`/`after_value` 的类型是
+ * `FlagReading`，`{scopes, reason}` 不在今天的读面上 —— 等「契约扩展」片再暴露），其余字段原样透出；
+ * 同一响应里的 `set_flag` 行**仍然**带着 `{enabled, revision}`；`set_flag` 行形状不符**仍然 503**。
+ */
+test('GET /admin/audit-logs：读数按 action 分派（admin_scope.grant 如实 null，set_flag 仍严格）', async () => {
+  // 端口拿到的就是**库里的原始行**（`actor_id` 列、jsonb 读数、微秒游标列）。
+  const rawGrantRow = {
+    id: UUIDS[0],
+    actor_id: ADMIN_ID,
+    action: 'admin_scope.grant',
+    scope: 'scopes:write',
+    target_ref: null,
+    target_hint: `admin:${OTHER_ADMIN_ID}`,
+    reason_code: 'admin_scope_granted',
+    request_id: UUIDS[1],
+    result: 'accepted',
+    before_value: { scopes: [], reason: 'x' },
+    after_value: { scopes: ['sources:write'], reason: 'x' },
+    created_at: new Date('2026-10-24T10:00:00.000Z'),
+    cursor_position: '2026-10-24T10:00:00.000000Z',
+  };
+  const rawFlagRow = {
+    id: UUIDS[2],
+    actor_id: ADMIN_ID,
+    action: 'set_flag',
+    scope: 'flags:write',
+    target_ref: null,
+    target_hint: 'community.posts.hide',
+    reason_code: 'manual_takedown',
+    request_id: UUIDS[1],
+    result: 'accepted',
+    before_value: { enabled: false, revision: 3 },
+    after_value: { enabled: true, revision: 4 },
+    created_at: new Date('2026-10-24T09:00:00.000Z'),
+    cursor_position: '2026-10-24T09:00:00.000000Z',
+  };
+  const pool = {
+    async query() {
+      return { rows: [rawGrantRow, rawFlagRow] };
+    },
+  };
+  const service = makeService(createPostgresAdminAuditLogPort({ pool }));
+  const response = await service.listAuditLogs(adminContext());
+
+  assert.equal(response.status, 200, '结果集里有 admin_scope.grant 行时整页必须 200（改前整页 503）');
+  const [grant, flag] = response.body.data.items;
+  // 该行：读数如实 null，其余字段原样透出。
+  assert.deepEqual(grant, {
+    id: UUIDS[0],
+    action: 'admin_scope.grant',
+    scope: 'scopes:write',
+    target_ref: null,
+    reason_code: 'admin_scope_granted',
+    request_id: UUIDS[1],
+    result: 'accepted',
+    created_at: '2026-10-24T10:00:00.000Z',
+    actor: ADMIN_ID,
+    target_hint: `admin:${OTHER_ADMIN_ID}`,
+    before_value: null,
+    after_value: null,
+  }, '非开关动作的 before_value/after_value 必须如实为 null（⛔ 不 503、⛔ 不伪造读数），其余字段原样透出');
+  // 同一响应里的开关行：读数必须**仍然**在（证明不是整体抹掉）。
+  assert.deepEqual(flag.before_value, { enabled: false, revision: 3 }, 'set_flag 行必须保留 before_value 读数');
+  assert.deepEqual(flag.after_value, { enabled: true, revision: 4 }, 'set_flag 行必须保留 after_value 读数');
+
+  // 负向对照：分派 ≠ 放宽 —— `set_flag` 行的读数形状不符时**仍然 503**。
+  const badFlagPool = {
+    async query() {
+      return { rows: [{ ...rawFlagRow, before_value: { scopes: [], reason: 'x' } }] };
+    },
+  };
+  await assert.rejects(
+    () => makeService(createPostgresAdminAuditLogPort({ pool: badFlagPool })).listAuditLogs(adminContext()),
+    (error) =>
+      expectApiError(error, 'PROVIDER_UNAVAILABLE') &&
+      error.status === 503 &&
+      error.message.includes('读数形状不符'),
+  );
+});
+
+/**
+ * 5b. 读数语义表与动作闭集的**双向钉子**：`Object.keys(AUDIT_READING_KIND)` 必须与 `AUDIT_ACTIONS`
+ * 逐项相等（值相同、顺序相同、无重复、无多余）。
+ *
+ * 为什么需要运行时钉子：`Record<AdminAuditAction, …>` 只保证闭集里的动作**不漏**（新增动作时 tsc 报缺项），
+ * 但它挡不住「表里多出一个闭集外的键」（构造方式一旦不是字面量，excess property 检查就不生效）。
+ * 将来在 `AUDIT_ACTIONS` 里加 `admin_account.disable/enable`（R68）时，
+ * 这条钉子会立刻红，提醒作者补声明「这个动作有没有开关读数」。
+ *
+ * 2026-10-27 更新：`post.hide` 已随 #659 进闭集（第 8 值），本片为它补了 `'unexposed'` 声明；
+ * 因此「多出一个闭集外的键」的牙齿改用**尚未进闭集**的 `post.approve` 作替身。
+ */
+test('GET /admin/audit-logs：读数语义表与动作闭集逐项相等（不漏、不多、同序）', () => {
+  assert.ok(Object.isFrozen(AUDIT_READING_KIND), '映射必须是冻结对象（运行时不可被改写）');
+  assert.deepEqual(
+    Object.keys(AUDIT_READING_KIND),
+    [...AUDIT_ACTIONS],
+    'AUDIT_READING_KIND 的键必须与 AUDIT_ACTIONS 同值同序：新增动作时请在这里补一行声明',
+  );
+
+  // 牙齿：多一个闭集外的键（这里用尚未进闭集的 `post.approve` 作替身）必须被这条判据抓住。
+  const withExtraKey = { ...AUDIT_READING_KIND, 'post.approve': 'unexposed' };
+  assert.notDeepEqual(
+    Object.keys(withExtraKey),
+    [...AUDIT_ACTIONS],
+    '多出一个闭集外的键时判据必须红（否则这条钉子没有牙齿）',
+  );
+
+  // 语义本身：今天只有 `set_flag` 走开关读数，其余一律 unexposed（含闭集外动作的回落）。
+  assert.deepEqual(
+    AUDIT_ACTIONS.filter((action) => readingKindOf(action) === 'flag_reading'),
+    ['set_flag'],
+    '今天只有 set_flag 带开关读数；新增动作若也写读数，必须同时改契约 FlagReading 或另开「契约扩展」片',
+  );
+  assert.equal(readingKindOf('post.hide'), 'unexposed', 'post.hide（0047 写 NULL）应当是 unexposed');
+  assert.equal(readingKindOf('post.approve'), 'unexposed', '闭集外动作回落 unexposed（不猜形状）');
 });
 
 /** 6. PG 适配器：七参数显式转型、键集语义、hasMore 来自 limit+1。 */

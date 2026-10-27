@@ -22,7 +22,7 @@ workflow、两份守卫用例、被验证臂、本页）。
   该条目仍是**等行数替换**（文件 738 → 738 行，`git diff --numstat` 读数 `9 9`）。
 - **顺手修掉臂的收尾 bug**（§2.3，本片自己的复盘发现、追加指令要求修）：`closeSync(logFd)` 原本排在
   `stopCluster()` 之前，导致 `pg_ctl stop` 每次都以 `status=null / error.code=EBADF` 静默失败，
-  **一次也没真正停过集群**。修法两条：fd 关到收尾之后（`tests/integration/admin-audit-logs-pg.mjs:672`）；
+  **一次也没真正停过集群**。修法两条：fd 关到收尾之后（`tests/integration/admin-audit-logs-pg.mjs:826`）；
   `stopCluster()` 现在判 `stop.error || stop.status !== 0` ⇒ 抛 `pg_ctl stop 失败：…`，整臂非 0 退出
   （`tests/integration/admin-audit-logs-pg.mjs:216-221`）。同时把 `:275-277` 那句「本文件未接入」改成了当时态。
 - **CI 首轮红：POSIX unix socket**（§5.4，接进去以后第一次真跑就暴露）：Debian/Ubuntu 的
@@ -216,7 +216,7 @@ job 结束即随 runner 丢弃。⛔ 若将来有脚本把**同一目录名**写
 ```
 
 11 条 ✓（`tests/integration/admin-audit-logs-pg.mjs:297`、`:302`、`:398`、`:416`、`:426`、`:468`、`:485`、`:499`、
-`:519`、`:539`、`:608` 各一条），末行由 `tests/integration/admin-audit-logs-pg.mjs:656` 打印；
+`:519`、`:539`、`:608` 各一条），末行由 `tests/integration/admin-audit-logs-pg.mjs:798` 打印；
 规模读数在 `:625`（`generate_series(1, 20000)` 见 `:621`，加 9 行夹具 ⇒ 20009），三条 EXPLAIN 在 `:636` 循环里。
 
 耗时口径：工具日志 `gy-r34-audit-logs-pg-tools.log` 的时间戳跨度 **5.0 s**（`14:50:35.280` → `14:50:40.286`，

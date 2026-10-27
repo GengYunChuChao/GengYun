@@ -3640,7 +3640,7 @@
         {
           "path": "services/api/src/admin/audit/pg.ts",
           "symbol": "createPostgresAdminAuditLogPort",
-          "lines": "305-305"
+          "lines": "378-429"
         },
         {
           "path": "services/api/db/migrations/0033_admin_audit_log_read.sql",
