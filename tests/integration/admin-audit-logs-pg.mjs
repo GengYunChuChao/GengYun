@@ -797,6 +797,369 @@ async function main() {
   pass('7d) 总行数 20010；时间窗 limit=2 恰好 5 页收全 9 行、无重复、顺序与全量一致；全表首页与第二页游标正确');
   pass('P0 回归：0041 形状的 admin_scope.grant 行整页 200、读数为 null、?action 精确命中；同查询 set_flag 读数仍在；总行数与游标不变');
 
+  // =========================================================================
+  // 8) **C05：读面必须扛得住 `0041` / `0046` 自己写出来的「真实数据形状」**
+  //
+  //    第 7 段那行 `admin_scope.grant` 是**手抄的 jsonb 字面量**：它和迁移今天同形，但迁移哪天
+  //    改了（`jsonb_build_object` 换字段名、`to_jsonb` 换包裹、或者干脆不写读数），手抄夹具照样
+  //    同形、照样绿 —— 夹具不会跟着迁移走，读面就算退回「只认开关形状」也可能一片绿。
+  //    这一段改成**迁移函数自己写**：`grant_admin_scope` / `revoke_admin_scope`（0041）与
+  //    `record_admin_scope_denial`（0046）在真库里各写一行，再由读面读回来。三种形状同页出现
+  //    （grant/revoke 的 `{scopes, reason}` + deny 的「不写读数」+ `set_flag` 的 `{enabled, revision}`），
+  //    只有**按 `action` 分派**才解得开。
+  //    ⛔ 既有 7a–7d 的断言一行不动，本段只追加。
+  // =========================================================================
+
+  // 8-0) 写面走**运行时的真实路径**。运维顺序是「迁移 ⇒ 20-login-roles.sql」，而本臂上面只执行了
+  //      读函数的授权段（`gy-r34-audit-logs-grant`）。这里把 0041 / 0046 的三条写入口授权段也原样
+  //      执行：下面三行写入用的是 `gengyun_api_runtime`（零表级写权限），而不是属主。
+  //      属主直接 `INSERT` 造不出「函数把形状写对了」这件事，只有让写入口自己写才算。
+  for (const writeRegion of ['gy-r37-s2-scope-grant', 'gy-r64-pr4a-denial-trace-grant']) {
+    await ownerPool.query(grantRegion('deploy/postgres-cvm/sql/20-login-roles.sql', writeRegion));
+  }
+  pass('8-0) 写面授权段 gy-r37-s2-scope-grant / gy-r64-pr4a-denial-trace-grant 原样执行通过（0041/0046 的写入口对运行时可见）');
+
+  const C05_ACTOR = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const C05_TARGET = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+  // 三个审计行 id 由调用方经 `p_audit_id` 指定；刻意让 `id` 的降序与写入顺序一致：
+  // 万一三行落在**同一微秒**，键集排序回落到 `id DESC`，读数顺序仍然稳定。
+  const C05_GRANT_AUDIT = '005a0001-0000-4000-8000-000000000001';
+  const C05_REVOKE_AUDIT = '005a0002-0000-4000-8000-000000000002';
+  const C05_DENY_AUDIT = '005a0003-0000-4000-8000-000000000003';
+  const C05_IDS = [C05_GRANT_AUDIT, C05_REVOKE_AUDIT, C05_DENY_AUDIT];
+  const C05_GRANT_REASON = 'C05 夹具：逐字同形 grant';
+  const C05_REVOKE_REASON = 'C05 夹具：逐字同形 revoke';
+  const C05_SET_FLAG_ID = '00333333-3333-4333-8333-333333333333';
+
+  // 0041 的门：actor 必须存在 + `state='active'` + 当前有效持 `scopes:write`（`:239-254`），
+  // 且「只能授自己当前有效持有的 scope」（`:274-282`）⇒ actor 自己要持 `scopes:write` 与
+  // `sources:write`（两者都是闭集成员，见 `0041:178-194` 的 CHECK）。目标账号初始不带任何 scope。
+  await ownerPool.query(
+    `INSERT INTO public.admin_accounts (id, login_name, credential_hash) VALUES
+       ($1::uuid, 'c05-actor', 'scrypt$c05$actor$placeholder'),
+       ($2::uuid, 'c05-target', 'scrypt$c05$target$placeholder')`,
+    [C05_ACTOR, C05_TARGET],
+  );
+  await ownerPool.query(
+    `INSERT INTO public.admin_scopes (admin_id, scope, granted_by) VALUES
+       ($1::uuid, 'scopes:write', $1::uuid),
+       ($1::uuid, 'sources:write', $1::uuid)`,
+    [C05_ACTOR],
+  );
+
+  // 8a) 三个写入口各写一行（**真实签名**：0041 是 7 参、0046 是 6 参，见 `0041:199-207` / `0046:137-144`）。
+  const granted = await runtimePool.query(
+    `SELECT public.grant_admin_scope($1::uuid, $2::uuid, 'sources:write', $3::text, $4::uuid, $5::uuid) AS result`,
+    [C05_ACTOR, C05_TARGET, C05_GRANT_REASON, REQUEST_ID, C05_GRANT_AUDIT],
+  );
+  assert.equal(
+    granted.rows[0].result.changed,
+    true,
+    '0041 的 grant_admin_scope 必须真的落了变更（changed=true 才写审计行；changed=false 表示夹具本身没生效）',
+  );
+  assert.equal(
+    granted.rows[0].result.audit_id,
+    C05_GRANT_AUDIT,
+    '0041 的审计行 id 必须就是调用方给的 p_audit_id（不是函数另生的 uuid）',
+  );
+
+  const revoked = await runtimePool.query(
+    `SELECT public.revoke_admin_scope($1::uuid, $2::uuid, 'sources:write', $3::text, $4::uuid, $5::uuid) AS result`,
+    [C05_ACTOR, C05_TARGET, C05_REVOKE_REASON, REQUEST_ID, C05_REVOKE_AUDIT],
+  );
+  assert.equal(revoked.rows[0].result.changed, true, '0041 的 revoke_admin_scope 必须真的落了变更（否则下面读的就是空行）');
+  assert.equal(revoked.rows[0].result.audit_id, C05_REVOKE_AUDIT, '0041 撤销行的 id 必须就是 p_audit_id');
+
+  const denial = await runtimePool.query(
+    `SELECT public.record_admin_scope_denial(
+              $1::uuid, $2::uuid, 'scopes:write', 'self_scope_grant_denied', $3::uuid, $4::uuid) AS audit_id`,
+    [C05_ACTOR, C05_TARGET, REQUEST_ID, C05_DENY_AUDIT],
+  );
+  assert.equal(
+    denial.rows[0].audit_id,
+    C05_DENY_AUDIT,
+    '0046 的 record_admin_scope_denial 必须回写它插进去的那一行 id（= p_audit_id）',
+  );
+
+  // 造数自检：库里这 3 行**真的是**迁移写出来的形状（否则下面「读成 null」可能是空断言）。
+  // ⛔ 不 UPDATE 任何行：`admin_audit_events_append_only` 触发器把 UPDATE/DELETE 判成 G0006。
+  const c05Stored = await ownerPool.query(
+    `SELECT id::text AS id, actor_id::text AS actor_id, action, scope, target_ref, target_hint,
+            reason_code, request_id::text AS request_id, result::text AS result,
+            before_value, after_value, created_at
+       FROM public.admin_audit_events
+      WHERE id = ANY($1::uuid[])`,
+    [C05_IDS],
+  );
+  assert.equal(c05Stored.rows.length, 3, '三个写入口必须各留 1 行（grant/revoke 幂等、deny 刻意不幂等）');
+  const c05StoredById = new Map(c05Stored.rows.map(row => [row.id, row]));
+
+  const grantStoredRow = c05StoredById.get(C05_GRANT_AUDIT);
+  assert.equal(grantStoredRow.action, 'admin_scope.grant');
+  assert.equal(grantStoredRow.actor_id, C05_ACTOR, '0041 的 actor_id 必须是函数里定的操作者（不是属主、不是调用方自报）');
+  assert.equal(grantStoredRow.scope, 'sources:write');
+  assert.equal(grantStoredRow.target_ref, null, '契约 TargetRef 闭集没有 account ⇒ 0041 写 NULL，标识落 target_hint');
+  assert.equal(grantStoredRow.target_hint, `admin_account:${C05_TARGET}`);
+  assert.equal(grantStoredRow.reason_code, 'scope_granted');
+  assert.equal(grantStoredRow.result, 'accepted');
+  assert.equal(grantStoredRow.request_id, REQUEST_ID);
+  assert.deepEqual(
+    grantStoredRow.before_value,
+    { scopes: [], reason: C05_GRANT_REASON },
+    '0041 的 grant 行 before_value 必须是 jsonb_build_object(\'scopes\', …, \'reason\', …)（`0041:326`）',
+  );
+  assert.deepEqual(
+    grantStoredRow.after_value,
+    { scopes: ['sources:write'], reason: C05_GRANT_REASON },
+    '0041 的 grant 行 after_value 同形（`0041:327`），scopes 是变更后的有效集合',
+  );
+
+  const revokeStoredRow = c05StoredById.get(C05_REVOKE_AUDIT);
+  assert.equal(revokeStoredRow.action, 'admin_scope.revoke');
+  assert.equal(revokeStoredRow.actor_id, C05_ACTOR);
+  assert.equal(revokeStoredRow.scope, 'sources:write');
+  assert.equal(revokeStoredRow.target_hint, `admin_account:${C05_TARGET}`);
+  assert.equal(revokeStoredRow.reason_code, 'scope_revoked');
+  assert.equal(revokeStoredRow.result, 'accepted');
+  assert.deepEqual(
+    revokeStoredRow.before_value,
+    { scopes: ['sources:write'], reason: C05_REVOKE_REASON },
+    '0041 的撤销行 before_value 同形（`0041:479`），scopes 是撤销前的有效集合',
+  );
+  assert.deepEqual(
+    revokeStoredRow.after_value,
+    { scopes: [], reason: C05_REVOKE_REASON },
+    '0041 的撤销行 after_value 同形（`0041:480`）',
+  );
+
+  const denyStoredRow = c05StoredById.get(C05_DENY_AUDIT);
+  assert.equal(denyStoredRow.action, 'admin_scope.deny');
+  assert.equal(denyStoredRow.actor_id, C05_ACTOR);
+  assert.equal(denyStoredRow.scope, 'scopes:write');
+  assert.equal(denyStoredRow.target_hint, `admin_account:${C05_TARGET}`);
+  assert.equal(denyStoredRow.reason_code, 'self_scope_grant_denied', '0046 的拒绝理由码来自闭集四值');
+  assert.equal(denyStoredRow.result, 'denied', '0046 写死 result=denied（`0046:218`）');
+  assert.equal(denyStoredRow.before_value, null, '0046 拒绝行的 before_value 不写 ⇒ NULL（`0046:81` 裁定：没有「变更前后」的事实）');
+  assert.equal(denyStoredRow.after_value, null, '0046 拒绝行的 after_value 同上');
+
+  // 字段名不是我起的：逐字对 `0041:326-327` / `:479-480` 的 `jsonb_build_object`。
+  for (const [label, value] of [
+    ['grant.before_value', grantStoredRow.before_value],
+    ['grant.after_value', grantStoredRow.after_value],
+    ['revoke.before_value', revokeStoredRow.before_value],
+    ['revoke.after_value', revokeStoredRow.after_value],
+  ]) {
+    assert.deepEqual(
+      Object.keys(value).sort(),
+      ['reason', 'scopes'],
+      `${label} 的 jsonb 键必须逐字是 scopes / reason（⛔ 本臂不自己发明字段名）`,
+    );
+  }
+  pass('8a) 三个写入口（0041 grant/revoke、0046 deny）经运行时角色各写 1 行，库里形状与迁移源码逐字一致：grant/revoke 的 before/after 都是 {scopes, reason}，deny 的读数为 NULL');
+
+  // 8b) 整页取回：**这段窗口由库里的实际时间反推**（三个函数写的是 `now()`，不是夹具时间），
+  //     并先确认窗口内没有别的行 —— 否则下面「恰好 3 行」的读数不可信。
+  const c05Span = await ownerPool.query(
+    `SELECT min(created_at) AS lo, max(created_at) AS hi
+       FROM public.admin_audit_events WHERE id = ANY($1::uuid[])`,
+    [C05_IDS],
+  );
+  const c05From = new Date(c05Span.rows[0].lo.getTime() - 60_000).toISOString();
+  const c05To = new Date(c05Span.rows[0].hi.getTime() + 60_000).toISOString();
+  const c05Neighbours = await ownerPool.query(
+    `SELECT count(*)::int AS n FROM public.admin_audit_events
+      WHERE NOT (id = ANY($1::uuid[])) AND created_at >= $2::timestamptz AND created_at <= $3::timestamptz`,
+    [C05_IDS, c05From, c05To],
+  );
+  assert.equal(
+    c05Neighbours.rows[0].n,
+    0,
+    `C05 时间窗内混进了 ${c05Neighbours.rows[0].n} 行别的夹具 ⇒ 「恰好 3 行」不可信（宿主时钟是否落在固定夹具附近？）`,
+  );
+  const C05_WINDOW = { from: c05From, to: c05To };
+
+  const c05Page = await service.listAuditLogs(context, { limit: 50, ...C05_WINDOW });
+  assert.equal(
+    c05Page.status,
+    200,
+    '结果集里有 0041/0046 真实写出的行时整页必须 200（解码器退回「只认开关形状」时这里 503 读数形状不符）',
+  );
+  assert.deepEqual(
+    c05Page.body.data.items.map(item => item.id),
+    [C05_DENY_AUDIT, C05_REVOKE_AUDIT, C05_GRANT_AUDIT],
+    '三行按 created_at DESC 取回（deny 最后写 ⇒ 最新；同一微秒落库时键集回落到 id DESC，顺序不变）',
+  );
+
+  const c05Items = new Map(c05Page.body.data.items.map(item => [item.id, item]));
+  for (const [id, action, scope, reasonCode, result] of [
+    [C05_DENY_AUDIT, 'admin_scope.deny', 'scopes:write', 'self_scope_grant_denied', 'denied'],
+    [C05_REVOKE_AUDIT, 'admin_scope.revoke', 'sources:write', 'scope_revoked', 'accepted'],
+    [C05_GRANT_AUDIT, 'admin_scope.grant', 'sources:write', 'scope_granted', 'accepted'],
+  ]) {
+    const item = c05Items.get(id);
+    assert.ok(item !== undefined, `${action} 行必须在列表里（⛔ 不得被静默丢弃）`);
+    assert.equal(item.action, action);
+    assert.equal(item.scope, scope);
+    assert.equal(item.reason_code, reasonCode);
+    assert.equal(item.result, result);
+    assert.equal(item.actor, C05_ACTOR, 'actor 必须是写入口记下的操作者（actor_id → actor 映射）');
+    assert.equal(item.target_hint, `admin_account:${C05_TARGET}`);
+    assert.equal(item.target_ref, null);
+    assert.equal(item.request_id, REQUEST_ID);
+    assert.equal(
+      item.created_at,
+      c05StoredById.get(id).created_at.toISOString(),
+      'created_at 必须原样透出（毫秒 ISO）',
+    );
+    // 契约边界（不是本片的取舍，已在 findings 里登记）：`AuditEvent.before_value` / `after_value`
+    // 的类型是 `FlagReading | null`（`{enabled, revision}`，`additionalProperties: false`），
+    // 装不下 `{scopes, reason}` ⇒ 读面今天如实给 `null`。**库里那两个字段确实可读**，由上面 8a 的
+    // deepEqual 逐字证明；「经 HTTP 读得到 scopes/reason」要等契约扩展片，本片不改契约。
+    assert.equal(
+      item.before_value,
+      null,
+      `${action} 的 before_value 在契约里装不下 {scopes, reason} ⇒ 必须如实 null（⛔ 不是 503、⛔ 不是伪造读数）`,
+    );
+    assert.equal(item.after_value, null, `${action} 的 after_value 同上`);
+  }
+  assert.deepEqual(
+    Object.keys(c05Items.get(C05_DENY_AUDIT)).sort(),
+    [
+      'action', 'actor', 'after_value', 'before_value', 'created_at', 'id',
+      'reason_code', 'request_id', 'result', 'scope', 'target_hint', 'target_ref',
+    ],
+    '契约 AuditEvent 就是这 12 个字段：读面没有 metadata 位（scopes/reason 只能按契约扩展片再暴露）',
+  );
+  pass('8b) 真实写出来的三行同页取回：整页 200、顺序 deny→revoke→grant、action/actor/scope/reason_code/result/created_at 逐项对得上，读数如实为 null（契约 12 字段无 metadata 位）');
+
+  // 8c) 分页计数：3 行 / 每页 2 行 = 2 页，无重复、无漏行、顺序与全量一致。
+  const c05Paged = [];
+  let c05Cursor = null;
+  let c05Pages = 0;
+  do {
+    const page = await service.listAuditLogs(context, {
+      limit: 2,
+      ...C05_WINDOW,
+      ...(c05Cursor === null ? {} : { cursor: c05Cursor }),
+    });
+    assert.equal(page.status, 200, '含 0041/0046 真实形状行的窗口翻页必须每页 200');
+    c05Paged.push(...page.body.data.items.map(item => item.id));
+    c05Cursor = page.body.data.next_cursor;
+    c05Pages += 1;
+    assert.ok(c05Pages <= 10, '翻页次数异常（游标可能没有推进）');
+  } while (c05Cursor !== null);
+  assert.deepEqual(
+    c05Paged,
+    [C05_DENY_AUDIT, C05_REVOKE_AUDIT, C05_GRANT_AUDIT],
+    '键集翻页必须与全量顺序逐项一致',
+  );
+  assert.equal(new Set(c05Paged).size, 3, '翻页不得重复、不得漏行');
+  assert.equal(c05Pages, 2, '3 行 / 每页 2 行必须恰好 2 页');
+  pass('8c) 分页计数正确：3 行 / 每页 2 行恰好 2 页，2+1 无重复无漏行，顺序与全量一致');
+
+  // 8d) **判别力所在：一页里混杂三种形状**。窗口从 10-20 起 ⇒ `set_flag`（开关读数）、
+  //     7 段手抄的 0041 行、以及本段真实写出的三行**同页出现**；两条形状必须各自解码正确。
+  const c05MixedIds = [
+    C05_DENY_AUDIT,
+    C05_REVOKE_AUDIT,
+    C05_GRANT_AUDIT,
+    GRANT_ROW_ID,
+    'a0040000-0000-4000-8000-000000000000',
+    'a0010000-0000-4000-8000-000000000000',
+    'a0020000-0000-4000-8000-000000000000',
+    '00200000-0000-4000-8000-000000000000',
+    '00100000-0000-4000-8000-000000000000',
+    C05_SET_FLAG_ID,
+    '00222222-2222-4222-8222-222222222222',
+    '00111111-1111-4111-8111-111111111111',
+  ];
+  const mixedPage = await service.listAuditLogs(context, {
+    limit: 50, from: '2026-10-20T00:00:00Z', to: c05To,
+  });
+  assert.equal(mixedPage.status, 200, '混杂三种形状的一页必须 200');
+  assert.deepEqual(
+    mixedPage.body.data.items.map(item => item.id),
+    c05MixedIds,
+    '混杂页 12 行（3 行真实写入口 + 1 行手抄 0041 + 3 行同毫秒 + 5 行 10-20 夹具）顺序必须 created_at DESC, id DESC',
+  );
+  const mixedById = new Map(mixedPage.body.data.items.map(item => [item.id, item]));
+  assert.deepEqual(
+    mixedById.get(C05_SET_FLAG_ID).before_value,
+    { enabled: false, revision: 3 },
+    '同页的 set_flag 行必须**仍然**按开关形状解码（分派 ≠ 整页一刀切）',
+  );
+  assert.deepEqual(
+    mixedById.get(C05_SET_FLAG_ID).after_value,
+    { enabled: true, revision: 4 },
+    '同页的 set_flag 行 after_value 同前',
+  );
+  for (const id of [C05_DENY_AUDIT, C05_REVOKE_AUDIT, C05_GRANT_AUDIT, GRANT_ROW_ID]) {
+    assert.equal(
+      mixedById.get(id).before_value,
+      null,
+      `${mixedById.get(id).action} 行与开关行同页时必须按自己的 action 解码成 null（不是 503、不是开关读数）`,
+    );
+    assert.equal(mixedById.get(id).after_value, null, `${mixedById.get(id).action} 行 after_value 同上`);
+  }
+  assert.deepEqual(
+    mixedPage.body.data.items
+      .filter(item => item.before_value !== null || item.after_value !== null)
+      .map(item => item.id),
+    [C05_SET_FLAG_ID],
+    '整页只有 set_flag 那一行有读数：0041 的 grant/revoke、0046 的 deny、以及 10-20 的其余行一律 null',
+  );
+
+  const mixedPaged = [];
+  let mixedCursor = null;
+  let mixedPages = 0;
+  do {
+    const page = await service.listAuditLogs(context, {
+      limit: 5,
+      from: '2026-10-20T00:00:00Z',
+      to: c05To,
+      ...(mixedCursor === null ? {} : { cursor: mixedCursor }),
+    });
+    assert.equal(page.status, 200, '混杂页翻页必须每页 200');
+    mixedPaged.push(...page.body.data.items.map(item => item.id));
+    mixedCursor = page.body.data.next_cursor;
+    mixedPages += 1;
+    assert.ok(mixedPages <= 10, '翻页次数异常（游标可能没有推进）');
+  } while (mixedCursor !== null);
+  assert.deepEqual(mixedPaged, c05MixedIds, '混杂页键集翻页必须与全量顺序逐项一致');
+  assert.equal(new Set(mixedPaged).size, 12, '混杂页翻页不得重复');
+  assert.equal(mixedPages, 3, '12 行 / 每页 5 行必须恰好 3 页');
+  pass('8d) 一页混杂三种形状：12 行顺序正确、set_flag 行仍取到 {enabled:false,revision:3}/{enabled:true,revision:4}、其余 4 行读数 null；12 行 / 每页 5 行恰好 3 页');
+
+  // 8e) 三个新 action 各自 `?action=` 精确命中（action 维度不做 scope 收窄）。
+  for (const [action, expectedIds] of [
+    ['admin_scope.grant', [C05_GRANT_AUDIT]],
+    ['admin_scope.revoke', [C05_REVOKE_AUDIT]],
+    ['admin_scope.deny', [C05_DENY_AUDIT]],
+  ]) {
+    const only = await service.listAuditLogs(context, { limit: 50, ...C05_WINDOW, action });
+    assert.equal(only.status, 200, `?action=${action} 必须 200`);
+    assert.deepEqual(
+      only.body.data.items.map(item => item.id),
+      expectedIds,
+      `?action=${action} 必须精确取回这一行`,
+    );
+    assert.equal(only.body.data.items[0].action, action);
+    assert.equal(only.body.data.items[0].before_value, null);
+  }
+  pass('8e) ?action=admin_scope.grant / .revoke / .deny 各自精确命中 1 行，读数仍为 null');
+
+  // 8f) 总行数：只加 3 行，没有删改任何既有行。
+  const countAfterC05 = await ownerPool.query(
+    'SELECT count(*)::int AS n FROM public.admin_audit_events',
+  );
+  assert.equal(
+    countAfterC05.rows[0].n,
+    20013,
+    '总行数 = 20010（7d 时）+ 3 行真实写入口产出（grant/revoke/deny 各 1 行）',
+  );
+  pass('8f) 总行数 20013（+3），既有 20010 行一行未删未改');
+  pass('C05 真实形状覆盖：0041 的 grant/revoke 与 0046 的 deny 由迁移函数自己写入真库，读面按 action 分派解码，同页混杂开关行时两条形状各自正确');
+
   console.log('真库臂 PASS：读通道的 SQL、权限、键集、筛选、脱敏全部在真 PG 17.11 上取得读数。');
 }
 
