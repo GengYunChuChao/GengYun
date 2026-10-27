@@ -8,5 +8,15 @@
     "to": 258,
     "toEnd": 269,
     "reason": "合并 upstream/main（fa3b2553）时 catalog.ts 被上游注释块改动，`export const AUDIT_ACTIONS = Object.freeze([`（258）到 `] as const);`（269）整体下移 8 行；旧值 250-261 在合并后的文件里指向注释文字，不是闭集。按符号重锚，不是 250+8 的差值平移。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 18,
+    "target": "services/api/src/routes/admin.ts",
+    "from": 238,
+    "fromEnd": 255,
+    "to": 408,
+    "toEnd": 427,
+    "reason": "按符号重锚，不是随代码位移：旧值 238-255 在 base（76ba283f）上是 238 空行加 239 `const knowledge = familyOps(KNOWLEDGE_FAMILY);` 起的 knowledge 族六条路由（到 255 `app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`），而这一行现在写的是 `grantAdministratorScope`／`revokeAdministratorScope` 两条授/收权写面——旧锚点本来就指错了族，属既有陈旧锚点。新区间取这两条路由的真实注册块：408 `app.post(` 起（409 是 `/admin/administrators/:id/scopes`）到 427 `);` 收口，中间 417 `app.delete(` 起（418 是 `/admin/administrators/:id/scopes/:scope`）；一个区间覆盖两条 operation，与文档该行的「2 个 operation」对齐。services/api/src/routes/admin.ts 本片未改动，所以只能登记，不能用端点映射解释。"
   }
 ]
