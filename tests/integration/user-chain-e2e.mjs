@@ -49,7 +49,6 @@
  * `.github/workflows/real-pg-integration.yml` 传 `${{ runner.temp }}/gy-user-chain-pg`。
  */
 import assert from 'node:assert/strict';
-import net from 'node:net';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, lstatSync, unlinkSync, rmdirSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
@@ -64,6 +63,7 @@ import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { hashToken } from '../../services/api/src/auth/tokens.ts';
 import { computeSubjectLookup, STUB_APP_ID } from '../../services/api/src/auth/wechat.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const RUN_ID = `${process.pid}-${Date.now().toString(36)}`;
@@ -124,12 +124,9 @@ function resolvePgBin() {
 function pgTool(binDir, name) {
   return join(binDir, existsSync(join(binDir, `${name}.exe`)) ? `${name}.exe` : name);
 }
+/** 端口：共用工具向内核要一个此刻空闲的（⛔ 不再在本脚本里自己写一份 `listen(0)`，见 `./lib/free-port.mjs`）。 */
 async function freePort() {
-  const server = net.createServer();
-  await new Promise((resolve, reject) => server.once('error', reject).listen(0, '127.0.0.1', resolve));
-  const { port } = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return port;
+  return pickFreePort();
 }
 function run(bin, args) {
   return execFileSync(bin, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });

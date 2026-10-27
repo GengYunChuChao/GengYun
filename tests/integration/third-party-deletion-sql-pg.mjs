@@ -48,7 +48,7 @@
  * `.github/workflows/real-pg-integration.yml` 是**逐文件列举**跑 `tests/integration/*.mjs` 的
  * （每个 step 一行 `psql -c 'CREATE DATABASE …' && node tests/integration/<脚本>.mjs`）⇒
  * **新建**的集成脚本不会被任何 job 跑到，等于「写了断言、CI 上从未执行」。
- * 而本文件恰好是仓内**形状最贴近**的那一条：它**自起一次性 PG 17 集群**（56000–56499 先探活再起）、
+ * 而本文件恰好是仓内**形状最贴近**的那一条：它**自起一次性 PG 17 集群**（端口向内核要一个此刻空闲的）、
  * 跑**全链迁移**（因此 0046 自动被应用）、建一个**只有 EXECUTE** 的运行时身份、并已经用
  * 「表对运行时 forbidden + 函数对运行时放行」这一对判据钉住 `0044` 的两条窄函数 ——
  * 0046 要证明的正是同一对判据在**审计面**上的版本（`admin_audit_events` 零表级权限 + 一条写函数）。
@@ -64,7 +64,8 @@
  * 未取得（POSIX skipped 惯例：**未取得 ≠ 通过**）。本脚本**刻意不提供** `--allow-skip` / `GY_ALLOW_SKIP`：
  * 取不到真库就没有读数，任何把 77 读成绿的开关都会把缺口重新藏起来。
  *
- * 端口：56000–56499 里**先探活再起**（同机上别人留下的临时集群必须先避开）。数据目录
+ * 端口：由 `./lib/free-port.mjs` 的 `pickFreePort()` 向内核要一个**此刻空闲**的（⛔ 不再从 56000–56499
+ * 这种落在 Linux ephemeral 区间里的固定基址随机取）。数据目录
  * `<root>/gy-s4-p2b-pg-<hex>`：收尾 `pg_ctl stop` + 删目录。运行时身份是一次性集群内的角色，随目录一起
  * 消失，无需 DROP。
  *
@@ -73,12 +74,13 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+import { pickFreePort } from './lib/free-port.mjs';
 
 // ---------------------------------------------------------------------------
 // 闸门：缺 `GY_PG_BIN` ⇒ SKIP + 77（⛔ 不是通过）
@@ -162,22 +164,17 @@ const sleepSync = (ms) => {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 };
 
-/** 端口先探活：同机可能已有别人的临时集群，撞端口会让 initdb 之后的一切假红。 */
-const portIsFree = (candidate) =>
-  new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => server.close(() => resolve(true)));
-    server.listen({ port: candidate, host: '127.0.0.1', exclusive: true });
-  });
-
+/**
+ * 挑端口：向内核要一个**此刻空闲**的端口（`listen(0)` 现分配），⛔ 不再从 `56000 + randomInt(0, 500)`
+ * 这种固定基址里瞎猜 —— 那一段落在 Linux 默认 ephemeral 区间 32768–60999 内，会被任何出站连接的
+ * 源端口占住，`pg_ctl start` 就偶发 `could not bind IPv4 address "127.0.0.1": Address already in use`。
+ *
+ * 本臂是**单次尝试、fail-loud**：`startCluster()` 只 `pg_ctl -W start` 一次（不等待就绪），
+ * bind 撞了就是 `runTool` 非 0 抛错 ⇒ 整臂红，不会换端口再来。仓内带「bind 失败换端口重试」的
+ * 只有 `admin-audit-logs-pg.mjs`、`admin-scopes-authority-pg.mjs`、`retention-purge-pg.mjs` 三个臂。
+ */
 async function pickPort() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 56000 + randomInt(0, 500);
-    // eslint-disable-next-line no-await-in-loop
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('56000–56499 里找不到空闲端口（同机临时集群过多），本臂不猜端口');
+  return pickFreePort();
 }
 
 /**

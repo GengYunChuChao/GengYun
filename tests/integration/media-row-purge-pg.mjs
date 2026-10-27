@@ -32,12 +32,13 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+
+import { pickFreePort } from './lib/free-port.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 if (binDir === '') {
@@ -85,24 +86,6 @@ let dataDir = '';
 const rootDir = process.env.GY_R34_PG_ROOT ?? tmpdir();
 const tool = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
 
-async function portIsFree(candidate) {
-  return new Promise((resolve) => {
-    const probe = createServer();
-    probe.once('error', () => resolve(false));
-    probe.once('listening', () => probe.close(() => resolve(true)));
-    probe.listen(candidate, '127.0.0.1');
-  });
-}
-
-async function pickPort() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 55700 + randomInt(0, 300);
-    if (candidate === 55436) continue;
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('557xx 区间内找不到空闲端口（同机临时集群过多）');
-}
-
 function runTool(name, args) {
   // 本机 sandbox 禁止命名管道：用管道收集 postgres/pg_ctl 的输出会等 EOF 等到超时，
   // 因此一律把子进程 stdout/stderr 重定向到文件。
@@ -136,7 +119,9 @@ function tailOfFile(file, maxLines = 15) {
 }
 
 async function startCluster() {
-  port = await pickPort();
+  // 端口向内核要一个此刻空闲的（`lib/free-port.mjs`）：⛔ 原来 `55700 + randomInt(0, 300)`
+  // 整段落在 Linux 默认 ephemeral 区间（32768–60999）里，会被出站连接的源端口占住。
+  port = await pickFreePort();
   adminBase = `postgresql://postgres@127.0.0.1:${port}`;
   targetUrl = `${adminBase}/${DB_NAME}`;
   assert.ok(existsSync(tool('initdb')), `GY_PG_BIN 下找不到 initdb：${binDir}`);
