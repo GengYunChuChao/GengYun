@@ -49,7 +49,7 @@
 
 游客可见：徽标 `游客仅可预览首页`（`miniprogram/pages/home/home.wxml:15`）、登录按钮 `微信登录`（`miniprogram/pages/home/home.wxml:21`）。受控入口恰好 5 处 `openGated`（`miniprogram/pages/home/home.js:63`、`:64`、`:66`、`:67`、`:68`），未登录统一弹同一句：`需要登录` / `该功能需要微信登录后使用，现在去登录吗？` / `去登录` / `暂不`（`miniprogram/pages/home/home.js:92-100`），取消与失败都清 `returnTo`（`miniprogram/pages/home/home.js:97`、`miniprogram/pages/home/home.js:99`）。
 
-错误码映射表**存在且取值精确**：`miniprogram/utils/states.js:27-78` 的 `CODE_KIND`（如 `SESSION_REQUIRED: 'session'` 在 `miniprogram/utils/states.js:33`、`PROVIDER_UNAVAILABLE: 'unavailable'` 在 `miniprogram/utils/states.js:66`），可重试性在 `miniprogram/utils/states.js:108-118`（`session: false`，注释写明「需要重新登录，不是重试」）。但**首页不消费这张表**：`home.js` 的 require 只有 4 个模块，不含 `utils/states`（`miniprogram/pages/home/home.js:1-4`），`home.wxml` 也没有 `error-code=` ⇒ **现状缺口**：首页对 `SESSION_REQUIRED` / `PROVIDER_UNAVAILABLE` 没有任何专门处理，全靠 `verified` 布尔值。
+错误码映射表**存在且取值精确**：`miniprogram/utils/states.js:27-74` 的 `CODE_KIND`（如 `SESSION_REQUIRED: 'session'` 在 `miniprogram/utils/states.js:33`、`PROVIDER_UNAVAILABLE: 'unavailable'` 在 `miniprogram/utils/states.js:66`），可重试性在 `miniprogram/utils/states.js:104-114`（`session: false`，注释写明「需要重新登录，不是重试」）。但**首页不消费这张表**：`home.js` 的 require 只有 4 个模块，不含 `utils/states`（`miniprogram/pages/home/home.js:1-4`），`home.wxml` 也没有 `error-code=` ⇒ **现状缺口**：首页对 `SESSION_REQUIRED` / `PROVIDER_UNAVAILABLE` 没有任何专门处理，全靠 `verified` 布尔值。
 
 派单里举例的 `AUTH_REQUIRED` 在本仓**不存在**（`miniprogram/**` 与 `packages/contracts/openapi.json` 里均 0 次），真实会话码是 `SESSION_REQUIRED`。
 
@@ -59,7 +59,7 @@
 
 全仓 `miniprogram/**/*.js` 里 `onNetworkStatusChange|getNetworkType` **0 处**：没有任何页面在监听网络状态，断网不可能被识别成独立状态。
 
-其它页的离线码确实存在（`miniprogram/utils/identify-api.js:796` 的 `fail` → `NETWORK_UNCERTAIN`），但 `CODE_KIND` 里没有这个码：`statusForCode` 对未知码一律回「通用失败」（`miniprogram/utils/states.js:151-158`），`retryableForCode` 回 `false`（`miniprogram/utils/states.js:161-164`）—— 也就是说离线被归成「不可重试」，与 `unavailable: true` 的口径相反（同缺失的还有 `INVALID_RESPONSE`，在 `states.js` 里 0 次、在 `miniprogram/**` 里 244 次命中）。⇒ **现状缺口**（记录，不在本轮修）。
+其它页的离线码确实存在（`miniprogram/utils/identify-api.js:796` 的 `fail` → `NETWORK_UNCERTAIN`），但 `CODE_KIND` 里没有这个码：`statusForCode` 对未知码一律回「通用失败」（`miniprogram/utils/states.js:147-154`），`retryableForCode` 回 `false`（`miniprogram/utils/states.js:157-160`）—— 也就是说离线被归成「不可重试」，与 `unavailable: true` 的口径相反（同缺失的还有 `INVALID_RESPONSE`，在 `states.js` 里 0 次、在 `miniprogram/**` 里 244 次命中）。⇒ **现状缺口**（记录，不在本轮修）。
 
 ### 6. 超时 / 重复点击 / 竞态
 

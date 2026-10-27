@@ -49,7 +49,7 @@
 
 - 确认 → 发送两段式：`voice.js:1106-1248` `onConfirmAndSend`（先 `PATCH` 确认，再 `evaluateSendGate`，最后 `POST /conversations` + `POST /conversations/{id}/turns`）；闸门是纯函数 `speech-transcript.js:452-481`（取消/作废/未确认/记录缺失/版本不符/服务端未确认，六条 fail-closed）。
 - 回答内容**不在本页呈现**（只回报 `job id/state`），这对 #11 是「已接线到受理」，不是「已交付问答结果」——如实登记。
-- B7 统一状态层：`miniprogram/utils/states.js:1-13`（五态 + 「`denied` 与 `guest` 必须分开」）、`:27-78` `CODE_KIND`（`SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE → denied`；`SESSION_* → session`）、`:151-158` `statusForCode`、`:174-185` `resolve`。
+- B7 统一状态层：`miniprogram/utils/states.js:1-13`（五态 + 「`denied` 与 `guest` 必须分开」）、`:27-74` `CODE_KIND`（`SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE → denied`；`SESSION_* → session`）、`:147-154` `statusForCode`、`:170-181` `resolve`。
 - **端侧临时态现状**：`miniprogram/pages/voice/*` 对 `states` / `state-view` **零引用**（grep 命中数 0）。录音/上传/转写阶段全是页面私有 data（`voice.js:138-226` 的 `recordState`/`recordLabel`/`recordStageNote`/`transcriptStage`/`transcriptBusy`/`exitNote`），失败文案走各域 `messageFor`/`recordUploadMessageFor` 的**逐码文案表**而非 B7 的 `code → kind → status`。
   ⇒ 判定「半通」：错误码归因**语义**与 B7 一致（401 走会话、403 原样带出且文案各不相同），但**呈现**未统一；B7 为 `denied` 预留的渲染出口对语音域是死代码。
 - 契约侧依据：`docs/architecture/state-contract.md:64`（「同一页同一版本自动播报一次，离页/隐藏停止，**取消录音丢弃临时文件并解绑监听**；录音状态与播放状态由 GY-I11/13/26 客户端实现」）、`:62`（ASR 原转写保存、用户经 `PATCH confirmed_text` 明确确认、确认前不得问模型）、`:43`（`voice_question`：mp3/wav/aac、≤10MiB、≤60 秒）。

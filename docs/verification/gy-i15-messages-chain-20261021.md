@@ -105,7 +105,7 @@ Select-String -Path miniprogram/pages/messages/*,miniprogram/utils/messages-api.
 | 改前缺陷 | `miniprogram/utils/messages-api.js:123-127`（改前行号） | `if (statusCode === 401 \|\| 403) { auth.clearSession(); reject('SESSION_REQUIRED') }` |
 | 后果 ① | 同上 | 403 把**会话清掉**。403 的三码（`contract.ts:17`：`SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE`）都是「登录了但不给」，清完会话用户只会被反复踢去登录 |
 | 后果 ② | `messages-api.js:231`（改前行号，`SCOPE_DENIED: '当前会话无权访问消息。'`） | 这行文案**永不执行**（死字符串）——403 进不到错误封套解析那一支 |
-| 后果 ③ | `miniprogram/utils/states.js:154`（`denied` ⇒ `STATUS.DENIED`）、`components/state-view/state-view.js:153` | B7 的 `denied` 分支**不可达**：页面拿到的码永远是 `SESSION_REQUIRED` ⇒ 走 guest「请先登录」 |
+| 后果 ③ | `miniprogram/utils/states.js:150`（`denied` ⇒ `STATUS.DENIED`）、`components/state-view/state-view.js:153` | B7 的 `denied` 分支**不可达**：页面拿到的码永远是 `SESSION_REQUIRED` ⇒ 走 guest「请先登录」 |
 | 服务端真的会返 403 | `services/api/src/auth/middleware.ts:88-93`（账号非 `active` / `auth_epoch` 失配 ⇒ `ACCOUNT_INACTIVE`） | 不是假想情形：注销待处理、被停用、全局登出后的旧令牌都命中这一支 |
 | 统一口径（#396，**不属于本片**） | `miniprogram/utils/auth.js` 的 `attribution()`（`SESSION_LOSS_CODES` / `FORBIDDEN_CODES` / `RETIRED_SESSION_CODES`） | 401 ⇒ `SESSION_REQUIRED` + 清会话；403 ⇒ 三码原样带出，其中 **`ACCOUNT_INACTIVE` 例外：码保留 + 清会话**；403 无封套 ⇒ `SCOPE_DENIED` 且不清会话 |
 | 本域改法 | `miniprogram/utils/messages-api.js:131-136`（委托 `auth.failureFor(failure, statusCode, response.data)`）；原 `:146`/`:163` 两处「403 兜底」**已删除**（委托后不可达，留着就是第二份口径） | 本模块**不再有**任何 401/403 判定分支 |
