@@ -43,6 +43,11 @@
 
 `G0008`（自授）/`G0009`（撤销后持有者归零）/`G0010`（操作者不是有效管理员或不持 `scopes:write`）/`G0011`（授予自己并不有效持有的 scope）是**库层判定并整笔回滚**的四类拒绝。
 
+其中 `G0008` 有**两条到达路径**，都必须落到同一行 `admin_scope.deny`（`reason_code='self_scope_grant_denied'`、`scope='scopes:write'`）：
+
+- **(a) 库层判定**：自授请求真的进了 `public.grant_admin_scope(...)`（例如操作者绕过服务层、或将来有人把服务层的早拒拆掉）⇒ `G0008` 抛在主事务内、整笔回滚 ⇒ 写权威 `catch` 里那条旁路另开连接记账（就是上面「库层判定并整笔回滚」这句话描述的形状）。
+- **(b) 应用层早拒**：`services/api/src/admin/ops/service.ts` 的 `grantAdministratorScope` 在调 `grant` **之前**就把自授拒成 403 `SELF_SCOPE_GRANT_DENIED`（不让它进事务，也不让一次注定失败的操作占用幂等位）。这条路径上 (a) 的 `catch` **根本不会执行** ⇒ 修复前这一种自授在库里**零痕迹**。现在服务层在抛 403 之前显式调 `authority.recordEarlyDenial(subject, 'G0008')`：写路径仍是 `public.record_admin_scope_denial(...)`（`recordEarlyAdminScopeDenial` 是它的薄壳，逐字同源），区别只是**没有主事务可回滚**，因此那一条语句单语句自提交；失败同样整段吞掉，403 原样返回。
+
 `XX000`（内部错误）/`42501`（权限不足 ⇒ 运行时角色被收权）/`42883`（函数不存在 ⇒ 迁移没跑）/连接断开，是**服务端缺陷**。给它们写一行 `result='denied'` 会把平台事故伪装成一次正常的权限拒绝 —— 值班会去查操作者，而不是去查故障。⛔ 不得冒充。表外取值一律 `return`（`denialReasonOf` 用 `Object.hasOwn` 而非 `in`，避免 `toString`/`constructor` 这类原型键被误判成命中）。
 
 ### 2.3 为什么整段吞异常
@@ -184,6 +189,8 @@ EXIT_NEG=1
 6. **最坏情形仍可能丢一行**：`release()` 之后、旁路写完成之前若进程被杀/连接池不可用，这一次拒绝就无痕（只留可能的 `log.warn`）。这是「不把留痕塞进主事务」的必然代价，也是裁定 B 明确选择的取舍 —— 宁可少一行审计，也不让一次拒绝因为留痕失败变成 500。
 7. **本片只覆盖 `scopes:write` 域**：其它 scope 上的授予/撤销被拒（`G0011` 之外的目标 scope 越权等）仍由同一条旁路处理，但 `p_scope` 一律 `scopes:write`；若将来要按被操作 scope 记账，需要 `0046` 放宽 `p_scope` 的闭集约束（库层变更，不在本片）。
 8. **迁移 README 的「当前状态」无需再改**：`services/api/db/migrations/README.md:7` 在基线上已是 `0001..0046`；文中 `0001..0034`/`0001..0036` 两处是各片落盘**当时**的历史叙述，不是当前状态，故不动（也避免了无意义的锚点位移）。
+9. **落库的拒绝只有两类，⛔ 不是「每一次 403/409 都留一行」**：① 真正进了写权威的拒绝（`G0008` 路径 (a)、`G0009`、`G0010`、`G0011`，即 `0046` 闭集里的四值）；② 服务层自授这一处**提前**拒绝（`G0008` 路径 (b)，见 §2.2）。**不**落库的（刻意）：`resolveContext`/`requireAdminScope` 的 403 `SCOPE_DENIED`、`parseIfMatchHeader` 的 428/400、契约镜像校验的 400、`normalizeIdParam` 的 400、未接线时的 503、幂等外壳的 400/409、以及路由/中间件层的 401/403；它们不是库层判定，而是应用层根本没让请求进权威。要覆盖它们，必须先扩 `0046` 的 `x_reason_allowed` 闭集并另立口径（库层变更，不在本片）；⛔ 不得靠把任意应用层 403 塞进这条旁路来「补齐」——那会把「平台在犯病」记成「操作者越权」。
+   **本轮真库实测（2026-10-27，端口 55440）**：整条臂只落 **2 行** `admin_scope.deny`（`last_scope_manager=1`、`self_scope_grant_denied=1`）。两类「应用层 403 不落库」都被实测钉住：`[W5]` 里缺 `scopes:write` 的 403 前后总数 `1 → 1`（差 0）；`[W3]` 并发互撤的 loser 同样是 403 `SCOPE_DENIED` 且 0 行 —— 因为 `services/api/src/auth/middleware.ts` 每个请求都**活读** `admin_scopes`（`listAdminScopes`），输掉并发那一方的 `scopes:write` 已被撤销，请求在应用层门就被拦下，压根没进写权威。这条比干说更清楚：**「403 有行」和「403 没行」的区别不在状态码，而在有没有进权威**。
 
 ---
 
@@ -295,3 +302,73 @@ OK  E40 packages/contracts/openapi.json:11024-11028                    ⟨"enum"
    | `node tools/verify-doc-anchors.mjs --strict --scan docs` | 0 | `BROKEN 4 / OUT_OF_RANGE 2 / SUSPECT 7（合计 13）`；基线登记 13、命中 13、**基线外新增 0** |
 
    `#648` 带进的是 `miniprogram/**` 与 `tools/prepare-wechat.mjs` 的改动（**没有**动 `openapi.json`：`git diff --numstat 27bc991f aa65be8d -- packages/contracts/openapi.json` 为空）；`openapi.json` 的字段扩充来自 `#651`（`git diff --numstat d9f7f8f7 ac8b4446` = **+215/−8**）。逐版实测 `paths=94 / operations=124 / operationIds=124`（`27bc991f`、`aa65be8d`、`d9f7f8f7`、`ac8b4446`、`e26586db` 五版全同），故 `124 operations` 与 `parity` 三项读数不变；台账侧 `#651` 已把它自己那 50 行数字重编号落进 main，`305` 条与中文表格仍一致。
+
+## 12 第三轮：监工指出的「自授提前拒绝无留痕」缺口（代码修复 + 定向证据）
+
+**监工原话要点（`gengyun-supervisor[bot]`，PR `#652`，2026-10-26T14:48:34Z）**：持 `scopes:write` 的管理员用合法 body/`If-Match`/`Idempotency-Key` 对**自己** POST `/admin/administrators/{id}/scopes` 时，`grantAdministratorScope` 在调 `scopeAuthority.grant` **之前**就抛 `SELF_SCOPE_GRANT_DENIED` ⇒ 本轮新增的写权威 `catch` 与 `recordAdminScopeDenial` 都不执行 ⇒ 那个 403 在 `admin_audit_events` 里**一行都没有**。上一轮（§4/§5 的读数）**只**证明了「进了权威的拒绝会留痕」，对这条**提前**拒绝是零覆盖 —— 这是真缺口，不是表述问题。
+
+### 12.1 改了什么
+
+| 文件 | 改动 |
+| --- | --- |
+| `services/api/src/admin/ops/scope-denial-trace.ts` | ① `:75` 新增 `SELF_SCOPE_GRANT_DENIAL_SQLSTATE: AdminScopeDenialSqlState = 'G0008'`；② `:174-181` 新增薄壳 `recordEarlyAdminScopeDenial(args)`，函数体只有 `return recordAdminScopeDenial(args)` |
+| `services/api/src/admin/ops/scope-authority-pg.ts` | ① `:137` 端口加 `recordEarlyDenial(subject: AdminScopeDenialSubject, sqlState: string): Promise<void>`；② `:342` 工厂内委托 `recordEarlyAdminScopeDenial({ pool, subject, sqlState, log })`；③ `:61` 转出 `SELF_SCOPE_GRANT_DENIAL_SQLSTATE`（服务层只认识端口，不必认识旁路模块） |
+| `services/api/src/admin/ops/service.ts` | `:1507` 先 `const authority = requireWiredScopeAuthority();`；自授分支内在抛 403 **之前** `:1517-1521` 调 `authority.recordEarlyDenial({ actorId, targetId, requestId }, SELF_SCOPE_GRANT_DENIAL_SQLSTATE)`，整段 `try/catch` 吞掉；`:1532` 的 `grant(...)` 改用同一个 `authority` |
+| `tests/unit/admin-scopes-write.test.mjs` | `:54` 假权威补 `recordEarlyDenial`（独立 `earlyDenials` 流水，⛔ 不混进 `calls`）；`:228` 自授用例加「留痕 1 次 + `sqlState === 'G0008'` + 主体正确」；`:252` 新增负控制（留痕抛错 ⇒ 主响应仍 403 同码）；`:269` 新增适配层用例（真实现 ⇒ 单语句自提交、参数逐字、不包事务、连接归还） |
+| `tests/integration/admin-accounts-read-pg.mjs` | `:226` 扩 `REGIONS` 加 `gy-r64-pr4a-denial-trace-grant`（否则运行时角色没有留痕函数的 EXECUTE，**所有** 403/409 都静默只 warn）；`:623`/`:625` 两个计数助手；`[W4]` 补「+1 行 `last_scope_manager`」；`[W5]` 补「缺权 403 差 0」（边界）与「自授 +1 行 `self_scope_grant_denied`」+ 按 `reason_code` 分组的读数 |
+
+**两处判据口径（写清以免下一个人踩）**：
+
+1. **`G0008` 不能从 `ADMIN_SCOPE_DENIAL_REASONS` 取「键」**：那张表是 `{ G0008: 'self_scope_grant_denied' }`，`ADMIN_SCOPE_DENIAL_REASONS.G0008` 是 `reason_code`（值），当 SQLSTATE 传进去是**表外键** ⇒ `denialReasonOf` 返回 `undefined` ⇒ 一行都不写。所以新增了具名常量 `SELF_SCOPE_GRANT_DENIAL_SQLSTATE`（类型是 `keyof typeof ADMIN_SCOPE_DENIAL_REASONS`，改号即编译期红），服务层仍**不**自带第二份映射。
+2. **为什么是薄壳而不是在写权威里直接调 `recordAdminScopeDenial`**：`tests/unit/admin-scope-denial-wiring.test.mjs` 有一条静态判据「`scope-authority-pg.ts` 里 `recordAdminScopeDenial(` 恰 1 处，且必须在 `ROLLBACK` 与 `releaseQuietly(client)` **之后**」。在权威里再写一处同名调用会让它红，也会让读者以为早拒也包在主事务里。薄壳与本体逐字同源（同一个 `RECORD_DENIAL_SQL`、同一份「整段吞错」语义），只是调用时机不同：早拒没有主事务可回滚、没有主连接要 release，那一条语句自提交。
+
+### 12.2 读数（本机，2026-10-27）
+
+**单测**（`node --test`，三文件串跑）：
+
+| 文件 | tests | pass | fail |
+| --- | --- | --- | --- |
+| `tests/unit/admin-scopes-write.test.mjs` | 30 | 30 | 0 |
+| `tests/unit/admin-scope-denial-wiring.test.mjs` + `tests/unit/admin-scope-denial-trace.test.mjs` | 20 | 20 | 0 |
+| 合计 | 50 | 50 | 0 |
+
+`npx tsc -p services/api/tsconfig.json --noEmit` ⇒ `exit 0`。
+
+**真库臂**（便携 PG 17，端口 55440，`exit 0`）——本轮新增/改写的读数逐行原文：
+
+```
+[P] 已按出厂区域 gy-r64-pr4a-denial-trace-grant 授予 EXECUTE（恰好 1 条：record_admin_scope_denial）⇒ has_function_privilege=true
+[W4] 留痕：admin_scope.deny +1 行（reason_code=last_scope_manager，actor=最后授权者，scope=scopes:write，request_id=73bd2410-c625-4251-b0c6-86ba9b81ca07）
+[W5] 边界：缺 scopes:write 的 403 SCOPE_DENIED **不**落 deny 行（总数 1 → 1，差 0）
+[W5] 留痕：admin_scope.deny +1 行（reason_code=self_scope_grant_denied，actor/target 均为自授者，scope=scopes:write，request_id=16d785ba-6a2f-406f-b158-7255c3ca61e8）
+[W5] 本臂 deny 行按 reason_code 分组：last_scope_manager=1，self_scope_grant_denied=1
+```
+
+跑完直接从库里回读（`SELECT reason_code, scope, actor_id, request_id, result FROM admin_audit_events WHERE action='admin_scope.deny'`）：
+
+```
+last_scope_manager|scopes:write|50d49ea2-377e-40e2-ab12-8025c90132f8|73bd2410-c625-4251-b0c6-86ba9b81ca07|denied
+self_scope_grant_denied|scopes:write|50d49ea2-377e-40e2-ab12-8025c90132f8|16d785ba-6a2f-406f-b158-7255c3ca61e8|denied
+```
+
+⛔ `request_id` **不是** `Idempotency-Key`（这是随机/入站请求 id，`genReqId`）；断言只钉「非空 + uuid 形状 + ≠ 幂等键」，没有断言等于 `gy-w-self-0001`。
+
+**六条门禁（串行，全 exit 0）**：
+
+| 门禁 | exit | 读数 |
+| --- | --- | --- |
+| `node tools/verify-contract-status.mjs` | 0 | 行号区间 `305` 条全 PASS、中文表格一致 |
+| `node tools/verify-doc-anchors.mjs --strict --scan docs` | 0 | `BROKEN 4 / OUT_OF_RANGE 2 / SUSPECT 7（合计 13）`；基线 13、命中 13、**基线外新增 0** |
+| `node tools/openapi-route-parity.mjs` | 0 | `extra [] / missing [] / ledgerDrift []` |
+| `node tools/verify-migrations-unique.mjs` | 0 | `45 条配对 + 1 条登记允许缺省 = 46 条` |
+| `python tools/validate_contracts.py` | 0 | `PASS: 124 operations; 29 fixtures; 30 media traces; 8 knowledge roundtrips` |
+| `python tools/validate_development_docs.py` | 0 | `PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping` |
+
+### 12.3 覆盖边界与行号漂移（如实登记）
+
+1. **覆盖边界**见 §8 第 9 条：本条修复只把「服务层自授」这一处**提前**拒绝接进同一条旁路；其它应用层提前拒绝（含 `[W3]` 并发互撤 loser 的 403）**实测 0 行**，且刻意如此。
+2. **`[W3]` 的 loser 为什么不落行**：`services/api/src/auth/middleware.ts` 每请求**活读** `admin_scopes`，输掉并发互撤的一方已无 `scopes:write`，请求在应用层门就被拦下。上一轮我以为它可能是 `G0010`（那是会落行的），本轮实测否定了这个猜测 —— 所以 `[W4]`/`[W5]` 的断言一律用**前后差值**，不硬编码 `0→1`。
+3. **`docs/verification/gy-r64-pr4b-suspend-guard-20261026.md` 的 4 处行号引用已同步**（`:693`→`:777`、`:746-774`→`:830-858`、`:776-799`→`:860-883`、`:801-833`→`:885-917`）：本轮在 `[W]` 段追加断言使 `[G]` 段整体下移 84 行，只改行号、未改任何判据（否则 doc-anchors 闸门会新报 SUSPECT）。
+4. **为什么 `service.ts` 的 import 拧成一行**：新增的 `SELF_SCOPE_GRANT_DENIAL_SQLSTATE` 并入既有的端口 import 行，而不是另起一行 —— 该文件任何一行新增都会让 `docs/verification/r59-community-notify-dedupe-20261026.md:83` 引用的 `service.ts:1195` 落到一处只剩 `});` 的位置，从而在 doc-anchors 闸门新增 SUSPECT。这是**行号约束**驱动的写法，不是风格偏好。
+5. **没有重跑**：全量 `npm run test:unit`（内存吃紧，只跑受影响的三个文件）、`admin-scopes-authority-pg.mjs`（本轮没动它的代码路径）、`admin-http.mjs`、CI。
+

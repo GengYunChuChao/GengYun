@@ -24,13 +24,13 @@
 
 ## 2. 三组断言各钉住什么
 
-三组都在 `tests/integration/admin-accounts-read-pg.mjs` 的 `[G]` 段（入口 `async function suspendGuardEvidence()`，`tests/integration/admin-accounts-read-pg.mjs:693`），跑在既有 `[W1]`–`[W5]` 之后（它会归一化持有者数量，跑在前面会冲掉写面用例的并发前置）。
+三组都在 `tests/integration/admin-accounts-read-pg.mjs` 的 `[G]` 段（入口 `async function suspendGuardEvidence()`，`tests/integration/admin-accounts-read-pg.mjs:777`），跑在既有 `[W1]`–`[W5]` 之后（它会归一化持有者数量，跑在前面会冲掉写面用例的并发前置）。
 
 | 编号 | 位置 | 钉住的事实 | 什么情况下会红 |
 | --- | --- | --- | --- |
-| **[G1]** 实体分离（主断言） | `tests/integration/admin-accounts-read-pg.mjs:746-774` | 造 2 名 `state='active'` 且各持 `scopes:write` 的管理员 ⇒ 记 `SELECT count(*) FROM admin_scopes WHERE scope='scopes:write' AND revoked_at IS NULL` = **2** ⇒ 对**同数量**（2 行）`public.users` 调停用（走产品端口 `createPostgresAccountAuthority(...).suspend(...)`，调用形态与 `tests/integration/account-suspend-pg.mjs:525` 一致）⇒ 同一个 count **仍是 2**；两名管理员的 `admin_accounts` 行 `state` 仍 `'active'`、`revision` 一位没动 | 一旦有人把停用实现成「顺带撤销 `admin_scopes`」或「把管理员 `state` 改成 `suspended`」，count 或 `admin_accounts` 读数立刻偏离 |
-| **[G2]** 零持有者也不因停用而变 | `tests/integration/admin-accounts-read-pg.mjs:776-799` | 先用**直接 SQL** 把 `scopes:write` 撤到 **0** 持有者（这是唯一能归零的方式：走 `revoke_admin_scope()` 必被 `G0009` 拒绝，`[W4]` 已证明）⇒ 再停用 2 行 `public.users` ⇒ count 仍是 **0**，且**不抛任何错误** | 有人在停用路径上挂隐式守卫（比如「元权限为 0 就拒绝任何后台动作」），这里会抛错变红 |
-| **[G3]** 负控制（只红这一条） | `tests/integration/admin-accounts-read-pg.mjs:801-833` | 在**独立事务**里人为把「停用顺带撤销」做出来（`UPDATE admin_scopes SET revoked_at = now() WHERE scope='scopes:write' AND revoked_at IS NULL` ——与 `[G2]` 同形，只动仍然有效的行）⇒ 主断言口径必读到 **0**（守卫口径同样 0）⇒ `ROLLBACK` 复原 ⇒ 回到 **2** | 如果这条负控制**不红**，说明主断言读的根本不是这张表/这个条件，[G1] 就是空断言 |
+| **[G1]** 实体分离（主断言） | `tests/integration/admin-accounts-read-pg.mjs:830-858` | 造 2 名 `state='active'` 且各持 `scopes:write` 的管理员 ⇒ 记 `SELECT count(*) FROM admin_scopes WHERE scope='scopes:write' AND revoked_at IS NULL` = **2** ⇒ 对**同数量**（2 行）`public.users` 调停用（走产品端口 `createPostgresAccountAuthority(...).suspend(...)`，调用形态与 `tests/integration/account-suspend-pg.mjs:525` 一致）⇒ 同一个 count **仍是 2**；两名管理员的 `admin_accounts` 行 `state` 仍 `'active'`、`revision` 一位没动 | 一旦有人把停用实现成「顺带撤销 `admin_scopes`」或「把管理员 `state` 改成 `suspended`」，count 或 `admin_accounts` 读数立刻偏离 |
+| **[G2]** 零持有者也不因停用而变 | `tests/integration/admin-accounts-read-pg.mjs:860-883` | 先用**直接 SQL** 把 `scopes:write` 撤到 **0** 持有者（这是唯一能归零的方式：走 `revoke_admin_scope()` 必被 `G0009` 拒绝，`[W4]` 已证明）⇒ 再停用 2 行 `public.users` ⇒ count 仍是 **0**，且**不抛任何错误** | 有人在停用路径上挂隐式守卫（比如「元权限为 0 就拒绝任何后台动作」），这里会抛错变红 |
+| **[G3]** 负控制（只红这一条） | `tests/integration/admin-accounts-read-pg.mjs:885-917` | 在**独立事务**里人为把「停用顺带撤销」做出来（`UPDATE admin_scopes SET revoked_at = now() WHERE scope='scopes:write' AND revoked_at IS NULL` ——与 `[G2]` 同形，只动仍然有效的行）⇒ 主断言口径必读到 **0**（守卫口径同样 0）⇒ `ROLLBACK` 复原 ⇒ 回到 **2** | 如果这条负控制**不红**，说明主断言读的根本不是这张表/这个条件，[G1] 就是空断言 |
 
 两条防「空断言」的反向自证（不写出来这组证据会自己骗自己）：
 

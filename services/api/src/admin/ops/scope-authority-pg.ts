@@ -50,9 +50,15 @@ import type { PgPool } from '../../db/pool.ts';
 import { ADMIN_SCOPES, isAdminScope } from '../scopes.ts';
 import {
   recordAdminScopeDenial,
+  recordEarlyAdminScopeDenial,
   sqlStateOf,
   type AdminScopeDenialLogPort,
+  type AdminScopeDenialSubject,
 } from './scope-denial-trace.ts';
+
+// 「早拒」这条端口契约要用的 SQLSTATE 由本模块转出：调用方（`service.ts`）只认识**端口**，
+// 不必认识留痕模块（依赖方向：服务层 ⇒ 端口 ⇒ 旁路，⛔ 不许服务层直接依赖旁路细节）。
+export { SELF_SCOPE_GRANT_DENIAL_SQLSTATE } from './scope-denial-trace.ts';
 
 /** 授予：唯一写路径的精确签名（改动后必须同步 `90-assert-least-privilege.sql`）。 */
 export const GRANT_ADMIN_SCOPE_FUNCTION = 'public.grant_admin_scope';
@@ -116,6 +122,19 @@ export interface AdminScopeAuthority {
   readonly persistent: true;
   grant(action: AdminScopeAuthorityAction): Promise<AdminScopeAuthorityOutcome>;
   revoke(action: AdminScopeAuthorityAction): Promise<AdminScopeAuthorityOutcome>;
+  /**
+   * **权威之外**的那一次拒绝也要留痕：调用方在 `grant`/`revoke` **之前**就拒掉请求时用
+   * （服务层自授 ⇒ 403 `SELF_SCOPE_GRANT_DENIED`，见 `service.ts` 的 `grantAdministratorScope`）。
+   *
+   * 为什么必须由权威提供：留痕的写入口（迁移 `0046`）与「只认四个 G 码」的口径都在这一侧。
+   * 让服务层自己开连接写审计，等于把同一条纪律拆成两份实现。
+   *
+   * 实现是**同一条**旁路：失败语义与 `grant`/`revoke` 的 `catch` 分支完全一致 —— 全吞、只
+   * `log.warn`、绝不改变主响应，`void` 返回（调用方拿不到「留痕成没成」，就不可能让它参与判定）。
+   *
+   * `sqlState` 仍是 **SQLSTATE**（⛔ 不是 `reason_code`）：映射表只有 `scope-denial-trace.ts` 一份。
+   */
+  recordEarlyDenial(subject: AdminScopeDenialSubject, sqlState: string): Promise<void>;
 }
 
 /**
@@ -319,5 +338,7 @@ export function createPostgresAdminScopeAuthority({
     persistent: true,
     grant: (action) => call(CALL_GRANT_SQL, action),
     revoke: (action) => call(CALL_REVOKE_SQL, action),
+    // 早拒（服务层自授）：没有主事务、也没有要回滚的东西 ⇒ 直接交给同一条旁路（单语句自提交）。
+    recordEarlyDenial: (subject, sqlState) => recordEarlyAdminScopeDenial({ pool, subject, sqlState, log }),
   };
 }

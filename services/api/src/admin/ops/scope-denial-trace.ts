@@ -61,6 +61,20 @@ export const ADMIN_SCOPE_DENIAL_REASONS = Object.freeze({
 export type AdminScopeDenialSqlState = keyof typeof ADMIN_SCOPE_DENIAL_REASONS;
 
 /**
+ * 服务层在**进入权威之前**就拦住的那一类拒绝（自授）申报的 SQLSTATE。
+ *
+ * 为什么需要它：`SELF_SCOPE_GRANT_DENIED` 在服务层是一条**业务规则**（`service.ts` 直接抛
+ * `ApiError`），那一刻根本没有 PG 错误、也就没有现成的 SQLSTATE 可取；可留痕行必须与库层那条
+ * 拒绝**同一种口径**（`reason_code='self_scope_grant_denied'`），否则台账里会出现两种「自授」。
+ *
+ * 类型钉成 `AdminScopeDenialSqlState`（= 映射表的键）⇒ `G0008` 一旦改号，这里编译期就红。
+ * ⛔ 服务层因此不需要、也不许自带第二份「SQLSTATE → reason_code」的映射：把
+ * `ADMIN_SCOPE_DENIAL_REASONS.G0008` 当作 sqlState 传下去会得到 `'self_scope_grant_denied'`，
+ * 那是**表外 SQLSTATE** ⇒ 一行都不写（正是本片要修的那个洞的镜像）。
+ */
+export const SELF_SCOPE_GRANT_DENIAL_SQLSTATE: AdminScopeDenialSqlState = 'G0008';
+
+/**
  * 留痕行 `scope` 列的固定值。
  *
  * 口径来源：本片只处理**元权限域**（`scopes:write`）上的授予/撤销被拒，故 `p_scope` 写死为它，
@@ -140,6 +154,30 @@ export async function recordAdminScopeDenial(args: {
   } catch {
     // 兜底：留痕这一步的任何异常到此为止（不变量：旁路写失败不得改变主响应）。
   }
+}
+
+/**
+ * **权威之外**的留痕入口：调用方在调 `grant`/`revoke` **之前**就把请求拒掉时用（服务层自授，
+ * 见 `service.ts` 的 `grantAdministratorScope`）。
+ *
+ * 与 `recordAdminScopeDenial` 是**同一条**写路径：同一个 `RECORD_DENIAL_SQL`、同一份失败语义
+ * （整段吞错、只 `log.warn`、返回 `void`）。差别只在**调用时机**：早拒时调用方还没开连接，
+ * 因此这里既没有要 `ROLLBACK` 的主事务，也没有要 `release()` 的主连接 —— 旁路拿到的是
+ * 池里一条干净连接，单语句自提交。
+ *
+ * 为什么单独具名、而不是让写权威直接调 `recordAdminScopeDenial`：`scope-authority-pg.ts` 有一条
+ * 静态判据（`tests/unit/admin-scope-denial-wiring.test.mjs`）——那个文件里 `recordAdminScopeDenial(`
+ * 恰 1 处，且必须位于 `ROLLBACK` 与 `releaseQuietly(client)` **之后**（纪律 1 的文本证据）。
+ * 若在那里再写一处同名调用，判据会红，也会让读者以为早拒也包在主事务里。两条入口共用同一个
+ * 函数体，留痕的形状与失败语义都不分叉。
+ */
+export async function recordEarlyAdminScopeDenial(args: {
+  pool: PgPool;
+  subject: AdminScopeDenialSubject;
+  sqlState: string;
+  log?: AdminScopeDenialLogPort;
+}): Promise<void> {
+  return recordAdminScopeDenial(args);
 }
 
 async function writeAdminScopeDenial({

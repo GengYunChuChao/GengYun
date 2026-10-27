@@ -56,7 +56,7 @@ import { createHidePostAdapter, createPostReviewAdapter } from './community-post
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
 import type { AdminAdministratorsDirectory, AdministratorView } from './administrators.ts';
-import type { AdminScopeAuthority, AdminScopeAuthorityOutcome } from './scope-authority-pg.ts';
+import { SELF_SCOPE_GRANT_DENIAL_SQLSTATE, type AdminScopeAuthority, type AdminScopeAuthorityOutcome } from './scope-authority-pg.ts';
 import { ADMIN_SCOPES, isAdminScope } from '../scopes.ts';
 import { flagReadFailure, type FeatureFlagsPort, type FlagAuditRow } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
@@ -1495,6 +1495,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
    * 自授（`SELF_SCOPE_GRANT_DENIED`）放在接线**之后**：那是**业务规则**而不是形态，
    * 未接线时本进程根本没有能力回答"这个授予是否合法"，先给 503 才是不越权作答；
    * 接线后库层同样会拦（G0008），本层这一道只是让错误更早、且不必把请求送进事务。
+   * 但「更早」也意味着写权威 `catch` 里那条旁路留痕**跑不到** ⇒ 这里自己补一条
+   * `admin_scope.deny`（`G0008`），否则自授 403 在库里没有任何痕迹（见下面的内联注释）。
    */
   async function grantAdministratorScope(ctx: AdminCallContext, id: string, body: unknown) {
     const context = resolveContext(ctx, OPS_SCOPES.grantAdministratorScope);
@@ -1502,9 +1504,23 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     opsValidator.assertInput('AdminScopeGrantInput', body);
     const input = body as { scope: string; reason: string };
     const normalizedId = normalizeIdParam(id);
-    requireWiredScopeAuthority();
+    const authority = requireWiredScopeAuthority();
     if (normalizedId === context.identity.userId) {
       // 裁定④：**禁止自授**。这不是"缺权限"，是"这条规则对任何人都不开口子"。
+      //
+      // 这一道拦在 `grant` **之前** ⇒ 库层 `0041` 的 `G0008` 分支、以及写权威 `catch` 里的那条
+      // 旁路留痕都不会跑到。而「被拒就留一行」是裁定 B 的口径，⛔ 不因为拒绝发生在应用层就变成
+      // 「没人看见的自授尝试」⇒ 这里显式补**同一条**旁路（同一个 `reason_code`、同一份吞错语义）。
+      //
+      // 留痕失败**不得**改写主响应：这里整段吞掉，下面照常抛原始 403（绝不升 500、也绝不变成 200）。
+      try {
+        await authority.recordEarlyDenial(
+          { actorId: context.identity.userId, targetId: normalizedId, requestId: context.requestId },
+          SELF_SCOPE_GRANT_DENIAL_SQLSTATE,
+        );
+      } catch {
+        // 旁路：留痕失败不改变主响应（403 SELF_SCOPE_GRANT_DENIED 原样返回）。
+      }
       throw new ApiError('SELF_SCOPE_GRANT_DENIED', '不能把权限授予自己', { retryable: false });
     }
     return runIdempotentWrite(
@@ -1513,7 +1529,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
       { method: 'POST', path: `/admin/administrators/${normalizedId}/scopes`, expectedStatus: 200 },
       body,
       async () => {
-        const outcome = await requireWiredScopeAuthority().grant({
+        const outcome = await authority.grant({
           actorId: context.identity.userId,
           auditId: randomUUID(),
           targetId: normalizedId,
