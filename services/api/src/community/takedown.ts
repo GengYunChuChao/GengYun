@@ -72,8 +72,14 @@ export function withTakedownObserver(
       expected: PostCommitExpectation,
       patch: PostCommitPatch,
       moderation: Parameters<CommunityStore['commitPostIfCurrent']>[3],
+      // 第 5 个形参（迁移 0047 的下架审计）必须**原样转发**，⛔ 不能因为"观察器只发通知"就吞掉它：
+      // 这里的每一步转发都是 `CommunityStore.commitPostIfCurrent` 的完整签名，
+      // 少一个形参 TS **不会**报错（接口允许实现形参更少），运行时却是静默丢参——
+      // 审计永远不落库，下架照样 200。`tests/unit/community-audit-channel-pins.test.mjs`
+      // 的「透传钉」用假 store 捕获第 5 个实参来钉住这一点。
+      audit: Parameters<CommunityStore['commitPostIfCurrent']>[4] = null,
     ): Promise<CommitResult<PostRecord>> {
-      const result = await store.commitPostIfCurrent(id, expected, patch, moderation);
+      const result = await store.commitPostIfCurrent(id, expected, patch, moderation, audit);
       if (result.ok && patch.visibility === 'hidden' && result.record.visibility === 'hidden') {
         try {
           // 迁移 0030：已注销内容（`author_id = NULL`）**没有可通知的账户主体** ⇒ 不投递。

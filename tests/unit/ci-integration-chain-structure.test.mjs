@@ -170,6 +170,27 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
   },
   {
+    path: 'tests/integration/admin-post-hide-audit-pg.mjs',
+    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_post_hide_audit_test`：脚本要求**空库**'
+      + '（先断言 `public` 下 0 张表），只 apply 0001+0017+0022+0027+0030+0032+0033+0045+0047'
+      + '（⛔ 不是全链：0017 的 `admin_audit_events` 是 0047 函数 `INSERT` 的目标；0047 是本片主角'
+      + ' `record_admin_post_hide_audit(...)`；0027 的 `before_value`/`after_value` 与 0033 的只读函数'
+      + ' `list_admin_audit_logs(...)` 是 [A2] 段「用既有库内读面按 action=\'post.hide\' 筛得回来」的依赖），'
+      + '再用 real 装配 + 真库池跑：下架成功 ⇒ 真表恰 1 行 post.hide（actor/scope/action/result/'
+      + ' reason/target_ref 逐列）、触发器令审计写入抛错 ⇒ 503「审计写入失败」且帖子零变化（fail-closed）、'
+      + '拆触发器后同路径恢复 200（对照臂）、已隐藏再隐藏幂等且审计不增。连接串只走 argv[2]/env'
+      + ' `ADMIN_POST_HIDE_AUDIT_PG_TEST_URL`，缺 URL 时脚本打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过；'
+      + '`--allow-skip`／`GY_ALLOW_SKIP=1` 只供本机开发，⛔ 不得接进门禁）。'
+      + 'R64 本轮**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
+      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／'
+      + '`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，'
+      + '须由指挥裁定）。⚠ 如实交代：CI 侧 `post.hide` 真落库的留痕**已由**_已接线的_'
+      + ' `tests/integration/admin-community-posts-pg.mjs`（本片同批修改，[H] 段断言真表 +1 条）覆盖；'
+      + '本专用臂留作后续接线，不因「CI 已另有覆盖」而声称本臂已被 CI 覆盖。'
+      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
+      + '接进真库 job 不等于进 `test:integration:http`。',
+  },
+  {
     path: 'tests/integration/admin-jobs-pg.mjs',
     reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_jobs_test`：本脚本自带迁移全量应用（0001→0027）、'
       + '运行时角色最小权限探针（只跑开关/审计两条出厂授权区域，作业表的列级读授权归 0024/0025/0026 各自的区域，'

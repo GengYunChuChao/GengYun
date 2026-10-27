@@ -1230,7 +1230,10 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
       { method: 'POST', path: `/admin/posts/${normalizedId}/hide`, expectedStatus: 200 },
       body,
       async () => {
-        const outcome = await hideAdapter.hide(normalizedId, expectedRevision);
+        const outcome = await hideAdapter.hide(normalizedId, expectedRevision, {
+          actorId: context.identity.userId,
+          requestId: context.requestId,
+        });
         if (!outcome.ok) {
           switch (outcome.reason) {
             case 'NOT_FOUND':
@@ -1251,15 +1254,21 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
           // 幂等：已隐藏 ⇒ 不再迁移、不再记审计，返回契约 `Ack`。
           return singleResponse(context, executionMode, 200, { accepted: true }, etagOf(outcome.revision));
         }
-        appendAudit(context, {
-          action: 'post.hide',
-          scope: OPS_SCOPES.hidePost,
-          // 契约 `TargetRef.type` 闭集**有** post 成员 ⇒ 用合同口径，且带被隐藏的 revision。
-          targetRef: { type: 'post', id: normalizedId, revision: outcome.previousRevision },
-          targetHint: null,
-          reasonCode: 'post_hidden',
-          result: 'accepted',
-        });
+        // R64（迁移 0047）：审计**已由库层写进同一事务**（`public.record_admin_post_hide_audit`）⇒
+        // 这里不再记内存台账，⛔ 两处都记会让一条动作产出两条审计（同一请求在 `admin_audit_events`
+        // 一行 + 进程内台账一行）。判据与作业取消那里的 `persistent: true` 同口径（`jobs-pg.ts:517-518`）：
+        // 只有**没有真实审计落点**的装配（未接线 / 内存 store）才继续走内存台账，行为与改动前逐字一致。
+        if (!hideAdapter.persistent) {
+          appendAudit(context, {
+            action: 'post.hide',
+            scope: OPS_SCOPES.hidePost,
+            // 契约 `TargetRef.type` 闭集**有** post 成员 ⇒ 用合同口径，且带被隐藏的 revision。
+            targetRef: { type: 'post', id: normalizedId, revision: outcome.previousRevision },
+            targetHint: null,
+            reasonCode: 'post_hidden',
+            result: 'accepted',
+          });
+        }
         return singleResponse(context, executionMode, 200, { accepted: true }, etagOf(outcome.revision));
       },
     );
@@ -1280,10 +1289,18 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
    * - "谁在哪个版本上做了什么结论"落 `community_moderation_decisions.decided_by`
    *   （迁移 0045，与帖子行**同一事务**）；这是可回溯、可 JOIN 到人的那份。
    * - 本函数额外写内存 `store.audit.append`（`post.approve`/`post.reject`），与 `hidePost`
-   *   同款，作用是让 `GET /admin/audit-events` 立刻能看到这条动作；
+   *   改动前的口径同款，作用是让 `GET /admin/audit-events` 立刻能看到这条动作；
    *   ⛔ **不写** `public.admin_audit_events`：`AUDIT_ACTIONS` 是被用例钉死的四值闭集
    *   （`tests/unit/admin-audit-logs.test.mjs`），扩值要动迁移 + 闭集 + 契约 enum 三件套，
-   *   属 S3b；`decided_by` 已经覆盖了审计目的。
+   *   对 `approve`/`reject` 仍属 S3b。
+   *
+   * **R64 起，上面那句只对 `approve`/`reject` 成立**：`post.hide` 已有库层写通路——迁移 0047 的
+   * `public.record_admin_post_hide_audit(...)` 在**帖子事务内**写一行 `admin_audit_events`
+   * （动作/scope/result/target_ref 全部在函数内固定，运行时不持有该表的写权限）。
+   * 因此 `hidePost` 在真库装配下**不再** `appendAudit`（`HidePostAdapter.persistent` 二选一）。
+   * 但**读面闭集**（`admin/audit/catalog.ts` 的 `AUDIT_ACTIONS`/`AUDIT_ENTITY_SCOPES` 与
+   * `packages/contracts/openapi.json` 的查询 enum）本片**不动**，留给下一片——那两个文件正被
+   * 在飞 `#652` 修改，同片改会撞车。`approve`/`reject` 的库层写同样留在 S3b。
    */
   async function commitPostReview(
     ctx: AdminCallContext,

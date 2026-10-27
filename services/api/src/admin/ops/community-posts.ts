@@ -32,24 +32,52 @@ export type HidePostResult =
   | { ok: true; changed: boolean; previousRevision: number; revision: number }
   | { ok: false; reason: 'NOT_FOUND' | 'DELETED' | 'NOT_PUBLIC' | 'REVISION_CONFLICT' | 'STORE_UNAVAILABLE' };
 
+/** 下架审计的"谁 / 哪次请求"（迁移 0047 的 `record_admin_post_hide_audit` 前两个必填项之外的输入）。 */
+export interface HidePostAuditContext {
+  /** 操作者（服务层传 `context.identity.userId`，⛔ 不接受调用方自报）。 */
+  readonly actorId: string;
+  /** 请求 id（服务层传 `context.requestId`，与内存台账的 `appendAudit` 同一来源）。 */
+  readonly requestId: string;
+}
+
 export interface HidePostAdapter {
   readonly wired: boolean;
-  /** `expectedRevision` 必须在**任何写入之前**比对（避免"先隐藏再报冲突"的部分生效）。 */
-  hide(id: string, expectedRevision: number): Promise<HidePostResult>;
+  /**
+   * 审计是否**真落库**（本片把 `post.hide` 从进程内存搬到 PG 的分水岭）。
+   *
+   * - `false`（未接线 / 内存 store）⇒ 服务层仍走内存台账 `appendAudit`，与改动前逐字一致；
+   * - `true`（PG store）⇒ 审计由 `commitPostIfCurrent` 在**帖子事务内**写 `admin_audit_events`，
+   *   服务层**不再** `appendAudit`（⛔ 两处都记 = 一条动作两条审计）。
+   *
+   * 判据取自端口自己的能力位（`CommunityPostPort.persistent`，`community/store.ts` 恒 false、
+   * `community/store-pg.ts` 恒 true、`community/takedown.ts` 原样转发），不是本层自述的布尔。
+   */
+  readonly persistent: boolean;
+  /**
+   * `expectedRevision` 必须在**任何写入之前**比对（避免"先隐藏再报冲突"的部分生效）。
+   *
+   * `audit` 只在真库实现上用得上；审计写不进去时**抛** `PROVIDER_UNAVAILABLE`（已回滚、隐藏未生效），
+   * 由服务层原样上抛为 503 —— ⛔ 不在这里折叠成 `REVISION_CONFLICT`，⛔ 也不吞成成功。
+   */
+  hide(id: string, expectedRevision: number, audit: HidePostAuditContext): Promise<HidePostResult>;
 }
 
 export function createHidePostAdapter(port: CommunityPostPort | undefined, now: () => Date): HidePostAdapter {
   if (port === undefined) {
     return Object.freeze({
       wired: false,
+      // 未接线 ⇒ 没有真实审计落点，服务层继续走内存台账。
+      persistent: false,
       hide: async (): Promise<HidePostResult> => ({ ok: false, reason: 'STORE_UNAVAILABLE' }),
     });
   }
   const community = port;
+  const persistent = community.persistent === true;
 
   return Object.freeze({
     wired: true,
-    async hide(id: string, expectedRevision: number): Promise<HidePostResult> {
+    persistent,
+    async hide(id: string, expectedRevision: number, audit: HidePostAuditContext): Promise<HidePostResult> {
       const current = await community.getPost(id);
       if (current === null) return { ok: false, reason: 'NOT_FOUND' };
       // 已删除是单向门：真正的守卫在社区 CAS 里（下面同样会拒），这里先如实回拒。
@@ -68,6 +96,15 @@ export function createHidePostAdapter(port: CommunityPostPort | undefined, now: 
         { revision: current.revision, visibility: current.visibility },
         { revision: current.revision + 1, visibility: 'hidden', updated_at: now().toISOString() },
         null,
+        // 审计与可见性变更**同一次原子提交**（PG 实现里同一个事务）：
+        // `postRevision` 用 CAS 读到的**隐藏前** revision，与内存台账原来的 `previousRevision` 同义。
+        {
+          actorId: audit.actorId,
+          postId: id,
+          postRevision: current.revision,
+          reasonCode: 'post_hidden',
+          requestId: audit.requestId,
+        },
       );
       if (!result.ok) {
         if (result.reason === 'DELETED') return { ok: false, reason: 'DELETED' };

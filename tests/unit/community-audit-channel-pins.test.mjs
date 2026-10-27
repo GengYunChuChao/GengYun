@@ -33,6 +33,20 @@
  * `INSERT INTO public.admin_audit_events` 写入点、`services/api/src` 下确实存在别的 PG 后台 store。
  * 扫描器坏掉时先红的是正控，而不是让「零命中」冒充通过。
  *
+ * ## 透传钉（钉⑦，R64 新增）
+ *
+ * R64 把库层写做出来之后，真库臂 `tests/integration/admin-post-hide-audit-pg.mjs` 曾经全红在
+ * 一个**不是 SQL** 的地方：下架返回 200、`community_posts` 确实变 `hidden`/`revision=2`，而
+ * `admin_audit_events` **0 行**。根因是第 5 个参数 `audit` 被**两处静默丢掉**——`TypeScript`
+ * 允许实现方法的形参比接口少，所以既不报类型错、也不报红：
+ *
+ *   ① `services/api/src/community/takedown.ts` 的 `withTakedownObserver` 只声明/转发 4 个形参；
+ *   ② `services/api/src/community/store-pg.ts` 的 `commitPostIfCurrent` 只有 4 个形参，
+ *      没把第 5 个往后传给 `commitPost`（那是唯一执行 `POST_HIDE_AUDIT_SQL` 的地方）。
+ *
+ * 钉⑦ 因此用**假 store 捕获实参**来钉：任何一处再退回 4 个形参，`audit` 就到不了库层，
+ * 而「下架 200 + 帖子变 hidden」的其它读数**全都还是绿的**——这正是当初没人发现的原因。
+ *
  * ## 声明
  *
  * 行为层（钉⑥）走**真实 `buildApp` + 真实后台路由**（`POST /api/v1/admin/posts/:id/hide`），
@@ -46,6 +60,7 @@ import { join, relative, sep } from 'node:path';
 import { AUDIT_ACTIONS } from '../../services/api/src/admin/audit/catalog.ts';
 import { OPS_SCOPES } from '../../services/api/src/admin/ops/service.ts';
 import { createAdminOpsStore } from '../../services/api/src/admin/ops/store.ts';
+import { withTakedownObserver } from '../../services/api/src/community/takedown.ts';
 import {
   API,
   USER_A,
@@ -70,7 +85,10 @@ const FLIP_GUIDE =
   '  3) 把钉⑥ 的行为层从「内存台账」改成「库内台账」：真 PG 用例放 `tests/integration/`，' +
   '断言同一行在**新进程**里仍可读出（今天这里断言的是「换一个进程就是零」）；\n' +
   '  4) 更新 `services/api/src/app.ts:1416-1417` 那段「库内审计未取得」的登记注释，否则代码与注释互相打脸。\n' +
-  '  在翻钉之前，任何「下架审计已落库」的说法都与本文件冲突。';
+  '  ⚠ R64（2026-10）已经翻了**第 1 条**：迁移 `0047_admin_post_hide_audit.sql` 让下架审计真的落库，' +
+  '钉③ 因此反向成「有且只有一处窄口径写入点」。仍**未**翻的两条：`catalog.ts` 的读面闭集（留给下一片，' +
+  '那两个文件正被在飞 `#652` 修改）与钉⑥（它测的是**内存端口**的台账，PG 端口的行为在 ' +
+  '`tests/integration/admin-post-hide-audit-pg.mjs` 里断言）。';
 
 /** 递归列出目录下所有匹配的文件（绝对路径，按字典序），子目录（如 `rollback/`）不放过。 */
 function walk(dir, accept) {
@@ -140,7 +158,7 @@ function scanLines(files, pattern) {
 const MIGRATION_FILES = walk(MIGRATIONS_DIR, (name) => name.endsWith('.sql'));
 const SRC_FILES = walk(SRC_DIR, (name) => name.endsWith('.ts'));
 
-test('钉③：`db/migrations` 里没有任何 `post.hide` 的 DDL / 函数 —— 下架审计今天没有落库通路', () => {
+test('钉③（R64 已翻转）：下架审计在库里有**唯一的**窄口径写入点 —— 迁移 0047 的函数把 action/scope/result 写死', () => {
   // 正控 1：扫描面非空**且真的递归进了 `rollback/`**（递归到底才不漏，只读顶层会漏掉整个子目录）。
   //
   // 这里刻意**不把总数写成魔法数字**（曾写 `>= 80`，而注释说 85 —— 断言与注释各说一套）：
@@ -179,14 +197,56 @@ test('钉③：`db/migrations` 里没有任何 `post.hide` 的 DDL / 函数 —�
       `实际 ${auditInsertPoints.length} 处。零处说明审计表根本没在写，本钉的前提不成立`,
   );
 
-  // 钉：迁移里没有 `post.hide` / `post_hidden` / `post-hide` 的任何痕迹。
-  const hits = scanLines(MIGRATION_FILES, /post[._-]?hide/i);
+  // ---------------------------------------------------------------------------
+  // 钉（R64 翻转）：这条钉原来断言「零命中」—— 后台下架的审计**没有**落库通路。
+  // R64 把库层写做出来了（迁移 0047 的窄口径函数），于是断言方向整体反过来：
+  // 从「仓库里找不到 post.hide」变成「有且只有一处能干这件事，且动作/面/结果是写死的字面量」。
+  // 判别力没有下降 —— 原来防的是「有人偷偷落库了」，现在防的是「有人开了第二条写入通路、
+  // 或把 action/scope 改成调用方传参」（后者会让审计行可以被伪造成任意动作）。
+  // ---------------------------------------------------------------------------
+  const pinFile = 'services/api/db/migrations/0047_admin_post_hide_audit.sql';
+  const fnFiles = MIGRATION_FILES.filter((file) =>
+    /CREATE\s+(OR\s+REPLACE\s+)?FUNCTION\s+public\.record_admin_post_hide_audit\s*\(/i.test(readFileSync(file, 'utf8')),
+  );
   assert.deepEqual(
-    hits,
+    fnFiles.map(repoPath),
+    [pinFile],
+    '下架审计的库内写入点必须**唯一**，且落在 `0047_admin_post_hide_audit.sql`：' +
+      `实际 ${fnFiles.length} 个文件定义 \`public.record_admin_post_hide_audit(...)\`：${fnFiles.map(repoPath).join(', ') || '（无）'}。` +
+      '零个 ⇒ 库层写没了；多个 ⇒ 出现第二条写入通路（本钉只允许一处窄口径函数）',
+  );
+  const pinText = readFileSync(fnFiles[0], 'utf8');
+  // 动作文本 / scope / result 必须是**函数内**的字面量，不能由参数决定。
+  for (const [label, pattern] of [
+    ["action = 'post.hide'", /'post\.hide'/],
+    ["scope = 'sources:write'", /'sources:write'/],
+    ["result = 'accepted'", /'accepted'/],
+    ['actor 只来自参数 p_actor_id', /\bp_actor_id\b/],
+  ]) {
+    assert.match(pinText, pattern, `0047 的函数必须写死 ${label}（动作/面/结果由函数定，不由调用方传）`);
+  }
+  // 写入点恰好一行：函数体里只准出现一条 `INSERT INTO public.admin_audit_events`。
+  const pinInserts = scanLines([fnFiles[0]], /INSERT\s+INTO\s+public\.admin_audit_events/i);
+  assert.equal(pinInserts.length, 1, `0047 的函数体必须恰好一条审计写入，实际 ${pinInserts.length} 条：\n${pinInserts.join('\n')}`);
+  // 反控：这个函数不改业务表（下架本身是 `community_posts` 的 CAS，不归审计函数管）。
+  assert.deepEqual(
+    scanLines([fnFiles[0]], /UPDATE\s+(public\.)?community_posts|DELETE\s+FROM\s+(public\.)?community_posts/i),
     [],
-    `后台下架的审计**没有**任何落库通路：\`services/api/db/migrations\`（${MIGRATION_FILES.length} 个 .sql，含 rollback/）` +
-      `里不得出现 \`post.hide\` 的任何 DDL / 函数 / 写入。实际命中 ${hits.length} 处：\n` +
-      `${hits.join('\n')}\n\n${FLIP_GUIDE}`,
+    '审计函数不得改业务表：下架的可见性变更由 `commitPostIfCurrent` 的 CAS 负责，函数只写审计行',
+  );
+  // 配套回滚必须在，且**只删函数**（有行就中止，不能留下「有行、无出处」的审计）。
+  const downPath = 'services/api/db/migrations/rollback/0047_admin_post_hide_audit.down.sql';
+  const downFile = MIGRATION_FILES.find((file) => repoPath(file) === downPath);
+  assert.ok(downFile !== undefined, `配套回滚必须存在：${downPath}（rollback 不能缺）`);
+  const downText = readFileSync(downFile, 'utf8');
+  assert.match(downText, /DROP\s+FUNCTION\s+(IF\s+EXISTS\s+)?public\.record_admin_post_hide_audit\s*\(/i,
+    '回滚只删函数');
+  assert.match(downText, /RAISE\s+EXCEPTION/i,
+    "回滚必须先数 `action='post.hide'` 的审计行，`>0` 即 `RAISE EXCEPTION` 中止");
+  assert.deepEqual(
+    scanLines([downFile], /DROP\s+TABLE|TRUNCATE|DELETE\s+FROM\s+public\.admin_audit_events/i),
+    [],
+    '回滚不得删表/清行：审计行是证据，只能**拒绝**回滚，不能顺手抹掉',
   );
 });
 
@@ -362,8 +422,10 @@ test('钉⑥：真下架一次 ⇒ `post.hide` 审计只在内存台账里；换
   assert.equal(
     hitsOf(nextProcess.audit),
     0,
-    '钉子：新进程（新建 `createAdminOpsStore()`）里读不到那次下架 —— 因为下架审计从不落库，' +
-      `\`public.admin_audit_events\` 里从来没有这一行。实际 ${hitsOf(nextProcess.audit)} 条`,
+    '钉子：新进程（新建 `createAdminOpsStore()`）里读不到那次下架 —— 本臂走的是**内存端口**' +
+      '（`HidePostAdapter.persistent === false`），台账只活在进程里；PG 实现（`persistent: true`）自 R64 起' +
+      '走迁移 0047 的落库写，那一条由 `tests/integration/admin-post-hide-audit-pg.mjs` 断言。' +
+      `实际 ${hitsOf(nextProcess.audit)} 条`,
   );
   assert.notEqual(
     hitsOf(store.audit),
@@ -375,12 +437,169 @@ test('钉⑥：真下架一次 ⇒ `post.hide` 审计只在内存台账里；换
     nextProcess.audit.count(),
     0,
     '钉子：新进程（新建 `createAdminOpsStore()`）里的审计台账必须是**空**的 —— ' +
-      '因为下架审计从不落库，`public.admin_audit_events` 里从来没有这一行。' +
+      '内存端口的台账没有回填来源（R64 的库层写只挂在 PG 端口上，本臂没接）。' +
       `实际 ${nextProcess.audit.count()} 条（同刻当前进程为 ${store.audit.count()} 条 —— 两者成对才有判别力）`,
   );
   assert.deepEqual(
     nextProcess.audit.list().filter((record) => record.action === 'post.hide'),
     [],
-    `钉子：换一个进程就再也读不到那次下架的审计 —— 这是缺口，不是功能。\n\n${FLIP_GUIDE}`,
+    `钉子：换一个进程就再也读不到那次下架的审计 —— 这是**内存端口**的性质（真库端口已落库，见 0047）。\n\n${FLIP_GUIDE}`,
   );
 });
+
+/** 一份合法的 `PostHideAudit`（字段口径见 `services/api/src/community/store.ts` 的同名接口）。 */
+function sampleAudit(overrides = {}) {
+  return Object.freeze({
+    actorId: 'admin-account-1',
+    postId: 'post-pin-7',
+    postRevision: 1,
+    reasonCode: 'post_hidden',
+    requestId: 'req-pin-7',
+    ...overrides,
+  });
+}
+
+test('钉⑦（R64 · 透传钉）：`audit` 必须原样穿过下架观察器 —— 少一个形参就是静默丢参（审计 0 行、下架照样 200）', async () => {
+  // 前提：接口的第 5 个参数**真的存在**。若 `CommunityStore.commitPostIfCurrent` 的签名变了
+  // （比如把审计并进 `patch`），本钉与 `store-pg.ts` 的转发一起失效，必须先改这一条。
+  const hiddenRecord = { id: 'post-pin-7', visibility: 'hidden', author_id: 'user-a', revision: 2 };
+
+  // ---------- ① 运行时：观察器必须把第 5 个实参原样（同一引用）转发给真实 store ----------
+  const seen = [];
+  const published = [];
+  const wrapped = withTakedownObserver(
+    {
+      // 能力位取 `true`：`persistent` 必须原样转发（real 下架能不能放行由下游判定，不由观察器吞掉）。
+      persistent: true,
+      getPost: async () => null,
+      commitPostIfCurrent: async (...args) => {
+        seen.push(args);
+        return { ok: true, record: hiddenRecord };
+      },
+    },
+    { events: { publish: async (payload) => (published.push(payload), { delivered: true }) } },
+  );
+  assert.equal(wrapped.persistent, true, '观察器必须原样转发能力位 `persistent`（吞掉它会让 real 下架永远停在 fail-closed）');
+
+  const audit = sampleAudit();
+  const expected = { revision: 1 };
+  const result = await wrapped.commitPostIfCurrent('post-pin-7', expected, { visibility: 'hidden' }, null, audit);
+
+  assert.equal(result.ok, true, '观察器必须原样返回 CAS 结果');
+  assert.equal(seen.length, 1, '观察器必须**恰好**调用一次真实 store（不重试、不复制调用）');
+  assert.equal(
+    seen[0].length,
+    5,
+    '`withTakedownObserver().commitPostIfCurrent` 必须向下转发**全部 5 个实参**（第 5 个是迁移 0047 的 `audit`）：' +
+      `实际只转发 ${seen[0].length} 个。少转发 ⇒ \`store-pg.ts\` 的 \`POST_HIDE_AUDIT_SQL\` 永远不执行 ⇒ ` +
+      '下架 200、帖子变 hidden、审计 0 行（R64 红点原样复现）',
+  );
+  assert.equal(
+    seen[0][4],
+    audit,
+    '第 5 个实参必须是**同一个对象引用**原样抵达下游 store（不是复制、不是重建、不是丢弃）',
+  );
+  assert.equal(seen[0][3], null, '第 4 个实参 `moderation` 也必须原样转发（位置不能串）');
+  assert.equal(published.length, 1, '下架事件仍必须恰好投递一次（透传修正不得改变通知语义）');
+  assert.deepEqual(
+    published[0].target,
+    { type: 'post', id: 'post-pin-7', revision: 1 },
+    '事件版本取**处置前**的 `expected.revision`（见 `takedown.ts` 的口径注释）',
+  );
+
+  // ---------- ② 正向对照：`audit` 缺省（省略 / 显式 `undefined`）不得抛，且落成 `null` ----------
+  // 反向风险：如果修透传时把 `audit` 写成必填、或在观察器里解构它，内存端口与老调用点会当场炸。
+  seen.length = 0;
+  published.length = 0;
+  const omitted = await wrapped.commitPostIfCurrent('post-pin-7', expected, { visibility: 'hidden' }, null);
+  const explicitUndefined = await wrapped.commitPostIfCurrent(
+    'post-pin-7',
+    expected,
+    { visibility: 'hidden' },
+    null,
+    undefined,
+  );
+  assert.equal(omitted.ok, true, '省略第 5 个实参时下架必须照常成功（审计是可选能力，不是前置条件）');
+  assert.equal(explicitUndefined.ok, true, '显式传 `undefined` 时下架必须照常成功（不得因审计缺省抛错）');
+  assert.deepEqual(
+    seen.map((args) => args.length),
+    [5, 5],
+    '缺省 `audit` 时观察器仍然必须转发 5 个实参（第 5 个是默认值 `null`，不是「少一个」）',
+  );
+  assert.deepEqual(
+    seen.map((args) => args[4]),
+    [null, null],
+    '缺省 `audit` 必须落成 `null`（与 `store-pg.ts` 的 `audit: PostHideAudit | null = null` 对齐）',
+  );
+  assert.equal(published.length, 2, '缺省 `audit` 不改变通知语义：两次下架各投递一次事件');
+
+  // ---------- ③ 源码钉：`store-pg.ts` 的 `commitPostIfCurrent` 必须真的把 `audit` 传下去 ----------
+  // 运行时桩测不到这一处（真 store 需要 PG），所以按本文件的既有体例做**有正控的源码扫描**。
+  const pgStorePath = join(SRC_DIR, 'community', 'store-pg.ts');
+  const pgStoreText = readFileSync(pgStorePath, 'utf8');
+  // 正控 0：`commitPost` 的第 5 个形参确实叫 `audit`（否则下面「转发 audit」就是在转发一个不存在的位置）。
+  assert.equal(
+    (pgStoreText.match(/^\s*audit: PostHideAudit \| null = null,$/gm) ?? []).length,
+    1,
+    '正控：`store-pg.ts` 的 `commitPost(...)` 必须有且只有一处第 5 形参 `audit: PostHideAudit | null = null` —— ' +
+      '零处说明签名变了（本钉与 `POST_HIDE_AUDIT_SQL` 的调用点要一起改），多处说明多了第二条审计入口',
+  );
+  const pgCommitIfCurrent = pgStoreText.match(
+    /async commitPostIfCurrent\(([^)]*)\)\s*\{([\s\S]*?)\n {4}\},/,
+  );
+  assert.ok(
+    pgCommitIfCurrent !== null,
+    '正控：`store-pg.ts` 里必须能读到 `async commitPostIfCurrent(...) { ... },` 的实现体 —— 读不到说明实现换了形状，' +
+      '本钉的源码扫描要跟着改（不允许默默变绿）',
+  );
+  const pgParams = pgCommitIfCurrent[1].split(',').map((part) => part.trim());
+  assert.equal(
+    pgParams.length,
+    5,
+    '`store-pg.ts` 的 `commitPostIfCurrent` 必须声明 **5 个形参**（第 5 个是 `audit`）：' +
+      `实际 ${pgParams.length} 个 [${pgParams.join(' | ')}]。TS 不会因为少写形参报错，只有这条能钉住`,
+  );
+  assert.match(
+    pgParams[4],
+    /^audit\b/,
+    `\`store-pg.ts\` 的第 5 个形参必须是 \`audit\`（位置不能串、名字不能换成别的载荷）：实际 \`${pgParams[4]}\``,
+  );
+  assert.match(
+    pgCommitIfCurrent[2],
+    /return\s+commitPost\(\s*id\s*,\s*expected\s*,\s*patch\s*,\s*moderation\s*,\s*audit\s*\)\s*;/,
+    '`store-pg.ts` 的 `commitPostIfCurrent` 必须把 `audit` **作为第 5 个实参**转给 `commitPost`：' +
+      `实际实现体为 \`${pgCommitIfCurrent[2].trim()}\`。少了这一个实参 ⇒ 审计永不落库（R64 红点）`,
+  );
+
+  // ---------- ④ 内存实现：**接收但明确忽略**，且必须保持 `persistent: false` ----------
+  // 「库层写」与「内存台账」二选一：内存端口必须继续靠服务层的 `appendAudit` 记账，
+  // ⛔ 不允许它在 `commitPostIfCurrent` 里再私自记一遍（那会变成一条动作两条审计）。
+  const memoryStorePath = join(SRC_DIR, 'community', 'store.ts');
+  const memoryStoreText = readFileSync(memoryStorePath, 'utf8');
+  assert.match(
+    memoryStoreText,
+    /async commitPostIfCurrent\(id, expected, patch, moderationRecord, _audit = null\)/,
+    '内存实现的 `commitPostIfCurrent` 必须**显式接收**第 5 个参数（名字带 `_` 前缀表示明确忽略）：' +
+      '省掉形参虽然 TS 不报错，但会让「谁在丢参」在签名上彻底看不出来',
+  );
+  assert.doesNotMatch(
+    memoryStoreText,
+    /commitPost\(id, expected, patch, moderationRecord, _audit\)/,
+    '内存实现不得把 `audit` 往后传（内存 `commitPost` 没有审计通路）——⛔ 也不得在内存里自己记一条，' +
+      '那会与 `admin/ops/service.ts` 的 `appendAudit` 形成**双记**',
+  );
+
+  const h = makeWiredHarness({ ports: { tms: passingPort() } });
+  const post = await h.service.createPost(USER_A, postInput(), { idempotencyKey: idem(21) });
+  assert.equal(h.store.persistent, false, '内存 store 的 `persistent` 必须仍是 `false`（服务层据此走内存台账）');
+  const memoryResult = await h.store.commitPostIfCurrent(
+    post.id,
+    { revision: 1 },
+    { visibility: 'hidden' },
+    null,
+    sampleAudit({ postId: post.id }),
+  );
+  assert.equal(memoryResult.ok, true, '内存实现**接收**第 5 个实参后必须照常完成 CAS（不抛、不因审计入参拒绝下架）');
+  assert.equal(memoryResult.record.visibility, 'hidden', '内存实现的下架语义不因审计入参改变');
+});
+

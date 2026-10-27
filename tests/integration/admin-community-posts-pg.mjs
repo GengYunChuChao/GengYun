@@ -21,8 +21,10 @@
  *   - 处置：`POST /api/v1/admin/posts/{id}/hide`（real 模式下由
  *     `admin/ops/accounts-only.ts` 的 `hidePostWired`（= `communityPostPortForAdmin.persistent === true`）
  *     放行）；
- *   - 审计：`admin/ops/service.ts::appendAudit` 写进**同一个** `AdminRuntime` 的只可追加台账
- *     （`app.ts:1094-1098` 让内容 store 与 ops store 共用一份），本脚本用它的读 API 读回。
+ *   - 审计：R64 之后 `post.hide` 由迁移 0047 的窄口径函数在**同一事务**里写进
+ *     `public.admin_audit_events`（`admin/ops/service.ts::hidePost` 按 `hideAdapter.persistent` 二选一，
+ *     不再重复记内存台账），本脚本直接读真表；`post.approve` 这类尚未落库的动作仍读
+ *     `appendAudit` 那份进程内台账（`app.ts:1094-1098` 让内容 store 与 ops store 共用一份）。
  *
  * ## 覆盖的读数（前缀与派单 §3 对齐）
  *   [M] 迁移与装配：PG 主版本 17 / 空库前提 / 迁移子集 0001+0022+0028+0030+0032 逐条 apply 且二连跑 0 条 /
@@ -37,17 +39,19 @@
  *       游客 401、后台会话读社区面 403（面与面之间的权限边界）；
  *   [H] 下架处置（real 模式、真库 CAS）：200 Ack + ETag 新版本；`community_posts` 行
  *       `visibility='hidden'`、`revision` 1→2、`updated_at` 真前进、`audit_state`/正文未被动；
- *       审计台账**恰好新增一条** `post.hide`（`target_ref` 带**下架前** revision、`result:'accepted'`、
- *       `actor_id`＝该管理员）；社区可见性联动（他人列表剔除、他人详情 404、作者仍读得到 hidden、
+ *       `public.admin_audit_events` **恰好新增一条** `post.hide`（迁移 0047 同事务写入；`target_ref` 带
+ *       **下架前** revision、`result:'accepted'`、`actor_id`＝该管理员）；社区可见性联动（他人列表剔除、
+ *       他人详情 404、作者仍读得到 hidden、
  *       `mine=true` 仍含该帖 ⇒ 是「隐藏」不是「删除」）；
  *   [F] 失败隔离：If-Match 不符 / 缺失 / 帖子已删除 / 未公开 / 不存在 / 无 scope / 用户会话 / 游客
  *       八条被拒路径**逐条**证明「真库行逐列一字不动 + `post.hide` 审计条数不增」；
  *       并发两笔同 If-Match 的下架 ⇒ 恰好一笔成功、一笔 409，`revision` 只前进一次、审计只多一条。
  *
  * ## 未取得（如实登记，见证据页）
- *   - **库内审计**：`appendAudit` 落的是进程内只可追加台账（`adminOpsService.store.persistent === false`），
- *     重启即丢；real 模式下内容域 fail-closed ⇒ `GET /admin/audit-events` **503**（本脚本把这条
- *     如实证成读数，⛔ 不把「HTTP 读面 503」写成「审计不存在」）；
+ *   - **审计读面**：`GET /admin/audit-events` 在 real 模式下仍 **503**（`adminOpsService.store.persistent
+ *     === false` ⇒ 内容域 fail-closed），本片**没有**动读面闭集（`catalog.ts` 的 `AUDIT_ACTIONS` 与
+ *     契约查询 enum 留给下一片）；本脚本把这条如实证成读数，⛔ 不把「HTTP 读面 503」写成「审计不存在」
+ *     —— 写面已由 0047 落库，那一行就在真表里；
  *   - 真实审核供应商（全程注入仓内合成 gate 夹具，不联网）、真实媒体、下架后的**真实 UI**、
  *     来源 real 写面；
  *   - 运行时角色的库级最小权限面（账号/开关/作业三条既有臂已各自证明，本片的读数一律库 owner 身份）。
@@ -89,11 +93,15 @@ const HIDE_SCOPE = 'sources:write';
  *   0032 举报者行内注销引用（同一套列口径的一致性；本脚本不写举报，但保持与社区域同形）；
  *   0045 `community_moderation_decisions.decided_by`（**人工**审核的运营者快照，S3 新增）。缺它 ⇒
  *        通过/驳回写结论行时 42703 ⇒ 两个动作都 503 —— 第 [R] 节的读数正是"真库确实记得是谁批的"。
+ *   0017 `admin_audit_events`（R64 起下架审计**真的**写这张表；缺它 ⇒ 0047 的 `CREATE FUNCTION`
+ *        里那条 `INSERT` 找不到关系 ⇒ 迁移当场失败，而不是运行时才 503）；
+ *   0047 `record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)`（R64 的库层写：下架与审计
+ *        **同一事务**，审计写不进去连帖子一起 `ROLLBACK`；缺它 ⇒ 下架路径 42883 ⇒ 503「审计写入失败」）。
  * 刻意**不**引 0007（`CREATE EXTENSION pgcrypto`）等与本域无关的迁移，也不引 0028（审核**域**的
  * `moderation_decisions` 台账——本脚本的可见性判据来自社区自己的 `community_moderation_decisions`）：
  * 本脚本的读数是社区帖域，不是迁移链完整性（后者由跑全链的 `media-persistence-pg` / `ocr-jobs-pg` 等臂守住）。
  */
-const MIGRATIONS = ['0001', '0022', '0030', '0032', '0045'];
+const MIGRATIONS = ['0001', '0017', '0022', '0030', '0032', '0045', '0047'];
 
 const argvUrl = process.argv.slice(2).find((value) => /^postgres(ql)?:\/\//.test(value));
 const rawUrl = argvUrl ?? process.env[ENV];
@@ -257,6 +265,16 @@ async function main() {
         expiresAt: new Date(Date.now() + 3600_000),
         audience: 'admin',
       });
+      // 0047 的下架审计函数在**库里**再核一遍操作者（存在 / `state='active'` / 现行 `sources:write`），
+      // 所以这里把内存账号镜像到真库：只镜像「谁存在、持有什么 scope」，凭据 hash 是合成的、不镜像。
+      // ⛔ 这不是「为了让函数通过而补数据」：0047 的复核正是要挡住「进程里认了、库里不认」的账号。
+      await owner.query(
+        'INSERT INTO admin_accounts (id, login_name, credential_hash) VALUES ($1::uuid, $2, $3)',
+        [userId, loginName, 'synthetic-not-a-real-credential-hash'],
+      );
+      for (const scope of scopes) {
+        await owner.query('INSERT INTO admin_scopes (admin_id, scope) VALUES ($1::uuid, $2)', [userId, scope]);
+      }
       return { userId, token };
     };
     const hideAdmin = await admin('synthetic-i18-posts-hide-admin', [HIDE_SCOPE]);
@@ -370,10 +388,22 @@ async function main() {
       [id],
     )).rows[0] ?? null;
 
-    /** 审计台账（与 `GET /admin/audit-events` 同源的那一份只可追加台账）。 */
+    /**
+     * 进程内只可追加台账（`GET /admin/audit-events` 的同源实现）。R64 之后它**只**承载还没落库的动作
+     * （`post.approve` / `post.reject` 等）；`post.hide` 已改由迁移 0047 在真库里写，下架读数一律走 DB。
+     */
     const auditEntries = () => app.adminOpsService.store.audit.list();
-    const hideAudits = (id) => auditEntries().filter((entry) => entry.action === 'post.hide' && entry.target_ref?.id === id);
-    const hideAuditCount = () => auditEntries().filter((entry) => entry.action === 'post.hide').length;
+    /**
+     * 库内审计行 —— 迁移 0047 的窄口径函数写的就是这张表。列名与内存台账同名（`target_ref` 已是 jsonb
+     * ⇒ pg 直接给对象），所以 [H] 的逐项断言两边可以照抄同一套口径。
+     */
+    const dbAuditEntries = async () => (await owner.query(
+      `SELECT actor_id, action, scope, target_ref, target_hint, reason_code, request_id, result
+         FROM public.admin_audit_events ORDER BY created_at, id`,
+    )).rows;
+    const hideAudits = async (id) => (await dbAuditEntries())
+      .filter((entry) => entry.action === 'post.hide' && entry.target_ref?.id === id);
+    const hideAuditCount = async () => (await dbAuditEntries()).filter((entry) => entry.action === 'post.hide').length;
 
     // -----------------------------------------------------------------------
     // [L] 列表读面
@@ -558,7 +588,7 @@ async function main() {
     // [H] 下架处置（real 模式、真库 CAS）
     // -----------------------------------------------------------------------
     const beforeHide = await snapshotOf(P5.id);
-    const auditBefore = hideAuditCount();
+    const auditBefore = await hideAuditCount();
     const hidden = await hideOf(P5.id, { ifMatch: '"1"', key: 'i18-posts-hide-1' });
     assert.equal(hidden.status, 200, hidden.text.slice(0, 300));
     assert.deepEqual(hidden.body.data, { accepted: true }, '契约 Ack 必须恰好是 {accepted:true}');
@@ -575,9 +605,9 @@ async function main() {
     assert.equal(afterHide.author_id, beforeHide.author_id, '下架不得改写作者');
     note(`[H] POST ${API}/admin/posts/{id}/hide ⇒ 200 {accepted:true} + ETag "2"；真库行 visibility=hidden、revision 1→2、updated_at 前进，正文/审核态/作者一字未动`);
 
-    const newAudits = hideAudits(P5.id);
+    const newAudits = await hideAudits(P5.id);
     assert.equal(newAudits.length, 1, `成功下架必须恰好新增一条 post.hide 审计（实际 ${newAudits.length}）`);
-    assert.equal(hideAuditCount(), auditBefore + 1, '全部 post.hide 审计条数必须恰好 +1');
+    assert.equal(await hideAuditCount(), auditBefore + 1, '全部 post.hide 审计条数必须恰好 +1');
     const [audit] = newAudits;
     assert.equal(audit.action, 'post.hide');
     assert.equal(audit.scope, HIDE_SCOPE, '审计 scope 必须等于契约 OPS_SCOPES.hidePost');
@@ -611,7 +641,7 @@ async function main() {
     assert.equal(auditRead.status, 503, `real 模式下后台内容域 fail-closed ⇒ 审计 HTTP 读面必须 503，实际 ${auditRead.status}`);
     assert.equal(auditRead.body.error.code, 'PROVIDER_UNAVAILABLE');
     assert.equal(auditRead.body.error.retryable, false);
-    note('[H] 如实登记：real 模式下 `GET /admin/audit-events` = 503 PROVIDER_UNAVAILABLE(retryable:false) ⇒ 审计留痕只能由进程内台账读回，**未**落库、无 HTTP 读面');
+    note('[H] 读数分两半：GET /admin/audit-events = 503 PROVIDER_UNAVAILABLE(retryable:false)（读面闭集仍留给下一片）——但**写面已落库**：上面那条 post.hide 是从 public.admin_audit_events 真表读回来的，不是进程内台账');
 
     // -----------------------------------------------------------------------
     // [F] 失败隔离：被拒路径逐条证明「真库行一字不动 + 审计不增」
@@ -619,14 +649,14 @@ async function main() {
     /** 每条被拒路径都做同一件事：快照 → 调用 → 断言状态/错误码 → 快照逐列相等 + 审计条数不增。 */
     const expectRejected = async ({ label, id, request, status, code }) => {
       const before = id === null ? null : await snapshotOf(id);
-      const auditCountBefore = hideAuditCount();
+      const auditCountBefore = await hideAuditCount();
       const response = await request();
       assert.equal(response.status, status, `${label}：期望 ${status}，实际 ${response.status} ${response.text.slice(0, 240)}`);
       assert.equal(response.body.error.code, code, `${label}：期望 ${code}，实际 ${response.body.error.code}`);
       if (id !== null) {
         assert.deepEqual(await snapshotOf(id), before, `${label}：被拒路径不得改动真库行（逐列比对）`);
       }
-      assert.equal(hideAuditCount(), auditCountBefore, `${label}：被拒路径不得新增 post.hide 审计`);
+      assert.equal(await hideAuditCount(), auditCountBefore, `${label}：被拒路径不得新增 post.hide 审计`);
       return response;
     };
 
@@ -695,7 +725,7 @@ async function main() {
     assert.deepEqual(replay.body.data, { accepted: true });
     assert.equal(replay.headers.etag, '"2"', '重放必须回放首次的 ETag');
     assert.deepEqual(await snapshotOf(P5.id), beforeReplay, '重放不得再改真库行');
-    assert.equal(hideAudits(P5.id).length, 1, '重放不得新增审计');
+    assert.equal((await hideAudits(P5.id)).length, 1, '重放不得新增审计');
     note('[F] 幂等重放（同 idempotency-key 同体）：回放首次 200 + ETag "2"，rev 不再前进、审计不再增加');
 
     // 已隐藏再下架：changed:false 分支 ⇒ 200 但不是一次新处置，审计不增。
@@ -705,12 +735,12 @@ async function main() {
     assert.deepEqual(secondHide.body.data, { accepted: true });
     assert.equal(secondHide.headers.etag, '"2"', 'changed:false 时 ETag 仍是当前版本');
     assert.deepEqual(await snapshotOf(P5.id), beforeSecond, 'changed:false 不得再改真库行');
-    assert.equal(hideAudits(P5.id).length, 1, 'changed:false 不得新增审计（不把幂等成功记成一次处置）');
+    assert.equal((await hideAudits(P5.id)).length, 1, 'changed:false 不得新增审计（不把幂等成功记成一次处置）');
     note('[F] 已隐藏再下架：200 accepted、ETag 不变、rev 不变、审计不增（changed:false 不重复记处置）');
 
     // 并发两笔同 If-Match：真库 CAS 的原子性只能由 PG 证明。
     const beforeRace = await snapshotOf(P1.id);
-    const raceAuditBefore = hideAudits(P1.id).length;
+    const raceAuditBefore = (await hideAudits(P1.id)).length;
     const [raceA, raceB] = await Promise.all([
       hideOf(P1.id, { ifMatch: '"1"', key: 'i18-posts-race-a' }),
       hideOf(P1.id, { ifMatch: '"1"', key: 'i18-posts-race-b' }),
@@ -723,8 +753,8 @@ async function main() {
     const afterRace = await snapshotOf(P1.id);
     assert.equal(afterRace.revision, beforeRace.revision + 1, '并发两笔只能让 revision 前进**一次**');
     assert.equal(afterRace.visibility, 'hidden');
-    assert.equal(hideAudits(P1.id).length, raceAuditBefore + 1, '并发两笔只能留下**一条** post.hide 审计');
-    assert.equal(hideAuditCount(), auditBefore + 2, '至此 post.hide 审计总数 = 首次 1 + 并发成功 1（被拒与幂等路径一条不记）');
+    assert.equal((await hideAudits(P1.id)).length, raceAuditBefore + 1, '并发两笔只能留下**一条** post.hide 审计');
+    assert.equal(await hideAuditCount(), auditBefore + 2, '至此 post.hide 审计总数 = 首次 1 + 并发成功 1（被拒与幂等路径一条不记）');
     note('[F] 并发隔离：两笔同 If-Match 的下架 ⇒ 恰好一笔 200 / 一笔 409 REVISION_CONFLICT；rev 只前进一次、审计只多一条（真库 CAS 的原子性）');
 
     // 收尾自证：被拒路径没有留下"半写"的中间态 —— 全表逐列再核一次。
@@ -1223,7 +1253,10 @@ async function main() {
     }
 
     console.log('[ALL PASS] 后台社区帖域真库臂：读面 / 单条 / 下架处置 / 人工通过驳回 / 失败隔离 全部读数通过');
-    detail(`读数 ${readings} 组（[M]/[L]/[D]/[H]/[F]/[R]）；库内审计**未取得**（appendAudit 落进程内台账，real 下 HTTP 读面 503）`);
+    detail(`读数 ${readings} 组（[M]/[L]/[D]/[H]/[F]/[R]）；下架（\`post.hide\`）审计写面已由迁移 0047 **真落库**，`
+      + '[H] 段那一条是从 `public.admin_audit_events` 读回来的真行（⛔ 不是进程内台账）；'
+      + '人工通过/驳回的审计仍只落进程内追加台账，且实模式下 `GET /admin/audit-events` 仍 503'
+      + '（读面闭集留给下一片）——「HTTP 读面 503」不等于「审计不存在」');
   } finally {
     if (app !== null) await app.close().catch(() => {});
     if (pool !== null) await pool.end().catch(() => {});
