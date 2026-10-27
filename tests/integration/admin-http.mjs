@@ -1091,8 +1091,8 @@ await group('[正控制] 管理员目录/权限读面：**stub 缺省装配**由
   const items = listed.body.data.items;
   for (const item of items) {
     assert.deepEqual(
-      Object.keys(item).sort(), ['id', 'login_name', 'scopes', 'state'],
-      `每项形状必须是 {id, login_name, state, scopes}，实得 ${Object.keys(item).join(',')}`,
+      Object.keys(item).sort(), ['id', 'login_name', 'revision', 'scopes', 'state'],
+      `每项形状必须是 {id, login_name, revision, state, scopes}，实得 ${Object.keys(item).join(',')}`,
     );
     assert.equal('granted_by' in item, false, '⛔ 列表不得带 granted_by（运行时角色读不到那两列）');
     assert.equal('granted_at' in item, false, '⛔ 列表不得带 granted_at（运行时角色读不到那两列）');

@@ -337,7 +337,8 @@ async function httpEvidence() {
     }
     assert.equal(ids.includes(user.id), false, '目录不得包含 users.id（两个 id 空间无映射）');
     for (const item of items) {
-      assert.deepEqual(Object.keys(item).sort(), ['id', 'login_name', 'scopes', 'state'], `字段集合必须恰好四列（现场：${Object.keys(item).join(',')}）`);
+      assert.deepEqual(Object.keys(item).sort(), ['id', 'login_name', 'revision', 'scopes', 'state'], `字段集合必须恰好五列（现场：${Object.keys(item).join(',')}）`);
+      assert.ok(Number.isSafeInteger(item.revision) && item.revision >= 1, `revision 必须是正整数（现场：${item.revision}）——它是写面 If-Match 的唯一来源`);
       assert.ok(Array.isArray(item.scopes), 'scopes 必须是数组');
     }
     note(`[H] GET ${API}/admin/administrators ⇒ 200，items=${items.length}，id 全部来自 admin_accounts`);

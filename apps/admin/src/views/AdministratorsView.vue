@@ -1,17 +1,23 @@
 <script setup>
 /**
- * R60 · 管理员权限读面页面（只读）。
+ * R60 · 管理员权限读面 + R67-A05 · 管理员账号停用／恢复入口。
  *
- * 只调两条 GET：
+ * 读（scope `scopes:read`）：
  * - `GET /admin/administrators`（operationId `listAdministrators`）—— 管理员目录，每项
- *   `{id, login_name, state, scopes}`，`id` 是 `admin_accounts.id`（⛔ 不是 users.id）；
+ *   `{id, login_name, revision, state, scopes}`，`id` 是 `admin_accounts.id`（⛔ 不是 users.id）；
  * - `GET /admin/administrators/{id}/scopes`（operationId `listAdministratorScopes`）—— 某人当前有效权限。
- * 两条的 x-scope 都是 `scopes:read`。
  *
- * ⛔ 不做授权 / 撤销（scopes:write 不在本片范围），不改权限模型。
- * 表现约定：403 显示明确提示 + 错误码（不静默空白）；空目录显示空态；某人不存在显示 404 NOT_FOUND。
+ * 写（scope `scopes:write`）：
+ * - `POST /admin/administrators/{id}/disable`（`disableAdministratorAccount`）
+ * - `POST /admin/administrators/{id}/enable`（`enableAdministratorAccount`）
+ * 两面的 `If-Match` 取自已加载那一行的 `revision`（目录**不发** `ETag`），并带 `Idempotency-Key` 与理由。
+ * ⛔ 这不是终端用户停用（`PATCH /admin/accounts/{id}/suspend`，另一套 id 空间与 scope）。
+ *
+ * ⛔ 不做授权 / 撤销（那需要另一条写面），不改权限模型。
+ * 表现约定：403 显示明确提示 + 错误码（不静默空白）；空目录显示空态；某人不存在显示 404 NOT_FOUND；
+ * 写失败用 `WriteReceipt`（它按 `failed` 动态给 `role`/`aria-live`），视图不再另造 alert 横幅。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { API_BASE_URL, loadAdminSession, signInAdmin, signOutAdmin } from '../auth/session';
 import {
   ADMINISTRATORS_OPERATION_ID,
@@ -28,6 +34,18 @@ import {
   initialAdministratorsState,
   reduceAdministrators,
 } from '../lib/admin-administrators.mjs';
+import { reasonProblem } from '../lib/account-suspend-api.mjs';
+import {
+  ADMINISTRATOR_STATE_LABELS,
+  ADMINISTRATOR_STATE_SCOPE,
+  canChangeAdministratorState,
+  describeAdministratorStateFailure,
+  newIdempotencyKey,
+  setAdministratorState,
+} from '../lib/administrator-state-api.mjs';
+import { changedVerdict } from '../lib/admin-content-view-model.mjs';
+import { FOCUSABLE_SELECTOR, nextFocusIndex } from '../lib/dialog-focus.mjs';
+import WriteReceipt from './WriteReceipt.vue';
 
 const state = ref(initialAdministratorsState());
 const session = ref(null);
@@ -177,6 +195,168 @@ function refresh() {
   requestPage(null, { reset: true });
 }
 
+// ---------------------------------------------------------------- 停用 / 恢复（R67-A05）
+//
+// 两条写面：`POST /admin/administrators/{id}/disable|enable`（scope `scopes:write`）。
+// ⛔ 不是终端用户停用（那是 `PATCH /admin/accounts/{id}/suspend`，另一套 id 空间与 scope）。
+// `If-Match` 只能取自已加载那一行的 `revision`：目录**不发** `ETag`，所以 revision 必须由
+// `AdminAdministratorView` 带回来（本片契约新增字段），页面不猜。
+
+/** 当前打开的确认框目标；null 表示没开框。 */
+const changeTarget = ref(null);
+const changeReason = ref('');
+const changeSaving = ref(false);
+/** 失败说明（中文）；⛔ 不自己做 alert 横幅，失败回执由 `WriteReceipt` 呈现。 */
+const changeFailure = ref(null);
+/** 回执 `{ write, verdict }`：`write` 是 WriteReceipt 的入参，`verdict` 是 changed 三值。 */
+const changeReceipt = ref(null);
+/** 成功后的结果摘要（用来显示"这次到底改成了什么"）。 */
+const changeOutcome = ref(null);
+const changeDialog = ref(null);
+const changeTitle = ref(null);
+let changeTrigger = null;
+let changeKey = null;
+let changeSeq = 0;
+
+const changeProblem = computed(() => reasonProblem(changeReason.value));
+
+/** 这一行在这一模式下能不能发请求：判据在 lib（`canChangeAdministratorState`），模板里不散写。 */
+function canChange(row, mode) {
+  return canChangeAdministratorState(row, mode);
+}
+
+function changeLabel(mode) {
+  return ADMINISTRATOR_STATE_LABELS[mode] ?? mode;
+}
+
+/** 打开确认框：记住触发按钮（关闭后焦点还给它）；幂等键此时生成，重试复用同一个。 */
+function openStateChange(row, mode, event) {
+  if (!canChange(row, mode)) return;
+  changeTrigger = event?.currentTarget ?? null;
+  changeTarget.value = { id: row.id, loginName: row.loginName, mode, revision: row.revision };
+  changeReason.value = '';
+  changeFailure.value = null;
+  changeOutcome.value = null;
+  changeKey = newIdempotencyKey();
+}
+
+/** 焦点送进框内标题：读屏打开对话框后先播报名字，再 Tab 到理由输入框。 */
+function focusChangeTitle() {
+  const title = changeTitle.value;
+  if (title !== null && title !== undefined && typeof title.focus === 'function') title.focus();
+}
+
+function closeStateChange() {
+  changeTarget.value = null;
+}
+
+/** 打开 → 焦点进框；关闭 → 焦点回触发按钮（按钮被重渲染掉时不硬拉焦点）。 */
+watch(changeTarget, async (target) => {
+  if (target === null) {
+    const trigger = changeTrigger;
+    changeTrigger = null;
+    await nextTick();
+    if (trigger !== null && trigger.isConnected !== false && typeof trigger.focus === 'function') trigger.focus();
+    return;
+  }
+  await nextTick();
+  focusChangeTitle();
+});
+
+/**
+ * 对话框键盘行为：Esc 关闭（提交中不关）、Tab／Shift+Tab 框内循环。
+ * 下标算法与可聚焦选择器都来自 `lib/dialog-focus.mjs`（纯函数、有单测），这里只做 DOM 枚举与 focus。
+ */
+function onStateKeydown(event) {
+  if (event.key === 'Escape') {
+    if (changeSaving.value) return; // 与「取消」按钮 disabled 一致：提交中不允许关
+    event.preventDefault();
+    closeStateChange();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const dialog = changeDialog.value;
+  if (dialog === null || dialog === undefined || typeof dialog.querySelectorAll !== 'function') return;
+  const items = Array.from(dialog.querySelectorAll(FOCUSABLE_SELECTOR));
+  const active = globalThis.document === undefined ? null : globalThis.document.activeElement;
+  const index = nextFocusIndex({
+    count: items.length,
+    index: items.indexOf(active ?? null),
+    shift: event.shiftKey === true,
+  });
+  event.preventDefault(); // 目标一律由这里搬运，Tab 不跑出框
+  if (index === -1) {
+    focusChangeTitle();
+    return;
+  }
+  const next = items[index];
+  if (next !== undefined && typeof next.focus === 'function') next.focus();
+}
+
+/** 发一次停用／恢复：幂等键复用 `changeKey`；成功后刷新目录（revision 已前进，旧行不能再用）。 */
+async function submitStateChange() {
+  const target = changeTarget.value;
+  if (target === null || changeSaving.value) return;
+  if (changeProblem.value !== null) return;
+  const reason = changeReason.value.trim();
+  const key = changeKey ?? newIdempotencyKey();
+  changeKey = key;
+  const label = `${changeLabel(target.mode)}管理员账号 ${target.loginName}`;
+  const seq = ++changeSeq;
+  changeSaving.value = true;
+  changeReceipt.value = { write: { phase: 'pending', label }, verdict: 'unknown' };
+
+  const result = await setAdministratorState({
+    baseUrl: API_BASE_URL,
+    token: currentToken ?? '',
+    id: target.id,
+    revision: target.revision,
+    mode: target.mode,
+    reason,
+    idempotencyKey: key,
+  });
+  if (seq !== changeSeq) return; // 过期响应：丢弃，不改状态
+  changeSaving.value = false;
+
+  const write = {
+    label,
+    ok: result.ok === true,
+    status: result.status,
+    requestUrl: result.requestUrl,
+    requestId: result.requestId ?? null,
+    code: result.ok === true ? null : result.code,
+    inContract: result.inContract === true,
+    message: result.ok === true ? '' : result.message,
+    etag: result.ok === true ? result.etag : undefined,
+    sentHeaders: result.sentHeaders ?? { 'if-match': `"${target.revision}"`, 'idempotency-key': key },
+    changed: result.ok === true ? result.changed : null,
+  };
+  changeReceipt.value = { write, verdict: result.ok === true ? changedVerdict(result.changed) : 'unknown' };
+
+  if (result.ok === true) {
+    changeFailure.value = null;
+    changeOutcome.value = {
+      mode: target.mode,
+      loginName: target.loginName,
+      revisionFrom: target.revision,
+      revision: result.revision,
+      state: result.state,
+      changed: result.changed,
+      revokedSessions: result.revokedSessions,
+    };
+    closeStateChange();
+    refresh();
+    return;
+  }
+  changeOutcome.value = null;
+  changeFailure.value = describeAdministratorStateFailure(result);
+}
+
+function dismissStateReceipt() {
+  changeReceipt.value = null;
+  changeFailure.value = null;
+}
+
 onMounted(async () => {
   const adminSession = await loadAdminSession();
   if (adminSession === null) {
@@ -189,6 +369,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   ++requestSeq;
   ++scopesSeq;
+  ++changeSeq; // 卸载后回来的写响应一律丢弃，不往已卸载的状态里写
 });
 </script>
 
@@ -200,7 +381,8 @@ onBeforeUnmount(() => {
         调用 <code>GET {{ ADMINISTRATORS_PATH }}</code>（operationId <code>{{ ADMINISTRATORS_OPERATION_ID }}</code>）读管理员目录，
         点某一行再调 <code>GET {{ ADMINISTRATORS_PATH }}/{id}/scopes</code>（operationId
         <code>{{ ADMINISTRATOR_SCOPES_OPERATION_ID }}</code>）看该管理员当前有效权限。两条的 scope 都是
-        <code>{{ ADMINISTRATORS_SCOPE }}</code>。本页只读：不授权、不撤销、不改权限模型。
+        <code>{{ ADMINISTRATORS_SCOPE }}</code>。本页读之外还提供「停用／恢复」入口（写面 scope
+        <code>{{ ADMINISTRATOR_STATE_SCOPE }}</code>，<code>If-Match</code> 取自行内 revision）；不授权、不撤销。
       </p>
       <button v-if="signedIn" class="ghost" type="button" data-testid="administrators-sign-out" @click="signOut">退出登录</button>
     </header>
@@ -260,6 +442,7 @@ onBeforeUnmount(() => {
             <th>state</th>
             <th>scopes（列表项自带）</th>
             <th>id（admin_accounts.id）</th>
+            <th>revision（If-Match 来源）</th>
             <th>权限</th>
           </tr>
         </thead>
@@ -274,10 +457,27 @@ onBeforeUnmount(() => {
             <td><span class="pill" :class="row.stateTone">{{ row.stateLabel }}</span></td>
             <td class="mono scopes-cell">{{ row.scopesText }}</td>
             <td class="mono">{{ row.id }}</td>
+            <td class="mono" data-testid="administrator-revision">{{ row.revisionLabel }}</td>
             <td>
               <button class="link" type="button" data-testid="administrator-view-scopes" @click="openScopes(row)">
                 {{ state.selectedId === row.id ? '收起权限' : '查看权限' }}
               </button>
+              <button
+                v-if="row.state === 'active'"
+                class="link danger"
+                type="button"
+                data-testid="administrator-disable"
+                :disabled="!canChange(row, 'disable') || busy || changeSaving"
+                @click.stop="openStateChange(row, 'disable', $event)"
+              >停用</button>
+              <button
+                v-if="row.state === 'suspended'"
+                class="link danger"
+                type="button"
+                data-testid="administrator-enable"
+                :disabled="!canChange(row, 'enable') || busy || changeSaving"
+                @click.stop="openStateChange(row, 'enable', $event)"
+              >恢复</button>
             </td>
           </tr>
         </tbody>
@@ -312,14 +512,88 @@ onBeforeUnmount(() => {
         </button>
       </section>
 
+      <p v-if="changeOutcome !== null" class="banner ok" role="status" data-testid="administrator-state-ok">
+        {{ changeOutcome.mode === 'disable' ? '已停用' : '已恢复' }} <code>{{ changeOutcome.loginName }}</code>：
+        现在 state <code>{{ changeOutcome.state }}</code>、revision <code>{{ changeOutcome.revision }}</code>（本行原是
+        <code>{{ changeOutcome.revisionFrom }}</code>）·{{ changeOutcome.changed ? ' 本次确实发生了状态变更' : ' 本次未产生变更（同键重放或目标本就在该状态）' }}。
+        <span class="hint">
+          ⓘ 恢复只改账号状态：<strong>不会恢复被撤销的会话</strong>，<strong>不会恢复被撤销的 scope</strong> ——
+          该管理员需要重新登录、并由他人重新授权后才能再进后台。
+        </span>
+      </p>
+
+      <p v-if="changeFailure !== null" class="hint warn-text" data-testid="administrator-state-failure">
+        {{ changeFailure.title }}<template v-if="changeFailure.detail !== ''"> · {{ changeFailure.detail }}</template>
+        <template v-if="changeFailure.canRetry"> · 可以用同一幂等键重试。</template>
+      </p>
+
+      <WriteReceipt
+        v-if="changeReceipt !== null"
+        :write="changeReceipt.write"
+        :changed="changeReceipt.verdict"
+        @clear-receipt="dismissStateReceipt"
+      />
+
+      <div
+        v-if="changeTarget !== null"
+        ref="changeDialog"
+        class="state-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="administrator-state-title"
+        data-testid="administrator-state-dialog"
+        tabindex="-1"
+        @keydown="onStateKeydown"
+      >
+        <strong id="administrator-state-title" ref="changeTitle" tabindex="-1">
+          {{ changeTarget.mode === 'disable' ? '确认停用管理员账号' : '确认恢复管理员账号' }}
+        </strong>
+        <p class="hint">
+          <code>POST {{ ADMINISTRATORS_PATH }}/{{ changeTarget.id }}/{{ changeTarget.mode }}</code> · scope
+          <code>{{ ADMINISTRATOR_STATE_SCOPE }}</code> · <code>If-Match: "{{ changeTarget.revision }}"</code>
+          （取自已加载那一行的 revision：目录不发 ETag）· 需要 <code>Idempotency-Key</code> 与理由。
+        </p>
+        <label class="field">
+          <span>理由（契约 <code>ReasonInput.reason</code>，1..500 字符，写进审计）</span>
+          <input
+            v-model="changeReason"
+            name="administrator_state_reason"
+            maxlength="500"
+            :disabled="changeSaving"
+            data-testid="administrator-state-reason"
+          />
+        </label>
+        <p v-if="changeProblem !== null" class="hint warn-text" data-testid="administrator-state-problem">{{ changeProblem }}</p>
+        <p v-if="changeSaving" class="hint" data-testid="administrator-state-progress">
+          提交中…（请求已发出，正在等服务端回执）
+        </p>
+        <div class="state-actions">
+          <button
+            class="primary"
+            type="button"
+            :disabled="changeSaving || changeProblem !== null"
+            data-testid="administrator-state-submit"
+            @click="submitStateChange"
+          >
+            {{ changeSaving ? (changeTarget.mode === 'disable' ? '停用中…' : '恢复中…') : `确认${changeLabel(changeTarget.mode)}` }}
+          </button>
+          <button class="ghost" type="button" :disabled="changeSaving" data-testid="administrator-state-cancel" @click="closeStateChange">取消</button>
+        </div>
+        <p class="hint">
+          ⓘ 停用会撤销该管理员的会话并让 <code>auth_epoch</code> 前进；恢复不会把会话或 scope 还回去。
+        </p>
+      </div>
+
       <div class="pager">
         <button class="ghost" type="button" :disabled="!view.canLoadMore" data-testid="administrators-load-more" @click="loadMore">读取下一页</button>
       </div>
 
       <p class="foot">
-        只读说明：本页只有两条 GET。<code>scopes</code> 是「当前有效（revoked_at IS NULL）」的权限，去重 + 码元序，只含 scope
+        说明：读面是两条 GET（<code>scopes:read</code>），写面是 <code>POST …/disable</code> 与
+        <code>POST …/enable</code>（<code>scopes:write</code>，需 <code>If-Match</code> + <code>Idempotency-Key</code> + 理由）。
+        <code>scopes</code> 是「当前有效（revoked_at IS NULL）」的权限，去重 + 码元序，只含 scope
         字符串 —— ⛔ 不含 <code>granted_by</code> / <code>granted_at</code>（运行时角色对 <code>admin_scopes</code> 只有三列 SELECT
-        权限，写进契约就是无法兑现的承诺）。授权 / 撤销需要 <code>scopes:write</code>，不在本片范围。
+        权限，写进契约就是无法兑现的承诺）。授权 / 撤销仍不在本页：停用 ≠ 撤销 scope，恢复也不会把 scope 还回来。
       </p>
     </template>
   </section>
@@ -457,6 +731,42 @@ button:disabled {
   border-left: 3px solid #c53030;
   background: #fff5f5;
   color: #822727;
+}
+
+.banner.ok {
+  border-left: 3px solid #2f855a;
+  background: #f0fff4;
+  color: #22543d;
+}
+
+/* 行内「停用／恢复」与既有「查看权限」并排：同一种 link 样式，只是危险动作用红色。 */
+.link.danger {
+  margin-left: 0.5rem;
+  color: #c53030;
+}
+
+.warn-text {
+  color: #9c2b2b;
+}
+
+/* 写确认框（照 AccountsView 的停用确认框形态：标题 + 契约说明 + 理由 + 动作）。 */
+.state-confirm {
+  display: grid;
+  gap: 0.6rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 10px;
+  background: #f7fafc;
+  padding: 0.8rem 1rem;
+}
+
+.state-confirm strong {
+  font-size: 0.95rem;
+}
+
+.state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .status {

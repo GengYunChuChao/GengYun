@@ -262,7 +262,11 @@ test('②b 账号视图不夹带权限字段：查他人权限走独立只读端
   assert.equal(scopesView.additionalProperties, false);
   const view = openapi.components.schemas.AdminAdministratorView;
   assert.ok(view, '契约必须声明 AdminAdministratorView');
-  assert.deepEqual(Object.keys(view.properties).sort(), ['id', 'login_name', 'scopes', 'state']);
+  // `revision` 是停用/恢复写面的 `If-Match` 来源（目录不发 `ETag`）：它必须在目录项里，
+  // 否则任何客户端都构造不出 `If-Match`。仍是**穷举相等**：字段集合多一个少一个都算失败。
+  assert.deepEqual(Object.keys(view.properties).sort(), ['id', 'login_name', 'revision', 'scopes', 'state']);
+  assert.deepEqual([...view.required].sort(), ['id', 'login_name', 'revision', 'scopes', 'state']);
+  assert.deepEqual(view.properties.revision, { type: 'integer', minimum: 1 }, 'revision 必须是正整数（admin_accounts.revision）');
   // 出口只留 scope 字符串数组：`granted_by`/`granted_at` 连属性位都没有（不是「暂时不返回」）。
   const declared = new Set([...Object.keys(scopesView.properties), ...Object.keys(view.properties)]);
   assert.ok(!declared.has('granted_by'), '读面不得声明 granted_by');
