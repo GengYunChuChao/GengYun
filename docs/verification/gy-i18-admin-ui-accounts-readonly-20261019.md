@@ -11,7 +11,7 @@
 | 账号目录（只读） | 登录 → `GET /api/v1/admin/accounts` 游标分页列表 → 行内筛选 → 加载下一页 / 重新读取 | 已接入真实读面 |
 | 人工审核（占位） | 入口说明与"为什么是占位" | **明确占位**，见下节 |
 
-⛔ 本切片**没有**改动任何产品 API、契约、迁移、依赖清单：只消费已存在的读面 `GET /api/v1/admin/accounts`（`operationId: listAdminUsers`，scope `accounts:read`，见 [`openapi.json:9848-9932`](../../packages/contracts/openapi.json)）。停用/注销等写操作**未接线，页面上没有对应按钮**（不伪造不可用动作）。
+⛔ 本切片**没有**改动任何产品 API、契约、迁移、依赖清单：只消费已存在的读面 `GET /api/v1/admin/accounts`（`operationId: listAdminUsers`，scope `accounts:read`，见 [`openapi.json:10154-10241`](../../packages/contracts/openapi.json)）。停用/注销等写操作**未接线，页面上没有对应按钮**（不伪造不可用动作）。
 
 ## 分层：纯逻辑前置，SFC 只做渲染
 
@@ -30,14 +30,14 @@
 
 | 契约项 | 出处 | 客户端处理 |
 | --- | --- | --- |
-| `GET /admin/accounts`，`operationId: listAdminUsers` | [`openapi.json:9848-9851`](../../packages/contracts/openapi.json) | `buildAccountsUrl` 固定 `${base}/admin/accounts`，`ACCOUNTS_PATH` 常量单一来源 |
-| `x-scope: accounts:read`，`x-version-required: false` | [`openapi.json:9931-9932`](../../packages/contracts/openapi.json) | 403/`SCOPE_DENIED` ⇒ `kind: 'forbidden'`（不可重试），文案直接写缺少的 scope |
-| `cursor`（string，≤2048） | [`openapi.json:11185-11190`](../../packages/contracts/openapi.json) | `CURSOR_MAX_LENGTH` 越界 ⇒ `kind: 'invalid_cursor'`，不发请求 |
-| `limit`（integer 1..50，默认 20） | [`openapi.json:11193-11200`](../../packages/contracts/openapi.json) | `clampLimit` 钳到 1..50，非整数回落到 20 |
-| 200 ⇒ `AdminAccountViewPageEnvelope` | [`openapi.json:10041`](../../packages/contracts/openapi.json)、`:16169-16184` | 缺 `data`/`meta` ⇒ `kind: 'invalid_response'`（不把半截响应当成功） |
-| `AdminAccountViewPage`：`items` ≤50、`next_cursor` string\|null（末页显式 null） | [`openapi.json:16429-16457`](../../packages/contracts/openapi.json) | `validateAccountPage` 校验后 `appendPage` 合并；缺 `next_cursor`／空串／超长 ⇒ error，`items` >50 只记 warning；`next_cursor === null` ⇒ 不再翻页 |
-| `AdminAccountView`：`id` uuid、`revision` ≥1、`state` 闭集三值、`display_name` 1..80、`additionalProperties: false` | [`openapi.json:14686-14715`](../../packages/contracts/openapi.json) | 缺 `id`/`revision`/`state`/`display_name`、`revision` <1 或非整数、`state` 越界 ⇒ **error**（整页判 `invalid_response`）；uuid 形态不符、`display_name` >80、多余字段 ⇒ **warning**（行仍渲染，但 warning 不外显：多余字段直接丢弃、不推断含义，页面没有提示位——`warnings` 只留在函数返回值与单测断言里，是**静默忽略**，不是「显式标注」） |
-| 错误码闭集 | [`openapi.json:11324-11352`](../../packages/contracts/openapi.json) | `readErrorEnvelope` 标 `inContract`；闭集外 code 原样保留并标 `false`，不猜语义 |
+| `GET /admin/accounts`，`operationId: listAdminUsers` | [`openapi.json:10154-10157`](../../packages/contracts/openapi.json) | `buildAccountsUrl` 固定 `${base}/admin/accounts`，`ACCOUNTS_PATH` 常量单一来源 |
+| `x-scope: accounts:read`，`x-version-required: false` | [`openapi.json:10240-10241`](../../packages/contracts/openapi.json) | 403/`SCOPE_DENIED` ⇒ `kind: 'forbidden'`（不可重试），文案直接写缺少的 scope |
+| `cursor`（string，≤2048） | [`openapi.json:11527-11532`](../../packages/contracts/openapi.json) | `CURSOR_MAX_LENGTH` 越界 ⇒ `kind: 'invalid_cursor'`，不发请求 |
+| `limit`（integer 1..50，默认 20） | [`openapi.json:11535-11542`](../../packages/contracts/openapi.json) | `clampLimit` 钳到 1..50，非整数回落到 20 |
+| 200 ⇒ `AdminAccountViewPageEnvelope` | [`openapi.json:10353`](../../packages/contracts/openapi.json)、`:16548-16563` | 缺 `data`/`meta` ⇒ `kind: 'invalid_response'`（不把半截响应当成功） |
+| `AdminAccountViewPage`：`items` ≤50、`next_cursor` string\|null（末页显式 null） | [`openapi.json:16808-16836`](../../packages/contracts/openapi.json) | `validateAccountPage` 校验后 `appendPage` 合并；缺 `next_cursor`／空串／超长 ⇒ error，`items` >50 只记 warning；`next_cursor === null` ⇒ 不再翻页 |
+| `AdminAccountView`：`id` uuid、`revision` ≥1、`state` 闭集三值、`display_name` 1..80、`additionalProperties: false` | [`openapi.json:15065-15094`](../../packages/contracts/openapi.json) | 缺 `id`/`revision`/`state`/`display_name`、`revision` <1 或非整数、`state` 越界 ⇒ **error**（整页判 `invalid_response`）；uuid 形态不符、`display_name` >80、多余字段 ⇒ **warning**（行仍渲染，但 warning 不外显：多余字段直接丢弃、不推断含义，页面没有提示位——`warnings` 只留在函数返回值与单测断言里，是**静默忽略**，不是「显式标注」） |
+| 错误码闭集 | [`openapi.json:11669-11697`](../../packages/contracts/openapi.json) | `readErrorEnvelope` 标 `inContract`；闭集外 code 原样保留并标 `false`，不猜语义 |
 | 服务端实现（外包只换数据源） | [`service.ts:400-411`](../../services/api/src/admin/ops/service.ts)、[`admin.ts:286-292`](../../services/api/src/routes/admin.ts) | 客户端只依赖 `pageOf` 的封套/游标语义，不依赖数据来源 |
 
 失败分类：`signed_out`(401/`SESSION_REQUIRED`/`SESSION_EXPIRED`)、`forbidden`(403/`SCOPE_DENIED`)、`invalid_cursor`(400/`INVALID_CURSOR`)、`rate_limited`(429，带 `retry-after`)、`unavailable`(5xx)、`http_error`(其余)。可重试仅 `rate_limited`/`unavailable`/`network_error`（`isRetriable`）；`invalid_response` **不可重试**（重试同一次请求不会改变响应形状，页面不给「必然失败」的重试按钮）。**未知错误不当成空列表**：页面区分「读取失败」与「暂无账号」。

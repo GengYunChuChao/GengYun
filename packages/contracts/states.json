@@ -150,6 +150,9 @@
       "RATE_LIMITED",
       "PROVIDER_QUOTA_EXCEEDED"
     ],
+    "500": [
+      "INTERNAL_ERROR"
+    ],
     "503": [
       "PROVIDER_UNAVAILABLE",
       "PROVIDER_OUTCOME_UNKNOWN"

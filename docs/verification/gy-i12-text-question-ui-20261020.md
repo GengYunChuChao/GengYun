@@ -57,7 +57,7 @@
 
 | 核对项 | 实读结论 |
 | --- | --- |
-| `TextTurnInput` | `packages/contracts/openapi.json:14587`：恰两键 `input_type:'text'`（const）+ `text`（1..8000），`additionalProperties:false` |
+| `TextTurnInput` | `packages/contracts/openapi.json:14966`：恰两键 `input_type:'text'`（const）+ `text`（1..8000），`additionalProperties:false` |
 | `SpeechTurnInput` | 同文件 `:14026`：四键（`transcription_id`/`transcription_revision`/`confirmed`）——**本片一次都未发送** |
 | `Answer` | 同文件 `:13664`：十一键闭集；`status` 闭集 `answered`/`insufficient`/`blocked`；`check_state` 闭集 `passed`/`blocked`；`citations` ≤20；`dose_cards` ≤10 |
 | `SourceRef` | 同文件 `:11420`：十键闭集；`url` pattern `^https://` |

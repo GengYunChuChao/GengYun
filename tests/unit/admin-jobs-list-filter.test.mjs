@@ -12,7 +12,7 @@
  *    本文件逐源断言 cast，专门挡「有人改回统一 `::text`」这类回归。
  * 2. **不传过滤 ≡ 没有 `WHERE`**：语句与 `ADMIN_JOB_SQL.list` 逐字相同、绑定只有 `[limit]`。
  * 3. **闭集外的入参 ⇒ 400 `INVALID_REQUEST`**（不是 503、不是静默空页）：
- *    `state` 用契约 `JobState` 七值、`error_code` 用契约 `ErrorCode` 二十四值；
+ *    `state` 用契约 `JobState` 七值、`error_code` 用契约 `ErrorCode` 全集（不写死条数）；
  *    非字符串（重复查询参数会变数组）也是 400，但 `code` 是 `type` 而不是 `enum`。
  *
  * 末尾第 4 节钉住 `target_ref.revision` 的**真实来源**（`LEFT JOIN` 记录表取 `r.revision`）：
@@ -26,6 +26,7 @@
  *   同一组筛选条件翻页照常。
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createPostgresAdminJobPort, ADMIN_JOB_LIST_LIMIT, ADMIN_JOB_SQL } from '../../services/api/src/admin/ops/jobs-pg.ts';
 import { createMemoryAdminJobPort, parseAdminJobFilter } from '../../services/api/src/admin/ops/jobs.ts';
@@ -343,7 +344,7 @@ test('list：非字符串（重复查询参数变数组）⇒ 400 INVALID_REQUES
   assert.equal(pool.calls.length, 0);
 });
 
-test('契约闭集就是判定依据：JOB_STATES 七值全收、闭集外全拒；ERROR_CODES 二十七值全收', async () => {
+test('契约闭集就是判定依据：JOB_STATES 七值全收、闭集外全拒；ERROR_CODES 全收（数目与契约枚举双边相等）', async () => {
   // 正面：闭集内每个取值都能通过（不会因为判定表漏项而误拒）。
   for (const state of JOB_STATES) {
     const pool = fakePool();
@@ -356,7 +357,16 @@ test('契约闭集就是判定依据：JOB_STATES 七值全收、闭集外全拒
     assert.deepEqual(pool.calls[0].values, [ADMIN_JOB_LIST_LIMIT, code]);
   }
   assert.equal(JOB_STATES.length, 7);
-  assert.equal(ERROR_CODES.length, 27);
+  // 错误码闭集不钉死条数：与契约 `components.schemas.ErrorCode.enum` **双边**对拍
+  // （集合相等 ⇒ 条数自然相等；单侧 `assert.equal(ERROR_CODES.length, N)` 会在契约加码后永久绿）。
+  const contractEnum = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'))
+    .components.schemas.ErrorCode.enum;
+  assert.ok(contractEnum.length > 0, 'packages/contracts/openapi.json 里读不到 ErrorCode.enum');
+  assert.deepEqual(
+    [...ERROR_CODES].sort(),
+    [...contractEnum].sort(),
+    `jobs 列表过滤接受的错误码闭集必须与契约 ErrorCode 枚举逐项相等：代码 ${ERROR_CODES.length} / 契约 ${contractEnum.length}`,
+  );
 });
 
 test('过滤入参的空串/undefined/null 视为"没给"，不返回 400', async () => {

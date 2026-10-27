@@ -66,26 +66,29 @@ permissions:
   contents: read
 jobs:
   # ↓↓↓ 本 job 的运行纪律：每个真库臂 step 各自封顶 5 分钟，job 级只做算术兜底 ↓↓↓
-  # `timeout-minutes: 170`：**封顶之和 160 + 前置余量 10 = job 级 170**。
-  #   · 160 = 31 条真库臂 step 各 5 分钟
+  # `timeout-minutes: 195`：**封顶之和 185 + 前置余量 10 = job 级 195**。
+  #   · 185 = 31 条真库臂 step 各 5 分钟
   #         + 装 PG 17 服务端二进制 5（`apt-get update`/`install` 卡死时同样只死这一步）；
-  #   · 10  = 3 条无封顶前置（checkout / setup-node / `npm ci`）的显式常量余量。
+  #         + 三条前置 25 = `actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15
+  #           （R68 之前这三条**没有** step 级封顶，最坏要一直等到 job 级超时；现在它们自己先红）；
+  #   · 10  = job 级的显式常量余量（三条前置已各自封顶并计入上面的 185，它不再是「前置的合计上限」）。
   # 这两个数是**防卡死的上界，不是预计耗时**。CI 上的真读数：本 job 整跑 **104 秒**、41 个 step 全部走完
   # （`main` 上的成功 run 40547840506，2026-10-27T17:09:09Z）；同一次 run 的 `real-pg-admin-read-17.11`
   # 56 秒 / 12 个 step、`real-pg-admin-write-17.11` 49 秒 / 16 个 step ⇒ 正常路径离封顶有一到两个数量级。
   # （这几个 step 数取 GitHub 日志行口径，比本文件里的 35 / 6 / 10 多 6 行：`Set up job`、
   #   `Initialize containers`、两条 `Post Run`、`Stop containers`、`Complete job`。）
-  # 故**只要**三条无封顶前置（checkout / setup-node / `npm ci`）合计不超过 10 分钟的余量，
-  # job 级超时就**不可能**先于任何一步自己的 5 分钟触发，红的位置始终指向「哪一步卡死」：
+  # 故三条前置各自封顶（checkout 5 / setup-node 5 / `npm ci` 15）之后，job 级超时**不可能**先于
+  # 任何一步自己的封顶触发，红的位置始终指向「哪一步卡死」：
   # ⛔ 不靠 job 级兜底——那会把「这一步卡死」混成「job 超时」。
   # 旧的 job 级 15 分钟只在**条件**下不够：若 31 条臂各自都逼近自己 5 分钟的封顶，15 分钟必然先到。
   # 这不是已发生的事实（`main` 一直绿、上引 run 只用 104 秒），纪律要的是「卡死时红在哪一步」而非压低下界。
   # 增删臂 step 或改任何一条封顶，都必须同改这里的算式与 `timeout-minutes`（判据见
-  # `tests/unit/ci-real-pg-step-timeouts.test.mjs`：从本文件现场解析重算，算式与实测对不上即红）。
+  # `tests/unit/ci-real-pg-step-timeouts.test.mjs`：从本文件现场解析重算，算式与实测对不上即红；
+  # R68 起判据①b 连三条前置一起管：任何 step 缺封顶、或前置封顶不等于 5 / 5 / 15，都红）。
   real-pg-17-11:
     name: real-pg-17.11
     runs-on: ubuntu-24.04
-    timeout-minutes: 170
+    timeout-minutes: 195
     services:
       postgres:
         image: postgres:17.11
@@ -101,13 +104,16 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        timeout-minutes: 5
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        timeout-minutes: 5
         with:
           node-version: '24.16.0'
           cache: npm
       - run: npm ci --no-audit --no-fund
+        timeout-minutes: 15
       # 会话链（#313）：库名硬钉 `gengyun_conversations_test`，脚本自己断言 public 下无表。
       # `&&` 串联保证「建库失败」不会滑过去变成「脚本 77 也算跑过」——两步都必须成功。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_conversations_test' && node tests/integration/conversations-pg.mjs
@@ -826,18 +832,20 @@ jobs:
   #    另开 job 是加法而非改写（`REQUIRED_STEP_ORDER` 仍是一条全局序列，新脚本按文件顺序接在末尾）。
   #
   # 本 job 的前置与上面那个 job 完全同构（`ubuntu-24.04` + `postgres:17.11` service + 装 `postgresql-17`），
-  # 差异只在 step 数：这里只跑 2 条臂。`timeout-minutes: 25` 是算术兜底，不是运行纪律：
-  # **封顶之和 15 + 前置余量 10 = job 级 25**。
-  #   · 15 = 装包 5 + 两条臂各 5；
-  #   · 10 = 3 条无封顶前置（checkout / setup-node / `npm ci`）的显式常量余量。
-  # 故 job 级超时**不可能**先于某一步自己的 5 分钟触发。
+  # 差异只在 step 数：这里只跑 2 条臂。`timeout-minutes: 50` 是算术兜底，不是运行纪律：
+  # **封顶之和 40 + 前置余量 10 = job 级 50**。
+  #   · 40 = 装包 5 + 两条臂各 5 + 三条前置 25（checkout 5 + setup-node 5 + `npm ci` 15）；
+  #   · 10 = job 级的显式常量余量（三条前置已各自封顶并计入 40，它不再是「前置的合计上限」）。
+  # 故 job 级超时**不可能**先于任何一步自己的封顶触发。
+  # （R68：三条前置从前**没有** step 级封顶 ⇒ 旧值 25 实际上就是「前置卡死时能等多久」；
+  #   补上 5 / 5 / 15 后改 15 → 40、25 → 50，前置卡死时红在它自己那一步。）
   # （原注释写「3 条前置 + 装包 5 + 两条臂各 5 = 22」与文件实测不符：装包与两条臂之和是 15，
   #   22 里既把「3 条前置」当成了分钟数、又没有留下任何显式余量；GY-R67-D03 按实测改成 15 + 10 = 25。）
   # ⛔ 不靠 job 级超时兜底（那会把「某一步卡死」混成「job 超时」）。
   real-pg-admin-read-17-11:
     name: real-pg-admin-read-17.11
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 50
     services:
       postgres:
         image: postgres:17.11
@@ -853,13 +861,16 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        timeout-minutes: 5
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        timeout-minutes: 5
         with:
           node-version: '24.16.0'
           cache: npm
       - run: npm ci --no-audit --no-fund
+        timeout-minutes: 15
       # 装包 step：本 job 里 `admin-scopes-read-pg` 要自己 `initdb`/`pg_ctl`，所以同样要 17 服务端二进制。
       # ⚠️ 与上面那个 job 的同名 step 不是「装第二遍」：不同 job = 不同 runner（各自的文件系统），
       # 一个 job 里装出来的 `/usr/lib/postgresql/17/bin` 到不了另一个 job。同一个 runner 里仍只装一次。
@@ -962,10 +973,13 @@ jobs:
   # moderation-full-chain / recognitions-speech-purge / retention-clock-drill 各自区间；同一 job 内串行执行，
   # 前一条跑完已 `pg_ctl stop` 并删目录，故后一条不会撞上它的端口或数据目录。
   #
-  # `timeout-minutes: 45`：**封顶之和 35 + 前置余量 10 = job 级 45**。
-  #   · 35 = 装包 5 + **六条**臂各 5；
-  #   · 10 = 3 条无封顶前置（checkout / setup-node / `npm ci`）的显式常量余量。
+  # `timeout-minutes: 70`：**封顶之和 60 + 前置余量 10 = job 级 70**。
+  #   · 60 = 装包 5 + **六条**臂各 5
+  #         + 三条前置 25（`actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15）；
+  #   · 10 = job 级的显式常量余量（三条前置已各自封顶并计入 60，它不再是「前置的合计上限」）。
   # 故 job 级超时必晚于任何单个 step 自己的封顶。
+  # （R68：三条前置从前**没有** step 级封顶 ⇒ 旧值 45 实际上就是「前置卡死时能等多久」；
+  #   补上 5 / 5 / 15 后改 35 → 60、45 → 70，前置卡死时红在它自己那一步。）
   # （原注释写「3 条前置 + 装包 5 + 五条臂各 5 = 33 ⇒ 35」两处都与文件实测不符：本 job 实有**六条**
   #   自起集群臂（内容域 / 授权写入 / 审核全链 / 识别与语音清理 / 保留期时钟 / 媒体行清除），
   #   且 Σ封顶 35 正好等于 job 级 35 ⇒ 余量 0，即「某步封顶还没到、job 就先被杀」。
@@ -973,7 +987,7 @@ jobs:
   real-pg-admin-write-17-11:
     name: real-pg-admin-write-17.11
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 70
     services:
       postgres:
         image: postgres:17.11
@@ -989,13 +1003,16 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        timeout-minutes: 5
         with:
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        timeout-minutes: 5
         with:
           node-version: '24.16.0'
           cache: npm
       - run: npm ci --no-audit --no-fund
+        timeout-minutes: 15
       - name: 安装 PG 17 服务端二进制（本 job 五条自起集群臂都需要 initdb/pg_ctl）
         timeout-minutes: 5
         run: |

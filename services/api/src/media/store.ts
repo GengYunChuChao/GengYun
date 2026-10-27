@@ -21,6 +21,7 @@
  *   只有一个能 `claim` 成功，其余读到的 `mediaId` 为 `null` ⇒ 上层回 409 `REQUEST_IN_PROGRESS`。
  */
 import { idempotencyKeyHashHex, idempotencyScope } from '../auth/idempotency.ts';
+import { ApiError } from '../errors.ts';
 import type { PublishedContentRef } from './content-source.ts';
 
 /**
@@ -121,6 +122,48 @@ export interface MediaWritePrecondition {
   state: string;
 }
 
+/**
+ * `purgeOwnedMedia` 的**读数**（注销回执的证据串只认这两个数，别在这里塞别的口径）：
+ * - `softHidden`：本次**新**软隐藏的社区图片行数（已处于 `deleted`/`rejected` 的行不计数 ⇒
+ *   重复调用第二次为 0）；
+ * - `objectsRegistered`：本次**登记进清理台账**的对象键数（原对象键 + 衍生物键，按对象键去重；
+ *   台账里已有的键只累加 `attempts`，但仍然计入——这一次它确实被登记为「按主体删除」）。
+ *
+ * ⛔ **不是「已从桶里删掉的对象数」**：本方法不持有对象存储客户端、一次 `deleteObject` 都不调；
+ * 真删由台账重试器（`media/service.ts` 的 `cleanupOrphans` 第二循环）按行做，而该清理器
+ * **今天还没有生产调用者**。因此证据串只能说「已登记待删」，不能说 `purged`。
+ */
+export interface PurgeOwnedMediaResult {
+  softHidden: number;
+  objectsRegistered: number;
+}
+
+const OWNER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `purgeOwnedMedia` 的**范围守卫**：空/空白的 `ownerId` 一律抛错，绝不当成「清全部」，
+ * 也绝不让它落成 `WHERE owner_id = ''` 这种「匹配不到 ⇒ 静默成功」的假清理。
+ *
+ * 两个实现共用这一个守卫：内存版不校验就会与真库的 `uuid` 列类型约束分叉
+ * （真库会抛 22P02 并被折叠成「数据库暂不可用」，那是误导性的错误码）。
+ *
+ * `INVALID_REQUEST` 是**调用方**的错，重试没用 ⇒ 注销协调器会把它折叠成 `HANDLER_FAILED`，
+ * 回执如实 `blocked`，不静默算完成。
+ */
+export function requirePurgeOwnerId(ownerId: unknown): string {
+  if (typeof ownerId !== 'string') {
+    throw new ApiError('INVALID_REQUEST', '按主体清理媒体需要非空的 ownerId');
+  }
+  const trimmed = ownerId.trim();
+  if (trimmed === '') {
+    throw new ApiError('INVALID_REQUEST', '按主体清理媒体需要非空的 ownerId');
+  }
+  if (!OWNER_ID_PATTERN.test(trimmed)) {
+    throw new ApiError('INVALID_REQUEST', '按主体清理媒体要求 ownerId 是 uuid');
+  }
+  return trimmed;
+}
+
 /** 媒体域持久化端口。全部方法异步：真库实现无法同步返回，端口不能承诺同步性。 */
 export interface MediaStore {
   readonly persistent: boolean;
@@ -153,6 +196,28 @@ export interface MediaStore {
    * 状态不是 `deleted`/`rejected`）。上限判定用它，不能用「历史累计」。
    */
   liveCommunityImageCount(ownerId: string): Promise<number>;
+  /**
+   * **按主体清理媒体对象**（注销闭集用的原语）：把该 owner 的社区图片**软隐藏**，并把其对象键
+   * 全部交到清理台账（`media_object_cleanup`，`reason = 'owner_delete'`）后清掉引用。
+   *
+   * ## 顺序（实现必须照此，不许反过来）
+   * ① 先软隐藏（社区图片 `state → 'deleted'`、`revision + 1`）：公开面**先**看不到图；
+   * ② 再动对象：先把对象键登记进清理台账（同 `saveObjectCleanup` 的时序），再清掉
+   *    `media.object_ref_cipher` / `media_derivatives` 行。真桶删除由台账重试器做——
+   *    本方法**不直接打桶**，否则「登记」与「删除」之间没有可重放的凭据。
+   *    因此读数叫 `objectsRegistered`（已登记待删），**不叫** `objectsPurged`。
+   *
+   * ## 幂等性
+   * 重复调用安全：已隐藏的行不再计入 `softHidden`（第二次为 0），台账按对象键 upsert
+   * （`object_ref_digest` 全局唯一 ⇒ 同一键只留一行、`attempts` 累加、`media_id` 被后写者覆盖，
+   * 与既有 `saveObjectCleanup` 同口径），引用已被清空的行不再重复计数 ⇒ 第二次 `objectsRegistered` 为 0。
+   *
+   * ## 边界（不删别人的数据）
+   * 每条语句都按 `owner_id` 收窄，**只动该 owner 的行**；关联表按该 owner 的媒体 id 收窄。
+   * 空/空白/非 uuid 的 `ownerId` 直接抛错（见 {@link requirePurgeOwnerId}），永不当成「清全部」。
+   * 本方法只清理「媒体域自己的行与对象键」，不碰社区帖子、授权档案或其它域的表。
+   */
+  purgeOwnedMedia(ownerId: string): Promise<PurgeOwnedMediaResult>;
   /** 按状态枚举（清理器用：`expireInitiated` 取 `initiated`，`cleanupOrphans` 取 `rejected`/`deleted`）。 */
   listMediaByState(states: readonly string[]): Promise<MediaRecord[]>;
   countMedia(): Promise<number>;
@@ -287,6 +352,52 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
         count += 1;
       }
       return count;
+    },
+    async purgeOwnedMedia(ownerId) {
+      const owner = requirePurgeOwnerId(ownerId);
+      const at = now();
+      /** 本次交到台账的对象键（去重）：同一个对象键只登记一次，重试器按行扫描，不能越重试越多。 */
+      const registered = new Set<string>();
+      let softHidden = 0;
+      // 遍历快照：下面会改 `media` 的值，改到「还没访问到的行」不影响键集，但快照读起来更直白。
+      for (const [id, record] of [...media]) {
+        if (record.ownerId !== owner) continue;
+        // ① 先软隐藏：只动社区图片，且只动还活着的行（与 `liveCommunityImageCount` 同一判据）
+        //    ⇒ 重复调用时 `softHidden` 归 0。
+        const liveCommunityImage = record.purpose === 'community_image'
+          && record.state !== 'deleted'
+          && record.state !== 'rejected';
+        if (liveCommunityImage) softHidden += 1;
+        // ② 再动对象：先把对象键登记进清理台账（真桶删除由重试器按台账做），再清引用。
+        const fresh: string[] = [];
+        for (const objectRef of [record.rawRef, record.derivativeRef]) {
+          if (objectRef === null || objectRef === '' || registered.has(objectRef)) continue;
+          registered.add(objectRef);
+          fresh.push(objectRef);
+        }
+        for (const objectRef of fresh) {
+          const existing = cleanup.get(objectRef);
+          // 与真库的 `INSERT … ON CONFLICT (object_ref_digest) DO UPDATE` 同语义：一行、次数累加。
+          cleanup.set(objectRef, {
+            mediaId: id,
+            objectRef,
+            reason: 'owner_delete',
+            attempts: existing === undefined ? 1 : existing.attempts + 1,
+          });
+        }
+        if (!liveCommunityImage && fresh.length === 0) continue;
+        // 引用清空 ⇒ 行内容变了：`revision` 与 `updatedAt` 一起推进（与服务层「读快照 ⇒ 条件写」同口径，
+        // 迟到的 `complete`/`delete` 会因此拿到 REVISION_CONFLICT 而不是把已清空的行覆写回去）。
+        media.set(id, {
+          ...record,
+          state: liveCommunityImage ? 'deleted' : record.state,
+          revision: record.revision + 1,
+          updatedAt: at,
+          rawRef: null,
+          derivativeRef: null,
+        });
+      }
+      return { softHidden, objectsRegistered: registered.size };
     },
     async listMediaByState(states) {
       const wanted = new Set(states);

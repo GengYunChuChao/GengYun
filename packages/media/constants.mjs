@@ -99,6 +99,8 @@ export const MEDIA_STATE_TRANSITIONS = Object.freeze({
  * 媒体相关：413 MEDIA_TOO_LARGE、415 MEDIA_TYPE_UNSUPPORTED、
  * 404 NOT_FOUND（非本人统一 404）、409 OBJECT_UNAVAILABLE/REVISION_CONFLICT、
  * 428 REVISION_REQUIRED、409 IDEMPOTENCY_CONFLICT。
+ * 500 INTERNAL_ERROR：未预期异常的服务端兜底（GY-R67-A03 起契约可表达，本镜像必须同步，
+ * 否则 `tests/media/contract.test.mjs` 的「states → 镜像」方向会直接 TypeError）。
  */
 export const ERROR_STATUS_MAP = Object.freeze({
   400: Object.freeze(['INVALID_REQUEST', 'INVALID_CURSOR', 'IDEMPOTENCY_KEY_REQUIRED']),
@@ -118,6 +120,7 @@ export const ERROR_STATUS_MAP = Object.freeze({
   422: Object.freeze(['CONDITIONS_INCOMPLETE', 'SOURCE_CONFLICT', 'INPUT_UNCERTAIN']),
   428: Object.freeze(['REVISION_REQUIRED']),
   429: Object.freeze(['RATE_LIMITED', 'PROVIDER_QUOTA_EXCEEDED']),
+  500: Object.freeze(['INTERNAL_ERROR']),
   503: Object.freeze(['PROVIDER_UNAVAILABLE', 'PROVIDER_OUTCOME_UNKNOWN']),
   504: Object.freeze(['PROVIDER_TIMEOUT']),
 });
