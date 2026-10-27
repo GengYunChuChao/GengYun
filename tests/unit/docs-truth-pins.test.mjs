@@ -4,7 +4,8 @@
 // 恒取 1」三处假陈述的产地，2026-10-27 由 R67-A1 改正（提交 1a8af906）。这三类假话都是「读起来像事实、
 // 但没人真去核」的产物，只靠人眼复读守不住——所以这里把它们翻成可执行的断言：
 //
-//   a. 错误码计数双向相等（代码 27 码 ⇄ 页面写 27），d 另钉 `/admin/posts` 家族条数；
+//   a. 错误码计数双向相等（代码侧逐档等于 `packages/contracts/states.json` 的 error_status_map，
+//      页面侧写的「N 码」必须等于代码实数；两边都不钉死具体数字），d 另钉 `/admin/posts` 家族条数；
 //   b. 「后台无页面消费」这一族断言不许复活；
 //   c. `target_ref.revision` 不许再写成恒 1，且页面必须给出真值锚点、该锚点必须真的还是真值取用。
 //
@@ -88,15 +89,29 @@ function readErrorCodeFacts() {
 }
 
 describe('钉 a：错误码计数双向相等', () => {
-  test('代码侧：ERROR_STATUS_MAP 摊平去重后恰好 27 码、12 个状态档', () => {
+  test('代码侧：ERROR_STATUS_MAP 逐档等于契约 states.json 的 error_status_map（档数与码数都从契约数出来，不钉死数字）', () => {
     const { statuses, codes, uniqueCodes } = readErrorCodeFacts();
 
+    // 期望值不再写死「27 码 / 12 档」：档位集合与每档码集都从契约事实源数出来。
+    // 这比「条数相等」更强——服务端镜像少一档、多一码、或把码挂到错的状态档都会红，
+    // 而条数相同的错法（例如 429 与 500 各少一个码）不会被条数钉发现。
+    const states = JSON.parse(read('packages/contracts/states.json'));
+    const contractMap = states.error_status_map;
+    const contractStatuses = Object.keys(contractMap).map(Number);
+    const pairs = [...readErrorStatusMapBlock().matchAll(/^\s*(\d{3}):\s*\[([\s\S]*?)\]/gm)]
+      .map((match) => [match[1], [...match[2].matchAll(/'([A-Z][A-Z0-9_]*)'/g)].map((item) => item[1])]);
+    assert.deepEqual(
+      Object.fromEntries(pairs),
+      contractMap,
+      'ERROR_STATUS_MAP 与契约 states.json 的 error_status_map 必须逐档相等（档位、每档码集、码的归属）',
+    );
+
+    assert.deepEqual(statuses, contractStatuses, `状态档集合应与契约一致，实际 ${statuses.join('/')}`);
+    assert.deepEqual(uniqueCodes, [...new Set(Object.values(contractMap).flat())], '去重后的错误码集合应与契约一致');
     // 「摊平去重」才是真读数：ERROR_CODES = Object.values(ERROR_STATUS_MAP).flat()，
-    // 同一码若挂在两个状态档下会被 flat() 摊出来两次，但去重后仍是 27 个不同的码。
-    assert.equal(uniqueCodes.length, 27, `去重后的错误码数应为 27，实际 ${uniqueCodes.length}`);
+    // 同一码若挂在两个状态档下会被 flat() 摊出来两次，所以还要单独钉「不跨档重复登记」。
     assert.equal(codes.length, uniqueCodes.length, `ERROR_STATUS_MAP 里出现了重复登记的码：${codes.join(', ')}`);
-    assert.equal(statuses.length, 12, `状态档数应为 12，实际 ${statuses.length}（${statuses.join('/')}）`);
-    assert.equal(statuses.length + uniqueCodes.length, 39, `状态档数 + 去重码数（12 + 27）`);
+    assert.ok(uniqueCodes.length > 0 && contractStatuses.length > 0, '契约错误码映射读成空集：下面的相等没有意义');
 
     // 与派生常量对拍：ERROR_CODES 就是摊平结果，不是另一份手写清单。
     const source = read(CONTRACT_PATH);
@@ -104,7 +119,7 @@ describe('钉 a：错误码计数双向相等', () => {
     assert.match(source, /const ERROR_CODE_STATUS: ReadonlyMap<string, number> = new Map\(/);
   });
 
-  test('页面侧：写的「27 码」与代码实数一致（改成任何别的数字都必须红）', () => {
+  test('页面侧：写的「错误码单源 N 码」与代码实数一致（改成任何别的数字都必须红）', () => {
     const { uniqueCodes } = readErrorCodeFacts();
     const expected = uniqueCodes.length;
     const lines = sourceLines(PAGE_PATH);

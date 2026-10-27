@@ -183,7 +183,7 @@ test('B02 stale 分支同口径：retryable:false 不给重试；限流给等待
 // 未映射的码只剩原始码 + 服务端英文 message，读面没有写面 `describeWriteFailure` 那样的中文解释。
 // 这一层的纪律：**只加解释，不改事实**——码与服务端原文照旧，中文只解释码是什么意思。
 
-test('B11 错误码映射：契约 27 个码逐一有中文文案（非空、不含英文字母串），且表与契约同集', () => {
+test('B11 错误码映射：契约每个码逐一有中文文案（非空、不含英文字母串），且表与契约同集', () => {
   assert.deepEqual([...Object.keys(READ_FAILURE_CODE_LABELS)].sort(), [...ERROR_CODES].sort(), '映射表必须与契约 ErrorCode 同集（缺项/多项都要红）');
   assert.equal(new Set(ERROR_CODES).size, ERROR_CODES.length, '契约镜像里不应有重复码');
   const seen = new Set();
@@ -196,7 +196,7 @@ test('B11 错误码映射：契约 27 个码逐一有中文文案（非空、不
     assert.doesNotMatch(text, /未知错误/, `${code} 不许用「未知错误」兜底，实际：${text}`);
     seen.add(text);
   }
-  assert.equal(seen.size, ERROR_CODES.length, '每个码各有一句（不靠一条兜底句重复 27 遍）');
+  assert.equal(seen.size, ERROR_CODES.length, '每个码各有一句（不靠一条兜底句重复用同一句敷衍所有码）');
 });
 
 test('B11 错误码映射：契约外码／空码显式标注，⛔ 不写「未知错误」', () => {

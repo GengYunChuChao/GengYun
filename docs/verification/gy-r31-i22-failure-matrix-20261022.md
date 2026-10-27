@@ -15,7 +15,7 @@
 
 ### 0.1 失败族 → 契约错误码 → HTTP 状态
 
-来自 `services/api/src/contract.ts:14-27`（`ERROR_STATUS_MAP`，契约 1.0.0）：
+来自 `services/api/src/contract.ts:14-31`（`ERROR_STATUS_MAP`，契约 1.0.0）：
 
 | 失败族（列） | HTTP | 允许错误码 |
 | --- | --- | --- |

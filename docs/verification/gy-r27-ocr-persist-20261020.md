@@ -433,7 +433,7 @@ CI 里 `conversations-pg.mjs:57` 只应用**子集迁移** `['0001','0002','0005
 本次按「未迁移」报告，下一次调用重新探测（表被回滚/补迁移都能收敛）。`OcrTablesMissingError extends ApiError`，
 经 `classifyOcrDatabaseError` 时**原样透出**（单元测试断言 `error === original`）。
 
-HTTP 面差异（有意的）：写类撞「表未迁移」时是 `PROVIDER_UNAVAILABLE` ⇒ `contract.ts:25` 的
+HTTP 面差异（有意的）：写类撞「表未迁移」时是 `PROVIDER_UNAVAILABLE` ⇒ `contract.ts:29` 的
 `503: ['PROVIDER_UNAVAILABLE', …]` ⇒ **503 + `retryable:false`**（明确要求补迁移，不伪装成 404、也不诱导客户端重试）；
 读类（`/jobs/{id}`）则照常 200/404。写失败必须让调用方看见，不能被读语义吞掉。
 

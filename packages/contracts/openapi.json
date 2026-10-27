@@ -83,6 +83,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -163,6 +166,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -255,6 +261,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -344,6 +353,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -424,6 +436,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -510,6 +525,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -595,6 +613,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -675,6 +696,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -761,6 +785,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -860,6 +887,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -955,6 +985,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -1053,6 +1086,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -1133,6 +1169,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -1222,6 +1261,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -1304,6 +1346,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -1411,6 +1456,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -1499,6 +1547,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -1583,6 +1634,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -1677,6 +1731,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -1768,6 +1825,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -1852,6 +1912,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -1960,6 +2023,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -2061,6 +2127,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -2155,6 +2224,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -2253,6 +2325,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -2343,6 +2418,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -2440,6 +2518,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -2591,6 +2672,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -2735,6 +2819,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -2841,6 +2928,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -2932,6 +3022,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -3016,6 +3109,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -3111,6 +3207,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -3213,6 +3312,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -3307,6 +3409,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -3405,6 +3510,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -3499,6 +3607,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -3601,6 +3712,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -3695,6 +3809,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -3792,6 +3909,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -3900,6 +4020,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -3994,6 +4117,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -4096,6 +4222,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -4190,6 +4319,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -4288,6 +4420,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -4383,6 +4518,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -4477,6 +4615,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -4574,6 +4715,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -4664,6 +4808,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -4759,6 +4906,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -4856,6 +5006,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -4962,6 +5115,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -5067,6 +5223,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -5180,6 +5339,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -5262,6 +5424,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -5364,6 +5529,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -5458,6 +5626,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -5564,6 +5735,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -5661,6 +5835,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -5755,6 +5932,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -5857,6 +6037,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -5951,6 +6134,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -6057,6 +6243,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -6141,6 +6330,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -6237,6 +6429,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -6331,6 +6526,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -6429,6 +6627,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -6524,6 +6725,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -6608,6 +6812,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -6710,6 +6917,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -6798,6 +7008,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -6880,6 +7093,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -6988,6 +7204,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -7075,6 +7294,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -7173,6 +7395,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -7261,6 +7486,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -7341,6 +7569,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -7439,6 +7670,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -7527,6 +7761,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -7609,6 +7846,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -7711,6 +7951,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -7805,6 +8048,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -7913,6 +8159,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8020,6 +8269,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8118,6 +8370,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8200,6 +8455,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -8302,6 +8560,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8396,6 +8657,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -8504,6 +8768,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8611,6 +8878,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8709,6 +8979,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8791,6 +9064,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -8893,6 +9169,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -8987,6 +9266,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -9095,6 +9377,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -9202,6 +9487,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -9300,6 +9588,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -9382,6 +9673,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -9484,6 +9778,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -9578,6 +9875,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -9686,6 +9986,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -9793,6 +10096,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -9890,6 +10196,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -9989,6 +10298,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -10087,6 +10399,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -10183,6 +10498,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -10282,6 +10600,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -10367,6 +10688,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -10495,6 +10819,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -10645,6 +10972,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -10784,6 +11114,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -10925,6 +11258,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -11037,6 +11373,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -11133,6 +11472,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -11231,6 +11573,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -11370,6 +11715,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -11457,6 +11805,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -11558,6 +11909,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -11673,6 +12027,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -11763,6 +12120,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -11860,6 +12220,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -11968,6 +12331,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -12064,6 +12430,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -12163,6 +12532,9 @@
           "429": {
             "$ref": "#/components/responses/Error429"
           },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
           "503": {
             "$ref": "#/components/responses/Error503"
           },
@@ -12250,6 +12622,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -12385,6 +12760,9 @@
           },
           "429": {
             "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
           },
           "503": {
             "$ref": "#/components/responses/Error503"
@@ -12610,7 +12988,8 @@
           "PROVIDER_TIMEOUT",
           "SELF_SCOPE_GRANT_DENIED",
           "LAST_SCOPE_MANAGER",
-          "SELF_DISABLE_DENIED"
+          "SELF_DISABLE_DENIED",
+          "INTERNAL_ERROR"
         ]
       },
       "Meta": {
@@ -19173,6 +19552,16 @@
           }
         }
       },
+      "Error500": {
+        "description": "INTERNAL_ERROR",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorEnvelope"
+            }
+          }
+        }
+      },
       "Error503": {
         "description": "PROVIDER_UNAVAILABLE, PROVIDER_OUTCOME_UNKNOWN",
         "content": {
@@ -19257,6 +19646,9 @@
     "429": [
       "RATE_LIMITED",
       "PROVIDER_QUOTA_EXCEEDED"
+    ],
+    "500": [
+      "INTERNAL_ERROR"
     ],
     "503": [
       "PROVIDER_UNAVAILABLE",

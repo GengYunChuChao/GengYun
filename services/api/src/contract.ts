@@ -22,6 +22,10 @@ export const ERROR_STATUS_MAP = {
   422: ['CONDITIONS_INCOMPLETE', 'SOURCE_CONFLICT', 'INPUT_UNCERTAIN'],
   428: ['REVISION_REQUIRED'],
   429: ['RATE_LIMITED', 'PROVIDER_QUOTA_EXCEEDED'],
+  // 500 档（GY-R67-A03）：服务端**自身缺陷**这一类，不是上游/装配问题——上游不可用走 503/504，
+  // 能力未装配走 503 `PROVIDER_UNAVAILABLE`。`app.ts` 的 `setErrorHandler` 兜底即此码，
+  // 因此 500 不再是「契约里没有错误码可表达」的缺口，信封与其他错误同形。
+  500: ['INTERNAL_ERROR'],
   503: ['PROVIDER_UNAVAILABLE', 'PROVIDER_OUTCOME_UNKNOWN'],
   504: ['PROVIDER_TIMEOUT'],
 } as const;

@@ -57,7 +57,7 @@
 
 ## 五、「来源版本」在响应里到底是什么
 
-契约里**没有** `source_version` 这个字段：来源版本就是 `SourceRef.version`（`packages/contracts/openapi.json:12680` `SourceRef`，`:12448-12459` 的 required 含 `version`、`updated_at`、`validity`、`review_status`）。服务端口径见 `docs/verification/gy-i07-knowledge-consumer-20261011.md:15`：`SourceRef.id` 为 `sources.id`，`version` 为关联当前 `source_versions.version`，`updated_at` 取 `retrieved_at`。
+契约里**没有** `source_version` 这个字段：来源版本就是 `SourceRef.version`（`packages/contracts/openapi.json:13059` `SourceRef`，`:12826-12837` 的 required 含 `version`、`updated_at`、`validity`、`review_status`）。服务端口径见 `docs/verification/gy-i07-knowledge-consumer-20261011.md:15`：`SourceRef.id` 为 `sources.id`，`version` 为关联当前 `source_versions.version`，`updated_at` 取 `retrieved_at`。
 
 页面展示位置：
 
@@ -70,7 +70,7 @@
 
 ## 六、排序仍是契约 partial（本片不改码，只登记）
 
-前端不参与排序：`listKnowledge`／`listHerbicides` 的契约里**没有任何排序参数**（`packages/contracts/openapi.json:2375`、`:2669` 的 parameters 只有 `Cursor`／`Limit` 与筛选字段），页面照契约不传排序，也不在 UI 上声称任何排序（无「最新优先」字样）。所以这不是前端缺陷，而是服务端契约面未冻结完的口径差：
+前端不参与排序：`listKnowledge`／`listHerbicides` 的契约里**没有任何排序参数**（`packages/contracts/openapi.json:2453`、`:2753` 的 parameters 只有 `Cursor`／`Limit` 与筛选字段），页面照契约不传排序，也不在 UI 上声称任何排序（无「最新优先」字样）。所以这不是前端缺陷，而是服务端契约面未冻结完的口径差：
 
 - 冻结口径为 `(created_at DESC, id DESC)`：`docs/architecture/state-contract.md:32`「游标列表统一 items + next_cursor（null 结束），limit 默认 20、最大 50，排序 (created_at DESC,id DESC)」。
 - 现行实现为 `id_asc`：`docs/architecture/contract-status.json:781`（本轮实测行号，取**合流树**：`upstream/main`=`1d65b7ee` ＋ 本片 #538；合流按内容重锚，原记 `:716`）blocker 原文「当前 id_asc 排序仍不同于冻结 (created_at DESC, id DESC)，实际表/投影无 created_at，排序及历史数据方案未完成，按 partial 保留」（⚠ 引文为 R33 订正前原文，该行现文已按代码事实订正，见 `docs/verification/gy-r33-contract-ledger-20261023.md`）；台账同项记 `partial`（`docs/architecture/contract-implementation-status.md:72`，证据 `services/api/src/routes/knowledge.ts:188-192`、`services/api/src/knowledge/service.ts:56-123`、`services/api/src/knowledge/pagination.ts:30-72`）；历史判据见 `docs/verification/gy-i01-knowledge-cursor-20261013.md:46`。
