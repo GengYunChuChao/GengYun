@@ -215,6 +215,8 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
+  // R67-C3：与 `FROZEN_MANAGED_SCRIPTS` 同一份集合（只允许顺序不同）。
+  'tests/integration/media-row-purge-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -264,6 +266,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
+  // R67-C3：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/media-row-purge-pg.mjs',
 ]);
 
 /**
@@ -527,6 +531,8 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   // 23. `retention-clock-drill-pg`：自起集群，数据根键 `GY_I19_PG_ROOT`。写：7/30 日「加速时钟」三态
   //     （在线 +7 日、备份 +30 日）真删行；⛔ 不传 `GY_ALLOW_SKIP`（那是本机取 0 的放宽开关）。
   'tests/integration/retention-clock-drill-pg.mjs',
+  // R67-C3：`media-row-purge-pg`（媒体行清除驱动）接在写 job 的**最后一步** ⇒ 清单尾部同位置追加。
+  'tests/integration/media-row-purge-pg.mjs',
 ]);
 
 /**
@@ -599,6 +605,9 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   // `retention-clock-drill-pg`：自起集群，7/30 日加速时钟。
   'tests/integration/retention-clock-drill-pg.mjs',
+  // R67-C3：`media-row-purge-pg.mjs` 自起集群（自建 `gengyun_media_row_purge_test`、跑完 `pg_ctl stop`
+  // 并删数据目录），根键 **`GY_R34_PG_ROOT`**（与 `recognitions-speech-purge-pg` 同键、各自子目录）。
+  'tests/integration/media-row-purge-pg.mjs',
 ]);
 
 /**
@@ -657,6 +666,9 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   'tests/integration/moderation-full-chain-pg.mjs': 'GY_I14C_PG_ROOT',
   'tests/integration/recognitions-speech-purge-pg.mjs': 'GY_R34_PG_ROOT',
   'tests/integration/retention-clock-drill-pg.mjs': 'GY_I19_PG_ROOT',
+  // R67-C3：`media-row-purge-pg.mjs` 读 **`GY_R34_PG_ROOT`**（源码取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`；
+  // 日志键是 `GY_R34_PG_LOG`，不匹配根键形状，故不会误登记）。
+  'tests/integration/media-row-purge-pg.mjs': 'GY_R34_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */
