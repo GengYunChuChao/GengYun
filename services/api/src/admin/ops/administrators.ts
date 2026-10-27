@@ -71,10 +71,18 @@ export interface AdministratorScopesSnapshot {
  * `id` = `public.admin_accounts.id`（⛔ 不是 `public.users.id`，见文件头）。
  * `login_name` 是 `admin_accounts` 上**唯一**的人读标签（表里没有 display_name 列），
  * 它本来就在运行时角色的既有列授权内（登录路径必须读它）。
+ *
+ * `revision` = `admin_accounts.revision`（正整数）。**它是目录项存在的理由**：
+ * `POST /admin/administrators/{id}/disable|enable` 要求 `If-Match: "<revision>"`，
+ * 而这条列表**不发** `ETag` 响应头（强 ETag 只在资源写面）。没有 `revision`，
+ * 任何客户端都无法构造 `If-Match`——只能猜，或者必然吃 428 `REVISION_REQUIRED`。
+ * ⚠ 读到的 `revision` 只是**当时**的值：两次操作之间它可能已被别处推进，
+ * 写面靠 409 `REVISION_CONFLICT` 兜底，这个字段不是锁。
  */
 export interface AdministratorView {
   readonly id: string;
   readonly login_name: string;
+  readonly revision: number;
   readonly state: AdminState;
   readonly scopes: readonly string[];
 }
@@ -150,6 +158,9 @@ export function createAuthStoreAdministratorsDirectory({
           items.push({
             id: admin.id,
             login_name: admin.loginName,
+            // `listAdmins()` 本来就是 SELECT id, login_name, state, auth_epoch, revision：
+            // revision 早已读出来，只是过去在投影时被丢掉了（客户端因此无法构造 If-Match）。
+            revision: admin.revision,
             state: admin.state,
             scopes: await store.listAdminScopes(admin.id),
           });

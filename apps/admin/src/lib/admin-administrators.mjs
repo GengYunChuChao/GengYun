@@ -100,6 +100,12 @@ export function validateAdministratorView(value) {
     pushIssue(errors, '$.login_name', '必须是 1..80 字符的字符串');
   }
   if (!ADMIN_STATES.includes(value.state)) pushIssue(errors, '$.state', `必须是 ${ADMIN_STATES.join(' / ')} 之一`);
+  // `revision`（契约 AdminAdministratorView，必填）：它是停用/恢复写面 `If-Match` 的唯一来源
+  // ——目录不发 `ETag` 头。缺失/非正整数的行**不能**当成"能操作"：宁可校验失败，
+  // 也不要让上层拿 undefined 拼出 `If-Match: "undefined"`（那只会换来 400/428）。
+  if (typeof value.revision !== 'number' || !Number.isSafeInteger(value.revision) || value.revision < 1) {
+    pushIssue(errors, '$.revision', '必须是正整数（admin_accounts.revision）');
+  }
   if (!Array.isArray(value.scopes)) {
     pushIssue(errors, '$.scopes', '必须是数组');
   } else {
@@ -110,7 +116,7 @@ export function validateAdministratorView(value) {
     });
   }
   for (const key of Object.keys(value)) {
-    if (!['id', 'login_name', 'state', 'scopes'].includes(key)) warnings.push(`$.${key}：契约外字段（additionalProperties: false）`);
+    if (!['id', 'login_name', 'revision', 'state', 'scopes'].includes(key)) warnings.push(`$.${key}：契约外字段（additionalProperties: false）`);
   }
   if (errors.length > 0) return { ok: false, errors, warnings, item: null };
   return { ok: true, errors, warnings, item: value };
@@ -529,6 +535,10 @@ export function initialAdministratorsState() {
     loadingMore: false,
     failure: null,
     stale: false,
+    // 「重置型刷新」（`LOAD_START{reset:true}`，即停用/恢复成功后的 `refresh()`）待替换第一页。
+    // 不能在 `LOAD_START` 里就地清 `items`：那样刷新期间表格会闪空；改成在这里记一笔，
+    // 由 `LOAD_OK` 消费——见 `LOAD_OK` 里对 `appendAdministratorPage` 基线的选择。
+    pendingReset: false,
     scopeWarning: false,
     selectedId: null,
     selectedLoginName: '',
@@ -592,11 +602,18 @@ export function reduceAdministrators(state, action) {
         loadingMore: reset ? false : true,
         stale: reset ? hasRows : current.stale,
         phase: reset ? (hasRows ? 'ready' : 'loading') : current.phase,
+        pendingReset: reset,
       };
     }
 
     case 'LOAD_OK': {
-      const collection = appendAdministratorPage(current.collection, { cursor: action.cursor ?? null, page: action.page });
+      // 重置型刷新读的是**同一页**（`cursor === null`）：服务端这一页已整体取代旧数据，
+      // 所以基线必须是空集合，不能接着旧的 `items` 往后「按 id 去重追加」——那会把同一个
+      // `admin_accounts.id` 当重复项跳过（`duplicates += 1`），表里留着旧 `revision`，
+      // 下一次点「停用」拿旧 revision 发 `If-Match` 只会换来 409 REVISION_CONFLICT。
+      // 追加型（读取下一页）保持原样：接着当前集合往后追加。
+      const base = current.pendingReset === true ? emptyAdministratorCollection() : current.collection;
+      const collection = appendAdministratorPage(base, { cursor: action.cursor ?? null, page: action.page });
       return {
         ...current,
         collection,
@@ -604,6 +621,7 @@ export function reduceAdministrators(state, action) {
         loadingMore: false,
         failure: null,
         stale: false,
+        pendingReset: false,
       };
     }
 
@@ -790,14 +808,26 @@ export function describeAdministratorScopesView(state) {
 
 // ---------------------------------------------------------------- 行视图
 
-/** 列表一行：管理员 + 该行内联展示的 scopes（列表项自带 scopes 字段）。 */
+/**
+ * 列表一行：管理员 + 该行内联展示的 scopes（列表项自带 scopes 字段）。
+ *
+ * `revision` 是停用/恢复写面 `If-Match` 的**唯一**来源（目录不发 ETag）。拿不到合法的正整数
+ * revision 就直接返回 `null`（不产出该行），不再用「revision 0 + revisionLabel '—'」兜一个
+ * 看起来正常、实则点不动的行：那行既不能操作，又会让人以为「这行就是没版本号」，比不显示更含糊。
+ */
 export function administratorRowView(item) {
   const value = isPlainObject(item) ? item : {};
+  const revision = typeof value.revision === 'number' && Number.isSafeInteger(value.revision) && value.revision >= 1
+    ? value.revision
+    : null;
+  if (revision === null) return null;
   const scopes = Array.isArray(value.scopes) ? value.scopes.filter((scope) => typeof scope === 'string') : [];
   const state = typeof value.state === 'string' ? value.state : '';
   return {
     id: typeof value.id === 'string' ? value.id : '',
     loginName: typeof value.login_name === 'string' ? value.login_name : '',
+    revision,
+    revisionLabel: String(revision),
     state,
     stateLabel: ADMIN_STATE_LABELS[state] ?? state,
     stateTone: state === 'suspended' ? 'warn' : 'ok',
@@ -809,7 +839,8 @@ export function administratorRowView(item) {
 
 export function administratorRows(state) {
   const items = Array.isArray(state?.collection?.items) ? state.collection.items : [];
-  return items.map((item) => administratorRowView(item));
+  // `administratorRowView` 对拿不到合法 revision 的项返回 null：过滤掉，不留半截行。
+  return items.map((item) => administratorRowView(item)).filter((row) => row !== null);
 }
 
 /** scope 视图：给每条 scope 一个中文说明；闭集外的值如实标出来。 */

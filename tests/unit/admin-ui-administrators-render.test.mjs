@@ -23,6 +23,11 @@ if (globalThis.ShadowRoot === undefined) globalThis.ShadowRoot = class ShadowRoo
 
 const VIEW_URL = new URL('../../apps/admin/src/views/AdministratorsView.vue', import.meta.url);
 const LIB_URL = new URL('../../apps/admin/src/lib/admin-administrators.mjs', import.meta.url);
+// R67-A05：页面新增了停用／恢复入口，import 图里多了这几个模块（都是纯函数 lib，直接按 file: URL 载入）。
+const ACCOUNT_SUSPEND_LIB_URL = new URL('../../apps/admin/src/lib/account-suspend-api.mjs', import.meta.url);
+const STATE_LIB_URL = new URL('../../apps/admin/src/lib/administrator-state-api.mjs', import.meta.url);
+const CONTENT_VM_URL = new URL('../../apps/admin/src/lib/admin-content-view-model.mjs', import.meta.url);
+const DIALOG_FOCUS_URL = new URL('../../apps/admin/src/lib/dialog-focus.mjs', import.meta.url);
 const VUE_URL = import.meta.resolve('vue');
 
 const ADMIN_ID = '22222222-2222-4222-8222-222222222222';
@@ -50,6 +55,22 @@ export function signOutAdmin() {
 }
 `);
 
+/**
+ * `WriteReceipt.vue` 是 SFC，Node 不能直接 import：这里给一个同 props／同 emits 的空壳。
+ * 本套用例只断言目录读面与「停用／恢复」确认框，回执组件自身的渲染由
+ * `admin-ui-write-receipt-render.test.mjs` 覆盖 —— 所以空壳不削弱任何断言。
+ */
+const WRITE_RECEIPT_STUB_URL = moduleUrl(`
+export default {
+  name: 'WriteReceipt',
+  props: ['write', 'auditLookup', 'canAudit', 'canReloadDetail', 'changed'],
+  emits: ['lookup-audit', 'clear-receipt', 'reload-detail'],
+  render() {
+    return null;
+  },
+};
+`);
+
 let componentPromise = null;
 
 function loadViewComponent() {
@@ -66,7 +87,12 @@ function loadViewComponent() {
   const code = compiled.content
     .replace(/from\s+["']vue["']/g, `from '${VUE_URL}'`)
     .replace(new RegExp(`from\\s+["']${escape('../auth/session')}["']`, 'g'), `from '${SESSION_STUB_URL}'`)
-    .replace(new RegExp(`from\\s+["']${escape('../lib/admin-administrators.mjs')}["']`, 'g'), `from '${LIB_URL.href}'`);
+    .replace(new RegExp(`from\\s+["']${escape('../lib/admin-administrators.mjs')}["']`, 'g'), `from '${LIB_URL.href}'`)
+    .replace(new RegExp(`from\\s+["']${escape('../lib/administrator-state-api.mjs')}["']`, 'g'), `from '${STATE_LIB_URL.href}'`)
+    .replace(new RegExp(`from\\s+["']${escape('../lib/account-suspend-api.mjs')}["']`, 'g'), `from '${ACCOUNT_SUSPEND_LIB_URL.href}'`)
+    .replace(new RegExp(`from\\s+["']${escape('../lib/admin-content-view-model.mjs')}["']`, 'g'), `from '${CONTENT_VM_URL.href}'`)
+    .replace(new RegExp(`from\\s+["']${escape('../lib/dialog-focus.mjs')}["']`, 'g'), `from '${DIALOG_FOCUS_URL.href}'`)
+    .replace(new RegExp(`from\\s+["']${escape('./WriteReceipt.vue')}["']`, 'g'), `from '${WRITE_RECEIPT_STUB_URL}'`);
   assert.deepEqual(
     [...code.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1]).filter((spec) => !/^(data:|file:)/.test(spec)),
     [],
@@ -214,6 +240,7 @@ function administrator(overrides = {}) {
   return {
     id: ADMIN_ID,
     login_name: 'chen_yun',
+    revision: 1,
     state: 'active',
     scopes: ['audit:read', 'scopes:read'],
     ...overrides,

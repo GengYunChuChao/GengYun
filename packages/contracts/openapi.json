@@ -10210,7 +10210,7 @@
       "get": {
         "operationId": "listAdministrators",
         "summary": "listAdministrators",
-        "description": "后台管理员目录（admin_accounts）。id 是 **admin_accounts.id**，不是 users.id：/admin/accounts 读的是终端用户，两者同名不同源，不得混用。存在这一条读面的理由是授权端点 /admin/administrators/{id}/scopes 的目标只能来自这里。未接线（无持久认证存储）⇒ 503 PROVIDER_UNAVAILABLE，不返回空页。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "description": "后台管理员目录（admin_accounts）。id 是 **admin_accounts.id**，不是 users.id：/admin/accounts 读的是终端用户，两者同名不同源，不得混用。存在这一条读面的理由是授权端点 /admin/administrators/{id}/scopes 的目标只能来自这里。目录项带 revision（= admin_accounts.revision），它是 POST /admin/administrators/{id}/disable 与 POST /admin/administrators/{id}/enable 的 If-Match 来源；列表本身不返回 ETag 响应头（强 ETag 只出现在资源写面），客户端只能拿目录项的 revision 现拼 If-Match。⚠ revision 是账号行当时的修订号，列出来到点下去之间它可能已被别处改过——写面仍以 409 REVISION_CONFLICT 兜底，读面的 revision 不是锁。未接线（无持久认证存储）⇒ 503 PROVIDER_UNAVAILABLE，不返回空页。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
         ],
@@ -16011,6 +16011,10 @@
             "minLength": 1,
             "maxLength": 80
           },
+          "revision": {
+            "type": "integer",
+            "minimum": 1
+          },
           "state": {
             "type": "string",
             "enum": [
@@ -16029,6 +16033,7 @@
         "required": [
           "id",
           "login_name",
+          "revision",
           "state",
           "scopes"
         ],

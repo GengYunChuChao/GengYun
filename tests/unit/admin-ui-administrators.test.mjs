@@ -54,7 +54,8 @@ function page(items, nextCursor = null) {
 }
 
 function administrator(overrides = {}) {
-  return { id: ADMIN_ID, login_name: 'root', state: 'active', scopes: ['audit:read', 'scopes:read'], ...overrides };
+  // revision 是契约必填（R67-A05 起目录项带 revision，供写面拼 If-Match）
+  return { id: ADMIN_ID, login_name: 'root', revision: 1, state: 'active', scopes: ['audit:read', 'scopes:read'], ...overrides };
 }
 
 test('契约形状：两条读面都是 scopes:read；闭集 13 项', () => {
@@ -84,16 +85,22 @@ test('契约形状：两条读面都是 scopes:read；闭集 13 项', () => {
   assert.equal(ADMIN_SCOPES.includes('receipt'), false);
 });
 
-test('校验一项管理员：id 必须是 uuid、login_name 1..80、state 闭集、scopes 数组', () => {
+test('校验一项管理员：id 必须是 uuid、login_name 1..80、revision 是正整数、state 闭集、scopes 数组', () => {
   const ok = validateAdministratorView(administrator());
   assert.equal(ok.ok, true);
   assert.deepEqual(ok.errors, []);
   assert.equal(ok.item.login_name, 'root');
+  assert.equal(ok.item.revision, 1);
 
   assert.equal(validateAdministratorView(administrator({ id: USER_ID.replace('3d6a', 'zz') })).ok, false);
   assert.equal(validateAdministratorView(administrator({ id: 'users-1' })).ok, false, 'id 必须是 uuid（admin_accounts.id）');
   assert.equal(validateAdministratorView(administrator({ login_name: '' })).ok, false);
   assert.equal(validateAdministratorView(administrator({ login_name: 'x'.repeat(81) })).ok, false);
+  // revision 缺了／小于 1／不是整数 ⇒ 形状错误：客户端拿不到 If-Match 来源就不能让他以为能写
+  assert.equal(validateAdministratorView({ id: ADMIN_ID, login_name: 'root', state: 'active', scopes: [] }).ok, false);
+  assert.equal(validateAdministratorView(administrator({ revision: 0 })).ok, false);
+  assert.equal(validateAdministratorView(administrator({ revision: 1.5 })).ok, false);
+  assert.equal(validateAdministratorView(administrator({ revision: '2' })).ok, false);
   assert.equal(validateAdministratorView(administrator({ state: 'deleted' })).ok, false);
   assert.equal(validateAdministratorView(administrator({ scopes: 'audit:read' })).ok, false);
   assert.equal(validateAdministratorView(null).ok, false);
