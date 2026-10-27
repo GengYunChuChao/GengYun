@@ -11009,7 +11009,10 @@
                 "account.suspend",
                 "account.restore",
                 "set_flag",
-                "job.cancel"
+                "job.cancel",
+                "admin_scope.grant",
+                "admin_scope.revoke",
+                "admin_scope.deny"
               ]
             }
           },
@@ -11021,7 +11024,8 @@
               "enum": [
                 "account",
                 "flag",
-                "job"
+                "job",
+                "admin_scope"
               ]
             }
           }

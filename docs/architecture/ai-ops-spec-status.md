@@ -98,7 +98,7 @@
 | E28 | 开关关闭 ⇒ 409 `OBJECT_UNAVAILABLE` + `details[].code='FLAG_CLOSED'` | 已实现 | services/api/src/admin/ops/flag-gate.ts:418-422 | 409 而非 503：关闭是确定性结论，重试不会变 |
 | E29 | 开关不可识别 ⇒ 503 `PROVIDER_UNAVAILABLE` + `FLAG_UNRECOGNIZED`，`retryable` 按 cause | 已实现 | services/api/src/admin/ops/flag-gate.ts:424-437 | `retryable` 三分支（读失败／不可重试／不可识别）已成函数 |
 | E30 | 武装探测三态 `ready`／`missing`／`unknown`，`unknown` 不得折叠成 `missing` | 已实现 | services/api/src/admin/ops/flag-gate.ts:449 | 三态是刻意区分「表不存在」与「读不出」；探测装配见 services/api/src/app.ts:1316-1330 |
-| E31 | 四条落库审计写路径（账号停用／恢复 0017、开关变更 0020／0027、作业取消 0043） | 已实现 | services/api/src/admin/audit/catalog.ts:8-13 | 表注释与 `AUDIT_ACTIONS` 四项一一对应：第四行即 0043 的 `public.record_admin_job_cancel_audit`（审计行写 `scope='jobs:cancel'`）。台账 `docs/architecture/contract-implementation-status.md:164` 仍写「写入点只有三处」（N02） |
+| E31 | 七条落库审计写路径（账号停用／恢复 0017、开关变更 0020／0027、scope 授予／撤销 0041、作业取消 0043、scope 操作被拒 0046） | 已实现 | services/api/src/admin/audit/catalog.ts:9-17 | 表注释七行与 `AUDIT_ACTIONS` 七值一一对应，但**顺序不同**：表按迁移顺序列（第 4／5 行 = 0041 的 `grant_admin_scope`／`revoke_admin_scope`、第 6 行 = 0043 的 `record_admin_job_cancel_audit`（审计行写 `scope='jobs:cancel'`）、第 7 行 = 0046 的 `record_admin_scope_denial`），闭集把 `job.cancel` 留在第 4 位（历史顺序，见 tests/unit/admin-audit-action-jobs-cancel.test.mjs:150-154）。0041 的两条与 0046 的 `admin_scope.deny` 由 GY-R64 补登记——此前闭集只认 4 个写入点，`?action=admin_scope.grant` 恒 400。读面判定未变：`listAuditLogs` 在台账里仍是 `partial`（docs/architecture/contract-implementation-status.md:166） |
 | E32 | 后台 scope 映射（`accounts:suspend`／`flags:write`／`jobs:cancel`）与动作闭集绑定 | 已实现 | services/api/src/admin/audit/catalog.ts:57-68 | 映射只写一遍；`job` 映射的是审计行 `scope` 列**实际写的值** `jobs:cancel`（不是 `jobs:read`——映射成后者会让 `?entity=job` 恒空页） |
 | E33 | 作业台过滤参数闭集判定：闭集外 ⇒ 400 `enum`，非字符串 ⇒ 400 `type`，不复用 503 | 已实现 | services/api/src/admin/ops/jobs.ts:20-27 | 两层不混：参数层先 400，未接线分支才 503（同文件 :40、:44-45） |
 | E34 | 过滤下推 SQL（值绑定 + 枚举 cast，不拼串） | 已实现 | services/api/src/admin/ops/jobs-pg.ts:23-28 | 下推已实现；UI 不发送这些参数（P08） |
@@ -107,7 +107,7 @@
 | E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 24 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；`packages/contracts/` 下无源码文件 |
 | E38 | 后台作业台**真库端口**的产品装配：real + 有池 ⇒ `createPostgresAdminJobPort` | 已实现 | services/api/src/app.ts:1313-1315 | `adminRealUnwired` 只是「real 模式」的别名（同文件 :1291）；生产端口的 `persistent: true` 见 services/api/src/admin/ops/jobs-pg.ts:450-451 |
 | E39 | 真库臂回归：三域表读面、9 字段投影、取消 CAS 与审计恰 1 行、过滤下推、游标 | 已实现 | tests/integration/admin-jobs-pg.mjs:661 | 脚本在 CI 名单内（.github/workflows/real-pg-integration.yml:8），用 `postgres:17.11` 与全链迁移（同文件 :55） |
-| E40 | 审计 `action` 闭集登记作业取消：`AUDIT_ACTIONS` 恰四值，`?action=job.cancel` 由 400 转 200 | 已实现 | services/api/src/admin/audit/catalog.ts:41-46 | 锁它的用例：`tests/unit/admin-audit-action-jobs-cancel.test.mjs:159`（200 且只回该动作）、`:150`（恰四项）、`:213`（闭集外仍 400、零端口调用）；顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs:169` 钉住，契约枚举同步到四项（`packages/contracts/openapi.json:11008-11013`）。剩余边界：后台无页面消费该读面（P10） |
+| E40 | 审计 `action` 闭集覆盖库内全部写入点：`AUDIT_ACTIONS` 恰七值（`job.cancel` 仍在第 4 位，`admin_scope.grant`／`revoke`／`deny` 追加在末三位），`?action=job.cancel` 与 `?action=admin_scope.grant` 都由 400 转 200 | 已实现 | services/api/src/admin/audit/catalog.ts:76-85 | 锁它的用例：tests/unit/admin-audit-action-jobs-cancel.test.mjs:167（`?action=job.cancel` ⇒ 200 且只回该动作）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:150-154（前 4 项长度仍为 4、第 4 项仍是 `job.cancel`——扩值只能追加末位）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:221（闭集外仍 400、零端口调用）；逐值对拍另由 tests/unit/admin-audit-logs.test.mjs:130-131（契约 `action` enum === `AUDIT_ACTIONS`、`entity` enum === `AUDIT_ENTITIES`）与 tests/unit/ai-ops-ledger-pins.test.mjs:173 钉住，契约枚举同步到七项（packages/contracts/openapi.json:11008-11015）、`entity` 同步到四项（packages/contracts/openapi.json:11024-11028）。剩余边界：后台无页面消费该读面（P10） |
 
 ## 3 部分实现（12 条）
 
@@ -130,7 +130,7 @@
 
 | 编号 | 判定项 | 判定 | 依据（文件:行号） | 缺口说明 |
 | --- | --- | --- | --- | --- |
-| N02 | 审计写面的台账未跟上第四条写路径 | 未实现（P1） | docs/architecture/contract-implementation-status.md:164 | `catalog.ts` 的四写点表已由 #609 补上（E31），该台账行却仍写「库内写入点只有 suspend_account / restore_account / set_feature_flag 三处」「审计写面仍未落库」——与 0043 及其用例冲突；无功能影响，属文档与代码对不上 |
+| N02 | 审计写面的台账未跟上 0041／0043／0046 的四条写路径 | 未实现（P1） | docs/architecture/contract-implementation-status.md:166 | `catalog.ts` 的**七行**写点表已由 #609 补上（E31），该台账行却仍写「库内写入点只有 suspend_account / restore_account / set_feature_flag 三处」「审计写面仍未落库」——台账记三处、实际七条、未登记四条（`0041` grant／revoke、`0043` job.cancel、`0046` deny），与 `0041`／`0043`／`0046` 及其用例冲突；无功能影响，属文档与代码对不上 |
 | N03 | `model_version`／`prompt_version`／`rule_version` 的真实值 | 未实现（P0） | docs/architecture/contract-implementation-status.md:97 | 一律 `unimplemented:no-real-` 前缀；审核侧明示不产出这两字段且有源码扫描测试禁占位（docs/moderation/README.md:45-46），见 §7.3 |
 | N04 | 统一作业台账 `public.jobs` 的真实写入 | 未实现（P1） | services/api/src/admin/ops/jobs-pg.ts:4-9 | 表由 0001 建好（services/api/db/migrations/0001_initial_schema.sql:203-231），但全仓**零 INSERT**；真实作业行只落 `ocr_jobs`／`recognition_jobs`／`speech_jobs` 三张域内表 |
 | N05 | 调用记录表 `provider_invocations` | 未实现（P1） | docs/architecture/data-dictionary.md:48 | 全仓只出现在四份文档，**无迁移、无代码** ⇒ 无 attempt／版本串／成本的可审计记录 |
@@ -148,7 +148,7 @@
 
 | 编号 | 解封需要什么 | 卡在哪一类决定 |
 | --- | --- | --- |
-| N02 | 改台账 `docs/architecture/contract-implementation-status.md:164` 那一句（写入点三处 → 四处，删掉「审计写面仍未落库」）；库内与闭集侧已由 #609 补齐，无需再动代码 | 文档同步（零代码） |
+| N02 | 改台账 `docs/architecture/contract-implementation-status.md:166` 那一句（写入点三处 → 七处，删掉「审计写面仍未落库」）；库内与闭集侧已由 #609 补齐，无需再动代码 | 文档同步（零代码） |
 | N03 | 真实模型／提示词上线并产出可核对的版本串；`provider_invocations` 提供落点 | 付费授权（模型）+ 工程（N05） |
 | N04 | 各域作业受理时写 `public.jobs`（现只写三张域内表） | 工程（需先定「域内表与统一表哪张是权威」；后台读面**不**依赖它，见 §7.2） |
 | N05 | 迁移新建 `provider_invocations` + 调用点写入 attempt／版本串／耗时 | 工程（表结构在数据字典已定） |
@@ -201,7 +201,7 @@
 **仍没做到的两处**（已从 P0 降级，本页不再按 P0 计）：
 
 - 后台仍无入口：两个审计页分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54`），全仓没有页面消费 `GET /admin/audit-logs`（P10）。
-- 台账那句仍与代码冲突：`docs/architecture/contract-implementation-status.md:164` 还写着「审计写面仍未落库」「写入点只有三处」，与 0043 及其用例冲突（N02）。
+- 台账那句仍与代码冲突：`docs/architecture/contract-implementation-status.md:166` 还写着「审计写面仍未落库」「写入点只有三处」，与 0043 及其用例冲突（N02）。
 
 **留档的理由**：这条曾经是「写进去了，但没人读得到，且文档说它没写」。现在库里有行、接口能筛、用例锁住，只剩「后台点不到」与「台账说没写」——同一类漂移换了个面，别当它消失了。
 

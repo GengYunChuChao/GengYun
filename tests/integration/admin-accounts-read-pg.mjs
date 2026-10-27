@@ -217,6 +217,13 @@ async function provisionRoles() {
     // `grant_admin_scope` / `revoke_admin_scope`）。原样执行出厂区域，不复制粘贴 SQL ——
     // 授权被删／被改宽就变红。
     { name: 'gy-r37-s2-scope-grant', grants: 2 },
+    // GY-R64 PR-4a：被拒留痕的唯一写入口（迁移 0046 的 `record_admin_scope_denial`）。
+    // 少了这一段，`[W]` 段里每一条 403/409 的留痕都会静默失败（只 warn、一行不落）——
+    // 本片要证明「被拒真的落库」，所以运行时角色必须真拿到 EXECUTE。
+    // ⚠ 该区域**不含** psql 元命令：`\echo` 在 `-- #endregion` 之**后**（出厂脚本第 640 行），
+    // 正则取的是 region 与 `#endregion` 之间的正文，所以 `:227` 的元命令守卫原样通过、
+    // 也不需要为本区域做任何剔行预处理。⛔ 不要复制粘贴 GRANT 语句，⛔ 不要放宽守卫。
+    { name: 'gy-r64-pr4a-denial-trace-grant', grants: 1 },
   ];
   for (const { name, grants } of REGIONS) {
     const matched = deploySql('20-login-roles.sql').match(
@@ -231,6 +238,16 @@ async function provisionRoles() {
   const canExecute = await one("SELECT has_function_privilege($1, 'public.list_admin_accounts()', 'EXECUTE') AS v", [RUNTIME_ROLE]);
   assert.equal(canExecute.v, true, '运行时角色必须拿到 EXECUTE');
   note('[P] 已按出厂区域 gy-i18-accounts-read-grant 授予 EXECUTE（恰好 1 条：list_admin_accounts）');
+
+  // 留痕写入口的 EXECUTE 必须真在运行时角色名下：`[W]` 段是按运行时角色起 app 的，
+  // 少了这条授权，403/409 的留痕会「静默失败只 warn」，而 HTTP 断言照样全绿 ——
+  // 那正是本片最容易造假的地方，所以在这里单独钉一次权限面读数。
+  const canRecordDenial = await one(
+    "SELECT has_function_privilege($1, 'public.record_admin_scope_denial(uuid,uuid,text,text,uuid,uuid)', 'EXECUTE') AS v",
+    [RUNTIME_ROLE],
+  );
+  assert.equal(canRecordDenial.v, true, '运行时角色必须拿到 record_admin_scope_denial(...) 的 EXECUTE');
+  note('[P] 已按出厂区域 gy-r64-pr4a-denial-trace-grant 授予 EXECUTE（恰好 1 条：record_admin_scope_denial）⇒ has_function_privilege=true');
 }
 
 // ---------------------------------------------------------------------------
@@ -598,6 +615,20 @@ async function scopeWriteEvidence() {
     [last.admin.adminId],
   );
   assert.equal(beforeLast.revoked_at, null, '前置：自撤前该行必须仍有效');
+  // 留痕读数的公共入口：本条臂的每一条「被拒」都按**前后差值**核，⛔ 不假设此前计数为 0。
+  // 实测（2026-10-27 本机 55440）：`[W3]` 的 loser 是 403 `SCOPE_DENIED` 却**一行都没留**——因为
+  // `services/api/src/auth/middleware.ts` 每个请求都**活读** `admin_scopes`，输掉并发互撤那一方的
+  // `scopes:write` 已被撤销 ⇒ 应用层 `requireAdminScope` 先把请求拦了，根本没进写权威。
+  // 这正是 §8 第 9 条那条边界，也是为什么下面必须用差值而不是硬编码 0→N。
+  const denyTotal = async () =>
+    (await one("SELECT count(*)::int AS n FROM public.admin_audit_events WHERE action = 'admin_scope.deny'")).n;
+  const denyOfActor = async (adminId, reason) =>
+    (await one(
+      "SELECT count(*)::int AS n FROM public.admin_audit_events WHERE action = 'admin_scope.deny' AND reason_code = $2 AND actor_id = $1::uuid",
+      [adminId, reason],
+    )).n;
+  const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const beforeLastDeny = await denyOfActor(last.admin.adminId, 'last_scope_manager');
   const lastRes = await call(
     `${API}/admin/administrators/${last.admin.adminId}/scopes/scopes:write`,
     {
@@ -616,9 +647,33 @@ async function scopeWriteEvidence() {
   assert.equal(await holders(), 1, '被拒的那次不得改变持有者数量');
   note(`[W4] 最后授权者（${last.who}）自撤 ⇒ 409 LAST_SCOPE_MANAGER（retryable=false），revoked_at 仍为 NULL（整笔回滚）`);
 
+  // 留痕（不是状态）：409 的那一笔主事务整笔回滚，但写权威 `catch` 里的旁路要**另开一条连接**
+  // 落一行 `admin_scope.deny`。这一条同时是本片授权补丁（`gy-r64-pr4a-denial-trace-grant`）的证据：
+  // 运行时角色若没拿到 EXECUTE，这行不会出现，下面的 delta 断言就会红（HTTP 断言照样绿）。
+  const afterLastDeny = await denyOfActor(last.admin.adminId, 'last_scope_manager');
+  assert.equal(afterLastDeny - beforeLastDeny, 1, `最后授权者自撤被拒后必须恰好多 1 行 admin_scope.deny（last_scope_manager），实际 ${beforeLastDeny} → ${afterLastDeny}`);
+  const lastDenyRow = await one(
+    `SELECT actor_id, scope, target_ref, target_hint, reason_code, request_id, result
+       FROM public.admin_audit_events
+      WHERE action = 'admin_scope.deny' AND reason_code = 'last_scope_manager' AND actor_id = $1::uuid
+      ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [last.admin.adminId],
+  );
+  assert.equal(lastDenyRow.actor_id, last.admin.adminId, 'deny 行的 actor_id 必须是发起自撤的那个管理员');
+  assert.equal(lastDenyRow.scope, 'scopes:write', 'scope 列取被拒动作的域（scopes:write），不是被授予/撤销的那个 scope');
+  assert.equal(lastDenyRow.target_ref, null, 'deny 行不带 target_ref（按 0046 口径一律 NULL，标识落 target_hint）');
+  assert.equal(lastDenyRow.target_hint, `admin_account:${last.admin.adminId}`, 'target_hint 由函数按形参重建');
+  assert.equal(lastDenyRow.result, 'denied');
+  assert.match(lastDenyRow.request_id, UUID_SHAPE, `deny 行的 request_id 必须是入站请求 id（uuid），实际 ${lastDenyRow.request_id}`);
+  note(`[W4] 留痕：admin_scope.deny +1 行（reason_code=last_scope_manager，actor=最后授权者，scope=scopes:write，request_id=${lastDenyRow.request_id}）`);
+
   // ── [W5] 越权与自授：应用层与库层两道 ───────────────────────────────────
   // 缺 scopes:write 的操作者：用一个只持 accounts:read 的管理员。
   const plain = await seedScopeAdmin('gy-scope-plain', ['accounts:read']);
+  // 覆盖边界（如实限定，⛔ 不要读成「每一次 403/409 都落库」）：这一条 403 是应用层
+  // `resolveContext`/`requireAdminScope` 拦下的，**根本没有**进入写权威 ⇒ 不该凭空多出 deny 行。
+  // 同一句断言也把「旁路不是个什么都往里塞的垃圾桶」钉死：多写一行同样是缺陷。
+  const beforePlainDenyTotal = await denyTotal();
   const denied = await call(
     `${API}/admin/administrators/${last.admin.adminId}/scopes`,
     {
@@ -628,7 +683,11 @@ async function scopeWriteEvidence() {
   );
   assert.equal(denied.status, 403, `缺 scopes:write 必须 403，实际 ${denied.status}`);
   assert.equal(denied.body.error.code, 'SCOPE_DENIED');
+  const afterPlainDenyTotal = await denyTotal();
+  assert.equal(afterPlainDenyTotal, beforePlainDenyTotal, `缺 scopes:write 的 403 由应用层拦下、不进写权威 ⇒ 不得多出 deny 行，实际 ${beforePlainDenyTotal} → ${afterPlainDenyTotal}`);
+  note(`[W5] 边界：缺 scopes:write 的 403 SCOPE_DENIED **不**落 deny 行（总数 ${beforePlainDenyTotal} → ${afterPlainDenyTotal}，差 0）`);
   // 自授：唯一持有者给自己授一个**它自己没持有**的 scope ⇒ G0011（同样 403，但 details 指明 scope）。
+  const beforeSelfDenyTotal = await denyTotal();
   const selfGrant = await call(
     `${API}/admin/administrators/${last.admin.adminId}/scopes`,
     {
@@ -640,6 +699,34 @@ async function scopeWriteEvidence() {
   assert.equal(selfGrant.body.error.code, 'SELF_SCOPE_GRANT_DENIED', `自授必须是 SELF_SCOPE_GRANT_DENIED，实际 ${selfGrant.body.error.code}`);
   assert.equal(selfGrant.body.error.retryable, false);
   note('[W5] 缺 scopes:write ⇒ 403 SCOPE_DENIED；自授 ⇒ 403 SELF_SCOPE_GRANT_DENIED（均 retryable=false）');
+
+  // 监工指出的缺口：自授在 `grant` **之前**就被应用层拒掉，写权威 `catch` 里那条旁路跑不到
+  // ⇒ 修复后由服务层显式调 `recordEarlyDenial(...)` 补同一行。这里按**前后差值**核 +1，
+  // ⛔ 不硬编码 0→1（`[W3]`/`[W4]` 已经各写过行，0046 又刻意不幂等）。
+  const afterSelfDenyTotal = await denyTotal();
+  assert.equal(afterSelfDenyTotal - beforeSelfDenyTotal, 1, `自授被拒后必须恰好多 1 行 admin_scope.deny，实际 ${beforeSelfDenyTotal} → ${afterSelfDenyTotal}`);
+  const selfDenyRow = await one(
+    `SELECT actor_id, scope, target_ref, target_hint, reason_code, request_id, result
+       FROM public.admin_audit_events
+      WHERE action = 'admin_scope.deny' AND reason_code = 'self_scope_grant_denied' AND actor_id = $1::uuid
+      ORDER BY created_at DESC, id DESC LIMIT 1`,
+    [last.admin.adminId],
+  );
+  assert.equal(selfDenyRow.actor_id, last.admin.adminId, 'deny 行的 actor_id 必须是自授的那个管理员');
+  assert.equal(selfDenyRow.scope, 'scopes:write', 'scope 列取被拒动作的域（scopes:write），不是被授予的 jobs:cancel');
+  assert.equal(selfDenyRow.target_ref, null, 'deny 行不带 target_ref（按 0046 口径一律 NULL）');
+  assert.equal(selfDenyRow.target_hint, `admin_account:${last.admin.adminId}`, '自授的 target 就是自己：target_hint 由函数按形参重建');
+  assert.equal(selfDenyRow.result, 'denied');
+  // `requestId` 是**请求 id**（入站 id 或 `genReqId` 的随机 uuid），不是幂等键：
+  // ⛔ 不要断言它等于 `gy-w-self-0001`；只钉「非空 + uuid 形状」。
+  assert.match(selfDenyRow.request_id, UUID_SHAPE, `自授 deny 行的 request_id 必须是 uuid 形状，实际 ${selfDenyRow.request_id}`);
+  assert.notEqual(selfDenyRow.request_id, 'gy-w-self-0001', 'request_id 不是 Idempotency-Key');
+  const denyByReason = await q(
+    "SELECT reason_code, count(*)::int AS n FROM public.admin_audit_events WHERE action = 'admin_scope.deny' GROUP BY reason_code ORDER BY reason_code",
+  );
+  const denySummary = denyByReason.map((row) => `${row.reason_code}=${row.n}`).join('，');
+  note(`[W5] 留痕：admin_scope.deny +1 行（reason_code=self_scope_grant_denied，actor/target 均为自授者，scope=scopes:write，request_id=${selfDenyRow.request_id}）`);
+  note(`[W5] 本臂 deny 行按 reason_code 分组：${denySummary}`);
 
   await runtimePool.end();
 }

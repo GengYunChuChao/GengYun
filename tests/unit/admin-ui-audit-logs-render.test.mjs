@@ -340,7 +340,15 @@ test('筛选栏是契约的 entity（⛔ 不出现 entity_type），action 只�
     assert.ok(findBy(mounted.container, byTestId('audit-log-filter-to')) !== null, '必须有 to');
     assert.doesNotMatch(textOf(mounted.container), /entity_type/);
     const pageText = textOf(mounted.container);
-    for (const action of ['account.suspend', 'account.restore', 'set_flag', 'job.cancel']) {
+    for (const action of [
+      'account.suspend',
+      'account.restore',
+      'set_flag',
+      'job.cancel',
+      'admin_scope.grant',
+      'admin_scope.revoke',
+      'admin_scope.deny',
+    ]) {
       assert.match(pageText, new RegExp(action.replace('.', '\\.')), `action 闭集必须包含 ${action}`);
     }
     assert.match(pageText, /换筛选/, '必须写明换筛选会回第一页');

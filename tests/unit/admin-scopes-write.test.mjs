@@ -53,6 +53,9 @@ const operations = JSON.parse(readFileSync(new URL('../../packages/contracts/ope
  */
 function fakeAuthority(behaviour = {}) {
   const calls = [];
+  // 早拒（服务层在 `grant` 之前就拒掉）单独记一条流水：它**不是**一次写调用，
+  // 混进 `calls` 会让「自授不得进事务」这条断言失去意义。
+  const earlyDenials = [];
   let revision = behaviour.revision ?? 7;
   const respond = async (kind, action) => {
     calls.push({ kind, action });
@@ -71,10 +74,16 @@ function fakeAuthority(behaviour = {}) {
   };
   return {
     calls,
+    earlyDenials,
     authority: {
       persistent: true,
       grant: (action) => respond('grant', action),
       revoke: (action) => respond('revoke', action),
+      // 真实实现：委托给 `recordAdminScopeDenial`（整段吞错、返回 void）。替身同样返回 `undefined`。
+      recordEarlyDenial: async (subject, sqlState) => {
+        earlyDenials.push({ subject, sqlState });
+        if (behaviour.throwOnEarlyDenial !== undefined) throw behaviour.throwOnEarlyDenial;
+      },
     },
   };
 }
@@ -213,17 +222,80 @@ test('scopes:read 不等于 scopes:write：同一操作者读得到，却写不�
   assert.equal(calls.length, 0);
 });
 
+// ⚠ 用例名**逐字**保留旧文本：`docs/architecture/contract-status.json` 与
+// `contract-implementation-status.md` 把这条名字当锚点引用，改名会让门禁 MISSING（与改动无关的红）。
+// 新增的「留痕一次」主张写在断言里（下面两条），并另有独立的负控制用例。
 test('禁止自授：403 SELF_SCOPE_GRANT_DENIED（retryable:false），且不触达写权威', async () => {
-  const { authority, calls } = fakeAuthority({ scopes: ['scopes:write'] });
+  const { authority, calls, earlyDenials } = fakeAuthority({ scopes: ['scopes:write'] });
+  const service = serviceWith({ scopeAuthority: authority });
+  const ctx = writeContext();
+
+  const error = await expectApiError(
+    () => service.grantAdministratorScope(ctx, ACTOR_ID, grantBody({ scope: 'scopes:write' })),
+    'SELF_SCOPE_GRANT_DENIED',
+  );
+  assert.equal(error.status, 403);
+  assert.equal(error.retryable, false, '这是硬规则（裁定④），重试永远不会成功');
+  assert.equal(calls.length, 0, '自授必须在进入事务之前就被拦住');
+  // 监工缺口：拒在 `grant` 之前 ⇒ 写权威 catch 里的旁路跑不到 ⇒ 服务层必须自己补一次留痕。
+  // 留痕不是写调用（`calls` 仍为 0），它是**审计旁路**：两者混在一起就分不清"拦住了"和"写了"。
+  assert.equal(earlyDenials.length, 1, '自授必须留痕恰好一次（admin_scope.deny）');
+  assert.equal(earlyDenials[0].sqlState, 'G0008', '留痕走 SQLSTATE 口径：G0008（自授），不是 reason_code');
+  assert.notEqual(earlyDenials[0].sqlState, 'self_scope_grant_denied', '⛔ 别把 reason_code 当 SQLSTATE 传（表外值 ⇒ 一行都不写）');
+  assert.deepEqual(
+    earlyDenials[0].subject,
+    { actorId: ACTOR_ID, targetId: ACTOR_ID, requestId: ctx.requestId },
+    '留痕主体：actor 与 target 是同一个人（自授），request 取本次请求 id',
+  );
+});
+
+test('负控制：留痕本身失败 ⇒ 主响应仍是原始 403（同码、retryable:false），不升 500、不变成 200', async () => {
+  const { authority, calls, earlyDenials } = fakeAuthority({
+    scopes: ['scopes:write'],
+    throwOnEarlyDenial: new Error('旁路写失败：连接池耗尽（模拟）'),
+  });
   const service = serviceWith({ scopeAuthority: authority });
 
   const error = await expectApiError(
     () => service.grantAdministratorScope(writeContext(), ACTOR_ID, grantBody({ scope: 'scopes:write' })),
     'SELF_SCOPE_GRANT_DENIED',
   );
-  assert.equal(error.status, 403);
-  assert.equal(error.retryable, false, '这是硬规则（裁定④），重试永远不会成功');
-  assert.equal(calls.length, 0, '自授必须在进入事务之前就被拦住');
+  assert.equal(error.status, 403, '留痕失败不得把拒绝升级成 5xx');
+  assert.equal(error.retryable, false);
+  assert.equal(calls.length, 0, '留痕失败也不能顺手把请求放行去写权威');
+  assert.equal(earlyDenials.length, 1, '留痕尝试发生过一次（失败在替身里抛出，服务层吞掉）');
+});
+
+test('早拒留痕（适配层）：recordEarlyDenial ⇒ 走迁移 0046 的写入口，单语句自提交、不包事务', async () => {
+  // 为什么单独在**适配层**再证一次：服务层那条用例用的是替身，替身绿只证明"服务层调了这个方法"，
+  // 不证明真实现真的写库。这里用 `createPostgresAdminScopeAuthority` 的真实现 + 记录型连接池，
+  // 把「方法确实委托到 `record_admin_scope_denial(...)`」与「没有 BEGIN/COMMIT/ROLLBACK」钉死。
+  const queries = [];
+  const client = {
+    async query(text, params) {
+      queries.push({ text, params });
+      return { rows: [{ audit_id: makeUuid(891) }] };
+    },
+    release() {
+      queries.push({ text: '<release>', params: [] });
+    },
+  };
+  const pool = { async connect() { return client; } };
+  const authority = createPostgresAdminScopeAuthority({ pool });
+  const subject = { actorId: ACTOR_ID, targetId: ACTOR_ID, requestId: makeUuid(890) };
+
+  const result = await authority.recordEarlyDenial(subject, 'G0008');
+  assert.equal(result, undefined, '留痕成功不返回任何东西：调用方不可能据此改变判定');
+  assert.equal(queries.length, 2, '一次连接 + 一条 INSERT 语句 + 一次归还（归还也记进流水）');
+  assert.match(queries[0].text, /public\.record_admin_scope_denial/, '必须走 0046 的唯一写入口，而不是直接 INSERT admin_audit_events');
+  assert.deepEqual(
+    queries[0].params,
+    [ACTOR_ID, ACTOR_ID, 'scopes:write', 'self_scope_grant_denied', makeUuid(890)],
+    '函数入参：actor/target/scope（动作域）/reason_code（由 G0008 映射）/request_id',
+  );
+  assert.equal(queries[0].text.includes('BEGIN'), false, '早拒没有主事务：⛔ 不许开事务（开了就跟主响应生死绑在一起）');
+  assert.equal(queries[0].text.includes('ROLLBACK'), false, '早拒没有要回滚的东西');
+  assert.equal(queries[1].text, '<release>', '连接必须归还，否则旁路会漏池');
 });
 
 test('允许自撤（裁定④）：同一个人对自己 DELETE 不报 403，走真实写权威', async () => {

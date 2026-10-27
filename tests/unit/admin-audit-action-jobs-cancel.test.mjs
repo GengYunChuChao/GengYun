@@ -138,7 +138,7 @@ function expectApiError(error, code, status) {
 test('(a) AUDIT_ACTIONS 闭集含 `job.cancel`，既有 3 项顺序不变', () => {
   // 顺序有语义：闭集是「谁在写 admin_audit_events」的镜像，历史 3 项不许被重排／改名，
   // 否则历史审计行的 `action` 列与查询参数就对不上了。
-  assert.deepEqual([...AUDIT_ACTIONS], ['account.suspend', 'account.restore', 'set_flag', 'job.cancel']);
+  assert.deepEqual([...AUDIT_ACTIONS].slice(0, 4), ['account.suspend', 'account.restore', 'set_flag', 'job.cancel']);
   assert.ok(AUDIT_ACTIONS.includes('job.cancel'), '`job.cancel` 必须在闭集内（0043 写入的动作）');
   // `entity=job` 映射到 0043 实际写的 `scope` 值：`jobs:cancel`，**不是** `jobs:read`。
   assert.equal(AUDIT_ENTITY_SCOPES.job, 'jobs:cancel');
@@ -147,10 +147,18 @@ test('(a) AUDIT_ACTIONS 闭集含 `job.cancel`，既有 3 项顺序不变', () =
 });
 
 // (d) 长度单列一条：闭集被"顺手加一项却没写写入点"时，至少这里和契约用例会同时响。
-test('(d) AUDIT_ACTIONS.length === 4（第 4 项 = 0043 的 job.cancel）', () => {
-  assert.equal(AUDIT_ACTIONS.length, 4);
-  // entity 闭集同步到 3 项；`Object.values` 排序后逐值比对，防"改错映射值"。
-  assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), ['accounts:suspend', 'flags:write', 'jobs:cancel']);
+test('(d) 前 4 项长度仍为 4（第 4 项 = 0043 的 job.cancel）；后续扩值只能追加在末位', () => {
+  // GY-R64（#18 S2 PR-4）把闭集扩到 7 项（0041 的 grant/revoke + 0046 的 deny），
+  // 本条钉子收敛为「前 4 项及顺序不变」——那 4 项对应的库内写入点一个字都没动。
+  assert.equal([...AUDIT_ACTIONS].slice(0, 4).length, 4);
+  assert.equal(AUDIT_ACTIONS[3], 'job.cancel');
+  // entity 闭集同步到 4 项；`Object.values` 排序后逐值比对，防"改错映射值"。
+  assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), [
+    'accounts:suspend',
+    'flags:write',
+    'jobs:cancel',
+    'scopes:write',
+  ]);
 });
 
 // ---------------------------------------------------------------------------

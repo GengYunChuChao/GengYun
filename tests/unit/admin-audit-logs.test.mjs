@@ -131,12 +131,22 @@ test('GET /admin/audit-logs：action/entity 闭集与契约、库内写入点一
   assert.deepEqual(entity.schema.enum, [...AUDIT_ENTITIES]);
   assert.equal(operation['x-scope'], AUDIT_LOG_SCOPE);
   assert.equal(operation['x-version-required'], false);
-  // 库内写入点（迁移 0017 两处 + 迁移 0027 一处 + 迁移 0043 一处）写的 scope 就是 entity 的映射值。
-  assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), ['accounts:suspend', 'flags:write', 'jobs:cancel']);
+  // 库内写入点（迁移 0017 两处 + 0020/0027 一处 + 0043 一处 + 0041 两处 + 0046 一处）写的 scope
+  // 就是 entity 的映射值。`admin_scope` 映射到 `scopes:write`，但 0041 的授予/撤销行把 `scope`
+  // 写成**被授/被撤的那个 scope 本身** ⇒ 这条映射只收窄命中（拒绝行全中、授予/撤销只中
+  // `scopes:write` 那些）。取舍见 `catalog.ts` 文件头「一处必须如实登记的读数瑕疵」。
+  assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), [
+    'accounts:suspend',
+    'flags:write',
+    'jobs:cancel',
+    'scopes:write',
+  ]);
   assert.equal(scopeOfAuditEntity('account'), 'accounts:suspend');
   assert.equal(scopeOfAuditEntity('flag'), 'flags:write');
   // 0043 的 `record_admin_job_cancel_audit` 写的是 `jobs:cancel`（迁移 :175），不是 `jobs:read`。
   assert.equal(scopeOfAuditEntity('job'), 'jobs:cancel');
+  // 0046 的 `record_admin_scope_denial` 写死 `scope='scopes:write'`。
+  assert.equal(scopeOfAuditEntity('admin_scope'), 'scopes:write');
   assert.deepEqual([...AUDIT_LOG_OPERATION_IDS], ['listAuditLogs']);
 });
 

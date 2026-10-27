@@ -188,26 +188,40 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
     .parameters.find((parameter) => parameter.name === 'action').schema.enum;
   // 两层判据（S3b 审查后修复轮，2026-10-26）：
   //   ① **双向等式**（下面两句）：只保证"契约 enum 与运行时数组一致" ⇒ 抓**单边**改动；
-  //   ② **字面锚**（再下面两句）：钉住 4 个常量名与 4 个取值 ⇒ 抓**双边同时**改动。
+  //   ② **字面锚**（再下面两句）：钉住每个常量名与每个取值（含顺序）⇒ 抓**双边同时**改动。
   // 为什么必须补 ②：审查实测（本轮变异 M3）同时给契约 enum 与运行时常量追加第 5 个值 `post.hide`，
   // 只有 ① 时本用例 **5/5 全绿**（唯一变红的是 `admin-audit-action-jobs-cancel.test.mjs` 的
   // `AUDIT_ACTIONS.length === 4`）。也就是说：只留 ① 的本文件**不能**阻止未授权扩值，
-  // 那时它只配叫"一致性检查"。②补回后，"扩值"必须**显式**改这里 —— 仍然允许扩值（GY-R59 就是这么
-  // 合法扩到四值的），但扩值变成一次有联动的动作，而不是悄悄从两个文件之间溜过去。
+  // 那时它只配叫"一致性检查"。②补回后，"扩值"必须**显式**改这里 —— 仍然允许扩值（GY-R59 扩到四值、
+  // GY-R64 扩到七值就是这么做的），但扩值变成一次有联动的动作，而不是悄悄从两个文件之间溜过去。
   assert.deepEqual(runtime, contractEnum,
     '运行时 AUDIT_ACTIONS ≠ 契约 `?action=` 的 enum：值或顺序不一致，读面会「能看见但不能筛」');
   assert.deepEqual(contractEnum, runtime,
     '契约 `?action=` 的 enum ≠ 运行时 AUDIT_ACTIONS：反向同理，任何一侧单边改动都必须红');
   assert.deepEqual(order,
-    ['AUDIT_ACTION_ACCOUNT_SUSPEND', 'AUDIT_ACTION_ACCOUNT_RESTORE', 'AUDIT_ACTION_SET_FLAG', 'AUDIT_ACTION_JOB_CANCEL'],
-    'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这四个值是 `GET /admin/audit-logs?action=` 的合法输入，'
+    [
+      'AUDIT_ACTION_ACCOUNT_SUSPEND',
+      'AUDIT_ACTION_ACCOUNT_RESTORE',
+      'AUDIT_ACTION_SET_FLAG',
+      'AUDIT_ACTION_JOB_CANCEL',
+      'AUDIT_ACTION_ADMIN_SCOPE_GRANT',
+      'AUDIT_ACTION_ADMIN_SCOPE_REVOKE',
+      'AUDIT_ACTION_ADMIN_SCOPE_DENY',
+    ],
+    'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这些值是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '必须与 `admin_audit_events` 的写入点一一对应。第 4 项 `job.cancel` 由 GY-R59 追加：'
       + '0043_admin_job_cancel_audit.sql:168-175 早已写 `action=\'job.cancel\'` / `scope=\'jobs:cancel\'`，'
-      + '闭集漏登记导致 `?action=job.cancel` 恒 400。多一个成员就必须同 PR 改契约 enum、库内写入点与文档');
-  assert.deepEqual(runtime, ['account.suspend', 'account.restore', 'set_flag', 'job.cancel'],
-    'AUDIT_ACTIONS 的**取值**变了：这四个字符串就是 `GET /admin/audit-logs?action=` 的合法输入，'
+      + '闭集漏登记导致 `?action=job.cancel` 恒 400。第 5-7 项由 GY-R64（#18 S2 收尾片 PR-4）追加：'
+      + '0041 早已写 `admin_scope.grant` / `admin_scope.revoke`（`:319-326` / `:472-479`），闭集漏登记'
+      + '导致 `?action=admin_scope.grant` 恒 400；`admin_scope.deny` 来自 0046 的'
+      + '`record_admin_scope_denial`。多一个成员就必须同 PR 改契约 enum、库内写入点与文档');
+  assert.deepEqual(runtime,
+    ['account.suspend', 'account.restore', 'set_flag', 'job.cancel',
+      'admin_scope.grant', 'admin_scope.revoke', 'admin_scope.deny'],
+    'AUDIT_ACTIONS 的**取值**变了：这些字符串就是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '改名等于让历史审计行的 action 列与查询参数对不上。末位 `job.cancel` 来自 0043 的库内写入点'
-      + '（`record_admin_job_cancel_audit`，迁移 `0043_admin_job_cancel_audit.sql:174`）');
+      + '（`record_admin_job_cancel_audit`，迁移 `0043_admin_job_cancel_audit.sql:174`）；'
+      + '`admin_scope.*` 三项来自 0041（grant/revoke）与 0046（deny）');
   // 无重复：重复值会让 `?action=` 的合法性判断与顺序断言同时失真。
   assert.equal(new Set(runtime).size, runtime.length, `AUDIT_ACTIONS 有重复值：${runtime.join(', ')}`);
   // 历史锚点：`job.cancel` 必须仍在闭集内 —— 0043 的 `record_admin_job_cancel_audit` 在写它，
