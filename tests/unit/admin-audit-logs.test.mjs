@@ -21,10 +21,13 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  AUDIT_ACTION_POST_HIDE,
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
+  AUDIT_ENTITY_ACTION_GUARDS,
   AUDIT_ENTITY_SCOPES,
   AUDIT_LOG_SCOPE,
+  actionsOfAuditEntity,
   scopeOfAuditEntity,
 } from '../../services/api/src/admin/audit/catalog.ts';
 import {
@@ -131,15 +134,18 @@ test('GET /admin/audit-logs：action/entity 闭集与契约、库内写入点一
   assert.deepEqual(entity.schema.enum, [...AUDIT_ENTITIES]);
   assert.equal(operation['x-scope'], AUDIT_LOG_SCOPE);
   assert.equal(operation['x-version-required'], false);
-  // 库内写入点（迁移 0017 两处 + 0020/0027 一处 + 0043 一处 + 0041 两处 + 0046 一处）写的 scope
-  // 就是 entity 的映射值。`admin_scope` 映射到 `scopes:write`，但 0041 的授予/撤销行把 `scope`
+  // 库内写入点（迁移 0017 两处 + 0020/0027 一处 + 0043 一处 + 0041 两处 + 0046 一处 + 0047 一处）写的
+  // scope 就是 entity 的映射值。`admin_scope` 映射到 `scopes:write`，但 0041 的授予/撤销行把 `scope`
   // 写成**被授/被撤的那个 scope 本身** ⇒ 这条映射只收窄命中（拒绝行全中、授予/撤销只中
   // `scopes:write` 那些）。取舍见 `catalog.ts` 文件头「一处必须如实登记的读数瑕疵」。
+  // `post` 追加 `sources:write`（0047 的下架行写死这个值），但**单靠它不够**：0041/0046 的
+  // 权限行也把 `p_scope` 直传给 `scope` 列，所以 `post` 另配动作护栏（下一条用例专测）。
   assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), [
     'accounts:suspend',
     'flags:write',
     'jobs:cancel',
     'scopes:write',
+    'sources:write',
   ]);
   assert.equal(scopeOfAuditEntity('account'), 'accounts:suspend');
   assert.equal(scopeOfAuditEntity('flag'), 'flags:write');
@@ -147,6 +153,8 @@ test('GET /admin/audit-logs：action/entity 闭集与契约、库内写入点一
   assert.equal(scopeOfAuditEntity('job'), 'jobs:cancel');
   // 0046 的 `record_admin_scope_denial` 写死 `scope='scopes:write'`。
   assert.equal(scopeOfAuditEntity('admin_scope'), 'scopes:write');
+  // 0047 的 `record_admin_post_hide_audit` 写死 `scope='sources:write'`（迁移 :192）。
+  assert.equal(scopeOfAuditEntity('post'), 'sources:write');
   assert.deepEqual([...AUDIT_LOG_OPERATION_IDS], ['listAuditLogs']);
 });
 
@@ -319,8 +327,11 @@ test('GET /admin/audit-logs：筛选组合（action/entity/from/to 下传、未�
       expectApiError(error, 'INVALID_REQUEST') &&
       error.details.some((detail) => detail.field === 'action' && detail.code === 'enum'),
   );
+  // 闭集外的 entity 依旧 400（⛔ 不是空页）。`post` 在 R64 闭集片里**已经进闭集**，
+  // 所以这里换成 `comment`（`TargetRef.type` 里有、但审计 `entity` 维度没有）来保这条钉；
+  // `entity=post` 的正例与动作护栏见下一条用例。
   await assert.rejects(
-    () => service.listAuditLogs(adminContext(), { entity: 'post' }),
+    () => service.listAuditLogs(adminContext(), { entity: 'comment' }),
     (error) =>
       expectApiError(error, 'INVALID_REQUEST') &&
       error.details.some((detail) => detail.field === 'entity' && detail.code === 'enum'),
@@ -355,6 +366,81 @@ test('GET /admin/audit-logs：筛选组合（action/entity/from/to 下传、未�
       }),
     (error) => expectApiError(error, 'INVALID_CURSOR'),
   );
+});
+
+/**
+ * 4c. 动作护栏：`entity=post` 只等于 `action='post.hide'`。
+ *
+ * 为什么「`entity=post` ⇒ `scopes=['sources:write']`」一条不够：`sources:write` 在 `scope` 列上
+ * **不专属** —— `0041`/`0046` 的权限行把 `p_scope` 直传进去，授予/撤销 `sources:write` 能力时
+ * 落库的正是同一个字面量（`target_ref` 为 `NULL`、`target_hint` 是 `admin_account:<id>`）。
+ * 纯 scope 映射会把「某管理员拿到这个能力」混进一个标着 post 的结果集 —— 那不是收窄，是错误命名。
+ */
+test('GET /admin/audit-logs：动作护栏（entity=post 只等于 post.hide；护栏外 action 400 且零端口调用）', async () => {
+  const port = makeFakePort({ hasMore: false });
+  const service = makeService(port);
+
+  // ① 只给 `entity=post` ⇒ actions 取护栏清单、scopes 仍取 scope 映射。这是 200 的真页。
+  const onlyEntity = await service.listAuditLogs(adminContext(), { entity: 'post' });
+  assert.equal(onlyEntity.status, 200);
+  assert.deepEqual(port.calls[0].actions, ['post.hide'], 'entity=post 未带 action 时必须自己补上护栏清单');
+  assert.deepEqual(port.calls[0].scopes, ['sources:write']);
+
+  // ② 显式写全与 ① 同一个读数（护栏内，放行）。
+  await service.listAuditLogs(adminContext(), { entity: 'post', action: 'post.hide' });
+  assert.deepEqual(port.calls[1].actions, ['post.hide']);
+  assert.deepEqual(port.calls[1].scopes, ['sources:write']);
+
+  // ③ `action=post.hide` 不带 entity ⇒ 不受护栏影响（scopes=null，只看动作维度）。
+  await service.listAuditLogs(adminContext(), { action: 'post.hide' });
+  assert.deepEqual(port.calls[2].actions, ['post.hide']);
+  assert.equal(port.calls[2].scopes, null);
+
+  // ④ 护栏外的**合法** action 与 `entity=post` 组合 ⇒ 400 fail-closed，且**零端口调用**。
+  //    ⛔ 不是「交集为空 ⇒ 返回空页」：空页会被读成「平台从未发生过这类操作」。
+  //    `admin_scope.grant` 特意入选：它在裸 SQL 下与 `scopes=['sources:write']` **有交集**
+  //    （0041 把被授 scope 直传进 `scope` 列），正是这条护栏要挡的错误命名。
+  for (const action of ['set_flag', 'admin_scope.grant', 'account.suspend']) {
+    await assert.rejects(
+      () => service.listAuditLogs(adminContext(), { entity: 'post', action }),
+      (error) =>
+        expectApiError(error, 'INVALID_REQUEST') &&
+        error.details.some((detail) => detail.field === 'action' && detail.code === 'enum'),
+      `entity=post&action=${action} 必须 400`,
+    );
+  }
+  assert.equal(port.calls.length, 3, '护栏必须在查询之前拦下，不得触端口');
+
+  // ⑤ 护栏表自洽：键必属 entity 闭集、值非空、每个 action 都属 action 闭集；
+  //    没有护栏的实体（今天 account/flag/job/admin_scope）必须查回 null —— 「缺席即无护栏」。
+  for (const [entity, guard] of Object.entries(AUDIT_ENTITY_ACTION_GUARDS)) {
+    assert.ok(AUDIT_ENTITIES.includes(entity), `护栏键 ${entity} 不在 entity 闭集内`);
+    assert.ok(Array.isArray(guard) && guard.length > 0, `护栏 ${entity} 不得为空数组（空数组 = 另一种假话：静默全量）`);
+    for (const action of guard) {
+      assert.ok(AUDIT_ACTIONS.includes(action), `护栏动作 ${action} 不在 action 闭集内`);
+    }
+    assert.deepEqual(actionsOfAuditEntity(entity), guard);
+  }
+  assert.deepEqual(actionsOfAuditEntity('post'), [AUDIT_ACTION_POST_HIDE]);
+  for (const entity of ['account', 'flag', 'job', 'admin_scope']) {
+    assert.equal(actionsOfAuditEntity(entity), null, `${entity} 不该有护栏：它的 scope 列取值是该域专属的`);
+  }
+
+  // ⑥ 契约同源：护栏清单必须能在契约 `action` 枚举里筛得到（否则 `entity=post` 依旧「能看不能筛」），
+  //    描述里必须写明护栏语义（否则读者无从判断 400 是设计还是故障）。
+  const openapi = JSON.parse(readFileSync('packages/contracts/openapi.json', 'utf8'));
+  const operation = openapi.paths['/admin/audit-logs'].get;
+  const actionEnum = operation.parameters.find((parameter) => parameter.name === 'action').schema.enum;
+  const entityEnum = operation.parameters.find((parameter) => parameter.name === 'entity').schema.enum;
+  assert.ok(actionEnum.includes(AUDIT_ACTION_POST_HIDE), '契约 action 枚举漏了 post.hide');
+  assert.ok(entityEnum.includes('post'), '契约 entity 枚举漏了 post');
+  assert.ok(operation.description.includes('post.hide'), '契约描述必须写明 entity=post 的动作护栏');
+
+  // ⑦ operations.json 的 scope 仍是 `audit:read`（本片不动授权面；⛔ 该文件禁改）。
+  const operations = JSON.parse(readFileSync('packages/contracts/operations.json', 'utf8'));
+  const listed = operations.operations.find((candidate) => candidate.id === 'listAuditLogs');
+  assert.ok(listed, 'operations.json 里找不到 listAuditLogs');
+  assert.equal(listed.scope, AUDIT_LOG_SCOPE);
 });
 
 /** 4b. 游标完整性：跨用户 / 过期 / 篡改 / 位置不可解析。 */

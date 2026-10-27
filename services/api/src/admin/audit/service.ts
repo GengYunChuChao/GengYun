@@ -46,6 +46,7 @@ import {
   AUDIT_LOG_CURSOR_FAMILY,
   AUDIT_LOG_OPERATION_ID,
   AUDIT_LOG_SCOPE,
+  actionsOfAuditEntity,
   scopeOfAuditEntity,
 } from './catalog.ts';
 import type { AdminAuditEntity } from './catalog.ts';
@@ -206,6 +207,26 @@ export function createAdminAuditLogService(options: AdminAuditLogServiceOptions)
     const action = parseActionParam(query.action);
     const entity = parseEntityParam(query.entity);
 
+    // 动作护栏（`catalog.ts` 的 `AUDIT_ENTITY_ACTION_GUARDS`）：`entity=post` 只等于
+    // `action='post.hide'`。`post` 的 `scope` 取值（`sources:write`）在库里**不专属**于下架行 ——
+    // `0041`/`0046` 的权限行把 `p_scope` 直传进 `scope` 列，授予/撤销 `sources:write` 时
+    // 落库的正是同一个字面量。纯 scope 映射会把「某管理员拿到 `sources:write`」混进一个
+    // 标着 post 的结果集，那不是收窄而是错误命名（理由见 `catalog.ts` 文件头那一节）。
+    const guard = entity === null ? null : actionsOfAuditEntity(entity);
+    if (guard !== null && action !== null && !(guard as readonly string[]).includes(action)) {
+      // ⛔ 不静默取交集：这一组合按护栏算恒空（交集 ∅ ⇒ 伪造「平台从未发生过这类操作」），
+      // 不按护栏算又会把非 post 行塞进 post 的结果里（错误命名）。两种读法都是假话，
+      // 所以 fail-closed 报参数错；错误码沿用本路由既有的非法参数形态，不另造。
+      throw new ApiError(
+        'INVALID_REQUEST',
+        `entity=${entity} 只接受 action=${guard.join(' / ')}（动作护栏）`,
+        { details: [{ field: 'action', code: 'enum' }] },
+      );
+    }
+    // 没给 `?action=` 且实体带护栏 ⇒ actions 取护栏清单；`scopes` 依旧取
+    // `[scopeOfAuditEntity(entity)]`（护栏只收窄动作维度，不动 scope 维度）。
+    const actions = action === null ? (guard === null ? null : [...guard]) : [action];
+
     // 筛选组合的签名：游标只能在同一组筛选下继续翻页。
     const watermark = cursors.watermarkOf([from ?? '', to ?? '', action ?? '', entity ?? '']);
 
@@ -231,7 +252,7 @@ export function createAdminAuditLogService(options: AdminAuditLogServiceOptions)
       limit,
       from,
       to,
-      actions: action === null ? null : [action],
+      actions,
       scopes: entity === null ? null : [scopeOfAuditEntity(entity)],
       before,
     });

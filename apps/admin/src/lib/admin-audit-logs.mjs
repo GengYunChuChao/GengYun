@@ -43,6 +43,7 @@ export const AUDIT_LOG_ACTIONS = Object.freeze([
   'admin_scope.grant',
   'admin_scope.revoke',
   'admin_scope.deny',
+  'post.hide',
 ]);
 
 export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
@@ -53,24 +54,33 @@ export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
   'admin_scope.grant': '授予管理员能力',
   'admin_scope.revoke': '撤销管理员能力',
   'admin_scope.deny': '管理员操作被拒',
+  'post.hide': '下架社区内容',
 });
 
 /** `entity` 闭集：与 `catalog.ts` 的 `AUDIT_ENTITIES` 逐字同序（⛔ 不是 `entity_type`）。 */
-export const AUDIT_LOG_ENTITIES = Object.freeze(['account', 'flag', 'job', 'admin_scope']);
+export const AUDIT_LOG_ENTITIES = Object.freeze(['account', 'flag', 'job', 'admin_scope', 'post']);
 
 export const AUDIT_LOG_ENTITY_LABELS = Object.freeze({
   account: '账号',
   flag: '功能开关',
   job: '作业',
   admin_scope: '管理员能力',
+  post: '社区内容',
 });
 
-/** entity → 事件落库时的 scope（`AUDIT_ENTITY_SCOPES`）。仅用于说明文案。 */
+/**
+ * entity → 事件落库时的 scope（`AUDIT_ENTITY_SCOPES`）。仅用于说明文案。
+ * ⚠ `post` 那一格**不足以**定义 `entity=post`：`sources:write` 同时是权限行的 `scope` 取值
+ * （授予／撤销 `sources:write` 时落库的正是这个串），所以后端另有一张动作护栏
+ * （`AUDIT_ENTITY_ACTION_GUARDS`）把 `entity=post` 收窄成 `action='post.hide'`，
+ * 与护栏外 `action` 组合时是 400 而不是空页。前端不复制护栏，越界组合由后端 400 拦下。
+ */
 export const AUDIT_LOG_ENTITY_SCOPES = Object.freeze({
   account: 'accounts:suspend',
   flag: 'flags:write',
   job: 'jobs:cancel',
   admin_scope: 'scopes:write',
+  post: 'sources:write',
 });
 
 export const AUDIT_LOG_LIMIT_OPTIONS = Object.freeze([LIMIT_DEFAULT, LIMIT_MAX].filter((value, index, list) => list.indexOf(value) === index));

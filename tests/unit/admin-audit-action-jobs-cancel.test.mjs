@@ -149,15 +149,17 @@ test('(a) AUDIT_ACTIONS 闭集含 `job.cancel`，既有 3 项顺序不变', () =
 // (d) 长度单列一条：闭集被"顺手加一项却没写写入点"时，至少这里和契约用例会同时响。
 test('(d) 前 4 项长度仍为 4（第 4 项 = 0043 的 job.cancel）；后续扩值只能追加在末位', () => {
   // GY-R64（#18 S2 PR-4）把闭集扩到 7 项（0041 的 grant/revoke + 0046 的 deny），
-  // 本条钉子收敛为「前 4 项及顺序不变」——那 4 项对应的库内写入点一个字都没动。
+  // 同轮的读面闭集片再追加第 8 项 `post.hide`（0047 的下架审计）——
+  // 本条钉子收敛为「前 4 项及顺序不变」：那 4 项对应的库内写入点一个字都没动。
   assert.equal([...AUDIT_ACTIONS].slice(0, 4).length, 4);
   assert.equal(AUDIT_ACTIONS[3], 'job.cancel');
-  // entity 闭集同步到 4 项；`Object.values` 排序后逐值比对，防"改错映射值"。
+  // entity 闭集同步到 5 项（读面闭集片追加 `post`）；`Object.values` 排序后逐值比对，防"改错映射值"。
   assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), [
     'accounts:suspend',
     'flags:write',
     'jobs:cancel',
     'scopes:write',
+    'sources:write',
   ]);
 });
 
