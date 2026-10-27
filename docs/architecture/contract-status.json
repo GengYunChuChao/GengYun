@@ -565,7 +565,7 @@
         {
           "path": "services/api/src/privacy/user-data-deletion.ts",
           "symbol": "cancelDeletion",
-          "lines": "1350-1364"
+          "lines": "1429-1443"
         },
         {
           "test": "tests/unit/account-deletion-receipts.test.mjs",
@@ -4017,7 +4017,7 @@
         {
           "path": "services/api/src/contract.ts",
           "symbol": "ERROR_STATUS_MAP",
-          "lines": "14-58"
+          "lines": "14-62"
         },
         {
           "path": "services/api/src/errors.ts",
@@ -4029,7 +4029,7 @@
           "name": "API 错误码与 HTTP 状态映射与契约 states.json 完全一致"
         }
       ],
-      "blocker": "缺：契约 error_status_map 未定义 500/INTERNAL_ERROR，未预期异常以 500 + contract_gap=NO_CONTRACT_CODE_FOR_500 如实返回（services/api/src/app.ts:2098-2110）；后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）"
+      "blocker": "缺：后台凭据错误无专用码，复用 401 SESSION_REQUIRED（admin-auth.ts:12-13）。500 一侧已闭（GY-R67-A03）：契约 error_status_map 的 500 档只有 INTERNAL_ERROR，未预期异常由 services/api/src/app.ts 的 setErrorHandler 兜底以该码返回，信封走与其他错误同一个 buildErrorEnvelope（不再有 contract_gap 之类顶层字段），且每个 operation 都声明 #/components/responses/Error500"
     },
     {
       "key": "pagination",

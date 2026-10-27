@@ -330,6 +330,8 @@ export const READ_FAILURE_CODE_LABELS = Object.freeze({
   REQUEST_IN_PROGRESS: '同一请求正在处理中，稍后用同一幂等键查结果',
   // 429：限流
   RATE_LIMITED: '请求过于频繁，被服务端限流',
+  // 500：服务端自身缺陷（不是上游问题，也不是调用方参数问题——那是 4xx）
+  INTERNAL_ERROR: '服务端内部错误（服务端自身故障，不是你的操作问题）',
   // 503 / 504：上游不可用、配额、结果未知、超时
   PROVIDER_UNAVAILABLE: '服务暂不可用（后端依赖未接线或不可达）',
   PROVIDER_QUOTA_EXCEEDED: '上游服务配额已用尽',

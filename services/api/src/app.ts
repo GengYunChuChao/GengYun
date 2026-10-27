@@ -23,7 +23,7 @@
 import { randomUUID } from 'node:crypto';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
-import { CONTRACT_VERSION } from './contract.ts';
+// 本文件不再直接引 `CONTRACT_VERSION`：`meta.contract_version` 由 `buildErrorEnvelope` 统一补齐（GY-R67-A03）。
 import type { AppConfig, TrustProxyConfig } from './config.ts';
 import { ApiError, buildErrorEnvelope, retryAfterSecondsFor } from './errors.ts';
 import { createJsonSchema2020ValidatorCompiler, RUNTIME_AJV_CUSTOM_OPTIONS } from './schema-validator.ts';
@@ -2606,7 +2606,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const errorCode = (error as { code?: string }).code;
 
     // Fastify 内容类型解析错误（非法 JSON / 内容类型 / 请求体过大）：
-    // 这些是客户端请求错误，映射到契约错误码，而不是 500 缺口。
+    // 这些是客户端请求错误，映射到契约错误码，而不是落到 500 `INTERNAL_ERROR`。
     if (typeof errorCode === 'string' && errorCode.startsWith('FST_ERR_CTP_')) {
       if (statusCode === 413) {
         reply.status(413).send(envelope(new ApiError('MEDIA_TOO_LARGE', '请求体超过大小限制')));
@@ -2635,21 +2635,21 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     }
 
     request.log.error({ err: error }, 'unhandled error');
-    // 契约 error_status_map 未定义 500 / INTERNAL_ERROR（见 docs/engineering-shell.md“契约缺口”）。
-    // 不伪造契约错误码：如实返回 500，并显式标记该缺口，供监工与指挥核对。
-    reply.status(500).send({
-      error: {
-        message: '服务器内部错误',
-        retryable: false,
-        details: [],
-      },
-      meta: {
-        request_id: request.id,
-        contract_version: CONTRACT_VERSION,
-        execution_mode: config.executionMode,
-      },
-      contract_gap: 'NO_CONTRACT_CODE_FOR_500',
-    });
+    // 未预期异常 ⇒ 契约 500 档 `INTERNAL_ERROR`。依据分散在四处，改一处要同步四处：
+    //   1. `packages/contracts/states.json` 的 `error_status_map` 500 档只有这一个码；
+    //   2. `packages/contracts/openapi.json` 的 `components.schemas.ErrorCode.enum` 收录它；
+    //   3. 同文件 `x-error-status-map` 与 `components.responses.Error500`（description 恰是该码）；
+    //   4. 每个 operation 的 `responses` 都声明 `#/components/responses/Error500`。
+    // `services/api/src/contract.ts` 的 `ERROR_STATUS_MAP` 是这四处的服务端镜像，`ApiError.status`
+    // 由错误码反推，所以这里不写死 500，也不另造一套信封形状。
+    // 信封走与其余错误**同一个** `buildErrorEnvelope`：`error.code` 必填、`meta` 三字段齐备；
+    // `ErrorEnvelope` 与 `meta` 都是 additionalProperties:false，因此不能再有 `contract_gap`
+    // 这类顶层披露字段（GY-R67-A03 之前那版正是靠它标记「契约里没有能映射到 500 的码」）。
+    // `details` 保持空数组：服务端内部错误没有可枚举的字段级明细，而契约要求它是数组。
+    // `retryable` 沿用 5xx 口径：服务端自身缺陷，客户端重试没有意义 ⇒ false；也不给
+    // `Retry-After`（那只对 409 / 429 / 可重试的 503、504 有意义）。
+    const internalError = new ApiError('INTERNAL_ERROR', '服务器内部错误');
+    reply.status(internalError.status).send(envelope(internalError));
   });
 
   return app;

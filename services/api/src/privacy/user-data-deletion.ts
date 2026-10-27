@@ -272,6 +272,30 @@ export interface OwnerPurgeStore {
 }
 
 /**
+ * 媒体对象清理端口（注销闭集 · 媒体域）。
+ *
+ * 语义由 store 原语自己保证（`services/api/src/media/store.ts::purgeOwnedMedia`）：
+ * 把该主体的社区图片**软隐藏**（行打 `deleted`，内容不再被读路径返回）＋把对象引用**摘掉并登记进
+ * 待删台账**，两段在**同一个事务**里完成（先软隐藏、再摘对象）。
+ *
+ * 调用方只需知道三条边界：
+ *   - **幂等**：同一主体重复调用不报错；返回的是"这次实际改动的行数 / 对象登记数"（第二次通常为 0），
+ *     ⛔ 不是累计值；
+ *   - **只动该主体**：所有语句按 `owner_id = $1` 收窄，别人的媒体不会被这条路径碰到；
+ *   - **空 / 非法主体拒跑**：`''`、纯空白、非 UUID 一律抛错 ⇒ 由协议折叠成 `blocked`，
+ *     ⛔ 绝不退化成"清全部"。
+ *
+ * ⚠️ `objectsRegistered` 是**台账登记数**，不是"已从桶里删除的对象数"：原语不持有对象存储客户端，
+ * 真删在 `media/service.ts` 的 `cleanupOrphans`（该清理器今天没有生产调用者）。因此证据串用
+ * `media-objects-registered`，⛔ 不得写成 `purged`（那是在回执里谎称对象已删）。
+ *
+ * 只声明注销闭集用得到的这一个方法：接了清理也不因此获得媒体域的其它能力。
+ */
+export interface MediaPurgePort {
+  purgeOwnedMedia(ownerId: string): Promise<{ softHidden: number; objectsRegistered: number }>;
+}
+
+/**
  * 备份副本清除端口。**默认未接线** ⇒ `backupState: 'pending'`（不谎称完成）。
  * 接线（GY-I19）后返回 `{ purged: true, evidenceRef }` 即置 `completed`。
  *
@@ -465,6 +489,28 @@ export interface UserDataDeletionDeps {
    * 调用期取，不另建实例）；不注入 ⇒ 闭集逐字保持本片之前的行为。
    */
   ocrStore?: OwnerPurgeStore;
+  /**
+   * GY-R68（#19 延续片 · 媒体域）· 媒体对象清理端口（`media/store.ts::purgeOwnedMedia`）。
+   *
+   * 只声明一个方法（社区图片软隐藏 ＋ 对象引用摘除进待删台账，同一事务、幂等、按 `owner_id` 收窄）。
+   * 不注入 ⇒ 闭集与证据串逐字保持本片之前的行为。
+   *
+   * ⚠️ 它挂在 `recognitions` 处理器上（识别产物的原对象就在媒体域）⇒ 装配处必须与
+   * `recognitionsStore` **成对注入**；只注入本端口而没注入识别域 store 时，媒体对象不会被清。
+   *
+   * ⚠️ 媒体读数当前挂在识别域证据上（`recognitions:media-hidden:*` / `recognitions:media-objects-registered:*`）；
+   * 若将来独立成 media 域，必须同步 `requiredModules()` 与 `MODULE_TABLE_COVERAGE`（后者写死 8 个域，
+   * 而 `tests/unit/deletion-registration-coverage.test.mjs` 把 4 个条件域名字写死）。
+   *
+   * ⚠️ **装配留白是个叠加陷阱**（`services/api/src/app.ts` 现状）：`:1298-1301` 建 PG 媒体 store 时
+   * **不传 `connect`**、`:2212` 也**不注入本端口**。两处空白今天互相掩盖（不注入 ⇒ 根本不执行）；
+   * 下一片若只补 `mediaStore` 而忘给 `connect`，真库下 `purgeOwnedMedia` 会以
+   * `PROVIDER_UNAVAILABLE` fail-closed ⇒ **所有**识别域注销一起变 `blocked`。装配时**两处必须同时补**。
+   *
+   * ⚠️ 台账 `media_object_cleanup` 按 `object_ref_digest` **全局唯一**：同一对象键重复登记会覆盖旧行的
+   * `media_id`（只累加 `attempts`），与既有 `saveObjectCleanup` 同口径 —— 此处不引入新语义。
+   */
+  mediaStore?: MediaPurgePort;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
   /**
@@ -777,10 +823,20 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     return userId;
   }
 
-  function makeHandler(module: string, store: OwnerPurgeStore) {
+  function makeHandler(module: string, store: OwnerPurgeStore, mediaPurge?: MediaPurgePort) {
     return async (input_: Record<string, unknown>): Promise<Record<string, unknown>> => {
       const requestId = String(input_['requestId'] ?? '');
       const userId = subjectOf(requestId);
+      // GY-R68（#19 延续片 · 媒体域）：先清媒体对象，再删本域行。
+      //   - 读数一律来自原语的**真实返回**（⛔ 不写死常量、不造伪数字）；
+      //   - 主体为空 ⇒ **不调原语**（空主体="不知道清谁"，绝不能变成"清全部"）；
+      //   - 原语抛错 ⇒ 本处理器直接抛，由协议折叠 `blocked`（此后一行都没删，不会留下
+      //     "行已删但媒体还在"的半截状态）。
+      //     这条排序有专门用例守：`tests/unit/privacy-media-purge.test.mjs::清理失败` 先种一行识别记录，
+      //     断言媒体抛错后该行仍在 —— 把本段挪到 `purgeOwnerData` 之后，该用例会立刻转红。
+      const mediaReadings = mediaPurge !== undefined && userId.trim() !== ''
+        ? await mediaPurge.purgeOwnedMedia(userId)
+        : null;
       // 能分表计数的实现（本片 PG store）走 `purgeOwnerData`：正文表＋本域幂等台账**同一事务**
       // 清掉，两个真实行数都进证据；只提供 `deleteAllByOwner` 的实现保持既有语义（只报正文行数）。
       const purgeOwnerData = store.purgeOwnerData;
@@ -829,6 +885,22 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       if (retained !== null) evidenceRef = `${evidenceRef};${module}:retained:${retained}`;
       if (redacted !== null) evidenceRef = `${evidenceRef};${module}:redacted:${redacted}`;
       if (hiddenMedia !== null) evidenceRef = `${evidenceRef};${module}:media-hidden:${hiddenMedia}`;
+      // GY-R68 · 媒体对象清理读数（社区图片软隐藏数 ＋ 对象键**登记待删**数），来自原语真实返回。
+      // ⛔ 不可信读数不写进证据：宁可让本模块 blocked，也不把假数字写进回执。
+      // ⛔ token 是 `media-objects-registered`：原语只把对象键登记进 `media_object_cleanup`，
+      //    一次 `deleteObject` 都没调（真删在 `media/service.ts::cleanupOrphans`，今天无生产调用者），
+      //    写成 `purged` 就是在回执里谎称桶里已经删干净。
+      if (mediaReadings !== null) {
+        const { softHidden, objectsRegistered } = mediaReadings;
+        if (
+          !Number.isSafeInteger(softHidden) || softHidden < 0
+          || !Number.isSafeInteger(objectsRegistered) || objectsRegistered < 0
+        ) {
+          throw new Error('媒体清理返回了不可信读数：拒绝写假证据');
+        }
+        evidenceRef = `${evidenceRef};${module}:media-hidden:${softHidden}`;
+        evidenceRef = `${evidenceRef};${module}:media-objects-registered:${objectsRegistered}`;
+      }
       // 迁移 0030：行级作者指针替换读数（0 也要写 —— "替换了 0 行"是可与"没做"区分的读数）。
       if (authorRefsReplaced !== null) {
         evidenceRef = `${evidenceRef};${module}:author-refs-replaced:${authorRefsReplaced}`;
@@ -938,12 +1010,19 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   // 的 `purgeOwnerRows`）：**注入才注册**（闭集同步追加，见 `RECOGNITIONS_DELETION_MODULE` 注释）。
   // 走 `purgeOwnerData` ⇒ 证据串带 `recognitions:online-purged:<三表真实删除行数之和>` 与
   // `recognitions:idempotency-purged:<台账行数>`，并由 `ONLINE_EVIDENCE_MODULES` 放行落库（迁移 0031）。
-  // ⛔ 该域**没有**"保留/脱敏"这类业务留存：识别任务与识别结果都是该主体自己的数据，
-  // 注销即物理删；关联的 `media` 对象由媒体域另行清理（本片不接管，见证据页的排除表）。
+  // ⛔ 该域**没有**"保留/脱敏"这类业务留存：识别任务与识别结果都是该主体自己的数据，注销即物理删。
+  // GY-R68（#19 延续片 · 媒体域）：注入 `mediaStore` 时，本处理器**先**调媒体域原语
+  // `purgeOwnedMedia`（社区图片软隐藏 ＋ 对象键登记进待删台账，同一事务、幂等、按 `owner_id` 收窄），
+  // 再删本域四表，并把原语返回的两个**真实读数**写进证据串：
+  //   `recognitions:media-hidden:<softHidden>`、`recognitions:media-objects-registered:<objectsRegistered>`。
+  // ⛔ 第二个数只是**台账登记数**（原语不删桶对象；真删在 `cleanupOrphans`，今天无生产调用者），
+  //   所以 token 是 `-registered` 而不是 `-purged`。
+  // ⛔ 不写死常量、不造伪数字；原语抛错或读数不可信 ⇒ 本处理器抛错、协议折叠 `blocked`
+  // （不回退成"没有媒体要清"）；主体为空则**不调原语**。
   if (input.recognitionsStore !== undefined) {
     coordinator.registerModule(
       RECOGNITIONS_DELETION_MODULE,
-      makeHandler(RECOGNITIONS_DELETION_MODULE, input.recognitionsStore),
+      makeHandler(RECOGNITIONS_DELETION_MODULE, input.recognitionsStore, input.mediaStore),
     );
   }
   // #19 延续片 · 语音域（三表：`speech_jobs` → `transcriptions` → `speech_idempotency`，理由同上，
