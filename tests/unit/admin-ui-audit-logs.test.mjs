@@ -76,8 +76,9 @@ test('契约形状：路径/scope/闭集与后端 catalog 逐字一致；⛔ 没
     'admin_scope.grant',
     'admin_scope.revoke',
     'admin_scope.deny',
+    'post.hide',
   ]);
-  assert.deepEqual([...AUDIT_LOG_ENTITIES], ['account', 'flag', 'job', 'admin_scope']);
+  assert.deepEqual([...AUDIT_LOG_ENTITIES], ['account', 'flag', 'job', 'admin_scope', 'post']);
   assert.equal(AUDIT_LOG_ACTIONS.includes('entity_type'), false);
 });
 
@@ -121,7 +122,9 @@ test('筛选校验：非法时间/闭集外 action/entity/from>to 都在出网�
   assert.equal(noZone.errors[0].field, 'from');
   assert.match(noZone.errors[0].message, /RFC 3339/u);
 
-  const badAction = validateAuditLogFilters({ action: 'post.hide' });
+  // `post.hide` 由 GY-R64 读面闭集片登记进闭集（第 8 值），故「闭集外」的例子改用它**没有**的
+  // 同域动作 `post.approve`（后端只有 `post.hide` 一个 post 域 action）。
+  const badAction = validateAuditLogFilters({ action: 'post.approve' });
   assert.equal(badAction.ok, false);
   assert.equal(badAction.errors[0].field, 'action');
   assert.equal(badAction.errors[0].code, 'enum');

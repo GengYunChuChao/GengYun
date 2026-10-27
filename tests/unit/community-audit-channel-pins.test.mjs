@@ -1,6 +1,19 @@
 /**
  * A 档回归钉 · 「后台下架（`post.hide`）的审计**不落库**」这个缺口（基线 `31291afb`）。
  *
+ * ## 翻钉进度（GY-R64，2026-10）
+ *
+ * - 钉③（库内写入点）**已翻**：#656 的迁移 `0047_admin_post_hide_audit.sql` 让下架审计真的落库，
+ *   钉③ 因此反向成「有且只有一处窄口径写入点」。
+ * - 钉④（读面闭集）**已翻**（本片）：`AUDIT_ACTIONS` 登记 `post.hide` 作第 8 项、`post` 作第 5 个
+ *   entity 键，并给 `entity=post` 加动作护栏；`?action=post.hide` 不再是 400。
+ * - 钉⑥ **仍未翻**：它断言的是**内存端口**的台账（`persistent: false`），PG 端口的行为在
+ *   `tests/integration/admin-post-hide-audit-pg.mjs` 里断言，所以这里反过来要保住「内存台账仍是
+ *   进程内」这个事实，否则两份口径混成一份。
+ *
+ * ⇒ 下面这段「缺口原貌」是**基线 `31291afb` 的历史记录**，用于解释本文件为什么存在；
+ *    它不再代表当前行为，当前行为以钉③④⑥ 的断言与 `FLIP_GUIDE` 的翻钉进度为准。
+ *
  * ## 本文件钉的是**缺口**，不是功能
  *
  * 今天（2026-10，基线 `31291afb`）后台下架一条社区帖时会写一条 `action = 'post.hide'` 的审计行
@@ -86,9 +99,11 @@ const FLIP_GUIDE =
   '断言同一行在**新进程**里仍可读出（今天这里断言的是「换一个进程就是零」）；\n' +
   '  4) 更新 `services/api/src/app.ts:1416-1417` 那段「库内审计未取得」的登记注释，否则代码与注释互相打脸。\n' +
   '  ⚠ R64（2026-10）已经翻了**第 1 条**：迁移 `0047_admin_post_hide_audit.sql` 让下架审计真的落库，' +
-  '钉③ 因此反向成「有且只有一处窄口径写入点」。仍**未**翻的两条：`catalog.ts` 的读面闭集（留给下一片，' +
-  '那两个文件正被在飞 `#652` 修改）与钉⑥（它测的是**内存端口**的台账，PG 端口的行为在 ' +
-  '`tests/integration/admin-post-hide-audit-pg.mjs` 里断言）。';
+  '钉③ 因此反向成「有且只有一处窄口径写入点」。同轮**读面闭集片**翻了**第 2 条**：' +
+  '`catalog.ts` 的 `AUDIT_ACTIONS` 追加 `post.hide`、`AUDIT_ENTITY_SCOPES` 追加 `post`，' +
+  '并给 `entity=post` 加动作护栏（`AUDIT_ENTITY_ACTION_GUARDS`）——钉④ 因此反向成' +
+  '「闭集含 `post.hide`，且库内恰有一处写入点」。仍**未**翻的是钉⑥（它测的是**内存端口**的台账，' +
+  'PG 端口的行为在 `tests/integration/admin-post-hide-audit-pg.mjs` 里断言）。';
 
 /** 递归列出目录下所有匹配的文件（绝对路径，按字典序），子目录（如 `rollback/`）不放过。 */
 function walk(dir, accept) {
@@ -250,7 +265,7 @@ test('钉③（R64 已翻转）：下架审计在库里有**唯一的**窄口径
   );
 });
 
-test('钉④：审计读面的 `action` 闭集里没有 `post.hide` —— 读面认不出这个动作', () => {
+test('钉④：审计读面的 `action` 闭集含 `post.hide`，且库内恰有一处写入点（读面「能看见也能筛」）', () => {
   // 正控 0：闭集必须**真的来自源文件**（不是把常量数组抄进测试的静态快照）。
   const sourceActions = auditActionsFromCatalogSource();
   assert.ok(
@@ -278,14 +293,27 @@ test('钉④：审计读面的 `action` 闭集里没有 `post.hide` —— 读�
     `正控：\`AUDIT_ACTIONS\` 至少含 4 个库内写入动作，实际 ${JSON.stringify(AUDIT_ACTIONS)}`,
   );
 
+  // 翻转后的判据（原判据是「闭集里不许有 post 域动作」）：post 域动作**恰好一个**且就是
+  // `post.hide` —— 多一个（例如有人把 `post.approve` 也塞进来而不写库内写入点）同样要红。
   const postish = AUDIT_ACTIONS.filter((action) => /post/i.test(action));
   assert.deepEqual(
     postish,
-    [],
-    `下架动作不得出现在审计读面闭集里：\`services/api/src/admin/audit/catalog.ts\` 的 \`AUDIT_ACTIONS\` 是` +
-      `「谁在往 \`public.admin_audit_events\` 写」的单一来源（同文件 :6-13 列出 4 处库内窄口径函数），` +
-      `今天没有任何一处写 \`post.hide\`。实际多出来 ${postish.length} 个：${JSON.stringify(postish)}。\n` +
-      `如果这条红了，说明有人给闭集加了动作却没有配套的库内写入点（或反过来）——先对齐再决定翻钉。\n\n${FLIP_GUIDE}`,
+    ['post.hide'],
+    `审计读面闭集里的 post 域动作必须**恰好一个** \`post.hide\`（0047 的 \`record_admin_post_hide_audit\` 写它）。` +
+      `实际 ${postish.length} 个：${JSON.stringify(postish)}。\n` +
+      `如果这条红了：多出来的动作要么还没有库内写入点（先写迁移再进闭集），要么是拼写漂移。\n\n${FLIP_GUIDE}`,
+  );
+
+  // 反向核：闭集里能筛的 post 域动作，必须真有一处迁移在写（否则就是「能筛但没人写」的假面）。
+  const inDbWriters = listSqlFiles(MIGRATIONS_DIR).filter((file) => {
+    const text = readFileSync(file, 'utf8');
+    return /INSERT INTO public\.admin_audit_events/i.test(text) && text.includes("'post.hide'");
+  });
+  assert.deepEqual(
+    inDbWriters.map(repoPath),
+    ['services/api/db/migrations/0047_admin_post_hide_audit.sql'],
+    '闭集里的 `post.hide` 必须**恰好**由一处迁移写入（读面与写入点一比一）：' +
+      `实际命中 ${JSON.stringify(inDbWriters.map(repoPath))}`,
   );
 });
 

@@ -27,7 +27,8 @@
  *     `appendAudit` 那份进程内台账（`app.ts:1094-1098` 让内容 store 与 ops store 共用一份）。
  *
  * ## 覆盖的读数（前缀与派单 §3 对齐）
- *   [M] 迁移与装配：PG 主版本 17 / 空库前提 / 迁移子集 0001+0022+0028+0030+0032 逐条 apply 且二连跑 0 条 /
+ *   [M] 迁移与装配：PG 主版本 17 / 空库前提 / 迁移子集
+ *       `0001+0017+0022+0027+0030+0032+0033+0045+0047`（= `MIGRATIONS` 常量，按目录序）逐条 apply 且二连跑 0 条 /
  *       `community_posts` 与本脚本依赖的列真的在（`anonymized_author_ref` 只在 0030 之后存在）/
  *       real + 真 pool ⇒ 社区服务与后台运营服务都在，且社区帖子端口 `persistent === true`；
  *   [L] 列表读面（真库夹具）：无筛选 / `crop_id` / `region_code` / 两者组合 / `mine=true` 的 id 序列
@@ -45,13 +46,19 @@
  *       `mine=true` 仍含该帖 ⇒ 是「隐藏」不是「删除」）；
  *   [F] 失败隔离：If-Match 不符 / 缺失 / 帖子已删除 / 未公开 / 不存在 / 无 scope / 用户会话 / 游客
  *       八条被拒路径**逐条**证明「真库行逐列一字不动 + `post.hide` 审计条数不增」；
- *       并发两笔同 If-Match 的下架 ⇒ 恰好一笔成功、一笔 409，`revision` 只前进一次、审计只多一条。
+ *       并发两笔同 If-Match 的下架 ⇒ 恰好一笔成功、一笔 409，`revision` 只前进一次、审计只多一条；
+ *   [A] 审计读面 `GET /admin/audit-logs`（R64 读面闭集片）：`?action=` 闭集含 `post.hide`、
+ *       `?entity=post` 走**动作护栏**（只返回 `post.hide`）——夹具里特意插一条 `scope` 同为
+ *       `sources:write` 的**权限行**（0041/0046 的形状），证明纯 scope 映射会把权限变更漏进来；
+ *       `entity=post&action=set_flag` ⇒ **400**（fail-closed，⛔ 不是空页）；
+ *       条目字段恰为契约 12 键、`Cache-Control: no-store`。
  *
  * ## 未取得（如实登记，见证据页）
- *   - **审计读面**：`GET /admin/audit-events` 在 real 模式下仍 **503**（`adminOpsService.store.persistent
- *     === false` ⇒ 内容域 fail-closed），本片**没有**动读面闭集（`catalog.ts` 的 `AUDIT_ACTIONS` 与
- *     契约查询 enum 留给下一片）；本脚本把这条如实证成读数，⛔ 不把「HTTP 读面 503」写成「审计不存在」
- *     —— 写面已由 0047 落库，那一行就在真表里；
+ *   - **内容域 ops 台账读面**：`GET /admin/audit-events` 在 real 模式下仍 **503**
+ *     （`adminOpsService.store.persistent === false` ⇒ 内容域 fail-closed）。它和本片扩的
+ *     `GET /admin/audit-logs`（R34 通用审计读面，读 `public.admin_audit_events`）**不是同一读面**，
+ *     本脚本把 503 如实证成读数，⛔ 不把「HTTP 读面 503」写成「审计不存在」
+ *     —— 写面已由 0047 落库，那一行就在真表里，[A] 段还从 `GET /admin/audit-logs` 读回来了；
  *   - 真实审核供应商（全程注入仓内合成 gate 夹具，不联网）、真实媒体、下架后的**真实 UI**、
  *     来源 real 写面；
  *   - 运行时角色的库级最小权限面（账号/开关/作业三条既有臂已各自证明，本片的读数一律库 owner 身份）。
@@ -96,12 +103,17 @@ const HIDE_SCOPE = 'sources:write';
  *   0017 `admin_audit_events`（R64 起下架审计**真的**写这张表；缺它 ⇒ 0047 的 `CREATE FUNCTION`
  *        里那条 `INSERT` 找不到关系 ⇒ 迁移当场失败，而不是运行时才 503）；
  *   0047 `record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)`（R64 的库层写：下架与审计
- *        **同一事务**，审计写不进去连帖子一起 `ROLLBACK`；缺它 ⇒ 下架路径 42883 ⇒ 503「审计写入失败」）。
+ *        **同一事务**，审计写不进去连帖子一起 `ROLLBACK`；缺它 ⇒ 下架路径 42883 ⇒ 503「审计写入失败」）；
+ *   0027 `admin_audit_events.before_value` / `after_value`（R64 读面闭集片的**硬依赖**：
+ *        0033 的 `list_admin_audit_logs` 是 `LANGUAGE sql`，函数体在 `CREATE` 时就会校验列存在
+ *        —— 缺这两列 ⇒ 0033 当场建不起来（不是运行时 503）；
+ *   0033 `public.list_admin_audit_logs(...)`（R64 读面闭集片的读面函数：`GET /admin/audit-logs`
+ *        的 PG 只读端口调它；缺它 ⇒ 42883 ⇒ 该路由 503。它只读 0017 的表，不 ADD COLUMN）。
  * 刻意**不**引 0007（`CREATE EXTENSION pgcrypto`）等与本域无关的迁移，也不引 0028（审核**域**的
  * `moderation_decisions` 台账——本脚本的可见性判据来自社区自己的 `community_moderation_decisions`）：
  * 本脚本的读数是社区帖域，不是迁移链完整性（后者由跑全链的 `media-persistence-pg` / `ocr-jobs-pg` 等臂守住）。
  */
-const MIGRATIONS = ['0001', '0017', '0022', '0030', '0032', '0045', '0047'];
+const MIGRATIONS = ['0001', '0017', '0022', '0027', '0030', '0032', '0033', '0045', '0047'];
 
 const argvUrl = process.argv.slice(2).find((value) => /^postgres(ql)?:\/\//.test(value));
 const rawUrl = argvUrl ?? process.env[ENV];
@@ -203,8 +215,8 @@ async function main() {
       assert.ok(versions.includes(required), `迁移目录必须含 ${required}`);
     }
     const picked = discovered.filter((migration) => MIGRATIONS.includes(migration.version));
-    assert.deepEqual(picked.map((migration) => migration.version), MIGRATIONS, '本脚本依赖的五段迁移必须按目录序取到');
-    assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '五段迁移必须逐条真正应用');
+    assert.deepEqual(picked.map((migration) => migration.version), MIGRATIONS, '本脚本依赖的九段迁移必须按目录序取到');
+    assert.deepEqual((await applyMigrations(owner, picked)).applied, MIGRATIONS, '九段迁移必须逐条真正应用');
     assert.equal((await applyMigrations(owner, picked)).applied.length, 0, '重跑迁移必须是 no-op');
     note(`[M] 迁移子集 ${MIGRATIONS.join('+')} 逐条 apply 成功、二连跑 0 条（目录共 ${versions.length} 个迁移，版本号无重复）`);
 
@@ -641,7 +653,116 @@ async function main() {
     assert.equal(auditRead.status, 503, `real 模式下后台内容域 fail-closed ⇒ 审计 HTTP 读面必须 503，实际 ${auditRead.status}`);
     assert.equal(auditRead.body.error.code, 'PROVIDER_UNAVAILABLE');
     assert.equal(auditRead.body.error.retryable, false);
-    note('[H] 读数分两半：GET /admin/audit-events = 503 PROVIDER_UNAVAILABLE(retryable:false)（读面闭集仍留给下一片）——但**写面已落库**：上面那条 post.hide 是从 public.admin_audit_events 真表读回来的，不是进程内台账');
+    note('[H] 读数分两半：GET /admin/audit-events = 503 PROVIDER_UNAVAILABLE(retryable:false)（内容域 ops 台账读面，与本片的 /admin/audit-logs 不是同一读面）——但**写面已落库**：上面那条 post.hide 是从 public.admin_audit_events 真表读回来的，不是进程内台账');
+
+    // -----------------------------------------------------------------------
+    // [A] 审计读面 `GET /admin/audit-logs`（R64 读面闭集片）
+    //
+    // 本片给读面补了两件事：`action` 闭集加 `post.hide`、`entity` 闭集加 `post`，
+    // 并给 `entity=post` 加**动作护栏**（只等于 `action='post.hide'`）。
+    //
+    // 为什么要护栏而不是只靠 scope：`sources:write` 在 `scope` 列上**不专属** —— 0041/0046 的
+    // `admin_scope.grant`/`deny` 把被授 scope 直传进这一列，授予 `sources:write` 时落库的
+    // `scope` 与 0047 的下架行**一模一样**。下面第 ① 步插的那条夹具就是这一行（本子集不引
+    // 0041/0046，它们带来与本域无关的依赖），用来把「纯 scope 映射会漏进来」变成**可观测读数**：
+    // 全量列表里它在，`?entity=post` 里它必须**不在**。
+    // -----------------------------------------------------------------------
+    const permissionAuditId = randomUUID();
+    await owner.query(
+      `INSERT INTO public.admin_audit_events
+         (id, actor_id, action, scope, target_ref, target_hint, reason_code, request_id, result, created_at)
+       VALUES ($1::uuid, $2::uuid, 'admin_scope.grant', $3, NULL, $4, 'admin_scope_grant', $5::uuid, 'accepted', now() + interval '1 second')`,
+      [permissionAuditId, auditAdmin.userId, HIDE_SCOPE, `admin_account:${hideAdmin.userId}`, randomUUID()],
+    );
+
+    const auditLogsAll = await call(auditAdmin.token, 'GET', `${API}/admin/audit-logs`);
+    assert.equal(auditLogsAll.status, 200, auditLogsAll.text.slice(0, 300));
+    // `pageResponse()`（`admin/identity.ts`）统一挂 `Cache-Control: no-store`；`app.inject` 的
+    // headers 键大小写随底层实现，两种写法都认，避免把「大小写」当成「缺 header」。
+    assert.equal(
+      auditLogsAll.headers['cache-control'] ?? auditLogsAll.headers['Cache-Control'],
+      'no-store',
+      '审计读面必须 no-store（内容会随时间变化）',
+    );
+    const allAuditItems = auditLogsAll.body.data.items;
+    assert.ok(Array.isArray(allAuditItems) && allAuditItems.length >= 2,
+      `全量列表至少含下架行与那条权限行，实际 ${allAuditItems.length}`);
+    assert.equal(allAuditItems[0].id, permissionAuditId, 'created_at DESC：刚插入的权限行必须排在最前');
+    assert.equal(allAuditItems[0].scope, HIDE_SCOPE, '权限行的 scope 就是 sources:write（与下架行同一个值）');
+    const postHideRows = allAuditItems.filter((item) => item.action === 'post.hide');
+    assert.equal(postHideRows.length, 1, `下架行必须在全量列表里（实际 ${postHideRows.length}）`);
+    assert.deepEqual(
+      Object.keys(allAuditItems[0]).sort(),
+      ['action', 'actor', 'after_value', 'before_value', 'created_at', 'id', 'reason_code',
+        'request_id', 'result', 'scope', 'target_hint', 'target_ref'],
+      '条目字段必须恰为契约 `AuditEvent` 的 12 键（多一列 = 泄露内部列，少一列 = 契约缺口）',
+    );
+    note(`[A] GET /admin/audit-logs ⇒ 200、Cache-Control: no-store、条目恰为契约 12 键；全量 ${allAuditItems.length} 条（含 1 条 post.hide + 1 条 scope 同为 sources:write 的权限行夹具）`);
+
+    // ① `?entity=post`（不给 action）⇒ 只返回 post.hide：那条同 scope 的权限行必须被护栏挡在外面。
+    const byEntity = await call(auditAdmin.token, 'GET', `${API}/admin/audit-logs?entity=post`);
+    assert.equal(byEntity.status, 200, byEntity.text.slice(0, 300));
+    assert.ok(byEntity.body.data.items.length >= 1, 'entity=post 必须真读到下架行（不是空页）');
+    assert.deepEqual(
+      [...new Set(byEntity.body.data.items.map((item) => item.action))],
+      ['post.hide'],
+      'entity=post 只返回 post.hide（动作护栏）；出现别的 action ⇒ 护栏失效',
+    );
+    assert.equal(
+      byEntity.body.data.items.some((item) => item.id === permissionAuditId),
+      false,
+      'scope 同为 sources:write 的权限行不得混进 entity=post 的结果集（纯 scope 映射会漏进来）',
+    );
+    assert.deepEqual(byEntity.body.data.items[0].target_ref, { type: 'post', id: P5.id, revision: 1 });
+    note('[A] `?entity=post` ⇒ 200 且**只有** post.hide（target_ref={post,id,revision:1}）；同 scope 的权限行被护栏排除在外');
+
+    // ② 显式写全 `?entity=post&action=post.hide` ⇒ 与 ① 同一个读数（护栏内放行）。
+    const byEntityAction = await call(auditAdmin.token, 'GET', `${API}/admin/audit-logs?entity=post&action=post.hide`);
+    assert.equal(byEntityAction.status, 200, byEntityAction.text.slice(0, 300));
+    assert.deepEqual(
+      byEntityAction.body.data.items.map((item) => item.id),
+      byEntity.body.data.items.map((item) => item.id),
+      '显式写全与省略 action 必须给同一页（护栏清单就是默认值）',
+    );
+
+    // ③ 护栏外的**合法** action 与 `entity=post` 组合 ⇒ 400 fail-closed（⛔ 不是空页）。
+    //    `admin_scope.grant` 特意入选：它在裸 SQL 下与 `scopes=['sources:write']` **有交集**
+    //    （上面那条夹具就证明这点），正是这条护栏要挡的错误命名。
+    for (const action of ['set_flag', 'admin_scope.grant']) {
+      const rejected = await call(auditAdmin.token, 'GET', `${API}/admin/audit-logs?entity=post&action=${action}`);
+      assert.equal(rejected.status, 400, `entity=post&action=${action} 必须 400，实际 ${rejected.status} ${rejected.text.slice(0, 200)}`);
+      assert.equal(rejected.body.error.code, 'INVALID_REQUEST');
+      assert.ok(
+        rejected.body.error.details.some((detail) => detail.field === 'action' && detail.code === 'enum'),
+        `entity=post&action=${action} 的错误明细必须指向 action/enum（实际 ${JSON.stringify(rejected.body.error.details)}）`,
+      );
+    }
+    note('[A] `?entity=post&action=set_flag` 与 `&action=admin_scope.grant` ⇒ 400 INVALID_REQUEST(action/enum)：护栏外一律 fail-closed，不返回空页');
+
+    // ④ `?action=post.hide`（不带 entity）⇒ 只看动作维度（scopes 为 NULL），与全量里的下架行同一集合。
+    const byAction = await call(auditAdmin.token, 'GET', `${API}/admin/audit-logs?action=post.hide`);
+    assert.equal(byAction.status, 200, byAction.text.slice(0, 300));
+    assert.deepEqual(
+      byAction.body.data.items.map((item) => item.id).sort(),
+      postHideRows.map((item) => item.id).sort(),
+      'action=post.hide 必须恰好返回那些下架行',
+    );
+
+    // ⑤ 闭集外的值仍旧 400（本片只补了两个值，没有放宽校验）。
+    const unknownEntity = await call(auditAdmin.token, 'GET', `${API}/admin/audit-logs?entity=comment`);
+    assert.equal(unknownEntity.status, 400, `闭集外 entity 必须 400，实际 ${unknownEntity.status}`);
+    assert.equal(unknownEntity.body.error.code, 'INVALID_REQUEST');
+    const unknownAction = await call(auditAdmin.token, 'GET', `${API}/admin/audit-logs?action=post.approve`);
+    assert.equal(unknownAction.status, 400, `闭集外 action 必须 400（post.approve 尚未落库，本片不登记它），实际 ${unknownAction.status}`);
+    note('[A] 闭集外的 `?entity=comment` 与 `?action=post.approve` 仍 400 INVALID_REQUEST（本片只补 post.hide / post 两个值，未放宽）');
+
+    // ⑥ 权限面没变：`audit:read` 之外读不到（用没有该 scope 的管理员会话取 403）。
+    const noScopeAdmin = await admin('synthetic-i18-posts-readonly-admin', ['flags:write']);
+    const forbidden = await call(noScopeAdmin.token, 'GET', `${API}/admin/audit-logs`);
+    assert.equal(forbidden.status, 403, `缺 audit:read 必须 403，实际 ${forbidden.status}`);
+    assert.equal(forbidden.body.error.code, 'SCOPE_DENIED');
+    note('[A] 缺 `audit:read` 的管理员会话 ⇒ 403 SCOPE_DENIED（本片不动授权面）');
+
 
     // -----------------------------------------------------------------------
     // [F] 失败隔离：被拒路径逐条证明「真库行一字不动 + 审计不增」
@@ -1023,7 +1144,7 @@ async function main() {
      */
     // 0018（收藏/历史）与 0019（消息）是本节的**真实依赖**：缺表 ⇒ 读面 42703 ⇒ 503，
     // 那样的读数不能证明"读面看不到该帖"。两段只 FK 到 `public.users`（0018:48/73、0019:51），
-    // 与已应用的 0001 组合即可，且台账 `schema_migrations` 只追加，先前五段不受影响。
+    // 与已应用的 0001 组合即可，且台账 `schema_migrations` 只追加，先前的几段不受影响。
     // ⛔ 刻意**不加** 0008（`idempotency_keys`）：那张表只服务 `PUT /messages/{id}/read` 的
     // 幂等台账（`messages/service.ts:169-207` → `messages/store-pg.ts:349-420`），而"下架后消息同步"
     // 走的是 `appendMessage`（`messages/service.ts:422-444`：`findByEventKey` 查的是 `public.messages`，
@@ -1253,10 +1374,12 @@ async function main() {
     }
 
     console.log('[ALL PASS] 后台社区帖域真库臂：读面 / 单条 / 下架处置 / 人工通过驳回 / 失败隔离 全部读数通过');
-    detail(`读数 ${readings} 组（[M]/[L]/[D]/[H]/[F]/[R]）；下架（\`post.hide\`）审计写面已由迁移 0047 **真落库**，`
+    detail(`读数 ${readings} 组（[M]/[L]/[D]/[H]/[A]/[F]/[R]/[U]）；下架（\`post.hide\`）审计写面已由迁移 0047 **真落库**，`
       + '[H] 段那一条是从 `public.admin_audit_events` 读回来的真行（⛔ 不是进程内台账）；'
+      + '[A] 段的 `GET /admin/audit-logs` 由迁移 0033 的 `list_admin_audit_logs` 支撑，'
+      + '`entity=post` 的动作护栏把「同 scope 的权限行」挡在结果集外（护栏外 action 一律 400）；'
       + '人工通过/驳回的审计仍只落进程内追加台账，且实模式下 `GET /admin/audit-events` 仍 503'
-      + '（读面闭集留给下一片）——「HTTP 读面 503」不等于「审计不存在」');
+      + '（内容域 ops 台账读面，与本片扩的 `/admin/audit-logs` 不是同一读面）——「HTTP 读面 503」不等于「审计不存在」');
   } finally {
     if (app !== null) await app.close().catch(() => {});
     if (pool !== null) await pool.end().catch(() => {});
