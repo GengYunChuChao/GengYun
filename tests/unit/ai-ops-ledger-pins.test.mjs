@@ -22,8 +22,11 @@
  *      都是迁移头注释在引用「grep `INSERT INTO jobs` 为空」这句判据本身）。⛔ 不退化成一概不看注释：
  *      将来哪怕只在注释里多提一句也要红，逼人回来改口径。
  *   ② `provider_invocations` 无迁移、源码零引用，只有文档里有形状。
- *   ③ 正向迁移末项 = `0048`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
- *      main 时改 `LAST_MIGRATION` / `LAST_MIGRATION_NUMBER`；`0037` 是历史缺号，本断言不钉连续性）。
+ *   ③ 正向迁移末项**从编号目录派生**（不写死编号 / 文件名：`services/api/src/db/migrate.ts` 的
+ *      `discoverMigrations` / `inspectMigrationNumbering` / `formatMigrationVersion` 是唯一真源），
+ *      并断言派生值 == 目录里的最大编号、该文件确实存在、`rollback/` 下有同名回滚件；
+ *      另有一条变异用例：临时目录里多一个「最大编号 + 1」的假迁移，派生末项必须随之前移
+ *      （证明派生不是靠猜；`0037` 是历史缺号，本断言不钉连续性）。
  *   ④ `AUDIT_ACTIONS` 与契约 `?action=` 的 enum **双向相等**（同值、同序、无重复），**并且**钉住字面
  *      四值（4 个常量名 + 4 个取值 + 顺序）：双向等式只抓单边改动，双边同时扩值只有字面锚会红。
  *      第 4 项 `job.cancel` 的来历见上（GY-R59 修闭集漂移）；**扩值必须同 PR 改三件套**（契约 enum／
@@ -32,17 +35,32 @@
  *   ⑤ 真库臂跳过面：`tests/integration/**` 里 14 个脚本以 `process.env.GY_PG_BIN` 为门，缺它就打印
  *      SKIP 并以 77 退出（POSIX「未取得」≠ 通过），这份清单是冻结的。
  *
- * ## 为什么全用 fs + 文本
+ * ## 为什么全是 fs + 文本（唯一的 import 是「编号」工具）
  * 判据是「源码 / 迁移的形状」而不是运行结果：`catalog.ts` 是 TS（本仓 `node --test` 不保证 strip-types
  * 可用），迁移是 SQL。读文本让本文件在**没有 node_modules 的树**里也真跑，不会因依赖缺失被静默跳过
  * ——那正是"假的绿"。少数 `assert.match` / `existsSync` 的判据**本质**就是「文件里有没有这种行形状」，
  * 已在原位注明；其余全部 `assert.deepEqual` / `assert.equal`。
+ *
+ * 例外是**迁移编号**：它只有一个真源（编号目录）和一条现成的读法
+ * （`services/api/src/db/migrate.ts` 的 `discoverMigrations` / `inspectMigrationNumbering` /
+ * `formatMigrationVersion`，只用 node 内置模块，不碰 `node_modules`）。本文件此前把末项写成
+ * `'0048_…'` + `48` 两个字面量 —— 与真源脱钩，每加一条迁移就要手改一次，且改错了也只在"末项推进"
+ * 那一刻才发现。现在改为**派生**：目录里有什么就说什么，再用变异用例（临时目录里造一条假迁移）
+ * 证明派生值真的跟着目录走，而不是换个地方写死。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import {
+  DEFAULT_MIGRATIONS_DIR,
+  discoverMigrations,
+  formatMigrationVersion,
+  inspectMigrationNumbering,
+} from '../../services/api/src/db/migrate.ts';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const read = (relPath) => readFileSync(join(ROOT, relPath), 'utf8');
@@ -134,35 +152,97 @@ test('钉子②：provider_invocations 无迁移、源码零引用，只有数�
 });
 
 // ---------------------------------------------------------------------------
-// 钉子③：正向迁移末项 + 同名回滚件
+// 钉子③：正向迁移末项（**从编号目录派生**，不写死编号）+ 同名回滚件
 // ---------------------------------------------------------------------------
-const FORWARD_MIGRATION = /^\d{4}_[a-z0-9_]+\.sql$/;
-/** 当前末项（**本断言随末项推进同步**：新迁移合并后改这两个常量，别让它们停在旧编号上）。 */
-const LAST_MIGRATION = '0048_admin_account_disable.sql';
-const LAST_MIGRATION_NUMBER = 48;
+/**
+ * 派生某个目录的正向迁移编号 —— ⛔ 这里**没有**任何 `'0048_…'` / `48` 字面量。
+ *
+ * 读法用仓库现成的编号工具（`services/api/src/db/migrate.ts`）：`discoverMigrations` 会拒收
+ * 不合规文件名与重复版本号，`inspectMigrationNumbering` 给出 `maxVersion`，`formatMigrationVersion`
+ * 给出 `0` 补齐口径。因此 `last` 是**目录里真实存在的那一条**，不是从数字拼出来的猜测。
+ */
+function forwardNumbering(dir) {
+  const migrations = discoverMigrations(dir);
+  const numbering = inspectMigrationNumbering(migrations);
+  return { migrations, numbering, last: migrations[migrations.length - 1], maxVersion: numbering.maxVersion };
+}
 
-test('钉子③：正向迁移末项就是 0048，且 rollback/ 下有同名回滚件', () => {
-  const forward = readdirSync(join(ROOT, MIGRATIONS_DIR))
-    .filter((name) => FORWARD_MIGRATION.test(name))
-    .sort();
-  const last = forward[forward.length - 1] ?? '';
+/** 回滚件名：同目录 `rollback/` 下的 `<stem>.down.sql`。 */
+function rollbackName(filename) {
+  return `${filename.slice(0, -'.sql'.length)}.down.sql`;
+}
+
+test('钉子③：正向迁移末项由编号目录派生，且 rollback/ 下有同名回滚件', () => {
+  const real = forwardNumbering(DEFAULT_MIGRATIONS_DIR);
+  assert.ok(real.last !== undefined, '迁移目录里一个合规迁移都没有：编号真源已失效');
+  // ① 派生值 == 目录里的最大编号（排序末项 vs `maxVersion`，两条独立读法必须同答案）。
   assert.equal(
-    last,
-    LAST_MIGRATION,
-    `正向迁移末项变了：现在是「${last}」而钉子写的是「${LAST_MIGRATION}」。新迁移落地就同步这两个常量`
-      + '（「本断言随末项推进同步」由你来兑现），否则末项推进时本片会静默失守',
+    Number(real.last.version),
+    real.maxVersion,
+    `派生末项编号 ${real.last.version} ≠ 目录最大编号 ${real.maxVersion}：编号目录是唯一真源，`
+      + '两者不一致说明某一条读法被改坏了',
+  );
+  // ② 文件名 == `formatMigrationVersion(maxVersion)` 前缀 + 真名（命名口径也与工具同源）。
+  assert.equal(
+    real.last.filename,
+    `${formatMigrationVersion(real.maxVersion)}_${real.last.name}.sql`,
+    '末项文件名与「0 补齐的编号 + 名字」不一致：`formatMigrationVersion` 与目录命名口径已分叉',
+  );
+  // ③ 该文件**确实存在**：⛔ 不只断言"拼出来的字符串好看"，派生值必须指到一条真实文件。
+  assert.equal(
+    existsSync(join(DEFAULT_MIGRATIONS_DIR, real.last.filename)),
+    true,
+    `派生出的末项 ${real.last.filename} 在 ${MIGRATIONS_DIR}/ 里不存在：派生值与磁盘脱钩`,
   );
   assert.equal(
-    Number(last.slice(0, 4)),
-    LAST_MIGRATION_NUMBER,
-    `末项编号不是 ${LAST_MIGRATION_NUMBER}：迁移按数字前缀排序执行，编号跳变意味着目录里有未预期的插入`,
+    real.migrations.filter((migration) => migration.version === real.last.version).length,
+    1,
+    `末项编号 ${real.last.version} 在目录里不唯一：迁移按数字前缀排序执行，重复编号会让顺序不确定`,
   );
-  const downFile = `${last.slice(0, -'.sql'.length)}.down.sql`;
+  // ④ 配套回滚件（文件名从派生值来，不再手写）。
+  const downFile = rollbackName(real.last.filename);
   assert.equal(
-    existsSync(join(ROOT, MIGRATIONS_DIR, 'rollback', downFile)),
+    existsSync(join(DEFAULT_MIGRATIONS_DIR, 'rollback', downFile)),
     true,
     `rollback/ 缺同名回滚件 ${downFile}：迁移没有配套回滚，真出问题只能手工改库`,
   );
+});
+
+test('钉子③b 变异：临时目录里多一条假迁移，派生末项随之前移（派生不是写死）', () => {
+  const real = forwardNumbering(DEFAULT_MIGRATIONS_DIR);
+  const dir = mkdtempSync(join(tmpdir(), 'gy-migration-numbering-'));
+  try {
+    // 夹具：把真末项复制进临时目录（编号不动），先确认派生读到的就是它 —— 否则后面的读数不算数。
+    copyFileSync(join(DEFAULT_MIGRATIONS_DIR, real.last.filename), join(dir, real.last.filename));
+    const before = forwardNumbering(dir);
+    assert.equal(before.last.filename, real.last.filename, '临时目录夹具没被派生读到：变异用例本身失效');
+    assert.equal(before.maxVersion, real.maxVersion);
+    // 变异：造一条「最大编号 + 1」的假迁移（编号由派生值算，⛔ 不写 `0049` 这种字面量）。
+    const probe = `${formatMigrationVersion(real.maxVersion + 1)}_mutation_probe.sql`;
+    writeFileSync(join(dir, probe), '-- 变异探针：只为证明派生末项跟着目录走\n', 'utf8');
+    const after = forwardNumbering(dir);
+    assert.equal(
+      after.last.filename,
+      probe,
+      `多一条 ${probe} 之后派生末项仍是 ${after.last.filename}：派生值是写死的，不是从目录算的`,
+    );
+    assert.equal(after.maxVersion, real.maxVersion + 1);
+    assert.equal(Number(after.last.version), after.maxVersion);
+    // 反向读数：假迁移**没有**配套回滚件 ⇒ ③ 的 ④ 那种断言在同一条派生值上会红（它不是恒真）。
+    assert.equal(
+      existsSync(join(dir, 'rollback', rollbackName(after.last.filename))),
+      false,
+      '临时目录里不该有 rollback/：这条反向断言恒真的话，③ 的回滚件断言就没有判别力',
+    );
+    // 不污染仓库：真目录的派生末项仍然原样。
+    assert.equal(
+      forwardNumbering(DEFAULT_MIGRATIONS_DIR).last.filename,
+      real.last.filename,
+      '变异用例写到了真目录上：临时夹具必须只落在 mkdtemp 出来的目录里',
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ---------------------------------------------------------------------------

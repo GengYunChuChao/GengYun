@@ -42,15 +42,23 @@ const ACCESS_MARKERS = Object.freeze(['public', 'receipt']);
 /**
  * 已声明、但**暂无 operation 引用**的后台权限。
  *
- * **本片（`#18` S2 PR-3）起为空**：PR-2 当时 `scopes:write` 属 PR-3、明令不得有写端点，
- * `operations.json` 里自然没有引用它的 operation，所以这里补了一项，好让 ③ 的「代码闭集」
- * 与契约 enum 对得上。PR-3 落地了 `grantAdministratorScope` / `revokeAdministratorScope`
- * 两条写面 ⇒ `operations.json` 现在**真的**引用了 `scopes:write` ⇒ 这一项必须清空，
- * 否则 ③ 就变成「用一份手写的补丁把两边的差抹平」，那正是这条断言本该抓到的东西。
+ * **`#18` S2 PR-3 起为空，此后一直是空数组**：PR-2 当时 `scopes:write` 属 PR-3、明令不得有
+ * 写端点，`operations.json` 里自然没有引用它的 operation，所以这里补过一项，好让 ③ 的「代码闭集」
+ * 与契约 enum 对得上。PR-3 落地 `grantAdministratorScope` / `revokeAdministratorScope` 后
+ * `operations.json` **真的**引用了 `scopes:write` ⇒ 那一项被**移出**（不是删常量、不是放宽断言）。
+ *
+ * ⛔ 「把它从集合里移出去」本身**不构成修好**：清空之后，辨别"某个 scope 到底有没有端点"的能力
+ * 必须落在别处，否则 ③ 就从"抓差集"退化成"永远绿"。判别力今天由 ③ 的三条合成：
+ *   1. `DECLARED_ONLY_SCOPES` 必须为空（补丁位不许再被填回来，否则 ③ 变成用手写补丁抹平差集）；
+ *   2. **门集合对拍**：`operations.json` 引用的每个后台 scope，routes 层都必须真的有一处以它为
+ *      实参的 `requireScope` 门（见 `scanRouteScopeGates`）；
+ *   3. **逐处门计数 + 逐 operationId 对拍**（B1）：光有集合只证明"出现过一次"，把 `scopes:write`
+ *      的四处写面门（`grantAdministratorScope` / `revokeAdministratorScope` /
+ *      `disableAdministratorAccount` / `enableAdministratorAccount`）摘掉一处，第 2 条照样绿。
+ *      所以 ③ 还数未去重的调用条数、并逐 operationId 要求源码里仍有那处
+ *      `requireScope(OPS_SCOPES.<operationId>)` —— 变异记录在 ③ 的注释里。
  *
  * 判据不是本测试自造集合，而是应用层唯一的闭集常量 `ADMIN_SCOPES`（`admin/scopes.ts`）。
- * ⛔ 保留这个常量（而不是删掉）是为了让下一种"只声明、无端点"的权限仍有唯一落点，
- * 并由 ③b 断言它**必须为空**——空不是"忘了填"，而是"今天对得上"。
  */
 const DECLARED_ONLY_SCOPES = Object.freeze([]);
 
@@ -93,6 +101,79 @@ function scanRouteRequireScopeArgs() {
   }
   assert.ok(calls > 0, 'routes 层未发现任何 requireScope 调用点，闭集推导口径已失效');
   return { literals: [...literals].sort(), calls, literalCalls, constantRefs };
+}
+
+/**
+ * routes 层每处 `requireScope(...)` 实参 → **scope 真值**（两份视图）。
+ *
+ * 与 `scanRouteRequireScopeArgs` 的分工：那个只做"分类统计"（字面量 / 常量引用 / 未归类即红），
+ * 这个把实参**解析成它真正的字符串**，并返回 `gates`（去重集合：有没有这个门）与 `calls`
+ * （未去重：每处调用是谁，用来数"四处写面门是不是都还在"，见 ③a-1/③a-2）。只有集合的话，
+ * 摘掉四处写面门里的一处仍然全绿——那是 B1，⛔ 别把 `calls` 删回去。存在的理由：`scopes:write`
+ * 曾靠一份手写的"只声明、无端点"清单
+ * 豁免掉这层对拍（那份清单已清空），所以这里解析不出来的实参一律判红 —— ⛔ 不当成"已覆盖"。
+ */
+function scanRouteScopeGates() {
+  const gates = new Set();
+  // `calls` **不去重**：每处 `requireScope` 调用留一条解析值。`gates` 只能回答"这个 scope 出现过至少
+  // 一次"，回答不了"四处写面门是不是都还各自挂着"——单点摘门/降级正是从这道缝溜过去的（B1）。
+  const calls = [];
+  const record = (value) => {
+    gates.add(value);
+    calls.push(value);
+  };
+  let descriptorCalls = 0;
+  for (const name of readdirSync(ROUTES_DIR_URL)) {
+    if (!name.endsWith('.ts')) continue;
+    const text = readFileSync(new URL(name, ROUTES_DIR_URL), 'utf8');
+    for (const match of text.matchAll(/requireScope\(([^)]*)\)/g)) {
+      const arg = match[1].trim();
+      const literal = /^'([^']+)'$/.exec(arg);
+      if (literal) {
+        record(literal[1]);
+        continue;
+      }
+      const opsRef = /^OPS_SCOPES\.(\w+)$/.exec(arg);
+      if (opsRef) {
+        const value = OPS_SCOPES[opsRef[1]];
+        assert.equal(
+          typeof value,
+          'string',
+          `routes/${name} 的 requireScope 引用了 OPS_SCOPES.${opsRef[1]}，但 OPS_SCOPES 没有这个键：`
+            + '门会静默退化成 undefined（鉴权被跳过），必须先补 OPS_SCOPES',
+        );
+        record(value);
+        continue;
+      }
+      if (arg === 'AUDIT_LOG_SCOPE') {
+        record(AUDIT_LOG_SCOPE);
+        continue;
+      }
+      if (arg === 'ADMIN_POST_READ_SCOPE') {
+        record(declaredScopeValue('services/api/src/admin/posts/service.ts', 'ADMIN_POST_READ_SCOPE'));
+        continue;
+      }
+      if (arg === 'descriptor.readScope' || arg === 'descriptor.writeScope') {
+        // 族级门：`descriptor` 是 `FAMILIES` 的运行时形参，一族两名（读 / 写），逐个取真值。
+        const key = arg === 'descriptor.readScope' ? 'readScope' : 'writeScope';
+        for (const family of FAMILIES) record(family[key]);
+        descriptorCalls += 1;
+        continue;
+      }
+      assert.fail(
+        `routes/${name} 出现无法解析为 scope 真值的 requireScope 实参：${arg}（请扩展 scanRouteScopeGates）`,
+      );
+    }
+  }
+  return { gates: [...gates].sort(), calls, descriptorCalls };
+}
+
+/** 从声明处读常量真值（`export const NAME = '…';`）；读不到就判红 —— ⛔ 不猜，也不在这里抄一份。 */
+function declaredScopeValue(relPath, name) {
+  const text = readFileSync(new URL(`../../${relPath}`, import.meta.url), 'utf8');
+  const match = new RegExp(`export const ${name} = '([^']+)';`).exec(text);
+  assert.ok(match, `${relPath} 里找不到 \`export const ${name} = '…';\`：门集合推导已失去真值来源`);
+  return match[1];
 }
 
 /** 后台权限闭集：常量 + routes 层字面量实参（不含用户端 `user`）。 */
@@ -274,17 +355,83 @@ test('②b 账号视图不夹带权限字段：查他人权限走独立只读端
 });
 
 test('③ 闭集三方一致：代码实参 ↔ 契约 enum ↔ operations.json scope', () => {
+  // 先跑门扫描器、再跑旧分类器：`scanRouteScopeGates` 里「实参解析不出即红」的兜底只有排在旧分类器
+  // 之前才可达（旧分类器的接受式覆盖同类实参，先跑它，这条兜底就成死代码——两条都红，但红线要指对人）。
+  const { gates, calls } = scanRouteScopeGates();
   const codeClosedSet = sorted([...codeAdminScopes(), USER_SESSION_SCOPE]);
   const contract = contractClosedSet();
   const manifest = manifestClosedSet();
 
   assert.equal(codeClosedSet.length, 14, '闭集应为 14 项（13 个后台权限 + user）');
   assert.deepEqual(contract, codeClosedSet, '契约 enum 必须与代码闭集逐项一致');
-  // operations.json 收「有 operation 引用」的 scope。PR-3 起 \`scopes:write\` 已被两条写面引用
-  // ⇒ \`DECLARED_ONLY_SCOPES\` 必须为空，否则下面的对拍就变成「用补丁抹平差集」。
+  // operations.json 收「有 operation 引用」的 scope。`scopes:write` 今天有 4 处写面引用它
+  // （PR-3 的 `grantAdministratorScope` / `revokeAdministratorScope`，R64 的
+  // `disableAdministratorAccount` / `enableAdministratorAccount`）
+  // ⇒ `DECLARED_ONLY_SCOPES` 必须为空，否则下面的对拍就变成「用补丁抹平差集」。
   assert.deepEqual([...DECLARED_ONLY_SCOPES], [], '已声明但无端点的 scope 必须为空：今天每个闭集成员都有 operation');
   assert.deepEqual(sorted([...manifest, ...DECLARED_ONLY_SCOPES]), codeClosedSet, 'operations.json 的 scope 闭集必须与代码闭集逐项一致');
   assert.ok(manifest.includes('scopes:write'), 'operations.json 必须真的引用 scopes:write（PR-3 写面），而不是靠补丁');
+  // ③a **逐处门对拍**（A06 收尾；B1 修好后口径才与注释一致）：manifest 说「实现了」的后台 scope，
+  // routes 层必须真的有一处 `requireScope` 以它为实参。旧口径只看两份清单相不相等 —— `scopes:write`
+  // 当时靠 `DECLARED_ONLY_SCOPES` 里手写的一项就豁免了这层检查；现在清单为空，差集无处藏。
+  // `user` 单独排除：它是身份域取值（`sessionInfo()` 给出），用户端路由用 `x-scope: user` 访问标记，
+  // 不经 `requireScope`，不是后台门。
+  // 变异实测（A06，临时改 `services/api/src/routes/admin.ts`，跑完已 `git checkout` 回滚，整文件读数）：
+  //   M-a 把四处写面门（`OPS_SCOPES.grantAdministratorScope` / `revokeAdministratorScope` /
+  //       `disableAdministratorAccount` / `enableAdministratorAccount`）一起换成
+  //       `OPS_SCOPES.listAdministratorScopes` ⇒ 红：「写面门 `scopes:write` 必须真的挂在 routes 层
+  //       （pass 7 / fail 1）」；
+  //   M-b 把 `OPS_SCOPES.cancelAdminJob` 换成 `OPS_SCOPES.listAdminJobs` ⇒ 红：「operations.json
+  //       声明实现了「jobs:cancel」，但 routes 层没有任何一处 requireScope 以它为门」（pass 7 / fail 1）
+  //       ——M-b 证明下面这条循环不是只对 `scopes:write` 生效的一次性检查。
+  //   M-c/M-c' 只动**一处**写面门（B1 的反例）：把 disable 那道门换成 `OPS_SCOPES.listAdministrators`
+  //       （`scopes:read`，= 把停用降级成只读），或整行摘掉只留 `guards.requireAdmin`（= 无 scope 门）
+  //       ⇒ 各红在 ③a-1 的计数（`actual 3 expected 4`）。修 B1 前这两例是 8/8 全绿。
+  assert.ok(gates.includes('scopes:write'), '写面门 `scopes:write` 必须真的挂在 routes 层');
+  for (const scope of manifest.filter((item) => item !== USER_SESSION_SCOPE)) {
+    assert.ok(
+      gates.includes(scope),
+      `operations.json 声明实现了「${scope}」，但 routes 层没有任何一处 requireScope 以它为门：`
+        + '要么端点被删、门被改成别的 scope（声明与实现脱钩），要么这处门用了本测试解析不了的写法'
+        + '（请扩展 scanRouteScopeGates，⛔ 不要把该 scope 塞回 DECLARED_ONLY_SCOPES 绕过）',
+    );
+  }
+  // ③a-1 **按调用计数对拍**（B1）：`gates` 是去重集合，只能证明「这个 scope 出现过至少一次」——
+  // 四处写面门摘掉一处，集合照样含 `scopes:write`、整文件 8/8 全绿（实测过）。所以再数一遍
+  // **未去重**的 `calls`：以 `scopes:write` 为实参的 `requireScope` 调用数，必须等于 operations.json
+  // 里 `scope='scopes:write'` 的 operation 条数。期望值从真源派生，⛔ 不硬编码 4（写面增删时这里跟着走）。
+  const writeFaceOps = readJson(OPERATIONS_URL).operations
+    .filter((operation) => operation.scope === 'scopes:write')
+    .map((operation) => operation.id);
+  assert.ok(writeFaceOps.length > 0, 'operations.json 必须声明至少一个 scopes:write 写面 operation');
+  assert.equal(
+    calls.filter((value) => value === 'scopes:write').length,
+    writeFaceOps.length,
+    `以 \`scopes:write\` 为实参的 requireScope 调用数必须等于 operations.json 里声称实现了它的 operation 条数`
+      + `（${writeFaceOps.length}：${writeFaceOps.join(' / ')}）。少一处＝某条写面门被摘掉或降级成别的 scope，`
+      + '多一处＝有未登记的门（先补 operations.json，⛔ 不要调低这个数字来变绿）',
+  );
+  // ③a-2 **逐 operationId 对拍**：计数相等仍不排除「一处摘门 + 另一处多挂门」互相抵消（比如把 disable
+  // 端点降级成 `scopes:read`、同时把某个非写面端点的门改成 `scopes:write`）。`OPS_SCOPES` 的键就是
+  // operationId，所以逐条断言 routes 源码里仍存在 `requireScope(OPS_SCOPES.<operationId>)` 这处调用。
+  // ⚠️ 本断言依赖「门写成 `OPS_SCOPES.<operationId>`」这一形式；将来某条写面改用族级/字面量门，必须
+  // 同步扩展这里（⛔ 不许删断言来变绿）。
+  const routesText = readdirSync(ROUTES_DIR_URL)
+    .filter((name) => name.endsWith('.ts'))
+    .map((name) => readFileSync(new URL(name, ROUTES_DIR_URL), 'utf8'))
+    .join('\n');
+  for (const operationId of writeFaceOps) {
+    assert.equal(
+      OPS_SCOPES[operationId],
+      'scopes:write',
+      `operations.json 说「${operationId}」是写面，但 OPS_SCOPES.${operationId} 不等于 scopes:write：门表与 manifest 各说各话`,
+    );
+    assert.ok(
+      routesText.includes(`requireScope(OPS_SCOPES.${operationId})`),
+      `写面 operation「${operationId}」的门不见了：routes 层必须仍有一处 requireScope(OPS_SCOPES.${operationId})`
+        + '（换成别的 scope、或整行摘掉只留 requireAdmin，都是写面鉴权降级）',
+    );
+  }
   assert.equal(new Set(contract).size, contract.length, '契约闭集不得重复');
   assert.deepEqual([...contract].sort(), contract, '契约闭集须按码元序（保证响应顺序稳定）');
   for (const marker of ACCESS_MARKERS) {
