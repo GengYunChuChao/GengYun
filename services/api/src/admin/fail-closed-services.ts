@@ -13,7 +13,8 @@
  * `createRealSpeechProvider`，缺凭据即 `available=false` ⇒ 受理直接 503
  * `PROVIDER_UNAVAILABLE`）；以及 `auth` 侧"real 模式必须持久化存储，否则拒绝签发会话"。
  * 本模块是后台域的同一形态：**34 条路由保持注册**（契约面不缩水、静态清单工具不受影响），
- * 但每个操作一律以 `PROVIDER_UNAVAILABLE`(503, retryable) 拒绝，**不落任何内存写**。
+ * 但每个操作一律以 `PROVIDER_UNAVAILABLE`（503 且 `retryable: false` —— fail-closed，客户端**不应自动重试**）
+ * 拒绝，**不落任何内存写**。
  *
  * ## 接线点（将来怎么解除 fail-closed）
  * 判定条件是 **`executionMode === 'real'` 本身**，**刻意不依赖 store 自称持久化**：

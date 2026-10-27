@@ -18,7 +18,7 @@ import {
   readErrorEnvelope,
   readPageEnvelope,
 } from './admin-contract.mjs';
-import { clampLimit, normalizeBaseUrl } from './admin-api.mjs';
+import { clampLimit, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
 import {
   AUDIT_EVENTS_PATH, CATEGORIES_PATH,
   IF_MATCH_PATTERN,
@@ -134,14 +134,14 @@ function classifyHttpFailure({ status, envelope, body, requestUrl, sentHeaders, 
     return failure('missing_if_match', { ...base, message: base.message || '服务端要求 If-Match 请求头' });
   }
   if (status === 409 || code === 'REVISION_CONFLICT' || code === 'IDEMPOTENCY_CONFLICT' || code === 'OBJECT_UNAVAILABLE') {
-    const kind = code === 'IDEMPOTENCY_CONFLICT'
-      ? 'idempotency_conflict'
-      : code === 'OBJECT_UNAVAILABLE'
-        ? 'object_unavailable'
-        : code === 'REVISION_CONFLICT'
-          ? 'revision_conflict'
-          : 'http_error';
-    return failure(kind, { ...base, message: base.message || '写操作冲突（修订/幂等/对象状态）' });
+    // `REQUEST_IN_PROGRESS`（`services/api/src/admin/idempotent-write.ts` 的占位分支）走专用失败类型：
+    // 写请求带 `Idempotency-Key`，同一个键重放不会重复生效 ⇒ 服务端给了 `Retry-After` 才能说「等 N 秒再试」。
+    const kind = code === 'REQUEST_IN_PROGRESS' ? 'in_progress' : (CONFLICT_KINDS[code] ?? 'http_error');
+    const retryAfterSeconds = kind === 'in_progress' ? readRetryAfterSeconds(headers) : null;
+    return failure(kind, {
+      ...base, retriable: serverAllowsRetry({ ...base, kind }), retryAfterSeconds,
+      message: base.message || '写操作冲突（修订/幂等/对象状态）',
+    });
   }
   if (status === 422 || code === 'SOURCE_CONFLICT') {
     return failure('source_conflict', { ...base, message: base.message || '资料引用门槛未通过' });
@@ -745,6 +745,34 @@ export function describeWriteOutcome(result, { action, previousRevision = null, 
   };
 }
 
+/**
+ * 409 冲突类契约码 → 失败类型（`classifyHttpFailure` 与 `describeWriteFailure` 共用）。
+ *
+ * 定义写在文件这个位置是**有意的**：`docs/architecture/admin-console-capability-map.md` 用行号锚点
+ * 引用本文件前 600 行的函数（`listSources` / `getSource` / `getKnowledge` / `editCategory` /
+ * `findAuditEventsForRequest`、以及 `writeFamilyResource` 的 307-406 区间），所以 `classifyHttpFailure`
+ * 里那张表**只换写法、不增减行数**，表的定义放在锚点之外（见文件末尾同一条约束的说明）。
+ */
+const CONFLICT_KINDS = Object.freeze({
+  IDEMPOTENCY_CONFLICT: 'idempotency_conflict',
+  OBJECT_UNAVAILABLE: 'object_unavailable',
+  REVISION_CONFLICT: 'revision_conflict',
+});
+
+/**
+ * `Retry-After` 的**秒数形式**：服务端说等多久就照抄，缺头或形状不符一律返回 `null`
+ * （不编 0、1 之类的假值，页面改说「服务端未给出等待秒数」）。
+ *
+ * `http-date` 形式（`Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`）不换算：那是绝对时刻，
+ * 折算成「还要等几秒」要信客户端时钟，宁可如实说不知道。
+ */
+function readRetryAfterSeconds(headers) {
+  const raw = typeof headers?.get === 'function' ? headers.get('retry-after') : null;
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw.trim())) return null;
+  const seconds = Number(raw.trim());
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
+}
+
 /** 写失败 → 页面文案（标题/说明/建议动作）。**错误码原样保留**，绝不吞掉。 */
 export function describeWriteFailure(result) {
   if (!result || result.ok !== false) return null;
@@ -774,6 +802,31 @@ export function describeWriteFailure(result) {
       return { title: '响应不符合契约', detail: detail || '未渲染任何行（不猜测缺字段）', action: 'none' };
     case 'rate_limited':
       return { title: '请求过于频繁', detail: detail, action: 'retry' };
+    case 'in_progress': {
+      // 409 `REQUEST_IN_PROGRESS`：同一 `Idempotency-Key` 的上一次写**还在处理中**。写请求带幂等键 ⇒
+      // 用同一个键重放不会重复生效，所以「等 N 秒再试」是真出路；N 只取服务端 `Retry-After`，没有就不编。
+      // 服务端声明 `retryable:false` 时仍不给自动重试（与 fail-closed 503 同一口径）。
+      const head = `（HTTP ${result.status} · ${result.code}）`;
+      if (serverAllowsRetry(result) !== true) {
+        return {
+          title: '上一次请求仍在处理中',
+          detail: result.declaredRetryable === false
+            ? `${head}，服务端声明不可自动重试（retryable:false）`
+            : `${head}，服务端未声明可自动重试，请先核对这一次写是否已生效`,
+          retriable: false,
+          action: 'none',
+        };
+      }
+      const wait = typeof result.retryAfterSeconds === 'number'
+        ? `建议等待 ${result.retryAfterSeconds} 秒后重试`
+        : '建议稍后再试（服务端未给出等待秒数）';
+      return {
+        title: '上一次请求仍在处理中',
+        detail: `${head}，${wait}；同一幂等键重放不会重复生效`,
+        retriable: true,
+        action: 'retry',
+      };
+    }
     case 'unavailable': {
       // `real` 装配下无库池 ⇒ 这批内容操作一律 fail-closed 503 `PROVIDER_UNAVAILABLE`
       // （`services/api/src/admin/fail-closed-services.ts`）。它**不是**「服务端忙」，
@@ -976,29 +1029,3 @@ export const REGISTRATION_RESTRICTION_OPERATIONS = Object.freeze({
   publishRestriction: 'publishRestriction',
   withdrawRestriction: 'withdrawRestriction',
 });
-
-// ------------------------------------------------------------------ `Retry-After` 解读（R67-A02b）
-// 服务端对「可重试的 503/504」与 429、409 `REQUEST_IN_PROGRESS` 统一下发 `Retry-After`（**整数秒**字符串；
-// 唯一出口是 `services/api/src/errors.ts` 的 `retryAfterSecondsFor`，全仓只有 `app.ts` 的统一错误出口写该头）。
-// 读面只认这一个头的整数秒形态：缺失／`0`／`abc`／`1.5`／负数／HTTP-date 一律 `null`——**不猜**一个好看的秒数。
-// 回填值时 viewer 侧的 `retryHintOf` 也只在「正整数」时才拼「（建议等待 N 秒）」，两处判据同口径。
-//
-// ⚠ 本函数刻意放在文件**末尾**：`docs/architecture/admin-console-capability-map.md` 用「路径:行号」锚点
-// 引用本文件前 600 行（`listSources:409` 起 15 条，`tools/verify-contract-status.mjs` 容差只有 ±2 行），
-// 在 `readEtag` 旁插函数会把它们整体推高。函数声明会提升，所以上面的 `classifyHttpFailure` 照样能调它。
-// 同理，`failure()` 与 `classifyHttpFailure` 里的 `retryAfterSeconds` 是**并到既有行**上的（不新增行），
-// 否则 `verify-doc-anchors.mjs --strict` 会报「基线之外新增」——本次改动对上述行号是零位移。
-function readRetryAfterSeconds(headers) {
-  if (headers === null || headers === undefined) return null;
-  // `Headers.get` 本身大小写不敏感；普通对象（假 response）再按 key 大小写不敏感地补一遍。
-  let raw = typeof headers.get === 'function' ? headers.get('retry-after') : null;
-  if (typeof raw !== 'string' && typeof headers === 'object') {
-    const key = Object.keys(headers).find((name) => name.toLowerCase() === 'retry-after');
-    if (key !== undefined) raw = headers[key];
-  }
-  if (typeof raw !== 'string') return null;
-  const text = raw.trim();
-  if (!/^[0-9]+$/.test(text)) return null;
-  const seconds = Number(text);
-  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
-}

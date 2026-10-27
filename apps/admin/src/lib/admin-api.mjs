@@ -233,3 +233,23 @@ export function describeFailure(result) {
       return { title: '请求失败', detail: result.message || '未知错误', retriable: false, action: 'none' };
   }
 }
+
+/**
+ * 「这次失败服务端到底允不允许再试」的**唯一**判据：内容族（`admin-content-api.mjs`）等读面/写面的
+ * `canRetry` 都由这里判，不许各页自己再抄一份。
+ *
+ * 顺序是**服务端声明优先**：失败对象里带 `serverRetryable`（jobs 族的拼写）或 `declaredRetryable`
+ * （内容族写面信封 `retryable` 的落点）时以它为准；两者都拿不到（没有响应可读）才回落到本地闭集
+ * `isRetriable(kind)`。服务端显式 `retryable:false` 必须尊重 —— fail-closed 503 `PROVIDER_UNAVAILABLE`
+ * （`services/api/src/admin/fail-closed-services.ts`）就是这一档：重试不会成功，别给「再试一次」按钮。
+ *
+ * 409 `REQUEST_IN_PROGRESS` 之所以可以「等 N 秒再重试」，是因为写请求带 `Idempotency-Key`：
+ * 用**同一个**键重放不会重复生效（服务端要么继续回「仍在处理中」，要么回那次已生效的结果）。
+ */
+export function serverAllowsRetry(result) {
+  if (result === null || typeof result !== 'object') return false;
+  const declared = result.serverRetryable ?? result.declaredRetryable;
+  if (declared === true) return true;
+  if (declared === false) return false;
+  return isRetriable(result.kind) === true;
+}
