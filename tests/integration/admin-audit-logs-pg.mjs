@@ -7,8 +7,9 @@
  * `SECURITY DEFINER` 之后运行时角色到底还能不能读表、以及 `target_ref` 的允许列表投影是否真
  * 把多余键裁掉。这些只有真 PG 才能回答。
  *
- * 本臂自己起**一次性集群**（`initdb` 新目录），因此不依赖本机既有实例；端口在 55436–55467 里探活后取空闲者
- * （55432–55435 留给兄弟集群），收尾 `pg_ctl stop` + 删数据目录（`server.log` 随目录删；工具日志在 root 下、不删、取证用）。
+ * 本臂自己起**一次性集群**（`initdb` 新目录），因此不依赖本机既有实例；端口由 `./lib/free-port.mjs`
+ * 向内核要一个此刻空闲的（⛔ 不再在 55436–55467 这种固定区间里挑：那落在 Linux ephemeral 区间内），
+ * 收尾 `pg_ctl stop` + 删数据目录（`server.log` 随目录删；工具日志在 root 下、不删、取证用）。
  *
  * 怎么跑
  * ------
@@ -35,12 +36,15 @@ import pg from 'pg';
 import { createAdminAuditLogService } from '../../services/api/src/admin/audit/service.ts';
 import { createPostgresAdminAuditLogPort } from '../../services/api/src/admin/audit/pg.ts';
 import { createPool } from '../../services/api/src/db/pool.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
 const DB_NAME = 'gengyun_r34_audit_logs_test';
 const RUNTIME_ROLE = 'gengyun_api_runtime';
 const RUNTIME_PASSWORD = 'r34auditarm';
+/** 起集群最多换几个候选端口（每个都来自内核分配；见 `startCluster()`）。 */
+const MAX_PORT_ATTEMPTS = 8;
 const UNGRANTED_ROLE = 'r34_audit_logs_no_grant';
 const ADMIN_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const REQUEST_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -143,12 +147,18 @@ let ownerPool = null;
 let runtimePool = null;
 
 /**
- * 起一次性集群：在 55436–55467 里逐个候选试（55432–55435 已被兄弟切片占用，不碰）。
+ * 起一次性集群：最多试 `MAX_PORT_ATTEMPTS` 个候选，每个候选都向内核要（`pickFreePort()`）。
  *
- * 为什么不是「探到一个空闲端口就 initdb」：Windows 还有**保留/排除端口区间**
+ * ⛔ 不再「在 55436–55467 里逐个数字试」：那段落在 Linux 默认 ephemeral 区间 32768–60999 内，
+ * 会被任何出站连接的源端口占住，`pg_ctl start` 就偶发
+ * `could not bind IPv4 address "127.0.0.1": Address already in use`（C05 真库臂事故同一根因）。
+ *
+ * 为什么挑到空口还要「起不来就换一个」：Windows 还有**保留/排除端口区间**
  * （`netsh int ipv4 show excludedportrange protocol=tcp`，本机 55441–55540 在列），
  * postgres 在这些端口上会拿到 WSAEACCES。所以真正的判据是「postgres 能不能 bind」——
  * 失败就换下一个候选，并把原因如实打出来（不静默降级、不假装通过）。
+ * 同理保留 `portBusy()` 先探活：Windows 上 `listen()` 成功**不**证明端口空闲
+ * （SO_REUSEADDR 语义），只有 connect 才会告诉你「已经有人在监听」。
  *
  * POSIX 上还**必须**把 unix socket 指到本集群自己的数据目录：Debian/Ubuntu（含 PGDG 的
  * `postgresql-17`）把编译默认 `unix_socket_directories` 钉成 `/var/run/postgresql`，runner
@@ -164,7 +174,16 @@ function serverOptions(candidate, dir) {
 
 async function startCluster() {
   const tried = [];
-  for (let candidate = 55436; candidate <= 55467; candidate += 1) {
+  const seen = new Set();
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const candidate = await pickFreePort();
+    if (seen.has(candidate)) {
+      tried.push(`${candidate}:本轮已试过`);
+      continue;
+    }
+    seen.add(candidate);
+    // eslint-disable-next-line no-await-in-loop
     if (await portBusy(candidate)) {
       tried.push(`${candidate}:已有人监听`);
       continue;
@@ -211,7 +230,7 @@ async function startCluster() {
     }
     return;
   }
-  throw new Error(`55436–55467 内没有可用端口：${tried.join('；')}`);
+  throw new Error(`连续 ${MAX_PORT_ATTEMPTS} 次都没能起出一个临时集群：${tried.join('；')}`);
 }
 
 function stopCluster() {

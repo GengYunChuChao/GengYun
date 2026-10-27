@@ -57,6 +57,7 @@ import pg from 'pg';
 // 连接把拒绝写进 `admin_audit_events`」，所以必须用**产品代码本身**，不能用裸 SQL 模拟。
 // `.ts` 直接 import 是本仓集成测试的既有做法（Node 类型剥离），兄弟臂大半都这么引 services/**。
 import { createPostgresAdminScopeAuthority } from '../../services/api/src/admin/ops/scope-authority-pg.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
@@ -75,6 +76,8 @@ const RUNTIME_ROLE = 'gengyun_api_runtime';
 // 20-login-roles.sql 的口令 `\getenv` 守卫要求 48 位小写十六进制（openssl rand -hex 24）。
 const RUNTIME_PASSWORD = '0123456789abcdef0123456789abcdef0123456789abcdef';
 const TOOL = name => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
+/** 起集群最多换几个候选端口（每个都来自内核分配；见 `startCluster()`）。 */
+const MAX_PORT_ATTEMPTS = 8;
 const pass = line => console.log(`  ✓ ${line}`);
 const note = line => console.log(`  · ${line}`);
 
@@ -201,12 +204,23 @@ async function connectWithRetry(connectionString, attempts = 40) {
 /**
  * 起一次性集群：直接 spawn `postgres.exe -D … -p … -h 127.0.0.1`（裁定：⛔ 不用 `pg_ctl start`）。
  *
- * 候选端口 55600–55639：与兄弟臂（55432–55467）错开，避开本机保留区间。bind 失败的判据是
- * 「子进程退出 / 连不上」，失败就换下一个候选并把 server.log 的 FATAL 行如实打出来。
+ * 候选端口最多试 `MAX_PORT_ATTEMPTS` 个，每个都由 `./lib/free-port.mjs` 向内核要（`listen(0)` 现分配）。
+ * ⛔ 不再用「55600–55639 逐个数字试」：那段落在 Linux 默认 ephemeral 区间 32768–60999 内，会被任何
+ * 出站连接的源端口占住，起库时报 `could not bind IPv4 address "127.0.0.1": Address already in use`。
+ * bind 失败的判据仍是「子进程退出 / 连不上」，失败就换下一个候选并把 server.log 的 FATAL 行如实打出来。
  */
 async function startCluster() {
   const tried = [];
-  for (let candidate = 55600; candidate <= 55639; candidate += 1) {
+  const seen = new Set();
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const candidate = await pickFreePort();
+    if (seen.has(candidate)) {
+      tried.push(`${candidate}:本轮已试过`);
+      continue;
+    }
+    seen.add(candidate);
+    // eslint-disable-next-line no-await-in-loop
     if (await portBusy(candidate)) {
       tried.push(`${candidate}:已有人监听`);
       continue;
@@ -265,7 +279,7 @@ async function startCluster() {
     }
     return;
   }
-  throw new Error(`55600–55639 内没有可用端口：${tried.join('；')}`);
+  throw new Error(`连续 ${MAX_PORT_ATTEMPTS} 次都没能起出一个临时集群：${tried.join('；')}`);
 }
 
 /** 等 postgres 能接受连接；子进程提前退出即判失败。 */

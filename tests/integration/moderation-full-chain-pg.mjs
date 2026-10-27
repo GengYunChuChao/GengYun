@@ -39,7 +39,6 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from 'node:fs';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -64,6 +63,7 @@ import {
   scriptedClock,
 } from '../unit/community-fixtures.mjs';
 import { createPublicPostingConsent } from '../unit/community-posting-consent-fixtures.mjs';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const API = '/api/v1';
 const DB_NAME = 'gengyun_moderation_chain_test';
@@ -113,23 +113,6 @@ const note = (line) => console.log(`  · ${line}`);
 const digest = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 const postText = (title, body) => `${title}\n${body}`;
 
-function portIsFree(candidate) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => server.close(() => resolve(true)));
-    server.listen(candidate, '127.0.0.1');
-  });
-}
-
-async function pickPort() {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const candidate = 55600 + Math.floor(Math.random() * 400);
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('55600–55999 区间内找不到空闲端口（同机临时集群过多）');
-}
-
 /** 子进程输出去**文件**：本机 sandbox 禁命名管道，用管道收集会等到超时。 */
 function runTool(name, args) {
   const fd = openSync(serverLog, 'a');
@@ -160,7 +143,9 @@ function tailOfFile(file, maxLines = 15) {
 }
 
 async function startCluster() {
-  port = await pickPort();
+  // 端口向内核要一个此刻空闲的（`lib/free-port.mjs`）：⛔ 原来 `55600 + Math.random()*400`
+  // 整段落在 Linux 默认 ephemeral 区间（32768–60999）里，会被出站连接的源端口占住。
+  port = await pickFreePort();
   adminBase = `postgresql://postgres@127.0.0.1:${port}`;
   targetUrl = `${adminBase}/${DB_NAME}`;
   mkdirSync(dataDir, { recursive: true });

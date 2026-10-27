@@ -33,7 +33,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
@@ -50,6 +50,7 @@ import { RECEIPT_TTL_MS } from '../../services/api/src/privacy/account-deletion.
 import { createPostgresBackupPurgePort } from '../../services/api/src/privacy/backup-copies-pg.ts';
 import { createPostgresDeletionRequestStore } from '../../services/api/src/privacy/deletion-requests-pg.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 // 缺 PG 二进制时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
@@ -84,11 +85,13 @@ const say = (label) => {
 const note = (line) => console.log(`  - ${line}`);
 
 // ---------------------------------------------------------------------------
-// 临时集群（数据目录与端口都随机；端口取 55500+，避开本机既有 5432）
+// 临时集群（数据目录随机；端口向内核要一个**此刻空闲**的，⛔ 不在固定基址上 randomInt：
+// `55500 + randomInt(0, 500)` 会落进 Linux ephemeral 区间 32768–60999，被出站连接的源端口
+// 占住就 `pg_ctl start` 报 `could not bind IPv4 address "127.0.0.1": Address already in use`）
 // ---------------------------------------------------------------------------
 const rootDir = process.env.GY_I19_PG_ROOT ?? tmpdir();
 const dataDir = join(rootDir, `gy-i19-pg-${randomBytes(4).toString('hex')}`);
-const port = 55500 + randomInt(0, 500);
+const port = await pickFreePort();
 const tool = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
 
 /**

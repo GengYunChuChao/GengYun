@@ -79,11 +79,11 @@ workflow、两份守卫用例、被验证臂、本页）。
   `tests/integration/admin-audit-logs-pg.mjs:64` `process.env.GY_R34_PG_ROOT ?? tmpdir()`），两条各自在 root 下
   建自己的子目录 ⇒ 共用 `${{ runner.temp }}/gy-r34-pg` 是允许的，⛔ 不是同目录。
 - `:714` `PGCLIENTENCODING: UTF8`：邻居都有；这臂的读数里有中文断言消息，且它自己 `--encoding=UTF8` 建库
-  （`tests/integration/admin-audit-logs-pg.mjs:175`），客户端编码不设会让 psql/驱动口径与库不一致。
+  （`tests/integration/admin-audit-logs-pg.mjs:194`），客户端编码不设会让 psql/驱动口径与库不一致。
 - **收尾删什么、留什么**（别读成「删了两份日志」）：脚本收尾先 `pg_ctl stop`、再删**数据目录**，
-  `server.log` 在数据目录里（`tests/integration/admin-audit-logs-pg.mjs:184`）⇒ 随目录一起没；
+  `server.log` 在数据目录里（`tests/integration/admin-audit-logs-pg.mjs:203`）⇒ 随目录一起没；
   工具日志是 `openSync(join(rootDir, 'gy-r34-audit-logs-pg-tools.log'), 'a')`
-  （`tests/integration/admin-audit-logs-pg.mjs:66-68`）写在 **rootDir** 下的固定文件名、append 模式，
+  （`tests/integration/admin-audit-logs-pg.mjs:70-72`）写在 **rootDir** 下的固定文件名、append 模式，
   而 `stopCluster()` 只删 `dataDir` ⇒ 工具日志**从来不会被删**，作为取证留在 root 下
   （本机实测：`r66-arm2` 跑完 `E:\GengYunCommander\.pg17\tmp\r66-arm2` 里只剩它一个文件）。
 
@@ -216,7 +216,7 @@ job 结束即随 runner 丢弃。⛔ 若将来有脚本把**同一目录名**写
 ```
 
 11 条 ✓（`tests/integration/admin-audit-logs-pg.mjs:297`、`:302`、`:398`、`:416`、`:426`、`:468`、`:485`、`:499`、
-`:519`、`:539`、`:608` 各一条），末行由 `tests/integration/admin-audit-logs-pg.mjs:798` 打印；
+`:519`、`:539`、`:608` 各一条），末行由 `tests/integration/admin-audit-logs-pg.mjs:817` 打印；
 规模读数在 `:625`（`generate_series(1, 20000)` 见 `:621`，加 9 行夹具 ⇒ 20009），三条 EXPLAIN 在 `:636` 循环里。
 
 耗时口径：工具日志 `gy-r34-audit-logs-pg-tools.log` 的时间戳跨度 **5.0 s**（`14:50:35.280` → `14:50:40.286`，
@@ -239,7 +239,7 @@ postgres 进程数 = 0
 
 `r66-arm2` 跑完后 root 里**只剩** `gy-r34-audit-logs-pg-tools.log`：数据目录（含 `server.log`）已随
 `stopCluster()` 删除；工具日志按设计**本来就不删**——它 `openSync(join(rootDir, 'gy-r34-audit-logs-pg-tools.log'), 'a')`
-（`tests/integration/admin-audit-logs-pg.mjs:66-68`）写在 rootDir 下，而 `stopCluster()` 只删 `dataDir`，
+（`tests/integration/admin-audit-logs-pg.mjs:70-72`）写在 rootDir 下，而 `stopCluster()` 只删 `dataDir`，
 所以「只剩它一个」是**正确的收尾结果**，不是残留（§2.1 最后一条）。
 读数规模与修前一致（11 条 ✓、`规模：表内 20009 行`、三条 EXPLAIN：`8.08ms`／`3.02ms`／`2.96ms`）。
 **全程没有手工 `pg_ctl stop`、没有手工删目录**——这也是 §6.2 负控制成立的前提。

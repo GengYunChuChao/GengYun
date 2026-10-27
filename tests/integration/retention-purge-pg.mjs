@@ -7,7 +7,8 @@
 // 没给 `GY_PG_BIN` ⇒ 打印 SKIP 并 **exit 77**（刻意不提供 `--allow-skip`：CI 一旦跳过就必须是红的，
 // 不能让「没装 PG」静默变成绿）。
 //
-// 本臂自起临时集群（端口 55432–55467，避开发脑上 55436 的遗留集群；可用 `GY_PG_PORT` 钉死）：
+// 本臂自起临时集群（端口向内核要一个此刻空闲的，⛔ 不再取 55432–55467 这段固定区间——它落在
+// Linux 默认 ephemeral 区间 32768–60999 里；仍可用 `GY_PG_PORT` 钉死）：
 // 空库 ⇒ 跑全链迁移（0001…0032）⇒ 造过期/未过期数据 ⇒ dry-run ⇒ 真执行 ⇒ 再执行一次
 // ⇒ 机制臂（合成策略行：archive_marker / anonymize+revision）⇒ 权限失败。
 //
@@ -26,13 +27,14 @@ import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, 
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { randomBytes, randomInt } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import pg from 'pg';
 
 // 机制臂（[6]）要在进程内跑同一套执行器 + 合成策略行，所以直接 import（工具末尾有 invokedDirectly 闸门，不会自己跑）。
 import { runRetentionPurge } from '../../tools/purge-retention-expired.mjs';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 if (binDir === '') {
@@ -77,12 +79,13 @@ function portIsFree(candidate) {
 }
 
 /**
- * 保留策略片的端口区间是 **55432–55467**（派单硬约束）。
- * 55436 在开发机上曾遗留一个临时集群：范围包含它，但这里硬挡一次，防止踩到别人的库。
- *
  * 同机并行跑多个臂时必须能钉死端口（否则两个臂各自「先探活再绑定」会撞在同一个端口上，
  * 表现为 pg_ctl 报 `could not bind IPv4 address "127.0.0.1": Permission denied`）：
- * 给 `GY_PG_PORT` 就直接用它（仍校验区间外可用性），不给才随机挑。
+ * 给 `GY_PG_PORT` 就直接用它（仍校验区间外可用性），不给才向内核要一个此刻空闲的。
+ *
+ * ⛔ 不再从固定区间里 `randomInt`（原 `55432 + randomInt(0, 36)`）——这段落在 Linux 默认
+ * ephemeral 区间 32768–60999 里，会被出站连接的源端口占住，起库时报
+ * `could not bind IPv4 address "127.0.0.1": Address already in use`。
  */
 async function pickPort() {
   const fixed = process.env.GY_PG_PORT;
@@ -96,13 +99,14 @@ async function pickPort() {
     assert.ok(await portIsFree(candidate), `GY_PG_PORT=${candidate} 已被占用（换一个空闲端口）`);
     return candidate;
   }
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 55432 + randomInt(0, 36);
-    if (candidate === 55436) continue;
+  // 本臂会在 bind 冲突时换端口重试（见 `startCluster()`），所以同一进程内可能连要多次：
+  // 已经用过的端口由 `takenPorts` 排掉（`pickFreePort()` 只会给此刻空闲的，但同一个号可能被再次分配）。
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = await pickFreePort();
     if (takenPorts.has(candidate)) continue;
-    if (await portIsFree(candidate)) return candidate;
+    return candidate;
   }
-  throw new Error('55432–55467 区间内找不到空闲端口（同机临时集群过多）');
+  throw new Error('连续 8 次都没能拿到可用端口（同机临时集群过多）');
 }
 
 /**
