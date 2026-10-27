@@ -300,6 +300,112 @@ test('负例八（整块比对）：删掉逐 operation 表的一整行 ⇒ --ch
   assert.match(output, /文档：.*revokeAdministratorScope/, '红报告没有贴出文档侧原文');
 });
 
+/**
+ * M2b 的注入素材：一条**携带真实 method+path 证据**的 client 函数。
+ *
+ * 与「负例六」的关键差别：`sneakyPostDetail` 的路径段 `id` 不是模块字面量，
+ * `operationsForEvidence()` 会把它当可疑通配段整条丢掉——于是那条假入口在更早的分支
+ * 就被筛掉，根本走不到 `if (!called) continue;`（≈ `tools/lib/admin-capability-map.mjs:1604`）
+ * 这一步。这里复用 `admin-administrators.mjs` 里**已经成立**的证据形态
+ * （`${ADMINISTRATORS_PATH}/${id}/scopes` ⇒ `/admin/administrators/{id}/scopes`），
+ * 只把方法换成 POST，于是这条函数确实背书 `grantAdministratorScope`。
+ *
+ * 注入点刻意选 `admin-administrators.mjs`（该文件本来就有 admin 路径证据）：`uiRefFiles`
+ * 不变，用例里的差异就只剩「有没有真的调用」这一件事。
+ */
+const PROBE_ENTRY_FUNCTION = 'grantScopeEntryProbe';
+const PROBE_ENTRY_LIB = 'apps/admin/src/lib/admin-administrators.mjs';
+const PROBE_ENTRY_VIEW = 'apps/admin/src/views/AdministratorsView.vue';
+
+/**
+ * 在真实树的内存副本上注入「带证据的 client 函数」，并让可达视图
+ * `AdministratorsView.vue` import 它；`callStatement` 决定视图**是否真的调用**。
+ * 返回完整的 sources（`buildCapabilityMap` 直接吃），不落盘、不动 `docs/**`。
+ */
+function sourcesWithEvidenceCarryingProbe(callStatement) {
+  const sources = loadSources(REPO_ROOT);
+  // 反引号与 `${` 用 fromCharCode 拼，避免测试文件自身的模板转义把被注入的样例改样
+  const tick = String.fromCharCode(96);
+  const open = `${String.fromCharCode(36)}{`;
+  const probe = [
+    '',
+    '/** 假入口：携带 grantAdministratorScope 的 method + path 证据，视图只 import 不调用。 */',
+    `export async function ${PROBE_ENTRY_FUNCTION}(probeArgs = {}) {`,
+    '  const doFetch = resolveFetch(probeArgs.fetchImpl);',
+    `  const requestUrl = ${tick}${open}normalizeBaseUrl(probeArgs.baseUrl)}${open}ADMINISTRATORS_PATH}/${open}probeArgs.id}/scopes${tick};`,
+    "  return doFetch(requestUrl, { method: 'POST', headers: authHeaders(probeArgs.token), credentials: 'omit' });",
+    '}',
+    '',
+  ].join('\n');
+
+  const ui = sources.ui.map(file => {
+    if (file.path === PROBE_ENTRY_LIB) return { ...file, text: `${file.text}\n${probe}` };
+    if (file.path === PROBE_ENTRY_VIEW) {
+      assert.ok(file.text.includes('</script>'), `注入前提不成立：${PROBE_ENTRY_VIEW} 里没有 </script>`);
+      const injected = `import { ${PROBE_ENTRY_FUNCTION} } from '../lib/admin-administrators.mjs';\n${callStatement}`;
+      return { ...file, text: file.text.replace('</script>', `${injected}\n</script>`) };
+    }
+    return file;
+  });
+  return { ...sources, ui };
+}
+
+test('负例九（M2b 守卫）：携带真实证据的 client 函数只 import 不调用 ⇒ 该 operation 仍无 UI 入口', () => {
+  const base = buildCapabilityMap(loadSources(REPO_ROOT));
+  // 目标必须是**当前真的没有入口**的 operation：否则「import 即入口」的变异两边都是入口，用例失去判别力。
+  const gap = 'grantAdministratorScope';
+  assert.ok(base.summary.noUiEntryList.includes(gap), `前提不成立：${gap} 当前有入口，本守卫需改指向下一个缺口`);
+
+  const map = buildCapabilityMap(sourcesWithEvidenceCarryingProbe(''));
+  const row = rowOf(map, gap);
+
+  // ① 证据确实被认到了这条 operation 上：证明本用例走得到「有没有被调用」那个分支
+  //    （注入的函数若在 operationsForEvidence() 就被筛掉，下面的断言就变成了空转）。
+  assert.ok(
+    row.evidenceFunctions.includes(PROBE_ENTRY_FUNCTION),
+    `${PROBE_ENTRY_FUNCTION} 没有落在 ${gap} 的路径证据上，本用例会退化成无效守卫：${row.evidenceFunctions.join(', ')}`,
+  );
+  assert.equal(
+    map.summary.operationsWithEvidence,
+    base.summary.operationsWithEvidence + 1,
+    '注入的函数没有为任何 operation 增加路径证据',
+  );
+
+  // ② import 不是入口：withUiEntry / noUiEntry / noUiEntryList 一个都不许动
+  assert.equal(
+    map.summary.withUiEntry,
+    base.summary.withUiEntry,
+    '只 import 从不调用却被算成了入口 ——「光 import 不算入口」这条判据被掏空了',
+  );
+  assert.equal(map.summary.noUiEntry, base.summary.noUiEntry, '只 import 未调用却减少了缺口数');
+  assert.deepEqual(map.summary.noUiEntryList, base.summary.noUiEntryList, '缺口清单被 import 改写');
+  assert.ok(map.summary.noUiEntryList.includes(gap), `${gap} 不在缺口清单里`);
+  assert.equal(row.verdict, 'no-ui-entry', `只 import 未调用却判成 ${row.verdict}`);
+  assert.deepEqual(row.uiEntryViews, [], `只 import 未调用却挂上了入口视图：${row.uiEntryViews.join(', ')}`);
+
+  // ③ 「引用文件数」不动：本例只测「调用」，不测「哪个文件带了证据」
+  assert.equal(map.summary.uiRefFiles, base.summary.uiRefFiles, '注入点选错了：不该改变带 admin 路径证据的文件数');
+});
+
+test('负例十（M2b 对照）：同一个函数被调用一次 ⇒ 该 operation 变成有入口，差异只来自「调用」', () => {
+  const base = buildCapabilityMap(loadSources(REPO_ROOT));
+  const gap = 'grantAdministratorScope';
+  assert.ok(base.summary.noUiEntryList.includes(gap), `前提不成立：${gap} 当前有入口`);
+
+  const map = buildCapabilityMap(sourcesWithEvidenceCarryingProbe('void grantScopeEntryProbe({});'));
+  const row = rowOf(map, gap);
+
+  assert.equal(row.verdict, 'ui-entry', `函数真被调用后仍判成 ${row.verdict}`);
+  assert.deepEqual(row.uiEntryViews, [PROBE_ENTRY_VIEW], `入口视图不是 ${PROBE_ENTRY_VIEW}：${row.uiEntryViews.join(', ')}`);
+  assert.equal(map.summary.withUiEntry, base.summary.withUiEntry + 1);
+  assert.equal(map.summary.noUiEntry, base.summary.noUiEntry - 1);
+  assert.ok(!map.summary.noUiEntryList.includes(gap), '被调用的函数已经造出入口，却仍留在缺口清单里');
+  assert.ok(
+    map.summary.noUiEntryList.includes('revokeAdministratorScope'),
+    '另一条真缺口被牵连了：对照组的差异不应扩散',
+  );
+});
+
 test('--update 只重写标记块，不动块外散文', t => {
   const root = makeTempTree(t);
   const docPath = join(root, 'docs/architecture/admin-console-capability-map.md');
