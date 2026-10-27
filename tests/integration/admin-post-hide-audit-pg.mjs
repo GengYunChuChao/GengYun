@@ -17,8 +17,8 @@
  *       scope=`sources:write`、result=`accepted`、reason_code=`post_hidden`、
  *       target_ref={type:'post',id,revision:**下架前**的 1}、target_hint=NULL、request_id 非空；
  *       **负控制**：把 0047 的 `action` 字面量改成 `post_hide` ⇒ 本条红（[A] 读的是真表里的值）；
- *   [A2] **读写面互不伤害**：不带 action 过滤的 `public.list_admin_audit_logs(...)` 必须**正常返回**
- *       且**含**这条 `post.hide`（#654 栽在「写了行让读面 503」，这是本片最容易翻车的点）；
+ *   [A2] **读写面互不伤害**：不带 action 过滤的 `public.list_admin_audit_logs(...)` 必须**正常返回**、行数
+ *       **恰好**等于真表行数且**含**这条 `post.hide`（R67-D10：原为 `>= 1`；期望值＝[A] 的真表读数）；
  *       **负控制**：去掉 0047 里的 `REVOKE`/把行写成 `reason_code=''` ⇒ 读面在 `p_reason_code`
  *       断言处红，而不是静默通过；
  *   [B] **同事务返修臂**：用 `BEFORE INSERT … WHEN (NEW.action='post.hide')` 触发器让审计写入失败 ⇒
@@ -354,12 +354,43 @@ async function main() {
     const listed = await owner.query(
       'SELECT id, action, scope, result, target_ref FROM public.list_admin_audit_logs(p_limit => 50)',
     );
-    assert.ok(listed.rows.length >= 1, 'list_admin_audit_logs 不带 action 过滤必须正常返回行（不是空、不是报错）');
+    /*
+     * 期望行数的来源（⛔ 不是魔数）：本臂到 [A2] 为止**只写过一次**审计——[A] 那笔成功下架。
+     * 库层写入点只有 0047 的 `record_admin_post_hide_audit`，本脚本从不直接 INSERT
+     * `public.admin_audit_events`；[B] 的失败路径按判据必须零留行、[C] 幂等臂排在它之后。
+     * 所以此刻真表里应当恰好是 `rows1.length` 行（[A] 从**真表**读到的行数），而不带 action 过滤的
+     * 读面必须把它们**一条不少、一条不多**地返回。此前这里写的是 `>= 1`：只要读面返回任意一行就绿，
+     * 「读面漏行」和「读面重复行」两种翻车都会被放过。
+     */
+    const expectedListedRows = rows1.length;
+    const trueAuditRows = (await owner.query(
+      'SELECT count(*)::int AS n FROM public.admin_audit_events',
+    )).rows[0].n;
+    assert.equal(
+      trueAuditRows,
+      expectedListedRows,
+      `真表 public.admin_audit_events 此刻必须恰好 ${expectedListedRows} 行（期望值 = [A] 的真表读数 rows1.length：`
+        + `本臂只成功下架过 P1 一条，且 [B]/[C] 都在这一段之后），实际 ${trueAuditRows} 行；`
+        + '这条同时钉住「本脚本没有第二个审计写入点」这个前提',
+    );
+    assert.equal(
+      listed.rows.length,
+      expectedListedRows,
+      `list_admin_audit_logs 不带 action 过滤必须正常返回表里的**全部** ${expectedListedRows} 行`
+        + '（期望值 = [A] 的真表读数 rows1.length，即本臂成功下架的次数；'
+        + '写成「>= 1」时漏行/重复行都判绿，等于没判别力）'
+        + `，实际 ${listed.rows.length} 行`,
+    );
     const listedHide = listed.rows.filter((row) => row.action === 'post.hide');
-    assert.equal(listedHide.length, 1, `读面必须含这条 post.hide（实际 ${listedHide.length}）`);
+    assert.equal(
+      listedHide.length,
+      expectedListedRows,
+      `读面返回的 post.hide 行数必须等于本臂成功下架的次数 ${expectedListedRows}`
+        + `（= [A] 的真表读数 rows1.length），实际 ${listedHide.length} 行`,
+    );
     assert.equal(listedHide[0].id, audit.id, '读面返回的必须是同一行（同 id）');
     assert.deepEqual(listedHide[0].target_ref, { type: 'post', id: P1.id, revision: 1 });
-    note(`[A2] 读面不受伤：public.list_admin_audit_logs(p_limit => 50) 正常返回 ${listed.rows.length} 行，其中 post.hide 恰 1 行且同 id（#654 的翻车点在这里钉住）`);
+    note(`[A2] 读面不受伤：public.list_admin_audit_logs(p_limit => 50) 正常返回 ${listed.rows.length} 行 = 真表全部 ${trueAuditRows} 行，其中 post.hide 恰 ${listedHide.length} 行且同 id（#654 的翻车点在这里钉住）`);
 
     // -----------------------------------------------------------------------
     // [B] 同事务返修臂：审计写不进去 ⇒ 整笔回滚、如实 503
