@@ -54,7 +54,7 @@
 | 审核规则层与载荷 | 5 | 2 | 1 | 2 | 0 | 模型层不存在（N07）；载荷缺 mime（N11） |
 | 媒体 | 2 | 1 | 0 | 1 | 0 | 读句柄网关未接（N12）；写链路已验收（E24） |
 | 开关（三键与十个受控面） | 6 | 6 | 0 | 0 | 0 | 本域全绿，闭集与两个错误码分流都有断言 |
-| 审计 | 6 | 3 | 2 | 1 | 0 | `job.cancel` 已登记进闭集、读面可筛（E40）；审计总台账**已有页面**消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`，导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:70`，#633）；剩余是三读面读数不合并（P10）与台账滞后（N02）。原写「后台无入口」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
+| 审计 | 6 | 3 | 2 | 1 | 0 | `job.cancel` 已登记进闭集、读面可筛（E40）；审计总台账**已有页面**消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`，导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`，#633）；剩余是三读面读数不合并（P10）与台账滞后（N02）。原写「后台无入口」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | 后台作业台（含真库臂） | 8 | 6 | 2 | 0 | 0 | 端口已接线并通过真库回归；投影语义未真实化（P11） |
 | 统一台账·调用记录·版本串 | 3 | 0 | 0 | 3 | 0 | `public.jobs` 零写入、`provider_invocations` 无表（N04／N05） |
 | 登记核对 | 1 | 0 | 1 | 0 | 0 | real 无登记库，恒 unavailable（P12） |
@@ -122,7 +122,7 @@
 | P07 | 审核域结论可读 + 规则层可用 | 部分实现 | docs/architecture/contract-implementation-status.md:76 | 真实 tms／ims 未授权 ⇒ real 整域 fail-closed（Z06）；持久队列与租约仍是内存台账 |
 | P08 | 作业台列表：过滤参数与下推 SQL 已实现 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:23-28 | 后台 UI 只发 `limit`／`cursor`（apps/admin/src/lib/jobs-api.mjs:136-146）⇒ 库侧过滤能力无入口 |
 | P09 | 非持久端口的审计台账（内存追加、只增不改） | 部分实现 | services/api/src/admin/ops/content-pg.ts:25-27 | 仍只增不改、重启即丢；但**真库端口已不再走它**：持久端口在自身事务里写库（services/api/src/admin/ops/service.ts:853-854 只在 `!persistent` 时追加内存） |
-| P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；出口侧：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`，导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:70`，#633），另两个审计页仍分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54）⇒ 三读面读数不能合并、页面读数也无端到端验收，故仍判部分实现。原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
+| P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；出口侧：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`，导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`，#633），另两个审计页仍分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54）⇒ 三读面读数不能合并、页面读数也无端到端验收，故仍判部分实现。原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | P11 | 作业台作业投影按契约形状输出 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:17-22 | `target_ref.revision` **自 #608 起已取记录行真实 revision**（`services/api/src/admin/ops/jobs-pg.ts:413` 的 `targetRevision ?? UNCREATED_RECORD_REVISION`，SQL 投影 `r.revision`；记录尚未创建时才退回 1，见同文件 :23-28）；`result` 恒 `null` 是契约形状、作业结果在后台读面仍读不到——形状对、语义只真实化一半。原写「`target_ref.revision` 恒取 1」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | P12 | 登记核对 `verifyRegistration` 判定内核 | 部分实现 | docs/architecture/contract-implementation-status.md:82 | real 无真实登记库 ⇒ 恒 `unavailable`；无已审用量来源 ⇒ `dose_cards` 恒空 |
 

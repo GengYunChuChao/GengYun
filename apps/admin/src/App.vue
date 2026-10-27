@@ -62,16 +62,28 @@ const active = ref<TabKey>('accounts');
       </button>
     </nav>
 
-    <AccountsView v-if="active === 'accounts'" />
-    <ContentAdminView v-else-if="active === 'content'" />
-    <FlagsView v-else-if="active === 'flags'" />
-    <FlagAuditView v-else-if="active === 'flagAudit'" />
-    <AuditEventsView v-else-if="active === 'audit'" />
-    <AuditLogsView v-else-if="active === 'auditLogs'" />
-    <AdministratorsView v-else-if="active === 'administrators'" />
-    <JobsView v-else-if="active === 'jobs'" />
-    <ModerationQueueView v-else-if="active === 'moderation'" />
-    <ReviewPlaceholderView v-else />
+    <!--
+      R68-B10：切页不能丢回执。
+      `v-if` 链本身是对的（同一时刻只有一个页面实例在树上），但**没有缓存**：切走就卸载、
+      切回就重建，于是「停用某人 / 隐藏某帖」拿到的 `WriteReceipt`、以及那一步的结果摘要
+      全都随卸载消失，页面还会重新拉一次第一页（用户无法确认刚才那步是否生效）。
+      `<KeepAlive>` 只把**非活动页**的实例放进缓存（DOM 移出文档），切回来复用同一个实例：
+      回执、表单草稿、已读到的列表与那次读请求都还在，`onMounted` 也不再重跑 —— 读请求只会更少。
+      `:max` 钉住缓存上限为标签页数量：一个键一份，任何时候都不会因为缓存堆叠而多出实例。
+      ⛔ 不要换成「一直挂载 + v-show」：那会让 10 个页面同时存在、同时拉数据。
+    -->
+    <KeepAlive :max="tabs.length">
+      <AccountsView v-if="active === 'accounts'" />
+      <ContentAdminView v-else-if="active === 'content'" />
+      <FlagsView v-else-if="active === 'flags'" />
+      <FlagAuditView v-else-if="active === 'flagAudit'" />
+      <AuditEventsView v-else-if="active === 'audit'" />
+      <AuditLogsView v-else-if="active === 'auditLogs'" />
+      <AdministratorsView v-else-if="active === 'administrators'" />
+      <JobsView v-else-if="active === 'jobs'" />
+      <ModerationQueueView v-else-if="active === 'moderation'" />
+      <ReviewPlaceholderView v-else />
+    </KeepAlive>
 
     <footer class="foot">
       <dl>
