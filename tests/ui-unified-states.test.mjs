@@ -2,8 +2,9 @@
  * B7 小程序端统一失败/空态/模拟标记（Refs #28）
  * ----------------------------------------------------------------------------
  * 本文件把「统一状态层」从口头约定变成可复算的断言，覆盖四件事：
- *   1. 契约覆盖：`services/api/src/contract.ts` 的每一个错误码，`utils/states.js` 都有归类
- *      ——漏一个码就等于某个接口失败时页面无状态可渲染（静默空白），必须红。
+ *   1. 契约覆盖（**双向**）：`services/api/src/contract.ts` 的每一个错误码，`utils/states.js` 都有归类
+ *      ——漏一个码就等于某个接口失败时页面无状态可渲染（静默空白），必须红；反过来，
+ *      `states.js` 多出契约里没有、又不在显式客户端许可清单（`CLIENT_ONLY_CODES`）里的码，同样红。
  *   2. 分类语义：401→guest、403→denied、404→invalid、其余→error；「可重试」只给
  *      服务侧临时故障与冲突类，请求不合法/无权限/找不到不提供原地重试（重试无效）。
  *   3. 组件行为：`components/state-view` 用**真实模块**在 vm 里跑 refresh()，逐态断言
@@ -83,8 +84,9 @@ function renderComponent(passed) {
   return instance.data;
 }
 
-test('契约错误码全覆盖：contract.ts 的每个码都有状态归类，漏一个即红', () => {
-  for (const { status, code } of contractCodes()) {
+test('契约错误码全覆盖（双向）：契约里的每个码都有状态归类，states.js 也不许多出未登记的码', () => {
+  const contract = contractCodes();
+  for (const { status, code } of contract) {
     assert.ok(
       Object.prototype.hasOwnProperty.call(states.CODE_KIND, code),
       `${code}（HTTP ${status}）在 utils/states.js 里没有归类——该错误发生时页面将无状态可渲染`
@@ -92,6 +94,54 @@ test('契约错误码全覆盖：contract.ts 的每个码都有状态归类，�
     const kind = states.CODE_KIND[code];
     assert.ok(states.KIND_LABEL[kind], `${code} 的分类 ${kind} 没有中文标签`);
   }
+
+  // 反方向：states.js 的每个码要么在契约里，要么在**显式**的客户端自造码许可清单里。
+  // 多一个未登记的码同样算红——它要么是页面会按一个契约永远给不出的码渲染状态，
+  // 要么是契约删码后留下的僵尸归类，两种都让这张表不再可信。
+  const inContract = new Set(contract.map((entry) => entry.code));
+  const allowlist = new Set(states.CLIENT_ONLY_CODES);
+  const unregistered = Object.keys(states.CODE_KIND).filter(
+    code => !inContract.has(code) && !allowlist.has(code)
+  );
+  assert.deepEqual(
+    unregistered,
+    [],
+    'states.js 有契约里没有、也不在 CLIENT_ONLY_CODES 里的码：' + unregistered.join('、')
+  );
+  assert.equal(
+    new Set(states.CLIENT_ONLY_CODES).size,
+    states.CLIENT_ONLY_CODES.length,
+    'CLIENT_ONLY_CODES 有重复项'
+  );
+  // 许可清单不得空转：每条都要真的在 CODE_KIND 里，且真的不在契约里（真在契约里就该删掉这一条）。
+  for (const code of states.CLIENT_ONLY_CODES) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(states.CODE_KIND, code),
+      `CLIENT_ONLY_CODES 的 ${code} 在 CODE_KIND 里没有归类——清单与实现已漂移`
+    );
+    assert.ok(!inContract.has(code), `CLIENT_ONLY_CODES 的 ${code} 其实已在契约里——应从允许清单删除`);
+  }
+});
+
+test('409 的两个业务规则拒绝：形态同 denied（锁住、无重试），但不得冒充「内容已变更」', () => {
+  for (const code of ['LAST_SCOPE_MANAGER', 'SELF_DISABLE_DENIED']) {
+    assert.equal(states.statusForCode(code), states.STATUS.DENIED, code + ' 必须按拒绝呈现，不能落成通用 error');
+    assert.equal(states.retryableForCode(code), false, code + ' 换谁再点一次都是同样结果，不该给重试按钮');
+    assert.equal(states.resolve(code).kindLabel, '操作不被允许', code + ' 的标签必须说清是「规则不让做」');
+    assert.notEqual(states.CODE_KIND[code], 'conflict', code + ' 不是「内容已变更」——归 conflict 会给出假的可重试提示');
+  }
+  // refused 与 denied 必须分开：utils/auth.js 的 FORBIDDEN_CODES 由 kind === 'denied' 反推（契约 403 闭集），
+  // 把 409 混进去会让 401/403 归因多出两个永不出现的成员。
+  const deniedKinds = Object.keys(states.CODE_KIND).filter(code => states.CODE_KIND[code] === 'denied');
+  for (const code of ['LAST_SCOPE_MANAGER', 'SELF_DISABLE_DENIED']) {
+    assert.ok(deniedKinds.indexOf(code) === -1, code + ' 是 409，不该混进按 kind==="denied" 反推的 403 归因闭集');
+  }
+  // 组件层：页面即使按 error 传入，也渲染成锁住语气并按 denied 收起重试。
+  const view = renderComponent({ status: 'error', errorCode: 'LAST_SCOPE_MANAGER', actionText: '重新尝试' });
+  assert.equal(view.effectiveStatus, 'denied');
+  assert.equal(view.kindTag, '操作不被允许');
+  assert.equal(view.retryable, false);
+  assert.equal(view.actionSuppressed, true, '规则拒绝下「重新尝试」必须收起');
 });
 
 test('分类语义：401→guest、403→denied、404→invalid、服务端故障→error 且可重试', () => {
@@ -99,7 +149,7 @@ test('分类语义：401→guest、403→denied、404→invalid、服务端故�
     assert.equal(states.statusForCode(code), states.STATUS.GUEST, code + ' 必须按未登录处理');
     assert.equal(states.retryableForCode(code), false, code + ' 不该提供原地重试');
   }
-  for (const code of ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE']) {
+  for (const code of ['SCOPE_DENIED', 'CONSENT_REQUIRED', 'ACCOUNT_INACTIVE', 'SELF_SCOPE_GRANT_DENIED']) {
     assert.equal(states.statusForCode(code), states.STATUS.DENIED, code + ' 必须与 guest 分开');
     assert.equal(states.retryableForCode(code), false, code + ' 重试不会变好，不该给重试');
     assert.equal(states.resolve(code).kindLabel, '没有权限');
