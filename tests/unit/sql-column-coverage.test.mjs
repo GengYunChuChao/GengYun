@@ -519,11 +519,22 @@ const OPAQUE_ALLOWLIST = [
  * S3（迁移 0045）：`community_moderation_decisions.decided_by` 在 `store-pg.ts` 的
  * INSERT 列清单、`ON CONFLICT DO UPDATE SET`、SELECT 列清单各出现一次 ⇒ 列要求 +3，
  * 其余读数不变。
+ *
+ * R64（迁移 0047）：`community/store-pg.ts` 新增一条**下架审计调用** ——
+ * `SELECT public.record_admin_post_hide_audit($1::uuid, $2::uuid, $3::integer, $4::text, $5::uuid)
+ * AS audit_event_id`（`COMMUNITY_POST_SQL.hideAudit`，静态整句、零插值）。与 ⑰ 的
+ * `CANCEL_AUDIT_SQL` 同形：**没有 FROM** ⇒ 只让字面量、SELECT、无顶层 FROM 与逐文件
+ * `community` 各 +1，**不**新增引用表/函数调用/列权限要求
+ * （函数的 EXECUTE 归 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 的函数面清单）。
+ *   ⇒ 8 文件块：字面量 163 → **164**、SELECT 75 → **76**、逐文件 `community` 43 → **44**；
+ *   20 文件块：字面量 290 → **291**、SELECT 155 → **156**、无顶层 FROM 15 → **16**、
+ *   逐文件 `community` 43 → **44**；两块的 INSERT/UPDATE/DELETE、RETURNING、ON CONFLICT、
+ *   `SELECT *`、引用表、行锁、不可判插值、列要求均不变。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 163,
-  statements: { INSERT: 27, UPDATE: 29, SELECT: 75, DELETE: 32 },
+  sqlLiterals: 164,
+  statements: { INSERT: 27, UPDATE: 29, SELECT: 76, DELETE: 32 },
   returningClauses: 65,
   onConflictClauses: 17,
   selectStar: 0,
@@ -534,7 +545,7 @@ const EXPECTED_READINGS = {
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 43,
+  community: 44,
   conversations: 17,
   favorites: 15,
   history: 16,
@@ -737,15 +748,15 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 20,
-  sqlLiterals: 290,
-  statements: { INSERT: 45, UPDATE: 51, SELECT: 155, DELETE: 39 },
+  sqlLiterals: 291,
+  statements: { INSERT: 45, UPDATE: 51, SELECT: 156, DELETE: 39 },
   returningClauses: 91,
   onConflictClauses: 28,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 15,
+  noTargetTable: 16,
   referencedTables: 48,
   columnRequirements: 1864,
   coveredRequirements: 1810,
@@ -761,7 +772,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 13,
-  'community': 43,
+  'community': 44,
   'conversations': 17,
   'favorites': 15,
   'history': 16,

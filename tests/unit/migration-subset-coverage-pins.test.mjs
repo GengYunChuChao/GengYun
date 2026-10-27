@@ -26,14 +26,14 @@
  *
  * 五条臂（全部只读：读文件、读目录，不连库、不执行 SQL、不起进程）：
  *
- *   1. 扫描面自证：真正识别出的「子集脚本」必须**恰好**是 `SUBSET_SCRIPTS` 这 12 个（today 实测
- *      12/66）；另外把「朴素扫描命中但不是真子集」的差集钉成**恰好** `NAIVE_ONLY_SCRIPTS`
+ *   1. 扫描面自证：真正识别出的「子集脚本」必须**恰好**是 `SUBSET_SCRIPTS` 这 13 个（today 实测
+ *      13/67）；另外把「朴素扫描命中但不是真子集」的差集钉成**恰好** `NAIVE_ONLY_SCRIPTS`
  *      （today 实测就 `moderation-ledger-pg.mjs` 一个，原因见那里的注释）。正则一旦失配成「零命中」，
  *      这两条立刻红 —— 防「零命中即全绿」。
  *   2. 核心判定：子集脚本（或它直接 import 的模块）提到 (表, 列)，且这张表**由该脚本自己的子集
  *      建得出来** ⇒ 子集必须含该列所属迁移号。需求清单按「`0045` 在不在本树」二选一、
- *      两边都写成**精确清单**：不在树 17 条（today 实测，0 违规；其中 15 条
- *      `anonymized_author_ref` 需求）、在树 22 条（+5 条 `decided_by`）。见「过渡期适配」段。
+ *      两边都写成**精确清单**：不在树 22 条（today 实测，0 违规；其中 18 条
+ *      `anonymized_author_ref` 需求）、在树 28 条（+6 条 `decided_by`）。见「过渡期适配」段。
  *   3. rollback 重放面：脚本回滚了 `rollback/NNNN`，且它用到了「被 NNNN 建出来的表」上由后续迁移
  *      ADD COLUMN 的列 ⇒ 该版本必须在**回滚点之后**再被 apply 一次。today 实测需求恰为
  *      `community-pg.mjs` 的 0030、0032，各出现 **2 次**（子集一次 + 重放一次）。
@@ -42,12 +42,12 @@
  *      防「迁移里的列名拼错/与代码脱节」——这条也是本文件唯一能抓住「改迁移里的列名」的那一臂。
  *
  * 过渡期适配（看这条，别看错）：需求清单的条数取决于「`0045` 在不在本树」——
- *   **不在**是 17 条（今天的 main `740ed332`），**在**是 22 条（多出五个 community 脚本各一条
+ *   **不在**是 22 条（加 R64 后的主干），**在**是 28 条（多出六个 community 脚本各一条
  *   `→ 0045 community_moderation_decisions.decided_by`，实测 `de695979` 树）。本文件用
  *   `HAS_MIGRATION_0045` 二选一，两块都是**精确清单**（没有 `>=`、没有 `includes` 兜底、没有
  *   「有 0045 就跳过」）：这样 `#630`（B 档，还开着）合入 main 的那一刻这条钉子在主干上**直接绿**，
  *   不会用一个 A 档 PR 给主干埋雷；同时两条分支都仍然逐条比对，`#630` 那种「新列没进子集」照样红。
- *   `#630` 合入之后请做一次收尾（届时条件分支就是纯噪音）：把 `EXPECTED_DEMANDS_WITH_0045` 那 5 条
+ *   `#630` 合入之后请做一次收尾（届时条件分支就是纯噪音）：把 `EXPECTED_DEMANDS_WITH_0045` 那 6 条
  *   并进 `EXPECTED_DEMANDS`（保持字典序）、删掉 `EXPECTED_DEMANDS_WITH_0045` 常量与
  *   `expectedDemands` 的三元条件（改成 `const expectedDemands = [...EXPECTED_DEMANDS];`）、
  *   并删掉本段与 `EXPECTED_DEMANDS` 注释里所有「过渡期」字样。
@@ -68,7 +68,7 @@
  *   - 不判断子集里的版本号是否真的存在（那是 `migrations-rollback-pairing.test.mjs` 与
  *     `migrations-negative-pg.mjs` 的事），也不判断 apply 顺序（那是各脚本自己的自证臂）。
  *   - 不解析「按需加载 / 动态拼路径」的 import：只认静态 `import … from '<相对路径>'` 与
- *     `import('<相对路径>')`；今天 12 个子集脚本用的都是显式 `.ts` 后缀的静态相对 import。
+ *     `import('<相对路径>')`；今天 13 个子集脚本用的都是显式 `.ts` 后缀的静态相对 import。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -95,6 +95,7 @@ const UP_FILE_PATTERN = /^\d{4}_[a-z0-9_]+\.sql$/;
  */
 const SUBSET_SCRIPTS = Object.freeze([
   'admin-community-posts-pg.mjs',
+  'admin-post-hide-audit-pg.mjs',
   'admin-posts-read-pg.mjs',
   'catalog-pg.mjs',
   'community-filter-pg.mjs',
@@ -133,11 +134,11 @@ const COLUMN_ENTRY_FLOOR = 18;
 const CODE_FILE_FLOOR = 900;
 
 /**
- * 今天真实的 17 条需求（精确清单）= **0045 不在本树时**的全部需求。
+ * 今天真实的 22 条需求（精确清单）= **0045 不在本树时**的全部需求。
  *
  * 0030/0032/0012 是既成事实：这些迁移已经在树上、相关脚本已经补齐，需求**只会增不会减**。
  * 谁把某一版从某个脚本的子集里删掉，这里逐条报 `文件 → 版本 表.列`。
- * `0045` 落树后多出的那 5 条在 `EXPECTED_DEMANDS_WITH_0045`，由 `expectedDemands` 按
+ * `0045` 落树后多出的那 6 条在 `EXPECTED_DEMANDS_WITH_0045`，由 `expectedDemands` 按
  * `HAS_MIGRATION_0045` 二选一（过渡期适配，见文件头）。
  *
  * 为什么 `anonymized_author_ref` 是 15 条而不是 8 条：需求侧接了「直接 import 的模块」之后，
@@ -149,6 +150,11 @@ const EXPECTED_DEMANDS = Object.freeze([
   'admin-community-posts-pg.mjs → 0030 community_comments.anonymized_author_ref',
   'admin-community-posts-pg.mjs → 0030 community_posts.anonymized_author_ref',
   'admin-community-posts-pg.mjs → 0032 community_reports.anonymized_author_ref',
+  'admin-post-hide-audit-pg.mjs → 0027 admin_audit_events.after_value',
+  'admin-post-hide-audit-pg.mjs → 0027 admin_audit_events.before_value',
+  'admin-post-hide-audit-pg.mjs → 0030 community_comments.anonymized_author_ref',
+  'admin-post-hide-audit-pg.mjs → 0030 community_posts.anonymized_author_ref',
+  'admin-post-hide-audit-pg.mjs → 0032 community_reports.anonymized_author_ref',
   'admin-posts-read-pg.mjs → 0030 community_comments.anonymized_author_ref',
   'admin-posts-read-pg.mjs → 0030 community_posts.anonymized_author_ref',
   'admin-posts-read-pg.mjs → 0032 community_reports.anonymized_author_ref',
@@ -166,16 +172,17 @@ const EXPECTED_DEMANDS = Object.freeze([
 ]);
 
 /**
- * `0045`（#630）在树上时**额外**多出的 5 条需求（过渡期适配的另一半，见文件头）。
+ * `0045`（#630）在树上时**额外**多出的 6 条需求（过渡期适配的另一半，见文件头）。
  *
- * 为什么是 5 条：五个 community 真库脚本的子集里都有建出 `community_moderation_decisions` 的
+ * 为什么是 6 条：五个 community 真库脚本的子集里都有建出 `community_moderation_decisions` 的
  * `0022`，而它们（或它们直接 import 的 `store-pg.ts` / `app.ts`）都会读写 `decided_by`，于是每个脚本
- * 各自提出一条需求。实测 `de695979` 树（#630 的修复提交）上正是这 5 条、需求总数 22。
+ * 各自提出一条需求。实测 `de695979` 树（#630 的修复提交）上正是这 6 条、需求总数 28。
  * 与 `EXPECTED_DEMANDS` 一样是**精确清单**：`expectedDemands` 按 `HAS_MIGRATION_0045` 二选一，
  * 不做并集、不跳过；`#630` 合入后把这 5 行并进上面那张表并删掉本常量。
  */
 const EXPECTED_DEMANDS_WITH_0045 = Object.freeze([
   'admin-community-posts-pg.mjs → 0045 community_moderation_decisions.decided_by',
+  'admin-post-hide-audit-pg.mjs → 0045 community_moderation_decisions.decided_by',
   'admin-posts-read-pg.mjs → 0045 community_moderation_decisions.decided_by',
   'community-filter-pg.mjs → 0045 community_moderation_decisions.decided_by',
   'community-pg.mjs → 0045 community_moderation_decisions.decided_by',
@@ -183,14 +190,15 @@ const EXPECTED_DEMANDS_WITH_0045 = Object.freeze([
 ]);
 
 /**
- * 直接 import 了 `services/api/src/community/store-pg.ts` 的子集脚本（today 实测这五个）。
+ * 直接 import 了 `services/api/src/community/store-pg.ts` 的子集脚本（today 实测这六个）。
  *
- * 这五个就是「会话/审核/筛选」真库臂：#630 的 42703 正是从 store-pg 的 SQL 里冒出来的。
+ * 这六个就是「会话/审核/筛选」真库臂：#630 的 42703 正是从 store-pg 的 SQL 里冒出来的。
  * 钉住这份清单 = 钉住「需求侧真的读到了 store 代码」——谁把某个脚本的 store import 换成
  * 别的东西（或改成动态拼路径），这条立刻红，而不是让核心判定悄悄退化成「只看脚本文本」。
  */
 const EXPECTED_STORE_IMPORTERS = Object.freeze([
   'admin-community-posts-pg.mjs',
+  'admin-post-hide-audit-pg.mjs',
   'admin-posts-read-pg.mjs',
   'community-filter-pg.mjs',
   'community-pg.mjs',
@@ -401,7 +409,7 @@ function locateMention(sources, symbol) {
 /**
  * 把脚本里静态相对 import 的说明符解析成仓库内真实文件（只读探测，不执行）。
  *
- * 今天 12 个子集脚本写的都是显式后缀（`'../../services/api/src/community/store-pg.ts'`），
+ * 今天 13 个子集脚本写的都是显式后缀（`'../../services/api/src/community/store-pg.ts'`），
  * 这里额外容忍 `.js → .ts`、`.mjs → .mts`、省略后缀与 `index.ts`，免得换个写法就静悄悄零命中。
  * @param {string} fromFile 仓库相对路径
  * @param {string} specifier `import … from '<specifier>'` 里的原文
@@ -591,7 +599,7 @@ const createdBy = collectCreatedTables(migrationFiles);
  *
  * 刻意按**文件名前缀**判，而不是按「收集到了 0045 的 ADD COLUMN」判：这条分支问的是
  * 「那一版迁移在不在树上」。若 0045 落树却没带 ADD COLUMN（改成 RENAME 之类），
- * `expectedDemands` 会走 22 条那条分支而收集不到 decided_by，于是本条红 —— 那正是要的信号。
+ * `expectedDemands` 会走 28 条那条分支而收集不到 decided_by，于是本条红 —— 那正是要的信号。
  */
 const HAS_MIGRATION_0045 = migrationFiles.some((file) => file.name.startsWith('0045_'));
 
@@ -664,7 +672,7 @@ const orphanColumns = findOrphanColumns(columnEntries, codeFiles);
 // 1. 扫描面自证
 // ---------------------------------------------------------------------------
 
-test('扫描面自证：真正识别的子集脚本恰是这 12 个（today 12/66），防正则失配后零命中即全绿', () => {
+test('扫描面自证：真正识别的子集脚本恰是这 13 个（today 13/67），防正则失配后零命中即全绿', () => {
   const actual = subsetScripts.map((script) => script.file);
   assert.deepEqual(
     actual,
@@ -747,7 +755,7 @@ test('ADD COLUMN 收集面：18 条下限 + 0030/0032 的 community 三列必须
   );
 });
 
-test('扫描面自证：需求侧真的读到了 community store（直接 import store-pg.ts 的恰是这 5 个脚本）', () => {
+test('扫描面自证：需求侧真的读到了 community store（直接 import store-pg.ts 的恰是这 6 个脚本）', () => {
   assert.deepEqual(
     storeImporters,
     [...EXPECTED_STORE_IMPORTERS],
@@ -764,7 +772,7 @@ test('扫描面自证：需求侧真的读到了 community store（直接 import
   );
 });
 
-test('核心判定：子集脚本或其直接 import 的代码提到 (表, 列) ⇒ 子集必须含该列所属迁移（需求清单精确：无 0045 = 17 条 / 有 0045 = 22 条；today 0 违规）', () => {
+test('核心判定：子集脚本或其直接 import 的代码提到 (表, 列) ⇒ 子集必须含该列所属迁移（需求清单精确：无 0045 = 22 条 / 有 0045 = 28 条；today 0 违规）', () => {
   assert.deepEqual(
     coverageViolations.map(formatViolation),
     [],
@@ -776,7 +784,7 @@ test('核心判定：子集脚本或其直接 import 的代码提到 (表, 列) 
   assert.deepEqual(
     coverageDemands.map(formatDemand).sort(),
     [...expectedDemands],
-    `需求清单变了（分支：${HAS_MIGRATION_0045 ? '0045 在本树 ⇒ 应为 22 条' : '0045 不在本树 ⇒ 应为 17 条'}；`
+    `需求清单变了（分支：${HAS_MIGRATION_0045 ? '0045 在本树 ⇒ 应为 28 条' : '0045 不在本树 ⇒ 应为 22 条'}；`
       + '0030/0032/0012 已经落在树上，需求只会增不会减）：\n  '
       + coverageDemands.map(formatDemand).sort().join('\n  '),
   );

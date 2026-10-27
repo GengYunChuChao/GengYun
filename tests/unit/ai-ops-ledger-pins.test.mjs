@@ -22,7 +22,7 @@
  *      都是迁移头注释在引用「grep `INSERT INTO jobs` 为空」这句判据本身）。⛔ 不退化成一概不看注释：
  *      将来哪怕只在注释里多提一句也要红，逼人回来改口径。
  *   ② `provider_invocations` 无迁移、源码零引用，只有文档里有形状。
- *   ③ 正向迁移末项 = `0046`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
+ *   ③ 正向迁移末项 = `0047`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
  *      main 时改 `LAST_MIGRATION` / `LAST_MIGRATION_NUMBER`；`0037` 是历史缺号，本断言不钉连续性）。
  *   ④ `AUDIT_ACTIONS` 与契约 `?action=` 的 enum **双向相等**（同值、同序、无重复），**并且**钉住字面
  *      四值（4 个常量名 + 4 个取值 + 顺序）：双向等式只抓单边改动，双边同时扩值只有字面锚会红。
@@ -138,10 +138,10 @@ test('钉子②：provider_invocations 无迁移、源码零引用，只有数�
 // ---------------------------------------------------------------------------
 const FORWARD_MIGRATION = /^\d{4}_[a-z0-9_]+\.sql$/;
 /** 当前末项（**本断言随末项推进同步**：新迁移合并后改这两个常量，别让它们停在旧编号上）。 */
-const LAST_MIGRATION = '0046_admin_scope_denial_trace.sql';
-const LAST_MIGRATION_NUMBER = 46;
+const LAST_MIGRATION = '0047_admin_post_hide_audit.sql';
+const LAST_MIGRATION_NUMBER = 47;
 
-test('钉子③：正向迁移末项就是 0046，且 rollback/ 下有同名回滚件', () => {
+test('钉子③：正向迁移末项就是 0047，且 rollback/ 下有同名回滚件', () => {
   const forward = readdirSync(join(ROOT, MIGRATIONS_DIR))
     .filter((name) => FORWARD_MIGRATION.test(name))
     .sort();

@@ -60,6 +60,7 @@ import type {
   ModerationRecord,
   PostCommitExpectation,
   PostCommitPatch,
+  PostHideAudit,
   PostRecord,
   ReportCommitExpectation,
   ReportCommitPatch,
@@ -104,6 +105,21 @@ export function classifyCommunityDatabaseError(error: unknown): never {
   throw new ApiError('PROVIDER_UNAVAILABLE', '社区数据库暂不可用', { retryable: isTransientDatabaseError(error) });
 }
 
+/**
+ * 后台隐藏帖子的审计写不进去时的错误（迁移 0047，fail-closed）。
+ *
+ * 措辞刻意写全「已回滚，隐藏未生效」：调用方看到 503 时必须能判断出**帖子没有被隐藏**，
+ * 而不是"隐藏成功了但没留痕"（那种缺口本片就是为了消灭它）。
+ * `retryable: false` 与 `admin/ops/jobs-pg.ts` 的 `auditUnavailable` 同口径：同一请求重试能不能成，
+ * 取决于审计面是否恢复，不是这一条请求本身的问题。⛔ 不折叠成 `REVISION_CONFLICT`，⛔ 不吞成成功。
+ */
+function postHideAuditUnavailable(why: unknown): ApiError {
+  const detail = why instanceof Error ? why.message : String(why);
+  return new ApiError('PROVIDER_UNAVAILABLE', `审计写入失败（已回滚，隐藏未生效）：${detail}`, {
+    retryable: false,
+  });
+}
+
 /** `awaitIdempotencySettled` 的轮询间隔（与内存实现的有界等待同口径：25ms、不忙等）。 */
 const SETTLE_POLL_INTERVAL_MS = 25;
 
@@ -129,6 +145,26 @@ const TARGET_TYPE_VALUES: readonly ReportTarget['type'][] = ['post', 'comment'];
 const REPORT_STATE_VALUES: readonly ReportRecord['state'][] = ['received', 'isolated', 'closed'];
 const KNOWLEDGE_TYPE_VALUES: readonly KnowledgeTarget['type'][] = ['species', 'herbicide', 'scheme'];
 const OUTCOME_KINDS: readonly IdempotencyOutcome['kind'][] = ['post', 'comment', 'report', 'ack'];
+
+/**
+ * 后台「隐藏帖子」审计的唯一写路径（迁移 0047 的窄口径 SECURITY DEFINER 函数）。
+ *
+ * 为什么走这个函数、而不是应用层直接写审计表：运行时不持有审计表的任何表级/列级写权限
+ * （`90-assert-least-privilege.sql` 的 external_manifest 与 protected_columns 钉死的红线，
+ * `tests/unit/community-audit-channel-pins.test.mjs` 的 `admin_audit_events` 写入面禁令也在应用侧镜像了它）。
+ *
+ * 字面量、无 `FROM`：这条语句必须在**帖子事务的那个 `sql`** 上执行（同一个 client），
+ * 与 `0043` 在 `admin/ops/jobs-pg.ts` 的 `cancelAudit` 同一体例。
+ */
+const POST_HIDE_AUDIT_SQL = 'SELECT public.record_admin_post_hide_audit($1::uuid,$2::uuid,$3::integer,$4::text,$5::uuid)';
+
+/**
+ * 供真库臂（`tests/integration/admin-post-hide-audit-pg.mjs`）逐字断言的 SQL 常量出口。
+ *
+ * 与 `admin/ops/jobs-pg.ts` 的 `ADMIN_JOB_SQL.cancelAudit` 同体例：测试不复制字符串、只比对这个出口，
+ * 免得「生产语句」与「测试里手抄的那份」各自漂移。
+ */
+export const COMMUNITY_POST_SQL = { hideAudit: POST_HIDE_AUDIT_SQL } as const;
 
 function closedValue<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
   if (typeof value !== 'string' || !(allowed as readonly string[]).includes(value)) {
@@ -417,6 +453,7 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
     expected: PostCommitExpectation,
     patch: PostCommitPatch,
     moderation: ModerationRecord | null,
+    audit: PostHideAudit | null = null,
   ): Promise<CommitResult<PostRecord>> {
     return withTransaction<CommitResult<PostRecord>>(pool, async (sql) => {
       const current = (await sql.query(
@@ -464,6 +501,22 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       );
       // 结论绑定到**写入后的 revision**（与内存实现 `moderationComposite(..., next.revision)` 同义）。
       if (moderation !== null) await writeModeration(sql, 'post', id, next.revision, moderation);
+      // 后台「隐藏帖子」的审计（迁移 0047）：**同一个 sql、同一个事务**，在 COMMIT 之前。
+      // ⛔ 不能挪到事务外（那是"先成后败"的假成功），⛔ 也不能另开一条连接（换了 client 就不是同一事务）。
+      // 函数抛错 ⇒ 本事务 ROLLBACK ⇒ 帖子保持原 visibility/revision，审计表零新增。
+      if (audit !== null) {
+        try {
+          await sql.query(POST_HIDE_AUDIT_SQL, [
+            audit.actorId,
+            audit.postId,
+            audit.postRevision,
+            audit.reasonCode,
+            audit.requestId,
+          ]);
+        } catch (error) {
+          throw postHideAuditUnavailable(error);
+        }
+      }
       return { ok: true, record: next };
     });
   }
@@ -585,8 +638,10 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       return readPost(id);
     },
 
-    async commitPostIfCurrent(id, expected, patch, moderation) {
-      return commitPost(id, expected, patch, moderation);
+    // 第 5 个参数 `audit`（迁移 0047）必须转发给 `commitPost`，⛔ 少写一个形参 TS 不会报错
+    // （接口里 `audit` 是可选参数，实现允许形参更少），运行时却是静默丢参 ⇒ 审计 0 行、下架照样 200。
+    async commitPostIfCurrent(id, expected, patch, moderation, audit = null) {
+      return commitPost(id, expected, patch, moderation, audit);
     },
 
     async listPosts(filter = { scope: 'all' }) {

@@ -138,19 +138,22 @@ async function main() {
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
-    const migrations = all.filter((m) => ['0001', '0019', '0022', '0028', '0030', '0032', '0045'].includes(m.version));
+    const migrations = all.filter((m) => ['0001', '0017', '0019', '0022', '0028', '0030', '0032', '0045', '0047'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0019', '0022', '0028', '0030', '0032', '0045'],
-      '0001（users/枚举底座）+ 0019（messages：GY-I18 admin 臂要证明"下架后消息跳转目标由 available 变 unavailable"，'
+      ['0001', '0017', '0019', '0022', '0028', '0030', '0032', '0045', '0047'],
+      '0001（users/枚举底座）+ 0017（`public.admin_audit_events`：0047 的下架审计落点，本片新增依赖）'
+        + ' + 0019（messages：GY-I18 admin 臂要证明"下架后消息跳转目标由 available 变 unavailable"，'
         + '该判据经消息域读取时重查，因此需要真消息表）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）'
         + ' + 0030（F13 行级作者注销引用：author_id 可空 + anonymized_author_ref）'
         + ' + 0032（#15 去身份残留：举报者 reporter_id 可空 + 同一形态的匿名引用）'
         + ' + 0045（community_moderation_decisions.decided_by：人工 approve/reject 的运营者快照列，'
-        + '审核判定台账的 INSERT/SELECT 都会写读该列，故真实库臂必须把它 apply 进来）',
+        + '审核判定台账的 INSERT/SELECT 都会写读该列，故真实库臂必须把它 apply 进来）'
+        + ' + 0047（`public.record_admin_post_hide_audit`：下架必须与可见性变更同事务落审计，'
+        + '缺它则真实库臂的下架会 fail-closed 成 503 —— 这不是可选项，是运行时依赖）',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0019 + 0022 + 0028 + 0030 + 0032 + 0045`);
+    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0017 + 0019 + 0022 + 0028 + 0030 + 0032 + 0045 + 0047`);
 
     const tables = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",
@@ -1153,8 +1156,14 @@ async function main() {
     //   real + pool ⇒ `createPostgresAccountAuthority({ pool })` 已接 ⇒ 进入能力外壳，
     //   `hidePostWired` 因此为 true；写本身不新增迁移（`20-login-roles.sql` 已有
     //   `GRANT UPDATE (…, visibility, audit_state, updated_at) ON public.community_posts`）。
-    // ⛔ 本段**不**证明库内审计：`appendAudit` 仍落内存 ops store（`persistent:false`）——
-    //   "库内审计未取得"在 PR 正文如实登记；下面只顺带断言该能力位确实是 false（不得被读成已落库）。
+    // 库内审计（迁移 0047 起）：下架的 `post.hide` 审计由 `public.record_admin_post_hide_audit(…)`
+    //   在**下架同一事务**里写进 `public.admin_audit_events`（13.3 之后逐列读回，见 13.3b）；
+    //   它由社区 store 的 `persistent` 位驱动（`true` ⇒ 库层写、服务层不再 `appendAudit`）。
+    //   后台 ops store 自身仍是内存实现（`adminApp.adminOpsService.store.persistent === false`），
+    //   那是**其它**动作（approve/reject 等）的台账落点 —— 两者不是同一件事，别互相顶替。
+    //   0047 的 definer 会在库内复核操作者与 `sources:write`（G0002/G0010），而本脚本的 admin 身份
+    //   来自**内存** auth store（库里本来没有这一行）⇒ 下面必须补一条同 id 的镜像行，否则下架被
+    //   审计侧 fail-closed 成 503 —— 这正是本臂要钉的"审计是写路径的一部分，不是旁路"。
     const adminToken = mintOpaqueToken();
     const hideAdminId = await auth.createAdmin({
       loginName: 'synthetic-i18-hide-admin',
@@ -1168,11 +1177,24 @@ async function main() {
       expiresAt: new Date(Date.now() + 3600_000),
       audience: 'admin',
     });
+    // 0047 的 definer 复核的是**库内**身份 ⇒ 给内存里的这位 admin 补一条同 id 的镜像行
+    // （`admin_accounts` 来自 0001、`admin_scopes` 同为 0001，本臂已 apply）。
+    // 这不是"造一个能过校验的假 actor"：内存 auth store 与真库在这里必须是同一个人，
+    // 否则 0047 会以 G0002 NOT_FOUND 拒写 —— 那正是 13.7 之外的另一条 fail-closed 证据链。
+    await owner.query(
+      'INSERT INTO admin_accounts (id, login_name, credential_hash) VALUES ($1::uuid, $2, $3)',
+      [hideAdminId, 'synthetic-i18-hide-admin', 'synthetic-not-a-real-credential-hash'],
+    );
+    await owner.query(
+      "INSERT INTO admin_scopes (admin_id, scope) VALUES ($1::uuid, 'sources:write')",
+      [hideAdminId],
+    );
     const b = await account('q'); // 他人（非作者）：读列表/详情用
     const adminApp = buildApp({ config: realConfig, store: auth, pool, now: () => new Date() });
     assert.notEqual(adminApp.adminOpsService, null, 'real + pool ⇒ 后台运营服务必须存在（能力外壳）');
     assert.equal(adminApp.adminOpsService.store.persistent, false,
-      '如实标注：后台审计 store 仍是内存实现（persistent:false）⇒ 本段**不**构成"审计已落库"');
+      '如实标注：后台 ops 台账（approve/reject 等）仍是内存实现（persistent:false）；'
+      + '下架的 `post.hide` 审计另有落点 —— 0047 的窄口径函数，见 13.3b 的逐列读回');
     const call2 = async (token, method, path, extra = {}) => {
       const response = await adminApp.inject({
         method,
@@ -1241,6 +1263,30 @@ async function main() {
     assert.deepEqual(storedRow, { visibility: 'hidden', revision: 2 }, '可见性与版本必须真落库（不是只改返回值）');
     say('real admin 臂：hidePost 经能力门放行 ⇒ 200 Ack，community_posts 行 visibility=hidden、revision 1→2 真落库');
 
+    // 13.3b 库内审计（迁移 0047）：同一次下架必须恰好留一条 `post.hide`，且是**真表读回**。
+    //   逐列钉住 0047 的字面量口径（action/scope/result/reason_code/target_ref/target_hint），
+    //   避免"函数被换掉但测试仍绿"这类静默漂移。
+    const auditRows = (await owner.query(
+      `SELECT actor_id, action, scope, result, reason_code, target_ref, target_hint, request_id
+         FROM public.admin_audit_events
+        WHERE action = 'post.hide'
+        ORDER BY created_at`,
+    )).rows;
+    assert.equal(auditRows.length, 1, '一次成功下架必须恰好留一条 post.hide 审计（真表读回，不是内存台账）');
+    const auditRow = auditRows[0];
+    assert.equal(auditRow.actor_id, hideAdminId, '审计的 actor 必须是这次下架的管理员');
+    assert.equal(auditRow.scope, 'sources:write', 'scope 必须是 sources:write（= OPS_SCOPES.hidePost）');
+    assert.equal(auditRow.result, 'accepted');
+    assert.equal(auditRow.reason_code, 'post_hidden', '理由码是闭集值 post_hidden（不是请求体里的自由文本）');
+    assert.deepEqual(
+      auditRow.target_ref,
+      { type: 'post', id: hiddenPostId, revision: hiddenPostRevision },
+      'target_ref 记的是"下架前"的 revision（被下架的那一版），不是 2',
+    );
+    assert.equal(auditRow.target_hint, null, 'target_ref 已能定位，不得再塞人类可读提示');
+    assert.match(String(auditRow.request_id), /^[0-9a-f-]{36}$/, 'request_id 由服务端生成（uuid），不得为空');
+    say('库内审计：同一次下架在 public.admin_audit_events 恰好写 1 条 post.hide（actor/scope/result/reason/target_ref 逐列对上）');
+
     // 13.4 下架后：他人详情 404（同形不泄露）、列表剔除、作者仍 200（#15 既有口径）。
     const afterDetail = await call2(b.token, 'GET', `/api/v1/posts/${hiddenPostId}`);
     assert.equal(afterDetail.status, 404, JSON.stringify(afterDetail.body));
@@ -1304,6 +1350,14 @@ async function main() {
       '被拒的路径不得改行',
     );
     say('错误映射与幂等：同键重放回放首次结果、已隐藏再下架 200(changed:false)、版本不符 409、未知 404、已删除 409 且不改行');
+    assert.equal(
+      (await owner.query(
+        "SELECT count(*)::int AS n FROM public.admin_audit_events WHERE action = 'post.hide'",
+      )).rows[0].n,
+      1,
+      '整段只有一次**真改动**的保存：重放/已隐藏/被拒路径都不得再写第二条 post.hide 审计',
+    );
+    say('库内审计不虚增：重放、已隐藏、409、404 全程仍只有 1 条 post.hide（审计写在改动成功的那一次里）');
     await adminApp.close();
 
     // 13.7 能力门的反例（同一真库、同一装配，只换模式）：real 但无池 ⇒ 行为回到 503。

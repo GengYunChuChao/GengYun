@@ -183,6 +183,28 @@ export type PostCommitPatch = Partial<
 export type CommentCommitPatch = Partial<Pick<CommentRecord, 'revision' | 'body' | 'visibility' | 'audit_state'>>;
 
 /**
+ * 后台「隐藏帖子」的审计入参（`post.hide`，迁移 0047）。
+ *
+ * 只在**真库**（PG）实现上有效：`commitPost` 在同一个事务里把它交给
+ * `public.record_admin_post_hide_audit(...)`，由那条窄口径函数校验操作者并写
+ * `public.admin_audit_events`（`action`/`scope`/`result`/`target_ref`/`target_hint` 全在函数内固定）。
+ * 内存实现**忽略**该入参：它没有审计表，且 `persistent === false` 时服务层仍走 `appendAudit`
+ * （库层写与内存台账**二选一**，⛔ 不重复记两遍）。
+ */
+export interface PostHideAudit {
+  /** 操作者 `admin_accounts.id`（= 会话身份，不是调用方自报的名字）。 */
+  actorId: string;
+  /** 被隐藏的帖子 id（写进 `target_ref.id`）。 */
+  postId: string;
+  /** **隐藏前**的帖子 revision（CAS 读到的 `current.revision`，写进 `target_ref.revision`）。 */
+  postRevision: number;
+  /** 理由码闭集（迁移 0047 只接受这一个值）。 */
+  reasonCode: 'post_hidden';
+  /** 契约 `Meta.request_id`，用于把审计行与请求对齐。 */
+  requestId: string;
+}
+
+/**
  * 举报 CAS 的期望状态（与 `PostCommitExpectation` 同一套语义，只是比较列不同）。
  *
  * 举报没有「归属校验」这一档：处置方是运营侧，而不是举报者本人（举报者只能读自己的举报，
@@ -374,12 +396,17 @@ export interface CommunityStore {
    * **唯一的帖子更新原语**：比较并写入（CAS）。
    * 在同一同步临界区内完成"重读当前记录 → 校验 revision/可见性/审核状态/归属/未删除 → 写入补丁
    * （+ 可选：同一次提交写入该 revision 的审核结论）"。**不存在**无条件覆盖的更新入口。
+   *
+   * 第 5 个可选参数 `audit`（迁移 0047）：给定且实现是真库时，**同一个事务**内再调
+   * `public.record_admin_post_hide_audit(...)` 写一行 `post.hide` 审计；函数抛错 ⇒ 整笔
+   * `ROLLBACK`（帖子不被隐藏）。内存实现忽略它（见 `PostHideAudit` 的注释）。
    */
   commitPostIfCurrent(
     id: string,
     expected: PostCommitExpectation,
     patch: PostCommitPatch,
     moderation: ModerationRecord | null,
+    audit?: PostHideAudit | null,
   ): Promise<CommitResult<PostRecord>>;
   /**
    * 列表读取。`filter` 的每一项都必须由**存储层**执行（SQL 实现写进 `WHERE`，内存实现等价过滤），
@@ -638,7 +665,12 @@ export function createMemoryCommunityStore(
       const record = posts.get(id);
       return record === undefined ? null : clonePost(record);
     },
-    async commitPostIfCurrent(id, expected, patch, moderationRecord) {
+    // 内存实现**显式接收、明确忽略**第 5 个参数 `audit`（迁移 0047）：它没有
+    // `admin_audit_events` 这张表，`persistent === false` 时服务层继续走内存台账
+    // `appendAudit`（`admin/ops/service.ts::hidePost` 的 `if (!hideAdapter.persistent)`）
+    // ⇒ 「库层写」与「内存台账」**二选一**，⛔ 不在这里私自再记一遍（那会变成一条动作两条审计）。
+    // 形参写在这里而不是省掉，是为了让「谁在丢参」在签名上就能看出来：省略形参 TS 不报错。
+    async commitPostIfCurrent(id, expected, patch, moderationRecord, _audit = null) {
       return commitPost(id, expected, patch, moderationRecord);
     },
     async listPosts(filter = { scope: 'all' }) {

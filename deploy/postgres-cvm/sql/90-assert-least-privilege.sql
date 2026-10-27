@@ -1813,6 +1813,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- ⛔ 不核 active、⛔ 不核是否持 scopes:write —— 被拒的正是这件事（0046 文件头有完整理由）。
     ('public',         'record_admin_scope_denial',          'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- R64（`#18` / 迁移 0047）：后台「隐藏帖子」审计的**唯一写路径**（一条窄口径 SECURITY DEFINER
+    -- 函数）。运行时对 `admin_audit_events` 仍是零表级、零列级写（external_manifest 与槽 9 的
+    -- protected_columns 逐字未动；append-only 触发器还在），并且写入的是**受保护审计面**：函数内
+    -- 固定 action='post.hide' / scope='sources:write' / result='accepted'、重建 target_ref、
+    -- reason_code 走闭集 {'post_hidden'}，并重核验操作者存在 + active + 当前有效持 sources:write
+    -- ⇒ 调用方无法伪造 actor、动作文本或 target。
+    -- EXECUTE 只授运行时（断言 107 精确比对 grantee 集，断言 3 同时覆盖「多授 / 少授」）。
+    ('public',         'record_admin_post_hide_audit',       'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -4056,6 +4065,55 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          || '；表面 runtime INSERT=' || has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'INSERT')
          || ' SELECT=' || has_table_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'SELECT')
          || ' 任一列 SELECT=' || has_any_column_privilege('gengyun_api_runtime', 'public.third_party_deletions', 'SELECT')
+
+  UNION ALL
+  -- 107. R64（`#18` / 迁移 0047）：后台「隐藏帖子」审计的唯一写路径
+  --      `public.record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)` 必须
+  --      「已登记 + SECURITY DEFINER + proacl 非空 + PUBLIC 无 EXECUTE + 非属主只有运行时」。
+  --      为什么与断言 103（0041 的 scope 写面）同构：断言 3 只判「manifest 行与实测 grantee 集相等」，
+  --      函数缺失时它给的读数只是「少授」；这里把「建成了 SECURITY INVOKER」与「漏了
+  --      REVOKE ALL FROM PUBLIC」两种半接通各自钉住 —— 前者会让任何能连库的角色借调用者身份
+  --      往 `admin_audit_events` 里写字（本文件 external_manifest 钉死的红线：表级 S/I/U/D 全 false），
+  --      后者让任何能连库的角色都能伪造一条 `post.hide` 审计。
+  --      ⚠ 一条函数一个编号（不做数组）：本片只加这一条，后续片各有号位。
+  SELECT 'admin_post_hide_audit_function_execute_exact',
+         (SELECT count(*) = 1
+                 AND bool_and(
+                       f.prosecdef
+                   AND f.proacl IS NOT NULL
+                   AND has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')
+                   AND NOT has_function_privilege('public', f.oid, 'EXECUTE')
+                   -- 必须显式 ::text（与断言 103 同一个坑：`pg_roles.rolname` 是 `name`，
+                   -- 'PUBLIC' 伪角色是 unknown 字面量 ⇒ 不转型得到 `name[]`，与右边 `text[]` 无 `=` 运算符）。
+                   AND (SELECT array_agg(DISTINCT COALESCE(g.rolname::text, 'PUBLIC')
+                                         ORDER BY COALESCE(g.rolname::text, 'PUBLIC'))
+                          FROM aclexplode(f.proacl) AS a
+                          LEFT JOIN pg_roles AS g ON g.oid = a.grantee
+                         WHERE a.privilege_type = 'EXECUTE'
+                           AND a.grantee <> f.proowner) = ARRAY['gengyun_api_runtime']::text[]
+                 )
+            FROM pg_proc AS f
+           WHERE f.oid = to_regprocedure(
+                    'public.record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)'
+                 )),
+         'public.record_admin_post_hide_audit(uuid,uuid,integer,text,uuid) 必须存在、SECURITY DEFINER、PUBLIC 无 EXECUTE、非属主只授 gengyun_api_runtime（grantee 集合精确相等）；实测 '
+         || COALESCE((
+              SELECT 'secdef=' || f.prosecdef
+                  || ',proacl_null=' || (f.proacl IS NULL)::text
+                  || ',public_exec=' || has_function_privilege('public', f.oid, 'EXECUTE')::text
+                  || ',runtime_exec=' || has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')::text
+                  || ',grantees=[' || COALESCE((
+                       SELECT string_agg(DISTINCT COALESCE(g.rolname::text, 'PUBLIC'), ',' ORDER BY COALESCE(g.rolname::text, 'PUBLIC'))
+                         FROM aclexplode(f.proacl) AS a
+                         LEFT JOIN pg_roles AS g ON g.oid = a.grantee
+                        WHERE a.privilege_type = 'EXECUTE'
+                          AND a.grantee <> f.proowner
+                     ), '') || ']'
+                FROM pg_proc AS f
+               WHERE f.oid = to_regprocedure(
+                        'public.record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)'
+                     )
+            ), '（函数不存在：迁移 0047 未执行，或 20-login-roles.sql 的 gy-r64-posthide-audit-grant 未跑）')
 )
 
 SELECT label, ok, detail
@@ -4097,6 +4155,10 @@ SELECT CASE
 -- 表仍 forbidden）⇒ 静态值 124 条；`domain_manifest` 的 third_party_deletions forbidden 行
 -- 与断言 48 **一句未动**（运行时对它仍然零表级、零列级权限），新增的只有
 -- `function_surface_manifest` 的两行函数面。
+-- R64（`#18` / 迁移 0047）：再追加**一条**（107 后台「隐藏帖子」审计写路径的函数授权面）
+-- ⇒ 静态值 125 条；`external_manifest` 的 admin_audit_events 行与槽 9 的 protected_columns
+-- **一句未动**（运行时对它仍然零表级、零列级写），新增的只有 `function_surface_manifest`
+-- 的一行函数面（`record_admin_post_hide_audit`）。
 DO $$
 DECLARE
   v_failed integer;

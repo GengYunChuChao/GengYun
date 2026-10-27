@@ -3677,7 +3677,7 @@
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
           "symbol": "createAdminPostReadAdapter",
-          "lines": "102-124"
+          "lines": "147-169"
         },
         {
           "path": "services/api/src/admin/ops/types.ts",
@@ -3791,7 +3791,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "approvePost",
-          "lines": "1418-1420"
+          "locator": { "symbol": "approvePost" }
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
@@ -3823,7 +3823,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "rejectPost",
-          "lines": "1427-1429"
+          "locator": { "symbol": "rejectPost" }
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",

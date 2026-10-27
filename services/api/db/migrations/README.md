@@ -4,7 +4,7 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-26 · `#18` S2 收尾片（`0046`）落盘后实测：`0001..0046`，缺 `0037`）
+## 当前状态（2026-10-27 · R64 后台下架审计（`0047`）落盘后实测：`0001..0047`，缺 `0037`）
 
 `0001..0035` 已连续落盘（35 个正向；`0035_r34_media_row_purge.sql` 已随上游真实落盘，本片旧段里那条
 `WARN[gap] 0035` 的前提随之作废）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
@@ -14,16 +14,39 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 �
 `0042_favorites_history_target_type_conversation_turn.sql`、`#18` R18 片落
 `0043_admin_job_cancel_audit.sql`、GY-S4 P1 落 `0044_third_party_deletion_persistence.sql`、
 S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
-`0046_admin_scope_denial_trace.sql`
-⇒ 目录现为 **45 个正向 `.sql`** ＋ `rollback/` **44 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **45 + 1 === 46**），
+`0046_admin_scope_denial_trace.sql`、R64 落 `0047_admin_post_hide_audit.sql`
+⇒ 目录现为 **46 个正向 `.sql`** ＋ `rollback/` **45 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **46 + 1 === 47**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对该缺号有依据（见下）。
 （本段数字为实测：`git ls-tree -r --name-only HEAD -- services/api/db/migrations`
-⇒ 正向 `.sql` 45 条、`rollback/` 44 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
+⇒ 正向 `.sql` 46 条、`rollback/` 45 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
 故保留台账里**不得**再出现 40/41/42 号条目 —— 否则 `reservedButPresent` 会把它判红。
-`0043`/`0044`/`0045`/`0046` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
+`0043`/`0044`/`0045`/`0046`/`0047` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0047_admin_post_hide_audit.sql`（R64 · **库层写通路**：后台「隐藏帖子」（`post.hide`）的审计从**进程内存**
+  落到 `public.admin_audit_events`）接在 `0046` 之后，号位依据「正向最大号 +1」（当时最大 `0046`；
+  `0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。只建一条窄口径 `SECURITY DEFINER` 函数
+  `public.record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)`（固定 `search_path = pg_catalog`）：
+  `action='post.hide'` / `scope='sources:write'` / `result='accepted'` 与 `reason_code` 由函数体**字面量**固定
+  （调用方伪造不了），`target_ref` 由形参重建为 `{type:'post', id, revision:<**下架前** revision>}`、
+  `target_hint=NULL`；入参自检「actor 在 `admin_accounts` 且持 `sources:write` 未撤销」，否则 `G0010 SCOPE_DENIED`。
+  调用点**只有一处**：`services/api/src/community/store-pg.ts` 的 `commitPost`，SQL 是字面量
+  `SELECT public.record_admin_post_hide_audit($1..$5)`（`COMMUNITY_POST_SQL.hideAudit`，无 `FROM`、
+  不走调用方拼串），且**与下架同一事务**（`withTransaction` 内）⇒ 审计写不进去连帖子一起 `ROLLBACK`、
+  客户端拿 503（**fail-closed**；⛔ 不存在「200 + 已隐藏 + 审计 0 行」那种静默丢参结局）。
+  ⚠ 本片**不动读面闭集**：`services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS` 与
+  `packages/contracts/openapi.json` 的 `?action=` enum 仍只有原四值（那两个文件正被在飞 `#652` 修改），
+  所以 `GET /admin/audit-logs` 按 `action=post.hide` 过滤仍按旧闭集拒绝 —— **读面放开留给下一片**；
+  但「能查」的既有库内函数 `list_admin_audit_logs(...)`（0033）现在**确实**查得到这一行（不带 `action`
+  过滤时），这正是本片的 `[A2]` 读数。
+  配对回滚 `rollback/0047_admin_post_hide_audit.down.sql` **先预检再删函数**：`admin_audit_events` 里已有
+  `action='post.hide'` 行即 `RAISE EXCEPTION 'G0019'` 中止（理由与 `0043` 同源：删函数会留下「有行无出处」，
+  而应用侧仍在调用它 ⇒ 每次隐藏都会 503；且审计台账 append-only 也带不走那些行），
+  正确动作是**回滚应用版本**。
+  读数：`tests/integration/admin-post-hide-audit-pg.mjs`（专用真库臂：成功恰 1 条真行 / 触发器挡审计 ⇒ 503
+  且帖子零变化 / 拆触发器恢复 200 / 已隐藏再隐藏幂等不增条）＋ `tests/integration/admin-community-posts-pg.mjs`
+  的 `[H]` 段（社区帖域里同一条路径）。
 - `0046_admin_scope_denial_trace.sql`（`#18` S2 收尾片 · **库层一半**：后台 scope 操作**被拒**时的留痕写入口，
   Refs #18）接在 `0045` 之后，号位依据 `.pg17/ruling-r64-pr4-design-20261026.md` 裁定 B / D（max `0045` + 1；
   `0037` 不动、**台账不新增条目**）。只建一条窄口径 `SECURITY DEFINER` 函数
