@@ -2154,7 +2154,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources`",
-          "lines": "217-217"
+          "lines": "220-220"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2198,7 +2198,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources`",
-          "lines": "220-220"
+          "lines": "223-223"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2242,7 +2242,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "223-223"
+          "lines": "226-226"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2286,7 +2286,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/sources/:id`",
-          "lines": "226-226"
+          "lines": "229-229"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2334,7 +2334,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/publish`",
-          "lines": "229-229"
+          "lines": "232-232"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2378,7 +2378,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/sources/:id/withdraw`",
-          "lines": "232-232"
+          "lines": "235-235"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2422,7 +2422,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge`",
-          "lines": "237-237"
+          "lines": "240-240"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2466,7 +2466,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge`",
-          "lines": "240-240"
+          "lines": "243-243"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2510,7 +2510,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "243-243"
+          "lines": "246-246"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2554,7 +2554,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/knowledge/:id`",
-          "lines": "246-246"
+          "lines": "249-249"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2598,7 +2598,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/publish`",
-          "lines": "249-249"
+          "lines": "252-252"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2646,7 +2646,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`",
-          "lines": "252-252"
+          "lines": "255-255"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2690,7 +2690,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations`",
-          "lines": "257-257"
+          "lines": "260-260"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2734,7 +2734,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations`",
-          "lines": "260-260"
+          "lines": "263-263"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2778,7 +2778,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "263-263"
+          "lines": "266-266"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2822,7 +2822,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/registrations/:id`",
-          "lines": "266-266"
+          "lines": "269-269"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2866,7 +2866,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/publish`",
-          "lines": "269-269"
+          "lines": "272-272"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2910,7 +2910,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/registrations/:id/withdraw`",
-          "lines": "272-272"
+          "lines": "275-275"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2954,7 +2954,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions`",
-          "lines": "277-277"
+          "lines": "280-280"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -2998,7 +2998,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions`",
-          "lines": "280-280"
+          "lines": "283-283"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3042,7 +3042,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.get(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "283-283"
+          "lines": "286-286"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3086,7 +3086,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.patch(`${API_PREFIX}/admin/restrictions/:id`",
-          "lines": "286-286"
+          "lines": "289-289"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3130,7 +3130,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/publish`",
-          "lines": "289-289"
+          "lines": "292-292"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3174,7 +3174,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`",
-          "lines": "292-292"
+          "lines": "295-295"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3218,7 +3218,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/categories`",
-          "lines": "326-328"
+          "lines": "329-331"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3227,11 +3227,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminCategories",
-          "lines": "524-527"
+          "locator": { "symbol": "listAdminCategories" }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3258,11 +3258,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "editCategory",
-          "lines": "529-564"
+          "locator": { "symbol": "editCategory" }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3280,7 +3280,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/accounts`",
-          "lines": "347-349"
+          "lines": "350-352"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3289,11 +3289,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminUsers",
-          "lines": "610-621"
+          "locator": { "symbol": "listAdminUsers" }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3320,11 +3320,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "suspendUser",
-          "lines": "728-787"
+          "locator": { "symbol": "suspendUser" }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3342,12 +3342,12 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/administrators`",
-          "lines": "373-375"
+          "lines": "376-378"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministrators",
-          "lines": "685-694"
+          "lines": "784-793"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3384,7 +3384,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function listAdministratorScopes",
-          "lines": "713-726"
+          "lines": "812-825"
         },
         {
           "path": "services/api/src/admin/ops/administrators.ts",
@@ -3415,8 +3415,8 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "symbol": "grantAdministratorScope",
-          "lines": "1482-1511"
+          "symbol": "async function grantAdministratorScope(ctx: AdminCallContext, id: string, body: unknown) {",
+          "lines": "1598-1627"
         },
         {
           "path": "services/api/src/admin/ops/scope-authority-pg.ts",
@@ -3447,8 +3447,8 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "symbol": "revokeAdministratorScope",
-          "lines": "1523-1557"
+          "symbol": "async function revokeAdministratorScope(ctx: AdminCallContext, id: string, scopeParam: string, body: unknown) {",
+          "lines": "1639-1673"
         },
         {
           "path": "services/api/src/admin/ops/scope-authority-pg.ts",
@@ -3475,7 +3475,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs`",
-          "lines": "434-436"
+          "lines": "478-480"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3484,11 +3484,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminJobs",
-          "lines": "832-838"
+          "locator": { "symbol": "listAdminJobs" }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3506,7 +3506,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "439-444"
+          "lines": "483-488"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3519,7 +3519,7 @@
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3537,7 +3537,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/feature-flags`",
-          "lines": "455-457"
+          "lines": "499-501"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3545,12 +3545,12 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "symbol": "listFlags",
-          "lines": "1071-1075"
+          "symbol": "async function listFlags(ctx: AdminCallContext, query: PageQuery = {}) {",
+          "lines": "1170-1174"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3568,7 +3568,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/feature-flags/:key`",
-          "lines": "460-465"
+          "lines": "504-509"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3577,11 +3577,11 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function setFlag(ctx: AdminCallContext, key: string, body: unknown) {",
-          "lines": "1077-1143"
+          "lines": "1176-1242"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         },
         {
           "test": "tests/unit/admin-flag-gate.test.mjs",
@@ -3603,16 +3603,16 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/flag-audit-events`",
-          "lines": "475-477"
+          "lines": "519-521"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlagAuditEvents",
-          "lines": "1161-1215"
+          "locator": { "symbol": "listFlagAuditEvents" }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "开关变更审计的只读查询已装配（读 public.admin_audit_events 的 set_flag 行，键集游标 (created_at,id) 降序）；后台 UI 已有「操作者/变更前后」列；人审隔离位仍属契约/范围外（AdminJob 9 字段无隔离位）"
@@ -3630,7 +3630,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/audit-logs`",
-          "lines": "314-316"
+          "lines": "317-319"
         },
         {
           "path": "services/api/src/admin/audit/service.ts",
@@ -3667,7 +3667,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/posts`",
-          "lines": "508-508"
+          "lines": "551-553"
         },
         {
           "path": "services/api/src/admin/posts/service.ts",
@@ -3716,7 +3716,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/posts/:id`",
-          "lines": "513-513"
+          "lines": "556-558"
         },
         {
           "path": "services/api/src/admin/posts/service.ts",
@@ -3755,7 +3755,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/posts/:id/hide`",
-          "lines": "487-492"
+          "lines": "531-536"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3763,12 +3763,12 @@
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
-          "symbol": "hidePost",
-          "lines": "1221-1266"
+          "symbol": "async function hidePost(ctx: AdminCallContext, id: string, body: unknown) {",
+          "lines": "1320-1374"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
-          "name": "恰好实现 16 个 operationId；显式不做的操作未被实现"
+          "name": "恰好实现 18 个 operationId；显式不做的操作未被实现"
         }
       ],
       "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
@@ -3785,8 +3785,8 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "symbol": "approvePost",
-          "lines": "524-533"
+          "symbol": "`${API_PREFIX}/admin/posts/:id/approve`",
+          "lines": "569-574"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
@@ -3817,8 +3817,8 @@
       "evidence": [
         {
           "path": "services/api/src/routes/admin.ts",
-          "symbol": "rejectPost",
-          "lines": "535-544"
+          "symbol": "`${API_PREFIX}/admin/posts/:id/reject`",
+          "lines": "580-585"
         },
         {
           "path": "services/api/src/admin/ops/service.ts",
@@ -3850,7 +3850,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/audit-events`",
-          "lines": "300-302"
+          "lines": "303-305"
         },
         {
           "test": "tests/integration/admin-http.mjs",
@@ -3925,6 +3925,86 @@
         }
       ],
       "blocker": "取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收"
+    },
+    {
+      "id": "disableAdministratorAccount",
+      "method": "post",
+      "path": "/admin/administrators/{id}/disable",
+      "route": "/api/v1/admin/administrators/:id/disable",
+      "scope": "scopes:write",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/administrators/:id/disable`",
+          "lines": "451-456"
+        },
+        {
+          "path": "services/api/src/admin/ops/admin-account-authority-pg.ts",
+          "symbol": "disable: (action) => call(CALL_DISABLE_SQL, 'suspended', action),",
+          "lines": "254-329"
+        },
+        {
+          "path": "services/api/db/migrations/0048_admin_account_disable.sql",
+          "symbol": "CREATE OR REPLACE FUNCTION public.disable_admin_account(",
+          "lines": "143-143"
+        },
+        {
+          "test": "tests/integration/admin-accounts-read-pg.mjs",
+          "name": "[D1] 库里的 state 必须真的是 suspended（⛔ 不是只改了返回值）"
+        },
+        {
+          "test": "tests/unit/admin-account-disable-pins.test.mjs",
+          "name": "钉子(c)：routes/admin.ts 有两条路由且都挂 requireScope(OPS_SCOPES.…)"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[R68 正控制] 停用/恢复：注入权威端口 ⇒ 200 + 契约封套 + ETag；幂等重放不再调端口"
+        }
+      ],
+      "blocker": "真实存储已接 PG：迁移 `0048` 两个窄口径 `SECURITY DEFINER` 函数（`public.disable_admin_account` / `public.enable_admin_account`，同一把 advisory 锁 + CAS + 撤会话 + 审计 NULL），`deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r68-admin-account-state-grant` 段只授运行时 `EXECUTE`，`public.admin_accounts` / `public.admin_sessions` 对运行时仍是零表级 DML、零 UPDATE 列权，写路径**只有**这两个函数。真库臂 `tests/integration/admin-accounts-read-pg.mjs` 的 `[D]` 段与 HTTP 臂 `tests/integration/admin-http.mjs` 的 `[R68 …]` 四组已覆盖（含 `[D8]` G0009 结构性不可达的如实登记）。剩余：后台 UI 无停用/恢复入口（属 GY-I18 联调）；`G0009 LAST_SCOPE_MANAGER` 在本片产品路径**结构性不可达**（函数第一步要求操作者当前有效持 `scopes:write`，停用他人后有效持有者恒 ≥ 1），仅作纵深防御保留、⛔ 不宣称「已触发」；`reason` 收参并校验长度（1..500 字符）但**不落库**（审计行无 reason 列，`before_value` / `after_value` 必须 NULL）。"
+    },
+    {
+      "id": "enableAdministratorAccount",
+      "method": "post",
+      "path": "/admin/administrators/{id}/enable",
+      "route": "/api/v1/admin/administrators/:id/enable",
+      "scope": "scopes:write",
+      "version_required": true,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/admin.ts",
+          "symbol": "`${API_PREFIX}/admin/administrators/:id/enable`",
+          "lines": "460-465"
+        },
+        {
+          "path": "services/api/src/admin/ops/admin-account-authority-pg.ts",
+          "symbol": "enable: (action) => call(CALL_ENABLE_SQL, 'active', action),",
+          "lines": "254-329"
+        },
+        {
+          "path": "services/api/db/migrations/0048_admin_account_disable.sql",
+          "symbol": "CREATE OR REPLACE FUNCTION public.enable_admin_account(",
+          "lines": "315-315"
+        },
+        {
+          "test": "tests/integration/admin-accounts-read-pg.mjs",
+          "name": "[D5] 恢复也要推进 auth_epoch（停用期间的漏网会话不得复活）"
+        },
+        {
+          "test": "tests/unit/admin-account-disable-pins.test.mjs",
+          "name": "迁移 0048：两条 SECURITY DEFINER 函数、同一把 advisory 锁、CAS、撤会话、审计 NULL"
+        },
+        {
+          "test": "tests/integration/admin-http.mjs",
+          "name": "[R68 正控制] 停用/恢复：注入权威端口 ⇒ 200 + 契约封套 + ETag；幂等重放不再调端口"
+        }
+      ],
+      "blocker": "真实存储已接 PG：迁移 `0048` 两个窄口径 `SECURITY DEFINER` 函数（`public.disable_admin_account` / `public.enable_admin_account`，同一把 advisory 锁 + CAS + 撤会话 + 审计 NULL），`deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r68-admin-account-state-grant` 段只授运行时 `EXECUTE`，`public.admin_accounts` / `public.admin_sessions` 对运行时仍是零表级 DML、零 UPDATE 列权，写路径**只有**这两个函数。真库臂 `tests/integration/admin-accounts-read-pg.mjs` 的 `[D]` 段与 HTTP 臂 `tests/integration/admin-http.mjs` 的 `[R68 …]` 四组已覆盖（含 `[D8]` G0009 结构性不可达的如实登记）。剩余：后台 UI 无停用/恢复入口（属 GY-I18 联调）；`G0009 LAST_SCOPE_MANAGER` 在本片产品路径**结构性不可达**（函数第一步要求操作者当前有效持 `scopes:write`，停用他人后有效持有者恒 ≥ 1），仅作纵深防御保留、⛔ 不宣称「已触发」；`reason` 收参并校验长度（1..500 字符）但**不落库**（审计行无 reason 列，`before_value` / `after_value` 必须 NULL）。"
     }
   ],
   "dimensions": [
@@ -4035,7 +4115,7 @@
         {
           "path": "services/api/src/app.ts",
           "symbol": "const idempotencyStore = idempotency ?? (sql === null ? createMemoryIdempotencyStore() : createPostgresIdempotencyStore(sql));",
-          "lines": "945-945"
+          "lines": "786-2656"
         },
         {
           "path": "services/api/src/auth/idempotency.ts",
@@ -4174,7 +4254,7 @@
         {
           "path": "services/api/src/routes/admin.ts",
           "symbol": "`${API_PREFIX}/admin/jobs/:id/cancel`",
-          "lines": "439-444"
+          "lines": "483-488"
         }
       ],
       "blocker": "共享作业面现由 `services/api/src/app.ts:2227` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:2228`）、transcription（`:2204`）、moderation（`:2207`）、synthesis（`:2213`）、ocr（`:2221`）、answer（`:2229`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"

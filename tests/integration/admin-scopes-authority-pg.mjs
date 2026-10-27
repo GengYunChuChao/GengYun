@@ -368,8 +368,8 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  assert.equal(applied.rows[0].version, '0047', '迁移 0047（R64：后台下架 `post.hide` 的审计真落库唯一写入口 record_admin_post_hide_audit；上一支 0046 是 `#18` S2 收尾片 record_admin_scope_denial——后台 scope 操作被拒时的留痕写入口；再上 0045 是 S3 片 A 给 community_moderation_decisions 增 decided_by uuid——人工 approve/reject 的施动者快照，非外键、不加索引）必须是最后一条已应用版本');
-  pass('schema_migrations 末项 = 0047');
+  assert.equal(applied.rows[0].version, '0048', '迁移 0048（R68：后台**停用/恢复管理员账号**的唯一写入口 disable_admin_account / enable_admin_account，SECURITY DEFINER + 同一把 scope advisory 锁 + 行 FOR UPDATE + CAS revision，停用同时把 admin_sessions 的 live 行置 revoked_at 并审计落库；上一支 0047 是 R64 的后台下架 `post.hide` 审计真落库唯一写入口 record_admin_post_hide_audit；再上 0046 是 `#18` S2 收尾片 record_admin_scope_denial——后台 scope 操作被拒时的留痕写入口）必须是最后一条已应用版本');
+  pass('schema_migrations 末项 = 0048');
 
   const hasCheck = await ownerPool.query(
     `SELECT count(*)::int AS n FROM pg_constraint

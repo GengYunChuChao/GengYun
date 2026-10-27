@@ -29,7 +29,9 @@
  * 转发对象必须**逐个显式**列出：`inner.suspendUser`（真实停用权威）、`inner.listAdminUsers`
  * （真实读目录）、`inner.listFlags` / `inner.setFlag`（真实开关读写）、`inner.hidePost`
  * （真实持久社区 store 的 CAS 下架）、`inner.grantAdministratorScope` /
- * `inner.revokeAdministratorScope`（`#18` S2 PR-3 的真实 scope 写权威）。
+ * `inner.revokeAdministratorScope`（`#18` S2 PR-3 的真实 scope 写权威）、
+ * `inner.disableAdministratorAccount` / `inner.enableAdministratorAccount`
+ * （R64 的真实管理员账号状态写权威，放行表第 8 条）。
  * 新增可放行操作必须在 `app.ts` 再写一次显式放行
  * （与 `fail-closed-services.ts` 头部"接线点"要求一致），⛔ 不得改成"整对象透传"。
  *
@@ -115,6 +117,21 @@ export interface RestrictToAccountsAuthorityOptions {
    * 的半开状态 —— 那种状态最糟：界面显示成功按钮，点下去 503。
    */
   readonly scopeWriteWired?: boolean;
+  /**
+   * **R64 · 放行表第 8 条**：管理员**账号状态**写面（`disableAdministratorAccount` /
+   * `enableAdministratorAccount`）是否已接上真实写权威。
+   *
+   * 只能由 `app.ts` 在**确实构造出** `AdminAccountStateAuthority`
+   * （`createPostgresAdminAccountStateAuthority({ pool })`）时置 `true`；默认 `false` ⇒ 两条操作
+   * 继续 503（⛔ 不伪造成功、⛔ 不落内存、⛔ 不占幂等位、⛔ 不靠"撤 scope"冒充停用）。
+   *
+   * 为什么不能复用 `scopeWriteWired`（第 7 条）：两者写的**不是同一张表**。scope 写面改
+   * `admin_scopes.revoked_at`（迁移 0041），账号状态写面改 `admin_accounts.state` /
+   * `auth_epoch` + 撤 `admin_sessions`（迁移 0048）。把它们绑在一个布尔上，就会出现
+   * "`If-Match` 校验通过了、`state` 却没变"的半开状态 —— 那正是本片头号禁止项
+   * （裁定④：**撤 scope ≠ 停用**）。
+   */
+  readonly adminAccountWriteWired?: boolean;
 }
 
 /**
@@ -145,6 +162,8 @@ export function restrictAdminOpsToAccountsAuthority(
   const postReviewWired = options.postReviewWired === true;
   // **放行表第 7 条**（`#18` S2 PR-3）：管理员 scope 写面单独一道门，默认关闭 ⇒ 两条写面 503。
   const scopeWriteWired = options.scopeWriteWired === true;
+  // **放行表第 8 条**（R64）：管理员账号状态写面单独一道门，默认关闭 ⇒ 停用/启用 503。
+  const adminAccountWriteWired = options.adminAccountWriteWired === true;
 
   return {
     // 如实暴露底层 store/jobPort，使"接线状态"仍可被测试与回归直接核对。
@@ -185,5 +204,11 @@ export function restrictAdminOpsToAccountsAuthority(
     // 幂等与 CAS 口径仍由服务层与迁移 0041 的函数决定，⛔ 本外壳不自己判、也不发成功封套。
     grantAdministratorScope: scopeWriteWired ? inner.grantAdministratorScope : reject,
     revokeAdministratorScope: scopeWriteWired ? inner.revokeAdministratorScope : reject,
+    // **放行 8**（需 `adminAccountWriteWired: true`，R64）：管理员账号**状态**写面。
+    // 转发 inner 的两个方法本身：G 码映射（404/409/403/503）、自停用拒绝、最后一名 scope 管理者
+    // 守卫、CAS(`If-Match`) 与审计口径仍由服务层与迁移 0048 的函数决定，
+    // ⛔ 本外壳不自己改 state、不自己踢会话、也不发成功封套。
+    disableAdministratorAccount: adminAccountWriteWired ? inner.disableAdministratorAccount : reject,
+    enableAdministratorAccount: adminAccountWriteWired ? inner.enableAdministratorAccount : reject,
   };
 }

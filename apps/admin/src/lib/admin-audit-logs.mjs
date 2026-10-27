@@ -44,6 +44,8 @@ export const AUDIT_LOG_ACTIONS = Object.freeze([
   'admin_scope.revoke',
   'admin_scope.deny',
   'post.hide',
+  'admin_account.disable',
+  'admin_account.enable',
 ]);
 
 export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
@@ -55,10 +57,12 @@ export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
   'admin_scope.revoke': '撤销管理员能力',
   'admin_scope.deny': '管理员操作被拒',
   'post.hide': '下架社区内容',
+  'admin_account.disable': '停用管理员账号',
+  'admin_account.enable': '恢复管理员账号',
 });
 
 /** `entity` 闭集：与 `catalog.ts` 的 `AUDIT_ENTITIES` 逐字同序（⛔ 不是 `entity_type`）。 */
-export const AUDIT_LOG_ENTITIES = Object.freeze(['account', 'flag', 'job', 'admin_scope', 'post']);
+export const AUDIT_LOG_ENTITIES = Object.freeze(['account', 'flag', 'job', 'admin_scope', 'post', 'admin_account']);
 
 export const AUDIT_LOG_ENTITY_LABELS = Object.freeze({
   account: '账号',
@@ -66,6 +70,7 @@ export const AUDIT_LOG_ENTITY_LABELS = Object.freeze({
   job: '作业',
   admin_scope: '管理员能力',
   post: '社区内容',
+  admin_account: '管理员账号',
 });
 
 /**
@@ -81,6 +86,7 @@ export const AUDIT_LOG_ENTITY_SCOPES = Object.freeze({
   job: 'jobs:cancel',
   admin_scope: 'scopes:write',
   post: 'sources:write',
+  admin_account: 'scopes:write',
 });
 
 export const AUDIT_LOG_LIMIT_OPTIONS = Object.freeze([LIMIT_DEFAULT, LIMIT_MAX].filter((value, index, list) => list.indexOf(value) === index));

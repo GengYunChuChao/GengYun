@@ -77,8 +77,10 @@ test('契约形状：路径/scope/闭集与后端 catalog 逐字一致；⛔ 没
     'admin_scope.revoke',
     'admin_scope.deny',
     'post.hide',
+    'admin_account.disable',
+    'admin_account.enable',
   ]);
-  assert.deepEqual([...AUDIT_LOG_ENTITIES], ['account', 'flag', 'job', 'admin_scope', 'post']);
+  assert.deepEqual([...AUDIT_LOG_ENTITIES], ['account', 'flag', 'job', 'admin_scope', 'post', 'admin_account']);
   assert.equal(AUDIT_LOG_ACTIONS.includes('entity_type'), false);
 });
 
@@ -122,8 +124,9 @@ test('筛选校验：非法时间/闭集外 action/entity/from>to 都在出网�
   assert.equal(noZone.errors[0].field, 'from');
   assert.match(noZone.errors[0].message, /RFC 3339/u);
 
-  // `post.hide` 由 GY-R64 读面闭集片登记进闭集（第 8 值），故「闭集外」的例子改用它**没有**的
-  // 同域动作 `post.approve`（后端只有 `post.hide` 一个 post 域 action）。
+  // 闭集外的示例必须是一个**真不在**闭集里的值：`post.hide` 已由 GY-R64 读面闭集片登记（第 8 值）、
+  // `admin_account.disable` / `admin_account.enable` 由 R68 登记（第 9/10 值），继续拿它们当反例
+  // 会让这条钉变成在测一个假命题；故取同域但没有的 `post.approve`（后端只有 `post.hide` 一个 post 域 action）。
   const badAction = validateAuditLogFilters({ action: 'post.approve' });
   assert.equal(badAction.ok, false);
   assert.equal(badAction.errors[0].field, 'action');

@@ -1822,6 +1822,21 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- EXECUTE 只授运行时（断言 107 精确比对 grantee 集，断言 3 同时覆盖「多授 / 少授」）。
     ('public',         'record_admin_post_hide_audit',       'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- R68（`#18` / 迁移 0048）：后台「停用 / 恢复管理员账号」的**唯一写路径**（两条窄口径
+    -- SECURITY DEFINER 函数）。为什么必须走函数、且必须登记在这里：这两条函数改的不是审计面
+    -- 而是**账号与会话状态**（`admin_accounts.state/auth_epoch/revision` 的 CAS + `admin_sessions`
+    -- 的批量撤销），运行时对 `admin_accounts` 仍然**零表级、零列级写**（external_manifest 与
+    -- 槽 9 的 protected_columns 一句未动），`admin_sessions` 的 UPDATE 也只有既有的
+    -- 会话轮换路径——停用路径拿不到任何直接写权，只能经这两条函数。
+    -- 函数内固定 action（`admin_account.disable` / `admin_account.enable`）、scope='scopes:write'、
+    -- result='accepted'、`before_value`/`after_value` 为 NULL、重核验操作者存在 + active +
+    -- 当前有效持 scopes:write + 目标存在 + 不许停用自己（G0020）＋ 不许停用唯一持有
+    -- scopes:write 的管理员（G0009，与 0041 同一个码）⇒ 调用方伪造不了 actor、动作文本或 target。
+    -- EXECUTE 只授运行时（断言 108/109 精确比对 grantee 集，断言 3 同时覆盖「多授 / 少授」）。
+    ('public',         'disable_admin_account',              'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    ('public',         'enable_admin_account',               'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -4114,6 +4129,92 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                         'public.record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)'
                      )
             ), '（函数不存在：迁移 0047 未执行，或 20-login-roles.sql 的 gy-r64-posthide-audit-grant 未跑）')
+
+  UNION ALL
+  -- 108. R68（迁移 0048）：后台「停用管理员账号」的唯一写路径
+  --      `public.disable_admin_account(uuid,uuid,uuid,integer,uuid,text)` 必须
+  --      「已登记 + SECURITY DEFINER + proacl 非空 + PUBLIC 无 EXECUTE + 非属主只有运行时」。
+  --      与断言 107 同构，但理由更硬一层：0047 那条函数只往审计面追加一行，这两条函数改的是
+  --      **账号与会话状态**（`admin_accounts.state/auth_epoch/revision` + `admin_sessions.revoked_at`）。
+  --      建成 SECURITY INVOKER ⇒ 「谁能停用管理员」退化成调用者的表权限（或 42501 运行态）；
+  --      漏 REVOKE ALL FROM PUBLIC ⇒ 任何能连库的角色都能把别人踢下线（连审计行也由它写）。
+  SELECT 'admin_account_disable_function_execute_exact',
+         (SELECT count(*) = 1
+                 AND bool_and(
+                       f.prosecdef
+                   AND f.proacl IS NOT NULL
+                   AND has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')
+                   AND NOT has_function_privilege('public', f.oid, 'EXECUTE')
+                   -- 必须显式 ::text（同一个坑，见断言 103/107）。
+                   AND (SELECT array_agg(DISTINCT COALESCE(g.rolname::text, 'PUBLIC')
+                                         ORDER BY COALESCE(g.rolname::text, 'PUBLIC'))
+                          FROM aclexplode(f.proacl) AS a
+                          LEFT JOIN pg_roles AS g ON g.oid = a.grantee
+                         WHERE a.privilege_type = 'EXECUTE'
+                           AND a.grantee <> f.proowner) = ARRAY['gengyun_api_runtime']::text[]
+                 )
+            FROM pg_proc AS f
+           WHERE f.oid = to_regprocedure(
+                    'public.disable_admin_account(uuid,uuid,uuid,integer,uuid,text)'
+                 )),
+         'public.disable_admin_account(uuid,uuid,uuid,integer,uuid,text) 必须存在、SECURITY DEFINER、PUBLIC 无 EXECUTE、非属主只授 gengyun_api_runtime（grantee 集合精确相等）；实测 '
+         || COALESCE((
+              SELECT 'secdef=' || f.prosecdef
+                  || ',proacl_null=' || (f.proacl IS NULL)::text
+                  || ',public_exec=' || has_function_privilege('public', f.oid, 'EXECUTE')::text
+                  || ',runtime_exec=' || has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')::text
+                  || ',grantees=[' || COALESCE((
+                       SELECT string_agg(DISTINCT COALESCE(g.rolname::text, 'PUBLIC'), ',' ORDER BY COALESCE(g.rolname::text, 'PUBLIC'))
+                         FROM aclexplode(f.proacl) AS a
+                         LEFT JOIN pg_roles AS g ON g.oid = a.grantee
+                        WHERE a.privilege_type = 'EXECUTE'
+                          AND a.grantee <> f.proowner
+                     ), '') || ']'
+                FROM pg_proc AS f
+               WHERE f.oid = to_regprocedure(
+                        'public.disable_admin_account(uuid,uuid,uuid,integer,uuid,text)'
+                     )
+            ), '（函数不存在：迁移 0048 未执行，或 20-login-roles.sql 的 gy-r68-admin-account-state-grant 未跑）')
+
+  UNION ALL
+  -- 109. R68（迁移 0048）：后台「恢复管理员账号」的唯一写路径，口径与断言 108 逐字同构
+  --      （一条函数一个编号，不做数组 —— 与断言 107 的约定一致）。
+  SELECT 'admin_account_enable_function_execute_exact',
+         (SELECT count(*) = 1
+                 AND bool_and(
+                       f.prosecdef
+                   AND f.proacl IS NOT NULL
+                   AND has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')
+                   AND NOT has_function_privilege('public', f.oid, 'EXECUTE')
+                   AND (SELECT array_agg(DISTINCT COALESCE(g.rolname::text, 'PUBLIC')
+                                         ORDER BY COALESCE(g.rolname::text, 'PUBLIC'))
+                          FROM aclexplode(f.proacl) AS a
+                          LEFT JOIN pg_roles AS g ON g.oid = a.grantee
+                         WHERE a.privilege_type = 'EXECUTE'
+                           AND a.grantee <> f.proowner) = ARRAY['gengyun_api_runtime']::text[]
+                 )
+            FROM pg_proc AS f
+           WHERE f.oid = to_regprocedure(
+                    'public.enable_admin_account(uuid,uuid,uuid,integer,uuid,text)'
+                 )),
+         'public.enable_admin_account(uuid,uuid,uuid,integer,uuid,text) 必须存在、SECURITY DEFINER、PUBLIC 无 EXECUTE、非属主只授 gengyun_api_runtime（grantee 集合精确相等）；实测 '
+         || COALESCE((
+              SELECT 'secdef=' || f.prosecdef
+                  || ',proacl_null=' || (f.proacl IS NULL)::text
+                  || ',public_exec=' || has_function_privilege('public', f.oid, 'EXECUTE')::text
+                  || ',runtime_exec=' || has_function_privilege('gengyun_api_runtime', f.oid, 'EXECUTE')::text
+                  || ',grantees=[' || COALESCE((
+                       SELECT string_agg(DISTINCT COALESCE(g.rolname::text, 'PUBLIC'), ',' ORDER BY COALESCE(g.rolname::text, 'PUBLIC'))
+                         FROM aclexplode(f.proacl) AS a
+                         LEFT JOIN pg_roles AS g ON g.oid = a.grantee
+                        WHERE a.privilege_type = 'EXECUTE'
+                          AND a.grantee <> f.proowner
+                     ), '') || ']'
+                FROM pg_proc AS f
+               WHERE f.oid = to_regprocedure(
+                        'public.enable_admin_account(uuid,uuid,uuid,integer,uuid,text)'
+                     )
+            ), '（函数不存在：迁移 0048 未执行，或 20-login-roles.sql 的 gy-r68-admin-account-state-grant 未跑）')
 )
 
 SELECT label, ok, detail
@@ -4159,6 +4260,11 @@ SELECT CASE
 -- ⇒ 静态值 125 条；`external_manifest` 的 admin_audit_events 行与槽 9 的 protected_columns
 -- **一句未动**（运行时对它仍然零表级、零列级写），新增的只有 `function_surface_manifest`
 -- 的一行函数面（`record_admin_post_hide_audit`）。
+-- R68（`#18` / 迁移 0048）：再追加**两条**（108 后台「停用管理员账号」写路径的函数授权面 /
+-- 109 「恢复管理员账号」的同口径授权面）⇒ 静态值 127 条；`external_manifest` 的
+-- admin_accounts / admin_sessions / admin_audit_events 三行与槽 9 的 protected_columns
+-- **一句未动**（运行时对这三张表仍然零表级、零列级写），新增的只有
+-- `function_surface_manifest` 的两行函数面。
 DO $$
 DECLARE
   v_failed integer;

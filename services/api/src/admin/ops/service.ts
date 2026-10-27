@@ -1,5 +1,5 @@
 /**
- * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 16 个 operationId**）。
+ * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 18 个 operationId**）。
  * 第 10 个是本片新增的 `listFlagAuditEvents`（开关变更留痕 A→B，迁移 0027 提供读函数）。
  * 第 11、12 个是 `#18` S2 PR-2 新增的 `listAdministrators`（管理员目录）与
  * `listAdministratorScopes`（只读展示**他人**权限）；两者门都是 `scopes:read`，
@@ -7,6 +7,12 @@
  * 第 15、16 个是 `#18` S2 PR-3 新增的写面：`grantAdministratorScope` /
  * `revokeAdministratorScope`（门 `scopes:write`）；真实写在迁移 0041 的两条
  * `SECURITY DEFINER` 函数里，见 `scope-authority-pg.ts`。没有内存实现 ⇒ 无端口即 503。
+ * 第 17、18 个是 R64 新增的**管理员账号状态**写面：`disableAdministratorAccount` /
+ * `enableAdministratorAccount`（门沿用 `scopes:write`，⛔ 不新造 scope 值）；真实写在迁移 0048
+ * 的两条 `SECURITY DEFINER` 函数里，见 `admin-account-authority-pg.ts`。
+ * ⚠ 与第 15、16 个的区别是本片的核心口径：**撤销 scope ≠ 停用账号**。前者只改
+ * `admin_scopes.revoked_at`（账号仍是 `active`、既有会话仍合法），后者改
+ * `admin_accounts.state` + `auth_epoch` 并撤销全部会话（裁定④）。
  *
  * 本文件**只做服务端**：不注册路由、不改 `app.ts`、不改 `apps/admin/**`、不改小程序、
  * 不改 `services/api/src/community/**`（只读依赖）。
@@ -57,6 +63,7 @@ import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
 import type { AdminAdministratorsDirectory, AdministratorView } from './administrators.ts';
 import { SELF_SCOPE_GRANT_DENIAL_SQLSTATE, type AdminScopeAuthority, type AdminScopeAuthorityOutcome } from './scope-authority-pg.ts';
+import type { AdminAccountStateAuthority, AdminAccountStateOutcome } from './admin-account-authority-pg.ts';
 import { ADMIN_SCOPES, isAdminScope } from '../scopes.ts';
 import { flagReadFailure, type FeatureFlagsPort, type FlagAuditRow } from './flags-pg.ts';
 import { createAdminOpsStore } from './store.ts';
@@ -152,6 +159,23 @@ export interface AdminOpsServiceOptions {
    */
   scopeAuthority?: AdminScopeAuthority | null;
   /**
+   * 管理员**账号状态**的写权威（R64 接线：`admin-account-authority-pg.ts` 调迁移 0048 的两条
+   * `SECURITY DEFINER` 函数）。
+   *
+   * 给了它 ⇒ `disableAdministratorAccount` / `enableAdministratorAccount` 走真实库；
+   * 缺省/`null` ⇒ 两个操作**一律 503** `PROVIDER_UNAVAILABLE`（`retryable: false`），
+   * ⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。
+   *
+   * **为什么必须与 `scopeAuthority` 分开**：两者写的是两张不同的表。`scopeAuthority` 改
+   * `admin_scopes.revoked_at`（0041），本字段改 `admin_accounts.state` + `auth_epoch` 并撤销
+   * `admin_sessions`（0048）。合成一个端口，就会出现「scope 撤了但账号还能登录」被当成"已停用"。
+   *
+   * **没有内存实现是刻意的**：运行时角色对 `admin_accounts` 零表级/零列级写权限
+   * （`90-assert-least-privilege.sql` 的 external_manifest 钉死），唯一写路径就是 0048 的两条函数。
+   * 编一个"内存里停用了"的分支，等于在"真实模式"下伪造一次下线。
+   */
+  adminAccountAuthority?: AdminAccountStateAuthority | null;
+  /**
    * 真实开关端口（GY-I18 接线，`flags-pg.ts`）。给了它 ⇒ `listFlags`/`setFlag` 的**读写都走库**：
    * 读面从 `public.feature_flags` 取三行（缺行/多行/闭集外 ⇒ 503 fail-closed，**不**返回三键全 false），
    * 写面经 `commitIfCurrent` 单事务 CAS + 审计。未给 ⇒ 与既有口径逐字一致地走内存 store
@@ -186,6 +210,28 @@ export interface AdminOpsServiceOptions {
   postReview?: PostReviewPort;
   /** flag 语义分类表；缺省为合同 3 键的"能力门"分类。构造时会自检不得放宽 fail-closed。 */
   flagEffects?: Readonly<Record<string, FlagEffect>>;
+}
+
+/**
+ * 停用/启用后回给调用方的**实测**读数（R64）。
+ *
+ * 字段与库层函数的返回列一一对应（`admin-account-authority-pg.ts` 只在形状不符时失败关闭，
+ * ⛔ 不做"零值填充"）：
+ * - `id` = `admin_accounts.id`（管理员账号 id，⛔ 不是 `users.id`）；
+ * - `revision` = 变更后的 `admin_accounts.revision`（同值已作为 `ETag` 出口）；
+ * - `state` = 变更后的状态（停用必为 `suspended`、启用必为 `active`，与动作不符即 503）；
+ * - `auth_epoch` 每次真实变更都 +1（幂等分支即当前值）——老 token 因此立即失效；
+ * - `revoked_sessions` = 本次撤销的会话行数（停用时常 `> 0` 才证明"踢下线"真的发生；
+ *   已经没有任何活动会话时是合法的 `0`，⛔ 不把 `0` 当失败）；
+ * - `changed` = 本次是否真的改了库（`false` ⇒ 幂等重放，无第二条审计）。
+ */
+export interface AdminAccountStateView {
+  id: string;
+  revision: number;
+  state: 'active' | 'suspended';
+  auth_epoch: number;
+  revoked_sessions: number;
+  changed: boolean;
 }
 
 export interface AdminOpsService {
@@ -287,6 +333,46 @@ export interface AdminOpsService {
     scope: string,
     body: unknown,
   ): Promise<ServiceResponse<SingleEnvelope<{ id: string; revision: number; scopes: string[]; changed: boolean }>>>;
+
+  /**
+   * 停用某后台管理员账号（R64）：`POST /admin/administrators/{id}/disable`。
+   *
+   * 门沿用 `scopes:write`（⛔ 不新增 scope 值：库层 `admin_scopes_scope_closed_set` 与
+   * `ADMIN_SCOPES` 都不动）。`If-Match`（`admin_accounts.revision` 的强 ETag）与
+   * `Idempotency-Key` 都必填。
+   *
+   * 生效面（**四件事同一事务**，全在迁移 0048 的函数体里，本层不补写）：
+   * `state='suspended'`、`auth_epoch+1`（老 token 立即失效）、撤销该管理员全部未撤销会话、
+   * 落一条 `action='admin_account.disable'` 的审计行。
+   *
+   * 错误（逐条与库层 G 码对应，映射表见 `admin-account-authority-pg.ts` 文件头）：
+   * 目标/操作者不存在 ⇒ 404；版本不符 ⇒ 409 `REVISION_CONFLICT`；
+   * 停用后 `scopes:write` 有效持有者归零 ⇒ 409 `LAST_SCOPE_MANAGER`（**与 0041 同一个码**）；
+   * 停用自己 ⇒ 409 `SELF_DISABLE_DENIED`；操作者非有效管理员/不持该 scope ⇒ 403 `SCOPE_DENIED`；
+   * 未接线 ⇒ 503（`retryable: false`）。
+   *
+   * 已经是 `suspended` 再停用 ⇒ 幂等成功（`changed: false`，无第二条审计、不再前进 `revision`）。
+   */
+  disableAdministratorAccount(
+    ctx: AdminCallContext,
+    id: string,
+    body: unknown,
+  ): Promise<ServiceResponse<SingleEnvelope<AdminAccountStateView>>>;
+
+  /**
+   * 启用（解除停用）某后台管理员账号（R64）：`POST /admin/administrators/{id}/enable`。
+   *
+   * 与 `disableAdministratorAccount` 对称：`state='active'`、`auth_epoch+1`、`revision+1`、
+   * 审计 `action='admin_account.enable'`。
+   *
+   * ⚠ **不**恢复被撤销的会话（会话撤销是永久的：用户必须重新登录），也**不**恢复任何 scope ——
+   * 停用期间被撤掉的权限不会因为重新启用而回来，那是另一条授权路径（0041）的事。
+   */
+  enableAdministratorAccount(
+    ctx: AdminCallContext,
+    id: string,
+    body: unknown,
+  ): Promise<ServiceResponse<SingleEnvelope<AdminAccountStateView>>>;
 }
 
 /** 本片 operationId（机读形式，供测试断言"恰好 14 个、不越界"）。 */
@@ -310,6 +396,10 @@ export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   // 既有 14 项的下标与顺序**一格都不动**。
   'grantAdministratorScope',
   'revokeAdministratorScope',
+  // R64：管理员**账号状态**写面（停用 / 启用）。同样**追加在尾部**，
+  // 既有 16 项的下标与顺序一格都不动。
+  'disableAdministratorAccount',
+  'enableAdministratorAccount',
 ]);
 
 /** 契约 scope（来自 `packages/contracts/operations.json`）。 */
@@ -335,6 +425,12 @@ export const OPS_SCOPES = Object.freeze({
   // 裁定②把读他人权限与维护授权列为两个 scope，持前者不自动获得后者。
   grantAdministratorScope: 'scopes:write',
   revokeAdministratorScope: 'scopes:write',
+  // R64：停用/启用管理员账号沿用 `scopes:write`（裁定①：权限门不新造 scope 值）。
+  // 为什么是 `scopes:write` 而不是 `accounts:suspend`：后者管的是**终端用户**（`public.users`，
+  // 0017 的 `suspend_account`）；这两条管的是**后台管理员**（`admin_accounts`）。两者同名不同源，
+  // 用同一个 scope 会让「能停用用户」自动等于「能停用管理员」——那是权限扩大。
+  disableAdministratorAccount: 'scopes:write',
+  enableAdministratorAccount: 'scopes:write',
 });
 
 interface Identified {
@@ -391,6 +487,9 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // 管理员 scope 的写权威（`#18` S2 PR-3）：判据同样是**能力对象存在**（`app.ts` 只在真的构造出
   // `createPostgresAdminScopeAuthority()` 时传），⛔ 不读任何自述持久化布尔标志。
   const scopeAuthority: AdminScopeAuthority | null = options.scopeAuthority ?? null;
+  // 管理员账号**状态**写权威（R64）：判据同样是**能力对象存在**（`app.ts` 只在真的构造出
+  // `createPostgresAdminAccountStateAuthority()` 时传），⛔ 不读任何自述持久化布尔标志。
+  const adminAccountAuthority: AdminAccountStateAuthority | null = options.adminAccountAuthority ?? null;
   const flagsPort: FeatureFlagsPort | null = options.flagsPort ?? null;
   const now = options.now ?? (() => new Date());
   const executionMode: ExecutionMode = options.executionMode ?? 'stub';
@@ -1589,6 +1688,101 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     );
   }
 
+  // -------------------------------------------------------------------------
+  // R64：管理员**账号状态**写面（停用 / 启用）
+  //
+  // 为什么这里也不再写审计、不再拼"我们自己的一次变更"：
+  //   迁移 0048 的两条函数在**同一个事务**里完成「advisory 锁（与 0041 同一把）→ 重核验操作者 →
+  //   目标行 FOR UPDATE → 版本门 → `state`/`auth_epoch`/`revision` 前进 → 撤销会话 → 写审计」。
+  //   应用层再补一条 `appendAudit` 就会变成两行（`admin_audit_events` 只可追加、删不掉），
+  //   与 `grantAdministratorScope` 对 0041 的处理逐字同源。
+  //   ⇒ 本层只做「形态校验 → 调端口 → 把函数实测读数投影成契约」，⛔ 不自己改 state、⛔ 不自己踢会话。
+  //
+  // 为什么没有内存实现：运行时角色对 `admin_accounts` 零表级/零列级写权限
+  // （`90-assert-least-privilege.sql` 钉死），唯一写路径就是 0048 的两条 `SECURITY DEFINER` 函数；
+  // 内存 store 里也没有"管理员账号状态"这种东西 ⇒ 没有端口就如实 503，⛔ 不伪造一次"内存里停用了"。
+  // -------------------------------------------------------------------------
+
+  /**
+   * 写面未接线时的统一 fail-closed（措辞与 `requireWiredScopeAuthority` 同一形态：
+   * 503 `PROVIDER_UNAVAILABLE` 且 `retryable: false`）。
+   *
+   * 「接线」是**运维动作**：同一请求在无运维介入下稍后重试不可能成功，故不得宣称可重试。
+   * ⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位（本检查放在 `runIdempotentWrite` **之前**）。
+   */
+  function requireWiredAdminAccountAuthority(): AdminAccountStateAuthority {
+    if (adminAccountAuthority === null) {
+      throw new ApiError('PROVIDER_UNAVAILABLE', '管理员账号状态写面尚未接线到数据库权威', { retryable: false });
+    }
+    return adminAccountAuthority;
+  }
+
+  /** 端口读数 → 契约 `AdminAccountStateView`（字段直投，⛔ 不做"零值填充"）。 */
+  function adminAccountStateViewOf(outcome: AdminAccountStateOutcome): AdminAccountStateView {
+    return {
+      id: outcome.administratorId,
+      revision: outcome.revision,
+      state: outcome.state,
+      auth_epoch: outcome.authEpoch,
+      revoked_sessions: outcome.revokedSessions,
+      changed: outcome.changed,
+    };
+  }
+
+  /**
+   * 停用/启用共用骨架。形态校验顺序与 `grantAdministratorScope` 逐条一致：
+   * `resolveContext`（401/400/403）→ `parseIfMatchHeader`（428/400）→ 契约镜像校验（400）→
+   * `normalizeIdParam`（400）→ 接线 503 → 幂等外壳 → 真实写。
+   *
+   * **自停用拒绝不在本层**：它是业务规则，由库层 `G0020` 判（`0048` 在拿到目标行之后才判）。
+   * 本层若提前判，就得先读一行再写 —— 那正是裁定⑤禁止的"应用层先读后写"（会与并发停用竞态）。
+   */
+  async function commitAdminAccountState(
+    ctx: AdminCallContext,
+    id: string,
+    body: unknown,
+    mode: 'disable' | 'enable',
+  ) {
+    const context = resolveContext(
+      ctx,
+      mode === 'disable' ? OPS_SCOPES.disableAdministratorAccount : OPS_SCOPES.enableAdministratorAccount,
+    );
+    const expectedRevision = parseIfMatchHeader(context.ifMatch);
+    opsValidator.assertInput('ReasonInput', body);
+    const input = body as { reason: string };
+    const normalizedId = normalizeIdParam(id);
+    requireWiredAdminAccountAuthority();
+    return runIdempotentWrite(
+      writeDeps,
+      context,
+      { method: 'POST', path: `/admin/administrators/${normalizedId}/${mode}`, expectedStatus: 200 },
+      body,
+      async () => {
+        const authority = requireWiredAdminAccountAuthority();
+        const action = {
+          actorId: context.identity.userId,
+          auditId: randomUUID(),
+          targetId: normalizedId,
+          expectedRevision,
+          requestId: context.requestId,
+          reason: input.reason,
+        };
+        const outcome = mode === 'disable' ? await authority.disable(action) : await authority.enable(action);
+        return singleResponse(context, executionMode, 200, adminAccountStateViewOf(outcome), etagOf(outcome.revision));
+      },
+    );
+  }
+
+  /** `disableAdministratorAccount`：`POST /admin/administrators/{id}/disable`（R64）。 */
+  async function disableAdministratorAccount(ctx: AdminCallContext, id: string, body: unknown) {
+    return commitAdminAccountState(ctx, id, body, 'disable');
+  }
+
+  /** `enableAdministratorAccount`：`POST /admin/administrators/{id}/enable`（R64）。 */
+  async function enableAdministratorAccount(ctx: AdminCallContext, id: string, body: unknown) {
+    return commitAdminAccountState(ctx, id, body, 'enable');
+  }
+
   return {
     store,
     jobPort,
@@ -1610,6 +1804,8 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     listAdministratorScopes,
     grantAdministratorScope,
     revokeAdministratorScope,
+    disableAdministratorAccount,
+    enableAdministratorAccount,
   };
 }
 

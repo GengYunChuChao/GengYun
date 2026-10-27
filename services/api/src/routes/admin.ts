@@ -1,7 +1,7 @@
 /**
  * GY-I18 后台资料／运营／开关 · HTTP 路由（阶段 2：产品装配）。
  *
- * 覆盖契约 `packages/contracts/openapi.json` 里 **44 个 operationId**：
+ * 覆盖契约 `packages/contracts/openapi.json` 里 **46 个 operationId**：
  * - 阶段 1（已合并 #96）25 个：四类资料 × 6（list/create/get/edit/publish/withdraw）
  *   + `listAuditEvents`；
  * - 阶段 1b（已合并 #101）9 个：`listAdminCategories`/`editCategory`、
@@ -13,6 +13,9 @@
  *   `grantAdministratorScope` / `revokeAdministratorScope`（写面，`scopes:write`；唯一写路径＝迁移 0041 两函数）；
  * - R59 2 个：`listAdminPosts` / `getAdminPost`（后台帖子读面，scope `sources:read`；
  *   管理视角候选集含 `hidden`/`deleted`，见 `admin/posts/service.ts` 文件头）。
+ * - R64 2 个：`disableAdministratorAccount` / `enableAdministratorAccount`（管理员**账号状态**写面，
+ *   `POST /admin/administrators/{id}/disable|enable`，scope 沿用 `scopes:write`；
+ *   唯一写路径＝迁移 0048 两函数，⛔ 不是"撤 scope"）。
  *
  * **本文件只做「搬运 + 契约映射」**：鉴权/权限、审计、幂等、CAS、可见性、
  * 契约字段校验、fail-closed 判定**全部复用服务层既有实现**
@@ -424,6 +427,47 @@ export function registerAdminRoutes(
   );
 
   // -------------------------------------------------------------------------
+  // R64：管理员**账号状态**的写面（2 个 operationId，门 `scopes:write`）
+  //
+  //   `POST /admin/administrators/{id}/disable` —— 停用（`state='suspended'` + `auth_epoch+1`
+  //   + 撤销该管理员全部会话 + 审计 `admin_account.disable`）；
+  //   `POST /admin/administrators/{id}/enable`  —— 启用（`state='active'` + `auth_epoch+1` + 审计
+  //   `admin_account.enable`，⛔ 不恢复被撤的会话、⛔ 不恢复被撤的 scope）。
+  //
+  // 为什么挂在 `/admin/administrators` 而不是 `/admin/accounts`：目标 id 只能是
+  // `admin_accounts.id`（后台管理员），`/admin/accounts` 名下是 `users.id`（终端用户，
+  // 由 `suspendUser` 管）。同名不同源，混挂会让「停用用户」与「停用管理员」变成同一条路由。
+  //
+  // 为什么是 `POST .../disable` 而不是 `DELETE`：这不是删账号（⛔ 本片不做 `DELETE FROM
+  // admin_accounts`），是可逆的状态迁移；`DELETE` 会让人以为可以撤销，而停用/启用是两条对称动作，
+  // 状态位与 `auth_epoch` 都要前进、都要留审计。
+  //
+  // `If-Match`（`admin_accounts.revision` 的强 ETag）/ `Idempotency-Key` **原样**交给服务层判定
+  // （缺 If-Match ⇒ 428、非法 ⇒ 400、不匹配 ⇒ 409；缺 Idempotency-Key ⇒ 400
+  // `IDEMPOTENCY_KEY_REQUIRED`），本层不重判。未接线 ⇒ 服务层 503，本层不改写、不发成功封套。
+  // -------------------------------------------------------------------------
+  const disableAdministratorAccount = methodOf(services.ops, 'disableAdministratorAccount');
+  const enableAdministratorAccount = methodOf(services.ops, 'enableAdministratorAccount');
+  app.post(
+    `${API_PREFIX}/admin/administrators/:id/disable`,
+    {
+      preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.disableAdministratorAccount)],
+      schema: { params: uuidIdParams },
+    },
+    async (request, reply) =>
+      send(reply, await disableAdministratorAccount(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+  app.post(
+    `${API_PREFIX}/admin/administrators/:id/enable`,
+    {
+      preHandler: [guards.requireAdmin, guards.requireScope(OPS_SCOPES.enableAdministratorAccount)],
+      schema: { params: uuidIdParams },
+    },
+    async (request, reply) =>
+      send(reply, await enableAdministratorAccount(callerOf(request), (request.params as { id: string }).id, request.body)),
+  );
+
+  // -------------------------------------------------------------------------
   // 阶段 1b：平台级作业（2 个 operationId）
   // **默认未接线 ⇒ 读与写都 503 `PROVIDER_UNAVAILABLE`（不返回空页）**：
   // 空页会被读成「平台当前没有作业」，那是无法确认的结论。该判定在服务层，
@@ -570,6 +614,9 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   // R37 `#18` S2 PR-3：管理员 scope 的写面（门 `scopes:write`）。
   'grantAdministratorScope',
   'revokeAdministratorScope',
+  // R64：管理员**账号状态**写面（门同为 `scopes:write`，⛔ 不新增 scope 值）。
+  'disableAdministratorAccount',
+  'enableAdministratorAccount',
   // R34：库内审计日志只读查询（迁移 0033 的 `public.list_admin_audit_logs()`）。
   'listAuditLogs',
   // R59：后台帖子读面（管理视角，`hidden`/`deleted` 也在候选集里）。

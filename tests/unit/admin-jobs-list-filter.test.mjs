@@ -343,7 +343,7 @@ test('list：非字符串（重复查询参数变数组）⇒ 400 INVALID_REQUES
   assert.equal(pool.calls.length, 0);
 });
 
-test('契约闭集就是判定依据：JOB_STATES 七值全收、闭集外全拒；ERROR_CODES 二十六值全收', async () => {
+test('契约闭集就是判定依据：JOB_STATES 七值全收、闭集外全拒；ERROR_CODES 二十七值全收', async () => {
   // 正面：闭集内每个取值都能通过（不会因为判定表漏项而误拒）。
   for (const state of JOB_STATES) {
     const pool = fakePool();
@@ -356,7 +356,7 @@ test('契约闭集就是判定依据：JOB_STATES 七值全收、闭集外全拒
     assert.deepEqual(pool.calls[0].values, [ADMIN_JOB_LIST_LIMIT, code]);
   }
   assert.equal(JOB_STATES.length, 7);
-  assert.equal(ERROR_CODES.length, 26);
+  assert.equal(ERROR_CODES.length, 27);
 });
 
 test('过滤入参的空串/undefined/null 视为"没给"，不返回 400', async () => {

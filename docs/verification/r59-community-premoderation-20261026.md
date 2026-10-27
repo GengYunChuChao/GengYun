@@ -41,7 +41,7 @@
 
 | 功能点 | 关键行号 | 说明 |
 | --- | --- | --- |
-| `/admin/posts` 下唯一 path | `packages/contracts/openapi.json:11301` | 全 spec 89 条 path 里，含 `/admin/posts` 的**只有** `/admin/posts/{id}/hide`（`operationId: hidePost`）；**没有**列表、没有通过、没有驳回 |
+| `/admin/posts` 下唯一 path | `packages/contracts/openapi.json:11584` | 全 spec 89 条 path 里，含 `/admin/posts` 的**只有** `/admin/posts/{id}/hide`（`operationId: hidePost`）；**没有**列表、没有通过、没有驳回 （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）|
 | 人审动作 operation | `services/api/src/admin/ops/service.ts:210-224` | 后台 operation 闭集 `OPS_OPERATION_IDS`（`:211-224`，注释 `:210` 自称「恰好 12 个」、实测共 **12 项**）里，**与社区内容相关的只有** `hidePost`（`:221`，第 10 项）；其后两项 `listAdministrators`／`listAdministratorScopes`（`:222-223`）是管理员权限读面，不碰内容。故「闭集只到 `hidePost`」的说法不准：它**不是末项**，而是末一个碰内容的项 —— **没有**通过／驳回／下架理由这类人审动作；`OPS_SCOPES`（`:227-241`）同理，`hidePost` 只映射到 `sources:write` |
 
 > 「只有契约、没实现」这一档**本次核对为空**：社区人审相关的契约面只有一条已经实现的

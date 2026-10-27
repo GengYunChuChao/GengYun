@@ -21,6 +21,8 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
+  AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE,
   AUDIT_ACTION_POST_HIDE,
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
@@ -136,13 +138,17 @@ test('GET /admin/audit-logs：action/entity 闭集与契约、库内写入点一
   assert.deepEqual(entity.schema.enum, [...AUDIT_ENTITIES]);
   assert.equal(operation['x-scope'], AUDIT_LOG_SCOPE);
   assert.equal(operation['x-version-required'], false);
-  // 库内写入点（迁移 0017 两处 + 0020/0027 一处 + 0043 一处 + 0041 两处 + 0046 一处 + 0047 一处）写的
-  // scope 就是 entity 的映射值。`admin_scope` 映射到 `scopes:write`，但 0041 的授予/撤销行把 `scope`
-  // 写成**被授/被撤的那个 scope 本身** ⇒ 这条映射只收窄命中（拒绝行全中、授予/撤销只中
-  // `scopes:write` 那些）。取舍见 `catalog.ts` 文件头「一处必须如实登记的读数瑕疵」。
+  // 库内写入点（迁移 0017 两处 + 0020/0027 一处 + 0043 一处 + 0041 两处 + 0046 一处 + 0047 一处
+  // + 0048 两处）写的 scope 就是 entity 的映射值。`admin_scope` 映射到 `scopes:write`，但 0041 的
+  // 授予/撤销行把 `scope` 写成**被授/被撤的那个 scope 本身** ⇒ 这条映射只收窄命中（拒绝行全中、
+  // 授予/撤销只中 `scopes:write` 那些）。取舍见 `catalog.ts` 文件头「一处必须如实登记的读数瑕疵」。
   // `post` 追加 `sources:write`（0047 的下架行写死这个值），但**单靠它不够**：0041/0046 的
   // 权限行也把 `p_scope` 直传给 `scope` 列，所以 `post` 另配动作护栏（下一条用例专测）。
-  assert.deepEqual(Object.values(AUDIT_ENTITY_SCOPES).sort(), [
+  // `admin_account` 追加 `scopes:write`（0048 的停用/恢复行写死这个值，`:286` / `:417`）⇒ 与
+  // `admin_scope` **共用同一个字面量**，同样「单靠它不够」，所以它也配动作护栏（同一条用例）。
+  const entityScopes = Object.values(AUDIT_ENTITY_SCOPES);
+  assert.equal(entityScopes.length, 6, '六个实体各有一个 scope 映射（admin_scope 与 admin_account 共用 scopes:write）');
+  assert.deepEqual([...new Set(entityScopes)].sort(), [
     'accounts:suspend',
     'flags:write',
     'jobs:cancel',
@@ -443,6 +449,52 @@ test('GET /admin/audit-logs：动作护栏（entity=post 只等于 post.hide；�
   const listed = operations.operations.find((candidate) => candidate.id === 'listAuditLogs');
   assert.ok(listed, 'operations.json 里找不到 listAuditLogs');
   assert.equal(listed.scope, AUDIT_LOG_SCOPE);
+
+  // ⑧ R68：闭集扩到**十项** + 第 6 个实体 `admin_account` 自带动作护栏。
+  //    这两件事是同一枚硬币的两面：`admin_account.*` 的审计行 `scope` 列写的是 `'scopes:write'`
+  //    （`0048:286` / `0048:417` 的字面量），与 `admin_scope.*` 共用 ⇒ 不设护栏就会把
+  //    权限授予/撤销行命名成「管理员账号被停用」。
+  assert.equal(AUDIT_ACTIONS.length, 10, 'action 闭集必须恰好十项（原有 8 + admin_account.disable / .enable）');
+  assert.deepEqual([...AUDIT_ENTITIES], ['account', 'flag', 'job', 'admin_scope', 'post', 'admin_account']);
+  assert.deepEqual(actionsOfAuditEntity('admin_account'), [
+    AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
+    AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE,
+  ]);
+  assert.equal(
+    scopeOfAuditEntity('admin_account'),
+    'scopes:write',
+    'admin_account 的行 scope 列是 scopes:write（0048 函数体内写死，不是由调用方传）',
+  );
+  assert.ok(actionEnum.includes(AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE), '契约 action 枚举漏了 admin_account.disable');
+  assert.ok(actionEnum.includes(AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE), '契约 action 枚举漏了 admin_account.enable');
+  assert.ok(entityEnum.includes('admin_account'), '契约 entity 枚举漏了 admin_account');
+  assert.equal(actionEnum.length, 10, '契约 action 枚举必须与 AUDIT_ACTIONS 同长（十项）');
+  assert.equal(entityEnum.length, 6, '契约 entity 枚举必须与 AUDIT_ENTITIES 同长（六项）');
+
+  const callsBeforeGuard = port.calls.length;
+  for (const action of ['set_flag', 'admin_scope.grant', 'post.hide']) {
+    await assert.rejects(
+      () => service.listAuditLogs(adminContext(), { entity: 'admin_account', action }),
+      (error) =>
+        expectApiError(error, 'INVALID_REQUEST') &&
+        error.details.some((detail) => detail.field === 'action' && detail.code === 'enum'),
+      `entity=admin_account&action=${action} 必须 400（护栏是语义边界，不静默取交集）`,
+    );
+  }
+  // 反向：`admin_account.*` 在 `entity=post` 下同样被 post 那条护栏挡掉 —— 两条护栏互不串味。
+  await assert.rejects(
+    () => service.listAuditLogs(adminContext(), { entity: 'post', action: AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE }),
+    (error) => expectApiError(error, 'INVALID_REQUEST'),
+  );
+  assert.equal(port.calls.length, callsBeforeGuard, '四条护栏外请求都必须在查询之前拦下，不得触端口');
+
+  // 正向：`entity=admin_account` 不带 action ⇒ 端口收到护栏清单本身（恰好两个新 action）。
+  await service.listAuditLogs(adminContext(), { entity: 'admin_account' });
+  assert.deepEqual(
+    port.calls.at(-1).actions,
+    [AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE, AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE],
+    'entity=admin_account 未带 action 时必须自己补上护栏清单',
+  );
 });
 
 /** 4b. 游标完整性：跨用户 / 过期 / 篡改 / 位置不可解析。 */

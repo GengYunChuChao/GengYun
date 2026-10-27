@@ -4,16 +4,16 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 240
+      "files": 241
     },
     {
       "dir": "miniprogram",
-      "files": 28
+      "files": 29
     }
   ],
   "counts": {
-    "total": 45,
-    "has": 44,
+    "total": 46,
+    "has": 45,
     "none": 1
   },
   "entries": [
@@ -28,6 +28,13 @@
       "file": "services/api/src/admin/ops/accounts-pg.ts",
       "line": 105,
       "function": "mapAccountsReadError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/admin/ops/admin-account-authority-pg.ts",
+      "line": 228,
+      "function": "mapAdminAccountAuthorityError",
       "judgement": "has",
       "owner": "GY-I22"
     },
@@ -89,14 +96,14 @@
     },
     {
       "file": "services/api/src/community/store-pg.ts",
-      "line": 97,
+      "line": 98,
       "function": "classifyCommunityDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/community/store-pg.ts",
-      "line": 104,
+      "line": 105,
       "function": "classifyCommunityDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"

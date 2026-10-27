@@ -37,8 +37,8 @@ export const ALL_OPS_SCOPES = Object.freeze([
 ]);
 
 /**
- * 本片 16 个 operationId（10 个既有 + R37 `#18` S2 读面 2 个 + S3 人工通过/驳回 2 个
- * + `#18` S2 PR-3 管理员 scope 写面 2 个）。
+ * 本片 18 个 operationId（10 个既有 + R37 `#18` S2 读面 2 个 + S3 人工通过/驳回 2 个
+ * + `#18` S2 PR-3 管理员 scope 写面 2 个 + R68 账号停用/恢复 2 个）。
  */
 export const OPS_IDS = Object.freeze([
   'listAdminCategories',
@@ -57,6 +57,8 @@ export const OPS_IDS = Object.freeze([
   'rejectPost',
   'grantAdministratorScope',
   'revokeAdministratorScope',
+  'disableAdministratorAccount',
+  'enableAdministratorAccount',
 ]);
 
 /** 派单显式不做的 operationId（不得在本片出现）。 */

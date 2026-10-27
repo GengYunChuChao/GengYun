@@ -868,6 +868,20 @@
       "method": "get",
       "scope": "user",
       "version_required": false
+    },
+    {
+      "id": "disableAdministratorAccount",
+      "path": "/admin/administrators/{id}/disable",
+      "method": "post",
+      "scope": "scopes:write",
+      "version_required": true
+    },
+    {
+      "id": "enableAdministratorAccount",
+      "path": "/admin/administrators/{id}/enable",
+      "method": "post",
+      "scope": "scopes:write",
+      "version_required": true
     }
   ],
   "proposal_revision": 2

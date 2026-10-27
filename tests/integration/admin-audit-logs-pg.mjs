@@ -283,7 +283,7 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  // 版本钉是**字面量**，新增迁移落地时要把这里同步到新的末位号（本切片：仓库末位＝`0047`）。
+  // 版本钉是**字面量**，新增迁移落地时要把这里同步到新的末位号（本切片：仓库末位＝`0048`）。
   // 演进史：曾钉 `'0033'`，迁移推到 0044 后陈旧了 11 号 —— 当时本文件**尚未**接入
   // `.github/workflows/real-pg-integration.yml`，没有 CI 来提醒，只能靠这条注释；
   // （R66 起它已是 `real-pg-17.11` job 里的一步：钉旧了 CI 直接红，这条注释退回「演进史」用途。）
@@ -293,8 +293,10 @@ async function bootstrapDatabase() {
   // 本切片实测这样写会让该守卫用例直接变红。
   // 第三次：`#18` S2 收尾片的 0046（scope 操作被拒的留痕写入口 `record_admin_scope_denial`）落地，末位随之前移到 0046。
   // 第四次：R64 的 0047（后台下架 `post.hide` 的审计真落库 `record_admin_post_hide_audit`）落地，末位随之前移到 0047。
-  assert.equal(applied.rows[0].version, '0047', '迁移 0047（R64：record_admin_post_hide_audit，后台下架 `post.hide` 的审计写入口，与下架同一事务；此前 0046 是 `#18` S2 收尾片的 record_admin_scope_denial、0045 是 S3 片 A 的 community_moderation_decisions.decided_by）必须是最后一条已应用版本');
-  pass('迁移 0047 经 migrate.ts up 落到真库（schema_migrations 末项 0047）');
+  // 第五次：R68 的 0048（后台**停用/恢复管理员账号**的唯一写入口 `disable_admin_account` /
+  // `enable_admin_account`）落地，末位随之前移到 0048。
+  assert.equal(applied.rows[0].version, '0048', '迁移 0048（R68：disable_admin_account / enable_admin_account，后台管理员账号停用与恢复的唯一写入口，改的是账号与会话状态而不是审计面；此前 0047 是 R64 的 record_admin_post_hide_audit、0046 是 `#18` S2 收尾片的 record_admin_scope_denial）必须是最后一条已应用版本');
+  pass('迁移 0048 经 migrate.ts up 落到真库（schema_migrations 末项 0048）');
 
   await ownerPool.query(`GRANT USAGE ON SCHEMA public TO ${RUNTIME_ROLE}, ${UNGRANTED_ROLE}`);
   const region = grantRegion('deploy/postgres-cvm/sql/20-login-roles.sql', 'gy-r34-audit-logs-grant');

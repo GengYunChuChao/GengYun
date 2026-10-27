@@ -27,6 +27,8 @@ import type { AuditResult, TargetRefValue } from '../types.ts';
 import {
   AUDIT_ACTION_ACCOUNT_RESTORE,
   AUDIT_ACTION_ACCOUNT_SUSPEND,
+  AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
+  AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE,
   AUDIT_ACTION_ADMIN_SCOPE_DENY,
   AUDIT_ACTION_ADMIN_SCOPE_GRANT,
   AUDIT_ACTION_ADMIN_SCOPE_REVOKE,
@@ -106,6 +108,8 @@ export const AUDIT_READING_KIND: Readonly<Record<AdminAuditAction, AuditReadingK
   [AUDIT_ACTION_ADMIN_SCOPE_REVOKE]: 'unexposed',
   [AUDIT_ACTION_ADMIN_SCOPE_DENY]: 'unexposed',
   [AUDIT_ACTION_POST_HIDE]: 'unexposed',
+  [AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE]: 'unexposed',
+  [AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE]: 'unexposed',
 });
 
 /** 该 action 的读数语义；闭集外一律 `unexposed`（今天没有契约读面能表达它们的读数）。 */

@@ -111,6 +111,7 @@ export const ERROR_STATUS_MAP = Object.freeze({
     'OBJECT_UNAVAILABLE',
     'REQUEST_IN_PROGRESS',
     'LAST_SCOPE_MANAGER',
+    'SELF_DISABLE_DENIED',
   ]),
   413: Object.freeze(['MEDIA_TOO_LARGE']),
   415: Object.freeze(['MEDIA_TYPE_UNSUPPORTED']),

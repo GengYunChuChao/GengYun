@@ -4,7 +4,7 @@
  * ## 为什么枚举不写死在路由/契约两处
  * 查询参数 `action` / `entity` 的闭集**不是**从契约里编出来的，而是从「谁在写这张表」反推的。
  * 今天往 `public.admin_audit_events` 落库写审计的地方全在 `services/api/db/migrations/` 里，
- * 一共八种 `action`：
+ * 一共十种 `action`：
  *
  * | 写入点（库内函数） | `action` | `scope`（查询参数 `entity` 的取值来源） | 迁移 |
  * | --- | --- | --- | --- |
@@ -16,11 +16,15 @@
  * | `public.record_admin_job_cancel_audit(...)` | `job.cancel` | `jobs:cancel` | 0043 `:168-175` |
  * | `public.record_admin_scope_denial(...)` | `admin_scope.deny` | `scopes:write` | 0046 |
  * | `public.record_admin_post_hide_audit(...)` | `post.hide` | `sources:write` | 0047 `:185-198` |
+ * | `public.disable_admin_account(...)` | `admin_account.disable` | `scopes:write`（共享，见下「admin_account 也需要护栏」） | 0048 `:282-290` |
+ * | `public.enable_admin_account(...)`  | `admin_account.enable`  | `scopes:write`（同上） | 0048 `:413-421` |
  *
  * `account.suspend` 与 `account.restore` 共用同一个 `scope`，因此 `entity=account` 一次取回
  * 「停用 + 恢复」两类行；`entity=flag` 只取开关变更；`entity=job` 只取作业取消；
- * `entity=admin_scope` 取 scope 授予/撤销/被拒；`entity=post` 只取下架 —— 但 `post` 不是靠
- * `scope` 列收窄出来的，它是**唯一带动作护栏**的实体，理由见下面单独一节。
+ * `entity=admin_scope` 取 scope 授予/撤销/被拒（并见下「一处必须如实登记的读数放宽」——
+ * `0048` 之后这个筛选维度还会带上 `admin_account.*` 行）；`entity=admin_account` 取后台
+ * 管理员账号的停用/恢复；`entity=post` 只取下架 —— 但 `post` 与 `admin_account` 都不是靠
+ * `scope` 列收窄出来的，它们是**带动作护栏**的实体，理由见下面两节。
  * **未知取值一律 400**（fail-closed）：
  * ⛔ 不静默返回空页 —— 空页会被读成「平台从未发生过这类操作」，那是一条无法确认的结论。
  *
@@ -72,6 +76,35 @@
  *
  * ⛔ 不要把这条护栏做成「忽略 `?action=` 静默取交集」或「忽略护栏返回全 scope」：
  * 前者伪造空页，后者重现上面那个命名错误。护栏是**语义边界**，违反它的请求必须被拒。
+ *
+ * ## 为什么 `admin_account` 也需要**动作护栏**（理由比 `post` 更强）
+ *
+ * `0048` 的两个写入口（`public.disable_admin_account` / `public.enable_admin_account`）把审计行
+ * 的 `scope` 列写成 `'scopes:write'` —— 那是**门控该动作的权限本身**，且是函数体内的字面量
+ * （`0048:286` / `0048:417`，调用方伪造不了）。但 `scopes:write` 同时是 `admin_scope` 实体的
+ * 映射值，`0041`/`0046` 的权限行把 `p_scope` 直传进同一个 `scope` 列。于是：
+ *
+ *   - `?entity=admin_account` 若不设护栏，会把 scope 授予/撤销/被拒行一起筛进来，
+ *     而读者看到的是「这些后台管理员账号被停用了」—— 与 `post` 那条一模一样的**错误命名**；
+ *   - 因此 `admin_account` 的护栏是 `['admin_account.disable', 'admin_account.enable']`，
+ *     `?entity=admin_account&action=<护栏外>` 一律 **400**（不静默取交集）。
+ *
+ * 与 `post` 的差别只在「共享字面量的另一半是谁」：`post` 抢的是 `sources:write`，`admin_account`
+ * 抢的是 `scopes:write`（后者更敏感：它正是本动作的权限门）。两条护栏各自独立登记，⛔ 不复用。
+ *
+ * ## 一处必须如实登记的读数放宽：`?entity=admin_scope` 现在也会带上 `admin_account.*` 行
+ *
+ * 护栏是**逐实体**的，只收窄被点名的那一个。`0048` 之后 `scope='scopes:write'` 这个字面量被
+ * 两类行共用（`admin_scope.*` 与 `admin_account.*`），而 `admin_scope` **故意不加护栏**：
+ * 派单硬约束是「⛔ 不给别的实体补护栏」，且真给 `admin_scope` 加护栏会把
+ * `?entity=admin_scope&action=account.suspend` 这类既有「能查、返回空页」的组合改成 400 —
+ * 那是协议行为变更，不在本片授权范围。代价：`?entity=admin_scope` 的结果里会混入
+ * `admin_account.disable` / `admin_account.enable` 行。每行都带着自己的 `action`，类型读得出来，
+ * 但**筛选维度**确实被放宽了。精确读法：
+ *   - 账号停用/恢复 ⇒ `?entity=admin_account`（护栏生效）或 `?action=admin_account.disable`；
+ *   - 权限变更 ⇒ `?action=admin_scope.grant` / `.revoke` / `.deny`（action 维度不做 scope 收窄）。
+ * ⛔ 不要为了「看起来更干净」给 `admin_scope` 补护栏，或把这层映射改成 `null`/空数组：
+ * 前者改既有协议、后者退化成静默全量。这条放宽是**已知代价**，登记在本节与验证文档里。
  */
 
 /** 账号停用（迁移 0017 `public.suspend_account`）。 */
@@ -119,6 +152,20 @@ export const AUDIT_ACTION_ADMIN_SCOPE_DENY = 'admin_scope.deny';
  */
 export const AUDIT_ACTION_POST_HIDE = 'post.hide';
 
+/**
+ * 后台管理员账号**停用**（迁移 `0048` 的 `public.disable_admin_account`，审计行在 `:282-290`）。
+ *
+ * 它是**第 9 项**。`0048` 把 `action='admin_account.disable'` / `scope='scopes:write'` 写进表，
+ * 闭集不登记就是又一次「能看见（全量翻页）、不能筛（`?action=admin_account.disable` 一律 400）」。
+ * `scopes:write` 与 `admin_scope` 实体共用 ⇒ 必须配动作护栏，见文件头那一节。
+ *
+ * ⛔ 这条 action **不是**「终端用户停用」（那是 `account.suspend`，`0017`），也不是
+ * 「撤销某个 scope」（那是 `admin_scope.revoke`）。三者语义与门都不同，别互相冒充。
+ */
+export const AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE = 'admin_account.disable';
+/** 后台管理员账号**恢复**（迁移 `0048` 的 `public.enable_admin_account`，审计行在 `:413-421`）。 */
+export const AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE = 'admin_account.enable';
+
 /** `GET /admin/audit-logs` 的 `action` 闭集（= 库内写入点的 `action` 列取值）。 */
 export const AUDIT_ACTIONS = Object.freeze([
   AUDIT_ACTION_ACCOUNT_SUSPEND,
@@ -129,6 +176,8 @@ export const AUDIT_ACTIONS = Object.freeze([
   AUDIT_ACTION_ADMIN_SCOPE_REVOKE,
   AUDIT_ACTION_ADMIN_SCOPE_DENY,
   AUDIT_ACTION_POST_HIDE,
+  AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
+  AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE,
 ] as const);
 
 export type AdminAuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -170,6 +219,16 @@ export const AUDIT_ENTITY_SCOPES = Object.freeze({
    * 见下面 `AUDIT_ENTITY_ACTION_GUARDS` 与文件头那一节。
    */
   post: 'sources:write',
+  /**
+   * `admin_account` → `scopes:write`。
+   *
+   * 这张表只记「审计行 `scope` 列实际写的值」：`0048:286` / `0048:417` 写死 `'scopes:write'`
+   * （门控该动作的权限，函数体内是字面量）。
+   * ⚠ 与 `post` 同构：`scopes:write` 也是 `0041`/`0046` 权限行的 `scope` 取值（`p_scope` 直传），
+   * 所以单独用这个映射会把权限变更行混进「管理员账号停用」的结果里 ⇒ `admin_account` 另配
+   * 动作护栏收窄到两个新 action，见下面 `AUDIT_ENTITY_ACTION_GUARDS` 与文件头那一节。
+   */
+  admin_account: 'scopes:write',
 } as const);
 
 export type AdminAuditEntity = keyof typeof AUDIT_ENTITY_SCOPES;
@@ -188,9 +247,10 @@ export function scopeOfAuditEntity(entity: AdminAuditEntity): string {
  * `entity` → **动作护栏**：该实体在 `?entity=` 语义下只允许出现的 `action` 清单。
  *
  * 为什么是独立一张表、而不是往 `AUDIT_ENTITY_SCOPES` 里加第二个字段：只有 `scope` 列取值
- * **不专属**的实体才需要护栏（今天只有 `post`，见文件头「为什么 `post` 需要动作护栏」）；
- * 其余实体在这里查不到键 ⇒ 「无护栏」= `?action=` 不受额外限制。用「缺席」表达「无护栏」，
- * 比给每个实体编一份假的「全量清单」更诚实 —— 后者会让读者以为所有实体都被动作维度过了一遍。
+ * **不专属**的实体才需要护栏（今天有 `post` 与 `admin_account`，两者都栽在共享字面量上，
+ * 见文件头两节）；其余实体在这里查不到键 ⇒ 「无护栏」= `?action=` 不受额外限制。用「缺席」
+ * 表达「无护栏」，比给每个实体编一份假的「全量清单」更诚实 —— 后者会让读者以为所有实体都被
+ * 动作维度过了一遍。
  *
  * ⛔ 护栏不是「建议值」：`services/api/src/admin/audit/service.ts` 在 `?action=` 落在清单外时
  * **400 fail-closed**（不静默取交集 —— 交集恒空，会被读成「平台从未发生过这类操作」）。
@@ -199,6 +259,7 @@ export const AUDIT_ENTITY_ACTION_GUARDS: Readonly<
   Partial<Record<AdminAuditEntity, readonly AdminAuditAction[]>>
 > = Object.freeze({
   post: Object.freeze([AUDIT_ACTION_POST_HIDE] as const),
+  admin_account: Object.freeze([AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE, AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE] as const),
 });
 
 /**

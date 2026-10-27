@@ -219,7 +219,7 @@
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `hidePost` POST /admin/posts/:id/hide | ○ | ● `C3-*` 系列（后台 403 统一族 `cases.mjs:126-137`） | ● `admin-http.mjs:494-497`（隐藏后他人读 404） | ● `community-moderation-revision-guard.test.mjs:58,71,72,94` | ● `admin-http.mjs:365,374` | ○ | ○ | ○ |
+| `hidePost` POST /admin/posts/:id/hide | ○ | ● `C3-*` 系列（后台 403 统一族 `cases.mjs:126-137`） | ● `admin-http.mjs:494-497`（隐藏后他人读 404） | ● `community-moderation-revision-guard.test.mjs:58,71,72,94` | ● `admin-http.mjs:366,375` | ○ | ○ | ○ （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）|
 | `listAuditEvents` GET /admin/audit-events | ● `C1` 族（后台未登录） | ● `C3-04@141`、`C3-15@152`（200 对照）、`C3-26@163` | — | — | ○ | ○ | ● `C7` 族游标口径 | ○ |
 
 注：审核**前置门禁**（先审后发）不是契约 operation，其断言在 `community-moderation-read-recheck.test.mjs:54,85,112`、`community-moderation-gate-wiring.test.mjs:125,190,291`（均为 404 形态）——计入 community 域的 404 列，不单独成行。
@@ -294,7 +294,7 @@
 | `admin.ts:287/273` | GET `/admin/categories`、PATCH `/admin/categories/:id` | `requireAdmin + OPS_SCOPES.listAdminCategories/editCategory` |
 | `admin.ts:289/294` | GET `/admin/accounts`、POST `/admin/accounts/:id/suspend` | `listAdminUsers/suspendUser` |
 | `admin.ts:312/317` | GET `/admin/jobs`、POST `/admin/jobs/:id/cancel` | `listAdminJobs/cancelAdminJob` |
-| `admin.ts:333/338` | GET `/admin/feature-flags`、PUT `/admin/feature-flags/:key` | `listFlags/setFlag` |
+| `admin.ts:500/505` | GET `/admin/feature-flags`、PUT `/admin/feature-flags/:key` | `listFlags/setFlag` |
 | `admin.ts:353` | GET `/admin/flag-audit-events` | `listFlagAuditEvents` |
 | `admin.ts:365` | POST `/admin/posts/:id/hide` | `hidePost` |
 | `admin-auth.ts:47/89/104` | POST/GET `/admin/auth/session`、POST `/admin/auth/logout` | 登录/会话/登出专用（不套 admin scope，语义正确） |

@@ -79,8 +79,8 @@ export const REVIEW_CODE_ANCHORS = Object.freeze([
     // `#18` S2 PR-3 把 `OPS_OPERATION_IDS` 从 244-260 挪到 293-313（写面新增两条 operationId）。
     // 这不是产品 UI 改动：本条目只是「人审入口的 0 与出处」这一段证据锚点，
     // 锚点跟着后端行号走，否则 `tests/unit/admin-ui-review-state.test.mjs` 会红成"引用失效"。
-    start: 293,
-    end: 313,
+    start: 379,
+    end: 401,
     mustInclude: ['OPS_OPERATION_IDS'],
   },
 ]);

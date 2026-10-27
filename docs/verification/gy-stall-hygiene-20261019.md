@@ -104,7 +104,7 @@ model_layer=not_wired），一律不得发布","retryable":false,"details":[{"fi
 | `tests/unit/gy-i22-secmatrix.test.mjs` | `makeWorld()`（`:96`）与 `C6` 的 `presetApp`（`:954`） | 同上；`:983` 的 `realApp` **一字未动**（它本就没传 `moderationInjection`，走 `app.ts` 的 real fail-closed 默认） |
 | `tests/unit/admin-flag-gate.test.mjs` | `newApp()`（`:305`） | 显式声明社区 store（`createMemoryCommunityStore()`）并补 `communityInjection: { store, gate: makeGate() }`，审核域走 `frozenModerationInjection`；返回值**只加** `community` 一个键 |
 
-为什么 `admin-flag-gate` 要补 `communityInjection`：原本社区 store 由 `app.ts:843` 内部默认创建，测试拿不到同一实例，审核域的「同源内容权威」就指不到「E7 断言零落库」的那份 store。
+为什么 `admin-flag-gate` 要补 `communityInjection`：原本社区 store 由 `app.ts:924` 内部默认创建，测试拿不到同一实例，审核域的「同源内容权威」就指不到「E7 断言零落库」的那份 store。
 
 ### 4.3 边界（不得误读）
 
