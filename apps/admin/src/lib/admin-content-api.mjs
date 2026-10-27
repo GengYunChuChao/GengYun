@@ -56,7 +56,7 @@ function failure(kind, extra = {}) {
     message: '',
     requestUrl: null,
     requestId: null,
-    sentHeaders: null,
+    sentHeaders: null, retryAfterSeconds: null,
     ...extra,
   };
 }
@@ -111,14 +111,14 @@ export function buildFamilyUrl(baseUrl, path, options = {}) {
   return url;
 }
 
-/** 把一次非 2xx 响应翻译成失败对象：错误码原样保留，未知 code 标 `inContract: false`。 */
-function classifyHttpFailure({ status, envelope, body, requestUrl, sentHeaders }) {
+/** 把一次非 2xx 响应翻译成失败对象：错误码原样保留（未知 code 标 `inContract: false`），并把 `Retry-After` 的整数秒落成 `retryAfterSeconds`（缺失／非法 ⇒ null，见 `readRetryAfterSeconds`）。 */
+function classifyHttpFailure({ status, envelope, body, requestUrl, sentHeaders, headers }) {
   const code = envelope?.code ?? null;
   const inContract = code === null ? false : ERROR_CODES.includes(code);
   const base = {
     status,
     code,
-    inContract, declaredRetryable: envelope?.retryable ?? null,
+    inContract, declaredRetryable: envelope?.retryable ?? null, retryAfterSeconds: readRetryAfterSeconds(headers),
     requestUrl,
     requestId: readRequestId(body),
     sentHeaders,
@@ -233,7 +233,7 @@ export async function fetchFamilyPage({
   }
 
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
-  const result = classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null });
+  const result = classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null, headers: response.headers });
   if (result.kind === 'forbidden') {
     result.message = result.message || '当前后台会话缺少读面 scope';
   }
@@ -293,7 +293,7 @@ export async function fetchFamilyItem({ fetchImpl, baseUrl, token, path, id, val
   }
 
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
-  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null });
+  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null, headers: response.headers });
 }
 
 /**
@@ -402,7 +402,7 @@ export async function writeFamilyResource({
   }
 
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
-  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders });
+  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders, headers: response.headers });
 }
 
 // ------------------------------------------------------------------ 资料来源的 6 个操作
@@ -976,3 +976,29 @@ export const REGISTRATION_RESTRICTION_OPERATIONS = Object.freeze({
   publishRestriction: 'publishRestriction',
   withdrawRestriction: 'withdrawRestriction',
 });
+
+// ------------------------------------------------------------------ `Retry-After` 解读（R67-A02b）
+// 服务端对「可重试的 503/504」与 429、409 `REQUEST_IN_PROGRESS` 统一下发 `Retry-After`（**整数秒**字符串；
+// 唯一出口是 `services/api/src/errors.ts` 的 `retryAfterSecondsFor`，全仓只有 `app.ts` 的统一错误出口写该头）。
+// 读面只认这一个头的整数秒形态：缺失／`0`／`abc`／`1.5`／负数／HTTP-date 一律 `null`——**不猜**一个好看的秒数。
+// 回填值时 viewer 侧的 `retryHintOf` 也只在「正整数」时才拼「（建议等待 N 秒）」，两处判据同口径。
+//
+// ⚠ 本函数刻意放在文件**末尾**：`docs/architecture/admin-console-capability-map.md` 用「路径:行号」锚点
+// 引用本文件前 600 行（`listSources:409` 起 15 条，`tools/verify-contract-status.mjs` 容差只有 ±2 行），
+// 在 `readEtag` 旁插函数会把它们整体推高。函数声明会提升，所以上面的 `classifyHttpFailure` 照样能调它。
+// 同理，`failure()` 与 `classifyHttpFailure` 里的 `retryAfterSeconds` 是**并到既有行**上的（不新增行），
+// 否则 `verify-doc-anchors.mjs --strict` 会报「基线之外新增」——本次改动对上述行号是零位移。
+function readRetryAfterSeconds(headers) {
+  if (headers === null || headers === undefined) return null;
+  // `Headers.get` 本身大小写不敏感；普通对象（假 response）再按 key 大小写不敏感地补一遍。
+  let raw = typeof headers.get === 'function' ? headers.get('retry-after') : null;
+  if (typeof raw !== 'string' && typeof headers === 'object') {
+    const key = Object.keys(headers).find((name) => name.toLowerCase() === 'retry-after');
+    if (key !== undefined) raw = headers[key];
+  }
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!/^[0-9]+$/.test(text)) return null;
+  const seconds = Number(text);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
+}
