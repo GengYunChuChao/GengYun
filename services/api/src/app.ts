@@ -2593,9 +2593,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
 
     if (error instanceof ApiError) {
       // 等待头（`Retry-After`，整数秒）的**唯一出口**：取值规则与契约依据见
-      // `services/api/src/errors.ts` 的 `retryAfterSecondsFor`——429（限流）与 409
-      // `REQUEST_IN_PROGRESS`（同一 Key 的请求仍在处理）必须带该头（state-contract.md:27 / :34），
-      // 其余错误码（含 503/504）不写。调用点不得各自写头，这里也不写 HTTP-date 形式。
+      // `services/api/src/errors.ts` 的 `retryAfterSecondsFor`——429（限流）、409
+      // `REQUEST_IN_PROGRESS`（同一 Key 的请求仍在处理）、以及 `retryable === true` 的 503/504
+      // 带该头（state-contract.md:27 / :34）；不可重试的 503/504 与其余错误码不写。调用点不得各自写头，这里也不写 HTTP-date 形式。
       const retryAfterSeconds = retryAfterSecondsFor(error);
       if (retryAfterSeconds !== null) reply.header('Retry-After', String(retryAfterSeconds));
       reply.status(error.status).send(envelope(error));
