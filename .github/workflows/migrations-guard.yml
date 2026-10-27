@@ -33,7 +33,20 @@
 # 判据分两档（2026-10-22 收窄，避免既有仓一上来就全红）：
 #   硬档 `[surface] [runner] [dup]`     ⇒ 不满足即退出码 1，本 job 直接红；
 #   软档 `[coexist] [rollback]` + 缺号 ⇒ 默认只 `WARN`、退出码 0；`--strict` 才升 1。
-#   本 job 跑**非 strict**：撞号（真事故形态）必须拦，回滚/缺号的既有欠账先只告警。
+#   本 job 跑**非 strict**：撞号（真事故形态）必须拦，回滚/缺号这类软档项先只告警。
+#
+# 软档的「告警」是可机检的，不是一行日志（2026-10-26 补，R68-D12）：
+#   判决步带 `--annotations`，工具会把每条软档项额外打成 GitHub 注解 `::warning title=…::…`
+#   —— 于是它们在 PR 的 Annotations 面板 / check 摘要里**可见**，而不是沉在 job 日志里；
+#   退出码仍为 0：本步只补「看得见」，不改已有的 strict 取舍。这一步是三方一致的落点：
+#     ① 本文件的 `run:` 行带 `--annotations`（`tests/unit/ci-migrations-guard-annotations.test.mjs`
+#        直接读本文件断言它，删掉即红）；
+#     ② 工具侧 `renderAnnotations()` 只覆盖软档项、且不碰 `--json` 的纯 JSON 契约（同一条单测钉住）；
+#     ③ 注解 ≠ 放宽：`continue-on-error` / `|| true` / `--strict` 的取舍都没动。
+#   ⚠ 别改用「嗅 GITHUB_ACTIONS 环境变量」来自动开注解：GitHub 会把该变量注入**整个 job**，
+#     连下面跑单测那一步也带着它，夹具产生的软档 WARN 就会混进单测 stdout。实测（2026-10-28
+#     复核）：只在**同时**去掉工具侧 `!json` 门时 `--json` 契约才真被破坏（27 pass / 4 fail）；
+#     保留 `!json` 门时 30 pass / 1 fail —— 两件都要，缺一件就留一个假绿口。
 #
 # ⛔ 本 job 不设 `continue-on-error`、不写 `|| true`、不加 `paths:` 过滤、不加 `if:` 条件：
 #    任一种都会把「这一轮没通过」变成「这一轮没跑」。也**不跑** `npm ci` —— 门禁与它的单测
@@ -62,10 +75,12 @@ jobs:
         with:
           node-version: '24.16.0'
       # 判据本体：对 `services/api/db/migrations/` 真跑一次。绿 = 3 条硬判据（surface/runner/dup）
-      # 全部满足（coexist/rollback/缺号只 warn，不加 `--strict` 不会把既有欠账变成红）；
+      # 全部满足（coexist/rollback/缺号只 warn，不加 `--strict` 就不会让它们变成红）；
       # 红 = 退出码 1 并逐条列出（`[dup]` 会点名两个撞号文件与运行时会在哪一行炸）。
+      # `--annotations` 只把软档 WARN 再打一遍成 `::warning::` 注解（不判错、不改退出码）——
+      # 让「默认只告警」的东西在 PR 的 Annotations 面板上真的能被看见。
       - name: 迁移编号唯一（纯静态：不连库、不写文件、不联网）
-        run: node tools/verify-migrations-unique.mjs
+        run: node tools/verify-migrations-unique.mjs --annotations
       # 机读快照：打进日志即可（不引第三方 action、不传 artifact —— 这条门禁零依赖，别为了留档
       # 又引入一个会自己漂的版本面）。人看得到「这一轮扫到了哪 27 个号、缺号有没有依据」。
       - name: 迁移编号快照（--json，仅留档不参与判决）

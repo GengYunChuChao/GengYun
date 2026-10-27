@@ -7,11 +7,15 @@ on:
       - 'tests/integration/workbook-staging-pg.mjs'
       - 'services/api/db/migrations/**'
       - '.github/workflows/workbook-staging.yml'
+      # 被测实现目录（R68-D04）：本臂跑的是 `services/api/src/knowledge/**` 的服务端逻辑，
+      # 只改实现不触发这条臂等于「真库读数静默下降」。结构守卫判据⑩ 会从数据里复算这一条。
+      - 'services/api/src/knowledge/**'
   push:
     branches: [main]
     paths:
       - 'tools/knowledge/import_workbook_staging.py'
       - 'services/api/db/migrations/**'
+      - 'services/api/src/knowledge/**'
 permissions:
   contents: read
 jobs:
