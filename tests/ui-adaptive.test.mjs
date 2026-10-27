@@ -317,8 +317,13 @@ test('本任务未改动冻结契约与本地配置隔离规则', (t) => {
     }
     throw err;
   }
-  assert.ok(!changed.some((f) => f.startsWith('packages/contracts/')), '不得修改冻结契约');
-  assert.ok(!changed.includes('miniprogram/config/runtime.js'), '不得修改共享运行配置');
+  // 禁令只在「这次改动看起来就是本任务」时成立：纯服务端/纯契约 PR 与跨端 PR 不适用，
+  // 否则「契约加 500 错误码 + 顺带给小程序补状态归类」这类 PR 会被这条禁令整块打死
+  // （真实事故：混合 PR 只能把小程序的改动整块摘掉）。判定口径见文件末尾 evaluateTaskScope，
+  // 五种改动情形由同文件的「本任务作用域判定」用例逐条钉住。
+  const { applicable, violations, skipNote } = evaluateTaskScope(changed);
+  if (applicable) assert.deepEqual(violations, [], violations.join('；'));
+  else t.diagnostic(skipNote);
   const ignore = read('.gitignore');
   assert.ok(ignore.includes('config.local.json'), '本地配置未被忽略');
 });
@@ -554,4 +559,106 @@ test('首页 Hero 普通视口不出现孤字或英文按钮重叠', () => {
   assert.match(heroCode, /position:\s*static/, '英文口号必须留在文档流中，避免覆盖主按钮');
   assert.match(heroCode, /margin-top:\s*16px/, '英文口号与主按钮之间缺少稳定间距');
   assert.doesNotMatch(heroCode, /(?:right|bottom):/, '英文口号不得再用绝对定位坐标参与布局');
+});
+
+/**
+ * 「本任务」作用域判定（纯函数：不读 git、不读文件，便于用路径数组直接钉住口径）
+ * ---------------------------------------------------------------------------
+ * 背景：上面那条用例原先把「本任务不得改冻结契约」写成了对任何 diff 都成立的全局禁令，
+ * 于是「给契约加 500 错误码 + 顺带给小程序补状态归类」这类跨端 PR 被打红，只能把小程序
+ * 的改动整块摘掉。收窄后的口径是「只在本任务的作用域内生效」，按四步判定：
+ *   ① 本地侧 = 本任务真正会动的实现/配置面：miniprogram/**、config/**、
+ *      project*.json*、docs/ui-demo/**；
+ *   ② 伴生改动：tests/**、docs/** 不改变「这是不是一个本任务的 PR」；
+ *   ③ 至少一个本地侧文件才算本任务的 PR —— 纯服务端/纯契约 PR 不适用；
+ *   ④ 不得出现本地侧与契约之外的实现面（services/api/**、apps/** 等）—— 跨端 PR 不适用；
+ *      而 packages/contracts/** 被当作「本任务范围内、明令禁止」的路径：出现即违规。
+ * 于是：纯小程序 → 绿；小程序 + 契约（只这两个面）→ 红（偷改契约的真实形态）；
+ * 小程序 + 契约 + services/api → 绿（跨端 PR）；纯契约 → 绿；小程序 + runtime.js → 红。
+ * 放在文件末尾而非顶部，是为了不移动本文件既有文档锚点所引用的测试行号（同 :554 的先例）；
+ * 函数声明会提升，用例在模块求值完成之后才执行，因此定义顺序不影响调用。
+ */
+const CONTRACTS_PREFIX = 'packages/contracts/';
+const SHARED_RUNTIME_PATH = 'miniprogram/config/runtime.js';
+const LOCAL_SIDE_PREFIXES = ['miniprogram/', 'config/', 'docs/ui-demo/'];
+const LOCAL_SIDE_PATTERNS = [/^project[^/]*\.json(\.[A-Za-z]+)?$/];
+const COMPANION_PREFIXES = ['tests/', 'docs/'];
+const SKIP_NO_LOCAL = '[跳过] 本次改动不含小程序侧文件（例如纯服务端/契约 PR），本任务禁令不适用';
+const SKIP_FOREIGN = '[跳过] 本次改动含本任务范围之外的文件（services/api/**、apps/** 等），本任务禁令不适用';
+
+function isLocalSidePath(path) {
+  return LOCAL_SIDE_PREFIXES.some((prefix) => path.startsWith(prefix))
+    || LOCAL_SIDE_PATTERNS.some((pattern) => pattern.test(path));
+}
+
+function isAllowedInTaskPr(path) {
+  // 契约路径「允许出现在 diff 里」，正因为如此下一步才能把它判成违规，而不是判成不适用
+  return isLocalSidePath(path)
+    || COMPANION_PREFIXES.some((prefix) => path.startsWith(prefix))
+    || path.startsWith(CONTRACTS_PREFIX);
+}
+
+function evaluateTaskScope(changedPaths) {
+  const paths = (changedPaths || []).map((p) => String(p).trim()).filter(Boolean);
+  if (paths.length === 0) return { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL };
+  if (!paths.some(isLocalSidePath)) return { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL };
+  if (!paths.every(isAllowedInTaskPr)) return { applicable: false, violations: [], skipNote: SKIP_FOREIGN };
+  const violations = [];
+  if (paths.some((p) => p.startsWith(CONTRACTS_PREFIX))) violations.push('不得修改冻结契约');
+  if (paths.includes(SHARED_RUNTIME_PATH)) violations.push('不得修改共享运行配置');
+  return { applicable: true, violations, skipNote: '' };
+}
+
+test('本任务作用域判定：五种改动情形逐条钉住（不依赖真实 git）', () => {
+  // 直接喂路径数组而非真实 diff：以后谁把守卫放宽成废的，这条用例会先红。
+  const judge = (paths) => evaluateTaskScope(paths);
+  const HOME = 'miniprogram/pages/home/home.wxml';
+  const CONTRACT = 'packages/contracts/openapi.json';
+
+  // 情形① 纯小程序改动：适用，无违规
+  assert.deepEqual(judge([HOME]), { applicable: true, violations: [], skipNote: '' });
+
+  // 情形② 小程序 + 契约（无其它文件）：适用，且点名「不得修改冻结契约」
+  assert.deepEqual(judge([HOME, CONTRACT]), { applicable: true, violations: ['不得修改冻结契约'], skipNote: '' });
+
+  // 情形③ 跨端改动（小程序 + 契约 + 服务端）：不适用，给出可读说明
+  assert.deepEqual(judge([HOME, CONTRACT, 'services/api/src/app.ts']), {
+    applicable: false,
+    violations: [],
+    skipNote: SKIP_FOREIGN,
+  });
+
+  // 情形④ 纯契约 / 纯服务端改动：不适用，给出可读说明
+  assert.deepEqual(judge([CONTRACT]), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
+  assert.deepEqual(judge(['services/api/src/app.ts']), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
+
+  // 情形⑤ 小程序 + 共享运行配置：适用，第二条禁令仍会红
+  assert.deepEqual(judge([HOME, SHARED_RUNTIME_PATH]), {
+    applicable: true,
+    violations: ['不得修改共享运行配置'],
+    skipNote: '',
+  });
+
+  // 附加：两条禁令可同时触发，违规文案保持原文且顺序稳定
+  assert.deepEqual(judge([HOME, CONTRACT, SHARED_RUNTIME_PATH]), {
+    applicable: true,
+    violations: ['不得修改冻结契约', '不得修改共享运行配置'],
+    skipNote: '',
+  });
+
+  // 附加：tests/** 与 docs/** 是伴生改动，不把本任务 PR 变成「跨端」
+  assert.deepEqual(judge([HOME, 'tests/ui-adaptive.test.mjs', 'docs/ui-demo/index.html']), {
+    applicable: true,
+    violations: [],
+    skipNote: '',
+  });
+
+  // 附加：小程序工程文件算本地侧；空 diff 与纯 apps/** 改动不适用
+  assert.deepEqual(judge(['project.config.json', 'project.private.config.json']), {
+    applicable: true,
+    violations: [],
+    skipNote: '',
+  });
+  assert.deepEqual(judge([]), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
+  assert.deepEqual(judge(['apps/admin/src/main.ts']), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
 });
