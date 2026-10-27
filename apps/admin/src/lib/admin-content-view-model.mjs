@@ -14,6 +14,7 @@
  * 本模块只翻译契约里**真实存在**的字段，不推断生命周期。
  */
 
+import { ERROR_CODES } from './admin-contract.mjs';
 import { REVIEW_STATUSES, SOURCE_KINDS, EVIDENCE_KINDS, KNOWLEDGE_TYPES, CATEGORY_TYPES, VISIBILITIES, RESTRICTION_EFFECTS } from './admin-content-contract.mjs';
 
 /** `Visibility` → 中文标签（一一对应，不合并状态）。 */
@@ -287,6 +288,89 @@ function retryHintOf(failure) {
   return { canRetry, retryAfterSeconds, detailSuffix };
 }
 
+/**
+ * 读面「错误码 → 一句中文」解释层。
+ *
+ * 改动前读面只有 `${code}（HTTP ${status}）${message}`：没被解释过的码只剩原始码加服务端英文 message，
+ * 而写面早就有 `describeWriteFailure` 的 kind→中文（`admin-content-api.mjs`）。这一层只补解释：
+ * 码、HTTP 状态、服务端原文照旧显示，中文只说明「这个码是什么意思、要不要重试」——只加解释，不改事实。
+ *
+ * 纪律：与契约 `components.schemas.ErrorCode` 同集（`selfCheckLabelCoverage` 核数量）；
+ * 每条文案不含 ASCII 字母（把码抄进中文位等于没解释）；契约外码与「没有码」各有一句显式标注，
+ * ⛔ 不用「未知错误」兜底——那会把契约漂移和服务端缺字段一起藏起来。
+ */
+export const READ_FAILURE_CODE_LABELS = Object.freeze({
+  // 400：请求本身不合契约，改参数或换分页位置再试
+  INVALID_REQUEST: '请求不符合契约，服务端未接受（改参数后再试）',
+  INVALID_CURSOR: '分页游标已失效或非法，请从第一页重新读取',
+  IDEMPOTENCY_KEY_REQUIRED: '缺少或非法的幂等键，服务端要求带键再提交',
+  CONDITIONS_INCOMPLETE: '查询条件不完整，服务端列出了缺项',
+  INPUT_UNCERTAIN: '输入无法判定（服务端宁可拒绝也不猜）',
+  REVISION_REQUIRED: '缺少版本前置条件，需带旧版本标记再提交',
+  // 413 / 415 / 422：媒体与引用门槛
+  MEDIA_TOO_LARGE: '媒体文件超过大小上限',
+  MEDIA_TYPE_UNSUPPORTED: '媒体类型不在允许的类型清单内',
+  SOURCE_CONFLICT: '引用门槛未通过：来源与内容冲突',
+  // 401：会话
+  SESSION_REQUIRED: '未登录：没有可用会话，请先登录后台',
+  SESSION_EXPIRED: '会话已过期，请重新登录后台',
+  // 403：权限与账号状态（重试无效，要找管理员）
+  SCOPE_DENIED: '权限范围不足（由服务端判定），重试无效',
+  CONSENT_REQUIRED: '缺少用途授权，未授权时服务端不返回该数据',
+  ACCOUNT_INACTIVE: '账号当前不可用（已停用或注销中），请联系管理员',
+  SELF_SCOPE_GRANT_DENIED: '不允许给自己授予权限（自授权被拒）',
+  SELF_DISABLE_DENIED: '不允许停用自己的账号',
+  LAST_SCOPE_MANAGER: '不能移除最后一名权限管理员（否则无人可管）',
+  // 404：目标不在（或不该让你看见）
+  NOT_FOUND: '目标不存在、已失效，或不在当前可见范围内',
+  OBJECT_UNAVAILABLE: '目标当前状态不允许该操作（不是「不存在」）',
+  // 409：冲突与幂等重放
+  REVISION_CONFLICT: '数据冲突：提交时依据的版本已被改动',
+  IDEMPOTENCY_CONFLICT: '数据冲突：同一幂等键被用于不同的请求内容',
+  REQUEST_IN_PROGRESS: '同一请求正在处理中，稍后用同一幂等键查结果',
+  // 429：限流
+  RATE_LIMITED: '请求过于频繁，被服务端限流',
+  // 503 / 504：上游不可用、配额、结果未知、超时
+  PROVIDER_UNAVAILABLE: '服务暂不可用（后端依赖未接线或不可达）',
+  PROVIDER_QUOTA_EXCEEDED: '上游服务配额已用尽',
+  PROVIDER_OUTCOME_UNKNOWN: '上游结果未知（可能已受理），不要自行重试',
+  PROVIDER_TIMEOUT: '上游超时，结果可能未生效',
+});
+
+/** 契约外码的显式标注：明说「本页不解释它」，而不是编一句「未知错误」。 */
+export const OUT_OF_CONTRACT_CODE_NOTE = '契约外码：不在契约错误码枚举内，本页不解释它的含义';
+
+/** 服务端连码都没给时的显式标注（旧文案在这里写的是「未知错误」）。 */
+export const MISSING_ERROR_CODE_NOTE = '无错误码：服务端未返回错误码，本页不猜原因';
+
+/** 码在契约里、本页文案表却缺它（手抄漂移）时的显式标注——绝不把 `undefined` 拼进页面。 */
+export const MISSING_LABEL_NOTE = '这是契约内的码，但本页缺它的中文文案（前端文案表缺项）';
+
+/** 单个错误码 → 一句中文；契约外码与空码各有显式标注，绝不返回 undefined。 */
+export function describeReadFailureCode(code) {
+  if (code === null || code === undefined) return MISSING_ERROR_CODE_NOTE;
+  if (typeof code !== 'string') return OUT_OF_CONTRACT_CODE_NOTE;
+  if (code.trim() === '') return MISSING_ERROR_CODE_NOTE;
+  if (!ERROR_CODES.includes(code)) return OUT_OF_CONTRACT_CODE_NOTE;
+  const label = READ_FAILURE_CODE_LABELS[code];
+  return typeof label === 'string' && label !== '' ? label : MISSING_LABEL_NOTE;
+}
+
+/**
+ * 读面失败对象 → 「码（HTTP 状态）· 中文 · 服务端说明：原文」。
+ * 码与服务端原文一字不改地保留，中文只在中间补一层解释；没有码时只显示 HTTP 状态并明说没拿到码。
+ */
+function readFailureHead(failure) {
+  const raw = failure?.code ?? null;
+  const code = typeof raw === 'string' && raw.trim() !== '' ? raw : null;
+  const status = failure?.status ?? '—';
+  const codePart = code === null ? `HTTP ${status}` : `${code}（HTTP ${status}）`;
+  const parts = [codePart, describeReadFailureCode(code)];
+  const message = typeof failure?.message === 'string' ? failure.message.trim() : '';
+  if (message !== '') parts.push(`服务端说明：${message}`);
+  return parts.join(' · ');
+}
+
 /** 列表状态 → 文案（加载中／空／筛选空／就绪／过期／失败，各用各的话）。 */
 export function describeFamily(state, options = {}) {
   const label = options.label ?? '资料';
@@ -299,7 +383,7 @@ export function describeFamily(state, options = {}) {
   }
   if (state.phase === 'error') {
     const hint = retryHintOf(state.failure);
-    const head = state.failure === null ? '未知错误' : `${state.failure.code ?? '无错误码'}（HTTP ${state.failure.status ?? '—'}）${state.failure.message ?? ''}`;
+    const head = readFailureHead(state.failure);
     return {
       phase: 'error',
       tone: 'error',
@@ -315,7 +399,7 @@ export function describeFamily(state, options = {}) {
       phase: 'stale',
       tone: 'stale',
       title: '刷新失败，显示的是上次读到的行',
-      detail: `共 ${total} 行（旧数据，未更新）· ${state.failure?.code ?? '无错误码'}（HTTP ${state.failure?.status ?? '—'}）${hint.detailSuffix}`,
+      detail: `共 ${total} 行（旧数据，未更新）· ${readFailureHead(state.failure)}${hint.detailSuffix}`,
       canRetry: hint.canRetry,
       retryAfterSeconds: hint.retryAfterSeconds,
     };
@@ -357,7 +441,7 @@ export function describeFamilyView(state, options = {}) {
   const unwired = failure !== null && failure !== undefined
     && (failure.status === 503 || failure.code === 'PROVIDER_UNAVAILABLE');
   if (!unwired) return view;
-  const tail = `${failure.code ?? '无错误码'}（HTTP ${failure.status ?? '—'}）${failure.message ?? ''}`;
+  const tail = readFailureHead(failure);
   return {
     ...view,
     phase: 'unwired',
@@ -711,7 +795,7 @@ export function describeAuditLookup(lookup) {
     return {
       tone: 'error',
       title: '审计台账读取失败',
-      detail: `${lookup.failure?.code ?? '无错误码'}（HTTP ${lookup.failure?.status ?? '—'}）${lookup.failure?.message ?? ''}`,
+      detail: readFailureHead(lookup.failure),
     };
   }
   if (lookup.events.length > 0) {
@@ -734,5 +818,6 @@ export function selfCheckLabelCoverage() {
   if (Object.keys(KNOWLEDGE_TYPE_LABELS).length !== KNOWLEDGE_TYPES.length) problems.push('KnowledgeDraftInput.type 标签缺项');
   if (Object.keys(CATEGORY_TYPE_LABELS).length !== CATEGORY_TYPES.length) problems.push('Category.type 标签缺项');
   if (Object.keys(EFFECT_LABELS).length !== RESTRICTION_EFFECTS.length) problems.push('RestrictionInput.effect 标签缺项');
+  if (Object.keys(READ_FAILURE_CODE_LABELS).length !== ERROR_CODES.length) problems.push('ErrorCode 读面文案缺项');
   return problems;
 }
