@@ -11,10 +11,20 @@
  * 本文件只做**结构/账目**判据（不读臂的断言内容，不代替臂本身，也不读臂脚本）：
  *   ① 每个 `run:` 里出现 `tests/integration/` 的 step 都必须有显式 step 级 `timeout-minutes`，
  *      且取值 = 臂的纪律常量 `ARM_STEP_TIMEOUT_MINUTES`（写别的值等于单方面放宽这一步的封顶）；
+ *   ①b 每个 job 里**所有** step（不只是臂）都必须有 step 级 `timeout-minutes`，且取值满足各自的纪律常量：
+ *      `uses: actions/*` = `ACTION_STEP_TIMEOUT_MINUTES`、`npm ci` = `NPM_CI_STEP_TIMEOUT_MINUTES`、
+ *      其它 `run:` step ≤ `MAX_STEP_TIMEOUT_MINUTES`（臂那 5 分钟归判据① 判，本判据不重复报）。
+ *      R68 之前 checkout / setup-node / `npm ci` 三条前置**没有任何封顶**：那三条是最容易卡在网络上的一组，
+ *      一旦卡死，红的位置就退回「job 超时」，判据① 只管臂、管不到它们。`npm ci` 的真实耗时见常量
+ *      `NPM_CI_STEP_TIMEOUT_MINUTES` 上的实测引用（run `40547840506`：2.0 s / 1.0 s / 2.0 s）；
+ *   ①c 每个臂 step 的 `run:` 里必须**恰一个** `tests/integration/*.mjs`——两个臂塞进同一步时封顶仍是
+ *      一条 5 分钟、Σ 与臂数都不变，判据① ② 都看不见（见 `armScriptCountProblems`）；
  *   ② 每个 job 的 job 级 `timeout-minutes` ≥ 本 job 内 `Σ step 封顶 + PREFIX_RESERVE_MINUTES`；
- *   ③ 每个 job 头顶注释里的算式必须与文件实测一致（形如 `封顶之和 160 + 前置余量 10 = job 级 170`）——
+ *   ③ 每个 job 头顶注释里的算式必须与文件实测一致（形如 `封顶之和 185 + 前置余量 10 = job 级 195`）——
  *      本条正是这次账目对不上的病灶：注释写着「五条臂各 5 = 33 ⇒ 35」，而文件里其实有六条臂。
  *   ④ 扫描面自证：解析出的 job 集合必须等于 `jobs:` 段里的全部 job 键（否则判据① ② 会空转成绿）；
+ *      并钉住反空转下界（全文 step 数 ≥ `MIN_TOTAL_STEPS`、每个 job ≥ `MIN_STEPS_PER_JOB`、
+ *      每个 job 至少解析出一条 `uses: actions/*`）——解析器塌一半时判据①b 的覆盖面会静默缩小；
  *   ⑥ 相对抗性（对抗审查 M8／W6／N1）：**声明侧（`declaredJobKeys`）故意比解析器宽**——四种合法
  *      但严格键正则读不到的写法（行尾注释 `key: # …`、双引号键 `"key":`、单引号键 `'key':`、
  *      点号键 `key.with.dots:`、引号内空格 `"key with space":`），必须让判据④ 红并点名；
@@ -23,7 +33,11 @@
  *
  * 三个数字**一律现场解析重算**，不硬编码「14 条臂 / 35 分钟」这类可漂移的量：臂 step 数、Σ封顶、
  * job 级数值都从 workflow 文本里读出来再算账。唯一写死的常量是**纪律本身**——每个臂 5 分钟、
- * 前置显式预留 10 分钟（checkout / setup-node / `npm ci` 这三条无封顶前置的合计上限）。
+ * `uses: actions/*` 5 分钟、`npm ci` 15 分钟、其它 `run:` step ≤ 15 分钟，以及 job 级的显式常量余量 10 分钟。
+ *
+ * ⚠️ `PREFIX_RESERVE_MINUTES` 的**语义已变**（R68）：从前它是「checkout / setup-node / `npm ci` 这三条
+ *    无封顶前置的合计上限」，现在三条前置已各自封顶（5 + 5 + 15 = 25）并计入 Σ，这 10 分钟与任何一条
+ *    前置的实际上限都无关，只是给 job 级留的纯常量余量（判据② 用它算下界，注释里仍逐字写「前置余量 10」）。
  *
  * ⛔ 本文件不把 job 名集合写成硬编码登记表：判据① ② 对**文件里出现的每个 job** 泛化生效，
  *    新增一个 job 会自动被同一套账目约束；再把 job 名单钉死只会让「加一个 job」变成假红
@@ -43,8 +57,32 @@ export const WORKFLOW_RELATIVE = '.github/workflows/real-pg-integration.yml';
 /** 每个真库臂 step 自己的封顶（分钟）：纪律常量，不是从文件里读的。 */
 export const ARM_STEP_TIMEOUT_MINUTES = 5;
 
-/** 前置显式预留（分钟）：checkout / setup-node / `npm ci` 这三条**无封顶**前置 step 的合计上限。 */
+/** 前置显式预留（分钟）：**纯常量余量**。R68 起三条前置已各自封顶并计入 Σ，见文件头 ⚠️ 说明。 */
 export const PREFIX_RESERVE_MINUTES = 10;
+
+/** 每条 `uses: actions/*` 前置 action step 自己的封顶（分钟）：纪律常量，不是从文件里读的。 */
+export const ACTION_STEP_TIMEOUT_MINUTES = 5;
+
+/**
+ * `npm ci` 前置 step 自己的封顶（分钟）：买的是「网络挂死时这一步先红」，不是给正常安装留时间。
+ *
+ * 实测出处（本仓 CI 记录，非本地估时）：`gh api repos/GengYunChuChao/GengYun/actions/runs/40547840506/jobs`
+ * —— 该 run 三个 job 里 `Run npm ci --no-audit --no-fund` 这一步分别耗 **2.0 s / 1.0 s / 2.0 s**
+ * （`setup-node` 带 `cache: npm`；同一 run 三个 job 整跑 104.0 s / 56.0 s / 49.0 s、step 数 41 / 12 / 16）。
+ * 15 分钟 ≈ 实测的 450–900 倍余量：它兜的是死锁，不是预计耗时。
+ * 冷缓存（`cache: npm` 未命中的首次安装）耗时不掌握，但没有任何理由接近 15 分钟量级——真到那个量级，
+ * 这一步就该红，而且红在它自己身上、不拖成「job 超时」。给 5 分钟会把偶发慢判成封顶红，给 30 分钟等于没封顶。
+ */
+export const NPM_CI_STEP_TIMEOUT_MINUTES = 15;
+
+/** 除真库臂以外任何 step 的封顶上界（分钟）：单方面放宽到超过它即红（`npm ci` 就是这条上界）。 */
+export const MAX_STEP_TIMEOUT_MINUTES = NPM_CI_STEP_TIMEOUT_MINUTES;
+
+/** 反空转下界：全文现场解析出的 step 总数不得低于它（R68 基线 51 步）。 */
+export const MIN_TOTAL_STEPS = 45;
+
+/** 反空转下界：每个 job 至少解析出的 step 数（R68 基线最小的是读 job 的 6 步）。 */
+export const MIN_STEPS_PER_JOB = 5;
 
 /**
  * 把整行注释替换成空行（**保留行号**）。判据必须看有效内容：注释里出现的
@@ -78,14 +116,51 @@ function parseSteps(jobLines, lineOffset) {
     const nameMatch = /^ {6}- name:\s*(.+)$/.exec(chunkLines[0]) ?? /^ {8}name:\s*(.+)$/m.exec(chunk);
     const timeoutMatch = /^ {8}timeout-minutes:\s*(\d+)\s*$/m.exec(chunk);
     const scriptMatch = /tests\/integration\/([A-Za-z0-9._-]+\.mjs)/.exec(chunk);
+    // 同一步里的**全部**臂脚本（判据①c 用）：`chunk` 已由 `parseWorkflow` 抹掉注释行，所以这里
+    // 数到的只有 `run:` 里真正会执行的引用，注释里提到别的 `.mjs` 不会把它们算进来。
+    const scriptMatches = chunk.match(/tests\/integration\/([A-Za-z0-9._-]+\.mjs)/g) ?? [];
+    // 前置 step 的「身份」：`uses:` 的 action 引用，或 `run:` 之后的首行命令（含 `|` 块写法）。
+    const usesMatch = /^ {6}- uses:\s*(\S+)\s*$/.exec(chunkLines[0]) ?? /^ {8}uses:\s*(\S+)\s*$/m.exec(chunk);
+    const runMatch = /^ {6}- run:\s*(.*)$/.exec(chunkLines[0]) ?? /^ {8}run:\s*(.*)$/m.exec(chunk);
     steps.push({
       name: nameMatch === null || nameMatch === undefined ? null : nameMatch[1].trim(),
       timeout: timeoutMatch === null ? null : Number(timeoutMatch[1]),
       integrationScript: scriptMatch === null ? null : scriptMatch[1],
+      integrationScripts: scriptMatches.map((ref) => ref.replace(/^tests\/integration\//, '')),
+      uses: usesMatch === null ? null : usesMatch[1],
+      runCommand: runMatch === null ? null : runMatch[1].trim(),
       lineNumber: lineOffset + from + 1,
     });
   }
   return steps;
+}
+
+/**
+ * step 的类别：`arm`（跑 `tests/integration/*.mjs`）/ `action`（`uses:`）/ `npm-ci`（`run: npm ci …`）/
+ * `run`（其它命令 step）/ `unknown`。判据①b 按类别选纪律常量，判据① 只认 `arm`。
+ */
+export function stepKind(step) {
+  if (step.integrationScript !== null) return 'arm';
+  if (step.uses !== null) return 'action';
+  if (step.runCommand !== null && /^npm ci\b/.test(step.runCommand)) return 'npm-ci';
+  if (step.runCommand !== null) return 'run';
+  return 'unknown';
+}
+
+/** 判据①b 的报错标签：`name:` → `uses:` 引用 → `run:` 首行 → 行号（必须能直接指到是哪一步）。 */
+export function stepCapLabel(step) {
+  if (step.name !== null) return step.name;
+  if (step.uses !== null) return `uses: ${step.uses}`;
+  if (step.runCommand !== null) return `run: ${step.runCommand}`;
+  return `(无 name，第 ${step.lineNumber} 行)`;
+}
+
+/** 判据①b：类别 → 纪律常量（分钟）。 */
+export function stepCeilingMinutes(kind) {
+  if (kind === 'action') return ACTION_STEP_TIMEOUT_MINUTES;
+  if (kind === 'npm-ci') return NPM_CI_STEP_TIMEOUT_MINUTES;
+  if (kind === 'arm') return ARM_STEP_TIMEOUT_MINUTES;
+  return MAX_STEP_TIMEOUT_MINUTES;
 }
 
 /**
@@ -153,6 +228,71 @@ export function armTimeoutProblems(rawText) {
         problems.push(
           `job \`${job.id}\` · step「${stepLabel(step)}」的 step 级封顶是 ${step.timeout} 分钟，`
             + `与臂的纪律常量 ${ARM_STEP_TIMEOUT_MINUTES} 分钟不一致（第 ${step.lineNumber} 行）`
+            + '⇒ 单方面放宽这一步的封顶，账目会在注释里对不上',
+        );
+      }
+    }
+  }
+  return problems;
+}
+
+/**
+ * 判据①c：每个真库臂 step 的 `run:` 里必须**恰一个** `tests/integration/*.mjs`。
+ *
+ * 为什么需要这条：判据① 只判「这一步有 5 分钟封顶」，判据② 按 step 条数算 Σ——于是存在一条逃逸：
+ * 把两个臂塞进同一个 step（`node a.mjs && node b.mjs`），封顶仍是**一条** 5 分钟、Σ 封顶与臂数都不变，
+ * 账目上完全看不出「本该是两条 5 分钟」；更糟的是两条臂共用同一个封顶，前一条跑满 5 分钟就会把
+ * 后一条挤成红，读数上分不清是哪个臂卡死。本仓 39 条臂（31 / 2 / 6）逐条实测都是恰一个 `.mjs`，
+ * 所以这条约束不是假想纪律。
+ */
+export function armScriptCountProblems(rawText) {
+  const problems = [];
+  for (const job of parseWorkflow(rawText)) {
+    for (const step of job.steps) {
+      if (step.integrationScripts.length <= 1) continue;
+      problems.push(
+        `job \`${job.id}\` · step「${stepLabel(step)}」的 \`run:\` 里出现了 ${step.integrationScripts.length} 个 `
+          + `\`tests/integration/*.mjs\`（${step.integrationScripts.join(' + ')}，第 ${step.lineNumber} 行）`
+          + `⇒ 一个 step 只能跑一个臂：两个臂挤在同一步会共用同一个 ${ARM_STEP_TIMEOUT_MINUTES} 分钟封顶，`
+          + 'Σ 封顶与臂数都不变，账目上看不出少算了一条封顶，也分不清是哪个臂卡死',
+      );
+    }
+  }
+  return problems;
+}
+
+/**
+ * 判据①b：**每个 step**（不只是臂）都必须有 step 级封顶，且取值满足各自的纪律常量。
+ *
+ * 为什么必须泛化到「所有 step」：R68 之前 checkout / setup-node / `npm ci` 三条前置没有任何封顶。
+ * 最坏情况下（网络挂死）它们会一直等到 job 级超时：job1 是 170 分钟、job2 25 分钟、job3 45 分钟 ——
+ * 「哪一步卡死」在读数上完全消失。给三条前置各自封顶后，job 级才是有意义的算术兜底。
+ *
+ * 取值纪律：`uses: actions/*` 恰 5、`npm ci` 恰 15、其它 `run:` step ≤ 15（上界 `MAX_STEP_TIMEOUT_MINUTES`）；
+ * 臂那「恰 5 分钟」归判据①（`armTimeoutProblems`）判，本判据对 `arm` 只判「有没有」，不重复报取值。
+ */
+export function stepCapProblems(rawText) {
+  const problems = [];
+  for (const job of parseWorkflow(rawText)) {
+    for (const step of job.steps) {
+      const kind = stepKind(step);
+      if (step.timeout === null) {
+        problems.push(
+          `job \`${job.id}\` · step「${stepCapLabel(step)}」没有 step 级 \`timeout-minutes\`（第 ${step.lineNumber} 行）`
+            + '⇒ 这一步卡死时只能等 job 级超时，「这一步卡死」会被读成「job 超时」；'
+            + '前置 step（`actions/checkout` / `actions/setup-node` / `npm ci`）同样要各自封顶，'
+            + `本仓纪律：\`uses: actions/*\` = ${ACTION_STEP_TIMEOUT_MINUTES} 分钟、`
+            + `\`npm ci\` = ${NPM_CI_STEP_TIMEOUT_MINUTES} 分钟`,
+        );
+        continue;
+      }
+      if (kind === 'arm') continue;
+      const ceiling = stepCeilingMinutes(kind);
+      const exact = kind === 'action' || kind === 'npm-ci';
+      if (exact ? step.timeout !== ceiling : !(step.timeout > 0 && step.timeout <= ceiling)) {
+        problems.push(
+          `job \`${job.id}\` · step「${stepCapLabel(step)}」的 step 级封顶是 ${step.timeout} 分钟，`
+            + `与「${kind}」这类 step 的纪律常量${exact ? '' : '上界'} ${ceiling} 分钟不符（第 ${step.lineNumber} 行）`
             + '⇒ 单方面放宽这一步的封顶，账目会在注释里对不上',
         );
       }
@@ -263,8 +403,30 @@ export function scanSurfaceProblems(rawText) {
   if (parsed.length < 3) problems.push(`job 数实测 ${parsed.length}，少于 3 ⇒ 解析器可能只读到一半`);
   const arms = parsed.flatMap((job) => job.steps).filter((step) => step.integrationScript !== null);
   if (arms.length < 1) problems.push('一个 `tests/integration/` step 都没解析出来 ⇒ 判据① 失去作用域');
+  const totalSteps = parsed.reduce((total, job) => total + job.steps.length, 0);
+  if (totalSteps < MIN_TOTAL_STEPS) {
+    problems.push(
+      `全文只解析出 ${totalSteps} 个 step（反空转下界 ${MIN_TOTAL_STEPS}）`
+        + '⇒ 解析器可能只读到一半，判据①b 的覆盖面会静默缩小',
+    );
+  }
   for (const job of parsed) {
-    if (job.steps.length === 0) problems.push(`job \`${job.id}\` 解析不出任何 step ⇒ 判据② 的 Σ 会恒为 0`);
+    if (job.steps.length === 0) {
+      problems.push(`job \`${job.id}\` 解析不出任何 step ⇒ 判据② 的 Σ 会恒为 0`);
+      continue;
+    }
+    if (job.steps.length < MIN_STEPS_PER_JOB) {
+      problems.push(
+        `job \`${job.id}\` 只解析出 ${job.steps.length} 个 step（反空转下界 ${MIN_STEPS_PER_JOB}）`
+          + '⇒ 这个 job 的 step 解析塌了，判据①/①b 会漏判',
+      );
+    }
+    if (!job.steps.some((step) => step.uses !== null && /^actions\//.test(step.uses))) {
+      problems.push(
+        `job \`${job.id}\` 里解析不出任何 \`uses: actions/*\` step`
+          + '⇒ 判据①b 的「前置 action 必须封顶」在这个 job 上失去作用域',
+      );
+    }
   }
   return problems;
 }
@@ -327,11 +489,46 @@ function replaceJobTimeout(text, jobId, replacement) {
   throw new Error(`自证前提：job「${jobId}」没有 job 级 timeout-minutes`);
 }
 
+/**
+ * 把一个**无 `name:` 的前置 step**（`- uses: actions/checkout@…` / `- run: npm ci …`）的封顶行
+ * 换成 `replacement`（`null` = 删掉那一行）。仅供判别力自证使用；`jobId` 限定在单个 job 内，
+ * 因为 `- run: npm ci …` 在三个 job 里逐字相同。
+ */
+function replacePrefixStepTimeout(text, jobId, needle, replacement) {
+  const lines = text.split('\n');
+  const jobAt = lines.findIndex((line) => line === `  ${jobId}:`);
+  assert.notEqual(jobAt, -1, `自证前提：job「${jobId}」必须存在`);
+  let end = lines.length;
+  for (let index = jobAt + 1; index < lines.length; index += 1) {
+    if (/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[index])) { end = index; break; }
+  }
+  let at = -1;
+  for (let index = jobAt + 1; index < end; index += 1) {
+    if (/^ {6}- (uses|run):/.test(lines[index]) && lines[index].includes(needle)) { at = index; break; }
+  }
+  assert.notEqual(at, -1, `自证前提：job「${jobId}」里必须有前置 step「${needle}」（否则这条自证测的是空替换）`);
+  for (let index = at + 1; index < end && index <= at + 6; index += 1) {
+    if (/^ {8}timeout-minutes:/.test(lines[index])) {
+      if (replacement === null) lines.splice(index, 1);
+      else lines[index] = replacement;
+      return lines.join('\n');
+    }
+  }
+  throw new Error(`自证前提：job「${jobId}」的前置 step「${needle}」没有 step 级封顶行`);
+}
+
 test('① 每个跑 `tests/integration/*.mjs` 的 step 都有自己的 5 分钟封顶', () => {
   assert.deepEqual(
     armTimeoutProblems(readWorkflow()),
     [],
     '真库臂 step 缺 step 级封顶：卡死时只能等 job 级超时，「这一步卡死」会被读成「job 超时」',
+  );
+  // 判据①c：一个 step 只许跑一个臂（两个臂挤同一步会共用一条 5 分钟封顶，Σ 与臂数都不变）。
+  assert.deepEqual(
+    armScriptCountProblems(readWorkflow()),
+    [],
+    '一个臂 step 的 `run:` 里只能有一个 `tests/integration/*.mjs`：两个臂挤在同一步会让封顶之和少算一条，'
+      + '且两条臂共用同一个封顶（前一条跑满 5 分钟就把后一条挤成红）',
   );
 });
 
@@ -357,6 +554,41 @@ test('④ 扫描面自证：解析出的 job 集合 = `jobs:` 段里的全部 jo
     [],
     '解析器漏读 job ⇒ 判据 ① ② 会在那个 job 上静默变绿；判据的扫描面必须自证',
   );
+});
+
+test('①b 每个 step（含 checkout / setup-node / `npm ci` 三条前置）都必须有 step 级封顶，且取值合纪律', () => {
+  const text = readWorkflow();
+  assert.deepEqual(
+    stepCapProblems(text),
+    [],
+    '有 step 没有 step 级封顶 ⇒ 它卡死时只能等 job 级超时，「这一步卡死」被读成「job 超时」',
+  );
+
+  // 覆盖自证：判据①b 的扫描面必须真的包含三条前置（否则这条判断会空转成绿）。
+  const jobs = parseWorkflow(text);
+  const kinds = jobs.flatMap((job) => job.steps.map((step) => [job.id, stepKind(step), step.timeout]));
+  for (const job of jobs) {
+    const mine = kinds.filter(([id]) => id === job.id);
+    assert.equal(
+      mine.filter(([, kind]) => kind === 'action').length,
+      2,
+      `job \`${job.id}\` 必须解析出 2 条 \`uses: actions/*\` 前置（checkout / setup-node），实测 `
+        + `${mine.filter(([, kind]) => kind === 'action').length}`,
+    );
+    assert.equal(
+      mine.filter(([, kind]) => kind === 'npm-ci').length,
+      1,
+      `job \`${job.id}\` 必须解析出 1 条 \`npm ci\` 前置，实测 ${mine.filter(([, kind]) => kind === 'npm-ci').length}`,
+    );
+    for (const [id, kind, timeout] of mine) {
+      if (kind !== 'action' && kind !== 'npm-ci') continue;
+      assert.equal(
+        timeout,
+        stepCeilingMinutes(kind),
+        `job \`${id}\` 的 ${kind} step 封顶必须 = ${stepCeilingMinutes(kind)} 分钟，实测 ${timeout}`,
+      );
+    }
+  }
 });
 
 test('⑥ 相对抗性（审查 M8／W6／N1）：声明侧与解析器必须**不同源**——四种「严格键正则读不到的合法写法」都要让判据④ 红并点名', () => {
@@ -435,21 +667,65 @@ test('⑥ 相对抗性（审查 M8／W6／N1）：声明侧与解析器必须**�
   }
 });
 
-test('⑤ 判别力自证：删封顶／把封顶改成 120／把 job 级调小／删 job 级，四种变异都必须红', () => {
+test('⑤ 判别力自证：删封顶（臂／前置）／把封顶改大（臂 120、臂 6、checkout 15）／把 job 级调小／删 job 级／注释脱钩／一步塞两个臂，每一条都必须红', () => {
   const text = readWorkflow();
 
+  // 变异 1：删掉一条**臂**的封顶 ⇒ 判据① 与判据①b 都必须点名它（判据①b 只判「有没有」）。
   const withoutCap = replaceStepTimeout(text, '第三方删除库层语义', null);
   assert.notEqual(withoutCap, text, '自证前提：删封顶必须真的改动了文本');
   const missing = armTimeoutProblems(withoutCap);
   assert.equal(missing.length, 1, `删掉一条步封顶必须正好报一处：${missing.join(' / ')}`);
   assert.ok(missing[0].includes('real-pg-17-11'), `报错必须打出 job 名：${missing[0]}`);
   assert.ok(missing[0].includes('第三方删除库层语义'), `报错必须打出 step 名：${missing[0]}`);
+  const missingCapSeen = stepCapProblems(withoutCap);
+  assert.equal(missingCapSeen.length, 1, `删掉一条臂封顶必须被判据①b 也点到一处：${missingCapSeen.join(' / ')}`);
+  assert.ok(missingCapSeen[0].includes('第三方删除库层语义'), `判据①b 必须打出 step 名：${missingCapSeen[0]}`);
 
+  // 变异 2：把臂的封顶改成 120 ⇒ 判据① 必须报「与 5 不一致」。
   const widened = replaceStepTimeout(text, '第三方删除库层语义', '        timeout-minutes: 120');
   const widenedProblems = armTimeoutProblems(widened);
   assert.equal(widenedProblems.length, 1, `把封顶改成 120 必须正好报一处：${widenedProblems.join(' / ')}`);
   assert.ok(widenedProblems[0].includes('120'), `报错必须打出实测值：${widenedProblems[0]}`);
 
+  // 变异 3：把臂的封顶改成 6（差 1 分钟的「悄悄放宽」）⇒ 判据① 必须红，不能只看「有没有」。
+  const sixMinutes = replaceStepTimeout(text, '第三方删除库层语义', '        timeout-minutes: 6');
+  const sixProblems = armTimeoutProblems(sixMinutes);
+  assert.equal(sixProblems.length, 1, `把臂封顶改成 6 分钟必须正好报一处：${sixProblems.join(' / ')}`);
+  assert.ok(sixProblems[0].includes('6 分钟'), `报错必须打出实测值 6 分钟：${sixProblems[0]}`);
+
+  // 变异 4：删掉 job 里 `npm ci` 这条**前置**的封顶 ⇒ 判据①b 必须点名 `run:` 首行（它没有 `name:`）。
+  const npmCiUncapped = replacePrefixStepTimeout(text, 'real-pg-17-11', 'run: npm ci', null);
+  assert.notEqual(npmCiUncapped, text, '自证前提：`npm ci` 的封顶行必须真的被删掉');
+  const npmCiProblems = stepCapProblems(npmCiUncapped);
+  assert.equal(npmCiProblems.length, 1, `删掉 \`npm ci\` 的封顶必须正好报一处：${npmCiProblems.join(' / ')}`);
+  assert.ok(npmCiProblems[0].includes('real-pg-17-11'), `报错必须打出 job 名：${npmCiProblems[0]}`);
+  assert.ok(
+    npmCiProblems[0].includes('run: npm ci --no-audit --no-fund'),
+    `报错必须打出 step 的 \`run:\` 首行（这条前置没有 name）：${npmCiProblems[0]}`,
+  );
+  assert.equal(
+    armTimeoutProblems(npmCiUncapped).length,
+    0,
+    '`npm ci` 不是真库臂 ⇒ 判据① 不该管它（两条判据的分工不能混）',
+  );
+
+  // 变异 5：删掉 `actions/checkout` 的封顶 ⇒ 判据①b 必须按 `uses:` 引用点名。
+  const checkoutUncapped = replacePrefixStepTimeout(text, 'real-pg-admin-write-17-11', 'uses: actions/checkout@', null);
+  assert.notEqual(checkoutUncapped, text, '自证前提：checkout 的封顶行必须真的被删掉');
+  const checkoutProblems = stepCapProblems(checkoutUncapped);
+  assert.equal(checkoutProblems.length, 1, `删掉 checkout 的封顶必须正好报一处：${checkoutProblems.join(' / ')}`);
+  assert.ok(
+    checkoutProblems[0].includes('uses: actions/checkout@'),
+    `报错必须打出 \`uses:\` 引用：${checkoutProblems[0]}`,
+  );
+
+  // 变异 6：把 checkout 的封顶放宽到 15 ⇒ 判据①b 必须报「与 5 不符」（不是只看有没有）。
+  const checkoutWidened = replacePrefixStepTimeout(text, 'real-pg-admin-read-17-11', 'uses: actions/checkout@', '        timeout-minutes: 15');
+  const checkoutWidenedProblems = stepCapProblems(checkoutWidened);
+  assert.equal(checkoutWidenedProblems.length, 1, `放宽 checkout 封顶必须正好报一处：${checkoutWidenedProblems.join(' / ')}`);
+  assert.ok(checkoutWidenedProblems[0].includes('15 分钟'), `报错必须打出实测值：${checkoutWidenedProblems[0]}`);
+
+  // 变异 7：把 job 级调小到 Σ封顶以下 ⇒ 判据② 必须红并打出两边数字。
   const crampedJob = replaceJobTimeout(text, 'real-pg-admin-write-17-11', '    timeout-minutes: 35');
   assert.notEqual(crampedJob, text, '自证前提：job 级数值必须真的被改动');
   const cramped = jobBudgetProblems(crampedJob);
@@ -457,12 +733,29 @@ test('⑤ 判别力自证：删封顶／把封顶改成 120／把 job 级调小�
   assert.ok(cramped[0].includes('real-pg-admin-write-17-11'), `报错必须打出 job 名：${cramped[0]}`);
   assert.ok(cramped[0].includes('35'), `报错必须打出两边数字：${cramped[0]}`);
 
+  // 变异 8：删掉 job 级 ⇒ 判据② 必须红。
   const noJobTimeout = replaceJobTimeout(text, 'real-pg-admin-read-17-11', null);
   assert.equal(jobBudgetProblems(noJobTimeout).length, 1, '删掉 job 级超时必须正好报一处');
 
-  // 注释与实测脱钩也算红：把 job 级数值改大但不改注释 ⇒ 判据③ 必须响。
+  // 变异 9：注释与实测脱钩也算红：把 job 级数值改大但不改注释 ⇒ 判据③ 必须响。
   const driftedComment = replaceJobTimeout(text, 'real-pg-admin-read-17-11', '    timeout-minutes: 90');
   const driftProblems = commentArithmeticProblems(driftedComment);
   assert.equal(driftProblems.length, 1, `注释与实测脱钩必须正好报一处：${driftProblems.join(' / ')}`);
-  assert.ok(driftProblems[0].includes('封顶之和 15 + 前置余量 10 = job 级 90'), `报错必须给出应有的算式：${driftProblems[0]}`);
+  assert.ok(driftProblems[0].includes('封顶之和 40 + 前置余量 10 = job 级 90'), `报错必须给出应有的算式：${driftProblems[0]}`);
+
+  // 变异 10：把两个臂塞进同一个 step（封顶仍是一条 5 分钟、Σ 与臂数都不变）⇒ 判据①c 必须点名。
+  //          这一步正是判据① 与判据② 都看不见的逃逸：① 只看「有没有封顶」、② 只按 step 条数求和。
+  const doubleArms = text
+    .split('\n')
+    .map((line) => (line.includes('node tests/integration/community-pg.mjs')
+      ? `${line} && node tests/integration/messages-pg.mjs`
+      : line))
+    .join('\n');
+  assert.notEqual(doubleArms, text, '自证前提：双臂注入必须真的改动了文本');
+  const doubleProblems = armScriptCountProblems(doubleArms);
+  assert.equal(doubleProblems.length, 1, `一步塞两个臂必须正好报一处：${doubleProblems.join(' / ')}`);
+  assert.ok(doubleProblems[0].includes('community-pg.mjs'), `报错必须打出两个臂脚本：${doubleProblems[0]}`);
+  assert.ok(doubleProblems[0].includes('messages-pg.mjs'), `报错必须打出两个臂脚本：${doubleProblems[0]}`);
+  assert.equal(armTimeoutProblems(doubleArms).length, 0, '双臂那一步自身仍带 5 分钟封顶 ⇒ 判据① 看不见它（所以要有①c）');
+  assert.equal(jobBudgetProblems(doubleArms).length, 0, 'Σ 封顶与臂数都没变 ⇒ 判据② 也看不见它（所以要有①c）');
 });
