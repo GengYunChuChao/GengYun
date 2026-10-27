@@ -224,7 +224,7 @@ onBeforeUnmount(() => {
         <code>event_type</code>、主体或时间范围之类的过滤参数。
       </p>
 
-      <div class="status" :class="view.tone" role="status">
+      <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'">
         <strong>{{ view.title }}</strong>
         <span>{{ view.detail }}</span>
         <code v-if="view.errorCode" class="code-chip">{{ view.errorCode }}</code>

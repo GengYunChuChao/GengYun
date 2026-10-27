@@ -262,7 +262,7 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="reasonErr" class="foot warn-text">理由不可用：{{ reasonErr }}</p>
 
-      <div class="status" :class="view.tone" role="status">
+      <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'">
         <strong>{{ view.title }}</strong>
         <span>{{ view.detail }}</span>
         <button v-if="retryRead || reloadNeeded" class="link" type="button" :disabled="busy" @click="reload">

@@ -222,7 +222,7 @@ onBeforeUnmount(() => {
         <button v-if="moreAvailable" class="primary" type="button" :disabled="busy" @click="loadMore">加载下一页</button>
       </div>
 
-      <div class="status" :class="view.tone" role="status">
+      <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'">
         <strong>{{ view.title }}</strong>
         <span>{{ view.detail }}</span>
         <code v-if="view.errorCode" class="code-chip">{{ view.errorCode }}</code>
