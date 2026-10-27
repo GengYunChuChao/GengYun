@@ -53,7 +53,7 @@
 | A5 | 读取时逐次重查可见性（不入库、不缓存） | `favorites/service.ts:233`（`project`）→ `:234`（`deriveVisibility`）；`history/service.ts:227`／`:233`；派生端口 `services/api/src/targetref/visibility.ts:170` |
 | A6 | 收藏／识别不转成「已使用事实」 | `favorites/service.ts:67`（`FAVORITE_PROJECTION_FIELDS`，投影六字段无 used/usage）、`:91`（`favoriteEligibleForRecommendation` 只看本次 `reference_state === 'available'`） |
 | A7 | 候选与人工选择分开、失败任务可数 | `miniprogram/utils/history-api.js:343`（`modelCandidates`）、`:347`（`manualSelection`）、`:354`（`candidateSelectionSeparated: true`）；`miniprogram/pages/history/history.js:74`（`failedCount` 逐条统计 `entry.failed`） |
-| A8 | 401 与 403 分档（403 不再折叠成掉登录） | 单一事实源 `miniprogram/utils/auth.js:95-109`；收藏/历史两侧委托 `miniprogram/utils/favorites-api.js:100`、`miniprogram/utils/history-api.js:171`；契约 403 闭集 `packages/contracts/openapi.json:17499-17503` |
+| A8 | 401 与 403 分档（403 不再折叠成掉登录） | 单一事实源 `miniprogram/utils/auth.js:95-109`；收藏/历史两侧委托 `miniprogram/utils/favorites-api.js:100`、`miniprogram/utils/history-api.js:171`；契约 403 闭集 `packages/contracts/openapi.json:16959-16963` |
 | A9 | 注销时点硬删收藏/历史（正文与幂等台账），行数入证据 | `favorites/store-pg.ts:172`（`DELETE FROM favorites … RETURNING id`）、`:176`（台账）；`history/store-pg.ts:160`、`:164`；闭集 `services/api/src/privacy/user-data-deletion.ts:93-98`、注册 `:444-445`；真库 PG17 读数 `tests/integration/favorites-history-pg.mjs:482-505`（A 四表残留 0、B 行逐表相等、证据串含两个计数） |
 
 补充可引的既有证据页（本片未重跑）：[阶段 2 PG 持久化](gy-i16-favorites-pg-20261017.md)、[读时权限/失效/去重语义收口](gy-i16-semantics-20261019.md)、[C5 端到端接线盘点](gy-r28-c5-favorites-history-20261021.md)。
@@ -115,7 +115,7 @@
 | A3 | 未读是派生量（没有计数器列 ⇒ 无计数漂移） | `messages/store-pg.ts:323-330`（`SELECT count(*) … owner_id = $1 AND read_at IS NULL`） |
 | A4 | 标记已读＝CAS＋单调＋恰好一次版本推进 | `messages/store-pg.ts:293-321`（`UPDATE … WHERE id AND owner_id AND read_at IS NULL RETURNING`） |
 | A5 | 归属：非本人与不存在同形 404 | `messages/service.ts:382`／`:402`（`record.owner_id !== user.userId` ⇒ `notFound()`）；存储层 `messages/store-pg.ts:312`（`OWNER_CHANGED`） |
-| A6 | 401 与 403 分档 | `miniprogram/utils/auth.js:95-109`；消息侧 `miniprogram/utils/messages-api.js:123-124`；契约 403 闭集 `packages/contracts/openapi.json:17499-17503` |
+| A6 | 401 与 403 分档 | `miniprogram/utils/auth.js:95-109`；消息侧 `miniprogram/utils/messages-api.js:123-124`；契约 403 闭集 `packages/contracts/openapi.json:16959-16963` |
 | A7 | 注销时点硬删消息域（正文＋共享幂等台账，同一事务） | `messages/store-pg.ts:220-241`（`DELETE FROM public.messages … RETURNING id` ＋ `DELETE FROM public.idempotency_keys … RETURNING scope`）；闭集 `privacy/user-data-deletion.ts:71`、`:93-98`、注册 `:449` |
 | A8 | 行数进证据（`records` 与 `idempotency` 分表计） | `privacy/user-data-deletion.ts:100-103`（`OwnerPurgeCounts`）；真表断言 `tests/unit/favorites-history-deletion-registration.test.mjs:288`（消息行必须真删）、`:290`（他人消息行不动）、`:426`（`messages:online-purged:1;messages:idempotency-purged:1`）、`:498`（`messages:online-purged:0;…` 同形） |
 | A9 | 不接外部推送、不虚构真人消息 | `services/api/src/messages/**` 与 `routes/messages.ts` 对 `subscribeMessage`／`webhook`／模板消息／`openid` **0 命中**（本片 grep 实跑）；`push` 命中均为数组 `push`（`messages/service.ts:345`、`:390`）；台账 blocker 逐字「…不虚构真人消息」（`docs/architecture/contract-status.json:2038`；合流后按内容重锚，main 记 `:2019`＋本片插入 20 行） |

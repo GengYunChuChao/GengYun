@@ -11,7 +11,7 @@
 2. **采样率/声道此前已经对了**：端口一直是 `sampleRate: 16000` / `numberOfChannels: 1`（改前 `miniprogram/utils/recorder-port.js` 第 29、31 行），与档位同值 ⇒ 本片**只改容器**，不改采样率与声道。
 3. **本片把容器改成 WAV**，并让页面**从档位常量取容器**（`miniprogram/pages/voice/voice.js:772` 用 `voiceApi.ASR_RECORD_FORMAT`），不再在页面里散落字面量。
 4. **新增客户端收尾校验**：录音停止后，若端口回报的 `format`/`mime` 不是 WAV（含"平台没回传 format"）⇒ **零上传**、就地如实失败、并**点名 WAV**（`miniprogram/pages/voice/voice.js:847-863`、`miniprogram/utils/voice-api.js:407`、`:413`）。拦在客户端的理由见 §5：非 WAV 在服务端被拒后作业落 `failed` 且**不写**转写行，用户只剩 404。
-5. **服务端未改**：契约 `Job.error_code` 是**闭集**（`packages/contracts/openapi.json:15509-15538` 的 `error_code` 为 `anyOf [ $ref ErrorCode, null ]`，`ErrorCode` 枚举在 `:11473-11524` 共 24 个取值），其中确有 `OBJECT_UNAVAILABLE` / `INVALID_REQUEST`；但把适配器的错误映射过去要动**另外两个切片**已冻结的断言，且**仍然拿不到"请上传 WAV"给用户** ⇒ 按派单"先查清再决定"的口径**不改**，在 §5 登记为缺陷。
+5. **服务端未改**：契约 `Job.error_code` 是**闭集**（`packages/contracts/openapi.json:14969-14998` 的 `error_code` 为 `anyOf [ $ref ErrorCode, null ]`，`ErrorCode` 枚举在 `:10996-11047` 共 24 个取值），其中确有 `OBJECT_UNAVAILABLE` / `INVALID_REQUEST`；但把适配器的错误映射过去要动**另外两个切片**已冻结的断言，且**仍然拿不到"请上传 WAV"给用户** ⇒ 按派单"先查清再决定"的口径**不改**，在 §5 登记为缺陷。
 6. **⛔ 未改**：ASR 档位（`LIVE_ASR_FROZEN_PROFILE`）、`packages/contracts/**`、媒体用途白名单（`packages/media/constants.mjs:48` 仍收 `audio/mpeg`/`audio/wav`/`audio/aac`）。
 
 ## 1 事实源（逐条实读，行号按本提交）
@@ -23,7 +23,7 @@
 | 配置侧剖面 | `tools/ai-config.mjs:57` | `p?.voiceFormat === 'wav' && p?.sampleRate === 16000 && p?.channels === 1 && p?.maxAudioSeconds === 60` |
 | 配置侧 WAV 头 | `tools/ai-config.mjs:91` | `readUInt32LE(4) !== 16000`、`readUInt32LE(8) !== 32000`、`readUInt16LE(14) !== 16` ⇒ 与适配器同口径 |
 | 上传用途白名单 | `packages/media/constants.mjs:48` | `voice_question: Object.freeze(['audio/mpeg', 'audio/wav', 'audio/aac'])`（**本片不改**：删条目＝改契约） |
-| 契约上传枚举 | `packages/contracts/openapi.json:11769-11820` | `ErrorCode` 闭集（24 值），含 `OBJECT_UNAVAILABLE`、`INVALID_REQUEST`、`MEDIA_TYPE_UNSUPPORTED` |
+| 契约上传枚举 | `packages/contracts/openapi.json:11274-11316` | `ErrorCode` 闭集（24 值），含 `OBJECT_UNAVAILABLE`、`INVALID_REQUEST`、`MEDIA_TYPE_UNSUPPORTED` |
 
 ⇒ 两侧口径并不对称：**上传**允许 mp3/wav/aac，**转写**只收 WAV（16k/单声道/16bit PCM）。客户端此前按上传白名单录 aac，等于必然撞上转写侧的本地闸。
 
@@ -112,7 +112,7 @@ OUTCOME={"kind":"failed","code":"PROVIDER_UNAVAILABLE"}
 ```
 
 - **为什么本片不改（"先查清再决定"）**：
-  1. **闭集条件成立**：`Job.error_code` 是闭集（`packages/contracts/openapi.json:15509-15538`），且 `AsrLocalInputError.code` 的取值域是 `'INVALID_REQUEST' | 'OBJECT_UNAVAILABLE'`（`services/api/src/ai/asr-live-ports.ts:118-126`），**两个都在闭集内** ⇒ 技术上**不需要**新增取值。
+  1. **闭集条件成立**：`Job.error_code` 是闭集（`packages/contracts/openapi.json:14969-14998`），且 `AsrLocalInputError.code` 的取值域是 `'INVALID_REQUEST' | 'OBJECT_UNAVAILABLE'`（`services/api/src/ai/asr-live-ports.ts:118-126`），**两个都在闭集内** ⇒ 技术上**不需要**新增取值。
   2. **但改它要同时改另外两个切片的冻结断言**：`tests/unit/i11-audio-mp3-wav-guard.test.mjs:159`（`deepEqual(outcome, { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' })`）、`tests/unit/ai-live-provider-wiring.test.mjs:238`、`:255`（产品链"字节来源未接线 ⇒ `PROVIDER_UNAVAILABLE`"）。这三条都不在本片被授权改动的断言清单内（本片只被授权改 `miniprogram-voice-playback.test.mjs` 里那条 `'aac'`）。
   3. **且收益到不了用户**：即便映射成 `OBJECT_UNAVAILABLE` / `INVALID_REQUEST`，作业仍是 `failed`、仍不写转写行、转写照旧 404 —— 用户还是拿不到"请上传 WAV"。要把那句话送出去，必须让**受理期**读到真实容器（`SpeechMediaPort.resolve` 回 mime，属**端口形状变更**）或由客户端拦住半程（本片已做客户端这一半）。
   ⇒ **建议**：由指挥裁定是否单开一片做"受理期读对象头部/回 mime"，并把上述三条断言的授权一并写进派单。
