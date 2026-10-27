@@ -265,32 +265,59 @@ export function reduceFamily(state, action) {
   }
 }
 
+/**
+ * 失败对象的「能不能重试／要等多久」——唯一出口，绝不写死。
+ *
+ * - `canRetry`：服务端声明 `retryable:false`（读面把它落成 `declaredRetryable`，见
+ *   `admin-content-api.mjs`）⇒ **不给重试**；字段缺失（旧失败对象、网络层失败）⇒ 保持旧行为
+ *   `true`，不因为拿不到声明就把用户挡在门外。
+ * - `retryAfterSeconds`：只有**正整数**才回填，其余（`0`／`1.5`／`'30'`／缺失）一律 `null`。
+ * - `detailSuffix`：不可重试时追加「服务端声明不可重试」，有等待秒数时追加「（建议等待 N 秒）」；
+ *   两者都没有时返回空串——旧文案因此**逐字不变**。
+ */
+function retryHintOf(failure) {
+  const declared = failure?.retryable ?? failure?.declaredRetryable ?? null;
+  const canRetry = declared !== false;
+  const wait = failure?.retryAfterSeconds;
+  const retryAfterSeconds = Number.isInteger(wait) && wait > 0 ? wait : null;
+  const notes = [];
+  if (!canRetry) notes.push('服务端声明不可重试');
+  if (retryAfterSeconds !== null) notes.push(`（建议等待 ${retryAfterSeconds} 秒）`);
+  const detailSuffix = notes.length === 0 ? '' : canRetry ? notes.join('') : ` · ${notes.join('')}`;
+  return { canRetry, retryAfterSeconds, detailSuffix };
+}
+
 /** 列表状态 → 文案（加载中／空／筛选空／就绪／过期／失败，各用各的话）。 */
 export function describeFamily(state, options = {}) {
   const label = options.label ?? '资料';
   const total = state.collection.items.length;
   if (state.phase === 'idle') {
-    return { phase: 'idle', tone: 'empty', title: `尚未读取${label}`, detail: '点「重新读取」按契约分页拉取。', canRetry: false };
+    return { phase: 'idle', tone: 'empty', title: `尚未读取${label}`, detail: '点「重新读取」按契约分页拉取。', canRetry: false, retryAfterSeconds: null };
   }
   if (state.phase === 'loading') {
-    return { phase: 'loading', tone: 'empty', title: `正在读取${label}…`, detail: '按 limit／cursor 分页请求；不使用缓存行。', canRetry: false };
+    return { phase: 'loading', tone: 'empty', title: `正在读取${label}…`, detail: '按 limit／cursor 分页请求；不使用缓存行。', canRetry: false, retryAfterSeconds: null };
   }
   if (state.phase === 'error') {
+    const hint = retryHintOf(state.failure);
+    const head = state.failure === null ? '未知错误' : `${state.failure.code ?? '无错误码'}（HTTP ${state.failure.status ?? '—'}）${state.failure.message ?? ''}`;
     return {
       phase: 'error',
       tone: 'error',
       title: '读取失败',
-      detail: state.failure === null ? '未知错误' : `${state.failure.code ?? '无错误码'}（HTTP ${state.failure.status ?? '—'}）${state.failure.message ?? ''}`,
-      canRetry: true,
+      detail: `${head}${hint.detailSuffix}`,
+      canRetry: hint.canRetry,
+      retryAfterSeconds: hint.retryAfterSeconds,
     };
   }
   if (state.stale) {
+    const hint = retryHintOf(state.failure);
     return {
       phase: 'stale',
       tone: 'stale',
       title: '刷新失败，显示的是上次读到的行',
-      detail: `共 ${total} 行（旧数据，未更新）· ${state.failure?.code ?? '无错误码'}（HTTP ${state.failure?.status ?? '—'}）`,
-      canRetry: true,
+      detail: `共 ${total} 行（旧数据，未更新）· ${state.failure?.code ?? '无错误码'}（HTTP ${state.failure?.status ?? '—'}）${hint.detailSuffix}`,
+      canRetry: hint.canRetry,
+      retryAfterSeconds: hint.retryAfterSeconds,
     };
   }
   if (state.phase === 'empty') {
@@ -300,6 +327,7 @@ export function describeFamily(state, options = {}) {
       title: '接口返回 0 行',
       detail: '服务端确实没有这类资料（不是筛选结果，也不是加载失败）。',
       canRetry: false,
+      retryAfterSeconds: null,
     };
   }
   return {
@@ -308,6 +336,7 @@ export function describeFamily(state, options = {}) {
     title: `已读取 ${total} 行`,
     detail: `已翻 ${state.collection.pages} 页${state.collection.nextCursor === null ? '，已到末页' : '，还有下一页'}`,
     canRetry: false,
+    retryAfterSeconds: null,
   };
 }
 
