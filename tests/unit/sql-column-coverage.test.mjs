@@ -745,21 +745,30 @@ const TABLE_WIDE_COLUMN = '*';
  *   各多一列 ⇒ 列要求 1861 → **1864**、已覆盖 1807 → **1810**（缺口仍 **0**：
  *   `decided_by` 已在 `20-login-roles.sql` 的列级授权与 `90-assert-least-privilege.sql`
  *   的期望清单内同步登记）。字面量与语句条数**不变**（同一条 INSERT/SELECT 内加列）。
+ *
+ * ⑳ 2026-10-28 R68-C1（媒体域补 `purgeOwnedMedia`：注销闭集按 owner 清媒体对象）：
+ *   `media/store-pg.ts` 新增 6 条语句（读该 owner 的 media 行、读其衍生物行、软隐藏 UPDATE …
+ *   RETURNING、按对象键登记 `media_object_cleanup` 的 INSERT … ON CONFLICT、清 `object_ref_cipher`
+ *   的 UPDATE、删衍生物行 DELETE）⇒ 字面量 291 → **297**、逐文件 `media` 17 → **23**、
+ *   语句 INSERT 45 → **46** / UPDATE 51 → **53** / SELECT 156 → **158** / DELETE 39 → **40**、
+ *   RETURNING 91 → **92**、ON CONFLICT 28 → **29**；这些语句的列面 ⇒ 列要求 1864 → **1891**、
+ *   已覆盖 1810 → **1837**（缺口仍 **0**：用到的列都已在 `20-login-roles.sql` 段 M 授权内，
+ *   因此本片**零迁移、零 GRANT 变更**）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 20,
-  sqlLiterals: 291,
-  statements: { INSERT: 45, UPDATE: 51, SELECT: 156, DELETE: 39 },
-  returningClauses: 91,
-  onConflictClauses: 28,
+  sqlLiterals: 297,
+  statements: { INSERT: 46, UPDATE: 53, SELECT: 158, DELETE: 40 },
+  returningClauses: 92,
+  onConflictClauses: 29,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
   noTargetTable: 16,
   referencedTables: 48,
-  columnRequirements: 1864,
-  coveredRequirements: 1810,
+  columnRequirements: 1891,
+  coveredRequirements: 1837,
   ledgerExemptions: 33,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
@@ -777,7 +786,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'favorites': 15,
   'history': 16,
   'knowledge/service.ts': 4,
-  'media': 17,
+  'media': 23,
   'messages': 15,
   'moderation/ledger-pg.ts': 5,
   'ocr': 19,

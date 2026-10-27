@@ -44,11 +44,13 @@ import { createHash } from 'node:crypto';
 import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import type { ObjectRefCipher } from './object-ref-cipher.ts';
+import { requirePurgeOwnerId } from './store.ts';
 import type {
   MediaIdempotencyEntry,
   MediaRecord,
   MediaStore,
   MediaWritePrecondition,
+  PurgeOwnedMediaResult,
 } from './store.ts';
 
 /** `pg` 连接池的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；各域自持一份，不跨域 import）。 */
@@ -56,10 +58,26 @@ export interface MediaSqlRunner {
   query(text: string, values?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>;
 }
 
+/**
+ * 事务连接的最小形状（`pg.PoolClient` 的结构子集）：`purgeOwnedMedia` 要单事务，
+ * 而 {@link MediaSqlRunner} 只有 `query`——在池上直接 `query` 就是每条语句各自自动提交。
+ */
+export interface MediaTransactionClient extends MediaSqlRunner {
+  release(): void;
+}
+
 export interface PostgresMediaStoreOptions {
   pool: MediaSqlRunner;
   /** 对象引用加解密器（键来自配置 `MEDIA_OBJECT_REF_KEY`；缺键时装配层不得走到这里）。 */
   cipher: ObjectRefCipher;
+  /**
+   * 事务连接工厂（传 `pg.Pool` 自己的 `connect` 即可）。**只有 `purgeOwnedMedia` 用它**。
+   *
+   * 缺省时该原语 **fail-closed**（`PROVIDER_UNAVAILABLE`、`retryable: false`）：把「软隐藏 + 登记
+   * 清理意图 + 清引用」拆成几条各自自动提交的语句，中途失败会留下「图已隐藏、台账没写、对象没人删」
+   * 的半清，且没有任何凭据能重放。宁可在注销回执里如实 `blocked`，也不做伪事务。
+   */
+  connect?: () => Promise<MediaTransactionClient>;
 }
 
 /** 衍生物种类：`stripImageMetadata` 的产物（服务层只有一个衍生物槽位，见文件头）。 */
@@ -330,6 +348,144 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
         return asNumber(result.rows[0]?.count);
       } catch (error) {
         return classifyMediaDatabaseError(error);
+      }
+    },
+
+    /**
+     * 按主体清理媒体（注销闭集用）——**单事务**，顺序：软隐藏 ⇒ 登记清理意图 ⇒ 清引用 ⇒ 删衍生物。
+     *
+     * ## 为什么不用 0035 那个按主体删媒体行的窄函数
+     * 它只删 `rejected`/`deleted` 两种状态的 `media` 行，**且要求台账意图先存在**
+     * （否则 `G0007` 整批中止），与本原语「先软隐藏、再动对象」的顺序相反；它也不软隐藏
+     * `ready` 状态的社区图片（那正是要挡在公开面之前的那一类）。因此这里走本域自己的语句。
+     *
+     * ## 授权面
+     * 只用 `deploy/postgres-cvm/sql/20-login-roles.sql` 段 M 已授权的列（`media` 的列级
+     * SELECT/UPDATE、`media_derivatives` 与 `media_object_cleanup` 的整表授权）⇒ **不需要新迁移**。
+     * 每条语句都按 `owner_id`（关联表按该 owner 的媒体 id）收窄，不删别人的数据。
+     */
+    async purgeOwnedMedia(ownerId) {
+      const owner = requirePurgeOwnerId(ownerId);
+      const connect = options.connect;
+      if (typeof connect !== 'function') {
+        throw new ApiError('PROVIDER_UNAVAILABLE', '媒体清理需要事务连接（装配层未注入 connect）', {
+          retryable: false,
+        });
+      }
+      let client: MediaTransactionClient | null = null;
+      try {
+        client = await connect();
+        await client.query('BEGIN');
+        const readMedia = await client.query(
+          `SELECT id, purpose::text AS purpose, state::text AS state, object_ref_cipher
+             FROM public.media WHERE owner_id = $1 ORDER BY id`,
+          [owner],
+        );
+        const rows = readMedia.rows.map((row) => ({
+          id: asText(row.id),
+          purpose: asText(row.purpose),
+          state: asText(row.state),
+          rawRef: cipher.decryptObjectRef(asText(row.object_ref_cipher)),
+        }));
+        const mediaIds = rows.map((row) => row.id);
+        const derivativeRefs = new Map<string, string[]>();
+        if (mediaIds.length > 0) {
+          const readDerivatives = await client.query(
+            `SELECT media_id, object_ref_cipher FROM public.media_derivatives
+              WHERE media_id = ANY($1::uuid[]) ORDER BY media_id, object_ref_cipher`,
+            [mediaIds],
+          );
+          for (const row of readDerivatives.rows) {
+            const objectRef = cipher.decryptObjectRef(asText(row.object_ref_cipher));
+            if (objectRef === null || objectRef === '') continue;
+            const mediaId = asText(row.media_id);
+            const refs = derivativeRefs.get(mediaId) ?? [];
+            refs.push(objectRef);
+            derivativeRefs.set(mediaId, refs);
+          }
+        }
+        /** 空明文的密文：列是 `NOT NULL`，清引用写它，解密时还原为 `null`（与 `store.ts` 文件头同口径）。 */
+        const emptyRef = cipher.encryptObjectRef('');
+        // ① **先软隐藏**（判据与 `liveCommunityImageCount` 一致）：社区图片先离开公开面，
+        //    同一语句清掉对象引用——仍在同一事务内，下面立刻登记台账，没有「键已丢、意图没写」的窗口。
+        const liveCommunityImageIds = rows
+          .filter((row) => row.purpose === 'community_image'
+            && row.state !== 'deleted'
+            && row.state !== 'rejected')
+          .map((row) => row.id);
+        let softHidden = 0;
+        if (liveCommunityImageIds.length > 0) {
+          const hidden = await client.query(
+            `UPDATE public.media SET
+               state = 'deleted'::media_state, object_ref_cipher = $3,
+               revision = revision + 1, updated_at = now()
+             WHERE owner_id = $1 AND id = ANY($2::uuid[]) RETURNING id`,
+            [owner, liveCommunityImageIds, emptyRef],
+          );
+          softHidden = hidden.rows.length;
+        }
+        // ② **再动对象**：先把每个对象键登记进清理台账（真桶删除由台账重试器按行做，
+        //    本原语不直接打桶——否则「登记」与「删除」之间没有可重放的凭据）。
+        const registered = new Set<string>();
+        const pending: Array<{ mediaId: string; objectRef: string }> = [];
+        for (const row of rows) {
+          const candidates = [row.rawRef ?? '', ...(derivativeRefs.get(row.id) ?? [])];
+          for (const objectRef of candidates) {
+            if (objectRef === '' || registered.has(objectRef)) continue;
+            registered.add(objectRef);
+            pending.push({ mediaId: row.id, objectRef });
+          }
+        }
+        for (const intent of pending) {
+          await client.query(
+            `INSERT INTO public.media_object_cleanup
+               (media_id, object_ref_cipher, object_ref_digest, reason, attempts, created_at, updated_at)
+             VALUES ($1, $2, $3, 'owner_delete', 1, now(), now())
+             ON CONFLICT (object_ref_digest) DO UPDATE SET
+               media_id = EXCLUDED.media_id,
+               reason = EXCLUDED.reason,
+               attempts = public.media_object_cleanup.attempts + 1,
+               updated_at = EXCLUDED.updated_at`,
+            [intent.mediaId, cipher.encryptObjectRef(intent.objectRef), objectRefDigest(intent.objectRef)],
+          );
+        }
+        // ③ 非社区图片行的引用在这里清（社区图片已在 ① 里清过，不重复推进 `revision`）。
+        const clearOtherIds = rows
+          .filter((row) => row.rawRef !== null && row.rawRef !== '' && !liveCommunityImageIds.includes(row.id))
+          .map((row) => row.id);
+        if (clearOtherIds.length > 0) {
+          await client.query(
+            `UPDATE public.media SET object_ref_cipher = $3, revision = revision + 1, updated_at = now()
+              WHERE owner_id = $1 AND id = ANY($2::uuid[])`,
+            [owner, clearOtherIds, emptyRef],
+          );
+        }
+        // ④ 衍生物行随引用一起删（对象键已在 ② 登记，删行不会丢线索）。
+        if (mediaIds.length > 0) {
+          await client.query(
+            `DELETE FROM public.media_derivatives WHERE media_id = ANY($1::uuid[])`,
+            [mediaIds],
+          );
+        }
+        await client.query('COMMIT');
+        // 读数只说「已登记待删」：本原语不持有对象存储客户端、`deleteObject` 一次都没调，
+        // 真删在 `media/service.ts` 的 `cleanupOrphans` 第二循环（该清理器今天无生产调用者）。
+        const purged: PurgeOwnedMediaResult = {
+          softHidden,
+          objectsRegistered: registered.size,
+        };
+        return purged;
+      } catch (error) {
+        if (client !== null) {
+          try {
+            await client.query('ROLLBACK');
+          } catch {
+            // 回滚本身失败不覆盖原始错误：原始错误才是注销回执要报的那一个。
+          }
+        }
+        return classifyMediaDatabaseError(error);
+      } finally {
+        client?.release();
       }
     },
 

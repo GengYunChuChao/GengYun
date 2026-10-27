@@ -204,16 +204,6 @@
       "note": "【段内块注释】文档引的是第 259-267 行的块注释，块后第一条非空行是第 268 行的「snapshotOwner?(」（可选成员签名，不是声明行）——这段说明没有声明行可指。"
     },
     {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "user-data-deletion.ts:276",
-      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
-      "docLine": 303,
-      "kind": "block",
-      "note": "【段内块注释】文档引的是第 274-283 行的块注释，块后第一条非空行是第 284 行的「/**」（紧跟另一段注释：相邻块拼接，声明在更后面）——这段说明没有声明行可指。"
-    },
-    {
       "path": "services/api/src/routes/health.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
