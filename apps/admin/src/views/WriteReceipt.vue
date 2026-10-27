@@ -50,6 +50,19 @@ const settled = computed(() => props.write !== null && props.write !== undefined
 const failed = computed(() => settled.value && props.write.ok !== true);
 const auditAvailable = computed(() => typeof props.write?.requestId === 'string' && props.write.requestId !== '');
 
+/**
+ * 活区角色（R67-B05）：这块面板是「已提交／失败」的唯一播报面，不挂活区读屏一个字也不念。
+ *
+ *  - 进行中／成功 → `role="status"` + `aria-live="polite"`（进度与完成通知，不该打断用户）；
+ *  - 失败 → `role="alert"` + `aria-live="assertive"`（`status` 是礼貌播报，念失败不够）；
+ *
+ * 两者复用同一块面板（失败态还要显示错误码／请求头），所以按 `failed` 动态绑定，不复制 DOM。
+ * 不额外加 `aria-atomic`：回执是「标题 + 多行字段」的结构，atomic 会把整块一起念，
+ * 与仓内既有写法（`banner`／`status` 只给 role）不一致。
+ */
+const liveRole = computed(() => (failed.value ? 'alert' : 'status'));
+const liveMode = computed(() => (failed.value ? 'assertive' : 'polite'));
+
 function eventTarget(event) {
   const ref = event?.target_ref;
   if (ref === null || ref === undefined) return 'null（契约允许）';
@@ -58,7 +71,13 @@ function eventTarget(event) {
 </script>
 
 <template>
-  <section v-if="write !== null" class="receipt" :class="{ failed }">
+  <section
+    v-if="write !== null"
+    class="receipt"
+    :class="{ failed }"
+    :role="liveRole"
+    :aria-live="liveMode"
+  >
     <header>
       <h4>{{ heading }}</h4>
       <div class="actions">

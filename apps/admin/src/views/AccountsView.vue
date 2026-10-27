@@ -8,10 +8,11 @@
  * 鉴权复用 `src/auth/session.ts` 的既有实现（Bearer + sessionStorage），本页不新造一套登录。
  * 纯逻辑都在 `src/lib/*.mjs`，本组件只负责把状态机接到 DOM。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { API_BASE_URL, loadAdminSession, signInAdmin, signOutAdmin } from '../auth/session';
 import { appendPage, emptyCollection, fetchAccountsPage } from '../lib/admin-api.mjs';
 import { newIdempotencyKey, suspendAccount } from '../lib/account-suspend-api.mjs';
+import { FOCUSABLE_SELECTOR, nextFocusIndex } from '../lib/dialog-focus.mjs';
 import {
   canLoadMore,
   canOpenSuspendDialog,
@@ -30,6 +31,11 @@ const session = ref(null);
 const loginName = ref('');
 const password = ref('');
 const busy = ref(false);
+
+// 停用确认框的焦点搬运（R67-B06）：框根、框内标题、触发按钮（关闭后回焦用）。
+const suspendDialog = ref(null);
+const suspendTitle = ref(null);
+let suspendTrigger = null;
 
 // 每次换会话/重载/写入递增；晚到的旧响应一律丢弃（避免把上一会话的数据画到当前会话）。
 let requestSeq = 0;
@@ -131,12 +137,70 @@ function refresh() {
 }
 
 /** 进入停用确认态：目标行必须是 active，否则状态机直接丢弃（不猜、不伪造写权限）。 */
-function beginSuspend(row) {
+function beginSuspend(row, event) {
+  // 记住触发按钮（`$event.currentTarget`），关闭对话框后焦点要还给它。
+  suspendTrigger = event?.currentTarget ?? null;
   dispatch({ type: 'SUSPEND_BEGIN', id: row.id });
 }
 
 function cancelSuspend() {
   dispatch({ type: 'SUSPEND_CANCEL' });
+}
+
+/** 把焦点送进框内标题：读屏打开对话框后会先播报名字，再让用户 Tab 到理由输入框。 */
+function focusSuspendTitle() {
+  const title = suspendTitle.value;
+  if (title !== null && title !== undefined && typeof title.focus === 'function') title.focus();
+}
+
+/**
+ * 焦点搬运（R67-B06）：打开 → 焦点进框；关闭 → 焦点回触发按钮。
+ *
+ * 触发按钮可能在关闭前就被重渲染掉了（停用成功后该行不再有「停用」按钮，`isConnected` 为 false），
+ * 那种情况不硬拉焦点——不把焦点塞进已卸载的节点。
+ */
+watch(suspendTarget, async (target) => {
+  if (target === null) {
+    const trigger = suspendTrigger;
+    suspendTrigger = null;
+    await nextTick();
+    if (trigger !== null && trigger.isConnected !== false && typeof trigger.focus === 'function') trigger.focus();
+    return;
+  }
+  await nextTick();
+  focusSuspendTitle();
+});
+
+/**
+ * 对话框键盘行为（R67-B06）：Esc 关闭；Tab／Shift+Tab 在框内循环（焦点陷阱，不跑到后面页面）。
+ *
+ * 循环的下标算法在 `lib/dialog-focus.mjs`（纯函数、有单测），这里只做 DOM 枚举与 `focus()`。
+ * 框内全禁用时（停用提交中）没有 Tab 目标，焦点交回标题，绝不留在框外。
+ */
+function onSuspendKeydown(event) {
+  if (event.key === 'Escape') {
+    if (suspendSaving.value) return; // 与「取消」按钮 disabled 一致：提交中不允许关
+    event.preventDefault();
+    cancelSuspend();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const dialog = suspendDialog.value;
+  if (dialog === null || dialog === undefined || typeof dialog.querySelectorAll !== 'function') return;
+  const items = Array.from(dialog.querySelectorAll(FOCUSABLE_SELECTOR));
+  const active = globalThis.document === undefined ? null : globalThis.document.activeElement;
+  const index = nextFocusIndex({
+    count: items.length,
+    index: items.indexOf(active ?? null),
+    shift: event.shiftKey === true,
+  });
+  event.preventDefault(); // 目标一律由这里搬运，Tab 不会跑出框
+  if (index === -1) {
+    focusSuspendTitle();
+    return;
+  }
+  const next = items[index];
+  if (next !== undefined && typeof next.focus === 'function') next.focus();
 }
 
 function dismissSuspendResult() {
@@ -270,7 +334,7 @@ onBeforeUnmount(() => {
         <code>cursor</code>／<code>limit</code> 两个参数，没有关键字参数。
       </p>
 
-      <div class="status" :class="view.tone" role="status">
+      <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'">
         <strong>{{ view.title }}</strong>
         <span>{{ view.detail }}</span>
         <button v-if="canRetry || restartNeeded" class="link" type="button" :disabled="busy" @click="retry">
@@ -278,9 +342,18 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
-      <div v-if="suspendTarget" class="suspend-confirm" role="dialog" aria-label="确认停用账号">
+      <div
+        v-if="suspendTarget"
+        ref="suspendDialog"
+        class="suspend-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="suspend-confirm-title"
+        tabindex="-1"
+        @keydown="onSuspendKeydown"
+      >
         <header>
-          <strong>确认停用账号</strong>
+          <strong id="suspend-confirm-title" ref="suspendTitle" tabindex="-1">确认停用账号</strong>
           <span class="mono" :title="suspendTarget.id">{{ suspendTarget.id }}</span>
         </header>
         <p class="hint">
@@ -359,7 +432,7 @@ onBeforeUnmount(() => {
                 type="button"
                 :disabled="!canOpenSuspend || busy"
                 :title="canOpenSuspend ? '带 If-Match 与 Idempotency-Key 停用' : '需要 accounts:suspend 且列表已就绪（理由在确认框里填写）'"
-                @click.stop="beginSuspend(row)"
+                @click.stop="beginSuspend(row, $event)"
               >
                 停用
               </button>

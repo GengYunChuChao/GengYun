@@ -460,7 +460,7 @@ onBeforeUnmount(() => {
       </div>
     </form>
 
-    <div class="status" :class="view.tone" role="status" data-testid="family-status">
+    <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'" data-testid="family-status">
       <strong>{{ view.title }}</strong>
       <span>{{ view.detail }}</span>
       <button v-if="view.canRetry" class="link" type="button" @click="refresh">重试</button>
