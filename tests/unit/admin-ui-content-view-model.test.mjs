@@ -98,6 +98,81 @@ test('空列表与失败是两件事：0 行不显示成「接口坏了」，有
   assert.equal(describeFamily(hardFail).canRetry, true);
 });
 
+test('B02 读取失败：服务端 retryable:false ⇒ 不给重试，文案点明「服务端声明不可重试」', () => {
+  const state = reduceFamily(initialFamilyState(), { type: 'LOAD_START', reset: true });
+  const failed = reduceFamily(state, {
+    type: 'LOAD_FAIL',
+    failure: { ok: false, kind: 'unavailable', status: 503, code: 'PROVIDER_UNAVAILABLE', retryable: false },
+  });
+  const view = describeFamily(failed, { label: '资料来源' });
+  assert.equal(view.phase, 'error');
+  assert.equal(view.canRetry, false);
+  assert.equal(view.detail.includes('服务端声明不可重试'), true);
+  assert.equal(view.retryAfterSeconds, null);
+  // 读面把契约 `ErrorBody.retryable` 落在 `declaredRetryable` 上：同一语义必须同样生效。
+  const viaDeclared = reduceFamily(state, {
+    type: 'LOAD_FAIL',
+    failure: { ok: false, kind: 'unavailable', status: 503, code: 'PROVIDER_UNAVAILABLE', declaredRetryable: false },
+  });
+  assert.equal(describeFamily(viaDeclared).canRetry, false);
+});
+
+test('B02 限流：retryable:true + retryAfterSeconds:7 ⇒ 可重试且文案给出等待秒数', () => {
+  const failed = reduceFamily(reduceFamily(initialFamilyState(), { type: 'LOAD_START', reset: true }), {
+    type: 'LOAD_FAIL',
+    failure: { ok: false, kind: 'rate_limited', status: 429, code: 'RATE_LIMITED', retryable: true, retryAfterSeconds: 7 },
+  });
+  const view = describeFamily(failed);
+  assert.equal(view.canRetry, true);
+  assert.equal(view.detail.includes('7 秒'), true);
+  assert.equal(view.detail.includes('建议等待 7 秒'), true);
+  assert.equal(view.retryAfterSeconds, 7);
+  assert.equal(view.detail.includes('不可重试'), false);
+});
+
+test('B02 旧失败对象（无 retryable／retryAfterSeconds）：保持可重试，文案逐字不变', () => {
+  const legacy = reduceFamily(reduceFamily(initialFamilyState(), { type: 'LOAD_START', reset: true }), {
+    type: 'LOAD_FAIL',
+    failure: { ok: false, kind: 'timeout', status: 504, code: 'GATEWAY_TIMEOUT', message: '上游超时' },
+  });
+  const view = describeFamily(legacy);
+  assert.equal(view.canRetry, true);
+  assert.equal(view.retryAfterSeconds, null);
+  assert.equal(view.detail, 'GATEWAY_TIMEOUT（HTTP 504）上游超时', '缺字段时 detail 必须与改动前逐字一致');
+  assert.equal(view.detail.includes('不可重试'), false);
+
+  // 连 failure 都没有（网络层失败）：老行为照旧，不追加任何新文案。
+  const noFailure = reduceFamily(reduceFamily(initialFamilyState(), { type: 'LOAD_START', reset: true }), { type: 'LOAD_FAIL', failure: null });
+  const bare = describeFamily(noFailure);
+  assert.equal(bare.canRetry, true);
+  assert.equal(bare.detail, '未知错误');
+  assert.equal(bare.retryAfterSeconds, null);
+});
+
+test('B02 stale 分支同口径：retryable:false 不给重试；限流给等待秒数；缺字段文案照旧', () => {
+  const staleBase = loadOk(initialFamilyState(), null, [sourceDraft(ID_A, 1)], null);
+  const staleOf = (failure) => reduceFamily(staleBase, { type: 'LOAD_FAIL', failure });
+  const oldStale = `共 1 行（旧数据，未更新）· PROVIDER_UNAVAILABLE（HTTP 503）`;
+
+  const legacy = describeFamily(staleOf({ ok: false, kind: 'unavailable', status: 503, code: 'PROVIDER_UNAVAILABLE' }));
+  assert.equal(legacy.phase, 'stale');
+  assert.equal(legacy.canRetry, true);
+  assert.equal(legacy.retryAfterSeconds, null);
+  assert.equal(legacy.detail, oldStale, '缺字段时 stale 文案必须与改动前逐字一致');
+
+  const forbidden = describeFamily(staleOf({ ok: false, kind: 'forbidden', status: 403, code: 'SCOPE_DENIED', retryable: false }));
+  assert.equal(forbidden.phase, 'stale');
+  assert.equal(forbidden.canRetry, false);
+  assert.equal(forbidden.detail.includes('服务端声明不可重试'), true);
+  assert.equal(forbidden.retryAfterSeconds, null);
+
+  const limited = describeFamily(staleOf({ ok: false, kind: 'rate_limited', status: 429, code: 'RATE_LIMITED', retryable: true, retryAfterSeconds: 7 }));
+  assert.equal(limited.phase, 'stale');
+  assert.equal(limited.canRetry, true);
+  assert.equal(limited.detail.includes('7 秒'), true);
+  assert.equal(limited.retryAfterSeconds, 7);
+});
+
 test('SELECT / DETAIL：选中即清空上一条详情与审计查找结果；空 id 等于取消选中', () => {
   let state = loadOk(initialFamilyState(), null, [sourceDraft(ID_A, 3)], null);
   state = reduceFamily(state, { type: 'SELECT', id: ID_A });
