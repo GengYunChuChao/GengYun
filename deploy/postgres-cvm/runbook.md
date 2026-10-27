@@ -365,6 +365,80 @@ sudo deploy/postgres-cvm/provision-db.sh
 > - **两层口径**：**事实层面**已部署且平台侧连通已实测；**验收层面仍未验收**（**监工尚未复核**）⇒
 >   **不得声称"已验收"**；公网 5432 的独立复核、PITR/异地等仍未取得（[evidence §13.2／§15.4](evidence/local-self-check.md)）。
 
+### 步骤 3.5 首次元权限引导（裁定 C，一次性）
+
+`provision-db.sh`（步骤 3）之后、启动 API **之前**，必须用**迁移属主**身份跑一次引导，
+把"第一个管理员 + `scopes:write` 元权限"落库。
+
+为什么不是让 API 自己建：运行时角色 `gengyun_api_runtime` 对 `public.admin_accounts` 只有**列级
+SELECT**（表级 INSERT 被 `90-assert-least-privilege.sql` 钉成 false），所以应用内
+`ensureBootstrapAdmin()` 的第一步 `INSERT INTO admin_accounts` 必然 `42501`。裁定 C 的落点就是
+"这份一次性 seed 只能在部署档、用属主身份完成"。
+
+**① 生成摘要**（本步只收 scrypt 摘要，⛔ **不接受明文口令**。形状 `scrypt$N$r$p$saltB64$hashB64`，
+由 `services/api/src/auth/password.ts` 的 `hashPassword` 定义：N=16384、r=8、p=1、salt 16 B、派生 64 B）：
+
+```bash
+read -r -s -p '设置初始管理员口令（≥12 字符）: ' GY_PW; echo
+GY_HASH="$(GY_PW="$GY_PW" node --input-type=module -e 'import { hashPassword } from "./services/api/src/auth/password.ts"; process.stdout.write(hashPassword(process.env.GY_PW));')"
+unset GY_PW
+printf '%s\n' "$GY_HASH" | cut -c1-19      # 自查：必须以 scrypt$16384$8$1 开头
+```
+
+仓库要求 Node ≥ 24.16（`package.json` 的 `engines`），原生可执行 `.ts`，不需要构建、不需要额外依赖。
+
+**② 以迁移属主身份执行一次**（两个变量都必填，文件里**没有任何默认值**）：
+变量**未设置** ⇒ §0 守卫当场停；变量**设置成空串** ⇒ §0 守卫**不拦**（`\getenv` 会把变量定义成空、
+`\if :{?var}` 仍为真），由 §① 的登录名/摘要形状判定停 —— 两条路径都是**非零退出**，但兜住空串的是形状判定。
+
+```bash
+install -o postgres -g postgres -m 0400 \
+  deploy/postgres-cvm/sql/30-bootstrap-admin.sql /tmp/30-bootstrap-admin.sql   # postgres 可能读不到仓库目录
+
+sudo -u postgres env \
+  GENGYUN_BOOTSTRAP_ADMIN_LOGIN='<登录名>' \
+  GENGYUN_BOOTSTRAP_ADMIN_CREDENTIAL_HASH="$GY_HASH" \
+  /usr/lib/postgresql/17/bin/psql -h /var/run/postgresql -U gengyun_cvm_owner -d gengyun \
+    -v ON_ERROR_STOP=1 -f /tmp/30-bootstrap-admin.sql ; rc=$?
+
+rm -f -- /tmp/30-bootstrap-admin.sql
+echo "exit=$rc"     # 期望 0
+```
+
+期望结尾打印：
+
+```text
+30-bootstrap-admin.sql 完成：已创建 1 名管理员 + 3 个 scope（scopes:write / session:read / session:logout）+ 1 行 bootstrap 审计。
+  实测读数：admin_accounts=1  active_admin_scopes=3  reason_code=bootstrap 审计行=1
+```
+
+关于参数：
+- 两个变量给的是**环境变量**（`\getenv` 读取），不是 SQL 里的字面量；摘要不会写进任何文件。
+- 摘要会短暂出现在 `ps`／`/proc/<pid>/environ` 里，且**它不是口令本身**（拿不到口令就验不过）；
+  仍按私密材料对待：不要贴进聊天、issue、提交信息。
+- 登录名要求 3–80 位 `A-Z a-z 0-9 . _ @ -`；不符合时脚本 `RAISE EXCEPTION`，不会建半个账号。
+
+**③ 自查**：跑一次验证脚本，看第 9.5 段。
+
+```bash
+sudo deploy/postgres-cvm/verify-cvm-postgres.sh
+```
+
+期望四行 `PASS`：`bootstrap_audit_exactly_one`（=1）、`scopes_write_active_holders`（>=1）、
+`bootstrap_audit_payload_null`（=1）、`bootstrap_audit_payload_no_object`（=0）。
+这四条**没有 `skip` 兜底**：引导没跑就应当红（退出码 1），不要把它读成"只是缺项"。
+
+后两条盯的是审计行的**读数列形状**：契约把 `before_value`/`after_value` 定成 `FlagReading | null`
+（`{enabled, revision}`），所以本 seed 写 **NULL**。若看到 `bootstrap_audit_payload_null` 红而
+`bootstrap_audit_exactly_one` 绿，说明这一行是**改版前**的写法（`{"scopes": …}`）写进去的 ——
+那行不可改不可删（追加型触发器 `0017` 的 `G0006 AUDIT_IMMUTABLE`），修复要走 DBA 维护窗口并留痕，
+⛔ 不要靠重跑本 seed 修（重跑必失败）。
+
+**④ 重跑会失败，这是裁定要求的行为**：`30-bootstrap-admin.sql` 在 `public.admin_accounts` 非空时
+直接 `RAISE EXCEPTION`（"已有管理员必须报错，不许静默跳过"）。看到
+`已存在管理员，拒绝重复引导` 说明引导**已经成功跑过**，不要再跑；要新增管理员/调整授权，
+走后台的 `grant_admin_scope` 与后台账号流程。
+
 ### 步骤 4 备份与恢复演练
 
 ```bash
@@ -551,6 +625,7 @@ sudo systemctl restart gengyun-postgresql.service  # 重启（改非热载参数
 | `psql: error: /home/…/xxx.sql: Permission denied`（**仓库文件**读不了） | 仓库在 `postgres` 不可穿越的目录（如 `/home/<user>` 默认 `0750`） | `namei -l <仓库路径>` | 返修 10 起脚本会把 SQL **暂存**到 postgres 可读的临时目录；若仍报错，说明用的是旧副本。**不要** `chmod 777` |
 | API `category=database_missing`（`3D000`） | 库名写错或库没建 | `\l` 等价查询 | 用 `gengyun`（或 `GENGYUN_DB_NAME` 指定的一致名字） |
 | API 报 `42501 permission denied` | 角色引导没跑或跑在错误的库上 | `verify-cvm-postgres.sh` 的 `least_privilege_assert`、`runtime_can_read_*` | 跑 `provision-db.sh` |
+| API 报 `42501`，且库里明确是 `permission denied for table admin_accounts`（INSERT） | **首次元权限引导（seed）没跑**——第一个管理员不是 API 建的，是部署档建的 | `SELECT count(*) FROM public.admin_accounts`（=0 即从未引导）；`verify-cvm-postgres.sh` 的 `bootstrap_audit_exactly_one` | 跑**步骤 3.5**（`sql/30-bootstrap-admin.sql`，属主身份、一次性）。⛔ 再跑 `provision-db.sh` 不会补这一行 |
 | `90-assert` 输出"警告：未找到 public.schema_migrations 台账" | 该库的迁移**不是用 `migrate.ts` 应用的**（例如用 `psql -f` 手工应用） | `SELECT to_regclass('public.schema_migrations')` | 在**目标 CVM** 上这属异常：用 `DATABASE_URL=… node services/api/src/db/migrate.ts up` 应用迁移。**等价复核环境**（只有套接字、node-postgres 不可用）里此告警属预期，15 项断言照常执行，见 [verify-socket-only-equivalents.md](verify-socket-only-equivalents.md) |
 | `90-assert` 输出"错误：…的硬前置未满足" | 7 个业务关系 / 运行时角色 / 5 组有缺失 | 输出里的三步指引 | 按序补：`install-postgres.sh` ⇒ `migrate.ts up` ⇒ `provision-db.sh` |
 | `pg_hba_file_rules` 有 `error` | 手改坏了配置 | `SELECT * FROM pg_hba_file_rules WHERE error IS NOT NULL` | 从 5.0 的备份恢复（5.1） |

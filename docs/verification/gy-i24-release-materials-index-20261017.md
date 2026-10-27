@@ -315,6 +315,7 @@
 | [`../../deploy/postgres-cvm/conf/gengyun-postgresql.service`](../../deploy/postgres-cvm/conf/gengyun-postgresql.service) | systemd 单元模板 | ✅ 在册 |
 | [`../../deploy/postgres-cvm/sql/20-login-roles.sql`](../../deploy/postgres-cvm/sql/20-login-roles.sql) | 登录角色授予 | ✅ 在册 |
 | [`../../deploy/postgres-cvm/sql/90-assert-least-privilege.sql`](../../deploy/postgres-cvm/sql/90-assert-least-privilege.sql) | 最小权限断言 | ✅ 在册 |
+| [`../../deploy/postgres-cvm/sql/30-bootstrap-admin.sql`](../../deploy/postgres-cvm/sql/30-bootstrap-admin.sql) | 管理员引导 seed（R64 裁定 C）：一次性创建首个管理员＋逐条字面授予 3 个 scope（`scopes:write`／`session:read`／`session:logout`）＋落恰 1 行引导审计（`action='admin_scope.grant'`＋`reason_code='bootstrap'`，`before_value`/`after_value` 均为 `NULL`）；**不是幂等**——第二次运行 `RAISE EXCEPTION` ⇒ `ON_ERROR_STOP` 中断、整事务 `ROLLBACK`（非零退出、三张表 0 行变化），「表里已有管理员」必须报错而不是静默跳过；参数只从**环境变量** `GENGYUN_BOOTSTRAP_ADMIN_LOGIN`／`GENGYUN_BOOTSTRAP_ADMIN_CREDENTIAL_HASH` 经 `\getenv` 读入，且只收 **scrypt 摘要**、⛔ 不收明文口令 | ✅ 在册；`bash` 侧无脚本判据可覆盖（本文件是 SQL，不是 `.sh`），真库正/负臂读数见[PR #654](https://github.com/GengYunChuChao/GengYun/pull/654) 描述，**不代表已在 CVM 执行** |
 
 ## 2b. 调度层（#19：到期清除的 systemd timer）
 
@@ -361,7 +362,7 @@
 | # | 判据 | 命令/来源 | 读数（基线 `60aa9ad`；第 2／8 项按 2026-10-18 合流 `0856e49`、2026-10-19 合流 `d131e47`／main `31a746d`／`145ebe4`（含 #279 的 `0021`）／`607c03c`（含 #312）／叠在 #296 新 head（`71eda51`）、2026-10-20 合流 main `df043a7`（含 #296 的 `0022` 与 #313）／`ff1b39d`（含 #295 的 `0023`）／`d4d48088`（含 #428 的 `0027`）后的树复跑） |
 | --- | --- | --- | --- |
 | 1 | 索引存在 | 文件在册 | ✅ |
-| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 38 个文件全部在索引表行中（38/38 覆盖），无悬空路径；较基线 `60aa9ad` 的 29 多出 `deploy/postgres-cvm/restore-drill.ps1`（I24 片）与 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`（R28-S24，2026-10-20）；R32 另增 `deploy/purge-schedule/` 下 5 件（4 个 systemd 单元 + README；cron 路线文件已按 R32 返修裁定删除）；S4 再增该目录 2 件（`gengyun-purge-retention.{service,timer}`） |
+| 2 | 索引覆盖 `deploy/**` 全部在册文件、所列路径全部存在、被索引文件非空 | `git ls-files deploy` ∪ 索引反查 | ✅ 39 个文件全部在索引表行中（39/39 覆盖），无悬空路径；**2026-10-26 R64 裁定 C 复核（本页同步）**：新增 `deploy/postgres-cvm/sql/30-bootstrap-admin.sql`（管理员引导 seed）⇒ 在册 38 → **39**；此前读数（并列历史，按原样保留）：较基线 `60aa9ad` 的 29 多出 `deploy/postgres-cvm/restore-drill.ps1`（I24 片）与 `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`（R28-S24，2026-10-20）；R32 另增 `deploy/purge-schedule/` 下 5 件（4 个 systemd 单元 + README；cron 路线文件已按 R32 返修裁定删除）；S4 再增该目录 2 件（`gengyun-purge-retention.{service,timer}`） |
 | 3 | 索引相对链接全部可解析 | 链接目标按索引所在目录解析 | ✅ |
 | 4 | 脚本三件套：`bash -n`、`set -euo pipefail`、**blob 为 LF** | `bash -n`（**blob 内容喂 stdin，不传文件路径**）；`git cat-file blob` 数 CR 字节 | ✅ 5/5 通过；blob CR 字节数全部为 0 |
 | 5 | 环境变量模板 ⊇ 配置面、无多余键、机密类键为空值 | `REQUIRED_WHEN_REAL`（9）∪ `config.ts` 实际读取键（8）＝17；模板 17 键 | ✅ 完全一致；`*_SECRET`/`*_PASSWORD`/`*_KEY` 全部空值 |
