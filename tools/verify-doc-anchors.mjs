@@ -1,10 +1,13 @@
 /**
  * 文档手写行号闸门：`docs/**` 里写成 `services/api/src/xxx.ts:17-30` 的引用，代码一动就变成假证据。
  *
- * 这个工具只判**能被机械证伪**的三件事，判不了的一律如实记「不可解析」，不冒充通过：
+ * 这个工具只判**能被机械证伪**的四件事，判不了的一律如实记「不可解析」，不冒充通过：
  *   BROKEN       —— 引用里的路径在仓库里找不到（也没法唯一解析）。
  *   OUT_OF_RANGE —— 路径找到了，但 `起-止` 超出该文件的行数。
  *   SUSPECT      —— 行号合法，可整个区间里没有一行实质内容（全空行／全右括号／全注释）。
+ *   ANCHOR_DRIFT —— 引用行里同一行的行内代码片段（`` `...` ``）在目标文件里 0 命中／多处命中，
+ *                   或只命中在引用窗口之外：行号还在界内，指的却已经不是那段代码。
+ *                   **只对 `docs/architecture/**` 判**，判据边界见 `ANCHOR_DRIFT` 常量上方的注释。
  *
  * 为什么**不**用「内容 sha256 全等」当判据：任何合法改代码（加一行日志、改一个错别字）都会让
  * 哈希变红，红的原因与「文档是不是假证据」无关，等于用噪声换掉原有的真信号，最后只能整片关掉。
@@ -377,6 +380,264 @@ export function collectFindings({
   return { findings, stats, unresolved };
 }
 
+// —— 锚点身份判据（ANCHOR_DRIFT，只对 docs/architecture/**） ———————————————————
+/**
+ * 结构三判据只回答「指的地方存不存在」，回答不了「指的还是不是那段代码」：把 `app.ts:1291`
+ * 改成 `:1341` 之后，行号仍在界内、区间里也有代码，三条判据照样全绿，文档却已经指到别的实现上。
+ * 这一条判据补的就是那半个问题：拿**引用行里同一行的行内代码片段**当「期望文本」，去目标文件里搜。
+ *
+ * 判定按**文档行**成组（不是按引用成组）：一行里常有多条引用，片段属于哪一条要看命中位置，
+ * 而不是看它离哪个反引号更近。四档：
+ *   绿                  —— 至少一个片段落在任意一条引用的 `[起-2, 止+2]` 内（±2 与 contract 锚点同口径）。
+ *   ANCHOR_DRIFT 可自动 —— 某条引用的片段在目标文件里**恰 1 处**命中，但那不在窗口内 ⇒ 按文本重定位即可，
+ *                         报出实际行号，作者把引用改成 `路径:实际行号` 就对了。
+ *   ANCHOR_DRIFT 不可自动 —— 该行只有 1 条引用，且所有片段在目标文件里 0 命中 ⇒ 代码可能换了写法、
+ *                         也可能这条引用早就不指这段实现了，机器判不了，必须人工确认改文档还是改代码。
+ *   其余（只计数）      —— 多引用行且片段都 0 命中、或只有多处命中：归属与文本都不唯一，判红只会制造噪声。
+ *   跳过（只计数）      —— 引用行里没有「像代码」的片段（现状大量如此）。不猜、不判。
+ *
+ * **为什么只对 `docs/architecture/**` 判**：证据页（`docs/verification/**`）是**某一版树的历史读数**，
+ * 行号按当时的树写、正文里也声明了基线；按当前树重新搜必然「漂移」，对它们判红等于要求历史证据跟着
+ * 代码一起改写，正好毁掉证据的价值。架构页是**在用的**实现说明，指错地方就是假证据。
+ *
+ * 误判的代价不对称：漏判有结构三判据兜着，误判会让作者去「修」一条其实写对了的引用（例如片段属于
+ * 同一行里用散文写的另一处引用）。所以片段过滤宁可严：太短、没有空白、不像代码、含省略号的都不算。
+ */
+export const ANCHOR_DRIFT = 'ANCHOR_DRIFT';
+/** 判据作用域：只判架构页（见上方「为什么只对 docs/architecture 判」）。 */
+export const ANCHOR_DRIFT_SCOPE = 'docs/architecture/';
+/** 容差：与 `tools/verify-contract-status.mjs` 的锚点 ±2 行同口径。 */
+export const ANCHOR_DRIFT_WINDOW = 2;
+const MIN_FRAGMENT_LENGTH = 12;
+const INLINE_CODE_SPAN = /`([^`\n]+)`/g;
+const ROUTE_LIKE_SPAN = /^(?:GET|POST|PUT|PATCH|DELETE)\s+\//;
+const ANCHOR_LIKE_SPAN = /\.(?:mjs|cjs|js|jsx|ts|tsx|json|jsonc|sql|md|yml|yaml|css|html|py|sh|ps1|toml):\d/;
+
+/** 判据作用域：`docs/architecture/**` 之外一律不判（证据页的历史读数不算漂移）。 */
+export function isAnchorDriftScope(docPath) {
+  return toPosix(docPath).startsWith(ANCHOR_DRIFT_SCOPE);
+}
+
+/** 片段正规化：折叠空白、去掉行尾分号——只判「同一段文本」，不判语义等价。 */
+export function normalizeFragment(text) {
+  return text.trim().replace(/\s+/g, ' ').replace(/;+$/, '');
+}
+
+/**
+ * 一段行内代码像不像「可以拿去搜的代码」。
+ * 这层过滤决定判据的量级：不过滤时 `docs/architecture/**` 会冒出 344 条命中（符号名、HTTP 路径、
+ * 表格共同列注解全被当指纹），过完是 16 条。
+ */
+export function isCodeFragment(span) {
+  const text = span.trim();
+  if (text.length < MIN_FRAGMENT_LENGTH) return false;
+  if (ANCHOR_LIKE_SPAN.test(text)) return false;                 // 片段自己就是锚点（`app.ts:12`）
+  if (text.includes('://')) return false;                        // URL 不是仓内文本
+  if (ROUTE_LIKE_SPAN.test(text)) return false;                  // `GET /admin/posts` 这类路由
+  if (!/\s/.test(text)) return false;                            // 单个标识符不唯一
+  if (!/[=;(){}]/.test(text)) return false;                      // 含运算符/括号，才像代码而不是短语
+  if (text.includes('...') || text.includes('…')) return false;   // 缩写/省略号不是可搜文本
+  return true;
+}
+
+/**
+ * 一份文档里「哪一行有哪些可用片段」（1 基行号 → 片段文本数组）。
+ * 片段必须同时满足：像代码（`isCodeFragment`）、且**只出现在这一行**——后者排除表格里反复出现的
+ * 共同列注解（「已实现」「只读代码取证」这类），它们不是某条引用行的私有指纹。
+ */
+export function collectLineFragments(docText) {
+  const lines = docText.split('\n');
+  const occurrences = new Map();
+  const spansByLine = new Map();
+  for (let index = 0; index < lines.length; index += 1) {
+    const spans = [];
+    INLINE_CODE_SPAN.lastIndex = 0;
+    let match = INLINE_CODE_SPAN.exec(lines[index]);
+    while (match !== null) {
+      const normalized = normalizeFragment(match[1]);
+      spans.push({ text: match[1], normalized });
+      if (!occurrences.has(normalized)) occurrences.set(normalized, new Set());
+      occurrences.get(normalized).add(index + 1);
+      match = INLINE_CODE_SPAN.exec(lines[index]);
+    }
+    if (spans.length > 0) spansByLine.set(index + 1, spans);
+  }
+  const fragmentsByLine = new Map();
+  for (const [docLine, spans] of spansByLine) {
+    const fragments = spans
+      .filter(span => isCodeFragment(span.text))
+      .filter(span => (occurrences.get(span.normalized)?.size ?? 0) === 1)
+      .map(span => span.text);
+    if (fragments.length > 0) fragmentsByLine.set(docLine, fragments);
+  }
+  return fragmentsByLine;
+}
+
+/**
+ * 全量跑锚点身份判据：返回 `{ findings, stats }`。每条 finding 形如
+ * `{ reason: ANCHOR_DRIFT, kind, doc, docLine, reference, path, from, to, fragments, actualLine, suggestion, owner, detail }`。
+ */
+export function collectAnchorDrift({
+  root = TOOL_ROOT,
+  targets = DEFAULT_SCAN_TARGETS,
+  fileIndex = null,
+  documents = null,
+} = {}) {
+  const index = fileIndex ?? buildFileNameIndex(root);
+  const documentsInScope = (documents ?? resolveScanTargets(root, targets)).filter(isAnchorDriftScope).sort();
+  const fileLines = new Map();
+  const readLines = relativePath => {
+    if (!fileLines.has(relativePath)) fileLines.set(relativePath, splitLines(readFileSync(join(root, relativePath), 'utf8')));
+    return fileLines.get(relativePath);
+  };
+  const findings = [];
+  const stats = {
+    documents: documentsInScope.length,
+    referenceLines: 0,
+    skipped: 0,
+    green: 0,
+    ambiguous: 0,
+    counts: { [ANCHOR_DRIFT]: 0 },
+  };
+  for (const docPath of documentsInScope) {
+    const text = readFileSync(join(root, docPath), 'utf8');
+    if (!text.includes('`')) continue;
+    const fragmentsByLine = collectLineFragments(text);
+    const referencesByLine = new Map();
+    for (const reference of extractReferences(text)) {
+      const list = referencesByLine.get(reference.docLine);
+      if (list === undefined) referencesByLine.set(reference.docLine, [reference]);
+      else list.push(reference);
+    }
+    for (const docLine of [...referencesByLine.keys()].sort((left, right) => left - right)) {
+      stats.referenceLines += 1;
+      const references = referencesByLine.get(docLine);
+      const fragments = fragmentsByLine.get(docLine) ?? [];
+      // 没有可用片段 ⇒ 这条判据没有线索，如实跳过（不猜、也不冒充通过）。
+      if (fragments.length === 0) { stats.skipped += 1; continue; }
+      const placements = [];
+      for (const reference of references) {
+        const resolved = resolveTarget({ root, docPath, target: reference.target, fileIndex: index });
+        if (resolved.status !== 'resolved') continue;
+        const lines = readLines(resolved.relative);
+        const perFragment = fragments.map(fragment => {
+          const needle = normalizeFragment(fragment);
+          const hits = [];
+          for (let index2 = 0; index2 < lines.length; index2 += 1) {
+            if (normalizeFragment(lines[index2]).includes(needle)) hits.push(index2 + 1);
+          }
+          return { fragment, hits };
+        });
+        placements.push({ reference, path: resolved.relative, from: reference.from, to: reference.to, perFragment });
+      }
+      if (placements.length === 0) { stats.skipped += 1; continue; }
+      const inWindow = placement => placement.perFragment.some(item => item.hits.some(
+        line => line >= placement.from - ANCHOR_DRIFT_WINDOW && line <= placement.to + ANCHOR_DRIFT_WINDOW,
+      ));
+      if (placements.some(inWindow)) { stats.green += 1; continue; }
+      const uniqueOut = placements.filter(placement => placement.perFragment.some(item => item.hits.length === 1));
+      if (uniqueOut.length > 0) {
+        const placement = uniqueOut[0];
+        const item = placement.perFragment.find(entry => entry.hits.length === 1);
+        stats.counts[ANCHOR_DRIFT] += 1;
+        findings.push({
+          reason: ANCHOR_DRIFT,
+          kind: 'drift-unique',
+          doc: docPath,
+          docLine,
+          reference: placement.reference.reference,
+          path: placement.path,
+          from: placement.from,
+          to: placement.to,
+          fragments,
+          actualLine: item.hits[0],
+          suggestion: `${placement.path}:${item.hits[0]}`,
+          owner: ownerOf(placement.path),
+          detail: `片段「${item.fragment}」在目标文件里只出现在第 ${item.hits[0]} 行，不在引用窗口 ${placement.from}-${placement.to}（±${ANCHOR_DRIFT_WINDOW}）内 ⇒ 可按文本重定位`,
+        });
+        continue;
+      }
+      const anyHit = placements.some(placement => placement.perFragment.some(item => item.hits.length > 0));
+      // 多引用行 + 片段全 0 命中：片段可能属于同行的另一处引用（归属不唯一），只计数不判红。
+      if (anyHit || references.length !== 1) { stats.ambiguous += 1; continue; }
+      const placement = placements[0];
+      stats.counts[ANCHOR_DRIFT] += 1;
+      findings.push({
+        reason: ANCHOR_DRIFT,
+        kind: 'drift-gone',
+        doc: docPath,
+        docLine,
+        reference: placement.reference.reference,
+        path: placement.path,
+        from: placement.from,
+        to: placement.to,
+        fragments,
+        actualLine: null,
+        suggestion: null,
+        owner: ownerOf(placement.path),
+        detail: `片段 ${fragments.map(fragment => `「${fragment}」`).join('、')} 在目标文件里 0 命中 ⇒ 引用可能早已不指这段实现，需人工确认改文档还是改代码`,
+      });
+    }
+  }
+  findings.sort((left, right) => (
+    left.doc.localeCompare(right.doc) || left.docLine - right.docLine
+  ));
+  return { findings, stats };
+}
+
+/** 锚点身份判据的基线 key：`文档:行号#片段签名`——片段本身进 key，文档行改写后 key 变 ⇒ 算新增。 */
+export function driftBaselineKey(finding) {
+  const signature = [...finding.fragments].map(normalizeFragment).sort().join(' && ');
+  return `${finding.doc}:${finding.docLine}#${signature}`;
+}
+
+/**
+ * 与结构基线同语义：命中＝已登记、新增＝未登记（`--strict` 下红）、陈旧＝登记了但已不命中（只提示）。
+ * 基线是**逐条人工裁决**的结果，不写数字上限：多一条未登记的漂移就红，修好一条则那一条变陈旧。
+ */
+export function partitionDriftByBaseline(findings, entries = ARCHITECTURE_ANCHOR_BASELINE) {
+  const registered = new Set(entries);
+  const covered = findings.filter(finding => registered.has(driftBaselineKey(finding)));
+  const fresh = findings.filter(finding => !registered.has(driftBaselineKey(finding)));
+  const hit = new Set(covered.map(finding => driftBaselineKey(finding)));
+  const stale = entries.filter(entry => !hit.has(entry));
+  return { fresh, covered, stale };
+}
+
+/**
+ * `docs/architecture/**` 上锚点身份判据的已登记清单（2026-10-27 实测 N=16）。
+ *
+ * 为什么不用 `--emit-baseline` 那一套：那套基线的条目形状是 `path|reason|reference`，只覆盖结构三判据，
+ * 而且 `tests/unit/doc-anchors-guard.test.mjs` 要求「条目陈旧就必须删」；把 ANCHOR_DRIFT 混进
+ * `tools/doc-anchors-baseline.json` 会让那份文件的语义变味，也让两套判据的陈旧处理互相牵制。
+ * 因此这里是**独立常量**，与 `tools/doc-anchors-baseline.json` 的 13 条互不干扰。
+ *
+ * 每条的分类写在行尾注释里：`drift-unique`（片段唯一命中但在窗口外，可按文本重定位）／
+ * `drift-gone`（单引用行、片段 0 命中，需人工判断）／`归属误判`（片段其实属于同一行里用散文写的
+ * 另一处引用，引用本身没错）／`历史树锚点`（该页行号是当时那棵树的历史读数，页内已声明）。
+ * 新增漂移必须**先人工看**再决定是改文档还是登记；⛔ 不要把这条判据当成可以随便扩的白名单。
+ */
+export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
+  // 2026-10-27 实测 16 条，逐条人工裁决；key 形状见 driftBaselineKey（文档:行号#片段指纹）。
+  // 行尾注释：判定档｜片段实际落点｜归类原因。
+  "docs/architecture/acceptance-map.md:69#HUMAN_REVIEW_STATE = 'under_construction'", // drift-unique｜实际在 services/api/src/moderation/nonbypass.ts:15｜归属误判：片段属于同一行里用散文写的 moderation/types.ts:110-115；nonbypass.ts:161-168 的引用本身没错
+  "docs/architecture/ai-ops-spec-status.md:197#{ actorId, reasonCode: 'job_cancelled', requestId }", // drift-gone｜0 命中｜真漂移：service.ts:776-780 现在是 account.suspend 的审计，job_cancelled 实际在 service.ts:880/962
+  "docs/architecture/gy-i19-user-backup-copies-design.md:26#{ purged: false }", // drift-unique｜实际在 services/api/src/privacy/user-data-deletion.ts:329｜历史树锚点：该页行号是 GY-R34-I19 树的读数
+  "docs/architecture/gy-i19-user-backup-copies-design.md:303#{ purged: boolean, evidenceRef?: string }", // drift-gone｜0 命中｜历史树锚点：同上
+  "docs/architecture/gy-i19-user-backup-copies-design.md:312#purged === true", // drift-gone｜0 命中｜历史树锚点：同上
+  "docs/architecture/gy-i19-user-backup-copies-design.md:354#MIGRATION_COUNT === LAST_VERSION_NUMBER", // drift-gone｜0 命中｜历史树锚点：同上
+  "docs/architecture/gy-r34-retention-policy.md:46#SET \"detail\" = NULL, \"detail\" = \"detail\" + 1 && SET detail = NULL, revision = revision + 1", // drift-unique｜实际在 services/api/src/community/store-pg.ts:1086｜真漂移
+  "docs/architecture/gy-r34-retention-policy.md:112#UPDATE (revoked_at)", // drift-gone｜0 命中｜表述差异：实际 SQL 是 GRANT UPDATE (token_hash,revoked_at) ON admin_sessions，片段少了授权前缀
+  "docs/architecture/gy-r34-retention-policy.md:156#expires_at <= now()", // drift-unique｜实际在 services/api/src/auth/idempotency.ts:261｜真漂移，同一句里已经写了 :261
+  "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:32#online_due_at <= cutoff AND state <> 'completed'", // drift-gone｜0 命中｜归属误判：片段属于同一行的 tools/purge-expired-online-data.mjs:16；package.json:35 引用本身没错
+  "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:33#state <> 'purged' AND retention_until <= cutoff", // drift-gone｜0 命中｜归属误判：同上（package.json:34）
+  "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:84#record_third_party_deletion(p_request_id uuid, p_recipient_id text, p_export_ref uuid, p_state text, p_evidence_ref text, p_error_code text, p_at timestamptz) RETURNS jsonb", // drift-gone｜0 命中｜表述差异：SQL 是 CREATE FUNCTION public.record_third_party_deletion( 多行签名，文档写成一行的完整签名
+  "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:108#REPLAY_MANIFEST_VERSION = 1", // drift-unique｜实际在 services/api/src/privacy/backup-replay-manifest.ts:85｜真漂移，同一句里已经写了 :85
+  "docs/architecture/rate-limit-policy.md:185#(_address, hop) => hop < trustProxy", // drift-gone｜0 命中｜真漂移：app.ts:2450-2455 现为 OCR 作业源注释；trustProxy 的 hop 判据在 app.ts:2649，且文档片段省略了类型标注
+  "docs/architecture/s4-data-traceability.md:186#available: config.executionMode !== 'real'", // drift-unique｜实际在 services/api/src/app.ts:2221｜真漂移
+  "docs/architecture/state-contract.md:117#createPostgresBackupPurgePort({ pool, now }) && payload = 'null'::jsonb && state = 'purged'", // drift-unique｜实际在 services/api/db/migrations/0023_user_backup_copies.sql:75｜真漂移（引用写的是 :34）
+]);
+
 /** 谁该修：按被引用路径的归属分组，方便派活；判断不了就给 repo。 */
 export function ownerOf(targetPath) {
   const path = toPosix(targetPath);
@@ -610,19 +871,33 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     if (findings.length > printed.length) streams.log(`… 另有 ${findings.length - printed.length} 条未打印（清单同上格式）`);
   }
   printSummary(streams, { stats, unresolved, findings, fresh, covered, stale, baseline, strict: options.strict });
+  const drift = collectAnchorDrift({ root: options.root, targets: options.scan });
+  const driftPartition = partitionDriftByBaseline(drift.findings);
+  printDriftSummary(streams, { drift, partition: driftPartition });
   if (options.symbol === 'count') printSymbolCount(streams, countSymbolAssociations({ root: options.root, targets: options.scan }));
   if (baseline.missing) streams.log(`NOTE: 基线 ${options.baseline} 不存在，按空基线处理（等于所有问题都算新增）。`);
   if (stale.length > 0) {
     streams.log(`STALE: ${stale.length} 条基线已不再命中（引用被修好或路径改名）——删掉这些条目，否则基线会慢慢变成免罚名单：`);
     for (const entry of stale.slice(0, 20)) streams.log(`  · ${entry.reference}（${entry.reason}，owner=${entry.owner ?? '未标'}）`);
   }
-  const failure = options.strict && fresh.length > 0;
-  if (failure) {
+  if (driftPartition.stale.length > 0) {
+    // 与结构基线同语义：陈旧只提示不判红——历史树锚点被修掉之后，基线腐烂不该把合并永久卡死。
+    streams.log(`STALE-DRIFT: ${driftPartition.stale.length} 条 ARCHITECTURE_ANCHOR_BASELINE 条目已不再命中（文档行改过片段，或那条漂移已修好）——删掉/更新这些 key：`);
+    for (const entry of driftPartition.stale.slice(0, 20)) streams.log(`  · ${entry}`);
+  }
+  const structuralFailed = options.strict && fresh.length > 0;
+  const driftFailed = options.strict && driftPartition.fresh.length > 0;
+  if (structuralFailed) {
     streams.error(`FAIL: 文档行号闸门未通过（基线之外新增 ${fresh.length} 条）`);
     for (const finding of fresh.slice(0, 40)) streams.error(`  · ${describe(finding)}`);
-    return 1;
   }
-  if (options.strict) streams.log('PASS: --strict 下没有基线之外的新增（基线内条目只计数、不判红；陈旧条目见 STALE）');
+  if (driftFailed) {
+    streams.error(`FAIL: 锚点身份闸门未通过（ANCHOR_DRIFT 基线之外新增 ${driftPartition.fresh.length} 条；判据只管 ${ANCHOR_DRIFT_SCOPE}**）`);
+    for (const finding of driftPartition.fresh.slice(0, 40)) streams.error(`  · ${describeDrift(finding)}`);
+    streams.error('  修法：按片段在目标文件里的真实行号改写引用（报错里给了「实际行号」）；确属历史遗留/归属不唯一的，人工裁决后加进 tools/verify-doc-anchors.mjs 的 ARCHITECTURE_ANCHOR_BASELINE 并写明分类。');
+  }
+  if (structuralFailed || driftFailed) return 1;
+  if (options.strict) streams.log('PASS: --strict 下没有基线之外的新增（结构三判据与 ANCHOR_DRIFT 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT）');
   return 0;
 }
 
@@ -633,6 +908,22 @@ function printSummary(streams, { stats, unresolved, findings, fresh, covered, st
   streams.log(`BASELINE: ${baseline.path} 登记 ${baseline.entries.length} 条；本次命中 ${covered.length} 条、基线外新增 ${fresh.length} 条、陈旧 ${stale.length} 条`);
   if (strict) streams.log('MODE: --strict（只在新增加非零时 exit 1）');
   else streams.log('MODE: dry-run（只打印，不判退出码）');
+}
+
+/** ANCHOR_DRIFT 的读数行：作用域、可判/跳过规模、两类命中的条数、与常量的比对结果。 */
+function printDriftSummary(streams, { drift, partition }) {
+  const { stats } = drift;
+  const unique = drift.findings.filter(finding => finding.kind === 'drift-unique').length;
+  const gone = drift.findings.filter(finding => finding.kind === 'drift-gone').length;
+  streams.log(`DRIFT: 作用域 ${ANCHOR_DRIFT_SCOPE}**（${stats.documents} 份文档）；带「路径:行号」引用的行 ${stats.referenceLines} 行——无行内代码片段跳过 ${stats.skipped} 行、区间内命中 ${stats.green} 行、归属或文本不唯一只计数 ${stats.ambiguous} 行`);
+  streams.log(`DRIFT-COUNT: ${ANCHOR_DRIFT} ${drift.findings.length} 条（可按文本重定位 ${unique} 条 / 需人工确认 ${gone} 条）`);
+  streams.log(`DRIFT-BASELINE: ARCHITECTURE_ANCHOR_BASELINE 登记 ${ARCHITECTURE_ANCHOR_BASELINE.length} 条；本次命中 ${partition.covered.length} 条、基线外新增 ${partition.fresh.length} 条、陈旧 ${partition.stale.length} 条`);
+}
+
+function describeDrift(finding) {
+  const actual = finding.actualLine === null ? '片段 0 命中' : `实际在第 ${finding.actualLine} 行`;
+  const suggestion = finding.suggestion === null ? '' : `；建议改写成 ${finding.suggestion}`;
+  return `${finding.doc}:${finding.docLine} → ${finding.reference}（${finding.kind}，${actual}${suggestion}；owner=${finding.owner}）`;
 }
 
 /**
