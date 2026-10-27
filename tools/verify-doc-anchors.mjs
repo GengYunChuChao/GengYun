@@ -13,6 +13,12 @@
  *   ANCHOR_DRIFT —— 引用行里同一行的行内代码片段（`` `...` ``）在目标文件里 0 命中／多处命中，
  *                   或只命中在引用窗口之外：行号还在界内，指的却已经不是那段代码。
  *                   **只对 `docs/architecture/**` 判**，判据边界见 `ANCHOR_DRIFT` 常量上方的注释。
+ *   COMMENT_ANCHOR（仅 `--symbol=strict`）—— 作用域内、目标是源码，但锚点**没有落在代码行上**：
+ *                   `注释但非文档注释`（引用的是注释块，目标文件里没有对应的声明行可指）＋
+ *                   `逐字引用注释文案`（文档逐字引注释原文，同上没有代码行可指）。
+ *                   这两档原先只进 `SYMBOL-LINE` 读数、谁都不判；`--symbol=strict` 把它们并入
+ *                   基线／新增加陈旧这套既有语义（基线见 `tools/doc-anchors-symbol-baseline.json`）。
+ *                   `落在文档注释里` 那一档**保持原样**（仍由 `NOT_SYMBOL_LINE` ＋ 结构基线判）。
  *
  * 为什么**不**用「内容 sha256 全等」当判据：任何合法改代码（加一行日志、改一个错别字）都会让
  * 哈希变红，红的原因与「文档是不是假证据」无关，等于用噪声换掉原有的真信号，最后只能整片关掉。
@@ -33,6 +39,10 @@
  *   node tools/verify-doc-anchors.mjs --write-baseline     # 写 tools/doc-anchors-baseline.json
  *   node tools/verify-doc-anchors.mjs --root <目录>        # 指向夹具树（单测用）
  *   node tools/verify-doc-anchors.mjs --symbol=count       # 符号关联统计（只统计，不参与退出码）
+ *   node tools/verify-doc-anchors.mjs --strict --symbol=strict
+ *                                                          # 作用域内锚点必须落在代码行上：
+ *                                                          # 未落代码行的走符号基线，基线外新增在
+ *                                                          # `--strict` 下 exit 1（CI 用的就是这条）
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -325,9 +335,22 @@ export function judgeSymbolLine({ docPath, docLineText, target, text, lines, fro
 }
 
 /**
- * 全量扫描：返回 `{ findings, stats, unresolved }`。
+ * 记录一条「作用域内、没落代码行」的锚点（`--symbol=strict` 的判据面）。
+ * 去重口径与 `findings` 一致：同一文档里同一条引用只记一条（key = `doc|reference`）。
+ */
+function recordCommentAnchor(list, seen, anchor) {
+  const key = commentAnchorKey(anchor);
+  if (seen.has(key)) return;
+  seen.add(key);
+  list.push(anchor);
+}
+
+/**
+ * 全量扫描：返回 `{ findings, stats, unresolved, commentAnchors }`。
  * `findings` 每条 = `{ reason, reference, target, path, owner, doc, docLine, detail }`；
  * 同一文档里同一条引用出现多次只记一条（按 doc + reference 去重）。
+ * `commentAnchors` = 作用域内、目标是源码、但**没落在代码行上**的锚点（`--symbol=strict` 的判据面，
+ * 见 `COMMENT_ANCHOR`）；与 `findings` 一样按 doc + reference 去重，仅这两档不会进 `findings`。
  */
 export function collectFindings({
   root = TOOL_ROOT,
@@ -341,8 +364,10 @@ export function collectFindings({
   const fileTexts = new Map();
   const fileScan = new Map();
   const findings = [];
+  const commentAnchors = [];
   const unresolved = [];
   const seen = new Set();
+  const seenComment = new Set();
   const stats = {
     documents: files.length,
     candidates: 0,
@@ -421,9 +446,36 @@ export function collectFindings({
           } else {
             stats.symbol.inScope += 1;
             if (symbol.status === 'code') stats.symbol.code += 1;
-            else if (symbol.status === 'comment-detached') stats.symbol.detached += 1;
-            else if (symbol.status === 'comment-cited') stats.symbol.cited += 1;
-            else if (symbol.status === 'comment-attached') {
+            else if (symbol.status === 'comment-detached') {
+              stats.symbol.detached += 1;
+              recordCommentAnchor(commentAnchors, seenComment, {
+                doc: docPath,
+                docLine: reference.docLine,
+                reference: reference.reference,
+                target: resolved.relative,
+                from: reference.from,
+                to: reference.to,
+                bucket: symbol.status,
+                span: symbol.span === null ? null : { start: symbol.span.start, end: symbol.span.end },
+                lineText: lines[reference.from - 1] ?? '',
+                owner: ownerOf(resolved.relative),
+              });
+            } else if (symbol.status === 'comment-cited') {
+              stats.symbol.cited += 1;
+              recordCommentAnchor(commentAnchors, seenComment, {
+                doc: docPath,
+                docLine: reference.docLine,
+                reference: reference.reference,
+                target: resolved.relative,
+                from: reference.from,
+                to: reference.to,
+                bucket: symbol.status,
+                span: symbol.span === null ? null : { start: symbol.span.start, end: symbol.span.end },
+                lineText: lines[reference.from - 1] ?? '',
+                owner: ownerOf(resolved.relative),
+                citation: symbol.citation,
+              });
+            } else if (symbol.status === 'comment-attached') {
               stats.symbol.attached += 1;
               const key = `${docPath}|${reference.reference}|${NOT_SYMBOL_LINE}`;
               if (!seen.has(key)) {
@@ -471,7 +523,7 @@ export function collectFindings({
     || left.reference.localeCompare(right.reference)
     || left.doc.localeCompare(right.doc)
   ));
-  return { findings, stats, unresolved };
+  return { findings, stats, unresolved, commentAnchors };
 }
 
 // —— 锚点身份判据（ANCHOR_DRIFT，只对 docs/architecture/**） ———————————————————
@@ -826,6 +878,119 @@ export function countSymbolAssociations({
   return { stats, reasons, undecidable, fallbacks };
 }
 
+// —— 符号落点严格档（`--symbol=strict`：注释里的锚点进「基线／新增／陈旧」） ——————————
+/**
+ * `--symbol=strict` 的判据名（也是符号基线条目的 `reason`）：作用域内、目标是源码，但锚点**没有落在
+ * 代码行上**——`注释但非文档注释` ＋ `逐字引用注释文案` 两档。这两档原来只进 `SYMBOL-LINE` 读数、
+ * 没有判据管：锚点可能指到一段注释、一个空行旁边、或与符号完全无关的行，闸门照样绿。
+ *
+ * 为什么不直接判红：仓里这两档是**既有证据形态**（引用代码里的旧文案、判据说明、门禁注释），
+ * 一次性 39 条不属本片能修的范围，直接判红等于把门禁钉成永红或者逼人乱重锚（篡改证据语义）。
+ * 因此沿用 `--strict` 的既有语义：命中基线只计数（打读数）、基线外新增在 `--strict` 下 exit 1、
+ * 基线条目修好（不再命中）报 `STALE` 要求删。
+ *
+ * `落在文档注释里`（`comment-attached`）**不在这里判**：它仍是 `NOT_SYMBOL_LINE` ＋
+ * `tools/doc-anchors-baseline.json` 的既有口径，两类基线互不干扰（语义、陈旧处理各自独立）。
+ */
+export const COMMENT_ANCHOR = 'COMMENT_ANCHOR';
+/** 符号基线只认这一种 `reason`：出现别的取值说明文件被改坏了，直接报错退出。 */
+export const SYMBOL_ANCHOR_REASONS = Object.freeze([COMMENT_ANCHOR]);
+/**
+ * 符号落点基线的默认路径：与 `tools/doc-anchors-baseline.json` **同目录同风格**的独立清单。
+ * 为什么不塞进那份文件：那份的 `reason` 只允许结构四判据（`REASONS`），
+ * `tests/unit/doc-anchors-guard.test.mjs` 也按结构判据逐条反查；混进来会让两份语义互相牵制。
+ */
+export const DEFAULT_SYMBOL_BASELINE = 'tools/doc-anchors-symbol-baseline.json';
+
+/** 符号基线 key：`文档|引用`。文档行号**不进 key**（正文插一行不该让整条基线失效），行号另记字段供人读。 */
+export const commentAnchorKey = anchor => `${anchor.doc}|${anchor.reference}`;
+
+/** 读符号基线；文件不存在按空基线处理（等于所有注释锚点都算新增），坏 JSON／缺字段／缺原因直接抛。 */
+export function loadSymbolBaseline(root, baselinePath = DEFAULT_SYMBOL_BASELINE) {
+  const absolute = resolve(root, baselinePath);
+  if (!existsSync(absolute)) return { path: baselinePath, entries: [], missing: true };
+  const parsed = JSON.parse(readFileSync(absolute, 'utf8'));
+  const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+  for (const entry of entries) {
+    if (typeof entry.doc !== 'string' || typeof entry.reference !== 'string' || typeof entry.reason !== 'string') {
+      throw new Error(`符号基线条目缺字段（需要 doc / reference / reason）：${JSON.stringify(entry)}`);
+    }
+    if (!SYMBOL_ANCHOR_REASONS.includes(entry.reason)) {
+      throw new Error(`符号基线条目的 reason 不是 ${SYMBOL_ANCHOR_REASONS.join(' / ')}：${entry.reason}`);
+    }
+    // 硬要求：基线条目必须**逐条带原因**，不许只写坐标（否则基线就退化成一串没人负责的行号）。
+    if (typeof entry.note !== 'string' || entry.note.trim() === '') {
+      throw new Error(`符号基线条目缺原因（note 不得为空，要写清「为什么这条锚点只能指注释」）：${JSON.stringify(entry)}`);
+    }
+  }
+  return { path: baselinePath, entries, missing: false };
+}
+
+/** 与结构基线同语义：命中＝已登记（只计数）、新增＝未登记（`--strict` 下红）、陈旧＝登记了但已不命中。 */
+export function partitionSymbolByBaseline(anchors, entries = []) {
+  const known = new Map();
+  for (const entry of entries) {
+    const key = commentAnchorKey(entry);
+    known.set(key, (known.get(key) ?? 0) + 1);
+  }
+  const covered = [];
+  const fresh = [];
+  for (const anchor of anchors) {
+    const key = commentAnchorKey(anchor);
+    const remaining = known.get(key) ?? 0;
+    if (remaining > 0) {
+      known.set(key, remaining - 1);
+      covered.push(anchor);
+    } else {
+      fresh.push(anchor);
+    }
+  }
+  const stale = [];
+  for (const entry of entries) {
+    const key = commentAnchorKey(entry);
+    const remaining = known.get(key) ?? 0;
+    if (remaining > 0) {
+      known.set(key, remaining - 1);
+      stale.push(entry);
+    }
+  }
+  return { fresh, covered, stale };
+}
+
+/**
+ * 一条「注释锚点」的失败正文：文档 file:line、目标文件、**该行实际内容**、以及这段注释为什么没有
+ * 代码行可指——作者不用回目标文件里自己找「到底指到了什么」。
+ */
+export function describeCommentAnchor(anchor) {
+  const raw = String(anchor.lineText ?? '').trim();
+  const text = raw === '' ? '（空行／纯空白）' : (raw.length > 96 ? `${raw.slice(0, 96)}…` : raw);
+  const range = anchor.from === anchor.to ? `${anchor.from}` : `${anchor.from}-${anchor.to}`;
+  const span = anchor.span === null ? '注释里' : `第 ${anchor.span.start}-${anchor.span.end} 行的注释里`;
+  const why = anchor.bucket === 'comment-cited'
+    ? '文档逐字引用了这段注释原文（该注释块紧贴声明行，但文档引的是注释不是声明）'
+    : '锚点落在注释上，该注释块后面没有声明行可指';
+  return `${anchor.doc}:${anchor.docLine} → ${anchor.reference}（目标文件 ${anchor.target} 第 ${range} 行的实际内容「${text}」；${why}；位置在${span}；owner=${anchor.owner}）`;
+}
+
+function printSymbolStrict(streams, { stats, baseline, fresh, covered, stale, anchors }) {
+  const { symbol } = stats;
+  const offCode = symbol.detached + symbol.cited;
+  const deduped = offCode - anchors;
+  streams.log('SYMBOL: --symbol=strict 判「作用域内的锚点必须落在目标文件的代码行上」——未落代码行的进符号基线（基线内只计数、基线外新增在 --strict 下 exit 1；--symbol=count 的口径与文案不变）');
+  streams.log(`SYMBOL-STRICT: 作用域 ${SYMBOL_LINE_SCOPE}** × 源码后缀——可判 ${symbol.inScope} 条：落代码行 ${symbol.code} 条通过、未落代码行 ${offCode} 条进基线（注释但非文档注释 ${symbol.detached}、逐字引用注释文案 ${symbol.cited}${deduped > 0 ? `；同文档重复 ${deduped} 条按 doc+reference 去重后 ${anchors} 条` : ''}）、落在文档注释里 ${symbol.attached} 条仍按 ${NOT_SYMBOL_LINE} ＋结构基线判；作用域外同形状 ${symbol.outside} 条只统计、不判红`);
+  streams.log(`SYMBOL-STRICT-BASELINE: ${baseline.path} 登记 ${baseline.entries.length} 条；本次命中 ${covered.length} 条、基线外新增 ${fresh.length} 条、陈旧 ${stale.length} 条`);
+  const cited = covered.filter(anchor => anchor.bucket === 'comment-cited').length;
+  if (covered.length > 0) {
+    streams.log(`SYMBOL-STRICT-COVERED: 基线内 ${covered.length} 条只计数不判红（注释但非文档注释 ${covered.length - cited} 条、逐字引用注释文案 ${cited} 条）——理由逐条写在 ${baseline.path} 的 note 字段里`);
+  }
+  if (stale.length > 0) {
+    streams.log(`STALE-SYMBOL: ${stale.length} 条符号基线条目已不再命中（锚点被重锚到代码行，或文档已改写）——删掉这些条目，否则符号基线会慢慢变成免罚名单：`);
+    for (const entry of stale.slice(0, 20)) {
+      streams.log(`  · ${entry.doc} → ${entry.reference}（${entry.reason}，owner=${entry.owner ?? '未标'}）`);
+    }
+  }
+}
+
 // —— 基线 ————————————————————————————————————————————————————————————
 export const baselineKey = entry => `${entry.path}|${entry.reason}|${entry.reference}`;
 
@@ -893,10 +1058,10 @@ export function renderBaseline(findings) {
 }
 
 // —— CLI ——————————————————————————————————————————————————————————————
-const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--root <目录>] [--symbol=count] [--emit-baseline | --write-baseline]';
+const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--root <目录>] [--symbol=count|strict] [--emit-baseline | --write-baseline]';
 const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--root', '--symbol', '--emit-baseline', '--write-baseline']);
 /** `--symbol` 的取值是**白名单**：不认识的取值直接报错退出，绝不当成「没传、照旧绿灯」。 */
-const SYMBOL_MODES = new Set(['count']);
+const SYMBOL_MODES = new Set(['count', 'strict']);
 const MAX_PRINTED = 300;
 const MAX_PRINTED_UNDECIDABLE = 500;
 
@@ -927,7 +1092,7 @@ export function parseArgs(argv) {
   }
   if (options.emit && options.write) throw new Error('--emit-baseline 与 --write-baseline 只能二选一');
   if (options.symbol !== null && (options.emit || options.write)) {
-    throw new Error('--symbol=count 不能与 --emit-baseline／--write-baseline 同时用（生成基线时统计会被忽略）');
+    throw new Error(`--symbol=${options.symbol} 不能与 --emit-baseline／--write-baseline 同时用（生成基线时统计会被忽略）`);
   }
   if (options.scan.length === 0) options.scan = [...DEFAULT_SCAN_TARGETS];
   return options;
@@ -955,7 +1120,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.error(error.message);
     return 2;
   }
-  const { findings, stats, unresolved } = collectFindings({ root: options.root, targets: options.scan });
+  const { findings, stats, unresolved, commentAnchors } = collectFindings({ root: options.root, targets: options.scan });
   if (options.emit) {
     process.stdout.write(renderBaseline(findings));
     return 0;
@@ -980,6 +1145,17 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   const driftPartition = partitionDriftByBaseline(drift.findings);
   printDriftSummary(streams, { drift, partition: driftPartition });
   if (options.symbol === 'count') printSymbolCount(streams, countSymbolAssociations({ root: options.root, targets: options.scan }));
+  // `--symbol=strict`：只在这里才读符号基线（`--symbol=count` 与其余路径的行为、文案一字不改）。
+  let symbolStrict = null;
+  if (options.symbol === 'strict') {
+    const symbolBaseline = loadSymbolBaseline(options.root);
+    const partition = partitionSymbolByBaseline(commentAnchors, symbolBaseline.entries);
+    symbolStrict = { baseline: symbolBaseline, ...partition };
+    printSymbolStrict(streams, { stats, baseline: symbolBaseline, anchors: commentAnchors.length, ...partition });
+    if (symbolBaseline.missing) {
+      streams.log(`NOTE: 符号基线 ${symbolBaseline.path} 不存在，按空基线处理（等于所有未落代码行的锚点都算新增）。`);
+    }
+  }
   if (baseline.missing) streams.log(`NOTE: 基线 ${options.baseline} 不存在，按空基线处理（等于所有问题都算新增）。`);
   if (stale.length > 0) {
     streams.log(`STALE: ${stale.length} 条基线已不再命中（引用被修好或路径改名）——删掉这些条目，否则基线会慢慢变成免罚名单：`);
@@ -992,6 +1168,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   }
   const structuralFailed = options.strict && fresh.length > 0;
   const driftFailed = options.strict && driftPartition.fresh.length > 0;
+  const symbolStrictFailed = options.strict && symbolStrict !== null && symbolStrict.fresh.length > 0;
   if (structuralFailed) {
     streams.error(`FAIL: 文档行号闸门未通过（基线之外新增 ${fresh.length} 条）`);
     for (const finding of fresh.slice(0, 40)) streams.error(`  · ${describe(finding)}`);
@@ -1001,8 +1178,13 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     for (const finding of driftPartition.fresh.slice(0, 40)) streams.error(`  · ${describeDrift(finding)}`);
     streams.error('  修法：按片段在目标文件里的真实行号改写引用（报错里给了「实际行号」）；确属历史遗留/归属不唯一的，人工裁决后加进 tools/verify-doc-anchors.mjs 的 ARCHITECTURE_ANCHOR_BASELINE 并写明分类。');
   }
-  if (structuralFailed || driftFailed) return 1;
-  if (options.strict) streams.log('PASS: --strict 下没有基线之外的新增（结构四判据与 ANCHOR_DRIFT 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT）');
+  if (symbolStrictFailed) {
+    streams.error(`FAIL: 符号落点闸门未通过（--symbol=strict 的 ${COMMENT_ANCHOR} 基线之外新增 ${symbolStrict.fresh.length} 条；判据只管 ${SYMBOL_LINE_SCOPE}** × 源码后缀）`);
+    for (const anchor of symbolStrict.fresh.slice(0, 40)) streams.error(`  · ${describeCommentAnchor(anchor)}`);
+    streams.error('  修法：把锚点改到目标文件里真正的声明行／代码行（报错里给了该行实际内容，按它找）；确属「引用注释原文、没有代码行可指」的合法证据，人工裁决后登记进 tools/doc-anchors-symbol-baseline.json 并在 note 里写明原因。⛔ 不要为了让门禁变绿去改被引用的注释。');
+  }
+  if (structuralFailed || driftFailed || symbolStrictFailed) return 1;
+  if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
   return 0;
 }
 

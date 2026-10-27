@@ -256,7 +256,7 @@ test('CLI：参数不被静默忽略——未知参数／非白名单取值／�
       assert.equal(result.code, 2, `应报错退出：${argv.join(' ')}`);
       assert.ok(result.error.length > 0, `应有错误信息：${argv.join(' ')}`);
     }
-    assert.match(runMain(['--symbol=bogus']).error.join('\n'), /--symbol 只支持 count（收到：bogus）/u);
+    assert.match(runMain(['--symbol=bogus']).error.join('\n'), /--symbol 只支持 count\|strict（收到：bogus）/u);
     assert.match(runMain(['--bogus-arg']).error.join('\n'), /未知参数：--bogus-arg/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
