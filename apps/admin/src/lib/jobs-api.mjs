@@ -27,7 +27,7 @@
  * `describeJobs`／`jobRowViews`）也放在这里：与 `view-model.mjs`／`flags-view-model.mjs` 同构，
  * 同样是无 DOM、无全局副作用的纯函数，组件只负责把状态接到 DOM。
  */
-import { clampLimit, normalizeBaseUrl } from './admin-api.mjs';
+import { clampLimit, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
 import { CURSOR_MAX_LENGTH, LIMIT_DEFAULT, LIMIT_MAX, isPlainObject, readErrorEnvelope } from './admin-contract.mjs';
 
 /** 作业台路径（相对 API 基地址）。 */
@@ -510,15 +510,11 @@ export async function cancelJob({
 /**
  * 服务端声明优先：`serverRetryable` 是 boolean 就照它，`null`（根本没拿到响应）才回落到本地闭集。
  *
- * 与 `admin-audit-logs.mjs` 的 `serverAllowsRetry()` 同一套写法：「重试」按钮和「稍后重试」字样
- * 只许出现在服务端确实允许自动重试的时候。`failure()` 里 `serverRetryable` 默认 `null` =
- * 没有服务端响应可读；拿到了响应就由 `listJobs`／`cancelJob` 从 `ErrorBody.retryable` 填，
- * 信封形状不符（`envelope === null`）按「不可自动重试」处理。
+ * R67-B04：判据本体已收敛到 `admin-api.mjs` 的**唯一**一处实现（账号目录／停用写面／审计日志／
+ * 管理员面都引同一份），这里只再导出，保持既有 `import { serverAllowsRetry } from './jobs-api.mjs'` 不断。
+ * 「重试」按钮和「稍后重试」字样只许出现在服务端确实允许自动重试的时候。
  */
-export function serverAllowsRetry(result) {
-  if (typeof result?.serverRetryable === 'boolean') return result.serverRetryable;
-  return isRetriable(result?.kind) === true;
-}
+export { serverAllowsRetry };
 
 /** 失败对象 → 页面文案（标题/说明/色调/是否可重试/可执行动作）。不伪造成功。 */
 export function describeFailure(result) {

@@ -42,7 +42,7 @@ import {
   LIFECYCLE_NOTE,
   canLoadMoreFamily,
   changedVerdict,
-  describeFamily,
+  describeFamilyView,
   initialFamilyState,
   knowledgeDetailView,
   knowledgeRow,
@@ -78,7 +78,7 @@ const pickedSourceId = ref('');
 let requestSeq = 0;
 
 const rows = computed(() => state.value.collection.items.map(knowledgeRow));
-const view = computed(() => describeFamily(state.value, { label: '科普内容' }));
+const view = computed(() => describeFamilyView(state.value, { label: '科普内容' }));
 const detail = computed(() => (state.value.detail === null ? null : knowledgeDetailView(state.value.detail)));
 const detailFailure = computed(() => (state.value.detailFailure === null ? null : describeWriteFailure(state.value.detailFailure)));
 const canRead = computed(() => props.scopes.includes(SOURCES_READ_SCOPE));

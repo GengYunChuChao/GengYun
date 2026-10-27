@@ -101,6 +101,34 @@ export function isRetriable(kind) {
   return kind === 'rate_limited' || kind === 'unavailable' || kind === 'network_error';
 }
 
+/**
+ * 从**原始错误体**读服务端是否显式声明了 `retryable`。
+ *
+ * 为什么不直接用 `readErrorEnvelope(...).retryable`：`admin-contract.mjs` 把它归一成
+ * `error.retryable === true`，于是「服务端写了 false」与「服务端根本没写」都落成同一个 `false`，
+ * 而下面必须把两者分开——显式 `false` 是「别重试」，没写才是「按本地口径」。
+ * 返回 `true`／`false`／`null`（`null` = 没写，含没有错误信封）。
+ */
+export function declaredRetryableOf(body) {
+  const error = body?.error;
+  if (error === null || typeof error !== 'object') return null;
+  return typeof error.retryable === 'boolean' ? error.retryable : null;
+}
+
+/**
+ * 唯一判据：服务端有没有明确同意重试。
+ *
+ * - 服务端显式 `retryable:true`／`false` ⇒ 听服务端的（写 `false` 时重试必然还是同一个失败）；
+ * - 服务端没写（`null`）⇒ 回落 `isRetriable(kind)` 的本地口径，保持既有页面行为不变。
+ *
+ * 默认是「不允许」：既没有服务端声明、也没有本地 `kind` 结论时不承诺重试。
+ */
+export function serverAllowsRetry(result) {
+  if (typeof result?.serverRetryable === 'boolean') return result.serverRetryable;
+  if (typeof result?.retriable === 'boolean') return result.retriable;
+  return isRetriable(result?.kind) === true;
+}
+
 async function readJson(response) {
   try {
     return { ok: true, value: await response.json() };
@@ -109,8 +137,24 @@ async function readJson(response) {
   }
 }
 
+/**
+ * 失败对象工厂。
+ *
+ * `retriable` 不是本地闭集的复述：服务端显式写了 `retryable` 就听服务端的，只有服务端没写
+ * （`serverRetryable === null`）才回落 `isRetriable(kind)`（见 `serverAllowsRetry`）。
+ */
 function failure(kind, extra = {}) {
-  return { ok: false, kind, retriable: isRetriable(kind), status: null, code: null, message: '', ...extra };
+  const serverRetryable = typeof extra.serverRetryable === 'boolean' ? extra.serverRetryable : null;
+  return {
+    ok: false,
+    kind,
+    retriable: serverAllowsRetry({ serverRetryable, retriable: isRetriable(kind) }),
+    serverRetryable,
+    status: null,
+    code: null,
+    message: '',
+    ...extra,
+  };
 }
 
 /**
@@ -173,7 +217,9 @@ export async function fetchAccountsPage({ fetchImpl, baseUrl, token, cursor = nu
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
   const code = envelope?.code ?? null;
   const inContract = envelope?.inContract ?? false;
-  const base = { status, code, inContract, requestUrl };
+  // 服务端显式写了 `retryable` 就落成布尔，没写落成 null（⇒ 回落本地闭集）。
+  const serverRetryable = parsed.ok ? declaredRetryableOf(parsed.value) : null;
+  const base = { status, code, inContract, requestUrl, serverRetryable };
   const serverMessage = envelope?.message ?? '';
 
   if (status === 401 || code === 'SESSION_REQUIRED' || code === 'SESSION_EXPIRED') {
@@ -203,6 +249,7 @@ export async function fetchAccountsPage({ fetchImpl, baseUrl, token, cursor = nu
 export function describeFailure(result) {
   if (!result || result.ok !== false) return null;
   const suffix = result.status === null || result.status === undefined ? '' : `（HTTP ${result.status}）`;
+  const retry = serverAllowsRetry(result);
   switch (result.kind) {
     case 'signed_out':
       return { title: '未登录或会话已过期', detail: `请重新登录后台${suffix}`, retriable: false, action: 'sign_in' };
@@ -216,6 +263,14 @@ export function describeFailure(result) {
     case 'invalid_cursor':
       return { title: '游标无效', detail: '服务端拒绝该游标，需从第一页重新读取', retriable: false, action: 'restart' };
     case 'rate_limited':
+      if (!retry) {
+        return {
+          title: '请求过于频繁',
+          detail: `后端限流，且服务端声明不可自动重试（retryable=false），请人工确认后端状态后再手动重读${suffix}`,
+          retriable: false,
+          action: 'none',
+        };
+      }
       return {
         title: '请求过于频繁',
         detail: result.retryAfterSeconds === null ? '稍后重试' : `约 ${result.retryAfterSeconds} 秒后重试`,
@@ -223,8 +278,24 @@ export function describeFailure(result) {
         action: 'retry',
       };
     case 'unavailable':
+      if (!retry) {
+        return {
+          title: '服务暂不可用',
+          detail: `服务端声明不可自动重试（retryable=false）${suffix}；本页不伪造空行，请人工确认后端状态后再手动重读`,
+          retriable: false,
+          action: 'none',
+        };
+      }
       return { title: '服务暂不可用', detail: `稍后重试${suffix}`, retriable: true, action: 'retry' };
     case 'network_error':
+      if (!retry) {
+        return {
+          title: '网络请求失败',
+          detail: `服务端声明不可自动重试（retryable=false）${suffix}；请人工确认后端状态后再手动重读`,
+          retriable: false,
+          action: 'none',
+        };
+      }
       return { title: '网络请求失败', detail: result.message || '检查 API 基地址与开发代理后重试', retriable: true, action: 'retry' };
     case 'invalid_response':
       // 与 isRetriable 闭集一致：重试同一次请求不会改变响应形状，不给「必然失败」的重试入口。

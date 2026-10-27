@@ -345,11 +345,15 @@ export function canLoadMoreFamily(state) {
 }
 
 /**
- * `describeFamily` + **「服务端未接线」硬分支**。
+ * `describeFamily` + **「服务端未接线」硬分支**——五族内容页（资料来源／科普内容／分类／
+ * 注册登记／使用限制）的**唯一**列表口径，五页都调这一个函数。
  *
  * `real` 装配下没有库池时，这批内容操作一律 503 `PROVIDER_UNAVAILABLE`（fail-closed）。
  * 那不是「服务端忙」，更不是「0 行」：必须显示成「未接线」，且在服务端 `retryable:false` 时
- * **不给重试**（重试必然还是 503）。注册／限制两页用这个包装，其余三族保持原口径。
+ * **不给重试**（重试必然还是 503）。
+ *
+ * `describeFamily` 仍是纯回退（不含本分支）：`phase: 'unwired'` 的文案只在这里定义一次，
+ * 免得同一种 503 在不同页面有两种说法。
  */
 export function describeFamilyView(state, options = {}) {
   const view = describeFamily(state, options);

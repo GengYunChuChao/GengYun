@@ -9,7 +9,7 @@
  *  4. 停用写入失败**保留服务端状态码与错误码**（428／409／503…）原样展示；
  *  5. 「可重试」只给真正幂等安全的情形（同一 If-Match + 同一 Idempotency-Key）。
  */
-import { describeFailure } from './admin-api.mjs';
+import { describeFailure, serverAllowsRetry } from './admin-api.mjs';
 import { ACCOUNTS_SCOPE } from './admin-contract.mjs';
 import { ACCOUNTS_SUSPEND_SCOPE, etagForRevision, reasonProblem } from './account-suspend-api.mjs';
 
@@ -404,6 +404,9 @@ export function describeSuspendFailure(failure) {
     code: failure.code ?? null,
     status: failure.status ?? null,
   });
+  // R67-B04：服务端声明优先——显式 `retryable:false` 时既不给「用同一幂等键重试」，
+  // 也不承诺「稍后重试」（重试必然还是同一个失败），改为指引人工处理。
+  const retry = serverAllowsRetry(failure);
   switch (failure.kind) {
     case 'signed_out':
       return out('未登录或会话已过期', '请重新登录后台后再试', 'sign_in', false);
@@ -418,12 +421,28 @@ export function describeSuspendFailure(failure) {
     case 'idempotency_key_required':
       return out('缺少 Idempotency-Key', '写操作必须带幂等键；请「重新读取」后重试', 'reload', false);
     case 'in_progress':
+      if (!retry) {
+        return out(
+          '同一操作正在处理中',
+          '服务端判定该幂等键的在途请求未完成，且声明不可自动重试（retryable=false）；请先「重新读取」确认账号当前状态，再人工确认在途请求的结果',
+          'reload',
+          false,
+        );
+      }
       return out('同一操作正在处理中', '服务端判定该幂等键的在途请求未完成；稍后用同一幂等键重试会命中同一结果', 'retry', true);
     case 'not_found':
       return out('账号不存在', '服务端返回 404；请「重新读取」确认当前账号集合', 'reload', false);
     case 'invalid_request':
       return out('请求被拒绝', failure.message || '服务端判定请求体/参数不合法', 'none', false);
     case 'rate_limited':
+      if (!retry) {
+        return out(
+          '请求过于频繁',
+          '后端限流，且服务端声明不可自动重试（retryable=false）；请人工确认后端状态后再手动重读本页',
+          'reload',
+          false,
+        );
+      }
       return out(
         '请求过于频繁',
         failure.retryAfterSeconds === null || failure.retryAfterSeconds === undefined
@@ -433,8 +452,19 @@ export function describeSuspendFailure(failure) {
         true,
       );
     case 'unavailable':
+      if (!retry) {
+        return out(
+          '服务暂不可用',
+          '账号停用端口未接线或暂时不可用（不返回伪造的成功值）；服务端声明不可自动重试（retryable=false），本页不重发停用请求，请先「重新读取」确认账号当前状态后人工处理',
+          'reload',
+          false,
+        );
+      }
       return out('服务暂不可用', '账号停用端口未接线或暂时不可用（不返回伪造的成功值）；稍后重试', 'retry', true);
     case 'network_error':
+      if (!retry) {
+        return out('网络请求失败', '服务端声明不可自动重试（retryable=false）；请人工确认后端状态后再手动重读本页', 'reload', false);
+      }
       return out('网络请求失败', failure.message || '检查 API 基地址与网络后重试', 'retry', true);
     case 'invalid_response':
       return out('响应不符合契约', failure.message || '未渲染任何猜测值', 'none', false);
