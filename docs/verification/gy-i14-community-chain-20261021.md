@@ -84,7 +84,7 @@
 | 3 | 403 `ACCOUNT_INACTIVE` | 码**如实保留**（B7 = `denied`）+ **清会话** | #396 §1.3 第 3 条；令牌已永久不可用 |
 | 4 | 401 `SESSION_EXPIRED` | 归一 `SESSION_REQUIRED` + 清会话 | #396 §1.3 第 2d 条 |
 | 5 | 社区 `public_posting` 闸 | 本片**不挂**，登记前置条件 | #396 §1.3 第 5 条 |
-| 6 | 「会话类」到底包含哪些码 | 页面**不再写字面量**，改判 `api.sessionFailure()`（= `auth.isSessionLossCode`，闭集由 `states.CODE_KIND` 反推）⇒ `SESSION_REQUIRED` / `SESSION_EXPIRED` / `SESSION_CHANGED` 一视同仁 | `SESSION_CHANGED` 在 `states.js:61` 就归 `session` 类；改前三个页面各写一次 `=== 'SESSION_REQUIRED'`，等于**第四份口径**，且把「会话已变化」说成「社区服务暂不可用」 |
+| 6 | 「会话类」到底包含哪些码 | 页面**不再写字面量**，改判 `api.sessionFailure()`（= `auth.isSessionLossCode`，闭集由 `states.CODE_KIND` 反推）⇒ `SESSION_REQUIRED` / `SESSION_EXPIRED` / `SESSION_CHANGED` 一视同仁 | `SESSION_CHANGED` 在 `states.js:72` 就归 `session` 类；改前三个页面各写一次 `=== 'SESSION_REQUIRED'`，等于**第四份口径**，且把「会话已变化」说成「社区服务暂不可用」 |
 | 7 | 403 在**写路径**怎么表现 | 与读路径一致：**整页** denied（不是一句 toast） | 403 是「登录了但不给你」，不是「这次点击没成功」；留一个看似正常、点一次骂一次的页面才是骗人。toast 也不会清掉 `error.code`，用户永远看不到原因 |
 | 8 | denied 态要不要留按钮 | 默认不留（B7 原设计：403 重试不会变好），但**导航动作**用 `allow-denied-action` 保留（详情页「返回社区」、投稿页「重新填写」） | 详情页若不留，用户会被困在一个回不去也重试不了的页面；`state-view` 的 `actionSuppressed` 只该收「重试」类动作 |
 | 9 | 评论取数失败怎么显示 | 评论区自己报错（可重试），**不**折叠成空态、**不**把整页说成「内容不可见」 | 空态是「服务端说没有」，失败是「服务端没回话」；把后者显示成前者是在替服务端编结论 |
