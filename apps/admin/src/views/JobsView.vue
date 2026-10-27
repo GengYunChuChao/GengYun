@@ -19,17 +19,25 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { API_BASE_URL, loadAdminSession, signInAdmin, signOutAdmin } from '../auth/session';
 import {
+  JOB_FILTER_ERROR_CODES,
+  JOB_FILTER_STATES,
+  JOB_STATE_NOTES,
   canCancelNow,
   canLoadMoreJobs,
   cancelJob,
   describeFailure,
+  describeIgnoredJobFilter,
   describeJobs,
   describeSignInFailure,
+  hasJobFilter,
   initialJobsState,
   jobDetailOf,
   jobRowViews,
+  jobsFilterSearch,
   listJobs,
   newIdempotencyKey,
+  normalizeJobFilter,
+  readJobsFilter,
   reasonProblem,
   reduceJobs,
   signInFailureOf,
@@ -63,6 +71,11 @@ const signInNotice = computed(() => describeSignInFailure(state.value.failure));
 const moreAvailable = computed(() => canLoadMoreJobs(state.value));
 const retryRead = computed(() => view.value.canRetry === true);
 const reloadNeeded = computed(() => view.value.action === 'reload');
+// 筛选（契约 `GET /admin/jobs` 的两个具名 query 参数）：选项直接来自闭集，页面不另抄一份字符串数组。
+const filterStates = JOB_FILTER_STATES;
+const filterErrorCodes = JOB_FILTER_ERROR_CODES;
+const stateNotes = JOB_STATE_NOTES;
+const filterActive = computed(() => hasJobFilter(state.value.filter));
 
 function dispatch(action) {
   state.value = reduceJobs(state.value, action);
@@ -77,7 +90,13 @@ async function requestPage(cursor, { reset }) {
   const seq = ++requestSeq;
   busy.value = true;
   dispatch({ type: 'LOAD_START', reset });
-  const result = await listJobs({ baseUrl: API_BASE_URL, token, cursor });
+  const result = await listJobs({
+    baseUrl: API_BASE_URL,
+    token,
+    cursor,
+    state: state.value.filter.state,
+    errorCode: state.value.filter.errorCode,
+  });
   if (seq !== requestSeq) return; // 过期响应：丢弃，不改状态
   busy.value = false;
   if (result.ok) {
@@ -135,6 +154,58 @@ function loadMore() {
   const cursor = state.value.nextCursor;
   if (cursor === null) return;
   requestPage(cursor, { reset: false });
+}
+
+/* ------------------------------------------------------------------ *
+ * 筛选（契约 GET /admin/jobs 的 state／error_code，服务端已下推到 SQL）
+ *
+ * 三件事必须一起发生，缺一件就是行为 bug：
+ * 1. 闭集外的值**本地拒绝**：不发请求，只给可读提示（服务端对闭集外只会回 400）；
+ * 2. 换筛选必须 `cursor` 归零并重读第一页（上游游标 watermark 绑筛选组合）；
+ * 3. 筛选同步进地址栏（刷新后保持），清空时把参数删掉。
+ * ------------------------------------------------------------------ */
+
+/** 地址栏查询串；没有 window（如单测直接 import）时按空串处理。 */
+function currentSearch() {
+  const search = globalThis.window?.location?.search;
+  return typeof search === 'string' ? search : '';
+}
+
+/** 用 replaceState 写回筛选：不产生历史记录（筛选不是页面跳转，返回键不该被它占据）。 */
+function syncFilterToUrl(filter) {
+  const location = globalThis.window?.location;
+  const history = globalThis.window?.history;
+  if (location === undefined || history === undefined || typeof history.replaceState !== 'function') return;
+  const search = jobsFilterSearch(typeof location.search === 'string' ? location.search : '', filter);
+  const pathname = typeof location.pathname === 'string' ? location.pathname : '';
+  const hash = typeof location.hash === 'string' ? location.hash : '';
+  history.replaceState(history.state ?? null, '', `${pathname}${search}${hash}`);
+}
+
+/**
+ * 改一个筛选字段：闭集外的值只留提示（不改筛选、不发请求、不写地址栏）；
+ * 合法值与当前一致时不重读（避免白跑一次请求）。
+ */
+function setFilter(field, value) {
+  const candidate = { ...state.value.filter, [field]: value };
+  const normalized = normalizeJobFilter(candidate);
+  if (!normalized.ok) {
+    dispatch({ type: 'FILTER_REJECTED', message: normalized.problems.join('；') });
+    return;
+  }
+  const current = state.value.filter;
+  if (normalized.filter.state === current.state && normalized.filter.errorCode === current.errorCode) return;
+  dispatch({ type: 'SET_FILTER', filter: normalized.filter });
+  syncFilterToUrl(normalized.filter);
+  requestPage(null, { reset: true });
+}
+
+/** 清空筛选，回到默认列表（并把地址栏里的两个参数删掉）。 */
+function clearFilters() {
+  if (!hasJobFilter(state.value.filter)) return;
+  dispatch({ type: 'SET_FILTER', filter: { state: '', errorCode: '' } });
+  syncFilterToUrl(state.value.filter);
+  requestPage(null, { reset: true });
 }
 
 /**
@@ -207,6 +278,17 @@ function retryCancel() {
 }
 
 onMounted(async () => {
+  // 刷新保持：地址栏里的筛选只认闭集，闭集外的值不发给服务端（发了只会换 400）。
+  const fromUrl = readJobsFilter(currentSearch());
+  if (fromUrl.state !== '' || fromUrl.errorCode !== '') {
+    dispatch({ type: 'SET_FILTER', filter: fromUrl });
+  }
+  // 被忽略的值必须说出来：否则用户看到的是全量列表，却被留在一个看起来在筛选的地址栏上
+  // （页面内选错值有 role="alert" 提示，两条路径不能两套待遇）。
+  // 顺序有讲究：必须排在 SET_FILTER 之后 —— SET_FILTER 成功时会把 filterFailure 清成 null。
+  if (fromUrl.ignored.length > 0) {
+    dispatch({ type: 'FILTER_REJECTED', message: describeIgnoredJobFilter(fromUrl.ignored) });
+  }
   const existing = await loadAdminSession();
   if (existing === null) {
     dispatch({ type: 'SESSION_MISSING' });
@@ -268,6 +350,43 @@ onBeforeUnmount(() => {
       </p>
 
       <div class="toolbar">
+        <label class="filter">
+          <span>作业状态（契约 <code>JobState</code>）</span>
+          <select
+            :value="state.filter.state"
+            name="state"
+            data-testid="jobs-filter-state"
+            :disabled="busy"
+            @change="setFilter('state', $event.target.value)"
+          >
+            <option value="">全部状态（不筛选）</option>
+            <option v-for="option in filterStates" :key="option" :value="option">
+              {{ option }}（{{ stateNotes[option] }}）
+            </option>
+          </select>
+        </label>
+        <label class="filter">
+          <span>错误码（契约 <code>ErrorCode</code>）</span>
+          <select
+            :value="state.filter.errorCode"
+            name="error_code"
+            data-testid="jobs-filter-error-code"
+            :disabled="busy"
+            @change="setFilter('errorCode', $event.target.value)"
+          >
+            <option value="">全部错误码（不筛选）</option>
+            <option v-for="option in filterErrorCodes" :key="option" :value="option">{{ option }}</option>
+          </select>
+        </label>
+        <button
+          class="ghost"
+          type="button"
+          data-testid="jobs-filter-clear"
+          :disabled="busy || !filterActive"
+          @click="clearFilters"
+        >
+          清空筛选
+        </button>
         <label class="reason">
           <span>取消理由（必填，进服务端审计；契约 <code>ReasonInput.reason</code> 1–500 字符）</span>
           <input
@@ -282,6 +401,11 @@ onBeforeUnmount(() => {
         <button class="ghost" type="button" :disabled="busy" @click="reload">重新读取</button>
         <button v-if="moreAvailable" class="primary" type="button" :disabled="busy" @click="loadMore">加载下一页</button>
       </div>
+      <!-- 闭集外的筛选值：本地已拦下（零请求），这里必须能被读屏当错误播报。 -->
+      <p v-if="state.filterFailure" class="banner error" role="alert" data-testid="jobs-filter-error">
+        <strong>筛选值不可用（本地已拦下，未发出请求）</strong>
+        <span>{{ state.filterFailure }}</span>
+      </p>
       <p v-if="reasonErr" class="foot warn-text">取消理由不可用：{{ reasonErr }}</p>
 
       <!--
@@ -465,16 +589,19 @@ code {
   background: #fff;
 }
 .signin label,
-.reason {
+.reason,
+.filter {
   display: grid;
   gap: 0.25rem;
   font-size: 0.9rem;
 }
-input {
+input,
+select {
   padding: 0.45rem 0.6rem;
   border: 1px solid #cbd5e0;
   border-radius: 8px;
   font: inherit;
+  background: #fff;
 }
 .toolbar {
   display: flex;
@@ -484,6 +611,9 @@ input {
 }
 .reason {
   flex: 1 1 20rem;
+}
+.filter {
+  flex: 0 1 12rem;
 }
 button {
   font: inherit;
