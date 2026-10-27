@@ -56,6 +56,12 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run test:unit
+      # `test:unit` 只跑 `tests/{unit,privacy,media,reference,moderation}/*.test.mjs` 这批 glob，
+      # **不含**顶层 `tests/ui-unified-states.test.mjs`：它是契约错误码 ↔ `miniprogram/utils/states.js`
+      # 的双向对拍（契约里每个码都必须有状态归类；多出未登记的码同样红）。不单独跑这一步，
+      # 「契约加了码、端上没归类」这类漏改会一路合进 main，出错时页面没有状态可渲染。
+      - name: "统一状态层 ↔ 契约错误码双向对拍（顶层用例，不在 test:unit 的 glob 里）"
+        run: node --test tests/ui-unified-states.test.mjs
 
   integration:
     name: integration-http

@@ -66,6 +66,16 @@ const CODE_KIND = {
   PROVIDER_UNAVAILABLE: 'unavailable',
   PROVIDER_OUTCOME_UNKNOWN: 'unavailable',
   PROVIDER_TIMEOUT: 'unavailable',
+  // —— 500 服务端自身缺陷：兜底信封返回的**未归类异常**，同属服务侧但**不可重试** ——
+  // HTTP 500：服务端未归类异常时由 `services/api/src/app.ts` 的 setErrorHandler 兜底信封返回
+  // （#688 起契约里才有这个码，`ERROR_STATUS_MAP` 的 `500: ['INTERNAL_ERROR']`）。可重试性：否。
+  // 为什么不是 unavailable：那一类装的是**上游/装配**问题，不是服务端自身缺陷——503 的
+  // `PROVIDER_UNAVAILABLE`／`PROVIDER_OUTCOME_UNKNOWN`、504 的 `PROVIDER_TIMEOUT`，连同客户端自造码
+  // `UNAVAILABLE`，共 **4** 个码，过一会儿重发有意义；500 是服务端自己的代码缺陷，原样重发只会再撞
+  // 一次同样的异常，给「重试」按钮等于让用户白点——且 `KIND_RETRYABLE.unavailable` 为 true，
+  // 改它等于一次改掉上面 4 个码的可重试性。
+  // 为什么不是 unknown：码是契约里已知的兜底码，标成「未分类的失败」会让用户以为页面没识别出来。
+  INTERNAL_ERROR: 'server',
   // —— 客户端自造码（不在契约里，仅本仓 miniprogram 适配层使用） ——
   // auth.js / *-api.js 在本地判定不可联网、服务端未接线时抛这两个，必须同样有归类，
   // 否则会出现「有码但无状态」的空白提示。它们不是契约码，故单列在此并注明来源。
@@ -93,6 +103,7 @@ const KIND_LABEL = {
   input: '条件不合法',
   throttled: '请求过于频繁',
   unavailable: '服务暂时不可用',
+  server: '服务端错误',
   unknown: '未分类的失败'
 };
 
@@ -110,6 +121,7 @@ const KIND_RETRYABLE = {
   input: false,
   throttled: true,
   unavailable: true,
+  server: false, // HTTP 500 兜底：服务端自身缺陷，同一请求重发只会再撞一次同样的异常
   unknown: false
 };
 
@@ -183,6 +195,9 @@ function resolve(code, fallback) {
 module.exports = {
   STATUS,
   KIND_LABEL,
+  // 导出只为让 `tests/ui-unified-states.test.mjs` 能判「每个 kind 都显式声明了可重试性」：
+  // 少了条目时 `retryableForCode` 对未知 kind 一律回 false，行为上看不出差别（等于静默失效）。
+  KIND_RETRYABLE,
   CODE_KIND,
   CLIENT_ONLY_CODES,
   isMockMode,
