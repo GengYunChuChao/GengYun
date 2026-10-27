@@ -23,6 +23,11 @@ import {
   validateJobPage,
 } from '../../apps/admin/src/lib/jobs-api.mjs'
 
+// P08（作业台筛选）：新符号走命名空间导入，而不是塞进上面那份具名清单——
+// 这样「基线还没实现」时新增用例只在本段失败，不会把整份文件的导入判成 SyntaxError 而连带既有用例。
+import * as jobsApi from '../../apps/admin/src/lib/jobs-api.mjs'
+import * as adminContract from '../../apps/admin/src/lib/admin-contract.mjs'
+
 // GY-I18 / issue #18：后台「AI 作业台」读＋取消面（假 fetch 注入；不连真实服务、不读真实令牌）。
 //
 // 说明：`apps/admin` 目前没有组件级测试基建（无 vitest／@vue/test-utils／jsdom；仓内前端测试
@@ -583,4 +588,172 @@ test('jobRowViews: state 徽标色调与终态禁用原因对齐既有 pill 闭�
   assert.equal(rows[0].errorCode, '—')
   assert.equal(rows[0].createdAt, '2026-10-20T11:58:00Z') // 原样展示，不重排时区
   assert.equal(rows[0].deadlineAt, '2026-10-20T12:00:00Z')
+})
+
+// ---------------------------------------------------------------------------
+// P08（审计缺口）：库侧过滤参数 `state` / `error_code` 接进后台页面
+//
+// 事实来源：契约 `GET /admin/jobs` 的 parameters（`state` → `JobState`、`error_code` → `ErrorCode`）与
+// 服务端已实现的下推（`services/api/src/admin/ops/jobs-pg.ts` 的 `listWhereFor()`）。
+// 页面级（真实 SFC）用例在 `tests/unit/admin-ui-jobs-filter.test.mjs`。
+// ---------------------------------------------------------------------------
+
+test('P08 闭集派生：筛选取值复用既有契约镜像（JOB_STATES / ERROR_CODES）的同一个对象，不另抄数组', () => {
+  assert.equal(jobsApi.JOB_FILTER_STATES, jobsApi.JOB_STATES, 'state 闭集必须就是 JOB_STATES 本身（同一引用，不是拷贝）')
+  assert.equal(
+    jobsApi.JOB_FILTER_ERROR_CODES,
+    adminContract.ERROR_CODES,
+    'error_code 闭集必须就是 admin-contract.mjs 的 ERROR_CODES（同一引用，不是拷贝）',
+  )
+  assert.deepEqual([...jobsApi.JOB_FILTER_STATES], ['queued', 'running', 'succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'])
+  assert.equal(jobsApi.JOB_FILTER_ERROR_CODES.length, 27)
+})
+
+test('P08 buildJobsUrl：合法 state / error_code 逐字进查询串；空值不发；既有 limit／cursor 顺序不变', () => {
+  assert.equal(buildJobsUrl(BASE, { state: 'failed' }), '/api/v1/admin/jobs?limit=20&state=failed')
+  assert.equal(
+    buildJobsUrl(BASE, { cursor: 'page-2', state: 'timed_out' }),
+    '/api/v1/admin/jobs?limit=20&cursor=page-2&state=timed_out',
+    '续页仍带游标；游标在前、筛选在后，既有断言不受影响',
+  )
+  assert.equal(
+    buildJobsUrl(BASE, { state: 'failed', errorCode: 'PROVIDER_TIMEOUT' }),
+    '/api/v1/admin/jobs?limit=20&state=failed&error_code=PROVIDER_TIMEOUT',
+    '契约里的参数名是 error_code（不是 errorCode）',
+  )
+  assert.equal(buildJobsUrl(BASE, { state: '', errorCode: '' }), '/api/v1/admin/jobs?limit=20', '空值＝不筛选，不发该参数')
+  assert.equal(buildJobsUrl(BASE, { state: null, errorCode: undefined }), '/api/v1/admin/jobs?limit=20', 'null／undefined 等同没给')
+})
+
+test('P08 buildJobsUrl：闭集外的值在本地抛错（连 URL 都不产出），错误信息点名该值、闭集名与合法取值', () => {
+  assert.throws(
+    () => buildJobsUrl(BASE, { state: 'completed' }),
+    (error) => {
+      assert.equal(error instanceof RangeError, true, '闭集外属于取值越界，用 RangeError')
+      assert.match(error.message, /completed/)
+      assert.match(error.message, /JobState/)
+      assert.match(error.message, /timed_out/)
+      return true
+    },
+  )
+  assert.throws(() => buildJobsUrl(BASE, { errorCode: 'PROVIDER_UNKNOWN' }), /PROVIDER_UNKNOWN[\s\S]*ErrorCode/)
+  assert.throws(() => buildJobsUrl(BASE, { state: 42 }), /state/, '非字符串（如重复查询参数变数组）也在本地拒绝')
+})
+
+test('P08 listJobs：合法筛选进请求 URL；闭集外的值 ⇒ 一条请求都不发，返回 invalid_request + 可读提示', async () => {
+  const okSpy = spy(() => jsonResponse(200, envelope({ items: [job()], next_cursor: null })))
+  const good = await listJobs({
+    fetchImpl: okSpy.impl,
+    baseUrl: BASE,
+    token: TOKEN,
+    state: 'failed',
+    errorCode: 'PROVIDER_TIMEOUT',
+  })
+  assert.equal(good.ok, true)
+  assert.equal(okSpy.calls.length, 1)
+  assert.equal(okSpy.calls[0].url, '/api/v1/admin/jobs?limit=20&state=failed&error_code=PROVIDER_TIMEOUT')
+
+  const badSpy = spy(() => jsonResponse(200, envelope({ items: [], next_cursor: null })))
+  const rejected = await listJobs({ fetchImpl: badSpy.impl, baseUrl: BASE, token: TOKEN, state: 'completed' })
+  assert.equal(badSpy.calls.length, 0, '闭集外的筛选值必须在本地拦下：不发必然 400 的请求')
+  assert.equal(rejected.ok, false)
+  assert.equal(rejected.kind, 'invalid_request', '这是本地校验失败，不是游标问题')
+  assert.equal(rejected.retriable, false)
+  assert.match(rejected.message, /completed/)
+  assert.match(rejected.message, /JobState/)
+
+  const view = describeFailure(rejected)
+  assert.equal(view.title, '请求不合法')
+  assert.equal(view.detail, rejected.message, '页面提示要原样给出那条可读信息，不吞成「请求失败」')
+  assert.equal(view.tone, 'error')
+  assert.equal(view.retriable, false)
+})
+
+test('P08 状态机：换筛选 ⇒ 游标归零（不接着上一页翻）；非法值只留提示、不改筛选、不动游标', () => {
+  let state = reduceJobs(initialJobsState(), { type: 'SIGNED_IN', scopes: ['jobs:read'], scopesProvided: true })
+  assert.deepEqual(state.filter, { state: '', errorCode: '' }, '初始状态不筛选')
+  state = reduceJobs(state, { type: 'LOAD_OK', reset: true, jobs: [job()], nextCursor: 'cursor-2' })
+  assert.equal(state.nextCursor, 'cursor-2')
+
+  state = reduceJobs(state, { type: 'SET_FILTER', filter: { state: 'failed' } })
+  assert.deepEqual(state.filter, { state: 'failed', errorCode: '' })
+  assert.equal(state.nextCursor, null, '换筛选必须让上一组筛选的游标作废（服务端游标 watermark 绑筛选组合）')
+  assert.equal(state.filterFailure, null)
+
+  const rejected = reduceJobs(state, { type: 'SET_FILTER', filter: { state: 'completed' } })
+  assert.deepEqual(rejected.filter, { state: 'failed', errorCode: '' }, '非法值不得写进筛选')
+  assert.match(rejected.filterFailure, /completed/)
+  assert.match(rejected.filterFailure, /JobState/)
+  assert.equal(rejected.nextCursor, null, '非法值不产生新游标')
+
+  const cleared = reduceJobs(state, { type: 'SET_FILTER', filter: { state: '', errorCode: '' } })
+  assert.deepEqual(cleared.filter, { state: '', errorCode: '' }, '清空筛选回到默认列表')
+  assert.equal(cleared.nextCursor, null)
+})
+
+test('P08 URL ⇄ 筛选：只认闭集（非法值丢弃并记账），往返保留别的查询参数，清空即删参数', () => {
+  assert.deepEqual(jobsApi.readJobsFilter('?state=failed&error_code=PROVIDER_TIMEOUT'), {
+    state: 'failed',
+    errorCode: 'PROVIDER_TIMEOUT',
+    ignored: [],
+  })
+  // 被忽略的项要带「哪个参数、什么值、为什么不行」，页面才能在不静默的同时说清细节。
+  const rejected = jobsApi.readJobsFilter('?state=completed&error_code=NOPE')
+  assert.deepEqual(
+    rejected.ignored.map((entry) => [entry.field, entry.param, entry.value]),
+    [
+      ['state', 'state', 'completed'],
+      ['errorCode', 'error_code', 'NOPE'],
+    ],
+    '非法值必须逐项记账（字段 / 契约参数名 / 原始值），不是只丢一个字段名',
+  )
+  assert.equal(rejected.state, '')
+  assert.equal(rejected.errorCode, '')
+  assert.match(rejected.ignored[0].problem, /state 取值不在契约闭集：completed/)
+  assert.match(rejected.ignored[1].problem, /error_code 取值不在契约闭集：NOPE/)
+  assert.deepEqual(jobsApi.readJobsFilter(''), { state: '', errorCode: '', ignored: [] })
+  assert.deepEqual(jobsApi.readJobsFilter('?state=failed').ignored, [], '合法值不算被忽略')
+
+  assert.equal(jobsApi.jobsFilterSearch('', { state: 'running' }), '?state=running')
+  assert.equal(
+    jobsApi.jobsFilterSearch('?tab=jobs', { state: 'timed_out', errorCode: 'MEDIA_TOO_LARGE' }),
+    '?tab=jobs&state=timed_out&error_code=MEDIA_TOO_LARGE',
+  )
+  assert.equal(jobsApi.jobsFilterSearch('?state=failed&tab=jobs', { state: '', errorCode: '' }), '?tab=jobs', '清空只删自己的参数')
+  assert.equal(jobsApi.jobsFilterSearch('?state=failed', { state: '', errorCode: '' }), '', '只剩空查询串时返回空串（不留裸 ?）')
+  assert.equal(jobsApi.jobsFilterSearch('?state=failed', { state: 'completed' }), '', '非法值不得写进地址栏')
+})
+
+test('P08 地址栏被忽略项的提示文案：点名参数与值、与页面内选错值同一套原因，没有忽略项时为空串', () => {
+  assert.equal(jobsApi.describeIgnoredJobFilter([]), '', '没有忽略项就不该有提示（否则每次加载都挂个假警报）')
+  assert.equal(jobsApi.describeIgnoredJobFilter(), '', '缺参等同没有忽略项')
+
+  const message = jobsApi.describeIgnoredJobFilter(jobsApi.readJobsFilter('?state=completed').ignored)
+  assert.match(message, /已忽略/, '必须说清「这个值没生效」，不能让用户以为自己看的是筛选结果')
+  assert.match(message, /未发给服务端/, '必须说清没有任何请求被这个值影响')
+  assert.match(message, /state 取值不在契约闭集：completed/, '必须点名被忽略的值（与页面内选错值同一句文案）')
+  assert.match(message, /JobState/, '必须点名它属于哪个契约闭集')
+  assert.match(message, /queued/, '提示必须列出合法取值（从闭集派生，不是「参数不合法」四个字）')
+
+  const two = jobsApi.describeIgnoredJobFilter(jobsApi.readJobsFilter('?state=completed&error_code=NOPE').ignored)
+  assert.match(two, /completed/, '多个被忽略项要逐个点名')
+  assert.match(two, /NOPE/)
+  assert.match(two, /；/, '多个被忽略项之间要可读地分开')
+})
+
+test('P08 归一化：前后空白 trim 后放行（同一合法值，不因空白发两个值），大小写与异名仍拒绝', () => {
+  // 这是**有意的宽容**：`' failed '` 与 `failed` 是同一取值，trim 后照常下推。
+  // 若将来改成严格匹配，这条会红 —— 改动必须是有意的，不能静默漂移。
+  const padded = jobsApi.normalizeJobFilter({ state: ' failed ', errorCode: ' PROVIDER_TIMEOUT ' })
+  assert.equal(padded.ok, true)
+  assert.deepEqual(padded.filter, { state: 'failed', errorCode: 'PROVIDER_TIMEOUT' })
+  assert.equal(buildJobsUrl(BASE, { state: ' failed ' }), '/api/v1/admin/jobs?limit=20&state=failed', '空白不得进 URL')
+  assert.equal(
+    buildJobsUrl(BASE, { state: 'failed ', errorCode: 'PROVIDER_TIMEOUT' }),
+    '/api/v1/admin/jobs?limit=20&state=failed&error_code=PROVIDER_TIMEOUT',
+  )
+
+  // 宽容只限空白：大小写不同、异名一律本地拒绝（不比服务端宽松）。
+  assert.throws(() => buildJobsUrl(BASE, { state: ' Failed ' }), /Failed[\s\S]*JobState/)
+  assert.equal(jobsApi.hasJobFilter({ state: '  ' }), false, '纯空白＝没筛选')
 })
