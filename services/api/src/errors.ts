@@ -83,8 +83,10 @@ const DEFAULT_RETRY_AFTER_SECONDS = 1;
  * 契约要求（`docs/architecture/state-contract.md`）：
  * - `:27` 行 429（`RATE_LIMITED` / `PROVIDER_QUOTA_EXCEEDED`）**必须**带 `Retry-After`；
  * - `:34` 行「处理中 409 `REQUEST_IN_PROGRESS`」**必须**带 `Retry-After`；
- * - 503/504 未在此强制；`packages/contracts/openapi.json` 里该头对所有错误响应都是 `required: false`
- *   （`{type:"integer", minimum:1}`，描述「仅可重试 409/429/503 返回」）⇒ 其余错误码**不写**该头。
+ * - 503/504 未在 state-contract 强制；`packages/contracts/openapi.json` 里该头对所有错误响应都是
+ *   `required: false`（`{type:"integer", minimum:1}`，描述「仅可重试 409/429/503 返回」）——契约把
+ *   「**可重试的** 503」列进了带该头的范围，故本函数对可重试的 503/504 也给值（见取值 3）；
+ *   **不可重试**的 503/504 与其余错误码**不写**该头。
  *
  * 取值（确定性、可解释、整数秒；⛔不用 HTTP-date 形式）：
  * 1. **优先用限流器给出的剩余窗口**：`services/api/src/rate-limit/limiter.ts` 在拒绝请求时把
@@ -94,6 +96,11 @@ const DEFAULT_RETRY_AFTER_SECONDS = 1;
  *    45011 映射成 `RATE_LIMITED`，上游只给错误码、不给剩余窗口），`Provider` 侧 429 亦然；此时任何
  *    更大的数字都是编造，1 是 openapi `minimum: 1` 的最小合法值，语义是「至少等 1 秒再试」。
  *    409 `REQUEST_IN_PROGRESS` 同理：同一 Key 的前一个请求通常在毫秒级完成，1 秒与本仓既有口径（#108）一致。
+ * 3. **可重试的 503/504 同取固定 1 秒**：`retryable === true` 的唯一口径是「同一请求在无人工/运维介入下
+ *    稍后重试可能成功」（见本文件 `ApiError` 上方那段注释），上游超时/暂不可用（例：`auth/wechat.ts`
+ *    映射出的 503）正属此类，此时「至少等 1 秒再试」与 409 是同一口径，仍不编造更大的数字。
+ *    **`retryable === false` 的 503/504 一律 `null`**：未装配／未接线／权限缺失这类要运维改配置，
+ *    时间不会让它自愈，给出等待秒数等于向客户端谎报「等一会儿就好」——判别力就在这一条上。
  */
 export function retryAfterSecondsFor(error: ApiError): number | null {
   const fromLimiter = error.retryAfterSeconds;
@@ -103,6 +110,10 @@ export function retryAfterSecondsFor(error: ApiError): number | null {
   }
   if (error.code === 'REQUEST_IN_PROGRESS') return DEFAULT_RETRY_AFTER_SECONDS;
   if (error.status === 429) return DEFAULT_RETRY_AFTER_SECONDS;
+  // 可重试的 503/504：只认 `retryable === true`，不看状态码本身（`retryable` 才是「稍后会好」的口径）。
+  if (error.retryable === true && (error.status === 503 || error.status === 504)) {
+    return DEFAULT_RETRY_AFTER_SECONDS;
+  }
   return null;
 }
 

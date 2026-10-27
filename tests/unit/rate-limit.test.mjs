@@ -2,9 +2,11 @@
 // 429 契约与 `Retry-After` / `X-RateLimit-*` 头。
 //
 // 覆盖派单要求的五条：窗口内超限 429、窗口过期恢复、不同 key 互不影响、白名单/豁免路径、
-// 错误码与头字段正确；另外钉住两条容易回归的实现细节：
+// 错误码与头字段正确；另外钉住三条容易回归的实现细节：
 // - 同一请求串行过两条守卫（`requireAdmin` + `requireScope`）只计一次；
-// - 计数在进程内**单实例**（本文件不断言多实例一致，因为那正是未做的部分）。
+// - 计数在进程内**单实例**（本文件不断言多实例一致，因为那正是未做的部分）；
+// - 可重试的 503/504 也给 `Retry-After`（R67-A02：实现追赶上契约「仅可重试 409/429/503 返回」），
+//   不可重试的 503/504 仍不给——只按状态码下发的草率改法会在那两条上红。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -325,6 +327,60 @@ test('429 契约：复用 RATE_LIMITED（不新增错误码），Retry-After 取
   assert.equal(retryAfterSecondsFor(new ApiError('RATE_LIMITED', 'x', { retryAfterSeconds: 0 })), 1, '小于 1 一律按 1 秒');
   assert.equal(retryAfterSecondsFor(new ApiError('REQUEST_IN_PROGRESS', 'x')), 1);
   assert.equal(retryAfterSecondsFor(new ApiError('NOT_FOUND', 'x')), null, '非 429/409 不写该头');
+});
+
+// R67-A02：契约（`packages/contracts/openapi.json:10453-10459` 等 6 处）把该头的语义写成
+// 「**仅可重试**的 409/429/503 返回」，即「可重试」就该带值。实现此前只覆盖 409/429，可重试的
+// 503（上游暂不可用）与 504（上游超时）拿不到等待建议 ⇒ 客户端只能盲退避。
+//
+// 判别力在下面第 3 组：`retryable === false` 的 503/504 必须仍是 `null`——「未装配/未接线/权限缺失」
+// 重试不会因时间推移而成功，给秒数等于向客户端谎报「等一会儿就好」。只按状态码给值的草率改法
+// （`if (status === 503 || status === 504) return 1;`）会在这两条上立刻红。
+test('可重试 503/504 与 429/409 同给 Retry-After；不可重试的 503/504 仍不给（R67-A02）', () => {
+  // = `errors.ts` 的 `DEFAULT_RETRY_AFTER_SECONDS`（当前 1，openapi `minimum: 1` 的最小合法值）
+  const ONE = 1;
+
+  // 1) 可重试 503（上游暂不可用 / fail-closed 的**瞬时**读面）⇒ 正整数，且与 409 同一口径
+  const retryable503 = retryAfterSecondsFor(
+    new ApiError('PROVIDER_UNAVAILABLE', '上游暂不可用', { retryable: true }),
+  );
+  assert.equal(retryable503, ONE, '可重试 503 必须给出等待秒数');
+  assert.equal(
+    retryable503,
+    retryAfterSecondsFor(new ApiError('REQUEST_IN_PROGRESS', 'x')),
+    '可重试 503 与 409 REQUEST_IN_PROGRESS 同一口径（至少等 1 秒再试）',
+  );
+
+  // 2) 可重试 504（上游超时）⇒ 同上
+  assert.equal(
+    retryAfterSecondsFor(new ApiError('PROVIDER_TIMEOUT', '上游超时', { retryable: true })),
+    ONE,
+    '可重试 504 必须给出等待秒数',
+  );
+
+  // 3) 不可重试的 503/504 ⇒ 仍 null（本片的判别力所在）
+  assert.equal(
+    retryAfterSecondsFor(new ApiError('PROVIDER_UNAVAILABLE', '目录尚未接线')),
+    null,
+    '不可重试 503（默认 retryable:false）不得给等待头',
+  );
+  assert.equal(
+    retryAfterSecondsFor(new ApiError('PROVIDER_TIMEOUT', '超时但非瞬时故障', { retryable: false })),
+    null,
+    '不可重试 504 不得给等待头',
+  );
+
+  // 4) 回归：429 仍取默认值
+  assert.equal(retryAfterSecondsFor(new ApiError('RATE_LIMITED', 'x')), ONE, '429 仍给默认值');
+
+  // 5) 限流器/上游给出的具体秒数优先，不许被默认值覆盖
+  assert.equal(
+    retryAfterSecondsFor(
+      new ApiError('PROVIDER_UNAVAILABLE', '上游说 7 秒', { retryable: true, retryAfterSeconds: 7 }),
+    ),
+    7,
+    '具体秒数优先于默认值',
+  );
 });
 
 // ---------------------------------------------------------------------------
