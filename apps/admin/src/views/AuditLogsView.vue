@@ -15,19 +15,19 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { API_BASE_URL, loadAdminSession, signInAdmin, signOutAdmin } from '../auth/session';
 import {
-  AUDIT_LOG_ACTIONS,
-  AUDIT_LOG_ACTION_LABELS,
-  AUDIT_LOG_ENTITIES,
-  AUDIT_LOG_ENTITY_LABELS,
-  AUDIT_LOGS_OPERATION_ID,
-  AUDIT_LOGS_PATH,
-  AUDIT_LOGS_SCOPE,
-  auditLogLimitOptions,
-  auditLogRows,
+  AUDIT_LOG_ACTIONS, AUDIT_LOG_ACTION_LABELS,
+  AUDIT_LOG_ENTITIES, AUDIT_LOG_ENTITY_LABELS,
+  AUDIT_LOGS_OPERATION_ID, AUDIT_LOGS_PATH, AUDIT_LOGS_SCOPE,
+  AUDIT_MERGE_FILTER_ANY, AUDIT_MERGE_SOURCE_LABELS, AUDIT_MERGE_SOURCE_TASKS,
+  auditLogLimitOptions, auditLogRows,
+  auditMergeSourceOptions,
   describeAuditLogView,
+  describeMergeSourceCounts,
   fetchAuditLogsPage,
+  filterMergedRows,
   initialAuditLogState,
-  reduceAuditLog,
+  loadAuditMergeSources,
+  mergeAuditSources, reduceAuditLog,
 } from '../lib/admin-audit-logs.mjs';
 
 const state = ref(initialAuditLogState());
@@ -181,6 +181,53 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   ++requestSeq;
 });
+
+// ------------------------------------------------ 三读面合并读数（GY-R68-C4）
+
+/**
+ * 把三条审计读面（`/admin/audit-logs` 全表、`/admin/audit-events` 内存、`/admin/flag-audit-events` 开关库）
+ * 合并成**一张表**：按 `(created_at, id)` 降序，同一 `id` 跨源只留一行并标注全部来源。
+ * 服务端零改动——三条读面都已在契约里，这里只是把三个既有 GET 的读数并到一页。
+ *
+ * ⛔ 按需读、不在挂载时读：本页既有渲染用例钉住「挂载只发 1 个请求」
+ *    （`GET /admin/audit-logs?limit=20`），合并读数是**显式动作**，不抢首屏请求预算，
+ *    也不动上面那张单源表格的任何既有语义。
+ * ⛔ 失败隔离：任一源失败只把那一源写进 `failures`（单独 `role="alert"` 播报），另两源照常出数——
+ *    整页判失败会把「另外两源明明有数」一起埋掉。
+ */
+const mergeTasks = AUDIT_MERGE_SOURCE_TASKS.map((task) => ({ ...task, label: AUDIT_MERGE_SOURCE_LABELS[task.source] }));
+const mergeSourceOptions = auditMergeSourceOptions();
+const mergeEntries = ref([]);
+const mergeFilter = ref(AUDIT_MERGE_FILTER_ANY);
+const mergeBusy = ref(false);
+const mergeLoaded = ref(false);
+let mergeSeq = 0;
+
+const merged = computed(() => mergeAuditSources(mergeEntries.value));
+const mergeRows = computed(() => filterMergedRows(merged.value.rows, mergeFilter.value));
+const mergeSourceCounts = computed(() => describeMergeSourceCounts(merged.value));
+
+/** 切来源筛选：只筛已读到的行，不重发请求（三源读数已在内存里）。 */
+function setMergeFilter(value) {
+  mergeFilter.value = value;
+}
+
+/** 读三源（并发；任一源抛错只记在那一源上），成功后把结果交给纯函数层合并。 */
+async function loadMerged() {
+  if (currentToken === null || mergeBusy.value) return;
+  const seq = ++mergeSeq;
+  mergeBusy.value = true;
+  const entries = await loadAuditMergeSources({
+    baseUrl: API_BASE_URL,
+    token: currentToken,
+    limit: state.value.limit,
+  });
+  if (seq !== mergeSeq) return;
+  mergeBusy.value = false;
+  if (currentToken === null) return;
+  mergeEntries.value = entries;
+  mergeLoaded.value = true;
+}
 </script>
 
 <template>
@@ -214,6 +261,104 @@ onBeforeUnmount(() => {
       <p v-if="state.scopeWarning" class="banner warn" data-testid="audit-log-scope-warning">
         当前后台会话的 scope 列表里没有 <code>audit:read</code>：读取会被后端以 403 SCOPE_DENIED 拒绝，下面会如实显示，不静默空白。
       </p>
+
+      <section class="merged" data-testid="audit-merge-panel">
+        <header class="merged-head">
+          <h3>三读面合并读数</h3>
+          <p class="sub">
+            同一张表读三条审计读面：<template v-for="(task, index) in mergeTasks" :key="task.source"
+              ><span v-if="index > 0">、</span><code>GET {{ task.path }}</code>（<code>{{ task.operationId }}</code>，scope
+              <code>{{ task.scope }}</code>，{{ task.label }}）</template
+            >。按 <code>(created_at, id)</code> 降序合并，同一 <code>id</code> 跨源只留一行并标注全部来源；某一源读取失败时另外两源照常出数。
+          </p>
+          <div class="actions">
+            <button class="primary" type="button" :disabled="mergeBusy" data-testid="audit-merge-load" @click="loadMerged">
+              读取三源
+            </button>
+            <label class="field">
+              <span>来源筛选</span>
+              <select data-testid="audit-merge-filter" :value="mergeFilter" @change="setMergeFilter($event.target.value)">
+                <option v-for="option in mergeSourceOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+            </label>
+          </div>
+        </header>
+
+        <p
+          v-for="(failure, failureIndex) in merged.failures"
+          :key="failure.source + '#' + failureIndex"
+          class="banner error"
+          role="alert"
+          data-testid="audit-merge-failure"
+          :data-source="failure.source"
+        >
+          <strong>{{ failure.sourceLabel }}读取失败：</strong><span>{{ failure.message }}</span>
+        </p>
+
+        <template v-if="mergeLoaded">
+          <p class="counts" data-testid="audit-merge-counts">
+            <span class="pill" :class="merged.failures.length > 0 ? 'warn' : 'ok'" data-testid="audit-merge-summary">{{ merged.summary }}</span>
+            <span
+              v-for="item in mergeSourceCounts"
+              :key="item.source"
+              class="pill"
+              :class="item.failed ? 'warn' : ''"
+              :data-testid="'audit-merge-count-' + item.source"
+              >{{ item.text }}</span
+            >
+          </p>
+
+          <p v-if="merged.counts.unidentified > 0" class="hint" data-testid="audit-merge-unidentified">
+            有 {{ merged.counts.unidentified }} 条读面返回的行没有 <code>id</code>，未参与跨源去重（各自按行保留）。
+          </p>
+
+          <table v-if="mergeRows.length > 0" class="grid merged-grid" data-testid="audit-merge-table">
+            <thead>
+              <tr>
+                <th scope="col">时间（UTC）</th>
+                <th scope="col">来源</th>
+                <th scope="col">action</th>
+                <th scope="col">结果</th>
+                <th scope="col">scope</th>
+                <th scope="col">目标</th>
+                <th scope="col">actor</th>
+                <th scope="col">request_id</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="(row, index) in mergeRows"
+                :key="row.id === '' ? row.source + '-' + index : row.id"
+                data-testid="audit-merge-row"
+                :data-source="row.source"
+              >
+                <td class="mono">{{ row.createdAtText }}</td>
+                <td><span class="pill source" data-testid="audit-merge-row-source">{{ row.sourceText }}</span></td>
+                <td>
+                  <span class="mono">{{ row.action }}</span>
+                  <small class="label">{{ row.actionLabel }}</small>
+                </td>
+                <td><span class="pill" :class="row.resultTone">{{ row.resultLabel }}</span></td>
+                <td class="mono">{{ row.scope }}</td>
+                <td class="mono">{{ row.targetText }}</td>
+                <td class="mono">{{ row.actor === '' ? '（无）' : row.actor }}</td>
+                <td class="mono">{{ row.requestId === '' ? '（无）' : row.requestId }}</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <aside v-else class="note" data-testid="audit-merge-empty">
+            <strong>三源合并后没有任何行</strong>
+            <p v-if="merged.failures.length === 0">三条读面都读成功但都没返回行；这与「某一源读取失败」是两件事——失败会在上面单独点名。</p>
+            <p v-else>成功的读面没有返回任何行；失败的读面已在上面点名。</p>
+          </aside>
+
+          <p class="hint" data-testid="audit-merge-hint">
+            合并读数与上面的筛选栏不是同一口径：另两个读面只接受 <code>cursor</code> / <code>limit</code>，没有 action / entity / 时间参数，
+            所以这里只读每源最近 {{ state.limit }} 条；要看筛选后的单源台账请用上面的表格。
+          </p>
+        </template>
+      </section>
 
       <form class="toolbar" data-testid="audit-log-filters" @submit.prevent="applyFilters">
         <label class="field">
@@ -623,5 +768,37 @@ th {
 .foot {
   margin: 0;
   line-height: 1.6;
+}
+
+/* 三读面合并读数（GY-R68-C4）：与单源台账同一套 pill/grid，只加一个承装容器与来源标记。 */
+.merged {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid rgba(15, 118, 110, 0.28);
+  border-radius: 0.6rem;
+}
+
+.merged-head {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.merged-head h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.merged-head .sub {
+  margin: 0;
+}
+
+.pill.source {
+  background: rgba(15, 118, 110, 0.14);
+  color: #0f766e;
+}
+
+.merged-grid small.label {
+  display: block;
 }
 </style>
