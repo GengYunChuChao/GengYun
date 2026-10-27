@@ -86,6 +86,7 @@ async function requestPage(cursor, { reset }) {
 }
 
 function startSession(adminSession) {
+  resetMerged(); // 会话边界（换号直登 / 令牌过期重登 / 组件复用）：先清上一会话的合并读数
   session.value = adminSession;
   currentToken = typeof adminSession?.accessToken === 'string' ? adminSession.accessToken : null;
   dispatch({ type: 'SIGNED_IN', scopes: adminSession?.scopes });
@@ -120,6 +121,7 @@ async function submitSignIn() {
 
 async function signOut() {
   ++requestSeq;
+  resetMerged();
   currentToken = null;
   session.value = null;
   busy.value = false;
@@ -180,6 +182,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   ++requestSeq;
+  resetMerged();
 });
 
 // ------------------------------------------------ 三读面合并读数（GY-R68-C4）
@@ -227,6 +230,23 @@ async function loadMerged() {
   if (currentToken === null) return;
   mergeEntries.value = entries;
   mergeLoaded.value = true;
+}
+
+/**
+ * 会话边界复位：登录成功（`startSession`）／退出（`signOut`）／组件卸载三处都要走。
+ *
+ * ⛔ 只把 `currentToken` 置空不够：三源请求是在旧会话里发出去的，回来时若只判「令牌非空」，
+ *    旧响应会被新会话接纳，把上一账号读到的审计行展示给下一个账号（会话隔离缺陷）。
+ *    `++mergeSeq` 让换会话之前发出的在途响应因代号过期被丢弃。
+ * ⛔ 不复位 `mergeBusy`：旧请求在途时退出再登录，按钮会一直禁用。
+ * ⛔ 失败隔离与空态诚实不受影响：复位只发生在会话边界，绝不把「某源 403」伪装成空台账。
+ */
+function resetMerged() {
+  ++mergeSeq;
+  mergeEntries.value = [];
+  mergeLoaded.value = false;
+  mergeBusy.value = false;
+  mergeFilter.value = AUDIT_MERGE_FILTER_ANY;
 }
 </script>
 

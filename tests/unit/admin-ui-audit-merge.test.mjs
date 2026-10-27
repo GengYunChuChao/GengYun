@@ -637,3 +637,106 @@ test('来源筛选白名单：闭集外的取值只当「没有行」，不抛�
   assert.equal(filterMergedRows(rows, 'flag-audit').length, 1);
   assert.equal(AUDIT_MERGE_SOURCE_LABELS['flag-audit'].includes('开关'), true);
 });
+
+// ---------------------------------------------------------------------------
+// 七、会话隔离（换账号前后，合并读数不得跨会话残留）
+//
+// 这三条读面都是「后台会话令牌」授权的：A 读到 → 退出 → B 登录，若合并读数只在 `signOut()` 里
+// 清单源表格而不清合并表，B 会看到 A 已读的审计行（跨账号泄露）。在途响应同理：请求是在旧会话里
+// 发出去的，回来时必须因为「代号过期」被丢弃，而不能只看 `currentToken` 是否为空。
+// ---------------------------------------------------------------------------
+
+/** B 会话：登录成功，但 scope 列表里**没有** `audit:read`（读面应被 403 拒绝）。 */
+const SESSION_B = { accessToken: 'synthetic-b-token', expiresAt: '2099-01-01T00:00:00.000Z', scopes: [] };
+
+/** 从请求头取令牌（本页每条请求都带 `authorization: Bearer <token>`）。 */
+function tokenOf(init) {
+  const headers = init?.headers ?? {};
+  const raw = headers.authorization ?? headers.Authorization ?? '';
+  return String(raw).replace(/^Bearer\s+/i, '');
+}
+
+/** 提交登录表单：调 `onSubmit`（`.prevent` 需要 `preventDefault`）。 */
+async function submitSignInForm(container) {
+  const form = findBy(container, byTestId('audit-log-signin'));
+  assert.ok(form !== null, '退出后必须回到登录表单');
+  assert.equal(typeof form.props.onSubmit, 'function', '登录表单必须挂着 submit 处理器');
+  form.props.onSubmit({ preventDefault() {} });
+  await settle();
+}
+
+const SCOPE_DENIED_403 = () => jsonResponse(403, errorEnvelope('SCOPE_DENIED', '后台会话缺少所需 scope', false));
+
+test('会话隔离：换账号后合并读数必须清空，B 看不到 A 读到的审计行', async () => {
+  const aOnlyRow = auditEvent({ id: 'aaaa1111-1111-4111-8111-111111111111', request_id: 'req-a-only' });
+  const routes = {
+    [LOGS_PATH]: ({ init }) => (tokenOf(init) === SESSION_B.accessToken ? SCOPE_DENIED_403() : jsonResponse(200, page([aOnlyRow]))),
+    [EVENTS_PATH]: ({ init }) => (tokenOf(init) === SESSION_B.accessToken ? SCOPE_DENIED_403() : jsonResponse(200, page([]))),
+    [FLAGS_PATH]: ({ init }) => (tokenOf(init) === SESSION_B.accessToken ? SCOPE_DENIED_403() : jsonResponse(200, page([]))),
+  };
+  const fetchImpl = routeFetch(routes);
+  const mounted = await mountView({ fetchImpl });
+  try {
+    await mounted.click('audit-merge-load');
+    assert.equal(countOf(mounted.container, 'audit-merge-row'), 1, 'A 会话先读到 1 条合成审计行');
+    assert.equal(countOf(mounted.container, 'audit-merge-counts'), 1, 'A 会话合并读数已落地');
+
+    await mounted.click('audit-log-sign-out');
+    assert.equal(countOf(mounted.container, 'audit-merge-row'), 0, '退出后合并表不得继续渲染');
+
+    globalThis.__GY_TEST_SESSION__ = SESSION_B;
+    await submitSignInForm(mounted.container);
+
+    assert.equal(countOf(mounted.container, 'audit-log-signin'), 0, 'B 登录后 signedIn 必须为 true（登录表单消失）');
+    assert.ok(findBy(mounted.container, byTestId('audit-log-sign-out')) !== null, 'B 登录后应有退出按钮');
+    assert.equal(countOf(mounted.container, 'audit-merge-row'), 0, 'B 不得看到 A 读到的审计行（会话隔离）');
+    assert.equal(countOf(mounted.container, 'audit-merge-table'), 0, 'B 的合并表必须是空态，不能残留 A 的行');
+    assert.equal(countOf(mounted.container, 'audit-merge-counts'), 0, 'mergeLoaded 必须复位：未读三源就不得显示合计');
+
+    // 失败隔离 / 空态诚实保持：B 没有 audit:read，该报失败就报失败，不伪装成空台账。
+    const status = findBy(mounted.container, byTestId('audit-log-status'));
+    assert.ok(status !== null, 'B 的单源读面必须给出状态块');
+    assert.equal(status.props.role, 'alert', 'B 无权限时必须是 alert，不是「空台账」');
+    assert.match(textOf(status), /权限不足/, 'B 的 403 必须点名权限不足');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test('会话隔离：换会话之前发出的三源在途响应回来后必须被丢弃（不落地、不置 mergeLoaded）', async () => {
+  let releaseStale = null;
+  const stale = new Promise((resolve) => {
+    releaseStale = resolve;
+  });
+  const routes = {
+    [LOGS_PATH]: ({ init }) => (tokenOf(init) === SESSION.accessToken ? stale : SCOPE_DENIED_403()),
+    [EVENTS_PATH]: ({ init }) => (tokenOf(init) === SESSION.accessToken ? stale : SCOPE_DENIED_403()),
+    [FLAGS_PATH]: ({ init }) => (tokenOf(init) === SESSION.accessToken ? stale : SCOPE_DENIED_403()),
+  };
+  const fetchImpl = routeFetch(routes);
+  const mounted = await mountView({ fetchImpl });
+  try {
+    // 触发合并读取但**不 await**：三个请求都挂着（在途）。
+    const loadNode = findBy(mounted.container, byTestId('audit-merge-load'));
+    assert.ok(loadNode !== null, '合并面板必须有「读取三源」按钮');
+    loadNode.props.onClick({});
+    await settle();
+    assert.equal(countOf(mounted.container, 'audit-merge-row'), 0, '在途期间不该有任何行');
+
+    await mounted.click('audit-log-sign-out');
+    globalThis.__GY_TEST_SESSION__ = SESSION_B;
+    await submitSignInForm(mounted.container);
+    assert.equal(countOf(mounted.container, 'audit-log-signin'), 0, 'B 已登录');
+
+    // 旧会话的响应现在才回来：代号已过期，必须整份丢掉。
+    releaseStale(jsonResponse(200, page([auditEvent({ id: 'bbbb2222-2222-4222-8222-222222222222', request_id: 'req-stale' })])));
+    await settle();
+    await settle();
+
+    assert.equal(countOf(mounted.container, 'audit-merge-row'), 0, '旧会话的在途响应不得跨会话落地');
+    assert.equal(countOf(mounted.container, 'audit-merge-table'), 0, '旧响应也不得把合并表建出来');
+    assert.equal(countOf(mounted.container, 'audit-merge-counts'), 0, '旧响应不得把 mergeLoaded 置 true');
+  } finally {
+    mounted.unmount();
+  }
+});
