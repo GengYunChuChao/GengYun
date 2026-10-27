@@ -14,28 +14,60 @@
  * | `public.grant_admin_scope(...)`  | `admin_scope.grant`  | `scopes:write`（见下「一变多」注） | 0041 |
  * | `public.revoke_admin_scope(...)` | `admin_scope.revoke` | `scopes:write`（同上） | 0041 |
  * | `public.record_admin_job_cancel_audit(...)` | `job.cancel` | `jobs:cancel` | 0043 `:168-175` |
- * | `public.record_admin_scope_denial(...)` | `admin_scope.deny` | `scopes:write` | 0046 |
+ * | `public.record_admin_scope_denial(...)` | `admin_scope.deny` | `p_scope`（调用点固定申报 `scopes:write`，见下「一变多」注） | 0046 |
  * | `public.record_admin_post_hide_audit(...)` | `post.hide` | `sources:write` | 0047 `:185-198` |
  * | `public.disable_admin_account(...)` | `admin_account.disable` | `scopes:write`（共享，见下「admin_account 也需要护栏」） | 0048 `:282-290` |
  * | `public.enable_admin_account(...)`  | `admin_account.enable`  | `scopes:write`（同上） | 0048 `:413-421` |
  *
- * `account.suspend` 与 `account.restore` 共用同一个 `scope`，因此 `entity=account` 一次取回
- * 「停用 + 恢复」两类行；`entity=flag` 只取开关变更；`entity=job` 只取作业取消；
- * `entity=admin_scope` 取 scope 授予/撤销/被拒（并见下「一处必须如实登记的读数放宽」——
- * `0048` 之后这个筛选维度还会带上 `admin_account.*` 行）；`entity=admin_account` 取后台
- * 管理员账号的停用/恢复；`entity=post` 只取下架 —— 但 `post` 与 `admin_account` 都不是靠
- * `scope` 列收窄出来的，它们是**带动作护栏**的实体，理由见下面两节。
+ * ## `?entity=X` 到底匹配哪些行（本文件的**筛选语义**，唯一定义处）
+ *
+ * 一条审计行进不进 `?entity=X` 的结果集，由两个维度共同决定：
+ *
+ *   1. **必选**：该行 `scope` 列 === `scopeOfAuditEntity(X)`（`AUDIT_ENTITY_SCOPES`）；
+ *   2. **护栏实体另加**：该行 `action` ∈ `actionsOfAuditEntity(X)`（`AUDIT_ENTITY_ACTION_GUARDS`，
+ *      缺席 = 该实体没有护栏，本维度不生效）。
+ *
+ * ⚠ 维度 1 从来**不足以**定义 `entity`：`scope` 列不是「域」列，它记的是「这笔操作动了哪个
+ * 权限名」，而 `0041` / `0046` 把调用方给的 `p_scope` 直传进去（见下「一变多」注）。后台 13 项
+ * 闭集里的**每一个** scope 都能出现在授权行上，所以**没有任何一个 scope 字面量是域专属的**。
+ * 凡是「域内动作 ≠ 落库 scope 全部来源」的实体，都必须靠维度 2 收窄。今天：
+ *
+ * | `entity` | 匹配的行 |
+ * | --- | --- |
+ * | `account` | `action ∈ {account.suspend, account.restore}` 且 `scope='accounts:suspend'` |
+ * | `job` | `action='job.cancel'` 且 `scope='jobs:cancel'` |
+ * | `post` | `action='post.hide'` 且 `scope='sources:write'` |
+ * | `admin_account` | `action ∈ {admin_account.disable, admin_account.enable}` 且 `scope='scopes:write'` |
+ * | `flag` | `action='set_flag'` 且 `scope='flags:write'` |
+ * | `admin_scope` | 只按 `scope='scopes:write'`（**无护栏**，见「读数放宽①」） |
+ *
+ * 前四行之外的直觉都不成立：`account.suspend` 与 `account.restore` 共用一个 `scope`，所以
+ * `entity=account` 一次取回「停用 + 恢复」两类行 —— 这是**同一实体**的两个动作，不是串味；
+ * 串味指的是「另一个实体的动作因为共用同一个 scope 字面量而漏进来」，那才是护栏要挡的东西。
+ *
+ * 六个实体里只剩 `admin_scope` 没有护栏（**故意**，理由见「读数放宽①」）。无护栏**不退化成
+ * 「不过滤」或「全返回」**：它仍然按维度 1 精确匹配 `scope` 列（`services/api/src/admin/audit/
+ * service.ts` 下传单元素数组，不是 `null`）。`null` 在本读面等于「该维度不作为条件」⇒ 那是
+ * 静默全量，⛔ 绝不允许出现。
  * **未知取值一律 400**（fail-closed）：
  * ⛔ 不静默返回空页 —— 空页会被读成「平台从未发生过这类操作」，那是一条无法确认的结论。
  *
- * ## 一处必须如实登记的读数瑕疵：「一变多」的 `scope` 列
+ * ## 「一变多」的 `scope` 列：库层没有域专属字面量
  * `0041` 的审计行把 `scope` 写成**被授/被撤的那个 scope 值本身**（`0041:65` 的口径，
- * `p_scope` 直传），而 `0046` 的拒绝行写死 `'scopes:write'`（`0046` 的 `p_scope` 由调用方
- * 固定申报）。所以 `entity=admin_scope` 映射到单个 `scopes:write` 时：
- *   - `admin_scope.deny` 行 **全部命中**（它们恒为 `scopes:write`）；
+ * `p_scope` 直传；落列见 `:319-326`、`:472-479`）。`0046` 的拒绝行**同样**是 `p_scope` 直传
+ * （`:213`），⛔ 不是函数体里写死的 `'scopes:write'` —— 那个字面量来自**调用方**
+ * （`services/api/src/admin/ops/scope-denial-trace.ts` 的 `ADMIN_SCOPE_DENIAL_SCOPE`，注释写明
+ * 「本片只处理元权限域，故 `p_scope` 写死为它」）。⇒ 口径是「库函数不写死、应用层写死」，
+ * 后者是**调用方纪律，不是库层保证**：将来任何一条路径按真实被拒 scope 申报，拒绝行的 `scope`
+ * 就会跟着变。所以 `entity=admin_scope` 映射到单个 `scopes:write` 时：
+ *   - `admin_scope.deny` 行**今天**全部命中（调用点固定申报 `scopes:write`）；
  *   - `admin_scope.grant` / `admin_scope.revoke` 行**只命中**动到 `scopes:write` 的那些，
  *     例如「授予 `accounts:read`」这类行不在 `entity=admin_scope` 的结果里。
- * 这是**已知且被接受**的收窄：`?entity=` 是单值筛选维度（`service.ts` 把
+ * 同一枚硬币的另一面是**串味**：「授予 `jobs:cancel`」的行 `scope` 恰好是 `'jobs:cancel'`，
+ * 于是它会落进 `?entity=job` 的 scope 条件里 —— 那正是 R68 · GY-R67-C07 修掉的东西（见下
+ * 「为什么 `account` / `job` 也需要动作护栏」）。两头都指向同一个结论：**`scope` 不能单独承担
+ * `entity` 语义**。
+ * 收窄那一半是**已知且被接受**的取舍：`?entity=` 是单值筛选维度（`service.ts` 把
  * `scopeOfAuditEntity(entity)` 包成单元素数组），要完整覆盖需把 `entity` 语义改成「多值集」，
  * 那是读面的形状变更、不在本片范围。⛔ 不得为此把映射改成 `null`/空数组——那会退化成
  * 「静默全量」，比收窄更糟。要按 `action` 精确取，`?action=admin_scope.grant` 是全量命中的。
@@ -48,9 +80,8 @@
  *
  * ## 为什么 `post` 需要**动作护栏**（`AUDIT_ENTITY_ACTION_GUARDS`）
  *
- * 别的实体靠 `entity → scope` 一对一收窄就够用：它们的 `scope` 列取值是**该域专属**的
- * （`accounts:suspend` / `flags:write` / `jobs:cancel`）。`sources:write` 不是 ——
- * 它是**共享**命名空间，同一个字面量在库里至少被两类审计行写着：
+ * 这条护栏要挡的不是「`sources:write` 特别脏」，而是「域内动作 ≠ 落库 `scope` 的全部来源」：
+ * `sources:write` 是**共享**命名空间，同一个字面量在库里至少被两类审计行写着：
  *
  *   1. `0047` 的下架行：`action='post.hide'`、`scope='sources:write'`、`target_ref.type='post'`；
  *   2. `0041` / `0046` 的**权限行**：`grant_admin_scope` / `revoke_admin_scope` /
@@ -92,7 +123,33 @@
  * 与 `post` 的差别只在「共享字面量的另一半是谁」：`post` 抢的是 `sources:write`，`admin_account`
  * 抢的是 `scopes:write`（后者更敏感：它正是本动作的权限门）。两条护栏各自独立登记，⛔ 不复用。
  *
- * ## 一处必须如实登记的读数放宽：`?entity=admin_scope` 现在也会带上 `admin_account.*` 行
+ * ## 为什么 `account` / `job` 也需要**动作护栏**（R68 · GY-R67-C07）
+ *
+ * 同样的串味，只是共用的另一半不同：`accounts:suspend` 与 `jobs:cancel` 都在后台 13 项 scope
+ * 闭集里（`services/api/src/admin/scopes.ts` 的 `ADMIN_SCOPES`），所以「管理员被授予/撤销了
+ * `jobs:cancel`」这类**授权行**的 `scope` 列恰好是 `'jobs:cancel'`（`0041` 的 `p_scope` 直传，
+ * 拒绝行同理）。R68 之前 `job` / `account` 没有护栏 ⇒ 端口只收到 `scopes=['jobs:cancel']`，于是：
+ *
+ *   - `?entity=job` 把 `admin_scope.grant` / `admin_scope.revoke` / `admin_scope.deny` 的行
+ *     一起筛出来 —— 页面标着「作业」，实际列的是权限变更；
+ *   - `?entity=account` 同理（`accounts:suspend` 被授予/撤销时漏进来）。
+ *
+ * 这是**读面错误命名**，不是权限泄漏（能读到这些行的人本来就有 `audit:read`），但它会让
+ * 「按实体查审计」的结论变假，且比空页更难发现 —— 与 `post` 那一节同一判据。
+ *
+ * 修法是**给这些实体补护栏，而不是在 `service.ts` 里另加一层推导**：
+ *   - `account` → `[account.suspend, account.restore]`（同一实体的两个动作，共用一个 scope）；
+ *   - `job` → `[job.cancel]`（`0043` 只写这一个）；
+ *   - `flag` → `[set_flag]`（同一判据，见下「`flag` 已收口」）。
+ * 补完之后五个实体（`account` / `job` / `flag` / `post` / `admin_account`）走**同一条**路径
+ * （`actions` ∩ `scopes` 双维 AND，`service.ts` 一行不动），只剩 `admin_scope` 留作已登记的
+ * 放宽（见下一节）。
+ *
+ * ⛔ 不要改成「按 action 名字前缀过滤」：前缀是字符串猜谜，而**「哪个 action 属于哪个实体」的
+ * 权威映射就是下面这张护栏表**。把判据散成两处（表 + 前缀启发式），下一次新增写入点时会各自
+ * 漂移，而漂移的方向恰好是「静默放过」。
+ *
+ * ## 一处必须如实登记的读数放宽①：`?entity=admin_scope` 现在也会带上 `admin_account.*` 行
  *
  * 护栏是**逐实体**的，只收窄被点名的那一个。`0048` 之后 `scope='scopes:write'` 这个字面量被
  * 两类行共用（`admin_scope.*` 与 `admin_account.*`），而 `admin_scope` **故意不加护栏**：
@@ -105,13 +162,35 @@
  *   - 权限变更 ⇒ `?action=admin_scope.grant` / `.revoke` / `.deny`（action 维度不做 scope 收窄）。
  * ⛔ 不要为了「看起来更干净」给 `admin_scope` 补护栏，或把这层映射改成 `null`/空数组：
  * 前者改既有协议、后者退化成静默全量。这条放宽是**已知代价**，登记在本节与验证文档里。
+ *
+ * ## `flag` 已收口：不再混入动到 `flags:write` 的授权行（R68 · GY-R67-C07）
+ *
+ * `flags:write` 也在 13 项闭集里，所以「管理员被授予/撤销 `flags:write`」的授权行与 `set_flag`
+ * 行共用这个 `scope` 字面量 —— 收口前 `?entity=flag` 一样会混入前者，与 `job` / `account`
+ * 修之前是**同一个缺陷**。同一判据 ⇒ 同一修法：`flag` 的护栏只有 `[set_flag]`，于是
+ * `?entity=flag` = `action='set_flag'` ∧ `scope='flags:write'`。
+ *
+ * ⛔ 不要把「今天还没人抱怨」当成「不必收口」：被混入的行是**权限变更**，把这批行命名成
+ * 「开关变更」和把它命名成「作业事件」一样假。也不要在测试里把「混入的读数」钉成期望值 ——
+ * 那是把已知缺陷写成断言。
+ *
+ * ⚠ 收口 `flag` **不**牵连授权面的可观测性：`?entity=admin_scope` 仍然看得到
+ * `admin_scope.grant` / `.revoke` / `.deny` 三类授权行（它按 `scope='scopes:write'` 收窄，
+ * 与 `flag` 的 `action` 维度互不干扰）。
+ *
+ * ⛔ 也不要因为「顺手」给 `admin_scope` 补护栏 —— 那是放宽①，理由见上一节。
  */
 
 /** 账号停用（迁移 0017 `public.suspend_account`）。 */
 export const AUDIT_ACTION_ACCOUNT_SUSPEND = 'account.suspend';
 /** 账号恢复（迁移 0017 `public.restore_account`）。 */
 export const AUDIT_ACTION_ACCOUNT_RESTORE = 'account.restore';
-/** 功能开关变更（迁移 0020，0027 同签名替换）。 */
+/**
+ * 功能开关变更（迁移 0020，0027 同签名替换）。
+ *
+ * `scope` 列写的是 `'flags:write'`，而这个字面量同时能被授权行写上（授予/撤销 `flags:write`），
+ * 故 `?entity=flag` 需要动作护栏收窄到本动作，见文件头「`flag` 已收口」。
+ */
 export const AUDIT_ACTION_SET_FLAG = 'set_flag';
 /**
  * 作业取消（迁移 0043 `public.record_admin_job_cancel_audit`，审计行写在 `:168-175`）。
@@ -144,7 +223,8 @@ export const AUDIT_ACTION_ADMIN_SCOPE_DENY = 'admin_scope.deny';
 /**
  * 后台下架社区帖（迁移 `0047` 的 `public.record_admin_post_hide_audit`，审计行在 `:185-198`）。
  *
- * 它是**第 8 项**、也是当前唯一需要配「动作护栏」的实体动作：`0047` 早已把
+ * 它是**第 8 项**、也是第一个需要配「动作护栏」的实体动作（R68 起 `account` / `job` 加入同一层）：
+ * `0047` 早已把
  * `action='post.hide'` / `scope='sources:write'` 写进表，但读面闭集不认它 ⇒ 又一次
  * 「能看见（全量翻页）、不能筛（`?action=post.hide` 一律 400）」。而 `sources:write`
  * 同时是权限行（`0041`/`0046` 直传 `p_scope`）的 `scope` 取值，所以补闭集还不够，
@@ -190,7 +270,21 @@ export type AdminAuditAction = (typeof AUDIT_ACTIONS)[number];
  * 映射关系只在这里写一遍：路由层与服务层都不许再抄一份。
  */
 export const AUDIT_ENTITY_SCOPES = Object.freeze({
+  /**
+   * `account` → `accounts:suspend`（`0017` 的 `suspend_account` / `restore_account` 都写这个值）。
+   *
+   * ⚠ 它**不是**域专属字面量：`accounts:suspend` 在后台 13 项 scope 闭集里，授予/撤销该 scope 的
+   * 授权行 `scope` 列也是它（`0041` 的 `p_scope` 直传）⇒ 单靠本映射会让 `?entity=account` 混入
+   * 权限变更行。故 `account` 另配动作护栏收窄到 `account.suspend` / `account.restore`，
+   * 见 `AUDIT_ENTITY_ACTION_GUARDS` 与文件头「为什么 `account` / `job` 也需要动作护栏」。
+   */
   account: 'accounts:suspend',
+  /**
+   * `flag` → `flags:write`。
+   *
+   * ⚠ 同样**不是**域专属：授予/撤销 `flags:write` 的授权行 `scope` 列也是它 ⇒ `flag` 另配动作
+   * 护栏收窄到 `set_flag`（见文件头「`flag` 已收口」）。
+   */
   flag: 'flags:write',
   /**
    * `job` → `jobs:cancel`（**不是** `jobs:read`）。
@@ -198,16 +292,21 @@ export const AUDIT_ENTITY_SCOPES = Object.freeze({
    * 这张表映射的是「审计行 `scope` 列**实际写的值**」，不是「读这类对象要哪个权限」。
    * 0043 的 `record_admin_job_cancel_audit` 在 `:175` 写的是 `'jobs:cancel'`，映射成
    * `jobs:read` 会让 `?entity=job` 永远返回空页 —— 那恰好是本片要杀死的「静默空页」伪造。
+   *
+   * ⚠ 同样**不是**域专属：`jobs:cancel` 在 13 项 scope 闭集里，授予/撤销它的授权行 `scope`
+   * 列也是 `'jobs:cancel'` ⇒ `job` 另配动作护栏收窄到 `job.cancel`（见文件头那一节）。
    */
   job: 'jobs:cancel',
   /**
    * `admin_scope` → `scopes:write`。
    *
-   * ⚠ 这是一条**已知的收窄**，不是笔误：`0046` 的拒绝行恒写 `scope='scopes:write'`（写死），
-   * 而 `0041` 的授予/撤销行写的是**被授/被撤的那个 scope 值本身**（`p_scope` 直传）⇒
-   * 本映射只命中「动到 `scopes:write`」的授予/撤销行，以及**全部**拒绝行。完整的逐 scope
+   * ⚠ 这是一条**已知的收窄**，不是笔误：`0046` 的拒绝行把库函数收到的 `p_scope` 直传进
+   * `scope` 列（不是函数体内的字面量），**今天的调用点**固定申报 `scopes:write`
+   * （`services/api/src/admin/ops/scope-denial-trace.ts` 的 `ADMIN_SCOPE_DENIAL_SCOPE`）；而
+   * `0041` 的授予/撤销行写的是**被授/被撤的那个 scope 值本身**（同为 `p_scope` 直传）⇒
+   * 本映射只命中「动到 `scopes:write`」的授予/撤销行，以及今天**全部**拒绝行。完整的逐 scope
    * 读法走 `?action=admin_scope.grant`（action 维度不做 scope 收窄）。理由与取舍见文件头
-   * 「一处必须如实登记的读数瑕疵」那段。
+   * 「「一变多」的 `scope` 列」与「读数放宽①」两段。
    */
   admin_scope: 'scopes:write',
   /**
@@ -247,10 +346,14 @@ export function scopeOfAuditEntity(entity: AdminAuditEntity): string {
  * `entity` → **动作护栏**：该实体在 `?entity=` 语义下只允许出现的 `action` 清单。
  *
  * 为什么是独立一张表、而不是往 `AUDIT_ENTITY_SCOPES` 里加第二个字段：只有 `scope` 列取值
- * **不专属**的实体才需要护栏（今天有 `post` 与 `admin_account`，两者都栽在共享字面量上，
- * 见文件头两节）；其余实体在这里查不到键 ⇒ 「无护栏」= `?action=` 不受额外限制。用「缺席」
- * 表达「无护栏」，比给每个实体编一份假的「全量清单」更诚实 —— 后者会让读者以为所有实体都被
- * 动作维度过了一遍。
+ * **不专属**的实体才需要护栏。今天有五个：`account` / `job` / `flag` / `post` /
+ * `admin_account`，五者都栽在「域内动作 ≠ 落库 scope 的全部来源」上（见文件头五节）。其余实体
+ * （`admin_scope`）在这里查不到键 ⇒ 「无护栏」= **动作维度不生效**，但 `scope` 维度照样生效
+ * （`service.ts` 仍下传 `[scopeOfAuditEntity(entity)]`，⛔ 不是 `null`）。
+ *
+ * 用「缺席」表达「无护栏」，比给每个实体编一份假的「全量清单」更诚实 —— 后者会让读者以为所有
+ * 实体都被动作维度过了一遍。⚠ 缺席也是「这个键根本不是实体」的表现形式之一，所以调用方必须
+ * 先判 `AUDIT_ENTITIES`（闭集外 400），本表不承担这个判断。
  *
  * ⛔ 护栏不是「建议值」：`services/api/src/admin/audit/service.ts` 在 `?action=` 落在清单外时
  * **400 fail-closed**（不静默取交集 —— 交集恒空，会被读成「平台从未发生过这类操作」）。
@@ -258,8 +361,11 @@ export function scopeOfAuditEntity(entity: AdminAuditEntity): string {
 export const AUDIT_ENTITY_ACTION_GUARDS: Readonly<
   Partial<Record<AdminAuditEntity, readonly AdminAuditAction[]>>
 > = Object.freeze({
-  post: Object.freeze([AUDIT_ACTION_POST_HIDE] as const),
+  account: Object.freeze([AUDIT_ACTION_ACCOUNT_SUSPEND, AUDIT_ACTION_ACCOUNT_RESTORE] as const),
   admin_account: Object.freeze([AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE, AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE] as const),
+  flag: Object.freeze([AUDIT_ACTION_SET_FLAG] as const),
+  job: Object.freeze([AUDIT_ACTION_JOB_CANCEL] as const),
+  post: Object.freeze([AUDIT_ACTION_POST_HIDE] as const),
 });
 
 /**

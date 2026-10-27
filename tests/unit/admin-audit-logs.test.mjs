@@ -21,9 +21,16 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  AUDIT_ACTION_ACCOUNT_RESTORE,
+  AUDIT_ACTION_ACCOUNT_SUSPEND,
   AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
   AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE,
+  AUDIT_ACTION_ADMIN_SCOPE_DENY,
+  AUDIT_ACTION_ADMIN_SCOPE_GRANT,
+  AUDIT_ACTION_ADMIN_SCOPE_REVOKE,
+  AUDIT_ACTION_JOB_CANCEL,
   AUDIT_ACTION_POST_HIDE,
+  AUDIT_ACTION_SET_FLAG,
   AUDIT_ACTIONS,
   AUDIT_ENTITIES,
   AUDIT_ENTITY_ACTION_GUARDS,
@@ -141,7 +148,7 @@ test('GET /admin/audit-logs：action/entity 闭集与契约、库内写入点一
   // 库内写入点（迁移 0017 两处 + 0020/0027 一处 + 0043 一处 + 0041 两处 + 0046 一处 + 0047 一处
   // + 0048 两处）写的 scope 就是 entity 的映射值。`admin_scope` 映射到 `scopes:write`，但 0041 的
   // 授予/撤销行把 `scope` 写成**被授/被撤的那个 scope 本身** ⇒ 这条映射只收窄命中（拒绝行全中、
-  // 授予/撤销只中 `scopes:write` 那些）。取舍见 `catalog.ts` 文件头「一处必须如实登记的读数瑕疵」。
+  // 授予/撤销只中 `scopes:write` 那些）。取舍见 `catalog.ts` 文件头「「一变多」的 `scope` 列」。
   // `post` 追加 `sources:write`（0047 的下架行写死这个值），但**单靠它不够**：0041/0046 的
   // 权限行也把 `p_scope` 直传给 `scope` 列，所以 `post` 另配动作护栏（下一条用例专测）。
   // `admin_account` 追加 `scopes:write`（0048 的停用/恢复行写死这个值，`:286` / `:417`）⇒ 与
@@ -159,7 +166,8 @@ test('GET /admin/audit-logs：action/entity 闭集与契约、库内写入点一
   assert.equal(scopeOfAuditEntity('flag'), 'flags:write');
   // 0043 的 `record_admin_job_cancel_audit` 写的是 `jobs:cancel`（迁移 :175），不是 `jobs:read`。
   assert.equal(scopeOfAuditEntity('job'), 'jobs:cancel');
-  // 0046 的 `record_admin_scope_denial` 写死 `scope='scopes:write'`。
+  // 0046 的 `record_admin_scope_denial` 把调用方给的 `p_scope` 直传进 `scope` 列（不是函数体字面量），
+  // 今天的调用点固定申报 `scopes:write`（`scope-denial-trace.ts` 的 `ADMIN_SCOPE_DENIAL_SCOPE`）。
   assert.equal(scopeOfAuditEntity('admin_scope'), 'scopes:write');
   // 0047 的 `record_admin_post_hide_audit` 写死 `scope='sources:write'`（迁移 :192）。
   assert.equal(scopeOfAuditEntity('post'), 'sources:write');
@@ -420,7 +428,8 @@ test('GET /admin/audit-logs：动作护栏（entity=post 只等于 post.hide；�
   assert.equal(port.calls.length, 3, '护栏必须在查询之前拦下，不得触端口');
 
   // ⑤ 护栏表自洽：键必属 entity 闭集、值非空、每个 action 都属 action 闭集；
-  //    没有护栏的实体（今天 account/flag/job/admin_scope）必须查回 null —— 「缺席即无护栏」。
+  //    没有护栏的实体（今天只剩 admin_scope）必须查回 null —— 「缺席即无护栏」，
+  //    而「无护栏」只关掉**动作**维度，`scope` 维度照样收窄（见 4d 用例的 admin_scope 半区）。
   for (const [entity, guard] of Object.entries(AUDIT_ENTITY_ACTION_GUARDS)) {
     assert.ok(AUDIT_ENTITIES.includes(entity), `护栏键 ${entity} 不在 entity 闭集内`);
     assert.ok(Array.isArray(guard) && guard.length > 0, `护栏 ${entity} 不得为空数组（空数组 = 另一种假话：静默全量）`);
@@ -430,9 +439,22 @@ test('GET /admin/audit-logs：动作护栏（entity=post 只等于 post.hide；�
     assert.deepEqual(actionsOfAuditEntity(entity), guard);
   }
   assert.deepEqual(actionsOfAuditEntity('post'), [AUDIT_ACTION_POST_HIDE]);
-  for (const entity of ['account', 'flag', 'job', 'admin_scope']) {
-    assert.equal(actionsOfAuditEntity(entity), null, `${entity} 不该有护栏：它的 scope 列取值是该域专属的`);
-  }
+  // R68 · GY-R67-C07：`account` / `job` 与 `post` / `admin_account` 同层，四者都带护栏
+  // （理由见 `catalog.ts` 文件头：没有一个 scope 字面量是域专属的，授权行会把 `p_scope` 直传进
+  // `scope` 列，于是 `?entity=job` 会混入「授予 jobs:cancel」这类权限变更行）。
+  assert.deepEqual(actionsOfAuditEntity('account'), [
+    AUDIT_ACTION_ACCOUNT_SUSPEND,
+    AUDIT_ACTION_ACCOUNT_RESTORE,
+  ]);
+  assert.deepEqual(actionsOfAuditEntity('job'), [AUDIT_ACTION_JOB_CANCEL]);
+  // `flag` 与 `post` 同形：`flags:write` 也能被授权行写上（授予/撤销该 scope），
+  // 故它的护栏同样只放本域动作，⛔ 不再把它当「已知串味、保持原样」的放宽。
+  assert.deepEqual(actionsOfAuditEntity('flag'), [AUDIT_ACTION_SET_FLAG]);
+  assert.equal(
+    actionsOfAuditEntity('admin_scope'),
+    null,
+    'admin_scope 无护栏是**已登记**的放宽①（scope 维度仍精确匹配，不是「不过滤」），⛔ 别在这里加护栏改协议',
+  );
 
   // ⑥ 契约同源：护栏清单必须能在契约 `action` 枚举里筛得到（否则 `entity=post` 依旧「能看不能筛」），
   //    描述里必须写明护栏语义（否则读者无从判断 400 是设计还是故障）。
@@ -495,6 +517,170 @@ test('GET /admin/audit-logs：动作护栏（entity=post 只等于 post.hide；�
     [AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE, AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE],
     'entity=admin_account 未带 action 时必须自己补上护栏清单',
   );
+});
+
+/**
+ * 4d. 实体筛选**不得串味**（R68 · GY-R67-C07）。
+ *
+ * 为什么必须自己造一个「真的按筛选入参过滤」的端口：`makeFakePort` 返回固定页，护栏被摘掉
+ * 它照样「通过」—— 那正是这类缺陷能活到 R68 的原因。`?entity=X` 的语义是两个维度的 AND：
+ * 「`scope` 列 === `scopeOfAuditEntity(X)`」∧（有护栏的实体）「`action` ∈ `actionsOfAuditEntity(X)`」。
+ *
+ * 判据来源是库里的真实形状：`0041` 把 `p_scope` 直传进 `scope` 列，所以「授予 `jobs:cancel`」
+ * 的**授权行** `scope` 就是 `'jobs:cancel'` —— 与 `job.cancel` 行同一个字面量。那是权限变更，
+ * ⛔ 不是作业事件；把它们算进 `?entity=job` 不是收窄，是**错误命名**。
+ */
+function makeFilteringPort(rows) {
+  const calls = [];
+  return {
+    persistent: true,
+    calls,
+    async listAuditLogs(filters) {
+      calls.push(filters);
+      const matched = rows.filter(
+        (row) =>
+          (filters.actions === null || filters.actions.includes(row.action))
+          && (filters.scopes === null || filters.scopes.includes(row.scope)),
+      );
+      return { items: matched.slice(0, filters.limit ?? 20), hasMore: false, nextPosition: null };
+    },
+  };
+}
+
+/** 一行一个自增 id（形状仍是 uuid，见 `pg.ts` 的 `UUID_RE`）。 */
+function c07Row(seq, action, scope) {
+  return auditRow({
+    id: `c0700000-0000-4000-8000-${String(seq).padStart(12, '0')}`,
+    action,
+    scope,
+  });
+}
+
+/**
+ * 「库里长什么样」：每个实体两组行 —— 域内动作 + `scope` 恰好撞上的授权行。
+ * 授权行用 `admin_scope.grant` / `.revoke` / `.deny`（R67 报告里点名的三种）。
+ */
+const C07_ROWS = [
+  // job 族
+  c07Row(1, AUDIT_ACTION_JOB_CANCEL, 'jobs:cancel'),
+  c07Row(2, AUDIT_ACTION_ADMIN_SCOPE_GRANT, 'jobs:cancel'),
+  c07Row(3, AUDIT_ACTION_ADMIN_SCOPE_REVOKE, 'jobs:cancel'),
+  c07Row(4, AUDIT_ACTION_ADMIN_SCOPE_DENY, 'jobs:cancel'),
+  // account 族
+  c07Row(5, AUDIT_ACTION_ACCOUNT_SUSPEND, 'accounts:suspend'),
+  c07Row(6, AUDIT_ACTION_ACCOUNT_RESTORE, 'accounts:suspend'),
+  c07Row(7, AUDIT_ACTION_ADMIN_SCOPE_GRANT, 'accounts:suspend'),
+  // post 族（回归）
+  c07Row(8, AUDIT_ACTION_POST_HIDE, 'sources:write'),
+  c07Row(9, AUDIT_ACTION_ADMIN_SCOPE_GRANT, 'sources:write'),
+  // admin_account 族（回归）
+  c07Row(10, AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE, 'scopes:write'),
+  c07Row(11, AUDIT_ACTION_ADMIN_SCOPE_GRANT, 'scopes:write'),
+  // flag 族（R68 收口：`flags:write` 与授权行共用，但 flag 也有护栏了）
+  c07Row(12, AUDIT_ACTION_SET_FLAG, 'flags:write'),
+  c07Row(13, AUDIT_ACTION_ADMIN_SCOPE_GRANT, 'flags:write'),
+  // admin_scope 族（**无护栏** 的放宽①）：授权行本身就是这个实体的动作，必须仍然看得见
+  c07Row(14, AUDIT_ACTION_ADMIN_SCOPE_REVOKE, 'scopes:write'),
+  c07Row(15, AUDIT_ACTION_ADMIN_SCOPE_DENY, 'scopes:write'),
+];
+
+test('GET /admin/audit-logs：entity 筛选不串味（job/account/flag 不吞授权行；post/admin_account 回归）', async () => {
+  const port = makeFilteringPort(C07_ROWS);
+  const service = makeService(port);
+  const actionsOf = async (entity) => {
+    const response = await service.listAuditLogs(adminContext(), { entity });
+    return response.body.data.items.map((item) => item.action);
+  };
+
+  // ① `?entity=job` 只含作业取消，**不含**任何 `admin_scope.*`（那三行的 scope 恰好是 jobs:cancel）。
+  const jobActions = await actionsOf('job');
+  assert.deepEqual(jobActions, [AUDIT_ACTION_JOB_CANCEL], 'entity=job 只该看到 job.cancel 行');
+  assert.ok(
+    jobActions.every((action) => !action.startsWith('admin_scope.')),
+    `entity=job 的结果里混进了授权行：${JSON.stringify(jobActions)}`,
+  );
+  assert.deepEqual(port.calls.at(-1).actions, [AUDIT_ACTION_JOB_CANCEL]);
+  assert.deepEqual(port.calls.at(-1).scopes, ['jobs:cancel'], 'scope 维度必须仍然收窄（⛔ 不是 null）');
+
+  // ② `?entity=account` 同理：停用/恢复都在，授权行不在。
+  const accountActions = await actionsOf('account');
+  assert.deepEqual(accountActions, [AUDIT_ACTION_ACCOUNT_SUSPEND, AUDIT_ACTION_ACCOUNT_RESTORE]);
+  assert.ok(
+    accountActions.every((action) => !action.startsWith('admin_scope.')),
+    `entity=account 的结果里混进了授权行：${JSON.stringify(accountActions)}`,
+  );
+  assert.deepEqual(port.calls.at(-1).actions, [
+    AUDIT_ACTION_ACCOUNT_SUSPEND,
+    AUDIT_ACTION_ACCOUNT_RESTORE,
+  ]);
+  assert.deepEqual(port.calls.at(-1).scopes, ['accounts:suspend']);
+
+  // ③ 回归：post / admin_account 两条既有护栏行为不变（`scopes` 仍取映射值）。
+  assert.deepEqual(await actionsOf('post'), [AUDIT_ACTION_POST_HIDE]);
+  assert.deepEqual(await actionsOf('admin_account'), [AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE]);
+
+  // ④ `?entity=flag` 也收口了：`flags:write` 与授权行共用同一个 scope 字面量，但护栏把
+  //    授权行挡在外面 —— 只该看到 `set_flag`。⛔ 不许退回「只按 scope 匹配」的串味读数
+  //    （那样 grant 行会跟着 `flags:write` 一起进来）。
+  const flagActions = await actionsOf('flag');
+  assert.deepEqual(flagActions, [AUDIT_ACTION_SET_FLAG], 'entity=flag 只该看到 set_flag 行');
+  assert.ok(
+    flagActions.every((action) => !action.startsWith('admin_scope.')),
+    `entity=flag 的结果里混进了授权行：${JSON.stringify(flagActions)}`,
+  );
+  assert.deepEqual(port.calls.at(-1).actions, [AUDIT_ACTION_SET_FLAG]);
+  assert.deepEqual(port.calls.at(-1).scopes, ['flags:write']);
+
+  // ④b 收口 `flag` **没有**把授权面的可观测性一起吞掉：`?entity=admin_scope` 仍看得到
+  //     grant / revoke / deny 三类授权行（它按 `scope='scopes:write'` 收窄，无护栏）。
+  //     ⚠ 同一条读数里还有 `admin_account.disable` —— 那是**已登记**的放宽①（`0048` 之后
+  //     `scopes:write` 被两类行共用，`admin_scope` 故意不加护栏），不是本片新增的串味。
+  const adminScopeActions = await actionsOf('admin_scope');
+  assert.deepEqual(
+    adminScopeActions.filter((action) => action.startsWith('admin_scope.')),
+    [AUDIT_ACTION_ADMIN_SCOPE_GRANT, AUDIT_ACTION_ADMIN_SCOPE_REVOKE, AUDIT_ACTION_ADMIN_SCOPE_DENY],
+    'entity=admin_scope 必须仍然看得全三类授权行（收口 flag 不得牵连授权面可观测性）',
+  );
+  assert.deepEqual(adminScopeActions, [
+    AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
+    AUDIT_ACTION_ADMIN_SCOPE_GRANT,
+    AUDIT_ACTION_ADMIN_SCOPE_REVOKE,
+    AUDIT_ACTION_ADMIN_SCOPE_DENY,
+  ]);
+  assert.ok(
+    !adminScopeActions.includes(AUDIT_ACTION_SET_FLAG),
+    'entity=admin_scope 与 entity=flag 互不吞行：set_flag 行不得出现在 admin_scope 的结果里',
+  );
+  assert.deepEqual(port.calls.at(-1).actions, null, 'admin_scope 无护栏 ⇒ actions 维度不下传');
+  assert.deepEqual(port.calls.at(-1).scopes, ['scopes:write'], 'admin_scope 仍按 scope 收窄（⛔ 不是 null）');
+
+  // ⑤ 未知 entity ⇒ 400 且**零端口调用**。⛔ 不是空页（空页会被读成「平台从未发生过」），
+  //    更⛔ 不是全量 —— 它连查询都没发出去。
+  const callsBefore = port.calls.length;
+  await assert.rejects(
+    () => service.listAuditLogs(adminContext(), { entity: 'nope' }),
+    (error) =>
+      expectApiError(error, 'INVALID_REQUEST')
+      && error.details.some((detail) => detail.field === 'entity' && detail.code === 'enum'),
+    'entity=nope 必须 400（不是空页、更不是全量）',
+  );
+  assert.equal(port.calls.length, callsBefore, '未知 entity 必须在查询之前拦下，不得触端口');
+
+  // ⑥ 护栏是语义边界：`entity=job|account` 配护栏外的**合法** action ⇒ 400，
+  //    而不是「交集为空 ⇒ 返回空页」（那会把 R67 的串味改写成另一种假话）。
+  for (const [entity, action] of [
+    ['job', AUDIT_ACTION_ADMIN_SCOPE_GRANT],
+    ['account', AUDIT_ACTION_ADMIN_SCOPE_DENY],
+  ]) {
+    await assert.rejects(
+      () => service.listAuditLogs(adminContext(), { entity, action }),
+      (error) =>
+        expectApiError(error, 'INVALID_REQUEST')
+        && error.details.some((detail) => detail.field === 'action' && detail.code === 'enum'),
+      `entity=${entity}&action=${action} 必须 400`,
+    );
+  }
+  assert.equal(port.calls.length, callsBefore, '护栏外组合必须在查询之前拦下，不得触端口');
 });
 
 /** 4b. 游标完整性：跨用户 / 过期 / 篡改 / 位置不可解析。 */
