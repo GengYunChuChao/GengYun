@@ -314,15 +314,39 @@ async function main() {
     .filter((name) => /^\d{4}_[a-z0-9_]+\.sql$/.test(name))
     .sort();
   const versions = migrationFiles.map((name) => Number(name.slice(0, 4)));
-  for (let index = 0; index < versions.length; index += 1) {
-    assert.equal(versions[index], index + 1, `迁移号必须从 0001 起连续无缺号，缺 ${index + 1}`);
+
+  // 迁移号不变量：**文件数 + 已登记保留数 === 最大号**，且缺号必须逐个在
+  // `services/api/db/migration-reservations.json` 里登记过（现行台账口径）。
+  // ⚠️ R67-C3 之前这里断言「从 0001 起连续无缺号」，那是旧口径：仓库自 #14 起
+  // 就把 0037 号先分配、后落文件（见 `services/api/db/migrations/README.md` 与
+  // `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据），于是本臂在今天的树上
+  // 还没跑到断言就先红 —— 错的是判据，不是树。
+  const reservations = JSON.parse(
+    readFileSync(new URL('../../services/api/db/migration-reservations.json', import.meta.url), 'utf8'),
+  ).reservations;
+  const reservedVersions = new Set(reservations.map((entry) => entry.version));
+  const missingVersions = [];
+  for (let version = 1; version <= Math.max(...versions); version += 1) {
+    if (!versions.includes(version) && !reservedVersions.has(version)) missingVersions.push(version);
   }
+  assert.deepEqual(
+    missingVersions,
+    [],
+    `迁移号缺号必须逐个在 migration-reservations.json 登记（未登记空洞：${missingVersions.join(', ') || '无'}）`,
+  );
   assert.ok(versions.includes(35), '迁移清单里必须有 0035（本片的媒体行窄函数）');
-  assert.equal(versions.length, Math.max(...versions), '迁移个数必须等于最大号（无空洞）');
+  assert.equal(
+    versions.length + reservedVersions.size,
+    Math.max(...versions),
+    '文件数 + 已登记保留数必须等于最大号（否则存在既无文件也未登记的号）',
+  );
   for (const name of migrationFiles) {
     await owner.query(readFileSync(new URL(name, migrationsDir), 'utf8'));
   }
-  say(`全链迁移应用完成：${migrationFiles.length} 个文件，编号 1..${Math.max(...versions)} 连续`);
+  say(
+    `全链迁移应用完成：${migrationFiles.length} 个文件，编号 1..${Math.max(...versions)}`
+      + `（其中 ${reservedVersions.size} 个号为已登记保留、缺文件属正常：${[...reservedVersions].join(',')}）`,
+  );
 
   const fn = (
     await owner.query(

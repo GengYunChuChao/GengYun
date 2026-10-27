@@ -1073,3 +1073,36 @@ jobs:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
           PGCLIENTENCODING: UTF8
+
+      # 媒体行清除驱动（R67-C3）：`media-row-purge-pg.mjs` 是 #663 之后**最后一条**「可接但没接」的真库臂。
+      # 它自起临时 17 集群（只用 `initdb` 出来的实例、自建 `gengyun_media_row_purge_test`、跑完 `pg_ctl stop`
+      # 并删数据目录），因此走「自起集群」那套等价判据：给 `GY_PG_BIN` 与它**自己读的**根键
+      # `GY_R34_PG_ROOT`（源码取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`），⛔ 本 step 不建库。
+      # 本片同时修掉它自己的迁移号不变量：原来断言「从 0001 起连续无缺号」，而仓库自 #14 起把 0037 号
+      # 先分配后落文件（保留台账 `services/api/db/migration-reservations.json`）⇒ 该臂在今天的树上必红。
+      # 现在改成台账口径：文件数 + 已登记保留数 === 最大号，且缺号必须逐个登记过。
+      - name: 媒体行清除驱动（R67-C3：media-row-purge-pg / 自起集群 / 迁移号按保留台账口径）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/media-row-purge-pg.log
+          rc=0
+          node tests/integration/media-row-purge-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::媒体行清除驱动的真库臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::媒体行清除驱动失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行 / ✓ 行）"
+          if [ "$readings" -lt 1 ]; then
+            echo "::error::媒体行清除驱动没有报出任何读数 ⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_R34_PG_ROOT: ${{ runner.temp }}/gy-r34-pg
+          PGCLIENTENCODING: UTF8
