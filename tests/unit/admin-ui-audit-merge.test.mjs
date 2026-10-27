@@ -527,6 +527,30 @@ test('渲染：一源 503 ⇒ 另两源照常出数，失败源单独 role="aler
   }
 });
 
+test('渲染：三源全成功且都 0 行 ⇒ 空态必须说「都读成功」，且不得出现「失败」字样', async () => {
+  const routes = {
+    [LOGS_PATH]: () => jsonResponse(200, page([])),
+    [EVENTS_PATH]: () => jsonResponse(200, page([])),
+    [FLAGS_PATH]: () => jsonResponse(200, page([])),
+  };
+  const fetchImpl = routeFetch(routes);
+  const mounted = await mountView({ fetchImpl });
+  try {
+    await mounted.click('audit-merge-load');
+    assert.equal(mergedRows(mounted.container).length, 0);
+    assert.equal(countOf(mounted.container, 'audit-merge-failure'), 0, '三源都成功时不得有失败播报');
+    assert.match(textOf(findBy(mounted.container, byTestId('audit-merge-summary'))), /三源合计 0 条，去重 0 条/);
+
+    const empty = findBy(mounted.container, byTestId('audit-merge-empty'));
+    assert.ok(empty !== null, '0 行时必须有空态');
+    const emptyText = textOf(empty);
+    assert.match(emptyText, /都读成功/, '三源都读成功时必须说清这是空台账，不是故障');
+    assert.doesNotMatch(emptyText, /失败/, '三源都成功时空态不得出现「失败」字样（否则空台账会被读成故障）');
+  } finally {
+    mounted.unmount();
+  }
+});
+
 test('渲染：三源全失败 ⇒ 空态照出但不得自称「三条读面都读成功」，3 条 alert 仍在', async () => {
   const routes = {
     [LOGS_PATH]: () => jsonResponse(503, errorEnvelope('PROVIDER_UNAVAILABLE', '全表读面尚未接线', false)),

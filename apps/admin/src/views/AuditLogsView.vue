@@ -308,10 +308,6 @@ async function loadMerged() {
             >
           </p>
 
-          <p v-if="merged.counts.unidentified > 0" class="hint" data-testid="audit-merge-unidentified">
-            有 {{ merged.counts.unidentified }} 条读面返回的行没有 <code>id</code>，未参与跨源去重（各自按行保留）。
-          </p>
-
           <table v-if="mergeRows.length > 0" class="grid merged-grid" data-testid="audit-merge-table">
             <thead>
               <tr>
@@ -349,7 +345,7 @@ async function loadMerged() {
 
           <aside v-else class="note" data-testid="audit-merge-empty">
             <strong>三源合并后没有任何行</strong>
-            <p v-if="merged.failures.length === 0">三条读面都读成功但都没返回行；这与「某一源读取失败」是两件事——失败会在上面单独点名。</p>
+            <p v-if="merged.failures.length === 0">三条读面都读成功但都没返回行；这与「某一源读取异常」是两件事——空台账不是错误，异常会在上面单独点名。</p>
             <p v-else>成功的读面没有返回任何行；失败的读面已在上面点名。</p>
           </aside>
 

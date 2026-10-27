@@ -976,6 +976,9 @@ function compareMergedRows(left, right) {
  * - `bySource` 是「按源计的**输入**条数」，`sum(bySource) === totalInput`。
  * - `requested === succeeded + failed` 只在「同一 source 重复入参」这条纯函数退化路径上会破
  *   （`requested` 数入参数组长度，`succeeded`/`failed` 数去重后的来源）；页面三源闭集下恒成立。
+ * - **页面路径下 `unidentified` 恒为 0**：三个 `fetch*Page` 都过 `validateAuditEvent`，空 `id` 会让整页
+ *   判 `invalid_response`（该源进 `failures`，它的行根本进不了 `rows`）。这个计数只为纯函数层防御保留，
+ *   页面不展示它——别在视图里加「有 N 行没有 id」的读数，那在页面上是恒不出现的死读数。
  */
 export function mergeAuditSources(entries) {
   const list = Array.isArray(entries) ? entries : [];
