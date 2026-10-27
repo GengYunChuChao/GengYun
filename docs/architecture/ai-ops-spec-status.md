@@ -71,8 +71,8 @@
 | E01 | `Job` 九键闭集，出口按契约重建、多余键一律拒绝 | 已实现 | services/api/src/jobs/registry.ts:50-60 | 只管公共作业面；后台 `AdminJob` 另有投影，两套键集不共享 |
 | E02 | `JobState` 七值闭集，不得扩展 | 已实现 | services/api/src/jobs/registry.ts:38-46 | 域内状态机另有迁移表，闭集是出口判定而非库内唯一来源 |
 | E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2433-2472 | 「注册」不等于「有能力」：取消能力另按域判定（P01） |
-| E04 | 未接线 kind 与「作业不存在」同形 404 | 已实现 | services/api/src/jobs/registry.ts:108 | 同形是刻意设计，代价是运维无法从 404 分辨「没接」与「没这条」 |
-| E05 | `result` 如实性不变式：`result` 非空 ⇒ 只能是 `succeeded`／`uncertain` | 已实现 | services/api/src/jobs/registry.ts:166-168 | 与识别域既有行为有一处口径差（`uncertain` 允许带 `result`），已在同文件注明 |
+| E04 | 未接线 kind 与「作业不存在」同形 404 | 已实现 | services/api/src/jobs/registry.ts:109 | 同形是刻意设计，代价是运维无法从 404 分辨「没接」与「没这条」 |
+| E05 | `result` 如实性不变式：`result` 非空 ⇒ 只能是 `succeeded`／`uncertain` | 已实现 | services/api/src/jobs/registry.ts:177 | 与识别域既有行为有一处口径差（`uncertain` 允许带 `result`），已在同文件注明 |
 | E06 | 端口回传不合契约 ⇒ 503 `PROVIDER_UNAVAILABLE` + `retryable:false`，单通道 | 已实现 | services/api/src/jobs/registry.ts:130-133 | 唯一拒绝通道；不另造错误码，也不放宽冻结契约 |
 | E07 | 终态判定单点（`succeeded`／`uncertain`／`failed`／`timed_out`／`cancelled`） | 已实现 | services/api/src/jobs/registry.ts:114-116 | 该函数只判读，不改状态；状态迁移仍只在各域 |
 | E08 | 归属与不存在 404 同形（域内 `NOT_FOUND` ⇒ `null`） | 已实现 | services/api/src/jobs/sources.ts:41-44 | 同为刻意：不泄露存在性，同时让注册表无法区分二者 |
@@ -107,13 +107,13 @@
 | E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 27 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；27 = 12 个状态档的码数之和（403 档 `SELF_SCOPE_GRANT_DENIED`、409 档 `LAST_SCOPE_MANAGER` 是 #646 新增，409 档 `SELF_DISABLE_DENIED` 是 R68 新增；页面侧 `apps/admin/src/lib/admin-contract.mjs` 同步到 27 项）；`packages/contracts/` 下无源码文件 |
 | E38 | 后台作业台**真库端口**的产品装配：real + 有池 ⇒ `createPostgresAdminJobPort` | 已实现 | services/api/src/app.ts:1375-1377 | `adminRealUnwired` 只是「real 模式」的别名（同文件 :1341）；生产端口的 `persistent: true` 见 services/api/src/admin/ops/jobs-pg.ts:450-451 |
 | E39 | 真库臂回归：三域表读面、9 字段投影、取消 CAS 与审计恰 1 行、过滤下推、游标 | 已实现 | tests/integration/admin-jobs-pg.mjs:661 | 脚本在 CI 名单内（.github/workflows/real-pg-integration.yml:8），用 `postgres:17.11` 与全链迁移（同文件 :55） |
-| E40 | 审计 `action` 闭集覆盖库内全部写入点：`AUDIT_ACTIONS` 恰十值（`job.cancel` 仍在第 4 位，`admin_scope.grant`／`revoke`／`deny` 依次在第 5–7 位，`post.hide` 第 8 位，`admin_account.disable`／`enable` 追加在第 9／10 位），`?action=job.cancel`、`?action=admin_scope.grant`、`?action=post.hide`、`?action=admin_account.disable` 都由 400 转 200 | 已实现 | services/api/src/admin/audit/catalog.ts:170-181 | 锁它的用例：tests/unit/admin-audit-action-jobs-cancel.test.mjs:171（`?action=job.cancel` ⇒ 200 且只回该动作）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:150-154（前 4 项长度仍为 4、第 4 项仍是 `job.cancel`——扩值只能追加末位）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:225（闭集外仍 400、零端口调用）；第 8 值 `post.hide` 另由 tests/unit/admin-audit-logs.test.mjs:379（`entity=post` 只等于 `post.hide`、护栏外合法 action 仍 400 且零端口调用）与 tests/unit/community-audit-channel-pins.test.mjs:268（库内 `post.hide` 写入点恰 0047 一处）钉住；第 9／10 值与 `admin_account` 实体护栏由 tests/unit/admin-account-disable-pins.test.mjs 与 tests/unit/admin-ui-audit-logs.test.mjs 钉住（后者断言 10 个动作、6 个实体）；逐值对拍另由 tests/unit/admin-audit-logs.test.mjs:133-134（契约 `action` enum === `AUDIT_ACTIONS`、`entity` enum === `AUDIT_ENTITIES`）与 tests/unit/ai-ops-ledger-pins.test.mjs:173 钉住，契约枚举同步到十项（packages/contracts/openapi.json:11288-11299）、`entity` 同步到六项（packages/contracts/openapi.json:11307-11314）。剩余边界：审计总台账页已消费该读面（`apps/admin/src/views/AuditLogsView.vue:72`、导航 `apps/admin/src/App.vue:33`），缺口是三个读面各自直连、读数不合并，且无端到端验收 |
+| E40 | 审计 `action` 闭集覆盖库内全部写入点：`AUDIT_ACTIONS` 恰十值（`job.cancel` 仍在第 4 位，`admin_scope.grant`／`revoke`／`deny` 依次在第 5–7 位，`post.hide` 第 8 位，`admin_account.disable`／`enable` 追加在第 9／10 位），`?action=job.cancel`、`?action=admin_scope.grant`、`?action=post.hide`、`?action=admin_account.disable` 都由 400 转 200 | 已实现 | services/api/src/admin/audit/catalog.ts:170-181 | 锁它的用例：tests/unit/admin-audit-action-jobs-cancel.test.mjs:171（`?action=job.cancel` ⇒ 200 且只回该动作）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:150-154（前 4 项长度仍为 4、第 4 项仍是 `job.cancel`——扩值只能追加末位）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:225（闭集外仍 400、零端口调用）；第 8 值 `post.hide` 另由 tests/unit/admin-audit-logs.test.mjs:387（`entity=post` 只等于 `post.hide`、护栏外合法 action 仍 400 且零端口调用）与 tests/unit/community-audit-channel-pins.test.mjs:268（库内 `post.hide` 写入点恰 0047 一处）钉住；第 9／10 值与 `admin_account` 实体护栏由 tests/unit/admin-account-disable-pins.test.mjs 与 tests/unit/admin-ui-audit-logs.test.mjs 钉住（后者断言 10 个动作、6 个实体）；逐值对拍另由 tests/unit/admin-audit-logs.test.mjs:133-134（契约 `action` enum === `AUDIT_ACTIONS`、`entity` enum === `AUDIT_ENTITIES`）与 tests/unit/ai-ops-ledger-pins.test.mjs:173 钉住，契约枚举同步到十项（packages/contracts/openapi.json:11288-11299）、`entity` 同步到六项（packages/contracts/openapi.json:11307-11314）。剩余边界：审计总台账页已消费该读面（`apps/admin/src/views/AuditLogsView.vue:72`、导航 `apps/admin/src/App.vue:33`），缺口是三个读面各自直连、读数不合并，且无端到端验收 |
 
 ## 3 部分实现（12 条）
 
 | 编号 | 判定项 | 判定 | 依据（文件:行号） | 缺口说明 |
 | --- | --- | --- | --- | --- |
-| P01 | 取消能力按域分派：识别／OCR／转写／合成四域提供；审核与问答两域不提供 ⇒ 503 `retryable:false` | 部分实现 | services/api/src/jobs/registry.ts:94-95 | 缺的两域不是漏接线，是域内确无取消入口；问答取消「仍如实 503」已写进台账 |
+| P01 | 取消能力按域分派：识别／OCR／转写／合成四域提供；审核与问答两域不提供 ⇒ 503 `retryable:false` | 部分实现 | services/api/src/jobs/registry.ts:99 | 缺的两域不是漏接线，是域内确无取消入口；问答取消「仍如实 503」已写进台账 |
 | P02 | 识别域端点、任务、选种、删除闭环 | 部分实现 | docs/architecture/contract-implementation-status.md:83-86 | 结果是 stub／preset_demo 合成替身；真实供应商与独立样本评估未验收（N06） |
 | P03 | OCR 域五端点 + 持久化 | 部分实现 | docs/architecture/contract-implementation-status.md:87-91 | 任务读取与取消已接；真实提供者／媒体／登记源未接线，用量端口恒空 |
 | P04 | 转写域四端点 + 确认分离 | 部分实现 | docs/architecture/contract-implementation-status.md:92-95 | 默认内存 store；真实 ASR 评估、媒体持久化、注销清理未验收 |
@@ -134,7 +134,7 @@
 | N03 | `model_version`／`prompt_version`／`rule_version` 的真实值 | 未实现（P0） | docs/architecture/contract-implementation-status.md:97 | 一律 `unimplemented:no-real-` 前缀；审核侧明示不产出这两字段且有源码扫描测试禁占位（docs/moderation/README.md:45-46），见 §7.3 |
 | N04 | 统一作业台账 `public.jobs` 的真实写入 | 未实现（P1） | services/api/src/admin/ops/jobs-pg.ts:4-9 | 表由 0001 建好（services/api/db/migrations/0001_initial_schema.sql:203-231），但全仓**零 INSERT**；真实作业行只落 `ocr_jobs`／`recognition_jobs`／`speech_jobs` 三张域内表 |
 | N05 | 调用记录表 `provider_invocations` | 未实现（P1） | docs/architecture/data-dictionary.md:48 | 全仓只出现在四份文档，**无迁移、无代码** ⇒ 无 attempt／版本串／成本的可审计记录 |
-| N06 | 识别真实供应商适配器 | 未实现（P1） | services/api/src/recognitions/provider.ts:147-148 | 缺凭据即 503；**即使凭据齐备也没有已审适配器**，`recognize` 仍返回 `PROVIDER_UNAVAILABLE`（同文件 :165） |
+| N06 | 识别真实供应商适配器 | 未实现（P1） | services/api/src/recognitions/provider.ts:151 | 缺凭据即 503；**即使凭据齐备也没有已审适配器**，`recognize` 仍返回 `PROVIDER_UNAVAILABLE`（同文件 :165） |
 | N07 | 审核模型层（LLM 图文／文本模型判定） | 未实现（P1） | services/api/src/moderation/service.ts:366 | 规则层可用、模型层不存在；带媒体投稿因模型层缺失而无法 approved，只能停在待审或隔离 |
 | N08 | Q29 独立样本、真实语音与模型评估（原 Z02） | 未实现（P1） | docs/requirements.md:58 | 原文「尚未执行」；独立样本须在调参前冻结，属**未做**，无暂缓记录 |
 | N09 | 固定 120 题资料问答评估（原 Z07） | 未实现（P1） | docs/implementation-requirements.md:467 | 60 可答／20 不足／20 危险／20 注入，题集与判分口径已存在但未执行；台账「仍待后续片」不是暂缓 |
@@ -194,8 +194,8 @@
 
 上一版的三步断链：#589 修掉前两步，#609 修掉第三步。
 
-1. 写：`jobPort.cancel(...)` 带上 `{ actorId, reasonCode: 'job_cancelled', requestId }`（`services/api/src/admin/ops/service.ts:776-780`）；持久端口不再由服务层写内存审计，而是 `if (!jobPort.persistent) { appendAudit(...) }`（同文件 :853-854）。
-2. 落：真库端口在同一事务里调库函数（`services/api/src/admin/ops/jobs-pg.ts:88`、`:518-519`），失败整体 `ROLLBACK`；真库臂钉住「恰 1 行」（`tests/integration/admin-jobs-pg.mjs:730`），并验证审计表被拒时作业保持原状态（同文件 :845）。
+1. 写：`jobPort.cancel(...)` 带上 `{ actorId, reasonCode: 'job_cancelled', requestId }`（`services/api/src/admin/ops/service.ts:977-981`）；持久端口不再由服务层写内存审计，而是 `if (!jobPort.persistent) { appendAudit(...) }`（同文件 :853-854）。
+2. 落：真库端口在同一事务里调库函数（`services/api/src/admin/ops/jobs-pg.ts:497`、`:518-519`），失败整体 `ROLLBACK`；真库臂钉住「恰 1 行」（`tests/integration/admin-jobs-pg.mjs:730`），并验证审计表被拒时作业保持原状态（同文件 :845）。
 3. 读：库函数本身支持按 action 过滤（`services/api/db/migrations/0033_admin_audit_log_read.sql:50`、`:98`），但 `GET /admin/audit-logs` 的 `action` 参数走闭集判定，`AUDIT_ACTIONS` 当时只有三个动作 ⇒ **`?action=job.cancel` 得 400 `INVALID_REQUEST` + `details[].code='enum'`**（闭集判定本身今天没变，见 `services/api/src/admin/audit/service.ts:121-131`；变的是它读的那张表）。#609 把 `job.cancel` 登记为第四项（`services/api/src/admin/audit/catalog.ts:41-46`），`entity=job` 映射到审计行实际写的 `jobs:cancel`（同文件 :57-68），契约两个枚举随之扩到四项与三项（`packages/contracts/openapi.json:11008-11013`、`:10733-10738`）；用例钉住「200 且只回该动作」「恰四项」「闭集外仍 400 且零端口调用」（`tests/unit/admin-audit-action-jobs-cancel.test.mjs:159`、`:150`、`:213`），顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs:169` 钉住。
 
 **仍没做到的两处**（已从 P0 降级，本页不再按 P0 计）：

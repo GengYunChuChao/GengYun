@@ -1,18 +1,23 @@
 /**
  * 文档手写行号闸门：`docs/**` 里写成 `services/api/src/xxx.ts:17-30` 的引用，代码一动就变成假证据。
  *
- * 这个工具只判**能被机械证伪**的四件事，判不了的一律如实记「不可解析」，不冒充通过：
+ * 这个工具只判**能被机械证伪**的五件事，判不了的一律如实记「不可解析」，不冒充通过：
  *   BROKEN       —— 引用里的路径在仓库里找不到（也没法唯一解析）。
  *   OUT_OF_RANGE —— 路径找到了，但 `起-止` 超出该文件的行数。
  *   SUSPECT      —— 行号合法，可整个区间里没有一行实质内容（全空行／全右括号／全注释）。
+ *   NOT_SYMBOL_LINE —— 「符号引脚」没落在符号行上：目标行在注释里，而这段注释**紧贴声明行**
+ *                   （即该声明的文档注释），文档行又没有逐字引用这段注释里的文字。
+ *                   这就是一次真实事故的假绿通道——上方插入约 30 行后，`:123` 从真声明行漂到
+ *                   `fetchAccountsPage` 的 JSDoc 中间（甚至漂到块注释收尾行 ` *&#47;`），三判据照样全绿。
+ *                   **只对 `docs/architecture/**` 且目标为源码后缀判**，判据边界见 `NOT_SYMBOL_LINE` 上方注释。
  *   ANCHOR_DRIFT —— 引用行里同一行的行内代码片段（`` `...` ``）在目标文件里 0 命中／多处命中，
  *                   或只命中在引用窗口之外：行号还在界内，指的却已经不是那段代码。
  *                   **只对 `docs/architecture/**` 判**，判据边界见 `ANCHOR_DRIFT` 常量上方的注释。
  *
  * 为什么**不**用「内容 sha256 全等」当判据：任何合法改代码（加一行日志、改一个错别字）都会让
  * 哈希变红，红的原因与「文档是不是假证据」无关，等于用噪声换掉原有的真信号，最后只能整片关掉。
- * 本工具判的是**结构性**事实（路径在不在、行号在不在文件里、区间里有没有东西），
- * 这些事实只在「文档确实指错了地方」时才变红。内容是否仍然描述同一段实现，属人工判断，
+ * 本工具判的是**结构性**事实（路径在不在、行号在不在文件里、区间里有没有东西、符号引脚落没落在
+ * 符号行上），这些事实只在「文档确实指错了地方」时才变红。内容是否仍然描述同一段实现，属人工判断，
  * 本工具不证明（见 docs/verification/gy-r31-doc-anchors-20261022.md）。
  *
  * 基线：仓内既有文档本来就有历史遗留的行号漂移，全量清零不是本片能做的事。已知问题登记在
@@ -33,7 +38,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from '
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { associateSymbol, declarationBlocks } from './lib/anchor-resolve.mjs';
+import { associateSymbol, declarationBlocks, scanComments, symbolLineVerdict } from './lib/anchor-resolve.mjs';
 
 export const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 默认扫描面：架构文档 + 证据页。用 `--scan` 可加，不改这里也能扩。 */
@@ -42,7 +47,23 @@ export const DEFAULT_BASELINE = 'tools/doc-anchors-baseline.json';
 export const BROKEN = 'BROKEN';
 export const OUT_OF_RANGE = 'OUT_OF_RANGE';
 export const SUSPECT = 'SUSPECT';
-export const REASONS = Object.freeze([BROKEN, OUT_OF_RANGE, SUSPECT]);
+export const NOT_SYMBOL_LINE = 'NOT_SYMBOL_LINE';
+export const REASONS = Object.freeze([BROKEN, OUT_OF_RANGE, SUSPECT, NOT_SYMBOL_LINE]);
+
+/**
+ * 符号行判据的作用域：只判**在用的实现说明**（架构页），与 `ANCHOR_DRIFT` 同一理由——
+ * `docs/verification/**` 是某一版树的历史读数，行号按当时的树写、正文也声明了基线，
+ * 要求它们「落在当前树的符号行上」等于逼历史证据跟着代码一起改写，正好毁掉证据的价值。
+ * 作用域外同形状的引用只统计（`SYMBOL-LINE` 读数的「作用域外」那一格），不判红。
+ */
+export const SYMBOL_LINE_SCOPE = 'docs/architecture/';
+
+/**
+ * 套「符号行」口径的目标后缀：只有源码才有可识别的声明行（`export` / `function` / `class` /
+ * `interface` / `type` / `enum` / `CONSTANT =` …）。JSON/SQL/MD/YML 不套——裁定 ④ 不强制它们
+ * 长出「函数符号」，SQL 的 `CREATE TABLE`、MD 的标题是另一套语义，硬套只会造出无从修的红。
+ * 清单定义在文件后半段（与 `--symbol=count` 共用一份，见 `SYMBOL_SOURCE_EXTENSIONS`）。
+ */
 
 /** 只认这些扩展名：`10.20.0.0:16` 这类 IP／端口不会被误当成「路径:行号」。 */
 const ANCHOR_EXTENSIONS = Object.freeze([
@@ -283,6 +304,26 @@ export function classifyReference({ lines, from, to, extension }) {
   return { reason: null, commentOnly };
 }
 
+// —— 符号行判据（NOT_SYMBOL_LINE） ————————————————————————————————————
+/**
+ * 该文档是否在符号行判据的作用域内（`docs/architecture/**`，见 `SYMBOL_LINE_SCOPE`）。
+ */
+export function isSymbolLineScope(docPath) {
+  return toPosix(docPath).startsWith(SYMBOL_LINE_SCOPE);
+}
+
+/**
+ * 闸门侧入口：判据本体在 `tools/lib/anchor-resolve.mjs` 的 `symbolLineVerdict`（**一处口径**，
+ * 单测与闸门调的是同一个函数，不许在这里再抄一份判定）。返回 `{...verdict, inScope, applicable}`：
+ * `status` ∈ `code` / `comment-detached` / `comment-cited` / `comment-attached`；
+ * `inScope` = 文档在 `SYMBOL_LINE_SCOPE` 内，`applicable` = 目标是源码后缀。
+ * **只有 `inScope && status === 'comment-attached'` 判红**（`NOT_SYMBOL_LINE`）。
+ */
+export function judgeSymbolLine({ docPath, docLineText, target, text, lines, from, to, scan = null }) {
+  const verdict = symbolLineVerdict({ text, docLineText, lines, from, to, scan });
+  return { ...verdict, inScope: isSymbolLineScope(docPath), applicable: SYMBOL_SOURCE_EXTENSIONS.has(extensionOf(target)) };
+}
+
 /**
  * 全量扫描：返回 `{ findings, stats, unresolved }`。
  * `findings` 每条 = `{ reason, reference, target, path, owner, doc, docLine, detail }`；
@@ -297,6 +338,8 @@ export function collectFindings({
   const index = fileIndex ?? buildFileNameIndex(root);
   const files = documents ?? resolveScanTargets(root, targets);
   const fileLines = new Map();
+  const fileTexts = new Map();
+  const fileScan = new Map();
   const findings = [];
   const unresolved = [];
   const seen = new Set();
@@ -307,14 +350,24 @@ export function collectFindings({
     deduped: 0,
     blankStart: 0,
     commentOnly: 0,
-    counts: { [BROKEN]: 0, [OUT_OF_RANGE]: 0, [SUSPECT]: 0 },
+    symbol: { inScope: 0, code: 0, detached: 0, cited: 0, attached: 0, outside: 0 },
+    counts: { [BROKEN]: 0, [OUT_OF_RANGE]: 0, [SUSPECT]: 0, [NOT_SYMBOL_LINE]: 0 },
+  };
+  const readText = relativePath => {
+    if (!fileTexts.has(relativePath)) fileTexts.set(relativePath, readFileSync(join(root, relativePath), 'utf8'));
+    return fileTexts.get(relativePath);
   };
   const readLines = relativePath => {
-    if (!fileLines.has(relativePath)) fileLines.set(relativePath, splitLines(readFileSync(join(root, relativePath), 'utf8')));
+    if (!fileLines.has(relativePath)) fileLines.set(relativePath, splitLines(readText(relativePath)));
     return fileLines.get(relativePath);
+  };
+  const readScan = relativePath => {
+    if (!fileScan.has(relativePath)) fileScan.set(relativePath, scanComments(readText(relativePath)));
+    return fileScan.get(relativePath);
   };
   for (const docPath of files) {
     const text = readFileSync(join(root, docPath), 'utf8');
+    const docLines = splitLines(text);
     for (const reference of extractReferences(text)) {
       stats.candidates += 1;
       const resolved = resolveTarget({ root, docPath, target: reference.target, fileIndex: index });
@@ -351,6 +404,47 @@ export function collectFindings({
       });
       if (verdict.reason === null) {
         if (verdict.commentOnly) stats.commentOnly += 1;
+        const symbol = judgeSymbolLine({
+          docPath,
+          docLineText: docLines[reference.docLine - 1] ?? '',
+          target: resolved.relative,
+          text: readText(resolved.relative),
+          lines,
+          from: reference.from,
+          to: reference.to,
+          scan: readScan(resolved.relative),
+        });
+        if (symbol.applicable) {
+          if (!symbol.inScope) {
+            // 作用域外（历史证据页）同形状的引用只统计：见 `SYMBOL_LINE_SCOPE` 的理由，不判红。
+            if (symbol.status === 'comment-attached') stats.symbol.outside += 1;
+          } else {
+            stats.symbol.inScope += 1;
+            if (symbol.status === 'code') stats.symbol.code += 1;
+            else if (symbol.status === 'comment-detached') stats.symbol.detached += 1;
+            else if (symbol.status === 'comment-cited') stats.symbol.cited += 1;
+            else if (symbol.status === 'comment-attached') {
+              stats.symbol.attached += 1;
+              const key = `${docPath}|${reference.reference}|${NOT_SYMBOL_LINE}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                stats.counts[NOT_SYMBOL_LINE] += 1;
+                findings.push({
+                  reason: NOT_SYMBOL_LINE,
+                  reference: reference.reference,
+                  target: reference.target,
+                  path: resolved.relative,
+                  owner: ownerOf(resolved.relative),
+                  doc: docPath,
+                  docLine: reference.docLine,
+                  detail: describeSymbolMiss({ target: resolved.relative, span: symbol.span, declaration: symbol.declaration }),
+                });
+              } else {
+                stats.deduped += 1;
+              }
+            }
+          }
+        }
         continue;
       }
       const key = `${docPath}|${reference.reference}|${verdict.reason}`;
@@ -656,8 +750,9 @@ export function ownerOf(targetPath) {
 /**
  * 只有这些扩展名有「声明块」口径。JSON/SQL/MD/YML 的目标**不算无法判定**：
  * 裁定 ④ 明确「不强制所有 JSON/SQL/历史读数都套函数符号」，硬套只会把合规引用记成红的。
+ * 同一份清单也用于 `NOT_SYMBOL_LINE` 的作用域判定（见 `SYMBOL_LINE_SCOPE` 上方注释）。
  */
-const SYMBOL_SOURCE_EXTENSIONS = new Set(['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs']);
+export const SYMBOL_SOURCE_EXTENSIONS = new Set(['ts', 'tsx', 'mts', 'cts', 'js', 'jsx', 'mjs', 'cjs']);
 
 /**
  * 逐条引用做符号关联：**每个引用位置分别关联**，不按行去重、也不取「一行一个」。
@@ -744,7 +839,7 @@ export function loadBaseline(root, baselinePath = DEFAULT_BASELINE) {
     if (typeof entry.path !== 'string' || typeof entry.reference !== 'string' || typeof entry.reason !== 'string') {
       throw new Error(`基线条目缺字段（需要 path / reason / reference）：${JSON.stringify(entry)}`);
     }
-    if (!REASONS.includes(entry.reason)) throw new Error(`基线条目的 reason 不是三类之一：${entry.reason}`);
+    if (!REASONS.includes(entry.reason)) throw new Error(`基线条目的 reason 不是登记的四类之一（${REASONS.join(' / ')}）：${entry.reason}`);
   }
   return { path: baselinePath, entries, missing: false };
 }
@@ -790,7 +885,7 @@ export function renderBaseline(findings) {
   }));
   const document = {
     schema_version: 1,
-    note: '文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。',
+    note: '文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。',
     generated_by: 'node tools/verify-doc-anchors.mjs --emit-baseline',
     entries,
   };
@@ -840,6 +935,16 @@ export function parseArgs(argv) {
 
 function describe(finding) {
   return `${finding.reason} ${finding.doc}:${finding.docLine} → ${finding.reference}（${finding.detail}；owner=${finding.owner}）`;
+}
+
+/**
+ * `NOT_SYMBOL_LINE` 的报错正文：一眼能改对——说清注释块的行区间、**该注释块后面的声明行是哪个
+ * `path:N`**、以及那段注释的首行（截断），作者不用回目标文件里自己找「到底该指哪一行」。
+ */
+function describeSymbolMiss({ target, span, declaration }) {
+  const head = (String(span.text).split('\n')[0] ?? '').trim().slice(0, 60);
+  const symbol = declaration.symbol === null ? '' : `（${declaration.symbol}）`;
+  return `符号引脚落在第 ${span.start}-${span.end} 行的注释里；该注释块后面的声明行是 ${target}:${declaration.line}${symbol}；注释首行「${head}」`;
 }
 
 export function main(argv = process.argv.slice(2), streams = { log: console.log, error: console.error }) {
@@ -897,14 +1002,15 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.error('  修法：按片段在目标文件里的真实行号改写引用（报错里给了「实际行号」）；确属历史遗留/归属不唯一的，人工裁决后加进 tools/verify-doc-anchors.mjs 的 ARCHITECTURE_ANCHOR_BASELINE 并写明分类。');
   }
   if (structuralFailed || driftFailed) return 1;
-  if (options.strict) streams.log('PASS: --strict 下没有基线之外的新增（结构三判据与 ANCHOR_DRIFT 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT）');
+  if (options.strict) streams.log('PASS: --strict 下没有基线之外的新增（结构四判据与 ANCHOR_DRIFT 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT）');
   return 0;
 }
 
 function printSummary(streams, { stats, unresolved, findings, fresh, covered, stale, baseline, strict }) {
   const { counts } = stats;
   streams.log(`SCAN: 文档 ${stats.documents} 份；抽出「路径:行号」引用 ${stats.candidates} 条（解析成功 ${stats.resolved} 条、同名多文件无法唯一解析 ${unresolved.length} 条不计红${stats.deduped > 0 ? `、同文档重复 ${stats.deduped} 条已去重` : ''}）`);
-  streams.log(`COUNT: BROKEN ${counts[BROKEN]} / OUT_OF_RANGE ${counts[OUT_OF_RANGE]} / SUSPECT ${counts[SUSPECT]}（合计 ${findings.length} 条；另只计数不判红：区间首行为空行 ${stats.blankStart} 条、区间全是注释行 ${stats.commentOnly} 条）`);
+  streams.log(`COUNT: BROKEN ${counts[BROKEN]} / OUT_OF_RANGE ${counts[OUT_OF_RANGE]} / SUSPECT ${counts[SUSPECT]} / ${NOT_SYMBOL_LINE} ${counts[NOT_SYMBOL_LINE]}（合计 ${findings.length} 条；另只计数不判红：区间首行为空行 ${stats.blankStart} 条、区间全是注释行 ${stats.commentOnly} 条）`);
+  streams.log(`SYMBOL-LINE: 作用域 ${SYMBOL_LINE_SCOPE}** × 源码后缀——可判 ${stats.symbol.inScope} 条：落代码行 ${stats.symbol.code}、注释但非文档注释 ${stats.symbol.detached}、逐字引用注释文案 ${stats.symbol.cited}、落在文档注释里 ${stats.symbol.attached}（其中判红 ${counts[NOT_SYMBOL_LINE]} 条）；作用域外（历史证据页）同形状 ${stats.symbol.outside} 条只统计、不判红`);
   streams.log(`BASELINE: ${baseline.path} 登记 ${baseline.entries.length} 条；本次命中 ${covered.length} 条、基线外新增 ${fresh.length} 条、陈旧 ${stale.length} 条`);
   if (strict) streams.log('MODE: --strict（只在新增加非零时 exit 1）');
   else streams.log('MODE: dry-run（只打印，不判退出码）');
@@ -932,7 +1038,7 @@ function describeDrift(finding) {
  * 只打印，不改退出码。
  */
 function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
-  streams.log('SYMBOL: --symbol=count 只统计不判红（退出码仍只由 --strict ＋ 基线外新增决定；结构性的 BROKEN／OUT_OF_RANGE／SUSPECT 判据一切照旧）');
+  streams.log('SYMBOL: --symbol=count 只统计不判红（退出码仍只由 --strict ＋ 基线外新增决定；结构性的 BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE 判据一切照旧）');
   streams.log(`SYMBOL-COUNT: 引用 ${stats.references} 条（每个引用位置分别关联，未按行去重）：可核 ${stats.checkable} 条（其中命中 ${stats.hit} 条）/ 无法判定 ${stats.undecidable} 条 / 不适用 ${stats.notApplicable} 条（目标不是源码扩展名，裁定 ④ 不强制套函数符号）`);
   if (reasons.size > 0) {
     streams.log(`SYMBOL-UNDECIDABLE-REASONS: ${[...reasons].map(([reason, count]) => `${reason} ${count} 条`).join('；')}`);
