@@ -157,6 +157,12 @@ const MANAGED_SCRIPTS = Object.freeze([
   // 真库留痕、[B] 段 fail-closed（审计写不进去 ⇒ 503 且帖子零变化）、[C] 段幂等）。**紧挨着
   // `admin-community-posts-pg`**插入：同一 `POST /admin/posts/{id}/hide` 处置面，并排读最省事。
   'tests/integration/admin-post-hide-audit-pg.mjs',
+  // R66：`admin-audit-logs-pg`（#34 的**审计读面**真库臂：迁移 0033 的只读函数
+  // `public.list_admin_audit_logs(...)`，钉条数与顺序、键集翻页、时间区间、事件类型筛选、`target_ref` 脱敏
+  // 投影、以及「读面只能走函数」的权限形状）。**紧挨着 `admin-post-hide-audit-pg`**插入：同一审计域的两面
+  // （`post.hide` 的审计**写**入口专证 vs 审计**读**面），并排读最省事。
+  // ⚠️ 它的 workflow step 与上面那条**不同段**：它要 `GY_PG_BIN`，必须排在那条装包 step 之后。
+  'tests/integration/admin-audit-logs-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
@@ -209,6 +215,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-community-posts-pg.mjs',
   // R65：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/admin-post-hide-audit-pg.mjs',
+  // R66：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/admin-audit-logs-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
@@ -438,6 +446,18 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
   //    其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后。
   'tests/integration/third-party-deletion-sql-pg.mjs',
+  // 15f. `admin-audit-logs-pg`（R66 接入，#34 的**审计读面**：迁移 0033 的只读函数 `list_admin_audit_logs`）：
+  //    与第 13/14/15/15b/15c/15d/15e 条**同类**的自起集群脚本（自己 `initdb` 出临时 17 集群、
+  //    端口 `55436–55467` 且**先探活再起**、只监听 127.0.0.1、`-c max_connections=32`、自建
+  //    `gengyun_r34_audit_logs_test`、迁移走生产路径 `migrate.ts up` 到 0047、跑完 `pg_ctl stop` 并删数据
+  //    目录与两份日志），**不连** service 里的库、也不复用别人的库/角色（只自建运行时与未授权两个角色）⇒ 零耦合。
+  //    它的数据根目录键是 **`GY_R34_PG_ROOT`**（源码唯一取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`，`:64`），
+  //    与第 15c 条 `retention-purge-pg` **同键**——两条各自在 root 下建自己的子目录，允许共用同一个 CI root，
+  //    ⛔ 但不是「同目录」；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
+  //    它在 workflow 里排在 `third-party-deletion-sql-pg`（15e）**之后**、`recognition-chain-e2e`（16）**之前**
+  //    （本清单与 workflow 实际执行顺序逐条对齐）；后者仍排最后：其 step 注释与本清单都要求它是唯一起 loopback
+  //    监听并反复轮询异步落库的最慢一步，别把它的读秒和别人的失败混在一起。
+  'tests/integration/admin-audit-logs-pg.mjs',
   // 16. `recognition-chain-e2e`（R28-S65 接入，GY-I06／I08／I09／I10）：**两条不叫 `-pg.mjs`** 的受管脚本之一
   //    （另一条是上面第 15d 条的 `user-chain-e2e`，同为 `-e2e.mjs`），跑的是仓内唯一的完整识别业务链路
   //    （上传识别→结果→可信度与理由→识别历史→读回→删除→读空，
@@ -498,6 +518,12 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   // 与两份日志）。它读的数据根键是 **`GY_S4_PG_ROOT`**（源码取值点 `process.env.GY_S4_PG_ROOT ?? tmpdir()`），
   // 与上六条都不同 ⇒ 键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   'tests/integration/third-party-deletion-sql-pg.mjs',
+  // R66：`admin-audit-logs-pg.mjs`（#34 审计读面）同上（自起集群、`initdb -U postgres -A trust`、
+  // `55436–55467` 先探活再起、只监听 127.0.0.1、`-c max_connections=32`、自建 `gengyun_r34_audit_logs_test`、
+  // 迁移走生产路径 `migrate.ts up` 到 0047 再原样执行部署授权段、跑完 `pg_ctl stop` 并删数据目录与两份日志）。
+  // 它读的数据根键是 **`GY_R34_PG_ROOT`**（源码唯一取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`，`:64`）：
+  // 与第 15c 条 `retention-purge-pg` **同键**（同族同键、各自子目录，见 `SELF_CLUSTERED_ROOT_KEY`）。
+  'tests/integration/admin-audit-logs-pg.mjs',
 ]);
 
 /**
@@ -533,6 +559,14 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   // 下的 `gy-s4-p2b-pg-<hex>.log`——`⛔` 不能放进 dataDir，否则 `openSync` 会把 initdb 的目标目录变成非空）。
   // ⚠️ 它**没有** `GY_*_PG_LOG` 键（日志路径由 root 推导）⇒ `detectedRootKeys()` 只认这一个根键。
   'tests/integration/third-party-deletion-sql-pg.mjs': 'GY_S4_PG_ROOT',
+  // R66：`admin-audit-logs-pg.mjs`（#34 审计读面）读 **`GY_R34_PG_ROOT`**（源码唯一取值点
+  // `process.env.GY_R34_PG_ROOT ?? tmpdir()`，`:64`；数据目录＝<root>/gy-r34-audit-logs-pg-<端口>-<6 位 hex>，
+  // 日志是**同一 root** 下的固定文件名 `gy-r34-audit-logs-pg-tools.log`——⛔ 不在 dataDir 里，否则 initdb 的
+  // 目标目录非空；append 模式，故与前一条共用 root 也只是追加、不覆盖）。
+  // ⚠️ 与上面 `retention-purge-pg` **同键但⛔ 非同目录**：两条各自在 root 下建自己的子目录（日志文件名也不同），
+  // 互不覆盖，所以 workflow 里两条 step 可以共用同一个 `${{ runner.temp }}/gy-r34-pg`。
+  // ⚠️ 它**没有** `GY_*_PG_LOG` 键（日志路径由 root 推导）⇒ `detectedRootKeys()` 只认这一个根键。
+  'tests/integration/admin-audit-logs-pg.mjs': 'GY_R34_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */

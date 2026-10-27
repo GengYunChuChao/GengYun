@@ -681,6 +681,37 @@ jobs:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_S4_PG_ROOT: ${{ runner.temp }}/gy-s4-p2b-pg
           PGCLIENTENCODING: UTF8
+      # 审计读面（#34 的**读**面：迁移 0033 的只读函数 `public.list_admin_audit_logs(...)`，钉条数与顺序、
+      # 键集翻页、时间区间、事件类型筛选、target_ref 脱敏投影、以及「读面只能走函数」的权限形状）。
+      # 形态与上面那些「CI 建库 + 连接串 env」的臂**不同**：它自己 `initdb` 出一个一次性 17 集群
+      # （`GY_PG_BIN` 指二进制目录），端口在 `55436–55467` 内**先探活再起**、只监听 127.0.0.1、自建
+      # `gengyun_r34_audit_logs_test`、跑完 `pg_ctl stop` 并删数据目录（`server.log` 随目录一起删；工具日志
+      # `gy-r34-audit-logs-pg-tools.log` 写在 root 下、**不删**、留着取证）⇒ 属本仓「自起集群」族，判据⑦⑧ 走等价判据，
+      # 它不读 owner URL、也不复用 service 集群的任何库/角色（故没有「CI 建的库」可核对）⇒ 对前后 step 零耦合。
+      # 为什么要给 `GY_PG_BIN`：这条臂第一步就是 `initdb`，而 runner 上 `initdb`／`pg_ctl` 不在 PATH 上
+      # （路径是 `/usr/lib/postgresql/17/bin`）；上面那条装包 step 已把 17 服务端二进制装好，故它必须排在那条之后。
+      # 缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，
+      # 也不加 `continue-on-error`／`|| true` 任何吞红开关）。
+      # ⚠️ 数据根目录键是 **`GY_R34_PG_ROOT`**（源码唯一取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`，`:64`）。
+      # 它与 `retention-purge-pg` 那条**同键**是允许的：两条各自在 root 下建自己的子目录，互不覆盖；但根键名
+      # 必须按脚本映射（守卫按源码交叉核对 `SELF_CLUSTERED_ROOT_KEY`），给错键即红——那样 root 只是**装饰性
+      # env**，数据目录照样落 `os.tmpdir()`。
+      # ⛔ 本 step **不得**出现 `CREATE DATABASE`：它连的是自己临时集群里的 `gengyun_r34_audit_logs_test`
+      # （脚本内 `CREATE DATABASE`，与 CI 建的库毫无关系）；紧跟其后的识别链路 step 才建它自己的库。
+      # 排在 `third-party-deletion-sql-pg` **之后**、`recognition-chain-e2e` **之前**：后者的 step 注释与
+      # `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
+      # `timeout-minutes: 5`：本机实测整臂 ≈ 20 s（修前；其中工具日志段 5 s 是 initdb + 全链 46 个迁移 + 11 组读数
+      # + 20009 行规模，另 ≈ 13 s 是那次失败收尾的句柄等待；修后收尾立即成功、整臂更快），5 分钟是它自己的封顶；
+      # ⛔ 不靠 job 级 15 分钟兜底——那会把「这一步卡死」混成「job 超时」。
+      # 本地取证（本机 PG 17.11 二进制 + 独立数据根 `E:\GengYunCommander\.pg17\tmp\r66-arm2`）：exit=0、11 条 ✓，
+      # 含 `规模：表内 20009 行` 与三条 EXPLAIN 读数，末行 `真库臂 PASS：…`；跑完 `postgres`=0、目录已删、55436 未监听。
+      - name: 审计读面（#34 / 迁移 0033 的 list_admin_audit_logs / 键集 / 筛选 / 脱敏 / 权限形状）
+        timeout-minutes: 5
+        run: node tests/integration/admin-audit-logs-pg.mjs
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_R34_PG_ROOT: ${{ runner.temp }}/gy-r34-pg
+          PGCLIENTENCODING: UTF8
       # 识别端到端链路（GY-I06／I08／I09／I10，R28-S65）：库名硬钉 `gengyun_recognition_chain_test`，
       # 脚本同样要求**空库**（`preparePg()` 先数 `public` 下的表，非 0 直接断言失败）。
       # 它跑的是仓内**唯一**的完整业务链路：上传识别 → 拿到结果 → 看可信度与理由 → 加入识别历史 →

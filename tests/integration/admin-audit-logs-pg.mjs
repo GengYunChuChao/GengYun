@@ -7,8 +7,8 @@
  * `SECURITY DEFINER` 之后运行时角色到底还能不能读表、以及 `target_ref` 的允许列表投影是否真
  * 把多余键裁掉。这些只有真 PG 才能回答。
  *
- * 本臂自己起**一次性集群**（`initdb` 新目录），因此不依赖本机既有实例；端口在
- * 55436–55467 里探活后取空闲者（55432–55435 留给已存在的兄弟集群），收尾 `pg_ctl stop` + 删目录。
+ * 本臂自己起**一次性集群**（`initdb` 新目录），因此不依赖本机既有实例；端口在 55436–55467 里探活后取空闲者
+ * （55432–55435 留给兄弟集群），收尾 `pg_ctl stop` + 删数据目录（`server.log` 随目录删；工具日志在 root 下、不删、取证用）。
  *
  * 怎么跑
  * ------
@@ -149,7 +149,19 @@ let runtimePool = null;
  * （`netsh int ipv4 show excludedportrange protocol=tcp`，本机 55441–55540 在列），
  * postgres 在这些端口上会拿到 WSAEACCES。所以真正的判据是「postgres 能不能 bind」——
  * 失败就换下一个候选，并把原因如实打出来（不静默降级、不假装通过）。
+ *
+ * POSIX 上还**必须**把 unix socket 指到本集群自己的数据目录：Debian/Ubuntu（含 PGDG 的
+ * `postgresql-17`）把编译默认 `unix_socket_directories` 钉成 `/var/run/postgresql`，runner
+ * 的普通用户写不了 ⇒ `pg_ctl start` 直接 FATAL `could not create lock file
+ * "/var/run/postgresql/.s.PGSQL.<port>.lock"`（2026-10-27 CI 实测，见 R66 证据页 §5.4）。
+ * 本臂原先只在 Windows 上跑过（Windows 不用 unix socket），所以这一条一直没暴露。
  */
+function serverOptions(candidate, dir) {
+  const options = [`-p ${candidate}`, '-c listen_addresses=127.0.0.1', '-c max_connections=32'];
+  if (process.platform !== 'win32') options.push(`-k ${dir}`);
+  return options.join(' ');
+}
+
 async function startCluster() {
   const tried = [];
   for (let candidate = 55436; candidate <= 55467; candidate += 1) {
@@ -170,7 +182,7 @@ async function startCluster() {
     const start = runTool('pg_ctl', [
       '-D', dir,
       '-l', join(dir, 'server.log'),
-      '-o', [`-p ${candidate}`, '-c listen_addresses=127.0.0.1', '-c max_connections=32'].join(' '),
+      '-o', serverOptions(candidate, dir),
       '-t', '60', '-w', 'start',
     ]);
     if (start.status !== 0) {
@@ -207,7 +219,18 @@ function stopCluster() {
     throw new Error(`拒绝删除非本脚本创建的目录：${dataDir}`);
   }
   if (existsSync(join(dataDir, 'PG_VERSION'))) {
-    runTool('pg_ctl', ['-D', dataDir, '-m', 'immediate', '-w', 'stop'], { timeout: 60_000 });
+    const stop = runTool('pg_ctl', ['-D', dataDir, '-m', 'immediate', '-w', 'stop'], { timeout: 60_000 });
+    // 必须显式判返回码与 `error`：`spawnSync` 在 stdio 里拿到**已关闭的 fd** 时**不抛错**，只把失败
+    // 塞进 `error`（此时 `status` 为 `null`）。只看 `status` 或干脆不看返回值，这次「停止」就会静默
+    // 不执行 —— 2026-10-27 之前本臂正是这样：`closeSync(logFd)` 排在 `stopCluster()` 之前，
+    // 每次 stop 都拿到 `status=null / error.code=EBADF` 并被丢弃，于是集群留在宿主上、目录删不掉，
+    // 而读数照绿（R66 复盘；现改为收尾之后才关 fd，见 finally 里的注释）。
+    if (stop.error || stop.status !== 0) {
+      const reason = stop.error
+        ? `${stop.error.code ?? 'ERROR'} ${stop.error.message}`.trim()
+        : `exit ${stop.status}`;
+      throw new Error(`pg_ctl stop 失败：${reason}（目录 ${dataDir}，需人工清理）`);
+    }
   }
   // `pg_ctl -w stop` 返回不等于 postgres 已经放开文件句柄：先等 postmaster.pid 消失，再删目录。
   // 删不掉不算测试失败（读数已经拿到），只打印目录路径让人工清理。
@@ -261,8 +284,9 @@ async function bootstrapDatabase() {
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
   // 版本钉是**字面量**，新增迁移落地时要把这里同步到新的末位号（本切片：仓库末位＝`0047`）。
-  // 演进史：曾钉 `'0033'`，迁移推到 0044 后陈旧了 11 号 —— 而本文件未接入
+  // 演进史：曾钉 `'0033'`，迁移推到 0044 后陈旧了 11 号 —— 当时本文件**尚未**接入
   // `.github/workflows/real-pg-integration.yml`，没有 CI 来提醒，只能靠这条注释；
+  // （R66 起它已是 `real-pg-17.11` job 里的一步：钉旧了 CI 直接红，这条注释退回「演进史」用途。）
   // 第二次：S3 片 A 的 0045（人工 approve/reject 的施动者快照列 `decided_by`）落地，末位随之前移到 0045。
   // ⛔ 也不要图省事改成「取迁移目录末项再比」：`tests/unit/migration-pin-guard.test.mjs` 把
   // 「读迁移清单末位」整类列为仓库级红项（D1 末项索引 / D2 `.at(-1)` 等形态，跨 PR 互斥）——
@@ -643,7 +667,6 @@ try {
 } finally {
   await ownerPool?.end().catch(() => {});
   await runtimePool?.end().catch(() => {});
-  closeSync(logFd);
   if (dataDir === '') {
     // 没有起成集群（候选端口全不可用）：没有东西可清理。
   } else {
@@ -654,4 +677,9 @@ try {
       process.exitCode = 1;
     }
   }
+  // 工具日志 fd 必须**在 `stopCluster()` 之后**关：`runTool` 把这个 fd 直接当 `pg_ctl`/`postgres` 的
+  // stdout/stderr（见 `runTool`），提前关掉会让 `spawnSync` 拿到 EBADF 且**不抛错**
+  // （`status=null`、`error.code=EBADF`），`pg_ctl stop` 于是静默不执行 —— 顺序反过来是最小、
+  // 也最不容易再把这条 bug 带回来的写法（R66 修复）。
+  closeSync(logFd);
 }
