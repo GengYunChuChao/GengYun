@@ -224,7 +224,7 @@ onBeforeUnmount(() => {
         <code>event_type</code>、主体或时间范围之类的过滤参数。
       </p>
 
-      <div class="status" :class="view.tone" role="status">
+      <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'">
         <strong>{{ view.title }}</strong>
         <span>{{ view.detail }}</span>
         <code v-if="view.errorCode" class="code-chip">{{ view.errorCode }}</code>
@@ -255,7 +255,14 @@ onBeforeUnmount(() => {
         </thead>
         <tbody>
           <template v-for="row in rows" :key="row.id">
-            <tr :class="{ selected: row.id === state.expandedId }" @click="dispatch({ type: 'TOGGLE_ROW', id: row.id })">
+            <tr
+              :class="{ selected: row.id === state.expandedId }"
+              tabindex="0"
+              :aria-label="`展开或收起审计事件原文：${row.action}（${row.id}）`"
+              @click="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+              @keydown.enter.self.prevent="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+              @keydown.space.self.prevent="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+            >
               <td class="mono">{{ row.createdAt }}</td>
               <td class="mono">{{ row.action }}</td>
               <td class="mono">{{ row.scope }}</td>
@@ -267,7 +274,14 @@ onBeforeUnmount(() => {
               <td class="mono">{{ row.changeLabel === null ? '—' : row.changeLabel }}</td>
               <td class="mono" :title="row.requestId">{{ row.shortRequestId }}…</td>
               <td class="right">
-                <button class="link" type="button">{{ row.id === state.expandedId ? '收起' : '展开原文' }}</button>
+                <button
+                  class="link"
+                  type="button"
+                  :aria-label="`${row.id === state.expandedId ? '收起' : '展开原文'}：审计事件 ${row.action}（${row.id}）`"
+                  @click.stop="dispatch({ type: 'TOGGLE_ROW', id: row.id })"
+                >
+                  {{ row.id === state.expandedId ? '收起' : '展开原文' }}
+                </button>
               </td>
             </tr>
             <tr v-if="row.id === state.expandedId" :key="`${row.id}-detail`" class="detail">

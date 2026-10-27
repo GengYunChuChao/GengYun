@@ -262,7 +262,7 @@ onBeforeUnmount(() => {
       </div>
       <p v-if="reasonErr" class="foot warn-text">理由不可用：{{ reasonErr }}</p>
 
-      <div class="status" :class="view.tone" role="status">
+      <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'">
         <strong>{{ view.title }}</strong>
         <span>{{ view.detail }}</span>
         <button v-if="retryRead || reloadNeeded" class="link" type="button" :disabled="busy" @click="reload">
@@ -308,7 +308,11 @@ onBeforeUnmount(() => {
             v-for="row in rows"
             :key="row.key"
             :class="{ selected: row.key === state.selectedKey }"
+            tabindex="0"
+            :aria-label="`选中文档开关 ${row.key}`"
             @click="dispatch({ type: 'SELECT', key: row.key })"
+            @keydown.enter.self.prevent="dispatch({ type: 'SELECT', key: row.key })"
+            @keydown.space.self.prevent="dispatch({ type: 'SELECT', key: row.key })"
           >
             <td class="mono">{{ row.key }}</td>
             <td><span class="pill" :class="row.tone">{{ row.enabledLabel }}</span></td>

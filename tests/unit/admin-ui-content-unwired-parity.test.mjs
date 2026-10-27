@@ -52,13 +52,42 @@ const unwiredResponse = (retryable) =>
   );
 
 /**
- * 列表状态区：五族都渲染**恰好一个** `role="status"` 的区块
- * （注册／限制另有 `role="alert"` 的失败横幅，不是本用例的对象）。
+ * 列表状态区：五族都渲染**恰好一个**静态 `class="status"` 的列表区块。
+ *
+ * 为什么不再用 `role="status"` 去找它：#673（`9cdfcbf4`）把这五页同一个 `.status` 容器改成了
+ * `:role="view.tone === 'error' ? 'alert' : 'status'"` ⇒ 503 错误态下该容器的 role 是 **`alert`**，
+ * 旧选择器 `node.props.role === 'status'` 取到 `null`（不是「页面没有状态区」，是选择器过时）。
+ * 现在按**静态类**定位（夹具的 `patchProp` 把 Vue 归一化后的 class 落在 `node.props.class`，形如
+ * `status error`），再**由 tone 推 role**：`tone === 'error'` ⇒ `role="alert"`，其余 ⇒ `role="status"`。
+ * 刻意不拿 role 反推 role —— 那是循环论证，改坏模板也会跟着一起绿。
+ * （注册／限制另有 `role="alert"` 的失败横幅，是 `view.phase !== 'unwired'` 时的另一支，不是本用例的对象。）
  */
-function requireStatusRegion(container) {
-  const status = findBy(container, (node) => node.props.role === 'status');
-  assert.notEqual(status, null, '每族都必须有 role="status" 的列表状态区');
-  return status;
+function classTokens(node) {
+  const value = node.props.class;
+  if (typeof value !== 'string') return [];
+  return value.split(/\s+/).filter((token) => token !== '');
+}
+
+function requireStatusRegion(container, label) {
+  const region = findBy(container, (node) => classTokens(node).includes('status'));
+  assert.notEqual(region, null, `${label}：每族都必须有 class="status" 的列表状态区`);
+  const tone = classTokens(region).filter((token) => token !== 'status')[0];
+  assert.equal(typeof tone, 'string', `${label}：列表状态区必须带 tone（class 里除 status 之外的那一枚）`);
+  const expectedRole = tone === 'error' ? 'alert' : 'status';
+  assert.equal(
+    region.props.role,
+    expectedRole,
+    `${label}：列表状态区 tone=${tone} 时 role 必须是 ${expectedRole}`,
+  );
+  if (tone === 'error') {
+    // 反向自证：旧选择器（role="status"）在错误态下**取不到**这个容器，所以它必须改。
+    assert.equal(
+      findBy(container, (node) => node.props.role === 'status'),
+      null,
+      `${label}：tone=error 时旧选择器 role="status" 应当一无所获（这正是本用例要修的过时选择器）`,
+    );
+  }
+  return region;
 }
 
 async function mountView(relativePath) {
@@ -74,7 +103,7 @@ test('五族内容页：503 + retryable:false ⇒ 统一说「服务端未接线
     try {
       assert.equal(fetchImpl.calls.length, 1, `${family.label}：503 之后不得自动重试`);
 
-      const status = requireStatusRegion(container);
+      const status = requireStatusRegion(container, family.label);
       const statusText = textOf(status);
 
       assert.match(statusText, /服务端未接线/, `${family.label}：503 fail-closed 必须说「服务端未接线」`);
@@ -103,7 +132,7 @@ test('五族内容页：同一个 503 若服务端写 retryable:true ⇒ 五族�
     const restore = withFetch(fetchImpl);
     const { app, container } = await mountView(family.file);
     try {
-      const status = requireStatusRegion(container);
+      const status = requireStatusRegion(container, family.label);
       assert.match(textOf(status), /服务端未接线/, `${family.label}：文案口径与 retryable 无关`);
       const retry = findBy(status, (node) => node.kind === 'button');
       assert.notEqual(retry, null, `${family.label}：retryable:true 时必须给重试按钮`);

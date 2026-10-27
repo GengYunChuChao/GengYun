@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 
 import {
   ACCOUNT_STATES,
@@ -33,7 +34,7 @@ function validPage(overrides = {}) {
   return { items: [validRow()], next_cursor: null, ...overrides }
 }
 
-test('admin-contract: 契约常量与 openapi.json 一致（路径/scope/边界/enum 规模）', () => {
+test('admin-contract: 路径/scope/分页边界/state enum 逐字钉住契约口径（手抄镜像，改契约须同步这里）', () => {
   assert.equal(ACCOUNTS_PATH, '/admin/accounts')
   assert.equal(ACCOUNTS_SCOPE, 'accounts:read')
   assert.equal(LIMIT_MIN, 1)
@@ -41,11 +42,73 @@ test('admin-contract: 契约常量与 openapi.json 一致（路径/scope/边界/
   assert.equal(LIMIT_DEFAULT, 20)
   assert.equal(CURSOR_MAX_LENGTH, 2048)
   assert.deepEqual([...ACCOUNT_STATES], ['active', 'suspended', 'deletion_pending'])
-  // ErrorCode enum 共 27 项（本文件按契约抄录，改动须同步契约）
-  assert.equal(ERROR_CODES.length, 27)
-  for (const code of ['INVALID_CURSOR', 'SESSION_REQUIRED', 'SESSION_EXPIRED', 'SCOPE_DENIED', 'RATE_LIMITED', 'SELF_SCOPE_GRANT_DENIED', 'LAST_SCOPE_MANAGER', 'SELF_DISABLE_DENIED']) {
-    assert.ok(ERROR_CODES.includes(code), `ERROR_CODES 缺少 ${code}`)
+})
+
+// GY-R67-B01：`ERROR_CODES` 是**手写镜像**，一致性只能靠读契约逐项对拍证明。
+// 改动前这里写的是 `assert.equal(ERROR_CODES.length, 27)` + 8 个码的点检——条数对上就绿：
+// 把镜像里的 `INPUT_UNCERTAIN` 换成任一契约外码（条数仍是 27，不在点检名单内），
+// 用例照样 ✔，契约新增/改名一个码它也不会红。那是**永久绿**：它从没读过 openapi.json。
+
+/** 契约真值：`components.schemas.ErrorCode.enum`（唯一事实来源，不在测试里手抄）。 */
+const CONTRACT_ERROR_CODES = JSON.parse(
+  readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'),
+).components.schemas.ErrorCode.enum
+
+/**
+ * 镜像 ↔ 契约逐项对拍，**顺序不敏感**，返回差异清单而不是布尔。
+ *
+ * 只比条数是假绿（见上）；这里按集合比两项：契约有而镜像没有（missing）、镜像有而契约没有（extra）。
+ * 差异非空时由 `assertErrorCodesMirror` 把差异码原样打进断言消息，日志里直接看到差哪个码。
+ */
+function diffErrorCodes(mirror, contractEnum) {
+  const mirrorSet = new Set(mirror)
+  const contractEnumSet = new Set(contractEnum)
+  return {
+    missing: contractEnum.filter((code) => !mirrorSet.has(code)),
+    extra: mirror.filter((code) => !contractEnumSet.has(code)),
   }
+}
+
+/** 真断言：差异非空即红，消息里点名缺项/多项。 */
+function assertErrorCodesMirror(mirror, contractEnum) {
+  const { missing, extra } = diffErrorCodes(mirror, contractEnum)
+  const detail = `缺项=${missing.length === 0 ? '（无）' : missing.join('、')}；多项=${extra.length === 0 ? '（无）' : extra.join('、')}`
+  assert.deepEqual(missing, [], `镜像缺少契约 ErrorCode 里的码：${detail}`)
+  assert.deepEqual(extra, [], `镜像多出契约 ErrorCode 里没有的码：${detail}`)
+}
+
+test('admin-contract: ERROR_CODES 与 components.schemas.ErrorCode 逐项相等（顺序不敏感）', () => {
+  assert.ok(
+    Array.isArray(CONTRACT_ERROR_CODES) && CONTRACT_ERROR_CODES.length > 0,
+    'packages/contracts/openapi.json 里必须能读到 components.schemas.ErrorCode.enum',
+  )
+  // 先跑差异对拍（红时消息里点名缺项/多项），再做整体排序 deepEqual 兜底。
+  assertErrorCodesMirror(ERROR_CODES, CONTRACT_ERROR_CODES)
+  // 契约 enum 的书写顺序不是本模块的约束：两边都排序后比，集合相等即可。
+  assert.deepEqual([...ERROR_CODES].sort(), [...CONTRACT_ERROR_CODES].sort())
+})
+
+test('判别力自证①：镜像少一项（契约新增码而镜像没跟）⇒ 真断言会红并点名缺哪个码', () => {
+  const mirror = CONTRACT_ERROR_CODES.filter((code) => code !== 'RATE_LIMITED')
+  const diff = diffErrorCodes(mirror, CONTRACT_ERROR_CODES)
+  assert.deepEqual(diff.missing, ['RATE_LIMITED'])
+  assert.deepEqual(diff.extra, [])
+  assert.throws(() => assertErrorCodesMirror(mirror, CONTRACT_ERROR_CODES), /RATE_LIMITED/)
+})
+
+test('判别力自证②：镜像多一项（镜像手抄进契约外码）⇒ 真断言会红并点名多哪个码', () => {
+  const mirror = [...CONTRACT_ERROR_CODES, 'CONTRACT_DRIFT_PROBE']
+  const diff = diffErrorCodes(mirror, CONTRACT_ERROR_CODES)
+  assert.deepEqual(diff.extra, ['CONTRACT_DRIFT_PROBE'])
+  assert.deepEqual(diff.missing, [])
+  assert.throws(() => assertErrorCodesMirror(mirror, CONTRACT_ERROR_CODES), /CONTRACT_DRIFT_PROBE/)
+})
+
+test('判别力自证③：一缺一多、条数不变（正是改动前那类漂移）⇒ 真断言仍会红', () => {
+  // 镜像把最后一个码换成契约外码：`length` 与改动前一致，旧用例的条数断言对此无感。
+  const swapped = [...CONTRACT_ERROR_CODES.slice(0, -1), 'INPUT_UNCERTAINTY']
+  assert.equal(swapped.length, CONTRACT_ERROR_CODES.length)
+  assert.throws(() => assertErrorCodesMirror(swapped, CONTRACT_ERROR_CODES), /INPUT_UNCERTAIN/)
 })
 
 test('validateAccountView: 契约形状的行通过校验', () => {

@@ -360,7 +360,11 @@ onBeforeUnmount(() => {
             :key="row.id"
             data-testid="jobs-row"
             :class="{ selected: row.selected }"
+            tabindex="0"
+            :aria-label="`选中作业 ${row.kind}（${row.id}）`"
             @click="dispatch({ type: 'SELECT', id: row.id })"
+            @keydown.enter.self.prevent="dispatch({ type: 'SELECT', id: row.id })"
+            @keydown.space.self.prevent="dispatch({ type: 'SELECT', id: row.id })"
           >
             <td class="mono" :title="row.targetRef">{{ row.kind }}</td>
             <td><span class="pill" :class="row.tone" :title="row.stateTitle">{{ row.state }}</span></td>

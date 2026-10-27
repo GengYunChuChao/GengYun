@@ -7,14 +7,18 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { ERROR_CODES } from '../../apps/admin/src/lib/admin-contract.mjs';
 import {
   AUDIT_SCOPE_NOTE,
+  READ_FAILURE_CODE_LABELS,
   canLoadMoreFamily,
   categoryDetailView,
   categoryRow,
   changedVerdict,
   describeAuditLookup,
   describeFamily,
+  describeFamilyView,
+  describeReadFailureCode,
   formatDateTime,
   initialFamilyState,
   knowledgeDetailView,
@@ -130,7 +134,7 @@ test('B02 限流：retryable:true + retryAfterSeconds:7 ⇒ 可重试且文案�
   assert.equal(view.detail.includes('不可重试'), false);
 });
 
-test('B02 旧失败对象（无 retryable／retryAfterSeconds）：保持可重试，文案逐字不变', () => {
+test('B02 旧失败对象（无 retryable／retryAfterSeconds）：保持可重试，不追加任何重试后缀', () => {
   const legacy = reduceFamily(reduceFamily(initialFamilyState(), { type: 'LOAD_START', reset: true }), {
     type: 'LOAD_FAIL',
     failure: { ok: false, kind: 'timeout', status: 504, code: 'GATEWAY_TIMEOUT', message: '上游超时' },
@@ -138,27 +142,28 @@ test('B02 旧失败对象（无 retryable／retryAfterSeconds）：保持可重�
   const view = describeFamily(legacy);
   assert.equal(view.canRetry, true);
   assert.equal(view.retryAfterSeconds, null);
-  assert.equal(view.detail, 'GATEWAY_TIMEOUT（HTTP 504）上游超时', '缺字段时 detail 必须与改动前逐字一致');
+  assert.equal(view.detail, 'GATEWAY_TIMEOUT（HTTP 504） · 契约外码：不在契约错误码枚举内，本页不解释它的含义 · 服务端说明：上游超时', '缺字段时 detail 只有「码 · 中文 · 服务端说明」三段，不追加任何重试后缀');
   assert.equal(view.detail.includes('不可重试'), false);
 
-  // 连 failure 都没有（网络层失败）：老行为照旧，不追加任何新文案。
+  // 连 failure 都没有（网络层失败）：明说没拿到码，不写「未知错误」糊过去。
   const noFailure = reduceFamily(reduceFamily(initialFamilyState(), { type: 'LOAD_START', reset: true }), { type: 'LOAD_FAIL', failure: null });
   const bare = describeFamily(noFailure);
   assert.equal(bare.canRetry, true);
-  assert.equal(bare.detail, '未知错误');
+  assert.equal(bare.detail, 'HTTP — · 无错误码：服务端未返回错误码，本页不猜原因');
+  assert.equal(bare.detail.includes('未知错误'), false);
   assert.equal(bare.retryAfterSeconds, null);
 });
 
-test('B02 stale 分支同口径：retryable:false 不给重试；限流给等待秒数；缺字段文案照旧', () => {
+test('B02 stale 分支同口径：retryable:false 不给重试；限流给等待秒数；缺字段只到「旧行标记 · 码 · 中文」', () => {
   const staleBase = loadOk(initialFamilyState(), null, [sourceDraft(ID_A, 1)], null);
   const staleOf = (failure) => reduceFamily(staleBase, { type: 'LOAD_FAIL', failure });
-  const oldStale = `共 1 行（旧数据，未更新）· PROVIDER_UNAVAILABLE（HTTP 503）`;
+  const oldStale = `共 1 行（旧数据，未更新）· PROVIDER_UNAVAILABLE（HTTP 503） · 服务暂不可用（后端依赖未接线或不可达）`;
 
   const legacy = describeFamily(staleOf({ ok: false, kind: 'unavailable', status: 503, code: 'PROVIDER_UNAVAILABLE' }));
   assert.equal(legacy.phase, 'stale');
   assert.equal(legacy.canRetry, true);
   assert.equal(legacy.retryAfterSeconds, null);
-  assert.equal(legacy.detail, oldStale, '缺字段时 stale 文案必须与改动前逐字一致');
+  assert.equal(legacy.detail, oldStale, '缺字段时 stale 文案只到「旧行标记 · 码 · 中文」为止，不追加不可重试/等待秒数');
 
   const forbidden = describeFamily(staleOf({ ok: false, kind: 'forbidden', status: 403, code: 'SCOPE_DENIED', retryable: false }));
   assert.equal(forbidden.phase, 'stale');
@@ -171,6 +176,89 @@ test('B02 stale 分支同口径：retryable:false 不给重试；限流给等待
   assert.equal(limited.canRetry, true);
   assert.equal(limited.detail.includes('7 秒'), true);
   assert.equal(limited.retryAfterSeconds, 7);
+});
+
+// ── B11：读面「错误码 → 中文文案」这一层 ─────────────────────────────────────
+// 改动前 `describeFamily` 直接把码拼进句子（`${code ?? '无错误码'}（HTTP …）${message}`）：
+// 未映射的码只剩原始码 + 服务端英文 message，读面没有写面 `describeWriteFailure` 那样的中文解释。
+// 这一层的纪律：**只加解释，不改事实**——码与服务端原文照旧，中文只解释码是什么意思。
+
+test('B11 错误码映射：契约 27 个码逐一有中文文案（非空、不含英文字母串），且表与契约同集', () => {
+  assert.deepEqual([...Object.keys(READ_FAILURE_CODE_LABELS)].sort(), [...ERROR_CODES].sort(), '映射表必须与契约 ErrorCode 同集（缺项/多项都要红）');
+  assert.equal(new Set(ERROR_CODES).size, ERROR_CODES.length, '契约镜像里不应有重复码');
+  const seen = new Set();
+  for (const code of ERROR_CODES) {
+    const text = describeReadFailureCode(code);
+    assert.equal(typeof text, 'string', `${code} 必须返回字符串`);
+    assert.notEqual(text.trim(), '', `${code} 的文案不能为空`);
+    assert.match(text, /[\u4e00-\u9fff]{4,}/, `${code} 必须是中文解释，实际：${text}`);
+    assert.doesNotMatch(text, /[A-Za-z]/, `${code} 的文案不得夹英文字母串（那等于把原文当解释），实际：${text}`);
+    assert.doesNotMatch(text, /未知错误/, `${code} 不许用「未知错误」兜底，实际：${text}`);
+    seen.add(text);
+  }
+  assert.equal(seen.size, ERROR_CODES.length, '每个码各有一句（不靠一条兜底句重复 27 遍）');
+});
+
+test('B11 错误码映射：契约外码／空码显式标注，⛔ 不写「未知错误」', () => {
+  const outside = describeReadFailureCode('GATEWAY_TIMEOUT');
+  assert.match(outside, /契约外码/, `契约外码必须显式标注，实际：${outside}`);
+  assert.doesNotMatch(outside, /未知错误/);
+  assert.doesNotMatch(outside, /[A-Za-z]/, '契约外码的标注也不夹英文串');
+
+  for (const empty of [null, undefined, '', '   ']) {
+    const text = describeReadFailureCode(empty);
+    assert.match(text, /无错误码/, `空码 ${JSON.stringify(empty)} 必须显式标注「无错误码」，实际：${text}`);
+    assert.doesNotMatch(text, /未知错误/);
+  }
+
+  // 非字符串（服务端给了数字/对象）同样不许被当成契约码去查表。
+  assert.match(describeReadFailureCode(503), /契约外码/);
+  assert.match(describeReadFailureCode({ code: 'NOT_FOUND' }), /契约外码/);
+});
+
+test('B11 describeFamily 失败态：码原样 + 中文解释 + 服务端说明三件都在', () => {
+  const failed = reduceFamily(reduceFamily(initialFamilyState(), { type: 'LOAD_START', reset: true }), {
+    type: 'LOAD_FAIL',
+    failure: { ok: false, kind: 'forbidden', status: 403, code: 'SCOPE_DENIED', message: 'missing scope accounts:read' },
+  });
+  const view = describeFamily(failed);
+  assert.equal(view.detail, 'SCOPE_DENIED（HTTP 403） · 权限范围不足（由服务端判定），重试无效 · 服务端说明：missing scope accounts:read', '码、中文、服务端原文缺一不可，顺序固定');
+  assert.match(view.detail, /^SCOPE_DENIED（HTTP 403）/, '码必须原样打头，不许被中文替换');
+
+  // 契约外码：码照旧显示，但中文位只能标注「契约外码」，不许编一句解释。
+  const outside = describeFamily(reduceFamily(initialFamilyState(), {
+    type: 'LOAD_FAIL',
+    failure: { ok: false, kind: 'http_error', status: 504, code: 'GATEWAY_TIMEOUT', message: '上游超时' },
+  }));
+  assert.match(outside.detail, /^GATEWAY_TIMEOUT（HTTP 504） · 契约外码/);
+  assert.match(outside.detail, /服务端说明：上游超时/);
+});
+
+test('B11 stale 分支：旧行标记后接同一层（中文有、服务端说明不再被吞）', () => {
+  const stale = reduceFamily(loadOk(initialFamilyState(), null, [sourceDraft(ID_A, 1)], null), {
+    type: 'LOAD_FAIL',
+    failure: { ok: false, kind: 'unavailable', status: 503, code: 'PROVIDER_UNAVAILABLE', message: 'no pool' },
+  });
+  const view = describeFamily(stale);
+  assert.equal(view.phase, 'stale');
+  assert.equal(view.detail, '共 1 行（旧数据，未更新）· PROVIDER_UNAVAILABLE（HTTP 503） · 服务暂不可用（后端依赖未接线或不可达） · 服务端说明：no pool');
+});
+
+test('B11 审计查找失败与「未接线」走同一层：码原样 + 中文 + 服务端说明', () => {
+  const lookup = describeAuditLookup({ phase: 'error', failure: { code: 'GATEWAY_TIMEOUT', status: 504, message: '上游超时' } });
+  assert.match(lookup.detail, /^GATEWAY_TIMEOUT（HTTP 504） · 契约外码/);
+  assert.match(lookup.detail, /服务端说明：上游超时/);
+
+  const unwired = describeFamilyView({
+    phase: 'error',
+    stale: false,
+    collection: { items: [], pages: 0, nextCursor: null },
+    failure: { ok: false, status: 503, code: 'PROVIDER_UNAVAILABLE', message: 'no pool', declaredRetryable: false },
+  });
+  assert.equal(unwired.phase, 'unwired');
+  assert.match(unwired.detail, /^PROVIDER_UNAVAILABLE（HTTP 503） · 服务暂不可用/);
+  assert.match(unwired.detail, /服务端说明：no pool/);
+  assert.match(unwired.detail, /这不是「没有数据」/);
 });
 
 test('SELECT / DETAIL：选中即清空上一条详情与审计查找结果；空 id 等于取消选中', () => {

@@ -115,20 +115,6 @@ export function declaredRetryableOf(body) {
   return typeof error.retryable === 'boolean' ? error.retryable : null;
 }
 
-/**
- * 唯一判据：服务端有没有明确同意重试。
- *
- * - 服务端显式 `retryable:true`／`false` ⇒ 听服务端的（写 `false` 时重试必然还是同一个失败）；
- * - 服务端没写（`null`）⇒ 回落 `isRetriable(kind)` 的本地口径，保持既有页面行为不变。
- *
- * 默认是「不允许」：既没有服务端声明、也没有本地 `kind` 结论时不承诺重试。
- */
-export function serverAllowsRetry(result) {
-  if (typeof result?.serverRetryable === 'boolean') return result.serverRetryable;
-  if (typeof result?.retriable === 'boolean') return result.retriable;
-  return isRetriable(result?.kind) === true;
-}
-
 async function readJson(response) {
   try {
     return { ok: true, value: await response.json() };
@@ -303,4 +289,31 @@ export function describeFailure(result) {
     default:
       return { title: '请求失败', detail: result.message || '未知错误', retriable: false, action: 'none' };
   }
+}
+
+/**
+ * 「这次失败服务端到底允不允许再试」的**唯一**判据：内容族（`admin-content-api.mjs`）等读面/写面的
+ * `canRetry` 都由这里判，不许各页自己再抄一份（`jobs-api.mjs` 只是再导出同一个函数对象）。
+ *
+ * 三个输入拼写都认，按**服务端声明优先**的顺序取第一个拿得到的：
+ *   1. `serverRetryable`——jobs 族失败对象的拼写（`declaredRetryableOf(error)` 的落点，`null` = 服务端没写）；
+ *   2. `declaredRetryable`——内容族写面信封 `retryable` 的落点（`null` = 服务端没写）；
+ *   3. `retriable`——失败对象自己已经算好的布尔结论（本地闭集 `isRetriable(kind)` 的复述）。
+ * 三者都拿不到（没有可比对的声明／结论）才回落到本地闭集 `isRetriable(kind)`；非对象入参一律 `false`
+ * （保持既有防御）。默认也是「不允许」：既没有服务端声明、也没有本地 `kind` 结论时不承诺重试。
+ *
+ * 为什么要区分「服务端写了 false」与「服务端没写」：`readErrorEnvelope(...).retryable` 会把两者都归一成
+ * 同一个 `false`（见 `declaredRetryableOf`），而显式 `false` 是「别重试」、没写才是「按本地口径」。
+ * 服务端显式 `retryable:false` 必须尊重 —— fail-closed 503 `PROVIDER_UNAVAILABLE`
+ * （`services/api/src/admin/fail-closed-services.ts`）就是这一档：重试不会成功，别给「再试一次」按钮。
+ *
+ * 409 `REQUEST_IN_PROGRESS` 之所以可以「等 N 秒再重试」，是因为写请求带 `Idempotency-Key`：
+ * 用**同一个**键重放不会重复生效（服务端要么继续回「仍在处理中」，要么回那次已生效的结果）。
+ */
+export function serverAllowsRetry(result) {
+  if (result === null || typeof result !== 'object') return false;
+  if (typeof result.serverRetryable === 'boolean') return result.serverRetryable;
+  if (typeof result.declaredRetryable === 'boolean') return result.declaredRetryable;
+  if (typeof result.retriable === 'boolean') return result.retriable;
+  return isRetriable(result.kind) === true;
 }

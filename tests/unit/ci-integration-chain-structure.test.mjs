@@ -67,492 +67,492 @@ const FROZEN_CHAIN = Object.freeze([
 const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/account-deletion-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_deletion_test`（脚本自己断言 hostname=127.0.0.1、'
-      + 'pathname=/gengyun_deletion_test、public 下无表）：自建 5 组角色 + 运行时 LOGIN，口令在脚本内'
-      + ' `randomBytes(24)` 生成**并写进它自己用的运行时 URL**（scram 下自洽），收尾逐个 DROP 且复核为空；'
-      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
-      + '不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_deletion_test`，再把该库 owner URL 作 argv[2]）；'
+      + '该臂证注销受理的持久化与同事务内撤销。'
+      + '该 job 用 `postgres:17.11` service，失败即整 job 红；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/third-party-deletion-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_third_party_deletion_test`（脚本自己断言 hostname=127.0.0.1、'
-      + 'pathname=/gengyun_third_party_deletion_test、public 下无表）：自建 5 个既有 NOLOGIN 域组 + 运行时 LOGIN'
-      + '（口令 `randomBytes(24)` 生成**并写进它自己用的运行时 URL**，scram 下自洽），D5 授权区从出厂文件'
-      + ' `deploy/postgres-cvm/sql/20-login-roles.sql` **原样抽取执行**（不复制 SQL：授权被删/被改宽就变红），'
-      + '收尾按 `pg_roles` 快照差集 DROP 并复核为空；由 `.github/workflows/real-pg-integration.yml` 的独立真库 job'
-      + '（`postgres:17.11` service）里一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_third_party_deletion_test`）'
-      + '⇒ 接进真库 job 不等于进 `test:integration:http`（回环链里既没有真 PG 也没有可建角色的超管连接），'
-      + '故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_third_party_deletion_test`，再把该库 owner URL 作 argv[2]）。'
+      + '该臂只碰库、不装配 HTTP：两条 `SECURITY DEFINER` 函数 + 运行时 EXECUTE + 最小权限断言；'
+      + '硬钉 hostname=127.0.0.1 与 pathname=/gengyun_third_party_deletion_test，'
+      + '口令 `randomBytes(24)` 生成并写进它自己用的运行时 URL（scram 下自洽）'
+      + '，D5 授权区从出厂 `deploy/postgres-cvm/sql/20-login-roles.sql` 原样抽取执行'
+      + '（不复制 SQL：授权被删或被改宽就变红），收尾按 `pg_roles` 快照差集 DROP 并复核为空；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/account-suspend-pg.mjs',
-    reason: '需真实 PG 17.11（硬钉库名 `gengyun_suspend_test`；脚本要求**空库**，自己 apply 0001–0017 后把 0017 '
-      + '单独跑 UP/ROLLBACK/REPLAY 三连）：R28-S39 已把它接进 `.github/workflows/real-pg-integration.yml`，'
-      + '由该 workflow 的独立真库 job（`postgres:17.11` service）里一个**独立 step** 真跑'
-      + '（自带 `CREATE DATABASE gengyun_suspend_test`；argv 只给 owner URL，运行时角色由脚本自建并派生 URL ⇒ '
-      + 'scram 下自洽，旧版「口令割裂 ⇒ 28P01」的缺陷已由 R28-S15 修掉）；它**不进**无 PG 的回环链——'
-      + '回环链里既没有真 PG 也没有可建角色的超管连接，接进真库 job 不等于进 `test:integration:http`，'
-      + '故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_suspend_test`，只给 owner URL 作 argv[2]）。'
+      + '该臂证账号停用／恢复接真实认证权威：要求空库，自己 apply 0001–0017 后把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；'
+      + 'argv[3]（运行时角色 URL）可省略——省略时脚本自己生成口令、建／改同一个角色，给了 argv[3] 就取 URL 里的口令去建／改'
+      + '（旧版把 `CREATE ROLE … PASSWORD` 与 argv[3] 的口令割裂 ⇒ scram 下必 28P01，本版两种形态在 scram-sha-256 上都自洽）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/admin-accounts-read-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_accounts_read_test`：运行时角色的口令由脚本'
-      + '**从 argv[3] 的 URL 解出来**再 `CREATE ROLE`（`admin-accounts-read-pg.mjs:190-192`）⇒ scram 下自洽；'
-      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
-      + '不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_admin_accounts_read_test`，再传 **两个** URL：owner + `gengyun_api_runtime` 运行时）；'
+      + '运行时角色的 `CREATE ROLE` 口令取自 argv[3] 的 URL（省略 argv[3] 时脚本自己生成口令建／改同一角色），scram 下自洽；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/admin-audit-logs-pg.mjs',
-    reason: '需真实 PG 17.11，且是**自起集群**脚本（R34 / #18 交付；R66 已接进真库 job）：要求 `GY_PG_BIN` 指向服务端'
-      + '二进制目录，自行 `initdb`/`pg_ctl` 起一次性集群（仅回环；端口在 55436–55467 里**先探活再起**，'
-      + '数据目录父目录走 `GY_R34_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），再走生产路径 `migrate.ts up` 到 0047 并钉'
-      + '`public.list_admin_audit_logs()` 的读面：参数绑定、键集 `(created_at, id)` 分页、同一毫秒不同微秒不漏行，'
-      + '以及运行时角色直读 `admin_audit_events` 仍恰好 42501（零新增授权）。'
-      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
-      + 'R66 起它已作为独立 step 跑在 `.github/workflows/real-pg-integration.yml` 的 `real-pg-17.11` job 里'
-      + '（自起集群那一族：`GY_PG_BIN` + `GY_R34_PG_ROOT`，登记在 `ci-real-pg-wiring.test.mjs` 的'
-      + '`SELF_CLUSTERED_SCRIPTS`／`SELF_CLUSTERED_ROOT_KEY` 等五张清单），但它**仍留在本清单**：判据 4 的 `wired`'
-      + '只认 `package.json` 的 `test:integration:http` 链，真库 job 不算接线（与 `admin-post-hide-audit-pg.mjs`'
-      + '同一条口径，见其条目）。它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
-      + '接进真库 job 不等于进 `test:integration:http`。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「审计读面'
+      + '（#34 / 迁移 0033 的 list_admin_audit_logs / 键集 / 筛选 / 脱敏 / 权限形状）'
+      + '」跑 `node tests/integration/admin-audit-logs-pg.mjs`。'
+      + '它是**自起集群**族：step 给 `GY_PG_BIN`（装包 step 装出的 `/usr/lib/postgresql/17/bin`）'
+      + '与 `GY_R34_PG_ROOT`（数据根），⛔ 本 step 不 `CREATE DATABASE`；'
+      + '脚本自己 `initdb` 起一次性集群（端口在 55436–55467 内先探活再起、只监听 127.0.0.1）、'
+      + '跑生产路径 `migrate.ts up` 到 0033，再钉 `public.list_admin_audit_logs()` 的读面：'
+      + '参数绑定、键集 `(created_at, id)` 分页、同一毫秒不同微秒不漏行，以及运行时角色直读 `admin_audit_events` 仍恰好 42501（零新增授权）。'
+      + '缺 `GY_PG_BIN` 时它打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过；'
+      + '也不加任何吞红开关）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/admin-scopes-authority-pg.mjs',
-    reason: '需真实 PG 17.11，且是**自起集群**脚本（R37 / `#18` S2 片1 交付）：要求 `GY_PG_BIN` 指向服务端'
-      + '二进制目录，自行 `initdb` 后以 `postgres -D … -p … -h 127.0.0.1` 前台进程起一次性集群'
-      + '（仅回环；端口在 55600–55639 里**先探活再起**，数据目录父目录走可选的 `GY_R37_PG_ROOT`，'
-      + '收尾 `pg_ctl stop -m fast` + 删目录），再按**生产顺序**跑 `migrate.ts up` ⇒ `roles/*.sql` ⇒'
-      + ' `20-login-roles.sql` ⇒ `90-assert-least-privilege.sql`（末行必须 ok、新增断言 103/104 必须为真），'
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-admin-write-17-11` 的 step「授权写入面'
+      + '（R67-C：admin-scopes-authority-pg / 自起集群 / 授撤 + 委派 + 审计）'
+      + '」跑 `node tests/integration/admin-scopes-authority-pg.mjs`'
+      + '（`2>&1 | tee` 后按 `rc` 判红，紧随的判断把 exit 77 升级成硬失败并打 `::error::`）。'
+      + '自起集群族：`GY_PG_BIN` + `GY_R37_PG_ROOT`；'
+      + '脚本 `initdb` 后以 `postgres -D … -p … -h 127.0.0.1` 前台起一次性集群（端口在 55600–55639 里先探活再起），'
+      + '按生产顺序跑 `migrate.ts up` ⇒ `roles/*.sql` ⇒ `20-login-roles.sql` ⇒ `90-assert-least-privilege.sql`'
+      + '（末行必须 ok、新增断言 103/104 必须为真），'
       + '最后以 `gengyun_api_runtime` 身份直调迁移 0041 的 `grant_admin_scope` / `revoke_admin_scope`：'
-      + '正常授予与撤销、幂等（不写第二条审计、不 bump revision）、自授与「授予自己未持有的 scope」被拒、'
-      + '目标停用被拒、版本冲突、撤销后复活（重置 granted_at）、最后授权者守卫（含停用账号不计入）、'
-      + '审计撞主键整笔回滚（零写入）、闭集外取值由库层 CHECK 拒绝（23514）。'
-      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
-      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-write-17.11`'
-      + '（独立 step、`GY_PG_BIN` + `GY_R37_PG_ROOT`、exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs`'
-      + ' 的五张清单里同位置登记；但它**仍留在本清单**：判据 4 的 `wired` 只认 `package.json` 的'
-      + ' `test:integration:http` 链，真库 job 不算接线（与 `admin-post-hide-audit-pg.mjs` 同一条口径）。'
-      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
-      + '接进真库 job 不等于进 `test:integration:http`。',
+      + '正常授予与撤销、幂等（不写第二条审计、不 bump revision）'
+      + '、自授与「授予自己未持有的 scope」被拒、目标停用被拒、版本冲突、撤销后复活（重置 granted_at）、最后授权者守卫（含停用账号不计入）、审计撞主键整笔回滚（零写入）、闭集外取值由库层 CHECK 拒绝（23514）。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过；'
+      + '也不加任何吞红开关）。'
+      + '它**会写库**，因此归 admin-write 那个 job 而不是只读 job；'
+      + '`ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS` 与其冻结清单里已登记；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/admin-scopes-read-pg.mjs',
-    reason: '需真实 PG 17.11，且是**自起集群**脚本（R37 / `#18` S2 片2 读面交付）：要求 `GY_PG_BIN` 指向'
-      + '服务端二进制目录，自行 `initdb` 后 `pg_ctl start` 起一次性集群（仅回环；端口在 55468–55499 里'
-      + '**先探活再起**，数据目录父目录走可选的 `GY_R37_PG_ROOT`，收尾 `pg_ctl stop -m immediate` + 删目录），'
-      + '按**生产顺序**跑全链迁移（含 0041），再断言：`admin_scopes_scope_closed_set` 的取值集合与'
-      + ' `services/api/src/admin/scopes.ts` 的 `ADMIN_SCOPES` 逐项相等、闭集外取值插入即 23514；'
-      + '运行时角色（`gengyun_auth_privacy`）能读 `admin_scopes.scope` 与 `admin_accounts` 的窄列，'
-      + '但直读 `granted_by`/`granted_at` 一律 42501、`has_column_privilege` 为 false、表级 '
-      + '`INSERT`/`UPDATE`/`DELETE` 全 false（零新增授权）；最后以 real 装配 + 真库池跑两条读面：'
-      + '列表 / 单条只返 scope 字符串数组（⛔ 无 granted_by/granted_at）、列表 id 来自 `admin_accounts`'
-      + '（⛔ 不是 `users.id`）、缺 `scopes:read` 一律 403、不存在 404、无令牌 401。'
-      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
-      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-read-17.11`'
-      + '（独立 step、`GY_PG_BIN` + `GY_R37_PG_ROOT`、exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs`'
-      + ' 的五张清单里同位置登记；但它**仍留在本清单**：判据 4 的 `wired` 只认 `package.json` 的'
-      + ' `test:integration:http` 链，真库 job 不算接线（与 `admin-post-hide-audit-pg.mjs` 同一条口径）。'
-      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
-      + '接进真库 job 不等于进 `test:integration:http`。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-admin-read-17-11` 的 step「授权范围读面'
+      + '（R67-C：admin-scopes-read-pg / 自起集群 / 只读）'
+      + '」跑 `node tests/integration/admin-scopes-read-pg.mjs`'
+      + '（`2>&1 | tee "$log" || rc=$?` 形态，exit 77 由紧随的判断升级成硬失败并打 `::error::`）。'
+      + '自起集群族：`GY_PG_BIN`（该 job 第一步先装 PG 17 服务端二进制）+ `GY_R37_PG_ROOT`，'
+      + '⛔ 本 step 不 `CREATE DATABASE`（守卫按「自起集群 step 出现 CREATE DATABASE」判红）；'
+      + '脚本 `initdb` 起只监听 127.0.0.1 的一次性集群（端口在 55468–55499 里先探活再起），'
+      + '再按生产顺序跑 `migrate.ts up` 与 `roles/*.sql`、`20-login-roles.sql`、'
+      + '`90-assert-least-privilege.sql` 落授权，最后以运行时角色钉读面：'
+      + '`GET /admin/administrators` 与 `GET /admin/administrators/{id}/scopes` 的列表、'
+      + '筛选、分页，以及「无权限即 42501」的形状。'
+      + '为什么要独立 job 而不是塞进 real-pg-17-11：它只读，但需要 `initdb`/`pg_ctl`，与 service 形态的三十多条臂不是同一套依赖。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过；'
+      + '也不加任何吞红开关）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/admin-community-posts-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_community_posts_test`：脚本要求**空库**'
-      + '（先断言 `public` 下 0 张表），只 apply 0001+0022+0030+0032（社区帖读/写真正依赖的四段：'
-      + '身份底座、社区六表（含 `community_moderation_decisions`，读面 `effectiveState()` 每次都要它）、'
-      + '0030 的 `anonymized_author_ref`、0032 的同一套列口径），⛔ 不是全链，也不引 0007 的 pgcrypto 扩展；'
-      + '再用 **real 装配 + 真库池**跑列表/单条读面、`POST /admin/posts/{id}/hide` 的下架处置'
-      + '（真库行 visibility+revision、`post.hide` 审计留痕、社区可见性联动）与失败隔离'
-      + '（八条被拒路径逐列不动 + 并发只成功一笔）。连接串只走 argv[2]（owner URL），不建组角色；'
-      + '缺 URL 时脚本打印 SKIP 并 exit 77 ⇒ workflow 把 77 显式升级成硬失败。'
-      + 'R34 已把它接进 `.github/workflows/real-pg-integration.yml` 的 `real-pg-17.11` job'
-      + '（自带 `CREATE DATABASE gengyun_admin_community_posts_test` 空库、一个**独立 step** 真跑）；'
-      + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「后台社区帖域'
+      + '（#18 / 列表·单条读面 / 下架处置 / 审计留痕 / 失败隔离）」'
+      + '跑 `node tests/integration/admin-community-posts-pg.mjs <owner URL>`'
+      + '（该 step 先 `CREATE DATABASE gengyun_admin_community_posts_test`，'
+      + '`2>&1 | tee "$log"` 后按 `rc` 判红）。'
+      + '该 job 用 `postgres:17.11` service、'
+      + '不是自起集群，所以不需要 `GY_PG_BIN`；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接）'
+      + '，真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/admin-post-hide-audit-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_post_hide_audit_test`：脚本要求**空库**（先断言 `public` 下 0 张表），只 apply 0001+0017+0022+0027+0030+0032+0033+0045+0047'
-      + '（⛔ 不是全链：0017 的 `admin_audit_events` 是 0047 函数 `INSERT` 的目标；0047 是本片主角'
-      + ' `record_admin_post_hide_audit(...)`；0027 的 `before_value`/`after_value` 与 0033 的只读函数'
-      + ' `list_admin_audit_logs(...)` 是 [A2] 段「用既有库内读面按 action=\'post.hide\' 筛得回来」的依赖），'
-      + '再用 real 装配 + 真库池跑：下架成功 ⇒ 真表恰 1 行 post.hide（actor/scope/action/result/reason/target_ref 逐列）、'
-      + '触发器令审计写入抛错 ⇒ 503「审计写入失败」且帖子零变化（fail-closed）、拆触发器后同路径恢复 200（对照臂）、'
-      + '已隐藏再隐藏幂等且审计不增。连接串只走 argv[2]/env `ADMIN_POST_HIDE_AUDIT_PG_TEST_URL`（一个 owner URL，'
-      + '不建组角色），缺 URL 时脚本打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过；`--allow-skip`／`GY_ALLOW_SKIP=1`'
-      + '只供本机开发，⛔ 不得接进门禁）。R65 已把它接进 `.github/workflows/real-pg-integration.yml` 的 `real-pg-17.11`'
-      + ' job：紧接 `admin-community-posts-pg` 的**独立 step**（自带 `CREATE DATABASE gengyun_admin_post_hide_audit_test`'
-      + ' 空库、node 收到 owner URL、exit 77 被显式升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs` 的'
-      + ' `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单同位置登记。⚠ `post.hide` 真落库的'
-      + '留痕此前已由 `admin-community-posts-pg.mjs`（[H] 段断言真表 +1 条）覆盖，本臂是同一处置面的**审计专证**'
-      + '（fail-closed + 幂等），两臂并排跑、不互相顶替。它仍**不进**无 PG 的回环链（`test:integration:http` 里既没有真 PG、'
-      + '也没有 `initdb`/`pg_ctl`）；判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链、真库臂永远不在其中'
-      + '⇒「已接线」与「从本白名单移除」在现有断言下互斥，教会判据 4 认 real-PG workflow 属后续片；本片⛔ 未放宽任何断言'
-      + '——条目保留、只把 reason 改成当时态（不加「已接线即免声明」这类豁免口径），'
-      + '判据 1–6 一字未动。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「后台社区帖域 · 下架审计'
+      + '（#18 / post.hide 审计函数专证 / fail-closed / 幂等）」'
+      + '跑 `node tests/integration/admin-post-hide-audit-pg.mjs <owner URL>`'
+      + '（该 step 先 `CREATE DATABASE gengyun_admin_post_hide_audit_test`，'
+      + '`2>&1 | tee "$log" || rc=$?` 后按 `rc` 判红）。'
+      + '它专证 R64 的下架审计：下架一次写一条审计、'
+      + '重放同一请求不写第二条（幂等）、审计写失败时整笔回滚'
+      + '（fail-closed）、'
+      + '运行时角色直写 `admin_audit_events` 仍 42501。'
+      + '该 job 用 `postgres:17.11` service、'
+      + '不是自起集群，所以既不需要 `GY_PG_BIN` 也不需要数据根键。'
+      + '旧理由「需真实 PG，留作后续接线」'
+      + '在这条上早就是假话——它已经在 CI 真跑，'
+      + 'R67-D01 按接线事实改写；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接）'
+      + '，真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/admin-jobs-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_admin_jobs_test`：本脚本自带迁移全量应用（0001→0027）、'
-      + '运行时角色最小权限探针（只跑开关/审计两条出厂授权区域，作业表的列级读授权归 0024/0025/0026 各自的区域，'
-      + '本脚本只断言「未授列读不到」而**不代发授权**）、以及开关关/开/再关与作业读/取消的 HTTP 真读数；'
-      + '缺 argv[2] 时回落到回环默认 URL（与 `admin-flags-pg.mjs` 同形：连不上就硬失败，不打印 SKIP），'
-      + '故不进无 PG 的回环链。'
-      + 'R29-S5 交付脚本与本地真读数（PG 17.11 / 127.0.0.1:55432）；R31 已把它接进'
-      + ' `.github/workflows/real-pg-integration.yml` 的 `real-pg-17.11` job（自带 `CREATE DATABASE gengyun_admin_jobs_test`'
-      + ' 空库、只传 argv[2]、把 77 显式升级成硬失败），由该 job 一个**独立 step** 真跑；'
-      + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「作业台域'
+      + '（#9 / 全链迁移 0001→0027 / 作业与错误可见 / 变更留痕 A→B / 最小权限）'
+      + '」跑 `node tests/integration/admin-jobs-pg.mjs <owner URL>`'
+      + '（先 `CREATE DATABASE gengyun_admin_jobs_test`）。'
+      + '该臂证后台 AI 作业读面、取消、开关变更留痕与投稿开关真实生效，每条都给「改前真红」的判别力；'
+      + '走全链迁移到 0027；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/admin-content-pg.mjs',
-    reason: '需真实 PG 17.11，且是**自起集群**脚本（R34 / #18 交付）：要求 `GY_PG_BIN` 指向服务端二进制目录，'
-      + '自行 `initdb`/`pg_ctl` 起一次性集群（仅回环；端口在 55600–55699 里**先探活再起**，并硬挡 55436/55437，'
-      + '数据目录父目录走可选的 `GY_I18_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），再 apply 全链迁移（含本片 0036）、'
-      + '跑 `deploy/postgres-cvm/sql` 的 `gy-r34-content-grant` 授权区域，然后用 **real 装配 + 真库池**走完'
-      + '内容域 24 条路由（建草稿/幂等重放/列表/读/改/发布/撤回）与归属隔离，并断言运行时角色直连'
-      + '`DELETE`/`TRUNCATE`/改未授权列一律 42501（列级而非表级的负控制），最后在独立库里跑 rollback 脚本确认三表删净。'
-      + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip），'
-      + '`pg` 依赖在闸门之后才 `await import`，避免把「没二进制」报成「依赖缺失 ⇒ 失败」。'
-      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-write-17.11`'
-      + '（独立 step、`GY_PG_BIN` + `GY_I18_PG_ROOT`、exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs`'
-      + ' 的五张清单里同位置登记；但它**仍留在本清单**：判据 4 的 `wired` 只认 `package.json` 的'
-      + ' `test:integration:http` 链，真库 job 不算接线。本机 PG 17.11 复跑该臂 11 组 ALL PASS、EXITCODE=0。'
-      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
-      + '接进真库 job 不等于进 `test:integration:http`。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-admin-write-17-11` 的 step「内容域持久化（R67-C：'
+      + 'admin-content-pg / 自起集群 / 建表 + 造数 + 回滚）」'
+      + '跑 `node tests/integration/admin-content-pg.mjs`'
+      + '（`2>&1 | tee "$log" || rc=$?`，exit 77 升级成硬失败）。'
+      + '自起集群族：`GY_PG_BIN` + **`GY_I18_PG_ROOT`**（源码唯一取值点，'
+      + '⛔ 不是同族的 `GY_R34_PG_ROOT`／`GY_R37_PG_ROOT`）'
+      + '，⛔ step 里不许出现 `CREATE DATABASE`：'
+      + '库名 `gengyun_admin_content_pg_test` 由脚本在自己的临时集群里建。'
+      + '读数形态是 `PASS n: label`（脚本自证 11 组）'
+      + '：建表 → 造数 → 事务回滚后行数不变、失败不留半条。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/admin-flags-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_flags_test`：argv[3] 省略时脚本自己 `CREATE ROLE`（**只接受'
-      + '自己本轮新建的角色** —— `preflightRuntimeRole` 在任何写库动作之前硬拒「同名角色已存在」，⛔ 不再'
-      + '`ALTER ROLE … PASSWORD` 接管）并把随机口令写进它自己的 URL（`admin-flags-pg.mjs` 的 `provisionRoles`）'
-      + '⇒ scram 下自洽（这也正是 workflow 里只传一个参数的原因）；由 `.github/workflows/real-pg-integration.yml` '
-      + '的独立真库 job（`postgres:17.11` service）运行，不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_flags_test`，再传该库 owner URL）；'
+      + '该臂钉 `0020_feature_flags.sql` 的持久化面。'
+      + '该 job 用 `postgres:17.11` service；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/auth-privacy-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/auth-privacy-postgres.yml#auth-privacy-pg` 的无名 step 直接 `node` 它（该 job 自带 `postgres:17.11` service，owner 装库、API 用独立限权 LOGIN）；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/backup-purge-pg.mjs',
-    reason: '需真实 PG 17.11 且是**自起集群**脚本：要求 `GY_PG_BIN` 指向**服务端二进制目录**'
-      + '（自行 `initdb`/`pg_ctl` 起第二个 17.11 集群，仅回环；端口 `55500 + randomInt(0, 500)`'
-      + ' 无环境变量可覆盖）；缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77（⛔ 不得用 --allow-skip 读成 0）。'
-      + 'R28-S49 已把它接进 `.github/workflows/real-pg-integration.yml`：先用 PGDG apt 装 `postgresql-17`'
-      + '取 `initdb`/`pg_ctl`，再以 `GY_PG_BIN=/usr/lib/postgresql/17/bin`、'
-      + '`GY_I19_PG_ROOT=${{ runner.temp }}/gy-i19-pg` 真跑 ⇒ **已接真库 job**。'
-      + '但它**仍不进无 PG 的回环链**：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`'
-      + '（装 PG 服务端是那个真库 job 自己的事），故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「备份副本域'
+      + '（迁移 0023 / 受理同事务 / 30 天清除）」跑 `node tests/integration/backup-purge-pg.mjs`。'
+      + '自起集群族：`GY_PG_BIN` + `GY_I19_PG_ROOT`，⛔ 本 step 不 `CREATE DATABASE`（库名硬钉在脚本自己起的临时集群里）；'
+      + '它钉 0023 的受理同事务与 30 天清除。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/backup-copies-purge-pg.mjs',
-    reason: '需真实 PG 17.11，且与 `backup-purge-pg.mjs` 同为**自起集群**脚本：要求 `GY_PG_BIN` 指向服务端'
-      + '二进制目录（自行 `initdb`/`pg_ctl` 起临时集群，仅回环；端口取 556xx 且**先探活再起**，'
-      + '因为同机可能已有别人的临时集群）；缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77'
-      + '（⛔ 不得用 --allow-skip 读成 0）。它验证的是备份副本 30 日到期**驱动**'
-      + '（到期枚举 / 逐组清除 / 失败不阻塞 / failed 重排 / 幂等重跑 / CLI 退出码），没有真库就没有读数。'
-      + 'R28-E5 已把它接进 `.github/workflows/real-pg-integration.yml`：复用该 job 里那条装 `postgresql-17`'
-      + '（PGDG `noble-pgdg`）的 step 装出来的 `/usr/lib/postgresql/17/bin`（`GY_PG_BIN`）＋'
-      + ' `GY_I19_PG_ROOT=${{ runner.temp }}/gy-i19-pg` 真跑，⛔ 不自己 `CREATE DATABASE`（受管脚本第 13 条）'
-      + ' ⇒ **已接真库 job**。但它**仍不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`'
-      + '（装 PG 服务端是那个真库 job 自己的事），故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「备份副本到期清除驱动'
+      + '（迁移 0023 / 到期枚举 / 逐组清除 / 失败重排 / CLI 幂等）」'
+      + '跑 `node tests/integration/backup-copies-purge-pg.mjs`。'
+      + '自起集群族：`GY_PG_BIN` + `GY_I19_PG_ROOT`，'
+      + '⛔ 不 `CREATE DATABASE`；'
+      + '它自证 14 条（权限形状／到期边界／批量上限／失败留痕与重排／幂等重跑／CLI 退出码）。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过，也不加任何吞红开关）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/catalog-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/catalog-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/catalog-postgres.yml#catalog-pg` 的无名 step 直接 `node` 它（该 job 自带 `postgres:17.11` service；夹具与凭据全是合成的，未审种子另行单独测）；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/community-filter-pg.mjs',
-    reason: '需真实 PG17 且硬钉库名 `gengyun_community_filter_test`（脚本自己断言 hostname 回环、'
-      + 'pathname=/gengyun_community_filter_test、public 下无表）：取 `GET /posts` 的 `crop_id`/`region_code`/'
-      + '`mine` 三类筛选的**真库读数**（逐条与同条件 SELECT 对照）、游标绑定筛选集、参数闭集 400、'
-      + '以及「筛选未下推 SQL」的语句读数 + `community_posts_feed_idx` 的 EXPLAIN 读数；'
-      + '未配置 `COMMUNITY_FILTER_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**'
-      + '（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0，⛔ 不得用于门禁）；'
-      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
-      + '不进无 PG 的回环链。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_community_filter_test` 再 `node tests/integration/community-filter-pg.mjs`，不带 argv）；'
+      + '该臂钉社区域列表筛选下推与分页确定性，并登记举报状态推进通道的残留缺口。'
+      + '该 job 用 `postgres:17.11` service、'
+      + '不是自起集群，不需要 `GY_PG_BIN`；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/qa-citations-pg.mjs',
-    reason: '需真实 PG 17.11 且要求**空库** `gengyun_qa_citations_test`（脚本自己 apply 迁移子集'
-      + ' 0001/0002/0005/0008/0010/0012/0013）；连接串只走 env `QA_CITATIONS_PG_TEST_URL`，'
-      + '未设时打印 SKIP 并 exit 77（⛔ 不得用 --allow-skip 读成 0、⛔ 不得接进无 PG 的回环链）。'
-      + 'R31 已把它接进 `.github/workflows/real-pg-integration.yml` 的 `real-pg-17.11` job（连同受管清单'
-      + ' `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 与证据页'
-      + ' `docs/verification/gy-r31-pg-arms-wiring-20261022.md`），由一个**独立 step** 真跑并把 77 升级成硬失败；'
-      + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「问答引用可溯源'
+      + '（#12 / 迁移子集 7 段 / 引用反算对账 / 零命中必拒答）」'
+      + '跑 `node tests/integration/qa-citations-pg.mjs`'
+      + '（先 `CREATE DATABASE gengyun_qa_citations_test`，带 `2>&1 | tee "$log" || rc=$?`）。'
+      + '⛔ 它跑的是迁移子集 7 段（0001/0002/0005/0008/0010/0012/0013），不是全链；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/community-pg.mjs',
-    reason: '需真实 PG17 且硬钉库名 `gengyun_community_test`：未配置 `COMMUNITY_PG_TEST_URL` 时'
-      + '**显式打印 SKIP 并以 77 退出**（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）；'
-      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
-      + '不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_community_test` 再 `node tests/integration/community-pg.mjs`，不带 argv）；'
+      + '该臂钉社区域 PG 持久化；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/consent-grant-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/consent-grant-postgres.yml` 用独立测试集群运行，不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/consent-grant-postgres.yml#consent-grant-pg` 的无名 step 直接 `node` 它（该 job 自带 `postgres:17.11` service；策略与收件人全为合成值，不调供应商）；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/conversations-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_conversations_test`（本机隔离集群，仅回环端口）：'
-      + '本片用它取"引用只能取自本次检索集合"的真库读数（真读面视图 → 真检索端口 → 真守卫 → 真 PG store）；'
-      + '未配置 `CONVERSATIONS_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**（未取得，不冒充通过；'
-      + '仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0），'
-      + '由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11` service）运行，'
-      + '不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_conversations_test` 再 `node tests/integration/conversations-pg.mjs`，'
+      + '**不带** argv）；'
+      + '该臂钉会话链的 PG 持久化（迁移 0001/0002/0005/0008/0010/0012/0013）。'
+      + '该 job 用 `postgres:17.11` service；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/egress-ledger-pg.mjs',
-    reason: '需真实 PG 且硬钉库名 `gengyun_egress_test`：由 `consent-grant-postgres.yml` 先建库再运行。',
+    reason: '已接线（workflow）：`.github/workflows/consent-grant-postgres.yml#consent-grant-pg` 的无名 step 真跑它（同一 `run:` 行先 `CREATE DATABASE gengyun_egress_test`）；该臂钉外发账本的端到端；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/egress-object-key-pg.mjs',
-    reason: '需真实 PG 且硬钉前置：由 `consent-grant-postgres.yml` 在同一 `gengyun_egress_test` 上紧跟'
-      + ' `egress-ledger-pg.mjs`（`EGRESS_LEDGER_KEEP=1` 保留角色/夹具行）之后运行，不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/consent-grant-postgres.yml#consent-grant-pg` 的无名 step 以 `W116_PSQL="$(command -v psql)" node tests/integration/egress-object-key-pg.mjs` 真跑它：本 step 不起库也不建库，它跑在同一 job 前一步已建好的库上；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/egress-revoke-race-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_egress_revoke_race_test`（首行断言 `public` 表数 = 0）：由'
-      + ' `consent-grant-postgres.yml` 先建库再运行。它与 `gengyun_egress_test` **刻意不共库**（两套夹具的账号/撤回时序'
-      + '互不兼容），故不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/consent-grant-postgres.yml#consent-grant-pg` 的无名 step 真跑它（同一 `run:` 行先 `CREATE DATABASE gengyun_egress_revoke_race_test`，再 `node tests/integration/egress-revoke-race-pg.mjs`）；'
+      + '该臂钉在途—撤回／注销—回写的竞态守卫与回写诚实性；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/favorites-history-isolation-http.reverse-control.mjs',
-    reason: '反向控制运行器，**故意**不在门禁名单内（需显式运行，自证见同目录正向脚本注释）。',
+    reason: '非门禁入口：**反向控制运行器**，由 `tests/integration/favorites-history-isolation-http.mjs` 的 `reverse-control` 注释指向，用法是在 worktree 根手动 `node tests/integration/favorites-history-isolation-http.reverse-control.mjs`——把会话 B 换成 A 后期望隔离断言变红（证明原断言不空），原文件 blob 不变；⛔ 接进任何链都会让整链变红，故不是漏接线。'
   },
   {
     path: 'tests/integration/favorites-history-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它（先 `CREATE DATABASE gengyun_favorites_history_test` 再 `node tests/integration/favorites-history-pg.mjs`）；该臂只在显式回环库上破坏性写入；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/knowledge-native-consumer.mjs',
-    reason: '需外部组合目录／runtime 目录作参数（微信原生侧业务消费者），不在 CI 回环链内。',
+    reason: '非门禁入口：**三参驱动**的原生侧消费者，不是自证读数的臂——用法见 `docs/verification/gy-i07-native-business-consumer-20261011.md` 的 `node <证据目录>/tests/integration/knowledge-native-consumer.mjs <组合目录> <新 runtime 目录> <脱敏输出目录>`，缺任一目录即退出；它要隔离的原生 PG 与外部组合目录，⛔ 不是漏接线。'
   },
   {
     path: 'tests/integration/local-knowledge-smoke.mjs',
-    reason: '需先跑 `tools/local-dev` 生成 `.local/local-dev` 本机目录，属本机任务而非 CI 回环。',
+    reason: '非门禁入口：取 `argv[2]` 当**窗口目录**的冒烟脚本，用法 `node tests/integration/local-knowledge-smoke.mjs .local/local-dev`（需先跑 `tools/local-dev` 生成该被忽略目录）；证据页 `docs/verification/local-knowledge-native-20261011.md` 记了整串 prepare→start→smoke 编排，仓里没有 npm 脚本编排它，⛔ 不是漏接线。'
   },
   {
     path: 'tests/integration/media-persistence-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_media_test`（脚本只允许回环地址）：脚本要求**空库**，'
-      + '自己 `applyMigrations(discoverMigrations())` 套用 26 个迁移（与 `npm run db:migrate` 同一条代码路径），'
-      + '随后跑三段式上传／owner 逐字节读／非 owner NOT_FOUND／同键重复 complete 行数不变／**子进程真重启**后'
-      + '同 uploadId 仍可读／缺 `MEDIA_OBJECT_REF_KEY` 时整域 503／空仓储负控制。'
-      + 'R28-W12 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job'
-      + '（`postgres:17.11` service，一个**独立 step** 自带 `CREATE DATABASE gengyun_media_test`），'
-      + '但它**不进**无 PG 的回环链：回环链里既没有真 PG、也没有对象存储替代物以外的任何准备，'
-      + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_media_test`，'
+      + '再 `node tests/integration/media-persistence-pg.mjs <owner URL>`）；'
+      + '该臂证媒体三个事实源真落库、重启可读、装配 fail-closed。'
+      + '⛔ 本地 `npm run test:integration:media-persistence-pg` 那条还带 `--experimental-strip-types`，与 CI 的直跑不是同一条命令。'
+      + '该 job 用 `postgres:17.11` service；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/media-concurrency-pg.mjs',
-    reason: '需真实 PG 17.11 且库名硬钉 `gengyun_media_concurrency_test`（脚本只允许回环地址，`:64`）：要求**空库**，'
-      + '自己 `applyMigrations(discoverMigrations())` 套用全链迁移，随后跑三条并发读数——同一媒体对象两次**并发**'
-      + ' complete（恰好一个 202、一个 409 `REVISION_CONFLICT`）／同一 `Idempotency-Key` **跨主体**的 scope 判定'
-      + '（各自 201、不回放他人回执、同主体同键异请求体才 409 `IDEMPOTENCY_CONFLICT`）／`reject()` 的条件写布尔语义'
-      + '（落库 1 行 true，行已被 `delete` 推进到 deleted 时 0 行 false 且不覆盖终态）。'
-      + 'R28-W12 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立真库 job：与 `media-persistence-pg.mjs`'
-      + ' **同型但不同库**（`postgres:17.11` service，一个自带 `CREATE DATABASE gengyun_media_concurrency_test` 的'
-      + ' 独立 step）——⛔ 不能共库：上一步的读数里有**全库** `count(*)`（`media-persistence-pg.mjs:273-275`、'
-      + '`:289-291`、`:426`），共库会让「同一幂等键重复 complete 行数不变」与并发臂的行数互相污染。'
-      + '但它**不进**无 PG 的回环链：回环链里既没有真 PG、也没有对象存储之外任何准备，'
-      + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_media_concurrency_test`，'
+      + '再 `node tests/integration/media-concurrency-pg.mjs <owner URL>`）。'
+      + '它是 `media-persistence-pg` 的合流补测，只补并发面三个读数：'
+      + '同一媒体对象两次并发 complete（不同 scope 判定）、并发删除与在途写、幂等键并发重放。'
+      + '该 job 用 `postgres:17.11` service、'
+      + '不是自起集群，不需要 `GY_PG_BIN`；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接）'
+      + '，真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/media-row-purge-pg.mjs',
-    reason: '需真实 PG 17.11，且是**自起集群**脚本（R34 / #19 片 2 交付）：要求 `GY_PG_BIN` 指向服务端'
-      + '二进制目录，自行 `initdb`/`pg_ctl` 起一次性集群（仅回环；端口在 55700–55799 里**先探活再起**，'
-      + '数据目录父目录走可选的 `GY_R34_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），再应用全链迁移并把'
-      + '`20-login-roles.sql` 的段 M（媒体域生产授权面）与本片新增的段 D4（仅一条 EXECUTE）切出来真跑：'
-      + '断言运行时对 `public.media` 仍**零表级 DELETE/TRUNCATE**（直删恰好 42501）而'
-      + '`media_derivatives`/`media_object_cleanup` 的表级 DELETE 仍在；再以运行时身份调'
-      + '`public.purge_owner_media(uuid)`，逐键核对读数 `media/derivatives/queued/skipped_referenced/skipped_referenced_by`，'
-      + '并把三条硬条件各钉一段：缺清理意图行 ⇒ `G0007` 且**整批不删**、非终态五行一行不动、'
-      + '**11 列 / 8 类**引用面（有外键的 `content_media_refs`／`community_media_grants`／`public_authors.avatar_media_id`，'
-      + '加上**无外键**的 `users.avatar_media_id`／`ocr_jobs`／`ocr_records`／`recognition_jobs`／`recognition_records`／'
-      + '`speech_jobs`／`transcriptions`／`community_posts.media_ids`）'
-      + '指向的行留原地；另测幂等第二次全 0、`p_owner IS NULL` ⇒ `G0001`、清理台账不随父行消失'
-      + '（0029 故意不建外键）。缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**'
-      + '（未取得，⛔ 不是通过；也不认 --allow-skip）；⚠ `pg` 只在这道闸门**之后**动态加载 —— '
-      + '静态 import 会被提升到闸门之上，在无 `node_modules` 的树里以 exit 1 死在 SKIP 之前（把「未取得」报成「失败」）。'
-      + '本片（R34 / #19 片 2）**未**把它接进 `.github/workflows/real-pg-integration.yml`：'
-      + '`.github/workflows/**` 不在本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的'
-      + '`MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页'
-      + '（那是独立的一次门禁变更，须由指挥裁定），故在此如实登记为未接线。'
-      + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
-      + '接进真库 job 不等于进 `test:integration:http`。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-admin-write-17-11` 的 step「媒体行清除驱动'
+      + '（R67-C3：media-row-purge-pg / 自起集群 / 迁移号按保留台账口径）'
+      + '」跑 `node tests/integration/media-row-purge-pg.mjs`'
+      + '（`2>&1 | tee "$log" || rc=$?`，'
+      + 'exit 77 升级成硬失败并打 `::error::`）。'
+      + '它钉 `public.purge_owner_media(uuid)` 的真库语义：'
+      + '0035 的四谓词（本人 + 终态 + 未被任何一处引用面指向 + 已入队）'
+      + '与「`public.media` 对运行时零表级 DELETE」这两件事，静态测试只能证明 SQL 文本长这样，'
+      + '证明不了 PG 真跑起来会这样——所以它自己 `initdb` 出一次性集群、跑全链迁移、把整条链真跑一遍。'
+      + '自起集群族：`GY_PG_BIN` + **`GY_R34_PG_ROOT`**'
+      + '（源码取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`；'
+      + '⛔ 不是 `GY_I19_PG_ROOT`／`GY_W11_PG_ROOT`／`GY_I18_PG_ROOT`）'
+      + '，并且 ⛔ 本 step 不建库：库在脚本自己的临时集群里。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**'
+      + '（未取得，⛔ 不是通过，也不加任何吞红开关）。'
+      + 'R67-C3 已把它接进这个 job，'
+      + '`ci-real-pg-wiring.test.mjs` 的五张清单同位置登记；'
+      + '旧理由「本片未接进 workflow」是过期假话，R67-D01 按接线事实改写；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/messages-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用独立测试集群运行，不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它（先 `CREATE DATABASE gengyun_messages_test`，再传该库 owner URL）；该臂钉 0019 的并发、分页与归属；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     // R34（#17「社区事件 → 消息域」）：**紧挨着 `messages-pg`** 登记（同一条「消息域落库」链的两面：
     // 消息域自己写 vs 经社区事件投递进来）；⛔ 不要追加到清单末尾，那里紧邻 admin 域条目。
     path: 'tests/integration/message-events-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/real-pg-integration.yml` 用专用空库 `gengyun_message_events_test` 运行'
-      + '（`psql … CREATE DATABASE … && node <脚本> <owner url>`），不进无 PG 的回环链——'
-      + '回环链里既没有真库可 `CREATE DATABASE`、也没有迁移/唯一键可裁决，'
-      + '而本脚本证明的正是「社区事件经装配层投递进 `public.messages`、同一事件键只有一行、'
-      + '投递失败不拖垮内容写入、进程内状态清空后仍能读回未读/已读」这条**只有真库能证明**的链。'
-      + '它没有 77 跳过分支（缺 argv 就退回默认端口、连不上即非 0 失败）⇒ 缺库必红。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_message_events_test`，'
+      + '再 `node tests/integration/message-events-pg.mjs <owner URL>`）；'
+      + '该臂钉「社区事件 → 消息域」的投递与恢复，补的是社区事件端口与消息域之间那条真库缺口。'
+      + '该 job 用 `postgres:17.11` service；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/messages-purge-pg.mjs',
-    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时集群、跑全链迁移与运行时角色授权，'
-      + '再经真实 `purgeOwnerData` 取「本主体 messages 行数 → 0／他人行原样」的注销行数读数；未设 `GY_PG_BIN` 时'
-      + '**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），故不进无 PG 的回环链。'
-      + 'R29-W13 已把它接进 `.github/workflows/real-pg-integration.yml`：复用该 job 里装 `postgresql-17`'
-      + '（PGDG `noble-pgdg`）那条 step 装出来的 `/usr/lib/postgresql/17/bin`（`GY_PG_BIN`），以**独立 step** 真跑，'
-      + '⛔ 不自己 `CREATE DATABASE`。⚠️ 它的数据根目录键是 `GY_W11_PG_ROOT`（脚本 `:92`），'
-      + '⛔ 不是同族脚本的 `GY_I19_PG_ROOT`——守卫按脚本映射键名并与源码真值交叉核对，给错键即红。'
-      + '但它**仍不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`'
-      + '（装 PG 服务端是那个真库 job 自己的事），故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「消息域注销行数'
+      + '（#17 / 迁移 0019 messages + 0008 idempotency_keys）」'
+      + '跑 `node tests/integration/messages-purge-pg.mjs`。'
+      + '自起集群族：`GY_PG_BIN` + `GY_W11_PG_ROOT`（⚠️ 数据根键与同 job 的 `GY_I19_PG_ROOT`／`GY_R34_PG_ROOT` 不同，'
+      + '抄错键只会多一条装饰性 env），⛔ 不 `CREATE DATABASE`；'
+      + '它自证 8 条（授权形状／消息与台账行数／他人零影响／负控制／幂等重放／回执）。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/migrations-negative-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/auth-privacy-postgres.yml` 另起一步、以 `MIGRATIONS_NEGATIVE_TEST_URL`'
-      + ' 运行并自建/自删 `gengyun_migrations_negative_{a,b,c}` 三个库；未设 env 时显式 SKIP 打印原因并以 77 退出（未取得），'
-      + '故不进无 PG 的回环链。',
+    reason: '已接线（workflow）：`.github/workflows/auth-privacy-postgres.yml#auth-privacy-pg` 的无名 step 直接 `node` 它；'
+      + '三臂逐臂可读：A 半截失败 ⇒ 非 0 退出且同次已执行 DDL 全回滚、台账不留行；B 重放（对已迁移的库再跑同一批 ⇒ 台账幂等跳过、绝不重放语句）；'
+      + 'C 回滚（0016 先 up 再跑 migrations/rollback/0016_*.down.sql ⇒ up 前不存在的对象在 down 后消失）；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/moderation-ledger-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_moderation_test`（脚本自己断言 hostname=127.0.0.1、pathname='
-      + '`/gengyun_moderation_test`，连接串只认 argv[2]）：它要跑**整条迁移链**（0001..0026 ⇒ #428 的 0027 DDL 夹具 ⇒ '
-      + '0028 的 UP/ROLLBACK/REPLAY 三连），再用真库判审核台账的四条写语句（INSERT/UPDATE/supersede/下架）与并发唯一性，'
-      + '无 PG 的回环链里既没有服务端也没有迁移链，故不进 `test:integration:http`。'
-      + 'R29 已把它接进 `.github/workflows/real-pg-integration.yml`：由该 workflow 的独立真库 job（`postgres:17.11` service）'
-      + '里一个**独立 step**（先 `CREATE DATABASE gengyun_moderation_test` 再 `node …`）真跑，'
-      + '接进真库 job 不等于进回环链，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_moderation_test`，'
+      + '再 `node tests/integration/moderation-ledger-pg.mjs <owner URL>`）；'
+      + '该臂钉 0028 审核判定台账的落库与读取。'
+      + '该 job 用 `postgres:17.11` service；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/moderation-full-chain-pg.mjs',
-    reason: '需真实 PG 17.11 且是**自起集群**脚本（GY-I14 片 C / #14 交付）：要求 `GY_PG_BIN` 指向服务端'
-      + '二进制目录（自行 `initdb`/`pg_ctl` 起一次性集群，仅回环、端口 55600–55999 先探活再起、数据目录父目录'
-      + '可选 `GY_I14C_PG_ROOT`，收尾 `pg_ctl stop` + 删目录），只 apply 0001+0022+0028+0030+0032，'
-      + '再用 stub 装配 + 真 pool + 合成模型端口（`provider.synthetic === true`）跑 post→edit→review→takedown'
-      + ' 全链，真库证明三态：编辑后旧结论不套新版本（rev1/rev2 各绑定各自正文摘要 + 审核域两条版本级任务）、'
-      + '超时/结构错误不发布（RULE_TIMEOUT / RULE_ENGINE_ERROR ⇒ 422 且内容行零落库）、下架驱动缓存失效'
-      + '（审核域读缓存 1→0 + `moderation_withdrawals` 落库）。缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77'
-      + '（⛔ 不是通过，不认 --allow-skip）；R67-C 已把它接进 `real-pg-admin-write-17.11` 新 job 的独立 step'
-      + '（`GY_PG_BIN` + `GY_I14C_PG_ROOT`），但仍留在本清单：判据 4 只认 `test:integration:http` 链。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-admin-write-17-11` 的 step「审核全链（R67-C：'
+      + 'moderation-full-chain-pg / 自起集群 / 建帖→编辑→审核→下架）」'
+      + '跑 `node tests/integration/moderation-full-chain-pg.mjs`'
+      + '（`2>&1 | tee "$log" || rc=$?`，exit 77 升级成硬失败）。'
+      + '自起集群族：`GY_PG_BIN` + `GY_I14C_PG_ROOT`，⛔ 不 `CREATE DATABASE`；'
+      + '它证版本重审、失败隔离与下架缓存失效的整线联调，会写库；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/ocr-corrections-pg.mjs',
-    reason: '需真实 PG 17.11（硬钉空库名 `gengyun_ocr_corrections_test`，开头断言 `public` 下 0 张表并 `applyMigrations()` 跑全链；'
-      + '未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：未取得，不是通过）：R31 已把它接进'
-      + ' `.github/workflows/real-pg-integration.yml` 的 `real-pg-17.11` job（一个**独立 step**、自带'
-      + ' `CREATE DATABASE gengyun_ocr_corrections_test` 空库、把 77 升级成硬失败；本地真跑 7 项 PASS）；'
-      + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「OCR 校正台账域'
+      + '（#10 / jsonb 台账 append-only / 原文零改写 / HTTP 五字段）'
+      + '」跑 `node tests/integration/ocr-corrections-pg.mjs`（先 `CREATE DATABASE gengyun_ocr_corrections_test`，带 `2>&1 | tee "$log" || rc=$?`）。'
+      + '它只主张四件事，且每件都在真 PG 上取证：内存 store 证不了 jsonb 往返与重启后仍在；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/ocr-jobs-pg.mjs',
-    reason: '需真实 PG 17.11（硬钉库名 `gengyun_ocr_jobs_test`；未配置 `OCR_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
-      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：R28-S17 已把它接进'
-      + ' `.github/workflows/real-pg-integration.yml`，由该 workflow 的独立真库 job（`postgres:17.11` service）里'
-      + '一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_ocr_jobs_test` 空库）；它**不进**无 PG 的回环链——'
-      + '接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_ocr_jobs_test` 再 `node tests/integration/ocr-jobs-pg.mjs`，不带 argv）；'
+      + '该臂只讲一件事：OCR 任务与记录真落库，关掉连接重开还在（迁移 0024）；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/profile-ui-fixture.mjs',
-    reason: '夹具模块：被已接线的 `profile-ui-http.test.mjs` import，不是独立可执行脚本。',
+    reason: '非门禁入口：**被 import 的夹具模块**（导出 `createProfileFixture`），由 `tests/integration/profile-ui-http.test.mjs` 用 `import` 语句从 `./profile-ui-fixture.mjs` 取 `createProfileFixture` 后调用；它自己不是可执行的门禁臂（直接 `node` 它只导出、不跑断言），在 npm 链里的是调用它的那个 `profile-ui-http.test.mjs`，⛔ 不是漏接线。'
   },
   {
     path: 'tests/integration/recognition-chain-e2e.mjs',
-    reason: '需真实 PG 17.11（**专用空库** `gengyun_recognition_chain_test`——脚本 `preparePg()` 先数 `public` 下'
-      + '的表，非 0 直接断言失败；真库臂只 apply 它需要的两段迁移 0001 身份 + 0018 历史并断言「恰好一次、'
-      + '重复 no-op」，⛔ 不跑全链；连接串只走 env `RECOGNITION_CHAIN_PG_TEST_URL`，全程**库 owner** 身份，'
-      + '脚本自己从不建角色、也不用运行时角色；链路本身走 loopback 真 HTTP）。'
-      + 'R28-S65 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立 step（受管脚本第 13 条，'
-      + '自带 `CREATE DATABASE gengyun_recognition_chain_test`，并把缺 env 的 exit 77 显式升级成硬失败）；'
-      + '它**仍不进**无 PG 的回环链 `test:integration:http`——缺库即 77，挂进去只会让整链显式失败，'
-      + '故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「识别端到端链路'
+      + '（上传→结果→历史→删除→读空）」'
+      + '跑 `node tests/integration/recognition-chain-e2e.mjs || rc=$?`'
+      + '（该 step 先 `CREATE DATABASE gengyun_recognition_chain_test`）。'
+      + '它走本机回环真 HTTP + fetch，把上传识别、拿结果、看可信度与理由、加入识别历史、读回、删除、再读为空串成一条链；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/recognitions-pg.mjs',
-    reason: '需真实 PG 17.11（硬钉库名 `gengyun_recognitions_test`；未配置 `RECOGNITIONS_PG_TEST_URL` 时**显式打印 SKIP 并以 77 退出**：'
-      + '未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：R28-S36 已把它接进'
-      + ' `.github/workflows/real-pg-integration.yml`，由该 workflow 的独立真库 job（`postgres:17.11` service）里'
-      + '一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_recognitions_test` 空库，脚本自己 apply「除 0025 外全部 → 0025」）；'
-      + '它**不进**无 PG 的回环链——接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_recognitions_test` 再 `node tests/integration/recognitions-pg.mjs`）；'
+      + '该臂钉识别域真库裁决：假池能钉住发了哪条 SQL，钉不住数据库真的这样裁决；'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/recognitions-speech-purge-pg.mjs',
-    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时集群、跑全链迁移与运行时角色授权，'
-      + '再经真实 `createUserDataDeletion` 与识别/语音两域的 `purgeOwnerData` 取「本主体七表 → 0 行／他人行原样／'
-      + '`public.users` 行仍在（证明不是外键级联的副作用）／两本台账按 scope 前缀只删本主体」的注销读数；'
-      + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），'
-      + '故不进无 PG 的回环链。⚠️ 它的数据根目录键是 `GY_R34_PG_ROOT`（脚本 `:92`），⛔ 不是同族脚本的'
-      + ' `GY_W11_PG_ROOT`——守卫按脚本映射键名并与源码真值交叉核对，给错键即红。'
-      + 'R67-C 已把它接进 `real-pg-admin-write-17.11` 新 job 的独立 step（`GY_PG_BIN` + `GY_R34_PG_ROOT`、'
-      + ' exit 77 升级成硬失败、step 里不 `CREATE DATABASE`）；但它仍留在本清单：判据 4 只认回环链。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-admin-write-17-11` 的 step「识别与语音域清理（R67-C：'
+      + 'recognitions-speech-purge-pg / 自起集群 / 真删 + 幂等）」'
+      + '跑 `node tests/integration/recognitions-speech-purge-pg.mjs`（`2>&1 | tee "$log" || rc=$?`）。'
+      + '自起集群族：`GY_PG_BIN` + `GY_R34_PG_ROOT`，⛔ 不 `CREATE DATABASE`；'
+      + '它全是真删，因此归 write job；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     // GY-I19（#19 片B-演练）：加速时钟演练——把时间推到第 7/30 日边界，在 stub（纯逻辑，不碰 PG）与
     // PG（一次性临时集群）两层各证一遍「未到期不删／刚好到期删（闭区间）／到期删」。按路径序落在
     // `recognitions-speech-purge-pg` 与 `retention-purge-pg` 之间登记（同属 #19 的到期/保留族）。
     path: 'tests/integration/retention-clock-drill-pg.mjs',
-    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起一次性临时集群'
-      + '（端口 55600+randomInt(0,300)、**先探活再起**、只监听 127.0.0.1，数据目录根 `GY_I19_PG_ROOT` 默认 `tmpdir()`、'
-      + '跑完 `pg_ctl stop` + 删目录），再把可注入时钟推到第 7/30 日边界，经在线/备份两份到期驱动取'
-      + '「未到期不删／刚好到期删（闭区间）／到期删」三态真库读数（stub 臂纯逻辑不碰 PG、不读墙钟）；'
-      + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（`--allow-skip`／`GY_ALLOW_SKIP=1` 仅降级为 0，'
-      + '⛔ 不得接进门禁）。R67-C 已把它接进 `real-pg-admin-write-17.11` 新 job 的独立 step（`GY_PG_BIN` +'
-      + ' `GY_I19_PG_ROOT`），但它仍留在本清单：判据 4 只认 `test:integration:http` 链，真库 job 不算接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-admin-write-17-11` 的 step「保留期时钟演练（R67-C：'
+      + 'retention-clock-drill-pg / 自起集群 / 7/30 日三态）」'
+      + '跑 `node tests/integration/retention-clock-drill-pg.mjs`（`2>&1 | tee "$log" || rc=$?`）。'
+      + '自起集群族：`GY_PG_BIN` + `GY_I19_PG_ROOT`，⛔ 不 `CREATE DATABASE`；'
+      + '它是纯演练、无迁移，钉 7／30 日三态。'
+      + '⛔ 该 step 不传「本机取 0」的放宽开关（守卫的 `FORBIDDEN_ESCAPE_HATCHES` 两条）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     // R34（#19 的**保留策略侧**，GY-R34-RETENTION）：按路径序落在 `recognitions-pg` 与 `source-lifecycle-pg`
     // 之间登记。它与 `messages-purge-pg`／`online-purge-pg` **同族**：自起临时集群、自建库、跑完即删。
     path: 'tests/integration/retention-purge-pg.mjs',
-    reason: '需真实 PG 17.11：自己用 `GY_PG_BIN`（含 `initdb`/`pg_ctl`）起临时 17 集群'
-      + '（端口 55432–55467 且**先探活再起**，可用 `GY_PG_PORT` 钉死）、只监听 127.0.0.1、'
-      + '自建 `gengyun_retention_purge_test`，跑全链迁移后造「过期／未过期／贴边」三类真数据，'
-      + '再经 `npm run purge:retention` 的执行器取「只删过期、未过期零改动、第二轮删 0 行」的读数；'
-      + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），'
-      + '故不进无 PG 的回环链。R34 已把它接进 `.github/workflows/real-pg-integration.yml`：'
-      + '复用该 job 里装 `postgresql-17`（PGDG）那条 step 装出来的 `/usr/lib/postgresql/17/bin`（`GY_PG_BIN`），'
-      + '以**独立 step** 真跑，⛔ 不自己 `CREATE DATABASE`（库名由脚本在自己临时集群里建）。'
-      + '⚠️ 它的数据根目录键是 `GY_R34_PG_ROOT`（脚本取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`），'
-      + '⛔ 不是同族脚本的 `GY_I19_PG_ROOT`／`GY_W11_PG_ROOT`——守卫按脚本映射键名并与源码真值交叉核对，'
-      + '给错键即红。但接进真库 job 不等于进 `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「保留策略到期清理'
+      + '（#19 保留策略侧 / 两张有出处的表 / 分批 500 / 幂等重跑 / 匿名化 revision+1）'
+      + '」跑 `node tests/integration/retention-purge-pg.mjs`。'
+      + '它是 `tools/purge-retention-expired.mjs` 的真库臂：数据根键是 **`GY_R34_PG_ROOT`**'
+      + '（脚本 `:51` 的 `process.env.GY_R34_PG_ROOT ?? tmpdir()`），⛔ 不是 `GY_I19_PG_ROOT`／`GY_W11_PG_ROOT`；'
+      + '守卫按脚本源码交叉核对（`SELF_CLUSTERED_ROOT_KEY`）。'
+      + '端口可钉 `GY_PG_PORT`、只监听 127.0.0.1、自建 `gengyun_retention_purge_test`、'
+      + '跑完 `pg_ctl stop`，⛔ 不 `CREATE DATABASE`；'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/source-lifecycle-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/source-lifecycle-postgres.yml` 用独立测试集群运行。',
+    reason: '已接线（workflow）：`.github/workflows/source-lifecycle-postgres.yml#lifecycle-pg` 的无名 step 直接 `node` 它（该 job 自带 `postgres:17.11` service，起库与建库都在这个 job 里）；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/speech-pg.mjs',
-    reason: '需真实 PG 17.11 且硬钉库名 `gengyun_speech_test`：脚本先断言 public 下 0 张表（**必须是空库**），'
-      + '再跑 0026 的 UP／ROLLBACK／REPLAY 与 12 方法语义；未配置 `SPEECH_PG_TEST_URL` 时'
-      + '**显式打印 SKIP 并以 77 退出**（未取得，不是通过；仅 `--allow-skip`／`GY_ALLOW_SKIP=1` 显式取 0）：'
-      + 'R28-S40 已把它接进 `.github/workflows/real-pg-integration.yml`，由该 workflow 的独立真库 job'
-      + '（`postgres:17.11` service）里一个**独立 step** 真跑（自带 `CREATE DATABASE gengyun_speech_test` 空库，'
-      + '连接串走 env `SPEECH_PG_TEST_URL`）；它**不进**无 PG 的回环链——接进真库 job 不等于进'
-      + ' `test:integration:http`，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（先 `CREATE DATABASE gengyun_speech_test` 再 `node tests/integration/speech-pg.mjs`，不带 argv）；'
+      + '该臂只讲一件事：转写任务与转写记录真落库，关掉连接重开还在（迁移 0026）。'
+      + '该 job 用 `postgres:17.11` service；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/staging-intake-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/staging-intake-postgres.yml` 用独立测试集群运行。',
+    reason: '已接线（workflow）：`.github/workflows/staging-intake-postgres.yml#intake-pg` 的无名 step 直接 `node` 它（该 job 自带 `postgres:17.11` service）；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     path: 'tests/integration/user-chain-e2e.mjs',
-    reason: '需真实 PostgreSQL 17：脚本自己用 `initdb` 起一次性隔离集群（随机端口、独立数据目录，'
-      + '跑完 `pg_ctl stop` 并逐个文件删除数据目录），依赖本机 PG 二进制（`GY_PG_BIN`，缺省走 PATH）；'
-      + '缺 PG17 时显式跳过并以 **77** 退出（未取得，⛔ 不是通过）；'
-      + 'R18 已把它接进 `.github/workflows/real-pg-integration.yml` 的独立 step（受管脚本第 15d 条：'
-      + '复用该 job 里装 `postgresql-17` 那条 step 装出来的 `/usr/lib/postgresql/17/bin`，'
-      + '数据根目录走 `GY_USER_CHAIN_PG_ROOT`＝`${{ runner.temp }}/gy-user-chain-pg`，⛔ 不自己 `CREATE DATABASE`），'
-      + '但它**仍不进**无 PG 的回环链 `test:integration:http`——接进真库 job 不等于进回环链，故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「用户链路端到端'
+      + '（登录→手选→搜索→详情→收藏/取消→退出 / 119 条断言）」跑 `node tests/integration/user-chain-e2e.mjs`。'
+      + '自起集群族：`GY_PG_BIN` + `GY_USER_CHAIN_PG_ROOT`（脚本 `:286` 的 `process.env.GY_USER_CHAIN_PG_ROOT`'
+      + '（取不到时回落空串），⛔ 不是同族的其它根键），⛔ 不 `CREATE DATABASE`：夹具与全链迁移直接落在自己临时集群的 `postgres` 库里；'
+      + '跑的是原样 API（`buildApp` 真装配，不 mock 路由）。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/online-purge-pg.mjs',
-    reason: '需真实 PostgreSQL 17：脚本自己用 `initdb` 起一次性隔离集群（随机端口 556xx、独立数据目录，'
-      + '跑完 `pg_ctl stop` 并递归删除数据目录），依赖本机 PG 二进制（`GY_PG_BIN`）；缺 `GY_PG_BIN` 时'
-      + '显式跳过并以 **77** 退出（未取得，⛔ 不是通过）。还要真跑 `20-login-roles.sql` 主体里的'
-      + '四域 GRANT（运行时角色四域 DELETE 的既有授权面），回环链里既没有真 PG 也没有可建角色的超管连接，'
-      + '故如实登记为未接线（本片不新增 workflow：`.github/workflows/**` 不在本片授权范围）。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「在线数据 7 日到期清除驱动'
+      + '（#19 / 到期闭区间 / 跨进程游标 / 失败不阻塞 / 回执 backupState）」跑 `node tests/integration/online-purge-pg.mjs`。'
+      + '自起集群族：`GY_PG_BIN` + `GY_I19_PG_ROOT`，⛔ 不 `CREATE DATABASE`；'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/workbook-staging-pg.mjs',
-    reason: '需真实 PG：由 `.github/workflows/workbook-staging.yml` 用独立测试集群运行。',
+    reason: '已接线（workflow）：`.github/workflows/workbook-staging.yml#staging-pg17` 的无名 step 直接 `node` 它（该 job 自带 `postgres:17.11` service；破坏性检查只落在专用本地／CI 库，从不碰普通 DATABASE_URL）；判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
     // ⚠ 位置**固定在清单末尾**：本文件的登记行被证据页按手写行号引用（`docs/verification/**` 里
@@ -560,24 +560,24 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     // 实质行上，否则 `tests/unit/doc-anchors-guard.test.mjs` 判 SUSPECT 直接红）。插在字母序位置上
     // 会把后面每一条登记行整体下移、把这些锚点全部顶偏 ⇒ 新增条目一律追加在此，⛔ 不要插到中间。
     path: 'tests/integration/third-party-deletion-sql-pg.mjs',
-    reason: '**自起集群**类真库臂（迁移 0044 两条 SECURITY DEFINER 函数的运行时语义）：缺 `GY_PG_BIN` 就打印 SKIP'
-      + ' 并 `exit(77)`，设了就自己 `initdb` 出一次性 PG 17 集群（`-U postgres -A trust`、56000–56499 先探活再起、'
-      + '只监听 127.0.0.1）、自建库 `gengyun_third_party_deletion_sql_test`、跑完全链迁移 0001→0044、自建运行时'
-      + '身份后直调两条函数；由 `.github/workflows/real-pg-integration.yml` 的独立真库 job（`postgres:17.11`'
-      + ' service + 一条装 `postgresql-17` 二进制的 step）里一个**独立 step** 真跑（step 里**不** `CREATE DATABASE`）'
-      + '⇒ 接进真库 job 不等于进 `test:integration:http`（回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`），'
-      + '故在此如实登记为未接线。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「第三方删除库层语义'
+      + '（0044 / 闭集 G0001 / 终态 G0003 / 读面八列 / 运行时直写 42501）」跑 `node tests/integration/third-party-deletion-sql-pg.mjs`。'
+      + '自起集群族：`GY_PG_BIN` + `GY_S4_PG_ROOT`（来源唯一取值点），⛔ 不 `CREATE DATABASE`：'
+      + '它自己 `initdb` 出一次性 PG 17 集群 → 跑全链迁移 → 建一个只有 EXECUTE 的运行时角色，再钉库层函数语义与读面八列。'
+      + '缺 `GY_PG_BIN` 时打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过）；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
   {
     path: 'tests/integration/admin-posts-read-pg.mjs',
-    reason: '需真实 PG 17（硬钉库名 `gengyun_admin_posts_read_test`，脚本自己断言 hostname=127.0.0.1、'
-      + 'pathname=/gengyun_admin_posts_read_test，apply 0001–0030 后自建 6 条社区帖夹具）：'
-      + '连不上就打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过，也不认 --allow-skip）；'
-      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-read-17.11`'
-      + '（独立 step 先 `CREATE DATABASE gengyun_admin_posts_read_test` 空库、node 收 owner URL、'
-      + ' exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs` 的五张清单里同位置登记；'
-      + '但它**仍留在本清单**：判据 4 的 `wired` 只认 `test:integration:http` 链，真库 job 不算接线。'
-      + '它同样**不进**无 PG 的回环链：回环链里没有真 PG，接进真库 job 不等于进 `test:integration:http`。',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-admin-read-17-11` 的 step「后台帖子读面'
+      + '（R67-C：admin-posts-read-pg / 空库 + 五段迁移 + 读面读数）'
+      + '」跑 `node tests/integration/admin-posts-read-pg.mjs`'
+      + '（该 step 先 `CREATE DATABASE gengyun_admin_posts_read_test`，带 `2>&1 | tee "$log" || rc=$?`）。'
+      + '它钉 `GET /admin/posts` 与 `GET /admin/posts/{id}` 的读面；'
+      + '空库建起后只跑五段迁移，不跑全链；'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
 ]);
 

@@ -18,7 +18,7 @@ import {
   readErrorEnvelope,
   readPageEnvelope,
 } from './admin-contract.mjs';
-import { clampLimit, normalizeBaseUrl } from './admin-api.mjs';
+import { clampLimit, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
 import {
   AUDIT_EVENTS_PATH, CATEGORIES_PATH,
   IF_MATCH_PATTERN,
@@ -56,7 +56,7 @@ function failure(kind, extra = {}) {
     message: '',
     requestUrl: null,
     requestId: null,
-    sentHeaders: null,
+    sentHeaders: null, retryAfterSeconds: null,
     ...extra,
   };
 }
@@ -111,14 +111,14 @@ export function buildFamilyUrl(baseUrl, path, options = {}) {
   return url;
 }
 
-/** 把一次非 2xx 响应翻译成失败对象：错误码原样保留，未知 code 标 `inContract: false`。 */
-function classifyHttpFailure({ status, envelope, body, requestUrl, sentHeaders }) {
+/** 把一次非 2xx 响应翻译成失败对象：错误码原样保留（未知 code 标 `inContract: false`），并把 `Retry-After` 的整数秒落成 `retryAfterSeconds`（缺失／非法 ⇒ null，见 `readRetryAfterSeconds`）。 */
+function classifyHttpFailure({ status, envelope, body, requestUrl, sentHeaders, headers }) {
   const code = envelope?.code ?? null;
   const inContract = code === null ? false : ERROR_CODES.includes(code);
   const base = {
     status,
     code,
-    inContract, declaredRetryable: envelope?.retryable ?? null,
+    inContract, declaredRetryable: envelope?.retryable ?? null, retryAfterSeconds: readRetryAfterSeconds(headers),
     requestUrl,
     requestId: readRequestId(body),
     sentHeaders,
@@ -134,14 +134,14 @@ function classifyHttpFailure({ status, envelope, body, requestUrl, sentHeaders }
     return failure('missing_if_match', { ...base, message: base.message || '服务端要求 If-Match 请求头' });
   }
   if (status === 409 || code === 'REVISION_CONFLICT' || code === 'IDEMPOTENCY_CONFLICT' || code === 'OBJECT_UNAVAILABLE') {
-    const kind = code === 'IDEMPOTENCY_CONFLICT'
-      ? 'idempotency_conflict'
-      : code === 'OBJECT_UNAVAILABLE'
-        ? 'object_unavailable'
-        : code === 'REVISION_CONFLICT'
-          ? 'revision_conflict'
-          : 'http_error';
-    return failure(kind, { ...base, message: base.message || '写操作冲突（修订/幂等/对象状态）' });
+    // `REQUEST_IN_PROGRESS`（`services/api/src/admin/idempotent-write.ts` 的占位分支）走专用失败类型：
+    // 写请求带 `Idempotency-Key`，同一个键重放不会重复生效 ⇒ 服务端给了 `Retry-After` 才能说「等 N 秒再试」。
+    const kind = code === 'REQUEST_IN_PROGRESS' ? 'in_progress' : (CONFLICT_KINDS[code] ?? 'http_error');
+    const retryAfterSeconds = kind === 'in_progress' ? readRetryAfterSeconds(headers) : null;
+    return failure(kind, {
+      ...base, retriable: serverAllowsRetry({ ...base, kind }), retryAfterSeconds,
+      message: base.message || '写操作冲突（修订/幂等/对象状态）',
+    });
   }
   if (status === 422 || code === 'SOURCE_CONFLICT') {
     return failure('source_conflict', { ...base, message: base.message || '资料引用门槛未通过' });
@@ -233,7 +233,7 @@ export async function fetchFamilyPage({
   }
 
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
-  const result = classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null });
+  const result = classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null, headers: response.headers });
   if (result.kind === 'forbidden') {
     result.message = result.message || '当前后台会话缺少读面 scope';
   }
@@ -293,7 +293,7 @@ export async function fetchFamilyItem({ fetchImpl, baseUrl, token, path, id, val
   }
 
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
-  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null });
+  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders: null, headers: response.headers });
 }
 
 /**
@@ -402,7 +402,7 @@ export async function writeFamilyResource({
   }
 
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
-  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders });
+  return classifyHttpFailure({ status, envelope, body: parsed.value, requestUrl, sentHeaders, headers: response.headers });
 }
 
 // ------------------------------------------------------------------ 资料来源的 6 个操作
@@ -745,6 +745,34 @@ export function describeWriteOutcome(result, { action, previousRevision = null, 
   };
 }
 
+/**
+ * 409 冲突类契约码 → 失败类型（`classifyHttpFailure` 与 `describeWriteFailure` 共用）。
+ *
+ * 定义写在文件这个位置是**有意的**：`docs/architecture/admin-console-capability-map.md` 用行号锚点
+ * 引用本文件前 600 行的函数（`listSources` / `getSource` / `getKnowledge` / `editCategory` /
+ * `findAuditEventsForRequest`、以及 `writeFamilyResource` 的 307-406 区间），所以 `classifyHttpFailure`
+ * 里那张表**只换写法、不增减行数**，表的定义放在锚点之外（见文件末尾同一条约束的说明）。
+ */
+const CONFLICT_KINDS = Object.freeze({
+  IDEMPOTENCY_CONFLICT: 'idempotency_conflict',
+  OBJECT_UNAVAILABLE: 'object_unavailable',
+  REVISION_CONFLICT: 'revision_conflict',
+});
+
+/**
+ * `Retry-After` 的**秒数形式**：服务端说等多久就照抄，缺头或形状不符一律返回 `null`
+ * （不编 0、1 之类的假值，页面改说「服务端未给出等待秒数」）。
+ *
+ * `http-date` 形式（`Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`）不换算：那是绝对时刻，
+ * 折算成「还要等几秒」要信客户端时钟，宁可如实说不知道。
+ */
+function readRetryAfterSeconds(headers) {
+  const raw = typeof headers?.get === 'function' ? headers.get('retry-after') : null;
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw.trim())) return null;
+  const seconds = Number(raw.trim());
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : null;
+}
+
 /** 写失败 → 页面文案（标题/说明/建议动作）。**错误码原样保留**，绝不吞掉。 */
 export function describeWriteFailure(result) {
   if (!result || result.ok !== false) return null;
@@ -774,6 +802,31 @@ export function describeWriteFailure(result) {
       return { title: '响应不符合契约', detail: detail || '未渲染任何行（不猜测缺字段）', action: 'none' };
     case 'rate_limited':
       return { title: '请求过于频繁', detail: detail, action: 'retry' };
+    case 'in_progress': {
+      // 409 `REQUEST_IN_PROGRESS`：同一 `Idempotency-Key` 的上一次写**还在处理中**。写请求带幂等键 ⇒
+      // 用同一个键重放不会重复生效，所以「等 N 秒再试」是真出路；N 只取服务端 `Retry-After`，没有就不编。
+      // 服务端声明 `retryable:false` 时仍不给自动重试（与 fail-closed 503 同一口径）。
+      const head = `（HTTP ${result.status} · ${result.code}）`;
+      if (serverAllowsRetry(result) !== true) {
+        return {
+          title: '上一次请求仍在处理中',
+          detail: result.declaredRetryable === false
+            ? `${head}，服务端声明不可自动重试（retryable:false）`
+            : `${head}，服务端未声明可自动重试，请先核对这一次写是否已生效`,
+          retriable: false,
+          action: 'none',
+        };
+      }
+      const wait = typeof result.retryAfterSeconds === 'number'
+        ? `建议等待 ${result.retryAfterSeconds} 秒后重试`
+        : '建议稍后再试（服务端未给出等待秒数）';
+      return {
+        title: '上一次请求仍在处理中',
+        detail: `${head}，${wait}；同一幂等键重放不会重复生效`,
+        retriable: true,
+        action: 'retry',
+      };
+    }
     case 'unavailable': {
       // `real` 装配下无库池 ⇒ 这批内容操作一律 fail-closed 503 `PROVIDER_UNAVAILABLE`
       // （`services/api/src/admin/fail-closed-services.ts`）。它**不是**「服务端忙」，

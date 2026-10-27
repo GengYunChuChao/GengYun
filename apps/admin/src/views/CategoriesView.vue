@@ -261,7 +261,7 @@ onBeforeUnmount(() => {
       </div>
     </form>
 
-    <div class="status" :class="view.tone" role="status">
+    <div class="status" :class="view.tone" :role="view.tone === 'error' ? 'alert' : 'status'">
       <strong>{{ view.title }}</strong>
       <span>{{ view.detail }}</span>
       <button v-if="view.canRetry" class="link" type="button" @click="refresh">重试</button>
@@ -283,14 +283,27 @@ onBeforeUnmount(() => {
           v-for="row in rows"
           :key="row.id"
           :class="{ selected: row.id === state.selectedId }"
+          tabindex="0"
+          :aria-label="`打开分类《${row.title}》编辑（${row.id}）`"
           @click="select(row)"
+          @keydown.enter.self.prevent="select(row)"
+          @keydown.space.self.prevent="select(row)"
         >
           <td>{{ row.title }}</td>
           <td>{{ row.versionLabel }}</td>
           <td><span class="pill" :class="row.statusTone">{{ row.statusLabel }}</span></td>
           <td class="mono">{{ row.revisionLabel }}</td>
           <td class="mono" :title="row.id">{{ row.id }}</td>
-          <td class="right"><button class="link" type="button">编辑</button></td>
+          <td class="right">
+            <button
+              class="link"
+              type="button"
+              :aria-label="`打开分类《${row.title}》编辑（${row.id}）`"
+              @click.stop="select(row)"
+            >
+              编辑
+            </button>
+          </td>
         </tr>
       </tbody>
     </table>
