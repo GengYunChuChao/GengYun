@@ -99,7 +99,7 @@ test('② 无 `Retry-After` ⇒ retryAfterSeconds 为 null，detail 逐字回到
 
   assert.equal(result.retryAfterSeconds, null);
   const view = viewOf(result);
-  assert.equal(view.detail, 'PROVIDER_UNAVAILABLE（HTTP 503）服务端说明 PROVIDER_UNAVAILABLE', '缺头时 detail 必须与改动前逐字一致');
+  assert.equal(view.detail, 'PROVIDER_UNAVAILABLE（HTTP 503） · 服务暂不可用（后端依赖未接线或不可达） · 服务端说明：服务端说明 PROVIDER_UNAVAILABLE', '缺头时 detail 只到「码 · 中文解释 · 服务端说明」为止（不追加任何等待秒数）');
   assert.equal(view.detail.includes('建议等待'), false);
   assert.equal(view.retryAfterSeconds, null);
 });
