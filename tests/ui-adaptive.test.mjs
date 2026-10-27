@@ -317,15 +317,10 @@ test('本任务未改动冻结契约与本地配置隔离规则', (t) => {
     }
     throw err;
   }
-  // 禁令只在「这次改动看起来就是本任务」时成立：纯服务端/纯契约 PR 与跨端 PR 不适用，
-  // 否则「契约加 500 错误码 + 顺带给小程序补状态归类」这类 PR 会被这条禁令整块打死
-  // （真实事故：混合 PR 只能把小程序的改动整块摘掉）。判定口径见文件末尾 evaluateTaskScope，
-  // 五种改动情形由同文件的「本任务作用域判定」用例逐条钉住。
-  const { applicable, violations, skipNote } = evaluateTaskScope(changed);
-  if (applicable) assert.deepEqual(violations, [], violations.join('；'));
-  else t.diagnostic(skipNote);
-  const ignore = read('.gitignore');
-  assert.ok(ignore.includes('config.local.json'), '本地配置未被忽略');
+  // 禁令只在本任务作用域内生效：判定、违规施加与配置隔离校验都在文件末尾的
+  // enforceTaskScope 里（八种情形由下方的纯函数用例逐条钉住）。已知限制：删掉下面
+  // 这一行即静默失效——纯函数用例钉不住调用点，故此处保持无条件的一行调用。
+  enforceTaskScope(t, changed, read('.gitignore'));
 });
 
 /**
@@ -566,23 +561,31 @@ test('首页 Hero 普通视口不出现孤字或英文按钮重叠', () => {
  * ---------------------------------------------------------------------------
  * 背景：上面那条用例原先把「本任务不得改冻结契约」写成了对任何 diff 都成立的全局禁令，
  * 于是「给契约加 500 错误码 + 顺带给小程序补状态归类」这类跨端 PR 被打红，只能把小程序
- * 的改动整块摘掉。收窄后的口径是「只在本任务的作用域内生效」，按四步判定：
+ * 的改动整块摘掉。收窄后的口径是「只在本任务的作用域内生效」，按三步判定：
  *   ① 本地侧 = 本任务真正会动的实现/配置面：miniprogram/**、config/**、
  *      project*.json*、docs/ui-demo/**；
- *   ② 伴生改动：tests/**、docs/** 不改变「这是不是一个本任务的 PR」；
- *   ③ 至少一个本地侧文件才算本任务的 PR —— 纯服务端/纯契约 PR 不适用；
- *   ④ 不得出现本地侧与契约之外的实现面（services/api/**、apps/** 等）—— 跨端 PR 不适用；
- *      而 packages/contracts/** 被当作「本任务范围内、明令禁止」的路径：出现即违规。
- * 于是：纯小程序 → 绿；小程序 + 契约（只这两个面）→ 红（偷改契约的真实形态）；
- * 小程序 + 契约 + services/api → 绿（跨端 PR）；纯契约 → 绿；小程序 + runtime.js → 红。
- * 放在文件末尾而非顶部，是为了不移动本文件既有文档锚点所引用的测试行号（同 :554 的先例）；
- * 函数声明会提升，用例在模块求值完成之后才执行，因此定义顺序不影响调用。
+ *   ② 「不适用」只认两件事：diff 里完全没有本地侧**也没有冻结面**文件（纯服务端/纯工具 PR），
+ *      或明确跨端（出现 services/**、apps/**）。
+ *   ③ **不**再用「有没有白名单之外的路径」判跨端：那样 tools/**、.gitignore、.github/**、
+ *      README.md 都能一键把禁令洗成「不适用」（对抗性审查实测 S6/S7/S8 由红转绿）。
+ *      packages/contracts/** 与 miniprogram/config/runtime.js 一旦出现就是违规，不看别的文件。
+ * 情形表：S1 纯小程序 → 绿；S2 小程序+契约 → 红（偷改契约的真实形态）；S3 小程序+runtime.js → 红；
+ * S4 小程序+契约+services/api → 绿（跨端 PR）；S5 纯契约 → 红（这类 PR 本来不触发本 job，
+ * 判红只为堵「契约 + tests/** 或 .gitignore 洗白」）；S6 契约+tests/**、S7 契约+.gitignore、
+ * S8 小程序+契约+tools/** → 全红。
+ * 放在文件末尾而非顶部：末尾块本来没有任何被 docs 引用的锚点，因此函数与用例放这里不会推动
+ * 别处的行号。用例体里改的那一段（原两条 assert + 两行 .gitignore 校验 ⇒ 三行注释 + 一行调用）
+ * 正好与此前等行数，`:303-324` 的用例边界、`:320`、`:357` 等既有锚点行号全部不变，只有
+ * `docs/verification/gy-i01-contract-runtime-freeze-20261015.md` 逐字引用的旧断言文案失效
+ * （该文件是历史证据页，需另开 PR 更新，本提交不动 docs）。函数声明会提升，用例在模块求值
+ * 完成后才执行，因此定义顺序不影响调用。
  */
 const CONTRACTS_PREFIX = 'packages/contracts/';
 const SHARED_RUNTIME_PATH = 'miniprogram/config/runtime.js';
 const LOCAL_SIDE_PREFIXES = ['miniprogram/', 'config/', 'docs/ui-demo/'];
 const LOCAL_SIDE_PATTERNS = [/^project[^/]*\.json(\.[A-Za-z]+)?$/];
-const COMPANION_PREFIXES = ['tests/', 'docs/'];
+const CROSS_END_PREFIXES = ['services/', 'apps/'];
+const LOCAL_IGNORE_ENTRY = 'config.local.json';
 const SKIP_NO_LOCAL = '[跳过] 本次改动不含小程序侧文件（例如纯服务端/契约 PR），本任务禁令不适用';
 const SKIP_FOREIGN = '[跳过] 本次改动含本任务范围之外的文件（services/api/**、apps/** 等），本任务禁令不适用';
 
@@ -591,74 +594,121 @@ function isLocalSidePath(path) {
     || LOCAL_SIDE_PATTERNS.some((pattern) => pattern.test(path));
 }
 
-function isAllowedInTaskPr(path) {
-  // 契约路径「允许出现在 diff 里」，正因为如此下一步才能把它判成违规，而不是判成不适用
-  return isLocalSidePath(path)
-    || COMPANION_PREFIXES.some((prefix) => path.startsWith(prefix))
-    || path.startsWith(CONTRACTS_PREFIX);
-}
-
 function evaluateTaskScope(changedPaths) {
   const paths = (changedPaths || []).map((p) => String(p).trim()).filter(Boolean);
   if (paths.length === 0) return { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL };
-  if (!paths.some(isLocalSidePath)) return { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL };
-  if (!paths.every(isAllowedInTaskPr)) return { applicable: false, violations: [], skipNote: SKIP_FOREIGN };
+  // 冻结面（契约与共享运行配置）自己就有「存在感」：否则「契约 + .gitignore」或「契约 + tests/**」
+  // 会因为「没有本地侧文件」被判不适用，等于给偷改契约开了后门（审查 S6/S7）。
+  const touchesFrozen = paths.some((p) => p.startsWith(CONTRACTS_PREFIX)) || paths.includes(SHARED_RUNTIME_PATH);
+  if (!paths.some(isLocalSidePath) && !touchesFrozen) {
+    return { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL };
+  }
+  // 只有明确的跨端面算「另一个 PR 的事情」；tools/**、.gitignore、.github/** 之类不算（审查 S8）。
+  if (paths.some((p) => CROSS_END_PREFIXES.some((prefix) => p.startsWith(prefix)))) {
+    return { applicable: false, violations: [], skipNote: SKIP_FOREIGN };
+  }
   const violations = [];
   if (paths.some((p) => p.startsWith(CONTRACTS_PREFIX))) violations.push('不得修改冻结契约');
   if (paths.includes(SHARED_RUNTIME_PATH)) violations.push('不得修改共享运行配置');
   return { applicable: true, violations, skipNote: '' };
 }
 
-test('本任务作用域判定：五种改动情形逐条钉住（不依赖真实 git）', () => {
+/**
+ * 施加器：把「判定 → 违规断言 → 跳过说明 → 本地配置隔离校验」收成唯一入口，调用点只留一行
+ * 且无条件执行（审查 M5：判定散在用例体里时，把调用点弱化成 `if (applicable && false)`
+ * 就能让 28/28 全绿而违约不响）。
+ * 已知限制（有意留，写法同 tests/unit/doc-anchors-symbol-line.test.mjs 头部的 ⑨）：删掉调用
+ * 那一行、或把它短路，纯函数用例钉不住——用例只能钉住函数本体。收成一处至少保证「函数里的
+ * 任何一条判据被掏空」都会让下面的边界用例变红。
+ */
+function enforceTaskScope(t, changedPaths, ignoreText) {
+  const scope = evaluateTaskScope(changedPaths);
+  if (scope.applicable) assert.deepEqual(scope.violations, [], scope.violations.join('；'));
+  else t.diagnostic(scope.skipNote);
+  // 本地配置隔离规则与作用域无关，永远校验（审查 M8：它在 `if (applicable)` 之外，改废了
+  // 以前全绿、无任何负控制；现在它也在同一边界内）。
+  assert.ok(String(ignoreText).includes(LOCAL_IGNORE_ENTRY), '本地配置未被忽略');
+  return scope;
+}
+
+test('本任务作用域判定：八种改动情形逐条钉住（不依赖真实 git）', () => {
   // 直接喂路径数组而非真实 diff：以后谁把守卫放宽成废的，这条用例会先红。
   const judge = (paths) => evaluateTaskScope(paths);
   const HOME = 'miniprogram/pages/home/home.wxml';
   const CONTRACT = 'packages/contracts/openapi.json';
+  const applies = (violations) => ({ applicable: true, violations, skipNote: '' });
+  const skipped = (skipNote) => ({ applicable: false, violations: [], skipNote });
 
-  // 情形① 纯小程序改动：适用，无违规
-  assert.deepEqual(judge([HOME]), { applicable: true, violations: [], skipNote: '' });
+  // S1 纯小程序改动：适用，无违规
+  assert.deepEqual(judge([HOME]), applies([]));
 
-  // 情形② 小程序 + 契约（无其它文件）：适用，且点名「不得修改冻结契约」
-  assert.deepEqual(judge([HOME, CONTRACT]), { applicable: true, violations: ['不得修改冻结契约'], skipNote: '' });
+  // S2 小程序 + 契约（只这两个面）：适用，且点名「不得修改冻结契约」——偷改契约的真实形态
+  assert.deepEqual(judge([HOME, CONTRACT]), applies(['不得修改冻结契约']));
 
-  // 情形③ 跨端改动（小程序 + 契约 + 服务端）：不适用，给出可读说明
-  assert.deepEqual(judge([HOME, CONTRACT, 'services/api/src/app.ts']), {
-    applicable: false,
-    violations: [],
-    skipNote: SKIP_FOREIGN,
-  });
+  // S3 小程序 + 共享运行配置：适用，第二条禁令仍会红
+  assert.deepEqual(judge([HOME, SHARED_RUNTIME_PATH]), applies(['不得修改共享运行配置']));
 
-  // 情形④ 纯契约 / 纯服务端改动：不适用，给出可读说明
-  assert.deepEqual(judge([CONTRACT]), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
-  assert.deepEqual(judge(['services/api/src/app.ts']), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
+  // S4 跨端改动（小程序 + 契约 + 服务端）：不适用 + 可读说明（这才是本次收窄要保住的行为）
+  assert.deepEqual(judge([HOME, CONTRACT, 'services/api/src/app.ts']), skipped(SKIP_FOREIGN));
 
-  // 情形⑤ 小程序 + 共享运行配置：适用，第二条禁令仍会红
-  assert.deepEqual(judge([HOME, SHARED_RUNTIME_PATH]), {
-    applicable: true,
-    violations: ['不得修改共享运行配置'],
-    skipNote: '',
-  });
+  // S5 纯契约：仍然适用并判红。这类 PR 不会触发本 job（`local-wechat.yml` 的 paths 里没有
+  // `packages/contracts/**`），所以不会真误伤；判红是为了堵住 S6/S7 的洗白口子。
+  assert.deepEqual(judge([CONTRACT]), applies(['不得修改冻结契约']));
 
-  // 附加：两条禁令可同时触发，违规文案保持原文且顺序稳定
-  assert.deepEqual(judge([HOME, CONTRACT, SHARED_RUNTIME_PATH]), {
-    applicable: true,
-    violations: ['不得修改冻结契约', '不得修改共享运行配置'],
-    skipNote: '',
-  });
+  // S6 契约 + 本用例文件（workflow 触发路径之一）：必须仍适用（以前被洗成「不适用」）
+  assert.deepEqual(judge([CONTRACT, 'tests/ui-adaptive.test.mjs']), applies(['不得修改冻结契约']));
 
-  // 附加：tests/** 与 docs/** 是伴生改动，不把本任务 PR 变成「跨端」
-  assert.deepEqual(judge([HOME, 'tests/ui-adaptive.test.mjs', 'docs/ui-demo/index.html']), {
-    applicable: true,
-    violations: [],
-    skipNote: '',
-  });
+  // S7 契约 + .gitignore（workflow 触发路径之一）：必须仍适用（以前被洗成「不适用」）
+  assert.deepEqual(judge([CONTRACT, '.gitignore']), applies(['不得修改冻结契约']));
 
-  // 附加：小程序工程文件算本地侧；空 diff 与纯 apps/** 改动不适用
-  assert.deepEqual(judge(['project.config.json', 'project.private.config.json']), {
-    applicable: true,
-    violations: [],
-    skipNote: '',
-  });
-  assert.deepEqual(judge([]), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
-  assert.deepEqual(judge(['apps/admin/src/main.ts']), { applicable: false, violations: [], skipNote: SKIP_NO_LOCAL });
+  // S8 小程序 + 契约 + tools/**（也是触发路径）：tools 不是跨端，必须仍适用（以前被洗成「不适用」）
+  assert.deepEqual(judge([HOME, CONTRACT, 'tools/verify-layout.mjs']), applies(['不得修改冻结契约']));
+
+  // 跨端也认 apps/**：与 services/** 同等对待
+  assert.deepEqual(judge([HOME, CONTRACT, 'apps/admin/src/main.ts']), skipped(SKIP_FOREIGN));
+
+  // 两条禁令可同时触发，违规文案保持原文且顺序稳定（旧代码只会报第一条 ⇒ 现在更严）
+  assert.deepEqual(judge([HOME, CONTRACT, SHARED_RUNTIME_PATH]), applies(['不得修改冻结契约', '不得修改共享运行配置']));
+
+  // tests/** 与 docs/** 是伴生改动，不把本任务 PR 变成「跨端」
+  assert.deepEqual(judge([HOME, 'tests/ui-adaptive.test.mjs', 'docs/ui-demo/index.html']), applies([]));
+
+  // 小程序工程文件算本地侧
+  assert.deepEqual(judge(['project.config.json', 'project.private.config.json']), applies([]));
+
+  // 真正「没有本地侧也没有冻结面」的 diff 才不适用：纯服务端、纯工具、空 diff
+  assert.deepEqual(judge(['services/api/src/app.ts']), skipped(SKIP_NO_LOCAL));
+  assert.deepEqual(judge(['tools/verify-layout.mjs']), skipped(SKIP_NO_LOCAL));
+  assert.deepEqual(judge([]), skipped(SKIP_NO_LOCAL));
+});
+
+test('本任务作用域的施加器：禁令与本地配置校验都不允许被短路（纯函数边界）', () => {
+  // 审查 M5/M8：判定散在用例体里时，把调用点短路成 `if (applicable && false)`、或把
+  // `.gitignore` 断言换成 `assert.ok(true)`，整份测试仍然 28/28 全绿。这里用假 t 直接钉住
+  // 施加器本体：契约在作用域内必须真的抛，跨端必须只写诊断，本地配置缺条目必须无条件抛。
+  const notes = [];
+  const fakeT = { diagnostic: (message) => notes.push(message) };
+  const GOOD_IGNORE = 'node_modules/\nconfig.local.json\n';
+  const HOME = 'miniprogram/pages/home/home.wxml';
+  const CONTRACT = 'packages/contracts/openapi.json';
+
+  // 合规的小程序 PR：不抛，也不写诊断
+  notes.length = 0;
+  assert.deepEqual(enforceTaskScope(fakeT, [HOME], GOOD_IGNORE), { applicable: true, violations: [], skipNote: '' });
+  assert.deepEqual(notes, []);
+
+  // 契约在作用域内 ⇒ 断言真的抛（若有人把 violations 断言改成只写诊断，这里变红）
+  assert.throws(() => enforceTaskScope(fakeT, [HOME, CONTRACT], GOOD_IGNORE), /不得修改冻结契约/);
+
+  // 纯契约（S5）同样抛
+  assert.throws(() => enforceTaskScope(fakeT, [CONTRACT], GOOD_IGNORE), /不得修改冻结契约/);
+
+  // 跨端 PR：不抛，改为写一行诊断
+  notes.length = 0;
+  assert.doesNotThrow(() => enforceTaskScope(fakeT, [HOME, CONTRACT, 'services/api/src/app.ts'], GOOD_IGNORE));
+  assert.deepEqual(notes, [SKIP_FOREIGN]);
+
+  // 本地配置隔离：无条件生效——即使这一轮「不适用」，缺 config.local.json 也必须抛
+  assert.throws(() => enforceTaskScope(fakeT, [HOME], 'node_modules/\n'), /本地配置未被忽略/);
+  assert.throws(() => enforceTaskScope(fakeT, [CONTRACT, 'services/api/src/app.ts'], ''), /本地配置未被忽略/);
 });
