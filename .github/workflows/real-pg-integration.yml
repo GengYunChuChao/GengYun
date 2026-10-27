@@ -316,6 +316,45 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
+      # 后台社区帖域 · 下架审计专项臂（#18 / 迁移 0047 的 `record_admin_post_hide_audit` 专证，R65 接入）：
+      # 库名硬钉 `gengyun_admin_post_hide_audit_test`，脚本要求**空库**（先断言 `public` 下 0 张表），只 apply
+      # 0001+0017+0022+0027+0030+0032+0033+0045+0047（⛔ 不是全链：0047 的函数 `INSERT` 0017 的
+      # `admin_audit_events`；0027 的 before/after 与 0033 的读函数是 [A2]「按 action 筛得回来」的依赖）。
+      # 读数：[M] 迁移子集与装配 / [A] 下架落恰 1 行 post.hide（逐列）/ [A2] 既有读面正常返回且含这条 /
+      # [B] 触发器令审计写入抛错 ⇒ 503「审计写入失败」且帖子零变化（fail-closed）/ [C] 拆触发器恢复 200
+      # 且已隐藏再隐藏幂等（审计不增）；末行固定 `PASS admin-post-hide-audit-pg · 读数 N 条`。
+      # 连接串只走 **argv[2]**（owner URL）：它不建组角色、不 `CREATE ROLE`、对集群级角色零依赖；
+      # 缺 URL 时脚本打印 SKIP 并以 77 退出 ⇒ 下面把 77 显式升级成硬失败（77 = 未取得，⛔ 不是通过）。
+      # 位置：紧接 `admin-community-posts-pg`（同一 `POST /admin/posts/{id}/hide` 处置面的专证臂）、
+      # 仍在 `ocr-jobs` 之前；与 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `REQUIRED_STEP_ORDER` 第 3e 条对应。
+      - name: 后台社区帖域 · 下架审计（#18 / post.hide 审计函数专证 / fail-closed / 幂等）
+        run: |
+          set -euo pipefail
+          log=/tmp/admin-post-hide-audit-pg.log
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_admin_post_hide_audit_test'
+          rc=0
+          node tests/integration/admin-post-hide-audit-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_admin_post_hide_audit_test 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::下架审计臂被跳过（exit 77）：连接串 env 传丢了，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::下架审计臂失败（exit $rc）。"
+            tail -n 60 "$log"
+            exit "$rc"
+          fi
+          readings=$(awk '/^\[[A-Z0-9]+\]/{n++} END{print n+0}' "$log")
+          echo "读数：${readings} 条 [X] 注释"
+          if [ "$readings" -lt 1 ] || ! grep -Fq 'PASS admin-post-hide-audit-pg' "$log"; then
+            echo "::error::下架审计臂 exit 0 但读数缺失（[X] 行=${readings}，末行 PASS 行未出现）⇒ 等于没跑。"
+            exit 1
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
       # 标签 OCR 域（#323 / I10，R28-S17）：库名硬钉 `gengyun_ocr_jobs_test`，脚本同样要求**空库**
       # （自己断言 `public` 下 0 张表），并用 `discoverMigrations()` 跑**全链迁移**（0001..0024，含本片的
       # 0024）而不是子集——因此它顺带守住「迁移清单连续无缺号、总数 === 最大版本号、0024 仍在末位」。
