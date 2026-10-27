@@ -13,8 +13,13 @@
 // 九条判据（每条都有对应反向控制，且反向控制与正向断言**调用同一个**函数）：
 //   ① 受管脚本必须出现在某个 `.github/workflows/*.yml` 的 `run:` **命令文本**里
 //      （不认注释、不认裸文件名；`run: |` 块标量体里的 `#` 行是 shell 注释，同样不认）；
-//   ② 任何 workflow 都不得含「放宽跳过」的开关（`GY_ALLOW_SKIP` / `--allow-skip`）——
-//      真库没跑起来必须以 77 红掉，不得被写成绿（口径见 `.pg17/ruling-skip-exit-code-20261020.md`）；
+//   ② 任何 workflow、以及任何 **npm 入口**（根 `package.json` ＋ 根 `workspaces` 登记的成员）的 `scripts`，
+//      都不得含「放宽跳过／吞红」的开关（`GY_ALLOW_SKIP` / `--allow-skip` / `ALLOW_SKIP=` / `--skip-…` /
+//      `|| true` / `; true` / `|| exit 0` / `; exit 0` / `|| :` / `set +e`）——真库没跑起来必须以 77 红掉，
+//      不得被写成绿；反面同样算判据：`|| exit 1` 与 `set -e` 是**正确传播失败**，必须仍然绿（不误伤）
+//      （口径见 `.pg17/ruling-skip-exit-code-20261020.md`）；
+//      npm 这一半是 R67-D06 补的：`package.json` 里给某个臂的 script 加一句 `--allow-skip`，此前
+//      一个守卫都碰不到它（判据②只读 `.github/workflows/` 的文本）——与「workflow 里加开关」是同一种假绿；
 //   ③ **真跑受管脚本的那个 job** 必须真的有 `services.postgres`，且镜像主版本锚定 **17**
 //      （防降级到 16 / 防删 service；作用域锚定到 job，⛔ 不看「文件里第一个 `services:`」——
 //      前置诱饵 job 就能把那种实现骗成绿）；
@@ -39,7 +44,8 @@
 //      执行的脚本集合与 `MANAGED_SCRIPTS` 必须**双向相等**（此前只有单向：清单里有、workflow 没有 ⇒ 红；
 //      反过来「双清单同时删掉一项」⇒ 全绿，受管脚本照样没人跑）。
 //
-// 纯静态：只读 `.github/workflows/` 下的文本，⛔ 不起服务、不连 PG、不联网、不写任何文件、不新增依赖。
+// 纯静态：只读 `.github/workflows/` 下的文本与 `package.json`（根的 ＋ 根 `workspaces` 登记成员的），
+// ⛔ 不起服务、不连 PG、不联网、不写任何文件、不新增依赖。
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -541,6 +547,46 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
  */
 const FORBIDDEN_ESCAPE_HATCHES = Object.freeze(['GY_ALLOW_SKIP', '--allow-skip']);
 
+/**
+ * 判据②的**另一半**（R67-D06）：`workflow` 不是唯一入口。假绿出口长这样——
+ *   "test:integration:conversations-pg": "node tests/integration/conversations-pg.mjs --allow-skip"
+ * 缺库时脚本本该 exit 77（红），加了这句就以 0 退出（绿）；而判据②原本只读 `.github/workflows/` 的文本，
+ * 上面这条改**一个守卫都碰不到**。故这里把扫描面扩到 npm 入口：根的 `package.json` ＋ 根 `workspaces`
+ * 里登记的每个成员的 `package.json`（workspace 的 `scripts` 同样是 `npm run …` 入口）。
+ *
+ * 每一条都对应仓库里**已经存在**的写法（⛔ 不是凭空发明的黑名单）：
+ *   · `GY_ALLOW_SKIP` / `--allow-skip`：就是 `FORBIDDEN_ESCAPE_HATCHES` 那两个开关（脚本侧把「缺库 77」放宽成 0）；
+ *   · `ALLOW_SKIP=`：同一开关的 env 赋值形态（`ALLOW_SKIP=1` 一类；`GY_ALLOW_SKIP=1` 由第一条命中——
+ *     `\b` 前面是 `_` 这个词字符，故 `\bALLOW_SKIP` 不会在 `GY_ALLOW_SKIP` 里二次命中）；
+ *   · `--skip-…`：node／npm 自带的跳过写法（`--skip-pattern` 一类），语义与上面相同；
+ *   · `|| true` / `; true`：workflow 侧早有的「吞红」构造（口径见判据⑤的 `swallowedFailureHits`），
+ *     挪进 npm 脚本一样是「命令失败仍以 0 退出」；`||true`（不带空格）由 `\s*` 一并覆盖。
+ *   · `|| exit 0` / `; exit 0` / `|| :` / `set +e`：与 `|| true` 同族的四种写法（审查实测：这四种
+ *     此前 npm 侧与 workflow 侧都漏抓，注入后守卫 exit=0、不点名）。`|| exit 0` 是「以成功退出」的
+ *     显式写法，`:` 是恒成功的空命令（等价 `|| true`），`; exit 0` 只是换成无条件的 `;` 形态，
+ *     `set +e` 关掉 errexit 后命令失败不再中止、脚本尾部自然收 0。无空格变体（`||exit 0`、`||:`、
+ *     `;exit 0`）由 `\s*` 一并覆盖。
+ *     ⚠️ 反面同样是判据的一部分：`|| exit 1`（前面失败就以非 0 退出＝**正确传播失败**）与 `set -e`
+ *     （打开 errexit＝失败即中止）都**必须仍然绿**——守卫若把「正确传播失败」也判红，就会逼人删掉它，
+ *     那是把闸门往坏处改。反向控制②b 对这两类各钉了一条不误伤断言。
+ * 增删任何一条＝改门禁口径：反向控制②b 钉住了这份 label 清单，改了就红（刻意留 diff）。
+ */
+const FORBIDDEN_NPM_SCRIPT_SWITCHES = Object.freeze([
+  { label: 'GY_ALLOW_SKIP', pattern: /GY_ALLOW_SKIP/, sample: 'GY_ALLOW_SKIP=1', why: '缺库时把 77 放宽成 0' },
+  { label: '--allow-skip', pattern: /--allow-skip\b/, sample: '--allow-skip', why: 'argv 形态的放宽跳过' },
+  { label: 'ALLOW_SKIP=', pattern: /\bALLOW_SKIP\s*=/, sample: 'ALLOW_SKIP=1', why: 'env 赋值形态的放宽跳过' },
+  { label: '--skip-*', pattern: /--skip-[A-Za-z0-9-]+/, sample: '--skip-pattern=x', why: 'node／npm 的跳过开关' },
+  { label: '|| true', pattern: /\|\|\s*true\b/, sample: '|| true', why: '前一失败仍以 0 退出' },
+  { label: '; true', pattern: /;\s*true\b/, sample: '; true', why: '同上，分号形态' },
+  { label: '|| exit 0', pattern: /\|\|\s*exit\s+0\b/, sample: '|| exit 0', why: '前面失败仍以 0 退出（`|| true` 的显式写法）' },
+  { label: '; exit 0', pattern: /;\s*exit\s+0\b/, sample: '; exit 0', why: '同上，无条件分号形态' },
+  { label: '|| :', pattern: /\|\|\s*:(?=\s|$)/, sample: '|| :', why: '`:` 是恒成功的空命令，等价 `|| true`' },
+  { label: 'set +e', pattern: /\bset\s+\+[a-z]*e\b/, sample: 'set +e', why: '关掉 errexit：后续失败不再中止，脚本尾部收 0' },
+]);
+
+/** 根 `package.json` 固定叫这个名字；workspace 成员的文件名同样固定。 */
+const ROOT_MANIFEST = 'package.json';
+
 /** 真库镜像的主版本：`postgres:17.11` 的 `17`。降级成 16 会让 17 专有行为（视图/迁移）静默失真。 */
 const REQUIRED_POSTGRES_MAJOR = '17';
 
@@ -761,6 +807,50 @@ export function escapeHatchHits({ file, source }) {
       if (line.includes(token)) hits.push(`${file}:${index + 1}: ${token}`);
     }
   });
+  return hits;
+}
+
+/**
+ * 一个 npm 入口文件里的 `scripts`（`[{ name, command }]`）。`scripts` 缺失/不是对象时返回空数组——
+ * 「一条脚本都没读到」不能自己算绿，那由用例里的反空转断言兜住（扫不到东西也必须红）。
+ */
+export function npmScriptsOf({ source }) {
+  const parsed = JSON.parse(source);
+  const scripts = parsed.scripts;
+  if (scripts === null || typeof scripts !== 'object' || Array.isArray(scripts)) return [];
+  return Object.keys(scripts).map((name) => ({ name, command: String(scripts[name]) }));
+}
+
+/**
+ * 根 `package.json` 里登记的 workspace 成员目录。`workspaces` 也接受 `{ packages: [...] }` 形态。
+ * ⛔ 不展开 glob：命中的写法原样放进 `globs` 交回调用方判红——静默漏扫某个成员的 `scripts`
+ * 与「根本没有这条守卫」等价（本仓当前登记的是两个具体目录，没有 glob）。
+ */
+export function workspaceDirsOf({ source }) {
+  const parsed = JSON.parse(source);
+  const raw = parsed.workspaces;
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.packages) ? raw.packages : [];
+  const dirs = [];
+  const globs = [];
+  for (const entry of list) {
+    if (/[*?[]/.test(entry)) globs.push(entry);
+    else dirs.push(entry);
+  }
+  return { dirs, globs };
+}
+
+/**
+ * npm 脚本里的「放宽跳过／吞红」开关命中行（`文件#scripts.<script>: 开关（为什么是假绿）`），空数组＝干净。
+ * 命中必须同时带 **script 名**与**开关名**：消息要能直接指出「哪个 script、哪个开关」，
+ * 否则读消息的人还得自己回去翻整份 `package.json`。
+ */
+export function npmScriptEscapeHatchHits({ file, source }) {
+  const hits = [];
+  for (const { name, command } of npmScriptsOf({ source })) {
+    for (const { label, pattern, why } of FORBIDDEN_NPM_SCRIPT_SWITCHES) {
+      if (pattern.test(command)) hits.push(`${file}#scripts.${name}: ${label}（${why}）`);
+    }
+  }
   return hits;
 }
 
@@ -1287,6 +1377,24 @@ function assertNoEscapeHatches(hits) {
   );
 }
 
+function assertNoNpmScriptEscapeHatches(hits) {
+  assert.deepEqual(
+    hits,
+    [],
+    [
+      '有 npm 脚本含「放宽跳过／吞红」开关：`npm run <script>` 在真库没跑起来时会以 0 退出，',
+      '也就是把「未取得」改写成「通过」——与在 workflow 里加 `GY_ALLOW_SKIP` 是同一种假绿，只是入口换成了',
+      '`package.json`（缺库必须以 77 红掉）：',
+      ...hits.map((hit) => `  · ${hit}`),
+      '',
+      '请登记或去掉：',
+      '  · 去掉：从该 `scripts` 条目里删掉这个开关（真库没跑起来本来就该 77 红掉，⛔ 不要把它改写成绿）；',
+      '  · 登记：若这是本守卫还不认得的**新种类**出口开关，就把它登记进 `FORBIDDEN_NPM_SCRIPT_SWITCHES`',
+      '    与反向控制②b 的 label 清单——增删开关一律是改门禁口径，必须刻意留下可审的 diff（⛔ 不是静默豁免）。',
+    ].join('\n'),
+  );
+}
+
 function assertPostgresServiceHealthy(file, problems) {
   assert.deepEqual(
     problems,
@@ -1383,6 +1491,31 @@ function readAllWorkflows() {
     const { source } = readWorkflow(file);
     return { file, source, commands: runCommandTextsOf(source) };
   });
+}
+
+/**
+ * 需要扫的 npm 入口文件：仓库根的 `package.json`，加上根 `workspaces` 里登记的每个成员的 `package.json`。
+ * 为什么连 workspace 一起扫：`npm run <script> --workspace @gengyun/api` 同样是入口，把降级开关藏在
+ * 成员的 `scripts` 里与藏在根里没有区别（判据②要守的是「入口」，不是「某一个文件」）。
+ */
+function listNpmEntryFilesOnDisk() {
+  const rootSource = readFileSync(join(REPO_ROOT, ROOT_MANIFEST), 'utf8');
+  const { dirs, globs } = workspaceDirsOf({ source: rootSource });
+  assert.deepEqual(
+    globs,
+    [],
+    `根 \`${ROOT_MANIFEST}\` 的 \`workspaces\` 里出现了 glob（${globs.join('、')}）：本判据不展开 glob，`
+      + '静默漏扫这些成员的 `scripts` 与「没有这条守卫」等价。请在此处把 glob 展开成具体目录，'
+      + '或改用另一种能覆盖它们的写法（⛔ 不要靠留一个 glob 让判据变成部分覆盖）。',
+  );
+  return [ROOT_MANIFEST, ...dirs.map((dir) => `${dir.replace(/\/+$/, '')}/${ROOT_MANIFEST}`)];
+}
+
+function readAllNpmEntryScripts() {
+  return listNpmEntryFilesOnDisk().map((file) => ({
+    file,
+    source: readFileSync(join(REPO_ROOT, file), 'utf8'),
+  }));
 }
 
 // ── 变异辅助（只给反向控制用；全部在**内存**里做，⛔ 不落盘） ────────────────────────────
@@ -1672,6 +1805,110 @@ test('反向控制②：往 workflow 里加 `GY_ALLOW_SKIP` 或 `--allow-skip`�
 
   // 不误伤：语义相反的合法文字（「不得放宽」）不得被当成开关。
   assert.deepEqual(escapeHatchHits({ file: REAL_PG_WORKFLOW, source: '# 缺库必须以 77 红掉，不得放宽\n' }), []);
+});
+
+test('前向②b：npm 入口（根 `package.json` ＋ `workspaces` 成员）的 `scripts` 都不得含「放宽跳过／吞红」开关', () => {
+  const entries = readAllNpmEntryScripts();
+  assertNoNpmScriptEscapeHatches(entries.flatMap((entry) => npmScriptEscapeHatchHits(entry)));
+
+  // 反空转：真读到文件、真读到脚本，且受管真库臂确实是从 npm 入口被调起来的——
+  // 否则「一条 script 都没读到」也会让上面那条绿，本判据就成了永远绿的装饰。
+  assert.ok(
+    entries.length >= 2,
+    `只扫到 ${entries.length} 个 npm 入口（至少要有根的 package.json ＋ 一个 workspace 成员）`,
+  );
+  assert.equal(entries[0].file, ROOT_MANIFEST, '第一个被扫的必须是仓库根的 `package.json`');
+  const scripts = entries.flatMap((entry) => npmScriptsOf(entry).map((script) => ({ ...script, file: entry.file })));
+  assert.ok(scripts.length >= 10, `只读到 ${scripts.length} 条 npm script，解析口径可能已失效`);
+  const armEntries = scripts.filter((script) => script.command.includes('tests/integration/'));
+  assert.ok(
+    armEntries.length >= 1,
+    '没有任何 npm script 调 `tests/integration/` 下的脚本：本判据扫的就不是「真库臂的入口」',
+  );
+});
+
+test('反向控制②b：往某个 npm script 尾部加 `--allow-skip` 一类开关，同一断言必须红并点名该 script', () => {
+  const rootSource = readFileSync(join(REPO_ROOT, ROOT_MANIFEST), 'utf8');
+  assertNoNpmScriptEscapeHatches(npmScriptEscapeHatchHits({ file: ROOT_MANIFEST, source: rootSource }));
+
+  // 口径钉死：这条守卫认得哪几种开关。增删任何一条＝改门禁口径，必须刻意留下可审的 diff。
+  assert.deepEqual(
+    FORBIDDEN_NPM_SCRIPT_SWITCHES.map((entry) => entry.label),
+    [
+      'GY_ALLOW_SKIP',
+      '--allow-skip',
+      'ALLOW_SKIP=',
+      '--skip-*',
+      '|| true',
+      '; true',
+      '|| exit 0',
+      '; exit 0',
+      '|| :',
+      'set +e',
+    ],
+    '「放宽跳过／吞红」开关清单被改动：请同步判据②的说明与证据页（⛔ 不要静默删掉一条）',
+  );
+
+  // 真跑库臂的 npm 入口：根 `package.json` 里就有这条 script。
+  const target = 'test:integration:conversations-pg';
+  const rootParsed = JSON.parse(rootSource);
+  assert.ok(
+    typeof rootParsed.scripts?.[target] === 'string' && rootParsed.scripts[target].includes('tests/integration/'),
+    `前提：根 package.json 里有真跑库臂的 script ${target}`,
+  );
+
+  const withTail = (suffix) => JSON.stringify(
+    { ...rootParsed, scripts: { ...rootParsed.scripts, [target]: `${rootParsed.scripts[target]} ${suffix}` } },
+    null,
+    2,
+  );
+
+  for (const { label, pattern, sample } of FORBIDDEN_NPM_SCRIPT_SWITCHES) {
+    // ① 判据要认得出自己的样例——否则「命中 0 处」是判据写错了，而不是文件干净。
+    assert.match(sample, pattern, `开关 ${label} 的正则认不出自己的样例：${sample}`);
+
+    // ② 只在内存里注入：模拟「有人为了让 `npm run` 变绿，在 script 尾部加了一句开关」。
+    const hits = npmScriptEscapeHatchHits({ file: ROOT_MANIFEST, source: withTail(sample) });
+    assert.equal(hits.length, 1, `注入 ${label} 后必须正好命中一处（实际 ${hits.length} 处：${hits.join('、')}）`);
+    assert.ok(hits[0].includes(`#scripts.${target}`), `失败信息必须点名 script（${hits[0]}）`);
+    assert.ok(hits[0].includes(label), `失败信息必须点名开关 ${label}（${hits[0]}）`);
+    assert.throws(
+      () => assertNoNpmScriptEscapeHatches(hits),
+      (error) => error.message.includes(target)
+        && error.message.includes(label)
+        && error.message.includes('请登记或去掉'),
+      `注入 ${label} 后同一断言必须失败，且消息要点名 script、开关与「请登记或去掉」`,
+    );
+  }
+
+  // 不带空格的打字法是同一个吞红构造，`\s*` 必须也认（`||true` 与新增四种的无空格变体）。
+  for (const tight of ['||true', '||exit 0', ';exit 0', '||:']) {
+    assert.equal(
+      npmScriptEscapeHatchHits({ file: ROOT_MANIFEST, source: withTail(tight) }).length,
+      1,
+      `\`${tight}\` 不带空格也必须命中`,
+    );
+  }
+
+  // 不误伤（与上面同等重要）：`|| exit 1` 是把失败**正确传播**出去（前面失败就以非 0 退出），
+  // `; exit 1` 同理，`set -e`／`set -eu` 是打开 errexit（失败即中止）——三者都不是吞红，注入后必须命中 0 处。
+  // 守卫若把它们也判红，就会逼人删掉这些正经写法，那是把闸门往坏处改。
+  for (const benignSuffix of ['|| exit 1', '; exit 1', 'set -e', 'set -eu']) {
+    assert.deepEqual(
+      npmScriptEscapeHatchHits({ file: ROOT_MANIFEST, source: withTail(benignSuffix) }),
+      [],
+      `\`${benignSuffix}\` 是正确传播失败／打开 errexit，不是吞红，不得被判红`,
+    );
+  }
+
+  // 不误伤：脚本**名**里带 skip、或命令里 echo 一句语义相反的话，都不是开关。
+  const benign = JSON.stringify({
+    scripts: {
+      'docs:skip-policy': 'node tools/print-skip-policy.mjs',
+      'docs:no-widen': 'echo 缺库必须以 77 红掉，不得放宽',
+    },
+  }, null, 2);
+  assert.deepEqual(npmScriptEscapeHatchHits({ file: ROOT_MANIFEST, source: benign }), []);
 });
 
 test('前向③：真 job 有 `services.postgres`，镜像主版本锚定 17，且 `uses:` 全部固定 SHA', () => {

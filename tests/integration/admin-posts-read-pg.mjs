@@ -26,7 +26,8 @@
  *       `community_moderation_decisions.text_digest` 在位 / real+真 pool ⇒ `adminPostReadService` 与
  *       `communityService` 都在；
  *   [L] 列表：无筛选的 id 序列与真库 `SELECT ... ORDER BY created_at DESC, id DESC` **逐位相等**；
- *       `state=hidden` / `audit_state=pending` / `state+audit_state` 组合各自与 SQL 对账；
+ *       `state=hidden` / `audit_state=pending` / `state+audit_state` 组合各自与 SQL 对账，
+ *       且命中**条数**必须恰好等于夹具里满足该条件的行数（R67-D10：此处原为 `> 0`，只证明「有行」）；
  *       `limit=2` 逐页遍历覆盖全集、无重无漏、末页 `next_cursor:null`；
  *   [D] 单条：字段集合与契约 `AdminPost`（`additionalProperties:false`）**恰好相等**、值与真库行逐列相等、
  *       `ETag` = `"<revision>"`；随机 uuid ⇒ 404 `NOT_FOUND`（⛔ 不是 403，不泄露存在性）；
@@ -282,18 +283,47 @@ async function main() {
     assert.ok(listAll.headers.etag === undefined, '列表响应不带 ETag（契约只给单资源）');
     note('[L] 列表（无筛选）：6/6 条与真库 SQL 逐位相等，含 hidden×1 / deleted×1 / private×1 / 待审×2');
 
-    for (const [label, query, expected] of [
-      ['state=hidden', '?state=hidden', { state: 'hidden' }],
-      ['state=deleted', '?state=deleted', { state: 'deleted' }],
-      ['audit_state=pending', '?audit_state=pending', { auditState: 'pending' }],
-      ['state=published&audit_state=pending', '?state=published&audit_state=pending', { state: 'published', auditState: 'pending' }],
+    /*
+     * 每一行＝〔label／query／真库对照 SQL 的等值条件／**该条件在本臂夹具里应当命中哪些行**〕。
+     * 第 4 列是「期望条数」的唯一来源：它按 `FIXTURES` 逐条判定（夹具自己造的行、自己标的
+     * `visibility`/`audit_state`），也就是「这几条该被筛出来、其余不该」这个夹具事实本身。
+     * ⛔ 不是写死的 1/2 魔数，也不是此前那句 `> 0`——`> 0` 只证明「有行」：读面多吐一条、或吐出
+     * 不该出现的行都照样绿（`deepEqual` 与 `sqlAdmin` 对账在「两边都是空」时也是绿的）。
+     */
+    for (const [label, query, expected, matches] of [
+      ['state=hidden', '?state=hidden', { state: 'hidden' }, (record) => record.visibility === 'hidden'],
+      ['state=deleted', '?state=deleted', { state: 'deleted' }, (record) => record.visibility === 'deleted'],
+      ['audit_state=pending', '?audit_state=pending', { auditState: 'pending' }, (record) => record.audit_state === 'pending'],
+      [
+        'state=published&audit_state=pending',
+        '?state=published&audit_state=pending',
+        { state: 'published', auditState: 'pending' },
+        (record) => record.visibility === 'published' && record.audit_state === 'pending',
+      ],
     ]) {
+      const expectedRecords = FIXTURES.filter((record) => matches(record));
+      const expectedTags = expectedRecords.map((record) => record.tag);
+      const expectedIds = expectedRecords.map((record) => record.id).sort();
       const response = await call(readAdmin.token, 'GET', `${API}/admin/posts${query}`);
       assert.equal(response.status, 200, `${label} ⇒ ${response.status} ${response.text.slice(0, 200)}`);
-      assert.deepEqual(idsOf(response.body), await sqlAdmin(expected), `${label} 必须与真库 SQL 对账`);
-      assert.ok(response.body.data.items.length > 0, `${label} 在真库夹具里应至少命中 1 条（证明下推真的生效）`);
+      const actualIds = idsOf(response.body);
+      assert.deepEqual(actualIds, await sqlAdmin(expected), `${label} 必须与真库 SQL 对账`);
+      assert.equal(
+        response.body.data.items.length,
+        expectedRecords.length,
+        `${label} 必须**恰好**命中 ${expectedRecords.length} 条：期望值取自本臂夹具——`
+          + `FIXTURES 的 ${FIXTURES.length} 条里只有 ${expectedTags.join('、')} 这几条的 visibility/audit_state`
+          + ` 满足该筛选，实际命中 ${response.body.data.items.length} 条`
+          + '（此前写作「> 0」，只证明「有行」：多吐/少吐都判绿）',
+      );
+      assert.deepEqual(
+        [...actualIds].sort(),
+        expectedIds,
+        `${label} 命中的必须正是夹具里那 ${expectedRecords.length} 条（${expectedTags.join('、')}），`
+          + '多一条/少一条都算下推（或谓词）走形',
+      );
     }
-    note('[L] 过滤下推：state=hidden / state=deleted / audit_state=pending / 两者组合 各自与真库 SQL 逐位相等');
+    note('[L] 过滤下推：state=hidden / state=deleted / audit_state=pending / 两者组合 各自与真库 SQL 逐位相等，且条数恰好等于夹具里满足该条件的行数');
 
     const walked = [];
     let cursor = null;
