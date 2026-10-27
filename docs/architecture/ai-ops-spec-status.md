@@ -19,7 +19,7 @@
 
 | 上一版编号 | 上一版定性 | 本版定性 | 改判依据 |
 | --- | --- | --- | --- |
-| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1291` 的 `adminRealUnwired` 值只等于「real 模式」，`:1313-1315` 在 real + 有池时即构造生产端口 |
+| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1341` 的 `adminRealUnwired` 值只等于「real 模式」，`:1363-1365` 在 real + 有池时即构造生产端口 |
 | 原 Z02（Q29） | 已搁置 | N08（未实现） | 原文只有「尚未执行」（docs/requirements.md:58），无暂缓记录 |
 | 原 Z07（120 题） | 已搁置 | N09（未实现） | 台账「仍待后续片」是排期自述；门槛原文见 docs/implementation-requirements.md:467 |
 | 原 Z08（原生 PG17 迁移） | 已搁置 | 并入 E39 | 真库臂 workflow 用 `postgres:17.11` 并跑全链迁移（.github/workflows/real-pg-integration.yml:55） |
@@ -54,11 +54,11 @@
 | 审核规则层与载荷 | 5 | 2 | 1 | 2 | 0 | 模型层不存在（N07）；载荷缺 mime（N11） |
 | 媒体 | 2 | 1 | 0 | 1 | 0 | 读句柄网关未接（N12）；写链路已验收（E24） |
 | 开关（三键与十个受控面） | 6 | 6 | 0 | 0 | 0 | 本域全绿，闭集与两个错误码分流都有断言 |
-| 审计 | 6 | 3 | 2 | 1 | 0 | `job.cancel` 已登记进闭集、读面可筛（E40）；剩余是后台无入口（P10）与台账滞后（N02） |
+| 审计 | 6 | 3 | 2 | 1 | 0 | `job.cancel` 已登记进闭集、读面可筛（E40）；审计总台账**已有页面**消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`，导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:70`，#633）；剩余是三读面读数不合并（P10）与台账滞后（N02）。原写「后台无入口」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | 后台作业台（含真库臂） | 8 | 6 | 2 | 0 | 0 | 端口已接线并通过真库回归；投影语义未真实化（P11） |
 | 统一台账·调用记录·版本串 | 3 | 0 | 0 | 3 | 0 | `public.jobs` 零写入、`provider_invocations` 无表（N04／N05） |
 | 登记核对 | 1 | 0 | 1 | 0 | 0 | real 无登记库，恒 unavailable（P12） |
-| 契约单源 | 1 | 1 | 0 | 0 | 0 | 错误码单源 24 码，改动必须过 `states.json` |
+| 契约单源 | 1 | 1 | 0 | 0 | 0 | 错误码单源 26 码，改动必须过 `states.json` |
 | 许可与真实评估排期 | 3 | 0 | 0 | 2 | 1 | 许可调查暂缓（Z01）；Q29 与 120 题属未实现（N08／N09） |
 | 上线／部署／迁移实例 | 2 | 0 | 0 | 0 | 2 | 测试版与服务器部署按用户要求暂缓（Z04／Z05） |
 | 范围决策与外部授权 | 4 | 0 | 0 | 1 | 3 | iOS 与适老为范围决策（Z02／Z03）；注销擦除未并入（N10） |
@@ -70,7 +70,7 @@
 | --- | --- | --- | --- | --- |
 | E01 | `Job` 九键闭集，出口按契约重建、多余键一律拒绝 | 已实现 | services/api/src/jobs/registry.ts:50-60 | 只管公共作业面；后台 `AdminJob` 另有投影，两套键集不共享 |
 | E02 | `JobState` 七值闭集，不得扩展 | 已实现 | services/api/src/jobs/registry.ts:38-46 | 域内状态机另有迁移表，闭集是出口判定而非库内唯一来源 |
-| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2285-2320 | 「注册」不等于「有能力」：取消能力另按域判定（P01） |
+| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2433-2472 | 「注册」不等于「有能力」：取消能力另按域判定（P01） |
 | E04 | 未接线 kind 与「作业不存在」同形 404 | 已实现 | services/api/src/jobs/registry.ts:108 | 同形是刻意设计，代价是运维无法从 404 分辨「没接」与「没这条」 |
 | E05 | `result` 如实性不变式：`result` 非空 ⇒ 只能是 `succeeded`／`uncertain` | 已实现 | services/api/src/jobs/registry.ts:166-168 | 与识别域既有行为有一处口径差（`uncertain` 允许带 `result`），已在同文件注明 |
 | E06 | 端口回传不合契约 ⇒ 503 `PROVIDER_UNAVAILABLE` + `retryable:false`，单通道 | 已实现 | services/api/src/jobs/registry.ts:130-133 | 唯一拒绝通道；不另造错误码，也不放宽冻结契约 |
@@ -104,8 +104,8 @@
 | E34 | 过滤下推 SQL（值绑定 + 枚举 cast，不拼串） | 已实现 | services/api/src/admin/ops/jobs-pg.ts:23-28 | 下推已实现；UI 不发送这些参数（P08） |
 | E35 | 作业台取消只允许 `queued`／`running` → `cancelled`，终态由端口判 `TERMINAL` | 已实现 | services/api/src/admin/ops/jobs-pg.ts:30-33 | 终态拒绝已锁，并由真库臂钉住（E39） |
 | E36 | 后台作业台取消的前端判据（状态 + uuid + `etagForRevision`） | 已实现 | apps/admin/src/lib/jobs-api.mjs:124-130 | 前端判据已锁；后端未注入端口时仍会收到 503 |
-| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 24 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；`packages/contracts/` 下无源码文件 |
-| E38 | 后台作业台**真库端口**的产品装配：real + 有池 ⇒ `createPostgresAdminJobPort` | 已实现 | services/api/src/app.ts:1313-1315 | `adminRealUnwired` 只是「real 模式」的别名（同文件 :1291）；生产端口的 `persistent: true` 见 services/api/src/admin/ops/jobs-pg.ts:450-451 |
+| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 26 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；26 = 12 个状态档的码数之和（403 档 `SELF_SCOPE_GRANT_DENIED`、409 档 `LAST_SCOPE_MANAGER` 是 #646 新增）；`packages/contracts/` 下无源码文件 |
+| E38 | 后台作业台**真库端口**的产品装配：real + 有池 ⇒ `createPostgresAdminJobPort` | 已实现 | services/api/src/app.ts:1363-1365 | `adminRealUnwired` 只是「real 模式」的别名（同文件 :1341）；生产端口的 `persistent: true` 见 services/api/src/admin/ops/jobs-pg.ts:450-451 |
 | E39 | 真库臂回归：三域表读面、9 字段投影、取消 CAS 与审计恰 1 行、过滤下推、游标 | 已实现 | tests/integration/admin-jobs-pg.mjs:661 | 脚本在 CI 名单内（.github/workflows/real-pg-integration.yml:8），用 `postgres:17.11` 与全链迁移（同文件 :55） |
 | E40 | 审计 `action` 闭集覆盖库内全部写入点：`AUDIT_ACTIONS` 恰八值（`job.cancel` 仍在第 4 位，`admin_scope.grant`／`revoke`／`deny` 依次在第 5–7 位，`post.hide` 追加在**末位**即第 8 位），`?action=job.cancel` 与 `?action=admin_scope.grant` 都由 400 转 200，`?action=post.hide` 同理由 400 转 200 | 已实现 | services/api/src/admin/audit/catalog.ts:123-132 | 锁它的用例：tests/unit/admin-audit-action-jobs-cancel.test.mjs:169（`?action=job.cancel` ⇒ 200 且只回该动作）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:150-154（前 4 项长度仍为 4、第 4 项仍是 `job.cancel`——扩值只能追加末位）、tests/unit/admin-audit-action-jobs-cancel.test.mjs:223（闭集外仍 400、零端口调用）；第 8 值 `post.hide` 另由 tests/unit/admin-audit-logs.test.mjs:379（`entity=post` 只等于 `post.hide`、护栏外合法 action 仍 400 且零端口调用）与 tests/unit/community-audit-channel-pins.test.mjs:268（库内 `post.hide` 写入点恰 0047 一处）钉住；逐值对拍另由 tests/unit/admin-audit-logs.test.mjs:133-134（契约 `action` enum === `AUDIT_ACTIONS`、`entity` enum === `AUDIT_ENTITIES`）与 tests/unit/ai-ops-ledger-pins.test.mjs:173 钉住，契约枚举同步到八项（packages/contracts/openapi.json:11008-11016）、`entity` 同步到五项（packages/contracts/openapi.json:11025-11030）。剩余边界：后台无页面消费该读面（P10） |
 
@@ -122,8 +122,8 @@
 | P07 | 审核域结论可读 + 规则层可用 | 部分实现 | docs/architecture/contract-implementation-status.md:76 | 真实 tms／ims 未授权 ⇒ real 整域 fail-closed（Z06）；持久队列与租约仍是内存台账 |
 | P08 | 作业台列表：过滤参数与下推 SQL 已实现 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:23-28 | 后台 UI 只发 `limit`／`cursor`（apps/admin/src/lib/jobs-api.mjs:136-146）⇒ 库侧过滤能力无入口 |
 | P09 | 非持久端口的审计台账（内存追加、只增不改） | 部分实现 | services/api/src/admin/ops/content-pg.ts:25-27 | 仍只增不改、重启即丢；但**真库端口已不再走它**：持久端口在自身事务里写库（services/api/src/admin/ops/service.ts:853-854 只在 `!persistent` 时追加内存） |
-| P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；缺口改在**出口**：两个审计页分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54），全仓没有页面消费 `GET /admin/audit-logs` |
-| P11 | 作业台作业投影按契约形状输出 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:17-22 | `target_ref.revision` 恒取 1、`result` 恒 `null`——形状对、语义未真实化 |
+| P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；出口侧：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`，导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:70`，#633），另两个审计页仍分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54）⇒ 三读面读数不能合并、页面读数也无端到端验收，故仍判部分实现。原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
+| P11 | 作业台作业投影按契约形状输出 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:17-22 | `target_ref.revision` **自 #608 起已取记录行真实 revision**（`services/api/src/admin/ops/jobs-pg.ts:413` 的 `targetRevision ?? UNCREATED_RECORD_REVISION`，SQL 投影 `r.revision`；记录尚未创建时才退回 1，见同文件 :23-28）；`result` 恒 `null` 是契约形状、作业结果在后台读面仍读不到——形状对、语义只真实化一半。原写「`target_ref.revision` 恒取 1」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | P12 | 登记核对 `verifyRegistration` 判定内核 | 部分实现 | docs/architecture/contract-implementation-status.md:82 | real 无真实登记库 ⇒ 恒 `unavailable`；无已审用量来源 ⇒ `dose_cards` 恒空 |
 
 ## 4 未实现（11 条，含一条 P0；原 N01 已撤条并入 E40）
@@ -200,24 +200,24 @@
 
 **仍没做到的两处**（已从 P0 降级，本页不再按 P0 计）：
 
-- 后台仍无入口：两个审计页分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54`），全仓没有页面消费 `GET /admin/audit-logs`（P10）。
+- 三读面读数不合并：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`），另两个审计页仍分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54`），三面读数无法合并、页面读数也无端到端验收（P10）。原写「后台仍无入口…全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md`。
 - 台账那句仍与代码冲突：`docs/architecture/contract-implementation-status.md:166` 还写着「审计写面仍未落库」「写入点只有三处」，与 0043 及其用例冲突（N02）。
 
-**留档的理由**：这条曾经是「写进去了，但没人读得到，且文档说它没写」。现在库里有行、接口能筛、用例锁住，只剩「后台点不到」与「台账说没写」——同一类漂移换了个面，别当它消失了。
+**留档的理由**：这条曾经是「写进去了，但没人读得到，且文档说它没写」。现在库里有行、接口能筛、用例锁住，只剩「三读面读数不合并」与「台账说没写」——同一类漂移换了个面，别当它消失了。
 
 ### 7.2 后台作业台：端口已接线，剩余是语义与入口（P1）
 
 上一版判「默认未接线、一律 503」，那是把**缺省分支**当成了生产路径。按 #589 后的代码更正：
 
-- 判定变量名骗人但不骗逻辑：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1291`），值只取决于是否 real。
-- 装配：`adminJobPort = adminInjection?.jobPort ?? (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined)`（同文件 :1313-1315），显式注入优先；随后注入服务层（同文件 :1476）。
+- 判定变量名骗人但不骗逻辑：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1341`），值只取决于是否 real。
+- 装配：`adminJobPort = adminInjection?.jobPort ?? (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined)`（同文件 :1363-1365），显式注入优先；随后注入服务层（同文件 :1549）。
 - 生产端口本体：`services/api/src/admin/ops/jobs-pg.ts:374-380` 的构造器，`persistent: true` 在 `:450-451`；读三张域内作业表（`ocr_jobs`／`recognition_jobs`／`speech_jobs`，同文件 :4-9），**不读** `public.jobs`。
 - 503 只剩缺省：未注入（stub／无池）时 `services/api/src/admin/ops/jobs.ts:77-84` 的 `createUnwiredAdminJobPort()` 返回 `PORT_UNAVAILABLE`。`tests/failmatrix/cases.mjs:159` 锁的是这条分支——它证明「没池时不许假绿」，不证明生产也 503。
 - 真库臂已覆盖生产路径：`wired===true`（`tests/integration/admin-jobs-pg.mjs:661`）、`GET /admin/jobs` 200 且字段面恰契约 9 项（同文件 :681）、401／403 与 `jobs:read` 专权（:699）、取消让 revision 1→2（:711）、终态拒绝、过滤下推与闭集 400、游标两页不重不漏（:1157-1252）。
 
 **真正没做到的**（仍是缺口，但级别是 P1）：
 
-- 投影语义未真实化：`target_ref.revision` 恒取 1、`result` 恒 `null`（`services/api/src/admin/ops/jobs-pg.ts:17-22`），即前端看到的「修订号／结果」不是真值（P11）。
+- 投影语义只真实化一半：`target_ref.revision` 自 #608 起取记录行真实 revision（`services/api/src/admin/ops/jobs-pg.ts:413`），只有记录尚未创建时才退回 1；`result` 恒 `null`（同文件 :419）是契约形状，即前端看到的「结果」仍不是真值（P11）。
 - 能力无入口：后台 UI 的列表 URL 只 set `limit` 与 `cursor`（`apps/admin/src/lib/jobs-api.mjs:136-146`），`state`／`error_code` 过滤虽然已下推 SQL（`services/api/src/admin/ops/jobs-pg.ts:23-28`），后台用户却点不到（P08）。
 
 ### 7.3 模型／提示词版本零真实值（P0）
