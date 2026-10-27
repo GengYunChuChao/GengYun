@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "note": "符号落点基线（reason 只有 COMMENT_ANCHOR）：--symbol=strict 下「作用域 docs/architecture/** × 源码后缀、但锚点没有落在代码行上」的已登记清单——注释但非文档注释（comment-detached）与逐字引用注释文案（comment-cited）两档。用途：这些锚点引用的是代码注释（文件头自述／段内说明／行内注释／逐字引注释原文），目标文件里没有对应的声明行可指；D09 之后它们不能再「只统计不判红」，但一次性重锚不是本片该做的事，故逐条登记并写明原因（note）。维护规则：① 基线之外新增在 --strict 下 exit 1 并逐条点名（文档行、目标文件、该行实际内容），修法是把锚点改到真正的代码行／声明行；② 确属「引用注释原文、没有代码行可指」的合法证据，必须人工裁决后才登记，且 note 要写清为什么；③ 条目修好（重锚到代码行或文档改掉）后会变陈旧，报 STALE-SYMBOL，必须删掉——陈旧条目会把基线变成免罚名单；④ ⛔ 不许为了让门禁变绿去改被引用的注释，也不许把 note 写成空话（loader 会拒收空 note）；⑤ 本文件的 reason 只允许 COMMENT_ANCHOR，与 tools/doc-anchors-baseline.json（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE 结构四判据）互不干扰；⑥ docLine 只是给人看的定位提示，不进 key（key = doc|reference），文档正文插行不会让整条基线失效。",
-  "generated_by": "逐条人工裁决（2026-10-28 实测 31 条；条目由 collectFindings().commentAnchors 导出后人工分类写 note）",
+  "generated_by": "逐条人工裁决（2026-10-28 实测 31 条；同日删去 1 条已重锚的 `ai-ops-ledger-pins.test.mjs:169`，现 30 条；条目由 collectFindings().commentAnchors 导出后人工分类写 note）",
   "entries": [
     {
       "path": "services/api/src/routes/admin.ts",
@@ -174,16 +174,6 @@
       "note": "【行内单行注释】文档引的是第 1073 行这条`//` 行注释（「//     放在 [F] 之后：本臂会追加两行作业，[F] 的「5 条全量」断言因此不受影响。」），块后第一条非空行是第 1074 行的「await jobsTargetRevisionArm(app, fullAdmin.token, user.id);」，不是声明行——引用的是这条注释的自述，没有声明行可指。"
     },
     {
-      "path": "tests/unit/ai-ops-ledger-pins.test.mjs",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "repo",
-      "reference": "tests/unit/ai-ops-ledger-pins.test.mjs:169",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 199,
-      "kind": "inline",
-      "note": "【行内单行注释】文档引的是第 169 行这条`//` 行注释（「// 钉子④：AUDIT_ACTIONS 闭集（含顺序）」），块后第一条非空行是第 170 行的「// -------------------------------------------------------------------…」，紧跟另一段注释——引用的是这条注释的自述，没有声明行可指。"
-    },
-    {
       "path": "services/api/src/routes/admin-auth.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
@@ -212,16 +202,6 @@
       "docLine": 55,
       "kind": "block",
       "note": "【段内块注释】文档引的是第 259-267 行的块注释，块后第一条非空行是第 268 行的「snapshotOwner?(」（可选成员签名，不是声明行）——这段说明没有声明行可指。"
-    },
-    {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "user-data-deletion.ts:276",
-      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
-      "docLine": 303,
-      "kind": "block",
-      "note": "【段内块注释】文档引的是第 274-283 行的块注释，块后第一条非空行是第 284 行的「/**」（紧跟另一段注释：相邻块拼接，声明在更后面）——这段说明没有声明行可指。"
     },
     {
       "path": "services/api/src/routes/health.ts",

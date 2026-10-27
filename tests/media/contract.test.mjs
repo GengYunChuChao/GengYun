@@ -31,15 +31,47 @@ test('MediaPurpose / MediaState 与 states.json 逐一一致', () => {
   assert.deepEqual(MEDIA_STATES, states.states.MediaState);
 });
 
-test('error_status_map 与 states.json 一致', () => {
+test('error_status_map 与 states.json 双向一致（档位集合与码表都必须相等）', () => {
+  // 档位集合先钉：双向遍历仍可能被「两侧同时少同一档」骗过；而集合断言若放在遍历之后，
+  // 会被「先红的那一轮」挡成不可达（写了永远不响）—— 所以它必须在两个遍历之前判。
+  // 消息里点名缺/多了哪几档：只说「集合必须相等」时，读测试的人还得自己 diff 才看得出是 500。
+  const mirrorStatuses = Object.keys(ERROR_STATUS_MAP).map(Number).sort((a, b) => a - b);
+  const contractStatuses = Object.keys(states.error_status_map).map(Number).sort((a, b) => a - b);
+  const missingInMirror = contractStatuses.filter((s) => !mirrorStatuses.includes(s));
+  const extraInMirror = mirrorStatuses.filter((s) => !contractStatuses.includes(s));
+  assert.deepEqual(
+    mirrorStatuses,
+    contractStatuses,
+    `镜像与契约的档位集合必须相等（镜像缺档：[${missingInMirror.join(', ')}]；镜像多档：[${extraInMirror.join(', ')}]）`,
+  );
+  // 方向一：states → 镜像。契约里有的档，镜像必须逐项相同。
+  // 缺档时先点名再比：否则 `[...undefined]` 只会抛
+  // `TypeError: ERROR_STATUS_MAP[status] is not iterable`，只报行号、不报缺的是哪一档。
   for (const [status, codes] of Object.entries(states.error_status_map)) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(ERROR_STATUS_MAP, status),
+      `镜像缺档：ERROR_STATUS_MAP 没有 ${status}（states.json 有）`,
+    );
     assert.deepEqual([...ERROR_STATUS_MAP[status]], codes, `状态 ${status} 错误码漂移`);
+  }
+  // 方向二：镜像 → states。镜像里多出来的档同样算漂移（单向遍历时它只会静默通过）。
+  for (const [status, codes] of Object.entries(ERROR_STATUS_MAP)) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(states.error_status_map, status),
+      `契约缺档：states.error_status_map 没有 ${status}（镜像有）`,
+    );
+    assert.deepEqual(
+      [...codes],
+      states.error_status_map[status],
+      `镜像档 ${status} 在 states.json 里不存在或码表不同`,
+    );
   }
   assert.equal(statusForErrorCode('MEDIA_TOO_LARGE'), 413);
   assert.equal(statusForErrorCode('MEDIA_TYPE_UNSUPPORTED'), 415);
   assert.equal(statusForErrorCode('NOT_FOUND'), 404);
   assert.equal(statusForErrorCode('REVISION_REQUIRED'), 428);
   assert.equal(statusForErrorCode('REVISION_CONFLICT'), 409);
+  assert.equal(statusForErrorCode('INTERNAL_ERROR'), 500);
   assert.equal(isErrorCode('IDEMPOTENCY_CONFLICT'), true);
   assert.equal(isErrorCode('NOT_A_CODE'), false);
 });

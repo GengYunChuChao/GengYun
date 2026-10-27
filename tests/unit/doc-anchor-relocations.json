@@ -1,0 +1,12 @@
+[
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 110,
+    "target": "services/api/src/admin/audit/catalog.ts",
+    "from": 250,
+    "fromEnd": 261,
+    "to": 258,
+    "toEnd": 269,
+    "reason": "合并 upstream/main（fa3b2553）时 catalog.ts 被上游注释块改动，`export const AUDIT_ACTIONS = Object.freeze([`（258）到 `] as const);`（269）整体下移 8 行；旧值 250-261 在合并后的文件里指向注释文字，不是闭集。按符号重锚，不是 250+8 的差值平移。"
+  }
+]

@@ -3,7 +3,7 @@
 本片只做一件事：给 `services/api/db/migrations/NNNN_*.sql` 的**全局唯一命名空间**补一层**静态**门禁。不连库、不执行任何 `.sql`、不写任何文件、不联网、无第三方依赖。
 
 - 仓库 `GengYunChuChao/GengYun`，分支 `feat/gy-r30-migration-guard`，基线 `d4d48088532377adb54c278b24ba90be42cb5aaf`，工作树 `E:\GengYunCommander\wt-r30-migration-guard`。
-- 交付物：`tools/verify-migrations-unique.mjs`（判据本体 · 875 行，含 `--json` / `--strict`）、`tests/unit/verify-migrations-unique.test.mjs`（单测 · 28 条）、`.github/workflows/migrations-guard.yml`（每个 PR 跑一次）、本页证据。
+- 交付物：`tools/verify-migrations-unique.mjs`（判据本体 · 954 行，含 `--json` / `--strict` / `--annotations`）、`tests/unit/verify-migrations-unique.test.mjs`（单测 · 28 条）、`.github/workflows/migrations-guard.yml`（每个 PR 跑一次）、本页证据。
 - ⛔ 不改任何既有迁移/回滚文件，不改 `services/`、`apps/`、`packages/`、`deploy/` 下的实现，不改 `real-pg-integration.yml`，不改 `docs/architecture/contract-status.json`。
 
 ## 1 动机：git 不冲突，运行时会炸
@@ -41,18 +41,19 @@ if (previous !== undefined) {
 
 | 判据 | 档 | 触发条件 | 现实对应 | 实现锚点 |
 | --- | --- | --- | --- | --- |
-| `[surface]` | **硬**（exit 1） | 顶层 `.sql` 必须合 `^\d{4}_.*\.sql$`，且**至少 1 条**；顶层出现 `.down.sql` 判红；后缀不是小写 `.sql`、或 `.sql` 条目不是常规文件，同样判红 | 「扫到 0 条 ⇒ 全绿」是门禁最经典的假绿；`.down.sql` 放在顶层既不是正向迁移、也永远不会被当回滚执行 | `// ── [surface]` 两段，`tools/verify-migrations-unique.mjs:336`（目录前置）/ `:363`（扫描面） |
-| `[runner]` | **硬** | 守卫扫描集合 ≠ **产品发现器**扫描集合 ⇒ 红并点名差集 | 正则逐字抄 `services/api/src/db/migrate.ts:44`（常量 `RUNNER_PATTERN_SOURCE`，`tools/verify-migrations-unique.mjs:94`）。两侧数量不一致时「守卫绿」没有意义 | `tools/verify-migrations-unique.mjs:429` |
-| `[dup]` | **硬** | 同一 4 位号被**两个及以上正向文件**占用 | §1 的真实形态。点名两个文件 + 运行时会抛的原话 + 下一个可用号 | `tools/verify-migrations-unique.mjs:456` |
-| `[coexist]` | 软（默认 `WARN`，`--strict` 才红） | `rollback/` 只收 `<NNNN>_<name>.down.sql`；往 `rollback/` 放正向形态、或给同一号补第二份 `.down.sql`，判 warn | 这是把「第二条同号迁移」藏起来的两种典型形态：放进去的文件既不会被当回滚执行，也不会被运行器发现 | `tools/verify-migrations-unique.mjs:498` |
-| `[rollback]` | 软（默认 `WARN`，`--strict` 才红） | 每条正向迁移要么有 `rollback/<同名>.down.sql`，要么在内置 `NO_ROLLBACK` 清单里（每条理由 ≥ 20 字）；孤儿回滚、同号 down 与正向名不一致、**登记过期**（已有 down / 迁移已不存在 / 理由占位）均报 warn | 例外必须可核证、会过期，不能变成永久通行证 | `tools/verify-migrations-unique.mjs:556` |
-| 缺号 `[gap]` | 软（默认 `WARN`，`--strict` 才红） | 首尾之间缺的号（`min+1..max-1`），若在迁移目录下某个 `*.md` 的**同一行**找不到「跳过 / 预留 / 预占」类说明 ⇒ `WARN[gap]` 并点名该号 | 跨 PR 乱序合并时缺号是正常态；真正要防的是「号被**悄悄**用掉了，没人知道」——所以要的是**依据**，不是「必须连续」 | `listDocSources()`（`:201`）/ `findGapEvidence()`（`:217`）/ 证据装配在 `:653-655` |
+| `[surface]` | **硬**（exit 1） | 顶层 `.sql` 必须合 `^\d{4}_.*\.sql$`，且**至少 1 条**；顶层出现 `.down.sql` 判红；后缀不是小写 `.sql`、或 `.sql` 条目不是常规文件，同样判红 | 「扫到 0 条 ⇒ 全绿」是门禁最经典的假绿；`.down.sql` 放在顶层既不是正向迁移、也永远不会被当回滚执行 | `// ── [surface]` 两段，`tools/verify-migrations-unique.mjs:347`（目录前置）/ `:374`（扫描面） |
+| `[runner]` | **硬** | 守卫扫描集合 ≠ **产品发现器**扫描集合 ⇒ 红并点名差集 | 正则逐字抄 `services/api/src/db/migrate.ts:44`（常量 `RUNNER_PATTERN_SOURCE`，`tools/verify-migrations-unique.mjs:105`）。两侧数量不一致时「守卫绿」没有意义 | `tools/verify-migrations-unique.mjs:440` |
+| `[dup]` | **硬** | 同一 4 位号被**两个及以上正向文件**占用 | §1 的真实形态。点名两个文件 + 运行时会抛的原话 + 下一个可用号 | `tools/verify-migrations-unique.mjs:467` |
+| `[coexist]` | 软（默认 `WARN`，`--strict` 才红） | `rollback/` 只收 `<NNNN>_<name>.down.sql`；往 `rollback/` 放正向形态、或给同一号补第二份 `.down.sql`，判 warn | 这是把「第二条同号迁移」藏起来的两种典型形态：放进去的文件既不会被当回滚执行，也不会被运行器发现 | `tools/verify-migrations-unique.mjs:509` |
+| `[rollback]` | 软（默认 `WARN`，`--strict` 才红） | 每条正向迁移要么有 `rollback/<同名>.down.sql`，要么在内置 `NO_ROLLBACK` 清单里（每条理由 ≥ 20 字）；孤儿回滚、同号 down 与正向名不一致、**登记过期**（已有 down / 迁移已不存在 / 理由占位）均报 warn | 例外必须可核证、会过期，不能变成永久通行证 | `tools/verify-migrations-unique.mjs:567` |
+| 缺号 `[gap]` | 软（默认 `WARN`，`--strict` 才红） | 首尾之间缺的号（`min+1..max-1`），若在迁移目录下某个 `*.md` 的**同一行**找不到「跳过 / 预留 / 预占」类说明 ⇒ `WARN[gap]` 并点名该号 | 跨 PR 乱序合并时缺号是正常态；真正要防的是「号被**悄悄**用掉了，没人知道」——所以要的是**依据**，不是「必须连续」 | `listDocSources()`（`:212`）/ `findGapEvidence()`（`:228`）/ 证据装配在 `:664-666` |
 
-**为什么分档。** `[dup]` 是本片立项的真实事故形态（两条 `0028_*` 落进同一目录，git 侧 MERGEABLE、运行时才炸）⇒ 必须硬红；`[coexist]`/`[rollback]`/缺号在既有仓里**本来就有欠账**（`rollback/` 不是全仓约定、`0001` 无 down、跨 PR 乱序必然缺号），一上来就要求它们全绿只会让门禁第一天就红、然后被人加 `continue-on-error` 绕过 —— 那是比没有门禁更坏的结局。故默认只 `WARN` 并计入「默认不判错」尾行，需要更严时显式 `--strict`。
+**为什么分档。** `[dup]` 是本片立项的真实事故形态（两条 `0028_*` 落进同一目录，git 侧 MERGEABLE、运行时才炸）⇒ 必须硬红；`[coexist]`/`[rollback]`/缺号靠的是「全仓统一约定 + 每个 PR 都补」这类**分布式约定**（`rollback/` 目前不是全仓普遍约定、跨 PR 乱序合并天然会缺号），把它们设为硬档等于让每条无关 PR 都为别人的迁移负责 —— 所以默认只 `WARN` 并计入「默认不判错」尾行，需要更严时显式 `--strict`。
+**口径更正（2026-10-28 复测）。** 本页早前写过「既有仓里本来就有欠账、会被 `continue-on-error` 绕过」——**这一句没有依据**：当前真仓 `--strict` 实测 **EXIT=0**（46 条配对 + 1 条 `NO_ROLLBACK` 登记 = 47 条正向迁移逐条有交代、软档 0 项），且该 workflow 全历史里从未出现 `continue-on-error` 键（全仓 workflows 也无实际使用）。分档因此是**设计取舍**（避免无关 PR 承担跨分支缺号），不是「历史上被迫放水」的记录。
 
 退出码：`0` = **无硬错**（非 `--strict` 下不看 warn 项）；`1` = 有硬错（`[surface]` / `[runner]` / `[dup]`），加 `--strict` 时软项（`[coexist]` / `[rollback]` / 未登记缺号）也升为 1；`2` = 用法错误（`--dir` 缺值、未知参数）。
 
-两种输出：默认人读报告（`renderReport()`，`tools/verify-migrations-unique.mjs:684`）；`--json` 时 stdout 是**纯 JSON**（`buildJsonReport()`，`:761`），字段 `ok` / `exitCode` / `strict` / `counts{}` / `duplicates[]` / `gaps[]` / `rollbackIssues[]` / `errors[]` / `numbers[]` / `docSources[]` / `readings[]`，`schemaVersion: 1`。命令行入口 `main()`（`:822`），被 `import` 时无副作用（`:863` 的 `isDirectExecution()` 守卫）。
+两种输出：默认人读报告（`renderReport()`，`tools/verify-migrations-unique.mjs:695`）；`--json` 时 stdout 是**纯 JSON**（`buildJsonReport()`，`:772`），字段 `ok` / `exitCode` / `strict` / `counts{}` / `duplicates[]` / `gaps[]` / `rollbackIssues[]` / `errors[]` / `numbers[]` / `docSources[]` / `readings[]`，`schemaVersion: 1`。命令行入口 `main()`（`:890`），被 `import` 时无副作用（`:942` 的 `isDirectExecution()` 守卫）。
 
 `NO_ROLLBACK` 当前只有 `0001` 一条，理由是**全库地板**（15 个枚举 / 20 张表，`0002..0027` 全部建在其上且既有 down 一律显式保留其对象；它的 down 只等于清库），可逆性判定见 [gy-r28-migration-rollback-pairing-20261021.md §4](gy-r28-migration-rollback-pairing-20261021.md)。
 
@@ -190,7 +191,7 @@ WARN：1 项默认不判错（rollback）；退出码 0；加 --strict 可升为
 | 守卫抄的正则 == 产品发现器 | 单测读 `services/api/src/db/migrate.ts` 原文，正则体与 `RUNNER_PATTERN_SOURCE` **逐字**比对 | 一致；`migrate.ts:44` = `/^(\d{4,})_([a-z0-9_]+)\.sql$/` |
 | 默认目录 == 运行器默认目录 | 两边 `realpathSync` 后比对（单测） | 同一处（`migrate.ts:42` 的 `fileURLToPath(new URL('../../db/migrations/', import.meta.url))`） |
 | 运行器仍会因撞号抛错 | 单测断言 `migrate.ts` 里仍有「迁移版本号重复」 | 在（`:72`） |
-| 四件产物编码（2026-10-22 收窄改造后重测） | 逐字节读：UTF-8 解码后 U+FFFD 计数、典型乱码字符（U+951B `锛` / U+9532 `鍜`）、BOM、CRLF | `tools/verify-migrations-unique.mjs`：876 行 / 42848 字节 / 无 BOM / 0 个 U+FFFD / 0 个乱码字符 / CRLF 0；`tests/unit/verify-migrations-unique.test.mjs`：605 行 / 27966 字节 / 同 0；`.github/workflows/migrations-guard.yml`：79 行 / 5754 字节 / 同 0；本页 228 行 / 22453 字节 / 同 0（本页的 2 处「典型乱码字符」是 §6 表格里**刻意引用**的 `锛`/`鍜` 样本，不是文件损坏） |
+| 四件产物编码（2026-10-28 R68 注解化改造后复测；数字随改动漂移，此处为当轮读数） | 逐字节读：UTF-8 解码后 U+FFFD 计数、典型乱码字符（U+951B `锛` / U+9532 `鍜`）、BOM、CRLF | `tools/verify-migrations-unique.mjs`：954 行 / 47425 字节 / 无 BOM / 0 个 U+FFFD / 0 个乱码字符 / CRLF 0；`tests/unit/verify-migrations-unique.test.mjs`：604 行 / 27966 字节 / 同 0；`.github/workflows/migrations-guard.yml`：93 行 / 7289 字节 / 同 0；本页：UTF-8 / 无 BOM / 0 个 U+FFFD / CRLF 0（**行数与字节数不复报** —— 本页一改它们就过期，留一个必然过期的数字等于给下一个人埋假锚点；本页的 2 处「典型乱码字符」是 §6 表格里**刻意引用**的 `锛`/`鍜` 样本，不是文件损坏） |
 | 非 ASCII 首字样本 | 解码后取首个非 ASCII 片段 | `·迁移编号唯一门禁——纯`（与 `renderReport()` 的标题行一致） |
 
 关于**交接时「该文件是 GBK/UTF-8 互转错的乱码」这一说法**：接手时实测该文件已是合法 UTF-8 —— 逐字节读 + 全文中文注释语义连贯，**没有可修补的乱码字节**，故本片按「复核设计意图 + 全量真跑」处置，没有做逐字节修补（也没有做无谓的重写：真跑与 28 条单测已把判据钉住）。
@@ -215,6 +216,21 @@ WARN：1 项默认不判错（rollback）；退出码 0；加 --strict 可升为
 - 本页写作时 PR 尚未创建，**GitHub Actions 的 `migrations-guard` / `migrations-unique` 结果尚未回填**；CI 结果以 PR 页上的 check 为准，若与 §3/§5 的本地读数不一致，以 CI 为准并回填本页。
 - 未在真库上复现「两条 `0028_*` ⇒ 运行器抛错」的运行时红：本片交付的是**静态**门禁，运行时那一层的既有证据在真库链与 `services/api/src/db/migrate.ts` 的既有单测里；负控制把两条 `0028_*` 造在**临时拷贝目录**里，不碰真实迁移目录。
 - i18 片的 `0028_admin_scope_authority.sql` 抢救件仍未并回 `services/api/db/migrations/`；它一旦并入，本门禁会与 `#434` 的 `0028_governance_audit_log.sql` **正面撞号** —— 那正是本片要提前暴露的形态，处置（改号 / 合并）不在本片范围。
+
+## 7b 软档告警的可见性：WARN ⇒ GitHub 注解（R68-D12 补，2026-10-28）
+
+**缺陷**：软档 findings 原来只以 `WARN[...]` 纯文本打印 —— 既不失败、也不会出现在 PR 的 Annotations 面板，等于「告警」只对肯点开 job 日志的人存在。
+
+**修法（选 a：注解化，不切 strict）**：判决步改为 `node tools/verify-migrations-unique.mjs --annotations`，工具新增导出 `renderAnnotations(result)`：软档项逐条打成 `::warning title=…::…`，回滚问题逐条、无依据缺号合并一条；`%` / CR / LF / 属性里的 `:` `,` 按 GitHub 注解语法转义。**退出码不变**（软档仍 `0`，`--strict` 的取舍一字未动）。
+
+**为什么用显式开关而不是嗅 `GITHUB_ACTIONS`**：后者注入**整个 job**，连跑单测那一步也带着它，夹具产生的软档 WARN 会混进单测 stdout。实测（2026-10-28）：只在**同时**去掉工具侧 `!json` 门时 `--json` 契约才真被破坏（`tests/unit/ci-migrations-guard-annotations.test.mjs` 27 pass / 4 fail）；保留 `!json` 门时 30 pass / 1 fail。故「显式开关」+「`--json` 优先吞掉注解」两件都要。
+
+**机器可验证的落点（三处，删任一处即红）**：
+1. `.github/workflows/migrations-guard.yml` 判决步的 `run:` 必须含 `--annotations`、不含 `--strict`（`tests/unit/ci-migrations-guard-annotations.test.mjs` 直接读该文件）；
+2. `renderAnnotations()` 的注解条数 = 回滚问题数 +（有无依据缺号 ? 1 : 0），并验 `%0A` / `%25` 转义；
+3. `--json --annotations` 的 stdout 仍可 `JSON.parse`（与不加开关逐字节相同）。
+
+**今天真仓 0 条注解**（`--annotations` 实测 EXIT=0、软档 0 项 ⇒ 通道空转），注解**形态**由上面第 2/3 条夹具（`0100`/`0102` 两条缺依据的临时夹具）守住 —— 也就是说：真实仓此刻没有可注解的东西，但「有东西时会真的变成注解」这句话是被测住的，不是靠肉眼。
 
 ## 8 复现
 

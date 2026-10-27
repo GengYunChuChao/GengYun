@@ -44,7 +44,7 @@ SQL 层、校验发生在解码层）。
 | 5 | 读函数无形状过滤 | `services/api/db/migrations/0033_admin_audit_log_read.sql:96-107` | 只按 `from`/`to`/`action`/`scope`/`actor` 过滤，**不看** jsonb 形状 ⇒ 0041 的行必然流到解码器 |
 | 6 | 唯一写开关读数的迁移 | `services/api/db/migrations/0027_*.sql:144-145` | `jsonb_build_object('enabled', x_before.enabled, 'revision', x_before.revision)`（`set_flag` 专用） |
 | 7 | 其余写入点 | 0017（`account.suspend`/`account.restore`）、0043（`job.cancel`）、0046（`admin_scope.deny`）、0047（`post.hide`） | 全部写 `NULL` ⇒ 改前它们「碰巧」不触发 503 |
-| 8 | 契约只能表达开关读数 | `packages/contracts/openapi.json:15884-15893`（`before_value`）、`:15795-15811`（`FlagReading`） | `before_value`/`after_value` ＝ `anyOf[FlagReading, null]`；`FlagReading` 是 `{enabled, revision≥1}` 且 `additionalProperties: false` |
+| 8 | 契约只能表达开关读数 | `packages/contracts/openapi.json:16263-16272`（`before_value`）、`:16174-16190`（`FlagReading`） | `before_value`/`after_value` ＝ `anyOf[FlagReading, null]`；`FlagReading` 是 `{enabled, revision≥1}` 且 `additionalProperties: false` |
 | 9 | 契约镜像检查 | `services/api/src/admin/audit/service.ts:240-249` | 端口返回的每一行都过 `collectIssues('AuditEvent', …)` ⇒ 把 `{scopes, reason}` 塞进 `FlagReading` 只是把 503 挪到下一道门 |
 | 10 | 盲区：真库臂只造一种形状 | `tests/integration/admin-audit-logs-pg.mjs`（改前第 1–6 段） | 只有 `before_value: { enabled: false, revision: 3 }`，**从未**造过 0041 形状 ⇒ 这条 503 路径零测试覆盖 |
 

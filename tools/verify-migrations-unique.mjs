@@ -51,6 +51,16 @@
  *   全红，红到没人看门禁就等于没有门禁。所以：默认只 warn 并逐条点名，需要收紧的场合加
  *   `--strict`（CI 里刻意不传，见 `.github/workflows/migrations-guard.yml`）。
  *
+ * 软档 findings 的**可见性**（2026-10-26 补，R68-D12）：默认只 warn 的代价是它们容易沉在日志里，
+ *   于是 `--annotations` 会把每条软档项额外打成 GitHub 注解（`::warning title=…::…`），
+ *   **只加注解、不改退出码**。CI 的判决步就带这个开关 —— 于是「不判错」与「看得见」同时成立。
+ *   `--json` 时注解被刻意吞掉（机读契约优先，stdout 必须是纯 JSON）。
+ *   ⚠ 也别改成嗅 `GITHUB_ACTIONS` 自动开注解：那变量注入整个 job，夹具产出的软档项会混进
+ *   单测 stdout。实测口径（2026-10-28 复核）：**只在同时去掉 `!json` 门时**才真的破坏 `--json`
+ *   契约（去掉后 `tests/unit/ci-migrations-guard-annotations.test.mjs` 变 27 pass / 4 fail；
+ *   保留 `!json` 门时 30 pass / 1 fail，红的那条是自证「不加开关就该 0 条 `::`」）。也就是说
+ *   「`--json` 优先」这条门是必需件，光靠「不嗅环境变量」并不足够 —— 两件都要。
+ *
  * 刻意**不做**（不冒充能力）：
  *   · 不执行任何 `.sql`、不判断迁移内容能否跑通（真执行由 `tests/integration/*-pg.mjs` 覆盖）；
  *   · 不判断 down 与 up 语义互逆（配对口径见 `tests/unit/migrations-rollback-pairing.test.mjs`）；
@@ -65,6 +75,7 @@
  *   node tools/verify-migrations-unique.mjs --json          # 机读：duplicates[] / gaps[] /
  *                                                           #   rollbackIssues[] / counts{}（退出码同上）
  *   node tools/verify-migrations-unique.mjs --strict        # 缺号与回滚问题一并升为退出码 1
+ *   node tools/verify-migrations-unique.mjs --annotations   # 软档项另打 ::warning:: 注解（不改退出码）
  *   node tools/verify-migrations-unique.mjs --help
  */
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -807,12 +818,69 @@ export function buildJsonReport(result) {
   };
 }
 
+/**
+ * 把一次校验的**默认只 warn** 的项渲染成 GitHub Actions 注解（`::warning …`）。
+ *
+ * 为什么需要这一层（R68-D12）：`renderReport()` 里的 `WARN[...]` 只是 stdout 里的一行文本 ——
+ * 在 GitHub UI 上它既不会失败，也不会出现在 PR 的 Annotations 面板，`paths` 之外的读者
+ * 根本看不见。把同一批 finding 用 workflow command 再打一遍，就让「不判错」与「看得见」
+ * 这两件事同时成立：退出码仍是 0（`--strict` 才升 1），但每条软档 findings 都会变成
+ * 一个可聚类的注解。
+ *
+ * 只覆盖**软档**（`rollbackIssues` + 无「故意跳过」依据的缺号）；硬错本来就以退出码 1
+ * 失败，再叠注解只会重复。
+ *
+ * 注解里的 `file=` / `line=` 一律不写：软档 findings 不是「某一行代码有问题」，它们描述的是
+ * 整个迁移目录的形态，硬塞一个文件行号反而误导。
+ *
+ * @param {ReturnType<typeof verifyMigrations>} result
+ * @returns {string[]} 每行一个 workflow command（GitHub 按 stdout 逐行解析）
+ */
+export function renderAnnotations(result) {
+  const annotations = [];
+  const undocumented = result.details.gapDocumentation.filter((gap) => !gap.documented);
+
+  for (const failure of result.rollbackIssues) {
+    annotations.push(
+      `::warning title=${escapeAnnotationProperty(`迁移编号门禁 · ${failure.id}`)}::`
+        + escapeAnnotationData(failure.message),
+    );
+  }
+  if (undocumented.length > 0) {
+    const numbers = undocumented.map((gap) => gap.number).join('、');
+    annotations.push(
+      `::warning title=${escapeAnnotationProperty('迁移编号门禁 · gap')}::`
+        + escapeAnnotationData(
+          `缺号 ${numbers} 在迁移目录下没有「故意跳过」依据：无法与「删错了一条迁移」区分。`
+            + '依据写法 = 在 services/api/db/migrations/README.md 里让该缺号与「跳过/预留」出现在同一行'
+            + '（例：`- 0102 故意跳过：预留给 #434 的审计日志迁移`）。',
+        ),
+    );
+  }
+  return annotations;
+}
+
+/**
+ * workflow command 的数据段转义（`%` / CR / LF）。
+ * 见 GitHub 文档「Workflow commands for GitHub Actions」的 escaping 一节：不转义会让
+ * 换行截断注解、`%` 被当成转义序列的开头。
+ */
+function escapeAnnotationData(value) {
+  return String(value).replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
+}
+
+/** workflow command 的属性段转义：在数据段之上再加 `:` 与 `,`（属性以 `key=value` 逗号分隔）。 */
+function escapeAnnotationProperty(value) {
+  return escapeAnnotationData(value).replaceAll(':', '%3A').replaceAll(',', '%2C');
+}
+
 const USAGE = [
   '用法：',
   '  node tools/verify-migrations-unique.mjs               # 扫 services/api/db/migrations/',
   '  node tools/verify-migrations-unique.mjs --dir <目录>  # 扫指定目录（负控制/夹具用）',
   '  node tools/verify-migrations-unique.mjs --json        # 机读：duplicates[]/gaps[]/rollbackIssues[]/counts{}',
   '  node tools/verify-migrations-unique.mjs --strict      # 回滚问题与无依据的缺号也判红',
+  '  node tools/verify-migrations-unique.mjs --annotations # 软档项另打 ::warning:: 注解（不改退出码）',
   '',
   '判据：surface / runner / dup（硬错）+ coexist / rollback / gap（默认只 warn）—— 详见文件头注释。',
   '退出码：0 = 全部满足（非 --strict 下只看硬错）；1 = 有硬错（--strict 下含 warn 项）；2 = 用法错误。',
@@ -824,6 +892,7 @@ export function main(argv = process.argv) {
   let migrationsDir = DEFAULT_MIGRATIONS_DIR;
   let json = false;
   let strict = false;
+  let annotations = false;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -837,6 +906,10 @@ export function main(argv = process.argv) {
     }
     if (arg === '--strict') {
       strict = true;
+      continue;
+    }
+    if (arg === '--annotations') {
+      annotations = true;
       continue;
     }
     if (arg === '--dir') {
@@ -856,6 +929,12 @@ export function main(argv = process.argv) {
   const result = verifyMigrations({ migrationsDir, strict });
   // `--json` 时 stdout 必须是**纯 JSON**（不混读数），下游才敢直接 `JSON.parse`。
   console.log(json ? JSON.stringify(buildJsonReport(result), null, 2) : renderReport(result));
+  // `--annotations` 只加注解、**不改退出码**：非 strict 下软档仍然只 warn。
+  // `--json` 与 `--annotations` 同时给时以 `--json` 为准（JSON 契约优先，注解会被静默吞掉，
+  // 免得「想要机读」的人拿到一份 PARSE 不了的东西）；要注解就不要带 --json。
+  if (annotations && !json) {
+    for (const line of renderAnnotations(result)) console.log(line);
+  }
   return result.ok ? 0 : 1;
 }
 

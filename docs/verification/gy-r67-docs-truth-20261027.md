@@ -40,7 +40,7 @@ EXIT=0
 `docs/architecture/ai-ops-spec-status.md:107`（改前）：
 
 ```text
-| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 24 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；`packages/contracts/` 下无源码文件 |
+| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 24 个错误码 | 已实现 | services/api/src/contract.ts:14-31 | 事实源是 packages/contracts/states.json:108；`packages/contracts/` 下无源码文件 |
 ```
 
 同一页还有第二处同一断言，`docs/architecture/ai-ops-spec-status.md:61`（改前）：
@@ -51,7 +51,7 @@ EXIT=0
 
 ### 1.2 为什么是假的（证据）
 
-`services/api/src/contract.ts:14-27` 的 `ERROR_STATUS_MAP` 现在是 12 个状态键、**26** 个错误码；`SELF_SCOPE_GRANT_DENIED`（403 档）与 `LAST_SCOPE_MANAGER`（409 档）是 #646 新增。复算方式与输出（`states.json` 是 E37 自己写明的事实源，逐档求和）：
+`services/api/src/contract.ts:14-31` 的 `ERROR_STATUS_MAP` 现在是 12 个状态键、**26** 个错误码；`SELF_SCOPE_GRANT_DENIED`（403 档）与 `LAST_SCOPE_MANAGER`（409 档）是 #646 新增。复算方式与输出（`states.json` 是 E37 自己写明的事实源，逐档求和）：
 
 ```text
 $ $j = Get-Content -Raw -Encoding utf8 packages\contracts\states.json | ConvertFrom-Json; $m = $j.error_status_map
@@ -73,11 +73,11 @@ TOTAL=26
 STATUS_KEYS=12
 ```
 
-`packages/contracts/states.json:108` 逐字为 `"error_status_map": {`（E37 依据列引的锚点仍然对得上）；`services/api/src/contract.ts:14` 逐字 `export const ERROR_STATUS_MAP = {`、`:27` 逐字 `} as const;`，与 `states.json` 逐档一致（26）。全 `docs/**` 里「24 个错误码」只命中 `:107` 这一处，「24 码」只命中 `:61` 这一处，两处都已改；其余形如「24 个」的命中说的是迁移条数、分页操作数等，与错误码无关。
+`packages/contracts/states.json:108` 逐字为 `"error_status_map": {`（E37 依据列引的锚点仍然对得上）；`services/api/src/contract.ts:14` 逐字 `export const ERROR_STATUS_MAP = {`、`:31` 逐字 `} as const;`，与 `states.json` 逐档一致（26）。全 `docs/**` 里「24 个错误码」只命中 `:107` 这一处，「24 码」只命中 `:61` 这一处，两处都已改；其余形如「24 个」的命中说的是迁移条数、分页操作数等，与错误码无关。（本节 `:N` 均为**历史读数**，按当时快照记录，勿随行号位移更新。）
 
 ### 1.3 改成什么（逐字，见 §7.4／§7.3 全文）
 
-- `:107` → `| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 26 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；26 = 12 个状态档的码数之和（403 档 `SELF_SCOPE_GRANT_DENIED`、409 档 `LAST_SCOPE_MANAGER` 是 #646 新增）；`packages/contracts/` 下无源码文件 |`
+- `:107` → `| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 26 个错误码 | 已实现 | services/api/src/contract.ts:14-31 | 事实源是 packages/contracts/states.json:108；26 = 12 个状态档的码数之和（403 档 `SELF_SCOPE_GRANT_DENIED`、409 档 `LAST_SCOPE_MANAGER` 是 #646 新增）；`packages/contracts/` 下无源码文件 |`
 - `:61` → `错误码单源 26 码`
 
 判定未动：E37 仍是「已实现」，§1 的「契约单源 1 | 1 | 0 | 0 | 0」计数不变——本片只改数字与复算说明，不改档位、不改口径。
@@ -153,7 +153,7 @@ STATUS_KEYS=12
 
 1. 取的是记录行真实版本列：`services/api/src/admin/ops/jobs-pg.ts:413` 逐字 `revision: targetRevision ?? UNCREATED_RECORD_REVISION,`，其中 `targetRevision` 来自 SQL 投影 `r.revision`（同文件 `:18-19` 的头注释逐字「`revision` 取记录行的**真实版本列**（SQL 里 `r.revision`，投影成 `target_revision`）」）；该实现随 #608（提交 `e9c4de8c`）落地。
 2. 退回 1 只发生在「记录尚未创建」这一合法分支：`services/api/src/admin/ops/jobs-pg.ts:23-28` 逐字「记录**尚未创建**时退回 `1`：记录行只由终态事务那一笔写入…初始 `revision` 恒为 1。这与三域自己的读面**同一口径**…不是"随便占位"」；`:400-405` 对非法值一律 503，不折算、也不夹到 1。
-3. `result` 恒 `null` 是**契约形状**，不是实现偷懒：`packages/contracts/openapi.json:16154-16156` 逐字 `"result": {` / `"type": "null"` / `},`；实现侧 `services/api/src/admin/ops/jobs-pg.ts:419` 逐字 `result: null,`。
+3. `result` 恒 `null` 是**契约形状**，不是实现偷懒：`packages/contracts/openapi.json:16533-16535` 逐字 `"result": {` / `"type": "null"` / `},`；实现侧 `services/api/src/admin/ops/jobs-pg.ts:419` 逐字 `result: null,`。
 4. 两条时钟不同（说明为什么不能拿作业 revision 顶替）：同文件 `:18-22` 与 `:408`（`revision: row.revision,`）——作业行自己的 `revision` 是状态迁移计数（取消一次 1→2），`target_ref.revision` 是目标记录版本；真库臂 `tests/integration/admin-jobs-pg.mjs:1351-1361` 断言记录版本 5 与作业 revision 2 必须不同。
 
 ### 3.3 改成什么（逐字，见 §7.9／§7.14）
@@ -290,7 +290,7 @@ STATUS_KEYS=12
 - 新文（逐字）：
 
 ```text
-| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 26 个错误码 | 已实现 | services/api/src/contract.ts:14-27 | 事实源是 packages/contracts/states.json:108；26 = 12 个状态档的码数之和（403 档 `SELF_SCOPE_GRANT_DENIED`、409 档 `LAST_SCOPE_MANAGER` 是 #646 新增）；`packages/contracts/` 下无源码文件 |
+| E37 | 错误码单源：`ERROR_STATUS_MAP` 12 个状态、恰好 26 个错误码 | 已实现 | services/api/src/contract.ts:14-31 | 事实源是 packages/contracts/states.json:108；26 = 12 个状态档的码数之和（403 档 `SELF_SCOPE_GRANT_DENIED`、409 档 `LAST_SCOPE_MANAGER` 是 #646 新增）；`packages/contracts/` 下无源码文件 |
 ```
 
 - 依据：§1.2；`packages/contracts/states.json:108` 逐字 `"error_status_map": {`。
@@ -425,7 +425,7 @@ STATUS_KEYS=12
 3. `docs/architecture/ai-ops-spec-status.md:271`（§9 失效触发清单）末项「真库端口投影改成真值（P11）」——把 P11 整条当未来触发，实际已发生一半（revision 已真、`result` 未真）；属宽表述，未改。
 4. `docs/architecture/contract-implementation-status.md` 里成批的 `services/api/src/app.ts` 旧行号（该页 :19／:36／:39／:42／:43／:68／:73／:87-91／:126-128 一带）——另一份台账页，本片未逐条复核、未改。
 5. `docs/verification/gy-i28-unified-states-20261021.md:44`「契约错误码全表（**24 码** + 2 个客户端自造码）」——该表滞后（契约已 26 码，缺 `SELF_SCOPE_GRANT_DENIED`／`LAST_SCOPE_MANAGER`）；同页 `:42`「覆盖率由测试对着该文件逐码核对：**漏一个码就红**」需要另片复核（`miniprogram/utils/states.js` 对这两个新码 0 命中，`miniprogram/**` 不在本片范围）。
-6. `services/api/src/admin/ops/jobs-pg.ts:30` 的代码注释引了 `fields.ts:101` 作为 `AdminJob.result` 的依据，但 `packages/contracts/fields.ts` 不存在（实测 0 行）；正确锚点是 `packages/contracts/openapi.json:16154-16156`。属源码注释、本片不改，供后续片修正。
+6. `services/api/src/admin/ops/jobs-pg.ts:30` 的代码注释引了 `fields.ts:101` 作为 `AdminJob.result` 的依据，但 `packages/contracts/fields.ts` 不存在（实测 0 行）；正确锚点是 `packages/contracts/openapi.json:16533-16535`。属源码注释、本片不改，供后续片修正。
 7. `docs/verification/gy-i14-community-chain-20261021.md:70`、`docs/verification/gy-r31-i26-recon-20261022.md:128` 的「没有页面消费者」说的是举报状态入口与 `/public/home` 预览，与审计无关，无动作。
 
 ## 10 复算命令清单（可重跑）

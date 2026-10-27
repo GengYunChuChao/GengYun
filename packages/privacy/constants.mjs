@@ -98,6 +98,8 @@ export const MEDIA_PURPOSE_REQUIRED_CONSENTS = Object.freeze({
  * states.error_status_map（HTTP 状态 -> 允许的错误码）。
  * 前后端一致的授权错误码：403 CONSENT_REQUIRED / SCOPE_DENIED / ACCOUNT_INACTIVE，
  * 409 OBJECT_UNAVAILABLE / REVISION_CONFLICT，428 REVISION_REQUIRED。
+ * 500 INTERNAL_ERROR：未预期异常的服务端兜底（GY-R67-A03 起契约可表达，本镜像同步，否则
+ * 与 states.json 的档位集合就不相等 —— `tests/privacy/contract.test.mjs` 两个方向都要对拍）。
  */
 export const ERROR_STATUS_MAP = Object.freeze({
   400: Object.freeze(['INVALID_REQUEST', 'INVALID_CURSOR', 'IDEMPOTENCY_KEY_REQUIRED']),
@@ -117,6 +119,7 @@ export const ERROR_STATUS_MAP = Object.freeze({
   422: Object.freeze(['CONDITIONS_INCOMPLETE', 'SOURCE_CONFLICT', 'INPUT_UNCERTAIN']),
   428: Object.freeze(['REVISION_REQUIRED']),
   429: Object.freeze(['RATE_LIMITED', 'PROVIDER_QUOTA_EXCEEDED']),
+  500: Object.freeze(['INTERNAL_ERROR']),
   503: Object.freeze(['PROVIDER_UNAVAILABLE', 'PROVIDER_OUTCOME_UNKNOWN']),
   504: Object.freeze(['PROVIDER_TIMEOUT']),
 });
