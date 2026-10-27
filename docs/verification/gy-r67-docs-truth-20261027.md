@@ -386,8 +386,8 @@ STATUS_KEYS=12
 ### 7.13 `docs/architecture/ai-ops-spec-status.md:213`（§7.2）
 
 - 原文（逐字）：`- 装配：`adminJobPort = adminInjection?.jobPort ?? (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined)`（同文件 :1313-1315），显式注入优先；随后注入服务层（同文件 :1476）。`
-- 新文（逐字）：同上，仅 `:1313-1315` → `:1363-1365`、`:1476` → `:1549`。
-- 依据：§4.1 第 2、4 行；`services/api/src/app.ts:1549` 逐字 `jobPort: adminJobPort,`。
+- 新文（逐字）：同上，仅 `:1313-1315` → `:1363-1365`、`:1476` → `:1549`（这两个数字是 A1 当时树上成立的读数）。
+- 依据：§4.1 第 2、4 行。R68 合流（#652／R68 一并落在同一条装配链上）后同一块下移：`adminJobPort` 的定义在 `services/api/src/app.ts:1375`（`:1375-1377` 三行），真库域的注入点在 `services/api/src/app.ts:1572`（stub 域另有一处同名注入在 `:1703`，两者不是同一块）。
 
 ### 7.14 `docs/architecture/ai-ops-spec-status.md:220`（§7.2，任务第 3 条）
 

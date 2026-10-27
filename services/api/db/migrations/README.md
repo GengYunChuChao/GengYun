@@ -4,7 +4,7 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-27 · R64 后台下架审计（`0047`）落盘后实测：`0001..0047`，缺 `0037`）
+## 当前状态（2026-10-27 · R68 后台管理员账号停用/恢复（`0048`）落盘后实测：`0001..0048`，缺 `0037`）
 
 `0001..0035` 已连续落盘（35 个正向；`0035_r34_media_row_purge.sql` 已随上游真实落盘，本片旧段里那条
 `WARN[gap] 0035` 的前提随之作废）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
@@ -14,16 +14,41 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 �
 `0042_favorites_history_target_type_conversation_turn.sql`、`#18` R18 片落
 `0043_admin_job_cancel_audit.sql`、GY-S4 P1 落 `0044_third_party_deletion_persistence.sql`、
 S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
-`0046_admin_scope_denial_trace.sql`、R64 落 `0047_admin_post_hide_audit.sql`
-⇒ 目录现为 **46 个正向 `.sql`** ＋ `rollback/` **45 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **46 + 1 === 47**），
+`0046_admin_scope_denial_trace.sql`、R64 落 `0047_admin_post_hide_audit.sql`、R68 落
+`0048_admin_account_disable.sql`
+⇒ 目录现为 **47 个正向 `.sql`** ＋ `rollback/` **46 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **47 + 1 === 48**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对该缺号有依据（见下）。
-（本段数字为实测：`git ls-tree -r --name-only HEAD -- services/api/db/migrations`
-⇒ 正向 `.sql` 46 条、`rollback/` 45 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
+（本段数字为实测：`Get-ChildItem services/api/db/migrations -Filter '*.sql'`
+⇒ 正向 `.sql` 47 条、`rollback/` 46 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
 故保留台账里**不得**再出现 40/41/42 号条目 —— 否则 `reservedButPresent` 会把它判红。
-`0043`/`0044`/`0045`/`0046`/`0047` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
+`0043`/`0044`/`0045`/`0046`/`0047`/`0048` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0048_admin_account_disable.sql`（R68 · **库层写通路**：后台「停用 / 恢复管理员账号」）。
+  接在 `0047` 之后，号位依据「正向最大号 +1」（`0047` 已被 R64 的后台下架审计占用，裁定书里那张
+  「编号与排序（2026-10-27 10:1x 复核后更正）」小节即为此；`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
+  建两条窄口径 `SECURITY DEFINER` 函数：`public.disable_admin_account(uuid,uuid,uuid,integer,uuid,text)`
+  与 `public.enable_admin_account(同形)`（`SET search_path = pg_catalog` + `SET TimeZone = 'UTC'` +
+  `REVOKE ALL … FROM PUBLIC`）。**锁序**先拿 `0041` 同一把事务级
+  `pg_advisory_xact_lock(hashtextextended('admin_scope:' || p_scope, 18040))`（`scopes:write`），
+  再对 `public.admin_accounts` 的目标行 `FOR UPDATE` —— 与 `0041` 的 grant/revoke 是**同一把**锁，
+  所以「停用最后一个 scope 管理者」与「撤掉最后一个 scope 管理者」不会以不同顺序交错。
+  停用写 `state='suspended'` + `auth_epoch = auth_epoch + 1` + `revision = revision + 1`（CAS：
+  `p_expected_revision` 与现行 `revision` 不等即 `G0003 REVISION_CONFLICT`），并**同事务**把
+  `public.admin_sessions` 里 `admin_id = 目标 AND revoked_at IS NULL` 的行置 `revoked_at = now()`
+  ⇒ 旧 token 下一次请求就撞 `admin_sessions.revoked_at`，401（不是 403）。审计**同事务**写
+  `public.admin_audit_events`，`action` 固定 `admin_account.disable` / `admin_account.enable`、
+  `before_value`/`after_value` **必须 NULL**、`target_ref` 由形参重建，`reason_code` 走两值闭集。
+  守卫：停用自己 ⇒ `G0020 SELF_DISABLE_DENIED`（409）；停用**唯一**持有效 `scopes:write` 的管理员 ⇒
+  与 `0041` **同一个** `G0009`（业务码 `LAST_SCOPE_MANAGER` / 409）。
+  ⚠ 本片**不动** `0017` 的 `suspend_account`/`restore_account`（终端用户面），也不给运行时任何
+  `admin_accounts` / `admin_sessions` 的 UPDATE 列权 —— 两条函数是唯一写路径。
+  配对回滚 `rollback/0048_admin_account_disable.down.sql` **只 `DROP FUNCTION IF EXISTS`**，
+  ⛔ 不删审计行（append-only 台账带不走，删函数会留下「有行无出处」）。
+  读数：`tests/integration/admin-accounts-read-pg.mjs` 的 `[S]` 段（真库臂追加，不新建文件）＋
+  `tests/integration/admin-http.mjs` 的停用/恢复 HTTP 臂（停用后旧 token `GET /admin/auth/session`
+  ⇒ 401 `ACCOUNT_INACTIVE`）。
 - `0047_admin_post_hide_audit.sql`（R64 · **库层写通路**：后台「隐藏帖子」（`post.hide`）的审计从**进程内存**
   落到 `public.admin_audit_events`）接在 `0046` 之后，号位依据「正向最大号 +1」（当时最大 `0046`；
   `0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。只建一条窄口径 `SECURITY DEFINER` 函数

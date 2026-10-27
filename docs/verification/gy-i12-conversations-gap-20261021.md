@@ -125,7 +125,7 @@ const candidate = composer.compose({
 | 建了哪些表 | `conversations`、`conversation_turns`、`conversation_answers`；`conversation_turns.conversation_id → conversations(id) ON DELETE CASCADE`、`conversation_answers.turn_id → conversation_turns(id) ON DELETE CASCADE` |
 | 关键约束 | `revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1)`；`citations` 有 `jsonb_array_length(citations) <= 20`；`dose_cards <= 10`；`status IN ('answered','insufficient','blocked')`；`check_state IN ('passed','blocked')` |
 | 迁移总数 / 最大号 | **26** 个，最大 `0026_speech_persistence.sql`（所以「0027」这个号在本片没有用途——除非将来为 LLM 外发账本新建表，见 §6 R-3） |
-| 装配是否真用 PG | 是：`app.ts:1507-1511`，且 `app.ts:1549` 拒绝任何非 `persistent` store 在 real 下接手 |
+| 装配是否真用 PG | 是：`app.ts:1507-1511`，且 `app.ts:2331` 拒绝任何非 `persistent` store 在 real 下接手 |
 
 ---
 
@@ -267,7 +267,7 @@ if (!answerProvider.available) {
 - 不新增任何 npm 依赖（真实 LLM 走 `fetchImpl` 注入，`live-ports.ts` 的先例即是零依赖）。
 - 不改 `packages/contracts/openapi.json`（只读）。
 - 不把任何 `partial` 改成 `implemented`（升级权限在监工）；本轮台账**一行未动**。
-- 不让 real 模式在缺凭据/缺持久 store 时产生「成功」：`app.ts:1549` 的表达式与 `ocr/service.ts:459-463` 的 `retryable:false` 语义都不放宽。
+- 不让 real 模式在缺凭据/缺持久 store 时产生「成功」：`app.ts:2331` 的表达式与 `ocr/service.ts:459-463` 的 `retryable:false` 语义都不放宽。
 
 ---
 

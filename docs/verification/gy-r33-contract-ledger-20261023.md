@@ -111,7 +111,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 | 保留项：`createPost/editPost` 图片审核细节 | 仍成立：`IMAGE_MODERATION_UNAVAILABLE`、`MEDIA_NOT_EVALUATED_BY_RULE_LAYER`、媒体元数据只传 `media_id`（→ `MODEL_PAYLOAD_INVALID`） | `services/api/src/community/service.ts:426`、`:429`、`:573`、`:200-201`；`packages/moderation/merge.mjs:539` |
 | 保留项：正式微信身份/真机/发布环境；测试≠验收 | 仍成立 | 保留原句 |
 
-> **后续变更（R33-I15-S4 片，2026-10-23）**：上表「保留项：资料关联默认 fail-closed」一行**已不再成立** —— 装配层现在**有连接池**时用同一条 `pool` 查公开读视图 `catalog_read.current_knowledge` 构造真实 `createKnowledgeAvailabilityPort`（`services/api/src/app.ts:1259`），**仅无池**时才保持未接线 fail-closed；错误码（409 `OBJECT_UNAVAILABLE`）与「不泄露存在性」语义一字未改，装配级回归见 `tests/unit/community-knowledge-wiring.test.mjs`。`docs/architecture/contract-status.json` 里 16 条社区 blocker 的同款子句已同步订正（`status` / `baseline` 未动）。上表其余行保持 R33 台账片的当时读数。
+> **后续变更（R33-I15-S4 片，2026-10-23）**：上表「保留项：资料关联默认 fail-closed」一行**已不再成立** —— 装配层现在**有连接池**时用同一条 `pool` 查公开读视图 `catalog_read.current_knowledge` 构造真实 `createKnowledgeAvailabilityPort`（`services/api/src/app.ts:1280`），**仅无池**时才保持未接线 fail-closed；错误码（409 `OBJECT_UNAVAILABLE`）与「不泄露存在性」语义一字未改，装配级回归见 `tests/unit/community-knowledge-wiring.test.mjs`。`docs/architecture/contract-status.json` 里 16 条社区 blocker 的同款子句已同步订正（`status` / `baseline` 未动）。上表其余行保持 R33 台账片的当时读数。
 
 **处置：16 条全部订正（部分过时）**：只替换「真实持久存储未交付（real 模式整域 503）」这一子句为「持久化已交付 + 放行判据」；其余未取得项原样保留。`status` 未动。
 

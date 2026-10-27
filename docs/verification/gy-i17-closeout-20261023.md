@@ -106,7 +106,7 @@
 | 去重判定 | `services/api/src/messages/store-pg.ts:263` | `const result: InsertResult = rows.length > 0 ? 'inserted' : 'duplicate';` |
 | 持久化标志（装配判据） | `services/api/src/messages/store-pg.ts:244` | `persistent: true,` |
 | 装配：有池走 PG | `services/api/src/app.ts:802` | `const messagesStore: MessagesStore =` （`:806` `createPostgresMessagesStore({ pool })`） |
-| 装配：real 无池即 null（503） | `services/api/src/app.ts:812` | `const messagesService = config.executionMode === 'real'` |
+| 装配：real 无池即 null（503） | `services/api/src/app.ts:898` | `const messagesService = config.executionMode === 'real'` |
 
 ### 2.2 未读聚合
 

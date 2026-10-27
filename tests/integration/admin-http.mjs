@@ -20,6 +20,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
+import { ApiError } from '../../services/api/src/errors.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
 import { createAdminOpsStore } from '../../services/api/src/admin/ops/store.ts';
@@ -1433,6 +1434,265 @@ await group('[正控制] real 缺省装配（无库池 / 认证存储不持久�
     );
     assert.equal(anon.body.error.code, 'SESSION_REQUIRED');
   }
+});
+
+// ---------------------------------------------------------------------------
+// R68 · 后台「停用 / 恢复管理员账号」的 HTTP 面（迁移 `0048` 的应用层接线）
+//
+// 判据出处（逐条读代码，不外推）：
+// - 权限门沿用**既有** `scopes:write`（`services/api/src/admin/ops/service.ts` 的 `OPS_SCOPES`
+//   `.disableAdministratorAccount` / `.enableAdministratorAccount`）；⛔ 没有新 scope 值，
+//   也⛔ 不用 `accounts:suspend`（那是终端用户面）。
+// - 请求头顺序（同 `services/api/src/admin/ops/service.ts` 的 commit 骨架）：
+//   `parseIfMatchHeader`（缺 ⇒ **428 `REVISION_REQUIRED`**）先于幂等键读取（缺 ⇒ 400
+//   `IDEMPOTENCY_KEY_REQUIRED`）⇒ **两头都缺时实测报 428**。⚠ 这与 `jobs-http.mjs:528` 里
+//   `cancelAdminJob` 的「先缺键」顺序**不同**：两条路径的检查次序各自为实，两处各留各的读数。
+// - 未接线（`adminAccountAuthority === null`）⇒ **503 `PROVIDER_UNAVAILABLE` + `retryable:false`**，
+//   ⛔ 不返回「200 + 假装停用了」的封套。
+//
+// 这里注入的是**内存替身端口**：本组只钉 HTTP 面（路由/权限门/头/封套/幂等回放/审计形状外泄与否）。
+// 「三列真的落了库、会话真的被撤、审计真的进 append-only 表」由真库臂
+// `tests/integration/admin-accounts-read-pg.mjs` 的 `[D]` 段负责 —— 两份读数分工不重叠。
+// ---------------------------------------------------------------------------
+const R68_SCOPES = [...ALL_SCOPES, 'scopes:write'];
+const r68Auth = createMemoryAuthStore();
+const r68Admin = await seedAdminSession(r68Auth, 'r68-admin', R68_SCOPES);
+const r68NoScope = await seedAdminSession(r68Auth, 'r68-no-scope', ['sources:read']);
+
+/** 内存替身：只实现端口协议（CAS + 自停用拒绝 + 稳定形状），不承担库层语义。 */
+const r68Accounts = new Map();
+const r68Calls = [];
+const r68Port = {
+  persistent: true,
+  async disable(input) {
+    return r68Transition(input, 'suspended');
+  },
+  async enable(input) {
+    return r68Transition(input, 'active');
+  },
+};
+function r68Transition(input, nextState) {
+  r68Calls.push({ mode: nextState === 'suspended' ? 'disable' : 'enable', ...input });
+  if (input.targetId === input.actorId) {
+    throw new ApiError('SELF_DISABLE_DENIED', '不能停用自己的账号');
+  }
+  const current = r68Accounts.get(input.targetId);
+  if (current === undefined) {
+    throw new ApiError('NOT_FOUND', '管理员不存在');
+  }
+  if (input.expectedRevision !== null && input.expectedRevision !== current.revision) {
+    throw new ApiError('REVISION_CONFLICT', '版本不匹配');
+  }
+  if (current.state === nextState) {
+    // 已经处于目标状态：`changed=false` 且**不写审计**（`auditId` 必须同步为 null，
+    // 应用层会校验 `changed === (auditId !== null)` 这条互指）。
+    return {
+      administratorId: input.targetId,
+      revision: current.revision,
+      state: current.state,
+      authEpoch: current.authEpoch,
+      revokedSessions: 0,
+      changed: false,
+      auditId: null,
+    };
+  }
+  const updated = {
+    revision: current.revision + 1,
+    state: nextState,
+    authEpoch: current.authEpoch + 1,
+  };
+  r68Accounts.set(input.targetId, updated);
+  return {
+    administratorId: input.targetId,
+    revision: updated.revision,
+    state: updated.state,
+    authEpoch: updated.authEpoch,
+    revokedSessions: nextState === 'suspended' ? 1 : 0,
+    changed: true,
+    auditId: input.auditId,
+  };
+}
+
+const r68App = buildApp({
+  config: loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+  store: r68Auth,
+  adminInjection: { adminAccountAuthority: r68Port },
+});
+const r68Origin = await r68App.listen({ host: '127.0.0.1', port: 0 });
+const r68Http = makeHttp(r68Origin);
+
+await group('[R68 正控制] 停用/恢复：注入权威端口 ⇒ 200 + 契约封套 + ETag；幂等重放不再调端口', async () => {
+  const target = randomUUID();
+  r68Accounts.set(target, { revision: 1, state: 'active', authEpoch: 1 });
+
+  const disabled = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST',
+    token: r68Admin.token,
+    body: { reason: 'R68 HTTP 臂：停用' },
+    headers: { 'idempotency-key': newKey('r68-disable'), 'if-match': '"1"' },
+  });
+  assert.equal(disabled.status, 200, `停用期望 200，实得 ${disabled.status}：${disabled.text}`);
+  assert.equal(disabled.etag, '"2"', `200 必须回写新 revision 的强 ETag，实得 ${disabled.etag}`);
+  assert.deepEqual(
+    Object.keys(disabled.body).sort(), ['data', 'meta'],
+    `封套只允许 data + meta，实得 ${Object.keys(disabled.body).join(',')}`,
+  );
+  assert.deepEqual(
+    Object.keys(disabled.body.data).sort(),
+    ['auth_epoch', 'changed', 'id', 'revision', 'revoked_sessions', 'state'],
+    `单个资源信封的字段集合固定，实得 ${Object.keys(disabled.body.data).join(',')}`,
+  );
+  assert.equal(disabled.body.data.state, 'suspended');
+  assert.equal(disabled.body.data.changed, true);
+  assert.equal(Number(disabled.body.data.revision), 2);
+  assert.equal(Number(disabled.body.data.auth_epoch), 2);
+  assert.equal(Number(disabled.body.data.revoked_sessions), 1);
+  assert.equal(disabled.body.data.id, target);
+
+  const callsAfterFirst = r68Calls.length;
+  const replayKey = newKey('r68-disable-replay');
+  const replay = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST',
+    token: r68Admin.token,
+    body: { reason: 'R68 HTTP 臂：停用' },
+    headers: { 'idempotency-key': replayKey, 'if-match': '"2"' },
+  });
+  // 不同幂等键 + 当前 revision ⇒ 真的再调一次端口；端口说「已在目标状态」⇒ 200 + changed=false。
+  assert.equal(replay.status, 200, `已停用再停用期望 200（幂等），实得 ${replay.status}：${replay.text}`);
+  assert.equal(replay.body.data.changed, false, '同状态再停用必须 changed=false（⛔ 不谎报"刚停用"）');
+  assert.equal(r68Calls.length, callsAfterFirst + 1, '换幂等键 ⇒ 必须真的再进一次端口');
+
+  const sameKeyReplay = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST',
+    token: r68Admin.token,
+    body: { reason: 'R68 HTTP 臂：停用' },
+    headers: { 'idempotency-key': replayKey, 'if-match': '"2"' },
+  });
+  assert.equal(sameKeyReplay.status, 200, `同键同体重放期望 200，实得 ${sameKeyReplay.status}：${sameKeyReplay.text}`);
+  assert.equal(
+    r68Calls.length, callsAfterFirst + 1,
+    '同键同体重放**不得**再进端口（幂等台账回放定型结果，而不是重做副作用）',
+  );
+  assert.deepEqual(sameKeyReplay.body.data, replay.body.data, '重放必须回放同一份结果（逐字段相同）');
+
+  const enabled = await r68Http(`${API}/admin/administrators/${target}/enable`, {
+    method: 'POST',
+    token: r68Admin.token,
+    body: { reason: 'R68 HTTP 臂：恢复' },
+    headers: { 'idempotency-key': newKey('r68-enable'), 'if-match': '"2"' },
+  });
+  assert.equal(enabled.status, 200, `恢复期望 200，实得 ${enabled.status}：${enabled.text}`);
+  assert.equal(enabled.body.data.state, 'active');
+  assert.equal(Number(enabled.body.data.revision), 3);
+  assert.equal(Number(enabled.body.data.auth_epoch), 3, '恢复也要推进 auth_epoch（停用期间的漏网会话不得复活）');
+});
+
+await group('[R68 反例] 请求头两条硬前置：缺 Key ⇒ 400 IDEMPOTENCY_KEY_REQUIRED；缺 If-Match ⇒ 428 REVISION_REQUIRED', async () => {
+  const target = randomUUID();
+  r68Accounts.set(target, { revision: 1, state: 'active', authEpoch: 1 });
+
+  const noKey = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', token: r68Admin.token, body: { reason: '缺键' }, headers: { 'if-match': '"1"' },
+  });
+  assert.equal(noKey.status, 400, `缺 Idempotency-Key 期望 400，实得 ${noKey.status}：${noKey.text}`);
+  assert.equal(noKey.body.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
+
+  const noMatch = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', token: r68Admin.token, body: { reason: '缺 ETag' }, headers: { 'idempotency-key': newKey('r68-nomatch') },
+  });
+  assert.equal(noMatch.status, 428, `缺 If-Match 期望 428，实得 ${noMatch.status}：${noMatch.text}`);
+  assert.equal(noMatch.body.error.code, 'REVISION_REQUIRED');
+
+  // 两个头都缺：**实测**顺序是「先缺 ETag」⇒ 428（`parseIfMatchHeader` 在 commit 骨架里先于
+  // 幂等键读取；与 `jobs-http.mjs:528` 里 cancelAdminJob 的 400 顺序**不同**，两处各自留实测读数，
+  // ⛔ 不把一处的顺序外推到另一处）。
+  const neither = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', token: r68Admin.token, body: { reason: '两头都缺' },
+  });
+  assert.equal(neither.status, 428, `两头都缺期望 428（If-Match 判定在本路径上更早），实得 ${neither.status}：${neither.text}`);
+  assert.equal(neither.body.error.code, 'REVISION_REQUIRED');
+
+  const noBody = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', token: r68Admin.token, headers: { 'idempotency-key': newKey('r68-nobody'), 'if-match': '"1"' },
+  });
+  assert.equal(noBody.status, 400, `缺 reason 期望 400，实得 ${noBody.status}：${noBody.text}`);
+  assert.equal(noBody.body.error.code, 'INVALID_REQUEST');
+
+  const extra = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', token: r68Admin.token, body: { reason: '多余字段', state: 'suspended' },
+    headers: { 'idempotency-key': newKey('r68-extra'), 'if-match': '"1"' },
+  });
+  assert.equal(extra.status, 400, `多余字段期望 400（additionalProperties:false），实得 ${extra.status}：${extra.text}`);
+  assert.equal(extra.body.error.code, 'INVALID_REQUEST');
+  assert.equal(
+    r68Accounts.get(target).state, 'active',
+    '⛔ 上述四种拒绝都不得改动端口状态（被拒的请求不许有副作用）',
+  );
+});
+
+await group('[R68 反例] 权限门与业务规则：无 scopes:write ⇒ 403；停用自己 ⇒ 409 SELF_DISABLE_DENIED；陈旧 ETag ⇒ 409 REVISION_CONFLICT', async () => {
+  const target = randomUUID();
+  r68Accounts.set(target, { revision: 1, state: 'active', authEpoch: 1 });
+
+  const denied = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', token: r68NoScope.token, body: { reason: '越权' },
+    headers: { 'idempotency-key': newKey('r68-denied'), 'if-match': '"1"' },
+  });
+  assert.equal(denied.status, 403, `无 scopes:write 期望 403，实得 ${denied.status}：${denied.text}`);
+  assert.equal(denied.body.error.code, 'SCOPE_DENIED');
+  assert.equal(denied.body.error.retryable, false, '缺权限是确定性结果 ⇒ retryable 必须 false');
+
+  const anon = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', body: { reason: '无会话' },
+    headers: { 'idempotency-key': newKey('r68-anon'), 'if-match': '"1"' },
+  });
+  assert.equal(anon.status, 401, `无会话期望 401，实得 ${anon.status}：${anon.text}`);
+  assert.equal(anon.body.error.code, 'SESSION_REQUIRED');
+
+  const self = await r68Http(`${API}/admin/administrators/${r68Admin.adminId}/disable`, {
+    method: 'POST', token: r68Admin.token, body: { reason: '停用自己' },
+    headers: { 'idempotency-key': newKey('r68-self'), 'if-match': '"1"' },
+  });
+  assert.equal(self.status, 409, `停用自己期望 409，实得 ${self.status}：${self.text}`);
+  assert.equal(self.body.error.code, 'SELF_DISABLE_DENIED');
+  assert.equal(self.body.error.retryable, false, '自停用是业务规则 ⇒ retryable 必须 false（重试不会变好）');
+
+  const stale = await r68Http(`${API}/admin/administrators/${target}/disable`, {
+    method: 'POST', token: r68Admin.token, body: { reason: '陈旧版本' },
+    headers: { 'idempotency-key': newKey('r68-stale'), 'if-match': '"9"' },
+  });
+  assert.equal(stale.status, 409, `陈旧 ETag 期望 409，实得 ${stale.status}：${stale.text}`);
+  assert.equal(stale.body.error.code, 'REVISION_CONFLICT');
+
+  const unknown = await r68Http(`${API}/admin/administrators/${UNKNOWN_UUID}/disable`, {
+    method: 'POST', token: r68Admin.token, body: { reason: '不存在' },
+    headers: { 'idempotency-key': newKey('r68-unknown'), 'if-match': '"1"' },
+  });
+  assert.equal(unknown.status, 404, `未知 id 期望 404，实得 ${unknown.status}：${unknown.text}`);
+  assert.equal(unknown.body.error.code, 'NOT_FOUND');
+  assert.equal(r68Accounts.get(target).state, 'active', '⛔ 越权/陈旧/不存在都不得改动端口状态');
+});
+
+await group('[R68 正控制] 未注入权威端口（stub 缺省装配）⇒ 503 PROVIDER_UNAVAILABLE + retryable:false，⛔ 不假装停用了', async () => {
+  // 权限门先于接线判定：必须用一个**真持 `scopes:write`** 的账号，否则拿到的是 403 而不是 503
+  // （`ALL_SCOPES` 不含 `scopes:write`，本片新增的两条路由沿用既有 `scopes:write` 门）。
+  const defaultR68Admin = await seedAdminSession(defaultAuth, 'default-r68', R68_SCOPES);
+  const res = await defaultHttp(`${API}/admin/administrators/${UNKNOWN_UUID}/disable`, {
+    method: 'POST', token: defaultR68Admin.token, body: { reason: '未接线' },
+    headers: { 'idempotency-key': newKey('r68-unwired-disable'), 'if-match': '"1"' },
+  });
+  assert.equal(res.status, 503, `未接线期望 503（⛔ 不是 200），实得 ${res.status}：${res.text}`);
+  assert.equal(res.body.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(res.body.error.retryable, false, '接线是运维动作 ⇒ retryable 必须 false');
+  assert.equal(res.body.data, undefined, '⛔ 503 不得带 data（否则等于宣称"已停用"）');
+  assert.match(String(res.body.error.message), /未接线/, `文案应自述未接线，实得 ${res.body.error.message}`);
+
+  const resEnable = await defaultHttp(`${API}/admin/administrators/${UNKNOWN_UUID}/enable`, {
+    method: 'POST', token: defaultR68Admin.token, body: { reason: '未接线' },
+    headers: { 'idempotency-key': newKey('r68-unwired-enable'), 'if-match': '"1"' },
+  });
+  assert.equal(resEnable.status, 503, `恢复方向未接线同样 503，实得 ${resEnable.status}：${resEnable.text}`);
+  assert.equal(resEnable.body.error.code, 'PROVIDER_UNAVAILABLE');
 });
 
 // ---------------------------------------------------------------- 汇总

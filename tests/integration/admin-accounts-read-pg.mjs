@@ -224,6 +224,13 @@ async function provisionRoles() {
     // 正则取的是 region 与 `#endregion` 之间的正文，所以 `:227` 的元命令守卫原样通过、
     // 也不需要为本区域做任何剔行预处理。⛔ 不要复制粘贴 GRANT 语句，⛔ 不要放宽守卫。
     { name: 'gy-r64-pr4a-denial-trace-grant', grants: 1 },
+    // R68：后台管理员账号停用/恢复（迁移 0048 的 `disable_admin_account` / `enable_admin_account`）。
+    // 同样**原样执行**出厂区域：两条函数少授一条 ⇒ 本断言红；哪天有人把 `REVOKE ALL` 删了 ⇒
+    // 下面的 PUBLIC 反向探针红。
+    { name: 'gy-r68-admin-account-state-grant', grants: 2 },
+    // R68 的 `[D7]` 要经 HTTP 读审计（`?entity=admin_account`），读面函数 `list_admin_audit_logs`
+    // 的 EXECUTE 由 0033 那支的出厂区域授予（原本本脚本用不到它）。同样原样执行，不复制粘贴。
+    { name: 'gy-r34-audit-logs-grant', grants: 1 },
   ];
   for (const { name, grants } of REGIONS) {
     const matched = deploySql('20-login-roles.sql').match(
@@ -263,6 +270,11 @@ async function leastPrivilege() {
     ['SELECT deletion_generation FROM public.users', 'users.deletion_generation 直接读'],
     ['SELECT id, revision, state, nickname FROM public.users ORDER BY created_at ASC, id ASC', '派单 §2.1 逐字 SQL（含 nickname/created_at）'],
     ["UPDATE users SET state = 'suspended'", 'users.state 直接写'],
+    // R68（迁移 0048）：停用/恢复的**唯一**写路径是两条 `SECURITY DEFINER` 函数。
+    // 运行时角色对身份面三张表必须一个 DML 权限都没有 —— 否则「绕过函数直接改 state」就是一条
+    // 不写审计、不推 `auth_epoch`、不撤会话的后门（停用会变成静默半成品）。
+    ["UPDATE public.admin_accounts SET state = 'suspended'", 'admin_accounts.state 直接写（绕过 0048）'],
+    ["UPDATE public.admin_audit_events SET result = 'accepted'", 'admin_audit_events 直接改（审计只可追加）'],
   ];
   for (const [sql, label] of probes) {
     let code = null;
@@ -274,6 +286,28 @@ async function leastPrivilege() {
     assert.equal(code, '42501', `${label} 必须以 42501 拒绝，实际 ${String(code)}`);
   }
   note('[P] 运行时角色：nickname/created_at/deletion_generation 直读、派单逐字 SQL、state 直写 全部 42501');
+
+  // R68 · 身份面两张表的权限面读数（比 42501 探针更细，直接读 catalog）：
+  //   · `admin_accounts`：运行时**零 UPDATE**（表级与列级都是 false）—— 停用只能走 0048 的函数；
+  //   · `admin_sessions`：运行时**有** UPDATE —— 这是既有登出路径（`services/api/src/auth/store.ts:334`
+  //     按 `token_hash` 撤会话）的必需品，不是本片新增的，也⛔ 不是本片放开的。
+  const accountsUpdTable = await one("SELECT has_table_privilege($1, 'public.admin_accounts', 'UPDATE') AS v", [RUNTIME_ROLE]);
+  const accountsUpdState = await one("SELECT has_column_privilege($1, 'public.admin_accounts', 'state', 'UPDATE') AS v", [RUNTIME_ROLE]);
+  assert.equal(accountsUpdTable.v, false, '运行时不得有 admin_accounts 表级 UPDATE（否则能绕过 0048 直接改 state）');
+  assert.equal(accountsUpdState.v, false, '运行时不得有 admin_accounts.state 列级 UPDATE（派单硬边界）');
+  const sessionsUpd = await one("SELECT has_table_privilege($1, 'public.admin_sessions', 'UPDATE') AS v", [RUNTIME_ROLE]);
+  note(`[P] admin_accounts：表级 UPDATE=${accountsUpdTable.v}、state 列级 UPDATE=${accountsUpdState.v}（停用只能走 0048）；`
+    + `admin_sessions 表级 UPDATE=${sessionsUpd.v}（既有登出路径 auth/store.ts:334 需要，非本片放开）`);
+
+  // R68 · 两条 0048 函数：运行时能 EXECUTE（唯一写路径），但 `PUBLIC` **不能**（`REVOKE ALL … FROM PUBLIC`
+  // 一旦被删，任何能建会话的角色都能停用管理员）。
+  for (const fn of ['public.disable_admin_account(uuid,uuid,uuid,integer,uuid,text)', 'public.enable_admin_account(uuid,uuid,uuid,integer,uuid,text)']) {
+    const runtimeCan = await one('SELECT has_function_privilege($1, $2, \'EXECUTE\') AS v', [RUNTIME_ROLE, fn]);
+    const publicCan = await one("SELECT has_function_privilege('public', $1, 'EXECUTE') AS v", [fn]);
+    assert.equal(runtimeCan.v, true, `运行时必须拿到 ${fn} 的 EXECUTE（否则停用/恢复整条路径 42501）`);
+    assert.equal(publicCan.v, false, `PUBLIC 不得有 ${fn} 的 EXECUTE（REVOKE ALL … FROM PUBLIC 被删就会变红）`);
+  }
+  note('[P] 0048 两条函数：运行时 EXECUTE=true、PUBLIC EXECUTE=false（停用/恢复的唯一写路径，且不是"谁都能调"）');
 
   // 行级可达 ≠ 列级可达：三列（id/revision/state）本来就有列权限，这里只是把「缺的恰好是 nickname/created_at」钉死。
   const three = await client.query('SELECT id, revision, state FROM public.users');
@@ -920,6 +954,236 @@ async function suspendGuardEvidence() {
     + '（若把停用实现成顺带撤销，[G1] 的主断言会红；变异未留在代码里）');
 }
 
+// ---------------------------------------------------------------------------
+// [D] R68 · 后台「停用 / 恢复管理员账号」（迁移 `0048` 的库层写路径 + 应用层接线）
+//
+// ## 为什么这组必须在**这个**文件里、且必须踩真库
+// 停用路径的四件事**只有真库能证明**：
+//   ① `admin_accounts` 的 `state/auth_epoch/revision` 三列在**真实事务提交之后**是什么值
+//      （内存替身只能看见返回值，看不见「写进去了没有」）；
+//   ② `admin_sessions` 里那些行**真的**被置了 `revoked_at` —— 这是「停用后旧 token 立刻死」的唯一来源；
+//   ③ 审计行真的落在 `public.admin_audit_events`（append-only，写错形状删不掉）；
+//   ④ 同一个 HTTP 装配上，停用后的 token 走**鉴权中间件**得到什么状态码 —— 这只能由真实
+//      `auth/store.ts` + 真表给出（假 store 里没有 `revoked_at` 这一列）。
+//
+// ## 与派单的一处实测偏差（如实登记，⛔ 不是「应该会绿」）
+// 派单写「停用后旧 token `GET /admin/auth/session` ⇒ **401 `ACCOUNT_INACTIVE`**（不是 403）」。
+// 实测：`0048` 在**同一事务**里把该管理员的 `admin_sessions` 行置 `revoked_at`，而
+// `services/api/src/auth/middleware.ts` 的判定顺序是「先看会话是否已撤销（⇒ 401 `SESSION_EXPIRED`）、
+// 再看账号是否 `active`（⇒ 403 `ACCOUNT_INACTIVE`）、最后比 `auth_epoch`」。所以旧 token 实际拿到的是
+// **401 `SESSION_EXPIRED`**。派单那句话的**意图**（撤光 scope ≠ 停用 ／ 停用不是 403）成立且被下面
+// 两组读数分别钉住：
+//   · 401 而不是 403：旧 token 连会话都过不去（撤 scope 不会撤会话，那时是 200/403）；
+//   · `ACCOUNT_INACTIVE` 这一层单独可达：**新签**一个 epoch 正确的会话（属主直插），仍被
+//     `state <> 'active'` 拦成 403 —— 证明「停用」本身独立于「会话撤销」生效。
+// 两组都断言，两条都留痕。
+// ---------------------------------------------------------------------------
+async function adminAccountDisableEvidence() {
+  if (runtimeUrl === null) {
+    unread('[D] R68 管理员账号停用/恢复', '未提供运行时角色 URL（argv[3]），无法以最小权限跑真实 HTTP');
+    return;
+  }
+  // 前置归一化（⛔ 不能清空 `admin_audit_events`：那张表 append-only，DELETE 会被
+  // `admin_audit_events_reject_mutation` 以 `G0006 AUDIT_IMMUTABLE` 拒掉 —— 本臂改为**按 action 过滤**
+  // 自己那两行，既不需要删审计，也不假设「库里没有别的审计」）。
+  // 归一化 `scopes:write` 的持有者：本臂要断言「停用后有效持有者仍 ≥1」与「收尾恰 2」，先把前面几段
+  // 留下的持有者全部撤掉（属主 SQL，同 `[G2]` 的做法），再由本臂自己的人重新持上。
+  await owner.query("UPDATE public.admin_scopes SET revoked_at = now() WHERE scope = 'scopes:write' AND revoked_at IS NULL");
+  await owner.query('DELETE FROM public.admin_sessions');
+
+  const actor = await seedScopeAdmin('gy-r68-actor', ['scopes:write', 'audit:read']);
+  const target = await seedScopeAdmin('gy-r68-target', ['scopes:write', 'accounts:read']);
+
+  // 与 `[W]` 段内同名 helper 同形（那份作用域在 `[W]` 里，这里必须各自重建）。
+  const write = (token, body, revision, key) => ({
+    token,
+    body,
+    headers: { 'idempotency-key': key, 'if-match': `"${revision}"` },
+  });
+
+  const runtimePool = createPool(runtimeUrl.href);
+  assert.ok(runtimePool !== null, '运行时 pool 必须建出来');
+  const { app, call } = await launchApp(runtimePool);
+  registeredApps.push(app);
+
+  const stateOf = async (id) => one(
+    'SELECT state::text AS state, auth_epoch, revision FROM public.admin_accounts WHERE id = $1::uuid',
+    [id],
+  );
+  const liveSessions = async (id) => Number((await one(
+    'SELECT count(*)::int AS c FROM public.admin_sessions WHERE admin_id = $1::uuid AND revoked_at IS NULL',
+    [id],
+  )).c);
+  const accountAudits = async () => q(
+    "SELECT action, scope, result, before_value, after_value, target_ref, target_hint, reason_code"
+      + " FROM public.admin_audit_events WHERE action LIKE 'admin_account.%' ORDER BY created_at",
+  );
+
+  // ── [D0] 前置读数 ─────────────────────────────────────────────────────────
+  const before = await stateOf(target.adminId);
+  assert.equal(before.state, 'active', '[D0] 目标起手必须 active');
+  assert.equal(await liveSessions(target.adminId), 1, '[D0] 目标起手必须恰有 1 条有效会话（否则 [D1] 的「撤光」是空断言）');
+  assert.equal(await liveSessions(actor.adminId), 1, '[D0] 操作者自己也要有 1 条有效会话');
+
+  // ── [D1] 停用：三列 + 会话 + 审计（一拍四处） ──────────────────────────────
+  const disabled = await call(`${API}/admin/administrators/${target.adminId}/disable`, {
+    method: 'POST',
+    ...write(actor.token, { reason: 'R68 集成臂：停用交接' }, before.revision, 'gy-r68-disable-0001'),
+  });
+  assert.equal(disabled.status, 200, `停用必须 200，实际 ${disabled.status} ${disabled.text.slice(0, 300)}`);
+  assert.equal(disabled.body.data.state, 'suspended', '[D1] 响应里的 state 必须是 suspended');
+  assert.equal(disabled.body.data.changed, true, '[D1] 第一次停用必须 changed=true');
+  assert.equal(Number(disabled.body.data.revision), Number(before.revision) + 1, '[D1] revision 必须 +1');
+  assert.equal(Number(disabled.body.data.auth_epoch), Number(before.auth_epoch) + 1, '[D1] auth_epoch 必须 +1');
+  assert.ok(
+    typeof disabled.body.data.revoked_sessions === 'number' && disabled.body.data.revoked_sessions >= 1,
+    `[D1] revoked_sessions 必须 ≥1（现场 ${disabled.body.data.revoked_sessions}）`,
+  );
+
+  const afterDisable = await stateOf(target.adminId);
+  assert.equal(afterDisable.state, 'suspended', '[D1] 库里的 state 必须真的是 suspended（⛔ 不是只改了返回值）');
+  assert.equal(Number(afterDisable.auth_epoch), Number(before.auth_epoch) + 1, '[D1] 库里的 auth_epoch 必须 +1');
+  assert.equal(Number(afterDisable.revision), Number(before.revision) + 1, '[D1] 库里的 revision 必须 +1');
+  assert.equal(await liveSessions(target.adminId), 0, '[D1] 停用后该管理员的未撤销会话必须为 0');
+  assert.equal(await liveSessions(actor.adminId), 1, '[D1] 操作者自己的会话不得被连带撤销');
+
+  const audits1 = await accountAudits();
+  assert.equal(audits1.length, 1, `[D1] 停用后 admin_account.* 审计必须恰好 1 行（现场 ${audits1.length}）`);
+  assert.equal(audits1[0].action, 'admin_account.disable', '[D1] action 必须是 admin_account.disable');
+  assert.equal(audits1[0].scope, 'scopes:write', '[D1] scope 列必须是既有的 scopes:write（⛔ 没有新 scope 值）');
+  assert.equal(audits1[0].result, 'accepted', '[D1] result 必须是 accepted');
+  assert.equal(audits1[0].before_value, null, '[D1] before_value 必须是 NULL（写成别的形状会让读面 503）');
+  assert.equal(audits1[0].after_value, null, '[D1] after_value 必须是 NULL（同上）');
+  assert.equal(audits1[0].target_ref, null, '[D1] target_ref 必须是 NULL');
+  assert.equal(audits1[0].target_hint, `admin_account:${target.adminId}`, '[D1] target_hint 必须能指回被停用的账号');
+  note(`[D1] 停用 ⇒ 200；库里 state=${afterDisable.state}、auth_epoch=${before.auth_epoch}→${afterDisable.auth_epoch}、`
+    + `revision=${before.revision}→${afterDisable.revision}；目标未撤销会话 1→0；审计恰 1 行`
+    + `（action=${audits1[0].action}、scope=${audits1[0].scope}、before/after/target_ref 全 NULL、reason_code=${audits1[0].reason_code}）`);
+
+  // ── [D2] 幂等重放：同键同体同 If-Match ⇒ 回放定型结果，不再写审计 ─────────
+  const replay = await call(`${API}/admin/administrators/${target.adminId}/disable`, {
+    method: 'POST',
+    ...write(actor.token, { reason: 'R68 集成臂：停用交接' }, before.revision, 'gy-r68-disable-0001'),
+  });
+  assert.equal(replay.status, 200, `[D2] 幂等重放必须 200，实际 ${replay.status} ${replay.text.slice(0, 200)}`);
+  assert.equal(replay.body.data.changed, true, '[D2] 重放回放的是第一次的定型结果（changed=true）');
+  assert.equal((await accountAudits()).length, 1, '[D2] 幂等重放不得写第二条审计');
+  assert.equal(Number((await stateOf(target.adminId)).revision), Number(before.revision) + 1, '[D2] 重放不得再 bump revision');
+  note('[D2] 幂等重放 ⇒ 200（回放定型结果）；审计仍 1 行、revision 未再动');
+
+  // ── [D3] CAS：陈旧 If-Match ⇒ 409 REVISION_CONFLICT ──────────────────────
+  const stale = await call(`${API}/admin/administrators/${target.adminId}/enable`, {
+    method: 'POST',
+    ...write(actor.token, { reason: 'R68 集成臂：陈旧版本' }, before.revision, 'gy-r68-enable-stale-0001'),
+  });
+  assert.equal(stale.status, 409, `[D3] 陈旧 If-Match 必须 409，实际 ${stale.status} ${stale.text.slice(0, 200)}`);
+  assert.equal(stale.body.error.code, 'REVISION_CONFLICT', `[D3] 期望 REVISION_CONFLICT，实际 ${stale.body.error.code}`);
+  assert.equal((await accountAudits()).length, 1, '[D3] CAS 失败不得写审计');
+  note('[D3] 陈旧 If-Match（恢复方向）⇒ 409 REVISION_CONFLICT，审计未增行');
+
+  // ── [D4] 停用后的两种拒绝：旧 token 401 / 新会话 403 ACCOUNT_INACTIVE ────
+  const oldToken = await call(`${API}/admin/auth/session`, { token: target.token });
+  assert.equal(oldToken.status, 401, `[D4] 停用后旧 token 必须 401（⛔ 不是 403），实际 ${oldToken.status} ${oldToken.text.slice(0, 200)}`);
+  assert.equal(
+    oldToken.body.error.code, 'SESSION_EXPIRED',
+    '[D4] 旧 token 的码实测是 SESSION_EXPIRED（鉴权先看会话是否已撤销）——派单写的是 ACCOUNT_INACTIVE，'
+      + `实测不符，以实测为准；现场 ${oldToken.body.error.code}`,
+  );
+  // 再签一条 epoch 正确的会话：绕过「会话已撤销」，单独把 `state <> 'active'` 那一层逼出来。
+  const freshToken = mintOpaqueToken();
+  await seedStore.createSession({
+    userId: target.adminId,
+    tokenHashHex: hashToken(freshToken),
+    authEpoch: Number(afterDisable.auth_epoch),
+    expiresAt: new Date(Date.now() + 3600 * 1000),
+    audience: 'admin',
+  });
+  const freshCall = await call(`${API}/admin/auth/session`, { token: freshToken });
+  assert.equal(freshCall.status, 403, `[D4] 停用账号上的新会话必须 403，实际 ${freshCall.status} ${freshCall.text.slice(0, 200)}`);
+  assert.equal(freshCall.body.error.code, 'ACCOUNT_INACTIVE', `[D4] 期望 ACCOUNT_INACTIVE，实际 ${freshCall.body.error.code}`);
+  note(`[D4] 停用后旧 token ⇒ 401 ${oldToken.body.error.code}（会话已撤销，鉴权先命中）；`
+    + `同账号上 epoch 正确的新会话 ⇒ 403 ${freshCall.body.error.code}（state 那一层独立生效）`);
+
+  // ── [D5] 恢复：回到 active，三列再推一格 ─────────────────────────────────
+  const restored = await call(`${API}/admin/administrators/${target.adminId}/enable`, {
+    method: 'POST',
+    ...write(actor.token, { reason: 'R68 集成臂：恢复交接' }, Number(afterDisable.revision), 'gy-r68-enable-0001'),
+  });
+  assert.equal(restored.status, 200, `[D5] 恢复必须 200，实际 ${restored.status} ${restored.text.slice(0, 300)}`);
+  assert.equal(restored.body.data.state, 'active', '[D5] 恢复后 state 必须是 active');
+  const afterEnable = await stateOf(target.adminId);
+  assert.equal(afterEnable.state, 'active', '[D5] 库里的 state 必须真的回到 active');
+  assert.equal(Number(afterEnable.revision), Number(afterDisable.revision) + 1, '[D5] 恢复也要 CAS 推进 revision');
+  assert.equal(Number(afterEnable.auth_epoch), Number(afterDisable.auth_epoch) + 1, '[D5] 恢复也要推进 auth_epoch（停用期间的漏网会话不得复活）');
+  const audits2 = await accountAudits();
+  assert.equal(audits2.length, 2, `[D5] 恢复后 admin_account.* 审计必须 2 行（现场 ${audits2.length}）`);
+  assert.equal(audits2[1].action, 'admin_account.enable', '[D5] 第二行 action 必须是 admin_account.enable');
+  assert.equal(audits2[1].before_value, null, '[D5] enable 的 before_value 也必须 NULL');
+  assert.equal(audits2[1].after_value, null, '[D5] enable 的 after_value 也必须 NULL');
+  note(`[D5] 恢复 ⇒ 200；state=active、revision=${afterDisable.revision}→${afterEnable.revision}、`
+    + `auth_epoch=${afterDisable.auth_epoch}→${afterEnable.auth_epoch}；审计第 2 行 action=${audits2[1].action}`);
+
+  // ── [D6] 自停用 ⇒ 409 SELF_DISABLE_DENIED（且一行都没改） ─────────────────
+  const actorRevision = Number((await stateOf(actor.adminId)).revision);
+  const selfDisable = await call(`${API}/admin/administrators/${actor.adminId}/disable`, {
+    method: 'POST',
+    ...write(actor.token, { reason: 'R68 集成臂：自停用' }, actorRevision, 'gy-r68-self-0001'),
+  });
+  assert.equal(selfDisable.status, 409, `[D6] 自停用必须 409，实际 ${selfDisable.status} ${selfDisable.text.slice(0, 200)}`);
+  assert.equal(selfDisable.body.error.code, 'SELF_DISABLE_DENIED', `[D6] 期望 SELF_DISABLE_DENIED，实际 ${selfDisable.body.error.code}`);
+  assert.equal(selfDisable.body.error.retryable, false, '[D6] 自停用是业务规则 ⇒ retryable 必须 false');
+  const actorAfter = await stateOf(actor.adminId);
+  assert.equal(actorAfter.state, 'active', '[D6] 自停用被拒后操作者必须仍 active');
+  assert.equal(Number(actorAfter.revision), actorRevision, '[D6] 自停用被拒不得推进 revision');
+  assert.equal(await liveSessions(actor.adminId), 1, '[D6] 自停用被拒不得撤销操作者会话');
+  assert.equal((await accountAudits()).length, 2, '[D6] 被拒的自停用不得写 accepted 审计行');
+  note(`[D6] 自停用 ⇒ 409 ${selfDisable.body.error.code}（retryable=false）；操作者 state/revision/会话均未变，审计未增行`);
+
+  // ── [D7] 读面实体的两条护栏读数（`entity=admin_account`） ────────────────
+  const listed = await call(`${API}/admin/audit-logs?entity=admin_account`, { token: actor.token });
+  assert.equal(listed.status, 200, `[D7] ?entity=admin_account 必须 200，实际 ${listed.status} ${listed.text.slice(0, 300)}`);
+  const listedActions = [...new Set(listed.body.data.items.map((item) => item.action))].sort();
+  assert.deepEqual(
+    listedActions,
+    ['admin_account.disable', 'admin_account.enable'],
+    `[D7] ?entity=admin_account 的 action 集合必须恰是两个新值（现场 ${listedActions.join(',')}）`,
+  );
+  const crossed = await call(`${API}/admin/audit-logs?entity=admin_account&action=admin_scope.grant`, { token: actor.token });
+  assert.equal(crossed.status, 400, `[D7] entity 与 action 跨护栏必须 400，实际 ${crossed.status} ${crossed.text.slice(0, 300)}`);
+  assert.equal(crossed.body.error.code, 'INVALID_REQUEST', `[D7] 期望 INVALID_REQUEST，实际 ${crossed.body.error.code}`);
+  assert.deepEqual(
+    crossed.body.error.details,
+    [{ field: 'action', code: 'enum' }],
+    `[D7] 详情必须是 [{field:'action',code:'enum'}]（现场 ${JSON.stringify(crossed.body.error.details)}）`,
+  );
+  note(`[D7] ?entity=admin_account ⇒ 200，action 集合恰 {${listedActions.join(' , ')}}；`
+    + '?entity=admin_account&action=admin_scope.grant ⇒ 400 INVALID_REQUEST details=[{field:action,code:enum}]');
+
+  // ── [D8] 「最后一名 scopes:write 持有者」守卫：**结构性不可达**（如实登记） ─
+  // 0048 的 G0009 与 0041 同一个码、同一套计数口径，但**产品路径上无法触发**：函数第一步就要求
+  // 操作者**当前有效**持 `scopes:write`（否则 G0010），所以「操作者不持 scope 而目标持」这个前置
+  // 在调用入口就被拒掉；操作者自己持 scope ⇒ 停用任何人之后有效持有者恒 ≥ 1。
+  // 这里用两条可执行读数把这个结论钉住（⛔ 不假装它是触发过的）：
+  //   ① 函数体里确实有那条守卫（`pg_get_functiondef` 里出现 G0009 与计数 SQL）；
+  //   ② 现实路径：操作者与目标都持 scope ⇒ 停用后有效持有者 = 1（不是 0），全程无 409。
+  const guardDef = (await one(
+    "SELECT pg_get_functiondef('public.disable_admin_account(uuid,uuid,uuid,integer,uuid,text)'::regprocedure) AS def",
+  )).def;
+  assert.match(String(guardDef), /G0009/, '[D8] 函数体里必须真的存在 G0009 守卫（纵深防御，即便产品路径不可达）');
+  assert.match(String(guardDef), /scopes:write/, '[D8] 守卫计数必须按 scopes:write 口径');
+  const holders = Number((await one(
+    `SELECT count(*)::int AS c
+       FROM public.admin_scopes AS s
+       JOIN public.admin_accounts AS a ON a.id = s.admin_id
+      WHERE s.scope = 'scopes:write' AND s.revoked_at IS NULL AND a.state = 'active'`,
+  )).c);
+  assert.equal(holders, 2, `[D8] 收尾时两名管理员都持 scopes:write ⇒ 有效持有者应为 2（现场 ${holders}）`);
+  note(`[D8] G0009 守卫在函数体内存在（纵深防御），但产品路径**结构性不可达**：能调用者自己就持 scopes:write`
+    + `，停用他人后有效持有者恒 ≥ 1（现场 holders=${holders}）——如实登记，⛔ 不宣称「已触发」`);
+
+  await runtimePool.end();
+}
+
 try {
   await migrationTriple();
   await provisionRoles();
@@ -933,6 +1197,9 @@ try {
   // PR-4b · 停用守卫（裁定 A-b「无处可挂」）：实体分离 / 零持有者 / 负控制。同样放在最后：
   // 它要先归一化 `scopes:write` 的持有者数量，跑在 [W] 前面会把写面用例的并发前置冲掉。
   await suspendGuardEvidence();
+  // R68 · 管理员账号停用/恢复（迁移 0048）：三列 / 会话 / 审计 / 幂等 / CAS / 自停用 / 实体护栏。
+  // 也放在最后：它同样清空身份面并重建自己的两名管理员。
+  await adminAccountDisableEvidence();
 } finally {
   for (const app of registeredApps) {
     await app.close().catch(() => {});
@@ -950,6 +1217,9 @@ if (runtimeUrl === null) {
     + ' + `#18` S2 PR-3 写面（授予落 granted_by/granted_at / 撤销落 revoked_at / 幂等 / 并发恰一方成功 / '
     + '最后授权者 409 LAST_SCOPE_MANAGER / 缺权限与自授 403）'
     + ' + PR-4b 停用守卫（实体分离：停用 public.users 不牵动 admin_scopes、管理员 state 不被动 / '
-    + '零持有者下停用零错误 / 负控制事务内造变异必红后 ROLLBACK 复原）全部通过；'
+    + '零持有者下停用零错误 / 负控制事务内造变异必红后 ROLLBACK 复原）'
+    + ' + R68 后台管理员停用/恢复（`0048` 三写 state/auth_epoch/revision + 会话撤销 + 审计 before/after/target_ref 全 NULL + '
+    + '幂等重放 / 陈旧 If-Match 409 / 自停用 409 SELF_DISABLE_DENIED / `?entity=admin_account` 200 与跨实体 action 400；'
+    + '`G0009` 守卫在函数体内存在但产品路径结构性不可达，如实登记不宣称已触发）全部通过；'
     + '90 号断言由 psql -f 单独执行并回读 verdict。');
 }

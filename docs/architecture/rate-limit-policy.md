@@ -186,7 +186,7 @@
   `hop`，`address` 不参与判断，语义与 `proxy-addr` 的 hop 形态一致。改这里时别忘了
   `tests/unit/rate-limit.test.mjs` 里「默认忽略 XFF / 打开后按 XFF 分桶」两条断言。
 - **额外的落盘面（开 `trustProxy` 的副作用）**：请求日志里的 `remoteAddress` 会从网关地址变成
-  **真实客户端 IP**（`services/api/src/app.ts:742`，原记 :630）。这是本片新引入的「终端用户 IP 落盘」，
+  **真实客户端 IP**（`services/api/src/app.ts:648`，原记 :630）。这是本片新引入的「终端用户 IP 落盘」，
   与限流生效与否是两件事——需要和日志脱敏/留存口径一起评估，而不是只看 429 是否按 IP 分开。
 ## 9. 验证
 

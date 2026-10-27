@@ -41,9 +41,9 @@ test('admin-contract: 契约常量与 openapi.json 一致（路径/scope/边界/
   assert.equal(LIMIT_DEFAULT, 20)
   assert.equal(CURSOR_MAX_LENGTH, 2048)
   assert.deepEqual([...ACCOUNT_STATES], ['active', 'suspended', 'deletion_pending'])
-  // ErrorCode enum 共 24 项（本文件按契约抄录，改动须同步契约）
-  assert.equal(ERROR_CODES.length, 24)
-  for (const code of ['INVALID_CURSOR', 'SESSION_REQUIRED', 'SESSION_EXPIRED', 'SCOPE_DENIED', 'RATE_LIMITED']) {
+  // ErrorCode enum 共 27 项（本文件按契约抄录，改动须同步契约）
+  assert.equal(ERROR_CODES.length, 27)
+  for (const code of ['INVALID_CURSOR', 'SESSION_REQUIRED', 'SESSION_EXPIRED', 'SCOPE_DENIED', 'RATE_LIMITED', 'SELF_SCOPE_GRANT_DENIED', 'LAST_SCOPE_MANAGER', 'SELF_DISABLE_DENIED']) {
     assert.ok(ERROR_CODES.includes(code), `ERROR_CODES 缺少 ${code}`)
   }
 })

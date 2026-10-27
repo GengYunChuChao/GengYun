@@ -22,7 +22,7 @@
  *      都是迁移头注释在引用「grep `INSERT INTO jobs` 为空」这句判据本身）。⛔ 不退化成一概不看注释：
  *      将来哪怕只在注释里多提一句也要红，逼人回来改口径。
  *   ② `provider_invocations` 无迁移、源码零引用，只有文档里有形状。
- *   ③ 正向迁移末项 = `0047`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
+ *   ③ 正向迁移末项 = `0048`，且 `rollback/` 下有同名回滚件（**本断言随末项推进同步**：新迁移合并进
  *      main 时改 `LAST_MIGRATION` / `LAST_MIGRATION_NUMBER`；`0037` 是历史缺号，本断言不钉连续性）。
  *   ④ `AUDIT_ACTIONS` 与契约 `?action=` 的 enum **双向相等**（同值、同序、无重复），**并且**钉住字面
  *      四值（4 个常量名 + 4 个取值 + 顺序）：双向等式只抓单边改动，双边同时扩值只有字面锚会红。
@@ -138,10 +138,10 @@ test('钉子②：provider_invocations 无迁移、源码零引用，只有数�
 // ---------------------------------------------------------------------------
 const FORWARD_MIGRATION = /^\d{4}_[a-z0-9_]+\.sql$/;
 /** 当前末项（**本断言随末项推进同步**：新迁移合并后改这两个常量，别让它们停在旧编号上）。 */
-const LAST_MIGRATION = '0047_admin_post_hide_audit.sql';
-const LAST_MIGRATION_NUMBER = 47;
+const LAST_MIGRATION = '0048_admin_account_disable.sql';
+const LAST_MIGRATION_NUMBER = 48;
 
-test('钉子③：正向迁移末项就是 0047，且 rollback/ 下有同名回滚件', () => {
+test('钉子③：正向迁移末项就是 0048，且 rollback/ 下有同名回滚件', () => {
   const forward = readdirSync(join(ROOT, MIGRATIONS_DIR))
     .filter((name) => FORWARD_MIGRATION.test(name))
     .sort();
@@ -193,7 +193,7 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
   // 只有 ① 时本用例 **5/5 全绿**（唯一变红的是 `admin-audit-action-jobs-cancel.test.mjs` 的
   // `AUDIT_ACTIONS.length === 4`）。也就是说：只留 ① 的本文件**不能**阻止未授权扩值，
   // 那时它只配叫"一致性检查"。②补回后，"扩值"必须**显式**改这里 —— 仍然允许扩值（GY-R59 扩到四值、
-  // GY-R64 扩到七值、同轮的读面闭集片扩到八值就是这么做的），但扩值变成一次有联动的动作，
+  // GY-R64 扩到七值、同轮的读面闭集片扩到八值、R68 扩到十值就是这么做的），但扩值变成一次有联动的动作，
   // 而不是悄悄从两个文件之间溜过去。
   assert.deepEqual(runtime, contractEnum,
     '运行时 AUDIT_ACTIONS ≠ 契约 `?action=` 的 enum：值或顺序不一致，读面会「能看见但不能筛」');
@@ -209,6 +209,8 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
       'AUDIT_ACTION_ADMIN_SCOPE_REVOKE',
       'AUDIT_ACTION_ADMIN_SCOPE_DENY',
       'AUDIT_ACTION_POST_HIDE',
+      'AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE',
+      'AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE',
     ],
     'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这些值是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '必须与 `admin_audit_events` 的写入点一一对应。第 4 项 `job.cancel` 由 GY-R59 追加：'
@@ -219,15 +221,21 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
       + '`record_admin_scope_denial`。第 8 项 `post.hide` 由 GY-R64 读面闭集片追加：'
       + '0047_admin_post_hide_audit.sql:185-198 已在事务内写这一行，闭集漏登记'
       + '导致 `?action=post.hide` 与 `?entity=post` 恒 400（写进去了却查不出来）。'
+      + '第 9-10 项 `admin_account.disable` / `admin_account.enable` 由 R68（迁移 0048）追加：'
+      + '0048_admin_account_disable.sql 在事务内写这两个 action，闭集漏登记同样会让'
+      + '`?action=admin_account.disable` 与 `?entity=admin_account` 恒 400。'
       + '多一个成员就必须同 PR 改契约 enum、库内写入点与文档');
   assert.deepEqual(runtime,
     ['account.suspend', 'account.restore', 'set_flag', 'job.cancel',
-      'admin_scope.grant', 'admin_scope.revoke', 'admin_scope.deny', 'post.hide'],
+      'admin_scope.grant', 'admin_scope.revoke', 'admin_scope.deny', 'post.hide',
+      'admin_account.disable', 'admin_account.enable'],
     'AUDIT_ACTIONS 的**取值**变了：这些字符串就是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '改名等于让历史审计行的 action 列与查询参数对不上。`job.cancel` 来自 0043 的库内写入点'
       + '（`record_admin_job_cancel_audit`，迁移 `0043_admin_job_cancel_audit.sql:174`）；'
       + '`admin_scope.*` 三项来自 0041（grant/revoke）与 0046（deny）；'
-      + '`post.hide` 来自 0047（`record_admin_post_hide_audit`，迁移 `0047_admin_post_hide_audit.sql:192`）');
+      + '`post.hide` 来自 0047（`record_admin_post_hide_audit`，迁移 `0047_admin_post_hide_audit.sql:192`）；'
+      + '`admin_account.disable` / `admin_account.enable` 来自 0048（`disable_admin_account` /'
+      + '`enable_admin_account`，迁移 `0048_admin_account_disable.sql`）');
   // 无重复：重复值会让 `?action=` 的合法性判断与顺序断言同时失真。
   assert.equal(new Set(runtime).size, runtime.length, `AUDIT_ACTIONS 有重复值：${runtime.join(', ')}`);
   // 历史锚点：`job.cancel` 必须仍在闭集内 —— 0043 的 `record_admin_job_cancel_audit` 在写它，

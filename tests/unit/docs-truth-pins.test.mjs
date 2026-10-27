@@ -4,7 +4,7 @@
 // 恒取 1」三处假陈述的产地，2026-10-27 由 R67-A1 改正（提交 1a8af906）。这三类假话都是「读起来像事实、
 // 但没人真去核」的产物，只靠人眼复读守不住——所以这里把它们翻成可执行的断言：
 //
-//   a. 错误码计数双向相等（代码 26 码 ⇄ 页面写 26），d 另钉 `/admin/posts` 家族条数；
+//   a. 错误码计数双向相等（代码 27 码 ⇄ 页面写 27），d 另钉 `/admin/posts` 家族条数；
 //   b. 「后台无页面消费」这一族断言不许复活；
 //   c. `target_ref.revision` 不许再写成恒 1，且页面必须给出真值锚点、该锚点必须真的还是真值取用。
 //
@@ -88,15 +88,15 @@ function readErrorCodeFacts() {
 }
 
 describe('钉 a：错误码计数双向相等', () => {
-  test('代码侧：ERROR_STATUS_MAP 摊平去重后恰好 26 码、12 个状态档', () => {
+  test('代码侧：ERROR_STATUS_MAP 摊平去重后恰好 27 码、12 个状态档', () => {
     const { statuses, codes, uniqueCodes } = readErrorCodeFacts();
 
     // 「摊平去重」才是真读数：ERROR_CODES = Object.values(ERROR_STATUS_MAP).flat()，
-    // 同一码若挂在两个状态档下会被 flat() 摊出来两次，但去重后仍是 26 个不同的码。
-    assert.equal(uniqueCodes.length, 26, `去重后的错误码数应为 26，实际 ${uniqueCodes.length}`);
+    // 同一码若挂在两个状态档下会被 flat() 摊出来两次，但去重后仍是 27 个不同的码。
+    assert.equal(uniqueCodes.length, 27, `去重后的错误码数应为 27，实际 ${uniqueCodes.length}`);
     assert.equal(codes.length, uniqueCodes.length, `ERROR_STATUS_MAP 里出现了重复登记的码：${codes.join(', ')}`);
     assert.equal(statuses.length, 12, `状态档数应为 12，实际 ${statuses.length}（${statuses.join('/')}）`);
-    assert.equal(statuses.length + uniqueCodes.length, 38);
+    assert.equal(statuses.length + uniqueCodes.length, 39, `状态档数 + 去重码数（12 + 27）`);
 
     // 与派生常量对拍：ERROR_CODES 就是摊平结果，不是另一份手写清单。
     const source = read(CONTRACT_PATH);
@@ -104,7 +104,7 @@ describe('钉 a：错误码计数双向相等', () => {
     assert.match(source, /const ERROR_CODE_STATUS: ReadonlyMap<string, number> = new Map\(/);
   });
 
-  test('页面侧：写的「26 码」与代码实数一致（改成任何别的数字都必须红）', () => {
+  test('页面侧：写的「27 码」与代码实数一致（改成任何别的数字都必须红）', () => {
     const { uniqueCodes } = readErrorCodeFacts();
     const expected = uniqueCodes.length;
     const lines = sourceLines(PAGE_PATH);

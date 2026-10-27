@@ -145,6 +145,8 @@ function adminRequests() {
   // 两条都带 `If-Match`（缺了会先 428，那样就测不到 503 了）。
   rows.push({ op: 'grantAdministratorScope', method: 'POST', url: `${API}/admin/administrators/${UNKNOWN_UUID}/scopes`, body: { scope: 'audit:read', reason: 'r' }, ifMatch: '"1"' });
   rows.push({ op: 'revokeAdministratorScope', method: 'DELETE', url: `${API}/admin/administrators/${UNKNOWN_UUID}/scopes/audit:read`, body: { reason: 'r' }, ifMatch: '"1"' });
+  rows.push({ op: 'disableAdministratorAccount', method: 'POST', url: `${API}/admin/administrators/${UNKNOWN_UUID}/disable`, body: { reason: 'r' }, ifMatch: '"1"' });
+  rows.push({ op: 'enableAdministratorAccount', method: 'POST', url: `${API}/admin/administrators/${UNKNOWN_UUID}/enable`, body: { reason: 'r' }, ifMatch: '"1"' });
   return rows;
 }
 
@@ -177,13 +179,13 @@ function inject(app, token, row, index) {
   });
 }
 
-test('real 默认装配反例：44 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
+test('real 默认装配反例：46 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
   const authStore = createMemoryAuthStore();
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore });
   try {
     const token = await seedAdmin(authStore);
     const rows = adminRequests();
-    assert.equal(rows.length, 44, '反例必须覆盖全部 44 个 operationId');
+    assert.equal(rows.length, 46, '反例必须覆盖全部 46 个 operationId');
 
     const succeeded = [];
     for (const [index, row] of rows.entries()) {
@@ -197,8 +199,8 @@ test('real 默认装配反例：44 条后台路由一律 fail-closed（503 PROVI
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);
 
-    // 契约面不缩水：44 条路由**仍然注册**（只是运行时一律拒绝）。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 44);
+    // 契约面不缩水：46 条路由**仍然注册**（只是运行时一律拒绝）。
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 46);
     for (const opId of ADMIN_HTTP_OPERATION_IDS) {
       const route = CONTRACT_ROUTES.get(opId);
       const url = `${route.path}`
@@ -214,7 +216,7 @@ test('real 默认装配反例：44 条后台路由一律 fail-closed（503 PROVI
     assert.equal(app.adminContentService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminOpsService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminContentService.operationIds.length, 25);
-    assert.equal(app.adminOpsService.operationIds.length, 16);
+    assert.equal(app.adminOpsService.operationIds.length, 18);
   } finally {
     await app.close();
   }

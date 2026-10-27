@@ -76,6 +76,7 @@ import type { AdminOpsService, AdminOpsServiceOptions } from './admin/ops/servic
 import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg.ts';
 // `#18` S2 PR-3：管理员 scope 的唯一写路径（迁移 0041 的两条 SECURITY DEFINER 函数）。
 import { createPostgresAdminScopeAuthority } from './admin/ops/scope-authority-pg.ts';
+import { createPostgresAdminAccountStateAuthority } from './admin/ops/admin-account-authority-pg.ts';
 // GY-I17（#17）系统事件：账号停用/恢复 → 消息域 `system` 消息（结构性端口，不 import 消息域）。
 import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts';
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
@@ -445,6 +446,17 @@ export interface BuildAppOptions {
      * 注入优先（测试用它钉住接线点与错误码映射，不依赖真实库）。
      */
     scopeAuthority?: AdminOpsServiceOptions['scopeAuthority'];
+    /**
+     * 管理员**账号状态**的写权威（R64）：不传时 `real` 且 `pool !== null` 按
+     * `createPostgresAdminAccountStateAuthority({ pool })` 自建（迁移 0048 的两条
+     * `SECURITY DEFINER` 函数：`disable_admin_account` / `enable_admin_account`）；
+     * `pool === null` ⇒ 两条路由继续 503。
+     * 注入优先（测试用它钉住接线点与错误码映射，不依赖真实库）。
+     *
+     * ⚠ 与上面的 `scopeAuthority` **不是同一件事**：那条写 `admin_scopes.revoked_at`（撤权），
+     * 这条写 `admin_accounts.state` + `auth_epoch` 并撤销会话（停用）。撤 scope ≠ 停用。
+     */
+    adminAccountAuthority?: AdminOpsServiceOptions['adminAccountAuthority'];
   };
   // GY-I06 媒体域注入项（**全部可选**）：不传时按 executionMode 自建 ——
   // `real` ⇒ **未接线 fail-closed**（整域 503；**含 ambient env 里 `OBJECT_STORAGE_*` 齐备**：
@@ -1508,6 +1520,15 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // ⛔ 不占幂等位）。**没有内存实现是刻意的**：`admin_scopes` 的唯一写路径就是那两条函数。
     const realScopeAuthority =
       adminInjection?.scopeAuthority ?? (pool === null ? null : createPostgresAdminScopeAuthority({ pool, log: app.log }));
+    // **R64 显式放行：管理员账号的停用/启用**。与上面的 scope 写面是**两条独立能力**：
+    // 这条要的是迁移 0048 两条函数的 EXECUTE（`20-login-roles.sql` 的
+    // `gy-r64-admin-account-disable` 区），写的是 `admin_accounts.state` + `auth_epoch`
+    // 并撤销 `admin_sessions`（`admin_scopes` 一格不动）。
+    // `pool === null` ⇒ 权威为 null ⇒ 两条路由 503（⛔ 不返回成功封套、⛔ 不落内存、
+    // ⛔ 不占幂等位、⛔ 不用"撤 scope"冒充停用）。
+    const realAdminAccountAuthority =
+      adminInjection?.adminAccountAuthority
+      ?? (pool === null ? null : createPostgresAdminAccountStateAuthority({ pool, log: app.log }));
     adminAuditLogService = createAdminAuditLogService({
       port: realAuditLogPort,
       now: clock,
@@ -1526,7 +1547,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       signingKey: adminSigningKey,
       executionMode: config.executionMode,
     });
-    if (realAccountAuthority === null && !flagsWired) {
+    if (realAccountAuthority === null && !flagsWired && realAdminAccountAuthority === null) {
       adminOpsService = failClosed.ops;
       // 内容域已放行时，仍 503 的面只剩作业/账号类 **＋ 审计读面**：按实测扣减（放行 24 条内容 CRUD；`listAuditEvents` 仍失闭、不计入放行 —— 见上方「裁决 A」）。
       const stillClosed = ADMIN_HTTP_OPERATION_IDS.length - (adminContentWired ? ADMIN_CONTENT_OPERATION_IDS.length - 1 : 0);
@@ -1544,6 +1565,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           administrators: administratorsDirectory,
           // `#18` S2 PR-3：管理员 scope 的写权威（只有拿到真实库池/显式注入才非 null）。
           scopeAuthority: realScopeAuthority,
+          // R64：管理员账号的停用/启用写权威（只有拿到真实库池/显式注入才非 null）。
+          adminAccountAuthority: realAdminAccountAuthority,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
           jobPort: adminJobPort,
@@ -1569,6 +1592,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           administratorsWired: administratorsDirectory !== null,
           // `#18` S2 PR-3：管理员 scope 写面（判据＝真实写权威对象存在，见上方定义处注释）。
           scopeWriteWired: realScopeAuthority !== null,
+          // R64：管理员账号状态写面（判据＝真实写权威对象存在，见上方定义处注释）。
+          adminAccountWriteWired: realAdminAccountAuthority !== null,
           // S3：审核面单独一道门，判据同下架（只有真实持久的社区端口才放行）。
           postReviewWired: communityPostPortForAdmin.persistent === true,
         },
@@ -1621,6 +1646,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         released.push('管理员权限写面（授予/撤销）');
         releasedRoutes += 2; // grantAdministratorScope / revokeAdministratorScope
       }
+      // R64：管理员**账号状态**写面（停用/启用；判据＝真实写权威；两条路由）。
+      // 与上面的权限写面是两条独立能力：那条改 `admin_scopes`，这条改 `admin_accounts.state`。
+      if (realAdminAccountAuthority !== null) {
+        released.push('管理员账号停用/启用');
+        releasedRoutes += 2; // disableAdministratorAccount / enableAdministratorAccount
+      }
       // **本片**：内容/资料域（迁移 0036 的三表落点）—— 放行 **24** 条内容 CRUD；审计读面 `listAuditEvents` **仍失闭**（裁决 A：台账未落库 ⇒ 放行只会返回内存空页），⛔ 不计入放行、日志不得宣称「内容域全放行」。
       if (adminContentWired) {
         released.push('内容/资料读写（24 条内容 CRUD；审计读面 listAuditEvents 仍失闭，因台账未落库）');
@@ -1635,6 +1666,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           auditLogReadWired: realAuditLogPort !== null,
           administratorsWired: administratorsDirectory !== null,
           postReviewWired,
+          adminAccountWriteWired: realAdminAccountAuthority !== null,
           contentWired: adminContentWired,
           postsReadWired: adminPostReadPort !== undefined,
         },
@@ -1659,6 +1691,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // `#18` S2 PR-3：stub/preset_demo 域的管理员 scope 写权威**只经显式注入**（与 `accountAuthority` 同口径）。
       // 不注入 ⇒ null ⇒ 两条写面如实 503（⛔ 没有内存实现，也没有"演示成功"分支）。
       scopeAuthority: adminInjection?.scopeAuthority,
+      // R64：stub/preset_demo 域的管理员**账号状态**写权威同样**只经显式注入**
+      // （与 `accountAuthority` / `scopeAuthority` 同口径）。不注入 ⇒ null ⇒ 两条路由如实 503
+      // （⛔ 没有内存实现，也没有"演示成功"分支：内存里停用一个管理员是伪造一次下线）。
+      adminAccountAuthority: adminInjection?.adminAccountAuthority,
       // `#18` S2 PR-2：stub/preset_demo 域的管理员目录/权限读面（判据同为持久认证存储；
       // stub 下 `authStore` 是内存实现 ⇒ 目录非 null，读的是本进程播种的管理员，如实）。
       administrators: administratorsDirectory,
