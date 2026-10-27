@@ -24,7 +24,7 @@ import {
   readErrorEnvelope,
   readPageEnvelope,
 } from './admin-contract.mjs';
-import { clampLimit, isRetriable, normalizeBaseUrl } from './admin-api.mjs';
+import { clampLimit, isRetriable, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
 import { AUDIT_RESULT_LABELS, AUDIT_RESULT_TONES, errorCodeText, validateAuditEventPage } from './audit-events.mjs';
 
 /** 契约路径（逐字，不拼 query）。 */
@@ -279,17 +279,17 @@ function failure(kind, extra = {}) {
 }
 
 /**
- * 能不能给用户「重试」：**服务端声明优先**，没有声明才回落到本地闭集。
+ * 能不能给用户「重试」的判据是 `admin-api.mjs` 的 `serverAllowsRetry`（R67-B04 收敛为唯一一处实现）：
+ * 服务端声明优先，没有声明才回落到本地闭集——本文件只 import，不再自带同体副本（副本是三处口径漂移的根因）。
  *
- * 后端的 503 全都显式 `retryable:false`（`services/api/src/admin/audit/service.ts:33`、
+ * 后端审计面的 503 全都显式 `retryable:false`（`services/api/src/admin/audit/service.ts:33`、
  * `:195`、`:243-244`、`:255-256`、`:275-276`），所以不能再用「5xx 就该重试」的本地猜法：
  * 那会让页面许诺一件服务端明说不会自动好的事。只有**根本没拿到响应**的失败
  * （网络错误）才由本地闭集决定。
+ *
+ * 口径逐条：显式 `retryable:false` ⇒ 不给重试；显式 `true` ⇒ 给；没写（`serverRetryable === null`）
+ * ⇒ 回落 `isRetriable(kind)`，保持既有页面行为不变。改判据请改 `admin-api.mjs` 那一处。
  */
-function serverAllowsRetry(result) {
-  if (typeof result?.serverRetryable === 'boolean') return result.serverRetryable;
-  return isRetriable(result?.kind) === true;
-}
 
 /** 把校验问题渲染成一句话（`$.items[0].result 不在闭集内`），避免报错里出现 `[object Object]`。 */
 function describeIssues(errors) {

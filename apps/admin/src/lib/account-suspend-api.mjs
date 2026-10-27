@@ -15,7 +15,7 @@
  * 不记录、不回传 access token；请求头只带 `authorization`／`accept`／`content-type`／
  * `if-match`／`idempotency-key`，不写日志、不落 localStorage。
  */
-import { normalizeBaseUrl } from './admin-api.mjs';
+import { declaredRetryableOf, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
 import { ACCOUNTS_PATH, isPlainObject, readErrorEnvelope, validateAccountView } from './admin-contract.mjs';
 
 /** 契约 `x-scope`：停用写面 scope（读面是 `accounts:read`，见 admin-contract.mjs）。 */
@@ -39,8 +39,24 @@ export function isRetriable(kind) {
   return kind === 'rate_limited' || kind === 'unavailable' || kind === 'network_error' || kind === 'in_progress';
 }
 
+/**
+ * 失败对象工厂（R67-B04：和账号目录读面同一条判据）。
+ *
+ * 服务端显式写了 `retryable` 就听服务端的（`false` 时本地闭集不再赋权）；没写
+ * （`serverRetryable === null`）才回落 `isRetriable(kind)`，保持既有页面行为不变。
+ */
 function failure(kind, extra = {}) {
-  return { ok: false, kind, retriable: isRetriable(kind), status: null, code: null, message: '', ...extra };
+  const serverRetryable = typeof extra.serverRetryable === 'boolean' ? extra.serverRetryable : null;
+  return {
+    ok: false,
+    kind,
+    retriable: serverAllowsRetry({ serverRetryable, retriable: isRetriable(kind) }),
+    serverRetryable,
+    status: null,
+    code: null,
+    message: '',
+    ...extra,
+  };
 }
 
 async function readJson(response) {
@@ -213,11 +229,14 @@ export async function suspendAccount({
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
   const code = envelope?.code ?? null;
   const retryAfter = Number(response.headers?.get?.('retry-after'));
+  // 服务端显式写了 `retryable` 就落成布尔，没写落成 null（⇒ 回落本地闭集）。
+  const serverRetryable = parsed.ok ? declaredRetryableOf(parsed.value) : null;
   return failure(classify(status, code), {
     status,
     code,
     inContract: envelope?.inContract ?? false,
     requestUrl,
+    serverRetryable,
     retryAfterSeconds: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
     message: envelope?.message || `请求失败（HTTP ${status}）`,
   });

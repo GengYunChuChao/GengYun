@@ -101,6 +101,20 @@ export function isRetriable(kind) {
   return kind === 'rate_limited' || kind === 'unavailable' || kind === 'network_error';
 }
 
+/**
+ * 从**原始错误体**读服务端是否显式声明了 `retryable`。
+ *
+ * 为什么不直接用 `readErrorEnvelope(...).retryable`：`admin-contract.mjs` 把它归一成
+ * `error.retryable === true`，于是「服务端写了 false」与「服务端根本没写」都落成同一个 `false`，
+ * 而下面必须把两者分开——显式 `false` 是「别重试」，没写才是「按本地口径」。
+ * 返回 `true`／`false`／`null`（`null` = 没写，含没有错误信封）。
+ */
+export function declaredRetryableOf(body) {
+  const error = body?.error;
+  if (error === null || typeof error !== 'object') return null;
+  return typeof error.retryable === 'boolean' ? error.retryable : null;
+}
+
 async function readJson(response) {
   try {
     return { ok: true, value: await response.json() };
@@ -109,8 +123,24 @@ async function readJson(response) {
   }
 }
 
+/**
+ * 失败对象工厂。
+ *
+ * `retriable` 不是本地闭集的复述：服务端显式写了 `retryable` 就听服务端的，只有服务端没写
+ * （`serverRetryable === null`）才回落 `isRetriable(kind)`（见 `serverAllowsRetry`）。
+ */
 function failure(kind, extra = {}) {
-  return { ok: false, kind, retriable: isRetriable(kind), status: null, code: null, message: '', ...extra };
+  const serverRetryable = typeof extra.serverRetryable === 'boolean' ? extra.serverRetryable : null;
+  return {
+    ok: false,
+    kind,
+    retriable: serverAllowsRetry({ serverRetryable, retriable: isRetriable(kind) }),
+    serverRetryable,
+    status: null,
+    code: null,
+    message: '',
+    ...extra,
+  };
 }
 
 /**
@@ -173,7 +203,9 @@ export async function fetchAccountsPage({ fetchImpl, baseUrl, token, cursor = nu
   const envelope = parsed.ok ? readErrorEnvelope(parsed.value) : null;
   const code = envelope?.code ?? null;
   const inContract = envelope?.inContract ?? false;
-  const base = { status, code, inContract, requestUrl };
+  // 服务端显式写了 `retryable` 就落成布尔，没写落成 null（⇒ 回落本地闭集）。
+  const serverRetryable = parsed.ok ? declaredRetryableOf(parsed.value) : null;
+  const base = { status, code, inContract, requestUrl, serverRetryable };
   const serverMessage = envelope?.message ?? '';
 
   if (status === 401 || code === 'SESSION_REQUIRED' || code === 'SESSION_EXPIRED') {
@@ -203,6 +235,7 @@ export async function fetchAccountsPage({ fetchImpl, baseUrl, token, cursor = nu
 export function describeFailure(result) {
   if (!result || result.ok !== false) return null;
   const suffix = result.status === null || result.status === undefined ? '' : `（HTTP ${result.status}）`;
+  const retry = serverAllowsRetry(result);
   switch (result.kind) {
     case 'signed_out':
       return { title: '未登录或会话已过期', detail: `请重新登录后台${suffix}`, retriable: false, action: 'sign_in' };
@@ -216,6 +249,14 @@ export function describeFailure(result) {
     case 'invalid_cursor':
       return { title: '游标无效', detail: '服务端拒绝该游标，需从第一页重新读取', retriable: false, action: 'restart' };
     case 'rate_limited':
+      if (!retry) {
+        return {
+          title: '请求过于频繁',
+          detail: `后端限流，且服务端声明不可自动重试（retryable=false），请人工确认后端状态后再手动重读${suffix}`,
+          retriable: false,
+          action: 'none',
+        };
+      }
       return {
         title: '请求过于频繁',
         detail: result.retryAfterSeconds === null ? '稍后重试' : `约 ${result.retryAfterSeconds} 秒后重试`,
@@ -223,8 +264,24 @@ export function describeFailure(result) {
         action: 'retry',
       };
     case 'unavailable':
+      if (!retry) {
+        return {
+          title: '服务暂不可用',
+          detail: `服务端声明不可自动重试（retryable=false）${suffix}；本页不伪造空行，请人工确认后端状态后再手动重读`,
+          retriable: false,
+          action: 'none',
+        };
+      }
       return { title: '服务暂不可用', detail: `稍后重试${suffix}`, retriable: true, action: 'retry' };
     case 'network_error':
+      if (!retry) {
+        return {
+          title: '网络请求失败',
+          detail: `服务端声明不可自动重试（retryable=false）${suffix}；请人工确认后端状态后再手动重读`,
+          retriable: false,
+          action: 'none',
+        };
+      }
       return { title: '网络请求失败', detail: result.message || '检查 API 基地址与开发代理后重试', retriable: true, action: 'retry' };
     case 'invalid_response':
       // 与 isRetriable 闭集一致：重试同一次请求不会改变响应形状，不给「必然失败」的重试入口。
@@ -236,11 +293,18 @@ export function describeFailure(result) {
 
 /**
  * 「这次失败服务端到底允不允许再试」的**唯一**判据：内容族（`admin-content-api.mjs`）等读面/写面的
- * `canRetry` 都由这里判，不许各页自己再抄一份。
+ * `canRetry` 都由这里判，不许各页自己再抄一份（`jobs-api.mjs` 只是再导出同一个函数对象）。
  *
- * 顺序是**服务端声明优先**：失败对象里带 `serverRetryable`（jobs 族的拼写）或 `declaredRetryable`
- * （内容族写面信封 `retryable` 的落点）时以它为准；两者都拿不到（没有响应可读）才回落到本地闭集
- * `isRetriable(kind)`。服务端显式 `retryable:false` 必须尊重 —— fail-closed 503 `PROVIDER_UNAVAILABLE`
+ * 三个输入拼写都认，按**服务端声明优先**的顺序取第一个拿得到的：
+ *   1. `serverRetryable`——jobs 族失败对象的拼写（`declaredRetryableOf(error)` 的落点，`null` = 服务端没写）；
+ *   2. `declaredRetryable`——内容族写面信封 `retryable` 的落点（`null` = 服务端没写）；
+ *   3. `retriable`——失败对象自己已经算好的布尔结论（本地闭集 `isRetriable(kind)` 的复述）。
+ * 三者都拿不到（没有可比对的声明／结论）才回落到本地闭集 `isRetriable(kind)`；非对象入参一律 `false`
+ * （保持既有防御）。默认也是「不允许」：既没有服务端声明、也没有本地 `kind` 结论时不承诺重试。
+ *
+ * 为什么要区分「服务端写了 false」与「服务端没写」：`readErrorEnvelope(...).retryable` 会把两者都归一成
+ * 同一个 `false`（见 `declaredRetryableOf`），而显式 `false` 是「别重试」、没写才是「按本地口径」。
+ * 服务端显式 `retryable:false` 必须尊重 —— fail-closed 503 `PROVIDER_UNAVAILABLE`
  * （`services/api/src/admin/fail-closed-services.ts`）就是这一档：重试不会成功，别给「再试一次」按钮。
  *
  * 409 `REQUEST_IN_PROGRESS` 之所以可以「等 N 秒再重试」，是因为写请求带 `Idempotency-Key`：
@@ -248,8 +312,8 @@ export function describeFailure(result) {
  */
 export function serverAllowsRetry(result) {
   if (result === null || typeof result !== 'object') return false;
-  const declared = result.serverRetryable ?? result.declaredRetryable;
-  if (declared === true) return true;
-  if (declared === false) return false;
+  if (typeof result.serverRetryable === 'boolean') return result.serverRetryable;
+  if (typeof result.declaredRetryable === 'boolean') return result.declaredRetryable;
+  if (typeof result.retriable === 'boolean') return result.retriable;
   return isRetriable(result.kind) === true;
 }

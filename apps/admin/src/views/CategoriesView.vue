@@ -33,7 +33,7 @@ import {
   categoryDetailView,
   categoryRow,
   changedVerdict,
-  describeFamily,
+  describeFamilyView,
   initialFamilyState,
   reduceFamily,
 } from '../lib/admin-content-view-model.mjs';
@@ -55,7 +55,7 @@ const formErrors = ref([]);
 let requestSeq = 0;
 
 const rows = computed(() => state.value.collection.items.map(categoryRow));
-const view = computed(() => describeFamily(state.value, { label: '分类' }));
+const view = computed(() => describeFamilyView(state.value, { label: '分类' }));
 const detail = computed(() => (state.value.detail === null ? null : categoryDetailView(state.value.detail)));
 const canRead = computed(() => props.scopes.includes(SOURCES_READ_SCOPE));
 const canWrite = computed(() => props.scopes.includes(SOURCES_WRITE_SCOPE));

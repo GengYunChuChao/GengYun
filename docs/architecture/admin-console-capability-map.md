@@ -72,7 +72,7 @@
 | withdrawKnowledge | withdrawKnowledge（apps/admin/src/lib/admin-content-api.mjs:537） | POST /admin/knowledge/{id}/withdraw | sources:write |
 | listAdminCategories | listCategories（apps/admin/src/lib/admin-content-api.mjs:555） | GET /admin/categories | sources:read |
 | editCategory | editCategory（apps/admin/src/lib/admin-content-api.mjs:559） | PATCH /admin/categories/{id} | sources:write |
-| listAdminUsers | fetchAccountsPage（apps/admin/src/lib/admin-api.mjs:123） | GET /admin/accounts | accounts:read |
+| listAdminUsers | fetchAccountsPage（apps/admin/src/lib/admin-api.mjs:153） | GET /admin/accounts | accounts:read |
 | suspendUser | suspendAccount（apps/admin/src/lib/account-suspend-api.mjs:138） | POST /admin/accounts/{id}/suspend | accounts:suspend |
 | listFlags | fetchFlagsPage（apps/admin/src/lib/flags-api.mjs:224） | GET /admin/feature-flags | flags:read |
 | setFlag | putFlag（apps/admin/src/lib/flags-api.mjs:288） | PUT /admin/feature-flags/{key} | flags:write |
