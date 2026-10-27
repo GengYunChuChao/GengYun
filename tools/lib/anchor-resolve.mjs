@@ -20,7 +20,8 @@
  * 由调用方 exit 1；⛔ 不许静默降级成「不可核」。
  *
  * 消费者：`tools/verify-contract-status.mjs`（含 `--reanchor` / `--write-doc`）、
- * `tools/contract-status-core.mjs`（对照表渲染）。后续接文档行号闸门时从这里 import，不许再抄一份。
+ * `tools/contract-status-core.mjs`（对照表渲染）、`tools/verify-doc-anchors.mjs`（文档锚点闸门的
+ * 「符号行」判据 `symbolLineVerdict`）。后续接文档行号闸门时从这里 import，不许再抄一份。
  */
 
 /** 符号形态的定位器键：证据项上的 `locator: {symbol, file?}`（与行号形态的 `lines` 二选一）。 */
@@ -428,4 +429,210 @@ export function associateSymbol(blocks, { from, to }) {
   const block = innermost[0];
   if (to > block.end) return { status: 'checkable', block, reason: `引用区间超出所在声明块（第 ${block.start}-${block.end} 行）` };
   return { status: 'hit', block, reason: '' };
+}
+
+// —— 符号行判据（文档锚点的落点必须可识别为「符号行」） ———————————————————————
+/**
+ * 「实质内容行」回答不了的一个假绿通道：注释行也算实质内容，于是上方插入几十行之后，
+ * `path/x.mjs:123` 从**真声明行**漂到 `fetchAccountsPage` 自己的 JSDoc 中间（甚至漂到块注释的
+ * 收尾行 ` *&#47;`），三判据照样全绿——PR 里带着一条指错地方的「符号证据」。
+ *
+ * 判据（`symbolLineVerdict`，全仓唯一一份，闸门与测试都从这里 import）：
+ *   1) 引用行（或整段区间，两端都算）**不在注释里** ⇒ `code`，通过。
+ *   2) 在注释里，但这段注释**与声明无关**（文件头、分节注释：块后第一条非空行不是声明行）
+ *      ⇒ `comment-detached`，通过——引用注释文案是既有合法证据形态（证据页大量引用注释说明不变量）。
+ *   3) 在注释里，且这段注释**紧贴声明行**（所谓「文档注释」），但文档行**逐字引用了这段注释里的
+ *      文字** ⇒ `comment-cited`，通过——文档真的在引原文，锚点指原文才对。
+ *   4) 在注释里、紧贴声明行、文档行又没有逐字引用 ⇒ `comment-attached`，**判红**：这是符号引脚，
+ *      必须落在声明行上（事故形状：` *&#47;` 收尾行、JSDoc 中部都落进这一档）。
+ *
+ * 为什么把 2) 3) 留成合法：`docs/architecture` 里 130 条注释内引用绝大多数是「引用代码里的旧文案／
+ * 判据说明」，无条件判红等于否掉仓里既有的证据形态，还会逼作者把注释证据改写成不相干的代码行
+ * （=篡改证据语义）。判据只掐「本该指符号、却指到该符号的文档注释里」这一条。
+ *
+ * 注释扫描只认 JS/TS 家族语法（`//`、`/* … *&#47;`）：本判据的作用域就是源码后缀（ts/tsx/mts/cts/
+ * js/jsx/mjs/cjs）；md/json/sql 不套符号口径（JSON 没有注释，SQL／MD 的「声明」是另一套语义）。
+ */
+const CITE_MIN_LENGTH = 4;
+/** 纯代码片段（标识符、路径、`a.b:c`）：引号里出现它**不算**「引注释原文」，那只是顺手标的符号名。 */
+const CODE_LIKE_LITERAL = /^[A-Za-z0-9_$.:/'"[\](){}<>=,+\-*|&!?\\]+$/;
+
+/**
+ * 注释扫描：返回 `{ spans, codeLines }`。
+ *   spans     —— `{start, end, text}[]`，1-based 行、同一段跨行块注释合成一条；
+ *   codeLines —— 有「注释之外的实义字符」的行号集合（1-based）。**只由它决定一行算不算代码行**：
+ *                声明行带行尾注释（`const ONLINE_HOURS = 7 * 24; // 在线 7×24 小时`）必须算代码行，
+ *                否则真声明行会被当成「落在注释里」。
+ * 字符串与模板字面量里的 `//`、`/*` 不算注释——否则 `'/api/*'` 会把后面半页代码吞成注释，
+ * 把真声明行误判成「在注释里」。已知边界：正则字面量里的块注释标记不识别（`/\/\*…/` 极少见）。
+ */
+export function scanComments(text) {
+  const spans = [];
+  const codeLines = new Set();
+  const length = text.length;
+  let line = 1;
+  let startLine = 0;
+  let startOffset = 0;
+  let inLineComment = false;
+  let inBlockComment = false;
+  const mark = char => {
+    if (char !== undefined && !/[\s\u3000]/.test(char)) codeLines.add(line);
+  };
+  for (let index = 0; index < length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (inLineComment) {
+      if (char === '\n') {
+        spans.push({ start: startLine, end: line, text: text.slice(startOffset, index) });
+        inLineComment = false;
+        line += 1;
+      }
+      continue;
+    }
+    if (inBlockComment) {
+      if (char === '*' && next === '/') {
+        spans.push({ start: startLine, end: line, text: text.slice(startOffset, index + 2) });
+        inBlockComment = false;
+        index += 1;
+      } else if (char === '\n') {
+        line += 1;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      const quote = char;
+      mark(char);
+      index += 1;
+      while (index < length) {
+        const inner = text[index];
+        if (inner === '\\') {
+          mark(text[index + 1]);
+          if (text[index + 1] === '\n') line += 1;
+          index += 2;
+          continue;
+        }
+        if (inner === '\n') {
+          line += 1;
+          if (quote !== '`') break;
+          index += 1;
+          continue;
+        }
+        if (inner === quote) {
+          mark(inner);
+          break;
+        }
+        mark(inner);
+        index += 1;
+      }
+      continue;
+    }
+    if (char === '/' && next === '/') {
+      inLineComment = true;
+      startLine = line;
+      startOffset = index;
+      index += 1;
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      inBlockComment = true;
+      startLine = line;
+      startOffset = index;
+      index += 1;
+      continue;
+    }
+    if (char === '\n') line += 1;
+    else mark(char);
+  }
+  if (inLineComment || inBlockComment) {
+    spans.push({ start: startLine, end: line, text: text.slice(startOffset) });
+  }
+  return { spans, codeLines };
+}
+
+/** 只要注释跨度时用这个（`scanComments` 的薄封装）。 */
+export function commentSpans(text) {
+  return scanComments(text).spans;
+}
+
+/** `[from, to]` 完全落在同一段注释里时返回该段，否则 `null`。 */
+export function commentSpanAt(spans, from, to) {
+  for (const span of spans) {
+    if (span.start <= from && to <= span.end) return span;
+  }
+  return null;
+}
+
+/**
+ * 注释段之后的第一条非空行若是声明行 ⇒ 这段注释是「文档注释」，返回 `{line, symbol, text}`；
+ * 否则 `null`（文件头、分节注释、注释掉的代码块都走这一支：它们不是任何声明的说明书）。
+ */
+export function declarationAfterComment(lines, span) {
+  for (let line = span.end + 1; line <= lines.length; line += 1) {
+    const raw = lines[line - 1];
+    if (raw.trim() === '') continue;
+    if (!isDeclarationLine(raw)) return null;
+    return { line, symbol: declarationName(raw), text: raw.trim() };
+  }
+  return null;
+}
+
+/** 文档行里的引号文字：`「」`、`『』`、`“”`、`""`、`` `` ``（逐条去首尾空白）。 */
+export function quotedLiterals(docLine) {
+  const literals = [];
+  const patterns = [/「([^「」]+)」/g, /『([^『』]+)』/g, /“([^“”]+)”/g, /"([^"]+)"/g, /`([^`]+)`/g];
+  for (const pattern of patterns) {
+    pattern.lastIndex = 0;
+    let match = pattern.exec(String(docLine));
+    while (match !== null) {
+      literals.push(match[1].trim());
+      match = pattern.exec(String(docLine));
+    }
+  }
+  return literals.filter(literal => literal !== '');
+}
+
+/** 引文比对用的归一：去掉所有空白（含全角空格），让「换行/缩进不同」不算改写措辞。 */
+export function normalizeCitedText(value) {
+  return String(value).replace(/[\s\u3000]+/g, '');
+}
+
+/**
+ * 文档行是否**逐字引用**了这段注释里的文字：任一引号内的文字是注释原文的子串 ⇒ 返回该引文。
+ * 两个条件都必要：① 归一后不少于 4 字符、且不只是一串代码（标识符／路径／`a.b:c` 这类不算引原文——
+ * 表格里写个 `` `cancelJob` `` 顺手加了反引号，不等于在引注释）；② 该文字**确实在这段注释块里**
+ * （子串匹配、去掉空白）。于是豁免是「文档真的在引原文」，而不是加一对引号就能绕过。
+ */
+export function citedByDocument(docLineText, span) {
+  const haystack = normalizeCitedText(span.text);
+  for (const literal of quotedLiterals(docLineText)) {
+    const needle = normalizeCitedText(literal);
+    if (needle.length < CITE_MIN_LENGTH) continue;
+    if (CODE_LIKE_LITERAL.test(needle)) continue;
+    if (haystack.includes(needle)) return literal;
+  }
+  return null;
+}
+
+/**
+ * 符号行判定：见本节开头的四档。返回
+ * `{ status, span, declaration, citation }`——`status` ∈
+ * `code` / `comment-detached` / `comment-cited` / `comment-attached`；
+ * `comment-attached` 是唯一判红的一档，`declaration.line` 就是该指点到的声明行（报错里要打出来）。
+ *
+ * 「在注释里」的判定是**逐行**的：`[from, to]` 每一行都必须没有注释之外的实义字符（`scan.codeLines`）。
+ * 只判「区间落在某个注释跨度里」不够——声明行自己的行尾注释也会形成一个同行的注释跨度，
+ * 于是 `const ONLINE_HOURS = 7 * 24; // 在线 7×24 小时` 这种**真声明行**会被误判成注释行。
+ */
+export function symbolLineVerdict({ text, docLineText = '', from, to, scan = null, lines = null }) {
+  const scanned = scan ?? scanComments(text);
+  const span = commentSpanAt(scanned.spans, from, to);
+  if (span === null) return { status: 'code', span: null, declaration: null, citation: null };
+  for (let line = from; line <= to; line += 1) {
+    if (scanned.codeLines.has(line)) return { status: 'code', span: null, declaration: null, citation: null };
+  }
+  const declaration = declarationAfterComment(lines ?? String(text).split('\n'), span);
+  if (declaration === null) return { status: 'comment-detached', span, declaration: null, citation: null };
+  const citation = citedByDocument(docLineText, span);
+  if (citation !== null) return { status: 'comment-cited', span, declaration, citation };
+  return { status: 'comment-attached', span, declaration, citation: null };
 }
