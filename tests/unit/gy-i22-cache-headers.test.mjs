@@ -20,6 +20,9 @@
  *      **不带**任何 `Cache-Control`——这是「没有一律关掉公共缓存」的负控制，必须一直是 `undefined`。
  *   4. 出口健壮性（合成路由，仅测试内注册）：抛 `Error` 的 500、直接 `reply.status(409).send()`
  *      的拒绝都补到 `no-store`；路由自己写的值**不被覆盖**；合成的 200 公共路由不被加头。
+ *      其中 500 兜底（GY-R67-A03 起）**信封必须是契约合法形状**：`error.code === 'INTERNAL_ERROR'`
+ *      （500 由契约错误码反推，见 `ERROR_STATUS_MAP` 的 500 档）、`retryable` 布尔、`details` 数组、
+ *      `meta` 三字段齐备，且**没有**旧的顶层 `contract_gap` 披露字段。
  *
  * 声明：身份、正文、媒体字节全为合成夹具；对象存储 `createSubstituteObjectStore()`、审核
  * `makeSyntheticPassPort('tms')`（四个网络 seam 持有即抛错），**零真实外呼**。夹具与
@@ -29,6 +32,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildApp } from '../../services/api/src/app.ts';
+import { CONTRACT_VERSION } from '../../services/api/src/contract.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
@@ -464,12 +468,23 @@ test('统一出口：抛错的 500 与路由直接 reply.status(4xx).send() 的�
     return reply.status(403).send({ error: { code: 'SYNTHETIC_DENIED' } });
   });
 
-  // (a) 抛错 → `setErrorHandler` 的 else 分支（500 + contract_gap），仍必须有 no-store。
+  // (a) 抛错 → `setErrorHandler` 的 500 兜底。**信封必须是契约合法形状**：500 不是「没有错误码的
+  // 缺口」，而是由契约错误码 `INTERNAL_ERROR` 反推出来的状态（`ERROR_STATUS_MAP` 的 500 档，
+  // 见 services/api/src/contract.ts），所以这里逐字段钉契约 `ErrorEnvelope`：`error.code` 在、
+  // `error.retryable` 是布尔、`error.details` 是数组、`meta` 三字段齐备，且**不再有** `contract_gap`
+  // 这个顶层披露字段（`ErrorEnvelope` 是 `additionalProperties: false`）。仍必须有 no-store。
   const thrown = await call(world.app, 'GET', '/__i22ch/throw', null);
   assert.equal(thrown.status, 500, `抛错必须 500，实际 ${thrown.status}：${thrown.text}`);
-  assert.equal(thrown.body?.contract_gap, 'NO_CONTRACT_CODE_FOR_500', `500 兜底必须显式标记契约缺口：${thrown.text}`);
+  assert.equal(thrown.body?.error?.code, 'INTERNAL_ERROR', `500 信封必须带契约错误码 INTERNAL_ERROR：${thrown.text}`);
+  assert.equal(typeof thrown.body?.error?.retryable, 'boolean', `error.retryable 必须是布尔：${thrown.text}`);
+  assert.equal(Array.isArray(thrown.body?.error?.details), true, `error.details 必须是数组：${thrown.text}`);
+  assert.equal(typeof thrown.body?.error?.message, 'string', `error.message 必须是字符串：${thrown.text}`);
+  assert.equal(thrown.body?.meta?.contract_version, CONTRACT_VERSION, `meta.contract_version 必须是契约版本：${thrown.text}`);
+  assert.equal(typeof thrown.body?.meta?.request_id, 'string', `meta.request_id 必须是字符串：${thrown.text}`);
+  assert.equal(typeof thrown.body?.meta?.execution_mode, 'string', `meta.execution_mode 必须是字符串：${thrown.text}`);
+  assert.equal('contract_gap' in (thrown.body ?? {}), false, `500 信封不得再带顶层 contract_gap：${thrown.text}`);
   assertNoStore(thrown, '500 兜底（合成抛错路由）');
-  note(`500 兜底（合成抛错）→ ${thrown.status}，Cache-Control=${thrown.cache}`);
+  note(`500 兜底（合成抛错）→ ${thrown.status} ${String(thrown.body?.error?.code)}，Cache-Control=${thrown.cache}`);
 
   // (b) 路由自己直接 `reply.status(409).send()`：`setErrorHandler` 看不到这条路径，
   // 全靠 `onSend` 出口兜住——这是「统一出口」而非「只补 errorHandler」的直接证据。

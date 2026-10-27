@@ -325,7 +325,7 @@
 | 191 | grantCommunityMediaAccess | services/api/src/media/service.ts:1056-1174 | 「grantCommunityMediaAccess」 | 6 / 2 |  |
 | 192 | readCommunityMediaContent | services/api/src/routes/media.ts:337-362 | 「service.readCommunityMediaContent(」 | 1 / 1 |  |
 | 193 | readCommunityMediaContent | services/api/src/media/service.ts:1176-1222 | 「readCommunityMediaContent」 | 6 / 2 |  |
-| 194 | dimension error_codes | services/api/src/contract.ts:14-58 | 「ERROR_STATUS_MAP」 | 3 / 3 |  |
+| 194 | dimension error_codes | services/api/src/contract.ts:14-62 | 「ERROR_STATUS_MAP」 | 3 / 3 |  |
 | 195 | dimension error_codes | services/api/src/errors.ts:42-76 | 「ApiError」 | 3 / 3 |  |
 | 196 | dimension pagination | services/api/src/knowledge/pagination.ts:30-72 | 「paginateKnowledge」 | 1 / 1 | 同区间共用 2 条 |
 | 197 | dimension pagination | services/api/src/profile/service.ts:104-113 | 「async list(input: Identity, kind: 'crops' \| 'regions', options: {cursor?: string; limit: number; parent_code?: string}) {」 | 1 / 1 |  |

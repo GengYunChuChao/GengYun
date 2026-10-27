@@ -14,7 +14,7 @@
  * `DELETE` **不**回 `ETag`：成功响应是 `Ack`（无 revision 字段），资源已删除，回一个
  * "已删除资源的 ETag"是编造；口径与已合并的 `DELETE /recognitions/{id}` 一致。
  *
- * ## `X-GY-Cascade`（**非契约披露标记**，与前例 `contract_gap` 同一做法）
+ * ## `X-GY-Cascade`（**非契约披露标记**，与曾经的 500 `contract_gap` 同一做法：契约无处承载时才临时挂，并明确标注非契约；那个字段已随 GY-R67-A03 把 500 写进契约而删除）
  * 契约对该删除的描述是「同时启动关联识别/OCR私有结果/媒体和外发删除」。R33 片（授权：
  * `.pg17/ruling-r33-i16-history-cascade-partial-20261023.md`）把**识别与 OCR 两类**关联对象的
  * 删除接上（`services/api/src/history/cascade-wiring.ts`）；**媒体与外发删除仍跨线未接**（#6/#19）。
