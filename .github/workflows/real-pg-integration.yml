@@ -46,10 +46,27 @@ on:
 permissions:
   contents: read
 jobs:
+  # ↓↓↓ 本 job 的运行纪律：每个真库臂 step 各自封顶 5 分钟，job 级只做算术兜底 ↓↓↓
+  # `timeout-minutes: 170`：**封顶之和 160 + 前置余量 10 = job 级 170**。
+  #   · 160 = 31 条真库臂 step 各 5 分钟
+  #         + 装 PG 17 服务端二进制 5（`apt-get update`/`install` 卡死时同样只死这一步）；
+  #   · 10  = 3 条无封顶前置（checkout / setup-node / `npm ci`）的显式常量余量。
+  # 这两个数是**防卡死的上界，不是预计耗时**。CI 上的真读数：本 job 整跑 **104 秒**、41 个 step 全部走完
+  # （`main` 上的成功 run 40547840506，2026-10-27T17:09:09Z）；同一次 run 的 `real-pg-admin-read-17.11`
+  # 56 秒 / 12 个 step、`real-pg-admin-write-17.11` 49 秒 / 16 个 step ⇒ 正常路径离封顶有一到两个数量级。
+  # （这几个 step 数取 GitHub 日志行口径，比本文件里的 35 / 6 / 10 多 6 行：`Set up job`、
+  #   `Initialize containers`、两条 `Post Run`、`Stop containers`、`Complete job`。）
+  # 故**只要**三条无封顶前置（checkout / setup-node / `npm ci`）合计不超过 10 分钟的余量，
+  # job 级超时就**不可能**先于任何一步自己的 5 分钟触发，红的位置始终指向「哪一步卡死」：
+  # ⛔ 不靠 job 级兜底——那会把「这一步卡死」混成「job 超时」。
+  # 旧的 job 级 15 分钟只在**条件**下不够：若 31 条臂各自都逼近自己 5 分钟的封顶，15 分钟必然先到。
+  # 这不是已发生的事实（`main` 一直绿、上引 run 只用 104 秒），纪律要的是「卡死时红在哪一步」而非压低下界。
+  # 增删臂 step 或改任何一条封顶，都必须同改这里的算式与 `timeout-minutes`（判据见
+  # `tests/unit/ci-real-pg-step-timeouts.test.mjs`：从本文件现场解析重算，算式与实测对不上即红）。
   real-pg-17-11:
     name: real-pg-17.11
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 170
     services:
       postgres:
         image: postgres:17.11
@@ -75,6 +92,7 @@ jobs:
       # 会话链（#313）：库名硬钉 `gengyun_conversations_test`，脚本自己断言 public 下无表。
       # `&&` 串联保证「建库失败」不会滑过去变成「脚本 77 也算跑过」——两步都必须成功。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_conversations_test' && node tests/integration/conversations-pg.mjs
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -85,6 +103,7 @@ jobs:
       # 社区域（#296）：库名硬钉 `gengyun_community_test`，同样要求空库；顺序在会话链之后，
       # 两者不共享任何库/角色状态。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_community_test' && node tests/integration/community-pg.mjs
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -97,6 +116,7 @@ jobs:
       # 它取的是 `GET /posts` 三类筛选的真库读数 + 「筛选未下推 SQL」的语句读数 + `feed_idx` 的 EXPLAIN 读数；
       # 缺 `COMMUNITY_FILTER_PG_TEST_URL` 时脚本打印 SKIP 并 exit 77 ⇒ 本 step 必红（⛔ 不传任何放宽开关）。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_community_filter_test' && node tests/integration/community-filter-pg.mjs
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -116,6 +136,7 @@ jobs:
       # 也不复用别人的运行时角色 ⇒ 对前后脚本零耦合。
       # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：`qa-citations-pg：8 条读数全部通过`。
       - name: 问答引用可溯源（#12 / 迁移子集 7 段 / 引用反算对账 / 零命中必拒答）
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           log=/tmp/qa-citations-pg.log
@@ -147,6 +168,7 @@ jobs:
       # 该脚本的连接串走**argv**（`node <脚本> <owner url>`）而不是 env——URL 写在命令行末尾，
       # 上面那几个 PG* 环境变量只给 `psql` 建库用（脚本自己从不读它们）。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_messages_test' && node tests/integration/messages-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_messages_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -165,6 +187,7 @@ jobs:
       # 它没有 77 跳过分支（缺 argv 就退回默认端口、连不上即非 0）⇒ 缺库必红，⛔ 不加任何放宽开关。
       # 本地取证（PG 17.11 + 空库 + 库 owner）：exit=0，`TOTAL PASS = 8`，末行 `[√] ALL PASS`。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_message_events_test' && node tests/integration/message-events-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_message_events_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -174,6 +197,7 @@ jobs:
       # 收藏／历史域（#16，R27-S4）：库名硬钉 `gengyun_favorites_history_test`，同样要求空库；
       # 连接串走 env（`FAVORITES_HISTORY_PG_TEST_URL`），未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_favorites_history_test' && node tests/integration/favorites-history-pg.mjs
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -187,6 +211,7 @@ jobs:
       # 不留角色。连接串走 **argv[2]**，上面那组 PG* 只给 `psql` 建库用（脚本从不读它们）。
       # 本地取证（PG 17.11 + scram 认证 + `gengyun_ci_owner`）：exit=0，PASS 13 组。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_deletion_test' && node tests/integration/account-deletion-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_deletion_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -201,6 +226,7 @@ jobs:
       # forbidden（运行时行为 P2 才接电，这条臂不装配 HTTP）。
       # 本地取证（PG 17.11 + scram 认证 + `gengyun_ci_owner`）：PASS 13 组。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_third_party_deletion_test' && node tests/integration/third-party-deletion-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_third_party_deletion_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -221,6 +247,7 @@ jobs:
       # 让「exit 0 但什么都没证明」也不可能变绿。⛔ 不传任何放宽开关。
       # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：`[X]` 读数 15 条，末行 `[ALL PASS]`。
       - name: 作业台域（#9 / 全链迁移 0001→0027 / 作业与错误可见 / 变更留痕 A→B / 最小权限）
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           log=/tmp/admin-jobs-pg.log
@@ -253,6 +280,7 @@ jobs:
       # **留在集群里**的 `admin-accounts-read` 之前 —— 本机负控制：角色在时它 exit=1 且打印「拒绝接管既有角色」。
       # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，`[H]` 等锁 4007ms ⇒ 504 PROVIDER_TIMEOUT。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_flags_test' && node tests/integration/admin-flags-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_flags_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -267,6 +295,7 @@ jobs:
       # 集群里没有该角色（各自收尾清空），而本步是三条 I18 后台真库臂里唯一会把角色留下来的，故排在三者最后。
       # 本地取证（PG 17.11 + scram + `gengyun_ci_owner`）：exit=0，迁移三连/最小权限/HTTP 全过。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_admin_accounts_read_test' && node tests/integration/admin-accounts-read-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_admin_accounts_read_test postgres://gengyun_api_runtime:synthetic-ci-runtime-only@127.0.0.1:5432/gengyun_admin_accounts_read_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -290,6 +319,7 @@ jobs:
       # 故排在 `admin-accounts-read` 之后不受影响，⛔ 也不追加到文件末尾。
       # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：读数 23 组，末行 `[ALL PASS]`。
       - name: 后台社区帖域（#18 / 列表·单条读面 / 下架处置 / 审计留痕 / 失败隔离）
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           log=/tmp/admin-community-posts-pg.log
@@ -328,6 +358,7 @@ jobs:
       # 位置：紧接 `admin-community-posts-pg`（同一 `POST /admin/posts/{id}/hide` 处置面的专证臂）、
       # 仍在 `ocr-jobs` 之前；与 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `REQUIRED_STEP_ORDER` 第 3e 条对应。
       - name: 后台社区帖域 · 下架审计（#18 / post.hide 审计函数专证 / fail-closed / 幂等）
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           log=/tmp/admin-post-hide-audit-pg.log
@@ -361,6 +392,7 @@ jobs:
       # 连接串走 **env**（`OCR_PG_TEST_URL`）：未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红（77 不是通过）。
       # 本地取证（PG 17.11 + 空库）：exit=0，`共 27 条 PASS`（含关连接重开逐字节仍在 + 子进程重启臂）。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_ocr_jobs_test' && node tests/integration/ocr-jobs-pg.mjs
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -379,6 +411,7 @@ jobs:
       # 位置：紧跟标签 OCR 域，同域「作业面 + 台账面」并排读；两者各自建库、互不共享角色 ⇒ 零耦合。
       # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：`OK 7 项真库读数全部通过`。
       - name: OCR 校正台账域（#10 / jsonb 台账 append-only / 原文零改写 / HTTP 五字段）
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           log=/tmp/ocr-corrections-pg.log
@@ -413,6 +446,7 @@ jobs:
       # 未设时脚本打印 SKIP 并以 77 退出 ⇒ 缺库必红（77 不是通过，也不加任何吞红开关）。
       # 本地取证（PG 17.11 + 空库 + `gengyun_ci_owner` 属主）：exit=0，`共 30 条 PASS，耗时 1777ms`。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_recognitions_test' && node tests/integration/recognitions-pg.mjs
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -430,6 +464,7 @@ jobs:
       # 前面留下的同名角色它用 `ALTER ROLE` 复用，不会再 42710。
       # 本地取证（PG 17.11 + scram + `gengyun_ci_owner` 超级用户）：exit=0，四臂 [M]/[P]/[A-D]/[E-F] 齐全，末行 `ALL PASS`。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_suspend_test' && node tests/integration/account-suspend-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_suspend_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -443,6 +478,7 @@ jobs:
       # 位置排最后：它自建专用空库、自己 apply 迁移，不建组角色、也不复用别人的运行时角色 ⇒ 对前后无耦合。
       # 本地取证（PG 17.11 + scram + 空库）：exit=0，`共 30 条 PASS`（含关连接重开逐字节仍在 + 子进程重启臂）。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_speech_test' && node tests/integration/speech-pg.mjs
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -461,6 +497,7 @@ jobs:
       # ——它不需要 `initdb`/`pg_ctl`，混进自起集群那批会让「装包失败」与「台账失败」的读秒纠缠在一起。
       # 本地取证（PG 17.11 + 空库 + 全链迁移）：exit=0，`[√] ALL PASS`（[F][M][W][S][V][U][X][C][R] 九臂）。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_moderation_test' && node tests/integration/moderation-ledger-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_moderation_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -476,6 +513,7 @@ jobs:
       # 连接串走 argv[2]，与 suspend step 同形；省略时脚本回落到本机 `:55683`，且**只允许回环地址**。
       # 本地取证（PG 17.11 + 空库 + 属主等价 `gengyun_ci_owner`）：exit=0，`17 条读数，全部断言通过`。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_media_test' && node tests/integration/media-persistence-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_media_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -498,6 +536,7 @@ jobs:
       # 连接串走 argv[2]，与上一步同形；省略时回落本机 `:55712`，且**只允许回环地址**（`media-concurrency-pg.mjs:64`）。
       # 本地取证（PG 17.11 + 空库 + 属主等价 `gengyun_ci_owner`）：见 W12 证据页 §13.3。
       - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_media_concurrency_test' && node tests/integration/media-concurrency-pg.mjs postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_media_concurrency_test
+        timeout-minutes: 5
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
@@ -519,6 +558,7 @@ jobs:
       # 大版本的最新小版本，写死小版本会在 17.12 发布当天变成「依赖无法满足」——那是另一种假门禁（步骤永远红）。
       # 作为交换，装完**断言大版本真的是 17**：装错了大版本 ⇒ 本步立刻红，而不是等脚本在 initdb 处神秘失败。
       - name: 安装 PG 17 服务端二进制（backup-purge / backup-copies / messages-purge / online-purge / retention-purge 需要 initdb/pg_ctl）
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           sudo install -d /usr/share/postgresql-common/pgdg
@@ -535,6 +575,7 @@ jobs:
             exit 1
           fi
       - name: 备份副本域（迁移 0023 / 受理同事务 / 30 天清除）
+        timeout-minutes: 5
         run: node tests/integration/backup-purge-pg.mjs
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
@@ -551,6 +592,7 @@ jobs:
       # 口令与角色零依赖（自己不建组角色、不碰 service 集群），故对前后脚本都无前提。
       # 本地取证（本机 PG 17.11 二进制 + 独立临时数据目录）：exit=0，`PASS 1..14` + 末行 `ALL PASS：14 条真库断言`。
       - name: 备份副本到期清除驱动（迁移 0023 / 到期枚举 / 逐组清除 / 失败重排 / CLI 幂等）
+        timeout-minutes: 5
         run: node tests/integration/backup-copies-purge-pg.mjs
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
@@ -572,6 +614,7 @@ jobs:
       # 本地取证（本机 PG 17.11 二进制 + 独立临时数据目录 `E:\GengYunCommander\.pg17\tmp\w13-w11`）：
       # exit=0，`PASS 1..8` + 末行 `ALL PASS：8 条真库断言`，端口 55766，无残留下游。
       - name: 消息域注销行数（#17 / 迁移 0019 messages + 0008 idempotency_keys）
+        timeout-minutes: 5
         run: node tests/integration/messages-purge-pg.mjs
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
@@ -596,6 +639,7 @@ jobs:
       # `pg_ctl: could not create restricted token: error code 87`（Windows 受限令牌被沙箱拒绝）⇒
       # 这条臂的读数只能由 CI 给出。⛔ 不把「没跑过」写成「本地 exit=0」；本 step 的首次真库读数就是本 PR 的 CI。
       - name: 在线数据 7 日到期清除驱动（#19 / 到期闭区间 / 跨进程游标 / 失败不阻塞 / 回执 backupState）
+        timeout-minutes: 5
         run: node tests/integration/online-purge-pg.mjs
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
@@ -618,6 +662,7 @@ jobs:
       # 本地取证（本机 PG 17.11 + 独立数据根 `E:\GengYunCommander\.pg17\tmp`）：`GY_PG_PORT=55435` 时
       # exit=0、`PASS 1..8`，跑完 `gy-r34-retention-*` 目录零残留。
       - name: 保留策略到期清理（#19 保留策略侧 / 两张有出处的表 / 分批 500 / 幂等重跑 / 匿名化 revision+1）
+        timeout-minutes: 5
         run: node tests/integration/retention-purge-pg.mjs
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
@@ -643,6 +688,7 @@ jobs:
       # 排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
       # 其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
       - name: 用户链路端到端（登录→手选→搜索→详情→收藏/取消→退出 / 119 条断言）
+        timeout-minutes: 5
         run: node tests/integration/user-chain-e2e.mjs
         env:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
@@ -726,6 +772,7 @@ jobs:
       # 非 0 且非 77 ⇒ 原样以该码退出（真跑挂了就是红）。⛔ 不加任何吞红开关／`|| true`／`set +e`。
       # 本地取证（PG 17.11 + 空库 + `gengyun_ci_owner` 属主）：exit=0，内存臂 + 真库臂双 PASS。
       - name: 识别端到端链路（上传→结果→历史→删除→读空）
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_recognition_chain_test'
@@ -760,8 +807,13 @@ jobs:
   #    另开 job 是加法而非改写（`REQUIRED_STEP_ORDER` 仍是一条全局序列，新脚本按文件顺序接在末尾）。
   #
   # 本 job 的前置与上面那个 job 完全同构（`ubuntu-24.04` + `postgres:17.11` service + 装 `postgresql-17`），
-  # 差异只在 step 数：这里只跑 2 条臂。`timeout-minutes: 25` 是「各 step 封顶之和 + 余量」——
-  # 3 条前置 + 装包 5 + 两条臂各 5 = 22，故 job 级超时**不可能**先于某一步自己的 5 分钟触发；
+  # 差异只在 step 数：这里只跑 2 条臂。`timeout-minutes: 25` 是算术兜底，不是运行纪律：
+  # **封顶之和 15 + 前置余量 10 = job 级 25**。
+  #   · 15 = 装包 5 + 两条臂各 5；
+  #   · 10 = 3 条无封顶前置（checkout / setup-node / `npm ci`）的显式常量余量。
+  # 故 job 级超时**不可能**先于某一步自己的 5 分钟触发。
+  # （原注释写「3 条前置 + 装包 5 + 两条臂各 5 = 22」与文件实测不符：装包与两条臂之和是 15，
+  #   22 里既把「3 条前置」当成了分钟数、又没有留下任何显式余量；GY-R67-D03 按实测改成 15 + 10 = 25。）
   # ⛔ 不靠 job 级超时兜底（那会把「某一步卡死」混成「job 超时」）。
   real-pg-admin-read-17-11:
     name: real-pg-admin-read-17.11
@@ -891,11 +943,18 @@ jobs:
   # moderation-full-chain / recognitions-speech-purge / retention-clock-drill 各自区间；同一 job 内串行执行，
   # 前一条跑完已 `pg_ctl stop` 并删目录，故后一条不会撞上它的端口或数据目录。
   #
-  # `timeout-minutes: 35`：3 条前置 + 装包 5 + 五条臂各 5 = 33 ⇒ job 级超时必晚于任何单个 step 的封顶。
+  # `timeout-minutes: 45`：**封顶之和 35 + 前置余量 10 = job 级 45**。
+  #   · 35 = 装包 5 + **六条**臂各 5；
+  #   · 10 = 3 条无封顶前置（checkout / setup-node / `npm ci`）的显式常量余量。
+  # 故 job 级超时必晚于任何单个 step 自己的封顶。
+  # （原注释写「3 条前置 + 装包 5 + 五条臂各 5 = 33 ⇒ 35」两处都与文件实测不符：本 job 实有**六条**
+  #   自起集群臂（内容域 / 授权写入 / 审核全链 / 识别与语音清理 / 保留期时钟 / 媒体行清除），
+  #   且 Σ封顶 35 正好等于 job 级 35 ⇒ 余量 0，即「某步封顶还没到、job 就先被杀」。
+  #   GY-R67-D03 按实测改成 35 + 10 = 45。）
   real-pg-admin-write-17-11:
     name: real-pg-admin-write-17.11
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:17.11
