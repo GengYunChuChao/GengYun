@@ -747,3 +747,329 @@ jobs:
           PGDATABASE: gengyun_ci_bootstrap
           RECOGNITION_CHAIN_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognition_chain_test
           PGCLIENTENCODING: UTF8
+  # ── R67-C：后台**读面**（owner URL 臂 + 只读的自起集群臂）────────────────────────────────
+  #
+  # 为什么新开一个 job 而不是往上面 `real-pg-17-11` 里继续加 step：
+  # 1) 读面与写入/清理面是两类故障。上面那个 job 已经在跑 35 个 step（含建库、造数、清理、回滚），
+  #    再往里塞只会让「读面 SQL 谓词写错」和「写入/清理链挂掉」挤在同一条红里，看日志得翻 700 行。
+  #    拆成读/写两个 job 后，红在哪一侧就直接说明「只读路径坏了」还是「写/删/授权坏了」。
+  # 2) 读 job 里的臂**不写业务数据**（只 apply 迁移后按谓词读，或读授权形状），写 job 里的臂**会建表、
+  #    造数、删数据、回滚**。两类臂放同一 job 时，写 job 的残留（行锁、角色、跨库残留）会污染读面的读数，
+  #    分 job 后各自一个干净 runner，互不串味。
+  # 3) 不改上面那个 job 的任何一行：它已经被 R65/R66 的证据页与 `FROZEN_MANAGED_SCRIPTS` 钉住，
+  #    另开 job 是加法而非改写（`REQUIRED_STEP_ORDER` 仍是一条全局序列，新脚本按文件顺序接在末尾）。
+  #
+  # 本 job 的前置与上面那个 job 完全同构（`ubuntu-24.04` + `postgres:17.11` service + 装 `postgresql-17`），
+  # 差异只在 step 数：这里只跑 2 条臂。`timeout-minutes: 25` 是「各 step 封顶之和 + 余量」——
+  # 3 条前置 + 装包 5 + 两条臂各 5 = 22，故 job 级超时**不可能**先于某一步自己的 5 分钟触发；
+  # ⛔ 不靠 job 级超时兜底（那会把「某一步卡死」混成「job 超时」）。
+  real-pg-admin-read-17-11:
+    name: real-pg-admin-read-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_DB: gengyun_ci_bootstrap
+          POSTGRES_USER: gengyun_ci_owner
+          POSTGRES_PASSWORD: synthetic-ci-owner-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # 装包 step：本 job 里 `admin-scopes-read-pg` 要自己 `initdb`/`pg_ctl`，所以同样要 17 服务端二进制。
+      # ⚠️ 与上面那个 job 的同名 step 不是「装第二遍」：不同 job = 不同 runner（各自的文件系统），
+      # 一个 job 里装出来的 `/usr/lib/postgresql/17/bin` 到不了另一个 job。同一个 runner 里仍只装一次。
+      - name: 安装 PG 17 服务端二进制（本 job 的 admin-scopes-read-pg 需要 initdb/pg_ctl）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+          initdb_version=$(/usr/lib/postgresql/17/bin/initdb --version)
+          echo "$initdb_version"
+          /usr/lib/postgresql/17/bin/pg_ctl --version
+          server_major=$(printf '%s\n' "$initdb_version" | sed -e 's/.*(PostgreSQL) \([0-9][0-9]*\)\..*/\1/')
+          if [ "$server_major" != "17" ]; then
+            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 自起集群臂会拿到错的大版本，真库臂等于没验证。"
+            exit 1
+          fi
+      # 后台帖子读面（R67-C）：`tests/integration/admin-posts-read-pg.mjs` 是 **owner URL** 类臂
+      # （argv 优先、env `ADMIN_POSTS_READ_PG_TEST_URL` 兜底；未设 ⇒ 打印 SKIP 并 exit 77）。
+      # 它**不自起集群**、也不建库：库名硬钉在脚本里（`const DB = 'gengyun_admin_posts_read_test'`
+      # 与 URL pathname 断言 `=== '/gengyun_admin_posts_read_test'` 两处），所以**建库必须在 step 里显式做**，
+      # 且库名与脚本内一致（守卫 `databaseGuardProblems` 交叉核对：step 建的库名 = env/argv URL 的库名 =
+      # 脚本常量）。脚本自己 apply 五段迁移（0001/0022/0030/0032/0045）、先断言 `public` 下 0 张表，
+      # 故本步的库必须**新建成空库**，不能复用前面任何 step 的库。
+      # 77 升级为硬失败（`::error::` + `exit 1`）：本 workflow 自己传了这个 env，77 只可能意味着
+      # 「env 传丢了」或「脚本的跳过判据被改过」⇒ 不许把「跳过」读成通过。⛔ 无 `continue-on-error`／`|| true`。
+      # 读数行：脚本末段打印 `READINGS=<n>`（本次真库运行取得的读数条数；SKIP 不计）⇒ 0 条也算红（空转不是通过）。
+      - name: 后台帖子读面（R67-C：admin-posts-read-pg / 空库 + 五段迁移 + 读面读数）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/admin-posts-read-pg.log
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_admin_posts_read_test'
+          rc=0
+          node tests/integration/admin-posts-read-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::后台帖子读面的真库臂被跳过（exit 77）：ADMIN_POSTS_READ_PG_TEST_URL 没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::后台帖子读面失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(sed -n 's/^READINGS=\([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
+          echo "读数：${readings:-0} 条（脚本自报 READINGS=）"
+          if [ -z "${readings:-}" ] || [ "$readings" -lt 1 ]; then
+            echo "::error::后台帖子读面没有报出任何读数（READINGS= 缺失或为 0）⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          ADMIN_POSTS_READ_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_admin_posts_read_test
+          PGCLIENTENCODING: UTF8
+      # 授权范围读面（R67-C）：**自起集群**类臂 —— 自己 `initdb` 一个一次性集群（端口在 55468–55499 里
+      # 探活取空闲者、只监听 127.0.0.1、跑完 `pg_ctl stop` + 删数据目录），**不**连 service 里那个库、
+      # step 里也**不** `CREATE DATABASE`（守卫按此判据会红）。缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77 ⇒
+      # 装包或路径没弄好必红。数据根键是 `GY_R37_PG_ROOT`（源码唯一取值点），⛔ 给错键 = root 只是装饰性 env。
+      # 它是**只读**臂：只 apply 迁移 + 建角色/授权读形状、按谓词读断言，不改业务数据 ⇒ 属于本 job。
+      - name: 授权范围读面（R67-C：admin-scopes-read-pg / 自起集群 / 只读）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/admin-scopes-read-pg.log
+          rc=0
+          node tests/integration/admin-scopes-read-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::授权范围读面的真库臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::授权范围读面失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行 / ✓ 行）"
+          if [ "$readings" -lt 1 ]; then
+            echo "::error::授权范围读面没有报出任何读数 ⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_R37_PG_ROOT: ${{ runner.temp }}/gy-r37-pg
+          PGCLIENTENCODING: UTF8
+  # ── R67-C：后台**写入/清理面**（自起集群，会建表/造数/删数据/回滚）────────────────────────
+  #
+  # 与上面 `real-pg-admin-read-17.11` 的分工：这里的五条臂都会**写库**（迁移 up/down、造数、删行、
+  # 授权变更、回滚），所以不能和只读臂挤在同一个 job 里 —— 一条写臂失败留下的残留（行锁、未回滚的角色、
+  # 半个数据目录）会让同 job 的只读读数变成「读到了别人的半成品」，红的位置也就不再指向真正的坏点。
+  #
+  # 五条臂全部**自起集群**（各自 `initdb` + `pg_ctl` + 自建库名 + 跑完自删），故本 job 只为它们装一次
+  # 17 服务端二进制，step 里**一律不** `CREATE DATABASE`（守卫按「自起集群 step 出现 CREATE DATABASE」判红）。
+  # 端口区间互不重叠（脚本内各自探活）：admin-content 55600–55699、admin-scopes-authority 55600–55639、
+  # moderation-full-chain / recognitions-speech-purge / retention-clock-drill 各自区间；同一 job 内串行执行，
+  # 前一条跑完已 `pg_ctl stop` 并删目录，故后一条不会撞上它的端口或数据目录。
+  #
+  # `timeout-minutes: 35`：3 条前置 + 装包 5 + 五条臂各 5 = 33 ⇒ job 级超时必晚于任何单个 step 的封顶。
+  real-pg-admin-write-17-11:
+    name: real-pg-admin-write-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_DB: gengyun_ci_bootstrap
+          POSTGRES_USER: gengyun_ci_owner
+          POSTGRES_PASSWORD: synthetic-ci-owner-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: 安装 PG 17 服务端二进制（本 job 五条自起集群臂都需要 initdb/pg_ctl）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+          initdb_version=$(/usr/lib/postgresql/17/bin/initdb --version)
+          echo "$initdb_version"
+          /usr/lib/postgresql/17/bin/pg_ctl --version
+          server_major=$(printf '%s\n' "$initdb_version" | sed -e 's/.*(PostgreSQL) \([0-9][0-9]*\)\..*/\1/')
+          if [ "$server_major" != "17" ]; then
+            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 自起集群臂会拿到错的大版本，真库臂等于没验证。"
+            exit 1
+          fi
+      # 内容域持久化（R67-C）：建三张内容表、造草稿/版本/台账、发布→撤回、负控制（42501）、回滚三连。
+      # 数据根键 `GY_I18_PG_ROOT`（源码唯一取值点）；库名在脚本内（`gengyun_admin_content_pg_test`），
+      # ⛔ step 里不许出现 `CREATE DATABASE`。读数：`PASS n: label`（脚本自证 11 组）。
+      - name: 内容域持久化（R67-C：admin-content-pg / 自起集群 / 建表 + 造数 + 回滚）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/admin-content-pg.log
+          rc=0
+          node tests/integration/admin-content-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::内容域持久化的真库臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::内容域持久化失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行 / ✓ 行）"
+          if [ "$readings" -lt 1 ]; then
+            echo "::error::内容域持久化没有报出任何读数 ⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I18_PG_ROOT: ${{ runner.temp }}/gy-i18-pg
+          PGCLIENTENCODING: UTF8
+      # 授权写入面（R67-C）：它**直接 `spawn postgres`**（不走 `pg_ctl start`）、在集群里自建库名 `gengyun`、
+      # 并在臂内跑 `deploy/postgres-cvm/sql/20-login-roles.sql` 的授权区（`:93-99` 硬前置）—— 所以它只认
+      # `GY_PG_BIN` + `GY_R37_PG_ROOT`，不占 deploy-sql 那条链的门禁。它**会写**（授/撤/委派/停用 + 审计行），
+      # 故归本 job。读数：`  ✓ ` 行（脚本结论行同格式）。
+      - name: 授权写入面（R67-C：admin-scopes-authority-pg / 自起集群 / 授撤 + 委派 + 审计）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/admin-scopes-authority-pg.log
+          rc=0
+          node tests/integration/admin-scopes-authority-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::授权写入面的真库臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::授权写入面失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行 / ✓ 行）"
+          if [ "$readings" -lt 1 ]; then
+            echo "::error::授权写入面没有报出任何读数 ⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_R37_PG_ROOT: ${{ runner.temp }}/gy-r37-pg
+          PGCLIENTENCODING: UTF8
+      # 审核全链（R67-C）：建帖 → 编辑 → 审核 → 下架四态，会写库。数据根键 `GY_I14C_PG_ROOT`。
+      - name: 审核全链（R67-C：moderation-full-chain-pg / 自起集群 / 建帖→编辑→审核→下架）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/moderation-full-chain-pg.log
+          rc=0
+          node tests/integration/moderation-full-chain-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::审核全链的真库臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::审核全链失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行 / ✓ 行）"
+          if [ "$readings" -lt 1 ]; then
+            echo "::error::审核全链没有报出任何读数 ⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I14C_PG_ROOT: ${{ runner.temp }}/gy-i14c-pg
+          PGCLIENTENCODING: UTF8
+      # 识别/语音清理（R67-C）：两本域内台账 + 五张正文/任务表的清理函数、负控制读数、幂等重放，
+      # 全是真删 → 归本 job。数据根键 `GY_R34_PG_ROOT`（与上面那个 job 的 admin-audit-logs 同键是允许的：
+      # 各自在 root 下建自己的子目录）。
+      - name: 识别与语音域清理（R67-C：recognitions-speech-purge-pg / 自起集群 / 真删 + 幂等）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/recognitions-speech-purge-pg.log
+          rc=0
+          node tests/integration/recognitions-speech-purge-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::识别与语音域清理的真库臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::识别与语音域清理失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行 / ✓ 行）"
+          if [ "$readings" -lt 1 ]; then
+            echo "::error::识别与语音域清理没有报出任何读数 ⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_R34_PG_ROOT: ${{ runner.temp }}/gy-r34-pg
+          PGCLIENTENCODING: UTF8
+      # 7/30 日时钟演练（R67-C）：在线 +7 日 / 备份 +30 日的「加速时钟」三态，删的是真行 → 归本 job。
+      # 数据根键 `GY_I19_PG_ROOT`。⛔ 不传「本机取 0」的放宽开关（见守卫的 FORBIDDEN_ESCAPE_HATCHES 两条）。
+      - name: 保留期时钟演练（R67-C：retention-clock-drill-pg / 自起集群 / 7/30 日三态）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/retention-clock-drill-pg.log
+          rc=0
+          node tests/integration/retention-clock-drill-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::保留期时钟演练的真库臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::保留期时钟演练失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行 / ✓ 行）"
+          if [ "$readings" -lt 1 ]; then
+            echo "::error::保留期时钟演练没有报出任何读数 ⇒ 空转不算通过。"
+            exit 1
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I19_PG_ROOT: ${{ runner.temp }}/gy-i19-pg
+          PGCLIENTENCODING: UTF8

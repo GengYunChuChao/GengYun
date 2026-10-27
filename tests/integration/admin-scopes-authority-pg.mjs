@@ -226,6 +226,11 @@ async function startCluster() {
       '-D', dir,
       '-p', String(candidate),
       '-h', '127.0.0.1',
+      // POSIX 专有坑（R67-C 把它接进 CI 后第一次真跑才暴露）：Debian/Ubuntu 的 PGDG 包把
+      // `unix_socket_directories` 的编译默认钉在 `/var/run/postgresql`，GitHub runner 的普通用户
+      // 写不了 ⇒ 连 `.s.PGSQL.<port>.lock` 都建不出来，postgres 起来即 FATAL。Windows 不用
+      // unix socket，故本臂此前只在 Windows 跑过、从未暴露。显式把 socket 目录指到本臂数据目录。
+      ...(process.platform === 'win32' ? [] : ['-k', dir]),
       '-c', 'max_connections=32',
       '-c', 'timezone=UTC',
     ], {

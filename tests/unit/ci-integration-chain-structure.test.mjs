@@ -128,10 +128,10 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '目标停用被拒、版本冲突、撤销后复活（重置 granted_at）、最后授权者守卫（含停用账号不计入）、'
       + '审计撞主键整笔回滚（零写入）、闭集外取值由库层 CHECK 拒绝（23514）。'
       + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
-      + '本片**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
-      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／'
-      + '`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，'
-      + '须由指挥裁定），故在此如实登记为未接线；本地已用本机 PG 17.11 二进制跑通该臂。'
+      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-write-17.11`'
+      + '（独立 step、`GY_PG_BIN` + `GY_R37_PG_ROOT`、exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs`'
+      + ' 的五张清单里同位置登记；但它**仍留在本清单**：判据 4 的 `wired` 只认 `package.json` 的'
+      + ' `test:integration:http` 链，真库 job 不算接线（与 `admin-post-hide-audit-pg.mjs` 同一条口径）。'
       + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
       + '接进真库 job 不等于进 `test:integration:http`。',
   },
@@ -148,10 +148,10 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '列表 / 单条只返 scope 字符串数组（⛔ 无 granted_by/granted_at）、列表 id 来自 `admin_accounts`'
       + '（⛔ 不是 `users.id`）、缺 `scopes:read` 一律 403、不存在 404、无令牌 401。'
       + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip）。'
-      + '本片**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
-      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／'
-      + '`FROZEN_MANAGED_SCRIPTS`／`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，'
-      + '须由指挥裁定），故在此如实登记为未接线。'
+      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-read-17.11`'
+      + '（独立 step、`GY_PG_BIN` + `GY_R37_PG_ROOT`、exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs`'
+      + ' 的五张清单里同位置登记；但它**仍留在本清单**：判据 4 的 `wired` 只认 `package.json` 的'
+      + ' `test:integration:http` 链，真库 job 不算接线（与 `admin-post-hide-audit-pg.mjs` 同一条口径）。'
       + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
       + '接进真库 job 不等于进 `test:integration:http`。',
   },
@@ -212,10 +212,10 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '`DELETE`/`TRUNCATE`/改未授权列一律 42501（列级而非表级的负控制），最后在独立库里跑 rollback 脚本确认三表删净。'
       + '缺 `GY_PG_BIN` 时脚本打印 3 行 SKIP 并 **exit 77**（未取得，⛔ 不是通过；也不认 --allow-skip），'
       + '`pg` 依赖在闸门之后才 `await import`，避免把「没二进制」报成「依赖缺失 ⇒ 失败」。'
-      + '本片（R34）**未**把它接进 `.github/workflows/real-pg-integration.yml`：`.github/workflows/**` 不在'
-      + '本片授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／'
-      + '`REQUIRED_STEP_ORDER` 三张清单与证据页（那是独立的一次门禁变更，须由指挥裁定），故在此如实登记为未接线；'
-      + '本地已用本机 PG 17.11 二进制跑通该臂（10 组 ALL PASS，EXITCODE=0）。'
+      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-write-17.11`'
+      + '（独立 step、`GY_PG_BIN` + `GY_I18_PG_ROOT`、exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs`'
+      + ' 的五张清单里同位置登记；但它**仍留在本清单**：判据 4 的 `wired` 只认 `package.json` 的'
+      + ' `test:integration:http` 链，真库 job 不算接线。本机 PG 17.11 复跑该臂 11 组 ALL PASS、EXITCODE=0。'
       + '它同样**不进**无 PG 的回环链：回环链里既没有真 PG、也没有 `initdb`/`pg_ctl`，'
       + '接进真库 job 不等于进 `test:integration:http`。',
   },
@@ -432,8 +432,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + ' 全链，真库证明三态：编辑后旧结论不套新版本（rev1/rev2 各绑定各自正文摘要 + 审核域两条版本级任务）、'
       + '超时/结构错误不发布（RULE_TIMEOUT / RULE_ENGINE_ERROR ⇒ 422 且内容行零落库）、下架驱动缓存失效'
       + '（审核域读缓存 1→0 + `moderation_withdrawals` 落库）。缺 `GY_PG_BIN` 时打印 SKIP 并 exit 77'
-      + '（⛔ 不是通过，不认 --allow-skip）；本片未把它接进任何 workflow（`.github/workflows/**` 不在本片授权范围），'
-      + '故不进无 PG 的回环链，如实登记为未接线。',
+      + '（⛔ 不是通过，不认 --allow-skip）；R67-C 已把它接进 `real-pg-admin-write-17.11` 新 job 的独立 step'
+      + '（`GY_PG_BIN` + `GY_I14C_PG_ROOT`），但仍留在本清单：判据 4 只认 `test:integration:http` 链。',
   },
   {
     path: 'tests/integration/ocr-corrections-pg.mjs',
@@ -482,8 +482,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（不提供 `--allow-skip`），'
       + '故不进无 PG 的回环链。⚠️ 它的数据根目录键是 `GY_R34_PG_ROOT`（脚本 `:92`），⛔ 不是同族脚本的'
       + ' `GY_W11_PG_ROOT`——守卫按脚本映射键名并与源码真值交叉核对，给错键即红。'
-      + '本片（GY-R34-I19）未把它接进任何 workflow：真库读数以本地临时集群取得（见'
-      + ' `docs/verification/gy-r34-i19-deletion-closure-20261023.md` §4），接 CI 留待总监安排。',
+      + 'R67-C 已把它接进 `real-pg-admin-write-17.11` 新 job 的独立 step（`GY_PG_BIN` + `GY_R34_PG_ROOT`、'
+      + ' exit 77 升级成硬失败、step 里不 `CREATE DATABASE`）；但它仍留在本清单：判据 4 只认回环链。',
   },
   {
     // GY-I19（#19 片B-演练）：加速时钟演练——把时间推到第 7/30 日边界，在 stub（纯逻辑，不碰 PG）与
@@ -495,8 +495,8 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '跑完 `pg_ctl stop` + 删目录），再把可注入时钟推到第 7/30 日边界，经在线/备份两份到期驱动取'
       + '「未到期不删／刚好到期删（闭区间）／到期删」三态真库读数（stub 臂纯逻辑不碰 PG、不读墙钟）；'
       + '未设 `GY_PG_BIN` 时**显式打印「未取得，不是通过」并以 77 退出**（`--allow-skip`／`GY_ALLOW_SKIP=1` 仅降级为 0，'
-      + '⛔ 不得接进门禁）。本片只改 `tests/`、不新增 workflow（`.github/workflows/**` 不在本片授权范围），'
-      + '故不进无 PG 的回环链，如实登记为未接线。',
+      + '⛔ 不得接进门禁）。R67-C 已把它接进 `real-pg-admin-write-17.11` 新 job 的独立 step（`GY_PG_BIN` +'
+      + ' `GY_I19_PG_ROOT`），但它仍留在本清单：判据 4 只认 `test:integration:http` 链，真库 job 不算接线。',
   },
   {
     // R34（#19 的**保留策略侧**，GY-R34-RETENTION）：按路径序落在 `recognitions-pg` 与 `source-lifecycle-pg`
@@ -573,10 +573,10 @@ const UNWIRED_DECLARATIONS = Object.freeze([
     reason: '需真实 PG 17（硬钉库名 `gengyun_admin_posts_read_test`，脚本自己断言 hostname=127.0.0.1、'
       + 'pathname=/gengyun_admin_posts_read_test，apply 0001–0030 后自建 6 条社区帖夹具）：'
       + '连不上就打印 SKIP 并 **exit 77**（未取得，⛔ 不是通过，也不认 --allow-skip）；'
-      + 'R59 片**未**把它接进 `.github/workflows/real-pg-integration.yml`——`.github/workflows/**` 不在本片'
-      + '授权范围，接线会连带改 `ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／`FROZEN_MANAGED_SCRIPTS`／'
-      + '`REQUIRED_STEP_ORDER` 三张清单和证据页（那是独立的一次门禁变更，须由指挥裁定），故在此如实登记为未接线；'
-      + '本地已用便携 PG 17.11（`E:\\GengYunCommander\\.pg17\\pgsql\\bin`）现建库跑通 12 个读数。'
+      + 'R67-C 已把它接进 `.github/workflows/real-pg-integration.yml` 的**新 job** `real-pg-admin-read-17.11`'
+      + '（独立 step 先 `CREATE DATABASE gengyun_admin_posts_read_test` 空库、node 收 owner URL、'
+      + ' exit 77 升级成硬失败），并已在 `ci-real-pg-wiring.test.mjs` 的五张清单里同位置登记；'
+      + '但它**仍留在本清单**：判据 4 的 `wired` 只认 `test:integration:http` 链，真库 job 不算接线。'
       + '它同样**不进**无 PG 的回环链：回环链里没有真 PG，接进真库 job 不等于进 `test:integration:http`。',
   },
 ]);

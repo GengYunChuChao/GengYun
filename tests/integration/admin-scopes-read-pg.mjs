@@ -72,8 +72,8 @@ const toolLog = join(rootDir, 'gy-r37-scope-read-pg-tools.log');
 mkdirSync(rootDir, { recursive: true });
 const logFd = openSync(toolLog, 'a');
 
-const readSql = rel => readFileSync(join(ROOT, `services/api/src/db/${rel}`), 'utf8');
-const migrationsDir = join(ROOT, 'services/api/src/db/migrations');
+const readSql = rel => readFileSync(join(ROOT, `services/api/db/${rel}`), 'utf8');
+const migrationsDir = join(ROOT, 'services/api/db/migrations');
 
 function runTool(name, args, options = {}) {
   return spawnSync(TOOL(name), args, {
@@ -145,7 +145,13 @@ async function startCluster() {
     }
   }
   assert.ok(port !== null, '55468–55499 内没有空闲端口（兄弟集群占满了？）');
-  const up = runTool('pg_ctl', ['-D', dataDir, '-l', join(dataDir, 'server.log'), '-o', `-p ${port} -h 127.0.0.1`, '-w', 'start']);
+  // POSIX 专有坑（R67-C 把它接进 CI 后第一次真跑才暴露）：Debian/Ubuntu 的 PGDG 包把
+  // `unix_socket_directories` 的编译默认钉在 `/var/run/postgresql`，GitHub runner 的普通用户
+  // 写不了 ⇒ 连 `.s.PGSQL.<port>.lock` 都建不出来，`pg_ctl start` 直接 `could not start server`。
+  // Windows 不用 unix socket，故本臂此前只在 Windows 跑过、从未暴露。显式把 socket 目录指到本臂
+  // 自己的数据目录（Unix 域 socket 随目录一起删），两个平台走同一条码。
+  const socketOption = process.platform === 'win32' ? '' : ` -k ${dataDir}`;
+  const up = runTool('pg_ctl', ['-D', dataDir, '-l', join(dataDir, 'server.log'), '-o', `-p ${port} -h 127.0.0.1${socketOption}`, '-w', 'start']);
   assert.equal(up.status, 0, `pg_ctl start 失败（沙箱禁回环监听时会走到这里）：${tail(toolLog)}`);
   started.cluster = true;
   const created = runTool('createdb', ['-h', '127.0.0.1', '-p', String(port), '-U', 'postgres', DB_NAME]);
