@@ -33,9 +33,8 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, rmSync } from 'node:fs';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -64,6 +63,7 @@ import { createPostgresConversationStore } from '../../services/api/src/conversa
 import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
 import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
 import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 // 缺 PG 二进制时的出口：默认 77（未取得，不是通过）；只有显式 `--allow-skip` / `GY_ALLOW_SKIP=1` 才降级为 0。
@@ -188,7 +188,8 @@ const BACKUP_DUE = shift(REQUESTED, 30 * DAY_MS); // 第 30 日当天
 }
 
 // ---------------------------------------------------------------------------
-// 临时集群（数据目录与端口都随机；端口取 556xx，避开本机既有 5432/55436，且先探活）
+// 临时集群（数据目录随机；端口向内核要一个此刻空闲的 —— ⛔ 不再用 `55600 + randomInt(0, 300)`：
+// 那套挑法落在 Linux 默认 ephemeral 区间 32768–60999 里，会被出站连接的源端口占住）
 // ---------------------------------------------------------------------------
 const DB_NAME = 'gy_i19_clock_drill';
 const migrationsDir = new URL('../../services/api/db/migrations/', import.meta.url);
@@ -202,23 +203,6 @@ let port = 0;
 let adminBase = '';
 let targetUrl = '';
 const tool = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
-
-function portIsFree(candidate) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => server.close(() => resolve(true)));
-    server.listen(candidate, '127.0.0.1');
-  });
-}
-
-async function pickPort() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 55600 + randomInt(0, 300);
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('556xx 区间内找不到空闲端口（同机临时集群过多）');
-}
 
 /** 子进程统一把 stdout/stderr 重定向到**文件**：本机 sandbox 禁止命名管道，用管道收集会等到超时。 */
 function runTool(name, args) {
@@ -250,7 +234,7 @@ function tailOfFile(file, maxLines = 15) {
 }
 
 async function startCluster() {
-  port = await pickPort();
+  port = await pickFreePort();
   adminBase = `postgresql://postgres@127.0.0.1:${port}`;
   targetUrl = `${adminBase}/${DB_NAME}`;
   assert.ok(existsSync(tool('initdb')), `GY_PG_BIN 下没有 initdb：${tool('initdb')}`);

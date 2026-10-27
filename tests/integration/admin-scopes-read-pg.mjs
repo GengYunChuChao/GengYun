@@ -12,8 +12,9 @@
  *   3. **两个 id 空间**：`/admin/administrators` 的 `id` 来自 `public.admin_accounts`，
  *      与 `public.users.id`（`/admin/accounts` 的形状）没有任何映射 —— 拿用户 id 必须 404。
  *
- * 本臂自己起**一次性集群**（`initdb` 新目录），不依赖本机既有实例；端口在 55468–55499 里
- * 探活后取空闲者（55432–55467 留给已存在的兄弟集群），收尾 `pg_ctl stop` + 删目录。
+ * 本臂自己起**一次性集群**（`initdb` 新目录），不依赖本机既有实例；端口由 `./lib/free-port.mjs`
+ * 向内核要一个此刻空闲的（⛔ 不再在 55468–55499 这种固定区间里挑：那落在 Linux ephemeral 区间内），
+ * 收尾 `pg_ctl stop` + 删目录。
  *
  * 怎么跑
  * ------
@@ -42,12 +43,15 @@ import { createPool } from '../../services/api/src/db/pool.ts';
 import { createPostgresAuthStore } from '../../services/api/src/auth/store.ts';
 import { hashToken, mintOpaqueToken } from '../../services/api/src/auth/tokens.ts';
 import { ADMIN_SCOPES } from '../../services/api/src/admin/scopes.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
 const DB_NAME = 'gengyun_r37_scope_read_test';
 const RUNTIME_ROLE = 'gengyun_api_runtime';
 const RUNTIME_PASSWORD = 'r37scoperead';
+/** 起集群最多换几个候选端口（每个都来自内核分配；见 `startCluster()`）。 */
+const MAX_PORT_ATTEMPTS = 8;
 const API = '/api/v1';
 const MIGRATION = '0041_admin_scope_write_authority.sql';
 const CONSTRAINT = 'admin_scopes_scope_closed_set';
@@ -137,14 +141,26 @@ const started = { cluster: false };
 async function startCluster() {
   const init = runTool('initdb', ['-D', dataDir, '-U', 'postgres', '-A', 'trust', '--encoding=UTF8', '--locale=C']);
   assert.equal(init.status, 0, `initdb 失败：${tail(toolLog)}`);
-  for (let candidate = 55468; candidate <= 55499; candidate += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    if (!(await portBusy(candidate))) {
-      port = candidate;
-      break;
+  // 端口：向内核要一个**此刻空闲**的（`listen(0)` 现分配），最多试 `MAX_PORT_ATTEMPTS` 次。
+  // ⛔ 不再「55468–55499 逐个数字试」：那段落在 Linux 默认 ephemeral 区间 32768–60999 内，会被任何
+  // 出站连接的源端口占住，`pg_ctl start` 就偶发 `could not bind IPv4 address "127.0.0.1": Address already in use`。
+  const seen = new Set();
+  for (let attempt = 0; attempt < MAX_PORT_ATTEMPTS; attempt += 1) {
+    let candidate;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      candidate = await pickFreePort();
+    } catch {
+      break; // 连内核都给不出空口：交给下面的断言如实判红，不静默降级
     }
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    // eslint-disable-next-line no-await-in-loop
+    if (await portBusy(candidate)) continue;
+    port = candidate;
+    break;
   }
-  assert.ok(port !== null, '55468–55499 内没有空闲端口（兄弟集群占满了？）');
+  assert.ok(port !== null, '连续 8 次都没能拿到空闲端口（兄弟集群占满了？）');
   // POSIX 专有坑（R67-C 把它接进 CI 后第一次真跑才暴露）：Debian/Ubuntu 的 PGDG 包把
   // `unix_socket_directories` 的编译默认钉在 `/var/run/postgresql`，GitHub runner 的普通用户
   // 写不了 ⇒ 连 `.s.PGSQL.<port>.lock` 都建不出来，`pg_ctl start` 直接 `could not start server`。

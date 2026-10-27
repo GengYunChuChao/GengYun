@@ -44,9 +44,8 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from 'node:fs';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -59,6 +58,7 @@ import { createMemoryFavoritesStore } from '../../services/api/src/favorites/sto
 import { createMemoryHistoryStore } from '../../services/api/src/history/store.ts';
 import { createPostgresMessagesStore } from '../../services/api/src/messages/store-pg.ts';
 import { createUserDataDeletion } from '../../services/api/src/privacy/user-data-deletion.ts';
+import { pickFreePort } from './lib/free-port.mjs';
 
 const binDir = process.env.GY_PG_BIN ?? '';
 if (binDir === '') {
@@ -87,7 +87,8 @@ const say = (label) => {
 const note = (line) => console.log(`  - ${line}`);
 
 // ---------------------------------------------------------------------------
-// 临时集群（数据目录与端口都随机；端口取 55700–55999，避开 55436 的遗留集群与本机 5432）
+// 临时集群（数据目录随机；端口向内核要一个此刻空闲的 —— ⛔ 不再用 `55700 + randomInt(0, 300)`：
+// 那套挑法落在 Linux 默认 ephemeral 区间 32768–60999 里，会被出站连接的源端口占住）
 // ---------------------------------------------------------------------------
 const rootDir = process.env.GY_W11_PG_ROOT ?? tmpdir();
 const dataDir = join(rootDir, `gy-w11-messages-purge-pg-${randomBytes(4).toString('hex')}`);
@@ -95,28 +96,6 @@ let port = 0;
 let adminBase = '';
 let targetUrl = '';
 const tool = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
-
-/** 端口空闲？（只探 127.0.0.1：集群也只监听回环） */
-function portIsFree(candidate) {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.once('error', () => resolve(false));
-    server.once('listening', () => {
-      server.close(() => resolve(true));
-    });
-    server.listen(candidate, '127.0.0.1');
-  });
-}
-
-async function pickPort() {
-  for (let attempt = 0; attempt < 40; attempt += 1) {
-    const candidate = 55700 + randomInt(0, 300);
-    // 开发机上已有一个 55436 的遗留临时集群：范围已避开，这里再硬挡一次，防止将来改范围时撞上。
-    if (candidate === 55436) continue;
-    if (await portIsFree(candidate)) return candidate;
-  }
-  throw new Error('557xx 区间内找不到空闲端口（同机临时集群过多）');
-}
 
 /**
  * 子进程统一把 stdout/stderr 重定向到**文件**：本机 sandbox 禁止命名管道，
@@ -160,7 +139,7 @@ function tailOfFile(file, maxLines = 15) {
 }
 
 async function startCluster() {
-  port = await pickPort();
+  port = await pickFreePort();
   adminBase = `postgresql://postgres@127.0.0.1:${port}`;
   targetUrl = `${adminBase}/${DB_NAME}`;
   assert.ok(existsSync(tool('initdb')), `GY_PG_BIN 下没有 initdb：${tool('initdb')}`);

@@ -24,8 +24,8 @@
  * 一条审计行进不进 `?entity=X` 的结果集，由两个维度共同决定：
  *
  *   1. **必选**：该行 `scope` 列 === `scopeOfAuditEntity(X)`（`AUDIT_ENTITY_SCOPES`）；
- *   2. **护栏实体另加**：该行 `action` ∈ `actionsOfAuditEntity(X)`（`AUDIT_ENTITY_ACTION_GUARDS`，
- *      缺席 = 该实体没有护栏，本维度不生效）。
+ *   2. **动作护栏**：该行 `action` ∈ `actionsOfAuditEntity(X)`（`AUDIT_ENTITY_ACTION_GUARDS`；
+ *      表里对该实体显式写 `null` = 没有专属动作清单，本维度不生效）。
  *
  * ⚠ 维度 1 从来**不足以**定义 `entity`：`scope` 列不是「域」列，它记的是「这笔操作动了哪个
  * 权限名」，而 `0041` / `0046` 把调用方给的 `p_scope` 直传进去（见下「一变多」注）。后台 13 项
@@ -39,16 +39,19 @@
  * | `post` | `action='post.hide'` 且 `scope='sources:write'` |
  * | `admin_account` | `action ∈ {admin_account.disable, admin_account.enable}` 且 `scope='scopes:write'` |
  * | `flag` | `action='set_flag'` 且 `scope='flags:write'` |
- * | `admin_scope` | 只按 `scope='scopes:write'`（**无护栏**，见「读数放宽①」） |
+ * | `admin_scope` | `action ∈ {admin_scope.grant, admin_scope.revoke, admin_scope.deny}` 且 `scope='scopes:write'` |
  *
  * 前四行之外的直觉都不成立：`account.suspend` 与 `account.restore` 共用一个 `scope`，所以
  * `entity=account` 一次取回「停用 + 恢复」两类行 —— 这是**同一实体**的两个动作，不是串味；
  * 串味指的是「另一个实体的动作因为共用同一个 scope 字面量而漏进来」，那才是护栏要挡的东西。
  *
- * 六个实体里只剩 `admin_scope` 没有护栏（**故意**，理由见「读数放宽①」）。无护栏**不退化成
- * 「不过滤」或「全返回」**：它仍然按维度 1 精确匹配 `scope` 列（`services/api/src/admin/audit/
- * service.ts` 下传单元素数组，不是 `null`）。`null` 在本读面等于「该维度不作为条件」⇒ 那是
- * 静默全量，⛔ 绝不允许出现。
+ * 六个实体**全部**带护栏（`account` / `job` / `flag` / `post` / `admin_account` 由 R68 收口，
+ * `admin_scope` 由本片收口，见「`admin_scope` 已收口」）。护栏表是**穷尽**的
+ * （`Record<AdminAuditEntity, …>`）：新增实体时忘了登记，`tsc` 会在护栏表处报缺项，而不是静默
+ * 让它走「无护栏」的宽读数。没有专属动作的实体**显式写 `null`** —— 那表示「本实体的动作维度
+ * 不生效，按 `scope` 兜底」，⛔ 不是「不过滤」或「全返回」：`scope` 维度照样精确匹配
+ * （`services/api/src/admin/audit/service.ts` 下传单元素数组，不是 `null`）。`scopes=null` 在本读面
+ * 等于「该维度不作为条件」⇒ 那是静默全量，⛔ 绝不允许出现。
  * **未知取值一律 400**（fail-closed）：
  * ⛔ 不静默返回空页 —— 空页会被读成「平台从未发生过这类操作」，那是一条无法确认的结论。
  *
@@ -141,27 +144,34 @@
  *   - `account` → `[account.suspend, account.restore]`（同一实体的两个动作，共用一个 scope）；
  *   - `job` → `[job.cancel]`（`0043` 只写这一个）；
  *   - `flag` → `[set_flag]`（同一判据，见下「`flag` 已收口」）。
- * 补完之后五个实体（`account` / `job` / `flag` / `post` / `admin_account`）走**同一条**路径
- * （`actions` ∩ `scopes` 双维 AND，`service.ts` 一行不动），只剩 `admin_scope` 留作已登记的
- * 放宽（见下一节）。
+ * 补完之后六个实体（`account` / `job` / `flag` / `post` / `admin_account` / `admin_scope`）走
+ * **同一条**路径（`actions` ∩ `scopes` 双维 AND，`service.ts` 一行不动），不再有「豁免护栏」的
+ * 实体（`admin_scope` 的收口见下一节）。
  *
  * ⛔ 不要改成「按 action 名字前缀过滤」：前缀是字符串猜谜，而**「哪个 action 属于哪个实体」的
  * 权威映射就是下面这张护栏表**。把判据散成两处（表 + 前缀启发式），下一次新增写入点时会各自
  * 漂移，而漂移的方向恰好是「静默放过」。
  *
- * ## 一处必须如实登记的读数放宽①：`?entity=admin_scope` 现在也会带上 `admin_account.*` 行
+ * ## `admin_scope` 已收口：`?entity=admin_scope` 不再带上 `admin_account.*` 行（PR #684 审查遗留项）
  *
- * 护栏是**逐实体**的，只收窄被点名的那一个。`0048` 之后 `scope='scopes:write'` 这个字面量被
- * 两类行共用（`admin_scope.*` 与 `admin_account.*`），而 `admin_scope` **故意不加护栏**：
- * 派单硬约束是「⛔ 不给别的实体补护栏」，且真给 `admin_scope` 加护栏会把
- * `?entity=admin_scope&action=account.suspend` 这类既有「能查、返回空页」的组合改成 400 —
- * 那是协议行为变更，不在本片授权范围。代价：`?entity=admin_scope` 的结果里会混入
- * `admin_account.disable` / `admin_account.enable` 行。每行都带着自己的 `action`，类型读得出来，
- * 但**筛选维度**确实被放宽了。精确读法：
- *   - 账号停用/恢复 ⇒ `?entity=admin_account`（护栏生效）或 `?action=admin_account.disable`；
- *   - 权限变更 ⇒ `?action=admin_scope.grant` / `.revoke` / `.deny`（action 维度不做 scope 收窄）。
- * ⛔ 不要为了「看起来更干净」给 `admin_scope` 补护栏，或把这层映射改成 `null`/空数组：
- * 前者改既有协议、后者退化成静默全量。这条放宽是**已知代价**，登记在本节与验证文档里。
+ * `0048` 之后 `scope='scopes:write'` 这个字面量被**两类**行共用（`admin_scope.*` 与
+ * `admin_account.*`）。R68 给 `admin_account` 补护栏时，`admin_scope` 一侧留成了已登记的
+ * 「读数放宽①」：`?entity=admin_scope` 的读面会把 `admin_account.disable` / `.enable` 的行
+ * 一起筛出来 —— 与 `job` / `account` / `flag` 修之前**同一个缺陷**（读者看到「权限变更」，
+ * 其中混着账号停用）。每行都带着自己的 `action`，类型读得出来，但**筛选维度**确实被放宽了。
+ *
+ * 那时不补的理由是「补护栏会把 `?entity=admin_scope&action=account.suspend` 这类既有
+ * 「能查、返回空页」的组合改成 400 ⇒ 协议行为变更，不在 PR #684 的授权范围」。
+ * **本片正是那个被追认的范围**：`admin_scope` 的护栏 = `[grant, revoke, deny]`，于是
+ *   - `?entity=admin_scope` ⇒ 三类授权行，⛔ 不含任何 `admin_account.*`；
+ *   - `?entity=admin_scope&action=<护栏外>` ⇒ **400**（`service.ts` 的 fail-closed，不静默取交集）。
+ *     这是**刻意的**协议变严，不是回归：该组合在护栏语义下不可表达（按护栏算恒空 ⇒ 伪造
+ *     「平台从未发生过」；不按护栏算 ⇒ 把账号停用命名成权限变更）。受影响的可观测性只是
+ *     「拿 `entity=admin_scope` 去查别的实体的 action」这种本就自相矛盾的用法。
+ *   - 精确读法不变：账号停用/恢复 ⇒ `?entity=admin_account` 或 `?action=admin_account.disable`；
+ *     权限变更 ⇒ `?action=admin_scope.grant` / `.revoke` / `.deny`（action 维度不做 scope 收窄）。
+ * ⛔ 仍不要把映射改成 `null`/空数组：那会退化成「静默全量」，比收窄更糟。收窄（只命中动到
+ * `scopes:write` 的 grant/revoke 行）是**已知且被接受**的代价，理由见上一节「一变多」注。
  *
  * ## `flag` 已收口：不再混入动到 `flags:write` 的授权行（R68 · GY-R67-C07）
  *
@@ -175,10 +185,8 @@
  * 那是把已知缺陷写成断言。
  *
  * ⚠ 收口 `flag` **不**牵连授权面的可观测性：`?entity=admin_scope` 仍然看得到
- * `admin_scope.grant` / `.revoke` / `.deny` 三类授权行（它按 `scope='scopes:write'` 收窄，
- * 与 `flag` 的 `action` 维度互不干扰）。
- *
- * ⛔ 也不要因为「顺手」给 `admin_scope` 补护栏 —— 那是放宽①，理由见上一节。
+ * `admin_scope.grant` / `.revoke` / `.deny` 三类授权行（`scope` 维度仍按 `scopes:write` 收窄，
+ * 三类动作全在护栏清单内 ⇒ 与 `flag` 的 `action` 维度互不干扰）。
  */
 
 /** 账号停用（迁移 0017 `public.suspend_account`）。 */
@@ -306,7 +314,7 @@ export const AUDIT_ENTITY_SCOPES = Object.freeze({
    * `0041` 的授予/撤销行写的是**被授/被撤的那个 scope 值本身**（同为 `p_scope` 直传）⇒
    * 本映射只命中「动到 `scopes:write`」的授予/撤销行，以及今天**全部**拒绝行。完整的逐 scope
    * 读法走 `?action=admin_scope.grant`（action 维度不做 scope 收窄）。理由与取舍见文件头
-   * 「「一变多」的 `scope` 列」与「读数放宽①」两段。
+   * 「「一变多」的 `scope` 列」与「`admin_scope` 已收口」两段。
    */
   admin_scope: 'scopes:write',
   /**
@@ -346,23 +354,36 @@ export function scopeOfAuditEntity(entity: AdminAuditEntity): string {
  * `entity` → **动作护栏**：该实体在 `?entity=` 语义下只允许出现的 `action` 清单。
  *
  * 为什么是独立一张表、而不是往 `AUDIT_ENTITY_SCOPES` 里加第二个字段：只有 `scope` 列取值
- * **不专属**的实体才需要护栏。今天有五个：`account` / `job` / `flag` / `post` /
- * `admin_account`，五者都栽在「域内动作 ≠ 落库 scope 的全部来源」上（见文件头五节）。其余实体
- * （`admin_scope`）在这里查不到键 ⇒ 「无护栏」= **动作维度不生效**，但 `scope` 维度照样生效
- * （`service.ts` 仍下传 `[scopeOfAuditEntity(entity)]`，⛔ 不是 `null`）。
+ * **不专属**的实体才需要护栏。今天**六个实体全部**需要：`account` / `job` / `flag` / `post` /
+ * `admin_account` / `admin_scope`，六者都栽在「域内动作 ≠ 落库 scope 的全部来源」上（见文件头
+ * 对应六节）。`scope` 维度照样生效（`service.ts` 仍下传 `[scopeOfAuditEntity(entity)]`，
+ * ⛔ 不是 `null`）——护栏只收窄**动作**维度。
  *
- * 用「缺席」表达「无护栏」，比给每个实体编一份假的「全量清单」更诚实 —— 后者会让读者以为所有
- * 实体都被动作维度过了一遍。⚠ 缺席也是「这个键根本不是实体」的表现形式之一，所以调用方必须
- * 先判 `AUDIT_ENTITIES`（闭集外 400），本表不承担这个判断。
+ * ## 为什么类型是穷尽的 `Record`（⛔ 不是 `Partial<Record>`）
+ * 用 `Partial<Record<…>>` 时「缺席 = 无护栏」：将来新增一个实体（往 `AUDIT_ENTITY_SCOPES` 加键）
+ * 却忘了登记护栏，`tsc` **不会报错**，那个实体就静默退回「只按 `scope` 匹配」的宽读数 ——
+ * 也就是本片要杀死的串味。改成 `Record<AdminAuditEntity, … | null>` 后：
+ *   - 新增实体 ⇒ 这里**必须**补一个键，否则 `tsc` 报 TS2741（缺属性）；
+ *   - 确实没有专属动作的实体 ⇒ **显式写 `null`**（「动作维度不生效，按 scope 兜底」）。
+ *     显式的 `null` 是一句可审的声明；「漏写」不是 —— 前者能被 review，后者只能被事故发现。
+ *   - `null` ⛔ 不等于「返回全部」：`scopes` 仍取 `[scopeOfAuditEntity(entity)]`（见上）。
+ *
+ * ⚠ 键名必须是 `AdminAuditEntity` 的成员：闭集外的实体在 `AUDIT_ENTITIES` 判 400，本表不承担
+ * 这个判断（`validate` 由调用方先做）。
  *
  * ⛔ 护栏不是「建议值」：`services/api/src/admin/audit/service.ts` 在 `?action=` 落在清单外时
  * **400 fail-closed**（不静默取交集 —— 交集恒空，会被读成「平台从未发生过这类操作」）。
  */
 export const AUDIT_ENTITY_ACTION_GUARDS: Readonly<
-  Partial<Record<AdminAuditEntity, readonly AdminAuditAction[]>>
+  Record<AdminAuditEntity, readonly AdminAuditAction[] | null>
 > = Object.freeze({
   account: Object.freeze([AUDIT_ACTION_ACCOUNT_SUSPEND, AUDIT_ACTION_ACCOUNT_RESTORE] as const),
   admin_account: Object.freeze([AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE, AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE] as const),
+  admin_scope: Object.freeze([
+    AUDIT_ACTION_ADMIN_SCOPE_GRANT,
+    AUDIT_ACTION_ADMIN_SCOPE_REVOKE,
+    AUDIT_ACTION_ADMIN_SCOPE_DENY,
+  ] as const),
   flag: Object.freeze([AUDIT_ACTION_SET_FLAG] as const),
   job: Object.freeze([AUDIT_ACTION_JOB_CANCEL] as const),
   post: Object.freeze([AUDIT_ACTION_POST_HIDE] as const),
@@ -371,8 +392,10 @@ export const AUDIT_ENTITY_ACTION_GUARDS: Readonly<
 /**
  * 取某个 `entity` 的动作护栏。
  *
- * @returns 护栏清单（至少一项）；`null` = 该实体**没有**护栏，`?action=` 不受额外限制。
+ * @returns 护栏清单（至少一项）；`null` = 该实体**没有**专属动作清单（表里显式写 `null`），
+ *   `?action=` 不受额外限制、但 `scopes` 维度照样收窄。
  *   调用方必须先判 `entity` 属于闭集（`AUDIT_ENTITIES`），本函数不重复校验。
+ *   `?? null` 只为运行期兜底：类型上表是穷尽的，键必在；但 `entity` 可能是绕过类型的字符串。
  */
 export function actionsOfAuditEntity(entity: AdminAuditEntity): readonly AdminAuditAction[] | null {
   return AUDIT_ENTITY_ACTION_GUARDS[entity] ?? null;

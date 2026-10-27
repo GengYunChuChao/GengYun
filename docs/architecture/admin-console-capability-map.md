@@ -161,8 +161,8 @@
 
 | 原缺口 | 实际页面 | 依据（operation → 客户端函数 → 视图调用点） |
 | --- | --- | --- |
-| 审计总台账 1 条（`listAuditLogs`） | `apps/admin/src/views/AuditLogsView.vue` | `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:374`）→ 视图调用点 `apps/admin/src/views/AuditLogsView.vue:72`；tab 装配 `apps/admin/src/App.vue:33`、`apps/admin/src/App.vue:70` |
-| 管理员权限读面 2 条（`listAdministrators`、`listAdministratorScopes`） | `apps/admin/src/views/AdministratorsView.vue` | `listAdministrators` → `fetchAdministratorsPage`（`apps/admin/src/lib/admin-administrators.mjs:397`）→ `apps/admin/src/views/AdministratorsView.vue:92`；`listAdministratorScopes` → `fetchAdministratorScopes`（`apps/admin/src/lib/admin-administrators.mjs:425`）→ `apps/admin/src/views/AdministratorsView.vue:164`；tab 装配 `apps/admin/src/App.vue:34`、`apps/admin/src/App.vue:71` |
+| 审计总台账 1 条（`listAuditLogs`） | `apps/admin/src/views/AuditLogsView.vue` | `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:374`）→ 视图调用点 `apps/admin/src/views/AuditLogsView.vue:72`；tab 装配 `apps/admin/src/App.vue:33`、`apps/admin/src/App.vue:81` |
+| 管理员权限读面 2 条（`listAdministrators`、`listAdministratorScopes`） | `apps/admin/src/views/AdministratorsView.vue` | `listAdministrators` → `fetchAdministratorsPage`（`apps/admin/src/lib/admin-administrators.mjs:397`）→ `apps/admin/src/views/AdministratorsView.vue:92`；`listAdministratorScopes` → `fetchAdministratorScopes`（`apps/admin/src/lib/admin-administrators.mjs:425`）→ `apps/admin/src/views/AdministratorsView.vue:164`；tab 装配 `apps/admin/src/App.vue:34`、`apps/admin/src/App.vue:82` |
 
 ## 5 鉴权面：身份与权限现在怎么来
 
@@ -184,7 +184,7 @@
 ```
 
 5. `scopes` 的形状与排序在 `services/api/src/auth/service.ts:377-389`；服务端裁决在 `services/api/src/auth/middleware.ts:201-206`，缺 scope 固定回 `SCOPE_DENIED`「缺少所需权限：<scope>」；用户端会话打后台固定被拒（`services/api/src/auth/middleware.ts:110-117`）。
-6. scope 闭集 13 项见 `services/api/src/admin/scopes.ts:35-49`；`scopes:write` 只在常量里声明、没有任何路由以它为门（`services/api/src/admin/scopes.ts:65-69`），授/撤 scope 现状只有迁移 0041 的 SECURITY DEFINER 函数。
+6. scope 闭集 13 项见 `services/api/src/admin/scopes.ts:38-50`；`scopes:write` 已经落写面，声明见 `services/api/src/admin/scopes.ts:88`，以它为门的写操作共 4 个 operationId（授/撤 scope 两个，管理员账号停用/启用两个；写路径仍是迁移 0041 的两个 SECURITY DEFINER 函数与迁移 0048）。
 7. 前端把 scope 只当「提前禁用按钮」：9 个页面登录后立刻再读一次 `GET /admin/auth/session`（`apps/admin/src/views/AccountsView.vue:91`、`apps/admin/src/views/AdministratorsView.vue:109`、`apps/admin/src/views/AuditEventsView.vue:98`、`apps/admin/src/views/AuditLogsView.vue:111`、`apps/admin/src/views/FlagsView.vue:88`、`apps/admin/src/views/FlagAuditView.vue:100`、`apps/admin/src/views/JobsView.vue:105`、`apps/admin/src/views/ContentAdminView.vue:41-68`、`apps/admin/src/views/ModerationQueueView.vue:179`）。
 
 缺 scope 的三种可见后果：
@@ -208,10 +208,10 @@
 ## 7 如果要做「后台最小可用」，先补这三件
 
 1. **注册资料与限制资料两页（12 个 operation）**。理由：这是 12 条无入口里的**全部**（12/12），且服务端四族共用同一批 scope、同一个 `familyOps()` 装配（`services/api/src/routes/admin.ts:184-195`），前端照 `SourcesView` 的既有模式复制即可，不需要新契约、不需要新 scope。
-2. **管理员权限「授/收权」写面（`scopes:write`）**。理由：`scopes:write` 在 `AdminScope.enum` 闭集里，但 44 条 operation（闭集全集口径；本页 42 口径下即 42 条）**零使用**（`services/api/src/admin/scopes.ts:65-69` 的注释明写「只声明、不实现」）⇒ 控制台在结构上无法授权/收权，`AdministratorsView` 只能读。这是 §6「两端都缺」里唯一「契约位置已留、只差实现」的一条；前置是产品先定「谁能授权管理员」，否则会造出自提权面。
+2. **管理员权限「授/收权」写面（`scopes:write`）**。**订正（GY-R68，A06；2026-10-28 复审后再校口径）**：本条原文写「44 条 operation 零使用（`services/api/src/admin/scopes.ts:65-69` 的注释明写「只声明、不实现」）」，该注释与「零使用」都是旧读数，现已失实——服务端**已有 4 条**以 `scopes:write` 为门的写面 operation（`packages/contracts/operations.json` 里 scope=`scopes:write` 的恰好这 4 条）：授/撤 2 条 `grantAdministratorScope`（`POST /admin/administrators/{id}/scopes`）、`revokeAdministratorScope`（`DELETE /admin/administrators/{id}/scopes/{scope}`），加账号状态 2 条 `disableAdministratorAccount`（`POST /admin/administrators/{id}/disable`）、`enableAdministratorAccount`（`POST /admin/administrators/{id}/enable`）；门在 `services/api/src/routes/admin.ts`（`OPS_SCOPES` 的对应四键，值都是 `scopes:write`），由 `tests/unit/session-scopes-s1.test.mjs` 的 ③ 三层钉住：门集合存在、以 `scopes:write` 为实参的 `requireScope` 调用条数 = manifest 里该 scope 的 operation 条数、且逐 operationId 仍有那处门（任一处被改值或摘掉即红）。剩下的缺口在**前端**：`apps/admin` 对**授/撤**两条 operation 无任何调用点（`src/lib/admin-administrators.mjs` 只读、`AdministratorsView` 仍只能看），而账号状态两条前端已有写面（`src/lib/administrator-state-api.mjs` 的 `ADMINISTRATOR_STATE_SCOPE='scopes:write'`，停用/恢复入口在 `AdministratorsView`）。前置仍是产品先定「谁能授权管理员」，否则会造出自提权面。
 3. **让 scopes 随登录一起到前端（1 处响应或守卫调整）**。理由：现在 9 个页面各抄一遍「登录后再读一次」，且没有 `session:read` 的管理员会直接卡在登录失败；把 scopes 放进登录响应（或允许无 `session:read` 也能读自己的会话）能同时消掉重复代码与这个单点。
 
-「审计总台账」与「管理员权限读面」已落地（页面见 §4 更正记录），不再需要补入口。遗留的只是**装配风险**而非 UI 缺口：`listAuditLogs` 在 `real` + 有库池时只读端口已构造（`services/api/src/app.ts:1485-1493`），只有缺省装配（stub / real 无池）才 503——运维侧确认运行模式即可。**R67-A 口径对齐（2026-10-27）**：审计总台账确有页面消费该读面——`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`（`GET /admin/audit-logs`），导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:70`（#633，见 §4 更正记录）；`docs/architecture/ai-ops-spec-status.md` 的 P10 原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，已按本页口径改成真值（三读面读数不合并、页面读数无端到端验收），逐条证据见 `docs/verification/gy-r67-docs-truth-20261027.md`。
+「审计总台账」与「管理员权限读面」已落地（页面见 §4 更正记录），不再需要补入口。遗留的只是**装配风险**而非 UI 缺口：`listAuditLogs` 在 `real` + 有库池时只读端口已构造（`services/api/src/app.ts:1485-1493`），只有缺省装配（stub / real 无池）才 503——运维侧确认运行模式即可。**R67-A 口径对齐（2026-10-27）**：审计总台账确有页面消费该读面——`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`（`GET /admin/audit-logs`），导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`（#633，见 §4 更正记录）；`docs/architecture/ai-ops-spec-status.md` 的 P10 原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，已按本页口径改成真值（三读面读数不合并、页面读数无端到端验收），逐条证据见 `docs/verification/gy-r67-docs-truth-20261027.md`。
 
 ## 8 与既有取证、代码注释的差异
 
@@ -222,7 +222,7 @@
 | 「登录后 scopes 恒为空导致写入按钮全灭」（同上） | 半过时：`scopes: []` 仍在，但 9 个页面登录后立刻再读会话，按钮不会全灭；真正会全灭的是缺 `session:read` 的账号 | apps/admin/src/auth/session.ts:128；apps/admin/src/views/AccountsView.vue:91 |
 | 「登录响应不含 scope」 | 复核成立 | services/api/src/auth/service.ts:366-374 |
 | 「15 个 operation 无 UI 入口」（本页旧版自己的结论） | **已过时**：`68dec742` 上实测 **12 条**；旧版的 15 把「审计总台账 1」「管理员权限读面 2」算了进去，而这两条都已有页面（依据见 §4 更正记录）。取证报告在 `1a583e1d` 上给出的缺口 16 条同理——它多算了帖子族 4 条，而那 4 条随 `#640` 合入已经有页 | §4；§2.2 全表 |
-| 代码内陈旧文案（一） | `apps/admin/src/App.vue:28` 写「账号目录（只读）」、`apps/admin/src/App.vue:83` 写「停用/注销等写操作不在本片」，与实有的停用写面矛盾；`apps/admin/src/auth/session.ts:21` 写「控制台业务页面未实现」，实际 `apps/admin/src/views/` 已有 16 个 `.vue`；`services/api/src/routes/admin.ts:160` 写「注册 40 个后台路由」，实际 42 条（文件头 `services/api/src/routes/admin.ts:4` 的「40 个 operationId」同样漏了 S3 的 `approvePost`/`rejectPost`） | 同行号 |
+| 代码内陈旧文案（一） | `apps/admin/src/App.vue:28` 写「账号目录（只读）」、`apps/admin/src/App.vue:95` 写「停用/注销等写操作不在本片」，与实有的停用写面矛盾；`apps/admin/src/auth/session.ts:21` 写「控制台业务页面未实现」，实际 `apps/admin/src/views/` 已有 16 个 `.vue`；`services/api/src/routes/admin.ts:160` 写「注册 40 个后台路由」，实际 42 条（文件头 `services/api/src/routes/admin.ts:4` 的「40 个 operationId」同样漏了 S3 的 `approvePost`/`rejectPost`） | 同行号 |
 | 代码内陈旧文案（二）：「契约里没有帖子读面／没有任何帖子读面」（`apps/admin/src/views/PostTakedownView.vue:6`、`apps/admin/src/lib/post-takedown-api.mjs:8`、`apps/admin/src/lib/post-takedown-form.mjs:7-8`） | **已不成立**（措辞与事实相反）：契约有 `GET /admin/posts`、`GET /admin/posts/{id}`，路由在 `services/api/src/routes/admin.ts:450`、`services/api/src/routes/admin.ts:455`；页面在 `apps/admin/src/views/ModerationQueueView.vue:129`、`apps/admin/src/views/ModerationQueueView.vue:149`。**本页只记录，不改代码**（属 B 档） | 同行号 |
 | 代码内陈旧文案（三）：「契约里根本没有审核队列的读面（path 含 `review` 的数量为 0），`routes/` 也没有任何 review 路由」（`apps/admin/src/views/ReviewPlaceholderView.vue:5-6`、`apps/admin/src/lib/review-state.mjs:9`、`apps/admin/src/lib/review-state.mjs:37`） | **字面断言仍成立、结论已过时**：实测契约中 path 含 `review` 的确实为 0，路由里也没有名字带 review 的路径；但「没有审核面」的结论已被 `GET /admin/posts`（读面）与 `approvePost`/`rejectPost`（动作面）推翻——它们只是不叫 review。**本页只记录，不改代码**（属 B 档） | 同行号；`packages/contracts/openapi.json` |
 

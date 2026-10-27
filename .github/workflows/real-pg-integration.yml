@@ -38,6 +38,25 @@
 #
 # 口令是**明显的合成值**（`synthetic-ci-owner-only`），与其它 PG workflow 同值；不含任何真实凭据。
 
+# ── 读数闸门的口径（GY-R68-D05）：N 是**冻结基线**，不是「至少 1 条」 ─────────────────────
+# 每条臂的 step 在脚本 exit 0 之后都数一遍自己的读数（`PASS ` 行 / `[X]` 注释 / `READINGS=` 自报），
+# 再要求 `readings >= N`，N 就是**该臂当前稳定产出的读数条数**。逐臂的 N 与臂脚本登记在
+# `tests/unit/ci-real-pg-readings-gates.test.mjs` 的同一张表里，守卫逐条比对「表 ↔ 本文件」，
+# 任何一边单独改动都会红（含只登一部分：表条目数必须等于本文件里的读数闸门数）。
+#   · 为什么不是「至少 1 条」：每条臂每跑一次都会打出自己的读数，`-lt` 后面接数字 1 只挡得住「零读数」，
+#     挡不住「断言组被悄悄删掉一半」——而后者正是这一层闸门最该抓的东西。
+#   · N 怎么来的（必须能从仓库复算，不许凭印象）：本机 PG 17.11 真跑该臂一遍，按本文件同一条
+#     awk/sed 口径数出条数；解析不了端口的那条（admin-scopes-read，端口段被本机 TCP 保留区间
+#     整段占住，起不了集群）退到**静态计数**（数脚本里 `pass(` 的调用点），守卫的表里注明来源。
+#   · ⛔ N 只许**上调**：断言组增加 ⇒ 读数变多 ⇒ 把 N 一起调上去；**不许下调**来凑绿——下调等于
+#     把「断言组被删」重新放回闸门之外。上调时**表与 yml 必须同一次改完**，否则守卫当场红。
+#   · **确需下调**的规程（唯一例外）：断言组合并/删除后读数确实变少时，必须在 PR 里贴出**这次实测的
+#     读数**（怎么数的、数出几条）与下调原因，并在**同一个提交**里同时改本文件的 N 与
+#     `tests/unit/ci-real-pg-readings-gates.test.mjs` 的 `READING_GATE_BASELINES`（连同 `source` 说明）。
+#     只改一边 ⇒ 守卫红；两边一起改而不给读数 ⇒ 审查必须打回（守卫只能证明「两边同源」，证明不了「该降」）。
+#   · 数字之外，「**数数字的表达式**」也一并冻结在表的 `counter` 列（`readings=$(…)` 逐字）：
+#     否则把 `{n+=1}` 改成 `{n+=10}`、闸门与表都不动，读数照样「够」而闸门已被放空。
+
 name: Real PostgreSQL integration gates
 on:
   pull_request:
@@ -153,8 +172,8 @@ jobs:
           fi
           readings=$(awk '/^PASS /{n++} END{print n+0}' "$log")
           echo "PASS 读数：${readings} 条"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::问答引用可溯源臂 exit 0 却一条 PASS 都没有 ⇒ 等于没跑（0 条断言不是通过）。"
+          if [ "$readings" -lt 8 ]; then
+            echo "::error::问答引用可溯源臂 exit 0 但 PASS 读数只有 ${readings} 条（基线 8）⇒ 断言组被删减；0 条断言不是通过。"
             exit 1
           fi
         env:
@@ -243,9 +262,9 @@ jobs:
       # 计数回到 0）⇒ 不把角色留给下一步 `admin-flags`（后者同样只接受自己新建的角色，见下一步的注释）
       # ——这才是它排在这一步**之前**的理由，⛔ 不要挪到 `admin-accounts-read` 之后。
       # 读数：跑**全链迁移 0001→0027** 再打真 HTTP，`[M]/[P]/[A]/[J]/[C]/[E]` 六组，末行固定 `[ALL PASS]`。
-      # 它没有 77 跳过分支（连不上即非 0），下面仍显式断言「末行 `[ALL PASS]` + 至少一条 `[X]` 读数」，
+      # 它没有 77 跳过分支（连不上即非 0），下面仍显式断言「末行 `[ALL PASS]` + 至少 25 条 `[X]` 读数」，
       # 让「exit 0 但什么都没证明」也不可能变绿。⛔ 不传任何放宽开关。
-      # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：`[X]` 读数 15 条，末行 `[ALL PASS]`。
+      # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：`[X]` 读数 25 条（旧值 15 条已过时），末行 `[ALL PASS]`。
       - name: 作业台域（#9 / 全链迁移 0001→0027 / 作业与错误可见 / 变更留痕 A→B / 最小权限）
         timeout-minutes: 5
         run: |
@@ -260,8 +279,8 @@ jobs:
           fi
           readings=$(awk '/^\[[A-Z]\]/{n++} END{print n+0}' "$log")
           echo "读数：${readings} 条 [X] 注释"
-          if [ "$readings" -lt 1 ] || ! grep -Fq '[ALL PASS]' "$log"; then
-            echo "::error::作业台域 exit 0 但读数缺失（[X] 行=${readings}，末行 [ALL PASS] 未出现）⇒ 等于没跑。"
+          if [ "$readings" -lt 25 ] || ! grep -Fq '[ALL PASS]' "$log"; then
+            echo "::error::作业台域 exit 0 但读数不足基线（[X] 行=${readings}，基线 25；末行 [ALL PASS] 未出现也算）⇒ 等于没跑或断言组被删减。"
             exit 1
           fi
         env:
@@ -317,7 +336,7 @@ jobs:
       # `admin-accounts-read` 收尾不清理，会把 `gengyun_api_runtime` + 6 个组角色留在集群里）；
       # 本脚本对集群级角色**零依赖**（只用 owner URL、不 `CREATE ROLE`、不读 `pg_authid`），
       # 故排在 `admin-accounts-read` 之后不受影响，⛔ 也不追加到文件末尾。
-      # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：读数 23 组，末行 `[ALL PASS]`。
+      # 本地取证（PG 17.11 + 空库 + 库 owner，exit=0）：读数 41 组（旧值 23 组已过时），末行 `[ALL PASS]`。
       - name: 后台社区帖域（#18 / 列表·单条读面 / 下架处置 / 审计留痕 / 失败隔离）
         timeout-minutes: 5
         run: |
@@ -336,8 +355,8 @@ jobs:
           fi
           readings=$(awk '/^\[[A-Z]\]/{n++} END{print n+0}' "$log")
           echo "读数：${readings} 条 [X] 注释"
-          if [ "$readings" -lt 1 ] || ! grep -Fq '[ALL PASS]' "$log"; then
-            echo "::error::后台社区帖域 exit 0 但读数缺失（[X] 行=${readings}，末行 [ALL PASS] 未出现）⇒ 等于没跑。"
+          if [ "$readings" -lt 41 ] || ! grep -Fq '[ALL PASS]' "$log"; then
+            echo "::error::后台社区帖域 exit 0 但读数不足基线（[X] 行=${readings}，基线 41；末行 [ALL PASS] 未出现也算）⇒ 等于没跑或断言组被删减。"
             exit 1
           fi
         env:
@@ -376,8 +395,8 @@ jobs:
           fi
           readings=$(awk '/^\[[A-Z0-9]+\]/{n++} END{print n+0}' "$log")
           echo "读数：${readings} 条 [X] 注释"
-          if [ "$readings" -lt 1 ] || ! grep -Fq 'PASS admin-post-hide-audit-pg' "$log"; then
-            echo "::error::下架审计臂 exit 0 但读数缺失（[X] 行=${readings}，末行 PASS 行未出现）⇒ 等于没跑。"
+          if [ "$readings" -lt 10 ] || ! grep -Fq 'PASS admin-post-hide-audit-pg' "$log"; then
+            echo "::error::下架审计臂 exit 0 但读数不足基线（[X] 行=${readings}，基线 10；末行 PASS 行未出现也算）⇒ 等于没跑或断言组被删减。"
             exit 1
           fi
         env:
@@ -428,8 +447,8 @@ jobs:
           fi
           readings=$(awk '/^PASS /{n++} END{print n+0}' "$log")
           echo "PASS 读数：${readings} 条"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::OCR 校正台账臂 exit 0 却一条 PASS 都没有 ⇒ 等于没跑（0 条断言不是通过）。"
+          if [ "$readings" -lt 7 ]; then
+            echo "::error::OCR 校正台账臂 exit 0 但 PASS 读数只有 ${readings} 条（基线 7）⇒ 断言组被删减；0 条断言不是通过。"
             exit 1
           fi
         env:
@@ -889,8 +908,8 @@ jobs:
           fi
           readings=$(sed -n 's/^READINGS=\([0-9][0-9]*\).*/\1/p' "$log" | tail -n 1)
           echo "读数：${readings:-0} 条（脚本自报 READINGS=）"
-          if [ -z "${readings:-}" ] || [ "$readings" -lt 1 ]; then
-            echo "::error::后台帖子读面没有报出任何读数（READINGS= 缺失或为 0）⇒ 空转不算通过。"
+          if [ -z "${readings:-}" ] || [ "$readings" -lt 12 ]; then
+            echo "::error::后台帖子读面没有报出基线读数（READINGS= 缺失或 < 12）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:
@@ -923,8 +942,8 @@ jobs:
           fi
           readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
           echo "读数：${readings} 条（PASS 行 / ✓ 行）"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::授权范围读面没有报出任何读数 ⇒ 空转不算通过。"
+          if [ "$readings" -lt 3 ]; then
+            echo "::error::授权范围读面读数不足基线（PASS 行 / ✓ 行合计 ${readings} < 3）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:
@@ -1014,8 +1033,8 @@ jobs:
           fi
           readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
           echo "读数：${readings} 条（PASS 行 / ✓ 行）"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::内容域持久化没有报出任何读数 ⇒ 空转不算通过。"
+          if [ "$readings" -lt 11 ]; then
+            echo "::error::内容域持久化读数不足基线（PASS 行 / ✓ 行合计 ${readings} < 11）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:
@@ -1043,8 +1062,8 @@ jobs:
           fi
           readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
           echo "读数：${readings} 条（PASS 行 / ✓ 行）"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::授权写入面没有报出任何读数 ⇒ 空转不算通过。"
+          if [ "$readings" -lt 34 ]; then
+            echo "::error::授权写入面读数不足基线（PASS 行 / ✓ 行合计 ${readings} < 34）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:
@@ -1069,8 +1088,8 @@ jobs:
           fi
           readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
           echo "读数：${readings} 条（PASS 行 / ✓ 行）"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::审核全链没有报出任何读数 ⇒ 空转不算通过。"
+          if [ "$readings" -lt 5 ]; then
+            echo "::error::审核全链读数不足基线（PASS 行 / ✓ 行合计 ${readings} < 5）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:
@@ -1097,8 +1116,8 @@ jobs:
           fi
           readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
           echo "读数：${readings} 条（PASS 行 / ✓ 行）"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::识别与语音域清理没有报出任何读数 ⇒ 空转不算通过。"
+          if [ "$readings" -lt 10 ]; then
+            echo "::error::识别与语音域清理读数不足基线（PASS 行 / ✓ 行合计 ${readings} < 10）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:
@@ -1124,8 +1143,8 @@ jobs:
           fi
           readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
           echo "读数：${readings} 条（PASS 行 / ✓ 行）"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::保留期时钟演练没有报出任何读数 ⇒ 空转不算通过。"
+          if [ "$readings" -lt 10 ]; then
+            echo "::error::保留期时钟演练读数不足基线（PASS 行 / ✓ 行合计 ${readings} < 10）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:
@@ -1157,8 +1176,8 @@ jobs:
           fi
           readings=$(awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log")
           echo "读数：${readings} 条（PASS 行 / ✓ 行）"
-          if [ "$readings" -lt 1 ]; then
-            echo "::error::媒体行清除驱动没有报出任何读数 ⇒ 空转不算通过。"
+          if [ "$readings" -lt 18 ]; then
+            echo "::error::媒体行清除驱动读数不足基线（PASS 行 / ✓ 行合计 ${readings} < 18）⇒ 空转不算通过，断言组被删减同样不算。"
             exit 1
           fi
         env:

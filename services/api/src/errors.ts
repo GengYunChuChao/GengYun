@@ -1,7 +1,13 @@
 /**
  * 契约错误封套：ErrorEnvelope（packages/contracts/openapi.json）。
  *
- * shape：{ error: { code, message, retryable, details: [{field, code}] }, meta: { rid, contract_version, execution_mode } }
+ * shape（逐字对齐下面的 `ErrorEnvelope` 与契约 `#/components/schemas/Meta`）：
+ * { error: { code, message, retryable, details: [{field, code}] },
+ *   meta: { request_id, contract_version, execution_mode } }
+ *
+ * `meta` 只有这三个字段：请求 id 叫 `request_id`（⛔ 不是 `rid`），`contract_version` 是
+ * `CONTRACT_VERSION` 的 const（`1.0.0`），`execution_mode` 取自 `ExecutionMode`。三者都是必填，
+ * `meta` 与 `error` 都是封闭对象（`additionalProperties: false`），多一个字段契约就判红。
  */
 import { CONTRACT_VERSION, type ErrorCode, statusForErrorCode } from './contract.ts';
 import type { ExecutionMode } from './contract.ts';
