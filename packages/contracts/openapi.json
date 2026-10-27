@@ -9819,7 +9819,7 @@
       "get": {
         "operationId": "listAdminCategories",
         "summary": "listAdminCategories",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "description": "未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false）：real 模式下本 operation 由后台外壳恒拒绝，⛔ 不返回空页（空页会被读成「平台没有分类」，那是伪造读数）。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
         ],
@@ -9907,7 +9907,7 @@
       "patch": {
         "operationId": "editCategory",
         "summary": "editCategory",
-        "description": "仅维护首版已规划字典显示与停用；新增覆盖/种类必须另行来源与评估，不由编辑名称扩大识别承诺。",
+        "description": "仅维护首版已规划字典显示与停用；新增覆盖/种类必须另行来源与评估，不由编辑名称扩大识别承诺。未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false）：real 模式下本 operation 由后台外壳恒拒绝，⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。",
         "tags": [
           "admin"
         ],
