@@ -9,6 +9,7 @@ jobs:
   catalog-pg:
     name: catalog-postgres-17.11
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     services:
       postgres:
         image: postgres:17.11

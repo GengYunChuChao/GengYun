@@ -9,6 +9,7 @@ jobs:
   consent-grant-pg:
     name: consent-grant-postgres-17.11
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:17.11
