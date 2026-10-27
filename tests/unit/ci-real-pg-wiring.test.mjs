@@ -153,6 +153,10 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/admin-community-posts-pg.mjs',
+  // R65：`admin-post-hide-audit-pg`（#18 的**下架审计**专证臂：迁移 0047 的 `record_admin_post_hide_audit(...)`
+  // 真库留痕、[B] 段 fail-closed（审计写不进去 ⇒ 503 且帖子零变化）、[C] 段幂等）。**紧挨着
+  // `admin-community-posts-pg`**插入：同一 `POST /admin/posts/{id}/hide` 处置面，并排读最省事。
+  'tests/integration/admin-post-hide-audit-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
@@ -203,6 +207,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/admin-accounts-read-pg.mjs',
   'tests/integration/admin-flags-pg.mjs',
   'tests/integration/admin-community-posts-pg.mjs',
+  // R65：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/admin-post-hide-audit-pg.mjs',
   'tests/integration/ocr-jobs-pg.mjs',
   'tests/integration/ocr-corrections-pg.mjs',
   'tests/integration/recognitions-pg.mjs',
@@ -309,6 +315,12 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    收尾把角色清空、accounts-read 之后会把运行时角色 + 6 个组角色留在集群里）；本脚本对角色零依赖
   //    （只用 owner URL、不 `CREATE ROLE`、不读 `pg_authid`）⇒ 排在 accounts-read **之后**不受影响。
   'tests/integration/admin-community-posts-pg.mjs',
+  // 3e. `admin-post-hide-audit-pg`（R65 接入，#18 的**下架审计**专证臂：迁移 0047 的
+  //    `record_admin_post_hide_audit(...)` 真库留痕、[B] 段 fail-closed（审计写入抛错 ⇒ 503 且帖子零变化）、
+  //    [C] 段幂等（已隐藏再隐藏 ⇒ 200、ETag 不变、审计不增）。要求**空库**、只 apply 9 段迁移子集、
+  //    argv 只给 owner URL（不建组角色）。**紧挨着 `admin-community-posts-pg`**：同一处置面的两面
+  //    （前者钉处置面 [H] +1 行，本臂钉审计函数与回滚语义）；⛔ 不要插进那条有角色前提的链中间。
+  'tests/integration/admin-post-hide-audit-pg.mjs',
   // 8. `ocr-jobs-pg`（`#331` 接入）：自建专用空库、跑全链迁移 0001..0024、建/清一个测试 LOGIN，
   //    不建组角色、也不复用别人的运行时角色 ⇒ 对前后脚本都无耦合（R28-S36 之后它不再是最后一步）。
   'tests/integration/ocr-jobs-pg.mjs',
