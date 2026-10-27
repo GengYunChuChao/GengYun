@@ -31,15 +31,32 @@ test('MediaPurpose / MediaState 与 states.json 逐一一致', () => {
   assert.deepEqual(MEDIA_STATES, states.states.MediaState);
 });
 
-test('error_status_map 与 states.json 一致', () => {
+test('error_status_map 与 states.json 双向一致（档位集合与码表都必须相等）', () => {
+  // 方向一：states → 镜像。契约里有的档，镜像必须逐项相同。
   for (const [status, codes] of Object.entries(states.error_status_map)) {
     assert.deepEqual([...ERROR_STATUS_MAP[status]], codes, `状态 ${status} 错误码漂移`);
   }
+  // 方向二：镜像 → states。镜像里多出来的档同样算漂移 —— 单向遍历时「镜像缺一档」
+  // 会被 `[...undefined]` 直接 TypeError，但「镜像多一档」只会静默通过，所以两个方向都要走。
+  for (const [status, codes] of Object.entries(ERROR_STATUS_MAP)) {
+    assert.deepEqual(
+      [...codes],
+      states.error_status_map[status],
+      `镜像档 ${status} 在 states.json 里不存在或码表不同`,
+    );
+  }
+  // 键集合相等：双向遍历仍可能被「两侧同时少同一档」骗过，这里再钉一次集合。
+  assert.deepEqual(
+    Object.keys(ERROR_STATUS_MAP).map(Number).sort((a, b) => a - b),
+    Object.keys(states.error_status_map).map(Number).sort((a, b) => a - b),
+    '镜像与契约的档位集合必须相等',
+  );
   assert.equal(statusForErrorCode('MEDIA_TOO_LARGE'), 413);
   assert.equal(statusForErrorCode('MEDIA_TYPE_UNSUPPORTED'), 415);
   assert.equal(statusForErrorCode('NOT_FOUND'), 404);
   assert.equal(statusForErrorCode('REVISION_REQUIRED'), 428);
   assert.equal(statusForErrorCode('REVISION_CONFLICT'), 409);
+  assert.equal(statusForErrorCode('INTERNAL_ERROR'), 500);
   assert.equal(isErrorCode('IDEMPOTENCY_CONFLICT'), true);
   assert.equal(isErrorCode('NOT_A_CODE'), false);
 });

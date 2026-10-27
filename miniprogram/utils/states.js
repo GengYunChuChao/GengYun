@@ -66,6 +66,10 @@ const CODE_KIND = {
   PROVIDER_UNAVAILABLE: 'unavailable',
   PROVIDER_OUTCOME_UNKNOWN: 'unavailable',
   PROVIDER_TIMEOUT: 'unavailable',
+  // 500 INTERNAL_ERROR＝服务端未预期异常的兜底码（GY-R67-A03 起契约可表达）。
+  // 与 503 同形态：不是用户输入/权限问题，改条件重发无意义，值得原地重试；
+  // 持续失败应报障。不归 input（会误导用户改条件），也不归 unknown（等于没归类）。
+  INTERNAL_ERROR: 'unavailable',
   // —— 客户端自造码（不在契约里，仅本仓 miniprogram 适配层使用） ——
   // auth.js / *-api.js 在本地判定不可联网、服务端未接线时抛这两个，必须同样有归类，
   // 否则会出现「有码但无状态」的空白提示。它们不是契约码，故单列在此并注明来源。

@@ -30,14 +30,22 @@ test('ConsentPurpose / MediaPurpose / ThirdPartyState / DeletionState 与 states
   assert.deepEqual(DELETION_STATES, states.states.DeletionState);
 });
 
-test('error_status_map 与 states.json 一致（前后端一致授权错误码）', () => {
-  const fromStates = {};
-  for (const [status, codes] of Object.entries(states.error_status_map)) {
-    fromStates[status] = codes;
-  }
+test('error_status_map 与 states.json 双向一致（前后端一致授权错误码）', () => {
+  // 方向一：镜像 → states。镜像里每一档都必须与契约同档逐项相同。
   for (const [status, codes] of Object.entries(ERROR_STATUS_MAP)) {
-    assert.deepEqual([...codes], fromStates[status], `状态 ${status} 的错误码漂移`);
+    assert.deepEqual([...codes], states.error_status_map[status], `状态 ${status} 的错误码漂移`);
   }
+  // 方向二：states → 镜像。契约里有的档，镜像不许缺 —— 单向遍历时「镜像缺一档」
+  // 只是少跑一轮循环、会静默通过（这正是 500 漏同步时本文件仍绿的原因），所以补上这一方向。
+  for (const [status, codes] of Object.entries(states.error_status_map)) {
+    assert.deepEqual([...ERROR_STATUS_MAP[status]], codes, `镜像缺档或码表不同：契约状态 ${status}`);
+  }
+  // 键集合相等：两侧同时少同一档时双向遍历仍会全绿，这里再钉一次集合。
+  assert.deepEqual(
+    Object.keys(ERROR_STATUS_MAP).map(Number).sort((a, b) => a - b),
+    Object.keys(states.error_status_map).map(Number).sort((a, b) => a - b),
+    '镜像与契约的档位集合必须相等',
+  );
   // 403 必须包含授权相关错误码
   assert.ok(ERROR_STATUS_MAP[403].includes('CONSENT_REQUIRED'));
   assert.ok(ERROR_STATUS_MAP[403].includes('SCOPE_DENIED'));
@@ -52,6 +60,7 @@ test('statusForErrorCode 与 isErrorCode 映射正确', () => {
   assert.equal(statusForErrorCode('ACCOUNT_INACTIVE'), 403);
   assert.equal(statusForErrorCode('OBJECT_UNAVAILABLE'), 409);
   assert.equal(statusForErrorCode('REVISION_REQUIRED'), 428);
+  assert.equal(statusForErrorCode('INTERNAL_ERROR'), 500);
   assert.equal(isErrorCode('CONSENT_REQUIRED'), true);
   assert.equal(isErrorCode('NOT_A_CODE'), false);
   assert.throws(() => statusForErrorCode('NOT_A_CODE'));
