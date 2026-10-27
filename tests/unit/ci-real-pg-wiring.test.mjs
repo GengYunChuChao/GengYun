@@ -191,7 +191,29 @@ const MANAGED_SCRIPTS = Object.freeze([
   //    都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
   //    其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后。
+  // R67-C：本片接的 7 条「写好了但从不进 CI」的真库臂，读面/写面分进两个新 job
+  // （`real-pg-admin-read-17.11` / `real-pg-admin-write-17.11`，见 `REQUIRED_STEP_ORDER` 末尾七条）：
+  //   · `admin-posts-read-pg`（后台帖子**读**面；owner URL 形态：CI 建空库 + 五段迁移 + 读面读数）；
+  //   · `admin-scopes-read-pg`（授权范围**读**面；自起集群）；
+  //   · `admin-content-pg`（内容域建表/造数/回滚；自起集群）；
+  //   · `admin-scopes-authority-pg`（授/撤/委派/停用 + 审计；自起集群，直接 spawn postgres）；
+  //   · `moderation-full-chain-pg`（建帖→编辑→审核→下架四态；自起集群）；
+  //   · `recognitions-speech-purge-pg`（识别/语音两域清理 + 幂等重放；自起集群）；
+  //   · `retention-clock-drill-pg`（7/30 日「加速时钟」三态；自起集群）。
+  // ⛔ 不是门禁入口的四条（三参驱动的 `knowledge-native-consumer`、反向控制运行器
+  // `favorites-history-isolation-http.reverse-control`、吃 `argv[2]` 窗口目录的 `local-knowledge-smoke`、
+  // 夹具模块 `profile-ui-fixture`）不在此列。
+  // ⚠️ `media-row-purge-pg` 也**不**接：它 `:318` 断言「迁移号从 0001 起连续无缺号」，而仓内
+  // `services/api/db/migrations` 自 0036 直接跳到 0038（46 个文件、最高 0047）⇒ 本机实测 exit 1
+  // （`缺 37` / `38 !== 37`）。接进来就是一条永久红，修臂不在本片授权内（见证据页「未取得清单」）。
   'tests/integration/user-chain-e2e.mjs',
+  'tests/integration/admin-posts-read-pg.mjs',
+  'tests/integration/admin-scopes-read-pg.mjs',
+  'tests/integration/admin-content-pg.mjs',
+  'tests/integration/admin-scopes-authority-pg.mjs',
+  'tests/integration/moderation-full-chain-pg.mjs',
+  'tests/integration/recognitions-speech-purge-pg.mjs',
+  'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -233,6 +255,14 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/retention-purge-pg.mjs',
   // R18：同上（与 `MANAGED_SCRIPTS` 同位置插入，同一份集合，只允许顺序不同）。
   'tests/integration/user-chain-e2e.mjs',
+  // R67-C：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/admin-posts-read-pg.mjs',
+  'tests/integration/admin-scopes-read-pg.mjs',
+  'tests/integration/admin-content-pg.mjs',
+  'tests/integration/admin-scopes-authority-pg.mjs',
+  'tests/integration/moderation-full-chain-pg.mjs',
+  'tests/integration/recognitions-speech-purge-pg.mjs',
+  'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
 ]);
 
@@ -468,6 +498,35 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    排**最后**的两个理由：它对前后无前提（⑦⑧⑨ 都不依赖前面的库/角色），而它自己会起 loopback 监听
   //    并反复轮询「历史行异步落库」（有界等待，最慢的一步）⇒ 放最后不会把别人的失败混进它的读秒。
   'tests/integration/recognition-chain-e2e.mjs',
+  // ── R67-C：两个**新 job** 里的七条臂 ────────────────────────────────────────────────────────────
+  // ⚠️ 本清单仍是**一条全局序列**（`stepOrderProblems()` 按 workflow 文件里的 `findIndex` 严格递增），
+  // ⛔ 没有改成「按 job 分组」——那样会把「跨 job 的条目顺序」这条断言悄悄丢掉。新 job 的 step 在文件里
+  // 排在 `real-pg-17.11` 之后，故这七条接在 `recognition-chain-e2e` 之后，断言强度与原来逐条等价。
+  // 17~18 在 `real-pg-admin-read-17.11`（读面），19~23 在 `real-pg-admin-write-17.11`（写面）：
+  // 读 job 里两条都**不改业务数据**（迁移后按谓词读 / 读授权形状），写 job 里五条都会建表、造数、
+  // 删行、变更授权或回滚；混在一个 job 里会让写臂的残留污染读面读数，红的位置也不再指向真正的坏点。
+  // 17. `admin-posts-read-pg`：owner URL 形态（CI 显式 `CREATE DATABASE gengyun_admin_posts_read_test`
+  //     空库 + 脚本自己 apply 0001/0022/0030/0032/0045 + 读面读数）。它**不是**自起集群臂（不吃 `GY_PG_BIN`），
+  //     故不进 `SELF_CLUSTERED_SCRIPTS`/`SELF_CLUSTERED_ROOT_KEY`；建库在 step 里、库名与脚本常量一致。
+  'tests/integration/admin-posts-read-pg.mjs',
+  // 18. `admin-scopes-read-pg`：自起集群（端口 55468–55499 先探活再起、只监听 127.0.0.1、跑完自删），
+  //     数据根键 `GY_R37_PG_ROOT`。它只读（迁移 + 角色/授权读形状 + 谓词读），故排在读 job 的最后一步。
+  'tests/integration/admin-scopes-read-pg.mjs',
+  // 19. `admin-content-pg`：自起集群，数据根键 `GY_I18_PG_ROOT`（端口 55600–55699）。
+  //     写：三张内容表 + 草稿/版本/台账 + 发布→撤回 + 负控制 42501 + 回滚三连。
+  'tests/integration/admin-content-pg.mjs',
+  // 20. `admin-scopes-authority-pg`：自起集群，数据根键 `GY_R37_PG_ROOT`。**直接 `spawn postgres`**
+  //     （不走 `pg_ctl start`）、自建库名 `gengyun`、臂内跑 `20-login-roles.sql` 的授权区。
+  //     写：授/撤/委派/停用 + 审计行 ⇒ 归写 job，⛔ 不占 deploy-sql 门禁。
+  'tests/integration/admin-scopes-authority-pg.mjs',
+  // 21. `moderation-full-chain-pg`：自起集群，数据根键 `GY_I14C_PG_ROOT`。写：建帖→编辑→审核→下架四态。
+  'tests/integration/moderation-full-chain-pg.mjs',
+  // 22. `recognitions-speech-purge-pg`：自起集群，数据根键 `GY_R34_PG_ROOT`（与第 15c/15f 条同键、
+  //     各自子目录）。写：两域清理函数真删 + 负控制读数 + 幂等重放。
+  'tests/integration/recognitions-speech-purge-pg.mjs',
+  // 23. `retention-clock-drill-pg`：自起集群，数据根键 `GY_I19_PG_ROOT`。写：7/30 日「加速时钟」三态
+  //     （在线 +7 日、备份 +30 日）真删行；⛔ 不传 `GY_ALLOW_SKIP`（那是本机取 0 的放宽开关）。
+  'tests/integration/retention-clock-drill-pg.mjs',
 ]);
 
 /**
@@ -524,6 +583,22 @@ const SELF_CLUSTERED_SCRIPTS = Object.freeze([
   // 它读的数据根键是 **`GY_R34_PG_ROOT`**（源码唯一取值点 `process.env.GY_R34_PG_ROOT ?? tmpdir()`，`:64`）：
   // 与第 15c 条 `retention-purge-pg` **同键**（同族同键、各自子目录，见 `SELF_CLUSTERED_ROOT_KEY`）。
   'tests/integration/admin-audit-logs-pg.mjs',
+  // R67-C：下面六条同为自起集群臂（各自 `initdb` + `pg_ctl` + 自建库 + 跑完自删），CI 里没有可核对的
+  // 「CI 建出来的库」⇒ 判据⑦⑧ 对它们换同一组等价（更强）判据；step 里**不得**出现 `CREATE DATABASE`。
+  // 第 17 条的 `admin-posts-read-pg` 是 owner URL 形态，⛔ 不进这张表。
+  // `admin-scopes-read-pg`：端口 55468–55499 先探活再起、只监听 127.0.0.1、自建库名在脚本内。
+  'tests/integration/admin-scopes-read-pg.mjs',
+  // `admin-content-pg`：端口 55600–55699 先探活再起、自建 `gengyun_admin_content_pg_test`。
+  'tests/integration/admin-content-pg.mjs',
+  // `admin-scopes-authority-pg`：直接 `spawn postgres`（不走 `pg_ctl start`）、自建库名 `gengyun`、
+  // 臂内跑 `20-login-roles.sql` 的授权区 ⇒ 只在 `GY_PG_BIN` + `GY_R37_PG_ROOT` 上有前提。
+  'tests/integration/admin-scopes-authority-pg.mjs',
+  // `moderation-full-chain-pg`：自起集群，自建库名在脚本内。
+  'tests/integration/moderation-full-chain-pg.mjs',
+  // `recognitions-speech-purge-pg`：自起集群（与 `media-row-purge-pg` 同族，但本片只接这条）。
+  'tests/integration/recognitions-speech-purge-pg.mjs',
+  // `retention-clock-drill-pg`：自起集群，7/30 日加速时钟。
+  'tests/integration/retention-clock-drill-pg.mjs',
 ]);
 
 /**
@@ -567,6 +642,21 @@ const SELF_CLUSTERED_ROOT_KEY = Object.freeze({
   // 互不覆盖，所以 workflow 里两条 step 可以共用同一个 `${{ runner.temp }}/gy-r34-pg`。
   // ⚠️ 它**没有** `GY_*_PG_LOG` 键（日志路径由 root 推导）⇒ `detectedRootKeys()` 只认这一个根键。
   'tests/integration/admin-audit-logs-pg.mjs': 'GY_R34_PG_ROOT',
+  // R67-C：下面六条各自读一个 `GY_*_PG_ROOT`（`detectedRootKeys()` 会从源码交叉核对，写错即红）：
+  //   · `admin-scopes-read-pg` / `admin-scopes-authority-pg` 读 **`GY_R37_PG_ROOT`**（同键、各自子目录；
+  //     两条分属读/写两个 job，root 值都落在各自的 `${{ runner.temp }}/gy-r37-pg`）；
+  //   · `admin-content-pg` 读 **`GY_I18_PG_ROOT`**（它的日志键是 `GY_I18_PG_LOG`，不匹配根键形状）；
+  //   · `moderation-full-chain-pg` 读 **`GY_I14C_PG_ROOT`**；
+  //   · `recognitions-speech-purge-pg` 读 **`GY_R34_PG_ROOT`**（与 15c/15f 同键、各自子目录；日志键
+  //     `GY_R34_PG_LOG` 不匹配根键形状）；
+  //   · `retention-clock-drill-pg` 读 **`GY_I19_PG_ROOT`**（与 13/14/15b 同键、各自子目录）。
+  // ⚠️ 第 17 条 `admin-posts-read-pg` 吃 owner URL、⛔ 不读任何 `GY_*_PG_ROOT` ⇒ 不在这张表里。
+  'tests/integration/admin-scopes-read-pg.mjs': 'GY_R37_PG_ROOT',
+  'tests/integration/admin-content-pg.mjs': 'GY_I18_PG_ROOT',
+  'tests/integration/admin-scopes-authority-pg.mjs': 'GY_R37_PG_ROOT',
+  'tests/integration/moderation-full-chain-pg.mjs': 'GY_I14C_PG_ROOT',
+  'tests/integration/recognitions-speech-purge-pg.mjs': 'GY_R34_PG_ROOT',
+  'tests/integration/retention-clock-drill-pg.mjs': 'GY_I19_PG_ROOT',
 });
 
 /** 数据根目录键的形状：`GY_*_PG_ROOT`。用来从脚本源码认出「它读哪个根」，也是「装饰性 env」的识别口径。 */
@@ -2076,9 +2166,14 @@ test('反向控制⑧：判据⑥⑦⑧⑨ 各自的变异都必须红，且消�
   //    且点名那条脚本。⛔ 变异不能用 `replaceWithinJob`：自 R28-E5 起同一个 job 里有**两条**自起集群脚本、
   //    两段 `GY_PG_BIN` 逐字相同（`/usr/lib/postgresql/17/bin`），job 级变异会命中两处而假红。
   for (const selfClustered of SELF_CLUSTERED_SCRIPTS) {
+    // R67-C：自起集群脚本已分散在三个 job 里（`real-pg-17-11` / `real-pg-admin-read-17.11` /
+    // `real-pg-admin-write-17.11`）⇒ 变异必须落在**它自己**所在的 job 里的那一个 step，
+    // ⛔ 不再硬取 `jobsRunningManagedScripts(source)[0]`（那会把作用域缩小到第一个 job）。
+    const hostJob = jobsOf(source).find((job) => job.body.includes(`node ${selfClustered}`));
+    assert.ok(hostJob !== undefined, `workflow 里找不到 \`${selfClustered}\` 所在的 job`);
     const withoutBin = replaceWithinStep(
       source,
-      realJobId,
+      hostJob.id,
       selfClustered,
       /GY_PG_BIN: \/usr\/lib\/postgresql\/17\/bin/,
       '# GY_PG_BIN: /usr/lib/postgresql/17/bin',
