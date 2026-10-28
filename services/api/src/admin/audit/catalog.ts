@@ -4,7 +4,7 @@
  * ## 为什么枚举不写死在路由/契约两处
  * 查询参数 `action` / `entity` 的闭集**不是**从契约里编出来的，而是从「谁在写这张表」反推的。
  * 今天往 `public.admin_audit_events` 落库写审计的地方全在 `services/api/db/migrations/` 里，
- * 一共十种 `action`：
+ * 一共十一种 `action`：
  *
  * | 写入点（库内函数） | `action` | `scope`（查询参数 `entity` 的取值来源） | 迁移 |
  * | --- | --- | --- | --- |
@@ -18,6 +18,7 @@
  * | `public.record_admin_post_hide_audit(...)` | `post.hide` | `sources:write` | 0047 `:185-198` |
  * | `public.disable_admin_account(...)` | `admin_account.disable` | `scopes:write`（共享，见下「admin_account 也需要护栏」） | 0048 `:282-290` |
  * | `public.enable_admin_account(...)`  | `admin_account.enable`  | `scopes:write`（同上） | 0048 `:413-421` |
+ * | `public.record_admin_category_update(...)` | `category.update` | `sources:write`（与 `post` 共享，靠动作护栏分开；**没有** `entity=category`） | 0049 `:413` |
  *
  * ## `?entity=X` 到底匹配哪些行（本文件的**筛选语义**，唯一定义处）
  *
@@ -254,6 +255,25 @@ export const AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE = 'admin_account.disable';
 /** 后台管理员账号**恢复**（迁移 `0048` 的 `public.enable_admin_account`，审计行在 `:413-421`）。 */
 export const AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE = 'admin_account.enable';
 
+/**
+ * 后台改**分类目录**（迁移 `0049` 的 `public.record_admin_category_update`，审计行在该函数体内）。
+ *
+ * 它是**第 11 项**，也是第一个「有落库写入点、但没有对应 `entity`」的动作：`0049` 把
+ * `action='category.update'` / `scope='sources:write'` 写进表，闭集不登记就是又一次
+ * 「能看见（全量翻页）、不能筛（`?action=category.update` 一律 400）」。
+ *
+ * ⚠ `sources:write` 与 `post` 实体共用 ⇒ **靠 `post` 的动作护栏挡串味**：护栏把 `entity=post`
+ * 收窄到 `action='post.hide'`，分类行不会漏进帖子视图。反方向今天**没有** `entity=category`
+ * （分类不是六个实体之一，也没有 `?entity=` 取值），分类行只能靠 `?action=category.update`
+ * 或不过滤的全量翻页拿到 —— 这是刻意的：新增一个 `entity` 要连带改契约 `AuditEntity` 枚举、
+ * 后台筛选栏与 `AUDIT_ENTITY_SCOPES`，超出「让既有落库行可筛」的范围。
+ *
+ * ⛔ 这条 action **不是** `set_flag`（那是 `feature_flags` 的开关值），也不是「内容下架」
+ * （那是 `post.hide`）：三者都写过 `sources:write` / `flags:write` 一类共享 scope，但语义、
+ * 实体与控制面都不同，别互相冒充。
+ */
+export const AUDIT_ACTION_CATEGORY_UPDATE = 'category.update';
+
 /** `GET /admin/audit-logs` 的 `action` 闭集（= 库内写入点的 `action` 列取值）。 */
 export const AUDIT_ACTIONS = Object.freeze([
   AUDIT_ACTION_ACCOUNT_SUSPEND,
@@ -266,6 +286,7 @@ export const AUDIT_ACTIONS = Object.freeze([
   AUDIT_ACTION_POST_HIDE,
   AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
   AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE,
+  AUDIT_ACTION_CATEGORY_UPDATE,
 ] as const);
 
 export type AdminAuditAction = (typeof AUDIT_ACTIONS)[number];
