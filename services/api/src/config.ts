@@ -1185,3 +1185,53 @@ export interface AppConfig {
    */
   wechatStubSubject?: string | null;
 }
+
+// ===========================================================================
+// GY-R68 返修 · 启动日志的「固定身份是否生效」读数（本片只加**可观测性**，不改行为）
+//
+// 独立审查的两条非阻塞之一：启动日志原本只有 `execution_mode` / `database_configured`，
+// 开发者无从判断「我设的固定身份到底生效了没有」；而 `WECHAT_STUB_SUBJECT='   '`（纯半角空白／
+// 全角空白）在语义上等价于「未设」，过去**静默**回落 code 派生 —— 开发者会以为身份已固定、
+// 其实没固定。
+//
+// 本函数把三态压成启动日志里的布尔（⛔ **只打布尔，绝不打变量的值**：那是身份标识）：
+//   · `wechat_stub_subject_fixed: true`   ⇒ 固定身份确实生效（等价于 `config.wechatStubSubject !== null`）；
+//   · `wechat_stub_subject_fixed: false`  ⇒ 未生效（未设／只含空白／real 模式三种情形）；
+//   · `wechat_stub_subject_ignored: true` ⇒ **单独出现**时表示「设了、但只含空白 ⇒ 被忽略」，
+//                                           与「未设」可区分（这正是审查要的可观测差异）。
+//
+// 判据不复写第二份：`fixed` 直接调用 `readStubSubject`（`loadConfig` 用的同一个函数），因此不会
+// 与真实行为漂移。本函数**不改变**身份派生、real 边界与 `INVALID_VALUE` 规则。
+// ===========================================================================
+
+/** 启动日志里 `WECHAT_STUB_SUBJECT` 的可观测读数（⛔ 只有布尔，没有值）。 */
+export interface WechatStubSubjectStartupFields {
+  /** 固定身份是否生效（＝ `config.wechatStubSubject !== null`）。 */
+  wechat_stub_subject_fixed: boolean;
+  /** 变量设了但只含空白字符（被 `trimmed()` 归一化成「未设」）时为 `true`；其它情形**不出现**该键。 */
+  wechat_stub_subject_ignored?: true;
+}
+
+/**
+ * 计算启动日志要追加的字段。见上方口径。
+ *
+ * `env` 与 `executionMode` 必须来自**同一次**配置加载（`server.ts` 传 `process.env` 与
+ * `config.executionMode`），否则读数可能与真实生效值不一致。
+ */
+export function wechatStubSubjectStartupFields(
+  env: Env,
+  executionMode: AppConfig['executionMode'],
+): WechatStubSubjectStartupFields {
+  // 与 `loadConfig` 同源：real 恒 null；未设/空白恒 null；超长/控制字符恒 null（此时启动已失败）。
+  const fixed = readStubSubject(env, executionMode, []) !== null;
+  if (fixed) return { wechat_stub_subject_fixed: true };
+  // real 模式：该变量本就不生效（不是「设错了」）⇒ 只报 false，不额外标「被忽略」，
+  // 免得运维被引导去改一个在 real 下没有意义的变量。
+  if (executionMode === 'real') return { wechat_stub_subject_fixed: false };
+  // 「设了但只含空白」≠「未设」：`trimmed()` 会把前者归一化成未设，必须单独标出来。
+  const raw = env['WECHAT_STUB_SUBJECT'];
+  const whitespaceOnly = typeof raw === 'string' && raw.length > 0 && raw.trim() === '';
+  return whitespaceOnly
+    ? { wechat_stub_subject_fixed: false, wechat_stub_subject_ignored: true }
+    : { wechat_stub_subject_fixed: false };
+}
