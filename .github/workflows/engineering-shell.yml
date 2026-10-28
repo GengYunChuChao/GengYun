@@ -50,6 +50,11 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
+          # 本 job 跑 `npm run test:unit`，其中 tests/unit/doc-anchor-relocation-identity.test.mjs
+          # （文档锚点位移闸门）要用 `git merge-base HEAD origin/main` 取 base。checkout 默认
+          # `fetch-depth: 1`，浅克隆里三个 fallback 全断 ⇒ 用例 SKIP 而 exit 0，等于空跑。
+          # 取全历史让它真的判；浅克隆下的自愈 fetch 仍保留，作为纵深。
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '24.16.0'

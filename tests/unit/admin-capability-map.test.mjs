@@ -35,11 +35,17 @@ const SOURCE_PATHS = [
 ];
 
 /**
- * UI 侧真实缺口（2026-10-28 实测）：这两条 operation 只有 operationId 常量
- * （`apps/admin/src/lib/admin-administrators.mjs`），没有对应的客户端函数，因此没有入口。
- * 这个清单是**断言**：新口径下 `noUiEntry` 不是 0，闸门必须如实说出是哪两条。
+ * UI 侧真实缺口：**当前为空**。
+ *
+ * 2026-10-28 之前这里是 `['grantAdministratorScope', 'revokeAdministratorScope']`——两条授/撤权
+ * 写面只有 operationId 常量、没有客户端函数，因此没有入口。GY-R68 把
+ * `apps/admin/src/lib/administrator-scope-api.mjs` 与 `AdministratorsView.vue` 的调用链接上之后，
+ * 46 条 operation 全部有入口。
+ *
+ * 这个常量是**断言**，不是注释：它和 `noUiEntryList` 双向对拍（多一条少一条都红）。
+ * 清单清空不等于判据放宽——哪天有人把入口拆掉，这里必须先被显式改回来，闸门才会重新变绿。
  */
-const KNOWN_NO_UI_ENTRY = ['grantAdministratorScope', 'revokeAdministratorScope'];
+const KNOWN_NO_UI_ENTRY = [];
 
 function makeTempTree(t) {
   const root = mkdtempSync(join(tmpdir(), 'capmap-'));
@@ -283,21 +289,25 @@ test('负例七（反假阳性）：把 POSTS_PATH 拆成 ADMIN_ROOT_PATH + 模�
   assert.equal(result.code, 0, `纯改名/拆常量重构不该让闸门变红：\n${result.stdout}\n${result.stderr}`);
 });
 
-test('负例八（整块比对）：删掉逐 operation 表的一整行 ⇒ --check 必须变红并指出第一处差异', t => {
+test('负例八（整块比对）：删掉逐 operation / 族表的一整行 ⇒ --check 必须变红并指出第一处差异', t => {
   const root = makeTempTree(t);
   editFile(root, 'docs/architecture/admin-console-capability-map.md', doc => {
-    assert.ok(doc.includes('| grantAdministratorScope | POST |'), '负例前提不成立：逐 op 表里没有该行');
-    // 读数表一行不动 —— 只删逐 operation 表的一行：这正是「只比读数」时漏掉的假绿通道。
-    return doc.replace(/^\| grantAdministratorScope \|.*\n/m, '');
+    assert.ok(
+      doc.includes('| administrators | /admin/administrators | 6 |'),
+      '负例前提不成立：族表里没有 administrators 那一行',
+    );
+    // 读数表一行不动 —— 只删下表的一行：这正是「只比读数」时漏掉的假绿通道。
+    // （逐 operation 表在 R68 之后是空的：46 条全部有入口，所以这里改删族表一行。）
+    return doc.replace(/^\| administrators \|.*\n/m, '');
   });
 
   const result = runCli(['--check', '--root', root]);
   const output = `${result.stdout}\n${result.stderr}`;
-  assert.equal(result.code, 1, `删掉逐 op 表一行后 --check 应为 1（整块比对），实际 ${result.code}\n${output}`);
+  assert.equal(result.code, 1, `删掉族表一行后 --check 应为 1（整块比对），实际 ${result.code}\n${output}`);
   assert.match(output, /整块与重算不一致/, '红报告没有说明这是整块比对失败');
   assert.match(output, /第一处差异在 .*admin-console-capability-map\.md:\d+/, '红报告没有给出文档行号');
-  assert.match(output, /重算：.*grantAdministratorScope \| POST/, '红报告没有贴出重算侧原文');
-  assert.match(output, /文档：.*revokeAdministratorScope/, '红报告没有贴出文档侧原文');
+  assert.match(output, /重算：.*\| administrators \| \/admin\/administrators \| 6 \|/, '红报告没有贴出重算侧原文');
+  assert.match(output, /文档：.*\| audit-events \|/, '红报告没有贴出文档侧原文');
 });
 
 /**
@@ -318,12 +328,41 @@ const PROBE_ENTRY_LIB = 'apps/admin/src/lib/admin-administrators.mjs';
 const PROBE_ENTRY_VIEW = 'apps/admin/src/views/AdministratorsView.vue';
 
 /**
+ * 把真实视图里的授/撤权**调用**抹掉（import 与函数体都留着，只把调用点换成等价占位）。
+ *
+ * 作用：造一个**已知缺口**给「负例九／十」用。R68 之后真实树里 46 条 operation 全部有入口，
+ * 这两条守卫如果还指着真实树，`base.summary.noUiEntryList.includes(gap)` 就不成立、
+ * 前提断言会直接红 —— 但判据本身（光 import 不算入口 / 真调用才算）仍必须被钉住。
+ * 所以改成「先人造缺口，再在同一个副本上做 import-only / called 的对照」，
+ * 两次 map 的差异仍然只剩「有没有真的调用」这一件事。
+ */
+function sourcesWithoutRealScopeWriteCalls() {
+  const sources = loadSources(REPO_ROOT);
+  let stripped = 0;
+  const ui = sources.ui.map(file => {
+    if (file.path !== PROBE_ENTRY_VIEW) return file;
+    const text = file.text
+      .replace(/\bgrantAdministratorScope\(request\)/g, () => {
+        stripped += 1;
+        return 'Promise.resolve(request)';
+      })
+      .replace(/\brevokeAdministratorScope\(request\)/g, () => {
+        stripped += 1;
+        return 'Promise.resolve(request)';
+      });
+    return { ...file, text };
+  });
+  assert.equal(stripped, 2, `造缺口失败：${PROBE_ENTRY_VIEW} 里应有两处真实调用（授、撤各一处），实际抹掉 ${stripped} 处`);
+  return { ...sources, ui };
+}
+
+/**
  * 在真实树的内存副本上注入「带证据的 client 函数」，并让可达视图
  * `AdministratorsView.vue` import 它；`callStatement` 决定视图**是否真的调用**。
  * 返回完整的 sources（`buildCapabilityMap` 直接吃），不落盘、不动 `docs/**`。
  */
-function sourcesWithEvidenceCarryingProbe(callStatement) {
-  const sources = loadSources(REPO_ROOT);
+function sourcesWithEvidenceCarryingProbe(callStatement, base = loadSources(REPO_ROOT)) {
+  const sources = base;
   // 反引号与 `${` 用 fromCharCode 拼，避免测试文件自身的模板转义把被注入的样例改样
   const tick = String.fromCharCode(96);
   const open = `${String.fromCharCode(36)}{`;
@@ -351,12 +390,14 @@ function sourcesWithEvidenceCarryingProbe(callStatement) {
 }
 
 test('负例九（M2b 守卫）：携带真实证据的 client 函数只 import 不调用 ⇒ 该 operation 仍无 UI 入口', () => {
-  const base = buildCapabilityMap(loadSources(REPO_ROOT));
-  // 目标必须是**当前真的没有入口**的 operation：否则「import 即入口」的变异两边都是入口，用例失去判别力。
+  // 真实树已经 46/46 全有入口（R68 补上了授/撤权入口），先在内存副本里抹掉真实调用造出**已知缺口**，
+  // 否则下面的「前提」断言本身就不成立、这条守卫会失去判别力。
+  const gapped = sourcesWithoutRealScopeWriteCalls();
+  const base = buildCapabilityMap(gapped);
   const gap = 'grantAdministratorScope';
-  assert.ok(base.summary.noUiEntryList.includes(gap), `前提不成立：${gap} 当前有入口，本守卫需改指向下一个缺口`);
+  assert.ok(base.summary.noUiEntryList.includes(gap), `前提不成立：抹掉调用后 ${gap} 仍判有入口，本守卫失去判别力`);
 
-  const map = buildCapabilityMap(sourcesWithEvidenceCarryingProbe(''));
+  const map = buildCapabilityMap(sourcesWithEvidenceCarryingProbe('', gapped));
   const row = rowOf(map, gap);
 
   // ① 证据确实被认到了这条 operation 上：证明本用例走得到「有没有被调用」那个分支
@@ -366,9 +407,19 @@ test('负例九（M2b 守卫）：携带真实证据的 client 函数只 import 
     `${PROBE_ENTRY_FUNCTION} 没有落在 ${gap} 的路径证据上，本用例会退化成无效守卫：${row.evidenceFunctions.join(', ')}`,
   );
   assert.equal(
+    row.evidenceFunctions.length,
+    rowOf(base, gap).evidenceFunctions.length + 1,
+    '注入的函数没有被算成这条 operation 的路径证据（operation 级计数按「是否已有证据函数」算，注入前这条本来就有真实证据）',
+  );
+
+  // ①b 全局证据计数不许动：注入的函数落在一条**本来就有证据**的 operation 上，
+  //     所以 `operationsWithEvidence` 应该原地不动。若它跟着 +1，说明这条判据是按
+  //     「证据函数条数」在累加、而不是按「这条 operation 有没有证据」——那样「光 import 不算入口」
+  //     与「真调用才算入口」两条守卫会同时失去判别力（R68 对抗审查 N3：计数必须落在本行，不能落在全局）。
+  assert.equal(
     map.summary.operationsWithEvidence,
-    base.summary.operationsWithEvidence + 1,
-    '注入的函数没有为任何 operation 增加路径证据',
+    base.summary.operationsWithEvidence,
+    '注入的探针让全局证据计数动了：判据按「证据函数条数」累加，而不是按 operation 归属',
   );
 
   // ② import 不是入口：withUiEntry / noUiEntry / noUiEntryList 一个都不许动
@@ -388,11 +439,12 @@ test('负例九（M2b 守卫）：携带真实证据的 client 函数只 import 
 });
 
 test('负例十（M2b 对照）：同一个函数被调用一次 ⇒ 该 operation 变成有入口，差异只来自「调用」', () => {
-  const base = buildCapabilityMap(loadSources(REPO_ROOT));
+  const gapped = sourcesWithoutRealScopeWriteCalls();
+  const base = buildCapabilityMap(gapped);
   const gap = 'grantAdministratorScope';
-  assert.ok(base.summary.noUiEntryList.includes(gap), `前提不成立：${gap} 当前有入口`);
+  assert.ok(base.summary.noUiEntryList.includes(gap), `前提不成立：抹掉真实调用后 ${gap} 仍判有入口`);
 
-  const map = buildCapabilityMap(sourcesWithEvidenceCarryingProbe('void grantScopeEntryProbe({});'));
+  const map = buildCapabilityMap(sourcesWithEvidenceCarryingProbe('void grantScopeEntryProbe({});', gapped));
   const row = rowOf(map, gap);
 
   assert.equal(row.verdict, 'ui-entry', `函数真被调用后仍判成 ${row.verdict}`);
@@ -426,8 +478,8 @@ test('汇总行可直接贴进回报（含四个关键读数）', () => {
   const map = buildCapabilityMap(loadSources(REPO_ROOT));
   const line = renderSummaryLine(map);
   assert.match(line, /totalOps=46/);
-  assert.match(line, /有入口=44/);
-  assert.match(line, /无入口=2/);
+  assert.match(line, /有入口=46/);
+  assert.match(line, /无入口=0/);
   assert.match(line, /死按钮=0/);
   assert.equal(readdirSync(join(REPO_ROOT, 'tools/lib')).includes('admin-capability-map.mjs'), true);
 });
