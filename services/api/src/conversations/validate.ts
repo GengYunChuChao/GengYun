@@ -67,7 +67,7 @@ function lengthProblem(value: unknown, min: number, max: number): 'NOT_STRING' |
   return null;
 }
 
-/** 主体校验（契约 `security: userSession`）。后台会话 ⇒ 403 `SCOPE_DENIED`。 */
+/** 主体校验（契约 `security: userSession`）。后台会话在 HTTP 面是 401 `SESSION_EXPIRED`；`SCOPE_DENIED` 只作服务层兜底。 */
 export function requireUserActor(actor: unknown): ConversationActor {
   if (!isPlainObject(actor)) throw new ApiError('SESSION_REQUIRED', '需要用户会话');
   const { userId, authEpoch, role } = actor;
