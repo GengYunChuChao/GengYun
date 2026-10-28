@@ -186,8 +186,8 @@ const MANAGED_SCRIPTS = Object.freeze([
   // 两者同族（自起临时集群、自建库、跑完即删），并排读最省事；⛔ 不追加到清单末尾——那里紧邻识别链
   // `recognition-chain-e2e`，它必须始终排最后。
   'tests/integration/retention-purge-pg.mjs',
-  // 15d. `user-chain-e2e.mjs`（R18 接入，GY-I04／I05／I07／I16：登录→手选→搜索→详情→收藏/取消→退出
-  //    六步整链、119 条断言）。与第 13/14/15/15b/15c 条**同类**的自起集群脚本（自己 `initdb` 出临时 17
+  // 15d. `user-chain-e2e.mjs`（R18 接入，GY-I04／I05／I07／I16：登录→手选→搜索→详情→收藏/取消→来源失效→退出
+  //    七步整链、142 条断言）。与第 13/14/15/15b/15c 条**同类**的自起集群脚本（自己 `initdb` 出临时 17
   //    集群、空闲端口、自建库、跑完 `pg_ctl stop` 并逐个文件删数据目录），**不连** service 里的库、
   //    **不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
   //    它是**第二条** `-e2e.mjs`（另一条是第 16 条的识别链）：在原样 `buildApp` 真装配上 `listen({port:0})`
@@ -460,8 +460,8 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    ⛔ 与第 13/14/15b 条都不同；键名按脚本映射，见 `SELF_CLUSTERED_ROOT_KEY`。
   //    它排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步。
   'tests/integration/retention-purge-pg.mjs',
-  // 15d. `user-chain-e2e`（R18 接入，GY-I04／I05／I07／I16：登录→手选作物/地区→搜索→详情→收藏/取消→退出
-  //    六步整链、119 条断言）：与第 13/14/15/15b/15c 条**同类**的自起集群脚本（自己 `initdb` 出临时 17
+  // 15d. `user-chain-e2e`（R18 接入，GY-I04／I05／I07／I16：登录→手选作物/地区→搜索→详情→收藏/取消→来源失效→退出
+  //    七步整链、142 条断言）：与第 13/14/15/15b/15c 条**同类**的自起集群脚本（自己 `initdb` 出临时 17
   //    集群、空闲端口且**先探活再起**、自建库、跑完 `pg_ctl stop` 并逐个文件删数据目录），**不连** service
   //    里的库、**不建**组角色、也不碰集群级对象 ⇒ 对前后脚本零耦合，位置只受「那条装包 step 在它之前」约束。
   //    它是**第二条** `-e2e.mjs`：在原样 `buildApp` 真装配上 `listen({port:0})` 走真 HTTP（不 mock 路由），
