@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。",
+  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。",
   "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
@@ -46,6 +46,12 @@
       "reference": "verify-cvm-postgres.sh:326"
     },
     {
+      "path": "docs/architecture/s4-data-traceability.md",
+      "reason": "SUSPECT",
+      "owner": "docs",
+      "reference": "docs/architecture/s4-data-traceability.md:339"
+    },
+    {
       "path": "docs/verification/gy-i09-identify-loop-20261011.md",
       "reason": "SUSPECT",
       "owner": "docs",
@@ -80,6 +86,36 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/unit/tts-jobs-http.test.mjs:129"
+    },
+    {
+      "path": "tests/unit/user-data-deletion.test.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/unit/user-data-deletion.test.mjs:127"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:276"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:315"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:91"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:97"
     }
   ]
 }

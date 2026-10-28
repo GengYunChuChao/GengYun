@@ -282,6 +282,96 @@
       "docLine": 345,
       "kind": "block",
       "note": "【段内块注释】文档引的是第 2-32 行的块注释，块后第一条非空行是第 34 行的「import assert from 'node:assert/strict';」（不是声明行）——这段说明没有声明行可指。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:2204",
+      "doc": "docs/architecture/contract-implementation-status.md",
+      "docLine": 42,
+      "kind": "inline",
+      "note": "【行内注释·六源分派旧行号】文档该处原本是一串裸锚点（`:2204` 继承同块显式锚点 `services/api/src/app.ts:2227`），指的是 app.ts 里那行 `// 投影换成注销引用；未完成项如实 blocked（见 community/purge.ts）。`——单行注释，块后没有声明行可指，硬改锚会把「旧行号的注释说明」换成不相干的符号。判据仍在：`--symbol=strict` 每次都会判这一条，条目消失会被 STALE-SYMBOL 反查。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:2213",
+      "doc": "docs/architecture/contract-implementation-status.md",
+      "docLine": 42,
+      "kind": "inline",
+      "note": "【行内注释·六源分派旧行号】同上一行的兄弟锚点（裸 `:2213`），指 `// #19 延续片 · 语音域（三表）：同上，无条件注入…`，单行注释、块后无声明行。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "app.ts:470",
+      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
+      "docLine": 27,
+      "kind": "block",
+      "note": "【注释块·装配层纪律自述】文档该行原为裸锚点 `:470`（继承同块 `services/api/src/app.ts:495`），引的是 `services/api/src/app.ts:467-472` 那段「装配层**绝不自行铸造**、也不从 env／原型链／全局对象派生」的自述块，块后没有声明行可指。这条自述正是「注入点已存在但不铸造」这一设计判据的原文，只能指注释。"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:335",
+      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
+      "docLine": 303,
+      "kind": "block",
+      "note": "【注释块收尾行】文档该行原为裸锚点 `:335`（继承同块 `user-data-deletion.ts:342`），指的是 `services/api/src/privacy/user-data-deletion.ts:332-335` 注释块的收尾行（第 335 行内容就是 `*/`）——设计页要引的是那段端口说明的原文，不是声明行（声明行在第 342 行，句子里另一个锚点已经指它）。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:2259",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 188,
+      "kind": "inline",
+      "note": "【可达性自陈·行内注释】文档 §4 D1「缺口」原写「同一处 `:2078` 自陈」，按当前树 2078 已是 `};`；真正的那句在 `// ⚠ 可达性（实测）：…real 下 `requireWired()` 先 503…两条路都到不了这里`。是单行注释、块后无声明行——这一条正是「注销在 real 模式下不可用」的原文证据，只能指注释。"
+    },
+    {
+      "path": "services/api/src/privacy/backup-replay-manifest.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/privacy/backup-replay-manifest.ts:68",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 202,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引「该文件 `:68` 自陈『契约里没有备份/恢复/重放的 operation』」，指的是整份文件开头的自述第 1-78 行（第 68 行在其中），块后没有声明行可指——文件级自述没有单个声明行，硬改锚会把自述换成不相干的符号。"
+    },
+    {
+      "path": "services/api/src/community/authors.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/community/authors.ts:38-39",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 213,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引「同一文件 `:38-39` 自述它是『兼容用的快路径、不是权威落点』」，落在文件头自述第 1-40 行内（进程内 Map 的让步说明），块后没有声明行可指。"
+    },
+    {
+      "path": "services/api/src/community/authors.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/community/authors.ts:8-12",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 214,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引「本地假名投影：由内部 userId 派生稳定的假名 id 与显示名」，落在文件头自述第 1-40 行内，块后没有声明行可指。"
+    },
+    {
+      "path": "services/api/src/community/purge.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/community/purge.ts:32",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 219,
+      "kind": "file-header",
+      "note": "【文件头自述块·原因码清单】文档该行原为裸锚点 `:32`（继承同块 `community/purge.ts:69`），指文件头自述里 `author-reference-unavailable` 那条原因码说明（第 1-72 行块内），块后没有声明行可指——原因码清单是文档证据，不是可指的声明行。"
     }
   ]
 }

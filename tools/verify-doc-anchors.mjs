@@ -37,6 +37,8 @@
  *   node tools/verify-doc-anchors.mjs --scan docs/reference --scan 'docs/features/**\/*.md'
  *   node tools/verify-doc-anchors.mjs --emit-baseline      # 打印基线 JSON（不写盘）
  *   node tools/verify-doc-anchors.mjs --write-baseline     # 写 tools/doc-anchors-baseline.json
+ *   node tools/verify-doc-anchors.mjs --emit-orphan-baseline  # 打印裸锚点孤儿册 JSON（不写盘）
+ *   node tools/verify-doc-anchors.mjs --write-orphan-baseline # 写 tools/doc-anchors-orphan-baseline.json
  *   node tools/verify-doc-anchors.mjs --root <目录>        # 指向夹具树（单测用）
  *   node tools/verify-doc-anchors.mjs --symbol=count       # 符号关联统计（只统计，不参与退出码）
  *   node tools/verify-doc-anchors.mjs --strict --symbol=strict
@@ -47,8 +49,17 @@
  * 裸锚点（只写 `:1316`／`:1341-1350`）：路径从**同块**（同一段落／列表项／表格单元格／代码块）
  * 内最近的显式锚点继承，链接 `[:321](path)` 直接从 href 取；继承到的锚点与显式锚点**同权**——
  * 越界、区间无实质内容、符号落点、`--strict` 汇总都算它，所以把 `path:130` 删成 `:130` 不会洗白。
- * 归不到路径的（同块没有显式锚点、或同块路径不唯一）进 `BARE_ORPHAN`：只计数 + 逐条打印、不判红。
+ * 归属失败（同块没有显式锚点、或同块显式锚点指向不同文件）的裸锚点进 `BARE_ORPHAN`：单条不判红
+ * （猜路径比漏判更坏），但**逐条登记在册**——`tools/doc-anchors-orphan-baseline.json`，键为
+ * `文档:文档行:原文|原因`。`--strict` 下「基线之外的新增孤儿」判红并逐条打印，基线里已经不在文档中的
+ * 条目打 `STALE-ORPHAN` 点名要求删。同一份册子还登记「作用域外、按同口径本会红」的继承锚点
+ * （键 `文档:文档行:引用|判据`），以免 `docs/verification/**` 成为无人复核的免检区。于是删掉路径前缀
+ * 只有两个出口：被同块继承抓住（该红照红），或者在孤儿册上留下一条增删（评审看得见）——都不会静默消失。
  * 继承锚点的判红作用域与 `SYMBOL_LINE_SCOPE` 同口径（`docs/architecture/**`），历史取证页只计数。
+ *
+ * 两种扫描口径的数字**不可互换**：`npm run verify:anchors` 走默认 `docs/architecture` + `docs/verification`
+ * （375 份文档）；`--scan docs` 还多扫 `docs/` 下其余页面（README、development-progress、evaluation 等）。
+ * 引用 `BARE`／`BARE-SCOPE`／`BARE-ORPHAN` 读数前，先确认命令用的是哪一种。
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -60,6 +71,15 @@ export const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 默认扫描面：架构文档 + 证据页。用 `--scan` 可加，不改这里也能扩。 */
 export const DEFAULT_SCAN_TARGETS = Object.freeze(['docs/architecture', 'docs/verification']);
 export const DEFAULT_BASELINE = 'tools/doc-anchors-baseline.json';
+/**
+ * 裸锚点孤儿册：`BARE_ORPHAN` 逐条登记在这里（键 `文档:文档行:原文|原因`），另有 `outsideRed`
+ * 数组登记「作用域外、按同口径本会红」的继承锚点（键 `文档:文档行:引用|判据`）。
+ *
+ * 为什么必须落成文件：孤儿不判红，若每次现算，删掉路径前缀就等于让一条锚点退出全部判据而**不留痕迹**——
+ * PR diff 里看不到增减，评审无从复核。落成册之后，这条路要么被同块继承抓住（该红照红），要么在册子上
+ * 留下一行增删。册子只由 `--write-orphan-baseline` 生成，不手写。
+ */
+export const DEFAULT_ORPHAN_BASELINE = 'tools/doc-anchors-orphan-baseline.json';
 export const BROKEN = 'BROKEN';
 export const OUT_OF_RANGE = 'OUT_OF_RANGE';
 export const SUSPECT = 'SUSPECT';
@@ -106,8 +126,9 @@ const LINK_ANCHOR_PATTERN = /\[\s*:(\d+)(?:-(\d+))?\s*\]\(\s*<?([^)\s>]+)>?\s*\)
 
 /**
  * 裸锚点「无主」桶：同块内没有可继承的显式锚点，或同块显式锚点指向不同文件因而无法唯一归属。
- * 这类锚点**今天不判红**（猜路径比漏判更坏），但必须逐条打印 + 在汇总行给出数字——
- * 让「删掉路径前缀」这条路要么被继承抓住、要么以 `BARE_ORPHAN` 的形状留在报告里，不会静默消失。
+ * 这类锚点**单条不判红**（猜路径比漏判更坏），但每条都进 `tools/doc-anchors-orphan-baseline.json`：
+ * `--strict` 只报基线之外的新增、并对已消失的基线条目点名要求删——所以「删掉路径前缀」不会静默消失，
+ * 它会以孤儿册上的一行增删留在 diff 里。
  */
 export const BARE_ORPHAN = 'BARE_ORPHAN';
 /**
@@ -560,7 +581,10 @@ function recordCommentAnchor(list, seen, anchor) {
  * 同一文档里同一条引用出现多次只记一条（按 doc + reference 去重）。
  * `commentAnchors` = 作用域内、目标是源码、但**没落在代码行上**的锚点（`--symbol=strict` 的判据面，
  * 见 `COMMENT_ANCHOR`）；与 `findings` 一样按 doc + reference 去重，仅这两档不会进 `findings`。
- * `bareOrphans` = 归不到路径的裸锚点（见 `BARE_ORPHAN`）：只计数、逐条打印，不进 `findings`、不影响退出码。
+ * `bareOrphans` = 归不到路径的裸锚点（见 `BARE_ORPHAN`）：不进 `findings`、不影响退出码，但逐条进
+ * `tools/doc-anchors-orphan-baseline.json`（基线外新增在 `--strict` 下判红）。
+ * `outsideRedAnchors` = 作用域外、按同口径**本会红**的继承锚点：`docs/verification/**` 不判红（历史读数），
+ * 但它们进同一份孤儿册的 `outsideRed` 数组，新增同样在 `--strict` 下判红——否则证据页会变成免检区。
  */
 export function collectFindings({
   root = TOOL_ROOT,
@@ -579,6 +603,7 @@ export function collectFindings({
   const seen = new Set();
   const seenComment = new Set();
   const bareOrphans = [];
+  const outsideRedAnchors = [];
   const stats = {
     documents: files.length,
     candidates: 0,
@@ -630,6 +655,7 @@ export function collectFindings({
         reason: orphan.reason,
         inScope: bareInScope,
         text: orphan.text.trim().slice(0, 160),
+        ...(Array.isArray(orphan.candidates) ? { candidates: orphan.candidates } : {}),
       });
     }
     const queue = [
@@ -652,7 +678,11 @@ export function collectFindings({
           unresolved.push({ doc: docPath, docLine: reference.docLine, reference: reference.reference, candidates: resolved.candidates });
           continue;
         }
-        if (!report) { stats.bare.outsideRed += 1; continue; }
+        if (!report) {
+          stats.bare.outsideRed += 1;
+          outsideRedAnchors.push({ doc: docPath, docLine: reference.docLine, reference: reference.reference, reason: BROKEN });
+          continue;
+        }
         const key = `${docPath}|${reference.reference}|${BROKEN}`;
         if (seen.has(key)) { stats.deduped += 1; continue; }
         seen.add(key);
@@ -752,7 +782,11 @@ export function collectFindings({
         }
         continue;
       }
-      if (!report) { stats.bare.outsideRed += 1; continue; }
+      if (!report) {
+        stats.bare.outsideRed += 1;
+        outsideRedAnchors.push({ doc: docPath, docLine: reference.docLine, reference: reference.reference, reason: verdict.reason });
+        continue;
+      }
       const key = `${docPath}|${reference.reference}|${verdict.reason}`;
       if (seen.has(key)) { stats.deduped += 1; continue; }
       seen.add(key);
@@ -778,7 +812,7 @@ export function collectFindings({
     || left.reference.localeCompare(right.reference)
     || left.doc.localeCompare(right.doc)
   ));
-  return { findings, stats, unresolved, commentAnchors, bareOrphans };
+  return { findings, stats, unresolved, commentAnchors, bareOrphans, outsideRedAnchors };
 }
 
 // —— 锚点身份判据（ANCHOR_DRIFT，只对 docs/architecture/**） ———————————————————
@@ -1020,6 +1054,14 @@ export function partitionDriftByBaseline(findings, entries = ARCHITECTURE_ANCHOR
  */
 export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   // 2026-10-27 实测 16 条，逐条人工裁决；key 形状见 driftBaselineKey（文档:行号#片段指纹）。
+  // 2026-10-28（GY-R68-D09b，base de2aa3c6）删去 1 条 ⇒ 15 条。删掉的是原来这条：
+  //   "docs/architecture/s4-data-traceability.md:186#available: config.executionMode !== 'real'",
+  //   行尾注记当时写「drift-unique｜实际在 services/api/src/app.ts:2221｜真漂移」。那个 :2221 在写下时是**对的**：
+  //   1a8af906（app.ts 2659 行）的第 2221 行正是 `    available: config.executionMode !== 'real',`，该片段全文件唯一；
+  //   到 base de2aa3c6（2695 行）相对那棵树 +36 行后，唯一落点漂到 2257，这条注记才 stale（是漂移失效，不是出生即错）。
+  //   本片把该页那处引用改成真实落点 :2257，漂移修好后这条 key 再也命中不了 ⇒ 留着只是留一条永远命不中的假基线：
+  //   实测把它加回去 `--strict` 仍 exit 0，只多一行 `STALE-DRIFT`（陈旧漂移条目不进 exit code）。
+  //   所以删它属于「基线治理、不留假基线」，判据逻辑与 `ANCHOR_DRIFT_WINDOW` 一个字没改，也不是闸门硬要求。
   // 行尾注释：判定档｜片段实际落点｜归类原因。
   "docs/architecture/acceptance-map.md:69#HUMAN_REVIEW_STATE = 'under_construction'", // drift-unique｜实际在 services/api/src/moderation/nonbypass.ts:15｜归属误判：片段属于同一行里用散文写的 moderation/types.ts:110-115；nonbypass.ts:161-168 的引用本身没错
   "docs/architecture/ai-ops-spec-status.md:197#{ actorId, reasonCode: 'job_cancelled', requestId }", // drift-gone｜0 命中｜真漂移：service.ts:776-780 现在是 account.suspend 的审计，job_cancelled 实际在 service.ts:880/962
@@ -1035,7 +1077,6 @@ export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:84#record_third_party_deletion(p_request_id uuid, p_recipient_id text, p_export_ref uuid, p_state text, p_evidence_ref text, p_error_code text, p_at timestamptz) RETURNS jsonb", // drift-gone｜0 命中｜表述差异：SQL 是 CREATE FUNCTION public.record_third_party_deletion( 多行签名，文档写成一行的完整签名
   "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:108#REPLAY_MANIFEST_VERSION = 1", // drift-unique｜实际在 services/api/src/privacy/backup-replay-manifest.ts:85｜真漂移，同一句里已经写了 :85
   "docs/architecture/rate-limit-policy.md:185#(_address, hop) => hop < trustProxy", // drift-gone｜0 命中｜真漂移：app.ts:2450-2455 现为 OCR 作业源注释；trustProxy 的 hop 判据在 app.ts:2649，且文档片段省略了类型标注
-  "docs/architecture/s4-data-traceability.md:186#available: config.executionMode !== 'real'", // drift-unique｜实际在 services/api/src/app.ts:2221｜真漂移
   "docs/architecture/state-contract.md:117#createPostgresBackupPurgePort({ pool, now }) && payload = 'null'::jsonb && state = 'purged'", // drift-unique｜实际在 services/api/db/migrations/0023_user_backup_copies.sql:75｜真漂移（引用写的是 :34）
 ]);
 
@@ -1312,9 +1353,112 @@ export function renderBaseline(findings) {
   return `${JSON.stringify(document, null, 2)}\n`;
 }
 
+// —— 裸锚点孤儿册（BARE_ORPHAN ＋ 作用域外本会红）——————————————————————————
+/**
+ * 孤儿册的键：`文档:文档行:原文|原因`。
+ *
+ * 为什么不学结构基线的「path|reason|reference」：孤儿**没有可解析的路径**，它的 `reference` 就是那个裸
+ * `:130` 本身，同一页会出现很多次；把文档行和原文一起放进键，才能在 diff 里定位到具体是哪一行在变。
+ */
+export const orphanKey = item => `${item.doc}:${item.docLine}:${item.raw}|${item.reason}`;
+/** 作用域外「本会红」的继承锚点：`reference` 已经带路径（继承来的），键同结构基线口径再补文档行。 */
+export const outsideRedKey = item => `${item.doc}:${item.docLine}:${item.reference}|${item.reason}`;
+
+/** 读孤儿册；文件不存在按空册处理（首次落地前的合法状态），坏结构直接抛。 */
+export function loadOrphanBaseline(root, baselinePath = DEFAULT_ORPHAN_BASELINE) {
+  const absolute = resolve(root, baselinePath);
+  if (!existsSync(absolute)) return { path: baselinePath, orphans: [], outsideRed: [], missing: true };
+  const parsed = JSON.parse(readFileSync(absolute, 'utf8'));
+  const readList = (name, list) => {
+    if (list === undefined) return [];
+    if (!Array.isArray(list)) throw new Error(`孤儿册的 ${name} 字段必须是字符串数组：${baselinePath}`);
+    for (const key of list) {
+      if (typeof key !== 'string' || !key.includes('|')) {
+        throw new Error(`孤儿册 ${name} 的条目必须是「…|原因」形状的字符串：${JSON.stringify(key)}`);
+      }
+    }
+    return list;
+  };
+  return {
+    path: baselinePath,
+    orphans: readList('orphans', parsed.orphans),
+    outsideRed: readList('outsideRed', parsed.outsideRed),
+    missing: false,
+  };
+}
+
+/**
+ * 重数法比对（与 `partitionByBaseline` 同构）：同名键登记了几条就只免罚几条，多出来的算新增。
+ * `entries` 既接受已算好的字符串键，也接受对象（好让调用方直接传 `loadOrphanBaseline` 的条目）。
+ *
+ * `scannedDocs`／`docExists` 只影响**陈旧**判定：孤儿册按两种扫描面（`--strict` 的默认面、CI 的
+ * `--scan docs`）共用一份文件，若把「本次没扫到的文档」也算陈旧，就跑哪个面都会刷一片假陈旧。键的第一段
+ * 是文档路径（仓内相对路径没有 `:`），据此跳过「文件还在、只是不在本次扫描面里」的条目。
+ * 但**文件根本不存在**的条目必须照报陈旧——否则册子里塞一条指向不存在文档的假条目就永久隐身了。
+ */
+export function partitionOrphanBaseline(items, keyOf, entries, scannedDocs = null, docExists = null) {
+  const keyOfEntry = entry => (typeof entry === 'string' ? entry : keyOf(entry));
+  const docOfKey = key => String(key).slice(0, String(key).indexOf(':'));
+  const known = new Map();
+  for (const entry of entries) {
+    const key = keyOfEntry(entry);
+    known.set(key, (known.get(key) ?? 0) + 1);
+  }
+  const fresh = [];
+  const covered = [];
+  for (const item of items) {
+    const key = keyOf(item);
+    const remaining = known.get(key) ?? 0;
+    if (remaining > 0) {
+      known.set(key, remaining - 1);
+      covered.push(item);
+    } else {
+      fresh.push(item);
+    }
+  }
+  const stale = [];
+  for (const entry of entries) {
+    const key = keyOfEntry(entry);
+    const doc = docOfKey(key);
+    if (scannedDocs !== null && !scannedDocs.has(doc) && (docExists === null || docExists(doc))) continue;
+    const remaining = known.get(key) ?? 0;
+    if (remaining > 0) {
+      known.set(key, remaining - 1);
+      stale.push(key);
+    }
+  }
+  return { fresh, covered, stale };
+}
+
+/**
+ * 生成孤儿册 JSON：两个数组都**排序**后再落盘，同一棵树上重复生成必须逐字节相同
+ * （否则每次重跑都是一片挪行噪声，评审时看不出真正的增删）。
+ */
+export function renderOrphanBaseline({ orphans, outsideRed }) {
+  const document = {
+    schema_version: 1,
+    note: '归不到路径的裸锚点（BARE_ORPHAN）与「作用域外、按同口径本会红」的继承锚点快照。键 = 文档:文档行:原文|原因（outsideRed 为 文档:文档行:引用|判据）。--strict 只报本文件之外的**新增**（新增 ⇒ exit 1）；条目消失后会变「STALE-ORPHAN 陈旧」，复核后删掉那一行。⛔ 删掉文档里的路径前缀会在这里留下增删——那正是它该有的评审痕迹，不要靠删条目让它变绿。',
+    generated_by: 'node tools/verify-doc-anchors.mjs --write-orphan-baseline',
+    orphans: orphans.map(orphanKey).sort(),
+    outsideRed: outsideRed.map(outsideRedKey).sort(),
+  };
+  return `${JSON.stringify(document, null, 2)}\n`;
+}
+
+/** 孤儿册的读数行：登记多少、命中多少、基线外新增多少、陈旧多少。 */
+function printOrphanBaseline(streams, { baseline, orphans, outside, orphanTotal, outsideTotal }) {
+  streams.log(`BARE-ORPHAN: ${BARE_ORPHAN} ${orphanTotal} 条归不到路径的裸锚点——册 ${baseline.path} 登记 ${baseline.orphans.length} 条；本次命中 ${orphans.covered.length} 条、基线外新增 ${orphans.fresh.length} 条、本次扫描面内陈旧 ${orphans.stale.length} 条`);
+  streams.log(`BARE-ORPHAN-OUTSIDE: 作用域外「本会红」${outsideTotal} 条——同一册 outsideRed 登记 ${baseline.outsideRed.length} 条；命中 ${outside.covered.length} 条、基线外新增 ${outside.fresh.length} 条`);
+  if (baseline.missing) streams.log(`NOTE: 孤儿册 ${baseline.path} 不存在，按空册处理（等于每一条孤儿都算新增）。`);
+  if (orphans.stale.length > 0 || outside.stale.length > 0) {
+    streams.log(`STALE-ORPHAN: ${orphans.stale.length + outside.stale.length} 条孤儿册条目已不再命中（那条裸锚点补回路径了、或文档改写了）——删掉这些行，否则孤儿册会慢慢变成免罚名单：`);
+    for (const key of [...orphans.stale, ...outside.stale].slice(0, 20)) streams.log(`  · ${key}`);
+  }
+}
+
 // —— CLI ——————————————————————————————————————————————————————————————
-const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--root <目录>] [--symbol=count|strict] [--emit-baseline | --write-baseline]';
-const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--root', '--symbol', '--emit-baseline', '--write-baseline']);
+const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline]';
+const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--root', '--symbol', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline']);
 /** `--symbol` 的取值是**白名单**：不认识的取值直接报错退出，绝不当成「没传、照旧绿灯」。 */
 const SYMBOL_MODES = new Set(['count', 'strict']);
 const MAX_PRINTED = 300;
@@ -1323,7 +1467,7 @@ const MAX_PRINTED_UNDECIDABLE = 500;
 const MAX_PRINTED_ORPHAN_OUTSIDE = 40;
 
 export function parseArgs(argv) {
-  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, root: TOOL_ROOT, symbol: null, emit: false, write: false };
+  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, root: TOOL_ROOT, symbol: null, emit: false, write: false, emitOrphan: false, writeOrphan: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const [flag, inline] = argument.includes('=') ? [argument.slice(0, argument.indexOf('=')), argument.slice(argument.indexOf('=') + 1)] : [argument, undefined];
@@ -1338,8 +1482,11 @@ export function parseArgs(argv) {
     if (flag === '--strict') options.strict = true;
     else if (flag === '--emit-baseline') options.emit = true;
     else if (flag === '--write-baseline') options.write = true;
+    else if (flag === '--emit-orphan-baseline') options.emitOrphan = true;
+    else if (flag === '--write-orphan-baseline') options.writeOrphan = true;
     else if (flag === '--scan') options.scan.push(value());
     else if (flag === '--baseline') options.baseline = value();
+    else if (flag === '--orphan-baseline') options.orphanBaseline = value();
     else if (flag === '--root') options.root = resolve(value());
     else if (flag === '--symbol') {
       const mode = value();
@@ -1348,8 +1495,15 @@ export function parseArgs(argv) {
     }
   }
   if (options.emit && options.write) throw new Error('--emit-baseline 与 --write-baseline 只能二选一');
+  if (options.emitOrphan && options.writeOrphan) throw new Error('--emit-orphan-baseline 与 --write-orphan-baseline 只能二选一');
+  if ((options.emit || options.write) && (options.emitOrphan || options.writeOrphan)) {
+    throw new Error('结构基线与孤儿册要分别生成：--emit-baseline／--write-baseline 不能和 --emit-orphan-baseline／--write-orphan-baseline 同时用');
+  }
   if (options.symbol !== null && (options.emit || options.write)) {
     throw new Error(`--symbol=${options.symbol} 不能与 --emit-baseline／--write-baseline 同时用（生成基线时统计会被忽略）`);
+  }
+  if (options.symbol !== null && (options.emitOrphan || options.writeOrphan)) {
+    throw new Error(`--symbol=${options.symbol} 不能与 --emit-orphan-baseline／--write-orphan-baseline 同时用（生成孤儿册时统计会被忽略）`);
   }
   if (options.scan.length === 0) options.scan = [...DEFAULT_SCAN_TARGETS];
   return options;
@@ -1361,6 +1515,17 @@ function describe(finding) {
     ? ''
     : `［裸锚点，继承同块 ${finding.inheritedFrom.reference}（文档第 ${finding.inheritedFrom.docLine} 行）］`;
   return `${finding.reason} ${finding.doc}:${finding.docLine} → ${finding.reference}${inherited}（${finding.detail}；owner=${finding.owner}）`;
+}
+
+/**
+ * 孤儿（`BARE_ORPHAN`）的逐条描述：文档、行号、原文、原因、片段，`ambiguous-block` 连候选路径一起打。
+ * 候选是归属时**已经算出来的**事实，不打出来等于让读者回去手数同块里的显式锚点。
+ */
+function describeOrphan(item) {
+  const candidates = Array.isArray(item.candidates) && item.candidates.length > 0
+    ? `；候选 ${item.candidates.join(' / ')}`
+    : '';
+  return `${item.doc}:${item.docLine} ${item.raw}（${item.reason}${candidates}）｜${item.text}`;
 }
 
 /**
@@ -1381,7 +1546,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.error(error.message);
     return 2;
   }
-  const { findings, stats, unresolved, commentAnchors, bareOrphans } = collectFindings({ root: options.root, targets: options.scan });
+  const { findings, stats, unresolved, commentAnchors, bareOrphans, outsideRedAnchors } = collectFindings({ root: options.root, targets: options.scan });
   if (options.emit) {
     process.stdout.write(renderBaseline(findings));
     return 0;
@@ -1390,6 +1555,17 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     const absolute = resolve(options.root, options.baseline);
     writeFileSync(absolute, renderBaseline(findings));
     streams.log(`WRITE: 已写 ${options.baseline}（${findings.length} 条）。基线是**人工裁决**的结果，提交前逐条看过；新问题不要往里加。`);
+    return 0;
+  }
+  const orphanDocument = renderOrphanBaseline({ orphans: bareOrphans, outsideRed: outsideRedAnchors });
+  if (options.emitOrphan) {
+    process.stdout.write(orphanDocument);
+    return 0;
+  }
+  if (options.writeOrphan) {
+    const absolute = resolve(options.root, options.orphanBaseline);
+    writeFileSync(absolute, orphanDocument);
+    streams.log(`WRITE: 已写 ${options.orphanBaseline}（孤儿 ${bareOrphans.length} 条、作用域外本会红 ${outsideRedAnchors.length} 条）。这是**快照**不是裁决：只由本工具生成，不手写；提交前确认增量确实该留在册上。`);
     return 0;
   }
   const baseline = loadBaseline(options.root, options.baseline);
@@ -1403,6 +1579,18 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   }
   printSummary(streams, { stats, unresolved, findings, fresh, covered, stale, baseline, strict: options.strict });
   printBareOrphans(streams, bareOrphans);
+  const orphanBaseline = loadOrphanBaseline(options.root, options.orphanBaseline);
+  const scannedDocs = new Set(resolveScanTargets(options.root, options.scan));
+  const docExists = docPath => existsSync(resolve(options.root, docPath));
+  const orphanPartition = partitionOrphanBaseline(bareOrphans, orphanKey, orphanBaseline.orphans, scannedDocs, docExists);
+  const outsidePartition = partitionOrphanBaseline(outsideRedAnchors, outsideRedKey, orphanBaseline.outsideRed, scannedDocs, docExists);
+  printOrphanBaseline(streams, {
+    baseline: orphanBaseline,
+    orphans: orphanPartition,
+    outside: outsidePartition,
+    orphanTotal: bareOrphans.length,
+    outsideTotal: outsideRedAnchors.length,
+  });
   const drift = collectAnchorDrift({ root: options.root, targets: options.scan });
   const driftPartition = partitionDriftByBaseline(drift.findings);
   printDriftSummary(streams, { drift, partition: driftPartition });
@@ -1431,6 +1619,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   const structuralFailed = options.strict && fresh.length > 0;
   const driftFailed = options.strict && driftPartition.fresh.length > 0;
   const symbolStrictFailed = options.strict && symbolStrict !== null && symbolStrict.fresh.length > 0;
+  const orphanFailed = options.strict && (orphanPartition.fresh.length > 0 || outsidePartition.fresh.length > 0);
   if (structuralFailed) {
     streams.error(`FAIL: 文档行号闸门未通过（基线之外新增 ${fresh.length} 条）`);
     for (const finding of fresh.slice(0, 40)) streams.error(`  · ${describe(finding)}`);
@@ -1445,8 +1634,14 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     for (const anchor of symbolStrict.fresh.slice(0, 40)) streams.error(`  · ${describeCommentAnchor(anchor)}`);
     streams.error('  修法：把锚点改到目标文件里真正的声明行／代码行（报错里给了该行实际内容，按它找）；确属「引用注释原文、没有代码行可指」的合法证据，人工裁决后登记进 tools/doc-anchors-symbol-baseline.json 并在 note 里写明原因。⛔ 不要为了让门禁变绿去改被引用的注释。');
   }
-  if (structuralFailed || driftFailed || symbolStrictFailed) return 1;
-  if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
+  if (orphanFailed) {
+    streams.error(`FAIL: 裸锚点孤儿册未通过（${BARE_ORPHAN} 基线之外新增 ${orphanPartition.fresh.length} 条、作用域外本会红新增 ${outsidePartition.fresh.length} 条）`);
+    for (const item of orphanPartition.fresh.slice(0, 40)) streams.error(`  · ${describeOrphan(item)}`);
+    for (const item of outsidePartition.fresh.slice(0, 40)) streams.error(`  · ${item.doc}:${item.docLine} → ${item.reference}（${item.reason}，作用域外本会红）`);
+    streams.error('  修法：给这条裸锚点补回路径（`path:N`），或把段落写成「同块前面已有显式锚点」的形状；确属历史取证页逐字引用、补不回路径的，人工裁决后用 --write-orphan-baseline 重新生成孤儿册（那不是「让它变绿」，是把「放弃判据」这件事登记成册上的一行）。');
+  }
+  if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed) return 1;
+  if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、${BARE_ORPHAN}${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
   return 0;
 }
 
@@ -1464,19 +1659,20 @@ function printSummary(streams, { stats, unresolved, findings, fresh, covered, st
 }
 
 /**
- * `BARE_ORPHAN` 的逐条打印：文档、行号、原文片段、归属失败的原因。
- * 作用域内全列（数量可控，也很可能是该补路径的）；作用域外的历史取证页只抽样，数字仍在 `BARE-SCOPE` 行。
+ * `BARE_ORPHAN` 的逐条打印：文档、行号、原文片段、归属失败的原因；`ambiguous-block` 连**候选路径**一起打
+ * （候选已经算出来了，不打出来等于让人回去手数）。作用域内全列（数量可控，也很可能是该补路径的）；
+ * 作用域外的历史取证页只抽样，数字仍在 `BARE-SCOPE` 行。
  */
 function printBareOrphans(streams, bareOrphans) {
   if (bareOrphans.length === 0) return;
   const inScope = bareOrphans.filter(item => item.inScope);
   const outside = bareOrphans.filter(item => !item.inScope);
-  streams.log(`${BARE_ORPHAN}: ${bareOrphans.length} 条裸锚点归不到路径（同块内没有显式锚点，或同块显式锚点指向不同文件）——今天不判红，但留在这里可见，「删路径前缀」这条路不会静默消失：`);
+  streams.log(`${BARE_ORPHAN}: ${bareOrphans.length} 条裸锚点归不到路径（同块内没有显式锚点，或同块显式锚点指向不同文件）——单条不判红（判红只能靠猜），但每条都进 ${DEFAULT_ORPHAN_BASELINE}：--strict 只报基线外新增、并对已消失的条目点名要求删，所以「删掉路径前缀」要么被同块继承抓住，要么在孤儿册上留下增删：`);
   for (const item of inScope) {
-    streams.log(`  · ${item.doc}:${item.docLine} ${item.raw}（${item.reason}）｜${item.text}`);
+    streams.log(`  · ${describeOrphan(item)}`);
   }
   for (const item of outside.slice(0, MAX_PRINTED_ORPHAN_OUTSIDE)) {
-    streams.log(`  · ${item.doc}:${item.docLine} ${item.raw}（${item.reason}）｜${item.text}`);
+    streams.log(`  · ${describeOrphan(item)}`);
   }
   if (outside.length > MAX_PRINTED_ORPHAN_OUTSIDE) {
     streams.log(`  … 另有 ${outside.length - MAX_PRINTED_ORPHAN_OUTSIDE} 条作用域外未打印（抽样上限 ${MAX_PRINTED_ORPHAN_OUTSIDE} 条，作用域内的已全列）`);

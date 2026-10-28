@@ -183,9 +183,9 @@
   删除模块闭集 4 项固定 + 4 项条件追加（`services/api/src/privacy/user-data-deletion.ts:164-169`、`:202-207`），
   真实注销路径有效闭集 **8 项**（`:151-153` 自述）。
 - **证据**：`tests/integration/account-deletion-pg.mjs`，CI `.github/workflows/real-pg-integration.yml:189`。
-- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2076` 是 `available: config.executionMode !== 'real'`，
-  注释 `:2058-2065` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
-  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处注释（第 2259 行）自陈
+- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2257` 是 `available: config.executionMode !== 'real'`，
+  注释 `:2239-2246` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
+  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处 `:2259` 自陈
   外发撤销器与 `available` 门互斥，「两条路都到不了这里」（仅测试注入可达）。
 
 ### D09 在线 7 日、备份 30 日、恢复重放
@@ -199,7 +199,7 @@
 - **证据**：CI 里三条真库臂 `.github/workflows/real-pg-integration.yml:546`（online-purge-pg）、`:501`
   （backup-copies-purge-pg）、`:485`（backup-purge-pg）。
 - **缺口**：① 恢复重放只有纯函数模块 `services/api/src/privacy/backup-replay-manifest.ts:559`，**没有装配进 `app.ts`**，
-  契约里也没有恢复 operation（该文件头注释第 68 行自陈）；② 调度件的「已安装并生效」不在仓内，没有任何生产读数；
+  契约里也没有恢复 operation（该文件 `:68` 自陈）；② 调度件的「已安装并生效」不在仓内，没有任何生产读数；
   ③ 加速演练 `tests/integration/retention-clock-drill-pg.mjs` 未进任何 workflow，未设 `GY_PG_BIN` 时如实 `exit 77`。
 
 ### D10 帖评保留、去身份、已注销用户、不可反查
@@ -210,13 +210,13 @@
   引用形状 `^gy-anon-[0-9a-f]{16}$` 与共用规则见 `services/api/db/migrations/0032_community_report_reporter_ref.sql:24`。
 - **证据**：`services/api/src/community/purge.ts:141` 起（`authors.anonymize` 调用与形状校验）。
 - **缺口**：`services/api/src/community/authors.ts:92` 的进程内 `anonymizedRefs` 以 **userId** 为键（`:122` 读、`:125` 写、`:140` 查），进程生命周期内仍能把「原账户 → 注销引用」对上（重启即失，持久面已去关联）；
-  同一文件头注释第 38-39 行自述它是「**兼容用的快路径**、不是权威落点」——那是**持久化轴**上的让步（行内 `anonymized_author_ref` 才是权威），**不等于**「不可反查」：进程还在时 `Map.has(userId)` 就是判据；2026-10-28 复核据此**维持「部分」**并写死口径（读数：`git grep -n anonymizedRefs -- services/api/src/community/authors.ts`）。
-  举报表在 0032 之前是强关联，迁移头注释第 8-12 行自陈过这一点。
+  同一文件 `:38-39` 自述它是「**兼容用的快路径**、不是权威落点」——那是**持久化轴**上的让步（行内 `anonymized_author_ref` 才是权威），**不等于**「不可反查」：进程还在时 `Map.has(userId)` 就是判据；2026-10-28 复核据此**维持「部分」**并写死口径（读数：`git grep -n anonymizedRefs -- services/api/src/community/authors.ts`）。
+  举报表在 0032 之前是强关联，迁移 `:8-12` 自陈过这一点。
 
 ### D11 保留正文脱敏、不能可靠脱敏的媒体隐藏/移除
 
 - **判定**：部分。需求 `docs/implementation-requirements.md:280`。
-- **实现**：行级读数含 `hiddenMedia`（`services/api/src/community/purge.ts:69`），blocked 原因码见同文件头注释第 32 行起；
+- **实现**：行级读数含 `hiddenMedia`（`services/api/src/community/purge.ts:69`），blocked 原因码在 `:32` 起；
   单条媒体的对象删除是「确认后才清引用」（`services/api/src/media/service.ts:736`，先落清理意图再删桶对象）。
 - **证据**：账本脱敏 `packages/privacy/redact.mjs:68`。
 - **缺口**：**注销时按主体批量清媒体未接线**——`git grep -n purge_owner_media -- services/api/src` = 0 行，
@@ -339,7 +339,7 @@
 
 | 编号 | 事实 | 可复算 |
 | --- | --- | --- |
-| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2076` |
+| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2257` |
 | E2 | 三条真库臂不在任何 workflow：`tests/integration/media-row-purge-pg.mjs`、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/integration/retention-clock-drill-pg.mjs` | 在 `.github` 下 grep 这三个脚本名，命中 0 行 |
 | E3 | 恢复重放只有纯函数，契约无恢复 operation | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | E4 | 加速演练 `exit 77` 是「未取得」，不是通过 | `tests/integration/retention-clock-drill-pg.mjs:20` |
@@ -364,9 +364,9 @@
 
 | 项 | 现在 | 升档需要的事实 | 判据落点 |
 | --- | --- | --- | --- |
-| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2076` |
+| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2257` |
 | D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:203` |
-| D13 | 未实现 | **2026-10-28 复核后只剩两项**（适配器注入、读侧真库端口、回执投影都已在）：① 注销受理时按接收方建行（调写侧端口 `subscribeThirdPartyDeletion`，现在零调用者）；② real 模式的注销域开门（`available` 门），否则回执不可达 | `services/api/src/app.ts:1998` |
+| D13 | 未实现 | **2026-10-28 复核后只剩两项**（适配器注入、读侧真库端口、回执投影都已在）：① 注销受理时按接收方建行（调写侧端口 `subscribeThirdPartyDeletion`，现在零调用者）；② real 模式的注销域开门（`available` 门），否则回执不可达 | `services/api/src/app.ts:1998` 同侧装配区 |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
 | G3 | **已消解（2026-10-26 复核）** | 已具备（撤条理由）：`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer` 在、`purge:retention` 已在必需清单、日级上界 1440 分钟已分档；若单元被删或必需清单回落到 2 项，按缺口重新记 | `tools/verify-purge-schedule.mjs:117` |

@@ -183,7 +183,7 @@
     "/admin/auth/session": {
       "post": {
         "operationId": "loginAdmin",
-        "summary": "loginAdmin",
+        "summary": "用后台登录名与口令换取一个独立的后台会话（与用户会话分表、分 audience）",
         "description": "独立后台凭据交换；不授用户会话或自注册管理员。",
         "tags": [
           "admin"
@@ -272,8 +272,8 @@
       },
       "get": {
         "operationId": "getAdminSession",
-        "summary": "getAdminSession",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "供当前后台管理员自查本会话的过期时间与有效 scope",
+        "description": "门 session:read，且必须是后台 audience 的会话（无会话 401 SESSION_REQUIRED、用户会话 403 SCOPE_DENIED）；返回本人会话的过期时间、修订号与去重排序后的有效 scope 清单，ETag 取该会话 revision，Cache-Control: no-store；只读，不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "admin"
         ],
@@ -507,8 +507,8 @@
     "/admin/auth/logout": {
       "post": {
         "operationId": "logoutAdmin",
-        "summary": "logoutAdmin",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "由当前后台管理员撤销自己这一个会话",
+        "description": "门 session:logout；Idempotency-Key 必填（缺失 400 IDEMPOTENCY_KEY_REQUIRED、长度非法 400 INVALID_REQUEST），同键同体重放按台账原样返回；只把当前会话置为已撤销，不递增账号 auth_epoch、不碰其它会话，响应体为 {accepted:true}；无后台会话 401 SESSION_REQUIRED，缺 scope 403 SCOPE_DENIED。",
         "tags": [
           "admin"
         ],
@@ -7340,8 +7340,8 @@
     "/admin/sources": {
       "get": {
         "operationId": "listAdminSources",
-        "summary": "listAdminSources",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出当前管理员自己创建的来源资料及其当前修订",
+        "description": "门 sources:read；只列 steward 是自己的 sources（别人的不出现在本页）；每项取 head 修订投影成 SourceDraft{id,revision,source,visibility}，其中 SourceRef 带 validity（草稿为 unknown、撤回为 withdrawn）与 review_status（曾发布 ⇒ verified）；游标签名绑当前管理员与集合指纹、15 分钟后过期，集合变化 ⇒ 400 INVALID_CURSOR；响应无 ETag、不返回总数。",
         "tags": [
           "admin"
         ],
@@ -7420,7 +7420,7 @@
       },
       "post": {
         "operationId": "createSourceDraft",
-        "summary": "createSourceDraft",
+        "summary": "新建一条来源资料草稿，由服务端分配 id 与修订 1",
         "description": "只写unverified/private草稿；不可由客户端直接写verified/approved。",
         "tags": [
           "admin"
@@ -7515,8 +7515,8 @@
     "/admin/sources/{id}": {
       "get": {
         "operationId": "getAdminSource",
-        "summary": "getAdminSource",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "按 id 读取一条来源资料的当前修订",
+        "description": "门 sources:read；返回 head 修订与 revision，ETag 取该修订号；目标不存在、属于别的家族、或 steward 不是当前管理员，三种情况一律 404 NOT_FOUND（对外同形）；id 非 uuid ⇒ 400 INVALID_REQUEST。",
         "tags": [
           "admin"
         ],
@@ -7598,8 +7598,8 @@
       },
       "patch": {
         "operationId": "editSourceDraft",
-        "summary": "editSourceDraft",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "给一条来源资料追加一条新的草稿修订（整条提交，不改写旧修订）",
+        "description": "门 sources:write；Idempotency-Key 必填（缺失 400 IDEMPOTENCY_KEY_REQUIRED），If-Match 必填且须等于当前 head 修订（缺失 428 REVISION_REQUIRED、格式非法 400、不匹配 409 REVISION_CONFLICT）；body 是完整的 SourceDraftInput（10 个必填字段，不是部分更新），效果是追加一条新修订，旧修订（含已发布正文）不被改写；目标不存在/越界 ⇒ 404 NOT_FOUND。",
         "tags": [
           "admin"
         ],
@@ -7708,7 +7708,7 @@
     "/admin/sources/{id}/publish": {
       "post": {
         "operationId": "publishSource",
-        "summary": "publishSource",
+        "summary": "发布一条来源资料，使其成为公开视图里的生效修订",
         "description": "服务端核对受控evidence_ref、责任人、登记制剂/有效期/规则；模拟只可发布明确模拟科普且禁止用量。不授专业资格。",
         "tags": [
           "admin"
@@ -7818,8 +7818,8 @@
     "/admin/sources/{id}/withdraw": {
       "post": {
         "operationId": "withdrawSource",
-        "summary": "withdrawSource",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "撤回一条已发布的来源资料，使其退出公开视图",
+        "description": "门 sources:write；Idempotency-Key 必填、If-Match 须等于当前 head（428/400/409），body 必填 reason（ReasonInput）；从未发布过 ⇒ 409 OBJECT_UNAVAILABLE，已撤回 ⇒ 200 changed:false（不迁移、不写审计）；成功写 lifecycle=withdrawn 并追加 source.withdraw 审计（reasonCode=withdraw_executed、targetRef 带已发布修订号），⛔ 不删除任何审计痕迹。",
         "tags": [
           "admin"
         ],
@@ -7928,8 +7928,8 @@
     "/admin/knowledge": {
       "get": {
         "operationId": "listAdminKnowledge",
-        "summary": "listAdminKnowledge",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出当前管理员自己创建的知识条目及其当前修订",
+        "description": "门 sources:read；只列 steward 是自己的 knowledge；每项取 head 修订投影成 {id,revision,content,visibility,review_status}（KnowledgeDraft 有 visibility）；游标签名绑当前管理员与集合指纹、15 分钟后过期，集合变化 ⇒ 400 INVALID_CURSOR；响应无 ETag、不返回总数。",
         "tags": [
           "admin"
         ],
@@ -8008,7 +8008,7 @@
       },
       "post": {
         "operationId": "createKnowledgeDraft",
-        "summary": "createKnowledgeDraft",
+        "summary": "新建一条植保知识条目草稿，由服务端分配 id 与修订 1",
         "description": "只建unverified草稿，生成ID由服务端设置；不自动作为有效药剂/限制或用量依据。",
         "tags": [
           "admin"
@@ -8103,8 +8103,8 @@
     "/admin/knowledge/{id}": {
       "get": {
         "operationId": "getAdminKnowledge",
-        "summary": "getAdminKnowledge",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "按 id 读取一条知识条目的当前修订",
+        "description": "门 sources:read；返回 head 修订的 {id,revision,content,visibility,review_status} 与 ETag；不存在、跨家族、非本人 steward ⇒ 一律 404 NOT_FOUND；id 非 uuid ⇒ 400 INVALID_REQUEST。",
         "tags": [
           "admin"
         ],
@@ -8186,7 +8186,7 @@
       },
       "patch": {
         "operationId": "editKnowledgeDraft",
-        "summary": "editKnowledgeDraft",
+        "summary": "给一条知识条目追加新修订，并使引用旧版本的公开内容立即失效",
         "description": "新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。",
         "tags": [
           "admin"
@@ -8296,7 +8296,7 @@
     "/admin/knowledge/{id}/publish": {
       "post": {
         "operationId": "publishKnowledge",
-        "summary": "publishKnowledge",
+        "summary": "发布一条知识条目，使其成为公开视图里的生效修订",
         "description": "核对来源/evidence_ref/有效期/范围/制剂/规则，模拟不能成为可执行依据；来源及限制缺失保持未知。",
         "tags": [
           "admin"
@@ -8406,8 +8406,8 @@
     "/admin/knowledge/{id}/withdraw": {
       "post": {
         "operationId": "withdrawKnowledge",
-        "summary": "withdrawKnowledge",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "撤回一条已发布的知识条目，使其退出公开视图",
+        "description": "门 sources:write；Idempotency-Key 必填、If-Match 须等于当前 head（428/400/409），body 必填 reason；从未发布过 ⇒ 409 OBJECT_UNAVAILABLE，已撤回 ⇒ 200 changed:false；成功写 lifecycle=withdrawn（已发布那条修订的 visibility 投影为 hidden，之后的新草稿仍是 private）并追加 knowledge.withdraw 审计；引用它的公开投影在下一次读取时按新状态重算。",
         "tags": [
           "admin"
         ],
@@ -8516,8 +8516,8 @@
     "/admin/registrations": {
       "get": {
         "operationId": "listAdminRegistration",
-        "summary": "listAdminRegistration",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出当前管理员自己创建的制剂登记资料及其当前修订",
+        "description": "门 sources:read；只列 steward 是自己的 registrations；契约 RegistrationDraft 没有 visibility 字段，故每项只有 {id,revision,content,review_status}；游标签名绑当前管理员与集合指纹、15 分钟后过期，集合变化 ⇒ 400 INVALID_CURSOR；响应无 ETag、不返回总数。",
         "tags": [
           "admin"
         ],
@@ -8596,7 +8596,7 @@
       },
       "post": {
         "operationId": "createRegistrationDraft",
-        "summary": "createRegistrationDraft",
+        "summary": "新建一条制剂登记资料草稿，由服务端分配 id 与修订 1",
         "description": "只建unverified草稿，生成ID由服务端设置；不自动作为有效药剂/限制或用量依据。",
         "tags": [
           "admin"
@@ -8691,8 +8691,8 @@
     "/admin/registrations/{id}": {
       "get": {
         "operationId": "getAdminRegistration",
-        "summary": "getAdminRegistration",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "按 id 读取一条制剂登记资料的当前修订",
+        "description": "门 sources:read；返回 head 修订的 {id,revision,content,review_status} 与 ETag；不存在、跨家族、非本人 steward ⇒ 一律 404 NOT_FOUND；id 非 uuid ⇒ 400 INVALID_REQUEST。",
         "tags": [
           "admin"
         ],
@@ -8774,7 +8774,7 @@
       },
       "patch": {
         "operationId": "editRegistrationDraft",
-        "summary": "editRegistrationDraft",
+        "summary": "给一条制剂登记资料追加一条新的草稿修订",
         "description": "新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。",
         "tags": [
           "admin"
@@ -8884,7 +8884,7 @@
     "/admin/registrations/{id}/publish": {
       "post": {
         "operationId": "publishRegistration",
-        "summary": "publishRegistration",
+        "summary": "发布一条制剂登记资料，使其成为公开视图里的生效修订",
         "description": "核对来源/evidence_ref/有效期/范围/制剂/规则，模拟不能成为可执行依据；来源及限制缺失保持未知。",
         "tags": [
           "admin"
@@ -8994,8 +8994,8 @@
     "/admin/registrations/{id}/withdraw": {
       "post": {
         "operationId": "withdrawRegistration",
-        "summary": "withdrawRegistration",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "撤回一条已发布的制剂登记资料，使其退出公开视图",
+        "description": "门 sources:write；Idempotency-Key 必填、If-Match 须等于当前 head（428/400/409），body 必填 reason；契约里 RegistrationDraft 没有 visibility 字段，撤回只落在服务层生命周期与公开读口径上；从未发布过 ⇒ 409 OBJECT_UNAVAILABLE，已撤回 ⇒ 200 changed:false；成功追加 registration.withdraw 审计。",
         "tags": [
           "admin"
         ],
@@ -9104,8 +9104,8 @@
     "/admin/restrictions": {
       "get": {
         "operationId": "listAdminRestriction",
-        "summary": "listAdminRestriction",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出当前管理员自己创建的使用限制条目及其当前修订",
+        "description": "门 sources:read；只列 steward 是自己的 restrictions；契约 Restriction 没有 visibility 字段，故每项只有 {id,revision,content,review_status}；游标签名绑当前管理员与集合指纹、15 分钟后过期，集合变化 ⇒ 400 INVALID_CURSOR；响应无 ETag、不返回总数。",
         "tags": [
           "admin"
         ],
@@ -9184,7 +9184,7 @@
       },
       "post": {
         "operationId": "createRestrictionDraft",
-        "summary": "createRestrictionDraft",
+        "summary": "新建一条使用限制草稿，由服务端分配 id 与修订 1",
         "description": "只建unverified草稿，生成ID由服务端设置；不自动作为有效药剂/限制或用量依据。",
         "tags": [
           "admin"
@@ -9279,8 +9279,8 @@
     "/admin/restrictions/{id}": {
       "get": {
         "operationId": "getAdminRestriction",
-        "summary": "getAdminRestriction",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "按 id 读取一条使用限制的当前修订",
+        "description": "门 sources:read；返回 head 修订的 {id,revision,content,review_status} 与 ETag；不存在、跨家族、非本人 steward ⇒ 一律 404 NOT_FOUND；id 非 uuid ⇒ 400 INVALID_REQUEST。",
         "tags": [
           "admin"
         ],
@@ -9362,7 +9362,7 @@
       },
       "patch": {
         "operationId": "editRestrictionDraft",
-        "summary": "editRestrictionDraft",
+        "summary": "给一条使用限制追加一条新的草稿修订",
         "description": "新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。",
         "tags": [
           "admin"
@@ -9472,7 +9472,7 @@
     "/admin/restrictions/{id}/publish": {
       "post": {
         "operationId": "publishRestriction",
-        "summary": "publishRestriction",
+        "summary": "发布一条使用限制，使其成为公开视图里的生效修订",
         "description": "核对来源/evidence_ref/有效期/范围/制剂/规则，模拟不能成为可执行依据；来源及限制缺失保持未知。",
         "tags": [
           "admin"
@@ -9582,8 +9582,8 @@
     "/admin/restrictions/{id}/withdraw": {
       "post": {
         "operationId": "withdrawRestriction",
-        "summary": "withdrawRestriction",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "撤回一条已发布的使用限制，使其退出公开视图",
+        "description": "门 sources:write；Idempotency-Key 必填、If-Match 须等于当前 head（428/400/409），body 必填 reason；契约里 Restriction 没有 visibility 字段，撤回只落在服务层生命周期与公开读口径上；从未发布过 ⇒ 409 OBJECT_UNAVAILABLE，已撤回 ⇒ 200 changed:false；成功追加 restriction.withdraw 审计。",
         "tags": [
           "admin"
         ],
@@ -9692,7 +9692,7 @@
     "/admin/categories": {
       "get": {
         "operationId": "listAdminCategories",
-        "summary": "listAdminCategories",
+        "summary": "列出后台分类字典项及其显示名与停用状态",
         "description": "未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false）：real 模式下本 operation 由后台外壳恒拒绝，⛔ 不返回空页（空页会被读成「平台没有分类」，那是伪造读数）。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
@@ -9774,7 +9774,7 @@
     "/admin/categories/{id}": {
       "patch": {
         "operationId": "editCategory",
-        "summary": "editCategory",
+        "summary": "修改一个后台分类的显示与停用状态",
         "description": "仅维护首版已规划字典显示与停用；新增覆盖/种类必须另行来源与评估，不由编辑名称扩大识别承诺。未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false）：real 模式下本 operation 由后台外壳恒拒绝，⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。",
         "tags": [
           "admin"
@@ -9885,8 +9885,8 @@
     "/admin/accounts": {
       "get": {
         "operationId": "listAdminUsers",
-        "summary": "listAdminUsers",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出终端用户账号的状态与显示名（id 是 public.users.id）",
+        "description": "门 accounts:read（⛔ 不是 scopes:read）；id 是 public.users.id，与 /admin/administrators 的 admin_accounts.id 不同源；真实路径读迁移 0021 的 SECURITY DEFINER 函数 list_admin_accounts()，只输出 id/revision/state/display_name，不返回 auth_epoch 与微信标识；一次全表读后由服务层切片分页；未接线或返回形状不符 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）。",
         "tags": [
           "admin"
         ],
@@ -9967,8 +9967,8 @@
     "/admin/accounts/{id}/suspend": {
       "post": {
         "operationId": "suspendUser",
-        "summary": "suspendUser",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "停用一个终端用户账号，并使其现有会话立即失效",
+        "description": "门 accounts:suspend（管终端用户 public.users，与停用后台管理员的 scopes:write 是不同能力）；Idempotency-Key 必填、If-Match 须等于账号当前 revision（428/400/409），body 必填 reason；真实路径走迁移 0017 的 suspend_account()，state、auth_epoch、撤销会话与审计在同一事务内完成；已停用 ⇒ 200 幂等（不写审计、不递增 epoch）；deletion_pending ⇒ 409 OBJECT_UNAVAILABLE；未接线 ⇒ 503 PROVIDER_UNAVAILABLE。",
         "tags": [
           "admin"
         ],
@@ -10077,7 +10077,7 @@
     "/admin/administrators": {
       "get": {
         "operationId": "listAdministrators",
-        "summary": "listAdministrators",
+        "summary": "列出后台管理员账号，以及每人当前有效的 scope",
         "description": "后台管理员目录（admin_accounts）。id 是 **admin_accounts.id**，不是 users.id：/admin/accounts 读的是终端用户，两者同名不同源，不得混用。存在这一条读面的理由是授权端点 /admin/administrators/{id}/scopes 的目标只能来自这里。目录项带 revision（= admin_accounts.revision），它是 POST /admin/administrators/{id}/disable 与 POST /admin/administrators/{id}/enable 的 If-Match 来源；列表本身不返回 ETag 响应头（强 ETag 只出现在资源写面），客户端只能拿目录项的 revision 现拼 If-Match。⚠ revision 是账号行当时的修订号，列出来到点下去之间它可能已被别处改过——写面仍以 409 REVISION_CONFLICT 兜底，读面的 revision 不是锁。未接线（无持久认证存储）⇒ 503 PROVIDER_UNAVAILABLE，不返回空页。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
@@ -10159,7 +10159,7 @@
     "/admin/administrators/{id}/scopes": {
       "get": {
         "operationId": "listAdministratorScopes",
-        "summary": "listAdministratorScopes",
+        "summary": "查看某一个后台管理员当前有效的 scope",
         "description": "只读展示某后台管理员当前有效的权限（admin_scopes 中 revoked_at IS NULL 的 scope）。返回体**只含 scope 字符串数组**：不含 granted_by / granted_at（运行时角色对该表只有三列 SELECT 权限），因此本响应**不发 ETag**（权限集合没有独立修订号，用 admin_accounts.revision 会谎称集合未变）。门是 scopes:read，与 accounts:read 是两种能力（持 accounts:read 不自动获得读他人权限）；自查继续走 GET /admin/auth/session。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
@@ -10237,7 +10237,7 @@
       },
       "post": {
         "operationId": "grantAdministratorScope",
-        "summary": "grantAdministratorScope",
+        "summary": "给一个后台管理员授予一项 scope",
         "description": "授予某后台管理员**一个** scope（裁定③：POST /admin/administrators/{id}/scopes，单条写入，⛔ 不做整集合覆盖 —— 请求体里没提到的 scope 一律不动）。id 是 admin_accounts.id，⛔ 不是 users.id（/admin/accounts 读的是终端用户，两者同名不同源）。门是 scopes:write，⛔ 不是 accounts:read。CAS：If-Match 必填（缺 428 REVISION_REQUIRED、格式非法 400、不匹配 409 REVISION_CONFLICT），比对的是 admin_accounts.revision；幂等：Idempotency-Key 必填，同键同体重放不再产生第二次变更、不再写第二条审计。错误：只允许授予操作者**自己当前有效持有**的 scope（向另一管理员委派元权限同样受此约束），否则 403 SCOPE_DENIED；自授 ⇒ 403 SELF_SCOPE_GRANT_DENIED（retryable:false）；目标不存在 ⇒ 404 NOT_FOUND；目标非 active ⇒ 409 OBJECT_UNAVAILABLE。成功授予（含对已撤销行的重新授予）真实写 granted_by/granted_at，变更与审计同一事务提交。未接线（real 无库池 / stub 无持久写端口）⇒ 503 PROVIDER_UNAVAILABLE，⛔ 不返回成功封套。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
@@ -10380,7 +10380,7 @@
     "/admin/administrators/{id}/scopes/{scope}": {
       "delete": {
         "operationId": "revokeAdministratorScope",
-        "summary": "revokeAdministratorScope",
+        "summary": "撤销一个后台管理员的一项 scope",
         "description": "撤销某后台管理员的**一个** scope（裁定③：DELETE /admin/administrators/{id}/scopes/{scope}，被撤的 scope **在路径里**，⛔ 不是查询参数 —— 撤谁、撤哪个权限都必须能被访问日志与审计逐字复现）。id 是 admin_accounts.id，⛔ 不是 users.id。门是 scopes:write。**允许自撤**（那是降权，裁定④）；自撤同样受最后授权者守卫约束。CAS/幂等口径与授予面逐条相同：If-Match 必填（缺 428、非法 400、不匹配 409），Idempotency-Key 必填。撤销写 revoked_at；对「已撤销 / 本就没授过」的行是幂等空操作（changed=false，不写审计、不推进 revision）。硬拦：若被撤的是 scopes:write 且撤销后有效持有者归零 ⇒ 409 LAST_SCOPE_MANAGER（retryable:false，库层在事务级 advisory 锁内核验，不是应用层先数后写）。错误：缺 scopes:write ⇒ 403 SCOPE_DENIED；目标不存在 ⇒ 404 NOT_FOUND；目标非 active ⇒ 409 OBJECT_UNAVAILABLE。未接线（real 无库池 / stub 无持久写端口）⇒ 503 PROVIDER_UNAVAILABLE，⛔ 不返回成功封套。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
@@ -10532,7 +10532,7 @@
     "/admin/administrators/{id}/disable": {
       "post": {
         "operationId": "disableAdministratorAccount",
-        "summary": "disableAdministratorAccount",
+        "summary": "停用一个后台管理员账号并撤销其全部会话",
         "description": "停用某后台管理员账号（**管理员**账号停用，⛔ 不是终端用户停用 —— 那是 PATCH /admin/accounts/{id}/suspend）。id 是 admin_accounts.id，⛔ 不是 users.id。门沿用既有 scopes:write（裁定①：⛔ 不新增 scope 值、⛔ 不用 accounts:suspend 冒充停用）。CAS：If-Match 必填（缺 428 REVISION_REQUIRED、格式非法 400 INVALID_REQUEST、不符 409 REVISION_CONFLICT），比对 admin_accounts.revision；幂等：Idempotency-Key 必填，同键同体重放 changed=false、不再写第二条审计、不再推进 revision。写入口径（同一事务；先拿 0041 同一把事务级 advisory 锁，再锁 admin_accounts 行，锁序与撤销面一致）：state='suspended'、auth_epoch+1、revision+1、该管理员全部未撤销会话置 revoked_at=now()；⛔ 不做物理删除（DELETE FROM admin_accounts 永不执行）、⛔ 不撤销 scope（停用 ≠ 降权，裁定②）、⛔ 不改 list_admin_accounts()、⛔ 不给运行时角色 admin_accounts 的 UPDATE 列权（写面只经 SECURITY DEFINER 函数）。硬拦：停用自己 ⇒ 409 SELF_DISABLE_DENIED（retryable:false，自锁门）；若停用后仍有效持有 scopes:write 的管理员归零 ⇒ 409 LAST_SCOPE_MANAGER（retryable:false，与撤销面同一个码；库层在事务级 advisory 锁内核验，⛔ 不是应用层先数后写）。错误：缺 scopes:write ⇒ 403 SCOPE_DENIED；目标不存在 ⇒ 404 NOT_FOUND；目标本就是 suspended ⇒ 200 changed=false（幂等空操作，inactive 也算成功终态）。审计：同事务写 admin_audit_events，action=admin_account.disable、entity_type=admin_account，before_value/after_value 一律 NULL（⛔ 不落调用方传入的自由文本，理由见 audit/catalog.ts 头注：admin_account 与 post 一样带动作护栏，停用台账里不该出现攻击者可控字符串）。未接线（real 无库池 / stub 无持久写端口）⇒ 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回成功封套。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
@@ -10675,7 +10675,7 @@
     "/admin/administrators/{id}/enable": {
       "post": {
         "operationId": "enableAdministratorAccount",
-        "summary": "enableAdministratorAccount",
+        "summary": "把一个后台管理员账号恢复为 active（不恢复会话与 scope）",
         "description": "恢复某后台管理员账号（state 回到 active）。id 是 admin_accounts.id，⛔ 不是 users.id。门沿用既有 scopes:write。CAS / 幂等口径与停用面逐条相同：If-Match 必填（缺 428、非法 400、不符 409），Idempotency-Key 必填，重放 changed=false。写入口径（同一事务、同一把 advisory 锁 + 行锁 + CAS revision）：state='active'、auth_epoch+1、revision+1。⛔ 不恢复会话：被停用踢掉的会话不复活（admin_sessions.revoked_at 不重置），恢复后必须重新登录；⛔ 不恢复 scope（停用期间没撤过任何授权，恢复也不补授）；⛔ 不做物理删除。错误：缺 scopes:write ⇒ 403 SCOPE_DENIED；目标不存在 ⇒ 404 NOT_FOUND；目标本就是 active ⇒ 200 changed=false（幂等空操作）。SELF_DISABLE_DENIED 不适用于恢复面（恢复自己不会自锁）；LAST_SCOPE_MANAGER 也不适用（恢复只会增加 scope 有效持有者）。审计：同事务写 admin_audit_events，action=admin_account.enable、entity_type=admin_account，before_value/after_value 一律 NULL。未接线 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回成功封套。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
         "tags": [
           "admin"
@@ -10818,7 +10818,7 @@
     "/admin/jobs": {
       "get": {
         "operationId": "listAdminJobs",
-        "summary": "listAdminJobs",
+        "summary": "列出平台级作业的状态与错误码（未接线时 503）",
         "description": "后台任务只含最小状态/错误元数据，result=null；不开放用户私有转写/会话/媒体。",
         "tags": [
           "admin"
@@ -10914,7 +10914,7 @@
     "/admin/jobs/{id}/cancel": {
       "post": {
         "operationId": "cancelAdminJob",
-        "summary": "cancelAdminJob",
+        "summary": "取消一个尚未进入终态的平台级作业",
         "description": "后台取消只返回最小状态，result=null。",
         "tags": [
           "admin"
@@ -11024,8 +11024,8 @@
     "/admin/flag-audit-events": {
       "get": {
         "operationId": "listFlagAuditEvents",
-        "summary": "listFlagAuditEvents",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出开关变更的库内审计记录（含变更前后值）",
+        "description": "门 flags:read；读库内迁移 0027 的只读函数（固定 action=set_flag，含变更前后值），键集分页 (created_at,id) DESC、不返回 COUNT；每行出口过契约镜像，形状不符 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）；未接线同样 503，⛔ 不返回空页。",
         "tags": [
           "admin"
         ],
@@ -11106,7 +11106,7 @@
     "/admin/audit-logs": {
       "get": {
         "operationId": "listAuditLogs",
-        "summary": "listAuditLogs",
+        "summary": "按时间区间与动作/域查询库内管理审计日志",
         "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。`entity=post` 只返回 `post.hide`（动作护栏：`sources:write` 同时是权限行的 scope 取值，纯 scope 映射会把权限变更混进下架结果），与护栏外的 `action` 组合时是 400 而不是空页。",
         "tags": [
           "admin"
@@ -11238,8 +11238,8 @@
   "/admin/feature-flags": {
       "get": {
         "operationId": "listFlags",
-        "summary": "listFlags",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出全局开关当前的开/关状态与 revision",
+        "description": "门 flags:read；接端口时读 public.feature_flags 的 key/enabled/revision（运行时角色对该表只有 SELECT），未接端口时读进程内种子；游标按 key 键集分页、不返回总数；读库失败 ⇒ 503 PROVIDER_UNAVAILABLE，语句超时/锁不可用 ⇒ 504 PROVIDER_TIMEOUT，⛔ 不降级成内存值。",
         "tags": [
           "admin"
         ],
@@ -11320,8 +11320,8 @@
     "/admin/feature-flags/{key}": {
       "put": {
         "operationId": "setFlag",
-        "summary": "setFlag",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "打开或关闭一个全局开关（CAS 写入并同事务留审计）",
+        "description": "门 flags:write；Idempotency-Key 必填、If-Match 须等于该开关当前 revision（428/400/409），body 是 FlagInput{enabled,reason}；key 取自契约闭集，闭集外 ⇒ 400 INVALID_REQUEST，命中削弱 fail-closed 的保留名 ⇒ 400 且先记一条 result=denied 审计；值未变 ⇒ 200 幂等（不写审计、不推进 revision）；真实写入走 public.set_feature_flag()，同一事务内完成 CAS 与 admin_audit_events 落账。",
         "tags": [
           "admin"
         ],
@@ -11434,7 +11434,7 @@
     "/admin/posts": {
       "get": {
         "operationId": "listAdminPosts",
-        "summary": "listAdminPosts",
+        "summary": "以管理视角列出帖子（含已隐藏与已删除）",
         "description": "后台帖子读面（管理视角）：列出帖子，**含已隐藏与已删除**——与用户读面的可见性谓词不同，本读面不做任何可见性/审核状态过滤，只按请求参数精确筛选。游标分页，不返回总数。",
         "tags": [
           "admin"
@@ -11532,7 +11532,7 @@
     "/admin/posts/{id}": {
       "get": {
         "operationId": "getAdminPost",
-        "summary": "getAdminPost",
+        "summary": "以管理视角读取一条帖子详情（含已隐藏与已删除）",
         "description": "后台帖子详情（管理视角）：一条帖子的管理视图，**含已隐藏与已删除**。不存在返回 404（不用 403，避免泄露存在性）。",
         "tags": [
           "admin"
@@ -11617,7 +11617,7 @@
     "/admin/posts/{id}/hide": {
       "post": {
         "operationId": "hidePost",
-        "summary": "hidePost",
+        "summary": "紧急下架一条帖子，并记一条最小审计",
         "description": "仅紧急下架；无人工审核放行，记录最小审计。",
         "tags": [
           "admin"
@@ -11727,7 +11727,7 @@
     "/admin/posts/{id}/approve": {
       "post": {
         "operationId": "approvePost",
-        "summary": "approvePost",
+        "summary": "人工审核通过一条帖子，但不改其可见性",
         "description": "人工审核通过：写运营通过结论（audit_state=approved），不改可见性；硬规则明确否决的内容不可通过（422）。",
         "tags": [
           "admin"
@@ -11827,7 +11827,7 @@
     "/admin/posts/{id}/reject": {
       "post": {
         "operationId": "rejectPost",
-        "summary": "rejectPost",
+        "summary": "人工驳回一条帖子，并把它置为隐藏",
         "description": "人工驳回：写运营驳回结论（reason_code 取自闭集），audit_state=rejected 且 visibility=hidden，并通知作者。",
         "tags": [
           "admin"
@@ -11937,8 +11937,8 @@
     "/admin/audit-events": {
       "get": {
         "operationId": "listAuditEvents",
-        "summary": "listAuditEvents",
-        "description": "遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "summary": "列出内容域的审计事件（进程内只追加台账）",
+        "description": "门 audit:read；读内容服务的进程内只追加审计台账（库内口径另见 GET /admin/flag-audit-events 与 GET /admin/audit-logs，三者权威源不同）；游标签名绑当前管理员与台账指纹、会过期，游标不属于本查询或台账已变化 ⇒ 400 INVALID_CURSOR；不返回总数。real 模式（pool≠null）下这条读面被单独 fail-closed 成 503：其余 24 条内容 CRUD 已放行，本条由 restrictAdminContentAuditRead() 换回与整域替身逐字同一 reason 的 503 PROVIDER_UNAVAILABLE（retryable=false），整条读面永不返回页——因为返回空页 items:[] 会被读成「平台从未发生任何管理动作」，那是伪造读数；pool==null 时同样 503，不返回空页。",
         "tags": [
           "admin"
         ],

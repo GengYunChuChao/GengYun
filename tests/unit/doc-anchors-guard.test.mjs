@@ -29,7 +29,9 @@ import { fileURLToPath } from 'node:url';
 import {
   BARE_ORPHAN,
   BROKEN,
+  NOT_SYMBOL_LINE,
   OUT_OF_RANGE,
+  REASONS,
   SUSPECT,
   attributeBareAnchors,
   collectFindings,
@@ -256,7 +258,7 @@ test('基线 stale 反查：`tools/doc-anchors-baseline.json` 每条都必须仍
   }
 });
 
-test('基线条目必须带 path／reason／owner／reference，且 reason 只能是三类之一', () => {
+test('基线条目必须带 path／reason／owner／reference，且 reason 只能是工具认的四类之一', () => {
   const baseline = loadBaseline(REPO_ROOT);
   for (const entry of baseline.entries) {
     assert.equal(typeof entry.path, 'string', `基线条目缺 path：${JSON.stringify(entry)}`);
@@ -269,7 +271,9 @@ test('基线条目必须带 path／reason／owner／reference，且 reason 只�
       entry.path === stem || entry.path.endsWith(`/${stem}`) || stem.endsWith(`/${entry.path}`),
       `reference 与 path 不一致：${JSON.stringify(entry)}`,
     );
-    assert.ok([BROKEN, OUT_OF_RANGE, SUSPECT].includes(entry.reason), `reason 不合法：${JSON.stringify(entry)}`);
+    // 四类都得收：`NOT_SYMBOL_LINE` 是「符号引脚落进文档注释」，它只能由结构基线兜（符号基线专管
+    // `COMMENT_ANCHOR`），不收它就等于把这一类问题挤回散文改写——正是审查 B2 指出的那条退路。
+    assert.ok(REASONS.includes(entry.reason), `reason 不合法（只认 ${REASONS.join(' / ')}）：${JSON.stringify(entry)}`);
     assert.equal(typeof entry.owner, 'string', `基线条目缺 owner（谁去修）：${JSON.stringify(entry)}`);
     assert.ok(entry.owner.length > 0);
   }
@@ -453,5 +457,39 @@ test('T7 反空转：块切分与扫描面有下界断言（否则「全部孤�
   const separated = '见 `src/x.mjs:3`。\n\n:9\n';
   assert.equal(attributeBareAnchors({ text: adjacent, references: extractReferences(adjacent) }).inherited.length, 1);
   assert.equal(attributeBareAnchors({ text: separated, references: extractReferences(separated) }).orphans.length, 1);
+});
+
+test('T8 表格必须按单元格断块：同格可继承，跨格不许继承（跨格继承＝拿另一列的证据冒充这一列的行号）', () => {
+  const root = makeBareFixture({
+    // 同一格：显式锚点与裸锚点都在第 2 个单元格里 ⇒ 继承成立，`:999` 越界照红。
+    'docs/architecture/bare-table-same-cell.md': '# 标题\n\n| 命令 | `src/x.mjs:3` 与 `:999` | note |\n',
+    // 跨格：显式锚点在第 2 格、裸锚点在第 3 格 ⇒ 不猜，落孤儿。
+    'docs/architecture/bare-table-cross-cell.md': '# 标题\n\n| 命令 | `src/y.mjs:2` | 另见 `:999` |\n',
+  });
+  try {
+    const { findings, bareOrphans } = collectFindings({ root, targets: ['docs/architecture'] });
+    assert.deepEqual(
+      findings.map(finding => `${finding.reason} ${finding.reference} ← ${finding.doc}`),
+      ['OUT_OF_RANGE src/x.mjs:999 ← docs/architecture/bare-table-same-cell.md'],
+      `单元格内的裸锚点必须继承并照红；跨单元格那条必须留成孤儿、不许算到 src/y.mjs 头上，实际：${JSON.stringify(findings.map(f => `${f.reason} ${f.reference} ← ${f.doc}`))}`,
+    );
+    assert.deepEqual(
+      bareOrphans.map(item => `${item.doc}:${item.docLine} ${item.raw}（${item.reason}）`),
+      ['docs/architecture/bare-table-cross-cell.md:3 :999（no-explicit-in-block）'],
+      '跨单元格的裸锚点归不到路径，必须进 BARE_ORPHAN 而不是被同行的另一列吃掉',
+    );
+
+    // 对照组：把「同格」这条删掉，剩下那一行必须仍是孤儿——证明上面那条红来自同格继承而不是行内碰巧。
+    const direct = '见 `src/y.mjs:2` 与 `:999` 同格。\n';
+    assert.equal(attributeBareAnchors({ text: direct, references: extractReferences(direct) }).inherited.length, 1);
+    const tableRow = '| a | `src/y.mjs:2` | `:999` |\n';
+    assert.equal(
+      attributeBareAnchors({ text: tableRow, references: extractReferences(tableRow) }).inherited.length,
+      0,
+      '表格行里跨单元格的裸锚点一条都不许继承（去掉单元格判据就会变成 1，此断言即反空转钉子）',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
