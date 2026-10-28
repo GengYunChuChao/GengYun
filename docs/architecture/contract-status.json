@@ -3652,7 +3652,7 @@
           "name": "GET /admin/audit-logs：权限矩阵、筛选组合、分页边界与脱敏"
         }
       ],
-      "blocker": "读面已装配（迁移 0033 的只读函数 public.list_admin_audit_logs()，scope audit:read；权限与 listAuditEvents 同一把门），真库臂已建数据→查询→断言；但**审计写面仍未落库**：库内写入点只有 suspend_account / restore_account / set_feature_flag 三处，其余 appendAudit 仍落内存 ops store（persistent=false，重启即丢），后台 UI 的审计页尚未消费本接口，表内无 ip / user_agent 列故响应不含该二字段。"
+      "blocker": "读面已装配（迁移 0033 的只读函数 public.list_admin_audit_logs()，scope audit:read；权限与 listAuditEvents 同一把门），真库臂已建数据→查询→断言；后台 UI 的审计总台账页（apps/admin/src/views/AuditLogsView.vue）已在消费本接口，并把三条审计读面合到同一页。写面也已落库：库内共 10 处写入点（INSERT 语句 11 条，0020 与 0027 是同一个 set_feature_flag 的前后两版），覆盖 services/api/src/admin/audit/catalog.ts 里 AUDIT_ACTIONS 的全部 10 个 action，分布在迁移 0017 / 0020 / 0027 / 0041 / 0043 / 0046 / 0047 / 0048。仍差的：① 表内无 ip / user_agent 列，故响应不含该二字段；② 资料域（source / knowledge / registration / restriction 的 edit / publish / withdraw）、分类编辑（category.update）、帖子审核结论（post.approve / post.reject，这两个 action 也不在 AUDIT_ACTIONS 内）与安全关键开关被拒的 flag.set(denied) 只写进程内审计流（GET /admin/audit-events，重启即丢）。"
     },
     {
       "id": "listAdminPosts",
