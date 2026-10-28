@@ -19,12 +19,28 @@ API 只读进程环境。下面列变量名、默认值和条件，不列真实�
 | OBJECT_STORAGE_BUCKET | real 必填 | 同上 |
 | OBJECT_STORAGE_ACCESS_KEY | real 必填、秘密 | 同上 |
 | OBJECT_STORAGE_SECRET_KEY | real 必填、秘密 | 同上 |
+| MEDIA_OBJECT_REF_KEY | 非启动必填；`real` 且配了 `DATABASE_URL` 时**事实必填**（键材质：64 位十六进制／32 字节 base64／32 字节原串，秘密） | **媒体域**：`media.object_ref_cipher` 是 `NOT NULL` 密文列，存的是「这条媒体在对象存储里的对象键」经 AES-256-GCM 加密后的信封（明文对象键只在服务进程内出现）。缺键 ⇒ 装配层**不接 PG 存储**并整域 fail-closed：**503 `PROVIDER_UNAVAILABLE`（`retryable:false`）**，7 条媒体路由与语音受理（此时 **409 `OBJECT_UNAVAILABLE`**）一起不可用，绝不退回进程内 `Map` 去假装持久化；键材质非法 ⇒ 启动 `ConfigError`（`INVALID_VALUE`）。判据 `services/api/src/config.ts:509-525`，装配 `services/api/src/app.ts:1784-1804` |
+| MEDIA_ACCESS_GRANT_ORIGIN | 可选；只接受 `https://<host>[:port]`（不带路径／查询／URL 内凭据） | **媒体域（取图句柄）**：`AccessGrant.url` 的 host 来自这里（`<origin>/api/v1/media/{id}/content`）。未配置 ⇒ 句柄指向不可解析的占位域 `https://media.placeholder.invalid`（本仓不提供该数据面）；带 `--approve-real-media-wiring` 启动时缺它 ⇒ **进程拒绝启动**（exit 1，`access_grant_origin_not_deployable`）；格式非法 ⇒ 启动 `ConfigError`（`INVALID_VALUE`）。判据 `services/api/src/config.ts:451-465`，启动期校验 `services/api/src/media/real-ports.ts:260-278` |
+| RECOGNITION_PROVIDER_URL / RECOGNITION_PROVIDER_KEY | 可选；**real** 下两行成对；**不在 `config.ts` 校验**（装配处直读 `process.env`） | **识别域**：`real` 下缺任一 ⇒ 受理 `POST /api/v1/recognitions` 之前即 **503 `PROVIDER_UNAVAILABLE`（`retryable:false`）**，不回退替身；即使配齐，本仓当前没有已审识别适配器，作业仍以 `failed`／`PROVIDER_UNAVAILABLE` 收尾且不产生候选。读取点 `services/api/src/app.ts:1115-1121`，拒绝 `services/api/src/recognitions/service.ts:397-400`，适配器缺席 `services/api/src/recognitions/provider.ts:163-166` |
+| CHAT_LLM_ENDPOINT / CHAT_LLM_MODEL / CHAT_LLM_API_KEY（或 `DEEPSEEK_API_KEY`） | 可选；三项**要么全配、要么全空**（端点须 `https://`、模型名 1..80、密钥 8..200） | **问答域**：三项全空 ⇒ 回答照常 200，但 `model_version`／`prompt_version` 带 `unimplemented:no-real-` 前缀（确定性摘录，不是真实模型，`services/api/src/conversations/service.ts:86-91`）；只配一半或值非法 ⇒ 启动 `ConfigError` 并列出字段名（进程 exit 1），**不**静默退回确定性回答器；三项齐备后仍要 `APP_EXECUTION_MODE=real` **且**外发账本可用（`DATABASE_URL`），否则继续走确定性回答器并记一条 warn（`services/api/src/ai/chat-wiring.ts:52-97`）。判据 `services/api/src/config.ts:275-367` |
+| DEEPSEEK_API_KEY | 可选；`CHAT_LLM_API_KEY` 的同义替代 | 二选一；两者都给时以 `CHAT_LLM_API_KEY` 为准（`services/api/src/config.ts:253-262`） |
+| CHAT_LLM_TIMEOUT_MS | 可选，默认 20000；1000–30000 | 问答域单次外发超时；缺省用默认值，不影响可用性；越界 ⇒ 启动 `ConfigError`（`INVALID_VALUE`） |
+| CHAT_LLM_MAX_RETRIES | 可选，默认 1；0–2 | 传输层重试次数（只重试**未派发**的失败）；越界 ⇒ 同上 |
 | ADMIN_BOOTSTRAP_LOGIN_NAME | 可选，≤80 字符 | 与密码同时设置；空账号表时初始化 |
 | ADMIN_BOOTSTRAP_PASSWORD | 可选，≥12 字符、秘密 | scrypt 摘要；启动脚本初始化失败时会记录但继续启动 |
 | VITE_API_BASE_URL | /api/v1，公开变量 | 只用于后台，启动／构建时注入 |
 | STAGING_PYTHON | Windows python，否则 python3 | 暂存导入 CLI 使用的既有解释器，不自动安装 |
 
 缺失配置只报告字段，不输出值。真实文件被忽略，密钥由私密环境注入；不要以关闭 TLS 校验解决连接问题。
+
+## 启动必填 ≠ 链路可用（四组域内必填字段）
+
+`real` 下的启动门只强制 9 项（`REQUIRED_WHEN_REAL`，`services/api/src/config.ts:147-157`）。上表新增的 `MEDIA_OBJECT_REF_KEY`、`MEDIA_ACCESS_GRANT_ORIGIN`、`RECOGNITION_PROVIDER_URL`／`_KEY`、`CHAT_LLM_*` 都不在其中：进程照常起来，但对应域按域拒绝或降级，是「配了但没生效」的高发点。
+
+- **媒体域**：缺 `MEDIA_OBJECT_REF_KEY` ⇒ 7 条媒体路由 503 `PROVIDER_UNAVAILABLE`、语音受理 409 `OBJECT_UNAVAILABLE`；即便对象存储四键与 `MEDIA_OBJECT_REF_KEY` 都齐备，只要没有启动参数 `--approve-real-media-wiring`（`services/api/src/server.ts:29-51` 是批准能力的唯一铸造点）仍是整域 503。
+- **问答域**：缺 `CHAT_LLM_*` 不报错，只是继续用确定性回答器——判据看回答的 `model_version` 是否带 `unimplemented:no-real-`。
+- **识别域**：缺 `RECOGNITION_PROVIDER_*` ⇒ 受理 503；配齐也只到「能受理」，作业仍以 `failed` 收尾（无已审适配器）。
+- **部署模板的关系**：`deploy/cloudrun/env.placeholder.json` 的键集判据只取 `REQUIRED_WHEN_REAL` 与 `config.ts` 里 `trimmed(env, '…')` 的字面量（`tools/verify-release-materials.mjs:351-372`），因此 `MEDIA_*` 两项已在模板中，而 `RECOGNITION_PROVIDER_*`／`CHAT_LLM_*` 不在、也不该为过门禁而加进去（模板「无多余键」同样判红）。
 
 ## 加载方式与联调
 
