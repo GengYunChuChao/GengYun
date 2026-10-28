@@ -1118,7 +1118,7 @@ test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— �
   assert.deepEqual(realPortsAmbient.findings, [], 'real-ports.ts 的 ambient env 读取点实测必须为 0');
 });
 
-test('GY-I06 1-A B1（全文件 ambient env 审计）：app.ts 只允许 3 个非媒体键；media/** 与 routes/media.ts 一次都不许读', () => {
+test('GY-I06 1-A B1（全文件 ambient env 审计）：app.ts 只允许白名单里的 4 个非媒体键；media/** 与 routes/media.ts 一次都不许读', () => {
   const app = parseRepoFile('services/api/src/app.ts');
   const audit = auditAmbientEnv(app, APP_AMBIENT_ENV_ALLOWLIST);
 

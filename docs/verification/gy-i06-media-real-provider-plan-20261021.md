@@ -122,6 +122,8 @@
 | 保留 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore` 的「缺任一键 ⇒ `unwired`」语义**不改**：`tests/unit/media-real-mode-fail-closed.test.mjs` 的 1-A 用例逐键验证 |
 | 建议增强 | `services/api/src/media/object-store.ts:224`（`readObjectStorageConfig` 的 endpoint 校验） | 现正则 `/^https:\/\/[^\s/]+/i` 只挡 http 与空 host，`https://evil.example/whatever` 能过。建议补「无 path/query/fragment + host 白名单」（与 [规范 §2.4](provider-adapter-live-wiring.md) 的端点白名单同口径） |
 
+> **后续变更（GY-R68，2026-10-29）**：上表「⛔ 约束」一行写的「ambient env 只允许 **3** 个非媒体键／不得借此新增**第四个** `process.env[...]`」已被后续变更推进为 **4 个**：新增 `MODERATION_DEMO_PORT`（审核域**演示端口**开关；装配处**按名**读这一个键，实现见 `services/api/src/moderation/demo-port.ts`，`real` 下不注入）。**原文作为当时读数保留**，不回改；白名单当前实况以 `tests/unit/media-real-mode-fail-closed.test.mjs` 的 `APP_AMBIENT_ENV_ALLOWLIST` 为准（现为 4 条，且该键不命中 `STORAGE_SHAPED_ENV_KEY`）。
+
 ### 5.2 第二层：签名 / 句柄层 —— 缺 3 件
 
 | # | 缺口 | 现状事实 | 建议动作（文件:行号） |
@@ -227,6 +229,8 @@
 | `app.ts` 不得把 `process.env` 交给 resolver | 同上 `:519-541`（原记 :329-337） | PR #193 P1 的静态钉子 |
 | `app.ts` 全文件 ambient env 审计：只允许 3 个非媒体键 | 同上 `:1121`（原记 :1050；另有 `:1298` 原记 :1227 的运行期来源检查） | 实施片新增任何装配读取都不得突破这条白名单 |
 | 构造期拒绝（空桶 / http endpoint） | 同上 `:249-254` | 真实适配器不静默降级 |
+
+> **后续变更（GY-R68，2026-10-29）**：上表「`app.ts` 全文件 ambient env 审计：只允许 **3** 个非媒体键」一条现为 **4 个**（新增 `MODERATION_DEMO_PORT`；理由与核对口径见 §5.1 表末的注记）。**这条断言没有被削弱**：判据仍是「实测读取点必须**逐字等于**白名单，且每一处都必须**按名**读（不得整表传递／动态取键）」，只是白名单多了一条。原文作为当时读数保留。
 
 ## 9 风险清单
 

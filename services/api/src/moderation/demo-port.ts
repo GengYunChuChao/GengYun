@@ -27,7 +27,13 @@
  *    （`docs/evaluation/sample-gap-register.md`：真实样本各 0）。演示放行 ≠ 内容已审。
  *  - **只有文本端口 `tms`**：图片端口 `ims` 仍是出厂替身 ⇒ 带媒体投稿仍走隔离/待审，
  *    演示端口**不**顺手放宽图片链路。
- *  - 网络 seam 四个全部"持有即抛错/占位"，与出厂替身同形（`packages/moderation` 从不调用它们）。
+ *  - **规则层照旧独立拦截**：本端口只替代「模型层结论」，社区发布闸门的硬规则（`gate.evaluate`）
+ *    先跑且不受它影响 ⇒ 危险混配等内容仍 **400 + 内容行 0**。所以它不是"全放行"。
+ *  - 网络 seam 的实况（**不夸大**）：`fetchImpl` 一旦被调用就抛错；其余三个（`credentials`/
+ *    `liveGate`/`now`）是**惰性占位**，被持有但从不使用。合流层要求四个 seam 都显式持有，
+ *    所以它们必须存在。**"零外呼"不靠那个抛错**，而靠代码面实测：
+ *    `services/api/src/moderation/demo-port.ts` 与 `packages/moderation/*.mjs` 里
+ *    `https?://`／`fetch(`／`node:http`／`axios`／`undici` 命中 **0 条**（本片 grep 读数）。
  */
 import type { ModerationPortLike, PortKind } from './provider.ts';
 
@@ -74,7 +80,8 @@ export function createDemoModerationPort(kind: PortKind = 'tms'): ModerationPort
       reason_codes: [],
       summary: 'synthetic demo port: fixed pass (not a real moderation verdict)',
     }),
-    // 四个网络 seam 与出厂替身同形：持有但不可用，`packages/moderation` 从不调用。
+    // 四个 seam 必须**逐个显式持有**（合流层否则判端口非法），但只有 `fetchImpl` 是"调用即抛"；
+    // 其余三个是惰性占位（占位凭据 / 关闭的 liveGate / 常量时钟），`packages/moderation` 从不使用它们。
     seams: {
       fetchImpl: (): never => {
         throw new Error('demo moderation port seam must never be called (no network in the demo port)');

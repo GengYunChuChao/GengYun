@@ -13,11 +13,17 @@
  * | ③ | real 下必须被拒 | `APP_EXECUTION_MODE=real` + 设了开关 | `POST /posts` **503**、审核域 `submitScreening` **503**、能力位 `none`、启动日志**明说拒绝** |
  * | ④ | 负控制（`synthetic` 键是判据） | 同 ② 的端口，但删掉 `provider.synthetic` | 必须**红**：`422` + 0 行 + 理由码指向端口形状非法 |
  * | ⑤ | 启动日志读数 | 设了 / 没设 | 设了 ⇒ 日志出现 `moderation_demo_port: synthetic`；没设 ⇒ 不出现 |
+ * | ⑥ | 规则层仍独立拦截（**不是全放行**） | 同 ② 的开关 + 危险混配正文 | 必须 **400** + 内容行 0：演示端口只替代「模型层结论」 |
  *
  * ## 声明（不得误读）
- * - **替身级证据**：演示端口是**合成** `pass`（`provider.synthetic === true`、四个网络 seam
- *   持有即抛错、零外呼、零凭据）。它**不证明**真实审核能力（真实 tms/ims 未授权、BizType 未核验、
- *   真实样本各 0，见 `docs/evaluation/sample-gap-register.md`），也不得被引用成召回率／误隔离率成绩。
+ * - **替身级证据**：演示端口是**合成** `pass`（`provider.synthetic === true`、零凭据）。网络面按实况写：
+ *   `fetchImpl` 一旦被调用就抛错，其余 3 个 seam（`credentials`／`liveGate`／`now`）是**惰性占位**；
+ *   「零外呼」的判据是代码面实测（本模块与 `packages/moderation/*.mjs` 里 `https?://`／`fetch(`／
+ *   `node:http`／`axios`／`undici` 命中 0 条），**不是**靠那个抛错。它**不证明**真实审核能力
+ *   （真实 tms/ims 未授权、BizType 未核验、真实样本各 0，见 `docs/evaluation/sample-gap-register.md`），
+ *   也不得被引用成召回率／误隔离率成绩。
+ * - **不是"全放行"**：本端口只替代「模型层结论」；社区发布闸门的**硬规则照旧先跑且独立拦截**
+ *   （第 ⑥ 支：危险混配仍 400 + 内容行 0）。
  * - **没有放宽 fail-closed**：real 分支一个字没改 —— 未接真实端口即整域 503；缺端口仍 422。
  *   本文件第 ③ 支就是这条不变量在"开关设了"情形下的钉住读数。
  * - 测试侧唯一的额外旋钮是**规则层冻结时钟**（`FROZEN_RULE_OPTIONS`，与
@@ -44,7 +50,7 @@ import {
   demoPortRequested,
   resolveDemoModerationPorts,
 } from '../../services/api/src/moderation/demo-port.ts';
-import { CLEAN_BODY, CLEAN_TITLE, makeGate } from './community-fixtures.mjs';
+import { CLEAN_BODY, CLEAN_TITLE, DANGEROUS_BODY, makeGate } from './community-fixtures.mjs';
 import { FROZEN_RULE_OPTIONS } from './stall-hygiene-fixtures.mjs';
 import { createPublicPostingConsent } from './community-posting-consent-fixtures.mjs';
 
@@ -357,4 +363,43 @@ test('⑤ 启动日志：设了开关 ⇒ 出现 `moderation_demo_port: syntheti
   assert.equal(offLog.includes(DEMO_PORT_LOG_REFUSED), false, '没设开关也不该出现拒绝行');
   // 反向对照：两个日志出口都只在"动了开关"时说话，默认装配的启动日志一字不多。
   assert.equal(onLog.length > 0, true, '捕获通道本身必须是通的（否则上面的"不出现"没有意义）');
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ 规则层仍独立拦截：演示端口只替代「模型层结论」，不是"全放行"
+// ---------------------------------------------------------------------------
+
+test('⑥ 演示端口开着也挡危险混配：硬规则仍 400 + 内容行 0（不是全放行）', async (t) => {
+  setDemoSwitch(t, DEMO_PORT_ENV_PASS);
+  const h = await fixture(t, { moderationInjection: { ruleOptions: FROZEN_RULE_OPTIONS } });
+
+  // 前置：演示端口**确实装上了** —— 否则"被挡"可能只是因为压根没开端口，证明不了规则层独立。
+  assert.deepEqual(h.app.moderationService.counts().substitutes, ['ims'], '前置：文本端口必须已被演示端口接上');
+
+  const created = await h.call('POST', `${API}/posts`, {
+    headers: write('gy-r68-demoport-danger-0001'),
+    payload: { title: CLEAN_TITLE, body: DANGEROUS_BODY, media_ids: [] },
+  });
+
+  // 读数 1：硬规则命中 ⇒ 400（驳回），不是 201（演示端口放行）、也不是 422（隔离）。
+  assert.equal(created.status, 400, `硬规则命中必须 400，实得 ${created.status}：${JSON.stringify(created.body)}`);
+  assert.equal(created.body.error.code, 'INVALID_REQUEST');
+  assert.equal(created.body.error.retryable, false);
+  assert.equal(created.body.data, undefined);
+  const codes = (created.body.error.details ?? []).map((entry) => entry.code);
+  assert.ok(
+    codes.includes('DANGEROUS_MIX'),
+    `必须如实回传命中的硬规则码，实得 ${JSON.stringify(codes)}`,
+  );
+
+  // 读数 2：内容行 0 行（被规则挡在落库之前），但拒审结论如实留档。
+  const counts = h.community.snapshotCounts();
+  assert.equal(counts.posts, 0, `内容行必须 0 行，实得 ${JSON.stringify(counts)}`);
+  assert.equal(counts.moderation, 1, '拒审结论必须留档一条（不静默丢弃）');
+  assert.deepEqual(await h.community.listPosts({ scope: 'all' }), [], 'store 里必须 0 行');
+
+  // 读数 3：读面仍可用（写面被规则挡，读面没坏）。
+  const feed = await h.call('GET', `${API}/posts`);
+  assert.equal(feed.status, 200);
+  assert.deepEqual(feed.body.data.items, []);
 });
