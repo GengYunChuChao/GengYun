@@ -917,6 +917,39 @@ describe('生长型读数：下界语义（--tolerant-growth）、防注水与�
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('同一份滞后文档：宽容打印的滞后键与严格点名的键必须完全相等（宽容不许放行别的差异）', () => {
+    // 这一条是「真仓自检」两条用例的确定性替身：真仓在本机是 0 条滞后、在 CI 合成树上是 4 条，
+    // 分档口径只在「有滞后」时才真的被检验，所以这里用夹具把「有滞后」那一支固定下来。
+    const dir = mkdtempSync(join(tmpdir(), 'gy-g-drill-lagkeys-'));
+    const docPath = join(dir, 'drill.md');
+    try {
+      writeFileSync(docPath, dropGrowthValues(fixture.docText, 2), 'utf8');
+      const run = (extra) => spawnSync(
+        process.execPath,
+        ['tools/verify-g-drill-readings.mjs', '--check', '--root', fixture.root, '--doc', docPath, ...extra],
+        { cwd: REPO_ROOT, encoding: 'utf8', windowsHide: true },
+      );
+      const tolerant = run([]);
+      assert.equal(tolerant.status, 0, `--tolerant-growth 应当 exit 0：\n${tolerant.stdout}\n${tolerant.stderr}`);
+      const lagKeys = String(tolerant.stdout).split('\n')
+        .filter((line) => line.includes('↳'))
+        .map((line) => (line.match(/↳ 生长型读数滞后：(\S+) /) ?? [])[1])
+        .filter(Boolean);
+      assert.equal(lagKeys.length, 4, `应当有 4 条滞后键：\n${tolerant.stdout}`);
+
+      const strict = run(['--strict-growth']);
+      assert.equal(strict.status, 1, `--strict-growth 应当 exit 1：\n${strict.stdout}`);
+      const named = new Set(
+        String(strict.stderr).split('\n')
+          .map((line) => (line.match(/([A-Za-z][A-Za-z0-9.]*)：文档写 \d+，重算 \d+ ⇒ --strict-growth/) ?? [])[1])
+          .filter(Boolean),
+      );
+      assert.deepEqual([...named].sort(), [...new Set(lagKeys)].sort(), `严格点名的键必须与滞后键一一对应：\n${strict.stderr}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -927,20 +960,57 @@ describe('真仓自检（只读，不写盘）', () => {
     windowsHide: true,
   });
 
-  it('`node tools/verify-g-drill-readings.mjs --check`（默认 --tolerant-growth）在真仓上 exit 0', () => {
+  it('`node tools/verify-g-drill-readings.mjs --check`（默认 --tolerant-growth）在真仓上 exit 0，且只放行「生长型 + 文档值偏小」的滞后', () => {
     const result = runCheck([]);
     assert.equal(result.status, 0, `--check 在真仓上红了：\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
     assert.match(String(result.stdout), /八条判据全过/);
     assert.match(String(result.stdout), /--tolerant-growth/);
-    // 真仓是「页与树同一棵树」⇒ 不该有任何滞后行（有滞后就说明块该刷新了，只是不判红而已）。
-    assert.equal(String(result.stdout).split('\n').filter((line) => line.includes('↳')).length, 0, String(result.stdout));
+    // ⛔ 不许断言「真仓必须 0 条滞后」：CI 检出的是「本分支 ∪ 最新 main」的合成树，main 每加一个
+    // 测试文件 `allTestFiles` 就 +1 ⇒ 合成树上必然有滞后。`#728` 首轮就是这么红的（本机 0 条、
+    // CI 4 条），而把断言写成 0 等于要求证据页跟着每个 main 提交手改 —— 那正是本片要消灭的东西。
+    // 本用例守的是**放行条件本身**：每一条滞后行都必须是生长型键、文档值严格小于重算值、且
+    // 「滞后 N」等于「重算 − 文档」。任何别的差异都不许以滞后形态出现。
+    const lagLines = String(result.stdout).split('\n').filter((line) => line.includes('↳'));
+    for (const line of lagLines) {
+      const matched = line.match(/↳ 生长型读数滞后：(\S+) 文档 (\d+) → 重算 (\d+)（滞后 (\d+)）$/);
+      assert.ok(matched, `滞后行格式不符（解析不了的行不许静默放行）：${line}`);
+      const [, key, docRaw, expectedRaw, lagRaw] = matched;
+      assert.ok(GROWTH_READINGS.includes(key), `只有生长型读数才允许滞后，\`${key}\` 不是：${line}`);
+      assert.ok(Number(docRaw) < Number(expectedRaw), `滞后必须是文档值偏小（冒进要红，不许当滞后）：${line}`);
+      assert.equal(Number(lagRaw), Number(expectedRaw) - Number(docRaw), `滞后数必须是「重算 − 文档」：${line}`);
+    }
+    if (lagLines.length > 0) {
+      assert.match(String(result.stdout), /生长型读数按\*\*下界\*\*判/, '有滞后时末行必须声明下界口径，不许悄悄过');
+    }
   });
 
-  it('真仓在 `--strict-growth` 下也精确相等（exit 0）：闸门没有靠宽容口径变绿', () => {
-    const result = runCheck(['--strict-growth']);
-    assert.equal(result.status, 0, `--strict-growth 在真仓上红了：\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
-    assert.match(String(result.stdout), /八条判据全过/);
-    assert.match(String(result.stdout), /读数与树逐字相等/);
+  it('`--strict-growth` 与 `--tolerant-growth` 在同一棵树上自洽：宽容只放行滞后，严格点名的键必须与滞后键一一对应', () => {
+    const tolerant = runCheck([]);
+    const strict = runCheck(['--strict-growth']);
+    assert.equal(tolerant.status, 0, `--tolerant-growth 在真仓上红了：\n${tolerant.stdout ?? ''}\n${tolerant.stderr ?? ''}`);
+    const lagKeys = String(tolerant.stdout).split('\n')
+      .filter((line) => line.includes('↳'))
+      .map((line) => (line.match(/↳ 生长型读数滞后：(\S+) /) ?? [])[1])
+      .filter(Boolean);
+    if (lagKeys.length === 0) {
+      // 页与树同一棵树（本机、或合流后恰好没长）⇒ 严格口径也必须过：这就是「闸门没靠宽容口径变绿」。
+      assert.equal(strict.status, 0, `零滞后时 --strict-growth 必须也 exit 0：\n${strict.stdout ?? ''}\n${strict.stderr ?? ''}`);
+      assert.match(String(strict.stdout), /读数与树逐字相等/);
+      return;
+    }
+    // 有滞后 ⇒ 严格口径必须红，而且**它点名的键集必须与宽容口径打印的滞后键集完全相等**：
+    // 多一个就说明宽容口径放行了「滞后以外的差异」，那才是真的变绿；少一个说明滞后没被严格口径看见。
+    assert.equal(strict.status, 1, `有 ${lagKeys.length} 条滞后时 --strict-growth 必须 exit 1：\n${strict.stdout ?? ''}`);
+    const named = new Set(
+      String(strict.stderr).split('\n')
+        .map((line) => (line.match(/([A-Za-z][A-Za-z0-9.]*)：文档写 \d+，重算 \d+ ⇒ --strict-growth/) ?? [])[1])
+        .filter(Boolean),
+    );
+    assert.deepEqual(
+      [...named].sort(),
+      [...new Set(lagKeys)].sort(),
+      `严格口径点名的键必须与滞后键一一对应（否则宽容口径放行了别的差异）：\n${strict.stderr ?? ''}`,
+    );
   });
 
   it('真仓的演练计划里每条命令都有出处，且计划本身覆盖 21 条', () => {
