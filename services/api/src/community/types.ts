@@ -179,7 +179,7 @@ export interface Ack {
  *
  * 本片没有 HTTP 层，因此不读取 `req`；但语义与 `auth/middleware.ts` 的
  * `readIdentity` 一致：缺 userId／authEpoch／role ⇒ SESSION_REQUIRED，
- * 非 user 角色（后台会话）⇒ SCOPE_DENIED，与契约 security: userSession 一致。
+ * 非 user 角色（后台会话）⇒ SCOPE_DENIED 仅服务层兜底：HTTP 面 `authenticateUser` 只取 'user' 会话，实际返 401 `SESSION_EXPIRED`。
  */
 export interface CommunityActor {
   userId: string;
