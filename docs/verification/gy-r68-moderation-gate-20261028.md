@@ -277,3 +277,48 @@ $ git diff --name-only da61b64d -- services apps packages .github tools
 - **没做变异/注入破坏性验证**：本片没有把「审核门」故意拆掉再跑一遍（那要改 `services/**`，属禁区）。负控制的可信度来自「正控制 + 三条排除性读数」（§4），不来自破坏性实验。
 - **没有评估审核质量**：见 §5，一次也没有。
 - **侦察报告的分歧**：`RECON.md` 引 `packages/moderation/constants.mjs:223`，本基线实测 `DEFAULT_RULE_BUDGET_MS` 在 `:224`。本页按实测写 `:224`，不回改侦察报告（它不在本片改动面内）。
+
+## 9 追补（同日）：演示审核端口已按用户裁决落地（**可选、仅非 real、结论恒 pass**）
+
+§6 当时把「加一条 `synthetic: true` 的演示审核端口」列为**用户决策**、写手不实现。用户随后明确授权：**要一个这样的演示端口**。本节登记它的落地口径与读数，**不推翻** §1–§8 的任何既有结论：默认装配（零开关）下仍然是 422 + 内容行 0 行。
+
+### 9.1 口径（逐条）
+
+| 维度 | 口径 |
+| --- | --- |
+| 开关 | 环境变量 `MODERATION_DEMO_PORT`，**唯一**认可取值 `pass`（首尾空白、大小写不敏感）；`1`／`true`／`on`／空值一律视为**关闭**。默认关闭 ⇒ 与接线前逐字一致。字段说明见 [配置参考](../reference/configuration.md) 与 `.env.example` |
+| 生效范围 | **只在 `APP_EXECUTION_MODE != real`**。`real` 下即便设了也**绝不启用**：装配层不注入，审核域自己的 real 分支也根本不看注入端口（未接真实供应商 ⇒ 整域 503 `PROVIDER_UNAVAILABLE`）。fail-closed 语义**一个字没改** |
+| 端口性质 | **合成的**：`provider.synthetic === true`、`model_version` 以 `synthetic-demo-` 开头、零凭据、不读正文。网络面**按实况写，不夸大**：`fetchImpl` 一旦被调用就抛错；其余 3 个 seam（`credentials`／`liveGate`／`now`）是**惰性占位**，被持有但从不使用（合流层要求四个 seam 都显式持有，所以它们必须存在） |
+| 「零外呼」的判据 | **不靠那个抛错**，靠代码面实测（逐词 grep，命中 **0 条**）：`services/api/src/moderation/demo-port.ts` 与 `packages/moderation/*.mjs` 里各查 `https?://`、`fetch(`、`node:http`、`node:https`、`net.`、`axios`、`undici`、`URL(`、`request(` —— 两个面全部 0 命中（本片读数） |
+| 规则层是否被绕过 | **否**。演示端口只替代「**模型层结论**」；社区发布闸门的硬规则（`gate.evaluate`）**照旧先跑且独立拦截** ⇒ 危险混配仍 **400 + 内容行 0**（§9.2 第 ⑥ 行）。所以它不是「全放行」 |
+| 结论 | 恒 `pass`（不看内容、不看媒体）⇒ 演示环境「先审后发」链路可以走到 `published` + `approved` |
+| 覆盖面 | **只有文本端口 `tms`**；图片端口 `ims` 仍是出厂替身 ⇒ 带媒体投稿照旧隔离/待审，演示端口不顺手放宽媒体链路 |
+| 运维可见 | 启动日志：启用时一行 `moderation_demo_port: synthetic`（并写明"不是真实审核结论"）；`real` 下设了则一行 `moderation_demo_port: refused`（明说拒绝） |
+| 不可当证据 | 它**不是**真实 tms/ims：不得被引用为审核能力、召回率、误隔离率或任何质量成绩；「演示环境能发帖」≠「内容已审」。真实样本缺口仍是各 0（[样本缺口登记](../evaluation/sample-gap-register.md)） |
+
+实现与用例：端口实现 `services/api/src/moderation/demo-port.ts`；装配点在 `services/api/src/app.ts` 的审核域装配处（既有 `ports` 形状；显式注入优先、环境开关次之；`real` 恒不注入）；用例 `tests/unit/community-moderation-demo-port.test.mjs`。
+
+### 9.2 读数（同一份夹具、同一条 `POST /posts`，只差「执行模式 + 开关」）
+
+| # | 旋钮 | 状态码 | 内容行 | 台账/启动日志 |
+| --- | --- | --- | --- | --- |
+| ① | 不设 `MODERATION_DEMO_PORT`（纯默认装配） | `422 INPUT_UNCERTAIN`（`retryable:false`） | **0**（`insertPost` 未被调用） | 两端口都仍是替身（`counts().substitutes = ['tms','ims']`）；启动日志不含 `moderation_demo_port` |
+| ①b | 设成 `1`／`true`／`on`／空 | `422`（与 ① 逐字相同） | **0** | 开关只认 `pass` |
+| ② | 非 real + `MODERATION_DEMO_PORT=pass` | **201**（`published` + `approved`） | **恰好 1** | 台账 `evidence.provider.synthetic=true`、`origin='injected'`、`model_version=synthetic-demo-pass-tms@0.0.0`；`GET /jobs/{id}`（`kind=moderation`）同版本；`counts().substitutes=['ims']`；启动日志 `moderation_demo_port: synthetic` |
+| ③ | `APP_EXECUTION_MODE=real` + 设了开关 | `POST /posts` **503** `PROVIDER_UNAVAILABLE`（`retryable:false`）；审核域 `submitScreening` 同样 **503**、能力位 `text.state='none'` | **0** | 启动日志 `moderation_demo_port: refused … APP_EXECUTION_MODE=real` ⇒ **fail-closed 没被打开** |
+| ④ | 同 ② 的端口但删掉 `provider.synthetic` | 必须**红**：`422` + 理由码 `MODEL_LAYER_PORT_INVALID` | **0** | 证明 `synthetic` 这个键是**有判据的**，不是装饰 |
+| ⑤ | 启动日志读数 | 设了 ⇒ 出现 `moderation_demo_port: synthetic`；没设 ⇒ 不出现（也不出现 `refused`） | — | 运维不会在不知情的情况下用假审核 |
+| ⑥ | 同 ② 的开关 + **危险混配**正文（`DANGEROUS_BODY`，MR-01 夹具） | **400** `INVALID_REQUEST`（`details[].code` 含 `DANGEROUS_MIX`，`retryable:false`） | **0**（`snapshotCounts().posts = 0`；拒审结论留档 1 条） | 演示端口开着也**挡得住** ⇒ 它只替代模型层结论，规则层照旧拦截 |
+
+### 9.3 本节**不**声称的事
+
+- **不**声称真实审核已接通：演示端口是合成的，「201 + 1 行」只证明演示链路通了，不证明任何内容真的被审过。
+- **不**声称 `real` 可发帖：`real` 仍是没有真实供应商就整域 503；本节第 ③ 行就是这条不变量的钉住读数。
+- **不**声称图片/媒体路径松动：`ims` 未被演示端口替换。
+- **不**声称是「全放行」：第 ⑥ 行就是反例（硬规则仍 400 + 0 行）。
+- **不**声称质量指标：见 §5 与 [样本缺口登记](../evaluation/sample-gap-register.md)。
+
+### 9.4 措辞订正（同一页早期表述）
+
+本节第一版与 [配置参考](../reference/configuration.md) 曾把网络面写成「**四个** seam 持有即抛错」——实测只有 `fetchImpl` 抛错，其余 3 个是惰性占位，属**说多了**。现已按实况改写（见 §9.1 两行）；本页 §2 与 §5 里描述**另一支测试夹具**（`tests/unit/community-fixtures.mjs` 的 `makeSyntheticPassPort`）的「四个网络 seam 持有即抛错」是当时的读数，**保留原文不回改**，其真实网络面同样是「1 个抛错 + 3 个占位」，两者都不构成真实外呼。
+
