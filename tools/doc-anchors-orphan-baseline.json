@@ -8,6 +8,12 @@
       "accept": 3688,
       "orphans": 3543,
       "outsideRed": 145
+    },
+    {
+      "why": "GY-R68 审查 B1：docs/verification/gy-r31-i15-recon-20261022.md:133 的两条裸锚点按符号重取（:51→:62 的 buildApp、:78→:89 的 database_configured），孤儿册键随行号平移：新增 2 条（:62、:89）、陈旧 2 条（:51、:78），是同一批锚点的机械重取，不是新增问题。",
+      "accept": 2,
+      "orphans": 3543,
+      "outsideRed": 145
     }
   ],
   "orphans": [
@@ -2521,9 +2527,9 @@
     "docs/verification/gy-r31-i15-recon-20261022.md|:422|no-explicit-in-block",
     "docs/verification/gy-r31-i15-recon-20261022.md|:452|ambiguous-block",
     "docs/verification/gy-r31-i15-recon-20261022.md|:469|no-explicit-in-block",
-    "docs/verification/gy-r31-i15-recon-20261022.md|:51|ambiguous-block",
     "docs/verification/gy-r31-i15-recon-20261022.md|:592|ambiguous-block",
-    "docs/verification/gy-r31-i15-recon-20261022.md|:78|ambiguous-block",
+    "docs/verification/gy-r31-i15-recon-20261022.md|:62|ambiguous-block",
+    "docs/verification/gy-r31-i15-recon-20261022.md|:89|ambiguous-block",
     "docs/verification/gy-r31-i15-recon-20261022.md|:935-1047|no-explicit-in-block",
     "docs/verification/gy-r31-i15-recon-20261022.md|:975-978|no-explicit-in-block",
     "docs/verification/gy-r31-i15-recon-20261022.md|:980|no-explicit-in-block",
