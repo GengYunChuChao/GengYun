@@ -1,11 +1,12 @@
 {
   "schema_version": 1,
-  "note": "按文档的「进判据锚点条数」清册（显式锚点 + 继承到路径的裸锚点，按文档计数、不去重以避免同一行多引用的假象）。--strict 判：某文档条数比这里少 ⇒ exit 1（少掉的那条锚点必须写回路径，或用 --write-anchor-count-baseline --accept=<净增减> --why=\"<理由>\" 登记）。judged_total 必须等于 documents 逐项之和，且最后一条 accept 账本的 judged_total 必须与之一致——单改一个数字会当场被这两道算术抓住。scan 记下生成时的扫描面：本次跑的面更窄（默认面）时可跳过面内的键，面外的键（改名成别的文档）照样判红。",
+  "note": "按文档的「进判据锚点条数」清册（显式锚点 + 继承到路径的裸锚点，按文档计数、不去重以避免同一行多引用的假象）。--strict 判：某文档条数比这里少 ⇒ exit 1（少掉的那条锚点必须写回路径，或用 --write-anchor-count-baseline --accept=<净增减> --why=\"<理由>\" 登记）。judged_total 必须等于 documents 逐项之和，且最后一条 accept 账本的 judged_total 必须与之一致——单改一个数字会当场被这两道算术抓住。scan 记下生成时的扫描面：本次跑的面更窄（默认面）时可跳过面内的键，面外的键（改名成别的文档）照样判红。documents_digest 钉住这张表本身（judged_total + 排序后的 键/条数）：把条数、judged_total、账本末条三处一起改齐也会被摘要抓住，摘要只由 --write-anchor-count-baseline 重算，不许手改。",
   "generated_by": "node tools/verify-doc-anchors.mjs --scan <目录> --write-anchor-count-baseline --accept=<净增减> --why=\"<理由>\"",
   "scan": [
     "docs"
   ],
   "judged_total": 6217,
+  "documents_digest": "fnv1a64:DD75D9B9DC67BEF9",
   "accept": [
     {
       "why": "首次落地锚点清册：按文档登记「进判据的锚点条数」（226 份文档 / 6217 条），堵住「整条改写成散文就无声离开判据面」",
@@ -14,6 +15,11 @@
     },
     {
       "why": "清册补记自己的生成扫描面（scan=['docs']）：面内的键在更窄的默认面运行时可以合法跳过，面外的键（把键改成 README.md 之类）必须判红。键集与 judged_total 不变（226 份 / 6217 条）。",
+      "accept": 0,
+      "judged_total": 6217
+    },
+    {
+      "why": "补 documents_digest：把清册这张表本身钉进文件（求和与 accept 账本只抓得住单改一个数字，把条数、judged_total、账本末条一起改齐仍能过关）。只加字段与一条 accept 留痕，键集与 judged_total 都不动：226 份 / 6217 条",
       "accept": 0,
       "judged_total": 6217
     }

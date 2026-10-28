@@ -63,6 +63,12 @@
  * 另有一份**锚点清册** `tools/doc-anchors-anchor-count-baseline.json`：按文档登记「进判据的锚点条数」，
  * 某文档计数下降即判红——它管的是「该出现的锚点是否还在」，因为四类结构判据只审**已经出现**的锚点，
  * 把一条锚点整句改写成散文（「见第 4 行」）本来能让它无声离开判据面。
+ * 清册里「没扫到」分四桶，只有最后一桶算合法跳过：①键根本不是可扫的 `.md`（非 `.md` 路径、目录名、
+ * `walkMarkdown` 跳过的目录）②键在**本次运行面**内却扫不到 ③两张面都不在（改名成 `README.md` 这类面外文档）
+ * ——①②③都判红；④可扫的文档、在清册记下的生成面内、但不在本次面内（默认面 vs `--scan docs` 的日常）才跳过。
+ * 运行面**认 glob**（与 `--scan` 共用同一个 `globToRegExp`），所以把 CI 那一行换成 `--scan 'docs/**\/*.md'`
+ * 关不掉这一闸。清册还带 `documents_digest`（FNV-1a 64 位，只覆盖这张表自己的数字）：把某文档条数、
+ * `judged_total`、accept 账本末条三处一起改齐，求和与账本都自洽，但仍会被摘要抓住——摘要只由写模式重算。
  * 注意：这两道都只是**留痕**，不是「不可能放弃判据」——孤儿册与清册都是可登记的白名单，区别只在于
  * 每次放宽都必须带条数与理由、并出现在 diff 里。
  * 继承锚点的判红作用域与 `SYMBOL_LINE_SCOPE` 同口径（`docs/architecture/**`），历史取证页只计数。
@@ -1584,9 +1590,37 @@ function assertNormalizedDocKey(doc, baselinePath) {
   }
 }
 
-export function loadAnchorCountBaseline(root, baselinePath = DEFAULT_ANCHOR_COUNT_BASELINE) {
+/**
+ * 64 位 FNV-1a，返回 16 位大写十六进制。
+ *
+ * 为什么不是 sha256：本工具的判据刻意**不**用「内容哈希全等」（见文件头），也不 import `node:crypto`
+ * （`tests/unit/doc-anchors-guard.test.mjs` 钉着这一条）。这里只给清册**自己的数字**算一个确定性校验和。
+ */
+function fnv1a64Hex(text) {
+  const prime = 0x100000001b3n;
+  const mask = 0xffffffffffffffffn;
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of Buffer.from(text, 'utf8')) hash = ((hash ^ BigInt(byte)) * prime) & mask;
+  return hash.toString(16).toUpperCase().padStart(16, '0');
+}
+
+/**
+ * 清册 `documents` 的确定性摘要：`fnv1a64:` + 16 位大写十六进制，覆盖 `total` 与「排序后的 键<TAB>条数」。
+ *
+ * 用途只有一条：拦住「手改 documents 而不同步重生成」。求和与 accept 账本这两道算术只抓得住**单改一个数字**；
+ * 把某文档条数、`judged_total`、账本末条**一起**改，或者干脆整键删掉，算术就自洽了（第五轮复审实测两条都 exit 0）。
+ * 摘要把「这张表到底长什么样」钉进文件：手改之后摘要对不上 ⇒ loader 直接 exit 2。
+ * 强度说清楚：这是**校验和**不是签名，愿意读源码的人能重算；它拦的是「顺手改册子」，和整本册子可以重生成是同层留痕。
+ */
+export function anchorCountDocumentsDigest(documents, total) {
+  const lines = [`total\t${total}`];
+  for (const doc of Object.keys(documents).sort()) lines.push(`${doc}\t${documents[doc]}`);
+  return `fnv1a64:${fnv1a64Hex(lines.join('\n'))}`;
+}
+
+export function loadAnchorCountBaseline(root, baselinePath = DEFAULT_ANCHOR_COUNT_BASELINE, { allowMissingDigest = false } = {}) {
   const absolute = resolve(root, baselinePath);
-  if (!existsSync(absolute)) return { path: baselinePath, documents: {}, total: 0, accept: [], scan: [], missing: true };
+  if (!existsSync(absolute)) return { path: baselinePath, documents: {}, total: 0, accept: [], scan: [], missing: true, documents_digest: null };
   const parsed = JSON.parse(readFileSync(absolute, 'utf8'));
   const documents = parsed.documents;
   if (typeof documents !== 'object' || documents === null || Array.isArray(documents)) {
@@ -1623,26 +1657,66 @@ export function loadAnchorCountBaseline(root, baselinePath = DEFAULT_ANCHOR_COUN
         '只改数字不改账本，等于绕过「谁放行的」这一问——请重跑 --write-anchor-count-baseline（带 --accept 与 --why）。');
     }
   }
-  return { path: baselinePath, documents, total: sum, accept, scan, missing: false };
+  // 第三道：`documents` 摘要。前两道算术只抓「单改一个数字」——把文档条数、judged_total、账本末条一起改，
+  // 或者整键删掉，算术就自洽了（第五轮复审实测两种都能 exit 0，唯一痕迹是「上升 N 份」）。摘要覆盖整张表，
+  // 手改之后必然对不上；只有 --write-anchor-count-baseline 会重算它，而那条路会在 accept 账本里留名。
+  const digest = anchorCountDocumentsDigest(documents, sum);
+  // `allowMissingDigest` 只给**写模式**做引导用：清册还没有摘要字段时（首次引入摘要、或有人把整本册子删了重来），
+  // 写模式必须能读到旧册子才能重生成；而重生成会把摘要算准、并在 accept 账本里留一条名。
+  // 校验路径（默认）一律要求摘要存在——删掉摘要再手改，走的是这条默认路径，所以还是 exit 2。
+  const digestMissing = parsed.documents_digest === undefined;
+  if (parsed.documents_digest !== digest && !(allowMissingDigest && digestMissing)) {
+    throw new Error(`锚点清册 ${baselinePath} 的 documents 摘要不符（或缺失）：文件里是 ${JSON.stringify(parsed.documents_digest)}，按当前 documents 重算是 ${digest}。` +
+      '这张表只能由 --write-anchor-count-baseline（带 --accept 与 --why）重生成——手改条数、judged_total 与账本末条' +
+      '三处一起改齐就能绕过求和与账本这两道算术，摘要正是为这一步准备的：不许手改。');
+  }
+  return { path: baselinePath, documents, total: sum, accept, scan, missing: false, documents_digest: digest };
 }
 
-/** 键是否落在清册自己记下的生成扫描面里（`scan: ['docs']` ⇒ `docs/**`）。 */
+/**
+ * 键是否落在某个扫描面里（`scan: ['docs']` ⇒ `docs/**`）。
+ *
+ * **认 glob**：`resolveScanTargets` 允许 `--scan 'docs/**\/*.md'` 这样的面（文件头与 USAGE 都写着），
+ * 而「面」与「扫」必须同一口径——只做前缀比较的话，glob 面下任何键都匹配不上，
+ * 「面内却扫不到」这一刀就成了不可达代码（第五轮复审 B1：改 CI 那一行参数即可关掉清册判据）。
+ * 这里复用 `resolveScanTargets` 用的同一个 `globToRegExp`，不另造一套通配语义。
+ */
 function isInsideFace(doc, face) {
-  return face.some(target => doc === target || doc.startsWith(`${target.replace(/\/+$/u, '')}/`));
+  return face.some(target => {
+    const normalized = toPosix(target).replace(/^\.\//, '').replace(/\/+$/u, '');
+    if (normalized.includes('*')) return globToRegExp(normalized).test(doc);
+    return doc === normalized || doc.startsWith(`${normalized}/`);
+  });
+}
+
+/**
+ * 键本身长得像「`walkMarkdown` 会收的文档」吗？只判形状，不碰磁盘。
+ *
+ * `docs/**` 下不是 `.md` 的路径（`…/contract-status.json`）、目录名（`docs/architecture`）、
+ * 落在 `SKIP_DIRECTORIES` 或 `.` 开头目录里的路径，`walkMarkdown` **永远不会**收它们。
+ * 这种键在任何扫描面下都不许算「合法跳过」：算的话，把键换成这类名字就等于让那份文档永久退出判据面，
+ * 而 judged_total、账本、摘要三处一个数字都不用动。
+ */
+function isCollectibleDocKey(doc) {
+  if (!doc.endsWith('.md')) return false;
+  return doc.split('/').slice(0, -1).every(segment =>
+    segment === '.github' || (!segment.startsWith('.') && !SKIP_DIRECTORIES.has(segment)));
 }
 
 /**
  * 比对：只判「减少」。某份文档的进判据锚点比基线少 ⇒ 红（少掉的那条必须写回路径，或登记成一条 accept）。
  * 增加不判红（有人在文档里补了引用是好事），只报读数。
  *
- * **没扫到的键**要看「它在不在**本次运行面**里」，而是只看「它在不在**清册记下的生成面**里」。
+ * **没扫到的键**要看「它在不在**本次运行面**里」，而不是只看「它在不在**清册记下的生成面**里」。
  * 只看后者会留一条通用通道：把键写成 `docs/**` 下**任何人扫不到**的名字（非 `.md` 的路径，或目录名），
  * 它就永远落在「清册面内、本次没扫到」，于是每次都被当成合法跳过——`judged_total` 一条不少、账本也对，
- * 这份文档却已经永久退出判据面，连 `--accept` 都不用记。三种情形因此分开：
- * - 键在本次运行面内，却没扫到（不是 `.md`，或落在 `walkMarkdown` 跳过的目录里）⇒ 进 `unscanned` 判红；
- * - 键不在本次运行面内、但在清册记下的生成面内（默认面 vs `--scan docs` 的日常）⇒ 合法跳过，只计数（`skipped`）；
- * - 两张面都不在（把键改名成 `README.md` 这类面外文档）⇒ 进 `unscanned` 判红。
- * 少了这一刀，「换个文档名」或「换成一个扫不到的名字」都能让某份文档永远退出判据面，而求和与账本全都对得上。
+ * 这份文档却已经永久退出判据面，连 `--accept` 都不用记。所以「没扫到」分四桶，只有最后一桶算合法：
+ * - 键根本不是可扫的文档（不是 `.md`，或落在 `walkMarkdown` 跳过的目录里）⇒ 判红（`collectible: false`）；
+ * - 键在本次运行面内，却没扫到 ⇒ 判红（`inRunFace: true`）；
+ * - 两张面都不在（把键改名成 `README.md` 这类面外文档）⇒ 判红（`inBookFace: false`）；
+ * - 可扫的文档、在清册记下的生成面内、但不在本次面内（默认面 vs `--scan docs` 的日常）⇒ 合法跳过，只计数。
+ * 少了任何一刀，「换个文档名」「换成一个扫不到的名字」「换成一个 glob 面」都能让某份文档永远退出判据面，
+ * 而求和、账本、摘要全都对得上。
  *
  * `face` 只该由调用点传**本次运行面**（`options.scan`）；不传时退回清册自己记的面——那是「本次面未知」
  * 的保守近似，不是这次要判的那一刀。
@@ -1656,18 +1730,24 @@ export function partitionAnchorCountBaseline(counts, baseline, scannedDocs = nul
   for (const [doc, expected] of Object.entries(baseline.documents)) {
     if (scannedDocs !== null && !scannedDocs.has(doc) && (docExists === null || docExists(doc))) {
       const inRunFace = runFace.length > 0 && isInsideFace(doc, runFace);
-      if (!inRunFace && bookFace.length > 0 && isInsideFace(doc, bookFace)) {
+      const inBookFace = bookFace.length > 0 && isInsideFace(doc, bookFace);
+      const collectible = isCollectibleDocKey(doc);
+      if (collectible && !inRunFace && inBookFace) {
         skipped += 1;
       } else {
         unscanned.push({
           doc,
           expected,
           inRunFace,
-          reason: bookFace.length === 0
-            ? '清册没有记下生成扫描面'
-            : inRunFace
-              ? '键在本次扫描面内，却没扫到它——不是 .md，或落在 walkMarkdown 跳过的目录里'
-              : '键不在清册记下的生成扫描面内',
+          inBookFace,
+          collectible,
+          reason: !collectible
+            ? '键不是一份可扫的 Markdown 文档（不是 .md，或落在 walkMarkdown 跳过的目录里）——这种名字任何扫描面都扫不到'
+            : bookFace.length === 0
+              ? '清册没有记下生成扫描面'
+              : inRunFace
+                ? '键在本次扫描面内，却没扫到它——不是 .md，或落在 walkMarkdown 跳过的目录里'
+                : '键不在清册记下的生成扫描面内',
         });
       }
       continue;
@@ -1691,10 +1771,11 @@ export function renderAnchorCountBaseline({ counts, baseline, accept = null, led
   if (accept !== null) entries.push({ why: accept.why, accept: accept.accepted, judged_total: total });
   const document = {
     schema_version: 1,
-    note: '按文档的「进判据锚点条数」清册（显式锚点 + 继承到路径的裸锚点，按文档计数、不去重以避免同一行多引用的假象）。--strict 判：某文档条数比这里少 ⇒ exit 1（少掉的那条锚点必须写回路径，或用 --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记）。judged_total 必须等于 documents 逐项之和，且最后一条 accept 账本的 judged_total 必须与之一致——单改一个数字会当场被这两道算术抓住。scan 记下生成时的扫描面：本次跑的面更窄（默认面）时可跳过面内的键，面外的键（改名成别的文档）照样判红。',
+    note: '按文档的「进判据锚点条数」清册（显式锚点 + 继承到路径的裸锚点，按文档计数、不去重以避免同一行多引用的假象）。--strict 判：某文档条数比这里少 ⇒ exit 1（少掉的那条锚点必须写回路径，或用 --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记）。judged_total 必须等于 documents 逐项之和，且最后一条 accept 账本的 judged_total 必须与之一致——单改一个数字会当场被这两道算术抓住。scan 记下生成时的扫描面：本次跑的面更窄（默认面）时可跳过面内的键，面外的键（改名成别的文档）照样判红。documents_digest 钉住这张表本身（judged_total + 排序后的 键/条数）：把条数、judged_total、账本末条三处一起改齐也会被摘要抓住，摘要只由 --write-anchor-count-baseline 重算，不许手改。',
     generated_by: 'node tools/verify-doc-anchors.mjs --scan <目录> --write-anchor-count-baseline --accept=<净增减> --why="<理由>"',
     scan: [...new Set(scan)].sort(),
     judged_total: total,
+    documents_digest: anchorCountDocumentsDigest(documents, total),
     accept: entries,
     documents,
   };
@@ -1704,9 +1785,10 @@ export function renderAnchorCountBaseline({ counts, baseline, accept = null, led
 function printAnchorCountBaseline(streams, { baseline, counts, partition }) {
   const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
   const registered = Object.keys(baseline.documents).length;
-  const outOfFace = partition.unscanned.filter(item => !item.inRunFace).length;
-  const insideButUnscanned = partition.unscanned.length - outOfFace;
-  streams.log(`ANCHOR-COUNT: 进判据锚点 ${total} 条 / ${counts.size} 份文档——清册 ${baseline.path} 登记 ${baseline.total} 条 / ${registered} 份；本次计数下降的文档 ${partition.drops.length} 份、上升 ${partition.growth.length} 份、面外未扫的键 ${outOfFace} 个、面内本次未扫 ${partition.skipped} 个（清册面内、本次面外：合法跳过）、面内却扫不到的键 ${insideButUnscanned} 个（按本次面本该扫到却没扫到：判红）`);
+  const uncollectible = partition.unscanned.filter(item => !item.collectible).length;
+  const outOfFace = partition.unscanned.filter(item => item.collectible && !item.inRunFace).length;
+  const insideButUnscanned = partition.unscanned.length - outOfFace - uncollectible;
+  streams.log(`ANCHOR-COUNT: 进判据锚点 ${total} 条 / ${counts.size} 份文档——清册 ${baseline.path} 登记 ${baseline.total} 条 / ${registered} 份；本次计数下降的文档 ${partition.drops.length} 份、上升 ${partition.growth.length} 份、面外未扫的键 ${outOfFace} 个、面内本次未扫 ${partition.skipped} 个（清册面内、本次面外：合法跳过）、面内却扫不到的键 ${insideButUnscanned} 个（按本次面本该扫到却没扫到：判红）、永远扫不到的键 ${uncollectible} 个（键根本不是可扫的文档：判红）`);
   if (baseline.missing) streams.log(`NOTE: 锚点清册 ${baseline.path} 不存在，按空册处理（不判「该出现的锚点仍在」这一条）。`);
   const last = baseline.accept[baseline.accept.length - 1];
   if (last !== undefined) streams.log(`ANCHOR-COUNT-ACCEPT: 最近一次放行 ${last.why}（当时 accept=${last.accept}、judged_total=${last.judged_total}）`);
@@ -1871,7 +1953,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     return 0;
   }
   if (options.writeCount) {
-    const current = loadAnchorCountBaseline(options.root, options.anchorCountBaseline);
+    const current = loadAnchorCountBaseline(options.root, options.anchorCountBaseline, { allowMissingDigest: true });
     const currentTotal = [...anchorCounts.values()].reduce((sum, value) => sum + value, 0);
     // 这里**没有**「必须显式给 --scan」这道闸：`parseArgs` 在填默认面之后才返回，`options.scan` 永远非空，
     // 写在这种位置的空面检查是死代码（旧注释说「口径必须与 CI 一致」，但 code path 到不了）。
@@ -2006,11 +2088,13 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     for (const drop of countPartition.drops.slice(0, 20)) streams.error(`  · ${drop.doc}：清册 ${drop.expected} 条 → 本次 ${drop.actual} 条（少 ${drop.expected - drop.actual} 条）`);
     for (const item of countPartition.unscanned.slice(0, 20)) {
       streams.error(`  · ${item.doc}：清册 ${item.expected} 条，但本次根本没扫到它（${item.reason}）——` +
-        (item.inRunFace
-          ? '键在本次扫描面内，扫不到它等于这份文档的锚点从判据面上消失（换成非 .md 路径或目录名同样算）'
-          : '键被换成了面外的文档，等于让这份文档永久退出判据面'));
+        (!item.collectible
+          ? '键根本不是可扫的文档，等于让这份文档永久退出判据面（换成非 .md 路径、目录名或跳过目录里的路径都是这一桶）'
+          : item.inRunFace
+            ? '键在本次扫描面内，扫不到它等于这份文档的锚点从判据面上消失（换成非 .md 路径或目录名同样算）'
+            : '键被换成了面外的文档，等于让这份文档永久退出判据面'));
     }
-    streams.error('  修法：这条锚点必须留在判据里——把删掉的路径写回（`path:N`），或把「第 N 行」这类散文改回锚点。确属有意放弃判据的，本地跑 --scan docs --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记（CI 里拒绝执行）；单改清册数字会被 judged_total 求和、accept 账本、键必须是规范化路径这三道抓住。⛔ 不要把键换成 `README.md` 这类面外文档，也不要换成 `docs/**` 下不是 .md 的文件或目录名——两种都是「扫不到」，两种都判红。');
+    streams.error('  修法：这条锚点必须留在判据里——把删掉的路径写回（`path:N`），或把「第 N 行」这类散文改回锚点。确属有意放弃判据的，本地跑 --scan docs --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记（CI 里拒绝执行）；单改清册数字会被 judged_total 求和、accept 账本、documents 摘要、键必须是规范化路径这四道抓住。⛔ 不要把键换成 `README.md` 这类面外文档，也不要换成 `docs/**` 下不是 .md 的文件或目录名——两种都是「扫不到」，两种都判红；把 CI 那一行改成 glob 面（`--scan docs/**/*.md`）也一样判红，别指望换扫描面参数能让这一闸失效。');
   }
   if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed || countFailed) return 1;
   if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、${BARE_ORPHAN}、ANCHOR-COUNT${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
