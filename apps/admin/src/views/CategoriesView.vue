@@ -237,6 +237,12 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
+    <p class="banner warn" data-note="categories-two-sources">
+      分类目录在后台是独立表（迁移 0049 的 <code>public.admin_categories</code>）；用户面
+      <code>GET /catalog/crops|species</code> 仍读旧表 <code>crops</code>/<code>species</code>，本版不双写 ⇒
+      改这里（改名或停用）不会立刻反映到 App，两份一致化由后续版本收敛。
+    </p>
+
     <p v-if="!canRead" class="banner warn">
       当前后台会话的 scope 列表里没有 <code>sources:read</code>，本页不发列表请求（服务端会回
       <code>403 SCOPE_DENIED</code>）。

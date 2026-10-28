@@ -314,8 +314,10 @@ async function bootstrapDatabase() {
   // 第四次：R64 的 0047（后台下架 `post.hide` 的审计真落库 `record_admin_post_hide_audit`）落地，末位随之前移到 0047。
   // 第五次：R68 的 0048（后台**停用/恢复管理员账号**的唯一写入口 `disable_admin_account` /
   // `enable_admin_account`）落地，末位随之前移到 0048。
-  assert.equal(applied.rows[0].version, '0048', '迁移 0048（R68：disable_admin_account / enable_admin_account，后台管理员账号停用与恢复的唯一写入口，改的是账号与会话状态而不是审计面；此前 0047 是 R64 的 record_admin_post_hide_audit、0046 是 `#18` S2 收尾片的 record_admin_scope_denial）必须是最后一条已应用版本');
-  pass('迁移 0048 经 migrate.ts up 落到真库（schema_migrations 末项 0048）');
+  // 第六次：R68-A01 的 0049（后台分类字典 `public.admin_categories` + 审计窄函数
+  // `record_admin_category_update`）落地，末位随之前移到 0049。
+  assert.equal(applied.rows[0].version, '0049', '迁移 0049（R68-A01：后台分类字典 public.admin_categories 与审计窄函数 record_admin_category_update，与审计同事务；此前 0048 是 R68 的 disable_admin_account / enable_admin_account、0047 是 R64 的 record_admin_post_hide_audit）必须是最后一条已应用版本');
+  pass('迁移 0049 经 migrate.ts up 落到真库（schema_migrations 末项 0049）');
 
   await ownerPool.query(`GRANT USAGE ON SCHEMA public TO ${RUNTIME_ROLE}, ${UNGRANTED_ROLE}`);
   const region = grantRegion('deploy/postgres-cvm/sql/20-login-roles.sql', 'gy-r34-audit-logs-grant');

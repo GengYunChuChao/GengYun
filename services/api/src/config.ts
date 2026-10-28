@@ -446,6 +446,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
 
   const wechatAppId = trimmed(env, 'WECHAT_APP_ID') ?? null;
   const wechatAppSecret = trimmed(env, 'WECHAT_APP_SECRET') ?? null;
+  // 合成模式固定测试身份（GY-R68）：判据集中在 `readStubSubject`（**只在非 real 且值非空**时非 null；
+  // real 恒 null、未设/空白恒 null ⇒ 默认行为逐字不变）。⛔ 值只从服务端进程环境读取。
+  const wechatStubSubject = readStubSubject(env, executionMode, issues);
   const sessionSigningKey = trimmed(env, 'SESSION_SIGNING_KEY') ?? null;
   const adminBootstrap = asBootstrap(env, issues);
   // 访问网关原点：可选。未配置 ⇒ null（媒体域用占位/不可解析默认域，句柄由部署期网关解析）。
@@ -545,6 +548,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
     requiresRealCredentials: executionMode === 'real',
     wechatAppId,
     wechatAppSecret,
+    wechatStubSubject,
     sessionSigningKey,
     adminBootstrap,
     mediaAccessGrantOrigin,
@@ -555,6 +559,51 @@ export function loadConfig(env: Env = process.env): AppConfig {
     rateLimit,
     trustProxy,
   };
+}
+
+// ===========================================================================
+// GY-R68 · 合成模式固定测试身份（`WECHAT_STUB_SUBJECT`）
+//
+// 缺口：合成分支把 `wx.login` 的 code 派生为 subject，而每次登录 code 都不同 ⇒ 开发者工具里
+// 点一次登录就是一个新账号，资料/收藏在两次登录之间不互通，「退出 → 用同一身份重登 → 数据仍在」
+// 这条 P0 恢复链路在 stub 下**证不了**（real 模式需要真凭据，本机没有）。
+//
+// 判据（与 `docs/reference/configuration.md`、`.env.example` 同口径）：
+//   · `APP_EXECUTION_MODE === 'real'`          ⇒ 恒 `null`（**设了也不生效**，不报错、不透出）；
+//   · 非 real 且该变量未设/空白             ⇒ `null` ⇒ 合成身份仍按 code 派生，**默认行为逐字不变**；
+//   · 非 real 且该变量非空                    ⇒ 原样透出（装配层把它交给合成身份派生，见 `auth/wechat.ts`）。
+//
+// ⛔ 安全边界：subject 只能由**服务端环境**决定。本函数只读进程环境（或其显式传入的等价 env），
+// 绝不读请求体/查询参数/header；请求侧唯一输入仍是 `code`，schema 为 `additionalProperties:false`。
+// ===========================================================================
+
+/** 固定测试身份的最大长度（防止把整段记事贴进环境变量；不含敏感语义，只防手滑）。 */
+export const WECHAT_STUB_SUBJECT_MAX_LENGTH = 128;
+
+/**
+ * 读取合成模式的固定测试身份。见上方口径：real 恒 `null`；未设/空白恒 `null`；非空才透出。
+ * 非法值（超长/含控制字符）并入 `issues` 一次性抛出，⛔ 不静默退回「按 code 派生」
+ * ——那会让「我明明设了固定身份」被读成「设了没用」。
+ */
+function readStubSubject(env: Env, executionMode: ExecutionMode, issues: ConfigIssue[]): string | null {
+  // real 模式：该变量**完全不生效**（哪怕设了也不用，也不因此报错——它不是 real 的配置面）。
+  if (executionMode === 'real') return null;
+  const raw = trimmed(env, 'WECHAT_STUB_SUBJECT');
+  if (raw === undefined) return null;
+  if (raw.length > WECHAT_STUB_SUBJECT_MAX_LENGTH) {
+    issues.push({
+      field: 'WECHAT_STUB_SUBJECT',
+      code: 'INVALID_VALUE',
+      reason: `最长 ${WECHAT_STUB_SUBJECT_MAX_LENGTH} 字符`,
+    });
+    return null;
+  }
+  // 控制字符（含换行）会把 subject 拆成两行：既不便于核对，也可能被下游当作两个身份。
+  if (/[\u0000-\u001f\u007f]/.test(raw)) {
+    issues.push({ field: 'WECHAT_STUB_SUBJECT', code: 'INVALID_VALUE', reason: '不得含控制字符（含换行）' });
+    return null;
+  }
+  return raw;
 }
 
 // ===========================================================================
@@ -1106,4 +1155,33 @@ export function readTrustProxyConfig(env: Env, issues: ConfigIssue[]): TrustProx
     reason: '必须是 true/false 或非负整数跳数（例如 true、false、1、2）',
   });
   return false;
+}
+
+// ===========================================================================
+// GY-R68 · `WECHAT_STUB_SUBJECT`（合成模式固定测试身份）的类型声明
+//
+// 为什么在文件末尾再声明一次**同名**接口，而不是把字段插进上面的 `AppConfig`：本仓 `docs/**`
+// 与 `docs/architecture/contract-status.json` 把 `config.ts` 的行号当证据锚点（如
+// `docs/verification/gy-r34-private-env-mapping-20261023.md` 的 `config.ts:278`），在接口里
+// 插字段会把 `loadConfig` 及其后的行整体下移、把锚点推到空行上（实测会红）。TS 的**接口声明
+// 合并**允许同名接口分多处声明，合并后 `AppConfig` 仍是同一个类型；口径同本文件既有的
+// 「按追加而非插入」（见 GY-R28-W1 段落）。
+// ===========================================================================
+
+export interface AppConfig {
+  /**
+   * 合成模式的**固定测试身份**（`WECHAT_STUB_SUBJECT`，GY-R68）；`null` ＝未设／空白／real 模式。
+   *
+   * 为什么需要它：合成分支原本把 `wx.login` 的 code 派生为 subject，而每次登录 code 都不同
+   * ⇒ 开发者工具里点一次登录就是一个新账号，资料与收藏在两次登录之间不互通，
+   * 「退出 → 用同一身份重登 → 数据仍在」这条 P0 恢复链路在 stub 下**证不了**（real 要真凭据）。
+   * 设了非空值后 subject 由**固定串**派生 ⇒ 同一台机器上每次登录都是同一个用户。
+   *
+   * 安全边界（硬约束）：
+   * - 值**只**来自服务端进程环境（`loadConfig` 是唯一读取点），请求体／查询参数／header
+   *   **一律无法**影响它 —— 否则就成了「客户端自称身份」，那是伪造身份；
+   * - **real 模式恒为 `null`**：哪怕运维设了这个变量也不生效（real 分支从不读取它）；
+   * - 未设／空白 ⇒ `null` ⇒ 合成行为与接线前**逐字一致**（仍按 code 派生），默认不被改变。
+   */
+  wechatStubSubject?: string | null;
 }
