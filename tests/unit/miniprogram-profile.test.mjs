@@ -367,7 +367,7 @@ const RESOURCE_ID=resolve(root+'/miniprogram/data/region-centroids.js');
 const FIXTURE_COUNTY=regions.find(r=>r.parent_code&&!regions.some(x=>x.parent_code===r.code));
 const SYNTHETIC={latitude:27.9013,longitude:119.9027};
 const SYNTHETIC_TEXT=['27.9013','119.9027'];
-function syntheticResource(code){return {schema:regionConverterModule.SCHEMA,state:'available',source:'测试合成（不是真实几何数据）',license:'测试合成',retrieved_at:'2026-10-17',catalog_version:mpCatalog.catalog_version,max_distance_km:5,points:[{code:code,latitude:SYNTHETIC.latitude,longitude:SYNTHETIC.longitude}]};}
+function syntheticResource(code){return {schema:regionConverterModule.SCHEMA,state:'available',crs:'WGS84',source:'测试合成（不是真实几何数据）',license:'测试合成',retrieved_at:'2026-10-17',catalog_version:mpCatalog.catalog_version,max_distance_km:5,points:[{code:code,latitude:SYNTHETIC.latitude,longitude:SYNTHETIC.longitude}]};}
 
 test('D2 profile.js 不再写死转换资源：注入点即装配模块 build()，资源缺席时如实回退手选且不落库',async()=>{
  const source=readFileSync(root+'/miniprogram/pages/profile/profile.js','utf8');
