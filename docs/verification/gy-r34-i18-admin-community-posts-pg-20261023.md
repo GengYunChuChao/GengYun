@@ -133,3 +133,7 @@ node tests/integration/admin-community-posts-pg.mjs postgres://postgres@127.0.0.
 `GET /api/v1/posts` 得 **401 `SESSION_EXPIRED`**（`authenticateUser()` 只认 `audience:'user'` 的会话，
 找不到即报会话过期）。两者都是**拒绝**、都不泄露目标存在性，故不构成安全问题；本片只如实读数，
 ⛔ 不顺手改注释、不改产品代码（按派单「只调用既有代码，不改产品行为」）。
+
+## 7. 指针：`approvePost` 的「人工复核」口径与钉子（2026-10-29 补）
+
+本页记录的 `approve`（`private → published`）**真库**读数（结论行逐列、`decided_by`、并发一胜一败）不变。它的**口径**（为什么这不是后门：有人／有 scope／有审计／有 CAS）与内存臂的三条钉子（正控制／负控制「人工审核必须留痕」／越权 403·401）登记在 [`docs/architecture/acceptance-map.md`](../architecture/acceptance-map.md) 末节「后台人工审核 ＝ 合法的人工复核路径」；用例在 `tests/unit/admin-post-approve-audit-pin.test.mjs`。本节只加指针，不改本页任何既有读数。

@@ -152,3 +152,48 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 
 ⛔ 这些断言刻意钉在**今天的坏行为**上：按出路 (a) 修好后它们**必须变红**，届时同批改断言并把本节状态改成「已裁定/已实现」。另：本片还用一次**临时改动生产默认解析器**（`publicKnowledgeRowOf` 返回 `null` 时改判 `available`）复核了负控制——① 与 ② 变红且红在 `reference_state` 那两条断言上，随后立即复原（blob 指纹前后一致，未入提交）。
 
+## 后台人工审核 ＝ 合法的人工复核路径（`approvePost`，GY-R68 登记）
+
+**登记日期** 2026-10-29 · **状态**：**用户已裁定「这条保留」**。本节的任务是把「`private` 能被直接推成 `published`」这件事从"看起来像后门"改写成**有文档、有审计、有用例钉住**的人工复核路径；**不改业务行为**（`services/**`、契约、迁移、CI 在本片全是零改动）。
+
+### 现象与判据的差别
+
+侦察记的那笔账**成立**：`POST /admin/posts/{id}/approve` 在 real 装配下能把 `private` 直接推成 `published`，全程**不经过** AI 审核端口，与 #14「先审后发」的出发点看似冲突。但"绕过"是一个**结论**，不是一条**事实**——它取决于四个条件是否同时成立。今天这四条都成立，所以它是人工复核；只要有任一条塌掉，它才真的是后门。
+
+### 四个条件（缺一即为后门）
+
+| # | 条件 | 落点与读数 |
+| --- | --- | --- |
+| 1 | **有人** | 结论行带 `decided_by`，值取自会话里的管理员 id（⛔ 不接受调用方自报）：`services/api/src/admin/ops/community-posts.ts:292`；列定义见迁移 `services/api/db/migrations/0045_community_post_review_actor.sql:61`——`NULL` 是机器结论，非 `NULL` 才是人工结论 |
+| 2 | **有 scope** | 路由门是 `requireAdmin` 加 `requireScope`：`services/api/src/routes/admin.ts:569-572`；scope 取 `sources:write`（与 `hidePost` 同门，不新增 scope 值）：`services/api/src/admin/ops/service.ts:429`；没有它即 403 `SCOPE_DENIED`：`services/api/src/admin/identity.ts:69-70` |
+| 3 | **有审计** | 结论与帖子行**同一次原子提交**（不是"先发布、再补一条审计"）：`services/api/src/admin/ops/community-posts.ts:351-361` 只调一次 CAS 原语，结论作第 4 个实参交给它；库层在同一事务里写结论行：`services/api/src/community/store-pg.ts:632`，列与覆盖语义见 `services/api/src/community/store-pg.ts:354` 与 `services/api/src/community/store-pg.ts:366` |
+| 4 | **有 CAS** | 写之前逐项比对修订号、可见性、审核态，不符即拒：`services/api/src/community/store-pg.ts:470-476`；可见性推进只是这次 CAS 的**新态**之一：`services/api/src/admin/ops/community-posts.ts:327-328`（仅对 `private` 生效，`hidden`／`deleted` 不翻案） |
+
+还容易漏一条：**硬规则层照旧拦得住**。人工放行覆盖的是"引擎没给结论／给了隔离"，不是违禁内容——硬规则否决时 422：`services/api/src/admin/ops/community-posts.ts:318-320`。
+
+### 它与 AI 审核的关系（两个方向都要写清）
+
+- **AI 不通过 ⇒ 人工可以放行。** 这是人工复核**唯一**的正当性来源：引擎给不出结论、或给了隔离时，人可以在 scope 后面重新判断并留下 `decided_by`。入口里**没有** AI 审核端口（适配器只注入社区 store、事件端口与规则层发布门：`services/api/src/admin/ops/community-posts.ts:225-236`），所以"人工放行"从来不是"AI 说通过"——文档与读面都不得把它记成 AI 结论。
+- **AI 通过 ⇒ 不免除人工抽检。** 反向不成立。AI 通过只说明规则层/模型层没有否决，**不产生** `decided_by`；一行 `decided_by IS NULL` 是机器结论，不等于"人工已复核"。任何把抽检记成"已被 AI 覆盖"的走查口径都不成立。
+- **为什么"通过"必须同时翻可见性。** 待审队列在库里就是 `private` 加 `pending`，而公开读面要求 `published` 且 `approved`，契约里又没有作者自助发布口；只翻审核态会让运营点了通过、帖子永远不可见。故 v1 口径是"通过动作同时承担发布语义"；作者自助发布口属 S4，上线时须重新裁定这一段（口径页见 `docs/architecture/s3-community-review-design.md`）。
+
+### 钉子：三条用例 ＋ 一条负控制
+
+`tests/unit/admin-post-approve-audit-pin.test.mjs`（内存 store 臂；不连真库、不读真实 `.env`、零外呼）：
+
+| 臂 | 做什么 | 期望读数 |
+| --- | --- | --- |
+| ① 正控制 | `approvePost` 推一条 `private` 加 `pending` 的帖子 | 200、`published` 加 `approved`、修订号 1→2；`community_moderation_decisions` **恰好 1 行**、`decided_by` 是该管理员、`hard_rule_passed=true` |
+| ② 负控制 | 把「写 decisions」那一步改成空操作（唯一改动：CAS 的结论实参换成 `null`） | CAS 照跑、帖子**照样** `published`、仍然 200 ⇒ ① 的断言**必须红**，且红在「人工审核必须留痕」这句上 |
+| ③ 越权 | 缺 `sources:write`（403）／无会话（401） | 拒绝，且可见性仍是 `private`、结论行 0 行、内存审计 0 条、修订号不动 |
+
+②的两层复核对得上：测试侧的变异落在端口包装上（生产代码零改动）；另用一次**临时改动生产代码**（把 CAS 的第 4 个实参换成 `null`）复核了同一件事——① 变红在「人工审核必须留痕」那一句，而帖子**已经是** `published`。随后立即复原（文件指纹前后一致、未入提交）。这正是本节要证明的：**状态迁移本身不是证据，结论行才是**。
+
+真库臂（PG 的事务边界与逐列读数）不在本文件：`tests/integration/admin-community-posts-pg.mjs` 的审核臂已按 `community_moderation_decisions` 逐列核对同一组事实（含并发两笔只允许一笔 200、另一笔 409）。
+
+### 不得据此放宽的三件事
+
+1. **不得把 `approve` 记成 AI 审核通过**：响应里的 `decision` 是人工结论；"有人做过这件事"的证据只有一条——`decided_by` 非 `NULL`。
+2. **不得因为有人工通道就跳过审核门**：`POST /posts` 的发布闸门照旧（硬规则层加审核域）。人工通道是"结论落不下来"时的出口，不是绕过闸门的新入口。
+3. **不得把本节当成 #14 的替代**：AI 审核的真实样本覆盖仍按 `docs/evaluation/sample-gap-register.md` 记（风险／正常两格均为 0/200），本节补的是"没人管的那一段"，补不了"审核能力本身"。
+
