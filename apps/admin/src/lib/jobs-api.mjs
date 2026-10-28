@@ -28,7 +28,7 @@
  * 同样是无 DOM、无全局副作用的纯函数，组件只负责把状态接到 DOM。
  */
 import { clampLimit, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
-import { CURSOR_MAX_LENGTH, LIMIT_DEFAULT, LIMIT_MAX, isPlainObject, readErrorEnvelope } from './admin-contract.mjs';
+import { CURSOR_MAX_LENGTH, ERROR_CODES, LIMIT_DEFAULT, LIMIT_MAX, isPlainObject, readErrorEnvelope } from './admin-contract.mjs';
 
 /** 作业台路径（相对 API 基地址）。 */
 export const JOBS_PATH = '/admin/jobs';
@@ -86,6 +86,142 @@ export const JOB_STATE_NOTES = Object.freeze({
   cancelled: '已取消',
 });
 
+/**
+ * 列表筛选参数：契约 `GET /admin/jobs` 只有两个具名 query 参数 `state`／`error_code`
+ * （另有 `Cursor`／`Limit`），服务端**已经**把它们下推到 SQL（`jobs-pg.ts` 的 `listWhereFor()`）。
+ *
+ * ⛔ 合法取值不在这里手抄：`state` 直接复用上面的 `JOB_STATES`（契约 `JobState` enum 的镜像），
+ * `error_code` 直接复用 `admin-contract.mjs` 的 `ERROR_CODES`（契约 `ErrorCode` enum 的镜像）——
+ * 是同一个对象引用，契约一改，筛选项与本地校验同时跟着改，不会各自漂移。
+ */
+export const JOB_FILTER_STATES = JOB_STATES;
+export const JOB_FILTER_ERROR_CODES = ERROR_CODES;
+
+/** 筛选字段 → 契约查询参数名（服务端参数是 `error_code` 下划线，不是 camelCase）。 */
+export const JOB_FILTER_PARAMS = Object.freeze({ state: 'state', errorCode: 'error_code' });
+
+/** 筛选字段 → 它所属的契约闭集名（提示里点名，别只说「参数不合法」）。 */
+const JOB_FILTER_CLOSED_SET_NAMES = Object.freeze({ state: 'JobState', errorCode: 'ErrorCode' });
+
+/** 空筛选＝不筛选：两个字段都是空串时不发任何筛选参数。 */
+export const EMPTY_JOB_FILTER = Object.freeze({ state: '', errorCode: '' });
+
+function jobFilterClosedSet(field) {
+  return field === 'state' ? JOB_FILTER_STATES : JOB_FILTER_ERROR_CODES;
+}
+
+/**
+ * 单个筛选值是否可用：可用返回 `null`，否则返回**可读原因**（点名该值、闭集名与全部合法取值）。
+ * 空串／纯空白＝「没筛选」，按可用处理（服务端也把空串当没给）。
+ */
+export function jobFilterProblem(field, value) {
+  const closedSet = jobFilterClosedSet(field);
+  const closedSetName = JOB_FILTER_CLOSED_SET_NAMES[field];
+  const param = JOB_FILTER_PARAMS[field];
+  if (typeof value !== 'string') {
+    const actual = Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+    return `${param}（${closedSetName}）必须是字符串，实际是 ${actual}`;
+  }
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  if (closedSet.includes(trimmed)) return null;
+  return `${param} 取值不在契约闭集：${value}（契约 ${closedSetName} 合法值：${closedSet.join(' / ')}）`;
+}
+
+/**
+ * 归一化筛选入参：`null`／`undefined`／空串都当「没给」，闭集外的值收进 `problems`。
+ * 返回 `{ok, filter: {state, errorCode}, problems: string[]}`；页面把 `problems` 原样展示。
+ */
+export function normalizeJobFilter(input = {}) {
+  const source = isPlainObject(input) ? input : {};
+  const filter = { ...EMPTY_JOB_FILTER };
+  const problems = [];
+  for (const field of ['state', 'errorCode']) {
+    const value = source[field];
+    if (value === undefined || value === null) continue;
+    const problem = jobFilterProblem(field, value);
+    if (problem !== null) {
+      problems.push(problem);
+      continue;
+    }
+    filter[field] = value.trim();
+  }
+  return { ok: problems.length === 0, filter, problems };
+}
+
+/** 是否有生效中的筛选。 */
+export function hasJobFilter(filter) {
+  const normalized = normalizeJobFilter(filter).filter;
+  return normalized.state !== '' || normalized.errorCode !== '';
+}
+
+/**
+ * 从地址栏查询串读筛选：只认闭集。手改出来的闭集外值**不发给服务端**（发了只会换 400），
+ * 记进 `ignored`（每项 `{field, param, value, problem}`，`problem` 是可读原因）交调用方提示，
+ * **不静默当作「没筛选」**——静默会让用户以为自己看的是筛选结果，却留在看起来在筛选的地址栏上。
+ * 提示文案直接用 `describeIgnoredJobFilter(ignored)`，与页面内选错值时的文案同源。
+ */
+export function readJobsFilter(search = '') {
+  let params;
+  try {
+    params = new URLSearchParams(typeof search === 'string' ? search : '');
+  } catch {
+    return { ...EMPTY_JOB_FILTER, ignored: [] };
+  }
+  const filter = { ...EMPTY_JOB_FILTER };
+  const ignored = [];
+  for (const field of ['state', 'errorCode']) {
+    const param = JOB_FILTER_PARAMS[field];
+    const raw = params.get(param);
+    if (raw === null) continue;
+    const problem = jobFilterProblem(field, raw);
+    if (problem !== null) {
+      ignored.push({ field, param, value: raw, problem });
+      continue;
+    }
+    filter[field] = raw.trim();
+  }
+  return { ...filter, ignored };
+}
+
+/**
+ * 地址栏里被忽略的筛选值的提示文案；没有忽略项时返回空串（调用方据此决定要不要提示）。
+ * 逐条点名「哪个参数、什么值、为什么不行、合法值有哪些」——与页面内选错值时的文案同源。
+ */
+export function describeIgnoredJobFilter(ignored = []) {
+  if (!Array.isArray(ignored) || ignored.length === 0) return '';
+  const details = ignored.map((entry) => {
+    if (typeof entry === 'string') return `${JOB_FILTER_PARAMS[entry] ?? entry} 的取值不在契约闭集`;
+    return entry.problem ?? `${entry.param ?? entry.field} 的取值不在契约闭集`;
+  });
+  return `地址栏里的筛选值已忽略（未发给服务端）：${details.join('；')}`;
+}
+
+/**
+ * 把筛选写回查询串（保留别的参数；`search` 可带可不带 `?`）。
+ * 空筛选时删掉该参数；无参数时返回空串（不留裸 `?`）；闭集外的值不写进地址栏。
+ */
+export function jobsFilterSearch(search = '', filter = {}) {
+  const params = new URLSearchParams(typeof search === 'string' ? search : '');
+  const normalized = normalizeJobFilter(filter).filter;
+  for (const field of ['state', 'errorCode']) {
+    params.delete(JOB_FILTER_PARAMS[field]);
+    if (normalized[field] !== '') params.set(JOB_FILTER_PARAMS[field], normalized[field]);
+  }
+  const query = params.toString();
+  return query === '' ? '' : `?${query}`;
+}
+
+/** 筛选的中文摘要（状态条上写清「现在看的是筛选后的子集」，避免被当成全量）。 */
+export function describeJobFilterNote(filter) {
+  const normalized = normalizeJobFilter(filter).filter;
+  const parts = [];
+  if (normalized.state !== '') parts.push(`state=${normalized.state}`);
+  if (normalized.errorCode !== '') parts.push(`error_code=${normalized.errorCode}`);
+  if (parts.length === 0) return '';
+  return `筛选：${parts.join('、')}`;
+}
+
 /** 契约 `ReasonInput.reason` 长度边界。 */
 export const REASON_MIN_LENGTH = 1;
 export const REASON_MAX_LENGTH = 500;
@@ -132,6 +268,10 @@ export function canCancelJob(job) {
 /**
  * 拼作业列表 URL。`limit` 总是显式带上（便于证据页复现），`cursor` 仅在续页时带；
  * 游标超过契约上限 2048 时抛 RangeError——宁可不发请求，也不发一个必然 400 的请求。
+ *
+ * `state`／`errorCode` 是契约里已下推到 SQL 的两个筛选参数：**空值不发**（空串／null／undefined
+ * 都等于「不筛选」），闭集外的值在本地抛错（RangeError；类型不对抛 TypeError），
+ * 根本拼不出 URL——绝不把闭集外的值送到服务端去换 400。
  */
 export function buildJobsUrl(baseUrl, options = {}) {
   const base = normalizeBaseUrl(baseUrl);
@@ -142,6 +282,17 @@ export function buildJobsUrl(baseUrl, options = {}) {
     if (typeof cursor !== 'string' || cursor.length === 0) throw new TypeError('cursor 必须是非空字符串');
     if (cursor.length > CURSOR_MAX_LENGTH) throw new RangeError(`cursor 超过契约上限 ${CURSOR_MAX_LENGTH} 字符`);
     params.set('cursor', cursor);
+  }
+  const normalized = normalizeJobFilter({ state: options.state, errorCode: options.errorCode });
+  if (!normalized.ok) {
+    const message = normalized.problems.join('；');
+    const typeProblem = ['state', 'errorCode'].some(
+      (field) => options[field] !== undefined && options[field] !== null && typeof options[field] !== 'string',
+    );
+    throw typeProblem ? new TypeError(message) : new RangeError(message);
+  }
+  for (const field of ['state', 'errorCode']) {
+    if (normalized.filter[field] !== '') params.set(JOB_FILTER_PARAMS[field], normalized.filter[field]);
   }
   return `${base}${JOBS_PATH}?${params.toString()}`;
 }
@@ -342,17 +493,34 @@ function classify(status, code) {
 /**
  * 请求一页作业列表（GET）。
  *
+ * 筛选（`state`／`errorCode`）在本地先校验：闭集外的值直接返回 `invalid_request`
+ * 并带上可读提示，**一条请求都不发**（服务端对闭集外的值只会回 400）。
+ *
  * 返回 `{ok: true, status, requestUrl, requestId, page: {items, nextCursor}}` 或
  * `{ok: false, kind, retriable, status, code, inContract, message, requestUrl}`。
  */
-export async function listJobs({ fetchImpl, baseUrl, token, cursor = null, limit = LIMIT_DEFAULT, signal } = {}) {
+export async function listJobs({
+  fetchImpl,
+  baseUrl,
+  token,
+  cursor = null,
+  limit = LIMIT_DEFAULT,
+  state = '',
+  errorCode = '',
+  signal,
+} = {}) {
   const doFetch = fetchImpl ?? globalThis.fetch;
   if (typeof doFetch !== 'function') return failure('network_error', { message: '当前环境没有可用的 fetch' });
   if (typeof token !== 'string' || token.length === 0) return failure('signed_out', { message: '没有后台会话令牌' });
 
+  const normalizedFilter = normalizeJobFilter({ state, errorCode });
+  if (!normalizedFilter.ok) {
+    return failure('invalid_request', { message: normalizedFilter.problems.join('；') });
+  }
+
   let requestUrl;
   try {
-    requestUrl = buildJobsUrl(baseUrl, { cursor, limit });
+    requestUrl = buildJobsUrl(baseUrl, { cursor, limit, state: normalizedFilter.filter.state, errorCode: normalizedFilter.filter.errorCode });
   } catch (error) {
     return failure('invalid_cursor', { message: error instanceof Error ? error.message : '游标不合法' });
   }
@@ -694,6 +862,8 @@ export function initialJobsState() {
     pages: 0,
     failure: null,
     reason: '',
+    filter: { ...EMPTY_JOB_FILTER },
+    filterFailure: null,
     selectedId: null,
     cancelingId: null,
     write: null,
@@ -738,6 +908,10 @@ export function reduceJobs(state, action) {
     case 'SIGNED_IN':
       return {
         ...initialJobsState(),
+        // 筛选是「读取偏好」而不是列表数据：登录/换会话不清它，
+        // 否则刷新页面（先读地址栏筛选、再走登录）时筛选会被登录动作擦掉。
+        filter: normalizeJobFilter(state?.filter ?? {}).filter,
+        filterFailure: state?.filterFailure ?? null,
         signedIn: true,
         ...scopeFlags(action.scopes, action.scopesProvided),
         phase: 'loading',
@@ -775,6 +949,17 @@ export function reduceJobs(state, action) {
       return { ...state, phase: 'error', failure: action.failure ?? null };
     case 'SET_REASON':
       return { ...state, reason: typeof action.value === 'string' ? action.value : '' };
+    case 'SET_FILTER': {
+      // 换筛选 ⇒ 上一组筛选的游标立刻作废（服务端的游标 watermark 绑筛选组合，
+      // 拿旧游标配新筛选只会换 400 INVALID_CURSOR）。闭集外的值不写进筛选，只留提示。
+      const normalized = normalizeJobFilter(action.filter ?? {});
+      if (!normalized.ok) {
+        return { ...state, filterFailure: normalized.problems.join('；') };
+      }
+      return { ...state, filter: normalized.filter, filterFailure: null, nextCursor: null };
+    }
+    case 'FILTER_REJECTED':
+      return { ...state, filterFailure: typeof action.message === 'string' ? action.message : '筛选值不合法' };
     case 'SELECT':
       return { ...state, selectedId: state.selectedId === action.id ? null : action.id };
     case 'CLOSE_DETAIL':
@@ -842,6 +1027,8 @@ export function describeJobs(state) {
   const notes = [];
   if (state.hasReadScope === false) notes.push('当前会话 scope 里没有 jobs:read（请求大概率 403）');
   if (state.hasCancelScope === false) notes.push('当前会话没有 jobs:cancel，取消按钮已禁用');
+  const filterNote = describeJobFilterNote(state.filter);
+  if (filterNote !== '') notes.push(`${filterNote}（列表是筛选后的子集，不是全量）`);
   if (state.phase === 'ready' && state.jobs.length === 0) {
     return {
       title: '暂无作业',

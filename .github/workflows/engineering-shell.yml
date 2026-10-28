@@ -56,6 +56,19 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run test:unit
+      # `test:unit` 只跑 `tests/{unit,privacy,media,reference,moderation}/*.test.mjs` 这批 glob，
+      # **不含**顶层 `tests/ui-unified-states.test.mjs`：它是契约错误码 ↔ `miniprogram/utils/states.js`
+      # 的双向对拍（契约里每个码都必须有状态归类；多出未登记的码同样红）。不单独跑这一步，
+      # 「契约加了码、端上没归类」这类漏改会一路合进 main，出错时页面没有状态可渲染。
+      - name: "统一状态层 ↔ 契约错误码双向对拍（顶层用例，不在 test:unit 的 glob 里）"
+        run: node --test tests/ui-unified-states.test.mjs
+      # 同上，另一条顶层用例：`tests/demo-ui-components.test.mjs` 也不在 `test:unit` 的 glob 里，
+      # 而它在全部 15 份 workflow 里原本 **0 命中**——按钮／标签的禁用-加载态守卫、搜索的受控
+      # input／confirm／clear、样张宿主回写这 3 条断言，坏掉也不会有任何 CI 变红。
+      # 这句话的接线由 `tests/unit/ci-orphan-tests-wired.test.mjs` 静态守住：这步 `run:` 一旦被删，
+      # 它就会把本文件当孤儿点名（改走别的门禁也行，但必须**真被常跑**，不能只写在注释里）。
+      - name: "UI 基础组件行为守卫（顶层用例，不在 test:unit 的 glob 里）"
+        run: node --test tests/demo-ui-components.test.mjs
 
   integration:
     name: integration-http
@@ -92,6 +105,7 @@ jobs:
       - run: npm run test:contract
       - run: node tools/verify-contract-status.mjs
       - run: node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs
+      - run: npm run verify:capability-map
 
   evaluation:
     name: evaluation-tests

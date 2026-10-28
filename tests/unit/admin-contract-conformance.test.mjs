@@ -124,7 +124,7 @@ const collectAdminPathOperations = () => collectOperations((entry) => entry.path
 const collectAdminScopeOperations = () =>
   collectOperations((entry) => entry.path.startsWith('/admin/') || entry.operationId === 'listKnowledge' || entry.operationId === 'getKnowledge');
 
-test('契约镜像表与 openapi.json 逐字相等（44 个 schema，逐字段比对）', () => {
+test('契约镜像表与 openapi.json 逐字相等（45 个 schema，逐字段比对）', () => {
   const groups = [['INPUT_SPECS', INPUT_SPECS], ['OUTPUT_SPECS', OUTPUT_SPECS], ['OUTCOME_SPECS', OUTCOME_SPECS], ['PAGE_SPECS', PAGE_SPECS], ['ENVELOPE_SPECS', ENVELOPE_SPECS]];
   let compared = 0;
   for (const [groupName, group] of groups) {
@@ -144,7 +144,11 @@ test('契约镜像表与 openapi.json 逐字相等（44 个 schema，逐字段�
     }
   }
   assert.equal(compared, Object.keys(ALL_SPECS).length, '镜像表必须被完整覆盖');
-  assert.equal(compared, 44, '本片镜像的 schema 数量应恰好 44（+ FlagReading + 四张 *PublicationOutcome 回执）');
+  assert.equal(
+    compared,
+    45,
+    '本片镜像的 schema 数量应恰好 45（+ FlagReading + 四张 *PublicationOutcome 回执 + GY-R68·C08 的 AuditAction 闭集）',
+  );
   // 反向确认归一化没有把契约的关键约束吃掉。
   const draftInput = normalizeContractSchema(openapi.components.schemas.SourceDraftInput);
   assert.equal(draftInput.additionalProperties, false);

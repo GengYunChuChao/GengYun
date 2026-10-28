@@ -25,7 +25,8 @@ import {
   readPageEnvelope,
 } from './admin-contract.mjs';
 import { clampLimit, isRetriable, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
-import { AUDIT_RESULT_LABELS, AUDIT_RESULT_TONES, errorCodeText, validateAuditEventPage } from './audit-events.mjs';
+import { AUDIT_EVENTS_PATH, AUDIT_RESULT_LABELS, AUDIT_RESULT_TONES, AUDIT_SCOPE, describeAuditFailure, errorCodeText, fetchAuditEventsPage, validateAuditEventPage } from './audit-events.mjs';
+import { FLAG_AUDIT_PATH, FLAG_AUDIT_SCOPE, describeFlagAuditFailure, fetchFlagAuditPage } from './flag-audit.mjs';
 
 /** 契约路径（逐字，不拼 query）。 */
 export const AUDIT_LOGS_PATH = '/admin/audit-logs';
@@ -819,3 +820,311 @@ export function isValidAuditLogLimit(limit) {
 }
 
 export { errorCodeText };
+
+// ------------------------------------------------ 三读面合并读数（GY-R68-C4）
+
+/**
+ * 后台审计有**三条互不相同的读面**——这是三个接口，不是三个页面：
+ *
+ * | 来源键 | 路径 | operationId | 必需 scope | 权威来源 |
+ * | --- | --- | --- | --- | --- |
+ * | `audit-logs`   | `/admin/audit-logs`        | `listAuditLogs`       | `audit:read`  | 全表库函数 |
+ * | `audit-events` | `/admin/audit-events`      | `listAuditEvents`     | `audit:read`  | 内存读面 |
+ * | `flag-audit`   | `/admin/flag-audit-events` | `listFlagAuditEvents` | `flags:read`  | 开关库函数 |
+ *
+ * 三个接口返回同一个契约（`AuditEvent` / `AuditEventPageEnvelope`），所以「合并」只需要
+ * 「按 `(created_at, id)` 降序 + 同一 `id` 跨源去重」，不必为每种形状各写一份映射。
+ *
+ * ⛔ 服务端零改动：本层只消费既有读面，不新增 operation、不改契约、不改 `services/api`。
+ * ⛔ 失败隔离：任一读面失败（抛错或返回 `{ok:false}`）都**不得**让整页判失败——另外两源照常出数，
+ *    失败以 `failures: [{source, sourceLabel, message, code}]` 单独返回。
+ * ⛔ 纯函数：`mergeAuditSources` / `filterMergedRows` / `describe*` 不碰 DOM、不发请求；
+ *    `loadAuditMergeSources` 是唯一的异步入口，只做「并发发起 + 收齐结果」，不解释结果。
+ *
+ * 为什么放在本文件而不是新开 `audit-merge.mjs`：视图只能从 `../lib/admin-audit-logs.mjs`
+ * 取合并层（`tests/unit/admin-ui-audit-logs-render.test.mjs` 与
+ * `tests/unit/admin-ui-sfc-harness.mjs` 都按「已列出的说明符」重写导入，新增一个相对说明符
+ * 会让前者的「编译产物里不得残留裸模块说明符」断言变红）；而把合并层挪进 `audit-events.mjs`
+ * 再反向引用本文件的行视图会形成模块环。合并读数的消费方就是本页，故并在这里。
+ */
+export const AUDIT_MERGE_SOURCES = Object.freeze(['audit-logs', 'audit-events', 'flag-audit']);
+
+/** 「来源筛选：全部」的取值（与任何来源键都不冲突）。 */
+export const AUDIT_MERGE_FILTER_ANY = 'all';
+
+/** 来源键 → 「来源」列里写给人看的中文名（不写路径：路径已在面板说明里逐条列了）。 */
+export const AUDIT_MERGE_SOURCE_LABELS = Object.freeze({
+  'audit-logs': '审计总台账（全表读面）',
+  'audit-events': '审计事件（内存读面）',
+  'flag-audit': '开关变更留痕（开关库读面）',
+});
+
+/** 三源的接口元数据：来源键 → 路径 / operationId / 必需 scope（operationId 逐字抄契约）。 */
+export const AUDIT_MERGE_SOURCE_TASKS = Object.freeze([
+  { source: 'audit-logs', path: AUDIT_LOGS_PATH, operationId: AUDIT_LOGS_OPERATION_ID, scope: AUDIT_LOGS_SCOPE },
+  { source: 'audit-events', path: AUDIT_EVENTS_PATH, operationId: 'listAuditEvents', scope: AUDIT_SCOPE },
+  { source: 'flag-audit', path: FLAG_AUDIT_PATH, operationId: 'listFlagAuditEvents', scope: FLAG_AUDIT_SCOPE },
+]);
+
+/**
+ * 每源自己的失败文案描述器。
+ * ⛔ 不跨源复用：文案里出现的 scope 必须是**该接口真实要求**的 scope（`flags:read` 的 403
+ * 不能拿 `audit:read` 的说明糊上去）。
+ */
+const AUDIT_MERGE_FAILURE_DESCRIBERS = Object.freeze({
+  'audit-logs': describeAuditLogFailure,
+  'audit-events': describeAuditFailure,
+  'flag-audit': describeFlagAuditFailure,
+});
+
+/** 失败对象里的错误码／类型（只用于给文案加一个可 grep 的尾巴）。 */
+function mergeFailureCode(value) {
+  if (!isPlainObject(value)) return null;
+  if (typeof value.code === 'string' && value.code !== '') return value.code;
+  if (typeof value.kind === 'string' && value.kind !== '') return value.kind;
+  return null;
+}
+
+/** 失败对象 → 一句人话。字符串／Error 原样带出，`{ok:false}` 走该源自己的描述器。 */
+function mergeFailureMessage(source, value) {
+  if (typeof value === 'string' && value.trim() !== '') return value;
+  if (value instanceof Error) return value.message === '' ? value.name : value.message;
+  if (isPlainObject(value)) {
+    const describe = AUDIT_MERGE_FAILURE_DESCRIBERS[source];
+    const described = typeof describe === 'function' ? describe(value) : null;
+    const code = mergeFailureCode(value);
+    const core =
+      described === null || described === undefined
+        ? typeof value.message === 'string' && value.message !== ''
+          ? value.message
+          : typeof value.kind === 'string' && value.kind !== ''
+            ? `读面失败（${value.kind}）`
+            : ''
+        : `${described.title}：${described.detail}`;
+    if (core !== '') return code === null ? core : `${core}（${code}）`;
+  }
+  return '读面失败，且未提供原因';
+}
+
+/**
+ * 把一个来源的「结果」归一成 `{ok:true, items}` 或 `{ok:false, message, code}`。
+ *
+ * 接受四种入口形状（覆盖本仓三种读面 + 单测直接喂数组）：
+ *   - `{items}` / `{page:{items}}` / 裸数组            ⇒ 成功
+ *   - `{ok:true, page:{items}}`（`fetch*Page` 的原样返回）⇒ 成功
+ *   - `{ok:false, kind, ...}`（`fetch*Page` 的失败返回）  ⇒ 失败
+ *   - `{error}` / `{failure}`（调用方自己捕获的抛错）      ⇒ 失败
+ */
+function settleAuditSource(entry) {
+  if (Array.isArray(entry)) return { ok: true, items: entry };
+  if (!isPlainObject(entry)) return { ok: false, message: '读面没有返回任何结果', code: null };
+  if (entry.error !== undefined && entry.error !== null) {
+    return { ok: false, message: mergeFailureMessage(entry.source, entry.error), code: mergeFailureCode(entry.error) };
+  }
+  if (entry.failure !== undefined && entry.failure !== null) {
+    const failure = entry.failure;
+    return { ok: false, message: mergeFailureMessage(entry.source, failure), code: mergeFailureCode(failure) };
+  }
+  const candidate = entry.result !== undefined && entry.result !== null ? entry.result : entry;
+  if (Array.isArray(candidate)) return { ok: true, items: candidate };
+  if (isPlainObject(candidate)) {
+    if (candidate.ok === false) {
+      return { ok: false, message: mergeFailureMessage(entry.source, candidate), code: mergeFailureCode(candidate) };
+    }
+    if (Array.isArray(candidate.items)) return { ok: true, items: candidate.items };
+    if (isPlainObject(candidate.page) && Array.isArray(candidate.page.items)) return { ok: true, items: candidate.page.items };
+  }
+  return { ok: false, message: '读面返回了无法识别的结果形状（既不是 {items}，也不是失败）', code: null };
+}
+
+/** 一行的展示字段：复用本文件的 `auditLogRowView`（三条读面契约同构，不需要第二份映射）。 */
+function mergeRowView(item, source) {
+  const base = auditLogRowView(item);
+  const ms = Date.parse(base.createdAt);
+  return {
+    ...base,
+    source,
+    sources: [source],
+    sourceText: AUDIT_MERGE_SOURCE_LABELS[source] ?? source,
+    sortCreatedAt: Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY,
+  };
+}
+
+/** 排序：`(created_at, id)` 降序（与后端 keyset 同口径；时间戳相同退到 id 降序，保证稳定）。 */
+function compareMergedRows(left, right) {
+  if (left.sortCreatedAt !== right.sortCreatedAt) return left.sortCreatedAt > right.sortCreatedAt ? -1 : 1;
+  if (left.id === right.id) return 0;
+  return left.id > right.id ? -1 : 1;
+}
+
+/**
+ * 三源结果 → 合并行 + 逐源计数 + 失败清单。
+ *
+ * @param {Array<{source: string, result?: unknown, error?: unknown, failure?: unknown}>|Array<Array>} entries
+ * @returns {{
+ *   rows: Array<object>,
+ *   failures: Array<{source: string, sourceLabel: string, message: string, code: string|null}>,
+ *   counts: {requested: number, succeeded: number, failed: number, totalInput: number, merged: number,
+ *            deduped: number, unidentified: number, bySource: Record<string, number>},
+ *   summary: string,
+ *   empty: boolean,
+ * }}
+ *
+ * 计数口径（别换成别的等式）：
+ * - 恒等式是 `merged + deduped === totalInput`，恒真。`unidentified`（无 `id` 的行）**也进 `merged`**，
+ *   只是各自成键、不参与跨源去重 ⇒ 不能写成 `merged + deduped === totalInput - unidentified`。
+ * - `bySource` 是「按源计的**输入**条数」，`sum(bySource) === totalInput`。
+ * - `requested === succeeded + failed` 只在「同一 source 重复入参」这条纯函数退化路径上会破
+ *   （`requested` 数入参数组长度，`succeeded`/`failed` 数去重后的来源）；页面三源闭集下恒成立。
+ * - **页面路径下 `unidentified` 恒为 0**：三个 `fetch*Page` 都过 `validateAuditEvent`，空 `id` 会让整页
+ *   判 `invalid_response`（该源进 `failures`，它的行根本进不了 `rows`）。这个计数只为纯函数层防御保留，
+ *   页面不展示它——别在视图里加「有 N 行没有 id」的读数，那在页面上是恒不出现的死读数。
+ */
+export function mergeAuditSources(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const bySource = {};
+  for (const source of AUDIT_MERGE_SOURCES) bySource[source] = 0;
+  const failures = [];
+  const requested = new Set();
+  /** 去重键 → `{row, sources, occurrences}`；无 `id` 的行各自成键（不猜、也不静默丢）。 */
+  const bucket = new Map();
+  let totalInput = 0;
+  let unidentified = 0;
+
+  for (const entry of list) {
+    const source = typeof entry?.source === 'string' ? entry.source : '';
+    if (!AUDIT_MERGE_SOURCES.includes(source)) {
+      const raw = source === '' ? '(缺少 source)' : source;
+      failures.push({
+        source: raw,
+        sourceLabel: raw,
+        message: `来源不在闭集内（${AUDIT_MERGE_SOURCES.join(' / ')}）`,
+        code: null,
+      });
+      continue;
+    }
+    requested.add(source);
+    const settled = settleAuditSource(entry);
+    if (!settled.ok) {
+      failures.push({
+        source,
+        sourceLabel: AUDIT_MERGE_SOURCE_LABELS[source],
+        message: settled.message,
+        code: settled.code,
+      });
+      continue;
+    }
+    bySource[source] += settled.items.length;
+    totalInput += settled.items.length;
+    let index = 0;
+    for (const item of settled.items) {
+      index += 1;
+      const row = mergeRowView(item, source);
+      let key = row.id;
+      if (key === '') {
+        unidentified += 1;
+        key = `\u0000${source}#${index}`;
+      }
+      const existing = bucket.get(key);
+      if (existing === undefined) {
+        bucket.set(key, { row, sources: [source], occurrences: 1 });
+        continue;
+      }
+      // 同一 id 跨源重复：留第一条（数据同构，展示字段等价），来源合并进 `sources`，不静默丢。
+      existing.occurrences += 1;
+      if (!existing.sources.includes(source)) existing.sources.push(source);
+    }
+  }
+
+  const rows = [];
+  let deduped = 0;
+  for (const entry of bucket.values()) {
+    deduped += entry.occurrences - 1;
+    const sources = AUDIT_MERGE_SOURCES.filter((source) => entry.sources.includes(source));
+    rows.push({
+      ...entry.row,
+      source: sources[0],
+      sources,
+      sourceText: sources.map((source) => AUDIT_MERGE_SOURCE_LABELS[source] ?? source).join(' + '),
+      duplicated: sources.length > 1,
+    });
+  }
+  rows.sort(compareMergedRows);
+
+  const counts = {
+    requested: list.length,
+    succeeded: [...requested].filter((source) => !failures.some((failure) => failure.source === source)).length,
+    failed: failures.length,
+    totalInput,
+    merged: rows.length,
+    deduped,
+    unidentified,
+    bySource,
+  };
+
+  return {
+    rows,
+    failures,
+    counts,
+    summary: describeMergeCounts(counts),
+    empty: rows.length === 0,
+  };
+}
+
+/** 顶部汇总口径：`三源合计 N 条，去重 M 条`（`M` 是**被并掉的重复行数**，不是合并后的行数）。 */
+export function describeMergeCounts(counts) {
+  const total = Number.isInteger(counts?.totalInput) ? counts.totalInput : 0;
+  const deduped = Number.isInteger(counts?.deduped) ? counts.deduped : 0;
+  return `三源合计 ${total} 条，去重 ${deduped} 条`;
+}
+
+/** 逐源计数：失败的那源写「读取失败」而不是「0 条」（0 条会被读成「这一源没有事」）。 */
+export function describeMergeSourceCounts(merged) {
+  const bySource = isPlainObject(merged?.counts?.bySource) ? merged.counts.bySource : {};
+  const failures = Array.isArray(merged?.failures) ? merged.failures : [];
+  return AUDIT_MERGE_SOURCES.map((source) => {
+    const label = AUDIT_MERGE_SOURCE_LABELS[source];
+    const failed = failures.some((failure) => failure.source === source);
+    const count = Number.isInteger(bySource[source]) ? bySource[source] : 0;
+    return { source, label, count, failed, text: failed ? `${label}：读取失败` : `${label}：${count} 条` };
+  });
+}
+
+/** 来源筛选下拉项：「全部来源」+ 三源闭集（顺序固定，便于用例钉住）。 */
+export function auditMergeSourceOptions() {
+  return [
+    { value: AUDIT_MERGE_FILTER_ANY, label: '全部来源' },
+    ...AUDIT_MERGE_SOURCES.map((source) => ({ value: source, label: AUDIT_MERGE_SOURCE_LABELS[source] })),
+  ];
+}
+
+/** 来源筛选：`all`（或空）返回全部；闭集外取值返回空数组（不抛错，页面照常渲染）。 */
+export function filterMergedRows(rows, source = AUDIT_MERGE_FILTER_ANY) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (source === AUDIT_MERGE_FILTER_ANY || source === undefined || source === null || source === '') return list;
+  if (!AUDIT_MERGE_SOURCES.includes(source)) return [];
+  return list.filter((row) => Array.isArray(row?.sources) && row.sources.includes(source));
+}
+
+/**
+ * 并发读三源，收齐后原样交出（不解释、不吞异常）。
+ *
+ * 用 `Promise.allSettled`：任一源抛错只记在那一条 `{source, error}` 上，另外两源照常返回；
+ * 三条都失败也只是三条 `failures`，页面不会整页判失败。
+ *
+ * ⛔ 不套用页面顶部的 action/entity/时间筛选：另两个读面（`listAuditEvents`、
+ * `listFlagAuditEvents`）根本没有这些参数，只给一个源加筛选会让三源不同口径。
+ */
+export async function loadAuditMergeSources({ fetchImpl, baseUrl, token, limit = LIMIT_DEFAULT, signal } = {}) {
+  const runs = [
+    ['audit-logs', () => fetchAuditLogsPage({ fetchImpl, baseUrl, token, limit, signal })],
+    ['audit-events', () => fetchAuditEventsPage({ fetchImpl, baseUrl, token, limit, signal })],
+    ['flag-audit', () => fetchFlagAuditPage({ fetchImpl, baseUrl, token, limit, signal })],
+  ];
+  const settled = await Promise.allSettled(runs.map(([, run]) => run()));
+  return runs.map(([source], index) => {
+    const outcome = settled[index];
+    if (outcome === undefined) return { source, error: new Error('读面任务丢失') };
+    return outcome.status === 'fulfilled' ? { source, result: outcome.value } : { source, error: outcome.reason };
+  });
+}
