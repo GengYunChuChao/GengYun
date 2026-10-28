@@ -84,9 +84,9 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 
 2026-10-28 登记（Refs #7 #16，对应上表 F18／AC17／GY-I16 那一行）。**本节只登记，不裁定**——选哪条出路要指挥／用户拍。
 
-**现象**：P0 链路第 5 步是「详情 → 收藏」。`pages/knowledge` → `pages/knowledgedetail` 这一路有收藏按钮、能走通；`pages/reference` → `pages/referencedetail` 这一路**没有收藏入口**（该页 `.js` 443 行、`.wxml` 160 行逐字读完，对 `收藏`／`favorite`／`fav` 零命中）。
+**现象**：P0 链路第 5 步是「详情 → 收藏」，**入口一共两处**（`docs/ui-state-inventory.md` 第 7.6 节是唯一口径）：`pages/knowledgedetail` 的收藏按钮，与 `pages/favorites` 上半区「可收藏的资料」的逐条「收藏」（两者走同一个 `POST /favorites`）。`pages/knowledge` → `pages/knowledgedetail` 这一路走通；`pages/reference` → `pages/referencedetail` 这一路**没有收藏入口**（该页 `.js` 443 行、`.wxml` 160 行逐字读完，对 `收藏`／`favorite`／`fav` 零命中）。
 
-**为什么"补一个按钮"补不上（结构性缺口，不是未接线）**：
+**为什么"补一个按钮"补不上（**在本数据源下**不可为，不是未接线）**：
 
 1. 该页数据源是**随包离线名录**，记录主键形如 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:34`）；页面的路由判定是 `validId` 为真走服务端、否则走随包副本，随包 id 永远落在后一支：`miniprogram/pages/referencedetail/referencedetail.js:115`。
 2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假 ⇒ 这一支永远拿不到服务端实体：`miniprogram/utils/knowledge-api.js:224`。
@@ -99,4 +99,11 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 - **(b) 换数据源**：让除草剂详情读服务端实体（UUID）以保住收藏。代价是要同时改 #7 的「手选条件查询」与「详情」验收口径——`/herbicides` 今天只接受 `q`／`registration_number`（结构化条件不可表达），等于把查询面也翻一遍。成本高，跨片。
 
 **登记口径**：裁定落地前，任何走查脚本、验收记录、状态清单都**不得**把「从除草剂详情收藏」写成已支持或计划支持；`pages/referencedetail` 的界面状态里也不得出现收藏态。本片只改 `docs/**`，不碰 `miniprogram/**`、冻结契约与 #7 的验收文本。
+
+**不裁定时这条验收怎么记账**（给后续评审与走查统一口径，避免各行其是）：
+
+- `F18`／`AC17`／GY-I16 这一行按「**已实现的部分 + 一处待裁定的缺口**」记账：两处入口（`pages/knowledgedetail`、`pages/favorites`）的收藏／取消可以正常验收（201／幂等同 id／428／409／404 各有 e2e 或代码锚）。
+- 「从除草剂（随包名录）详情收藏」**既不计入已实现，也不记为缺陷/待修**——它今天既不是"漏接线"，也不是"计划内待做"；在 (a)／(b) 裁定前，它属于**范围未定**。
+- 因此：不得因它把 AC17 整条判「不通过」（其余验收项与它无依赖），也不得据此判「已通过」（缺一项就写缺一项）；任何把该项写进验收清单的行都必须带「待裁定」标注。
+- 裁定落地后，本节的记账口径随之失效：走 (a) 就把它写成「明确不做」，走 (b) 就按 #7 新口径重新列验收项，两种都要在同一片里改 `docs/ui-state-inventory.md` 第 7.6 节与本节的这一条。
 

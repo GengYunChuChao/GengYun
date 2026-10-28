@@ -251,7 +251,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 带作物／杂草／地区条件时**强制**读随包离线副本，不发请求 | 服务端 `/herbicides` 的 querystring 只接受 `q`／`registration_number`／`cursor`／`limit`，结构化条件**不可表达**；页面据此直接返回 `bundled-offline` | `miniprogram/pages/reference/reference.js:207-210`；客户端闭集 `miniprogram/utils/knowledge-api.js:122-124` |
 | 剂型条件走同一分支（不静默丢弃条件） | 同上分支，`others` 为真时文案并列「作物／杂草／地区／剂型」 | `miniprogram/pages/reference/reference.js:200-206` |
 | 分支落点：先判来源再决定走服务端还是随包副本 | `runQuery` 里 `decision.source === SERVER` 才走 `runServerQuery`，否则 `runBundledQuery` | `miniprogram/pages/reference/reference.js:223-225` |
-| 这一路上「详情 → 收藏」**走不通** | `pages/referencedetail` 的 `.js`／`.wxml` 全文对 `收藏`／`favorite`／`fav` 零命中，没有收藏入口 | 无入口可锚（负向事实，逐字读完 443+160 行确认）；P0 链路的收藏只在 `pages/knowledgedetail`（第 7.2 节） |
+| 这一路上「详情 → 收藏」**走不通** | `pages/referencedetail` 的 `.js`／`.wxml` 全文对 `收藏`／`favorite`／`fav` 零命中，没有收藏入口 | 无入口可锚（负向事实，逐字读完 443+160 行确认）；P0 链路第 5 步的收藏入口是「详情页 `pages/knowledgedetail`」与「收藏页 `pages/favorites` 的『可收藏的资料』」**两处**（第 7.2、7.6 节），本路不在其中 |
 | 不能用来满足「下架／失效退出有效查询」 | 随包副本恒为有效记录，没有下架概念 ⇒ 该条验收在这一路上**结构上**判不了 | 同上；对照 `services/api/db/migrations/0012_knowledge_created_at.sql:87-116`（服务端才有失效闭集） |
 
 **结论**：`pages/reference` 保留为**随包除草剂名录浏览**（离线可用、明示数据来源），但不计入 P0 链路；P0 的查询面是 `pages/knowledge`。
@@ -263,23 +263,23 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 - 处置：**本节只登记，不删除**（本片不动 `miniprogram/**`）。唯一还依赖它的是单测 `tests/ui-adaptive.test.mjs:268-286`（按路径直接读源码并 `createRequire` 加载，断言「关闭状态下 `isGuest()` 恒为 `true`、且不发生存储读取」）——后续任一片要删它，必须同时改掉这条单测，否则那一组断言会 BROKEN 而不是「自动消失」。
 - ⚠ 第 4 节末段那句「会话占位不调用任何登录或手机号授权接口……」**只描述这个死文件**，不描述页面会话；页面会话口径以第 4 节表格的「登录会话」行为准（已按第 4 节的更正改为「已接真实服务端会话」）。
 
-### 7.6 「详情 → 收藏」：唯一入口、取消路径，与「不可收藏」的裁定（Refs #16 #7）
+### 7.6 「详情 → 收藏」：入口、取消路径，与「不可收藏」的裁定（Refs #16 #7）
 
-第 7.2 节证明了「`pages/knowledgedetail` 详情页有收藏按钮」，本节把它**收口成唯一入口**，并把另一条详情路（`pages/referencedetail`）**不可收藏**写成可当裁定引用的结论。收藏域的服务端语义（`reference_state` 逐次派生）与真库 e2e 见第 7.3 节与 `tests/integration/user-chain-e2e.mjs`；本节只钉**页面口径**。
+第 7.2 节证明了「`pages/knowledgedetail` 详情页有收藏按钮」。本节把第 5 步**一共几个入口、各是哪个**钉成一种口径（全文只此一处结论，第 7.4 节同向），并把另一条详情路（`pages/referencedetail`）**不可收藏**写成可当裁定引用的结论。收藏域的服务端语义（`reference_state` 逐次派生）与真库 e2e 见第 7.3 节与 `tests/integration/user-chain-e2e.mjs`；本节只钉**页面口径**。
 
-#### 7.6.1 从详情收藏的唯一入口 = `pages/knowledgedetail` 的收藏按钮
+#### 7.6.1 从详情页收藏的入口 = `pages/knowledgedetail` 的收藏按钮
 
 | 项 | 口径 | 证据（path:line） |
 | --- | --- | --- |
 | 按钮位置 | 正文下方独立一张卡：「收藏」标题 + 固定说明「收藏只表示保存了这条资料，不代表已核对、已使用或已确认适用性。」+ 状态行 + 单按钮（`bindtap="toggleFavorite"`，`loading`／`disabled` 都绑 `favBusy`）；整张卡只在 `favState !== 'idle'` 时渲染 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:41-46` |
 | 按钮出现条件 | `favSupported` 为真才渲染按钮；它由 `item.type` 是否落在契约闭集 `species`／`herbicide`／`scheme` 决定，其它类型落 `unsupported`、**不渲染按钮也不发请求** | `miniprogram/pages/knowledgedetail/knowledgedetail.js:79-88` |
-| 依赖 API | `POST /api/v1/favorites`，operationId **`createFavorite`**，必带 `Idempotency-Key`；请求体形状 **`{ target_ref: { type, id, revision } }`**（契约 `FavoriteInput` 只有 `target_ref` 一个必填字段，`target_ref` 的 `type`／`id`／`revision` 三字段全必填） | `miniprogram/utils/favorites-api.js:139-147` |
-| `target_type` | 三值闭集 `species`／`herbicide`／`scheme`；`static_region` 等其它 `Knowledge.type` 不可收藏 | 客户端闭集 `miniprogram/pages/knowledgedetail/knowledgedetail.js:8`；契约 `packages/contracts/openapi.json` 的 `FavoriteTarget.type`（enum 三值；同一个 schema 里 `id` 只约束 1..80 长度、`revision ≥ 1`） |
+| 依赖 API | `POST /api/v1/favorites`，operationId **`createFavorite`**，必带 `Idempotency-Key`；请求体形状 **`{ target_ref: { type, id, revision } }`**（契约 `FavoriteInput` 只有 `target_ref` 一个必填字段，`target_ref` 的 `type`／`id`／`revision` 三字段全必填） | `miniprogram/utils/favorites-api.js:139-147`；落库侧 `services/api/db/migrations/0018_favorites_history.sql:56-64`（`target_id` 1..80、`target_revision ≥ 1`、唯一去重键 `favorites_owner_target_key (owner_id, target_type, target_id)`） |
+| `target_type` | 三值闭集 `species`／`herbicide`／`scheme`；`static_region` 等其它 `Knowledge.type` 不可收藏 | 客户端闭集 `miniprogram/pages/knowledgedetail/knowledgedetail.js:10`；契约 `packages/contracts/openapi.json` 的 `FavoriteTarget.type`（enum 三值；同一个 schema 里 `id` 只约束 1..80 长度、`revision ≥ 1`） |
 | 成功后 UI 变化 | 同一按钮文案变「取消收藏」、状态行变「已收藏该资料。」，`_favCurrent` 记下服务端回的 `favorite.id`／`favorite.revision` 供下次取消的 `If-Match` 用；**不做本地乐观置位**，只认服务端回执 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:143-146` |
 | 失败后 UI | 不保留乐观状态：`favBusy` 复位、`favState` 落 `unknown`、文案走既有错误映射；会话失效（401／403）时同样复位，不会卡在「正在核对收藏状态…」 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:147-154` |
 | 收藏状态怎么来 | **逐次**读 `GET /favorites` 找同 `(type,id)`，不缓存、不本地推断；读失败如实报「未取得」，既不假定已收藏也不假定未收藏 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:73-107` |
 
-另有两处收藏入口，**都不属于「从详情收藏」**，不得计入 P0 链路第 5 步：① 收藏页上半区的「可收藏的资料」（第 7.6.2 节）；② 识别结果页的 `components/fav-entry`，宿主只有识别页一行，且只收 `species` 一类目标：`miniprogram/pages/identify/identify.wxml:221`、`miniprogram/components/fav-entry/fav-entry.js:9`。
+第 5 步的收藏入口**一共两处**（这是全文唯一口径，与第 7.4 节、本节末段一致）：① 本小节的**详情页按钮**（`pages/knowledgedetail` 里从一条资料发起收藏）；② 第 7.6.2 节的**收藏页「可收藏的资料」**（收藏页上半区的引导列表，逐条「收藏」，走同一个 `POST /favorites`：`miniprogram/pages/favorites/favorites.wxml:39-45` 的按钮 `bind:tap="onAdd"` → `miniprogram/pages/favorites/favorites.js:156-169`）。两者是**同一件事的两个入口**（同一契约、同一去重键、同一失败口径），不是并列的两种能力。另有**一处不计入**第 5 步：识别结果页的 `components/fav-entry`（宿主只有识别页一行、只收 `species`，属识别能力、不在本节六步内）：`miniprogram/pages/identify/identify.wxml:221`、`miniprogram/components/fav-entry/fav-entry.js:9`。
 
 #### 7.6.2 `pages/favorites`：可收藏的资料、取消收藏走哪个接口、失败怎么回滚
 
@@ -287,13 +287,13 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | --- | --- | --- |
 | 有「可收藏的资料」入口 | 有。页面上半区标题「可收藏的资料」，数据来自 `GET /knowledge` 第一页（`limit=20`，共 20 条）按 `species`／`herbicide`／`scheme` 闭集过滤；每行一个「收藏」按钮（已收藏则按钮禁用并标「已收藏」） | `miniprogram/pages/favorites/favorites.wxml:24-48`；闭集 `miniprogram/pages/favorites/favorites.js:21-23`；取数 `miniprogram/pages/favorites/favorites.js:120-143` |
 | 点「收藏」发的请求 | 同一个 `POST /api/v1/favorites`（`createFavorite`，`Idempotency-Key` 必带）；成功后只显示「已收藏：<标题>」并**重新读取**收藏列表，不往本地列表里追加 | `miniprogram/pages/favorites/favorites.js:156-169` |
-| 取消收藏走哪个接口 | `DELETE /api/v1/favorites/{id}`，operationId **`deleteFavorite`**；必带 `If-Match: "<revision>"` 与 `Idempotency-Key`，缺 `If-Match` 服务端回 **428 `REVISION_REQUIRED`**，不会静默成功 | 按钮 `miniprogram/pages/favorites/favorites.wxml:100-113`；处理 `miniprogram/pages/favorites/favorites.js:171-188`；HTTP 层 `miniprogram/utils/favorites-api.js:149-158` |
+| 取消收藏走哪个接口 | `DELETE /api/v1/favorites/{id}`，operationId **`deleteFavorite`**；必带 `If-Match: "<revision>"` 与 `Idempotency-Key`；缺 `If-Match` 服务端回 **428 `REVISION_REQUIRED`**（不是静默成功），`revision` 与当前行不符回 409 `REVISION_CONFLICT` | 取消按钮本身 `miniprogram/pages/favorites/favorites.wxml:107-113`（同一张卡上方的「查看资料」按钮**不是**收藏动作，故不计入本锚点）；处理 `miniprogram/pages/favorites/favorites.js:171-188`；HTTP 层 `miniprogram/utils/favorites-api.js:150-158`；428 的落点 `services/api/src/favorites/validate.ts:93-96` |
 | 失败态如何回滚 | 取消失败**不本地摘行、不假装成功**：先如实提示错误映射文案；`NOT_FOUND`／`REVISION_CONFLICT` 再回服务端重读一次（列表一律以服务端为准） | `miniprogram/pages/favorites/favorites.js:182-187` |
 | 目标当前不可用时 | `reference_state !== 'available'` 就不给「查看资料」入口（旧链接不因被收藏过而复活），取消收藏按钮仍可用 | `miniprogram/pages/favorites/favorites.js:108-110` |
 
-#### 7.6.3 `pages/referencedetail` **不可收藏**（结构性，不是没接线）
+#### 7.6.3 `pages/referencedetail` **不可收藏**（本数据源下不可为，不是没接线）
 
-**裁定**：`pages/referencedetail`（随包除草剂名录的详情页）**不给收藏入口，也不应给**。这不是「接线漏了」或「下个片补上就行」，是**结构性不可为**——在这条路上加一个收藏按钮，产出的是**一条永远 `unavailable`、永远点不开的坏收藏**。后来的开发者若被要求「从除草剂详情也能收藏」，不要在本页加按钮，先按下节走裁定。
+**裁定**：`pages/referencedetail`（随包除草剂名录的详情页）**不给收藏入口，也不应给**。这不是「接线漏了」，也不是「下个片补上就行」——**在当前数据源下不可为**：不换数据源就加一个收藏按钮，产出的是**一条永远 `unavailable`、永远点不开的坏收藏**。换数据源是**另一条路**（代价见第 7.6.3 末段与 `docs/architecture/acceptance-map.md` 的「已知缺口」），要走那条路必须先裁定。后来的开发者若被要求「从除草剂详情也能收藏」，不要在本页加按钮。
 
 | 依据 | 事实 | 证据（path:line） |
 | --- | --- | --- |
@@ -301,8 +301,8 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | ② 数据源 id 不是 UUID | 随包名录的记录主键形如 `gy-i03-hb-001`（离线副本本身：`miniprogram/data/records-2026.js:34`，由 `miniprogram/utils/reference.js:14` 装载）；页面按下式分流：`validId` 为真才走服务端，否则走随包副本 | `miniprogram/pages/referencedetail/referencedetail.js:115-120` |
 | ③ `validId` 就是 UUID 判定 | `validId` 是 UUID 正则判定，`gy-i03-hb-001` 恒假 ⇒ 该页永远落在 `bundled-offline` 这一支 | `miniprogram/utils/knowledge-api.js:224` |
 | ④ `/favorites` 要的 `revision` 只能来自服务端实体 | `POST /favorites` 的 `target_ref.revision` 在原页取自 `GET /knowledge/{id}` 的 `item.revision`，而那个响应里的 `id` 被客户端强制 UUID；随包记录既没有服务端 `id` 也没有服务端 `revision` | `miniprogram/utils/knowledge-api.js:49`；取用点 `miniprogram/pages/knowledgedetail/knowledgedetail.js:143` |
-| ⑤ 契约不认它「可用」 | 契约 `FavoriteTarget.id` 只约束 1..80 字符串（**不**设 UUID format），所以「发不出去」**不是**靠 400 挡住的：真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面**逐次派生**，随包记录在服务端不存在 ⇒ 恒 `unavailable` + 冻结闭集里的对象侧说明；收藏页据此不给「查看资料」 | `services/api/src/targetref/visibility.ts:140-158`；理由闭集 `services/api/src/targetref/visibility.ts:34-41`；页面侧 `miniprogram/pages/favorites/favorites.js:108-110` |
+| ⑤ 契约不认它「可用」 | 契约 `FavoriteTarget.id` 只约束 1..80 字符串（**不**设 UUID format），所以「发不出去」**不是**靠 400 挡住的：真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面**逐次派生**，随包记录在服务端不存在 ⇒ 恒 `unavailable` + 冻结闭集里的对象侧说明；收藏页据此不给「查看资料」 | `services/api/src/targetref/visibility.ts:140-158`；理由闭集 `services/api/src/targetref/visibility.ts:34-41`；落库侧也明说不收 UUID：`target_id` 是任意文本（只有 `id`／`owner_id` 是 uuid）`services/api/db/migrations/0018_favorites_history.sql:29-30`；页面侧 `miniprogram/pages/favorites/favorites.js:108-110` |
 
-**为什么写成「结构性」而不是「未接线」**：未接线是「补一段代码就能通」，这里的缺口在**数据源身份**——随包名录不是服务端实体，`/favorites` 的语义是「保存一条**服务端可核验**的引用」。所以它不随某个 PR 的进度自动消失：要么明确不做（从名录详情收藏），要么换数据源并连带改 #7 的验收口径（本片只登记，不裁定，见 `docs/architecture/acceptance-map.md` 的「已知缺口」一节）。
+**为什么写成「本数据源下不可为」而不是「未接线」**：未接线是「补一段代码就能通」；这里的缺口在**数据源身份**——随包名录不是服务端实体，而 `/favorites` 的语义是「保存一条**服务端可核验**的引用」。所以在**不换数据源**的前提下，它不随某个 PR 的进度自动消失：要么明确不做（从名录详情收藏，本页按这一支写），要么换数据源并连带改 #7 的验收口径（= 另一条路，代价与待裁定项见 `docs/architecture/acceptance-map.md` 的「已知缺口」；本片只登记，不裁定）。
 
-**结论**：P0 链路第 5 步「收藏／取消」的入口只有两个——`pages/knowledgedetail` 的收藏按钮（主路径）与 `pages/favorites` 的「可收藏的资料」；`pages/reference` / `pages/referencedetail` 这一路不计入本链路（第 7.4 节），也不提供收藏。
+**结论**：P0 链路第 5 步「收藏／取消」的入口是**两个**——`pages/knowledgedetail` 的收藏按钮（主路径，从详情页发起）与 `pages/favorites` 的「可收藏的资料」（从收藏页发起，**同一个** `POST /favorites`）；`pages/reference` / `pages/referencedetail` 这一路不计入本链路（第 7.4 节），也不提供收藏；识别结果页的 `fav-entry` 属识别能力，同样不计入（第 7.6.1 节）。
