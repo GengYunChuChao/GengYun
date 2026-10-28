@@ -24,7 +24,7 @@
 | --- | --- | --- |
 | **GY-I19 期间**仓内没有逐用户备份副本地表 | [验证记录](../verification/gy-i19-backup-domain-20261018.md) §1 普查 | 18 个迁移（0001–0018）、54 处 `CREATE TABLE`（按 `schema.table` 限定名去重 54 张）、0 张备份/快照/副本/转储表。**GY-R28 起已落地**：`0023_user_backup_copies.sql` 建 `public.user_backup_copies`（`state='purged'` ⇒ `payload='null'::jsonb` ＋ 清除证据），`services/api/src/privacy/backup-copies-pg.ts` 的 `createPostgresBackupPurgePort()` 是真实端口（`kind: 'wired'`／`available: true`） |
 | 端口已存在但**当时**恒未接线 | [user-data-deletion.ts:339](../../services/api/src/privacy/user-data-deletion.ts)（接口 `BackupPurgePort`；R68-C1 片之前记 `:315`，媒体域补注释使行号下移）、[:321](../../services/api/src/privacy/user-data-deletion.ts)（工厂与返回对象；行号为 GY-R34-I19 树，设计片当时在 `:91`／`:97`，R28 树在 `:141`／`:147-156`，后续片新增常量与注释使行号下移） | 当时 `kind: 'unwired'`、`available: false`、`purge()` 恒 `{ purged: false }`；GY-R28 起不再恒未接线：`app.ts:1798-1805`（`backupPurgeWiring`，原记 :1581-1588；合流当前 main 前在 `:1457-1464`，按符号重取）在「受理端口已接线 ＋ 有真库连接池」时装配 `backup-copies-pg.ts` 的 PG 端口，无真库/未接受理时仍退回本行的 unwired 语义 |
-| 注入点已存在 | [app.ts:495](../../services/api/src/app.ts)（类型定义，原记 :470）、[:1799-1800](../../services/api/src/app.ts)（注入使用处，原记 :1582-1583） | 仅在显式注入 `userDataDeletionInjection.backupPurge` 时传入 |
+| 注入点已存在 | [app.ts:496](../../services/api/src/app.ts)（类型定义，原记 :471）、[:1818-1819](../../services/api/src/app.ts)（注入使用处，原记 :1593-1594） | 仅在显式注入 `userDataDeletionInjection.backupPurge` 时传入 |
 | 回执照实不谎报 | [tests/unit/user-data-deletion.test.mjs:88](../../tests/unit/user-data-deletion.test.mjs) | 断言逐字「备份副本清除未接线 ⇒ 如实 pending，不得谎称 completed」 |
 | 唯一备份产物是整库 dump | [backup-postgres.sh:56-57](../../deploy/postgres-cvm/backup-postgres.sh) | `KEEP_DAYS=30` 是**文件**保留期，无法逐用户删 |
 
