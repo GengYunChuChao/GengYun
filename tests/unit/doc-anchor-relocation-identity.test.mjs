@@ -12,6 +12,10 @@
  * 判据（全部现场重算，**零硬编码**：本文件不写任何期望条数／期望行号／提交 sha）：
  *   1) base = `git merge-base HEAD origin/main`（拿不到再退 `upstream/main`，再退 `HEAD~1`）；
  *   2) 扫描面 = `git diff -U0 <base>..HEAD -- docs/` 里被**改写**的那批行（旧行文本→新行文本配对）；
+ *      每个 hunk 先按 `@@ -<oldCount> +<newCount> @@` 分成三类：`pairedHunks`（旧侧、新侧都非空，
+ *      真能配出「旧行→新行」）、`pureAddHunks`（旧侧 0 行 ⇒ 一行都配不出来）、`pureDeleteHunks`
+ *      （新侧 0 行 ⇒ 旧行整行消失，锚点走 `removed` 桶）。本次文档改动面**全部**是纯新增 hunk 时，
+ *      这条提交没有任何位移面可言，显式 SKIP 并报出纯新增 hunk 数（见「已知限制之三」）；
  *   3) 每对行里按仓库既有写法抽锚点：`<路径>:<起>[-<止>]` 与紧跟在某个路径锚点之后的裸 `:<起>[-<止>]`；
  *      裸锚点解析不出归属（同行没有前置路径 / 前置路径装不下这个行号）时退回**当前文档自身**；
  *   4) 目标文件本提交未改动 ⇒ 断言 `new === old`（起止都断言）；
@@ -69,8 +73,34 @@
  * 已知限制（**不是正确语义**，见本文件末尾的常驻用例）：整条锚点被删掉时，扫描面里只剩「旧锚点」，
  * 没有新锚点可比对，判不了「该不该删」—— 判红会误伤正常删除，所以只**计数并逐条列进 diagnostic**
  * （`removed` 桶），不判红。删锚点这件事因此是「可观测但放行」。相应地，这类提交的 `judged` 可能是 0，
- * 「扫描面非空」的自证落在「每个抽到的 token 都进了某个桶（判定／已删／未判）」上；只有「抽到 0 个
- * token」（纯散文改动、整行没有锚点）才显式 SKIP 为「无判定面」，绝不静默记成 PASS。
+ * 「扫描面非空」的自证落在「每个抽到的 token 都进了某个桶（判定／已删／未判）」上；只有「配出了行对、
+ * 但那些行里一个锚点都没抽到」（纯散文改动、整行没有行号引用）才显式 SKIP 为「无判定面」，绝不静默
+ * 记成 PASS。
+ *
+ * 已知限制之三（**纯新增 docs 提交**，GY-R68 追加；每一条都**只记录、不擅自扩判定面**）：
+ *   ① `git diff -U0` 对「只新增行、不改旧行」的文档提交给出 `@@ -N,0 +M,K @@`（旧侧 0 行），
+ *      `pairHunkLines()` 一行都配不出来，`removed` 桶也接不住它（没有任何旧行），于是这种提交曾经落到
+ *      「扫描面为空」的硬红上 —— 那是**假红**：这种提交根本没有位移面可言。现在的口径是「本次文档改动面
+ *      **全部**是纯新增 hunk ⇒ 显式 SKIP（文案带纯新增 hunk 数）」；只要掺进一个配得上行的 hunk 或一个
+ *      纯删除 hunk，就不许 SKIP（末尾 A1／A4 两条常驻用例钉住，A2／A3 钉住「没有变松」）。
+ *   ② 整份文档被删（`+++ /dev/null`）⇒ `parseDocDiffSinglePass()` 把该文件整体过滤掉；若它是本次唯一的
+ *      文档改动，`docFiles === 0` ⇒ `judge()` 退 `reason: '没有改动 docs/**'` ⇒ 主用例仍 SKIP。既有形状，
+ *      本片不动它（删整份文档不会产生任何「需要重锚」的行）。
+ *   ③ 纯改名（`--no-renames` 下是「删 + 增」）⇒ 旧文件侧是纯删除 hunk、新文件侧是纯新增 hunk ⇒
+ *      `appendOnly` 判据不成立，落到「`docLines 0` 且 `removed 0`」的硬红上，文案会报出纯新增 hunk 数。
+ *      若被改名的那份文件里本来没有锚点，这仍是一条「没有位移面却被判红」的形状 —— 已知、未在本片处理
+ *      （至少它是可读的硬红，不是静默通过）。
+ *   ④ SKIP 只证明「本次没有位移面」，**不证明**新增行里的锚点写对了：新增行没有「旧行」可比，一旦
+ *      纯新增 hunk 被 SKIP，那些新增行号是否正确就只由 `tools/verify-doc-anchors.mjs --strict` 那套
+ *      「行号在不在文件范围内」兜底。这条闸门对此确实**没有**判别力。
+ *   ⑤ `tokens === 0` 只在「没有任何桶接过东西」时才 SKIP（「配出了行对，但一个锚点都没抽到」= 纯散文
+ *      改动，A5 钉住）：本片**没有**把它改成硬红 —— 改判方向会让「随手修一个 typo 的 docs 提交」直接
+ *      变红，而这条闸门的既有语义（上一段）就是「无判定面 ⇒ SKIP，绝不静默 PASS」。要改成红必须单独
+ *      开片并同步改文案。
+ *   ⑥ `tokens === 0` 但 `removed > 0`（纯删除型：整行删掉带锚点的行；或「纯删除 hunk + 纯新增 hunk」
+ *      混排且没有配对 hunk）现在走 **ok/PASS**，旧实现是 SKIP —— 这是本片唯一一处判定方向变化，来源是
+ *      「纯删除型只观测不判红、但扫描面确实非空」这条既有语义（上一段），A3 钉住它。它仍然判红 0 条：
+ *      被删掉的锚点去哪了**没人判**，只是计数进 `removed` 并逐条列进 diagnostic。
  *
  * 已知限制之二（`kind: "correction"` 那一类）：三件验真验的是**文本**，不是语义 —— ② 只说明 base 的
  * `from` 窗口不含 `symbol`，它不扫描新树别处；③ 只判 `from !== to`。所以「新行含 `symbol`、旧行不含」
@@ -531,6 +561,11 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
     // 文档行的多个 token 复用（`docFile()` 那种一行两锚点的文档）时各 +1，于是 corrected=2。
     // 它是 `registered` 的子集（纠正也走登记分支），`judgmentBuckets()` 里因此要减掉它再报 `registered`。
     identical: 0, relocated: 0, registered: 0, corrected: 0, carried: 0, removed: 0,
+    // 文档 hunk 的三分类（只喂给「扫描面」判定，不参与任何逐 token 判定）：
+    // `pureAddHunks` 是 `git diff -U0` 里 `@@ -N,0 +M,K @@` 那种「只新增行、旧侧 0 行」的 hunk ——
+    // 它一行都配不出「旧行→新行」，也没进 `removed`（没有任何旧行），所以「本次全是纯新增」的提交
+    // 在旧实现里会撞上「扫描面为空」的假红。纯删除型（`newCount === 0`）早就有 `removed` 桶兜着。
+    pairedHunks: 0, pureAddHunks: 0, pureDeleteHunks: 0,
   };
   const empty = (reason) => ({ violations, unresolved, removed, registered, carried, pairs, stats, reason });
 
@@ -645,6 +680,12 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
 
   for (const file of docFiles) {
     for (const hunk of file.hunks) {
+      // 先给 hunk 分类（真·扫描面统计，不改判定）：纯新增的 hunk 既配不出行对、也产不出 `removed`，
+      // 完全「隐形」—— 正是「纯新增 docs 提交被判扫描面为空」那个假红的根。分类口径按 hunk 头里的
+      // 计数走，不按 `oldLines`/`newLines` 数组长度走（`-U0` 下两者本应一致，但以头为准更稳）。
+      if (hunk.oldCount === 0 && hunk.newCount > 0) stats.pureAddHunks += 1;
+      else if (hunk.newCount === 0) stats.pureDeleteHunks += 1;
+      else stats.pairedHunks += 1;
       const { pairs: linePairs, unpairedOld } = pairHunkLines(hunk);
       // 整行被删掉的旧行：它的锚点在新侧彻底消失，既配不上对、也进不了任何判定桶。
       // 这类锚点直接进 `removed`（只观测不判红：正常删文档不该判红，但也不许静默隐身）。
@@ -937,7 +978,10 @@ function summarize(result, baseLabel) {
     + `tokens=${stats.tokens} pairs=${stats.pairs} judged=${stats.judged} `
     + `identical=${stats.identical} relocated=${stats.relocated} registered=${stats.registered} `
     + `corrected=${stats.corrected} `
-    + `carried=${stats.carried} removed=${stats.removed} unresolved=${result.unresolved.length}`;
+    + `carried=${stats.carried} removed=${stats.removed} unresolved=${result.unresolved.length} `
+    // hunk 三分类：`add` 是纯新增（旧侧 0 行）、`del` 是纯删除（新侧 0 行）、`pair` 是两侧都非空。
+    // 「全是纯新增」⇒ 本次没有位移面，主用例会显式 SKIP（读数里能一眼看出是哪种 SKIP）。
+    + `hunks(pair=${stats.pairedHunks} add=${stats.pureAddHunks} del=${stats.pureDeleteHunks})`;
 }
 
 /**
@@ -979,8 +1023,67 @@ function judgmentBuckets(result) {
   return buckets;
 }
 
-/** 「已登记」明细块：主用例读数与 B1 回归夹具共用，保证两边看到的是同一句话。 */
-function registeredDetail(result) {
+/**
+ * 「本次文档改动面全是纯新增」判据（本片修的那个假红的核心）：三个条件缺一不可 ——
+ * 有纯新增 hunk、没有任何配得上「旧行→新行」的 hunk、也没有任何纯删除 hunk。
+ * 只要掺进另外两类中的任意一个，本次提交就确实有「旧行」可比，必须走正常判定（A4 钉住这一点）。
+ */
+function appendOnlyDocDiff(stats) {
+  return stats.pureAddHunks > 0 && stats.pairedHunks === 0 && stats.pureDeleteHunks === 0;
+}
+
+/**
+ * 扫描面裁决，纯函数，返回 `{ kind: 'ok' | 'skip' | 'fail', message }` —— 主用例与末尾 A1–A5 常驻夹具
+ * 共用同一份判断（否则夹具只能钉住「我以为的」判定，而不是主用例真跑的那份）。
+ * - `skip`：本次提交**没有**位移面可言，显式 SKIP 并带可区分的读数，绝不静默记成 PASS。两种形状：
+ *   ① 全是纯新增 hunk（`@@ -N,0 +M,K @@`，一行都配不出来，也没有旧行进 `removed`）；
+ *   ② 配出了行对但一个锚点都没抽到（纯散文改动）。② 的「SKIP 而不是硬红」是既有约定
+ *   （本文件「已知限制之三 ⑤」），本片**没有**改它的方向。
+ * - `fail`：diff 非空却既配不出行对、也没有 `removed`（硬红文案里带上纯新增 hunk 数，便于与 ① 区分），
+ *   或者抽到了锚点却一条都没进桶 —— 这两种都是「判了 0 条却全绿」的静默漏洞。
+ * - `ok`：有真实判定面，交给后续 `assertNoViolations` 判红绿。
+ */
+function scanSurfaceDecision(result) {
+  const { stats } = result;
+  const buckets = judgmentBuckets(result);
+  if (stats.docFiles === 0) {
+    return { kind: 'fail', message: '扫描面为空：没有任何被改写的文档' };
+  }
+  if (appendOnlyDocDiff(stats)) {
+    return {
+      kind: 'skip',
+      message: `本次文档提交只有新增行，没有锚点位移面（${stats.pureAddHunks} 个纯新增 hunk）`,
+    };
+  }
+  if (stats.docLines === 0 && buckets.total === 0) {
+    return {
+      kind: 'fail',
+      // `buckets.total` 里已经算上 `removed`/`unresolved`/`violations`/`registered`：纯删除型文档提交
+      // 配不出任何行对，但它的锚点落在 `removed` 桶里（`total > 0`）⇒ 有扫描面、不许红。
+      // 只有「一行都对不上、也没有任何桶接过任何东西」才是真的什么都没解析出来 ⇒ 硬红。
+      message: '扫描面为空：既没有配对出任何「旧行→新行」的文档行对，也没有任何被整行删掉/'
+        + `换锚点的旧行（docLines ${stats.docLines}／removed ${result.removed.length}／`
+        + `其中有 ${stats.pureAddHunks} 个纯新增 hunk）`,
+    };
+  }
+  if (stats.tokens === 0 && buckets.total === 0) {
+    return {
+      kind: 'skip',
+      message: '被改写的文档行里没有任何锚点（tokens=0），本次改动不含任何行号引用，本用例无判定面',
+    };
+  }
+  if (buckets.total === 0) {
+    return {
+      kind: 'fail',
+      message: `扫描面为空：抽到 ${stats.tokens} 个锚点，却没有任何一个进入判定桶（判定 ${buckets.judged}／`
+        + `已删 ${buckets.removed}／未判 ${buckets.unresolved}／判红 ${buckets.violations}／`
+        + `已登记 ${buckets.registered}／纠正 ${buckets.corrected}）`,
+    };
+  }
+  return { kind: 'ok', message: '' };
+}
+
+/** 「已登记」明细块：主用例读数与 B1 回归夹具共用，保证两边看到的是同一句话。 */function registeredDetail(result) {
   return result.registered.length === 0
     ? ''
     : `；已登记：\n${result.registered.map((item) => `    - ${item}`).join('\n')}`;
@@ -1059,34 +1162,21 @@ test('文档锚点位移恒等：目标文件没改 ⇒ 行号恒等（陈旧锚
     return;
   }
 
-  // 自证扫描面非空：防「扫到 0 条 ⇒ 全绿」。
-  // `docFiles`/`docLines` 证明扫描面本身有内容；`tokens` 证明确实抽到了锚点（纯散文改动没有锚点，
-  // 那是「无判定面」而不是「判定通过」，显式 SKIP 并说明）；最后要求每个 token 都落进了某个桶
-  // （判定／已删／未判／判红／**已登记**），否则就是「抽到了却一条没判」的静默漏洞。
-  // 判红也必须算进这个桶：判红分支在 `continue` 之前不进 `judged`，漏算会让「确有违规」的场景
-  // 反而先撞上这条自证断言，把真正的违规清单埋在一条误导性信息后面。
-  // 已登记同理（B1）：登记命中的 token 也只 `continue`、不进 `judged`，漏算会把「只靠登记落地的最小
-  // 修复提交」判成「扫描面为空」——那正是本闸门要放行的形状。
-  const { stats } = result;
-  assert.ok(stats.docFiles > 0, `扫描面为空：${base.slice(0, 12)}..${head.slice(0, 12)} 没有任何被改写的文档`);
-  // 纯删除型 docs 提交里一行都配不上对（旧行被整行删掉），那种情况由 `removed` 侧承担扫描面：
-  // 拿 `docLines > 0` 当唯一门槛会把「合法删除」判成「扫描面为空」的假红。
-  assert.ok(
-    stats.docLines > 0 || result.removed.length > 0,
-    '扫描面为空：既没有配对出任何「旧行→新行」的文档行对，也没有任何被整行删掉/换锚点的旧行'
-    + `（docLines ${stats.docLines}／removed ${result.removed.length}）`,
-  );
-  if (stats.tokens === 0) {
-    t.skip(`SKIP: ${base.slice(0, 12)}..${head.slice(0, 12)} 被改写的文档行里没有任何锚点（tokens=0），本用例无判定面`);
+  // 扫描面自证：防「扫到 0 条 ⇒ 全绿」。裁决抽进 `scanSurfaceDecision()`，让末尾 A1–A5 常驻夹具
+  // 钉住的就是主用例**真跑的那一份**判断，而不是另写一份「我以为的」判定：
+  // - 全是纯新增 hunk ⇒ 本次提交根本没有位移面（新增行没有「旧行号」可比），显式 SKIP 并报出数量；
+  // - 配出了行对、但一个锚点都没抽到（纯散文改动）⇒ 显式 SKIP（既有约定，见「已知限制之三 ⑤」）；
+  // - 其余「diff 非空却连一个桶都没进」的形状 ⇒ 硬红，文案里带纯新增 hunk 数以便与上面区分。
+  // 判红/已登记也必须算进桶：判红与登记分支在 `continue` 之前不进 `judged`，漏算会让「确有违规」
+  // 反而先撞上自证断言，把真正的违规清单埋在一条误导性信息后面（B1 的教训）。
+  const shortRange = `${base.slice(0, 12)}..${head.slice(0, 12)}`;
+  const decision = scanSurfaceDecision(result);
+  if (decision.kind === 'skip') {
+    t.skip(`SKIP: ${shortRange} ${decision.message}`);
     return;
   }
-  const buckets = judgmentBuckets(result);
-  assert.ok(
-    buckets.total > 0,
-    `扫描面为空：抽到 ${stats.tokens} 个锚点，却没有任何一个进入判定桶（判定 ${buckets.judged}／`
-    + `已删 ${buckets.removed}／未判 ${buckets.unresolved}／判红 ${buckets.violations}／`
-    + `已登记 ${buckets.registered}／纠正 ${buckets.corrected}）`,
-  );
+  // `fail` 与「有判定面、可能判红」都往下走：`fail` 在下一行直接红，文案原样带出扫描面读数。
+  assert.equal(decision.kind, 'ok', `${shortRange} ${decision.message}`);
 
   const summary = summarize(result, `${base.slice(0, 12)}（${baseLabel}）`);
   const detail = [
@@ -1952,6 +2042,174 @@ test('变异夹具：纯删除型文档提交（旧行全部被删）⇒ 不许�
   assert.equal(result.stats.docLines, 0, '夹具应当一行都配不上对（整段被删）');
   assert.ok(result.removed.length > 0, '纯删除也必须让锚点进 removed（不许零判定静默通过）');
   t.diagnostic(`夹具（纯删除）docLines=0 removed=${result.stats.removed} 条，未假红`);
+});
+
+// ──────────── 纯新增 docs 提交（GY-R68）：假红修复与相邻盲区的常驻夹具 ────────────
+// 这一组钉的是「扫描面裁决」`scanSurfaceDecision()` 本身，用的是主用例真跑的那份判断：
+//   A1 本次修掉的假红：纯新增 hunk ⇒ 显式 SKIP（既不是 PASS 也不是 fail）；
+//   A2/A3 钉住它没把既有判定改松（未登记位移仍红／整行删锚点仍走 removed，且都不许变成 SKIP）；
+//   A4 钉住 SKIP 只在「**全部**纯新增」时生效（掺进一个配得上行的 hunk 就必须红）；
+//   A5 钉住「配出了行对但一个锚点都没抽到」的既有方向（SKIP），本片没有改它 —— 见文件头「已知限制之三 ⑤」。
+
+/** A4 用的填充行：把「改旧行」与「末尾新增」隔成两个独立 hunk（`-U0` 下只要中间有未改行就会分开）。 */
+const DOC_FILLER_LINES = Array.from({ length: 12 }, (_, index) => `- 填充行 ${index + 1}`);
+
+test('A1 纯新增 docs 提交（旧侧 0 行）⇒ 显式 SKIP 并报出纯新增 hunk 数，不再是「扫描面为空」的假红', (t) => {
+  const baseDoc = docFile({ anchor: FIXTURE_ANCHOR_LINE });
+  const headDoc = `${baseDoc}\n## 追加附录（本节只新增，不改任何既有行）\n\n- 追加的一行说明\n`;
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+
+  // 先钉住夹具**就是**旧假红的形状：一行都配不上对，也没有任何旧行进 removed ⇒ 旧断言必红。
+  assert.equal(result.stats.pairedHunks, 0, '夹具不该有「旧行→新行」配得上对的 hunk');
+  assert.equal(result.stats.pureAddHunks, 1, '夹具应当恰好一个纯新增 hunk');
+  assert.equal(result.stats.pureDeleteHunks, 0, '夹具不该有纯删除 hunk');
+  assert.equal(result.stats.docLines, 0, '纯新增 hunk 一行也配不出「旧行→新行」');
+  assert.deepEqual(result.removed, [], '纯新增没有任何旧行，removed 桶必须为空（旧实现正是在这里撞红）');
+  assert.deepEqual(result.violations, [], '纯新增没有任何待判锚点，违规清单必须为空');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'skip', `纯新增文档提交必须显式 SKIP，实际 ${decision.kind}：${decision.message}`);
+  assert.match(decision.message, /只有新增行，没有锚点位移面（1 个纯新增 hunk）/);
+  t.diagnostic(`夹具 A1（纯新增）${decision.kind}：${decision.message}｜${summarize(result, 'fixture')}`);
+});
+
+test('A2 目标文件本提交未改、文档行号被改动却没登记 ⇒ 仍硬红（新增的 SKIP 没把这条改松）', (t) => {
+  const repo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: serviceFile(),
+      // 旧锚点指错一行；本提交把它「改对了」，但目标文件一个字没改 ⇒ 必须走登记表，否则红。
+      [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE + 1 }),
+    },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE }) },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'ok', `本次确有位移面，裁决不该是 ${decision.kind}：${decision.message}`);
+  assert.equal(result.stats.pairedHunks, 1, '夹具应当恰好一个配得上行的 hunk');
+  assert.equal(result.stats.pureAddHunks, 0, '夹具不该掺纯新增 hunk');
+  assert.ok(result.violations.length > 0, '未登记的行号位移竟然判绿：判别力不成立');
+  assert.match(result.violations.join('\n'), /行号必须恒等/);
+  assert.throws(() => assertNoViolations(result), /锚点位移恒等失败/);
+  t.diagnostic(`夹具 A2（未登记位移）裁决 ok，判红 ${result.violations.length} 条｜${summarize(result, 'fixture')}`);
+});
+
+test('A3 整行删掉带锚点的文档行 ⇒ 进 removed 且裁决是 ok，不许被判成 SKIP', (t) => {
+  const baseDoc = `# 夹具\n\n- 前置说明\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\``
+    + `（裸锚点 :${FIXTURE_ANCHOR_LINE}）\n`;
+  const headDoc = '# 夹具\n\n- 前置说明\n';
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.equal(result.stats.pureDeleteHunks, 1, '夹具应当恰好一个纯删除 hunk');
+  assert.equal(result.stats.pureAddHunks, 0, '整行删除不该附带纯新增 hunk');
+  assert.equal(result.stats.pairedHunks, 0, '整行删除配不出「旧行→新行」');
+  assert.equal(result.stats.docLines, 0, '夹具应当一行都配不上对');
+  assert.ok(result.removed.length > 0, '整行删掉的锚点必须进 removed 桶');
+  assert.deepEqual(result.violations, [], '删锚点是已知限制：只观测不判红');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'ok', `纯删除型不许被 SKIP 吃掉，实际 ${decision.kind}：${decision.message}`);
+  assert.doesNotMatch(decision.message, /纯新增/);
+  t.diagnostic(`夹具 A3（整行删锚点）裁决 ok，removed=${result.stats.removed} 条｜${summarize(result, 'fixture')}`);
+});
+
+test('A4 混合：一个纯新增 hunk + 一个改了旧行却没登记行号位移的 hunk ⇒ 必须硬红（SKIP 只在「全部纯新增」时生效）', (t) => {
+  const baseDoc = [
+    '# 夹具',
+    '',
+    `- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`（裸锚点 :${FIXTURE_ANCHOR_LINE}）`,
+    '',
+    ...DOC_FILLER_LINES,
+  ].join('\n') + '\n';
+  const headDoc = [
+    '# 夹具',
+    '',
+    // 改旧行：目标文件本提交一个字没改，锚点却被改了 ⇒ 未登记的位移，必须红。
+    `- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE - 1}\`（裸锚点 :${FIXTURE_ANCHOR_LINE - 1}）`,
+    '',
+    ...DOC_FILLER_LINES,
+    '',
+    '## 追加附录（这一段是纯新增 hunk）',
+    '',
+    '- 追加的一行说明',
+  ].join('\n') + '\n';
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.equal(result.stats.pairedHunks, 1, '夹具应当有一个「改旧行」的 hunk');
+  assert.equal(result.stats.pureAddHunks, 1, '夹具应当同时有一个纯新增 hunk');
+  assert.equal(result.stats.pureDeleteHunks, 0, '夹具不该有纯删除 hunk');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'ok', `掺了配得上行的 hunk 就不许 SKIP，实际 ${decision.kind}：${decision.message}`);
+  assert.ok(result.violations.length > 0, '混合形状竟然判绿：SKIP 被放宽到了「有纯新增 hunk」而不是「全是纯新增」');
+  assert.match(result.violations.join('\n'), /行号必须恒等/);
+  assert.throws(() => assertNoViolations(result), /锚点位移恒等失败/);
+  t.diagnostic(`夹具 A4（纯新增 + 改旧行）裁决 ok，判红 ${result.violations.length} 条｜${summarize(result, 'fixture')}`);
+});
+
+test('A5 只改一句不含行号引用的散文 ⇒ 现状：配得出行对但 tokens=0，显式 SKIP（本片不改判定方向，钉子钉住现状）', (t) => {
+  // 用户的第 5 条要求「如实测出这条现状」。实测结果不是红、也不是 pass，而是既有约定的显式 SKIP
+  // （见文件头「已知限制之三 ⑤」）：改动面里连一个锚点都没有，闸门没有任何东西可判。
+  // 这条用例**故意**钉住「SKIP」而不是把它改成红：改判方向会让「随手修一个 typo 的 docs 提交」直接变红。
+  const baseDoc = `# 夹具\n\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`\n\n- 旧措辞的一句散文\n`;
+  const headDoc = `# 夹具\n\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`\n\n`
+    + '- 新措辞的一句散文（只改了几个字，没有任何行号引用）\n';
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.equal(result.stats.docLines, 1, '夹具应当恰好配出一对行');
+  assert.equal(result.stats.tokens, 0, '这句散文里不该有任何锚点 token');
+  assert.deepEqual(result.removed, [], '夹具不该有整行删除');
+  assert.deepEqual(result.violations, [], '夹具不该有违规（否则这条钉子钉的就不是「现状」）');
+  assert.equal(judgmentBuckets(result).total, 0, '夹具必须真的没有任何判定面');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'skip', `现状是 SKIP（既不是 PASS 也不是红），实际 ${decision.kind}：${decision.message}`);
+  assert.match(decision.message, /不含任何行号引用/);
+  t.diagnostic(`夹具 A5（纯散文改动）${decision.kind}：${decision.message}｜${summarize(result, 'fixture')}`);
+});
+
+test('自证：扫描面裁决的 fail 分支不许退化成 SKIP ——「diff 非空却什么都没解析出来」仍硬红且带纯新增 hunk 数', (t) => {
+  const zeroStats = {
+    docFiles: 1, docLines: 0, tokens: 0, pairs: 0, judged: 0, identical: 0, relocated: 0,
+    registered: 0, corrected: 0, carried: 0, removed: 0,
+    pairedHunks: 1, pureAddHunks: 2, pureDeleteHunks: 0,
+  };
+  const emptyBuckets = { violations: [], unresolved: [], removed: [], registered: [], carried: [], pairs: [] };
+
+  // ① 有配对 hunk、也掺了纯新增 hunk，却一行都没配对出来、也没有 removed ⇒ 硬红，且不许落进「纯新增 SKIP」文案。
+  const burned = scanSurfaceDecision({ ...emptyBuckets, stats: zeroStats });
+  assert.equal(burned.kind, 'fail', `这种形状必须硬红，实际 ${burned.kind}：${burned.message}`);
+  assert.match(burned.message, /其中有 2 个纯新增 hunk/);
+  assert.doesNotMatch(burned.message, /只有新增行/);
+
+  // ② 抽到了锚点却一条都没进桶 ⇒ 硬红（文案报出 tokens，别让人以为「没锚点」）。
+  const stranded = scanSurfaceDecision({
+    ...emptyBuckets,
+    stats: { ...zeroStats, docLines: 1, tokens: 3 },
+  });
+  assert.equal(stranded.kind, 'fail', `抽到锚点却没进桶必须硬红，实际 ${stranded.kind}：${stranded.message}`);
+  assert.match(stranded.message, /抽到 3 个锚点/);
+
+  // ③ 只有「一个配得上行的 hunk 都没有」时才是 SKIP。
+  const appendOnly = scanSurfaceDecision({
+    ...emptyBuckets,
+    stats: { ...zeroStats, pairedHunks: 0, pureAddHunks: 3 },
+  });
+  assert.equal(appendOnly.kind, 'skip', `全是纯新增才是 SKIP，实际 ${appendOnly.kind}：${appendOnly.message}`);
+  assert.match(appendOnly.message, /3 个纯新增 hunk/);
+  t.diagnostic(`夹具（裁决自证）fail/fail/skip 三分支都按预期：${burned.message}｜${stranded.message}｜${appendOnly.message}`);
 });
 
 test('自证：判据 helper「零违规」对非空 violations 必须抛（防一键把闸门改成恒绿）', (t) => {

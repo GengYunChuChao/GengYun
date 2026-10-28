@@ -44,7 +44,7 @@
 | 驳回时的通知 | `services/api/src/community/service.ts:696-699` | 注释原文「被拒的写入请求**不投递**：那条 revision 从未落库」 |
 | 驳回时连内容都不写 | `services/api/src/community/moderation-link.ts:37` | 表格行原文：驳回 `vetoed` ⇒ **不落库**（400）+ 读取面退出公开面 |
 | 后台的通过 / 驳回动作 | `services/api/src/admin/ops/service.ts:211-224` | 12 项 operationId 闭集里与帖相关的只有 `hidePost`，位置在 `services/api/src/admin/ops/service.ts:237` |
-| 契约里的审核动作 | `packages/contracts/openapi.json:11938` | spec 里 `/admin/posts` 家族恰好一条 `/admin/posts/{id}/hide` （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）|
+| 契约里的审核动作 | `packages/contracts/openapi.json:11434` | spec 里 `/admin/posts` 家族恰好一条 `/admin/posts/{id}/hide` （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）|
 | 同上（被测试钉死） | `tests/unit/community-premoderation-invariants.test.mjs:234-246` | `assert.deepEqual` 直接比对 `['/admin/posts/{id}/hide']` |
 | `notifications` 表 / outbox 表 | `services/api/db/migrations/0016_account_deletion_persistence.sql:36` | 仓库自陈「main 上既无 outbox 表也无消费者，建表就是空承诺」 |
 | docs 侧的既有记录 | `docs/verification/gy-i15-community-http-20261020.md:247` | 该行记录的是「读取时重查负例·用例 6」（删除后 `reReviewContent` 返回 `re_reviewed:false / visibility:'deleted'`，**不复活**）——属于「读取时重查」的行为用例之一。**路由层零调用**：`git grep -n reReviewContent -- services/api/src` 只有定义 `services/api/src/community/service.ts:1735`，没有任何调用点 |

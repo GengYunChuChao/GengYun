@@ -1,25 +1,25 @@
 /**
  * 后台「社区审核队列」读面 + 审帖动作客户端 —— 纯 ESM，无 Vue／DOM 依赖，可用假 fetch 注入测试。
  *
- * ## 契约事实（`packages/contracts/openapi.json`，逐条给行号）
- * - `GET /admin/posts`（:11008）operationId `listAdminPosts`（:11010）、`x-scope: sources:read`（:11107）；
- *   参数 `Cursor`（:11023）／`Limit`（:11026）／`state`（:11029，`$ref Visibility`，「按 `visibility` 精确筛选」）／
- *   `audit_state`（:11037，`$ref AuditState`）；**无请求体**；200 `AdminPostPageEnvelope`（:11051）。
+ * ## 契约事实（`packages/contracts/openapi.json`，逐条给行号；R68-A05 净删 540 行后已按符号复核）
+ * - `GET /admin/posts`（:11434）operationId `listAdminPosts`（:11436）、`x-scope: sources:read`（:11527）；
+ *   参数 `Cursor`（:11449）／`Limit`（:11452）／`state`（:11455，`$ref Visibility`，「按 `visibility` 精确筛选」）／
+ *   `audit_state`（:11463，`$ref AuditState`）；**无请求体**；200 `AdminPostPageEnvelope`（:11477）。
  *   ⚠ 参数名就是 `state` 与 `audit_state`（snake）；**没有** `entity`／`entity_type`／作者／来源维度。
- * - `GET /admin/posts/{id}`（:11112）`getAdminPost`（:11114）、`x-scope: sources:read`（:11198）；
- *   path `id`（uuid，:11127-11133）；200 `AdminPostEnvelope`（:11142）+ `ETag`（:11147-11152，描述原文
- *   「资源revision强ETag；列表无此头」）；不存在 404（:11116 原文「不用 403，避免泄露存在性」）。
- * - `POST /admin/posts/{id}/approve`（:11310）`approvePost`（:11312）、`x-scope: sources:write`（:11402）；
- *   参数 `IdempotencyKey`（:11334）＋`IfMatch`（:11337）；**没有 requestBody**；200
- *   `PostReviewOutcomeEnvelope`（:11346）。描述（:11314）：写 `audit_state=approved`、**不改可见性**、
+ * - `GET /admin/posts/{id}`（:11532）`getAdminPost`（:11534）、`x-scope: sources:read`（:11612）；
+ *   path `id`（uuid，:11547-11552）；200 `AdminPostEnvelope`（:11562）+ `ETag`（:11567-11571，描述原文
+ *   「资源revision强ETag；列表无此头」）；不存在 404（:11536 原文「不用 403，避免泄露存在性」）。
+ * - `POST /admin/posts/{id}/approve`（:11727）`approvePost`（:11729）、`x-scope: sources:write`（:11822）；
+ *   参数 `IdempotencyKey`（:11751）＋`IfMatch`（:11754）；**没有 requestBody**；200
+ *   `PostReviewOutcomeEnvelope`（:11763）。描述（:11731）：写 `audit_state=approved`、**不改可见性**、
  *   硬规则明确否决的内容 422。
- * - `POST /admin/posts/{id}/reject`（:11407）`rejectPost`（:11409）、`x-scope: sources:write`（:11499）；
- *   请求体 `PostRejectionInput`（schema :15941：`reason_code` 闭集 10 值、必填、`additionalProperties:false`）；
- *   200 `PostReviewOutcomeEnvelope`（:11443）。描述（:11411）：`audit_state=rejected` **且** `visibility=hidden`，并通知作者。
- * - 幂等语义：`PostReviewOutcome`（schema :15966，8 个必填字段含 `changed`／`notified`）——重复动作返回
+ * - `POST /admin/posts/{id}/reject`（:11827）`rejectPost`（:11829）、`x-scope: sources:write`（:11922）；
+ *   请求体 `PostRejectionInput`（schema :16364：`reason_code` 闭集 10 值、必填、`additionalProperties:false`）；
+ *   200 `PostReviewOutcomeEnvelope`（:11863）。描述（:11831）：`audit_state=rejected` **且** `visibility=hidden`，并通知作者。
+ * - 幂等语义：`PostReviewOutcome`（schema :16389，8 个必填字段含 `changed`／`notified`）——重复动作返回
  *   `changed:false`。本模块**不把 `changed:false` 当成功**：页面显示「已是该状态」（见 `describeReviewOutcome`）。
- * - 四个 op 的响应码全集相同（:11045 起的 `responses`）：
- *   `200/400/401/403/404/409/413/415/422/428/429/503/504`。
+ * - 响应码不是四个 op 一套（R68-A05 收窄后实测）：两个 GET 为 `200/400/401/403/404/409/422/429/500/503/504`
+ *   （GET 不解析请求体 ⇒ 无 413/415；无前置条件头 ⇒ 无 428）；两个 POST（approve／reject）另含 `413/415/428`。
  *
  * ## 服务层事实（只读核对，`services/api/src/admin/ops/service.ts`）
  * - `:1297` 只在 `changed` 时记审计并回新 ETag；`:1275-1294` 错误映射：`NOT_FOUND`→404、
@@ -64,10 +64,10 @@ import {
 /** 读面路径（与下架面同一个 `/admin/posts` 家族；`POSTS_PATH` 复用，不另写字面量）。 */
 export const MODERATION_QUEUE_PATH = POSTS_PATH;
 
-/** 两个读面的 scope（契约 `x-scope` 原文 :11107 / :11198）。 */
+/** 两个读面的 scope（契约 `x-scope` 原文 :11527 / :11612）。 */
 export const MODERATION_READ_SCOPE = 'sources:read';
 
-/** 两个动作的 scope（契约 `x-scope` 原文 :11402 / :11499）。 */
+/** 两个动作的 scope（契约 `x-scope` 原文 :11822 / :11922）。 */
 export const MODERATION_WRITE_SCOPE = SOURCES_WRITE_SCOPE;
 
 export const LIST_OPERATION_ID = 'listAdminPosts';
@@ -75,7 +75,7 @@ export const DETAIL_OPERATION_ID = 'getAdminPost';
 export const APPROVE_OPERATION_ID = 'approvePost';
 export const REJECT_OPERATION_ID = 'rejectPost';
 
-/** 契约 `Visibility` 闭集（schema :11937 / 亦见 :11031 的筛选描述）。 */
+/** 契约 `Visibility` 闭集（schema :12351 / 亦见 :11457 的筛选描述）。 */
 export const VISIBILITY_STATES = Object.freeze(['private', 'published', 'hidden', 'deleted']);
 
 export const VISIBILITY_LABELS = Object.freeze({
@@ -85,7 +85,7 @@ export const VISIBILITY_LABELS = Object.freeze({
   deleted: 'deleted（已删除）',
 });
 
-/** 契约 `AuditState` 闭集（schema :11928）。 */
+/** 契约 `AuditState` 闭集（schema :12342）。 */
 export const AUDIT_STATES = Object.freeze(['pending', 'approved', 'rejected', 'quarantined']);
 
 export const AUDIT_STATE_LABELS = Object.freeze({
@@ -96,11 +96,11 @@ export const AUDIT_STATE_LABELS = Object.freeze({
   quarantined: 'quarantined（隔离待查）',
 });
 
-/** 审帖动作闭集（= 契约里两个 POST 的路径段 :11310 / :11407）。 */
+/** 审帖动作闭集（= 契约里两个 POST 的路径段 :11727 / :11827）。 */
 export const REVIEW_DECISIONS = Object.freeze(['approve', 'reject']);
 
 /**
- * 契约 `PostRejectionInput.reason_code` 闭集（schema :15941）。
+ * 契约 `PostRejectionInput.reason_code` 闭集（schema :16364）。
  * 单一来源：`services/api/src/admin/ops/types.ts` 的 `POST_REVIEW_REASON_CODES`。
  */
 export const POST_REVIEW_REASON_CODES = Object.freeze([

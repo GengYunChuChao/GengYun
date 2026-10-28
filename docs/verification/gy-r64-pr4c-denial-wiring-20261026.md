@@ -221,7 +221,7 @@ node tests/integration/admin-scopes-authority-pg.mjs
 
 - **E31** → 「**七条**落库审计写路径（账号停用／恢复 `0017`、开关变更 `0020`／`0027`、scope 授予／撤销 `0041`、作业取消 `0043`、scope 操作被拒 `0046`）」+ 依据 `catalog.ts:9-17`；并写明「表七行与 `AUDIT_ACTIONS` 七值一一对应但**顺序不同**」——表按迁移顺序（`job.cancel` 在表里第 6 位），闭集把 `job.cancel` 留在**第 4 位**、`admin_scope.*` 追加在末三位。这个错位是真实存在的，照抄「一一对应」会在扩值时误导人。
 - **E40** → 「`AUDIT_ACTIONS` **恰七值**（`job.cancel` 仍在第 4 位，`admin_scope.grant`／`revoke`／`deny` 追加在末三位），`?action=job.cancel` 与 `?action=admin_scope.grant` 都由 400 转 200」+ 依据 `catalog.ts:76-85`。
-- 指针全部改成实测行号：`admin-audit-action-jobs-cancel.test.mjs:171`（200 且只回该动作）、`:150-154`（前 4 项长度 + 第 4 项）、`:225`（闭集外仍 400、零端口调用）、`admin-audit-logs.test.mjs:130-131`（`deepEqual(enum, AUDIT_ACTIONS)` / `AUDIT_ENTITIES`）、`ai-ops-ledger-pins.test.mjs:253`（钉子④）、`packages/contracts/openapi.json:11344-11351`（action 七值）、`:11360-11364`（entity 四值）。（⚠ 这两处 `openapi.json` 指针自 R64 起就偏到 responses 块，不是本次位移造成的；真值见 `docs/architecture/ai-ops-spec-status.md` 的 E40 段，待跟进片修正。）
+- 指针全部改成实测行号：`admin-audit-action-jobs-cancel.test.mjs:171`（200 且只回该动作）、`:150-154`（前 4 项长度 + 第 4 项）、`:225`（闭集外仍 400、零端口调用）、`admin-audit-logs.test.mjs:130-131`（`deepEqual(enum, AUDIT_ACTIONS)` / `AUDIT_ENTITIES`）、`ai-ops-ledger-pins.test.mjs:253`（钉子④）、`packages/contracts/openapi.json:11147-11158`（action，R64 时七值、现十值）、`:11166-11173`（entity，R64 时四值、现六值）。（⚠ 这两处 `openapi.json` 指针自 R64 起就偏到 responses 块，不是位移造成的；R68-A05 已按符号把两条都改指枚举本体，实测见本页 §10.1 的两条 OK 行。）
 - 顺带修掉一处**双重过时**的交叉引用：E31 末尾原指 `docs/architecture/contract-implementation-status.md:164` 并断言「写入点只有三处」。**实测（`27bc991f`）**：`:164` 是 `setFlag` 那一行（535 字符，最近的真空行在 `:175`），而「库内写入点只有 suspend_account / restore_account / set_feature_flag 三处」这句**逐字存在于 `:166`**（`listAuditLogs` 行）；`N02` 也**没有销号**（`ai-ops-spec-status.md` 里 `N02` 实指 **8 处**：`:57`／`:133`／`:151`／`:163`／`:204`／`:236`／`:306`／`:307`；另 `:18` 与 `:145`（该行两次）为顺带提及 —— 逐字重数为 **10 行 / 11 次**，`:133` 指针写的仍是 `:164`、`:151` 待办写的仍是「三处 → 四处」）。所以原指针是**指错了两行**，不是「指到空行」、也不是「那句话不存在」。本片据实改指 `:166`（`listAuditLogs` 判定不变，仍 `partial`），并把 N02 的 `:133`／`:204` 指针与 `:151` 的待办数字一并改正（「三处 → 四处」→「三处 → 七处」）。`contract-implementation-status.md` 本身是治理台账（§10.1 受保护清单未列入它，但本片亦无书面授权），**没有改它**——它那行「三处」仍与七值闭集冲突，N02 因此仍未关闭，需另开一片同步。
 
 **怎么证明（人工证据，`--strict` 抓不到这类错）**：一次性脚本（不入仓）把 E31/E40 里所有 `路径:行号` 抽出来，逐条 ① 读该区间、断言每行非空且非纯符号（防「指到空行仍 exit 0」）② 按 `EXPECT` 表做**语义**断言（该行必须是被声称的那一行）。输出（11 条全中）：
@@ -236,13 +236,13 @@ OK  E40 tests/unit/admin-audit-action-jobs-cancel.test.mjs:150-154     ⟨test('
 OK  E40 tests/unit/admin-audit-action-jobs-cancel.test.mjs:225         ⟨test('(c) 反向控制：`action=not.an.action` ⇒ 400 INVALID_REQUEST，零端口调用', async () =⟩
 OK  E40 tests/unit/admin-audit-logs.test.mjs:130-131                   ⟨assert.deepEqual(action.schema.enum, [...AUDIT_ACTIONS]);⟩
 OK  E40 tests/unit/ai-ops-ledger-pins.test.mjs:253                     ⟨test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、无重复），扩值必须同 PR 改三件套', () => {⟩
-OK  E40 packages/contracts/openapi.json:11344-11351                    ⟨"enum": [⟩
-OK  E40 packages/contracts/openapi.json:11360-11364                    ⟨"enum": [⟩
+OK  E40 packages/contracts/openapi.json:11147-11158                    ⟨"enum": [⟩
+OK  E40 packages/contracts/openapi.json:11166-11173                    ⟨"enum": [⟩
 
 核对完成：11 条带行号的指针全部命中预期行，且没有一条指向空行/纯符号。
 ```
 
-脚本首跑还**抓出了我自己一个错**：原本写的 `openapi.json:11344-11352` 末行只是 `]`，不合「非纯符号」判据 ⇒ 收敛成 `11344-11351` / `11360-11364`（R64 当时的行号是 `11008-11015` / `11024-11028`；上面指针行用的是按 `openapi.json` 插入位移平移后的位置，两处指针的历史偏差见那里的 ⚠）。这就是为什么要逐行读、而不是只看「行号在文件长度内」。
+脚本首跑还**抓出了我自己一个错**：原本写的 action 区间 `11344-11352` 末行只是 `]`，不合「非纯符号」判据 ⇒ 收敛到最后一个枚举值上，成为 `11344-11351` / `11360-11364`（这是按当时 `openapi.json` 的插入位移平移后的位置，R64 时代契约里的真值是 `11008-11015` / `11024-11028`）。R68-A05 净删 540 行后按符号复核，两条现为 `11147-11158`（action，十值）/ `11166-11173`（entity，六值），见本页 §10.1 的两条 OK 行。这就是为什么要逐行读、而不是只看「行号在文件长度内」。
 
 ### 10.2 必修 2：`log.warn` 抛错会把 403/409 升成 500
 

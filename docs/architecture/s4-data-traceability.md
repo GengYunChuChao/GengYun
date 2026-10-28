@@ -94,7 +94,7 @@
   （「不能越权读取识别、反馈、认证、评审或原媒体」）。
 - **实现**：`services/api/src/auth/middleware.ts:233` 定义 `requireUser`，`:237` 定义 `requireAdmin`；
   后台面拒用户会话并回 `SCOPE_DENIED`（`:117`）；scope 串校验在 `:204`。
-- **证据**：契约两套鉴权方案 `packages/contracts/openapi.json:17`（`userSession`）与 `:297`（`adminSession`）；
+- **证据**：契约两套鉴权方案 `packages/contracts/openapi.json:17`（`userSession`）与 `:282`（`adminSession`）；
   用例 `tests/unit/auth-privacy-arm-isolation.test.mjs`、`tests/integration/favorites-history-isolation-http.mjs`。
 - **缺口**：无。**本项只判「有没有鉴权骨架与归属校验」**；「机构只给汇总、评审只看被分配脱敏原文」是另一件事，
   见 D02。这一拆分是本页与「鉴权面已实现」这类笼统结论的主要差异。
@@ -108,7 +108,7 @@
   写回 `:650`；读面 `services/api/src/routes/exports.ts:42`（无池即 503，不降级内存账本 `:55`）；
   接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:205`，授权落库要求两类证据引用见
   `services/api/src/privacy/grant-pg.ts:63`。
-- **证据**：契约 `packages/contracts/openapi.json:1474`（`GET /me/exports`）；装配 `services/api/src/app.ts:2405`（`registerExportRoutes(app, config, pool, guards)`；2026-10-28 复核纠正：原引 `:2219` 实测是应用时钟注释段，按符号 `registerExportRoutes` 重锚）。
+- **证据**：契约 `packages/contracts/openapi.json:1378`（`GET /me/exports`；2026-10-28 合并复核：#707 删掉 540 行错误响应后本锚由 `:1474` 落到 `:1378`，按符号 `"/me/exports"` 复取）；装配 `services/api/src/app.ts:2405`（`registerExportRoutes(app, config, pool, guards)`；2026-10-28 复核纠正：原引 `:2219` 实测是应用时钟注释段，按符号 `registerExportRoutes` 重锚）。
 - **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接。账本装配在 `services/api/src/app.ts:1007`（`egressPoolUsable` 才建 `createPostgresExportLedger`），同段 `//` 装配注释自述：real 模式
   在任何账本变更**之前** 503（零 `sent` 记录），替身/演示模式**不记账**（注释行按 `--symbol=strict` 不能落锚点，故只给同段代码行）。因此真库上取不到一条真实外发记录，
   「记录得住」这件事只有结构与读面证据，没有一条真实数据流过。这一条不把 D12 降级：能力（表、写面、读面、
@@ -132,7 +132,7 @@
 - **实现**：purpose 闭集 4 项（`recording`、`media_processing`、`external_inference`、`public_posting`）见
   `packages/privacy/constants.mjs:13-18`；授权读面与撤回面 `services/api/src/routes/consents.ts:38`（写）、`:64`（撤回，
   缺 `If-Match` 即 `REVISION_REQUIRED` `:74`）、`:90`（政策读面）；撤回落库 `services/api/src/privacy/consent-pg.ts:148`。
-- **证据**：契约 `packages/contracts/openapi.json:1377`（`withdrawConsent`）；真库臂
+- **证据**：契约 `packages/contracts/openapi.json:1281`（`withdrawConsent`）；真库臂
   `.github/workflows/consent-grant-postgres.yml:34`。
 - **缺口**：没有 `location` 与 `training` 两个 purpose（`packages/privacy/constants.mjs:12` 自注「首版无 training」）。
   后果是「定位要单独授权」这条子句无处可撤——不是撤不掉，而是根本没有这一路授权。
@@ -244,7 +244,7 @@
   （`:147` 无凭据或无传输即不可用、`:45` 错误码 `OBJECT_UNAVAILABLE`），装配在 `services/api/src/app.ts:2009`：只登记进
   删除注册表、**不 dispatch**（同段 `:2007` 自陈 `config.ts` 无第三方凭据键 ⇒ 装配层不自造真实适配器）；④ 回执投影在且
   **已接进注销回执**——`services/api/src/privacy/third-party-deletion-projection.ts:277` → `services/api/src/routes/account-deletion.ts:148`
-  （`thirdPartyRowsFor` 当次请求内预取一次）→ `:154`（`thirdPartyReceiptState`），契约字段 `third_party_state` 见 `packages/contracts/openapi.json:14374`
+  （`thirdPartyRowsFor` 当次请求内预取一次）→ `:154`（`thirdPartyReceiptState`），契约字段 `third_party_state` 见 `packages/contracts/openapi.json:13834`
   （回执是 `getDeletionReceipt`，原页误作 `/me/exports`）；⑤ 真库端口在、**读侧已装配**——`services/api/src/privacy/third-party-deletion-pg.ts`
   只经 0044 两条 `SECURITY DEFINER` 函数进出（表零 DML/SELECT）；装配四臂在 `services/api/src/app.ts:1998`（`:2002` 真库臂、
   `:2004` 不可用臂），`:2550` 交给注销路由；**写侧方法 `subscribeThirdPartyDeletion` 零调用者**（读数见「证据」）。

@@ -332,9 +332,9 @@
 
 - **为什么未取得（实测口径，`7dd3d699`）**：
   - `packages/contracts/states.json:64-69` 的 `DeletionState` 枚举只有 `requested` / `processing` / `blocked` / `completed`，**没有 `cancelled`**；
-  - `packages/contracts/openapi.json` 里 `/me/account/deletion` 只有 `post`（`requestAccountDeletion`，见 `packages/contracts/openapi.json:1565-1567`），`/account/deletions/{id}` 只有 `get`（`getDeletionReceipt`，见 `packages/contracts/openapi.json:1663-1665`）；`packages/contracts/operations.json` 共 **113** 个 operation，按 `deletion` 过滤只有上面这 2 条（自算命令：`node -e "…filter(o => JSON.stringify(o).includes('deletion'))"`）；
+  - `packages/contracts/openapi.json` 里 `/me/account/deletion` 只有 `post`（`requestAccountDeletion`，见 `packages/contracts/openapi.json:1460-1462`），`/account/deletions/{id}` 只有 `get`（`getDeletionReceipt`，见 `packages/contracts/openapi.json:1555-1557`）；`packages/contracts/operations.json` 共 **113** 个 operation，按 `deletion` 过滤只有上面这 2 条（自算命令：`node -e "…filter(o => JSON.stringify(o).includes('deletion'))"`）；
   - 因此矩阵 C4 第 15–16 条只能断言 **404**——证的是「契约里没有这条路」，**不是**「取消注销后状态回到正确态」。
-  - 注意别把两件事混起来：`/jobs/{id}/cancel` 与 `/admin/jobs/{id}/cancel` **有**契约 operation（`packages/contracts/openapi.json:2351`、`:10446`），那是「在途任务取消」，不是「注销取消」。
+  - 注意别把两件事混起来：`/jobs/{id}/cancel` 与 `/admin/jobs/{id}/cancel` **有**契约 operation（`packages/contracts/openapi.json:2219`、`:9996`），那是「在途任务取消」，不是「注销取消」。
 - **要拿到需要什么**：需求侧先定契约（是否允许取消、允许窗口、取消后 `DeletionState` 取值、回执 bearer 是否随之失效）⇒ 再在 openapi / operations.json / states.json 三处加 operation 与枚举 ⇒ 然后写实现 + 矩阵补两条**真**断言。三步都不在本片范围（本片不改契约、不改产品代码）。
 - **是否阻塞 #22 关闭**：**我的判断：不阻塞。** 依据是 #22 验收原文只要求「有限关键安全及权限用例全部通过，未解决严重安全／权限缺陷 0」；一个**契约未定义**的路径既不是「用例失败」也不是「未解决的严重缺陷」，属范围外。但这条判断的代价要写清：**在契约补上之前，任何「注销闭环（含取消）」的说法都不成立**。
 

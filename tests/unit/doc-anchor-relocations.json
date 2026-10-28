@@ -10,6 +10,128 @@
     "reason": "合并 upstream/main（fa3b2553）时 catalog.ts 被上游注释块改动，`export const AUDIT_ACTIONS = Object.freeze([`（258）到 `] as const);`（269）整体下移 8 行；旧值 250-261 在合并后的文件里指向注释文字，不是闭集。按符号重锚，不是 250+8 的差值平移。"
   },
   {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 199,
+    "target": "packages/contracts/openapi.json",
+    "from": 11008,
+    "fromEnd": 11013,
+    "to": 11147,
+    "toEnd": 11158,
+    "reason": "旧锚点 11008-11013 指到 `GET /admin/audit-logs` 的 `security` / `parameters` 块（base 原行为 `\"security\": [`、`\"parameters\": [`），不是 action 枚举；本提交按符号 `admin_account.enable` 改指 AuditAction 枚举本体（HEAD 11147-11158）。该 symbol 在 openapi.json 内出现 2 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account.enable\""
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 199,
+    "target": "packages/contracts/openapi.json",
+    "from": 10733,
+    "fromEnd": 10738,
+    "to": 11166,
+    "toEnd": 11173,
+    "reason": "旧锚点 10733-10738 指到另一个 operation 的 `IfMatch` 参数尾部与 `responses` / `200` 块，不是 entity 枚举；本提交按符号 `admin_account` 改指 AuditEntity 枚举本体（HEAD 11166-11173）。该 symbol 在 openapi.json 内出现 1 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account\""
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 12,
+    "target": "packages/contracts/openapi.json",
+    "from": 11462,
+    "to": 11617,
+    "reason": "旧锚点 11462 指到 `Error413` 的 `$ref`，不是 path 行；本提交按符号 `/admin/posts/{id}/hide` 改指 `POST /admin/posts/{id}/hide` 的 path 键（HEAD 11617）。",
+    "kind": "correction",
+    "symbol": "/admin/posts/{id}/hide"
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 58,
+    "target": "packages/contracts/openapi.json",
+    "from": 11462,
+    "to": 11617,
+    "reason": "同页表格里的 path 锚点：旧值 11462 指到 `Error413` 的 `$ref`，不是 path 行；本提交按符号 `/admin/posts/{id}/hide` 改指 path 键（HEAD 11617）。",
+    "kind": "correction",
+    "symbol": "/admin/posts/{id}/hide"
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 58,
+    "target": "packages/contracts/openapi.json",
+    "from": 11167,
+    "to": 11619,
+    "reason": "旧锚点 11167 指到一个裸 `{`，不是 `operationId` 行；本提交按符号 `hidePost` 改指 `\"operationId\": \"hidePost\"`（HEAD 11619）。",
+    "kind": "correction",
+    "symbol": "hidePost"
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 59,
+    "target": "packages/contracts/openapi.json",
+    "from": 11371,
+    "to": 11712,
+    "reason": "旧锚点 11371 指到 `Error428` 的 `$ref`，不是 `x-scope` 行；本提交按符号 `x-scope` 改指 `\"x-scope\": \"sources:write\"`（HEAD 11712）。该 symbol 在 openapi.json 内出现 20 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"x-scope\": \"sources:write\""
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 60,
+    "target": "packages/contracts/openapi.json",
+    "from": 11540,
+    "to": 11713,
+    "reason": "旧锚点 11540 指到一个 `\"schema\": {`，不是 `x-version-required` 行；本提交按符号 `x-version-required` 改指 `\"x-version-required\": true`（HEAD 11713）。该 symbol 在 openapi.json 内出现 52 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"x-version-required\": true"
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 224,
+    "target": "packages/contracts/openapi.json",
+    "from": 11344,
+    "fromEnd": 11351,
+    "to": 11147,
+    "toEnd": 11158,
+    "reason": "旧锚点 11344-11351 落在某个 operation 的 `responses` 里 400/401 的 `$ref` 上，不是 action 枚举；本提交按符号 `admin_account.enable` 改指 AuditAction 枚举本体（HEAD 11147-11158）。该 symbol 在 openapi.json 内出现 2 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account.enable\""
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 224,
+    "target": "packages/contracts/openapi.json",
+    "from": 11360,
+    "fromEnd": 11364,
+    "to": 11166,
+    "toEnd": 11173,
+    "reason": "旧锚点 11360-11364 落在 413/415 的 `$ref` 上，不是 entity 枚举；本提交按符号 `admin_account` 改指 AuditEntity 枚举本体（HEAD 11166-11173）。该 symbol 在 openapi.json 内出现 1 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account\""
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 239,
+    "target": "packages/contracts/openapi.json",
+    "from": 11344,
+    "fromEnd": 11351,
+    "to": 11147,
+    "toEnd": 11158,
+    "reason": "§10.1 的 OK 行：旧值 11344-11351 在 base 上落在 400/401 的 `$ref`（不是枚举），本提交按符号 `admin_account.enable` 改指 AuditAction 枚举本体（HEAD 11147-11158）。该 symbol 在 openapi.json 内出现 2 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account.enable\""
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 240,
+    "target": "packages/contracts/openapi.json",
+    "from": 11360,
+    "fromEnd": 11364,
+    "to": 11166,
+    "toEnd": 11173,
+    "reason": "§10.1 的 OK 行：旧值 11360-11364 在 base 上落在 413/415 的 `$ref`（不是枚举），本提交按符号 `admin_account` 改指 AuditEntity 枚举本体（HEAD 11166-11173）。该 symbol 在 openapi.json 内出现 1 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account\""
+  },
+  {
     "doc": "docs/architecture/admin-console-capability-map.md",
     "line": 18,
     "target": "services/api/src/routes/admin.ts",
@@ -18,6 +140,398 @@
     "to": 408,
     "toEnd": 427,
     "reason": "按符号重锚，不是随代码位移：旧值 238-255 在 base（76ba283f）上是 238 空行加 239 `const knowledge = familyOps(KNOWLEDGE_FAMILY);` 起的 knowledge 族六条路由（到 255 `app.post(`${API_PREFIX}/admin/knowledge/:id/withdraw`），而这一行现在写的是 `grantAdministratorScope`／`revokeAdministratorScope` 两条授/收权写面——旧锚点本来就指错了族，属既有陈旧锚点。新区间取这两条路由的真实注册块：408 `app.post(` 起（409 是 `/admin/administrators/:id/scopes`）到 427 `);` 收口，中间 417 `app.delete(` 起（418 是 `/admin/administrators/:id/scopes/:scope`）；一个区间覆盖两条 operation，与文档该行的「2 个 operation」对齐。services/api/src/routes/admin.ts 本片未改动，所以只能登记，不能用端点映射解释。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 7,
+    "target": "services/api/src/app.ts",
+    "from": 1332,
+    "to": 1353,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1332` 是 `communityPostPortForAdmin` 的续行（`adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });`），不是 `adminRealUnwired`；真值是 1353 `const adminRealUnwired = config.executionMode === 'real';`。按符号 `adminRealUnwired` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 78,
+    "target": "services/api/src/app.ts",
+    "from": 1332,
+    "to": 1353,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1332` 是 `communityPostPortForAdmin` 的续行（`adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });`），不是 `adminRealUnwired`；真值是 1353 `const adminRealUnwired = config.executionMode === 'real';`。按符号 `adminRealUnwired` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 78,
+    "target": "services/api/src/app.ts",
+    "from": 1354,
+    "fromEnd": 1356,
+    "to": 1375,
+    "toEnd": 1377,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 78,
+    "target": "services/api/src/app.ts",
+    "from": 1492,
+    "fromEnd": 1493,
+    "to": 1513,
+    "toEnd": 1514,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1492-1493` 落在账号停用/恢复装配里（1492 `messagesService === null` 一带），不是审计总台账只读端口；真值是 1513-1514 `const realAuditLogPort =` / `adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));`。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 82,
+    "target": "services/api/src/routes/admin.ts",
+    "from": 295,
+    "fromEnd": 299,
+    "to": 316,
+    "toEnd": 321,
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:295-299` 是 restrictions 家族的 withdraw 路由（`app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`…)`），不是 `listAuditLogs`；真值是 316-321（316 `const listAuditLogs = methodOf(services.audit, 'listAuditLogs');`、318 `${API_PREFIX}/admin/audit-logs`）。按符号 `listAuditLogs` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 82,
+    "target": "services/api/src/app.ts",
+    "from": 1485,
+    "fromEnd": 1493,
+    "to": 1513,
+    "toEnd": 1514,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 83,
+    "target": "services/api/src/routes/admin.ts",
+    "from": 377,
+    "fromEnd": 390,
+    "to": 476,
+    "toEnd": 490,
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:377-390` 是 `/admin/administrators` 列表与 scopes 读面，不是 jobs 族；真值是 476-490（476 `const listJobs = methodOf(services.ops, 'listAdminJobs');`、478-482 `${API_PREFIX}/admin/jobs`、483-490 `${API_PREFIX}/admin/jobs/:id/cancel`）。按符号 `listAdminJobs`／`cancelAdminJob` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 83,
+    "target": "services/api/src/app.ts",
+    "from": 1354,
+    "fromEnd": 1356,
+    "to": 1375,
+    "toEnd": 1377,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 84,
+    "target": "services/api/src/routes/admin.ts",
+    "from": 430,
+    "fromEnd": 438,
+    "to": 530,
+    "toEnd": 539,
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:430-438` 是 R64 管理员账号状态写面的注释块，不是 `hidePost` 路由；真值是 530-539（530 `const hidePost = methodOf(services.ops, 'hidePost');`、532 `${API_PREFIX}/admin/posts/:id/hide`）。按符号 `hidePost` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 84,
+    "target": "services/api/src/app.ts",
+    "from": 1310,
+    "fromEnd": 1311,
+    "to": 1331,
+    "toEnd": 1332,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1310-1311` 是社区服务 fail-closed 的告警分支（`app.log.warn({ executionMode: config.executionMode }, \"GY-I15 社区域：… 16 条社区路由一律 503 PROVIDER_UNAVAILABLE\")` 与 `} else {`），不是 `hidePost` 用的社区帖子端口构造；真值是 1331-1332 `const communityPostPortForAdmin =` / `adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });`。按符号 `communityPostPortForAdmin` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 84,
+    "target": "services/api/src/app.ts",
+    "from": 1548,
+    "to": 1590,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1548` 是 `executionMode: config.executionMode,`（管理员运行时装配里的一行），不是 `hidePostWired`；真值是 1590 `hidePostWired: communityPostPortForAdmin.persistent === true,`（另一分支的同一判断在 1665）。按符号 `hidePostWired` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 236,
+    "target": "services/api/src/app.ts",
+    "from": 1354,
+    "fromEnd": 1356,
+    "to": 1375,
+    "toEnd": 1377,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 236,
+    "target": "services/api/src/app.ts",
+    "from": 1492,
+    "fromEnd": 1493,
+    "to": 1513,
+    "toEnd": 1514,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1492-1493` 落在账号停用/恢复装配里（1492 `messagesService === null` 一带），不是审计总台账只读端口；真值是 1513-1514 `const realAuditLogPort =` / `adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));`。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 246,
+    "target": "services/api/src/app.ts",
+    "from": 1485,
+    "fromEnd": 1493,
+    "to": 1513,
+    "toEnd": 1514,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 87,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 87,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 87,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 88,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 88,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 88,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 89,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 89,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 89,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 90,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 90,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 90,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 91,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 91,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 91,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1057,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1057,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1057,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1079,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1079,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1079,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1101,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1101,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1101,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1123,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1123,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1123,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1145,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1145,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 494,
+    "to": 557,
+    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1145,
+    "target": "services/api/src/app.ts",
+    "from": 2306,
+    "to": 2462,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/development-progress.md",
+    "line": 114,
+    "target": "services/api/src/ocr/store-pg.ts",
+    "from": 359,
+    "to": 376,
+    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/admin-console-capability-map.md",
+    "line": 78,
+    "target": "services/api/src/app.ts",
+    "from": 1485,
+    "fromEnd": 1491,
+    "to": 1506,
+    "toEnd": 1512,
+    "reason": "旧锚点指向注释段主体之前的无关装配行：`services/api/src/app.ts:1485-1491` 是账号停用/恢复系统事件（accountEvents）代码块，不含 R34 只读端口那句说明；旧行原文逐字相同的那段说明在 HEAD 落在 1506-1512（1506 `// **R34 显式放行（库内审计**读**面，不是写面）**：只在**确实拿到库池**时构造只读端口；`、1507 `// \\`pool === null\\` ⇒ 端口 null ⇒ \\`/admin/audit-logs\\` 保持 503…`）。按符号重锚到该注释块，目标文件本提交未改动。"
   },
   {
     "doc": "docs/architecture/s4-data-traceability.md",
@@ -50,5 +564,13 @@
     "from": 2076,
     "to": 1998,
     "reason": "§7.2 D13 行的判据落点原写 `app.ts:2076 同侧装配区`，而 base 上 2076 是 `) => messagesPurgeSnapshot(ownerId, client),`（消息清理快照，与本项无关）；第三方读侧装配区真行是 1998 的 `const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =`（按符号 `thirdPartyWiring` 命中）。按符号重锚到 1998。目标文件本片未改。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 97,
+    "target": "packages/contracts/openapi.json",
+    "from": 297,
+    "to": 282,
+    "reason": "D01 的「证据」行写两套鉴权方案 `packages/contracts/openapi.json:17`（`userSession`）与裸锚 `:297`（`adminSession`）。base 上 `packages/contracts/openapi.json:297` 确为 `            \"adminSession\": []`；upstream #707（ae818469）从该契约删掉 540 行错误响应后全文前移，`adminSession` 首个定义落到 282，HEAD 上 `packages/contracts/openapi.json:282` = `            \"adminSession\": []`（`:297` 现在是 `              \"ETag\": {`）。按符号 `\"adminSession\": []` 复取到 282，不是差值平移。契约文件本提交未改动（HEAD 的 openapi.json 就是 upstream/main 那一份）。"
   }
 ]
