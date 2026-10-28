@@ -201,7 +201,9 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 钉这条路径的原因是「手选条件查询」在仓里有两个实现，数据源根本不同：`pages/knowledge` 走服务端 `GET /knowledge`（真库读视图），`pages/reference` 带条件时**强制**读随包离线副本（第 7.4 节）。若不钉，同一句验收会在两个页面上各算一半，而其中一半结构上不可能通过。
 
-真库端到端已按这条路写成 7 步：`tests/integration/user-chain-e2e.mjs`（本片加入第 7.3 节的「来源失效」往返后实测 142 条断言 / 7 步 / exit 0）。
+真库端到端已按这条路写成 7 步：`tests/integration/user-chain-e2e.mjs`（本片加入第 7.3 节的「来源失效」往返后实测 142 条断言 / 7 步 / exit 0；2026-10-28 于本机真库复跑复现同一读数）。
+
+这 7 步**不含历史步** —— `tests/integration/user-chain-e2e.mjs` 全文对 `history` 零命中，`/history` 一步都没有，故 #16 的「可核对历史」这一半**不在这条链路里**（历史侧目前只有 `tests/integration/favorites-history-isolation-http.mjs`：两账号 × 两私有域，但 store 是内存替身、非真库）；⛔ 不能把本链路 e2e 读成「历史也验过了」。
 
 ### 7.1 查询面＝`pages/knowledge`
 
