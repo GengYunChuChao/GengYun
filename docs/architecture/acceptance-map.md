@@ -80,3 +80,48 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 
 验证方式（跨平台可复现）：`node --test tests/unit/admin-ops-governance.test.mjs tests/unit/admin-ui-review-state.test.mjs tests/moderation/http-callback.test.mjs` 在 HEAD 上全绿；把上表任一条**单独**改成"已接线"（例如给 `/admin` 响应加 `wired: { const: true }`）即可看到对应用例变红。
 
+## 待裁定缺口：从 `/herbicides` 的 id 收藏必然 `unavailable`（GY-R68）
+
+**登记日期** 2026-10-28 · **基线** `da61b64d` · **状态**：已复现、已钉负控制，**待指挥/用户裁定**。本片只加证据与登记，**不改业务行为**。
+
+### 现象
+
+`/herbicides` 与 `/knowledge` 是**两套 uuid**，同一条公告记录在两套读面里名字不同，而收藏的「引用可用性」解析只认后一套：
+
+| 环节 | 派生方式 | 位置 |
+| --- | --- | --- |
+| `/herbicides/{id}` 的 id | `deterministicUuid(record_id)` | `packages/reference/records.mjs`（`toHerbicideContract`） |
+| 同一记录在 `/knowledge` 的 id | `deterministicUuid('knowledge:' + record_id)` | `packages/reference/records.mjs`（`toKnowledgeContract`） |
+| `/knowledge` 浙江首批投影的 id（第三套） | `deterministicUuid('zhejiang-knowledge:' + item_id)` | `packages/reference/zhejiang.mjs` |
+| 收藏可用性解析的**唯一**权威 | 只查 `catalog_read.current_knowledge` + 浙江首批投影 | `services/api/src/app.ts`（`publicKnowledgeRowOf`、`defaultVisibility`）、`services/api/src/knowledge/reference-query.ts`（`toSeedRows`） |
+
+实测（20 条公告记录逐条复算）：两套 id 对**同一条记录**全部不同（0/20 相同），且与浙江首批 159 条 id 集合**交集为 0**；`/herbicides` 的 20 个 id 与 `/knowledge` 读面 159 行的交集同样是 **0**。
+
+⇒ 用 `/herbicides` 列表里的 id 建收藏：**HTTP 201 成功**，但 `reference_state` 恒为 `unavailable`，`unavailable_reason` 落在冻结闭集的对象侧那条（「目标已下架、已失效、已隐藏、已删除或不属于当前账号」）。**这与数据是否核准无关**——`/knowledge` 里 `review_status='unverified'` 的未核准种子行照样判 `available`，差别只在 id 认不认。
+
+今天的**可达性**（如实写清，别夸大）：小程序里**没有**从 `/herbicides` 详情收藏的入口（`miniprogram/pages/referencedetail/` 无收藏按钮），收藏页的「可收藏目标」也来自 `/knowledge` 列表。所以坏收藏目前只能经 API 直接产生；**一旦给该详情页加收藏按钮，用户会立刻遇到**。
+
+### 两条出路（待裁定，本片不选）
+
+| # | 出路 | 代价 / 需要先定的事 |
+| --- | --- | --- |
+| (a) | 让收藏可用性解析器认 `/herbicides` 的 id（在 `publicKnowledgeRowOf` 之前先按 `packages/reference` 的 `Herbicide` 投影核一次，或把两套 id 统一成一套） | 动**服务端契约面**：`FavoriteTarget.id` 的语义从「`/knowledge` 的 id」扩成「任一读面的 id」。**须先裁定这是否等于「收藏授予可见性」这条红线**——收藏行为本身能不能让一条不在 `/knowledge` 读面里的目标变成「可用/可跳转」。若答案是不能，则只剩"统一 id"（改响应里的 id 值，属破坏性契约变更），不能"两套都认" |
+| (b) | 像 `referencedetail` 现在这样**明确不做**：`/herbicides` 详情页**不给收藏入口**，把"不给"写成显式决定而不是遗漏 | 零服务端改动。**用户会看到什么**：`/herbicides` 详情页没有收藏按钮，收藏只能发生在 `/knowledge` 的条目上；从 `/herbicides` 复制 id 直接打 API 仍会得到 201 + `unavailable`（属开发/运维路径，不属用户路径）。代价是"从公告记录本身收藏"这个产品意图被正式放弃，需在需求侧认账 |
+
+### 不裁定的后果
+
+用户从除草剂详情点收藏会得到「**收藏成功但永远不可用**」的坏收藏——比被拒更糟：按钮变「取消收藏」、提示「已收藏该资料。」，用户以为收藏到了；事后在收藏页只看到 pill「不可用」+ 一句刻意不区分原因的非披露文案，既不能跳转也无法自救。裁决前若有人给 `/herbicides` 详情页加收藏按钮，这条坏路径会立刻变成线上体验。
+
+### 本片的钉子（不是修复）
+
+`tests/unit/favorites-herbicide-id-gap.test.mjs` 把上面每一条钉成可复跑的断言：
+
+| 用例 | 钉住的事实 |
+| --- | --- |
+| R68-0 | 两套 id 的口算：20/20 对同一条记录不同、与浙江首批 159 条 id 交集 0（纯函数，不启服务） |
+| R68-① | `/herbicides` 首条 id ⇒ `POST /favorites` **201** + `reference_state='unavailable'` + 理由码在冻结闭集内；同一夹具里 `/knowledge` 读面 159 条非空且与 20 个 herbicide id 交集 0（排除"读面为空"这一平凡解释） |
+| R68-② | 两条原因**分开**断言：甲「数据未核准」不导致 unavailable（未核准种子行照样 `available`）；乙「id 不认」——同一条记录换成 `/knowledge` 拼法即 `available`，`/herbicides` 拼法 `unavailable` |
+| R68-③ | 负控制：把解析器换成"任何 id 都 available"（经 `buildApp` 的公开注入缝 `favoritesInjection.visibility`，不改生产代码）⇒ ①②的核心断言双双变红 |
+
+⛔ 这些断言刻意钉在**今天的坏行为**上：按出路 (a) 修好后它们**必须变红**，届时同批改断言并把本节状态改成「已裁定/已实现」。另：本片还用一次**临时改动生产默认解析器**（`publicKnowledgeRowOf` 返回 `null` 时改判 `available`）复核了负控制——① 与 ② 变红且红在 `reference_state` 那两条断言上，随后立即复原（blob 指纹前后一致，未入提交）。
+
