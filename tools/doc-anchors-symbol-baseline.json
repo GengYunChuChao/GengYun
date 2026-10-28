@@ -164,16 +164,6 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-72 行（「/**…」），块后第一条非空行是第 73 行的「import type { AuthorDirectory } from './types.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/app.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/app.ts:2219",
-      "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 111,
-      "kind": "inline",
-      "note": "【行内单行注释】文档引的是第 2219 行这条`//` 行注释（「// 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一*…」），块后第一条非空行是第 2220 行的「// 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。」，紧跟另一段注释——引用的是这条注释的自述，没有声明行可指。"
-    },
-    {
       "path": "packages/privacy/constants.mjs",
       "reason": "COMMENT_ANCHOR",
       "owner": "contracts",
