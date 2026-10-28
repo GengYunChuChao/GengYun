@@ -43,11 +43,14 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
+    // 重新进入本页即作废上一轮列表读取：门禁/新读取还没返回时，旧第一页或旧分页的
+    // 成功/失败都不得再写页面或定位快照。离页时仍可能留下 busy/loading，这里一并解除。
+    self._listEpoch = (self._listEpoch || 0) + 1
     // 重新进入本页即丢弃上一轮的定位快照：门禁/读取还没返回时，旧行 id 不应继续可用。
     self._rawItems = []
     historyApi.clearSelection()
     self.setData({
-      gatePassed: false, checking: true, items: [], nextCursor: null,
+      gatePassed: false, checking: true, busy: false, loading: false, items: [], nextCursor: null,
       errorText: '', errorCode: '', message: '', failedCount: 0
     })
     pageGate.start(this, function (ok) {
@@ -58,13 +61,25 @@ Page({
     })
   },
 
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  onHide: function () {
+    pageGate.cancel(this)
+    // 隐藏后旧请求仍可能返回；先作废代次，再由重进 onShow 建立新一轮。
+    this._listEpoch = (this._listEpoch || 0) + 1
+  },
+  onUnload: function () {
+    pageGate.cancel(this)
+    this._listEpoch = (this._listEpoch || 0) + 1
+  },
 
   load: function (cursor) {
     const self = this
+    // 每次加载（第一页、加载更多、刷新）都有自己的页面代次。守卫必须在任何 setData、
+    // `_rawItems` 写入或 historyApi.remember 之前；旧响应连 busy/loading 都不得复位。
+    const epoch = (self._listEpoch = (self._listEpoch || 0) + 1)
+    const alive = function () { return epoch === self._listEpoch }
     self.setData({ busy: true, loading: true, errorText: '', errorCode: '' })
     historyApi.listHistory(cursor || '', PAGE_SIZE).then(function (result) {
+      if (!alive()) return
       const items = result.items.map(function (item) {
         const view = historyApi.historyItemView(item)
         return Object.assign({}, view, { cardTitle: view.kindLabel + ' · ' + view.createdText })
@@ -82,6 +97,7 @@ Page({
         message: merged.length ? '' : '还没有识别记录。'
       })
     }).catch(function (error) {
+      if (!alive()) return
       // 失败时不保留旧记录；错误码原样带出，401/403/404 分别由状态组件呈现，不折叠成空列表成功。
       self._rawItems = []
       self.setData({

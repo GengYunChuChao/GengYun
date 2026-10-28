@@ -5,8 +5,8 @@
   "scan": [
     "docs"
   ],
-  "judged_total": 6217,
-  "documents_digest": "fnv1a64:DD75D9B9DC67BEF9",
+  "judged_total": 6219,
+  "documents_digest": "fnv1a64:437786CEFF179869",
   "accept": [
     {
       "why": "首次落地锚点清册：按文档登记「进判据的锚点条数」（226 份文档 / 6217 条），堵住「整条改写成散文就无声离开判据面」",
@@ -22,21 +22,26 @@
       "why": "补 documents_digest：把清册这张表本身钉进文件（求和与 accept 账本只抓得住单改一个数字，把条数、judged_total、账本末条一起改齐仍能过关）。只加字段与一条 accept 留痕，键集与 judged_total 都不动：226 份 / 6217 条",
       "accept": 0,
       "judged_total": 6217
+    },
+    {
+      "why": "合流 GY-R68-A01 × upstream/main 后重算清册：净 +2（6217→6219）——admin-console-capability-map +2、state-contract +7 是 A01 补的实测锚点；contract-implementation-status -7 是把 main 侧标注为「旧基线值」的 7 条过期读数（app.ts:2227／2228／2204／2207／2213／2221／2229）换成本片在合流树上按符号重取的 7 条（:2488／:2489／:2495／:2498／:2504／:2512／:2520），旧值不再留在正文里冒充锚点——不是「把 path:N 改写成第 N 行」的逃逸，判据与键集都没动。",
+      "accept": 2,
+      "judged_total": 6219
     }
   ],
   "documents": {
     "docs/architecture/README.md": 4,
     "docs/architecture/acceptance-map.md": 1,
-    "docs/architecture/admin-console-capability-map.md": 95,
+    "docs/architecture/admin-console-capability-map.md": 97,
     "docs/architecture/ai-ops-spec-status.md": 177,
-    "docs/architecture/contract-implementation-status.md": 446,
+    "docs/architecture/contract-implementation-status.md": 439,
     "docs/architecture/gy-i19-user-backup-copies-design.md": 33,
     "docs/architecture/gy-r34-retention-policy.md": 19,
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md": 81,
     "docs/architecture/openapi-route-parity.md": 1,
     "docs/architecture/rate-limit-policy.md": 4,
     "docs/architecture/s4-data-traceability.md": 212,
-    "docs/architecture/state-contract.md": 9,
+    "docs/architecture/state-contract.md": 16,
     "docs/development-progress.md": 55,
     "docs/evaluation/acceptance-thresholds-summary.md": 3,
     "docs/evaluation/sample-gap-register.md": 2,

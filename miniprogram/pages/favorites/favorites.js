@@ -50,10 +50,14 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
-    // 门禁未通过前清空一切结果，避免残留上一个会话的收藏。
+    // 页面代次：每次进入/离开都推进。上一轮在途的读取（成功或失败）一律作废，
+    // 不得把旧列表/targets/busy/error 写回新一轮。
+    self._epoch = (self._epoch || 0) + 1
+    // 门禁未通过前清空一切结果，避免残留上一个会话的收藏；同时解除上一轮可能残留的在途态。
     self.setData({
       gatePassed: false, checking: true, items: [], total: 0, nextCursor: null,
-      targets: [], targetNote: '', targetError: '', errorText: '', errorCode: '', message: ''
+      targets: [], targetNote: '', targetError: '', errorText: '', errorCode: '', message: '',
+      busy: false, loading: false
     })
     pageGate.start(this, function (ok) {
       self.setData({ checking: false })
@@ -66,13 +70,26 @@ Page({
     })
   },
 
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  onHide: function () { pageGate.cancel(this); this._epoch = (this._epoch || 0) + 1 },
+  onUnload: function () { pageGate.cancel(this); this._epoch = (this._epoch || 0) + 1 },
+
+  // 读取代次：每发起一次读取推进，并与页面代次一起校验。旧页面或旧一轮的回调必须在
+  // **任何 setData／reconcile 之前**返回，否则旧列表/旧 targets/旧 busy/error 会污染新一轮。
+  beginRead: function (key) {
+    this[key] = (this[key] || 0) + 1
+    return { epoch: this._epoch || 0, seq: this[key] }
+  },
+
+  readAlive: function (read, key) {
+    return !!read && read.epoch === (this._epoch || 0) && read.seq === this[key]
+  },
 
   loadFavorites: function (cursor) {
     const self = this
+    const read = self.beginRead('_favoritesRead')
     self.setData({ busy: true, errorText: '', errorCode: '' })
     favoritesApi.listFavorites(cursor || '', PAGE_SIZE).then(function (result) {
+      if (!self.readAlive(read, '_favoritesRead')) return
       const items = cursor ? self.data.items.concat(result.items.map(self.presentFavorite, self)) : result.items.map(self.presentFavorite, self)
       self.setData({
         busy: false, loading: false, items: items, total: items.length,
@@ -82,6 +99,7 @@ Page({
       })
       self.reconcileTargets()
     }).catch(function (error) {
+      if (!self.readAlive(read, '_favoritesRead')) return
       // 失败时不保留旧列表（避免"看起来还在"）。错误码原样带出，401/403/404 由状态组件分别呈现，
       // 不把"没有权限"或"服务不可用"折叠成空列表或"请重新登录"。
       self.setData({
@@ -120,7 +138,9 @@ Page({
   /** 可收藏目标（来自已合并的 /knowledge 列表第一页）。 */
   loadTargets: function () {
     const self = this
+    const read = self.beginRead('_targetsRead')
     knowledgeApi.list({ limit: PAGE_SIZE }).then(function (result) {
+      if (!self.readAlive(read, '_targetsRead')) return
       const targets = result.items
         .filter(function (item) { return FAVORITE_TARGET_TYPES.indexOf(item.type) !== -1 })
         .map(function (item) {
@@ -137,6 +157,7 @@ Page({
       self.setData({ targets: targets, targetNote: '来自已上架资料（' + targets.length + ' 条可收藏）', targetError: '' })
       self.reconcileTargets()
     }).catch(function (error) {
+      if (!self.readAlive(read, '_targetsRead')) return
       // 资料列表不可用时如实说明；收藏列表本身仍可查看与取消。
       self.setData({ targets: [], targetNote: '资料列表不可用', targetError: knowledgeApi.message(error) })
     })
