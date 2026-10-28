@@ -269,9 +269,9 @@ export interface AdminOpsService {
   /**
    * 人工**通过**（S3）：`POST /admin/posts/{id}/approve`。
    *
-   * 只把 `audit_state` 推到 `approved`（并写一条人工结论），**不改 `visibility`**；
+   * 把 `audit_state` 推到 `approved`（并写一条人工结论），且把 `private` 帖一并推到 `published`（其余保持原可见性）；
    * 必须带 `If-Match`（ETag）与 `Idempotency-Key`；未接线 ⇒ 503（fail-closed）。
-   * 硬规则明确否决的帖子**不可**通过（409 `RULE_VETOED`）——那是红线，不是运营权衡。
+   * 硬规则明确否决的帖子**不可**通过（422 `INPUT_UNCERTAIN`，内部原因码 `RULE_VETOED`）——那是红线，不是运营权衡。
    */
   approvePost(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<PostReviewOutcome>>>;
 

@@ -8,8 +8,9 @@
  *
  * 钉住四件事（解析／判定一律调 `tools/verify-doc-anchors.mjs` 的导出，不在这里抄第二份口径）：
  *   ① 每条基线仍可解析：`doc` 与 `target` 指向的文件都在仓库里（`resolveTarget`，同名后缀档也走它）、行区间
- *      合法、`path` 字段与 `reference` 解析出的文件是同一个、文档里那条引用还在（`extractReferences`）、
- *      键 `doc|reference` 不重复（`commentAnchorKey`）；
+ *      合法、`path` 字段与 `reference` 解析出的文件是同一个、文档里那条引用还在（显式写法走 `extractReferences`，
+ *      裸锚点继承档走 `attributeBareAnchors`——登记的坐标是「同块最近显式锚点的路径 ＋ 裸锚点行号」规范化后的形态，
+ *      文档里只写 `` `:N` ``，字面量比不出来）、键 `doc|reference` 不重复（`commentAnchorKey`）；
  *   ② 每条基线仍「值得登记」：工具当下的判定里它仍是 `comment-detached` / `comment-cited`——即
  *      `collectFindings().commentAnchors` 的 `bucket`（判据本体是 `judgeSymbolLine` → `symbolLineVerdict`，
  *      一处口径两处用）。已经落到代码行、或那一行已不存在 ⇒ 该条不再是注释锚点 ⇒ 红并点名；
@@ -37,6 +38,7 @@ import {
   SYMBOL_LINE_SCOPE,
   TOOL_ROOT,
   buildFileNameIndex,
+  attributeBareAnchors,
   collectFindings,
   commentAnchorKey,
   extractReferences,
@@ -176,9 +178,25 @@ function auditResolvable({ entries, root = ROOT }) {
     if (Number.isInteger(entry.docLine) && entry.docLine > lineCount) {
       problems.push(`${where}：docLine 超出文档行数（该文档 ${lineCount} 行）`);
     }
-    const present = extractReferences(docText).filter(reference => reference.reference === entry.reference);
+    const documentReferences = extractReferences(docText);
+    const present = documentReferences.filter(reference => reference.reference === entry.reference);
     if (present.length === 0) {
-      problems.push(`${where}：文档里已经没有这条引用了（文档被改写 ⇒ 这条登记该删）`);
+      // 裸锚点档：登记的是「同块最近的显式锚点路径 ＋ 裸锚点自己的行号」规范化后的坐标，文档里只写 `` `:N` ``，
+      // 字面量当然不在。判活要走同一套归属（`attributeBareAnchors`），否则这条用例会把「继承来的锚点」当成
+      // 「文档已改写」全数判红——那等于逼人别登记它们。
+      const inherited = attributeBareAnchors({
+        text: docText,
+        references: documentReferences,
+        // 归属口径必须与 `collectFindings` 一致：`resolveIdentity` 返回**解析后的仓内路径**，
+        // 否则同块里 `app.ts:2227` 与 `app.ts:2228` 会被当成「两个不同文件」而全判 ambiguous。
+        resolveIdentity: reference => {
+          const probe = resolveTarget({ root, docPath: entry.doc, target: reference.target, fileIndex });
+          return probe.status === 'resolved' ? probe.relative : `?${reference.target}`;
+        },
+      }).inherited;
+      if (!inherited.some(item => item.reference === entry.reference)) {
+        problems.push(`${where}：文档里已经没有这条引用了（文档被改写 ⇒ 这条登记该删）`);
+      }
     }
   }
   return problems;

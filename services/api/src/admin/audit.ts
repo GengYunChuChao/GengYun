@@ -4,9 +4,9 @@
  * 契约 `components.schemas.AuditEvent`（additionalProperties:false，8 个必填字段）：
  *   id / action / scope / target_ref / reason_code / request_id / result / created_at
  *
- * 契约缺口（如实记录，不自行补字段）：这 8 个字段里**没有主体/actor**，
- * 而派单要求审计事件「含主体、动作、目标 TargetRef（含 revision）、时间」。
- * 因此：
+ * 契约缺口：这 8 个**必填**字段里没有主体/actor；R29-S5 只把它加成**可选可空**的
+ * `actor`，别当必填用。主体信息今天由 `actor_id` ＋ `scope` ＋ `result`／`reason_code` 表达。
+ * 因此（权限只由 `scope` 表达，**不新增 role 列**）：
  * - 内部记录 = 契约 8 字段 **+ `actor_id`**（主体）；内部记录同样只可追加。
  * - `projectAuditEvent()` 是**唯一的契约出口**，严格只输出合同的 8 个字段。
  *

@@ -117,3 +117,30 @@ Deletion状态 `requested → processing → completed`，失败 `blocked` 可�
 > **GY-R28 起该域已落地**：`services/api/db/migrations/0023_user_backup_copies.sql:34` 建 `public.user_backup_copies`（受理时按主体留最小清单行；`state = 'purged'` 必须在同一行同时满足 `purged_at`／`evidence_ref` 非空且 `payload = 'null'::jsonb`，见该文件 `:70-76` 的 `user_backup_copies_purged_evidence` 约束），`services/api/src/privacy/backup-copies-pg.ts:183` 的 `createPostgresBackupPurgePort({ pool, now })` 是真实端口（`:248` `kind: 'wired'`、`:249` `available: true`），`services/api/src/app.ts:1821`（装配点，原记 :1458-1465） 在「注销受理端口已接线 ＋ 有真库连接池」时装配它（显式注入优先；受理已接线但无真库且 `real` ⇒ 显式不可用端口；受理未接线或 stub/demo ⇒ 缺省 unwired，四态见 `services/api/src/app.ts:1813-1816`（原记 :1448-1457） 注释）。因此上面「备份证据／每个备份的 lineage 与截至水位」现在**有落点**；但**执行链仍未取得**：7 日在线／30 日备份的到期执行与调度、恢复清单重放、第三方删除证据均未验收，`real` 模式整域仍 503 `PROVIDER_UNAVAILABLE`，未接真库时各模块 `backup_state` 仍如实停留 `pending`、完成判定为 `blocked`，不以时钟到期或空集冒充完成。⛔ 本段**不是**「#19 已完成」。
 
 首版训练关闭；未来实际启用前独立 ADR/同意/谱系和可控模型停部署、切换、7/30日权重删除、重训重验门槛，不能用本契约称已实现训练删除。已脱敏匿名统计可保留；合法最小证据留存须明确用途与期限，不能一概保留账号可逆映射。
+
+## 审计事件的主体（actor）口径与已知缺口
+
+本节只补「主体」这一面的事实与缺口，不改上面任何状态语义；引用一律写 `文件:行`，行号按基线逐字核对。
+
+### 今天：主体信息落在哪几列
+
+内部台账 `public.admin_audit_events` 没有独立的 role 列，主体信息由三组列表达：
+
+| 列 | 语义 |
+| --- | --- |
+| `actor_id` | **谁做的**：发起该动作的后台会话所属管理员账号 uuid，`NOT NULL`（`services/api/db/migrations/0017_account_suspend_authority.sql:75`）。 |
+| `scope` | **以什么权限做的**：该动作要求的后台 scope 字面量（`services/api/db/migrations/0017_account_suspend_authority.sql:77`）。 |
+| `result` | **做成了没有**：`accepted`／`denied`／`failed` 闭集（`services/api/db/migrations/0017_account_suspend_authority.sql:83`）。 |
+| `reason_code` | **为什么**：拒绝与失败必须落原因码（`services/api/db/migrations/0017_account_suspend_authority.sql:81`）。 |
+
+### 契约层的已知缺口
+
+契约 `components.schemas.AuditEvent` 的 8 个**必填**字段是 `id`／`action`／`scope`／`target_ref`／`reason_code`／`request_id`／`result`／`created_at`（`packages/contracts/openapi.json:16033`）——内核字段里**没有主体 actor**。R29-S5 之后 `actor` 只是**可选可空**属性（`packages/contracts/openapi.json:15989`）。因此：
+
+- 不能把 `actor` 当必填字段依赖：缺它的审计事件仍然是合法契约事件；
+- 内部台账的 `actor_id` 比契约多这一列，`projectAuditEvent()`（`services/api/src/admin/audit.ts:67`）是唯一契约出口、会把它剥掉，投影结果只含那 8 个字段；
+- 这是**契约事实**，消除它要动 `packages/contracts/**` 与迁移，不在本文档范围内——本文档只把缺口写在明面上。
+
+### 为什么不需要 role 列
+
+审计要回答四件事：谁、以什么权限、做了什么、结果如何。前两问已分别由 `actor_id` 与 `scope` 回答——`scope` 本身就是权限字面量，`accounts:suspend` 与 `audit:read` 的差别就是权限差别；`result` 与 `reason_code` 补齐「做没做成、为什么」。再加一列 `actor_role`，只会把 `scope` 已有的信息换个更粗的粒度重存（角色包含多个 scope，而逐条审计要的正是细粒度那一层），且全仓没有消费者：`actor_role`／`actorRole` 在基线上 0 命中。所以本契约**不新增 role 列**，「谁以什么权限做的」继续由 `actor_id` ＋ `scope` ＋ `result`／`reason_code` 完整表达。

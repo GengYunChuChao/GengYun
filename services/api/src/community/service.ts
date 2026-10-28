@@ -1578,7 +1578,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
      * `getPostLike`：`GET /posts/{id}/like` —— 点赞的**只读**读取面（issue #15 的 S7 读面）。
      *
      * 与 `getPost` **同一道**鉴权/可见性闸门：
-     *   1. `requireUserActor`（游客 401 `SESSION_REQUIRED`；后台会话 403 `SCOPE_DENIED`）；
+     *   1. `requireUserActor`（游客 401 `SESSION_REQUIRED`；后台会话在 HTTP 面同样是 401 `SESSION_EXPIRED`，`SCOPE_DENIED` 只作服务层兜底）；
      *   2. `requireUuidParam(id, 'id')`（非 uuid ⇒ 400 `VALIDATION_FAILED`，与既有读路径同一校验）；
      *   3. `readablePost(user, postId)`：不存在／已删除／未发布／审核未通过的他人内容 ⇒
      *      **同一个** `NOT_FOUND`（`内容不存在或不可用`，不泄露存在性），作者本人仍可读自己的非删除内容。

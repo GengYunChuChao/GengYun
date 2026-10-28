@@ -535,8 +535,8 @@ onBeforeUnmount(() => {
           </div>
 
           <p class="foot">
-            approve 只写 <code>audit_state=approved</code>、不改可见性；reject 同时把 <code>visibility</code> 置为
-            <code>hidden</code> 并通知作者。两个动作都要 <code>If-Match: "&lt;revision&gt;"</code> 与
+            approve 写 <code>audit_state=approved</code>，并把 <code>visibility</code> 从 <code>private</code> 推到 <code>published</code>（其余保持原值）；
+            reject 同时把 <code>visibility</code> 置为 <code>hidden</code> 并通知作者。两个动作都要 <code>If-Match: "&lt;revision&gt;"</code> 与
             <code>Idempotency-Key</code>；重复提交同一结论时服务端回 <code>changed:false</code>。
             本页<strong>不显示审核人</strong>：<code>audit_state</code> 只记状态，谁审的落在审计台账（<code>audit:read</code>），
             帖子行里没有这个字段，页面不替它编。

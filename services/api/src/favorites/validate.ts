@@ -54,7 +54,7 @@ function lengthProblem(value: unknown, min: number, max: number): 'NOT_STRING' |
 /**
  * 主体校验（契约 `security: userSession`）。
  * - 缺 `userId`／`authEpoch`／`role` ⇒ 401 `SESSION_REQUIRED`；
- * - 后台会话（`role !== 'user'`）⇒ 403 `SCOPE_DENIED`（收藏属用户会话域，后台不得代替）。
+ * - 后台会话调用户面接口：`authenticateUser` 只取 `'user'` 会话 ⇒ 实际返 401 `SESSION_EXPIRED`；`role !== 'user'` 的 `SCOPE_DENIED` 只作服务层兜底。
  */
 export function requireUserActor(actor: unknown): FavoritesActor {
   if (!isPlainObject(actor)) throw new ApiError('SESSION_REQUIRED', '需要用户会话');
