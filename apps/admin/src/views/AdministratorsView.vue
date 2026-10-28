@@ -10,10 +10,12 @@
  * 写（scope `scopes:write`）：
  * - `POST /admin/administrators/{id}/disable`（`disableAdministratorAccount`）
  * - `POST /admin/administrators/{id}/enable`（`enableAdministratorAccount`）
- * 两面的 `If-Match` 取自已加载那一行的 `revision`（目录**不发** `ETag`），并带 `Idempotency-Key` 与理由。
- * ⛔ 这不是终端用户停用（`PATCH /admin/accounts/{id}/suspend`，另一套 id 空间与 scope）。
- *
- * ⛔ 不做授权 / 撤销（那需要另一条写面），不改权限模型。
+ * - `POST /admin/administrators/{id}/scopes`（`grantAdministratorScope`）—— R68 授权
+ * - `DELETE /admin/administrators/{id}/scopes/{scope}`（`revokeAdministratorScope`）—— R68 撤销
+ * 三面的 `If-Match` 取自已加载那一行的 `revision`（目录**不发** `ETag`），并带 `Idempotency-Key` 与理由。
+ * ⛔ 「停用／恢复」不是终端用户停用（`PATCH /admin/accounts/{id}/suspend`，另一套 id 空间与 scope）。
+ * ⛔ 「撤销 scope」也不是「停用」：停用改账号状态并撤会话，撤销只回收一条权限；恢复账号也不会把 scope 还回来。
+ * scope 的合法值只来自 `admin-scope-catalog.mjs`（从契约 `AdminScope.enum` 派生），⛔ 视图里不手抄清单。
  * 表现约定：403 显示明确提示 + 错误码（不静默空白）；空目录显示空态；某人不存在显示 404 NOT_FOUND；
  * 写失败用 `WriteReceipt`（它按 `failed` 动态给 `role`/`aria-live`），视图不再另造 alert 横幅。
  */
@@ -44,6 +46,16 @@ import {
   setAdministratorState,
 } from '../lib/administrator-state-api.mjs';
 import { changedVerdict } from '../lib/admin-content-view-model.mjs';
+import { ADMIN_SCOPE_OPTIONS, scopeProblem } from '../lib/admin-scope-catalog.mjs';
+import {
+  ADMIN_SCOPE_COUNT,
+  ADMINISTRATOR_SCOPE_MODE_LABELS,
+  ADMINISTRATOR_SCOPE_WRITE_SCOPE,
+  canWriteAdministratorScope,
+  describeAdministratorScopeFailure,
+  grantAdministratorScope,
+  revokeAdministratorScope,
+} from '../lib/administrator-scope-api.mjs';
 import { FOCUSABLE_SELECTOR, nextFocusIndex } from '../lib/dialog-focus.mjs';
 import WriteReceipt from './WriteReceipt.vue';
 
@@ -148,14 +160,13 @@ async function signOut() {
   await signOutAdmin();
 }
 
-/** 点某一行「查看权限」：读一次 /admin/administrators/{id}/scopes。 */
-async function openScopes(row) {
+/**
+ * 读一次 `/admin/administrators/{id}/scopes` 并把结果灌进面板（**不**切换面板开合）。
+ * 从 `openScopes` 里拆出来是因为授权／撤销成功后要「重读该行权威值」，那时面板可能已经开着。
+ */
+async function loadScopes(row) {
   if (currentToken === null) {
     dispatch({ type: 'SCOPES_FAIL', failure: { ok: false, kind: 'signed_out', status: null, code: null, inContract: false, retryAfterSeconds: null, message: '没有后台会话令牌' } });
-    return;
-  }
-  if (state.value.selectedId === row.id && state.value.scopesPhase === 'ready') {
-    dispatch({ type: 'CLOSE_SCOPES' });
     return;
   }
   const seq = ++scopesSeq;
@@ -166,6 +177,19 @@ async function openScopes(row) {
   scopesBusy.value = false;
   if (result.ok) dispatch({ type: 'SCOPES_OK', scopes: result.scopes });
   else dispatch({ type: 'SCOPES_FAIL', failure: result });
+}
+
+/** 点某一行「查看权限」：开／合面板；打开时读一次 scopes。 */
+async function openScopes(row) {
+  if (currentToken === null) {
+    dispatch({ type: 'SCOPES_FAIL', failure: { ok: false, kind: 'signed_out', status: null, code: null, inContract: false, retryAfterSeconds: null, message: '没有后台会话令牌' } });
+    return;
+  }
+  if (state.value.selectedId === row.id && state.value.scopesPhase === 'ready') {
+    dispatch({ type: 'CLOSE_SCOPES' });
+    return;
+  }
+  await loadScopes(row);
 }
 
 function retryScopes() {
@@ -192,7 +216,7 @@ function loadMore() {
 }
 
 function refresh() {
-  requestPage(null, { reset: true });
+  return requestPage(null, { reset: true });
 }
 
 // ---------------------------------------------------------------- 停用 / 恢复（R67-A05）
@@ -357,6 +381,193 @@ function dismissStateReceipt() {
   changeFailure.value = null;
 }
 
+// ---------------------------------------------------------------- 授权 / 撤销（R68）
+//
+// 两条写面：`POST /admin/administrators/{id}/scopes`（grant）与 `DELETE …/scopes/{scope}`（revoke），
+// 门同为 `scopes:write`。scope 的合法值只来自 `admin-scope-catalog.mjs`（契约 `AdminScope.enum` 派生）：
+// 选择器 option、本地闭集校验、行判定都走 lib，⛔ 视图里不写第二份清单。
+// 顺序是「先确认、再发请求」：点按钮只开确认框，真正发请求在 `submitScopeWrite`。
+
+/** 选择器选项（契约闭集，顺序同 enum）。 */
+const scopeOptions = computed(() => ADMIN_SCOPE_OPTIONS);
+/** 每行当前选中的 scope：`{ [rowId]: scope }`。⛔ 不用 `v-model`：渲染层只认显式 `:value` + `@change`。 */
+const scopePicks = ref({});
+const scopeTarget = ref(null);
+const scopeReason = ref('');
+const scopeSaving = ref(false);
+/** 写失败说明（`describeAdministratorScopeFailure` 的产物，带具体错误码）。 */
+const scopeFailure = ref(null);
+/** 成功摘要：这次到底授／撤了谁的哪条权限。 */
+const scopeOutcome = ref(null);
+/** 选择器本身不合法时的就地提示：不发请求、不开确认框。 */
+const scopePickProblem = ref(null);
+const scopeDialog = ref(null);
+const scopeTitle = ref(null);
+let scopeTrigger = null;
+let scopeKey = null;
+let scopeSeq = 0;
+
+const scopeReasonIssue = computed(() => reasonProblem(scopeReason.value));
+
+function scopePick(row) {
+  const picked = scopePicks.value[row.id];
+  return typeof picked === 'string' ? picked : '';
+}
+
+function pickScope(row, value) {
+  scopePicks.value = { ...scopePicks.value, [row.id]: typeof value === 'string' ? value : '' };
+  scopePickProblem.value = null;
+}
+
+/** 选中的 scope 在契约闭集内 **且** 这一行可写 ⇒ 按钮才可用（判据都在 lib，模板里不散写）。 */
+function canPickScope(row, mode) {
+  return canWriteAdministratorScope(row, mode) && scopeProblem(scopePick(row)) === null;
+}
+
+function scopeModeLabel(mode) {
+  return ADMINISTRATOR_SCOPE_MODE_LABELS[mode] ?? mode;
+}
+
+/**
+ * 打开确认框。**第一步校验**在这里：scope 不合法就只上屏提示——不发请求、不开框
+ * （闭集外的值发出去只会换来 400 INVALID_REQUEST，还要白占一个幂等键）。
+ */
+function openScopeWrite(row, mode, event) {
+  const picked = scopePick(row);
+  const issue = scopeProblem(picked);
+  if (issue !== null) {
+    scopePickProblem.value = issue;
+    scopeFailure.value = null;
+    scopeOutcome.value = null;
+    return;
+  }
+  if (!canWriteAdministratorScope(row, mode)) return;
+  scopePickProblem.value = null;
+  scopeTrigger = event?.currentTarget ?? null;
+  scopeTarget.value = { id: row.id, loginName: row.loginName, mode, revision: row.revision, scope: picked };
+  scopeReason.value = '';
+  scopeFailure.value = null;
+  scopeOutcome.value = null;
+  scopeKey = newIdempotencyKey();
+}
+
+function focusScopeTitle() {
+  const title = scopeTitle.value;
+  if (title !== null && title !== undefined && typeof title.focus === 'function') title.focus();
+}
+
+function closeScopeWrite() {
+  scopeTarget.value = null;
+}
+
+/** 打开 → 焦点进框；关闭 → 焦点回触发按钮（按钮被重渲染掉时不硬拉焦点）。 */
+watch(scopeTarget, async (target) => {
+  if (target === null) {
+    const trigger = scopeTrigger;
+    scopeTrigger = null;
+    await nextTick();
+    if (trigger !== null && trigger.isConnected !== false && typeof trigger.focus === 'function') trigger.focus();
+    return;
+  }
+  await nextTick();
+  focusScopeTitle();
+});
+
+/** 对话框键盘行为：Esc 关闭（提交中不关）、Tab／Shift+Tab 框内循环（与停用／恢复完全一致）。 */
+function onScopeKeydown(event) {
+  if (event.key === 'Escape') {
+    if (scopeSaving.value) return;
+    event.preventDefault();
+    closeScopeWrite();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const dialog = scopeDialog.value;
+  if (dialog === null || dialog === undefined || typeof dialog.querySelectorAll !== 'function') return;
+  const items = Array.from(dialog.querySelectorAll(FOCUSABLE_SELECTOR));
+  const active = globalThis.document === undefined ? null : globalThis.document.activeElement;
+  const index = nextFocusIndex({
+    count: items.length,
+    index: items.indexOf(active ?? null),
+    shift: event.shiftKey === true,
+  });
+  event.preventDefault();
+  if (index === -1) {
+    focusScopeTitle();
+    return;
+  }
+  const next = items[index];
+  if (next !== undefined && typeof next.focus === 'function') next.focus();
+}
+
+/**
+ * 发一次授权／撤销。
+ *
+ * 两个函数**按名字**调（不塞进一个 `const write = …` 再调）：能力图按「视图里有没有
+ * `grantAdministratorScope(` / `revokeAdministratorScope(` 这行调用 + 该函数自己的 fetch 调用点」
+ * 判 UI 入口，绕一层变量就会判成「无入口」。
+ */
+async function submitScopeWrite() {
+  const target = scopeTarget.value;
+  if (target === null || scopeSaving.value) return;
+  const issue = scopeProblem(target.scope); // 第二道闸：确认框开着时 scope 也不许跑出闭集
+  if (issue !== null) {
+    scopePickProblem.value = issue;
+    return;
+  }
+  if (scopeReasonIssue.value !== null) return;
+  const reason = scopeReason.value.trim();
+  const key = scopeKey ?? newIdempotencyKey();
+  scopeKey = key;
+  const seq = ++scopeSeq;
+  scopeSaving.value = true;
+  scopeFailure.value = null;
+  scopeOutcome.value = null;
+
+  const request = {
+    baseUrl: API_BASE_URL,
+    token: currentToken ?? '',
+    administratorId: target.id,
+    scope: target.scope,
+    revision: target.revision,
+    reason,
+    idempotencyKey: key,
+  };
+  const result = target.mode === 'grant'
+    ? await grantAdministratorScope(request)
+    : await revokeAdministratorScope(request);
+  if (seq !== scopeSeq) return; // 过期响应：丢弃，不往已换掉的目标里写
+  scopeSaving.value = false;
+
+  if (result.ok === true) {
+    scopeOutcome.value = {
+      mode: target.mode,
+      loginName: target.loginName,
+      scope: target.scope,
+      revisionFrom: target.revision,
+      revision: result.revision,
+      scopes: result.scopes,
+      changed: result.changed,
+    };
+    closeScopeWrite();
+    await refreshAfterScopeWrite(target.id);
+    return;
+  }
+  scopeOutcome.value = null;
+  scopeFailure.value = describeAdministratorScopeFailure(result);
+}
+
+/**
+ * 写成功后刷新：先重读目录（行内 `scopes` / `revision` 都由它更新），
+ * 若该行的 scopes 面板正开着，再重读一次权威值——否则面板会留着改动前的旧列表。
+ */
+async function refreshAfterScopeWrite(administratorId) {
+  await refresh();
+  const row = rows.value.find((item) => item.id === administratorId);
+  if (row === undefined) return;
+  if (state.value.selectedId === administratorId && state.value.scopesPhase !== 'idle') await loadScopes(row);
+}
+
 onMounted(async () => {
   const adminSession = await loadAdminSession();
   if (adminSession === null) {
@@ -370,6 +581,7 @@ onBeforeUnmount(() => {
   ++requestSeq;
   ++scopesSeq;
   ++changeSeq; // 卸载后回来的写响应一律丢弃，不往已卸载的状态里写
+  ++scopeSeq;
 });
 </script>
 
@@ -381,8 +593,11 @@ onBeforeUnmount(() => {
         调用 <code>GET {{ ADMINISTRATORS_PATH }}</code>（operationId <code>{{ ADMINISTRATORS_OPERATION_ID }}</code>）读管理员目录，
         点某一行再调 <code>GET {{ ADMINISTRATORS_PATH }}/{id}/scopes</code>（operationId
         <code>{{ ADMINISTRATOR_SCOPES_OPERATION_ID }}</code>）看该管理员当前有效权限。两条的 scope 都是
-        <code>{{ ADMINISTRATORS_SCOPE }}</code>。本页读之外还提供「停用／恢复」入口（写面 scope
-        <code>{{ ADMINISTRATOR_STATE_SCOPE }}</code>，<code>If-Match</code> 取自行内 revision）；不授权、不撤销。
+        <code>{{ ADMINISTRATORS_SCOPE }}</code>。本页读之外还提供三条写入口：<strong>停用／恢复</strong>账号（写面 scope
+        <code>{{ ADMINISTRATOR_STATE_SCOPE }}</code>）与 <strong>授权／撤销</strong>单条 scope（同样
+        <code>{{ ADMINISTRATOR_SCOPE_WRITE_SCOPE }}</code>）；<code>If-Match</code> 一律取自行内 revision，
+        并需 <code>Idempotency-Key</code> 与理由。scope 的可选值来自契约 <code>AdminScope</code> 闭集（共
+        {{ ADMIN_SCOPE_COUNT }} 项）。
       </p>
       <button v-if="signedIn" class="ghost" type="button" data-testid="administrators-sign-out" @click="signOut">退出登录</button>
     </header>
@@ -455,7 +670,7 @@ onBeforeUnmount(() => {
           >
             <td class="mono">{{ row.loginName }}</td>
             <td><span class="pill" :class="row.stateTone">{{ row.stateLabel }}</span></td>
-            <td class="mono scopes-cell">{{ row.scopesText }}</td>
+            <td class="mono scopes-cell" data-testid="administrator-scopes-text">{{ row.scopesText }}</td>
             <td class="mono">{{ row.id }}</td>
             <td class="mono" data-testid="administrator-revision">{{ row.revisionLabel }}</td>
             <td>
@@ -478,6 +693,39 @@ onBeforeUnmount(() => {
                 :disabled="!canChange(row, 'enable') || busy || changeSaving"
                 @click.stop="openStateChange(row, 'enable', $event)"
               >恢复</button>
+              <template v-if="row.state === 'active'">
+                <select
+                  class="scope-pick"
+                  data-testid="administrator-scope-pick"
+                  :value="scopePick(row)"
+                  :aria-label="`为 ${row.loginName} 选择要授权或撤销的 scope（契约 AdminScope 闭集）`"
+                  :disabled="busy || scopeSaving || changeSaving"
+                  @change="pickScope(row, $event.target.value)"
+                >
+                  <option value="">选择 scope…</option>
+                  <option v-for="option in scopeOptions" :key="option.value" :value="option.value">
+                    {{ option.value }} · {{ option.label }}
+                  </option>
+                </select>
+                <button
+                  class="link"
+                  type="button"
+                  data-testid="administrator-grant"
+                  :aria-label="`给 ${row.loginName} 授予所选 scope`"
+                  :aria-disabled="canPickScope(row, 'grant') ? 'false' : 'true'"
+                  :disabled="!canPickScope(row, 'grant') || busy || scopeSaving || changeSaving"
+                  @click.stop="openScopeWrite(row, 'grant', $event)"
+                >授权</button>
+                <button
+                  class="link danger"
+                  type="button"
+                  data-testid="administrator-revoke"
+                  :aria-label="`撤销 ${row.loginName} 的所选 scope`"
+                  :aria-disabled="canPickScope(row, 'revoke') ? 'false' : 'true'"
+                  :disabled="!canPickScope(row, 'revoke') || busy || scopeSaving || changeSaving"
+                  @click.stop="openScopeWrite(row, 'revoke', $event)"
+                >撤销</button>
+              </template>
             </td>
           </tr>
         </tbody>
@@ -584,16 +832,87 @@ onBeforeUnmount(() => {
         </p>
       </div>
 
+      <p v-if="scopePickProblem !== null" class="banner error" role="alert" data-testid="administrator-scope-error">
+        {{ scopePickProblem }}
+        <span class="hint">ⓘ 这次没有发出任何请求：scope 必须在契约 <code>AdminScope</code> 闭集内（共 {{ ADMIN_SCOPE_COUNT }} 项）。</span>
+      </p>
+
+      <p v-if="scopeFailure !== null" class="banner error" role="alert" data-testid="administrator-scope-failure">
+        {{ scopeFailure.title }}<template v-if="scopeFailure.detail !== ''"> · {{ scopeFailure.detail }}</template>
+        <template v-if="scopeFailure.canRetry"> · 可以用同一幂等键重试。</template>
+      </p>
+
+      <p v-if="scopeOutcome !== null" class="banner ok" role="status" data-testid="administrator-scope-ok">
+        {{ scopeOutcome.mode === 'grant' ? '已授权' : '已撤销' }} <code>{{ scopeOutcome.loginName }}</code> 的
+        <code>{{ scopeOutcome.scope }}</code>：现在 revision <code>{{ scopeOutcome.revision }}</code>（本行原是
+        <code>{{ scopeOutcome.revisionFrom }}</code>）·{{ scopeOutcome.changed
+          ? ' 本次确实发生了权限变更'
+          : ' 本次未产生变更（同键重放，或该 scope 本来就在／本来就没有）' }}。
+      </p>
+
+      <div
+        v-if="scopeTarget !== null"
+        ref="scopeDialog"
+        class="state-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="administrator-scope-title"
+        data-testid="administrator-scope-dialog"
+        tabindex="-1"
+        @keydown="onScopeKeydown"
+      >
+        <strong id="administrator-scope-title" ref="scopeTitle" tabindex="-1">
+          {{ scopeTarget.mode === 'grant' ? '确认授权 scope' : '确认撤销 scope' }}：<code>{{ scopeTarget.scope }}</code>
+        </strong>
+        <p class="hint">
+          <code>{{ scopeTarget.mode === 'grant' ? 'POST' : 'DELETE' }} {{ ADMINISTRATORS_PATH }}/{{ scopeTarget.id }}/scopes<template v-if="scopeTarget.mode === 'revoke'">/{{ scopeTarget.scope }}</template></code>
+          · scope <code>{{ ADMINISTRATOR_SCOPE_WRITE_SCOPE }}</code> · <code>If-Match: "{{ scopeTarget.revision }}"</code>
+          （取自已加载那一行的 revision：目录不发 ETag）· 需要 <code>Idempotency-Key</code> 与理由。scope 闭集来自契约
+          <code>AdminScope</code>（共 {{ ADMIN_SCOPE_COUNT }} 项）。
+        </p>
+        <label class="field">
+          <span>理由（契约 <code>ReasonInput.reason</code>，1..500 字符，写进审计）</span>
+          <input
+            name="administrator_scope_reason"
+            maxlength="500"
+            :value="scopeReason"
+            :disabled="scopeSaving"
+            data-testid="administrator-scope-reason"
+            @input="scopeReason = $event.target.value"
+          />
+        </label>
+        <p v-if="scopeReasonIssue !== null" class="hint warn-text" data-testid="administrator-scope-problem">{{ scopeReasonIssue }}</p>
+        <p v-if="scopeSaving" class="hint" data-testid="administrator-scope-progress">提交中…（请求已发出，正在等服务端回执）</p>
+        <div class="state-actions">
+          <button
+            class="primary"
+            type="button"
+            :disabled="scopeSaving || scopeReasonIssue !== null"
+            data-testid="administrator-scope-submit"
+            @click="submitScopeWrite"
+          >
+            {{ scopeSaving ? '提交中…' : `确认${scopeModeLabel(scopeTarget.mode)}` }}
+          </button>
+          <button class="ghost" type="button" :disabled="scopeSaving" data-testid="administrator-scope-cancel" @click="closeScopeWrite">取消</button>
+        </div>
+        <p class="hint">
+          ⓘ 撤销一条本来就没有的 scope 是幂等空操作（<code>changed:false</code>，不写审计、不推 revision）；
+          撤掉最后一名 <code>scopes:write</code> 有效持有人会被服务端 409 <code>LAST_SCOPE_MANAGER</code> 拒。
+        </p>
+      </div>
+
       <div class="pager">
         <button class="ghost" type="button" :disabled="!view.canLoadMore" data-testid="administrators-load-more" @click="loadMore">读取下一页</button>
       </div>
 
       <p class="foot">
-        说明：读面是两条 GET（<code>scopes:read</code>），写面是 <code>POST …/disable</code> 与
-        <code>POST …/enable</code>（<code>scopes:write</code>，需 <code>If-Match</code> + <code>Idempotency-Key</code> + 理由）。
+        说明：读面是两条 GET（<code>scopes:read</code>），写面是 <code>POST …/disable</code>、
+        <code>POST …/enable</code>、<code>POST …/scopes</code>（授权）与 <code>DELETE …/scopes/{scope}</code>（撤销）
+        —— 全部 <code>scopes:write</code>，都需 <code>If-Match</code> + <code>Idempotency-Key</code> + 理由。
         <code>scopes</code> 是「当前有效（revoked_at IS NULL）」的权限，去重 + 码元序，只含 scope
         字符串 —— ⛔ 不含 <code>granted_by</code> / <code>granted_at</code>（运行时角色对 <code>admin_scopes</code> 只有三列 SELECT
-        权限，写进契约就是无法兑现的承诺）。授权 / 撤销仍不在本页：停用 ≠ 撤销 scope，恢复也不会把 scope 还回来。
+        权限，写进契约就是无法兑现的承诺）。停用 ≠ 撤销 scope：停用改账号状态并撤会话，
+        恢复也不会把 scope 还回来——要收回某条权限，用行内的「撤销」。
       </p>
     </template>
   </section>
@@ -928,5 +1247,23 @@ tr.selected {
 .foot {
   margin: 0;
   line-height: 1.6;
+}
+
+/* 行内 scope 选择器：操作列本来就窄，给一个够用的上限，不把整行撑开。 */
+.scope-pick {
+  max-width: 11rem;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.25rem;
+}
+
+/* 键盘可达：本页按钮全是 `.link` / `.ghost` 这类轻样式，必须自带可见焦点环
+   （默认 outline 在重置过的按钮上不一定看得见）。鼠标点击不触发 `:focus-visible`。 */
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+a:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
 }
 </style>

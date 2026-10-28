@@ -28,6 +28,10 @@ const ACCOUNT_SUSPEND_LIB_URL = new URL('../../apps/admin/src/lib/account-suspen
 const STATE_LIB_URL = new URL('../../apps/admin/src/lib/administrator-state-api.mjs', import.meta.url);
 const CONTENT_VM_URL = new URL('../../apps/admin/src/lib/admin-content-view-model.mjs', import.meta.url);
 const DIALOG_FOCUS_URL = new URL('../../apps/admin/src/lib/dialog-focus.mjs', import.meta.url);
+// R68：页面新增了「授权／撤销」入口，import 图里又多了这两块（同样是纯函数 lib，直接按 file: URL 载入）。
+// scope 闭集由契约 JSON 派生（admin-scope-catalog.mjs 里 `import … with { type: 'json' }`），Node 直接吃得下。
+const SCOPE_CATALOG_URL = new URL('../../apps/admin/src/lib/admin-scope-catalog.mjs', import.meta.url);
+const SCOPE_API_URL = new URL('../../apps/admin/src/lib/administrator-scope-api.mjs', import.meta.url);
 const VUE_URL = import.meta.resolve('vue');
 
 const ADMIN_ID = '22222222-2222-4222-8222-222222222222';
@@ -92,6 +96,8 @@ function loadViewComponent() {
     .replace(new RegExp(`from\\s+["']${escape('../lib/account-suspend-api.mjs')}["']`, 'g'), `from '${ACCOUNT_SUSPEND_LIB_URL.href}'`)
     .replace(new RegExp(`from\\s+["']${escape('../lib/admin-content-view-model.mjs')}["']`, 'g'), `from '${CONTENT_VM_URL.href}'`)
     .replace(new RegExp(`from\\s+["']${escape('../lib/dialog-focus.mjs')}["']`, 'g'), `from '${DIALOG_FOCUS_URL.href}'`)
+    .replace(new RegExp(`from\\s+["']${escape('../lib/admin-scope-catalog.mjs')}["']`, 'g'), `from '${SCOPE_CATALOG_URL.href}'`)
+    .replace(new RegExp(`from\\s+["']${escape('../lib/administrator-scope-api.mjs')}["']`, 'g'), `from '${SCOPE_API_URL.href}'`)
     .replace(new RegExp(`from\\s+["']${escape('./WriteReceipt.vue')}["']`, 'g'), `from '${WRITE_RECEIPT_STUB_URL}'`);
   assert.deepEqual(
     [...code.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1]).filter((spec) => !/^(data:|file:)/.test(spec)),
