@@ -532,5 +532,37 @@
     "to": 1506,
     "toEnd": 1512,
     "reason": "旧锚点指向注释段主体之前的无关装配行：`services/api/src/app.ts:1485-1491` 是账号停用/恢复系统事件（accountEvents）代码块，不含 R34 只读端口那句说明；旧行原文逐字相同的那段说明在 HEAD 落在 1506-1512（1506 `// **R34 显式放行（库内审计**读**面，不是写面）**：只在**确实拿到库池**时构造只读端口；`、1507 `// \\`pool === null\\` ⇒ 端口 null ⇒ \\`/admin/audit-logs\\` 保持 503…`）。按符号重锚到该注释块，目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 186,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 2257,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2076` 原文是 `          ) => messagesPurgeSnapshot(ownerId, client),`（messages 清理快照的 store 回调），讲清理快照数据源，不是注销可用性门；新值 2257 原文是 `    available: config.executionMode !== 'real',`，而 `available: config.executionMode` 在 base 的 services/api/src/app.ts 里只命中这一行，2255 `    deletion: userDataDeletion,` 与 2256 `    receipts: deletionReceipts,` 与之同属注销装配对象。为何旧值错：2076 行文本与「`available: config.executionMode !== 'real'`」毫无重叠，行号只是历史抄错。目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 342,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 2257,
+    "reason": "该行（E1）正文是「真实模式下注销整域 503」，判据就是注销可用性门本身。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 是 messages 清理快照回调，与「整域 503」无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 正是真实模式下把注销门关掉的那个赋值行。旧值错、新值对，按符号重锚；目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 366,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 2257,
+    "reason": "该行（D08 升档判据）正文直接引用该门：`available` 门不再是 `!== 'real'`。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 与 `available` 无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 就是该门表达式的落点（全文件唯一 `available: config.executionMode`）。目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 368,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 1998,
+    "reason": "该行（D13）正文是「适配器与 0044 真库端口都在 `app.ts` 装配；注销受理时按接收方建行；回执带第三方状态」，讲第三方读侧装配，不是可用性门，所以不能改到 2257。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 是 messages 清理快照回调；新值 1998 原文 `  const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =` 才是第三方读侧端口 `ThirdPartyDeletionReadPort` 的装配点（同一符号在 2227 `    ...thirdPartyWiring,` 展开进注销装配装配、2550 `    thirdPartyRows: thirdPartyWiring.thirdParty ?? null,` 落到注销状态读数）。目标文件本提交未改动。"
   }
 ]

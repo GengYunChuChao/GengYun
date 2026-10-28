@@ -183,9 +183,9 @@
   删除模块闭集 4 项固定 + 4 项条件追加（`services/api/src/privacy/user-data-deletion.ts:164-169`、`:202-207`），
   真实注销路径有效闭集 **8 项**（`:151-153` 自述）。
 - **证据**：`tests/integration/account-deletion-pg.mjs`，CI `.github/workflows/real-pg-integration.yml:189`。
-- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2076` 是 `available: config.executionMode !== 'real'`，
-  注释 `:2058-2065` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
-  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处 `:2078` 自陈
+- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2257` 是 `available: config.executionMode !== 'real'`，
+  注释 `:2239-2246` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
+  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处 `:2259` 自陈
   外发撤销器与 `available` 门互斥，「两条路都到不了这里」（仅测试注入可达）。
 
 ### D09 在线 7 日、备份 30 日、恢复重放
@@ -339,7 +339,7 @@
 
 | 编号 | 事实 | 可复算 |
 | --- | --- | --- |
-| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2076` |
+| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2257` |
 | E2 | 三条真库臂不在任何 workflow：`tests/integration/media-row-purge-pg.mjs`、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/integration/retention-clock-drill-pg.mjs` | 在 `.github` 下 grep 这三个脚本名，命中 0 行 |
 | E3 | 恢复重放只有纯函数，契约无恢复 operation | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | E4 | 加速演练 `exit 77` 是「未取得」，不是通过 | `tests/integration/retention-clock-drill-pg.mjs:20` |
@@ -363,9 +363,9 @@
 
 | 项 | 现在 | 升档需要的事实 | 判据落点 |
 | --- | --- | --- | --- |
-| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2076` |
+| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2257` |
 | D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:203` |
-| D13 | 未实现 | 适配器与 0044 真库端口都在 `app.ts` 装配；注销受理时按接收方建行；回执带第三方状态 | `services/api/src/app.ts:2076` 同侧装配区 |
+| D13 | 未实现 | 适配器与 0044 真库端口都在 `app.ts` 装配；注销受理时按接收方建行；回执带第三方状态 | `services/api/src/app.ts:1998` 同侧装配区 |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
 | G3 | **已消解（2026-10-26 复核）** | 已具备（撤条理由）：`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer` 在、`purge:retention` 已在必需清单、日级上界 1440 分钟已分档；若单元被删或必需清单回落到 2 项，按缺口重新记 | `tools/verify-purge-schedule.mjs:117` |
