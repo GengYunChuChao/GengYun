@@ -45,7 +45,7 @@ function normalizeTarget(candidate) {
   if (parts.length > 2 || PAGES.indexOf(parts[0].slice(1)) === -1 ||
       parts[0].charAt(0) !== '/' || parts[0] === LOGIN) return null
   if (parts.length === 1) return parts[0]
-  // 档案入口的结构化条件白名单（⛔ 不是死代码）：profile 页「按当前档案查科普资料」（profile.js 的 openReference）仍把 crop_id / region_code 传给 pages/reference，该页 onLoad 也仍按这两个条件预选筛选（reference.js 的 `_profileFilter`）⇒ 这段放行留着；只有该入口改跳 pages/knowledge 之后，才能连同 tests/unit/miniprogram-profile.test.mjs 那条白名单用例一起删。
+  // 档案入口的结构化条件白名单（⛔ 不是死代码，删掉会把登录回跳目标丢成 HOME）：真消费点是登录回跳——auth.js:550 的 `requireLogin` 用 `navigation.captureCurrent()` 把当前页的 route+options 还原成目标，**由这里放行之后**才存进 returnTo，登录回来再由 auth.js:590 的 `consumeReturnTo` + `openTarget` 打开；不放行 ⇒ 本函数返回 null ⇒ `openTarget` 的 `|| HOME` 兜成首页（用户刚点进来的那组档案筛选条件就丢了）。同时 profile 页「按当前档案查科普资料」（profile.js 的 `openReference`）仍把 crop_id / region_code 传给 pages/reference，该页 `onLoad` 也仍按这两个条件预选筛选（reference.js 的 `_profileFilter`）⇒ 只有该入口改跳 pages/knowledge 之后，才能连同 tests/unit/miniprogram-profile.test.mjs 那条白名单用例一起删。
   if (parts[0] === '/pages/reference/reference' && /^crop_id=[A-Za-z0-9_-]{1,80}&region_code=33[0-9]{4}$/.test(parts[1])) return candidate
   // No arbitrary role/token/user_id/redirect parameters. Only existing detail-page IDs.
   if (ID_PAGES.indexOf(parts[0]) === -1 || !/^id=[A-Za-z0-9_%.-]+$/.test(parts[1])) return null
