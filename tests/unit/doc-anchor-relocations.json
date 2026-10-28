@@ -747,5 +747,15 @@
     "reason": "旧锚点 27 在 base 上指到 `const pool = createPool(config.databaseUrl);`，与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪到第 51 行，27 只是它早年的位置）；本提交按符号 `buildApp(` 改指 HEAD 第 62 行 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，不是 27+1 的差值平移。",
     "kind": "correction",
     "symbol": "buildApp("
+  },
+  {
+    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
+    "line": 17,
+    "target": "services/api/src/app.ts",
+    "from": 1614,
+    "to": 1815,
+    "reason": "旧锚点 1614 在 base 上指到 `const released: string[] = [];`（与这条引用无关）；该行要引用的是 `buildApp` 里转发媒体批准能力的 spread，按符号 `mediaRealApprovalOption` 在 HEAD 上取到第 1815 行 `...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),`。1614 这个值自本片（2026-10-21）之后就一直在漂，属于陈旧锚点纠正，不是按差值平移。",
+    "kind": "correction",
+    "symbol": "mediaRealApprovalOption"
   }
 ]
