@@ -535,6 +535,46 @@
   },
   {
     "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 111,
+    "target": "services/api/src/app.ts",
+    "from": 2219,
+    "to": 2405,
+    "reason": "D12 的「装配」锚点原写 `:2219`，那行在 base 上是应用时钟自述注释（`// 与其它服务同源使用应用时钟：…`），不是 `GET /me/exports` 的装配；真装配是 `registerExportRoutes(app, config, pool, guards);`（按符号 `registerExportRoutes` 命中，声明在 `services/api/src/routes/exports.ts:31`）。按符号重锚到 2405，不是 2219+186 的差值平移。目标文件本片未改。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 112,
+    "target": "services/api/src/app.ts",
+    "from": 928,
+    "to": 1007,
+    "reason": "D12 的「缺口」锚点原写 `:928`，那行在 base 上是 `store: communityStore,`（与账本无关）；账本真装配是 `const egressLedger = egressPoolUsable ? createPostgresExportLedger({ pool }) : null;`（按符号 `egressLedger` 命中）。按符号重锚到 1007，不是差值平移。目标文件本片未改。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 153,
+    "target": "services/api/src/app.ts",
+    "from": 608,
+    "to": 665,
+    "reason": "D06 原写 `:608` 是「整条查询串一律不落」的自述注释位置，但 base 上 608 实际是 `ledger?: ConversationIdempotencyLedger;`（类型字段，与本项无关）；该自述现在 660-663 的注释块里，落点代码是 665 的 `export function logSafePath(url: unknown): string | null {`（`requestLogFields` 在 685 调用它）。注释行按 `--symbol=strict` 不能落锚点，故按符号 `logSafePath` 重锚到 665。目标文件本片未改。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 369,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 1998,
+    "reason": "§7.2 D13 行的判据落点原写 `app.ts:2076 同侧装配区`，而 base 上 2076 是 `) => messagesPurgeSnapshot(ownerId, client),`（消息清理快照，与本项无关）；第三方读侧装配区真行是 1998 的 `const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =`（按符号 `thirdPartyWiring` 命中）。按符号重锚到 1998。目标文件本片未改。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 97,
+    "target": "packages/contracts/openapi.json",
+    "from": 297,
+    "to": 282,
+    "reason": "D01 的「证据」行写两套鉴权方案 `packages/contracts/openapi.json:17`（`userSession`）与裸锚 `:297`（`adminSession`）。base 上 `packages/contracts/openapi.json:297` 确为 `            \"adminSession\": []`；upstream #707（ae818469）从该契约删掉 540 行错误响应后全文前移，`adminSession` 首个定义落到 282，HEAD 上 `packages/contracts/openapi.json:282` = `            \"adminSession\": []`（`:297` 现在是 `              \"ETag\": {`）。按符号 `\"adminSession\": []` 复取到 282，不是差值平移。契约文件本提交未改动（HEAD 的 openapi.json 就是 upstream/main 那一份）。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
     "line": 186,
     "target": "services/api/src/app.ts",
     "from": 2076,
@@ -551,18 +591,10 @@
   },
   {
     "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 366,
+    "line": 367,
     "target": "services/api/src/app.ts",
     "from": 2076,
     "to": 2257,
     "reason": "该行（D08 升档判据）正文直接引用该门：`available` 门不再是 `!== 'real'`。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 与 `available` 无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 就是该门表达式的落点（全文件唯一 `available: config.executionMode`）。目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 368,
-    "target": "services/api/src/app.ts",
-    "from": 2076,
-    "to": 1998,
-    "reason": "该行（D13）正文是「适配器与 0044 真库端口都在 `app.ts` 装配；注销受理时按接收方建行；回执带第三方状态」，讲第三方读侧装配，不是可用性门，所以不能改到 2257。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 是 messages 清理快照回调；新值 1998 原文 `  const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =` 才是第三方读侧端口 `ThirdPartyDeletionReadPort` 的装配点（同一符号在 2227 `    ...thirdPartyWiring,` 展开进注销装配装配、2550 `    thirdPartyRows: thirdPartyWiring.thirdParty ?? null,` 落到注销状态读数）。目标文件本提交未改动。"
   }
 ]

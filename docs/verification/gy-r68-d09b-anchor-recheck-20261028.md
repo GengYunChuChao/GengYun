@@ -43,9 +43,15 @@
 | 368 | `services/api/src/app.ts:2076` | `services/api/src/app.ts:1998` | `const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =`（D13 第三方读侧装配） |
 
 187/188 是相对引用（路径沿用同段 186 行的 `services/api/src/app.ts`），与页内 183 行
-`` `…user-data-deletion.ts:164-169`、`:202-207` `` 是同一种写法。文件行数改前改后都是 389 行
-（`git diff --numstat` 为 `6 6`，六行原地替换，没有新增/删除整行），所以被行号钉住的引用
-（`docs/verification/gy-r67-docs-pins-20261027.md:106`）不会因为这次改动移位。
+`` `…user-data-deletion.ts:164-169`、`:202-207` `` 是同一种写法。本片那条内容提交（`HEAD^1`）自己相对父
+`de2aa3c6` 的行数是 **389 → 389**（`git diff --numstat` 为 `6 6`，六行原地替换，没有新增/删除整行），
+所以被行号钉住的引用（`docs/verification/gy-r67-docs-pins-20261027.md:106`）不会因为那次改动移位。
+**并入 `#706` 之后整页是 391 行**（`git show HEAD:该路径` 按 `split('\n')` 计是 392，末尾空行占 1）；
+本页下面所有 s4 行号与读数都按合并后的树报。
+
+上表行号是**本片第一个提交相对 base `de2aa3c6` 的编号**。并入 `#706`（C5 复核）之后，`#706` 在本页前文
+插了一行，D08 与 D13 各下移一行：`366 → 367`、`368 → 369`；186/187/188/342 不动。合并后的登记表条目与
+doc 行号按合并后的树重新核过（见 §3 与 §8）。
 
 ## 3. 登记表：186/342/366/368 必须登记，187/188 登记不了（闸门的盲区）
 
@@ -65,13 +71,21 @@ docs/architecture/s4-data-traceability.md:186 ⟨services/api/src/app.ts :2076 �
 `186/342/366` 登记 `2076 → 2257`、`368` 登记 `2076 → 1998`，每条 `reason` 都写「旧行是什么符号 / 新行是什么符号 /
 为什么旧的是错的」。这条用例的口径只接受这种登记，不接受改 `services/api/**` 来迁就文档。
 
+并入 `#706` 后登记表按**并集**收（两侧条目一条不丢），同一处修正只留一条：`#706` 也把 D13 登成
+`2076 → 1998`（它登在 369，本片登在 368，是同一处纠正）。合并后 D13 落在 **369** ⇒ 保留 `#706` 那条、
+删掉本片重复的那条；本片 D08 那条的 `line` 由 366 改为 **367**。最终 **67 条**（59 历史保留 + `#706` 的 5 条 +
+本片的 3 条 186/342/367），按 `(doc, line, target, from, to)` 自证无重复。
+
 187/188 登记不了，原因是工具把裸 `:行号` 归到**当前文档自己**（`docs/architecture/s4-data-traceability.md`），
-而该页只有 389 行 ⇒ 这两条落进「行号越界、未判」桶，既不算判红也不算判绿：
+而该页只有 391 行（工具的分母写 392，按 `split('\n')` 计、含末尾空行）⇒ 这两条落进「行号越界、未判」桶，
+既不算判红也不算判绿：
 
 ```
-docs/architecture/s4-data-traceability.md:187 ⟨docs/architecture/s4-data-traceability.md⟩ 行号越界（旧 2058/390、新 2239/390），未判
-docs/architecture/s4-data-traceability.md:188 ⟨docs/architecture/s4-data-traceability.md⟩ 行号越界（旧 2078/390、新 2259/390），未判
+docs/architecture/s4-data-traceability.md:187 ⟨docs/architecture/s4-data-traceability.md⟩ 行号越界（旧 2058/392、新 2239/392），未判
+docs/architecture/s4-data-traceability.md:188 ⟨docs/architecture/s4-data-traceability.md⟩ 行号越界（旧 2078/392、新 2259/392），未判
 ```
+
+（上面两行是合并后在 `HEAD` 上跑出来的原文，可直接复现。）
 
 这是工具的已知盲区（页内相对引用没有解析到真正的目标文件），本片不为此改判据。试过把这两处写成显式路径
 `services/api/src/app.ts:2239-2246`：结构基线 13 条与漂移基线 15 条都不动，但 `--symbol=strict` 的
@@ -93,14 +107,15 @@ docs/architecture/s4-data-traceability.md:186#available: config.executionMode !=
 并顺手把表头注释里「实际在 :2221」这条注记的来龙去脉写对（它当年正确、随 +36 行漂移失效，见 §1）。
 删条只动登记表：判据逻辑与漂移窗口（`ANCHOR_DRIFT_WINDOW = 2`）一个字没改。
 
-## 5. 复测读数（同一批闸门，均在本提交之后、工作区干净的状态下跑）
+## 5. 复测读数（合并 `#706` 之后、工作区干净的状态下跑，命令原样）
 
 | 命令 | 读数 |
 | --- | --- |
-| `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | exit 0；结构基线 `登记 13 条；命中 13、新增 0、陈旧 0`；漂移基线 `登记 15 条；命中 15、新增 0、陈旧 0`；符号基线 `登记 29 条；命中 29、新增 0、陈旧 0`；`PASS: --strict 下没有基线之外的新增` |
-| `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | exit 0；tests 31 / pass 31 / fail 0；`registered=4 carried=59 removed=0 unresolved=2`（unresolved 是上面 187/188 的「未判」，不判红），base `de2aa3c6` |
+| `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | exit 0；结构基线 `登记 13 条；命中 13、新增 0、陈旧 0`；漂移基线 `登记 15 条；命中 15、新增 0、陈旧 0`；符号基线 `登记 28 条；命中 28、新增 0、陈旧 0`；`PASS: --strict 下没有基线之外的新增` |
+| `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | exit 0；tests 31 / pass 31 / fail 0；`base=578e7e30`（merge-base HEAD origin/main）、`docLines=6 tokens=6 pairs=6`、`registered=3 carried=64 removed=0 unresolved=2`（unresolved 是上面 187/188 的「未判」，不判红）；登记表 67 条 |
 | `node --test "tests/unit/doc-anchor*.test.mjs"` | exit 0；tests 80 / pass 80 / fail 0 |
 | `node --test "tests/unit/*anchor*" tests/unit/s4-data-gap-pins.test.mjs tests/unit/verify-anchors-script.test.mjs` | exit 0；tests 142 / pass 142 / fail 0 |
+| `node --test tests/unit/doc-anchors-symbol-baseline-fresh.test.mjs tests/unit/doc-anchors-symbol-strict.test.mjs tests/unit/doc-anchors-symbol-count.test.mjs tests/unit/doc-anchors-symbol-line.test.mjs`（符号基线新鲜度那组） | exit 0；tests 39 / pass 39 / fail 0 |
 | `node tools/verify-contract-status.mjs` | exit 0（台账自证 PASS，含「状态为人工判定」那条免责） |
 | `npm run verify:parity` | exit 0（`extra` / `missing` / `ledgerDrift` 均空） |
 | `node --test tests/unit/docs-truth-pins.test.mjs` | exit 0；tests 9 / pass 9 / fail 0 |
@@ -118,8 +133,25 @@ D13 那一行的 1998 与 c5 页给出的 `2076 → 1998` 是同一个判断（c
 - 没有改 `services/api/**`、`apps/**`、`.github/**`、迁移、`packages/contracts/openapi.json`（行号坐标系正被别的片改）。
 - 没有动 `docs/verification/gy-r67-docs-pins-20261027.md` 等历史页：它们记的是当时那棵树的读数，改了就不叫历史了。
 - 没改 `tools/verify-doc-anchors.mjs` 的任何判据逻辑：只删了一条已失效的漂移登记、改了一段表头注释。
-- s4 页 342/366/368 三处只有「路径:行号」没有行内指纹片段，`ANCHOR_DRIFT` 判据（要求同一行另有行内代码指纹）
-  对它们**不判红也不判绿**（工具计数在「无行内代码片段跳过」里），所以这三处属人工复核修正；
-  只有 186 那处是被 `ANCHOR_DRIFT` 真正抓到的漂移（`actualLine 2257`、`suggestion services/api/src/app.ts:2257`）。
-  `tests/unit/doc-anchor-relocation-identity.test.mjs` 这四条都抓到了。
+- s4 页 342/367 两处只有「路径:行号」、没有行内指纹片段，`ANCHOR_DRIFT` 判据（要求同一行另有行内代码指纹）
+  对它们**不判红也不判绿**（落「无行内代码片段跳过」桶）；369（D13）虽有行内片段，但按 ±2 窗口对不上，
+  落 ambiguous 桶、同样只计数不判红。所以这三处（342/367/369）都属人工复核修正，没有自动闸门兜底。
+  186 那处原来是 `ANCHOR_DRIFT` 真正抓到的漂移（`actualLine 2257`、`suggestion services/api/src/app.ts:2257`），
+  改对后它从 findings 里消失、转入 green：在 `HEAD` 上复算 `collectAnchorDrift({ root, targets: ['docs'] })`
+  得 15 条 finding、**s4 页 0 条**，`stats = {documents:17, referenceLines:533, skipped:499, green:13, ambiguous:6}`。
+  `tests/unit/doc-anchor-relocation-identity.test.mjs` 这**3 条**（186/342/367）都抓到了。
 - s4 页 187/188 两道闸门都看不见（详见 §3 的「未判」读数与显式路径试验），它们的正确性只由本页的行原文比对兜着。
+
+## 8. 与 `#706`（C5 s4 D 轴复核）合并后的状态
+
+本片是两个提交：先 `docs(s4)`（相对 base `de2aa3c6`），再 `merge upstream/main`（并入 `578e7e30`，#706）。
+另起 worktree 的指针：`git log --oneline -2` 能看到 `merge:` 与 `docs(s4):` 两条，`HEAD^1` 是本片那条、
+`HEAD^2` 是 `578e7e30`。
+
+合并后 s4 页（相对 `upstream/main` 逐行核过）：
+- 全文 `2076` **零命中**（`git grep` 与逐行扫描都是 0 行）。
+- `available: config.executionMode !== 'real'` 的落点 2257 在 186 / 265 / 313 / 342 / 367 五行上被引用，与 `app.ts` 一致。
+- 第三方读侧装配 1998 在 55 / 82 / 249 / 261 / 262 / 312 / 369 上被引用（其中 369 就是 D13 行）。
+- 相对 `upstream/main` 的 `git diff --numstat` 仍是 `6 6`（六行原地替换：186/187/188/342/367 的落点号 + 369 的 D13 判据措辞）。
+- 登记表最终 67 条，`(doc, line, target, from, to)` 无重复（同一处修正只有一条）。
+
