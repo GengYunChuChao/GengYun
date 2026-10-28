@@ -154,7 +154,7 @@
 | 社区只读谓词（不进路由/不进 OpenAPI） | `services/api/src/community/service.ts:1851` | `visibility: Object.freeze({` |
 | 装配：后绑定读取器 | `services/api/src/app.ts:810` | `const messageReference: MessageReferencePort =`（`:811` `createCommunityReferencePort({ community: () => communityVisibility })`；`:1154` 补赋值） |
 | 页面可点判据（唯一） | `miniprogram/pages/messages/messages.js:310` | `const canOpen = message.reference_state === 'available' && target !== null &&` |
-| 页面跳转（post 直跳／comment 先取父帖） | `miniprogram/pages/messages/messages.js:277`／`:278` | `if (item.targetType === 'post') { open(item.targetId); return }`／`communityApi.getComment(item.targetId).then(function (result) {` |
+| 页面跳转（post 直跳／comment 先取父帖） | `miniprogram/pages/messages/messages.js:279`／`:280` | `if (item.targetType === 'post') { open(item.targetId); return }`／`communityApi.getComment(item.targetId).then(function (result) {` |
 | 行绑定 | `miniprogram/pages/messages/messages.wxml:101` | `bindtap="onOpenTarget"`（`:108` `查看详情 ›`；`:115` `catchtap="onMarkRead"`） |
 | 文案不暗示存在性 | `miniprogram/pages/messages/messages.js:48` | `unavailable: '关联内容当前不可查看，本条不提供跳转入口。'` |
 
