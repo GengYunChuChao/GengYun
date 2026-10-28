@@ -169,10 +169,17 @@ Page({
     return params
   },
 
-  /** 列表项展示字段：只做**展示**派生（可见性/审核状态如实标注），不改契约语义。 */
+  /**
+   * 列表项展示字段：只做**展示**派生（可见性/审核状态如实标注），不改契约语义。
+   *
+   * 审核结论的措辞一律取适配层 `api.outcomeOf`（唯一一张表）：改前这里把
+   * `pending`/`quarantined`/`rejected` 一律写成「待审／未公开」，于是「隔离待复核」与
+   * 「明确驳回」在列表上完全同形，被驳回的还被告知「待审」。
+   */
   _decorate: function (items) {
     return items.map(function (post) {
       const author = api.authorView(post.author)
+      const outcome = api.outcomeOf(post)
       return {
         id: post.id,
         revision: post.revision,
@@ -186,10 +193,8 @@ Page({
         region_code: post.region_code,
         visibility: post.visibility,
         audit_state: post.audit_state,
-        self: post.visibility !== 'published' || post.audit_state !== 'approved',
-        stateLabel: post.visibility === 'published' && post.audit_state === 'approved'
-          ? ''
-          : (post.visibility === 'hidden' ? '已下架（仅本人可见）' : '待审／未公开'),
+        self: outcome.key !== 'approved',
+        stateLabel: outcome.key === 'approved' ? '' : outcome.title,
         linkTitle: post.linked_knowledge && post.linked_knowledge.summary
           ? post.linked_knowledge.summary.title
           : '',

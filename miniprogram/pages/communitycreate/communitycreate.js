@@ -95,17 +95,13 @@ Page({
     this.setData({ submitting: true, errorText: '' })
     api.createPost(input).then(function (result) {
       that.setData({ submitting: false })
-      // 审核结论只以**服务端返回**为准。判据与措辞**逐字**取自**既有**的详情页与列表页，
-      // 本页不自造第二套说法：通过 ⇒ 详情页的 `publicLabel`（`communitydetail.js:105`）；
-      // 其余 ⇒ 详情页的作者侧 `stateLabel`（`:106-108`）＝列表页 `stateLabel`
-      // （`community.js:130-133`）：已下架 ⇒ '已下架（仅本人可见）'，否则 '待审／未公开'。
-      // 此前这里是无条件宣称"已发布并通过先行审核"——服务端从未这么说过。
-      const post = result.post
-      const approved = post.visibility === 'published' && post.audit_state === 'approved'
-      wx.showToast({
-        title: approved ? '已通过先行审核' : (post.visibility === 'hidden' ? '已下架（仅本人可见）' : '待审／未公开'),
-        icon: approved ? 'success' : 'none'
-      })
+      // 审核结论只以**服务端返回**为准，措辞取适配层 `api.outcomeOf`（详情页/列表页同一张表）：
+      // 201 只是「服务端已受理」，是否公开一律按返回的 `visibility`/`audit_state` 如实提示。
+      // 改前这里把 `pending`/`quarantined`/`rejected` 一律说成「待审／未公开」——
+      // 对「隔离待复核」尚可，对「明确驳回」是说反了（不会再有人审它）。
+      const outcome = api.outcomeOf(result.post)
+      const approved = outcome.key === 'approved'
+      wx.showToast({ title: outcome.title, icon: approved ? 'success' : 'none' })
       navigation.openTarget('/pages/communitydetail/communitydetail?id=' + encodeURIComponent(result.post.id), true, function () {})
     }).catch(function (error) {
       // 会话类（含 `SESSION_CHANGED`）⇒ 回登录门禁；403 三码 ⇒ 整页 denied（`errorCode` 驱动）。
@@ -113,6 +109,8 @@ Page({
         that.setData({ submitting: false, guest: true, errorText: '', errorCode: '', denied: false })
         return
       }
+      // `api.message()` 已按结论分流：400 明确驳回 / 422 隔离待复核，各带理由码人话；
+      // 未知码落在「未知原因（码：X）」，不会说成通过、也不会说成系统错误。
       that.setData({
         submitting: false,
         errorText: api.message(error),
