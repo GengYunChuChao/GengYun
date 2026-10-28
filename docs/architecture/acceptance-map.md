@@ -80,3 +80,23 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 
 验证方式（跨平台可复现）：`node --test tests/unit/admin-ops-governance.test.mjs tests/unit/admin-ui-review-state.test.mjs tests/moderation/http-callback.test.mjs` 在 HEAD 上全绿；把上表任一条**单独**改成"已接线"（例如给 `/admin` 响应加 `wired: { const: true }`）即可看到对应用例变红。
 
+## 已知缺口：`referencedetail` 无收藏入口，且随包名录 id 不是 UUID（待裁定）
+
+2026-10-28 登记（Refs #7 #16，对应上表 F18／AC17／GY-I16 那一行）。**本节只登记，不裁定**——选哪条出路要指挥／用户拍。
+
+**现象**：P0 链路第 5 步是「详情 → 收藏」。`pages/knowledge` → `pages/knowledgedetail` 这一路有收藏按钮、能走通；`pages/reference` → `pages/referencedetail` 这一路**没有收藏入口**（该页 `.js` 443 行、`.wxml` 160 行逐字读完，对 `收藏`／`favorite`／`fav` 零命中）。
+
+**为什么"补一个按钮"补不上（结构性缺口，不是未接线）**：
+
+1. 该页数据源是**随包离线名录**，记录主键形如 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:34`）；页面的路由判定是 `validId` 为真走服务端、否则走随包副本，随包 id 永远落在后一支：`miniprogram/pages/referencedetail/referencedetail.js:115`。
+2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假 ⇒ 这一支永远拿不到服务端实体：`miniprogram/utils/knowledge-api.js:224`。
+3. `POST /favorites` 的 `target_ref.revision` 只能取自服务端读面（`GET /knowledge/{id}`，该客户端把响应 `id` 强制 UUID），随包记录既无服务端 `id` 也无 `revision`。
+4. 契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format ⇒ 强行发一条不会被 400 挡住，但 `reference_state` 由服务端按 `/knowledge` 公开读面逐次派生，随包记录在服务端不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:108`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
+
+**两条出路（二选一，本片不选）**：
+
+- **(a) 明确不做「从名录详情收藏」**：`referencedetail` 保持无收藏入口，P0 的收藏一律走 `pages/knowledgedetail` 与 `pages/favorites`；口径已按这一支写进 `docs/ui-state-inventory.md` 第 7.6 节，可当裁定引。成本低（只动文档），不动 #7 验收口径。
+- **(b) 换数据源**：让除草剂详情读服务端实体（UUID）以保住收藏。代价是要同时改 #7 的「手选条件查询」与「详情」验收口径——`/herbicides` 今天只接受 `q`／`registration_number`（结构化条件不可表达），等于把查询面也翻一遍。成本高，跨片。
+
+**登记口径**：裁定落地前，任何走查脚本、验收记录、状态清单都**不得**把「从除草剂详情收藏」写成已支持或计划支持；`pages/referencedetail` 的界面状态里也不得出现收藏态。本片只改 `docs/**`，不碰 `miniprogram/**`、冻结契约与 #7 的验收文本。
+
