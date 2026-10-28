@@ -12,6 +12,10 @@
  * 判据（全部现场重算，**零硬编码**：本文件不写任何期望条数／期望行号／提交 sha）：
  *   1) base = `git merge-base HEAD origin/main`（拿不到再退 `upstream/main`，再退 `HEAD~1`）；
  *   2) 扫描面 = `git diff -U0 <base>..HEAD -- docs/` 里被**改写**的那批行（旧行文本→新行文本配对）；
+ *      每个 hunk 先按 `@@ -<oldCount> +<newCount> @@` 分成三类：`pairedHunks`（旧侧、新侧都非空，
+ *      真能配出「旧行→新行」）、`pureAddHunks`（旧侧 0 行 ⇒ 一行都配不出来）、`pureDeleteHunks`
+ *      （新侧 0 行 ⇒ 旧行整行消失，锚点走 `removed` 桶）。本次文档改动面**全部**是纯新增 hunk 时，
+ *      这条提交没有任何位移面可言，显式 SKIP 并报出纯新增 hunk 数（见「已知限制之三」）；
  *   3) 每对行里按仓库既有写法抽锚点：`<路径>:<起>[-<止>]` 与紧跟在某个路径锚点之后的裸 `:<起>[-<止>]`；
  *      裸锚点解析不出归属（同行没有前置路径 / 前置路径装不下这个行号）时退回**当前文档自身**；
  *   4) 目标文件本提交未改动 ⇒ 断言 `new === old`（起止都断言）；
@@ -19,24 +23,90 @@
  *   5) 两种情形都断言「`git show <base>:<目标>` 的旧行原文 === `git show HEAD:<目标>` 的新行原文」
  *      （目标行落在该文件被改写/删除的区内时无法做内容同一性判定，如实计入「不可解析」）。
  *
- * 位移的**唯一合法例外**是「旧锚点本来就指错，本提交把它改到正确行号」（目标文件一个字没动）——
- * 这种位移交给审查可见的登记表 `tests/unit/doc-anchor-relocations.json` 表达（字段
- * `doc` / `line` / `target` / `from` / `to` / `reason`，区间锚点再加 `fromEnd` / `toEnd`，
- * 仿 `tools/doc-anchors-baseline.json`）：
+ * 位移的**合法例外**有两类，都必须写进审查可见的登记表 `tests/unit/doc-anchor-relocations.json`
+ * （字段 `doc` / `line` / `target` / `from` / `to` / `reason`，区间锚点再加 `fromEnd` / `toEnd`，
+ * 可选 `kind` / `symbol`，仿 `tools/doc-anchors-baseline.json`）：
+ *
+ * Ａ) **陈旧锚点重锚**（`kind` 缺省）：目标文件**一个字没动**，只是文档里那个旧行号指错了，本提交把它
+ *     改到正确行号。
  *   - 目标文件未改 + 行号变了 ⇒ **默认红**；
  *   - 只有登记表里**逐字匹配**（doc / line / target / from / to 全等；区间锚点连两端都等）的一条能把它
  *     降级为「已登记」，diagnostic 里会列出条数与逐条摘要；
- *   - **登记表自身要被验真**：每条必须满足「新行号确实命中」「旧行号不再命中同一段原文」
- *     「本次提交的文档改动面里确实有这条位移」；陈旧条目（from == to、新行号不命中、原文相同、
- *     没有对应位移）与冗余条目（目标文件有改动、端点映射已能判）一律**判红并点名** —— 登记表不是
- *     白名单垃圾桶，用不上的一条就得删；
+ *   - **登记条目是「历史事实登记」，判它的是「HEAD 上是否仍成立」，不是「本次 diff 里有没有」**。
+ *     一条登记只由引入它的那次提交举证一次（那次提交的文档改动面里必须有这条位移，否则它根本登记不
+ *     进来）；之后每个改过 `docs/**` 的提交都会把它重新验一遍，但**不再要求它在本提交里复现** ——
+ *     那条位移早已落在 base 里，`base..HEAD` 的文档改动面里当然没有它。历史实现要求「本次提交的文档
+ *     改动面里必须能找到这条位移」，等于：谁修掉一个跨提交漂移的旧锚点，下一个**无关**的 docs 提交就
+ *     会因为它而判红（`upstream/main` 上真实发生过）。现在的两档判定：
+ *       ① **陈旧**（HEAD 上已经站不住）：`from == to`、`doc` 或该行在 HEAD 上不存在、
+ *          该行已不再含 `⟨target :to⟩`、目标文件缺失或行号越界、`base[from]` 与 `HEAD[to]` 原文相同
+ *          （旧锚点本来就指对了）、形状不合法 —— **判红并点名**；
+ *       ② **冗余**（这条位移本提交自己就能用端点映射判出来，或本次改动面里已有另一条登记接住它）——
+ *          **判红并点名**；
+ *       ③ 其余（HEAD 上仍成立、本次提交的文档改动面没涉及它）= **历史保留**，逐条进 `carried` 并在
+ *          diagnostic 里点名读数，**不判红**。
+ *
+ * Ｂ) **陈旧锚点纠正**（`kind: "correction"` + 必填 `symbol`）：目标文件**本提交被改了**，而旧锚点在
+ *     base 上**本来就是错的** —— 它指到 `Error413`／参数 `{`／`schema` 这类与引用语义无关的行。此时端点
+ *     映射只会把错误机械平移到另一个错行，改成真正正确的行号又撞「必须等于端点映射」，作者无路可走
+ *     （GY-R68 的 A05 片就是受害者）。这一类补的正是这条**整改通道**：把 from→to 连同「应该落到哪个
+ *     符号上」一起登记出来，闸门改为验真「新行确实含该符号」。
+ *   - 它**不是白名单**，验真三件事缺一即红：
+ *       ① HEAD 版 target 的 `to`（区间则整段连起来看）必须含 `symbol`；
+ *       ② base 版 target 的 `from`（区间则逐行看）必须**不含** `symbol` —— 含了就说明旧锚点本来就指对了，
+ *          那是真回归而不是纠正，这条登记必须删（文案直说「这不是纠正」）；
+ *       ③ `from !== to`；
+ *     另外文档侧 `doc:line` 必须真的含 ⟨target :to⟩（与Ａ类共用同一条陈旧判据）。
+ *   - 它可以出现在「目标文件本提交有改动」那一支：接住后计入 `registered` 并**跳过端点映射判定**；
+ *     也可以出现在「目标文件未改」那一支（与Ａ类行为一致）。同一行多个 token 复用一条登记的行为不变。
+ *   - 生效时逐条打印 `kind=correction` 与 `symbol`，同时计入 `stats.corrected`（`summarize()` 的
+ *     `corrected=N`、`judgmentBuckets().corrected`），便于人工复核；`corrected` **只在验真通过后 +1**。
+ *   - 缺省 `kind` 的条目在「目标文件有改动」那一支**仍然没有逃生口**（那一支只认 `kind: "correction"`）；
+ *     反过来，correction 也放行不了「新行仍然是旧行那一段文本」（②：那样 base 的 `from` 窗口也含
+ *     `symbol`），也放行不了 `from === to`（③）。但它**不判断语义**：旧行原文若已落在新树别处、而
+ *     文档被人工指到另一条恰好含 `symbol` 的行，这条通道会放行 —— 这是代价，兜底靠「登记条目随 diff
+ *     进 review」+「生效时逐条打印 `kind=correction` 与 `symbol`」。
+ *
+ * 登记表不是白名单垃圾桶：HEAD 上站不住的一条都留不下来，本次真用得上却没登记的位移照样红；
  *   - 空登记表（`[]`）是合法状态，本片（GY-R67-A03）就是零条目：11 处回退之后目标文件未改且行号恒等。
  *
  * 已知限制（**不是正确语义**，见本文件末尾的常驻用例）：整条锚点被删掉时，扫描面里只剩「旧锚点」，
  * 没有新锚点可比对，判不了「该不该删」—— 判红会误伤正常删除，所以只**计数并逐条列进 diagnostic**
  * （`removed` 桶），不判红。删锚点这件事因此是「可观测但放行」。相应地，这类提交的 `judged` 可能是 0，
- * 「扫描面非空」的自证落在「每个抽到的 token 都进了某个桶（判定／已删／未判）」上；只有「抽到 0 个
- * token」（纯散文改动、整行没有锚点）才显式 SKIP 为「无判定面」，绝不静默记成 PASS。
+ * 「扫描面非空」的自证落在「每个抽到的 token 都进了某个桶（判定／已删／未判）」上；只有「配出了行对、
+ * 但那些行里一个锚点都没抽到」（纯散文改动、整行没有行号引用）才显式 SKIP 为「无判定面」，绝不静默
+ * 记成 PASS。
+ *
+ * 已知限制之三（**纯新增 docs 提交**，GY-R68 追加；每一条都**只记录、不擅自扩判定面**）：
+ *   ① `git diff -U0` 对「只新增行、不改旧行」的文档提交给出 `@@ -N,0 +M,K @@`（旧侧 0 行），
+ *      `pairHunkLines()` 一行都配不出来，`removed` 桶也接不住它（没有任何旧行），于是这种提交曾经落到
+ *      「扫描面为空」的硬红上 —— 那是**假红**：这种提交根本没有位移面可言。现在的口径是「本次文档改动面
+ *      **全部**是纯新增 hunk ⇒ 显式 SKIP（文案带纯新增 hunk 数）」；只要掺进一个配得上行的 hunk 或一个
+ *      纯删除 hunk，就不许 SKIP（末尾 A1／A4 两条常驻用例钉住，A2／A3 钉住「没有变松」）。
+ *   ② 整份文档被删（`+++ /dev/null`）⇒ `parseDocDiffSinglePass()` 把该文件整体过滤掉；若它是本次唯一的
+ *      文档改动，`docFiles === 0` ⇒ `judge()` 退 `reason: '没有改动 docs/**'` ⇒ 主用例仍 SKIP。既有形状，
+ *      本片不动它（删整份文档不会产生任何「需要重锚」的行）。
+ *   ③ 纯改名（`--no-renames` 下是「删 + 增」）⇒ 旧文件侧是纯删除 hunk、新文件侧是纯新增 hunk ⇒
+ *      `appendOnly` 判据不成立，落到「`docLines 0` 且 `removed 0`」的硬红上，文案会报出纯新增 hunk 数。
+ *      若被改名的那份文件里本来没有锚点，这仍是一条「没有位移面却被判红」的形状 —— 已知、未在本片处理
+ *      （至少它是可读的硬红，不是静默通过）。
+ *   ④ SKIP 只证明「本次没有位移面」，**不证明**新增行里的锚点写对了：新增行没有「旧行」可比，一旦
+ *      纯新增 hunk 被 SKIP，那些新增行号是否正确就只由 `tools/verify-doc-anchors.mjs --strict` 那套
+ *      「行号在不在文件范围内」兜底。这条闸门对此确实**没有**判别力。
+ *   ⑤ `tokens === 0` 只在「没有任何桶接过东西」时才 SKIP（「配出了行对，但一个锚点都没抽到」= 纯散文
+ *      改动，A5 钉住）：本片**没有**把它改成硬红 —— 改判方向会让「随手修一个 typo 的 docs 提交」直接
+ *      变红，而这条闸门的既有语义（上一段）就是「无判定面 ⇒ SKIP，绝不静默 PASS」。要改成红必须单独
+ *      开片并同步改文案。
+ *   ⑥ `tokens === 0` 但 `removed > 0`（纯删除型：整行删掉带锚点的行；或「纯删除 hunk + 纯新增 hunk」
+ *      混排且没有配对 hunk）现在走 **ok/PASS**，旧实现是 SKIP —— 这是本片唯一一处判定方向变化，来源是
+ *      「纯删除型只观测不判红、但扫描面确实非空」这条既有语义（上一段），A3 钉住它。它仍然判红 0 条：
+ *      被删掉的锚点去哪了**没人判**，只是计数进 `removed` 并逐条列进 diagnostic。
+ *
+ * 已知限制之二（`kind: "correction"` 那一类）：三件验真验的是**文本**，不是语义 —— ② 只说明 base 的
+ * `from` 窗口不含 `symbol`，它不扫描新树别处；③ 只判 `from !== to`。所以「新行含 `symbol`、旧行不含」
+ * 这两条成立时，闸门分辨不出「这个片段是不是该锚点真正该指的 API」。`symbol` 还是**纯子串匹配**（见
+ * `REGISTRY_ENTRY_SHAPE` 上方说明）：极短符号（`"e"`、`"id"`）几乎任何代码行都能命中，判别力实际落在
+ * `reason` 与「登记条目随 diff 进 review」上，不落在闸门自己的判断里。
  *
  * CI 历史可用性：`actions/checkout` 默认 `fetch-depth: 1`，`.github/workflows/engineering-shell.yml`
  * 的 `unit` job 与 `docs` job 都**没有**带 `fetch-depth`（全仓只有 `local-wechat.yml` 带
@@ -382,6 +452,20 @@ function loadRegistry(root) {
   return { entries: parsed, problems: [] };
 }
 
+/** `symbol` 的长度上限：够写下一个函数名／导出名／字段名，又不至于把整段代码塞进登记表。 */
+const SYMBOL_MAX_LENGTH = 200;
+
+/**
+ * 登记条目 schema（`tests/unit/doc-anchor-relocations.json` 的每一元素）：
+ * - `doc` / `line` / `target` / `from` / `to` / `reason` 必填；区间锚点再加 `fromEnd` / `toEnd`；
+ * - `kind` 可选，只有两个取值：缺省（＝陈旧锚点重锚，目标文件本提交未改动那一支）或 `"correction"`
+ *   （＝纠正本来指错的锚点，两支都可用）；写别的值一律形状错误；
+ * - `symbol` 只在 `kind: "correction"` 下必填（1–200 字符、不含换行、非纯空白），缺省 `kind` 时
+ *   **必须不出现** —— 半成品登记（想写纠正却漏了 kind）在这里就判红，不许滑到判定阶段再猜。
+ *   它是**纯子串匹配**（`String.prototype.includes`，区分大小写、不校验标识符边界）：极短符号
+ *   （如 `"e"`）几乎任何行都能命中，实际判别力靠 `reason` 写清该锚点应指的 API + 人工 review；
+ *   这里**不**加最小长度阈值 —— 那会引入「多短才算符号」的新语义，而本闸门不判语义。
+ */
 const REGISTRY_ENTRY_SHAPE = (entry) => {
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return '条目不是对象';
   if (typeof entry.doc !== 'string' || entry.doc === '') return 'doc 必须是仓库相对路径字符串';
@@ -396,24 +480,94 @@ const REGISTRY_ENTRY_SHAPE = (entry) => {
     return 'toEnd 必须是 ≥ to 的整数';
   }
   if (typeof entry.reason !== 'string' || entry.reason.trim() === '') return 'reason 必须是非空字符串（写明这条位移为什么合法）';
+  if (entry.kind !== undefined && entry.kind !== 'correction') {
+    return `kind 只允许缺省（陈旧锚点重锚）或 "correction"（纠正本来指错的锚点），实际是 ${JSON.stringify(entry.kind)}`;
+  }
+  if (entry.kind === 'correction') {
+    if (typeof entry.symbol !== 'string' || entry.symbol.trim() === '') {
+      return 'kind="correction" 时 symbol 必填（非空字符串：新行里必须出现的那个符号，用来证明纠正指对了）';
+    }
+    if (entry.symbol.length > SYMBOL_MAX_LENGTH) {
+      return `symbol 长度必须在 1–${SYMBOL_MAX_LENGTH} 字符之间，实际 ${entry.symbol.length}`;
+    }
+    if (/[\r\n]/.test(entry.symbol)) return 'symbol 不能包含换行（它是符号子串，不是一段代码）';
+  } else if (entry.symbol !== undefined) {
+    return 'symbol 只在 kind="correction" 下允许出现；缺省 kind 却写了 symbol 是半成品登记'
+      + '（要么补 kind: "correction"，要么删掉 symbol）';
+  }
   return null;
 };
 
+/** 1 基闭区间的行窗口（`end` 缺省时退化为单行）。 */
+function lineWindow(lines, start, end) {
+  return lines.slice(start - 1, end === undefined ? start : end);
+}
+
+/**
+ * `kind: "correction"` 的三件验真（缺一即红），通过返回 `null`，否则返回可操作的红文案。
+ * ① 新行（区间则整段连起来看）必须含 `symbol`；② 旧行（区间则逐行看）必须**不含** `symbol`；
+ * ③ `from !== to`。② 是关键：旧行本来就含该符号 ⇒ 旧锚点本来就指对了，把行号改掉是真回归，
+ * 不许用「correction」把它洗成「已登记」。
+ */
+function correctionViolation({ entry, targetPath, root, base, head, textCache }) {
+  const symbol = entry.symbol;
+  const span = (start, end) => (end === undefined || end === start ? `:${start}` : `:${start}-${end}`);
+  const headLines = readLines(root, head, targetPath, textCache);
+  const baseLines = readLines(root, base, targetPath, textCache);
+  if (headLines === null || baseLines === null) {
+    return `目标文件 ${targetPath} 在 base/HEAD 上缺失，correction 无法验真`;
+  }
+  if (entry.to > headLines.length || (entry.toEnd !== undefined && entry.toEnd > headLines.length)) {
+    return `新行号越界：${targetPath} 在 HEAD 上只有 ${headLines.length} 行`
+      + `（to${span(entry.to, entry.toEnd)} 不存在）`;
+  }
+  if (entry.from > baseLines.length || (entry.fromEnd !== undefined && entry.fromEnd > baseLines.length)) {
+    return `旧行号越界：${targetPath} 在 base 上只有 ${baseLines.length} 行`
+      + `（from${span(entry.from, entry.fromEnd)} 不存在）`;
+  }
+  if (entry.from === entry.to && (entry.fromEnd ?? entry.from) === (entry.toEnd ?? entry.to)) {
+    return 'from 与 to 相同 ⇒ 旧锚点根本没动，谈不上「把错锚点改到正确行号」，这条登记必须删';
+  }
+  if (!lineWindow(headLines, entry.to, entry.toEnd).join('\n').includes(symbol)) {
+    return `新行 ${targetPath}${span(entry.to, entry.toEnd)} 里找不到 symbol ${JSON.stringify(symbol)}`
+      + '（把错锚点机械平移到另一条不含该符号的行，不叫纠正）';
+  }
+  const oldWindow = lineWindow(baseLines, entry.from, entry.fromEnd);
+  const oldHit = oldWindow.findIndex((line) => line.includes(symbol));
+  if (oldHit !== -1) {
+    return `这不是纠正：旧行 ${targetPath}:${entry.from + oldHit} 已经含 symbol ${JSON.stringify(symbol)}`
+      + ' —— 旧锚点本来就指对了，把它的行号改掉是真回归；请删掉这条登记（'
+      + '`kind: "correction"` 只能用来修「base 上本来就指错」的锚点）';
+  }
+  return null;
+}
+
 /**
  * 判定核心。全部结论现场重算，不做任何缓存跨调用复用（夹具用例拿同一棵树跑多次不同登记表）。
- * 返回 `{ violations, unresolved, removed, registered, pairs, stats, reason }`。
+ * 返回 `{ violations, unresolved, removed, registered, carried, pairs, stats, reason }`：
+ * `registered` 只装**本次真正生效**的登记条目；`carried` 装「HEAD 上仍成立、但本次提交的文档改动面
+ * 没涉及」的历史条目（不判红，只读数）。
  */
 function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }) {
   const violations = registryProblems.map((problem) => `[登记表] ${problem}`);
   const unresolved = [];
   const removed = [];
   const registered = [];
+  const carried = [];
   const pairs = [];
   const stats = {
     docFiles: 0, docLines: 0, tokens: 0, pairs: 0, judged: 0,
-    identical: 0, relocated: 0, registered: 0, removed: 0,
+    // `corrected` 与 `registered` 同口径：**按 token 计**，不是按登记条目计 —— 同一条 correction 被同一
+    // 文档行的多个 token 复用（`docFile()` 那种一行两锚点的文档）时各 +1，于是 corrected=2。
+    // 它是 `registered` 的子集（纠正也走登记分支），`judgmentBuckets()` 里因此要减掉它再报 `registered`。
+    identical: 0, relocated: 0, registered: 0, corrected: 0, carried: 0, removed: 0,
+    // 文档 hunk 的三分类（只喂给「扫描面」判定，不参与任何逐 token 判定）：
+    // `pureAddHunks` 是 `git diff -U0` 里 `@@ -N,0 +M,K @@` 那种「只新增行、旧侧 0 行」的 hunk ——
+    // 它一行都配不出「旧行→新行」，也没进 `removed`（没有任何旧行），所以「本次全是纯新增」的提交
+    // 在旧实现里会撞上「扫描面为空」的假红。纯删除型（`newCount === 0`）早就有 `removed` 桶兜着。
+    pairedHunks: 0, pureAddHunks: 0, pureDeleteHunks: 0,
   };
-  const empty = (reason) => ({ violations, unresolved, removed, registered, pairs, stats, reason });
+  const empty = (reason) => ({ violations, unresolved, removed, registered, carried, pairs, stats, reason });
 
   if (base === head) return empty('base 与 HEAD 同一提交');
 
@@ -465,18 +619,27 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
   };
 
   const usedEntries = new Set();
+  /** 验真失败的 correction 条目：已经由 token 判定逐条判红过，登记表自验循环不再重复刷屏。 */
+  const failedCorrections = new Set();
   /**
    * 登记条目按「一次位移」登记，而不是按「一个 token」登记：同一行里 `path:20` 与紧随其后的裸 `:20`
    * 是同一段位移的两种写法（裸锚点会继承前置路径作为 target），因此**同一条登记可以被同一行的多个
-   * token 复用**；`usedEntries` 只用来判「这条登记是否真的用上了」（用不上 ⇒ 冗余 ⇒ 判红）。
+   * token 复用**；`usedEntries` 只用来判「这条登记本次提交是否被用上了」—— 只有**同时**出现在本次
+   * `pairs` 里的条目才谈得上冗余（见下面登记表自验真循环），「本次没提它」本身不是判据。
    * 区间锚点 `path:166-168 → path:177`：登记必须带 `fromEnd`/`toEnd`，按两端逐字比对，不接受只对起点。
+   * `kinds` 用来把分支收窄：目标文件**有改动**那一支只认 `kind: "correction"`，别的一律不匹配
+   * （缺省 kind 的登记在那一支没有逃生口）。
    */
-  const matchRegistry = (context) => {
+  const matchRegistry = (context, { kinds = null } = {}) => {
     const matchesEndpoint = (token, entryStart, entryEnd) => (
       entryStart === token.start && (token.end === token.start ? entryEnd === undefined : entryEnd === token.end)
     );
     return registry.findIndex((entry) => {
       if (entry === null || typeof entry !== 'object') return false;
+      // 形状不合法的条目一律不参与匹配：它会在下面的验真循环里逐条判红，
+      // 绝不能靠「匹配上了」把 token 从判定面里搬走（那样形状错误就变成一条静默放行）。
+      if (REGISTRY_ENTRY_SHAPE(entry) !== null) return false;
+      if (kinds !== null && !kinds.includes(entry.kind)) return false;
       return entry.doc === context.doc
         && entry.line === context.newLineNo
         && (entry.target === context.target || entry.target === context.rawTarget)
@@ -485,8 +648,44 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
     });
   };
 
+  /**
+   * 把命中的登记接住。`kind: "correction"` 先跑三件验真，**不通过就判红且 `corrected` 不加一**
+   * （「登记了就算纠正」等于白名单）。返回 `true` 表示这条位移已经被这条登记接住。
+   */
+  const applyRegistration = ({ registryIndex, label, targetPath }) => {
+    const entry = registry[registryIndex];
+    if (entry.kind === 'correction') {
+      const problem = correctionViolation({ entry, targetPath, root, base, head, textCache });
+      if (problem !== null) {
+        const firstReport = !failedCorrections.has(registryIndex);
+        failedCorrections.add(registryIndex);
+        if (firstReport) {
+          violations.push(
+            `${label} 登记为 kind=correction（symbol ${JSON.stringify(entry.symbol)}），但验真不通过：${problem}`,
+          );
+        }
+        return false;
+      }
+      stats.corrected += 1;
+    }
+    usedEntries.add(registryIndex);
+    registered.push(
+      `${label} — 已登记（${entry.kind === 'correction'
+        ? `kind=correction，symbol=${JSON.stringify(entry.symbol)}，${entry.reason}`
+        : entry.reason}）`,
+    );
+    stats.registered += 1;
+    return true;
+  };
+
   for (const file of docFiles) {
     for (const hunk of file.hunks) {
+      // 先给 hunk 分类（真·扫描面统计，不改判定）：纯新增的 hunk 既配不出行对、也产不出 `removed`，
+      // 完全「隐形」—— 正是「纯新增 docs 提交被判扫描面为空」那个假红的根。分类口径按 hunk 头里的
+      // 计数走，不按 `oldLines`/`newLines` 数组长度走（`-U0` 下两者本应一致，但以头为准更稳）。
+      if (hunk.oldCount === 0 && hunk.newCount > 0) stats.pureAddHunks += 1;
+      else if (hunk.newCount === 0) stats.pureDeleteHunks += 1;
+      else stats.pairedHunks += 1;
       const { pairs: linePairs, unpairedOld } = pairHunkLines(hunk);
       // 整行被删掉的旧行：它的锚点在新侧彻底消失，既配不上对、也进不了任何判定桶。
       // 这类锚点直接进 `removed`（只观测不判红：正常删文档不该判红，但也不许静默隐身）。
@@ -576,15 +775,12 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
 
           if (!changed) {
             if (newToken.start !== oldToken.start || newToken.end !== oldToken.end) {
-              const registryIndex = matchRegistry({
+              const context = {
                 doc: file.path, newLineNo, target, rawTarget: oldToken.target, oldToken, newToken,
-              });
-              if (registryIndex !== -1) {
-                usedEntries.add(registryIndex);
-                registered.push(
-                  `${label} — 已登记（${registry[registryIndex].reason}）`,
-                );
-                stats.registered += 1;
+              };
+              const registryIndex = matchRegistry(context, { kinds: [undefined, 'correction'] });
+              if (registryIndex !== -1
+                && applyRegistration({ registryIndex, label, targetPath: target })) {
                 continue;
               }
               violations.push(
@@ -599,6 +795,18 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
             }
             stats.identical += 1;
           } else {
+            // 目标文件本提交有改动：先看有没有 `kind: "correction"` 登记接住它。旧锚点在 base 上本来就
+            // 指错时，端点映射只会把错误原样搬到新行号 —— 这一支必须留一条「改到正确行号」的整改通道。
+            const correctionIndex = matchRegistry(
+              { doc: file.path, newLineNo, target, rawTarget: oldToken.target, oldToken, newToken },
+              { kinds: ['correction'] },
+            );
+            if (correctionIndex !== -1) {
+              // 命中即由这条登记负责到底：验真通过 ⇒ 计入 registered/corrected 并跳过端点映射；
+              // 验真不过 ⇒ applyRegistration 已经判红，这里不再叠一条端点映射文案（同一处只报一次）。
+              applyRegistration({ registryIndex: correctionIndex, label, targetPath: target });
+              continue;
+            }
             const hunks = targetHunks(target);
             const mappedStart = relocationMap(hunks, oldToken.start);
             const mappedEnd = relocationMap(hunks, oldToken.end);
@@ -639,7 +847,9 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
     }
   }
 
-  // 登记表自身验真：陈旧 / 冗余条目一律判红并点名（登记表不许变成白名单垃圾桶）。
+  // 登记表自身验真：判的是「HEAD 上是否仍成立」（历史事实登记），**不是**「本次 diff 里有没有这条位移」。
+  // 陈旧条目（HEAD 上站不住）与冗余条目（本次自己就能判出这条位移）判红并点名；其余 HEAD 上仍成立、
+  // 本次没涉及的条目进 `carried`（历史保留，只读数不判红）。登记表仍不许变成白名单垃圾桶。
   for (let index = 0; index < registry.length; index += 1) {
     const entry = registry[index];
     const shapeError = REGISTRY_ENTRY_SHAPE(entry);
@@ -707,34 +917,71 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
       );
       continue;
     }
-    const pairExists = pairs.some(
+    // 「本次提交的文档改动面里有没有这条位移」**不是**登记条目合法性的依据：登记条目是历史事实登记，
+    // 只在引入它的那次提交被举证一次；之后每个改过 docs 的提交都会重新验一遍，而那条位移早已落在 base
+    // 里、当然不在 `base..HEAD` 的文档改动面里。拿 `pairs` 当硬要求（历史实现）等于：谁修掉一个跨提交
+    // 漂移的旧锚点，下一个**无关**的 docs 提交就会因为它判红 —— `upstream/main` 上真实发生过。
+    // 现在只有两种结局：① 冗余（本次改动面里确实出现了这条位移，且登记没被用上 ⇒ 多余/重复，必须删）；
+    // ② 历史保留（HEAD 上仍成立、本次没涉及 ⇒ 进 `carried` 读数，不判红）。
+    // 本次真正生效的条目（`usedEntries`）已经在 `registered` 里逐条点名了，不再进任何别的桶。
+    // `kind: "correction"` 在这里再跑一遍三件验真：它是整改通道而不是白名单 —— 通不过就判红，
+    // `corrected` 只在通过后 +1（见 `applyRegistration`）。已经被 token 判定判过红的条目不重复刷屏。
+    if (entry.kind === 'correction') {
+      if (failedCorrections.has(index)) continue;
+      const correctionProblem = correctionViolation({
+        entry, targetPath: resolvedEntryTarget, root, base, head, textCache,
+      });
+      if (correctionProblem !== null) {
+        failedCorrections.add(index);
+        violations.push(`${label} correction 验真不通过：${correctionProblem}`);
+        continue;
+      }
+    }
+    if (usedEntries.has(index)) continue;
+    const sameRelocation = pairs.find(
       (pair) => pair.doc === entry.doc && pair.line === entry.line
         && pair.from === entry.from && pair.to === entry.to
         && (pair.target === resolvedEntryTarget || pair.rawTarget === entry.target),
     );
-    if (!pairExists) {
-      violations.push(`${label} 陈旧：本次提交的文档改动面里没有这条位移，必须删`);
+    if (sameRelocation !== undefined) {
+      const hunks = targetHunks(resolvedEntryTarget);
+      const mappedStart = relocationMap(hunks, entry.from);
+      const mappedEnd = entry.fromEnd === undefined ? mappedStart : relocationMap(hunks, entry.fromEnd);
+      const mappingJudgesIt = changedFiles.has(resolvedEntryTarget)
+        && mappedStart !== undefined && mappedEnd !== undefined;
+      violations.push(
+        mappingJudgesIt
+          ? `${label} 冗余：目标文件本提交有改动，端点映射已经能判这条位移`
+            + `（:${entry.from}→:${mappedStart}），不需要登记，必须删`
+          : `${label} 冗余：这条位移本次提交的文档改动面里已经有了，而这条登记没被用上`
+            + '（重复登记，或已被另一条登记接住），必须删',
+      );
       continue;
     }
-    if (!usedEntries.has(index)) {
-      violations.push(
-        `${label} 冗余：目标文件本提交有改动，端点映射已经能判这条位移，不需要登记，必须删`,
-      );
-    }
+    carried.push(
+      `${label} — 历史保留（HEAD 上仍成立，本次提交的文档改动面没有涉及它）`
+      + `${entry.kind === 'correction' ? `（kind=correction，symbol=${JSON.stringify(entry.symbol)}）` : ''}`
+      + `：${entry.reason}`,
+    );
   }
 
   stats.registered = registered.length;
+  stats.carried = carried.length;
   stats.removed = removed.length;
-  return { violations, unresolved, removed, registered, pairs, stats, reason: null };
+  return { violations, unresolved, removed, registered, carried, pairs, stats, reason: null };
 }
 
-/** 判定摘要：绿的时候也要把扫描面、判定量、已登记、已删都打出来，避免「判了 0 条」冒充「全对」。 */
+/** 判定摘要：绿的时候也要把扫描面、判定量、已登记、历史保留、已删都打出来，避免「判了 0 条」冒充「全对」。 */
 function summarize(result, baseLabel) {
   const { stats } = result;
   return `base=${baseLabel} documented files=${stats.docFiles} docLines=${stats.docLines} `
     + `tokens=${stats.tokens} pairs=${stats.pairs} judged=${stats.judged} `
     + `identical=${stats.identical} relocated=${stats.relocated} registered=${stats.registered} `
-    + `removed=${stats.removed} unresolved=${result.unresolved.length}`;
+    + `corrected=${stats.corrected} `
+    + `carried=${stats.carried} removed=${stats.removed} unresolved=${result.unresolved.length} `
+    // hunk 三分类：`add` 是纯新增（旧侧 0 行）、`del` 是纯删除（新侧 0 行）、`pair` 是两侧都非空。
+    // 「全是纯新增」⇒ 本次没有位移面，主用例会显式 SKIP（读数里能一眼看出是哪种 SKIP）。
+    + `hunks(pair=${stats.pairedHunks} add=${stats.pureAddHunks} del=${stats.pureDeleteHunks})`;
 }
 
 /**
@@ -749,6 +996,97 @@ function assertNoViolations(result, summary = '') {
     `锚点位移恒等失败 ${result.violations.length} 条${summary === '' ? '' : `（${summary}）`}：\n`
     + result.violations.map((item, index) => `  ${index + 1}. ${item}`).join('\n'),
   );
+}
+
+/**
+ * 判空自证用的五个桶，抽成 helper 的唯一理由同样是让它自己也被钉住。
+ * **`registered` 必须算进来**：登记命中走的也是 `continue`（登记分支），不进 `judged`；
+ * 漏算它会让「目标文件本提交未改 + 只把文档行号重锚到正确新值 + 逐字登记一条」这种
+ * **最小修复提交**撞上「扫描面为空」的假红——而那恰好是本闸门存在的理由（B1，审查实测：
+ * `扫描面为空：抽到 1 个锚点，却没有任何一个进入判定桶（判定 0／已删 0／未判 0／判红 0）`）。
+ * **`corrected` 同理会漏**（`kind: "correction"` 走的也是登记分支）：只靠 correction 落地的提交
+ * 必须照样算进 `total`，否则同一个 B1 假红会在新的整改通道上重演一遍。
+ */
+function judgmentBuckets(result) {
+  const { stats } = result;
+  const buckets = {
+    judged: stats.judged,
+    removed: stats.removed,
+    unresolved: result.unresolved.length,
+    violations: result.violations.length,
+    // `corrected` 是 `registered` 的子集（纠正也走登记分支），这里拆开单列，避免同一处位移被数两遍。
+    registered: result.registered.length - stats.corrected,
+    corrected: stats.corrected,
+  };
+  buckets.total = buckets.judged + buckets.removed + buckets.unresolved
+    + buckets.violations + buckets.registered + buckets.corrected;
+  return buckets;
+}
+
+/**
+ * 「本次文档改动面全是纯新增」判据（本片修的那个假红的核心）：三个条件缺一不可 ——
+ * 有纯新增 hunk、没有任何配得上「旧行→新行」的 hunk、也没有任何纯删除 hunk。
+ * 只要掺进另外两类中的任意一个，本次提交就确实有「旧行」可比，必须走正常判定（A4 钉住这一点）。
+ */
+function appendOnlyDocDiff(stats) {
+  return stats.pureAddHunks > 0 && stats.pairedHunks === 0 && stats.pureDeleteHunks === 0;
+}
+
+/**
+ * 扫描面裁决，纯函数，返回 `{ kind: 'ok' | 'skip' | 'fail', message }` —— 主用例与末尾 A1–A5 常驻夹具
+ * 共用同一份判断（否则夹具只能钉住「我以为的」判定，而不是主用例真跑的那份）。
+ * - `skip`：本次提交**没有**位移面可言，显式 SKIP 并带可区分的读数，绝不静默记成 PASS。两种形状：
+ *   ① 全是纯新增 hunk（`@@ -N,0 +M,K @@`，一行都配不出来，也没有旧行进 `removed`）；
+ *   ② 配出了行对但一个锚点都没抽到（纯散文改动）。② 的「SKIP 而不是硬红」是既有约定
+ *   （本文件「已知限制之三 ⑤」），本片**没有**改它的方向。
+ * - `fail`：diff 非空却既配不出行对、也没有 `removed`（硬红文案里带上纯新增 hunk 数，便于与 ① 区分），
+ *   或者抽到了锚点却一条都没进桶 —— 这两种都是「判了 0 条却全绿」的静默漏洞。
+ * - `ok`：有真实判定面，交给后续 `assertNoViolations` 判红绿。
+ */
+function scanSurfaceDecision(result) {
+  const { stats } = result;
+  const buckets = judgmentBuckets(result);
+  if (stats.docFiles === 0) {
+    return { kind: 'fail', message: '扫描面为空：没有任何被改写的文档' };
+  }
+  if (appendOnlyDocDiff(stats)) {
+    return {
+      kind: 'skip',
+      message: `本次文档提交只有新增行，没有锚点位移面（${stats.pureAddHunks} 个纯新增 hunk）`,
+    };
+  }
+  if (stats.docLines === 0 && buckets.total === 0) {
+    return {
+      kind: 'fail',
+      // `buckets.total` 里已经算上 `removed`/`unresolved`/`violations`/`registered`：纯删除型文档提交
+      // 配不出任何行对，但它的锚点落在 `removed` 桶里（`total > 0`）⇒ 有扫描面、不许红。
+      // 只有「一行都对不上、也没有任何桶接过任何东西」才是真的什么都没解析出来 ⇒ 硬红。
+      message: '扫描面为空：既没有配对出任何「旧行→新行」的文档行对，也没有任何被整行删掉/'
+        + `换锚点的旧行（docLines ${stats.docLines}／removed ${result.removed.length}／`
+        + `其中有 ${stats.pureAddHunks} 个纯新增 hunk）`,
+    };
+  }
+  if (stats.tokens === 0 && buckets.total === 0) {
+    return {
+      kind: 'skip',
+      message: '被改写的文档行里没有任何锚点（tokens=0），本次改动不含任何行号引用，本用例无判定面',
+    };
+  }
+  if (buckets.total === 0) {
+    return {
+      kind: 'fail',
+      message: `扫描面为空：抽到 ${stats.tokens} 个锚点，却没有任何一个进入判定桶（判定 ${buckets.judged}／`
+        + `已删 ${buckets.removed}／未判 ${buckets.unresolved}／判红 ${buckets.violations}／`
+        + `已登记 ${buckets.registered}／纠正 ${buckets.corrected}）`,
+    };
+  }
+  return { kind: 'ok', message: '' };
+}
+
+/** 「已登记」明细块：主用例读数与 B1 回归夹具共用，保证两边看到的是同一句话。 */function registeredDetail(result) {
+  return result.registered.length === 0
+    ? ''
+    : `；已登记：\n${result.registered.map((item) => `    - ${item}`).join('\n')}`;
 }
 
 test('文档锚点位移恒等：目标文件没改 ⇒ 行号恒等（陈旧锚点必须走登记表）；改了 ⇒ 必须落在这个文件自己的端点映射上，且旧行原文 === 新行原文', (t) => {
@@ -824,35 +1162,29 @@ test('文档锚点位移恒等：目标文件没改 ⇒ 行号恒等（陈旧锚
     return;
   }
 
-  // 自证扫描面非空：防「扫到 0 条 ⇒ 全绿」。
-  // `docFiles`/`docLines` 证明扫描面本身有内容；`tokens` 证明确实抽到了锚点（纯散文改动没有锚点，
-  // 那是「无判定面」而不是「判定通过」，显式 SKIP 并说明）；最后要求每个 token 都落进了某个桶
-  // （判定／已删／未判／判红），否则就是「抽到了却一条没判」的静默漏洞。
-  // 判红也必须算进这个桶：判红分支在 `continue` 之前不进 `judged`，漏算会让「确有违规」的场景
-  // 反而先撞上这条自证断言，把真正的违规清单埋在一条误导性信息后面。
-  const { stats } = result;
-  assert.ok(stats.docFiles > 0, `扫描面为空：${base.slice(0, 12)}..${head.slice(0, 12)} 没有任何被改写的文档`);
-  // 纯删除型 docs 提交里一行都配不上对（旧行被整行删掉），那种情况由 `removed` 侧承担扫描面：
-  // 拿 `docLines > 0` 当唯一门槛会把「合法删除」判成「扫描面为空」的假红。
-  assert.ok(
-    stats.docLines > 0 || result.removed.length > 0,
-    '扫描面为空：既没有配对出任何「旧行→新行」的文档行对，也没有任何被整行删掉/换锚点的旧行'
-    + `（docLines ${stats.docLines}／removed ${result.removed.length}）`,
-  );
-  if (stats.tokens === 0) {
-    t.skip(`SKIP: ${base.slice(0, 12)}..${head.slice(0, 12)} 被改写的文档行里没有任何锚点（tokens=0），本用例无判定面`);
+  // 扫描面自证：防「扫到 0 条 ⇒ 全绿」。裁决抽进 `scanSurfaceDecision()`，让末尾 A1–A5 常驻夹具
+  // 钉住的就是主用例**真跑的那一份**判断，而不是另写一份「我以为的」判定：
+  // - 全是纯新增 hunk ⇒ 本次提交根本没有位移面（新增行没有「旧行号」可比），显式 SKIP 并报出数量；
+  // - 配出了行对、但一个锚点都没抽到（纯散文改动）⇒ 显式 SKIP（既有约定，见「已知限制之三 ⑤」）；
+  // - 其余「diff 非空却连一个桶都没进」的形状 ⇒ 硬红，文案里带纯新增 hunk 数以便与上面区分。
+  // 判红/已登记也必须算进桶：判红与登记分支在 `continue` 之前不进 `judged`，漏算会让「确有违规」
+  // 反而先撞上自证断言，把真正的违规清单埋在一条误导性信息后面（B1 的教训）。
+  const shortRange = `${base.slice(0, 12)}..${head.slice(0, 12)}`;
+  const decision = scanSurfaceDecision(result);
+  if (decision.kind === 'skip') {
+    t.skip(`SKIP: ${shortRange} ${decision.message}`);
     return;
   }
-  assert.ok(
-    stats.judged + stats.removed + result.unresolved.length + result.violations.length > 0,
-    `扫描面为空：抽到 ${stats.tokens} 个锚点，却没有任何一个进入判定桶（判定 ${stats.judged}／`
-    + `已删 ${stats.removed}／未判 ${result.unresolved.length}／判红 ${result.violations.length}）`,
-  );
+  // `fail` 与「有判定面、可能判红」都往下走：`fail` 在下一行直接红，文案原样带出扫描面读数。
+  assert.equal(decision.kind, 'ok', `${shortRange} ${decision.message}`);
 
   const summary = summarize(result, `${base.slice(0, 12)}（${baseLabel}）`);
   const detail = [
-    `；登记表 ${registry.entries.length} 条，其中本次生效 ${result.registered.length} 条`,
-    result.registered.length === 0 ? '' : `；已登记：\n${result.registered.map((item) => `    - ${item}`).join('\n')}`,
+    `；登记表 ${registry.entries.length} 条：本次生效 ${result.registered.length} 个 token`
+    + `（其中 kind=correction ${result.stats.corrected} 个）、`
+    + `历史保留 ${result.carried.length} 条（历史条目只要求「HEAD 上仍成立」，不要求本提交再举证一次）`,
+    result.registered.length === 0 ? '' : registeredDetail(result),
+    result.carried.length === 0 ? '' : `；历史保留（不判红，逐条可审）：\n${result.carried.map((item) => `    - ${item}`).join('\n')}`,
     `；未判（不可解析，不冒充通过）${result.unresolved.length} 条`,
     result.unresolved.length === 0 ? '' : `：\n${result.unresolved.map((item) => `    - ${item}`).join('\n')}`,
     `；已删/换目标（已知限制：只观测不判红）${result.removed.length} 条`,
@@ -884,9 +1216,32 @@ function docFile({ anchor, note = '' }) {
   return `# 夹具\n\n- 落点：\`${FIXTURE_TARGET}:${anchor}\`（裸锚点 :${anchor}）${note}\n`;
 }
 
+/**
+ * C 组（`kind: "correction"`）夹具用的目标文件：与 `serviceFile()` 同构的 40 行正文，
+ * 但允许按 **base 的 1 基行号** 覆盖任意行内容 —— 纠正夹具需要「旧行/新行各自含不含某个符号」
+ * 这种精确形状，用 `serviceFile()` 的固定标记行拼不出来。
+ */
+function targetFile({ insertAbove = 0, overrides = {} } = {}) {
+  const top = Array.from({ length: insertAbove }, (_, index) => `// 顶部新增占位行 ${index + 1}`);
+  const body = Array.from({ length: 40 }, (_, index) => (
+    overrides[index + 1] ?? `export const value${index + 1} = ${index + 1};`
+  ));
+  return `${[...top, ...body].join('\n')}\n`;
+}
+
 /** 夹具文档里带锚点的那一行在 HEAD 上的行号（登记表要写它）。 */
 function anchorDocLine(text) {
   return text.split('\n').findIndex((line) => anchorTokens(line).length > 0) + 1;
+}
+
+/**
+ * 「历史保留」夹具用的第二份文档：本提交一个字都不改它，但它的锚点在 HEAD 上仍然成立。
+ * 形态对齐真实登记表里那种「引入它的提交早就举证过、之后每提交都会重新看到」的条目。
+ */
+const FIXTURE_LEGACY_DOC = 'docs/legacy-status.md';
+
+function legacyDocFile({ anchor }) {
+  return `# 历史台账（本提交不涉及）\n\n- 旧台账：\`${FIXTURE_TARGET}:${anchor}\`\n`;
 }
 
 /**
@@ -1038,16 +1393,22 @@ test('登记表：目标文件未改、旧锚点本就指错 ⇒ 逐字登记后
   t.diagnostic(`夹具（登记生效 ${withRegistry.registered.length} 个 token / 1 条登记）${withRegistry.registered[0]}`);
 });
 
-test('登记表：陈旧条目（旧==新 / 新行号不命中 / 本次没有这条位移）必须判红并点名', (t) => {
+test('登记表：陈旧条目（旧==新 / 新行号不命中 / 文档行不存在）必须判红并点名；本次没涉及但 HEAD 上仍成立的条目只进「历史保留」读数', (t) => {
   const insertAbove = 4;
   const shifted = FIXTURE_ANCHOR_LINE + insertAbove;
   const headDoc = docFile({ anchor: shifted });
+  const legacyDoc = legacyDocFile({ anchor: shifted });
   const repo = fixtureRepo(t, {
     baseFiles: {
       [FIXTURE_TARGET]: serviceFile(),
       [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE }),
+      [FIXTURE_LEGACY_DOC]: legacyDoc,
     },
-    headFiles: { [FIXTURE_TARGET]: serviceFile({ insertAbove }), [FIXTURE_DOC]: headDoc },
+    headFiles: {
+      [FIXTURE_TARGET]: serviceFile({ insertAbove }),
+      [FIXTURE_DOC]: headDoc,
+      [FIXTURE_LEGACY_DOC]: legacyDoc,
+    },
   });
   const line = anchorDocLine(headDoc);
   const result = judge({
@@ -1058,11 +1419,590 @@ test('登记表：陈旧条目（旧==新 / 新行号不命中 / 本次没有这
       { doc: FIXTURE_DOC, line, target: FIXTURE_TARGET, from: FIXTURE_ANCHOR_LINE, to: FIXTURE_ANCHOR_LINE, reason: '陈旧：from 与 to 相同' },
       { doc: FIXTURE_DOC, line, target: FIXTURE_TARGET, from: FIXTURE_ANCHOR_LINE, to: 9999, reason: '陈旧：新行号不存在' },
       { doc: FIXTURE_DOC, line: 9999, target: FIXTURE_TARGET, from: FIXTURE_ANCHOR_LINE, to: shifted, reason: '陈旧：文档行不存在' },
+      // **有意的语义变更（GY-R68）**：这一条在历史实现里靠「本次提交的文档改动面里没有这条位移」判红。
+      // 那条规则本身就是缺陷 —— 它让「修一个跨提交漂移的旧锚点」之后、任何无关的 docs 提交都判红。
+      // 现在它 HEAD 上仍成立（doc 行还在、仍含 ⟨target :to⟩、base[from] 与 HEAD[to] 原文不同），
+      // 只是本次没涉及 ⇒ 不判红，但**必须**出现在「历史保留」读数里，不许静默吞掉。
+      { doc: FIXTURE_LEGACY_DOC, line: anchorDocLine(legacyDoc), target: FIXTURE_TARGET, from: 30, to: shifted, reason: '历史保留夹具：引入它的提交已经举证过，本次提交没涉及' },
     ],
   });
-  assert.ok(result.violations.length >= 3, `陈旧登记没有逐条判红（只红了 ${result.violations.length} 条）`);
+  assert.equal(
+    result.violations.length,
+    3,
+    `陈旧登记应当逐条判红 3 条，实际 ${result.violations.length} 条：${result.violations.join(' | ')}`,
+  );
   for (const message of result.violations) assert.match(message, /^\[登记表\] 第 \d+ 条/);
-  t.diagnostic(`夹具（陈旧登记）判红 ${result.violations.length} 条`);
+  assert.ok(
+    !result.violations.some((message) => message.includes(FIXTURE_LEGACY_DOC)),
+    `历史保留条目不许出现在 violations 里：${result.violations.join(' | ')}`,
+  );
+  assert.equal(result.carried.length, 1, `历史保留必须逐条读出 1 条，实际 ${result.carried.length} 条`);
+  assert.equal(result.stats.carried, result.carried.length);
+  assert.match(result.carried[0], /\[登记表\] 第 4 条/);
+  assert.match(result.carried[0], /docs\/legacy-status\.md:3/);
+  assert.match(result.carried[0], /历史保留/);
+  t.diagnostic(
+    `夹具（陈旧登记）判红 ${result.violations.length} 条；历史保留 ${result.carried.length} 条：${result.carried[0]}`,
+  );
+});
+
+test('登记表 U1：继承一条与本提交无关的历史条目（HEAD 上仍成立）⇒ 不得出现在 violations 里，该绿的部分照样绿', (t) => {
+  // 真实形态：`upstream/main` 的登记表里已经躺着一条历史条目（引入它的提交早就举证过），此后任何一个
+  // 只改**别的**文档的提交，都不该因为它判红。
+  const legacyDoc = legacyDocFile({ anchor: FIXTURE_ANCHOR_LINE });
+  const headDoc = docFile({ anchor: FIXTURE_ANCHOR_LINE });
+  const repo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: serviceFile(),
+      [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE + 1 }),
+      [FIXTURE_LEGACY_DOC]: legacyDoc,
+    },
+    headFiles: {
+      [FIXTURE_TARGET]: serviceFile(),
+      [FIXTURE_DOC]: headDoc,
+      [FIXTURE_LEGACY_DOC]: legacyDoc,
+    },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [
+      {
+        doc: FIXTURE_DOC,
+        line: anchorDocLine(headDoc),
+        target: FIXTURE_TARGET,
+        from: FIXTURE_ANCHOR_LINE + 1,
+        to: FIXTURE_ANCHOR_LINE,
+        reason: '夹具：本提交把陈旧锚点改到正确行（目标文件未改）',
+      },
+      {
+        doc: FIXTURE_LEGACY_DOC,
+        line: anchorDocLine(legacyDoc),
+        target: FIXTURE_TARGET,
+        from: 30,
+        to: FIXTURE_ANCHOR_LINE,
+        reason: '历史保留夹具：与本提交无关，但 HEAD 上仍成立',
+      },
+    ],
+  });
+  assert.deepEqual(result.violations, []);
+  assert.equal(result.stats.docFiles, 1, '本次提交的文档改动面只该有 docs/notes.md 一个文件');
+  assert.equal(result.registered.length, 2, '本提交真正生效的登记：同行路径锚点 + 裸锚点');
+  for (const message of result.registered) assert.match(message, /已登记/);
+  assert.equal(result.carried.length, 1, '那条历史条目必须进「历史保留」读数');
+  assert.match(result.carried[0], /docs\/legacy-status\.md:3/);
+  assert.match(result.carried[0], /历史保留/);
+  assert.ok(
+    result.stats.judged + result.registered.length > 0,
+    '判定面自证：本次该绿的部分必须真的判到了（不许靠「判 0 条」冒充通过）',
+  );
+  t.diagnostic(
+    `夹具（U1 继承条目 + 改别的文档）violations=0　生效 ${result.registered.length} 个 token、历史保留 ${result.carried.length} 条`,
+  );
+});
+
+test('登记表 U2：历史条目的 doc 本提交也被改了、但改的是别的行 ⇒ 不判红，只进「历史保留」', (t) => {
+  // 本提交改 docs/notes.md 的两行：第 3 行重锚（21 → 20，走登记），第 4 行只改措辞（锚点逐字恒等）。
+  // 登记表里那条历史条目指向**第 4 行**（HEAD 上仍含 ⟨target :to⟩），本次改动面里没有它对应的位移。
+  const baseDoc = `# 夹具\n\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE + 1}\`（裸锚点 :${FIXTURE_ANCHOR_LINE + 1}）\n`
+    + `- 备注：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`\n`;
+  const headDoc = `# 夹具\n\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`（裸锚点 :${FIXTURE_ANCHOR_LINE}）\n`
+    + `- 备注（本提交只改了措辞）：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`\n`;
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [
+      {
+        doc: FIXTURE_DOC,
+        line: 3,
+        target: FIXTURE_TARGET,
+        from: FIXTURE_ANCHOR_LINE + 1,
+        to: FIXTURE_ANCHOR_LINE,
+        reason: '夹具：本提交把第 3 行的陈旧锚点改到正确行',
+      },
+      {
+        doc: FIXTURE_DOC,
+        line: 4,
+        target: FIXTURE_TARGET,
+        from: 30,
+        to: FIXTURE_ANCHOR_LINE,
+        reason: '历史保留夹具：同文档、不同行的历史条目',
+      },
+    ],
+  });
+  assert.deepEqual(result.violations, []);
+  assert.equal(result.registered.length, 2, '第 3 行重锚应当由登记接住');
+  assert.ok(result.stats.judged > 0, '第 4 行锚点恒等，必须真的判过（否则是「一条没判」的假绿）');
+  assert.equal(result.carried.length, 1, '同文档不同行的历史条目必须进「历史保留」读数');
+  assert.match(result.carried[0], /docs\/notes\.md:4/);
+  assert.match(result.carried[0], /历史保留/);
+  t.diagnostic(
+    `夹具（U2 继承条目 + 同文档别的行）violations=0　judged=${result.stats.judged}　历史保留 ${result.carried.length} 条`,
+  );
+});
+
+test('登记表 U3：条目指到一条本来就不含该锚点的文档行 ⇒ 必须判红并点名（doc 本提交一个字没改也一样）', (t) => {
+  // 「HEAD 上仍成立」的反面：doc 行存在，但那一行从来就没有 ⟨target :to⟩。这类登记站不住，必须红。
+  const headDoc = docFile({ anchor: FIXTURE_ANCHOR_LINE });
+  const repo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: serviceFile(),
+      [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE + 1 }),
+    },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [
+      {
+        doc: FIXTURE_DOC,
+        line: anchorDocLine(headDoc),
+        target: FIXTURE_TARGET,
+        from: FIXTURE_ANCHOR_LINE + 1,
+        to: FIXTURE_ANCHOR_LINE,
+        reason: '夹具：本提交把陈旧锚点改到正确行（这条是合法的）',
+      },
+      {
+        doc: FIXTURE_DOC,
+        line: 1,
+        target: FIXTURE_TARGET,
+        from: 30,
+        to: FIXTURE_ANCHOR_LINE,
+        reason: '陈旧夹具：doc 第 1 行是标题，本来就没有锚点',
+      },
+    ],
+  });
+  assert.equal(
+    result.violations.length,
+    1,
+    `只有那条站不住的登记该红，实际 ${result.violations.length} 条：${result.violations.join(' | ')}`,
+  );
+  assert.match(result.violations[0], /^\[登记表\] 第 2 条 ⟨docs\/notes\.md:1 /);
+  assert.match(result.violations[0], /陈旧/);
+  assert.match(result.violations[0], /里已经没有 ⟨src\/service\.mjs :20⟩ 这个锚点/);
+  assert.equal(result.carried.length, 0, '判红的条目不许同时被当成「历史保留」');
+  t.diagnostic(`夹具（U3 指到无锚点的行）判红 1 条：${result.violations[0]}`);
+});
+
+test('登记表 U4（关键回归）：目标文件本提交未改、文档把陈旧行号改到正确新值 ⇒ 登记了就绿并读出「已登记」，不登记必须红', (t) => {
+  // 真实使用场景（GY-R68 起因）：`app.ts:2433-2472` 早已漂移到 `:2469-2508`，本提交只改文档行号，
+  // 目标文件一个字没动。历史实现在「本次提交的文档改动面里没有这条位移」那一档把这种提交判红 ⇒
+  // 等于这条闸门不许人修旧锚点。这个用例同时钉住「加登记 ⇒ 绿」「不加 ⇒ 仍按恒等判红」两侧。
+  const stale = 30;
+  const correct = FIXTURE_ANCHOR_LINE;
+  const legacyDoc = legacyDocFile({ anchor: stale });
+  const repo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: serviceFile(),
+      [FIXTURE_DOC]: docFile({ anchor: stale }),
+      [FIXTURE_LEGACY_DOC]: legacyDoc,
+    },
+    headFiles: {
+      [FIXTURE_TARGET]: serviceFile(),
+      [FIXTURE_DOC]: docFile({ anchor: correct }),
+      [FIXTURE_LEGACY_DOC]: legacyDoc,
+    },
+  });
+  const legacyEntry = {
+    doc: FIXTURE_LEGACY_DOC,
+    line: anchorDocLine(legacyDoc),
+    target: FIXTURE_TARGET,
+    from: 35,
+    to: stale,
+    reason: '历史保留夹具：与本提交无关，HEAD 上仍成立',
+  };
+
+  const withoutRegistration = judge({
+    root: repo.root, base: repo.base, head: repo.head, registry: [legacyEntry],
+  });
+  assert.ok(withoutRegistration.violations.length > 0, '目标文件未改 + 行号变了，没有登记必须红');
+  assert.match(
+    withoutRegistration.violations.join('\n'),
+    /目标文件本提交未改动 ⇒ 行号必须恒等/,
+    '恒等判定必须还在（不许把闸门放开成万能通行证）',
+  );
+  assert.ok(
+    !withoutRegistration.violations.some((message) => message.includes(FIXTURE_LEGACY_DOC)),
+    '历史条目不许掺进这次的红：' + withoutRegistration.violations.join(' | '),
+  );
+  assert.equal(withoutRegistration.carried.length, 1, '历史条目此时也必须是「历史保留」而不是判红');
+
+  const withRegistration = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [{
+      doc: FIXTURE_DOC,
+      line: anchorDocLine(docFile({ anchor: correct })),
+      target: FIXTURE_TARGET,
+      from: stale,
+      to: correct,
+      reason: '夹具：旧锚点指到 value30，本提交按符号重锚到标记行（目标文件未改）',
+    }, legacyEntry],
+  });
+  assert.deepEqual(withRegistration.violations, []);
+  assert.equal(withRegistration.registered.length, 2, '路径锚点 + 裸锚点都该由这条登记接住');
+  for (const message of withRegistration.registered) assert.match(message, /已登记/);
+  assert.equal(withRegistration.carried.length, 1);
+  assert.match(withRegistration.carried[0], /docs\/legacy-status\.md:3/);
+  t.diagnostic(
+    `夹具（U4 真场景）不登记 ⇒ 红 ${withoutRegistration.violations.length} 条；登记 ⇒ 绿，已登记 ${withRegistration.registered.length} 个 token：${withRegistration.registered[0]}`,
+  );
+});
+
+test('登记表 U5：登记的 doc 本提交被改、改后 entry.doc:entry.line 已不再命中 ⟨target :to⟩ ⇒ 必须判红并点名', (t) => {
+  // 这是新的「陈旧」定义：不看你本次有没有提到这条位移，只看 HEAD 上那个锚点还在不在那一行。
+  // 夹具把锚点行原地换成了散文（锚点挪到下一行），登记表里那条 doc:3 随之失效。
+  const baseDoc = docFile({ anchor: FIXTURE_ANCHOR_LINE });
+  const headDoc = `# 夹具\n\n- 新增说明行（本提交把锚点行挪到下一行）\n`
+    + `- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`（裸锚点 :${FIXTURE_ANCHOR_LINE}）\n`;
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [{
+      doc: FIXTURE_DOC,
+      line: 3,
+      target: FIXTURE_TARGET,
+      from: 30,
+      to: FIXTURE_ANCHOR_LINE,
+      reason: '陈旧夹具：登记行已被上移，新行号不命中',
+    }],
+  });
+  assert.equal(
+    result.violations.length,
+    1,
+    `登记失效必须且只判 1 条，实际 ${result.violations.length} 条：${result.violations.join(' | ')}`,
+  );
+  assert.match(result.violations[0], /^\[登记表\] 第 1 条 ⟨docs\/notes\.md:3 /);
+  assert.match(result.violations[0], /陈旧/);
+  assert.match(result.violations[0], /里已经没有 ⟨src\/service\.mjs :20⟩ 这个锚点/);
+  assert.equal(result.carried.length, 0, 'doc 行已经不命中，绝不许退化成「历史保留」');
+  t.diagnostic(`夹具（U5 doc 行失效）判红 1 条：${result.violations[0]}`);
+});
+
+test('登记表 B1 回归：只靠登记落地的最小修复提交（目标文件未改 + 文档行号重锚 + 逐字条目）⇒ 判空自证必须认「已登记」，读数出现「已登记 2 个 token」', (t) => {
+  // 审查实测的假红：目标文件本提交未改、只把文档里的锚点行号改成正确新值、登记一条逐字条目 ——
+  // 这正是「按符号重锚一个跨提交漂移的旧锚点」的标准提交。登记命中的 token 走 `continue`、不进
+  // `judged`，所以判空自证只要漏算 `registered`，这种提交就会被判
+  // 「扫描面为空：抽到 1 个锚点，却没有任何一个进入判定桶（判定 0／已删 0／未判 0／判红 0）」。
+  // 本用例把 `judgmentBuckets()` 钉住：谁把 registered 从自证里删掉，这里就红。
+  const stale = 30;
+  const correct = FIXTURE_ANCHOR_LINE;
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: docFile({ anchor: stale }) },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: docFile({ anchor: correct }) },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [{
+      doc: FIXTURE_DOC,
+      line: anchorDocLine(docFile({ anchor: correct })),
+      target: FIXTURE_TARGET,
+      from: stale,
+      to: correct,
+      reason: '夹具（B1）：目标文件本提交未改，文档把旧锚点重锚到正确新值',
+    }],
+  });
+  assert.deepEqual(result.violations, [], '这种最小修复提交必须全绿');
+  assert.equal(result.stats.judged, 0, '前提：本提交没有任何 token 进入 judged（全靠登记接住）');
+  assert.equal(result.registered.length, 2, '路径锚点 + 裸锚点都该由这条登记接住');
+  const buckets = judgmentBuckets(result);
+  assert.equal(buckets.registered, 2);
+  assert.equal(buckets.corrected, 0, 'Ａ类登记（缺省 kind）不该被算成纠正');
+  assert.equal(buckets.judged + buckets.removed + buckets.unresolved + buckets.violations, 0);
+  assert.ok(
+    buckets.total > 0,
+    '判空自证必须把「已登记」算进桶里，否则这种提交会假红「扫描面为空」',
+  );
+  assert.match(summarize(result, 'fixture'), /registered=2/);
+  const detail = registeredDetail(result);
+  assert.match(detail, /；已登记：/);
+  assert.match(detail, /docs\/notes\.md:3 ⟨src\/service\.mjs :30 → :20⟩ — 已登记（/);
+  assert.equal(detail.split('\n').length - 1, 2, '两条 token 的「已登记」都要逐条写出');
+  t.diagnostic(
+    `夹具（B1 只靠登记落地）judged=0 removed=0 unresolved=0 判红=0 已登记=${buckets.registered} `
+    + `纠正=${buckets.corrected}，判空自证 total=${buckets.total} 通过`,
+  );
+});
+
+// ───────────────────── C 组夹具：kind: "correction"（整改通道，不是白名单） ─────────────────────
+// 统一场景是「真实现场」的合成版：同一提交里目标文件顶部插 4 行 ⇒ 端点映射把旧行 21 机械平移到 25；
+// 但旧锚点在 base 上本来就指错（指到无关的 value21），正确落点是 HEAD 的 24 行（含 FIXED_TARGET）。
+// 于是：不登记 ⇒ 红在端点映射（C2）；登记 correction ⇒ 绿（C1）；验真三件事不过 ⇒ 红（C3–C7）。
+
+/** C 组共用的符号：只有「纠正后正确的那一行」才含它。 */
+const CORRECTION_SYMBOL = 'FIXED_TARGET';
+/** C 组共用的旧锚点（base 上指错的无关行）。 */
+const CORRECTION_OLD_ANCHOR = 21;
+/** 顶部插 4 行后，端点映射把旧锚点搬到这一行 —— 机械平移只会把错误搬到这里。 */
+const CORRECTION_MAPPED_ANCHOR = CORRECTION_OLD_ANCHOR + 4;
+/** 真正含符号的正确落点（HEAD 行号）。 */
+const CORRECTION_RIGHT_ANCHOR = 24;
+
+function correctionDoc(anchor) {
+  return docFile({ anchor });
+}
+
+/** C1/C2/C3/C4/C6 共用的仓库：base 指错、HEAD 指对，目标文件本提交有改动。 */
+function correctionRepo(t) {
+  return fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: targetFile(),
+      [FIXTURE_DOC]: correctionDoc(CORRECTION_OLD_ANCHOR),
+    },
+    headFiles: {
+      [FIXTURE_TARGET]: targetFile({
+        insertAbove: 4,
+        overrides: { 20: `export const ${CORRECTION_SYMBOL} = '纠正后的正确落点';` },
+      }),
+      [FIXTURE_DOC]: correctionDoc(CORRECTION_RIGHT_ANCHOR),
+    },
+  });
+}
+
+/** 一条形状完整的 correction 登记（路径锚点 + 同行的裸锚点共用这一条）。 */
+function correctionEntry(overrides = {}) {
+  return {
+    doc: FIXTURE_DOC,
+    line: anchorDocLine(correctionDoc(CORRECTION_RIGHT_ANCHOR)),
+    target: FIXTURE_TARGET,
+    from: CORRECTION_OLD_ANCHOR,
+    to: CORRECTION_RIGHT_ANCHOR,
+    reason: '夹具（C 组）：旧锚点在 base 上本来就指错，纠正到含 FIXED_TARGET 的正确行',
+    kind: 'correction',
+    symbol: CORRECTION_SYMBOL,
+    ...overrides,
+  };
+}
+
+test('C1 纠正夹具：目标文件有改动 + 旧锚点本就指错 + kind="correction" 登记 ⇒ 绿，registered 打印 kind=correction 与 symbol、stats.corrected ≥ 1', (t) => {
+  const repo = correctionRepo(t);
+  const result = judge({
+    root: repo.root, base: repo.base, head: repo.head, registry: [correctionEntry()],
+  });
+  assert.deepEqual(
+    result.violations,
+    [],
+    `纠正登记必须放行，实际判红 ${result.violations.length} 条：${result.violations.join(' | ')}`,
+  );
+  assert.ok(
+    result.stats.corrected >= 1,
+    `纠正计数没加上：${summarize(result, 'fixture')}`,
+  );
+  assert.ok(
+    result.registered.some((item) => item.includes('kind=correction') && item.includes(CORRECTION_SYMBOL)),
+    `registered 必须逐条打印 kind=correction 与 symbol 才能人工复核：${result.registered.join(' | ')}`,
+  );
+  assert.match(summarize(result, 'fixture'), /corrected=2\b/);
+  const buckets = judgmentBuckets(result);
+  assert.ok(buckets.corrected >= 1, 'judgmentBuckets 漏了 corrected');
+  assert.equal(buckets.registered, 0, '纠正不该同时被算成Ａ类「已登记」（同一处位移只数一遍）');
+  assert.ok(
+    buckets.total > 0,
+    '只靠 correction 落地的提交必须仍是非空扫描面（B1 类「扫描面为空」假红不许在新通道上重演）',
+  );
+  t.diagnostic(
+    `夹具（C1 纠正放行）${summarize(result, 'fixture')}；已登记：${result.registered.join(' | ')}`,
+  );
+});
+
+test('C2 纠正夹具：同一场景但不登记 ⇒ 必红，且红在「端点映射」那条（证明放行只来自登记）', (t) => {
+  const repo = correctionRepo(t);
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.ok(result.violations.length > 0, '不登记竟然判绿：整改通道变成了白名单');
+  const text = result.violations.join('\n');
+  assert.match(text, /目标文件本提交有改动 ⇒ 行号必须落在这个文件自己的端点映射上/);
+  assert.match(
+    text,
+    new RegExp(`起 ${CORRECTION_OLD_ANCHOR}→${CORRECTION_MAPPED_ANCHOR}（文档写 ${CORRECTION_RIGHT_ANCHOR}）`),
+  );
+  assert.equal(result.stats.corrected, 0, '没有登记就不该有纠正计数');
+  t.diagnostic(`夹具（C2 不登记）判红 ${result.violations.length} 条：${result.violations[0]}`);
+});
+
+test('C3 纠正夹具：kind="correction" 却缺 symbol ⇒ 形状错误判红（半成品登记不许滑到判定阶段）', (t) => {
+  const repo = correctionRepo(t);
+  const entry = correctionEntry();
+  delete entry.symbol;
+  const result = judge({
+    root: repo.root, base: repo.base, head: repo.head, registry: [entry],
+  });
+  const text = result.violations.join('\n');
+  assert.ok(result.violations.length > 0, '缺 symbol 的 correction 竟然判绿');
+  assert.match(text, /\[登记表\] 第 1 条形状错误/);
+  assert.match(text, /symbol 必填/);
+  assert.equal(result.stats.corrected, 0, '形状错误一律不许计入 corrected');
+  t.diagnostic(`夹具（C3 缺 symbol）判红 ${result.violations.length} 条：${text.split('\n')[0]}`);
+});
+
+test('C4 纠正夹具：symbol 在新行里找不到 ⇒ 判红，文案点名找不到的那个符号', (t) => {
+  const repo = correctionRepo(t);
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [correctionEntry({ symbol: 'NOT_IN_HEAD_LINE' })],
+  });
+  const text = result.violations.join('\n');
+  assert.ok(result.violations.length > 0, 'symbol 找不到竟然判绿');
+  assert.match(text, /找不到 symbol "NOT_IN_HEAD_LINE"/);
+  assert.match(text, new RegExp(`新行 ${FIXTURE_TARGET.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:${CORRECTION_RIGHT_ANCHOR}`));
+  assert.equal(result.stats.corrected, 0, '验真不过不许 +1');
+  t.diagnostic(`夹具（C4 新行无此符号）判红 ${result.violations.length} 条：${result.violations[0]}`);
+});
+
+test('C5 纠正夹具：symbol 在旧行里也有（旧锚点本来就指对）⇒ 判红「这不是纠正」', (t) => {
+  // 旧行与新行含同一个符号 ⇒ 把行号从 21 改到 24 是真回归，不是纠正；② 必须拦住。
+  const shared = 'SHARED_SYMBOL';
+  const sharedLine = `export const ${shared} = '旧锚点本来就指对了';`;
+  const repo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: targetFile({ overrides: { [CORRECTION_OLD_ANCHOR]: sharedLine } }),
+      [FIXTURE_DOC]: correctionDoc(CORRECTION_OLD_ANCHOR),
+    },
+    headFiles: {
+      [FIXTURE_TARGET]: targetFile({ insertAbove: 4, overrides: { 20: sharedLine } }),
+      [FIXTURE_DOC]: correctionDoc(CORRECTION_RIGHT_ANCHOR),
+    },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [correctionEntry({ symbol: shared })],
+  });
+  const text = result.violations.join('\n');
+  assert.ok(result.violations.length > 0, '旧锚点本来就指对竟然还能「纠正」成功');
+  assert.match(text, /这不是纠正/);
+  assert.match(text, /旧行/);
+  assert.equal(result.stats.corrected, 0, '② 不通过不许 +1');
+  t.diagnostic(`夹具（C5 旧行已含符号）判红 ${result.violations.length} 条：${result.violations[0]}`);
+});
+
+test('C6 纠正夹具：kind 写成其它值（"fix"）⇒ 形状错误判红', (t) => {
+  const repo = correctionRepo(t);
+  const result = judge({
+    root: repo.root, base: repo.base, head: repo.head,
+    registry: [correctionEntry({ kind: 'fix' })],
+  });
+  const text = result.violations.join('\n');
+  assert.ok(result.violations.length > 0, 'kind="fix" 竟然判绿');
+  assert.match(text, /\[登记表\] 第 1 条形状错误/);
+  assert.match(text, /kind 只允许/);
+  assert.match(text, /"fix"/);
+  assert.equal(result.stats.corrected, 0);
+  t.diagnostic(`夹具（C6 非法 kind）判红 ${result.violations.length} 条：${text.split('\n')[0]}`);
+});
+
+test('C7 反空转：correction 把 to 指到任意不含 symbol 的行 ⇒ 必红，且 corrected 只在验真通过后 +1', (t) => {
+  // 「指到别处也算纠正」是这条整改通道最容易退化的形状：把 to 挪到一条与符号无关的行，
+  // 验真①就必须拦住；同时钉住「corrected 只在通过后 +1」—— 失败时计数必须纹丝不动。
+  const wrongTo = CORRECTION_MAPPED_ANCHOR + 5;
+  const wrongRepo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: targetFile(),
+      [FIXTURE_DOC]: correctionDoc(CORRECTION_OLD_ANCHOR),
+    },
+    headFiles: {
+      [FIXTURE_TARGET]: targetFile({
+        insertAbove: 4,
+        overrides: { 20: `export const ${CORRECTION_SYMBOL} = '纠正后的正确落点';` },
+      }),
+      [FIXTURE_DOC]: correctionDoc(wrongTo),
+    },
+  });
+  const wrongEntry = correctionEntry({ to: wrongTo });
+  const failed = judge({
+    root: wrongRepo.root, base: wrongRepo.base, head: wrongRepo.head, registry: [wrongEntry],
+  });
+  const text = failed.violations.join('\n');
+  assert.ok(failed.violations.length > 0, `把 to 指到不含 symbol 的行竟然判绿（to=${wrongTo}）`);
+  assert.match(text, /找不到 symbol/);
+  assert.equal(failed.stats.corrected, 0, 'corrected 只在验真通过后才 +1，失败必须纹丝不动');
+
+  // 同一场景把 to 指回真正含符号的行 ⇒ 才允许 +1（对照，证明上面那条红不是「整条通道恒红」）。
+  const rightRepo = correctionRepo(t);
+  const passed = judge({
+    root: rightRepo.root, base: rightRepo.base, head: rightRepo.head, registry: [correctionEntry()],
+  });
+  assert.deepEqual(
+    passed.violations,
+    [],
+    `指回正确行后仍判红：${passed.violations.join(' | ')}`,
+  );
+  assert.ok(passed.stats.corrected >= 1, '验真通过后 corrected 必须 +1');
+  t.diagnostic(
+    `夹具（C7 反空转）to=${wrongTo} 判红 ${failed.violations.length} 条 corrected=${failed.stats.corrected}；`
+    + `指回 :${CORRECTION_RIGHT_ANCHOR} 后 corrected=${passed.stats.corrected} 且 0 判红`,
+  );
+});
+
+test('C8 纠正夹具：kind="correction" 且 from === to（锚点根本没动）⇒ 判红并点名（③ 与登记表「陈旧」双保险）', (t) => {
+  // 对抗审查 ADV-V3c 的永久化：目标文件确实改了（顶部插 4 行），但文档被「只改措辞、不动锚点」地过一遍。
+  // 这种形状谈不上「把错锚点改到正确行号」，③ 必须拦住；登记表自验真的「陈旧」是第二道独立保险。
+  const repo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: targetFile(),
+      [FIXTURE_DOC]: docFile({ anchor: CORRECTION_OLD_ANCHOR }),
+    },
+    headFiles: {
+      [FIXTURE_TARGET]: targetFile({
+        insertAbove: 4,
+        overrides: { 20: `export const ${CORRECTION_SYMBOL} = '纠正后的正确落点';` },
+      }),
+      // 关键：HEAD 的锚点数值仍是 21，只在同一行补了措辞 ⇒ 这一行真的进了 diff，但位移量为 0。
+      [FIXTURE_DOC]: docFile({ anchor: CORRECTION_OLD_ANCHOR, note: '（本提交只改了措辞，锚点没动）' }),
+    },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [correctionEntry({ from: CORRECTION_OLD_ANCHOR, to: CORRECTION_OLD_ANCHOR })],
+  });
+  const text = result.violations.join('\n');
+  assert.ok(result.violations.length > 0, 'from === to 的 correction 竟然判绿');
+  assert.match(text, /登记为 kind=correction.*验真不通过：from 与 to 相同 ⇒ 旧锚点根本没动/);
+  assert.match(text, /陈旧：from 与 to 相同，不可能对应任何位移，必须删/);
+  assert.equal(result.stats.corrected, 0, '③ 不通过不许 +1');
+  assert.equal(result.carried.length, 0, '不合格的 correction 不许退化成「历史保留」');
+  t.diagnostic(`夹具（C8 from===to）判红 ${result.violations.length} 条：${result.violations[0]}`);
+});
+
+test('C9 纠正夹具：symbol 是纯空白串 ⇒ 形状错误判红（空白符号会把缩进行当成「命中」）', (t) => {
+  // 对抗审查 ADV-S2 的永久化：`symbol: "   "` 必须被形状校验按「空」拦下，不许滑到验真阶段
+  // —— 否则 `includes("   ")` 会把一条缩进行当成符号命中，纠正就退化成任意改行号。
+  const repo = correctionRepo(t);
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [correctionEntry({ symbol: '   ' })],
+  });
+  const text = result.violations.join('\n');
+  assert.ok(result.violations.length > 0, '纯空白 symbol 竟然判绿');
+  assert.match(text, /\[登记表\] 第 1 条形状错误/);
+  assert.match(text, /symbol 必填（非空字符串/);
+  assert.equal(result.stats.corrected, 0, '形状错误一律不许计入 corrected');
+  // 形状不合法的条目不参与匹配 ⇒ 两个 token 仍要落回端点映射判红，不许被「登记过」静默搬走。
+  assert.match(text, /行号必须落在这个文件自己的端点映射上/);
+  const shapeLine = result.violations.find((item) => /形状错误/.test(item));
+  t.diagnostic(`夹具（C9 纯空白 symbol）判红 ${result.violations.length} 条：${shapeLine}`);
 });
 
 test('变异夹具：整行删掉带锚点的文档行（另改一行散文）⇒ 不判红，但锚点必须进 removed，不许隐身', (t) => {
@@ -1102,6 +2042,174 @@ test('变异夹具：纯删除型文档提交（旧行全部被删）⇒ 不许�
   assert.equal(result.stats.docLines, 0, '夹具应当一行都配不上对（整段被删）');
   assert.ok(result.removed.length > 0, '纯删除也必须让锚点进 removed（不许零判定静默通过）');
   t.diagnostic(`夹具（纯删除）docLines=0 removed=${result.stats.removed} 条，未假红`);
+});
+
+// ──────────── 纯新增 docs 提交（GY-R68）：假红修复与相邻盲区的常驻夹具 ────────────
+// 这一组钉的是「扫描面裁决」`scanSurfaceDecision()` 本身，用的是主用例真跑的那份判断：
+//   A1 本次修掉的假红：纯新增 hunk ⇒ 显式 SKIP（既不是 PASS 也不是 fail）；
+//   A2/A3 钉住它没把既有判定改松（未登记位移仍红／整行删锚点仍走 removed，且都不许变成 SKIP）；
+//   A4 钉住 SKIP 只在「**全部**纯新增」时生效（掺进一个配得上行的 hunk 就必须红）；
+//   A5 钉住「配出了行对但一个锚点都没抽到」的既有方向（SKIP），本片没有改它 —— 见文件头「已知限制之三 ⑤」。
+
+/** A4 用的填充行：把「改旧行」与「末尾新增」隔成两个独立 hunk（`-U0` 下只要中间有未改行就会分开）。 */
+const DOC_FILLER_LINES = Array.from({ length: 12 }, (_, index) => `- 填充行 ${index + 1}`);
+
+test('A1 纯新增 docs 提交（旧侧 0 行）⇒ 显式 SKIP 并报出纯新增 hunk 数，不再是「扫描面为空」的假红', (t) => {
+  const baseDoc = docFile({ anchor: FIXTURE_ANCHOR_LINE });
+  const headDoc = `${baseDoc}\n## 追加附录（本节只新增，不改任何既有行）\n\n- 追加的一行说明\n`;
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+
+  // 先钉住夹具**就是**旧假红的形状：一行都配不上对，也没有任何旧行进 removed ⇒ 旧断言必红。
+  assert.equal(result.stats.pairedHunks, 0, '夹具不该有「旧行→新行」配得上对的 hunk');
+  assert.equal(result.stats.pureAddHunks, 1, '夹具应当恰好一个纯新增 hunk');
+  assert.equal(result.stats.pureDeleteHunks, 0, '夹具不该有纯删除 hunk');
+  assert.equal(result.stats.docLines, 0, '纯新增 hunk 一行也配不出「旧行→新行」');
+  assert.deepEqual(result.removed, [], '纯新增没有任何旧行，removed 桶必须为空（旧实现正是在这里撞红）');
+  assert.deepEqual(result.violations, [], '纯新增没有任何待判锚点，违规清单必须为空');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'skip', `纯新增文档提交必须显式 SKIP，实际 ${decision.kind}：${decision.message}`);
+  assert.match(decision.message, /只有新增行，没有锚点位移面（1 个纯新增 hunk）/);
+  t.diagnostic(`夹具 A1（纯新增）${decision.kind}：${decision.message}｜${summarize(result, 'fixture')}`);
+});
+
+test('A2 目标文件本提交未改、文档行号被改动却没登记 ⇒ 仍硬红（新增的 SKIP 没把这条改松）', (t) => {
+  const repo = fixtureRepo(t, {
+    baseFiles: {
+      [FIXTURE_TARGET]: serviceFile(),
+      // 旧锚点指错一行；本提交把它「改对了」，但目标文件一个字没改 ⇒ 必须走登记表，否则红。
+      [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE + 1 }),
+    },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE }) },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'ok', `本次确有位移面，裁决不该是 ${decision.kind}：${decision.message}`);
+  assert.equal(result.stats.pairedHunks, 1, '夹具应当恰好一个配得上行的 hunk');
+  assert.equal(result.stats.pureAddHunks, 0, '夹具不该掺纯新增 hunk');
+  assert.ok(result.violations.length > 0, '未登记的行号位移竟然判绿：判别力不成立');
+  assert.match(result.violations.join('\n'), /行号必须恒等/);
+  assert.throws(() => assertNoViolations(result), /锚点位移恒等失败/);
+  t.diagnostic(`夹具 A2（未登记位移）裁决 ok，判红 ${result.violations.length} 条｜${summarize(result, 'fixture')}`);
+});
+
+test('A3 整行删掉带锚点的文档行 ⇒ 进 removed 且裁决是 ok，不许被判成 SKIP', (t) => {
+  const baseDoc = `# 夹具\n\n- 前置说明\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\``
+    + `（裸锚点 :${FIXTURE_ANCHOR_LINE}）\n`;
+  const headDoc = '# 夹具\n\n- 前置说明\n';
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.equal(result.stats.pureDeleteHunks, 1, '夹具应当恰好一个纯删除 hunk');
+  assert.equal(result.stats.pureAddHunks, 0, '整行删除不该附带纯新增 hunk');
+  assert.equal(result.stats.pairedHunks, 0, '整行删除配不出「旧行→新行」');
+  assert.equal(result.stats.docLines, 0, '夹具应当一行都配不上对');
+  assert.ok(result.removed.length > 0, '整行删掉的锚点必须进 removed 桶');
+  assert.deepEqual(result.violations, [], '删锚点是已知限制：只观测不判红');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'ok', `纯删除型不许被 SKIP 吃掉，实际 ${decision.kind}：${decision.message}`);
+  assert.doesNotMatch(decision.message, /纯新增/);
+  t.diagnostic(`夹具 A3（整行删锚点）裁决 ok，removed=${result.stats.removed} 条｜${summarize(result, 'fixture')}`);
+});
+
+test('A4 混合：一个纯新增 hunk + 一个改了旧行却没登记行号位移的 hunk ⇒ 必须硬红（SKIP 只在「全部纯新增」时生效）', (t) => {
+  const baseDoc = [
+    '# 夹具',
+    '',
+    `- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`（裸锚点 :${FIXTURE_ANCHOR_LINE}）`,
+    '',
+    ...DOC_FILLER_LINES,
+  ].join('\n') + '\n';
+  const headDoc = [
+    '# 夹具',
+    '',
+    // 改旧行：目标文件本提交一个字没改，锚点却被改了 ⇒ 未登记的位移，必须红。
+    `- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE - 1}\`（裸锚点 :${FIXTURE_ANCHOR_LINE - 1}）`,
+    '',
+    ...DOC_FILLER_LINES,
+    '',
+    '## 追加附录（这一段是纯新增 hunk）',
+    '',
+    '- 追加的一行说明',
+  ].join('\n') + '\n';
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.equal(result.stats.pairedHunks, 1, '夹具应当有一个「改旧行」的 hunk');
+  assert.equal(result.stats.pureAddHunks, 1, '夹具应当同时有一个纯新增 hunk');
+  assert.equal(result.stats.pureDeleteHunks, 0, '夹具不该有纯删除 hunk');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'ok', `掺了配得上行的 hunk 就不许 SKIP，实际 ${decision.kind}：${decision.message}`);
+  assert.ok(result.violations.length > 0, '混合形状竟然判绿：SKIP 被放宽到了「有纯新增 hunk」而不是「全是纯新增」');
+  assert.match(result.violations.join('\n'), /行号必须恒等/);
+  assert.throws(() => assertNoViolations(result), /锚点位移恒等失败/);
+  t.diagnostic(`夹具 A4（纯新增 + 改旧行）裁决 ok，判红 ${result.violations.length} 条｜${summarize(result, 'fixture')}`);
+});
+
+test('A5 只改一句不含行号引用的散文 ⇒ 现状：配得出行对但 tokens=0，显式 SKIP（本片不改判定方向，钉子钉住现状）', (t) => {
+  // 用户的第 5 条要求「如实测出这条现状」。实测结果不是红、也不是 pass，而是既有约定的显式 SKIP
+  // （见文件头「已知限制之三 ⑤」）：改动面里连一个锚点都没有，闸门没有任何东西可判。
+  // 这条用例**故意**钉住「SKIP」而不是把它改成红：改判方向会让「随手修一个 typo 的 docs 提交」直接变红。
+  const baseDoc = `# 夹具\n\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`\n\n- 旧措辞的一句散文\n`;
+  const headDoc = `# 夹具\n\n- 落点：\`${FIXTURE_TARGET}:${FIXTURE_ANCHOR_LINE}\`\n\n`
+    + '- 新措辞的一句散文（只改了几个字，没有任何行号引用）\n';
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: serviceFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head });
+  assert.equal(result.stats.docLines, 1, '夹具应当恰好配出一对行');
+  assert.equal(result.stats.tokens, 0, '这句散文里不该有任何锚点 token');
+  assert.deepEqual(result.removed, [], '夹具不该有整行删除');
+  assert.deepEqual(result.violations, [], '夹具不该有违规（否则这条钉子钉的就不是「现状」）');
+  assert.equal(judgmentBuckets(result).total, 0, '夹具必须真的没有任何判定面');
+
+  const decision = scanSurfaceDecision(result);
+  assert.equal(decision.kind, 'skip', `现状是 SKIP（既不是 PASS 也不是红），实际 ${decision.kind}：${decision.message}`);
+  assert.match(decision.message, /不含任何行号引用/);
+  t.diagnostic(`夹具 A5（纯散文改动）${decision.kind}：${decision.message}｜${summarize(result, 'fixture')}`);
+});
+
+test('自证：扫描面裁决的 fail 分支不许退化成 SKIP ——「diff 非空却什么都没解析出来」仍硬红且带纯新增 hunk 数', (t) => {
+  const zeroStats = {
+    docFiles: 1, docLines: 0, tokens: 0, pairs: 0, judged: 0, identical: 0, relocated: 0,
+    registered: 0, corrected: 0, carried: 0, removed: 0,
+    pairedHunks: 1, pureAddHunks: 2, pureDeleteHunks: 0,
+  };
+  const emptyBuckets = { violations: [], unresolved: [], removed: [], registered: [], carried: [], pairs: [] };
+
+  // ① 有配对 hunk、也掺了纯新增 hunk，却一行都没配对出来、也没有 removed ⇒ 硬红，且不许落进「纯新增 SKIP」文案。
+  const burned = scanSurfaceDecision({ ...emptyBuckets, stats: zeroStats });
+  assert.equal(burned.kind, 'fail', `这种形状必须硬红，实际 ${burned.kind}：${burned.message}`);
+  assert.match(burned.message, /其中有 2 个纯新增 hunk/);
+  assert.doesNotMatch(burned.message, /只有新增行/);
+
+  // ② 抽到了锚点却一条都没进桶 ⇒ 硬红（文案报出 tokens，别让人以为「没锚点」）。
+  const stranded = scanSurfaceDecision({
+    ...emptyBuckets,
+    stats: { ...zeroStats, docLines: 1, tokens: 3 },
+  });
+  assert.equal(stranded.kind, 'fail', `抽到锚点却没进桶必须硬红，实际 ${stranded.kind}：${stranded.message}`);
+  assert.match(stranded.message, /抽到 3 个锚点/);
+
+  // ③ 只有「一个配得上行的 hunk 都没有」时才是 SKIP。
+  const appendOnly = scanSurfaceDecision({
+    ...emptyBuckets,
+    stats: { ...zeroStats, pairedHunks: 0, pureAddHunks: 3 },
+  });
+  assert.equal(appendOnly.kind, 'skip', `全是纯新增才是 SKIP，实际 ${appendOnly.kind}：${appendOnly.message}`);
+  assert.match(appendOnly.message, /3 个纯新增 hunk/);
+  t.diagnostic(`夹具（裁决自证）fail/fail/skip 三分支都按预期：${burned.message}｜${stranded.message}｜${appendOnly.message}`);
 });
 
 test('自证：判据 helper「零违规」对非空 violations 必须抛（防一键把闸门改成恒绿）', (t) => {

@@ -15,6 +15,8 @@
  */
 import { ApiError } from '../errors.ts';
 import type { FieldError } from '../errors.ts';
+// 审计动作闭集：镜像不另抄一份字面量，直接引用 `services/api/src/admin/audit/catalog.ts`。
+import { AUDIT_ACTIONS } from './audit/catalog.ts';
 
 /** 契约 JSON Schema 子集在本片用到的全部关键字（归一化后的形状）。 */
 export interface FieldSpec {
@@ -48,6 +50,18 @@ const datetime = (): FieldSpec => ({ type: 'string', format: 'date-time' });
  * 注意：契约里另有一批**内联**枚举（`KnowledgeDraftInput.type`、各 `review_status`、
  * `SourceRef.validity`、`RestrictionInput.effect`、`TargetRef.type`、`AuditEvent.result`），
  * 它们必须**就地内联**，不能另起名字——否则镜像与契约就不逐字相等了。
+ *
+ * GY-R68 · C08 反转了一处：`AuditEvent.action` 从「1..80 字符的自由字符串」收窄为
+ * `$ref: '#/components/schemas/AuditAction'`（闭集 26 值）。镜像随之改成 `{ ref: 'AuditAction' }`。
+ *
+ * 为什么是 26 而不是 10（**重要，别看错**）：契约 `AuditEvent` 同时是三条读面的行形状
+ * （`GET /admin/audit-logs` 读库内 `public.admin_audit_events`、`GET /admin/audit-events` 与
+ * `GET /admin/flag-audit-events` 读内存审计账本 `services/api/src/admin/audit.ts` 的 `createAuditLog`），
+ * 而内存账本按**域**记更细的码（库内 `set_flag` ↔ 内存 `flag.set`；库内没有内容域动作）。
+ * 又因为 `store.audit.append` 每追加一条都拿本 schema 校验（`services/api/src/admin/audit.ts:100`），
+ * 若闭集只写库内那 10 个值，所有内容域 publish/withdraw/edit 与运营域动作都会当场 `INVALID_REQUEST`。
+ * ⇒ 闭集 = 库内 10 值（`AUDIT_ACTIONS`，逐值同序）+ 内存账本独有的 16 个域内码。
+ * `tests/unit/audit-action-literal-coverage.test.mjs` 从源码派生这三段并与契约双向对拍。
  */
 const SCALAR_SPECS = {
   SourceKind: enumOf('database', 'verified_seed', 'simulation'),
@@ -58,6 +72,32 @@ const SCALAR_SPECS = {
 
 /** 契约里 4 处 `review_status` 的内联枚举。 */
 const REVIEW_STATUS: FieldSpec = enumOf('unverified', 'verified', 'rejected');
+
+/**
+ * 内存审计账本（`services/api/src/admin/audit.ts` 的 `createAuditLog`）**独有**的动作码。
+ *
+ * 为什么单独列、而不是从别处 import：
+ * - 库内那 10 个值有唯一真值源（`services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS`），直接引用；
+ * - 内存账本的码没有常量化：内容域的五处写点（`services/api/src/admin/service.ts:351/401/422/449/511`）
+ *   是模板串 `` `${descriptor.noun}.edit|publish|withdraw` ``，运营域的七处是内联字面量
+ *   （`services/api/src/admin/ops/service.ts:651/875/1055/1186/1231/1361/1483`）。
+ *   这里把「noun × verb」与运营域独有的四个码摊平，由
+ *   `tests/unit/audit-action-literal-coverage.test.mjs` **从源码反推**同一份集合再双向对拍
+ *   ⇒ 有人新写一个动作码而没改这里，测试会红并把值点名，不会静默漂移。
+ *
+ * 注意 noun 的顺序必须与 `services/api/src/admin/families.ts` 的 `FAMILIES` 一致（测试会核对）；
+ * 本文件不 import `families.ts`：那边反过来 import 本文件的 `INPUT_SPECS`，会形成模块环。
+ */
+const IN_MEMORY_AUDIT_NOUNS = Object.freeze(['source', 'knowledge', 'registration', 'restriction'] as const);
+/** 内容域三个写动作的动词，与 `services/api/src/admin/service.ts` 的五处写点同源。 */
+const IN_MEMORY_AUDIT_VERBS = Object.freeze(['edit', 'publish', 'withdraw'] as const);
+/** 运营域独有的四个动作码。 */
+const IN_MEMORY_OPS_AUDIT_ACTIONS = Object.freeze(['category.update', 'flag.set', 'post.approve', 'post.reject'] as const);
+/** 内存账本独有的 16 个动作码（12 个内容域 + 4 个运营域）。 */
+export const IN_MEMORY_AUDIT_ACTIONS: readonly string[] = Object.freeze([
+  ...IN_MEMORY_AUDIT_NOUNS.flatMap((noun) => IN_MEMORY_AUDIT_VERBS.map((verb) => `${noun}.${verb}`)),
+  ...IN_MEMORY_OPS_AUDIT_ACTIONS,
+]);
 
 /** 契约 `TargetRef.type` 的 17 个成员（本片按此闭集校验审计目标类型）。 */
 export const TARGET_REF_TYPES = [
@@ -193,6 +233,14 @@ export const INPUT_SPECS = {
 export const OUTPUT_SPECS = {
   Visibility: SCALAR_SPECS.Visibility,
   ExecutionMode: SCALAR_SPECS.ExecutionMode,
+  /**
+   * GY-R68 · C08：契约 `AuditAction` 是审计动作**闭集**，成员 = 库内 `AUDIT_ACTIONS`（10 值，
+   * 全部 11 处迁移写点的取值域）+ 内存账本独有的 16 个域内码，顺序与契约逐字一致。
+   *
+   * 这一条让镜像在**出参侧**咬住闭集：`collectIssues('AuditEvent', row)` 遇到闭集外的 `action`
+   * 会给出 `enum` issue，读面据此 503 而不是把任意字符串当合法审计事件回出去。
+   */
+  AuditAction: enumOf(...AUDIT_ACTIONS, ...IN_MEMORY_AUDIT_ACTIONS),
 
   Meta: {
     type: 'object',
@@ -290,7 +338,7 @@ export const OUTPUT_SPECS = {
     required: ['id', 'action', 'scope', 'target_ref', 'reason_code', 'request_id', 'result', 'created_at'],
     properties: {
       id: uuid(),
-      action: str(1, 80),
+      action: { ref: 'AuditAction' },
       scope: str(1, 80),
       target_ref: { ref: 'TargetRef', nullable: true },
       reason_code: str(1, 80),

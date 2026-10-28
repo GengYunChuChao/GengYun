@@ -303,6 +303,13 @@ def check_contract(spec, states, manifest, fixtures, media_traces=(), knowledge_
     for state, targets in transitions.items():
         check(set(targets) <= transitions.keys() and state not in targets, 'Invalid transition ' + state)
     anonymous = {('/public/home', 'get'), ('/auth/wechat', 'post'), ('/admin/auth/session', 'post')}
+    # 错误响应矩阵按「可产出性」判，不再要求每个 operation 声明全站 13 个错误码：
+    #   - 通用码：与请求体、前置条件无关，每个 operation 都必须声明；
+    #   - 413/415 只由请求体解析产出（Fastify 只对 bodywith 方法跑 contentTypeParser），bodyless 方法不得声明；
+    #   - 412/428 只由前置条件校验产出，没有条件请求头的 operation 不得声明，有则必须声明 428。
+    universal_errors = set(states['error_status_map']) - {'412', '413', '415', '428'}
+    bodyless_methods = {'get', 'head', 'trace'}
+    precondition_headers = {'If-Match', 'If-None-Match', 'If-Unmodified-Since', 'If-Modified-Since', 'If-Range'}
     actual = []
     seen = set()
     for path, methods in spec['paths'].items():
@@ -329,7 +336,15 @@ def check_contract(spec, states, manifest, fixtures, media_traces=(), knowledge_
                 limit = next((p for p in params if p['name'] == 'limit'), {})
                 check(limit.get('schema', {}).get('maximum') == 50, 'Unbounded pagination ' + oid)
             check(any(code.startswith('2') for code in op['responses']), 'No success response ' + oid)
-            check(set(states['error_status_map']) <= op['responses'].keys(), 'Missing error response ' + oid)
+            check(universal_errors <= op['responses'].keys(), 'Missing error response ' + oid)
+            if method in bodyless_methods:
+                check(not ({'413', '415'} & op['responses'].keys()), 'Impossible body error response ' + oid)
+            else:
+                check({'413', '415'} <= op['responses'].keys(), 'Missing body error response ' + oid)
+            if precondition_headers & set(headers):
+                check('428' in op['responses'], 'Missing revision-required response ' + oid)
+            else:
+                check(not ({'412', '428'} & op['responses'].keys()), 'Impossible precondition response ' + oid)
             actual.append({'id': oid, 'path': path, 'method': method, 'scope': scope, 'version_required': op['x-version-required']})
     ordering = lambda item: (item['path'], item['method'])
     check(sorted(actual, key=ordering) == sorted(manifest['operations'], key=ordering), 'Operations manifest drift')

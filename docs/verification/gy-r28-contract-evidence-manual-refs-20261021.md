@@ -65,7 +65,7 @@ A/B 的分界：A = 基线片段的**首行本身就是该函数的声明**（�
 | 假设 | 检索 | 结论 |
 | --- | --- | --- |
 | `getPublicHome` 在 `db/catalog.ts` 已死 | `getPublicHome` 在该文件大小写敏感命中 **0**；全仓（含 `packages/contracts/openapi.json:23-24`、`packages/contracts/operations.json:5`、台账自身、两份历史证据页）共 8 处；实现为同文件 `readHomePreviews`（14 声明、32 闭包），HTTP 面在 `services/api/src/routes/public-home.ts` | **未死**，重锚 14-32 |
-| `grantConsent` 在 `privacy/grant-pg.ts` 已死 | `grantConsent` 在该文件大小写敏感命中 **0**；全仓 10 处（`openapi.json:1279-1280`、`docs/verification/product-readiness.md:62-63`、台账自身等）；实现为 `persistConsentGrant`（32 声明、113 闭包），HTTP 面在 `services/api/src/routes/consents.ts` | **未死**，重锚 32-113 |
+| `grantConsent` 在 `privacy/grant-pg.ts` 已死 | `grantConsent` 在该文件大小写敏感命中 **0**；全仓 10 处（`openapi.json:1186-1187`、`docs/verification/product-readiness.md:62-63`、台账自身等）；实现为 `persistConsentGrant`（32 声明、113 闭包），HTTP 面在 `services/api/src/routes/consents.ts` | **未死**，重锚 32-113 |
 
 ### 3.2 条目名在区间内不出现的 7 条（不是死引用）
 
