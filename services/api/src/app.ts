@@ -77,6 +77,7 @@ import { createPostgresAccountAuthority } from './admin/ops/account-authority-pg
 // `#18` S2 PR-3：管理员 scope 的唯一写路径（迁移 0041 的两条 SECURITY DEFINER 函数）。
 import { createPostgresAdminScopeAuthority } from './admin/ops/scope-authority-pg.ts';
 import { createPostgresAdminAccountStateAuthority } from './admin/ops/admin-account-authority-pg.ts';
+import { createPostgresAdminCategories } from './admin/ops/categories-pg.ts';
 // GY-I17（#17）系统事件：账号停用/恢复 → 消息域 `system` 消息（结构性端口，不 import 消息域）。
 import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts';
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
@@ -962,8 +963,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       executionMode: config.executionMode,
       appId: config.wechatAppId,
       appSecret: config.wechatAppSecret,
-      // 真实模式用 SESSION_SIGNING_KEY 作为 HMAC 密钥；替身/演示用固定桩密钥。
-      lookupKey: config.sessionSigningKey ?? STUB_LOOKUP_KEY,
+      // 真实模式用 SESSION_SIGNING_KEY 作为 HMAC 密钥；替身/演示用固定桩密钥。GY-R68 的固定身份只从服务端配置来。
+      lookupKey: config.sessionSigningKey ?? STUB_LOOKUP_KEY, stubSubject: config.wechatStubSubject ?? null,
     });
 
   const service = new AuthService({
@@ -1529,6 +1530,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const realAdminAccountAuthority =
       adminInjection?.adminAccountAuthority
       ?? (pool === null ? null : createPostgresAdminAccountStateAuthority({ pool, log: app.log }));
+    // **R68 显式放行：后台分类字典读写面**（`listAdminCategories` / `editCategory`）。
+    // 判据是**能力对象存在**：`pool === null` ⇒ 端口 null ⇒ 两条路由保持 503
+    // `PROVIDER_UNAVAILABLE`（`retryable: false`）。这里⛔ 绝不降级成内存 store 或空页 ——
+    // 空页会被读成"平台没有分类"，那是伪造读数（契约两处 description 都明写「⛔ 不返回空页」）。
+    // 端口读的是迁移 0049 建的 `public.admin_categories`，写面在它自己的事务里做
+    // `UPDATE … WHERE id = $1 AND revision = $2` 的 CAS 并调 0049 的窄函数写审计
+    // （运行时对 `admin_audit_events` 仍是零表级权限，只有该函数的 EXECUTE）。
+    const realCategoriesPort = pool === null ? null : createPostgresAdminCategories({ pool });
     adminAuditLogService = createAdminAuditLogService({
       port: realAuditLogPort,
       now: clock,
@@ -1569,6 +1578,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           adminAccountAuthority: realAdminAccountAuthority,
           // 只转**真实**端口：`null` 时服务层保持"无 port 走内存 store"的既有分支。
           ...(flagsPort === null ? {} : { flagsPort }),
+          // R68：分类字典端口（`null` ⇒ 服务层在 `real` 下 fail-closed 抛 503，不返回空页）。
+          ...(realCategoriesPort === null ? {} : { categoriesPort: realCategoriesPort }),
           jobPort: adminJobPort,
           // R18：`job.cancel` 的审计落点跟着 `jobPort` 走 —— 真库端口在它自己的取消事务里
           // 写 `public.admin_audit_events`（迁移 0043 的窄口径函数）；内存端口由服务层写内存审计流。
@@ -1596,6 +1607,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           adminAccountWriteWired: realAdminAccountAuthority !== null,
           // S3：审核面单独一道门，判据同下架（只有真实持久的社区端口才放行）。
           postReviewWired: communityPostPortForAdmin.persistent === true,
+          // R68：分类字典读写面（判据＝真实目录端口对象存在，见上方定义处注释）。
+          categoriesWired: realCategoriesPort !== null,
         },
       );
       const released: string[] = [];
@@ -1652,6 +1665,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         released.push('管理员账号停用/启用');
         releasedRoutes += 2; // disableAdministratorAccount / enableAdministratorAccount
       }
+      // R68：后台分类字典读写面（判据＝真实目录端口存在；两条路由）。
+      if (realCategoriesPort !== null) {
+        released.push('后台分类字典读写（迁移 0049 的 public.admin_categories，写面 CAS + 库内窄函数审计）');
+        releasedRoutes += 2; // listAdminCategories / editCategory
+      }
       // **本片**：内容/资料域（迁移 0036 的三表落点）—— 放行 **24** 条内容 CRUD；审计读面 `listAuditEvents` **仍失闭**（裁决 A：台账未落库 ⇒ 放行只会返回内存空页），⛔ 不计入放行、日志不得宣称「内容域全放行」。
       if (adminContentWired) {
         released.push('内容/资料读写（24 条内容 CRUD；审计读面 listAuditEvents 仍失闭，因台账未落库）');
@@ -1669,8 +1687,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           adminAccountWriteWired: realAdminAccountAuthority !== null,
           contentWired: adminContentWired,
           postsReadWired: adminPostReadPort !== undefined,
+          categoriesWired: realCategoriesPort !== null,
         },
-        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036；管理员目录/权限读面经 admin_accounts + admin_scopes 的既有列授权，闭集由迁移 0041 保证；人工审核经 community_moderation_decisions.decided_by，迁移 0045）；其余 ${ADMIN_HTTP_OPERATION_IDS.length - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
+        `GY-I18/I22/R34 已接真实持久权威 ⇒ ${released.join('、')}走真实库（读面经 public.list_admin_accounts()，迁移 0021；下架经 community_posts 的 CAS，迁移 0022；审计日志经 public.list_admin_audit_logs()，迁移 0033；内容域经 public.admin_content_{entities,revisions,idempotency}，迁移 0036；管理员目录/权限读面经 admin_accounts + admin_scopes 的既有列授权，闭集由迁移 0041 保证；人工审核经 community_moderation_decisions.decided_by，迁移 0045；后台分类字典经 public.admin_categories 的 CAS + public.record_admin_category_update() 的同事务审计，迁移 0049）；其余 ${ADMIN_HTTP_OPERATION_IDS.length - releasedRoutes} 条后台路由仍 503 PROVIDER_UNAVAILABLE`,
       );
     }
   } else {

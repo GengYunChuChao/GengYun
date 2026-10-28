@@ -79,6 +79,7 @@ test('契约形状：路径/scope/闭集与后端 catalog 逐字一致；⛔ 没
     'post.hide',
     'admin_account.disable',
     'admin_account.enable',
+    'category.update',
   ]);
   assert.deepEqual([...AUDIT_LOG_ENTITIES], ['account', 'flag', 'job', 'admin_scope', 'post', 'admin_account']);
   assert.equal(AUDIT_LOG_ACTIONS.includes('entity_type'), false);
