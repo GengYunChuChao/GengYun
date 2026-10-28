@@ -179,3 +179,36 @@ npm run test:docs
 ```bash
 node tools/verify-doc-anchors.mjs        # 不带 --strict，会打印 SCAN: 行
 ```
+
+## 7. 后续变更（2026-10-29，追加；上文原文保留不动）
+
+第一段（「隔离待复核」与「明确驳回」分成两句）已由 **#749**（squash `3eb402cd`）合入 main；
+第二段（`hidden` 路径的再分档与理由码入口）在分支 `fix/gy-r68-moderation-hidden-outcome` 上追加。
+两次改动都按**钉 5 自带的翻转要求**（见钉 5 失败提示原文：「文案改动可能是**有意**的…那就是本切片
+点名的 S5 切片，请把三页 + 本钉子 + 证据页一起改」）把「钉 5」从**钉缺口**翻成**钉修好之后的事实**。
+本文以下位置记的是**翻转前**的口径，原文保留以便对照，**不要再按它们复算**：
+
+- 第 30 行（§1 表的「审核域联动注入」行）与本文全文的「三页只有三档文案」前提：现状已是
+  **六个结论档**（`approved`/`pending`/`quarantined`/`rejected`，加 `hidden` 的四种分档
+  `hidden`/`hidden_pending`/`hidden_quarantined`/`hidden_rejected`），措辞集中在
+  `miniprogram/utils/community-api.js` 的 `OUTCOMES` / `HIDDEN_OUTCOMES`（唯一来源，页面不自持）；
+- 第 60 行（§2 表第 2 行）与 §2 其它行里的 `services/api/src/community/service.ts` 行号：服务端在本页
+  之后又合入了若干提交（含 `#743`–`#751`），行号已漂移；本页的「行号以 `f6c5866d` 为准」声明
+  **仍然只对 `f6c5866d` 成立**；
+- 第 71-72 行（§3 第 1 条「驳回时内容行不落库」）：该结论**仍然成立且更关键** —— 正因为它成立，
+  隔离（422）那条错误文案**不承诺**「已转入人工复核」，只有**落库**的 `pending`/`quarantined`
+  （以及被读面 `effectiveState.demoted()` 降级成 `hidden` 的那两种）才说「等待人工复核/稍后再看」。
+
+新增的钉子内容（本页不再复制用例正文，只登记判据位置与口径）：
+`tests/unit/community-premoderation-invariants.test.mjs` 的钉 5 断言「隔离/驳回两结论标题互不相同、
+`{hidden,rejected}` 与 `{hidden,quarantined}` 也不得同形、三页零本地文案字面量且都调
+`api.outcomeOf`/`api.commentOutcomeOf`、`（码：X）` 拼接表达式恰好一处、未知码兜底在位、
+旧 `原因码：` 裸码零命中」；行为面用例在 `tests/unit/miniprogram-community-api.test.mjs`
+（①–⑧，含两条负控制）。
+
+新增的钉子内容（本页不再复制用例正文，只登记判据位置与口径）：
+`tests/unit/community-premoderation-invariants.test.mjs` 的钉 5 断言「隔离/驳回两结论标题互不相同、
+`{hidden,rejected}` 与 `{hidden,quarantined}` 也不得同形、三页零本地文案字面量且都调
+`api.outcomeOf`/`api.commentOutcomeOf`、`（码：X）` 拼接表达式恰好一处、未知码兜底在位、
+旧 `原因码：` 裸码零命中」；行为面用例在 `tests/unit/miniprogram-community-api.test.mjs`
+（①–⑧，含两条负控制）。
