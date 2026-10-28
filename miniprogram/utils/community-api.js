@@ -447,7 +447,7 @@ function outcomeOf(record) {
  * 取值来自仓库既有闭集，不是自造：
  *   - 规则命中（明确驳回）：`packages/moderation/constants.mjs` 的 `RULE_REASON_CODES`；
  *   - 未结论/隔离：同文件 `FAIL_CLOSED_REASON_CODES`、`packages/moderation/model-reason-codes.mjs`
- *     的 `MODEL_REASON_CODES`，以及 `community/service.ts` 追加的
+ *     的模型层理由码闭集（该文件导出的数组），以及 `community/service.ts` 追加的
  *     `IMAGE_MODERATION_UNAVAILABLE` / `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`、审核域读面的
  *     `RESCREEN_REQUIRED`。
  * 表里没有的码**一律**走 `未知原因（码：X）`（见 `reasonLabel`），不猜、不合并、不说成通过。
