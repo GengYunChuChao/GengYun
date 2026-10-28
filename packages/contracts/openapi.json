@@ -8186,8 +8186,8 @@
       },
       "patch": {
         "operationId": "editKnowledgeDraft",
-        "summary": "给一条知识条目追加新修订，并使引用旧版本的公开内容立即失效",
-        "description": "新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。",
+        "summary": "给一条知识条目追加一条新的草稿修订（整条提交，不改写已发布修订；公开面仍读已发布那条）",
+        "description": "本操作只追加一条新的草稿修订：已发布修订的正文（以及它上面的任何修订）都不会被改写，公开面只读当前生效的已发布修订（publishedRevision）、绝不读 head，所以编辑本身不会让引用旧版本的公开内容失效或重新核对（依据 services/api/src/admin/service.ts 的 editXxxDraft「只追加新修订」与 services/api/src/admin/public-view.ts 的公开读口径）；review_status 不接受客户端提交值，由该修订是否曾发布派生（services/api/src/admin/families.ts 的 projectRevisionData）。",
         "tags": [
           "admin"
         ],
@@ -8775,7 +8775,7 @@
       "patch": {
         "operationId": "editRegistrationDraft",
         "summary": "给一条制剂登记资料追加一条新的草稿修订",
-        "description": "新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。",
+        "description": "新不可变版本：每次编辑只追加一条新的草稿修订（已发布修订的正文以及它上面的任何修订都不会被改写，旧修订保持不可变），公开面只读当前生效的已发布修订（publishedRevision）、绝不读 head，所以旧公开引用继续指向原 publishedRevision、不因这次编辑而失效，也不需要重新核对（依据 services/api/src/admin/service.ts 的 editXxxDraft「只追加新修订」与 services/api/src/admin/public-view.ts 的公开读口径）；不能用客户端提交review_status。",
         "tags": [
           "admin"
         ],
@@ -9363,7 +9363,7 @@
       "patch": {
         "operationId": "editRestrictionDraft",
         "summary": "给一条使用限制追加一条新的草稿修订",
-        "description": "新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。",
+        "description": "新不可变版本：每次编辑只追加一条新的草稿修订（已发布修订的正文以及它上面的任何修订都不会被改写，旧修订保持不可变），公开面只读当前生效的已发布修订（publishedRevision）、绝不读 head，所以旧公开引用继续指向原 publishedRevision、不因这次编辑而失效，也不需要重新核对（依据 services/api/src/admin/service.ts 的 editXxxDraft「只追加新修订」与 services/api/src/admin/public-view.ts 的公开读口径）；不能用客户端提交review_status。",
         "tags": [
           "admin"
         ],
@@ -11239,7 +11239,7 @@
       "get": {
         "operationId": "listFlags",
         "summary": "列出全局开关当前的开/关状态与 revision",
-        "description": "门 flags:read；接端口时读 public.feature_flags 的 key/enabled/revision（运行时角色对该表只有 SELECT），未接端口时读进程内种子；游标按 key 键集分页、不返回总数；读库失败 ⇒ 503 PROVIDER_UNAVAILABLE，语句超时/锁不可用 ⇒ 504 PROVIDER_TIMEOUT，⛔ 不降级成内存值。",
+        "description": "门 flags:read；接端口时读 public.feature_flags 的 key/enabled/revision（运行时角色对该表只有 SELECT）；只有 stub 域未接端口时才回落到进程内种子，real 模式没有库池（开关端口未接线）时由后台外壳直接 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不回落进程内种子——与同一道 flagsWired 门的 listFlagAuditEvents 同口径；游标按 key 键集分页、不返回总数；读库失败 ⇒ 503 PROVIDER_UNAVAILABLE，语句超时/锁不可用 ⇒ 504 PROVIDER_TIMEOUT，⛔ 不降级成内存值。",
         "tags": [
           "admin"
         ],
@@ -11727,8 +11727,8 @@
     "/admin/posts/{id}/approve": {
       "post": {
         "operationId": "approvePost",
-        "summary": "人工审核通过一条帖子，但不改其可见性",
-        "description": "人工审核通过：写运营通过结论（audit_state=approved），不改可见性；硬规则明确否决的内容不可通过（422）。",
+        "summary": "人工审核通过一条帖子，并在同一次操作里把待审（private）的帖子推成 published",
+        "description": "人工审核通过：写运营通过结论（audit_state=approved），**并同时承担发布语义**——待审帖（visibility=private）在同一次 CAS 里被推成 published，已 hidden 的不被翻回 published，已删除的返回 409 OBJECT_UNAVAILABLE 不可审核；硬规则明确否决的内容不可通过（422）。依据 services/api/src/admin/ops/community-posts.ts 的 review()：targetVisibility = current.visibility === 'private' ? 'published' : current.visibility，且仅当该值不同于当前可见性时才把 visibility 写进 commitPostIfCurrent 的新值（口径见 services/api/src/admin/ops/service.ts 的 approvePost 注释：公开读面要求「published 且 approved」，契约里没有作者自助发布口，只翻 audit_state 会让通过变成黑洞）。",
         "tags": [
           "admin"
         ],
