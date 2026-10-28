@@ -184,7 +184,7 @@
       "post": {
         "operationId": "loginAdmin",
         "summary": "用后台登录名与口令换取一个独立的后台会话（与用户会话分表、分 audience）",
-        "description": "独立后台凭据交换；不授用户会话或自注册管理员。",
+        "description": "鉴权口径 public：公开端点，不要求会话，也不要求任何后台 scope（它是取得后台会话的入口，先要会话就成了循环）。Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED；同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT；同键并发占位中 ⇒ 409 REQUEST_IN_PROGRESS，retryable）。body 是 AdminLoginInput（login_name 与 password 均必填，不接受多余字段，不合法 ⇒ 400）。口令错误沿用 401 SESSION_REQUIRED——错误码表里没有「凭据错误」专用码，⛔ 不臆造新码；本端点按客户端 IP 限流，超限 ⇒ 429 RATE_LIMITED（retryable，带 Retry-After 与限流响应头）。成功 200 并带强 ETag 与 Cache-Control: no-store；幂等台账只存不含凭据的结果引用（会话 id + audience），重放时重新校验凭据与会话/账号当前状态后重新签发，⛔ 不复用旧令牌、⛔ 不落口令或令牌明文。本 operation ⛔ 不授用户会话、⛔ 不自注册管理员。",
         "tags": [
           "admin"
         ],
@@ -7421,7 +7421,7 @@
       "post": {
         "operationId": "createSourceDraft",
         "summary": "新建一条来源资料草稿，由服务端分配 id 与修订 1",
-        "description": "只写unverified/private草稿；不可由客户端直接写verified/approved。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）。body 是完整的 SourceDraftInput（全部必填字段都要给，不是部分更新；不合法 ⇒ 400）。成功 201 并带强 ETag：id 与首个修订由服务端分配，客户端 ⛔ 不能指定 id 或修订号。本 operation 只写未核验、非公开的草稿，⛔ 不由客户端直接写入 verified/approved 的公开态——发布是另一个 operation 的事。",
         "tags": [
           "admin"
         ],
@@ -7709,7 +7709,7 @@
       "post": {
         "operationId": "publishSource",
         "summary": "发布一条来源资料，使其成为公开视图里的生效修订",
-        "description": "服务端核对受控evidence_ref、责任人、登记制剂/有效期/规则；模拟只可发布明确模拟科普且禁止用量。不授专业资格。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是 SourcePublishInput（evidence_ref 与 reason 均必填，不合法 ⇒ 400）；目标不存在、属于别的家族、或不归当前管理主体 ⇒ 404 NOT_FOUND。幂等：head 已是当前生效的已发布修订 ⇒ 直接 200 changed:false，不迁移、不写审计。发布门槛 fail-closed：按该族输入契约重新收集 issue，有 issue ⇒ 先记 denied 审计再返回 400 INVALID_REQUEST（⛔ 不返回成功封套）。成功 200 changed:true 并带强 ETag，lifecycle 与发布字段整体提交，⛔ 不存在部分发布。本 operation 不授予专业资格，模拟资料只可发布为明确标注的模拟科普且禁止写成用量依据。",
         "tags": [
           "admin"
         ],
@@ -8009,7 +8009,7 @@
       "post": {
         "operationId": "createKnowledgeDraft",
         "summary": "新建一条植保知识条目草稿，由服务端分配 id 与修订 1",
-        "description": "只建unverified草稿，生成ID由服务端设置；不自动作为有效药剂/限制或用量依据。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）。body 是完整的 KnowledgeDraftInput（全部必填字段都要给，不是部分更新；不合法 ⇒ 400）。成功 201 并带强 ETag：id 与首个修订由服务端分配，客户端 ⛔ 不能指定 id 或修订号。本 operation 只写未核验的非公开草稿，⛔ 不自动成为有效药剂/限制或用量依据。",
         "tags": [
           "admin"
         ],
@@ -8187,7 +8187,7 @@
       "patch": {
         "operationId": "editKnowledgeDraft",
         "summary": "给一条知识条目追加一条新的草稿修订（整条提交，不改写已发布修订；公开面仍读已发布那条）",
-        "description": "本操作只追加一条新的草稿修订：已发布修订的正文（以及它上面的任何修订）都不会被改写，公开面只读当前生效的已发布修订（publishedRevision）、绝不读 head，所以编辑本身不会让引用旧版本的公开内容失效或重新核对（依据 services/api/src/admin/service.ts 的 editXxxDraft「只追加新修订」与 services/api/src/admin/public-view.ts 的公开读口径）；review_status 不接受客户端提交值，由该修订是否曾发布派生（services/api/src/admin/families.ts 的 projectRevisionData）。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是完整的 KnowledgeDraftInput（不是部分更新，不合法 ⇒ 400）；目标不存在、属于别的家族、或不归当前管理主体，一律 404 NOT_FOUND（三种情况对外同形）。效果是只追加一条新的草稿修订（derivedFromRevision 指向原 head）：已发布修订的正文以及它上面的任何修订都不会被改写，公开面只读当前生效的已发布修订、绝不读 head，所以这次编辑本身不会让引用旧版本的公开内容失效，也不触发重新核对；review_status ⛔ 不接受客户端提交值，由该修订是否曾发布派生。成功 200 并带强 ETag，同时写一条 knowledge.edit 审计（reasonCode=revision_appended、result=accepted）。",
         "tags": [
           "admin"
         ],
@@ -8297,7 +8297,7 @@
       "post": {
         "operationId": "publishKnowledge",
         "summary": "发布一条知识条目，使其成为公开视图里的生效修订",
-        "description": "核对来源/evidence_ref/有效期/范围/制剂/规则，模拟不能成为可执行依据；来源及限制缺失保持未知。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是 SourcePublishInput（evidence_ref 与 reason 均必填，不合法 ⇒ 400）；目标不存在、属于别的家族、或不归当前管理主体 ⇒ 404 NOT_FOUND。幂等：head 已是当前生效的已发布修订 ⇒ 直接 200 changed:false，不迁移、不写审计。发布门槛 fail-closed：按该族输入契约重新收集 issue，有 issue ⇒ 先记 denied 审计再返回 400 INVALID_REQUEST（⛔ 不返回成功封套）。引用门槛：引用的来源被判定为「确认失效」⇒ 记 denied 审计后返回 422 SOURCE_CONFLICT；未接真实库、库外来源这类不可判定的情形不拦，保持未知而不是假装核过。成功 200 changed:true 并带强 ETag，⛔ 不存在部分发布。",
         "tags": [
           "admin"
         ],
@@ -8597,7 +8597,7 @@
       "post": {
         "operationId": "createRegistrationDraft",
         "summary": "新建一条制剂登记资料草稿，由服务端分配 id 与修订 1",
-        "description": "只建unverified草稿，生成ID由服务端设置；不自动作为有效药剂/限制或用量依据。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）。body 是完整的 RegistrationDraftInput（全部必填字段都要给，不是部分更新；不合法 ⇒ 400）。成功 201 并带强 ETag：id 与首个修订由服务端分配，客户端 ⛔ 不能指定 id 或修订号。本 operation 只写未核验的非公开草稿，⛔ 不自动成为有效药剂/限制或用量依据。",
         "tags": [
           "admin"
         ],
@@ -8775,7 +8775,7 @@
       "patch": {
         "operationId": "editRegistrationDraft",
         "summary": "给一条制剂登记资料追加一条新的草稿修订",
-        "description": "新不可变版本：每次编辑只追加一条新的草稿修订（已发布修订的正文以及它上面的任何修订都不会被改写，旧修订保持不可变），公开面只读当前生效的已发布修订（publishedRevision）、绝不读 head，所以旧公开引用继续指向原 publishedRevision、不因这次编辑而失效，也不需要重新核对（依据 services/api/src/admin/service.ts 的 editXxxDraft「只追加新修订」与 services/api/src/admin/public-view.ts 的公开读口径）；不能用客户端提交review_status。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是完整的 RegistrationDraftInput（不是部分更新，不合法 ⇒ 400）；目标不存在、属于别的家族、或不归当前管理主体，一律 404 NOT_FOUND（三种情况对外同形）。效果是只追加一条新的草稿修订（derivedFromRevision 指向原 head）：已发布修订的正文以及它上面的任何修订都不会被改写，公开面只读当前生效的已发布修订、绝不读 head，所以这次编辑本身不会让引用旧版本的公开内容失效，也不触发重新核对；review_status ⛔ 不接受客户端提交值，由该修订是否曾发布派生。成功 200 并带强 ETag，同时写一条 registration.edit 审计（reasonCode=revision_appended、result=accepted）。",
         "tags": [
           "admin"
         ],
@@ -8885,7 +8885,7 @@
       "post": {
         "operationId": "publishRegistration",
         "summary": "发布一条制剂登记资料，使其成为公开视图里的生效修订",
-        "description": "核对来源/evidence_ref/有效期/范围/制剂/规则，模拟不能成为可执行依据；来源及限制缺失保持未知。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是 SourcePublishInput（evidence_ref 与 reason 均必填，不合法 ⇒ 400）；目标不存在、属于别的家族、或不归当前管理主体 ⇒ 404 NOT_FOUND。幂等：head 已是当前生效的已发布修订 ⇒ 直接 200 changed:false，不迁移、不写审计。发布门槛 fail-closed：按该族输入契约重新收集 issue，有 issue ⇒ 先记 denied 审计再返回 400 INVALID_REQUEST（⛔ 不返回成功封套）。引用门槛：引用的来源被判定为「确认失效」⇒ 记 denied 审计后返回 422 SOURCE_CONFLICT；未接真实库、库外来源这类不可判定的情形不拦，保持未知而不是假装核过。成功 200 changed:true 并带强 ETag，⛔ 不存在部分发布。",
         "tags": [
           "admin"
         ],
@@ -9185,7 +9185,7 @@
       "post": {
         "operationId": "createRestrictionDraft",
         "summary": "新建一条使用限制草稿，由服务端分配 id 与修订 1",
-        "description": "只建unverified草稿，生成ID由服务端设置；不自动作为有效药剂/限制或用量依据。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）。body 是完整的 RestrictionInput（全部必填字段都要给，不是部分更新；不合法 ⇒ 400）。成功 201 并带强 ETag：id 与首个修订由服务端分配，客户端 ⛔ 不能指定 id 或修订号。本 operation 只写未核验的非公开草稿，⛔ 不自动成为有效药剂/限制或用量依据。",
         "tags": [
           "admin"
         ],
@@ -9363,7 +9363,7 @@
       "patch": {
         "operationId": "editRestrictionDraft",
         "summary": "给一条使用限制追加一条新的草稿修订",
-        "description": "新不可变版本：每次编辑只追加一条新的草稿修订（已发布修订的正文以及它上面的任何修订都不会被改写，旧修订保持不可变），公开面只读当前生效的已发布修订（publishedRevision）、绝不读 head，所以旧公开引用继续指向原 publishedRevision、不因这次编辑而失效，也不需要重新核对（依据 services/api/src/admin/service.ts 的 editXxxDraft「只追加新修订」与 services/api/src/admin/public-view.ts 的公开读口径）；不能用客户端提交review_status。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是完整的 RestrictionInput（不是部分更新，不合法 ⇒ 400）；目标不存在、属于别的家族、或不归当前管理主体，一律 404 NOT_FOUND（三种情况对外同形）。效果是只追加一条新的草稿修订（derivedFromRevision 指向原 head）：已发布修订的正文以及它上面的任何修订都不会被改写，公开面只读当前生效的已发布修订、绝不读 head，所以这次编辑本身不会让引用旧版本的公开内容失效，也不触发重新核对；review_status ⛔ 不接受客户端提交值，由该修订是否曾发布派生。成功 200 并带强 ETag，同时写一条 restriction.edit 审计（reasonCode=revision_appended、result=accepted）。",
         "tags": [
           "admin"
         ],
@@ -9473,7 +9473,7 @@
       "post": {
         "operationId": "publishRestriction",
         "summary": "发布一条使用限制，使其成为公开视图里的生效修订",
-        "description": "核对来源/evidence_ref/有效期/范围/制剂/规则，模拟不能成为可执行依据；来源及限制缺失保持未知。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是 SourcePublishInput（evidence_ref 与 reason 均必填，不合法 ⇒ 400）；目标不存在、属于别的家族、或不归当前管理主体 ⇒ 404 NOT_FOUND。幂等：head 已是当前生效的已发布修订 ⇒ 直接 200 changed:false，不迁移、不写审计。发布门槛 fail-closed：按该族输入契约重新收集 issue，有 issue ⇒ 先记 denied 审计再返回 400 INVALID_REQUEST（⛔ 不返回成功封套）。引用门槛：引用的来源被判定为「确认失效」⇒ 记 denied 审计后返回 422 SOURCE_CONFLICT；未接真实库、库外来源这类不可判定的情形不拦，保持未知而不是假装核过。成功 200 changed:true 并带强 ETag，⛔ 不存在部分发布。",
         "tags": [
           "admin"
         ],
@@ -9693,7 +9693,7 @@
       "get": {
         "operationId": "listAdminCategories",
         "summary": "列出后台分类字典项及其显示名与停用状态",
-        "description": "未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false）：real 模式下本 operation 由后台外壳恒拒绝，⛔ 不返回空页（空页会被读成「平台没有分类」，那是伪造读数）。遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。",
+        "description": "门 sources:read。real 模式下本 operation 由后台外壳恒拒绝：未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回空页（空页会被读成「平台没有分类」，那是伪造读数），⛔ 也不返回 404。判定顺序：鉴权/权限（401/403）⇒ 接线（503）⇒ 入参（limit 越界 ⇒ 400 INVALID_REQUEST；cursor 非法、已过期、或不属于当前查询 ⇒ 400 INVALID_CURSOR，⛔ 不静默回第一页）。成功 200 为游标页（items + next_cursor，不返回总数），带 Cache-Control: no-store；列表 ⛔ 不承诺 ETag。",
         "tags": [
           "admin"
         ],
@@ -9775,7 +9775,7 @@
       "patch": {
         "operationId": "editCategory",
         "summary": "修改一个后台分类的显示与停用状态",
-        "description": "仅维护首版已规划字典显示与停用；新增覆盖/种类必须另行来源与评估，不由编辑名称扩大识别承诺。未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false）：real 模式下本 operation 由后台外壳恒拒绝，⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。路径 id 是分类的不透明字符串标识（⛔ 不是 uuid），越界 ⇒ 400；body 是完整的 CategoryInput（name、description、active 全必填，⛔ 没有 type，⛔ 没有删除语义），不合法 ⇒ 400。本 operation 仅维护首版已规划字典的显示与停用；新增覆盖或种类必须另行来源与评估，⛔ 不由编辑名称扩大识别承诺。分类不存在 ⇒ 404 NOT_FOUND。未接线时本 operation 由后台外壳恒拒绝，返回 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。成功 200 并带强 ETag，同时写一条 category.update 审计（reasonCode=category_updated；契约 TargetRef 闭集里没有分类，故合同口径该字段为 null，标识落在内部记录）。",
         "tags": [
           "admin"
         ],
@@ -10819,7 +10819,7 @@
       "get": {
         "operationId": "listAdminJobs",
         "summary": "列出平台级作业的状态与错误码（未接线时 503）",
-        "description": "后台任务只含最小状态/错误元数据，result=null；不开放用户私有转写/会话/媒体。",
+        "description": "门 jobs:read。判定顺序：鉴权/权限（401/403）⇒ 端口接线（503 PROVIDER_UNAVAILABLE，retryable:false，⛔ 不返回空页）⇒ 入参闭集（400）⇒ 分页（400 INVALID_CURSOR）。未接线优先于入参非法：端口没接线时「这个状态有没有作业」本来就无法回答，先给 503 才是如实。limit 越界 ⇒ 400；state 与 error_code 非字符串或落在闭集外 ⇒ 400（缺省或空串不过滤）；一旦带过滤，换任何一组筛选条件都会让旧游标 400 INVALID_CURSOR，而不是把上一组筛选的位置错套到这一组。成功 200 为游标页（items + next_cursor），带 Cache-Control: no-store，列表无 ETag；每项只含最小状态与错误元数据（result=null），⛔ 不开放用户私有转写/会话/媒体。",
         "tags": [
           "admin"
         ],
@@ -10915,7 +10915,7 @@
       "post": {
         "operationId": "cancelAdminJob",
         "summary": "取消一个尚未进入终态的平台级作业",
-        "description": "后台取消只返回最小状态，result=null。",
+        "description": "门 jobs:cancel；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是 ReasonInput（reason 必填，不合法 ⇒ 400）；路径 id 非 uuid ⇒ 400；作业不存在 ⇒ 404 NOT_FOUND。幂等：已是 cancelled ⇒ 直接 200，⛔ 不再迁移、⛔ 不写第二条审计。终态（succeeded / uncertain / failed / timed_out）是单向门 ⇒ 409 OBJECT_UNAVAILABLE，⛔ 不复活。未接线或端口回传不可信 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）；端口回传的行必须先过契约镜像，形状越界就整条拒绝投影，⛔ 不把不完整的记录当作业状态发出去。成功 200 只返回最小状态（result=null）并带强 ETag。",
         "tags": [
           "admin"
         ],
@@ -11435,7 +11435,7 @@
       "get": {
         "operationId": "listAdminPosts",
         "summary": "以管理视角列出帖子（含已隐藏与已删除）",
-        "description": "后台帖子读面（管理视角）：列出帖子，**含已隐藏与已删除**——与用户读面的可见性谓词不同，本读面不做任何可见性/审核状态过滤，只按请求参数精确筛选。游标分页，不返回总数。",
+        "description": "门 sources:read。判定顺序：鉴权/权限（401/403）⇒ 端口接线（503 PROVIDER_UNAVAILABLE，retryable:false，⛔ 不返回空页）⇒ 入参闭集（400）⇒ 分页（400 INVALID_CURSOR）。后台读面的可见性谓词与用户读面不同：private / published / hidden / deleted 四值原样给出，待审与拒审同样看得到，⛔ 不复用公开读面的生效态重算——否则管理员看不到自己要处置、要复查的那一行。limit 越界 ⇒ 400；state 与 audit_state 非字符串或落在闭集外 ⇒ 400（缺省或空串不过滤）；游标不属于当前查询、已过期、或筛选条件已变化 ⇒ 400 INVALID_CURSOR。成功 200 为游标页（items + next_cursor，不返回总数），带 Cache-Control: no-store；列表 ⛔ 不承诺 ETag。",
         "tags": [
           "admin"
         ],
@@ -11533,7 +11533,7 @@
       "get": {
         "operationId": "getAdminPost",
         "summary": "以管理视角读取一条帖子详情（含已隐藏与已删除）",
-        "description": "后台帖子详情（管理视角）：一条帖子的管理视图，**含已隐藏与已删除**。不存在返回 404（不用 403，避免泄露存在性）。",
+        "description": "门 sources:read。判定顺序：鉴权/权限（401/403）⇒ 端口接线（503 PROVIDER_UNAVAILABLE，retryable:false）⇒ 路径 id 非 uuid ⇒ 400。后台读面的可见性谓词与用户读面不同：含已隐藏与已删除，原样给出库内存储值，不按规则版本重算。帖子不存在 ⇒ 404 NOT_FOUND，⛔ 不用 403——后台读面的 scope 是入口级的，没有按目标的行级授权，报 403 会把存在性变成探测通道。成功 200 并带强 ETag（修订号）；出口逐行过契约镜像，任何一行越界 ⇒ 503，⛔ 不静默折叠、⛔ 不丢弃该行。",
         "tags": [
           "admin"
         ],
@@ -11618,7 +11618,7 @@
       "post": {
         "operationId": "hidePost",
         "summary": "紧急下架一条帖子，并记一条最小审计",
-        "description": "仅紧急下架；无人工审核放行，记录最小审计。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是 ReasonInput（reason 必填，不合法 ⇒ 400）；路径 id 非 uuid ⇒ 400。帖子不存在 ⇒ 404 NOT_FOUND；已删除 ⇒ 409 OBJECT_UNAVAILABLE（已删除内容不复活，⛔ 不谎报成功）；当前不是已发布状态 ⇒ 409 OBJECT_UNAVAILABLE（没有可撤回的公开可见性）。幂等：已隐藏 ⇒ 200 且 changed:false，⛔ 不再迁移、⛔ 不写第二条审计。未接线或存储回传不可信 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）。成功 200 并带强 ETag；真库装配下这条动作的审计由库层在同一事务内写，⛔ 服务层不再记第二条（两处都记会让一个动作产出两条审计）。",
         "tags": [
           "admin"
         ],
@@ -11728,7 +11728,7 @@
       "post": {
         "operationId": "approvePost",
         "summary": "人工审核通过一条帖子，并在同一次操作里把待审（private）的帖子推成 published",
-        "description": "人工审核通过：写运营通过结论（audit_state=approved），**并同时承担发布语义**——待审帖（visibility=private）在同一次 CAS 里被推成 published，已 hidden 的不被翻回 published，已删除的返回 409 OBJECT_UNAVAILABLE 不可审核；硬规则明确否决的内容不可通过（422）。依据 services/api/src/admin/ops/community-posts.ts 的 review()：targetVisibility = current.visibility === 'private' ? 'published' : current.visibility，且仅当该值不同于当前可见性时才把 visibility 写进 commitPostIfCurrent 的新值（口径见 services/api/src/admin/ops/service.ts 的 approvePost 注释：公开读面要求「published 且 approved」，契约里没有作者自助发布口，只翻 audit_state 会让通过变成黑洞）。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。契约里本 operation ⛔ 没有请求体：给了非空 body 一律 400 INVALID_REQUEST（⛔ 不静默忽略）；路径 id 非 uuid ⇒ 400。人工审核通过：写运营通过结论（audit_state=approved），并同时承担发布语义——待审帖（visibility=private）在同一次 CAS 里被推成 published；已 hidden 的不被翻回 published。帖子不存在 ⇒ 404 NOT_FOUND；已删除 ⇒ 409 OBJECT_UNAVAILABLE（不可审核，已删除内容不复活）；硬规则明确否决的内容 ⛔ 不可由人工放行 ⇒ 422 INPUT_UNCERTAIN（details 里带被否决的规则码）；当前发布规则集版本不可用 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false，⛔ 宁可 503 也不伪造「已审」）；未接线或存储回传不可信 ⇒ 503。幂等：状态本来就如此 ⇒ 200 且 changed:false，⛔ 不重复通知、⛔ 不写第二条审计。成功 200 并带强 ETag。",
         "tags": [
           "admin"
         ],
@@ -11828,7 +11828,7 @@
       "post": {
         "operationId": "rejectPost",
         "summary": "人工驳回一条帖子，并把它置为隐藏",
-        "description": "人工驳回：写运营驳回结论（reason_code 取自闭集），audit_state=rejected 且 visibility=hidden，并通知作者。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。body 是 PostRejectionInput（reason_code 取自闭集，缺省、非闭集值或不接受多余字段 ⇒ 400）；路径 id 非 uuid ⇒ 400。人工驳回：写运营驳回结论，audit_state=rejected 且 visibility=hidden，并通知作者。置 hidden 会触发下架观察器再发一条事件，作者会收到两条消息——这是既有观察器行为，本 operation ⛔ 不去重。帖子不存在 ⇒ 404 NOT_FOUND；已删除 ⇒ 409 OBJECT_UNAVAILABLE（不可审核，已删除内容不复活）；硬规则明确否决 ⇒ 422 INPUT_UNCERTAIN；当前发布规则集版本不可用或存储回传不可信 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）。幂等：已是该结论 ⇒ 200 且 changed:false，⛔ 不重复通知、⛔ 不写第二条审计。成功 200 并带强 ETag。",
         "tags": [
           "admin"
         ],
