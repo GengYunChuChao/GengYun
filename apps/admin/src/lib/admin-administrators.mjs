@@ -2,7 +2,8 @@
  * R60 · 管理员权限读面（`GET /admin/administrators` + `GET /admin/administrators/{id}/scopes`）。
  *
  * 只读：两条都是 GET，x-scope 都是 `scopes:read`。
- * ⛔ 不做授权 / 撤销（`scopes:write` 不在本片范围），不改权限模型，不新增后端 operation。
+ * 本文件**只做读面**；授权 / 撤销（`scopes:write`）在 `administrator-scope-api.mjs`，
+ * scope 闭集在 `admin-scope-catalog.mjs`（从契约派生，本文件转出口，不另存一份）。
  *
  * 契约要点（`packages/contracts/openapi.json` `:10209` / `:10297`）：
  * - 列表项 `AdminAdministratorView` 的 required 恰好是 `{id, login_name, state, scopes}`，
@@ -21,44 +22,14 @@ import {
 } from './admin-contract.mjs';
 import { clampLimit, isRetriable, normalizeBaseUrl, serverAllowsRetry } from './admin-api.mjs';
 import { errorCodeText } from './audit-events.mjs';
+import { ADMIN_SCOPES, ADMIN_SCOPE_LABELS, isKnownAdminScope } from './admin-scope-catalog.mjs';
+
+export { ADMIN_SCOPES, ADMIN_SCOPE_LABELS, isKnownAdminScope };
 
 export const ADMINISTRATORS_PATH = '/admin/administrators';
 export const ADMINISTRATORS_SCOPE = 'scopes:read';
 export const ADMINISTRATORS_OPERATION_ID = 'listAdministrators';
 export const ADMINISTRATOR_SCOPES_OPERATION_ID = 'listAdministratorScopes';
-
-/** 契约 `AdminScope` 闭集（13 项，与迁移 0041 的 CHECK 同源）。 */
-export const ADMIN_SCOPES = Object.freeze([
-  'accounts:read',
-  'accounts:suspend',
-  'audit:read',
-  'flags:read',
-  'flags:write',
-  'jobs:cancel',
-  'jobs:read',
-  'scopes:read',
-  'scopes:write',
-  'session:logout',
-  'session:read',
-  'sources:read',
-  'sources:write',
-]);
-
-export const ADMIN_SCOPE_LABELS = Object.freeze({
-  'accounts:read': '账号目录读',
-  'accounts:suspend': '账号暂停 / 恢复',
-  'audit:read': '审计总台账读',
-  'flags:read': '功能开关读',
-  'flags:write': '功能开关写',
-  'jobs:cancel': '取消作业',
-  'jobs:read': '作业读',
-  'scopes:read': '管理员权限读',
-  'scopes:write': '管理员权限写',
-  'session:logout': '退出后台会话',
-  'session:read': '后台会话读',
-  'sources:read': '资料来源读',
-  'sources:write': '资料来源写',
-});
 
 /** 库层 admin_state 只有两态。 */
 export const ADMIN_STATES = Object.freeze(['active', 'suspended']);
@@ -74,11 +45,6 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** 管理员 id 必须是 uuid（契约 path 参数 format: uuid）。 */
 export function isAdministratorId(value) {
   return typeof value === 'string' && UUID_RE.test(value);
-}
-
-/** scope 是否在闭集里（闭集外的值照样展示，但标成「契约外」）。 */
-export function isKnownAdminScope(value) {
-  return typeof value === 'string' && ADMIN_SCOPES.includes(value);
 }
 
 function pushIssue(list, path, message) {
