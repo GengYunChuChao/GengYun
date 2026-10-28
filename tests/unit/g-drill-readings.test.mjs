@@ -52,6 +52,7 @@ import {
   pathTokens,
   readingKind,
   readingsOf,
+  readingsProblems,
   realPgArms,
   renderDrillBlock,
   renderReadout,
@@ -812,24 +813,45 @@ describe('生长型读数：下界语义（--tolerant-growth）、防注水与�
     return docText.replace(hit[0], `| ${key} | ${Number(hit[1]) + up} |`);
   }
 
-  it('分档：稳定型恰为四个，其余全部登记为生长型（新增读数必须分档，不许「未分档」）', () => {
-    assert.deepEqual(
-      [...STABLE_READINGS].sort(),
-      ['drillCommands', 'verificationDocs', 'workflowJobs', 'workflows'].sort(),
-      '稳定型就是「workflow / job / 演练命令数 / 页面数」这四个，多一个少一个都要先说清理由',
-    );
+  it('分档：稳定型与生长型不相交、并集等于全部读数键，且稳定型非空', () => {
+    // ⛔ 不写死「稳定型恰好是哪几个 / 一共几个」：分档集合随读数增删而变，写死个数等于把
+    // 「lib 里的分档表」与「本用例」绑成同义反复。这里守的是**结构约束**（期望值全部从 lib 导出派生）：
+    //   ① 两档**不相交**，且**并集 == `readingsOf()` 给出的全部读数键**——漏掉一个键，判据 2 就会把它
+    //      当「未分档」报红，所以这条是「新增读数必须显式分档」的机器锚；
+    //   ② 稳定型**不许为空**：一条「精确相等」的读数都没有时，判据 2 退化成「只防注水」，
+    //      把块里的数改小会静默通过（见下一条用例）。
+    const stable = [...STABLE_READINGS];
+    const growth = [...GROWTH_READINGS];
+    assert.ok(stable.length > 0, '稳定型集合不许为空（否则判据 2 只剩防注水，改小读数不红）');
+    assert.ok(growth.length > 0, '生长型集合不许为空（否则 main 一前进就红，作者无法让两棵树都绿）');
+    assert.deepEqual(stable.filter((key) => growth.includes(key)), [], '稳定型与生长型不许相交');
     const keys = readingsOf(fixture.tree).map((row) => row.key);
     assert.ok(keys.length >= 15, `读数只有 ${keys.length} 条？`);
+    assert.deepEqual(
+      [...stable, ...growth].sort(),
+      [...keys].sort(),
+      '两档的并集必须等于全部读数键；新增读数必须显式登记到其中一档（不许漏）',
+    );
+    for (const key of stable) assert.equal(readingKind(key), 'stable', `\`${key}\` 应当是稳定型`);
+    for (const key of growth) assert.equal(readingKind(key), 'growth', `\`${key}\` 应当是生长型`);
     for (const key of keys) {
       assert.notEqual(readingKind(key), 'unclassified', `读数 \`${key}\` 没有分档 ⇒ 判据 2 会红`);
     }
-    for (const key of GROWTH_READINGS) assert.equal(readingKind(key), 'growth', `${key} 应当是生长型`);
-    // 生长型里**不许**混进稳定型：误把 `workflows` 当下界，这条立刻红。
-    for (const key of STABLE_READINGS) {
-      assert.equal(GROWTH_READINGS.includes(key), false, `\`${key}\` 是稳定型，不许当生长型/下界`);
-    }
-    for (const key of ['allTestFiles', 'totalTestFiles', 'unitGlobUnion', 'globFiles.unit']) {
-      assert.ok(GROWTH_READINGS.includes(key), `\`${key}\` 必须登记为生长型`);
+    // 正向锚：唯一「完全由本片自己决定」的读数必须留在稳定型（`DRILL_PLAN` 那张表就在 lib 里，
+    // main 的提交碰不到它）——稳定型只剩它一个也不算空。
+    assert.ok(stable.includes('drillCommands'), '`drillCommands`（`DRILL_PLAN` 的条数）必须归稳定型');
+  });
+
+  it('阻塞 2 回归：main 上也会涨的三个计数（workflows / workflowJobs / verificationDocs）必须归生长型', () => {
+    // 这三个键曾经被归成稳定型：main 上任何一个「新增证据页」或「给 workflow 加一个 job」的 PR 合进来，
+    // 本片闸门就立刻红，而作者无法同时让本分支树与合流树都绿（`#728` 阻塞 2）。
+    // 它们是**树上的文件数 / job 数**——main 的日常提交会推它们 ⇒ 只能按生长型（下界）判。
+    for (const key of ['workflows', 'workflowJobs', 'verificationDocs']) {
+      assert.equal(
+        readingKind(key),
+        'growth',
+        `\`${key}\` 在 main 上会涨（加 workflow / 加 job / 加证据页）⇒ 必须归生长型，否则合流树上必红`,
+      );
     }
   });
 
@@ -880,17 +902,56 @@ describe('生长型读数：下界语义（--tolerant-growth）、防注水与�
   });
 
   it('稳定型读数滞后/冒进在两种口径下都红（误把稳定型当下界 ⇒ 这条必红）', () => {
-    const shrunk = mutated(fixture.docText, '| workflows | 15 |', '| workflows | 14 |');
+    // 稳定型只剩 `drillCommands`：它由 `DRILL_PLAN` 决定（lib 里的表），main 的提交碰不到它 ⇒
+    // 任何偏差都只能是手改，两种口径都不许放行（尤其不许以「生长型滞后」的名义放行）。
+    const key = 'drillCommands';
+    assert.ok(STABLE_READINGS.includes(key), `本用例要的稳定型键 \`${key}\` 不在 STABLE_READINGS 里`);
+    const base = DRILL_PLAN.length;
+    const shrunk = mutated(fixture.docText, `| ${key} | ${base} |`, `| ${key} | ${base - 1} |`);
     for (const tolerantGrowth of [true, false]) {
       const result = checkDocument({ root: fixture.root, docText: shrunk, isAncestor: () => true, tolerantGrowth });
-      assert.equal(result.ok, false, `tolerantGrowth=${tolerantGrowth} 下 workflows 少 1 必须红`);
+      assert.equal(result.ok, false, `tolerantGrowth=${tolerantGrowth} 下 ${key} 少 1 必须红`);
       assert.ok(
-        result.problems.map((item) => item.message).includes('workflows：文档写 14，重算 15'),
+        result.problems.map((item) => item.message).includes(`${key}：文档写 ${base - 1}，重算 ${base}`),
         result.problems.map((item) => item.message).join('\n'),
       );
       assert.ok(result.problems.some((item) => item.message.startsWith('第一处差异：')), '整块比对也要红');
       assert.deepEqual(result.growth, [], '稳定型不进 growthLag（它不是「可滞后的生长型」）');
     }
+  });
+
+  it('防注水逐键：每个读数键 +1 都必须在两种口径下红并点名（不止 allTestFiles 一条）', () => {
+    // 「文档值 > 重算值」是防注水的主牙齿，它对**每一个键**都要咬住，不只是被单测宠幸的那几个。
+    const expected = readingsOf(fixture.tree);
+    assert.ok(expected.length >= 15, `读数只有 ${expected.length} 条？`);
+    for (const row of expected) {
+      const inflated = bumpReading(fixture.docText, row.key, 1);
+      for (const tolerantGrowth of [true, false]) {
+        const result = checkDocument({ root: fixture.root, docText: inflated, isAncestor: () => true, tolerantGrowth });
+        const messages = result.problems.map((item) => item.message);
+        assert.equal(result.ok, false, `\`${row.key}\` 文档值 +1（tolerantGrowth=${tolerantGrowth}）必须红`);
+        assert.ok(
+          messages.includes(`${row.key}：文档写 ${row.value + 1}，重算 ${row.value}`),
+          `\`${row.key}\` 冒进没有被点名（tolerantGrowth=${tolerantGrowth}）：\n${messages.join('\n')}`,
+        );
+        assert.deepEqual(result.growth, [], '冒进不是「滞后」，不许被 growthLag 收进去');
+      }
+    }
+  });
+
+  it('未分档读数 ⇒ 判据 2 必红并点名「没有分档」（新增读数不许靠默认值蒙混）', () => {
+    // 夹具树的键都已分档，所以这里**造**第 6 条 glob：`readingsOf()` 会据此多出一个
+    // `globFiles.weird` 键，而它不在任何一档里 ⇒ 判据 2 的单键比对必须报「没有分档」。
+    const tree = { ...fixture.tree, globs: [...fixture.tree.globs, { glob: 'tests/weird/*.test.mjs', files: [] }] };
+    const key = 'globFiles.weird';
+    assert.equal(readingKind(key), 'unclassified', '这条用例的前提：新键确实没有分档');
+    const docReadings = new Map(readingsOf(fixture.tree).map((row) => [row.key, row.value]));
+    docReadings.set(key, 0);
+    const messages = readingsProblems(docReadings, tree);
+    assert.ok(
+      messages.some((message) => message.startsWith(`\`${key}\`：这个读数没有分档`)),
+      `未分档的读数必须被点名（不许静默跳过）：\n${messages.join('\n')}`,
+    );
   });
 
   it('CLI 可观测性：--tolerant-growth 逐行打印「滞后 N」且 exit 0；--strict-growth exit 1', () => {

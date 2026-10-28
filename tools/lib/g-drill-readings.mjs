@@ -19,10 +19,12 @@
  *
  * ## 可复算类内部还要**再分两档**（`STABLE_READINGS` / `GROWTH_READINGS`）
  *
- * 「可复算」不等于「能让主基线随便前进」。稳定型（workflow / job / 演练命令数 / 页面数）必须精确相等；
- * 生长型（测试文件数、五条 glob 的分文件数、脚本数、真库臂条数……）**main 每加一个测试文件就会变**，
- * 证据页一旦提交就必然滞后 ⇒ 用**下界语义**（文档值 <= 重算值），滞后由 `--tolerant-growth` 逐行打印；
- * 但 `文档值 > 重算值` 照样红（防注水）。逐档理由见 `STABLE_READINGS` 上方的长注释。
+ * 「可复算」不等于「能让主基线随便前进」。稳定型只剩**完全由本片决定**的读数（`drillCommands` =
+ * 本文件的 `DRILL_PLAN.length`：那张计划表就在本文件里，main 的提交碰不到它）⇒ 必须精确相等；
+ * 生长型（workflow / job / 页面数、测试文件数、五条 glob 的分文件数、脚本数、真库臂条数……）
+ * **main 每加一页、加一个 job、加一个测试文件就会变**，证据页一旦提交就必然滞后 ⇒ 用**下界语义**
+ * （文档值 <= 重算值），滞后由 `--tolerant-growth` 逐行打印；但 `文档值 > 重算值` 照样红（防注水）。
+ * 逐档理由见 `STABLE_READINGS` 上方的长注释。
  *
  * ## 标记块
  *
@@ -550,24 +552,35 @@ export function computeTreeReadings(root) {
  *
  * 为什么要分：证据页的读数全部「从树现场重算」，但两类读数的**增长来源**完全不同。
  *
- *   · **稳定型**（`workflows` / `workflowJobs` / `drillCommands` / `verificationDocs`）：
- *     由本片自己决定——workflow 与 job 是手写 YAML 的产物、`drillCommands` 是 `DRILL_PLAN` 的条数、
- *     页数是受审的 `docs/verification/*.md` 份数。主基线（main）的日常提交不会让它们变，
- *     所以**必须精确相等**：差一个就说明有人手改了读数（或闸门自己漂了）。
+ *   · **稳定型**（`drillCommands`）：只留**完全由本片自己决定**的读数。
+ *     `drillCommands` 就是 `DRILL_PLAN` 的条数——那张计划表就在本文件里，main 上的任何 PR（加测试、
+ *     加证据页、给 workflow 加 job、加 npm 脚本）都不会让它动 1，所以**必须精确相等**：差一个就说明
+ *     有人手改了块里的数（或计划表改了却没同步页面）。两种口径（`--tolerant-growth` /
+ *     `--strict-growth`）下这一档都一样，不许拿「生长型滞后」当借口。
+ *     ⛔ 稳定型集合**不许为空**：一条「精确相等」的读数都没有时，判据 2 就退化成「只防注水」，
+ *     把块里的数改小会静默通过。新增读数先问一句「main 的日常提交会不会让它变」——会变的一律进生长型。
  *
- *   · **生长型**（`allTestFiles` / `totalTestFiles` / `unitGlobUnion` / `globFiles.*` /
- *     `packageScripts` / `verifyTestScripts` / `realPgArms` / `drilledArms`）：
- *     main 每加一个测试文件、一个 npm 脚本、一条真库臂，它们就变。证据页一旦提交就**必然滞后**于
- *     最新 main（PR 的 CI 检出的还是「本分支 ∪ 最新 main」的合成树），这不是造假，是分叉的必然结果。
- *     所以判据是**下界**：`文档值 <= 重算值` 成立；`文档值 > 重算值` 立刻红——**这条是防注水的主牙齿**，
- *     它保证「页面上的数不会比树里真有的还多」。
+ *   · **生长型**（`workflows` / `workflowJobs` / `verificationDocs` / `allTestFiles` /
+ *     `totalTestFiles` / `unitGlobUnion` / `globFiles.*` / `packageScripts` / `verifyTestScripts` /
+ *     `realPgArms` / `drilledArms`）：
+ *     main 每加一个 workflow 文件、一个 job、一个 `docs/verification/*.md` 页、一个测试文件、
+ *     一个 npm 脚本、一条真库臂，它们就变（`verificationDocs` / `workflowJobs` / `workflows` 曾经被
+ *     归成稳定型，结果是「main 上新增一页证据就红」——那与本页 §4「在飞的 PR 会让页数上涨」自相矛盾，
+ *     作者无法同时让本分支树与合流树都绿，故一并移入生长型）。
+ *     证据页一旦提交就**必然滞后**于最新 main（PR 的 CI 检出的还是「本分支 ∪ 最新 main」的合成树），
+ *     这不是造假，是分叉的必然结果。
+ *     所以判据是**下界**：`文档值 <= 重算值` 成立（滞后由 CLI 逐行打印，**不许静默**）；
+ *     `文档值 > 重算值` 立刻红——**这条是防注水的主牙齿**，它保证「页面上的数不会比树里真有的还多」。
  *
  * 新增读数必须显式登记到其中一档：`readingKind()` 对未登记的键返回 `'unclassified'`，
  * 判据 2 会把它当红处理（不许靠默认值蒙混过去）。
  */
-export const STABLE_READINGS = Object.freeze(['workflows', 'workflowJobs', 'drillCommands', 'verificationDocs']);
+export const STABLE_READINGS = Object.freeze(['drillCommands']);
 
 export const GROWTH_READINGS = Object.freeze([
+  'workflows',
+  'workflowJobs',
+  'verificationDocs',
   'allTestFiles',
   'totalTestFiles',
   'unitGlobUnion',
@@ -608,12 +621,13 @@ export function growthLag(docReadings, tree) {
 /**
  * 可复算读数的**固定顺序 + 下界/关系说明**（渲染与比对共用这一份，防两处漂移）。
  * `relation` 是给人读的口径，不参与判定（判定看 `DEFAULT_FLOORS`、`STABLE_READINGS` / `GROWTH_READINGS` 与各条判据）。
+ * ⚠ 稳定型那几行的 `relation` **不要**写成「>= N」：那一列会被读者当成判据，与「稳定型必须精确相等」打架。
  */
 export function readingsOf(tree) {
   const rows = [
     { key: 'workflows', value: tree.workflows, relation: '>= 15（`.github/workflows/` 下的 `*.yml` 与 `*.yaml` 文件数）' },
     { key: 'workflowJobs', value: tree.workflowJobs, relation: '>= 25（各 workflow `jobs:` 段两空格缩进键之和）' },
-    { key: 'drillCommands', value: DRILL_PLAN.length, relation: '>= 20（演练计划里的命令条数）' },
+    { key: 'drillCommands', value: DRILL_PLAN.length, relation: '必须精确相等（`DRILL_PLAN` 的条数；稳定型：两种口径都不许滞后，反空转下界 ≥ 20）' },
     { key: 'allTestFiles', value: tree.allTestFiles, relation: '>= 490（`tests/**/*.test.mjs` 递归计数）' },
     { key: 'verificationDocs', value: tree.verificationDocs, relation: '>= 297（`docs/verification/*.md`）' },
     { key: 'totalTestFiles', value: tree.totalTestFiles, relation: '= 五条 `test:unit` glob 的分文件数之和' },
@@ -943,8 +957,8 @@ export function parseNotes(block) {
 
 /**
  * 一行「生长型读数滞后」的识别：`docLine` 与 `expectedLine` 是同一张表的同一行，
- * **只有数值格不同**，且该键属生长型、文档值 <= 重算值 ⇒ 返回 `{ key, doc, expected, lag }`。
- * 其它任何不同（换列、改关系说明、冒进）都返回 `null`，照旧当差异报。
+ * **只有数值格不同**，且该键属生长型、文档值**严格小于**重算值 ⇒ 返回 `{ key, doc, expected, lag }`。
+ * 其它任何不同（换列、改关系说明、冒进、同值不同排版）都返回 `null`，照旧当差异报。
  */
 export function growthRowLag(docLine, expectedLine) {
   const docCells = splitTableRow(docLine);
@@ -958,7 +972,10 @@ export function growthRowLag(docLine, expectedLine) {
   }
   const doc = Number(docCells[1]);
   const expected = Number(expectedCells[1]);
-  if (doc > expected) return null; // 冒进 ⇒ 不是滞后，照旧红
+  // 必须是**严格**滞后：`doc === expected` 说明「数值格相同、只有排版/空格不同」——
+  // 那不是滞后，是手改（`|  workflows | 15 |` 这种）。这一支必须返回 `null`（照旧红），
+  // 否则「只多一个空格」会被当成「滞后 0」静默放行。
+  if (doc >= expected) return null; // 冒进（doc > expected）与同值不同排版（doc === expected）都不是滞后
   return { key: docCells[0], doc, expected, lag: expected - doc };
 }
 
