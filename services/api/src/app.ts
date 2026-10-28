@@ -962,8 +962,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       executionMode: config.executionMode,
       appId: config.wechatAppId,
       appSecret: config.wechatAppSecret,
-      // 真实模式用 SESSION_SIGNING_KEY 作为 HMAC 密钥；替身/演示用固定桩密钥。
-      lookupKey: config.sessionSigningKey ?? STUB_LOOKUP_KEY,
+      // 真实模式用 SESSION_SIGNING_KEY 作为 HMAC 密钥；替身/演示用固定桩密钥。GY-R68 的固定身份只从服务端配置来。
+      lookupKey: config.sessionSigningKey ?? STUB_LOOKUP_KEY, stubSubject: config.wechatStubSubject ?? null,
     });
 
   const service = new AuthService({
