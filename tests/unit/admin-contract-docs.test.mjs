@@ -37,6 +37,14 @@
  *
  * 读取路径：默认 `packages/contracts/openapi.json`（仓内真文件）。环境变量 `GY_OPENAPI_PATH`
  * 只服务于「先红／变异自证」——把待验副本指过去跑同一个文件，默认值与产品代码行为不变。
+ *
+ * ── A04 第二片（`/me/**`，GY-R68）────────────────────────────────────────────
+ * 同一把闸门现在也守 `/me/**` 那 17 条 operation（含 `/me/profile`、`/me/consents`、`/me/exports`、
+ * `/me/account/deletion`、`/media/**`、`/messages/**`，它们都以 `/me` 前缀声明、`x-scope: user`）。
+ * 新增的是 A4／A5（覆盖面）、B-me、C①②③-me，判定逻辑与 admin 那几条**共用同一个函数**
+ * （`suffixProblems` / `scopeProblems` / `statusCodeProblems` / `headerProblems`），⛔ 不许为某一族
+ * 另写一份更松的复制——「两族各自绿」和「两族共用一把尺」在退化时结果完全不同。
+ * `/me` 族与 `/admin` 族的区别只在**名单与数量**，不在尺子。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -100,12 +108,43 @@ const TEMPLATE_DESCRIPTION = '遵循状态协议：服务端归属/当前版本/
 /** `/admin/**` operation 实测数（A1）。 */
 const ADMIN_OP_COUNT = 49;
 
+/** `/me/**` operation 实测数（A4）：13 条 path、17 条 operation（含 `/media/**` 5 条与 `/messages/**` 3 条）。 */
+const ME_OP_COUNT = 17;
+
+/**
+ * 17 条这一片改写过的 `/me/**` operation（A04 第二片实测：summary 与 description 都按代码真值重写）。
+ * 顺序按 spec 里出现的顺序，便于与本片交付报告里的表格逐行对照。
+ */
+const REWRITTEN_ME_OPS = Object.freeze([
+  'getProfile',
+  'putProfile',
+  'getPrivacyPolicy',
+  'listConsents',
+  'grantConsent',
+  'withdrawConsent',
+  'listExports',
+  'requestAccountDeletion',
+  'cancelDeletion',
+  'createUpload',
+  'completeUpload',
+  'getMedia',
+  'deleteMedia',
+  'grantMediaAccess',
+  'listMessages',
+  'getUnreadCount',
+  'markMessageRead',
+]);
+
+
 /**
  * 其余族里 `summary === operationId` 的 operation **上限**（A3）。
- * 77 是当前的欠账上限，做其他族后只会下降；若上升说明有人把 summary 改回 operationId，属退化。
- * ⛔ 只在「A04 其余族还没做」时成立：做其他族时把上限同步下调（或删掉这条）。
+ * 做其他族后只会下降（**下降是好事、不判红**），上升才是退化（有人把 summary 改回 operationId）。
+ *
+ * 当前 60 = 上一片留下的 77 − 本片改写的 17 条 `/me/**`（17 条现在 summary 都不再等于 operationId）。
+ * ⛔ 这是**上限**语义，不是精确期望：别把它当成「必须正好 60」——真改好了却判红，等于罚人做正确的事。
+ * 谁再改写别的族，就把这个数继续**下调**（只降不升）；全部改写完后这条可以直接删掉。
  */
-const NON_ADMIN_SUMMARY_EQUALS_ID_COUNT = 77;
+const NON_ADMIN_SUMMARY_EQUALS_ID_COUNT = 60;
 
 /** 方法白名单：openapi 里只可能出现这几种 operation 键。 */
 const METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'];
@@ -115,22 +154,41 @@ function isAdminPath(p) {
   return p === '/admin' || p.startsWith('/admin/');
 }
 
-/** 扫全 spec，返回 `{ admin, others }` 两组 `{ path, method, op }`。 */
+/**
+ * `/me` 族的三段前缀：这一片改写的 17 条 operation 都落在这三段里（13 条 path）。
+ * ⛔ 为什么不是单个 `/me/` 前缀：`/media/...`、`/messages/...` 是本片口径里同族的本人资源面
+ * （`x-scope: user`），但它们不以 `/me/` 开头；反过来单看 `/me` 前缀又会把 `/media` 当成
+ * `/me` + `dia`。三段显式列出，族边界靠常量表达，不靠前缀的巧合。
+ */
+const ME_PATH_PREFIXES = Object.freeze(['/me', '/media', '/messages']);
+
+/** `p` 是否属于本片口径的「`/me` 族」（`/me`、`/media`、`/messages` 三段之一）。 */
+function isMeFamilyPath(p) {
+  return ME_PATH_PREFIXES.some((prefix) => p === prefix || p.startsWith(`${prefix}/`));
+}
+
+/** 扫全 spec，返回 `{ admin, me, others }` 三组 `{ path, method, op }`；`others` 仍是「非 admin」。 */
 function collectOperations(document) {
   const admin = [];
+  const me = [];
   const others = [];
   for (const [path, item] of Object.entries(document.paths ?? {})) {
     for (const method of METHODS) {
       const op = item?.[method];
       if (!op || typeof op !== 'object' || !op.operationId) continue;
-      (isAdminPath(path) ? admin : others).push({ path, method, op });
+      const entry = { path, method, op };
+      if (isAdminPath(path)) admin.push(entry);
+      // `others` 的口径与 #713 那一片完全一致（非 admin），A3 的「上限只降不升」才有可比性。
+      else others.push(entry);
+      if (isMeFamilyPath(path)) me.push(entry);
     }
   }
-  return { admin, others };
+  return { admin, me, others };
 }
 
-const { admin: adminOps, others: otherOps } = collectOperations(spec);
+const { admin: adminOps, me: meOps, others: otherOps } = collectOperations(spec);
 const adminById = new Map(adminOps.map((entry) => [entry.op.operationId, entry]));
+const meById = new Map(meOps.map((entry) => [entry.op.operationId, entry]));
 
 /** 含汉字即算中文摘要（用 Unicode script 属性，⛔ 不用手写码点区间）。 */
 const HAN = /\p{Script=Han}/u;
@@ -158,6 +216,118 @@ function headerNamesOf(op) {
     .filter(Boolean)
     .filter((parameter) => parameter.in === 'header')
     .map((parameter) => parameter.name);
+}
+
+/** 从 `byId` 里按名单取条目；找不到的由 A2／A5 单独判红，这里静默跳过以免同一问题报两遍。 */
+function entriesOf(byId, ids) {
+  return ids.map((id) => byId.get(id)).filter(Boolean);
+}
+
+/**
+ * B 组的公共实现（admin 与 me 两族共用同一份判定）。
+ * 四问：summary 是否退回 operationId、summary 有没有汉字、description 是否退回模板句、
+ * description 是否把模板句整句留在里面。
+ * @param {{path: string, method: string, op: object}[]} entries
+ * @returns {string[]} 问题清单（空数组＝通过）
+ */
+function suffixProblems(entries) {
+  const problems = [];
+  for (const { path, method, op } of entries) {
+    if (op.summary === op.operationId) {
+      problems.push(`summary 等于 operationId（${method.toUpperCase()} ${path}）：${JSON.stringify(op.summary)}`);
+    }
+    if (!HAN.test(String(op.summary ?? ''))) {
+      problems.push(`summary 不含汉字（${method.toUpperCase()} ${path}）：${JSON.stringify(op.summary)}`);
+    }
+    if (String(op.description ?? '').trim() === TEMPLATE_DESCRIPTION) {
+      problems.push(`description 退化成模板句（${method.toUpperCase()} ${path}）：${op.operationId}`);
+    }
+    if (String(op.description ?? '').includes(TEMPLATE_DESCRIPTION)) {
+      problems.push(`description 仍把模板句整句留在里面（${method.toUpperCase()} ${path}）：${op.operationId}`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * C① 的公共实现：description 必须出现该 op 自己 `x-scope` 里的字面量（多 scope 任一即可）。
+ * 缺 `x-scope` 的 op 记问题而不是跳过——跳过等于「没有期望值也算过」。
+ * @returns {{problems: string[], asserted: number}}
+ */
+function scopeProblems(entries) {
+  const problems = [];
+  let asserted = 0;
+  for (const { path, method, op } of entries) {
+    const scopes = scopesOf(op);
+    if (scopes.length === 0) {
+      problems.push(`op 没有 \`x-scope\`，本条无法派生期望值（${method.toUpperCase()} ${path}）：${op.operationId}`);
+      continue;
+    }
+    const description = String(op.description ?? '');
+    const hit = scopes.filter((scope) => description.includes(scope));
+    if (hit.length === 0) {
+      problems.push(
+        `description 里一个 scope 字面量都没有（${method.toUpperCase()} ${path}）：${op.operationId}`
+        + ` 声明 ${JSON.stringify(op['x-scope'])}`,
+      );
+      continue;
+    }
+    asserted += 1;
+  }
+  return { problems, asserted };
+}
+
+/**
+ * C② 的公共实现：description 必须含至少一个**该 op 自己** `responses` 里的三位状态码。
+ * @returns {{problems: string[], asserted: number}}
+ */
+function statusCodeProblems(entries) {
+  const problems = [];
+  let asserted = 0;
+  for (const { path, method, op } of entries) {
+    const declared = Object.keys(op.responses ?? {}).filter((code) => /^[0-9]{3}$/.test(code));
+    if (declared.length === 0) {
+      problems.push(`op 没有三位状态码声明，本条无法派生期望值（${method.toUpperCase()} ${path}）：${op.operationId}`);
+      continue;
+    }
+    const description = String(op.description ?? '');
+    const hit = declared.filter((code) => description.includes(code));
+    if (hit.length === 0) {
+      problems.push(
+        `description 里没有任何一个本 op 声明的状态码（${method.toUpperCase()} ${path}）：${op.operationId}`
+        + ` 声明 ${declared.join(',')}`,
+      );
+      continue;
+    }
+    asserted += 1;
+  }
+  return { problems, asserted };
+}
+
+/** C③ 关注的头部：声明了就必须在 description 里写出来。 */
+const WATCHED_HEADERS = Object.freeze(['Idempotency-Key', 'If-Match']);
+
+/**
+ * C③ 的公共实现：声明了 `Idempotency-Key`／`If-Match` 的 op，description 必须写出该 header 名。
+ * @returns {{problems: string[], asserted: number}}
+ */
+function headerProblems(entries) {
+  const problems = [];
+  let asserted = 0;
+  for (const { path, method, op } of entries) {
+    const headers = headerNamesOf(op).filter((name) => WATCHED_HEADERS.includes(name));
+    if (headers.length === 0) continue;
+    asserted += 1;
+    const description = String(op.description ?? '');
+    const missing = headers.filter((name) => !description.includes(name));
+    if (missing.length > 0) {
+      problems.push(
+        `description 没写出已声明的 header（${method.toUpperCase()} ${path}）：${op.operationId}`
+        + ` 缺 ${missing.join(',')}`,
+      );
+    }
+  }
+  return { problems, asserted };
 }
 
 test('A1 `/admin/**` operation 数 === 49（扫描面反空转）', () => {
@@ -202,8 +372,9 @@ test('A2 REWRITTEN_ADMIN_OPS 恰好 21 个，且逐个在 spec 里找得到', ()
   );
 });
 
-test('A3 非 admin 族里 `summary === operationId` 的 operation 数 ≤ 77（欠账上限，只降不升）', () => {
-  // 77 是当前的欠账上限，做其他族后只会下降；若上升说明有人把 summary 改回 operationId，属退化。
+test('A3 非 admin 族里 `summary === operationId` 的 operation 数 ≤ 60（欠账上限，只降不升）', () => {
+  // 60 = 上一片的 77 − 本片改写的 17 条 `/me/**`。上限只许下调：下降是好事（改写生效），
+  // 上升是退化（有人把 summary 写回 operationId）。
   const suffix = otherOps.filter((entry) => entry.op.summary === entry.op.operationId);
   assert.ok(
     suffix.length <= NON_ADMIN_SUMMARY_EQUALS_ID_COUNT,
@@ -211,31 +382,55 @@ test('A3 非 admin 族里 `summary === operationId` 的 operation 数 ≤ 77（�
     + `上限 ${NON_ADMIN_SUMMARY_EQUALS_ID_COUNT} 条 —— 下降是好事（其余族改写生效），`
     + '上升是退化（有人把 summary 写回了 operationId）。\n'
     + `命中示例：${suffix.slice(0, 8).map((entry) => entry.op.operationId).join(', ')}\n`
-    + '⛔ 上限不是精确期望：别把 77 当成「必须正好 77」——真改好了却判红，等于罚人做正确的事。\n'
-    + '若是「其余族已经改写」造成的下降 ⇒ 把上限改小或删掉这条（它是临时口径，不是永恒目标）；'
-    + '若是「admin 判定把别人算进来了」⇒ 查 `isAdminPath()`。',
+    + '⛔ 上限不是精确期望：别把 60 当成「必须正好 60」——真改好了却判红，等于罚人做正确的事。\n'
+    + '若实测比上限更小（又改好了别的族）⇒ 把上限继续改小（只降不升），别反过来放宽；'
+    + '若比上限大 ⇒ 先查是不是有人把某条 summary 写回了 operationId，再查 `isAdminPath()` 是否把别人算进来了。',
+  );
+});
+
+test('A4 `/me/**` operation 数 === 17（扫描面反空转）', () => {
+  assert.equal(
+    meOps.length,
+    ME_OP_COUNT,
+    `\`/me/**\` operation 数变了：实测 ${meOps.length}，本闸门记的是 ${ME_OP_COUNT}。\n`
+    + `当前 /me 族 operationId：${meOps.map((entry) => entry.op.operationId).sort().join(', ')}\n`
+    + `判定前缀：${ME_PATH_PREFIXES.join(' / ')}\n`
+    + '新增/删除本人侧操作必须同步改这条常量与 A5 名单（否则「覆盖面」会悄悄缩水）。',
+  );
+});
+
+test('A5 REWRITTEN_ME_OPS 恰好 17 条，且与 `/me/**` 全部 operation 一一对应', () => {
+  assert.equal(
+    REWRITTEN_ME_OPS.length,
+    ME_OP_COUNT,
+    `改写名单长度应为 ${ME_OP_COUNT}，实测 ${REWRITTEN_ME_OPS.length}`,
+  );
+  assert.equal(
+    new Set(REWRITTEN_ME_OPS).size,
+    REWRITTEN_ME_OPS.length,
+    '改写名单里有重复 operationId',
+  );
+  const missing = REWRITTEN_ME_OPS.filter((id) => !meById.has(id));
+  assert.deepEqual(
+    missing,
+    [],
+    `以下 operationId 在 \`/me/**\` 里找不到（改名/删除/写错前缀）：${missing.join(', ')}\n`
+    + '⛔ 名单找不到就跳过＝这条 op 从此没人守，所以这里必须先红。\n'
+    + `当前 /me 族实际 operationId：${meOps.map((entry) => entry.op.operationId).sort().join(', ')}`,
+  );
+  // 反向：`/me/**` 里任何一条不在名单上的 op 都是「没人守的新面孔」，同样要红。
+  const untracked = meOps
+    .map((entry) => entry.op.operationId)
+    .filter((id) => !REWRITTEN_ME_OPS.includes(id));
+  assert.deepEqual(
+    untracked,
+    [],
+    `以下 /me 族 operation 不在 REWRITTEN_ME_OPS 里（新增了 op 却没登记，等于没人守）：${untracked.join(', ')}`,
   );
 });
 
 test('B 21 条改写过的 admin op：summary 不再是 operationId、含汉字、description 不再是模板句', () => {
-  const problems = [];
-  for (const id of REWRITTEN_ADMIN_OPS) {
-    const entry = adminById.get(id);
-    if (!entry) continue; // A2 已单独判红
-    const { path, method, op } = entry;
-    if (op.summary === op.operationId) {
-      problems.push(`summary 等于 operationId（${method.toUpperCase()} ${path}）：${JSON.stringify(op.summary)}`);
-    }
-    if (!HAN.test(String(op.summary ?? ''))) {
-      problems.push(`summary 不含汉字（${method.toUpperCase()} ${path}）：${JSON.stringify(op.summary)}`);
-    }
-    if (String(op.description ?? '').trim() === TEMPLATE_DESCRIPTION) {
-      problems.push(`description 退化成模板句（${method.toUpperCase()} ${path}）：${id}`);
-    }
-    if (String(op.description ?? '').includes(TEMPLATE_DESCRIPTION)) {
-      problems.push(`description 仍把模板句整句留在里面（${method.toUpperCase()} ${path}）：${id}`);
-    }
-  }
+  const problems = suffixProblems(entriesOf(adminById, REWRITTEN_ADMIN_OPS));
   assert.deepEqual(
     problems,
     [],
@@ -245,85 +440,71 @@ test('B 21 条改写过的 admin op：summary 不再是 operationId、含汉字�
   );
 });
 
+test('B-me 17 条改写过的 /me/** op：summary 不再是 operationId、含汉字、description 不再是模板句', () => {
+  const problems = suffixProblems(entriesOf(meById, REWRITTEN_ME_OPS));
+  assert.deepEqual(
+    problems,
+    [],
+    `以下 ${problems.length} 处退化（/me/** 这一片：summary 改回 operationId、或 description 抄回模板句）：\n  - `
+    + `${problems.join('\n  - ')}\n`
+    + `判定的模板句原文：${TEMPLATE_DESCRIPTION}\n`
+    + '/me/** 这 17 条的价值与 /admin/** 那 49 条是同一条标准：summary 写「做什么 + 作用域/边界」，'
+    + 'description 写门（scope／登录／Idempotency-Key／If-Match）、成功形状与分页语义、错误码与条件、'
+    + '受哪个开关或执行模式影响（没有就明说「无开关」）。退回模板句或 operationId 必须红。',
+  );
+});
+
 test('C① description 必须含该 op 自己 x-scope 里的字面量（期望值从 op 派生）', () => {
-  const problems = [];
-  let asserted = 0;
-  for (const id of REWRITTEN_ADMIN_OPS) {
-    const entry = adminById.get(id);
-    if (!entry) continue;
-    const { path, method, op } = entry;
-    const scopes = scopesOf(op);
-    if (scopes.length === 0) {
-      problems.push(`op 没有 \`x-scope\`，本条无法派生期望值（${method.toUpperCase()} ${path}）：${id}`);
-      continue;
-    }
-    const description = String(op.description ?? '');
-    const hit = scopes.filter((scope) => description.includes(scope));
-    if (hit.length === 0) {
-      problems.push(
-        `description 里一个 scope 字面量都没有（${method.toUpperCase()} ${path}）：${id}`
-        + ` 声明 ${JSON.stringify(op['x-scope'])}`,
-      );
-      continue;
-    }
-    asserted += 1;
-  }
+  const { problems, asserted } = scopeProblems(entriesOf(adminById, REWRITTEN_ADMIN_OPS));
   assert.ok(asserted > 0, 'C① 一条 op 都没断言到 ⇒ 恒真');
   assert.deepEqual(problems, [], `以下 ${problems.length} 处 scope 与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
 
+test('C①-me /me/** 17 条的 description 同样必须含自身 x-scope 字面量', () => {
+  const { problems, asserted } = scopeProblems(entriesOf(meById, REWRITTEN_ME_OPS));
+  assert.equal(
+    asserted,
+    ME_OP_COUNT,
+    `C①-me 只断言到 ${asserted} 条（应为 ${ME_OP_COUNT}）⇒ 有 op 缺 x-scope 或描述里没写出 scope 字面量`,
+  );
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处 scope 与描述对不上：\n  - ${problems.join('\n  - ')}`);
+});
+
 test('C② description 必须含至少一个该 op 自己 responses 里的三位状态码（期望值从 op 派生）', () => {
-  const problems = [];
-  let asserted = 0;
-  for (const id of REWRITTEN_ADMIN_OPS) {
-    const entry = adminById.get(id);
-    if (!entry) continue;
-    const { path, method, op } = entry;
-    const declared = Object.keys(op.responses ?? {}).filter((code) => /^[0-9]{3}$/.test(code));
-    if (declared.length === 0) {
-      problems.push(`op 没有三位状态码声明，本条无法派生期望值（${method.toUpperCase()} ${path}）：${id}`);
-      continue;
-    }
-    const description = String(op.description ?? '');
-    const hit = declared.filter((code) => description.includes(code));
-    if (hit.length === 0) {
-      problems.push(
-        `description 里没有任何一个本 op 声明的状态码（${method.toUpperCase()} ${path}）：${id}`
-        + ` 声明 ${declared.join(',')}`,
-      );
-      continue;
-    }
-    asserted += 1;
-  }
+  const { problems, asserted } = statusCodeProblems(entriesOf(adminById, REWRITTEN_ADMIN_OPS));
   assert.ok(asserted > 0, 'C② 一条 op 都没断言到 ⇒ 恒真');
   assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
 
+test('C②-me /me/** 17 条的 description 同样必须含自身 responses 里的三位状态码', () => {
+  const { problems, asserted } = statusCodeProblems(entriesOf(meById, REWRITTEN_ME_OPS));
+  assert.equal(
+    asserted,
+    ME_OP_COUNT,
+    `C②-me 只断言到 ${asserted} 条（应为 ${ME_OP_COUNT}）⇒ 有 op 描述里写的码不是它自己 responses 里的`,
+  );
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
+});
+
 test('C③ 声明了 Idempotency-Key／If-Match 的 op，description 必须写出该 header 名', () => {
-  const watched = ['Idempotency-Key', 'If-Match'];
-  const problems = [];
-  let asserted = 0;
-  for (const id of REWRITTEN_ADMIN_OPS) {
-    const entry = adminById.get(id);
-    if (!entry) continue;
-    const { path, method, op } = entry;
-    const headers = headerNamesOf(op).filter((name) => watched.includes(name));
-    if (headers.length === 0) continue;
-    asserted += 1;
-    const description = String(op.description ?? '');
-    const missing = headers.filter((name) => !description.includes(name));
-    if (missing.length > 0) {
-      problems.push(
-        `description 没写出已声明的 header（${method.toUpperCase()} ${path}）：${id}`
-        + ` 缺 ${missing.join(',')}`,
-      );
-    }
-  }
+  const { problems, asserted } = headerProblems(entriesOf(adminById, REWRITTEN_ADMIN_OPS));
   // 反空转：这 21 条里确实有一批声明了幂等/版本头，否则本组断言等于没跑。
   assert.ok(
     asserted > 0,
     'C③ 分支在 21 条改写过的 op 里一次都没命中（没有任何 op 声明 Idempotency-Key／If-Match）'
     + ' ⇒ 这条断言恒真。要么参数改成了别的形制，要么 `$ref` 解析坏了。',
+  );
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处 header 与描述对不上：\n  - ${problems.join('\n  - ')}`);
+});
+
+test('C③-me /me/** 17 条：声明了的 Idempotency-Key／If-Match 必须写进 description', () => {
+  const { problems, asserted } = headerProblems(entriesOf(meById, REWRITTEN_ME_OPS));
+  // 反空转：/me 族里 10 条声明了 Idempotency-Key（其中 6 条另声明 If-Match），命中面必须够大，
+  // 否则「参数改形制」时这条会静默变成恒真。
+  assert.ok(
+    asserted >= 10,
+    `C③-me 只命中 ${asserted} 条（/me 族里应有 10 条声明 Idempotency-Key、其中 6 条另声明 If-Match）`
+    + ' ⇒ 要么参数改成了别的形制，要么 `$ref` 解析坏了。',
   );
   assert.deepEqual(problems, [], `以下 ${problems.length} 处 header 与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
