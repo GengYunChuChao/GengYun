@@ -146,7 +146,7 @@
 | # | 原说法（现已不成立） | 现状 | 改在哪 |
 | --- | --- | --- | --- |
 | 1 | `docs/architecture/s4-data-traceability.md:321`（改动前是 `:312`）曾称 `purge:retention`「**没有 `.service`/`.timer`**，也不在调度门禁的必需清单里」，并称 `REQUIRED_NPM_SCRIPTS` 只有两项 | 单元在（`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer`），必需清单在 `tools/verify-purge-schedule.mjs:117` 已是 **3 项**；同仓 `docs/architecture/gy-r34-retention-policy.md:118` 早在 2026-10-24 就写了「调度接线（已做）」 | **已改 s4**：整条改标「★G3（已于 2026-10-26 复核消解，整条留档）」，原判原文留在 `:323` 作历史记录；§6 计数「三条→两条」（`:305`）与证据基础设施段标题（`:335`）同步 |
-| 2 | `docs/architecture/s4-data-traceability.md:354`（改动前是 `:339`）曾写「`PASS`，但必需清单只有两项（看 `tools/verify-purge-schedule.mjs:109`）」 | `:109` 实际是 `DEFAULT_SCHEDULE_DIR`；必需清单在 `:117`，实测覆盖 3/3 | **已改 s4**：`:354` 与 §7.2 升档条件表的 `:368` 均改为 `:117` ＋ 3/3，并把该行标为「已消解（2026-10-26 复核）」 |
+| 2 | `docs/architecture/s4-data-traceability.md:354`（改动前是第 339 行）曾写「`PASS`，但必需清单只有两项（看 `tools/verify-purge-schedule.mjs:109`）」 | `:109` 实际是 `DEFAULT_SCHEDULE_DIR`；必需清单在 `:117`，实测覆盖 3/3 | **已改 s4**：`:354` 与 §7.2 升档条件表的 `:368` 均改为 `:117` ＋ 3/3，并把该行标为「已消解（2026-10-26 复核）」 |
 | 3 | `docs/architecture/README.md:17` 曾称「`verify:purge-schedule` **仍未进 CI**」，`:18` 曾称「#19 的到期执行与第三方证据仍未取得」 | 已进：`.github/workflows/engineering-shell.yml:140` 的 `retention-gates` job，`:153` 执行 | **已改 README**：`:17` 改为「已进 CI ＋ 三对单元在 `deploy/purge-schedule/`」，`:18` 改为只剩第三方证据未取得，同页 `:20` 的「三条缺口」随 G3 撤条改为「两条」 |
 
 ## 9. 复核命令

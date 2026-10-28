@@ -185,7 +185,7 @@
 - **证据**：`tests/integration/account-deletion-pg.mjs`，CI `.github/workflows/real-pg-integration.yml:189`。
 - **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2076` 是 `available: config.executionMode !== 'real'`，
   注释 `:2058-2065` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
-  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处 `:2078` 自陈
+  也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处注释（第 2259 行）自陈
   外发撤销器与 `available` 门互斥，「两条路都到不了这里」（仅测试注入可达）。
 
 ### D09 在线 7 日、备份 30 日、恢复重放
@@ -199,7 +199,7 @@
 - **证据**：CI 里三条真库臂 `.github/workflows/real-pg-integration.yml:546`（online-purge-pg）、`:501`
   （backup-copies-purge-pg）、`:485`（backup-purge-pg）。
 - **缺口**：① 恢复重放只有纯函数模块 `services/api/src/privacy/backup-replay-manifest.ts:559`，**没有装配进 `app.ts`**，
-  契约里也没有恢复 operation（该文件 `:68` 自陈）；② 调度件的「已安装并生效」不在仓内，没有任何生产读数；
+  契约里也没有恢复 operation（该文件头注释第 68 行自陈）；② 调度件的「已安装并生效」不在仓内，没有任何生产读数；
   ③ 加速演练 `tests/integration/retention-clock-drill-pg.mjs` 未进任何 workflow，未设 `GY_PG_BIN` 时如实 `exit 77`。
 
 ### D10 帖评保留、去身份、已注销用户、不可反查
@@ -210,13 +210,13 @@
   引用形状 `^gy-anon-[0-9a-f]{16}$` 与共用规则见 `services/api/db/migrations/0032_community_report_reporter_ref.sql:24`。
 - **证据**：`services/api/src/community/purge.ts:141` 起（`authors.anonymize` 调用与形状校验）。
 - **缺口**：`services/api/src/community/authors.ts:92` 的进程内 `anonymizedRefs` 以 **userId** 为键（`:122` 读、`:125` 写、`:140` 查），进程生命周期内仍能把「原账户 → 注销引用」对上（重启即失，持久面已去关联）；
-  同一文件 `:38-39` 自述它是「**兼容用的快路径**、不是权威落点」——那是**持久化轴**上的让步（行内 `anonymized_author_ref` 才是权威），**不等于**「不可反查」：进程还在时 `Map.has(userId)` 就是判据；2026-10-28 复核据此**维持「部分」**并写死口径（读数：`git grep -n anonymizedRefs -- services/api/src/community/authors.ts`）。
-  举报表在 0032 之前是强关联，迁移 `:8-12` 自陈过这一点。
+  同一文件头注释第 38-39 行自述它是「**兼容用的快路径**、不是权威落点」——那是**持久化轴**上的让步（行内 `anonymized_author_ref` 才是权威），**不等于**「不可反查」：进程还在时 `Map.has(userId)` 就是判据；2026-10-28 复核据此**维持「部分」**并写死口径（读数：`git grep -n anonymizedRefs -- services/api/src/community/authors.ts`）。
+  举报表在 0032 之前是强关联，迁移头注释第 8-12 行自陈过这一点。
 
 ### D11 保留正文脱敏、不能可靠脱敏的媒体隐藏/移除
 
 - **判定**：部分。需求 `docs/implementation-requirements.md:280`。
-- **实现**：行级读数含 `hiddenMedia`（`services/api/src/community/purge.ts:69`），blocked 原因码在 `:32` 起；
+- **实现**：行级读数含 `hiddenMedia`（`services/api/src/community/purge.ts:69`），blocked 原因码见同文件头注释第 32 行起；
   单条媒体的对象删除是「确认后才清引用」（`services/api/src/media/service.ts:736`，先落清理意图再删桶对象）。
 - **证据**：账本脱敏 `packages/privacy/redact.mjs:68`。
 - **缺口**：**注销时按主体批量清媒体未接线**——`git grep -n purge_owner_media -- services/api/src` = 0 行，

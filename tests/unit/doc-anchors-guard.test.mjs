@@ -27,15 +27,18 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  BARE_ORPHAN,
   BROKEN,
   OUT_OF_RANGE,
   SUSPECT,
+  attributeBareAnchors,
   collectFindings,
   extractReferences,
   loadBaseline,
   main,
   partitionByBaseline,
   renderBaseline,
+  segmentDocumentBlocks,
   splitLines,
 } from '../../tools/verify-doc-anchors.mjs';
 
@@ -283,3 +286,172 @@ test('判据是结构性的：不得引入内容哈希（sha256 全等会把任�
   assert.match(code, /SUSPECT/);
   assert.match(code, /BROKEN/);
 });
+
+// —— 裸锚点（只写 `:N`／`:N-M`）的同块继承 ————————————————————————————————
+//
+// 缺口：`ANCHOR_PATTERN` 要求「文件名.扩展名」，于是把 `path:130` 改写成 `:130` 就能让这条锚点
+// 彻底离开扫描面——不参与行号越界、不参与 `--symbol=strict`、也不进任何桶（通用后门）。
+// 这一组用例钉住「删路径前缀」这条路：**能继承的必须与显式锚点同权判红**，继承不到的必须留在
+// `BARE_ORPHAN` 里计数并逐条打印（文档、行号、原文片段、归属失败原因），不许静默消失。
+//
+// T2 的口径说明（重要）：任务书写的「同段无其它显式锚点 ⇒ 仍必红」与「无法归属的裸锚点今天不判红」
+// 在逻辑上互斥——一个块里再没有任何路径可继承时，工具没有任何依据知道 `:20` 指的是哪个文件，
+// 判红只能是瞎猜。故 T2 钉的是**可满足的最强性质**：① 同块还有兄弟锚点时，把路径删掉照样红；
+// ② 整块一个显式锚点都不剩时，它必须落进 BARE_ORPHAN 且被打印出来（可见，而非静默放行）。
+
+const BARE_CODE = Array.from({ length: 30 }, (_, index) => `export const v${index + 1} = ${index + 1};`);
+const BARE_BLANK = ['export const head = 1;', '', '', '  })', 'export const tail = 2;'];
+const BARE_OTHER = ['export const p = 1;', 'export const q = 2;', 'export const r = 3;', 'export const s = 4;', 'export const t = 5;'];
+
+/** 裸锚点用例的最小仓：目标源码按行数造（越界档要好算），需要几个就几个。 */
+function makeBareFixture(extra) {
+  return makeFixture({
+    'src/x.mjs': `${BARE_CODE.join('\n')}\n`,
+    'src/y.mjs': `${BARE_OTHER.join('\n')}\n`,
+    'src/blank.mjs': `${BARE_BLANK.join('\n')}\n`,
+    ...extra,
+  });
+}
+
+const bareScanArgs = root => ['--root', root, '--scan', 'docs/architecture', '--baseline', 'tools/doc-anchors-baseline.json'];
+
+test('T1 裸锚点继承同块显式锚点后与显式同权：行号越界照样判 OUT_OF_RANGE', () => {
+  const root = makeBareFixture({
+    'docs/architecture/bare-inherit-range.md': '# 标题\n\n同段：`src/x.mjs:3` 与 `:999`（继承后仍要越界判红）。\n',
+  });
+  try {
+    const { findings, stats } = collectFindings({ root, targets: ['docs/architecture'] });
+    const outOfRange = findings.filter(finding => finding.reason === OUT_OF_RANGE);
+    assert.deepEqual(
+      outOfRange.map(finding => finding.reference),
+      ['src/x.mjs:999'],
+      `继承来的裸锚点必须进同一套越界判据，实际：${JSON.stringify(findings.map(f => `${f.reason} ${f.reference}`))}`,
+    );
+    assert.equal(outOfRange[0].bare, true, 'finding 要标出它是裸锚点，否则维护者以为文档里写的是全路径');
+    assert.deepEqual(outOfRange[0].inheritedFrom, { reference: 'src/x.mjs:3', docLine: 3 }, '要能追溯它继承自哪一条显式锚点');
+    assert.match(outOfRange[0].detail, /30 行/, '读数必须带目标文件真实行数');
+    assert.equal(stats.bare.inherited, 1);
+    assert.equal(stats.bare.judged, 1, '作用域内的裸锚点必须进判据，不能只计数');
+    assert.equal(stats.candidates, 1, '裸锚点不混进「抽出引用」条数（candidates 只数显式锚点）');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T2 回归钉子：把 `src/x.mjs:20` 改写成裸 `:999` 不能洗白（有兄弟锚点必红，没兄弟锚点必须可见）', () => {
+  const root = makeBareFixture({
+    // ① 同一段里还有兄弟显式锚点：把自己那条的路径删掉，仍然被继承抓住。
+    'docs/architecture/bare-washout.md': '# 标题\n\n见 `src/x.mjs:20`；把这条改写成 `:999` 也要红。\n',
+    // ② 整段一个显式锚点都不剩：今天不判红，但必须落进 BARE_ORPHAN 并被打印。
+    'docs/architecture/bare-orphan-nail.md': '见 `:5`（路径前缀被删干净）。\n',
+  });
+  try {
+    const { findings, bareOrphans } = collectFindings({ root, targets: ['docs/architecture'] });
+    assert.deepEqual(
+      findings.map(finding => `${finding.reason} ${finding.reference}`),
+      ['OUT_OF_RANGE src/x.mjs:999'],
+      '删掉路径前缀必须仍然判红，否则这就是一条「洗白」后门',
+    );
+    assert.equal(bareOrphans.length, 1, '整块无显式锚点的裸锚点应当且只能有一条进 BARE_ORPHAN');
+    assert.equal(bareOrphans[0].doc, 'docs/architecture/bare-orphan-nail.md');
+    assert.equal(bareOrphans[0].docLine, 1);
+    assert.equal(bareOrphans[0].raw, ':5');
+    assert.equal(bareOrphans[0].reason, 'no-explicit-in-block');
+
+    const dry = capture(bareScanArgs(root));
+    assert.match(dry.text, new RegExp(`^${BARE_ORPHAN}: 1 条`, 'm'), '孤儿裸锚点必须在报告里点名条数');
+    assert.match(dry.text, /· docs\/architecture\/bare-orphan-nail\.md:1 :5（no-explicit-in-block）｜/, '要逐条打印文档:行、原文与原因');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T3 空行后的裸锚点 ⇒ BARE_ORPHAN：不判红，但计数 +1 且逐条打印', () => {
+  const root = makeBareFixture({
+    'docs/architecture/bare-orphan.md': ['# 标题', '', '见 `src/x.mjs:3`。', '', '这一行前面没有显式锚点：:20。', ''].join('\n'),
+  });
+  try {
+    const { findings, bareOrphans, stats } = collectFindings({ root, targets: ['docs/architecture'] });
+    assert.deepEqual(findings, [], '孤儿裸锚点今天不判红（策略见 BARE_ORPHAN 注释），判红就是瞎猜');
+    assert.equal(bareOrphans.length, 1);
+    assert.equal(bareOrphans[0].docLine, 5, '空行断开后它不在上文的块里');
+    assert.equal(bareOrphans[0].reason, 'no-explicit-in-block');
+    assert.equal(bareOrphans[0].inScope, true, 'docs/architecture/** 属于判红作用域，孤儿也要标 inScope 便于分派');
+    assert.equal(stats.bare.total, 1);
+    assert.equal(stats.bare.orphan, 1);
+    assert.equal(stats.bare.orphanInScope, 1);
+    assert.equal(stats.bare.judged, 0);
+
+    const dry = capture(bareScanArgs(root));
+    assert.equal(dry.code, 0, '孤儿裸锚点不影响退出码');
+    assert.match(dry.text, new RegExp(`^${BARE_ORPHAN}: 1 条`, 'm'));
+    assert.match(dry.text, /bare-orphan\.md:5 :20（no-explicit-in-block）/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T4 同块两个不同路径的显式锚点 + 裸锚点 ⇒ 归 BARE_ORPHAN（不猜路径）', () => {
+  const root = makeBareFixture({
+    'docs/architecture/bare-ambiguous.md': 'A `src/x.mjs:3`、B `src/y.mjs:4`，然后 `:7` 不知道该算谁。\n',
+  });
+  try {
+    const { findings, bareOrphans } = collectFindings({ root, targets: ['docs/architecture'] });
+    assert.deepEqual(findings, [], '路径不唯一时不许猜，更不许拿最近那条当答案');
+    assert.equal(bareOrphans.length, 1);
+    assert.equal(bareOrphans[0].reason, 'ambiguous-block');
+    assert.equal(bareOrphans[0].raw, ':7');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T5 裸区间 `:N-M` 同样继承，并参与 SUSPECT 判定', () => {
+  const root = makeBareFixture({
+    'docs/architecture/bare-range.md': '见 `src/blank.mjs:1`，区间 `:2-4` 全是空行与收尾括号。\n',
+  });
+  try {
+    const { findings } = collectFindings({ root, targets: ['docs/architecture'] });
+    const suspect = findings.filter(finding => finding.reason === SUSPECT);
+    assert.deepEqual(suspect.map(finding => finding.reference), ['src/blank.mjs:2-4'], '裸区间继承后必须与显式区间同权判 SUSPECT');
+    assert.equal(suspect[0].bare, true);
+    assert.deepEqual(suspect[0].inheritedFrom, { reference: 'src/blank.mjs:1', docLine: 1 });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T6 围栏代码块（```）内的裸锚点同样继承（块内空行不切断，围栏不逃逸判据）', () => {
+  const root = makeBareFixture({
+    'docs/architecture/bare-fence.md': ['# 标题', '', '```js', '见 `src/x.mjs:3` 与 `:999`', '```', ''].join('\n'),
+  });
+  try {
+    const { findings, stats } = collectFindings({ root, targets: ['docs/architecture'] });
+    assert.deepEqual(
+      findings.map(finding => `${finding.reason} ${finding.reference}`),
+      ['OUT_OF_RANGE src/x.mjs:999'],
+      '代码块里的裸锚点不能成为免检区',
+    );
+    assert.equal(stats.bare.inherited, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T7 反空转：块切分与扫描面有下界断言（否则「全部孤儿」也能让上面几条看起来绿）', () => {
+  const lines = ['# 标题', '', '段落一', '段落一的续行', '', '- 列表项一', '- 列表项二', '', '| a | b |', '', '```', 'code', '```', ''];
+  const { blocks } = segmentDocumentBlocks(lines);
+  assert.ok(blocks.length >= 6, `合成的文档至少切出 6 块（标题/段落/两个列表项/表格行/代码块），实际 ${blocks.length} 块`);
+
+  const text = lines.join('\n');
+  const attribution = attributeBareAnchors({ text, references: extractReferences(text) });
+  assert.equal(attribution.blocks, blocks.length, '两处块切分必须同源，否则归属与下界断言各说各话');
+  assert.deepEqual(attribution.inherited, [], '这份文档没有裸锚点，继承数必须是 0（不是「什么都没算」）');
+
+  // 空行必须真的断块：紧邻段落里的裸锚点可继承，隔一个空行就不行。
+  const adjacent = '见 `src/x.mjs:3` 与 `:9`。\n';
+  const separated = '见 `src/x.mjs:3`。\n\n:9\n';
+  assert.equal(attributeBareAnchors({ text: adjacent, references: extractReferences(adjacent) }).inherited.length, 1);
+  assert.equal(attributeBareAnchors({ text: separated, references: extractReferences(separated) }).orphans.length, 1);
+});
+

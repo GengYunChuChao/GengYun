@@ -43,6 +43,12 @@
  *                                                          # 作用域内锚点必须落在代码行上：
  *                                                          # 未落代码行的走符号基线，基线外新增在
  *                                                          # `--strict` 下 exit 1（CI 用的就是这条）
+ *
+ * 裸锚点（只写 `:1316`／`:1341-1350`）：路径从**同块**（同一段落／列表项／表格单元格／代码块）
+ * 内最近的显式锚点继承，链接 `[:321](path)` 直接从 href 取；继承到的锚点与显式锚点**同权**——
+ * 越界、区间无实质内容、符号落点、`--strict` 汇总都算它，所以把 `path:130` 删成 `:130` 不会洗白。
+ * 归不到路径的（同块没有显式锚点、或同块路径不唯一）进 `BARE_ORPHAN`：只计数 + 逐条打印、不判红。
+ * 继承锚点的判红作用域与 `SYMBOL_LINE_SCOPE` 同口径（`docs/architecture/**`），历史取证页只计数。
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -84,6 +90,33 @@ const ANCHOR_PATTERN = new RegExp(
   `(?<![\\w.\\-/])((?:[\\w.\\-]+/)*[\\w.\\-]+\\.(?:${ANCHOR_EXTENSIONS.join('|')})):(\\d+)(?:-(\\d+))?(?!\\d)`,
   'g',
 );
+/**
+ * 裸锚点：只写 `:1316`／`:1341-1350`、路径靠上下文继承的写法。
+ *
+ * 为什么必须认它：`ANCHOR_PATTERN` 要求锚点自带「文件名.扩展名」，于是「见 `services/api/src/app.ts:1316-1330`…
+ * 同文件 `:1341`」里的那个裸 `:1341` 根本不在扫描面里——把 `path:130` 删成 `:130` 就能让任何锚点绕过全部判据
+ * 与基线，是一条通用后门。裸锚点因此要**先归属、再与显式锚点同权**：继承到的锚点照样进
+ * `BROKEN`／`OUT_OF_RANGE`／`SUSPECT`／`NOT_SYMBOL_LINE` 与 `--strict` 的失败汇总。
+ *
+ * 前置字符里额外排除 `:`——`tests/integration/x.mjs::3)` 这种「`::` 后的场景号」不是行号。
+ */
+const BARE_ANCHOR_PATTERN = /(?<![\w.\-/:]):(\d+)(?:-(\d+))?(?!\d)/g;
+/** 链接把路径藏在 href 里时的写法：`[:321](../../services/api/src/privacy/x.ts)`。 */
+const LINK_ANCHOR_PATTERN = /\[\s*:(\d+)(?:-(\d+))?\s*\]\(\s*<?([^)\s>]+)>?\s*\)/g;
+
+/**
+ * 裸锚点「无主」桶：同块内没有可继承的显式锚点，或同块显式锚点指向不同文件因而无法唯一归属。
+ * 这类锚点**今天不判红**（猜路径比漏判更坏），但必须逐条打印 + 在汇总行给出数字——
+ * 让「删掉路径前缀」这条路要么被继承抓住、要么以 `BARE_ORPHAN` 的形状留在报告里，不会静默消失。
+ */
+export const BARE_ORPHAN = 'BARE_ORPHAN';
+/**
+ * 继承锚点参与判红的作用域：与 `SYMBOL_LINE_SCOPE`／`ANCHOR_DRIFT_SCOPE` 同一口径。
+ * `docs/verification/**` 是某一版树的历史取证页（行号按当时的树写、正文也声明了基线），把裸锚点按今天的树判红
+ * 等于逼历史证据跟着代码一起改写，正好毁掉证据的价值；作用域外只计数（`BARE-SCOPE` 那一行）。
+ */
+export const BARE_ANCHOR_SCOPE = 'docs/architecture/';
+
 /** 遍历仓库建「同名文件」索引时跳过的目录：依赖与产物不是文档该引用的源码证据。 */
 const SKIP_DIRECTORIES = new Set([
   'node_modules', '.git', '.pnpm-store', 'dist', 'coverage', '.pg17', '.pgdata',
@@ -245,6 +278,182 @@ export function extractReferences(text) {
   return references;
 }
 
+// —— 块切分与裸锚点归属 ————————————————————————————————————————————————
+// 「同块」= 同一段落／同一列表项／同一表格单元格／同一代码块；空行、标题行、列表项边界、表格行各自断开。
+// 表格行**按单元格**再断一次：同一行不同列是不同证据位（一行里写着「旧文件:35」与「新文件 `:79`」时，
+// 把 `:79` 归给左列的路径就是错案，实测确有此类跨列误归）。
+const HEADING_LINE = /^#{1,6}\s/;
+const LIST_ITEM_LINE = /^\s*(?:[-*+]|\d+[.)])\s/;
+const TABLE_ROW_LINE = /^\s*\|/;
+const QUOTE_LINE = /^\s*>/;
+const FENCE_LINE = /^\s*(?:```|~~~)/;
+const CLOSING_FENCE_LINE = /^\s*(?:```+|~~~+)\s*$/;
+
+/** 表格行里，第 `offset` 个字符落在第几个单元格（`\|` 是转义竖线，不算分隔）。 */
+function cellIndexAt(line, offset) {
+  let cell = 0;
+  for (let index = 0; index < offset && index < line.length; index += 1) {
+    if (line[index] === '|' && line[index - 1] !== '\\') cell += 1;
+  }
+  return cell;
+}
+
+/**
+ * 把一份文档切成块，返回 `{ blockOf, blocks }`：`blockOf[行号]` = 块序号（1 起），空行为 -1。
+ * 切分口径（裸锚点继承只认「同块」）：空行断开；标题行自成一块且断开；表格行一行一块（再按单元格细分）；
+ * 列表项一项一块（续行归该项）；引用块连续成块；围栏代码块整块一块（块内空行不切断）。
+ */
+export function segmentDocumentBlocks(lines) {
+  const blockOf = new Array(lines.length + 1).fill(-1);
+  const blocks = [];
+  let current = null;
+  let fence = null;
+  const open = (lineNumber, kind) => {
+    current = { index: blocks.length, kind, startLine: lineNumber, endLine: lineNumber };
+    blocks.push(current);
+    blockOf[lineNumber] = current.index;
+  };
+  const extend = lineNumber => {
+    current.endLine = lineNumber;
+    blockOf[lineNumber] = current.index;
+  };
+  for (let index = 0; index < lines.length; index += 1) {
+    const lineNumber = index + 1;
+    const line = lines[index];
+    const trimmed = line.trim();
+    if (fence !== null) {
+      extend(lineNumber);
+      if (CLOSING_FENCE_LINE.test(line) && trimmed.startsWith(fence)) fence = null;
+      continue;
+    }
+    if (trimmed === '') { current = null; continue; }
+    if (FENCE_LINE.test(line)) { open(lineNumber, 'code'); fence = trimmed.slice(0, 3); continue; }
+    if (HEADING_LINE.test(line)) { open(lineNumber, 'heading'); current = null; continue; }
+    if (TABLE_ROW_LINE.test(line)) { open(lineNumber, 'table'); current = null; continue; }
+    if (LIST_ITEM_LINE.test(line)) { open(lineNumber, 'list-item'); continue; }
+    if (QUOTE_LINE.test(line) && (current === null || current.kind !== 'quote')) { open(lineNumber, 'quote'); continue; }
+    if (current === null || current.kind === 'heading' || current.kind === 'table') { open(lineNumber, 'paragraph'); continue; }
+    extend(lineNumber);
+  }
+  return { blockOf, blocks };
+}
+
+/** 裸锚点是否在「参与判红」的作用域内（`docs/architecture/**`），口径见 `BARE_ANCHOR_SCOPE`。 */
+export function isBareAnchorScope(docPath) {
+  return toPosix(docPath).startsWith(BARE_ANCHOR_SCOPE);
+}
+
+const canonicalAnchor = (target, from, to) => (
+  to === from ? `${target}:${from}` : `${target}:${from}-${to}`
+);
+
+/**
+ * 给裸锚点找归属：① 链接 href（`[:321](../../path.ts)`）优先；② 否则继承**同块内最近**的显式锚点路径。
+ * 同块显式锚点路径不一致而裸锚点无法唯一归属 ⇒ 进 `orphans`（不猜）；同块没有显式锚点 ⇒ 也进 `orphans`。
+ *
+ * `resolveIdentity(reference)` 用来判断「同块的两个显式锚点是不是同一份文件」（`app.ts:495` 与
+ * `services/api/src/app.ts:100` 是同一份）——解析归调用方，本函数不碰文件系统。
+ * 返回的继承项形状与 `extractReferences` 一致，另加 `bare`／`inheritedFrom`／`via`；`reference` 已规范化成
+ * `路径:起-止`，所以它与同一条显式锚点共用同一套去重键、符号基线与失效判据（继承后同权）。
+ */
+export function attributeBareAnchors({ text, references, resolveIdentity = null }) {
+  const lines = text.split('\n');
+  const { blockOf, blocks } = segmentDocumentBlocks(lines);
+  const identityOf = resolveIdentity ?? (reference => reference.reference);
+  const links = new Map();
+  for (let index = 0; index < lines.length; index += 1) {
+    LINK_ANCHOR_PATTERN.lastIndex = 0;
+    let link = LINK_ANCHOR_PATTERN.exec(lines[index]);
+    while (link !== null) {
+      const href = link[3].replace(/[#?].*$/, '');
+      if (!href.includes('://')) {
+        const from = Number(link[1]);
+        const to = link[2] === undefined ? from : Number(link[2]);
+        links.set(`${index + 1}|${from}|${to}`, { target: href.replace(/^\.\//, ''), rawLink: link[0] });
+      }
+      link = LINK_ANCHOR_PATTERN.exec(lines[index]);
+    }
+  }
+  const explicit = references.map(reference => {
+    const line = lines[reference.docLine - 1] ?? '';
+    const column = Math.max(0, line.indexOf(reference.raw));
+    return {
+      reference,
+      column,
+      cell: TABLE_ROW_LINE.test(line) ? cellIndexAt(line, column) : -1,
+      identity: identityOf(reference),
+    };
+  });
+  const inherited = [];
+  const orphans = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const docLine = index + 1;
+    const line = lines[index];
+    if (line.trim() === '') continue;
+    const inTable = TABLE_ROW_LINE.test(line);
+    BARE_ANCHOR_PATTERN.lastIndex = 0;
+    let match = BARE_ANCHOR_PATTERN.exec(line);
+    while (match !== null) {
+      const column = match.index;
+      const from = Number(match[1]);
+      const to = match[2] === undefined ? from : Number(match[2]);
+      const raw = match[0];
+      const link = links.get(`${docLine}|${from}|${to}`);
+      if (link !== undefined) {
+        inherited.push({
+          raw,
+          reference: canonicalAnchor(link.target, from, to),
+          target: link.target,
+          from,
+          to,
+          docLine,
+          bare: true,
+          via: 'link',
+          inheritedFrom: { reference: link.rawLink, docLine },
+        });
+      } else {
+        const block = blockOf[docLine];
+        const cell = inTable ? cellIndexAt(line, column) : -1;
+        const around = block < 0 ? [] : explicit.filter(item => (
+          blockOf[item.reference.docLine] === block
+          && item.cell === cell
+          && (item.reference.docLine < docLine || (item.reference.docLine === docLine && item.column < column))
+        ));
+        if (around.length === 0) {
+          orphans.push({ docLine, raw, from, to, reason: 'no-explicit-in-block', text: line });
+        } else {
+          const nearest = around[around.length - 1];
+          if (around.some(item => item.identity !== nearest.identity)) {
+            orphans.push({
+              docLine,
+              raw,
+              from,
+              to,
+              reason: 'ambiguous-block',
+              text: line,
+              candidates: [...new Set(around.map(item => item.identity))],
+            });
+          } else {
+            inherited.push({
+              raw,
+              reference: canonicalAnchor(nearest.reference.target, from, to),
+              target: nearest.reference.target,
+              from,
+              to,
+              docLine,
+              bare: true,
+              via: 'block',
+              inheritedFrom: { reference: nearest.reference.reference, docLine: nearest.reference.docLine },
+            });
+          }
+        }
+      }
+      match = BARE_ANCHOR_PATTERN.exec(line);
+    }
+  }
+  return { inherited, orphans, blocks: blocks.length };
+}
+
 // —— 路径解析 ————————————————————————————————————————————————————————
 /** 同名文件索引：`service.ts` → 仓库里所有同名文件的相对路径（用于「裸文件名」引用）。 */
 export function buildFileNameIndex(root) {
@@ -346,11 +555,12 @@ function recordCommentAnchor(list, seen, anchor) {
 }
 
 /**
- * 全量扫描：返回 `{ findings, stats, unresolved, commentAnchors }`。
+ * 全量扫描：返回 `{ findings, stats, unresolved, commentAnchors, bareOrphans }`。
  * `findings` 每条 = `{ reason, reference, target, path, owner, doc, docLine, detail }`；
  * 同一文档里同一条引用出现多次只记一条（按 doc + reference 去重）。
  * `commentAnchors` = 作用域内、目标是源码、但**没落在代码行上**的锚点（`--symbol=strict` 的判据面，
  * 见 `COMMENT_ANCHOR`）；与 `findings` 一样按 doc + reference 去重，仅这两档不会进 `findings`。
+ * `bareOrphans` = 归不到路径的裸锚点（见 `BARE_ORPHAN`）：只计数、逐条打印，不进 `findings`、不影响退出码。
  */
 export function collectFindings({
   root = TOOL_ROOT,
@@ -368,6 +578,7 @@ export function collectFindings({
   const unresolved = [];
   const seen = new Set();
   const seenComment = new Set();
+  const bareOrphans = [];
   const stats = {
     documents: files.length,
     candidates: 0,
@@ -376,6 +587,7 @@ export function collectFindings({
     blankStart: 0,
     commentOnly: 0,
     symbol: { inScope: 0, code: 0, detached: 0, cited: 0, attached: 0, outside: 0 },
+    bare: { total: 0, inherited: 0, link: 0, orphan: 0, orphanInScope: 0, judged: 0, outside: 0, outsideRed: 0 },
     counts: { [BROKEN]: 0, [OUT_OF_RANGE]: 0, [SUSPECT]: 0, [NOT_SYMBOL_LINE]: 0 },
   };
   const readText = relativePath => {
@@ -393,15 +605,54 @@ export function collectFindings({
   for (const docPath of files) {
     const text = readFileSync(join(root, docPath), 'utf8');
     const docLines = splitLines(text);
-    for (const reference of extractReferences(text)) {
-      stats.candidates += 1;
+    const explicit = extractReferences(text);
+    // 裸锚点先归属：继承到的锚点与显式锚点走同一段判据；`report` 只决定它是否真的进 findings／commentAnchors
+    // （作用域外的历史取证页只计数，见 `BARE_ANCHOR_SCOPE`）。
+    const attribution = attributeBareAnchors({
+      text,
+      references: explicit,
+      resolveIdentity: reference => {
+        const probe = resolveTarget({ root, docPath, target: reference.target, fileIndex: index });
+        return probe.status === 'resolved' ? probe.relative : `?${reference.target}`;
+      },
+    });
+    const bareInScope = isBareAnchorScope(docPath);
+    stats.bare.inherited += attribution.inherited.length;
+    stats.bare.link += attribution.inherited.filter(item => item.via === 'link').length;
+    stats.bare.total += attribution.inherited.length + attribution.orphans.length;
+    stats.bare.orphan += attribution.orphans.length;
+    for (const orphan of attribution.orphans) {
+      if (bareInScope) stats.bare.orphanInScope += 1;
+      bareOrphans.push({
+        doc: docPath,
+        docLine: orphan.docLine,
+        raw: orphan.raw,
+        reason: orphan.reason,
+        inScope: bareInScope,
+        text: orphan.text.trim().slice(0, 160),
+      });
+    }
+    const queue = [
+      ...explicit.map(reference => ({ reference, report: true })),
+      ...attribution.inherited.map(reference => ({ reference, report: bareInScope })),
+    ];
+    for (const { reference, report } of queue) {
+      const bare = reference.bare === true;
+      if (bare) {
+        if (report) stats.bare.judged += 1;
+        else stats.bare.outside += 1;
+      } else {
+        stats.candidates += 1;
+      }
       const resolved = resolveTarget({ root, docPath, target: reference.target, fileIndex: index });
       if (resolved.status !== 'resolved') {
         if (resolved.status === 'ambiguous') {
           // 不可解析≠不存在：如实记账，不冒充 BROKEN，也不静默丢弃。
+          if (!report) continue;
           unresolved.push({ doc: docPath, docLine: reference.docLine, reference: reference.reference, candidates: resolved.candidates });
           continue;
         }
+        if (!report) { stats.bare.outsideRed += 1; continue; }
         const key = `${docPath}|${reference.reference}|${BROKEN}`;
         if (seen.has(key)) { stats.deduped += 1; continue; }
         seen.add(key);
@@ -415,10 +666,11 @@ export function collectFindings({
           doc: docPath,
           docLine: reference.docLine,
           detail: '路径在仓库里找不到',
+          ...(bare ? { bare, inheritedFrom: reference.inheritedFrom } : {}),
         });
         continue;
       }
-      stats.resolved += 1;
+      if (!bare) stats.resolved += 1;
       const lines = readLines(resolved.relative);
       if (lines[reference.from - 1] !== undefined && lines[reference.from - 1].trim() === '') stats.blankStart += 1;
       const verdict = classifyReference({
@@ -490,6 +742,7 @@ export function collectFindings({
                   doc: docPath,
                   docLine: reference.docLine,
                   detail: describeSymbolMiss({ target: resolved.relative, span: symbol.span, declaration: symbol.declaration }),
+                  ...(bare ? { bare, inheritedFrom: reference.inheritedFrom } : {}),
                 });
               } else {
                 stats.deduped += 1;
@@ -499,6 +752,7 @@ export function collectFindings({
         }
         continue;
       }
+      if (!report) { stats.bare.outsideRed += 1; continue; }
       const key = `${docPath}|${reference.reference}|${verdict.reason}`;
       if (seen.has(key)) { stats.deduped += 1; continue; }
       seen.add(key);
@@ -514,6 +768,7 @@ export function collectFindings({
         detail: verdict.reason === OUT_OF_RANGE
           ? `行号超出文件行数（该文件 ${verdict.lineCount} 行）`
           : '区间内没有任何实质内容行（全空行／全右括号）',
+        ...(bare ? { bare, inheritedFrom: reference.inheritedFrom } : {}),
       });
     }
   }
@@ -523,7 +778,7 @@ export function collectFindings({
     || left.reference.localeCompare(right.reference)
     || left.doc.localeCompare(right.doc)
   ));
-  return { findings, stats, unresolved, commentAnchors };
+  return { findings, stats, unresolved, commentAnchors, bareOrphans };
 }
 
 // —— 锚点身份判据（ANCHOR_DRIFT，只对 docs/architecture/**） ———————————————————
@@ -1064,6 +1319,8 @@ const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--root', '--sy
 const SYMBOL_MODES = new Set(['count', 'strict']);
 const MAX_PRINTED = 300;
 const MAX_PRINTED_UNDECIDABLE = 500;
+/** `BARE_ORPHAN` 的逐条打印上限：作用域内全列，作用域外的历史取证页只抽样（数字仍在汇总行）。 */
+const MAX_PRINTED_ORPHAN_OUTSIDE = 40;
 
 export function parseArgs(argv) {
   const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, root: TOOL_ROOT, symbol: null, emit: false, write: false };
@@ -1099,7 +1356,11 @@ export function parseArgs(argv) {
 }
 
 function describe(finding) {
-  return `${finding.reason} ${finding.doc}:${finding.docLine} → ${finding.reference}（${finding.detail}；owner=${finding.owner}）`;
+  // 裸锚点（`:130`）报错时必须带上「它继承了谁」——否则读者看到 `→ app.ts:130` 会不知道这个路径是从哪来的。
+  const inherited = finding.inheritedFrom === undefined
+    ? ''
+    : `［裸锚点，继承同块 ${finding.inheritedFrom.reference}（文档第 ${finding.inheritedFrom.docLine} 行）］`;
+  return `${finding.reason} ${finding.doc}:${finding.docLine} → ${finding.reference}${inherited}（${finding.detail}；owner=${finding.owner}）`;
 }
 
 /**
@@ -1120,7 +1381,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.error(error.message);
     return 2;
   }
-  const { findings, stats, unresolved, commentAnchors } = collectFindings({ root: options.root, targets: options.scan });
+  const { findings, stats, unresolved, commentAnchors, bareOrphans } = collectFindings({ root: options.root, targets: options.scan });
   if (options.emit) {
     process.stdout.write(renderBaseline(findings));
     return 0;
@@ -1141,6 +1402,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     if (findings.length > printed.length) streams.log(`… 另有 ${findings.length - printed.length} 条未打印（清单同上格式）`);
   }
   printSummary(streams, { stats, unresolved, findings, fresh, covered, stale, baseline, strict: options.strict });
+  printBareOrphans(streams, bareOrphans);
   const drift = collectAnchorDrift({ root: options.root, targets: options.scan });
   const driftPartition = partitionDriftByBaseline(drift.findings);
   printDriftSummary(streams, { drift, partition: driftPartition });
@@ -1193,9 +1455,32 @@ function printSummary(streams, { stats, unresolved, findings, fresh, covered, st
   streams.log(`SCAN: 文档 ${stats.documents} 份；抽出「路径:行号」引用 ${stats.candidates} 条（解析成功 ${stats.resolved} 条、同名多文件无法唯一解析 ${unresolved.length} 条不计红${stats.deduped > 0 ? `、同文档重复 ${stats.deduped} 条已去重` : ''}）`);
   streams.log(`COUNT: BROKEN ${counts[BROKEN]} / OUT_OF_RANGE ${counts[OUT_OF_RANGE]} / SUSPECT ${counts[SUSPECT]} / ${NOT_SYMBOL_LINE} ${counts[NOT_SYMBOL_LINE]}（合计 ${findings.length} 条；另只计数不判红：区间首行为空行 ${stats.blankStart} 条、区间全是注释行 ${stats.commentOnly} 条）`);
   streams.log(`SYMBOL-LINE: 作用域 ${SYMBOL_LINE_SCOPE}** × 源码后缀——可判 ${stats.symbol.inScope} 条：落代码行 ${stats.symbol.code}、注释但非文档注释 ${stats.symbol.detached}、逐字引用注释文案 ${stats.symbol.cited}、落在文档注释里 ${stats.symbol.attached}（其中判红 ${counts[NOT_SYMBOL_LINE]} 条）；作用域外（历史证据页）同形状 ${stats.symbol.outside} 条只统计、不判红`);
+  const bare = stats.bare;
+  streams.log(`BARE: 裸锚点（只写 :N／:N-M、路径继承同块显式锚点）${bare.total} 条——继承到路径 ${bare.inherited} 条（链接 href ${bare.link} 条、同块 ${bare.inherited - bare.link} 条）、无主 ${bare.orphan} 条（${BARE_ORPHAN}，见下方逐条）`);
+  streams.log(`BARE-SCOPE: 参与判红的作用域 ${BARE_ANCHOR_SCOPE}**——进判据 ${bare.judged} 条（继承后与显式锚点同权：BROKEN／OUT_OF_RANGE／SUSPECT／${NOT_SYMBOL_LINE}／--strict 汇总都算它）；作用域外 ${bare.outside} 条只计数（同口径本会红 ${bare.outsideRed} 条，历史取证页不复判）、作用域内无主 ${bare.orphanInScope} 条`);
   streams.log(`BASELINE: ${baseline.path} 登记 ${baseline.entries.length} 条；本次命中 ${covered.length} 条、基线外新增 ${fresh.length} 条、陈旧 ${stale.length} 条`);
   if (strict) streams.log('MODE: --strict（只在新增加非零时 exit 1）');
   else streams.log('MODE: dry-run（只打印，不判退出码）');
+}
+
+/**
+ * `BARE_ORPHAN` 的逐条打印：文档、行号、原文片段、归属失败的原因。
+ * 作用域内全列（数量可控，也很可能是该补路径的）；作用域外的历史取证页只抽样，数字仍在 `BARE-SCOPE` 行。
+ */
+function printBareOrphans(streams, bareOrphans) {
+  if (bareOrphans.length === 0) return;
+  const inScope = bareOrphans.filter(item => item.inScope);
+  const outside = bareOrphans.filter(item => !item.inScope);
+  streams.log(`${BARE_ORPHAN}: ${bareOrphans.length} 条裸锚点归不到路径（同块内没有显式锚点，或同块显式锚点指向不同文件）——今天不判红，但留在这里可见，「删路径前缀」这条路不会静默消失：`);
+  for (const item of inScope) {
+    streams.log(`  · ${item.doc}:${item.docLine} ${item.raw}（${item.reason}）｜${item.text}`);
+  }
+  for (const item of outside.slice(0, MAX_PRINTED_ORPHAN_OUTSIDE)) {
+    streams.log(`  · ${item.doc}:${item.docLine} ${item.raw}（${item.reason}）｜${item.text}`);
+  }
+  if (outside.length > MAX_PRINTED_ORPHAN_OUTSIDE) {
+    streams.log(`  … 另有 ${outside.length - MAX_PRINTED_ORPHAN_OUTSIDE} 条作用域外未打印（抽样上限 ${MAX_PRINTED_ORPHAN_OUTSIDE} 条，作用域内的已全列）`);
+  }
 }
 
 /** ANCHOR_DRIFT 的读数行：作用域、可判/跳过规模、两类命中的条数、与常量的比对结果。 */
