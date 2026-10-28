@@ -120,29 +120,29 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 写面请求头不是页面各自拼的：`writeFamilyResource` 统一要求 `Idempotency-Key`，非 POST 或带 action 时还要 `If-Match`（`apps/admin/src/lib/admin-content-api.mjs:307-406`，头部校验落在其中 325-336 行）。两个审核 POST 不走 `writeFamilyResource`：它们复用下架页已有的 `buildIfMatch` / `normalizeIdempotencyKey`（`apps/admin/src/lib/post-takedown-api.mjs`），请求构造函数在 `apps/admin/src/lib/admin-moderation-queue.mjs:698`。
 
-### 2.2 视图侧调用点（33 处 / 30 个 operation —— 本表未纳入闸门）
+### 2.2 视图侧调用点（33 处 / 30 个 operation —— 本表已纳入闸门）
 
 | 页面（行数） | 调用点：operationId@行 | 计数 |
 | --- | --- | --- |
-| apps/admin/src/views/AccountsView.vue（649） | listAdminUsers@64、suspendUser@162 | 2 |
-| apps/admin/src/views/AdministratorsView.vue（622） | listAdministrators@74、listAdministratorScopes@146 | 2 |
-| apps/admin/src/views/AuditLogsView.vue（627） | listAuditLogs@72 | 1 |
-| apps/admin/src/views/SourcesView.vue（720） | listAdminSources@135、getAdminSource@165、createSourceDraft@253、editSourceDraft@268、publishSource@294、withdrawSource@320、listAuditEvents@328 | 7 |
-| apps/admin/src/views/KnowledgeAdminView.vue（760） | listAdminKnowledge@124、getAdminKnowledge@154、listAdminSources@206、createKnowledgeDraft@257、editKnowledgeDraft@272、publishKnowledge@298、withdrawKnowledge@324、listAuditEvents@332 | 8 |
-| apps/admin/src/views/CategoriesView.vue（507） | listAdminCategories@86、editCategory@171、listAuditEvents@179 | 3 |
+| apps/admin/src/views/AccountsView.vue（726） | listAdminUsers@70、suspendUser@226 | 2 |
+| apps/admin/src/views/AdministratorsView.vue（1326） | listAdministrators@104、listAdministratorScopes@179 | 2 |
+| apps/admin/src/views/AuditLogsView.vue（820） | listAuditLogs@72 | 1 |
+| apps/admin/src/views/SourcesView.vue（766） | listAdminSources@147、getAdminSource@177、createSourceDraft@276、editSourceDraft@296、publishSource@324、withdrawSource@352、listAuditEvents@360 | 7 |
+| apps/admin/src/views/KnowledgeAdminView.vue（809） | listAdminKnowledge@136、getAdminKnowledge@166、listAdminSources@218、createKnowledgeDraft@283、editKnowledgeDraft@303、publishKnowledge@331、withdrawKnowledge@359、listAuditEvents@367 | 8 |
+| apps/admin/src/views/CategoriesView.vue（549） | listAdminCategories@97、editCategory@199、listAuditEvents@207 | 3 |
 | apps/admin/src/views/PostTakedownView.vue（351） | hidePost@89 | 1 |
-| apps/admin/src/views/FlagsView.vue（595） | listFlags@63、setFlag@147 | 2 |
-| apps/admin/src/views/FlagAuditView.vue（546） | listFlagAuditEvents@68 | 1 |
-| apps/admin/src/views/AuditEventsView.vue（541） | listAuditEvents@66 | 1 |
-| apps/admin/src/views/JobsView.vue（664） | listAdminJobs@80、cancelAdminJob@159 | 2 |
-| apps/admin/src/views/ModerationQueueView.vue（888） | listAdminPosts@129、getAdminPost@149、approvePost/rejectPost@303（同一处 `submitPostReview`） | 3 |
-| 合计 | 30 个 operation（本表未纳入闸门；机器重算的入口读数是 46 个 operation 全部有入口、0 条无入口，见 §0 标记块） | 33 |
+| apps/admin/src/views/FlagsView.vue（599） | listFlags@63、setFlag@147 | 2 |
+| apps/admin/src/views/FlagAuditView.vue（560） | listFlagAuditEvents@68 | 1 |
+| apps/admin/src/views/AuditEventsView.vue（555） | listAuditEvents@66 | 1 |
+| apps/admin/src/views/JobsView.vue（798） | listAdminJobs@93、cancelAdminJob@230 | 2 |
+| apps/admin/src/views/ModerationQueueView.vue（900） | listAdminPosts@129、getAdminPost@149、approvePost/rejectPost@303（同一处 `submitPostReview`） | 3 |
+| 合计 | 30 个 operation（已纳入闸门；机器重算的入口读数是 46 个 operation 全部有入口、0 条无入口，见 §0 标记块） | 33 |
 
-`listAuditEvents` 被 4 处调用（`apps/admin/src/views/AuditEventsView.vue:66`、`apps/admin/src/views/SourcesView.vue:328`、`apps/admin/src/views/KnowledgeAdminView.vue:332`、`apps/admin/src/views/CategoriesView.vue:179`），`listAdminSources` 被 2 处调用（`apps/admin/src/views/SourcesView.vue:135`、`apps/admin/src/views/KnowledgeAdminView.vue:206`），而 `approvePost` 与 `rejectPost` 共用一处 `submitPostReview`（`apps/admin/src/views/ModerationQueueView.vue:303`）；所以 30 个 operation 对应 33 处物理调用点（+3 +1 −1；「处数」按 `<视图,行号>` 去重，不按 operation 去重）。
+`listAuditEvents` 被 4 处调用（`apps/admin/src/views/AuditEventsView.vue:66`、`apps/admin/src/views/SourcesView.vue:360`、`apps/admin/src/views/KnowledgeAdminView.vue:367`、`apps/admin/src/views/CategoriesView.vue:207`），`listAdminSources` 被 2 处调用（`apps/admin/src/views/SourcesView.vue:147`、`apps/admin/src/views/KnowledgeAdminView.vue:218`），而 `approvePost` 与 `rejectPost` 共用一处 `submitPostReview`（`apps/admin/src/views/ModerationQueueView.vue:303`）；所以 30 个 operation 对应 33 处物理调用点（+3 +1 −1；「处数」按 `<视图,行号>` 去重，不按 operation 去重）。这一行里的行号与上表同口径，由 `tests/unit/admin-console-capability-op-claims.test.mjs` 一起判。
 
 ### 2.3 覆盖差集
 
-46 条服务端 operation 中，UI 有入口的 **46** 条，**没有前端入口的 0 条**（`grantAdministratorScope`、`revokeAdministratorScope` 已由 GY-R68 接上，逐条见 §0 标记块与 §4）。本页旧版这里写「有入口 30 条、其余 12 条完全没有前端入口」，那组数字已被代码证伪：注册资料与限制资料两族各 6 条早已有 `RegistrationAdminView.vue`／`RestrictionAdminView.vue` 走完整调用链（见 §4）。§2.2 那张手表只覆盖 30 个 operation，是因为它按 2026-10-26 的视图快照逐行抄的，未纳入闸门。
+46 条服务端 operation 中，UI 有入口的 **46** 条，**没有前端入口的 0 条**（`grantAdministratorScope`、`revokeAdministratorScope` 已由 GY-R68 接上，逐条见 §0 标记块与 §4）。本页旧版这里写「有入口 30 条、其余 12 条完全没有前端入口」，那组数字已被代码证伪：注册资料与限制资料两族各 6 条早已有 `RegistrationAdminView.vue`／`RestrictionAdminView.vue` 走完整调用链（见 §4）。§2.2 那张手表只覆盖 30 个 operation，是因为它按 2026-10-26 的视图快照逐行抄的；2026-11-01 起该表已纳入闸门（`tests/unit/admin-console-capability-op-claims.test.mjs` 逐条判行号与行数读数），但闸门范围就是这 30 个 operation 的 34 条 claim、12 个页面行数与 7 条散文锚点：其余 16 个 op 的入口、本页 §3 的两张表（视图行数表 14/16 条读数仍是 2026-10 的旧数、与 §2.2 改对后的读数自相矛盾；link 按钮表的 link 侧 6 条锚点全部指错，其中 `SourcesView.vue:469` 指到空行，父行侧另有 3 条错）、§0 第 17 行（复用了同一个坏锚 `SourcesView.vue:469`）、§5「缺 scope」表的两处锚点（`SourcesView.vue:14` 指到注释行、`SourcesView.vue:366` 指到 `}`）、以及 §5 第 7 条里三处已知陈旧的 session 锚点（`AccountsView.vue`、`AdministratorsView.vue`、`JobsView.vue` 各一处，后续片再收）都不在闸门内——即本页至少还有 14 个陈旧的行数读数与 11 个指错的 `.vue` 锚点没有被机器看住。原因是结构性的，不是漏做：`tools/verify-doc-anchors.mjs` 的 `ANCHOR_EXTENSIONS` 与 `SYMBOL_SOURCE_EXTENSIONS` 都没有 `vue`，那个工具根本看不到 `.vue:行号` 这个形态，要覆盖只能另立闸门（就是上面这份用例）。**所以「§2.2 有闸门」不等于「这张现状页的行号/行数已经全部被机器看住了」**。
 
 ## 3 每个后台页面现在能做什么
 
