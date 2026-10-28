@@ -148,6 +148,8 @@ test('isolated packaging excludes private files and rejects release overrides/st
     'utils/location-region.js',
     // 地区转换资源装配（GY-I05 D2）：profile 页 require 它，漏打包会让标准包 MODULE_NOT_FOUND
     'utils/region-converter.js',
+    // 地区质心数据（GY-I05 U3／Refs #5）**不在这张固定清单里**：本仓不随分发该数据文件。
+    // 它的打包口径由「源码树存在 ⇔ 标准包里存在」双向断言把住，见下方 region-centroids 一致性断言。
     'utils/knowledge-api.js',
     // 社区域适配层（GY-I15）：社区三页依赖它
     'utils/community-api.js',
@@ -189,6 +191,17 @@ test('isolated packaging excludes private files and rejects release overrides/st
   ]) {
     assert.equal(existsSync(join(release, 'miniprogram', dep)), true, `打包缺失参考域依赖 ${dep}`);
   }
+  // —— 地区质心数据（GY-I05 U3／Refs #5）：本仓**不随分发**，所以不能钉一条固定清单 ——
+  // 钉的是「源码树里有 ⇔ 标准包里必须有」两端一致：
+  //   ① 有人把 miniprogram/data/region-centroids.js 放进来却没进允许清单 ⇒ 本条必红
+  //      （那正是今天会静默的场景：require 失败被吞成 null，页面照旧只报"资源尚未接入"，不报错）；
+  //   ② 清单登记了它但源码树里没有 ⇒ 本条同样红（prepare-wechat 复制阶段会 ENOENT）。
+  // 清单口径的唯一来源是 tools/lib/region-centroid-packaging.mjs。
+  assert.equal(
+    existsSync(join(release, 'miniprogram', 'data/region-centroids.js')),
+    existsSync(join(root, 'miniprogram/data/region-centroids.js')),
+    '地区质心数据必须与打包允许清单两端一致：源码树存在就必须打包，不存在就必须不打包',
+  );
   // Evaluate the real standard products, not a parallel local-dev copy or a mocked loader.
   const loader = `const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
     const dir=process.argv[1],mode=process.argv[2];global.Page=()=>{};global.App=()=>{};global.Component=()=>{};

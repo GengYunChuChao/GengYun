@@ -289,7 +289,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 点「收藏」发的请求 | 同一个 `POST /api/v1/favorites`（`createFavorite`，`Idempotency-Key` 必带）；成功后只显示「已收藏：<标题>」并**重新读取**收藏列表，不往本地列表里追加 | `miniprogram/pages/favorites/favorites.js:156-169` |
 | 取消收藏走哪个接口 | `DELETE /api/v1/favorites/{id}`，operationId **`deleteFavorite`**；必带 `If-Match: "<revision>"` 与 `Idempotency-Key`；缺 `If-Match` 服务端回 **428 `REVISION_REQUIRED`**（不是静默成功），`revision` 与当前行不符回 409 `REVISION_CONFLICT` | 取消按钮本身 `miniprogram/pages/favorites/favorites.wxml:107-113`（同一张卡上方的「查看资料」按钮**不是**收藏动作，故不计入本锚点）；处理 `miniprogram/pages/favorites/favorites.js:171-188`；HTTP 层 `miniprogram/utils/favorites-api.js:150-158`；428 的落点 `services/api/src/favorites/validate.ts:93-96` |
 | 失败态如何回滚 | 取消失败**不本地摘行、不假装成功**：先如实提示错误映射文案；`NOT_FOUND`／`REVISION_CONFLICT` 再回服务端重读一次（列表一律以服务端为准） | `miniprogram/pages/favorites/favorites.js:182-187` |
-| 目标当前不可用时 | `reference_state !== 'available'` 就不给「查看资料」入口（旧链接不因被收藏过而复活），取消收藏按钮仍可用 | `miniprogram/pages/favorites/favorites.js:108-110` |
+| 目标当前不可用时 | `reference_state !== 'available'` 就不给「查看资料」入口（旧链接不因被收藏过而复活），取消收藏按钮仍可用 | `miniprogram/pages/favorites/favorites.js:126-128` |
 
 #### 7.6.3 `pages/referencedetail` **不可收藏**（本数据源下不可为，不是没接线）
 
@@ -301,8 +301,55 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | ② 数据源 id 不是 UUID | 随包名录的记录主键形如 `gy-i03-hb-001`（离线副本本身：`miniprogram/data/records-2026.js:34`，由 `miniprogram/utils/reference.js:14` 装载）；页面按下式分流：`validId` 为真才走服务端，否则走随包副本 | `miniprogram/pages/referencedetail/referencedetail.js:115-120` |
 | ③ `validId` 就是 UUID 判定 | `validId` 是 UUID 正则判定，`gy-i03-hb-001` 恒假 ⇒ 该页永远落在 `bundled-offline` 这一支 | `miniprogram/utils/knowledge-api.js:224` |
 | ④ `/favorites` 要的 `revision` 只能来自服务端实体 | `POST /favorites` 的 `target_ref.revision` 在原页取自 `GET /knowledge/{id}` 的 `item.revision`，而那个响应里的 `id` 被客户端强制 UUID；随包记录既没有服务端 `id` 也没有服务端 `revision` | `miniprogram/utils/knowledge-api.js:49`；取用点 `miniprogram/pages/knowledgedetail/knowledgedetail.js:143` |
-| ⑤ 契约不认它「可用」 | 契约 `FavoriteTarget.id` 只约束 1..80 字符串（**不**设 UUID format），所以「发不出去」**不是**靠 400 挡住的：真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面**逐次派生**，随包记录在服务端不存在 ⇒ 恒 `unavailable` + 冻结闭集里的对象侧说明；收藏页据此不给「查看资料」 | `services/api/src/targetref/visibility.ts:140-158`；理由闭集 `services/api/src/targetref/visibility.ts:34-41`；落库侧也明说不收 UUID：`target_id` 是任意文本（只有 `id`／`owner_id` 是 uuid）`services/api/db/migrations/0018_favorites_history.sql:29-30`；页面侧 `miniprogram/pages/favorites/favorites.js:108-110` |
+| ⑤ 契约不认它「可用」 | 契约 `FavoriteTarget.id` 只约束 1..80 字符串（**不**设 UUID format），所以「发不出去」**不是**靠 400 挡住的：真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面**逐次派生**，随包记录在服务端不存在 ⇒ 恒 `unavailable` + 冻结闭集里的对象侧说明；收藏页据此不给「查看资料」 | `services/api/src/targetref/visibility.ts:140-158`；理由闭集 `services/api/src/targetref/visibility.ts:34-41`；落库侧也明说不收 UUID：`target_id` 是任意文本（只有 `id`／`owner_id` 是 uuid）`services/api/db/migrations/0018_favorites_history.sql:29-30`；页面侧 `miniprogram/pages/favorites/favorites.js:126-128` |
 
 **为什么写成「本数据源下不可为」而不是「未接线」**：未接线是「补一段代码就能通」；这里的缺口在**数据源身份**——随包名录不是服务端实体，而 `/favorites` 的语义是「保存一条**服务端可核验**的引用」。所以在**不换数据源**的前提下，它不随某个 PR 的进度自动消失：要么明确不做（从名录详情收藏，本页按这一支写），要么换数据源并连带改 #7 的验收口径（= 另一条路，代价与待裁定项见 `docs/architecture/acceptance-map.md` 的「已知缺口」；本片只登记，不裁定）。
 
 **结论**：P0 链路第 5 步「收藏／取消」的入口是**两个**——`pages/knowledgedetail` 的收藏按钮（主路径，从详情页发起）与 `pages/favorites` 的「可收藏的资料」（从收藏页发起，**同一个** `POST /favorites`）；`pages/reference` / `pages/referencedetail` 这一路不计入本链路（第 7.4 节），也不提供收藏；识别结果页的 `fav-entry` 属识别能力，同样不计入（第 7.6.1 节）。
+
+## 8 定位选地区＝本仓恒 `unavailable`（地区质心数据不随仓分发，Refs #5）
+
+**登记日期**：2026-10-28，基线 `f0b97e16`。本节登记的是**今天的事实**与「要用它必须交出什么文件」，不承诺时间、不写成「即将支持」、不写成「只差一份数据」。
+
+### 8.1 现象与链路
+
+| 项 | 事实 | 证据（path:line） |
+| --- | --- | --- |
+| 用户看到什么 | 在档案页点「使用定位选地区」并**授权成功**后，一律只得到一句「地区转换资源尚未接入，请手选浙江市县。」；页面**不退出编辑态**，三个 picker 照常可用，不发生任何落库 | 文案 `miniprogram/utils/location-region.js:34`；落点 `miniprogram/pages/profile/profile.js:214` |
+| 为什么 | 页面装配时调用 `regionConverterResource.build()`；`build()` 读 `miniprogram/data/region-centroids.js`，该文件**不在仓内** ⇒ `require` 异常被 `loadModule` 吞成 `null` ⇒ `inspect()` 判 `resource-missing` ⇒ `build()` 返回 `null` ⇒ 定位成功后 `typeof convert !== 'function'` 直接落 `unavailable` | 装配 `miniprogram/pages/profile/profile.js:204`；`build` `miniprogram/utils/region-converter.js:159`；`inspect` `miniprogram/utils/region-converter.js:82`；回落 `miniprogram/utils/location-region.js:82` |
+| 这不是代码缺陷，是数据缺口 | 仓内**零**质心／边界几何：`miniprogram/data/regions.js` 与 `packages/knowledge/catalog/regions-zhejiang.json` 只有 `code`／`name`／`parent_code`（102 条），`db/**`、`services/api/db/**`、`docs/**` 里没有真实坐标。⛔ 不得用行政区目录推导坐标，⛔ 不得内置自制边界 | 负向事实；既有登记 `docs/verification/gy-i05-d2-region-converter-20261017.md`、`docs/verification/platform-checklist.md` |
+| 成功分支是死代码 | `applyLocatedRegion`（预选市／县）与 `out_of_coverage` 只在注入合成转换器的测试里可达；生产不可达 | `miniprogram/pages/profile/profile.js:220-229` |
+| 第二条死路（如实登记） | 即使将来资源合规：若 `convert()` 返回**省级** `330000`，`applyLocatedRegion` 用「省根的直接子节点（11 市）」做 `findIndex`，恒 `-1` ⇒ 页面报「不在首版覆盖的浙江省」。所以「只判是否在浙江、返回 `330000`」这条设计在**当前页面**上表达不出来；数据要么给到市级、要么给到县级 | `miniprogram/pages/profile/profile.js:226-227` |
+
+### 8.2 要用它，需要交出什么文件
+
+放一份 `miniprogram/data/region-centroids.js`（CommonJS 模块）进源码树，`module.exports` 一个文档对象。**字段缺一项或类型不对一律不接线**（fail-closed：宁可回落手选，也不用来源不明／口径不符的数据）。
+
+| 字段 | 要求 | 说明 |
+| --- | --- | --- |
+| `schema` | 恒等 `'gengyun.knowledge.region-centroids.v1'` | 与 `region-converter.js` 的 `SCHEMA` 同一个常量 |
+| `state` | 恒等 `'available'` | 不声明即无法区分「不可用」与「写错了」 |
+| `crs` | 恒等 `'WGS84'` | **2026-10-28 起必填**（缺 ⇒ `crs`，填别的基准 ⇒ `crs:<值>`）。坐标系是数据口径本身：`wx.getLocation` 走 `type: 'wgs84'`，GCJ-02 数据偏移数百米，县级粒度虽无感，但校验层必须能证明口径 |
+| `source` | 非空字符串 | 写清出处（数据集名、版本、获取方式／URL） |
+| `license` | 非空字符串 | 写清该数据的**许可名与版本**；必须是允许再分发的公开许可。来源不明、内部资料、从地图截屏反推的数据一律不合规 |
+| `retrieved_at` | `YYYY-MM-DD` 形态的**真实日期** | 2026-10-28 起加严：`'todo'`、`'2026-13-01'`、`'2026-02-30'` 都判 `retrieved_at-format` |
+| `max_distance_km` | 有限数，`0 < x ≤ 500` | 最近质心阈值。超过 500 km 判 `max_distance_km-range`：本表只服务浙江（南北约 450 km），再大就等于省内外不分 |
+| `catalog_version` | 非空字符串，且必须**等于**目录版本 | 今天目录版本是 `mca-xzqh-2023`；不等 ⇒ `catalog-version` |
+| `points[]` | 非空数组，每项 `{ code, latitude, longitude }` | `code` 匹配 `^33[0-9]{4}$` 且**必须在目录里**、不重复；`latitude`／`longitude` 是有限数、十进制度、WGS84，落在 `[-90,90]`／`[-180,180]` |
+| 覆盖率 | 不要求覆盖全部县区 | 只给 11 个市级点也能通过校验并接线（页面本来就有「定位结果是市」这一支）；市级精度下省界附近会误判，阈值要相应放大但不超过上面的上限 |
+
+### 8.3 放进去就生效：打包清单已改成可执行断言
+
+「把文件放进 `miniprogram/data/` 就算接入」曾经是**错的**：标准包只复制允许清单里的文件，漏登记时 `require` 失败被吞成 `null`，页面照旧只报「资源尚未接入」，**不报错**。现在这条静默路径被两处断言挡住：
+
+| 项 | 口径 | 位置 |
+| --- | --- | --- |
+| 清单条目 | 由「源码树是否存在该文件」决定：存在才打包、不存在不打包 | `tools/prepare-wechat.mjs:168`；口径实现 `tools/lib/region-centroid-packaging.mjs` |
+| 双向断言 | **存在却不在清单** ⇒ 打包失败并点名该文件；**在清单却不存在** ⇒ 也失败（复制阶段会 ENOENT）；重复登记同样失败 | `tools/prepare-wechat.mjs:243` |
+| 负控制用例 | 真跑 `prepare-wechat` 三态：没有就不打包／有就逐字打包／**有却漏进清单 ⇒ 必红** | `tests/unit/region-centroid-packaging.test.mjs` |
+| 端到端固定 | 「源码树里有 ⇔ 标准包里必须有」两端一致 | `tests/local-debug.test.mjs:201-203` |
+
+**资源真落地时必须同批翻转的钉**（都带「已出现/已就位请更新」提示，变成红是设计）：`tests/unit/miniprogram-location-region.test.mjs` 的 U3 缺席断言与 `resource-missing` 期望、`tests/unit/miniprogram-profile.test.mjs` 的 `regionConverter === null`、`tests/integration/profile-ui-http.test.mjs` 的装配为 `null` 断言，以及 `docs/verification/` 下三页的 U3 登记。
+
+**不得怎么写**：不得把「定位选地区」写成已支持、计划内或「只差一份数据」；`docs/verification/` 任何证据页不得用**合成坐标**充当「地区覆盖」截图；本仓的 `miniprogram/data/region-centroids.js` 至今**不存在**，这不是笔误。
+
