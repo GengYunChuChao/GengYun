@@ -273,7 +273,7 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
   // 只有 ① 时本用例 **5/5 全绿**（唯一变红的是 `admin-audit-action-jobs-cancel.test.mjs` 的
   // `AUDIT_ACTIONS.length === 4`）。也就是说：只留 ① 的本文件**不能**阻止未授权扩值，
   // 那时它只配叫"一致性检查"。②补回后，"扩值"必须**显式**改这里 —— 仍然允许扩值（GY-R59 扩到四值、
-  // GY-R64 扩到七值、同轮的读面闭集片扩到八值、R68 扩到十值就是这么做的），但扩值变成一次有联动的动作，
+  // GY-R64 扩到七值、同轮的读面闭集片扩到八值、R68 扩到十值、R68-A01 扩到十一值就是这么做的），但扩值变成一次有联动的动作，
   // 而不是悄悄从两个文件之间溜过去。
   assert.deepEqual(runtime, contractEnum,
     '运行时 AUDIT_ACTIONS ≠ 契约 `?action=` 的 enum：值或顺序不一致，读面会「能看见但不能筛」');
@@ -291,6 +291,7 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
       'AUDIT_ACTION_POST_HIDE',
       'AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE',
       'AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE',
+      'AUDIT_ACTION_CATEGORY_UPDATE',
     ],
     'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这些值是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '必须与 `admin_audit_events` 的写入点一一对应。第 4 项 `job.cancel` 由 GY-R59 追加：'
@@ -304,18 +305,20 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
       + '第 9-10 项 `admin_account.disable` / `admin_account.enable` 由 R68（迁移 0048）追加：'
       + '0048_admin_account_disable.sql 在事务内写这两个 action，闭集漏登记同样会让'
       + '`?action=admin_account.disable` 与 `?entity=admin_account` 恒 400。'
+      + '第 11 项 `category.update` 由 GY-R68-A01（迁移 0049 的 `record_admin_category_update`）追加：'
       + '多一个成员就必须同 PR 改契约 enum、库内写入点与文档');
   assert.deepEqual(runtime,
     ['account.suspend', 'account.restore', 'set_flag', 'job.cancel',
       'admin_scope.grant', 'admin_scope.revoke', 'admin_scope.deny', 'post.hide',
-      'admin_account.disable', 'admin_account.enable'],
+      'admin_account.disable', 'admin_account.enable', 'category.update'],
     'AUDIT_ACTIONS 的**取值**变了：这些字符串就是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '改名等于让历史审计行的 action 列与查询参数对不上。`job.cancel` 来自 0043 的库内写入点'
       + '（`record_admin_job_cancel_audit`，迁移 `0043_admin_job_cancel_audit.sql:174`）；'
       + '`admin_scope.*` 三项来自 0041（grant/revoke）与 0046（deny）；'
       + '`post.hide` 来自 0047（`record_admin_post_hide_audit`，迁移 `0047_admin_post_hide_audit.sql:192`）；'
       + '`admin_account.disable` / `admin_account.enable` 来自 0048（`disable_admin_account` /'
-      + '`enable_admin_account`，迁移 `0048_admin_account_disable.sql`）');
+      + '`enable_admin_account`，迁移 `0048_admin_account_disable.sql`）；`category.update` 来自 0049'
+      + '（`record_admin_category_update`，迁移 `0049_admin_categories.sql`）');
   // 无重复：重复值会让 `?action=` 的合法性判断与顺序断言同时失真。
   assert.equal(new Set(runtime).size, runtime.length, `AUDIT_ACTIONS 有重复值：${runtime.join(', ')}`);
   // 历史锚点：`job.cancel` 必须仍在闭集内 —— 0043 的 `record_admin_job_cancel_audit` 在写它，

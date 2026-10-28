@@ -199,6 +199,24 @@ export const ALLOWED_RETRYABLE = [
       + '`isTransientDatabaseError`（db/pool.ts）只放行 08xxx/53xxx/57P0x/40001/40P01，'
       + '42501/3D000/28P01/42P01/42883 与无法归类一律 false（即 503 的 retryable 分档与其余域一致）。',
   },
+  // —— GY-R68-A01（迁移 0049 分类目录落库）按 R31 扩域同一口径登记 ——
+  // 本片在 `admin/ops/categories-pg.ts` 新增分类目录读写端口，catch 通道里照抄既有分档：
+  // 57014/55P03 ⇒ 预折成 `PROVIDER_TIMEOUT`（`retryable: true`，有具名 SQLSTATE 判据，不是兜底）；
+  // G0001/G0002/G0010 ⇒ `retryable: false`；其余「无法归类」仍交给全仓共享判据 `isTransientDatabaseError`。
+  // owner 记为 R31：受控范围（`admin/ops/**`）与分档口径都由 R31 扩域那一轮定义，本片只是沿用、没有自造第二套。
+  {
+    file: 'services/api/src/admin/ops/categories-pg.ts',
+    function: 'foldCategoryDatabaseError',
+    retryable: 'isTransientDatabaseError(error)',
+    message: '后台分类库暂不可用',
+    owner: 'R31',
+    reason:
+      '**有判据**（合法放宽）：后台分类目录域（GY-R68-A01、迁移 0049）数据库异常折叠，与 content-pg.ts 的 '
+      + '`foldDatabaseError` 逐条同口径 —— 57014/55P03 已在上方折成 `PROVIDER_TIMEOUT`；G0001/G0002/G0010 是库层'
+      + '拒绝审计写入，落 `retryable: false`；此处 `isTransientDatabaseError`（db/pool.ts:77）只放行 08xxx/53xxx/'
+      + '57P0x/40001/40P01，42501/3D000/28P01/42P01/42883 与无法归类一律 false。⛔ 不用 `set_flag` 那类「同 scope '
+      + '的现成动作」冒充分类编辑，也不把这条兜底改成恒 true。',
+  },
 ];
 
 /** 条目声明的判据类别（缺省只对 `PROVIDER_UNAVAILABLE` 站点生效）。 */

@@ -9693,7 +9693,7 @@
       "get": {
         "operationId": "listAdminCategories",
         "summary": "列出后台分类字典项及其显示名与停用状态",
-        "description": "门 sources:read。real 模式下本 operation 由后台外壳恒拒绝：未接线时返回 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回空页（空页会被读成「平台没有分类」，那是伪造读数），⛔ 也不返回 404。判定顺序：鉴权/权限（401/403）⇒ 接线（503）⇒ 入参（limit 越界 ⇒ 400 INVALID_REQUEST；cursor 非法、已过期、或不属于当前查询 ⇒ 400 INVALID_CURSOR，⛔ 不静默回第一页）。成功 200 为游标页（items + next_cursor，不返回总数），带 Cache-Control: no-store；列表 ⛔ 不承诺 ETag。",
+        "description": "门 sources:read。真实存储已接 PostgreSQL（迁移 0049）：execution_mode=real 且有连接池时读 public.admin_categories（按 id 稳定排序、以 id 为游标键），返回 200 CategoryPageEnvelope —— 每页都是本次真读库的结果（⛔ 不缓存、⛔ 不返回空页：空页会被读成「平台没有分类」，那是伪造读数）。没有连接池（或非 real 模式）时返回 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不静默降级成内存或空数组，⛔ 也不返回 404。判定顺序：鉴权／权限（401／403）⇒ 接线（503）⇒ 入参（limit 越界 ⇒ 400 INVALID_REQUEST；cursor 非法、已过期、或不属于当前查询 ⇒ 400 INVALID_CURSOR，⛔ 不静默回第一页）。成功 200 为游标页（items + next_cursor，不返回总数），带 Cache-Control: no-store；列表 ⛔ 不承诺 ETag。⚠ 目录今天有**两份真相**（本片刻意披露，不是静默缺陷）：本表 public.admin_categories 是后台唯一真源，而用户面 GET /catalog/crops|species 仍读 public.crops / public.species，本片**不双写** ⇒ 后台改名或停用不会立刻反映到 App；两份一致化由后续片收敛，当期漂移清单与盘点 SQL 见 services/api/src/admin/ops/categories-pg.ts 文件头「两份真相」一节。",
         "tags": [
           "admin"
         ],
@@ -9775,7 +9775,7 @@
       "patch": {
         "operationId": "editCategory",
         "summary": "修改一个后台分类的显示与停用状态",
-        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`/`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。路径 id 是分类的不透明字符串标识（⛔ 不是 uuid），越界 ⇒ 400；body 是完整的 CategoryInput（name、description、active 全必填，⛔ 没有 type，⛔ 没有删除语义），不合法 ⇒ 400。本 operation 仅维护首版已规划字典的显示与停用；新增覆盖或种类必须另行来源与评估，⛔ 不由编辑名称扩大识别承诺。分类不存在 ⇒ 404 NOT_FOUND。未接线时本 operation 由后台外壳恒拒绝，返回 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。成功 200 并带强 ETag，同时写一条 category.update 审计（reasonCode=category_updated；契约 TargetRef 闭集里没有分类，故合同口径该字段为 null，标识落在内部记录）。",
+        "description": "门 sources:write；Idempotency-Key 必填，长度上限见该参数的 `minLength`／`maxLength`（缺失或越界 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT）；If-Match 必填且须等于当前 head 修订（缺失 ⇒ 428 REVISION_REQUIRED，格式非法 ⇒ 400，不匹配 ⇒ 409 REVISION_CONFLICT）。路径 id 是分类的不透明字符串标识（⛔ 不是 uuid），越界 ⇒ 400；body 是完整的 CategoryInput（name、description、active 全必填，⛔ 没有 type，⛔ 没有删除语义），不合法 ⇒ 400。本 operation 仅维护首版已规划字典的显示与停用；新增覆盖或种类必须另行来源与评估，⛔ 不由编辑名称扩大识别承诺。真实存储已接 PostgreSQL（迁移 0049）：execution_mode=real 且有连接池时，按 If-Match 里的 revision 对 public.admin_categories 做单行 CAS 更新（UPDATE … WHERE id = $1 AND revision = $2），revision 递增 1 后返回 200 CategoryEnvelope（带 ETag），并在同一事务内由窄函数 public.record_admin_category_update 写一条 admin_audit_events（action=category.update、scope=sources:write、result=accepted）；审计写不进去整笔回滚（fail-closed）。分类不存在 ⇒ 404 NOT_FOUND；revision 与库内当前值不符 ⇒ 409 REVISION_CONFLICT（If-Match 用 428／版本守卫用 409 的既有口径不变）。没有连接池（或非 real 模式）时返回 503 PROVIDER_UNAVAILABLE（retryable:false）：⛔ 不返回成功封套、⛔ 不落内存、⛔ 不占幂等位。⚠ 同一份披露：写入只落 public.admin_categories（后台唯一真源），用户面 GET /catalog/crops|species 仍读 public.crops / public.species，本片**不双写** ⇒ 后台改名或停用不会立刻反映到 App。另注意本操作是**整份替换**（name／description／active 三个字段都必填）：回填的 description 是「（未编撰：…）」占位串，只改名称时若把占位串原样提交，等于把说明覆盖成占位文本；两份一致化由后续片收敛。",
         "tags": [
           "admin"
         ],
@@ -11154,7 +11154,7 @@
                 "admin_scope.deny",
                 "post.hide",
                 "admin_account.disable",
-                "admin_account.enable"
+                "admin_account.enable", "category.update"
               ]
             }
           },
@@ -18599,7 +18599,7 @@
       },
       "AuditAction": {
         "type": "string",
-        "description": "审计 `action` 的**完整闭集（26 值）**，不是自由字符串。前 10 项 = 库内审计台账 `public.admin_audit_events` 的唯一取值域，逐值同序抄自 `services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS`（`GET /admin/audit-logs` 的 `?action=` 参数 enum 与它双向相等）；后 16 项 = 内存审计账本（`services/api/src/admin/audit.ts` 的 `createAuditLog`，`GET /admin/audit-events` 与 `GET /admin/flag-audit-events` 的行源）自己产生的域内动作码：内容域四条族 `<noun>.edit|publish|withdraw`（noun ∈ source/knowledge/registration/restriction）与运营域 `category.update` / `flag.set` / `post.approve` / `post.reject`。两套词表不可合并：库内只有 10 个写入动作，内存账本按域记更细的码（同一件事在库内叫 `set_flag`、在内存账本里叫 `flag.set`），所以「审计事件」这一个 schema 覆盖的取值域是两者的**并集**；只列 10 项会让 `store.audit.append` 的既有写入路径当场 500（`services/api/src/admin/audit.ts:100` 用本 schema 校验每一次追加）。闭集由 `tests/unit/audit-action-literal-coverage.test.mjs` 从源码派生后与契约双向对拍：增、删、改任一值都会红。",
+        "description": "审计 `action` 的**完整闭集（26 值）**，不是自由字符串。前 11 项 = 库内审计台账 `public.admin_audit_events` 的唯一取值域，逐值同序抄自 `services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS`（`GET /admin/audit-logs` 的 `?action=` 参数 enum 与它双向相等）；后 15 项 = 内存审计账本（`services/api/src/admin/audit.ts` 的 `createAuditLog`，`GET /admin/audit-events` 与 `GET /admin/flag-audit-events` 的行源）自己产生的域内动作码：内容域四条族 `<noun>.edit|publish|withdraw`（noun ∈ source/knowledge/registration/restriction）与运营域 `flag.set` / `post.approve` / `post.reject`（`category.update` 自 GY-R68-A01 起改由迁移 `0049` 的窄函数落库，已成库内第 11 值）。两套词表不可合并：库内只有 11 个写入动作，内存账本按域记更细的码（同一件事在库内叫 `set_flag`、在内存账本里叫 `flag.set`），所以「审计事件」这一个 schema 覆盖的取值域是两者的**并集**；只列 10 项会让 `store.audit.append` 的既有写入路径当场 500（`services/api/src/admin/audit.ts:100` 用本 schema 校验每一次追加）。闭集由 `tests/unit/audit-action-literal-coverage.test.mjs` 从源码派生后与契约双向对拍：增、删、改任一值都会红。",
         "enum": [
           "account.suspend",
           "account.restore",
@@ -18611,6 +18611,7 @@
           "post.hide",
           "admin_account.disable",
           "admin_account.enable",
+          "category.update",
           "source.edit",
           "source.publish",
           "source.withdraw",
@@ -18623,7 +18624,6 @@
           "restriction.edit",
           "restriction.publish",
           "restriction.withdraw",
-          "category.update",
           "flag.set",
           "post.approve",
           "post.reject"
