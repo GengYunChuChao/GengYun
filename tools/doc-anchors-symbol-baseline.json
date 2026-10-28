@@ -64,16 +64,6 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-10 行（「/**…」），块后第一条非空行是第 12 行的「/**」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/admin/audit/catalog.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/audit/catalog.ts:41-46",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 29,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-182 行（「/**…」），块后第一条非空行是第 184 行的「/** 账号停用（迁移 0017 `public.suspend_account`）。 */」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
       "path": "services/api/src/jobs/sources.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
@@ -82,46 +72,6 @@
       "docLine": 79,
       "kind": "file-header",
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-33 行（「/**…」），块后第一条非空行是第 34 行的「import { ApiError } from '../errors.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/admin/audit/catalog.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/audit/catalog.ts:9-18",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 101,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-182 行（「/**…」），块后第一条非空行是第 184 行的「/** 账号停用（迁移 0017 `public.suspend_account`）。 */」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/admin/audit/catalog.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/audit/catalog.ts:57-68",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 102,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-182 行（「/**…」），块后第一条非空行是第 184 行的「/** 账号停用（迁移 0017 `public.suspend_account`）。 */」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:23-28",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 104,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-44 行（「/**…」），块后第一条非空行是第 45 行的「import type { PoolClient } from 'pg';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:30-33",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 105,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-44 行（「/**…」），块后第一条非空行是第 45 行的「import type { PoolClient } from 'pg';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
       "path": "services/api/src/admin/ops/content-pg.ts",
@@ -162,16 +112,6 @@
       "docLine": 135,
       "kind": "file-header",
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-44 行（「/**…」），块后第一条非空行是第 45 行的「import type { PoolClient } from 'pg';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "tests/integration/admin-jobs-pg.mjs",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "repo",
-      "reference": "tests/integration/admin-jobs-pg.mjs:1073",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 182,
-      "kind": "inline",
-      "note": "【行内单行注释】文档引的是第 1073 行这条`//` 行注释（「//     放在 [F] 之后：本臂会追加两行作业，[F] 的「5 条全量」断言因此不受影响。」），块后第一条非空行是第 1074 行的「await jobsTargetRevisionArm(app, fullAdmin.token, user.id);」，不是声明行——引用的是这条注释的自述，没有声明行可指。"
     },
     {
       "path": "services/api/src/routes/admin-auth.ts",
