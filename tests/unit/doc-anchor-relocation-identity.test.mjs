@@ -108,27 +108,40 @@
  * `REGISTRY_ENTRY_SHAPE` 上方说明）：极短符号（`"e"`、`"id"`）几乎任何代码行都能命中，判别力实际落在
  * `reason` 与「登记条目随 diff 进 review」上，不落在闸门自己的判断里。
  *
- * CI 历史可用性：`actions/checkout` 默认 `fetch-depth: 1`，`.github/workflows/engineering-shell.yml`
- * 的 `unit` job 与 `docs` job 都**没有**带 `fetch-depth`（全仓只有 `local-wechat.yml` 带
- * `fetch-depth: 0`），浅克隆下 `git merge-base` 拿不到 base。本用例不放任自己在 CI 上变成空转：
- *   - CI 环境（`CI` 或 `GITHUB_ACTIONS==='true'`）且取不到 base ⇒ **机会性自愈**：
- *     `git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main`（公开仓匿名可 fetch；
- *     25 秒超时；失败不抛到用例外面），仍取不到再退一步 `git fetch --deepen=100 origin`
+ * CI 历史可用性：`actions/checkout` 默认 `fetch-depth: 1`，浅克隆下 `git merge-base` 拿不到 base，
+ * 这条闸门的默认结局就是 exit 0 + SKIP —— 也就是「假绿」。现在是**双层**保障：
+ *   - 第一层：`.github/workflows/engineering-shell.yml` 的 `unit` job 显式 `fetch-depth: 0`
+ *     （`docs` job 不跑本用例，仍不带；`local-wechat.yml` 另有自己的 `fetch-depth: 0`）；
+ *   - 第二层（纵深）：即便拿不到历史也不放任自己空转 —— CI 环境（`CI` 或
+ *     `GITHUB_ACTIONS==='true'`）且取不到 base ⇒ **机会性自愈**：
+ *     `git fetch --depth=50 origin +refs/heads/main:refs/remotes/origin/main`（公开仓匿名可 fetch；
+ *     30 秒超时；失败不抛到用例外面），仍取不到再退一步 `git fetch --deepen=500 origin`
  *     （Action 的浅克隆会把 HEAD 的历史也截断，只加深 main 一侧往往仍无共同祖先）；
  *     自愈成功后**重新取 base 并真跑判定**，不许再 SKIP。
- *   - 只有 fetch 本身因为**网络/认证**失败（断网、DNS 不通、remote 不存在、仓库不可达）才允许 SKIP，
- *     并且文案必须写「网络取 base 失败，本用例未执行」+ 每招的尝试记录；`couldn't find remote ref`
- *     这类「远端没有那个 ref」不算网络故障，会继续试下一招（`--deepen=100`）。非「无历史」类错误
+ *   - 只有 fetch **每一招都失败**（断网、DNS 不通、**超时**、remote 不存在、仓库不可达）才允许 SKIP，
+ *     文案必须写「网络取 base 失败，本用例未执行」；若有任一招 fetch 跑通、只是 merge-base 仍失败，
+ *     文案必须换成「自愈 fetch 成功但取不到共同祖先」—— 第二轮审查抓到的毛病正是这里**说谎**：
+ *     第一版只拿 `NETWORK_ERROR` 正则去判 `firstLine(stderr)`，而超时的 `stderr` 是**空**（`code` 是
+ *     `ETIMEDOUT`、`signal` 是 `SIGTERM`），于是超时被归进 `no-base`、SKIP 文案还写「fetch 成功」。
+ *     现在分类先看 `code`/`signal`、文案按 `anyFetchSucceeded` 分支，两种都把每招的实际错误
+ *     （`code`/`signal`/`stderr` 摘要）放进 `t.diagnostic`。`couldn't find remote ref` 这类
+ *     「远端没有那个 ref」不算网络故障，会继续试下一招（`--deepen=500`）。非「无历史」类错误
  *     （权限、仓库损坏）一律 rethrow。
  *   - 非 CI 的浅克隆不做自愈，显式 `t.skip` 并打印原因（沿用 `tests/ui-adaptive.test.mjs:303-324`
  *     的既有约定：绝不静默 return 让 node:test 记成 PASS）。
  *   - 下面那批「变异夹具」用例不依赖本仓库历史，任何环境下都会真跑 —— 即使主用例因浅克隆 SKIP，
  *     这条闸门的判别逻辑仍然被现场验证过。
+ *   - 自愈链路本身有一条**永久用例**钉住（文件末尾「CI 自愈：真浅克隆 + CI=true ⇒ 真的判了（不是 SKIP）」）：
+ *     现场用 `git clone --depth=1 file:///…` 造一个真浅克隆，其中三个 fallback 全断（= CI 假绿的
+ *     形状），断言「关掉自愈就必须 SKIP、开着自愈就必须判出红」—— 否则这条自愈随时可能悄悄烂掉。
+ *   - 失败分类与 SKIP 文案另有**永久用例**（「fetch 超时必须归 network（不是 no-base），且 SKIP 文案
+ *     不许谎称「fetch 成功」」）：注入伪 `ETIMEDOUT`／伪「远端没有该 ref」／伪「跑通但无共同祖先」，
+ *     钉住「超时算网络」「文案按实际结果分支」「半失败两句都说」，**不必真等 30 秒超时**。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -136,8 +149,8 @@ import { tmpdir } from 'node:os';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REGISTRY_RELATIVE = 'tests/unit/doc-anchor-relocations.json';
 const MAX_BUFFER = 512 * 1024 * 1024;
-/** 自愈 fetch 的超时：CI 里卡住的网络不该把整个 unit job 拖死。 */
-const FETCH_TIMEOUT_MS = 25_000;
+/** 自愈 fetch 的超时：CI 里卡住的网络不该把整个 unit job 拖死（两次 fetch 各 30 秒是上限）。 */
+const FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * 只读 git（夹具场景下也会用来建提交），默认在仓库根跑。
@@ -394,40 +407,153 @@ function isShallowRepository(root) {
 }
 
 /**
- * 机会性自愈：浅克隆里把 base 拉回来。
- * 先按审查方指定的 refspec 补 `origin/main`；这一招失败（例如远端根本没有 `refs/heads/main`）不当作
- * 网络故障，继续下一招 `--deepen=100`（Actions 的 `fetch-depth: 1` 把 HEAD 的历史也截断了，
- * 只补 main 一侧两端仍不相连，加深才能让共同祖先恢复）。
- * 返回 `{ resolved, failure }`：`failure === 'network'` 表示**确实**有 fetch 因为网络/认证失败
- * （唯一允许 SKIP 的情形）；`failure === 'no-base'` 表示 fetch 都跑过了但仍无共同祖先。
+ * 一次 fetch 失败的分类。**超时也是「没取到」，不许被当成 `no-base`**：
+ * `execFileSync` 超时抛的是 `code: 'ETIMEDOUT'` / `signal: 'SIGTERM'`，而且 `stderr === ''` ——
+ * 错误文本里根本没有 `timed out` 这几个字。第一版只拿 `NETWORK_ERROR` 正则去判 `firstLine(stderr)`
+ * 于是超时落进 `no-base`，SKIP 文案还写成「fetch 成功」，把真实原因整个丢了（审查方实测复现）。
+ * 所以：先看 `code`/`signal`，再看文本；`stderr` 为空时退回 `error.message`（`spawnSync git ETIMEDOUT`）。
  */
-function selfHealBase(root, attempts) {
+function classifyFetchFailure(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  const signal = typeof error?.signal === 'string' ? error.signal : '';
+  const stderr = String(error?.stderr ?? '');
+  const fallback = String(error?.message ?? '');
+  const source = stderr.trim() === '' ? fallback : stderr;
+  const detail = firstLine(source) || '(stderr 与 message 皆空)';
+  const timedOut = code === 'ETIMEDOUT' || signal !== '';
+  return {
+    code,
+    signal,
+    detail,
+    stderrSummary: summarizeStderr(stderr, fallback),
+    timedOut,
+    network: timedOut || NETWORK_ERROR.test(source),
+  };
+}
+
+/** stderr 摘要：多行压成一行、截到 240 字；**空 stderr 要显式写「空」**，不能留一个洞。 */
+function summarizeStderr(stderr, fallback) {
+  const text = String(stderr ?? '').trim();
+  if (text === '') return `(空；error.message=${firstLine(String(fallback ?? '')) || '—'})`;
+  const flat = text.split('\n').map((line) => line.trim()).filter((line) => line !== '').join(' / ');
+  return flat.length > 240 ? `${flat.slice(0, 240)}…` : flat;
+}
+
+/**
+ * 机会性自愈：浅克隆里把 base 拉回来。
+ * 先按审查方指定的 refspec 补 `origin/main`（`--depth=50`：`fetch-depth: 1` 的克隆里连 feature 侧
+ * 也只有 1 个提交，50 足够覆盖绝大多数 PR 的 base）；这一招失败（例如远端根本没有 `refs/heads/main`）
+ * 不当作网络故障，继续下一招 `--deepen=500`（Actions 的 `fetch-depth: 1` 把 HEAD 的历史也截断了，
+ * 只补 main 一侧两端仍不相连，加深才能让共同祖先恢复）。
+ *
+ * 返回 `{ resolved, failure, failures, anyFetchSucceeded, timedOut }`：
+ *   · `failure === 'network'`：**至少一招** fetch 因为网络/认证/超时失败；
+ *   · `failure === 'no-base'`：每一招 fetch 都跑通了，但仍无共同祖先；
+ *   · `failures`：每一招的**实际**错误（`code`/`signal`/`stderr` 摘要），供 `t.diagnostic` 原样带出；
+ *   · `anyFetchSucceeded`：是否有某一招 fetch 真的 exit 0 —— SKIP 文案按它分支，**不许再说谎**。
+ *
+ * `run` / `resolve` 只为永久用例注入伪错误对象（否则验一条超时分支要真等 30 秒）；
+ * 生产路径不传，走 `git` 与 `resolveBase`。
+ */
+function selfHealBase(root, attempts, { run = git, resolve = resolveBase } = {}) {
   const steps = [
     {
-      label: 'git fetch --depth=1 origin +refs/heads/main:refs/remotes/origin/main',
-      args: ['fetch', '--depth=1', 'origin', '+refs/heads/main:refs/remotes/origin/main'],
+      label: 'git fetch --depth=50 origin +refs/heads/main:refs/remotes/origin/main',
+      args: ['fetch', '--depth=50', 'origin', '+refs/heads/main:refs/remotes/origin/main'],
     },
-    { label: 'git fetch --deepen=100 origin', args: ['fetch', '--deepen=100', 'origin'] },
+    { label: 'git fetch --deepen=500 origin', args: ['fetch', '--deepen=500', 'origin'] },
   ];
+  const failures = [];
   let networkError = null;
+  let anyFetchSucceeded = false;
   for (const step of steps) {
     try {
-      git(step.args, { cwd: root, timeout: FETCH_TIMEOUT_MS });
+      run(step.args, { cwd: root, timeout: FETCH_TIMEOUT_MS });
+      anyFetchSucceeded = true;
     } catch (error) {
-      const detail = firstLine(error.stderr ?? error.message);
-      attempts.push(`${step.label} → ${detail}`);
-      if (NETWORK_ERROR.test(detail) && networkError === null) networkError = `${step.label} → ${detail}`;
+      const failure = classifyFetchFailure(error);
+      const kind = failure.timedOut ? '超时' : (failure.network ? '网络失败' : '失败');
+      const text = `${step.label} → ${kind}（code=${failure.code || '—'} signal=${failure.signal || '—'}，`
+        + `超时上限 ${FETCH_TIMEOUT_MS}ms）：${failure.detail}`;
+      failures.push({ step: step.label, ...failure, text });
+      attempts.push(text);
+      if (failure.network && networkError === null) networkError = text;
       continue;
     }
-    const retried = resolveBase(root);
+    const retried = resolve(root);
     attempts.push(...retried.attempts);
     if (retried.sha !== null) {
       attempts.push(`${step.label} → 成功，base = ${retried.sha.slice(0, 12)}（${retried.label}）`);
-      return { resolved: retried, failure: null };
+      return { resolved: retried, failure: null, failures, anyFetchSucceeded, timedOut: false };
     }
     attempts.push(`${step.label} → 成功，但 merge-base 仍取不到`);
   }
-  return { resolved: null, failure: networkError === null ? 'no-base' : 'network', networkError };
+  return {
+    resolved: null,
+    failure: networkError === null ? 'no-base' : 'network',
+    networkError,
+    failures,
+    anyFetchSucceeded,
+    timedOut: failures.some((failure) => failure.timedOut),
+  };
+}
+
+/**
+ * 自愈失败后的**裁决**（`{ action: 'skip' | 'throw', message }`）。
+ *
+ * 文案必须按**实际结果**分支（第一版在这里说谎：fetch 超时／全失败也照样写「fetch 成功」）：
+ *   · 每一招 fetch 都失败 ⇒ 「网络取 base 失败」（拿不到 origin/main，不是判定通过）；
+ *   · 有 fetch 跑通、但 merge-base 仍失败 ⇒ 「自愈 fetch 成功但取不到共同祖先」；
+ *     浅克隆（边界没连通）可以 SKIP，完整仓库却是逻辑坏了 ⇒ 硬失败。
+ * 抽成函数是为了让永久用例直接钉文案：超时**不许**走到「fetch 成功」那一支。
+ */
+function selfHealDeadEnd(heal, shallow) {
+  const tail = '每一招的实际错误见 t.diagnostic';
+  if (!heal.anyFetchSucceeded) {
+    const kinds = heal.failures.map((failure) => (failure.timedOut ? '超时' : (failure.network ? '网络' : '其它')));
+    return {
+      action: 'skip',
+      message: 'SKIP: 网络取 base 失败，本用例未执行 —— CI 里 '
+        + `${heal.failures.length} 招 git fetch 全部失败（${kinds.join('/') || '未知'}；`
+        + '失败即拿不到 origin/main），这不是判定通过。'
+        + tail,
+    };
+  }
+  const partial = heal.failure === 'network'
+    ? `${heal.failures.length} 招 fetch 报错、另有一招跑通，浅克隆边界仍未连通`
+    : '浅克隆边界未连通（fetch 跑通了，但 merge-base 仍取不到共同祖先）';
+  if (shallow) {
+    return {
+      action: 'skip',
+      message: `SKIP: 自愈 fetch 成功但取不到共同祖先，本用例未执行 —— ${partial}。${tail}`,
+    };
+  }
+  return {
+    action: 'throw',
+    message: '取不到 base，且仓库**不是**浅克隆（完整仓库却没有 origin/main、upstream/main、HEAD~1）—— '
+      + `自愈 fetch 成功但取不到共同祖先，本用例无法判定，也不允许静默通过（${partial}）。${tail}`,
+  };
+}
+
+/** 自愈失败的诊断载荷：每一招的 `code`/`signal`/`stderr` 摘要 ＋ 全部尝试记录，一行都不许丢。 */
+function fetchDiagnosticOf(heal, attempts, shallow) {
+  const lines = [
+    `CI 自愈 fetch 明细：failure=${heal.failure ?? '—'} anyFetchSucceeded=${heal.anyFetchSucceeded}`
+      + ` timedOut=${heal.timedOut} shallow=${shallow} 超时上限=${FETCH_TIMEOUT_MS}ms`,
+  ];
+  if (heal.failures.length === 0) {
+    lines.push('  · （没有任何一招 fetch 报错：全部 exit 0，只是 merge-base 仍取不到）');
+  }
+  for (const failure of heal.failures) {
+    lines.push(`  · ${failure.step}`);
+    lines.push(`      分类=${failure.timedOut ? '超时' : (failure.network ? '网络失败' : '失败')}`
+      + ` code=${failure.code || '—'} signal=${failure.signal || '—'}`);
+    lines.push(`      error=${failure.detail}`);
+    lines.push(`      stderr=${failure.stderrSummary}`);
+  }
+  lines.push(`尝试记录（${attempts.length} 条）：`);
+  for (const attempt of attempts) lines.push(`  · ${attempt}`);
+  return lines.join('\n');
 }
 
 /** 登记表：`tests/unit/doc-anchor-relocations.json`，缺失/非数组时给出问题而不是静默当空表。 */
@@ -1118,23 +1244,18 @@ test('文档锚点位移恒等：目标文件没改 ⇒ 行号恒等（陈旧锚
     if (heal.resolved !== null) {
       resolved = heal.resolved;
       baseLabel = `${resolved.label}（CI 自愈 fetch 后取到 base）`;
-    } else if (heal.failure === 'network') {
-      t.skip(
-        'SKIP: 网络取 base 失败，本用例未执行 —— CI 里 git fetch 拿不到 origin/main'
-        + `（断网或 remote 不可达），不是判定通过。尝试记录：${attempts.join('；')}`,
-      );
-      return;
-    } else if (isShallowRepository(ROOT)) {
-      t.skip(
-        'SKIP: 无 base 历史，本用例未执行 —— 自愈 fetch 成功但仍取不到共同祖先'
-        + `（浅克隆边界未连通）。尝试记录：${attempts.join('；')}`,
-      );
-      return;
     } else {
-      throw new Error(
-        '取不到 base，且仓库**不是**浅克隆（完整仓库却没有 origin/main、upstream/main、HEAD~1）—— '
-        + `本用例无法判定，也不允许静默通过。尝试记录：${attempts.join('；')}`,
-      );
+      const shallow = isShallowRepository(ROOT);
+      // 文案与「SKIP 还是硬失败」都交给 `selfHealDeadEnd()`：只有 fetch **全部失败**才说
+      // 「网络取 base 失败」；有任何一招 fetch 跑通就只说「fetch 成功但取不到共同祖先」——
+      // 第一版在这里说反过（超时被当 no-base，文案却写「fetch 成功」），见 `classifyFetchFailure` 注释。
+      const deadEnd = selfHealDeadEnd(heal, shallow);
+      t.diagnostic(fetchDiagnosticOf(heal, attempts, shallow));
+      if (deadEnd.action === 'skip') {
+        t.skip(deadEnd.message);
+        return;
+      }
+      throw new Error(deadEnd.message);
     }
   }
 
@@ -2223,4 +2344,255 @@ test('自证：判据 helper「零违规」对非空 violations 必须抛（防�
     /锚点位移恒等失败 2 条（summary-x）/,
   );
   t.diagnostic('夹具（零违规 helper）对 1 条 / 2 条违规都抛，带 summary 时也抛');
+});
+
+/**
+ * 永久用例：**真浅克隆里的 CI 自愈**（本片新增 —— 钉住「CI 上不许假绿」这条承诺本身）。
+ *
+ * 现场造一个带真 `.git/shallow` 的克隆：`git clone --depth=1 --branch feature file:///…`。三个 fallback
+ * （`merge-base HEAD origin/main` / `merge-base HEAD upstream/main` / `rev-parse HEAD~1`）在里面**全断**，
+ * 正是 CI 上 `actions/checkout` 默认 `fetch-depth: 1` 的形状 —— 也就是这条闸门假绿的来源。然后：
+ *   ① 不自愈时 `resolveBase()` 必须返回 null（= 老行为一定 SKIP，这就是假绿）；
+ *   ② 用 `CI=true` 跑一次**真用例本体**（子进程 `node --test` 只筛主用例）：必须 exit 1 且判出违规
+ *      （判了才有 exit 1；SKIP 只会 exit 0）；
+ *   ③ 事后回读克隆：`rev-list --count` 长出来、`merge-base HEAD origin/main` 落回 main tip、
+ *      `--is-shallow-repository` 变 false ⇒ base 是**自愈 fetch** 给的，不是别的原因碰巧。
+ *
+ * 上游为什么是合成的、而不是直接 `git clone file:///<本仓路径>`：
+ *   - 本仓在 CI 上是 detached HEAD（PR 检查）⇒ 从本仓 clone 拿不到默认分支，克隆出来可能没有工作区；
+ *   - 本仓自己的对象库也带 `.git/shallow`（多个 graft 点），且 `refs/heads/main` 与 `origin/main` 并不
+ *     指向同一个提交 ⇒ base 会落进无关历史，判定结果随分支内容漂移，做成永久用例必然 flaky；
+ *   - 在「深度 1 克隆里再造一个提交」会让 `HEAD~1` 重新可用（父提交本来就在克隆里）⇒ 走的是 fallback 3，
+ *     自愈根本没被走到，测了等于没测。
+ *   合成上游只有 3 个提交，而 `HEAD~1` 不可解 / `origin/main` 缺失 / graft 边界不透明这三条与 CI 完全一致，
+ *   所以浅克隆的**行为**是真的，只有仓库来源是合成的。
+ */
+test('CI 自愈：真浅克隆 + CI=true ⇒ 真的判了（不是 SKIP）', (t) => {
+  if (process.env.DOC_ANCHOR_SHALLOW_CHILD === '1') {
+    t.skip('子进程里不递归再造克隆：本用例在外层已经真跑过一次');
+    return;
+  }
+  const upstreamRoot = mkdtempSync(join(tmpdir(), 'doc-anchor-upstream-'));
+  const holderRoot = mkdtempSync(join(tmpdir(), 'doc-anchor-shallow-'));
+  t.after(() => {
+    for (const root of [upstreamRoot, holderRoot]) {
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch {
+        // 临时目录清理失败不影响判定结论
+      }
+    }
+  });
+
+  const up = (args) => git(args, { cwd: upstreamRoot });
+  up(['init', '-q', '-b', 'main']);
+  const commit = (snapshot, message) => {
+    for (const [relative, content] of Object.entries(snapshot)) {
+      const absolute = join(upstreamRoot, relative);
+      mkdirSync(dirname(absolute), { recursive: true });
+      writeFileSync(absolute, content, 'utf8');
+    }
+    up(['add', '-A']);
+    up(['-c', 'user.email=fixture@example.invalid', '-c', 'user.name=fixture', 'commit', '-q', '-m', message]);
+    return up(['rev-parse', 'HEAD']).trim();
+  };
+  // 上游 main 必须有两个提交：`--deepen` 得真有更深的祖先可加深（只有 1 个提交时自愈必然无解）。
+  commit({
+    [FIXTURE_TARGET]: serviceFile(),
+    [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE }),
+    [REGISTRY_RELATIVE]: '[]\n',
+    'tests/unit/doc-anchor-relocation-identity.test.mjs': readFileSync(fileURLToPath(import.meta.url), 'utf8'),
+  }, 'main: 基线（锚点 :20 成立，登记表为空）');
+  const mainTip = commit({ 'README.md': '# 上游夹具\n' }, 'main: 与锚点无关的一步');
+  up(['checkout', '-q', '-b', 'feature']);
+  // feature 只改 docs：目标文件一个字没动，却把锚点从 :20 改成 :21（且不登记）⇒ 必须判红。
+  const docsOnly = commit({
+    [FIXTURE_DOC]: docFile({ anchor: FIXTURE_ANCHOR_LINE + 1 }),
+  }, 'feature: 只改 docs 的锚点行号（故意漏登记）');
+
+  const work = join(holderRoot, 'work');
+  git(['clone', '--depth=1', '--branch', 'feature', pathToFileURL(upstreamRoot).href, work], {
+    cwd: holderRoot,
+    timeout: 120_000,
+  });
+  const inWork = (args) => git(args, { cwd: work });
+
+  // ① 假绿的形状：真浅克隆 + 三个 fallback 全断。
+  assert.equal(inWork(['rev-parse', '--is-shallow-repository']).trim(), 'true', '克隆必须是真浅克隆');
+  assert.equal(inWork(['rev-list', '--count', 'HEAD']).trim(), '1', '深度必须是 1（= fetch-depth: 1）');
+  assert.throws(() => inWork(['rev-parse', 'HEAD~1']), /ambiguous argument|unknown revision/);
+  assert.throws(() => inWork(['rev-parse', 'origin/main']), /ambiguous argument|unknown revision/);
+  const cold = resolveBase(work);
+  assert.equal(cold.sha, null, `浅克隆里三个 fallback 必须全断（这才是 CI 假绿的形状），实际取到 ${cold.sha}`);
+  assert.match(cold.attempts.join('\n'), /merge-base HEAD origin\/main/);
+  assert.match(cold.attempts.join('\n'), /merge-base HEAD upstream\/main/);
+  assert.match(cold.attempts.join('\n'), /rev-parse HEAD~1/);
+
+  // ② CI=true 跑真用例本体：判了才有 exit 1，SKIP 只会 exit 0。
+  const childEnv = { ...process.env, CI: 'true', DOC_ANCHOR_SHALLOW_CHILD: '1' };
+  // 只留 `CI`：证明单靠 `CI` 就够（`GITHUB_ACTIONS` 不必参与）。
+  delete childEnv.GITHUB_ACTIONS;
+  // 必须摘掉：本进程自己在 node:test 里跑，`NODE_TEST_CONTEXT` 会让子进程以为自己是「测试 runner 的
+  // 子 worker」，结果全走 fd3 的 V8 序列化协议 —— stdout 一片空白、exit 0，看起来像「跑过了」。
+  delete childEnv.NODE_TEST_CONTEXT;
+  let childStatus = 0;
+  let childOut = '';
+  try {
+    childOut = execFileSync(process.execPath, [
+      '--test',
+      '--test-name-pattern=文档锚点位移恒等',
+      'tests/unit/doc-anchor-relocation-identity.test.mjs',
+    ], {
+      cwd: work,
+      env: childEnv,
+      encoding: 'utf8',
+      maxBuffer: MAX_BUFFER,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 180_000,
+    });
+  } catch (error) {
+    childStatus = typeof error.status === 'number' ? error.status : -1;
+    childOut = `${error.stdout ?? ''}${error.stderr ?? ''}`;
+  }
+  assert.equal(
+    childStatus,
+    1,
+    `浅克隆 + CI=true 必须因为「判出违规」而红（只 SKIP 不会 exit 1）；实际 status=${childStatus}：\n${childOut}`,
+  );
+  assert.match(childOut, /锚点位移恒等失败 \d+ 条/, '子进程没报出违规条数 ⇒ 判定压根没跑');
+  assert.match(childOut, /行号必须恒等/, '子进程报的不是「目标文件没改 ⇒ 行号必须恒等」这条违规');
+  assert.doesNotMatch(childOut, /SKIP: 无 base 历史/, '浅克隆 + CI 下不许再退化成「无 base 历史」SKIP（假绿）');
+  assert.doesNotMatch(childOut, /网络取 base 失败/, '本夹具的 fetch 是本机 file:// 克隆，不该走网络故障 SKIP');
+
+  // ③ 回读克隆：base 是自愈 fetch 拉回来的。
+  const healedCount = Number(inWork(['rev-list', '--count', 'HEAD']).trim());
+  assert.ok(healedCount > 1, `自愈后 HEAD 的历史必须长出来，实际 rev-list --count HEAD = ${healedCount}`);
+  assert.equal(inWork(['rev-parse', 'origin/main']).trim(), mainTip, '自愈第一步必须真的建出 origin/main');
+  assert.equal(inWork(['merge-base', 'HEAD', 'origin/main']).trim(), mainTip, '自愈后 merge-base 必须落回 main tip');
+  assert.equal(
+    inWork(['rev-parse', '--is-shallow-repository']).trim(),
+    'false',
+    '--deepen 必须把 graft 边界撤掉，否则 base 依然靠碰运气',
+  );
+
+  const bucketLine = (childOut.split('\n').find((line) => line.includes('锚点位移恒等失败')) ?? '').trim();
+  t.diagnostic(
+    `自愈夹具：clone 深度 1（rev-list 1 → ${healedCount}，is-shallow true → false），`
+      + `origin/main 由 fetch 建出（${mainTip.slice(0, 12)}），merge-base 落回 ${mainTip.slice(0, 12)}；`
+      + `子进程（CI=true）status=${childStatus}，feature=${docsOnly.slice(0, 12)}｜${bucketLine}`,
+  );
+});
+
+/**
+ * 永久守卫：fetch **超时**必须归 `network`（不是 `no-base`），且 SKIP 文案不许说「fetch 成功」。
+ *
+ * 背景（本轮审查方实测复现，本片第二轮修掉的正是这条说谎）：`execFileSync` 超时抛出来的错误
+ * `stderr === ''`、`code === 'ETIMEDOUT'`、`signal === 'SIGTERM'`，错误文本里根本没有 `timed out`
+ * 这几个字 —— 第一版只拿 `NETWORK_ERROR` 正则去判 `firstLine(stderr)`，于是超时被归进 `no-base`，
+ * SKIP 文案照样写「自愈 fetch 成功但仍取不到共同祖先」，真实原因（超时）被丢空。这条用例用
+ * **注入的伪错误对象**钉住四件事（不真跑 git fetch、**不真等 30 秒**）：
+ *   ① `classifyFetchFailure`：`ETIMEDOUT` / `signal` ⇒ `timedOut && network`；而
+ *      `couldn't find remote ref` 这类「远端没有那个 ref」仍必须**不**算网络故障（口径不能被改松）；
+ *   ② 两招都超时 ⇒ `failure === 'network'`、`anyFetchSucceeded === false`、`timedOut === true`、
+ *      `stderr` 摘要明写「空」；裁决 SKIP，文案含「网络取 base 失败」且**不含**「fetch 成功」；
+ *   ③ 两招都跑通、但 merge-base 仍空 ⇒ 文案必须换成「自愈 fetch 成功但取不到共同祖先」，
+ *      且**不含**「网络取 base 失败」（证明文案按实际结果分支，不是写死一句话）；
+ *   ④ 半失败（一招超时、一招跑通）⇒ 两句都说、且不许说「全部失败」（第一版在这里只报一半）。
+ */
+test('CI 自愈：fetch 超时必须归 network（不是 no-base），且 SKIP 文案不许谎称「fetch 成功」', () => {
+  const timeoutError = () => {
+    const error = new Error('spawnSync git ETIMEDOUT');
+    error.code = 'ETIMEDOUT';
+    error.signal = 'SIGTERM';
+    error.stderr = '';
+    return error;
+  };
+  const missingRefError = () => {
+    const error = new Error("Command failed: git fetch --depth=50 origin +refs/heads/main:refs/remotes/origin/main\n"
+      + "fatal: couldn't find remote ref refs/heads/main\n");
+    error.status = 128;
+    error.stderr = "fatal: couldn't find remote ref refs/heads/main\n";
+    return error;
+  };
+
+  // ① 分类：超时算网络；远端没有该 ref 不算（这条口径是 SKIP 文案与「继续试下一招」的分界）。
+  const timedOut = classifyFetchFailure(timeoutError());
+  assert.equal(timedOut.timedOut, true, '`code: ETIMEDOUT` / `signal` 必须被判成超时');
+  assert.equal(timedOut.network, true, '超时是「没取到 base」，必须归 network 而不是 no-base');
+  assert.equal(timedOut.code, 'ETIMEDOUT');
+  assert.equal(timedOut.signal, 'SIGTERM');
+  assert.match(timedOut.stderrSummary, /空/, '`stderr` 为空时必须显式写「空」，不能留一个洞');
+  const missingRef = classifyFetchFailure(missingRefError());
+  assert.equal(missingRef.network, false, "`couldn't find remote ref` 不是网络故障（远端没有那个 ref 而已）");
+  assert.equal(missingRef.timedOut, false);
+
+  // ② 两招都超时：failure 必须是 network（第一版这里是 no-base），文案必须是「网络取 base 失败」。
+  const timeoutAttempts = [];
+  const timeoutCalls = [];
+  const healed = selfHealBase('/不存在的夹具根：run 已注入，不会碰文件系统', timeoutAttempts, {
+    run: (args) => {
+      timeoutCalls.push(args.join(' '));
+      throw timeoutError();
+    },
+    resolve: () => {
+      throw new Error('两招 fetch 都失败时不该再调 resolveBase（那会把失败咽成「没有共同祖先」）');
+    },
+  });
+  assert.equal(timeoutCalls.length, 2, '两招都必须真的试过：第一招超时不许提前收工');
+  assert.match(timeoutCalls[0], /--depth=50/);
+  assert.match(timeoutCalls[1], /--deepen=500/);
+  assert.equal(healed.resolved, null);
+  assert.equal(healed.failure, 'network', '超时被归成 no-base 就是本用例存在的理由');
+  assert.equal(healed.anyFetchSucceeded, false);
+  assert.equal(healed.timedOut, true);
+  assert.equal(healed.failures.length, 2);
+  assert.match(timeoutAttempts.join('\n'), /超时/, '尝试记录里必须点名「超时」，不能只写一句 fatal');
+  assert.match(timeoutAttempts.join('\n'), /code=ETIMEDOUT/);
+  const timeoutDeadEnd = selfHealDeadEnd(healed, true);
+  assert.equal(timeoutDeadEnd.action, 'skip', 'fetch 全部失败 ⇒ 允许 SKIP');
+  assert.equal(selfHealDeadEnd(healed, false).action, 'skip', '完整仓库 + fetch 全失败也只允许 SKIP（不是逻辑坏了）');
+  assert.match(timeoutDeadEnd.message, /网络取 base 失败，本用例未执行/, '文案必须写清「网络取 base 失败」');
+  assert.doesNotMatch(timeoutDeadEnd.message, /fetch 成功/, 'fetch 全失败却写「fetch 成功」＝第一条被审查抓到的说谎');
+  const timeoutDiagnostic = fetchDiagnosticOf(healed, timeoutAttempts, true);
+  assert.match(timeoutDiagnostic, /code=ETIMEDOUT/, '`t.diagnostic` 必须带出 code');
+  assert.match(timeoutDiagnostic, /signal=SIGTERM/, '`t.diagnostic` 必须带出 signal');
+  assert.match(timeoutDiagnostic, /stderr=\(空/, '`t.diagnostic` 必须把「空 stderr」写出来');
+  assert.match(timeoutDiagnostic, /尝试记录（\d+ 条）/, '`t.diagnostic` 必须带出全部尝试记录');
+
+  // ③ 两招都跑通、但仍取不到共同祖先：文案必须换一支（且不许再说「网络取 base 失败」）。
+  const noBase = selfHealBase('/同 ②', [], {
+    run: () => {},
+    resolve: () => ({
+      sha: null,
+      label: null,
+      attempts: ['merge-base HEAD origin/main → fatal: Not a valid object name origin/main'],
+    }),
+  });
+  assert.equal(noBase.failure, 'no-base');
+  assert.equal(noBase.anyFetchSucceeded, true);
+  assert.equal(noBase.failures.length, 0);
+  const noBaseDeadEnd = selfHealDeadEnd(noBase, true);
+  assert.equal(noBaseDeadEnd.action, 'skip');
+  assert.match(noBaseDeadEnd.message, /自愈 fetch 成功但取不到共同祖先/);
+  assert.doesNotMatch(noBaseDeadEnd.message, /网络取 base 失败/, 'fetch 明明没失败，不许写「网络取 base 失败」');
+  assert.equal(selfHealDeadEnd(noBase, false).action, 'throw', '完整仓库无 base ⇒ 必须硬失败，不许 SKIP');
+
+  // ④ 半失败：一招超时 + 一招跑通，但仍无共同祖先 ⇒ 两句都要说，且不许说「全部失败」。
+  let mixedCalls = 0;
+  const mixed = selfHealBase('/同 ②', [], {
+    run: () => {
+      mixedCalls += 1;
+      if (mixedCalls === 1) throw timeoutError();
+    },
+    resolve: () => ({ sha: null, label: null, attempts: [] }),
+  });
+  assert.equal(mixed.failure, 'network', '有一招超时 ⇒ failure 记 network（但 anyFetchSucceeded 也真）');
+  assert.equal(mixed.anyFetchSucceeded, true);
+  assert.equal(mixed.timedOut, true);
+  const mixedDeadEnd = selfHealDeadEnd(mixed, true);
+  assert.equal(mixedDeadEnd.action, 'skip');
+  assert.match(mixedDeadEnd.message, /fetch 成功但取不到共同祖先/, '有 fetch 跑通 ⇒ 必须说「fetch 成功…」');
+  assert.match(mixedDeadEnd.message, /1 招 fetch 报错/, '必须点名「有 1 招报错」，别只报一半');
+  assert.doesNotMatch(mixedDeadEnd.message, /全部失败/, '有一招跑通了，不许说「全部失败」');
 });

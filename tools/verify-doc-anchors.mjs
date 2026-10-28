@@ -765,6 +765,14 @@ export function partitionDriftByBaseline(findings, entries = ARCHITECTURE_ANCHOR
  */
 export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   // 2026-10-27 实测 16 条，逐条人工裁决；key 形状见 driftBaselineKey（文档:行号#片段指纹）。
+  // 2026-10-28（GY-R68-D09b，base de2aa3c6）删去 1 条 ⇒ 15 条。删掉的是原来这条：
+  //   "docs/architecture/s4-data-traceability.md:186#available: config.executionMode !== 'real'",
+  //   行尾注记当时写「drift-unique｜实际在 services/api/src/app.ts:2221｜真漂移」。那个 :2221 在写下时是**对的**：
+  //   1a8af906（app.ts 2659 行）的第 2221 行正是 `    available: config.executionMode !== 'real',`，该片段全文件唯一；
+  //   到 base de2aa3c6（2695 行）相对那棵树 +36 行后，唯一落点漂到 2257，这条注记才 stale（是漂移失效，不是出生即错）。
+  //   本片把该页那处引用改成真实落点 :2257，漂移修好后这条 key 再也命中不了 ⇒ 留着只是留一条永远命不中的假基线：
+  //   实测把它加回去 `--strict` 仍 exit 0，只多一行 `STALE-DRIFT`（陈旧漂移条目不进 exit code）。
+  //   所以删它属于「基线治理、不留假基线」，判据逻辑与 `ANCHOR_DRIFT_WINDOW` 一个字没改，也不是闸门硬要求。
   // 行尾注释：判定档｜片段实际落点｜归类原因。
   "docs/architecture/acceptance-map.md:69#HUMAN_REVIEW_STATE = 'under_construction'", // drift-unique｜实际在 services/api/src/moderation/nonbypass.ts:15｜归属误判：片段属于同一行里用散文写的 moderation/types.ts:110-115；nonbypass.ts:161-168 的引用本身没错
   "docs/architecture/ai-ops-spec-status.md:195#{ actorId, reasonCode: 'job_cancelled', requestId }", // drift-gone｜0 命中｜真漂移：片段是散文式简写（代码里该对象跨 977-981 四行），故永不逐字命中；锚点区间本身对（service.ts:977-981 就是取消审计那一笔）。key 的文档行号随 N02 销号删两行由 197 移到 195
@@ -780,7 +788,6 @@ export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:84#record_third_party_deletion(p_request_id uuid, p_recipient_id text, p_export_ref uuid, p_state text, p_evidence_ref text, p_error_code text, p_at timestamptz) RETURNS jsonb", // drift-gone｜0 命中｜表述差异：SQL 是 CREATE FUNCTION public.record_third_party_deletion( 多行签名，文档写成一行的完整签名
   "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:108#REPLAY_MANIFEST_VERSION = 1", // drift-unique｜实际在 services/api/src/privacy/backup-replay-manifest.ts:85｜真漂移，同一句里已经写了 :85
   "docs/architecture/rate-limit-policy.md:185#(_address, hop) => hop < trustProxy", // drift-gone｜0 命中｜真漂移：app.ts:2450-2455 现为 OCR 作业源注释；trustProxy 的 hop 判据在 app.ts:2649，且文档片段省略了类型标注
-  "docs/architecture/s4-data-traceability.md:186#available: config.executionMode !== 'real'", // drift-unique｜实际在 services/api/src/app.ts:2221｜真漂移
   "docs/architecture/state-contract.md:117#createPostgresBackupPurgePort({ pool, now }) && payload = 'null'::jsonb && state = 'purged'", // drift-unique｜实际在 services/api/db/migrations/0023_user_backup_copies.sql:75｜真漂移（引用写的是 :34）
 ]);
 
