@@ -866,5 +866,15 @@
     "from": 2076,
     "to": 2257,
     "reason": "该行（D08 升档判据）正文直接引用该门：`available` 门不再是 `!== 'real'`。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 与 `available` 无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 就是该门表达式的落点（全文件唯一 `available: config.executionMode`）。目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
+    "line": 77,
+    "target": "services/api/src/server.ts",
+    "from": 27,
+    "to": 62,
+    "reason": "旧锚点 27 在 base 上指到 const pool = createPool(config.databaseUrl);，与这一行要说的「生产入口 buildApp(...) 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪到第 51 行，27 只是它早年的位置）；本提交按符号 \buildApp( 改指 HEAD 第 62 行 const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });，不是 27+1 的差值平移。",
+    "kind": "correction",
+    "symbol": "buildApp("
   }
 ]

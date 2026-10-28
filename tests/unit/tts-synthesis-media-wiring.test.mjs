@@ -305,3 +305,40 @@ test('③ 负控制：去掉那处注入（= 修补前的 server.ts 形态）⇒
   const accepted = await post(fixed, actor.token, 'r68-negative-control-fixed');
   assert.equal(accepted.status, 202, '加回注入 ⇒ 受理必须 202');
 });
+
+// ---------------------------------------------------------------- ④ 入口不得读 ambient env（结构断言 + 负控制）
+
+/**
+ * 一段源码里 ambient env 的读取点计数（`process.env` 出现次数）；0 = 一次都不读。
+ *
+ * 为什么是计数而不是 `includes(...) === false`：计数让负控制有可读的读数（`1`），而不是只给
+ * 一个布尔；两种写法在这里语义等价（0 ⇔ 完全不含）。
+ */
+function ambientEnvReads(text) {
+  return (text.match(/process\.env/g) ?? []).length;
+}
+
+test('④ 入口不读 ambient env：server.ts 与本次新增的派生模块都是 0 处（负控制：塞一行即红）', () => {
+  // 「两个端口都只能由 `--approve-real-media-wiring` 显式批准驱动」这句话的前提是入口**不读 env**：
+  // 一旦入口按 ambient `OBJECT_STORAGE_*` 自己造端口，"配置即门控" 就回来了。此前没有任何用例
+  // 直接钉这条（审查实测：把入口里的 env 读取压成一行、不动行数时，既有四条用例全绿）。
+  const files = ['services/api/src/server.ts', 'services/api/src/tts/real-ports.ts'];
+  const sources = files.map((rel) => readFileSync(resolve(ROOT, rel), 'utf8'));
+  for (let index = 0; index < files.length; index += 1) {
+    assert.equal(
+      ambientEnvReads(sources[index]),
+      0,
+      `${files[index]} 不得读 ambient env（真实端口的唯一开启路径是启动参数，不是环境）`,
+    );
+  }
+  // 负控制：把同一段源码拼上一行 env 读取，判据必须立刻变成 1（否则这条断言是空转的）。
+  assert.equal(
+    ambientEnvReads(`${sources[0]}\nconst r68Leak = process.env.R68_LEAK;\n`),
+    1,
+    '负控制：拼入一行 `process.env.X` 后判据必须红（证明它真的在看来源串）',
+  );
+  // 负控制之二：派生模块里塞一行同样要红（两个文件都在判据面内，不是只盯入口）。
+  assert.equal(ambientEnvReads(`${sources[1]}\nconst r68Leak = process.env.R68_LEAK;\n`), 1);
+  // 正向对照：入口确实读过 argv（同一族的显式启动面），否则上面的 0 可能只是因为整段被读空。
+  assert.equal(/process\.argv\.slice\(2\)/.test(sources[0]), true, '入口必须从 argv 取启动参数');
+});
