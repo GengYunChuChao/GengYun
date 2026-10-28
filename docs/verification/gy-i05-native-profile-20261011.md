@@ -28,6 +28,30 @@ PUT 成功后 GET 当前档案，读失败不称“已重读”。不改识别�
 资料页保留登录门禁、当前目录验证和来源限制。当前测试返回 insufficient／条件不足，
 没有生成用药建议，研究候选和种子整理稿未改成批准资料。
 
+> **后续变更（2026-10-28 订正；上面这段是 2026-10-11 的读数，逐字保留）**：
+> 「按当前档案查科普资料」的**落点已变**，改动在 **PR #744**（分支 `fix/gy-r68-profile-query-entry`，提交 `c8548873`，2026-10-28）：
+> `openReference()` 现为 `wx.navigateTo({ url: '/pages/knowledge/knowledge' })`，**不再**拼 `crop_id`／`region_code` 查询串
+> （`pages/knowledge` 的 `onLoad` 不读 `options`，它自己 `prepare()` 读一次 `GET /me/profile`，把档案预置成首次查询条件）；
+> 档案为空（缺 `crop_id` 或 `region_code`）时**不跳转**，只在入口提示「请先设置档案（作物与地区）再按档案查科普资料。」。
+> **该行为随 #744 变更，未合入前以现状为准**：#744 截至本注记**尚未合入 main**——本页订正时的合流树
+> `f0b97e16` 上，`miniprogram/pages/profile/profile.js:274` 仍是
+> `wx.navigateTo({ url: '/pages/reference/reference?crop_id=…&region_code=…' })`，空档案时提示「请先设置档案。」（同样不跳转）。
+> 所以：**合流前**，上面「导航只允许固定 reference 路由与两项格式」仍是线上事实；**合流后**以 #744 为准——`pages/reference`
+> 这条路只留随包名录浏览（`docs/ui-state-inventory.md` §7.4 的定位不变），「按档案查资料」走服务端查询面。
+> **旧记录为什么保留**：这一句是 2026-10-11 那次 320px 实机读数的**当时事实**（当时确实只允许固定 reference 路由与两项格式，
+> 源码快照见本页「当前源码与微信画面」的 `f0ea601`）；把它直接抹成新值会让那次读数变成假的，也让「什么时候变的、谁改的」无从追溯。
+>
+> **同页第二处（2026-10-28 订正）：上面「行为与边界」里的「定位辅助明确尚未接入」也已不成立**，但**别读成「定位已经可用」**：
+> 定位入口已接进「我的」页（入口由 `#86`／squash `e22dbeb7`，2026-10-11 同日合入）——按钮在
+> `miniprogram/pages/profile/profile.wxml:108`（「使用定位选地区（可改手选）」），
+> 处理在 `miniprogram/pages/profile/profile.js:205-218`，六条出口（授权／拒绝／取消／超时／平台不支持／转换不可用）在
+> `miniprogram/utils/location-region.js`；其中 **15s 墙钟超时兜底**由 `#392`（squash `0bf1a73e`，2026-10-21）补上，
+> 单测 `tests/unit/miniprogram-location-region.test.mjs`。**仍未变的两件**：① 坐标→行政区转换资源
+> `miniprogram/data/region-centroids.js` **至今不存在**（`miniprogram/utils/region-converter.js:12-16` 自述「截至 2026-10-17
+> 未取得可追溯来源」，`build()` 返回 `null`）⇒ 定位成功也回落「地区转换资源尚未接入，请手选浙江市县。」，页面保留手选；
+> ② 真机授权路径未验，故文末「定位转换资源及权限失败路径待后续」那一条**照旧成立**。结论：原句按「代码与单测」读已过期，
+> 按「真实设备可用」读仍然对——两种读法都不能省。
+
 ## 工程范围
 
 使用原“我的”页面，无新增页面或 app.json 路由；五 Tab 顺序／居中识别／字号／安全区保留。
