@@ -222,7 +222,12 @@ const REWRITTEN_REST_OPS = Object.freeze([
 
 /**
  * 60 条里声明了 `Idempotency-Key`（`in: header`）的条数实测值（C③-rest 的反空转下界）。
- * 其中 26 条另声明 `If-Match`；`If-Match` 是它的子集，所以命中面 = 34 条。
+ * 其中 **23** 条另声明 `If-Match`（`If-Match` 是它的子集，所以命中面 = 34 条）——这个 23 是
+ * 复查时用 `$ref` 解引用后重算的（旧注释写的 26 是手数误差，断言用的是 34，未受影响）：
+ * cancelJob / deleteRecognition / selectSpecies / deleteOCR / correctOCR / verifyOCR /
+ * deleteTranscription / confirmTranscription / deleteConversation / createTurn / deleteTurn /
+ * deletePost / editPost / createComment / deleteComment / editComment / likePosts / unlikePosts /
+ * likeComments / unlikeComments / deleteFavorite / deleteHistory / grantCommunityMediaAccess。
  */
 const REST_IDEMPOTENCY_OP_COUNT = 34;
 
@@ -365,8 +370,48 @@ function scopeProblems(entries) {
   return { problems, asserted };
 }
 
+/** 「像状态码的三位数字」：前后不能紧邻字母或数字，否则 `sha256`、`10485760`、`57014` 会被误抽。 */
+const THREE_DIGIT_CODE = /(?<![0-9A-Za-z])[0-9]{3}(?![0-9A-Za-z])/g;
+
 /**
- * C② 的公共实现：description 必须含至少一个**该 op 自己** `responses` 里的三位状态码。
+ * 抽取前先抹掉的两类**明确不是状态码**的数字。除这两类外不给任何豁免表——
+ * 豁免一多，下面的反向判定（每个三位数字都必须是本 op 声明的码）就退化成恒真。
+ *
+ * ① 源码引用行号：`routes/ocr.ts:305-306`、`（:770-817）`、`（:139、393-404）`。
+ *    证据行号天然是 1..4 位数字，且总是以 `:` 引出、或以 `、`/`,` 续接一个区间；
+ *    状态码在正文里永远写成「409 REVISION_CONFLICT」这种「数字 + 空格 + 大写错误码」的形态，
+ *    不会紧跟 `:`，所以这两类在文本上可区分（`_rest` 那批 60 条描述里共有 100+ 处行号引用）。
+ *
+ * ② 形状/容量区间：`8..128 字符`（Idempotency-Key 长度）、`1..120`（标题）、`1..512`（令牌头）。
+ *    端点写成 `A..B` 的形态，与状态码无歧义。
+ */
+const REFERENCE_SPAN = /[A-Za-z0-9_\-./]+\.(?:ts|mts|cts|mjs|cjs|js|json|py|sql|ps1|sh)[:：][0-9]{1,4}(?:(?:\s?[-–—]\s?|\s?[:：]\s?|\s?、\s?|\s?,\s?)[0-9]{1,4})*/g;
+const REFERENCE_CONT_AFTER_COLON = /(?<=[:：])[0-9]{1,4}(?:\s?[-–—]\s?[0-9]{1,4})?(?:(?:\s?[:：、,，]\s?)[0-9]{1,4}(?:\s?[-–—]\s?[0-9]{1,4})?)*/g;
+const REFERENCE_CONT_WITH_RANGE = /(?<=[、,，])[0-9]{1,4}\s?[-–—]\s?[0-9]{1,4}(?:(?:\s?[:：、,，]\s?)[0-9]{1,4}(?:\s?[-–—]\s?[0-9]{1,4})?)*/g;
+const CONSTRAINT_RANGE = /[0-9]+\.\.[0-9]+/g;
+
+/** 去掉行号引用与形状区间后剩下的正文（只用于抽三位数字）。 */
+function withoutNonCodeSpans(description) {
+  return String(description)
+    .replace(REFERENCE_SPAN, ' ')
+    .replace(REFERENCE_CONT_AFTER_COLON, ' ')
+    .replace(REFERENCE_CONT_WITH_RANGE, ' ')
+    .replace(CONSTRAINT_RANGE, ' ');
+}
+
+/**
+ * C② 的公共实现，**集合级双向判定**（不再是「至少命中一个」的存在性判定）：
+ * 1. 正向：description 至少出现一个**该 op 自己** `responses` 的键；
+ * 2. 反向：description 里出现的**每一个**三位数字，都必须是该 op 自己 `responses` 的键——
+ *    多写一个不属于本 op 的码（例如把 `504` 写成 `418`、或凭空追加一个 `418`）也判红。
+ *
+ * 反向这一半是 A04-rest 审查（`adv-verdict-a04rest-435ea904.md` B2）指出的盲区：只有正向时，
+ * 「在已经写对 `200` 的句子里再追加一个未声明的码」仍然全绿；#718 已给 `/me` 族补了这一半，
+ * 这里把它推广到 admin／/me／其余族三族共用（三族描述经同一函数判定，不设第二把尺子）。
+ *
+ * 已知边界（写进 PR 正文「已知限制」）：本判定只能证明「描述里的码 ⊆ `responses` 的键」，
+ * 不能证明「`responses` 里的码在当前配置下真的可达」——`403 SCOPE_DENIED` 这种「声明了但走不到」
+ * 的错只能靠语义审查抓（见报告 B1 那 12 条）。
  * @returns {{problems: string[], asserted: number}}
  */
 function statusCodeProblems(entries) {
@@ -379,11 +424,21 @@ function statusCodeProblems(entries) {
       continue;
     }
     const description = String(op.description ?? '');
+    const declaredSet = new Set(declared);
     const hit = declared.filter((code) => description.includes(code));
     if (hit.length === 0) {
       problems.push(
         `description 里没有任何一个本 op 声明的状态码（${method.toUpperCase()} ${path}）：${op.operationId}`
         + ` 声明 ${declared.join(',')}`,
+      );
+      continue;
+    }
+    const found = [...new Set(withoutNonCodeSpans(description).match(THREE_DIGIT_CODE) ?? [])];
+    const stray = found.filter((code) => !declaredSet.has(code));
+    if (stray.length > 0) {
+      problems.push(
+        `description 里出现了本 op 没声明的三位数字（疑似把状态码写错或凭空追加）（${method.toUpperCase()} ${path}）：`
+        + `${op.operationId} 写了 ${stray.join(',')}，本 op 只声明 ${declared.join(',')}`,
       );
       continue;
     }
@@ -623,14 +678,17 @@ test('C①-rest 其余族 60 条的 description 同样必须含自身 x-scope �
   assert.deepEqual(problems, [], `以下 ${problems.length} 处 scope 与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
 
-test('C② description 必须含至少一个该 op 自己 responses 里的三位状态码（期望值从 op 派生）', () => {
+test('C② description 必须含该 op 自己 responses 里的三位状态码，且不得出现未声明的三位数字（集合级双向）', () => {
   const { problems, asserted } = statusCodeProblems(entriesOf(adminById, REWRITTEN_ADMIN_OPS));
   assert.ok(asserted > 0, 'C② 一条 op 都没断言到 ⇒ 恒真');
   assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
 
-test('C②-me /me/** 17 条的 description 同样必须含自身 responses 里的三位状态码', () => {
+test('C②-me /me/** 17 条：同样要含自身 responses 里的码，且不得出现未声明的三位数字', () => {
   const { problems, asserted } = statusCodeProblems(entriesOf(meById, REWRITTEN_ME_OPS));
+  // 先报「具体哪条 op 写错了码」（problems 每条都带 operationId），再报「断言面是否缩水」：
+  // 反过来先断言条数，只会留下「少了一条」，既看不出是谁、也看不出写成了什么码。
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
   assert.equal(
     asserted,
     ME_OP_COUNT,
@@ -639,8 +697,10 @@ test('C②-me /me/** 17 条的 description 同样必须含自身 responses 里�
   assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
 
-test('C②-rest 其余族 60 条的 description 同样必须含自身 responses 里的三位状态码', () => {
+test('C②-rest 其余族 60 条：同样要含自身 responses 里的码，且不得出现未声明的三位数字', () => {
   const { problems, asserted } = statusCodeProblems(entriesOf(restById, REWRITTEN_REST_OPS));
+  // 同上：先点名哪条 op 写错码，再守「60 条全被断言到」这条反空转线。
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
   assert.equal(
     asserted,
     REST_OP_COUNT,
@@ -674,13 +734,13 @@ test('C③-me /me/** 17 条：声明了的 Idempotency-Key／If-Match 必须写�
 
 test('C③-rest 其余族 60 条：声明了的 Idempotency-Key／If-Match 必须写进 description', () => {
   const { problems, asserted } = headerProblems(entriesOf(restById, REWRITTEN_REST_OPS));
-  // 反空转：其余族里 34 条声明了 Idempotency-Key（其中 26 条另声明 If-Match），命中面必须够大，
+  // 反空转：其余族里 34 条声明了 Idempotency-Key（其中 23 条另声明 If-Match），命中面必须够大，
   // 否则「参数改形制」时这条会静默变成恒真。
   assert.equal(
     asserted,
     REST_IDEMPOTENCY_OP_COUNT,
     `C③-rest 命中 ${asserted} 条（应为 ${REST_IDEMPOTENCY_OP_COUNT}：这 60 条里还有 34 条声明 Idempotency-Key、`
-    + '其中 26 条另声明 If-Match）⇒ 要么参数改成了别的形制，要么 `$ref` 解析坏了，要么入选名单换了。',
+    + '其中 23 条另声明 If-Match）⇒ 要么参数改成了别的形制，要么 `$ref` 解析坏了，要么入选名单换了。',
   );
   assert.deepEqual(problems, [], `以下 ${problems.length} 处 header 与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
