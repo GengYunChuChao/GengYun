@@ -91,7 +91,9 @@ function outcome(overrides = {}) {
     id: POST_ID,
     revision: 4,
     audit_state: 'approved',
-    visibility: 'private',
+    // 服务端真实可达形态（`admin/ops/community-posts.ts:327-328`）：private 帖通过后就是 published。
+    // 旧夹具写 'private' 是服务端**不会**返回的状态，等于把「通过不改可见性」的错误结论钉死。
+    visibility: 'published',
     decision: 'approved',
     changed: true,
     notified: false,
@@ -714,12 +716,22 @@ test('formatModerationTimestamp：UTC 稳定；解析不了原样返回', () => 
   assert.equal(formatModerationTimestamp(null), '（无时间）');
 });
 
-test('describeReviewOutcome：changed:true 时如实区分「通过不改可见性」与「驳回置 hidden 并通知」', () => {
-  const approved = describeReviewOutcome(outcome({ changed: true, notified: false, visibility: 'private' }), 'approve');
+test('describeReviewOutcome：changed:true 时如实说「通过后 private ⇒ published」与「驳回置 hidden 并通知」', () => {
+  // 服务端可达态一：private 帖被通过 ⇒ published（`admin/ops/community-posts.ts:327-328`）。
+  const approved = describeReviewOutcome(outcome({ changed: true, notified: false, visibility: 'published' }), 'approve');
   assert.equal(approved.tone, 'ready');
   assert.match(approved.title, /通过/);
-  assert.match(approved.detail, /通过不改可见性/);
-  assert.match(approved.advice, /不通知作者/);
+  assert.match(approved.detail, /visibility=published（已公开）/);
+  assert.match(approved.detail, /private ⇒ published/, '必须说清通过会把 private 推到 published');
+  assert.doesNotMatch(approved.detail, /不改可见性/, '旧句「通过不改可见性」与服务端事实相反，不得复活');
+  assert.match(approved.advice, /没有通知作者/);
+  assert.match(approved.advice, /notified:false/);
+
+  // 服务端可达态二：hidden 帖被通过 ⇒ 仍是 hidden（单向门不为通过翻案），且不得声称「已公开」。
+  const approvedHidden = describeReviewOutcome(outcome({ changed: true, notified: true, visibility: 'hidden' }), 'approve');
+  assert.match(approvedHidden.detail, /visibility=hidden（已隐藏）/, 'hidden 帖通过后必须仍是 hidden');
+  assert.doesNotMatch(approvedHidden.detail, /已公开/, 'hidden 帖通过后不得出现「已公开」');
+  assert.doesNotMatch(approvedHidden.detail, /不改可见性/);
 
   const rejected = describeReviewOutcome(outcome({ audit_state: 'rejected', decision: 'rejected', visibility: 'hidden', changed: true, notified: true, reason_codes: ['spam'] }), 'reject');
   assert.match(rejected.title, /驳回/);
