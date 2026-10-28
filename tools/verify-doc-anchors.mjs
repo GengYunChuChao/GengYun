@@ -38,7 +38,11 @@
  *   node tools/verify-doc-anchors.mjs --emit-baseline      # 打印基线 JSON（不写盘）
  *   node tools/verify-doc-anchors.mjs --write-baseline     # 写 tools/doc-anchors-baseline.json
  *   node tools/verify-doc-anchors.mjs --emit-orphan-baseline  # 打印裸锚点孤儿册 JSON（不写盘）
- *   node tools/verify-doc-anchors.mjs --write-orphan-baseline # 写 tools/doc-anchors-orphan-baseline.json
+ *   node tools/verify-doc-anchors.mjs --write-orphan-baseline --accept=<新增条数> --why="<理由>"
+ *                                                          # 写 tools/doc-anchors-orphan-baseline.json
+ *                                                          # （CI 里拒绝执行；理由落进 accept 账本）
+ *   node tools/verify-doc-anchors.mjs --write-anchor-count-baseline --accept=<净增减> --why="<理由>"
+ *                                                          # 写 tools/doc-anchors-anchor-count-baseline.json
  *   node tools/verify-doc-anchors.mjs --root <目录>        # 指向夹具树（单测用）
  *   node tools/verify-doc-anchors.mjs --symbol=count       # 符号关联统计（只统计，不参与退出码）
  *   node tools/verify-doc-anchors.mjs --strict --symbol=strict
@@ -51,15 +55,21 @@
  * 越界、区间无实质内容、符号落点、`--strict` 汇总都算它，所以把 `path:130` 删成 `:130` 不会洗白。
  * 归属失败（同块没有显式锚点、或同块显式锚点指向不同文件）的裸锚点进 `BARE_ORPHAN`：单条不判红
  * （猜路径比漏判更坏），但**逐条登记在册**——`tools/doc-anchors-orphan-baseline.json`，键为
- * `文档:文档行:原文|原因`。`--strict` 下「基线之外的新增孤儿」判红并逐条打印，基线里已经不在文档中的
- * 条目打 `STALE-ORPHAN` 点名要求删。同一份册子还登记「作用域外、按同口径本会红」的继承锚点
- * （键 `文档:文档行:引用|判据`），以免 `docs/verification/**` 成为无人复核的免检区。于是删掉路径前缀
- * 只有两个出口：被同块继承抓住（该红照红），或者在孤儿册上留下一条增删（评审看得见）——都不会静默消失。
+ * `文档|原文|原因`（键里没有行号，插行不会刷出成批假增删）。`--strict` 下「基线之外的新增孤儿」**与
+ * 「册上已不再命中的陈旧条目」都判红**：新增要点名补回路径或登记，陈旧要点名删行——删条目换绿不成立。
+ * 同一份册子还登记「作用域外、按同口径本会红」的继承锚点（键 `文档|引用|判据`），以免
+ * `docs/verification/**` 成为无人复核的免检区。写盘必须 `--accept=<实际新增条数>` ＋ `--why="<理由>"`
+ * （理由落进 `accept` 账本），且 CI 环境里拒绝写模式。
+ * 另有一份**锚点清册** `tools/doc-anchors-anchor-count-baseline.json`：按文档登记「进判据的锚点条数」，
+ * 某文档计数下降即判红——它管的是「该出现的锚点是否还在」，因为四类结构判据只审**已经出现**的锚点，
+ * 把一条锚点整句改写成散文（「见第 4 行」）本来能让它无声离开判据面。
+ * 注意：这两道都只是**留痕**，不是「不可能放弃判据」——孤儿册与清册都是可登记的白名单，区别只在于
+ * 每次放宽都必须带条数与理由、并出现在 diff 里。
  * 继承锚点的判红作用域与 `SYMBOL_LINE_SCOPE` 同口径（`docs/architecture/**`），历史取证页只计数。
  *
- * 两种扫描口径的数字**不可互换**：`npm run verify:anchors` 走默认 `docs/architecture` + `docs/verification`
- * （375 份文档）；`--scan docs` 还多扫 `docs/` 下其余页面（README、development-progress、evaluation 等）。
- * 引用 `BARE`／`BARE-SCOPE`／`BARE-ORPHAN` 读数前，先确认命令用的是哪一种。
+ * 两种扫描口径的数字**不可互换**：`npm run verify:anchors` 走默认 `docs/architecture` + `docs/verification`；
+ * `--scan docs` 还多扫 `docs/` 下其余页面（README、development-progress、evaluation 等）。
+ * 引用 `BARE`／`BARE-SCOPE`／`BARE-ORPHAN`／`ANCHOR-COUNT` 读数前，先确认命令用的是哪一种。
  */
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
@@ -72,14 +82,26 @@ export const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_SCAN_TARGETS = Object.freeze(['docs/architecture', 'docs/verification']);
 export const DEFAULT_BASELINE = 'tools/doc-anchors-baseline.json';
 /**
- * 裸锚点孤儿册：`BARE_ORPHAN` 逐条登记在这里（键 `文档:文档行:原文|原因`），另有 `outsideRed`
- * 数组登记「作用域外、按同口径本会红」的继承锚点（键 `文档:文档行:引用|判据`）。
+ * 裸锚点孤儿册：`BARE_ORPHAN` 逐条登记在这里（键 `文档|原文|原因`），另有 `outsideRed`
+ * 数组登记「作用域外、按同口径本会红」的继承锚点（键 `文档|引用|判据`）。
+ *
+ * 键里**故意不带文档行号**：带行号的话，在页面顶部插一行空行就会让整页的键同时错位，一次刷出成批的
+ * 「新增 + 陈旧」噪声，真正的增删反而看不见。同一个裸锚点在一页里出现多次由「重数法」承担。
  *
  * 为什么必须落成文件：孤儿不判红，若每次现算，删掉路径前缀就等于让一条锚点退出全部判据而**不留痕迹**——
  * PR diff 里看不到增减，评审无从复核。落成册之后，这条路要么被同块继承抓住（该红照红），要么在册子上
- * 留下一行增删。册子只由 `--write-orphan-baseline` 生成，不手写。
+ * 留下一行增删。写盘必须带 `--accept=<实际新增条数>` 与 `--why="<理由>"`，这句理由会落进册子的
+ * `accept` 账本（追加式），并且 CI 环境里拒绝写模式——生成基线是**人工裁决**，不是门禁的一部分。
  */
 export const DEFAULT_ORPHAN_BASELINE = 'tools/doc-anchors-orphan-baseline.json';
+/**
+ * 锚点清册：按**文档**登记「进判据的锚点条数」，`--strict` 下某文档计数下降即判红。
+ *
+ * 为什么还需要它：孤儿册只管「归不到路径的裸锚点」，`BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE`
+ * 四类判据都只审**出现了的锚点**——把 `services/api/src/app.ts:4` 整条改写成「第 4 行」，那条锚点就
+ * 干净地离开判据面，什么都不会红。清册把「该出现的锚点仍在」也变成判据：少一条就得登记，或者把路径写回来。
+ */
+export const DEFAULT_ANCHOR_COUNT_BASELINE = 'tools/doc-anchors-anchor-count-baseline.json';
 export const BROKEN = 'BROKEN';
 export const OUT_OF_RANGE = 'OUT_OF_RANGE';
 export const SUSPECT = 'SUSPECT';
@@ -604,6 +626,9 @@ export function collectFindings({
   const seenComment = new Set();
   const bareOrphans = [];
   const outsideRedAnchors = [];
+  // 每份文档「进判据的锚点」清单（显式锚点 + 继承到路径的裸锚点）：给锚点清册用，
+  // 让「把 `path:4` 改写成『第 4 行』」这种逃逸在计数上留下痕迹。
+  const judgedByDoc = new Map();
   const stats = {
     documents: files.length,
     candidates: 0,
@@ -664,6 +689,11 @@ export function collectFindings({
     ];
     for (const { reference, report } of queue) {
       const bare = reference.bare === true;
+      if (report) {
+        const judged = judgedByDoc.get(docPath);
+        if (judged === undefined) judgedByDoc.set(docPath, [reference.reference]);
+        else judged.push(reference.reference);
+      }
       if (bare) {
         if (report) stats.bare.judged += 1;
         else stats.bare.outside += 1;
@@ -812,7 +842,7 @@ export function collectFindings({
     || left.reference.localeCompare(right.reference)
     || left.doc.localeCompare(right.doc)
   ));
-  return { findings, stats, unresolved, commentAnchors, bareOrphans, outsideRedAnchors };
+  return { findings, stats, unresolved, commentAnchors, bareOrphans, outsideRedAnchors, judgedByDoc };
 }
 
 // —— 锚点身份判据（ANCHOR_DRIFT，只对 docs/architecture/**） ———————————————————
@@ -1064,7 +1094,7 @@ export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   //   所以删它属于「基线治理、不留假基线」，判据逻辑与 `ANCHOR_DRIFT_WINDOW` 一个字没改，也不是闸门硬要求。
   // 行尾注释：判定档｜片段实际落点｜归类原因。
   "docs/architecture/acceptance-map.md:69#HUMAN_REVIEW_STATE = 'under_construction'", // drift-unique｜实际在 services/api/src/moderation/nonbypass.ts:15｜归属误判：片段属于同一行里用散文写的 moderation/types.ts:110-115；nonbypass.ts:161-168 的引用本身没错
-  "docs/architecture/ai-ops-spec-status.md:197#{ actorId, reasonCode: 'job_cancelled', requestId }", // drift-gone｜0 命中｜真漂移：service.ts:776-780 现在是 account.suspend 的审计，job_cancelled 实际在 service.ts:880/962
+  "docs/architecture/ai-ops-spec-status.md:195#{ actorId, reasonCode: 'job_cancelled', requestId }", // drift-gone｜0 命中｜真漂移：片段是散文式简写（代码里该对象跨 977-981 四行），故永不逐字命中；锚点区间本身对（service.ts:977-981 就是取消审计那一笔）。key 的文档行号随 N02 销号删两行由 197 移到 195
   "docs/architecture/gy-i19-user-backup-copies-design.md:26#{ purged: false }", // drift-unique｜实际在 services/api/src/privacy/user-data-deletion.ts:329｜历史树锚点：该页行号是 GY-R34-I19 树的读数
   "docs/architecture/gy-i19-user-backup-copies-design.md:303#{ purged: boolean, evidenceRef?: string }", // drift-gone｜0 命中｜历史树锚点：同上
   "docs/architecture/gy-i19-user-backup-copies-design.md:312#purged === true", // drift-gone｜0 命中｜历史树锚点：同上
@@ -1355,36 +1385,87 @@ export function renderBaseline(findings) {
 
 // —— 裸锚点孤儿册（BARE_ORPHAN ＋ 作用域外本会红）——————————————————————————
 /**
- * 孤儿册的键：`文档:文档行:原文|原因`。
+ * 孤儿册的键：`文档|原文|原因`（作用域外本会红：`文档|引用|原因`）。
  *
- * 为什么不学结构基线的「path|reason|reference」：孤儿**没有可解析的路径**，它的 `reference` 就是那个裸
- * `:130` 本身，同一页会出现很多次；把文档行和原文一起放进键，才能在 diff 里定位到具体是哪一行在变。
+ * **不含文档行号**——这是刻意的：键里带行号时，在某页顶部插一行空行会让整页键同时错位，一次刷出成批的
+ * 「新增 + 陈旧」（实测 25 新增 / 25 陈旧），真正的增删被噪声埋掉。改成「文档 + 原文 + 原因」之后，同一个
+ * 裸锚点在一页出现多次由**重数法**承担（登记 3 条就免罚 3 条），插行不再改变任何键。
  */
-export const orphanKey = item => `${item.doc}:${item.docLine}:${item.raw}|${item.reason}`;
-/** 作用域外「本会红」的继承锚点：`reference` 已经带路径（继承来的），键同结构基线口径再补文档行。 */
-export const outsideRedKey = item => `${item.doc}:${item.docLine}:${item.reference}|${item.reason}`;
+export const orphanKey = item => `${item.doc}|${item.raw}|${item.reason}`;
+/** 作用域外「本会红」的继承锚点：`reference` 已经带路径（继承来的），键同样不带文档行号。 */
+export const outsideRedKey = item => `${item.doc}|${item.reference}|${item.reason}`;
+/** 孤儿册 `accept` 账本条目：写模式必须留名，理由落进文件、进 diff。 */
+const ORPHAN_REASONS = new Set(['no-explicit-in-block', 'ambiguous-block']);
+
+/**
+ * 写模式的**人工裁决闸门**：生成基线不是门禁的一部分，必须有人签名。
+ *
+ * 三件同时要求：`--accept=<n>` 与实际增量**逐条对得上**（不是「随便给个数」）、`--why` 非空、且**不在 CI 里**
+ * （`CI`／`GITHUB_ACTIONS` 命中即拒绝）。理由：写模式只写不判，若允许「红 → write → 绿」在 CI 里自动跑，
+ * 那等于给「删掉路径前缀」开了一条自助通道；把 write 限定在本地 + 显式 accept/why，它才是一次可评审的动作。
+ */
+const CI_ENV_KEYS = Object.freeze(['CI', 'GITHUB_ACTIONS', 'CONTINUOUS_INTEGRATION']);
+
+export function assertWritable({ accept, why, expected, label }) {
+  const inCi = CI_ENV_KEYS.find(key => {
+    const value = process.env[key];
+    return value !== undefined && value !== '' && value !== '0' && value !== 'false';
+  });
+  if (inCi !== undefined) {
+    throw new Error(`${label} 在 CI 环境（检测到 ${inCi}）里被拒绝执行：生成基线是人工裁决，不能由门禁自己改基线。请在本地复核后提交。`);
+  }
+  if (typeof why !== 'string' || why.trim() === '') {
+    throw new Error(`${label} 必须带 --why="<理由>"：这句理由会写进基线的 accept 账本，评审靠它知道这次为什么放行。`);
+  }
+  if (accept === null || !Number.isInteger(accept)) {
+    throw new Error(`${label} 必须带 --accept=<n>（本次实际新增／净增减的条数），收到：${accept === null ? '（未给）' : accept}`);
+  }
+  if (accept !== expected) {
+    throw new Error(`${label} 的 --accept=${accept} 与实际增量 ${expected} 不符：` +
+      '先看清 diff 里到底多了几条，再按实际条数落盘——数字对不上就是没复核。');
+  }
+}
 
 /** 读孤儿册；文件不存在按空册处理（首次落地前的合法状态），坏结构直接抛。 */
 export function loadOrphanBaseline(root, baselinePath = DEFAULT_ORPHAN_BASELINE) {
   const absolute = resolve(root, baselinePath);
-  if (!existsSync(absolute)) return { path: baselinePath, orphans: [], outsideRed: [], missing: true };
+  if (!existsSync(absolute)) return { path: baselinePath, orphans: [], outsideRed: [], accept: [], missing: true };
   const parsed = JSON.parse(readFileSync(absolute, 'utf8'));
-  const readList = (name, list) => {
+  const readList = (name, list, reasons) => {
     if (list === undefined) return [];
     if (!Array.isArray(list)) throw new Error(`孤儿册的 ${name} 字段必须是字符串数组：${baselinePath}`);
+    let previous = null;
     for (const key of list) {
-      if (typeof key !== 'string' || !key.includes('|')) {
-        throw new Error(`孤儿册 ${name} 的条目必须是「…|原因」形状的字符串：${JSON.stringify(key)}`);
+      if (typeof key !== 'string' || key.split('|').length !== 3) {
+        throw new Error(`孤儿册 ${name} 的条目必须是「文档|原文|原因」三段形状的字符串：${JSON.stringify(key)}`);
       }
+      const [doc, , reason] = key.split('|');
+      if (doc.trim() === '') throw new Error(`孤儿册 ${name} 的条目缺文档路径：${JSON.stringify(key)}`);
+      if (!reasons.has(reason)) {
+        throw new Error(`孤儿册 ${name} 的原因只能是 ${[...reasons].join('／')}（收到：${JSON.stringify(reason)}）`);
+      }
+      // 生成器排序落盘；手写插入的行几乎一定破坏顺序，顺手把「有人手改过」暴露出来。
+      if (previous !== null && key < previous) {
+        throw new Error(`孤儿册 ${name} 未按字典序排列（${JSON.stringify(previous)} 之后是 ${JSON.stringify(key)}）：这份文件只由 --write-orphan-baseline 生成，不要手写。`);
+      }
+      previous = key;
     }
     return list;
   };
-  return {
-    path: baselinePath,
-    orphans: readList('orphans', parsed.orphans),
-    outsideRed: readList('outsideRed', parsed.outsideRed),
-    missing: false,
-  };
+  const orphans = readList('orphans', parsed.orphans, ORPHAN_REASONS);
+  const outsideRed = readList('outsideRed', parsed.outsideRed, new Set(REASONS));
+  const accept = Array.isArray(parsed.accept) ? parsed.accept : [];
+  const last = accept[accept.length - 1];
+  if (accept.length > 0) {
+    if (typeof last !== 'object' || last === null || typeof last.why !== 'string' || last.why.trim() === '') {
+      throw new Error(`孤儿册的 accept 账本条目必须是 { why, orphans, outsideRed } 形状且 why 非空：${JSON.stringify(last)}`);
+    }
+    if (last.orphans !== orphans.length || last.outsideRed !== outsideRed.length) {
+      throw new Error(`孤儿册与 accept 账本对不上：账本记 orphans=${last.orphans}／outsideRed=${last.outsideRed}，实际 ${orphans.length}／${outsideRed.length}。` +
+        '手改条目必须重新走 --write-orphan-baseline（带 --accept 与 --why）——这是「谁放行的」在 diff 里留痕的唯一方式。');
+    }
+  }
+  return { path: baselinePath, orphans, outsideRed, accept, missing: false };
 }
 
 /**
@@ -1393,12 +1474,12 @@ export function loadOrphanBaseline(root, baselinePath = DEFAULT_ORPHAN_BASELINE)
  *
  * `scannedDocs`／`docExists` 只影响**陈旧**判定：孤儿册按两种扫描面（`--strict` 的默认面、CI 的
  * `--scan docs`）共用一份文件，若把「本次没扫到的文档」也算陈旧，就跑哪个面都会刷一片假陈旧。键的第一段
- * 是文档路径（仓内相对路径没有 `:`），据此跳过「文件还在、只是不在本次扫描面里」的条目。
+ * 是文档路径（仓内相对路径没有 `|`），据此跳过「文件还在、只是不在本次扫描面里」的条目。
  * 但**文件根本不存在**的条目必须照报陈旧——否则册子里塞一条指向不存在文档的假条目就永久隐身了。
  */
 export function partitionOrphanBaseline(items, keyOf, entries, scannedDocs = null, docExists = null) {
   const keyOfEntry = entry => (typeof entry === 'string' ? entry : keyOf(entry));
-  const docOfKey = key => String(key).slice(0, String(key).indexOf(':'));
+  const docOfKey = key => String(key).slice(0, String(key).indexOf('|'));
   const known = new Map();
   for (const entry of entries) {
     const key = keyOfEntry(entry);
@@ -1433,32 +1514,207 @@ export function partitionOrphanBaseline(items, keyOf, entries, scannedDocs = nul
 /**
  * 生成孤儿册 JSON：两个数组都**排序**后再落盘，同一棵树上重复生成必须逐字节相同
  * （否则每次重跑都是一片挪行噪声，评审时看不出真正的增删）。
+ *
+ * `accept` 账本是**追加式**的：每次写盘追加一条 `{ why, accept, orphans, outsideRed }`，读回来的 loader 会校
+ * 「最后一条与实际条数一致」——手改数组而不重跑写模式，当场报错。
  */
-export function renderOrphanBaseline({ orphans, outsideRed }) {
+export function renderOrphanBaseline({ orphans, outsideRed, accept = null, ledger = [] }) {
+  const keys = orphans.map(orphanKey).sort();
+  const outsideKeys = outsideRed.map(outsideRedKey).sort();
+  const entries = [...ledger];
+  if (accept !== null) {
+    entries.push({ why: accept.why, accept: accept.accepted, orphans: keys.length, outsideRed: outsideKeys.length });
+  }
   const document = {
     schema_version: 1,
-    note: '归不到路径的裸锚点（BARE_ORPHAN）与「作用域外、按同口径本会红」的继承锚点快照。键 = 文档:文档行:原文|原因（outsideRed 为 文档:文档行:引用|判据）。--strict 只报本文件之外的**新增**（新增 ⇒ exit 1）；条目消失后会变「STALE-ORPHAN 陈旧」，复核后删掉那一行。⛔ 删掉文档里的路径前缀会在这里留下增删——那正是它该有的评审痕迹，不要靠删条目让它变绿。',
-    generated_by: 'node tools/verify-doc-anchors.mjs --write-orphan-baseline',
-    orphans: orphans.map(orphanKey).sort(),
-    outsideRed: outsideRed.map(outsideRedKey).sort(),
+    note: '归不到路径的裸锚点（BARE_ORPHAN）与「作用域外、按同口径本会红」的继承锚点快照。键 = 文档|原文|原因（outsideRed 为 文档|引用|判据），**键里没有行号**，所以插行不会刷出成批的假增删。--strict 对「基线外新增」与「陈旧」都判红；改这份文件只能走 --write-orphan-baseline（带 --accept=<实际新增条数> 与 --why="<理由>"，CI 里拒绝执行），理由落进下面的 accept 账本。⛔ 删掉文档里的路径前缀会在这里留下增删——那正是它该有的评审痕迹。',
+    generated_by: 'node tools/verify-doc-anchors.mjs --write-orphan-baseline --accept=<n> --why="<理由>"',
+    accept: entries,
+    orphans: keys,
+    outsideRed: outsideKeys,
   };
   return `${JSON.stringify(document, null, 2)}\n`;
 }
 
-/** 孤儿册的读数行：登记多少、命中多少、基线外新增多少、陈旧多少。 */
+/** 孤儿册的读数行：登记多少、命中多少、基线外新增多少、陈旧多少，以及最后一次放行的理由。 */
 function printOrphanBaseline(streams, { baseline, orphans, outside, orphanTotal, outsideTotal }) {
-  streams.log(`BARE-ORPHAN: ${BARE_ORPHAN} ${orphanTotal} 条归不到路径的裸锚点——册 ${baseline.path} 登记 ${baseline.orphans.length} 条；本次命中 ${orphans.covered.length} 条、基线外新增 ${orphans.fresh.length} 条、本次扫描面内陈旧 ${orphans.stale.length} 条`);
-  streams.log(`BARE-ORPHAN-OUTSIDE: 作用域外「本会红」${outsideTotal} 条——同一册 outsideRed 登记 ${baseline.outsideRed.length} 条；命中 ${outside.covered.length} 条、基线外新增 ${outside.fresh.length} 条`);
+  streams.log(`BARE-ORPHAN: ${BARE_ORPHAN} ${orphanTotal} 条归不到路径的裸锚点——册 ${baseline.path} 登记 ${baseline.orphans.length} 条；本次命中 ${orphans.covered.length} 条、基线外新增 ${orphans.fresh.length} 条、本次扫描面内陈旧 ${orphans.stale.length} 条（新增与陈旧在 --strict 下都判红）`);
+  streams.log(`BARE-ORPHAN-OUTSIDE: 作用域外「本会红」${outsideTotal} 条——同一册 outsideRed 登记 ${baseline.outsideRed.length} 条；命中 ${outside.covered.length} 条、基线外新增 ${outside.fresh.length} 条、陈旧 ${outside.stale.length} 条`);
   if (baseline.missing) streams.log(`NOTE: 孤儿册 ${baseline.path} 不存在，按空册处理（等于每一条孤儿都算新增）。`);
-  if (orphans.stale.length > 0 || outside.stale.length > 0) {
-    streams.log(`STALE-ORPHAN: ${orphans.stale.length + outside.stale.length} 条孤儿册条目已不再命中（那条裸锚点补回路径了、或文档改写了）——删掉这些行，否则孤儿册会慢慢变成免罚名单：`);
-    for (const key of [...orphans.stale, ...outside.stale].slice(0, 20)) streams.log(`  · ${key}`);
+  const last = baseline.accept[baseline.accept.length - 1];
+  if (last !== undefined) streams.log(`BARE-ORPHAN-ACCEPT: 最近一次放行 ${last.why}（当时 accept=${last.accept}、orphans=${last.orphans}、outsideRed=${last.outsideRed}）`);
+  const staleKeys = [...orphans.stale, ...outside.stale];
+  if (staleKeys.length > 0) {
+    streams.log(`STALE-ORPHAN: ${staleKeys.length} 条孤儿册条目已不再命中（那条裸锚点补回路径了、或文档改写／删段了）——删掉这些行，否则册子会慢慢变成免罚名单。删除同样要重跑 --write-orphan-baseline（它会把这件事记进 accept 账本）：`);
+    for (const key of staleKeys.slice(0, 20)) streams.log(`  · ${key}`);
   }
 }
 
+/**
+ * 锚点清册：把「每份文档进判据的锚点条数」也变成判据。
+ *
+ * 为什么必须另立一份：`BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE` 都只审**出现了的**锚点，于是
+ * 「把 `services/api/src/app.js:4` 整条改写成『第 4 行』」能让一条锚点干净地离开判据面而全绿。清册记的是
+ * 每份文档「本该有这么多条锚点在判据里」，少一条就得登记——登记要带 `--accept`／`--why`，理由进账本。
+ */
+export const ANCHOR_COUNT_KEY = 'judged';
+
+export function buildAnchorCounts(judgedByDoc) {
+  const counts = new Map();
+  for (const [doc, references] of judgedByDoc) counts.set(doc, references.length);
+  return counts;
+}
+
+/**
+ * 键必须是**已经规范化的仓库相对 posix 路径**。
+ *
+ * 为什么单查这一条：`documents` 的键是「哪些文档受清册管辖」的全部信息，而 `./`、`..`、反斜杠这些写法会让
+ * 同一个文档有多个字面形式——把 `docs/architecture/x.md` 改成 `docs/architecture/./x.md` 就能让 `scannedDocs.has()`
+ * 查不中（于是这条锚点被跳过、清册总数与账本又都不变）。所以在 loader 里直接拒绝，而不是静默 normalize：
+ * 静默 normalize 会让人以为改法生效了。
+ */
+function assertNormalizedDocKey(doc, baselinePath) {
+  const segments = doc.split('/');
+  const dirty = doc === '' || doc.includes('\\') || doc.startsWith('/') || doc.endsWith('/') ||
+    segments.some(segment => segment === '' || segment === '.' || segment === '..');
+  if (dirty) {
+    throw new Error(`锚点清册 ${baselinePath} 的键不是规范化的仓库相对路径：${JSON.stringify(doc)}。` +
+      '不要写 `./`、`..`、连续斜杠、反斜杠或绝对路径——同一个文档换个写法就能绕过「本次有没有扫到它」的判断，' +
+      '所以这里直接报错，不做静默 normalize。');
+  }
+}
+
+export function loadAnchorCountBaseline(root, baselinePath = DEFAULT_ANCHOR_COUNT_BASELINE) {
+  const absolute = resolve(root, baselinePath);
+  if (!existsSync(absolute)) return { path: baselinePath, documents: {}, total: 0, accept: [], scan: [], missing: true };
+  const parsed = JSON.parse(readFileSync(absolute, 'utf8'));
+  const documents = parsed.documents;
+  if (typeof documents !== 'object' || documents === null || Array.isArray(documents)) {
+    throw new Error(`锚点清册的 documents 字段必须是「文档路径 → 条数」的对象：${baselinePath}`);
+  }
+  // 清册记下自己的生成扫描面：本次的面比它窄（默认面 vs `--scan docs`）时，面内的键可以合法跳过；
+  // 面外的键（被改成一个根本不在生成面里的文档）必须判红，否则「改名换姓」就是一条免罚通道。
+  // ⚠️ 这条面只用来判「合法跳过」，**不能**用来判「扫没扫到」：键落在本次面内却没扫到（`docs/**` 下不是 .md
+  // 的路径、或目录名）时，只看这张面就等于每次都被跳过——第二刀在 partitionAnchorCountBaseline（传本次面）。
+  const scan = parsed.scan === undefined ? [] : parsed.scan;
+  if (!Array.isArray(scan) || scan.some(target => typeof target !== 'string' || target.trim() === '')) {
+    throw new Error(`锚点清册的 scan 字段必须是「生成时所扫目录／glob」的字符串数组：${JSON.stringify(parsed.scan)}`);
+  }
+  let sum = 0;
+  for (const [doc, value] of Object.entries(documents)) {
+    assertNormalizedDocKey(doc, baselinePath);
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`锚点清册 ${doc} 的条数必须是非负整数（收到：${JSON.stringify(value)}）`);
+    }
+    sum += value;
+  }
+  if (!Number.isInteger(parsed.judged_total) || parsed.judged_total !== sum) {
+    throw new Error(`锚点清册自相矛盾：judged_total=${JSON.stringify(parsed.judged_total)}，但 documents 逐项相加是 ${sum}。` +
+      '手改某个文档的条数必须同时重算总数——而这正是「偷偷放宽」最容易露馅的地方。');
+  }
+  const accept = Array.isArray(parsed.accept) ? parsed.accept : [];
+  const last = accept[accept.length - 1];
+  if (accept.length > 0) {
+    if (typeof last !== 'object' || last === null || typeof last.why !== 'string' || last.why.trim() === '') {
+      throw new Error(`锚点清册的 accept 账本条目必须是 { why, accept, judged_total } 形状且 why 非空：${JSON.stringify(last)}`);
+    }
+    if (last.judged_total !== parsed.judged_total) {
+      throw new Error(`锚点清册与 accept 账本对不上：账本记 judged_total=${last.judged_total}，文件里是 ${parsed.judged_total}。` +
+        '只改数字不改账本，等于绕过「谁放行的」这一问——请重跑 --write-anchor-count-baseline（带 --accept 与 --why）。');
+    }
+  }
+  return { path: baselinePath, documents, total: sum, accept, scan, missing: false };
+}
+
+/** 键是否落在清册自己记下的生成扫描面里（`scan: ['docs']` ⇒ `docs/**`）。 */
+function isInsideFace(doc, face) {
+  return face.some(target => doc === target || doc.startsWith(`${target.replace(/\/+$/u, '')}/`));
+}
+
+/**
+ * 比对：只判「减少」。某份文档的进判据锚点比基线少 ⇒ 红（少掉的那条必须写回路径，或登记成一条 accept）。
+ * 增加不判红（有人在文档里补了引用是好事），只报读数。
+ *
+ * **没扫到的键**要看「它在不在**本次运行面**里」，而是只看「它在不在**清册记下的生成面**里」。
+ * 只看后者会留一条通用通道：把键写成 `docs/**` 下**任何人扫不到**的名字（非 `.md` 的路径，或目录名），
+ * 它就永远落在「清册面内、本次没扫到」，于是每次都被当成合法跳过——`judged_total` 一条不少、账本也对，
+ * 这份文档却已经永久退出判据面，连 `--accept` 都不用记。三种情形因此分开：
+ * - 键在本次运行面内，却没扫到（不是 `.md`，或落在 `walkMarkdown` 跳过的目录里）⇒ 进 `unscanned` 判红；
+ * - 键不在本次运行面内、但在清册记下的生成面内（默认面 vs `--scan docs` 的日常）⇒ 合法跳过，只计数（`skipped`）；
+ * - 两张面都不在（把键改名成 `README.md` 这类面外文档）⇒ 进 `unscanned` 判红。
+ * 少了这一刀，「换个文档名」或「换成一个扫不到的名字」都能让某份文档永远退出判据面，而求和与账本全都对得上。
+ *
+ * `face` 只该由调用点传**本次运行面**（`options.scan`）；不传时退回清册自己记的面——那是「本次面未知」
+ * 的保守近似，不是这次要判的那一刀。
+ */
+export function partitionAnchorCountBaseline(counts, baseline, scannedDocs = null, docExists = null, face = null) {
+  const bookFace = baseline.scan ?? [];
+  const runFace = face ?? bookFace;
+  const drops = [];
+  const unscanned = [];
+  let skipped = 0;
+  for (const [doc, expected] of Object.entries(baseline.documents)) {
+    if (scannedDocs !== null && !scannedDocs.has(doc) && (docExists === null || docExists(doc))) {
+      const inRunFace = runFace.length > 0 && isInsideFace(doc, runFace);
+      if (!inRunFace && bookFace.length > 0 && isInsideFace(doc, bookFace)) {
+        skipped += 1;
+      } else {
+        unscanned.push({
+          doc,
+          expected,
+          inRunFace,
+          reason: bookFace.length === 0
+            ? '清册没有记下生成扫描面'
+            : inRunFace
+              ? '键在本次扫描面内，却没扫到它——不是 .md，或落在 walkMarkdown 跳过的目录里'
+              : '键不在清册记下的生成扫描面内',
+        });
+      }
+      continue;
+    }
+    const actual = counts.get(doc) ?? 0;
+    if (actual < expected) drops.push({ doc, expected, actual });
+  }
+  const growth = [];
+  for (const [doc, actual] of counts) {
+    const expected = baseline.documents[doc] ?? 0;
+    if (actual > expected) growth.push({ doc, expected, actual });
+  }
+  return { drops, growth, unscanned, skipped };
+}
+
+export function renderAnchorCountBaseline({ counts, baseline, accept = null, ledger = [], scan = [] }) {
+  const documents = {};
+  for (const doc of [...counts.keys()].sort()) documents[doc] = counts.get(doc);
+  const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
+  const entries = [...ledger];
+  if (accept !== null) entries.push({ why: accept.why, accept: accept.accepted, judged_total: total });
+  const document = {
+    schema_version: 1,
+    note: '按文档的「进判据锚点条数」清册（显式锚点 + 继承到路径的裸锚点，按文档计数、不去重以避免同一行多引用的假象）。--strict 判：某文档条数比这里少 ⇒ exit 1（少掉的那条锚点必须写回路径，或用 --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记）。judged_total 必须等于 documents 逐项之和，且最后一条 accept 账本的 judged_total 必须与之一致——单改一个数字会当场被这两道算术抓住。scan 记下生成时的扫描面：本次跑的面更窄（默认面）时可跳过面内的键，面外的键（改名成别的文档）照样判红。',
+    generated_by: 'node tools/verify-doc-anchors.mjs --scan <目录> --write-anchor-count-baseline --accept=<净增减> --why="<理由>"',
+    scan: [...new Set(scan)].sort(),
+    judged_total: total,
+    accept: entries,
+    documents,
+  };
+  return `${JSON.stringify(document, null, 2)}\n`;
+}
+
+function printAnchorCountBaseline(streams, { baseline, counts, partition }) {
+  const total = [...counts.values()].reduce((sum, value) => sum + value, 0);
+  const registered = Object.keys(baseline.documents).length;
+  const outOfFace = partition.unscanned.filter(item => !item.inRunFace).length;
+  const insideButUnscanned = partition.unscanned.length - outOfFace;
+  streams.log(`ANCHOR-COUNT: 进判据锚点 ${total} 条 / ${counts.size} 份文档——清册 ${baseline.path} 登记 ${baseline.total} 条 / ${registered} 份；本次计数下降的文档 ${partition.drops.length} 份、上升 ${partition.growth.length} 份、面外未扫的键 ${outOfFace} 个、面内本次未扫 ${partition.skipped} 个（清册面内、本次面外：合法跳过）、面内却扫不到的键 ${insideButUnscanned} 个（按本次面本该扫到却没扫到：判红）`);
+  if (baseline.missing) streams.log(`NOTE: 锚点清册 ${baseline.path} 不存在，按空册处理（不判「该出现的锚点仍在」这一条）。`);
+  const last = baseline.accept[baseline.accept.length - 1];
+  if (last !== undefined) streams.log(`ANCHOR-COUNT-ACCEPT: 最近一次放行 ${last.why}（当时 accept=${last.accept}、judged_total=${last.judged_total}）`);
+}
+
 // —— CLI ——————————————————————————————————————————————————————————————
-const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline]';
-const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--root', '--symbol', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline']);
+const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--anchor-count-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline] [--emit-anchor-count-baseline | --write-anchor-count-baseline --accept <净增减> --why "理由"]';
+const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--anchor-count-baseline', '--root', '--symbol', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline', '--emit-anchor-count-baseline', '--write-anchor-count-baseline', '--accept', '--why']);
 /** `--symbol` 的取值是**白名单**：不认识的取值直接报错退出，绝不当成「没传、照旧绿灯」。 */
 const SYMBOL_MODES = new Set(['count', 'strict']);
 const MAX_PRINTED = 300;
@@ -1467,7 +1723,7 @@ const MAX_PRINTED_UNDECIDABLE = 500;
 const MAX_PRINTED_ORPHAN_OUTSIDE = 40;
 
 export function parseArgs(argv) {
-  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, root: TOOL_ROOT, symbol: null, emit: false, write: false, emitOrphan: false, writeOrphan: false };
+  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, anchorCountBaseline: DEFAULT_ANCHOR_COUNT_BASELINE, root: TOOL_ROOT, symbol: null, accept: null, why: null, emit: false, write: false, emitOrphan: false, writeOrphan: false, emitCount: false, writeCount: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const [flag, inline] = argument.includes('=') ? [argument.slice(0, argument.indexOf('=')), argument.slice(argument.indexOf('=') + 1)] : [argument, undefined];
@@ -1484,9 +1740,18 @@ export function parseArgs(argv) {
     else if (flag === '--write-baseline') options.write = true;
     else if (flag === '--emit-orphan-baseline') options.emitOrphan = true;
     else if (flag === '--write-orphan-baseline') options.writeOrphan = true;
+    else if (flag === '--emit-anchor-count-baseline') options.emitCount = true;
+    else if (flag === '--write-anchor-count-baseline') options.writeCount = true;
     else if (flag === '--scan') options.scan.push(value());
     else if (flag === '--baseline') options.baseline = value();
     else if (flag === '--orphan-baseline') options.orphanBaseline = value();
+    else if (flag === '--anchor-count-baseline') options.anchorCountBaseline = value();
+    else if (flag === '--accept') {
+      const raw = value();
+      if (!/^-?\d+$/.test(raw)) throw new Error(`--accept 只接受整数（收到：${raw}）\n${USAGE}`);
+      options.accept = Number.parseInt(raw, 10);
+    }
+    else if (flag === '--why') options.why = value();
     else if (flag === '--root') options.root = resolve(value());
     else if (flag === '--symbol') {
       const mode = value();
@@ -1496,14 +1761,22 @@ export function parseArgs(argv) {
   }
   if (options.emit && options.write) throw new Error('--emit-baseline 与 --write-baseline 只能二选一');
   if (options.emitOrphan && options.writeOrphan) throw new Error('--emit-orphan-baseline 与 --write-orphan-baseline 只能二选一');
-  if ((options.emit || options.write) && (options.emitOrphan || options.writeOrphan)) {
-    throw new Error('结构基线与孤儿册要分别生成：--emit-baseline／--write-baseline 不能和 --emit-orphan-baseline／--write-orphan-baseline 同时用');
+  if (options.emitCount && options.writeCount) throw new Error('--emit-anchor-count-baseline 与 --write-anchor-count-baseline 只能二选一');
+  const generating = [
+    options.emit || options.write,
+    options.emitOrphan || options.writeOrphan,
+    options.emitCount || options.writeCount,
+  ].filter(Boolean).length;
+  if (generating > 1) {
+    throw new Error('四份基线的生成要分别做：--emit/--write-baseline、--emit/--write-orphan-baseline、--emit/--write-anchor-count-baseline 一次只能选一组');
   }
-  if (options.symbol !== null && (options.emit || options.write)) {
-    throw new Error(`--symbol=${options.symbol} 不能与 --emit-baseline／--write-baseline 同时用（生成基线时统计会被忽略）`);
+  const writing = options.write || options.writeOrphan || options.writeCount;
+  if (generating > 0 && options.symbol !== null) {
+    throw new Error(`--symbol=${options.symbol} 不能与基线生成同时用（生成基线时统计会被忽略）`);
   }
-  if (options.symbol !== null && (options.emitOrphan || options.writeOrphan)) {
-    throw new Error(`--symbol=${options.symbol} 不能与 --emit-orphan-baseline／--write-orphan-baseline 同时用（生成孤儿册时统计会被忽略）`);
+  // `--accept`／`--why` 只在**写模式**有意义：干跑时给它们会让人以为「已经登记过了」。
+  if (!writing && (options.accept !== null || options.why !== null)) {
+    throw new Error('--accept 与 --why 只跟 --write-*-baseline 一起用（试运行不接受「放行」参数）');
   }
   if (options.scan.length === 0) options.scan = [...DEFAULT_SCAN_TARGETS];
   return options;
@@ -1546,7 +1819,8 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.error(error.message);
     return 2;
   }
-  const { findings, stats, unresolved, commentAnchors, bareOrphans, outsideRedAnchors } = collectFindings({ root: options.root, targets: options.scan });
+  const { findings, stats, unresolved, commentAnchors, bareOrphans, outsideRedAnchors, judgedByDoc } = collectFindings({ root: options.root, targets: options.scan });
+  const anchorCounts = buildAnchorCounts(judgedByDoc);
   if (options.emit) {
     process.stdout.write(renderBaseline(findings));
     return 0;
@@ -1557,15 +1831,75 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.log(`WRITE: 已写 ${options.baseline}（${findings.length} 条）。基线是**人工裁决**的结果，提交前逐条看过；新问题不要往里加。`);
     return 0;
   }
-  const orphanDocument = renderOrphanBaseline({ orphans: bareOrphans, outsideRed: outsideRedAnchors });
   if (options.emitOrphan) {
-    process.stdout.write(orphanDocument);
+    process.stdout.write(renderOrphanBaseline({ orphans: bareOrphans, outsideRed: outsideRedAnchors }));
     return 0;
   }
   if (options.writeOrphan) {
+    // 现有册子可能还是旧格式（键里带行号）：那说明这是一次**格式迁移**，整份重登——于是 accept 会很大，
+    // 而这正是它该有的样子：口径变了就是变了一遍，不该被伪装成「只多了三条」。
+    let current;
+    try {
+      current = loadOrphanBaseline(options.root, options.orphanBaseline);
+    } catch (error) {
+      streams.log(`NOTE: 现有孤儿册按当前格式无法解析（${String(error.message).split('\n')[0]}）——本次按空册重登，--accept 必须等于全量条目数。`);
+      current = { path: options.orphanBaseline, orphans: [], outsideRed: [], accept: [], missing: true };
+    }
+    const keySet = new Set(current.orphans.map(key => key));
+    const outsideSet = new Set(current.outsideRed.map(key => key));
+    const freshOrphans = bareOrphans.filter(item => !keySet.has(orphanKey(item)));
+    const freshOutside = outsideRedAnchors.filter(item => !outsideSet.has(outsideRedKey(item)));
+    try {
+      assertWritable({ accept: options.accept, why: options.why, expected: freshOrphans.length + freshOutside.length, label: '--write-orphan-baseline' });
+    } catch (error) {
+      streams.error(error.message);
+      return 2;
+    }
     const absolute = resolve(options.root, options.orphanBaseline);
-    writeFileSync(absolute, orphanDocument);
-    streams.log(`WRITE: 已写 ${options.orphanBaseline}（孤儿 ${bareOrphans.length} 条、作用域外本会红 ${outsideRedAnchors.length} 条）。这是**快照**不是裁决：只由本工具生成，不手写；提交前确认增量确实该留在册上。`);
+    writeFileSync(absolute, renderOrphanBaseline({
+      orphans: bareOrphans,
+      outsideRed: outsideRedAnchors,
+      accept: { why: options.why, accepted: options.accept },
+      ledger: current.accept,
+    }));
+    streams.log(`WRITE: 已写 ${options.orphanBaseline}（孤儿 ${bareOrphans.length} 条、作用域外本会红 ${outsideRedAnchors.length} 条；本次新增 ${freshOrphans.length + freshOutside.length} 条，与 --accept=${options.accept} 一致）。理由已记进 accept 账本：${options.why}`);
+    return 0;
+  }
+  if (options.emitCount) {
+    const current = loadAnchorCountBaseline(options.root, options.anchorCountBaseline);
+    process.stdout.write(renderAnchorCountBaseline({ counts: anchorCounts, baseline: current, scan: options.scan.length > 0 ? options.scan : current.scan }));
+    return 0;
+  }
+  if (options.writeCount) {
+    const current = loadAnchorCountBaseline(options.root, options.anchorCountBaseline);
+    const currentTotal = [...anchorCounts.values()].reduce((sum, value) => sum + value, 0);
+    // 这里**没有**「必须显式给 --scan」这道闸：`parseArgs` 在填默认面之后才返回，`options.scan` 永远非空，
+    // 写在这种位置的空面检查是死代码（旧注释说「口径必须与 CI 一致」，但 code path 到不了）。
+    // 真正挡住「照窄面重写＝静默丢键」的是下面这道 lostKeys：写模式的硬约束是**新键集 ⊇ 旧键集**
+    // （实测：默认面 218 份/6111 条 vs `--scan docs` 的 226 份/6217 条，少掉的 8 份在这里被点名拦下），
+    // 比「必须给 --scan」更硬——给了 `--scan` 但面仍比清册窄，一样被拦。
+    const lostKeys = Object.keys(current.documents).filter(doc => !anchorCounts.has(doc));
+    if (lostKeys.length > 0) {
+      streams.error(`ERROR: 本次扫描面里没有这 ${lostKeys.length} 份文档，重写会把它们从清册里静默删掉（等于让它们永久退出判据面）：`);
+      for (const doc of lostKeys.slice(0, 40)) streams.error(`  · ${doc}（清册 ${current.documents[doc]} 条）`);
+      streams.error('  修法：用与 CI 相同的口径重跑（`--scan docs`）；确有文档被删除/移走的，先单独确认，再手工把这次收缩当成一次审查决定处理。');
+      return 2;
+    }
+    try {
+      assertWritable({ accept: options.accept, why: options.why, expected: currentTotal - current.total, label: '--write-anchor-count-baseline' });
+    } catch (error) {
+      streams.error(error.message);
+      return 2;
+    }
+    const absolute = resolve(options.root, options.anchorCountBaseline);
+    writeFileSync(absolute, renderAnchorCountBaseline({
+      counts: anchorCounts,
+      baseline: current,
+      accept: { why: options.why, accepted: options.accept },
+      ledger: current.accept,
+      scan: options.scan,
+    }));
+    streams.log(`WRITE: 已写 ${options.anchorCountBaseline}（进判据锚点 ${currentTotal} 条 / ${anchorCounts.size} 份文档；净增减 ${currentTotal - current.total} 条，与 --accept=${options.accept} 一致）。理由已记进 accept 账本：${options.why}`);
     return 0;
   }
   const baseline = loadBaseline(options.root, options.baseline);
@@ -1579,7 +1913,13 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   }
   printSummary(streams, { stats, unresolved, findings, fresh, covered, stale, baseline, strict: options.strict });
   printBareOrphans(streams, bareOrphans);
-  const orphanBaseline = loadOrphanBaseline(options.root, options.orphanBaseline);
+  let orphanBaseline;
+  try {
+    orphanBaseline = loadOrphanBaseline(options.root, options.orphanBaseline);
+  } catch (error) {
+    streams.error(`ERROR: ${error.message}`);
+    return 2;
+  }
   const scannedDocs = new Set(resolveScanTargets(options.root, options.scan));
   const docExists = docPath => existsSync(resolve(options.root, docPath));
   const orphanPartition = partitionOrphanBaseline(bareOrphans, orphanKey, orphanBaseline.orphans, scannedDocs, docExists);
@@ -1591,6 +1931,25 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     orphanTotal: bareOrphans.length,
     outsideTotal: outsideRedAnchors.length,
   });
+  // 两份册子都可能被人手改：写法不是「相信它」，而是让**算术对不上**当场炸出来（见各自的 loader）。
+  let anchorCountBaseline;
+  try {
+    anchorCountBaseline = loadAnchorCountBaseline(options.root, options.anchorCountBaseline);
+  } catch (error) {
+    streams.error(`ERROR: ${error.message}`);
+    return 2;
+  }
+  // 第 5 参是**本次运行面**：键在面内却没扫到（`docs/**` 下不是 .md 的路径、或目录名）必须判红，
+  // 不能因为「它在清册记下的那个更宽的面里」就永远算合法跳过（那是一条零账本的退出通道）。
+  const countPartition = partitionAnchorCountBaseline(anchorCounts, anchorCountBaseline, scannedDocs, docExists, options.scan);
+  printAnchorCountBaseline(streams, { baseline: anchorCountBaseline, counts: anchorCounts, partition: countPartition });
+  // 明细只在 dry-run 打：--strict 的失败清单走 stderr（同结构四判据的既有分工，免得同一份清单打印两遍）。
+  if (countPartition.drops.length > 0 && !options.strict) {
+    streams.log(`ANCHOR-COUNT-DROP: ${countPartition.drops.length} 份文档的「进判据锚点」比清册少（--strict 下判红）：`);
+    for (const drop of countPartition.drops.slice(0, 20)) {
+      streams.log(`  · ${drop.doc}：清册 ${drop.expected} 条 → 本次 ${drop.actual} 条（少 ${drop.expected - drop.actual} 条）`);
+    }
+  }
   const drift = collectAnchorDrift({ root: options.root, targets: options.scan });
   const driftPartition = partitionDriftByBaseline(drift.findings);
   printDriftSummary(streams, { drift, partition: driftPartition });
@@ -1619,7 +1978,8 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   const structuralFailed = options.strict && fresh.length > 0;
   const driftFailed = options.strict && driftPartition.fresh.length > 0;
   const symbolStrictFailed = options.strict && symbolStrict !== null && symbolStrict.fresh.length > 0;
-  const orphanFailed = options.strict && (orphanPartition.fresh.length > 0 || outsidePartition.fresh.length > 0);
+  const orphanFailed = options.strict && (orphanPartition.fresh.length > 0 || outsidePartition.fresh.length > 0 || orphanPartition.stale.length > 0 || outsidePartition.stale.length > 0);
+  const countFailed = options.strict && (countPartition.drops.length > 0 || countPartition.unscanned.length > 0);
   if (structuralFailed) {
     streams.error(`FAIL: 文档行号闸门未通过（基线之外新增 ${fresh.length} 条）`);
     for (const finding of fresh.slice(0, 40)) streams.error(`  · ${describe(finding)}`);
@@ -1635,13 +1995,25 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.error('  修法：把锚点改到目标文件里真正的声明行／代码行（报错里给了该行实际内容，按它找）；确属「引用注释原文、没有代码行可指」的合法证据，人工裁决后登记进 tools/doc-anchors-symbol-baseline.json 并在 note 里写明原因。⛔ 不要为了让门禁变绿去改被引用的注释。');
   }
   if (orphanFailed) {
-    streams.error(`FAIL: 裸锚点孤儿册未通过（${BARE_ORPHAN} 基线之外新增 ${orphanPartition.fresh.length} 条、作用域外本会红新增 ${outsidePartition.fresh.length} 条）`);
+    streams.error(`FAIL: 裸锚点孤儿册未通过（${BARE_ORPHAN} 基线之外新增 ${orphanPartition.fresh.length} 条、作用域外本会红新增 ${outsidePartition.fresh.length} 条、册上陈旧 ${orphanPartition.stale.length + outsidePartition.stale.length} 条）`);
     for (const item of orphanPartition.fresh.slice(0, 40)) streams.error(`  · ${describeOrphan(item)}`);
     for (const item of outsidePartition.fresh.slice(0, 40)) streams.error(`  · ${item.doc}:${item.docLine} → ${item.reference}（${item.reason}，作用域外本会红）`);
-    streams.error('  修法：给这条裸锚点补回路径（`path:N`），或把段落写成「同块前面已有显式锚点」的形状；确属历史取证页逐字引用、补不回路径的，人工裁决后用 --write-orphan-baseline 重新生成孤儿册（那不是「让它变绿」，是把「放弃判据」这件事登记成册上的一行）。');
+    for (const key of [...orphanPartition.stale, ...outsidePartition.stale].slice(0, 20)) streams.error(`  · 陈旧 ${key}`);
+    streams.error('  修法：给这条裸锚点补回路径（`path:N`），或把段落写成「同块前面已有显式锚点」的形状。确属历史取证页逐字引用、补不回路径的，本地跑 --write-orphan-baseline --accept=<实际新增条数> --why="<理由>" 重新生成：那是把「放弃判据」登记成册上一行 + 一条署名理由（CI 里这个写模式会被拒绝执行）。⛔ 不要靠删条目换绿——陈旧条数同样判红。');
   }
-  if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed) return 1;
-  if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、${BARE_ORPHAN}${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
+  if (countFailed) {
+    streams.error(`FAIL: 锚点清册未通过（${countPartition.drops.length} 份文档的「进判据锚点」比 ${options.anchorCountBaseline} 少、${countPartition.unscanned.length} 个键本次没扫到）`);
+    for (const drop of countPartition.drops.slice(0, 20)) streams.error(`  · ${drop.doc}：清册 ${drop.expected} 条 → 本次 ${drop.actual} 条（少 ${drop.expected - drop.actual} 条）`);
+    for (const item of countPartition.unscanned.slice(0, 20)) {
+      streams.error(`  · ${item.doc}：清册 ${item.expected} 条，但本次根本没扫到它（${item.reason}）——` +
+        (item.inRunFace
+          ? '键在本次扫描面内，扫不到它等于这份文档的锚点从判据面上消失（换成非 .md 路径或目录名同样算）'
+          : '键被换成了面外的文档，等于让这份文档永久退出判据面'));
+    }
+    streams.error('  修法：这条锚点必须留在判据里——把删掉的路径写回（`path:N`），或把「第 N 行」这类散文改回锚点。确属有意放弃判据的，本地跑 --scan docs --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记（CI 里拒绝执行）；单改清册数字会被 judged_total 求和、accept 账本、键必须是规范化路径这三道抓住。⛔ 不要把键换成 `README.md` 这类面外文档，也不要换成 `docs/**` 下不是 .md 的文件或目录名——两种都是「扫不到」，两种都判红。');
+  }
+  if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed || countFailed) return 1;
+  if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、${BARE_ORPHAN}、ANCHOR-COUNT${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
   return 0;
 }
 
@@ -1667,7 +2039,7 @@ function printBareOrphans(streams, bareOrphans) {
   if (bareOrphans.length === 0) return;
   const inScope = bareOrphans.filter(item => item.inScope);
   const outside = bareOrphans.filter(item => !item.inScope);
-  streams.log(`${BARE_ORPHAN}: ${bareOrphans.length} 条裸锚点归不到路径（同块内没有显式锚点，或同块显式锚点指向不同文件）——单条不判红（判红只能靠猜），但每条都进 ${DEFAULT_ORPHAN_BASELINE}：--strict 只报基线外新增、并对已消失的条目点名要求删，所以「删掉路径前缀」要么被同块继承抓住，要么在孤儿册上留下增删：`);
+  streams.log(`${BARE_ORPHAN}: ${bareOrphans.length} 条裸锚点归不到路径（同块内没有显式锚点，或同块显式锚点指向不同文件）——单条不判红（判红只能靠猜），但每条都进 ${DEFAULT_ORPHAN_BASELINE}：--strict 报「基线外新增」与「册上陈旧」两类，且 ${DEFAULT_ANCHOR_COUNT_BASELINE} 还会盯住每份文档的进判据条数。所以「删掉路径前缀」要么被同块继承抓住（该红照红），要么至少要在那两份册子上留下一行增删（带 --accept 条数与 --why 理由）。`);
   for (const item of inScope) {
     streams.log(`  · ${describeOrphan(item)}`);
   }

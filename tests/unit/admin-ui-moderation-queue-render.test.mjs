@@ -241,7 +241,8 @@ function reviewOutcome(overrides = {}) {
     id: POST_ID,
     revision: 4,
     audit_state: 'approved',
-    visibility: 'private',
+    // 服务端真实可达形态（`admin/ops/community-posts.ts:327-328`）：private 帖通过后就是 published。
+    visibility: 'published',
     decision: 'approved',
     changed: true,
     notified: false,
@@ -471,7 +472,9 @@ test('approve 成功 ⇒ 该行审核态变成 approved（回执 changed:true，
     list: () => jsonResponse(200, page([adminPost(), adminPost({ id: OTHER_ID, title: '另一条待审帖' })])),
     current,
     action: () => {
-      current.post = adminPost({ revision: 4, audit_state: 'approved' });
+      // 服务端通过动作会把 private 帖推到 published（`admin/ops/community-posts.ts:327-328`），
+      // 所以重读出来的详情必须是 published——旧夹具留 'private' 是服务端不会返回的状态。
+      current.post = adminPost({ revision: 4, audit_state: 'approved', visibility: 'published' });
       current.etag = '"4"';
       return jsonResponse(200, { data: reviewOutcome(), meta: meta() }, { etag: '"4"' });
     },
@@ -493,7 +496,11 @@ test('approve 成功 ⇒ 该行审核态变成 approved（回执 changed:true，
     assert.ok(notice !== null, '成功后必须有回执条');
     assert.equal(notice.props.role, 'status');
     assert.match(textOf(notice), /已写入审核结论：通过/);
-    assert.match(textOf(notice), /通过不改可见性/);
+    // 新文案语义（钉住）：private 帖通过后回执必须说「已公开」，且**不得**再出现与服务端相反的那句。
+    assert.match(textOf(notice), /published（已公开）/, '通过后回执必须显示服务端返回的 published');
+    assert.match(textOf(notice), /private ⇒ published/, '回执必须说清 private 帖通过后会变 published');
+    assert.doesNotMatch(textOf(notice), /不改可见性/, '旧句「通过不改可见性」与服务端事实相反，不得复活');
+    assert.match(textOf(findBy(mounted.container, byTestId('moderation-detail'))), /published（已公开）/, '详情面板的可见性也要跟着回执走');
 
     const actionCalls = fetchImpl.calls.filter((call) => call.method === 'POST');
     assert.equal(actionCalls.length, 1);
@@ -507,6 +514,56 @@ test('approve 成功 ⇒ 该行审核态变成 approved（回执 changed:true，
       '成功后应重读一次详情（拿真实 ETag）',
     );
     assert.match(textOf(findBy(mounted.container, byTestId('moderation-detail'))), /"4"/);
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test('详情脚注：通过会把 private 推到 published（不得再写「不改可见性」）', async () => {
+  const fetchImpl = routedFetch({
+    list: () => jsonResponse(200, page([adminPost()])),
+    current: { post: adminPost(), etag: '"3"' },
+    action: passThrough,
+  });
+  const mounted = await mountView({ fetchImpl });
+  try {
+    findBy(mounted.container, byTestId('moderation-row')).props.onClick({});
+    await settle();
+    const footText = textOf(findBy(mounted.container, byTestId('moderation-detail')));
+    assert.match(footText, /approve 写 audit_state=approved/, '脚注必须说 approve 写 audit_state=approved');
+    assert.match(footText, /从 private 推到 published/, '脚注必须说清通过会把 private 推到 published');
+    assert.doesNotMatch(footText, /不改可见性/, '旧句「通过不改可见性」与服务端事实相反，不得复活');
+    assert.match(footText, /reject 同时把 visibility 置为 hidden/, '驳回置 hidden 的说法要保留（服务端确实如此）');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test('approve 一条已 hidden 的帖 ⇒ 回执仍是 hidden（不为通过翻案），且不得出现「已公开」', async () => {
+  // 服务端单向门：`hidden`／`deleted` 不被通过动作翻案（`admin/ops/community-posts.ts` 的 `review()`）。
+  const current = { post: adminPost({ visibility: 'hidden' }), etag: '"3"' };
+  const fetchImpl = routedFetch({
+    list: () => jsonResponse(200, page([adminPost({ visibility: 'hidden' })])),
+    current,
+    action: () => {
+      current.post = adminPost({ revision: 4, audit_state: 'approved', visibility: 'hidden' });
+      current.etag = '"4"';
+      return jsonResponse(200, { data: reviewOutcome({ visibility: 'hidden', notified: true }), meta: meta() }, { etag: '"4"' });
+    },
+  });
+  const mounted = await mountView({ fetchImpl });
+  try {
+    findBy(mounted.container, byTestId('moderation-row')).props.onClick({});
+    await settle();
+    findBy(mounted.container, byTestId('moderation-approve')).props.onClick({});
+    await settle();
+
+    const notice = findBy(mounted.container, byTestId('moderation-action-notice'));
+    assert.ok(notice !== null, '成功后必须有回执条');
+    const noticeText = textOf(notice);
+    assert.match(noticeText, /visibility=hidden（已隐藏）/, 'hidden 帖通过后必须仍是 hidden');
+    assert.doesNotMatch(noticeText, /已公开/, 'hidden 帖通过后不得出现「已公开」');
+    assert.doesNotMatch(noticeText, /不改可见性/, '旧句「通过不改可见性」与服务端事实相反，不得复活');
   } finally {
     mounted.unmount();
   }

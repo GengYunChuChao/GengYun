@@ -11,8 +11,8 @@
  *   「资源revision强ETag；列表无此头」）；不存在 404（:11536 原文「不用 403，避免泄露存在性」）。
  * - `POST /admin/posts/{id}/approve`（:11727）`approvePost`（:11729）、`x-scope: sources:write`（:11822）；
  *   参数 `IdempotencyKey`（:11751）＋`IfMatch`（:11754）；**没有 requestBody**；200
- *   `PostReviewOutcomeEnvelope`（:11763）。描述（:11731）：写 `audit_state=approved`、**不改可见性**、
- *   硬规则明确否决的内容 422。
+ *   `PostReviewOutcomeEnvelope`（:11763）。可见性语义以服务端实现为准（`admin/ops/community-posts.ts`
+ *   的 `review()`）：通过写 `audit_state=approved`，并把 `private` 帖一并推到 `published`；硬规则明确否决 422。
  * - `POST /admin/posts/{id}/reject`（:11827）`rejectPost`（:11829）、`x-scope: sources:write`（:11922）；
  *   请求体 `PostRejectionInput`（schema :16364：`reason_code` 闭集 10 值、必填、`additionalProperties:false`）；
  *   200 `PostReviewOutcomeEnvelope`（:11863）。描述（:11831）：`audit_state=rejected` **且** `visibility=hidden`，并通知作者。
@@ -1261,10 +1261,10 @@ export function describeReviewOutcome(outcome, decision) {
     tone: 'ready',
     role: 'status',
     title: `已写入审核结论：通过（audit_state=${outcome.audit_state}）`,
-    detail: `revision ${outcome.revision} · visibility=${visibilityLabel}（通过不改可见性）`,
+    detail: `revision ${outcome.revision} · visibility=${visibilityLabel}（通过后：private ⇒ published，其余保持原可见性）`,
     advice: outcome.notified === true
       ? '服务端 notified:true ⇒ 已通知作者。'
-      : '通过动作不通知作者（契约里 notified:false），可见性保持详情里的值。',
+      : '服务端 notified:false ⇒ 本次没有通知作者（匿名帖或通知通道未送达），照实显示，不代替服务端承诺已送达。',
     outcome,
   };
 }

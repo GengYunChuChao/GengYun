@@ -21,7 +21,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,7 +36,9 @@ import {
   attributeBareAnchors,
   collectFindings,
   extractReferences,
+  loadAnchorCountBaseline,
   loadBaseline,
+  loadOrphanBaseline,
   main,
   partitionByBaseline,
   renderBaseline,
@@ -53,6 +55,24 @@ function capture(args) {
   const stderr = [];
   const code = main(args, { log: line => stdout.push(line), error: line => stderr.push(line) });
   return { code, stdout, stderr, text: [...stdout, ...stderr].join('\n') };
+}
+
+/**
+ * 生成模式（`--emit-*-baseline`）把 JSON 直接写 `process.stdout`，不走 `streams.log`——
+ * 那是有意的（emit 的输出要能原样重定向成文件），所以这里短暂接管 `process.stdout.write` 把它捞回来。
+ */
+function captureEmit(args) {
+  const original = process.stdout.write;
+  let out = '';
+  process.stdout.write = chunk => {
+    out += String(chunk);
+    return true;
+  };
+  try {
+    return { ...capture(args), stdout: out };
+  } finally {
+    process.stdout.write = original;
+  }
 }
 
 /** 在临时目录里搭一棵最小仓库：`docs/architecture/*.md` + `src/*.ts` + `tools/`。 */
@@ -279,6 +299,30 @@ test('基线条目必须带 path／reason／owner／reference，且 reason 只�
   }
 });
 
+test('清册与孤儿册受版本控制存在，真实仓上不报「计数下降／孤儿新增」', () => {
+  // 这两份册子本身是「判据面的账本」：删掉文件就等于把整面清零，所以它们必须在仓里，
+  // 而且必须与当前文档对得上——手改数字由 loader 的算术不变量抓，删文件由这条抓。
+  const orphan = loadOrphanBaseline(REPO_ROOT);
+  assert.equal(orphan.missing, false, `${orphan.path} 必须受版本控制存在（缺文件等于把所有孤儿清零）`);
+  assert.ok(
+    orphan.orphans.length > 0 || orphan.outsideRed.length > 0,
+    '孤儿册被写成空册：空册会让所有孤儿变成「基线外新增」而整片红，不是把它们修好了',
+  );
+  const count = loadAnchorCountBaseline(REPO_ROOT);
+  assert.equal(count.missing, false, `${count.path} 必须受版本控制存在（缺文件等于把每页的判据面清零）`);
+  assert.ok(count.total >= 1000, `清册只登记了 ${count.total} 条进判据锚点，判据面可能被改坏了`);
+
+  const result = capture(['--root', REPO_ROOT, '--strict']);
+  assert.equal(result.code, 0, `真实仓在 --strict 下必须绿：\n${result.text}`);
+  assert.match(result.text, /ANCHOR-COUNT: .*本次计数下降的文档 0 份/u);
+  assert.match(result.text, /BARE-ORPHAN: .*基线外新增 0 条、本次扫描面内陈旧 0 条/u);
+  // 钉子：默认面（`--scan docs/architecture` + `--scan docs/verification`，即 `npm run verify:anchors`）
+  // 比清册记的 `docs` 窄，所以**正常运行时**就有一批「清册面内、本次面外」的键被合法跳过；
+  // 这些跳过必须打印出来（可见），而且「面内却扫不到」必须是 0——两个数不许对调或合并。
+  assert.match(result.text, /面内本次未扫 \d+ 个（清册面内、本次面外：合法跳过）/u);
+  assert.match(result.text, /面内却扫不到的键 0 个（按本次面本该扫到却没扫到：判红）/u);
+});
+
 test('判据是结构性的：不得引入内容哈希（sha256 全等会把任何合法改代码都判红）', async () => {
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(join(REPO_ROOT, 'tools/verify-doc-anchors.mjs'), 'utf8');
@@ -490,6 +534,281 @@ test('T8 表格必须按单元格断块：同格可继承，跨格不许继承�
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// —— 锚点清册与孤儿册（第二轮审查的阻塞 1／阻塞 2）————————————————————
+// 这两道判据管的不是「锚点写错了」，而是「锚点**不见了**」：结构四判据只审已经出现的锚点，
+// 把 `src/x.mjs:3` 整条改写成「见第 3 行」，它就从判据面上干净消失、四类判据全绿。清册与孤儿册
+// 把「该出现的还在不在」「放弃判据的那一条登记过没有」也变成判据，而且改册子必须留名（--accept + --why）。
+
+/** 在夹具里补写一份文件（基线 JSON 也要落进临时仓，`--root` 才会读到它）。 */
+function writeIn(root, relativePath, content) {
+  const absolute = join(root, relativePath);
+  mkdirSync(dirname(absolute), { recursive: true });
+  writeFileSync(absolute, content);
+}
+
+const COUNT_BASELINE = 'tools/doc-anchors-anchor-count-baseline.json';
+const ORPHAN_BASELINE = 'tools/doc-anchors-orphan-baseline.json';
+const COUNT_DOC = 'docs/architecture/bare-count-drop.md';
+
+test('T9 散文逃逸必红：把唯一那条锚点整句改写成散文 ⇒ 锚点清册点出「少了一条」', () => {
+  const root = makeBareFixture({
+    [COUNT_DOC]: '读数：见 `src/x.mjs:3`。\n',
+    [COUNT_BASELINE]: `${JSON.stringify({
+      schema_version: 1,
+      note: '测试夹具',
+      generated_by: 'test',
+      judged_total: 1,
+      accept: [],
+      documents: { [COUNT_DOC]: 1 },
+    }, null, 2)}\n`,
+  });
+  try {
+    const before = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(before.code, 0, `锚点还在时不该红：${before.text}`);
+    assert.match(before.text, /ANCHOR-COUNT: 进判据锚点 1 条/u);
+
+    // 把锚点整条改写成散文：源文件没动、行号没越界、结构四判据都无从判——只有清册能看出少了一条。
+    writeIn(root, COUNT_DOC, '读数：见第 3 行。\n');
+    const after = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(after.code, 1, `锚点被改写成散文必须判红，实际：${after.text}`);
+    assert.match(after.text, /FAIL: 锚点清册未通过/u);
+    assert.match(after.text, /docs\/architecture\/bare-count-drop\.md：清册 1 条 → 本次 0 条（少 1 条）/u, '报错必须点名文档、给出旧计数／新计数');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T10 清册不能自助下调：只改一处数字必被算术抓住，改齐了也必须在 accept 账本里留名', () => {
+  const root = makeBareFixture({
+    [COUNT_DOC]: '读数：见第 3 行。\n', // 锚点已经不在了（等价于「刚被人改写成散文」）
+    [COUNT_BASELINE]: `${JSON.stringify({
+      schema_version: 1,
+      note: '测试夹具',
+      generated_by: 'test',
+      judged_total: 1,
+      accept: [],
+      documents: { [COUNT_DOC]: 1 },
+    }, null, 2)}\n`,
+  });
+  try {
+    // ① 只把该文档的条数下调 1（judged_total 不动）⇒ 逐项相加对不上总数，当场报错。
+    writeIn(root, COUNT_BASELINE, `${JSON.stringify({
+      schema_version: 1, note: '测试夹具', generated_by: 'test', judged_total: 1, accept: [], documents: { [COUNT_DOC]: 0 },
+    }, null, 2)}\n`);
+    const onlyDocLowered = capture([...bareScanArgs(root), '--strict']);
+    assert.notEqual(onlyDocLowered.code, 0, `只改文档条数、不改总数必须报错，实际：${onlyDocLowered.text}`);
+    assert.match(onlyDocLowered.text, /自相矛盾：judged_total=1，但 documents 逐项相加是 0/u);
+
+    // ② 连 judged_total 一起下调 ⇒ 与 accept 账本对不上（账本是「谁放行的」那一栏）。
+    writeIn(root, COUNT_BASELINE, `${JSON.stringify({
+      schema_version: 1, note: '测试夹具', generated_by: 'test', judged_total: 0,
+      accept: [{ why: '首次落地', accept: 1, judged_total: 1 }], documents: { [COUNT_DOC]: 0 },
+    }, null, 2)}\n`);
+    const bothLowered = capture([...bareScanArgs(root), '--strict']);
+    assert.notEqual(bothLowered.code, 0, `改数字不改账本必须报错，实际：${bothLowered.text}`);
+    assert.match(bothLowered.text, /与 accept 账本对不上/u);
+
+    // ③ 三处都改（= 真的重跑写模式）⇒ 绿，但账本里必须留下「放行了几条、为什么」。
+    writeIn(root, COUNT_BASELINE, `${JSON.stringify({
+      schema_version: 1, note: '测试夹具', generated_by: 'test', judged_total: 0,
+      accept: [{ why: '该锚点指的历史行已不存在，主动放弃判据', accept: -1, judged_total: 0 }],
+      documents: { [COUNT_DOC]: 0 },
+    }, null, 2)}\n`);
+    const registered = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(registered.code, 0, `登记过就该绿（留痕而非防伪——差别在于放宽必须署名）：${registered.text}`);
+    assert.match(registered.text, /ANCHOR-COUNT-ACCEPT: 最近一次放行 该锚点指的历史行已不存在/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T11 孤儿册的键不带行号：页首插一行空行不造成成批「新增 + 陈旧」噪声', () => {
+  const doc = 'docs/architecture/bare-orphan-blank.md';
+  const body = ['# 标题', '', '段落一：:5', '', '段落二：:7', ''].join('\n');
+  const root = makeBareFixture({ [doc]: body });
+  try {
+    const emitted = captureEmit([...bareScanArgs(root), '--emit-orphan-baseline']);
+    assert.equal(emitted.code, 0);
+    const snapshot = JSON.parse(emitted.stdout);
+    assert.equal(snapshot.orphans.length, 2, `两段各一条孤儿，实际：${JSON.stringify(snapshot.orphans)}`);
+    writeIn(root, ORPHAN_BASELINE, emitted.stdout);
+
+    const before = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(before.code, 0, `册子刚生成，不该红：${before.text}`);
+
+    // 页首插一行空行：文档行号整体 +1（下面用 findings 的 docLine 证明它真的位移了）。
+    writeIn(root, doc, `\n${body}`);
+    const orphanLines = collectFindings({ root, targets: ['docs/architecture'] }).bareOrphans.map(item => item.docLine);
+    assert.deepEqual(orphanLines, [4, 6], '插一行之后孤儿所在文档行确实从 3／5 漂到 4／6（这是行号漂移的实证）');
+
+    const after = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(after.code, 0, `键里没有行号 ⇒ 插行不该刷出成批增删，实际：${after.text}`);
+    assert.match(after.text, /BARE-ORPHAN: BARE_ORPHAN 2 条归不到路径的裸锚点——册 tools\/doc-anchors-orphan-baseline\.json 登记 2 条；本次命中 2 条、基线外新增 0 条、本次扫描面内陈旧 0 条/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T12 孤儿册三件：陈旧判红、写模式在 CI 里被拒、--accept 与实际增量不符即报错', () => {
+  const doc = 'docs/architecture/bare-orphan-stale.md';
+  const root = makeBareFixture({ [doc]: '# 标题\n\n段落一：:5\n' });
+  const writeArgs = [...bareScanArgs(root), '--orphan-baseline', ORPHAN_BASELINE];
+  try {
+    const emitted = captureEmit([...writeArgs, '--emit-orphan-baseline']);
+    writeIn(root, ORPHAN_BASELINE, emitted.stdout);
+    assert.equal(capture([...writeArgs, '--strict']).code, 0, '册子与文档一致时不该红');
+
+    // ① 陈旧判红：把那条裸锚点补回路径，册子里的条目就「不再命中」——删册子换绿不成立。
+    writeIn(root, doc, '# 标题\n\n段落一：`src/x.mjs:5`。\n');
+    const stale = capture([...writeArgs, '--strict']);
+    assert.equal(stale.code, 1, `册上条目不再命中必须判红，实际：${stale.text}`);
+    assert.match(stale.text, /FAIL: 裸锚点孤儿册未通过/u);
+    assert.match(stale.text, /册上陈旧 1 条/u);
+    assert.match(stale.text, /陈旧 docs\/architecture\/bare-orphan-stale\.md\|:5\|no-explicit-in-block/u);
+
+    // ② CI 里拒绝写模式：门禁不能自己改基线。
+    const hadCi = process.env.CI;
+    process.env.CI = '1';
+    try {
+      const refused = capture([...writeArgs, '--write-orphan-baseline', '--accept', '0', '--why', '测试：CI 里应当被拒']);
+      assert.equal(refused.code, 2, `CI 里写模式必须被拒，实际：${refused.text}`);
+      assert.match(refused.text, /在 CI 环境（检测到 CI）里被拒绝执行/u);
+    } finally {
+      if (hadCi === undefined) delete process.env.CI;
+      else process.env.CI = hadCi;
+    }
+
+    // ③ --accept 必须等于实际增量：数字对不上就是没复核。
+    const wrongAccept = capture([...writeArgs, '--write-orphan-baseline', '--accept', '99', '--why', '测试：故意给错条数']);
+    assert.equal(wrongAccept.code, 2, `--accept 与实际不符必须报错，实际：${wrongAccept.text}`);
+    assert.match(wrongAccept.text, /--accept=99 与实际增量 0 不符/u);
+
+    // ④ 试运行不许带「放行」参数（否则会让人以为已经登记过了）。
+    const acceptWithoutWrite = capture([...writeArgs, '--strict', '--accept', '0']);
+    assert.equal(acceptWithoutWrite.code, 2);
+    assert.match(acceptWithoutWrite.text, /--accept 与 --why 只跟 --write-\*-baseline 一起用/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('T13 清册的两条静默通道：键改成面外文档必红、键写 `./` 直接拒收、写模式漏 --scan 不许静默丢键', () => {
+  const doc = 'docs/architecture/bare-count-face.md';
+  const source = '读数：见 `src/x.mjs:3`。\n';
+  const countOf = (documents, scan = ['docs/architecture']) => `${JSON.stringify({
+    schema_version: 1,
+    note: '测试夹具',
+    generated_by: 'test',
+    scan,
+    judged_total: Object.values(documents).reduce((sum, value) => sum + value, 0),
+    accept: [],
+    documents,
+  }, null, 2)}\n`;
+  // 夹具里 README.md 是「磁盘上真实存在、但不在扫描面内」的文档——正是审查给的 E27 形状。
+  const root = makeBareFixture({
+    [doc]: source,
+    'README.md': '# 夹具根说明\n',
+    [COUNT_BASELINE]: countOf({ [doc]: 1 }),
+  });
+  try {
+    assert.equal(capture([...bareScanArgs(root), '--strict']).code, 0, '清册与文档一致时不该红');
+
+    // ① 把键改名成面外的 README.md：求和、账本、总数全都不变，只有「这份文档本次根本没被扫到」能抓住它。
+    writeIn(root, COUNT_BASELINE, countOf({ 'README.md': 1 }));
+    const renamed = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(renamed.code, 1, `键改成面外文档必须判红，实际：${renamed.text}`);
+    assert.match(renamed.text, /FAIL: 锚点清册未通过/u);
+    assert.match(renamed.text, /1 个键本次没扫到/u);
+    assert.match(renamed.text, /README\.md：清册 1 条，但本次根本没扫到它/u);
+    assert.match(renamed.text, /键不在清册记下的生成扫描面内/u);
+    // 面外的键要单独计数：它既不是「合法跳过」，也不许混进「面内却扫不到」。
+    assert.match(renamed.text, /面外未扫的键 1 个、面内本次未扫 0 个/u);
+    assert.match(renamed.text, /面内却扫不到的键 0 个/u);
+
+    // ② 同一个文档换个字面写法（`./`）：直接拒收，不做静默 normalize（否则「扫没扫到」就查不中了）。
+    writeIn(root, COUNT_BASELINE, countOf({ 'docs/architecture/./bare-count-face.md': 1 }));
+    const dotSlash = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(dotSlash.code, 2, `非规范化的键必须拒收，实际：${dotSlash.text}`);
+    assert.match(dotSlash.text, /键不是规范化的仓库相对路径/u);
+    assert.match(dotSlash.text, /docs\/architecture\/\.\/bare-count-face\.md/u);
+    assert.match(dotSlash.text, /不做静默 normalize/u);
+
+    // ③ 清册记下的面比本次宽时，面内的键是**合法**跳过（默认面跑 218 份、CI 面跑 226 份的日常）。
+    writeIn(root, 'docs/verification/absent.md', '引用：`src/x.mjs:3`。\n引用：`src/y.mjs:2`。\n');
+    writeIn(root, COUNT_BASELINE, countOf({ [doc]: 1, 'docs/verification/absent.md': 2 }, ['docs']));
+    const wider = capture([...bareScanArgs(root), '--strict']);
+    assert.equal(wider.code, 0, `清册面内的键在更窄的面上运行应当只计数、不判红：${wider.text}`);
+    assert.match(wider.text, /面外未扫的键 0 个、面内本次未扫 1 个/u);
+
+    // ④ 写模式漏 `--scan`：`parseArgs` 会补上默认面（比清册记的宽面窄），照它重写会静默丢键。
+    //    真正拦住它的不是「必须显式给 --scan」那种形状检查（那种检查在这里是死代码：面永远非空），
+    //    而是写模式里的 `lostKeys` 闸——「新键集 ⊇ 旧键集」，比要求显式传参更硬。
+    const before = readFileSync(join(root, COUNT_BASELINE), 'utf8');
+    const lostScan = capture([...bareScanArgs(root), '--write-anchor-count-baseline', '--accept', '-2', '--why', '变异：漏 --scan']);
+    assert.equal(lostScan.code, 2, `漏 --scan 的写模式必须报错，实际：${lostScan.text}`);
+    assert.match(lostScan.text, /本次扫描面里没有这 1 份文档，重写会把它们从清册里静默删掉/u);
+    assert.equal(readFileSync(join(root, COUNT_BASELINE), 'utf8'), before, '写模式失败时不许留下半截册子');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/**
+ * T14：把「面内扫不到」这条洞钉死在两种最省事的写法上。
+ *
+ * 洞的形状（r4 对抗审查的阻塞项）：清册的键只要落在 **清册记下的扫描面** 里、而本次没扫到，
+ * 就被当成「合法跳过」计了数。于是把键换成 `docs/**` 下**不是 .md 的文件**或**目录名**，
+ * 这份文档就永远扫不到、却一直 PASS——`进判据 6216 / 清册登记 6217` 少 1 条也不红。
+ *
+ * 判据：合法跳过只认「清册面内、**本次运行面外**」；落在**本次运行面内**却扫不到 ⇒ 判红点名。
+ * 这两个用例都用「磁盘上真实存在、但不是 .md」的键——正是审查复现的那两步。
+ */
+test('T14 面内扫不到也算红：键指向面内非 .md 文件、键指向目录名，都必须 exit 1 且点名', () => {
+  const doc = 'docs/architecture/bare-count-nonmd.md';
+  const source = '读数：见 `src/x.mjs:3`。\n';
+  const countOf = documents => `${JSON.stringify({
+    schema_version: 1,
+    note: '测试夹具',
+    generated_by: 'test',
+    scan: ['docs/architecture'],
+    judged_total: Object.values(documents).reduce((sum, value) => sum + value, 0),
+    accept: [],
+    documents,
+  }, null, 2)}\n`;
+
+  // ① 键换成面内的**非 .md 文件**：文件真实存在（docExists 为真）、锚点总数与账本都不变，
+  //    唯一的破绽是「这次没扫到它」——必须判红，而不是记一笔「合法跳过」。
+  const nonMd = makeBareFixture({
+    [doc]: source,
+    'docs/architecture/contract-status.json': '{"note":"面内的非 .md 文件，walkMarkdown 不会收它"}\n',
+  });
+  try {
+    writeIn(nonMd, COUNT_BASELINE, countOf({ 'docs/architecture/contract-status.json': 1 }));
+    const renamed = capture([...bareScanArgs(nonMd), '--strict']);
+    assert.equal(renamed.code, 1, `键换成面内非 .md 文件必须判红，实际：${renamed.text}`);
+    assert.match(renamed.text, /1 个键本次没扫到/u);
+    assert.match(renamed.text, /面内却扫不到的键 1 个/u);
+    assert.match(renamed.text, /· docs\/architecture\/contract-status\.json：清册 1 条，但本次根本没扫到它/u);
+    assert.match(renamed.text, /键在本次扫描面内，却没扫到它——不是 \.md/u);
+    assert.doesNotMatch(renamed.text, /面内本次未扫 1 个/u, '面内扫不到的键不许被记成「合法跳过」');
+  } finally {
+    rmSync(nonMd, { recursive: true, force: true });
+  }
+
+  // ② 键换成面内的**目录名**：`docs/architecture` 自己就在扫描面内、也确实存在于磁盘，
+  //    但它永远不可能是一条「被扫描的文档」，同样必须判红点名。
+  const asDir = makeBareFixture({ [doc]: source });
+  try {
+    writeIn(asDir, COUNT_BASELINE, countOf({ 'docs/architecture': 1 }));
+    const directory = capture([...bareScanArgs(asDir), '--strict']);
+    assert.equal(directory.code, 1, `键换成目录名必须判红，实际：${directory.text}`);
+    assert.match(directory.text, /· docs\/architecture：清册 1 条，但本次根本没扫到它/u);
+    assert.match(directory.text, /键在本次扫描面内，扫不到它等于这份文档的锚点从判据面上消失/u);
+  } finally {
+    rmSync(asDir, { recursive: true, force: true });
   }
 });
 

@@ -156,7 +156,7 @@ test('基线内命中：只计数不判红，读数给出登记／命中／分�
     assert.match(result.text, /SYMBOL-STRICT: 作用域 docs\/architecture\/\*\* × 源码后缀——可判 5 条：落代码行 1 条通过、未落代码行 3 条进基线（注释但非文档注释 2、逐字引用注释文案 1）/u);
     assert.match(result.text, new RegExp(`SYMBOL-STRICT-BASELINE: ${DEFAULT_SYMBOL_BASELINE} 登记 3 条；本次命中 3 条、基线外新增 0 条、陈旧 0 条`, 'u'));
     assert.match(result.text, /SYMBOL-STRICT-COVERED: 基线内 3 条只计数不判红（注释但非文档注释 2 条、逐字引用注释文案 1 条）/u);
-    assert.match(result.text, /PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN 与 COMMENT_ANCHOR/u);
+    assert.match(result.text, /PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT 与 COMMENT_ANCHOR/u);
     // 「落在文档注释里」那条仍归结构判据，没被符号基线吞掉。
     assert.match(result.text, /落在文档注释里 1 条仍按 NOT_SYMBOL_LINE ＋结构基线判/u);
     assert.match(result.text, /BASELINE: tools\/doc-anchors-baseline\.json 登记 1 条；本次命中 1 条、基线外新增 0 条、陈旧 0 条/u);

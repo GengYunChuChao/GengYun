@@ -98,7 +98,7 @@ STATUS_KEYS=12
 | P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；缺口改在**出口**：两个审计页分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54），全仓没有页面消费 `GET /admin/audit-logs` |
 ```
 
-`docs/architecture/ai-ops-spec-status.md:203`（改前，§7.1「仍没做到的两处」第 1 条）：
+`docs/architecture/ai-ops-spec-status.md` §7.1（改前原文，原「仍没做到的两处」第 1 条；该项已随 #710 闭合，本节标题现为「仍没做到的一处」）：
 
 ```text
 - 后台仍无入口：两个审计页分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54`），全仓没有页面消费 `GET /admin/audit-logs`（P10）。
@@ -143,7 +143,7 @@ STATUS_KEYS=12
 `target_ref.revision` 恒取 1、`result` 恒 `null`——形状对、语义未真实化
 ```
 
-`docs/architecture/ai-ops-spec-status.md:220`（改前，§7.2「真正没做到的」第 1 条）：
+`docs/architecture/ai-ops-spec-status.md` §7.2（改前原文，原「真正没做到的」第 1 条；该项现已改写为「投影语义只真实化一半」）：
 
 ```text
 - 投影语义未真实化：`target_ref.revision` 恒取 1、`result` 恒 `null`（`services/api/src/admin/ops/jobs-pg.ts:17-22`），即前端看到的「修订号／结果」不是真值（P11）。
@@ -350,7 +350,7 @@ STATUS_KEYS=12
 
 - 依据：§3.2；档位「部分实现」未动（理由见 §3.3 末段）。
 
-### 7.10 `docs/architecture/ai-ops-spec-status.md:203`（§7.1，任务第 2 条）
+### 7.10 `docs/architecture/ai-ops-spec-status.md` §7.1（任务第 2 条；改前引的是该页第 203 行，N02 销号后那两行已删）
 
 - 原文（逐字）：见 §2.1 第三条。
 - 新文（逐字）：
@@ -389,7 +389,7 @@ STATUS_KEYS=12
 - 新文（逐字）：同上，仅 `:1313-1315` → `:1363-1365`、`:1476` → `:1549`（这两个数字是 A1 当时树上成立的读数）。
 - 依据：§4.1 第 2、4 行。R68 合流（#652／R68 一并落在同一条装配链上）后同一块下移：`adminJobPort` 的定义在 `services/api/src/app.ts:1375`（`:1375-1377` 三行），真库域的注入点在 `services/api/src/app.ts:1572`（stub 域另有一处同名注入在 `:1703`，两者不是同一块）。
 
-### 7.14 `docs/architecture/ai-ops-spec-status.md:220`（§7.2，任务第 3 条）
+### 7.14 `docs/architecture/ai-ops-spec-status.md` §7.2（任务第 3 条；改前引的是该页第 220 行，该条现已改写为「投影语义只真实化一半」）
 
 - 原文（逐字）：见 §3.1 第二条。
 - 新文（逐字）：

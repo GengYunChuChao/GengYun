@@ -153,10 +153,10 @@ describe('钉 a：错误码计数双向相等', () => {
 // ---------------------------------------------------------------------------
 
 // 目标只是「后台没有页面在读这个读面」这一族断言。注意 `无入口` 单独出现多半是**真话**：
-//   · `docs/architecture/ai-ops-spec-status.md:123`（P08）「库侧过滤能力无入口」——`/admin/jobs` 的列表 URL 只 set limit/cursor；
-//   · 同页 :221「能力无入口」；
 //   · `docs/architecture/admin-console-capability-map.md:17`／`:210`「后端有面、UI 无入口 12 个 operation」；
 //   · `docs/architecture/README.md:21`「UI 有入口 32 个、无入口 12 个」。
+// 反例（已不再成立）：ai-ops 页原 P08「库侧过滤能力无入口」与同页 :221「能力无入口」——#694 已把
+// `state`／`error_code` 筛选接到作业台页面（该页 E41），所以这两句不再是现状。
 // 所以正则必须带「后台/页面消费」这层限定，不能把「无入口」当禁词；否则等于用假绿灯换真话。
 const FORBIDDEN_NO_PAGE_CONSUMER = /无页面消费|后台(?:仍|也|端|侧)?(?:没有|无)(?:页面)?入口/;
 
@@ -174,12 +174,12 @@ describe('钉 b：「后台无页面消费」这一族断言不许复活', () =>
     );
   });
 
-  test('真话不受牵连：「能力无入口」「三读面读数不合并」仍然可以写', () => {
-    // 正向控制：这两句是现状里的真陈述（P08 / P10），钉子不该把它们判红。
+  test('真话不受牵连：「能力无入口」「三读面读数已在页面层合并」仍然可以写', () => {
+    // 正向控制：这两句只是正则的负控制（「无入口」单独出现不是禁词）；页面里仍在的真话是 P10 的「三读面读数已在页面层合并」。
     assert.doesNotMatch('库侧过滤能力无入口', FORBIDDEN_NO_PAGE_CONSUMER);
     assert.doesNotMatch('能力无入口：后台 UI 的列表 URL 只 set `limit` 与 `cursor`', FORBIDDEN_NO_PAGE_CONSUMER);
     const page = read(PAGE_PATH);
-    assert.match(page, /三读面读数不合并/);
+    assert.match(page, /三读面读数已在页面层合并/);
   });
 });
 
