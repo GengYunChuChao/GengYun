@@ -738,4 +738,40 @@
     "symbol": "createAnswerJobSource({",
     "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
   }
+,
+  {
+    "doc": "docs/architecture/acceptance-map.md",
+    "line": 94,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 108,
+    "to": 128,
+    "kind": "correction",
+    "symbol": "canOpen",
+    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 292,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 108,
+    "fromEnd": 110,
+    "to": 126,
+    "toEnd": 128,
+    "kind": "correction",
+    "symbol": "canOpen",
+    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 304,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 108,
+    "fromEnd": 110,
+    "to": 126,
+    "toEnd": 128,
+    "kind": "correction",
+    "symbol": "canOpen",
+    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+  }
+
 ]
