@@ -737,5 +737,15 @@
     "kind": "correction",
     "symbol": "createAnswerJobSource({",
     "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
+    "line": 77,
+    "target": "services/api/src/server.ts",
+    "from": 27,
+    "to": 62,
+    "reason": "旧锚点 27 在 base 上指到 `const pool = createPool(config.databaseUrl);`，与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪到第 51 行，27 只是它早年的位置）；本提交按符号 `buildApp(` 改指 HEAD 第 62 行 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，不是 27+1 的差值平移。",
+    "kind": "correction",
+    "symbol": "buildApp("
   }
 ]
