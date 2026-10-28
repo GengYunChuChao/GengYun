@@ -483,12 +483,23 @@ function visibleOutcomeOf(visibility, auditState) {
 }
 
 /**
- * 审核结论判定（**单一实现**）：`visibility` + `audit_state` ⇒ 上面两张表里的一条。
+ * 结论**基础分档**（不含理由码）：`visibility` + `audit_state` ⇒ 上面两张表里的一条。
  *
  * 顺序是刻意的：**先按审核结论分**（驳回／隔离／待审／通过），再把 `hidden` 作为
  * 「可见性附加说明」叠上去；只有结论不可判（`approved`/未知）时，`hidden` 才独立成
  * 「已下架（仅本人可见）」。`audit_state` 不认识时按 `pending`（fail-closed：宁可说
  * 「还在等」，也不说「通过」，更不说「系统错误」——后者会把审核结论说成故障）。
+ */
+function baseOutcomeOf(record) {
+  const visibility = record && record.visibility
+  const auditState = record && record.audit_state
+  return visibility === 'hidden'
+    ? hiddenOutcomeOf(auditState)
+    : visibleOutcomeOf(visibility, auditState)
+}
+
+/**
+ * 审核结论判定（**单一实现**，页面只调它）：`baseOutcomeOf` + 理由码。
  *
  * `options.reasonCodes`：调用方**手上真有**理由码时传进来（唯一现存通道是错误封套的
  * `details[].code`）。读面契约 `Post`/`Comment` 没有理由码字段
@@ -496,19 +507,19 @@ function visibleOutcomeOf(visibility, auditState) {
  * 所以本函数**不会**凭空编理由：没传码就只说结论。
  */
 function outcomeOf(record, options) {
-  const visibility = record && record.visibility
-  const auditState = record && record.audit_state
-  const base = visibility === 'hidden'
-    ? hiddenOutcomeOf(auditState)
-    : visibleOutcomeOf(visibility, auditState)
-  return withReasons(base, options)
+  return withReasons(baseOutcomeOf(record), options)
 }
+
+/** 理由码挂到文案上时最多列几条（超过只说「等 N 条」，不把整段解释撑成码的流水账）。 */
+const REASON_LINES_MAX = 6
 
 /**
  * 把理由码挂到结论文案上（**不改变结论本身**）。
  *
  * 驳回 ⇒ `原因：人话（码：X）…`；隔离/待审 ⇒ `审核侧说明：…`（同一批码在这两处的含义不同，
- * 不能混着说）。返回**新的冻结对象**，入参那条不动（表本身不可被页面就地改）。
+ * 不能混着说）。条数上限 `REASON_LINES_MAX`（6 条），超出部分只报「等 N 条」——
+ * 服务端 `details` 本身最多 30 条，全列出来会让整句解释长到没人读。
+ * 返回**新的冻结对象**，入参那条不动（表本身不可被页面就地改）。
  */
 function withReasons(outcome, options) {
   const codes = options && Array.isArray(options.reasonCodes) ? options.reasonCodes : []
@@ -521,10 +532,13 @@ function withReasons(outcome, options) {
   const label = outcome.key === 'rejected' || outcome.key === 'hidden_rejected'
     ? '原因：'
     : '审核侧说明：'
+  const shown = lines.slice(0, REASON_LINES_MAX)
+  const overflow = lines.length - shown.length
+  const tail = overflow > 0 ? `等 ${lines.length} 条` : ''
   return Object.freeze({
     key: outcome.key,
     title: outcome.title,
-    desc: outcome.desc + label + lines.join('；') + '。'
+    desc: outcome.desc + label + shown.join('；') + tail + '。'
   })
 }
 
@@ -545,14 +559,22 @@ const HIDDEN_COMMENT_TITLES = Object.freeze({
 /** 评论被处置时的统一解释（评论行只渲染标签，这句留给需要整句的调用方）。 */
 const HIDDEN_COMMENT_DESC = '这条评论当前不对其他用户展示，仅你本人可见。'
 
+/**
+ * 评论的结论判定（**与 `outcomeOf` 同一条理由码规则**）。
+ *
+ * 顺序很重要（审查 N1）：先把「基础分档」换成评论措辞，**再**挂理由码——
+ * 改前是先 `outcomeOf(record, options)`（已把码拼进 desc）再用通用句覆盖 desc，
+ * 等于「传了码却不显示」的静默降级。现在只有一条路径，不存在"先拼后覆盖"。
+ */
 function commentOutcomeOf(record, options) {
-  const outcome = outcomeOf(record, options)
-  if (!Object.prototype.hasOwnProperty.call(HIDDEN_COMMENT_TITLES, outcome.key)) return outcome
-  return Object.freeze({
-    key: outcome.key,
-    title: HIDDEN_COMMENT_TITLES[outcome.key],
-    desc: HIDDEN_COMMENT_DESC
-  })
+  const base = baseOutcomeOf(record)
+  const commentTitle = Object.prototype.hasOwnProperty.call(HIDDEN_COMMENT_TITLES, base.key)
+    ? HIDDEN_COMMENT_TITLES[base.key]
+    : null
+  const shaped = commentTitle === null
+    ? base
+    : Object.freeze({ key: base.key, title: commentTitle, desc: HIDDEN_COMMENT_DESC })
+  return withReasons(shaped, options)
 }
 
 /**

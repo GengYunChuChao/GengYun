@@ -931,6 +931,49 @@ test('⑥ 理由码接进结论文案：给了就翻人话，没给就只说结�
   assert.equal(Object.isFrozen(without), true);
   assert.notEqual(h.api.HIDDEN_OUTCOMES.rejected.desc, withCode.desc);
   assert.equal(h.api.HIDDEN_OUTCOMES.rejected.desc, without.desc, '表里的原条目不得被追加内容污染');
+
+  // 评论通道**同一条理由码规则**（审查 N1：改前是「先拼码、再用通用句覆盖」的静默降级）。
+  const commentWithCode = h.api.commentOutcomeOf(
+    comment({ visibility: 'hidden', audit_state: 'rejected' }),
+    { reasonCodes: ['DANGEROUS_MIX'] },
+  );
+  assert.match(commentWithCode.title, /已隐藏：审核未通过/, '评论仍用评论的处置措辞');
+  assert.match(commentWithCode.desc, /这条评论当前不对其他用户展示/, '评论的整句仍是评论口径（没被换成帖子口径）');
+  assert.match(commentWithCode.desc, /原因：/, '评论通道也要把码渲染出来（不得静默丢弃）');
+  assert.match(commentWithCode.desc, /码：DANGEROUS_MIX/);
+  // 隔离的评论用「审核侧说明：」（与驳回区分）。
+  const commentQuarantined = h.api.commentOutcomeOf(
+    comment({ visibility: 'hidden', audit_state: 'quarantined' }),
+    { reasonCodes: ['MODEL_NOT_EVALUATED'] },
+  );
+  assert.match(commentQuarantined.desc, /审核侧说明：/);
+  assert.doesNotMatch(commentQuarantined.desc, /原因：/);
+});
+
+test('⑨ 理由码条数上限：最多 6 条，超出只说「等 N 条」（不把解释撑成码的流水账）', () => {
+  const h = load(() => DEFER);
+  const codes = ['DANGEROUS_MIX', 'DOSE_UNBOUNDED', 'DOSE_NOT_BOUND_TO_LABEL', 'PRIVACY_PII',
+    'PRIVACY_COORDS', 'PROMPT_INJECTION', 'FALSE_AUTHORITY', 'ABSOLUTE_SAFETY_CLAIM', 'COMMERCE_LINK'];
+  const outcome = h.api.outcomeOf(post({ visibility: 'hidden', audit_state: 'rejected' }), { reasonCodes: codes });
+
+  assert.match(outcome.desc, /原因：/);
+  assert.match(outcome.desc, /等 9 条/, '超出上限必须说清总条数，不能装作只有 6 条');
+  assert.match(outcome.desc, /码：DANGEROUS_MIX/);
+  assert.doesNotMatch(outcome.desc, /码：COMMERCE_LINK/, '第 7 条起不逐条列出');
+  // 逐条数一遍：`（码：` 出现次数 ≤ 6。
+  const listed = (outcome.desc.match(/（码：/g) || []).length;
+  assert.equal(listed, 6, `最多列 6 条（实测 ${listed} 条）`);
+  // 上限必须**真的省字**：比「9 条全列」短（不设绝对长度判据——6 条人话本身就有固定体量）。
+  const fullyListed = codes.map((code) => h.api.reasonLabel(code)).join('；');
+  assert.ok(outcome.desc.length < fullyListed.length,
+    `上限要真的省字（实测 ${outcome.desc.length} 字符 vs 全列 ${fullyListed.length} 字符）`);
+
+  // 去重后仍按上限计：重复码不占名额、也不虚报「等 N 条」。
+  const deduped = h.api.outcomeOf(post({ audit_state: 'rejected' }), {
+    reasonCodes: ['DANGEROUS_MIX', 'DANGEROUS_MIX', 'PRIVACY_PII'],
+  });
+  assert.doesNotMatch(deduped.desc, /等 \d+ 条/, '没有超出上限时不得出现「等 N 条」');
+  assert.equal((deduped.desc.match(/（码：/g) || []).length, 2);
 });
 
 test('⑦ 负控制：hidden 路径把两态折回同一句 ⇒ ⑤ 必红', () => {
