@@ -16,7 +16,7 @@ Refs #28。基线 main `910aec3`，工作分支 `feature/gui-adaptive-pages`。
 | 2 | 识别 | `pages/identify/identify` | identify.js/json/wxml/wxss | 可浏览，操作禁用 | 拍草／标签／文字三入口，录音与播放分离 |
 | 3 | 社区 | `pages/community/community` | community.js/json/wxml/wxss | 否 | 空态、人工审核空入口、内容安全说明 |
 | 4 | 消息 | `pages/messages/messages` | messages.js/json/wxml/wxss | 否 | 空态、**首版**消息类型（评论与点赞／内容审核结果／系统通知） |
-| 5 | 我的 | `pages/profile/profile` | profile.js/json/wxml/wxss | 仅浏览 | 游客档案、隐私说明、状态提示 |
+| 5 | 我的 | `pages/profile/profile` | profile.js/json/wxml/wxss | 否——**2026-10-28 更正**（原写「仅浏览」是过期口径）：游客进页即被门禁送登录页（`pageGate.start` → `auth.requireLogin` → `reLaunch` 登录页），不是可浏览页（证据 `miniprogram/pages/profile/profile.js:56-60`、`miniprogram/utils/page-gate.js:11`、`miniprogram/utils/auth.js:546-570`） | 档案、隐私说明、状态提示（登录后才渲染） |
 
 tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯一对游客完全开放的功能页。
 
@@ -121,7 +121,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 | 项目 | 当前状态 | 隔离方式 |
 | --- | --- | --- |
-| 登录会话 | **恒为游客** | `utils/session.js` 的 `SESSION_ENABLED` 为 `false`，`isGuest()` 无条件返回 `true` 且不读存储；置为 `true` 后 `read()` 仍要求对象形态、非 `__devPreview`、含字符串 `token` |
+| 登录会话 | **已接真实服务端会话**——**2026-10-28 更正**（原写「恒为游客」是 2026-10 的过期口径，与实际代码相反） | 页面一律 `require('../../utils/auth')` 走 `requireLogin` 门禁与 `Authorization: Bearer` 会话：21 个页面脚本里 20 个如此，唯一例外是不读任何业务数据的走查页 `pages/specimen`（`miniprogram/pages/knowledge/knowledge.js:2`）。`utils/session.js` 是**死代码**（`SESSION_ENABLED = false`、`isGuest()` 恒 `true`，但页面／组件层对它 `require` 零命中），**不要**按它读登录口径；登记与处置见第 7.5 节（本片不删它） |
 | 拍草识别 | 未接入 | 入口仅提示，不调用相机 |
 | 标签 OCR | 未接入 | 入口仅提示，不调用相机 |
 | 语音转写与播放 | 录音已接真实端口；转写核对在 stub/preset_demo 接通 | 录音经 `utils/recorder-port.js`（`wx.getRecorderManager` 在原生侧的唯一出现处）真实采集，按用途 voice_question 上传（real 模式）；`utils/speech-transcript.js` 在 stub/preset_demo 下走通「受理→轮询→可编辑→用户明确确认→发送」，未经确认不外发、取消/失败/迟到回调不外发；**真实 ASR 未接线**，替身文本明确标注 |
@@ -192,3 +192,73 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 数值门槛（44px 触控区、18px 正文、54px 末屏预留）已由 `verify-layout.mjs` 静态核算覆盖；仍需真机验证的是系统级字体缩放是否生效、极窄容器下的实际换行与溢出。
 
 > 本任务不重复验收语音服务准确率，也不代替 GY-I13 的播放生命周期验证。基础库以 `project.config.json` 的 `libVersion` 为准，本轮曾将不可选的 `3.5.5` 修正为候选 `3.5.8`（未实测、未冻结，详见 `docs/verification/gui-adaptive-evidence.md`）。
+
+---
+
+## 7 P0 链路（第一条用户链路）
+
+2026-10-28 增补（Refs #4 #5 #7 #16 #28）。本节把 README「推荐推进顺序」里的 P0 第一条用户链路收尾（登录 → 手选作物／地区 → 查询 → 详情 → 收藏／取消 → 退出，且「退出、**来源失效**、网络失败能清旧内容并恢复」）**钉在一条页面路径**上：查询／列表在 `miniprogram/pages/knowledge`，详情／收藏在 `miniprogram/pages/knowledgedetail`。
+
+钉这条路径的原因是「手选条件查询」在仓里有两个实现，数据源根本不同：`pages/knowledge` 走服务端 `GET /knowledge`（真库读视图），`pages/reference` 带条件时**强制**读随包离线副本（第 7.4 节）。若不钉，同一句验收会在两个页面上各算一半，而其中一半结构上不可能通过。
+
+真库端到端已按这条路写成 7 步：`tests/integration/user-chain-e2e.mjs`（本片加入第 7.3 节的「来源失效」往返后实测 142 条断言 / 7 步 / exit 0）。
+
+### 7.1 查询面＝`pages/knowledge`
+
+| 项 | 口径 | 证据（path:line） |
+| --- | --- | --- |
+| 用户可见入口 | 作物／杂草／地区三个 picker（`data-field` = `cropIndex`／`speciesIndex`／`regionIndex`，选项来自随包目录） | `miniprogram/pages/knowledge/knowledge.wxml:29-31` |
+|  | 「查询／重试」按钮（`bindtap="search"`，`loading`／`disabled` 绑 `busy`） | `miniprogram/pages/knowledge/knowledge.wxml:42` |
+|  | 每条结果一个「查看详情并核对来源」按钮（`data-id` 带资料 id） | `miniprogram/pages/knowledge/knowledge.wxml:80` |
+|  | 未登录时整页只渲染 `guest` 状态视图，查询区**不出现**（不是渲染后报错） | `miniprogram/pages/knowledge/knowledge.wxml:10-18`；`miniprogram/pages/knowledge/knowledge.js:68-70` |
+| 依赖 API | `GET /api/v1/knowledge`，operationId **`listKnowledge`**；查询串闭集 = `q` ＋ `crop_id`／`region_code`／`species_id`／`growth_stage`／`planting_method`／`use_scene` ＋ `cursor`／`limit` | 客户端闭集 `miniprogram/utils/knowledge-api.js:9`；请求装配 `miniprogram/utils/knowledge-api.js:95-103` |
+|  | 服务端只读 `catalog_read.current_knowledge`（＝来源已核对 + `validity='valid'` + 已发布 + 最新修订的闭集），**不是**客户端筛 | `services/api/src/knowledge/service.ts:76`；视图定义 `services/api/db/migrations/0012_knowledge_created_at.sql:87-116` |
+| 失败态 | `stateKind` 落 `error` + `state-view`「查询没有成功」；文案取自客户端闭集（如 `NOT_FOUND`＝「资料不存在、已失效或不符合查询条件，请返回列表重新查询。」） | `miniprogram/pages/knowledge/knowledge.wxml:67-69`；`miniprogram/utils/knowledge-api.js:221` |
+|  | 空结果**分两种**：填了未采集维度（生育期／种植方式／使用场景）落 `uncollected` 并点名原因，否则才落 `empty` | `miniprogram/pages/knowledge/knowledge.wxml:61-66` |
+| 清空口径 | 每次查询**先** `clear()`：清 `items`／`nextCursor`／`status`，并作废在途查询与档案预置（迟到的回包不得覆盖当前条件） | `miniprogram/pages/knowledge/knowledge.js:185-213` |
+|  | 失败分支显式 `items: []`／`nextCursor: null` —— 旧结果**不留在屏幕上** | `miniprogram/pages/knowledge/knowledge.js:209-211` |
+
+### 7.2 详情面＝`pages/knowledgedetail`
+
+| 项 | 口径 | 证据（path:line） |
+| --- | --- | --- |
+| 用户可见入口 | 从列表「查看详情并核对来源」`navigateTo` 进入，只带 `id`（详情页自行重读，不复用列表对象当正文） | `miniprogram/pages/knowledge/knowledge.js:214-220` |
+|  | 「收藏／取消收藏」按钮：`favSupported` 为真才渲染，`loading`／`disabled` 绑 `favBusy`，卡片固定注明「收藏只表示保存了这条资料」 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:41-46` |
+|  | 「重新核对／重试」「返回继续查询」 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:48-49` |
+| 依赖 API | `GET /api/v1/knowledge/{id}`，operationId **`getKnowledge`**（客户端会带上从列表带来的条件，用于核对「版本或来源状态是否变化」） | `miniprogram/utils/knowledge-api.js:104-111`；核对点 `miniprogram/pages/knowledgedetail/knowledgedetail.js:32-53` |
+|  | `POST /api/v1/favorites`，operationId **`createFavorite`**（`Idempotency-Key` 必带；服务端按 `(user,target)` 去重，重复收藏返回同一行） | `miniprogram/utils/favorites-api.js:139-147` |
+|  | `DELETE /api/v1/favorites/{id}`，operationId **`deleteFavorite`**（`If-Match: "<revision>"` + `Idempotency-Key` 必带；缺 `If-Match` 服务端回 **428 `REVISION_REQUIRED`**，不会静默成功） | `miniprogram/utils/favorites-api.js:150-158` |
+|  | 收藏状态**逐次重查**（不缓存、不在本地推断）：命中同 `(type,id)` 才显示「取消收藏」，扫不到也不做本地去重决定 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:76-123`；按钮行为 `miniprogram/pages/knowledgedetail/knowledgedetail.js:126-155` |
+| 失败态 | `!item && stateKind === 'error'` 走 `state-view`「没有读到这份资料」＋「重新核对／重试」；成功正文整块不渲染 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:22-30` |
+|  | 收藏失败不保留乐观状态：`favState` 落 `unknown`，`favBusy` 复位，文案走既有错误映射 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:147-154` |
+| 清空口径 | 每次 `read()` 先 `clear()`：`item`／`labels`／`conditionsText` 全清，并复位收藏入口（`resetFavorite`） | `miniprogram/pages/knowledgedetail/knowledgedetail.js:29`；`miniprogram/pages/knowledgedetail/knowledgedetail.js:32-53` |
+|  | 失败分支 `item: null`／`labels: null` —— 旧正文不留在屏幕上 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:49-52` |
+
+### 7.3 来源失效（撤下／恢复）：一条判据、三处同源
+
+链路要求「来源失效能清旧内容并恢复」。服务端把「一条资料该不该可见」收敛成一个判定，三条读面读的是**同一个**集合，因此不可能出现「列表里没有、详情还能看」这类不一致：
+
+1. **列表**：`catalog_read.current_knowledge` 只收「来源已核对 + `validity='valid'` + 已发布 + 最新修订」的行；来源一撤下，该行就不在集合里（`services/api/db/migrations/0012_knowledge_created_at.sql:87-116`）。
+2. **详情**：读不到时抛 `NOT_FOUND`「资料不可用」，与「这个 id 根本不存在」**逐字段同形**（不泄露存在性）：`services/api/src/knowledge/service.ts:107`；详情面的公开读判定 `unavailable ⇒ 同形 404` 见 `services/api/src/routes/knowledge.ts:110-122`。
+3. **收藏**：`reference_state`／`unavailable_reason` **每次读取重新派生、不入库**；不可用时理由折叠成冻结闭集里那条**对象侧统一说明**（不细分「已隐藏／不存在」）：`services/api/src/targetref/visibility.ts:34-41`。
+
+**已进真库 e2e**：`tests/integration/user-chain-e2e.mjs` 的「4.5 来源失效」一步把这条往返跑成四组断言 —— ① 同一查询串读空；② 详情 404 `NOT_FOUND` 且与「不存在」逐字段同形；③ 既有收藏转 `unavailable` + 闭集理由（且收藏行**不被失效清掉**）；④ `validity` 改回 `valid` 后列表／详情重新可读、收藏状态回正。该步**开头**先断言「失效前确实是 `available`」，否则第 ③ 组在"一直不可用"的实现下也会绿（空转）。
+
+### 7.4 `pages/reference` 不是本链路的查询面（只做随包名录浏览）
+
+| 结论 | 依据 | 证据（path:line） |
+| --- | --- | --- |
+| 带作物／杂草／地区条件时**强制**读随包离线副本，不发请求 | 服务端 `/herbicides` 的 querystring 只接受 `q`／`registration_number`／`cursor`／`limit`，结构化条件**不可表达**；页面据此直接返回 `bundled-offline` | `miniprogram/pages/reference/reference.js:207-210`；客户端闭集 `miniprogram/utils/knowledge-api.js:122-124` |
+| 剂型条件走同一分支（不静默丢弃条件） | 同上分支，`others` 为真时文案并列「作物／杂草／地区／剂型」 | `miniprogram/pages/reference/reference.js:200-206` |
+| 分支落点：先判来源再决定走服务端还是随包副本 | `runQuery` 里 `decision.source === SERVER` 才走 `runServerQuery`，否则 `runBundledQuery` | `miniprogram/pages/reference/reference.js:223-225` |
+| 这一路上「详情 → 收藏」**走不通** | `pages/referencedetail` 的 `.js`／`.wxml` 全文对 `收藏`／`favorite`／`fav` 零命中，没有收藏入口 | 无入口可锚（负向事实，逐字读完 368+156 行确认）；P0 链路的收藏只在 `pages/knowledgedetail`（第 7.2 节） |
+| 不能用来满足「下架／失效退出有效查询」 | 随包副本恒为有效记录，没有下架概念 ⇒ 该条验收在这一路上**结构上**判不了 | 同上；对照 `services/api/db/migrations/0012_knowledge_created_at.sql:87-116`（服务端才有失效闭集） |
+
+**结论**：`pages/reference` 保留为**随包除草剂名录浏览**（离线可用、明示数据来源），但不计入 P0 链路；P0 的查询面是 `pages/knowledge`。
+
+### 7.5 `utils/session.js` 是死代码（如实登记，本片不删）
+
+- `miniprogram/utils/session.js:22`：`SESSION_ENABLED = false`；`miniprogram/utils/session.js:38-41`：`isGuest()` 在该开关关闭时**无条件**返回 `true` 且不读存储。
+- 页面／组件／工具层对它的 `require` **零命中**：`miniprogram/` 里 20 个页面脚本一律 `require('../../utils/auth')`（唯一例外是走查页 `pages/specimen`），没有任何页面读 `utils/session` ⇒ 这个文件今天**不参与**任何登录判定。
+- 处置：**本节只登记，不删除**（本片不动 `miniprogram/**`）。唯一还依赖它的是单测 `tests/ui-adaptive.test.mjs:268-286`（按路径直接读源码并 `createRequire` 加载，断言「关闭状态下 `isGuest()` 恒为 `true`、且不发生存储读取」）——后续任一片要删它，必须同时改掉这条单测，否则那一组断言会 BROKEN 而不是「自动消失」。
+- ⚠ 第 4 节末段那句「会话占位不调用任何登录或手机号授权接口……」**只描述这个死文件**，不描述页面会话；页面会话口径以第 4 节表格的「登录会话」行为准（已按第 4 节的更正改为「已接真实服务端会话」）。
