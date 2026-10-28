@@ -866,5 +866,15 @@
     "from": 2076,
     "to": 2257,
     "reason": "该行（D08 升档判据）正文直接引用该门：`available` 门不再是 `!== 'real'`。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 与 `available` 无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 就是该门表达式的落点（全文件唯一 `available: config.executionMode`）。目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/verification/gy-user-chain-20261019.md",
+    "line": 99,
+    "target": "tests/integration/user-chain-e2e.mjs",
+    "from": 376,
+    "fromEnd": 383,
+    "to": 412,
+    "toEnd": 419,
+    "reason": "目标文件本提交未改动（本片 docs-only）。这行引用的是 e2e 里「停用 crop_corn 后目录必须不再列出该作物」的反向控制段（脚本拿停用前清单与「停用后清单 + crop_corn」做差集比对）。旧锚点 :376-383 源自 2026-10-19 树 463a5c5，到 base（da61b64d）时已经陈旧：376 的原文是 step 1 登录的 eq(me.status, 200, '登录后 /me/profile 必须 200（受保护接口）');，与这段语义无关。HEAD 上该段真实位置是 412-419（412 是 `UPDATE public.crops SET active=false WHERE id='crop_corn'`、414-418 是 setEq 差集断言、419 是改回 active=true 的复位）。按符号重锚，不是 376→412 的差值平移。"
   }
 ]
