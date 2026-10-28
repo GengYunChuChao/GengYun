@@ -49,27 +49,27 @@ node tools/verify-g-drill-readings.mjs --update    # 用上一步的读数重写
 
 | # | 命令 | exit | 读数 | sha | 主机 | 时刻（ISO 8601） |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `npm run test:unit` | 1 | tests 5557 / pass 5553 / fail 1 / skipped 1 / todo 2 / 131924ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 2 | `node --test tests/ui-unified-states.test.mjs` | 0 | tests 10 / pass 10 / fail 0 / skipped 0 / todo 0 / 236ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 3 | `node --test tests/demo-ui-components.test.mjs` | 0 | tests 3 / pass 3 / fail 0 / skipped 0 / todo 0 / 222ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 4 | `npm run lint` | 0 | 耗时 8044ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 5 | `node tools/run-python.mjs tools/validate_development_docs.py` | 0 | 耗时 507ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 6 | `node tools/run-python.mjs tools/validate_contracts.py` | 0 | 耗时 337ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 7 | `node tools/run-python.mjs tools/test_contracts.py` | 0 | 耗时 620ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 8 | `node tools/verify-research-records.mjs` | 0 | 耗时 135ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 9 | `node tools/verify-contract-status.mjs` | 0 | 耗时 2637ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 10 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | 0 | 耗时 2829ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 11 | `node tools/verify-admin-capability-map.mjs --check` | 0 | 耗时 1109ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 12 | `node tools/verify-purge-schedule.mjs` | 0 | 耗时 380ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 13 | `node tools/verify-migrations-unique.mjs --annotations` | 0 | 耗时 115ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 14 | `node tools/openapi-route-parity.mjs` | 0 | 耗时 1417ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 15 | `npm run test:contract` | 0 | tests 17 / pass 17 / fail 0 / skipped 0 / todo 0 / 2147ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 16 | `npm run test:evaluation` | 0 | tests 169 / pass 169 / fail 0 / skipped 0 / todo 0 / 2660ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 17 | `npm run test:integration:http` | 0 | 耗时 78869ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 18 | `npm run test:failmatrix -- --json={logDir}\failmatrix.json` | 0 | 耗时 2403ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 19 | `node tests/integration/catalog-pg.mjs` | 0 | 耗时 3420ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 20 | `node tests/integration/retention-purge-pg.mjs` | 0 | 耗时 6521ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
-| 21 | `node tests/integration/admin-audit-logs-pg.mjs` | 0 | 耗时 6342ms | `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372` | 本机 春秋蝉鸣少年归 | 2026-10-28T06:10:12.055Z |
+| 1 | `npm run test:unit` | 0 | tests 5563 / pass 5559 / fail 0 / skipped 2 / todo 2 / 155869ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 2 | `node --test tests/ui-unified-states.test.mjs` | 0 | tests 10 / pass 10 / fail 0 / skipped 0 / todo 0 / 930ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 3 | `node --test tests/demo-ui-components.test.mjs` | 0 | tests 3 / pass 3 / fail 0 / skipped 0 / todo 0 / 810ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 4 | `npm run lint` | 0 | 耗时 16225ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 5 | `node tools/run-python.mjs tools/validate_development_docs.py` | 0 | 耗时 578ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 6 | `node tools/run-python.mjs tools/validate_contracts.py` | 0 | 耗时 333ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 7 | `node tools/run-python.mjs tools/test_contracts.py` | 0 | 耗时 615ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 8 | `node tools/verify-research-records.mjs` | 0 | 耗时 136ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 9 | `node tools/verify-contract-status.mjs` | 0 | 耗时 2750ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 10 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | 0 | 耗时 2882ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 11 | `node tools/verify-admin-capability-map.mjs --check` | 0 | 耗时 1110ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 12 | `node tools/verify-purge-schedule.mjs` | 0 | 耗时 375ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 13 | `node tools/verify-migrations-unique.mjs --annotations` | 0 | 耗时 124ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 14 | `node tools/openapi-route-parity.mjs` | 0 | 耗时 1648ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 15 | `npm run test:contract` | 0 | tests 17 / pass 17 / fail 0 / skipped 0 / todo 0 / 2132ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 16 | `npm run test:evaluation` | 0 | tests 169 / pass 169 / fail 0 / skipped 0 / todo 0 / 2608ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 17 | `npm run test:integration:http` | 0 | 耗时 96752ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 18 | `npm run test:failmatrix -- --json={logDir}\failmatrix.json` | 0 | 耗时 2926ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 19 | `node tests/integration/catalog-pg.mjs` | 0 | 耗时 4309ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 20 | `node tests/integration/retention-purge-pg.mjs` | 0 | 耗时 7776ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
+| 21 | `node tests/integration/admin-audit-logs-pg.mjs` | 0 | 耗时 7476ms | `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7` | 本机 春秋蝉鸣少年归 | 2026-10-28T07:35:53.263Z |
 
 #### 未跑（本机跑不了）与不在演练范围（原因）
 
@@ -184,27 +184,28 @@ M4「同义反复」是**测试文件里另写的一个假实现**（`tautologic
   为什么不直接用 `%TEMP%`：本机实测 `initdb` 在 `$env:TEMP\...` 下建数据目录会
   `initdb: error: could not create directory ... Permission denied`（同一套 PG 17.11 二进制在 `.pg17\` 下正常），
   这是**本机文件权限差异**，不是产品缺陷；换机器若 `%TEMP%` 可写可以不设。
-- 标记块里的 `sha` 是**采集时那棵树的检出提交**：本页这 21 条全部 `@ 1f056b8bf033fdffb33e28e40c038e5e4d7cb372`——
-  但那次采集是在 `1f056b8b` 的**检出 + 本片 5 个未提交新文件**上跑的：`1f056b8b` 里并没有
-  `tests/unit/g-drill-readings.test.mjs`（`git cat-file -e` 会失败），纯基线树是 5529 项。所以这一列只说明
-  「检出的是哪个提交」，**不**说明「代码就在该提交里」（见 §5 第 9 条）。下一个提交那版页会在本片代码提交的
-  干净检出上重采一次。`--check` 只核「sha 是 HEAD 的祖先」；**sha 解析不到时放行**
-  （`git merge-base --is-ancestor` 返回 0/1 之外的错误码＝「无法判断」）——这条放行口子本身就是判据 6 的边界。
-- 本页这 21 条是**上一轮采集的存量**（`1f056b8b` 检出 + 本片 5 个未提交文件，见上一条），**没有**在本提交上重跑；
-  数字是采集器落盘的原文，没有一处手改。`tests 5557` 里含本片新增的 28 条单测（纯基线树是 5529 项），
-  所以它不能当「基线读数」读。下一个提交那版页会在干净的代码提交上重采一次（§7 就是那条路径）。
-- `--live` 在这棵树上跑过，**11 条静态闸门逐条 exit 0**（`npm run lint` 13581ms、`verify-doc-anchors --strict`
-  3063ms、`openapi-route-parity` 1819ms 等，都是同一次采集里的现场读数），与块里记的 exit 一致 ⇒ `--live` exit **0**。
+- 标记块里的 `sha` 是**采集时那棵树的检出提交**：本页这 21 条全部 `@ 4d8e476fde96849fba8cb28b8e63becb63bbf2b7`——它就是本片的**代码提交**，
+  这些读数是在它的**干净检出**上重采的（采集前 `git status --porcelain` 为空；`%TEMP%\gy-g-drill\4d8e476fde96849fba8cb28b8e63becb63bbf2b7\readings.json`
+  的 `sha` 字段就是它）。第一个提交那版页里的 21 条是 `1f056b8bf033fdffb33e28e40c038e5e4d7cb372`（采自基线检出 +
+  本片 5 个未提交新文件），见 §5 第 9 条。`--check` 只核「sha 是 HEAD 的祖先」；
+  **sha 解析不到时放行**（`git merge-base --is-ancestor` 返回 0/1 之外的错误码＝「无法判断」）——这条放行口子
+  本身就是判据 6 的边界。
+- 本页数字是**真跑出来的**：`node tools/collect-g-drill.mjs` 在代码提交上跑完 21 条（含自起 PG 集群的三条真库臂），
+  再 `--update` 把读数渲染进块，没有一处手改；`tests` 因此从 5557 变成 5563（新增的 6 条单测：`realPgArms` 下界 /
+  臂清单清空 ⇒ 判据 4 红 / `--live` 文案条数 / 工具链缺失归因 / `--live` 退出码 / `readDirty`）。
+  采集器现在会记 `dirty` 字段并在工作区不干净时喊话（`--update` 也会提醒）——这一次是干净的（`dirty: false`）。
+- `--live` 在这棵树上跑过，**11 条静态闸门逐条 exit 0**（`npm run lint` 16225ms、`verify-doc-anchors --strict`
+  2882ms、`openapi-route-parity` 1648ms 等，都是同一次采集里的现场读数），与块里记的 exit 一致 ⇒ `--live` exit **0**。
   但这**只**证明「这 11 条现在的 exit 与页面写的一样」，不刷新任何一次性读数（unit / suite / pg 三类一条都没碰，见 §5 第 7 条）。
-  在**没有** `node_modules` 的机器上 `lint` 会以「未找到本地 TypeScript」失败 ⇒ 那一条按 SKIP 计、`--live` 以 **2** 退出（§5 第 10 条）。
+  在**没有** `node_modules` 的机器上 `lint` 会以「未找到本地 TypeScript」失败、`openapi-route-parity` 会以
+  `Cannot find package 'fastify'` 失败 ⇒ 这两条按 SKIP 计、`--live` 以 **2** 退出（§5 第 10 条）。
 - 为什么本片是**两个提交**而不是一个：`tests/unit/doc-anchor-relocation-identity.test.mjs:1271`
   有一条守卫——`git merge-base HEAD origin/main` 与 HEAD 同提交时**直接判红**（「没有判定面却也不是 CI 浅克隆，
   不允许静默通过」）。所以在基线提交 `1f056b8bf033` 上跑全量单测**必然带 1 条结构性红**（`tests 5557 / pass 5553 /
   fail 1`），实测过两次；只有在「本片自己的提交」上重跑，单测才可能真的全绿。
-  于是本页先随代码提交落地（记的是上一轮在基线检出上的存量读数），**下一步**要在这个提交上重跑采集、
-  用新读数重写标记块，再提交一次。
-  **拆两个提交不是唯一可行解**：把本页单独拿出来跑 `--check` 也自洽（审查实测过），
-  拆开的理由是让**每个提交自己的证据页都自洽**，不是「不这么拆就过不了」。
+  **拆两个提交不是唯一可行解**：审查实测把第一个提交那版页面（`git show <第一个提交>:docs/verification/…`）单独拿出来跑
+  `--check` 也是 exit 0，所以「一个提交 + 一份页」同样自洽。拆开的理由是让**每个提交自己的证据页都自洽**
+  （第一个提交的页记基线读数，第二个提交的页记本片提交上的读数），不是「不这么拆就过不了」。
 - `catalog-pg` 那一条需要**外部已起的集群**（本机 `127.0.0.1:55432`，库 `gengyun_catalog_test`，角色 `gy_drill`）：
   它自己**不** `initdb`，只认 `DATABASE_TEST_URL`。另两条（`retention-purge-pg`、`admin-audit-logs-pg`）
   自己 `initdb` 起临时集群，只认 `GY_PG_BIN` + `GY_R34_PG_ROOT`。这三条是「`GY_PG_BIN` 这条本机路径通」的证据，
