@@ -348,7 +348,7 @@
       "get": {
         "operationId": "getUserSession",
         "summary": "读当前会话：身份只来自服务端会话，scopes 仅供展示、不参与鉴权判定",
-        "description": "作用域 user：必须带用户 Bearer 会话——无令牌 401 SESSION_REQUIRED，会话已撤销/已过期 401 SESSION_EXPIRED，账号停用或 auth_epoch 失效 403 ACCOUNT_INACTIVE，后台令牌打本接口同样 401 SESSION_EXPIRED 而不是 403——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向「用户令牌打后台面」（:101-106），本接口不产生它；200 返回 audience/expires_at/scopes/revision，带强 ETag \"<revision>\" 与 Cache-Control: no-store（routes/auth.ts:85-98）；scopes 去重后按码元序输出、且明确不参与鉴权判定（auth/service.ts:377-389）；单条读面：无分页与游标，不需要 Idempotency-Key 与 If-Match，无功能开关。",
+        "description": "作用域 user：必须带用户 Bearer 会话——无令牌 401 SESSION_REQUIRED，会话已撤销/已过期 401 SESSION_EXPIRED，账号停用或 auth_epoch 失效 403 ACCOUNT_INACTIVE，后台令牌打本接口同样 401 SESSION_EXPIRED 而不是 403——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向「用户令牌打后台面」（auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它；200 返回 audience/expires_at/scopes/revision，带强 ETag \"<revision>\" 与 Cache-Control: no-store（routes/auth.ts:85-98）；scopes 去重后按码元序输出、且明确不参与鉴权判定（auth/service.ts:377-389）；单条读面：无分页与游标，不需要 Idempotency-Key 与 If-Match，无功能开关。",
         "tags": [
           "auth"
         ],
@@ -423,7 +423,7 @@
       "post": {
         "operationId": "logoutUser",
         "summary": "撤销当前会话本身；以会话 id 为键，同键重放回同一 accepted 结果",
-        "description": "作用域 user：必须带用户会话（无令牌 401 SESSION_REQUIRED、失效 401 SESSION_EXPIRED、后台令牌打本接口同样 401 SESSION_EXPIRED 而不是 403：用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；必须带 Idempotency-Key（8..128，非法 400 IDEMPOTENCY_KEY_REQUIRED），幂等域按当前用户主体隔离（routes/auth.ts:101-119）；200 只回 {accepted:true} + Cache-Control: no-store，不发 ETag（AckEnvelope 没有 revision，不伪造版本）；服务端按当前会话 id 撤销该会话（auth/service.ts:169-172），因此只影响本次会话，不吊销账号其它设备令牌；不需要 If-Match，无分页、无开关。",
+        "description": "作用域 user：必须带用户会话（无令牌 401 SESSION_REQUIRED、失效 401 SESSION_EXPIRED、后台令牌打本接口同样 401 SESSION_EXPIRED 而不是 403：用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它）；必须带 Idempotency-Key（8..128，非法 400 IDEMPOTENCY_KEY_REQUIRED），幂等域按当前用户主体隔离（routes/auth.ts:101-119）；200 只回 {accepted:true} + Cache-Control: no-store，不发 ETag（AckEnvelope 没有 revision，不伪造版本）；服务端按当前会话 id 撤销该会话（auth/service.ts:169-172），因此只影响本次会话，不吊销账号其它设备令牌；不需要 If-Match，无分页、无开关。",
         "tags": [
           "auth"
         ],
@@ -593,7 +593,7 @@
       "get": {
         "operationId": "getProfile",
         "summary": "读取本人的单条档案；从未保存过时返回 revision=1 的空档案",
-        "description": "作用域 user：必须登录用户会话（缺令牌 401 SESSION_REQUIRED、会话已撤销或已过期 401 SESSION_EXPIRED、账号 state 或 auth_epoch 失效 403 ACCOUNT_INACTIVE；后台令牌打本接口同样 401 SESSION_EXPIRED——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；200 返回 {crop_id,region_code,region_catalog_version,revision}，带强 ETag \"<revision>\" 与 Cache-Control: no-store；没有任何档案行时不回 404，而是返回三个 null + revision=1 的占位（profile/service.ts:20,86）；单条读面，无分页与游标，不需要 Idempotency-Key 与 If-Match；无开关；未接档案库 ⇒ 503 PROVIDER_UNAVAILABLE，库超时（57014/55P03）⇒ 504 PROVIDER_TIMEOUT。",
+        "description": "作用域 user：必须登录用户会话（无 bearer 令牌 401 SESSION_REQUIRED、会话失效或账号不存在 401 SESSION_EXPIRED，services/api/src/auth/middleware.ts:55-58、:78-84）；后台令牌访问本接口同样是 401 SESSION_EXPIRED——受众隔离：用户面只认 audience=user 的会话（services/api/src/auth/middleware.ts:62-80；auth/store.ts 的 sessionKey 按 audience 分键（:97-98），pg 存储侧用户会话与后台会话分表），因此服务层「非 user 角色」那条分支只在进程内直接调用时可达、HTTP 面不可达（services/api/src/profile/service.ts:34）；403 只由账号停用或身份版本失效 ACCOUNT_INACTIVE 产生（middleware.ts:88-93，contract.ts:17）——用户面不存在「缺权限」那类 403；200 返回本人单条档案 {crop_id,region_code,region_catalog_version,revision} 并带 ETag \"<revision>\" 与 Cache-Control: no-store；从未保存过时不回 404，而是返回三字段为 null、revision=1 的占位档案（services/api/src/profile/service.ts:20、:86）；只读接口：不接受 query 与请求体，也不需要 Idempotency-Key 与 If-Match；无开关；账号 state 非 active 或 auth_epoch 失效 403 ACCOUNT_INACTIVE（profile/service.ts:40）；档案库未接线 503 PROVIDER_UNAVAILABLE（routes/profile.ts:21），事务超时（57014 与 55P03）504 PROVIDER_TIMEOUT（profile/service.ts:59）。",
         "tags": [
           "me"
         ],
@@ -767,7 +767,7 @@
       "get": {
         "operationId": "listCrops",
         "summary": "作物目录分页：游标是签名串、绑定主体与目录快照，15 分钟过期",
-        "description": "作用域 user：需登录用户会话（无令牌 401 SESSION_REQUIRED、会话失效 401 SESSION_EXPIRED、账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；200 返回 {items,next_cursor} + Cache-Control: no-store，列表不发 ETag；分页是签名游标：把 v/kind/user/auth_epoch/filter/sort/watermark/after/expires 全部签进去，TTL 15 分钟，目录内容一变 watermark 就不符 ⇒ 400 INVALID_CURSOR，游标被改一个字节同样 400（profile/pagination.ts:4-5、56-74）；limit 必须 1..50（默认 20），越界 400 INVALID_REQUEST（:34-36）；未接档案库 ⇒ 503 PROVIDER_UNAVAILABLE「档案数据库尚未配置」、库超时 504 PROVIDER_TIMEOUT（routes/profile.ts:20-23）；不需要 Idempotency-Key 与 If-Match。",
+        "description": "作用域 user：需登录用户会话（无令牌 401 SESSION_REQUIRED、会话失效 401 SESSION_EXPIRED、账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它）；200 返回 {items,next_cursor} + Cache-Control: no-store，列表不发 ETag；分页是签名游标：把 v/kind/user/auth_epoch/filter/sort/watermark/after/expires 全部签进去，TTL 15 分钟，目录内容一变 watermark 就不符 ⇒ 400 INVALID_CURSOR，游标被改一个字节同样 400（profile/pagination.ts:4-5、56-74）；limit 必须 1..50（默认 20），越界 400 INVALID_REQUEST（:34-36）；未接档案库 ⇒ 503 PROVIDER_UNAVAILABLE「档案数据库尚未配置」、库超时 504 PROVIDER_TIMEOUT（routes/profile.ts:20-23）；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "catalog"
         ],
@@ -849,7 +849,7 @@
       "get": {
         "operationId": "listRegions",
         "summary": "地区目录分页：parent_code 只收浙江区划码，游标 15 分钟过期",
-        "description": "作用域 user：与 listCrops 同一道门（无令牌 401 SESSION_REQUIRED / 会话失效 401 SESSION_EXPIRED / 账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它），同一个签名游标实现；额外的收窄条件是 parent_code，必须匹配 ^33[0-9]{4}$（route 层 pattern），只覆盖浙江区划码，传别的省份码 400；200 返回 {items,next_cursor} + no-store、列表不发 ETag，limit 1..50 越界 400 INVALID_REQUEST；游标绑定 kind=regions 与 filter（含 parent_code），换 parent_code 重放旧游标 ⇒ 400 INVALID_CURSOR（profile/pagination.ts:42-47、66-74）；未接库 503 PROVIDER_UNAVAILABLE、库超时 504 PROVIDER_TIMEOUT；不需要 Idempotency-Key 与 If-Match。",
+        "description": "作用域 user：与 listCrops 同一道门（无令牌 401 SESSION_REQUIRED / 会话失效 401 SESSION_EXPIRED / 账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它），同一个签名游标实现；额外的收窄条件是 parent_code，必须匹配 ^33[0-9]{4}$（route 层 pattern），只覆盖浙江区划码，传别的省份码 400；200 返回 {items,next_cursor} + no-store、列表不发 ETag，limit 1..50 越界 400 INVALID_REQUEST；游标绑定 kind=regions 与 filter（含 parent_code），换 parent_code 重放旧游标 ⇒ 400 INVALID_CURSOR（profile/pagination.ts:42-47、66-74）；未接库 503 PROVIDER_UNAVAILABLE、库超时 504 PROVIDER_TIMEOUT；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "catalog"
         ],
@@ -1030,7 +1030,7 @@
       "get": {
         "operationId": "getPrivacyPolicy",
         "summary": "读取当前生效的用途政策与已核验接收方清单；尚无政策时返回 unpublished 空态",
-        "description": "作用域 user：必须登录；200 返回 {version,purposes,recipients,training_enabled}——version 取库内唯一生效的 policy_version，没有政策行时返回保留哨兵 \"unpublished\" + 空数组，既不回 404 也不编造一份政策文本（privacy/privacy-policy.ts:37,202）；recipients 只列 enabled 且命中该版本的行，最多 30 条，retention_online_days ≤ 7、retention_backup_days ≤ 30；training_enabled 恒 false（首版不开启用户训练）；onRequest 统一 no-store，不发 ETag（全局读面不是私有资源）；无分页、无 Idempotency-Key/If-Match；无开关；无连接池、行形状不符或启用中的政策出现多个版本 ⇒ 503 PROVIDER_UNAVAILABLE（fail-closed，不拿空政策冒充正常）。",
+        "description": "作用域 user：必须登录；200 返回 {version,purposes,recipients,training_enabled}——version 取库内唯一生效的 policy_version，没有政策行时返回保留哨兵 \"unpublished\" + 空数组，既不回 404 也不编造一份政策文本（services/api/src/privacy/privacy-policy.ts:37 与 read() 的空政策分支）；recipients 只列 enabled 且命中该版本的行，最多 30 条，retention_online_days ≤ 7、retention_backup_days ≤ 30；training_enabled 恒 false（首版不开启用户训练）；onRequest 统一 no-store，不发 ETag（全局读面不是私有资源）；无分页、无 Idempotency-Key/If-Match；无开关；无连接池、行形状不符或启用中的政策出现多个版本 ⇒ 503 PROVIDER_UNAVAILABLE（fail-closed，不拿空政策冒充正常）。",
         "tags": [
           "me"
         ],
@@ -1379,7 +1379,7 @@
       "get": {
         "operationId": "listExports",
         "summary": "列出本人的数据导出任务（签名游标分页，只读）",
-        "description": "作用域 user：必须登录（无令牌 401 SESSION_REQUIRED、会话失效 401 SESSION_EXPIRED）；后台令牌打本接口同样 401 SESSION_EXPIRED 而不是 403——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它；query 只接受 cursor（≤2048）与 limit（1..50，默认 20）；200 返回 {items,next_cursor}，items 是导出任务台账记录（状态、创建时间、过期时间等），排序固定为 created_at DESC + id DESC；next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 排序 + 域，有效期 15 分钟，过期/被篡改/别人的游标在读库之前就 400 INVALID_CURSOR；列表不发 ETag（契约：只有资源写面发强 ETag），响应 no-store；无开关；未接外发账本 503 PROVIDER_UNAVAILABLE（不用内存账本冒充持久化），台账记录形状不符或签名密钥缺失同样 503。",
+        "description": "作用域 user：必须登录（无 bearer 令牌 401 SESSION_REQUIRED、会话失效或账号不存在 401 SESSION_EXPIRED，services/api/src/auth/middleware.ts:55-58、:78-84）；后台令牌访问本接口同样是 401 SESSION_EXPIRED——受众隔离：用户面只认 audience=user 的会话（services/api/src/auth/middleware.ts:62-80；auth/store.ts 的 sessionKey 按 audience 分键（:97-98），pg 存储侧用户会话与后台会话分表），因此服务层「非 user 角色」那条分支只在进程内直接调用时可达、HTTP 面不可达（services/api/src/routes/exports.ts:58）；403 只由账号停用或身份版本失效 ACCOUNT_INACTIVE 产生（middleware.ts:88-93，contract.ts:17）——用户面不存在「缺权限」那类 403；query 只接受 cursor（≤2048）与 limit（1..50，默认 20）；200 返回 {items,next_cursor}，items 是导出任务台账记录（状态、创建时间、过期时间等），排序固定为 created_at DESC + id DESC；next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 排序 + 域，有效期 15 分钟，过期/被篡改/别人的游标在读库之前就 400 INVALID_CURSOR；列表不发 ETag（契约：只有资源写面发强 ETag），响应 no-store；无开关；未接外发账本 503 PROVIDER_UNAVAILABLE（不用内存账本冒充持久化），台账记录形状不符或签名密钥缺失同样 503。",
         "tags": [
           "me"
         ],
@@ -1461,7 +1461,7 @@
       "post": {
         "operationId": "requestAccountDeletion",
         "summary": "受理本人的账号注销请求并签发一次性进度回执（202 是已受理，不是已删除）",
-        "description": "作用域 user：必须登录；Idempotency-Key 必填（缺/越界 400 IDEMPOTENCY_KEY_REQUIRED）；成功 202 返回 {receipt_token,receipt_expires_at,deletion} 并带 ETag \"<revision>\" 与 no-store——202 只表示受理了异步任务，回执里的 state 如实可能是 requested/pending/blocked，绝不写成已删除；受理在同一事务内完成「账号 state→deletion_pending、auth_epoch+1、撤销该账号全部会话、请求落库」，其中被撤销的只有会话与 auth_epoch 这一半，外发与在途回写的撤销、7 日在线与 30 日备份的到期执行、第三方完成证据均未接线（如实登记，不掩盖）；回执明文只在这里出现一次、服务端只存 sha256 摘要，有效期 35 日；回执台账（receipts 注册表）在进程内维护，进程重启后旧回执不再可解析——回执查询是另一条 operation，本 operation 不对它承诺状态码；同键重放会重新签发新回执，台账不可达 ⇒ 409 OBJECT_UNAVAILABLE；执行链路未装配 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false，不伪造受理）。",
+        "description": "作用域 user：必须登录；Idempotency-Key 必填（缺/越界 400 IDEMPOTENCY_KEY_REQUIRED）；成功 202 返回 {receipt_token,receipt_expires_at,deletion} 并带 ETag \"<revision>\" 与 no-store——202 只表示受理了异步任务：deletion.state 取自契约的 DeletionState 枚举（requested/processing/blocked/cancelled/completed），绝不含 pending 值、也绝不写成已删除；在线与备份两段进度分别落在回执的 online_state/backup_state 上，不在 deletion.state 里；受理在同一事务内完成「账号 state→deletion_pending、auth_epoch+1、撤销该账号全部会话、请求落库」（services/api/src/privacy/deletion-requests-pg.ts:9-13）；其中被撤销的只有会话与 auth_epoch 这一半；外发与在途回写的撤销、7 日在线与 30 日备份的到期执行、第三方完成证据，模块表里明确记为未实现（services/api/src/privacy/account-deletion.ts:44-49、:52-56）；回执明文只在这里出现一次、服务端只存 sha256 摘要，有效期 35 日；回执台账在有库时走迁移 0038 的持久化读写（重启后旧回执仍可反查），无库时才是进程内兜底（services/api/src/app.ts:2247-2253，持久化台账实现见 privacy/account-deletion.ts 的 createPostgresDeletionReceiptRegistry）；回执台账故障 503 PROVIDER_UNAVAILABLE 或 504 PROVIDER_TIMEOUT；409 OBJECT_UNAVAILABLE 只用于「幂等重放时在途请求台账已不可达」这类缺数据/缺模块的情形；同键重放会重新签发新回执（旧的作废）；real 模式该族恒 503（available 由 executionMode 是否为 real 决定，app.ts:2257），执行链路未装配时同样 503 PROVIDER_UNAVAILABLE（retryable:false，不伪造受理）。",
         "tags": [
           "me"
         ],
@@ -1724,7 +1724,7 @@
       "post": {
         "operationId": "createUpload",
         "summary": "为某个媒体用途申请一次上传（签出上传句柄并建 initiated 记录）",
-        "description": "作用域 user：必须登录；Idempotency-Key 必填（缺/越界 400 IDEMPOTENCY_KEY_REQUIRED）；body 必填 purpose（weed_recognition/label_ocr/voice_question/community_image）、mime（图片 image/jpeg|png|webp、音频 audio/mpeg|wav|aac）、bytes、sha256（64 位小写十六进制），duration_ms 可选；schema 只卡全局上限（bytes ≤ 10485760、duration_ms ≤ 60000）且不接受多余字段，越界 400 INVALID_REQUEST；按用途更严的上限（识别/OCR 2MiB、语音 10MiB、社区 5MiB）定义在 packages/media/constants.mjs:61-66，本接口的入参 schema 未按用途逐档收紧——如实注明，不冒充已生效；成功 201 返回 {media,upload}（media.revision 从 1 起、state=initiated、24 小时未完成可回收）并带 ETag 与 no-store；这是 7 条媒体路由里唯一挂用途授权前置的入口（purpose=media_processing，voice_question 另需 recording、community_image 另需 public_posting，缺 ⇒ 403 CONSENT_REQUIRED），该前置只在装配了授权端口时生效（未注入即直通）；私有上传不因社区公开状态扩大可见范围；同键重放按原请求重签句柄，句柄已失效（rejected/deleted）⇒ 409 OBJECT_UNAVAILABLE；real 模式媒体域未接线（fail-closed）⇒ 503 PROVIDER_UNAVAILABLE（retryable:false，7 条媒体路由一致）。",
+        "description": "作用域 user：必须登录；Idempotency-Key 必填（缺/越界 400 IDEMPOTENCY_KEY_REQUIRED）；body 必填 purpose（weed_recognition/label_ocr/voice_question/community_image）、mime（图片 image/jpeg|png|webp、音频 audio/mpeg|wav|aac）、bytes、sha256（64 位小写十六进制），duration_ms 可选；入参 schema 只卡全局上限（bytes 最大 10485760、duration_ms 最大 60000）且不接受多余字段，schema 越界 400 INVALID_REQUEST；更严的按用途分档由服务层 validateUploadInput 按 purpose 强制（识别/OCR 2 MiB、语音 10 MiB、社区 5 MiB，见 packages/media/constants.mjs:61-66 与 packages/media/validate.mjs:54-61），越限 413 MEDIA_TOO_LARGE；mime 不在该用途允许范围 415 MEDIA_TYPE_UNSUPPORTED；成功 201 返回 {media,upload}（media.revision 从 1 起、state=initiated、24 小时未完成可回收）并带 ETag 与 no-store；这是 7 条媒体路由里唯一挂用途授权前置的入口（purpose=media_processing，voice_question 另需 recording、community_image 另需 public_posting，缺 403 CONSENT_REQUIRED），该前置只在装配了授权端口时生效（未注入即直通）；私有上传不因社区公开状态扩大可见范围；同键重放按原请求重签句柄，句柄已失效（rejected/deleted）409 OBJECT_UNAVAILABLE；real 模式媒体域未接线（fail-closed）503 PROVIDER_UNAVAILABLE（retryable:false，7 条媒体路由一致）。",
         "tags": [
           "media"
         ],
@@ -1818,8 +1818,8 @@
     "/media/uploads/{id}/complete": {
       "post": {
         "operationId": "completeUpload",
-        "summary": "声明一次上传已完成（版本校验 + 幂等，202 受理异步校验）",
-        "description": "作用域 user：必须登录；path 的 id 必须是 uuid（形状不符 400 INVALID_REQUEST）；Idempotency-Key 必填、If-Match 必填且须等于媒体当前 revision（缺 428 REVISION_REQUIRED、格式不合法 400 INVALID_REQUEST、不符 409 REVISION_CONFLICT）；body 必填 sha256 与 bytes，与初始化声明不一致 ⇒ 400 INVALID_REQUEST；成功 202 返回 media（202 只表示受理，随后验实际魔数/hash/字节并异步处理），带 ETag 与 no-store；对象不存在或已被回收 ⇒ 409 OBJECT_UNAVAILABLE，当前状态不可完成（已 processing/ready/deleted 等）⇒ 409 OBJECT_UNAVAILABLE，并发完成撞 CAS ⇒ 409 REVISION_CONFLICT；ready 之前不可被 AI 调用；单条写面，无分页；无开关（real 模式未接线时媒体域整域 503 PROVIDER_UNAVAILABLE）。",
+        "summary": "校验上传字节并在同一请求内把媒体推进到 ready（已 ready 时 202 幂等成功）",
+        "description": "作用域 user：必须登录；path 的 id 必须是 uuid（形状不符 400 INVALID_REQUEST）；Idempotency-Key 必填（缺/越界 400 IDEMPOTENCY_KEY_REQUIRED）、If-Match 必填且须等于该媒体当前 revision（缺 428 REVISION_REQUIRED、格式不符 400、已过期 409 REVISION_CONFLICT）；body 必填 sha256 与 bytes，与本地上传初始化时的声明不一致 400 INVALID_REQUEST；服务端从对象存储取回字节，并在**同一请求内**同步推进 uploaded→processing→ready（图片还要去元数据并写衍生件），因此 202 是「这次完成已受理并当场校验完成」，不是「稍后再异步处理」；成功返回 202 与 ETag \"<revision>\" 及 no-store；重复 complete 且媒体已 ready 时返回 202 幂等成功（不是 409）；state 为 processing/deleted 等不接受完成的状态 409 OBJECT_UNAVAILABLE；对象缺失或已被回收 409 OBJECT_UNAVAILABLE；并发 delete 让条件写失效 409 REVISION_CONFLICT；real 模式媒体域未接线（fail-closed）503 PROVIDER_UNAVAILABLE（retryable:false）。",
         "tags": [
           "media"
         ],
@@ -2112,7 +2112,7 @@
       "post": {
         "operationId": "grantMediaAccess",
         "summary": "为本人私有媒体签一张短效访问令牌（仅 owner，媒体必须已 ready）",
-        "description": "作用域 user：必须登录；path 的 id 必须是 uuid（形状不符 400 INVALID_REQUEST）；Idempotency-Key 必填、If-Match 必填且须等于媒体 revision（缺 428 REVISION_REQUIRED、格式不合法 400 INVALID_REQUEST、不符 409 REVISION_CONFLICT）；成功 200 返回访问授权（令牌与过期时间，ETag 取媒体的 revision）并带 no-store；只有 owner 能签，非本人/不存在一律 404 NOT_FOUND；媒体不是 ready ⇒ 409 OBJECT_UNAVAILABLE（未完成校验的媒体不给访问）；令牌有效期上限 5 分钟；他人不得通过 media_id 或社区公开状态扩大本接口权限——其他登录读者走带公开内容上下文的 POST /community/media-access（另一条操作，同样要 Idempotency-Key 与 If-Match）；同键重放返回首次结果；无开关；媒体域 fail-closed ⇒ 503 PROVIDER_UNAVAILABLE。",
+        "description": "作用域 user：必须登录；path 的 id 必须是 uuid（形状不符 400 INVALID_REQUEST）；Idempotency-Key 必填、If-Match 必填且须等于媒体 revision（缺 428 REVISION_REQUIRED、格式不合法 400 INVALID_REQUEST、不符 409 REVISION_CONFLICT）；成功 200 返回访问授权（令牌与过期时间，ETag 取媒体的 revision）并带 no-store；只有 owner 能签，非本人/不存在一律 404 NOT_FOUND；媒体不是 ready ⇒ 409 OBJECT_UNAVAILABLE（未完成校验的媒体不给访问）；令牌有效期上限 5 分钟（MEDIA_ACCESS_TTL_MS，packages/media/constants.mjs:81）；他人不得通过 media_id 或社区公开状态扩大本接口权限——其他登录读者走带公开内容上下文的 POST /community/media-access（另一条操作，同样要 Idempotency-Key 与 If-Match）；同键重放返回首次结果；无开关；媒体域 fail-closed ⇒ 503 PROVIDER_UNAVAILABLE。",
         "tags": [
           "media"
         ],
@@ -2212,7 +2212,7 @@
       "get": {
         "operationId": "getJob",
         "summary": "读作业状态：不存在、越权、该能力未接线三者是同一个 404",
-        "description": "作用域 user：必须带用户会话（401 SESSION_REQUIRED / 401 SESSION_EXPIRED / 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；params 必须是 uuid，格式不对在校验层就 400 INVALID_REQUEST，**不并入**同形 404（jobs/routes.ts:9-18）；未声明的查询参数一律 400（querystring 为 additionalProperties:false 的空对象，不静默忽略）；200 返回 JobEnvelope + 强 ETag \"<revision>\" + no-store；服务层逐个作业源查，全落空就是 404 NOT_FOUND「作业不存在」——不存在、越权、该 kind 未接线三者完全同形（jobs/registry.ts:275-282）；端口回传不合契约 ⇒ 503 PROVIDER_UNAVAILABLE 且 retryable:false，不放宽 schema、不伪造状态（:130-133）；不需要 Idempotency-Key 与 If-Match。",
+        "description": "作用域 user：必须带用户会话（401 SESSION_REQUIRED / 401 SESSION_EXPIRED / 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它）；params 必须是 uuid，格式不对在校验层就 400 INVALID_REQUEST，**不并入**同形 404（jobs/routes.ts:9-18）；未声明的查询参数一律 400（querystring 为 additionalProperties:false 的空对象，不静默忽略）；200 返回 JobEnvelope + 强 ETag \"<revision>\" + no-store；服务层逐个作业源查，全落空就是 404 NOT_FOUND「作业不存在」——不存在、越权、该 kind 未接线三者完全同形（jobs/registry.ts:275-282）；端口回传不合契约 ⇒ 503 PROVIDER_UNAVAILABLE 且 retryable:false，不放宽 schema、不伪造状态（:130-133）；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "jobs"
         ],
@@ -2297,7 +2297,7 @@
       "post": {
         "operationId": "cancelJob",
         "summary": "取消作业：所属能力未提供取消时如实 503，绝不谎称已取消",
-        "description": "作用域 user：需登录会话，params 必须 uuid（非 uuid 400 INVALID_REQUEST，不与 404 合并）；If-Match 必填（契约 x-version-required）：缺失 428 REVISION_REQUIRED、格式非法 400 INVALID_REQUEST、与当前 revision 不符 409 REVISION_CONFLICT；Idempotency-Key 必填（8..128，非法 400 IDEMPOTENCY_KEY_REQUIRED）——两个头由本层原样转发，判定在有取消能力的作业源内做（jobs/routes.ts:60-77）；200 返回 JobEnvelope + 强 ETag + no-store；若作业所属能力没有取消端口：先确认作业确实属于它，存在则 503 PROVIDER_UNAVAILABLE「该作业所属能力尚未提供取消（未接线）」且 retryable:false，不谎称取消成功、也不用 409（jobs/registry.ts:283-309）；判定顺序固定：先判两个头的形状（缺 If-Match 得 428，早于版本比对），再判作业归属（同形 404），最后才看该源有没有取消端口（未接线 ⇒ 503，绝不谎报已取消，也不用 409 顶替）；作业不存在/越权同形 404 NOT_FOUND。",
+        "description": "作用域 user：需登录会话，params 必须 uuid（非 uuid 400 INVALID_REQUEST，不与 404 合并）；If-Match 必填（契约 x-version-required）：缺失 428 REVISION_REQUIRED、格式非法 400 INVALID_REQUEST、与当前 revision 不符 409 REVISION_CONFLICT；Idempotency-Key 必填（8..128，非法 400 IDEMPOTENCY_KEY_REQUIRED）——两个头由本层原样转发，判定在有取消能力的作业源内做（jobs/routes.ts:60-77）；200 返回 JobEnvelope + 强 ETag + no-store；若作业所属能力没有取消端口：先确认作业确实属于它，存在则 503 PROVIDER_UNAVAILABLE「该作业所属能力尚未提供取消（未接线）」且 retryable:false，不谎称取消成功、也不用 409（jobs/registry.ts:283-309）——这条 503 的可达面由「哪些作业源不提供 cancel」决定：注册进注册表的作业源共 6 个（app.ts:2469-2508：识别、转写、审核、合成、OCR、文字问答），其中**审核源与文字问答源**刻意不提供 cancel（moderation/job-source.ts:19-44、conversations/job.ts:15-16、:64-73），故取消 kind=moderation 或 kind=answer 的作业会得到它；识别／转写／合成／OCR 四个源实现了 cancel（jobs/sources.ts:65、107、153、208），这四个 kind 走不到；判定顺序固定：先判两个头的形状（缺 If-Match 得 428，早于版本比对），再判作业归属（同形 404），最后才看该源有没有取消端口（未接线 ⇒ 503，绝不谎报已取消，也不用 409 顶替）；作业不存在/越权同形 404 NOT_FOUND。",
         "tags": [
           "jobs"
         ],
@@ -2397,7 +2397,7 @@
       "get": {
         "operationId": "listKnowledge",
         "summary": "资料列表分页 + 六维筛选；未核对种子默认不进 real 结果",
-        "description": "作用域 user：需登录会话（无令牌 401 SESSION_REQUIRED / 会话失效 401 SESSION_EXPIRED / 账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；querystring 为 additionalProperties:false，未声明的参数 400；筛选是 crop_id/region_code（^33[0-9]{4}$）/species_id/growth_stage/planting_method/use_scene 六维 + q（1..80）；200 返回 {items,next_cursor} + no-store，列表不发 ETag；游标 TTL 15 分钟、绑定 filter 与资料快照 watermark，游标不合法/过期/资料已变化统一 400 INVALID_CURSOR「资料游标无效、已过期或资料已变化」（knowledge/pagination.ts:4、26、38-58）；未接库 ⇒ 503 PROVIDER_UNAVAILABLE「资料数据库尚未配置」（routes/knowledge.ts:189-192）；浙江首批未核对种子默认关闭，需非 real 模式且 APP_KNOWLEDGE_UNVERIFIED_SEED 显式为 1/true 才装载（:171-176）；不需要 Idempotency-Key 与 If-Match。",
+        "description": "作用域 user：需登录会话（无令牌 401 SESSION_REQUIRED / 会话失效 401 SESSION_EXPIRED / 账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它）；querystring 为 additionalProperties:false，未声明的参数 400；筛选是 crop_id/region_code（^33[0-9]{4}$）/species_id/growth_stage/planting_method/use_scene 六维 + q（1..80）；200 返回 {items,next_cursor} + no-store，列表不发 ETag；游标 TTL 15 分钟、绑定 filter 与资料快照 watermark，游标不合法/过期/资料已变化统一 400 INVALID_CURSOR「资料游标无效、已过期或资料已变化」（knowledge/pagination.ts:4、26、38-58）；未接库 ⇒ 503 PROVIDER_UNAVAILABLE「资料数据库尚未配置」（routes/knowledge.ts:189-192）；浙江首批未核对种子默认关闭，需非 real 模式且 APP_KNOWLEDGE_UNVERIFIED_SEED 显式为 1/true 才装载（:171-176）；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "knowledge"
         ],
@@ -2779,7 +2779,7 @@
       "get": {
         "operationId": "getHerbicide",
         "summary": "单条除草剂读面：路径必须 uuid，未声明的查询参数一律 400",
-        "description": "作用域 user：需登录会话；params 必须 uuid，querystring 是 additionalProperties:false 的空对象 ⇒ 任何未声明查询参数 400（不静默忽略）；200 返回除草剂投影，命中时下发 data.etag（若有）；记录不存在/不可见 ⇒ 404 NOT_FOUND「未找到该除草剂记录」；数据来自 packages/reference 适配层，未装配 ⇒ 503 PROVIDER_UNAVAILABLE；单条读面无分页，不需要 Idempotency-Key 与 If-Match，无功能开关（routes/knowledge.ts:216-224）。",
+        "description": "作用域 user：需登录会话；params 必须 uuid，querystring 是 additionalProperties:false 的空对象 ⇒ 任何未声明查询参数 400（不静默忽略）；200 返回除草剂投影，版本号由**响应头** ETag 携带（有 etag 时才写；routes/knowledge.ts:218 解构、:222 headers.header('ETag', etag) —— 不在 body 里）；记录不存在/不可见 ⇒ 404 NOT_FOUND「未找到该除草剂记录」；数据来自 packages/reference 适配层，未装配 ⇒ 503 PROVIDER_UNAVAILABLE；单条读面无分页，不需要 Idempotency-Key 与 If-Match，无功能开关（routes/knowledge.ts:216-224）。",
         "tags": [
           "herbicides"
         ],
@@ -4421,7 +4421,7 @@
       "get": {
         "operationId": "listConversations",
         "summary": "本人问答会话列表：签名游标 TTL 15 分钟，列表不发 ETag",
-        "description": "作用域 user：需登录会话（无令牌 401 SESSION_REQUIRED / 会话失效 401 SESSION_EXPIRED / 账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；200 只回 {items,next_cursor} + Cache-Control: no-store，**列表不发 ETag**（契约逐字写列表无此头，routes/conversations.ts:15-20）；游标是 HMAC 签名串，绑定 user + routePath + expires，TTL 15 分钟，解析失败统一 400 INVALID_CURSOR（conversations/service.ts:81-82、632-664）；服务层自己兜底 limit（缺省 20），取页时多要一条判断是否还有下一页，next_cursor 只在真有下一页时给（:726-744）；问答存储未接线 ⇒ 503 PROVIDER_UNAVAILABLE 且 retryable:false（routes/conversations.ts:81-88）；不需要 Idempotency-Key 与 If-Match。",
+        "description": "作用域 user：需登录会话（无令牌 401 SESSION_REQUIRED / 会话失效 401 SESSION_EXPIRED / 账号停用 403 ACCOUNT_INACTIVE；后台令牌同样 401 SESSION_EXPIRED，用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它）；200 只回 {items,next_cursor} + Cache-Control: no-store，**列表不发 ETag**（契约逐字写列表无此头，routes/conversations.ts:15-20）；游标是 HMAC 签名串，绑定 user + routePath + expires，TTL 15 分钟，解析失败统一 400 INVALID_CURSOR（conversations/service.ts:81-82、632-664）；服务层自己兜底 limit（缺省 20），取页时多要一条判断是否还有下一页，next_cursor 只在真有下一页时给（:726-744）；问答存储未接线 ⇒ 503 PROVIDER_UNAVAILABLE 且 retryable:false（routes/conversations.ts:81-88）；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "conversations"
         ],
@@ -4994,7 +4994,7 @@
       "get": {
         "operationId": "listPosts",
         "summary": "帖子列表：mine=true 含本人未公开版本，公开流每行重算可见性",
-        "description": "作用域 user：需登录会话（游客 401 SESSION_REQUIRED、后台会话 401 SESSION_EXPIRED——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；200 返回 {items,next_cursor} + no-store，列表不发 ETag；mine=true 时返回本人非删除内容（含未公开版本），否则每行都要过 isPubliclyVisible 复核（community/service.ts:914-981）；游标是签名串，绑定 subject/route/filter{crop_id,region_code,mine}/sort=created_at_desc，被公开复核丢掉的行由游标前进补回，next_cursor 只在确有下一页时给（:933-977）；crop_id 越界 400 INVALID_REQUEST、region_code 不匹配 ^33[0-9]{4}$ 400（:923、927），游标坏 400 INVALID_CURSOR（:864）；社区持久存储未接线（real 模式且存储不持久）⇒ 503 PROVIDER_UNAVAILABLE 且 retryable:false（routes/community.ts:193-200）。",
+        "description": "作用域 user：需登录会话（游客 401 SESSION_REQUIRED、后台会话 401 SESSION_EXPIRED——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它）；200 返回 {items,next_cursor} + no-store，列表不发 ETag；mine=true 时返回本人非删除内容（含未公开版本），否则每行都要过 isPubliclyVisible 复核（community/service.ts:914-981）；游标是签名串，绑定 subject/route/filter{crop_id,region_code,mine}/sort=created_at_desc，被公开复核丢掉的行由游标前进补回，next_cursor 只在确有下一页时给（:933-977）；crop_id 越界 400 INVALID_REQUEST、region_code 不匹配 ^33[0-9]{4}$ 400（:923、927），游标坏 400 INVALID_CURSOR（:864）；社区持久存储未接线（real 模式且存储不持久）⇒ 503 PROVIDER_UNAVAILABLE 且 retryable:false（routes/community.ts:193-200）。",
         "tags": [
           "posts"
         ],
@@ -5573,7 +5573,7 @@
       "post": {
         "operationId": "createComment",
         "summary": "发评论（201）：If-Match 是父帖的 revision，父帖必须是已发布版本",
-        "description": "作用域 user：需登录会话，并挂 public_posting 投稿用途闸；If-Match 必须等于**父帖**当前 revision（缺失 428 REVISION_REQUIRED、不符 409 REVISION_CONFLICT「父帖版本已变化」）、Idempotency-Key 必填（community/service.ts:1330-1355）；父帖不存在或已删除 ⇒ 404 NOT_FOUND「父帖已被删除或版本已变化」；201 返回评论 + 强 ETag \"<revision>\" + no-store，评论同样先 private/pending 再由审核闸门发布，201 不代表已对他可见（:1382、1488）；body 只有 body(1..4000)（routes/community.ts:92-97）。",
+        "description": "作用域 user：需登录会话，并挂 public_posting 投稿用途闸；If-Match 必须等于**父帖**当前 revision（缺失 428 REVISION_REQUIRED、不符 409 REVISION_CONFLICT「父帖版本已变化，请刷新后重试」，community/service.ts:1354-1355）、Idempotency-Key 必填（community/service.ts:1330-1355）；父帖不存在 / 已删除 / 不可读 ⇒ 404 NOT_FOUND「内容不存在或不可用」（community/service.ts:212-213 的 notFound()，:1352 在用这条）；201 返回评论 + 强 ETag \"<revision>\" + no-store，评论同样先 private/pending 再由审核闸门发布，201 不代表已对他可见（:1382-1383、:1399）；插入时在同一临界区再校验父帖存在、未删除、revision 未变，不满足即 409（:1386-1393）；body 只有 body(1..4000)（routes/community.ts:92-97）。",
         "tags": [
           "posts"
         ],
@@ -5974,7 +5974,7 @@
       "get": {
         "operationId": "getPostLike",
         "summary": "读点赞数与我是否赞过：count(*) 现算，不设计数器列",
-        "description": "作用域 user：需登录会话（游客 401 SESSION_REQUIRED、后台会话 401 SESSION_EXPIRED——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它）；params 必须 uuid；可读性闸门与 getPost **同一道** readablePost：不存在/已删除/未发布/审核未通过一律同一个 404 NOT_FOUND，不泄露存在性、不新增错误码（community/service.ts:1577-1598）；200 返回 {count, liked_by_me} + no-store；count 走 count(*)（索引 target_type,target_id,user_id），liked_by_me 走 hasLiked，两条都是只读语句，不加计数器列；点赞计数是派生量，**不进** Post/Comment 字段（:1834）；不需要 Idempotency-Key 与 If-Match。",
+        "description": "作用域 user：需登录会话（游客 401 SESSION_REQUIRED、后台会话 401 SESSION_EXPIRED——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:62-72，分键查询在 :67）；403 只出现在反方向（用户令牌打后台面，auth/middleware.ts:117）；各域服务层另有兜底 403 SCOPE_DENIED（HTTP 面不可达；例：conversations/service.ts:522、community/validate.ts:89、favorites/validate.ts:65、history/validate.ts:68、messages/validate.ts:81），本接口不产生它）；params 必须 uuid；可读性闸门与 getPost **同一道** readablePost：不存在/已删除/未发布/审核未通过一律同一个 404 NOT_FOUND，不泄露存在性、不新增错误码（community/service.ts:1577-1598）；200 返回 {count, liked_by_me} + no-store；count 走 count(*)（索引 target_type,target_id,user_id），liked_by_me 走 hasLiked，两条都是只读语句，不加计数器列；点赞计数是派生量，**不进** Post/Comment 字段（:1834）；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "posts"
         ],
@@ -7084,7 +7084,7 @@
       "get": {
         "operationId": "listMessages",
         "summary": "列出本人的站内消息（服务端签名游标分页，倒序稳定）",
-        "description": "作用域 user：必须登录（无令牌 401 SESSION_REQUIRED、会话失效 401 SESSION_EXPIRED）；后台令牌打本接口同样 401 SESSION_EXPIRED 而不是 403——用户面按 audience='user' 分键查会话，后台令牌在这里查不到（auth/middleware.ts:51-69）；403 只出现在反方向（用户令牌打后台面，:101-106），本接口不产生它；query 只接受 cursor（≤2048）与 limit（1..50，默认 20），越界或未知字段 400 INVALID_REQUEST；不接受请求体（非空 body ⇒ 400 INVALID_REQUEST）；200 返回 {items,next_cursor}，只列本人消息、按 (created_at DESC, id DESC) 稳定排序，next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 水位 + 路由 + 排序，有效期 15 分钟，只有还有下一页时才返回；过期/被篡改/别人的游标 ⇒ 400 INVALID_CURSOR，翻页锚点失效（水位对不上）同样 400 INVALID_CURSOR 让客户端重读首页；不发 ETag，响应 no-store；无开关；消息存储未接线 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）。",
+        "description": "作用域 user：必须登录（无 bearer 令牌 401 SESSION_REQUIRED、会话失效或账号不存在 401 SESSION_EXPIRED，services/api/src/auth/middleware.ts:55-58、:78-84）；后台令牌访问本接口同样是 401 SESSION_EXPIRED——受众隔离：用户面只认 audience=user 的会话（services/api/src/auth/middleware.ts:62-80；auth/store.ts 的 sessionKey 按 audience 分键（:97-98），pg 存储侧用户会话与后台会话分表），因此服务层「非 user 角色」那条分支只在进程内直接调用时可达、HTTP 面不可达（services/api/src/messages/validate.ts:81）；403 只由账号停用或身份版本失效 ACCOUNT_INACTIVE 产生（middleware.ts:88-93，contract.ts:17）——用户面不存在「缺权限」那类 403；query 只接受 cursor（≤2048）与 limit（1..50，默认 20），越界或未知字段 400 INVALID_REQUEST；不接受请求体（非空 body ⇒ 400 INVALID_REQUEST）；200 返回 {items,next_cursor}，只列本人消息、按 (created_at DESC, id DESC) 稳定排序，next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 水位 + 路由 + 排序，有效期 15 分钟，只有还有下一页时才返回；过期/被篡改/别人的游标 ⇒ 400 INVALID_CURSOR，翻页锚点失效（水位对不上）同样 400 INVALID_CURSOR 让客户端重读首页；不发 ETag，响应 no-store；无开关；消息存储未接线 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）。",
         "tags": [
           "messages"
         ],
