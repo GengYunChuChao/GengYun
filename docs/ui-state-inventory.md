@@ -306,3 +306,6 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 **为什么写成「本数据源下不可为」而不是「未接线」**：未接线是「补一段代码就能通」；这里的缺口在**数据源身份**——随包名录不是服务端实体，而 `/favorites` 的语义是「保存一条**服务端可核验**的引用」。所以在**不换数据源**的前提下，它不随某个 PR 的进度自动消失：要么明确不做（从名录详情收藏，本页按这一支写），要么换数据源并连带改 #7 的验收口径（= 另一条路，代价与待裁定项见 `docs/architecture/acceptance-map.md` 的「已知缺口」；本片只登记，不裁定）。
 
 **结论**：P0 链路第 5 步「收藏／取消」的入口是**两个**——`pages/knowledgedetail` 的收藏按钮（主路径，从详情页发起）与 `pages/favorites` 的「可收藏的资料」（从收藏页发起，**同一个** `POST /favorites`）；`pages/reference` / `pages/referencedetail` 这一路不计入本链路（第 7.4 节），也不提供收藏；识别结果页的 `fav-entry` 属识别能力，同样不计入（第 7.6.1 节）。
+## 7.7 链路 e2e 的边界：这 7 步不含历史步
+
+这 7 步**不含历史步** —— `tests/integration/user-chain-e2e.mjs` 全文对 `history` 零命中，`/history` 一步都没有，故 #16 的「可核对历史」这一半**不在这条链路里**（历史侧目前只有 `tests/integration/favorites-history-isolation-http.mjs`：两账号 × 两私有域，但 store 是内存替身、非真库）；⛔ 不能把本链路 e2e 读成「历史也验过了」。

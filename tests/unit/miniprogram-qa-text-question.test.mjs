@@ -1014,12 +1014,200 @@ test('静态·面向用户的文案不暴露契约名/路径/状态机/幂等键
   for (const token of forbidden) {
     assert.equal(visible.includes(token), false, `模板可见文案不得出现技术细节「${token}」`)
   }
-  // 必要风险提示与"演示数据"标记必须保留。
+  // 必要风险提示与"演示数据"标记必须保留（但**只**在演示态出现，见下面 I 段三态用例）。
   const api = read('miniprogram/utils/qa-api.js')
-  assert.ok(/当前为演示数据/.test(api), '必须保留"当前为演示数据"的明确标记')
-  assert.ok(/\{\{unwiredNote\}\}/.test(visible), '模板必须常驻展示演示数据/未接线说明')
+  assert.ok(/当前为演示数据/.test(api), '必须保留"当前为演示数据"的明确标记（演示态仍要显式说演示）')
+  assert.ok(/versionState === 'demo'/.test(visible), '演示说明必须按版本态有条件渲染（不得再常驻）')
+  assert.ok(/versionState === 'real'/.test(visible), '真实模型态必须有独立分支')
+  assert.ok(/versionState === 'unknown'/.test(visible), '版本未知态必须有独立分支（不许默认演示或真实）')
+  assert.ok(/\{\{versionNote\}\}/.test(visible), '版本说明文案必须绑定判定结果，不能在模板里写死')
+  assert.equal(/\{\{unwiredNote\}\}/.test(visible), false, '常驻的写死说明节点必须已撤掉（它会在真实模型下说反话）')
   assert.ok(/不构成用药建议/.test(visible), '必须保留用药风险提示')
   assert.ok(/服务端能力未接线|还(没|没有)有接上真实服务/.test(api), '服务未接线必须如实说明')
   // 面向用户的错误/闸门文案同样不得暴露内部状态值。
   assert.equal(/check_state=' \+|status=' \+/.test(api), false, '闸门文案不得拼接内部状态值')
+})
+
+// ============================================================ I. 回答来源三态（真实模型 / 演示 / 未知）
+//
+// 本轮返修的缺陷：`qa.wxml` 里「当前为演示数据」是**无条件常驻**节点，真值 `model_version`
+// 被读进 `data.answer.modelVersion` 之后从未参与渲染 ⇒ 一旦开启真实模型，页面会对用户说反话。
+// 下面四条用例把"说哪一句"钉在服务端自报的事实上，并留一条负控制证明断言真的会翻面。
+
+const QA_WXML_PATH = 'miniprogram/pages/qa/qa.wxml'
+
+/** 判据用到的"真实版本串"（合成值，模拟接上真实模型后服务端自报的版本）。 */
+const REAL_MODEL_VERSION = 'gpt-4o-mini@2026-10-20'
+/** 基线服务端实际自报的演示版本串（前缀即判据）。 */
+const DEMO_MODEL_VERSION = 'unimplemented:no-real-model/text-qa-deterministic'
+
+/** 真实模型的完整版本三元组（模型/提示/规则都不带演示前缀）。 */
+function realVersions(overrides) {
+  return Object.assign({
+    model_version: REAL_MODEL_VERSION,
+    prompt_version: 'prompt/citation-guard/2',
+    rule_version: 'rule/cjk-bigram+word-match/1+dose/2'
+  }, overrides || {})
+}
+
+/**
+ * 按页面 `data` 求出模板里**真正会渲染出来的**版本说明条目。
+ *
+ * 只认两种形状，别的一律抛错（形状一变就红，不静默放过）：
+ *   - `wx:if="{{versionState === '<state>'}}"`：与 `data.versionState` 相等才渲染；
+ *   - **没有** `wx:if`：常驻渲染 —— 正是本次要修的回归形状，负控制里由它把 ① 顶红。
+ */
+function versionBanners(wxml, data) {
+  const banners = []
+  const blockPattern = /<view\b([^>]*)>([\s\S]*?)<\/view>/g
+  let match
+  while ((match = blockPattern.exec(wxml)) !== null) {
+    const attrs = match[1]
+    const inner = match[2]
+    // 版本三态三块：正文只由 `{{versionNote}}` 供给（文案在 qa.js 里按事实生成）。
+    const isVersionNote = /\{\{\s*versionNote\s*\}\}/.test(inner)
+    // 常驻的写死说明块（回归形状）：替身底色 + 没有 wx:if 判定。
+    const isUnconditional = !/wx:if=/.test(attrs) && /notice--stub/.test(attrs)
+    if (!isVersionNote && !isUnconditional) continue
+    const gate = /wx:if="\{\{\s*versionState === '([a-z]+)'\s*\}\}"/.exec(attrs)
+    if (gate === null) {
+      if (/wx:if=/.test(attrs)) throw new Error('版本说明块的 wx:if 形状不可识别：' + attrs.trim())
+      banners.push({ state: null, always: true, stub: /notice--stub/.test(attrs), text: inner })
+      continue
+    }
+    if (gate[1] !== data.versionState) continue
+    banners.push({
+      state: gate[1],
+      always: false,
+      stub: /notice--stub/.test(attrs),
+      text: inner.replace(/\{\{\s*versionNote\s*\}\}/g, data.versionNote)
+    })
+  }
+  return banners
+}
+
+test('三态①·execution_mode=real + 真实版本串 ⇒ 演示节点不出现、真实版本可见', async () => {
+  const h = bootQaPage({ mode: 'real', jobAnswer: answerFixture(realVersions()) })
+  h.page.setData({ draft: QUESTION })
+  await h.page.onSend()
+  await waitSettled(h.page)
+
+  // 页面数据：判成真实，且文案里带着服务端原样回传的版本串。
+  assert.equal(h.page.data.versionState, 'real', '真实模型 + 干净版本串必须判成 real')
+  assert.ok(h.page.data.versionNote.includes(REAL_MODEL_VERSION), '真实版本串必须原样出现在说明里')
+  assert.equal(h.page.data.versionNote.includes('当前为演示数据'), false, '真实模型下不得出现"当前为演示数据"')
+  assert.equal(h.page.data.modeLabel, '真实服务', '真实态的执行模式 pill 与版本说明必须一致（不得被误改）')
+
+  // 模板层：按同一份 data 求值，只有"真实"那一条会渲染。
+  const banners = versionBanners(read(QA_WXML_PATH), h.page.data)
+  assert.equal(banners.length, 1, '真实态只应渲染一条来源说明')
+  assert.equal(banners[0].state, 'real')
+  assert.equal(banners[0].stub, false, '真实态不得套用替身底色')
+  assert.ok(banners[0].text.includes(REAL_MODEL_VERSION), '真实版本必须可见')
+  assert.equal(/当前为演示数据/.test(banners[0].text), false, '真实态渲染结果里不得出现演示文案')
+  assert.equal(banners.some((b) => /当前为演示数据/.test(b.text)), false, '演示说明不得出现在真实态')
+  h.page.onUnload()
+})
+
+test('三态②·execution_mode=stub 或版本串带未接真实模型前缀 ⇒ 演示节点出现', async () => {
+  // (a) 执行模式显式 stub + 干净版本串：仍判演示（执行模式自报演示）。
+  const a = bootQaPage({ mode: 'stub', jobAnswer: answerFixture(realVersions()) })
+  a.page.setData({ draft: QUESTION })
+  await a.page.onSend()
+  await waitSettled(a.page)
+  assert.equal(a.page.data.versionState, 'demo', 'execution_mode=stub 必须判成 demo')
+  assert.ok(a.page.data.versionNote.indexOf('当前为演示数据') === 0, '演示态必须保留原文案开头')
+  const aBanners = versionBanners(read(QA_WXML_PATH), a.page.data)
+  assert.equal(aBanners.length, 1, '演示态只应渲染一条来源说明')
+  assert.equal(aBanners[0].state, 'demo')
+  assert.equal(aBanners[0].stub, true, '演示态必须用替身底色，不能与真实态同色')
+  assert.equal(/当前为演示数据/.test(aBanners[0].text), true, '演示态必须真的渲染演示文案')
+  assert.equal(/🧪/.test(aBanners[0].text), true, '演示态保留替身图标（不能只靠颜色区分）')
+  a.page.onUnload()
+
+  // (b) 执行模式写 real、但版本串仍带 `unimplemented:no-real-`：版本串是逐条凭据，判演示。
+  const b = bootQaPage({ mode: 'real', jobAnswer: answerFixture(realVersions({ model_version: DEMO_MODEL_VERSION })) })
+  b.page.setData({ draft: QUESTION })
+  await b.page.onSend()
+  await waitSettled(b.page)
+  assert.equal(b.page.data.versionState, 'demo', '版本串带演示前缀时执行模式说 real 也不算真实')
+  assert.ok(b.page.data.versionNote.indexOf('当前为演示数据') === 0, '演示态必须保留原文案开头')
+  assert.equal(b.page.data.versionNote.includes('unimplemented:no-real-'), false, '前缀必须脱敏，不把内部串甩给用户')
+  assert.ok(b.page.data.versionNote.includes('model/text-qa-deterministic'), '脱敏后仍要给出可读的演示版本')
+  // 同一屏不得自相矛盾：② 区的执行模式 pill 不得继续宣称「真实服务」。
+  assert.equal(b.page.data.modeLabel, '演示数据', '执行模式标 real 但版本串是演示时，pill 必须跟着版本串走')
+  assert.equal(b.page.data.mode, 'real', '前提：服务端这条响应确实自报 execution_mode=real')
+  b.page.onUnload()
+})
+
+test('三态③·拿不到版本串 ⇒ 显示「版本未知」，既不显示演示也不显示真实', async () => {
+  // (a) 端到端·这次没有产出回答 ⇒ 连版本串都没有：只能如实报"版本未知"。
+  const h = bootQaPage()
+  h.jobState.value = answerJobFixture(h.job.target_ref.id, {
+    id: h.job.id, state: 'failed', deadline_at: h.job.deadline_at, error_code: 'PROVIDER_UNAVAILABLE'
+  })
+  h.page.setData({ draft: QUESTION })
+  await h.page.onSend()
+  await waitSettled(h.page, 'failed 终态应已落定（5ms 轮询拍未落地）')
+  assert.equal(h.page.data.answer, null, '前提：失败终态不展示回答')
+  assert.equal(h.page.data.versionState, 'unknown', '拿不到版本串必须是 unknown')
+  assert.ok(h.page.data.versionNote.includes('版本未知'), '未知态必须说"版本未知"')
+  assert.equal(h.page.data.versionNote.includes('当前为演示数据'), false, '未知态不得显示演示')
+  assert.equal(h.page.data.versionNote.indexOf('真实模型：'), -1, '未知态不得显示真实')
+  const aBanners = versionBanners(read(QA_WXML_PATH), h.page.data)
+  assert.equal(aBanners.length, 1, '未知态只应渲染一条来源说明')
+  assert.equal(aBanners[0].state, 'unknown')
+  assert.equal(aBanners[0].stub, false, '未知态不得套用替身底色（否则等于暗示"演示"）')
+  assert.equal(/当前为演示数据/.test(aBanners[0].text), false, '未知态渲染结果里不得出现演示文案')
+  assert.equal(/真实模型：/.test(aBanners[0].text), false, '未知态渲染结果里不得出现真实口径')
+  h.page.onUnload()
+
+  // (b) 端到端·回答缺版本串 ⇒ 契约校验整条拒收，页面同样只能报"版本未知"（绝不降级成演示）。
+  const b = bootQaPage({ mode: 'stub', jobAnswer: answerFixture(realVersions({ model_version: '' })) })
+  b.page.setData({ draft: QUESTION })
+  await b.page.onSend()
+  await waitFor(() => b.page.data.busy === false && b.page.data.taskErrorCode !== '', {
+    message: '缺版本串的回答应被契约拒收并落到可重试态（5ms 轮询拍未落地）'
+  })
+  assert.equal(b.page.data.answer, null, '缺版本串的回答不得进入展示')
+  assert.equal(b.page.data.versionState, 'unknown', '缺版本串时仍是 unknown，不因 execution_mode=stub 改说演示')
+  assert.ok(b.page.data.versionNote.includes('版本未知'), '必须如实说版本未知')
+  assert.equal(b.page.data.versionNote.includes('当前为演示数据'), false, '未知态不得显示演示')
+  b.page.onUnload()
+
+  // (c) 版本串在、但执行模式没说明 ⇒ 也是未知：不许默认按「真实」标注（fail-closed）。
+  const g = bootQaPage()
+  g.page.setData({ mode: '' })
+  assert.equal(g.page.applyVersionState(REAL_MODEL_VERSION), 'unknown', '执行模式没说明时不得判真实')
+  assert.ok(g.page.data.versionNote.includes('版本未知'), '必须如实说版本未知')
+  assert.ok(g.page.data.versionNote.includes(REAL_MODEL_VERSION), '已取得的版本串仍要如实给出，不隐藏')
+  assert.equal(g.page.data.versionNote.indexOf('当前为演示数据'), -1, '更不得转头说成演示')
+  g.page.onUnload()
+})
+
+test('三态④·负控制：把演示节点改回「无条件常驻」⇒ ①的断言必红', () => {
+  const wxml = read(QA_WXML_PATH)
+  const demoCopy = loadQaModule().UNWIRED_ANSWER_NOTE
+  // 复原返修前的形状：替身底色 + 无 wx:if + 写死的演示文案（文案取自产线同一常量）。
+  const regressed = '<view class="notice notice--stub">'
+    + '<text class="notice__icon">🧪</text>'
+    + '<text class="notice__text">' + demoCopy + '</text>'
+    + '</view>'
+  const realData = {
+    versionState: 'real',
+    versionNote: '真实模型：本次回答由服务端真实模型生成，模型版本 ' + REAL_MODEL_VERSION + '；'
+  }
+
+  // 对照：未变异的模板在真实态下**不**渲染演示文案（这正是 ① 的断言）。
+  assert.equal(
+    versionBanners(wxml, realData).some((b) => /当前为演示数据/.test(b.text)),
+    false,
+    '前提：修好后的模板在真实态下不得渲染演示文案'
+  )
+  // 负控制：同一份真实态 data + 常驻节点 ⇒ ① 的断言翻面（必红）。
+  assert.equal(
+    versionBanners(regressed, realData).some((b) => /当前为演示数据/.test(b.text)),
+    true,
+    '负控制失效：把节点改回无条件常驻后 ① 居然还能绿'
+  )
 })

@@ -72,7 +72,7 @@ node tools/local-debug-server.mjs --config config/debug.local.json     # 诊断�
 | B 官方 AppID | 必须是该小程序的项目成员 | 官方 AppID/AppSecret | 本机联调可以；正式验收另按发布流程 |
 | C `stub` | 无 | 不需要 | **不能**，服务端合成身份 |
 
-三条路径都先把客户端基址指到真实本地 API。**换一份配置，别覆盖诊断用的 `config/debug.local.json`**；`apiBaseUrl` 的端口必须与 `port` 相同（工具会校验），`/api/v1` 不能漏：
+三条路径都先把客户端基址指到真实本地 API。**换一份配置，别覆盖诊断用的 `config/debug.local.json`**；`apiBaseUrl` 的端口必须与 `port` 相同（工具会校验），`/api/v1` 不能漏（另注：`real` 起 API 只列了 9 项**启动必填**，另有 4 组字段 `MEDIA_OBJECT_REF_KEY`、`MEDIA_ACCESS_GRANT_ORIGIN`、`CHAT_LLM_*`、`RECOGNITION_PROVIDER_*` 不参与启动校验，缺了媒体域整域 503、语音受理 409、问答退回确定性摘录、识别受理 503，逐字段口径见[配置参考](docs/reference/configuration.md)）：
 
 ```powershell
 Set-Content -Encoding ascii config/api.local.json '{"mode":"local","bindHost":"127.0.0.1","port":3100,"apiBaseUrl":"http://127.0.0.1:3100/api/v1"}'
