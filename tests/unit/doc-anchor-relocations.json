@@ -866,5 +866,15 @@
     "from": 2076,
     "to": 2257,
     "reason": "该行（D08 升档判据）正文直接引用该门：`available` 门不再是 `!== 'real'`。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 与 `available` 无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 就是该门表达式的落点（全文件唯一 `available: config.executionMode`）。目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/verification/gy-i28-demo-parity-20261018.md",
+    "line": 99,
+    "target": "miniprogram/pages/messages/messages.js",
+    "from": 287,
+    "to": 447,
+    "reason": "该行引用文字是 `onMarkAllRead()` 的逐个串行标记（`targets = items.filter(unread)`、`_markReadOne`），旧号 287 在父提交（HEAD^，22ad9082）上却是 `_openDetail` 的前置注释 `/** 社区详情页的统一出口：先校验 uuid，再交给 navigation.openTarget 判路由与跳法。 */`，本来就不是 `onMarkAllRead`；本 PR 在 reload 内加两行后，机械 +2 只会落到 HEAD 289（同一行 `_openDetail` 注释），仍不是声明。HEAD 447 是唯一的 `onMarkAllRead: function () {`（全文 1 行，本次现测）。该页其余行号整体来自 10-18 树（`de66803…`），属既有语义陈旧，按符号纠正，不是 +2 平移。",
+    "kind": "correction",
+    "symbol": "onMarkAllRead: function () {"
   }
 ]

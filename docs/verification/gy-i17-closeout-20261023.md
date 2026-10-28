@@ -184,7 +184,7 @@
 | PR | state | mergeCommit（40 位） | 在 main 祖先链 | 标题要点 | 内容证据（实读） |
 | --- | --- | --- | --- | --- | --- |
 | #138 | MERGED | `1865c64e6ed4e5f4bbdcd939865785f6e7b513dc` | 1（不在） | 接通消息三端点与固定期限分页 | `services/api/src/routes/messages.ts:43`／`:53`／`:59` |
-| #191 | MERGED | `e1e1e4ad91c02bab938602d4cf0ab7ca8b353558` | 1（不在） | 消息页真实读面与未读角标 | `miniprogram/pages/messages/messages.js:298`（`_applyUnread`） |
+| #191 | MERGED | `e1e1e4ad91c02bab938602d4cf0ab7ca8b353558` | 1（不在） | 消息页真实读面与未读角标 | `miniprogram/pages/messages/messages.js:300`（`_applyUnread`） |
 | #215 | MERGED | `cc07de8fd2fabfcd51b11c37962994631ecfbed5` | 1（不在） | 修复微信端标为已读被误判 400 | `services/api/src/routes/messages.ts:36`（`dropEmptyBodyContentType`） |
 | #278 | MERGED | `293fbefa600f64c3a33e5404352f97a97a6ac829` | 1（不在） | 消息域接入 PostgreSQL 持久化 | `services/api/db/migrations/0019_messages_persistence.sql:49`、`services/api/src/messages/store-pg.ts:246` |
 | #422 | MERGED | `50e3bf40346811a72cb511f19e4b49f035a5a020` | 1（不在） | 他人评论/点赞真落库，类型按来源取值 | `services/api/src/community/events.ts:136`、`:173` |

@@ -96,7 +96,7 @@ PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门�
 | `:73` `button.chip` / `.chip.active` | `messages.wxml:33` `class="chip {{filter === item.value ? 'chip--active' : ''}}"` | demo `.active` ⇒ 本仓 `.chip--active`（`styles/components.wxss:877/892`） |
 | `:73` chips `全部/互动/系统` | `messages.js:41` `FILTERS` = `all/unread/interaction/system` | 见 §3.2 口径差异 |
 | `:73` `${btn('全部已读','read-all','ghost')}` | `messages.wxml:38-42` `<button class="btn btn--ghost" disabled="{{markingAll \|\| !hasUnread}}" bindtap="onMarkAllRead">` | 无未读时禁用；标记中显示「正在标记…」 |
-| `:113` `case 'read-all': S.read = notifications.map(n => n.id)` | `messages.js:287` `onMarkAllRead()`：`targets = items.filter(unread)`，串行 `_markReadOne` | 不新增批量接口；成功只采信服务端返回的本体（`revision`／`read_at`） |
+| `:113` `case 'read-all': S.read = notifications.map(n => n.id)` | `messages.js:447` `onMarkAllRead()`：`targets = items.filter(unread)`，串行 `_markReadOne` | 不新增批量接口；成功只采信服务端返回的本体（`revision`／`read_at`） |
 | `:112` `case 'message-filter': messageFilter = el.dataset.filter; render()` | `messages.js:217` `onFilter(event)`：只切本地视图，**不重新请求** | 同「本地筛选、不重排数据」 |
 | `:73` `.message-list` / `.message-row` / `.message-icon` / `.message-copy` / `.unread-dot` | `messages.wxml:72` `.message-list`、`:73` `.message-row`、`:74` `.message-icon`、`:75` `.message-copy`、`:76` `.unread-dot` | 行内未读点保留 |
 
