@@ -774,4 +774,16 @@
     "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
   }
 
+,
+  {
+    "doc": "docs/verification/gy-user-chain-20261019.md",
+    "line": 99,
+    "target": "tests/integration/user-chain-e2e.mjs",
+    "from": 376,
+    "fromEnd": 383,
+    "to": 412,
+    "toEnd": 419,
+    "reason": "目标文件本提交未改（docs-only）。base（da61b64d）上 376 是 step 1 登录的 eq(me.status,200,登录后 /me/profile 必须 200) 断言，旧锚点已陈旧；HEAD 上这段「停用 crop_corn 后目录不再列出」的反向控制真实位置是 412-419（412 停用、414-418 setEq 差集断言、419 复位），按符号重锚，不是 376→412 的差值平移。"
+  }
+
 ]
