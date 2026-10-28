@@ -9,7 +9,12 @@
  * - 契约 `enum` 缺失或为空 ⇒ **模块加载即抛错**。理由：一个空闭集等于「什么都不能授」，
  *   页面会静默变成只有禁用按钮的死页；这属于装配缺陷，必须在启动时炸出来，不能退化成空列表。
  *
- * ⓘ 代价：本模块 import 了整份契约 JSON（537KB），Vite 会把它内联进 admin 包。
+ * ⓘ 代价（对抗审查实测，2026-10-28）：本模块 import 了整份契约 JSON，Vite 会把它内联进 admin 包。
+ *   实测 `vite build`：**628,079 B → 541,216 B**，增量 **+86,863 B（+16.0%，min 后）／gzip +13,193 B（+8.2%）**。
+ *   机制值得记一笔：`openapi.json` 的 `paths`（204,378 B，min 后）被摇掉、只有 `components`（87,057 B）进包——
+ *   这是**偶然摇树**，不是设计保证：哪天有人 import 了 `paths`（或改成 `import * as contract`），
+ *   增量会回到 **+292KB** 量级。真要省，正确做法是构建期生成一份只含 enum 的小模块；
+ *   本片选择「先真、后省」，因为 `tools/**` 在这一片是禁改面。
  *   换来的是「选项就是契约」——不会出现前端清单与契约漂移导致的 400 INVALID_REQUEST。
  */
 import contract from '../../../../packages/contracts/openapi.json' with { type: 'json' };

@@ -412,6 +412,16 @@ test('负例九（M2b 守卫）：携带真实证据的 client 函数只 import 
     '注入的函数没有被算成这条 operation 的路径证据（operation 级计数按「是否已有证据函数」算，注入前这条本来就有真实证据）',
   );
 
+  // ①b 全局证据计数不许动：注入的函数落在一条**本来就有证据**的 operation 上，
+  //     所以 `operationsWithEvidence` 应该原地不动。若它跟着 +1，说明这条判据是按
+  //     「证据函数条数」在累加、而不是按「这条 operation 有没有证据」——那样「光 import 不算入口」
+  //     与「真调用才算入口」两条守卫会同时失去判别力（R68 对抗审查 N3：计数必须落在本行，不能落在全局）。
+  assert.equal(
+    map.summary.operationsWithEvidence,
+    base.summary.operationsWithEvidence,
+    '注入的探针让全局证据计数动了：判据按「证据函数条数」累加，而不是按 operation 归属',
+  );
+
   // ② import 不是入口：withUiEntry / noUiEntry / noUiEntryList 一个都不许动
   assert.equal(
     map.summary.withUiEntry,

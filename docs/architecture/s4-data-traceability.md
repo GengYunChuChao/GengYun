@@ -108,7 +108,7 @@
   写回 `:650`；读面 `services/api/src/routes/exports.ts:42`（无池即 503，不降级内存账本 `:55`）；
   接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:205`，授权落库要求两类证据引用见
   `services/api/src/privacy/grant-pg.ts:63`。
-- **证据**：契约 `packages/contracts/openapi.json:1474`（`GET /me/exports`）；装配 `services/api/src/app.ts:2219`。
+- **证据**：契约 `packages/contracts/openapi.json:1378`（`GET /me/exports`）；装配 `services/api/src/app.ts:2219`。
 - **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接，`services/api/src/app.ts:928` 起的注释写清：real 模式
   在任何账本变更**之前** 503（零 `sent` 记录），替身/演示模式**不记账**。因此真库上取不到一条真实外发记录，
   「记录得住」这件事只有结构与读面证据，没有一条真实数据流过。这一条不把 D12 降级：能力（表、写面、读面、
@@ -132,7 +132,7 @@
 - **实现**：purpose 闭集 4 项（`recording`、`media_processing`、`external_inference`、`public_posting`）见
   `packages/privacy/constants.mjs:13-18`；授权读面与撤回面 `services/api/src/routes/consents.ts:38`（写）、`:64`（撤回，
   缺 `If-Match` 即 `REVISION_REQUIRED` `:74`）、`:90`（政策读面）；撤回落库 `services/api/src/privacy/consent-pg.ts:148`。
-- **证据**：契约 `packages/contracts/openapi.json:1377`（`withdrawConsent`）；真库臂
+- **证据**：契约 `packages/contracts/openapi.json:1281`（`withdrawConsent`）；真库臂
   `.github/workflows/consent-grant-postgres.yml:34`。
 - **缺口**：没有 `location` 与 `training` 两个 purpose（`packages/privacy/constants.mjs:12` 自注「首版无 training」）。
   后果是「定位要单独授权」这条子句无处可撤——不是撤不掉，而是根本没有这一路授权。

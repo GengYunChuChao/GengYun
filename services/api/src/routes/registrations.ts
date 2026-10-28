@@ -10,7 +10,7 @@
  * - `requestBody.required: true` → `VerifyInput{ fields: LabelFields, conditions?: Conditions }`；
  * - `200` → `VerificationEnvelope{ data: Verification, meta }`；响应头声明 `Cache-Control`
  *   （「私有/授权访问 no-store」）与 `ETag`（「资源 revision 强 ETag」）。
- * - 其余状态码：400/401/403/404/409/413/415/422/428/429/503/504。
+ * - 其余状态码：400/401/403/404/409/413/415/422/429/503/504（无 428：本 operation 不要求前置条件头）。
  *
  * ## 与同域既有实现的关系
  *
