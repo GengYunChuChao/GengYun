@@ -102,7 +102,7 @@ node tools/local-debug-server.mjs --config config/debug.local.json
 
 | 现象 | 事实与影响 |
 | --- | --- |
-| `smoke.mjs` 在干净环境必然失败 | 它断言 `/api/v1/knowledge` 默认返回空列表，而 `api.mjs` 硬设 `APP_KNOWLEDGE_UNVERIFIED_SEED=1` 会放行未核对条目，于是断言失败。两者同批产物却对不上；冒烟前先知道这条，不要据此判断环境坏了 |
+| `smoke.mjs` 在干净环境必然失败 | 它断言 `/api/v1/knowledge` 默认返回空列表，而 `api.mjs` 硬设 `APP_KNOWLEDGE_UNVERIFIED_SEED=1` 会放行未核对条目，于是断言失败。两者同批产物却对不上；冒烟前先知道这条，不要据此判断环境坏了。`/knowledge` 在本地为空的成因与判别见文末「本地 `/knowledge` 为空的三条成因与判别」 |
 | 端口占用报错文案写死 | 实际用 `--api-port`/`--pg-port` 时，仍未占用也会报 `Port 3100 belongs to another service` / `Port 55436 belongs to another service`，数字是默认值不是你的配置值 |
 | PowerShell 5.1 环境变量大小写冲突 | 环境里同时存在 `no_proxy`/`NO_PROXY` 等大小写重复键时，`Start-Process` 重定向会报 `Item has already been added`，`start.ps1` 首次失败；当次进程内清掉小写变量后即可通过，不必改系统或仓库 |
 
@@ -142,3 +142,100 @@ npm ci --proxy=http://127.0.0.1:7897 --https-proxy=http://127.0.0.1:7897
 9. **`stop.ps1` 的异常路径**：正常停服与“数据保留”已实测；API 进程被外部结束后再停、以及 `api.pid` 被替换的拒绝分支未实测。
 
 其余具体故障按对应固定 SHA 验证页排查；不把历史测试数量／截图当当前证据。
+
+## 本地 `/knowledge` 为空的三条成因与判别
+
+`GET /api/v1/knowledge` 在本地「恒返回空」是**读面准入**的结果，不是没导数据，也不是 `card_ready` 没开：本机库里 `knowledge_versions` 有 **159 行**，而读视图 `catalog_read.current_knowledge` 是 **0 行**，差值全部来自准入闸。下面三层按「先查哪一层」排序。
+
+### 第一层：`card_ready` 不在这条链上
+
+| 事实 | 证据 |
+| --- | --- |
+| `/knowledge` 的唯一取数点是 `catalog_read.current_knowledge`；该视图**不 JOIN `applicability`**，整条链路没有一处读 `card_ready` | `services/api/db/migrations/0012_knowledge_created_at.sql:87-117`、`services/api/src/knowledge/service.ts:76` |
+| `card_ready` 只影响用量卡视图 `v_knowledge_applicability`，而该视图在 `services/api/src` 里**零消费者**（全目录 grep 0 处引用） | `services/api/db/migrations/0002_knowledge_catalog.sql:227-231` |
+| `/knowledge` 的 `dose_cards` 恒 `[]`、`conditions` 恒 `null` 是投影层写死的，与数据、与 `card_ready` 都无关 | `services/api/src/knowledge/service.ts:98-106` |
+| 现库 22 行 `applicability` 里**0 行**满足 `card_ready=true` 的 CHECK（9 个字段全非空才允许），直接 `UPDATE … SET card_ready=true` 会 23514 报错 | `services/api/db/migrations/0002_knowledge_catalog.sql:85-98`；本机实测 `applicability` 22 行、满足该 CHECK 0 行 |
+
+⇒ **开 `card_ready` 不是解法**：它不会让列表多出一行；在现库上连开都开不动（`v_knowledge_applicability` 也没有任何 HTTP 消费点，行数变化不影响 `/knowledge`）。
+
+### 第二层：真因是 9 道准入闸里有 5 道不过
+
+`/knowledge` 的数据库侧要穿过 `catalog_read.current_verified_sources`（`services/api/db/migrations/0005_catalog_read_views.sql:6-21`）再穿`current_knowledge` 自己的条件（`services/api/db/migrations/0012_knowledge_created_at.sql:87-117`）。把两道视图的条件合起来是 9 道闸，本机 159 行数据逐条过后是「5 道不过」：
+
+| # | 闸 | 判据位置 | 本机实测（分母 159 行） |
+| --- | --- | --- | --- |
+| 1 | 知识行已发布 | `0012` 的 `k.visibility='published'` | **0 / 159**（全 `private`）✗ |
+| 2 | 来源版本已核对 | `0005` 的 `sv.review_status='verified'` | **0 / 159**（全 `unverified`）✗ |
+| 3 | 核对人与核对时间非空 | `0005` 的 `sv.reviewed_by IS NOT NULL`、`sv.reviewed_at IS NOT NULL` | **0 / 159**（两边全 NULL）✗ |
+| 4 | 来源 URL 是 https | `0012` 的 `s.canonical_url ~ '^https://…'` | **0 / 159**（这 159 行挂的 2 个来源全是 `repo-external://…`；库内另有 3 个 https 来源，但没有知识行挂它们）✗ |
+| 5 | 数据集配置闸 | `0005` 的 `mode='real'` + `active_mode='real'` + `database_connected='true'` | `active_mode=stub`、`database_connected=false` ✗ |
+| 6 | 来源版本有效 | `0005` 的 `sv.validity='valid'` | 159 / 159 ✓ |
+| 7 | 来源当前版本 | `0005` 的 `s.current_version_id = sv.id` | 159 / 159 ✓ |
+| 8 | 形状闸（标题/正文/发布者长度、`sv.version` 1..80、`isfinite(retrieved_at)`、三个 id 是 jsonb 数组） | `0012` 的长度与 jsonb 条件 | 159 / 159 ✓ |
+| 9 | 有效期窗 | `0005` 的 `valid_from <= now()`、`valid_to` 空或未过期 | 159 / 159 ✓ |
+
+所以「数据在库里、列表却是空」是这 5 道闸的必然结果，**不是导入失败**，也不是有人在某处 `WHERE 1=0`。第 5 道是配置而不是数据：本地 API 恒定 `stub` 执行模式（`tools/local-dev/api.mjs` 显式注入 `APP_EXECUTION_MODE=stub`），`knowledge_dataset_config` 的 `active_mode` 就停在 `stub`，`database_connected` 停在 `false`。
+
+### 第三层：本地有一套既有的「非 real 演示数据」开关
+
+仓内已有把浙江首批资料接进 `/knowledge` 读面的**既有接线**（`v_queryable_seed_version` 的既有口径：无真实库时的有来源种子联调，消费方必须逐条标注未核对）：
+
+| 环节 | 位置 | 行为 |
+| --- | --- | --- |
+| 开关读取 | `services/api/src/routes/knowledge.ts:171` | `APP_KNOWLEDGE_UNVERIFIED_SEED` 取 `1`/`true` 才为真 |
+| 模式硬闸 | `services/api/src/routes/knowledge.ts:175`、`services/api/src/app.ts:1872-1873` | `executionMode !== 'real'` 才生效；`real` 模式装配层硬拒，开关设了也没用 |
+| 投影面 | `services/api/src/knowledge/reference-query.ts:138-141` | 开关关闭时 `seedRows()` 恒返回 `[]`，不会静默放行 |
+| 并入读面 | `services/api/src/knowledge/service.ts:81-84` | 种子行与数据库投影行按 `id` 去重后并进**同一份快照**，再走同一套过滤/分页/投影 |
+| 本地 harness | `tools/local-dev/api.mjs:6` | `tools/local-dev/api.mjs` 启动器**硬设**该开关为 `1` |
+
+这是**既有的非 real 演示数据开关**，不是「即将支持」，也不是临时绕过：默认关闭，打开必须是一次可审查的接线决定，且在 `real` 模式下一律失效。
+
+### 判别步骤（按顺序，别跳）
+
+1. **先看开关有没有设**。没设时，数据库侧本来就该是 0 条：
+
+   ```powershell
+   echo $env:APP_KNOWLEDGE_UNVERIFIED_SEED   # 需要 1 或 true；空/0 就解释了空列表
+   ```
+
+   同时确认执行模式非 `real`（`real` 下开关无效，见上表）。
+2. **再看连的是哪个库**。`tools/local-dev/api.mjs:12` 连的是 `gengyun_local_dev`（裸迁移 + 合成夹具，**不含任何 seed 知识记录**），不是你手工灌过 seed 的 `gengyun`。用你实际连上的库查一次分母：
+
+   ```sql
+   SELECT count(*) FROM knowledge_versions;   -- 0 ⇒ 库不对或没灌 seed
+   ```
+3. **再逐条数那 5 道闸**（一条 SQL 全出，分母就是上一句的计数）：
+
+   ```sql
+   SELECT count(*) AS rows,
+          count(*) FILTER (WHERE k.visibility = 'published')     AS g_published,
+          count(*) FILTER (WHERE sv.review_status = 'verified')  AS g_verified,
+          count(*) FILTER (WHERE sv.reviewed_by IS NOT NULL
+                             AND sv.reviewed_at IS NOT NULL)     AS g_reviewed,
+          count(*) FILTER (WHERE s.canonical_url ~ '^https://')  AS g_https
+   FROM knowledge_versions k
+   JOIN source_versions sv ON sv.id = k.source_version_id
+   JOIN sources s ON s.id = sv.source_id;
+
+   SELECT key, value, mode FROM knowledge_dataset_config ORDER BY key;  -- 配置闸
+   ```
+4. **再看视图自己**（`/knowledge` 的数据库侧唯一来源）：
+
+   ```sql
+   SELECT count(*) FROM catalog_read.current_knowledge;
+   ```
+5. **最后才怀疑数据**。本机 159 行的分布是 119 species / 35 herbicide / 5 scheme；三个数都缺才是数据问题，只有一两个缺也是准入问题，不是导入问题。
+
+另：未带令牌访问 `/api/v1/knowledge` 一律 401，**401 和「空列表」是两件事**，先排除鉴权再看上面五步。
+
+### 设开关后应当看到什么
+
+`APP_KNOWLEDGE_UNVERIFIED_SEED=1` + 非 `real` 模式下，`/knowledge` 立刻是 **159 条：119 species + 35 herbicide + 5 scheme**，来自 `packages/knowledge/zhejiang/materials-zhejiang-v1.json` 的投影。这 159 条**逐行**是：
+
+- `source.review_status = 'unverified'`（如实呈现，不会被统一改写成 `verified`）；
+- `dose_cards = []`、`conditions = null`（投影层写死，见 `services/api/src/knowledge/service.ts:98-106`）；
+- 库内 `knowledge_versions` 的 159 行分布与种子投影一致（119 / 35 / 5），两个取数口报的是同一批素材。
+
+**这 159 条「逐行标未核对、无剂量卡片」是正确行为**，不是缺陷：未核对内容可以出现在演示查询面，但不得冒充已核对，也不得带出用量卡（用量卡的合格来源、制剂、条件、原文缺项，见上表「模拟／种子能展示但无法产用量卡」一行）。
+
+读数来源：本机实测 `catalog_read.current_knowledge` = 0 行、`catalog_read.current_verified_sources` = 0 行、`v_active_source_version` = 0 行、`v_knowledge_applicability` = 0 行、`knowledge_versions` = 159 行、`applicability` = 22 行；种子面用 `createReferenceQueryService({includeUnverifiedSeed: true}).seedRows()` 实跑得 159 行（119 / 35 / 5、`review_status` 全 `unverified`）。两者相加即读面 159 条——本页未起完整 HTTP 链路，故不把这一条写成端到端验收。
