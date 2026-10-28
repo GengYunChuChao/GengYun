@@ -24,7 +24,7 @@
  * ## 装配纪律
  *
  * - **鉴权**：一律 `guards.requireUser`（契约 `security: userSession`）。游客 401
- *   `SESSION_REQUIRED`；后台会话 403 `SCOPE_DENIED`（服务层 `requireUserActor` 兜底），
+ *   `SESSION_REQUIRED`；后台会话在用户面同样是 401 `SESSION_EXPIRED`（服务层 `SCOPE_DENIED` 兜底、HTTP 面到不了），
  *   越权/不存在一律 404（不泄露存在性）。
  * - **头部**：写路径的 `Idempotency-Key` / `If-Match` 由**服务层**校验（缺 `If-Match`
  *   ⇒ 428 `REVISION_REQUIRED`，缺 `Idempotency-Key` ⇒ 400 `IDEMPOTENCY_KEY_REQUIRED`），
