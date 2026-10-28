@@ -3446,7 +3446,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function grantAdministratorScope(ctx: AdminCallContext, id: string, body: unknown) {",
-          "lines": "1661-1704"
+          "lines": "1659-1688"
         },
         {
           "path": "services/api/src/admin/ops/scope-authority-pg.ts",
@@ -3478,7 +3478,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "async function revokeAdministratorScope(ctx: AdminCallContext, id: string, scopeParam: string, body: unknown) {",
-          "lines": "1716-1750"
+          "lines": "1700-1734"
         },
         {
           "path": "services/api/src/admin/ops/scope-authority-pg.ts",
@@ -3545,7 +3545,7 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "cancelAdminJob",
-          "lines": "1016-1132"
+          "lines": "914-1030"
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3670,7 +3670,7 @@
         {
           "path": "services/api/src/admin/audit/pg.ts",
           "symbol": "createPostgresAdminAuditLogPort",
-          "lines": "378-429"
+          "lines": "380-431"
         },
         {
           "path": "services/api/db/migrations/0033_admin_audit_log_read.sql",
