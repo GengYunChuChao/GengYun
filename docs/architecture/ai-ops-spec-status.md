@@ -38,7 +38,7 @@
 | --- | --- | --- |
 | 已实现 | 41 | 闭集、错误码分流、投影不变式、持久化门、开关门、真库端口与页面筛选下发这些「硬边」齐备，且有断言锁住（本版新增审计动作闭集四项 E40、把作业台筛选升档为 E41） |
 | 部分实现 | 11 | 面已通、出口是替身或内存；或该域已接一半（有读无取消、投影语义未真实化） |
-| 未实现 | 11 | 一条 P0（版本串零真实值）＋十条 P1（审计台账同步、统一台账、调用记录、识别供应商、审核模型层、评估排期、媒体读句柄等） |
+| 未实现 | 10 | 一条 P0（版本串零真实值）＋九条 P1（统一台账、调用记录、识别供应商、审核模型层、评估排期、媒体读句柄等；原「审计台账同步」已随 N02 销号移出本档） |
 | 已搁置 | 6 | 均有逐字暂缓／不做／未授权记录：许可、iOS、适老、部署、测试版前置、tms／ims 授权 |
 
 按域再摊一遍（各行「计入四档」相加 = 68；后台作业台另有 1 条未验证，见 §6 不计入）：
@@ -123,7 +123,7 @@
 | P07 | 审核域结论可读 + 规则层可用 | 部分实现 | docs/architecture/contract-implementation-status.md:76 | 真实 tms／ims 未授权 ⇒ real 整域 fail-closed（Z06）；持久队列与租约仍是内存台账 |
 | P09 | 非持久端口的审计台账（内存追加、只增不改） | 部分实现 | services/api/src/admin/ops/content-pg.ts:25-27 | 仍只增不改、重启即丢；但**真库端口已不再走它**：持久端口在自身事务里写库（services/api/src/admin/ops/service.ts:1054 只在 `!persistent` 时追加内存） |
 | P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；出口侧：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `fetchAuditLogsPage`（operationId 是 `listAuditLogs`，见 `apps/admin/src/lib/admin-audit-logs.mjs:36`），导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`，#633），另两个审计页仍分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54）⇒ **三读面读数已在页面层合并**（`apps/admin/src/lib/admin-audit-logs.mjs:983` 的 `mergeAuditSources`，合并面板在 `apps/admin/src/views/AuditLogsView.vue:209`；该层头注释 `:838` 写死「服务端零改动：本层只消费既有读面，不新增 operation、不改契约」，故服务端仍是三个独立读面、无统一读面），合并条数／降序／跨源去重／失败隔离／来源筛选由 `tests/unit/admin-ui-audit-merge.test.mjs` 钉住；剩余缺口是页面读数无端到端验收，故仍判部分实现。原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
-| P11 | 作业台作业投影按契约形状输出 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:17-22 | `target_ref.revision` **自 #608 起已取记录行真实 revision**（`services/api/src/admin/ops/jobs-pg.ts:413` 的 `targetRevision ?? UNCREATED_RECORD_REVISION`，SQL 投影 `r.revision`；记录尚未创建时才退回 1，见 `services/api/src/admin/ops/jobs-pg.ts:23-28`）；`result` 恒 `null` 是契约形状、作业结果在后台读面仍读不到——形状对、语义只真实化一半。原写「`target_ref.revision` 恒取 1」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
+| P11 | 作业台作业投影按契约形状输出 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:17-22 | `target_ref.revision` **自 #608 起已取记录行真实 revision**（`services/api/src/admin/ops/jobs-pg.ts:413` 的 `targetRevision ?? UNCREATED_RECORD_REVISION`，SQL 投影 `r.revision`；记录尚未创建时才退回 1，常量 `UNCREATED_RECORD_REVISION = 1` 见 `services/api/src/admin/ops/jobs-pg.ts:295`）；`result` 恒 `null` 是契约形状、作业结果在后台读面仍读不到——形状对、语义只真实化一半。原写「`target_ref.revision` 恒取 1」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | P12 | 登记核对 `verifyRegistration` 判定内核 | 部分实现 | docs/architecture/contract-implementation-status.md:82 | real 无真实登记库 ⇒ 恒 `unavailable`；无已审用量来源 ⇒ `dose_cards` 恒空 |
 
 ## 4 未实现（10 条，含一条 P0；原 N01 已撤条并入 E40，原 N02 已随 #710 销号）
@@ -193,7 +193,7 @@
 上一版的三步断链：#589 修掉前两步，#609 修掉第三步。
 
 1. 写：`jobPort.cancel(...)` 带上 `{ actorId, reasonCode: 'job_cancelled', requestId }`（`services/api/src/admin/ops/service.ts:977-981`）；持久端口不再由服务层写内存审计，而是 `if (!jobPort.persistent) { appendAudit(...) }`（同文件 :1054）。
-2. 落：真库端口在同一事务里调库函数（`services/api/src/admin/ops/jobs-pg.ts:497`、`:517` 的「恰一个 persistent 实现」注释），失败整体 `ROLLBACK`；真库臂钉住「恰 1 行」（`tests/integration/admin-jobs-pg.mjs:730`），并验证审计表被拒时作业保持原状态（同文件 :841-845）。
+2. 落：真库端口在同一事务里调库函数（`services/api/src/admin/ops/jobs-pg.ts:497`），并在返回的端口对象上声明 `persistent: true`（`services/api/src/admin/ops/jobs-pg.ts:518-519` 的头一行就是该属性，其上一行注释写明「唯一 `persistent: true` 的实现：取消走真事务，审计行与状态变更同一 `COMMIT`」），失败整体 `ROLLBACK`；真库臂钉住「恰 1 行」（`tests/integration/admin-jobs-pg.mjs:730`），并验证审计表被拒时作业保持原状态（同文件 :841-845）。
 3. 读：库函数本身支持按 action 过滤（`services/api/db/migrations/0033_admin_audit_log_read.sql:50`、`:98`），但 `GET /admin/audit-logs` 的 `action` 参数走闭集判定，`AUDIT_ACTIONS` 当时只有三个动作 ⇒ **`?action=job.cancel` 得 400 `INVALID_REQUEST` + `details[].code='enum'`**（闭集判定本身今天没变，见 `services/api/src/admin/audit/service.ts:121-131`；变的是它读的那张表）。#609 把 `job.cancel` 登记为第四项（`services/api/src/admin/audit/catalog.ts:258-269`），`entity=job` 映射到审计行实际写的 `jobs:cancel`（同文件 :280-307），契约两个枚举随之扩到四项与三项（今 `packages/contracts/openapi.json:11147-11158` 已十项、`:11166-11173` 已六项）；用例钉住「200 且只回该动作」「恰四项」「闭集外仍 400 且零端口调用」（`tests/unit/admin-audit-action-jobs-cancel.test.mjs:171`、`:150`、`:225`），顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs:282` 钉住。
 
 **仍没做到的一处**（已从 P0 降级，本页不再按 P0 计；台账那半句已随 #710 闭合，见下条留档）：

@@ -673,15 +673,6 @@
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
     "line": 196,
-    "target": "services/api/src/admin/ops/jobs-pg.ts",
-    "from": 518,
-    "fromEnd": 519,
-    "to": 517,
-    "reason": "裸锚点 `:518-519` 承继同行 `jobs-pg.ts` 锚点；:518 是端口对象的 `persistent: true` 属性，「唯一 persistent 实现、审计与状态同一 COMMIT」的说明在 :517；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 196,
     "target": "tests/integration/admin-jobs-pg.mjs",
     "from": 845,
     "to": 841,

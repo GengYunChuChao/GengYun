@@ -767,7 +767,7 @@ export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   // 2026-10-27 实测 16 条，逐条人工裁决；key 形状见 driftBaselineKey（文档:行号#片段指纹）。
   // 行尾注释：判定档｜片段实际落点｜归类原因。
   "docs/architecture/acceptance-map.md:69#HUMAN_REVIEW_STATE = 'under_construction'", // drift-unique｜实际在 services/api/src/moderation/nonbypass.ts:15｜归属误判：片段属于同一行里用散文写的 moderation/types.ts:110-115；nonbypass.ts:161-168 的引用本身没错
-  "docs/architecture/ai-ops-spec-status.md:197#{ actorId, reasonCode: 'job_cancelled', requestId }", // drift-gone｜0 命中｜真漂移：service.ts:776-780 现在是 account.suspend 的审计，job_cancelled 实际在 service.ts:880/962
+  "docs/architecture/ai-ops-spec-status.md:195#{ actorId, reasonCode: 'job_cancelled', requestId }", // drift-gone｜0 命中｜真漂移：片段是散文式简写（代码里该对象跨 977-981 四行），故永不逐字命中；锚点区间本身对（service.ts:977-981 就是取消审计那一笔）。key 的文档行号随 N02 销号删两行由 197 移到 195
   "docs/architecture/gy-i19-user-backup-copies-design.md:26#{ purged: false }", // drift-unique｜实际在 services/api/src/privacy/user-data-deletion.ts:329｜历史树锚点：该页行号是 GY-R34-I19 树的读数
   "docs/architecture/gy-i19-user-backup-copies-design.md:303#{ purged: boolean, evidenceRef?: string }", // drift-gone｜0 命中｜历史树锚点：同上
   "docs/architecture/gy-i19-user-backup-copies-design.md:312#purged === true", // drift-gone｜0 命中｜历史树锚点：同上
