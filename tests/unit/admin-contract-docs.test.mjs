@@ -29,10 +29,11 @@
  *     ③ 恒真）。这三条保证「描述里那段 scope／状态码／头部名是真的从契约抄出来的」，而不是
  *     恰好抄成另一句模板。
  *
- *   D SUFFIX 白名单**只减不增**：`PENDING_SUFFIX_OPS` 这 8 条是「summary 已改、description 仍是
- *     模板句」的显式欠账。D 双向判：白名单里每条**当前仍含**模板句（否则判红并提示「从白名单
+ *   D SUFFIX 白名单**只减不增**：`PENDING_SUFFIX_OPS` 里剩下的是「summary 已改、description 仍是
+ *     模板句」的显式欠账（原 8 条，R68 后缀清理销掉 7 条，只剩 `listAdminCategories`——它的实现
+ *     另有分支在改）。D 双向判：白名单里每条**当前仍含**模板句（否则判红并提示「从白名单
  *     删除」，欠账还清了就必须销账）；白名单外**任何** admin op 的 description 不得含模板句
- *     （堵住「新写一条又抄回模板句」）。另钉住**白名单长度 === 8**：否则「把某条 description
+ *     （堵住「新写一条又抄回模板句」）。另钉住**白名单长度 === 1**：否则「把某条 description
  *     改回模板句 + 在白名单里加一行」是既退化又合法登记的，D 会全绿（审查实测 8/8 绿）。
  *
  * 读取路径：默认 `packages/contracts/openapi.json`（仓内真文件）。环境变量 `GY_OPENAPI_PATH`
@@ -82,16 +83,9 @@ const REWRITTEN_ADMIN_OPS = Object.freeze([
   'withdrawSource',
 ]);
 
-/** 8 条仍欠账的 admin 操作：summary 已改，description 还是模板句。⛔ 只减不增。 */
+/** 仍欠账的 admin 操作：summary 已改，description 还是模板句。⛔ 只减不增。 */
 const PENDING_SUFFIX_OPS = Object.freeze([
   'listAdminCategories',
-  'listAdministrators',
-  'listAdministratorScopes',
-  'grantAdministratorScope',
-  'revokeAdministratorScope',
-  'disableAdministratorAccount',
-  'enableAdministratorAccount',
-  'listAuditLogs',
 ]);
 
 /** 改造前的统一占位句（本片要消灭的那一句）。逐字比对，不做归一化。 */
@@ -334,8 +328,8 @@ test('D SUFFIX 白名单只减不增（双向）', () => {
   // PENDING_SUFFIX_OPS 里加一行」这种「既退化了又合法登记」能让 D 全绿（审查实测 8/8 绿）。
   assert.equal(
     PENDING_SUFFIX_OPS.length,
-    8,
-    `SUFFIX 白名单长度应为 8，实测 ${PENDING_SUFFIX_OPS.length}：白名单只许减不许增；`
+    1,
+    `SUFFIX 白名单长度应为 1，实测 ${PENDING_SUFFIX_OPS.length}：白名单只许减不许增；`
     + '清理某条后就把它删掉，并把这里的期望值同步下调。',
   );
   const problems = [];
