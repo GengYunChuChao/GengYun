@@ -6,7 +6,7 @@
  *   7 条门禁 + 两条 python 校验 + `npm run test:unit` **全绿**。也就是说「49 条 admin 操作
  *   不再用 operationId 冒充摘要」这件事当时只落在文件里，没有任何断言记得它。
  *
- * 本文件只读 `packages/contracts/openapi.json`，零依赖，`node --test` 直接跑。四组断言：
+ * 本文件只读 `packages/contracts/openapi.json`，零依赖，`node --test` 直接跑。五组断言：
  *
  *   A 覆盖面／反空转：数量与名单是**实测值**，不是「随便扫到几条都算过」——
  *     A1 `/admin/**` operation 数 === 49；A2 `REWRITTEN_ADMIN_OPS` 恰好 28 个且逐个能在 spec
@@ -35,6 +35,50 @@
  *     删除」，欠账还清了就必须销账）；白名单外**任何** admin op 的 description 不得含模板句
  *     （堵住「新写一条又抄回模板句」）。另钉住**白名单长度 === 1**：否则「把某条 description
  *     改回模板句 + 在白名单里加一行」是既退化又合法登记的，D 会全绿（审查实测 8/8 绿）。
+ *
+ *   E 反同义反复的**逆向一半**（`FORBIDDEN_SNIPPETS`）：A–D 全都只看「形状」——summary 不等于
+ *     operationId、含自己 `x-scope` 的字面量、含自己 `responses` 里的三位码、不是模板句。把一条
+ *     **已经按代码改准**的描述改回以前那句错话，A–D 仍然可以全绿：#719 修掉的 5 条（`approvePost`／
+ *     `editKnowledgeDraft`／`listFlags`／`editRegistrationDraft`／`editRestrictionDraft`）与 #718
+ *     修掉的 `completeUpload`／`requestAccountDeletion` 都踩过这个洞——改完没有任何断言记得住
+ *     「哪句话是错的」。E 按 operation 登记**已被证伪的片段**（每条都带证伪者与真值 `文件:行`），
+ *     `summary + '\n' + description` 包含即 `assert.fail`，报错点名 operationId、命中的片段与出处。
+ *     E 自带三条反空转：E1 表不得为空且条目数 ≥ 下限（**下限只许涨**，删条目须在提交信息里说明）；
+ *     E2 每个键必须是**真实存在**的 operationId（拼错/改名必须红，不许静默跳过）；E3 每个值是非空
+ *     数组、片段 ≥ 4 字。
+ *
+ *     **两种登记形态**：字面量 `'错话'`（`String#includes`）与 `{ re, sample }`（`RegExp#test`）。
+ *     为什么要有正则：同一个错主张会以不同写法回来（「不改可见性。」「…，不改可见性，不推进 visibility」），
+ *     而裸字面量 `不改可见性` 又会红掉**真话**「已 hidden/deleted 的单向门：不改可见性」——那句成真的
+ *     条件正是紧挨着的「单向门：」。所以用 **negative lookbehind 把「成真的限定词」写成豁免**，而不是
+ *     把片段缩窄到只剩旧句尾巴：`/(?<!单向门\s*[：:]\s*)不改可见性/`（全角 `：`／半角 `:`／冒号前后
+ *     空格都算豁免）。`sample` 是**注入用样本**（E6 把它拼进正文验管道），必须被该正则命中。
+ *     ⛔ 正则**不许带 `g`／`y` 标志**：`RegExp#test` 的 `lastIndex` 会造成同一文本间歇漏判。
+ *
+ *     ⛔⛔ **这条豁免的真实能力上限（审查实测，别把它当语义检查）**：lookbehind **只按紧邻的几个字
+ *     判豁免，不核整句其余部分**。所以「单向门：」一贴上去，后面接什么都会被放过——实测
+ *     `适用范围：单向门：不改可见性。` 与 `…单向门：不改可见性——private 帖也一样。` 都是**全绿**，
+ *     尽管后一句整体为假；`…只有 未接端口时读进程内种子 是旧口径，real 模式接端口时也回落进程内种子。`
+ *     同样全绿。⇒ 它比「引号豁免」窄，但**仍是「贴词即可通过」**——与已知边界①同级，只能靠评审。
+ *
+ *     ⚠ E 的**已知边界**（审查实测，不是设想）：
+ *     ① 它守「条数／覆盖的 op 数」与「登记片段**不许回到正文**」，**不守片段身份**——把真钉子
+ *        换成 `zzz-not-real` 这类垃圾照样全绿。「片段选得好不好」只能靠评审看提交信息，闸门管不了。
+ *     ② 字面量/正则会**认出引用式复述**照样判红（把「旧文写的…」写进描述同样红）。要解释旧话，就
+ *        **只引用证据位置（`文件:行`）**，不要复述错话本身。
+ *     ③ E6 只是**管道自证**：它证明「matcher 读的是 summary+description、报错文案渲染得出来」，
+ *        ⛔ **不证明任何一条登记是真的**（把片段自己拼进文本再断言命中，对被登记的片段数学上恒真）。
+ *        片段本身是否为真，只能靠 `FORBIDDEN_EVIDENCE` 里的 `文件:行` 被逐个复核。
+ *     ④ E4 只校验出处**形状**（`services/api/src/<file>:<line>`），⛔ **不核文件是否存在、不核行号
+ *        是否越界**——写错路径（如 `services/api/src/community/community-posts.ts`）也能过 E4。
+ *     ⑤ **贴豁免词即可通过（实测漏判，三条原文）**：把「单向门：」「stub 域」「只有 」这类豁免词贴在
+ *        主张前面，后面接的整句即使为假也不红：
+ *        `适用范围：单向门：不改可见性。` ⇒ exit 0；
+ *        `…单向门：不改可见性——private 帖也一样。` ⇒ exit 0（**整句为假**）；
+ *        `…只有 未接端口时读进程内种子 是旧口径，real 模式接端口时也回落进程内种子。` ⇒ exit 0（**整句为假**）。
+ *        ⛔ 这是本组**已知**的能力上限：本片不做整句语义判断（那只会把闸门变成更脆的东西）。裸主张
+ *        （`不改可见性。`／`未接端口时读进程内种子。`）与「砍旧句尾巴」的变体仍然红，但「贴词 + 假结论」
+ *        只能靠评审。
  *
  * 读取路径：默认 `packages/contracts/openapi.json`（仓内真文件）。环境变量 `GY_OPENAPI_PATH`
  * 只服务于「先红／变异自证」——把待验副本指过去跑同一个文件，默认值与产品代码行为不变。
@@ -584,5 +628,422 @@ test('D SUFFIX 白名单只减不增（双向）', () => {
     problems,
     [],
     `SUFFIX 白名单与事实不符（${problems.length} 处）：\n  - ${problems.join('\n  - ')}`,
+  );
+});
+
+/* ══════════════════════════════════════════════════════════════════════════════
+ * E 组：反同义反复的**逆向一半**——已改准的描述被改回被证伪的错话 ⇒ 必红
+ * ══════════════════════════════════════════════════════════════════════════════
+ * 唯一口径：把该 op 的 `summary + '\n' + description` 拼起来，命中任一登记片段即红——字面量是
+ * **逐字**包含，正则形态另外带「成真的限定词」豁免（见文件头「两种登记形态」；豁免只看紧邻的几个字，
+ * 「贴词即过」的边界见已知边界 ⑤）。⛔ 不做任何归一化（去空白／全角转半角／标点折叠）：错话回退时
+ * 常常连标点一起回退，归一化只会放过它，还会让「片段到底长什么样」不可核对。要放宽就改登记片段本身，
+ * 并在提交信息里说明理由。
+ */
+
+/**
+ * op → 已被证伪、**绝不许再出现**的描述片段（每条都在行内注释写清是谁证伪的；真值出处见
+ * `FORBIDDEN_EVIDENCE`，那里是 `文件:行`）。
+ *
+ * ⚠ 登记纪律（踩过的坑，别重犯）：**片段不能是真话的子串**，也不能把旧句的尾巴当成唯一判据。
+ * - 摘得太短会误红：裸的 `不改可见性` 会红掉真话「已 hidden/deleted 的单向门：不改可见性」
+ *   （`services/api/src/admin/ops/community-posts.ts:326`：hidden/deleted **不**为它们翻案，单向门）；
+ *   裸的 `未接端口时读进程内种子` 会红掉真话「stub 域未接端口时读进程内种子」
+ *   （`services/api/src/admin/ops/accounts-only.ts:184` 只有 flagsWired 才走 inner）。
+ * - **但「补回旧句标点尾巴」不是修法**：判据绑在尾巴上，砍掉尾巴的同一句错话就漏过去了（审查实测：
+ *   把 `不改可见性。`／`未接端口时读进程内种子。` 写回正文，旧版全绿 ⇒ 覆盖反而下降）。修法是
+ *   **正则 + negative lookbehind**：把「成真的限定词」写成豁免（见文件头「两种登记形态」），
+ *   主张本体仍然一个字都不许回来。
+ *
+ * ⛔ 登记只许增不许减：新增随意（发现一条错话被改掉，就把它钉住）；**删条目必须写清「为什么这句话
+ * 不再算错」**（典型：契约语义真的改了，而这条登记的是旧语义），并同步下调 `FORBIDDEN_MIN_SNIPPETS`。
+ * 条数下限见 `FORBIDDEN_MIN_SNIPPETS`（E1）。
+ */
+const FORBIDDEN_SNIPPETS = Object.freeze({
+  // #719（ab883f67）删掉的 summary「人工审核通过一条帖子，但不改其可见性」与 description
+  // 「…写运营通过结论（audit_state=approved），不改可见性；硬规则…」。真值：这拍的「通过」
+  // 自带发布语义——private 在同一次 CAS 里被推成 published。
+  // ⚠ 第 2 条是**正则**，不是「不改可见性；硬规则」这种尾巴：`:326` 只把「hidden/deleted 的单向门」
+  // 这一种写法判为真，其余任何「不改可见性」（含裸句、含「只翻 audit_state，不改可见性」）都要红。
+  // ⛔ 但正则的豁免**只看紧邻的几个字**（全角/半角冒号、冒号前后空格都算）：把「单向门：」贴在
+  // 主张前面，后面的假结论照样全绿（文件头已知边界 ⑤ 有实测原文）——这一层只能靠评审。
+  approvePost: Object.freeze([
+    '不改其可见性',
+    Object.freeze({ re: /(?<!单向门\s*[：:]\s*)不改可见性/, sample: '不改可见性' }),
+  ]),
+
+  // #719 删掉的 summary「…并使引用旧版本的公开内容立即失效」与 description「新不可变版本，
+  // 旧公开引用立即失效并重新核对；…」。真值：编辑只**追加**新修订，不动已发布修订，
+  // 公开面本来就只读 publishedRevision——所以旧引用既不会失效，也不需要「重新核对」。
+  editKnowledgeDraft: Object.freeze([
+    '使引用旧版本的公开内容立即失效',
+    '旧公开引用立即失效',
+    '立即失效并重新核对',
+  ]),
+
+  // 与 knowledge 同一句错话（#719 三条草稿编辑 op 共用同一段模板描述）。
+  editRegistrationDraft: Object.freeze(['旧公开引用立即失效', '立即失效并重新核对']),
+  editRestrictionDraft: Object.freeze(['旧公开引用立即失效', '立即失效并重新核对']),
+
+  // #719 删掉的 description 里的「…未接端口时读进程内种子；游标按 key 键集分页…」。
+  // 真值：只有 stub 域才回落进程内种子，real 模式没有库池直接 503（不回落）。
+  // ⚠ 正则，不是「…；游标」这种尾巴：`accounts-only.ts:184` 只把「stub 域 / 只有 stub 域」这一种
+  // 写法判为真，其余「未接端口时读进程内种子」（含砍掉尾巴的裸句「门 flags:read；未接端口时读进程内
+  // 种子。」）都要红。⛔ 不带 `g`／`y`：`RegExp#test` 的 `lastIndex` 会造成间歇漏判。
+  // ⛔ 豁免同样只看紧邻的几个字（`stub 域`／`只有 `，空格容错）：贴词即过的通道见文件头已知边界 ⑤。
+  listFlags: Object.freeze([
+    Object.freeze({ re: /(?<!stub\s*域)(?<!只有\s*)未接端口时读进程内种子/, sample: '未接端口时读进程内种子' }),
+  ]),
+
+  // #718（9a394db2）删掉的 description「同事务立即撤全部会话/角色/外发和在途回写；…」。
+  // 真值：同事务只实现「会话 + auth_epoch」那一半，外发与在途回写的撤销**未实现**。
+  requestAccountDeletion: Object.freeze(['撤全部会话/角色/外发和在途回写']),
+
+  // #718 删掉的 description「…异步处理完ready前不可AI调用。」。真值：同一请求内同步推到
+  // ready；已 ready 返回 202 幂等。
+  completeUpload: Object.freeze(['异步处理完ready前不可AI调用']),
+});
+
+/**
+ * op → 证伪依据（谁把它改掉的）与**真值出处**（`文件:行`，行号全部现场用
+ * `git -C <repo> show 9a394db2:<path>` 数出来，不凭记忆）。
+ * ⛔ 新增登记必须同时补这里：红的时候要能指着代码说「真值在这儿」，否则闸门只会喊「错了」，
+ * 不会告诉人「错在哪」。
+ */
+const FORBIDDEN_EVIDENCE = Object.freeze({
+  approvePost: Object.freeze({
+    refutedBy: '#719（ab883f67）删掉 summary「人工审核通过一条帖子，但不改其可见性」与 description「…不改可见性；硬规则明确否决的内容不可通过（422）。」',
+    truth: 'services/api/src/admin/ops/community-posts.ts:327-328（private ⇒ published 的目标可见性）、:351-361（commitPostIfCurrent 在 CAS 新值里写 visibility），口径注释见 :321-326',
+  }),
+  editKnowledgeDraft: Object.freeze({
+    refutedBy: '#719（ab883f67）删掉 summary「…并使引用旧版本的公开内容立即失效」与 description「新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。」',
+    truth: 'services/api/src/admin/service.ts:338-345（只追加新修订，已发布修订不被改写）、services/api/src/admin/public-view.ts:9-11（公开面只读 publishedRevision，绝不读 head）',
+  }),
+  editRegistrationDraft: Object.freeze({
+    refutedBy: '#719（ab883f67）删掉 description「新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。」',
+    truth: 'services/api/src/admin/service.ts:338-345（同一份 appendRevision 只追加）、services/api/src/admin/public-view.ts:9-11（公开面只读 publishedRevision）',
+  }),
+  editRestrictionDraft: Object.freeze({
+    refutedBy: '#719（ab883f67）删掉 description「新不可变版本，旧公开引用立即失效并重新核对；不能用客户端提交review_status。」',
+    truth: 'services/api/src/admin/service.ts:338-345（同一份 appendRevision 只追加）、services/api/src/admin/public-view.ts:9-11（公开面只读 publishedRevision）',
+  }),
+  listFlags: Object.freeze({
+    refutedBy: '#719（ab883f67）删掉 description 里的「…未接端口时读进程内种子；游标按 key 键集分页…」',
+    truth: 'services/api/src/admin/ops/accounts-only.ts:146-148（reject 直接抛 PROVIDER_UNAVAILABLE，retryable:false）、:184（只有 flagsWired 才放行 listFlags，否则走 reject）',
+  }),
+  requestAccountDeletion: Object.freeze({
+    refutedBy: '#718（9a394db2）删掉 description「同事务立即撤全部会话/角色/外发和在途回写；回执token只允许最小进度查询。」',
+    truth: 'services/api/src/privacy/account-deletion.ts:44-49（已实现清单＝会话 + auth_epoch）与 :52-56（仍未实现：outbox／到期执行／外发与在途回写的撤销）、services/api/src/privacy/deletion-requests-pg.ts:9-13（受理事务：state→deletion_pending、auth_epoch+1、撤全部会话、请求落库）。'
+      + '⚠「角色」二字的准确说法是：设计口径要求撤（`docs/architecture/state-contract.md:105`「撤所有用户会话/角色」），'
+      + '而实现清单里没有（`account-deletion.ts:44-49` 只列会话 + auth_epoch，`:52-56` 也未把它列入未实现项）⇒ '
+      + '本条判假**不靠「角色」**，靠同句里的「外发与在途回写的撤销未实现」；登记整句是为了「旧句原封放回」必红。',
+  }),
+  completeUpload: Object.freeze({
+    refutedBy: '#718（9a394db2）删掉 description「验实际魔数/hash/字节、解码和EXIF，异步处理完ready前不可AI调用。」',
+    truth: '同一请求内同步推进：services/api/src/media/service.ts:1056（transition uploaded）→ :1074／:1079（processing）→ :1083（transition ready）→ :1104（同一函数返回 202）；已 ready 的幂等返回见 :1039-1042，其余非 initiated／uploaded ⇒ 409 OBJECT_UNAVAILABLE 见 :1043-1045',
+  }),
+});
+
+/**
+ * 片段条数下限（E1）：**等于当前实测条数**，任何减少都必须显式下调这个数字。
+ * ⚠ 它只守「条数」，**守不住「身份」**——审查实测（`rotate-pin`）把一条真钉子换成 `zzz-junk-1`
+ * 再把条数补平，20/20 全绿。也就是说「先删登记再改回错话」这条通道**没有被断言堵住**，能堵住它的
+ * 只有评审读提交信息。⛔ 别把这里的数字当成「内容有保证」的证据。
+ */
+const FORBIDDEN_MIN_SNIPPETS = 12;
+
+/** 登记覆盖的 op 数下限（E1）：与 `FORBIDDEN_MIN_SNIPPETS` 同时钉，防「把 12 条全堆在一个 op 上」。 */
+const FORBIDDEN_MIN_OPS = 7;
+
+/**
+ * ⚠ 已知欠账（可执行的 TODO，不是「暂不登记」四个字）：`getProfile`／`listExports`／`listMessages`
+ * 在基线 `9a394db2` 上**仍带着**「非 user 角色 403 SCOPE_DENIED」的错话（真值：
+ * `services/api/src/auth/middleware.ts:75-107` 只 `loadLiveSession(…, 'user')`，`:99` role 与
+ * `:103` scopes 硬编码；`SCOPE_DENIED` 只在 `:110-120` 的 `authenticateAdmin` 里抛）。
+ * 现在**登记任一种形态都会误红**：整句 `非 user 角色 403 SCOPE_DENIED` 在这 3 条正文里同段共现，
+ * 而 #721（`feat/gy-r68-a04-me-scope`，`1c78f1eb`）改准后正文仍保留「非 user 角色」四字（作解释性
+ * 引用）却不再含 `SCOPE_DENIED` ⇒ 单登记那四个字在合入后必红。
+ * ⇒ **#721 合入后立刻做**：把 `非 user 角色 403 SCOPE_DENIED` 登记进上面 3 个 op，并把
+ * `FORBIDDEN_MIN_SNIPPETS` 12→15、`FORBIDDEN_MIN_OPS` 7→10。
+ */
+
+/** 片段最短字数（E3）：登记「的」「不改」这种无效条目挡不住任何真实退化，只会让表看起来有内容。 */
+const FORBIDDEN_MIN_SNIPPET_CHARS = 4;
+
+/** 全 spec 的 operationId 索引（E2 用：键必须真实存在，拼错/改名要红而不是静默跳过）。 */
+const EVERY_OP_BY_ID = new Map(
+  [...adminOps, ...otherOps].map((entry) => [entry.op.operationId, entry]),
+);
+
+/**
+ * 登记的两种形态，统一成三个取词函数（E3 校验形状、E5 判定、E6 注入、报错渲染都走这里）：
+ * - 字面量 `'错话'`：`String#includes`，展示与注入都用它本身。
+ * - `{ re, sample }`：`RegExp#test`（⛔ 必须无 `g`，否则 `lastIndex` 会让同一文本间歇漏判），
+ *   展示用 `re.source`，注入用 `sample`（`sample` 必须被 `re` 命中，E3 会验）。
+ */
+function snippetLabelOf(snippet) {
+  return typeof snippet === 'string' ? snippet : snippet.re.source;
+}
+
+/** 注入用样本：字面量就是它本身；正则是 `sample`（别拿整个正则串去拼，那永远命中不了）。 */
+function snippetSampleOf(snippet) {
+  return typeof snippet === 'string' ? snippet : snippet.sample;
+}
+
+/** 片段的有效字数（E3 的下限判据）：正则按 `sample` 算，别让 `(?<!x)` 这类豁免语法去凑字数。 */
+function snippetCharsOf(snippet) {
+  return [...snippetSampleOf(snippet)].length;
+}
+
+/** 该片段是否出现在 `text` 里（E5 的唯一判据）。 */
+function snippetHitsIn(snippet, text) {
+  return typeof snippet === 'string' ? text.includes(snippet) : snippet.re.test(text);
+}
+
+/** 某 op 参与 E 判定的文本。⚠ 只有 `summary` 与 `description`：E 管的是「人读的那两段」。 */
+function forbiddenTextOf(op) {
+  return `${String(op.summary ?? '')}\n${String(op.description ?? '')}`;
+}
+
+/** `text` 里命中了该 op 登记的哪几条片段（返回展示用标签清单，空数组＝没命中）。 */
+function forbiddenHitsIn(id, text) {
+  const snippets = FORBIDDEN_SNIPPETS[id] ?? [];
+  return snippets.filter((snippet) => snippetHitsIn(snippet, text)).map(snippetLabelOf);
+}
+
+/** 把一处命中格式化成给人看的报错：点名 op、片段、证伪者、真值出处。 */
+function formatForbiddenHit(id, snippet, entry) {
+  const evidence = FORBIDDEN_EVIDENCE[id];
+  return `\`${id}\`（${entry.method.toUpperCase()} ${entry.path}）的描述里又出现了已被证伪的说法`
+    + `「${snippet}」。\n    这条说法已被证伪：${evidence.refutedBy}\n    真值见 ${evidence.truth}`;
+}
+
+/** E5 的公共实现：遍历全表，返回问题清单（空数组＝通过）。 */
+function forbiddenProblems(byId) {
+  const problems = [];
+  for (const id of Object.keys(FORBIDDEN_SNIPPETS)) {
+    const entry = byId.get(id);
+    // 键不存在的问题由 E2 单独判红；这里跳过，免得同一个错因报两遍。
+    if (!entry) continue;
+    for (const snippet of forbiddenHitsIn(id, forbiddenTextOf(entry.op))) {
+      problems.push(formatForbiddenHit(id, snippet, entry));
+    }
+  }
+  return problems;
+}
+
+test('E1 禁用片段表不得为空，且条目数／覆盖 op 数有下限（下限只许涨）', () => {
+  const ids = Object.keys(FORBIDDEN_SNIPPETS);
+  const snippets = ids.flatMap((id) => (Array.isArray(FORBIDDEN_SNIPPETS[id]) ? FORBIDDEN_SNIPPETS[id] : []));
+  assert.ok(
+    ids.length > 0 &&
+      snippets.length > 0,
+    'E1 禁用片段表是空的 ⇒ E5 遍历零条、永远绿，整组 E 变成摆设（这正是本组要防的同义反复）。',
+  );
+  assert.ok(
+    snippets.length >= FORBIDDEN_MIN_SNIPPETS,
+    `E1 禁用片段表只有 ${snippets.length} 条，下限 ${FORBIDDEN_MIN_SNIPPETS} 条。`
+    + '⚠ 这个下限只守条数、不守内容：删一条真正的钉子、再用垃圾片段把条数补平，这里照样绿（审查实测）。'
+    + '所以先问「删掉的那条是不是真的被证伪了」，再决定是否下调。',
+  );
+  assert.ok(
+    ids.length >= FORBIDDEN_MIN_OPS,
+    `E1 只覆盖了 ${ids.length} 个 operation，下限 ${FORBIDDEN_MIN_OPS} 个：`
+    + '把全部片段堆在同一个 op 上不算覆盖（代码改一处、描述错一处，退化是按 op 来的）。',
+  );
+});
+
+test('E2 每个键必须是真实存在的 operationId（拼错不许静默跳过）', () => {
+  const problems = [];
+  for (const id of Object.keys(FORBIDDEN_SNIPPETS)) {
+    if (!EVERY_OP_BY_ID.has(id)) {
+      problems.push(
+        `\`${id}\` 不在 spec 的任何 operation 里（拼错？operationId 改名？）⇒ 这条登记永远不会生效，`
+        + '而 E5 会以为它守住了。',
+      );
+    }
+  }
+  for (const id of Object.keys(FORBIDDEN_EVIDENCE)) {
+    if (!Object.hasOwn(FORBIDDEN_SNIPPETS, id)) {
+      problems.push(`FORBIDDEN_EVIDENCE 里有 \`${id}\`，但 FORBIDDEN_SNIPPETS 没有 ⇒ 出处记录挂在空气上（反之亦然）。`);
+    }
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    `禁用片段表的键与 spec／出处表对不上（${problems.length} 处）：\n  - ${problems.join('\n  - ')}`,
+  );
+});
+
+test('E3 每个值必须是非空数组：字面量或 `{ re, sample }`，片段／样本 ≥ 4 字（防「登记一个的」）', () => {
+  const problems = [];
+  for (const [id, snippets] of Object.entries(FORBIDDEN_SNIPPETS)) {
+    if (!Array.isArray(snippets)) {
+      problems.push(`\`${id}\` 的值不是数组（实测 ${typeof snippets}）⇒ 片段必须逐条列，便于逐条核对出处`);
+      continue;
+    }
+    if (snippets.length < 1) {
+      problems.push(`\`${id}\` 的值是空数组 ⇒ 该 op 名义上被守住，实际一条都没登记`);
+      continue;
+    }
+    snippets.forEach((snippet, index) => {
+      // 形态①：字面量。形态②：`{ re, sample }`（正则 + 注入样本）。
+      if (typeof snippet === 'string') {
+        if (snippet.trim().length === 0) {
+          problems.push(`\`${id}\`[${index}] 是空串／全空白 ⇒ 空串被任何文本包含，等于恒红`);
+          return;
+        }
+        if ([...snippet].length < FORBIDDEN_MIN_SNIPPET_CHARS) {
+          problems.push(
+            `\`${id}\`[${index}] 片段「${snippet}」只有 ${[...snippet].length} 字（下限 ${FORBIDDEN_MIN_SNIPPET_CHARS}）：`
+            + '这么短的片段会命中大量正常句子，既挡不住退化，又会逼后来人删掉整条登记。',
+          );
+        }
+        if (snippets.indexOf(snippet) !== index) {
+          problems.push(`\`${id}\`[${index}] 片段「${snippet}」重复登记`);
+        }
+        return;
+      }
+      if (snippet === null || typeof snippet !== 'object' || Object.getPrototypeOf(snippet) !== Object.prototype) {
+        problems.push(
+          `\`${id}\`[${index}] 既不是字符串也不是 \`{ re, sample }\` 对象（实测 ${Object.prototype.toString.call(snippet)}）：`
+          + '只认这两种形态，免得有人塞个函数进来让判定恒真。',
+        );
+        return;
+      }
+      const { re, sample } = snippet;
+      if (!(re instanceof RegExp)) {
+        problems.push(`\`${id}\`[${index}].re 不是正则（实测 ${typeof re}）`);
+      } else {
+        // ⛔ 带 g 会让 `RegExp#test` 依赖 lastIndex，同一文本第二次判定结果可能翻脸（间歇漏判）。
+        if (re.global) problems.push(`\`${id}\`[${index}].re 带了 \`g\` 标志 ⇒ \`test\` 的 lastIndex 会造成间歇漏判，必须去掉`);
+        // ⛔ 带 y 同理（sticky 也吃 lastIndex）。
+        if (re.sticky) problems.push(`\`${id}\`[${index}].re 带了 \`y\`（sticky）标志 ⇒ 同样依赖 lastIndex，必须去掉`);
+        if (re.source.trim().length === 0) problems.push(`\`${id}\`[${index}].re 是空正则 ⇒ 命中任何文本，等于恒红`);
+      }
+      if (typeof sample !== 'string') {
+        problems.push(`\`${id}\`[${index}].sample 不是字符串（实测 ${typeof sample}）⇒ E6 拿什么注入？`);
+        return;
+      }
+      if (sample.trim().length === 0) {
+        problems.push(`\`${id}\`[${index}].sample 是空串／全空白 ⇒ 注入后恒命中，管道自证变成空转`);
+      } else if ([...sample].length < FORBIDDEN_MIN_SNIPPET_CHARS) {
+        problems.push(
+          `\`${id}\`[${index}].sample「${sample}」只有 ${[...sample].length} 字（下限 ${FORBIDDEN_MIN_SNIPPET_CHARS}）⇒ `
+          + '样本本身太短，注入后可能命中正常句子，验不出真实退化。',
+        );
+      }
+      if (re instanceof RegExp && typeof sample === 'string' && !re.test(sample)) {
+        problems.push(
+          `\`${id}\`[${index}] 的 sample「${sample}」**不被自己的正则命中**（re.source = /${re.source}/）⇒ `
+          + 'E6 注入它也不会报，管道看起来自洽、实际空转。',
+        );
+      }
+      if (snippets.findIndex((other) => other === snippet) !== index) {
+        problems.push(`\`${id}\`[${index}] 这条 \`{ re, sample }\` 重复登记（同一个对象出现两次）`);
+      }
+    });
+    // label 层面查重：字面量与正则的 source 撞了，等于同一条登记了两遍。
+    const labels = snippets.map((snippet) => (typeof snippet === 'string' ? snippet : `/${snippet?.re?.source ?? '?'}/`));
+    labels.forEach((label, index) => {
+      if (labels.indexOf(label) !== index) problems.push(`\`${id}\`[${index}] 展示标签「${label}」与前面重复`);
+    });
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    `禁用片段表有 ${problems.length} 处形状问题：\n  - ${problems.join('\n  - ')}`,
+  );
+});
+
+/**
+ * ⚠ E4 只校验**形状**（`services/api/src/<file>:<line>`）：它**不核文件是否存在、不核行号是否越界**
+ * （审查探针 `bogus_truth_path` 实测 EXIT=0）。也就是说「写了个不存在的路径」这种错它能放过半条——
+ * 出处的真实性只能靠评审按 `git show <sha>:<path>` 复核，别把 E4 的绿当成「行号已被验证」。
+ */
+test('E4 每条登记都要有出处：证伪者 + 真值 `文件:行`', () => {
+  const problems = [];
+  for (const id of Object.keys(FORBIDDEN_SNIPPETS)) {
+    const evidence = FORBIDDEN_EVIDENCE[id];
+    if (!evidence) {
+      problems.push(`\`${id}\` 没有 FORBIDDEN_EVIDENCE 条目 ⇒ 红的时候说不出「谁证伪的、真值在哪」`);
+      continue;
+    }
+    if (typeof evidence.refutedBy !== 'string' || evidence.refutedBy.trim().length < 8) {
+      problems.push(`\`${id}\`.refutedBy 缺失或过短 ⇒ 必须写清是谁（哪个 PR／提交）把它改掉的`);
+    }
+    if (typeof evidence.truth !== 'string' || !/services\/api\/src\/[\w./-]+:\d+/.test(evidence.truth)) {
+      problems.push(
+        `\`${id}\`.truth 不是「文件:行」形式（实测 ${JSON.stringify(evidence.truth)}）⇒ `
+        + '没有行号的出处只能算感想，不能算可核事实。',
+      );
+    }
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    `禁用片段表的出处记录不完整（${problems.length} 处）：\n  - ${problems.join('\n  - ')}`,
+  );
+});
+
+test('E5 已改准的描述不得退回被证伪的错话', () => {
+  const problems = forbiddenProblems(EVERY_OP_BY_ID);
+  if (problems.length > 0) {
+    assert.fail(
+      `⛔ ${problems.length} 处描述退回了已被证伪的说法（改准的句子又被改回错话）：`
+      + `\n  - ${problems.join('\n  - ')}`
+      + '\n  ⚠ 先别删登记：先确认这句是不是在**复述**那句错话（而不是引用/对照）。要解释旧话就只引用'
+      + '证据位置（`文件:行`），别复述错话本身——引号里复述也不行，字面量与正则都不认引号。'
+      + '只有确认「这条登记本身已被证伪」（契约语义真的改了）时才允许删条目，并须在提交信息里写明'
+      + '理由、同步下调 `FORBIDDEN_MIN_SNIPPETS`。',
+    );
+  }
+});
+
+/**
+ * E6 是**管道自证**，不是「判据非恒真」的自证——分开说清这两件事：
+ * - 方向一（当前正文不得命中）有判别力，但它判的是「现在这版正文」；同一句话写歪的人会看到它红。
+ * - 方向二（把片段注入正文 ⇒ 必须报命中）**对被登记的片段数学上恒真**：片段非空（E3 保证 ≥ 4 字）
+ *   且就是自己拼进去的。它只证明「matcher 读的是 summary+description、报错文案渲染得出来」，
+ *   ⛔ **不证明任何一条登记是真的**：把片段换成 `zzz-not-real` 这类垃圾，本用例照样全绿。
+ *   「片段是否为真」只能靠 `FORBIDDEN_EVIDENCE` 里的 `文件:行` 被逐个复核。
+ * 覆盖：循环体对**每一条**片段各做一次注入（不是只做 `snippets[0]`），条数由 E1 的下限兜住。
+ */
+test('E6 管道自证：每条片段注入正文后必被 matcher 命中（⛔ 不证明片段为真）', () => {
+  const proven = [];
+  for (const [id, snippets] of Object.entries(FORBIDDEN_SNIPPETS)) {
+    const entry = EVERY_OP_BY_ID.get(id);
+    assert.ok(entry, `E6 的样本 op ${id} 在 spec 里不存在（本该由 E2 报，这里再兜一次）`);
+    const original = forbiddenTextOf(entry.op);
+    // 方向一：当前这版已改准的正文里不得命中任何一条登记片段。按 op 报一次「实际命中了哪些」，
+    // 比逐片段重复报更准确（逐片段会在 A 命中时误报成 B 命中）。
+    assert.deepEqual(
+      forbiddenHitsIn(id, original),
+      [],
+      `⛔ ${id} 的当前正文命中了登记片段：要么描述退回了错话（看 E5 的报错与出处），`
+      + '要么这条登记已过期。⚠ 删之前先确认它已被证伪；要引用旧话就只引用 `文件:行`，别复述原句。',
+    );
+    // 方向二：逐条注入 ⇒ matcher 必须报出该条。
+    // ⚠ 注入的是 `snippetSampleOf`：字面量就是它本身，正则用它的 `sample`（把 `re.source` 拼进正文
+    // 是永远命中不了的假自证——`(?<!单向门：)` 这类语法在正文里根本不会出现）。
+    for (const snippet of snippets) {
+      const label = snippetLabelOf(snippet);
+      const sample = snippetSampleOf(snippet);
+      const injected = forbiddenHitsIn(id, `${original}\n${sample}`);
+      assert.ok(
+        injected.includes(label),
+        `⛔ 把样本「${sample}」注入 ${id} 的正文之后 matcher 没有报出「${label}」⇒ 判定管道坏了`,
+      );
+      // 报错文案必须点名 op、片段、证伪者与真值出处：「红了但说不清哪句话错」只算半个闸门。
+      const message = formatForbiddenHit(id, label, entry);
+      for (const must of [id, label, '已被证伪', '真值见', 'services/api/src/']) {
+        assert.ok(message.includes(must), `E6 报错文案缺「${must}」：${message}`);
+      }
+      proven.push(`${id}#${label}`);
+    }
+  }
+  assert.ok(
+    proven.length >= FORBIDDEN_MIN_SNIPPETS,
+    `E6 只注入了 ${proven.length} 条片段（下限 ${FORBIDDEN_MIN_SNIPPETS}）⇒ 有片段没走过注入路径，管道覆盖不全。`,
   );
 });
