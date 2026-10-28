@@ -330,7 +330,7 @@ test('空数组 ⇒ 空态（说清「空台账，不是错误」）', async () 
   }
 });
 
-test('筛选栏是契约的 entity（⛔ 不出现 entity_type），action 闭集十项全在', async () => {
+test('筛选栏是契约的 entity（⛔ 不出现 entity_type），action 闭集十一项全在', async () => {
   const fetchImpl = fakeFetch(() => jsonResponse(200, page([auditEvent()])));
   const mounted = await mountView({ fetchImpl });
   try {

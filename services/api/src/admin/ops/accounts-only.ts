@@ -132,6 +132,19 @@ export interface RestrictToAccountsAuthorityOptions {
    * （裁定④：**撤 scope ≠ 停用**）。
    */
   readonly adminAccountWriteWired?: boolean;
+  /**
+   * **R68 · 放行表第 9 条**：后台**分类字典**读写面（`listAdminCategories` / `editCategory`）
+   * 是否已接上真实的目录库端口（迁移 0049 的 `public.admin_categories`）。
+   *
+   * 只能由 `app.ts` 在**确实构造出** `AdminCategoriesPort`
+   * （`createPostgresAdminCategories({ pool })`）时置 `true`；默认 `false` ⇒ 两条操作继续 503
+   * （⛔ 不返回空页、⛔ 不落内存、⛔ 不占幂等位）。
+   *
+   * 为什么不能复用别的布尔：分类读的是**新表**（0049 建、从 crops/species 单向回填），
+   * 与账号目录（`users`）、管理员目录（`admin_accounts`）、内容域（0036 三表）都不是同一张表；
+   * 绑在一起就会出现"账号读得出来、分类页却 42501"的半开状态。
+   */
+  readonly categoriesWired?: boolean;
 }
 
 /**
@@ -164,6 +177,8 @@ export function restrictAdminOpsToAccountsAuthority(
   const scopeWriteWired = options.scopeWriteWired === true;
   // **放行表第 8 条**（R64）：管理员账号状态写面单独一道门，默认关闭 ⇒ 停用/启用 503。
   const adminAccountWriteWired = options.adminAccountWriteWired === true;
+  // **放行表第 9 条**（R68）：分类字典读写面单独一道门，默认关闭 ⇒ 两条操作 503（不返回空页）。
+  const categoriesWired = options.categoriesWired === true;
 
   return {
     // 如实暴露底层 store/jobPort，使"接线状态"仍可被测试与回归直接核对。
@@ -172,8 +187,12 @@ export function restrictAdminOpsToAccountsAuthority(
     accountsWired: false,
     operationIds: inner.operationIds,
 
-    listAdminCategories: reject,
-    editCategory: reject,
+    // **放行 9**（需 `categoriesWired: true`，R68）：后台分类字典（迁移 0049 的
+    // `public.admin_categories`）。转发 inner 的两个方法本身：分页/游标、`If-Match` CAS、
+    // 404/409/503 分工与审计口径仍由服务层与库层窄函数决定，
+    // ⛔ 本外壳不自己拼字典、不返回空页、也不发成功封套。
+    listAdminCategories: categoriesWired ? inner.listAdminCategories : reject,
+    editCategory: categoriesWired ? inner.editCategory : reject,
     // 真实读目录注入时放行（默认仍是 reject，与首版逐字相同）。
     listAdminUsers: accountsReadWired ? inner.listAdminUsers : reject,
     // **放行 1**：真实单事务停用权威（迁移 0017 的 `suspend_account()`）。

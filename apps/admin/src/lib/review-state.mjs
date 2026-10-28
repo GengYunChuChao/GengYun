@@ -79,8 +79,11 @@ export const REVIEW_CODE_ANCHORS = Object.freeze([
     // `#18` S2 PR-3 把 `OPS_OPERATION_IDS` 从 244-260 挪到 293-313（写面新增两条 operationId）。
     // 这不是产品 UI 改动：本条目只是「人审入口的 0 与出处」这一段证据锚点，
     // 锚点跟着后端行号走，否则 `tests/unit/admin-ui-review-state.test.mjs` 会红成"引用失效"。
-    start: 379,
-    end: 401,
+    // GY-R68-A01（分类字典接库）：`service.ts` 第 79 行后插入 10 行，数组头 379→389、数组尾 403→413；
+    // 下面两个数字只是**等价更新**（同一个 `OPS_OPERATION_IDS` 数组，未改任何语义/断言），
+    // 依据见 `docs/verification/gy-r68-aa-admin-disable-20261027.md:231` 的既有权衡口径。
+    start: 389,
+    end: 413,
     mustInclude: ['OPS_OPERATION_IDS'],
   },
 ]);
