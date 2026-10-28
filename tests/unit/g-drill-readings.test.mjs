@@ -13,14 +13,16 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
@@ -44,6 +46,7 @@ import {
   parseReadoutTap,
   parseRows,
   parseTapSummary,
+  pathTokens,
   realPgArms,
   renderDrillBlock,
   renderReadout,
@@ -96,6 +99,55 @@ function fixtureScripts() {
 function writeFixtureFile(path, text) {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text, 'utf8');
+}
+
+/**
+ * 仓内记号 → 夹具里的绝对路径：**先按 `/` 切分再拼**。
+ *
+ * ⛔ 这里不许出现 `String(token).replace(/\//g, '\\')` 这种「改成 Windows 分隔符」的写法：
+ * 在 POSIX runner 上它造出来的是一个**名字里带反斜杠的文件**（`tools\verify-doc-anchors.mjs`），
+ * `existsSync(join(root, 'tools/verify-doc-anchors.mjs'))` 永远看不到它 ⇒ CI 上成片报
+ * 「点到的 `tools/*.mjs` 不在仓库里（文件不存在）」；而 Windows 的 NTFS 把 `\` 当分隔符，
+ * 同一段代码在本机「看起来没问题」。所以路径构造必须在源码层就与平台分隔符无关。
+ */
+function stubPath(root, token) {
+  return join(root, ...String(token).split('/'));
+}
+
+/** 去掉注释后的源码：源码层断言只看**代码**，不看散文（注释里会举反例，那是给读者看的）。 */
+function codeOnly(source) {
+  return String(source)
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
+/** 一份命令清单里出现的**全部**仓内路径记号（去重、保序）。 */
+function referencedPaths(commands) {
+  const tokens = new Set();
+  for (const command of commands) {
+    for (const token of pathTokens(command)) tokens.add(token);
+  }
+  return [...tokens];
+}
+
+/**
+ * 夹具里「会被判据 3 对账」的命令面：演练计划 + `package.json` 脚本值 +
+ * 每个 workflow 的 `run:` 行 + 真库臂。夹具的占位文件**只按这份清单生成**，
+ * 不手抄白名单——这样「夹具自带全部被引用目标」是推导出来的，不是记出来的。
+ */
+function referencedCommands(scripts, workflows, arms) {
+  const commands = [
+    ...DRILL_PLAN.map((entry) => entry.command),
+    ...Object.values(scripts),
+    ...arms.map((arm) => `node ${arm}`),
+  ];
+  for (const text of Object.values(workflows)) {
+    for (const line of String(text).split('\n')) {
+      const run = /^\s*- run:\s*(.+)$/.exec(line);
+      if (run !== null) commands.push(run[1].trim());
+    }
+  }
+  return commands;
 }
 
 /** 造 15 个 workflow：第 1 个承载「出处」文本，其余只贡献 job 数（下限 25）。 */
@@ -157,8 +209,15 @@ function workflowTexts(arms) {
   return texts;
 }
 
-/** 造夹具树。返回 `{root, docText}`：`docText` 是一份**与树一致**的证据页（基线，check 应绿）。 */
-function buildFixture() {
+/**
+ * 造夹具树。返回 `{root, docText, tree, arms, stubs}`：
+ * `docText` 是一份**与树一致**的证据页（基线，check 应绿），`stubs` 是夹具自带的被引用目标。
+ *
+ * `options.omitStubs` 故意少造若干占位（负向用例：判据 3 必须红并点名）；
+ * `options.withStubs === false` 造一棵「一个占位都没有」的树（CI 语义的极端版）。
+ */
+function buildFixture(options = {}) {
+  const { omitStubs = [], withStubs = true } = options;
   const root = mkdtempSync(join(tmpdir(), 'gy-g-drill-fixture-'));
   // 1) 真库臂清单：直接复制真文件（⛔ 不复写它的基线；只借它的「臂清单」这一段形状）。
   mkdirSync(join(root, 'tests', 'unit'), { recursive: true });
@@ -167,35 +226,22 @@ function buildFixture() {
   assert.ok(arms.length > 0, '夹具树里读不到真库臂清单');
 
   // 2) package.json 与 workflow。
-  writeFixtureFile(join(root, 'package.json'), `${JSON.stringify({ name: 'fixture', scripts: fixtureScripts() }, null, 2)}\n`);
-  for (const [name, text] of Object.entries(workflowTexts(arms))) {
+  const scripts = fixtureScripts();
+  writeFixtureFile(join(root, 'package.json'), `${JSON.stringify({ name: 'fixture', scripts }, null, 2)}\n`);
+  const workflows = workflowTexts(arms);
+  for (const [name, text] of Object.entries(workflows)) {
     writeFixtureFile(join(root, '.github', 'workflows', name), text);
   }
 
-  // 3) 出处要用到的占位文件（traceCommand 要求路径记号真实存在）。
-  for (const path of [
-    'tools/run-python.mjs',
-    'tools/validate_development_docs.py',
-    'tools/validate_contracts.py',
-    'tools/test_contracts.py',
-    'tools/validate_openapi_standard.py',
-    'tools/placeholder.py',
-    'tools/verify-research-records.mjs',
-    'tools/verify-contract-status.mjs',
-    'tools/verify-doc-anchors.mjs',
-    'tools/verify-admin-capability-map.mjs',
-    'tools/verify-purge-schedule.mjs',
-    'tools/verify-migrations-unique.mjs',
-    'tools/openapi-route-parity.mjs',
-    'tests/failmatrix/run.mjs',
-    'tests/ui-unified-states.test.mjs',
-    'tests/demo-ui-components.test.mjs',
-    ...DRILL_PLAN.map((entry) => entry.command)
-      .map((command) => command.split(/\s+/).find((token) => token.startsWith('tests/')) ?? '')
-      .filter((token) => token !== ''),
-    ...arms,
-  ]) {
-    writeFixtureFile(join(root, String(path).replace(/\//g, '\\')), '// fixture stub\n');
+  // 3) 夹具树**自带全部被引用目标**：不手抄白名单，直接按命令面解析 `pathTokens()`
+  //    （演练计划 + scripts 值 + 每条 workflow 的 `run:` 行 + 真库臂），逐个在夹具根下落成占位文件。
+  //    路径由 `stubPath()` 按 `/` 切分构造 ⇒ POSIX 与 Windows 造出的是同一棵树。
+  const stubs = referencedPaths(referencedCommands(scripts, workflows, arms));
+  if (withStubs) {
+    for (const token of stubs) {
+      if (omitStubs.includes(token)) continue;
+      writeFixtureFile(stubPath(root, token), '// fixture stub\n');
+    }
   }
 
   // 4) 五个 glob 目录凑够 490 个测试文件（判据 4 的下界；五条 glob 的和必须等于总数）。
@@ -234,7 +280,7 @@ function buildFixture() {
     '块外散文：结尾。',
     '',
   ].join('\n');
-  return { root, docText, tree, arms };
+  return { root, docText, tree, arms, stubs };
 }
 
 let fixture;
@@ -601,6 +647,99 @@ describe('出处：traceCommand 认三处来源，也认「没有出处」', () 
     const traced = traceCommand('node tools/ghost.mjs', sources, fixture.root);
     assert.equal(traced.ok, false);
     assert.ok(traced.reason.includes('不在仓库里'), traced.reason);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('平台无关：夹具树自带全部被引用目标（判据 3 真的在看磁盘）', () => {
+  const LIB_PATH = join(REPO_ROOT, 'tools', 'lib', 'g-drill-readings.mjs');
+
+  it('占位路径按 `/` 切分构造（不许把分隔符改写成平台字面量）', () => {
+    // ⚠ 这条**必须**是源码层断言：`replace(/\//g, '\\')` 在 Windows 上语义不可见
+    // （NTFS 把 `\` 当分隔符，造出的还是 `tools/…`），行为断言在本机永远绿；
+    // 只有 POSIX runner 会把它变成「名字里带反斜杠的文件」⇒ 判据 3 成片红。
+    const source = codeOnly(readFileSync(new URL(import.meta.url), 'utf8'));
+    assert.equal(
+      /\.replace\(\s*\/\\\/\/g\s*,\s*['"]\\\\['"]\s*\)/.test(source),
+      false,
+      '夹具的占位路径不许把 `/` 改写成 `\\`：POSIX 上那会造出 `tools\\x.mjs` 这种文件名，判据 3 永远找不到',
+    );
+    // 纯拼接语义自证：记号里的 `/` 就是层级，与平台分隔符无关。
+    assert.equal(stubPath('/r', 'a/b/c.mjs').split(sep).join('/'), '/r/a/b/c.mjs');
+    assert.equal(stubPath('/r', 'tools/x.mjs').split(sep).join('/'), '/r/tools/x.mjs');
+  });
+
+  it('每条被引用命令的每个路径记号都在夹具根下真实存在', () => {
+    const tokens = fixture.stubs;
+    assert.ok(tokens.length >= 20, `夹具自带的占位太少（${tokens.length} 条）⇒ 判据 3 会被绕空`);
+    for (const token of tokens) {
+      assert.equal(token.includes('\\'), false, `记号必须是 \`/\` 归一：${token}`);
+      assert.equal(existsSync(stubPath(fixture.root, token)), true, `夹具没自带被引用目标：${token}`);
+    }
+    // 反证：夹具根与 tools/ 下不许出现「名字里带反斜杠」的文件（那正是 CI 上的错法）。
+    for (const entry of readdirSync(fixture.root)) {
+      assert.equal(entry.includes('\\'), false, `夹具根下出现了带反斜杠的名字：${entry}`);
+    }
+    for (const entry of readdirSync(join(fixture.root, 'tools'))) {
+      assert.equal(entry.includes('\\'), false, `tools/ 下出现了带反斜杠的名字：${entry}`);
+    }
+  });
+
+  it('lib 里没有隐式根兜底：root 一律由调用方显式传入', () => {
+    const source = codeOnly(readFileSync(LIB_PATH, 'utf8'));
+    assert.equal(
+      source.includes('process.cwd'),
+      false,
+      'lib 里出现了 process.cwd() 兜底 ⇒ 夹具树与真仓会走同一条隐式回退（判据 3 就可能在错根上「看起来存在」）',
+    );
+    assert.equal(
+      /existsSync\(join\(root, token\)\)/.test(source),
+      false,
+      '存在性检查必须按 `/` 切分记号：`join(root, ...String(token).split(\'/\'))`',
+    );
+    // 结构性断言：这些函数必须显式收 root（去掉参数或加默认值都会让 arity 变）。
+    assert.equal(traceCommand.length, 3, 'traceCommand 必须显式收 root：(command, sources, root)');
+    assert.equal(collectSources.length, 1, 'collectSources 必须显式收 root');
+    assert.equal(computeTreeReadings.length, 1, 'computeTreeReadings 必须显式收 root');
+    assert.equal(realPgArms.length, 1, 'realPgArms 必须显式收 root');
+  });
+
+  it('负向：删掉一个占位 ⇒ 判据 3 必须红并点名该文件（证明检查在看磁盘，不是白名单）', () => {
+    const missing = 'tools/verify-doc-anchors.mjs';
+    const isolated = buildFixture({ omitStubs: [missing] });
+    try {
+      assert.equal(existsSync(stubPath(isolated.root, missing)), false, '负向夹具必须真的少这一个文件');
+      const result = checkDocument({ root: isolated.root, docText: isolated.docText, isAncestor: () => true });
+      assert.equal(result.ok, false, '少了一个被引用目标却仍然绿 ⇒ 判据 3 没在看磁盘');
+      const hit = result.problems.find((problem) => problem.criterion === 3 && problem.message.includes(`\`${missing}\``));
+      assert.ok(
+        hit !== undefined,
+        `判据 3 没点名 ${missing}，实际问题：\n${result.problems.map((item) => `[判据 ${item.criterion}] ${item.message}`).join('\n')}`,
+      );
+      assert.ok(hit.message.includes('不在仓库里'), hit.message);
+      // 这条红必须**只**由「夹具缺占位」引起：别的判据一条都不许红。
+      assert.deepEqual(
+        result.problems.filter((problem) => problem.criterion !== 3).map((item) => `[判据 ${item.criterion}] ${item.message}`),
+        [],
+      );
+    } finally {
+      rmSync(isolated.root, { recursive: true, force: true });
+    }
+  });
+
+  it('负向：一个占位都没有的夹具（CI 语义的极端版）⇒ 判据 3 成片红，文案固定是「不在仓库里」', () => {
+    const isolated = buildFixture({ withStubs: false });
+    try {
+      const result = checkDocument({ root: isolated.root, docText: isolated.docText, isAncestor: () => true });
+      assert.equal(result.ok, false, '没有任何被引用目标却仍然绿 ⇒ 存在性检查被绕过了');
+      const crit3 = result.problems.filter((problem) => problem.criterion === 3);
+      assert.ok(crit3.length >= 10, `判据 3 只红了 ${crit3.length} 条，看不到成片的缺占位`);
+      for (const problem of crit3) assert.ok(problem.message.includes('不在仓库里'), problem.message);
+      // 读数类判据不受影响：占位文件只解决「出处」，不参与计数。
+      assert.deepEqual(result.problems.filter((problem) => problem.criterion === 2), []);
+    } finally {
+      rmSync(isolated.root, { recursive: true, force: true });
+    }
   });
 });
 

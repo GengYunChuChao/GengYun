@@ -988,7 +988,11 @@ export function traceCommand(command, sources, root) {
     return { ok: false, reason: `\`${command}\` 不在 package.json/workflow 文本里（命令里没有任何仓内脚本路径，无从对账）` };
   }
   for (const token of paths) {
-    if (!existsSync(join(root, token))) {
+    // 记号一律是 `/` 归一（见 `pathTokens()`），这里**按 `/` 切分再拼**：
+    // 判定语义因此只由「`root` + 记号」决定，与运行平台的路径分隔符无关。
+    // ⛔ 不要退回 `join(root, token)` 之外的隐式兜底（`process.cwd()` / `resolve(token)` 之类）：
+    // `root` 必须由调用方显式传入，夹具与真仓才不会走上同一条隐式回退。
+    if (!existsSync(join(root, ...String(token).split('/')))) {
       return { ok: false, reason: `\`${command}\` 点到的 \`${token}\` 不在仓库里（文件不存在）⇒ 不在 package.json/workflow 文本里` };
     }
     const scriptOwner = Object.entries(sources.scripts).find(([, value]) => typeof value === 'string' && value.includes(token));
