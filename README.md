@@ -131,7 +131,7 @@ node tools/prepare-wechat.mjs local --config config/api.local.json
 ```
 
 - 成功判据：登录返回 200 且 `meta.execution_mode` 为 `stub`；客户端会话缓存里 `executionMode` 是 `stub`（客户端只接受 `real`／`stub`／`preset_demo`）。
-- C 不发真实网络请求：服务端把 code 派生成稳定 subject（同一 code 同一用户，`services/api/src/auth/wechat.ts:69-75`）；要在这条链上验「退出 → 用同一身份重登 → 资料/收藏仍在」，起 API 前再设 `$env:WECHAT_STUB_SUBJECT = 'qa-dev-1'`（可选，**只在非 real 模式**且该值非空时生效：subject 改由该固定串派生 ⇒ 每次 `wx.login` 都是同一个用户；留空/不设 ⇒ 与今天逐字一致，一次登录一个新用户）。细则见 [配置参考](docs/reference/configuration.md) 与 `.env.example`。它证明的是「客户端 → 本地 API → 会话」接线，**不证明**微信凭据。
+- C 不发真实网络请求：服务端把 code 派生成稳定 subject（同一 code 同一用户，`services/api/src/auth/wechat.ts:69-75`）；要在这条链上验「退出 → 用同一身份重登 → 资料/收藏仍在」，起 API 前再设 `$env:WECHAT_STUB_SUBJECT = 'qa-dev-1'`（可选，**只在非 real 模式**且该值非空时生效：subject 改由该固定串派生 ⇒ **该服务端进程的所有 stub 客户端共用一个账号**、不再是「每台机器上一个用户」；⛔ **不要**在多人共用的 stub 服务上开这个开关，否则所有人共用一个账号、彼此看得到对方的数据；留空/不设 ⇒ 与今天逐字一致，一次登录一个新用户）。生效与否不用猜：启动日志里有 `wechat_stub_subject_fixed`（设成纯空白时另标 `wechat_stub_subject_ignored`），两者都**只打布尔、不打值**。细则见 [配置参考](docs/reference/configuration.md) 与 `.env.example`。它证明的是「客户端 → 本地 API → 会话」接线，**不证明**微信凭据。
 
 **报错对照表**
 
