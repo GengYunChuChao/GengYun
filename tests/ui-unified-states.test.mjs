@@ -163,6 +163,25 @@ test('分类语义：401→guest、403→denied、404→invalid、服务端故�
   for (const code of ['INVALID_REQUEST', 'INVALID_CURSOR', 'IDEMPOTENCY_KEY_REQUIRED', 'MEDIA_TOO_LARGE', 'MEDIA_TYPE_UNSUPPORTED', 'INPUT_UNCERTAIN']) {
     assert.equal(states.retryableForCode(code), false, code + ' 需用户改条件，原样重试无效');
   }
+  // 500 兜底（#688 起契约才有这个码）：服务端**自身缺陷**——既不是「用户改条件就能过」（上面那组），
+  // 也不是「临时故障、重试就好」（`unavailable` 那组），所以单列一块，不往现成名单里塞，
+  // 免得借别人的断言消息说出「需用户改条件」这句假话。
+  assert.equal(states.statusForCode('INTERNAL_ERROR'), states.STATUS.ERROR,
+    'INTERNAL_ERROR 必须落 error，不得落到 guest／denied／invalid');
+  assert.equal(states.retryableForCode('INTERNAL_ERROR'), false,
+    'INTERNAL_ERROR 是服务端缺陷，原样重发只会再撞一次同样的异常，不该给重试');
+  assert.equal(states.resolve('INTERNAL_ERROR').kindLabel, '服务端错误',
+    'INTERNAL_ERROR 的分类标签必须是「服务端错误」，不得是「服务暂时不可用」（那是 503/504）或「未分类的失败」');
+  // 分类表完整性：`CODE_KIND` 用到的每个 kind 都必须在 KIND_LABEL／KIND_RETRYABLE 里**显式**有条目。
+  // 缺 KIND_RETRYABLE 条目不会报错（`retryableForCode` 对未知 kind 一律回 false），等于让上面那条
+  // 「INTERNAL_ERROR 不可重试」静默失效——审查实测：只删掉 `server: false` 一行，本用例照样全绿。
+  for (const kind of new Set(Object.values(states.CODE_KIND))) {
+    assert.ok(states.KIND_LABEL[kind], `CODE_KIND 用到的分类 ${kind} 在 KIND_LABEL 里没有中文标签`);
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(states.KIND_RETRYABLE, kind),
+      `CODE_KIND 用到的分类 ${kind} 在 KIND_RETRYABLE 里没有显式条目——靠「未知 kind 默认不可重试」兜底会让可重试性判据形同不存在`
+    );
+  }
   // 未知码：宁可显示通用失败，也不得假装成功或伪造分类。
   assert.equal(states.statusForCode('SOMETHING_NEW'), states.STATUS.ERROR);
   assert.equal(states.retryableForCode('SOMETHING_NEW'), false);
