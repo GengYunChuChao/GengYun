@@ -4,7 +4,7 @@
 机器可读的「保留号台账」在 `services/api/db/migration-reservations.json`；
 `tools/verify-migrations-unique.mjs` 的 `[gap]` 判据要求缺号在**本目录的 `.md`** 里有一行依据。
 
-## 当前状态（2026-10-27 · R68 后台管理员账号停用/恢复（`0048`）落盘后实测：`0001..0048`，缺 `0037`）
+## 当前状态（2026-10-28 · R68-A01 后台分类字典（`0049`）落盘后实测：`0001..0049`，缺 `0037`）
 
 `0001..0035` 已连续落盘（35 个正向；`0035_r34_media_row_purge.sql` 已随上游真实落盘，本片旧段里那条
 `WARN[gap] 0035` 的前提随之作废）；上游 #553（#19 片B）落 `0038_r34_deletion_receipt_persistence.sql`、
@@ -15,16 +15,51 @@ GY-R35（#568）落 `0040_export_object_key_contract_backfill.sql`、`#18` S2 �
 `0043_admin_job_cancel_audit.sql`、GY-S4 P1 落 `0044_third_party_deletion_persistence.sql`、
 S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 `0046_admin_scope_denial_trace.sql`、R64 落 `0047_admin_post_hide_audit.sql`、R68 落
-`0048_admin_account_disable.sql`
-⇒ 目录现为 **47 个正向 `.sql`** ＋ `rollback/` **46 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
-`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **47 + 1 === 48**），
+`0048_admin_account_disable.sql`、R68-A01 落 `0049_admin_categories.sql`
+⇒ 目录现为 **48 个正向 `.sql`** ＋ `rollback/` **47 个**（`0001` 无 down）；缺号只剩 `0037`，已登记在
+`services/api/db/migration-reservations.json`（`count + 保留数 === max` ⇒ **48 + 1 === 49**），
 `node tools/verify-migrations-unique.mjs --strict` 的 `[gap]` 判据对该缺号有依据（见下）。
 （本段数字为实测：`Get-ChildItem services/api/db/migrations -Filter '*.sql'`
-⇒ 正向 `.sql` 47 条、`rollback/` 46 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
+⇒ 正向 `.sql` 48 条、`rollback/` 47 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
 故保留台账里**不得**再出现 40/41/42 号条目 —— 否则 `reservedButPresent` 会把它判红。
-`0043`/`0044`/`0045`/`0046`/`0047`/`0048` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
+`0043`/`0044`/`0045`/`0046`/`0047`/`0048`/`0049` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0049_admin_categories.sql`（R68-A01 · **库层读写通路**：后台「分类字典」读列表 / 改显示与停用
+  —— `listAdminCategories` / `editCategory`）。接在 `0048` 之后，号位依据「正向最大号 +1」
+  （`0048` 已被 R68 的后台账号停用/恢复占用；`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
+  建 `public.admin_categories`（`id varchar(80) PK` / `type varchar(16)` / `name varchar(120)` /
+  `description text` / `active boolean` / `revision integer` / `created_at` / `updated_at`），
+  列一律 `ADD COLUMN IF NOT EXISTS` + 默认值 ⇒ **幂等可重放**；四条 CHECK（type 闭集 `crop|species`、
+  name 1..120、description 1..2000、revision ≥ 1）先查 `pg_constraint` 再 `ADD CONSTRAINT`。
+  从 `public.crops`（type=`crop`）与 `public.species`（type=`species`，名取 `canonical_name`）
+  `ON CONFLICT (id) DO NOTHING` 回填；`description` 回填**明标「未编撰」的占位句**（契约 `Category.description`
+  是 minLength 1，空串是违法值，所以不能留空、也不许假装编好了）。
+  ⚠ **为什么不给 `crops`/`species` 加列**（本片最容易被问的一处，理由三条）：① CAS 必须在应用层做
+  （派单要求断言 `UPDATE … WHERE id = $1 AND revision = $2`）⇒ 运行时要有这两张表的列级 UPDATE 直授，
+  而 `90-assert-least-privilege.sql` 的 `external_violations` (c) 明令「非 `direct` 行不得有直授 runtime 的
+  表级/列级 ACL」，这两张表在 `external_manifest` 里是 `profile_runtime` 组继承行；② 唯一合规替代路
+  `services/api/db/roles/profile_runtime.sql:21-23` 逐字写着「Only name is granted for locking…
+  **The HTTP component has no directory mutation endpoint.**」；
+  ③ `crops.name` 是 `varchar(80)`（契约 `name` 上限 120）、`species.canonical_name` 带唯一索引且是**识别键**
+  （改它等于改识别身份，与契约「不由编辑名称扩大识别承诺」冲突）。故另立后台目录表，`crops`/`species`
+  一个字节都不动。
+  审计走窄口径 `SECURITY DEFINER` 函数 `public.record_admin_category_update(uuid,text,integer,uuid)`
+  （`SET search_path = pg_catalog` + `SET TimeZone = 'UTC'` + `REVOKE ALL … FROM PUBLIC`）：
+  `action='category.update'` / `scope='sources:write'` / `result='accepted'` / `reason_code='category_updated'`
+  由函数体**字面量**固定，`target_ref=NULL`（契约 `TargetRef.type` 闭集里没有 `category`）、
+  `target_hint='category:<id>'`；入参自检「actor 在 `admin_accounts` 且持 `sources:write` 未撤销」，
+  并核对「审计里的 revision 必须等于库内现值」（防拿旧 revision 写审计）。运行时对
+  `public.admin_audit_events` 仍是**零表级权限**，只有这条函数的 EXECUTE。
+  授权在 `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r68-catalog-grant` 段：`SELECT` 6 列 +
+  `UPDATE` 5 列（**无 INSERT、无 DELETE/TRUNCATE/REFERENCES/TRIGGER、无表级 DML**）。
+  配对回滚 `rollback/0049_admin_categories.down.sql` **先预检再删表**：`admin_audit_events` 里已有
+  `action='category.update'` 行、或 `admin_categories.revision > 1` 的行 ⇒ `RAISE EXCEPTION 'G0019'`
+  （理由与 `0043`/`0047` 同源：删表会留下「有行无出处」，且回填数据带不走），正确动作是**回滚应用版本**。
+  读数：`tests/unit/admin-categories-pg-wiring.test.mjs`（8 条：CAS 语句字面量、参数顺序、语句序列
+  `BEGIN→CAS→审计→COMMIT` / 落空 `BEGIN→CAS→currentRevision→ROLLBACK`、三臂 200/409/503、
+  无池 503 `retryable:false`、stub 走内存、外壳默认 reject）＋ `tests/unit/sql-column-coverage.test.mjs`
+  （新 SQL 宿主纳管后逐列核对，缺口 0）。
 - `0048_admin_account_disable.sql`（R68 · **库层写通路**：后台「停用 / 恢复管理员账号」）。
   接在 `0047` 之后，号位依据「正向最大号 +1」（`0047` 已被 R64 的后台下架审计占用，裁定书里那张
   「编号与排序（2026-10-27 10:1x 复核后更正）」小节即为此；`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。

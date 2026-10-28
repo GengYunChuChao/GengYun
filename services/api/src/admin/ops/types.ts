@@ -189,6 +189,72 @@ export interface AdminJobCancelAuditInput {
 }
 
 // ---------------------------------------------------------------------------
+// 后台分类目录端口（`listAdminCategories` / `editCategory`）
+// ---------------------------------------------------------------------------
+
+/**
+ * 一次分类编辑的端口结果：**不抛异常**，由服务层映射成契约错误码
+ * （照 `CancelJobOutcome` 的口径：端口只报告事实，不做 HTTP 语义决策）。
+ */
+export type CategoryCommitOutcome =
+  | { ok: true; record: CategoryView }
+  | { ok: false; reason: 'NOT_FOUND' | 'REVISION_CONFLICT' };
+
+/**
+ * 一次分类编辑要落的审计入参。
+ *
+ * 刻意**不含** `categoryId` / 变更后 `revision`：它们只能取自端口自己那条 CAS 语句的
+ * `RETURNING` 结果（即真实写成功的那一行），不让调用方另传一份可能与实际写入不一致的副本。
+ * 也不含 action / scope / result / target_ref / target_hint / reason_code —— 那些在迁移 0049 的
+ * `public.record_admin_category_update(...)` 函数体内固定或由形参重建，调用方无从伪造。
+ */
+export interface CategoryUpdateAuditInput {
+  /** 操作者 `admin_accounts.id`（= 会话身份；函数内重核验存在 / `active` / 当前有效持 `sources:write`）。 */
+  readonly actorId: string;
+  /** 契约 `Meta.request_id`。 */
+  readonly requestId: string;
+}
+
+/**
+ * 分类字典的**注入式端口**（`AdminCategoriesPort`）。
+ *
+ * 为什么需要它：`listAdminCategories` / `editCategory` 此前在
+ * `accounts-only.ts` 里是两条字面裸 `reject`（`execution_mode=real` ⇒ 恒 503，与库无关）。
+ * 拆掉裸 reject 只会得到**空页**，而契约明写「⛔ 不返回空页（空页会被读成「平台没有分类」，
+ * 那是伪造读数）」⇒ 读面必须是**真读**。于是：
+ * - 端口未注入（`real` 模式且没有连接池）⇒ 服务层 fail-closed 抛
+ *   `PROVIDER_UNAVAILABLE`（`retryable: false`），**绝不**返回空数组、也绝不落内存；
+ * - 端口注入且 `persistent === true`（Postgres 实现）⇒ 读走 SQL、写走 CAS，
+ *   审计在**端口自己的事务里**由窄函数写；
+ * - 端口未注入但 `execution_mode` 不是 `real`（stub / 单测）⇒ 与既有口径**逐字一致**地走
+ *   内存 `store`（既有单测与本地联调行为不变）。
+ */
+export interface AdminCategoriesPort {
+  /** 是否已接线。`false` ⇒ 服务层 fail-closed（本仓目前只有真库实现，恒 `true`）。 */
+  readonly wired: boolean;
+  /**
+   * 是否**持久化到库**（与 `AdminJobPort.persistent` / `CommunityPostPort.persistent` 同一口径：
+   * 不是自述布尔，内存实现恒 `false`、Postgres 实现恒 `true`）：
+   * - `false`：内存实现 ⇒ 审计由服务层写既有的内存 `store.audit.append`；
+   * - `true`：Postgres 端口 ⇒ 目录变更与审计行在**同一事务**里提交，服务层**不再**补写内存审计
+   *   （补写会变成一条动作两条审计，且掩盖库内已经写了的那一行）。
+   */
+  readonly persistent: boolean;
+  /** 读面：每次真读库（⛔ 不做跨请求缓存）。 */
+  listCategories(): Promise<readonly CategoryView[]>;
+  /**
+   * 写面：以 `revision` 做乐观锁（`UPDATE … WHERE id = $1 AND revision = $2`）。
+   * `expectedRevision` 来自 `If-Match`；端口只管 CAS 与审计的原子性，冲突码由服务层映射。
+   */
+  commitCategoryIfCurrent(
+    id: string,
+    expectedRevision: number,
+    patch: CategoryInputValue,
+    audit: CategoryUpdateAuditInput,
+  ): Promise<CategoryCommitOutcome>;
+}
+
+// ---------------------------------------------------------------------------
 // 社区帖子可见性端口（`hidePost` 复用 #15 的 CAS 原语，不另写一套可见性判定）
 // ---------------------------------------------------------------------------
 
