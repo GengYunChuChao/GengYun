@@ -263,6 +263,13 @@ Page({
       this.setData({ busy: false, retryPending: !!this._pendingSave, needsReload: conflict || !this._pendingSave, message: message(e.code) + (this._pendingSave ? '可重试同一次保存，或重新读取。' : '') })
     }
   },
+  // 入口「按当前档案查科普资料」。函数名沿用 `openReference`（`profile.wxml:146` 绑定名、
+  // 单测的 disabled 守卫都按这个名字查），但**目标页已改**：
+  //   · 落 `pages/knowledge`（服务端查询面 `GET /knowledge`）——它能走到「详情 → 收藏」、
+  //     能看到来源版本与失效口径；
+  //   · 不落 `pages/reference`：该页带作物／杂草／地区条件时**强制**读随包离线副本
+  //     （`pages/reference/reference.js:207-210`），这条路永远走不到服务端与收藏，
+  //     它只做随包名录浏览（`docs/ui-state-inventory.md` §7.4 的定位不变，本片不改它的行为）。
   openReference: function () {
     if (this.data.guest || this.data.busy) return
     if (!this.subjectCurrent()) return
@@ -270,8 +277,22 @@ Page({
     if (!this.data.loaded || !this.data.profile) { this.setData({ message: REFERENCE_NOT_READY }); return }
     if (this.data.needsReload) { this.setData({ message: REREAD_REQUIRED }); return }
     const p = this.data.profile
-    if (!p.crop_id || !p.region_code) { this.setData({ message: '请先设置档案。' }); return }
-    wx.navigateTo({ url: '/pages/reference/reference?crop_id=' + encodeURIComponent(p.crop_id) + '&region_code=' + encodeURIComponent(p.region_code) })
+    // 空档案（未选手选作物／地区）：**不跳转**，在入口处给出「先完善档案」的提示。
+    // 为什么选「提示」而不是「进知识页但不带筛选」：这个按钮的承诺是「**按当前档案**查科普资料」，
+    // 档案为空时跳过去只能给一张与档案无关的全量列表；知识页虽然也有「档案为空」的说明
+    // （`pages/knowledge/knowledge.js:19` EMPTY_PROFILE_NOTE），但那是在**用户已经进了查询面
+    // 之后**才说，第一屏仍然是一张会被读成「我的作物／地区下查到的资料」的列表。
+    // 入口处拦住，既守住按钮的承诺，也不让用户白跑一次；下一步动作就是本页的「编辑档案」。
+    if (!p.crop_id || !p.region_code) { this.setData({ message: '请先设置档案（作物与地区）再按档案查科普资料。' }); return }
+    // 跳转形状照抄本页同类的三个入口（收藏／历史／授权清单）：直接 `wx.navigateTo`。
+    // 目标不是底部 Tab，`navigateTo` 是正确的路由 API；无需 `navigation.openTarget` 的
+    // fail 兜底（那套是给 reLaunch／登录回路用的，这里失败也和同类入口一样保持原位）。
+    // **不拼查询参数**：`pages/knowledge` 的 `onLoad` 只做字号（`knowledge.js:57`），全页不读
+    // `options`；它靠 `prepare()` 自己读一次 `GET /me/profile`，把档案的 `crop_id` 与
+    // `region_code` 预置成首次查询条件（`knowledge.js:76-132`，地区一律按省级 `330000` 发并在
+    // 页面明示层级）。在这里另造一套参数名既不会被消费，也会与那条唯一实现分叉；
+    // `utils/navigation.js:49` 的 `normalizeTarget` 也只白名单 `pages/reference` 的查询串。
+    wx.navigateTo({ url: '/pages/knowledge/knowledge' })
   },
   // GY-I04 6-A：与 page-gate 同一登录口径（登记本页为返回目标 → reLaunch 登录页），
   // 登录成功后回到本页；门禁拦截语义不变（未登录仍被拦，按钮不放行任何数据）。
