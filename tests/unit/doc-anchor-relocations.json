@@ -10,6 +10,128 @@
     "reason": "合并 upstream/main（fa3b2553）时 catalog.ts 被上游注释块改动，`export const AUDIT_ACTIONS = Object.freeze([`（258）到 `] as const);`（269）整体下移 8 行；旧值 250-261 在合并后的文件里指向注释文字，不是闭集。按符号重锚，不是 250+8 的差值平移。"
   },
   {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 199,
+    "target": "packages/contracts/openapi.json",
+    "from": 11008,
+    "fromEnd": 11013,
+    "to": 11147,
+    "toEnd": 11158,
+    "reason": "旧锚点 11008-11013 指到 `GET /admin/audit-logs` 的 `security` / `parameters` 块（base 原行为 `\"security\": [`、`\"parameters\": [`），不是 action 枚举；本提交按符号 `admin_account.enable` 改指 AuditAction 枚举本体（HEAD 11147-11158）。该 symbol 在 openapi.json 内出现 2 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account.enable\""
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 199,
+    "target": "packages/contracts/openapi.json",
+    "from": 10733,
+    "fromEnd": 10738,
+    "to": 11166,
+    "toEnd": 11173,
+    "reason": "旧锚点 10733-10738 指到另一个 operation 的 `IfMatch` 参数尾部与 `responses` / `200` 块，不是 entity 枚举；本提交按符号 `admin_account` 改指 AuditEntity 枚举本体（HEAD 11166-11173）。该 symbol 在 openapi.json 内出现 1 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account\""
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 12,
+    "target": "packages/contracts/openapi.json",
+    "from": 11462,
+    "to": 11617,
+    "reason": "旧锚点 11462 指到 `Error413` 的 `$ref`，不是 path 行；本提交按符号 `/admin/posts/{id}/hide` 改指 `POST /admin/posts/{id}/hide` 的 path 键（HEAD 11617）。",
+    "kind": "correction",
+    "symbol": "/admin/posts/{id}/hide"
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 58,
+    "target": "packages/contracts/openapi.json",
+    "from": 11462,
+    "to": 11617,
+    "reason": "同页表格里的 path 锚点：旧值 11462 指到 `Error413` 的 `$ref`，不是 path 行；本提交按符号 `/admin/posts/{id}/hide` 改指 path 键（HEAD 11617）。",
+    "kind": "correction",
+    "symbol": "/admin/posts/{id}/hide"
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 58,
+    "target": "packages/contracts/openapi.json",
+    "from": 11167,
+    "to": 11619,
+    "reason": "旧锚点 11167 指到一个裸 `{`，不是 `operationId` 行；本提交按符号 `hidePost` 改指 `\"operationId\": \"hidePost\"`（HEAD 11619）。",
+    "kind": "correction",
+    "symbol": "hidePost"
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 59,
+    "target": "packages/contracts/openapi.json",
+    "from": 11371,
+    "to": 11712,
+    "reason": "旧锚点 11371 指到 `Error428` 的 `$ref`，不是 `x-scope` 行；本提交按符号 `x-scope` 改指 `\"x-scope\": \"sources:write\"`（HEAD 11712）。该 symbol 在 openapi.json 内出现 20 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"x-scope\": \"sources:write\""
+  },
+  {
+    "doc": "docs/verification/gy-r34-i18-post-takedown-ui-20261023.md",
+    "line": 60,
+    "target": "packages/contracts/openapi.json",
+    "from": 11540,
+    "to": 11713,
+    "reason": "旧锚点 11540 指到一个 `\"schema\": {`，不是 `x-version-required` 行；本提交按符号 `x-version-required` 改指 `\"x-version-required\": true`（HEAD 11713）。该 symbol 在 openapi.json 内出现 52 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"x-version-required\": true"
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 224,
+    "target": "packages/contracts/openapi.json",
+    "from": 11344,
+    "fromEnd": 11351,
+    "to": 11147,
+    "toEnd": 11158,
+    "reason": "旧锚点 11344-11351 落在某个 operation 的 `responses` 里 400/401 的 `$ref` 上，不是 action 枚举；本提交按符号 `admin_account.enable` 改指 AuditAction 枚举本体（HEAD 11147-11158）。该 symbol 在 openapi.json 内出现 2 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account.enable\""
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 224,
+    "target": "packages/contracts/openapi.json",
+    "from": 11360,
+    "fromEnd": 11364,
+    "to": 11166,
+    "toEnd": 11173,
+    "reason": "旧锚点 11360-11364 落在 413/415 的 `$ref` 上，不是 entity 枚举；本提交按符号 `admin_account` 改指 AuditEntity 枚举本体（HEAD 11166-11173）。该 symbol 在 openapi.json 内出现 1 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account\""
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 239,
+    "target": "packages/contracts/openapi.json",
+    "from": 11344,
+    "fromEnd": 11351,
+    "to": 11147,
+    "toEnd": 11158,
+    "reason": "§10.1 的 OK 行：旧值 11344-11351 在 base 上落在 400/401 的 `$ref`（不是枚举），本提交按符号 `admin_account.enable` 改指 AuditAction 枚举本体（HEAD 11147-11158）。该 symbol 在 openapi.json 内出现 2 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account.enable\""
+  },
+  {
+    "doc": "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md",
+    "line": 240,
+    "target": "packages/contracts/openapi.json",
+    "from": 11360,
+    "fromEnd": 11364,
+    "to": 11166,
+    "toEnd": 11173,
+    "reason": "§10.1 的 OK 行：旧值 11360-11364 在 base 上落在 413/415 的 `$ref`（不是枚举），本提交按符号 `admin_account` 改指 AuditEntity 枚举本体（HEAD 11166-11173）。该 symbol 在 openapi.json 内出现 1 行（本次现测）。",
+    "kind": "correction",
+    "symbol": "\"admin_account\""
+  },
+  {
     "doc": "docs/architecture/admin-console-capability-map.md",
     "line": 18,
     "target": "services/api/src/routes/admin.ts",
