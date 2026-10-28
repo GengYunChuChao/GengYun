@@ -9,14 +9,14 @@
  * 本文件只读 `packages/contracts/openapi.json`，零依赖，`node --test` 直接跑。四组断言：
  *
  *   A 覆盖面／反空转：数量与名单是**实测值**，不是「随便扫到几条都算过」——
- *     A1 `/admin/**` operation 数 === 49；A2 `REWRITTEN_ADMIN_OPS` 恰好 21 个且逐个能在 spec
+ *     A1 `/admin/**` operation 数 === 49；A2 `REWRITTEN_ADMIN_OPS` 恰好 28 个且逐个能在 spec
  *     里找到（找不到即红：名单漂移必须先红，而不是静默跳过）；
  *     A3 其余族（非 admin）里 `summary === operationId` 的 operation 数 **≤ 77**——77 是当前的
  *     **欠账上限**，做其他族后只会下降；**下降是好事、不判红**，上升才是退化（有人把 summary
  *     改回 operationId）。⛔ 别把欠账钉成精确期望：钉死会让「改善」也判红，将来做 `me` 族时
  *     变成「做了反而红」的反向枷锁。做其他族后把上限同步下调（或删掉这条）。
  *
- *   B 退化检测（对 21 个改写过的 op 逐个）：summary 不再等于 operationId、summary 含汉字、
+ *   B 退化检测（对 28 个改写过的 op 逐个）：summary 不再等于 operationId、summary 含汉字、
  *     description 不等于（也不包含）模板句。B 的失败清单一次性列全——先红时就是「summary 等于
  *     operationId 那一批」。
  *
@@ -29,10 +29,11 @@
  *     ③ 恒真）。这三条保证「描述里那段 scope／状态码／头部名是真的从契约抄出来的」，而不是
  *     恰好抄成另一句模板。
  *
- *   D SUFFIX 白名单**只减不增**：`PENDING_SUFFIX_OPS` 这 8 条是「summary 已改、description 仍是
- *     模板句」的显式欠账。D 双向判：白名单里每条**当前仍含**模板句（否则判红并提示「从白名单
+ *   D SUFFIX 白名单**只减不增**：`PENDING_SUFFIX_OPS` 里剩下的是「summary 已改、description 仍是
+ *     模板句」的显式欠账（原 8 条，R68 后缀清理销掉 7 条，只剩 `listAdminCategories`——它的实现
+ *     另有分支在改）。D 双向判：白名单里每条**当前仍含**模板句（否则判红并提示「从白名单
  *     删除」，欠账还清了就必须销账）；白名单外**任何** admin op 的 description 不得含模板句
- *     （堵住「新写一条又抄回模板句」）。另钉住**白名单长度 === 8**：否则「把某条 description
+ *     （堵住「新写一条又抄回模板句」）。另钉住**白名单长度 === 1**：否则「把某条 description
  *     改回模板句 + 在白名单里加一行」是既退化又合法登记的，D 会全绿（审查实测 8/8 绿）。
  *
  * 读取路径：默认 `packages/contracts/openapi.json`（仓内真文件）。环境变量 `GY_OPENAPI_PATH`
@@ -65,7 +66,13 @@ const SPEC_PATH = process.env.GY_OPENAPI_PATH
 
 const spec = JSON.parse(readFileSync(SPEC_PATH, 'utf8'));
 
-/** 21 条已被改写的 admin 操作（本片实测：`git diff de2aa3c6..1f9fe086` 里 description 变化的那批）。 */
+/**
+ * 28 条已被改写的 admin 操作 = 原本 21 条（`git diff de2aa3c6..1f9fe086` 里 description 变化的那批）
+ * + R68 后缀清理片补入的 7 条（listAdministrators / listAdministratorScopes / grantAdministratorScope /
+ * revokeAdministratorScope / disableAdministratorAccount / enableAdministratorAccount / listAuditLogs）。
+ * ⛔ 补这 7 行的理由：B/C①/C②/C③ 全部走 `entriesOf(adminById, REWRITTEN_ADMIN_OPS)`，名单外的 op
+ * 再怎么写都判不到 —— 实测「listAdministrators 塞未声明 418」在只靠 D 组时 14/14 全绿（假绿）。
+ */
 const REWRITTEN_ADMIN_OPS = Object.freeze([
   'editSourceDraft',
   'getAdminKnowledge',
@@ -88,11 +95,6 @@ const REWRITTEN_ADMIN_OPS = Object.freeze([
   'withdrawRegistration',
   'withdrawRestriction',
   'withdrawSource',
-]);
-
-/** 8 条仍欠账的 admin 操作：summary 已改，description 还是模板句。⛔ 只减不增。 */
-const PENDING_SUFFIX_OPS = Object.freeze([
-  'listAdminCategories',
   'listAdministrators',
   'listAdministratorScopes',
   'grantAdministratorScope',
@@ -100,6 +102,11 @@ const PENDING_SUFFIX_OPS = Object.freeze([
   'disableAdministratorAccount',
   'enableAdministratorAccount',
   'listAuditLogs',
+]);
+
+/** 仍欠账的 admin 操作：summary 已改，description 还是模板句。⛔ 只减不增。 */
+const PENDING_SUFFIX_OPS = Object.freeze([
+  'listAdminCategories',
 ]);
 
 /** 改造前的统一占位句（本片要消灭的那一句）。逐字比对，不做归一化。 */
@@ -365,11 +372,11 @@ test('A1 `/admin/**` operation 数 === 49（扫描面反空转）', () => {
   );
 });
 
-test('A2 REWRITTEN_ADMIN_OPS 恰好 21 个，且逐个在 spec 里找得到', () => {
+test('A2 REWRITTEN_ADMIN_OPS 恰好 28 个，且逐个在 spec 里找得到', () => {
   assert.equal(
     REWRITTEN_ADMIN_OPS.length,
-    21,
-    `改写名单长度应为 21，实测 ${REWRITTEN_ADMIN_OPS.length}`,
+    28,
+    `改写名单长度应为 28，实测 ${REWRITTEN_ADMIN_OPS.length}`,
   );
   assert.equal(
     new Set(REWRITTEN_ADMIN_OPS).size,
@@ -448,7 +455,7 @@ test('A5 REWRITTEN_ME_OPS 恰好 17 条，且与 `/me/**` 全部 operation 一�
   );
 });
 
-test('B 21 条改写过的 admin op：summary 不再是 operationId、含汉字、description 不再是模板句', () => {
+test('B 28 条改写过的 admin op：summary 不再是 operationId、含汉字、description 不再是模板句', () => {
   const problems = suffixProblems(entriesOf(adminById, REWRITTEN_ADMIN_OPS));
   assert.deepEqual(
     problems,
@@ -516,10 +523,10 @@ test('C②-me /me/** 17 条的 description 同样必须把状态码集合限制�
 
 test('C③ 声明了 Idempotency-Key／If-Match 的 op，description 必须写出该 header 名', () => {
   const { problems, asserted } = headerProblems(entriesOf(adminById, REWRITTEN_ADMIN_OPS));
-  // 反空转：这 21 条里确实有一批声明了幂等/版本头，否则本组断言等于没跑。
+  // 反空转：这 28 条里确实有一批声明了幂等/版本头，否则本组断言等于没跑。
   assert.ok(
     asserted > 0,
-    'C③ 分支在 21 条改写过的 op 里一次都没命中（没有任何 op 声明 Idempotency-Key／If-Match）'
+    'C③ 分支在 28 条改写过的 op 里一次都没命中（没有任何 op 声明 Idempotency-Key／If-Match）'
     + ' ⇒ 这条断言恒真。要么参数改成了别的形制，要么 `$ref` 解析坏了。',
   );
   assert.deepEqual(problems, [], `以下 ${problems.length} 处 header 与描述对不上：\n  - ${problems.join('\n  - ')}`);
@@ -543,8 +550,8 @@ test('D SUFFIX 白名单只减不增（双向）', () => {
   // PENDING_SUFFIX_OPS 里加一行」这种「既退化了又合法登记」能让 D 全绿（审查实测 8/8 绿）。
   assert.equal(
     PENDING_SUFFIX_OPS.length,
-    8,
-    `SUFFIX 白名单长度应为 8，实测 ${PENDING_SUFFIX_OPS.length}：白名单只许减不许增；`
+    1,
+    `SUFFIX 白名单长度应为 1，实测 ${PENDING_SUFFIX_OPS.length}：白名单只许减不许增；`
     + '清理某条后就把它删掉，并把这里的期望值同步下调。',
   );
   const problems = [];
