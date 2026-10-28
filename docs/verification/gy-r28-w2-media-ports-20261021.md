@@ -27,9 +27,9 @@
 ## 2. 形态
 
 - 装配点在 **`services/api/src/media/real-ports.ts`**，由 **`services/api/src/server.ts`**（进程启动点，不在 tsc 审计树内）构造后注入；`buildApp` 侧的「端口只能来自显式注入」结构断言**保持锁死**。
-  - `services/api/src/server.ts:39`：`resolveMediaRealPorts({ config, argv: process.argv.slice(2) })`
-  - `services/api/src/server.ts:40`：`if (mediaRealPorts !== null) mediaAssembly = mediaRealPortsAssemblyOptions(mediaRealPorts);`
-  - `services/api/src/server.ts:51`：`const app = buildApp({ config, pool, ...(mediaAssembly ?? {}) });`
+  - `services/api/src/server.ts:47`：`resolveMediaRealPorts({ config, argv: process.argv.slice(2) })`
+  - `services/api/src/server.ts:48-51`：`if (mediaRealPorts !== null) { mediaAssembly = mediaRealPortsAssemblyOptions(mediaRealPorts); … }`
+  - `services/api/src/server.ts:62`：`const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`（2026-10-28 · GY-R68 补合成域产物端口装配后重取：本片测量时为第 39／40／51 行，且当时只有媒体域一处 spread；本片的接线决定点与判据一字未变，新增的只是**同族**派生——合成域 `synthesisMediaWiring`，由同一个 `--approve-real-media-wiring` 驱动、在同一次判定内派生）
   - 为什么不在 `app.ts`：那里的媒体段被 `tests/unit/media-real-mode-fail-closed.test.mjs` 判死——`resolveMediaObjectStore` 只允许 `buildApp` 以 `{ executionMode }` 一种形状调 1 次；若在 `app.ts` 用 `config.objectStorage` 造真实端口会立刻判红。
 - **`--approve-real-media-wiring`**（`services/api/src/media/real-ports.ts:44`）是唯一显式决定点；选启动参数而非 env 的理由同文件 `:40-42`（env 会被容器顺手带上且长期生效；启动参数可被部署清单与进程列表审出来，且不扩张 `config.ts` 的 ambient env 面）。
 - 批准能力 `approveRealMediaWiring`（`services/api/src/media/service.ts:473`；non-defaultable 品牌 WeakSet 在 `service.ts:603` 的 `createAppMediaService` 内；两处均为合流当前 main 后的行号）**只在 `resolveMediaRealPorts` 内铸造一次**，不从 env／选项／原型链／结构化克隆派生。

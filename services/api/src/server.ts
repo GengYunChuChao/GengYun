@@ -6,6 +6,7 @@ import { buildApp } from './app.ts';
 import { ConfigError, loadConfig, wechatStubSubjectStartupFields } from './config.ts';
 import { createPool } from './db/pool.ts';
 import { MediaRealWiringError, mediaRealPortsAssemblyOptions, resolveMediaRealPorts } from './media/real-ports.ts';
+import { synthesisMediaWiringAssemblyOptions } from './tts/real-ports.ts';
 
 async function main(): Promise<void> {
   let config;
@@ -34,10 +35,20 @@ async function main(): Promise<void> {
   //   并构造 S3 兼容端口。铸造点只此一处（`approveRealMediaWiring` 的唯一调用点在
   //   `media/real-ports.ts` 的 `resolveMediaRealPorts` 内，且由本参数驱动）。
   // - 任何拒绝都是**启动失败**：不接受「半接线」上线。
+  //
+  // GY-R68 · 合成（TTS）产物端口补装配：产物端口 `synthesisMediaWiring` 只认显式注入
+  // （`tts/media.ts`：批准能力＋`s3_compatible` 端口，无默认值、不读 env），`app.ts` 只转发不铸造，
+  // 因此**必须**在这里派生——否则 `--approve-real-media-wiring` 对 TTS 完全无效、`real` 下恒 `unwired`。
+  // 派生口径与媒体域**共用同一次判定**：同一份真实端口、同一处启动参数，没有第二条开启路径；
+  // 没给参数 ⇒ `mediaRealPorts === null` ⇒ 不派生 ⇒ 仍 fail-closed（409/503 且 `retryable: false`）。
   let mediaAssembly: ReturnType<typeof mediaRealPortsAssemblyOptions> | null = null;
+  let synthesisMediaAssembly: ReturnType<typeof synthesisMediaWiringAssemblyOptions> | null = null;
   try {
     const mediaRealPorts = resolveMediaRealPorts({ config, argv: process.argv.slice(2) });
-    if (mediaRealPorts !== null) mediaAssembly = mediaRealPortsAssemblyOptions(mediaRealPorts);
+    if (mediaRealPorts !== null) {
+      mediaAssembly = mediaRealPortsAssemblyOptions(mediaRealPorts);
+      synthesisMediaAssembly = synthesisMediaWiringAssemblyOptions(mediaRealPorts);
+    }
   } catch (error) {
     if (error instanceof MediaRealWiringError) {
       console.error('启动失败：媒体域真实接线被拒绝（拒绝原因闭集见 media/real-ports.ts）。');
@@ -48,7 +59,7 @@ async function main(): Promise<void> {
     throw error;
   }
 
-  const app = buildApp({ config, pool, ...(mediaAssembly ?? {}) });
+  const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });
 
   // 管理员初始化：仅在后台账号表为空且配置了 bootstrap 凭据时创建；失败不静默。
   try {
