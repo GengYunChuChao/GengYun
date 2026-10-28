@@ -572,5 +572,29 @@
     "from": 297,
     "to": 282,
     "reason": "D01 的「证据」行写两套鉴权方案 `packages/contracts/openapi.json:17`（`userSession`）与裸锚 `:297`（`adminSession`）。base 上 `packages/contracts/openapi.json:297` 确为 `            \"adminSession\": []`；upstream #707（ae818469）从该契约删掉 540 行错误响应后全文前移，`adminSession` 首个定义落到 282，HEAD 上 `packages/contracts/openapi.json:282` = `            \"adminSession\": []`（`:297` 现在是 `              \"ETag\": {`）。按符号 `\"adminSession\": []` 复取到 282，不是差值平移。契约文件本提交未改动（HEAD 的 openapi.json 就是 upstream/main 那一份）。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 186,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 2257,
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2076` 原文是 `          ) => messagesPurgeSnapshot(ownerId, client),`（messages 清理快照的 store 回调），讲清理快照数据源，不是注销可用性门；新值 2257 原文是 `    available: config.executionMode !== 'real',`，而 `available: config.executionMode` 在 base 的 services/api/src/app.ts 里只命中这一行，2255 `    deletion: userDataDeletion,` 与 2256 `    receipts: deletionReceipts,` 与之同属注销装配对象。为何旧值错：2076 行文本与「`available: config.executionMode !== 'real'`」毫无重叠，行号只是历史抄错。目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 342,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 2257,
+    "reason": "该行（E1）正文是「真实模式下注销整域 503」，判据就是注销可用性门本身。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 是 messages 清理快照回调，与「整域 503」无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 正是真实模式下把注销门关掉的那个赋值行。旧值错、新值对，按符号重锚；目标文件本提交未改动。"
+  },
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 367,
+    "target": "services/api/src/app.ts",
+    "from": 2076,
+    "to": 2257,
+    "reason": "该行（D08 升档判据）正文直接引用该门：`available` 门不再是 `!== 'real'`。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 与 `available` 无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 就是该门表达式的落点（全文件唯一 `available: config.executionMode`）。目标文件本提交未改动。"
   }
 ]

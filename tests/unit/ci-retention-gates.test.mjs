@@ -19,7 +19,7 @@
  * 纯静态：只 `readFileSync` 读 workflow / `package.json` 三份文本。
  * ⛔ 不引入 `yaml` 依赖（按缩进逐行解析）、不联网、不 spawn 子进程、不写任何文件。
  *
- * 钉住的五条：
+ * 钉住的六条：
  *  1) `retention-gates` job 里**恰好一条**命令为 `npm run verify:purge-schedule` 的 step；
  *  2) 该 job（job 级）与那一步（step 级）都不带软失败构造（`if:` / `continue-on-error:` /
  *     行尾 `|| true` / `set +e` / `exit 0`）——它们都会让「门禁红了」仍被判绿；
@@ -33,6 +33,11 @@
  *  5) 反向控制：删掉那条 `run:`、把它写成 shell 注释、换成别的 npm script、加 `if: false`、
  *     加 `continue-on-error: true`、塞一条真库命令、给 `pull_request:` 加 `paths` 过滤 —— 七种变异
  *     都必须让对应判据红并点名。
+ *  6) 闸门自己吃的**历史**也钉住：跑单测的 `unit` job 的 `actions/checkout` 必须 `with.fetch-depth: 0`
+ *     （改成 1／删掉都必须红）。为什么它也在本文件：这是同一类「假绿通道」——`tests/unit/doc-anchor-
+ *     relocation-identity.test.mjs` 靠 `git merge-base HEAD origin/main` 取 base，`fetch-depth: 1` 时
+ *     取不到就只能 SKIP，而 **SKIP 也是 exit 0**；第一轮实测把那一行删掉后，全仓 `ci-*.test.mjs`
+ *     100 条**仍然全绿**，等于没人守。
  *
  * 刻意**不做**（不冒充能力）：不判断 `deploy/purge-schedule/**` 的判据本身是否合理
  * （那是 `tools/verify-purge-schedule.mjs` 的职责，`tests/unit/verify-purge-schedule.test.mjs` 已覆盖）；
@@ -49,6 +54,13 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 /** 主门禁工作流（本仓没有 `ci.yml`；分层 CI 落在这一份上，见其文件头注释）。 */
 const WORKFLOW_FILE = '.github/workflows/engineering-shell.yml';
 const JOB_ID = 'retention-gates';
+/**
+ * 判据 ⑥ 的作用域：**跑单测的那个 job**（本仓叫 `unit`，`name: unit-tests`）。
+ * 它跑 `npm run test:unit`，其中 `tests/unit/doc-anchor-relocation-identity.test.mjs` 要用
+ * `git merge-base HEAD origin/main` 取 base；`actions/checkout` 默认 `fetch-depth: 1` 时取不到 ⇒ 那条闸门
+ * 在 CI 上 SKIP（exit 0）＝空跑。故本 job 的 checkout 必须显式 `fetch-depth: 0`。
+ */
+const CHECKOUT_JOB_ID = 'unit';
 /** 必须原样出现的那一步；⛔ 不带任何 flag。 */
 const GATE_COMMAND = 'npm run verify:purge-schedule';
 /** 该命令背后的 `package.json` script 名与入口文件。 */
@@ -300,6 +312,77 @@ export function entryScriptProblems(packageJson) {
   return hits;
 }
 
+/**
+ * 判据 ⑥：闸门自己吃的「历史」也是判据面 —— `unit` job 的 checkout 必须带足历史。
+ *
+ * 为什么需要它（第一轮实测，不是假设）：`tests/unit/doc-anchor-relocation-identity.test.mjs`
+ * 靠 `git merge-base HEAD origin/main` 取 base；`actions/checkout` 默认 `fetch-depth: 1` 时
+ * 这个 merge-base 无解，用例只能靠「CI 自愈 fetch」或直接 SKIP —— **SKIP 也是 exit 0**，
+ * 于是这条闸门在 CI 上空转。给 `unit` job 补上 `fetch-depth: 0` 之后，把那一行删掉，
+ * 全仓 `tests/unit/ci-*.test.mjs`（100 条）**仍然全绿** —— 也就是没人守。本判据就是那枚钉子。
+ *
+ * 只认本 job 自己的 `actions/checkout` step，且只读该 step 自己的 `with:`（兄弟 step 的同名键不算）。
+ */
+export function checkoutDepthProblems(source) {
+  const job = jobBlockOf(source, CHECKOUT_JOB_ID);
+  if (!job) {
+    return [`\`${WORKFLOW_FILE}\` 里找不到 2 空格缩进的 \`${CHECKOUT_JOB_ID}:\` job —— `
+      + '跑单测的 job 不见了，`fetch-depth` 判据也就无处附着（本仓 job 键改名时必须同步改这里）'];
+  }
+  const steps = stepsOf(job);
+  const checkouts = steps.filter(step => step.lines.some(line => /^\s*(?:-\s+)?uses\s*:\s*actions\/checkout@/.test(line)));
+  if (checkouts.length === 0) {
+    return [`\`${CHECKOUT_JOB_ID}\` job（第 ${job.start + 1}–${job.end} 行）里没有 \`uses: actions/checkout@…\` 这一步`];
+  }
+  const hint = '文档锚点位移闸门需要真 base（`git merge-base HEAD origin/main`）；'
+    + '`fetch-depth: 1` 会让它在 CI 上走 SKIP ⇒ 假绿';
+  const hits = [];
+  for (const step of checkouts) {
+    const value = withValueOf(step.lines, 'fetch-depth');
+    if (value === null) {
+      hits.push(`第 ${step.line} 行的 checkout 没有 \`with.fetch-depth\`（默认就是 1）：${hint}`);
+    } else if (!/^0$/.test(value)) {
+      hits.push(`第 ${step.line} 行的 checkout 是 \`fetch-depth: ${value}\`，不是 \`0\`：${hint}`);
+    }
+  }
+  return hits;
+}
+
+/** 去掉 YAML 标量两侧的引号（`0` / `'0'` / `"0"` 一律当同一个值；YAML 解析后本来也都是 0）。 */
+function unquoteYamlScalar(value) {
+  return String(value).replace(/^['"]|['"]$/g, '').trim();
+}
+
+/**
+ * 读一个 step 的 `with:` 映射里某个键的值（未出现返回 null）。
+ * 两种写法都认：块（`with:` 换行 + 缩进子键）与行内流式映射（`with: { a: 1, b: 2 }`）。
+ * 只在该 step 自己的行区间里找 —— 兄弟 step 的 `with:` 不许被算进来。
+ */
+function withValueOf(stepLines, key) {
+  const keyPattern = new RegExp(`^\\s*${key}\\s*:\\s*(.*)$`);
+  for (let index = 0; index < stepLines.length; index += 1) {
+    const line = stepLines[index];
+    const inline = /^\s*(?:-\s+)?with\s*:\s*\{(.*)\}\s*$/.exec(line);
+    if (inline) {
+      for (const pair of inline[1].split(',')) {
+        const match = new RegExp(`^\\s*${key}\\s*:\\s*(.+?)\\s*$`).exec(pair);
+        if (match) return unquoteYamlScalar(match[1]);
+      }
+      continue;
+    }
+    if (!/^\s*(?:-\s+)?with\s*:\s*$/.test(line)) continue;
+    const withIndent = /^\s*/.exec(line)[0].length;
+    for (let cursor = index + 1; cursor < stepLines.length; cursor += 1) {
+      const child = stepLines[cursor];
+      if (child.trim() === '' || /^\s*#/.test(child)) continue;
+      if (/^\s*/.exec(child)[0].length <= withIndent) break;
+      const match = keyPattern.exec(child);
+      if (match) return unquoteYamlScalar(match[1]);
+    }
+  }
+  return null;
+}
+
 /** 六种内存变异的公共入口：只改文本，不写盘。 */
 function mutate(transform) {
   const original = readRepoText(WORKFLOW_FILE);
@@ -423,4 +506,67 @@ test('⑤ 反向控制：删命令／写成注释／换脚本／加 `if:`／加 
   const filteredProblems = pullRequestProblems(filtered);
   assert.ok(filteredProblems.length >= 1, '给 `pull_request:` 加 paths 过滤也必须红（现在是绿的）');
   assert.ok(filteredProblems.some(problem => problem.includes('paths')), '失败信息必须点名被加的那个过滤键');
+});
+
+test('⑥ `unit` job 的 checkout 带 `fetch-depth: 0`（否则文档锚点位移闸门在 CI 上 SKIP ⇒ 假绿）', () => {
+  const source = readRepoText(WORKFLOW_FILE);
+  const problems = checkoutDepthProblems(source);
+  assert.deepEqual(problems, [], [
+    `\`${CHECKOUT_JOB_ID}\` job 的 checkout 没给足历史（${problems.length} 处）：`,
+    ...problems.map(problem => `  · ${problem}`),
+    '改法：在 `.github/workflows/engineering-shell.yml` 的 `unit` job 里，给 `actions/checkout` 那一步写：',
+    '        with:',
+    '          fetch-depth: 0',
+    '⛔ 不要改成 `1`／删掉：那条闸门会拿不到 base，退化成 SKIP（exit 0）＝空跑。',
+  ].join('\n'));
+
+  // 反空转：job 与 checkout step 必须真解析到，否则「无问题」只是没扫到东西。
+  const job = jobBlockOf(source, CHECKOUT_JOB_ID);
+  assert.ok(job, `\`${WORKFLOW_FILE}\` 里找不到 \`${CHECKOUT_JOB_ID}:\` job`);
+  const steps = stepsOf(job);
+  assert.ok(steps.length >= 3, `\`${CHECKOUT_JOB_ID}\` job 只解析出 ${steps.length} 个 step，缩进口径或 job 结构可能已变`);
+  const checkout = steps.find(step => step.lines.some(line => /uses\s*:\s*actions\/checkout@/.test(line)));
+  assert.ok(checkout, `\`${CHECKOUT_JOB_ID}\` job 里解析不出 \`actions/checkout\` step`);
+  assert.equal(withValueOf(checkout.lines, 'fetch-depth'), '0', 'checkout step 自己的 `with.fetch-depth` 必须读成 0');
+
+  // 反向控制：改成 1／整行删掉／换成行内 `with: {…}` 三种改法，前两种必须红、行内写法必须照样认。
+  const shallow = mutate(text => text.replace(/^( *)(fetch-depth: 0)$/m, '$1fetch-depth: 1'));
+  const shallowProblems = checkoutDepthProblems(shallow);
+  assert.equal(shallowProblems.length, 1, `把 \`fetch-depth: 0\` 改成 1 必须正好报一处：${shallowProblems.join(' / ')}`);
+  assert.match(shallowProblems[0], /fetch-depth: 1/, '失败信息必须点名被改成 1 的那个值');
+  assert.match(shallowProblems[0], /假绿/, '失败信息必须说清后果（SKIP ⇒ 假绿）');
+  assert.match(shallowProblems[0], /git merge-base HEAD origin\/main/, '失败信息必须点出闸门的取 base 方式');
+
+  const dropped = mutate(text => text.split('\n').filter(line => line.trim() !== 'fetch-depth: 0').join('\n'));
+  const droppedProblems = checkoutDepthProblems(dropped);
+  assert.equal(droppedProblems.length, 1, `整行删掉 \`fetch-depth: 0\` 必须正好报一处：${droppedProblems.join(' / ')}`);
+  assert.match(droppedProblems[0], /没有 `with\.fetch-depth`/, '缺键时的文案必须点明「没有这个键（默认 1）」');
+
+  const inline = mutate(text => text.replace(
+    /^( *)with:\n( *persist-credentials: false\n)(?: *#.*\n)*( *fetch-depth: 0\n)/m,
+    '$1with: { persist-credentials: false, fetch-depth: 0 }\n',
+  ));
+  assert.deepEqual(checkoutDepthProblems(inline), [], '行内流式 `with: { … }` 写法也必须认出 `fetch-depth: 0`');
+
+  // 反向控制 2：兄弟 job／兄弟 step 上的 `fetch-depth: 0` 不许蒙过本判据（用一份最小合成 workflow 定范围）。
+  const scoped = [
+    'jobs:',
+    '  docs:',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '        with:',
+    '          fetch-depth: 0',
+    '  unit:',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '        with:',
+    '          persist-credentials: false',
+    '      - uses: actions/setup-node@v4',
+    '        with:',
+    '          cache: npm',
+    '          fetch-depth: 0',
+  ].join('\n');
+  const scopedProblems = checkoutDepthProblems(scoped);
+  assert.equal(scopedProblems.length, 1, `只有别的 job／别的 step 带 fetch-depth 时必须仍红：${scopedProblems.join(' / ')}`);
+  assert.match(scopedProblems[0], /第 9 行/, '必须点名 `unit` job 自己那一步（第 9 行）的 checkout');
 });
