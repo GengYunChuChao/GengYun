@@ -449,6 +449,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
   // 合成模式固定测试身份（GY-R68）：判据集中在 `readStubSubject`（**只在非 real 且值非空**时非 null；
   // real 恒 null、未设/空白恒 null ⇒ 默认行为逐字不变）。⛔ 值只从服务端进程环境读取。
   const wechatStubSubject = readStubSubject(env, executionMode, issues);
+  // GY-R68 返修（可观测性）：原始环境值存在但**只含空白** ⇒ 归一化成「未设」之后仍留痕，供启动日志把
+  // 「设了但被忽略」与「未设」区分开。⛔ 不改变身份派生：`wechatStubSubject` 仍然恒为 `null`。
+  const wechatStubSubjectIgnored = wechatStubSubject === null && hasWhitespaceOnlyStubSubject(env, executionMode);
   const sessionSigningKey = trimmed(env, 'SESSION_SIGNING_KEY') ?? null;
   const adminBootstrap = asBootstrap(env, issues);
   // 访问网关原点：可选。未配置 ⇒ null（媒体域用占位/不可解析默认域，句柄由部署期网关解析）。
@@ -549,6 +552,8 @@ export function loadConfig(env: Env = process.env): AppConfig {
     wechatAppId,
     wechatAppSecret,
     wechatStubSubject,
+    // 原始值「设了但只含空白」的留痕（只供启动日志读数；不参与身份派生）
+    wechatStubSubjectIgnored,
     sessionSigningKey,
     adminBootstrap,
     mediaAccessGrantOrigin,
@@ -1185,6 +1190,16 @@ export interface AppConfig {
    * - 未设／空白 ⇒ `null` ⇒ 合成行为与接线前**逐字一致**（仍按 code 派生），默认不被改变。
    */
   wechatStubSubject?: string | null;
+  /**
+   * `WECHAT_STUB_SUBJECT` **设了、但只含空白字符**（半角/全角/制表等）⇒ 被 `trimmed()` 归一化成
+   * 「未设」时为 `true`；未设、有值、real 模式都恒为 `false`。
+   *
+   * 用途**只有一个**：让启动日志把「被忽略」与「未设」区分开（`wechat_stub_subject_ignored`）。
+   * ⛔ 它不参与身份派生，也不改变 real 边界 —— 派生仍只看 `wechatStubSubject`。
+   * 在 `loadConfig` 里算好随配置交出去，是为了让**生产入口 `server.ts` 不读 ambient env**
+   * （入口读 `process.env` 的后门由 `tests/unit/tts-synthesis-media-wiring.test.mjs` 判据 ④ 钉住）。
+   */
+  wechatStubSubjectIgnored?: boolean;
 }
 
 // ===========================================================================
@@ -1201,8 +1216,9 @@ export interface AppConfig {
 //   · `wechat_stub_subject_ignored: true` ⇒ **单独出现**时表示「设了、但只含空白 ⇒ 被忽略」，
 //                                           与「未设」可区分（这正是审查要的可观测差异）。
 //
-// 判据不复写第二份：`fixed` 直接调用 `readStubSubject`（`loadConfig` 用的同一个函数），因此不会
-// 与真实行为漂移。本函数**不改变**身份派生、real 边界与 `INVALID_VALUE` 规则。
+// 判据不复写第二份：`fixed` 取的是 `config.wechatStubSubject`（`loadConfig` 的产物），空白判据取的是
+// `config.wechatStubSubjectIgnored`（同样在 `loadConfig` 里算好），因此不会与真实行为漂移、也不需要在
+// 入口层再读一次环境。本函数**不改变**身份派生、real 边界与 `INVALID_VALUE` 规则。
 // ===========================================================================
 
 /** 启动日志里 `WECHAT_STUB_SUBJECT` 的可观测读数（⛔ 只有布尔，没有值）。 */
@@ -1214,25 +1230,35 @@ export interface WechatStubSubjectStartupFields {
 }
 
 /**
+ * 「原始值存在、但去掉空白后为空」判定（供 `loadConfig` 计算 `wechatStubSubjectIgnored`）。
+ *
+ * 与 `trimmed()` 同口径（`String.prototype.trim()`，含全角空格 `U+3000`）：非空串且 trim 后为空
+ * ⇒ 会被归一化成「未设」。real 模式不算「被忽略」（该变量在 real 下本就不生效，不是设错）。
+ */
+function hasWhitespaceOnlyStubSubject(env: Env, executionMode: AppConfig['executionMode']): boolean {
+  if (executionMode === 'real') return false;
+  const raw = env['WECHAT_STUB_SUBJECT'];
+  return typeof raw === 'string' && raw.length > 0 && raw.trim() === '';
+}
+
+/**
  * 计算启动日志要追加的字段。见上方口径。
  *
- * `env` 与 `executionMode` 必须来自**同一次**配置加载（`server.ts` 传 `process.env` 与
- * `config.executionMode`），否则读数可能与真实生效值不一致。
+ * ⛔ **入参只有已解析的 `config`**：生产入口 `server.ts` 不许读 ambient env（`process.env` 出现次数必须为 0，
+ * 由 `tests/unit/tts-synthesis-media-wiring.test.mjs` 判据 ④ 钉住）。空白判据已在 `loadConfig` 里算好
+ * （`config.wechatStubSubjectIgnored`），本函数不再碰 env。
  */
 export function wechatStubSubjectStartupFields(
-  env: Env,
-  executionMode: AppConfig['executionMode'],
+  config: Pick<AppConfig, 'executionMode' | 'wechatStubSubject' | 'wechatStubSubjectIgnored'>,
 ): WechatStubSubjectStartupFields {
-  // 与 `loadConfig` 同源：real 恒 null；未设/空白恒 null；超长/控制字符恒 null（此时启动已失败）。
-  const fixed = readStubSubject(env, executionMode, []) !== null;
+  // 与 `loadConfig` 同源：`wechatStubSubject` 只在「非 real 且非空」时非 null。
+  const fixed = (config.wechatStubSubject ?? null) !== null;
   if (fixed) return { wechat_stub_subject_fixed: true };
   // real 模式：该变量本就不生效（不是「设错了」）⇒ 只报 false，不额外标「被忽略」，
   // 免得运维被引导去改一个在 real 下没有意义的变量。
-  if (executionMode === 'real') return { wechat_stub_subject_fixed: false };
+  if (config.executionMode === 'real') return { wechat_stub_subject_fixed: false };
   // 「设了但只含空白」≠「未设」：`trimmed()` 会把前者归一化成未设，必须单独标出来。
-  const raw = env['WECHAT_STUB_SUBJECT'];
-  const whitespaceOnly = typeof raw === 'string' && raw.length > 0 && raw.trim() === '';
-  return whitespaceOnly
+  return config.wechatStubSubjectIgnored === true
     ? { wechat_stub_subject_fixed: false, wechat_stub_subject_ignored: true }
     : { wechat_stub_subject_fixed: false };
 }
