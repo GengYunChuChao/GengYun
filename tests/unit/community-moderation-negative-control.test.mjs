@@ -63,6 +63,12 @@ import { createPublicPostingConsent } from './community-posting-consent-fixtures
 const API = '/api/v1';
 const START = Date.UTC(2026, 9, 28, 4, 0, 0);
 
+// GY-R68 追补：本文件证明的是「**零**审核旋钮」的默认装配。演示审核端口（`MODERATION_DEMO_PORT=pass`，
+// 见 `tests/unit/community-moderation-demo-port.test.mjs`）是**显式环境开关**：若某个 shell 里正好开着它，
+// 本文件的 422 读数就会被环境而不是被代码改变。这里把它按回「未设」——**不加宽也不放宽任何判据**，
+// 只是把「零旋钮」这个前提钉死（三次读数的断言一条没动）。
+delete process.env.MODERATION_DEMO_PORT;
+
 /** 写头：`Idempotency-Key`（required，8..128）。 */
 function write(key) {
   return { 'idempotency-key': key };
