@@ -12,6 +12,13 @@
  *   4 反空转下界（>=）       5 算术自洽              6 一次性读数三件套（sha/host/ISO 且 sha 是 HEAD 祖先）
  *   7 不许写「CI 已绿」      8 真空项显式化（未跑：原因）
  *
+ * 判据 2 内部再按**读数分档**判（分档表在 `tools/lib/g-drill-readings.mjs`）：
+ *   · 稳定型（workflow / job / 演练命令数 / 页面数）——**精确相等**，两种口径都一样；
+ *   · 生长型（测试文件数、五条 glob 的分文件数、脚本数、真库臂数）——**下界语义**：
+ *     `--tolerant-growth`（默认）下允许「文档值 < 重算值」（main 前进的必然结果）并逐行打印「滞后 N」；
+ *     `--strict-growth` 要求精确相等；`文档值 > 重算值`（冒进）在两种口径下都红——防注水的主牙齿。
+ *     `--update` 一律写**精确**重算值（新生成的块不带滞后）。
+ *
  * ⛔ 期望值**不得**来自任何已提交的 JSON 或文档自身：可复算类每次从树重算，一次性类只校形状。
  */
 import { spawnSync } from 'node:child_process';
@@ -32,6 +39,7 @@ import {
   computeTreeReadings,
   coverageProblems,
   diffDrillBlock,
+  growthLag,
   makeRow,
   oneShotProblems,
   parseDrillBlock,
@@ -51,11 +59,18 @@ const USAGE = [
   '用法：node tools/verify-g-drill-readings.mjs [--check|--update|--live] [--root <树>] [--doc <路径>] [--readings <路径>]',
   '',
   '  --check（默认） 重算并整块逐行比对（CRLF→LF、去行尾空白、去尾部空行之后）；不一致 exit 1',
-  '  --update        用 <readings.json> 重写标记块内部（块外不动）',
+  '  --update        用 <readings.json> 重写标记块内部（块外不动）；块里写**精确**重算值',
   '  --live          只重算「可复算类」（静态闸门 11 条）并对照块里的 exit / 读数',
   '  --root <目录>    被检查的树（夹具树做负例时用；默认本脚本所在仓库根）',
   '  --doc <路径>     证据页路径（默认 <root>/' + DOC_PATH + '）',
   '  --readings <路径> 演练读数 JSON（默认 $env:TEMP\\gy-g-drill\\<sha>\\readings.json）',
+  '',
+  '生长型读数的两种口径（`--check` 用；分档见 tools/lib/g-drill-readings.mjs 的 STABLE_READINGS / GROWTH_READINGS）：',
+  '  --tolerant-growth（默认） 生长型读数（测试文件数 / 五条 glob 的分文件数 / 脚本数 / 真库臂数）按**下界**判：',
+  '                            文档值 <= 重算值即成立；滞后**逐行打印**「滞后 N」，不静默；',
+  '                            稳定型读数（workflow / job / 演练命令数 / 页面数）仍要求**精确相等**。',
+  '                            两种口径下，「文档值 > 重算值」（冒进）都红——这是防注水的主牙齿。',
+  '  --strict-growth           只允许精确：生长型读数也必须与重算值逐字相等。',
   '',
   '退出码：0 = 全部判据通过（`--live` 下还要求没有任何静态闸门被跳过）；',
   '        1 = 至少一条判据红（输出会点名是哪条、哪一行）；',
@@ -76,12 +91,14 @@ export const CRITERIA = Object.freeze({
 
 /** 解析参数。 */
 export function parseArgs(argv) {
-  const options = { mode: 'check', root: TOOL_ROOT, doc: null, readings: null, help: false };
+  const options = { mode: 'check', root: TOOL_ROOT, doc: null, readings: null, tolerantGrowth: true, help: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--check') options.mode = 'check';
     else if (arg === '--update') options.mode = 'update';
     else if (arg === '--live') options.mode = 'live';
+    else if (arg === '--tolerant-growth') options.tolerantGrowth = true;
+    else if (arg === '--strict-growth') options.tolerantGrowth = false;
     else if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--root' || arg === '--doc' || arg === '--readings') {
       const value = argv[i + 1];
@@ -125,10 +142,13 @@ function tag(criterion, problems) {
 }
 
 /**
- * **全部八条判据**跑一遍，返回 `{ ok, problems, tree, doc, expected }`。
+ * **全部八条判据**跑一遍，返回 `{ ok, problems, tree, doc, expected, growth }`。
  * 纯函数（只读树与文档；`isAncestor` 由调用方注入）⇒ 单测可以直接喂夹具树 + 夹具文档。
+ *
+ * `tolerantGrowth`（默认 `true` = `--tolerant-growth`）：生长型读数按**下界**判、滞后进 `growth`
+ * 由 CLI 逐行打印；`false`（`--strict-growth`）要求精确相等。稳定型读数两种模式都要求精确相等。
  */
-export function checkDocument({ root, docText, isAncestor = () => null, readings = null }) {
+export function checkDocument({ root, docText, isAncestor = () => null, readings = null, tolerantGrowth = true }) {
   const tree = computeTreeReadings(root);
   const sources = collectSources(root);
   const problems = [];
@@ -147,17 +167,18 @@ export function checkDocument({ root, docText, isAncestor = () => null, readings
   const parsed = parseDrillBlock(docText);
   problems.push(...tag(1, parsed.problems));
   if (parsed.problems.length > 0) {
-    return { ok: false, problems, tree, doc: parsed, expected: null };
+    return { ok: false, problems, tree, doc: parsed, expected: null, growth: [] };
   }
 
   // 判据 2：整块逐行比对（规范化之后：CRLF→LF、去行尾空白、去尾部空行）。期望块由「树 + 文档自己的一次性行」渲染——
   // 一次性读数的**具体数字**不能重算（它们本来就不可复算），所以那几行的值从文档取，
   // 格式与顺序由渲染器说了算：块内任何手改（多空格、换行、删行、改表头）都会在这里被抓。
   const expected = renderDrillBlock({ tree, rows: parsed.rows });
-  const difference = diffDrillBlock(parsed.block, expected, parsed.startLine);
+  const difference = diffDrillBlock(parsed.block, expected, parsed.startLine, { tolerantGrowth });
   if (difference !== null) problems.push({ criterion: 2, name: CRITERIA[2], message: renderDifference(difference) });
   // 再补一条「单键点名」：整块比对只报第一处，单键比对把每个漂掉的读数都点出来。
-  problems.push(...tag(2, readingsProblems(parsed.readings, tree)));
+  problems.push(...tag(2, readingsProblems(parsed.readings, tree, { tolerantGrowth })));
+  const growth = growthLag(parsed.readings, tree);
 
   // 判据 3：出处双向。
   for (const entry of DRILL_PLAN) {
@@ -188,7 +209,7 @@ export function checkDocument({ root, docText, isAncestor = () => null, readings
   // 判据 8：真空项显式化。
   problems.push(...tag(8, vacuousProblems(parsed.notes)));
 
-  return { ok: problems.length === 0, problems, tree, doc: parsed, expected };
+  return { ok: problems.length === 0, problems, tree, doc: parsed, expected, growth };
 }
 
 /** 用 `readings.json` 造一次性行（顺序按演练计划；读数文件里少一条就报错，绝不写半张表）。 */
@@ -345,6 +366,7 @@ export function main(argv = process.argv.slice(2), { log = console.log, error = 
   log(`G 片演练闸门 · --${options.mode}`);
   log(`  树：${root}`);
   log(`  文档：${docPath}`);
+  log(`  生长型读数口径：${options.tolerantGrowth ? '--tolerant-growth（下界语义，滞后逐行打印）' : '--strict-growth（要求精确相等）'}`);
 
   if (options.mode === 'update') {
     const readingsPath = options.readings ?? join(tmpdir(), 'gy-g-drill', readSha(root), 'readings.json');
@@ -392,9 +414,25 @@ export function main(argv = process.argv.slice(2), { log = console.log, error = 
     return 1;
   }
 
-  const result = checkDocument({ root, docText, isAncestor: makeAncestorCheck(root), readings: null });
+  const result = checkDocument({
+    root,
+    docText,
+    isAncestor: makeAncestorCheck(root),
+    readings: null,
+    tolerantGrowth: options.tolerantGrowth,
+  });
+  // 生长型读数的滞后**必须可见**（不许静默）：`--tolerant-growth` 下逐行打印「滞后 N」。
+  // ⛔ 这些滞后数只进 stdout，**不进文档块**——块里保留的是「当时实测值」，一旦为了让 CI 变绿去改块，
+  //    就又变成「手改读数/动锚点」了。
+  for (const item of result.growth) {
+    log(`  ↳ 生长型读数滞后：${item.key} 文档 ${item.doc} → 重算 ${item.expected}（滞后 ${item.lag}）`);
+  }
   if (result.ok) {
-    log(`  ✓ 八条判据全过：workflows ${result.tree.workflows} / jobs ${result.tree.workflowJobs} / 演练 ${DRILL_PLAN.length} 条 / 测试文件 ${result.tree.allTestFiles}（glob 合计 ${result.tree.totalTestFiles}）`);
+    const mode = options.tolerantGrowth ? '--tolerant-growth' : '--strict-growth';
+    const tail = options.tolerantGrowth && result.growth.length > 0
+      ? `；生长型读数按**下界**判（${mode}），其中 ${result.growth.length} 条滞后已逐行打印`
+      : `；读数与树逐字相等（${mode}）`;
+    log(`  ✓ 八条判据全过：workflows ${result.tree.workflows} / jobs ${result.tree.workflowJobs} / 演练 ${DRILL_PLAN.length} 条 / 测试文件 ${result.tree.allTestFiles}（glob 合计 ${result.tree.totalTestFiles}）${tail}`);
     return 0;
   }
   error('');

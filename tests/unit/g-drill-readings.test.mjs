@@ -29,15 +29,18 @@ import { fileURLToPath } from 'node:url';
 import {
   DEFAULT_FLOORS,
   DRILL_PLAN,
+  GROWTH_READINGS,
   PG_ARM_NOT_RUN_REASON,
   REAL_PG_GATE_TEST,
   SCOPE_NOTES,
+  STABLE_READINGS,
   UNIT_GLOB_DIRS,
   arithmeticProblems,
   ciGreenProblems,
   compareDrillBlock,
   computeTreeReadings,
   collectSources,
+  growthLag,
   makeRow,
   markerLines,
   normalizeDrillBlock,
@@ -47,6 +50,8 @@ import {
   parseRows,
   parseTapSummary,
   pathTokens,
+  readingKind,
+  readingsOf,
   realPgArms,
   renderDrillBlock,
   renderReadout,
@@ -786,15 +791,156 @@ describe('--update 只换块内，块外一个字节都不动', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('生长型读数：下界语义（--tolerant-growth）、防注水与严格口径', () => {
+  /** 把块里某几个生长型读数的文档值各减 `drop`（模拟「main 又加了测试文件，页面还没刷新」）。 */
+  function dropGrowthValues(docText, drop, keys = ['allTestFiles', 'totalTestFiles', 'unitGlobUnion', 'globFiles.unit']) {
+    let next = docText;
+    for (const key of keys) {
+      const pattern = new RegExp(`\\| ${key.replace(/\./g, '\\.')} \\| (\\d+) \\|`);
+      const hit = pattern.exec(next);
+      assert.ok(hit !== null, `夹具文档里找不到 \`${key}\` 那一行`);
+      next = next.replace(hit[0], `| ${key} | ${Number(hit[1]) - drop} |`);
+    }
+    return next;
+  }
+
+  /** 把块里某个读数的文档值加 `up`（模拟「页面比树里真有的还多」= 注水）。 */
+  function bumpReading(docText, key, up = 1) {
+    const pattern = new RegExp(`\\| ${key.replace(/\./g, '\\.')} \\| (\\d+) \\|`);
+    const hit = pattern.exec(docText);
+    assert.ok(hit !== null, `夹具文档里找不到 \`${key}\` 那一行`);
+    return docText.replace(hit[0], `| ${key} | ${Number(hit[1]) + up} |`);
+  }
+
+  it('分档：稳定型恰为四个，其余全部登记为生长型（新增读数必须分档，不许「未分档」）', () => {
+    assert.deepEqual(
+      [...STABLE_READINGS].sort(),
+      ['drillCommands', 'verificationDocs', 'workflowJobs', 'workflows'].sort(),
+      '稳定型就是「workflow / job / 演练命令数 / 页面数」这四个，多一个少一个都要先说清理由',
+    );
+    const keys = readingsOf(fixture.tree).map((row) => row.key);
+    assert.ok(keys.length >= 15, `读数只有 ${keys.length} 条？`);
+    for (const key of keys) {
+      assert.notEqual(readingKind(key), 'unclassified', `读数 \`${key}\` 没有分档 ⇒ 判据 2 会红`);
+    }
+    for (const key of GROWTH_READINGS) assert.equal(readingKind(key), 'growth', `${key} 应当是生长型`);
+    // 生长型里**不许**混进稳定型：误把 `workflows` 当下界，这条立刻红。
+    for (const key of STABLE_READINGS) {
+      assert.equal(GROWTH_READINGS.includes(key), false, `\`${key}\` 是稳定型，不许当生长型/下界`);
+    }
+    for (const key of ['allTestFiles', 'totalTestFiles', 'unitGlobUnion', 'globFiles.unit']) {
+      assert.ok(GROWTH_READINGS.includes(key), `\`${key}\` 必须登记为生长型`);
+    }
+  });
+
+  it('滞后 4 条：--tolerant-growth 绿且逐条给出滞后数；--strict-growth 红并点名', () => {
+    const lagged = dropGrowthValues(fixture.docText, 2);
+    const tolerant = checkDocument({ root: fixture.root, docText: lagged, isAncestor: () => true });
+    assert.deepEqual(
+      tolerant.problems.map((item) => `[判据 ${item.criterion}] ${item.message}`),
+      [],
+      '生长型读数滞后 2 不该判红（那是 main 前进的正常后果）',
+    );
+    assert.equal(tolerant.ok, true);
+    assert.deepEqual(
+      tolerant.growth.map((item) => `${item.key} ${item.doc}->${item.expected}(滞后 ${item.lag})`),
+      readingsOf(fixture.tree)
+        .filter((row) => ['allTestFiles', 'totalTestFiles', 'unitGlobUnion', 'globFiles.unit'].includes(row.key))
+        .map((row) => `${row.key} ${row.value - 2}->${row.value}(滞后 2)`),
+      '滞后的键、文档值、重算值、滞后数都必须被逐条算出（滞后数要能打印，不许静默）',
+    );
+    assert.equal(tolerant.problems.filter((item) => item.criterion === 2).length, 0);
+
+    const strict = checkDocument({ root: fixture.root, docText: lagged, isAncestor: () => true, tolerantGrowth: false });
+    assert.equal(strict.ok, false, '--strict-growth 下滞后必须红');
+    const messages = strict.problems.map((item) => item.message);
+    assert.ok(
+      messages.some((message) => message.startsWith('allTestFiles：文档写 ') && message.includes('--strict-growth')),
+      `--strict-growth 必须点名 allTestFiles 并说明口径，实际：\n${messages.join('\n')}`,
+    );
+    assert.equal(
+      messages.filter((message) => message.startsWith('第一处差异：')).length,
+      1,
+      '--strict-growth 下整块比对也要报出第一处差异（不许只看单键）',
+    );
+  });
+
+  it('防注水：文档值 > 重算值 ⇒ 两种口径都红并点名（主牙齿不许松）', () => {
+    const base = fixture.tree.allTestFiles;
+    const inflated = bumpReading(fixture.docText, 'allTestFiles', 1);
+    for (const tolerantGrowth of [true, false]) {
+      const result = checkDocument({ root: fixture.root, docText: inflated, isAncestor: () => true, tolerantGrowth });
+      assert.equal(result.ok, false, `tolerantGrowth=${tolerantGrowth} 下冒进必须红`);
+      assert.ok(
+        result.problems.map((item) => item.message).includes(`allTestFiles：文档写 ${base + 1}，重算 ${base}`),
+        `没有点名 allTestFiles 冒进：\n${result.problems.map((item) => item.message).join('\n')}`,
+      );
+      assert.deepEqual(result.growth, [], '冒进不是「滞后」，不许被 growthLag 收进去');
+    }
+  });
+
+  it('稳定型读数滞后/冒进在两种口径下都红（误把稳定型当下界 ⇒ 这条必红）', () => {
+    const shrunk = mutated(fixture.docText, '| workflows | 15 |', '| workflows | 14 |');
+    for (const tolerantGrowth of [true, false]) {
+      const result = checkDocument({ root: fixture.root, docText: shrunk, isAncestor: () => true, tolerantGrowth });
+      assert.equal(result.ok, false, `tolerantGrowth=${tolerantGrowth} 下 workflows 少 1 必须红`);
+      assert.ok(
+        result.problems.map((item) => item.message).includes('workflows：文档写 14，重算 15'),
+        result.problems.map((item) => item.message).join('\n'),
+      );
+      assert.ok(result.problems.some((item) => item.message.startsWith('第一处差异：')), '整块比对也要红');
+      assert.deepEqual(result.growth, [], '稳定型不进 growthLag（它不是「可滞后的生长型」）');
+    }
+  });
+
+  it('CLI 可观测性：--tolerant-growth 逐行打印「滞后 N」且 exit 0；--strict-growth exit 1', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gy-g-drill-doc-'));
+    const docPath = join(dir, 'drill.md');
+    try {
+      writeFileSync(docPath, dropGrowthValues(fixture.docText, 2), 'utf8');
+      const run = (extra) => spawnSync(
+        process.execPath,
+        ['tools/verify-g-drill-readings.mjs', '--check', '--root', fixture.root, '--doc', docPath, ...extra],
+        { cwd: REPO_ROOT, encoding: 'utf8', windowsHide: true },
+      );
+      const tolerant = run([]);
+      assert.equal(tolerant.status, 0, `--tolerant-growth 应当 exit 0：\n${tolerant.stdout}\n${tolerant.stderr}`);
+      const lagLines = String(tolerant.stdout).split('\n').filter((line) => line.includes('↳'));
+      assert.equal(lagLines.length, 4, `应当逐行打印 4 条滞后（不许静默）：\n${tolerant.stdout}`);
+      for (const line of lagLines) assert.match(line, /（滞后 2）$/, line);
+      assert.match(String(tolerant.stdout), /八条判据全过/);
+
+      const strict = run(['--strict-growth']);
+      assert.equal(strict.status, 1, `--strict-growth 应当 exit 1：\n${strict.stdout}`);
+      assert.match(String(strict.stderr), /allTestFiles：文档写 \d+，重算 \d+ ⇒ --strict-growth 要求精确相等/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 describe('真仓自检（只读，不写盘）', () => {
-  it('`node tools/verify-g-drill-readings.mjs --check` 在真仓上 exit 0', () => {
-    const result = spawnSync(process.execPath, ['tools/verify-g-drill-readings.mjs', '--check'], {
-      cwd: REPO_ROOT,
-      encoding: 'utf8',
-      windowsHide: true,
-    });
+  const runCheck = (extra) => spawnSync(process.execPath, ['tools/verify-g-drill-readings.mjs', '--check', ...extra], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+
+  it('`node tools/verify-g-drill-readings.mjs --check`（默认 --tolerant-growth）在真仓上 exit 0', () => {
+    const result = runCheck([]);
     assert.equal(result.status, 0, `--check 在真仓上红了：\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
     assert.match(String(result.stdout), /八条判据全过/);
+    assert.match(String(result.stdout), /--tolerant-growth/);
+    // 真仓是「页与树同一棵树」⇒ 不该有任何滞后行（有滞后就说明块该刷新了，只是不判红而已）。
+    assert.equal(String(result.stdout).split('\n').filter((line) => line.includes('↳')).length, 0, String(result.stdout));
+  });
+
+  it('真仓在 `--strict-growth` 下也精确相等（exit 0）：闸门没有靠宽容口径变绿', () => {
+    const result = runCheck(['--strict-growth']);
+    assert.equal(result.status, 0, `--strict-growth 在真仓上红了：\n${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+    assert.match(String(result.stdout), /八条判据全过/);
+    assert.match(String(result.stdout), /读数与树逐字相等/);
   });
 
   it('真仓的演练计划里每条命令都有出处，且计划本身覆盖 21 条', () => {

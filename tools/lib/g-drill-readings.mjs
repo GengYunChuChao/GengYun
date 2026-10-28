@@ -17,6 +17,13 @@
  *    （`tests == pass + fail + skipped + todo`、sha 是 40 位 hex 且是 HEAD 的祖先、主机与 ISO 时刻非空），
  *    不假装能复算——日志留在 `$env:TEMP`、不入库，仓内没有第二份权威副本可比。
  *
+ * ## 可复算类内部还要**再分两档**（`STABLE_READINGS` / `GROWTH_READINGS`）
+ *
+ * 「可复算」不等于「能让主基线随便前进」。稳定型（workflow / job / 演练命令数 / 页面数）必须精确相等；
+ * 生长型（测试文件数、五条 glob 的分文件数、脚本数、真库臂条数……）**main 每加一个测试文件就会变**，
+ * 证据页一旦提交就必然滞后 ⇒ 用**下界语义**（文档值 <= 重算值），滞后由 `--tolerant-growth` 逐行打印；
+ * 但 `文档值 > 重算值` 照样红（防注水）。逐档理由见 `STABLE_READINGS` 上方的长注释。
+ *
  * ## 标记块
  *
  * `<!-- G-DRILL:BEGIN -->` … `<!-- G-DRILL:END -->` 之间**整块**由 `renderDrillBlock()` 生成：
@@ -539,8 +546,68 @@ export function computeTreeReadings(root) {
 }
 
 /**
+ * 读数**分档**：判据 2 的两套语义在这里显式建模（⛔ 别把这套判断散落到各个比对函数里）。
+ *
+ * 为什么要分：证据页的读数全部「从树现场重算」，但两类读数的**增长来源**完全不同。
+ *
+ *   · **稳定型**（`workflows` / `workflowJobs` / `drillCommands` / `verificationDocs`）：
+ *     由本片自己决定——workflow 与 job 是手写 YAML 的产物、`drillCommands` 是 `DRILL_PLAN` 的条数、
+ *     页数是受审的 `docs/verification/*.md` 份数。主基线（main）的日常提交不会让它们变，
+ *     所以**必须精确相等**：差一个就说明有人手改了读数（或闸门自己漂了）。
+ *
+ *   · **生长型**（`allTestFiles` / `totalTestFiles` / `unitGlobUnion` / `globFiles.*` /
+ *     `packageScripts` / `verifyTestScripts` / `realPgArms` / `drilledArms`）：
+ *     main 每加一个测试文件、一个 npm 脚本、一条真库臂，它们就变。证据页一旦提交就**必然滞后**于
+ *     最新 main（PR 的 CI 检出的还是「本分支 ∪ 最新 main」的合成树），这不是造假，是分叉的必然结果。
+ *     所以判据是**下界**：`文档值 <= 重算值` 成立；`文档值 > 重算值` 立刻红——**这条是防注水的主牙齿**，
+ *     它保证「页面上的数不会比树里真有的还多」。
+ *
+ * 新增读数必须显式登记到其中一档：`readingKind()` 对未登记的键返回 `'unclassified'`，
+ * 判据 2 会把它当红处理（不许靠默认值蒙混过去）。
+ */
+export const STABLE_READINGS = Object.freeze(['workflows', 'workflowJobs', 'drillCommands', 'verificationDocs']);
+
+export const GROWTH_READINGS = Object.freeze([
+  'allTestFiles',
+  'totalTestFiles',
+  'unitGlobUnion',
+  'globFiles.unit',
+  'globFiles.privacy',
+  'globFiles.media',
+  'globFiles.reference',
+  'globFiles.moderation',
+  'packageScripts',
+  'verifyTestScripts',
+  'realPgArms',
+  'drilledArms',
+]);
+
+/** 某个读数的档位：`'stable'` / `'growth'` / `'unclassified'`（未登记 ⇒ 判据 2 报红）。 */
+export function readingKind(key) {
+  if (STABLE_READINGS.includes(key)) return 'stable';
+  if (GROWTH_READINGS.includes(key)) return 'growth';
+  return 'unclassified';
+}
+
+/**
+ * 生长型读数的**滞后**（文档值 < 重算值）：返回 `[{ key, doc, expected, lag }]`，按 `readingsOf()` 的顺序。
+ * 「文档值 > 重算值」不在这里——那是硬红，由 `readingsProblems()` 报。
+ */
+export function growthLag(docReadings, tree) {
+  const lag = [];
+  for (const row of readingsOf(tree)) {
+    if (readingKind(row.key) !== 'growth') continue;
+    if (!docReadings.has(row.key)) continue;
+    const doc = docReadings.get(row.key);
+    if (typeof doc !== 'number' || doc >= row.value) continue;
+    lag.push({ key: row.key, doc, expected: row.value, lag: row.value - doc });
+  }
+  return lag;
+}
+
+/**
  * 可复算读数的**固定顺序 + 下界/关系说明**（渲染与比对共用这一份，防两处漂移）。
- * `relation` 是给人读的口径，不参与判定（判定看 `DEFAULT_FLOORS` 与各条判据）。
+ * `relation` 是给人读的口径，不参与判定（判定看 `DEFAULT_FLOORS`、`STABLE_READINGS` / `GROWTH_READINGS` 与各条判据）。
  */
 export function readingsOf(tree) {
   const rows = [
@@ -875,16 +942,42 @@ export function parseNotes(block) {
 }
 
 /**
+ * 一行「生长型读数滞后」的识别：`docLine` 与 `expectedLine` 是同一张表的同一行，
+ * **只有数值格不同**，且该键属生长型、文档值 <= 重算值 ⇒ 返回 `{ key, doc, expected, lag }`。
+ * 其它任何不同（换列、改关系说明、冒进）都返回 `null`，照旧当差异报。
+ */
+export function growthRowLag(docLine, expectedLine) {
+  const docCells = splitTableRow(docLine);
+  const expectedCells = splitTableRow(expectedLine);
+  if (docCells === null || expectedCells === null) return null;
+  if (docCells.length !== expectedCells.length || docCells.length < 2) return null;
+  if (readingKind(docCells[0]) !== 'growth') return null;
+  if (!/^\d+$/.test(docCells[1]) || !/^\d+$/.test(expectedCells[1])) return null;
+  for (let index = 2; index < docCells.length; index += 1) {
+    if (docCells[index] !== expectedCells[index]) return null;
+  }
+  const doc = Number(docCells[1]);
+  const expected = Number(expectedCells[1]);
+  if (doc > expected) return null; // 冒进 ⇒ 不是滞后，照旧红
+  return { key: docCells[0], doc, expected, lag: expected - doc };
+}
+
+/**
  * **判据 2**：整块逐行比对（规范化之后：CRLF→LF、去行尾空白、去尾部空行；不只比读数表）。
  * 返回 `null`（一致）或 `{ docLine, expectLine, docText, expectText, missing }`——
  * 报错文案由 `renderDifference()` 统一成「第一处差异：文档第 N 行 vs 重算第 M 行」。
+ *
+ * `tolerantGrowth`（默认 `true` = `--tolerant-growth`）：**生长型**读数允许「文档值 < 重算值」
+ * 的那一行不等（基线前进的正常后果），由 `growthLag()` / CLI 逐行打印滞后数；
+ * `false`（`--strict-growth`）要求整块逐字相等。稳定型读数在两种模式下都必须精确相等。
  */
-export function diffDrillBlock(docBlock, expectedBlock, startLine = 1) {
+export function diffDrillBlock(docBlock, expectedBlock, startLine = 1, { tolerantGrowth = true } = {}) {
   const left = normalizeDrillBlock(docBlock).split('\n');
   const right = normalizeDrillBlock(expectedBlock).split('\n');
   const length = Math.max(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
     if (left[index] === right[index]) continue;
+    if (tolerantGrowth && growthRowLag(left[index], right[index]) !== null) continue;
     return {
       docLine: startLine + index,
       expectLine: index + 1,
@@ -913,8 +1006,8 @@ export function renderDifference(difference) {
  * ⚠ CLI 不调它——`checkDocument` 走的是 `diffDrillBlock()` + `renderDifference()`
  * （要拿到结构化差异才能点名行号）。两者判据相同，这里只是给单测省一层拆包。
  */
-export function compareDrillBlock(docBlock, expectedBlock, startLine = 1) {
-  return renderDifference(diffDrillBlock(docBlock, expectedBlock, startLine));
+export function compareDrillBlock(docBlock, expectedBlock, startLine = 1, options = {}) {
+  return renderDifference(diffDrillBlock(docBlock, expectedBlock, startLine, options));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1209,8 +1302,17 @@ export function rowCommandProblems(rows) {
   return problems;
 }
 
-/** 判据 2 的「文档 vs 重算」单键比对（比整块比对更能点名是哪个读数漂了）。 */
-export function readingsProblems(docReadings, tree) {
+/**
+ * 判据 2 的「文档 vs 重算」单键比对（比整块比对更能点名是哪个读数漂了）。
+ *
+ * 两种档位，两套判据（见 `STABLE_READINGS` / `GROWTH_READINGS`）：
+ *   · 稳定型：`文档值 === 重算值`，否则红；
+ *   · 生长型：`文档值 <= 重算值` 成立（滞后由 `--tolerant-growth` 逐行打印），
+ *     `文档值 > 重算值` ⇒ 红（**防注水**：页面不许比树里真有的还多）；
+ *     `tolerantGrowth === false`（`--strict-growth`）时，滞后也算红。
+ * ⚠ 报错首句保持 `键：文档写 X，重算 Y` 的原有形状（单测与读者都依赖它）。
+ */
+export function readingsProblems(docReadings, tree, { tolerantGrowth = true } = {}) {
   const problems = [];
   const expected = readingsOf(tree);
   for (const row of expected) {
@@ -1219,7 +1321,28 @@ export function readingsProblems(docReadings, tree) {
       continue;
     }
     const docValue = docReadings.get(row.key);
-    if (docValue !== row.value) problems.push(`${row.key}：文档写 ${docValue}，重算 ${row.value}`);
+    const kind = readingKind(row.key);
+    if (kind === 'unclassified') {
+      problems.push(
+        `\`${row.key}\`：这个读数没有分档（不在 STABLE_READINGS 也不在 GROWTH_READINGS 里）`
+          + ' ⇒ 先把「它该精确相等还是下界」定下来，否则判据 2 无从判定',
+      );
+      continue;
+    }
+    if (kind === 'stable') {
+      if (docValue !== row.value) problems.push(`${row.key}：文档写 ${docValue}，重算 ${row.value}`);
+      continue;
+    }
+    if (docValue > row.value) {
+      problems.push(`${row.key}：文档写 ${docValue}，重算 ${row.value}`);
+      continue;
+    }
+    if (docValue < row.value && !tolerantGrowth) {
+      problems.push(
+        `${row.key}：文档写 ${docValue}，重算 ${row.value}`
+          + ` ⇒ --strict-growth 要求精确相等（生长型读数当前滞后 ${row.value - docValue}）`,
+      );
+    }
   }
   const known = new Set(expected.map((row) => row.key));
   for (const key of docReadings.keys()) {
