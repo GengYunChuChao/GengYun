@@ -91,6 +91,23 @@ export function createHost() {
     kind,
     children: [],
     parent: null,
+    /** 由 `mountComponent` 在根容器上置 true；其余节点靠父链继承。 */
+    connectedRoot: false,
+    /**
+     * 与真 DOM 同义：自己或任一祖先被标为已连接才算连着。
+     *
+     * 缺了它，「已卸载的按钮」与「还挂着的按钮」在夹具里长得一样，
+     * 于是视图里 `trigger.isConnected !== false` 这类守卫永远走「还连着」分支——
+     * 对已卸载节点调一次 `focus()` 会被误记成「焦点回流」。真浏览器里那是 no-op。
+     */
+    get isConnected() {
+      let cursor = this;
+      while (cursor !== null && cursor !== undefined) {
+        if (cursor.connectedRoot === true) return true;
+        cursor = cursor.parent;
+      }
+      return false;
+    },
     props: {},
     text: '',
     listeners: new Map(),
@@ -170,6 +187,7 @@ export function createHost() {
 export async function mountComponent(component, props) {
   const host = createHost();
   const container = host.make('root');
+  container.connectedRoot = true;
   const { createApp } = createRenderer({ ...host.nodeOps, patchProp: host.patchProp });
   const app = createApp(component, props);
   app.mount(container);
