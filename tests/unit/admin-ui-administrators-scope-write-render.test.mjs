@@ -539,3 +539,108 @@ test('a11y：两个按钮都有 aria-label、禁用态带 aria-disabled、样式
     unmount();
   }
 });
+
+// ---------------------------------------------------------------- 会话边界（GY-R68 复审 B1）
+//
+// 这两条钉的是「跨会话串数据」：A 打开／提交授权框后退出，B（可能连 scopes:read 都没有）登进来，
+// 不许看到 A 的目标管理员、理由、成功回执；A 那条还没回来的写响应也不许在 B 的会话里落地
+// （落地 = 往 B 的页面写回执 + 替 B 触发一次刷新读）。
+// 修法在视图里：`resetScopeWrite()`（++scopeSeq + 清目标/理由/回执/就地提示/逐行选择 + 关框），
+// 在 `startSession()`、`signOut()`、`onBeforeUnmount()` 三处调用。
+
+const SESSION_B = { accessToken: 'synthetic-admin-token-b', expiresAt: '2099-01-01T00:00:00.000Z', scopes: [] };
+const REASON_A = 'A 会话里写的理由';
+
+/** 提交表单（`@submit.prevent` 会先调 preventDefault 再进 handler）。 */
+async function submitForm(container, testId) {
+  const form = requireTestId(container, testId);
+  assert.equal(typeof form.props.onSubmit, 'function', `${testId} 必须绑定了 onSubmit`);
+  form.props.onSubmit({ preventDefault() {} });
+  await settle();
+  await settle();
+}
+
+/** A 打开授权框 → 填理由 → 提交，写请求**不 resolve**（把 resolve 交给调用方）。 */
+async function startPendingGrant(container, state) {
+  let release = null;
+  const pending = new Promise((resolve) => {
+    release = resolve;
+  });
+  state.grantResponse = pending;
+  await choose(requireTestId(container, 'administrator-scope-pick'), 'flags:write');
+  await click(requireTestId(container, 'administrator-grant'));
+  await typeInto(requireTestId(container, 'administrator-scope-reason'), REASON_A);
+  await click(requireTestId(container, 'administrator-scope-submit'));
+  assert.equal(countOf(container, 'administrator-scope-progress'), 1, '写请求应当在途（saving）');
+  return { release };
+}
+
+/** A 退出 → B（scopes: []）登录。 */
+async function switchToSessionB(container) {
+  await click(requireTestId(container, 'administrators-sign-out'));
+  globalThis.__GY_TEST_SESSION__ = SESSION_B;
+  await submitForm(container, 'administrators-signin');
+  assert.equal(countOf(container, 'administrators-table'), 1, 'B 登录后应当读到目录（新会话建立）');
+}
+
+test('会话切换：A 的授权框内容不得残留到 B（B 不得看到 A 的目标管理员 / 理由 / 回执）', async () => {
+  const state = makeState({ grantScope: 'flags:write' });
+  const impl = fakeFetch(directoryHandler(state));
+  const { container, unmount } = await mountView({ fetchImpl: impl });
+  try {
+    await startPendingGrant(container, state);
+    assert.equal(countOf(container, 'administrator-scope-dialog'), 1, 'A 的确认框应当是开着的');
+    assert.match(textOf(container), /确认授权 scope/, 'A 的对话框标题应当在');
+
+    await switchToSessionB(container);
+
+    // ① 框关掉：目标管理员（title + 请求行）不再上屏
+    assert.equal(countOf(container, 'administrator-scope-dialog'), 0, 'B 不得看到 A 的授权框内容（确认框必须已关）');
+    assert.equal(findAll(container, (node) => node.props.id === 'administrator-scope-title').length, 0,
+      'B 不得看到 A 的授权框标题');
+    assert.doesNotMatch(textOf(container), /确认授权 scope/, 'B 的页面上不许再出现 A 的确认框文案');
+    // ② 理由不残留
+    assert.equal(countOf(container, 'administrator-scope-reason'), 0, 'B 不得看到 A 填的理由输入框');
+    assert.doesNotMatch(textOf(container), new RegExp(REASON_A), 'B 不得看到 A 填的理由');
+    // ③ 回执 / 失败 / 就地提示都不许跨会话留下
+    assert.equal(countOf(container, 'administrator-scope-ok'), 0, 'B 不得看到 A 的成功回执');
+    assert.equal(countOf(container, 'administrator-scope-failure'), 0, 'B 不得看到 A 的失败提示');
+    assert.equal(countOf(container, 'administrator-scope-error'), 0, 'B 不得看到 A 的就地提示');
+    // ④ 新会话真的建立了（最近一次读用的是 B 的令牌）
+    const lastRead = impl.calls[impl.calls.length - 1];
+    assert.equal(lastRead.init.headers.authorization, `Bearer ${SESSION_B.accessToken}`, 'B 建立会话后应当用 B 的令牌重读');
+  } finally {
+    unmount();
+  }
+});
+
+test('在途响应不落地：A 的写请求在 B 的会话里回来 ⇒ 不许上屏、也不许替 B 触发刷新读', async () => {
+  const state = makeState({ grantScope: 'flags:write' });
+  const impl = fakeFetch(directoryHandler(state));
+  const { container, unmount } = await mountView({ fetchImpl: impl });
+  try {
+    const { release } = await startPendingGrant(container, state);
+    await switchToSessionB(container);
+    const callsAfterSwitch = impl.calls.length;
+    const postsBefore = impl.calls.filter((call) => call.init !== undefined && call.init.method === 'POST').length;
+    assert.equal(postsBefore, 1, 'A 那条 POST 应当只有一条');
+
+    // A 的响应迟到：在 B 的会话期间 resolve
+    release(jsonResponse(200, scopeWriteEnvelope({ revision: 4, scopes: ['audit:read', 'flags:write', 'scopes:read'], changed: true })));
+    await settle();
+    await settle();
+    await settle();
+
+    assert.equal(countOf(container, 'administrator-scope-ok'), 0, 'A 的在途响应不得跨会话落地（不许出现 A 的成功回执）');
+    assert.equal(countOf(container, 'administrator-scope-failure'), 0, 'A 的在途响应不得跨会话落地（不许出现失败提示）');
+    assert.doesNotMatch(
+      textOf(requireTestId(container, 'administrator-scopes-text')),
+      /flags:write/,
+      'B 的行内 scopes 不许被 A 的响应改动',
+    );
+    assert.equal(countOf(container, 'administrator-scope-progress'), 0, '在途标记要复位，不许卡住 B 的页面');
+    assert.equal(impl.calls.length, callsAfterSwitch, 'A 的迟到响应不得替 B 触发刷新读（不许新增请求）');
+  } finally {
+    unmount();
+  }
+});

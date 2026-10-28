@@ -114,6 +114,7 @@ async function requestPage(cursor, { reset }) {
 }
 
 function startSession(adminSession) {
+  resetScopeWrite(); // 换会话（登录 / 会话替换）⇒ 上一会话的授权框内容与在途写响应一律作废
   session.value = adminSession;
   currentToken = typeof adminSession?.accessToken === 'string' ? adminSession.accessToken : null;
   dispatch({ type: 'SIGNED_IN', scopes: adminSession?.scopes });
@@ -149,6 +150,7 @@ async function submitSignIn() {
 async function signOut() {
   ++requestSeq;
   ++scopesSeq;
+  resetScopeWrite(); // 退出即作废：目标管理员 / 理由 / 回执 / 逐行选择，以及 A 的在途写响应
   currentToken = null;
   session.value = null;
   busy.value = false;
@@ -460,6 +462,32 @@ function closeScopeWrite() {
   scopeTarget.value = null;
 }
 
+/**
+ * 会话边界清理：登录／退出／卸载时把授／撤权这一片**全部**作废。
+ *
+ * 两件事必须一起做，少一件就是跨会话串数据：
+ * ① `++scopeSeq` —— 让在途写响应认不出自己（`submitScopeWrite` 里 `seq !== scopeSeq` 就丢弃），
+ *    否则 A 的写请求会在 B 的会话里落地、甚至替 B 触发一次刷新读；
+ * ② 清 `scopeTarget/scopeReason/scopeOutcome/scopeFailure/scopePickProblem/scopePicks` 并把
+ *    `scopeSaving` 复位 —— 否则 A 打开过的确认框（目标管理员 + 理由）与成功回执会留在 B 的页面上，
+ *    而 B 可能根本没有 `scopes:read`。
+ *
+ * ⚠️ 先清 `scopeTrigger` 再清 `scopeTarget`：`watch(scopeTarget)` 在关闭时会把焦点还给触发按钮，
+ * 会话边界不该把焦点拉回一个已经换掉的页面。
+ */
+function resetScopeWrite() {
+  ++scopeSeq;
+  scopeTrigger = null;
+  scopeKey = null;
+  scopeTarget.value = null;
+  scopeReason.value = '';
+  scopeSaving.value = false;
+  scopeFailure.value = null;
+  scopeOutcome.value = null;
+  scopePickProblem.value = null;
+  scopePicks.value = {};
+}
+
 /** 打开 → 焦点进框；关闭 → 焦点回触发按钮（按钮被重渲染掉时不硬拉焦点）。 */
 watch(scopeTarget, async (target) => {
   if (target === null) {
@@ -537,6 +565,7 @@ async function submitScopeWrite() {
     ? await grantAdministratorScope(request)
     : await revokeAdministratorScope(request);
   if (seq !== scopeSeq) return; // 过期响应：丢弃，不往已换掉的目标里写
+  if (currentToken === null) return; // 兜底：会话已经退出／被换掉，即便 seq 没变也不往空会话里写
   scopeSaving.value = false;
 
   if (result.ok === true) {
@@ -581,7 +610,7 @@ onBeforeUnmount(() => {
   ++requestSeq;
   ++scopesSeq;
   ++changeSeq; // 卸载后回来的写响应一律丢弃，不往已卸载的状态里写
-  ++scopeSeq;
+  resetScopeWrite(); // 同上，连 `++scopeSeq` 一起（不在两处各写一份）
 });
 </script>
 
