@@ -593,7 +593,7 @@
       "get": {
         "operationId": "getProfile",
         "summary": "读取本人的单条档案；从未保存过时返回 revision=1 的空档案",
-        "description": "作用域 user：必须登录用户会话（缺 authEpoch 401 SESSION_REQUIRED、会话已失效或账号不存在 401 SESSION_EXPIRED、非 user 角色 403 SCOPE_DENIED）；200 返回本人单条档案 {crop_id,region_code,region_catalog_version,revision} 并带 ETag \"<revision>\" 与 Cache-Control: no-store；从未保存过时不回 404，而是返回三字段为 null、revision=1 的占位档案（services/api/src/profile/service.ts:20、:86）；只读接口：不接受 query 与请求体，也不需要 Idempotency-Key 与 If-Match；无开关；账号 state 非 active 或 auth_epoch 失效 403 ACCOUNT_INACTIVE（profile/service.ts:40）；档案库未接线 503 PROVIDER_UNAVAILABLE（routes/profile.ts:21），事务超时（57014 与 55P03）504 PROVIDER_TIMEOUT（profile/service.ts:59）。",
+        "description": "作用域 user：必须登录用户会话（无 bearer 令牌 401 SESSION_REQUIRED、会话失效或账号不存在 401 SESSION_EXPIRED，services/api/src/auth/middleware.ts:55-58、:78-84）；后台令牌访问本接口同样是 401 SESSION_EXPIRED——受众隔离：用户面只认 audience=user 的会话（services/api/src/auth/middleware.ts:62-80；auth/store.ts 的 sessionKey 按 audience 分键（:97-98），pg 存储侧用户会话与后台会话分表），因此服务层「非 user 角色」那条分支只在进程内直接调用时可达、HTTP 面不可达（services/api/src/profile/service.ts:34）；403 只由账号停用或身份版本失效 ACCOUNT_INACTIVE 产生（middleware.ts:88-93，contract.ts:17）——用户面不存在「缺权限」那类 403；200 返回本人单条档案 {crop_id,region_code,region_catalog_version,revision} 并带 ETag \"<revision>\" 与 Cache-Control: no-store；从未保存过时不回 404，而是返回三字段为 null、revision=1 的占位档案（services/api/src/profile/service.ts:20、:86）；只读接口：不接受 query 与请求体，也不需要 Idempotency-Key 与 If-Match；无开关；账号 state 非 active 或 auth_epoch 失效 403 ACCOUNT_INACTIVE（profile/service.ts:40）；档案库未接线 503 PROVIDER_UNAVAILABLE（routes/profile.ts:21），事务超时（57014 与 55P03）504 PROVIDER_TIMEOUT（profile/service.ts:59）。",
         "tags": [
           "me"
         ],
@@ -1379,7 +1379,7 @@
       "get": {
         "operationId": "listExports",
         "summary": "列出本人的数据导出任务（签名游标分页，只读）",
-        "description": "作用域 user：必须登录，非 user 角色 403 SCOPE_DENIED；query 只接受 cursor（≤2048）与 limit（1..50，默认 20）；200 返回 {items,next_cursor}，items 是导出任务台账记录（状态、创建时间、过期时间等），排序固定为 created_at DESC + id DESC；next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 排序 + 域，有效期 15 分钟，过期/被篡改/别人的游标在读库之前就 400 INVALID_CURSOR；列表不发 ETag（契约：只有资源写面发强 ETag），响应 no-store；无开关；未接外发账本 503 PROVIDER_UNAVAILABLE（不用内存账本冒充持久化），台账记录形状不符或签名密钥缺失同样 503。",
+        "description": "作用域 user：必须登录（无 bearer 令牌 401 SESSION_REQUIRED、会话失效或账号不存在 401 SESSION_EXPIRED，services/api/src/auth/middleware.ts:55-58、:78-84）；后台令牌访问本接口同样是 401 SESSION_EXPIRED——受众隔离：用户面只认 audience=user 的会话（services/api/src/auth/middleware.ts:62-80；auth/store.ts 的 sessionKey 按 audience 分键（:97-98），pg 存储侧用户会话与后台会话分表），因此服务层「非 user 角色」那条分支只在进程内直接调用时可达、HTTP 面不可达（services/api/src/routes/exports.ts:58）；403 只由账号停用或身份版本失效 ACCOUNT_INACTIVE 产生（middleware.ts:88-93，contract.ts:17）——用户面不存在「缺权限」那类 403；query 只接受 cursor（≤2048）与 limit（1..50，默认 20）；200 返回 {items,next_cursor}，items 是导出任务台账记录（状态、创建时间、过期时间等），排序固定为 created_at DESC + id DESC；next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 排序 + 域，有效期 15 分钟，过期/被篡改/别人的游标在读库之前就 400 INVALID_CURSOR；列表不发 ETag（契约：只有资源写面发强 ETag），响应 no-store；无开关；未接外发账本 503 PROVIDER_UNAVAILABLE（不用内存账本冒充持久化），台账记录形状不符或签名密钥缺失同样 503。",
         "tags": [
           "me"
         ],
@@ -7084,7 +7084,7 @@
       "get": {
         "operationId": "listMessages",
         "summary": "列出本人的站内消息（服务端签名游标分页，倒序稳定）",
-        "description": "作用域 user：必须登录，非 user 角色 403 SCOPE_DENIED；query 只接受 cursor（≤2048）与 limit（1..50，默认 20），越界或未知字段 400 INVALID_REQUEST；不接受请求体（非空 body ⇒ 400 INVALID_REQUEST）；200 返回 {items,next_cursor}，只列本人消息、按 (created_at DESC, id DESC) 稳定排序，next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 水位 + 路由 + 排序，有效期 15 分钟，只有还有下一页时才返回；过期/被篡改/别人的游标 ⇒ 400 INVALID_CURSOR，翻页锚点失效（水位对不上）同样 400 INVALID_CURSOR 让客户端重读首页；不发 ETag，响应 no-store；无开关；消息存储未接线 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）。",
+        "description": "作用域 user：必须登录（无 bearer 令牌 401 SESSION_REQUIRED、会话失效或账号不存在 401 SESSION_EXPIRED，services/api/src/auth/middleware.ts:55-58、:78-84）；后台令牌访问本接口同样是 401 SESSION_EXPIRED——受众隔离：用户面只认 audience=user 的会话（services/api/src/auth/middleware.ts:62-80；auth/store.ts 的 sessionKey 按 audience 分键（:97-98），pg 存储侧用户会话与后台会话分表），因此服务层「非 user 角色」那条分支只在进程内直接调用时可达、HTTP 面不可达（services/api/src/messages/validate.ts:81）；403 只由账号停用或身份版本失效 ACCOUNT_INACTIVE 产生（middleware.ts:88-93，contract.ts:17）——用户面不存在「缺权限」那类 403；query 只接受 cursor（≤2048）与 limit（1..50，默认 20），越界或未知字段 400 INVALID_REQUEST；不接受请求体（非空 body ⇒ 400 INVALID_REQUEST）；200 返回 {items,next_cursor}，只列本人消息、按 (created_at DESC, id DESC) 稳定排序，next_cursor 是 HMAC 签名游标，绑定 user + auth_epoch + 水位 + 路由 + 排序，有效期 15 分钟，只有还有下一页时才返回；过期/被篡改/别人的游标 ⇒ 400 INVALID_CURSOR，翻页锚点失效（水位对不上）同样 400 INVALID_CURSOR 让客户端重读首页；不发 ETag，响应 no-store；无开关；消息存储未接线 ⇒ 503 PROVIDER_UNAVAILABLE（retryable:false）。",
         "tags": [
           "messages"
         ],
