@@ -114,8 +114,8 @@ async function requestPage(cursor, { reset }) {
 }
 
 function startSession(adminSession) {
-  resetStateWrite(); // 换会话（登录 / 会话替换）⇒ 上一会话的停用／恢复框内容与在途写响应一律作废
-  resetScopeWrite(); // 同上：授权／撤销这一片
+  resetScopeWrite(); // 换会话（登录 / 会话替换）⇒ 上一会话的授权框内容与在途写响应一律作废
+  resetStateWrite(); // 同上：停用／恢复这一片
   session.value = adminSession;
   currentToken = typeof adminSession?.accessToken === 'string' ? adminSession.accessToken : null;
   dispatch({ type: 'SIGNED_IN', scopes: adminSession?.scopes });
@@ -151,8 +151,8 @@ async function submitSignIn() {
 async function signOut() {
   ++requestSeq;
   ++scopesSeq;
-  resetStateWrite(); // 退出即作废：停用／恢复的目标管理员 / 理由 / 回执 / 在途响应（连 `++changeSeq` 一起）
   resetScopeWrite(); // 退出即作废：目标管理员 / 理由 / 回执 / 逐行选择，以及 A 的在途写响应
+  resetStateWrite(); // 退出即作废：停用／恢复的目标管理员 / 理由 / 回执 / 在途响应（连 `++changeSeq` 一起）
   currentToken = null;
   session.value = null;
   busy.value = false;
@@ -637,8 +637,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   ++requestSeq;
   ++scopesSeq;
-  resetStateWrite(); // 卸载后回来的停用／恢复写响应一律丢弃（连 `++changeSeq` 一起，不在两处各写一份）
   resetScopeWrite(); // 同上，连 `++scopeSeq` 一起（不在两处各写一份）
+  resetStateWrite(); // 卸载后回来的停用／恢复写响应一律丢弃（连 `++changeSeq` 一起，不在两处各写一份）
 });
 </script>
 
