@@ -725,8 +725,8 @@ test('库内审计写入点：`admin_audit_events.action` 的字面量全部落�
 test('正控：扫描面确实读到了库内写入点（不是扫了个空）', () => {
   assert.ok(sqlFiles.length >= 48, `迁移文件数异常（${sqlFiles.length} 份），扫描面可能没接上`);
   assert.ok(
-    sqlScan.writePoints.length >= 11,
-    `只读到 ${sqlScan.writePoints.length} 个库内 audit 写入点（基线 11 个：0017×2、0020、0027、0041×2、0043、0046、0047、0048×2）`,
+    sqlScan.writePoints.length >= 12,
+    `只读到 ${sqlScan.writePoints.length} 个库内 audit 写入点（基线 12 个：0017×2、0020、0027、0041×2、0043、0046、0047、0048×2、0049）`,
   );
   const files = new Set(sqlScan.writePoints.map((point) => point.file));
   assert.ok(files.size >= 8, `写入点只落在 ${files.size} 份迁移里，扫描面可疑`);
@@ -778,7 +778,7 @@ test('服务端 `action: …` 字面量：`admin/audit/**` 不许出现，`admin
   assert.deepEqual(tsScan.dynamic, [], `模板串动作绑定进了扫描面却没人核：${JSON.stringify(tsScan.dynamic)}`);
 });
 
-test('契约：`AuditEvent.action` 是 `$ref` 到 `AuditAction`，枚举 = 库内 10 值 + 内存账本 16 值（逐值同序）', () => {
+test('契约：`AuditEvent.action` 是 `$ref` 到 `AuditAction`，枚举 = 库内 11 值 + 内存账本 15 值（逐值同序）', () => {
   const spec = JSON.parse(readFileSync(join(ROOT, 'packages/contracts/openapi.json'), 'utf8'));
   const schema = spec.components.schemas.AuditAction;
   assert.ok(schema !== undefined, '`components.schemas.AuditAction` 不存在 ⇒ `AuditEvent.action` 的 `$ref` 断链');
@@ -787,7 +787,7 @@ test('契约：`AuditEvent.action` 是 `$ref` 到 `AuditAction`，枚举 = 库�
   assert.deepEqual(
     schema.enum,
     [...AUDIT_ACTIONS, ...derived.inMemoryOnly],
-    '契约 `AuditAction.enum` 必须逐值同序等于「`AUDIT_ACTIONS`（库内 10 值，顺序照 services/api/src/admin/audit/catalog.ts）+ 内存账本独有码（源码派生）」',
+    '契约 `AuditAction.enum` 必须逐值同序等于「`AUDIT_ACTIONS`（库内 11 值，顺序照 services/api/src/admin/audit/catalog.ts）+ 内存账本独有码（源码派生）」',
   );
   assert.deepEqual(
     spec.components.schemas.AuditEvent.properties.action,
@@ -813,7 +813,7 @@ test('闭集三段派生：契约枚举 == `AUDIT_ACTIONS` + 内存账本独有�
     `services/api/src/admin/service.ts 里的审计模板动词变了：${derived.verbs.join(' / ')}（出现新动词必须同 PR 更新契约闭集与镜像）`,
   );
   assert.equal(derived.content.length, 12, `内容域动作码应为 4 noun × 3 verb = 12 条，实际 ${derived.content.length}`);
-  assert.equal(derived.inMemoryOnly.length, 16, `内存账本独有码应为 16 条（12 内容域 + 4 运营域），实际 ${derived.inMemoryOnly.length}：${derived.inMemoryOnly.join(' / ')}`);
+  assert.equal(derived.inMemoryOnly.length, 15, `内存账本独有码应为 15 条（12 内容域 + 3 运营域），实际 ${derived.inMemoryOnly.length}：${derived.inMemoryOnly.join(' / ')}`);
 
   // ② 契约枚举与派生值**双向**相等：少写（客户端以为不存在）与多写（契约承诺了永远不产生的码）都红。
   const spec = JSON.parse(readFileSync(join(ROOT, 'packages/contracts/openapi.json'), 'utf8'));

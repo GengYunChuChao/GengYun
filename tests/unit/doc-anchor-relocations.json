@@ -1,16 +1,6 @@
 [
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 110,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 250,
-    "fromEnd": 261,
-    "to": 258,
-    "toEnd": 269,
-    "reason": "合并 upstream/main（fa3b2553）时 catalog.ts 被上游注释块改动，`export const AUDIT_ACTIONS = Object.freeze([`（258）到 `] as const);`（269）整体下移 8 行；旧值 250-261 在合并后的文件里指向注释文字，不是闭集。按符号重锚，不是 250+8 的差值平移。"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
     "line": 197,
     "target": "packages/contracts/openapi.json",
     "from": 11008,
@@ -143,42 +133,6 @@
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 7,
-    "target": "services/api/src/app.ts",
-    "from": 1332,
-    "to": 1353,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1332` 是 `communityPostPortForAdmin` 的续行（`adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });`），不是 `adminRealUnwired`；真值是 1353 `const adminRealUnwired = config.executionMode === 'real';`。按符号 `adminRealUnwired` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 78,
-    "target": "services/api/src/app.ts",
-    "from": 1332,
-    "to": 1353,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1332` 是 `communityPostPortForAdmin` 的续行（`adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });`），不是 `adminRealUnwired`；真值是 1353 `const adminRealUnwired = config.executionMode === 'real';`。按符号 `adminRealUnwired` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 78,
-    "target": "services/api/src/app.ts",
-    "from": 1354,
-    "fromEnd": 1356,
-    "to": 1375,
-    "toEnd": 1377,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 78,
-    "target": "services/api/src/app.ts",
-    "from": 1492,
-    "fromEnd": 1493,
-    "to": 1513,
-    "toEnd": 1514,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1492-1493` 落在账号停用/恢复装配里（1492 `messagesService === null` 一带），不是审计总台账只读端口；真值是 1513-1514 `const realAuditLogPort =` / `adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));`。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/admin-console-capability-map.md",
     "line": 82,
     "target": "services/api/src/routes/admin.ts",
     "from": 295,
@@ -229,24 +183,6 @@
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 84,
-    "target": "services/api/src/app.ts",
-    "from": 1310,
-    "fromEnd": 1311,
-    "to": 1331,
-    "toEnd": 1332,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1310-1311` 是社区服务 fail-closed 的告警分支（`app.log.warn({ executionMode: config.executionMode }, \"GY-I15 社区域：… 16 条社区路由一律 503 PROVIDER_UNAVAILABLE\")` 与 `} else {`），不是 `hidePost` 用的社区帖子端口构造；真值是 1331-1332 `const communityPostPortForAdmin =` / `adminInjection?.communityStore ?? withTakedownObserver(communityStore, { events: communityEvents });`。按符号 `communityPostPortForAdmin` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 84,
-    "target": "services/api/src/app.ts",
-    "from": 1548,
-    "to": 1590,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1548` 是 `executionMode: config.executionMode,`（管理员运行时装配里的一行），不是 `hidePostWired`；真值是 1590 `hidePostWired: communityPostPortForAdmin.persistent === true,`（另一分支的同一判断在 1665）。按符号 `hidePostWired` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/admin-console-capability-map.md",
     "line": 236,
     "target": "services/api/src/app.ts",
     "from": 1354,
@@ -293,14 +229,6 @@
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 87,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
     "line": 88,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -314,14 +242,6 @@
     "from": 494,
     "to": 557,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 88,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -341,14 +261,6 @@
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 89,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
     "line": 90,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -365,14 +277,6 @@
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 90,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
     "line": 91,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -386,14 +290,6 @@
     "from": 494,
     "to": 557,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 91,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -413,14 +309,6 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 1057,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
     "line": 1079,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -434,14 +322,6 @@
     "from": 494,
     "to": 557,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1079,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -461,14 +341,6 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 1101,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
     "line": 1123,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -485,14 +357,6 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 1123,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
     "line": 1145,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -506,14 +370,6 @@
     "from": 494,
     "to": 557,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1145,
-    "target": "services/api/src/app.ts",
-    "from": 2306,
-    "to": 2462,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2306` 是 `chat: config.chatProvider ?? null,`（聊天提供者装配），不是 `ocrPersistencePool`；真值是 2462 `const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`（2463 起把它传给 `registerOcrRoutes`）。按符号 `ocrPersistencePool` 重锚，目标文件本提交未改动。"
   },
   {
     "doc": "docs/development-progress.md",
@@ -524,32 +380,12 @@
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
-    "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 78,
-    "target": "services/api/src/app.ts",
-    "from": 1485,
-    "fromEnd": 1491,
-    "to": 1506,
-    "toEnd": 1512,
-    "reason": "旧锚点指向注释段主体之前的无关装配行：`services/api/src/app.ts:1485-1491` 是账号停用/恢复系统事件（accountEvents）代码块，不含 R34 只读端口那句说明；旧行原文逐字相同的那段说明在 HEAD 落在 1506-1512（1506 `// **R34 显式放行（库内审计**读**面，不是写面）**：只在**确实拿到库池**时构造只读端口；`、1507 `// \\`pool === null\\` ⇒ 端口 null ⇒ \\`/admin/audit-logs\\` 保持 503…`）。按符号重锚到该注释块，目标文件本提交未改动。"
-  },
-  {
     "doc": "docs/architecture/ai-ops-spec-status.md",
     "line": 25,
     "target": ".github/workflows/real-pg-integration.yml",
     "from": 72,
     "to": 94,
     "reason": "workflow 的 :72 是 CI 计时注释（算 25 分钟的那段），真库臂的 PG service 镜像在 :94 的 `image: postgres:17.11`；按符号重定位，不是 +22 平移"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 29,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 41,
-    "fromEnd": 46,
-    "to": 258,
-    "toEnd": 269,
-    "reason": "catalog.ts:41-46 是「实体→scope」注释表的尾部，`AUDIT_ACTIONS` 闭集常量本体在 258-269；按符号重定位"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -585,46 +421,6 @@
     "from": 359,
     "to": 376,
     "reason": "store-pg.ts:359 是 `function recordValues(row: OcrRow)`，store 构造器 `createPostgresOcrStore` 在 :376；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 100,
-    "target": "services/api/src/app.ts",
-    "from": 1316,
-    "fromEnd": 1330,
-    "to": 1383,
-    "toEnd": 1417,
-    "reason": "app.ts:1316-1330 现在是社区注入装配，武装探测三态与 `createFlagGatedGuards(` 在 1383-1417；旧区间已过期，按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 101,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 9,
-    "fromEnd": 18,
-    "to": 193,
-    "toEnd": 255,
-    "reason": "catalog.ts:9-18 是文件头注释里的写入点表（九行版，当时漏了 0048 两行），十条 `AUDIT_ACTION_*` 常量本体在 193-255 且各自注明所属迁移；头部表整块在注释里没有代码行可锚，故按常量重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 102,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 57,
-    "fromEnd": 68,
-    "to": 280,
-    "toEnd": 307,
-    "reason": "catalog.ts:57-68 是「一变多」`scope` 列的注释段，`entity=job → jobs:cancel` 的映射本体在 `AUDIT_ENTITY_SCOPES` 的 280-307；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 103,
-    "target": "services/api/src/admin/ops/jobs.ts",
-    "from": 20,
-    "fromEnd": 27,
-    "to": 31,
-    "toEnd": 33,
-    "reason": "admin/ops/jobs.ts:20-27 是「闭集判定已上移到 admin/identity.ts」的注释，真正调用 `parseClosedSetParam` 的代码在 31-33，判定本体在 `services/api/src/admin/identity.ts:187-204`；按符号重定位"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -682,26 +478,6 @@
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
     "line": 197,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 41,
-    "fromEnd": 46,
-    "to": 258,
-    "toEnd": 269,
-    "reason": "同 doc:29：`catalog.ts:41-46` 是实体→scope 注释表尾，`job.cancel` 登记的闭集本体在 258-269；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 197,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 57,
-    "fromEnd": 68,
-    "to": 280,
-    "toEnd": 307,
-    "reason": "裸锚点 `:57-68` 承继同行 `services/api/src/admin/audit/catalog.ts:258-269`；`entity=job → jobs:cancel` 的映射本体在 280-307；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 197,
     "target": "tests/unit/admin-audit-action-jobs-cancel.test.mjs",
     "from": 159,
     "to": 171,
@@ -723,15 +499,6 @@
     "fromEnd": 380,
     "to": 441,
     "reason": "jobs-pg.ts:374-380 是 `toAdminJobView` 的行→契约投影注释（函数在 :382），生产端口构造器 `createPostgresAdminJobPort` 在 :441；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 212,
-    "target": "services/api/src/admin/ops/jobs-pg.ts",
-    "from": 450,
-    "fromEnd": 451,
-    "to": 518,
-    "reason": "裸锚点 `:450-451` 承继同行 `jobs-pg.ts` 锚点；该区间是 `lockRow` 形参，`persistent: true` 在 :518；按符号重定位"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -805,35 +572,11 @@
   },
   {
     "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 111,
-    "target": "services/api/src/app.ts",
-    "from": 2219,
-    "to": 2405,
-    "reason": "D12 的「装配」锚点原写 `:2219`，那行在 base 上是应用时钟自述注释（`// 与其它服务同源使用应用时钟：…`），不是 `GET /me/exports` 的装配；真装配是 `registerExportRoutes(app, config, pool, guards);`（按符号 `registerExportRoutes` 命中，声明在 `services/api/src/routes/exports.ts:31`）。按符号重锚到 2405，不是 2219+186 的差值平移。目标文件本片未改。"
-  },
-  {
-    "doc": "docs/architecture/s4-data-traceability.md",
     "line": 112,
     "target": "services/api/src/app.ts",
     "from": 928,
     "to": 1007,
     "reason": "D12 的「缺口」锚点原写 `:928`，那行在 base 上是 `store: communityStore,`（与账本无关）；账本真装配是 `const egressLedger = egressPoolUsable ? createPostgresExportLedger({ pool }) : null;`（按符号 `egressLedger` 命中）。按符号重锚到 1007，不是差值平移。目标文件本片未改。"
-  },
-  {
-    "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 153,
-    "target": "services/api/src/app.ts",
-    "from": 608,
-    "to": 665,
-    "reason": "D06 原写 `:608` 是「整条查询串一律不落」的自述注释位置，但 base 上 608 实际是 `ledger?: ConversationIdempotencyLedger;`（类型字段，与本项无关）；该自述现在 660-663 的注释块里，落点代码是 665 的 `export function logSafePath(url: unknown): string | null {`（`requestLogFields` 在 685 调用它）。注释行按 `--symbol=strict` 不能落锚点，故按符号 `logSafePath` 重锚到 665。目标文件本片未改。"
-  },
-  {
-    "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 369,
-    "target": "services/api/src/app.ts",
-    "from": 2076,
-    "to": 1998,
-    "reason": "§7.2 D13 行的判据落点原写 `app.ts:2076 同侧装配区`，而 base 上 2076 是 `) => messagesPurgeSnapshot(ownerId, client),`（消息清理快照，与本项无关）；第三方读侧装配区真行是 1998 的 `const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =`（按符号 `thirdPartyWiring` 命中）。按符号重锚到 1998。目标文件本片未改。"
   },
   {
     "doc": "docs/architecture/s4-data-traceability.md",
@@ -844,29 +587,194 @@
     "reason": "D01 的「证据」行写两套鉴权方案 `packages/contracts/openapi.json:17`（`userSession`）与裸锚 `:297`（`adminSession`）。base 上 `packages/contracts/openapi.json:297` 确为 `            \"adminSession\": []`；upstream #707（ae818469）从该契约删掉 540 行错误响应后全文前移，`adminSession` 首个定义落到 282，HEAD 上 `packages/contracts/openapi.json:282` = `            \"adminSession\": []`（`:297` 现在是 `              \"ETag\": {`）。按符号 `\"adminSession\": []` 复取到 282，不是差值平移。契约文件本提交未改动（HEAD 的 openapi.json 就是 upstream/main 那一份）。"
   },
   {
-    "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 186,
-    "target": "services/api/src/app.ts",
-    "from": 2076,
-    "to": 2257,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:2076` 原文是 `          ) => messagesPurgeSnapshot(ownerId, client),`（messages 清理快照的 store 回调），讲清理快照数据源，不是注销可用性门；新值 2257 原文是 `    available: config.executionMode !== 'real',`，而 `available: config.executionMode` 在 base 的 services/api/src/app.ts 里只命中这一行，2255 `    deletion: userDataDeletion,` 与 2256 `    receipts: deletionReceipts,` 与之同属注销装配对象。为何旧值错：2076 行文本与「`available: config.executionMode !== 'real'`」毫无重叠，行号只是历史抄错。目标文件本提交未改动。"
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 101,
+    "target": "services/api/src/admin/audit/catalog.ts",
+    "from": 193,
+    "fromEnd": 255,
+    "to": 9,
+    "toEnd": 21,
+    "kind": "correction",
+    "symbol": "public.record_admin_category_update",
+    "reason": "base（91c800f6）的 E31 锚 `catalog.ts:193-255` 是十条 `AUDIT_ACTION_*` 常量块，不含 0049 的 `record_admin_category_update` —— 而这一行判的是「十一条落库审计写路径」，第十一条正是 0049 在事务内写 `category.update` 的那个窄函数。合流后的树里证据原文是文件头那张写点一览表（第 9-21 行，第 7 行「一共十一种 action」、第 21 行就是 `public.record_admin_category_update`），按符号重锚到 9-21，而不是把常量块平移到 194-256（那样恰好漏掉新增的第十一条）。"
   },
   {
-    "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 342,
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
     "target": "services/api/src/app.ts",
-    "from": 2076,
-    "to": 2257,
-    "reason": "该行（E1）正文是「真实模式下注销整域 503」，判据就是注销可用性门本身。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 是 messages 清理快照回调，与「整域 503」无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 正是真实模式下把注销门关掉的那个赋值行。旧值错、新值对，按符号重锚；目标文件本提交未改动。"
+    "from": 2227,
+    "to": 2488,
+    "kind": "correction",
+    "symbol": "registerJobRoutes(app, config, guards",
+    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
   },
   {
-    "doc": "docs/architecture/s4-data-traceability.md",
-    "line": 367,
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
     "target": "services/api/src/app.ts",
-    "from": 2076,
-    "to": 2257,
-    "reason": "该行（D08 升档判据）正文直接引用该门：`available` 门不再是 `!== 'real'`。旧锚点 2076 原文 `          ) => messagesPurgeSnapshot(ownerId, client),` 与 `available` 无关；新值 2257 原文 `    available: config.executionMode !== 'real',` 就是该门表达式的落点（全文件唯一 `available: config.executionMode`）。目标文件本提交未改动。"
+    "from": 2228,
+    "to": 2489,
+    "kind": "correction",
+    "symbol": "createRecognitionJobSource(",
+    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
   },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
+    "target": "services/api/src/app.ts",
+    "from": 2204,
+    "to": 2495,
+    "kind": "correction",
+    "symbol": "createTranscriptionJobSource(",
+    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
+    "target": "services/api/src/app.ts",
+    "from": 2207,
+    "to": 2498,
+    "kind": "correction",
+    "symbol": "createModerationJobSource(",
+    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
+    "target": "services/api/src/app.ts",
+    "from": 2213,
+    "to": 2504,
+    "kind": "correction",
+    "symbol": "createSynthesisJobSource(",
+    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
+    "target": "services/api/src/app.ts",
+    "from": 2221,
+    "to": 2512,
+    "kind": "correction",
+    "symbol": "createOcrJobSource(",
+    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
+    "target": "services/api/src/app.ts",
+    "from": 2229,
+    "to": 2520,
+    "kind": "correction",
+    "symbol": "createAnswerJobSource({",
+    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4290,
+    "target": "services/api/src/app.ts",
+    "from": 2227,
+    "to": 2488,
+    "kind": "correction",
+    "symbol": "registerJobRoutes(app, config, guards",
+    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4290,
+    "target": "services/api/src/app.ts",
+    "from": 2228,
+    "to": 2489,
+    "kind": "correction",
+    "symbol": "createRecognitionJobSource(",
+    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4290,
+    "target": "services/api/src/app.ts",
+    "from": 2204,
+    "to": 2495,
+    "kind": "correction",
+    "symbol": "createTranscriptionJobSource(",
+    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4290,
+    "target": "services/api/src/app.ts",
+    "from": 2207,
+    "to": 2498,
+    "kind": "correction",
+    "symbol": "createModerationJobSource(",
+    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4290,
+    "target": "services/api/src/app.ts",
+    "from": 2213,
+    "to": 2504,
+    "kind": "correction",
+    "symbol": "createSynthesisJobSource(",
+    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4290,
+    "target": "services/api/src/app.ts",
+    "from": 2221,
+    "to": 2512,
+    "kind": "correction",
+    "symbol": "createOcrJobSource(",
+    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4290,
+    "target": "services/api/src/app.ts",
+    "from": 2229,
+    "to": 2520,
+    "kind": "correction",
+    "symbol": "createAnswerJobSource({",
+    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
+  }
+,
+  {
+    "doc": "docs/architecture/acceptance-map.md",
+    "line": 94,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 108,
+    "to": 128,
+    "kind": "correction",
+    "symbol": "canOpen",
+    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 292,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 108,
+    "fromEnd": 110,
+    "to": 126,
+    "toEnd": 128,
+    "kind": "correction",
+    "symbol": "canOpen",
+    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 304,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 108,
+    "fromEnd": 110,
+    "to": 126,
+    "toEnd": 128,
+    "kind": "correction",
+    "symbol": "canOpen",
+    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+  }
+
+,
   {
     "doc": "docs/verification/gy-user-chain-20261019.md",
     "line": 99,
@@ -875,6 +783,7 @@
     "fromEnd": 383,
     "to": 412,
     "toEnd": 419,
-    "reason": "目标文件本提交未改动（本片 docs-only）。这行引用的是 e2e 里「停用 crop_corn 后目录必须不再列出该作物」的反向控制段（脚本拿停用前清单与「停用后清单 + crop_corn」做差集比对）。旧锚点 :376-383 源自 2026-10-19 树 463a5c5，到 base（da61b64d）时已经陈旧：376 的原文是 step 1 登录的 eq(me.status, 200, '登录后 /me/profile 必须 200（受保护接口）');，与这段语义无关。HEAD 上该段真实位置是 412-419（412 是 `UPDATE public.crops SET active=false WHERE id='crop_corn'`、414-418 是 setEq 差集断言、419 是改回 active=true 的复位）。按符号重锚，不是 376→412 的差值平移。"
+    "reason": "目标文件本提交未改（docs-only）。base（da61b64d）上 376 是 step 1 登录的 eq(me.status,200,登录后 /me/profile 必须 200) 断言，旧锚点已陈旧；HEAD 上这段「停用 crop_corn 后目录不再列出」的反向控制真实位置是 412-419（412 停用、414-418 setEq 差集断言、419 复位），按符号重锚，不是 376→412 的差值平移。"
   }
+
 ]
