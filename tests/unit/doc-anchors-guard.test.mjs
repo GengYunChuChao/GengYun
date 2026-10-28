@@ -59,6 +59,27 @@ function capture(args) {
 }
 
 /**
+ * 临时清掉「CI 环境」三个变量并返回还原函数。
+ *
+ * 工具用 `CI` / `GITHUB_ACTIONS` / `CONTINUOUS_INTEGRATION` **任一个**就把写模式拒掉（生成基线是
+ * 人工裁决，不能由门禁自己改基线）。可这组用例里有的段落测的是**工具语义**（`--accept` 数不符、
+ * 写模式把摘要算准），它们在 runner 上会被 `GITHUB_ACTIONS=true` 先顶掉 ⇒ 本机绿、CI 红。
+ * 所以：语义段落一律用它清干净；专门测「CI 里必须被拒」的那一段（T12②）反而自己只设一个变量。
+ * ⛔ 这不是绕过门禁 —— 拒绝行为由 T12② 单独覆盖，且清空只影响进程内环境。
+ */
+function withoutCiEnv() {
+  const keys = ['CI', 'GITHUB_ACTIONS', 'CONTINUOUS_INTEGRATION'];
+  const saved = keys.map(key => [key, process.env[key]]);
+  for (const key of keys) delete process.env[key];
+  return () => {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
+}
+
+/**
  * 生成模式（`--emit-*-baseline`）把 JSON 直接写 `process.stdout`，不走 `streams.log`——
  * 那是有意的（emit 的输出要能原样重定向成文件），所以这里短暂接管 `process.stdout.write` 把它捞回来。
  */
@@ -672,6 +693,10 @@ test('T12 孤儿册三件：陈旧判红、写模式在 CI 里被拒、--accept 
   const doc = 'docs/architecture/bare-orphan-stale.md';
   const root = makeBareFixture({ [doc]: '# 标题\n\n段落一：:5\n' });
   const writeArgs = [...bareScanArgs(root), '--orphan-baseline', ORPHAN_BASELINE];
+  // 先清掉「CI 环境」三个变量：这条用例测的是**工具语义**（陈旧判红 / --accept 数不符），
+  // 而 CI runner 上 `GITHUB_ACTIONS=true` 会让写模式先 exit 2（那是 ② 专门要测的那条），
+  // 把 ③ 的语义断言直接顶掉 —— 本机绿、CI 红就是这么来的。
+  const restoreCiEnv = withoutCiEnv();
   try {
     const emitted = captureEmit([...writeArgs, '--emit-orphan-baseline']);
     writeIn(root, ORPHAN_BASELINE, emitted.stdout);
@@ -685,16 +710,16 @@ test('T12 孤儿册三件：陈旧判红、写模式在 CI 里被拒、--accept 
     assert.match(stale.text, /册上陈旧 1 条/u);
     assert.match(stale.text, /陈旧 docs\/architecture\/bare-orphan-stale\.md\|:5\|no-explicit-in-block/u);
 
-    // ② CI 里拒绝写模式：门禁不能自己改基线。
-    const hadCi = process.env.CI;
+    // ② CI 里拒绝写模式：门禁不能自己改基线。这里**只要**设一个变量即可（工具按
+    //    CI / GITHUB_ACTIONS / CONTINUOUS_INTEGRATION 三选一报「检测到 X」），其余两个
+    //    由上面的 withoutCiEnv() 清空，断言才不会因 runner 环境不同而报到另一个变量名。
     process.env.CI = '1';
     try {
       const refused = capture([...writeArgs, '--write-orphan-baseline', '--accept', '0', '--why', '测试：CI 里应当被拒']);
       assert.equal(refused.code, 2, `CI 里写模式必须被拒，实际：${refused.text}`);
       assert.match(refused.text, /在 CI 环境（检测到 CI）里被拒绝执行/u);
     } finally {
-      if (hadCi === undefined) delete process.env.CI;
-      else process.env.CI = hadCi;
+      delete process.env.CI;
     }
 
     // ③ --accept 必须等于实际增量：数字对不上就是没复核。
@@ -707,6 +732,7 @@ test('T12 孤儿册三件：陈旧判红、写模式在 CI 里被拒、--accept 
     assert.equal(acceptWithoutWrite.code, 2);
     assert.match(acceptWithoutWrite.text, /--accept 与 --why 只跟 --write-\*-baseline 一起用/u);
   } finally {
+    restoreCiEnv();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -896,8 +922,9 @@ test('T16 清册手改必炸：整键删除、删掉摘要字段都 exit 2；同
 
     // ③ 正控制：同一份册子走写模式 ⇒ exit 0，账本留一行、落盘文件里的摘要算准。
     //    没有这一步，「手改必炸」也可能只是把路彻底堵死。
-    const hadCi = process.env.CI;
-    delete process.env.CI;
+    //    ⚠ 必须清掉三个 CI 变量：runner 上 GITHUB_ACTIONS=true 会让写模式 exit 2（那是 T12② 的语义），
+    //    本机不设这些变量所以从来不会暴露 —— 这条是本 PR 第一轮 CI 红的直接原因。
+    const restoreCiEnv = withoutCiEnv();
     try {
       const written = capture([
         ...bareScanArgs(root), '--write-anchor-count-baseline', '--accept', '0', '--why', '用例：清册重生成，留一条名',
@@ -913,8 +940,7 @@ test('T16 清册手改必炸：整键删除、删掉摘要字段都 exit 2；同
       );
       assert.equal(saved.accept.at(-1).why, '用例：清册重生成，留一条名');
     } finally {
-      if (hadCi === undefined) delete process.env.CI;
-      else process.env.CI = hadCi;
+      restoreCiEnv();
     }
     const after = capture([...bareScanArgs(root), '--strict']);
     assert.equal(after.code, 0, `写模式重生成后应当绿：${after.text}`);
