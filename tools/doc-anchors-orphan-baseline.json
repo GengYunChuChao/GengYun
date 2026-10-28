@@ -14,6 +14,12 @@
       "accept": 16,
       "orphans": 3543,
       "outsideRed": 135
+    },
+    {
+      "why": "第四轮审查修复：ai-ops-spec-status.md 的 P10 行（mergeAuditSources 声明由 :983 改到 :985、该层头注释由 :838 改到 :840）与 §7.1 的 entity→scope 映射（由 :280-307 改到 :301-328）都是按符号重取的真行号；这几个裸锚点（键里的原文带行号）随之成对变动 ⇒ 登记新键、旧键陈旧，与「删掉路径前缀换绿」无关。未新增任何结构基线条目（同时删掉了 2 条 note 为空的 NOT_SYMBOL_LINE）。",
+      "accept": 2,
+      "orphans": 3543,
+      "outsideRed": 135
     }
   ],
   "orphans": [
@@ -23,10 +29,10 @@
     "docs/architecture/ai-ops-spec-status.md|:150|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:165|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:225|ambiguous-block",
-    "docs/architecture/ai-ops-spec-status.md|:280-307|ambiguous-block",
+    "docs/architecture/ai-ops-spec-status.md|:301-328|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:557|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:70-71|no-explicit-in-block",
-    "docs/architecture/ai-ops-spec-status.md|:838|ambiguous-block",
+    "docs/architecture/ai-ops-spec-status.md|:840|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:841-845|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:103-105|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:1040-1109|no-explicit-in-block",

@@ -218,18 +218,6 @@
       "reference": "tests/unit/user-data-deletion.test.mjs:127"
     },
     {
-      "path": "apps/admin/src/lib/admin-audit-logs.mjs",
-      "reason": "NOT_SYMBOL_LINE",
-      "owner": "admin-web",
-      "reference": "apps/admin/src/lib/admin-audit-logs.mjs:983"
-    },
-    {
-      "path": "services/api/src/admin/audit/catalog.ts",
-      "reason": "NOT_SYMBOL_LINE",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/audit/catalog.ts:258-269"
-    },
-    {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",

@@ -478,26 +478,6 @@
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
     "line": 197,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 41,
-    "fromEnd": 46,
-    "to": 258,
-    "toEnd": 269,
-    "reason": "同 doc:29：`catalog.ts:41-46` 是实体→scope 注释表尾，`job.cancel` 登记的闭集本体在 258-269；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 197,
-    "target": "services/api/src/admin/audit/catalog.ts",
-    "from": 57,
-    "fromEnd": 68,
-    "to": 280,
-    "toEnd": 307,
-    "reason": "裸锚点 `:57-68` 承继同行 `services/api/src/admin/audit/catalog.ts:258-269`；`entity=job → jobs:cancel` 的映射本体在 280-307；按符号重定位"
-  },
-  {
-    "doc": "docs/architecture/ai-ops-spec-status.md",
-    "line": 197,
     "target": "tests/unit/admin-audit-action-jobs-cancel.test.mjs",
     "from": 159,
     "to": 171,
