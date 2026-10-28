@@ -114,7 +114,8 @@ async function requestPage(cursor, { reset }) {
 }
 
 function startSession(adminSession) {
-  resetScopeWrite(); // 换会话（登录 / 会话替换）⇒ 上一会话的授权框内容与在途写响应一律作废
+  resetStateWrite(); // 换会话（登录 / 会话替换）⇒ 上一会话的停用／恢复框内容与在途写响应一律作废
+  resetScopeWrite(); // 同上：授权／撤销这一片
   session.value = adminSession;
   currentToken = typeof adminSession?.accessToken === 'string' ? adminSession.accessToken : null;
   dispatch({ type: 'SIGNED_IN', scopes: adminSession?.scopes });
@@ -150,6 +151,7 @@ async function submitSignIn() {
 async function signOut() {
   ++requestSeq;
   ++scopesSeq;
+  resetStateWrite(); // 退出即作废：停用／恢复的目标管理员 / 理由 / 回执 / 在途响应（连 `++changeSeq` 一起）
   resetScopeWrite(); // 退出即作废：目标管理员 / 理由 / 回执 / 逐行选择，以及 A 的在途写响应
   currentToken = null;
   session.value = null;
@@ -276,6 +278,31 @@ function closeStateChange() {
   changeTarget.value = null;
 }
 
+/**
+ * 会话边界清理：登录／退出／卸载时把「停用／恢复」这一片**全部**作废（与 `resetScopeWrite()` 同一套）。
+ *
+ * 两件事必须一起做，少一件就是跨会话串数据：
+ * ① `++changeSeq` —— 让在途写响应认不出自己（`submitStateChange` 里 `seq !== changeSeq` 就丢弃），
+ *    否则 A 的停用／恢复请求会在 B 的会话里落地、甚至替 B 触发一次刷新读；
+ * ② 清 `changeTarget/changeReason/changeOutcome/changeFailure/changeReceipt` 并把 `changeSaving`
+ *    复位 —— 否则 A 打开过的确认框（目标管理员 + 理由）与成功回执会留在 B 的页面上，
+ *    而 B 可能根本没有 `scopes:write`。
+ *
+ * ⚠️ 先清 `changeTrigger` 再清 `changeTarget`：`watch(changeTarget)` 在关闭时会把焦点还给触发按钮，
+ * 会话边界不该把焦点拉回一个已经换掉的页面。
+ */
+function resetStateWrite() {
+  ++changeSeq;
+  changeTrigger = null;
+  changeKey = null;
+  changeTarget.value = null;
+  changeReason.value = '';
+  changeSaving.value = false;
+  changeFailure.value = null;
+  changeReceipt.value = null;
+  changeOutcome.value = null;
+}
+
 /** 打开 → 焦点进框；关闭 → 焦点回触发按钮（按钮被重渲染掉时不硬拉焦点）。 */
 watch(changeTarget, async (target) => {
   if (target === null) {
@@ -342,6 +369,7 @@ async function submitStateChange() {
     idempotencyKey: key,
   });
   if (seq !== changeSeq) return; // 过期响应：丢弃，不改状态
+  if (currentToken === null) return; // 兜底：会话已经退出／被换掉，即便 seq 没变也不往空会话里写
   changeSaving.value = false;
 
   const write = {
@@ -609,7 +637,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   ++requestSeq;
   ++scopesSeq;
-  ++changeSeq; // 卸载后回来的写响应一律丢弃，不往已卸载的状态里写
+  resetStateWrite(); // 卸载后回来的停用／恢复写响应一律丢弃（连 `++changeSeq` 一起，不在两处各写一份）
   resetScopeWrite(); // 同上，连 `++scopeSeq` 一起（不在两处各写一份）
 });
 </script>
