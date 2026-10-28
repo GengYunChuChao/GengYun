@@ -11,10 +11,11 @@
  *   A 覆盖面／反空转：数量与名单是**实测值**，不是「随便扫到几条都算过」——
  *     A1 `/admin/**` operation 数 === 49；A2 `REWRITTEN_ADMIN_OPS` 恰好 28 个且逐个能在 spec
  *     里找到（找不到即红：名单漂移必须先红，而不是静默跳过）；
- *     A3 其余族（非 admin）里 `summary === operationId` 的 operation 数 **≤ 77**——77 是当前的
- *     **欠账上限**，做其他族后只会下降；**下降是好事、不判红**，上升才是退化（有人把 summary
- *     改回 operationId）。⛔ 别把欠账钉成精确期望：钉死会让「改善」也判红，将来做 `me` 族时
- *     变成「做了反而红」的反向枷锁。做其他族后把上限同步下调（或删掉这条）。
+ *     A3 其余族（非 admin，含 `/me` 族与「其余族」60 条）里 `summary === operationId` 的 operation
+ *     数 **必须 === 0**。三族（admin 49 + `/me` 17 + 其余 60 = 126）都写完之后，这条已经从「欠账
+ *     上限」换挡成**退化检测**：任何人把某条 summary 改回 operationId、或新增 op 时忘了写 summary，
+ *     都判红。（历史沿革：第一片时上限是 77、第二片 60，现在 0——77/60 只是沿革，不再代表欠账；
+ *     ⛔ 别把它改回「≤ N」的上限语义，那等于给退化留口子。）
  *
  *   B 退化检测（对 28 个改写过的 op 逐个）：summary 不再等于 operationId、summary 含汉字、
  *     description 不等于（也不包含）模板句。B 的失败清单一次性列全——先红时就是「summary 等于
@@ -90,6 +91,15 @@
  * （`suffixProblems` / `scopeProblems` / `statusCodeProblems` / `headerProblems`），⛔ 不许为某一族
  * 另写一份更松的复制——「两族各自绿」和「两族共用一把尺」在退化时结果完全不同。
  * `/me` 族与 `/admin` 族的区别只在**名单与数量**，不在尺子。
+ *
+ * ── A04 第三片（其余族 60 条，GY-R68）───────────────────────────────────────
+ * 剩下 60 条（`/public/**`、`/auth/**`、`/catalog/**`、`/jobs/**`、`/knowledge/**`、`/herbicides/**`、
+ * `/registrations/**`、`/recognitions/**`、`/ocr/**`、`/speech/**`、`/conversations/**`、`/posts/**`、
+ * `/comments/**`、`/reports/**`、`/favorites/**`、`/history/**`、`/community/**`、`/account/**`）也由
+ * 同一把尺子守：A6／A7（覆盖面与名单）、B-rest、C①②③-rest。`others` 里含 `/me` 族 17 条，所以
+ * 「其余族」必须写成 `otherOps.filter((entry) => !isMeFamilyPath(entry.path))`（77 − 17 = 60）。
+ * 本片另外把 C② 升级为**集合级双向判定**：描述里的每个三位数字都必须是该 op 自己 `responses` 的
+ * 键（只判「至少命中一个」会放过「凭空多写一个码」），并剥掉 `path.ts:305-306` 这类行号引用再判。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -187,15 +197,91 @@ const REWRITTEN_ME_OPS = Object.freeze([
 ]);
 
 
+
 /**
- * 其余族里 `summary === operationId` 的 operation **上限**（A3）。
- * 做其他族后只会下降（**下降是好事、不判红**），上升才是退化（有人把 summary 改回 operationId）。
- *
- * 当前 60 = 上一片留下的 77 − 本片改写的 17 条 `/me/**`（17 条现在 summary 都不再等于 operationId）。
- * ⛔ 这是**上限**语义，不是精确期望：别把它当成「必须正好 60」——真改好了却判红，等于罚人做正确的事。
- * 谁再改写别的族，就把这个数继续**下调**（只降不升）；全部改写完后这条可以直接删掉。
+ * 其余族（非 admin、非 `/me` 族）operation 实测数（A6）：126 − 49 − 17 = 60。
+ * 这是本片改写的那一批，也是 A3 里 `summary === operationId` 必须归零的那一批。
  */
-const NON_ADMIN_SUMMARY_EQUALS_ID_COUNT = 60;
+const REST_OP_COUNT = 60;
+
+/**
+ * 60 条这一片改写过的其余族 operation（A04 第三片实测：summary 与 description 都按代码真值重写）。
+ * 顺序按 spec 里出现的**文件顺序**（JSON 键插入序，同一 path 内 post 先于 get、patch 先于 delete），
+ * 便于与本片交付报告里的表格逐行对照。
+ */
+const REWRITTEN_REST_OPS = Object.freeze([
+  'getPublicHome',
+  'loginWechat',
+  'getUserSession',
+  'logoutUser',
+  'listCrops',
+  'listRegions',
+  'listSpecies',
+  'getDeletionReceipt',
+  'getJob',
+  'cancelJob',
+  'listKnowledge',
+  'getKnowledge',
+  'listHerbicides',
+  'getHerbicide',
+  'verifyRegistration',
+  'createRecognition',
+  'getRecognition',
+  'deleteRecognition',
+  'selectSpecies',
+  'createOCR',
+  'getOCR',
+  'deleteOCR',
+  'correctOCR',
+  'verifyOCR',
+  'createTranscription',
+  'getTranscription',
+  'deleteTranscription',
+  'confirmTranscription',
+  'createSynthesis',
+  'createConversation',
+  'listConversations',
+  'getConversation',
+  'deleteConversation',
+  'createTurn',
+  'listTurns',
+  'deleteTurn',
+  'listPosts',
+  'createPost',
+  'getPost',
+  'editPost',
+  'deletePost',
+  'listComments',
+  'createComment',
+  'getComment',
+  'editComment',
+  'deleteComment',
+  'getPostLike',
+  'likePosts',
+  'unlikePosts',
+  'likeComments',
+  'unlikeComments',
+  'createReport',
+  'getOwnReport',
+  'listFavorites',
+  'createFavorite',
+  'deleteFavorite',
+  'listHistory',
+  'deleteHistory',
+  'grantCommunityMediaAccess',
+  'readCommunityMediaContent',
+]);
+
+/**
+ * 60 条里声明了 `Idempotency-Key`（`in: header`）的条数实测值（C③-rest 的反空转下界）。
+ * 其中 **23** 条另声明 `If-Match`（`If-Match` 是它的子集，所以命中面 = 34 条）——这个 23 是
+ * 复查时用 `$ref` 解引用后重算的（旧注释写的 26 是手数误差，断言用的是 34，未受影响）：
+ * cancelJob / deleteRecognition / selectSpecies / deleteOCR / correctOCR / verifyOCR /
+ * deleteTranscription / confirmTranscription / deleteConversation / createTurn / deleteTurn /
+ * deletePost / editPost / createComment / deleteComment / editComment / likePosts / unlikePosts /
+ * likeComments / unlikeComments / deleteFavorite / deleteHistory / grantCommunityMediaAccess。
+ */
+const REST_IDEMPOTENCY_OP_COUNT = 34;
 
 /** 方法白名单：openapi 里只可能出现这几种 operation 键。 */
 const METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'];
@@ -229,7 +315,7 @@ function collectOperations(document) {
       if (!op || typeof op !== 'object' || !op.operationId) continue;
       const entry = { path, method, op };
       if (isAdminPath(path)) admin.push(entry);
-      // `others` 的口径与 #713 那一片完全一致（非 admin），A3 的「上限只降不升」才有可比性。
+      // `others` 的口径与 #713 那一片完全一致（非 admin）；A3 已是「必须 === 0」，口径不变才拿得到同一批 operation。
       else others.push(entry);
       if (isMeFamilyPath(path)) me.push(entry);
     }
@@ -240,6 +326,14 @@ function collectOperations(document) {
 const { admin: adminOps, me: meOps, others: otherOps } = collectOperations(spec);
 const adminById = new Map(adminOps.map((entry) => [entry.op.operationId, entry]));
 const meById = new Map(meOps.map((entry) => [entry.op.operationId, entry]));
+/**
+ * 其余族 = `others`（非 admin）**再剔掉 `/me` 族**。
+ * ⛔ 不能直接用 `otherOps`：`collectOperations()` 里 `/me` 族的 17 条同时落在 `others` 里
+ * （admin/me 是并列收集，`else` 才进 others），直接用会让「其余族 = 60」变成 77 而虚红线。
+ */
+const restOps = otherOps.filter((entry) => !isMeFamilyPath(entry.path));
+const restById = new Map(restOps.map((entry) => [entry.op.operationId, entry]));
+
 
 /** 含汉字即算中文摘要（用 Unicode script 属性，⛔ 不用手写码点区间）。 */
 const HAN = /\p{Script=Han}/u;
@@ -328,18 +422,48 @@ function scopeProblems(entries) {
   return { problems, asserted };
 }
 
-/**
- * description 里“像状态码”的三位数字：前后不能紧邻字母或数字，
- * 否则 `sha256`、`10485760`、`…ts:202` 这类会被误判成状态码。
- */
+/** 「像状态码的三位数字」：前后不能紧邻字母或数字，否则 `sha256`、`10485760`、`57014` 会被误抽。 */
 const THREE_DIGIT_CODE = /(?<![0-9A-Za-z])[0-9]{3}(?![0-9A-Za-z])/g;
+
+/**
+ * 抽取前先抹掉的两类**明确不是状态码**的数字。除这两类外不给任何豁免表——
+ * 豁免一多，下面的反向判定（每个三位数字都必须是本 op 声明的码）就退化成恒真。
+ *
+ * ① 源码引用行号：`routes/ocr.ts:305-306`、`（:770-817）`、`（:139、393-404）`。
+ *    证据行号天然是 1..4 位数字，且总是以 `:` 引出、或以 `、`/`,` 续接一个区间；
+ *    状态码在正文里永远写成「409 REVISION_CONFLICT」这种「数字 + 空格 + 大写错误码」的形态，
+ *    不会紧跟 `:`，所以这两类在文本上可区分（`_rest` 那批 60 条描述里共有 100+ 处行号引用）。
+ *
+ * ② 形状/容量区间：`8..128 字符`（Idempotency-Key 长度）、`1..120`（标题）、`1..512`（令牌头）。
+ *    端点写成 `A..B` 的形态，与状态码无歧义。
+ */
+const REFERENCE_SPAN = /[A-Za-z0-9_\-./]+\.(?:ts|mts|cts|mjs|cjs|js|json|py|sql|ps1|sh)[:：][0-9]{1,4}(?:(?:\s?[-–—]\s?|\s?[:：]\s?|\s?、\s?|\s?,\s?)[0-9]{1,4})*/g;
+const REFERENCE_CONT_AFTER_COLON = /(?<=[:：])[0-9]{1,4}(?:\s?[-–—]\s?[0-9]{1,4})?(?:(?:\s?[:：、,，]\s?)[0-9]{1,4}(?:\s?[-–—]\s?[0-9]{1,4})?)*/g;
+const REFERENCE_CONT_WITH_RANGE = /(?<=[、,，])[0-9]{1,4}\s?[-–—]\s?[0-9]{1,4}(?:(?:\s?[:：、,，]\s?)[0-9]{1,4}(?:\s?[-–—]\s?[0-9]{1,4})?)*/g;
+const CONSTRAINT_RANGE = /[0-9]+\.\.[0-9]+/g;
+
+/** 去掉行号引用与形状区间后剩下的正文（只用于抽三位数字）。 */
+function withoutNonCodeSpans(description) {
+  return String(description)
+    .replace(REFERENCE_SPAN, ' ')
+    .replace(REFERENCE_CONT_AFTER_COLON, ' ')
+    .replace(REFERENCE_CONT_WITH_RANGE, ' ')
+    .replace(CONSTRAINT_RANGE, ' ');
+}
 
 /**
  * C② 的公共实现，**集合级双向判定**（不再是「至少命中一个」的存在性判定）：
  * 1. 正向：description 至少出现一个**该 op 自己** `responses` 的键；
- * 2. 反向：description 里出现的**每一个**三位数字，都必须是该 op 自己 `responses` 的键
- *    —— 多写一个不属于本 op 的码（例如把 `504` 写成 `418`）也判红。
- * 反向这一半是审查方 M4b 指出的边界：只有正向时「写错第二个码」仍绿。
+ * 2. 反向：description 里出现的**每一个**三位数字，都必须是该 op 自己 `responses` 的键——
+ *    多写一个不属于本 op 的码（例如把 `504` 写成 `418`、或凭空追加一个 `418`）也判红。
+ *
+ * 反向这一半是 A04-rest 审查（`adv-verdict-a04rest-435ea904.md` B2）指出的盲区：只有正向时，
+ * 「在已经写对 `200` 的句子里再追加一个未声明的码」仍然全绿；#718 已给 `/me` 族补了这一半，
+ * 这里把它推广到 admin／/me／其余族三族共用（三族描述经同一函数判定，不设第二把尺子）。
+ *
+ * 已知边界（写进 PR 正文「已知限制」）：本判定只能证明「描述里的码 ⊆ `responses` 的键」，
+ * 不能证明「`responses` 里的码在当前配置下真的可达」——`403 SCOPE_DENIED` 这种「声明了但走不到」
+ * 的错只能靠语义审查抓（见报告 B1 那 12 条）。
  * @returns {{problems: string[], asserted: number}}
  */
 function statusCodeProblems(entries) {
@@ -353,18 +477,19 @@ function statusCodeProblems(entries) {
     }
     const description = String(op.description ?? '');
     const declaredSet = new Set(declared);
-    const found = [...new Set(description.match(THREE_DIGIT_CODE) ?? [])];
-    if (found.length === 0) {
+    const hit = declared.filter((code) => description.includes(code));
+    if (hit.length === 0) {
       problems.push(
         `description 里没有任何一个本 op 声明的状态码（${method.toUpperCase()} ${path}）：${op.operationId}`
         + ` 声明 ${declared.join(',')}`,
       );
       continue;
     }
+    const found = [...new Set(withoutNonCodeSpans(description).match(THREE_DIGIT_CODE) ?? [])];
     const stray = found.filter((code) => !declaredSet.has(code));
     if (stray.length > 0) {
       problems.push(
-        `description 里出现了本 op 没声明的三位数字（疑似把状态码写错）（${method.toUpperCase()} ${path}）：`
+        `description 里出现了本 op 没声明的三位数字（疑似把状态码写错或凭空追加）（${method.toUpperCase()} ${path}）：`
         + `${op.operationId} 写了 ${stray.join(',')}，本 op 只声明 ${declared.join(',')}`,
       );
       continue;
@@ -442,19 +567,18 @@ test('A2 REWRITTEN_ADMIN_OPS 恰好 28 个，且逐个在 spec 里找得到', ()
   );
 });
 
-test('A3 非 admin 族里 `summary === operationId` 的 operation 数 ≤ 60（欠账上限，只降不升）', () => {
-  // 60 = 上一片的 77 − 本片改写的 17 条 `/me/**`。上限只许下调：下降是好事（改写生效），
-  // 上升是退化（有人把 summary 写回 operationId）。
+test('A3 非 admin 族里 `summary === operationId` 的 operation 数必须 === 0（退化检测，不再是欠账上限）', () => {
+  // A04 第三片换挡：三族（admin 49 + /me 17 + 其余 60 = 126）都写完了，
+  // 「summary 等于 operationId」从此是**退化**，不再是「还没轮到的欠账」。
+  // ⛔ 别再把它写成 `<= N`：上限语义在 0 上等于没有断言（0 <= 0 恒真，涨到 1 也不红）。
   const suffix = otherOps.filter((entry) => entry.op.summary === entry.op.operationId);
-  assert.ok(
-    suffix.length <= NON_ADMIN_SUMMARY_EQUALS_ID_COUNT,
-    `非 admin 族里 \`summary === operationId\` 的 operation 实测 ${suffix.length} 条，`
-    + `上限 ${NON_ADMIN_SUMMARY_EQUALS_ID_COUNT} 条 —— 下降是好事（其余族改写生效），`
-    + '上升是退化（有人把 summary 写回了 operationId）。\n'
-    + `命中示例：${suffix.slice(0, 8).map((entry) => entry.op.operationId).join(', ')}\n`
-    + '⛔ 上限不是精确期望：别把 60 当成「必须正好 60」——真改好了却判红，等于罚人做正确的事。\n'
-    + '若实测比上限更小（又改好了别的族）⇒ 把上限继续改小（只降不升），别反过来放宽；'
-    + '若比上限大 ⇒ 先查是不是有人把某条 summary 写回了 operationId，再查 `isAdminPath()` 是否把别人算进来了。',
+  assert.equal(
+    suffix.length,
+    0,
+    `非 admin 族里 \`summary === operationId\` 的 operation 实测 ${suffix.length} 条，应为 0。\n`
+    + `命中：${suffix.map((entry) => `${entry.method.toUpperCase()} ${entry.path} → ${entry.op.operationId}`).join(' / ')}\n`
+    + '⛔ 这不是「欠账还没轮到」：三族都写完了，任何一条退回 operationId 都是退化。\n'
+    + '新增 operation 时必须同时写 summary（含汉字、说清做什么与边界），否则这条会红——这是本意。',
   );
 });
 
@@ -1046,4 +1170,100 @@ test('E6 管道自证：每条片段注入正文后必被 matcher 命中（⛔ �
     proven.length >= FORBIDDEN_MIN_SNIPPETS,
     `E6 只注入了 ${proven.length} 条片段（下限 ${FORBIDDEN_MIN_SNIPPETS}）⇒ 有片段没走过注入路径，管道覆盖不全。`,
   );
+});
+
+// ── A04 第三片（其余族 60 条）的覆盖面与四组判据（来自 upstream/main，与本片 E 组并存）──
+test('A6 其余族（非 admin、非 /me）operation 数 === 60（扫描面反空转）', () => {
+  assert.equal(
+    restOps.length,
+    REST_OP_COUNT,
+    `其余族 operation 数变了：实测 ${restOps.length}，本闸门记的是 ${REST_OP_COUNT}。\n`
+    + `当前其余族 operationId：${restOps.map((entry) => entry.op.operationId).sort().join(', ')}\n`
+    + '⛔ 口径是 `others`（非 admin）**再剔掉 `/me` 族**：`collectOperations()` 里 /me 的 17 条同时落在 '
+    + '`others` 里，直接用 `otherOps.length` 会得到 77 而不是 60。\n'
+    + '新增/删除其余族操作必须同步改这条常量与 A7 名单（否则「覆盖面」会悄悄缩水）。',
+  );
+});
+
+test('A7 REWRITTEN_REST_OPS 恰好 60 条，且与其余族全部 operation 一一对应', () => {
+  assert.equal(
+    REWRITTEN_REST_OPS.length,
+    REST_OP_COUNT,
+    `改写名单长度应为 ${REST_OP_COUNT}，实测 ${REWRITTEN_REST_OPS.length}`,
+  );
+  assert.equal(
+    new Set(REWRITTEN_REST_OPS).size,
+    REWRITTEN_REST_OPS.length,
+    '改写名单里有重复 operationId',
+  );
+  const missing = REWRITTEN_REST_OPS.filter((id) => !restById.has(id));
+  assert.deepEqual(
+    missing,
+    [],
+    `以下 operationId 在其余族里找不到（改名/删除/被算进别的族）：${missing.join(', ')}\n`
+    + '⛔ 名单找不到就跳过＝这条 op 从此没人守，所以这里必须先红。\n'
+    + `当前其余族实际 operationId：${restOps.map((entry) => entry.op.operationId).sort().join(', ')}`,
+  );
+  // 反向：其余族里任何一条不在名单上的 op 都是「没人守的新面孔」，同样要红。
+  const untracked = restOps
+    .map((entry) => entry.op.operationId)
+    .filter((id) => !REWRITTEN_REST_OPS.includes(id));
+  assert.deepEqual(
+    untracked,
+    [],
+    `以下其余族 operation 不在 REWRITTEN_REST_OPS 里（新增了 op 却没登记，等于没人守）：${untracked.join(', ')}`,
+  );
+});
+
+
+test('B-rest 60 条改写过的其余族 op：summary 不再是 operationId、含汉字、description 不再是模板句', () => {
+  const problems = suffixProblems(entriesOf(restById, REWRITTEN_REST_OPS));
+  assert.deepEqual(
+    problems,
+    [],
+    `以下 ${problems.length} 处退化（其余族这一片：summary 改回 operationId、或 description 抄回模板句）：\n  - `
+    + `${problems.join('\n  - ')}\n`
+    + `判定的模板句原文：${TEMPLATE_DESCRIPTION}\n`
+    + '这 60 条与 /admin、/me 两族是同一条标准：summary 写「做什么 + 作用域/边界」，description 写门'
+    + '（scope／登录／Idempotency-Key／If-Match）、成功形状与分页语义、错误码与条件、受哪个开关或执行模式影响。'
+    + '⛔ 尤其不许把「202 已受理」写成「已完成」，也不许把「未接线 ⇒ 503」省掉。',
+  );
+});
+
+
+test('C①-rest 其余族 60 条的 description 同样必须含自身 x-scope 字面量', () => {
+  const { problems, asserted } = scopeProblems(entriesOf(restById, REWRITTEN_REST_OPS));
+  assert.equal(
+    asserted,
+    REST_OP_COUNT,
+    `C①-rest 只断言到 ${asserted} 条（应为 ${REST_OP_COUNT}）⇒ 有 op 缺 x-scope 或描述里没写出 scope 字面量`,
+  );
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处 scope 与描述对不上：\n  - ${problems.join('\n  - ')}`);
+});
+
+
+test('C②-rest 其余族 60 条：同样要含自身 responses 里的码，且不得出现未声明的三位数字', () => {
+  const { problems, asserted } = statusCodeProblems(entriesOf(restById, REWRITTEN_REST_OPS));
+  // 同上：先点名哪条 op 写错码，再守「60 条全被断言到」这条反空转线。
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
+  assert.equal(
+    asserted,
+    REST_OP_COUNT,
+    `C②-rest 只断言到 ${asserted} 条（应为 ${REST_OP_COUNT}）⇒ 有 op 描述里写的码不是它自己 responses 里的`,
+  );
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
+});
+
+
+test('C③-rest 其余族 60 条：声明了的 Idempotency-Key／If-Match 必须写进 description', () => {
+  const { problems, asserted } = headerProblems(entriesOf(restById, REWRITTEN_REST_OPS));
+  // 反空转：其余族里 34 条声明了 Idempotency-Key（其中 23 条另声明 If-Match），命中面必须够大，
+  // 否则「参数改形制」时这条会静默变成恒真。
+  assert.equal(
+    asserted,
+    REST_IDEMPOTENCY_OP_COUNT,
+    `C③-rest 命中 ${asserted} 条（应为 ${REST_IDEMPOTENCY_OP_COUNT}：这 60 条里还有 34 条声明 Idempotency-Key、`
+    + '其中 23 条另声明 If-Match）⇒ 要么参数改成了别的形制，要么 `$ref` 解析坏了，要么入选名单换了。',
+  );
+  assert.deepEqual(problems, [], `以下 ${problems.length} 处 header 与描述对不上：\n  - ${problems.join('\n  - ')}`);
 });
