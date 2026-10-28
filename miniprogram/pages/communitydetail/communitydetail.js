@@ -192,8 +192,10 @@ Page({
   _decorateComments: function (items) {
     return items.map(function (comment) {
       const author = api.authorView(comment.author)
-      // 评论的「下架」措辞与帖子不同（评论叫「已隐藏」），其余结论一律取同一张表。
-      const outcome = api.outcomeOf(comment)
+      // 评论的处置措辞叫「已隐藏」（帖子叫「已下架」），但**审核结论的分档完全一样**：
+      // `{hidden, rejected}` 与 `{hidden, quarantined}` 的评论同样不能同形 ⇒ 一律取
+      // `api.commentOutcomeOf`（措辞表也在适配层，页面不自持第二套）。
+      const outcome = api.commentOutcomeOf(comment)
       return {
         id: comment.id,
         revision: comment.revision,
@@ -202,9 +204,7 @@ Page({
         authorAnonymized: author.anonymized,
         body: comment.body,
         time: comment.created_at,
-        stateLabel: comment.visibility === 'hidden'
-          ? '已隐藏（仅本人可见）'
-          : (outcome.key === 'approved' ? '' : outcome.title)
+        stateLabel: outcome.key === 'approved' ? '' : outcome.title
       }
     })
   },

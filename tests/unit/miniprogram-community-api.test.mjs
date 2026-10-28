@@ -842,3 +842,150 @@ test('④ 负控制：把两种结论映射成同一句文案 ⇒ ① 与 ② �
     '真实源码下隔离与驳回的文案必须不同',
   );
 });
+
+// ---------------------------------------------------------------------------
+// 独立审查 7d27727d 的阻塞项：`hidden` **不是**终态判据。
+//
+// 服务端读面（`community/service.ts:583-616` 的 `effectiveState`）把「已发布后被驳回/被隔离」
+// 一律降成 `hidden` 并**原样带 `audit_state`**：迟到驳回 ⇒ `{hidden, rejected}`，
+// 迟到隔离/未结论 ⇒ `{hidden, quarantined}`；`listPosts(mine=true)` 包含未公开版本
+// ⇒ 作者在自己的列表/详情里真的看得到。本片第一版先判 `hidden` 就返回
+// 「已下架（仅本人可见）」⇒ 这两种又被折成同一句、且一个理由都不给（只是把「两态同形」
+// 从「待审」挪到了「已下架」）。⑤⑥⑦ 就是把这条路钉住。
+// ---------------------------------------------------------------------------
+
+const OTHER_COMMENT_ID = '44444444-4444-4444-8444-444444444444';
+
+test('⑤ {hidden,rejected} 与 {hidden,quarantined} 不得同形（帖子与评论两条通道）', () => {
+  const h = load(() => DEFER);
+  const detail = loadPage(h, 'communitydetail');
+  const rejected = detail._decoratePost(post({ visibility: 'hidden', audit_state: 'rejected' }));
+  const quarantined = detail._decoratePost(post({ visibility: 'hidden', audit_state: 'quarantined' }));
+
+  assert.equal(rejected.outcomeKey, 'hidden_rejected');
+  assert.equal(quarantined.outcomeKey, 'hidden_quarantined');
+  assert.notEqual(rejected.stateLabel, quarantined.stateLabel, '下架+驳回 与 下架+隔离 的标签必须不同');
+  assert.notEqual(rejected.outcomeDesc, quarantined.outcomeDesc, '整句解释也必须不同');
+  assert.match(rejected.stateLabel, /未通过/, '下架+驳回 必须说「未通过」（用户得知道不会再等）');
+  assert.doesNotMatch(rejected.stateLabel, /复核/, '下架+驳回 不得说成「复核」');
+  assert.match(quarantined.stateLabel, /复核/, '下架+隔离 必须说「复核」');
+  assert.doesNotMatch(quarantined.stateLabel, /未通过/, '下架+隔离 不得说成「未通过」');
+  assert.match(quarantined.outcomeDesc, /稍后再来看/, '下架+隔离 要给出「稍后再看」的期待');
+
+  // 列表页对同一份数据必须说同一句话（跨页一致性）。
+  const list = loadPage(h, 'community')._decorate([
+    post({ visibility: 'hidden', audit_state: 'rejected' }),
+    post({ visibility: 'hidden', audit_state: 'quarantined' }),
+  ]);
+  assert.equal(list[0].stateLabel, rejected.stateLabel);
+  assert.equal(list[1].stateLabel, quarantined.stateLabel);
+
+  // 评论：同一套分档，措辞换成「已隐藏」。改前两种都是「已隐藏（仅本人可见）」。
+  const rows = detail._decorateComments([
+    comment({ id: COMMENT_ID, visibility: 'hidden', audit_state: 'rejected' }),
+    comment({ id: OTHER_COMMENT_ID, visibility: 'hidden', audit_state: 'quarantined' }),
+  ]);
+  assert.notEqual(rows[0].stateLabel, rows[1].stateLabel, '评论的两种下架结论也不得同形');
+  assert.match(rows[0].stateLabel, /已隐藏/);
+  assert.match(rows[0].stateLabel, /未通过/);
+  assert.match(rows[1].stateLabel, /已隐藏/);
+  assert.match(rows[1].stateLabel, /复核/);
+
+  // 下架本身仍能单独说清（下架是处置动作，不等于审核不通过）。
+  const plain = detail._decoratePost(post({ visibility: 'hidden', audit_state: 'approved' }));
+  assert.equal(plain.stateLabel, '已下架（仅本人可见）');
+  assert.equal(plain.outcomeKey, 'hidden');
+});
+
+test('⑥ 理由码接进结论文案：给了就翻人话，没给就只说结论（不编理由）', () => {
+  const h = load(() => DEFER);
+  const target = post({ visibility: 'hidden', audit_state: 'rejected' });
+
+  // 读面拿不到码（契约 Post 没有理由码字段）⇒ 只说结论，**一个理由都不许编**。
+  const without = h.api.outcomeOf(target);
+  assert.doesNotMatch(without.desc, /原因：|未知原因|（码：/, '没有理由码时不得凭空写原因');
+  assert.match(without.desc, /未通过/);
+
+  // 调用方手上有码（现存的唯一通道：错误封套 details[].code）⇒ 翻成人话挂上去，结论不变。
+  const withCode = h.api.outcomeOf(target, { reasonCodes: ['DANGEROUS_MIX', 'PRIVACY_PII'] });
+  assert.equal(withCode.key, without.key, '理由码不得改变结论本身');
+  assert.equal(withCode.title, without.title);
+  assert.match(withCode.desc, /原因：/);
+  assert.match(withCode.desc, /危险混配/);
+  assert.match(withCode.desc, /码：DANGEROUS_MIX/);
+  assert.match(withCode.desc, /隐私信息/);
+  assert.doesNotMatch(withCode.desc, /未知原因/, '已知码不得落未知码兜底');
+
+  // 隔离/待审用「审核侧说明：」——同一批码在这两处含义不同，不许混说。
+  const quarantined = h.api.outcomeOf(post({ audit_state: 'quarantined' }), { reasonCodes: ['MODEL_NOT_EVALUATED'] });
+  assert.match(quarantined.desc, /审核侧说明：/);
+  assert.doesNotMatch(quarantined.desc, /原因：/);
+
+  // 审查指出闭集漏项中**真实可达**的 6 条，必须有人话而不是兜底。
+  for (const code of ['MODEL_QUOTA_EXCEEDED', 'MODEL_AUTH_FAILED', 'MODEL_LAYER_INPUT_BINDING_MISMATCH',
+    'MODEL_LAYER_INVARIANT_VIOLATION', 'MODEL_MERGE_INPUT_INVALID', 'RULE_CATALOG_INVALID']) {
+    assert.doesNotMatch(h.api.reasonLabel(code), /未知原因/, code + ' 必须有人话，不得落兜底');
+  }
+
+  // 冻结：withReasons 返回新对象，表里那条原条目不被就地追加污染。
+  assert.equal(Object.isFrozen(without), true);
+  assert.notEqual(h.api.HIDDEN_OUTCOMES.rejected.desc, withCode.desc);
+  assert.equal(h.api.HIDDEN_OUTCOMES.rejected.desc, without.desc, '表里的原条目不得被追加内容污染');
+});
+
+test('⑦ 负控制：hidden 路径把两态折回同一句 ⇒ ⑤ 必红', () => {
+  const apiSource = readFileSync(resolve(root, 'miniprogram/utils/community-api.js'), 'utf8');
+  const mutationPoint = "  if (auditState === 'rejected') return HIDDEN_OUTCOMES.rejected\n"
+    + "  if (auditState === 'quarantined') return HIDDEN_OUTCOMES.quarantined";
+  assert.equal(apiSource.includes(mutationPoint), true,
+    '负控制的突变点不存在了：`hiddenOutcomeOf` 的两条分支被改写 ⇒ 请同步本用例（⛔ 不要删掉这条负控制）。');
+  const collapsed = apiSource.replace(mutationPoint,
+    "  if (auditState === 'rejected') return HIDDEN_OUTCOMES.plain\n"
+    + "  if (auditState === 'quarantined') return HIDDEN_OUTCOMES.plain");
+  assert.notEqual(collapsed, apiSource, '突变没有生效（源码未变）');
+
+  const h = load(() => DEFER, undefined, { source: collapsed });
+  const detail = loadPage(h, 'communitydetail');
+  const rejected = detail._decoratePost(post({ visibility: 'hidden', audit_state: 'rejected' }));
+  const quarantined = detail._decoratePost(post({ visibility: 'hidden', audit_state: 'quarantined' }));
+  assert.equal(rejected.stateLabel, quarantined.stateLabel, '负控制前提：折叠后两者确实同句');
+  assert.doesNotMatch(rejected.stateLabel, /未通过/, '折叠后「未通过」消失 ⇒ ⑤ 的 match(/未通过/) 必红');
+  assert.doesNotMatch(quarantined.stateLabel, /复核/, '折叠后「复核」消失 ⇒ ⑤ 的 match(/复核/) 必红');
+  assert.equal(rejected.outcomeKey, quarantined.outcomeKey, '折叠后结论标识也合并 ⇒ ⑤ 的 outcomeKey 断言必红');
+});
+
+// ---------------------------------------------------------------------------
+// ⑧ 理由码表**不许自造**：每个键都必须来自仓库既有闭集（或本域专有的 3 条 + 前缀族）。
+//
+// 这条是「人话表」的防漂移闸：以后谁想加一条码，必须先在 `packages/moderation` 的闭集里
+// 有它（或写进下面这张显式白名单并说明出处），否则就是**编了一个服务端不会给的码**。
+// 白名单逐条有据（都由服务端在社区读面上产出，见 `community/service.ts`）：
+//   - `IMAGE_MODERATION_UNAVAILABLE`：`:426` 定义、`:632` 追加进 details；
+//   - `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`：`:429`（规则层不评估媒体的跨片声明码）；
+//   - `RESCREEN_REQUIRED`：`moderation/visibility.ts:36`（读面「需重新审核」）。
+// 前缀族 `NOT_SCREENED:<kind>`：`moderation/service.ts:913`。
+// ---------------------------------------------------------------------------
+test('⑧ 理由码表不自造：键集合 ⊆ 服务端闭集 ∪ 三条本域专有码，且前缀族只登记一处', async () => {
+  const constants = await import('../../packages/moderation/constants.mjs');
+  const modelCodes = await import('../../packages/moderation/model-reason-codes.mjs');
+  const closed = new Set([
+    ...constants.RULE_REASON_CODES,
+    ...constants.FAIL_CLOSED_REASON_CODES,
+    ...modelCodes.MODEL_REASON_CODES,
+  ]);
+  const SERVICE_SPECIFIC = ['IMAGE_MODERATION_UNAVAILABLE', 'MEDIA_NOT_EVALUATED_BY_RULE_LAYER', 'RESCREEN_REQUIRED'];
+
+  const h = load(() => DEFER);
+  const invented = Object.keys(h.api.REASON_LABELS)
+    .filter((code) => !closed.has(code) && SERVICE_SPECIFIC.indexOf(code) === -1);
+  assert.deepEqual(invented, [], '理由码表里出现了服务端闭集之外的码（等于编了一个不会来的码）');
+
+  // 反向：闭集里的码**不必**全有人话（漏的落「未知原因（码：X）」是可接受的兜底），但已知码必须真的翻出人话。
+  for (const code of SERVICE_SPECIFIC) {
+    assert.equal(Object.prototype.hasOwnProperty.call(h.api.REASON_LABELS, code), true, code + ' 必须有对应人话');
+    assert.doesNotMatch(h.api.reasonLabel(code), /未知原因/);
+  }
+  // 前缀族只登记一条，且拼法仍是同一个 `withCode`（`（码：X）`）。
+  assert.equal(h.api.reasonLabel('NOT_SCREENED:text'), '这一版内容没有完成送审（码：NOT_SCREENED:text）');
+  assert.match(h.api.reasonLabel('NOT_SCREENED'), /（码：NOT_SCREENED）/);
+});
