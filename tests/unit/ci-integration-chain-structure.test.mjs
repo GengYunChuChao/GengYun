@@ -535,7 +535,7 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   {
     path: 'tests/integration/user-chain-e2e.mjs',
     reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「用户链路端到端'
-      + '（登录→手选→搜索→详情→收藏/取消→退出 / 119 条断言）」跑 `node tests/integration/user-chain-e2e.mjs`。'
+      + '（登录→手选→搜索→详情→收藏/取消→来源失效→退出 / 142 条断言 / 7 步）」跑 `node tests/integration/user-chain-e2e.mjs`。'
       + '自起集群族：`GY_PG_BIN` + `GY_USER_CHAIN_PG_ROOT`（脚本 `:286` 的 `process.env.GY_USER_CHAIN_PG_ROOT`'
       + '（取不到时回落空串），⛔ 不是同族的其它根键），⛔ 不 `CREATE DATABASE`：夹具与全链迁移直接落在自己临时集群的 `postgres` 库里；'
       + '跑的是原样 API（`buildApp` 真装配，不 mock 路由）。'
