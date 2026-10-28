@@ -839,6 +839,36 @@ test('钉 5 · 「隔离待复核」与「明确驳回」是两句不同的用�
     `驳回（rejected）不得说成「待复核」——它已经有结论了（实测：${rejectedTitle}）`
       + because('把 rejected 的文案写成隔离口径（用户会一直等一个不会到来的复核）。'));
 
+  // ②b `hidden` 不再是终态判据：`{hidden, rejected}` 与 `{hidden, quarantined}` 同样必须分开。
+  //
+  // 为什么它们真的会出现：读面 `effectiveState`（`community/service.ts:583-616`）的 `demoted()`
+  // 把 `published` 一律降成 `hidden` 并**原样带 `audit_state`**，迟到驳回返回 `'rejected'`、
+  // 迟到隔离返回 `'quarantined'`；`listPosts(mine=true)` 包含未公开版本 ⇒ 作者看得到这两种。
+  // 若 `outcomeOf` 先判 `hidden` 就返回同一句，等于把「两态同形」从「待审」挪到「已下架」。
+  const hiddenRejectedTitle = outcomeTitleLine('hidden_rejected');
+  const hiddenQuarantinedTitle = outcomeTitleLine('hidden_quarantined');
+  assert.notEqual(hiddenRejectedTitle, hiddenQuarantinedTitle,
+    '【hidden 路径又把两态合并了】下架+驳回 与 下架+隔离 用了同一句标签：' + hiddenRejectedTitle
+      + '\n  `{hidden, rejected}`＝已发布后被驳回（有结论，不会再等）；'
+      + '\n  `{hidden, quarantined}`＝已发布后转隔离（还没有结论，要等复核）。'
+      + because('在 outcomeOf 里让 `visibility === \'hidden\'` 短路成同一档（本片第一版就是这么错的）。'));
+  assert.equal(hiddenQuarantinedTitle.includes('复核'), true,
+    `下架+隔离 的标签必须说「复核」（实测：${hiddenQuarantinedTitle}）`
+      + because('把 hidden_quarantined 写成纯「已下架」。'));
+  assert.equal(hiddenQuarantinedTitle.includes('未通过'), false,
+    `下架+隔离 不得说成「未通过」（实测：${hiddenQuarantinedTitle}）`
+      + because('把 hidden_quarantined 写成驳回口径。'));
+  assert.equal(hiddenRejectedTitle.includes('未通过'), true,
+    `下架+驳回 的标签必须说「未通过」（实测：${hiddenRejectedTitle}）`
+      + because('把 hidden_rejected 写成纯「已下架」，用户就永远不知道是被驳回了。'));
+  assert.equal(hiddenRejectedTitle.includes('复核'), false,
+    `下架+驳回 不得说成「复核」（实测：${hiddenRejectedTitle}）`
+      + because('把 hidden_rejected 写成隔离口径。'));
+  // 下架本身的措辞（处置动作）仍只有一处。
+  assert.equal(readRepoText(OUTCOME_COPY_TABLE).includes("title: '已下架（仅本人可见）'"), true,
+    '下架（未伴随审核结论）那一档的文案不见了：下架是处置动作，仍要能单独说清'
+      + because('删掉 HIDDEN_OUTCOMES.plain（下架但审核通过/不可判时就没话说了）。'));
+
   // ③ 三页不再自持第二套文案：旧字面量一处都不许留，且必须从单一来源取。
   for (const file of OUTCOME_COPY_PAGES) {
     for (const literal of ["'待审／未公开'", "'未公开／待审'", "'已通过先行审核'", "'已下架（仅本人可见）'"]) {
@@ -851,6 +881,11 @@ test('钉 5 · 「隔离待复核」与「明确驳回」是两句不同的用�
       `${file} 没有从适配层的单一来源取结论（缺少 api.outcomeOf 调用）`
         + because('页面自己判断 visibility/audit_state 并直接写真中文（绕开唯一一处文案表）。'));
   }
+  // 评论行同理：处置措辞（「已隐藏」）也在适配层，页面不许另写一档。
+  assert.equal(readRepoText('miniprogram/pages/communitydetail/communitydetail.js').includes('api.commentOutcomeOf'), true,
+    '详情页的评论行没有走单一来源（缺 api.commentOutcomeOf）：评论的 {hidden,rejected} 与 '
+      + '{hidden,quarantined} 会重新同形'
+      + because('把评论行改回自己判 visibility 并直接写「已隐藏（仅本人可见）」。'));
 
   // ④ 英文裸码直传不得回潮：旧的「原因码：A、B」拼法已无出口。
   assert.deepEqual(hitsOf(OUTCOME_COPY_TABLE, '原因码：'), [],

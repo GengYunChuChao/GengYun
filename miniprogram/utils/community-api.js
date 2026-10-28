@@ -370,6 +370,9 @@ function reasonCodes(error) {
 // 口径（逐条可核对，不解释成服务端没说过的事）：
 //   1. 两种结论**必须能区分**：隔离 ⇒ 已提交 + 等待人工复核 + 「稍后再看」的期待；
 //      驳回 ⇒ 未通过 + 理由（理由码给到就翻成人话，没给就只说未通过，**不编**）。
+//   1b. 区分**不能靠判 `visibility` 短路**：读面会把「已发布后被驳回/被隔离」如实降级成
+//      `hidden`（`effectiveState` 的 `demoted()`）并原样带 `audit_state` ⇒ `{hidden,rejected}`
+//      与 `{hidden,quarantined}` 同样必须分得开（见 `HIDDEN_OUTCOMES`）。
 //   2. 理由码**不透传成英文裸码**：已知码 ⇒ 人话（码：X）；未知码 ⇒ 「未知原因（码：X）」。
 //   3. 未知 `audit_state` / 不认识的组合 **fail-closed 到「待审」**：绝不说成通过，也不说成系统错误。
 //
@@ -408,11 +411,9 @@ const OUTCOMES = Object.freeze({
     title: '未通过审核（未公开）',
     desc: '这条内容没有通过审核，不会公开。'
   }),
-  hidden: Object.freeze({
-    key: 'hidden',
-    title: '已下架（仅本人可见）',
-    desc: '这条内容已被下架，不再公开，仅你本人可见。'
-  }),
+  // ⚠ 这里**没有** `hidden` 条目：`visibility === 'hidden'` 的文案要按审核结论
+  // 分开（下架 + 驳回 ≠ 下架 + 隔离），统一放在下面的 `HIDDEN_OUTCOMES` 里，
+  // 避免同一句「已下架」在两处各存一份、改一处漏一处。
   draft: Object.freeze({
     key: 'draft',
     title: '未公开（仅本人可见）',
@@ -421,16 +422,56 @@ const OUTCOMES = Object.freeze({
 })
 
 /**
- * 审核结论判定（**单一实现**）：`visibility` + `audit_state` ⇒ 上面的一张文案。
+ * `visibility === 'hidden'` 时**再按审核结论分开**的几档文案。
  *
- * 优先级：`hidden`（下架是处置动作，优先于审核结论）⇒ `published ∧ approved`（真通过）
- * ⇒ 其余按 `audit_state` 如实取；`audit_state` 不认识时按 `pending`（fail-closed：
- * 宁可说「还在等」，也不说「通过」，更不说「系统错误」——后者会把审核结论说成故障）。
+ * 为什么必须分（独立审查 7d27727d 的阻塞项）：服务端读面会把「已发布后被驳回／被隔离」
+ * 如实降级成 `hidden` 并**原样带 `audit_state`**——
+ * `services/api/src/community/service.ts:583-616` 的 `effectiveState`：`demoted()` 把
+ * `published` 一律降成 `hidden`（`:588-591`），迟到驳回时 `domainWithholdingOf()` 返回
+ * `'rejected'`（`:611-612`），迟到隔离返回 `'quarantined'`；而 `listPosts(mine=true)`
+ * 明确包含未公开版本 ⇒ 作者在自己的列表/详情里**真的看得到** `{hidden, rejected}` 与
+ * `{hidden, quarantined}`。
+ *
+ * 本片第一版先判 `hidden` 就返回「已下架（仅本人可见）」⇒ 这两种又被折成同一句、且不给
+ * 任何理由，等于把「两态同形」从「待审」挪到了「已下架」。现在按 `audit_state` 分开，
+ * 只有「审核已通过／不可判」时才只说下架（下架是处置动作，不是审核结论）。
  */
-function outcomeOf(record) {
-  const visibility = record && record.visibility
-  const auditState = record && record.audit_state
-  if (visibility === 'hidden') return OUTCOMES.hidden
+const HIDDEN_OUTCOMES = Object.freeze({
+  // 下架是处置动作（下架 ≠ 审核不通过）：审核已通过、或 audit_state 缺失/未知时，只陈述下架。
+  plain: Object.freeze({
+    key: 'hidden',
+    title: '已下架（仅本人可见）',
+    desc: '这条内容已被下架，不再公开，仅你本人可见。'
+  }),
+  rejected: Object.freeze({
+    key: 'hidden_rejected',
+    title: '已下架：审核未通过（仅本人可见）',
+    desc: '这条内容当前已下架，且审核结论是「未通过」，不会再公开。'
+  }),
+  quarantined: Object.freeze({
+    key: 'hidden_quarantined',
+    title: '已下架：等待人工复核（仅本人可见）',
+    desc: '这条内容当前已下架，审核还没有给出结论，正等待人工复核；'
+      + '复核需要一些时间，请稍后再来看，出结论前不会重新公开。'
+  }),
+  pending: Object.freeze({
+    key: 'hidden_pending',
+    title: '已下架：待审（仅本人可见）',
+    desc: '这条内容当前已下架，正在等待审核结论；出结论前不会重新公开。'
+  })
+})
+
+/** `hidden` 的二次分档：**先看审核结论**，再看「已下架」这个处置事实。 */
+function hiddenOutcomeOf(auditState) {
+  if (auditState === 'rejected') return HIDDEN_OUTCOMES.rejected
+  if (auditState === 'quarantined') return HIDDEN_OUTCOMES.quarantined
+  if (auditState === 'pending') return HIDDEN_OUTCOMES.pending
+  // `approved`（下架但审核通过）／未知／字段缺失 ⇒ 只陈述下架，不替它编审核结论。
+  return HIDDEN_OUTCOMES.plain
+}
+
+/** 非 `hidden` 的审核结论分档（纯函数，只读两个字段）。 */
+function visibleOutcomeOf(visibility, auditState) {
   if (auditState === 'rejected') return OUTCOMES.rejected
   if (auditState === 'quarantined') return OUTCOMES.quarantined
   if (visibility === 'published' && auditState === 'approved') return OUTCOMES.approved
@@ -439,6 +480,79 @@ function outcomeOf(record) {
   if (auditState === 'pending') return OUTCOMES.pending
   // 未知 audit_state（含字段缺失）：不猜结论，如实停在「待审」。
   return OUTCOMES.pending
+}
+
+/**
+ * 审核结论判定（**单一实现**）：`visibility` + `audit_state` ⇒ 上面两张表里的一条。
+ *
+ * 顺序是刻意的：**先按审核结论分**（驳回／隔离／待审／通过），再把 `hidden` 作为
+ * 「可见性附加说明」叠上去；只有结论不可判（`approved`/未知）时，`hidden` 才独立成
+ * 「已下架（仅本人可见）」。`audit_state` 不认识时按 `pending`（fail-closed：宁可说
+ * 「还在等」，也不说「通过」，更不说「系统错误」——后者会把审核结论说成故障）。
+ *
+ * `options.reasonCodes`：调用方**手上真有**理由码时传进来（唯一现存通道是错误封套的
+ * `details[].code`）。读面契约 `Post`/`Comment` 没有理由码字段
+ * （`packages/contracts/openapi.json`：`additionalProperties:false`，15 个 required 里没有理由码），
+ * 所以本函数**不会**凭空编理由：没传码就只说结论。
+ */
+function outcomeOf(record, options) {
+  const visibility = record && record.visibility
+  const auditState = record && record.audit_state
+  const base = visibility === 'hidden'
+    ? hiddenOutcomeOf(auditState)
+    : visibleOutcomeOf(visibility, auditState)
+  return withReasons(base, options)
+}
+
+/**
+ * 把理由码挂到结论文案上（**不改变结论本身**）。
+ *
+ * 驳回 ⇒ `原因：人话（码：X）…`；隔离/待审 ⇒ `审核侧说明：…`（同一批码在这两处的含义不同，
+ * 不能混着说）。返回**新的冻结对象**，入参那条不动（表本身不可被页面就地改）。
+ */
+function withReasons(outcome, options) {
+  const codes = options && Array.isArray(options.reasonCodes) ? options.reasonCodes : []
+  const lines = []
+  for (let i = 0; i < codes.length; i += 1) {
+    const line = reasonLabel(codes[i])
+    if (lines.indexOf(line) === -1) lines.push(line)
+  }
+  if (lines.length === 0) return outcome
+  const label = outcome.key === 'rejected' || outcome.key === 'hidden_rejected'
+    ? '原因：'
+    : '审核侧说明：'
+  return Object.freeze({
+    key: outcome.key,
+    title: outcome.title,
+    desc: outcome.desc + label + lines.join('；') + '。'
+  })
+}
+
+/**
+ * 评论专用：**同一套审核结论分档**，只把处置措辞从「已下架」换成「已隐藏」。
+ *
+ * 评论的处置动词与帖子不同（评论被处置叫「已隐藏」），但**分档必须一样**：
+ * `{hidden, rejected}` 与 `{hidden, quarantined}` 的评论也不能同形（同一处 `effectiveState`
+ * 同一套降级规则）。措辞表仍在本文件里，页面无权另写一套。
+ */
+const HIDDEN_COMMENT_TITLES = Object.freeze({
+  hidden: '已隐藏（仅本人可见）',
+  hidden_pending: '已隐藏：待审（仅本人可见）',
+  hidden_quarantined: '已隐藏：等待人工复核（仅本人可见）',
+  hidden_rejected: '已隐藏：审核未通过（仅本人可见）'
+})
+
+/** 评论被处置时的统一解释（评论行只渲染标签，这句留给需要整句的调用方）。 */
+const HIDDEN_COMMENT_DESC = '这条评论当前不对其他用户展示，仅你本人可见。'
+
+function commentOutcomeOf(record, options) {
+  const outcome = outcomeOf(record, options)
+  if (!Object.prototype.hasOwnProperty.call(HIDDEN_COMMENT_TITLES, outcome.key)) return outcome
+  return Object.freeze({
+    key: outcome.key,
+    title: HIDDEN_COMMENT_TITLES[outcome.key],
+    desc: HIDDEN_COMMENT_DESC
+  })
 }
 
 /**
@@ -473,6 +587,11 @@ const REASON_LABELS = Object.freeze({
   MODEL_PORT_ERROR: '审核服务调用出错，未取得结论',
   MODEL_PAYLOAD_INVALID: '送审材料不完整，未取得结论',
   MODEL_MEDIA_UNSUPPORTED: '图片审核当前不支持这类媒体',
+  MODEL_QUOTA_EXCEEDED: '审核服务额度已用尽，未取得结论',
+  MODEL_AUTH_FAILED: '审核服务凭据无效，未取得结论',
+  MODEL_MERGE_INPUT_INVALID: '合流输入不完整，未取得结论',
+  MODEL_LAYER_INPUT_BINDING_MISMATCH: '送审内容与结论绑定的版本不一致，需要重新审核',
+  MODEL_LAYER_INVARIANT_VIOLATION: '审核结论自身不自洽，未取得结论',
   MODEL_BIZTYPE_UNVERIFIED: '审核供应商的业务类型尚未核验',
   MODEL_BLOCKED: '审核模型判定不得公开',
   MEDIA_NOT_EVALUATED_BY_RULE_LAYER: '规则层不评估图片，图片需另行复核',
@@ -480,6 +599,7 @@ const REASON_LABELS = Object.freeze({
   RULE_NOT_EVALUATED: '规则层没有完成评估',
   RULE_SCAN_TRUNCATED: '规则扫描没有覆盖全文',
   RULE_ENGINE_ERROR: '规则引擎出错，未取得结论',
+  RULE_CATALOG_INVALID: '审核规则目录无效，未取得结论',
   RULE_VERSION_UNKNOWN: '无法确认审核规则版本',
   ENGINE_INVARIANT_VIOLATION: '审核引擎状态不一致，未取得结论',
   REVIEW_INPUT_INVALID: '送审输入不完整',
@@ -627,8 +747,10 @@ module.exports = {
   reasonCodes: reasonCodes,
   // 审核结论文案（单一来源）：页面据此区分「隔离待复核」与「明确驳回」，不各写一套。
   OUTCOMES: OUTCOMES,
+  HIDDEN_OUTCOMES: HIDDEN_OUTCOMES,
   REASON_LABELS: REASON_LABELS,
   outcomeOf: outcomeOf,
+  commentOutcomeOf: commentOutcomeOf,
   reasonLabel: reasonLabel,
   reasonLines: reasonLines,
   sessionFailure: sessionFailure,

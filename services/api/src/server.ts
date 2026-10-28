@@ -3,7 +3,7 @@
  * 配置不合法立即失败并打印字段名；不启动半配置服务。
  */
 import { buildApp } from './app.ts';
-import { ConfigError, loadConfig } from './config.ts';
+import { ConfigError, loadConfig, wechatStubSubjectStartupFields } from './config.ts';
 import { createPool } from './db/pool.ts';
 import { MediaRealWiringError, mediaRealPortsAssemblyOptions, resolveMediaRealPorts } from './media/real-ports.ts';
 import { synthesisMediaWiringAssemblyOptions } from './tts/real-ports.ts';
@@ -86,7 +86,16 @@ async function main(): Promise<void> {
 
   await app.listen({ host: config.host, port: config.port });
   app.log.info(
-    { execution_mode: config.executionMode, database_configured: config.databaseUrl !== null },
+    {
+      execution_mode: config.executionMode,
+      database_configured: config.databaseUrl !== null,
+      // GY-R68 返修：固定身份**是否生效**的读数。⛔ 只追加布尔，绝不打印 `WECHAT_STUB_SUBJECT`
+      // 的值（那是身份标识）；`wechat_stub_subject_ignored: true` 只在「设了但只含空白」时出现，
+      // 用来把「被忽略」和「未设」区分开（见 `config.ts` 的 `wechatStubSubjectStartupFields`）。
+      // ⛔ 入参只有已解析的 `config`：生产入口不读 ambient env（空白判据已在 `loadConfig` 算好，
+      // 见 `config.wechatStubSubjectIgnored`）。
+      ...wechatStubSubjectStartupFields(config),
+    },
     'gengyun api 已启动（认证、后台认证与各业务域路由均已注册；各域真实后端未接线者按域 fail-closed，不以替身数据返回成功）',
   );
 }
