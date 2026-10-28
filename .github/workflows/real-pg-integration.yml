@@ -700,7 +700,7 @@ jobs:
       # 且同样**不** `CREATE DATABASE`——它把夹具与全链迁移直接落在**自己临时集群**的 `postgres` 库里
       # （连接串 `postgres://postgres@127.0.0.1:<port>/postgres`，见脚本 `:293`），所以没有「CI 建的库名」可核对，
       # 判据⑦⑧ 对它走 `SELF_CLUSTERED_SCRIPTS` 那组等价判据。
-      # 它跑的是本轮唯一一条**用户视角**整链（登录→手选作物/地区→搜索→详情→收藏/取消→退出），119 条断言／6 步，
+      # 它跑的是本轮唯一一条**用户视角**整链（登录→手选作物/地区→搜索→详情→收藏/取消→来源失效→退出），142 条断言／7 步，
       # 在**原样** `buildApp` 真装配上 `listen({port:0})` 走真 HTTP（不 mock 路由）；顺带钉住「未登录 401
       # `SESSION_REQUIRED`／登出后同令牌 401 `SESSION_EXPIRED`／他人读不到也删不掉收藏（IDOR→404 同形）」。
       # 缺 `GY_PG_BIN` 时脚本打印 SKIP 并 exit 77 ⇒ 装包或路径没弄好必红（77 是「未取得」，⛔ 不是通过，
@@ -712,7 +712,7 @@ jobs:
       # `could not create directory … Permission denied`（本机实测过这个坑）⇒ 必须显式落在 `runner.temp` 下。
       # 排在 `recognition-chain-e2e` **之前**：后者是唯一起 loopback 监听并反复轮询异步落库的最慢一步，
       # 其 step 注释与 `REQUIRED_STEP_ORDER` 都要求它仍排最后（别把它的读秒和别人的失败混在一起）。
-      - name: 用户链路端到端（登录→手选→搜索→详情→收藏/取消→退出 / 119 条断言）
+      - name: 用户链路端到端（登录→手选→搜索→详情→收藏/取消→来源失效→退出 / 142 条断言 / 7 步）
         timeout-minutes: 5
         run: node tests/integration/user-chain-e2e.mjs
         env:
