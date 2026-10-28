@@ -32,6 +32,7 @@ import {
   AUDIT_ACTION_ADMIN_SCOPE_DENY,
   AUDIT_ACTION_ADMIN_SCOPE_GRANT,
   AUDIT_ACTION_ADMIN_SCOPE_REVOKE,
+  AUDIT_ACTION_CATEGORY_UPDATE,
   AUDIT_ACTION_JOB_CANCEL,
   AUDIT_ACTION_POST_HIDE,
   AUDIT_ACTION_SET_FLAG,
@@ -110,6 +111,7 @@ export const AUDIT_READING_KIND: Readonly<Record<AdminAuditAction, AuditReadingK
   [AUDIT_ACTION_POST_HIDE]: 'unexposed',
   [AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE]: 'unexposed',
   [AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE]: 'unexposed',
+  [AUDIT_ACTION_CATEGORY_UPDATE]: 'unexposed',
 });
 
 /** 该 action 的读数语义；闭集外一律 `unexposed`（今天没有契约读面能表达它们的读数）。 */

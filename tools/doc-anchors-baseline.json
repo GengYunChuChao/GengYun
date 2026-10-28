@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。",
+  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。【2026-10-28 GY-R68-A01 追加】下列 16 条（第 14–29 条）**全部由本片 GY-R68-A01 引入**，不是既有遗留：父提交 1f056b8b 上这 16 处行号都指向实质代码行，本片在 services/api/src/app.ts（+19：:79 +1、:1531 后 +8、:1571 后 +2、:1598 后 +2、:1654 后 +5、:1671 后 +1）、services/api/src/admin/ops/service.ts（净 +61）、docs/architecture/contract-status.json（+30）、tests/integration/admin-audit-logs-pg.mjs（+2）里插入代码后把它们顶空。逐条 note 写明「父提交原文 → HEAD 新行号 → 哪一处插入造成的」。引用页全落在 docs/verification/** 的「当时读数」里，仓规四处白纸黑字禁止改写（gy-r67-docs-pins:82、gy-r68-d09b-anchor-recheck:134、gy-r28-e4:12、gy-r28-assert-verdict-hard-fail:66）⇒ 只登记、不改数字；能改成端点映射的运行页（docs/architecture/**）已经改了，见 tests/unit/doc-anchor-relocations.json。⛔ 仍然不要用 --reanchor（tools/verify-doc-anchors.mjs:340 自承它是改写历史的工具）。",
   "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
@@ -80,6 +80,118 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/unit/tts-jobs-http.test.mjs:129"
+    },
+    {
+      "path": "docs/architecture/contract-status.json",
+      "reason": "SUSPECT",
+      "owner": "docs",
+      "reference": "docs/architecture/contract-status.json:3314",
+      "note": "本片（GY-R68-A01）引入：docs/architecture/contract-status.json 本提交 +47/−17（:3234 后插 15 行、:3265 后插 15 行，新增 listAdminCategories / editCategory 两条 operation 条目）⇒ 父提交这里的 \"lines\": \"352-357\" 整块下移到 :3344。引用页 docs/verification/gy-r33-contract-ledger-20261023.md:62 是当时读数，按仓规不改写数字；同类漂移在运行页 docs/architecture/** 已按端点映射改正（见 tests/unit/doc-anchor-relocations.json）。"
+    },
+    {
+      "path": "services/api/src/admin/ops/service.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/service.ts:1195",
+      "note": "本片（GY-R68-A01）引入：services/api/src/admin/ops/service.ts 本提交 +74/−13（:622 后插 30 行分类读写实现、:641 处 9 行改 20 行、:651 处 9 行改 1 行）⇒ 父提交这里 details: [{ field: 'key', code: 'SAFETY_CRITICAL_KEY' }] 下移到 :1256（净 +61）。引用页 docs/verification/r59-community-notify-dedupe-20261026.md:83 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "app.ts:1341",
+      "note": "本片（GY-R68-A01）引入：services/api/src/app.ts 本提交在 :79 后插 1 行（import createPostgresAdminAccountStateAuthority）⇒ 父提交 :1341 的 const adminSigningKey = … 下移到 :1342，:1341 变成空行。引用页 docs/verification/gy-r67-docs-pins-20261027.md:12 是当时读数（裸文件名写法），按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "app.ts:2331",
+      "note": "本片（GY-R68-A01）引入：services/api/src/app.ts 本提交共 +19（:79 +1、:1531 后 +8、:1571 后 +2、:1598 后 +2、:1654 后 +5、:1671 后 +1）⇒ 父提交 :2331 的 conversationStore === null || … 下移到 :2350。引用页 docs/verification/gy-i12-conversations-gap-20261021.md:128 是当时读数（裸文件名），按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:1029",
+      "note": "本片（GY-R68-A01）引入：app.ts :79 后 +1 ⇒ 父提交 :1029 的 const recognitionEgress = mediaEgress(...) 下移到 :1030。引用页 docs/verification/gy-r31-i18-recon-20261022.md:78 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:1341",
+      "note": "同第 16 条的位移（app.ts :79 后 +1）：引用页 docs/verification/gy-r67-docs-pins-20261027.md:156 记的 app.ts:1341 现指空行，原行在 :1342。按仓规不改取证页数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:1341",
+      "note": "同第 16 条的位移（app.ts :79 后 +1）：引用页 docs/verification/gy-r67-docs-truth-20261027.md:172 记的 app.ts:1341 现指空行，原行在 :1342。按仓规不改取证页数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:1612",
+      "note": "本片（GY-R68-A01）引入：app.ts 在 :1531 后 +8、:1571 后 +2、:1598 后 +2（分类网关线）⇒ 父提交 :1612 的 if (flagsWired) { 下移到 :1625。引用页 docs/verification/gy-i06-private-media-20261014.md:270 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:1661",
+      "note": "本片（GY-R68-A01）引入：app.ts 在 :1654 后 +5（分类路由表）⇒ 父提交 :1661 的路由表开括号 { 现在在 :1679。引用页 docs/verification/gy-r31-closure-matrix-20261022.md:66 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:1661",
+      "note": "同第 22 条的位移（app.ts :1654 后 +5）：引用页 docs/verification/gy-r31-i26-recon-20261022.md:124 记的 app.ts:1661（路由表开括号）现在在 :1679。按仓规不改取证页数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:2156",
+      "note": "本片（GY-R68-A01）引入：app.ts 共 +19 ⇒ 父提交 :2156 的 ocrService?: { 下移到 :2175。引用页 docs/verification/gy-r30-public-posting-gate-20261022.md:39 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:2573",
+      "note": "本片（GY-R68-A01）引入：app.ts 共 +19 ⇒ 父提交 :2573 的 registerConversationRoutes(...) 下移到 :2592。引用页 docs/verification/gy-i12-text-question-ui-20261020.md:67 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:714",
+      "note": "本片（GY-R68-A01）引入：app.ts :79 后 +1 ⇒ 父提交 :714 的 ): AdminOpsService { 下移到 :715。引用页 docs/verification/gy-i02-openapi-2020-fastify-20261017.md:45 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:805",
+      "note": "本片（GY-R68-A01）引入：app.ts :79 后 +1 ⇒ 父提交 :805 的 Ajv2020 注释行下移到 :806。引用页 docs/verification/gy-i17-messages-pg-20261018.md:34 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:878",
+      "note": "本片（GY-R68-A01）引入：app.ts :79 后 +1 ⇒ 父提交 :878 的 return payload; 下移到 :879。引用页 docs/verification/gy-r31-closure-matrix-20261022.md:65 是当时读数，按仓规不改写数字。"
+    },
+    {
+      "path": "tests/integration/admin-audit-logs-pg.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/integration/admin-audit-logs-pg.mjs:817",
+      "note": "本片（GY-R68-A01）引入：tests/integration/admin-audit-logs-pg.mjs 本提交 :317 后 +2（BootstrapDatabase 的 0049 断言）⇒ 父提交 :817 的 pass('P0 回归：0041 形状的 admin_scope.grant …') 下移到 :819。引用页 docs/verification/gy-r66-wire-audit-logs-arm-20261027.md:219 是当时读数，按仓规不改写数字。"
     }
   ]
 }

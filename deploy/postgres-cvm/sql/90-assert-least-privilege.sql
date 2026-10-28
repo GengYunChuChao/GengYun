@@ -1178,7 +1178,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 并在这里同时补分类与下面 expected 的独立列清单复述。required=true：缺表（0036 未执行）直接失败。
     ('admin_content_entities',         'granted',          true),
     ('admin_content_revisions',        'granted',          true),
-    ('admin_content_idempotency',      'granted',          true)
+    ('admin_content_idempotency',      'granted',          true),
+    -- 迁移 0049（R68）：后台分类字典表。0049 只建表 + 一次性回填 ⇒ 本片在 20-login-roles.sql
+    -- 段 gy-r68-catalog-grant 逐列授权（SELECT 6 / UPDATE 5，无 INSERT、无 DELETE），
+    -- 并在这里补分类与下面 expected 的独立列清单复述。required=true：缺表（0049 未执行）直接失败。
+    ('admin_categories',               'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -1459,6 +1463,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
      ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
      ARRAY['request_hash','response_status','outcome','expires_at'],
+     false),
+    -- 后台分类字典（迁移 0049）：读面 6 列 = 契约 Category 的 6 个字段；写面只有一条 CAS UPDATE
+    -- （name/description/active + revision/updated_at）⇒ ins 为空数组（没有"新建分类"这个 operation）。
+    -- `type` 与 `created_at` **刻意不在 upd 里**：种类闭集与建行时刻都不许运行时改
+    -- （契约：新增覆盖/种类必须另行来源与评估）。del=false：没有"删除分类"这个 operation。
+    ('admin_categories',
+     ARRAY['id','revision','type','name','description','active'],
+     ARRAY[]::text[],
+     ARRAY['name','description','active','revision','updated_at'],
      false)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
@@ -1837,6 +1850,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['gengyun_api_runtime']::text[]),
     ('public',         'enable_admin_account',               'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- 迁移 0049（R68）：分类编辑的审计落库。运行时对 `admin_audit_events` 仍然**零表级、零列级
+    -- 权限**（external_manifest 与槽 9 的 protected_columns 一句未动），唯一写路径就是这条函数。
+    -- 函数内固定 action='category.update'、scope='sources:write'、result='accepted'、
+    -- `target_ref`=NULL（契约 TargetRef.type 闭集里没有 category）、`target_hint`='category:'||id
+    -- 由形参重建，并重核验操作者存在 + active + 当前有效持 sources:write + 目标行存在 +
+    -- 审计的 revision 必须等于库内现值（G0001/G0002/G0010）⇒ 调用方伪造不了 actor、动作文本或 target。
+    ('public',         'record_admin_category_update',       'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -1848,8 +1869,8 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
   ),
   -- R28-S52：跨 schema 关系面兜底清单（与 S43 的 external_manifest、S51 的
   -- function_surface_manifest 同构：把"点过名的关系"升级为"必须分类的关系面"）。
-  -- 为什么需要：domain_manifest（public 表 21 granted + 1 granted_external + 4 forbidden）、
-  --   external_manifest（S43 的 16 张 public 表 + GY-I07 的 `species` = 17 张）、function_surface_manifest（S51 的 11 个函数）
+  -- 为什么需要：domain_manifest（public 表 22 granted + 1 granted_external + 4 forbidden）、
+  --   external_manifest（S43 的 16 张 public 表 + GY-I07 的 `species` = 17 张）、function_surface_manifest（S51 的 11 个函数 + R68 的 1 条 = 12 个）
   --   三张清单覆盖的**全都只有 public**。非 public 的 4 个 schema（catalog_ops / catalog_read /
   --   knowledge_staging / staging_intake）里还有 9 个关系带组授权，而本切片之前只有
   --   preview_reader_scope（管 catalog_read.home_species）与 knowledge_runtime_scope

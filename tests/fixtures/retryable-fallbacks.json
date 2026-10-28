@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 241
+      "files": 242
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 46,
-    "has": 45,
+    "total": 48,
+    "has": 47,
     "none": 1
   },
   "entries": [
@@ -40,10 +40,24 @@
     },
     {
       "file": "services/api/src/admin/ops/administrators.ts",
-      "line": 97,
+      "line": 105,
       "function": "mapAdministratorsReadError",
       "judgement": "has",
       "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/admin/ops/categories-pg.ts",
+      "line": 201,
+      "function": "foldCategoryDatabaseError",
+      "judgement": "has",
+      "owner": "R31"
+    },
+    {
+      "file": "services/api/src/admin/ops/categories-pg.ts",
+      "line": 207,
+      "function": "foldCategoryDatabaseError",
+      "judgement": "has",
+      "owner": "R31"
     },
     {
       "file": "services/api/src/admin/ops/content-pg.ts",
@@ -75,7 +89,7 @@
     },
     {
       "file": "services/api/src/admin/ops/scope-authority-pg.ts",
-      "line": 217,
+      "line": 236,
       "function": "mapAdminScopeAuthorityError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -208,14 +222,14 @@
     },
     {
       "file": "services/api/src/media/store-pg.ts",
-      "line": 82,
+      "line": 100,
       "function": "classifyMediaDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/media/store-pg.ts",
-      "line": 85,
+      "line": 103,
       "function": "classifyMediaDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"

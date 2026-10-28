@@ -70,6 +70,7 @@ import { createAdminOpsStore } from './store.ts';
 import type { AdminOpsStore } from './store.ts';
 import type {
   AccountView,
+  AdminCategoriesPort,
   AdminJobPort,
   AdminJobView,
   CategoryView,
@@ -182,6 +183,15 @@ export interface AdminOpsServiceOptions {
    * （既有单测/stub 行为不变）。
    */
   flagsPort?: FeatureFlagsPort | null;
+  /**
+   * 后台分类字典端口（R68，`categories-pg.ts`）。给了它 ⇒ `listAdminCategories` / `editCategory`
+   * 的**读写都走库**：读面每页都真读 `public.admin_categories`（⛔ 不缓存、⛔ 不返回空页），
+   * 写面在端口自己的事务里做 CAS（`WHERE id = $1 AND revision = $2`）+ 同事务审计
+   * （迁移 0049 的窄函数 `record_admin_category_update`）。未给 ⇒ 与既有口径逐字一致地走内存
+   * store（既有单测/stub 行为不变）；**唯一例外**是 `execution_mode=real` —— 没有端口就 503
+   * （见 `requireCategoriesPort()`：既不返回空页，也不落内存）。
+   */
+  categoriesPort?: AdminCategoriesPort | null;
   now?: () => Date;
   /** 幂等请求摘要与游标签名用的服务端密钥；只经内存传入，不入库。 */
   signingKey: string;
@@ -239,7 +249,7 @@ export interface AdminOpsService {
   readonly jobPort: AdminJobPort;
   /** 账号面是否已接线到认证权威（`false` ⇒ 账号读/写面 503 fail-closed）；供测试与接线回归直接核对。 */
   readonly accountsWired: boolean;
-  /** 本片实现的 operationId 全集（应恰好 11 个）。 */
+  /** 本片实现的 operationId 全集（实测 18 个；唯一事实源是下方的 `OPS_OPERATION_IDS`）。 */
   readonly operationIds: readonly string[];
 
   listAdminCategories(ctx: AdminCallContext, query?: PageQuery): Promise<ServiceResponse<PageEnvelope<CategoryView>>>;
@@ -375,7 +385,7 @@ export interface AdminOpsService {
   ): Promise<ServiceResponse<SingleEnvelope<AdminAccountStateView>>>;
 }
 
-/** 本片 operationId（机读形式，供测试断言"恰好 14 个、不越界"）。 */
+/** 本片 operationId（机读形式，供测试断言「恰好 18 个、不越界」）。 */
 export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -491,6 +501,12 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // `createPostgresAdminAccountStateAuthority()` 时传），⛔ 不读任何自述持久化布尔标志。
   const adminAccountAuthority: AdminAccountStateAuthority | null = options.adminAccountAuthority ?? null;
   const flagsPort: FeatureFlagsPort | null = options.flagsPort ?? null;
+  // 分类字典端口（R68）：判据同样是**能力对象存在**（`app.ts` 只在真的构造出
+  // `createPostgresAdminCategories()` 时传），⛔ 不读任何自述持久化布尔标志。
+  // 未注入时是否 fail-closed 由 `executionMode` 决定（见 `requireCategoriesPort()`）：
+  // stub/单测继续走内存 store（既有行为逐字不变），`real` 一律 503 且**不返回空页**。
+  const categoriesPort: AdminCategoriesPort | null = options.categoriesPort ?? null;
+  const categoriesPersistent = categoriesPort?.persistent === true;
   const now = options.now ?? (() => new Date());
   const executionMode: ExecutionMode = options.executionMode ?? 'stub';
   const idempotencyTtlSeconds = options.idempotencyTtlSeconds ?? DEFAULT_IDEMPOTENCY_TTL_SECONDS;
@@ -620,9 +636,42 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
   // 分类
   // -------------------------------------------------------------------------
 
+  /**
+   * 分类面**没有端口**时的调用期判定（R68）：
+   * - `execution_mode` 不是 `real`（stub / 单测）⇒ 返回 `null`，调用点走内存 `store`（既有行为逐字不变）；
+   * - `real` ⇒ 抛 503，**绝不**返回空页 / 空数组 / 空成功封套。
+   *
+   * 为什么这条 fail-closed 必须在服务层再守一次（装配期 `accounts-only.ts` 已有一道门）：
+   * 外壳是**装配期**的门，它决定"这条路由是否可达"；这里是**调用期**的门，保证即使有人绕过外壳
+   * 直接调服务（单测、未来装配改动），也不会出现"没有端口却返回空页"这种伪造读数 ——
+   * 契约两处 description 都写着「⛔ 不返回空页（空页会被读成「平台没有分类」，那是伪造读数）」。
+   */
+  function requireCategoriesPort(): AdminCategoriesPort | null {
+    if (categoriesPort !== null) return categoriesPort;
+    if (executionMode !== 'real') return null;
+    throw new ApiError(
+      'PROVIDER_UNAVAILABLE',
+      '分类字典尚未接线到真实目录库（execution_mode=real 且没有连接池）：拒绝返回空页，也拒绝落内存',
+      { retryable: false },
+    );
+  }
+
+  /** 分类编辑成功后的审计条目（内存路径用；库内路径由 0049 的窄函数写，口径逐字一致）。 */
+  const CATEGORY_UPDATE_AUDIT = {
+    action: 'category.update',
+    scope: OPS_SCOPES.editCategory,
+    // 契约 `TargetRef.type` 闭集里没有 category ⇒ 合同口径为 null，标识落在内部记录。
+    targetRef: null,
+    reasonCode: 'category_updated',
+    result: 'accepted' as const,
+  };
+
   async function listAdminCategories(ctx: AdminCallContext, query: PageQuery = {}) {
     const context = resolveContext(ctx, OPS_SCOPES.listAdminCategories);
-    return pageOf(context, store.listCategories(), query, 'categories', byId);
+    const port = requireCategoriesPort();
+    // 有端口 ⇒ 每次真读库（⛔ 不缓存、⛔ 不回落到内存种子）；无端口（stub）⇒ 内存 store。
+    const items = port === null ? store.listCategories() : await port.listCategories();
+    return pageOf(context, items, query, 'categories', byId);
   }
 
   async function editCategory(ctx: AdminCallContext, id: string, body: unknown) {
@@ -632,13 +681,33 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     opsValidator.assertInput('CategoryInput', body);
     const input = body as { name: string; description: string; active: boolean };
     const normalizedId = normalizeStringIdParam(id, 80);
+    const port = requireCategoriesPort();
 
     return runIdempotentWrite(
       writeDeps,
       context,
       { method: 'PATCH', path: `/admin/categories/${normalizedId}`, expectedStatus: 200 },
       body,
-      () => {
+      async () => {
+        if (port !== null) {
+          // 真库路径：CAS（`WHERE id = $1 AND revision = $2`）与审计在端口自己的事务里，
+          // 审计写不进去 ⇒ 整个事务回滚、目录保持原样、这里抛 503（fail-closed）。
+          const outcome = await port.commitCategoryIfCurrent(normalizedId, expectedRevision, input, {
+            actorId: context.identity.userId,
+            requestId: context.requestId,
+          });
+          if (!outcome.ok) {
+            throw outcome.reason === 'NOT_FOUND'
+              ? new ApiError('NOT_FOUND', '分类不存在')
+              : new ApiError('REVISION_CONFLICT', '目标修订已变化，If-Match 与当前 ETag 不匹配');
+          }
+          // 审计二选一：持久端口已在**同一事务**里写过 ⇒ 这里⛔ 不再 append（否则一条动作两条审计）；
+          // 非持久端口（内存实现）才落内存台账。
+          if (!categoriesPersistent) {
+            appendAudit(context, { ...CATEGORY_UPDATE_AUDIT, targetHint: `category:${normalizedId}` });
+          }
+          return singleResponse(context, executionMode, 200, outcome.record, etagOf(outcome.record.revision));
+        }
         const current = store.getCategory(normalizedId);
         if (current === null) throw new ApiError('NOT_FOUND', '分类不存在');
         assertIfMatchMatches(expectedRevision, current.revision);
@@ -648,15 +717,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
             ? new ApiError('NOT_FOUND', '分类不存在')
             : new ApiError('REVISION_CONFLICT', '目标修订已变化，If-Match 与当前 ETag 不匹配');
         }
-        appendAudit(context, {
-          action: 'category.update',
-          scope: OPS_SCOPES.editCategory,
-          // 契约 `TargetRef.type` 闭集里没有 category ⇒ 合同口径为 null，标识落在内部记录。
-          targetRef: null,
-          targetHint: `category:${normalizedId}`,
-          reasonCode: 'category_updated',
-          result: 'accepted',
-        });
+        appendAudit(context, { ...CATEGORY_UPDATE_AUDIT, targetHint: `category:${normalizedId}` });
         return singleResponse(context, executionMode, 200, result.record, etagOf(result.record.revision));
       },
     );
