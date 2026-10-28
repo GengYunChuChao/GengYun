@@ -204,11 +204,4 @@ node tools/verify-doc-anchors.mjs        # 不带 --strict，会打印 SCAN: 行
 `{hidden,rejected}` 与 `{hidden,quarantined}` 也不得同形、三页零本地文案字面量且都调
 `api.outcomeOf`/`api.commentOutcomeOf`、`（码：X）` 拼接表达式恰好一处、未知码兜底在位、
 旧 `原因码：` 裸码零命中」；行为面用例在 `tests/unit/miniprogram-community-api.test.mjs`
-（①–⑧，含两条负控制）。
-
-新增的钉子内容（本页不再复制用例正文，只登记判据位置与口径）：
-`tests/unit/community-premoderation-invariants.test.mjs` 的钉 5 断言「隔离/驳回两结论标题互不相同、
-`{hidden,rejected}` 与 `{hidden,quarantined}` 也不得同形、三页零本地文案字面量且都调
-`api.outcomeOf`/`api.commentOutcomeOf`、`（码：X）` 拼接表达式恰好一处、未知码兜底在位、
-旧 `原因码：` 裸码零命中」；行为面用例在 `tests/unit/miniprogram-community-api.test.mjs`
-（①–⑧，含两条负控制）。
+（①–⑨，含两条负控制）。
