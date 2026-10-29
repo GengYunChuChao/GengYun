@@ -197,3 +197,27 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 2. **不得因为有人工通道就跳过审核门**：`POST /posts` 的发布闸门照旧（硬规则层加审核域）。人工通道是"结论落不下来"时的出口，不是绕过闸门的新入口。
 3. **不得把本节当成 #14 的替代**：AI 审核的真实样本覆盖仍按 `docs/evaluation/sample-gap-register.md` 记（风险／正常两格均为 0/200），本节补的是"没人管的那一段"，补不了"审核能力本身"。
 
+## 已知缺口（待裁定）：`favorites.target_type` 有三个口径，DB 少 `conversation_turn`（16 vs 17）
+
+**登记日期** 2026-10-29 · **证据基线** `b44f7941` · **状态**：**只登记，不修**（本片不改代码、不改契约、不动迁移、不改 CHECK）。
+
+同一件事——「收藏的目标可以是什么类型」——在仓里有**三个互不相同的口径**。逐个实测：
+
+| 口径 | 个数 | 具体值 | 出处 |
+| --- | --- | --- | --- |
+| 写入侧（`POST /favorites` 实际接受） | **3** | `species`、`herbicide`、`scheme` | 应用层闭集 `services/api/src/favorites/types.ts:24`；路由 schema `services/api/src/routes/favorites.ts:46` |
+| 读出侧（契约 `TargetRef`，`Favorite.target_ref` 用它投影） | **17** | 上列 3 项 ＋ `static_region`、`recognition`、`ocr`、`transcription`、`answer`、`post`、`comment`、`conversation`、`conversation_turn`、`dose_card`、`media`、`synthesis`、`job`、`source` | `services/api/src/targetref/types.ts:19-36`；契约 `packages/contracts/openapi.json:12554`（`TargetRef`；`type.enum` 在 `12558-12577`） |
+| 数据库 CHECK（`favorites.target_type` 的列约束） | **16** | 上列 17 项**去掉** `conversation_turn` | 迁移 `services/api/db/migrations/0018_favorites_history.sql:46-64`（`CREATE TABLE favorites`；`target_type` 的 CHECK 在 `51-55`） |
+
+**差异项（唯一一处）**：`conversation_turn` 在契约（17 项）与 `TARGET_REF_TYPES`（17 项）里都有，**数据库 CHECK 里没有**（16 项）。同一份迁移里 `history.target_type` 的 CHECK 是同一串 16 项（`0018:76-80`）—— 即这个「少一项」在两个域上是同一口径，不是收藏域独有的笔误。
+
+**今天为什么不出事**：写入侧只收 3 类，且这 3 类都在 DB 的 16 项里 ⇒ 从 `POST /favorites` 进来的行**撞不上**这条缺口；历史域的 `kind` 另有自己的 2 项闭集（`0018:75`），也不落这一列。
+
+**一旦有人往这两张表写 `conversation_turn` 会怎样**：DB 的 CHECK 直接打回 —— **是数据库报错，不是 400**（契约说这个类型合法、应用层不拦、落库才炸）。这正是要登记它的原因：不是「今天有 bug」，而是「口径已经三分，谁先用到谁踩」。
+
+**迁移里的自述也少算了一个**：`0018:49` 写「契约 `FavoriteTarget` 是 **16 项** `TargetRef.type` 的子集」，而今天的 `TargetRef.type` 是 **17 项** —— 这行注释与 CHECK 里的 16 项同源，两处一起漏了 `conversation_turn`。
+
+**本片只登记，不修**：不改写入侧闭集、不改契约、不动迁移、不改 CHECK。修法需要人裁定方向（把 DB 的 CHECK 补到 17 项／把契约收窄到与写入侧一致／明确 `conversation_turn` 永不入库），三条路的兼容代价不同，不属于「按现状改准」的范围。
+
+**顺带纠一处引用类型（实测，本片未改动任何既有段落）**：`services/api/db/migrations/0018_favorites_history.sql:46-64` 才是 `favorites` 的 DDL；该迁移**开头那段列类型注释**（第 29-30 行，写「`target_id`／`job_id`／`event_key` 是任意文本」）**不是** DDL。凡以那两行当「DDL 证据」的引用，都应改到 `:46-64`。
+

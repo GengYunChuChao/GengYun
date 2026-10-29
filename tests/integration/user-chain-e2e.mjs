@@ -13,7 +13,7 @@
  *   4) 详情：`/knowledge/:id` 与列表同一投影（`id` / `revision` / 来源版本逐字段相同），ETag 为 `"<revision>"`。
  *   5) 收藏：写入后立刻可读、重复收藏同目标不产生第二行、取消后读空；**PG 直查**校验行落库且属主正确；另一用户读不到、也删不掉（IDOR 断言，404 与不存在同形）。
  *   4.5) 来源失效（Refs #7 验收第 2 条、#16 验收第 4 条）：来源版本 `validity` 改 `withdrawn` ⇒ 列表读不到、详情 404 与「不存在」逐字段同形、既有收藏 `reference_state` 转 `unavailable`（理由落在冻结闭集的对象侧统一说明）；改回 `valid` 后重新可读且收藏状态回正。编号 4.5 是因为它验的是步骤 3/4/5 三条读面的失效口径，执行上必须在「收藏之后、退出之前」。
- *   6) 退出：会话撤销、令牌失效（401 `SESSION_EXPIRED`），但收藏行**仍按属主保留**（不被登出清掉）。
+ *   6) 退出：会话撤销、令牌失效（401 `SESSION_EXPIRED`），但收藏行**仍按属主保留**（不被登出清掉）。紧随的 6.5 再补「未登录面」对照：`GET /knowledge`、`GET /herbicides`、`POST /favorites`、`DELETE /favorites/{id}` 未带凭据必须 401 `SESSION_REQUIRED` 且响应体**只有错误封套**（顶层键恰为 `error`+`meta`、`details` 为空）—— 钉"游客拿到的是拒绝，不是空列表"，详见该步注释。
  *
  * 真库：本脚本**自己起一个一次性 PostgreSQL 17 隔离集群**（initdb + 随机端口 + 独立数据目录），
  * 跑完无论成败都 `pg_ctl stop` 并逐个文件删除数据目录。⚠ 不从外部借库、不写死端口、不动系统 PG。
@@ -29,7 +29,7 @@
  *   node tests/integration/user-chain-e2e.mjs
  *
  * 退出码（**跳过 ≠ 通过**）：
- *   0   真库起得来、7 步断言全绿；
+ *   0   真库起得来、8 步断言全绿；
  *   77  找不到 PostgreSQL 17（本机没装／没设 `GY_PG_BIN`）⇒ **未取得**，按 POSIX「skipped」惯例给 77；
  *       ⛔ 任何 `&&` 串联、CI、本地一键脚本都会因此变红 —— 这正是本意：一条都没跑的运行不得被读成通过；
  *   其它非 0（通常 1）真失败。
@@ -762,6 +762,55 @@ async function main() {
     eq(keptRows[0].target_id, hit.id, '退出后收藏目标必须不变');
     step6.actual(
       '200 accepted；revoked_at 已写；/auth/session、/me/profile、/favorites、/knowledge/{id}、/catalog/crops 全 401 SESSION_EXPIRED 且封套同形；不带上令牌对照全 401 SESSION_REQUIRED 且封套同形；收藏行仍在且属主不变',
+    );
+
+    // ---- 6.5 匿名面（未登录对照）扩面 -------------------------------------
+    /*
+     * 为什么另起一步（编号 6.5 而不是并进步骤 6）：步骤 6 的「不带上令牌」对照只覆盖 4 个面
+     * （/auth/session、/me/profile、/favorites、/catalog/crops），而 P0 六步里真正承载
+     * 「查询／名录／收藏写入／收藏删除」的四条面一直没进这条 e2e：`GET /knowledge`、
+     * `GET /herbicides`、`POST /favorites`、`DELETE /favorites/{id}`。四条面的 preHandler 都是
+     * `guards.requireUser`（`services/api/src/routes/knowledge.ts` 的 `gatedGuards`、
+     * `services/api/src/routes/favorites.ts` 的 `guards.requireUser`）⇒ 未带凭据一律 401。
+     *
+     * 但「回 401」只钉住一半：本片要钉死的是**游客拿到的不是业务答案**。所以每条面除 status 与
+     * code 外还必须钉住响应体形状：
+     *   · 顶层键只有 `error` 与 `meta` —— ⛔ 不得有 `data` 键，更不得是 `{items: []}` 这种
+     *     「查得到但空」的形状（那会把"没登录"说成"没有资料"，是这一条验收最常见的假绿）；
+     *   · `error.details` 必须为空数组 —— 不借 details 回填任何业务字段。
+     * 再补一条跨面对照：四条面的 401 必须**逐字段同形**（`request_id` 除外），任一条多带字段即红。
+     *
+     * 位置放在退出之后：此刻会话已被撤销，四条面在"真的没有会话"下再走一遍；同时又顺手证明
+     * **鉴权判定发生在取数之前**——DELETE 用的是步骤 5 里**真实存在**的那一行 `keptId`，
+     * POST 用的是步骤 5 里那份**合法**的 `favoriteBody`。若哪条面先取行／先校验业务体，
+     * 这里拿到的就会是 404 / 400 / 428 而不是 401（404 尤其糟：等于向游客泄露"这一行存在"）。
+     */
+    const step65 = record(
+      '6.5 匿名面',
+      '不带 Authorization：GET /api/v1/knowledge?<筛选>、GET /api/v1/herbicides?limit=20、POST /api/v1/favorites、DELETE /api/v1/favorites/{真实存在的收藏行 id}',
+      '四条面都 401 SESSION_REQUIRED；响应体只有错误封套（顶层无 data／无业务列表、details 为空）；四条面逐字段同形',
+    );
+    const anonymousFaces = [
+      ['GET /knowledge', await request('GET', searchPath, {})],
+      ['GET /herbicides', await request('GET', '/api/v1/herbicides?limit=20', {})],
+      // 业务体与幂等键都给全：⛔ 不让 schema 校验先把请求挡成 400（那会掩盖鉴权缺失）。
+      ['POST /favorites', await request('POST', '/api/v1/favorites', { body: favoriteBody, headers: { 'idempotency-key': randomUUID() } })],
+      // 收藏行 id 用**真实存在**的那一行：401 才证明鉴权先于取行（否则会得到 404，泄露存在性）。
+      ['DELETE /favorites/{id}', await request('DELETE', `/api/v1/favorites/${keptId}`, { headers: { 'if-match': '"1"', 'idempotency-key': randomUUID() } })],
+    ];
+    for (const [face, response] of anonymousFaces) {
+      eq(response.status, 401, `未登录 ${face} 必须 401（⛔ 不是 200 空列表、也不是 400/404），实测 ${response.status}：${JSON.stringify(response.body)}`);
+      eq(errorCodeOf(response), 'SESSION_REQUIRED', `未登录 ${face} 必须是 SESSION_REQUIRED`);
+      setEq(Object.keys(response.body ?? {}), ['error', 'meta'], `未登录 ${face} 的响应体只能有 error 与 meta（⛔ 不得出现 data／items 等业务字段）`);
+      eq((response.body?.error?.details ?? []).length, 0, `未登录 ${face} 的 error.details 必须为空（不得借 details 回填业务字段）`);
+    }
+    // 跨面对照：四条面必须是**同一个** 401 封套（只把每次不同的 request_id 抹掉再比）。
+    const anonymousBodies = anonymousFaces.map(([, response]) =>
+      JSON.stringify({ ...response.body, meta: { ...response.body.meta, request_id: null } }),
+    );
+    eq(new Set(anonymousBodies).size, 1, `四条匿名面的 401 必须逐字段同形（request_id 除外），实测 ${JSON.stringify(anonymousBodies)}`);
+    step65.actual(
+      `四条面全 401 SESSION_REQUIRED；顶层键均恰为 error+meta（无 data／无 items）、details 均空；四条封套逐字段同形；DELETE 用的是仍存在的收藏行 ${keptId}（401 而非 404 ⇒ 鉴权先于取行）`,
     );
 
     const elapsed = Date.now() - startedAt;
