@@ -65,3 +65,19 @@ Vite 的项目根在 apps/admin，不自动读取仓库根 .env；从终端注�
 
 集成测试使用独立测试库变量，各入口、库名与角色前置见[数据库交接](../verification/database-run-handoff.md)及[鉴权验证](../verification/gy-i04-27-auth-consent-pg.md)。
 供应商验证配置另见[资源交接](../verification/resource-handoff.md)，没有接入的能力不能凭填变量写成可用。
+
+## 启动参数：审核域真实接线的批准开关（GY-R70）
+
+审核域的真实供应商端口**不是配置项**，是一次显式运维动作。它由三个**命令行**参数决定（⛔ 不接受环境变量、不接受配置文件：那等于「配置即门控」，媒体域两轮对抗复审已否掉这条路；本模块去注释后 `process.env` 命中 0 条）：
+
+| 参数 | 形状 | 作用 |
+| --- | --- | --- |
+| `--approve-moderation-live-wiring` | 整串精确匹配 | 唯一的批准开关；`--approve-moderation-live-wiring=true` 之类的写法**不算**给了 |
+| `--moderation-policy-source=<标识>` | 3–120 位，字母/数字与 `._:/@+-`，不得含空白 | 策略**被独立核对过**的出处（非凭据）；形状合法不等于核对过 |
+| `--moderation-biz-type=<BizType>` | 正则与 `services/api/src/moderation/live-ports.ts` 的 `MODERATION_BIZ_TYPE_PATTERN` 同源 | **真实** BizType（`tools/ai-config.mjs` 里的那份是自描述占位值，不能拿来开户） |
+
+判定在 `services/api/src/moderation/startup-approval.ts` 的 `resolveModerationStartupApproval()`（纯函数：只吃 `config` 与 `argv`，不读 env、不碰网络），铸造点是 `services/api/src/moderation/live-assembly.ts` 的 `approveModerationLiveWiring()`（唯一，`WeakSet` 对象身份），生产入口只转发一行（`services/api/src/server.ts:61` → `services/api/src/server.ts:62`）。
+
+**四条前置同时成立才铸造**：① 开关给了；② 两个值齐备且形状合法；③ 共享凭据齐备（`TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` 成对，且 `APP_EXECUTION_MODE=real`）；④ 配置合法（铸造后仍由同一模块的 `resolveModerationLiveWiring()` 复核剖面/端点/超时）。任一条不成立 ⇒ **不铸造**、不传任何默认值，并联走**一行** `warn`，点名缺的是哪一条（原因只用既有闭集 `missing_approval` / `missing_credentials` / `invalid_configuration`）：`real` 下审核域保持既有整域 503 `PROVIDER_UNAVAILABLE`（`retryable:false`），非 `real` 下仍是替身端口。
+
+**与 `--approve-real-media-wiring` 的口径差异（有意，且已实测登记）**：媒体域那条在「开关给了但前置不满足」时是**启动失败**（`exit 1`，实跑读数见 [GY-R70 证据页](../verification/gy-r70-moderation-approval-20261030.md)）；本条**不是**启动失败——开关不成立只说明「这次没有批准」，审核域停在改前那个已经 fail-closed 的状态，没有「半接线」可防，因此只 warn 不退出（`⛔ 不批准 ≠ 启动失败`）。该差异是**待裁定项**，见证据页 §9。

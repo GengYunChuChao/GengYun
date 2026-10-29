@@ -155,9 +155,18 @@ test('GY-I05: logStream 仅测试注入——生产入口与配置层都不得�
   //   ② `synthesisMediaAssembly` 的赋值恰好 1 次，且该赋值与 `mediaAssembly` 的赋值**同处一个
   //      `if (mediaRealPorts !== null)` 分支**（= 共用同一次批准判定，没有第二条开启路径）。
   //   `logStream` 仍注入不进来：两处 spread 的取值都只来自具名派生函数，调用点是唯一的。
+  //
+  // ⚠ 2026-10-30（GY-R70 · 审核域批准通道，`--approve-moderation-live-wiring`）**有据变更，不是放宽**：
+  //   审核域的真实接线批准能力此前没有任何生产调用点（`server.ts` 不铸造 ⇒ `real` 下审核整域恒 503）。
+  //   修法是在入口追加**第三个**同族 spread（`moderationAssembly`），因此本钉子由「恰好这两处」改为
+  //   「恰好这三处、且各自只有唯一来源」，并**新增**两条更强的不变量：
+  //   ① `moderationStartupAssemblyOptions(` 全文件恰好 1 次；② `moderationAssembly` 的赋值恰好 1 次，
+  //      且**不得**落在 `if (mediaRealPorts !== null)` 判定块内——审核域与媒体域是**两条独立的门**，
+  //      焊死会让 `--approve-real-media-wiring` 变成审核域的前置条件。
+  //   `logStream` 仍注入不进来：三处 spread 的取值都只来自具名派生函数，调用点是唯一的。
   assert.match(
     server,
-    /buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\), \.\.\.\(synthesisMediaAssembly \?\? \{\}\) \}\)/,
+    /buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\), \.\.\.\(synthesisMediaAssembly \?\? \{\}\), \.\.\.moderationAssembly \}\)/,
   );
   assert.equal(server.match(/mediaRealPortsAssemblyOptions\(/g)?.length, 1, '媒体装配选项只允许一个来源');
   assert.equal(
@@ -165,11 +174,21 @@ test('GY-I05: logStream 仅测试注入——生产入口与配置层都不得�
     1,
     '合成产物装配选项只允许一个来源（不得出现第二处派生/默认值）',
   );
+  assert.equal(
+    server.match(/moderationStartupAssemblyOptions\(/g)?.length,
+    1,
+    '审核域批准通道只允许一个来源（不得出现第二处派生/默认值）',
+  );
   assert.equal(server.match(/buildApp\(/g)?.length, 1, '生产入口只允许调用一次 buildApp');
   assert.equal(
     server.match(/^\s*synthesisMediaAssembly = /gm)?.length,
     1,
     'synthesisMediaAssembly 只允许赋值一次（不得在别处补一条开启路径）',
+  );
+  assert.equal(
+    server.match(/^\s*const moderationAssembly = /gm)?.length,
+    1,
+    'moderationAssembly 只允许赋值一次（不得在别处补一条开启路径）',
   );
   const synthBranch = server.match(/if \(mediaRealPorts !== null\) \{\n[\s\S]*?\n {4}\}/);
   assert.ok(synthBranch !== null, 'server.ts 必须有 mediaRealPorts !== null 的判定块');
@@ -178,6 +197,11 @@ test('GY-I05: logStream 仅测试注入——生产入口与配置层都不得�
     synthBranch[0],
     /synthesisMediaAssembly = synthesisMediaWiringAssemblyOptions\(mediaRealPorts\);/,
     '合成产物派生必须与媒体域派生同处一次批准判定之内',
+  );
+  assert.equal(
+    synthBranch[0].includes('moderationAssembly'),
+    false,
+    '审核域的批准通道不得落进媒体域的判定块（两条门必须解耦，否则媒体开关成了审核域的前置条件）',
   );
   const config = readFileSync(resolve(root, 'services/api/src/config.ts'), 'utf8');
   assert.equal(config.includes('logStream'), false, '配置层不得暴露日志捕获开关');

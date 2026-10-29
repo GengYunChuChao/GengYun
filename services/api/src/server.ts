@@ -28,19 +28,19 @@ async function main(): Promise<void> {
   const pool = createPool(config.databaseUrl);
 
   // 媒体域真实端口接线（GY-R28 · W2）：本题**唯一**的接线决定点。
+  // - 没有 `--approve-real-media-wiring` ⇒ `resolveMediaRealPorts` 返回 `null` ⇒ **不传**任何媒体选项
+  //   ⇒ `buildApp` 走既有 fail-closed（整域 503 `PROVIDER_UNAVAILABLE`），与 main 逐字节一致；
+  // - 有该参数 ⇒ 前置校验（real 模式 / 四键配置齐备 / 访问网关原点可部署）后，**在此铸造**批准能力并
+  //   构造 S3 兼容端口（铸造点只此一处：`media/real-ports.ts` 的 `resolveMediaRealPorts`）；任何拒绝都是
+  //   **启动失败**（不接受「半接线」上线）。
+  // - GY-R68 · 合成（TTS）产物端口：`synthesisMediaWiring` 只认显式注入（无默认值、不读 env），`app.ts`
+  //   只转发不铸造 ⇒ **必须**在同一判定内派生，否则 `--approve-real-media-wiring` 对 TTS 完全无效、
+  //   `real` 下恒 `unwired`。派生口径与媒体域**共用同一次判定**：同一份真实端口、同一处启动参数。
   //
-  // - 没有 `--approve-real-media-wiring` ⇒ `resolveMediaRealPorts` 返回 `null` ⇒ **不传**任何媒体
-  //   选项 ⇒ `buildApp` 走既有 fail-closed（整域 503 `PROVIDER_UNAVAILABLE`），与 main 逐字节一致；
-  // - 有该参数 ⇒ 前置校验（real 模式 / 四键配置齐备 / 访问网关原点可部署）后，**在此铸造**批准能力
-  //   并构造 S3 兼容端口。铸造点只此一处（`approveRealMediaWiring` 的唯一调用点在
-  //   `media/real-ports.ts` 的 `resolveMediaRealPorts` 内，且由本参数驱动）。
-  // - 任何拒绝都是**启动失败**：不接受「半接线」上线。
-  //
-  // GY-R68 · 合成（TTS）产物端口补装配：产物端口 `synthesisMediaWiring` 只认显式注入
-  // （`tts/media.ts`：批准能力＋`s3_compatible` 端口，无默认值、不读 env），`app.ts` 只转发不铸造，
-  // 因此**必须**在这里派生——否则 `--approve-real-media-wiring` 对 TTS 完全无效、`real` 下恒 `unwired`。
-  // 派生口径与媒体域**共用同一次判定**：同一份真实端口、同一处启动参数，没有第二条开启路径；
-  // 没给参数 ⇒ `mediaRealPorts === null` ⇒ 不派生 ⇒ 仍 fail-closed（409/503 且 `retryable: false`）。
+  // 审核域真实接线（GY-R70）：唯一的**铸造点**在 `moderation/startup-approval.ts`，由有名开关
+  // `--approve-moderation-live-wiring` ＋ 命令行给的 policySource/bizType 驱动（⛔ 不从 env／配置文件取）；
+  // 「开关 + 输入齐备 + 共享凭据齐备 + 配置合法」四条全过才铸造，否则**不铸造**并打一行闭集原因 warn，
+  // 审核域保持既有整域 503（不批准 ≠ 启动失败）⇒ 下面 `moderationAssembly` 因此允许是空对象。
   let mediaAssembly: ReturnType<typeof mediaRealPortsAssemblyOptions> | null = null;
   let synthesisMediaAssembly: ReturnType<typeof synthesisMediaWiringAssemblyOptions> | null = null;
   try {
@@ -58,8 +58,8 @@ async function main(): Promise<void> {
     }
     throw error;
   }
-
-  const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });
+  const moderationAssembly = moderationStartupAssemblyOptions({ config, argv: process.argv.slice(2), warn: (line) => console.warn(line) });
+  const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}), ...moderationAssembly });
 
   // 管理员初始化：仅在后台账号表为空且配置了 bootstrap 凭据时创建；失败不静默。
   try {
@@ -104,3 +104,10 @@ main().catch((error: unknown) => {
   console.error('API 启动失败：', error);
   process.exitCode = 1;
 });
+
+// GY-R70 · 审核域真实接线的批准通道（有名启动开关 `--approve-moderation-live-wiring`）。
+// 放在文件**末尾**而不是顶部：本文件的行号是 `docs/architecture/contract-status.json` 与 `docs/**`
+// 手写锚点的指向对象（多处引用本文件的媒体域判定块与 `buildApp` 调用行），在顶部插一行 import 会让
+// 成批锚点整体漂移；ESM 的 import 声明会被提升 ⇒ 语义等价（与 `routes/ocr.ts`、`ocr/media.ts` 的
+// 既有做法同源）。本文件对它只做**转发**：解析、判定、铸造、warn 全在 `moderation/startup-approval.ts`。
+import { moderationStartupAssemblyOptions } from './moderation/startup-approval.ts';

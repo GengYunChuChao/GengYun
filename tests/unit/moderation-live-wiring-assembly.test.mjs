@@ -446,9 +446,12 @@ test('⑦ 构造失败（BizType 不合法）⇒ 捕获成 invalid_configuration
   });
 });
 
-test('⑧ 结构钉子：装配层从不铸造批准能力（唯一铸造点＝live-assembly.ts 的定义处）', () => {
+test('⑧ 结构钉子：铸造点唯一（定义处 ＋ 恰好一处生产调用点＝生产入口批准通道）', () => {
   const sourceRoot = join(ROOT, 'services/api/src');
   const offenders = [];
+  /** 生产代码里**允许**调用铸造点的唯一文件（GY-R70 · 有名启动开关的批准通道）。 */
+  const SANCTIONED_CALL_SITE = 'moderation/startup-approval.ts';
+  const callSites = [];
   let occurrences = 0;
   // 判据同既有结构钉子：**去注释后**的产品源码（注释里提到函数名不算铸造）。
   const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -465,14 +468,31 @@ test('⑧ 结构钉子：装配层从不铸造批准能力（唯一铸造点＝l
       const matches = source.match(/approveModerationLiveWiring\(/g) ?? [];
       if (matches.length === 0) continue;
       occurrences += matches.length;
-      // 唯一允许出现的位置：本模块的**函数定义**行（`export function approveModerationLiveWiring(`）。
+      // 唯一允许出现的**定义**位置：`export function approveModerationLiveWiring(`。
       const definitions = source.match(/export function approveModerationLiveWiring\(/g) ?? [];
-      if (definitions.length !== matches.length) offenders.push(relative);
+      const calls = matches.length - definitions.length;
+      if (definitions.length !== matches.length && relative !== SANCTIONED_CALL_SITE) {
+        offenders.push(relative);
+      }
+      if (calls > 0) callSites.push({ file: relative, calls });
     }
   };
   walk(sourceRoot);
-  assert.deepEqual(offenders, [], `除定义处外不得铸造批准能力（装配层自我批准＝没批准）：${offenders.join(', ')}`);
-  assert.equal(occurrences, 1, '生产代码里必须恰好一处（定义处）；多一处就是有人在自己批准自己');
+  assert.deepEqual(offenders, [], `除定义处与批准通道外不得铸造批准能力（装配层自我批准＝没批准）：${offenders.join(', ')}`);
+  // ⚠ 2026-10-30（GY-R70 · 批准通道）**有据变更，不是放宽**：`#777` 把「生产代码里恰好一处（定义处）」钉成
+  // 「装配层从不铸造」，但铸造点**必须**能被生产入口用一次，否则 `real` 下审核域永远开不了、批准能力等于死码。
+  // 因此本钉子由「恰好 1 处（定义处）」改为「恰好 2 处：定义处 ＋ 唯一获准的调用点」，并把调用点**逐名登记**
+  // （新增调用点仍判红）。`app.ts` 依然不得铸造（装配层不许自己批准自己），`server.ts` 只做转发、连名字都不碰。
+  assert.deepEqual(
+    callSites,
+    [{ file: SANCTIONED_CALL_SITE, calls: 1 }],
+    `铸造点只允许被 ${SANCTIONED_CALL_SITE} 调用一次（新增调用点＝有人在自己批准自己）`,
+  );
+  assert.equal(occurrences, 2, '生产代码里必须恰好两处：定义处 ＋ 唯一获准的调用点');
+  for (const relative of ['services/api/src/app.ts', 'services/api/src/server.ts']) {
+    const code = strip(readFileSync(join(ROOT, relative), 'utf8'));
+    assert.equal(code.includes('approveModerationLiveWiring('), false, `${relative} 不得调用铸造点（只许转发）`);
+  }
 
   // 真实的适配器符号仍不得进入 app.ts / server.ts（既有结构钉子照旧成立）。
   for (const relative of ['services/api/src/app.ts', 'services/api/src/server.ts']) {

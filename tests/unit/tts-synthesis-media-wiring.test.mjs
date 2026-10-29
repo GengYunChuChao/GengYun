@@ -159,9 +159,12 @@ test('① real + 已批准 + 四键齐备 ⇒ synthesisMediaWiring 非 null（st
     /synthesisMediaAssembly = synthesisMediaWiringAssemblyOptions\(mediaRealPorts\);/,
     '生产入口必须在同一处批准判定里派生 synthesisMediaWiring（否则 TTS 恒 unwired）',
   );
+  // ⚠ 2026-10-30（GY-R70 · 审核域批准通道）**有据变更，不是放宽**：入口的 `buildApp` 调用新增了
+  //   第三个同族 spread（`moderationAssembly`，审核域独立的门，与媒体域判定解耦）。本钉子只把
+  //   那条**新增的**实参登记进来，`logStream` 仍然注入不进来（第 168 行的断言一字未改）。
   assert.match(
     server,
-    /const app = buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\), \.\.\.\(synthesisMediaAssembly \?\? \{\}\) \}\);/,
+    /const app = buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\), \.\.\.\(synthesisMediaAssembly \?\? \{\}\), \.\.\.moderationAssembly \}\);/,
     '生产入口必须把派生结果传给 buildApp',
   );
   assert.equal(server.match(/synthesisMediaWiringAssemblyOptions\(/g)?.length, 1, '派生只允许一个来源');
