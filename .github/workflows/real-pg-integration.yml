@@ -12,6 +12,10 @@
 #   · tests/integration/online-purge-pg.mjs（#19 / 在线数据 7 日到期**执行者**：到期闭区间·跨进程游标·
 #     失败不阻塞·回执 backupState）；R32 追加 —— 它的驱动与运维命令早已在 main，但此前**不在任何 workflow**，
 #     等于「7 日到期」这条保证在 CI 上从未被真库验证过。
+#   · tests/integration/consent-zero-policy-pg.mjs（R69 / `consent_policies` **0 行**时的真实后果矩阵：
+#     全链迁移后断言 0 行 → 生产装配零注入 → 12 条挂闸入口逐格 403 + 读面/撤回面 → 「闸在最外层」两条判据
+#     → 三级负控制）；R69 追加 —— 侦察（`RECON.md` §7.1）给过同一张矩阵，但那是**纯读码推定**，侦察方自己
+#     把「无注入 + 真 PG + 零政策行 + 生产装配」列为最大的未核实项；本臂就是它要的那份真库读数。
 #
 # 为什么这些脚本**必须**真库：它们锁的是只有数据库能证明的性质——迁移子集按序 apply 且二连跑
 # 0 条、唯一键真的能裁决并发、外键真的挡孤儿行、枚举/CHECK 真的拒绝闭集外的值、
@@ -66,12 +70,14 @@ permissions:
   contents: read
 jobs:
   # ↓↓↓ 本 job 的运行纪律：每个真库臂 step 各自封顶 5 分钟，job 级只做算术兜底 ↓↓↓
-  # `timeout-minutes: 195`：**封顶之和 185 + 前置余量 10 = job 级 195**。
-  #   · 185 = 31 条真库臂 step 各 5 分钟
+  # `timeout-minutes: 200`：**封顶之和 190 + 前置余量 10 = job 级 200**。
+  #   · 190 = 32 条真库臂 step 各 5 分钟
   #         + 装 PG 17 服务端二进制 5（`apt-get update`/`install` 卡死时同样只死这一步）；
   #         + 三条前置 25 = `actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15
   #           （R68 之前这三条**没有** step 级封顶，最坏要一直等到 job 级超时；现在它们自己先红）；
-  #   · 10  = job 级的显式常量余量（三条前置已各自封顶并计入上面的 185，它不再是「前置的合计上限」）。
+  #   · 10  = job 级的显式常量余量（三条前置已各自封顶并计入上面的 190，它不再是「前置的合计上限」）。
+  # R69 把 31 → 32 条臂（新增「零政策矩阵」：consent-zero-policy-pg），故 185 → 190、195 → 200；
+  # 算式与 job 级数值必须与 `tests/unit/ci-real-pg-step-timeouts.test.mjs` 的现场重算一致。
   # 这两个数是**防卡死的上界，不是预计耗时**。CI 上的真读数：本 job 整跑 **104 秒**、41 个 step 全部走完
   # （`main` 上的成功 run 40547840506，2026-10-27T17:09:09Z）；同一次 run 的 `real-pg-admin-read-17.11`
   # 56 秒 / 12 个 step、`real-pg-admin-write-17.11` 49 秒 / 16 个 step ⇒ 正常路径离封顶有一到两个数量级。
@@ -88,7 +94,7 @@ jobs:
   real-pg-17-11:
     name: real-pg-17.11
     runs-on: ubuntu-24.04
-    timeout-minutes: 195
+    timeout-minutes: 200
     services:
       postgres:
         image: postgres:17.11
@@ -818,6 +824,49 @@ jobs:
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
           RECOGNITION_CHAIN_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognition_chain_test
+          PGCLIENTENCODING: UTF8
+      # 零政策矩阵（R69）：`consent_policies` **0 行**时每个入口返回什么 —— 只读侦察
+      # （`.pg17/tmp/r69-consent-gate/RECON.md` §7.1）给出了一张全矩阵，但**全部是读码推定**，侦察方自己把
+      # 「无注入 + 真 PG + 零政策行 + 生产装配」列为最大的未核实项。本臂就是那份矩阵的第一份真库读数：
+      #   ① 全链迁移（现场 48 个 `NNNN_*.sql`）后断言 `consent_policies` = 0 行（前提，不是结论），
+      #      并读出 `admin_accounts` = 0 行（=「造一行政策前有没有合法 `reviewed_by` 主体」的实测答案）；
+      #   ② **生产装配** `buildApp({config,pool,wechat})`：零 `privacyInjection`、零假 gate、
+      #      零 `consentGrantTestOptions`；`APP_EXECUTION_MODE=stub` + 真 `DATABASE_URL` + 两个临时密钥；
+      #   ③ 12 条挂闸写入口 ⇒ 403 `CONSENT_REQUIRED`，读面/撤回面/读可用面按矩阵逐格断言；
+      #   ④ 「闸在最外层」两条判据：403 批次前后 public 下**每张表**行数逐表相等 + 403 报文无审核域
+      #      `details[].field='reason_codes'`（后者由负控制正校准：L2 里它真的出现了）；
+      #   ⑤ 三级负控制：插 1 行 `source_kind='synthetic'` 政策（显式标 synthetic）后，生产装配**仍** 403
+      #      （synthetic 被 `grant-pg.ts:51-53` 拒），改走测试通道装配 ⇒ 授予 201、`POST /posts` 不再是 403。
+      # 为什么它归**这个 job**（owner URL + `CREATE DATABASE` 形态）：与相邻各臂同形——专用空库、库 owner
+      # 连接、不建组角色、不复用别人的运行时角色 ⇒ 对前后 step 零耦合；库名在脚本里硬钉
+      # `gengyun_consent_zero_test`，故 step 里建同名库（判据⑧ 要求两处逐字一致）。
+      # 缺 `CONSENT_ZERO_PG_TEST_URL` 时脚本**立刻断言失败**（与 `consent-grant-pg` / `egress-ledger-pg` 同口径：
+      # 没有 SKIP、没有 77）⇒ 真库没起来就是红，⛔ 不存在「悄悄跳过也算跑过」。
+      - name: 零政策矩阵（R69：consent-zero-policy-pg / 全链迁移 / 生产装配零注入 / 403 矩阵 + 三级负控制）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_consent_zero_test'
+          log=/tmp/consent-zero-policy-pg.log
+          rc=0
+          node tests/integration/consent-zero-policy-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::零政策矩阵失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/^PASS /{n++} END{print n+0}' "$log")
+          echo "读数：${readings} 条（PASS 行）"
+          if [ "$readings" -lt 14 ]; then
+            echo "::error::零政策矩阵读数不足基线（PASS 行 ${readings} < 14）⇒ 空转不算通过，断言组被删减同样不算。"
+            exit 1
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          CONSENT_ZERO_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_consent_zero_test
           PGCLIENTENCODING: UTF8
   # ── R67-C：后台**读面**（owner URL 臂 + 只读的自起集群臂）────────────────────────────────
   #
