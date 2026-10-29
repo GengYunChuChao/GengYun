@@ -322,9 +322,9 @@
        error-code：六类分支里的 permission_denied 即契约 CONSENT_REQUIRED（403），
        由统一状态层判定为「没有权限」语气（不是通用失败）；该分支的动作文案是「重试」，
        属于针对性动作，故 allow-denied-action 打开，其余 403 场景仍收起重试按钮。
-       措辞红线：**不写「去授权」**——应用内授权入口尚未接入（契约缺用途政策读取面），
-       照那样写就是把用户指向不存在的功能；按钮实际只重试本次操作，见
-       `utils/identify-api.js` 的 RETRY_ACTION_LABELS 与 `docs/verification/gy-i04-login-chain-20261021.md`。 -->
+       措辞红线：**不写「去授权」**——本页按钮实际只重试本次操作；可授予的入口在 `pages/consent`
+       （GY-R70 起真的发 `POST /me/consents`，但没有服务端可用政策的用途会置灰），
+       见 `utils/identify-api.js` 的 RETRY_ACTION_LABELS 与 `docs/verification/gy-r70-consent-client-20261030.md`。 -->
   <state-view
     wx:if="{{stateView && !guest && stateView.component !== 'ready'}}"
     status="{{stateView.component}}"
