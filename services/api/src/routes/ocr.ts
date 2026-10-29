@@ -32,7 +32,7 @@ import { API_PREFIX } from '../contract.ts';
 import { createOcrService, type OcrService, type OcrTerminalHistoryPort } from '../ocr/service.ts';
 import { createMemoryOcrStore, type OcrStore } from '../ocr/store.ts';
 import { createOcrProvider, type OcrProvider } from '../ocr/provider.ts';
-import { createOcrMediaPort, type OcrMediaPort } from '../ocr/media.ts';
+import { createOcrMediaPort, type OcrMediaPort } from '../ocr/media.ts'; /* 与上一条 import 同行：独占一行会推移本文件行号，令 docs/architecture/contract-implementation-status.md 对本文件的行区间引用顶漂 */ import { createObjectStoreOcrImageSource, type ObjectStoreOcrImageSourceOptions } from '../ai/ocr-image-source.ts';
 import {
   createOcrDosePort,
   createOcrReferencePort,
@@ -69,7 +69,7 @@ export interface OcrRouteDeps {
   service?: OcrService;
   provider?: OcrProvider;
   store?: OcrStore;
-  media?: OcrMediaPort;
+  media?: OcrMediaPort; /* GY-R69：图片字节来源的端口槽位（媒体登记册 + 媒体域对象存储）；缺省 ⇒ 域内退回「未接线」来源（与接线前逐字节相同） */ imageMedia?: ObjectStoreOcrImageSourceOptions;
   reference?: OcrReferencePort;
   dose?: OcrDosePort;
   /** 幂等请求摘要密钥；缺省取 `config.sessionSigningKey`，再缺省为替身桩密钥。 */
@@ -192,7 +192,7 @@ function actorId(request: FastifyRequest): string {
  */
 export function registerOcrRoutes(app: FastifyInstance, config: AppConfig, deps: OcrRouteDeps, persistencePool: TransactionalPool | null = null): OcrService {
   const guards = deps.guards;
-  const provider = deps.provider ?? createOcrProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders?.ocr ?? null });
+  const provider = deps.provider ?? createOcrProvider({ executionMode: config.executionMode, aiProviders: config.aiProviders?.ocr ?? null, ...(deps.imageMedia === undefined ? {} : { imageSource: createObjectStoreOcrImageSource(deps.imageMedia) }) });
   const store = deps.store ?? (persistencePool === null ? createMemoryOcrStore() : createPostgresOcrStore({ pool: persistencePool }));
   const media = deps.media ?? createOcrMediaPort(config.executionMode);
   const reference = deps.reference ?? createOcrReferencePort(config.executionMode);
