@@ -2,7 +2,7 @@
  * 第一条用户链路端到端（GY-I04 / I05 / I07 / I16，Refs #4 #5 #7 #16）。
  *
  * 干什么：在**原样 API**（`buildApp` 真装配，不 mock 路由）上跑一遍
- *   登录 → 手选作物/地区 → 搜索 → 详情 → 收藏 → 退出
+ *   登录 → 手选作物/地区 → 搜索 → 详情 → 收藏 → 来源失效（撤下／恢复）→ 退出
  * 并把每一步的**业务语义**钉住，而不是只看 200：
  *   1) 登录：拿到会话后访问受保护接口成功；会话行按 sha256(令牌) 落库；退出后同一令牌立刻 401 `SESSION_EXPIRED`、
  *      不带上令牌对照 401 `SESSION_REQUIRED`，两者封套同形（仓内冻结口径，见步骤 6 注释）。
@@ -11,8 +11,8 @@
  *   3) 搜索：结果只能来自**已登记来源**（`source.id` / `source.version` 与库内 `sources` / `source_versions` 直查一致），
  *      且**装了筛选条件**（换一个不存在的检索词 / 未覆盖地区必须读空 ⇒ 不是把全集当结果返回）。
  *   4) 详情：`/knowledge/:id` 与列表同一投影（`id` / `revision` / 来源版本逐字段相同），ETag 为 `"<revision>"`。
- *   5) 收藏：写入后立刻可读、重复收藏同目标不产生第二行、取消后读空；**PG 直查**校验行落库且属主正确；
- *      另一用户读不到、也删不掉（IDOR 断言，404 与不存在同形）。
+ *   5) 收藏：写入后立刻可读、重复收藏同目标不产生第二行、取消后读空；**PG 直查**校验行落库且属主正确；另一用户读不到、也删不掉（IDOR 断言，404 与不存在同形）。
+ *   4.5) 来源失效（Refs #7 验收第 2 条、#16 验收第 4 条）：来源版本 `validity` 改 `withdrawn` ⇒ 列表读不到、详情 404 与「不存在」逐字段同形、既有收藏 `reference_state` 转 `unavailable`（理由落在冻结闭集的对象侧统一说明）；改回 `valid` 后重新可读且收藏状态回正。编号 4.5 是因为它验的是步骤 3/4/5 三条读面的失效口径，执行上必须在「收藏之后、退出之前」。
  *   6) 退出：会话撤销、令牌失效（401 `SESSION_EXPIRED`），但收藏行**仍按属主保留**（不被登出清掉）。
  *
  * 真库：本脚本**自己起一个一次性 PostgreSQL 17 隔离集群**（initdb + 随机端口 + 独立数据目录），
@@ -29,7 +29,7 @@
  *   node tests/integration/user-chain-e2e.mjs
  *
  * 退出码（**跳过 ≠ 通过**）：
- *   0   真库起得来、6 步断言全绿；
+ *   0   真库起得来、7 步断言全绿；
  *   77  找不到 PostgreSQL 17（本机没装／没设 `GY_PG_BIN`）⇒ **未取得**，按 POSIX「skipped」惯例给 77；
  *       ⛔ 任何 `&&` 串联、CI、本地一键脚本都会因此变红 —— 这正是本意：一条都没跑的运行不得被读成通过；
  *   其它非 0（通常 1）真失败。
@@ -604,6 +604,105 @@ async function main() {
     ok(keptId !== undefined && keptId !== favoriteId, '再次收藏必须是一行新记录（旧行已取消）');
     step5.actual(
       `201 id=${favoriteId}；列表 1 条；PG 1 行属主=登录用户；重复收藏同 id→PG 仍 1 行；他人列表 0/删除 404 NOT_FOUND；缺 If-Match→428；取消→200 后 0 行；再收藏→${keptId}`,
+    );
+
+    // ---- 4.5 来源失效 -----------------------------------------------------
+    /*
+     * 为什么插在这里（编号 4.5 而不是 7）：这往返验证的是**步骤 3/4/5 那三条读面在来源失效时的口径**
+     * （#7 验收第 2 条「下架／失效退出有效查询，详情和列表一致」、#16 验收第 4 条「读取时重查，
+     * 隐藏／失效／注销不因缓存或旧链接重新公开」），因此必须在「详情 + 收藏」都已成立之后、
+     * 「退出」之前跑：退出会把令牌作废，之后再读就只能测 401 了。
+     *
+     * 怎么制造失效：只 `UPDATE` **已有夹具行**（不建表、不加列、不换数据集），把来源版本
+     * `validity` 从 'valid' 改成 'withdrawn'。链路是：
+     *   source_versions.validity='valid' → `catalog_read.current_verified_sources`（只收
+     *   validity='valid' + review_status='verified'）→ `catalog_read.current_knowledge` 里那一行随之消失
+     *   ⇒ 三条读面**同源**失效：列表读空、详情与「不存在」同形 404、收藏的 reference_state 逐次派生为
+     *   unavailable（app.ts 的 `publicKnowledgeRowOf` 读的也是同一张视图）。
+     * 恢复（改回 'valid'）必须**重新**可读且收藏状态回正 ⇒ 证明失效不是"一次性消失"，也不是缓存残留。
+     */
+    const step45 = record(
+      '4.5 来源失效',
+      `UPDATE public.source_versions SET validity → GET ${searchPath}、GET /api/v1/knowledge/${FIXTURE.knowledgeId}、GET /api/v1/favorites（恢复后再各读一遍）`,
+      '失效前可用；撤下后列表读不到该条、详情 404 NOT_FOUND 且与「不存在」同形、既有收藏 reference_state=unavailable；恢复后重新可读且收藏状态回正',
+    );
+    // 失效前先钉住"本来是可用的"：否则下面那条 unavailable 断言在"一直不可用"的实现下也会绿（空转）。
+    const beforeWithdraw = await request('GET', '/api/v1/favorites', { token });
+    const beforeRow = (beforeWithdraw.body.data.items ?? []).find((item) => item.id === keptId);
+    ok(beforeRow !== undefined, `失效前收藏列表必须仍含既有收藏行 ${keptId}`);
+    eq(beforeRow.reference_state, 'available', '失效前既有收藏的 reference_state 必须是 available');
+    eq(beforeRow.unavailable_reason, null, '可用时 unavailable_reason 必须为 null');
+    // 撤下：只改既有夹具行的来源版本（`withdrawn` 是 `source_validity` 枚举内的既有取值）。
+    const withdraw = await owner.query("UPDATE public.source_versions SET validity='withdrawn' WHERE id=$1::uuid", [
+      FIXTURE.sourceVersionId,
+    ]);
+    eq(withdraw.rowCount, 1, '撤下必须恰好命中 1 行来源版本（命中 0 行会让后面每一条都空转）');
+    eq(
+      (await owner.query('SELECT validity FROM public.source_versions WHERE id=$1::uuid', [FIXTURE.sourceVersionId])).rows[0].validity,
+      'withdrawn',
+      '库内来源版本 validity 必须已变为 withdrawn',
+    );
+    // ① 列表：**同一个查询串**必须读不到它（是服务端退出有效查询，不是客户端过滤）。
+    const goneList = await request('GET', searchPath, { token });
+    eq(goneList.status, 200, `失效后列表仍必须 200（是读不到，不是报错），实测 ${goneList.status}：${JSON.stringify(goneList.body)}`);
+    eq(
+      (goneList.body.data.items ?? []).length,
+      0,
+      `失效后同一查询串必须读空，实测 ${JSON.stringify((goneList.body.data.items ?? []).map((i) => i.id))}`,
+    );
+    // ② 详情：404 NOT_FOUND，且与「不存在」**逐字段同形**（`request_id` 每次不同，不比它）。
+    const goneDetail = await request('GET', `/api/v1/knowledge/${FIXTURE.knowledgeId}`, { token });
+    eq(goneDetail.status, 404, `失效后详情必须 404，实测 ${goneDetail.status}：${JSON.stringify(goneDetail.body)}`);
+    eq(errorCodeOf(goneDetail), 'NOT_FOUND', '失效后详情必须是 NOT_FOUND');
+    deepEq(
+      {
+        code: goneDetail.body.error.code,
+        message: goneDetail.body.error.message,
+        retryable: goneDetail.body.error.retryable,
+        details: goneDetail.body.error.details,
+      },
+      {
+        code: missing.body.error.code,
+        message: missing.body.error.message,
+        retryable: missing.body.error.retryable,
+        details: missing.body.error.details,
+      },
+      '失效详情必须与「不存在」的 404 逐字段同形（不泄露存在性）',
+    );
+    // ③ 收藏：行仍在（失效不清收藏），但 reference_state 逐次重查 ⇒ unavailable + 对象侧统一说明。
+    const goneFavorites = await request('GET', '/api/v1/favorites', { token });
+    eq(goneFavorites.status, 200, `失效后收藏列表必须 200，实测 ${goneFavorites.status}`);
+    eq((goneFavorites.body.data.items ?? []).length, 1, '失效不得清掉收藏行（列表仍 1 条）');
+    eq(goneFavorites.body.data.items[0].id, keptId, '失效后收藏行 id 必须不变');
+    eq(goneFavorites.body.data.items[0].reference_state, 'unavailable', '失效后既有收藏的 reference_state 必须变为 unavailable');
+    eq(
+      goneFavorites.body.data.items[0].unavailable_reason,
+      // 冻结闭集的对象侧那条（`services/api/src/targetref/visibility.ts:34-41` 的
+      // `REFERENCE_UNAVAILABLE_REASONS[0]`）：**不细分**「已隐藏／不存在」，因此本断言同时钉住"不泄露存在性"。
+      '目标已下架、已失效、已隐藏、已删除或不属于当前账号',
+      '失效理由必须落在冻结闭集的对象侧统一说明上（不细分「已隐藏／不存在」，不泄露存在性）',
+    );
+    // ④ 恢复：改回 'valid' ⇒ 列表/详情重新可读，收藏状态回正（同一行、同一 id，不是新建）。
+    const restore = await owner.query("UPDATE public.source_versions SET validity='valid' WHERE id=$1::uuid", [
+      FIXTURE.sourceVersionId,
+    ]);
+    eq(restore.rowCount, 1, '恢复必须恰好命中 1 行来源版本');
+    const backList = await request('GET', searchPath, { token });
+    deepEq(
+      (backList.body.data.items ?? []).map((item) => item.id),
+      [FIXTURE.knowledgeId],
+      '恢复后同一查询串必须重新读到该条',
+    );
+    const backDetail = await request('GET', `/api/v1/knowledge/${FIXTURE.knowledgeId}`, { token });
+    eq(backDetail.status, 200, `恢复后详情必须重新 200，实测 ${backDetail.status}：${JSON.stringify(backDetail.body)}`);
+    eq(backDetail.body.data.revision, detail.body.data.revision, '恢复后详情 revision 必须与失效前一致');
+    const backFavorites = await request('GET', '/api/v1/favorites', { token });
+    eq((backFavorites.body.data.items ?? []).length, 1, '恢复后收藏仍必须 1 条（未重复建行）');
+    eq(backFavorites.body.data.items[0].id, keptId, '恢复后收藏行 id 必须仍是原行');
+    eq(backFavorites.body.data.items[0].reference_state, 'available', '恢复后收藏 reference_state 必须回正为 available');
+    eq(backFavorites.body.data.items[0].unavailable_reason, null, '恢复后 unavailable_reason 必须回 null');
+    step45.actual(
+      `失效前 reference_state=available/理由 null；validity→withdrawn 命中 1 行；列表 0 条；详情 404 NOT_FOUND 且与「不存在」逐字段同形；收藏仍 1 行但 reference_state=unavailable + 闭集理由；validity→valid 命中 1 行后列表重新 1 条、详情 200 revision 不变、收藏 reference_state 回 available/理由 null`,
     );
 
     // ---- 6 退出 -----------------------------------------------------------

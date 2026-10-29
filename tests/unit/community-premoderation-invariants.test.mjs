@@ -32,7 +32,7 @@
  * | 2 | `services/api/src/community/service.ts`：`createPost`（:1052/:1066-1067）**与** `editPost`（:1188/:1197-1198）两处 | 每处三行都**逐字**钉住：`visibility` 三元组落 `'private' : 'published'`、`audit_state` 落 `'pending' : 'approved'`，`awaitingPublish` 定义为 `!mediaReview && screen !== null && link !== null`；且两处都是「先落库（`insertPost` / `commitPostIfCurrent`）→ 再 `link.publish` → 再回读」 | 初始写入被改回 `published/approved`（先审后发被拆掉）；把 `awaitingPublish` 恒置 `false`（三元组文本不变却永远不走待审）；两步顺序颠倒；或**只改一处**（发帖待审、改帖直接发） |
  * | 3 | `services/api/src/favorites/**`（`types.ts:24` 为闭集定义、`:74-76` 为唯一判定函数） | `FAVORITE_TARGET_TYPES` **逐字** `['species','herbicide','scheme']`；`isFavoriteTargetType` 仍由该常量派生；`favorites/**` 里**没有任何** `'post'` / `'comment'` 字面量 | 把社区帖子/评论加进收藏闭集（无论加在常量、判定函数还是别处的字面量） |
  * | 4 | `apps/admin/src/views/ReviewPlaceholderView.vue` 全文 | 该页**没有任何真网络调用形态**（`fetch(`/`axios`/`XMLHttpRequest`/`*Api.<method>`/`$fetch`/网络模块 import 等），数据仍只来自 `../lib/review-state.mjs` | **预期会红**：一旦人审后台真的实现（哪怕只是开始拉队列），这一页必须改成读真实数据 —— 届时先加契约读面，再翻转本钉子。⛔ 不要为了让本钉子变绿把模式改窄 |
- * | 5 | 小程序三页的**具体行** | `community.js:192`、`communitydetail.js:176`、`communitycreate.js:106` 仍写 `'待审／未公开'`（全角斜杠）；`communitydetail.js:173` 仍写 `'未公开／待审'`＋`'已通过先行审核'`；且三页**都没有**「已驳回」态 | 新增/改写作者侧状态文案（尤其**补上**「已驳回」态、或把「待审」改成「审核中」）；行号漂移同样红 |
+ * | 5 | 小程序审核结论文案：唯一来源 `miniprogram/utils/community-api.js` 的 `OUTCOMES` + 三页 | 「隔离待复核（`quarantined`）」与「明确驳回（`rejected`）」各有独立条目且**标题互不相同**（前者含「复核」且不得含「未通过」，后者含「未通过」且不得含「复核」）；三页**零**本地文案字面量（`待审／未公开` / `未公开／待审` / `已通过先行审核` / `已下架（仅本人可见）`）且都调 `api.outcomeOf`；理由码「（码：X）」拼接点恰好一处、带「未知原因」兜底、旧的「原因码：」裸码直传零命中 | 把两个结论合回一句（隔离/驳回不可区分）；在页面里重新抄一份文案；去掉 `Object.freeze`；删掉未知码兜底；把理由码改回 `codes.join()` 直传。**本钉子已按 fix/gy-r68-moderation-outcome-copy 翻转**（它改前钉的是「三页同为 `待审／未公开`、且没有已驳回态」这个缺口） |
  * | 6 | `services/api/src` 全树扫字面量 `gateCommunityService`；`app.ts` 单独断；`tests/` 扫调用点 | 除定义文件 `admin/ops/flag-gate.ts` 外**零引用**，`app.ts` **零出现** ⇒ **未装配**；测试侧唯一调用点是 `tests/unit/admin-flag-gate.test.mjs`；装饰器本体仍是 `return Object.freeze(wrapped) as T` | 任何装配（`app.ts` import/调用、新 bootstrap 模块、路由注入）；或反过来把装饰器掏空成空壳（那会让「未装配」变成「装了也没用」，同样要红）。⚠ 文本扫描有盲区，见该条注释 |
  *
  * ## 硬约束（改本文件时不许破）
@@ -771,97 +771,126 @@ test('钉 4 · `ReviewPlaceholderView.vue` 仍是结构性的「零」（不发�
 });
 
 // ---------------------------------------------------------------------------
-// 钉 5 · 小程序三处「待审／未公开」文案（且没有「已驳回」态）
+// 钉 5 · 小程序审核结论文案：**「隔离待复核」与「明确驳回」必须是两句不同的话**
+//
+// 翻转记录（fix/gy-r68-moderation-outcome-copy）：改前本钉子钉的是**缺口**——
+// 三页共三档文案（通过 / 已下架 / 其余一律 `待审／未公开`），`quarantined` 与 `rejected`
+// 落在同一句，且被驳回的内容被告知「待审」。该缺口已按「纯展示层」修掉：
+// 文案收敛到**唯一一处** `miniprogram/utils/community-api.js` 的 `OUTCOMES`，
+// 页面只 require 它、不再自持第二套字面量。本钉子因此由「钉缺口」翻成「钉修好之后的事实」：
+//   ① 两个结论各有自己的条目，且标题**互不相同**、各自说自己的话；
+//   ② 三页**不再**持有任何一套本地文案（回退就会被这里逮住）；
+//   ③ 理由码翻人话 + 未知码兜底在**同一处**，不再出现「原因码：」式的英文裸码直传。
 // ---------------------------------------------------------------------------
 
-/** 三处文案锚点：文件 / 行号 / 该行必须包含的字面量（全角斜杠 U+FF0F，逐字）。 */
-const MINIPROGRAM_COPY_PINS = [
-  {
-    file: 'miniprogram/pages/community/community.js',
-    line: 192,
-    mustInclude: "'待审／未公开'",
-    note: '列表页作者侧 stateLabel 的兜底分支',
-  },
-  {
-    file: 'miniprogram/pages/communitydetail/communitydetail.js',
-    line: 176,
-    mustInclude: "'待审／未公开'",
-    note: '详情页作者侧 stateLabel 的兜底分支',
-  },
-  {
-    file: 'miniprogram/pages/communitycreate/communitycreate.js',
-    line: 106,
-    mustInclude: "'待审／未公开'",
-    note: '发帖成功后的 toast 文案（按服务端返回的 visibility/audit_state 取）',
-  },
+/** 审核结论文案的唯一来源。 */
+const OUTCOME_COPY_TABLE = 'miniprogram/utils/community-api.js';
+
+/** 三个页面（列表 / 详情 / 投稿）：只许取单一来源，不许再写本地文案。 */
+const OUTCOME_COPY_PAGES = [
+  'miniprogram/pages/community/community.js',
+  'miniprogram/pages/communitydetail/communitydetail.js',
+  'miniprogram/pages/communitycreate/communitycreate.js',
 ];
 
-/** 详情页另有一处**语序不同**的公开侧标签（`未公开／待审`），单独钉。 */
-const DETAIL_PUBLIC_LABEL = {
-  file: 'miniprogram/pages/communitydetail/communitydetail.js',
-  line: 173,
-  mustInclude: "'未公开／待审'",
-};
+/** 取 `OUTCOMES` 里某个结论条目的 `title:` 整行（`key:` 之后 5 行内必出现）。 */
+function outcomeTitleLine(key) {
+  const lines = linesOf(OUTCOME_COPY_TABLE);
+  const at = lines.findIndex((line) => line.includes(`key: '${key}'`));
+  assert.notEqual(at, -1, `${OUTCOME_COPY_TABLE} 里找不到结论条目 key: '${key}'：`
+    + '审核结论文案表被改名/搬家了 ⇒ 请先确认新位置再改本钉子（⛔ 不要删断言让它变绿）。');
+  const titleLine = lines.slice(at, at + 5).map((line) => line.trim()).find((line) => line.startsWith('title:'));
+  assert.notEqual(titleLine, undefined, `结论条目 '${key}' 没有 title: 行（标签文案丢了）。`);
+  return titleLine;
+}
 
-test('钉 5 · 小程序三页仍写着「待审／未公开」，且都没有「已驳回」态', () => {
-  for (const pin of MINIPROGRAM_COPY_PINS) {
-    const lines = linesOf(pin.file);
-    assert.equal(
-      pin.line <= lines.length,
-      true,
-      `${pin.file} 只剩 ${lines.length} 行（锚点 :${pin.line} 越界）⇒ 页面被大改，请重新定位。`,
-    );
-    assert.equal(
-      lines[pin.line - 1].includes(pin.mustInclude),
-      true,
-      `【钉 5 破了】${pin.file}:${pin.line}（${pin.note}）不再包含 ${pin.mustInclude}：`
-        + `\n  实测该行：${JSON.stringify(lines[pin.line - 1].trim())}`
-        + '\n  基线的三页文案是**同一套**：通过 ⇒ 空串（列表/详情）或 `已通过先行审核`（详情公开侧/发帖 toast）；'
-        + '下架 ⇒ `已下架（仅本人可见）`；其余（含 `audit_state === \'pending\'` 与 `\'rejected\'`）⇒ `待审／未公开`。'
-        + '\n  ⚠ 文案改动可能是**有意**的（例如给「已驳回」独立态）—— 那就是本切片点名的 S5 切片，'
-        + '请把三页 + 本钉子 + 证据页一起改。'
-        + because('改写/删除这一行的 `\'待审／未公开\'` 字面量，或把状态判定挪到别的行（行号漂移同样红）。'),
-    );
+test('钉 5 · 「隔离待复核」与「明确驳回」是两句不同的用户可见文案，且只存在于一处', () => {
+  // ① 单一来源在位：表本身、两个结论条目、以及「未知码兜底」的措辞。
+  const table = readRepoText(OUTCOME_COPY_TABLE);
+  assert.equal(table.includes('const OUTCOMES = Object.freeze({'), true,
+    `${OUTCOME_COPY_TABLE} 里没有冻结的 OUTCOMES 表：审核结论文案必须集中在一处并 Object.freeze，`
+      + because('把 OUTCOMES 表挪走 / 去掉 Object.freeze（页面就能就地改文案，「同一处」也就不成立）。'));
+  assert.equal(table.includes("'未知原因'"), true,
+    '理由码表缺少「未知原因」兜底：未知码会被说成别的结论（甚至说成通过）'
+      + because('删掉 reasonLabel 的未知码兜底分支。'));
+  assert.deepEqual(occurrences(table, "'（码：' + key + '）'"), 1,
+    `理由码的「（码：X）」拼接**表达式**必须恰好一处（实测 ${occurrences(table, "'（码：' + key + '）'")} 处）：`
+      + '两处拼接就会出现两套码格式，未知码兜底也就维护不了'
+      + because('在别的分支里再拼一次理由码（例如给已知码/未知码各写一套格式，绕过 withCode）。'));
+
+  // ② 两种结论的标签必须互不相同，且各说各的事 —— 这一条是「两种状态被映射成同一句」的直接反例。
+  const quarantinedTitle = outcomeTitleLine('quarantined');
+  const rejectedTitle = outcomeTitleLine('rejected');
+  assert.notEqual(quarantinedTitle, rejectedTitle,
+    '【隔离与驳回被映射成同一句文案】两者标题相同：' + quarantinedTitle
+      + '\n  隔离（quarantined）＝已提交、等待人工复核、可以稍后再看；'
+      + '\n  驳回（rejected）＝未通过、不会公开、理由见理由码。二者不是同一件事。'
+      + because('让两个结论条目共用同一个 title（或把 rejected 折回 pending 的兜底）。'));
+  assert.equal(quarantinedTitle.includes('复核'), true,
+    `隔离（quarantined）的标签必须说「复核」（实测：${quarantinedTitle}）`
+      + because('把「待人工复核」改成只写「待审／未公开」这类不指向人工复核的说法。'));
+  assert.equal(quarantinedTitle.includes('未通过'), false,
+    `隔离（quarantined）不得说成「未通过」——它还没有结论（实测：${quarantinedTitle}）`
+      + because('把 quarantined 的文案写成驳回口径。'));
+  assert.equal(rejectedTitle.includes('未通过'), true,
+    `驳回（rejected）的标签必须说「未通过」（实测：${rejectedTitle}）`
+      + because('把「未通过审核」改成「待审」这类会让用户继续等下去的说法。'));
+  assert.equal(rejectedTitle.includes('复核'), false,
+    `驳回（rejected）不得说成「待复核」——它已经有结论了（实测：${rejectedTitle}）`
+      + because('把 rejected 的文案写成隔离口径（用户会一直等一个不会到来的复核）。'));
+
+  // ②b `hidden` 不再是终态判据：`{hidden, rejected}` 与 `{hidden, quarantined}` 同样必须分开。
+  //
+  // 为什么它们真的会出现：读面 `effectiveState`（`community/service.ts:583-616`）的 `demoted()`
+  // 把 `published` 一律降成 `hidden` 并**原样带 `audit_state`**，迟到驳回返回 `'rejected'`、
+  // 迟到隔离返回 `'quarantined'`；`listPosts(mine=true)` 包含未公开版本 ⇒ 作者看得到这两种。
+  // 若 `outcomeOf` 先判 `hidden` 就返回同一句，等于把「两态同形」从「待审」挪到「已下架」。
+  const hiddenRejectedTitle = outcomeTitleLine('hidden_rejected');
+  const hiddenQuarantinedTitle = outcomeTitleLine('hidden_quarantined');
+  assert.notEqual(hiddenRejectedTitle, hiddenQuarantinedTitle,
+    '【hidden 路径又把两态合并了】下架+驳回 与 下架+隔离 用了同一句标签：' + hiddenRejectedTitle
+      + '\n  `{hidden, rejected}`＝已发布后被驳回（有结论，不会再等）；'
+      + '\n  `{hidden, quarantined}`＝已发布后转隔离（还没有结论，要等复核）。'
+      + because('在 outcomeOf 里让 `visibility === \'hidden\'` 短路成同一档（本片第一版就是这么错的）。'));
+  assert.equal(hiddenQuarantinedTitle.includes('复核'), true,
+    `下架+隔离 的标签必须说「复核」（实测：${hiddenQuarantinedTitle}）`
+      + because('把 hidden_quarantined 写成纯「已下架」。'));
+  assert.equal(hiddenQuarantinedTitle.includes('未通过'), false,
+    `下架+隔离 不得说成「未通过」（实测：${hiddenQuarantinedTitle}）`
+      + because('把 hidden_quarantined 写成驳回口径。'));
+  assert.equal(hiddenRejectedTitle.includes('未通过'), true,
+    `下架+驳回 的标签必须说「未通过」（实测：${hiddenRejectedTitle}）`
+      + because('把 hidden_rejected 写成纯「已下架」，用户就永远不知道是被驳回了。'));
+  assert.equal(hiddenRejectedTitle.includes('复核'), false,
+    `下架+驳回 不得说成「复核」（实测：${hiddenRejectedTitle}）`
+      + because('把 hidden_rejected 写成隔离口径。'));
+  // 下架本身的措辞（处置动作）仍只有一处。
+  assert.equal(readRepoText(OUTCOME_COPY_TABLE).includes("title: '已下架（仅本人可见）'"), true,
+    '下架（未伴随审核结论）那一档的文案不见了：下架是处置动作，仍要能单独说清'
+      + because('删掉 HIDDEN_OUTCOMES.plain（下架但审核通过/不可判时就没话说了）。'));
+
+  // ③ 三页不再自持第二套文案：旧字面量一处都不许留，且必须从单一来源取。
+  for (const file of OUTCOME_COPY_PAGES) {
+    for (const literal of ["'待审／未公开'", "'未公开／待审'", "'已通过先行审核'", "'已下架（仅本人可见）'"]) {
+      assert.deepEqual(hitsOf(file, literal), [],
+        `${file} 里还留着本地文案 ${literal}：审核结论文案必须只存在于 ${OUTCOME_COPY_TABLE}，`
+          + '三页各写一套就是改前那个缺口的成因'
+          + because('在页面里重新抄一份结论文案（哪怕只是兜底分支）。'));
+    }
+    assert.equal(readRepoText(file).includes('api.outcomeOf'), true,
+      `${file} 没有从适配层的单一来源取结论（缺少 api.outcomeOf 调用）`
+        + because('页面自己判断 visibility/audit_state 并直接写真中文（绕开唯一一处文案表）。'));
   }
+  // 评论行同理：处置措辞（「已隐藏」）也在适配层，页面不许另写一档。
+  assert.equal(readRepoText('miniprogram/pages/communitydetail/communitydetail.js').includes('api.commentOutcomeOf'), true,
+    '详情页的评论行没有走单一来源（缺 api.commentOutcomeOf）：评论的 {hidden,rejected} 与 '
+      + '{hidden,quarantined} 会重新同形'
+      + because('把评论行改回自己判 visibility 并直接写「已隐藏（仅本人可见）」。'));
 
-  // 详情页公开侧：语序是 `未公开／待审`（不是 `待审／未公开`），别被上面的三处掩盖掉。
-  const detailLines = linesOf(DETAIL_PUBLIC_LABEL.file);
-  assert.equal(
-    detailLines[DETAIL_PUBLIC_LABEL.line - 1].includes(DETAIL_PUBLIC_LABEL.mustInclude)
-      && detailLines[DETAIL_PUBLIC_LABEL.line - 1].includes("'已通过先行审核'"),
-    true,
-    `【钉 5 破了】${DETAIL_PUBLIC_LABEL.file}:${DETAIL_PUBLIC_LABEL.line} 的公开侧标签变了：`
-      + `\n  实测该行：${JSON.stringify(detailLines[DETAIL_PUBLIC_LABEL.line - 1].trim())}`
-      + `\n  基线：三元组 \`… ? '已通过先行审核' : '未公开／待审'\`（**注意语序与作者侧相反**）。`
-      + because('改这一行的两个字面量之一（这一行是「他人视角」的标签，与作者侧不是同一套措辞）。'),
-  );
-
-  // 负向：「已驳回」态**不存在**。audit_state 四值里 `rejected` 没有自己的 UI 分支，
-  // 只会落进「待审／未公开」的兜底 —— 这正是本切片要钉住的现状（S5 才补它）。
-  const pageFiles = [
-    ...MINIPROGRAM_COPY_PINS.map((pin) => pin.file),
-    DETAIL_PUBLIC_LABEL.file,
-  ];
-  const uniquePages = [...new Set(pageFiles)];
-  /** @type {string[]} */
-  const rejectedCopyHits = [];
-  for (const file of uniquePages) {
-    for (const hit of hitsOf(file, '已驳回')) rejectedCopyHits.push(`${file}:${hit.line}: ${hit.text}`);
-    for (const hit of hitsOf(file, "'rejected'")) rejectedCopyHits.push(`${file}:${hit.line}: ${hit.text}`);
-  }
-  assert.deepEqual(
-    rejectedCopyHits,
-    [],
-    '【钉 5 破了】小程序出现了「已驳回」态（文案或 `audit_state === \'rejected\'` 判定）：'
-      + `\n  实测：${JSON.stringify(rejectedCopyHits)}`
-      + '\n  基线（' + BASELINE_SHA.slice(0, 8) + '）：**三页都没有「已驳回」态** —— '
-      + '`audit_state` 虽是四值枚举（`pending/approved/rejected/quarantined`），但小程序只区分'
-      + '「通过 / 下架 / 其余」，被驳回的内容对作者也只显示「待审／未公开」，不会告诉他被驳回了。'
-      + '\n  👉 若你刚补上这个态：那是**新产品语义**（作者可见的驳回告知），'
-      + '请同时确认后端有没有把结论告诉作者（基线：驳回时内容行根本不落库、也不发通知），'
-      + '并把本钉子改成「有已驳回态」的正向断言。'
-      + because('在这三页里写出 `已驳回` 文案，或加上 `audit_state === \'rejected\'` 的分支。'),
-  );
+  // ④ 英文裸码直传不得回潮：旧的「原因码：A、B」拼法已无出口。
+  assert.deepEqual(hitsOf(OUTCOME_COPY_TABLE, '原因码：'), [],
+    '适配层仍在把服务端理由码**裸码直传**给用户（`原因码：A、B` 的形式）'
+      + because('把 message() 的驳回分支改回 codes.join()，绕过 reasonLabel 的人话映射。'));
 });
 
 // ---------------------------------------------------------------------------

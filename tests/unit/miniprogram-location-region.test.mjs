@@ -407,6 +407,7 @@ test('超时兜底 不影响既有分支：wxApi 缺失仍立刻 failed，且不
 //
 // 合成资源坐标为下标确定性生成的**假坐标**，不是任何真实质心，也不代表仓库取得了几何数据；
 // 真实的 miniprogram/data/region-centroids.js 截至 2026-10-17 仍**未取得**（见交接 U3）。
+// 2026-10-28 起资源文档必须声明 crs: 'WGS84'（契约加严，Refs #5）：合成夹具同样要写，缺了就不合规。
 
 const regionConverter = createRequire(import.meta.url)(root + '/miniprogram/utils/region-converter.js');
 const mpCatalog = createRequire(import.meta.url)(root + '/miniprogram/data/regions.js');
@@ -426,7 +427,7 @@ const ABSENT_CODE = (() => {
 function syntheticDocument(overrides) {
   const points = COUNTY_CODES.slice(0, 6).map((code, index) => ({ code, latitude: 27.9 + index * 0.05, longitude: 119.9 + index * 0.05 }));
   return Object.assign({
-    schema: regionConverter.SCHEMA, state: 'available',
+    schema: regionConverter.SCHEMA, state: 'available', crs: 'WGS84',
     source: '测试合成（不是真实几何数据）', license: '测试合成', retrieved_at: '2026-10-17',
     catalog_version: mpCatalog.catalog_version, max_distance_km: 5, points,
   }, overrides);
@@ -442,6 +443,9 @@ test('D2 装配·U3 未取得：仓库内没有 region-centroids.js ⇒ build() 
   assert.equal(described.max_distance_km, null);
   assert.equal(described.source, null);
   assert.equal(described.license, null);
+  // 坐标系口径是排障第一问：资源缺席时也要能读出「期望是什么基准」。
+  assert.equal(described.expected_crs, 'WGS84');
+  assert.equal(described.declared_crs, null);
   // U3 如实登记：本片**未取得**几何资源。资源落地后本条必红，须显式更新交接与文档。
   assert.equal(RESOURCE_ABSENT, true, 'miniprogram/data/region-centroids.js 已出现：请更新 U3 登记与来源标注');
   const converter = regionConverter.build();
@@ -465,11 +469,27 @@ test('D2 装配·资源存在但校验不通过一律不接线：逐条 reason +
     ['资源是数组', { resource: [] }, 'resource-invalid'],
     ['schema 不符', { resource: syntheticDocument({ schema: 'gengyun.knowledge.regions.v1' }) }, 'schema'],
     ['state 未声明 available', { resource: syntheticDocument({ state: 'unavailable' }) }, 'state:unavailable'],
+    // 2026-10-28 加严（Refs #5）：坐标系缺字段／填别的基准都必须明确报不合规，不能退化成「资源不存在」。
+    ['缺 crs（字段删除）', { resource: syntheticDocument({ crs: undefined }) }, 'crs'],
+    ['crs 是空白串', { resource: syntheticDocument({ crs: '   ' }) }, 'crs'],
+    ['crs 非字符串', { resource: syntheticDocument({ crs: 4326 }) }, 'crs'],
+    ['crs 是 GCJ-02（口径不符）', { resource: syntheticDocument({ crs: 'GCJ-02' }) }, 'crs:GCJ-02'],
+    ['crs 是小写别名', { resource: syntheticDocument({ crs: 'wgs84' }) }, 'crs:wgs84'],
     ['缺 source', { resource: syntheticDocument({ source: '' }) }, 'source'],
     ['缺 license', { resource: syntheticDocument({ license: '   ' }) }, 'license'],
     ['缺 retrieved_at', { resource: syntheticDocument({ retrieved_at: null }) }, 'retrieved_at'],
+    // 抓取日期必须是真实日历日：占位串与不存在的日期都必须报格式错误，而不是当成"非空就算可追溯"。
+    ['retrieved_at 是占位串', { resource: syntheticDocument({ retrieved_at: 'todo' }) }, 'retrieved_at-format'],
+    ['retrieved_at 是带时间的完整 ISO', { resource: syntheticDocument({ retrieved_at: '2026-10-17T00:00:00Z' }) }, 'retrieved_at-format'],
+    ['retrieved_at 月份越界', { resource: syntheticDocument({ retrieved_at: '2026-13-01' }) }, 'retrieved_at-format'],
+    ['retrieved_at 日期不存在', { resource: syntheticDocument({ retrieved_at: '2026-02-30' }) }, 'retrieved_at-format'],
     ['max_distance_km 非正', { resource: syntheticDocument({ max_distance_km: 0 }) }, 'max_distance_km'],
+    ['max_distance_km 是字符串', { resource: syntheticDocument({ max_distance_km: '5' }) }, 'max_distance_km'],
+    // 阈值超过省域尺度就等于省内外不分：上限 500 km。
+    ['max_distance_km 超过上限', { resource: syntheticDocument({ max_distance_km: 501 }) }, 'max_distance_km-range'],
     ['points 为空', { resource: syntheticDocument({ points: [] }) }, 'points'],
+    ['缺 catalog_version', { resource: syntheticDocument({ catalog_version: null }) }, 'catalog_version'],
+    ['catalog_version 非字符串', { resource: syntheticDocument({ catalog_version: 2023 }) }, 'catalog_version'],
     ['catalog_version 与目录不符', { resource: syntheticDocument({ catalog_version: 'mca-xzqh-1999' }) }, 'catalog-version'],
     ['点不是对象', { resource: syntheticDocument({ points: [null] }) }, 'point-invalid:0'],
     ['点 code 形状非法', { resource: syntheticDocument({ points: [{ code: '440102', latitude: 28, longitude: 120 }] }) }, 'point-code:0'],
@@ -516,6 +536,9 @@ test('D2 装配·资源合规即接线：region_code 经两份目录校验、最
   }
   // 来源可追溯：装配结果自带 provenance，且与资源声明一致。
   assert.equal(convert.provenance.schema, regionConverter.SCHEMA);
+  // 坐标系不再只写在注释里：接线成功时 provenance 必须能回答「这份数据是什么基准」。
+  assert.equal(convert.provenance.crs, 'WGS84');
+  assert.equal(regionConverter.CRS, 'WGS84');
   assert.equal(convert.provenance.source, document.source);
   assert.equal(convert.provenance.license, document.license);
   assert.equal(convert.provenance.retrieved_at, document.retrieved_at);

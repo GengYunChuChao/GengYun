@@ -558,7 +558,7 @@ test('GY-I06 1-A 结构性判据：app.ts 媒体装配层**不得**把 `process.
 //   · 真实端口挪到 `createAppMediaService({ objectStore: … })` 实参位置（**块外**，块内判据看不见）；
 //   · 门用**非 canonical ambient 键**（`OBJECT_STORAGE_ALLOW_REAL === '1'`）而不是那 4 个标准键。
 // 所以这里改成两条**全文件／全链路**判据：
-//   A)「ambient env 读取」审计（AST）：`app.ts` 只允许读 3 个与存储无关的键（逐字枚举），
+//   A)「ambient env 读取」审计（AST）：`app.ts` 只允许读白名单里的非存储键（逐字枚举），
 //      `services/api/src/media/**` 与 `routes/media.ts` **一次都不许读**。覆盖
 //      `process.env`、`process['env']`、`globalThis.process.env`、`import.meta.env`，
 //      以及**整表传递／别名／解构／对象展开／动态取键**（这些一律视为违规，因为没有"按名读某个键"可核对）。
@@ -577,11 +577,11 @@ test('GY-I06 1-A 结构性判据：app.ts 媒体装配层**不得**把 `process.
 /** 仓库根（本文件位于 `<root>/tests/unit/`）。 */
 const REPO_ROOT_URL = new URL('../../', import.meta.url);
 
-/** `app.ts` 允许读取的 ambient 键：逐字枚举，**全部与存储/媒体无关**（键名形状由用例断言）。 */
+/** `app.ts` 允许读取的 ambient 键：逐字枚举，**全部与存储/媒体无关**（键名形状由用例断言）。GY-R68 追补的 `MODERATION_DEMO_PORT` 是审核域**演示端口**开关（`services/api/src/moderation/demo-port.ts`，装配处按名读这一个键）：人工过了一遍——① 键名不命中 `STORAGE_SHAPED_ENV_KEY`；② 它不是存储门控、不改变媒体域任何行为（媒体域仍只认显式注入的端口）；③ 它只在 `APP_EXECUTION_MODE != real` 生效，real 下装配层根本不注入（`demo-port.ts` 的 refused 分支）。 */
 const APP_AMBIENT_ENV_ALLOWLIST = Object.freeze([
   'RECOGNITION_PROVIDER_URL',
   'RECOGNITION_PROVIDER_KEY',
-  'APP_KNOWLEDGE_UNVERIFIED_SEED',
+  'APP_KNOWLEDGE_UNVERIFIED_SEED', 'MODERATION_DEMO_PORT',
 ]);
 
 /** 除上表外只允许 **Node/运行时内部**读取的键；出现未列出的键 ⇒ 判据红（见运行时探针用例）。 */
@@ -1118,7 +1118,7 @@ test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— �
   assert.deepEqual(realPortsAmbient.findings, [], 'real-ports.ts 的 ambient env 读取点实测必须为 0');
 });
 
-test('GY-I06 1-A B1（全文件 ambient env 审计）：app.ts 只允许 3 个非媒体键；media/** 与 routes/media.ts 一次都不许读', () => {
+test('GY-I06 1-A B1（全文件 ambient env 审计）：app.ts 只允许白名单里的 4 个非媒体键；media/** 与 routes/media.ts 一次都不许读', () => {
   const app = parseRepoFile('services/api/src/app.ts');
   const audit = auditAmbientEnv(app, APP_AMBIENT_ENV_ALLOWLIST);
 
@@ -1131,7 +1131,7 @@ test('GY-I06 1-A B1（全文件 ambient env 审计）：app.ts 只允许 3 个�
   assert.deepEqual(
     audit.findings.map((finding) => finding.key).sort(),
     [...APP_AMBIENT_ENV_ALLOWLIST].sort(),
-    'app.ts 的 ambient env 读取点必须恰好是那 3 个非媒体键',
+    'app.ts 的 ambient env 读取点必须恰好等于白名单里的非存储键（逐字枚举，多了少了都红）',
   );
   for (const finding of audit.findings) {
     assert.equal(finding.tableUse, null, `第 ${finding.line} 行必须是按名读取：${finding.snippet}`);
@@ -1326,7 +1326,7 @@ test('GY-I06 1-A B1（运行时来源检查）：装配期与请求期不得读�
   assert.deepEqual(storageReads, [], '装配期/请求期都不得读取存储形状的 ambient 键');
   // 来源检查（二）：不得整表枚举 ambient env（`Object.keys`/展开/env 快照）。
   assert.deepEqual(probe.enumerations, [], '不得整表枚举 ambient env');
-  // 来源检查（三）：读到的键必须是「3 个非媒体键（app.ts 白名单）」或「Node/运行时内部键」；
+  // 来源检查（三）：读到的键必须是「白名单里的非媒体键（app.ts）」或「Node/运行时内部键」；
   // 出现新键 ⇒ 要么它确实来自运行时（核后补注列入），要么装配路径新增了一条 ambient 输入 —— 两者都必须人工过一遍。
   const unknownKeys = [
     ...new Set(

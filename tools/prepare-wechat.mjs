@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync, existsSyn
 import { resolve, join, dirname, relative, isAbsolute, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readLocalConfig, configArgument } from './local-debug-config.mjs';
+import { REGION_CENTROID_SOURCE, regionCentroidManifestEntries, assertRegionCentroidPackaging } from './lib/region-centroid-packaging.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const APP_ID_PATTERN = /^wx[0-9a-f]{16}$/;
@@ -162,8 +163,9 @@ try {
     // 定位即时选地区（GY-I05／F02）：仅授权与失败分支，不内置坐标→地区转换资源。
     'utils/location-region.js',
     // 地区转换资源装配（GY-I05 D2）：profile 页 require 它；漏加会导致标准包 MODULE_NOT_FOUND。
-    // 资源就位（U3 取得）后，转换数据副本也必须一并加入本清单：
-    // 'data/region-centroids.js',
+    // 地区质心数据（GY-I05 U3／Refs #5）：本仓**不随分发**，所以清单条目由源码树是否存在决定
+    // （`regionCentroidManifestEntries`）。存在却没进清单时会静默失效——下方断言把这一条变成硬错误。
+    ...regionCentroidManifestEntries({ resourceExists: existsSync(join(root, REGION_CENTROID_SOURCE)) }),
     'utils/region-converter.js',
     'utils/knowledge-api.js',
     'utils/public-home-api.js',
@@ -236,6 +238,15 @@ try {
     'data/seed-province-index.js',
     'data/seed-control-timing.js',
   ];
+  // 打包清单不是「写下来就算」：先把「源码树有没有地区质心数据」与「清单有没有登记它」对齐，
+  // 不一致就当场失败（存在却漏登记 ⇒ 标准包静默 unavailable；登记了却不存在 ⇒ 复制阶段 ENOENT）。
+  const regionCentroid = assertRegionCentroidPackaging({
+    resourceExists: existsSync(join(root, REGION_CENTROID_SOURCE)),
+    manifest: files,
+  });
+  console.log(regionCentroid.packaged
+    ? '地区质心数据：已纳入打包允许清单（' + REGION_CENTROID_SOURCE + '），定位→地区转换会走真实资源。'
+    : '地区质心数据：' + REGION_CENTROID_SOURCE + ' 不存在，按设计不打包——本仓不随分发该数据，定位选地区在本仓恒为 unavailable（见 docs/ui-state-inventory.md §8）。');
   const pages = [
     'pages/home/home',
     'pages/identify/identify',

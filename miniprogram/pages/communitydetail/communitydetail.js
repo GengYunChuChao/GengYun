@@ -154,8 +154,18 @@ Page({
     wx.showToast({ title: api.message(error), icon: 'none' })
   },
 
+  /**
+   * 帖子展示投影。
+   *
+   * 审核结论**不再在这里另写一套三元组**（改前是「通过 / 下架 / 其余」三档，
+   * 于是「隔离待复核」与「明确驳回」对作者是同一句话，且被驳回的还会被告知「待审」）。
+   * 现在统一取适配层的 `api.outcomeOf`（唯一一张表）：`stateLabel` = 作者侧标签
+   * （通过时为空串，让 pill 落到 `publicLabel`），`publicLabel` = 结论标签，
+   * `outcomeDesc` = 详情页的整句解释（含「稍后再看」或「未通过」的区分）。
+   */
   _decoratePost: function (post) {
     const author = api.authorView(post.author)
+    const outcome = api.outcomeOf(post)
     return {
       id: post.id,
       revision: post.revision,
@@ -170,10 +180,10 @@ Page({
       region_code: post.region_code,
       visibility: post.visibility,
       audit_state: post.audit_state,
-      publicLabel: post.visibility === 'published' && post.audit_state === 'approved' ? '已通过先行审核' : '未公开／待审',
-      stateLabel: post.visibility === 'hidden'
-        ? '已下架（仅本人可见）'
-        : (post.visibility === 'published' && post.audit_state === 'approved' ? '' : '待审／未公开'),
+      outcomeKey: outcome.key,
+      outcomeDesc: outcome.desc,
+      publicLabel: outcome.title,
+      stateLabel: outcome.key === 'approved' ? '' : outcome.title,
       linkTitle: post.linked_knowledge && post.linked_knowledge.summary ? post.linked_knowledge.summary.title : '',
       linkState: post.linked_knowledge ? post.linked_knowledge.reference_state : ''
     }
@@ -182,6 +192,10 @@ Page({
   _decorateComments: function (items) {
     return items.map(function (comment) {
       const author = api.authorView(comment.author)
+      // 评论的处置措辞叫「已隐藏」（帖子叫「已下架」），但**审核结论的分档完全一样**：
+      // `{hidden, rejected}` 与 `{hidden, quarantined}` 的评论同样不能同形 ⇒ 一律取
+      // `api.commentOutcomeOf`（措辞表也在适配层，页面不自持第二套）。
+      const outcome = api.commentOutcomeOf(comment)
       return {
         id: comment.id,
         revision: comment.revision,
@@ -190,7 +204,7 @@ Page({
         authorAnonymized: author.anonymized,
         body: comment.body,
         time: comment.created_at,
-        stateLabel: comment.visibility === 'hidden' ? '已隐藏（仅本人可见）' : ''
+        stateLabel: outcome.key === 'approved' ? '' : outcome.title
       }
     })
   },

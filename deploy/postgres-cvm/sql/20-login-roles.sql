@@ -1540,3 +1540,59 @@ GRANT UPDATE (request_hash,response_status,outcome,expires_at)
 
 \echo '20-login-roles.sql：已授予 public.admin_content_entities（13/5/9 列）、public.admin_content_revisions（6/6/0 列）、public.admin_content_idempotency（6/6/4 列）的列级 SELECT/INSERT/UPDATE（逐列反推自 admin/ops/content-pg.ts；无表级 DML、无 INSERT/UPDATE 的表级授权）。'
 \echo '20-login-roles.sql：后台内容域不授 DELETE —— 撤回是 lifecycle 状态位，幂等台账的释放/清理走 UPDATE（PG 无列级 DELETE，授出即整表可删）。'
+
+-- ---------------------------------------------------------------------------
+-- 后台分类字典（R68）：public.admin_categories（迁移 0049）
+--
+-- 为什么是**列级**而不是表级：运行时只需要"读整行目录 + 改 5 列"，表级 GRANT 会顺带
+-- 允许它改 `type`（种类闭集，契约明写"新增覆盖/种类必须另行来源与评估，不由编辑名称扩大识别承诺"）
+-- 和 `created_at`（审计性的建行时刻）。列级授权把这两列钉死在"运行时改不了"。
+--
+-- 为什么**没有 INSERT / DELETE**：契约这两个 operation 里没有"新建分类"和"删除分类"——
+-- `CategoryInput` 只有 name/description/active，`id` 与 `type` 来自迁移 0049 的**一次性回填**
+-- （从 public.crops / public.species 单向搬一遍）。授出 INSERT 等于开一条契约之外的长目录通道；
+-- 授出 DELETE 等于让后台能删掉识别键（且 PG 没有列级 DELETE，授出即整表可删）。
+--
+-- 为什么 UPDATE 里有 `revision` / `updated_at`：CAS 的语义就是"读到的修订号 +1"与"记录本次改动
+-- 时刻"，两者都是 `UPDATE … SET name = $3, description = $4, active = $5, revision = revision + 1,
+-- updated_at = now() WHERE id = $1 AND revision = $2` 这一条语句的组成部分
+-- （见 services/api/src/admin/ops/categories-pg.ts 的 ADMIN_CATEGORY_SQL.commit）。
+-- `id` 在 SELECT 清单里：它既是 CAS 的定位列，也是返回给调用方的游标位。
+--
+-- 审计：运行时对 public.admin_audit_events 仍是**零表级/零列级权限**，唯一写路径是迁移 0049 的
+-- 窄口径 SECURITY DEFINER 函数 public.record_admin_category_update(...)，因此下面只授它的 EXECUTE。
+--
+-- 前置：迁移 0049 必须先执行（缺表/缺函数即显式失败，绝不留"看似收敛、点开 503"的运行态）。
+-- #region gy-r68-catalog-grant
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['admin_categories']) AS t(name)
+   WHERE to_regclass('public.'||t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少后台分类字典表：%（迁移 0049_admin_categories.sql 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+  IF to_regprocedure('public.record_admin_category_update(uuid,text,integer,uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.record_admin_category_update(uuid,text,integer,uuid)：迁移 0049_admin_categories.sql 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+REVOKE ALL ON TABLE public.admin_categories FROM PUBLIC;
+
+-- 读面：categories-pg.ts 的 ADMIN_CATEGORY_SQL.list 只取这 6 列（契约 Category 的 6 个字段）。
+GRANT SELECT (id,revision,type,name,description,active)
+  ON public.admin_categories TO gengyun_api_runtime;
+-- 写面：只有一条 CAS UPDATE（name/description/active + revision/updated_at）；无 INSERT、无 DELETE。
+GRANT UPDATE (name,description,active,revision,updated_at)
+  ON public.admin_categories TO gengyun_api_runtime;
+
+-- 审计落库的**唯一**通道：迁移 0049 的 SECURITY DEFINER 窄函数（函数内固定
+-- action='category.update' / scope='sources:write' / result='accepted'，并由形参重建 target_hint）。
+REVOKE ALL ON FUNCTION public.record_admin_category_update(uuid, text, integer, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_admin_category_update(uuid, text, integer, uuid) TO gengyun_api_runtime;
+-- #endregion gy-r68-catalog-grant
+
+\echo '20-login-roles.sql：已授予 public.admin_categories（6/0/5 列）的列级 SELECT/UPDATE 与 public.record_admin_category_update(uuid,text,integer,uuid) 的 EXECUTE（逐列反推自 admin/ops/categories-pg.ts；无表级 DML、无 INSERT/DELETE）。'
+\echo '20-login-roles.sql：后台分类字典不授 INSERT/DELETE —— 契约没有"新建/删除分类"，目录由迁移 0049 从 crops/species 一次性回填。'

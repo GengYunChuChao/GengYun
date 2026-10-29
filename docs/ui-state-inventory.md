@@ -16,7 +16,7 @@ Refs #28。基线 main `910aec3`，工作分支 `feature/gui-adaptive-pages`。
 | 2 | 识别 | `pages/identify/identify` | identify.js/json/wxml/wxss | 可浏览，操作禁用 | 拍草／标签／文字三入口，录音与播放分离 |
 | 3 | 社区 | `pages/community/community` | community.js/json/wxml/wxss | 否 | 空态、人工审核空入口、内容安全说明 |
 | 4 | 消息 | `pages/messages/messages` | messages.js/json/wxml/wxss | 否 | 空态、**首版**消息类型（评论与点赞／内容审核结果／系统通知） |
-| 5 | 我的 | `pages/profile/profile` | profile.js/json/wxml/wxss | 仅浏览 | 游客档案、隐私说明、状态提示 |
+| 5 | 我的 | `pages/profile/profile` | profile.js/json/wxml/wxss | 否——**2026-10-28 更正**（原写「仅浏览」是过期口径）：游客进页即被门禁送登录页（`pageGate.start` → `auth.requireLogin` → `reLaunch` 登录页），不是可浏览页（证据 `miniprogram/pages/profile/profile.js:56-60`、`miniprogram/utils/page-gate.js:11`、`miniprogram/utils/auth.js:546-570`） | 档案、隐私说明、状态提示（登录后才渲染） |
 
 tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯一对游客完全开放的功能页。
 
@@ -121,7 +121,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 | 项目 | 当前状态 | 隔离方式 |
 | --- | --- | --- |
-| 登录会话 | **恒为游客** | `utils/session.js` 的 `SESSION_ENABLED` 为 `false`，`isGuest()` 无条件返回 `true` 且不读存储；置为 `true` 后 `read()` 仍要求对象形态、非 `__devPreview`、含字符串 `token` |
+| 登录会话 | **已接真实服务端会话**——**2026-10-28 更正**（原写「恒为游客」是 2026-10 的过期口径，与实际代码相反） | 页面一律 `require('../../utils/auth')` 走 `requireLogin` 门禁与 `Authorization: Bearer` 会话：21 个页面脚本里 20 个如此，唯一例外是不读任何业务数据的走查页 `pages/specimen`（`miniprogram/pages/knowledge/knowledge.js:2`）。`utils/session.js` 是**死代码**（`SESSION_ENABLED = false`、`isGuest()` 恒 `true`，但页面／组件层对它 `require` 零命中），**不要**按它读登录口径；登记与处置见第 7.5 节（本片不删它） |
 | 拍草识别 | 未接入 | 入口仅提示，不调用相机 |
 | 标签 OCR | 未接入 | 入口仅提示，不调用相机 |
 | 语音转写与播放 | 录音已接真实端口；转写核对在 stub/preset_demo 接通 | 录音经 `utils/recorder-port.js`（`wx.getRecorderManager` 在原生侧的唯一出现处）真实采集，按用途 voice_question 上传（real 模式）；`utils/speech-transcript.js` 在 stub/preset_demo 下走通「受理→轮询→可编辑→用户明确确认→发送」，未经确认不外发、取消/失败/迟到回调不外发；**真实 ASR 未接线**，替身文本明确标注 |
@@ -192,3 +192,166 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 数值门槛（44px 触控区、18px 正文、54px 末屏预留）已由 `verify-layout.mjs` 静态核算覆盖；仍需真机验证的是系统级字体缩放是否生效、极窄容器下的实际换行与溢出。
 
 > 本任务不重复验收语音服务准确率，也不代替 GY-I13 的播放生命周期验证。基础库以 `project.config.json` 的 `libVersion` 为准，本轮曾将不可选的 `3.5.5` 修正为候选 `3.5.8`（未实测、未冻结，详见 `docs/verification/gui-adaptive-evidence.md`）。
+
+---
+
+## 7 P0 链路（第一条用户链路）
+
+2026-10-28 增补（Refs #4 #5 #7 #16 #28）。本节把 README「推荐推进顺序」里的 P0 第一条用户链路收尾（登录 → 手选作物／地区 → 查询 → 详情 → 收藏／取消 → 退出，且「退出、**来源失效**、网络失败能清旧内容并恢复」）**钉在一条页面路径**上：查询／列表在 `miniprogram/pages/knowledge`，详情／收藏在 `miniprogram/pages/knowledgedetail`。
+
+钉这条路径的原因是「手选条件查询」在仓里有两个实现，数据源根本不同：`pages/knowledge` 走服务端 `GET /knowledge`（真库读视图），`pages/reference` 带条件时**强制**读随包离线副本（第 7.4 节）。若不钉，同一句验收会在两个页面上各算一半，而其中一半结构上不可能通过。
+
+真库端到端已按这条路写成 7 步：`tests/integration/user-chain-e2e.mjs`（本片加入第 7.3 节的「来源失效」往返后实测 142 条断言 / 7 步 / exit 0）。
+
+### 7.1 查询面＝`pages/knowledge`
+
+| 项 | 口径 | 证据（path:line） |
+| --- | --- | --- |
+| 用户可见入口 | 作物／杂草／地区三个 picker（`data-field` = `cropIndex`／`speciesIndex`／`regionIndex`，选项来自随包目录） | `miniprogram/pages/knowledge/knowledge.wxml:29-31` |
+|  | 「查询／重试」按钮（`bindtap="search"`，`loading`／`disabled` 绑 `busy`） | `miniprogram/pages/knowledge/knowledge.wxml:42` |
+|  | 每条结果一个「查看详情并核对来源」按钮（`data-id` 带资料 id） | `miniprogram/pages/knowledge/knowledge.wxml:80` |
+|  | 未登录时整页只渲染 `guest` 状态视图，查询区**不出现**（不是渲染后报错） | `miniprogram/pages/knowledge/knowledge.wxml:10-18`；`miniprogram/pages/knowledge/knowledge.js:68-70` |
+| 依赖 API | `GET /api/v1/knowledge`，operationId **`listKnowledge`**；查询串闭集 = `q` ＋ `crop_id`／`region_code`／`species_id`／`growth_stage`／`planting_method`／`use_scene` ＋ `cursor`／`limit` | 客户端闭集 `miniprogram/utils/knowledge-api.js:9`；请求装配 `miniprogram/utils/knowledge-api.js:95-103` |
+|  | 服务端只读 `catalog_read.current_knowledge`（＝来源已核对 + `validity='valid'` + 已发布 + 最新修订的闭集），**不是**客户端筛 | `services/api/src/knowledge/service.ts:76`；视图定义 `services/api/db/migrations/0012_knowledge_created_at.sql:87-116` |
+| 失败态 | `stateKind` 落 `error` + `state-view`「查询没有成功」；文案取自客户端闭集（如 `NOT_FOUND`＝「资料不存在、已失效或不符合查询条件，请返回列表重新查询。」） | `miniprogram/pages/knowledge/knowledge.wxml:67-69`；`miniprogram/utils/knowledge-api.js:221` |
+|  | 空结果**分两种**：填了未采集维度（生育期／种植方式／使用场景）落 `uncollected` 并点名原因，否则才落 `empty` | `miniprogram/pages/knowledge/knowledge.wxml:61-66` |
+| 清空口径 | 每次查询**先** `clear()`：清 `items`／`nextCursor`／`status`，并作废在途查询与档案预置（迟到的回包不得覆盖当前条件） | `miniprogram/pages/knowledge/knowledge.js:185-213` |
+|  | 失败分支显式 `items: []`／`nextCursor: null` —— 旧结果**不留在屏幕上** | `miniprogram/pages/knowledge/knowledge.js:209-211` |
+
+### 7.2 详情面＝`pages/knowledgedetail`
+
+| 项 | 口径 | 证据（path:line） |
+| --- | --- | --- |
+| 用户可见入口 | 从列表「查看详情并核对来源」`navigateTo` 进入，只带 `id`（详情页自行重读，不复用列表对象当正文） | `miniprogram/pages/knowledge/knowledge.js:214-220` |
+|  | 「收藏／取消收藏」按钮：`favSupported` 为真才渲染，`loading`／`disabled` 绑 `favBusy`，卡片固定注明「收藏只表示保存了这条资料」 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:41-46` |
+|  | 「重新核对／重试」「返回继续查询」 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:48-49` |
+| 依赖 API | `GET /api/v1/knowledge/{id}`，operationId **`getKnowledge`**（客户端会带上从列表带来的条件，用于核对「版本或来源状态是否变化」） | `miniprogram/utils/knowledge-api.js:104-111`；核对点 `miniprogram/pages/knowledgedetail/knowledgedetail.js:32-53` |
+|  | `POST /api/v1/favorites`，operationId **`createFavorite`**（`Idempotency-Key` 必带；服务端按 `(user,target)` 去重，重复收藏返回同一行） | `miniprogram/utils/favorites-api.js:139-147` |
+|  | `DELETE /api/v1/favorites/{id}`，operationId **`deleteFavorite`**（`If-Match: "<revision>"` + `Idempotency-Key` 必带；缺 `If-Match` 服务端回 **428 `REVISION_REQUIRED`**，不会静默成功） | `miniprogram/utils/favorites-api.js:150-158` |
+|  | 收藏状态**逐次重查**（不缓存、不在本地推断）：命中同 `(type,id)` 才显示「取消收藏」，扫不到也不做本地去重决定 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:76-123`；按钮行为 `miniprogram/pages/knowledgedetail/knowledgedetail.js:126-155` |
+| 失败态 | `!item && stateKind === 'error'` 走 `state-view`「没有读到这份资料」＋「重新核对／重试」；成功正文整块不渲染 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:22-30` |
+|  | 收藏失败不保留乐观状态：`favState` 落 `unknown`，`favBusy` 复位，文案走既有错误映射 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:147-154` |
+| 清空口径 | 每次 `read()` 先 `clear()`：`item`／`labels`／`conditionsText` 全清，并复位收藏入口（`resetFavorite`） | `miniprogram/pages/knowledgedetail/knowledgedetail.js:29`；`miniprogram/pages/knowledgedetail/knowledgedetail.js:32-53` |
+|  | 失败分支 `item: null`／`labels: null` —— 旧正文不留在屏幕上 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:49-52` |
+
+### 7.3 来源失效（撤下／恢复）：一条判据、三处同源
+
+链路要求「来源失效能清旧内容并恢复」。服务端把「一条资料该不该可见」收敛成一个判定，三条读面读的是**同一个**集合，因此不可能出现「列表里没有、详情还能看」这类不一致：
+
+1. **列表**：`catalog_read.current_knowledge` 只收「来源已核对 + `validity='valid'` + 已发布 + 最新修订」的行；来源一撤下，该行就不在集合里（`services/api/db/migrations/0012_knowledge_created_at.sql:87-116`）。
+2. **详情**：读不到时抛 `NOT_FOUND`「资料不可用」，与「这个 id 根本不存在」**逐字段同形**（不泄露存在性）：`services/api/src/knowledge/service.ts:107`；详情面的公开读判定 `unavailable ⇒ 同形 404` 见 `services/api/src/routes/knowledge.ts:110-122`。
+3. **收藏**：`reference_state`／`unavailable_reason` **每次读取重新派生、不入库**；不可用时理由折叠成冻结闭集里那条**对象侧统一说明**（不细分「已隐藏／不存在」）：`services/api/src/targetref/visibility.ts:34-41`。
+
+**已进真库 e2e**：`tests/integration/user-chain-e2e.mjs` 的「4.5 来源失效」一步把这条往返跑成四组断言 —— ① 同一查询串读空；② 详情 404 `NOT_FOUND` 且与「不存在」逐字段同形；③ 既有收藏转 `unavailable` + 闭集理由（且收藏行**不被失效清掉**）；④ `validity` 改回 `valid` 后列表／详情重新可读、收藏状态回正。该步**开头**先断言「失效前确实是 `available`」，否则第 ③ 组在"一直不可用"的实现下也会绿（空转）。
+
+### 7.4 `pages/reference` 不是本链路的查询面（只做随包名录浏览）
+
+| 结论 | 依据 | 证据（path:line） |
+| --- | --- | --- |
+| 带作物／杂草／地区条件时**强制**读随包离线副本，不发请求 | 服务端 `/herbicides` 的 querystring 只接受 `q`／`registration_number`／`cursor`／`limit`，结构化条件**不可表达**；页面据此直接返回 `bundled-offline` | `miniprogram/pages/reference/reference.js:207-210`；客户端闭集 `miniprogram/utils/knowledge-api.js:122-124` |
+| 剂型条件走同一分支（不静默丢弃条件） | 同上分支，`others` 为真时文案并列「作物／杂草／地区／剂型」 | `miniprogram/pages/reference/reference.js:200-206` |
+| 分支落点：先判来源再决定走服务端还是随包副本 | `runQuery` 里 `decision.source === SERVER` 才走 `runServerQuery`，否则 `runBundledQuery` | `miniprogram/pages/reference/reference.js:223-225` |
+| 这一路上「详情 → 收藏」**走不通** | `pages/referencedetail` 的 `.js`／`.wxml` 全文对 `收藏`／`favorite`／`fav` 零命中，没有收藏入口 | 无入口可锚（负向事实，逐字读完 443+160 行确认）；P0 链路第 5 步的收藏入口是「详情页 `pages/knowledgedetail`」与「收藏页 `pages/favorites` 的『可收藏的资料』」**两处**（第 7.2、7.6 节），本路不在其中 |
+| 不能用来满足「下架／失效退出有效查询」 | 随包副本恒为有效记录，没有下架概念 ⇒ 该条验收在这一路上**结构上**判不了 | 同上；对照 `services/api/db/migrations/0012_knowledge_created_at.sql:87-116`（服务端才有失效闭集） |
+
+**结论**：`pages/reference` 保留为**随包除草剂名录浏览**（离线可用、明示数据来源），但不计入 P0 链路；P0 的查询面是 `pages/knowledge`。
+
+### 7.5 `utils/session.js` 是死代码（如实登记，本片不删）
+
+- `miniprogram/utils/session.js:22`：`SESSION_ENABLED = false`；`miniprogram/utils/session.js:38-41`：`isGuest()` 在该开关关闭时**无条件**返回 `true` 且不读存储。
+- 页面／组件／工具层对它的 `require` **零命中**：`miniprogram/` 里 20 个页面脚本一律 `require('../../utils/auth')`（唯一例外是走查页 `pages/specimen`），没有任何页面读 `utils/session` ⇒ 这个文件今天**不参与**任何登录判定。
+- 处置：**本节只登记，不删除**（本片不动 `miniprogram/**`）。唯一还依赖它的是单测 `tests/ui-adaptive.test.mjs:268-286`（按路径直接读源码并 `createRequire` 加载，断言「关闭状态下 `isGuest()` 恒为 `true`、且不发生存储读取」）——后续任一片要删它，必须同时改掉这条单测，否则那一组断言会 BROKEN 而不是「自动消失」。
+- ⚠ 第 4 节末段那句「会话占位不调用任何登录或手机号授权接口……」**只描述这个死文件**，不描述页面会话；页面会话口径以第 4 节表格的「登录会话」行为准（已按第 4 节的更正改为「已接真实服务端会话」）。
+
+### 7.6 「详情 → 收藏」：入口、取消路径，与「不可收藏」的裁定（Refs #16 #7）
+
+第 7.2 节证明了「`pages/knowledgedetail` 详情页有收藏按钮」。本节把第 5 步**一共几个入口、各是哪个**钉成一种口径（全文只此一处结论，第 7.4 节同向），并把另一条详情路（`pages/referencedetail`）**不可收藏**写成可当裁定引用的结论。收藏域的服务端语义（`reference_state` 逐次派生）与真库 e2e 见第 7.3 节与 `tests/integration/user-chain-e2e.mjs`；本节只钉**页面口径**。
+
+#### 7.6.1 从详情页收藏的入口 = `pages/knowledgedetail` 的收藏按钮
+
+| 项 | 口径 | 证据（path:line） |
+| --- | --- | --- |
+| 按钮位置 | 正文下方独立一张卡：「收藏」标题 + 固定说明「收藏只表示保存了这条资料，不代表已核对、已使用或已确认适用性。」+ 状态行 + 单按钮（`bindtap="toggleFavorite"`，`loading`／`disabled` 都绑 `favBusy`）；整张卡只在 `favState !== 'idle'` 时渲染 | `miniprogram/pages/knowledgedetail/knowledgedetail.wxml:41-46` |
+| 按钮出现条件 | `favSupported` 为真才渲染按钮；它由 `item.type` 是否落在契约闭集 `species`／`herbicide`／`scheme` 决定，其它类型落 `unsupported`、**不渲染按钮也不发请求** | `miniprogram/pages/knowledgedetail/knowledgedetail.js:79-88` |
+| 依赖 API | `POST /api/v1/favorites`，operationId **`createFavorite`**，必带 `Idempotency-Key`；请求体形状 **`{ target_ref: { type, id, revision } }`**（契约 `FavoriteInput` 只有 `target_ref` 一个必填字段，`target_ref` 的 `type`／`id`／`revision` 三字段全必填） | `miniprogram/utils/favorites-api.js:139-147`；落库侧 `services/api/db/migrations/0018_favorites_history.sql:56-64`（`target_id` 1..80、`target_revision ≥ 1`、唯一去重键 `favorites_owner_target_key (owner_id, target_type, target_id)`） |
+| `target_type` | 三值闭集 `species`／`herbicide`／`scheme`；`static_region` 等其它 `Knowledge.type` 不可收藏 | 客户端闭集 `miniprogram/pages/knowledgedetail/knowledgedetail.js:10`；契约 `packages/contracts/openapi.json` 的 `FavoriteTarget.type`（enum 三值；同一个 schema 里 `id` 只约束 1..80 长度、`revision ≥ 1`） |
+| 成功后 UI 变化 | 同一按钮文案变「取消收藏」、状态行变「已收藏该资料。」，`_favCurrent` 记下服务端回的 `favorite.id`／`favorite.revision` 供下次取消的 `If-Match` 用；**不做本地乐观置位**，只认服务端回执 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:143-146` |
+| 失败后 UI | 不保留乐观状态：`favBusy` 复位、`favState` 落 `unknown`、文案走既有错误映射；会话失效（401／403）时同样复位，不会卡在「正在核对收藏状态…」 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:147-154` |
+| 收藏状态怎么来 | **逐次**读 `GET /favorites` 找同 `(type,id)`，不缓存、不本地推断；读失败如实报「未取得」，既不假定已收藏也不假定未收藏 | `miniprogram/pages/knowledgedetail/knowledgedetail.js:73-107` |
+
+第 5 步的收藏入口**一共两处**（这是全文唯一口径，与第 7.4 节、本节末段一致）：① 本小节的**详情页按钮**（`pages/knowledgedetail` 里从一条资料发起收藏）；② 第 7.6.2 节的**收藏页「可收藏的资料」**（收藏页上半区的引导列表，逐条「收藏」，走同一个 `POST /favorites`：`miniprogram/pages/favorites/favorites.wxml:39-45` 的按钮 `bind:tap="onAdd"` → `miniprogram/pages/favorites/favorites.js:156-169`）。两者是**同一件事的两个入口**（同一契约、同一去重键、同一失败口径），不是并列的两种能力。另有**一处不计入**第 5 步：识别结果页的 `components/fav-entry`（宿主只有识别页一行、只收 `species`，属识别能力、不在本节六步内）：`miniprogram/pages/identify/identify.wxml:221`、`miniprogram/components/fav-entry/fav-entry.js:9`。
+
+#### 7.6.2 `pages/favorites`：可收藏的资料、取消收藏走哪个接口、失败怎么回滚
+
+| 项 | 口径 | 证据（path:line） |
+| --- | --- | --- |
+| 有「可收藏的资料」入口 | 有。页面上半区标题「可收藏的资料」，数据来自 `GET /knowledge` 第一页（`limit=20`，共 20 条）按 `species`／`herbicide`／`scheme` 闭集过滤；每行一个「收藏」按钮（已收藏则按钮禁用并标「已收藏」） | `miniprogram/pages/favorites/favorites.wxml:24-48`；闭集 `miniprogram/pages/favorites/favorites.js:21-23`；取数 `miniprogram/pages/favorites/favorites.js:120-143` |
+| 点「收藏」发的请求 | 同一个 `POST /api/v1/favorites`（`createFavorite`，`Idempotency-Key` 必带）；成功后只显示「已收藏：<标题>」并**重新读取**收藏列表，不往本地列表里追加 | `miniprogram/pages/favorites/favorites.js:156-169` |
+| 取消收藏走哪个接口 | `DELETE /api/v1/favorites/{id}`，operationId **`deleteFavorite`**；必带 `If-Match: "<revision>"` 与 `Idempotency-Key`；缺 `If-Match` 服务端回 **428 `REVISION_REQUIRED`**（不是静默成功），`revision` 与当前行不符回 409 `REVISION_CONFLICT` | 取消按钮本身 `miniprogram/pages/favorites/favorites.wxml:107-113`（同一张卡上方的「查看资料」按钮**不是**收藏动作，故不计入本锚点）；处理 `miniprogram/pages/favorites/favorites.js:171-188`；HTTP 层 `miniprogram/utils/favorites-api.js:150-158`；428 的落点 `services/api/src/favorites/validate.ts:93-96` |
+| 失败态如何回滚 | 取消失败**不本地摘行、不假装成功**：先如实提示错误映射文案；`NOT_FOUND`／`REVISION_CONFLICT` 再回服务端重读一次（列表一律以服务端为准） | `miniprogram/pages/favorites/favorites.js:182-187` |
+| 目标当前不可用时 | `reference_state !== 'available'` 就不给「查看资料」入口（旧链接不因被收藏过而复活），取消收藏按钮仍可用 | `miniprogram/pages/favorites/favorites.js:126-128` |
+
+#### 7.6.3 `pages/referencedetail` **不可收藏**（本数据源下不可为，不是没接线）
+
+**裁定**：`pages/referencedetail`（随包除草剂名录的详情页）**不给收藏入口，也不应给**。这不是「接线漏了」，也不是「下个片补上就行」——**在当前数据源下不可为**：不换数据源就加一个收藏按钮，产出的是**一条永远 `unavailable`、永远点不开的坏收藏**。换数据源是**另一条路**（代价见第 7.6.3 末段与 `docs/architecture/acceptance-map.md` 的「已知缺口」），要走那条路必须先裁定。后来的开发者若被要求「从除草剂详情也能收藏」，不要在本页加按钮。
+
+| 依据 | 事实 | 证据（path:line） |
+| --- | --- | --- |
+| ① 页面本来就没有 | `.js`／`.wxml` 全文对 `收藏`／`favorite`／`fav` **零命中**（`git grep -n` 在本树 exit 1，无输出）；全文 443 行 + 160 行逐字读完 | 负向事实，无入口可锚；行数见第 7.4 节同一条 |
+| ② 数据源 id 不是 UUID | 随包名录的记录主键形如 `gy-i03-hb-001`（离线副本本身：`miniprogram/data/records-2026.js:34`，由 `miniprogram/utils/reference.js:14` 装载）；页面按下式分流：`validId` 为真才走服务端，否则走随包副本 | `miniprogram/pages/referencedetail/referencedetail.js:115-120` |
+| ③ `validId` 就是 UUID 判定 | `validId` 是 UUID 正则判定，`gy-i03-hb-001` 恒假 ⇒ 该页永远落在 `bundled-offline` 这一支 | `miniprogram/utils/knowledge-api.js:224` |
+| ④ `/favorites` 要的 `revision` 只能来自服务端实体 | `POST /favorites` 的 `target_ref.revision` 在原页取自 `GET /knowledge/{id}` 的 `item.revision`，而那个响应里的 `id` 被客户端强制 UUID；随包记录既没有服务端 `id` 也没有服务端 `revision` | `miniprogram/utils/knowledge-api.js:49`；取用点 `miniprogram/pages/knowledgedetail/knowledgedetail.js:143` |
+| ⑤ 契约不认它「可用」 | 契约 `FavoriteTarget.id` 只约束 1..80 字符串（**不**设 UUID format），所以「发不出去」**不是**靠 400 挡住的：真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面**逐次派生**，随包记录在服务端不存在 ⇒ 恒 `unavailable` + 冻结闭集里的对象侧说明；收藏页据此不给「查看资料」 | `services/api/src/targetref/visibility.ts:140-158`；理由闭集 `services/api/src/targetref/visibility.ts:34-41`；落库侧也明说不收 UUID：`target_id` 是任意文本（只有 `id`／`owner_id` 是 uuid）`services/api/db/migrations/0018_favorites_history.sql:29-30`；页面侧 `miniprogram/pages/favorites/favorites.js:126-128` |
+
+**为什么写成「本数据源下不可为」而不是「未接线」**：未接线是「补一段代码就能通」；这里的缺口在**数据源身份**——随包名录不是服务端实体，而 `/favorites` 的语义是「保存一条**服务端可核验**的引用」。所以在**不换数据源**的前提下，它不随某个 PR 的进度自动消失：要么明确不做（从名录详情收藏，本页按这一支写），要么换数据源并连带改 #7 的验收口径（= 另一条路，代价与待裁定项见 `docs/architecture/acceptance-map.md` 的「已知缺口」；本片只登记，不裁定）。
+
+**结论**：P0 链路第 5 步「收藏／取消」的入口是**两个**——`pages/knowledgedetail` 的收藏按钮（主路径，从详情页发起）与 `pages/favorites` 的「可收藏的资料」（从收藏页发起，**同一个** `POST /favorites`）；`pages/reference` / `pages/referencedetail` 这一路不计入本链路（第 7.4 节），也不提供收藏；识别结果页的 `fav-entry` 属识别能力，同样不计入（第 7.6.1 节）。
+## 7.7 链路 e2e 的边界：这 7 步不含历史步
+
+这 7 步**不含历史步** —— `tests/integration/user-chain-e2e.mjs` 全文对 `history` 零命中，`/history` 一步都没有，故 #16 的「可核对历史」这一半**不在这条链路里**（历史侧目前只有 `tests/integration/favorites-history-isolation-http.mjs`：两账号 × 两私有域，但 store 是内存替身、非真库）；⛔ 不能把本链路 e2e 读成「历史也验过了」。
+
+## 8 定位选地区＝本仓恒 `unavailable`（地区质心数据不随仓分发，Refs #5）
+
+**登记日期**：2026-10-28，基线 `f0b97e16`。本节登记的是**今天的事实**与「要用它必须交出什么文件」，不承诺时间、不写成「即将支持」、不写成「只差一份数据」。
+
+### 8.1 现象与链路
+
+| 项 | 事实 | 证据（path:line） |
+| --- | --- | --- |
+| 用户看到什么 | 在档案页点「使用定位选地区」并**授权成功**后，一律只得到一句「地区转换资源尚未接入，请手选浙江市县。」；页面**不退出编辑态**，三个 picker 照常可用，不发生任何落库 | 文案 `miniprogram/utils/location-region.js:34`；落点 `miniprogram/pages/profile/profile.js:214` |
+| 为什么 | 页面装配时调用 `regionConverterResource.build()`；`build()` 读 `miniprogram/data/region-centroids.js`，该文件**不在仓内** ⇒ `require` 异常被 `loadModule` 吞成 `null` ⇒ `inspect()` 判 `resource-missing` ⇒ `build()` 返回 `null` ⇒ 定位成功后 `typeof convert !== 'function'` 直接落 `unavailable` | 装配 `miniprogram/pages/profile/profile.js:204`；`build` `miniprogram/utils/region-converter.js:159`；`inspect` `miniprogram/utils/region-converter.js:82`；回落 `miniprogram/utils/location-region.js:82` |
+| 这不是代码缺陷，是数据缺口 | 仓内**零**质心／边界几何：`miniprogram/data/regions.js` 与 `packages/knowledge/catalog/regions-zhejiang.json` 只有 `code`／`name`／`parent_code`（102 条），`db/**`、`services/api/db/**`、`docs/**` 里没有真实坐标。⛔ 不得用行政区目录推导坐标，⛔ 不得内置自制边界 | 负向事实；既有登记 `docs/verification/gy-i05-d2-region-converter-20261017.md`、`docs/verification/platform-checklist.md` |
+| 成功分支是死代码 | `applyLocatedRegion`（预选市／县）与 `out_of_coverage` 只在注入合成转换器的测试里可达；生产不可达 | `miniprogram/pages/profile/profile.js:220-229` |
+| 第二条死路（如实登记） | 即使将来资源合规：若 `convert()` 返回**省级** `330000`，`applyLocatedRegion` 用「省根的直接子节点（11 市）」做 `findIndex`，恒 `-1` ⇒ 页面报「不在首版覆盖的浙江省」。所以「只判是否在浙江、返回 `330000`」这条设计在**当前页面**上表达不出来；数据要么给到市级、要么给到县级 | `miniprogram/pages/profile/profile.js:226-227` |
+
+### 8.2 要用它，需要交出什么文件
+
+放一份 `miniprogram/data/region-centroids.js`（CommonJS 模块）进源码树，`module.exports` 一个文档对象。**字段缺一项或类型不对一律不接线**（fail-closed：宁可回落手选，也不用来源不明／口径不符的数据）。
+
+| 字段 | 要求 | 说明 |
+| --- | --- | --- |
+| `schema` | 恒等 `'gengyun.knowledge.region-centroids.v1'` | 与 `region-converter.js` 的 `SCHEMA` 同一个常量 |
+| `state` | 恒等 `'available'` | 不声明即无法区分「不可用」与「写错了」 |
+| `crs` | 恒等 `'WGS84'` | **2026-10-28 起必填**（缺 ⇒ `crs`，填别的基准 ⇒ `crs:<值>`）。坐标系是数据口径本身：`wx.getLocation` 走 `type: 'wgs84'`，GCJ-02 数据偏移数百米，县级粒度虽无感，但校验层必须能证明口径 |
+| `source` | 非空字符串 | 写清出处（数据集名、版本、获取方式／URL） |
+| `license` | 非空字符串 | 写清该数据的**许可名与版本**；必须是允许再分发的公开许可。来源不明、内部资料、从地图截屏反推的数据一律不合规 |
+| `retrieved_at` | `YYYY-MM-DD` 形态的**真实日期** | 2026-10-28 起加严：`'todo'`、`'2026-13-01'`、`'2026-02-30'` 都判 `retrieved_at-format` |
+| `max_distance_km` | 有限数，`0 < x ≤ 500` | 最近质心阈值。超过 500 km 判 `max_distance_km-range`：本表只服务浙江（南北约 450 km），再大就等于省内外不分 |
+| `catalog_version` | 非空字符串，且必须**等于**目录版本 | 今天目录版本是 `mca-xzqh-2023`；不等 ⇒ `catalog-version` |
+| `points[]` | 非空数组，每项 `{ code, latitude, longitude }` | `code` 匹配 `^33[0-9]{4}$` 且**必须在目录里**、不重复；`latitude`／`longitude` 是有限数、十进制度、WGS84，落在 `[-90,90]`／`[-180,180]` |
+| 覆盖率 | 不要求覆盖全部县区 | 只给 11 个市级点也能通过校验并接线（页面本来就有「定位结果是市」这一支）；市级精度下省界附近会误判，阈值要相应放大但不超过上面的上限 |
+
+### 8.3 放进去就生效：打包清单已改成可执行断言
+
+「把文件放进 `miniprogram/data/` 就算接入」曾经是**错的**：标准包只复制允许清单里的文件，漏登记时 `require` 失败被吞成 `null`，页面照旧只报「资源尚未接入」，**不报错**。现在这条静默路径被两处断言挡住：
+
+| 项 | 口径 | 位置 |
+| --- | --- | --- |
+| 清单条目 | 由「源码树是否存在该文件」决定：存在才打包、不存在不打包 | `tools/prepare-wechat.mjs:168`；口径实现 `tools/lib/region-centroid-packaging.mjs` |
+| 双向断言 | **存在却不在清单** ⇒ 打包失败并点名该文件；**在清单却不存在** ⇒ 也失败（复制阶段会 ENOENT）；重复登记同样失败 | `tools/prepare-wechat.mjs:243` |
+| 负控制用例 | 真跑 `prepare-wechat` 三态：没有就不打包／有就逐字打包／**有却漏进清单 ⇒ 必红** | `tests/unit/region-centroid-packaging.test.mjs` |
+| 端到端固定 | 「源码树里有 ⇔ 标准包里必须有」两端一致 | `tests/local-debug.test.mjs:201-203` |
+
+**资源真落地时必须同批翻转的钉**（都带「已出现/已就位请更新」提示，变成红是设计）：`tests/unit/miniprogram-location-region.test.mjs` 的 U3 缺席断言与 `resource-missing` 期望、`tests/unit/miniprogram-profile.test.mjs` 的 `regionConverter === null`、`tests/integration/profile-ui-http.test.mjs` 的装配为 `null` 断言，以及 `docs/verification/` 下三页的 U3 登记。
+
+**不得怎么写**：不得把「定位选地区」写成已支持、计划内或「只差一份数据」；`docs/verification/` 任何证据页不得用**合成坐标**充当「地区覆盖」截图；本仓的 `miniprogram/data/region-centroids.js` 至今**不存在**，这不是笔误。

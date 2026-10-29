@@ -72,7 +72,7 @@ node tools/local-debug-server.mjs --config config/debug.local.json     # 诊断�
 | B 官方 AppID | 必须是该小程序的项目成员 | 官方 AppID/AppSecret | 本机联调可以；正式验收另按发布流程 |
 | C `stub` | 无 | 不需要 | **不能**，服务端合成身份 |
 
-三条路径都先把客户端基址指到真实本地 API。**换一份配置，别覆盖诊断用的 `config/debug.local.json`**；`apiBaseUrl` 的端口必须与 `port` 相同（工具会校验），`/api/v1` 不能漏：
+三条路径都先把客户端基址指到真实本地 API。**换一份配置，别覆盖诊断用的 `config/debug.local.json`**；`apiBaseUrl` 的端口必须与 `port` 相同（工具会校验），`/api/v1` 不能漏（另注：`real` 起 API 只列了 9 项**启动必填**，另有 4 组字段 `MEDIA_OBJECT_REF_KEY`、`MEDIA_ACCESS_GRANT_ORIGIN`、`CHAT_LLM_*`、`RECOGNITION_PROVIDER_*` 不参与启动校验，缺了媒体域整域 503、语音受理 409、问答退回确定性摘录、识别受理 503，逐字段口径见[配置参考](docs/reference/configuration.md)）：
 
 ```powershell
 Set-Content -Encoding ascii config/api.local.json '{"mode":"local","bindHost":"127.0.0.1","port":3100,"apiBaseUrl":"http://127.0.0.1:3100/api/v1"}'
@@ -131,7 +131,7 @@ node tools/prepare-wechat.mjs local --config config/api.local.json
 ```
 
 - 成功判据：登录返回 200 且 `meta.execution_mode` 为 `stub`；客户端会话缓存里 `executionMode` 是 `stub`（客户端只接受 `real`／`stub`／`preset_demo`）。
-- C 不发真实网络请求：服务端把 code 直接派生成稳定 subject（同一 code 同一用户，`services/api/src/auth/wechat.ts:69-75`）。它证明的是「客户端 → 本地 API → 会话」接线，**不证明**微信凭据。
+- C 不发真实网络请求：服务端把 code 派生成稳定 subject（同一 code 同一用户，`services/api/src/auth/wechat.ts:69-75`）；要在这条链上验「退出 → 用同一身份重登 → 资料/收藏仍在」，起 API 前再设 `$env:WECHAT_STUB_SUBJECT = 'qa-dev-1'`（可选，**只在非 real 模式**且该值非空时生效：subject 改由该固定串派生 ⇒ **该服务端进程的所有 stub 客户端共用一个账号**、不再是「每台机器上一个用户」；⛔ **不要**在多人共用的 stub 服务上开这个开关，否则所有人共用一个账号、彼此看得到对方的数据；留空/不设 ⇒ 与今天逐字一致，一次登录一个新用户）。生效与否不用猜：启动日志里有 `wechat_stub_subject_fixed`（设成纯空白时另标 `wechat_stub_subject_ignored`），两者都**只打布尔、不打值**。细则见 [配置参考](docs/reference/configuration.md) 与 `.env.example`。它证明的是「客户端 → 本地 API → 会话」接线，**不证明**微信凭据。
 
 **报错对照表**
 

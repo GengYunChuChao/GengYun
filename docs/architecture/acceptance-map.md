@@ -80,3 +80,120 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 
 验证方式（跨平台可复现）：`node --test tests/unit/admin-ops-governance.test.mjs tests/unit/admin-ui-review-state.test.mjs tests/moderation/http-callback.test.mjs` 在 HEAD 上全绿；把上表任一条**单独**改成"已接线"（例如给 `/admin` 响应加 `wired: { const: true }`）即可看到对应用例变红。
 
+## 已知缺口：`referencedetail` 无收藏入口，且随包名录 id 不是 UUID（待裁定）
+
+2026-10-28 登记（Refs #7 #16，对应上表 F18／AC17／GY-I16 那一行）。**本节只登记，不裁定**——选哪条出路要指挥／用户拍。
+
+**现象**：P0 链路第 5 步是「详情 → 收藏」，**入口一共两处**（`docs/ui-state-inventory.md` 第 7.6 节是唯一口径）：`pages/knowledgedetail` 的收藏按钮，与 `pages/favorites` 上半区「可收藏的资料」的逐条「收藏」（两者走同一个 `POST /favorites`）。`pages/knowledge` → `pages/knowledgedetail` 这一路走通；`pages/reference` → `pages/referencedetail` 这一路**没有收藏入口**（该页 `.js` 443 行、`.wxml` 160 行逐字读完，对 `收藏`／`favorite`／`fav` 零命中）。
+
+**为什么"补一个按钮"补不上（**在本数据源下**不可为，不是未接线）**：
+
+1. 该页数据源是**随包离线名录**，记录主键形如 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:34`）；页面的路由判定是 `validId` 为真走服务端、否则走随包副本，随包 id 永远落在后一支：`miniprogram/pages/referencedetail/referencedetail.js:115`。
+2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假 ⇒ 这一支永远拿不到服务端实体：`miniprogram/utils/knowledge-api.js:224`。
+3. `POST /favorites` 的 `target_ref.revision` 只能取自服务端读面（`GET /knowledge/{id}`，该客户端把响应 `id` 强制 UUID），随包记录既无服务端 `id` 也无 `revision`。
+4. 契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format ⇒ 强行发一条不会被 400 挡住，但 `reference_state` 由服务端按 `/knowledge` 公开读面逐次派生，随包记录在服务端不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:128`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
+
+**两条出路（二选一，本片不选）**：
+
+- **(a) 明确不做「从名录详情收藏」**：`referencedetail` 保持无收藏入口，P0 的收藏一律走 `pages/knowledgedetail` 与 `pages/favorites`；口径已按这一支写进 `docs/ui-state-inventory.md` 第 7.6 节，可当裁定引。成本低（只动文档），不动 #7 验收口径。
+- **(b) 换数据源**：让除草剂详情读服务端实体（UUID）以保住收藏。代价是要同时改 #7 的「手选条件查询」与「详情」验收口径——`/herbicides` 今天只接受 `q`／`registration_number`（结构化条件不可表达），等于把查询面也翻一遍。成本高，跨片。
+
+**登记口径**：裁定落地前，任何走查脚本、验收记录、状态清单都**不得**把「从除草剂详情收藏」写成已支持或计划支持；`pages/referencedetail` 的界面状态里也不得出现收藏态。本片只改 `docs/**`，不碰 `miniprogram/**`、冻结契约与 #7 的验收文本。
+
+**不裁定时这条验收怎么记账**（给后续评审与走查统一口径，避免各行其是）：
+
+- `F18`／`AC17`／GY-I16 这一行按「**已实现的部分 + 一处待裁定的缺口**」记账：两处入口（`pages/knowledgedetail`、`pages/favorites`）的收藏／取消可以正常验收（201／幂等同 id／428／409／404 各有 e2e 或代码锚）。
+- 「从除草剂（随包名录）详情收藏」**既不计入已实现，也不记为缺陷/待修**——它今天既不是"漏接线"，也不是"计划内待做"；在 (a)／(b) 裁定前，它属于**范围未定**。
+- 因此：不得因它把 AC17 整条判「不通过」（其余验收项与它无依赖），也不得据此判「已通过」（缺一项就写缺一项）；任何把该项写进验收清单的行都必须带「待裁定」标注。
+- 裁定落地后，本节的记账口径随之失效：走 (a) 就把它写成「明确不做」，走 (b) 就按 #7 新口径重新列验收项，两种都要在同一片里改 `docs/ui-state-inventory.md` 第 7.6 节与本节的这一条。
+
+## 待裁定缺口：从 `/herbicides` 的 id 收藏必然 `unavailable`（GY-R68）
+
+**登记日期** 2026-10-28 · **基线** `da61b64d` · **状态**：已复现、已钉负控制，**待指挥/用户裁定**。本片只加证据与登记，**不改业务行为**。
+
+### 现象
+
+`/herbicides` 与 `/knowledge` 是**两套 uuid**，同一条公告记录在两套读面里名字不同，而收藏的「引用可用性」解析只认后一套：
+
+| 环节 | 派生方式 | 位置 |
+| --- | --- | --- |
+| `/herbicides/{id}` 的 id | `deterministicUuid(record_id)` | `packages/reference/records.mjs`（`toHerbicideContract`） |
+| 同一记录在 `/knowledge` 的 id | `deterministicUuid('knowledge:' + record_id)` | `packages/reference/records.mjs`（`toKnowledgeContract`） |
+| `/knowledge` 浙江首批投影的 id（第三套） | `deterministicUuid('zhejiang-knowledge:' + item_id)` | `packages/reference/zhejiang.mjs` |
+| 收藏可用性解析的**唯一**权威 | 只查 `catalog_read.current_knowledge` + 浙江首批投影 | `services/api/src/app.ts`（`publicKnowledgeRowOf`、`defaultVisibility`）、`services/api/src/knowledge/reference-query.ts`（`toSeedRows`） |
+
+实测（20 条公告记录逐条复算）：两套 id 对**同一条记录**全部不同（0/20 相同），且与浙江首批 159 条 id 集合**交集为 0**；`/herbicides` 的 20 个 id 与 `/knowledge` 读面 159 行的交集同样是 **0**。
+
+⇒ 用 `/herbicides` 列表里的 id 建收藏：**HTTP 201 成功**，但 `reference_state` 恒为 `unavailable`，`unavailable_reason` 落在冻结闭集的对象侧那条（「目标已下架、已失效、已隐藏、已删除或不属于当前账号」）。**这与数据是否核准无关**——`/knowledge` 里 `review_status='unverified'` 的未核准种子行照样判 `available`，差别只在 id 认不认。
+
+今天的**可达性**（如实写清，别夸大）：小程序里**没有**从 `/herbicides` 详情收藏的入口（`miniprogram/pages/referencedetail/` 无收藏按钮），收藏页的「可收藏目标」也来自 `/knowledge` 列表。所以坏收藏目前只能经 API 直接产生；**一旦给该详情页加收藏按钮，用户会立刻遇到**。
+
+### 两条出路（待裁定，本片不选）
+
+| # | 出路 | 代价 / 需要先定的事 |
+| --- | --- | --- |
+| (a) | 让收藏可用性解析器认 `/herbicides` 的 id（在 `publicKnowledgeRowOf` 之前先按 `packages/reference` 的 `Herbicide` 投影核一次，或把两套 id 统一成一套） | 动**服务端契约面**：`FavoriteTarget.id` 的语义从「`/knowledge` 的 id」扩成「任一读面的 id」。**须先裁定这是否等于「收藏授予可见性」这条红线**——收藏行为本身能不能让一条不在 `/knowledge` 读面里的目标变成「可用/可跳转」。若答案是不能，则只剩"统一 id"（改响应里的 id 值，属破坏性契约变更），不能"两套都认" |
+| (b) | 像 `referencedetail` 现在这样**明确不做**：`/herbicides` 详情页**不给收藏入口**，把"不给"写成显式决定而不是遗漏 | 零服务端改动。**用户会看到什么**：`/herbicides` 详情页没有收藏按钮，收藏只能发生在 `/knowledge` 的条目上；从 `/herbicides` 复制 id 直接打 API 仍会得到 201 + `unavailable`（属开发/运维路径，不属用户路径）。代价是"从公告记录本身收藏"这个产品意图被正式放弃，需在需求侧认账 |
+
+### 不裁定的后果
+
+用户从除草剂详情点收藏会得到「**收藏成功但永远不可用**」的坏收藏——比被拒更糟：按钮变「取消收藏」、提示「已收藏该资料。」，用户以为收藏到了；事后在收藏页只看到 pill「不可用」+ 一句刻意不区分原因的非披露文案，既不能跳转也无法自救。裁决前若有人给 `/herbicides` 详情页加收藏按钮，这条坏路径会立刻变成线上体验。
+
+### 本片的钉子（不是修复）
+
+`tests/unit/favorites-herbicide-id-gap.test.mjs` 把上面每一条钉成可复跑的断言：
+
+| 用例 | 钉住的事实 |
+| --- | --- |
+| R68-0 | 两套 id 的口算：20/20 对同一条记录不同、与浙江首批 159 条 id 交集 0（纯函数，不启服务） |
+| R68-① | `/herbicides` 首条 id ⇒ `POST /favorites` **201** + `reference_state='unavailable'` + 理由码在冻结闭集内；同一夹具里 `/knowledge` 读面 159 条非空且与 20 个 herbicide id 交集 0（排除"读面为空"这一平凡解释） |
+| R68-② | 两条原因**分开**断言：甲「数据未核准」不导致 unavailable（未核准种子行照样 `available`）；乙「id 不认」——同一条记录换成 `/knowledge` 拼法即 `available`，`/herbicides` 拼法 `unavailable` |
+| R68-③ | 负控制：把解析器换成"任何 id 都 available"（经 `buildApp` 的公开注入缝 `favoritesInjection.visibility`，不改生产代码）⇒ ①②的核心断言双双变红 |
+
+⛔ 这些断言刻意钉在**今天的坏行为**上：按出路 (a) 修好后它们**必须变红**，届时同批改断言并把本节状态改成「已裁定/已实现」。另：本片还用一次**临时改动生产默认解析器**（`publicKnowledgeRowOf` 返回 `null` 时改判 `available`）复核了负控制——① 与 ② 变红且红在 `reference_state` 那两条断言上，随后立即复原（blob 指纹前后一致，未入提交）。
+
+## 后台人工审核 ＝ 合法的人工复核路径（`approvePost`，GY-R68 登记）
+
+**登记日期** 2026-10-29 · **状态**：**用户已裁定「这条保留」**。本节的任务是把「`private` 能被直接推成 `published`」这件事从"看起来像后门"改写成**有文档、有审计、有用例钉住**的人工复核路径；**不改业务行为**（`services/**`、契约、迁移、CI 在本片全是零改动）。
+
+### 现象与判据的差别
+
+侦察记的那笔账**成立**：`POST /admin/posts/{id}/approve` 在 real 装配下能把 `private` 直接推成 `published`，全程**不经过** AI 审核端口，与 #14「先审后发」的出发点看似冲突。但"绕过"是一个**结论**，不是一条**事实**——它取决于四个条件是否同时成立。今天这四条都成立，所以它是人工复核；只要有任一条塌掉，它才真的是后门。
+
+### 四个条件（缺一即为后门）
+
+| # | 条件 | 落点与读数 |
+| --- | --- | --- |
+| 1 | **有人** | 结论行带 `decided_by`，值取自会话里的管理员 id（⛔ 不接受调用方自报）：`services/api/src/admin/ops/community-posts.ts:292`；列定义见迁移 `services/api/db/migrations/0045_community_post_review_actor.sql:61`——`NULL` 是机器结论，非 `NULL` 才是人工结论 |
+| 2 | **有 scope** | 路由门是 `requireAdmin` 加 `requireScope`：`services/api/src/routes/admin.ts:569-572`；scope 取 `sources:write`（与 `hidePost` 同门，不新增 scope 值）：`services/api/src/admin/ops/service.ts:429`；没有它即 403 `SCOPE_DENIED`：`services/api/src/admin/identity.ts:69-70` |
+| 3 | **有审计** | 结论与帖子行**同一次原子提交**（不是"先发布、再补一条审计"）：`services/api/src/admin/ops/community-posts.ts:351-361` 只调一次 CAS 原语，结论作第 4 个实参交给它；库层在同一事务里写结论行：`services/api/src/community/store-pg.ts:632`，列与覆盖语义见 `services/api/src/community/store-pg.ts:354` 与 `services/api/src/community/store-pg.ts:366` |
+| 4 | **有 CAS** | 写之前逐项比对修订号、可见性、审核态，不符即拒：`services/api/src/community/store-pg.ts:470-476`；可见性推进只是这次 CAS 的**新态**之一：`services/api/src/admin/ops/community-posts.ts:327-328`（仅对 `private` 生效，`hidden`／`deleted` 不翻案） |
+
+还容易漏一条：**硬规则层照旧拦得住**。人工放行覆盖的是"引擎没给结论／给了隔离"，不是违禁内容——硬规则否决时 422：`services/api/src/admin/ops/community-posts.ts:318-320`。
+
+### 它与 AI 审核的关系（两个方向都要写清）
+
+- **AI 不通过 ⇒ 人工可以放行。** 这是人工复核**唯一**的正当性来源：引擎给不出结论、或给了隔离时，人可以在 scope 后面重新判断并留下 `decided_by`。入口里**没有** AI 审核端口（适配器只注入社区 store、事件端口与规则层发布门：`services/api/src/admin/ops/community-posts.ts:225-236`），所以"人工放行"从来不是"AI 说通过"——文档与读面都不得把它记成 AI 结论。
+- **AI 通过 ⇒ 不免除人工抽检。** 反向不成立。AI 通过只说明规则层/模型层没有否决，**不产生** `decided_by`；一行 `decided_by IS NULL` 是机器结论，不等于"人工已复核"。任何把抽检记成"已被 AI 覆盖"的走查口径都不成立。
+- **为什么"通过"必须同时翻可见性。** 待审队列在库里就是 `private` 加 `pending`，而公开读面要求 `published` 且 `approved`，契约里又没有作者自助发布口；只翻审核态会让运营点了通过、帖子永远不可见。故 v1 口径是"通过动作同时承担发布语义"；作者自助发布口属 S4，上线时须重新裁定这一段（口径页见 `docs/architecture/s3-community-review-design.md`）。
+
+### 钉子：三条用例 ＋ 一条负控制
+
+`tests/unit/admin-post-approve-audit-pin.test.mjs`（内存 store 臂；不连真库、不读真实 `.env`、零外呼）：
+
+| 臂 | 做什么 | 期望读数 |
+| --- | --- | --- |
+| ① 正控制 | `approvePost` 推一条 `private` 加 `pending` 的帖子 | 200、`published` 加 `approved`、修订号 1→2；`community_moderation_decisions` **恰好 1 行**、`decided_by` 是该管理员、`hard_rule_passed=true` |
+| ② 负控制 | 把「写 decisions」那一步改成空操作（唯一改动：CAS 的结论实参换成 `null`） | CAS 照跑、帖子**照样** `published`、仍然 200 ⇒ ① 的断言**必须红**，且红在「人工审核必须留痕」这句上 |
+| ③ 越权 | 缺 `sources:write`（403）／无会话（401） | 拒绝，且可见性仍是 `private`、结论行 0 行、内存审计 0 条、修订号不动 |
+
+②的两层复核对得上：测试侧的变异落在端口包装上（生产代码零改动）；另用一次**临时改动生产代码**（把 CAS 的第 4 个实参换成 `null`）复核了同一件事——① 变红在「人工审核必须留痕」那一句，而帖子**已经是** `published`。随后立即复原（文件指纹前后一致、未入提交）。这正是本节要证明的：**状态迁移本身不是证据，结论行才是**。
+
+真库臂（PG 的事务边界与逐列读数）不在本文件：`tests/integration/admin-community-posts-pg.mjs` 的审核臂已按 `community_moderation_decisions` 逐列核对同一组事实（含并发两笔只允许一笔 200、另一笔 409）。
+
+### 不得据此放宽的三件事
+
+1. **不得把 `approve` 记成 AI 审核通过**：响应里的 `decision` 是人工结论；"有人做过这件事"的证据只有一条——`decided_by` 非 `NULL`。
+2. **不得因为有人工通道就跳过审核门**：`POST /posts` 的发布闸门照旧（硬规则层加审核域）。人工通道是"结论落不下来"时的出口，不是绕过闸门的新入口。
+3. **不得把本节当成 #14 的替代**：AI 审核的真实样本覆盖仍按 `docs/evaluation/sample-gap-register.md` 记（风险／正常两格均为 0/200），本节补的是"没人管的那一段"，补不了"审核能力本身"。
+

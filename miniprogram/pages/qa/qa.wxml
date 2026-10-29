@@ -2,8 +2,10 @@
      文档流顺序刻意是「风险信息与发送按钮在前、回答与来源在后」，控件一律走正常文档流
      （本文件与页面样式内均无 position:fixed/absolute），因此不会遮挡发送按钮或风险信息。
      回答正文一律用 text 节点呈现（不转 HTML）；来源只列服务端 citations 的真实字段。
-     文案只面向普通用户：输入问题/发送/正在查找/超时后重试/资料不足/来源/当前为演示数据；
-     契约名、接口路径、状态机内部码、幂等键、版本串等实现细节不占主流程（见交付报告）。 -->
+     文案只面向普通用户：输入问题/发送/正在查找/超时后重试/资料不足/来源/真实模型/演示数据/
+     版本未知；三态由服务端自报的版本串与执行模式判定（见 qa.js 的 versionStateOf），
+     版本串本身只以"可读版本号"出现在对应那条说明里；契约名、接口路径、状态机内部码、
+     幂等键等实现细节不占主流程（见交付报告）。 -->
 <view class="page" style="--font-scale: {{fontScale}}">
   <view class="page-heading">
     <view class="page-heading__main">
@@ -30,10 +32,23 @@
     <text class="notice__text">当前未启用联网：本页不会用本地数据顶替服务端回答。</text>
   </view>
 
-  <!-- 演示数据与未接线说明（必须常驻，不得被主流程文案盖过） -->
-  <view class="notice notice--stub">
+  <!-- 回答来源三态（真实模型 / 演示（确定性摘录）/ 版本未知）。
+       只有服务端自报的事实成立时才出现对应那一条：版本串带未接真实模型前缀或执行模式为
+       stub/preset_demo ⇒ 演示；执行模式 real 且版本串干净 ⇒ 真实（显示版本串）；
+       拿不到版本串或执行模式没说明 ⇒ 版本未知。⛔ 未知时不得默认按「真实」或「演示」标注。 -->
+  <view class="notice notice--stub" wx:if="{{versionState === 'demo'}}">
     <text class="notice__icon">🧪</text>
-    <text class="notice__text">{{unwiredNote}}</text>
+    <text class="notice__text">{{versionNote}}</text>
+  </view>
+
+  <view class="notice" wx:if="{{versionState === 'real'}}">
+    <text class="notice__icon">✅</text>
+    <text class="notice__text">{{versionNote}}</text>
+  </view>
+
+  <view class="notice notice--warn" wx:if="{{versionState === 'unknown'}}">
+    <text class="notice__icon">❔</text>
+    <text class="notice__text">{{versionNote}}</text>
   </view>
 
   <!-- ① 输入问题 -->

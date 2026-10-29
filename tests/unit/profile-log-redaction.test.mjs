@@ -145,9 +145,40 @@ test('GY-I05: logStream 仅测试注入——生产入口与配置层都不得�
   // 「必须是 `{ config, pool }` + 恰好这一处 `mediaAssembly` spread」，并追加两条更强的不变量：
   // 该 spread 的取值只允许来自 `mediaRealPortsAssemblyOptions`（唯一来源）、且 `server.ts` 里
   // `buildApp(` 只能出现一次 —— `logStream` 仍然注入不进来（本测试的主旨不变）。
-  assert.match(server, /buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\) \}\)/);
+  //
+  // ⚠ 2026-10-28（GY-R68 合成产物端口补装配）**有据变更，不是放宽**：合成域的产物端口
+  //   `synthesisMediaWiring` 同样只认「生产入口显式注入」（`app.ts` 只转发不铸造），此前 `server.ts`
+  //   从不传它 ⇒ `--approve-real-media-wiring` 对 TTS 完全无效、`real` 下恒 `unwired`。修法是在同一处
+  //   判定后追加**第二个**同族 spread（`synthesisMediaAssembly`）。因此本钉子由「恰好一处 spread」
+  //   改为「恰好这两处、且各自只有唯一来源」，并**新增**两条更强的不变量：
+  //   ① `synthesisMediaWiringAssemblyOptions(` 全文件恰好 1 次（不得有第二个来源，也不得自带默认值）；
+  //   ② `synthesisMediaAssembly` 的赋值恰好 1 次，且该赋值与 `mediaAssembly` 的赋值**同处一个
+  //      `if (mediaRealPorts !== null)` 分支**（= 共用同一次批准判定，没有第二条开启路径）。
+  //   `logStream` 仍注入不进来：两处 spread 的取值都只来自具名派生函数，调用点是唯一的。
+  assert.match(
+    server,
+    /buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\), \.\.\.\(synthesisMediaAssembly \?\? \{\}\) \}\)/,
+  );
   assert.equal(server.match(/mediaRealPortsAssemblyOptions\(/g)?.length, 1, '媒体装配选项只允许一个来源');
+  assert.equal(
+    server.match(/synthesisMediaWiringAssemblyOptions\(/g)?.length,
+    1,
+    '合成产物装配选项只允许一个来源（不得出现第二处派生/默认值）',
+  );
   assert.equal(server.match(/buildApp\(/g)?.length, 1, '生产入口只允许调用一次 buildApp');
+  assert.equal(
+    server.match(/^\s*synthesisMediaAssembly = /gm)?.length,
+    1,
+    'synthesisMediaAssembly 只允许赋值一次（不得在别处补一条开启路径）',
+  );
+  const synthBranch = server.match(/if \(mediaRealPorts !== null\) \{\n[\s\S]*?\n {4}\}/);
+  assert.ok(synthBranch !== null, 'server.ts 必须有 mediaRealPorts !== null 的判定块');
+  assert.match(synthBranch[0], /mediaAssembly = mediaRealPortsAssemblyOptions\(mediaRealPorts\);/);
+  assert.match(
+    synthBranch[0],
+    /synthesisMediaAssembly = synthesisMediaWiringAssemblyOptions\(mediaRealPorts\);/,
+    '合成产物派生必须与媒体域派生同处一次批准判定之内',
+  );
   const config = readFileSync(resolve(root, 'services/api/src/config.ts'), 'utf8');
   assert.equal(config.includes('logStream'), false, '配置层不得暴露日志捕获开关');
   // 默认（不传 logStream）时 logger 选项只有 level + serializers，不新增文件/级别/格式开关。

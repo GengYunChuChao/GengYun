@@ -53,6 +53,67 @@ function modeLabelOf(mode) {
   return ''
 }
 
+/**
+ * 回答来源三态口径（**唯一**判据：服务端自报的 `model_version` 与 `meta.execution_mode`）。
+ *
+ * 返修前本页把「当前为演示数据」写成**常驻**节点：真值 `model_version` 虽被读进
+ * `data.answer.modelVersion`，却从未参与渲染 ⇒ 一旦开启真实模型，页面会对用户说反话
+ * （真实模型下仍宣称"这是演示数据"）。这里把"说哪一句"交给数据：
+ *   - `demo`   ：版本串自带未接真实模型前缀 `unimplemented:no-real-`，或执行模式为
+ *                `stub`/`preset_demo` —— 服务端明示演示（确定性摘录）；
+ *   - `real`   ：执行模式显式为 `real`，且版本串存在、且不带演示前缀 —— 显示真实版本串；
+ *   - `unknown`：拿不到版本串，或版本串在但执行模式没说明 —— **不替服务端下结论**，
+ *                既不显示"演示"也不显示"真实"。
+ * 判定顺序本身就是诚实性：版本串缺失一律先落 `unknown`（执行模式只说明链路怎么跑，
+ * 说明不了这次回答的来源版本），再谈演示，最后才敢说真实。
+ */
+const DEMO_VERSION_PREFIX = 'unimplemented:no-real-'
+const VERSION_SHOW_MAX = 80
+
+/** 演示态正文：原常驻文案**一字不改**，只在演示态出现。 */
+const DEMO_BASE_NOTE = qaApi.UNWIRED_ANSWER_NOTE
+const DEMO_VERSION_NOTE = '（演示版本 %version%）'
+const REAL_NOTE = '真实模型：本次回答由服务端真实模型生成，模型版本 %version%；'
+  + '回答已通过服务端安全检查，仍请以核验登记资料与标签原文为准。'
+const UNKNOWN_VERSION_NOTE = '版本未知：还没有取得服务端返回的版本串，本页无法判断回答是否由真实模型生成；'
+  + '不按「真实模型」或「演示数据」标注。'
+const UNKNOWN_MODE_NOTE = '版本未知：已取得版本 %version%，但服务端没有说明执行模式，'
+  + '本页不替你判断它是否真实模型。'
+
+/** 版本串脱敏成可读形式：去控制字符、压空白、超长截断（不把服务端任意长串原样塞进界面）。 */
+function readableVersion(value) {
+  if (typeof value !== 'string') return ''
+  const cleaned = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return cleaned.length <= VERSION_SHOW_MAX ? cleaned : cleaned.slice(0, VERSION_SHOW_MAX) + '…'
+}
+
+/** 演示版本标签：去掉未接真实模型前缀，只留可读的模型/规则名。 */
+function demoLabel(version) {
+  return readableVersion(version.split(DEMO_VERSION_PREFIX).join(''))
+}
+
+/**
+ * 版本三态判定（纯函数）：返回 `{state, note}`，`state` 只可能是 `demo`/`real`/`unknown`。
+ * 判据逐条见上方注释；**不**依赖任何"基线就是演示"的先验假设。
+ */
+function versionStateOf(modelVersion, executionMode) {
+  const version = readableVersion(modelVersion)
+  const mode = typeof executionMode === 'string' ? executionMode : ''
+  if (version === '') return { state: 'unknown', note: UNKNOWN_VERSION_NOTE }
+  if (version.indexOf(DEMO_VERSION_PREFIX) !== -1) {
+    const label = demoLabel(version)
+    return {
+      state: 'demo',
+      note: label === '' ? DEMO_BASE_NOTE : DEMO_BASE_NOTE + DEMO_VERSION_NOTE.replace('%version%', label)
+    }
+  }
+  if (mode === 'stub' || mode === 'preset_demo') {
+    return { state: 'demo', note: DEMO_BASE_NOTE + DEMO_VERSION_NOTE.replace('%version%', version) }
+  }
+  if (mode === 'real') return { state: 'real', note: REAL_NOTE.replace('%version%', version) }
+  return { state: 'unknown', note: UNKNOWN_MODE_NOTE.replace('%version%', version) }
+}
+
 Page({
   onLoad: function () {
     fontScale.applyFontScale(this)
@@ -147,7 +208,9 @@ Page({
     turns: [],
     turnsNote: '',
     exitReason: '',
-    unwiredNote: qaApi.UNWIRED_ANSWER_NOTE
+    // 回答来源三态：初始**如实**为未知（还没取得任何版本串，不预设真实或演示）。
+    versionState: 'unknown',
+    versionNote: UNKNOWN_VERSION_NOTE
   },
 
   // ---------------------------------------------------------------- 操作代次与释放
@@ -198,6 +261,8 @@ Page({
       taskNote: '', taskErrorCode: '',
       answer: null, answerGateCode: '', answerGateMessage: '', citations: [], doseCards: null, answerNote: '',
       turns: [], turnsNote: '',
+      // 版本态随私有内容一起复位：旧身份的版本说明不得留给新身份看到。
+      versionState: 'unknown', versionNote: UNKNOWN_VERSION_NOTE,
       // 只有"用户主动离页"才留一句离页说明；门禁失效/换账号由各自的 taskNote 说明。
       exitReason: reason === 'hide' || reason === 'unload' ? reason : ''
     })
@@ -205,6 +270,25 @@ Page({
 
   stopPoll: function () {
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null }
+  },
+
+  /**
+   * 版本三态的**唯一**写入口：由服务端自报的 `model_version`（配合读面回传的执行模式）
+   * 决定页面说「真实模型」「演示数据」还是「版本未知」。
+   *
+   * 除本方法外，任何地方都不得直接 `setData` `versionState`/`versionNote`——
+   * 上一版的缺陷正是"文案写死、真值不参与渲染"，多一个写入口就会重新长出第二个真相。
+   *
+   * 同时消掉一处同一屏的自相矛盾：② 区的执行模式 pill 若写着「真实服务」、而这次回答
+   * 的版本串自报 `unimplemented:no-real-`（服务端执行模式标 real 但实际仍走确定性摘录），
+   * 就以版本串为准把 pill 改回「演示数据」——两句里只能有一句是真的。
+   */
+  applyVersionState: function (modelVersion) {
+    const view = versionStateOf(modelVersion, this.data.mode)
+    const patch = { versionState: view.state, versionNote: view.note }
+    if (view.state === 'demo' && modeLabelOf(this.data.mode) === '真实服务') patch.modeLabel = '演示数据'
+    this.setData(patch)
+    return view.state
   },
 
   // ---------------------------------------------------------------- ① 输入
@@ -280,6 +364,8 @@ Page({
       busy: true, stage: 'sending', taskNote: '', taskErrorCode: '', job: null,
       answer: null, answerGateCode: '', answerGateMessage: '', citations: [], doseCards: null, answerNote: ''
     })
+    // 新一次提问尚未拿到版本串：先如实复位为未知，绝不让上一次的"真实/演示"结论延续到这一次。
+    this.applyVersionState('')
     const text = this.data.draft
     try {
       // 会话创建与复用：本页缓存；不存在或已失效才新建（新建也带幂等键）。
@@ -437,6 +523,8 @@ Page({
         answerGateCode: 'ANSWER_NOT_PRODUCED',
         answerGateMessage: note
       })
+      // 没有产出回答 ⇒ 也没有版本串可核对：如实说"版本未知"，不得靠执行模式反推真实/演示。
+      this.applyVersionState('')
       return
     }
     const answer = job.result === null ? null : job.result
@@ -446,6 +534,8 @@ Page({
         answer: null, citations: [], doseCards: null,
         answerGateCode: gate.code, answerGateMessage: gate.message
       })
+      // 闸门不放行（含缺版本串/结构畸形）⇒ 同样只能报"版本未知"。
+      this.applyVersionState('')
       return
     }
     this.setData({
@@ -463,6 +553,8 @@ Page({
       answerGateCode: '',
       answerGateMessage: ''
     })
+    // 真实/演示/未知：由**这次回答**自报的版本串判定（不看"基线应该是演示"的先验）。
+    this.applyVersionState(gate.answer.model_version)
   },
 
   // ---------------------------------------------------------------- 轮次历史

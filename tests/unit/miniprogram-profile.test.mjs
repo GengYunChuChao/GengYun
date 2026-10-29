@@ -30,7 +30,7 @@ function fixture(overrides, globals) {
  return {page,auth,wx,requests,routes,answer,last,seed,ready,choose};
 }
 test('actual profile page reads complete cursor catalog, selects and freezes one save, then rereads',async()=>{
- const f=fixture();f.seed();f.page.onShow();f.answer(f.last('/auth/session'),{audience:'user',expires_at:new Date(Date.now()+3600000).toISOString()});f.answer(f.last('/me/profile'),profile());f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});f.answer(f.last('/catalog/regions'),{items:regions.slice(0,2),next_cursor:'opaque.cursor'});await flush();assert.match(f.last('/catalog/regions').url,/cursor=opaque.cursor/);assert.equal(f.page.data.loaded,false);f.answer(f.last('/catalog/regions'),{items:regions.slice(2),next_cursor:null});await flush();f.choose();f.page.onSave();f.page.onSave();const put=f.last('/me/profile');assert.equal(put.method,'PUT');assert.deepEqual(JSON.parse(JSON.stringify(put.data)),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1'});assert.equal(put.header['If-Match'],'"1"');assert.ok(put.header['Idempotency-Key'].length>=8);assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);f.answer(put,saved());await flush();assert.equal(f.last('/me/profile').method,'GET');f.answer(f.last('/me/profile'),saved(3));await flush();assert.equal(f.page.data.profile.revision,3);assert.equal(f.page.data.cropName,'水稻');assert.equal(f.page.data.regionName,'上城区');f.page.openReference();assert.equal(f.routes.at(-1),'/pages/reference/reference?crop_id=crop_rice&region_code=330102');
+ const f=fixture();f.seed();f.page.onShow();f.answer(f.last('/auth/session'),{audience:'user',expires_at:new Date(Date.now()+3600000).toISOString()});f.answer(f.last('/me/profile'),profile());f.answer(f.last('/catalog/crops'),{items:crop,next_cursor:null});f.answer(f.last('/catalog/regions'),{items:regions.slice(0,2),next_cursor:'opaque.cursor'});await flush();assert.match(f.last('/catalog/regions').url,/cursor=opaque.cursor/);assert.equal(f.page.data.loaded,false);f.answer(f.last('/catalog/regions'),{items:regions.slice(2),next_cursor:null});await flush();f.choose();f.page.onSave();f.page.onSave();const put=f.last('/me/profile');assert.equal(put.method,'PUT');assert.deepEqual(JSON.parse(JSON.stringify(put.data)),{crop_id:'crop_rice',region_code:'330102',region_catalog_version:'v1'});assert.equal(put.header['If-Match'],'"1"');assert.ok(put.header['Idempotency-Key'].length>=8);assert.equal(f.requests.filter(r=>r.method==='PUT').length,1);f.answer(put,saved());await flush();assert.equal(f.last('/me/profile').method,'GET');f.answer(f.last('/me/profile'),saved(3));await flush();assert.equal(f.page.data.profile.revision,3);assert.equal(f.page.data.cropName,'水稻');assert.equal(f.page.data.regionName,'上城区');f.page.openReference();assert.equal(f.routes.at(-1),'/pages/knowledge/knowledge','保存成功后按档案查资料必须落服务端查询面，不是随包离线名录');
 });
 test('expired catalog cursor discards partial directory and explicit reload starts a fresh chain without clearing login',async()=>{
  const f=fixture();f.seed();f.page.onShow();
@@ -181,6 +181,65 @@ test('location hung platform then late permission grant never rewrites the settl
  assert.equal(JSON.stringify(f.requests).includes('123.4567'),false);
 });
 
+// —— G1 缺口回归：「我的 → 按当前档案查科普资料」必须落**服务端查询面** `pages/knowledge` ——
+// 复核证据（改前基线 da61b64d，逐字读）：
+//   · `miniprogram/pages/profile/profile.js:266-275` 跳 `pages/reference`，并拼 crop_id + region_code；
+//   · `miniprogram/pages/reference/reference.js:207-210` 只要带作物／杂草／地区条件就**强制**
+//     `BUNDLED_OFFLINE`（服务端 `/herbicides` 的 querystring 表达不了这些条件），不发请求；
+//   ⇒ 这条入口结构上永远走不到 `GET /knowledge`，也就走不到「详情 → 收藏」与来源版本／失效口径。
+// 改后跳 `pages/knowledge/knowledge`，且**不拼查询参数**：该页 `onLoad` 只做字号（`knowledge.js:57`）、
+// 全页不读 `options`，档案条件由它自己的 `prepare()` 读一次 `GET /me/profile` 预置（`knowledge.js:76-132`，
+// 地区一律按省级 `330000` 发）。所以下面两条断言必须同时成立：跳对页 + 档案条件真的进了首次服务端查询。
+// 这个夹具只装 `pages/knowledge` 与其真实依赖（真页面 + 真客户端），HTTP 只入队、由用例显式回放。
+function knowledgePage() {
+ const requests=[],routes=[],storage=new Map(),cache=new Map();let page;
+ const wx={request:o=>requests.push(o),login:o=>o.success({code:'synthetic-code'}),getStorageSync:k=>storage.get(k),setStorageSync:(k,v)=>storage.set(k,v),removeStorageSync:k=>storage.delete(k),reLaunch:o=>{routes.push(o.url);o.success&&o.success()},navigateTo:o=>{routes.push(o.url);o.success&&o.success()},showToast:()=>{}};
+ function load(file){file=resolve(file);if(!file.endsWith('.js'))file+='.js';if(cache.has(file))return cache.get(file).exports;
+  if(file.endsWith('runtime.js')){const runtime={exports:{mode:'local',apiBaseUrl:'http://127.0.0.1:1234/api/v1'}};cache.set(file,runtime);return runtime.exports}
+  const m={exports:{}};cache.set(file,m);
+  vm.runInNewContext(readFileSync(file,'utf8'),{module:m,wx,require:id=>load(resolve(dirname(file),id)),getApp:()=>({globalData:{fontScale:1}}),getCurrentPages:()=>page?[page]:[],Page:d=>{page={...d,route:'pages/knowledge/knowledge',options:{},data:structuredClone(d.data),setData(p){Object.assign(this.data,p)}}}},{filename:file});
+  return m.exports}
+ const auth=load(root+'/miniprogram/utils/auth.js');load(root+'/miniprogram/pages/knowledge/knowledge.js');
+ return {page,auth,requests,routes,last:path=>requests.filter(r=>new URL(r.url).pathname.endsWith(path)).at(-1),
+  answer:(r,data,statusCode=200)=>{assert.ok(r,'expected request');r.success({statusCode,data:statusCode===200?{data,meta:{request_id:'11111111-1111-4111-8111-111111111111',contract_version:'1.0.0',execution_mode:'stub'}}:{error:{code:data}}})}}
+}
+test('按当前档案查科普资料 落服务端查询面 pages/knowledge，档案作物/地区仍进首次查询',async()=>{
+ const f=fixture();await f.ready(saved(2));
+ f.page.openReference();
+ assert.equal(f.routes.at(-1),'/pages/knowledge/knowledge','入口必须落服务端查询面');
+ assert.equal(f.routes.some(r=>r.startsWith('/pages/reference/reference')),false,'不得再落随包离线名录（reference 保持只做名录浏览）');
+ assert.equal(f.routes.at(-1).includes('?'),false,'knowledge 页不读 options：参数只能由它自己读档案预置，不得另造一套');
+ const k=knowledgePage();
+ k.auth.setSession({accessToken:'synthetic-a',audience:'user',expiresAt:new Date(Date.now()+3600000).toISOString(),executionMode:'stub'});
+ k.page.onLoad();k.page.onShow();
+ k.answer(k.last('/auth/session'),{audience:'user',expires_at:new Date(Date.now()+3600000).toISOString()});await flush();
+ k.answer(k.last('/me/profile'),saved(2));await flush();
+ const q=new URL(k.last('/knowledge').url);
+ assert.equal(q.searchParams.get('crop_id'),'crop_rice','档案作物必须进服务端查询');
+ assert.equal(q.searchParams.get('region_code'),'330000','资料只登记到省级，地区按 330000 发');
+ assert.equal(k.page.data.profileState,'applied','档案预置必须被页面认定已应用，而不是"没带筛选"');
+});
+// 空档案（未选手选作物／地区）的选定行为：**入口处提示、不跳转**，而不是"进知识页但不带筛选"。
+// 理由写在 profile.js 的注释里（按钮承诺「按当前档案」；知识页的空档案说明只在用户已进查询面之后才出现，
+// 第一屏仍是一张会被误读成"档案条件下查到的资料"的列表）。这里把「提示」与「不跳转」两条都钉死。
+test('空档案时不跳转，在入口给出"先完善档案"的可见提示',async()=>{
+ const f=fixture();await f.ready(profile(3));
+ const before=f.routes.length;
+ f.page.openReference();
+ assert.equal(f.routes.length,before,'档案为空时不得跳转');
+ assert.equal(f.routes.some(r=>r.startsWith('/pages/knowledge/knowledge')),false);
+ assert.equal(f.page.data.message,'请先设置档案（作物与地区）再按档案查科普资料。');
+});
+// 负控制（可执行的结构守卫）：把入口改回 `pages/reference` 时，上面的用例①必红。
+// 这里直接从源码切出 `openReference` 的函数体做判定——改回旧目标会在这里先失败。
+test('负控制：openReference 的函数体里不得再出现 pages/reference（改回旧目标必红）',()=>{
+ const src=readFileSync(root+'/miniprogram/pages/profile/profile.js','utf8');
+ const at=src.indexOf('openReference: function');
+ assert.ok(at>0,'openReference 入口未找到——正则/切片失配必须失败，不得静默通过');
+ const body=src.slice(at,src.indexOf('\n  },',at)+4);
+ assert.match(body,/\/pages\/knowledge\/knowledge/,'入口目标必须是服务端查询面');
+ assert.equal(/pages\/reference\/reference/.test(body),false,'入口不得再跳随包离线名录');
+});
 test('reference handoff preserves only existing crop/region conditions and refuses identity params',()=>{const f=fixture(); const navPath=root+'/miniprogram/utils/navigation.js';const m={exports:{}};vm.runInNewContext(readFileSync(navPath,'utf8'),{module:m});assert.equal(m.exports.normalizeTarget('/pages/reference/reference?crop_id=crop_rice&region_code=330102'),'/pages/reference/reference?crop_id=crop_rice&region_code=330102');for(const q of ['crop_id=crop_rice&region_code=330102&user_id=x','crop_id=crop_rice&region_code=440000','owner=x','redirect=http://evil'])assert.equal(m.exports.normalizeTarget('/pages/reference/reference?'+q),null)});
 
 // —— GY-I05（#5）：错误码与前端交互一致（前端侧）。断言对象来自 **packages/contracts/states.json 的
@@ -308,7 +367,7 @@ const RESOURCE_ID=resolve(root+'/miniprogram/data/region-centroids.js');
 const FIXTURE_COUNTY=regions.find(r=>r.parent_code&&!regions.some(x=>x.parent_code===r.code));
 const SYNTHETIC={latitude:27.9013,longitude:119.9027};
 const SYNTHETIC_TEXT=['27.9013','119.9027'];
-function syntheticResource(code){return {schema:regionConverterModule.SCHEMA,state:'available',source:'测试合成（不是真实几何数据）',license:'测试合成',retrieved_at:'2026-10-17',catalog_version:mpCatalog.catalog_version,max_distance_km:5,points:[{code:code,latitude:SYNTHETIC.latitude,longitude:SYNTHETIC.longitude}]};}
+function syntheticResource(code){return {schema:regionConverterModule.SCHEMA,state:'available',crs:'WGS84',source:'测试合成（不是真实几何数据）',license:'测试合成',retrieved_at:'2026-10-17',catalog_version:mpCatalog.catalog_version,max_distance_km:5,points:[{code:code,latitude:SYNTHETIC.latitude,longitude:SYNTHETIC.longitude}]};}
 
 test('D2 profile.js 不再写死转换资源：注入点即装配模块 build()，资源缺席时如实回退手选且不落库',async()=>{
  const source=readFileSync(root+'/miniprogram/pages/profile/profile.js','utf8');

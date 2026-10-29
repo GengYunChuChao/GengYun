@@ -30,8 +30,9 @@
 // `GRANT DELETE ON public.messages` 必须判红（DELETE 面在 2026-10-21 之前一直是盲区）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync, writeFileSync, rmSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, readdirSync, existsSync, writeFileSync, rmSync, mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -65,6 +66,7 @@ const EXPECTED_STORE_FILES = [
  */
 const ADDITIONAL_SQL_HOST_FILES = [
   'admin/ops/accounts-pg.ts',
+  'admin/ops/categories-pg.ts',
   'admin/ops/content-pg.ts',
   'admin/ops/flags-pg.ts',
   'admin/ops/jobs-pg.ts',
@@ -754,30 +756,40 @@ const TABLE_WIDE_COLUMN = '*';
  *   RETURNING 91 → **92**、ON CONFLICT 28 → **29**；这些语句的列面 ⇒ 列要求 1864 → **1891**、
  *   已覆盖 1810 → **1837**（缺口仍 **0**：用到的列都已在 `20-login-roles.sql` 段 M 授权内，
  *   因此本片**零迁移、零 GRANT 变更**）。
+ * ㉑ 2026-10-28 R68-A01（后台分类字典接线：`listAdminCategories` / `editCategory` 真读库）：
+ *   `admin/ops/categories-pg.ts` 从"未纳管 SQL 宿主"移入真审计（4 条字面量：list SELECT、
+ *   CAS UPDATE … RETURNING、落空分辨 SELECT、审计窄函数 SELECT）⇒ 审计文件数 20 → **21**、
+ *   字面量 297 → **301**、语句 INSERT 46 / UPDATE 53 → **54** / SELECT 158 → **161** / DELETE 40、
+ *   RETURNING 92 → **93**、无顶层 FROM 16 → **17**（审计那句 `SELECT public.record_admin_category_update(...)`
+ *   没有 FROM）；引用表 48 → **49**（`public.admin_categories`）；列要求 1891 → **1909**、
+ *   已覆盖 1837 → **1855**（缺口仍 **0**：这 6/5 列已在 `20-login-roles.sql` 段
+ *   `gy-r68-catalog-grant` 授权、`90-assert` 的 `expected` 同步登记）。另一件**不动读数**的事：
+ *   `admin/ops/accounts-only.ts` 里两条裸 `reject` 换成带门转发，本审计器不看 TS 逻辑，故无读数变化。
  */
 const EXPECTED_EXTENDED_READINGS = {
-  auditedFiles: 20,
-  sqlLiterals: 297,
-  statements: { INSERT: 46, UPDATE: 53, SELECT: 158, DELETE: 40 },
-  returningClauses: 92,
+  auditedFiles: 21,
+  sqlLiterals: 301,
+  statements: { INSERT: 46, UPDATE: 54, SELECT: 161, DELETE: 40 },
+  returningClauses: 93,
   onConflictClauses: 29,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 16,
-  referencedTables: 48,
-  columnRequirements: 1891,
-  coveredRequirements: 1837,
+  noTargetTable: 17,
+  referencedTables: 49,
+  columnRequirements: 1909,
+  coveredRequirements: 1855,
   ledgerExemptions: 33,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
 
-/** 逐文件读数（扩展 20 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
+/** 逐文件读数（扩展 21 文件；store 沿用域名键，新文件用 services/api/src/ 之后的相对路径）。 */
 const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/accounts-pg.ts': 1,
+  'admin/ops/categories-pg.ts': 4,
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 13,
@@ -799,9 +811,10 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'speech': 17,
 };
 
-/** 扩展审计引用到的表（44 张；含 catalog_read 视图，迁移期不判权限）。 */
+/** 扩展审计引用到的表（49 张；含 catalog_read 视图，迁移期不判权限）。 */
 const EXPECTED_EXTENDED_TABLES = [
   'catalog_read.current_knowledge',
+  'public.admin_categories',
   'public.admin_content_entities',
   'public.admin_content_idempotency',
   'public.admin_content_revisions',
@@ -2016,13 +2029,19 @@ function loadAuditedSources() {
   return [...loadStoreSources(), ...loadAdditionalSources()];
 }
 
-/** 递归列出 `services/api/src` 下所有 `.ts`（相对仓库根的 posix 路径，已排序）。 */
-function listTypeScriptFiles(directory) {
-  const absolute = resolve(root, directory);
+/**
+ * 递归列出 `directory` 下所有 `.ts`（相对**扫描基准** `baseDir` 的 posix 路径，已排序）。
+ *
+ * `baseDir` 默认仓库根。NC7 负控制要把它显式指到 `os.tmpdir()` 沙箱：临时宿主**不许**落进
+ * `services/api/src` —— 那是全量单测的并行扫描面（详见 NC7 的注释与
+ * `tests/unit/unit-suite-scan-write-isolation.test.mjs`）。
+ */
+function listTypeScriptFiles(directory, baseDir = root) {
+  const absolute = resolve(baseDir, directory);
   const files = [];
   for (const entry of readdirSync(absolute, { withFileTypes: true })) {
     const relativePath = `${directory}/${entry.name}`;
-    if (entry.isDirectory()) files.push(...listTypeScriptFiles(relativePath));
+    if (entry.isDirectory()) files.push(...listTypeScriptFiles(relativePath, baseDir));
     else if (entry.name.endsWith('.ts')) files.push(relativePath);
   }
   return files.sort();
@@ -2039,12 +2058,13 @@ const PUBLIC_QUALIFIED_SQL = /(?:INSERT\s+INTO|DELETE\s+FROM|UPDATE|FROM|JOIN)\s
  * `functionCall` 非空而 `table` 为 null（函数不是表），只判 `table` 会让这个文件从宿主集里
  * 凭空消失（R28-S66 阶段二实测 hosts 20/21 的来源）。
  * `publicQualified` 标记该文件的语句里有没有 `public.` 限定的表引用（派单 §1.2 的原谓词）。
+ * @param {string} [baseDir] 扫描基准（默认仓库根）。NC7 传 `os.tmpdir()` 沙箱，见 NC7 注释。
  * @returns {{file: string, tables: string[], functions: string[], publicQualified: boolean}[]}
  */
-function discoverSqlHosts() {
+function discoverSqlHosts(baseDir = root) {
   const hosts = [];
-  for (const file of listTypeScriptFiles(STORE_ROOT)) {
-    const text = readFileSync(resolve(root, file), 'utf8');
+  for (const file of listTypeScriptFiles(STORE_ROOT, baseDir)) {
+    const text = readFileSync(resolve(baseDir, file), 'utf8');
     const { statements } = extractRuntimeSql([{ file, text }]);
     const tables = [...new Set(statements.filter((item) => item.table !== null).map((item) => item.table))].sort();
     const functions = [...new Set(statements.filter((item) => item.functionCall !== null).map((item) => item.functionCall))].sort();
@@ -2421,7 +2441,7 @@ function findHostSetProblems(hosts) {
   return problems;
 }
 
-test('sql-column-coverage/扩展 20 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5）', () => {
+test('sql-column-coverage/扩展 21 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5 / R68-A01）', () => {
   const stats = extended.sql.stats;
   const perFile = Object.fromEntries(Object.entries(stats.byFile).map(([key, value]) => [key, value.sqlLiterals]));
   const starStatements = extended.sql.statements.filter((item) => item.selectStar);
@@ -2434,7 +2454,7 @@ test('sql-column-coverage/扩展 20 文件读数与列覆盖（R28-S66 / R28-W12
   console.log(`[sql-column-coverage] SELECT * 语句（列面不可判，只登记不判权限）：${starStatements.map((item) => `${item.file}:${item.line}${item.qualifiedStar ? '（t.*）' : ''}`).join('、')}`);
 
   assert.equal(extended.model.problems.length, 0, `扩展授权面解析出问题：\n${extended.model.problems.join('\n')}`);
-  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 20（8 store + 12 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts、R29 moderation/ledger-pg.ts、R34-I18 admin/ops/content-pg.ts）');
+  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 21（8 store + 13 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts、R29 moderation/ledger-pg.ts、R34-I18 admin/ops/content-pg.ts、R68-A01 admin/ops/categories-pg.ts）');
   assert.equal(stats.sqlLiterals, EXPECTED_EXTENDED_READINGS.sqlLiterals, 'SQL 字面量条数变了：要么源文件真改了，要么解析器瞎了');
   assert.deepEqual(stats.statements, EXPECTED_EXTENDED_READINGS.statements, `语句条数变了（实际 ${JSON.stringify(stats.statements)}）`);
   assert.equal(stats.returningClauses, EXPECTED_EXTENDED_READINGS.returningClauses);
@@ -2509,16 +2529,17 @@ test('sql-column-coverage/扩展 20 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 20 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 21 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 33, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 34, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
     [
       'services/api/src/admin/ops/accounts-pg.ts',
+      'services/api/src/admin/ops/categories-pg.ts',
       'services/api/src/admin/ops/content-pg.ts',
       'services/api/src/admin/ops/flags-pg.ts',
       'services/api/src/admin/ops/jobs-pg.ts',
@@ -2625,18 +2646,70 @@ test('sql-column-coverage/parser_negative_controls NC6：真实授权文本少�
   console.log(`[sql-column-coverage] NC6 复原后红字条数 ${restored.coverage.problems.length}`);
 });
 
+/**
+ * `child` 是否落在 `parent` 目录之内（同一台机器上的绝对路径；跨盘或父级 ⇒ false）。
+ * 只用于 NC7 的前提断言：临时宿主必须落在仓库**外**的沙箱里。
+ * @param {string} parent @param {string} child @returns {boolean}
+ */
+function isInside(parent, child) {
+  const rel = relative(parent, child);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
 test('sql-column-coverage/parser_negative_controls NC7：services/api/src 下多一个 SQL 宿主 ⇒ 文件集必须红（R28-S66）', () => {
-  const tempFile = 'services/api/src/nc7-temp-sql-host.ts';
-  const absolute = resolve(root, tempFile);
+  // ⚠ 跨文件竞态（GY-R68 修复，别改回去）：`services/api/src` 是**全量单测的并行扫描面** ——
+  // `tests/unit/s4-data-gap-pins.test.mjs` 的 `walkFiles('services/api/src')` 会「先枚举、再逐
+  // 文件读」。旧版把临时宿主**写进真实源码树**再删（写 → 两次全树扫描 → 删 ≈ 1.2s 窗口），s4
+  // 正好在这个窗口里枚举到它、读到它时它已被 `rmSync` ⇒ 报
+  // `判据位置不存在：services/api/src/nc7-temp-sql-host.ts`（s4 的 readRepoText），全量单测偶发假红
+  // （node 的 test runner 默认按文件并行）。
+  // 现在：临时宿主写进 `os.tmpdir()` 的 `mkdtempSync` 沙箱，扫描基准**显式传根目录**。
+  // 断言强度不变 —— 扫到的仍是磁盘上的真文件，走同一条 `listTypeScriptFiles` +
+  // `extractRuntimeSql` 管线，「多一个未登记的 SQL 宿主 ⇒ 恰红 1 条并点名该文件」还是同一条命题；
+  // 唯一变化是这棵树的根：仓库根 → 沙箱。
+  // 永久回归：`tests/unit/unit-suite-scan-write-isolation.test.mjs`（并行跑本文件与 s4，
+  // 期间扫描面里出现任何新文件即红）。
+  // 复现命令（旧树偶发红）：node --test tests/unit/sql-column-coverage.test.mjs tests/unit/s4-data-gap-pins.test.mjs
+  const tempFile = `${STORE_ROOT}/nc7-temp-sql-host.ts`;
+  const sandbox = mkdtempSync(join(tmpdir(), 'gy-nc7-sql-host-'));
+  const absolute = join(sandbox, ...tempFile.split('/'));
+  const inRepo = resolve(root, ...tempFile.split('/'));
   try {
+    assert.equal(
+      isInside(root, absolute),
+      false,
+      `NC7 的临时宿主必须落在仓库外（实际路径 ${absolute}）：services/api/src 是并行扫描面，`
+        + '写进去就会和 s4-data-gap-pins 的 walkFiles 抢同一个文件 ⇒ 全量单测偶发「判据位置不存在」。',
+    );
+    mkdirSync(dirname(absolute), { recursive: true });
     writeFileSync(absolute, "export const NC7_SQL = 'SELECT count(*) FROM public.favorites';\n", 'utf8');
-    const dirty = findHostSetProblems(discoverSqlHosts());
+
+    // 前提①（动态）：仓库树里一个字节都没动 —— 写完沙箱后，扫描面里仍然没有这个临时文件。
+    assert.equal(
+      existsSync(inRepo),
+      false,
+      `NC7 不得在 services/api/src 里留下临时文件（${inRepo} 不该存在）`,
+    );
+
+    // 前提②：沙箱里那个文件确实被同一套扫描器扫成了 SQL 宿主（否则下面的红字可能只是「没扫到」）。
+    const sandboxHosts = discoverSqlHosts(sandbox);
+    assert.deepEqual(
+      sandboxHosts.map((host) => host.file),
+      [tempFile],
+      `沙箱里的临时宿主没被扫成 SQL 宿主 ⇒ 本负控制退化成空转：${JSON.stringify(sandboxHosts)}`,
+    );
+
+    // 「真实扫描面（此刻新扫一遍）+ 沙箱里恰好多出来的那一个宿主」= 旧版写进源码树时的**同一个输入**，
+    // 判据一字未改：旧版是「写进树里再扫」，这里是「扫树 + 把沙箱宿主拼上去」，两者喂给
+    // findHostSetProblems 的 hosts 完全一样（多出来的那条 file 仍是 services/api/src/nc7-temp-sql-host.ts）。
+    const dirty = findHostSetProblems([...discoverSqlHosts(), ...sandboxHosts]);
     assert.equal(dirty.length, 1, `临时新增一个 SQL 宿主后必须恰红 1 条，实际：\n${dirty.join('\n') || '（没有变红 —— 文件集不变量没在看新文件！）'}`);
     assert.ok(dirty[0].includes(tempFile), `红字必须点名该临时文件：${dirty[0]}`);
     console.log(`[sql-column-coverage] NC7 红字（新宿主未登记）：${dirty[0]}`);
   } finally {
-    rmSync(absolute, { force: true });
+    rmSync(sandbox, { recursive: true, force: true });
   }
+  assert.equal(existsSync(inRepo), false, `NC7 收尾后 services/api/src 里不该有这个临时文件（${inRepo}）`);
   assert.deepEqual(findHostSetProblems(discoverSqlHosts()), [], '删掉临时宿主后必须回绿');
 });
 

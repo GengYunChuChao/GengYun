@@ -15,6 +15,36 @@
 | 小程序（识别结果页「收藏」） | **未通（缺口，本次不实施）** | `identify.wxml` / `identify.js` 里「收藏」与 `favorit` 两处关键词**零命中**：识别结果页没有收藏入口，只能经「识别 → 资料详情 → 收藏」两跳 |
 | 小程序（识别结果页「写历史」） | **已通** | 写入点在服务端终态端口（不在页面）；页面侧提供 `onOpenServerHistory` 跳 `/pages/history/history` |
 
+> **后续变更（2026-10-28 订正；本页其余读数一律保留 2026-10-21 基线，不改写）**：本页写于
+> `feat/gy-r28-c5-favorites-history`（基点 `43fa6d5`）。上表「小程序（识别结果页「收藏」）」那一行
+> 的判定**已被后续片推翻**，请按下面的事实读，原文不删：
+>
+> - **现在的事实：识别结果页有收藏入口**，形态是**自包含组件**。宿主侧只有一行挂载
+>   `<fav-entry wx:if="{{job.id && job.state === 'succeeded' && !guest}}" job-id job-state enabled />`
+>   （`miniprogram/pages/identify/identify.wxml:221`），组件注册在 `miniprogram/pages/identify/identify.json:4`，
+>   装配逻辑全在 `miniprogram/components/fav-entry/fav-entry.js`。它调的正是本页已登记的那两个接口：
+>   `POST /favorites`（`createFavorite`，`fav-entry.js:223`；`target_ref.type` 只取契约闭集里的 `species`）
+>   与 `DELETE /favorites/{id}`（`deleteFavorite`，`fav-entry.js:240`）；`target_ref.revision` 现场从
+>   `GET /knowledge/{id}` 取（`fav-entry.js:181`），取不到就整块不渲染（fail-closed），且只在作业
+>   `succeeded` 时装配。
+> - **由谁引入**：`#430`（squash `81bf0a2b`，2026-10-22 合入 main，同一提交里另有「收藏入口按宿主作业状态收敛」
+>   的返修）。**不是本片**：C5 当时确实没做，`identify.wxml`／`identify.js` 对 `收藏|favorit` 零命中这个
+>   **测量本身没错**——错的是把它读成「识别结果页没有（也不会有）收藏入口」的结论。
+> - **同页另有四处同一断言，一并按上面读**：§1 表「识别结果页『收藏』」行、§4 末条
+>   （「**识别结果页没有收藏入口**」）、§6 第 3 条（「identify 页当前完全不依赖 `knowledge-api`」——
+>   现在经 `fav-entry.js` 依赖 `miniprogram/utils/knowledge-api.js`）、§7 第 1 条（「识别结果页『收藏』入口（未通）」）。
+>   这四处的原文保留为当时读数。
+> - **§7 第 2 条「全站同类折叠」也已被后续片做完**：五个适配层现在**都**把 401/403 归因委托给
+>   `miniprogram/utils/auth.js:605` 的 `failureFor`（`attribution` 决定要不要清会话），不再各自
+>   `clearSession`＋折成 `SESSION_REQUIRED`——`miniprogram/utils/community-api.js:190`、
+>   `miniprogram/utils/knowledge-api.js:76`、`miniprogram/utils/messages-api.js:137`、
+>   `miniprogram/utils/profile-api.js:23`、`miniprogram/utils/voice-api.js:213`。原文「仍是 401/403 折叠」
+>   保留为 2026-10-21 读数（口径裁决见本页 §5.1 的 superseded 边界）。
+> - **没有变的口径**：P0 链路第 5 步「收藏／取消」的入口仍是**两处**（详情页按钮＋收藏页「可收藏的资料」）；
+>   识别页的 `fav-entry` **不计入**第 5 步（属识别能力、只收 `species`），裁定见
+>   `docs/ui-state-inventory.md:282` 与 `docs/ui-state-inventory.md:308`。
+> - 本页其余 `path:line` 仍是 2026-10-21 基线的读数，未随合流重取（合流后部分行号已漂移）；要引用请按符号回查。
+
 ## 2. 服务端面（证据）
 
 ### 2.1 收藏

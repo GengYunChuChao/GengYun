@@ -45,6 +45,10 @@
           <view class="post-author__tag pill {{post.stateLabel ? 'pill--amber' : 'pill--gray'}}">{{post.stateLabel || post.publicLabel}}</view>
         </view>
         <view class="post-title">{{post.title}}</view>
+        <!-- 审核结论的整句解释（单一来源 `utils/community-api.js` 的 `outcomeOf`）：
+             「待人工复核」与「未通过审核」是**两种**结论，不再折叠成同一句「待审／未公开」。
+             公开可见的内容不重复刷这句话（pill 已经说了「已通过先行审核」）。 -->
+        <view wx:if="{{post.outcomeKey !== 'approved'}}" class="demo-caption form-gap">{{post.outcomeDesc}}</view>
         <view class="post-text">{{post.body}}</view>
         <view wx:if="{{post.linkTitle}}" class="pill">关联资料：{{post.linkTitle}}</view>
         <view wx:elif="{{post.linkState === 'unavailable'}}" class="pill pill--gray">关联资料当前不可用（只保留目标引用）</view>

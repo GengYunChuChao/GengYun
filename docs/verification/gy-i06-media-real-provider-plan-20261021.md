@@ -14,7 +14,7 @@
 | # | 门 | 现状事实（文件:行号） | 后果 |
 | --- | --- | --- | --- |
 | 1 | **配置搬运门** | `services/api/src/config.ts:69-79` 只校验 `OBJECT_STORAGE_*` 四键「存在」，`AppConfig`（`services/api/src/config.ts:20-42`）里**没有任何对象存储字段**；装配点 `services/api/src/app.ts:1598` 调 `resolveMediaObjectStore({ executionMode })` **刻意不传 env** | real 模式**恒** `unwired`：校验过的东西到不了装配层，装配层又不敢读 ambient env |
-| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1614`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`）；生产入口 `services/api/src/server.ts:51` 只传 `{ config, pool }` | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1451`（原记 :1431；四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1480`（原记 :1460；批准能力不可伪造/不可派生/不可默认化） |
+| 2 | **批准门** | `services/api/src/media/service.ts:603` 的 real 分支要求 `realMediaApproval` 必须是 `approveRealMediaWiring()`（`:473`）铸造的 `WeakSet` 品牌（`:470` 的 `APPROVED_REAL_MEDIA_WIRINGS`；以上三处均为合流当前 main 后的行号，本片测量时为 `:595`／`:465`／`:462`）；`buildApp` 只**转发**不铸造（`services/api/src/app.ts:1815`：`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption })`；本片测量时为第 1614 行，此后该行号持续漂移，2026-10-28 合流 main 后按符号重取）；生产入口 `services/api/src/server.ts:62` 只**转发**派生结果（`...(mediaAssembly ?? {})`；2026-10-28 · GY-R68 起同一判定内另有合成域 `...(synthesisMediaAssembly ?? {})`），自身不铸造、不读 env（本片测量时为第 51 行且只传 `{ config, pool }`） | 即使端口是 `s3_compatible`，real 仍整域 503（`services/api/src/media/service.ts:609` 的 fail-closed 服务）。既有断言已把这条钉成「运行期主闸门」：`tests/unit/media-real-mode-fail-closed.test.mjs:1451`（原记 :1431；四键齐备 + 真实端口 + 无批准 ⇒ 仍 fail-closed）、`:1480`（原记 :1460；批准能力不可伪造/不可派生/不可默认化） |
 | 3 | **持久化门** | 媒体记录 / 社区句柄 / 幂等台账全在进程内 `Map`/`Set`（原记 `:624-629`；该符号在 `1d65b7ee` 已不存在——`git grep -n "new Map<" 1d65b7ee -- services/api/src/media/service.ts` ⇒ 0 命中，最后见于 `1fbe7572:624-629`，`records`／`grants`／`idempotency`／`inflight` 四个容器；现行记录已改由 `persistence` 端口持有） | 重启即丢 owner、`revision`、`rawRef`；`expireInitiated`（`:1239`）、`cleanupOrphans`（`:1250`）在 main 无生产调用者 ⇒ 删除链与 24h 回收**没有依据** |
 | 4 | **数据面缺口（部署件）** | 冻结契约内**没有**「owner 私有媒体字节读取」这一 operation；`MEDIA_ACCESS_GRANT_ORIGIN` 指向的访问网关在本仓库内**无实现** | 句柄签发得出来，但没人消费；本仓不能自称「契约已实现」 |
 
@@ -74,7 +74,7 @@
 | 5 | `services/api/src/app.ts:1723-1733` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
 | 6 | `services/api/src/app.ts:2305` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
 | 7 | `services/api/src/app.ts:2453` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点（GY-R34-I19 树重取；此前后续片在 `app.ts` 上半部新增装配行，行号已上移） |
-| 8 | `services/api/src/server.ts:27` | 生产入口 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval` |
+| 8 | `services/api/src/server.ts:62` | ⚠️ 本行记录的是 **W2 之前**的读码结果（当时该调用在第 27 行，形如 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval`）。W2（GY-R28）起改为经 `mediaRealPortsAssemblyOptions` 派生转发；GY-R68（2026-10-28）起同一判定内另有合成域 `synthesisMediaWiring` 派生。现读的调用行即本行左侧这条锚点 |
 
 ### 3.2 stub 下一次上传的完整走向
 
@@ -121,6 +121,8 @@
 | ⛔ 禁止 | `services/api/src/media/**` | **不得**在媒体域内读 `process.env` / `import.meta.env`（`services/api/src/media/service.ts:281-283` 已把该约束写进注释，同上测试做 AST 级判违规） |
 | 保留 | `services/api/src/media/object-store.ts:448-455` | `resolveMediaObjectStore` 的「缺任一键 ⇒ `unwired`」语义**不改**：`tests/unit/media-real-mode-fail-closed.test.mjs` 的 1-A 用例逐键验证 |
 | 建议增强 | `services/api/src/media/object-store.ts:224`（`readObjectStorageConfig` 的 endpoint 校验） | 现正则 `/^https:\/\/[^\s/]+/i` 只挡 http 与空 host，`https://evil.example/whatever` 能过。建议补「无 path/query/fragment + host 白名单」（与 [规范 §2.4](provider-adapter-live-wiring.md) 的端点白名单同口径） |
+
+> **后续变更（GY-R68，2026-10-29）**：上表「⛔ 约束」一行写的「ambient env 只允许 **3** 个非媒体键／不得借此新增**第四个** `process.env[...]`」已被后续变更推进为 **4 个**：新增 `MODERATION_DEMO_PORT`（审核域**演示端口**开关；装配处**按名**读这一个键，实现见 `services/api/src/moderation/demo-port.ts`，`real` 下不注入）。**原文作为当时读数保留**，不回改；白名单当前实况以 `tests/unit/media-real-mode-fail-closed.test.mjs` 的 `APP_AMBIENT_ENV_ALLOWLIST` 为准（现为 4 条，且该键不命中 `STORAGE_SHAPED_ENV_KEY`）。
 
 ### 5.2 第二层：签名 / 句柄层 —— 缺 3 件
 
@@ -227,6 +229,8 @@
 | `app.ts` 不得把 `process.env` 交给 resolver | 同上 `:519-541`（原记 :329-337） | PR #193 P1 的静态钉子 |
 | `app.ts` 全文件 ambient env 审计：只允许 3 个非媒体键 | 同上 `:1121`（原记 :1050；另有 `:1298` 原记 :1227 的运行期来源检查） | 实施片新增任何装配读取都不得突破这条白名单 |
 | 构造期拒绝（空桶 / http endpoint） | 同上 `:249-254` | 真实适配器不静默降级 |
+
+> **后续变更（GY-R68，2026-10-29）**：上表「`app.ts` 全文件 ambient env 审计：只允许 **3** 个非媒体键」一条现为 **4 个**（新增 `MODERATION_DEMO_PORT`；理由与核对口径见 §5.1 表末的注记）。**这条断言没有被削弱**：判据仍是「实测读取点必须**逐字等于**白名单，且每一处都必须**按名**读（不得整表传递／动态取键）」，只是白名单多了一条。原文作为当时读数保留。
 
 ## 9 风险清单
 

@@ -47,6 +47,7 @@ export const AUDIT_LOG_ACTIONS = Object.freeze([
   'post.hide',
   'admin_account.disable',
   'admin_account.enable',
+  'category.update',
 ]);
 
 export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
@@ -60,6 +61,7 @@ export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
   'post.hide': '下架社区内容',
   'admin_account.disable': '停用管理员账号',
   'admin_account.enable': '恢复管理员账号',
+  'category.update': '改分类目录',
 });
 
 /** `entity` 闭集：与 `catalog.ts` 的 `AUDIT_ENTITIES` 逐字同序（⛔ 不是 `entity_type`）。 */
