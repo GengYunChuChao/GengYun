@@ -38,9 +38,9 @@ async function main(): Promise<void> {
   //   `real` 下恒 `unwired`。派生口径与媒体域**共用同一次判定**：同一份真实端口、同一处启动参数。
   //
   // 审核域真实接线（GY-R70）：唯一的**铸造点**在 `moderation/startup-approval.ts`，由有名开关
-  // `--approve-moderation-live-wiring` ＋ 命令行给的 policySource/bizType 驱动（⛔ 不从 env／配置文件取）；
-  // 「开关 + 输入齐备 + 共享凭据齐备 + 配置合法」四条全过才铸造，否则**不铸造**并打一行闭集原因 warn，
-  // 审核域保持既有整域 503（不批准 ≠ 启动失败）⇒ 下面 `moderationAssembly` 因此允许是空对象。
+  // `--approve-moderation-live-wiring` ＋ 命令行给的 policySource/bizType 驱动（⛔ 不从 env／配置文件取）。
+  // 「开关 + 输入齐备 + 共享凭据齐备 + 配置合法」四条全过才铸造；开关给了但任一条不成立 ⇒ **启动失败**
+  // （`exit 1`：不批准 ≠ 启动成功，与 `--approve-real-media-wiring` 同口径）；开关没给 ⇒ 静默、一个键都不传。
   let mediaAssembly: ReturnType<typeof mediaRealPortsAssemblyOptions> | null = null;
   let synthesisMediaAssembly: ReturnType<typeof synthesisMediaWiringAssemblyOptions> | null = null;
   try {
@@ -58,8 +58,14 @@ async function main(): Promise<void> {
     }
     throw error;
   }
-  const moderationAssembly = moderationStartupAssemblyOptions({ config, argv: process.argv.slice(2), warn: (line) => console.warn(line) });
-  const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}), ...moderationAssembly });
+  const moderationAssembly = moderationStartupAssemblyOptions({ config, argv: process.argv.slice(2) });
+  if (moderationAssembly.fatalLine !== null) {
+    console.error(moderationAssembly.fatalLine);
+    process.exitCode = 1;
+    return;
+  }
+  const moderationInjection = moderationAssembly.moderationInjection;
+  const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}), ...(moderationInjection === undefined ? {} : { moderationInjection }) });
 
   // 管理员初始化：仅在后台账号表为空且配置了 bootstrap 凭据时创建；失败不静默。
   try {

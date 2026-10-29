@@ -17,7 +17,8 @@
  *   `policySelectionVerified` 恒 `false`、`executionAllowed` 恒 `false`，配置侧永远推不出授权。
  *   本文件因此**不读 `process.env`**（有结构用例钉住，见 `tests/unit/moderation-approval-flag.test.mjs`）。
  *
- * 四条前置**同时**成立才铸造（缺任一条 ⇒ 不铸造 + 一行 warn，⛔ 不是启动失败）：
+ * 四条前置**同时**成立才铸造（缺任一条 ⇒ 不铸造 ＋ 一行诊断 ＋ 调用方 `exit 1`，与
+ * `--approve-real-media-wiring` 同口径：**不批准 ≠ 启动成功**）：
  *   ① 开关 `--approve-moderation-live-wiring` 给了（整串精确匹配某一项 argv）；
  *   ② 运维给的 `policySource` / `bizType` 齐备且形状合法；
  *   ③ 共享凭据齐备（`config.moderationLive.credentials`，仅 `real` 且 `TENCENTCLOUD_*` 成对时非 `null`）；
@@ -119,24 +120,35 @@ export interface ModerationStartupApprovalPlan {
   readonly minted: boolean;
   /** 闭集拒绝原因（`#777` 的 `MODERATION_LIVE_REFUSAL_REASONS`）；`null` = 没有拒绝。 */
   readonly reason: ModerationLiveRefusalReason | null;
-  /** 恰好**一行** warn（闭集原因 + 点名缺哪一条）；`null` = 无需发声（没给开关）。 */
-  readonly warning: string | null;
+  /**
+   * **是否启动失败**（`server.ts` 据此 `exit 1`）。
+   *
+   * 口径与 `--approve-real-media-wiring` **一致**（先例实测是 `exit 1`）：**开关给了**但任何一条前置
+   * 不成立 ⇒ `true`。「不批准」不是「悄悄把门关上」，而是「你这次启动要的东西没成立」——一条 warn 混在
+   * 启动日志里等于没有，运维只会记住「批准开关一给，服务就该起不来」。
+   *
+   * 唯一为 `false` 的两支：**开关没给**（默认路径，与改前逐字相同），以及**四条全过**。
+   */
+  readonly fatal: boolean;
+  /** 那一行诊断（stderr，含闭集原因 + 点名缺哪一项）；`null` = 无话可说（开关没给或全过）。 */
+  readonly fatalLine: string | null;
 }
 
-/** 无话可说的一支：没给开关 ⇒ 与今天逐字相同的默认路径（不铸造、不 warn）。 */
+/** 无话可说的一支：没给开关 ⇒ 与今天逐字相同的默认路径（不铸造、不发声、不退出）。 */
 const SILENT_PLAN: ModerationStartupApprovalPlan = Object.freeze({
   liveApproval: null,
   minted: false,
   reason: null,
-  warning: null,
+  fatal: false,
+  fatalLine: null,
 });
 
 /**
- * 一行 warn（闭集原因 + 具体缺哪一项）。
+ * 那**一行**诊断（闭集原因 + 具体缺哪一项）。开关给了却不成立时进 stderr，进程随即 `exit 1`。
  *
  * ⛔ 不含任何配置值/凭据值/异常文本：`detail` 只允许本文件里的固定短语。
  */
-function warningLine(reason: ModerationLiveRefusalReason, detail: string): string {
+function refusalLine(reason: ModerationLiveRefusalReason, detail: string): string {
   return (
     `GY-R70 审核域真实接线未获批准：reason=${reason}（${detail}）`
     + ` ⇒ 本次启动**不铸造**批准能力、不给 moderationInjection.liveApproval 任何默认值，`
@@ -166,19 +178,20 @@ function hasCredentials(value: unknown): value is ModerationLiveCredentials {
  * **生产入口的唯一决定点**：这次启动要不要铸造一份审核域真实接线的批准能力。
  *
  * 拒绝顺序固定（便于判据逐条断言）：模式 → 输入齐备 → 输入形状 → 共享凭据 → 铸造 → 剖面复核。
- * 任一条不过 ⇒ `liveApproval === null` 且 `minted === false`（唯一例外：剖面复核失败时已铸造但**丢弃**，
- * 见下），调用方据此**一个字段都不传**，行为与改前逐字相同。
+ * 任一条不过 ⇒ `liveApproval === null`、`minted === false`（唯一例外：剖面复核失败时已铸造但**丢弃**，
+ * 见下）、`fatal === true` ＋ 一行诊断：调用方据此**一个字段都不传**并 `exit 1`——审核域不会带着
+ * 「以为自己已经开了」的假象留在线上。
  *
  * ⚠️ 剖面复核（`resolveModerationLiveWiring`）必须发生在铸造**之后**：它判的是「这份批准能力交给真实
  * 端点能不能构造出端口」。但**先判形状再铸造**（`MODERATION_BIZ_TYPE_PATTERN` 等）保证了这一支在现实中
- * 只可能由冻结常量漂移触发；真触发时**丢弃铸件**（不进装配）+ warn `invalid_configuration` ⇒ 门仍关着。
+ * 只可能由冻结常量漂移触发；真触发时**丢弃铸件**（不进装配）＋ 致命诊断 ⇒ 门仍关着且进程起不来。
  */
 export function resolveModerationStartupApproval(input: {
   config: ModerationStartupConfig;
   argv: readonly string[];
 }): ModerationStartupApprovalPlan {
   const args = parseModerationStartupArgs(input.argv);
-  // ① 开关没给 ⇒ 与今天逐字相同：不铸造、不发声（real 下的既有一行 warn 由 app.ts 的装配决定点给出）。
+  // ① 开关没给 ⇒ 与今天逐字相同：不铸造、不发声、不退出（real 下 app.ts 的装配决定点仍会各打一行）。
   if (!args.flagPresent) return SILENT_PLAN;
 
   // ② 模式：真实审核接线只在 real 下有意义。闭集里最贴近的是 invalid_configuration
@@ -189,7 +202,8 @@ export function resolveModerationStartupApproval(input: {
       liveApproval: null,
       minted: false,
       reason: 'invalid_configuration' as const,
-      warning: warningLine(
+      fatal: true,
+      fatalLine: refusalLine(
         'invalid_configuration',
         `执行模式是 ${JSON.stringify(input.config.executionMode)}，真实审核接线只在 real 下成立`,
       ),
@@ -206,19 +220,21 @@ export function resolveModerationStartupApproval(input: {
         liveApproval: null,
         minted: false,
         reason: 'missing_approval' as const,
-        warning: warningLine('missing_approval', `缺少 ${flag}<${label}>，必须由运维在启动命令行给出`),
+        fatal: true,
+      fatalLine: refusalLine('missing_approval', `缺少 ${flag}<${label}>，必须由运维在启动命令行给出`),
       });
     }
   }
 
-  // ④ 输入形状：未知值／空串／明显不是策略标识的串 ⇒ 不铸造（⛔ 不 exit，不批准 ≠ 启动失败）。
+  // ④ 输入形状：未知值／空串／明显不是策略标识的串 ⇒ 不铸造 ＋ 致命诊断（与媒体域同口径：exit 1）。
   const policySource = args.policySource.state === 'value' ? args.policySource.value : null;
   if (policySource === null || !MODERATION_POLICY_SOURCE_PATTERN.test(policySource)) {
     return Object.freeze({
       liveApproval: null,
       minted: false,
       reason: 'invalid_configuration' as const,
-      warning: warningLine('invalid_configuration', `${MODERATION_POLICY_SOURCE_PREFIX} 的值不是合法的策略标识`),
+      fatal: true,
+      fatalLine: refusalLine('invalid_configuration', `${MODERATION_POLICY_SOURCE_PREFIX} 的值不是合法的策略标识`),
     });
   }
   const bizType = args.bizType.state === 'value' ? args.bizType.value : null;
@@ -227,7 +243,8 @@ export function resolveModerationStartupApproval(input: {
       liveApproval: null,
       minted: false,
       reason: 'invalid_configuration' as const,
-      warning: warningLine('invalid_configuration', `${MODERATION_BIZ_TYPE_PREFIX} 的值不是合法的 BizType`),
+      fatal: true,
+      fatalLine: refusalLine('invalid_configuration', `${MODERATION_BIZ_TYPE_PREFIX} 的值不是合法的 BizType`),
     });
   }
 
@@ -240,7 +257,8 @@ export function resolveModerationStartupApproval(input: {
       liveApproval: null,
       minted: false,
       reason: 'missing_credentials' as const,
-      warning: warningLine(
+      fatal: true,
+      fatalLine: refusalLine(
         'missing_credentials',
         '共享凭据不齐备：TENCENTCLOUD_SECRET_ID / TENCENTCLOUD_SECRET_KEY 未成对配置，或执行模式不是 real',
       ),
@@ -266,37 +284,45 @@ export function resolveModerationStartupApproval(input: {
       liveApproval: null,
       minted: true,
       reason: plan.refusal?.reason ?? 'invalid_configuration',
-      warning: warningLine(
+      fatal: true,
+      fatalLine: refusalLine(
         plan.refusal?.reason ?? 'invalid_configuration',
         '批准能力已按启动参数铸造，但剖面/端点/超时复核未通过 ⇒ 铸件已丢弃，不进装配',
       ),
     });
   }
 
-  return Object.freeze({ liveApproval: approval, minted: true, reason: null, warning: null });
+  return Object.freeze({ liveApproval: approval, minted: true, reason: null, fatal: false, fatalLine: null });
 }
 
 // ---------------------------------------------------------------------------
-// 3. 装配层入口（`server.ts` 只转发这一个返回值；净 0 行增量）
+// 3. 装配层入口（`server.ts` 只转发这一段：铸造成功就只多一个键，拒绝就只剩一行 stderr）
 // ---------------------------------------------------------------------------
 
-/** `buildApp` 的审核域装配片段：要么空对象（一个字段都不传），要么只有 `liveApproval` 一个键。 */
+/**
+ * `buildApp` 的审核域装配片段 ＋ 一行致命诊断。
+ *
+ * - 铸造成功：只有 `moderationInjection` 一个键（`{ liveApproval }`），`fatalLine === null`；
+ * - 前置不成立：**一个装配键都不给**，`fatalLine` 是要打到 stderr 的那一行（调用方据此 `exit 1`）；
+ * - 开关没给：同上但 `fatalLine === null`（静默，与改前逐字相同）。
+ */
 export interface ModerationStartupAssemblyOptions {
   readonly moderationInjection?: { readonly liveApproval: ModerationLiveWiringApproval };
+  readonly fatalLine: string | null;
 }
 
 /**
- * 把决定折算成 `buildApp` 的装配片段，并把拒绝原因写成**一行** warn 交给调用方的日志出口。
+ * 把决定折算成 `buildApp` 的装配片段。
  *
- * ⛔ 没铸造成功就返回**空对象**：不传 `liveApproval`、不传替身端口、不传 `service`——审核域的
- *   既有 fail-closed 由 `app.ts` 的装配决定点兜住，本文件不碰它。
+ * ⛔ 没铸造成功就不给任何装配键：不传 `liveApproval`、不传替身端口、不传 `service`——审核域的既有
+ *   fail-closed 由 `app.ts` 的装配决定点兜住，本文件不碰它；同时把那一行诊断交回调用方（它负责 `exit 1`）。
  */
 export function moderationStartupAssemblyOptions(input: {
   config: ModerationStartupConfig;
   argv: readonly string[];
-  warn?: (line: string) => void;
 }): ModerationStartupAssemblyOptions {
   const plan = resolveModerationStartupApproval({ config: input.config, argv: input.argv });
-  if (plan.warning !== null) input.warn?.(plan.warning);
-  return plan.liveApproval === null ? {} : { moderationInjection: { liveApproval: plan.liveApproval } };
+  return plan.liveApproval === null
+    ? { fatalLine: plan.fatalLine }
+    : { moderationInjection: { liveApproval: plan.liveApproval }, fatalLine: null };
 }

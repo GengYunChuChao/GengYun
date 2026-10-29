@@ -158,15 +158,22 @@ test('GY-I05: logStream 仅测试注入——生产入口与配置层都不得�
   //
   // ⚠ 2026-10-30（GY-R70 · 审核域批准通道，`--approve-moderation-live-wiring`）**有据变更，不是放宽**：
   //   审核域的真实接线批准能力此前没有任何生产调用点（`server.ts` 不铸造 ⇒ `real` 下审核整域恒 503）。
-  //   修法是在入口追加**第三个**同族 spread（`moderationAssembly`），因此本钉子由「恰好这两处」改为
-  //   「恰好这三处、且各自只有唯一来源」，并**新增**两条更强的不变量：
+  //   修法是在入口追加**第三个**同族 spread（`moderationInjection`，只在铸造成功时才存在），因此本钉子由
+  //   「恰好这两处」改为「恰好这三处、且各自只有唯一来源」，并**新增**三条更强的不变量：
   //   ① `moderationStartupAssemblyOptions(` 全文件恰好 1 次；② `moderationAssembly` 的赋值恰好 1 次，
   //      且**不得**落在 `if (mediaRealPorts !== null)` 判定块内——审核域与媒体域是**两条独立的门**，
-  //      焊死会让 `--approve-real-media-wiring` 变成审核域的前置条件。
+  //      焊死会让 `--approve-real-media-wiring` 变成审核域的前置条件；③ 开关给了但前置不成立时
+  //      **必须**是 `console.error(...)` ＋ `process.exitCode = 1` ＋ `return`（与媒体域同口径：
+  //      不批准 ≠ 启动成功，⛔ 不许退化成一条 warn）。
   //   `logStream` 仍注入不进来：三处 spread 的取值都只来自具名派生函数，调用点是唯一的。
   assert.match(
     server,
-    /buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\), \.\.\.\(synthesisMediaAssembly \?\? \{\}\), \.\.\.moderationAssembly \}\)/,
+    /buildApp\(\{ config, pool, \.\.\.\(mediaAssembly \?\? \{\}\), \.\.\.\(synthesisMediaAssembly \?\? \{\}\), \.\.\.\(moderationInjection === undefined \? \{\} : \{ moderationInjection \}\) \}\)/,
+  );
+  assert.match(
+    server,
+    /if \(moderationAssembly\.fatalLine !== null\) \{\n\s+console\.error\(moderationAssembly\.fatalLine\);\n\s+process\.exitCode = 1;\n\s+return;\n\s+\}/,
+    '审核域批准通道的拒绝必须是启动失败（exitCode = 1），不是一条 warn',
   );
   assert.equal(server.match(/mediaRealPortsAssemblyOptions\(/g)?.length, 1, '媒体装配选项只允许一个来源');
   assert.equal(
