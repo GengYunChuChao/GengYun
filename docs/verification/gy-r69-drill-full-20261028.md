@@ -81,6 +81,7 @@ node tools/verify-g-drill-readings.mjs --update    # 用上一步的读数重写
 | `npm run verify:parity` | 不在演练范围：它全部内容就是清单里的 `node tools/openapi-route-parity.mjs` |
 | `npm run verify:capability-map` | 不在演练范围：它全部内容就是清单里的 `node tools/verify-admin-capability-map.mjs --check` |
 | `npm run verify:purge-schedule` | 不在演练范围：它全部内容就是清单里的 `node tools/verify-purge-schedule.mjs` |
+| `npm run verify:real-capability` | 不在演练范围：它是自检命令（默认恒 exit 0、不判红），且 `--strict` 要有真实凭据才有意义（无凭据时所有能力组判 n-a ⇒ 判定恒 PASS）；演练清单收的是会判红的门禁 |
 | `node tools/run-python.mjs tools/validate_openapi_standard.py` | 未跑：需网络下载官方 OAS 3.1 规范文件（`--schema` 必填，脚本明示自己不做下载/安装），且本机未安装 jsonschema；它也只出现在 `development-docs.yml` 的 `paths:` 里，任何 workflow 都没有它的 `run:` 步骤 ⇒ **CI 里没有等价的 OAS 3.1 元模式校验**（CI 跑的 `validate_contracts.py` 只做「自仓 openapi 的版本号串 == 3.1.1」这一条自检，不等于元模式校验；这是既有缺口，本片不改） |
 | `npm run test:mini` | 未跑：微信开发者工具 SDK 未安装（本机没有该 CLI，`check-wechat-project.mjs` 之后那条 `node --test` 无从跑起） |
 | `npm run test:integration:recognition-chain-pg` | 未跑：网络与凭据都不在本机：该臂打真实供应商链路，CI 外一律禁用真实外部调用 |
