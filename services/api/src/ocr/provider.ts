@@ -5,7 +5,7 @@
  * - `stub` / `preset_demo`：确定性的**明确标注替身**，绝不冒充真实 OCR；
  *   `model_version` 带 `stub` / `preset-demo` 标记，响应 `meta.execution_mode` 如实为对应模式。
  * - `real`：缺凭据**一律 fail-closed**（`PROVIDER_UNAVAILABLE`），**严禁静默回退替身**；
- *   即使凭据齐备，本片也没有已审真实 OCR 供应商适配器，同样 fail-closed，不伪造成功。
+ *   凭据齐备且注入被校验快照时**装的是真实适配器**；本文件下方的 `createRealOcrProvider` 是它装配失败时的 fail-closed 兜底，不伪造成功。
  * - 提供者错误按契约映射：超时 → `PROVIDER_TIMEOUT`，配额 → `PROVIDER_QUOTA_EXCEEDED`，
  *   结果未知/协议违规 → `PROVIDER_OUTCOME_UNKNOWN`，不可用 → `PROVIDER_UNAVAILABLE`。
  *   **不得**把提供者失败写成 `succeeded`。
@@ -18,7 +18,7 @@ import { createHash } from 'node:crypto';
 import type { ExecutionMode } from '../contract.ts';
 import { createLiveOcrProviderFromConfig, createUnwiredImageSource } from '../ai/ocr-live-adapter.ts';
 import { PRODUCT_GATE_AUTHORIZATION } from '../ai/live-gate.ts';
-import type { OcrProviderConfig } from '../config.ts';
+import type { OcrProviderConfig } from '../config.ts'; import type { OcrImageSource } from '../ai/ocr-live-ports.ts';
 
 /** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
 export const PROVIDER_FAILURE_CODES = [
@@ -165,7 +165,7 @@ export function createStubOcrProvider(options: { executionMode?: 'stub' | 'prese
 /**
  * 真实提供者（`real`）。**fail-closed**：
  * - 缺 endpoint/apiKey → `available=false`，POST 直接 503 `PROVIDER_UNAVAILABLE`；
- * - 即使凭据齐备，本片也没有已审真实 OCR 供应商适配器，`extract` 仍返回 `PROVIDER_UNAVAILABLE`；
+ * - 本函数**不持有**真实适配器（它是端口装配失败/无快照时的兜底），`extract` 恒返回 `PROVIDER_UNAVAILABLE`；
  * - 任何路径都**不会**回退到 stub/preset_demo 替身。
  */
 export function createRealOcrProvider(
@@ -193,15 +193,15 @@ export function createRealOcrProvider(
  *
  * `aiProviders`（GY-R28-W1）：`loadConfig()` 搬来的**被校验快照**（`config.aiProviders.ocr`）。
  * - 不传 / `null` ⇒ 与接线前**逐字节相同**（`real` 走 fail-closed 实现）；
- * - 传了 ⇒ `real` 装上真实适配器（`createLiveOcrProviderFromConfig`）；端口装配失败则回落成
- *   接线前的 fail-closed（**绝不**回退替身）。图片字节由端口提供，产品装配注入的是**未接线**来源
- *   （对象存储属媒体域），因此真实发送是否可达仍由媒体端口把关。
+ * - 传了 ⇒ `real` 装上真实适配器（`createLiveOcrProviderFromConfig`）；端口装配失败则回落成接线前的 fail-closed（**绝不**回退替身）。
+ * `imageSource`（GY-R69）：**可选**图片字节来源。不给（`undefined`/`null`）⇒ 继续用写死的 `createUnwiredImageSource(…)`
+ * （与接线前**逐字节相同**，fail-closed）；给了 ⇒ 用它替换那一句，字节从媒体域对象存储来（装配见 `routes/ocr.ts` 的 `imageMedia` 槽位）。
  */
 export function createOcrProvider(input: {
   executionMode: ExecutionMode;
   endpoint?: string | null;
   apiKey?: string | null;
-  aiProviders?: OcrProviderConfig | null;
+  aiProviders?: OcrProviderConfig | null; /* GY-R69：可选图片字节来源；不给 / `null` ⇒ 写死的未接线来源（行为不变） */ imageSource?: OcrImageSource | null;
 }): OcrProvider {
   if (input.executionMode === 'real') {
     const live = input.aiProviders ?? null;
@@ -209,7 +209,7 @@ export function createOcrProvider(input: {
       try {
         return createLiveOcrProviderFromConfig(live, {
           authorization: PRODUCT_GATE_AUTHORIZATION,
-          imageSource: createUnwiredImageSource('真实对象存储未接线：取不到待识别的私有图片字节'),
+          imageSource: input.imageSource ?? createUnwiredImageSource('真实对象存储未接线：取不到待识别的私有图片字节'),
         });
       } catch {
         return createRealOcrProvider({}, '真实 OCR 端口装配失败（配置不合法；fail-closed，未发包，不回退替身）');
