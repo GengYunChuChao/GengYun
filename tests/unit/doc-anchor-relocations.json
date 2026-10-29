@@ -763,10 +763,10 @@
     "line": 94,
     "target": "miniprogram/pages/favorites/favorites.js",
     "from": 108,
-    "to": 128,
+    "to": 140,
     "kind": "correction",
     "symbol": "canOpen",
-    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+    "reason": "真实父（53354fe7）的 favorites.js:128 是 `canOpen: item.reference_state === 'available'`，与「不给查看资料入口」语义一致；本提交在 :87 前插入 12 行，现平移到 HEAD :140（原文完全相同，属纯位移）。登记仍保留历史 from=108：真实父 :108 是 `})` 收尾，不是 canOpen；只把原登记的 to 由 128 更新为 140，不按 +21 机械平移。"
   },
   {
     "doc": "docs/ui-state-inventory.md",
@@ -774,11 +774,11 @@
     "target": "miniprogram/pages/favorites/favorites.js",
     "from": 108,
     "fromEnd": 110,
-    "to": 126,
-    "toEnd": 128,
+    "to": 138,
+    "toEnd": 140,
     "kind": "correction",
     "symbol": "canOpen",
-    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+    "reason": "真实父（53354fe7）:126-128 是 `available:`、可用性注释与 `canOpen:`，语义正确；本提交在 :87 前插入 12 行，现平移到 HEAD :138-140（三行原文完全相同，属纯位移）。登记保留历史 from=108-110：真实父 :108-110 是 setData 收尾 `})`、空行与 `},`，不含 canOpen；只更新 to 两端，不按 +21 机械平移。"
   },
   {
     "doc": "docs/ui-state-inventory.md",
@@ -786,11 +786,81 @@
     "target": "miniprogram/pages/favorites/favorites.js",
     "from": 108,
     "fromEnd": 110,
-    "to": 126,
-    "toEnd": 128,
+    "to": 138,
+    "toEnd": 140,
     "kind": "correction",
     "symbol": "canOpen",
-    "reason": "base（f0b97e16）里 favorites.js 第 108 行是收尾右括号 `})`、108-110 是收尾三行，都不是「不给查看资料入口」这件事；真值在同文件第 128 行的 `canOpen: item.reference_state === 'available'`（紧邻注释「只在服务端说『当前可用』时才提供进入资料页的入口」）。#738 在同一提交里既改了 favorites.js（+25/−4，218→239 行）又写了 108，把自己那行从 110 推到 128。按符号 canOpen 重锚，不做差值平移。"
+    "reason": "真实父（53354fe7）:126-128 是 `available:`、可用性注释与 `canOpen:`，语义正确；本提交在 :87 前插入 12 行，现平移到 HEAD :138-140（三行原文完全相同，属纯位移）。登记保留历史 from=108-110：真实父 :108-110 是 setData 收尾 `})`、空行与 `},`，不含 canOpen；只更新 to 两端，不按 +21 机械平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 282,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 156,
+    "fromEnd": 169,
+    "to": 189,
+    "toEnd": 206,
+    "kind": "correction",
+    "symbol": "onAdd: function (event) {",
+    "reason": "真实父（53354fe7）:156-169 是 targets 结果映射尾部、`setData({ targets... })` 与 `reconcileTargets()` 开头，不是文档所说的「收藏」按钮 `onAdd`；本提交的 HEAD :189-206 才是 onAdd 全体（beginWrite → createFavorite → 成功写回并重读 → 失败写 message）。按符号重取，不是 +21 机械平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 288,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 120,
+    "fromEnd": 143,
+    "to": 151,
+    "toEnd": 175,
+    "kind": "correction",
+    "symbol": "const targets = result.items",
+    "reason": "真实父（53354fe7）:120-143 主要落在 `presentFavorite`／`titleFor`，只到 `loadTargets` 开头，不能证明文档说的「GET /knowledge 第一页取数并按闭集过滤」；本提交 HEAD :151-175 是 loadTargets 全体（knowledgeApi.list → filter/map → setData → reconcile/catch）。按区间语义重取，不是 +21 机械平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 289,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 156,
+    "fromEnd": 169,
+    "to": 189,
+    "toEnd": 206,
+    "kind": "correction",
+    "symbol": "onAdd: function (event) {",
+    "reason": "真实父（53354fe7）:156-169 是 targets 映射/reconcileTargets 段落，不是文档要证的 `POST /favorites` 成功提示与重读；本提交 HEAD :189-206 的 onAdd 覆盖 `createFavorite`、成功 `已收藏：` 与 `loadFavorites()`。按符号重取，不是 +21 机械平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 290,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 171,
+    "fromEnd": 188,
+    "to": 208,
+    "toEnd": 230,
+    "kind": "correction",
+    "symbol": "onCancel: function (event) {",
+    "reason": "真实父（53354fe7）:171-188 是 `reconcileTargets` 的 setData 尾部与 `onAdd` 开头，不是取消收藏处理；本提交 HEAD :208-230 才是 onCancel 全体（beginWrite → deleteFavorite → 成功/失败分支）。按符号重取，不是 +21 机械平移。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 291,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 182,
+    "fromEnd": 187,
+    "to": 222,
+    "toEnd": 229,
+    "kind": "correction",
+    "symbol": "if (code === 'NOT_FOUND' || code === 'REVISION_CONFLICT') self.loadFavorites()",
+    "reason": "真实父（53354fe7）:182-187 是 onAdd 的 target guard、请求、成功重读与失败入口，不是取消收藏的失败回滚；本提交 HEAD :222-229 的 onCancel catch 才覆盖 `writeAlive`、错误文案与 `NOT_FOUND`／`REVISION_CONFLICT` 重读。按区间语义重取，不是 +21 机械平移。"
+  },
+  {
+    "doc": "docs/verification/gy-r28-c5-favorites-history-20261021.md",
+    "line": 134,
+    "target": "miniprogram/pages/favorites/favorites.js",
+    "from": 88,
+    "to": 119,
+    "kind": "correction",
+    "symbol": "errorCode: (error && error.code) || ''",
+    "reason": "真实父（53354fe7）:88 是 `loadFavorites` 开头的 `const self = this`，不是读取失败时带出 `errorCode` 的行；真实父 :107 才是 `errorCode: (error && error.code) || ''`，本提交在其前插入 12 行后落到 HEAD :119。按符号重取，不是把 :88 加 21。"
   },
   {
     "doc": "docs/verification/gy-user-chain-20261019.md",
@@ -811,5 +881,15 @@
     "reason": "该行引用文字是 `onMarkAllRead()` 的逐个串行标记（`targets = items.filter(unread)`、`_markReadOne`），旧号 287 在父提交（HEAD^，22ad9082）上却是 `_openDetail` 的前置注释 `/** 社区详情页的统一出口：先校验 uuid，再交给 navigation.openTarget 判路由与跳法。 */`，本来就不是 `onMarkAllRead`；本 PR 在 reload 内加两行后，机械 +2 只会落到 HEAD 289（同一行 `_openDetail` 注释），仍不是声明。HEAD 447 是唯一的 `onMarkAllRead: function () {`（全文 1 行，本次现测）。该页其余行号整体来自 10-18 树（`de66803…`），属既有语义陈旧，按符号纠正，不是 +2 平移。",
     "kind": "correction",
     "symbol": "onMarkAllRead: function () {"
+  },
+  {
+    "doc": "docs/verification/gy-r28-c5-favorites-history-20261021.md",
+    "line": 136,
+    "target": "miniprogram/pages/historydetail/historydetail.js",
+    "from": 137,
+    "to": 160,
+    "kind": "correction",
+    "symbol": "errorCode: (error && error.code) || ''",
+    "reason": "旧锚点 137 在 base（真实 main 53354fe 的 historydetail.js，F3 改动前）上已经是 recognition 分支 `setData(Object.assign(...))` 的收尾右括号（`})` 一类），不是该句要引的「把错误码交给 state-view」；真正对应的是失败分支里的 `errorCode: (error && error.code) || ''`。F3 只新增两行，旧号 137 因此偶然落到新树第 137 行的 `raw: null …` 字段上；机械 137+2 只会落到另一个收尾括号，仍不是该字段。新树（待提交 HEAD）该字段在 :160，`errorCode: (error && error.code) || ''` 在本文件只出现 1 次（本次现测），故按符号取 :160。"
   }
 ]

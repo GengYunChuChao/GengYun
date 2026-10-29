@@ -1252,7 +1252,7 @@
           "name": "C03 202·JobEnvelope 形状（data.kind=synthesis、meta 齐备、ETag/Cache-Control 同口径）"
         }
       ],
-      "blocker": "合成受理端点已装配，仅接受已核对内容引用；真实提供者、核对内容与产物端口未在产品装配接线，明确拒绝；内存任务的**读取**早已接入公共 Job 读面（#152 合成域作业源，读面复用 tts/service.ts 的 inspectJob），**取消**已于 GY-R27（#322）接线（`services/api/src/jobs/sources.ts:153`，域内 `services/api/src/tts/service.ts:711` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实音频/听感评估、播放消费、持久/删除链待验收"
+      "blocker": "合成受理端点已装配，仅接受已核对内容引用；真实提供者、核对内容与产物端口（GY-R68 起）**已在产品装配接线**——`services/api/src/app.ts:1157` 的 `createCheckedContentPortFromConfig`、`services/api/src/app.ts:1158` 的 `createTtsProvider`、`services/api/src/app.ts:1172` 的 `createSynthesisMediaPort(config.executionMode, synthesisMediaWiring)`，产物端口自身由**生产入口** `services/api/src/server.ts:50` 的 `synthesisMediaWiringAssemblyOptions(mediaRealPorts)` 在带 `--approve-real-media-wiring` 时铸造；旧文案「三样未在产品装配接线、明确拒绝」已过期，当前真实卡点是**凭据与媒体域批准**（无 TTS 凭据 ⇒ 503 `PROVIDER_UNAVAILABLE`；产物端口 `unwired` ⇒ 409 `OBJECT_UNAVAILABLE`；已核对内容读不到 ⇒ 409 + reason `AUDIT_STATE_UNREADABLE`），且产品 HTTP 路径的真实 `TextToVoice` 读数仍未取得；内存任务的**读取**早已接入公共 Job 读面（#152 合成域作业源，读面复用 tts/service.ts 的 inspectJob），**取消**已于 GY-R27（#322）接线（`services/api/src/jobs/sources.ts:153`，域内 `services/api/src/tts/service.ts:711` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实音频/听感评估、播放消费、持久/删除链待验收"
     },
     {
       "id": "createConversation",
@@ -1405,7 +1405,7 @@
           "name": "NC2 绿：回答器无法决定版本串 —— 注入自称\"真实模型\"的替身，落库与读面仍是未接真实模型"
         }
       ],
-      "blocker": "受理已装配为 202 + JobEnvelope（文字轮次直接受理；语音轮次须 confirmed 转写，端口未接线时如实 422 INPUT_UNCERTAIN、查不到 404，均不落假成功）；answer 作业源已接入跨 kind 作业读面（services/api/src/conversations/job.ts，GET /jobs/{id} 可返回契约 Job 与 error_code，取消仍如实 503）；回答经输出守卫（services/api/src/conversations/guard.ts）：引用只能逐字取自本次检索集合、用量卡只能取自确定性权威路径，越界一律拒绝并如实记因；**未接真实模型**：model_version/prompt_version/rule_version 一律带 unimplemented:no-real- 前缀且可被机器判据检出，正文是确定性检索条目摘录而非模型结果；真实检索资料覆盖有限（浙江首批 159 条 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发、external_inference 同意闸与 120 题评估仍待后续片"
+      "blocker": "受理已装配为 202 + JobEnvelope（文字轮次直接受理；语音轮次须 confirmed 转写，端口未接线时如实 422 INPUT_UNCERTAIN、查不到 404，均不落假成功）；answer 作业源已接入跨 kind 作业读面（services/api/src/conversations/job.ts，GET /jobs/{id} 可返回契约 Job 与 error_code，取消仍如实 503）；回答经输出守卫（services/api/src/conversations/guard.ts）：引用只能逐字取自本次检索集合、用量卡只能取自确定性权威路径，越界一律拒绝并如实记因；**真实模型已于 GY-R28 W7 接线，四与门不全时回落确定性回答器**：`services/api/src/ai/chat-wiring.ts:74-85` 的 `mode==='live'` 分支给出**装配层拥有**的真实版本串（`model/…` + `prompt/citation-bind/1`；装配点 `services/api/src/app.ts:2321` 调 `planConversationChat`、`services/api/src/app.ts:2363` 注入 `answerVersions`），四个与门＝注入覆盖／`chatProvider≠null`／`egressLedger`+`privacyInFlight`／`executionMode==='real'`；只有 `live` 之外的装配结局（注入覆盖走服务层基线常量；`chatProvider` 为 null／账本不可用／非 `real`）才让 model_version/prompt_version/rule_version **带** `unimplemented:no-real-` 前缀且可被机器判据检出（旧文案的「一律」是绝对量词，与代码不符），此时正文是确定性检索条目摘录而非模型结果；**产品 HTTP 路径的真实外发读数仍未取得**（单测层成立）；真实检索资料覆盖有限（浙江首批 159 条 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发、external_inference 同意闸与 120 题评估仍待后续片"
     },
     {
       "id": "listTurns",
