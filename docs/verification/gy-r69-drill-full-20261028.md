@@ -31,15 +31,15 @@ node tools/verify-g-drill-readings.mjs --update    # 用上一步的读数重写
 | workflows | 15 | >= 15（`.github/workflows/` 下的 `*.yml` 与 `*.yaml` 文件数） |
 | workflowJobs | 25 | >= 25（各 workflow `jobs:` 段两空格缩进键之和） |
 | drillCommands | 21 | 必须精确相等（`DRILL_PLAN` 的条数；稳定型：两种口径都不许滞后，反空转下界 ≥ 20） |
-| allTestFiles | 496 | >= 490（`tests/**/*.test.mjs` 递归计数） |
-| verificationDocs | 298 | >= 297（`docs/verification/*.md`） |
-| totalTestFiles | 467 | = 五条 `test:unit` glob 的分文件数之和 |
-| unitGlobUnion | 467 | 必须等于 totalTestFiles（五条 glob 不许重叠） |
+| allTestFiles | 507 | >= 490（`tests/**/*.test.mjs` 递归计数） |
+| verificationDocs | 299 | >= 297（`docs/verification/*.md`） |
+| totalTestFiles | 478 | = 五条 `test:unit` glob 的分文件数之和 |
+| unitGlobUnion | 478 | 必须等于 totalTestFiles（五条 glob 不许重叠） |
 | packageScripts | 26 | -（`package.json` 的 scripts 条数） |
 | verifyTestScripts | 18 | 每条都必须出现在本块里（跑或写明原因） |
-| realPgArms | 13 | >= 13（`ci-real-pg-readings-gates.test.mjs` 里的臂条数；只读，不复制基线） |
+| realPgArms | 14 | >= 13（`ci-real-pg-readings-gates.test.mjs` 里的臂条数；只读，不复制基线） |
 | drilledArms | 0 | 闸门表（`realPgArms`）里同时出现在演练清单中的条数；本片真跑的 3 条自起集群臂不在那张表里，故为 0（它们逐条写在下面「未跑」表之外的真实读数里） |
-| globFiles.unit | 396 | -（`tests/unit/*.test.mjs` 的分文件数） |
+| globFiles.unit | 407 | -（`tests/unit/*.test.mjs` 的分文件数） |
 | globFiles.privacy | 17 | -（`tests/privacy/*.test.mjs` 的分文件数） |
 | globFiles.media | 8 | -（`tests/media/*.test.mjs` 的分文件数） |
 | globFiles.reference | 26 | -（`tests/reference/*.test.mjs` 的分文件数） |
@@ -101,6 +101,7 @@ node tools/verify-g-drill-readings.mjs --update    # 用上一步的读数重写
 | `node tests/integration/recognitions-speech-purge-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
 | `node tests/integration/retention-clock-drill-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
 | `node tests/integration/media-row-purge-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
+| `node tests/integration/consent-zero-policy-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
 <!-- G-DRILL:END -->
 
 ## 3. 两类读数，不要混
@@ -159,6 +160,13 @@ M4「同义反复」是**测试文件里另写的一个假实现**（`tautologic
 
 > 上面第 6 条里的「整块逐字节」是审查报告的原文措辞；本页与代码现在统一写作「整块逐行比对（规范化之后）」，
 > 两者说的是同一件事（**规范化之后**逐行逐字符比，行尾空格与换行风格不算手改）。
+
+> **R69 后补（2026-10-29，写手切片 `test/gy-r69-consent-zero-policy`）**：本页第 3、4 条里的「另外 13 条」是**本页那次演练**的
+> 快照。此后 `READING_GATE_BASELINES` 增加了第 14 条臂 `tests/integration/consent-zero-policy-pg.mjs`（`consent_policies` **0 行**
+> 时的真实后果矩阵），块里 `realPgArms` 因此从 13 变成 14、并自动多出它那一行「未跑」——那行是
+> `tools/lib/g-drill-readings.mjs` 的 `PG_ARM_NOT_RUN_REASON` 常量统一渲染的措辞，意思是「**本页这次演练**没跑它」，
+> 不是说没人跑过：该臂在写手切片里**真跑过**（本机自起 PG 17.11 一次性集群 + 生产装配真 HTTP，`RESULT=PASS 14 组`），
+> 只是那次真跑记录在本切片的回报里、没有重跑本页的 21 条一次性读数，故本页照旧 `drilledArms = 0`。
 
 ## 6. 已知限制
 
