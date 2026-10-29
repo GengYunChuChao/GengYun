@@ -41,7 +41,8 @@
     "test:integration:backup-copies-purge-pg": "node tests/integration/backup-copies-purge-pg.mjs",
     "test:integration:online-purge-pg": "node tests/integration/online-purge-pg.mjs",
     "test:integration:retention-purge-pg": "node tests/integration/retention-purge-pg.mjs",
-    "verify:purge-schedule": "node tools/verify-purge-schedule.mjs"
+    "verify:purge-schedule": "node tools/verify-purge-schedule.mjs",
+    "verify:real-capability": "node tools/verify-real-capability-config.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.1",
