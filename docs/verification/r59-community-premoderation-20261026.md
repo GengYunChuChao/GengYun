@@ -27,7 +27,7 @@
 | 改帖两步（同口径，第二处落点） | `services/api/src/community/service.ts:1197-1198`、`:1203-1222` | 新 revision 必须重送审：先 `commitPostIfCurrent` 落待审，再 `link.publish` 这**个新 revision** |
 | 投稿面路由级门 | `services/api/src/routes/community.ts:212-220` | `POST /community/posts` 的 `preHandler: postingPreHandlers(...)`（功能开关 + 投稿同意门）在**服务层之前** |
 | 下架（发布后） | `services/api/src/routes/admin.ts:416-424` | `POST /admin/posts/:id/hide`，scope `sources:write`；服务层做可见性 CAS 到 `hidden` |
-| 作者侧状态文案（小程序三页） | `miniprogram/pages/community/community.js:190-192`、`miniprogram/pages/communitydetail/communitydetail.js:173-176`、`miniprogram/pages/communitycreate/communitycreate.js:99-108` | 通过 ⇒ 空串或「已通过先行审核」；下架 ⇒「已下架（仅本人可见）」；**其余（含 `pending` 与 `rejected`）⇒「待审／未公开」** |
+| 作者侧状态文案（小程序三页） | `miniprogram/pages/community/community.js:190-192`、`miniprogram/pages/communitydetail/communitydetail.js:200-201`、`miniprogram/pages/communitycreate/communitycreate.js:99-108` | 通过 ⇒ 空串或「已通过先行审核」；下架 ⇒「已下架（仅本人可见）」；**其余（含 `pending` 与 `rejected`）⇒「待审／未公开」**；历史三档口径（旧锚点 173-176 在父上实为 `body`/`author` 字段），#749 后统一由 `api.outcomeOf` 投影（现行锚点见本行 200-201） |
 
 ### 1.2 半落地（有代码，但离「先审后发」的完整语义还差一截）
 
@@ -92,7 +92,7 @@
    `audit_state = 'rejected'` 的行；也**没有通知对象**可发。把「驳回」想成「先发出去、后被打回」是错的。
 2. **`community.js` 里没有「已通过先行审核」这个字面量。** 列表页作者侧通过态是**空串**
    （`miniprogram/pages/community/community.js:190-192`）；该文案只出现在
-   `miniprogram/pages/communitydetail/communitydetail.js:173`（公开侧 `publicLabel`）与
+   `miniprogram/pages/communitydetail/communitydetail.js:200`（公开侧 `publicLabel`；历史锚点误指 173，文案表现集中在 `miniprogram/utils/community-api.js` 的 `OUTCOMES`）与
    `miniprogram/pages/communitycreate/communitycreate.js:106`（发帖 toast）。
    另注意详情页公开侧是「**未公开／待审**」，语序与作者侧「待审／未公开」**相反**。
 3. **两步状态有第二处落点：改帖（`editPost`）。** 之前只登记了发帖；
@@ -186,7 +186,7 @@ node tools/verify-doc-anchors.mjs        # 不带 --strict，会打印 SCAN: 行
 第二段（`hidden` 路径的再分档与理由码入口）在分支 `fix/gy-r68-moderation-hidden-outcome` 上追加。
 两次改动都按**钉 5 自带的翻转要求**（见钉 5 失败提示原文：「文案改动可能是**有意**的…那就是本切片
 点名的 S5 切片，请把三页 + 本钉子 + 证据页一起改」）把「钉 5」从**钉缺口**翻成**钉修好之后的事实**。
-本文以下位置记的是**翻转前**的口径，原文保留以便对照，**不要再按它们复算**：
+本文以下位置记的是**翻转前**的口径，原文保留以便对照，**不要再按它们复算**。本次仅把 §1 第 30 行与 §3 第 95 行指向 `communitydetail.js` 的两处陈旧行号按当前符号改到 200-201／200，翻转前口径与结论不变（历史事实与错误见 `.local/HANDOFF-anchors.md`）：
 
 - 第 30 行（§1 表的「审核域联动注入」行）与本文全文的「三页只有三档文案」前提：现状已是
   **六个结论档**（`approved`/`pending`/`quarantined`/`rejected`，加 `hidden` 的四种分档
