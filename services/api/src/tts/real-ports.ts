@@ -1,14 +1,14 @@
 /**
  * 合成域 · 真实产物存储接线的**生产入口派生**（GY-R68 · 装配漏项修补）。
  *
- * 上游断点（本轮复核的代码事实，不是推测）：合成产物端口 `synthesisMediaWiring` **只认显式注入**
- * （`tts/media.ts` 的 `SynthesisMediaPortOptions`：批准能力 + `s3_compatible` 端口，两项都没有默认值、
- * 也不从 env 折算）；`app.ts` 按边界要求**只转发、绝不铸造**（`tts/media.ts` 的 JSDoc：装配层自行铸造
- * 等于自我批准）。而生产入口 `server.ts` 从不传它 ⇒ 即使运维带上 `--approve-real-media-wiring`
- * （媒体域已按该参数铸造批准能力、并构造出 S3 兼容端口），合成产物端口在 `real` 下仍**恒为 `unwired`**：
- * 有凭据时 `POST /speech/synthesis` 受理前一律 409 `OBJECT_UNAVAILABLE`（`tts/service.ts` 的 ④ 道门），
- * 无凭据时更早触发 503 `PROVIDER_UNAVAILABLE`（③ 道门）——两条都是 `retryable: false`，且都不产生
- * 「替身成功封套」。结论：合成音频永远写不进真实桶，`--approve-real-media-wiring` 对 TTS 完全无效。
+ * 上游断点（**历史**：接线前的代码事实，这里保留以免下次被当成现状读）：合成产物端口
+ * `synthesisMediaWiring` **只认显式注入**（`tts/media.ts` 的 `SynthesisMediaPortOptions`：批准能力 +
+ * `s3_compatible` 端口，两项都没有默认值、也不从 env 折算）；`app.ts` 按边界要求**只转发、绝不铸造**
+ * （`tts/media.ts` 的 JSDoc：装配层自行铸造等于自我批准）。**修复前**生产入口 `server.ts` 从不传它 ⇒
+ * 即使运维带上 `--approve-real-media-wiring`，合成产物端口在 `real` 下仍恒为 `unwired`
+ * （有凭据时 `POST /speech/synthesis` 受理前 409 `OBJECT_UNAVAILABLE`／无凭据时更早 503
+ * `PROVIDER_UNAVAILABLE`，均 `retryable: false`）。**现状**：`server.ts` **真的传了**——它在
+ * `resolveMediaRealPorts` 返回非 `null` 时调用本文件的 `synthesisMediaWiringAssemblyOptions`，并把结果展开进 `buildApp({...})`。
  *
  * 本文件只做一件事，且**只做这一件**：把生产入口**已经铸造好的**真实端口（`MediaRealPorts`）折算成
  * `buildApp` 的 `synthesisMediaWiring` 装配选项——同一个 S3 兼容端口 ＋ 此刻显式铸造一次的合成产物
