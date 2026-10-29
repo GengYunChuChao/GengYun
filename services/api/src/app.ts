@@ -226,7 +226,7 @@ import { createCommunityModerationLink, type CommunityModerationLink } from './c
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 // GY-I14（#14）审核域：**追加式**装配（只加 import + 一个可选注入项 + 一处作业源注册 + 一处 decorate）。
 // 跨线披露：本块为纯追加（不改既有域行为、不重排既有装配）；回退 = 删除本块四处。
-import { createModerationService } from './moderation/service.ts'; import { demoAwareModerationPorts } from './moderation/demo-port.ts';
+import { createModerationService } from './moderation/service.ts'; import { demoAwareModerationPorts } from './moderation/demo-port.ts'; import { moderationServiceAssemblyOption } from './moderation/live-assembly.ts';
 import { createPostgresModerationLedger } from './moderation/ledger-pg.ts';
 import type { ModerationService } from './moderation/service.ts';
 import { createModerationJobSource } from './moderation/job-source.ts';
@@ -509,7 +509,7 @@ export interface BuildAppOptions {
     callbackKey?: string;
     // 规则层选项（**可选**，只供回归测试注入冻结时钟）。不传 ⇒ `createModerationService`
     // 内部沿用默认口径（真实 `Date.now` + 默认 50ms 预算，超时 ⇒ 隔离），与不传该字段等价。
-    ruleOptions?: Record<string, unknown>;
+    ruleOptions?: Record<string, unknown>; /** GY-R70（**只转发、绝不自行铸造**）：真实审核接线的显式批准能力，由 `moderation/live-assembly.ts` 的 `approveModerationLiveWiring()` 铸造；类型刻意是 `unknown`，判定只认铸造点的对象身份（形状相同的字面量/派生/克隆一律无效）。不传 ⇒ `real` 下审核域保持既有整域 503 fail-closed（与改前逐字相同）。 */ liveApproval?: unknown;
   };
   // GY-I16 收藏（#16）注入项。**全部可选**：不传时——收藏域新建内存 store；引用可用性端口
   // **已于 #167 接线**（缺省即同文件 `defaultVisibility`：`createWiredVisibilityPort`，可用性按
@@ -929,13 +929,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     store: communityStore,
     authors: communityAuthors,
   });
-  // GY-I14（#14）审核域：`real` ⇒ fail-closed 整域（未授权真实 tms/ims 供应商）；其余模式 ⇒ 替身端口
-  // （替身只回报"无结论"⇒ 隔离）。**应用装配路径永不注入真实适配器端口**（零端口注入）；唯一例外是显式环境开关 `MODERATION_DEMO_PORT=pass` 的**合成演示端口**（仅非 real，real 恒拒绝并记启动日志，见 `moderation/demo-port.ts`）。
-  // 本接线起：非 real 模式下**内容权威端口**默认是同源社区权威（除非显式注入）。
+  // GY-I14（#14）审核域：`real` ⇒ fail-closed 整域；其余模式 ⇒ 替身端口（替身只回报"无结论"⇒ 隔离）。**应用装配路径永不注入真实适配器端口**；唯一例外是 `MODERATION_DEMO_PORT=pass` 的合成演示端口（仅非 real，real 恒拒绝并记启动日志）。
+  // 非 real 模式下**内容权威端口**默认是同源社区权威（除非显式注入）。GY-R70 · **审核域真实接线的装配决定点**就在下面这一处：
+  // `moderationServiceAssemblyOption` 只在「real ∧ 凭据齐备（`config.moderationLive`）∧ 显式批准能力已铸造」三条同时成立时返回 `liveWiring`；否则该键不出现 ⇒ 保持既有整域 503 `PROVIDER_UNAVAILABLE`（`retryable: false`），⛔ 不放行、⛔ 不回退替身；拒绝只写一行闭集原因，不含异常文本/凭据。
   const moderationService: ModerationService =
     moderationInjection?.service ??
     createModerationService({
-      executionMode: config.executionMode,
+      ...moderationServiceAssemblyOption({ executionMode: config.executionMode, approval: moderationInjection?.liveApproval, credentials: config.moderationLive?.credentials ?? null, log: (line) => app.log.warn(line) }),
       ...demoAwareModerationPorts({ injected: moderationInjection?.ports, executionMode: config.executionMode, env: { MODERATION_DEMO_PORT: process.env['MODERATION_DEMO_PORT'] }, log: (line) => app.log.warn(line) }),
       ...(moderationInjection?.authority !== undefined
         ? { authority: moderationInjection.authority }
