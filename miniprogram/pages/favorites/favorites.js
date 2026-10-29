@@ -84,6 +84,18 @@ Page({
     return !!read && read.epoch === (this._epoch || 0) && read.seq === this[key]
   },
 
+  // 写操作（收藏/取消）绑定发起时的页面代次。离页不会取消已发出的服务端写，但旧响应
+  // 不得写回隐藏页或重进后的新页面，也不得替新页面发起 loadFavorites 重读。这里单独
+  // 捕获页面代次，**不**复用/推进读取的 _favoritesRead、_targetsRead seq：写回调不是读取，
+  // 不能把当前代次正在飞的新读取判成过期。
+  beginWrite: function () {
+    return { epoch: this._epoch || 0 }
+  },
+
+  writeAlive: function (write) {
+    return !!write && write.epoch === (this._epoch || 0)
+  },
+
   loadFavorites: function (cursor) {
     const self = this
     const read = self.beginRead('_favoritesRead')
@@ -180,11 +192,15 @@ Page({
     const index = Number(event.currentTarget.dataset.index)
     const target = self.data.targets[index]
     if (!target || target.favorited) return
+    const write = self.beginWrite()
     self.setData({ busy: true, message: '正在收藏…' })
     favoritesApi.createFavorite(target.type, target.id, target.revision).then(function () {
+      // 离页只丢弃本页旧响应；服务端写入仍可能完成，不能用“没写回”反推“没收藏”。
+      if (!self.writeAlive(write)) return
       self.setData({ busy: false, message: '已收藏：' + target.title })
       self.loadFavorites()
     }).catch(function (error) {
+      if (!self.writeAlive(write)) return
       self.setData({ busy: false, message: favoritesApi.messageFor(error) })
     })
   },
@@ -195,13 +211,18 @@ Page({
     const index = Number(event.currentTarget.dataset.index)
     const item = self.data.items[index]
     if (!item) return
+    const write = self.beginWrite()
     self.setData({ busy: true, message: '正在取消收藏…' })
     favoritesApi.deleteFavorite(item.id, item.revision).then(function () {
+      // 同上：离页后旧成功不得写新页面，也不得替新页面重读。
+      if (!self.writeAlive(write)) return
       self.setData({ busy: false, message: '已取消收藏。' })
       // 取消后重新读取（不走本地删除，确保列表与服务端一致）。
       self.loadFavorites()
     }).catch(function (error) {
       // 已被别人删掉 / 版本已变时不猜结果：如实报错，并回到服务端重读（不本地删除，也不假装成功）。
+      // 但旧代次的错误（含 NOT_FOUND／REVISION_CONFLICT）只丢弃，不能写当前页或触发重读。
+      if (!self.writeAlive(write)) return
       self.setData({ busy: false, message: favoritesApi.messageFor(error) })
       const code = error && error.code
       if (code === 'NOT_FOUND' || code === 'REVISION_CONFLICT') self.loadFavorites()

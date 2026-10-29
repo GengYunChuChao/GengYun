@@ -131,7 +131,7 @@
 
 ### 5.2 修：页面把错误码交给统一状态组件（新增状态不新写状态块）
 
-- `miniprogram/pages/favorites/favorites.js:36` data 增 `errorCode`，`:88` 失败时原样带出 `(error && error.code) || ''`；`favorites.wxml` 的「收藏读取失败」`<state-view>` 增 `errorCode="{{errorCode}}"`。
+- `miniprogram/pages/favorites/favorites.js:36` data 增 `errorCode`，`:119` 失败时原样带出 `(error && error.code) || ''`；`favorites.wxml` 的「收藏读取失败」`<state-view>` 增 `errorCode="{{errorCode}}"`。
 - `miniprogram/pages/history/history.js:33` / `:81`、`history.wxml` 同构。
 - `miniprogram/pages/historydetail/historydetail.js:29` / `:160`；`historydetail.wxml` 里原来自写的 `<view class="notice notice--warn">` 换成 `<state-view status="error" errorCode="{{errorCode}}" …>` —— 按派单要求复用组件，不自写状态块。
 - 效果：`components/state-view` 的 `refresh()` 见到 `resolved.status === 'denied'` 就渲染 denied 语气并自动压掉「重试 / 去登录」动作，页面无需自己判断 403。
