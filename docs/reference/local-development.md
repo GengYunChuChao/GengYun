@@ -239,3 +239,108 @@ npm ci --proxy=http://127.0.0.1:7897 --https-proxy=http://127.0.0.1:7897
 **这 159 条「逐行标未核对、无剂量卡片」是正确行为**，不是缺陷：未核对内容可以出现在演示查询面，但不得冒充已核对，也不得带出用量卡（用量卡的合格来源、制剂、条件、原文缺项，见上表「模拟／种子能展示但无法产用量卡」一行）。
 
 读数来源：本机实测 `catalog_read.current_knowledge` = 0 行、`catalog_read.current_verified_sources` = 0 行、`v_active_source_version` = 0 行、`v_knowledge_applicability` = 0 行、`knowledge_versions` = 159 行、`applicability` = 22 行；种子面用 `createReferenceQueryService({includeUnverifiedSeed: true}).seedRows()` 实跑得 159 行（119 / 35 / 5、`review_status` 全 `unverified`）。两者相加即读面 159 条——本页未起完整 HTTP 链路，故不把这一条写成端到端验收。
+
+## 本地为什么发不出帖（用途授权层）
+
+一句话：本地库 `consent_policies` 是 **0 行**，`POST /me/consents` 因为「没有可用的已核验用途政策」被 403，`POST /posts` 在**授权闸**就被 403；审核层（含任何演示／替身审核端口）根本没有被调用。读面不受影响。这不是缺陷，是授权层的正确 fail-closed。
+
+### 实测现象（本机，2026-10-29，基线 `719e4267`）
+
+环境：`APP_EXECUTION_MODE=stub`、`API_PORT=3102`、`DATABASE_URL` 指向本机 PG（`127.0.0.1:5544`，库 `gengyun`，该集群唯一角色是 `postgres`）、`APP_KNOWLEDGE_UNVERIFIED_SEED=1`、`WECHAT_STUB_SUBJECT=qa-dev-1`；先用 `POST /api/v1/auth/wechat`（`{"code":"qa-dev-1"}`）拿用户会话。
+
+| 请求 | 读数 |
+| --- | --- |
+| `POST /api/v1/me/consents`（`{"purpose":"public_posting","policy_version":"v1","recipient_ids":[]}`） | **403** `CONSENT_REQUIRED`「没有可用的已核验用途政策」，`retryable:false` |
+| `POST /api/v1/posts`（`{"title":"…","body":"…","media_ids":[]}`） | **403** `CONSENT_REQUIRED`「当前身份或用途授权不满足要求」，`retryable:false` |
+| `GET /api/v1/posts` | **200** `{"items":[],"next_cursor":null}` |
+| `GET /api/v1/me/consents` | **200** `{"items":[],"next_cursor":null}` |
+| `GET /api/v1/me/privacy-policy` | **200** `{"version":"unpublished","purposes":[],"recipients":[],"training_enabled":false}` |
+
+库侧同期读数：`consent_policies` **0**、`consent_records` **0**、`privacy_epochs` **0**、`community_posts` **0**；两条写请求之后这四个数字仍是 0（被拒的请求没有落任何内容行）。
+
+两条写请求都要带 `Idempotency-Key`（8..128 字符），缺了先得 400 `IDEMPOTENCY_KEY_REQUIRED`（`services/api/src/community/validate.ts:93-99`）；未登录则是 401——**鉴权先于授权**，403 只发给已认证的会话。
+
+### 链路（读码核实）
+
+| 步骤 | 位置 |
+| --- | --- |
+| `POST /me/consents` 注册与入参（`purpose` 闭集四用途、版本 1..80、`recipient_ids`≤30 且去重） | `services/api/src/routes/consents.ts:38-53` |
+| 授予在单事务里：先锁账号与会话、核对 `auth_epoch` | `services/api/src/privacy/consent-pg.ts:66-89` |
+| **政策解析**：`SELECT * FROM consent_policies WHERE purpose=$1 AND enabled AND reviewed_at<=clock_timestamp() AND valid_from<=clock_timestamp() AND valid_until>clock_timestamp()` | `services/api/src/privacy/grant-pg.ts:47-48` |
+| **0 行 ⇒ 显式 403**（不是 500） | `services/api/src/privacy/grant-pg.ts:49` |
+| 来源／证据／`content_sha256`／请求版本核验 | `services/api/src/privacy/grant-pg.ts:50-54` |
+| 接收方绑定与 `recipients` 表双向一致（仅 `recipient_ids` 非空时） | `services/api/src/privacy/grant-pg.ts:59-70` |
+| `POST /posts`：`preHandler` 先跑用途闸，handler 才落内容 | `services/api/src/routes/community.ts:212-222` |
+| 闸的装配：有授权端口 ⇒ `[requireUser, consent({purpose:'public_posting'})]` | `services/api/src/routes/community.ts:417-422` |
+| 授权闸**只在配了数据库时**装配；无 `DATABASE_URL` ⇒ 端口缺失 ⇒ 直通 | `services/api/src/app.ts:995-999` |
+| 闸内部：单事务读 `privacy_epochs` + `consent_records` 并核对两者一致 | `services/api/src/privacy/consent-pg.ts:138-146` |
+| 读不到该用途的授予 ⇒ `CONSENT_REQUIRED` | `packages/privacy/guard.mjs:112-117` |
+| 该错误在事务出口按错误码映射成固定文案「当前身份或用途授权不满足要求」 | `services/api/src/privacy/consent-pg.ts:94-95` |
+| 错误码 → HTTP 403（`CONSENT_REQUIRED` 属 403 闭集） | `services/api/src/contract.ts:17`、`services/api/src/errors.ts:78` |
+| 读面无此闸：`GET /posts` 只挂 `requireUser` | `services/api/src/routes/community.ts:202-210` |
+| 审核层在**handler 内部**、任何内容行落库之前才被问 | `services/api/src/community/service.ts:1013`、`services/api/src/community/moderation-link.ts:467` |
+
+为什么 0 行政策是 403 而不是 500：`/me/consents` 是我们亲手 `throw` 的**语义化拒绝**（`services/api/src/privacy/grant-pg.ts:49`），`/posts` 是授权闸按错误码映射出的 403（`services/api/src/privacy/consent-pg.ts:94-95`）。真正的服务端故障另有其码：表缺失、权限不足一类走 `services/api/src/privacy/consent-pg.ts:97` 的 503 `PROVIDER_UNAVAILABLE`（**只读码判断，本页未构造该故障实测**）。
+
+### 「怎么才算有政策」：判据与「仓内没有任何种子」
+
+表定义（`0009`，无种子）：`services/api/db/migrations/0009_consent_policy.sql:4-23`。
+
+- 列：`purpose`（闭集 `consent_purpose`）、`policy_version`（1..80）、`source_kind ∈ ('verified','synthetic')`、`source_ref`、`content_sha256`（`^[0-9a-f]{64}$`）、`review_evidence_ref`、`recipient_bindings`（jsonb 对象）、`valid_from`／`valid_until`、`reviewed_by`／`reviewed_at`、`enabled`。
+- 表级约束：`valid_until > valid_from`；`reviewed_by` 与 `reviewed_at` 同空同非空；**`enabled` ⇒ `reviewed_at` 非空**；`UNIQUE(purpose,policy_version)`；每个用途至多一个 `enabled` 行：`services/api/db/migrations/0009_consent_policy.sql:19-24`。
+- 已审内容**不可改、不可删**（`reviewed_at` 非空后只允许改 `enabled`／`updated_at`）：`services/api/db/migrations/0009_consent_policy.sql:25-40`。
+
+「已核验」是**四层同时成立**，缺一层仍然 403：
+
+1. 行存在、`enabled=true`、`reviewed_at<=now`、`valid_from<=now<valid_until`（已审且在有效期内）——`services/api/src/privacy/grant-pg.ts:47-48`；
+2. `source_kind='verified'`（生产），或 `'synthetic'`（**只有测试显式注入 `allowSyntheticGrantPolicy` 才放行**，正常装配一律拒绝）——`services/api/src/privacy/grant-pg.ts:50-53`；
+3. `source_ref` 与 `review_evidence_ref` 必须是 `https://` 且不带用户名口令（synthetic 用 `fixture://`），`content_sha256` 必须是 64 位小写十六进制——`services/api/src/privacy/grant-pg.ts:20-25`、`services/api/src/privacy/grant-pg.ts:50-53`；
+4. 请求里的 `policy_version` 必须等于该生效行的版本（不等 ⇒ 409 `REVISION_CONFLICT`）；`recipient_ids` 非空时每个接收方都要在 `recipient_bindings` 与 `recipients` 表双向一致（含免训练／删除证据与留存上限）——`services/api/src/privacy/grant-pg.ts:54`、`services/api/src/privacy/grant-pg.ts:59-70`。
+
+仓内**没有**插入政策行的东西：
+
+- `0009` 文件头写明「No production policy or recipient seeds」；`services/api/db/migrations/**` 里除 `CREATE TABLE` 外没有任何政策 `INSERT`。
+- `db/seeds/**` 全是资料／知识种子（`seed_reference.sql`、`seed_herbicides_verified.sql` 等），`grep -i consent db/seeds` **0 命中**。
+- 全仓唯一写 `consent_policies` 的地方是测试里的 owner 级 `INSERT`（如 `tests/integration/consent-grant-pg.mjs:67`），且都是 `source_kind='synthetic'` 并依赖测试注入。
+- API 侧**没有**政策的写面：`services/api/src/**` 对 `consent_policies` 只有 `SELECT`（`services/api/src/privacy/grant-pg.ts:47`、`services/api/src/privacy/privacy-policy.ts:91`）。
+- 运行时角色也**没有**写权限：`consent_granter` 只拿到 `SELECT` 与 `UPDATE(updated_at)`，`INSERT` 只授给 `consent_records`／`privacy_epochs`——`services/api/db/roles/consent_granter.sql:15-19`。
+
+所以在 `tools/local-dev` 那条现役路径上同样发不出帖：`api.mjs` 注入了真 `DATABASE_URL`（`tools/local-dev/api.mjs:12-14`），授权闸因此装配（`services/api/src/app.ts:995-999`），而它的库里同样没有政策行。
+
+### 合法做法（两条），以及不要做什么
+
+1. **由用户／管理员在受控环境导入真实政策行**：由拥有表写权限的发布／运维身份导入，管理员账号进 `reviewed_by`／`reviewed_at`，`source_ref`／`review_evidence_ref` 放真实 `https` 来源与审查证据，`content_sha256` 由真实条款正文算出，并给出明确有效期。这是数据运维动作，不属于任何 PR、脚本或本地工具；本页**不提供**「能直接粘贴出一行可用政策」的模板。
+2. **如实承认本地无法演示发布**：0 行政策下的 403 是**正确的 fail-closed**，不是缺陷、不需要开关绕开。本地能演示的边界是「读面可用 + 写面被拒」（见上表）；要端到端演示发布，必须先有第 1 条的真实政策行（或由测试注入 synthetic 政策——那只属于组件级证据，不是本地演示）。
+
+⛔ **不要**在本地库手插一条 `policy_version='v1'` 的假政策：
+
+- 它把「已核验政策」这条隐私红线变成**可自助绕过**；
+- 要让它生效必须 `enabled=true`，而表约束要求 `reviewed_at` 非空；一旦如此，这行就**永久不可改、不可删**（`services/api/db/migrations/0009_consent_policy.sql:19-40`），本地库从此带着一条伪造的「已审条款」；
+- 测试注入（`allowSyntheticGrantPolicy`）是**测试装配参数**，不是产品开关，不能当本地绿通道。
+
+### 与「审核」这一层的关系（含 `MODERATION_DEMO_PORT`）
+
+- 授权闸是 `preHandler`（`services/api/src/routes/community.ts:212-222`），审核在 handler 内部（`services/api/src/community/service.ts:1013`、`services/api/src/community/moderation-link.ts:467`）。**闸拒 ⇒ 审核代码根本不会执行**，所以「演示审核端口」改变不了这一层的 403。
+- 它解决的是另一格：**不配数据库**时授权闸不装配（`services/api/src/app.ts:995-999`），`POST /posts` 才会走到审核层、并因模型层未接线被拒——本机实测该组合（默认装配、未设演示端口开关）是 **422 `INPUT_UNCERTAIN`**（`details[0].code=MODEL_NOT_EVALUATED`、`model_layer=not_wired`），不是 403。
+- `MODERATION_DEMO_PORT` 这条开关的实况要按基线分开读：本页实测时（`719e4267`）它在仓内 **0 命中**；`#757` 合入后（基线 `b44f7941`）它已经落地——实现 `services/api/src/moderation/demo-port.ts`，装配处 `services/api/src/app.ts:939`，字段说明见 `docs/reference/configuration.md:19` 与 `.env.example:37`，逐格读数见 `docs/verification/gy-r68-moderation-gate-20261028.md:305-307`（① 不设 ⇒ `422` + 内容行 0；② 非 real + `pass` ⇒ **201** + 内容行恰好 1）。所以：在 `719e4267` 上把它设成 `pass` 不会有任何装配效果，在 `b44f7941` 上会生效；但**它改变不了本页这一格**——**配了数据库 + 0 行政策**时，请求在 `preHandler` 就被授权闸 403，审核端口连被问的机会都没有。这就是「本地发不出帖」与「审核演示」两件事不能互相替代的原因。
+
+### 复现命令（本机实测，可重复）
+
+```powershell
+# 1) 起 stub API（PG 用本机 5544 上的 gengyun 库；连接串账号口令按你本机实际，本页不写口令）
+$env:APP_EXECUTION_MODE='stub'; $env:API_PORT='3102'; $env:APP_KNOWLEDGE_UNVERIFIED_SEED='1'; $env:WECHAT_STUB_SUBJECT='qa-dev-1'
+$env:DATABASE_URL='postgresql://<用户>:<口令>@127.0.0.1:5544/gengyun'
+node services/api/src/server.ts
+
+# 2) 合成身份登录：POST /api/v1/auth/wechat  {"code":"qa-dev-1"}，取返回的 access_token 作 Bearer
+# 3) 两条写请求（都要带 8..128 字符的 Idempotency-Key）
+#    POST /api/v1/me/consents  {"purpose":"public_posting","policy_version":"v1","recipient_ids":[]}
+#    POST /api/v1/posts        {"title":"…","body":"…","media_ids":[]}
+# 4) 读面：GET /api/v1/posts ／ GET /api/v1/me/consents ／ GET /api/v1/me/privacy-policy
+```
+
+注意事项（本机踩到／未覆盖的）：
+
+- `Start-Process` 做重定向时，如果环境里同时存在 `HTTP_PROXY` 与 `http_proxy` 这类大小写重复键，会报 `Item has already been added`；当次进程内删掉小写那几个即可（与上文「已知不一致与缺陷」表同一条）。
+- 登录会为合成身份新建 1 行 `users`（实测 12→13）；它是身份行，不是政策行，也不写 `consent_*`。
+- 本页实测用的连接账号是该集群里唯一的 `postgres`（超级用户），**不是**主路径里的受限角色 `gengyun_local_runtime`。两条写请求的 403 发生在授权闸的错误码分支、与角色无关，但「受限角色下是否同样 403」本页未单独实测。

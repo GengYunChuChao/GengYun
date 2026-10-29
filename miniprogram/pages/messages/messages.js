@@ -139,7 +139,9 @@ Page({
   reload: function (done) {
     const epoch = (this._epoch = (this._epoch || 0) + 1)
     const that = this
-    this.setData({ status: 'loading', errorText: '', errorCode: '', stateTitle: '', stateDesc: '' })
+    // 换代即作废旧分页：旧 `onLoadMore` 的响应会因 epoch 不符提前 return，**不会**再替自己解忙锁。
+    // 因此忙锁必须由新一代替这里复位，否则「翻页在飞时刷新」会让 `loadingMore` 永久为 true。
+    this.setData({ status: 'loading', errorText: '', errorCode: '', stateTitle: '', stateDesc: '', loadingMore: false })
     api.listMessages({}).then(function (page) {
       if (epoch !== that._epoch) return
       const items = that._decorate(page.items)

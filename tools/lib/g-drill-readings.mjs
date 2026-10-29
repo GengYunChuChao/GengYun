@@ -337,6 +337,11 @@ export const SCOPE_NOTES = Object.freeze([
     reason: '它全部内容就是清单里的 `node tools/verify-purge-schedule.mjs`',
   },
   {
+    script: 'verify:real-capability',
+    marker: '不在演练范围',
+    reason: '它是自检命令（默认恒 exit 0、不判红），且 `--strict` 要有真实凭据才有意义（无凭据时所有能力组判 n-a ⇒ 判定恒 PASS）；演练清单收的是会判红的门禁',
+  },
+  {
     entry: 'node tools/run-python.mjs tools/validate_openapi_standard.py',
     marker: '未跑',
     reason: OPENAPI_STANDARD_REASON,

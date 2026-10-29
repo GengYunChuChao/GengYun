@@ -579,6 +579,19 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
       + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
+  {
+    path: 'tests/integration/consent-zero-policy-pg.mjs',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的 step「零政策矩阵'
+      + '（R69：consent-zero-policy-pg / 全链迁移 / 生产装配零注入 / 403 矩阵 + 三级负控制）'
+      + '」跑 `node tests/integration/consent-zero-policy-pg.mjs`'
+      + '（该 step 先 `CREATE DATABASE gengyun_consent_zero_test`，带 `2>&1 | tee "$log"`，'
+      + '并用 `awk` 数 `PASS ` 行、要求不少于 14 条读数闸门）。'
+      + '它证的是 `consent_policies` **0 行**时每个入口的真实后果（侦察 `RECON.md` §7.1 那张矩阵的第一份真库读数）：'
+      + '全链 48 个迁移后断言 0 行 → 生产装配零注入起真 HTTP → 12 条挂闸入口逐格 403 + 读面/撤回面 → '
+      + '「闸在最外层」两条判据（逐表行数不变 + 报文无 `reason_codes`）→ 三级负控制。'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（那条链无 PG：既没有真库、也没有能建角色/跑迁移的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
+  },
 ]);
 
 /** 读取并解析 `package.json` 真值。 */

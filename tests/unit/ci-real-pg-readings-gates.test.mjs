@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GY-R68-D05 · 真库 CI 的「读数闸门」守卫：`-lt 1` ⇒ **冻结基线常量 N**。
  *
  * 背景：`.github/workflows/real-pg-integration.yml` 里每条真库臂在脚本 `exit 0` 之后都会数一遍自己
@@ -33,7 +33,7 @@
  *      `readings=${readings}0`、`export readings=$(grep -c …)` 这三种**追加式**写法不碰冻结的那一行、
  *      表也逐字相等，读数却在闸门前被放大 ⇒ 唯一性按「任何给 readings 赋值/追加的行」判，见
  *      `readingsAssignments`。
- *   ⑥ 文案也算声明：13 个闸门 step 的 `::error::` 文案里，阈值（`基线 N` / `< N` 两种写法）必须与
+ *   ⑥ 文案也算声明：14 个闸门 step 的 `::error::` 文案里，阈值（`基线 N` / `< N` 两种写法）必须与
  *      `-lt N` 相等。本片 B1 的原形就是文案（15 条 / 23 组）与闸门数字（25 / 41）对不上；只改文案、
  *      `-lt` 与表都不动时 ①–⑤ 全绿（复审实测 P10），所以文案单独钉一条。
  *
@@ -60,7 +60,7 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 /** 被守卫的 workflow（本片只动这一份）。 */
 export const WORKFLOW_RELATIVE = '.github/workflows/real-pg-integration.yml';
 
-/** 反空转下限：job 数与读数闸门数（本文件实测 3 / 13；见文件头对「≥5」的说明）。 */
+/** 反空转下限：job 数与读数闸门数（本文件实测 3 / 14；见文件头对「≥5」的说明）。 */
 export const MIN_JOBS = 3;
 export const MIN_GATES = 10;
 
@@ -192,6 +192,13 @@ export const READING_GATE_BASELINES = [
     baseline: 18,
     counter: `awk '/PASS [0-9]+:/{n+=1} /✓/{n+=1} END{print n+0}' "$log"`,
     source: '真跑（awk PASS n: / ✓ 合计 ⇒ 18 条）',
+  },
+  {
+    step: '零政策矩阵（R69：consent-zero-policy-pg / 全链迁移 / 生产装配零注入 / 403 矩阵 + 三级负控制）',
+    script: 'tests/integration/consent-zero-policy-pg.mjs',
+    baseline: 14,
+    counter: `awk '/^PASS /{n++} END{print n+0}' "$log"`,
+    source: '真跑（本机 PG 17.11 + 空库 + 全链 48 迁移 ⇒ `PASS n:` 14 条；与脚本里 `say(` 的调用点数相等）',
   },
 ];
 
@@ -754,7 +761,7 @@ test('⑤ 每个闸门 step 里只有一处给 `readings` 赋值/追加，且它
   );
 });
 
-test('⑥ 13 个闸门的 `::error::` 文案里，阈值数字必须与 `-lt N` 相等（文案不能骗读日志的人）', () => {
+test('⑥ 14 个闸门的 `::error::` 文案里，阈值数字必须与 `-lt N` 相等（文案不能骗读日志的人）', () => {
   assert.deepEqual(
     errorTextProblems(readWorkflow()),
     [],

@@ -5,7 +5,7 @@
  * - `stub` / `preset_demo`：确定性的**明确标注替身**，绝不冒充真实 ASR；
  *   `model_version` 带 `stub` / `preset-demo` 标记，`note` 明写「替身」。
  * - `real`：缺凭据**一律 fail-closed**（`PROVIDER_UNAVAILABLE`），**严禁静默回退替身**；
- *   凭据齐备即装上真实 ASR 适配器（`createLiveSpeechProviderFromConfig`，见 `:24` 的 import 与 `createSpeechProvider` 的 real 分支）；仍 fail-closed 的是字节源：`AudioSource` 未接线时执行期 `failed PROVIDER_UNAVAILABLE` 且零发包，不伪造成功。
+ *   凭据齐备且注入被校验快照时**装的是真实适配器**；本文件下方的 `createRealSpeechProvider` 只是端口装配失败时的 fail-closed 兜底。
  * - 提供者错误按契约映射：超时 → `PROVIDER_TIMEOUT`，配额 → `PROVIDER_QUOTA_EXCEEDED`，
  *   结果未知/协议违规 → `PROVIDER_OUTCOME_UNKNOWN`，不可用 → `PROVIDER_UNAVAILABLE`。
  *   **不得**把提供者失败写成 `succeeded`。
@@ -186,7 +186,7 @@ export function createStubSpeechProvider(options: { executionMode?: 'stub' | 'pr
 /**
  * 真实提供者（`real`）。**fail-closed**：
  * - 缺 endpoint/apiKey → `available=false`，受理直接 503 `PROVIDER_UNAVAILABLE`；
- * - 即使凭据齐备，本片也没有已审真实 ASR 供应商适配器，`transcribe` 仍返回
+ * - 本函数**不持有**真实适配器（它是端口装配失败/无快照时的兜底），`transcribe` 仍返回
  *   `PROVIDER_UNAVAILABLE`，任务落 `failed`；
  * - 任何路径都**不会**回退到 stub/preset_demo 替身（回退会让证据口径被污染）。
  */

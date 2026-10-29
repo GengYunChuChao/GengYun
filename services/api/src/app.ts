@@ -2475,11 +2475,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    钉成结构性质，本接线用位置实参传入**同一个**池、由域内决定实现，因此那两条断言逐字保持
   //    （见证据页「既有断言 前→后」）。
   // GY-R31（#9/#10/#11 共同缺口）：deps 增 `media` **槽位**（值取注入项，缺省 undefined ⇒ 域内按
-  //    `executionMode` 自建）。这是唯一一处键集变化：四键 → 五键，两条结构断言（本文件同名判据
-  //    在 `tests/unit/ocr-store-pg-wiring.test.mjs` 与 `tests/integration/ocr-http.mjs`）已同步登记，
-  //    只加白名单、不删原有项；`store`/`provider`/`reference` 仍不得成为装配键，import 禁项不变。
-  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;
-  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia }, ocrPersistencePool);
+  //    `executionMode` 自建）。GY-R69 再增 `imageMedia` 槽位（OCR 图片字节来源的端口；值只转发**既有**
+  //    `mediaObjectStore` + `mediaStore`，缺省 undefined ⇒ 域内退回未接线来源）。键集五键 → 六键，两条结构
+  //    断言（`ocr-store-pg-wiring.test.mjs` 与 `ocr-http.mjs`）已同步登记；`store`/`provider`/`reference` 仍不得成为装配键。
+  const ocrPersistencePool = config.executionMode === 'real' ? pool : null; const ocrImageMedia = /* GY-R69：媒体域**既有**端口，与 `speechAudioMedia` 同形；本片只转发，不新建存储、不读 env、不铸造批准能力 */ { objectStore: mediaObjectStore, mediaRecords: mediaStore };
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia, imageMedia: ocrImageMedia }, ocrPersistencePool);
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入，**共 6 个**（识别 + 转写 + 审核 + 合成 + OCR + 文字问答，即下面
   // `createJobRegistry` 的 6 条 `create*JobSource` 实参）；未接入的 kind ⇒ 与「作业不存在」同形 404。
