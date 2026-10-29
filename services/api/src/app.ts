@@ -2478,8 +2478,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    `executionMode` 自建）。GY-R69 再增 `imageMedia` 槽位（OCR 图片字节来源的端口；值只转发**既有**
   //    `mediaObjectStore` + `mediaStore`，缺省 undefined ⇒ 域内退回未接线来源）。键集五键 → 六键，两条结构
   //    断言（`ocr-store-pg-wiring.test.mjs` 与 `ocr-http.mjs`）已同步登记；`store`/`provider`/`reference` 仍不得成为装配键。
-  const ocrPersistencePool = config.executionMode === 'real' ? pool : null; const ocrImageMedia = /* GY-R69：媒体域**既有**端口，与 `speechAudioMedia` 同形；本片只转发，不新建存储、不读 env、不铸造批准能力 */ { objectStore: mediaObjectStore, mediaRecords: mediaStore };
-  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia, imageMedia: ocrImageMedia }, ocrPersistencePool);
+  const ocrPersistencePool = config.executionMode === 'real' ? pool : null; const ocrImageMedia = /* GY-R69：媒体域**既有**端口，与 `speechAudioMedia` 同形；本片只转发，不新建存储、不读 env、不铸造批准能力 */ { objectStore: mediaObjectStore, mediaRecords: mediaStore }; /* GY-R70：下一行把**同一个** `ocrImageMedia` 再交给 `mediaWiring`（受理前媒体门）—— ⛔ 刻意不新建第二个字面量：两处消费的是同一对既有端口 ⇒ 永远同源（不会「受理看 A 桶、取字节看 B 桶」），也不在 app.ts 多出一处 objectStore 赋值位点（端口溯源审计把该位点数钉死为 3，本片不放宽）。装配层**不做放行判断**：判据全在域内（wiring 缺省 / 对象存储非真实适配器 ⇒ 仍 unwired，note 与状态码逐字不变）。 */
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia, imageMedia: ocrImageMedia, mediaWiring: ocrImageMedia }, ocrPersistencePool);
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入，**共 6 个**（识别 + 转写 + 审核 + 合成 + OCR + 文字问答，即下面
   // `createJobRegistry` 的 6 条 `create*JobSource` 实参）；未接入的 kind ⇒ 与「作业不存在」同形 404。

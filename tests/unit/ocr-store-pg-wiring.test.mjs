@@ -83,8 +83,8 @@ test('非 real 不换实现：stub / preset_demo 即使有池也用内存 store'
   }
 });
 
-test('结构钉子：装配行恰六键、app.ts 不引用 OCR 适配器、有池才给池', () => {
-  // ① 装配行是「guards + 隐私域 consent/egress + 历史域 history + 媒体引用槽位 media + 图片字节来源槽位 imageMedia」六个键。
+test('结构钉子：装配行恰七键、app.ts 不引用 OCR 适配器、有池才给池', () => {
+  // ① 装配行是「guards + 隐私域 consent/egress + 历史域 history + 媒体引用槽位 media + 图片字节来源槽位 imageMedia + 受理前媒体门接线 mediaWiring」七个键。
   //    `tests/integration/ocr-http.mjs` 用同一条判据（本文件只是让它在 unit 层也红得起来）。
   //    ⚠ 2026-10-22（GY-R31 媒体端口注入片）**口径如实登记**：四键 → 五键，新增的是 `media`
   //      （`OcrRouteDeps['media']`，值来自 `BuildAppOptions.ocrMedia`，缺省 undefined ⇒ 域内自建）。
@@ -93,7 +93,7 @@ test('结构钉子：装配行恰六键、app.ts 不引用 OCR 适配器、有�
   //      「零端口注入仍成立」——它本来就不成立于 `#181` 的 `history`。
   //    ⚠ 2026-10-29（GY-R69 图片字节来源片）**口径如实登记**：五键 → 六键，新增的是 `imageMedia`
   //      （`OcrRouteDeps['imageMedia']`，值来自装配层**既有**的 `mediaObjectStore` + `mediaStore`，
-  //      缺省 undefined ⇒ 域内退回写死的未接线来源）。与 `media` 同性质：**端口槽位**，不是实现层适配器。
+  //      缺省 undefined ⇒ 域内退回写死的未接线来源）。与 `media` 同性质：**端口槽位**，不是实现层适配器。另：2026-10-30（GY-R70 受理前媒体门片）六键 → 七键，新增 `mediaWiring`（与 `imageMedia` **同一对既有端口**：`mediaObjectStore` + `mediaStore`；缺省 undefined ⇒ 域内仍是 `unwired` ⇒ 受理仍 409，逐字不变）。
   const registrationLine = APP_SOURCE.split(/\r?\n/).find((line) =>
     line.includes('registerOcrRoutes(app, config,'),
   );
@@ -101,8 +101,8 @@ test('结构钉子：装配行恰六键、app.ts 不引用 OCR 适配器、有�
   const keys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
   assert.deepEqual(
     keys,
-    ['consent', 'egress', 'guards', 'history', 'imageMedia', 'media'],
-    `装配行只允许这六个键（不得塞入 store/provider/reference 等实现层端口）：${registrationLine.trim()}`,
+    ['consent', 'egress', 'guards', 'history', 'imageMedia', 'media', 'mediaWiring'],
+    `装配行只允许这七个键（不得塞入 store/provider/reference 等实现层端口）：${registrationLine.trim()}`,
   );
 
   // ② `app.ts` 不得引用任何 OCR 适配器模块（provider/store/media/reference）。
