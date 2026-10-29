@@ -76,7 +76,7 @@ Vite 的项目根在 apps/admin，不自动读取仓库根 .env；从终端注�
 | `--moderation-policy-source=<标识>` | 3–120 位，字母/数字与 `._:/@+-`，不得含空白 | 策略**被独立核对过**的出处（非凭据）；形状合法不等于核对过 |
 | `--moderation-biz-type=<BizType>` | 正则与 `services/api/src/moderation/live-ports.ts` 的 `MODERATION_BIZ_TYPE_PATTERN` 同源 | **真实** BizType（`tools/ai-config.mjs` 里的那份是自描述占位值，不能拿来开户） |
 
-判定在 `services/api/src/moderation/startup-approval.ts` 的 `resolveModerationStartupApproval()`（纯函数：只吃 `config` 与 `argv`，不读 env、不碰网络），铸造点是 `services/api/src/moderation/live-assembly.ts` 的 `approveModerationLiveWiring()`（唯一，`WeakSet` 对象身份），生产入口只转发：`services/api/src/server.ts:61` 取装配片段，`:62`–`:66` 是「有致命诊断就 `exit 1`」那一段，`:68` 才是 `buildApp(...)`。
+判定在 `services/api/src/moderation/startup-approval.ts` 的 `resolveModerationStartupApproval()`（纯函数：只吃 `config` 与 `argv`，不读 env、不碰网络），铸造点是 `services/api/src/moderation/live-assembly.ts` 的 `approveModerationLiveWiring()`（唯一，`WeakSet` 对象身份），生产入口只转发：`services/api/src/server.ts:61` 取装配片段，第 62–66 行是「有致命诊断就 `exit 1`」那一段，`services/api/src/server.ts:68` 才是 `buildApp(...)`。
 
 **四条前置同时成立才铸造**：① 开关给了；② 两个值齐备且形状合法；③ 共享凭据齐备（`TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` 成对，且 `APP_EXECUTION_MODE=real`）；④ 配置合法（铸造后仍由同一模块的 `resolveModerationLiveWiring()` 复核剖面/端点/超时）。任一条不成立 ⇒ **不铸造**、不传任何默认值，并打**一行** `stderr` 点名缺的是哪一条（原因只用既有闭集 `missing_approval` / `missing_credentials` / `invalid_configuration`）⇒ **进程 `exit 1`，服务不会起来**；`real` 下审核域保持既有整域 503 `PROVIDER_UNAVAILABLE`（`retryable:false`），非 `real` 下仍是替身端口。
 

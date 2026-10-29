@@ -43,7 +43,7 @@
 | `--moderation-biz-type=<BizType>` | 复用 `live-ports.ts` 的 `MODERATION_BIZ_TYPE_PATTERN`＝`^[A-Za-z0-9_-]{1,32}$`（**不写第二套真理**） | 同上 |
 | （不存在的入口）env／配置文件 | ⛔ 不读：`startup-approval.ts` **去注释后** `process.env` 命中 **0** 条（用例钉住） | — |
 
-**判定位置**：`services/api/src/moderation/startup-approval.ts` 的 `resolveModerationStartupApproval()`（第 189 行，纯函数：只吃 `config` 与 `argv`，不读 env、不碰网络、不写台账、不 `process.exit`）；**铸造点**：同文件第 270 行对 `#777` 的 `approveModerationLiveWiring()` 的**唯一**生产调用；**装配层入口**：`moderationStartupAssemblyOptions()`（第 320 行）。生产入口只转发那三件事：`services/api/src/server.ts:61` 取装配片段 → `:62`–`:66` 判致命（`console.error` ＋ `process.exitCode = 1` ＋ `return`）→ `:68` `buildApp(...)`。
+**判定位置**：`services/api/src/moderation/startup-approval.ts` 的 `resolveModerationStartupApproval()`（第 189 行，纯函数：只吃 `config` 与 `argv`，不读 env、不碰网络、不写台账、不 `process.exit`）；**铸造点**：同文件第 270 行对 `#777` 的 `approveModerationLiveWiring()` 的**唯一**生产调用；**装配层入口**：`moderationStartupAssemblyOptions()`（第 320 行）。生产入口只转发那三件事：`services/api/src/server.ts:61` 取装配片段 → 第 62–66 行判致命（`console.error` ＋ `process.exitCode = 1` ＋ `return`）→ `services/api/src/server.ts:68` 的 `buildApp(...)`。
 
 ---
 
@@ -62,8 +62,8 @@
 
 ### 行号策略（按裁定：**接受漂移，不为保行号压注释**）
 
-- 本片第一版为了保 `server.ts:62` 曾把注释压到 14 行；裁定明确「⛔ 不要为了保行号去压注释」，因此现在**保留完整注释**（第 30–43 行仍 14 行、内容写全），把新代码插在 61–68 行，`buildApp` 由 `:62` 漂到 **`:68`**。
-- `node tools/verify-contract-status.mjs --reanchor`（dry-run）读数：**「无可重定位项（带锚点且带行号的引用 302 条，锚点都在 ±2 行容差内；符号形态 11 条按运行时解析，不写盘）」** ⇒ **台账不需要 `--write-doc`**，因为台账里唯一直接指向 `server.ts` 的锚点是 **`:50`（符号 `synthesisMediaWiringAssemblyOptions(mediaRealPorts)`）**，它在漂移点**之上**、一位没动。
+- 本片第一版为了保 `server.ts:62` 曾把注释压到 14 行；裁定明确「⛔ 不要为了保行号去压注释」，因此现在**保留完整注释**（第 30–43 行仍 14 行、内容写全），把新代码插在第 61–68 行，`buildApp` 那一行由第 62 行漂到**第 68 行**。
+- `node tools/verify-contract-status.mjs --reanchor`（dry-run）读数：**「无可重定位项（带锚点且带行号的引用 302 条，锚点都在 ±2 行容差内；符号形态 11 条按运行时解析，不写盘）」** ⇒ **台账不需要 `--write-doc`**，因为台账里唯一直接指向 `server.ts` 的锚点是 `services/api/src/server.ts:50`（符号 `synthesisMediaWiringAssemblyOptions(mediaRealPorts)`），它在漂移点**之上**、一位没动。
 - ⚠ **doc 级（不是台账级）漂移，如实登记**：`docs/verification/**` 里另有三处按行号引用 `server.ts:62` 的**历史证据页**现在指短 6 行——`gy-i06-media-real-provider-plan-20261021.md`（第 17 行表格、第 77 行「| 8 |」行）、`gy-r28-w2-media-ports-20261021.md`（第 32 行）、`gy-r31-i15-recon-20261022.md`（第 133 行）。本片**没有改它们**（仓规：历史读数页不改数字；且这些行都自带「本片测量时为第 N 行」的时点说明）。它们不参与任何门禁判红（`ANCHOR_DRIFT` 只判 `docs/architecture/**`）。
 
 ### 既有结构断言的变更（前 → 后，逐条登记，口径同 `docs/verification/gy-r70-ocr-media-port-20261030.md` §5 的登记表）
@@ -143,7 +143,7 @@ GY-R70 审核域真实接线未获批准：reason=invalid_configuration（执行
 6. **零外呼**：六臂整条「解析 + 装配」路径（`loadConfig` + 决定点 + `buildApp` + `capabilities()`）`globalThis.fetch` 计数 **0**（手法照 `tests/unit/ai-live-provider-wiring.test.mjs` 头注：绊线是计数器 + 立即拒绝，判据只看**次数**）。
 7. **原因码没漂移**：所有诊断的 `reason=` 都逐字是 `#777` 的闭集成员（用例逐臂正则抽取后断言 `MODERATION_LIVE_REFUSAL_REASONS.includes(...)`）；诊断里不含异常文本、配置值、凭据值（`secretKey`/`secretId` 断言 0 命中）。
 8. **铸造点仍唯一、装配层仍不自我批准**：`services/api/src/**` 去注释后 `approveModerationLiveWiring(` 恰好 2 处（定义处 ＋ `moderation/startup-approval.ts` 的唯一调用点），`app.ts`/`server.ts` 各 0 处；`server.ts` 里 `moderationStartupAssemblyOptions(` 恰好 1 处、`console.error(moderationAssembly.fatalLine)` 恰好 1 处、**`console.warn(` 0 处**（口径已与媒体域统一）。
-9. **台账级行号零漂移**：`verify-contract-status --reanchor` 判「**无可重定位项**（302 条带行号引用全在 ±2 容差内）」——台账唯一指向 `server.ts` 的锚点 `:50` 在漂移点之上（doc 级漂移已如实登记在 §3）。
+9. **台账级行号零漂移**：`verify-contract-status --reanchor` 判「**无可重定位项**（302 条带行号引用全在 ±2 容差内）」——台账唯一指向 `server.ts` 的锚点是 `services/api/src/server.ts:50`，在漂移点之上（doc 级漂移已如实登记在 §3）。
 
 ---
 
@@ -167,8 +167,8 @@ GY-R70 审核域真实接线未获批准：reason=invalid_configuration（执行
 | 门禁 | 命令 | 读数 | exit |
 |---|---|---|---|
 | 单测 | `npm run test:unit`（`GY_BASH=D:\Git\bin\bash.exe`） | `tests 5818 / pass 5814 / fail 0 / cancelled 0 / skipped 2 / todo 2`（本片 11 条用例全绿，含 1 条子进程用例） | 0 |
-| 锚点（npm 扫描面） | `npm run verify:anchors` | `contract-status` PASS（覆盖 126 条操作、行号区间 313 条、中文表格一致）；`doc-anchors --strict` PASS（基线外新增 0、陈旧 0）；`BARE_ORPHAN 3479/3543`；`ANCHOR-COUNT 6214 条 / 224 份`（清册 6287/227；**下降 0 份**、上升 9 份、面内本次未扫 8 个合法跳过） | 0 |
-| **CI-exact** | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | `--strict` 无基线外新增；`SYMBOL-STRICT-BASELINE 31/31`；`ANCHOR_DRIFT 15` 全部落在基线内；`BARE-ORPHAN 3543/3543`、`outsideRed 134/134`；`ANCHOR-COUNT 6470 条 / 234 份`（上升 12 份、下降 0 份） | 0 |
+| 锚点（npm 扫描面） | `npm run verify:anchors` | `contract-status` PASS（覆盖 126 条操作、行号区间 313 条、中文表格一致）；`doc-anchors --strict` PASS（基线外新增 0、陈旧 0）；`BARE_ORPHAN 3479/3543`；`ANCHOR-COUNT 6219 条 / 224 份`（清册 6287/227；**下降 0 份**、上升 9 份、面内本次未扫 8 个合法跳过） | 0 |
+| **CI-exact** | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | `--strict` 无基线外新增；`SYMBOL-STRICT-BASELINE 31/31`；`ANCHOR_DRIFT 15` 全部落在基线内；`BARE-ORPHAN 3543/3543`、`outsideRed 134/134`；`ANCHOR-COUNT 6475 条 / 234 份`（上升 12 份、下降 0 份） | 0 |
 | 契约漂移 | `npm run verify:parity` | `extra: []` / `missing: []` / `ledgerDrift: []` | 0 |
 | 能力图 | `npm run verify:capability-map` | `totalOps=46，有入口=46，无入口=0，死按钮=0`；「文档标记块与重算一致」 | 0 |
 | 文档 | `npm run test:docs` | 研究记录 **5 通过 / 0 失败 / 4 legacy 已钉住**；`docs/research` 结构校验 PASS | 0 |
@@ -176,7 +176,7 @@ GY-R70 审核域真实接线未获批准：reason=invalid_configuration（执行
 | 契约测试 | `npm run test:contract` | `tests 17 / pass 17 / fail 0` | 0 |
 | 构建 | `npm run build`（`TMP`/`TEMP` 指到**仓外**；构建后删 `services/api/dist` 与 `apps/admin/dist`） | api `tsc` 无错、admin `vite build` 通过（629.18 kB 主包告警是既有体积提示，非错误）；两处 `dist` 已删（`Test-Path` 均为 `False`） | 0 |
 | 失败矩阵 | `npm run test:failmatrix` | `矩阵合计 249 条：PASS 249 / FAIL 0` | 0 |
-| 额外·重定位复核 | `node tools/verify-contract-status.mjs --reanchor`（dry-run） | **`无可重定位项（带锚点且带行号的引用 302 条，锚点都在 ±2 行容差内；符号形态 11 条按运行时解析，不写盘）`** ⇒ 台账无需 `--write-doc`（`server.ts` 漂移发生在台账锚点 `:50` 之后） | 0 |
+| 额外·重定位复核 | `node tools/verify-contract-status.mjs --reanchor`（dry-run） | **`无可重定位项（带锚点且带行号的引用 302 条，锚点都在 ±2 行容差内；符号形态 11 条按运行时解析，不写盘）`** ⇒ 台账无需 `--write-doc`（`server.ts` 的漂移发生在台账锚点第 50 行之后） | 0 |
 
 ### 7.1 本页加入后的复跑（纯文档面）
 
@@ -211,7 +211,7 @@ services/api/src/moderation/live-assembly.ts     AB862D17795D56F3AD7123310FE8BA7
 
 ## 9. 需要裁定的点（以及已裁定的记录）
 
-1. **【已裁定 · 已实现】非法值时 `warn` 还是 `exit 1`** ⇒ **`exit 1`**。本片第一版选 warn 并写下三条理由（无半接线可防／交付项把 warn 写成硬要求／爆炸半径），裁定逐条驳回，采纳结论：**同一台机器上两个批准开关行为必须一致**；要防的是「运维以为自己把审核开了」，一条 warn 在启动日志里等于没有；安全相关手误的正确爆炸半径就是起不来。实现：`plan.fatal` ＋ `plan.fatalLine` ＋ `server.ts:62`–`:66`。
+1. **【已裁定 · 已实现】非法值时 `warn` 还是 `exit 1`** ⇒ **`exit 1`**。本片第一版选 warn 并写下三条理由（无半接线可防／交付项把 warn 写成硬要求／爆炸半径），裁定逐条驳回，采纳结论：**同一台机器上两个批准开关行为必须一致**；要防的是「运维以为自己把审核开了」，一条 warn 在启动日志里等于没有；安全相关手误的正确爆炸半径就是起不来。实现：`plan.fatal` ＋ `plan.fatalLine` ＋ `services/api/src/server.ts` 第 62–66 行那一段。
 2. **【已裁定 · 保持】开关与参数命名**：`--approve-moderation-live-wiring` ＋ `--moderation-policy-source=` / `--moderation-biz-type=`（照派单例子逐字）。
 3. **【已裁定 · 保持】非 `real` 的原因映射**：闭集无 `execution_mode_not_real`，按 `invalid_configuration` 上报（⛔ 不新造原因串、⛔ 不跨片改 `#777` 闭集）。⚠ **可读性欠佳**：同一个 `invalid_configuration` 同时表示「模式不对」与「值非法」，区分只能看括号里的 detail。
 4. **【已裁定 · 保持】批准状态不挂只读面**（不新增 contract operation）。
@@ -219,7 +219,7 @@ services/api/src/moderation/live-assembly.ts     AB862D17795D56F3AD7123310FE8BA7
    `source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')` 去注释——**只要注释里出现 `/**`（例如写 `services/api/src/**`），非贪婪匹配就会从那里开始吞掉其后的一大段真实代码**。
    - **复现形状**：在 `services/api/src/**` 里任一 `.ts` 的注释中写下 `services/api/src/**`（或任何含 `/*` 的片段），再跑 `tests/unit/moderation-live-wiring-assembly.test.mjs` ⇒ 该文件里**真实存在的** `approveModerationLiveWiring(` 调用会从"去注释后源码"里消失，⑧ 报 `callSites` 为空并**误红**（本片第一版实测踩到，见 §8 末条）。
    - **反向风险**：同一个缺陷也能让**本该抓到的**调用点被吞掉 ⇒ 判据在「别人写了 `src/**` 的注释」之后**可能静默失效**（假绿）。本片因此在自己源码里避开了该写法并把这条写在这里，**没有**去改那条判据（改它会动到别人的钉子面）。
-6. **是否把 `docs/verification/**` 里三处 `server.ts:62` 的历史引用重取为 `:68`**：本片按「历史读数页不改数字」未动（清单见 §3）。需要的话是 3 处、每处 1 行的机械改动。
+6. **是否把 `docs/verification/**` 里三处 `server.ts:62` 的历史引用重取为第 68 行**：本片按「历史读数页不改数字」未动（清单见 §3）。需要的话是 3 处、每处 1 行的机械改动。
 
 ---
 
@@ -236,7 +236,7 @@ services/api/src/moderation/live-assembly.ts     AB862D17795D56F3AD7123310FE8BA7
  68   const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}), ...(moderationInjection === undefined ? {} : { moderationInjection }) });
 ```
 
-媒体域的判定块（`:47`／`:48-51`／`:50`）与 `let mediaAssembly`（`:44-45`）**一位没动**；`buildApp` 由 `:62` 漂到 `:68`（＋6 行，正好是上面 62–67 那 6 行）。
+媒体域的判定块（`services/api/src/server.ts:47`／`services/api/src/server.ts:48-51`，其中第 50 行是 `synthesisMediaWiringAssemblyOptions(mediaRealPorts)`）与 `let mediaAssembly`（第 44–45 行）**一位没动**；`buildApp` 由第 62 行漂到**第 68 行**（＋6 行，正好是附录 A 里 62–67 那 6 行）。
 
 ## 附录 B · 「零外呼」怎么数的
 
@@ -252,4 +252,16 @@ assert.equal(calls.length, 0);
 
 ## 附录 C · 复跑读数（本页加入后，纯文档面）
 
-<!-- RERUN -->
+<!-- 本节读数取自提交 84d2bfbd（本页与 configuration.md 均已在树内）；只复跑受文档改动影响的三条 ＋ 一条锚点自检用例。 -->
+
+| 复跑 | 读数 | exit |
+|---|---|---|
+| `npm run test:docs` | 研究记录 **5 通过 / 0 失败 / 4 legacy 已钉住**；`docs/research` 结构校验 PASS | 0 |
+| `npm run verify:anchors` | `contract-status` PASS；`doc-anchors --strict` PASS；`BARE_ORPHAN 3479/3543`（基线外新增 0）；`ANCHOR-COUNT 6219 条 / 224 份`（**下降 0 份**、上升 9 份、面内本次未扫 8 个合法跳过） | 0 |
+| **CI-exact**：`node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | `--strict` 无基线外新增；`SYMBOL-STRICT-BASELINE 31/31`；`ANCHOR_DRIFT 15` 全在基线内；`BARE-ORPHAN 3543/3543`、`outsideRed 134/134`；`ANCHOR-COUNT 6475 条 / 234 份`（上升 12 份、**下降 0 份**） | 0 |
+| 额外·`node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | `tests 33 / pass 32 / fail 0 / skipped 1`（SKIP 是它自己的「纯新增 hunk」分支：本页对旧行是纯新增，不触发重定位判据） | 0 |
+
+**两条如实记录（都是本片自己踩的，不是别人的坑）**：
+
+- 本页第一版把 `server.ts` 的行号写成裸 `:NNN` 形式，`npm run verify:anchors` 与 CI-exact **当场红**（`BARE_ORPHAN 基线外新增 9 条`）——**裸锚点是会打红门禁的**（本仓硬规矩）。改成「`services/api/src/server.ts:68`」或「第 68 行」后两条门禁复绿。
+- 两套扫描面的 `ANCHOR-COUNT` **本来就不相等**（前者 224 份 / 6218 条，后者 234 份 / 6474 条），不是读数矛盾：派单要求两条都跑，两条都是 exit 0。
