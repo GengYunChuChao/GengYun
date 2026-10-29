@@ -91,7 +91,7 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 1. 该页数据源是**随包离线名录**，记录主键形如 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:34`）；页面的路由判定是 `validId` 为真走服务端、否则走随包副本，随包 id 永远落在后一支：`miniprogram/pages/referencedetail/referencedetail.js:115`。
 2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假 ⇒ 这一支永远拿不到服务端实体：`miniprogram/utils/knowledge-api.js:224`。
 3. `POST /favorites` 的 `target_ref.revision` 只能取自服务端读面（`GET /knowledge/{id}`，该客户端把响应 `id` 强制 UUID），随包记录既无服务端 `id` 也无 `revision`。
-4. 契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format ⇒ 强行发一条不会被 400 挡住，但 `reference_state` 由服务端按 `/knowledge` 公开读面逐次派生，随包记录在服务端不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:128`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
+4. 契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format ⇒ 强行发一条不会被 400 挡住，但 `reference_state` 由服务端按 `/knowledge` 公开读面逐次派生，随包记录在服务端不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:140`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
 
 **两条出路（二选一，本片不选）**：
 
