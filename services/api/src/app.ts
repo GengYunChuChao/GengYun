@@ -947,7 +947,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       ...(moderationInjection?.ruleOptions === undefined
         ? {}
         : { ruleOptions: moderationInjection.ruleOptions }),
-      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), // GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账
+      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), /* GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账。 */ imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore }), /* GY-R70：与 `speechAudioMedia` / `ocrImageMedia` / 识别域取值器**同形**——只转发媒体域**既有**的那两个实例（不新建存储、不读 env、不铸造批准能力；媒体域端口在本函数更靠后解析，故用取值器晚绑定）。审核域只有在**显式注入** `liveWiring`（含凭据与策略闸门）时才消费它；本装配路径不注入 `liveWiring` ⇒ 本键不改变任何行为（`real` 仍整域 fail-closed，逐字节同本片之前）。 */
     });
   // 社区侧的审核域联动端口（版本级任务 / 明确驳回否决 / 下架缓存失效 / 读取时重查）。
   // `communityInjection.moderation === null` 可显式关闭联动（回到接线前行为，供反例与隔离用）。
