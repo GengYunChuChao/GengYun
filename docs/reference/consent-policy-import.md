@@ -50,7 +50,7 @@
 ### 第二步：dry-run 看形状（默认行为，不写库）
 
 ```powershell
-$env:DATABASE_URL = 'postgresql://<迁移属主或运维角色>:<口令>@<host>:5432/<db>'
+$env:DATABASE_URL = 'postgresql://<迁移属主或运维角色>:<口令>@<host>:<port>/<db>'
 node tools/import-consent-policy.mjs policy --file <仓外政策清单.json>
 ```
 
