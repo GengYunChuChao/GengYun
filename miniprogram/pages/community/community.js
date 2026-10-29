@@ -65,8 +65,27 @@ Page({
     })
   },
 
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  onHide: function () {
+    // 离页后本页的在途读取即作废：旧 reload／翻页的成功或失败都不得再写页面状态。
+    this._invalidateReads()
+    pageGate.cancel(this)
+  },
+  onUnload: function () {
+    this._invalidateReads()
+    pageGate.cancel(this)
+  },
+
+  /**
+   * 推进读取代次，作废所有**已发出**的列表读取（不取消服务端请求，只丢弃迟到结果）。
+   *
+   * - onHide／onUnload 调用：同一实例重进时，离页前发出的成功不会写 posts／cursor／状态，
+   *   失败不会写 guest／errorCode／loadMoreError，INVALID_CURSOR 也不会再 toast 或 reload；
+   * - reload 每次也推进同一计数器：它同时是筛选代次，旧筛选的迟到响应不能写进新筛选列表；
+   * - onLoadMore 捕获发起时的代次，所以跨代次的分页响应同样被丢弃，不会重复追加。
+   */
+  _invalidateReads: function () {
+    this._epoch = (this._epoch || 0) + 1
+  },
 
   onPullDownRefresh: function () {
     const that = this
@@ -77,7 +96,9 @@ Page({
   reload: function (done) {
     const epoch = ++this._epoch
     const that = this
-    this.setData({ status: 'loading', errorText: '', errorCode: '', posts: [], nextCursor: null, loadMoreError: '' })
+    // 新一次读取开始即重置翻页态：离页时被作废的旧 onLoadMore 不会再回来清 loadingMore，
+    // 若不在这里复位，新页面会被旧请求遗留的 loadingMore 永久卡住（无法再分页）。
+    this.setData({ status: 'loading', errorText: '', errorCode: '', posts: [], nextCursor: null, loadMoreError: '', loadingMore: false })
     api.listPosts(this._query(null)).then(function (page) {
       if (epoch !== that._epoch) return
       const mode = page.mode

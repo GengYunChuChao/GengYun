@@ -811,5 +811,87 @@
     "reason": "该行引用文字是 `onMarkAllRead()` 的逐个串行标记（`targets = items.filter(unread)`、`_markReadOne`），旧号 287 在父提交（HEAD^，22ad9082）上却是 `_openDetail` 的前置注释 `/** 社区详情页的统一出口：先校验 uuid，再交给 navigation.openTarget 判路由与跳法。 */`，本来就不是 `onMarkAllRead`；本 PR 在 reload 内加两行后，机械 +2 只会落到 HEAD 289（同一行 `_openDetail` 注释），仍不是声明。HEAD 447 是唯一的 `onMarkAllRead: function () {`（全文 1 行，本次现测）。该页其余行号整体来自 10-18 树（`de66803…`），属既有语义陈旧，按符号纠正，不是 +2 平移。",
     "kind": "correction",
     "symbol": "onMarkAllRead: function () {"
+  },
+  {
+    "doc": "docs/verification/gy-i28-demo-parity-20261018.md",
+    "line": 125,
+    "target": "miniprogram/pages/community/community.js",
+    "from": 51,
+    "to": 60,
+    "reason": "旧锚点 51 在父 53354fe 上是 `onLoad` 里的 `this._epoch = 0`，不是 `consumeCommunityMine`；本次按符号 `consumeCommunityMine` 重锚到 HEAD 第 60 行 `if (navigation.consumeCommunityMine()) this.setData({ filterMine: true })`。该页历史基线 de66803 的树本环境无导出，无法复核 2026-10-18 时 :51 是否恰好指这一段，故只按父/HEAD 事实登记，不冒充历史正确。",
+    "kind": "correction",
+    "symbol": "consumeCommunityMine"
+  },
+  {
+    "doc": "docs/verification/gy-r29-i15-community-filter-20261022.md",
+    "line": 18,
+    "target": "miniprogram/pages/community/community.js",
+    "from": 146,
+    "fromEnd": 148,
+    "to": 186,
+    "toEnd": 189,
+    "reason": "旧锚点 146-148 在父 53354fe 上是 `_loadMoreMessage` 上方的翻页失败文案注释（「失败提示与显式重试入口」「文案由本页给出」「直接复用会变成假陈述」），不是 `_query` 的筛选参数；本次按符号 `params.crop_id` 重锚到 HEAD 186-189（`params.cursor`／`params.mine`／`params.crop_id`／`params.region_code` 四条赋值）。该页历史基线 442057b 的树本环境无导出，无法复核当时 146-148 是否恰好是这三行参数，故只按父/HEAD 事实登记。",
+    "kind": "correction",
+    "symbol": "params.crop_id"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 25,
+    "target": "miniprogram/pages/community/community.js",
+    "from": 153,
+    "fromEnd": 177,
+    "to": 200,
+    "toEnd": 225,
+    "reason": "旧锚点 153-177 在父 53354fe 上是 `_loadMoreMessage`（153-159）、`_query`（161-170）与 `_decorate` 的文档注释开头（172-177），整段不含 `audit_state`，不是这一行要引的「三页同一套审核标注」；本次按符号 `audit_state` 重锚到 `_decorate` 全体 200-225（216 `audit_state: post.audit_state,`、218 `stateLabel:`）。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
+    "kind": "correction",
+    "symbol": "audit_state"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 26,
+    "target": "miniprogram/pages/community/community.js",
+    "from": 68,
+    "fromEnd": 80,
+    "to": 54,
+    "toEnd": 66,
+    "reason": "旧锚点 68-80 在父 53354fe 上是 `onHide`／`onUnload`（68-69）、下拉刷新（71-74）与 `reload` 的前半段（76-80），不含 `onShow` 的门禁重取；本次按符号 `pageGate.start(this` 重锚到 HEAD 54-66（62 `pageGate.start(this, function (ok) {`、64 `if (ok) that.reload()`）。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
+    "kind": "correction",
+    "symbol": "pageGate.start(this"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 29,
+    "target": "miniprogram/pages/community/community.js",
+    "from": 124,
+    "fromEnd": 138,
+    "to": 160,
+    "toEnd": 164,
+    "reason": "旧锚点 124-138 在父 53354fe 上是 `onLoadMore` 的发起与成功分支，止于 `INVALID_CURSOR` 分支前的注释（137-138 只写「失效游标」，不含字面量 `INVALID_CURSOR`），没有这一行要引的「清游标 + 重取第一页」；本次按符号 `INVALID_CURSOR` 重锚到 HEAD 160-164（160 判定、161 `nextCursor: null`、162 toast、163 `that.reload()`、164 `return`）。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
+    "kind": "correction",
+    "symbol": "INVALID_CURSOR"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 159,
+    "target": "miniprogram/pages/community/community.js",
+    "from": 153,
+    "fromEnd": 177,
+    "to": 200,
+    "toEnd": 225,
+    "reason": "同页 §2.7 的同一处引用：旧锚点 153-177 在父 53354fe 上是 `_loadMoreMessage`／`_query`／`_decorate` 注释头，不含 `audit_state`；按符号 `audit_state` 重锚到 `_decorate` 全体 200-225。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
+    "kind": "correction",
+    "symbol": "audit_state"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 167,
+    "target": "miniprogram/pages/community/community.js",
+    "from": 51,
+    "fromEnd": 63,
+    "to": 54,
+    "toEnd": 66,
+    "reason": "旧锚点 51-63 在父 53354fe 上起于 `onLoad` 的 `this._epoch = 0`（51），经 `onShow` 到 `that.setData({ guest: !ok })`（63）就断，既多带 onLoad 尾行、又漏掉真正发起重取的 `if (ok) that.reload()`（64）；本次按符号 `that.reload()` 重锚到 HEAD 54-66。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
+    "kind": "correction",
+    "symbol": "that.reload()"
   }
 ]

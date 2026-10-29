@@ -22,11 +22,11 @@
 | 收藏 | **不适用**：契约 `FavoriteInput` 的目标只有 `species`/`herbicide`/`scheme`，**没有** post/comment | 不适用（如实登记，不新造） | `packages/contracts/openapi.json` 的 `/favorites`（`createFavorite`）与 `FavoriteInput` |
 | 举报（提交） | **通**（`POST /reports` + 幂等键；`REVISION_CONFLICT` 后重读再试） | 通 | `routes/community.ts:341-349`；`communitydetail.js:272-301` |
 | 举报（处理状态） | **半通**：适配层有 `getOwnReport`，**页面零入口**（全仓无消费者） | **未变**（待裁决 E3-4） | `miniprogram/utils/community-api.js:313-318`；`routes/community.ts:353-360` |
-| 审核状态 | **通**：只以服务端返回的 `visibility`/`audit_state` 说话，三页同一套标注，无本地伪造 | 通（未改） | `community.js:153-177`、`communitydetail.js:157-178`、`communitycreate.js:104-109` |
-| 可见性刷新 | **通**：每次 `onShow` 经门禁重取；服务端每次读按**当前规则版本**重算 `effectiveState` | 通（未改） | `community.js:68-80`；`service.ts:455-500`、`:706-724` |
+| 审核状态 | **通**：只以服务端返回的 `visibility`/`audit_state` 说话，三页同一套标注，无本地伪造 | 通（未改） | `community.js:200-225`（父 53354fe 的 153-177 行是 `_loadMoreMessage`／`_query` 与 `_decorate` 的注释头，不含审核标注字段；按 `audit_state` 重锚）、`communitydetail.js:157-178`、`communitycreate.js:104-109` |
+| 可见性刷新 | **通**：每次 `onShow` 经门禁重取；服务端每次读按**当前规则版本**重算 `effectiveState` | 通（未改） | `community.js:54-66`（父 53354fe 的 68-80 行是 hide／unload 与下拉刷新段，不是 `onShow`；按 `pageGate.start` 重锚）；`service.ts:455-500`、`:706-724` |
 | 403 → B7 `denied` | **列表页通／详情页与投稿页未通**：详情页无 `errorCode`，wxml 写死 `status="invalid"` 且不传 `error-code`；投稿页只有一条红字提示 | **通**（三页都落 denied） | 改前 `communitydetail.js:22-37`、`communitydetail.wxml:20-27`、`communitycreate.js:104-107`；改后见 §2.9 |
 | 401 归因 | **适配层已委托**（#396）；**页面**只认 `=== 'SESSION_REQUIRED'`，`SESSION_CHANGED`（同属会话类）被当成普通失败停在错误页 | **通**（页面改判 `api.sessionFailure`） | `auth.js:61-133`；改后 `community-api.js:339-344` |
-| 失效游标（`INVALID_CURSOR`） | **半通**：只弹 toast，`nextCursor` 原样留着 ⇒ 该游标永不成功，用户反复点「加载更多」只见同一句报错 | **通**（清游标 + 重取第一页） | 改后 `community.js:124-138`、`communitydetail.js:248-266` |
+| 失效游标（`INVALID_CURSOR`） | **半通**：只弹 toast，`nextCursor` 原样留着 ⇒ 该游标永不成功，用户反复点「加载更多」只见同一句报错 | **通**（清游标 + 重取第一页） | 改后 `community.js:160-164`（父 53354fe 的 124-138 行未含 `INVALID_CURSOR` 分支；按符号重锚）、`communitydetail.js:248-266` |
 | `public_posting` 用途闸 | **未挂**：`routes/community.ts` 16 处 `preHandler` 全只有 `guards.requireUser`；`app.ts:1834` 未传 consent | **未挂**（按裁决，本片只写结论与前置条件） | `routes/community.ts:201-360`；`app.ts:1834`；`privacy/egress.ts:14` |
 
 一句话：**本片不动服务端、不动契约**；社区域剩下的真实缺口全在客户端「失败之后怎么说话」，
@@ -156,7 +156,7 @@
 ### 2.7 审核状态 —— 通
 
 - 服务端只返回 `visibility` + `audit_state`（`service.ts:602-625` 的 `projectPost`），客户端**不**自己推断：
-  `community.js:153-177`、`communitydetail.js:157-178`、`communitycreate.js:104-109` 三处标注逐字一致
+  `community.js:200-225`（父 53354fe 的 153-177 行不含 `audit_state`；按符号重锚）、`communitydetail.js:157-178`、`communitycreate.js:104-109` 三处标注逐字一致
   （`tests/unit/miniprogram-community-api.test.mjs` 的 `AUDIT_CASES` 6 例把这件事钉住）。
 - 编辑生成新 revision 后**必须重审**（`service.ts:914-1000`）；旧版本结论不会被套到新版本
   （`communitydetail.wxml:70` 向用户明说）。
@@ -164,7 +164,7 @@
 
 ### 2.8 可见性刷新 —— 通
 
-- 客户端：`community.js:51-63`、`communitydetail.js:57-66`、`communitycreate.js:48-52` 每次 `onShow`
+- 客户端：`community.js:54-66`（父 53354fe 的 51-63 行起于 `onLoad` 的 `_epoch` 初始化、止于 `setData({guest})`，未含发起重取的 `that.reload()`；按符号重锚）、`communitydetail.js:57-66`、`communitycreate.js:48-52` 每次 `onShow`
   都经 `pageGate` 重走门禁 + 重取；`onLoadMore` 的游标绑定主体，切筛选即 `reload()` 从第一页重来。
 - 服务端：`service.ts:455-500`（`effectiveState`：删除态直接返回；每次读按**当前规则版本**重判，
   已发布但当前不可发布的降到 `hidden`）、`:498-500`（`isPubliclyVisible` 的唯一判据
@@ -332,7 +332,7 @@ exit=0
 | 文件 | 改了什么 |
 |---|---|
 | `miniprogram/utils/community-api.js` | 头部纪律加第 5 条（归因委托会话层）；新增 `sessionFailure()`（`:339-341`）与 `forbidden()`（`:342-344`）两个**委托**判定并导出（`:404-405`）；`send()` 的 401/403 分支未改（`:167-170`，仍是唯一一处、委托 `auth.failureFor`）；本域 403 三码文案保留（`:365-367`） |
-| `miniprogram/pages/community/community.js` | 失败收口抽成 `_fail()`（`:96-110`，会话类回门禁、其余透传 `errorCode`）；`reload` 的 catch 改调 `_fail`（`:89-93`）；`onLoadMore` 的 catch 三分：会话/403 ⇒ `_fail`、`INVALID_CURSOR` ⇒ 清游标 + 重载、其余 toast（`:124-138`） |
+| `miniprogram/pages/community/community.js` | 失败收口抽成 `_fail()`（`:96-110`，会话类回门禁、其余透传 `errorCode`）；`reload` 的 catch 改调 `_fail`（`:89-93`）；`onLoadMore` 的 catch 三分：会话/403 ⇒ `_fail`、`INVALID_CURSOR` ⇒ 清游标 + 重载、其余 toast（`:124-138`）。本表裸行号是 2026-10-21 提交时的读数（同样保留在 §7「只登记不改」口径下）；父 53354fe 已漂移到 `_fail`／`reload`／`onLoadMore` 的现位置，本片不改这些历史裸锚点 |
 | `miniprogram/pages/communitydetail/communitydetail.js` | 新增 `errorCode`/`stateStatus`/`stateTitle`/`commentsStatus`/`commentsError`（`:21-50`）；`load()` 帖子先渲染、评论另取（`:70-100`）；新增 `loadComments()`（`:102-120`）；`_fail()`（`:130-144`）；`_writeFail()`（`:151-155`）并接上 7 个写入点；`onLoadMoreComments` 加游标回收（`:245-270`）；`onRetryComments`（`:391`） |
 | `miniprogram/pages/communitydetail/communitydetail.wxml` | 错误态改 `status="{{stateStatus}}"` + `error-code` + `title="{{stateTitle}}"` + `allow-denied-action`（`:19-34`）；评论区加 loading/error/empty 三态与「重新读取评论」（`:88-101`） |
 | `miniprogram/pages/communitycreate/communitycreate.js` | 新增 `errorCode`/`denied`（`:38-41`）；`onSubmit` 的 catch 三分（`:110-124`）；`onDismissDenied()`（`:126`） |
