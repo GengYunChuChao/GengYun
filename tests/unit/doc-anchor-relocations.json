@@ -811,5 +811,15 @@
     "reason": "该行引用文字是 `onMarkAllRead()` 的逐个串行标记（`targets = items.filter(unread)`、`_markReadOne`），旧号 287 在父提交（HEAD^，22ad9082）上却是 `_openDetail` 的前置注释 `/** 社区详情页的统一出口：先校验 uuid，再交给 navigation.openTarget 判路由与跳法。 */`，本来就不是 `onMarkAllRead`；本 PR 在 reload 内加两行后，机械 +2 只会落到 HEAD 289（同一行 `_openDetail` 注释），仍不是声明。HEAD 447 是唯一的 `onMarkAllRead: function () {`（全文 1 行，本次现测）。该页其余行号整体来自 10-18 树（`de66803…`），属既有语义陈旧，按符号纠正，不是 +2 平移。",
     "kind": "correction",
     "symbol": "onMarkAllRead: function () {"
+  },
+  {
+    "doc": "docs/verification/gy-r28-e6-closure-materials-20261021.md",
+    "line": 55,
+    "target": "miniprogram/pages/history/history.js",
+    "from": 74,
+    "to": 104,
+    "kind": "correction",
+    "symbol": "merged.filter(function (entry) { return entry.failed })",
+    "reason": "父基线 53354fe7 的 history.js:74 是 `load: function (cursor) {`（load 声明），该行没有 failedCount，也没有 `entry.failed` 统计——本页 A7 写的「failedCount 逐条统计」在父树上就对不上，属历史语义错，不是本次改 history.js 把这一行挤走的。真正的统计语句是列表写入里的 `failedCount: merged.filter(function (entry) { return entry.failed }).length`，HEAD 在 :104；按符号纠正到 :104，不走 +8 行号平移（平移落到的是 load 声明附近，仍不含该统计）。目标文件本提交的改动来自已冻结的页面生命周期补丁，本片只登记文档锚点。"
   }
 ]

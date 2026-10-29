@@ -43,6 +43,10 @@ Page({
   onShow: function () {
     fontScale.applyFontScale(this)
     const self = this
+    // 同会话页面代次：onShow/onHide/onUnload 各推进一次。删除确认与在途写回只认这个
+    // 代次；不绑 `_listEpoch`，正常列表读取换代不得误杀仍在当前页面的删除写回。
+    self._pageActive = true
+    self._pageEpoch = (self._pageEpoch || 0) + 1
     // 重新进入本页即作废上一轮列表读取：门禁/新读取还没返回时，旧第一页或旧分页的
     // 成功/失败都不得再写页面或定位快照。离页时仍可能留下 busy/loading，这里一并解除。
     self._listEpoch = (self._listEpoch || 0) + 1
@@ -63,11 +67,15 @@ Page({
 
   onHide: function () {
     pageGate.cancel(this)
-    // 隐藏后旧请求仍可能返回；先作废代次，再由重进 onShow 建立新一轮。
+    // 隐藏后旧请求仍可能返回（含删除确认/删除写回）；先作废页面代次，再由重进 onShow 建立新一轮。
+    this._pageActive = false
+    this._pageEpoch = (this._pageEpoch || 0) + 1
     this._listEpoch = (this._listEpoch || 0) + 1
   },
   onUnload: function () {
     pageGate.cancel(this)
+    this._pageActive = false
+    this._pageEpoch = (this._pageEpoch || 0) + 1
     this._listEpoch = (this._listEpoch || 0) + 1
   },
 
@@ -128,10 +136,20 @@ Page({
 
   onDelete: function (event) {
     const self = this
+    // 隐藏/离页、门禁未放行、断网、忙态或行已不在当前列表时不发起删除确认。
+    if (self._pageActive !== true || !self.data.gatePassed || self.data.networkOff) return
     if (self.data.busy) return
     const index = Number(event.currentTarget.dataset.index)
     const item = self.data.items[index]
     if (!item) return
+    const historyId = item.id
+    const revision = item.revision
+    // 弹窗发起时捕获本页身份。离页后 DELETE 不会因此在服务端被取消或回滚，
+    // 这里只保证不再把结果写回已经不可见的页面实例。
+    const pageEpoch = self._pageEpoch || 0
+    const alive = function () {
+      return self._pageActive === true && pageEpoch === (self._pageEpoch || 0)
+    }
     wx.showModal({
       title: '删除这条记录？',
       content: '将删除该识别记录，并触发关联的识别结果与媒体删除流程。删除后不可恢复。',
@@ -139,12 +157,18 @@ Page({
       cancelText: '取消',
       success: function (res) {
         if (!res.confirm) return
+        // 确认回调可能晚于离页/重进：身份已变或门禁/网络不满足时不发 DELETE。
+        // 这里不把 `busy` 当失效条件：同页列表读取会短暂置 busy，不能因此误杀已发起的删除。
+        if (!alive() || !self.data.gatePassed || self.data.networkOff) return
         self.setData({ busy: true, message: '正在删除…' })
-        historyApi.deleteHistory(item.id, item.revision).then(function (result) {
+        historyApi.deleteHistory(historyId, revision).then(function (result) {
+          // 成功/失败都必须先核页面身份，避免旧写回复位新 busy、改新 message 或重读新列表。
+          if (!alive()) return
           // 级联是否已启动由服务端如实回传（非契约披露标记）。
           self.setData({ busy: false, message: '已删除记录。' + historyApi.cascadeNote(result.cascade) })
           self.load()
         }).catch(function (error) {
+          if (!alive()) return
           self.setData({ busy: false, message: historyApi.messageFor(error) })
         })
       }

@@ -52,7 +52,7 @@
 | A4 | 归属校验：他人与不存在同形 404；单条删除带 `owner_id`＋`revision` 的 CAS | `favorites/service.ts:117`（`notFound`）、`history/service.ts:125`；`favorites/store-pg.ts:253`、`history/store-pg.ts:255` |
 | A5 | 读取时逐次重查可见性（不入库、不缓存） | `favorites/service.ts:233`（`project`）→ `:234`（`deriveVisibility`）；`history/service.ts:227`／`:233`；派生端口 `services/api/src/targetref/visibility.ts:170` |
 | A6 | 收藏／识别不转成「已使用事实」 | `favorites/service.ts:67`（`FAVORITE_PROJECTION_FIELDS`，投影六字段无 used/usage）、`:91`（`favoriteEligibleForRecommendation` 只看本次 `reference_state === 'available'`） |
-| A7 | 候选与人工选择分开、失败任务可数 | `miniprogram/utils/history-api.js:343`（`modelCandidates`）、`:347`（`manualSelection`）、`:354`（`candidateSelectionSeparated: true`）；`miniprogram/pages/history/history.js:74`（`failedCount` 逐条统计 `entry.failed`） |
+| A7 | 候选与人工选择分开、失败任务可数 | `miniprogram/utils/history-api.js:343`（`modelCandidates`）、`:347`（`manualSelection`）、`:354`（`candidateSelectionSeparated: true`）；`miniprogram/pages/history/history.js:104`（`failedCount` 逐条统计 `entry.failed`） |
 | A8 | 401 与 403 分档（403 不再折叠成掉登录） | 单一事实源 `miniprogram/utils/auth.js:95-109`；收藏/历史两侧委托 `miniprogram/utils/favorites-api.js:100`、`miniprogram/utils/history-api.js:171`；契约 403 闭集 `packages/contracts/openapi.json:16959-16963` |
 | A9 | 注销时点硬删收藏/历史（正文与幂等台账），行数入证据 | `favorites/store-pg.ts:172`（`DELETE FROM favorites … RETURNING id`）、`:176`（台账）；`history/store-pg.ts:160`、`:164`；闭集 `services/api/src/privacy/user-data-deletion.ts:93-98`、注册 `:444-445`；真库 PG17 读数 `tests/integration/favorites-history-pg.mjs:482-505`（A 四表残留 0、B 行逐表相等、证据串含两个计数） |
 
