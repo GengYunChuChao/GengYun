@@ -201,7 +201,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 钉这条路径的原因是「手选条件查询」在仓里有两个实现，数据源根本不同：`pages/knowledge` 走服务端 `GET /knowledge`（真库读视图），`pages/reference` 带条件时**强制**读随包离线副本（第 7.4 节）。若不钉，同一句验收会在两个页面上各算一半，而其中一半结构上不可能通过。
 
-真库端到端已按这条路写成 7 步：`tests/integration/user-chain-e2e.mjs`（本片加入第 7.3 节的「来源失效」往返后实测 142 条断言 / 7 步 / exit 0）。
+真库端到端已按这条路写成 8 步：`tests/integration/user-chain-e2e.mjs`（第 7.3 节的「来源失效」往返之后又补了「6.5 匿名面」：未登录访问 `GET /knowledge`、`GET /herbicides`、`POST /favorites`、`DELETE /favorites/{id}` 必须 401 且响应体只有错误封套；本机复采实测 159 条断言 / 8 步 / exit 0）。
 
 ### 7.1 查询面＝`pages/knowledge`
 
@@ -306,9 +306,9 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 **为什么写成「本数据源下不可为」而不是「未接线」**：未接线是「补一段代码就能通」；这里的缺口在**数据源身份**——随包名录不是服务端实体，而 `/favorites` 的语义是「保存一条**服务端可核验**的引用」。所以在**不换数据源**的前提下，它不随某个 PR 的进度自动消失：要么明确不做（从名录详情收藏，本页按这一支写），要么换数据源并连带改 #7 的验收口径（= 另一条路，代价与待裁定项见 `docs/architecture/acceptance-map.md` 的「已知缺口」；本片只登记，不裁定）。
 
 **结论**：P0 链路第 5 步「收藏／取消」的入口是**两个**——`pages/knowledgedetail` 的收藏按钮（主路径，从详情页发起）与 `pages/favorites` 的「可收藏的资料」（从收藏页发起，**同一个** `POST /favorites`）；`pages/reference` / `pages/referencedetail` 这一路不计入本链路（第 7.4 节），也不提供收藏；识别结果页的 `fav-entry` 属识别能力，同样不计入（第 7.6.1 节）。
-## 7.7 链路 e2e 的边界：这 7 步不含历史步
+## 7.7 链路 e2e 的边界：这 8 步不含历史步
 
-这 7 步**不含历史步** —— `tests/integration/user-chain-e2e.mjs` 全文对 `history` 零命中，`/history` 一步都没有，故 #16 的「可核对历史」这一半**不在这条链路里**（历史侧目前只有 `tests/integration/favorites-history-isolation-http.mjs`：两账号 × 两私有域，但 store 是内存替身、非真库）；⛔ 不能把本链路 e2e 读成「历史也验过了」。
+这 8 步**不含历史步** —— `tests/integration/user-chain-e2e.mjs` 全文对 `history` 零命中，`/history` 一步都没有，故 #16 的「可核对历史」这一半**不在这条链路里**（历史侧目前只有 `tests/integration/favorites-history-isolation-http.mjs`：两账号 × 两私有域，但 store 是内存替身、非真库）；⛔ 不能把本链路 e2e 读成「历史也验过了」。
 
 ## 8 定位选地区＝本仓恒 `unavailable`（地区质心数据不随仓分发，Refs #5）
 
