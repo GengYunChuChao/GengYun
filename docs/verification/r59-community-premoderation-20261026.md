@@ -27,7 +27,7 @@
 | 改帖两步（同口径，第二处落点） | `services/api/src/community/service.ts:1197-1198`、`:1203-1222` | 新 revision 必须重送审：先 `commitPostIfCurrent` 落待审，再 `link.publish` 这**个新 revision** |
 | 投稿面路由级门 | `services/api/src/routes/community.ts:212-220` | `POST /community/posts` 的 `preHandler: postingPreHandlers(...)`（功能开关 + 投稿同意门）在**服务层之前** |
 | 下架（发布后） | `services/api/src/routes/admin.ts:416-424` | `POST /admin/posts/:id/hide`，scope `sources:write`；服务层做可见性 CAS 到 `hidden` |
-| 作者侧状态文案（小程序三页） | `miniprogram/pages/community/community.js:190-192`、`miniprogram/pages/communitydetail/communitydetail.js:173-176`、`miniprogram/pages/communitycreate/communitycreate.js:99-108` | 通过 ⇒ 空串或「已通过先行审核」；下架 ⇒「已下架（仅本人可见）」；**其余（含 `pending` 与 `rejected`）⇒「待审／未公开」** |
+| 作者侧状态文案（小程序三页） | `miniprogram/pages/community/community.js:190-192`、`miniprogram/pages/communitydetail/communitydetail.js:173-176`、`miniprogram/pages/communitycreate/communitycreate.js:124-134` | 通过 ⇒ 空串或「已通过先行审核」；下架 ⇒「已下架（仅本人可见）」；**其余（含 `pending` 与 `rejected`）⇒「待审／未公开」** |
 
 ### 1.2 半落地（有代码，但离「先审后发」的完整语义还差一截）
 
@@ -93,13 +93,13 @@
 2. **`community.js` 里没有「已通过先行审核」这个字面量。** 列表页作者侧通过态是**空串**
    （`miniprogram/pages/community/community.js:190-192`）；该文案只出现在
    `miniprogram/pages/communitydetail/communitydetail.js:173`（公开侧 `publicLabel`）与
-   `miniprogram/pages/communitycreate/communitycreate.js:106`（发帖 toast）。
+   `miniprogram/pages/communitycreate/communitycreate.js:129`（发帖 toast；历史引用原写 106，父版本该行是 `}).catch(function (error) {`，toast 实际在 104）。
    另注意详情页公开侧是「**未公开／待审**」，语序与作者侧「待审／未公开」**相反**。
 3. **两步状态有第二处落点：改帖（`editPost`）。** 之前只登记了发帖；
    `services/api/src/community/service.ts:1188` 与 `:1197-1198` 是同一套三元组（新 revision 重送审）。
    只钉发帖会漏掉「发帖待审、改帖直接发」这条旁路 —— 所以钉 2 钉的是**两处**。
 4. 顺带登一句**注释漂移**（不影响行为，但会误导后来人）：
-   `miniprogram/pages/communitycreate/communitycreate.js:99-101` 的注释里写的交叉引用行号已过期
+   `miniprogram/pages/communitycreate/communitycreate.js:124-126` 的注释里写的交叉引用行号已过期
    （它指向 `communitydetail.js:105` / `:106-108` / `community.js:130-133`，实测分别在
    `:173` / `:174-176` / `:190-192`）。本切片**不改**小程序（A 档边界），只在此登记。
 
