@@ -52,8 +52,21 @@ Page({
     pageGate.start(this, function (ok) { that.setData({ guest: !ok }) })
   },
 
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  // 提交回调的页面可见周期身份（Refs #15／#28）：`createPost` 在飞时同一账号会话
+  // `onHide`／`onUnload`／重进，旧响应仍会 `setData`／`toast`／`navigation`；旧失败还会写
+  // `guest`／`errorCode`／`denied`／`errorText`，覆盖新页面或新一次提交。离页即换代，
+  // 旧回调据此提前返回。**不取消**服务端已受理的投稿，也不改后端／幂等／审核语义。
+  onHide: function () {
+    pageGate.cancel(this)
+    this.invalidateSubmitCycle()
+    // 只释放「本次可见周期」的忙碌态，避免回来后被上一次请求一直占着 submitting。
+    // 表单文本（title/body）与既有错误态都不在这里清空。
+    if (this.data.submitting) this.setData({ submitting: false })
+  },
+  onUnload: function () {
+    pageGate.cancel(this)
+    this.invalidateSubmitCycle()
+  },
 
   onTitle: function (event) { this.setData({ title: event.detail.value, errorText: '' }) },
   onBody: function (event) { this.setData({ body: event.detail.value, errorText: '' }) },
@@ -74,6 +87,16 @@ Page({
     navigation.openTarget('/pages/community/community', true, function () {})
   },
 
+  /** 离页换代：此后旧提交回调的周期身份不再等于当前周期。 */
+  invalidateSubmitCycle: function () {
+    this._submitCycle = (this._submitCycle || 0) + 1
+  },
+
+  /** 提交回调是否仍属于当前页面可见周期（离页／重进后的旧回调为 false）。 */
+  submitCallbackAlive: function (cycle) {
+    return (this._submitCycle || 0) === cycle
+  },
+
   onSubmit: function () {
     const title = String(this.data.title || '').trim()
     const body = String(this.data.body || '').trim()
@@ -92,8 +115,10 @@ Page({
     if (regionCode) input.region_code = regionCode
 
     const that = this
+    const cycle = this._submitCycle || 0
     this.setData({ submitting: true, errorText: '' })
     api.createPost(input).then(function (result) {
+      if (!that.submitCallbackAlive(cycle)) return
       that.setData({ submitting: false })
       // 审核结论只以**服务端返回**为准，措辞取适配层 `api.outcomeOf`（详情页/列表页同一张表）：
       // 201 只是「服务端已受理」，是否公开一律按返回的 `visibility`/`audit_state` 如实提示。
@@ -104,6 +129,7 @@ Page({
       wx.showToast({ title: outcome.title, icon: approved ? 'success' : 'none' })
       navigation.openTarget('/pages/communitydetail/communitydetail?id=' + encodeURIComponent(result.post.id), true, function () {})
     }).catch(function (error) {
+      if (!that.submitCallbackAlive(cycle)) return
       // 会话类（含 `SESSION_CHANGED`）⇒ 回登录门禁；403 三码 ⇒ 整页 denied（`errorCode` 驱动）。
       if (api.sessionFailure(error)) {
         that.setData({ submitting: false, guest: true, errorText: '', errorCode: '', denied: false })
