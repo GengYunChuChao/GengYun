@@ -18,15 +18,15 @@
 | 发帖（文字） | **通**：先审后发、规则层拒绝则不落内容行、审核域未放行不公开 | 通（本片**未改服务端**一行） | `services/api/src/community/service.ts:820-905`；`routes/community.ts:211-221` |
 | 图片／媒体附件 | **未通**（客户端无上传入口；服务端对 `media_ids.length > 0` 一律 503 fail-closed；投影恒为 `[]`） | **未通**（本片只如实标注，不补） | `service.ts:854-858`、`:970-972`、`:619`；`routes/media.ts:318`、`:337` |
 | 评论 | **通**（读/写/改/删 + 幂等键 + `If-Match`）；**半通**在失败谱：评论取数一失败，整页被说成「内容不可见」，已读到的帖子一起被抹掉 | **通** | 改前 `pages/communitydetail/communitydetail.js:80-88`；改后 `:70-120`（`load` + `loadComments`） |
-| 点赞 | **通**（PUT/DELETE 幂等，不改内容 revision）；**半通**在 403：只弹一句 toast，整页仍是「正常内容」 | **通** | `service.ts:1536-1576`；改后 `communitydetail.js:151-155`（`_writeFail`） |
+| 点赞 | **通**（PUT/DELETE 幂等，不改内容 revision）；**半通**在 403：只弹一句 toast，整页仍是「正常内容」 | **通** | `service.ts:1536-1576`；改后 `communitydetail.js:166-170`（`_writeFail`） |
 | 收藏 | **不适用**：契约 `FavoriteInput` 的目标只有 `species`/`herbicide`/`scheme`，**没有** post/comment | 不适用（如实登记，不新造） | `packages/contracts/openapi.json` 的 `/favorites`（`createFavorite`）与 `FavoriteInput` |
-| 举报（提交） | **通**（`POST /reports` + 幂等键；`REVISION_CONFLICT` 后重读再试） | 通 | `routes/community.ts:341-349`；`communitydetail.js:272-301` |
+| 举报（提交） | **通**（`POST /reports` + 幂等键；`REVISION_CONFLICT` 后重读再试） | 通 | `routes/community.ts:341-349`；`communitydetail.js:306-324` |
 | 举报（处理状态） | **半通**：适配层有 `getOwnReport`，**页面零入口**（全仓无消费者） | **未变**（待裁决 E3-4） | `miniprogram/utils/community-api.js:313-318`；`routes/community.ts:353-360` |
-| 审核状态 | **通**：只以服务端返回的 `visibility`/`audit_state` 说话，三页同一套标注，无本地伪造 | 通（未改） | `community.js:153-177`、`communitydetail.js:157-178`、`communitycreate.js:104-109` |
+| 审核状态 | **通**：只以服务端返回的 `visibility`/`audit_state` 说话，三页同一套标注，无本地伪造 | 通（未改） | `community.js:153-177`、`communitydetail.js:200-201`、`communitycreate.js:104-109` |
 | 可见性刷新 | **通**：每次 `onShow` 经门禁重取；服务端每次读按**当前规则版本**重算 `effectiveState` | 通（未改） | `community.js:68-80`；`service.ts:455-500`、`:706-724` |
 | 403 → B7 `denied` | **列表页通／详情页与投稿页未通**：详情页无 `errorCode`，wxml 写死 `status="invalid"` 且不传 `error-code`；投稿页只有一条红字提示 | **通**（三页都落 denied） | 改前 `communitydetail.js:22-37`、`communitydetail.wxml:20-27`、`communitycreate.js:104-107`；改后见 §2.9 |
 | 401 归因 | **适配层已委托**（#396）；**页面**只认 `=== 'SESSION_REQUIRED'`，`SESSION_CHANGED`（同属会话类）被当成普通失败停在错误页 | **通**（页面改判 `api.sessionFailure`） | `auth.js:61-133`；改后 `community-api.js:339-344` |
-| 失效游标（`INVALID_CURSOR`） | **半通**：只弹 toast，`nextCursor` 原样留着 ⇒ 该游标永不成功，用户反复点「加载更多」只见同一句报错 | **通**（清游标 + 重取第一页） | 改后 `community.js:124-138`、`communitydetail.js:248-266` |
+| 失效游标（`INVALID_CURSOR`） | **半通**：只弹 toast，`nextCursor` 原样留着 ⇒ 该游标永不成功，用户反复点「加载更多」只见同一句报错 | **通**（清游标 + 重取第一页） | 改后 `community.js:124-138`、`communitydetail.js:279-298` |
 | `public_posting` 用途闸 | **未挂**：`routes/community.ts` 16 处 `preHandler` 全只有 `guards.requireUser`；`app.ts:1834` 未传 consent | **未挂**（按裁决，本片只写结论与前置条件） | `routes/community.ts:201-360`；`app.ts:1834`；`privacy/egress.ts:14` |
 
 一句话：**本片不动服务端、不动契约**；社区域剩下的真实缺口全在客户端「失败之后怎么说话」，
@@ -125,8 +125,8 @@
 | 路由 | `routes/community.ts:251-262`（列表）、`:264-274`（创建）、`:276-283`（单条）、`:285-292`（改）、`:294-301`（删） | 全部 `requireUser`；创建 201 + `ETag` | 通 |
 | 服务端 | `service.ts:1137-1190`（创建：父帖必须可见/未删、幂等、先审后发）、`:1256-1280`（改：新 revision 重审）、`:1315-1330`（删） | 隐藏版本/不存在 ⇒ 404，不泄露存在性 | 通 |
 | 客户端（读） | 改前 `communitydetail.js:66-88`：`getPost().then(→ listComments)` 一条链，`catch` 分不清谁失败 | 评论失败 ⇒ `status='error'` + 「这条内容当前不可见」；已读到的帖子一起被抹掉 | **半通** |
-| 客户端（读，改后） | `communitydetail.js:70-100`（帖子先渲染）、`:102-120`（`loadComments`） | 帖子 `status='ready'` 后单独取评论；失败 ⇒ `commentsStatus='error'` + 可重试，帖子不动 | **通** |
-| 客户端（写） | `communitydetail.js:228-243`（发评论）、`:359-388`（改/删评论） | 幂等键 + `If-Match=post.revision`；`REVISION_CONFLICT` 重读再试 | 通 |
+| 客户端（读，改后） | `communitydetail.js:85-115`（帖子先渲染）、`:117-135`（`loadComments`） | 帖子 `status='ready'` 后单独取评论；失败 ⇒ `commentsStatus='error'` + 可重试，帖子不动 | **通** |
+| 客户端（写） | `communitydetail.js:262-278`（发评论）、`:410-439`（改/删评论） | 幂等键 + `If-Match=post.revision`；`REVISION_CONFLICT` 重读再试 | 通 |
 
 ### 2.4 点赞 —— 通（幂等），403 被 toast 掩盖 → 已补
 
@@ -135,7 +135,7 @@
 | 路由 | `routes/community.ts:305-320`（post like/unlike）、`:323-338`（comment like/unlike） | PUT/DELETE，`requireUser`；不写 `ETag`（`Ack` 无资源表示） | 通 |
 | 服务端 | `service.ts:1536-1576` | 持久唯一 `(user, target)`，重复 PUT 不产生第二条、不改内容 revision | 通 |
 | 客户端 | 改前 `communitydetail.js:154-159`：`catch → wx.showToast(api.message(error))` | 403 只弹一句「当前会话无权访问社区」，页面其余部分仍是正常内容 | **半通** |
-| 客户端（改后） | `communitydetail.js:151-155`（`_writeFail`）、`:214-226`（`_like`） | 会话类回门禁 / 403 整页 denied / 其余 toast | **通** |
+| 客户端（改后） | `communitydetail.js:166-170`（`_writeFail`）、`:248-258`（`_like`） | 会话类回门禁 / 403 整页 denied / 其余 toast | **通** |
 | 契约限制 | `openapi.json` 的 `Post`/`Comment` 无点赞计数字段 | 页面不显示点赞数（`communitydetail.wxml:52-55` 如实说明） | 通（不作为缺口） |
 
 ### 2.5 收藏 —— 不适用
@@ -149,14 +149,14 @@
 | 面 | 位置 | 读数 | 判定 |
 |---|---|---|---|
 | 提交 | `routes/community.ts:341-349`、`service.ts`（`createReport`） | `POST /reports`，201 + `ETag`，幂等键必填；`REPORT_REASONS` 五码闭集 | 通 |
-| 客户端提交 | `communitydetail.js:272-301`（`_report`） | `wx.showActionSheet` 选原因 → `POST /reports`；`REVISION_CONFLICT` 后 `load()` 重读 | 通 |
+| 客户端提交 | `communitydetail.js:306-324`（`_report`） | `wx.showActionSheet` 选原因 → `POST /reports`；`REVISION_CONFLICT` 后 `load()` 重读 | 通 |
 | 状态回执 | `routes/community.ts:353-360`（`GET /reports/{id}`）、`community-api.js:313-318`（`getOwnReport`） | 契约与适配层都在；**页面无任何消费者**（`grep getOwnReport miniprogram/pages` 零命中） | **半通** |
-| 提交后的可见反馈 | `communitydetail.js:277-280` | 只在一句 toast 里带 `result.report.state`（`received`/`isolated`/`closed`），关掉就没了 | 半通（如实） |
+| 提交后的可见反馈 | `communitydetail.js:312` | 只在一句 toast 里带 `result.report.state`（`received`/`isolated`/`closed`），关掉就没了 | 半通（如实） |
 
 ### 2.7 审核状态 —— 通
 
 - 服务端只返回 `visibility` + `audit_state`（`service.ts:602-625` 的 `projectPost`），客户端**不**自己推断：
-  `community.js:153-177`、`communitydetail.js:157-178`、`communitycreate.js:104-109` 三处标注逐字一致
+  `community.js:153-177`、`communitydetail.js:200-201`、`communitycreate.js:104-109` 三处标注逐字一致
   （`tests/unit/miniprogram-community-api.test.mjs` 的 `AUDIT_CASES` 6 例把这件事钉住）。
 - 编辑生成新 revision 后**必须重审**（`service.ts:914-1000`）；旧版本结论不会被套到新版本
   （`communitydetail.wxml:70` 向用户明说）。
@@ -164,7 +164,7 @@
 
 ### 2.8 可见性刷新 —— 通
 
-- 客户端：`community.js:51-63`、`communitydetail.js:57-66`、`communitycreate.js:48-52` 每次 `onShow`
+- 客户端：`community.js:51-63`、`communitydetail.js:57-71`、`communitycreate.js:48-52` 每次 `onShow`
   都经 `pageGate` 重走门禁 + 重取；`onLoadMore` 的游标绑定主体，切筛选即 `reload()` 从第一页重来。
 - 服务端：`service.ts:455-500`（`effectiveState`：删除态直接返回；每次读按**当前规则版本**重判，
   已发布但当前不可发布的降到 `hidden`）、`:498-500`（`isPubliclyVisible` 的唯一判据
@@ -177,7 +177,7 @@
 | 页 | 改前 | 改后 |
 |---|---|---|
 | 列表 | `error-code="{{errorCode}}"` 已在（`community.wxml:57`），`errorCode` 由 `reload` 透传 | 未改（仅把收口抽成 `_fail`，`:101-110`；字面量 `errorCode: (error && error.code) \|\| ''` 保留，`tests/ui-unified-states.test.mjs:198` 守着） |
-| 详情 | `data` 里**没有** `errorCode`；`communitydetail.wxml:20-27` 写死 `status="invalid"` 且**不传** `error-code` ⇒ `denied` 在本页**不可达**，403 显示成「这条内容当前不可见」 | `data.errorCode`/`stateStatus`/`stateTitle`（`communitydetail.js:21-50`）、`_fail`（`:130-144`）、wxml `status="{{stateStatus}}"` + `error-code` + `allow-denied-action`（`:19-34`） |
+| 详情 | `data` 里**没有** `errorCode`；`communitydetail.wxml:20-27` 写死 `status="invalid"` 且**不传** `error-code` ⇒ `denied` 在本页**不可达**，403 显示成「这条内容当前不可见」 | `data.errorCode`/`stateStatus`/`stateTitle`（`communitydetail.js:21-50`）、`_fail`（`:145-159`）、wxml `status="{{stateStatus}}"` + `error-code` + `allow-denied-action`（`:19-34`） |
 | 投稿 | 只有 `errorText` 红字提示（未见 `error-code`） | `data.errorCode`/`denied`（`:38-41`）、`onSubmit` 的 catch 分三路（`:110-124`）、wxml 顶部 denied 分支（`:22-33`） |
 | 组件级判定 | — | 真实 `state-view`（真实 `states.js`）在 `errorCode=SCOPE_DENIED/CONSENT_REQUIRED/ACCOUNT_INACTIVE` 时 `effectiveStatus==='denied'`，`kindTag==='没有权限'`；denied 默认收起动作，故详情页/投稿页显式 `allow-denied-action`（导航动作不是重试） |
 
@@ -314,7 +314,7 @@ exit=0
 ```
 （`skipped 1` 为既有跳过项，非本期新增。本轮**没有**出现抖动，也没有复跑。）
 
-## 4. 改法（逐文件，`git diff --numstat`）
+## 4. 改法（逐文件，`git diff --numstat`；下表行号为 2026-10-21 切片的历史位置，不是现行源码锚点）
 
 ```
  391    0  docs/verification/gy-i14-community-chain-20261021.md   ← 本页（新增）
@@ -364,8 +364,8 @@ exit=0
 | E3-2 | 社区投稿挂 `public_posting` 用途闸（`routes/community.ts` 16 处 preHandler；`app.ts:1834` 未传 consent） | 会先让 GY-I15 全部社区 HTTP 用例 403；需先备授权夹具 + 给 `registerCommunityRoutes` 加 consent 参数（§2.10 四条前置条件） | 独立片（#29 × #15 交汇） |
 | E3-3 | 图片帖：客户端上传 + 图片审核 + 媒体投影（`service.ts:619` 的 `media: []`） | 依赖模型层审核与真实供应商；写假上传只会造一条必然 503 的路径 | #14 供应商面（GY-I21 评估） |
 | E3-4 | 举报「处理状态」页面入口（`GET /reports/{id}` 已有、`getOwnReport` 已有消费者为零） | 属产品决定（入口放哪、多久回查、`isolated` 怎么向用户解释）；本片只登记缺口 | #15 后续片 |
-| E3-5 | 编辑帖子会**丢弃** `media_ids`：`communitydetail.js:312` 固定传 `media_ids: []` | 目前 `media_ids` 恒为空（无上传入口）⇒ 无实际影响；一旦 E3-3 落地就会静默丢附件，需随 E3-3 一起改成「沿用当前 `post.media_ids`」 | 随 E3-3 |
-| E3-6 | 举报 `detail` 字段始终传空串（`communitydetail.js:277-283`），页面没有输入框 | 契约允许可选 `detail`；补输入框属交互决定，不是缺陷 | #15 后续片 |
+| E3-5 | 编辑帖子会**丢弃** `media_ids`：`communitydetail.js:346` 固定传 `media_ids: []` | 目前 `media_ids` 恒为空（无上传入口）⇒ 无实际影响；一旦 E3-3 落地就会静默丢附件，需随 E3-3 一起改成「沿用当前 `post.media_ids`」 | 随 E3-3 |
+| E3-6 | 举报 `detail` 字段始终传空串（`communitydetail.js:311`），页面没有输入框 | 契约允许可选 `detail`；补输入框属交互决定，不是缺陷 | #15 后续片 |
 | E3-7 | 点赞没有「我是否点过赞」的读取口（契约无此字段） | 契约变更属禁改面；页面已如实说明「不显示点赞数」 | 契约片 |
 
 ## 7. 文档/行号漂移登记（只登记，本片不改）
