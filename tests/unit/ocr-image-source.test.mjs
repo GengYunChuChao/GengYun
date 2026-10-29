@@ -544,7 +544,7 @@ test('E·装配点行为：`registerOcrRoutes({ imageMedia })` 真的把媒体�
   }
 });
 
-test('E·装配点结构：app.ts 按 `speechAudioMedia` 同形转发**既有**媒体端口，键集只增 `imageMedia`', () => {
+test('E·装配点结构：app.ts 按 `speechAudioMedia` 同形转发**既有**媒体端口，键集只增 `imageMedia`（＋GY-R70 的 `mediaWiring`）', () => {
   const appSource = readRepoText('services/api/src/app.ts');
   // ① 转发的是**既有**变量（不新建对象存储、不读 env、不铸造批准能力）。
   assert.match(
@@ -564,8 +564,8 @@ test('E·装配点结构：app.ts 按 `speechAudioMedia` 同形转发**既有**�
   const keys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
   assert.deepEqual(
     keys,
-    ['consent', 'egress', 'guards', 'history', 'imageMedia', 'media'],
-    `装配行只允许这六个键（不得塞入 store/provider/reference 等实现层端口）：${registrationLine.trim()}`,
+    ['consent', 'egress', 'guards', 'history', 'imageMedia', 'media', 'mediaWiring'],
+    `装配行只允许这七个键（不得塞入 store/provider/reference 等实现层端口）：${registrationLine.trim()}`,
   );
   // ③ import 禁项逐字保留（装配层不接触 OCR 适配器模块）——本片新增的转发**不得**靠 import 适配器实现。
   for (const forbidden of ['ocr/provider', 'ocr/store', 'ocr/media', 'ocr/reference']) {
