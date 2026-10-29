@@ -7,6 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import path from 'node:path';
 
 import {
   DEFAULT_DATABASE,
@@ -137,11 +138,18 @@ test('端口：只有 1 个端口被占时，PowerShell 的 ConvertTo-Json 会�
 // ② initdb / pg_ctl / psql 参数拼装
 // ---------------------------------------------------------------------------
 
+// 跨平台的绝对路径夹具。⛔ 不写字面量 'C:\\tmp\\pg-data'：在 POSIX 上它不是绝对路径，
+// 会被 buildInitdbArgs / buildPgStartArgs 判成相对路径并抛错（本仓口径要求同一份代码
+// 在两种分隔符语义下都成立，⛔ 不用 process.platform 分支绕）。
+const ABS_TMP = path.resolve(path.sep, 'tmp');
+const DATA_DIR = path.join(ABS_TMP, 'pg-data');
+const LOG_FILE = path.join(ABS_TMP, 'pg.log');
+
 test('initdb 参数：顺序与取值逐字固定（-U postgres -A trust --locale=C --encoding=UTF8）', () => {
-  const args = buildInitdbArgs({ dataDir: 'C:\\tmp\\pg-data' });
+  const args = buildInitdbArgs({ dataDir: DATA_DIR });
   assert.deepEqual(args, [
     '-D',
-    'C:\\tmp\\pg-data',
+    DATA_DIR,
     '-U',
     'postgres',
     '-A',
@@ -157,12 +165,12 @@ test('initdb 参数：相对路径直接抛错（相对路径按进程 cwd 解�
 });
 
 test('pg_ctl 参数：start 带 -w/-t 且端口进 -o，stop 用 fast', () => {
-  const start = buildPgStartArgs({ dataDir: 'C:\\tmp\\pg-data', port: 5555, logFile: 'C:\\tmp\\pg.log', waitSeconds: 60 });
+  const start = buildPgStartArgs({ dataDir: DATA_DIR, port: 5555, logFile: LOG_FILE, waitSeconds: 60 });
   assert.deepEqual(start, [
     '-D',
-    'C:\\tmp\\pg-data',
+    DATA_DIR,
     '-l',
-    'C:\\tmp\\pg.log',
+    LOG_FILE,
     '-o',
     '-h 127.0.0.1 -p 5555',
     '-w',
@@ -170,9 +178,9 @@ test('pg_ctl 参数：start 带 -w/-t 且端口进 -o，stop 用 fast', () => {
     '60',
     'start',
   ]);
-  assert.deepEqual(buildPgStopArgs({ dataDir: 'C:\\tmp\\pg-data' }), [
+  assert.deepEqual(buildPgStopArgs({ dataDir: DATA_DIR }), [
     '-D',
-    'C:\\tmp\\pg-data',
+    DATA_DIR,
     '-m',
     'fast',
     '-w',
