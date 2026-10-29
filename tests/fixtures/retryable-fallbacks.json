@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 242
+      "files": 246
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 48,
-    "has": 47,
+    "total": 49,
+    "has": 48,
     "none": 1
   },
   "entries": [
@@ -47,14 +47,14 @@
     },
     {
       "file": "services/api/src/admin/ops/categories-pg.ts",
-      "line": 201,
+      "line": 207,
       "function": "foldCategoryDatabaseError",
       "judgement": "has",
       "owner": "R31"
     },
     {
       "file": "services/api/src/admin/ops/categories-pg.ts",
-      "line": 207,
+      "line": 213,
       "function": "foldCategoryDatabaseError",
       "judgement": "has",
       "owner": "R31"
@@ -247,6 +247,13 @@
       "function": "classifyMessagesDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/moderation/live-assembly.ts",
+      "line": 146,
+      "function": "refusalOf",
+      "judgement": "has",
+      "owner": "GY-I14"
     },
     {
       "file": "services/api/src/ocr/store-pg.ts",
