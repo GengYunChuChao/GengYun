@@ -63,8 +63,9 @@ Page({
     fontScale.applyFontScale(this)
     const self = this
     // 进入本页即作废上一条读取链：离开/重进后，旧响应不得再写回页面。
+    // 同时解除上一轮遗留的在途态（删除在飞时离开，旧回调已被代次挡掉），重进由本代 load 重新置位。
     self._epoch = (self._epoch || 0) + 1
-    self.setData({ gatePassed: false, checking: true, message: '', errorText: '', errorCode: '', invalid: false, invalidReason: '' })
+    self.setData({ gatePassed: false, checking: true, busy: false, message: '', errorText: '', errorCode: '', invalid: false, invalidReason: '' })
     pageGate.start(this, function (ok) {
       self.setData({ checking: false })
       if (!ok) { self.setData({ gatePassed: false }); return }
@@ -87,7 +88,8 @@ Page({
     // （旧响应可能还带着删除前的 succeeded／available 与可删除入口）。
     const epoch = (self._epoch = (self._epoch || 0) + 1)
     const alive = function () { return epoch === self._epoch }
-    self.setData({ busy: true, errorText: '', errorCode: '', invalid: false })
+    // 新一轮读取同时清掉上一轮的删除提示（删除在飞时重读，旧结果已被代次挡掉，不得留下"正在删除…"）。
+    self.setData({ busy: true, message: '', errorText: '', errorCode: '', invalid: false })
     historyApi.locateHistory(id, historyApi.PAGE_LIMIT_MAX).then(function (located) {
       if (!alive()) return null
       if (!located) {
@@ -180,6 +182,12 @@ Page({
   onDelete: function () {
     const self = this
     if (self.data.busy || !self.data.canDelete) return
+    // 本次删除的目标与世代在弹窗打开时固定：确认弹窗可能在离页、重新进入或重新读取之后才回调。
+    // 旧确认不得对新页面发起删除，也不得把新页面的 revision 当成这一条的目标。
+    const epoch = self._epoch
+    const targetId = self._query.id
+    const targetRevision = self.data.historyRevision
+    const alive = function () { return epoch === self._epoch }
     wx.showModal({
       title: '删除这条记录？',
       content: '将删除该识别记录，并触发关联的识别结果与媒体删除流程。删除后不可恢复。',
@@ -187,8 +195,14 @@ Page({
       cancelText: '取消',
       success: function (res) {
         if (!res.confirm) return
+        // 晚到的确认（已离页/重进/重读换代），或本次删除已在飞（双击），一律丢弃：
+        // 既不 setData，也不发 DELETE。
+        if (!alive() || self.data.busy || !self.data.canDelete ||
+            self.data.historyRevision !== targetRevision) return
         self.setData({ busy: true, message: '正在删除…' })
-        historyApi.deleteHistory(self._query.id, self.data.historyRevision).then(function (result) {
+        historyApi.deleteHistory(targetId, targetRevision).then(function (result) {
+          // 删除在飞期间离页/重进/重读：旧成功不得覆盖新详情与新 busy，也不得清掉新的定位快照。
+          if (!alive()) return
           self.setData({ busy: false, message: '已删除记录。' + historyApi.cascadeNote(result.cascade) })
           // 删除后不再展示任何记录内容（也不再给删除入口）；并作废本页带入的定位快照，
           // 否则再点「重新实时读取」时快照兜底会把刚删掉的记录重新当成"可定位"。
@@ -200,6 +214,8 @@ Page({
             recognized: false, modelCandidates: [], manualSelection: null, raw: null, corrected: null, verification: null
           })
         }).catch(function (error) {
+          // 旧 NOT_FOUND/普通失败同样静默：不写页面、不清定位快照（当前世代才按下列口径收口）。
+          if (!alive()) return
           // 如实报错；服务端说记录已不存在（含他人记录，二者同形）时按"记录不可用"收口，不再展示内容。
           self.setData({ busy: false, message: historyApi.messageFor(error) })
           if ((error && error.code) === 'NOT_FOUND') {
