@@ -28,10 +28,16 @@
       "outsideRed": 135
     },
     {
+      "why": "实际历史语义纠正及父源码证明",
+      "accept": 0,
+      "orphans": 3543,
+      "outsideRed": 134
+    },
+    {
       "why": "GY-R70 重写 N06 行：原句「即使凭据齐备也没有已审适配器」已被本片推翻，随行一并删除旧的裸锚点 :165（新增 0 条、陈旧 1 条，属如实删除而非放宽判据）",
       "accept": 0,
       "orphans": 3542,
-      "outsideRed": 135
+      "outsideRed": 134
     }
   ],
   "orphans": [
@@ -3636,7 +3642,6 @@
     "docs/verification/gy-i22-identity-headers-20261019.md|tests/unit/gy-i22-identity-headers.test.mjs:567|SUSPECT",
     "docs/verification/gy-i22-secmatrix-20261019.md|packages/contracts/openapi.json:9996|SUSPECT",
     "docs/verification/gy-i28-demo-parity-20261018.md|miniprogram/utils/history-api.js:193|SUSPECT",
-    "docs/verification/gy-r28-c5-favorites-history-20261021.md|miniprogram/pages/historydetail/historydetail.js:137|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:186|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:326|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:352|SUSPECT",
