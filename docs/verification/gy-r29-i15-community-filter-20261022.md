@@ -15,7 +15,7 @@
 | 筛选参数 | `GET /posts` 契约参数 = `cursor`/`limit`/`crop_id`/`region_code`/`mine`（`packages/contracts/openapi.json` 的 `/posts.get`）；`operations.json` 有 `listPosts` |
 | 筛选路由 | `services/api/src/routes/community.ts:123-133`（`additionalProperties:false`，多余参数 400） |
 | 筛选服务 | `services/api/src/community/service.ts:768-831`；过滤在 `:797-800`，游标绑定筛选集/主体/排序在 `:801-806`、`:819-826` |
-| 筛选小程序 | `miniprogram/pages/community/community.js:146-148`（`params.mine/crop_id/region_code`），chips 在 `community.wxml:37-38` |
+| 筛选小程序 | `miniprogram/pages/community/community.js:186-189`（`params.mine/crop_id/region_code`；父 53354fe 的 146-148 行是翻页失败文案注释，不是 `_query`，按符号重锚；历史基线 442057b 的树本环境无导出，当时行号未复核），chips 在 `community.wxml:37-38` |
 | 举报 | 契约 `createReport`/`getOwnReport`；路由 `routes/community.ts:341-360`；服务 `service.ts:1378-1416` + `:1418-1425`；PG 存储 `store-pg.ts:664-699`；表在 `0022_community_persistence.sql`；小程序 `communitydetail.js:267-278` |
 
 因此本片只做**读数**与**缺口登记**：把「筛选在真库上到底回什么」「举报状态到底能不能推进」变成可复跑的断言，
