@@ -51,7 +51,7 @@ import type { CallbackOutcome, CallbackReplayGuard } from './callback.ts';
 import { humanReviewQueue } from './nonbypass.ts';
 import { declaredModelVersion, declaredProvider, resolveModerationPorts } from './provider.ts';
 import type { ResolvedModerationPorts, PortKind } from './provider.ts';
-import { createLiveModerationPortsFromWiring, type ModerationLiveWiring } from './live-wiring.ts';
+import { createLiveModerationPortsFromWiring, type ModerationLiveWiring } from './live-wiring.ts'; import type { ModerationImagePortsResolver } from './image-source.ts'; /* GY-R70：与上一条**同行**（独占一行会推移本文件行号，令台账/证据页对 service.ts 的行号引用顶漂） */
 import type { ModerationLivePort } from './live-ports.ts';
 import {
   PORT_KIND_BY_CONTENT_KIND,
@@ -131,7 +131,7 @@ export interface ModerationServiceDeps {
    * 无凭据 / 未显式打开 ⇒ 本服务整域 fail-closed 503（**永不回退替身**）；
    * 有凭据且策略显式打开 ⇒ 装配 tms/ims 真实端口走完整服务。
    */
-  liveWiring?: ModerationLiveWiring;
+  liveWiring?: ModerationLiveWiring; /* GY-R70：`imageMedia` = 媒体域既有两个端口的**取值器**（`app.ts` 转发既有实例；只在 `liveWiring` 存在时才被消费 —— 缺省时本键不出现，行为与接线前逐字节相同）。 */ imageMedia?: ModerationImagePortsResolver;
   /** 内容权威端口（默认：real ⇒ 未接线 fail-closed；其余 ⇒ 明确标注的替身）。 */
   authority?: ContentAuthorityPort;
   /** 决策台账（默认新建内存台账）。 */
@@ -452,7 +452,7 @@ export function createModerationService(deps: ModerationServiceDeps): Moderation
   if (deps.executionMode === 'real') {
     // real：**永不**回退替身。有凭据且显式打开（`liveWiring`）⇒ 用真实端口走完整服务；
     // 否则（无凭据/未显式打开/装配失败）⇒ 整域 fail-closed 服务（含未接线权威端口，读面也不"看似可用"）。
-    const livePorts = deps.liveWiring === undefined ? null : createLiveModerationPortsFromWiring(deps.liveWiring);
+    const livePorts = deps.liveWiring === undefined ? null : createLiveModerationPortsFromWiring(deps.imageMedia === undefined || deps.imageMedia === null || deps.liveWiring.imageMedia !== undefined ? deps.liveWiring : { ...deps.liveWiring, imageMedia: deps.imageMedia }); /* GY-R70：把装配层给的媒体域端口取值器并进 wiring（wiring 自带的 `imageMedia` 优先，显式 `imageSource` 最高）；缺省时**原样**传 `deps.liveWiring`，逐字节同本片之前 */
     if (livePorts === null) {
       return createFailClosedModerationService();
     }
