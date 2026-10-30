@@ -32,6 +32,12 @@
       "accept": 0,
       "orphans": 3543,
       "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 让 settleCodeOf 保留 PrivacyError 的闭集码，services/api/src/conversations/service.ts 净 +14 行（import 1 + 注释 12 + 分支 1）。历史取证页 docs/verification/gy-i12-conversations-gap-20261021.md 的两条裸锚点随行号平移：键里带行号 ⇒ 新增 service.ts:945（SUSPECT）、陈旧 service.ts:1107（SUSPECT）。不是新增问题，按仓规不改写取证页数字。",
+      "accept": 1,
+      "orphans": 3543,
+      "outsideRed": 134
     }
   ],
   "orphans": [
@@ -3620,7 +3626,7 @@
     "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:1107|SUSPECT",
+    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:945|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",

@@ -277,3 +277,25 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 3. **不得把 `PROVIDER_UNAVAILABLE` 一律读成"供应商挂了"**：它还覆盖凭据缺失、协议拒绝、隐私账本拒绝（G3）。
 4. **不得因为本节登记了缺口就跳过既有红线**：来源仍必须逐字段取自本次检索集合、用量卡仍只能来自确定性权威路径、失败/超时仍零回答行 —— 这三条本片一条未动。
 
+---
+
+## G3 已修（GY-R71，2026-10-30 追加）
+
+**登记日期** 2026-10-30 · **证据基线** `8b646ae1` · **状态**：**已修**（上文「### G3 隐私类失败在异步面被折叠成 `PROVIDER_UNAVAILABLE`」描述的是 `8b646ae1` 时的状态，保留原样不改写；本节是它的**替代结论**）。
+
+**修法**：选**路线 ①**（放宽 `settleCodeOf`），但**只放宽到类**、不放宽到形状 —— `services/api/src/conversations/service.ts:499` 的 `settleCodeOf` 现在是「`ApiError` 或 `PrivacyError` 且 `code` 在契约闭集内 ⇒ 保留原码；其余一律 `PROVIDER_UNAVAILABLE`」。**没有**采纳路线 ②（让 `PrivacyError` 继承 `ApiError`）：那会把「`instanceof ApiError`」这一判据在全仓 43 个文件 47 处一起改语义，代价与收益完全不成比例（逐条代价见 `docs/verification/gy-r71-async-privacy-codes-20261030.md` §4）。
+
+**修后事实**（`tests/unit/conversation-async-privacy-codes.test.mjs` 钉住）：
+
+- 作业面四码可分：`CONSENT_REQUIRED`(403) / `OBJECT_UNAVAILABLE`(409) / `INVALID_REQUEST`(400) / `PROVIDER_UNAVAILABLE`(503)，**同 `state=failed`、四码互不相同** ⇒ 客户端第一次有了「去授权」与「重试/报运维」的分流判据。
+- 折叠口径**未放宽**：域外异常（含自带闭集码的第三方错误对象）与 `PrivacyError` 的闭集外码仍折成 `PROVIDER_UNAVAILABLE`。
+- **契约零改动**：作业封套仍是冻结九键，`retryable` 仍**不**进取（四个负控制里有一条专门把 `retryable` 塞进去，两个层次同时打红）。
+
+**由此产生的两处修正**：
+
+1. 上文「### 不得据本节放宽的四件事」第 3 条「不得把 `PROVIDER_UNAVAILABLE` 一律读成'供应商挂了'：它还覆盖凭据缺失、协议拒绝、**隐私账本拒绝**（G3）」—— 第 3 个并列项**已被本节修掉**：隐私账本/外发守卫的拒绝现在按原码落地，不再落成 `PROVIDER_UNAVAILABLE`。前两个并列项（凭据缺失、协议拒绝）仍然成立。
+2. `services/api/src/ai/error-map.ts` 的注释原文写「`settleCodeOf` 只认 `ApiError.code`，非 `ApiError` 一律兜底」——该句在修后不再成立，已同步改成「只保留 `ApiError` / `PrivacyError` 携带的闭集码，其余兜底」（等长替换，无行号漂移）。
+
+**仍未修（相邻面，需另行裁定）**：媒体三域（`recognition` / `ocr` / `speech`）不走 `settleCodeOf`，它们把 provider 抛出的任何异常吞成 `PROVIDER_OUTCOME_UNKNOWN`（`services/api/src/recognitions/service.ts:543`、`services/api/src/ocr/service.ts:635`、`services/api/src/speech/service.ts:620`）——隐私类失败在**那三个作业面**仍然不可分流。改它要动三域各自的「提供者失败码四值闭集」设计，属契约外的失败码集合变更，本片不动。
+
+
