@@ -4,6 +4,16 @@
   "generated_by": "逐条人工裁决（2026-10-28 实测 31 条；同日删去 1 条已重锚的 `ai-ops-ledger-pins.test.mjs:169`，现 30 条；条目由 collectFindings().commentAnchors 导出后人工分类写 note）",
   "entries": [
     {
+      "path": "services/api/src/routes/admin.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/routes/admin.ts:4",
+      "doc": "docs/architecture/admin-console-capability-map.md",
+      "docLine": 23,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-48 行（「/**…」），块后第一条非空行是第 49 行的「import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fa…」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
+    },
+    {
       "path": "apps/admin/src/auth/session.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "admin-web",
@@ -54,14 +64,14 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-10 行（「/**…」），块后第一条非空行是第 12 行的「/**」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "packages/privacy/constants.mjs",
+      "path": "services/api/src/jobs/sources.ts",
       "reason": "COMMENT_ANCHOR",
-      "owner": "contracts",
-      "reference": "packages/privacy/constants.mjs:12",
-      "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 137,
-      "kind": "cited",
-      "note": "【逐字引用注释原文】文档行逐字引用了第 12 行的注释文案「首版无 training」——这段注释确实紧贴声明行，可文档引的是注释不是声明，按本判据仍属「未落代码行」；豁免靠「引文可复核」，不靠闸门放行，故登记。"
+      "owner": "api-server",
+      "reference": "services/api/src/jobs/sources.ts:17-22",
+      "doc": "docs/architecture/ai-ops-spec-status.md",
+      "docLine": 79,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-33 行（「/**…」），块后第一条非空行是第 34 行的「import { ApiError } from '../errors.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
       "path": "services/api/src/admin/audit/catalog.ts",
@@ -74,16 +84,6 @@
       "note": "【文件头自述·写入点一览表】E31 引的是 catalog.ts 文件头那张「写入点（库内函数）／`action`／`scope`／迁移」的十一行表（第 9-21 行，第 7 行写明「一共十一种 `action`」），落在整份文件头自述块（1-191 行）里，块后第一条声明行是第 194 行的 `AUDIT_ACTION_ACCOUNT_SUSPEND`——这张表本身就是 E31「十一条落库审计写路径」的证据原文（含 0049 的 `record_admin_category_update` → `category.update`，第 21 行），硬改锚会把「写点一览」换成某一个常量，反而丢掉「十一路径」这个判据。"
     },
     {
-      "path": "services/api/src/admin/audit/service.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/audit/service.ts:14-16",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 125,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-35 行（「/**…」），块后第一条非空行是第 36 行的「import { ApiError } from '../../errors.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
       "path": "services/api/src/admin/ops/content-pg.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
@@ -92,6 +92,16 @@
       "docLine": 124,
       "kind": "file-header",
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-31 行（「/**…」），块后第一条非空行是第 32 行的「import { AsyncLocalStorage } from 'node:async_hooks';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
+    },
+    {
+      "path": "services/api/src/admin/audit/service.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/audit/service.ts:14-16",
+      "doc": "docs/architecture/ai-ops-spec-status.md",
+      "docLine": 125,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-35 行（「/**…」），块后第一条非空行是第 36 行的「import { ApiError } from '../../errors.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
       "path": "services/api/src/admin/ops/jobs-pg.ts",
@@ -104,14 +114,94 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-44 行（「/**…」），块后第一条非空行是第 45 行的「import type { PoolClient } from 'pg';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/app.ts",
+      "path": "services/api/src/routes/admin-auth.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:2013",
-      "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 263,
+      "reference": "admin-auth.ts:12-13",
+      "doc": "docs/architecture/contract-implementation-status.md",
+      "docLine": 36,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-14 行（「/**…」），块后第一条非空行是第 15 行的「import type { FastifyInstance } from 'fastify';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
+    },
+    {
+      "path": "services/api/src/community/service.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/community/service.ts:1379",
+      "doc": "docs/architecture/contract-implementation-status.md",
+      "docLine": 126,
+      "kind": "inline",
+      "note": "【行内单行注释】文档引的是第 1379 行这条`//` 行注释（「// 同 `createPost`：活跃作者行的匿名引用恒为 NULL（迁移 0030 的\"恰好一个\"约束）。」），块后第一条非空行是第 1380 行的「anonymized_author_ref: null,」，是接口成员签名不是声明行——引用的是这条注释的自述，没有声明行可指。"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:283-290",
+      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
+      "docLine": 55,
       "kind": "block",
-      "note": "【段内块注释·第三方删除读侧四臂】§D1 那句「装配在 `:2013`（仅注入、不 dispatch）」引的是 app.ts 里 GY-R59 P2-b 那段四臂说明（2013-2018：显式注入优先／有真库只读端口／real 无库显式不可用端口／stub 缺省 unwired）的首条注释行，块后没有声明行可指；这段说明正是「装上了但不可达、也不 dispatch」这条判据的原文，只能指注释。（GY-R71 补片：app.ts 顶部 +4 行 ⇒ 2009→2013。）"
+      "note": "【段内块注释】文档引的是第 283-291 行的块注释，块后第一条非空行是第 292 行的「snapshotOwner?(」（可选成员签名，不是声明行）——这段说明没有声明行可指。（GY-R71 补片：本文件新增 jobs 模块声明/依赖/注册块，整段下移 24 行 ⇒ 259-266→283-290。）"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:276",
+      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
+      "docLine": 303,
+      "kind": "cited",
+      "note": "【逐字引用历史读数】设计页那句「设计片当时记 `:276`（那是注释行，不是代码行）」本身就是**在引用注释行**：该行内容是一段端口说明注释。它被写出来是为了解释「为什么后来改指声明行」，不是活的代码锚点；GY-R71 补片沿用这个写法（同页另两个锚点已指到 363 与 356-359）。"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:356-359",
+      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
+      "docLine": 303,
+      "kind": "block",
+      "note": "【注释块】设计页引的是该端口「受理请求 id」那四行注释（356-359）的原文，块后第一条非空行是 360 的 `requestId?: string;`（可选成员签名，不是声明行）——这段说明没有声明行可指。GY-R71 补片：原记 335 行（当时是注释块收尾行，整段下移 24 行后已不存在），本片与文档同批改成实测的 356-359。"
+    },
+    {
+      "path": "services/api/src/routes/health.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/routes/health.ts:1-4",
+      "doc": "docs/architecture/openapi-route-parity.md",
+      "docLine": 35,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-4 行（「/**…」），块后第一条非空行是第 5 行的「import type { FastifyInstance } from 'fastify';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
+    },
+    {
+      "path": "services/api/src/community/purge.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/community/purge.ts:24",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 80,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-72 行（「/**…」），块后第一条非空行是第 73 行的「import type { AuthorDirectory } from './types.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
+    },
+    {
+      "path": "packages/privacy/constants.mjs",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "contracts",
+      "reference": "packages/privacy/constants.mjs:12",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 137,
+      "kind": "cited",
+      "note": "【逐字引用注释原文】文档行逐字引用了第 12 行的注释文案「首版无 training」——这段注释确实紧贴声明行，可文档引的是注释不是声明，按本判据仍属「未落代码行」；豁免靠「引文可复核」，不靠闸门放行，故登记。"
+    },
+    {
+      "path": "services/api/src/history/cascade-wiring.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/history/cascade-wiring.ts:17",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 175,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-30 行（「/**…」），块后第一条非空行是第 31 行的「import {」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
       "path": "services/api/src/app.ts",
@@ -122,6 +212,16 @@
       "docLine": 188,
       "kind": "inline",
       "note": "【可达性自陈·行内注释】文档 §4 D1「缺口」原写「同一处 `:2078` 自陈」，按当前树 2078 已是 `};`；真正的那句在 `// ⚠ 可达性（实测）：…real 下 `requireWired()` 先 503…两条路都到不了这里`。是单行注释、块后无声明行——这一条正是「注销在 real 模式下不可用」的原文证据，只能指注释。"
+    },
+    {
+      "path": "services/api/src/privacy/backup-replay-manifest.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "services/api/src/privacy/backup-replay-manifest.ts:68",
+      "doc": "docs/architecture/s4-data-traceability.md",
+      "docLine": 202,
+      "kind": "file-header",
+      "note": "【文件头自述块】文档引「该文件 `:68` 自陈『契约里没有备份/恢复/重放的 operation』」，指的是整份文件开头的自述第 1-78 行（第 68 行在其中），块后没有声明行可指——文件级自述没有单个声明行，硬改锚会把自述换成不相干的符号。"
     },
     {
       "path": "services/api/src/community/authors.ts",
@@ -147,16 +247,6 @@
       "path": "services/api/src/community/purge.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "services/api/src/community/purge.ts:24",
-      "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 80,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-72 行（「/**…」），块后第一条非空行是第 73 行的「import type { AuthorDirectory } from './types.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/community/purge.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
       "reference": "services/api/src/community/purge.ts:32",
       "doc": "docs/architecture/s4-data-traceability.md",
       "docLine": 219,
@@ -174,44 +264,24 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-72 行（「/**…」），块后第一条非空行是第 73 行的「import type { AuthorDirectory } from './types.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/community/service.ts",
+      "path": "tests/integration/third-party-deletion-pg.mjs",
       "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/community/service.ts:1379",
-      "doc": "docs/architecture/contract-implementation-status.md",
-      "docLine": 126,
-      "kind": "inline",
-      "note": "【行内单行注释】文档引的是第 1379 行这条`//` 行注释（「// 同 `createPost`：活跃作者行的匿名引用恒为 NULL（迁移 0030 的\"恰好一个\"约束）。」），块后第一条非空行是第 1380 行的「anonymized_author_ref: null,」，是接口成员签名不是声明行——引用的是这条注释的自述，没有声明行可指。"
-    },
-    {
-      "path": "services/api/src/history/cascade-wiring.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/history/cascade-wiring.ts:17",
+      "owner": "repo",
+      "reference": "tests/integration/third-party-deletion-pg.mjs:1",
       "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 175,
+      "docLine": 256,
       "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-30 行（「/**…」），块后第一条非空行是第 31 行的「import {」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
+      "note": "【文件头自述行】文档引的是整份文件开头的自述第 1 行（「// GY-S4 P1 真库臂：第三方删除持久化的「记住」面（迁移 0044）…」），块后第一条非空行是第 2 行的「//」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/jobs/sources.ts",
+      "path": "services/api/src/app.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "services/api/src/jobs/sources.ts:17-22",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 79,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-33 行（「/**…」），块后第一条非空行是第 34 行的「import { ApiError } from '../errors.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/privacy/backup-replay-manifest.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/privacy/backup-replay-manifest.ts:68",
+      "reference": "services/api/src/app.ts:2013",
       "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 202,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引「该文件 `:68` 自陈『契约里没有备份/恢复/重放的 operation』」，指的是整份文件开头的自述第 1-78 行（第 68 行在其中），块后没有声明行可指——文件级自述没有单个声明行，硬改锚会把自述换成不相干的符号。"
+      "docLine": 263,
+      "kind": "block",
+      "note": "【段内块注释·第三方删除读侧四臂】§D1 那句「装配在 `:2013`（仅注入、不 dispatch）」引的是 app.ts 里 GY-R59 P2-b 那段四臂说明（2013-2018：显式注入优先／有真库只读端口／real 无库显式不可用端口／stub 缺省 unwired）的首条注释行，块后没有声明行可指；这段说明正是「装上了但不可达、也不 dispatch」这条判据的原文，只能指注释。（GY-R71 补片：app.ts 顶部 +4 行 ⇒ 2009→2013。）"
     },
     {
       "path": "services/api/src/privacy/privacy-policy.ts",
@@ -224,56 +294,6 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-71 行（「/**…」），块后第一条非空行是第 72 行的「import type { PgPool } from '../db/pool.ts';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "user-data-deletion.ts:283-290",
-      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
-      "docLine": 55,
-      "kind": "block",
-      "note": "【段内块注释】文档引的是第 283-291 行的块注释，块后第一条非空行是第 292 行的「snapshotOwner?(」（可选成员签名，不是声明行）——这段说明没有声明行可指。（GY-R71 补片：本文件新增 jobs 模块声明/依赖/注册块，整段下移 24 行 ⇒ 259-266→283-290。）"
-    },
-    {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "user-data-deletion.ts:356-359",
-      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
-      "docLine": 303,
-      "kind": "block",
-      "note": "【注释块】设计页引的是该端口「受理请求 id」那四行注释（356-359）的原文，块后第一条非空行是 360 的 `requestId?: string;`（可选成员签名，不是声明行）——这段说明没有声明行可指。GY-R71 补片：原记 335 行（当时是注释块收尾行，整段下移 24 行后已不存在），本片与文档同批改成实测的 356-359。"
-    },
-    {
-      "path": "services/api/src/routes/admin-auth.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "admin-auth.ts:12-13",
-      "doc": "docs/architecture/contract-implementation-status.md",
-      "docLine": 36,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-14 行（「/**…」），块后第一条非空行是第 15 行的「import type { FastifyInstance } from 'fastify';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/routes/admin.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/admin.ts:4",
-      "doc": "docs/architecture/admin-console-capability-map.md",
-      "docLine": 23,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-48 行（「/**…」），块后第一条非空行是第 49 行的「import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fa…」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/routes/health.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/health.ts:1-4",
-      "doc": "docs/architecture/openapi-route-parity.md",
-      "docLine": 35,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-4 行（「/**…」），块后第一条非空行是第 5 行的「import type { FastifyInstance } from 'fastify';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
       "path": "tests/integration/retention-clock-drill-pg.mjs",
       "reason": "COMMENT_ANCHOR",
       "owner": "repo",
@@ -282,26 +302,6 @@
       "docLine": 345,
       "kind": "block",
       "note": "【段内块注释】文档引的是第 2-32 行的块注释，块后第一条非空行是第 34 行的「import assert from 'node:assert/strict';」（不是声明行）——这段说明没有声明行可指。"
-    },
-    {
-      "path": "tests/integration/third-party-deletion-pg.mjs",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "repo",
-      "reference": "tests/integration/third-party-deletion-pg.mjs:1",
-      "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 256,
-      "kind": "file-header",
-      "note": "【文件头自述行】文档引的是整份文件开头的自述第 1 行（「// GY-S4 P1 真库臂：第三方删除持久化的「记住」面（迁移 0044）…」），块后第一条非空行是第 2 行的「//」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "user-data-deletion.ts:276",
-      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
-      "docLine": 303,
-      "kind": "cited",
-      "note": "【逐字引用历史读数】设计页那句「设计片当时记 `:276`（那是注释行，不是代码行）」本身就是**在引用注释行**：该行内容是一段端口说明注释。它被写出来是为了解释「为什么后来改指声明行」，不是活的代码锚点；GY-R71 补片沿用这个写法（同页另两个锚点已指到 363 与 356-359）。"
     }
   ]
 }
