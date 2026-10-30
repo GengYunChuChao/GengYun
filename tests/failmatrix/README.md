@@ -133,13 +133,25 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | NC-22 | `privacy/exports-list.ts` 的 `ledger()` 懒建 catch：读面解析失败不再折成 503，原样上抛 | 单元测试 `exports-route-http.test.mjs`「连接池形状不合：装配期不抛（buildApp 能起），请求期 fail-closed 503」 |
 | NC-23 | `db/catalog.ts` 的 `readHomePreviews`：删掉语句超时单独分级（504 退化成 503） | 单元测试 `public-home.test.mjs`「database failures use safe contract errors, including statement timeout」 |
 | NC-24 | `knowledge/applicability-screen.ts` 的 `screenRegistrationMatch`：非 matched 的阻断码钉成 `INTERNAL`（不再 fail-closed 成 4xx） | 单元测试 `knowledge-applicability-screen.test.mjs`「GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 保留记录但资格另判」 |
+| NC-25 | `routes/consents.ts` 的隐私政策读面删掉 `preHandler: guards.requireUser`（无会话也能读 `GET /me/privacy-policy`） | 单元测试 `privacy-policy-read.test.mjs`「路由已装配：routes/consents.ts 里有路径、noStoreHook 与 requireUser 闸门」 |
 
 > **NC-22/23/24（R34 追加）的靶子不是矩阵用例，而是既有单元测试**：`me/exports`、`public/home`、
 > 登记校验面这三个读面不进 HTTP 失败矩阵，守着它们的是 `tests/unit/*.test.mjs`。执行器为此支持
 > `unitWatch: [{ file, pattern }]`，`pattern` 是测试名的**字面子串**：改一处后必须**恰好那一条**转红
 > （`# fail ≥ 1` 且 `# pass = 0`），恢复原字节后必须**恰好一条**转绿（`# fail = 0` 且 `# pass = 1`）。
-> 隐私说明（`GET /me/privacy-policy`）本轮判为**负控制不成立**：该域无路由、无守卫代码、无守护测试，
-> 缺口性质是「缺实现 / 缺测试」——不为凑数新写弱测试去喂负控制，详见证据页 R34 小节。
+> **订正（2026-10-31，基线 `7ada259e`）**：本页 R34 小节此前写着「隐私说明（`GET /me/privacy-policy`）本轮判为
+> **负控制不成立**：该域无路由、无守卫代码、无守护测试，缺口性质是「缺实现 / 缺测试」」。这句是 R34 时点
+> （基线 `d4a47206`）的**真话，现在已过期**——不是当初写错。时间线：路由/守卫/测试由 `9bd14e56`
+> （2026-10-24，PR #534）引入，三件东西现在各自落在——路由与守卫 `services/api/src/routes/consents.ts:90-97`
+> （守卫在 `services/api/src/routes/consents.ts:92` 的 `preHandler: guards.requireUser`；空态口径见
+> `services/api/src/privacy/privacy-policy.ts:37-44`）、装配 `services/api/src/app.ts:2418` 的
+> `registerConsentRoutes`、守护测试 `tests/unit/privacy-policy-read.test.mjs:210`「路由已装配」（真库同形用例
+> `tests/integration/consent-zero-policy-pg.mjs:405-413`）。所以该域缺的是**矩阵用例 + 负控制**，不是实现：
+> 本片补了 **NC-25**（`tests/failmatrix/mutations.mjs` 末尾，删 `services/api/src/routes/consents.ts` 里那行
+> `preHandler: guards.requireUser,`，靶子是既有单测「路由已装配」），实测「变异后恰一红（`# fail 1 / # pass 0`）
+> ／恢复后恰一绿（`# fail 0 / # pass 1`）」。按派单 §4，本页与证据页的**条数读数一律不动**（「26 条负控制」
+> 「实跑 168 条」等仍照原文，计数由指挥统一重算）；矩阵用例仍未为隐私说明域新增（NC-25 只有 `unitWatch`、
+> `watch` 为空），因此证据页「仍未进矩阵的域」那两行的口径不变——**「进矩阵」与「有负控制」是两件事**。
 
 四条**必须知道**的实测结论（它们本身就是被测代码/工具链的性质，不是测试写法）：
 

@@ -669,17 +669,38 @@ Node.js v24.16.0
 | 3 | `privacy-policy` | ——（无守卫代码可改） | ——（无守护测试） | —— | —— | ❌ **不成立：该域没有实现**，见 3.1 |
 | 4 | `registrations/verify` | `services/api/src/knowledge/applicability-screen.ts:screenRegistrationMatch` 的阻断码 fail-closed 映射 | `tests/unit/knowledge-applicability-screen.test.mjs`「GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 保留记录但资格另判」 | `# fail 1 / # pass 0`；`error: '契约错误码没有对应 HTTP 状态：INTERNAL'` | `# fail 0 / # pass 1` | ✅ 成立（NC-24），但域口径需订正，见 4.1 |
 
+> **订正（2026-10-31，基线 `7ada259e`）**：上表第 3 行「`privacy-policy` ❌ 不成立：该域没有实现」的**判断已过期**，
+> 原文一字不删（它是 R34 时点的真话：本页 R34 小节自述基线 `4b87e1d9`、文档基线 `d4a47206`，两者都早于引入提交
+> `9bd14e56`，那时代码里确实没有这条路由）。`9bd14e56`（2026-10-24，PR #534）之后该域三件东西齐备：路由与守卫
+> `services/api/src/routes/consents.ts:90-97`（守卫在 `services/api/src/routes/consents.ts:92` 的
+> `preHandler: guards.requireUser`；空态口径 `services/api/src/privacy/privacy-policy.ts:37-44`）、装配
+> `services/api/src/app.ts:2418` 的 `registerConsentRoutes`、守护测试 `tests/unit/privacy-policy-read.test.mjs:210`
+> 「路由已装配」（真库同形用例 `tests/integration/consent-zero-policy-pg.mjs:405-413`）。故缺口性质从「缺实现」
+> 变为**缺矩阵用例 + 缺负控制**：本条「负控制不成立」已被 **NC-25** 取代（`tests/failmatrix/mutations.mjs` 末尾，
+> 靶子是既有单测「路由已装配」，实测变异后 `# fail 1 / # pass 0`、恢复后 `# fail 0 / # pass 1`）。矩阵用例仍未新增，
+> 本页上文「仍未进矩阵的域」那两行的口径不变。
+
 每条都过了完整闭包：改前 / 改后 / 恢复后三次 sha256 逐字节比对一致（`NC-22` `services/api/src/privacy/exports-list.ts` = `65dfc495c3c3014b6a869571e674f368173088da27ff54e6184c22683432c587`、`NC-23` `services/api/src/db/catalog.ts` = `3fd779cc9be18f7bb85470633f03dfe3bdc8b961c1be4ca02ea78a04936554c2`、`NC-24` `services/api/src/knowledge/applicability-screen.ts` = `45cad9090813c2f231e64fc8b9c849e05069474b9c67f138fc97f9145136ea43`），恢复用**原始字节**回写，不经过字符串重编码。
 
 #### 3.1 `privacy-policy` 为什么不成立（缺口性质＝缺实现，比缺测试更上游）
 
 查证事实（三处互相独立）：
 
-1. `services/api/src/routes/` 下**没有**任何实现 `GET /me/privacy-policy`（或 `/privacy-policy`）的路由文件：`Select-String -Path services/api/src/routes/*.ts -Pattern 'privacy'` 的命中全部是 `import … from '../privacy/*.ts'` 与内容举报枚举 `'privacy'`，**没有一条是路由声明**。
+1. （**截至 `d4a47206`**；订正见 3.1 末尾）`services/api/src/routes/` 下**没有**任何实现 `GET /me/privacy-policy`（或 `/privacy-policy`）的路由文件：`Select-String -Path services/api/src/routes/*.ts -Pattern 'privacy'` 的命中全部是 `import … from '../privacy/*.ts'` 与内容举报枚举 `'privacy'`，**没有一条是路由声明**。
 2. 契约侧该行仍标「待接入」：`docs/ui-contract-binding.md` 绑定表的「隐私说明 | `GET /me/privacy-policy` | 静态文案」一行写着「界面读取待接入」。
 3. 仓内既有测试把它登记为**计划证据**而不是已实现能力：`tests/unit/contract-planned-exemptions.test.mjs` 的 `getPrivacyPolicy` 条目 `why: '无任何 policy 内容模块、无路由、无用例；仅有界面绑定的需求侧要求，因此只能记计划证据并标明是需求侧依据。'`；`services/api/src/privacy/backup-replay-manifest.ts` 的注释同样写明「**未自造任何路由/字段**」。
 
 结论：**该域无守护测试，负控制无法成立，缺口性质＝缺实现（连路由都没有；退一步讲也是缺测试）**。按本轮规则**没有**为它新写一条弱断言去喂负控制——那种做法只会产出一条「无论如何都红不了」的假负控制。
+
+> **订正（2026-10-31，基线 `7ada259e`）**：上面这条结论在它自己的基线上为真、**现在过期**——三条查证事实与结论原文
+> 全部保留不改。`9bd14e56`（2026-10-24，PR #534）引入 `GET /me/privacy-policy` 读面后：路由与守卫
+> `services/api/src/routes/consents.ts:90-97`（守卫是 `services/api/src/routes/consents.ts:92` 的
+> `preHandler: guards.requireUser`）、装配 `services/api/src/app.ts:2418` 的 `registerConsentRoutes`、守护测试
+> `tests/unit/privacy-policy-read.test.mjs:210`「路由已装配」、真库同形用例
+> `tests/integration/consent-zero-policy-pg.mjs:405-413`。因此「负控制无法成立」已被 **NC-25** 取代
+> （`tests/failmatrix/mutations.mjs` 末尾；变异点＝删掉那行 `preHandler: guards.requireUser,`；靶子是**既有**单测
+> 「路由已装配」，不是新写的弱断言），实测「变异后恰一红 `# fail 1 / # pass 0`、恢复后恰一绿 `# fail 0 / # pass 1`」。
+> 仍然**缺**的是矩阵用例（NC-25 只有 `unitWatch`、`watch` 为空）：本页上文「仍未进矩阵的域」那两行口径不变。
 
 #### 4.1 `registrations/verify` 的域口径订正
 
