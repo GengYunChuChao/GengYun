@@ -742,9 +742,9 @@
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
     "line": 77,
     "target": "services/api/src/server.ts",
-    "from": 27,
-    "to": 62,
-    "reason": "旧锚点 27 在 base 上指到 `const pool = createPool(config.databaseUrl);`，与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪到第 51 行，27 只是它早年的位置）；本提交按符号 `buildApp(` 改指 HEAD 第 62 行 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，不是 27+1 的差值平移。",
+    "from": 62,
+    "to": 68,
+    "reason": "本条目上一版记 from=27 → to=62（2026-10-21 按符号 `buildApp(` 的重锚）。GY-R70 合流 `upstream/main` 8b646ae1（#781「审核域显式启动批准」）在 `buildApp(...)` 之前插入审核域装配 6 行，该调用由 :62 下移到 :68；base 侧文档已写 :62，而 :62 现在是 `if (moderationAssembly.fatalLine !== null) {`（不含 `buildApp(` ⇒ 旧锚点本来就指错），故 from 记为 base 实际值 62、to 按符号重取 68。HEAD 第 68 行 = `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}), ...(moderationInjection === undefined ? {} : { moderationInjection }) });`，`buildApp(` 在 server.ts 内只出现 1 行（本次现测）。更早的 from=27（当时指到 `const pool = createPool(config.databaseUrl);`）保留在本理由与 git 历史里。",
     "kind": "correction",
     "symbol": "buildApp("
   },

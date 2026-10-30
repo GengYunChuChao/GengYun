@@ -32,6 +32,12 @@
       "accept": 0,
       "orphans": 3543,
       "outsideRed": 134
+    },
+    {
+      "why": "GY-R70 重写 N06 行：原句「即使凭据齐备也没有已审适配器」已被本片推翻，随行一并删除旧的裸锚点 :165（新增 0 条、陈旧 1 条，属如实删除而非放宽判据）",
+      "accept": 0,
+      "orphans": 3542,
+      "outsideRed": 134
     }
   ],
   "orphans": [
@@ -39,7 +45,6 @@
     "docs/architecture/ai-ops-spec-status.md|:126|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:1354|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:150|ambiguous-block",
-    "docs/architecture/ai-ops-spec-status.md|:165|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:225|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:301-328|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:557|no-explicit-in-block",

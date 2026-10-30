@@ -8,6 +8,10 @@
  * 本文件判据：
  *   ① 注入可用端口 ⇒ 三域**逐域**都拿到该端口（`describe().mediaPort` / `mediaNote`）；
  *   ② 不注入且 `real` ⇒ 三域保持**原有** fail-closed 形态与**逐字**错误码/文案（HTTP 503 原文）；
+ *      ⚠ GY-R70 一处如实变更：识别域的媒体引用端口已接媒体域既有两个端口（`mediaStore` +
+ *      `mediaObjectStore`），因此「零注入 + real」下该域 `describe().mediaPort` 由 `unwired` 变为
+ *      `wired`、文案换成新的一份（判据仍逐字相等）；**HTTP 结局不变**（无凭据 ⇒ 503 原文逐字不变；
+ *      有凭据 ⇒ 409 `OBJECT_UNAVAILABLE`，见 `tests/unit/recognitions-live-adapter.test.mjs` 的失败序②）。
  *   ③ 非 real（`stub` / `preset_demo`，纯内存装配）不受影响：默认仍是明确标注的替身；
  *   ④ 注入的是**同一个实例**（不是内部又 new 了一个）——用 `note` getter 逐次递增来证明服务持有的是
  *      传进去的那个对象本身；
@@ -34,6 +38,11 @@ const APP_SOURCE = readFileSync(join(ROOT, 'services/api/src/app.ts'), 'utf8');
 /** 基线实测原文（`1a333920` 探针读数，见证据页「改前读数」）。 */
 const OCR_UNWIRED_NOTE = '媒体 HTTP 路由已注册，但未接真实对象存储：无法读取私有媒体字节（fail-closed）';
 const RECOGNITION_UNWIRED_NOTE = OCR_UNWIRED_NOTE;
+/** GY-R70：识别域「零注入 + real」下**已接线**端口的文案（逐字；端口交给媒体域既有两个端口）。 */
+const RECOGNITION_WIRED_NOTE =
+  '真实识别媒体引用：按 media_id+revision 读媒体域登记册（归属/版本/状态/用途/衍生件键）→ 只从对象存储'
+  + '取**去元数据衍生件**并校验 Content-Type；不读含 EXIF/GPS 的原件、不读 ambient env、不伪造字节'
+  + '（任一环节不成立即 OBJECT_UNAVAILABLE，绝不静默放行）';
 const SPEECH_UNWIRED_NOTE = '媒体 HTTP 路由已注册，但未接真实对象存储：无法读取私有录音字节（fail-closed）';
 
 /** 基线实测原文：real 缺供应商凭据时，三域在触达媒体端口**之前**就 fail-closed。 */
@@ -45,9 +54,9 @@ const REAL_PROVIDER_REFUSALS = [
 
 /** 三域各自的 `describe()` 取用点（与 `app.ts` 的装饰名一致）。 */
 const DOMAINS = [
-  { domain: 'OCR', describe: (app) => app.ocrService.describe(), option: 'ocrMedia', unwiredNote: OCR_UNWIRED_NOTE },
-  { domain: '识别', describe: (app) => app.recognitionService.describe(), option: 'recognitionMedia', unwiredNote: RECOGNITION_UNWIRED_NOTE },
-  { domain: '语音', describe: (app) => app.speechService.describe(), option: 'speechMedia', unwiredNote: SPEECH_UNWIRED_NOTE },
+  { domain: 'OCR', describe: (app) => app.ocrService.describe(), option: 'ocrMedia', unwiredNote: OCR_UNWIRED_NOTE, zeroPort: 'unwired', zeroNote: OCR_UNWIRED_NOTE },
+  { domain: '识别', describe: (app) => app.recognitionService.describe(), option: 'recognitionMedia', unwiredNote: RECOGNITION_UNWIRED_NOTE, zeroPort: 'wired', zeroNote: RECOGNITION_WIRED_NOTE },
+  { domain: '语音', describe: (app) => app.speechService.describe(), option: 'speechMedia', unwiredNote: SPEECH_UNWIRED_NOTE, zeroPort: 'unwired', zeroNote: SPEECH_UNWIRED_NOTE },
 ];
 
 /** 可辨识的媒体引用端口（`note` 带随机标记：自建实例不可能复刻）。 */
@@ -132,10 +141,10 @@ test('② 未注入且 real ⇒ 三域保持原有 fail-closed（端口形态 + 
   const app = makeApp({ executionMode: 'real', options: { store } });
   t.after(() => app.close());
 
-  for (const { domain, describe, unwiredNote } of DOMAINS) {
+  for (const { domain, describe, zeroPort, zeroNote } of DOMAINS) {
     const described = describe(app);
-    assert.equal(described.mediaPort, 'unwired', `${domain}域：零注入 + real 必须仍是未接线端口`);
-    assert.equal(described.mediaNote, unwiredNote, `${domain}域：未接线文案必须逐字不变`);
+    assert.equal(described.mediaPort, zeroPort, `${domain}域：零注入 + real 的端口形态（该域真实接线状态）`);
+    assert.equal(described.mediaNote, zeroNote, `${domain}域：零注入 + real 的文案必须逐字相等`);
   }
 
   const token = await seedSession(store, 'gy-r31-real');
