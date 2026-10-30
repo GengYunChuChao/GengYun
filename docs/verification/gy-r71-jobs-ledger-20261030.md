@@ -260,7 +260,7 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 |---|---|---|---|
 | 1 | `npm run build` | **环境受阻，不计 PASS**：`tsc` 段通过、`apps/admin` 的 `vite build` 在 `[vite:esbuild-transpile]` 落临时文件后回 `remove C:\Users\MR\AppData\Local\Temp\esbuild-<hash>: Access is denied.`（Windows 拒绝删除 esbuild 的 >1 MiB 输入临时件）。这是本机结构性限制（已实测「>1 MiB 必失败 / <1 MiB 正常」，与仓库代码无关），⛔ 未改构建配置、未写 PASS。build 之后已删 `services/api/dist` 与 `apps/admin/dist`。 | 1（环境受阻） |
 | 2 | `npm run lint` | `PASS tsc --noEmit services/api/tsconfig.json`、`PASS tsc --noEmit apps/admin/tsconfig.json`、`PASS 仓库卫生扫描` | 0 |
-| 3 | `npm run test:unit` | `tests 5937 / pass 5934 / fail 0 / cancelled 0 / skipped 1 / todo 2`（注销接入前的同树读数曾为 `fail 7`，逐条修完归零；其中 `tests/unit/jobs-ledger-deletion.test.mjs` 5/5、`tests/unit/doc-anchor-relocation-identity.test.mjs` 33 条全绿、`tests/unit/doc-anchors-guard.test.mjs` 27/27、`tests/unit/doc-anchors-symbol-baseline-fresh.test.mjs` 5/5） | 0 |
+| 3 | `npm run test:unit` | `tests 5938 / pass 5935 / fail 0 / cancelled 0 / skipped 1 / todo 2`（注销接入前的同树读数曾为 `fail 7`，逐条修完归零；其中 `tests/unit/jobs-ledger-deletion.test.mjs` 6/6、`tests/unit/doc-anchor-relocation-identity.test.mjs` 33 条全绿、`tests/unit/doc-anchors-guard.test.mjs` 27/27、`tests/unit/doc-anchors-symbol-baseline-fresh.test.mjs` 5/5） | 0 |
 | 4 | `npm run test:contract` | `tests 17 / pass 17 / fail 0` | 0 |
 | 5 | `npm run verify:anchors` | `verify-contract-status` PASS（126 条契约操作；形状错误 0 / 语义错误 0 / 表格漂移 0）+ `verify-doc-anchors --strict` PASS（`--strict` 下无基线外新增） | 0 |
 | 6 | `npm run verify:parity` | `"extra": [] / "missing": [] / "ledgerDrift": []` | 0 |
@@ -301,12 +301,19 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 负控制 ③ 的价值要单独说一句：它证明了**接线读数**与**映射矩阵**不是同一层证据 —— 删掉一处调用，
 30 格映射断言照样全绿，只有"每域三处 + 取消一处"的静态读数会红。
 
-### 8.1 注销清理的两条负控制（补片实测）
+### 8.1 注销清理的三条负控制（补片实测）
 
 | # | 负控制 | 怎么打红 | 红在哪（判据原文/读数） | 恢复 |
 |---|---|---|---|---|
-| ⑤ | **摘掉 `jobs` 的处理器注册** | 删掉 `services/api/src/privacy/user-data-deletion.ts:1097` 起那整块 `if (input.jobsStore !== undefined) { coordinator.registerModule(JOBS_DELETION_MODULE, …) }` | `tests/unit/jobs-ledger-deletion.test.mjs` 三条同时红；正控制那条的报错原文是 `Error [PrivacyError]: 删除处理器未覆盖全部必需模块：jobs`（`packages/privacy/deletion-modules.mjs:140`）—— 「闭集里有、处理器没有」在**受理那一刻**就拒，不会静默少清一个域 | 恢复该块 → `pass 5 / fail 0` |
+| ⑤ | **摘掉 `jobs` 的处理器注册** | 删掉 `services/api/src/privacy/user-data-deletion.ts:1099` 起那整块 `if (input.jobsStore !== undefined) { coordinator.registerModule(JOBS_DELETION_MODULE, …) }` | `tests/unit/jobs-ledger-deletion.test.mjs` 多条同时红；正控制那条的报错原文是 `Error [PrivacyError]: 删除处理器未覆盖全部必需模块：jobs`（`packages/privacy/deletion-modules.mjs:140`）—— 「闭集里有、处理器没有」在**受理那一刻**就拒，不会静默少清一个域 | 恢复该块 → `pass 6 / fail 0` |
 | ⑥ | **摘掉 `app.ts` 的注入** | 删掉 `services/api/src/app.ts:2264` 的 `...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore }),` | `tests/unit/deletion-registration-coverage.test.mjs` 红：``AssertionError: `app.ts` 必须恰好注入一次 `jobsStore`（`...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore })`）：删掉或挪走 ⇒ 闭集缩回 8 项，而协议层与其它用例都不会报错`` | 恢复该行 → `pass 7 / fail 0` |
+| ⑦ | **把那条 `DELETE` 的语义改掉**（不是删调用，而是让「删」变成「什么也没删」） | 把 `services/api/src/jobs/ledger.ts:387` 的字面量改成 `DELETE FROM public.jobs WHERE owner_id = $1::uuid AND false` | `✖ SQL 字面钉子：删的是 public.jobs 里该 owner 的行` → `AssertionError: Expected values to be strictly equal: actual: 'DELETE FROM public.jobs WHERE owner_id = $1::uuid AND false'`（`tests 6 / pass 5 / fail 1`，exit 1） | 改回 → `pass 6 / fail 0` |
+
+⑦ 是这轮**新补出来的洞**，值得单独记一句：⑤⑥ 只证「处理器在、注入在」，而假池是按**导入的常量**判形状
+（`text !== JOB_LEDGER_PURGE_SQL`），所以只要常量自己被改成加谓词／换表／换成 `SELECT`，假池照样照着
+自己的分支删行、正控制与负控制**全都还是绿的**。因此补了这条**字面钉子**：把「删什么」钉死在
+`DELETE FROM public.jobs WHERE owner_id = $1::uuid`（无 `AND`／`OR`、无分号、非 `TRUNCATE`/`UPDATE`）。
+它证明的是「语句字面量没被悄悄改」，不证明 PostgreSQL 真的执行了它（那是真库臂的事，见 §10.4）。
 
 ⑤ 证的是**闭集与处理器的一致性**（缺处理器 ⇒ 受理即拒）；⑥ 证的是**装配处的注入真的存在**
 （源码文本里声明 `jobsStore?: OwnerPurgeStore` 不等于装配处传了实参）。两者不是同一条证据：
@@ -396,7 +403,9 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 1. 注销后该主体在 `public.jobs` 的行**归零**，他人主体的行一行不动，证据串带**真实**删除行数
    （`tests/unit/jobs-ledger-deletion.test.mjs`「正控制」，假池里真按 owner 删、再读回行数）。
 2. 负控制：把原语换成「报告 0 行但不删」的替身 ⇒ 行仍在库里，说明上面那条断言对「删没删」敏感
-   （同一文件「负控制」）。行级负控制（删掉 `app.ts` 的注入 / 删掉注册块）见 §8 第 ⑤ 条。
+   （同一文件「负控制」）。**这一条还不够**——替身替换的是假池，不是那条 SQL；因此另有字面钉子
+   （§8.1 ⑦）：把 `DELETE` 改成 `… AND false` ⇒ `tests 6 / pass 5 / fail 1`（exit 1），改回即复绿。
+   行级负控制（删掉 `app.ts` 的注入 / 删掉注册块）见 §8.1 ⑤⑥。
 3. 闭集真的覆盖它：注入 `jobsStore` ⇒ `requiredModules()` = 9 项且含 `jobs`；不注入 ⇒ 静默缩回 8 项
    （这正是要防的形态，`tests/unit/deletion-registration-coverage.test.mjs` 把它钉成断言）。
 4. 用户数据表清单的棘轮：`public.jobs` 从 `DECLARED_UNREGISTERED`（原登记语「任务表随执行器一起清理，

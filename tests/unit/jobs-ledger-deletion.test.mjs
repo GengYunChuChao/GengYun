@@ -187,3 +187,18 @@ test('端口抛错时该模块如实 blocked（⛔ 不折成 completed，也不�
   const evidence = deletion.evidenceOf(String(request.id))[JOBS_DELETION_MODULE] ?? '';
   assert.equal(evidence, '', '失败时不得留下任何「已清 N 行」形状的证据串（⛔ 不留假证据）');
 });
+
+/**
+ * 字面钉子（为什么非要有它）：上面四条都通过**导入的常量**驱动假池，假池拿 `text !== JOB_LEDGER_PURGE_SQL`
+ * 判形状 —— 也就是说，只要常量本身被改成「加了谓词」「去掉 owner 条件」甚至「整条换成 SELECT」，
+ * 假池仍会照着它自己的分支删行、断言照样全绿。这条钉子把**删什么**钉在字面量上：
+ * 谁动了那条 DELETE 的谓词或对象表，这里立刻红，而不用等真库臂。
+ */
+test('SQL 字面钉子：删的是 `public.jobs` 里该 owner 的行（⛔ 不加额外谓词、⛔ 换表、⛔ 拼第二条语句）', () => {
+  assert.equal(JOB_LEDGER_PURGE_SQL, 'DELETE FROM public.jobs WHERE owner_id = $1::uuid');
+  assert.match(JOB_LEDGER_PURGE_SQL, /^DELETE\s+FROM\s+public\.jobs\s+WHERE\s+owner_id\s*=\s*\$1::uuid$/);
+  assert.doesNotMatch(JOB_LEDGER_PURGE_SQL, /\b(?:AND|OR)\b/i, '只许一个谓词：多了就可能只删一部分、或删到别人的');
+  assert.doesNotMatch(JOB_LEDGER_PURGE_SQL, /;/i, '一条语句：不许夹带第二条');
+  assert.doesNotMatch(JOB_LEDGER_PURGE_SQL, /\b(?:TRUNCATE|DROP|UPDATE|INSERT)\b/i, '只能是 DELETE');
+});
+
