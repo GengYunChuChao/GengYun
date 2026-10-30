@@ -433,7 +433,7 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2227,
-    "to": 2488,
+    "to": 2515,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
     "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
@@ -443,7 +443,7 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2228,
-    "to": 2489,
+    "to": 2516,
     "kind": "correction",
     "symbol": "createRecognitionJobSource(",
     "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
@@ -453,7 +453,7 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2204,
-    "to": 2495,
+    "to": 2522,
     "kind": "correction",
     "symbol": "createTranscriptionJobSource(",
     "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
@@ -463,7 +463,7 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2207,
-    "to": 2498,
+    "to": 2525,
     "kind": "correction",
     "symbol": "createModerationJobSource(",
     "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
@@ -473,7 +473,7 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2213,
-    "to": 2504,
+    "to": 2531,
     "kind": "correction",
     "symbol": "createSynthesisJobSource(",
     "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
@@ -483,7 +483,7 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2221,
-    "to": 2512,
+    "to": 2539,
     "kind": "correction",
     "symbol": "createOcrJobSource(",
     "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
@@ -493,7 +493,7 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2229,
-    "to": 2520,
+    "to": 2547,
     "kind": "correction",
     "symbol": "createAnswerJobSource({",
     "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
@@ -503,7 +503,7 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2227,
-    "to": 2488,
+    "to": 2515,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
     "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
@@ -513,7 +513,7 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2228,
-    "to": 2489,
+    "to": 2516,
     "kind": "correction",
     "symbol": "createRecognitionJobSource(",
     "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
@@ -523,7 +523,7 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2204,
-    "to": 2495,
+    "to": 2522,
     "kind": "correction",
     "symbol": "createTranscriptionJobSource(",
     "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
@@ -533,7 +533,7 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2207,
-    "to": 2498,
+    "to": 2525,
     "kind": "correction",
     "symbol": "createModerationJobSource(",
     "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
@@ -543,7 +543,7 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2213,
-    "to": 2504,
+    "to": 2531,
     "kind": "correction",
     "symbol": "createSynthesisJobSource(",
     "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
@@ -553,7 +553,7 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2221,
-    "to": 2512,
+    "to": 2539,
     "kind": "correction",
     "symbol": "createOcrJobSource(",
     "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
@@ -563,7 +563,7 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2229,
-    "to": 2520,
+    "to": 2547,
     "kind": "correction",
     "symbol": "createAnswerJobSource({",
     "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
@@ -595,8 +595,8 @@
     "line": 17,
     "target": "services/api/src/app.ts",
     "from": 1614,
-    "to": 1815,
-    "reason": "旧锚点 1614 在 base 上指到 `const released: string[] = [];`（与这条引用无关）；该行要引用的是 `buildApp` 里转发媒体批准能力的 spread，按符号 `mediaRealApprovalOption` 在 HEAD 上取到第 1815 行 `...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),`。1614 这个值自本片（2026-10-21）之后就一直在漂，属于陈旧锚点纠正，不是按差值平移。",
+    "to": 1819,
+    "reason": "旧锚点 1614 在 base 上指到 `const released: string[] = [];`（与这条引用无关）；该行要引用的是 `buildApp` 里转发媒体批准能力的 spread，按符号 `mediaRealApprovalOption` 在 HEAD 上取到第 1815 行 `...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),`。1614 这个值自本片（2026-10-21）之后就一直在漂，属于陈旧锚点纠正，不是按差值平移。（GY-R71 补片：app.ts 顶部 +4 行的整体位移 ⇒ 1815→1819。）",
     "kind": "correction",
     "symbol": "mediaRealApprovalOption"
   },

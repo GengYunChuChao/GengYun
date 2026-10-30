@@ -297,6 +297,17 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 负控制 ③ 的价值要单独说一句：它证明了**接线读数**与**映射矩阵**不是同一层证据 —— 删掉一处调用，
 30 格映射断言照样全绿，只有"每域三处 + 取消一处"的静态读数会红。
 
+### 8.1 注销清理的两条负控制（补片实测）
+
+| # | 负控制 | 怎么打红 | 红在哪（判据原文/读数） | 恢复 |
+|---|---|---|---|---|
+| ⑤ | **摘掉 `jobs` 的处理器注册** | 删掉 `services/api/src/privacy/user-data-deletion.ts:1097` 起那整块 `if (input.jobsStore !== undefined) { coordinator.registerModule(JOBS_DELETION_MODULE, …) }` | `tests/unit/jobs-ledger-deletion.test.mjs` 三条同时红；正控制那条的报错原文是 `Error [PrivacyError]: 删除处理器未覆盖全部必需模块：jobs`（`packages/privacy/deletion-modules.mjs:140`）—— 「闭集里有、处理器没有」在**受理那一刻**就拒，不会静默少清一个域 | 恢复该块 → `pass 5 / fail 0` |
+| ⑥ | **摘掉 `app.ts` 的注入** | 删掉 `services/api/src/app.ts:2264` 的 `...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore }),` | `tests/unit/deletion-registration-coverage.test.mjs` 红：``AssertionError: `app.ts` 必须恰好注入一次 `jobsStore`（`...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore })`）：删掉或挪走 ⇒ 闭集缩回 8 项，而协议层与其它用例都不会报错`` | 恢复该行 → `pass 7 / fail 0` |
+
+⑤ 证的是**闭集与处理器的一致性**（缺处理器 ⇒ 受理即拒）；⑥ 证的是**装配处的注入真的存在**
+（源码文本里声明 `jobsStore?: OwnerPurgeStore` 不等于装配处传了实参）。两者不是同一条证据：
+⑤ 只在「闭集已追加」时才有意义，⑥ 保证闭集真的会被追加。
+
 ---
 
 ## 9 边界与需裁定点

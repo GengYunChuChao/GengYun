@@ -19,7 +19,7 @@
 
 | 上一版编号 | 上一版定性 | 本版定性 | 改判依据 |
 | --- | --- | --- | --- |
-| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1354` 的 `adminRealUnwired` 值只等于「real 模式」，`:1376-1378` 在 real + 有池时即构造生产端口 |
+| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1358` 的 `adminRealUnwired` 值只等于「real 模式」，`:1376-1378` 在 real + 有池时即构造生产端口 |
 | 原 Z02（Q29） | 已搁置 | N08（未实现） | 原文只有「尚未执行」（docs/requirements.md:58），无暂缓记录 |
 | 原 Z07（120 题） | 已搁置 | N09（未实现） | 台账「仍待后续片」是排期自述；门槛原文见 docs/implementation-requirements.md:467 |
 | 原 Z08（原生 PG17 迁移） | 已搁置 | 并入 E39 | 真库臂 workflow 用 `postgres:17.11` 并跑全链迁移（.github/workflows/real-pg-integration.yml:94；全链迁移见同文件 :533） |
@@ -207,7 +207,7 @@
 
 上一版判「默认未接线、一律 503」，那是把**缺省分支**当成了生产路径。按 #589 后的代码更正：
 
-- 判定变量名骗人但不骗逻辑：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1354`），值只取决于是否 real。
+- 判定变量名骗人但不骗逻辑：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1358`），值只取决于是否 real。
 - 装配：`adminJobPort = adminInjection?.jobPort ?? (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined)`（`services/api/src/app.ts:1376-1378`），显式注入优先；随后注入服务层（real 域 `services/api/src/app.ts:1583`、stub 域同文件 :1722）。
 - 生产端口本体：`services/api/src/admin/ops/jobs-pg.ts:441` 的构造器，`persistent: true` 在 `:518`；读三张域内作业表（`ocr_jobs`／`recognition_jobs`／`speech_jobs`，同文件 :4-9），**不读** `public.jobs`。
 - 503 只剩缺省：未注入（stub／无池）时 `services/api/src/admin/ops/jobs.ts:53-60` 的 `createUnwiredAdminJobPort()` 返回 `PORT_UNAVAILABLE`。`tests/failmatrix/cases.mjs:177` 锁的是这条分支——它证明「没池时不许假绿」，不证明生产也 503。

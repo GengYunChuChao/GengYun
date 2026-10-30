@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。【2026-10-28 GY-R68-A01 × upstream/main 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 现算（合流后的树），与两侧旧基线按 path|reason|reference 取并集、逐条沿用原来的 note：A01 侧 16 条「本片代码插入顶空」的登记全部保留，main 侧 6 条（user-data-deletion.ts 的 4 条 NOT_SYMBOL_LINE 等）保留，新增的几条是合流后行号再次前移所致（如 admin/ops/service.ts:1054→本片已改锚，未登记）。⛔ 仍然不要用 --reanchor 或在正文里改历史取证页的数字。 【2026-10-30 GY-R71】本轮新增 GET /dose-cards：openapi.json 文本级 +595 行（新路径 + 8 个 schema）、docs/architecture/contract-status.json 新增一行台账（+65 行）、services/api/src/routes/knowledge.ts 新增 1 行 import 与一段路由装配。历史取证页里指向这三个文件的 6 条 path:line 因此整体后移，本轮把后移后的行号重新登记（+6），并删掉因同一次位移而不再命中的 1 条陈旧条目（-1）；**没有新增任何一类问题**，正文里的历史数字也一条未改。 【2026-10-30 GY-R71 × upstream/main 合流（dose-cards 8f586061）】条目取**两侧旧基线的并集**（上游 42 + 本片 15 = 57）：上游侧是 GET /dose-cards 那次新增的 openapi.json / contract-status.json / routes/knowledge.ts 位移；本片侧是 GY-R71 在 ocr/recognitions/speech/conversations 的 store-pg.ts 与 admin/ops/jobs-pg.ts 插入台账写入点后，历史取证页与单测的既有数字整体下移（jobs-pg.ts / conversations/store-pg.ts:215-432 / ocr/store-pg.ts:376 / speech/store-pg.ts:122-142 等）。两侧各自在自己的 base 上已裁决过，合流后并集内的行号仍逐条命中，故**没有新增任何一类问题**；正文里的历史数字一条未改。 【合流裁决】① 增 2 条**重数**登记（同一条 jobs-pg.ts:419 与 ocr/store-pg.ts:376 各自被两页引用，基线按键重数）；② 删 1 条陈旧条目 contract-status.json:3314——dose-cards 片在 contract-status.json 前部新增台账行后，该行已不是空行/右括号区，闸门不再判 SUSPECT，按「修好/不再命中就删一行」删掉；gy-r33 取证页的原文数字仍按仓规不改写。",
-  "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline；note 于 GY-R71 补记",
+  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。 【GY-R71 补片 2026-10-30】删 2 条陈旧条目（app.ts:1172 / app.ts:680）：它们登记的是「活文档引用指到错行」的遗留，本片把那两处引用按实测行号改写（:1176 / :684）后不再命中，按「修好一条就删一行」删掉；其余条目为合流并集 + 本次 src 插入导致的真实位移重登记。",
+  "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
       "path": "sasl.js",
@@ -100,6 +100,24 @@
       "reference": "packages/contracts/openapi.json:6541"
     },
     {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:419"
+    },
+    {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:419"
+    },
+    {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:450-451"
+    },
+    {
       "path": "services/api/src/admin/ops/service.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
@@ -115,79 +133,85 @@
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "app.ts:1341"
+      "reference": "app.ts:1107"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "app.ts:2331"
+      "reference": "app.ts:1598"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1029"
+      "reference": "app.ts:2132"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1341"
+      "reference": "app.ts:2649"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1341"
+      "reference": "app.ts:787-789"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1612"
+      "reference": "services/api/src/app.ts:1116"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1661"
+      "reference": "services/api/src/app.ts:1116"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:1661"
+      "reference": "services/api/src/app.ts:1280"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:2156"
+      "reference": "services/api/src/app.ts:1598"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:2573"
+      "reference": "services/api/src/app.ts:1598"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:714"
+      "reference": "services/api/src/app.ts:1920"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:805"
+      "reference": "services/api/src/app.ts:631"
     },
     {
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:878"
+      "reference": "services/api/src/app.ts:787-789"
+    },
+    {
+      "path": "services/api/src/app.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:935"
     },
     {
       "path": "services/api/src/conversations/screen.ts",
@@ -196,10 +220,76 @@
       "reference": "services/api/src/conversations/screen.ts:152"
     },
     {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "conversations/store-pg.ts:432"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "conversations/store-pg.ts:88"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/conversations/store-pg.ts:215"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/conversations/store-pg.ts:326"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/conversations/store-pg.ts:342"
+    },
+    {
+      "path": "services/api/src/ocr/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/ocr/store-pg.ts:376"
+    },
+    {
+      "path": "services/api/src/ocr/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/ocr/store-pg.ts:376"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "../../services/api/src/privacy/user-data-deletion.ts:321"
+    },
+    {
       "path": "services/api/src/routes/knowledge.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "routes/knowledge.ts:196"
+    },
+    {
+      "path": "services/api/src/speech/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/speech/store-pg.ts:122"
+    },
+    {
+      "path": "services/api/src/speech/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "speech/store-pg.ts:122"
+    },
+    {
+      "path": "services/api/src/speech/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "speech/store-pg.ts:142"
     },
     {
       "path": "tests/integration/admin-audit-logs-pg.mjs",
@@ -212,6 +302,18 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/integration/ocr-jobs-pg.mjs:848"
+    },
+    {
+      "path": "tests/unit/ai-ops-ledger-pins.test.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/unit/ai-ops-ledger-pins.test.mjs:282"
+    },
+    {
+      "path": "tests/unit/ocr-store-pg.test.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/unit/ocr-store-pg.test.mjs:473"
     },
     {
       "path": "tests/unit/sql-column-coverage.test.mjs",
@@ -232,16 +334,40 @@
       "reference": "tests/unit/user-data-deletion.test.mjs:127"
     },
     {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:245-247"
+    },
+    {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:276"
+      "reference": "services/api/src/privacy/user-data-deletion.ts:164-169"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "services/api/src/privacy/user-data-deletion.ts:203"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
       "reference": "user-data-deletion.ts:315"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:335"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:339"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
@@ -254,118 +380,6 @@
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
       "reference": "user-data-deletion.ts:97"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:419",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:450-451",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "NOT_SYMBOL_LINE",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:245-247",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "conversations/store-pg.ts:432",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "conversations/store-pg.ts:88",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/store-pg.ts:215",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/store-pg.ts:326",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/store-pg.ts:342",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/ocr/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/store-pg.ts:376",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/speech/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/speech/store-pg.ts:122",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/speech/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "speech/store-pg.ts:122",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/speech/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "speech/store-pg.ts:142",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "tests/unit/ai-ops-ledger-pins.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/ai-ops-ledger-pins.test.mjs:282",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "tests/unit/ocr-store-pg.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/ocr-store-pg.test.mjs:473",
-      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:419",
-      "note": "合流后重数：同一表述在两页各命中一次（docs/architecture/ai-ops-spec-status.md:218 与 docs/verification/gy-r67-docs-truth-20261027.md:156 都引 services/api/src/admin/ops/jobs-pg.ts:419，GY-R71 的台账写入点把该行推成收尾括号区）。基线按键重数，故登记两条。"
-    },
-    {
-      "path": "services/api/src/ocr/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/store-pg.ts:376",
-      "note": "合流后重数：docs/architecture/ai-ops-spec-status.md:82 与 docs/architecture/contract-implementation-status.md:88 都引 services/api/src/ocr/store-pg.ts:376，GY-R71 在 OCR 写点插入台账行后该行落入收尾括号区，两页各命中一次，故登记两条。"
     }
   ]
 }
