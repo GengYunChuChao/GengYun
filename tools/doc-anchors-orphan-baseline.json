@@ -62,6 +62,12 @@
       "accept": 2,
       "orphans": 3542,
       "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 取消片合流 #786 后：作用域外本会红 +1 / 陈旧 1，来自 #786 剂量卡路由使历史页引用行位移；按实测重生成，非放宽判据",
+      "accept": 1,
+      "orphans": 3542,
+      "outsideRed": 134
     }
   ],
   "orphans": [
@@ -3649,7 +3655,6 @@
     "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:945|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
@@ -3665,6 +3670,7 @@
     "docs/verification/gy-i22-cross-module-security-e2e-20261027.md|services/api/src/routes/favorites.ts:87|SUSPECT",
     "docs/verification/gy-i22-identity-headers-20261019.md|tests/unit/gy-i22-identity-headers.test.mjs:567|SUSPECT",
     "docs/verification/gy-i28-demo-parity-20261018.md|miniprogram/utils/history-api.js:193|SUSPECT",
+    "docs/verification/gy-r27-synthesis-cancel-20261020.md|http-jobs.test.mjs:175|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:186|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:326|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:352|SUSPECT",

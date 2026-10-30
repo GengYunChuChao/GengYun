@@ -342,7 +342,7 @@ test('分页：游标翻页互不重不漏，会话与轮次两条列表都按�
   assert.equal(turnUnion.size, 3);
 });
 
-test('answer 作业：202 受理后可被跨 kind 读面读到，状态与失败可区分，且不伪造取消', async (t) => {
+test('answer 作业：202 受理后可被跨 kind 读面读到，状态与失败可区分，已终态取消按既有 409 拒绝', async (t) => {
   const fixture = await conversationFixture(t, { injection: retrievalInjection([ITEM_A, ITEM_B]) });
   const created = await fixture.createConversation({}, { tag: 'job' });
   const conversationId = created.body.data.id;
@@ -360,16 +360,23 @@ test('answer 作业：202 受理后可被跨 kind 读面读到，状态与失败
   const turns = await fixture.call('GET', `${CONVERSATIONS}/${conversationId}/turns`);
   assert.equal(turns.body.data.items[0].job_id, jobId, '轮次上的 job_id 必须就是作业读面认的 id');
 
+  // GY-R71 取消片：本域**已提供** cancel（接线前是 503「该能力尚未提供取消」）。可取消窗口只有
+  // `queued`/`running`；这里这条作业上面已经读到 `succeeded` ⇒ 按既有语义拒绝，且不改状态。
+  // 200 `cancelled` 的活体路径（含"取消后迟到结算不落回答行"）见
+  // `tests/unit/jobs-cancel-moderation-answer.test.mjs` 的 answer·①②③ 三组。
   const cancel = await fixture.call('POST', `${JOBS}/${jobId}/cancel`, fixture.a, {
     headers: { 'idempotency-key': 'idem-job-cancel', 'if-match': `"${job.body.data.revision}"` },
   });
-  assert.equal(cancel.status, 503, '该源没有 cancel：必须如实 503，不得伪造 cancelled');
-  assert.equal(cancel.body.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(cancel.status, 409, JSON.stringify(cancel.body));
+  assert.equal(cancel.body.error.code, 'OBJECT_UNAVAILABLE', '已终态作业不可取消：必须如实拒绝，不得伪造 cancelled');
   assert.equal(
     cancel.body.error.retryable,
     false,
-    '该源没有取消能力（未接线）⇒ 需运维改配置，同一请求重试不会成功 ⇒ 不得标为可重试',
+    '已终态不可取消（不是瞬时态）⇒ 同一请求重试不会成功 ⇒ 不得标为可重试',
   );
+  const afterCancel = await fixture.call('GET', `${JOBS}/${jobId}`);
+  assert.equal(afterCancel.body.data.state, 'succeeded', '被拒绝的取消不得改动状态');
+  assert.equal(afterCancel.body.data.revision, job.body.data.revision, '被拒绝的取消不得改动 revision');
 
   const absent = await fixture.call('GET', `${JOBS}/${ABSENT_ID}`);
   assert.equal(absent.status, 404, '未接线 kind 与作业不存在同形');

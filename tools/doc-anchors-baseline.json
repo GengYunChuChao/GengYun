@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。【2026-10-28 GY-R68-A01 × upstream/main 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 现算（合流后的树），与两侧旧基线按 path|reason|reference 取并集、逐条沿用原来的 note：A01 侧 16 条「本片代码插入顶空」的登记全部保留，main 侧 6 条（user-data-deletion.ts 的 4 条 NOT_SYMBOL_LINE 等）保留，新增的几条是合流后行号再次前移所致（如 admin/ops/service.ts:1054→本片已改锚，未登记）。⛔ 仍然不要用 --reanchor 或在正文里改历史取证页的数字。 【2026-10-30 GY-R71】本轮新增 GET /dose-cards：openapi.json 文本级 +595 行（新路径 + 8 个 schema）、docs/architecture/contract-status.json 新增一行台账（+65 行）、services/api/src/routes/knowledge.ts 新增 1 行 import 与一段路由装配。历史取证页里指向这三个文件的 6 条 path:line 因此整体后移，本轮把后移后的行号重新登记（+6），并删掉因同一次位移而不再命中的 1 条陈旧条目（-1）；**没有新增任何一类问题**，正文里的历史数字也一条未改。",
+  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。【2026-10-28 GY-R68-A01 × upstream/main 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 现算（合流后的树），与两侧旧基线按 path|reason|reference 取并集、逐条沿用原来的 note：A01 侧 16 条「本片代码插入顶空」的登记全部保留，main 侧 6 条（user-data-deletion.ts 的 4 条 NOT_SYMBOL_LINE 等）保留，新增的几条是合流后行号再次前移所致（如 admin/ops/service.ts:1054→本片已改锚，未登记）。⛔ 仍然不要用 --reanchor 或在正文里改历史取证页的数字。 【2026-10-30 GY-R71】本轮新增 GET /dose-cards：openapi.json 文本级 +595 行（新路径 + 8 个 schema）、docs/architecture/contract-status.json 新增一行台账（+65 行）、services/api/src/routes/knowledge.ts 新增 1 行 import 与一段路由装配。历史取证页里指向这三个文件的 6 条 path:line 因此整体后移，本轮把后移后的行号重新登记（+6），并删掉因同一次位移而不再命中的 1 条陈旧条目（-1）；**没有新增任何一类问题**，正文里的历史数字也一条未改。【2026-10-30 GY-R71 取消片合流】#787 让 services/api/src/app.ts 净 +13 行 ⇒ 原登记的 `services/api/src/app.ts:2573`（SUSPECT）不再命中：该行现在是代码行 `accountDeletionWired === null`，不是注释，工具报 STALE 并点名要求删除。按工具口径删掉这条陈旧条目（-1），本片未新增任何条目、也未改写任何历史取证页里的数字。",
   "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline；note 于 GY-R71 补记",
   "entries": [
     {
@@ -164,12 +164,6 @@
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "services/api/src/app.ts:2156"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/app.ts:2573"
     },
     {
       "path": "services/api/src/app.ts",

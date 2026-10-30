@@ -532,23 +532,34 @@ const OPAQUE_ALLOWLIST = [
  *   20 文件块：字面量 290 → **291**、SELECT 155 → **156**、无顶层 FROM 15 → **16**、
  *   逐文件 `community` 43 → **44**；两块的 INSERT/UPDATE/DELETE、RETURNING、ON CONFLICT、
  *   `SELECT *`、引用表、行锁、不可判插值、列要求均不变。
+ *
+ * GY-R71 取消片（`conversations`，2026-10-30）：`conversations/store-pg.ts` 的作业取消面。
+ *   - 新增 `cancelTurnJob` 一条**单语句 CAS** UPDATE（`conversation_turns` 按
+ *     `id`/`owner_id`/`job_state IN ('queued','running')`，带 `RETURNING`）；
+ *   - `settleTurnJob` 的次序修正（**先 CAS 再插回答**）把原来的一条 UPDATE 拆成两条
+ *     （先 `UPDATE … SET job_state/job_error_code/revision … RETURNING id`，再
+ *     `UPDATE … SET answer_id = COALESCE(…) RETURNING …`）⇒ UPDATE +1、RETURNING +1。
+ *   ⇒ 两块同时 +2 条字面量、+2 条 UPDATE、+2 处 RETURNING；逐文件 `conversations` +2；
+ *   列要求仍全部已覆盖（缺 0 条），INSERT/DELETE/SELECT、引用表、行锁、不可判插值**不变**。
+ *   8 文件块：字面量 164 → **166**、UPDATE 29 → **31**、RETURNING 65 → **67**、逐文件 `conversations`
+ *   17 → **19**；21 文件块：字面量 301 → **303**、UPDATE 54 → **56**、RETURNING 93 → **95**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 164,
-  statements: { INSERT: 27, UPDATE: 29, SELECT: 76, DELETE: 32 },
-  returningClauses: 65,
+  sqlLiterals: 166,
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 76, DELETE: 32 },
+  returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1250,
+  columnRequirements: 1269,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
   community: 44,
-  conversations: 17,
+  conversations: 19,
   favorites: 15,
   history: 16,
   messages: 15,
@@ -768,9 +779,9 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 21,
-  sqlLiterals: 301,
-  statements: { INSERT: 46, UPDATE: 54, SELECT: 161, DELETE: 40 },
-  returningClauses: 93,
+  sqlLiterals: 303,
+  statements: { INSERT: 46, UPDATE: 56, SELECT: 161, DELETE: 40 },
+  returningClauses: 95,
   onConflictClauses: 29,
   selectStar: 15,
   qualifiedStar: 4,
@@ -778,8 +789,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 17,
   referencedTables: 49,
-  columnRequirements: 1909,
-  coveredRequirements: 1855,
+  columnRequirements: 1928,
+  coveredRequirements: 1874,
   ledgerExemptions: 33,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
@@ -794,7 +805,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 13,
   'community': 44,
-  'conversations': 17,
+  'conversations': 19,
   'favorites': 15,
   'history': 16,
   'knowledge/service.ts': 4,
