@@ -148,7 +148,7 @@ export function classifyFavoritesDatabaseError(error: unknown): never {
 - 改后：同条件但 `retryable === false`，并新增 `08006 ⇒ true` 正向断言（现 :489-494）。
 - 理由：`XX000`（internal_error）是内部错误，同一请求原样重试大概率原样复现，不应劝客户端重试。该测试的其余部分——`57014/55P03 ⇒ 504`、普通 `Error` 原样抛出、`SpeechStoreConflictError` 与 `ApiError` 直通——**一字未动**，且全绿。
 
-**未改的**：`tests/unit/recognitions-store-pg.test.mjs:753` 的同类测试用的是 `08006`（真瞬态），断言 `retryable === true` 正确，**未改**；`favorites` / `history` / `messages` 的既有单测里没有断言旧口径（全绿）。除上述 3 处外，本片对既有测试**0 改动**。（该行号由 GY-R71 按文本重定位：本片给 `recognitions/store-pg.ts` 的写点加事务与台账行，同一批单测文件整体下移 28 行，原 `:725` 即现在这条 `08006` 断言。）
+**未改的**：`tests/unit/recognitions-store-pg.test.mjs:753` 的同类测试用的是 `08006`（真瞬态），断言 `retryable === true` 正确，**未改**；`favorites` / `history` / `messages` 的既有单测里没有断言旧口径（全绿）。除上述 3 处外，本片对既有测试**0 改动**。（该行号由 GY-R71 按文本重定位：本片给 `recognitions/store-pg.ts` 的写点加事务与台账行，同一批单测文件整体下移 28 行，原来的行号即现在这条 `08006` 断言。）
 
 ## 6. 门禁读数
 
