@@ -60,7 +60,7 @@
 | --- | --- | --- |
 | 存储 | **已通（real 走 PG）** | `services/api/src/app.ts:1986`：`real` + 有 `pool` ⇒ `createPostgresConversationStore(pool)`；非 `real` ⇒ 内存 store。`app.ts:2265-2267` 的 `conversationStore === null \|\| (config.executionMode === 'real' && !conversationStore.persistent) ? null : createConversationService({...})` 明确：**即使测试注入内存 store，real 下也不能绕过 fail-closed** |
 | 检索 | **已接真实读面（但依赖 `DATABASE_URL`）** | `app.ts:1803-1807` 的 `knowledgeQueryFace`（与 `/knowledge` 同一实例）→ `app.ts:2218-2224` `createKnowledgeRetrievalPort({ face: knowledgeQueryFace })`；无库时退到 `guard.ts:78-89` 的 `createUnwiredRetrievalPort`（`available:false`、`read()` 恒 `null` ⇒ 一律 `insufficient`） |
-| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:170`（原记 :152） `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:144` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:2254` 缺省启用（fail-closed） |
+| 风险/注入筛查 | **真实** | `services/api/src/conversations/screen.ts:226`（本片按符号重锚） `createModerationRiskScreen(...)`，复用 `packages/moderation` 的 `evaluateHardRules`；规则版本由 `screen.ts:192` `RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, ...)` 派生；`app.ts:2254` 缺省启用（fail-closed） |
 | 输出守卫 | **真实且唯一权威** | `services/api/src/conversations/guard.ts:293` `createAnswerGuard`，`:296` `check({ candidate, set, question, conditions })`；装配入口 `service.ts:1191`（原记 :1107） `createConversationGuard`（`app.ts:2229` 用它）。引用逐字段双相等、用量卡只走 `doseCardDescriptor`|
 
 ### 3.2 唯一断点：生成侧「没有模型」
@@ -112,7 +112,7 @@ const candidate = composer.compose({
 
 **③「`screen.ts` 的安全检查是 stub 还是 real」**
 
-**real**。`screen.ts:170`（原记 :152） 的 `createModerationRiskScreen` 调 `packages/moderation` 的真规则层（`RISK_SCREEN_CATEGORIES = ['dangerous_usage','prompt_injection']` 在 `screen.ts:34`，`RISK_BLOCK_TEXT` 在 `:49`，规则版本由 `:126` 派生），筛查发生在 `service.ts:1027-1031`（生成与守卫**之前**），污染条目从本次检索集合剔除后才有 `safeSet`。未被授权的模型输出**不可能**绕过它，因为筛查在候选产生之前。
+**real**。`screen.ts:226` `createModerationRiskScreen`（三道共用内层 `screen()` 在 `screen.ts:245`：只有"哪些规则进这一轮"不同，判定逻辑一处不复制） 调 `packages/moderation` 的真规则层（`RISK_SCREEN_CATEGORIES = ['dangerous_usage','prompt_injection']` 在 `screen.ts:37`，`RISK_BLOCK_TEXT` 在 `screen.ts:68`，规则版本由 `screen.ts:192` 派生；答案侧另立 `ANSWER_SCREEN_CATEGORIES` 四类别，含 `authority_spoofing` 与 `safety_claim`，见符号 `ANSWER_RISK_RULES` / `ANSWER_RISK_RULE_VERSION`），筛查发生在 `service.ts:1027-1031`（生成与守卫**之前**），污染条目从本次检索集合剔除后才有 `safeSet`。未被授权的模型输出**不可能**绕过它，因为筛查在候选产生之前。
 
 **小结**：断链只有一处 —— **「谁产生候选正文」**。检索、筛查、守卫、存储、级联、幂等台账、注销清理都在位。
 
@@ -309,10 +309,12 @@ services/api/src/conversations/guard.ts:253        check({candidate,set,question
 services/api/src/conversations/retrieval.ts:55     KnowledgeReadFace
 services/api/src/conversations/retrieval.ts:60     RETRIEVAL_LIMIT = 50
 services/api/src/conversations/retrieval.ts:261    createKnowledgeRetrievalPort
-services/api/src/conversations/screen.ts:34        RISK_SCREEN_CATEGORIES
-services/api/src/conversations/screen.ts:49        RISK_BLOCK_TEXT
-services/api/src/conversations/screen.ts:126       RISK_RULE_VERSION
-services/api/src/conversations/screen.ts:152       createModerationRiskScreen
+services/api/src/conversations/screen.ts:37        RISK_SCREEN_CATEGORIES
+services/api/src/conversations/screen.ts:48        ANSWER_SCREEN_CATEGORIES
+services/api/src/conversations/screen.ts:68        RISK_BLOCK_TEXT
+services/api/src/conversations/screen.ts:192       RISK_RULE_VERSION
+services/api/src/conversations/screen.ts:200       ANSWER_RISK_RULE_VERSION
+services/api/src/conversations/screen.ts:226       createModerationRiskScreen
 services/api/src/conversations/store-pg.ts:181     createPostgresConversationStore
 services/api/src/conversations/store-pg.ts:215     persistent: true
 services/api/src/conversations/store.ts:90         interface ConversationStore
