@@ -221,6 +221,10 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
+  // R69：`consent-zero-policy-pg`（`consent_policies` **0 行**时的真实后果矩阵 + 三级负控制）。
+  // 与 `FROZEN_MANAGED_SCRIPTS` 同一份集合（只允许顺序不同）；它排在 `real-pg-17-11` 的最后一步，
+  // 故在 `REQUIRED_STEP_ORDER` 里紧跟 `recognition-chain-e2e`、在 admin 读/写 job 的条目之前。
+  'tests/integration/consent-zero-policy-pg.mjs',
   // R67-C3：与 `FROZEN_MANAGED_SCRIPTS` 同一份集合（只允许顺序不同）。
   'tests/integration/media-row-purge-pg.mjs',
 ]);
@@ -272,6 +276,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
+  // R69：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/consent-zero-policy-pg.mjs',
   // R67-C3：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/media-row-purge-pg.mjs',
 ]);
@@ -508,6 +514,15 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    排**最后**的两个理由：它对前后无前提（⑦⑧⑨ 都不依赖前面的库/角色），而它自己会起 loopback 监听
   //    并反复轮询「历史行异步落库」（有界等待，最慢的一步）⇒ 放最后不会把别人的失败混进它的读秒。
   'tests/integration/recognition-chain-e2e.mjs',
+  // R69. `consent-zero-policy-pg`（`consent_policies` **0 行**时的真实后果矩阵 + 三级负控制）：
+  //    与相邻各臂同形的 owner-URL 臂——step 里 `CREATE DATABASE gengyun_consent_zero_test`，脚本硬钉同名库、
+  //    要求**空库**（public 下 0 张表）、自己 apply**全链 48 个**迁移、全程只用库 owner 连接
+  //    ⇒ 不建组角色、不复用别人的运行时角色，对前后 step 零耦合。它排在 `real-pg-17-11` 的**最后一步**
+  //    （紧接 `recognition-chain-e2e`）：那条臂的注释里「故排最后」描述的是它当时的相对位置与零前提，
+  //    本臂同样零前提且自带 `CREATE DATABASE`，追加在它之后不改变任何既有 step 的语义。
+  //    ⛔ 它不进 `SELF_CLUSTERED_SCRIPTS`：集群由调用方提供（CI 里是 `services.postgres`），判据⑦⑧ 走
+  //    「先 `CREATE DATABASE` 再 `node`」那条路径。
+  'tests/integration/consent-zero-policy-pg.mjs',
   // ── R67-C：两个**新 job** 里的七条臂 ────────────────────────────────────────────────────────────
   // ⚠️ 本清单仍是**一条全局序列**（`stepOrderProblems()` 按 workflow 文件里的 `findIndex` 严格递增），
   // ⛔ 没有改成「按 job 分组」——那样会把「跨 job 的条目顺序」这条断言悄悄丢掉。新 job 的 step 在文件里

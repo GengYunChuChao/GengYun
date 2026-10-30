@@ -6,7 +6,7 @@
  *   2) `real` 但 `pool === null` ⇒ **false**（如实内存，绝不冒充持久化）；
  *   3) `stub` / `preset_demo` 即使有池 ⇒ **false**（非 real 不换实现，行为与接线前逐字一致）；
  *   4) PG store 在**构造期不发任何查询**（`real + 池` 不得在启动时偷偷打库）；
- *   5) 结构钉子（源码级）：装配行仍恰四个键、`app.ts` 仍不引用 OCR 域适配器模块、
+ *   5) 结构钉子（源码级）：装配行仍恰六个键、`app.ts` 仍不引用 OCR 域适配器模块、
  *      且"有池才给池"的判定表达式仍在 —— 这三条一起防止"某天有人把实现换成永远 PG/永远内存"。
  *
  * 反向控制（本文件自带牙齿）：
@@ -83,14 +83,17 @@ test('非 real 不换实现：stub / preset_demo 即使有池也用内存 store'
   }
 });
 
-test('结构钉子：装配行恰五键、app.ts 不引用 OCR 适配器、有池才给池', () => {
-  // ① 装配行是「guards + 隐私域 consent/egress + 历史域 history + 媒体引用槽位 media」五个键。
+test('结构钉子：装配行恰七键、app.ts 不引用 OCR 适配器、有池才给池', () => {
+  // ① 装配行是「guards + 隐私域 consent/egress + 历史域 history + 媒体引用槽位 media + 图片字节来源槽位 imageMedia + 受理前媒体门接线 mediaWiring」七个键。
   //    `tests/integration/ocr-http.mjs` 用同一条判据（本文件只是让它在 unit 层也红得起来）。
   //    ⚠ 2026-10-22（GY-R31 媒体端口注入片）**口径如实登记**：四键 → 五键，新增的是 `media`
   //      （`OcrRouteDeps['media']`，值来自 `BuildAppOptions.ocrMedia`，缺省 undefined ⇒ 域内自建）。
   //      原意「不得塞入 store/provider/reference 等**实现层**适配器」不变：下面 ② 的 import 禁项
   //      逐字保留，`store`/`provider` 仍不得成为装配键。本注释**不**主张「四键已够」或
   //      「零端口注入仍成立」——它本来就不成立于 `#181` 的 `history`。
+  //    ⚠ 2026-10-29（GY-R69 图片字节来源片）**口径如实登记**：五键 → 六键，新增的是 `imageMedia`
+  //      （`OcrRouteDeps['imageMedia']`，值来自装配层**既有**的 `mediaObjectStore` + `mediaStore`，
+  //      缺省 undefined ⇒ 域内退回写死的未接线来源）。与 `media` 同性质：**端口槽位**，不是实现层适配器。另：2026-10-30（GY-R70 受理前媒体门片）六键 → 七键，新增 `mediaWiring`（与 `imageMedia` **同一对既有端口**：`mediaObjectStore` + `mediaStore`；缺省 undefined ⇒ 域内仍是 `unwired` ⇒ 受理仍 409，逐字不变）。
   const registrationLine = APP_SOURCE.split(/\r?\n/).find((line) =>
     line.includes('registerOcrRoutes(app, config,'),
   );
@@ -98,8 +101,8 @@ test('结构钉子：装配行恰五键、app.ts 不引用 OCR 适配器、有�
   const keys = [...registrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
   assert.deepEqual(
     keys,
-    ['consent', 'egress', 'guards', 'history', 'media'],
-    `装配行只允许这五个键（不得塞入 store/provider/reference 等实现层端口）：${registrationLine.trim()}`,
+    ['consent', 'egress', 'guards', 'history', 'imageMedia', 'media', 'mediaWiring'],
+    `装配行只允许这七个键（不得塞入 store/provider/reference 等实现层端口）：${registrationLine.trim()}`,
   );
 
   // ② `app.ts` 不得引用任何 OCR 适配器模块（provider/store/media/reference）。

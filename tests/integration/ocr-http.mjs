@@ -1587,14 +1587,14 @@ try {
     //   `consent`/`egress`"变为"隐私域 + 识别历史域写入端口"。本注释**不**主张"零端口注入仍成立"。
     //   下方另补**值断言**：钉住 `guards` 槽位装的确实是 `gatedGuards`（旗标门包装）。
     const ocrInjectedKeys = [...ocrRegistrationLine.matchAll(/([A-Za-z]+):/g)].map((match) => match[1]).sort();
-    // ⚠ 2026-10-22（GY-R31 媒体端口注入片）**口径再次如实登记**：四键 → 五键，新增 `media`
-    //   （`OcrRouteDeps['media']`，值来自 `BuildAppOptions.ocrMedia`，缺省 undefined ⇒ 域内自建）。
-    //   与 `history` 同性质：它是**端口槽位**，不是实现层适配器；下面 ② 的 import 禁项
-    //   （provider/store/media/reference）**逐字保留**，`app.ts` 仍不得引用任何 OCR 适配器模块。
+    // ⚠ 2026-10-22（GY-R31 媒体端口注入片）**口径再次如实登记**：四键 → 五键，新增 `media`；
+    //   2026-10-29（GY-R69 图片字节来源片）五键 → 六键，新增 `imageMedia`（`OcrRouteDeps['imageMedia']`，
+    //   值来自装配层**既有**的 `mediaObjectStore` + `mediaStore`）。两者与 `history` 同性质：都是**端口槽位**，
+    //   不是实现层适配器；下面 ② 的 import 禁项（provider/store/media/reference）**逐字保留**。⚠ 2026-10-30（GY-R70 受理前媒体门片）六键 → 七键，新增 `mediaWiring`（`OcrRouteDeps['mediaWiring']`，与 `imageMedia` **同一对既有端口** `mediaObjectStore` + `mediaStore`；缺省/对象存储非真实 ⇒ 仍是 `unwired`，本组断言的状态码/错误码/`mediaPort` 逐字未变）。
     assert.deepEqual(
       ocrInjectedKeys,
-      ['consent', 'egress', 'guards', 'history', 'media'].sort(),
-      `装配行只允许 guards 槽位、隐私域 consent/egress 端口、识别历史域 history 写入端口与媒体引用槽位 media；若失败说明装配点被塞入了 provider/store/reference 等实现层端口：${ocrRegistrationLine.trim()}`,
+      ['consent', 'egress', 'guards', 'history', 'imageMedia', 'media', 'mediaWiring'].sort(),
+      `装配行只允许 guards 槽位、隐私域 consent/egress 端口、识别历史域 history 写入端口、媒体引用槽位 media 与图片字节来源槽位 imageMedia；若失败说明装配点被塞入了 provider/store/reference 等实现层端口：${ocrRegistrationLine.trim()}`,
     );
     // 值断言（键存在 ≠ 值正确）：`guards` 槽位必须装**旗标门包装后的** `gatedGuards`，不是裸 `guards`
     //   （`\b` 词边界：裸 `guards` 是 `gatedGuards` 的后缀，不能只做子串判断）。

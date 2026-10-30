@@ -36,6 +36,22 @@ const MEDIA_REASON_MEDIA_BYTES = '媒体 HTTP 路由已注册，但未接真实�
 const MEDIA_REASON_SPEECH_BYTES = '媒体 HTTP 路由已注册，但未接真实对象存储：无法读取私有录音字节';
 const MEDIA_NOTE_MEDIA_BYTES = `${MEDIA_REASON_MEDIA_BYTES}（fail-closed）`;
 const MEDIA_NOTE_SPEECH_BYTES = `${MEDIA_REASON_SPEECH_BYTES}（fail-closed）`;
+/**
+ * GY-R70：识别域的**媒体引用端口**已接媒体域既有两个端口（`mediaStore` + `mediaObjectStore`），
+ * 因此默认 `real` 装配下 `describe().mediaPort` 由 `unwired` 变为 `wired`，文案随之改准。
+ *
+ * 判据强度**没有放宽**：仍是逐字相等（不是 includes/正则），并且同一用例继续断言
+ * 「默认 real 装配下真实供应商不可用（缺凭据 ⇒ 503）」。改动依据见
+ * `docs/verification/gy-r70-recognition-live-20261030.md` §「既有断言 前→后」。
+ *
+ * ⚠ 仍然成立的事实：默认 `real` 装配拿到的是**未接线**对象存储，因此 `POST /recognitions`
+ * 在凭据齐备时仍是 `409 OBJECT_UNAVAILABLE`（本片改前改后同读数，由
+ * `tests/unit/recognitions-live-adapter.test.mjs` 的「失败序②」实测）。
+ */
+const RECOGNITION_MEDIA_NOTE_WIRED =
+  '真实识别媒体引用：按 media_id+revision 读媒体域登记册（归属/版本/状态/用途/衍生件键）→ 只从对象存储'
+  + '取**去元数据衍生件**并校验 Content-Type；不读含 EXIF/GPS 的原件、不读 ambient env、不伪造字节'
+  + '（任一环节不成立即 OBJECT_UNAVAILABLE，绝不静默放行）';
 const STARTUP_MESSAGE =
   'gengyun api 已启动（认证、后台认证与各业务域路由均已注册；各域真实后端未接线者按域 fail-closed，不以替身数据返回成功）';
 
@@ -149,13 +165,13 @@ test('运行期文案 · 默认 real 装配下三域 describe() 报告的正是�
   t.after(() => app.close());
 
   const views = [
-    { label: 'ocr', view: app.ocrService.describe(), note: MEDIA_NOTE_MEDIA_BYTES },
-    { label: 'recognitions', view: app.recognitionService.describe(), note: MEDIA_NOTE_MEDIA_BYTES },
-    { label: 'speech', view: app.speechService.describe(), note: MEDIA_NOTE_SPEECH_BYTES },
+    { label: 'ocr', view: app.ocrService.describe(), port: 'unwired', note: MEDIA_NOTE_MEDIA_BYTES },
+    { label: 'recognitions', view: app.recognitionService.describe(), port: 'wired', note: RECOGNITION_MEDIA_NOTE_WIRED },
+    { label: 'speech', view: app.speechService.describe(), port: 'unwired', note: MEDIA_NOTE_SPEECH_BYTES },
   ];
 
-  for (const { label, view, note } of views) {
-    assert.equal(view.mediaPort, 'unwired', `${label}: 该域媒体端口仍未接线`);
+  for (const { label, view, port, note } of views) {
+    assert.equal(view.mediaPort, port, `${label}: 该域媒体端口状态与该域真实接线一致（${port}）`);
     assert.equal(view.mediaNote, note, `${label}: 该域运行期媒体说明文案`);
     // 默认 real 装配下真实凭据缺席 ⇒ 该域先于媒体端口 fail-closed（与启动日志措辞一致）。
     assert.equal(view.providerAvailable, false, `${label}: 默认 real 装配不应有可用真实供应商`);

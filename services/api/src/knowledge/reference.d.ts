@@ -148,6 +148,39 @@ declare module '*packages/reference/index.mjs' {
   /** GY-I08 阻断类别码列表（`deterministic.mjs` 的 `BLOCK_CODE_LIST`，顺序与域库一致）。 */
   export const BLOCK_CODE_LIST: readonly string[];
 
+  /**
+   * `labels.mjs` 的展示文案表（`DISPLAY_LABELS`）。
+   *
+   * 只声明**被服务端消费**的一节 `dose_reject_reason`：它是「哪道门没过」的**唯一**权威文案来源，
+   * `knowledge/dose-cards.ts` 用它把域库的拒绝原因映射回门 id。逐键列举而非索引签名
+   * （`noUncheckedIndexedAccess` 会把索引签名读成 `string | undefined`，而这些是常量成员）。
+   * 域库新增/改名任一文案时，本声明的 `Object.values` 消费点会跟着漂移，
+   * 由 `tests/unit/knowledge-dose-cards-http.test.mjs` 的映射总覆盖断言判红。
+   */
+  export const DISPLAY_LABELS: Readonly<{
+    dose_reject_reason: Readonly<{
+      not_usable: string;
+      missing_condition: string;
+      not_applicable: string;
+      banned: string;
+      restricted: string;
+      restriction_unknown: string;
+      invalid_source: string;
+      closed: string;
+      not_reviewed: string;
+      stale_dose: string;
+      incomplete_formulation: string;
+      simulated_source: string;
+      no_confirmed_context: string;
+      dose_formulation_mismatch: string;
+      dose_record_mismatch: string;
+      dose_reference_missing: string;
+    }>;
+  }>;
+
+  /** GY-I08 规则规格的内容摘要（`deterministic.mjs`；形如 `gy-i08-spec+sha256:<64hex>`）。 */
+  export function ruleVersionDigest(): string;
+
   /** GY-I08 匹配终态闭集（`deterministic.mjs` 的 `MATCH_STATES`，与契约 MatchState 同集）。 */
   export const MATCH_STATES: readonly string[];
 
@@ -223,6 +256,13 @@ declare module '*packages/reference/index.mjs' {
     /** 模拟来源标记（`SIM-` 前缀或 `source_kind=simulation`）：不得作为真实登记依据。 */
     readonly simulated: boolean;
     readonly contract: Record<string, unknown>;
+    /** 来源元数据原样投影（`record.source`）；字段是否存在**不保证**，消费方必须按不可信载荷处理。 */
+    readonly source?: Record<string, unknown>;
+    /** 核对元数据原样投影（`record.verification`，含 `usable_as_dose` / `review_status` / `dose`）。 */
+    readonly verification?: Record<string, unknown>;
+    readonly crop_ids?: readonly string[];
+    /** 使用场景原文（可能缺项，故为可选）。 */
+    readonly use_scene?: string | null;
   }
 
   /** 装载全部记录：`items` 为可对外投影的条目，`skipped` 为被 fail-closed 排除的记录（含原因）。 */

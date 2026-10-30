@@ -26,7 +26,7 @@
  *
  * ## 未取得（如实声明，不得当作已完成）
  *
- * - 只有内存存储（进程重启即丢），**没有**数据库迁移；real 模式下收藏域整体不可用（见 `app.ts`）。
+ * - 存储按装配走：`real` 且已接库（`pool !== null`）走 PG（迁移 `0018_favorites_history.sql`、实现 `store-pg.ts`，装配 `app.ts:1865-1869`）；其余走内存（进程重启即丢）。`real` 但 store 不持久 ⇒ 服务为 `null`、该域路由一律 503（判据 `app.ts:1954-1956`）——「无库即不可用」这条限制仍然成立。
  * - 引用可用性端口**已于 #167 接线**（`createWiredVisibilityPort`；装配点 `app.ts` 的
  *   `defaultVisibility`；可用性按 `/knowledge` 公开读面**每次读取重新派生**）⇒ 无库装配
  *   （`pool === null`）或核不到时仍如实 `unavailable`，绝不假装可用。

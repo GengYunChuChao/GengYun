@@ -91,7 +91,7 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 1. 该页数据源是**随包离线名录**，记录主键形如 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:34`）；页面的路由判定是 `validId` 为真走服务端、否则走随包副本，随包 id 永远落在后一支：`miniprogram/pages/referencedetail/referencedetail.js:115`。
 2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假 ⇒ 这一支永远拿不到服务端实体：`miniprogram/utils/knowledge-api.js:224`。
 3. `POST /favorites` 的 `target_ref.revision` 只能取自服务端读面（`GET /knowledge/{id}`，该客户端把响应 `id` 强制 UUID），随包记录既无服务端 `id` 也无 `revision`。
-4. 契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format ⇒ 强行发一条不会被 400 挡住，但 `reference_state` 由服务端按 `/knowledge` 公开读面逐次派生，随包记录在服务端不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:128`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
+4. 契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format ⇒ 强行发一条不会被 400 挡住，但 `reference_state` 由服务端按 `/knowledge` 公开读面逐次派生，随包记录在服务端不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:140`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
 
 **两条出路（二选一，本片不选）**：
 
@@ -196,4 +196,106 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 1. **不得把 `approve` 记成 AI 审核通过**：响应里的 `decision` 是人工结论；"有人做过这件事"的证据只有一条——`decided_by` 非 `NULL`。
 2. **不得因为有人工通道就跳过审核门**：`POST /posts` 的发布闸门照旧（硬规则层加审核域）。人工通道是"结论落不下来"时的出口，不是绕过闸门的新入口。
 3. **不得把本节当成 #14 的替代**：AI 审核的真实样本覆盖仍按 `docs/evaluation/sample-gap-register.md` 记（风险／正常两格均为 0/200），本节补的是"没人管的那一段"，补不了"审核能力本身"。
+
+## 已知缺口（待裁定）：`favorites.target_type` 有三个口径，DB 少 `conversation_turn`（16 vs 17）
+
+**登记日期** 2026-10-29 · **证据基线** `b44f7941` · **状态**：**只登记，不修**（本片不改代码、不改契约、不动迁移、不改 CHECK）。
+
+同一件事——「收藏的目标可以是什么类型」——在仓里有**三个互不相同的口径**。逐个实测：
+
+| 口径 | 个数 | 具体值 | 出处 |
+| --- | --- | --- | --- |
+| 写入侧（`POST /favorites` 实际接受） | **3** | `species`、`herbicide`、`scheme` | 应用层闭集 `services/api/src/favorites/types.ts:24`；路由 schema `services/api/src/routes/favorites.ts:46` |
+| 读出侧（契约 `TargetRef`，`Favorite.target_ref` 用它投影） | **17** | 上列 3 项 ＋ `static_region`、`recognition`、`ocr`、`transcription`、`answer`、`post`、`comment`、`conversation`、`conversation_turn`、`dose_card`、`media`、`synthesis`、`job`、`source` | `services/api/src/targetref/types.ts:19-36`；契约 `packages/contracts/openapi.json:12554`（`TargetRef`；`type.enum` 在 `12558-12577`） |
+| 数据库 CHECK（`favorites.target_type` 的列约束） | **16** | 上列 17 项**去掉** `conversation_turn` | 迁移 `services/api/db/migrations/0018_favorites_history.sql:46-64`（`CREATE TABLE favorites`；`target_type` 的 CHECK 在 `51-55`） |
+
+**差异项（唯一一处）**：`conversation_turn` 在契约（17 项）与 `TARGET_REF_TYPES`（17 项）里都有，**数据库 CHECK 里没有**（16 项）。同一份迁移里 `history.target_type` 的 CHECK 是同一串 16 项（`0018:76-80`）—— 即这个「少一项」在两个域上是同一口径，不是收藏域独有的笔误。
+
+**今天为什么不出事**：写入侧只收 3 类，且这 3 类都在 DB 的 16 项里 ⇒ 从 `POST /favorites` 进来的行**撞不上**这条缺口；历史域的 `kind` 另有自己的 2 项闭集（`0018:75`），也不落这一列。
+
+**一旦有人往这两张表写 `conversation_turn` 会怎样**：DB 的 CHECK 直接打回 —— **是数据库报错，不是 400**（契约说这个类型合法、应用层不拦、落库才炸）。这正是要登记它的原因：不是「今天有 bug」，而是「口径已经三分，谁先用到谁踩」。
+
+**迁移里的自述也少算了一个**：`0018:49` 写「契约 `FavoriteTarget` 是 **16 项** `TargetRef.type` 的子集」，而今天的 `TargetRef.type` 是 **17 项** —— 这行注释与 CHECK 里的 16 项同源，两处一起漏了 `conversation_turn`。
+
+**本片只登记，不修**：不改写入侧闭集、不改契约、不动迁移、不改 CHECK。修法需要人裁定方向（把 DB 的 CHECK 补到 17 项／把契约收窄到与写入侧一致／明确 `conversation_turn` 永不入库），三条路的兼容代价不同，不属于「按现状改准」的范围。
+
+**顺带纠一处引用类型（实测，本片未改动任何既有段落）**：`services/api/db/migrations/0018_favorites_history.sql:46-64` 才是 `favorites` 的 DDL；该迁移**开头那段列类型注释**（第 29-30 行，写「`target_id`／`job_id`／`event_key` 是任意文本」）**不是** DDL。凡以那两行当「DDL 证据」的引用，都应改到 `:46-64`。
+
+## `#12` 问答：已知缺口与判据（GY-R70 登记）
+
+**登记日期** 2026-10-30 · **证据基线** `c609ce7f` · **状态**：**只登记，不修**（本片零产品代码改动：`services/**`、契约、迁移、CI 全未动；只新增 `tests/**` 与 `docs/**`）。
+
+**这一节记录什么**：「文字问答 → 来源 → 失败恢复」这条链上，**已经可判**的三件事（来源是硬判据、版本串可判定、四类失败各有错误码）不需要再讨论；剩下五件事是**今天判不了或判不全**的，逐条写清"缺什么／为什么现在不改／改的代价／谁来裁"。取证与逐跳链路见 `docs/verification/gy-r70-qa-source-recovery-20261030.md`，可执行判据见 `tests/unit/conversation-qa-source-recovery.test.mjs`（23 条，全部离线）。
+
+### G1 问答接线在运维面上**不可见**
+
+- **缺什么**：`GET /health` 只查 `api` 与 `database`，没有任何问答/AI 接线读数。"配了模型却接不上外发账本"会打一条 warn；但**"完全没配 `CHAT_LLM_*`"一条信号都没有**——`real` 模式下进程照常起来、`/health` 报 `ok`、每次问答都静默走确定性摘录，唯一的机器可判据是**回答里的版本串前缀**（也就是必须"先答一次"才知道）。
+- **为什么现在不改**：改 `/health` 是**产品行为 + 契约外读面**的变更（健康检查已被监控与部署流程消费），且"该报什么、报给谁看"是产品/运维决策，不是写作片能定的；本片的任务边界是"先取证、再补钉子"，不是加字段。
+- **改的代价**：`services/api/src/routes/health.ts` 加一个 `checks.qa` 段（`mode: live|deterministic` + 两个布尔与门 + 一个 `warning`）。**既有断言不会因此变红**——`tests/unit/api-health.test.mjs` 只逐条断言 `checks.api.status` 与 `checks.database.*` 的具体取值，**没有**"键集恰好两键"的断言（本轮实测确认；不需要新增也不需要放宽）。真正的代价在别处：① `deploy/**`、监控告警与 runbook 要同步认这个新键并**真的告警**，否则新字段没人看等于没加；②「deterministic 在 `real` 下算不算 degraded」是**产品判定**（今天 `real` 无数据库报 503 degraded，而 `real` 无模型报 `ok`），选错会让监控长期静音；③ 新键一旦发布就进"有字段没人消费"的清单，要么接告警要么删掉，不允许留着当装饰。工作量小，**协商与运营成本大于实现成本**。
+- **谁来裁**：产品/运维口径的负责人裁定"健康检查要不要承载 AI 能力状态"；实现由后续接线片做。
+
+### G2 作业封套不承载 `retryable`
+
+- **缺什么**：`retryable` 只写在 `ApiError` 上（`services/api/src/ai/error-map.ts` 的 `FAILURES` 表 + `chatApiError`）；而问答失败走的是**异步作业面**——`GET /jobs/{id}` 恒 200，客户端只拿到 `state`（`timed_out` / `failed`）与 `error_code`。于是"这份失败要不要重试"必须由客户端**自己按 `services/api/src/errors.ts` 的注释口径重算**（超时/配额可重试、协议违规/凭据不可重试），而那份口径是**中文注释**，不是机器可读字段。
+- **为什么现在不改**：`Job` 是冻结契约的九键且 `additionalProperties:false`，加一个 `retryable` 属**契约变更**（`packages/contracts/openapi.json` + `operations.json` + 各域投影 + 客户端），远超一个写作片；且"要不要把可重试性下放到作业面"本身是契约设计问题。
+- **改的代价**：契约层加字段（`Job.retryable` 或 `Job.error_retryable`）→ 六个作业源的投影都要填 → 客户端（小程序/后台）解析要跟着改 → 既有"Job 恰好九键"的断言（本片 D6 与既有 `assertContractJob` 的 `JOB_KEYS`）全部要同批改。**中等**，且一旦加错方向（把重试判断交给服务端）会掩盖"客户端可以自行决定"的现状。
+- **谁来裁**：监工/契约负责人裁定"作业面要不要承载可重试性"；不裁定前，本片用 D6 把现状钉死（`hasOwnProperty('retryable') === false`），防止有人**以为**它已经在响应里。
+
+### G3 隐私类失败在异步面被折叠成 `PROVIDER_UNAVAILABLE`
+
+- **缺什么**：`services/api/src/conversations/service.ts` 的 `settleCodeOf` 只认 `instanceof ApiError`；而外发口（`services/api/src/privacy/task-egress.ts`）抛的是 `PrivacyError`（`packages/privacy/errors.mjs`，**不是** `ApiError`）。⇒ 同意缺失（`CONSENT_REQUIRED`，同步面是 403、要用户去授权）、对象不可用（`OBJECT_UNAVAILABLE`，409）、对象键非法（`INVALID_REQUEST`，400）在问答异步面**统统落成 `PROVIDER_UNAVAILABLE`**，与"供应商挂了"同码同 state。客户端无法分流"要用户授权"与"等一会儿重试/报运维"这两类**动作相反**的处置。
+- **为什么现在不改**：修法有两条，都要动产品判定或契约：① 让 `settleCodeOf` 接受任意 `{code}` 形状（会放宽"域外异常一律折叠"这条既有的 fail-closed 口径，且所有域共用同一处折叠，**改一处影响全域**）；② 让 `PrivacyError` 继承 `ApiError`（跨包依赖反转，`packages/privacy` 目前不依赖 `services/api`）。两条都不是"按现状改准"，属设计裁定。
+- **改的代价**：① 小改（几行）但**语义面大**：需要逐个域确认"哪些码可以被原样透出"，否则等于把内部错误码漏给客户端；② 中等（包依赖 + 所有 `instanceof ApiError` 的判定点复核）。另需补一条"隐私码 → 契约码"的映射表与对应用例。
+- **谁来裁**：监工裁定"异步面的隐私类失败要不要保留原码"；本片只把折叠这件事**写清**（证据页 §4 行 4a），不修。
+
+### G4 版本串描述的是"装配结局"，不是"这份正文的出处"
+
+- **缺什么**：`model_version` / `prompt_version` 在**装配层**盖章（`answerVersions` 只在 `mode==='live'` 时给），因此它们回答的是"这台部署接的是谁"，而不是"这一条正文是谁产的"。两个方向的残余：
+  - **过报（危险方向）**：`live` 装配但本轮**零外发**（检索集合为空 ⇒ 适配器根本不发）时，`model_version` 仍写 `model/…`，而正文是固定话术「资料不足」。本片已把它收窄并钉住：**零外发的 live 轮次不得是 `answered`、正文不得含任何模型片段**（用例 B3）。
+  - **欠报（安全方向）**：注入缝把真实适配器塞进 `composer` 时，前缀仍在、正文却真来自模型（用例 B1b）。这是 NC2 **有意**的方向（注入者不得自封真实模型），且生产装配**不可达**（`planConversationChat` 的 `injected` 分支只给 composer、不给 `answerVersions`）。
+- **为什么现在不改**：让版本串变成"逐轮出处"需要**每一轮**都知道生成侧有没有真的外发——`AnswerComposer` 端口不返回这个事实（`createLiveChatComposer` 的 `lastReading()` 不在端口里），要么扩端口（改域内接口），要么在 `Answer` 上加一个 `provenance` 字段（**契约变更**）。两条都超出"补钉子"的范围。
+- **改的代价**：扩端口 → 确定性回答器也要实现该字段（否则类型不闭合）→ 服务层把"有没有外发"写进回答行 → 若落在契约上则要改 `Answer` 十键（客户端同步）。**中等偏大**，且当前两个方向的残余都已被断言约束在"不会误导可交付正文"的范围内。
+- **谁来裁**：监工裁定"版本串的语义是部署属性还是逐轮出处"；若定为后者，需先定契约字段。
+
+### G5 真实外发的 **HTTP 级**读数仍未取得
+
+- **缺什么**：`mode==='live'` 在回环 HTTP 夹具里要求"真 PG 外发账本（`egressPoolUsable`）+ 持久会话 store"，本机无 PG ⇒ live 结局的判据只能落在**服务层**（`answerVersions` 的唯一注入缝，与生产同一行盖章代码）。也就是说：**产品 HTTP 路径上一次真实模型外发的读数，本片同样没有取得**（与该域首片的诚实边界一致，不是本片引入的新缺口）。
+- **为什么现在不改**：需要起真 PG + 真凭据才能发一次真实请求；派单明确 ⛔ 不发起任何真实模型调用，本片也⛔ 不打印凭据。
+- **改的代价**：需要 (a) 一次性真实外发授权（付费 + 凭据），(b) PG 17 实例 + 迁移，(c) 一条只跑一次的取证脚本。属**发版级**动作，不是单测能覆盖的。
+- **谁来裁**：用户/指挥裁定"要不要为问答再做一次真实外发取证"；README P1 的"来源/失败恢复"在单测层已可判定，真实外发是可选的加固。
+
+### 判据（可复跑，全部离线）
+
+- `tests/unit/conversation-qa-source-recovery.test.mjs`：A 组钉版本串分区（32 组四与门全交叉 + 两种禁止情形判零）；B 组钉落库面的"前缀 ⇔ 谁生成"；C 组钉"来源不得为空壳"（含三条空壳负控制）；D 组钉失败恢复矩阵（12 个 HTTP 状态 + 8 个失败形态 + 作业面四行 + 封套无 `retryable`）；E 组钉零外呼（三条 + 一条正控制证明绊线会响）。
+- 五条负控制（临时改生产代码 → 打红 → 复原）逐条记在证据页 §6.2，覆盖 A/B/C/D/E 五组，确认断言不是"恒绿装饰"。
+- 证据页 `docs/verification/gy-r70-qa-source-recovery-20261030.md` 给出逐跳链路、来源形态、失败矩阵与九条门禁读数。
+
+### 不得据本节放宽的四件事
+
+1. **不得把"有 `model_version`"当成"回答来自真实模型"**：还要看 `prompt_version` 是否含 `citation-bind` 与正文首行标记；三条一起看才判得准（C4 钉住三条）。
+2. **不得把"作业 `succeeded`"当成"模型答了"**：缺凭据/缺账本时作业**就是** `succeeded`，`error_code` 为 `null`，正文是确定性摘录（D5 钉住）。
+3. **不得把 `PROVIDER_UNAVAILABLE` 一律读成"供应商挂了"**：它还覆盖凭据缺失、协议拒绝、隐私账本拒绝（G3）。
+4. **不得因为本节登记了缺口就跳过既有红线**：来源仍必须逐字段取自本次检索集合、用量卡仍只能来自确定性权威路径、失败/超时仍零回答行 —— 这三条本片一条未动。
+
+---
+
+## G3 已修（GY-R71，2026-10-30 追加）
+
+**登记日期** 2026-10-30 · **证据基线** `8b646ae1` · **状态**：**已修**（上文「### G3 隐私类失败在异步面被折叠成 `PROVIDER_UNAVAILABLE`」描述的是 `8b646ae1` 时的状态，保留原样不改写；本节是它的**替代结论**）。
+
+**修法**：选**路线 ①**（放宽 `settleCodeOf`），但**只放宽到类**、不放宽到形状 —— `services/api/src/conversations/service.ts:499` 的 `settleCodeOf` 现在是「`ApiError` 或 `PrivacyError` 且 `code` 在契约闭集内 ⇒ 保留原码；其余一律 `PROVIDER_UNAVAILABLE`」。**没有**采纳路线 ②（让 `PrivacyError` 继承 `ApiError`）：那会把「`instanceof ApiError`」这一判据在全仓 43 个文件 47 处一起改语义，代价与收益完全不成比例（逐条代价见 `docs/verification/gy-r71-async-privacy-codes-20261030.md` §4）。
+
+**修后事实**（`tests/unit/conversation-async-privacy-codes.test.mjs` 钉住）：
+
+- 作业面四码可分：`CONSENT_REQUIRED`(403) / `OBJECT_UNAVAILABLE`(409) / `INVALID_REQUEST`(400) / `PROVIDER_UNAVAILABLE`(503)，**同 `state=failed`、四码互不相同** ⇒ 客户端第一次有了「去授权」与「重试/报运维」的分流判据。
+- 折叠口径**未放宽**：域外异常（含自带闭集码的第三方错误对象）与 `PrivacyError` 的闭集外码仍折成 `PROVIDER_UNAVAILABLE`。
+- **契约零改动**：作业封套仍是冻结九键，`retryable` 仍**不**进取（四个负控制里有一条专门把 `retryable` 塞进去，两个层次同时打红）。
+
+**由此产生的两处修正**：
+
+1. 上文「### 不得据本节放宽的四件事」第 3 条「不得把 `PROVIDER_UNAVAILABLE` 一律读成'供应商挂了'：它还覆盖凭据缺失、协议拒绝、**隐私账本拒绝**（G3）」—— 第 3 个并列项**已被本节修掉**：隐私账本/外发守卫的拒绝现在按原码落地，不再落成 `PROVIDER_UNAVAILABLE`。前两个并列项（凭据缺失、协议拒绝）仍然成立。
+2. `services/api/src/ai/error-map.ts` 的注释原文写「`settleCodeOf` 只认 `ApiError.code`，非 `ApiError` 一律兜底」——该句在修后不再成立，已同步改成「只保留 `ApiError` / `PrivacyError` 携带的闭集码，其余兜底」（等长替换，无行号漂移）。
+
+**仍未修（相邻面，需另行裁定）**：媒体三域（`recognition` / `ocr` / `speech`）不走 `settleCodeOf`，它们把 provider 抛出的任何异常吞成 `PROVIDER_OUTCOME_UNKNOWN`（`services/api/src/recognitions/service.ts:543`、`services/api/src/ocr/service.ts:635`、`services/api/src/speech/service.ts:620`）——隐私类失败在**那三个作业面**仍然不可分流。改它要动三域各自的「提供者失败码四值闭集」设计，属契约外的失败码集合变更，本片不动。
+
 
