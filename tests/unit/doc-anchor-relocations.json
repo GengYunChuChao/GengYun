@@ -740,16 +740,6 @@
   },
   {
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
-    "line": 77,
-    "target": "services/api/src/server.ts",
-    "from": 27,
-    "to": 68,
-    "reason": "旧锚点 27 在 base 上指到 `const pool = createPool(config.databaseUrl);`，与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪到第 51 行，27 只是它早年的位置）；本提交按符号 `buildApp(` 改指 HEAD 第 62 行 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，不是 27+1 的差值平移。",
-    "kind": "correction",
-    "symbol": "buildApp("
-  },
-  {
-    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
     "line": 17,
     "target": "services/api/src/app.ts",
     "from": 1614,
@@ -891,5 +881,37 @@
     "kind": "correction",
     "symbol": "errorCode: (error && error.code) || ''",
     "reason": "旧锚点 137 在 base（真实 main 53354fe 的 historydetail.js，F3 改动前）上已经是 recognition 分支 `setData(Object.assign(...))` 的收尾右括号（`})` 一类），不是该句要引的「把错误码交给 state-view」；真正对应的是失败分支里的 `errorCode: (error && error.code) || ''`。F3 只新增两行，旧号 137 因此偶然落到新树第 137 行的 `raw: null …` 字段上；机械 137+2 只会落到另一个收尾括号，仍不是该字段。新树（待提交 HEAD）该字段在 :160，`errorCode: (error && error.code) || ''` 在本文件只出现 1 次（本次现测），故按符号取 :160。"
+  },
+  {
+    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
+    "line": 17,
+    "target": "services/api/src/server.ts",
+    "from": 62,
+    "to": 68,
+    "kind": "correction",
+    "symbol": "const app = buildApp(",
+    "reason": "该页要引的是生产入口那条 `const app = buildApp({...})` 调用行；base 上写 `:62` 已经指到 `moderationAssembly.fatalLine` 判断（不是调用行），本提交按符号改指 HEAD 第 68 行。server.ts 在本提交**未改动**，所以这是纠正本来指错的锚点（kind=correction），不是随代码位移。"
+  },
+  {
+    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
+    "line": 77,
+    "target": "services/api/src/server.ts",
+    "from": 62,
+    "to": 68,
+    "kind": "correction",
+    "symbol": "const app = buildApp(",
+    "reason": "同上（该页第 77 行表格里同一条锚点）：`server.ts:62` 在 base 上指的是 `moderationAssembly.fatalLine` 判断，不是 `buildApp(` 调用行；本提交按符号改指 68。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 97,
+    "target": "services/api/src/conversations/service.ts",
+    "from": 636,
+    "fromEnd": 679,
+    "to": 686,
+    "toEnd": 729,
+    "kind": "correction",
+    "symbol": "async function createConversation(",
+    "reason": "台账里 `createConversation` 的 lines 是 `636-679`，但 base 上该函数体从 681 起（636-679 落在它前面的 `validateTurnInput` 与注释块里），旧锚点本来就指错；本片插入 cancelTurn 后由 `verify-contract-status.mjs --reanchor` 按符号重算为归属块 `686-729`，故按符号登记为纠正（新行 686 就是 `async function createConversation(`）。"
   }
 ]
