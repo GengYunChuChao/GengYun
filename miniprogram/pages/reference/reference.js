@@ -2,13 +2,13 @@ const fontScale = require('../../utils/font-scale')
 // GY-I07 科普／除草剂查询 · 列表页（作物—杂草—除草方式导航 + 关键词／地区筛选）。
 //
 // 数据来源（GY-I07 D1）：**两条路径，逐条可判定，互不冒充**。
-// - `data_source='server'`：运行时启用联网（runtime.mode==='local' 且 apiBaseUrl 非空）且**没有**
-//   作物／杂草／地区条件时，走服务端真实接口 `GET /herbicides`（miniprogram/utils/knowledge-api.js）。
-//   该接口 querystring 只接受 q／registration_number／cursor／limit（路由 schema
-//   additionalProperties:false），结构化条件在服务端**不可表达** ⇒ 不静默丢弃条件。
-// - `data_source='bundled-offline'`：未启用联网，或带结构化条件时，读随包离线副本
-//   （packages/knowledge/** → miniprogram/data/**，经 utils/reference.js），页面**显式标注**
-//   离线来源与原因，绝不冒充服务端读数。
+// - `data_source='server'`：运行时启用联网（runtime.mode==='local' 且 apiBaseUrl 非空），且本次条件集合
+//   落在服务端 `GET /herbicides` 的参数面内（`q`／`registration_number`／`crop_id`／`region_code`；
+//   判据唯一真源是 `services/api/src/routes/knowledge.ts` 的 querystring schema，客户端不信自己的记忆）
+//   时，走服务端真实接口（miniprogram/utils/knowledge-api.js），`crop_id`／`region_code` 随请求真的提交。
+// - `data_source='bundled-offline'`：未启用联网，或带了该接口**确实不接受**的条件（`species_id` 杂草、
+//   `dosage_form` 剂型）时，读随包离线副本（packages/knowledge/** → miniprogram/data/**，经
+//   utils/reference.js），页面**显式标注**离线来源与真实原因，绝不冒充服务端读数。
 // 两条路径共用：同一 source_version 展示口径；失败一律按闭集文案提示，**不落回离线副本**。
 // 列表与详情必须展示**同一个 source_version**；不得因模糊药名合并不同含量的剂型。
 
@@ -188,25 +188,23 @@ Page({
     this.runQuery(this.data.nextCursor)
   },
 
-  // 来源判定（可判定标记 + 原因，不是纯文案）：服务端 `/herbicides` 的 querystring 只接受
-  // q／registration_number／cursor／limit ⇒ 作物／杂草／地区／剂型条件在该接口**不可表达**；
+  // 来源判定（可判定标记 + 真实原因，不是纯文案）。判据是服务端 `/herbicides` 的 querystring schema：
+  // 它接受 `q`／`registration_number`／`crop_id`／`region_code`（另有分页 `cursor`／`limit`）——**作物与
+  // 地区是接受的**，所以它们只能把请求推向服务端，绝不能成为回退离线的理由；只有 `species_id`、
+  // `dosage_form` 这类该接口确实不接受的条件才回退，并逐个点名是哪一条（不笼统写成"作物／杂草／地区"）。
   // 未启用联网（runtime.mode 非 local 或 apiBaseUrl 为空）时也无法发起请求。
   querySource: function () {
     if (!auth.networkEnabled()) return {
       source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
       label: '数据来源：随包离线副本（bundled-offline）——当前运行未启用联网（runtime.mode 非 local），不冒充服务端读数。'
     }
-    // #8：剂型条件单独如实说明（不笼统并入作物／杂草／地区，也不改既有文案口径）。
-    if (this.data.dosageForm) {
-      const others = Boolean(this.data.cropId || this.data.speciesId || this.data.regionCode)
-      return {
-        source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
-        label: '数据来源：随包离线副本（bundled-offline）——服务端 /herbicides 不支持' + (others ? '作物／杂草／地区／剂型' : '剂型') + '条件，筛选条件未被丢弃。'
-      }
-    }
-    if (this.data.cropId || this.data.speciesId || this.data.regionCode) return {
+    // 该接口不接受的**筛选**条件，逐个点名（服务端 schema 里没有这些键，硬发只会换回 400）。
+    const rejected = []
+    if (this.data.speciesId) rejected.push('杂草（species_id）')
+    if (this.data.dosageForm) rejected.push('剂型（dosage_form）')
+    if (rejected.length) return {
       source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
-      label: '数据来源：随包离线副本（bundled-offline）——服务端 /herbicides 不支持作物／杂草／地区条件，筛选条件未被丢弃。'
+      label: '数据来源：随包离线副本（bundled-offline）——服务端 /herbicides 不接受' + rejected.join('、') + '条件，筛选条件未被丢弃。'
     }
     return { source: knowledgeApi.HERBICIDE_SOURCES.SERVER,
       label: '数据来源：服务端接口 /herbicides（真实读数，等待返回）。' }
@@ -232,6 +230,11 @@ Page({
     const operation = (self._queryOperation = (self._queryOperation || 0) + 1)
     self._queryActive = true
     const input = { limit: PAGE_SIZE }
+    // 结构化条件：服务端 schema 接受 `crop_id`／`region_code`，本页选中的必须**真的提交**，
+    // 否则页面显示"已筛选"而实际是全量（能力不可达，且读数对不上）。
+    const sent = []
+    if (self.data.cropId) { input.crop_id = self.data.cropId; sent.push('crop_id') }
+    if (self.data.regionCode) { input.region_code = self.data.regionCode; sent.push('region_code') }
     if (self.data.keyword) input.q = self.data.keyword
     if (cursor) input.cursor = cursor
     self.setData({ busy: true, dataSource: decision.source, dataSourceLabel: decision.label, queryError: '', queryErrorCode: '', querySession: false })
@@ -255,8 +258,9 @@ Page({
         simulatedExcluded: 0,
         sourceVersionNote: rows.length ? rows[0].source_version : '',
         countNote: rows.length ? '本页 ' + rows.length + ' 条（该接口不返回总数）' : '',
-        // 服务端路径不携带结构化条件 ⇒ 无「命中条件」可说，恒空（不冒充已筛选）。
-        matchedNote: '',
+        // 服务端确实按提交的 `crop_id`／`region_code` 收窄（命中集合已在 parity 判据里与 `/knowledge`
+        // 逐条比对）⇒ 命中条件只列**本次真的提交了**的结构化维度；未提交的不列（不冒充已筛选）。
+        matchedNote: matchedNoteOf(sent),
         queryError: '',
         queryErrorCode: '',
         querySession: false
@@ -283,7 +287,7 @@ Page({
     })
   },
 
-  // 路径二：随包离线副本（逐条标注来源）——仅在未联网或带结构化条件时使用。
+  // 路径二：随包离线副本（逐条标注来源）——仅在未联网、或带了该接口**确实不接受**的条件时使用。
   runBundledQuery: function (cursor, decision) {
     const self = this
     self._queryActive = false

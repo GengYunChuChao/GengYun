@@ -119,16 +119,24 @@ async function detail(id, input) {
 const HERBICIDE_KEYS = ['id', 'revision', 'formulation', 'source', 'risk_text', 'reference_state']
 const FORMULATION_KEYS = ['id', 'registration_number', 'producer', 'dosage_form', 'ingredients']
 const INGREDIENT_KEYS = ['name', 'content_text', 'unit_text']
-// 服务端 `/herbicides` querystring 只接受这四项（路由 schema additionalProperties:false）：
-// 作物／杂草／地区条件在该接口**不可表达**，不得静默丢弃（页面按来源标记回退随包副本）。
-const HERBICIDE_FILTERS = ['q', 'registration_number']
+// 服务端 `/herbicides` 参数面的唯一真源是 `services/api/src/routes/knowledge.ts` 的路由 querystring
+// schema（`additionalProperties:false`）。下面这张白名单逐键对齐它，不自行增删：
+//   ① 客户端**可表达**（会真的随请求提交）：`q`、`registration_number`、`crop_id`、`region_code`。
+//      前三个同服务端 `text`（非空字符串、长度 ≤80）；`region_code` 另须匹配 `^33[0-9]{4}$`
+//      （服务端 `regionCode` 的 pattern），不匹配即 `INVALID_INPUT`，不把脏值发到网上让服务端兜。
+//   ② 客户端**不可表达**（该接口 schema 里没有这些键，硬发只会换回 400 INVALID_REQUEST）：
+//      `species_id`、`growth_stage`、`planting_method`、`use_scene`；页面自带的 `dosage_form` 同理。
+// 白名单外的键一律 `INVALID_INPUT`，**不静默丢弃**：调用方据此如实改走随包副本并写明真实原因，
+// 而不是把用户选的条件悄悄扔掉后仍报一个服务端读数。
+const HERBICIDE_FILTERS = ['crop_id', 'region_code', 'q', 'registration_number']
+const REGION_CODE = /^33[0-9]{4}$/
 function herbicideQuery(input) {
   if (!object(input) || Object.keys(input).some(k => HERBICIDE_FILTERS.concat(['cursor', 'limit']).indexOf(k) === -1)) throw failure('INVALID_INPUT')
   const out = {}
   Object.keys(input).forEach(function (k) {
     const v = input[k]
     if (k === 'limit') { if (!Number.isInteger(v) || v < 1 || v > 50) throw failure('INVALID_INPUT'); out[k] = v; return }
-    if (!text(v, k === 'cursor' ? 2048 : 80)) throw failure('INVALID_INPUT')
+    if (!text(v, k === 'cursor' ? 2048 : 80) || (k === 'region_code' && !REGION_CODE.test(v))) throw failure('INVALID_INPUT')
     out[k] = v
   })
   return out
