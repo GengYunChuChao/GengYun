@@ -8,6 +8,7 @@ import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { createKnowledgeService, type KnowledgeQuery } from '../knowledge/service.ts';
 import { createReferenceQueryService, type ReferenceQueryService } from '../knowledge/reference-query.ts';
+import { readDoseCards } from '../knowledge/dose-cards.ts';
 import { decidePublicVisibilityAsync, type ReferenceResolver } from '../knowledge/public-invalidation.ts';
 import { buildMeta } from './support.ts';
 
@@ -221,5 +222,20 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
     const headers = reply.header('Cache-Control','no-store');
     if (etag !== undefined) headers.header('ETag',etag);
     return headers.send({data,meta:buildMeta(request,config)});
+  });
+  // GY-R71 · 「标签原文用量 / 可执行建议」的**只读出口**（issue #8 的核心缺口）。
+  //
+  // 为什么是新增路由而不是改写既有字段：`GET /knowledge` 的 `dose_cards` / `conditions` 是
+  // 冻结契约字段（`packages/contracts/openapi.json` 的 `Knowledge`），语义与下发时点都被既有
+  // 消费者与证据页钉住。本路由**只增不改**：既有两条读面的行为逐字节不变。
+  //
+  // 口径（逐条可核）：`services/api/src/knowledge/dose-cards.ts#readDoseCards` —— 每条候选必须
+  // 同时通过 `packages/reference/labels.mjs#doseCardDescriptor` 的九道门**与**
+  // `evaluateDoseBoundary` 的外层 `executable` 门才进 `dose_cards`；不过门的进 `rejections`
+  // 并给出「哪道门没过」，空结果**必带**非空 `empty_reason`（不是静默空数组）。
+  // 本路由不读库、不联网、不调模型；`Cache-Control: no-store` 且不发 ETag（不产生资源版本）。
+  app.get(`${API_PREFIX}/dose-cards`,{preHandler:guards.requireUser,schema:{querystring:{type:'object',additionalProperties:false,properties:{}}}},async(request,reply)=>{
+    const data = readDoseCards();
+    return reply.header('Cache-Control','no-store').send({data,meta:buildMeta(request,config)});
   });
 }

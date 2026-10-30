@@ -9,7 +9,7 @@
 1. **入口**：把「社区帖下架」做成 `ContentAdminView` 的**第 4 个 inner family**（`FAMILIES` 清单 ＋ 渲染链），
    **`App.vue` 0 行改动**（§2 有证明命令）。依据：`.pg17/ruling-r34-i18-post-takedown-entry-20261023.md` 第 1 条。
 2. **形态**：按**帖子 ID 直接下架**。契约里没有任何帖子读面（`/admin/posts` 全契约只有 1 条 path：
-   `openapi.json:11617`），因此**不造帖子列表/队列**（造列表＝伪造数据）。
+   `openapi.json:11686`），因此**不造帖子列表/队列**（造列表＝伪造数据）。
 3. **`If-Match` 永不为 `*`**：表单层就拒绝通配（`*` 时**零请求**发出），请求头里只有 `"<正整数>"`（§3、§5）。
 4. **real 模式 503 如实显示为失败**：不写成成功、不吞错误，并明确提示「处置可能已生效」＋「不会自动重试」。
    成功回执只说「服务端已受理（HTTP 200 · accepted:true）」，**不写「已下架成功」**。
@@ -55,9 +55,9 @@ $ git diff --numstat upstream/main...HEAD -- apps/admin/src/views/ContentAdminVi
 
 | 维度 | 后端/契约事实（文件:行 实测） | 前端落点 |
 | --- | --- | --- |
-| 路径 | `POST /admin/posts/{id}/hide`；`packages/contracts/openapi.json:11617`（path）、`:11619`（`operationId: hidePost`） | `post-takedown-api.mjs` 的 `POSTS_PATH`/`HIDE_ACTION` → `buildHidePostRequest` |
-| scope | `openapi.json:11712` `x-scope: sources:write`；`services/api/src/admin/ops/service.ts` `hidePost: 'sources:write'` | 常量 `SOURCES_WRITE_SCOPE`；缺 scope 只提示 ＋ 禁用按钮（不放行） |
-| 版本必需 | `openapi.json:11713` `x-version-required: true`；参数 `IfMatch`（pattern `^"[1-9][0-9]*"$`，`required: true`） | `buildIfMatch` / `checkIfMatchHeader` |
+| 路径 | `POST /admin/posts/{id}/hide`；`packages/contracts/openapi.json:11686`（path）、`:11688`（`operationId: hidePost`） | `post-takedown-api.mjs` 的 `POSTS_PATH`/`HIDE_ACTION` → `buildHidePostRequest` |
+| scope | `openapi.json:11781` `x-scope: sources:write`；`services/api/src/admin/ops/service.ts` `hidePost: 'sources:write'` | 常量 `SOURCES_WRITE_SCOPE`；缺 scope 只提示 ＋ 禁用按钮（不放行） |
+| 版本必需 | `openapi.json:11782` `x-version-required: true`；参数 `IfMatch`（pattern `^"[1-9][0-9]*"$`，`required: true`） | `buildIfMatch` / `checkIfMatchHeader` |
 | **`*` 被拒** | `services/api/src/admin/identity.ts` 的 `parseIfMatchHeader`：缺 → **428 `REVISION_REQUIRED`**；形状不符 → **400 `INVALID_REQUEST`**，原文「If-Match 必须是形如 "12" 的强 ETag，且不允许 *」 | `validateRevision('*')` → `code: 'wildcard'`，**不发请求**；`buildHidePostRequest` 二次校验 |
 | 幂等键 | 参数 `IdempotencyKey`（8..128，required）；`services/api/src/admin/identity.ts` 的 `requireIdempotencyKeyValue`：缺 → 400 `IDEMPOTENCY_KEY_REQUIRED`，越界 → 400 `INVALID_REQUEST` | `newIdempotencyKey()`（前缀 `admin-post-takedown-`）＋ `planIdempotencyKey`（同指纹复用、换内容换键） |
 | 请求体 | `ReasonInput`（`reason` 1..500，`additionalProperties: false`，`requestBody.required: true`） | `buildReason`；请求体**只有** `{reason}` |
