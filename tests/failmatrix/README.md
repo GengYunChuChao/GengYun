@@ -262,6 +262,41 @@ FATAL:  could not create lock file "/var/run/postgresql/.s.PGSQL.36271.lock": Pe
 本臂只走 TCP，socket 目录只影响这个 lock 文件，不影响任何断言。首跑日志另外证明了两件事：**job 结构、装包、
 主版本自证、env 传递都是对的**（`initdb (PostgreSQL) 17.11` 自证通过、`GY_PG_BIN`/`GY_I22_PG_ROOT` 都到了脚本里）。
 
+### CI 第二轮（2026-10-31，运行 `41135701430`）· 又一次**真**失败：夹具的时间炸弹
+
+socket 修掉之后集群起来了、全链迁移也跑过去了，step 6 改红在**播种第一个账号**：
+
+```
+ERROR:  new row for relation "sessions" violates check constraint "sessions_expires_after_creation"
+DETAIL:  Failing row contains (d9151d10-…, fedfae4f-…, …, user, 1, 2026-10-27 04:00:00+00, null, 2026-10-30 22:05:54.519484+00).
+    at async createAccount (…/tests/failmatrix/run-real.mjs:143:19)
+    at async main (…/tests/failmatrix/run-real.mjs:415:15)
+```
+
+根因是**夹具把会话过期时间写成了冻结时钟**：`sessions` 表有 `CHECK (expires_at > created_at)`，而
+`created_at` 走列默认 `DEFAULT now()`（真实墙钟）、生产 `createSession()` 也不写它；夹具却用
+`START + 48h`（`world.mjs:32` 的 `START = 2026-10-25T04:00Z` ⇒ `2026-10-27T04:00Z`）当 `expires_at`。
+墙钟一走过 `2026-10-27`，这条 INSERT 就必撞约束 —— 也就是说这条臂**自带保质期**，R29 当时本机时间还在
+窗口内，所以「历史上绿过」；它从没在 CI 上跑过，也就没人被这个炸弹炸到。
+
+修法（`tests/failmatrix/run-real.mjs`，不改生产代码、不动任何断言），三处同源：
+
+1. **真 PG 臂改用真实时钟**：`clock.now` 从 `() => new Date(START)` 改成 `() => new Date()`。冻结时钟只属于
+   stub 臂（那里没有库、也没有 CHECK）；real 臂必须和库同一口时钟。这一条是**根因级**的——不只 `sessions`，
+   `admin_sessions` 与 `idempotency_keys` 也有同样的 `CHECK (expires_at > created_at)`，而生产代码用应用时钟算
+   `expires_at = now + TTL`；时钟冻在过去，任何带 `Idempotency-Key` 的写请求（连 `logout` 都带）都会算到过去。
+2. **播种时间基准取库内 `now()`**（`SELECT (extract(epoch from now())*1000)::bigint` → `world.dbNowMs`）：
+   `createAccount` 缺省 `dbNowMs + 48h`、`createAdmin` 缺省 `dbNowMs + 1h`，与 `created_at` 的 `DEFAULT now()`
+   同源，钳制关系不因容器时钟/时区漂移再翻。
+3. **「已过期会话」改合规造法**：不再给 `expires_at` 一个过去时间（那必撞 CHECK），改为**先正常插入、再把
+   `created_at` 与 `expires_at` 一起回拨**（`-10 days` / `-9 days`，`expires_at > created_at` 仍成立，对应用时钟
+   确实已过期）。
+
+启动行会多打一行 `[pg] db_now=… app_clock=real`，把时钟口径落在日志里。`START` 这个常量从此只服务 stub 臂。
+
+这两轮红是**把臂接进 CI 这件事本身的收益**：两个缺陷（Debian socket 目录、夹具时间炸弹）在 Windows 本机
+都复现不了，只有真跑一次 Linux + 真 PG 才会现形。
+
 ## 与 `#22` 的关系
 
 `#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 249 条真读数用例 + 26 条负控制**，
