@@ -43,6 +43,7 @@ import {
   REQUIRED_ENDPOINTS,
   SCHEMA_ID,
   SECRET_ENV_NAMES,
+  SPAWNED_API_STOP,
   allEndpointsExpected,
   applyApiStop,
   assertNoSecretLeaks,
@@ -58,6 +59,7 @@ import {
   buildPgStopArgs,
   buildPsqlArgs,
   buildSummary,
+  childHasExited,
   classifyMigrateFailure,
   describeHolder,
   describeOwnershipChecks,
@@ -67,6 +69,7 @@ import {
   parseApiPidFile,
   parseMigrateOutput,
   planPort,
+  planSpawnedApiStop,
   redactConnectionStrings,
   serializeApiPidFile,
   serializeSummary,
@@ -597,14 +600,24 @@ async function up(options) {
   const previous = loadState(stateDir) ?? {};
   let pgStartedHere = false;
   let apiStartedHere = false;
+  /**
+   * 本次运行 `spawn` 出来的子进程对象本身（**回滚只认它，不认整数 pid**）。
+   *
+   * 整数 pid 会在子进程退出后被系统复用，回滚时按号码杀就会杀掉别人的进程（监工 R72 指出的
+   * `up()` 回滚路径缺陷）；`ChildProcess` 句柄绑的是那个进程本身，子进程已退出时 `kill()` 只会得到
+   * 「已经没了」，不会打到复用了该号码的进程。
+   */
+  let apiChild = null;
   let apiPid = null;
   /** 本实例的身份读数（`instanceToken` / 写入时刻 / 工作树根）；复用与新建都会填上。 */
   let apiInstance = null;
 
-  const rollback = () => {
-    // 这里停的是**本次运行刚 spawn 的子进程**：归属由 spawn 关系本身保证
-    // （刚生出来的子进程还没 `api.pid` 里那套「可核实身份」，也不能等 /health —— 它可能根本没起来）。
-    if (apiStartedHere) stopApi(apiPid, apiPidFile);
+  const rollback = async () => {
+    // 这里停的是**本次运行刚 spawn 出来的子进程**：归属由 spawn 对象本身保证
+    // （刚生出来的子进程还没有 `api.pid` 里那套「可核实身份」，也可能根本没起来，等不到 /health）。
+    // ⛔ 回滚**不走** `stopApi(apiPid, …)`：那会退化成 `process.kill(整数 pid)`，而子进程若在第 7/8 步
+    // 之前自己退掉了，系统可能已把该号码发给别的进程 ⇒ 一次误杀。只认 `apiChild` 句柄。
+    if (apiStartedHere) await stopSpawnedApi(apiChild, apiPid, apiPidFile);
     if (pgStartedHere) {
       const result = run(pgTool(pgBin, 'pg_ctl'), buildPgStopArgs({ dataDir }), { timeoutMs: 60000 });
       say(`回滚：pg_ctl stop ⇒ ${result.status === 0 ? '已停' : '停止失败（看 pg.log）'}`);
@@ -696,7 +709,7 @@ async function up(options) {
     if (result.status !== 0) {
       warn('✗ initdb 失败，原文（已脱敏）：');
       warn(redactConnectionStrings(result.stderr || result.stdout).slice(0, 4000));
-      rollback();
+      await rollback();
       return EXIT.POSTGRES;
     }
     say('  initdb 完成');
@@ -714,7 +727,7 @@ async function up(options) {
       warn('✗ pg_ctl start 失败，原文（已脱敏）：');
       warn(redactConnectionStrings(result.stderr || result.stdout).slice(0, 4000));
       warn(`  子进程日志：${pgLog}`);
-      rollback();
+      await rollback();
       return EXIT.POSTGRES;
     }
     pgStartedHere = true;
@@ -730,7 +743,7 @@ async function up(options) {
   }
   if (!ready) {
     warn(`✗ PG 在 ${pgPort} 上没有就绪（psql SELECT 1 未成功），看 ${pgLog}`);
-    rollback();
+    await rollback();
     return EXIT.POSTGRES;
   }
   const version = pgVersion(pgBin);
@@ -761,14 +774,14 @@ async function up(options) {
     const exists = psql(pgBin, buildPsqlArgs({ port: pgPort, sql: buildDatabaseExistsSql(options.database) }));
     if (exists.status !== 0) {
       warn(`✗ 查库存在性失败：${redactConnectionStrings(exists.stderr).slice(0, 1000)}`);
-      rollback();
+      await rollback();
       return EXIT.POSTGRES;
     }
     if (exists.stdout.trim() !== '1') {
       const created = psql(pgBin, buildPsqlArgs({ port: pgPort, sql: buildCreateDatabaseSql(options.database) }));
       if (created.status !== 0) {
         warn(`✗ 建库失败：${redactConnectionStrings(created.stderr).slice(0, 1000)}`);
-        rollback();
+        await rollback();
         return EXIT.POSTGRES;
       }
       say(`  已建库：${options.database}`);
@@ -792,7 +805,7 @@ async function up(options) {
     if (verdict.evidence !== null) warn(`  证据（已脱敏）：${verdict.evidence}`);
     warn(`  下一步：${verdict.hint}`);
     warn(`  完整输出（已脱敏）：${migrateLog}`);
-    rollback();
+    await rollback();
     return EXIT.MIGRATE;
   }
   say(
@@ -849,6 +862,8 @@ async function up(options) {
       stdio: ['ignore', outFd, errFd],
     });
     child.unref();
+    // 回滚只认这个对象：见 `rollback()` 与 `stopSpawnedApi()` 的注释。
+    apiChild = child;
     apiPid = child.pid ?? null;
     apiStartedHere = true;
     const apiStartedAt = new Date().toISOString();
@@ -896,7 +911,7 @@ async function up(options) {
       consentPoliciesRows: null,
     });
     emitSummary(summary, outPath, secrets);
-    rollback();
+    await rollback();
     return EXIT.ENDPOINTS;
   }
   say(`  /health 就绪：status=${health.status}，database.status=${health.databaseStatus}`);
@@ -1058,9 +1073,11 @@ function extractAccessToken(text) {
 /**
  * 发终止信号并同步等它真的退出。
  *
- * ⛔ **调用方必须先证明归属**：要么是本次运行刚 `spawn` 出来的子进程（spawn 关系本身就是归属），
- * 要么 `assessApiOwnership` 返回 `killAllowed === true`。本函数自己**不判任何东西**，
- * 这样「该不该杀」只有一处判据（纯逻辑里那四条）。
+ * ⛔ **调用方必须先证明归属**：只有 `assessApiOwnership` 返回 `killAllowed === true` 才许进来。
+ * 本函数自己**不判任何东西**，这样「该不该杀」只有一处判据（纯逻辑里那五条）。
+ *
+ * ⛔ **本次运行刚 `spawn` 出来的子进程不走这里**：本函数手上只有一个整数 pid，子进程若已退出，
+ * 该号码可能属于别人。那条路走 {@link stopSpawnedApi}（句柄级终止）。
  */
 function terminatePid(pid) {
   if (Number.isInteger(pid) && pid > 0 && pidAlive(pid)) {
@@ -1100,6 +1117,88 @@ function stopApi(pid, pidFile) {
   const stopped = terminatePid(pid);
   removePidFile(pidFile);
   return stopped;
+}
+
+// ---------------------------------------------------------------------------
+// 回滚用的「句柄级」停法（⛔ 不按整数 pid 杀）
+// ---------------------------------------------------------------------------
+
+/**
+ * 停「本次运行刚 `spawn` 出来的」API。
+ *
+ * 与 {@link stopApi} 的区别是**只认 `ChildProcess` 句柄、不认整数 pid**：`child.kill()` 打在 spawn
+ * 那一刻建立关系的那个进程上（Windows 是 `TerminateProcess(handle)`），所以子进程若已退出、系统把
+ * 这个号码发了别人，这里也只会拿到「已经没了」，不会打到别人身上。这正是监工 R72 指出的
+ * `up()` 回滚缺陷（旧实现存下 `child.pid` 后调 `stopApi(apiPid, …)` ⇒ `process.kill(整数)`）。
+ *
+ * 三条结局（都能用假对象在单测里驱动）：
+ * - `NOTHING_STARTED`：连句柄都没有（spawn 之前就失败）⇒ 零终止信号；
+ * - `ALREADY_EXITED`：句柄自报已退出（`exitCode` / `signalCode` 非空）⇒ 零终止信号，只清 pid 文件；
+ * - `SIGNALLED` / `SIGNALLED_AND_KILLED` / `STILL_RUNNING`：句柄还在 ⇒ 先 `kill()`，等不到再 `SIGKILL` 兜底。
+ *
+ * @returns {Promise<{outcome: string, signalled: boolean}>}
+ */
+export async function stopSpawnedApi(child, pid, pidFile, options = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 10000;
+  const hardTimeoutMs = Number.isFinite(options.hardTimeoutMs) ? options.hardTimeoutMs : 2000;
+  const log = typeof options.log === 'function' ? options.log : say;
+  const warnFn = typeof options.warn === 'function' ? options.warn : warn;
+  const dropPidFile = typeof options.removePidFile === 'function' ? options.removePidFile : removePidFile;
+  const waitExit = typeof options.waitExit === 'function' ? options.waitExit : waitChildExit;
+  const detail = Number.isInteger(pid) ? `pid ${pid}` : '无 pid';
+  const plan = planSpawnedApiStop(child);
+  if (plan.action !== SPAWNED_API_STOP.SIGNAL) {
+    // 零终止信号：没有句柄，或句柄已自报退出（此时整数 pid 可能已属于别人）。
+    dropPidFile(pidFile);
+    log(`  回滚：${plan.detail} ⇒ 零终止信号（${detail}）`);
+    return { outcome: plan.action, signalled: false };
+  }
+  try {
+    child.kill();
+  } catch (error) {
+    warnFn(`  ！回滚结束本次启动的 API 失败（${detail}）：${error?.message ?? '未知错误'}`);
+  }
+  if (await waitExit(child, timeoutMs)) {
+    dropPidFile(pidFile);
+    log(`  回滚：本次启动的 API 已停（${detail}）`);
+    return { outcome: 'SIGNALLED', signalled: true };
+  }
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // 已经没了。
+  }
+  const hardExited = await waitExit(child, hardTimeoutMs);
+  dropPidFile(pidFile);
+  if (hardExited) {
+    log(`  回滚：本次启动的 API 在 SIGKILL 后停下（${detail}）`);
+    return { outcome: 'SIGNALLED_AND_KILLED', signalled: true };
+  }
+  warnFn(`  ！回滚：本次启动的 API 在 ${timeoutMs + hardTimeoutMs}ms 内没有退出（${detail}）——请手工核对`);
+  return { outcome: 'STILL_RUNNING', signalled: true };
+}
+
+/**
+ * 等子进程退出：**只等句柄上的 `exit` 事件**，⛔ 不轮询整数 pid
+ * （pid 轮询会在号码被复用后盯着一个陌生人，甚至把它当成「还没退出」）。
+ */
+export function waitChildExit(child, timeoutMs) {
+  if (childHasExited(child)) return Promise.resolve(true);
+  if (typeof child.once !== 'function') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      if (typeof child.removeListener === 'function') child.removeListener('exit', onExit);
+      resolve(value);
+    };
+    const onExit = () => finish(true);
+    timer = setTimeout(() => finish(false), timeoutMs);
+    child.once('exit', onExit);
+  });
 }
 
 async function down(options) {

@@ -900,6 +900,50 @@ export function applyApiStop({ assessment = null, kill = null } = {}) {
   return { killed: true, killCalls: 1, pid, verdict: assessment.verdict, skipped: false };
 }
 
+/** 回滚路径的三种结局（见 {@link planSpawnedApiStop}）。 */
+export const SPAWNED_API_STOP = Object.freeze({
+  /** 连句柄都没有（spawn 之前就失败了）⇒ 零终止信号。 */
+  NOTHING_STARTED: 'NOTHING_STARTED',
+  /** 句柄自报已退出 ⇒ 零终止信号（此时整数 pid 可能已属于别人）。 */
+  ALREADY_EXITED: 'ALREADY_EXITED',
+  /** 句柄自报仍在运行 ⇒ 只对这个句柄发信号。 */
+  SIGNAL: 'SIGNAL',
+});
+
+/** 句柄是否已自报退出（`exitCode` / `signalCode` 任一非空即算）。 */
+export function childHasExited(child) {
+  const code = child?.exitCode;
+  const signal = child?.signalCode;
+  return (code !== null && code !== undefined) || (signal !== null && signal !== undefined);
+}
+
+/** 给日志用的一句退出读数（⛔ 只取两个数字，不回显命令行与环境块）。 */
+export function describeChildExit(child) {
+  const signal = child?.signalCode;
+  if (signal !== null && signal !== undefined) return `signalCode=${String(signal)}`;
+  return `exitCode=${String(child?.exitCode)}`;
+}
+
+/**
+ * `up()` 回滚时「该不该停本次启动的 API」这一步的决定（纯逻辑，可在单测里用假对象驱动）。
+ *
+ * ⛔ **只认 `ChildProcess` 句柄、不认整数 pid**：spawn 之后若子进程自己退掉了，系统可能已经把这个
+ * 号码发给别的进程；回滚按号码杀（旧实现的 `stopApi(apiPid, …)` ⇒ `process.kill(整数)`）就是一次
+ * 误杀。句柄绑的是那个进程本身，已退出时拿到的只会是「已经没了」（监工 R72 指出的
+ * `up()` 回滚缺陷，本函数是它的判据）。
+ *
+ * @returns {{action: string, exited: boolean, detail: string}}
+ */
+export function planSpawnedApiStop(child) {
+  if (child === null || typeof child !== 'object' || typeof child.kill !== 'function') {
+    return { action: SPAWNED_API_STOP.NOTHING_STARTED, exited: true, detail: '没有可终止的子进程句柄' };
+  }
+  if (childHasExited(child)) {
+    return { action: SPAWNED_API_STOP.ALREADY_EXITED, exited: true, detail: `子进程已退出（${describeChildExit(child)}）` };
+  }
+  return { action: SPAWNED_API_STOP.SIGNAL, exited: false, detail: '句柄自报仍在运行' };
+}
+
 /** 把判据表渲染成人话（`down` / `status` 逐条打印；`⛔` 不省略失败项）。 */
 export function describeOwnershipChecks(assessment) {
   const checks = assessment?.checks ?? [];

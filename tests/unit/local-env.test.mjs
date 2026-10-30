@@ -8,6 +8,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import {
   API_PID_SCHEMA,
@@ -20,6 +21,7 @@ import {
   REQUIRED_ENDPOINTS,
   ROOT_FLAG_PREFIX,
   SCHEMA_ID,
+  SPAWNED_API_STOP,
   START_TIME_TOLERANCE_MS,
   allEndpointsExpected,
   apiStatusLabel,
@@ -48,6 +50,7 @@ import {
   parseApiPidFile,
   parseMigrateOutput,
   planPort,
+  planSpawnedApiStop,
   redactConnectionStrings,
   redactSecrets,
   serializeApiPidFile,
@@ -801,4 +804,155 @@ test('applyApiStop：⛔ 没有 killAllowed 就一次都不调；pid 不合法/�
   assert.deepEqual(killer.calls, []);
   assert.throws(() => applyApiStop({}), /assessment/);
   assert.throws(() => applyApiStop({ assessment: blocked, kill: 'nope' }), /kill/);
+});
+
+import { stopSpawnedApi } from '../../tools/local-env.mjs';
+
+// ---------------------------------------------------------------------------
+// 回滚路径：⛔ 只认子进程句柄，不按整数 pid 杀
+// （监工 R72 指出的 `up()` 回滚缺陷：子进程先退出 + 后续步骤失败 ⇒ 旧写法按号码杀会误杀别人）
+// ---------------------------------------------------------------------------
+
+/** 假子进程：只实现回滚路径真正用到的三样（exitCode / signalCode、kill、once + removeListener）。 */
+function fakeChild({ exitCode = null, signalCode = null, exitOnSignal = false } = {}) {
+  const calls = [];
+  const listeners = new Map();
+  const child = {
+    exitCode,
+    signalCode,
+    calls,
+    kill(signal) {
+      calls.push(signal ?? null);
+      if (exitOnSignal) {
+        child.exitCode = 0;
+        for (const cb of [...(listeners.get('exit') ?? [])]) cb();
+      }
+      return true;
+    },
+    once(event, cb) {
+      const list = listeners.get(event) ?? [];
+      list.push(cb);
+      listeners.set(event, list);
+      return child;
+    },
+    removeListener(event, cb) {
+      const list = listeners.get(event) ?? [];
+      const at = list.indexOf(cb);
+      if (at >= 0) list.splice(at, 1);
+      return child;
+    },
+  };
+  return child;
+}
+
+test('回滚判据：没有句柄 / 句柄没有 kill ⇒ NOTHING_STARTED（⛔ 零终止信号）', () => {
+  for (const child of [null, undefined, {}, { pid: 4321 }]) {
+    const plan = planSpawnedApiStop(child);
+    assert.equal(plan.action, SPAWNED_API_STOP.NOTHING_STARTED);
+    assert.equal(plan.exited, true);
+  }
+});
+
+test('回滚判据：子进程已自行退出（exitCode / signalCode）⇒ ALREADY_EXITED，并点名退出读数', () => {
+  const byCode = planSpawnedApiStop({ exitCode: 1, kill() {} });
+  assert.equal(byCode.action, SPAWNED_API_STOP.ALREADY_EXITED);
+  assert.match(byCode.detail, /exitCode=1/);
+  const bySignal = planSpawnedApiStop({ signalCode: 'SIGTERM', kill() {} });
+  assert.equal(bySignal.action, SPAWNED_API_STOP.ALREADY_EXITED);
+  assert.match(bySignal.detail, /signalCode=SIGTERM/);
+});
+
+test('回滚判据：句柄自报仍在运行 ⇒ SIGNAL；exitCode=0 算「已退出」，⛔ 不当成还活着', () => {
+  assert.equal(planSpawnedApiStop({ exitCode: null, signalCode: null, kill() {} }).action, SPAWNED_API_STOP.SIGNAL);
+  assert.equal(planSpawnedApiStop({ exitCode: 0, signalCode: null, kill() {} }).action, SPAWNED_API_STOP.ALREADY_EXITED);
+});
+
+test('回滚：子进程先退出 + 后续步骤失败 ⇒ 一次 kill 都不发，只删本次的 pid 文件', async () => {
+  const child = fakeChild({ exitCode: 0 });
+  const removed = [];
+  const out = await stopSpawnedApi(child, 12345, '/tmp/api.pid', {
+    log: () => {},
+    warn: () => {},
+    removePidFile: (file) => removed.push(file),
+  });
+  assert.equal(out.outcome, SPAWNED_API_STOP.ALREADY_EXITED);
+  assert.equal(out.signalled, false);
+  assert.equal(child.calls.length, 0);
+  assert.deepEqual(removed, ['/tmp/api.pid']);
+});
+
+test('回滚：没有句柄（spawn 之前就失败）⇒ 零终止信号，pid 文件照样删', async () => {
+  const removed = [];
+  const out = await stopSpawnedApi(null, null, '/tmp/api.pid', {
+    log: () => {},
+    warn: () => {},
+    removePidFile: (file) => removed.push(file),
+  });
+  assert.equal(out.outcome, SPAWNED_API_STOP.NOTHING_STARTED);
+  assert.equal(out.signalled, false);
+  assert.deepEqual(removed, ['/tmp/api.pid']);
+});
+
+test('回滚：句柄还在 ⇒ 只对该句柄发信号，一次就退 ⇒ SIGNALLED', async () => {
+  const child = fakeChild({ exitOnSignal: false });
+  const out = await stopSpawnedApi(child, 999, null, {
+    log: () => {},
+    warn: () => {},
+    removePidFile: () => {},
+    waitExit: () => Promise.resolve(true),
+  });
+  assert.equal(out.outcome, 'SIGNALLED');
+  assert.deepEqual(child.calls, [null]);
+});
+
+test('回滚：第一次没退 ⇒ 用 SIGKILL 兜底（仍然只打在这个句柄上）', async () => {
+  const child = fakeChild({ exitOnSignal: false });
+  let waits = 0;
+  const out = await stopSpawnedApi(child, 999, null, {
+    log: () => {},
+    warn: () => {},
+    removePidFile: () => {},
+    waitExit: () => {
+      waits += 1;
+      return Promise.resolve(waits >= 2);
+    },
+  });
+  assert.equal(out.outcome, 'SIGNALLED_AND_KILLED');
+  assert.deepEqual(child.calls, [null, 'SIGKILL']);
+});
+
+test('回滚：SIGKILL 之后仍没退 ⇒ STILL_RUNNING（⛔ 不谎报「已停」）', async () => {
+  const child = fakeChild({ exitOnSignal: false });
+  const out = await stopSpawnedApi(child, 999, null, {
+    log: () => {},
+    warn: () => {},
+    removePidFile: () => {},
+    waitExit: () => Promise.resolve(false),
+  });
+  assert.equal(out.outcome, 'STILL_RUNNING');
+  assert.equal(out.signalled, true);
+});
+
+test('源码钉子：up() 回滚只走句柄级 stopSpawnedApi，⛔ 不出现 stopApi / process.kill', () => {
+  const source = readFileSync(new URL('../../tools/local-env.mjs', import.meta.url), 'utf8');
+  const at = source.indexOf('const rollback = async () => {');
+  assert.ok(at > 0, '找不到 rollback 定义 —— 钉子需要跟着实现更新');
+  // 只看代码行：注释里点名 `stopApi(apiPid, …)` 正是为了解释「为什么不用它」，不算违规。
+  const body = source
+    .slice(at, source.indexOf('};', at))
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n');
+  assert.match(body, /stopSpawnedApi\(apiChild/);
+  assert.doesNotMatch(body, /stopApi\(/);
+  assert.doesNotMatch(body, /process\.kill/);
+});
+
+test('源码钉子：stopSpawnedApi 用 child.kill 打句柄，⛔ 不碰 process.kill', () => {
+  const source = readFileSync(new URL('../../tools/local-env.mjs', import.meta.url), 'utf8');
+  const at = source.indexOf('export async function stopSpawnedApi');
+  assert.ok(at > 0, '找不到 stopSpawnedApi —— 钉子需要跟着实现更新');
+  const body = source.slice(at, source.indexOf('\n}\n', at) + 3);
+  assert.match(body, /child\.kill\(/);
+  assert.doesNotMatch(body, /process\.kill/);
 });
