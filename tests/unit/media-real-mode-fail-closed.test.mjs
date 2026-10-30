@@ -1009,18 +1009,16 @@ test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— �
   );
 
   // 端口名在全文件的**每一处**出现都必须落在枚举角色里（多一处即红）。
-  // GY-I11 语音片新增一处转交（`audioMedia`）⇒ 1→2；GY-R69 OCR 片再新增一处同形转交（`ocrImageMedia`）⇒ 2→3；
-  // GY-R70 识别片新增第三处同形转交（`recognitionMediaPorts`：识别域 provider 的 `imageSource` ＋ 该域 `media` 端口）⇒ 3→4；
-  // GY-R70 审核片新增第四处同形转交（`createModerationService` 的 `imageMedia` 取值器）⇒ 4→5。
-  // 五处都逐行钉死：多出第六处、或挪到别的行 ⇒ 红。
+  // GY-I11 语音片：新增一处转交（`audioMedia`）⇒ 1→2；GY-R69 OCR 片再新增一处**同形**转交（`ocrImageMedia`）⇒ 2→3；
+  // GY-R70 识别片新增第三处**同形**转交（`recognitionMediaPorts`：识别域 provider 的 `imageSource` ＋ 该域 `media` 端口）⇒ 3→4；GY-R70
+  // 审核片新增第四处**同形**转交（`createModerationService` 的 `imageMedia` 取值器）⇒ 4→5。五处都被**逐行钉死**：多出第六处、或挪到别的行 ⇒ 红。
   assert.deepEqual(
     audit.identifierRoles.map((entry) => entry.role).sort(),
     [
       'binding-element:propertyName→mediaObjectStoreOption',
       'call-argument:app.decorate', 'declaration',
+      'property-assignment:objectStore', 'property-assignment:objectStore', 'property-assignment:objectStore',
       'property-assignment:objectStore', 'property-assignment:objectStore',
-      'property-assignment:objectStore', 'property-assignment:objectStore',
-      'property-assignment:objectStore',
       'property-signature',
       'property-signature',
     ],
@@ -1030,14 +1028,11 @@ test('GY-I06 1-A B1（唯一显式注入来源）：app.ts 端口溯源 —— �
     const objectStoreArguments = audit.identifierRoles.filter((entry) => entry.role === 'property-assignment:objectStore');
     const lineOf = (marker) => app.text.split(/\r?\n/).findIndex((line) => line.includes(marker)) + 1;
     const speechAudioMediaLine = lineOf('const speechAudioMedia = {');
-    const ocrImageMediaLine = lineOf('const ocrImageMedia = ');
-    const recognitionMediaLine = lineOf('const recognitionMediaPorts = ');
-    const moderationImageMediaLine = lineOf('imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore })');
-    assert.ok(speechAudioMediaLine > 0 && ocrImageMediaLine > 0 && recognitionMediaLine > 0 && moderationImageMediaLine > 0, 'app.ts 必须有 speechAudioMedia / ocrImageMedia / recognitionMediaPorts / 审核域取值器 四条端口转发行');
+    const ocrImageMediaLine = lineOf('const ocrImageMedia = '); const recognitionMediaLine = lineOf('const recognitionMediaPorts = '); const moderationImageMediaLine = lineOf('imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore })');
+    assert.ok(speechAudioMediaLine > 0 && ocrImageMediaLine > 0 && recognitionMediaLine > 0, 'app.ts 必须有 speechAudioMedia / ocrImageMedia / recognitionMediaPorts 三条端口转发行'); assert.ok(moderationImageMediaLine > 0, 'app.ts 必须有审核域的媒体端口取值器转交处');
     for (const [label, line, literal] of [
-      ['语音域', speechAudioMediaLine, 'const speechAudioMedia = { objectStore: mediaObjectStore, mediaRecords: mediaStore };'], ['OCR 域', ocrImageMediaLine, '{ objectStore: mediaObjectStore, mediaRecords: mediaStore };'],
-      ['识别域', recognitionMediaLine, '{ objectStore: mediaObjectStore, mediaRecords: mediaStore });'],
-      ['审核域', moderationImageMediaLine, 'imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore }),'],
+      ['语音域', speechAudioMediaLine, 'const speechAudioMedia = { objectStore: mediaObjectStore, mediaRecords: mediaStore };'],
+      ['OCR 域', ocrImageMediaLine, '{ objectStore: mediaObjectStore, mediaRecords: mediaStore };'], ['识别域', recognitionMediaLine, '{ objectStore: mediaObjectStore, mediaRecords: mediaStore });'], ['审核域', moderationImageMediaLine, 'imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore }),'],
     ]) {
       assert.equal(objectStoreArguments.filter((entry) => entry.line === line).length, 1, `${label}：该行必须恰有一处 objectStore 实参（端口转交）`);
       assert.ok(app.text.includes(literal), `${label}：该行只允许原样转发既有端口（不得新建/派生存储端口）`);
