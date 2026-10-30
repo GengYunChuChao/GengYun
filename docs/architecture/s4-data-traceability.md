@@ -246,7 +246,7 @@
   **已接进注销回执**——`services/api/src/privacy/third-party-deletion-projection.ts:277` → `services/api/src/routes/account-deletion.ts:148`
   （`thirdPartyRowsFor` 当次请求内预取一次）→ `:154`（`thirdPartyReceiptState`），契约字段 `third_party_state` 见 `packages/contracts/openapi.json:13834`
   （回执是 `getDeletionReceipt`，原页误作 `/me/exports`）；⑤ 真库端口在、**读侧已装配**——`services/api/src/privacy/third-party-deletion-pg.ts`
-  只经 0044 两条 `SECURITY DEFINER` 函数进出（表零 DML/SELECT）；装配四臂在 `services/api/src/app.ts:2025`（`:2025` 真库臂、
+  只经 0044 两条 `SECURITY DEFINER` 函数进出（表零 DML/SELECT）；装配四臂在 `services/api/src/app.ts:2021`（`:2025` 真库臂、
   `:2004` 不可用臂），`:2550` 交给注销路由；**写侧方法 `subscribeThirdPartyDeletion` 零调用者**（读数见「证据」）。
 - **库层证据（2026-10-26 增补；2026-10-28 复核更正两处符号名与一处 CI 锚）**：迁移
   `services/api/db/migrations/0044_third_party_deletion_persistence.sql:97` 建了唯一写路径
