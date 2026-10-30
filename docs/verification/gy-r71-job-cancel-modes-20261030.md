@@ -151,10 +151,12 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 
 | # | 怎么打的（改哪一行） | 红在哪（逐字摘录） | 恢复后 |
 | --- | --- | --- | --- |
-| ① | **取消只改状态、仍然落结论**：`services/api/src/conversations/store.ts` 的内存 `settleTurnJob` 去掉「只有 `queued`/`running` 可结算」的状态谓词 | `answer·①` 红：`AssertionError: 取消后源表（conversation_answers）不得新增结论行` ⇒ **核心判据真的有牙齿** | 9/9 → 10/10 绿 |
+| ① | **取消只改状态、仍然落结论**：`services/api/src/conversations/store.ts` 的内存 `settleTurnJob` 去掉「只有 `queued`/`running` 可结算」的状态谓词 | `answer·①` 红：`AssertionError: 取消后源表（conversation_answers）不得新增结论行` ⇒ **核心判据真的有牙齿** | 10/10 绿 |
 | ② | **重复取消返回错误**：`services/api/src/moderation/service.ts` 去掉「已 `cancelled` ⇒ 200 no-op」分支（`if (false && record.state === 'cancelled')`） | `moderation·②` 红：收到 `{"code":"OBJECT_UNAVAILABLE","message":"作业已处于终态 cancelled，不可取消"}`，而不是 200 | 复绿 |
 | ③ | **取消他人作业不鉴权**：`services/api/src/moderation/job-source.ts:61` 去掉归属检查、且 `services/api/src/moderation/service.ts:1191` 的 `submitted_by` 校验短路 | `moderation·④⑤` 红：`AssertionError: 他人作业不可取消（与不存在同形，不泄露存在性）` ⇒ 越权者拿到了 200 | 复绿 |
 | ④ | **取消已终态作业返回成功**：`services/api/src/moderation/service.ts` 的终态判定短路（`if (false && …)`） | `moderation·③` 红：`200 !== 409`，响应体里 `state:"cancelled"`、`revision:2` —— 一条**已 `succeeded`** 的作业被"取消"了 | 复绿 |
+
+**复跑说明**：①②③④ 首次打红时本片用例是 9 条（PG 次序那条当时尚未加入）。随后按**最终字节**复跑了核心判据 ①：仍红在同一行 `AssertionError: 取消后源表（conversation_answers）不得新增结论行`，恢复后 10/10 绿（`Get-FileHash` 与改前逐字节相同）。②③④ 未复跑的理由是**可判据的**而非省略：被它们改动的三个文件（`services/api/src/conversations/store.ts`、`services/api/src/moderation/service.ts`、`services/api/src/moderation/job-source.ts`）在本片后续提交里**一个字节都没再动**（备份 SHA256 与打红前完全相同：`79619476…`／`7C8AAFFF…`／`BE633705…`），因此三条读数对最终字节同样成立。
 
 **一条如实结论**：①②④ 打在 `moderation`/`answer` 各自的判据上，各自只红对应用例（其余全绿）——说明五组用例**不是**同一条断言复读；③ 同时红在"同形 404"与"状态不变"两处，因为它破坏的是归属面。
 
@@ -162,20 +164,41 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 
 | 门禁 | 读数 | exit |
 | --- | --- | --- |
-| `npm run test:unit` | GATE_UNIT | 0 |
-| `npm run verify:anchors` | GATE_ANCHORS | 0 |
-| **CI-exact**：`node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | GATE_CIEXACT | 0 |
-| `npm run verify:parity` | `"extra": [] / "missing": [] / "ledgerDrift": []` | 0 |
+| `npm run test:unit` | `tests 5862 / pass 5859 / fail 0 / skipped 1 / todo 2` | 0 |
+| `npm run verify:anchors` | `verify-contract-status` PASS（覆盖 126 条操作；语义可核 105 条区间 + 4 条片段；行号区间 313 条有实质内容）+ `verify-doc-anchors --strict` PASS（基线外新增 0） | 0 |
+| **CI-exact**：`node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | `PASS: --strict 下没有基线之外的新增`；`SYMBOL-STRICT-BASELINE` 登记 31 / 命中 31 / 新增 0 / 陈旧 0；`BARE-ORPHAN` 3543 命中 3543；`BARE-ORPHAN-OUTSIDE` 134 命中 134；`ANCHOR-COUNT` 计数下降 0 份 | 0 |
+| `npm run verify:parity` | `"extra": []` / `"missing": []` / `"ledgerDrift": []` | 0 |
 | `npm run verify:capability-map` | `totalOps=46，有入口=46，无入口=0，死按钮=0`；标记块与重算一致 | 0 |
-| `npm run test:docs` | GATE_DOCS | 0 |
+| `npm run test:docs` | 研究记录校验 `5 通过 / 0 失败 / 4 legacy 已钉住`；`docs/research` 结构校验 PASS | 0 |
 | `npm run lint` | `tsc --noEmit` services/api PASS、apps/admin PASS；仓库卫生扫描 PASS | 0 |
-| `npm run test:contract` | GATE_CONTRACT | 0 |
-| `npm run build` | GATE_BUILD | 0 |
-| `npm run test:failmatrix` | GATE_FAILMATRIX | 0 |
+| `npm run test:contract` | `tests 17 / pass 17 / fail 0` | 0 |
+| `npm run build` | api + admin 均 `built`（`TMP`/`TEMP` 指向仓外 `E:\GengYunCommander\.pg17\tmp\r71cancel`；build 后已删 `services/api/dist` 与 `apps/admin/dist`） | 0 |
+| `npm run test:failmatrix` | `矩阵合计 249 条：PASS 249 / FAIL 0`（B5 批次「异步 AI 域（识别 / OCR / 转写 / 合成 / 作业 / 会话）的游客面与归属面」62 条全绿） | 0 |
 
 **行号与台账**：`node tools/verify-contract-status.mjs --reanchor` 报 4 条候选（`services/api/src/moderation/job-source.ts` 的 `getJob`/`cancelJob` → `services/api/src/moderation/job-source.ts:51-75`；`services/api/src/conversations/service.ts` 的 `createConversation` → `services/api/src/conversations/service.ts:686-729`、`listTurns` → `services/api/src/conversations/service.ts:950-969`）。`--reanchor --write-doc` 在写盘前的**字节保真自检**上判 `UNSAFE`（工具自身拒绝写盘），因此把那 4 个**由工具算出**的区间值手工落到台账与中文对照表，再跑 `node tools/verify-contract-status.mjs --write-doc`（同步表格）与 `verify-contract-status.mjs` 到 exit 0。⛔ 没有手工"凑容差"：落盘的就是工具打印的 `归属块` 起止行。
 
 **文档行号面**：本片改动推移了 6 处既有取证页的行号引用（`app.ts`、`conversations/service.ts`、`moderation/service.ts` 各若干），逐条按内容重新定位后复跑；`tools/doc-anchors-baseline.json` 基线外新增 **0** 条。裸锚点孤儿册按工具规定的方式重生成（`--write-orphan-baseline --accept=1 --why=…`），理由已写进该册的 accept 账本：**`tests/moderation/http-jobs.test.mjs` 的取消断言由 503 改为 409**，而 `docs/verification/gy-r27-synthesis-cancel-20261020.md:413` 是对旧断言行的**历史逐字引用**（该裸锚点指向旧用例里 `503` 那条断言行），补回路径等于篡改历史读数。
+
+## 8.5 文档行号位移：本片做了什么、为什么不是「凑绿」
+
+改 `services/api/src/**` 会推移**既有取证页/台账**里指向这些文件的行号。`tests/unit/doc-anchor-relocation-identity.test.mjs`（`npm run test:unit` 的一条）把纪律钉得很死：目标文件本提交有改动 ⇒ 每条手写锚点都要落到它自己的**端点映射**上，且**旧行原文 === 新行原文**；目标文件没改却被改号 ⇒ 必须在 `tests/unit/doc-anchor-relocations.json` 里登记（含 `reason`／`symbol`）。本片按这条纪律逐条处理：
+
+| 类别 | 数量 | 做法 |
+| --- | --- | --- |
+| 目标文件被本片改动、锚点按**内容**位移 | 20 处 | 用测试给出的端点映射改号（例：`services/api/src/conversations/service.ts` 的 `798→803`、`911→994`、`959-967→1042-1050`；`services/api/src/moderation/service.ts` 的 `623→682`；`services/api/src/app.ts` 的 `2649→2661`），旧行原文与新行原文逐字相同 |
+| 两侧本来就指错的锚点 ⇒ `kind: "correction"` 登记 | 3 条 | ① `docs/verification/gy-i06-media-real-provider-plan-20261021.md` 的两处 `services/api/src/server.ts:62`（base 上指的是 `moderationAssembly.fatalLine` 判断，不是 `buildApp(` 调用行）⇒ 按符号改指 `services/api/src/server.ts:68`；② 台账 `createConversation` 的 `636-679`（base 上该函数从 681 起，旧区间落在它前面的 `validateTurnInput` 里）⇒ 按符号改指归属块 `686-729` |
+| 基线册里已陈旧的条目 | 1 条 | `tools/doc-anchors-baseline.json` 的 `services/api/src/app.ts:2573` 已不再命中 ⇒ 按工具要求**删掉该行**（陈旧条目会把基线变成免罚名单） |
+| 台账 evidence 区间 | 1 条 | `services/api/src/conversations/job.ts` 的 `48-61` → 最终 `63-76`（`job.ts` 因新增 `ApiError` 判断多 1 行；纯偏移会少一行，故按端点映射取 `63-76`） |
+| 裸锚点孤儿册 | `accept=1` | `gy-r27` 取证页对旧断言行（`tests/moderation/http-jobs.test.mjs` 里已由 503 改为 409）的**历史逐字引用**无法在不篡改历史读数的前提下补回路径 ⇒ 按工具规定重生成并写明理由（理由已进该册 accept 账本） |
+
+⛔ **没有**把任何 `lines` 手工改小到「凑容差」，也**没有**为了变绿去改被引用的注释：`createConversation` 那一条是 `node tools/verify-contract-status.mjs --reanchor` 自己算出的归属块，本片只是把工具的输出落到台账并按符号登记。
+
+**一处工具限制如实登记**：`node tools/verify-contract-status.mjs --reanchor --write-doc` 在**写盘前的字节保真自检**上判 `UNSAFE`（工具拒绝写盘）。因此那 4 个**由工具自身算出**的区间值（`services/api/src/moderation/job-source.ts` → `services/api/src/moderation/job-source.ts:51-75`；`services/api/src/conversations/service.ts` → `services/api/src/conversations/service.ts:686-729` 与 `services/api/src/conversations/service.ts:950-969`）是手工落到台账与中文对照表的，随后用 `--write-doc` 同步表格并复跑到 exit 0。落盘值等于工具打印值，不是人工猜测。
+
+## 8.6 端口与进程：本片没有常驻监听
+
+- 本片用例一律用**动态空闲端口**（`app.listen({ host: '127.0.0.1', port: 0 })`），每条用例 `t.after` 关闭；文件末尾另有一条**实测**：`close()` 之后对同一 origin 的 `fetch` 必须**拒连**（`tests/unit/jobs-cancel-moderation-answer.test.mjs:576`）⇒ 端口释放是被断言住的，不是「应该会关」。
+- 全套门禁跑完后复查：本片**没有**留下常驻进程/监听端口。宿主机上仍在 127.0.0.1 监听的 node 进程用 `Get-CimInstance Win32_Process` 逐个核过命令行 —— 是 `opencli` daemon、`billion-context`、MCP 桥接（与本片无关，也不是本片启动的）。
 
 ## 9 需裁定点（三条）
 
