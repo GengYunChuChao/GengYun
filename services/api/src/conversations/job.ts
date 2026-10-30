@@ -12,21 +12,35 @@
  *   - `get` 只做投影，不做状态推断（`registry.assertContractJob` 会逐键复核，
  *     并把违规统一折叠为 503 `PROVIDER_UNAVAILABLE`，见其「端口回传不可信 ⇒ fail-closed」）；
  *   - 越权与不存在一律 `null`（与注册表口径一致：调用方不得据此区分二者）；
- *   - **不提供 `cancel`**：本片没有取消答案生成的实现，缺 `cancel` 会让注册表先确认作业存在、
- *     再如实 503「该能力尚未提供取消」——**不伪造 `cancelled`、不用 404 谎称不存在**。
+ *   - **取消面**（GY-R71 追加）：本片给本源补上 `cancel`，语义**全部由会话域既有的 `cancelTurn` 决定**
+ *     （`queued`/`running` → `cancelled`、revision 恰好 +1、终态不可取消、同键重放回放首次结果）。
+ *     取消只写轮次行的作业快照、**不写回答**，因此"取消后仍落一条回答"在存储层即不可能
+ *     （`settleTurnJob` 的状态谓词不再命中）。接线前该 kind 的取消一律 503「该能力尚未提供取消」。
  *
  * 如实性：`result` 只在该轮次确实已有回答（`state ∈ {succeeded, uncertain}` 且回答行存在）时给出，
  * `{kind:'answer', value: Answer}`。本片产出的每个 `Answer` 的 `model_version`/`prompt_version`
  * 都带 `unimplemented:no-real-` 前缀（「未接真实模型」的机器可判据标记，红线②）——
  * 替身结果**永远**带着这个标记，不可能被读成真实模型结果。
  */
-import type { ContractJob, JobSourceGetInput, JobSourcePort } from '../jobs/registry.ts';
+import type { ContractJob, JobSourceCancelInput, JobSourceGetInput, JobSourcePort } from '../jobs/registry.ts';
 import type { AnswerRecord, TurnRecord } from './types.ts';
 import { answerViewOf } from './view.ts';
 
 export interface AnswerJobSourceDeps {
   /** 按作业 id 取轮次 + 回答（**带主体**：越权与不存在同形返回 `null`）。 */
   findByJobId(input: { userId: string; jobId: string }): Promise<{ turn: TurnRecord; answer: AnswerRecord | null } | null>;
+  /**
+   * GY-R71 取消片：取消答案作业（**只读复用**会话域既有的 `cancelTurn`：状态机、`If-Match`、
+   * 幂等台账、终态语义全在域内，本层不判状态、不改 revision）。
+   * 不存在/越权 ⇒ `null`（⇒ 注册表回同形 404）；其余错误（`REVISION_CONFLICT`/
+   * `OBJECT_UNAVAILABLE`/`IDEMPOTENCY_*`/`REQUEST_IN_PROGRESS`）**原样透出**。
+   */
+  cancelJob(input: {
+    userId: string;
+    jobId: string;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<ContractJob | null>;
 }
 
 /**
@@ -68,6 +82,14 @@ export function createAnswerJobSource(deps: AnswerJobSourceDeps): JobSourcePort 
       const found = await deps.findByJobId(input);
       if (found === null) return null;
       return projectTurnJob(found.turn, found.answer);
+    },
+    async cancel(input: JobSourceCancelInput): Promise<unknown | null> {
+      return await deps.cancelJob({
+        userId: input.userId,
+        jobId: input.jobId,
+        ifMatch: input.ifMatch,
+        idempotencyKey: input.idempotencyKey,
+      });
     },
   };
 }

@@ -522,9 +522,10 @@ try {
   // 执行的共享请求头前置校验（`requireIdempotencyKey`/`requireIfMatch`）代答 —— 即"先校请求形状、再判归属"；
   // 注册表 cancel **遍历全部源**，故该映射**与注册顺序无关**（单测 `jobs-registry.test.mjs` 的钉子用换序 + 摘源两种构造证明了这一点），
   // 但它**依赖"注册表里存在至少一个有取消能力的源"**：若某天只剩无取消能力的源，同一缺头请求会退化为 503。
-  // **「无取消能力 kind ⇒ 503」这一支**在转写域接线后不再能由转写作业钉住，现由两处继续钉住（未削弱）：
-  //   · `tests/unit/jobs-registry.test.mjs` 的 fakeSource(`withoutCancel`) 用例（同形 404 + 503 retryable=false）；
-  //   · `tests/moderation/http-jobs.test.mjs`、`tests/unit/tts-jobs-http.test.mjs`（真实装配 + 未接线 kind）。
+  // **「无取消能力 kind ⇒ 503」这一支**在本基线（GY-R71 之后，六源**全部**提供 cancel）已无法由任何
+  // 真实作业钉住，只剩**替身源**能钉（未削弱：那一支的判定代码一字未改）：
+  //   · `tests/unit/jobs-registry.test.mjs` 的 fakeSource(`withoutCancel`) 用例（同形 404 + 503 retryable=false）。
+  // 历史登记：GY-R27 前由转写域、GY-R71 前由审核域/问答域钉住；两域接线后该支退化为"只有 fakeSource 可达"。
   await group('[14] 钉子·cancel 请求头错误码映射：缺 Key ⇒ 400 IDEMPOTENCY_KEY_REQUIRED；缺 If-Match ⇒ 428 REVISION_REQUIRED；两头齐备 ⇒ 409 OBJECT_UNAVAILABLE（转写域已接线，落在终态判定而非"能力未接线"；顺序依赖详见用例注释）', async () => {
     const before = (await readJob(transcriptionJobId)).body.data;
     const neither = await http(`${JOBS}/${transcriptionJobId}/cancel`, { method: 'POST', token: tokenA });

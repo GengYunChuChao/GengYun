@@ -32,6 +32,12 @@
       "accept": 0,
       "orphans": 3543,
       "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 取消片给 moderation/answer 两源补 cancel：tests/moderation/http-jobs.test.mjs 的 cancel 用例断言由 503 改为 409，gy-r27 取证页第 413 行对旧断言行（裸锚点 :175）的逐字引用无法在不篡改历史读数的前提下补回路径；同批重锚使 gy-i12 的 :1107 不再命中，一并清册。",
+      "accept": 1,
+      "orphans": 3543,
+      "outsideRed": 134
     }
   ],
   "orphans": [
@@ -3620,7 +3626,6 @@
     "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:1107|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
@@ -3637,6 +3642,7 @@
     "docs/verification/gy-i22-identity-headers-20261019.md|tests/unit/gy-i22-identity-headers.test.mjs:567|SUSPECT",
     "docs/verification/gy-i22-secmatrix-20261019.md|packages/contracts/openapi.json:9996|SUSPECT",
     "docs/verification/gy-i28-demo-parity-20261018.md|miniprogram/utils/history-api.js:193|SUSPECT",
+    "docs/verification/gy-r27-synthesis-cancel-20261020.md|http-jobs.test.mjs:175|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:186|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:326|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:352|SUSPECT",

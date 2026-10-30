@@ -564,7 +564,12 @@ export function createConversationService(deps: ConversationServiceDeps) {
   }
 
   async function withIdempotency<T>(input: {
-    actor: ConversationActor;
+    /**
+     * 幂等键域只用到主体 id（`<主体>\n<METHOD>\n<路由路径>`），因此这里只要求 `userId`：
+     * 作业取消面由 `jobs/routes.ts` 的 `guards.requireUser` 完成后到达，**没有**角色/epoch 可传，
+     * 也不该为此伪造一个 `authEpoch`（`StoreGuard` 的口径不在这里判）。
+     */
+    actor: Pick<ConversationActor, 'userId'>;
     method: string;
     routePath: string;
     key: string;
@@ -858,6 +863,84 @@ export function createConversationService(deps: ConversationServiceDeps) {
         if (outcome.resource !== 'turn') throw new ApiError('IDEMPOTENCY_CONFLICT', '同键请求内容不一致（结果引用不是轮次）');
         const found = await store.getTurn(conversationId, outcome.turn_id, identity.userId);
         // 台账/端口/契约形状不可信 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+        if (found === null) throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账命中但轮次已不存在', { retryable: false });
+        return { data: jobViewOf(found.turn, found.answer), etag: strongEtagOf(found.turn.revision) };
+      },
+    });
+  }
+
+  /**
+   * GY-R71 取消片 · **取消一轮问答作业**（`kind=answer` 的取消面）。
+   *
+   * 走**既有**状态机与既有错误码（不新造码、不新造状态）：
+   * - `queued`/`running` → `cancelled`（`store.cancelTurnJob` 单次 CAS ⇒ revision **恰好 +1**，
+   *   `job_error_code` 清空）；
+   * - 已终态（`succeeded`/`uncertain`/`failed`/`timed_out`）⇒ 409 `OBJECT_UNAVAILABLE`
+   *   （既有语义：不假装取消成功）；已 `cancelled` 的任务按下面的幂等口径处理；
+   * - `If-Match` 不符 ⇒ 409 `REVISION_CONFLICT`；缺失 ⇒ 428 `REVISION_REQUIRED`；格式非法 ⇒ 400；
+   * - 不存在与越权**同形** 404 `NOT_FOUND`（归属谓词始终带 `owner_id`，不泄露存在性）。
+   *
+   * **真取消**（本片核心判据）：取消只写轮次行的作业快照，**不写回答**；随后迟到的生成结果
+   * 调 `settleTurnJob` 时状态谓词（`queued`/`running`）已不命中 ⇒ 回答行永远不会被插入。
+   * 因此"取消后再落一条回答"这条路在**存储层**被堵住，而不是靠调用方自觉。
+   *
+   * 幂等：沿用本域**既有**幂等台账（`withIdempotency`，键域 `<主体>\nPOST\n<job 取消路径>`、
+   * 摘要含 `If-Match`）⇒ 同一 `Idempotency-Key` 的原样重试**回放首次结果**（200 + 当前作业视图），
+   * 不会因为 revision 已 +1 而被判 409、也不会执行第二次取消。
+   * 换新键再取消已 `cancelled` 的作业：`If-Match` 等于**当前** revision ⇒ 200 + 当前视图、
+   * **不再写**（revision 不变；这是"重复取消不报错"的实现，不产生第二次迁移、也不假装迁移）；
+   * 持旧 revision ⇒ 409 `REVISION_CONFLICT`。其余终态 ⇒ 409 `OBJECT_UNAVAILABLE`。
+   */
+  async function cancelTurn(input: {
+    userId: string;
+    jobId: string;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<ServiceOutcome<ContractJob>> {
+    const key = requireKey(input.idempotencyKey);
+    const ifMatch = requireStrongEtag(input.ifMatch);
+    const userId = input.userId;
+    return withIdempotency<ContractJob>({
+      actor: { userId },
+      method: 'POST',
+      routePath: `${API_PREFIX}/jobs/${input.jobId}/cancel`,
+      key,
+      body: null,
+      ifMatchRef: ifMatch.raw,
+      status: 200,
+      produce: async () => {
+        const found = await store.findTurnByJobId(input.jobId, userId);
+        if (found === null) throw notFound();
+        const turn = found.turn;
+        if (turn.revision !== ifMatch.revision) {
+          throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+        }
+        // **幂等**（本片选"重复取消不报错"，口径见证据页）：取消是"达成 `cancelled` 状态"的动作，
+        // 状态已达成 ⇒ 返回当前视图、**不**再写一次（revision 不变、不产生第二次迁移）。
+        // 这不是"假装成功"：本次没有发生任何副作用；持旧 `If-Match` 的重放仍会被上面判 409。
+        if (turn.job_state === 'cancelled') {
+          return {
+            outcome: { resource: 'turn', conversation_id: turn.conversation_id, turn_id: turn.id },
+            data: jobViewOf(turn, found.answer),
+            etag: strongEtagOf(turn.revision),
+          };
+        }
+        if (turn.job_state !== 'queued' && turn.job_state !== 'running') {
+          throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${turn.job_state}，不可取消`);
+        }
+        const cancelled = await store.cancelTurnJob(turn.id, userId);
+        // CAS 未命中 ⇒ 期间被并发推进（受理/结算/取消）：如实报版本冲突，不重试、不覆盖。
+        if (cancelled === null) throw new ApiError('REVISION_CONFLICT', '作业状态已变化，未能取消');
+        return {
+          outcome: { resource: 'turn', conversation_id: cancelled.conversation_id, turn_id: cancelled.id },
+          data: jobViewOf(cancelled, null),
+          etag: strongEtagOf(cancelled.revision),
+        };
+      },
+      // 同键重放：重读当前状态（cancelled + revision 已是 +1 后的值），不执行第二次取消。
+      replay: async (outcome) => {
+        if (outcome.resource !== 'turn') throw new ApiError('IDEMPOTENCY_CONFLICT', '同键请求内容不一致（结果引用不是轮次）');
+        const found = await store.findTurnByJobId(input.jobId, userId);
         if (found === null) throw new ApiError('PROVIDER_UNAVAILABLE', '幂等台账命中但轮次已不存在', { retryable: false });
         return { data: jobViewOf(found.turn, found.answer), etag: strongEtagOf(found.turn.revision) };
       },
@@ -1177,6 +1260,7 @@ export function createConversationService(deps: ConversationServiceDeps) {
     getConversation,
     deleteConversation,
     createTurn,
+    cancelTurn,
     listTurns,
     deleteTurn,
     findByJobId,

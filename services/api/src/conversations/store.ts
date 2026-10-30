@@ -111,6 +111,14 @@ export interface ConversationStore {
   deleteTurn(conversationId: string, turnId: string, ownerId: string, expectedRevision: number): Promise<CasResult<TurnRecord>>;
   /** 受理后的状态跃迁：只允许从 `queued` 起（重复调用返回 `null`，不覆盖已发生的状态）。 */
   claimTurnJob(turnId: string, ownerId: string): Promise<TurnRecord | null>;
+  /**
+   * GY-R71 取消片：取消受理后的作业——`queued`/`running` → `cancelled`（revision +1），
+   * 其它状态一律 `null`（与 `claimTurnJob`/`settleTurnJob` 同一结果语言，不新增状态）。
+   *
+   * **取消不写回答**，而 `settleTurnJob` 的状态谓词（`queued`/`running`）此后不再命中 ⇒
+   * 迟到的回答永远落不了库：这是"真取消"的实现方式（靠状态机，不靠删记录、不靠事后清理）。
+   */
+  cancelTurnJob(turnId: string, ownerId: string): Promise<TurnRecord | null>;
   /** 写入终态（+ 回答）：只有仍处于 `queued`/`running` 的轮次可被结算，其它一律 `null`。 */
   settleTurnJob(input: {
     turnId: string;
@@ -284,6 +292,21 @@ export function createMemoryConversationStore(): ConversationStore {
         ...record,
         revision: record.revision + 1,
         job_state: 'running',
+        updated_at: new Date(),
+      };
+      turns.set(turnId, next);
+      return clone(next);
+    },
+    async cancelTurnJob(turnId, ownerId) {
+      const record = turns.get(turnId);
+      if (record === undefined || record.owner_id !== ownerId) return null;
+      // 与 `settleTurnJob` 互斥：只有"还没结算"的轮次能被取消，取消后 settle 的谓词不再命中。
+      if (record.job_state !== 'queued' && record.job_state !== 'running') return null;
+      const next: TurnRecord = {
+        ...record,
+        revision: record.revision + 1,
+        job_state: 'cancelled',
+        job_error_code: null,
         updated_at: new Date(),
       };
       turns.set(turnId, next);
