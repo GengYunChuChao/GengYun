@@ -749,18 +749,6 @@
     "reason": "同上（该页第 77 行表格里同一条锚点）：`server.ts:62` 在 base 上指的是 `moderationAssembly.fatalLine` 判断，不是 `buildApp(` 调用行；本提交按符号改指 68。"
   },
   {
-    "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 97,
-    "target": "services/api/src/conversations/service.ts",
-    "from": 636,
-    "fromEnd": 679,
-    "to": 686,
-    "toEnd": 729,
-    "kind": "correction",
-    "symbol": "async function createConversation(",
-    "reason": "台账里 `createConversation` 的 lines 是 `636-679`，但 base 上该函数体从 681 起（636-679 落在它前面的 `validateTurnInput` 与注释块里），旧锚点本来就指错；本片插入 cancelTurn 后由 `verify-contract-status.mjs --reanchor` 按符号重算为归属块 `686-729`，故按符号登记为纠正（新行 686 就是 `async function createConversation(`）。"
-  },
-  {
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
     "line": 17,
     "target": "services/api/src/app.ts",
