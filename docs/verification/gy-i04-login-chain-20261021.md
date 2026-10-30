@@ -127,7 +127,7 @@
 - 拒绝语义：缺授权 403 `CONSENT_REQUIRED`、错用途 403 `SCOPE_DENIED`（`services/api/src/privacy/egress.ts:80-105`）。
 
 未通的四点（1/2/3/4 的处置见 §1.3 裁决与 §6.2）：
-1. **客户端没有授权入口**：全仓 `miniprogram/**` 对 `me/consents` **零调用**（`grep` 无命中）。识别页在 403 时给出 `retryAction: 'grant_consent'`，改前按钮文案是「去授权」，但 `pages/identify/identify.wxml` 的 `bind:action="onRetry"` 最终只做状态复位并**重跑同一个必然 403 的请求**（`pages/identify/identify.js:881`）——一个指向空处的按钮。本片按裁决 6 只改文案：按钮 →「重试」，说明句改为「应用内授权入口尚未接入，暂时只能由服务端预置授权」。
+1. **客户端没有授权入口**：全仓 `miniprogram/**` 对 `me/consents` **零调用**（`grep` 无命中）。识别页在 403 时给出 `retryAction: 'grant_consent'`，改前按钮文案是「去授权」，但 `pages/identify/identify.wxml` 的 `bind:action="onRetry"` 最终只做状态复位并**重跑同一个必然 403 的请求**（`pages/identify/identify.js:876`）——一个指向空处的按钮。本片按裁决 6 只改文案：按钮 →「重试」，说明句改为「应用内授权入口尚未接入，暂时只能由服务端预置授权」。
 2. **契约缺「读用途政策」面**：`POST /me/consents` 的请求体要求 `purpose` + `policy_version` + `recipient_ids`（`routes/consents.ts:28-32`），而 `openapi.json` 只有 `listConsents` / `grantConsent` / `withdrawConsent`，没有任何「当前生效政策版本 / 已核验接收方」的读取面 ⇒ 客户端**无法**合法组出请求体。
 3. **社区投稿的 `public_posting` 闸未挂**：`services/api/src/privacy/egress.ts:11-19` 的挂载表明确要求「社区投稿入口」挂 `createConsentPreHandler`，但 `routes/community.ts` 的 16 处 `preHandler`（`:203,213,225,234,243,253,266,278,287,296,307,316,325,334,343,355`）**全部只有 `guards.requireUser`**，`app.ts:1735` 也未注入 `consentGate`。
 4. **隐私说明曾说了做不到的事**：`pages/profile/profile.wxml` 原写「拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回」，但授权与撤回都没有入口 → 本片按裁决 7 改为如实措辞（删「随时撤回」，明写「入口尚未接入、不会默认替您授权」）。
