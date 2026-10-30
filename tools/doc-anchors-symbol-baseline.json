@@ -147,21 +147,21 @@
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:276",
+      "reference": "user-data-deletion.ts:300",
       "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
       "docLine": 303,
       "kind": "cited",
-      "note": "【逐字引用历史读数】设计页那句「设计片当时记 `:276`（那是注释行，不是代码行）」本身就是**在引用注释行**：该行内容是一段端口说明注释。它被写出来是为了解释「为什么后来改指声明行」，不是活的代码锚点；GY-R71 补片沿用这个写法（同页另两个锚点已指到 363 与 356-359）。"
+      "note": "【逐字引用历史读数】设计页那句「设计片当时记 `:300`（那是注释行，不是代码行）」本身就是**在引用注释行**：该行内容是一段端口说明注释。它被写出来是为了解释「为什么后来改指声明行」，不是活的代码锚点；GY-R71 补片沿用这个写法（同页另两个锚点已指到 363 与 356-359）。"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:356-359",
+      "reference": "user-data-deletion.ts:359",
       "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
       "docLine": 303,
       "kind": "block",
-      "note": "【注释块】设计页引的是该端口「受理请求 id」那四行注释（356-359）的原文，块后第一条非空行是 360 的 `requestId?: string;`（可选成员签名，不是声明行）——这段说明没有声明行可指。GY-R71 补片：原记 335 行（当时是注释块收尾行，整段下移 24 行后已不存在），本片与文档同批改成实测的 356-359。"
+      "note": "【注释块】设计页引的是该端口「受理请求 id」那四行注释（359）的原文，块后第一条非空行是 360 的 `requestId?: string;`（可选成员签名，不是声明行）——这段说明没有声明行可指。GY-R71 补片：原记 335 行（当时是注释块收尾行，整段下移 24 行后已不存在），本片与文档同批改成实测的 356-359。"
     },
     {
       "path": "services/api/src/routes/health.ts",
