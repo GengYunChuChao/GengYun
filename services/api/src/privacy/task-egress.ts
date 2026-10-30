@@ -23,8 +23,12 @@
  *   4. 成功 ⇒ `saveResult`（写回与校验同事务）；失败 ⇒ `markFailed`（不写回写表）。
  */
 import { PrivacyError } from '../../../../packages/privacy/errors.mjs';
-import { failureCodeOf, summarizeEgressOutcome } from './ledger-pg.ts';
-import type { ExportRecord, PostgresExportLedger } from './ledger-pg.ts';
+// 版本串的**单一真源**是 live 适配器的这两个导出（`model/<model>#live-1` / `prompt/citation-bind/1`）：
+// 本文件只**取数**，⛔ 不复制字面量。`ai/chat-live-adapter.ts` 对本文件只有 `import type { ChatEgress }`，
+// 所以这条反向依赖在运行时不成环（构建期也不成环：类型导入被擦除）。
+import { CHAT_PROMPT_VERSION, chatModelVersion } from '../ai/chat-live-adapter.ts';
+import { INVOCATION_STATE, failureCodeOf, summarizeEgressOutcome } from './ledger-pg.ts';
+import type { ExportRecord, InvocationState, PostgresExportLedger } from './ledger-pg.ts';
 import type { InFlightGuard } from '../../../../packages/privacy/in-flight.mjs';
 import { isErrorCode } from '../contract.ts';
 
@@ -209,6 +213,24 @@ function errorCodeOf(value: unknown): string | null {
 }
 
 /**
+ * 从一次外发的**返回值**里取结构用量（供应商文档里的 `usage` 对象）。
+ *
+ * 只认顶层 `usage`：`call()` 返回的是供应商响应经适配后的对象（`ai/chat-live-adapter.ts` 的
+ * `ChatCompletionBody`），其顶层 `usage` 就是用量的落点；⛔ 不读 `choices`、⛔ 不读正文。
+ *
+ * 形状的最终收口在账本侧（`ledger-pg.ts` 的 `sanitizedUsage`：只留非负整数键值、最多 8 键）。
+ * 这里只负责「从哪儿取」，不负责「什么算合法数字」—— 两处分开，免得两边各松一半。
+ *
+ * ⚠ 本仓**没有实测样本**：`usage` 的键名与值类型来自供应商文档（OpenAI 兼容的
+ * `{prompt_tokens, completion_tokens, total_tokens}`），未对真实响应验证过（见派单回报的未验证清单）。
+ */
+function usageOfOutcome(value: unknown): Record<string, unknown> | null {
+  const usage = (value as { usage?: unknown } | null)?.usage;
+  if (usage === null || usage === undefined || typeof usage !== 'object' || Array.isArray(usage)) return null;
+  return usage as Record<string, unknown>;
+}
+
+/**
  * 问答外发的守卫端口。
  *
  * 与 `MediaJobEgress` **同一套账本口径与同一套派发顺序**（预留 → 执行前重查 → `markSent`
@@ -231,11 +253,23 @@ export interface ChatEgressSend<T> {
   failureCodeOf?: (error: unknown) => string | null;
 }
 
+/** `ChatEgress` 写 `provider_invocations` 的可观测读数（进程内累计，只增不减）。 */
+export interface InvocationWriteReadings {
+  /** 成功落库的调用行数。 */
+  written: number;
+  /** 写失败次数（⛔ 写账本失败不许咽成静默 ⇒ 它必须有地方被看见）。 */
+  failed: number;
+  /** 最近一次写失败的**安全码**（契约错误码，不是驱动原文）；无失败时 `null`。 */
+  lastError: string | null;
+}
+
 export interface ChatEgress {
   /** `real` 才接管外发；其余模式恒 false（此时 `send` 直接拒绝，绝不无账外发）。 */
   readonly engaged: boolean;
   readonly note: string;
   readonly dataType: string;
+  /** 写账本读数（见 `InvocationWriteReadings`）。⛔ 只读计数，不含任何正文/凭据。 */
+  invocationReadings(): InvocationWriteReadings;
   /**
    * **reserve-then-send**：一次问答外发的唯一入口。
    *
@@ -267,6 +301,21 @@ export function createChatEgress(deps: {
   dataType?: string;
   purpose?: string;
   capability?: string;
+  /**
+   * live 适配器本次用的模型名（装配层的 `Config.chatProvider.model`）。
+   * 给了 ⇒ `chatModelVersion(model)` 换成版本串写进 `provider_invocations.model_version`；
+   * 没给 ⇒ 该列留 `NULL`。⛔ 绝不手写/猜测版本串（先例：`community/moderation-gate.ts:28`
+   * 「`model_version` / `prompt_version` 属模型层，本片不产出、不填占位串」）。
+   *
+   * ⚠ 本片（R72-W2）的写入范围不含装配层 `ai/chat-wiring.ts` ⇒ 生产调用点**还没传**这个参数，
+   * 因此当前部署下 `model_version` 实写 `NULL`；补这一行是接线片的活（1 行 diff）。
+   */
+  model?: string | null;
+  /**
+   * 写账本失败的可观测出口（默认进 stderr）。入参只有安全 token（错误码 + id + 状态），
+   * ⛔ 不含正文/凭据。实现方**不得**抛错（这里的语义是「记一笔就走」）。
+   */
+  log?: (event: Record<string, unknown>) => void;
 }): ChatEgress {
   const { ledger, inFlight, executionMode } = deps;
   const dataType = deps.dataType ?? 'checked_content';
@@ -275,16 +324,76 @@ export function createChatEgress(deps: {
   const engaged = executionMode === 'real';
 
   const note = engaged
-    ? '问答真实模型外发已接管：reserve → assertExecutable → markSent → 外发 → saveResult'
+    ? '问答真实模型外发已接管：reserve → assertExecutable → markSent → 外发 → 写调用记录 → saveResult'
     : `替身/演示模式（${executionMode}）：问答不发生真实外发，外发账本不记账`;
+
+  // 版本串：prompt 恒有真源（live 适配器的常量）；model 只有装配层给得出来，没给就 NULL。
+  const modelName = typeof deps.model === 'string' ? deps.model.trim() : '';
+  const modelVersion = modelName === '' ? null : chatModelVersion(modelName);
+  const promptVersion = CHAT_PROMPT_VERSION;
+
+  /** 写账本读数（`invocationReadings()` 返回的就是它；⛔ 不暴露给 HTTP 面）。 */
+  const readings: InvocationWriteReadings = { written: 0, failed: 0, lastError: null };
+  const emit =
+    deps.log ??
+    ((event: Record<string, unknown>) => {
+      // 兜底出口：没注入日志口时**也不许静默**（进 stderr，服务日志的默认去处）。
+      console.warn(JSON.stringify(event));
+    });
+
+  /**
+   * 写一行 `provider_invocations`（本文件**唯一**的写点）。
+   *
+   * 两条硬规矩（各有一条用例钉住）：
+   *  ⛔ **不咽**：写失败必须留下可观测读数 —— `invocationReadings().failed` / `lastError` 累加，
+   *     并发一条 `provider_invocation_write_failed` 事件（含安全码、`export_id`、状态；不含驱动原文）。
+   *  ⛔ **不改判**：写失败**不得**把已经成功的问答判成失败 —— 外发已经发生、正文已经拿到，
+   *     记账失败是记账的问题，不是回答的问题。所以这里自己 catch，绝不让异常穿过 `send`。
+   */
+  async function recordInvocationRow(input: {
+    exportId: string;
+    jobId: string | null;
+    invocationState: InvocationState;
+    sentAt: Date;
+    durationMs: number;
+    usage: Record<string, unknown> | null;
+  }): Promise<void> {
+    try {
+      await ledger.recordInvocation({
+        exportId: input.exportId,
+        jobId: input.jobId,
+        capability,
+        invocationState: input.invocationState,
+        sentAt: input.sentAt,
+        durationMs: input.durationMs,
+        usage: input.usage,
+        modelVersion,
+        promptVersion,
+      });
+      readings.written += 1;
+    } catch (error) {
+      readings.failed += 1;
+      const code = errorCodeOf(error) ?? 'PROVIDER_UNAVAILABLE';
+      readings.lastError = code;
+      emit({
+        event: 'provider_invocation_write_failed',
+        code,
+        export_id: input.exportId,
+        invocation_state: input.invocationState,
+      });
+    }
+  }
 
   const egress: ChatEgress = {
     engaged,
     note,
     dataType,
+    // 返回**快照**（不是内部对象）：调用方拿到的是读数，不是可以改库的手柄。
+    invocationReadings: () => ({ ...readings }),
 
     async send<T>(input: ChatEgressSend<T>): Promise<T> {
       // 未接账本/非 real ⇒ **在产生任何外发之前**拒绝（fail-closed，且不留 reserved 行）。
+      // ⛔ 这里**不写** `provider_invocations`：一次外发都没发生，写一行就是把「没发」洗成「发过」。
       if (!engaged) {
         throw new PrivacyError('PROVIDER_UNAVAILABLE', '问答真实外发未接管（非 real 模式）：拒绝无账外发', {
           retryable: false,
@@ -310,12 +419,27 @@ export function createChatEgress(deps: {
         sourceVersion: null,
       });
       // 执行前重查：撤回/注销后不得再起新外发。
+      // ⛔ 这里被拒 ⇒ 同样**不写** `provider_invocations`（没有外发）；`reserve` 失败同理，
+      //    所以那条路径连 `sent` 都到不了，这张表自然零行。
       await inFlight.assertExecutable({ exportId: record.id, userId: record.userId });
       const sent = await ledger.markSent(record.id);
+      // 下三行是**外发即将发生**的时刻读数：`sentAt` 取进入 `call()` 之前（不是拿到返回值的时刻），
+      // `startedAt` 只计这一次调用；两者都进 `provider_invocations.sent_at` / `duration_ms`。
+      const sentAt = new Date();
+      const startedAt = Date.now();
       let outcome: T;
       try {
         outcome = await input.call();
       } catch (error) {
+        // ✅ **写**：`call()` 抛错也是外发**已经发生**（供应商回错 / 超时 / 传输中断）⇒ `send_failed`。
+        await recordInvocationRow({
+          exportId: record.id,
+          jobId: sent.jobId,
+          invocationState: INVOCATION_STATE.sendFailed,
+          sentAt,
+          durationMs: Date.now() - startedAt,
+          usage: null,
+        });
         // `failureCodeOf` 认的是账本摘要形状（`{kind:'failed', code}`），**不认** Error；
         // 所以抛出来的 Error 先按它的 `code`（契约闭集里的错误码）取，取不到再落默认值。
         const code = input.failureCodeOf?.(error) ?? errorCodeOf(error) ?? failureCodeOf(error) ?? 'PROVIDER_UNAVAILABLE';
@@ -325,9 +449,28 @@ export function createChatEgress(deps: {
       }
       const failure = failureCodeOf(outcome);
       if (failure !== null) {
+        // ✅ **写**：供应商回了错（以**值**的形式返回，不抛错）—— 外发确实发生了 ⇒ `send_failed`。
+        // 这一行 `usage` 恒 NULL：回错响应里的 `usage` 不可信（多半根本没有），⛔ 不去猜。
+        await recordInvocationRow({
+          exportId: record.id,
+          jobId: sent.jobId,
+          invocationState: INVOCATION_STATE.sendFailed,
+          sentAt,
+          durationMs: Date.now() - startedAt,
+          usage: null,
+        });
         await ledger.markFailed(record.id, { errorCode: failure });
         return outcome;
       }
+      // ✅ **写**：外发成功且拿到正文 ⇒ `sent`；`usage` 只从响应顶层 `usage` 取结构读数。
+      await recordInvocationRow({
+        exportId: record.id,
+        jobId: sent.jobId,
+        invocationState: INVOCATION_STATE.sent,
+        sentAt,
+        durationMs: Date.now() - startedAt,
+        usage: usageOfOutcome(outcome),
+      });
       // 保存前重查 + 写回结构分类（与校验同事务）；被拒 ⇒ 抛错 ⇒ 调用方不保存结果（零写入）。
       await inFlight.saveResult({
         exportId: record.id,
