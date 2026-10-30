@@ -94,7 +94,7 @@
     "line": 88,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -102,7 +102,7 @@
     "line": 88,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
-    "to": 557,
+    "to": 558,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
   },
   {
@@ -110,7 +110,7 @@
     "line": 89,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -118,7 +118,7 @@
     "line": 89,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
-    "to": 557,
+    "to": 558,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
   },
   {
@@ -126,7 +126,7 @@
     "line": 90,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -134,7 +134,7 @@
     "line": 90,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
-    "to": 557,
+    "to": 558,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
   },
   {
@@ -142,7 +142,7 @@
     "line": 91,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -150,7 +150,7 @@
     "line": 91,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
-    "to": 557,
+    "to": 558,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
   },
   {
@@ -158,7 +158,7 @@
     "line": 1098,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -166,7 +166,7 @@
     "line": 1098,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
-    "to": 557,
+    "to": 558,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
   },
   {
@@ -174,7 +174,7 @@
     "line": 1120,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -182,7 +182,7 @@
     "line": 1120,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
-    "to": 557,
+    "to": 558,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
   },
   {
@@ -190,7 +190,7 @@
     "line": 1142,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -198,7 +198,7 @@
     "line": 1142,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
-    "to": 557,
+    "to": 558,
     "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
   },
   {
@@ -249,7 +249,7 @@
     "line": 82,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "store-pg.ts:359 是 `function recordValues(row: OcrRow)`，store 构造器 `createPostgresOcrStore` 在 :376；按符号重定位"
   },
   {
@@ -620,7 +620,7 @@
     "line": 1164,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
@@ -628,7 +628,7 @@
     "line": 1186,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
+    "to": 377,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
   },
   {
