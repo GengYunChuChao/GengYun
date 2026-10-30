@@ -68,6 +68,12 @@
       "accept": 1,
       "orphans": 3542,
       "outsideRed": 134
+    },
+    {
+      "why": "R72 外发调用账本片：privacy/ledger-pg.ts +131 行、privacy/task-egress.ts +108 行（0050 迁移 + 账本写入点）把两条历史取证页的既有引用顶空，作用域外按实测新增 2 条；同轮删掉 4 条已修好的陈旧条目。判据一字未改，不是放宽。",
+      "accept": 2,
+      "orphans": 3542,
+      "outsideRed": 132
     }
   ],
   "orphans": [
@@ -3690,8 +3696,6 @@
     "docs/verification/gy-r29-i07-closure-20261022.md|routes/knowledge.ts:201|SUSPECT",
     "docs/verification/gy-r29-i07-closure-20261022.md|services/api/src/knowledge/reference-query.ts:779|OUT_OF_RANGE",
     "docs/verification/gy-r29-i19-closure-20261022.md|services/api/src/privacy/backup-replay-manifest.ts:141|SUSPECT",
-    "docs/verification/gy-r29-i19-closure-20261022.md|services/api/src/privacy/ledger-pg.ts:303|SUSPECT",
-    "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/privacy/ledger-pg.ts:303|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:3267|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:3333|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:735|SUSPECT",
@@ -3736,8 +3740,8 @@
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:307|OUT_OF_RANGE",
     "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:173|SUSPECT",
     "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:252|SUSPECT",
-    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:539|SUSPECT",
-    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:625|SUSPECT",
+    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:398|SUSPECT",
+    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:468|SUSPECT",
     "docs/verification/gy-r67-docs-pins-20261027.md|app.ts:1341|SUSPECT",
     "docs/verification/gy-r67-docs-pins-20261027.md|docs/architecture/ai-ops-spec-status.md:203|SUSPECT",
     "docs/verification/gy-r67-docs-truth-20261027.md|services/api/src/app.ts:2449|SUSPECT",

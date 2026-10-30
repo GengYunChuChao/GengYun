@@ -48,6 +48,20 @@ GRANT UPDATE (state,sent_at,updated_at,revision,error_code,job_id,cancelled_at,c
 GRANT SELECT,INSERT ON export_writebacks TO gengyun_egress_ledger;
 
 -- 提交边界的**只读**核验（账号身份与授权快照）；列级最小化，且**无写权限**。
+-- 外发调用账本（0050，GY-R72）：一次外发一行，**只增不改**（append-only，刻意不给 UPDATE/DELETE）。
+-- 列级授权必须与 0050 的 16 列逐一对应：少授一列，本角色在真实库上就会 42501（被 mapPgError 笼统
+-- 映射成 503 PROVIDER_UNAVAILABLE），而 API 侧只会把它计成 `provider_invocation_write_failed` 读数。
+-- 注意：本组**不在** `20-login-roles.sql:221-225` 给运行时 LOGIN 的 5 个组之内，所以这些授权对
+-- `gengyun_api_runtime` 不生效（与 exports / export_writebacks 同一种结构性缺口）；本片把它们补在
+-- 组文件里，是因为它们本来就该在这一层，且不改变任何既有部署行为（本文件不被任何部署脚本执行）。
+GRANT SELECT (id,job_id,attempt,capability,provider_version,model_version,sdk_version,prompt_version,
+              rule_version,external_request_ref_cipher,invocation_state,sent_at,duration_ms,usage,
+              export_id,created_at)
+  ON provider_invocations TO gengyun_egress_ledger;
+GRANT INSERT (job_id,attempt,capability,provider_version,model_version,sdk_version,prompt_version,
+              rule_version,external_request_ref_cipher,invocation_state,sent_at,duration_ms,usage,
+              export_id)
+  ON provider_invocations TO gengyun_egress_ledger;
 GRANT SELECT (id,state,auth_epoch) ON users TO gengyun_egress_ledger;
 GRANT SELECT (user_id,purpose,current_epoch,state,revision) ON privacy_epochs TO gengyun_egress_ledger;
 GRANT SELECT (id,user_id,purpose,state,epoch,recipient_ids,policy_version) ON consent_records TO gengyun_egress_ledger;
