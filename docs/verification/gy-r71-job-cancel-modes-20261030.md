@@ -29,7 +29,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 | 3 | `moderation` | **没有** | `services/api/src/moderation/job-source.ts:61` → 域内 `services/api/src/moderation/service.ts:1180` | 注册表 `cancel` 遍历到本源时 `source.cancel === undefined` ⇒ 先 `get` 确认作业存在（`services/api/src/jobs/registry.ts:286-293`）⇒ 存在则 **503 `PROVIDER_UNAVAILABLE`（`retryable:false`）「该作业所属能力尚未提供取消（未接线）」**（`services/api/src/jobs/registry.ts:294-306`）；不存在/越权则同形 **404 `NOT_FOUND`** |
 | 4 | `synthesis` | **有** | `services/api/src/jobs/sources.ts:153` | —（已接线） |
 | 5 | `ocr` | **有** | `services/api/src/jobs/sources.ts:208` | —（已接线） |
-| 6 | `answer` | **没有** | `services/api/src/conversations/job.ts:86` → 域内 `services/api/src/conversations/service.ts:894` | 同 `moderation`：**503 `PROVIDER_UNAVAILABLE`（`retryable:false`）**，`get` 命不中则 **404 `NOT_FOUND`** |
+| 6 | `answer` | **没有** | `services/api/src/conversations/job.ts:87` → 域内 `services/api/src/conversations/service.ts:894` | 同 `moderation`：**503 `PROVIDER_UNAVAILABLE`（`retryable:false`）**，`get` 命不中则 **404 `NOT_FOUND`** |
 
 **六源共同口径（未改）**：注册表的 `cancel` 逐源遍历（`services/api/src/jobs/registry.ts:283-309`）；「不存在」「他人作业」「归不到任何源」**三者同形** `404 NOT_FOUND`；`If-Match` / `Idempotency-Key` 的前置校验由**第一个带 `cancel` 的源**代答（顺序依赖已在 `tests/integration/jobs-http.mjs` 的钉子用例里登记）。
 
@@ -48,7 +48,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 - 存储端口：`services/api/src/conversations/store.ts:121`（`cancelTurnJob` 声明）与内存实现 `services/api/src/conversations/store.ts:300`；PG 实现 `services/api/src/conversations/store-pg.ts:372`（**单条 CAS**：`UPDATE … WHERE id/owner_id AND job_state IN ('queued','running')`）。
 - **PG 结算次序修正（真取消的必要条件）**：`services/api/src/conversations/store-pg.ts:385` 的 `settleTurnJob` 从"先插回答行、再 CAS 轮次"改成"**先 CAS 抢状态、抢到才写回答行**"。基线形态在取消竞态下会留下一条**孤儿回答行**（轮次停在 `cancelled`、`answer_id` 为空，但 `conversation_answers` 已多一行）⇒ 那就是"取消只改了状态、结论照样落库"。次序不修，本片的核心判据必然假绿（见 §7 负控制 ①）。
 - 服务层：`services/api/src/conversations/service.ts:894` 的 `cancelTurn`，复用域内**既有**的幂等台账与强 ETag 解析（`withIdempotency` 的入参类型收窄为 `Pick<ConversationActor,'userId'>`：作业面由 `guards.requireUser` 完成后到达，没有角色/epoch 可传，也**不伪造**一个 `authEpoch`）。
-- 适配层：`services/api/src/conversations/job.ts:86`（`cancel`）；装配 `services/api/src/app.ts:2525`（`createAnswerJobSource` 的 `cancelJob` 调域内 `cancelTurn`；`app.conversationService === null` 时返回 `null` ⇒ 同形 404，不让 503 冒充）。
+- 适配层：`services/api/src/conversations/job.ts:87`（`cancel`）；装配 `services/api/src/app.ts:2525`（`createAnswerJobSource` 的 `cancelJob` 调域内 `cancelTurn`；`app.conversationService === null` 时返回 `null` ⇒ 同形 404，不让 503 冒充）。
 - **真取消的机制**：取消只写轮次行的作业快照，**不写回答**；此后迟到的生成/结算调 `settleTurnJob` 时状态谓词（`queued`/`running`）已不命中 ⇒ 回答行永远不会被插入。
 
 ### 2.3 幂等与终态口径（本片的**选择**，逐条说明）

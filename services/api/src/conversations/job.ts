@@ -23,6 +23,7 @@
  * 替身结果**永远**带着这个标记，不可能被读成真实模型结果。
  */
 import type { ContractJob, JobSourceCancelInput, JobSourceGetInput, JobSourcePort } from '../jobs/registry.ts';
+import { ApiError } from '../errors.ts';
 import type { AnswerRecord, TurnRecord } from './types.ts';
 import { answerViewOf } from './view.ts';
 
@@ -84,12 +85,20 @@ export function createAnswerJobSource(deps: AnswerJobSourceDeps): JobSourcePort 
       return projectTurnJob(found.turn, found.answer);
     },
     async cancel(input: JobSourceCancelInput): Promise<unknown | null> {
-      return await deps.cancelJob({
-        userId: input.userId,
-        jobId: input.jobId,
-        ifMatch: input.ifMatch,
-        idempotencyKey: input.idempotencyKey,
-      });
+      try {
+        return await deps.cancelJob({
+          userId: input.userId,
+          jobId: input.jobId,
+          ifMatch: input.ifMatch,
+          idempotencyKey: input.idempotencyKey,
+        });
+      } catch (error) {
+        // 域内「不存在**或**越权」一律 `NOT_FOUND`（问答域既有口径）⇒ 适配层把它映射成 `null`，
+        // 由注册表统一回**同形 404**（文案 `作业不存在`）。不映射会让问答域的 `资源不存在` 从本源漏出，
+        // 破坏跨 kind 的文案同形（`tests/unit/gy-i22-message-parity.test.mjs` 钉住的就是这一条）。
+        if (error instanceof ApiError && error.code === 'NOT_FOUND') return null;
+        throw error;
+      }
     },
   };
 }

@@ -156,13 +156,6 @@
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/app.ts:2573",
-      "note": "本片（GY-R68-A01）引入：app.ts 共 +19 ⇒ 父提交 :2573 的 registerConversationRoutes(...) 下移到 :2592。引用页 docs/verification/gy-i12-text-question-ui-20261020.md:67 是当时读数，按仓规不改写数字。"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
       "reference": "services/api/src/app.ts:714",
       "note": "本片（GY-R68-A01）引入：app.ts :79 后 +1 ⇒ 父提交 :714 的 ): AdminOpsService { 下移到 :715。引用页 docs/verification/gy-i02-openapi-2020-fastify-20261017.md:45 是当时读数，按仓规不改写数字。"
     },
