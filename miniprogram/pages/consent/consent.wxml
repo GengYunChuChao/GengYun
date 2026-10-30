@@ -2,7 +2,7 @@
   <view class="page-heading">
     <view class="page-heading__main">
       <view class="page-heading__title">授权清单</view>
-      <view class="page-heading__sub">各用途的授权状态按服务端记录如实列出；本页只读。</view>
+      <view class="page-heading__sub">各用途的授权状态按服务端记录如实列出；这里可以授予与撤回（撤回要二次确认，且会说明代价）。</view>
     </view>
   </view>
 
@@ -10,7 +10,7 @@
     wx:if="{{checking || !gatePassed}}"
     status="guest"
     title="请先登录"
-    desc="登录后才能查看自己的授权清单。清单只与你的账号绑定，不会公开。"
+    desc="登录后才能查看和修改自己的授权清单。清单只与你的账号绑定，不会公开。"
     actionText="去登录"
     bind:action="onLogin"
   ></state-view>
@@ -18,7 +18,41 @@
   <block wx:else>
     <view class="notice notice--warn" wx:if="{{networkOff}}">
       <text class="notice__icon">⚠️</text>
-      <text class="notice__text">当前未启用联网（共享源码默认关闭）。授权清单完全来自服务端，本页在没有联网时不会用本地数据顶替。请在本机或正式环境启用后再查看。</text>
+      <text class="notice__text">当前未启用联网（共享源码默认关闭）。授权清单与授予/撤回都完全走服务端，本页在没有联网时不会用本地数据顶替。请在本机或正式环境启用后再操作。</text>
+    </view>
+
+    <view class="section" wx:if="{{!networkOff}}">
+      <view class="section-head">
+        <text class="section-head__title">用途授权</text>
+        <text class="section-head__meta">{{rows.length}} 个用途</text>
+      </view>
+
+      <view class="panel">
+        <view class="consent-control" wx:for="{{rows}}" wx:key="purpose">
+          <view class="consent-control__copy">
+            <text class="info-row__title">{{item.label}}（{{item.purpose}}）</text>
+            <text class="info-row__desc">当前状态 {{item.stateLabel}}{{item.changedAt ? ' · 最近更新 ' + item.changedAt : ''}}</text>
+            <text class="info-row__desc" wx:if="{{item.policyVersion}}">服务端记录的政策版本 {{item.policyVersion}}</text>
+            <text class="consent-control__reason" wx:if="{{item.actionDisabled}}">不可用：{{item.actionReason}}</text>
+            <text class="consent-control__error" wx:if="{{item.errorText}}">上次操作未完成：{{item.errorText}}</text>
+            <text class="consent-control__code" wx:if="{{item.errorCode}}">服务端错误码 {{item.errorCode}}</text>
+          </view>
+          <gy-ui-button
+            label="{{item.actionLabel}}"
+            variant="secondary"
+            disabled="{{item.actionDisabled || item.busy}}"
+            loading="{{item.busy}}"
+            bind:tap="onRowAction"
+            data-purpose="{{item.purpose}}"
+          ></gy-ui-button>
+        </view>
+      </view>
+
+      <view class="card-text" wx:if="{{actionText}}">{{actionText}}</view>
+
+      <view class="demo-caption" wx:if="{{policyError}}">用途政策读取失败：{{policyError}}　所有开关因此置灰并逐行说明原因。</view>
+      <view class="demo-caption" wx:elif="{{policyLoaded}}">用途政策版本 {{policyVersion}}；当前有生效政策的用途：{{policyPurposeText}}</view>
+      <view class="demo-caption">授予与撤回都以服务端为准：服务端没有确认成功之前，这里的开关不会翻过去；失败时保持原状态，并在该行给出服务端错误码。</view>
     </view>
 
     <view class="section" wx:if="{{!networkOff}}">
@@ -45,7 +79,7 @@
         wx:elif="{{!items.length}}"
         status="empty"
         title="尚未授权任何用途"
-        desc="服务端返回的授权记录为 0 条：你还没有对任何用途授予过权限，所以这里没有可以列出的条目。"
+        desc="服务端返回的授权记录为 0 条：你还没有对任何用途授予过权限，所以这里没有可以列出的条目。上面四个用途的按钮能不能点，取决于服务端当前有没有可用的已核验政策。"
       ></state-view>
 
       <block wx:else>
@@ -56,7 +90,7 @@
                 <text class="info-row__title">{{item.purposeLabel}}（{{item.purpose}}）</text>
                 <text class="info-row__desc">状态 {{item.stateLabel}}{{item.withdrawnAt ? ' · 撤回时间 ' + item.withdrawnAt : ''}}</text>
                 <text class="info-row__desc">政策版本 {{item.policyVersion}} · 最近更新 {{item.changedAt}}</text>
-                <text class="info-row__desc">接收方标识 {{item.recipientCount}} 个</text>
+                <text class="info-row__desc">接收方标识 {{item.recipientCount}} 个 · 版本 revision {{item.revision}}</text>
               </view>
             </view>
           </view>
@@ -89,7 +123,16 @@
           契约没有单独的 `updated_at`：「最近更新」取最后一次状态变化的时间——已撤回取 `withdrawn_at`，已授权取 `granted_at`。
         </view>
         <view class="card-text">
-          本页只读：授予与撤回（`POST` / `DELETE /me/consents`）尚未接入，所以这里没有开关，本页的展示也不会改变任何授权状态。
+          授予走 `POST /me/consents`（带 `Idempotency-Key`，同一次动作的重试复用同一个键），撤回走
+          `DELETE /me/consents/{purpose}`（先取当前 `revision` 再带 `If-Match`；收到 428 `REVISION_REQUIRED` 时自动补取一次再重试，不无限重试）。
+          授予体里的 `policy_version` 只取自服务端政策读面 `GET /me/privacy-policy`，本页不编版本号。
+        </view>
+        <view class="card-text">
+          本页不会替您挑选第三方接收方：授予时的 `recipient_ids` 是空集合（录制/媒体处理/公开发布都不需要接收方）；
+          「外部推理」必须至少绑定一个已核验接收方，因此该用途的授予按钮在这里是置灰的，并写明原因。
+        </view>
+        <view class="card-text">
+          写成功后本页会重新读取服务端清单再刷新这四个开关；写失败时该行保持原状态，并在行内显示服务端错误码。
         </view>
       </view>
     </view>

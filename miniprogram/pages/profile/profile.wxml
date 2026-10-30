@@ -167,10 +167,13 @@
     </view>
   </view>
 
-  <!-- 隐私说明：**只写实现得到的事**。改前这里写「拍摄照片、录音和位置信息都需要您单独授权，
-       且可以随时撤回」，但应用内既没有授权入口也没有撤回入口（`POST/DELETE /me/consents` 需要
-       `policy_version`/`recipient_ids`，契约没有读取面）——那是把不存在的功能写成承诺。
-       见 docs/verification/gy-i04-login-chain-20261021.md 的「口径决定」第 6 条。 -->
+  <!-- 隐私说明：**只写实现得到的事**。历史：这里早先写「拍摄照片、录音和位置信息都需要您单独授权，
+       且可以随时撤回」，但那时应用内既没有授权入口也没有撤回入口（`POST/DELETE /me/consents` 需要
+       `policy_version`/`recipient_ids`，契约也没有能用的政策读面）——那是把不存在的功能写成承诺，
+       故 GY-I04 口径决定第 6 条先把「随时撤回」删掉（见 docs/verification/gy-i04-login-chain-20261021.md）。
+       GY-R70 起这条承诺**重新成立**：`pages/consent` 真的发 `POST`/`DELETE /me/consents`，政策版本取自
+       `GET /me/privacy-policy`，撤回有二次确认并逐用途写清代价。但成立有边界、且写在这里：只有服务端
+       当前有可用政策的用途才可授予；没有政策的用途那一页会置灰并写明原因，本页不替它打保票。 -->
   <view class="section">
     <view class="section-head">
       <view class="section-head__title">隐私说明</view>
@@ -181,7 +184,12 @@
         拍摄照片、录音和位置信息都需要您单独授权；未获得授权时不会上传或外发，也不会用替身结果顶替。
       </view>
       <view class="card-text">
-        应用内可以查看授权清单（只读，入口在本页末尾），但授予与撤回入口尚未接入，因此本页暂不提供授权开关；在入口接入前不会默认替您授权。
+        录音、媒体处理、外部推理、公开发布这四个用途的授权可以随时在「授权清单」页撤回（入口在本页末尾）：
+        撤回哪一项、撤回后哪些能力立刻不可用，那一页会逐项写清并请您二次确认；撤回不会删除已经生成的记录。
+      </view>
+      <view class="card-text">
+        手机系统的相机、相册、麦克风与定位权限由微信在系统层面询问，本页与授权清单页都不能替您开关。
+        用途授权另有一条边界：服务端当前没有可用政策的用途，授权清单页会把那一行置灰并写明原因，不会假装可点。
       </view>
     </view>
   </view>
@@ -199,20 +207,20 @@
     ></state-view>
   </view>
 
-  <!-- 授权清单入口（GY-R34 / #29 P1，只读）：跳到 pages/consent/consent 读 `GET /me/consents`。
-       只放入口、不放开关：授予与撤回（`POST` / `DELETE /me/consents`）属于 P2，
-       入口文案因此只说"查看"，不承诺能改授权。游客看该页时会被它自己的登录门禁拦住。 -->
+  <!-- 授权清单入口（GY-R34 只读页 → GY-R70 可写）：跳到 pages/consent/consent，读 `GET /me/consents`，
+       并在那一页发 `POST` / `DELETE /me/consents`。入口只说"查看与撤回"，具体能否授予由那一页按
+       服务端政策读面如实呈现（不可用就置灰 + 原因）；游客看该页时会被它自己的登录门禁拦住。 -->
   <view class="section" wx:if="{{!guest}}">
     <view class="section-head">
       <view class="section-head__title">授权清单</view>
     </view>
     <view class="panel">
-      <view class="setting-row" bindtap="openConsent" role="button" aria-label="查看授权清单（只读）">
+      <view class="setting-row" bindtap="openConsent" role="button" aria-label="查看并撤回各用途授权">
         <text class="setting-row__label">各用途的授权状态</text>
-        <text class="setting-row__value">只读查看</text>
+        <text class="setting-row__value">查看与撤回</text>
         <view class="gy-icon gy-icon--arrow"></view>
       </view>
-      <view class="demo-caption">清单由服务端按当前账号返回（用途、状态、政策版本与更新时间），本页不缓存、不代填；授予与撤回尚未接入。</view>
+      <view class="demo-caption">清单由服务端按当前账号返回（用途、状态、政策版本与 revision），本页不缓存、不代填；授予与撤回都在那一页完成，撤回需二次确认。</view>
     </view>
   </view>
 </view>
