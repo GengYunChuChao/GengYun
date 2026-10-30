@@ -3,12 +3,16 @@ const fontScale = require('../../utils/font-scale')
 //
 // 数据来源（GY-I07 D1）：**两条路径，逐条可判定，互不冒充**。
 // - `data_source='server'`：运行时启用联网（runtime.mode==='local' 且 apiBaseUrl 非空），且本次条件集合
-//   落在服务端 `GET /herbicides` 的参数面内（`q`／`registration_number`／`crop_id`／`region_code`；
-//   判据唯一真源是 `services/api/src/routes/knowledge.ts` 的 querystring schema，客户端不信自己的记忆）
-//   时，走服务端真实接口（miniprogram/utils/knowledge-api.js），`crop_id`／`region_code` 随请求真的提交。
-// - `data_source='bundled-offline'`：未启用联网，或带了该接口**确实不接受**的条件（`species_id` 杂草、
-//   `dosage_form` 剂型）时，读随包离线副本（packages/knowledge/** → miniprogram/data/**，经
-//   utils/reference.js），页面**显式标注**离线来源与真实原因，绝不冒充服务端读数。
+//   落在本页实际提交的参数面内（`q`／`registration_number`／`crop_id`；判据唯一真源是
+//   `services/api/src/routes/knowledge.ts` 的 querystring schema，客户端不信自己的记忆）时，走服务端
+//   真实接口（miniprogram/utils/knowledge-api.js）：**作物**服务端真按 `crop_ids` 收窄，故随请求真的提交。
+// - `data_source='bundled-offline'`：未启用联网，或带了服务端**确实不接受**的条件（`species_id` 杂草、
+//   `dosage_form` 剂型），或带了 `region_code`（地区）时，读随包离线副本（packages/knowledge/** →
+//   miniprogram/data/**，经 utils/reference.js），页面**显式标注**离线来源与真实原因，绝不冒充服务端读数。
+//   **地区不是"接口不支持"**：`region_code` 在服务端参数面内，但当前资料零条标注适用地区，且响应体
+//   （`{data:{items,next_cursor},meta}`）不回 `match_state`/`reasons` ⇒ 提交它只会把"未标注"显示成
+//   "不满足所选条件"，故本版不提交、改走随包副本并写明"资料未标注适用地区"（接它需服务端先补
+//   `match_state` 出口，下一片）。
 // 两条路径共用：同一 source_version 展示口径；失败一律按闭集文案提示，**不落回离线副本**。
 // 列表与详情必须展示**同一个 source_version**；不得因模糊药名合并不同含量的剂型。
 
@@ -189,22 +193,28 @@ Page({
   },
 
   // 来源判定（可判定标记 + 真实原因，不是纯文案）。判据是服务端 `/herbicides` 的 querystring schema：
-  // 它接受 `q`／`registration_number`／`crop_id`／`region_code`（另有分页 `cursor`／`limit`）——**作物与
-  // 地区是接受的**，所以它们只能把请求推向服务端，绝不能成为回退离线的理由；只有 `species_id`、
-  // `dosage_form` 这类该接口确实不接受的条件才回退，并逐个点名是哪一条（不笼统写成"作物／杂草／地区"）。
+  // 它接受 `q`／`registration_number`／`crop_id`／`region_code`（另有分页 `cursor`／`limit`）。但"服务端接受"
+  // 不等于"提交了就能如实显示"：**作物**服务端真按 `crop_ids` 收窄（随包 20 条记录 20/20 都标了），所以
+  // 作物只推向服务端、绝不能成为回退离线的理由；**地区**参数服务端虽接受，但当前资料零条标注适用地区，
+  // 且响应体不回 `match_state`/`reasons` ⇒ 提交它只会把"未标注"显示成"不满足所选条件"，故本版改走随包
+  // 副本并如实写"资料未标注适用地区"。`species_id`／`dosage_form` 则是该接口根本没有的参数。逐条点名真因
+  // （不笼统写成"作物／杂草／地区"，也不写成"接口不支持地区"）。
   // 未启用联网（runtime.mode 非 local 或 apiBaseUrl 为空）时也无法发起请求。
   querySource: function () {
     if (!auth.networkEnabled()) return {
       source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
       label: '数据来源：随包离线副本（bundled-offline）——当前运行未启用联网（runtime.mode 非 local），不冒充服务端读数。'
     }
-    // 该接口不接受的**筛选**条件，逐个点名（服务端 schema 里没有这些键，硬发只会换回 400）。
+    // 逐条点名**真实原因**（三种原因不同，不许混成一句）：
+    //   - species_id／dosage_form：服务端 schema 里没有这两个键，硬发只会换回 400 INVALID_REQUEST；
+    //   - region_code：服务端 schema **接受**它，但资料未标注适用地区 + 响应不回 match_state ⇒ 提交后只能误报。
     const rejected = []
-    if (this.data.speciesId) rejected.push('杂草（species_id）')
-    if (this.data.dosageForm) rejected.push('剂型（dosage_form）')
+    if (this.data.speciesId) rejected.push('杂草（species_id）：该接口没有这个参数')
+    if (this.data.dosageForm) rejected.push('剂型（dosage_form）：该接口没有这个参数')
+    if (this.data.regionCode) rejected.push('地区（region_code）：资料未标注适用地区，无法确认')
     if (rejected.length) return {
       source: knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE,
-      label: '数据来源：随包离线副本（bundled-offline）——服务端 /herbicides 不接受' + rejected.join('、') + '条件，筛选条件未被丢弃。'
+      label: '数据来源：随包离线副本（bundled-offline）——以下条件服务端当前无法如实判定，已改读随包副本（筛选条件未被丢弃）：' + rejected.join('；') + '。'
     }
     return { source: knowledgeApi.HERBICIDE_SOURCES.SERVER,
       label: '数据来源：服务端接口 /herbicides（真实读数，等待返回）。' }
@@ -230,11 +240,11 @@ Page({
     const operation = (self._queryOperation = (self._queryOperation || 0) + 1)
     self._queryActive = true
     const input = { limit: PAGE_SIZE }
-    // 结构化条件：服务端 schema 接受 `crop_id`／`region_code`，本页选中的必须**真的提交**，
-    // 否则页面显示"已筛选"而实际是全量（能力不可达，且读数对不上）。
+    // 结构化条件：只有 `crop_id` 会真的提交——服务端按记录的 `crop_ids` 收窄，不提交就等于页面显示
+    // "已筛选"而实际是全量。`region_code` **不提交**：服务端虽接受该参数，但资料未标注适用地区、响应也不回
+    // `match_state`，提交它只会把"未标注"误报成"不满足"（详见 querySource 注释）。
     const sent = []
     if (self.data.cropId) { input.crop_id = self.data.cropId; sent.push('crop_id') }
-    if (self.data.regionCode) { input.region_code = self.data.regionCode; sent.push('region_code') }
     if (self.data.keyword) input.q = self.data.keyword
     if (cursor) input.cursor = cursor
     self.setData({ busy: true, dataSource: decision.source, dataSourceLabel: decision.label, queryError: '', queryErrorCode: '', querySession: false })

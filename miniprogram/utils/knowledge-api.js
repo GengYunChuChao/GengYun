@@ -121,22 +121,30 @@ const FORMULATION_KEYS = ['id', 'registration_number', 'producer', 'dosage_form'
 const INGREDIENT_KEYS = ['name', 'content_text', 'unit_text']
 // 服务端 `/herbicides` 参数面的唯一真源是 `services/api/src/routes/knowledge.ts` 的路由 querystring
 // schema（`additionalProperties:false`）。下面这张白名单逐键对齐它，不自行增删：
-//   ① 客户端**可表达**（会真的随请求提交）：`q`、`registration_number`、`crop_id`、`region_code`。
-//      前三个同服务端 `text`（非空字符串、长度 ≤80）；`region_code` 另须匹配 `^33[0-9]{4}$`
-//      （服务端 `regionCode` 的 pattern），不匹配即 `INVALID_INPUT`，不把脏值发到网上让服务端兜。
-//   ② 客户端**不可表达**（该接口 schema 里没有这些键，硬发只会换回 400 INVALID_REQUEST）：
-//      `species_id`、`growth_stage`、`planting_method`、`use_scene`；页面自带的 `dosage_form` 同理。
+//   ① 客户端**可表达**（会真的随请求提交）：`q`、`registration_number`、`crop_id`。
+//      三者同服务端 `text`（非空字符串、长度 ≤80）。
+//      `crop_id` 服务端**真收窄**：`packages/reference/query.mjs` 的 `matchConditions()` 按记录的
+//      `crop_ids` 过滤，随包 20 条记录 20/20 都标了 `crop_ids`，作物 id 与
+//      `packages/knowledge/catalog/crops.json` 逐字一致。
+//   ② 服务端 schema **接受**、但本版**不提交**：`region_code`。它确实在服务端参数面内（pattern
+//      `^33[0-9]{4}$`，不是"接口不支持"），但当前资料零条标注适用地区（`region_codes` 全仓没有
+//      任何一条记录带），`matchConditions()` 对未标注的记录只能给"记录未标注适用地区，无法确认"，
+//      而该原因只留在 `reference.listHerbicides()` 的 `query_state.reasons` 里、**没有进响应体**
+//      （`{data:{items,next_cursor},meta}`）⇒ 客户端提交 `region_code` 只会拿到 `items: []`，
+//      再把"未标注"显示成"不满足所选条件"（又一处谎报）。故本版不提交，页面如实改走随包副本；
+//      待服务端补上 `match_state`/`reasons` 出口后再接（下一片）。
+//   ③ 该接口 schema 里根本没有的键（硬发只会换回 400 INVALID_REQUEST）：`species_id`、`growth_stage`、
+//      `planting_method`、`use_scene`；页面自带的 `dosage_form` 同理。
 // 白名单外的键一律 `INVALID_INPUT`，**不静默丢弃**：调用方据此如实改走随包副本并写明真实原因，
 // 而不是把用户选的条件悄悄扔掉后仍报一个服务端读数。
-const HERBICIDE_FILTERS = ['crop_id', 'region_code', 'q', 'registration_number']
-const REGION_CODE = /^33[0-9]{4}$/
+const HERBICIDE_FILTERS = ['crop_id', 'q', 'registration_number']
 function herbicideQuery(input) {
   if (!object(input) || Object.keys(input).some(k => HERBICIDE_FILTERS.concat(['cursor', 'limit']).indexOf(k) === -1)) throw failure('INVALID_INPUT')
   const out = {}
   Object.keys(input).forEach(function (k) {
     const v = input[k]
     if (k === 'limit') { if (!Number.isInteger(v) || v < 1 || v > 50) throw failure('INVALID_INPUT'); out[k] = v; return }
-    if (!text(v, k === 'cursor' ? 2048 : 80) || (k === 'region_code' && !REGION_CODE.test(v))) throw failure('INVALID_INPUT')
+    if (!text(v, k === 'cursor' ? 2048 : 80)) throw failure('INVALID_INPUT')
     out[k] = v
   })
   return out

@@ -380,6 +380,12 @@ function herbicidesQuerystringLiteral(source) {
 const CLIENT_NOT_A_FILTER = new Map([
   ['cursor', '分页游标，不是筛选条件：客户端 `herbicideQuery` 的 cursor 分支单独校验（非空字符串、≤2048）后提交，服务端 schema 同形（minLength 1 / maxLength 2048）。'],
   ['limit', '页长，不是筛选条件：客户端 `herbicideQuery` 的 limit 分支单独校验（整数 1..50）后提交，服务端 schema 同形（minimum 1 / maximum 50 / default 20）。'],
+  // 服务端 schema **接受** `region_code`（pattern ^33[0-9]{4}$），但客户端本版不提交它——原因不是"接口不支持"：
+  // 仓内没有一条记录标注 `region_codes`（`packages/reference/query.mjs` 的 `matchConditions()` 对未标注记录判
+  // "记录未标注适用地区，无法确认"），而该原因只留在 `reference.listHerbicides()` 的 `query_state.reasons` 里、
+  // 不进响应体（`{data:{items,next_cursor},meta}`）⇒ 提交 `region_code` 只会拿到 `items: []`，页面再把"未标注"
+  // 显示成"不满足所选条件"。接它必须先由服务端补上 `match_state`/`reasons` 出口（下一片）。
+  ['region_code', '地区：服务端 schema 接受该参数（pattern ^33[0-9]{4}$），但当前资料零条标注 region_codes（未标注适用地区），且响应体不回 match_state/reasons ⇒ 提交只会把"未标注"误报成"不满足"，故本版不提交，待服务端补 match_state 出口后再接。'],
 ]);
 
 const SERVER_PROPERTIES = objectLiteralKeys(API_ROUTE_SOURCE, herbicidesQuerystringLiteral(API_ROUTE_SOURCE));

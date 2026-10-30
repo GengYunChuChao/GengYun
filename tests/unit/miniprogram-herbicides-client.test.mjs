@@ -407,11 +407,14 @@ test('D1b 页面（纵深防御）：门禁通过后联网被关闭 ⇒ 随包�
   assert.ok(f.page.data.items.every((row) => row.source_marker === '随包离线副本'))
 })
 
-// D2 三兄弟钉的是同一个缺陷的另一半：服务端 `/herbicides` 早已接受 `crop_id`／`region_code`，
-// 页面却只要见到作物/地区条件就回退离线、并在标签里对用户说「服务端不支持作物／杂草／地区条件」。
-// 现在：条件集合 ⊆ {crop_id, region_code}（外加关键词/登记号）⇒ **必须走服务端且参数真的带上**；
-// 只有 `species_id`／`dosage_form` 这类该接口确实不接受的条件才回退，且标签只写真实原因；
-// 服务端失败仍**不许**静默改走离线副本（`data_source` 停在 server，文案说明未改用离线）。
+// D2 一族钉的是同一个缺陷的两半：
+//   - 作物：服务端 `/herbicides` 真按记录的 `crop_ids` 收窄，页面却只要见到作物条件就回退离线、并在标签里对
+//     用户说「服务端不支持作物／杂草／地区条件」⇒ 必须走服务端且 `crop_id` 真的带上（D2）。
+//   - 地区：服务端 schema **接受** `region_code`，但仓内资料零条标注适用地区、响应又不回
+//     `match_state`/`reasons` ⇒ 提交它只会把"未标注"显示成"不满足所选条件"，所以本版**不提交**、改走随包
+//     副本并如实写"资料未标注适用地区"（D2e）。两者都不是"接口不支持地区"，标签里不许出现这种措辞。
+//   - `species_id`／`dosage_form` 才是该接口根本没有的参数，回退时同样只写真实原因（D2b）。
+// 服务端失败仍**不许**静默改走离线副本（`data_source` 停在 server，文案说明未改用离线）——见 D2c。
 const firstCropId = (page) => {
   const crops = page.data.crops
   assert.ok(Array.isArray(crops) && crops.length > 0, '随包作物目录应可用')
@@ -425,7 +428,7 @@ const firstRegionCode = (page) => {
   return regions[0].code
 }
 
-test('D2 页面：带作物／地区条件 ⇒ 走服务端，且 crop_id／region_code 真的进了查询串', async () => {
+test('D2 页面：带作物条件 ⇒ 走服务端，且 crop_id 真的进了查询串', async () => {
   const f = fixture('reference')
   f.login()
   await f.show()
@@ -435,7 +438,6 @@ test('D2 页面：带作物／地区条件 ⇒ 走服务端，且 crop_id／regi
   await settle()
   const serverCalls = f.listCalls().length
 
-  // ① 只有作物：必须走服务端，且 crop_id 真的提交。
   const cropId = firstCropId(f.page)
   f.page.data.cropId = cropId
   f.page.runQuery()
@@ -447,29 +449,43 @@ test('D2 页面：带作物／地区条件 ⇒ 走服务端，且 crop_id／regi
   assert.equal(cropUrl.pathname, '/api/v1/herbicides')
   assert.equal(cropUrl.searchParams.get('crop_id'), cropId, 'crop_id 必须真的随请求提交（丢掉它 = 页面显示已筛选、实际全量）')
   assert.equal(cropUrl.searchParams.get('limit'), '20')
-  assert.equal(cropUrl.searchParams.get('region_code'), null, '没选地区就不许凭空带 region_code')
+  assert.equal(cropUrl.searchParams.get('region_code'), null, '地区本版不提交 ⇒ 没选地区时更不许带')
   assert.equal(cropUrl.searchParams.get('species_id'), null, '没选杂草就不许凭空带 species_id')
   assert.equal(f.page.data.dataSource, 'server', '带作物条件仍属服务端读数')
   assert.equal(f.page.data.dataSourceLabel, '数据来源：服务端接口 /herbicides（真实读数，等待返回）。')
-
-  // ② 作物 + 地区：两个参数必须同时带上，且命中条件如实列出（不是恒空）。
-  const regionCode = firstRegionCode(f.page)
   f.answer(cropRequest, { items: [herbicide()], next_cursor: null })
   await settle()
+  assert.equal(f.page.data.matchedNote, '命中条件：作物（筛选条件未被放宽）', '命中条件只列本次真的提交过的维度')
+  assert.equal(f.page.data.items.length, 1)
+})
+
+test('D2e 页面：选了地区 ⇒ 走随包副本，查询串里没有 region_code，离线原因点名"资料未标注适用地区"', async () => {
+  const f = fixture('reference')
+  f.login()
+  await f.show()
+  f.answer(f.pending('/herbicides'), { items: [herbicide()], next_cursor: null })
+  await settle()
+  const serverCalls = f.listCalls().length
+
+  const regionCode = firstRegionCode(f.page)
   f.page.data.regionCode = regionCode
   f.page.runQuery()
   await settle()
-  assert.equal(f.listCalls().length, serverCalls + 2, '作物 + 地区仍应走服务端')
-  const bothRequest = f.pending('/herbicides')
-  assert.ok(bothRequest, '作物 + 地区应发出一条新的 /herbicides 请求')
-  const bothUrl = new URL(bothRequest.url)
-  assert.equal(bothUrl.searchParams.get('crop_id'), cropId)
-  assert.equal(bothUrl.searchParams.get('region_code'), regionCode, 'region_code 必须真的随请求提交')
-  assert.equal(f.page.data.dataSource, 'server')
-  f.answer(bothRequest, { items: [herbicide()], next_cursor: null })
-  await settle()
-  assert.equal(f.page.data.matchedNote, '命中条件：作物、地区（筛选条件未被放宽）', '这次真的提交了两个条件 ⇒ 命中条件不得再写空')
-  assert.equal(f.page.data.items.length, 1)
+
+  assert.equal(f.listCalls().length, serverCalls, '地区本版不提交 ⇒ 不得发出 /herbicides 请求（提交只会把"未标注"显示成"不满足"）')
+  assert.equal(
+    f.listCalls().every((url) => new URL(url).searchParams.get('region_code') === null),
+    true,
+    '任何一条 /herbicides 请求都不许带 region_code',
+  )
+  const label = f.page.data.dataSourceLabel
+  assert.equal(f.page.data.dataSource, 'bundled-offline')
+  assert.ok(label.includes('region_code') && label.includes('地区'), `离线原因必须点名地区（当前：${label}）`)
+  assert.ok(label.includes('未标注'), `离线原因必须写真实原因"资料未标注适用地区"（当前：${label}）`)
+  assert.equal(/不支持/u.test(label), false, `"服务端接受该参数、只是资料未标注"≠"不支持"，不得再写不支持（当前：${label}）`)
+  assert.equal(/不满足/u.test(label), false, `不得把"未标注"说成"不满足所选条件"（当前：${label}）`)
+  assert.ok(f.page.data.items.every((row) => row.data_source === 'bundled-offline'), '随包行必须逐条标注离线来源')
+  assert.ok(f.page.data.items.every((row) => row.source_marker === '随包离线副本'))
 })
 
 test('D2b 页面：带杂草条件（服务端不接受 species_id）⇒ 离线副本，来源标记如实且原因只写真实原因', async () => {
@@ -521,7 +537,7 @@ test('D2c 页面：带作物条件时服务端报错 ⇒ 如实报错、不静�
   assert.equal(f.listCalls().length, serverCalls + 1, '失败后不得再补打任何列表请求（尤其不得改走离线）')
 })
 
-test('D2d 客户端：参数面逐条对齐服务端 schema —— 不接受的键抛 INVALID_INPUT（不静默丢弃），region_code 拒脏值', async () => {
+test('D2d 客户端：参数面逐条对齐服务端 schema —— 不接受的键抛 INVALID_INPUT（不静默丢弃）', async () => {
   const f = fixture(null)
   f.login()
   const rejects = async (input, why) => {
@@ -536,21 +552,22 @@ test('D2d 客户端：参数面逐条对齐服务端 schema —— 不接受的�
   await rejects({ use_scene: 'field' }, 'use_scene 不在 /herbicides 参数面内')
   await rejects({ dosage_form: '悬浮剂' }, 'dosage_form 是页面侧条件，服务端没有这个键')
   await rejects({ synthetic_unknown: 'x' }, '未知键必须拒绝而不是丢弃')
-  // 取值校验照服务端约束：text = 非空且 ≤80；region_code 必须匹配 ^33[0-9]{4}$。
+  // region_code：服务端 schema 接受它，但本版不提交（资料未标注适用地区 + 响应不回 match_state，
+  // 提交只会误报），所以客户端这一层也不许把它悄悄发出去——连合法值也拒。
+  await rejects({ region_code: '330102' }, 'region_code 本版不提交（资料未标注 + 响应无 match_state）')
+  await rejects({ region_code: '110101' }, 'region_code 本版不提交，脏值更不许发')
+  // 取值校验照服务端约束：text = 非空且 ≤80。
   await rejects({ crop_id: '' }, 'crop_id 非空')
   await rejects({ crop_id: 'x'.repeat(81) }, 'crop_id ≤80')
-  await rejects({ region_code: '110101' }, 'region_code 必须 33 开头')
-  await rejects({ region_code: '3301' }, 'region_code 必须 6 位')
-  await rejects({ region_code: '' }, 'region_code 非空')
-  // 反向：四个可表达的键必须真的被接受并进查询串（否则"白名单"只是摆设）。
-  const accepted = f.api.listHerbicides({ crop_id: 'crop_rice', region_code: '330102', q: '稻', registration_number: 'PD20161371' })
+  // 反向：三个可表达的键必须真的被接受并进查询串（否则"白名单"只是摆设）。
+  const accepted = f.api.listHerbicides({ crop_id: 'crop_rice', q: '稻', registration_number: 'PD20161371' })
   const request = f.pending('/herbicides')
   assert.ok(request, '合规参数必须真的发出请求')
   const url = new URL(request.url)
   assert.equal(url.searchParams.get('crop_id'), 'crop_rice')
-  assert.equal(url.searchParams.get('region_code'), '330102')
   assert.equal(url.searchParams.get('q'), '稻')
   assert.equal(url.searchParams.get('registration_number'), 'PD20161371')
+  assert.equal(url.searchParams.get('region_code'), null, '没传的条件不得凭空出现')
   assert.equal(url.searchParams.get('species_id'), null, '没传的条件不得凭空出现')
   f.answer(request, { items: [herbicide()], next_cursor: null })
   await accepted
