@@ -27,6 +27,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
+import { PrivacyError } from '../../../../packages/privacy/errors.mjs';
 import { isErrorCode, type ErrorCode } from '../contract.ts';
 import type { ContractJob, JobState } from '../jobs/registry.ts';
 import { collectShapeIssues } from '../jobs/result-shape.ts';
@@ -482,9 +483,22 @@ function assertAnswerContract(view: AnswerView): void {
   }
 }
 
-/** 终态错误码：只接受**契约闭集内**的错误码（`isErrorCode` 查 `states.json` 的映射表）；域外异常一律折为 `PROVIDER_UNAVAILABLE`。 */
+/**
+ * 终态错误码：只接受**契约闭集内**的错误码（`isErrorCode` 查 `states.json` 的映射表）；域外异常一律折为 `PROVIDER_UNAVAILABLE`。
+ *
+ * 隐私/外发域（`packages/privacy/errors.mjs` 的 `PrivacyError`）抛的是**同一套契约码**，但它
+ * **不是** `ApiError`：只认 `instanceof ApiError` 会把 403 `CONSENT_REQUIRED`（要去授权）、
+ * 409 `OBJECT_UNAVAILABLE`（对象不可用）、400 `INVALID_REQUEST` 统统折成 503
+ * `PROVIDER_UNAVAILABLE`，客户端无法把「去授权」与「重试/报运维」分开（GY-R71 / G3）。
+ * 这些码在**同步面**本就原样交给客户端（`privacy/egress.ts` 的 `toApiError`：码与状态取自
+ * 同一张 `ERROR_STATUS_MAP`），因此在作业面保留原码不新增任何暴露面。
+ *
+ * 折叠口径**不变**：只认这两个类，不做 `{code}` 鸭子类型 —— 域外异常（含自带闭集码的第三方
+ * 错误对象）仍然一律折为 `PROVIDER_UNAVAILABLE`（fail-closed）。
+ */
 function settleCodeOf(error: unknown): ErrorCode {
   if (error instanceof ApiError && isErrorCode(error.code)) return error.code;
+  if (error instanceof PrivacyError && isErrorCode(error.code)) return error.code;
   return 'PROVIDER_UNAVAILABLE';
 }
 

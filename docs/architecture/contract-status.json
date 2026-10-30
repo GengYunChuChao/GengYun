@@ -1330,7 +1330,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "746-751",
+          "lines": "760-765",
           "symbol": "async function getConversation(actor: ConversationActor"
         },
         {
@@ -4344,7 +4344,7 @@
           "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:70`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:803`，位于 `createTurn`，`:743`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:994`，位于 `jobViewOf`，`:986`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:1042-1050`，位于 `scheduleAnswer`，`:1036`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2309`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
+      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:76`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:862`，位于 `createTurn`，`:802`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:1053`，位于 `jobViewOf`，`:1045`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:1106-1114`，位于 `scheduleAnswer`，`:1100`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2309`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
     }
   ]
 }
