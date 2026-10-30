@@ -42,7 +42,7 @@
 
 1. **401/403 归因收敛为单一事实源**：`miniprogram/utils/auth.js` 新增 `SESSION_LOSS_CODES` / `FORBIDDEN_CODES`（**均由 `utils/states.js` 的 `CODE_KIND` 反推**，不另立码表）、`RETIRED_SESSION_CODES`、`errorCodeOf()`、`isSessionLossCode()`、`isForbiddenCode()`、`attribution()`（纯函数）、`failureFor()`（按归因清会话并构造错误对象，见 §1.3 口径决定）。
 2. **9 个适配层改为委托该归因**：`favorites-api.js`、`history-api.js`、`knowledge-api.js`、`voice-api.js`、`profile-api.js`、`messages-api.js`、`community-api.js`、`identify-api.js`、`speech-transcript.js`。其中 `identify-api` / `speech-transcript` 原先各持一份 `forbiddenOrSessionLoss`（对 `ACCOUNT_INACTIVE` 处理**相反**），合流进来的 #393 又在 `favorites-api` / `history-api` 写了**第三份**——三份自持码表全部删除，改为委托。
-3. **补齐 403 码的可见文案**（改前这些文案永远走不到，因为被折叠提前 return）：`favorites-api.js`、`history-api.js`（合流后沿用 #393 的更完整措辞「无权读写用户收藏」「缺少必要的授权同意」「账号当前不可用（已停用或已注销）」）、`messages-api.js:231-232`、`community-api.js:340-341`、`knowledge-api.js:214`、`pages/profile/profile.js:35-37`。
+3. **补齐 403 码的可见文案**（改前这些文案永远走不到，因为被折叠提前 return）：`favorites-api.js`、`history-api.js`（合流后沿用 #393 的更完整措辞「无权读写用户收藏」「缺少必要的授权同意」「账号当前不可用（已停用或已注销）」）、`messages-api.js:231-232`、`community-api.js:340-341`、`knowledge-api.js:230`、`pages/profile/profile.js:35-37`。
 4. **`GET /auth/session` 区分「会话被判定失效」与「这次核实没做成」**：仅 401/403（以及 200-但-契约不符）清会话；408/429/5xx/未知状态只保持「未核实」。
 5. **知识页 403 不再把门禁踢回登录**：`knowledge-api.js` 只在 `attribution().clearsSession` 为真时才丢弃翻页游标，会话本身由 `auth` 决定。
 6. **如实措辞（裁决 6/7）**：`identify-api.js` 的 `RETRY_ACTION_LABELS.grant_consent` 由「去授权」改为「重试」（按钮实际只重试本次操作），`CONSENT_REQUIRED` 文案不再写「请先在『我的』中完成授权」；`pages/profile/profile.wxml` 隐私说明删掉「且可以随时撤回」，改为如实写明「授权入口尚未接入、不会默认替您授权」。

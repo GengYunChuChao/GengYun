@@ -48,7 +48,7 @@
 | `listKnowledge`（2375） | `GET /knowledge` | `pages/knowledge` | `q`＋`crop_id`／`region_code`／`species_id`／`growth_stage`／`planting_method`／`use_scene`＋`limit: 20`＋`cursor`（分页） |
 | `getKnowledge`（2525） | `GET /knowledge/{id}` | `pages/knowledgedetail` | 路径 id ＋ 列表带过的 6 个筛选条件（作为同条件复核） |
 | `listHerbicides`（2669） | `GET /herbicides` | `pages/reference`（server 路径） | `q`＋`limit`＋`cursor`；**不传**结构化条件（契约不支持） |
-| `getHerbicide`（2775） | `GET /herbicides/{id}` | `pages/referencedetail`（server 路径） | 仅路径 id，**不带查询串**（该 schema `additionalProperties:false`，见 `knowledge-api.js:166`） |
+| `getHerbicide`（2775） | `GET /herbicides/{id}` | `pages/referencedetail`（server 路径） | 仅路径 id，**不带查询串**（该 schema `additionalProperties:false`，见 `knowledge-api.js:182`） |
 | `verifyRegistration`（2866） | `POST /registrations/verify` | **无消费者** | — |
 
 `verifyRegistration` 在这六个页面里没有任何调用点（`grep -r "registrations\|verifyRegistration" miniprogram/` 零命中）。它不是本次接线缺口：登记精确核对属 #10 的 OCR 链路，科普／除草剂阅读面按契约只读 `Knowledge` 与 `Herbicide` 两个实体。
