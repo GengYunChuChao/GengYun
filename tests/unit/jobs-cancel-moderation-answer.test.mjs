@@ -522,6 +522,11 @@ test('answer·PG 结算次序：CAS 拿不到（已取消）⇒ 零 INSERT；CAS
     const statements = [];
     const decide = (text) => {
       if (/^\s*(BEGIN|COMMIT|ROLLBACK)$/.test(text) || text.startsWith('SET LOCAL')) return { rows: [] };
+      // GY-R71 作业台账片在 `insertTurn` / `claimTurnJob` / `settleTurnJob` 的**同一事务**里写台账行
+      // （`services/api/src/jobs/ledger.ts` 的 upsert，`INSERT INTO public.jobs … ON CONFLICT (id) DO UPDATE`），
+      // 所以假池必须认得这条语句。它不改变本用例的任何断言：取消（CAS 0 行）之后仍然**一条**
+      // `INSERT INTO conversation_answers` 都不许出现，正常结算里 CAS 仍必须排在插回答行之前。
+      if (text.includes('INSERT INTO public.jobs')) return { rows: [] };
       if (text.includes('INSERT INTO conversation_answers')) return { rows: [{ id: answerId }] };
       // `answer_id = COALESCE(...)` 的语句也带 `RETURNING id`（列清单以 id 开头）⇒ 必须先判它。
       if (text.includes('UPDATE conversation_turns') && text.includes('answer_id = COALESCE')) return { rows: [turnRow] };
