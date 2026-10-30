@@ -171,6 +171,10 @@ import { createPostgresBackupPurgePort } from './privacy/backup-copies-pg.ts';
 import { createPostgresBackupStateReader, type BackupStateDerivationPort } from './privacy/backup-state-derivation.ts';
 import { createPostgresOnlinePurgeEvidenceRecorder, type OnlinePurgeEvidenceRecorder } from './privacy/online-purge-evidence.ts';
 import { createPostgresOnlineStateReader, type OnlineStateDerivationPort } from './privacy/online-state-derivation.ts';
+// GY-R71 补片（监工 B 档实质阻塞）· 统一作业台账 `public.jobs` 的**注销清理**原语：
+// 与它的写入点同文件（`jobs/ledger.ts` 的 `JOB_LEDGER_PURGE_SQL` / `purgeJobLedgerByOwner`），
+// 因此「谁写台账」与「谁删台账」不会分叉成两份口径。
+import { purgeJobLedgerByOwner } from './jobs/ledger.ts';
 // GY-I19（#19）决策包 A 第 2 步：契约里**已冻结**的注销/删除申请 HTTP 面接线
 // （openapi.json 的 `requestAccountDeletion` / `getDeletionReceipt`）。
 //   - 申请/回执**复用既有**删除机制（`userDataDeletion`，见上方 GY-I16 装配）与
@@ -2192,6 +2196,25 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     },
     purgeOwnerData: (ownerId: string) => ocrPurgeOwnerData(ownerId),
   };
+  // GY-R71 补片 · 统一作业台账 `public.jobs`（闭集第九域，见 `JOBS_DELETION_MODULE` 的注释）。
+  //   - 门与台账写入面**同门**：`pool !== null`。有池才有台账行（写入走域 store 的 PG 事务），
+  //     也才有表级 `DELETE` 可走；
+  //   - 无池（`stub` / `preset_demo` / real 无池）⇒ **不注入**：那时台账一行都没被写出来，
+  //     追加一个"总是 0 行"的处理器只会让回执多一行假读数；而删不掉的台账行**不会**出现。
+  //   - 缺权（42501）/连接失败/行数不可读 ⇒ `purgeJobLedgerByOwner` 抛错 ⇒ 协议折叠
+  //     `blocked` + `HANDLER_FAILED`，⛔ 不折成 `completed`、也不折成 0 行。
+  const jobsLedgerDeletionStore: OwnerPurgeStore | null = pool === null
+    ? null
+    : {
+        async deleteAllByOwner(ownerId) {
+          return purgeJobLedgerByOwner(pool, ownerId);
+        },
+        async purgeOwnerData(ownerId) {
+          // 台账没有"幂等台账表"这一层：`idempotency: 0` 是**事实**（该表只有作业行），
+          // 不是"没查"。证据串因此是 `jobs:online-purged:<n>;jobs:idempotency-purged:0`
+          return { records: await purgeJobLedgerByOwner(pool, ownerId), idempotency: 0 };
+        },
+      };
   const userDataDeletion = createUserDataDeletion({
     favoritesStore,
     historyStore,
@@ -2235,6 +2258,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // `ocr:online-purged:<n>` / `:idempotency-purged:<n>` / `:tables:ocr_records=<n>,ocr_jobs=<n>`，
     // 并落库 0031（`ONLINE_EVIDENCE_MODULES` 已含该模块名）。
     ocrStore: ocrDeletionStore,
+    // GY-R71 补片 · 统一作业台账（`public.jobs`）：有真库连接池才注入（门与写入面同门）。
+    // 注入 ⇒ 闭集追加 `jobs`，注销时按 `owner_id` 删掉该主体在台账里的**全部**作业行
+    // （ocr / recognition / transcription / answer 四源），证据 `jobs:online-purged:<n>`。
+    ...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore }),
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock,

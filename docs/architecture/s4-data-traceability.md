@@ -52,7 +52,7 @@
 | 过期引用 | 事实 |
 | --- | --- |
 | `docs/verification/gy-i29-closure-20261018.md:90` 引用的 `services/api/src/privacy/log-redaction.ts` | 该文件**不存在**；日志脱敏由 `packages/privacy/redact.mjs` 承担，`services/api/src` 内调用点只有账本一处 |
-| 第三方删除「只有适配器没接」的说法 | 2026-10-26 前不止没接：`third_party_deletions` 在 `services/api/src` 的读写是**零**；现由 `services/api/src/privacy/third-party-deletion-pg.ts` 经 0044 两条函数读写（表仍不可直写）。**2026-10-28 复核再更正**：「端口未装配」已不成立——读侧端口装配在 `services/api/src/app.ts:2017`，回执投影接在 `services/api/src/routes/account-deletion.ts:148`；仍缺的是写侧调度（见 D13） |
+| 第三方删除「只有适配器没接」的说法 | 2026-10-26 前不止没接：`third_party_deletions` 在 `services/api/src` 的读写是**零**；现由 `services/api/src/privacy/third-party-deletion-pg.ts` 经 0044 两条函数读写（表仍不可直写）。**2026-10-28 复核再更正**：「端口未装配」已不成立——读侧端口装配在 `services/api/src/app.ts:2021`，回执投影接在 `services/api/src/routes/account-deletion.ts:148`；仍缺的是写侧调度（见 D13） |
 
 ### 0.4 本页不构成关单依据
 
@@ -72,14 +72,14 @@
 | D03 | 定位仅到地区、清 EXIF | 部分 | `docs/implementation-requirements.md:275` | `services/api/src/media/service.ts:1069` | 无定位接口，「不存原始坐标」无从取证 |
 | D04 | 分用途授权 | 部分 | `docs/implementation-requirements.md:275` | `services/api/src/routes/consents.ts:38` | 缺 location 与 training 两个 purpose |
 | D05 | 传输/敏感字段/媒体/备份受保护 | 部分 | `docs/implementation-requirements.md:276` | `deploy/postgres-cvm/sql/20-login-roles.sql:350` | 仓内无 TLS/介质加密落点 |
-| D06 | 日志不带令牌/密码/媒体/联系方式 | 部分 | `docs/implementation-requirements.md:276` | `services/api/src/app.ts:680` | 无统一日志脱敏入口，只有请求层白名单 |
+| D06 | 日志不带令牌/密码/媒体/联系方式 | 部分 | `docs/implementation-requirements.md:276` | `services/api/src/app.ts:684` | 无统一日志脱敏入口，只有请求层白名单 |
 | D07 | 保存至注销、单条删除、撤回 | 部分 | `docs/implementation-requirements.md:277` | `services/api/src/routes/favorites.ts:109` | 消息无删除路由；识别/语音/OCR 只软删 |
 | D08 | 注销即时撤会话角色、停新外发、分对象删除任务 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/routes/account-deletion.ts:205` | 真实模式整域 503，仅替身模式可用 |
 | D09 | 在线 7 日、备份 30 日、恢复重放 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/privacy/deletion-aging.ts:60` | 恢复重放未装配；无生产安装证据 |
 | D10 | 帖评保留、去身份、已注销用户、不可反查 | 部分 | `docs/implementation-requirements.md:279` | `services/api/src/community/authors.ts:112` | 进程内 Map（`services/api/src/community/authors.ts:92`）仍以 userId 为键可反查 |
 | D11 | 保留正文脱敏、不能脱敏的媒体隐藏/移除 | 部分 | `docs/implementation-requirements.md:280` | `services/api/src/community/purge.ts:24` | 注销时媒体批量清除未接线 |
 | D12 | 外发记录与接收方门禁 | 已实现 | `docs/implementation-requirements.md:281` | `services/api/src/privacy/ledger-pg.ts:451` | 真实外发通路未接，真库零 sent 记录 |
-| D13 | 第三方删除请求/完成/失败与证据 | 未实现 | `docs/implementation-requirements.md:281` | `services/api/db/migrations/0003_privacy_consent.sql:185` | 读侧端口与回执投影已装配（`services/api/src/app.ts:2017`）、写侧零调度，证据不落 |
+| D13 | 第三方删除请求/完成/失败与证据 | 未实现 | `docs/implementation-requirements.md:281` | `services/api/db/migrations/0003_privacy_consent.sql:185` | 读侧端口与回执投影已装配（`services/api/src/app.ts:2021`）、写侧零调度，证据不落 |
 | D14 | 训练单独授权、撤回 7 日清理衍生物 | 已搁置 | `docs/implementation-requirements.md:282` | 无（产品裁定首版不做） | 无缺口；开启训练即降级为未实现 |
 | D15 | 受影响模型停部署、删权重、重训重验 | 未实现 | `docs/implementation-requirements.md:283` | 无（`model_version` 只是回答标注） | 无部署登记、无停用开关、无权重删除 |
 | D16 | 匿名统计可保留、明细删除后重算 | 未实现 | `docs/implementation-requirements.md:284` | 无（仓内无统计面） | 无统计投影，重算与证据限定均无落点 |
@@ -108,7 +108,7 @@
   写回 `:650`；读面 `services/api/src/routes/exports.ts:42`（无池即 503，不降级内存账本 `:55`）；
   接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:205`，授权落库要求两类证据引用见
   `services/api/src/privacy/grant-pg.ts:63`。
-- **证据**：契约 `packages/contracts/openapi.json:1378`（`GET /me/exports`；2026-10-28 合并复核：#707 删掉 540 行错误响应后本锚由 `:1474` 落到 `:1378`，按符号 `"/me/exports"` 复取）；装配 `services/api/src/app.ts:2424`（`registerExportRoutes(app, config, pool, guards)`；2026-10-28 复核纠正：原引 `:2238` 实测是应用时钟注释段，按符号 `registerExportRoutes` 重锚）。
+- **证据**：契约 `packages/contracts/openapi.json:1378`（`GET /me/exports`；2026-10-28 合并复核：#707 删掉 540 行错误响应后本锚由 `:1474` 落到 `:1378`，按符号 `"/me/exports"` 复取）；装配 `services/api/src/app.ts:2451`（`registerExportRoutes(app, config, pool, guards)`；2026-10-28 复核纠正：原引 2238 行（本页取证时的读数） 实测是应用时钟注释段，按符号 `registerExportRoutes` 重锚）。
 - **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接。账本装配在 `services/api/src/app.ts:1007`（`egressPoolUsable` 才建 `createPostgresExportLedger`），同段 `//` 装配注释自述：real 模式
   在任何账本变更**之前** 503（零 `sent` 记录），替身/演示模式**不记账**（注释行按 `--symbol=strict` 不能落锚点，故只给同段代码行）。因此真库上取不到一条真实外发记录，
   「记录得住」这件事只有结构与读面证据，没有一条真实数据流过。这一条不把 D12 降级：能力（表、写面、读面、
@@ -150,7 +150,7 @@
 ### D06 日志不带令牌/密码/媒体/联系方式
 
 - **判定**：部分。需求 `docs/implementation-requirements.md:276` 后半。
-- **实现**：请求日志白名单 `services/api/src/app.ts:680`（`requestLogFields`）；「整条查询串一律不落」的落点是 `services/api/src/app.ts:666`（`logSafePath`，`:686` 被 `requestLogFields` 调用），挂载在 `services/api/src/app.ts:793`（`serializers: { req: requestLogFields }`）；
+- **实现**：请求日志白名单 `services/api/src/app.ts:684`（`requestLogFields`）；「整条查询串一律不落」的落点是 `services/api/src/app.ts:670`（`logSafePath`，`:690` 被 `requestLogFields` 调用），挂载在 `services/api/src/app.ts:797`（`serializers: { req: requestLogFields }`）；
   账本回执脱敏 `packages/privacy/redact.mjs:68`（`redactForLog`）与 `:99`（`assertNoSensitiveLeak`），
   唯一调用点（限 `services/api/src`）是 `services/api/src/privacy/ledger-pg.ts:824`。
 - **证据**：`services/api/src/privacy/log-redaction.ts` 不存在（见 §0.3 表格）。
@@ -183,7 +183,7 @@
   删除模块闭集 4 项固定 + 4 项条件追加（`services/api/src/privacy/user-data-deletion.ts:164-169`、`:202-207`），
   真实注销路径有效闭集 **8 项**（`:151-153` 自述）。
 - **证据**：`tests/integration/account-deletion-pg.mjs`，CI `.github/workflows/real-pg-integration.yml:189`。
-- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2276` 是 `available: config.executionMode !== 'real'`，
+- **缺口**：**这是本页最重要的一处修正**。`services/api/src/app.ts:2303` 是 `available: config.executionMode !== 'real'`，
   注释 `:2239-2246` 明写：real 模式整域不接线，两个 operation 一律 503 `PROVIDER_UNAVAILABLE`、`retryable: false`。
   也就是说「注销即时生效」这条在真实执行模式下**不可用**，只在 `stub`/`preset_demo` 成立。同一处 `:2259` 自陈
   外发撤销器与 `available` 门互斥，「两条路都到不了这里」（仅测试注入可达）。
@@ -246,7 +246,7 @@
   **已接进注销回执**——`services/api/src/privacy/third-party-deletion-projection.ts:277` → `services/api/src/routes/account-deletion.ts:148`
   （`thirdPartyRowsFor` 当次请求内预取一次）→ `:154`（`thirdPartyReceiptState`），契约字段 `third_party_state` 见 `packages/contracts/openapi.json:13834`
   （回执是 `getDeletionReceipt`，原页误作 `/me/exports`）；⑤ 真库端口在、**读侧已装配**——`services/api/src/privacy/third-party-deletion-pg.ts`
-  只经 0044 两条 `SECURITY DEFINER` 函数进出（表零 DML/SELECT）；装配四臂在 `services/api/src/app.ts:2017`（`:2021` 真库臂、
+  只经 0044 两条 `SECURITY DEFINER` 函数进出（表零 DML/SELECT）；装配四臂在 `services/api/src/app.ts:2021`（`:2025` 真库臂、
   `:2004` 不可用臂），`:2550` 交给注销路由；**写侧方法 `subscribeThirdPartyDeletion` 零调用者**（读数见「证据」）。
 - **库层证据（2026-10-26 增补；2026-10-28 复核更正两处符号名与一处 CI 锚）**：迁移
   `services/api/db/migrations/0044_third_party_deletion_persistence.sql:97` 建了唯一写路径
@@ -259,10 +259,10 @@
 - **证据（2026-10-26 起；2026-10-28 复核重取）**：`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（全在端口
   `privacy/third-party-deletion-pg.ts`，对表零 DML/SELECT）；`git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = **15 行**（原页记「0 行」；
   实测 `:158/:162/:166/:167/:336/:339/:562/:567/:1991/:1998/:2002/:2004/:2009/:2538/:2547`）；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口 `third-party-deletion-pg.ts:141`、实现 `:312`、`privacy/user-data-deletion.ts` 一处注释）⇒ **写侧零调用者**。
-- **缺口（2026-10-28 复核重写：原三条里两条已被代码证伪）**：① ~~端口未装配~~ 不成立——读侧装配在 `services/api/src/app.ts:2017`；② ~~适配器未在 `app.ts` 装配~~
-  不成立——装配在 `:2009`（仅注入、不 dispatch）；③ ~~投影没接进回执~~ 不成立——已接在 `services/api/src/routes/account-deletion.ts:148`→`:154`。
+- **缺口（2026-10-28 复核重写：原三条里两条已被代码证伪）**：① ~~端口未装配~~ 不成立——读侧装配在 `services/api/src/app.ts:2021`；② ~~适配器未在 `app.ts` 装配~~
+  不成立——装配在 `:2013`（仅注入、不 dispatch）；③ ~~投影没接进回执~~ 不成立——已接在 `services/api/src/routes/account-deletion.ts:148`→`:154`。
   **改判后的真实缺口只剩一条**：运行面上**没有写入口**（`subscribeThirdPartyDeletion` 零调用者，注销受理时不按接收方建行），叠加
-  `services/api/src/app.ts:2276` 的 `available` 门（`:2548` 是它的消费点 `accountDeletionWired`；real ⇒ 注销域 operation 一律 503）⇒ 真实执行模式下四件事一条都取不到；本项判「未实现」即按此口径，不按 §0.1「零命中」那一句。
+  `services/api/src/app.ts:2303` 的 `available` 门（`:2575` 是它的消费点 `accountDeletionWired`；real ⇒ 注销域 operation 一律 503）⇒ 真实执行模式下四件事一条都取不到；本项判「未实现」即按此口径，不按 §0.1「零命中」那一句。
 
 ### D15 受影响模型停部署、删权重、重训重验
 
@@ -309,8 +309,8 @@
 
 ### ★G1 第三方删除（判据：D13）
 
-表、协议、适配器、投影、真库端口都在；**2026-10-28 复核把缺口收窄到一条**：不是「未装配」（适配器在 `services/api/src/app.ts:2028`、读侧真库端口在 `:2017`、投影已接进注销回执 `services/api/src/routes/account-deletion.ts:148`），而是**写侧零调度 + 证据不落**。可复算：
-`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（就是那个端口；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` = 3 行（接口、实现、一处注释）⇒ 零调用者。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2276`，`:2548` 是它的消费点）；回执侧不用再动。
+表、协议、适配器、投影、真库端口都在；**2026-10-28 复核把缺口收窄到一条**：不是「未装配」（适配器在 `services/api/src/app.ts:2032`、读侧真库端口在 `:2021`、投影已接进注销回执 `services/api/src/routes/account-deletion.ts:148`），而是**写侧零调度 + 证据不落**。可复算：
+`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（就是那个端口；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` = 3 行（接口、实现、一处注释）⇒ 零调用者。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2303`，`:2575` 是它的消费点）；回执侧不用再动。
 这一条直接决定 AC23（`docs/implementation-requirements.md:585`）
 的「第三方证据」判不了。
 
@@ -339,7 +339,7 @@
 
 | 编号 | 事实 | 可复算 |
 | --- | --- | --- |
-| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2276` |
+| E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2303` |
 | E2 | 三条真库臂不在任何 workflow：`tests/integration/media-row-purge-pg.mjs`、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/integration/retention-clock-drill-pg.mjs` | 在 `.github` 下 grep 这三个脚本名，命中 0 行 |
 | E3 | 恢复重放只有纯函数，契约无恢复 operation | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | E4 | 加速演练 `exit 77` 是「未取得」，不是通过 | `tests/integration/retention-clock-drill-pg.mjs:20` |
@@ -364,9 +364,9 @@
 
 | 项 | 现在 | 升档需要的事实 | 判据落点 |
 | --- | --- | --- | --- |
-| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2276` |
+| D08 | 部分 | `available` 门不再是 `!== 'real'`，且真实模式有注销受理读数 | `services/api/src/app.ts:2303` |
 | D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:203` |
-| D13 | 未实现 | **2026-10-28 复核后只剩两项**（适配器注入、读侧真库端口、回执投影都已在）：① 注销受理时按接收方建行（调写侧端口 `subscribeThirdPartyDeletion`，现在零调用者）；② real 模式的注销域开门（`available` 门），否则回执不可达 | `services/api/src/app.ts:2017` 同侧装配区 |
+| D13 | 未实现 | **2026-10-28 复核后只剩两项**（适配器注入、读侧真库端口、回执投影都已在）：① 注销受理时按接收方建行（调写侧端口 `subscribeThirdPartyDeletion`，现在零调用者）；② real 模式的注销域开门（`available` 门），否则回执不可达 | `services/api/src/app.ts:2021` 同侧装配区 |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
 | G3 | **已消解（2026-10-26 复核）** | 已具备（撤条理由）：`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer` 在、`purge:retention` 已在必需清单、日级上界 1440 分钟已分档；若单元被删或必需清单回落到 2 项，按缺口重新记 | `tools/verify-purge-schedule.mjs:117` |

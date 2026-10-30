@@ -54,9 +54,15 @@ const ROWS_BY_TABLE = {
       id: makeUuid(901),
       revision: 1,
       ocr_id: makeUuid(911),
+      // GY-R71：取消事务要写统一台账，故 lockSql 现在带回 owner/media 三列（台账 target_id /
+      // entity_revision）。夹具照真表补上这三列 —— 缺了它们取消路径会 fail-closed 抛 503。
+      owner_user_id: makeUuid(921),
+      media_id: makeUuid(931),
+      media_revision: 2,
       state: 'failed',
       deadline_at: '2026-10-12T01:00:00.000Z',
       created_at: '2026-10-12T00:03:00.000Z',
+      updated_at: '2026-10-12T00:03:00.000Z',
       error_code: 'PROVIDER_TIMEOUT',
     },
   ],
@@ -65,9 +71,13 @@ const ROWS_BY_TABLE = {
       id: makeUuid(902),
       revision: 1,
       recognition_id: makeUuid(912),
+      owner_user_id: makeUuid(922),
+      media_id: makeUuid(932),
+      media_revision: 4,
       state: 'queued',
       deadline_at: '2026-10-12T01:00:00.000Z',
       created_at: '2026-10-12T00:02:00.000Z',
+      updated_at: '2026-10-12T00:02:00.000Z',
       error_code: null,
     },
   ],
@@ -76,9 +86,13 @@ const ROWS_BY_TABLE = {
       id: makeUuid(903),
       revision: 1,
       transcription_id: makeUuid(913),
+      owner_user_id: makeUuid(923),
+      media_id: makeUuid(933),
+      media_revision: 1,
       state: 'running',
       deadline_at: '2026-10-12T01:00:00.000Z',
       created_at: '2026-10-12T00:01:00.000Z',
+      updated_at: '2026-10-12T00:01:00.000Z',
       error_code: null,
     },
   ],
@@ -529,6 +543,12 @@ function cancelPool(rowsByTable, updatedRowsByTable) {
       }
       // #589 的取消审计调用（`CANCEL_AUDIT_SQL`，`SELECT public.record_admin_job_cancel_audit(…)`）：
       // 它没有 `FROM`、不碰任何作业/记录表，假池只要回一个 uuid 回执即可。
+      if (text.includes('INSERT INTO public.jobs')) {
+        // GY-R71：取消事务里的统一台账 upsert（`services/api/src/jobs/ledger.ts`）。假池只回"写成功"：
+        // 台账行的**形状**由 tests/unit/jobs-ledger-mapping.test.mjs 逐格断言、真库由
+        // tests/integration/jobs-ledger-pg.mjs 断言，这里不重复第三遍。
+        return { rows: [] };
+      }
       if (text.includes('record_admin_job_cancel_audit')) {
         return { rows: [{ audit_event_id: makeUuid(943) }] };
       }

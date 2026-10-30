@@ -219,17 +219,25 @@ describe('钉 c：target_ref.revision 不许再写成恒 1', () => {
 
   test('锚点必须仍然指在真值取用上（文件行数变动请去文本重定位，不要只改数字）', () => {
     const lines = sourceLines(JOBS_PG_PATH);
-    assert.ok(lines.length >= 420, `${JOBS_PG_PATH} 只剩 ${lines.length} 行，原 410-420 区间已不存在`);
-    const window = lines.slice(409, 420);
+    // GY-R71（2026-10-30）：这个文件的台账写入点让 `toAdminJobView` 整块下移，原来冻死的
+    // 「410-420」窗口不再覆盖那行赋值。窗口改为**按符号实时定位**（与上一条用例同一口径）：
+    // 判据从「数字落在某个固定区间」变成「窗口绕着那行赋值展开」，文件再长也不会假红；
+    // 而「页面里写的行号必须等于它」这条约束仍由上面那条用例把住，不会因为窗口变活而放宽。
+    const anchorIndex = lines.findIndex((line) => /revision:\s*targetRevision\s*\?\?/.test(line));
+    assert.ok(
+      anchorIndex >= 0,
+      `${JOBS_PG_PATH} 里找不到「revision: targetRevision ??」那行赋值：真值取用点没了，本钉子的前提已失效`,
+    );
+    const window = lines.slice(Math.max(0, anchorIndex - 4), anchorIndex + 5);
     const joined = window.join('\n');
 
     assert.match(
       joined,
       /targetRevision|UNCREATED_RECORD_REVISION/,
       [
-        `${JOBS_PG_PATH}:410-420 区间里既没有 targetRevision 也没有 UNCREATED_RECORD_REVISION——`,
+        `${JOBS_PG_PATH}:${anchorIndex + 1} 附近既没有 targetRevision 也没有 UNCREATED_RECORD_REVISION——`,
         '说明这个文件的形状变了（插入/删除了代码），锚点已失效。',
-        '处理办法：去文本重定位——在文件里搜索「revision: targetRevision ??」这行赋值，把页面里的 :413 改成它的真实行号；',
+        '处理办法：去文本重定位——在文件里搜索「revision: targetRevision ??」这行赋值，把页面里的行号改成它的真实行号；',
         '⛔ 不要只把数字挪 1-2 行凑过校验，那等于用假锚点换绿。',
       ].join('\n'),
     );
