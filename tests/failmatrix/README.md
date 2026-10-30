@@ -3,7 +3,7 @@
 一套**能重复跑**的权限/安全失败回归：表驱动、每条用例给真实读数、每条关键守卫配**负控制**
 （故意放宽守卫 → 对应用例必须真红 → 原字节恢复 → sha256 前后一致 → 复跑转绿）。
 
-**本片不宣称 #22 完成。** 这里交付骨架 + 249 条用例 + 26 条负控制，覆盖「身份与权限面
+**本片不宣称 #22 完成。** 这里交付骨架 + 249 条用例 + 27 条负控制，覆盖「身份与权限面
 （游客/越权/后台/会话与注销）」「媒体归属与访问凭据」「重复请求」「无效输入」「审核回调与 AI 失败」
 「下架缓存」「版本回写」「提示注入」「下架后引用跳转」。**真实 AI 外呼、真机、微信端到端、真实对象存储签名过期、
 断网重试、账号停用、注销到期清理、在途取消 409** 仍**未取得**（见末尾「未取得」一节，逐条写明为什么）。
@@ -19,7 +19,7 @@ node tests/failmatrix/run.mjs --only=C2        # 只跑某族（前缀匹配，D
 node tests/failmatrix/run.mjs --only=D1-01,C6-10 --json=out.json
 node tests/failmatrix/run.mjs --list           # 只列用例
 
-node tools/i22-failmatrix-negative-control.mjs               # 26 条负控制
+node tools/i22-failmatrix-negative-control.mjs               # 27 条负控制
 node tools/i22-failmatrix-negative-control.mjs --only=NC-09  # 只跑一条
 
 # 真实 PostgreSQL 17 臂（把权限面 C1–C4/C10/C11 跑在一次性真 PG 集群上，逐条记录 stub vs 真 PG 差异）
@@ -70,7 +70,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | `seams.mjs` | 受信 seam 用例表：`invoke` + `expect{code}` + `check`（审核回调 / AI 失败 / 下架缓存 / 版本回写） |
 | `run.mjs` | 表驱动 runner：判定 + 拒绝不变量 + 同形对照 + 按族/批次汇总 + `--json` 机读结果 |
 | `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11 的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过）。**R72-W12 起已接进 CI**：`.github/workflows/real-pg-integration.yml` 末尾的 job `failmatrix-real-17.11`（键 `failmatrix-real-17-11`）每次 PR 真跑它，`GY_PG_BIN` 由 PGDG 装出的 `postgresql-17` 提供（`/usr/lib/postgresql/17/bin`），`--json` 产物按 artifact 归档；判决口径见下节末「进 CI 后的判决口径」 |
-| `mutations.mjs` | 26 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
+| `mutations.mjs` | 27 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
 | `tools/i22-failmatrix-negative-control.mjs` | 负控制执行器：sha256 → 改 → 跑（必须全红）→ 原字节恢复 → sha256 复核 → 复跑（必须全绿） |
 | `tools/i22-failmatrix-evidence-table.mjs` | 证据表生成器：读 `--json` 结果生成三列表，条数与文档声明不符即失败；归档页保护基于真实路径比较 + 文件身份（`dev` + `ino`，硬链接也拦得住）+ 仓库内包含性校验，`--write` 无隐式默认页（必须显式 `--page=`，且目标必须在仓库内；点名归档页要 `--i-know-this-rewrites-archive`，带旗标也仍受条数一致性约束——页内条数必须等于 `EXPECTED`，所以当前 168 / 23 的归档页必被拒），对账不通过一律不写盘 |
 
@@ -133,13 +133,25 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | NC-22 | `privacy/exports-list.ts` 的 `ledger()` 懒建 catch：读面解析失败不再折成 503，原样上抛 | 单元测试 `exports-route-http.test.mjs`「连接池形状不合：装配期不抛（buildApp 能起），请求期 fail-closed 503」 |
 | NC-23 | `db/catalog.ts` 的 `readHomePreviews`：删掉语句超时单独分级（504 退化成 503） | 单元测试 `public-home.test.mjs`「database failures use safe contract errors, including statement timeout」 |
 | NC-24 | `knowledge/applicability-screen.ts` 的 `screenRegistrationMatch`：非 matched 的阻断码钉成 `INTERNAL`（不再 fail-closed 成 4xx） | 单元测试 `knowledge-applicability-screen.test.mjs`「GY-I08 装配：登记匹配非 matched 一律带 4xx，matched 保留记录但资格另判」 |
+| NC-25 | `routes/consents.ts` 的隐私政策读面删掉 `preHandler: guards.requireUser`（无会话也能读 `GET /me/privacy-policy`） | 单元测试 `privacy-policy-read.test.mjs`「路由已装配：routes/consents.ts 里有路径、noStoreHook 与 requireUser 闸门」 |
 
 > **NC-22/23/24（R34 追加）的靶子不是矩阵用例，而是既有单元测试**：`me/exports`、`public/home`、
 > 登记校验面这三个读面不进 HTTP 失败矩阵，守着它们的是 `tests/unit/*.test.mjs`。执行器为此支持
 > `unitWatch: [{ file, pattern }]`，`pattern` 是测试名的**字面子串**：改一处后必须**恰好那一条**转红
 > （`# fail ≥ 1` 且 `# pass = 0`），恢复原字节后必须**恰好一条**转绿（`# fail = 0` 且 `# pass = 1`）。
-> 隐私说明（`GET /me/privacy-policy`）本轮判为**负控制不成立**：该域无路由、无守卫代码、无守护测试，
-> 缺口性质是「缺实现 / 缺测试」——不为凑数新写弱测试去喂负控制，详见证据页 R34 小节。
+> **订正（2026-10-31，基线 `7ada259e`）**：本页 R34 小节此前写着「隐私说明（`GET /me/privacy-policy`）本轮判为
+> **负控制不成立**：该域无路由、无守卫代码、无守护测试，缺口性质是「缺实现 / 缺测试」」。这句是 R34 时点
+> （基线 `d4a47206`）的**真话，现在已过期**——不是当初写错。时间线：路由/守卫/测试由 `9bd14e56`
+> （2026-10-24，PR #534）引入，三件东西现在各自落在——路由与守卫 `services/api/src/routes/consents.ts:90-97`
+> （守卫在 `services/api/src/routes/consents.ts:92` 的 `preHandler: guards.requireUser`；空态口径见
+> `services/api/src/privacy/privacy-policy.ts:37-44`）、装配 `services/api/src/app.ts:2418` 的
+> `registerConsentRoutes`、守护测试 `tests/unit/privacy-policy-read.test.mjs:210`「路由已装配」（真库同形用例
+> `tests/integration/consent-zero-policy-pg.mjs:405-413`）。所以该域缺的是**矩阵用例 + 负控制**，不是实现：
+> 本片补了 **NC-25**（`tests/failmatrix/mutations.mjs` 末尾，删 `services/api/src/routes/consents.ts` 里那行
+> `preHandler: guards.requireUser,`，靶子是既有单测「路由已装配」），实测「变异后恰一红（`# fail 1 / # pass 0`）
+> ／恢复后恰一绿（`# fail 0 / # pass 1`）」。按派单 §4 当时未动条数读数；随后由指挥在本片内统一重算（负控制 26 → **27**
+> 、真库臂实跑面 168 → **180**，见 §「真实 PG 臂」）；矩阵用例仍未为隐私说明域新增（NC-25 只有 `unitWatch`、
+> `watch` 为空），因此证据页「仍未进矩阵的域」那两行的口径不变——**「进矩阵」与「有负控制」是两件事**。
 
 四条**必须知道**的实测结论（它们本身就是被测代码/工具链的性质，不是测试写法）：
 
@@ -180,7 +192,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 - **真实 PG 下的同一矩阵（R34 追加：已接真 PG 臂，差异见下节）**：`run-real.mjs` 已把权限面
   C1–C4/C10/C11 跑在一次性真 PG 17 集群上，逐条记录 stub vs 真 PG 差异。**未取得的部分**：media /
   社区投稿 / 异步 AI 作业（识别 / OCR / 转写 / 作业）在 real 模式下 fail-closed（对象存储、真实供应商、
-  真实媒体未接线），无法播种属主行，对应用例如实标 `not-runnable`（占 168 条里的 35 条），⛔ 不拿
+  真实媒体未接线），无法播种属主行，对应用例如实标 `not-runnable`（占 R29 时点 168 条里的 35 条；现表 180 条，这组读数未随现表重跑，见下节），⛔ 不拿
   「不存在」当「越权 404」的假同形。
 
   订正（2026-10-31，基线 `7ada259e`）：上面这条 R34 追加只写了「已接真 PG 臂」，容易被读成「CI 上已经在跑」。
@@ -190,10 +202,10 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 ## 真实 PG 臂（`run-real.mjs`）· stub vs 真 PG 差异结论
 
 本臂把矩阵 world 的内存 store 换成真 PG store（`execution_mode=real` + 真 `pool`），在**一次性
-PostgreSQL 17.11 集群**上实跑权限面 168 条（C1 37 + C2 24 + C3 27 + C4 18 + C10 23 + C11 39），
+PostgreSQL 17.11 集群**上实跑权限面 **180** 条（C1 37 + C2 24 + C3 36 + C4 21 + C10 23 + C11 39）；R29 时点读数是 168 条（C3 27 + C4 18），差额 12 条 = C3 的 9 条作业过滤腿（`C3-28`…`C3-36`）+ C4 的 3 条「注销后旧会话读 个人资料／目录／资料库」（`C4-19`/`C4-20`/`C4-21`）。
 逐条比 `status`+`code`（stub 期望 vs 真 PG 实际）并校验 `meta.execution_mode === 'real'`。
 
-实测读数（本机 PG 17.11，基线 `d4a47206`）：**168 条 = same 114 / different 19 / not-runnable 35**。
+实测读数（本机 PG 17.11，基线 `d4a47206`，**当时口径 168 条**）：**168 条 = same 114 / different 19 / not-runnable 35**；这组读数**没有**随现表 180 条重跑（真库臂要 `GY_PG_BIN`，沙箱内跑不了），别把 114/19/35 当成 180 条的分母。
 `same` 是「stub 与真 PG 行为逐条一致」的证据；`different` 是真实行为差异；`not-runnable` 是「real
 模式该域 fail-closed，无法播种夹具」。差异分五类：
 
@@ -299,7 +311,7 @@ DETAIL:  Failing row contains (d9151d10-…, fedfae4f-…, …, user, 1, 2026-10
 
 ## 与 `#22` 的关系
 
-`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 249 条真读数用例 + 26 条负控制**，
+`#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 249 条真读数用例 + 27 条负控制**，
 并把「在 main 上一跑就绿」与「哪些还没取得」分开记账。后续批次直接在 `cases.mjs` 追加族
 `C8+`/`E3+`、在 `seams.mjs` 追加 `D5+`，并在 `mutations.mjs` 追加对应负控制；
 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` / `FAMILY_COUNTS` / `BATCH_COUNTS` 随之抬高——

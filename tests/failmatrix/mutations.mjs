@@ -269,4 +269,19 @@ export const MUTATIONS = [
       { file: 'tests/unit/knowledge-applicability-screen.test.mjs', pattern: 'GY-I08 装配：登记匹配非 matched 一律带 4xx' },
     ],
   },
+  // ——— R72/W10 追加（基线 7ada259e）：隐私说明域（`GET /me/privacy-policy`）此前没有负控制。 ———
+  // 该域一度被判「负控制不成立」，理由是「无路由、无守卫代码、无守护测试」——在写它的那条基线
+  // （`d4a47206`；本页 R34 小节自述基线 `4b87e1d9` 同样早于引入提交）上这句话是**真的**；路由/守卫/
+  // 测试由 `9bd14e56`（2026-10-24，PR #534）引入后，三件东西都已存在（`routes/consents.ts:90-97`、
+  // 其中 `:92` 的 `preHandler: guards.requireUser`、`tests/unit/privacy-policy-read.test.mjs:210`）。
+  // 所以缺口不是实现，而是**矩阵用例 + 负控制**：本条只补负控制（靶子是既有单元测试，不新写测试）。
+  {
+    id: 'NC-25',
+    title: 'consents：删掉隐私政策读面的 requireUser（游客也能读 /me/privacy-policy）',
+    file: 'services/api/src/routes/consents.ts',
+    find: '    onRequest: noStoreHook,\n    preHandler: guards.requireUser,\n',
+    replace: '    onRequest: noStoreHook,\n    // 负控制：删掉 requireUser，读面不再要求会话\n',
+    watch: [],
+    unitWatch: [{ file: 'tests/unit/privacy-policy-read.test.mjs', pattern: '路由已装配' }],
+  },
 ];

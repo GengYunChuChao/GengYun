@@ -148,8 +148,8 @@ test('GY-I22 失败矩阵：用例表自洽（id 唯一、族/批次闭合、exp
 });
 
 test('GY-I22 负控制清单与当前产品代码同步（每条 find 恰好命中一次）', () => {
-  // 基线只准上调：R34 追加 3 条单元靶子（NC-22/23/24），23 → 26。
-  assert.ok(MUTATIONS.length >= 26, `负控制只剩 ${MUTATIONS.length} 条（基线 26 条）`);
+  // 基线只准上调：R34 追加 3 条单元靶子（NC-22/23/24），23 → 26；R72/W10 追加 NC-25（隐私说明域读面），26 → 27。
+  assert.ok(MUTATIONS.length >= 27, `负控制只剩 ${MUTATIONS.length} 条（基线 27 条）`);
   const seen = new Set();
   for (const mutation of MUTATIONS) {
     assert.ok(!seen.has(mutation.id), `负控制 id 重复：${mutation.id}`);
