@@ -744,9 +744,21 @@
     "target": "services/api/src/server.ts",
     "from": 62,
     "to": 68,
-    "reason": "本条目上一版记 from=27 → to=62（2026-10-21 按符号 `buildApp(` 的重锚）。GY-R70 合流 `upstream/main` 8b646ae1（#781「审核域显式启动批准」）在 `buildApp(...)` 之前插入审核域装配 6 行，该调用由 :62 下移到 :68；base 侧文档已写 :62，而 :62 现在是 `if (moderationAssembly.fatalLine !== null) {`（不含 `buildApp(` ⇒ 旧锚点本来就指错），故 from 记为 base 实际值 62、to 按符号重取 68。HEAD 第 68 行 = `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}), ...(moderationInjection === undefined ? {} : { moderationInjection }) });`，`buildApp(` 在 server.ts 内只出现 1 行（本次现测）。更早的 from=27（当时指到 `const pool = createPool(config.databaseUrl);`）保留在本理由与 git 历史里。",
+    "reason": "这一格说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」，锚点必须指到那一次调用。历史沿革：该调用早年在本文件第 27 行，靠过一条 `from: 27 → to: 62` 的 correction（GY-R68 时登记）；随后基线提交 8b646ae1（#781「explicit moderation startup approval」）在同一调用里补了一项装配参数，把它推到了**第 68 行** ⇒ 原来的 `to: 62` 在任何 `base != HEAD` 的全量 unit 上都会因「新行里找不到 symbol `buildApp(`」判红（base 第 62 行现在是 `if (moderationAssembly.fatalLine !== null) {`）。GY-R71（2026-10-30）按同一符号把这一格与登记一起复验到真实的第 68 行：`from` 取文档当前写着的 62（不是更早的 27 —— 登记表按「文档现值 → 新值」配对，写 27 配不上），`symbol` 仍是 `buildApp(`，旧行（base:62）不含该符号这一条也成立。",
     "kind": "correction",
     "symbol": "buildApp("
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 97,
+    "target": "services/api/src/conversations/service.ts",
+    "from": 636,
+    "fromEnd": 679,
+    "to": 695,
+    "toEnd": 738,
+    "reason": "旧区间 636-679 是台账里记的归属块，但 base 上锚点「async function createConversation(」实际已在第 681 行（旧区间上界差 2 行，只是靠 `verify-contract-status` 的 ±2 容差才一直通过，旧行窗口里**没有**这个符号）。GY-R71 让 `settleCodeOf` 保留 `PrivacyError` 的闭集码，`services/api/src/conversations/service.ts` 净 +14 行 ⇒ `--reanchor` 按符号重算归属块为 695-738（起止都是「+59」，不是机械的 +14 平移，因为旧值本来就短了 45 行）。",
+    "kind": "correction",
+    "symbol": "async function createConversation("
   },
   {
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
