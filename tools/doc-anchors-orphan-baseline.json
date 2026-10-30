@@ -92,6 +92,12 @@
       "accept": 77,
       "orphans": 3541,
       "outsideRed": 133
+    },
+    {
+      "why": "同一处行号位移收尾：OCR 页 5 行的 store-pg 裸锚点 :557→:558、createTurn 行 app.ts:2363→:2390、ai-ops E12 的 :557→:558——旧键 6 条失效、新键 6 条入册，均是数字平移，不是新增判据。",
+      "accept": 6,
+      "orphans": 3541,
+      "outsideRed": 133
     }
   ],
   "orphans": [
@@ -101,7 +107,7 @@
     "docs/architecture/ai-ops-spec-status.md|:150|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:225|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:301-328|ambiguous-block",
-    "docs/architecture/ai-ops-spec-status.md|:557|no-explicit-in-block",
+    "docs/architecture/ai-ops-spec-status.md|:558|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:70-71|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:840|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:841-845|ambiguous-block",
@@ -150,11 +156,11 @@
     "docs/architecture/contract-implementation-status.md|:49|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:51-62|no-explicit-in-block",
     "docs/architecture/contract-implementation-status.md|:531-533|no-explicit-in-block",
-    "docs/architecture/contract-implementation-status.md|:557|ambiguous-block",
-    "docs/architecture/contract-implementation-status.md|:557|ambiguous-block",
-    "docs/architecture/contract-implementation-status.md|:557|ambiguous-block",
-    "docs/architecture/contract-implementation-status.md|:557|ambiguous-block",
-    "docs/architecture/contract-implementation-status.md|:557|ambiguous-block",
+    "docs/architecture/contract-implementation-status.md|:558|ambiguous-block",
+    "docs/architecture/contract-implementation-status.md|:558|ambiguous-block",
+    "docs/architecture/contract-implementation-status.md|:558|ambiguous-block",
+    "docs/architecture/contract-implementation-status.md|:558|ambiguous-block",
+    "docs/architecture/contract-implementation-status.md|:558|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:70-76|ambiguous-block",
     "docs/architecture/gy-i19-user-backup-copies-design.md|:0|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:00|no-explicit-in-block",
