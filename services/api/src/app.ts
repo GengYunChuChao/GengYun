@@ -226,7 +226,7 @@ import { createCommunityModerationLink, type CommunityModerationLink } from './c
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 // GY-I14（#14）审核域：**追加式**装配（只加 import + 一个可选注入项 + 一处作业源注册 + 一处 decorate）。
 // 跨线披露：本块为纯追加（不改既有域行为、不重排既有装配）；回退 = 删除本块四处。
-import { createModerationService } from './moderation/service.ts'; import { demoAwareModerationPorts } from './moderation/demo-port.ts';
+import { createModerationService } from './moderation/service.ts'; import { demoAwareModerationPorts } from './moderation/demo-port.ts'; import { moderationServiceAssemblyOption } from './moderation/live-assembly.ts';
 import { createPostgresModerationLedger } from './moderation/ledger-pg.ts';
 import type { ModerationService } from './moderation/service.ts';
 import { createModerationJobSource } from './moderation/job-source.ts';
@@ -509,7 +509,7 @@ export interface BuildAppOptions {
     callbackKey?: string;
     // 规则层选项（**可选**，只供回归测试注入冻结时钟）。不传 ⇒ `createModerationService`
     // 内部沿用默认口径（真实 `Date.now` + 默认 50ms 预算，超时 ⇒ 隔离），与不传该字段等价。
-    ruleOptions?: Record<string, unknown>;
+    ruleOptions?: Record<string, unknown>; /** GY-R70（**只转发、绝不自行铸造**）：真实审核接线的显式批准能力，由 `moderation/live-assembly.ts` 的 `approveModerationLiveWiring()` 铸造；类型刻意是 `unknown`，判定只认铸造点的对象身份（形状相同的字面量/派生/克隆一律无效）。不传 ⇒ `real` 下审核域保持既有整域 503 fail-closed（与改前逐字相同）。 */ liveApproval?: unknown;
   };
   // GY-I16 收藏（#16）注入项。**全部可选**：不传时——收藏域新建内存 store；引用可用性端口
   // **已于 #167 接线**（缺省即同文件 `defaultVisibility`：`createWiredVisibilityPort`，可用性按
@@ -929,13 +929,13 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     store: communityStore,
     authors: communityAuthors,
   });
-  // GY-I14（#14）审核域：`real` ⇒ fail-closed 整域（未授权真实 tms/ims 供应商）；其余模式 ⇒ 替身端口
-  // （替身只回报"无结论"⇒ 隔离）。**应用装配路径永不注入真实适配器端口**（零端口注入）；唯一例外是显式环境开关 `MODERATION_DEMO_PORT=pass` 的**合成演示端口**（仅非 real，real 恒拒绝并记启动日志，见 `moderation/demo-port.ts`）。
-  // 本接线起：非 real 模式下**内容权威端口**默认是同源社区权威（除非显式注入）。
+  // GY-I14（#14）审核域：`real` ⇒ fail-closed 整域；其余模式 ⇒ 替身端口（替身只回报"无结论"⇒ 隔离）。**应用装配路径永不注入真实适配器端口**；唯一例外是 `MODERATION_DEMO_PORT=pass` 的合成演示端口（仅非 real，real 恒拒绝并记启动日志）。
+  // 非 real 模式下**内容权威端口**默认是同源社区权威（除非显式注入）。GY-R70 · **审核域真实接线的装配决定点**就在下面这一处：
+  // `moderationServiceAssemblyOption` 只在「real ∧ 凭据齐备（`config.moderationLive`）∧ 显式批准能力已铸造」三条同时成立时返回 `liveWiring`；否则该键不出现 ⇒ 保持既有整域 503 `PROVIDER_UNAVAILABLE`（`retryable: false`），⛔ 不放行、⛔ 不回退替身；拒绝只写一行闭集原因，不含异常文本/凭据。
   const moderationService: ModerationService =
     moderationInjection?.service ??
     createModerationService({
-      executionMode: config.executionMode,
+      ...moderationServiceAssemblyOption({ executionMode: config.executionMode, approval: moderationInjection?.liveApproval, credentials: config.moderationLive?.credentials ?? null, log: (line) => app.log.warn(line) }),
       ...demoAwareModerationPorts({ injected: moderationInjection?.ports, executionMode: config.executionMode, env: { MODERATION_DEMO_PORT: process.env['MODERATION_DEMO_PORT'] }, log: (line) => app.log.warn(line) }),
       ...(moderationInjection?.authority !== undefined
         ? { authority: moderationInjection.authority }
@@ -947,7 +947,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       ...(moderationInjection?.ruleOptions === undefined
         ? {}
         : { ruleOptions: moderationInjection.ruleOptions }),
-      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), // GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账
+      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), /* GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账。 */ imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore }), /* GY-R70：与 `speechAudioMedia` / `ocrImageMedia` / 识别域取值器**同形**——只转发媒体域**既有**的那两个实例（不新建存储、不读 env、不铸造批准能力；媒体域端口在本函数更靠后解析，故用取值器晚绑定）。审核域只有在**显式注入** `liveWiring`（含凭据与策略闸门）时才消费它；本装配路径不注入 `liveWiring` ⇒ 本键不改变任何行为（`real` 仍整域 fail-closed，逐字节同本片之前）。 */
     });
   // 社区侧的审核域联动端口（版本级任务 / 明确驳回否决 / 下架缓存失效 / 读取时重查）。
   // `communityInjection.moderation === null` 可显式关闭联动（回到接线前行为，供反例与隔离用）。
@@ -2478,8 +2478,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    `executionMode` 自建）。GY-R69 再增 `imageMedia` 槽位（OCR 图片字节来源的端口；值只转发**既有**
   //    `mediaObjectStore` + `mediaStore`，缺省 undefined ⇒ 域内退回未接线来源）。键集五键 → 六键，两条结构
   //    断言（`ocr-store-pg-wiring.test.mjs` 与 `ocr-http.mjs`）已同步登记；`store`/`provider`/`reference` 仍不得成为装配键。
-  const ocrPersistencePool = config.executionMode === 'real' ? pool : null; const ocrImageMedia = /* GY-R69：媒体域**既有**端口，与 `speechAudioMedia` 同形；本片只转发，不新建存储、不读 env、不铸造批准能力 */ { objectStore: mediaObjectStore, mediaRecords: mediaStore };
-  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia, imageMedia: ocrImageMedia }, ocrPersistencePool);
+  const ocrPersistencePool = config.executionMode === 'real' ? pool : null; const ocrImageMedia = /* GY-R69：媒体域**既有**端口，与 `speechAudioMedia` 同形；本片只转发，不新建存储、不读 env、不铸造批准能力 */ { objectStore: mediaObjectStore, mediaRecords: mediaStore }; /* GY-R70：下一行把**同一个** `ocrImageMedia` 再交给 `mediaWiring`（受理前媒体门）—— ⛔ 刻意不新建第二个字面量：两处消费的是同一对既有端口 ⇒ 永远同源（不会「受理看 A 桶、取字节看 B 桶」），也不在 app.ts 多出一处 objectStore 赋值位点（端口溯源审计把该位点数钉死为 3，本片不放宽）。装配层**不做放行判断**：判据全在域内（wiring 缺省 / 对象存储非真实适配器 ⇒ 仍 unwired，note 与状态码逐字不变）。 */
+  registerOcrRoutes(app, config, { guards: gatedGuards, consent: consentGate, egress: ocrEgress, history: ocrTerminalHistory, media: ocrMedia, imageMedia: ocrImageMedia, mediaWiring: ocrImageMedia }, ocrPersistencePool);
   // GY-I01 跨 kind 作业读面/取消面：`/jobs/{id}` 与 `/jobs/{id}/cancel` 的**唯一注册点**。
   // 各域以作业源形式接入，**共 6 个**（识别 + 转写 + 审核 + 合成 + OCR + 文字问答，即下面
   // `createJobRegistry` 的 6 条 `create*JobSource` 实参）；未接入的 kind ⇒ 与「作业不存在」同形 404。

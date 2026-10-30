@@ -558,6 +558,9 @@ export function loadConfig(env: Env = process.env): AppConfig {
     adminBootstrap,
     mediaAccessGrantOrigin,
     aiProviders,
+    // GY-R70：审核域真实接线的凭据片段（real 且共享配对齐备才非 null；不含策略/批准，
+    // 是否接线由 `moderation/live-assembly.ts` 决定）。追加一行，不动上方任何行号。
+    moderationLive: asModerationLiveConfig(env, executionMode),
     objectStorage,
     mediaObjectRefKey,
     chatProvider,
@@ -1261,4 +1264,60 @@ export function wechatStubSubjectStartupFields(
   return config.wechatStubSubjectIgnored === true
     ? { wechat_stub_subject_fixed: false, wechat_stub_subject_ignored: true }
     : { wechat_stub_subject_fixed: false };
+}
+
+// ===========================================================================
+// GY-R70 · 审核域（tms/ims）真实接线的**凭据搬运**
+//
+// 为什么追加在文件末尾（按追加而非插入）：`docs/architecture/contract-status.json` 与本仓
+// `docs/**` 把 `config.ts` 的若干行号区间当证据锚点（容差 ±2 行），在 `loadConfig` 之前插行会
+// 整片推走它们。类型用**接口声明合并**追加，因此 `AppConfig` 主体的行号也不动
+// （与上方 `rateLimit` 同一手法）。
+//
+// 口径（与 `asAiProviders` 同源，**不另立一套**）：
+//   · 只有 `real` 模式才可能非 `null`——stub / preset_demo 即使环境里有凭据也一律 `null`
+//     （替身/演示不得携带真实供应商凭据，杜绝「悄悄打了个真实电话」）；
+//   · 凭据只读 `TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` / `TENCENTCLOUD_SESSION_TOKEN`
+//     （审核与 TTS/OCR 用**共享配对**；id/key 任一缺失即 `null`，**不逐字段混配**）；
+//   · 返回对象经 `redactedCredentials()` 处理 ⇒ `JSON.stringify` 只会看到 `[REDACTED]`。
+//
+// ⛔ 本函数**不**给 `policySelectionVerified` / `executionAllowed`（`tools/ai-config.mjs` 对审核
+// 恒 `false`），也**不**给 `bizType`（那边是自描述占位值）。"可以真实外呼"必须由另一次显式批准
+// 动作给出，见 `moderation/live-assembly.ts` 的 `approveModerationLiveWiring()`。
+// ===========================================================================
+
+/** 审核域真实接线所需的凭据片段（结构上等于 `moderation/live-ports.ts` 的 `ModerationLiveCredentials`）。 */
+export interface ModerationLiveConfig {
+  /** TC3 凭据三元组（**只在内存**；`toJSON()` 已脱敏）。 */
+  readonly credentials: {
+    readonly secretId: string;
+    readonly secretKey: string;
+    readonly sessionToken: string;
+  };
+}
+
+/** `AppConfig.moderationLive`（接口声明合并追加：不动 `AppConfig` 主体的行号）。 */
+export interface AppConfig {
+  /**
+   * 审核域真实接线的凭据（`real` 且共享配对齐备时非 `null`；其余恒 `null`）。
+   *
+   * 有凭据**不等于**已接线：还要 `moderation/live-assembly.ts` 的显式批准能力，两者齐备才接线。
+   */
+  readonly moderationLive?: ModerationLiveConfig | null;
+}
+
+/**
+ * 组装审核域真实接线的凭据。只有 `real` 才可能非 `null`（见上方口径）。
+ *
+ * 本函数只读 env、只返回内存对象；不写文件、不打印、不产生任何网络行为。
+ */
+function asModerationLiveConfig(env: Env, executionMode: ExecutionMode): ModerationLiveConfig | null {
+  if (executionMode !== 'real') return null;
+  const credentials = asCredentials(env, {
+    secretIdEnv: 'TENCENTCLOUD_SECRET_ID',
+    apiKeyEnv: 'TENCENTCLOUD_SECRET_KEY',
+    sessionTokenEnv: 'TENCENTCLOUD_SESSION_TOKEN',
+  });
+  if (credentials === null) return null;
+  return Object.freeze({ credentials });
 }
