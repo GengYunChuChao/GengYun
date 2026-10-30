@@ -565,15 +565,29 @@ test('①b 每个 step（含 checkout / setup-node / `npm ci` 三条前置）都
   );
 
   // 覆盖自证：判据①b 的扫描面必须真的包含三条前置（否则这条判断会空转成绿）。
+  // R72-W12（基线 7ada259e）：`failmatrix-real-17-11` 给真 PG 臂加了第三条 `uses:`（归档产物
+  // `actions/upload-artifact`），旧写法「每个 job 恰 2 条 action」在那里成了假红 —— 那个数字本来想守的是
+  // 「checkout / setup-node 两条前置真的被解析到」，不是「一个 job 只许有两条 `uses:`」。
+  // 现在改成「≥ 2 条，且 checkout 与 setup-node 都必须在里面」：多一条归档 action 不算放空，
+  // 少一条真前置照样红（它们的封顶仍由下面 5 / 5 / 15 的等值断言逐条核对）。
   const jobs = parseWorkflow(text);
-  const kinds = jobs.flatMap((job) => job.steps.map((step) => [job.id, stepKind(step), step.timeout]));
+  const kinds = jobs.flatMap((job) => job.steps.map((step) => [job.id, stepKind(step), step.timeout, step.uses]));
   for (const job of jobs) {
     const mine = kinds.filter(([id]) => id === job.id);
-    assert.equal(
-      mine.filter(([, kind]) => kind === 'action').length,
-      2,
-      `job \`${job.id}\` 必须解析出 2 条 \`uses: actions/*\` 前置（checkout / setup-node），实测 `
-        + `${mine.filter(([, kind]) => kind === 'action').length}`,
+    const actionSteps = mine.filter(([, kind]) => kind === 'action');
+    assert.ok(
+      actionSteps.length >= 2,
+      `job \`${job.id}\` 必须解析出 ≥2 条 \`uses: actions/*\` 前置（checkout / setup-node 必在其内），`
+        + `实测 ${actionSteps.length}`,
+    );
+    const actionUses = actionSteps.map((entry) => String(entry[3]));
+    assert.ok(
+      actionUses.some((uses) => uses.startsWith('actions/checkout@')),
+      `job \`${job.id}\` 的 action step 里必须解析出 \`actions/checkout@<sha>\`，实测 ${actionUses.join(' / ')}`,
+    );
+    assert.ok(
+      actionUses.some((uses) => uses.startsWith('actions/setup-node@')),
+      `job \`${job.id}\` 的 action step 里必须解析出 \`actions/setup-node@<sha>\`，实测 ${actionUses.join(' / ')}`,
     );
     assert.equal(
       mine.filter(([, kind]) => kind === 'npm-ci').length,

@@ -33,7 +33,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CASES, FAMILIES } from './cases.mjs';
-import { API, SPECIES_ID, inject, START } from './world.mjs';
+import { API, SPECIES_ID, inject } from './world.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
@@ -144,7 +144,9 @@ async function createAccount(world, label, options = {}) {
     userId: user.id,
     tokenHashHex: hashToken(token),
     authEpoch: options.authEpoch ?? user.authEpoch,
-    expiresAt: new Date(options.expiresAt ?? START + 48 * 3600_000),
+    // 缺省过期时间取「库内 now() + 48h」：`created_at` 是列的 `DEFAULT now()`，两者同源才永远满足
+    // `CHECK (expires_at > created_at)`（详见 main() 里 dbNowMs 的注释）。
+    expiresAt: new Date(options.expiresAt ?? world.dbNowMs + 48 * 3600_000),
     audience: 'user',
   });
   return { kind: 'user', user, userId: user.id, token, session };
@@ -161,7 +163,9 @@ async function createAdmin(world, scopes, label = 'admin') {
     userId: adminId,
     tokenHashHex: hashToken(token),
     authEpoch: 1,
-    expiresAt: new Date(START + 3600_000),
+    // 同 createAccount：以库内 now() 为基准，否则 `admin_sessions` 的
+    // `CHECK (expires_at > created_at)` 同样会被冻结时钟撞穿。
+    expiresAt: new Date(world.dbNowMs + 3600_000),
     audience: 'admin',
   });
   return { kind: 'admin', userId: adminId, token, scopes };
@@ -370,7 +374,18 @@ async function main() {
   try {
     if (existsSync(dataDir)) throw new Error(`数据目录已存在，拒绝复用（请换 GY_I22_PG_ROOT）：${dataDir}`);
     runTool(TOOL('initdb'), ['-D', dataDir, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--locale=C']);
-    runDetached(TOOL('pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', `-p ${port} -c listen_addresses=127.0.0.1`, 'start']);
+    // Debian/Ubuntu 的 `postgresql-17` 把编译默认 `unix_socket_directories` 钉在 `/var/run/postgresql`，
+    // 普通用户（CI 里的 `runner`）写不了它 ⇒ `pg_ctl start` 会
+    // `FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.<port>.lock": Permission denied`。
+    // 本臂只走 TCP（`postgres://postgres@127.0.0.1:<port>`），socket 目录只影响那个 lock 文件 ⇒ 非 win32 上
+    // 把它显式指到数据目录；Windows 没有 unix socket，传 `-k` 会报错，故只在非 win32 加。
+    // 同仓 `tests/integration/*` 的自起集群脚本（`user-chain-e2e.mjs:313-315`、`media-row-purge-pg.mjs:105-110`
+    // 等十余个）都是同一写法 —— 它们早就踩过这个坑，本臂是最后一个补上的。
+    // ⚠ `-o` 只收**一个**字符串：数组必须 `join(' ')`，否则 postgres 会把 `,` 当成值的一部分
+    // （`FATAL: invalid value for parameter "port": "55902,-c"`）。
+    const startOptions = [`-p ${port}`, '-c listen_addresses=127.0.0.1'];
+    if (process.platform !== 'win32') startOptions.push(`-k ${dataDir}`);
+    runDetached(TOOL('pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', startOptions.join(' '), 'start']);
     clusterUp = true;
     await waitForReady(connectionString, 60000);
 
@@ -393,12 +408,27 @@ async function main() {
       requiresRealCredentials: true,
       mediaObjectRefKey: 'a'.repeat(64),
     };
+    // 应用时钟：**真 PG 臂走真实时钟**，不沿用 stub 臂那个冻结在 `START` 的脚本化时钟。
+    // 理由是库侧的硬约束：`sessions` / `admin_sessions` / `idempotency_keys` 都有
+    // `CHECK (expires_at > created_at)`，而 `created_at` 是列的 `DEFAULT now()`（真实墙钟），
+    // 生产代码也用真实时钟算 `expires_at = now + TTL`；把应用时钟冻在 2026-10-25 而库是真实今天，
+    // 任何带 `Idempotency-Key` 的写请求（连 `logout` 都带）都会把 `expires_at` 算到过去 ⇒ 必撞约束。
+    // 2026-10-30 的 CI 第二轮就是这么红的（`sessions_expires_after_creation`，DETAIL 里
+    // `expires_at=2026-10-27 04:00:00+00` 而 `created_at=2026-10-30 22:05:54+00`）。
+    // 冻结时钟只属于 stub 臂（那里没有库、也没有 CHECK）；real 臂要的是「和库同一口时钟」。
     const clock = {
-      now: () => new Date(START),
+      now: () => new Date(),
     };
     app = buildApp({ config, pool, now: clock.now });
 
-    const world = { app, auth: app.authService.store, clock, config };
+    // 播种时间基准取**库内 now()**（而不是 Node 的 Date.now()）：让夹具的 `expires_at` 与
+    // `created_at` 的 `DEFAULT now()` 同源，钳制关系不因容器时钟/时区漂移再翻。
+    const dbNowRow = await pool.query('SELECT (extract(epoch from now()) * 1000)::bigint AS ms');
+    const dbNowMs = Number(dbNowRow.rows[0].ms);
+    if (!Number.isFinite(dbNowMs)) throw new Error('未能从数据库取到 now()（会话播种的时间基准）');
+
+    const world = { app, auth: app.authService.store, clock, config, dbNowMs };
+    console.log(`[pg] db_now=${new Date(dbNowMs).toISOString()} app_clock=real`);
 
     // ------------------------------------------------------------ 夹具：账号
     const a = await createAccount(world, 'mx-a');
@@ -438,7 +468,18 @@ async function main() {
       if (name === 'fresh') {
         built = await createAccount(world, `mx-fresh-${caseId}`);
       } else if (name === 'expired') {
-        built = await createAccount(world, `mx-exp-${caseId}`, { expiresAt: START - 60_000 });
+        // 「已过期会话」不能靠 `expires_at` 直接给过去时间造：`created_at` 走列默认 `DEFAULT now()`，
+        // `CHECK (expires_at > created_at)` 会把这条 INSERT 直接拒掉（2026-10-30 CI 首跑就是这么红的）。
+        // 合规造法：先按正常未来时间插入，再把 `created_at` 与 `expires_at` **一起**回拨到过去——
+        // 两者都进过去，`expires_at > created_at` 仍成立；对冻结在 `START` 的应用时钟也确实已过期。
+        built = await createAccount(world, `mx-exp-${caseId}`);
+        await pool.query(
+          `UPDATE public.sessions
+              SET created_at = now() - interval '10 days',
+                  expires_at = now() - interval '9 days'
+            WHERE id = $1::uuid`,
+          [built.session],
+        );
       } else if (name === 'stale') {
         built = await createAccount(world, `mx-stale-${caseId}`);
         await world.auth.bumpUserAuthEpoch(built.userId);

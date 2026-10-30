@@ -69,7 +69,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | `cases.mjs` | HTTP 用例表：`id` / `method` / `path` / `headers` / `body` / `expect{status,code,etag}` / `check` / `sameShapeAs` / `concurrent` / `app`（缺省 `'main'`；`'jobs'` = 已接线作业端口的第二个 app） |
 | `seams.mjs` | 受信 seam 用例表：`invoke` + `expect{code}` + `check`（审核回调 / AI 失败 / 下架缓存 / 版本回写） |
 | `run.mjs` | 表驱动 runner：判定 + 拒绝不变量 + 同形对照 + 按族/批次汇总 + `--json` 机读结果 |
-| `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11 的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过） |
+| `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11 的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过）。**R72-W12 起已接进 CI**：`.github/workflows/real-pg-integration.yml` 末尾的 job `failmatrix-real-17.11`（键 `failmatrix-real-17-11`）每次 PR 真跑它，`GY_PG_BIN` 由 PGDG 装出的 `postgresql-17` 提供（`/usr/lib/postgresql/17/bin`），`--json` 产物按 artifact 归档；判决口径见下节末「进 CI 后的判决口径」 |
 | `mutations.mjs` | 27 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
 | `tools/i22-failmatrix-negative-control.mjs` | 负控制执行器：sha256 → 改 → 跑（必须全红）→ 原字节恢复 → sha256 复核 → 复跑（必须全绿） |
 | `tools/i22-failmatrix-evidence-table.mjs` | 证据表生成器：读 `--json` 结果生成三列表，条数与文档声明不符即失败；归档页保护基于真实路径比较 + 文件身份（`dev` + `ino`，硬链接也拦得住）+ 仓库内包含性校验，`--write` 无隐式默认页（必须显式 `--page=`，且目标必须在仓库内；点名归档页要 `--i-know-this-rewrites-archive`，带旗标也仍受条数一致性约束——页内条数必须等于 `EXPECTED`，所以当前 168 / 23 的归档页必被拒），对账不通过一律不写盘 |
@@ -195,6 +195,10 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
   真实媒体未接线），无法播种属主行，对应用例如实标 `not-runnable`（占 R29 时点 168 条里的 35 条；现表 180 条，这组读数未随现表重跑，见下节），⛔ 不拿
   「不存在」当「越权 404」的假同形。
 
+  订正（2026-10-31，基线 `7ada259e`）：上面这条 R34 追加只写了「已接真 PG 臂」，容易被读成「CI 上已经在跑」。
+  事实是 `run-real.mjs` 对 `.github/workflows/` **零命中** —— 它只在本机手跑过，CI 上一直没有读数。R72-W12 起
+  由 `real-pg-integration.yml` 末尾的 job `failmatrix-real-17.11` 每次 PR 真跑，判决口径见下节末。
+
 ## 真实 PG 臂（`run-real.mjs`）· stub vs 真 PG 差异结论
 
 本臂把矩阵 world 的内存 store 换成真 PG store（`execution_mode=real` + 真 `pool`），在**一次性
@@ -221,6 +225,107 @@ C11-39（「B 仍能读自己的会话」正控制）由 200 变为 401 `SESSION
 （`real` 而非 `stub`）。`tests/unit/gy-i22-failmatrix-real.test.mjs` 锁住「缺 `GY_PG_BIN` ⇒ 77」与
 「权限面覆盖范围 = 180 条同源」两条契约。其中 9 条作业过滤腿（`app: 'jobs'`）在本臂记「不跑」：
 它们依赖已接线的内存作业端口种子，real + 真库没有作业读权威可播种（stub 臂与单测里全跑）。
+
+### 进 CI 后的判决口径（R72-W12，基线 `7ada259e`）
+
+这条臂从 R72 起在 CI 上有读数。job 是 `.github/workflows/real-pg-integration.yml` **末尾追加**的
+`failmatrix-real-17.11`（键 `failmatrix-real-17-11`，`runs-on: ubuntu-24.04`，job 级封顶 55 分钟 = Σ step 封顶
+45 + 前置余量 10）。它**不**吃 `services.postgres`：脚本自己 `initdb` 一次性集群，job 只负责用 PGDG 源装
+`postgresql-17`（装完先自证 `initdb --version` 主版本是 17），把 `/usr/lib/postgresql/17/bin` 传给 `GY_PG_BIN`，
+另给 `GY_I22_PG_ROOT`（脚本唯一读的数据根键）与 `PGCLIENTENCODING: UTF8`，然后跑
+`node tests/failmatrix/run-real.mjs --json="$RUNNER_TEMP/failmatrix-real/real.json"`，产物按 artifact 归档 14 天。
+
+**不可静默通过 —— 两条独立判决，任一成立就红：**
+
+1. **退出码**：`77` = 没拿到 17 的服务端二进制 ⇒「未取得」，job 把它显式升级成 `exit 1`
+   （脚本头注释写的就是「77 = 未取得，不是通过」）；其它非 0 原样透出。⛔ workflow 里**不传**任何放宽跳过的
+   开关/环境变量（守卫 `tests/unit/ci-real-pg-wiring.test.mjs` 对这类字样在**任何** workflow 里出现即判红）。
+2. **机读自证**：`exit 0` 之后再读一遍 `--json` 产物（node，不是 shell 数值闸门），要求「总条数 > 0」且
+   「三档计数之和 `same + different + not_runnable` === 总条数」，并顺带核 `rows.length === 总条数`、
+   `execution_mode === 'real'` —— 「打完成绩也退 0」「产物被清空」这两类回归都在这里红。
+   ⛔ **不断言 `different === 0`**：差异正是这条臂的产品，全 `same` 反而应该先怀疑用例没换代；
+   ⛔ **不断言总条数恰好 180**：`180` 是**今天**用例表的口径，硬钉等于把「加一条用例」变成假红。
+
+**读数口径要对齐的两个数字**：`168 条 = same 114 / different 19 / not-runnable 35` 是基线 `d4a47206` 上**本机
+PG 17.11** 手跑的读数（当时权限面 `C3` 27 条 + `C4` 18 条）；当前用例表是 **180 条**（`C3` 36 / `C4` 21，由
+`tests/unit/gy-i22-failmatrix-real.test.mjs` 的「同源 = 180 条」断言锁着）。180 条口径的真读数已由 CI 产出，见下节。
+
+### 首个真读数（2026-10-31，运行 `41137232998` / job `124342580280`，head `439970c2`）
+
+这是这条臂**第一次在 CI 上跑完**并留下可复查的读数（artifact `failmatrix-real-ecd95703…`，`real.json` 89945 字节）：
+
+| 档 | 条数 | 含义 |
+| --- | --- | --- |
+| `same` | 116 | 真 PG 与 stub 判定一致 |
+| `different` | 20 | 真 PG 下的实际与 stub 期望不同（**这是本臂的产品，不是失败**） |
+| `not-runnable` | 44 | real 模式下该域 fail-closed、夹具不可播种 |
+
+族分布与用例表一致：`C1` 37 / `C2` 24 / `C3` 36 / `C4` 21 / `C10` 23 / `C11` 39 = 180；产物里
+`execution_mode: "real"`、`postgres: 17.11`、`base_commit: 439970c2…`。
+
+`different` 的几条典型（stub 期望 → real 实际）：`C1-30` `401 SESSION_REQUIRED → 503 PROVIDER_UNAVAILABLE`、
+`C2-11/12/13` `404 NOT_FOUND → 503 PROVIDER_UNAVAILABLE`、`C2-18` `404 → 403 CONSENT_REQUIRED`、
+`C3-15` `200 → 503`，以及反向的两条 `C3-19`/`C3-20` `503 PROVIDER_UNAVAILABLE → 200`（那两处在 real 下**已接线**、
+不再 fail-closed）。`not-runnable` 44 条的成因集中在「夹具不可用」：社区投稿（审核管线未接线）10、作业过滤腿 9、
+注销受理 5、OCR 5、识别 4 …。
+
+⛔ 这 20 条差异**不是**要「修绿」的：本臂只负责把 stub 期望与真库实际并排记下来；哪条差异说明产品该改、哪条说明
+用例期望该改，属后续批次，每条都要单独给依据。CI 判决刻意**不**断言 `different === 0`（见上节）。
+
+### CI 首跑记录（2026-10-31，运行 `41135206295`）· 一次**真**失败，已修
+
+首跑不是绿的，而且红得有价值 —— 它暴露了一个**只有 Debian 系才存在、Windows 本机永远复现不了**的缺陷：
+
+```
+[pg] bin=/usr/lib/postgresql/17/bin
+[pg] dataDir=/home/runner/work/_temp/gy-i22-pg/gy-i22-failmatrix-realpg-4347-54067f2a port=36271
+真 PG 臂 FAIL：Error: Command failed: /usr/lib/postgresql/17/bin/pg_ctl -D … -o -p 36271 -c listen_addresses=127.0.0.1 start
+FATAL:  could not create lock file "/var/run/postgresql/.s.PGSQL.36271.lock": Permission denied
+```
+
+根因：PGDG 装出来的 `postgresql-17` 把编译默认 `unix_socket_directories` 钉成 `/var/run/postgresql`，而 runner 普通用户
+写不了那个目录 ⇒ `pg_ctl start` 拿不到 socket lock。**同仓 `tests/integration/*` 十余个自起集群脚本早就用
+`if (process.platform !== 'win32') options.push('-k ' + dataDir)` 避开了**（`user-chain-e2e.mjs:313-315`、
+`media-row-purge-pg.mjs:105-110`），只有这条臂漏了 —— 因为它此前从没在 Linux 上跑过。
+
+修法（`tests/failmatrix/run-real.mjs`）：`pg_ctl -o` 的选项改成数组拼装，非 win32 上追加 `-k <dataDir>`；
+本臂只走 TCP，socket 目录只影响这个 lock 文件，不影响任何断言。首跑日志另外证明了两件事：**job 结构、装包、
+主版本自证、env 传递都是对的**（`initdb (PostgreSQL) 17.11` 自证通过、`GY_PG_BIN`/`GY_I22_PG_ROOT` 都到了脚本里）。
+
+### CI 第二轮（2026-10-31，运行 `41135701430`）· 又一次**真**失败：夹具的时间炸弹
+
+socket 修掉之后集群起来了、全链迁移也跑过去了，step 6 改红在**播种第一个账号**：
+
+```
+ERROR:  new row for relation "sessions" violates check constraint "sessions_expires_after_creation"
+DETAIL:  Failing row contains (d9151d10-…, fedfae4f-…, …, user, 1, 2026-10-27 04:00:00+00, null, 2026-10-30 22:05:54.519484+00).
+    at async createAccount (…/tests/failmatrix/run-real.mjs:143:19)
+    at async main (…/tests/failmatrix/run-real.mjs:415:15)
+```
+
+根因是**夹具把会话过期时间写成了冻结时钟**：`sessions` 表有 `CHECK (expires_at > created_at)`，而
+`created_at` 走列默认 `DEFAULT now()`（真实墙钟）、生产 `createSession()` 也不写它；夹具却用
+`START + 48h`（`world.mjs:32` 的 `START = 2026-10-25T04:00Z` ⇒ `2026-10-27T04:00Z`）当 `expires_at`。
+墙钟一走过 `2026-10-27`，这条 INSERT 就必撞约束 —— 也就是说这条臂**自带保质期**，R29 当时本机时间还在
+窗口内，所以「历史上绿过」；它从没在 CI 上跑过，也就没人被这个炸弹炸到。
+
+修法（`tests/failmatrix/run-real.mjs`，不改生产代码、不动任何断言），三处同源：
+
+1. **真 PG 臂改用真实时钟**：`clock.now` 从 `() => new Date(START)` 改成 `() => new Date()`。冻结时钟只属于
+   stub 臂（那里没有库、也没有 CHECK）；real 臂必须和库同一口时钟。这一条是**根因级**的——不只 `sessions`，
+   `admin_sessions` 与 `idempotency_keys` 也有同样的 `CHECK (expires_at > created_at)`，而生产代码用应用时钟算
+   `expires_at = now + TTL`；时钟冻在过去，任何带 `Idempotency-Key` 的写请求（连 `logout` 都带）都会算到过去。
+2. **播种时间基准取库内 `now()`**（`SELECT (extract(epoch from now())*1000)::bigint` → `world.dbNowMs`）：
+   `createAccount` 缺省 `dbNowMs + 48h`、`createAdmin` 缺省 `dbNowMs + 1h`，与 `created_at` 的 `DEFAULT now()`
+   同源，钳制关系不因容器时钟/时区漂移再翻。
+3. **「已过期会话」改合规造法**：不再给 `expires_at` 一个过去时间（那必撞 CHECK），改为**先正常插入、再把
+   `created_at` 与 `expires_at` 一起回拨**（`-10 days` / `-9 days`，`expires_at > created_at` 仍成立，对应用时钟
+   确实已过期）。
+
+启动行会多打一行 `[pg] db_now=… app_clock=real`，把时钟口径落在日志里。`START` 这个常量从此只服务 stub 臂。
+
+这两轮红是**把臂接进 CI 这件事本身的收益**：两个缺陷（Debian socket 目录、夹具时间炸弹）在 Windows 本机
+都复现不了，只有真跑一次 Linux + 真 PG 才会现形。
 
 ## 与 `#22` 的关系
 
