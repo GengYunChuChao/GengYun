@@ -9,6 +9,7 @@
 | 数据关系／权限／状态 | [数据字典](../architecture/data-dictionary.md)、[状态协议](../architecture/state-contract.md) |
 | 当前关键决策／历史 ADR | [指南](../development-guide.md#5-接口契约与关键决策)、[ADR-001](../architecture/adr-001-initial-architecture.md) |
 | 配置与本地排查 | [完整配置](configuration.md)、[本地开发](local-development.md) |
+| 本地受控环境（一条命令起 PG + stub API） | [本地环境运行手册](local-env-runbook.md) |
 | 用途政策导入（`consent_policies` 的唯一写入途径） | [运维导入](consent-policy-import.md) |
 | 真实能力配置自检 | [能力自检](real-capability-selfcheck.md) |
 | 数据库运行／回滚细节 | [组件交接](../verification/database-run-handoff.md)及其固定 SHA 验证页 |
