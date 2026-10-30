@@ -376,8 +376,8 @@
     "line": 114,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
-    "to": 376,
-    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+    "to": 377,
+    "reason": "旧锚点本来就指错：services/api/src/ocr/store-pg.ts:359 是 \function recordValues(row: OcrRow): unknown[] {，不是 createPostgresOcrStore；真值是该函数的声明行（登记时应为 376）。GY-R71（2026-10-30）给 ocr 写点加事务与一行台账 upsert，声明行下移到 HEAD :377 export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore { —— 按符号 createPostgresOcrStore 把 to 从 376 订正到 377（文档侧同步写成 :377）。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -742,9 +742,9 @@
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
     "line": 77,
     "target": "services/api/src/server.ts",
-    "from": 27,
+    "from": 62,
     "to": 68,
-    "reason": "旧锚点 27 在 base 上指到 `const pool = createPool(config.databaseUrl);`，与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪走，27 只是它早年的位置）；本提交按符号 `buildApp(` 改指 HEAD 第 68 行 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，不是 27+1 的差值平移。**GY-R71（2026-10-30）订正 to 62 → 68**：这条 correction 记的是它落地那一刻的读数，之后 `services/api/src/server.ts` 又长了几行（合成 / 审核注入装配），`buildApp(` 从 62 下移到 68。本片只改台账写入点、不碰 server.ts，但一提交就有了 diff 面，静默失效的旧数字会被 correction 验真抓住 —— 按符号重定位，别按差值平移。",
+    "reason": "旧锚点 62 在 base 上指到 `if (moderationAssembly.fatalLine !== null) {`（装配的失败分支），与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关；`services/api/src/server.ts` 在 base 之后又长了几行（合成 / 审核注入装配），该调用已下移到 :68 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，`buildApp(` 在文件里 4 次命中但只有这一处是 `const app =` 赋值。**GY-R71（2026-10-30）订正 from 27 → 62、to 62 → 68**：这条 correction 原来写的是 27（W2 之前的位置），但文档那一行当时已经写的是 62，登记表与文档对不上，验真只会在「目标文件本提交有改动」时才跑，所以一直没被抓住；本片一提交就有 diff 面，两处一起按符号重定位。",
     "kind": "correction",
     "symbol": "buildApp("
   },
@@ -891,5 +891,26 @@
     "kind": "correction",
     "symbol": "errorCode: (error && error.code) || ''",
     "reason": "旧锚点 137 在 base（真实 main 53354fe 的 historydetail.js，F3 改动前）上已经是 recognition 分支 `setData(Object.assign(...))` 的收尾右括号（`})` 一类），不是该句要引的「把错误码交给 state-view」；真正对应的是失败分支里的 `errorCode: (error && error.code) || ''`。F3 只新增两行，旧号 137 因此偶然落到新树第 137 行的 `raw: null …` 字段上；机械 137+2 只会落到另一个收尾括号，仍不是该字段。新树（待提交 HEAD）该字段在 :160，`errorCode: (error && error.code) || ''` 在本文件只出现 1 次（本次现测），故按符号取 :160。"
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 126,
+    "target": "services/api/src/admin/ops/jobs-pg.ts",
+    "from": 17,
+    "fromEnd": 22,
+    "to": 310,
+    "kind": "correction",
+    "symbol": "UNCREATED_RECORD_REVISION",
+    "reason": "P11 那行的「依据」原来指的是本文件头部的读面自述第 17-22 行（整段 `/** … */` 里的读面口径），那段是**散文**，`target_ref.revision` 的真值取用并不在那里。GY-R71（2026-10-30）在 `services/api/src/admin/ops/jobs-pg.ts` 插入统一台账写入点后该处整体下移，机械平移只会把散文锚挪到另一段散文；本片按**符号**把它改指真正定义那个下限常量的声明行（HEAD :310 `const UNCREATED_RECORD_REVISION = 1;`）。base 的 17-22 里没有 `UNCREATED_RECORD_REVISION`（那段自述没提这个常量），HEAD 的 :310 就是它的声明 —— 这是纠正，不是平移。"
+  },
+  {
+    "doc": "docs/verification/gy-r28-db-error-retryable-20261021.md",
+    "line": 151,
+    "target": "tests/unit/recognitions-store-pg.test.mjs",
+    "from": 725,
+    "to": 753,
+    "kind": "correction",
+    "symbol": "08006",
+    "reason": "该行说的是「同类测试用的是 `08006`（真瞬态），断言 `retryable === true`」；旧锚点 725 在 base 上指的是那个 `test('错误折叠：…')` 的**声明行**（整块的入口，本身不含 `08006`）。GY-R71（2026-10-30）给识别域写点加事务与台账行，同一批单测整体下移；本片按**符号**把它改指那条断言本身（HEAD :753 `code: '08006'`）。base 的 725 里没有 `08006`（它只是 test 声明行），HEAD 的 :753 有 —— 纠正，不是机械平移。"
   }
 ]
