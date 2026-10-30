@@ -74,6 +74,12 @@
       "accept": 2,
       "orphans": 3542,
       "outsideRed": 132
+    },
+    {
+      "why": "R72 外发调用账本片合流 #789 后：三份历史取证页的裸锚点因 screen.ts +113 行而不再落在实质行（陈旧 3 条），按 --write-orphan-baseline 现算删掉；本次新增 0 条、判据一字未改，不是放宽。",
+      "accept": 0,
+      "orphans": 3542,
+      "outsideRed": 129
     }
   ],
   "orphans": [
@@ -3658,9 +3664,6 @@
     "docs/verification/gy-i09i10-recog-20261019.md|tests/unit/recognitions-candidates-selection.test.mjs:529|SUSPECT",
     "docs/verification/gy-i11-voice-input-20261021.md|miniprogram/pages/voice/voice.js:392|SUSPECT",
     "docs/verification/gy-i11-voice-input-20261021.md|voice.js:757|SUSPECT",
-    "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
