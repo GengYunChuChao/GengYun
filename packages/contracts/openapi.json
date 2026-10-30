@@ -2678,8 +2678,8 @@
     "/herbicides": {
       "get": {
         "operationId": "listHerbicides",
-        "summary": "除草剂列表分页 + q/登记号收窄；游标按过滤前的页派生",
-        "description": "作用域 user：需登录会话；只有 q 与 registration_number 两个收窄条件，加 cursor/limit（1..50）；200 返回 {items,next_cursor} + no-store、列表不发 ETag；引用不可见的行整条剔除，而游标仍按过滤前的页派生 ⇒ 单页可见条数可能少于 limit，翻页不会因过滤而漏行或重行（routes/knowledge.ts:137-146）；游标不合法/过期 400 INVALID_CURSOR；数据来自 packages/reference 适配层，未装配 ⇒ 503 PROVIDER_UNAVAILABLE；不需要 Idempotency-Key 与 If-Match。",
+        "summary": "除草剂列表分页 + q/登记号/作物/地区收窄；游标按过滤前的页派生",
+        "description": "作用域 user：需登录会话；收窄条件为 q 与 registration_number，另接 crop_id 与 region_code（参数名与校验同 /knowledge：crop_id 为目录内作物编号，region_code 须匹配 ^33[0-9]{4}$，取值不合法 400 INVALID_REQUEST），加 cursor/limit（1..50）；200 返回 {items,next_cursor} + no-store、列表不发 ETag；引用不可见的行整条剔除，而游标仍按过滤前的页派生 ⇒ 单页可见条数可能少于 limit，翻页不会因过滤而漏行或重行（routes/knowledge.ts:137-146）；游标不合法/过期 400 INVALID_CURSOR；数据来自 packages/reference 适配层，未装配 ⇒ 503 PROVIDER_UNAVAILABLE；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "herbicides"
         ],
@@ -2702,6 +2702,23 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 80
+            }
+          },
+          {
+            "name": "crop_id",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          },
+          {
+            "name": "region_code",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "pattern": "^33[0-9]{4}$"
             }
           },
           {
