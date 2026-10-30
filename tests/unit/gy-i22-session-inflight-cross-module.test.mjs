@@ -25,7 +25,11 @@
  *   该列端点前移，不修改任何实现文件。注销/账号版本前进/过期用**真实**存储 API。
  * - 后台权限降级用**只读过滤包装** `listAdminScopes`（真实实现按 `admin_scopes.revoked_at IS NULL`
  *   过滤，语义等价），因为内存存储没有"撤回 scope"的写口。
- * - 未放宽任何既有断言：本文件只**新增**用例，不修改、不跳过任何既有用例。
+ * - `PUT /me/profile` **写面**在本夹具（没有 `pool`）里正常态就是 503 `PROVIDER_UNAVAILABLE`：
+ *   它证明的是"该面已注册、共享守卫放行了有效令牌、矩阵确实遍历到它"，**不是**档案读写可用。
+ *   真库下的档案读写不在本文件口径内（由 `tests/integration/**` 与真实环境验收覆盖）。
+ * - 未放宽任何既有断言：既有断言只做**计数同步**（16 → 17 个面，随新增写面）与标题文案同步，
+ *   严格度一条未动、一条未跳过；同时**新增**了「档案写面进四态矩阵」与「无 pool ⇒ 503 夹具口径」两条覆盖。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -67,6 +71,24 @@ const READ_FACES = Object.freeze([
   { label: '作业 GET /jobs/{id}', method: 'GET', path: `${API}/jobs/${ABSENT_UUID}` },
 ]);
 
+/**
+ * `PUT /me/profile` 写面（issue #5 的越权/失效面缺口：这个写面此前没有任何 HTTP 级证据）。
+ * 请求形状**逐字段**对齐 `services/api/src/routes/profile.ts` 的 body schema：
+ * `additionalProperties: false`，只放 `crop_id` / `region_code` / `region_catalog_version`
+ * 三个 required 字符串，且 `region_code` 必须匹配 `^33[0-9]{4}$`；头方面
+ * `idempotency-key` 必须 8–128 字符（否则 400 `IDEMPOTENCY_KEY_REQUIRED`），
+ * `if-match` 必须形如 `"1"`（否则 428 `REVISION_REQUIRED` / 400 `INVALID_REQUEST`）。
+ * 形状或头不合法会先被 400/428 挡掉，那样拿到的就不是"写面被鉴权拒绝"的证据。
+ * 单独提出来是为了让下面「正常态 503」那条用例复用**同一个**对象（N1 负控制只需删数组里的一行）。
+ */
+const PROFILE_WRITE_FACE = Object.freeze({
+  label: '档案写 PUT /me/profile',
+  method: 'PUT',
+  path: `${API}/me/profile`,
+  headers: { 'idempotency-key': 'gy-i22-profile-put-0001', 'if-match': '"1"' },
+  payload: { crop_id: 'gy_i22_crop_0001', region_code: '330000', region_catalog_version: 'gy-i22-catalog-v1' },
+});
+
 const WRITE_FACES = Object.freeze([
   {
     label: '媒体受理 POST /media/uploads',
@@ -82,6 +104,7 @@ const WRITE_FACES = Object.freeze([
     headers: { 'idempotency-key': 'gy-i22-community-post-0001' },
     payload: { title: CLEAN_TITLE, body: CLEAN_BODY, media_ids: [] },
   },
+  PROFILE_WRITE_FACE,
 ]);
 
 const USER_FACES = Object.freeze([...READ_FACES, ...WRITE_FACES]);
@@ -251,9 +274,11 @@ async function expectUniformRejection(app, faces, token, status, code, note) {
 // 1. 游客矩阵（同时充当"该面确实挂守卫"的结构性证明）
 // ---------------------------------------------------------------------------
 
-test('跨模块·游客矩阵：无令牌在全部 16 个受保护面一致 401 SESSION_REQUIRED，且错误封套逐字节同形', async (t) => {
+test('跨模块·游客矩阵：无令牌在全部 17 个受保护面一致 401 SESSION_REQUIRED，且错误封套逐字节同形', async (t) => {
   const h = await makeFixture(t);
-  assert.equal(USER_FACES.length, 16, '矩阵应覆盖 14 个读面 + 2 个写面');
+  // 17 = 14 个读面 + 3 个写面（媒体受理 / 社区投稿 / 档案写）。面数由数组长度推导，
+  // 但这里**钉死**具体数字：任何一面被悄悄移出矩阵都必须让本条变红（N1 负控制即钉住这里）。
+  assert.equal(USER_FACES.length, 17, '矩阵应覆盖 14 个读面 + 3 个写面');
   const print = await expectUniformRejection(h.app, USER_FACES, null, 401, 'SESSION_REQUIRED', '游客');
   assert.equal(typeof print, 'string');
 
@@ -267,6 +292,8 @@ test('跨模块·游客矩阵：无令牌在全部 16 个受保护面一致 401 
 
 test('跨模块·正控制：同一枚有效用户令牌在全部面上都不被鉴权拒绝（排除整列恒 401 的空转）', async (t) => {
   const h = await makeFixture(t);
+  // 注：本夹具没有 `pool` ⇒ `档案写 PUT /me/profile` 的正常态是 503 `PROVIDER_UNAVAILABLE`
+  // （见下一条用例）。它在本循环里只需证明"没有被鉴权拒绝"，不是可用性证据。
   for (const entry of USER_FACES) {
     const result = await call(h.app, entry, h.a.token);
     assert.notEqual(result.status, 401, `${entry.label}：有效令牌不得 401（${JSON.stringify(result.body)}）`);
@@ -280,10 +307,30 @@ test('跨模块·正控制：同一枚有效用户令牌在全部面上都不被
 });
 
 // ---------------------------------------------------------------------------
+// 2b. 夹具口径：无 pool ⇒ 档案写面正常态就是 503（面**仍在**矩阵里，不因此剔除）
+// ---------------------------------------------------------------------------
+
+test('跨模块·夹具口径：无 pool 时档案写面 PUT /me/profile 正常态即 503 PROVIDER_UNAVAILABLE（面仍留在矩阵里，不剔除）', async (t) => {
+  const h = await makeFixture(t);
+  const result = await call(h.app, PROFILE_WRITE_FACE, h.a.token);
+  // 该 fixture 走 `buildApp({ ... })` 的缺省 `pool = null` ⇒ `registerProfileRoutes` 里
+  // `createProfileService` 为 `null` ⇒ 处理器的 `ready()` 抛 `ApiError('PROVIDER_UNAVAILABLE',
+  // '档案数据库尚未配置')`。这是**预期**行为，不是失败：本条把它写成断言，同时证明"该面已注册
+  // 且共享守卫放行了有效令牌"（否则会是 401/403 或 404 `未实现的路径`），而不是"写面可用"。
+  // 真 PG 下的档案读写由 `tests/integration/**` 与真实环境验收另行覆盖，本文件的合成夹具不冒充。
+  assert.equal(result.status, 503, `无 pool 时档案写面必须 503（不是 401/403/404/2xx）：${JSON.stringify(result.body)}`);
+  assert.equal(result.body.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(result.body.error.message, '档案数据库尚未配置');
+  assert.equal(result.body.error.retryable, false, '能力未装配不是"稍后会好"');
+  assert.deepEqual(result.body.error.details, []);
+  assert.equal(result.body.data, undefined);
+});
+
+// ---------------------------------------------------------------------------
 // 3. 注销（会话撤销）在途变化
 // ---------------------------------------------------------------------------
 
-test('跨模块·注销：POST /auth/logout 后同一枚旧令牌在全部 16 个面一致 401 SESSION_EXPIRED（不得有任何一面留用旧会话）', async (t) => {
+test('跨模块·注销：POST /auth/logout 后同一枚旧令牌在全部 17 个面一致 401 SESSION_EXPIRED（不得有任何一面留用旧会话）', async (t) => {
   const h = await makeFixture(t);
   // 注销前：旧令牌确实可用（正控制，证明后面变红不是因为它从来不可用）。
   const before = await call(h.app, READ_FACES[0], h.a.token);
@@ -319,7 +366,7 @@ test('跨模块·会话撤销幂等且不可复活：旧令牌重放注销请求
 // 4. 账号版本前进（停用/注销使既有会话立即失效的真实存储语义）
 // ---------------------------------------------------------------------------
 
-test('跨模块·账号版本前进：auth_epoch 前进后旧令牌在全部 16 个面一致 403 ACCOUNT_INACTIVE', async (t) => {
+test('跨模块·账号版本前进：auth_epoch 前进后旧令牌在全部 17 个面一致 403 ACCOUNT_INACTIVE', async (t) => {
   const h = await makeFixture(t);
   const before = await call(h.app, READ_FACES[0], h.a.token);
   assert.equal(before.status, 200, JSON.stringify(before.body));
@@ -334,7 +381,7 @@ test('跨模块·账号版本前进：auth_epoch 前进后旧令牌在全部 16 
   assert.equal(again.status, 403, '旧令牌不得因后续操作复活');
 });
 
-test('跨模块·账号停用：state=suspended 后旧令牌在全部 16 个面一致 403 ACCOUNT_INACTIVE', async (t) => {
+test('跨模块·账号停用：state=suspended 后旧令牌在全部 17 个面一致 403 ACCOUNT_INACTIVE', async (t) => {
   const h = await makeFixture(t);
   const before = await call(h.app, READ_FACES[0], h.a.token);
   assert.equal(before.status, 200, JSON.stringify(before.body));
@@ -349,7 +396,7 @@ test('跨模块·账号停用：state=suspended 后旧令牌在全部 16 个面�
 // 5. 过期令牌
 // ---------------------------------------------------------------------------
 
-test('跨模块·过期令牌：会话绝对到期后同一枚令牌在全部 16 个面一致 401 SESSION_EXPIRED', async (t) => {
+test('跨模块·过期令牌：会话绝对到期后同一枚令牌在全部 17 个面一致 401 SESSION_EXPIRED', async (t) => {
   const h = await makeFixture(t);
   assert.equal((await call(h.app, READ_FACES[0], h.a.token)).status, 200);
   // 会话绝对到期时刻为 START + 48h。
