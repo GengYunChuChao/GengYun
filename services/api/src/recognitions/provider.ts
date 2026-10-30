@@ -5,7 +5,8 @@
  * - `stub` / `preset_demo`：确定性的**明确标注替身**，绝不冒充真实识别；
  *   `model_version` 带 `stub` / `preset-demo` 标记，响应 `meta.execution_mode` 如实为对应模式。
  * - `real`：缺凭据**一律 fail-closed**（`PROVIDER_UNAVAILABLE`），**严禁静默回退替身**；
- *   即使提供凭据，本片也没有已审真实供应商适配器，同样 fail-closed，不伪造成功。
+ *   凭据齐备且真实适配器装配成功时才走 `recognitions/live-adapter.ts`（GY-R70 起），
+ *   装配失败/配置不合法同样 fail-closed（`createRealRecognitionProvider` 的既有语义），不伪造成功。
  * - 提供者错误按契约映射：超时 → `PROVIDER_TIMEOUT`，配额 → `PROVIDER_QUOTA_EXCEEDED`，
  *   结果未知/协议违规 → `PROVIDER_OUTCOME_UNKNOWN`，不可用 → `PROVIDER_UNAVAILABLE`。
  *   **不得**把提供者失败写成 `succeeded`。
@@ -16,6 +17,8 @@
 import { createHash } from 'node:crypto';
 import type { ExecutionMode } from '../contract.ts';
 import { FAILURE_BRANCHES, type FailureBranch } from './branches.ts';
+import { createUnwiredRecognitionImageSource, createLiveRecognitionProviderFromCredentials } from './live-adapter.ts';
+import type { RealRecognitionPorts, RecognitionImageSource } from './live-ports.ts';
 
 /** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
 export const PROVIDER_FAILURE_CODES = [
@@ -145,36 +148,80 @@ export function createStubRecognitionProvider(options: {
 /**
  * 真实提供者（`real`）。**fail-closed**：
  * - 缺 endpoint/apiKey → `available=false`，POST 直接 503 `PROVIDER_UNAVAILABLE`；
- * - 即使凭据齐备，本片也没有已审供应商适配器，`recognize` 仍返回 `PROVIDER_UNAVAILABLE`；
+ * - 凭据齐备但真实适配器**装配失败/配置不合法**（`createRecognitionProvider` 的 `catch` 分支）
+ *   也走这里：`available=false` ＋ 点名「装配失败」的如实原因（不伪装成凭据缺失）；
  * - 任何路径都**不会**回退到 stub/preset_demo 替身。
+ *
+ * ⚠ GY-R70 起「凭据齐备且字节端口在场」的真实分支**不再**是这里：它由
+ * `recognitions/live-adapter.ts` 的 `createLiveRecognitionProvider()` 承担（见下方
+ * `createRecognitionProvider`）。本函数保留为**装配失败/缺凭据**时的唯一 fail-closed 落点。
  */
 export function createRealRecognitionProvider(credentials: {
   endpoint?: string | null;
   apiKey?: string | null;
-} = {}): RecognitionProvider {
+} = {}, unavailableReasonOverride?: string): RecognitionProvider {
   const endpoint = typeof credentials.endpoint === 'string' && credentials.endpoint.trim() !== '' ? credentials.endpoint.trim() : null;
   const apiKey = typeof credentials.apiKey === 'string' && credentials.apiKey.trim() !== '' ? credentials.apiKey.trim() : null;
-  const missing = endpoint === null || apiKey === null;
+  const missing = endpoint === null || apiKey === null || typeof unavailableReasonOverride === 'string';
   return {
     executionMode: 'real',
     modelVersion: 'real-unconfigured',
     available: !missing,
-    unavailableReason: missing ? '缺少真实识别供应商凭据（fail-closed，不回退替身）' : null,
+    unavailableReason: unavailableReasonOverride ?? (missing ? '缺少真实识别供应商凭据（fail-closed，不回退替身）' : null),
     async recognize() {
-      // 无已审真实适配器：不伪造结果，也不回退替身。
+      // 没有可用的真实适配器：不伪造结果，也不回退替身。
       return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
     },
   };
 }
 
-/** 按执行模式选择提供者；`real` 永远走 fail-closed 实现。 */
+/**
+ * 按执行模式选择提供者；`real` **永远** fail-closed 或真实适配器，**永**不回退替身。
+ *
+ * GY-R70 起 `real` 的解析顺序（每一步都可被测试逐条断言）：
+ * 1. 缺 endpoint/apiKey ⇒ `createRealRecognitionProvider(…)`（`available=false` ⇒ POST 503，零发包）；
+ * 2. 两者齐备 ⇒ 尝试装配真实适配器 `createLiveRecognitionProviderFromCredentials(…)`；
+ *    装配失败/配置不合法（端点非 https、超时越界、缺授权串、缺字节端口…）⇒ **回落第 1 步**的
+ *    fail-closed 形态，并把原因如实点名（⛔ 绝不回退 `stub` / `preset_demo` 替身）；
+ * 3. 装配成功 ⇒ 真实适配器（`available=true`）：字节只从注入端口来，零字节即零发包。
+ *
+ * `imageSource` 缺省时用**未接线**的字节来源（恒 `null`，不是替身）：即使装配成功，识别也会在
+ * 第一步落 `failed PROVIDER_UNAVAILABLE`（与接线前同一结局）。
+ */
 export function createRecognitionProvider(input: {
   executionMode: ExecutionMode;
   endpoint?: string | null;
   apiKey?: string | null;
+  /** GY-R70：真实字节来源（产品路径＝`recognitions/image-source.ts`）。缺省 ⇒ 未接线来源。 */
+  imageSource?: RecognitionImageSource | null;
+  liveGate?: RealRecognitionPorts['liveGate'];
+  fetchImpl?: typeof fetch;
+  now?: () => number;
+  onObservation?: RealRecognitionPorts['onObservation'];
 }): RecognitionProvider {
   if (input.executionMode === 'real') {
-    return createRealRecognitionProvider({ endpoint: input.endpoint ?? null, apiKey: input.apiKey ?? null });
+    const endpoint = typeof input.endpoint === 'string' && input.endpoint.trim() !== '' ? input.endpoint.trim() : null;
+    const apiKey = typeof input.apiKey === 'string' && input.apiKey.trim() !== '' ? input.apiKey.trim() : null;
+    if (endpoint !== null && apiKey !== null) {
+      try {
+        return createLiveRecognitionProviderFromCredentials({
+          endpoint,
+          apiKey,
+          imageSource: input.imageSource ?? createUnwiredRecognitionImageSource('真实对象存储未接线：取不到待识别的私有照片字节'),
+          ...(input.liveGate === undefined ? {} : { liveGate: input.liveGate }),
+          ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+          ...(input.now === undefined ? {} : { now: input.now }),
+          ...(input.onObservation === undefined ? {} : { onObservation: input.onObservation }),
+        });
+      } catch {
+        // 装配失败/配置不合法：回落 fail-closed（既有语义），并如实点名，⛔ 不回退替身。
+        return createRealRecognitionProvider(
+          { endpoint, apiKey },
+          '真实识别端口装配失败（配置不合法；fail-closed，未发包，不回退替身）',
+        );
+      }
+    }
+    return createRealRecognitionProvider({ endpoint, apiKey });
   }
   return createStubRecognitionProvider({ executionMode: input.executionMode });
 }

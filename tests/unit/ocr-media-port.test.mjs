@@ -608,8 +608,8 @@ test('F·装配点结构：app.ts 按 `ocrImageMedia` 同形转发同一对既�
   );
   assert.equal(
     appSource.split('{ objectStore: mediaObjectStore, mediaRecords: mediaStore }').length - 1,
-    3,
-    'app.ts 只允许三处 `{ objectStore, mediaRecords }` 字面量（speechAudioMedia + ocrImageMedia + GY-R70 审核域 imageMedia 取值器），三处都只转发既有实例',
+    4,
+    'app.ts 只允许四处 `{ objectStore, mediaRecords }` 字面量（speechAudioMedia + ocrImageMedia + GY-R70 识别域 recognitionMediaPorts 取值器 + GY-R70 审核域 imageMedia 取值器），四处都只转发既有实例',
   );
   assert.equal(
     appSource.includes('const ocrImageMedia = /* GY-R69'),
