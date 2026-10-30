@@ -390,7 +390,7 @@ export const JOB_LEDGER_PURGE_SQL = 'DELETE FROM public.jobs WHERE owner_id = $1
  * 按主体清空台账行，返回**真实删除行数**（供在线清除证据 `jobs:online-purged:<n>`）。
  *
  * 调用方必须已在真库路径上（表级 `DELETE` 面见 `deploy/postgres-cvm/sql/20-login-roles.sql`
- * 的 `gy-r71-jobs-ledger-grant` 段）；缺权（42501）、连接失败、行数不可读一律抛错，
+ * 的 `gy-r71-jobs-ledger-purge-grant` 段）；缺权（42501）、连接失败、行数不可读一律抛错，
  * 由删除协议折叠成 `blocked` + `HANDLER_FAILED` —— ⛔ 不折成 `completed`，也不折成 0 行。
  */
 export async function purgeJobLedgerByOwner(sql: LedgerSqlRunner, ownerId: string): Promise<number> {
