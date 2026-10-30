@@ -27,6 +27,30 @@ const RECORDS = Array.isArray(RECORDS_JSON)
 /** 改前（`8b646ae1`）无新增过滤参数时的响应快照，证明"未给参数 ⇒ 逐字节同行为"。 */
 const GOLDEN = JSON.parse(readFileSync(here('../fixtures/herbicides-list-baseline-8b646ae1.json'), 'utf8'));
 
+/**
+ * 三条 golden 列表路径的判定真值 `data.query_state`（值由域层 `runQuery` 算好，**不是**测试按
+ * `items.length` 反推）。golden 快照采集时 `query_state` 还不存在，快照作为历史证据不重采；
+ * 判据拆成「改前已存在的 `items`/`next_cursor` 仍逐字节相同」+「新增字段逐字段钉死」。
+ */
+const GOLDEN_QUERY_STATE = {
+  '/api/v1/herbicides': {
+    match_state: 'matched', total: 20, reasons: [], simulated_excluded: 0, matched_dimensions: [],
+    unmatched_len: 0, unmatched_reason: null
+  },
+  '/api/v1/herbicides?limit=7': {
+    match_state: 'matched', total: 20, reasons: [], simulated_excluded: 0, matched_dimensions: [],
+    unmatched_len: 0, unmatched_reason: null
+  },
+  '/api/v1/herbicides?q=%E6%B0%B4%E7%A8%BB': {
+    match_state: 'matched', total: 6, reasons: [], simulated_excluded: 0, matched_dimensions: ['q'],
+    unmatched_len: 10, unmatched_reason: '关键词不匹配'
+  },
+  '/api/v1/herbicides?registration_number=PD20161371': {
+    match_state: 'matched', total: 1, reasons: [], simulated_excluded: 0, matched_dimensions: ['registration_number'],
+    unmatched_len: 10, unmatched_reason: '登记证号不符'
+  }
+};
+
 const SESSION_KEY = 'synthetic-session-signing-key-0123456789';
 const IDEM = 'idem-key-000001';
 
@@ -231,13 +255,41 @@ test('③非法值 ⇒ 4xx + 契约错误码闭集；⛔ 不静默忽略、⛔ �
   } finally { await app.close(); }
 });
 
-test('④未给参数 ⇒ 行为与改前逐字节相同（golden 快照，采集自 8b646ae1）+ 既有收窄条件不回归', async () => {
+test('④未给参数 ⇒ 改前已有字段逐字节相同（golden 快照，采集自 8b646ae1）+ 新增 query_state 逐字段钉死 + 既有收窄条件不回归', async () => {
   const { app, get } = await host({ rows: [] });
   try {
     for (const [path, want] of Object.entries(GOLDEN)) {
       if (path === '__pages__') continue;
       const res = await get(path.replace('/api/v1', ''));
       assert.equal(res.status, want.status, `${path} 状态码必须与改前一致`);
+      if (path.startsWith('/api/v1/herbicides')) {
+        // 本片给列表补了 `data.query_state`（判定真值的出口）：改前已存在的两字段仍逐字节比，
+        // 新增字段另按域层真值逐字段比 —— 不用"响应整体 sha 不同就改快照"的方式抹掉证据。
+        assert.deepEqual(res.body.data.items, want.data.items, `${path} items 必须与改前逐字节相同`);
+        assert.deepEqual(res.body.data.next_cursor, want.data.next_cursor, `${path} next_cursor 必须与改前逐字节相同`);
+        assert.deepEqual(Object.keys(res.body.data).sort(), ['items', 'next_cursor', 'query_state'], `${path} data 只应多出 query_state`);
+        const expected = GOLDEN_QUERY_STATE[path];
+        assert.ok(expected, `${path} 缺少判定真值期望，别让新参数悄悄溜进 golden 循环`);
+        const state = res.body.data.query_state;
+        assert.deepEqual(
+          {
+            match_state: state.match_state, total: state.total, reasons: state.reasons,
+            simulated_excluded: state.simulated_excluded, matched_dimensions: state.matched_dimensions
+          },
+          {
+            match_state: expected.match_state, total: expected.total, reasons: expected.reasons,
+            simulated_excluded: expected.simulated_excluded, matched_dimensions: expected.matched_dimensions
+          },
+          `${path} query_state 判定必须等于域层真值`
+        );
+        assert.equal(state.unmatched_reasons.length, expected.unmatched_len, `${path} 未命中原因条目数`);
+        for (const entry of state.unmatched_reasons) {
+          assert.deepEqual(Object.keys(entry).sort(), ['reasons', 'record_id'], `${path} 每条只需 record_id + reasons`);
+          assert.match(entry.record_id, /^gy-i03-hb-\d{3}$/);
+          assert.deepEqual(entry.reasons, [expected.unmatched_reason], `${path} 未命中理由文本`);
+        }
+        continue;
+      }
       assert.equal(sha256(res.body.data), sha256(want.data), `${path} 响应 data 必须与改前逐字节相同`);
     }
     // 分页链逐页逐字节（游标里带有效期，故只对 items 与"是否有下一页"做等价性）。

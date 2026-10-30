@@ -181,14 +181,20 @@ test('A2 页面：列表页展示的 sourceVersionNote 与详情页展示的 sou
   await list.show()
   const listRequest = list.pending('/herbicides')
   assert.equal(listRequest.url, BASE + '/herbicides?limit=20')
-  list.answer(listRequest, { items: [herbicide()], next_cursor: null })
+  list.answer(listRequest, {
+    items: [herbicide()],
+    next_cursor: null,
+    query_state: { match_state: 'matched', total: 1, reasons: [], unmatched_reasons: [], simulated_excluded: 0, matched_dimensions: [] }
+  })
   await settle()
   assert.equal(list.page.data.dataSource, 'server')
   assert.equal(list.page.data.dataSourceLabel, '数据来源：服务端接口 /herbicides（真实读数，等待返回）。')
   assert.equal(list.page.data.items.length, 1)
   assert.equal(list.page.data.items[0].data_source, 'server')
   assert.equal(list.page.data.sourceVersionNote, VERSION)
-  assert.equal(list.page.data.countNote, '本页 1 条（该接口不返回总数）')
+  assert.equal(list.page.data.matchState, 'matched', '判定取服务端真值，不按 items.length 反推')
+  assert.equal(list.page.data.matchLabel, '已找到符合条件的资料')
+  assert.equal(list.page.data.countNote, '本页 1 条 / 共 1 条（总数为裁剪前领域判定）')
   assert.equal(list.page.data.queryError, '')
 
   const detail = fixture('referencedetail')
@@ -552,10 +558,11 @@ test('D2d 客户端：参数面逐条对齐服务端 schema —— 不接受的�
   await rejects({ use_scene: 'field' }, 'use_scene 不在 /herbicides 参数面内')
   await rejects({ dosage_form: '悬浮剂' }, 'dosage_form 是页面侧条件，服务端没有这个键')
   await rejects({ synthetic_unknown: 'x' }, '未知键必须拒绝而不是丢弃')
-  // region_code：服务端 schema 接受它，但本版不提交（资料未标注适用地区 + 响应不回 match_state，
-  // 提交只会误报），所以客户端这一层也不许把它悄悄发出去——连合法值也拒。
-  await rejects({ region_code: '330102' }, 'region_code 本版不提交（资料未标注 + 响应无 match_state）')
-  await rejects({ region_code: '110101' }, 'region_code 本版不提交，脏值更不许发')
+  // region_code：服务端 schema 接受它（并已回 `query_state`），但本片**不改筛选面**——资料仍零条标注
+  // 适用地区，接上只会把"未标注"刷成"未命中"；接线是单独一片的事。所以客户端这一层仍不许把它
+  // 悄悄发出去，连合法值也拒。
+  await rejects({ region_code: '330102' }, 'region_code 本片仍不提交（资料零标注，接线留下一片）')
+  await rejects({ region_code: '110101' }, 'region_code 本片仍不提交，脏值更不许发')
   // 取值校验照服务端约束：text = 非空且 ≤80。
   await rejects({ crop_id: '' }, 'crop_id 非空')
   await rejects({ crop_id: 'x'.repeat(81) }, 'crop_id ≤80')
@@ -571,6 +578,105 @@ test('D2d 客户端：参数面逐条对齐服务端 schema —— 不接受的�
   assert.equal(url.searchParams.get('species_id'), null, '没传的条件不得凭空出现')
   f.answer(request, { items: [herbicide()], next_cursor: null })
   await accepted
+})
+
+test('E1 页面：判定与理由一律照抄服务端 query_state —— insufficient 说「无法确认」，绝不说成「不满足」', async () => {
+  const f = fixture('reference')
+  f.login()
+  await f.show()
+  // 说明：本片页面只提交 crop_id/q，服务端 `insufficient` 当前**只可能**由 region_code 触发，而页面
+  // 不提交它 ⇒ 下面这份响应在生产路径暂不可达。用例钉的是「拿到什么就如实转述什么」的渲染契约，
+  // 不是"生产已达"；可达性缺口写进交付报告的「本片没有解决什么」。
+  f.answer(f.pending('/herbicides'), {
+    items: [],
+    next_cursor: null,
+    query_state: {
+      match_state: 'insufficient',
+      total: 0,
+      reasons: ['部分条件在资料中未标注，无法确认适用性'],
+      unmatched_reasons: [
+        { record_id: 'gy-i03-hb-001', reasons: ['记录未标注适用地区，无法确认是否适用该地区'] },
+        { record_id: 'gy-i03-hb-002', reasons: ['记录未标注适用地区，无法确认是否适用该地区'] }
+      ],
+      simulated_excluded: 2,
+      matched_dimensions: ['region_code']
+    }
+  })
+  await settle()
+  assert.equal(f.page.data.matchState, 'insufficient', '判定取服务端真值，不按 items.length 反推')
+  assert.equal(f.page.data.matchLabel, '条件在资料中未标注，无法确认')
+  assert.equal(/不满足/u.test(f.page.data.matchLabel), false, `未标注不得说成「不满足」（当前：${f.page.data.matchLabel}）`)
+  assert.deepEqual(f.page.data.reasons, ['部分条件在资料中未标注，无法确认适用性'])
+  // 页面在 vm 里跑，数组/对象的原型跨 realm ⇒ 用 JSON 往返比较值，避免 deepStrictEqual 因原型差异误报。
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(f.page.data.unmatchedReasons)),
+    [
+      { record_id: 'gy-i03-hb-001', reasons: ['记录未标注适用地区，无法确认是否适用该地区'] },
+      { record_id: 'gy-i03-hb-002', reasons: ['记录未标注适用地区，无法确认是否适用该地区'] }
+    ]
+  )
+  assert.equal(f.page.data.simulatedExcluded, 2, '模拟数据被排除的条数必须透出，不吞掉')
+  assert.equal(f.page.data.matchedNote, '命中条件：地区（筛选条件未被放宽）', '命中维度取服务端 matched_dimensions')
+  assert.equal(f.page.data.total, 0)
+  assert.equal(f.page.data.countNote, '')
+  assert.equal(f.page.data.items.length, 0)
+  assert.equal(f.page.data.queryError, '')
+})
+
+test('E2 页面：权限裁剪后本页比 total 少也不得说成 no_match —— countNote 把「本页/共」分开说', async () => {
+  const f = fixture('reference')
+  f.login()
+  await f.show()
+  f.answer(f.pending('/herbicides'), {
+    items: [herbicide(), herbicide({ id: OTHER_ID })],
+    next_cursor: null,
+    query_state: { match_state: 'matched', total: 6, reasons: [], unmatched_reasons: [], simulated_excluded: 0, matched_dimensions: [] }
+  })
+  await settle()
+  // `items` 是权限裁剪后的可见集，`total`/`match_state` 是裁剪前领域判定（口径写在
+  // services/api/src/routes/knowledge.ts 与 miniprogram/pages/reference/reference.js 的注释里）。
+  assert.equal(f.page.data.queryError, '')
+  assert.equal(f.page.data.matchState, 'matched', '有记录被权限滤掉 ≠ 没有资料')
+  assert.equal(f.page.data.total, 6)
+  assert.equal(f.page.data.items.length, 2)
+  assert.equal(f.page.data.countNote, '本页 2 条 / 共 6 条（总数为裁剪前领域判定）')
+})
+
+test('E3 页面：响应缺 query_state ⇒ 不猜判定（不写 matched / 不写 no_match），如实说「未提供」', async () => {
+  const f = fixture('reference')
+  f.login()
+  await f.show()
+  f.answer(f.pending('/herbicides'), { items: [herbicide()], next_cursor: null })
+  await settle()
+  assert.equal(f.page.data.items.length, 1, '兼容性前提：老响应仍能出列表')
+  assert.notEqual(f.page.data.matchState, 'no_match', '没拿到判定就不许断言"没有匹配"')
+  assert.notEqual(f.page.data.matchState, 'matched', '没拿到判定也不许断言"已匹配"')
+  assert.equal(f.page.data.matchState, '')
+  assert.equal(f.page.data.matchLabel, '服务端未提供匹配判定')
+  assert.equal(f.page.data.total, 0)
+  assert.equal(f.page.data.countNote, '本页 1 条（服务端未提供匹配判定）')
+  assert.equal(f.page.data.queryError, '')
+})
+
+test('E4 客户端：query_state 形状越界 ⇒ INVALID_RESPONSE（不猜、不截断、不丢弃）', async () => {
+  const f = fixture(null)
+  f.login()
+  const good = { match_state: 'matched', total: 1, reasons: [], unmatched_reasons: [], simulated_excluded: 0, matched_dimensions: [] }
+  const rejects = async (queryState, why) => {
+    const pending = f.api.listHerbicides({})
+    f.answer(f.pending('/herbicides'), { items: [], next_cursor: null, query_state: queryState })
+    await assert.rejects(pending, (error) => error && error.code === 'INVALID_RESPONSE', why)
+  }
+  await rejects({ ...good, match_state: 'partial' }, 'match_state 不在闭集内')
+  await rejects({ ...good, match_state: 'ambiguous' }, 'MatchState 六值里的 ambiguous 不是列表判定取值')
+  await rejects({ ...good, total: -1 }, 'total 不得为负')
+  await rejects({ ...good, total: 1.5 }, 'total 必须是整数')
+  await rejects({ ...good, simulated_excluded: -2 }, 'simulated_excluded 不得为负')
+  await rejects({ match_state: 'matched', total: 1, reasons: [], unmatched_reasons: [], simulated_excluded: 0 }, '缺 matched_dimensions 不得默认成空数组')
+  await rejects({ ...good, extra_field: 'x' }, '多余字段不得静默忽略')
+  await rejects({ ...good, reasons: [1] }, 'reasons 元素必须是字符串')
+  await rejects({ ...good, unmatched_reasons: [{ record_id: 'gy-i03-hb-001' }] }, 'unmatched_reasons 元素缺 reasons')
+  await rejects({ ...good, unmatched_reasons: Array.from({ length: 11 }, (_v, i) => ({ record_id: 'gy-i03-hb-0' + (i % 10), reasons: ['x'] })) }, 'unmatched_reasons 至多 10 条')
 })
 
 test('D3 页面：非 UUID 记录 id ⇒ 走随包副本，零 /herbicides/{id} 请求', async () => {

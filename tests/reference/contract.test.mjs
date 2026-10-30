@@ -215,12 +215,29 @@ test('G1：/knowledge 完整封套通过冻结 schema（真实 Ajv）', async ()
   }
 });
 
-test('G1：/herbicides 完整封套通过冻结 schema（含 Ingredient.unit_text）', async () => {
+test('G1：/herbicides 域层封套通过冻结 schema（body 只有 items/next_cursor；query_state 挂兄弟位）', async () => {
   const { createReferenceService } = await import('../../packages/reference/service.mjs');
   const compile = ajvCompile();
   const svc = createReferenceService({ executionMode: 'stub' });
   const res = svc.listHerbicides({ limit: 20 }, 'g1-h');
-  assertValid(compile('HerbicidePageEnvelope'), ser(res.body), 'HerbicidePageEnvelope');
+  // 封套口径（`packages/reference/service.mjs:112-124` 注释）：冻结封套只允许 `data`/`meta`，
+  // `HerbicidePage` 只有 `items`/`next_cursor` ⇒ 域层把判定真值挂在**响应体兄弟位** `query_state`，
+  // 不塞进 body。搬到 `data.query_state`（契约 `QueryState`）是 API 层
+  // （`services/api/src/knowledge/reference-query.ts` → `services/api/src/routes/knowledge.ts`）的职责，
+  // 所以这里断言域层 body 仍只含两字段，而不是迁就实现去放宽 schema。
+  assert.deepEqual(Object.keys(ser(res.body)), ['data', 'meta']);
+  assert.deepEqual(Object.keys(ser(res.body.data)).sort(), ['items', 'next_cursor']);
+  // 域层 body 本身**不含** query_state（上面两行钉住）⇒ 直接拿 body 校验 `HerbicidePageEnvelope`
+  // 必然因 required 缺项失败。这不是 schema 错，正是"域层 / API 层分工"的证据：这里按 API 层真实组装
+  // 方式（`services/api/src/routes/knowledge.ts`：`{...data, query_state: queryState}`）合成同一份响应
+  // 再校验——既证明封套完整合法，也证明 query_state 只是换了位置、内容一模一样。
+  const composed = { data: { ...ser(res.body.data), query_state: ser(res.query_state) }, meta: ser(res.body.meta) };
+  assertValid(compile('HerbicidePageEnvelope'), composed, 'HerbicidePageEnvelope（API 层组装：body + 兄弟位 query_state）');
+  // 同一调用的返回值必须同时给出判定真值，且形状与契约 `QueryState` 完全一致（六字段必填、无多余字段）。
+  assertValid(compile('QueryState'), ser(res.query_state), 'QueryState（域层兄弟位 query_state）');
+  assert.deepEqual(Object.keys(ser(res.query_state)).sort(), [
+    'match_state', 'matched_dimensions', 'reasons', 'simulated_excluded', 'total', 'unmatched_reasons'
+  ]);
   const vH = compile('Herbicide');
   let ingTotal = 0;
   for (const item of ser(res.body.data.items)) {
@@ -232,6 +249,41 @@ test('G1：/herbicides 完整封套通过冻结 schema（含 Ingredient.unit_tex
     }
   }
   assert.ok(ingTotal >= 42, `成分总数应 >= 42（H1 修复逗号误切后为 42），实为 ${ingTotal}`);
+});
+
+// G2：`QueryState` 组件与域层判定真值**逐字段**对齐（字段名从源码读，不抄文档）
+test('G2：QueryState 字段集合 = queryStateOf() 实际产出的字段集合；HerbicidePage 必填 query_state', async () => {
+  const source = readFileSync(new URL('../../packages/reference/service.mjs', import.meta.url), 'utf8');
+  // 从 `queryStateOf()` 的返回字面量里读字段名（唯一真值），而不是从 openapi/文档反推。
+  const start = source.indexOf('function queryStateOf');
+  assert.ok(start > 0, 'service.mjs 里必须有 queryStateOf()');
+  const body = source.slice(start, source.indexOf('\n}', start));
+  const fields = [...body.matchAll(/^\s{4}([a-z_]+):/gm)].map((m) => m[1]);
+  assert.equal(fields.length >= 6, true, `queryStateOf() 至少产出 6 个字段，实为 ${JSON.stringify(fields)}`);
+
+  const schema = openapi.components.schemas.QueryState;
+  assert.ok(schema, 'openapi 必须新增 QueryState 组件');
+  assert.deepEqual(Object.keys(schema.properties).sort(), [...fields].sort(), 'QueryState.properties 必须与 queryStateOf() 字段一一对应');
+  assert.deepEqual([...schema.required].sort(), [...fields].sort(), '六个字段都必填（缺失即无法判定，不许留空当默认）');
+  assert.equal(schema.additionalProperties, false, '闭集：不许另加判定字段');
+
+  // `match_state` 是闭集，且只能是域层真的会产出的三个值（`runQuery` 不产出 ambiguous/conflict/unavailable）。
+  assert.deepEqual(schema.properties.match_state.enum, ['matched', 'no_match', 'insufficient']);
+  const compile = ajvCompile();
+  const ok = compile('QueryState');
+  const sample = { match_state: 'matched', total: 0, reasons: [], unmatched_reasons: [], simulated_excluded: 0, matched_dimensions: [] };
+  for (const value of ['matched', 'no_match', 'insufficient']) {
+    assert.equal(ok({ ...sample, match_state: value }), true, `${value} 必须被接受`);
+  }
+  for (const bogus of ['partial', 'ambiguous', 'conflict', 'unavailable', 'ok']) {
+    assert.equal(ok({ ...sample, match_state: bogus }), false, `${bogus} 不属于本组件闭集，必须被拒`);
+  }
+
+  // 列表封套必须**要求** query_state（否则客户端又得靠 items.length 猜）。
+  const page = openapi.components.schemas.HerbicidePage;
+  assert.deepEqual(page.required, ['items', 'next_cursor', 'query_state']);
+  assert.deepEqual(page.properties.query_state, { $ref: '#/components/schemas/QueryState' });
+  assert.equal(page.additionalProperties, false);
 });
 
 test('G1：详情封套通过冻结 schema（不含额外字段 query_state/detail_state）', async () => {

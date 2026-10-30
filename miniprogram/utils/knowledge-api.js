@@ -128,11 +128,11 @@ const INGREDIENT_KEYS = ['name', 'content_text', 'unit_text']
 //      `packages/knowledge/catalog/crops.json` 逐字一致。
 //   ② 服务端 schema **接受**、但本版**不提交**：`region_code`。它确实在服务端参数面内（pattern
 //      `^33[0-9]{4}$`，不是"接口不支持"），但当前资料零条标注适用地区（`region_codes` 全仓没有
-//      任何一条记录带），`matchConditions()` 对未标注的记录只能给"记录未标注适用地区，无法确认"，
-//      而该原因只留在 `reference.listHerbicides()` 的 `query_state.reasons` 里、**没有进响应体**
-//      （`{data:{items,next_cursor},meta}`）⇒ 客户端提交 `region_code` 只会拿到 `items: []`，
-//      再把"未标注"显示成"不满足所选条件"（又一处谎报）。故本版不提交，页面如实改走随包副本；
-//      待服务端补上 `match_state`/`reasons` 出口后再接（下一片）。
+//      任何一条记录带）。`/herbicides` 现已回 `data.query_state`（`match_state`/`reasons`/`total` 等，
+//      见 openapi 的 `QueryState`），当年"提交后只能把未标注误报成不满足"的障碍已解除；但本片
+//      **不改筛选面**（页面选地区仍走随包副本并如实标注"未标注"，见 `pages/reference/reference.js`），
+//      故这里仍不提交，等单独一片接线（届时连同 `insufficient` 的展示文案一起验收）。
+//      页面若在接线前收到 `insufficient` 响应，也只会如实转述，不会说成"不满足"。
 //   ③ 该接口 schema 里根本没有的键（硬发只会换回 400 INVALID_REQUEST）：`species_id`、`growth_stage`、
 //      `planting_method`、`use_scene`；页面自带的 `dosage_form` 同理。
 // 白名单外的键一律 `INVALID_INPUT`，**不静默丢弃**：调用方据此如实改走随包副本并写明真实原因，
@@ -174,12 +174,12 @@ function validHerbicide(x) {
 }
 async function listHerbicides(input) {
   const q = herbicideQuery(input || {}), r = await request('/herbicides' + (Object.keys(q).length ? '?' + query(q) : '')), p = r.data
-  keys(p, ['items', 'next_cursor'])
+  keys(p, ['items', 'next_cursor'], ['query_state'])
   if (!Array.isArray(p.items) || p.items.length > (q.limit || 20) || !(p.next_cursor === null || text(p.next_cursor, 2048)) ||
       (p.next_cursor !== null && p.next_cursor === q.cursor)) throw failure('INVALID_RESPONSE')
   const seen = []
   p.items.forEach(function (x) { validHerbicide(x); if (!usable(x) || seen.indexOf(x.id) !== -1) throw failure('INVALID_RESPONSE'); seen.push(x.id) })
-  return { items: p.items, nextCursor: p.next_cursor, mode: r.mode }
+  return { items: p.items, nextCursor: p.next_cursor, queryState: queryState(p.query_state), mode: r.mode }
 }
 async function detailHerbicide(id) {
   if (typeof id !== 'string' || !UUID.test(id)) throw failure('INVALID_INPUT')
@@ -235,6 +235,34 @@ function labels(x) {
 }
 function modeNote(mode) { return mode === 'real' ? '服务端资料读取；来源核对与适用条件仍需分别确认。' : mode === 'preset_demo' ? '预设演示资料，不代表实际查询结果。' : mode === 'stub' ? '替身服务资料，仅供联调，不代表真实资料查询。' : '服务端资料查询；资料需重新核对，失败时不会改用本地资料。' }
 function message(e) { return { NOT_FOUND: '资料不存在、已失效或不符合查询条件，请返回列表重新查询。', INVALID_CURSOR: '查询已过期或资料已更新，请点击查询重新开始。', INVALID_INPUT: '查询条件格式不正确，请修改后重试。', INVALID_RESPONSE: '资料响应无法核对，已清空，请重试。', UNSUPPORTED_DOSE_RESPONSE: '该资料含本页尚未接入的用量卡，已停止展示。', SESSION_REQUIRED: '登录状态已失效，请重新登录。', SESSION_CHANGED: '会话已变化，请重新进入查询。', NETWORK_UNCERTAIN: '网络未能确认当前资料，已清空，请重试。', SCOPE_DENIED: '当前会话无权查看资料（403 SCOPE_DENIED）：权限范围不足，重试无效。', CONSENT_REQUIRED: '缺少用途授权（403 CONSENT_REQUIRED）：未授权时不会读取资料。', ACCOUNT_INACTIVE: '账号当前不可用（403 ACCOUNT_INACTIVE）：请重新登录后再查。' }[e && e.code] || '资料服务暂不可用，已清空，请重试。' }
+// `query_state`：`/herbicides` 的**领域判定真值**（openapi `#/components/schemas/QueryState`）。
+//   · **缺失 ⇒ null，不猜**：没有这个字段的响应（老部署/随包副本）由页面显示"未提供匹配判定"，绝不按
+//     `items.length` 反推 `matched`/`no_match`——那正是本片修掉的谎报来源。
+//   · 口径：`items` 是**权限裁剪后**的当前页，`total`/`match_state` 是**裁剪前**的领域判定 ⇒ `total` 可以
+//     大于 `items.length`（差额是被隐藏的记录），这不等于 `no_match`。
+const QUERY_STATE_KEYS = ['match_state', 'total', 'reasons', 'unmatched_reasons', 'simulated_excluded', 'matched_dimensions']
+const QUERY_MATCH_STATES = ['matched', 'no_match', 'insufficient']
+function queryState(x) {
+  if (x === undefined) return null
+  keys(x, QUERY_STATE_KEYS)
+  if (!one(x.match_state, QUERY_MATCH_STATES) || !Number.isSafeInteger(x.total) || x.total < 0 ||
+      !Array.isArray(x.reasons) || x.reasons.some(function (v) { return !text(v, 200) }) ||
+      !Array.isArray(x.unmatched_reasons) || x.unmatched_reasons.length > 10 ||
+      !Number.isSafeInteger(x.simulated_excluded) || x.simulated_excluded < 0 ||
+      !Array.isArray(x.matched_dimensions) || x.matched_dimensions.some(function (v) { return !text(v, 80) })) throw failure('INVALID_RESPONSE')
+  x.unmatched_reasons.forEach(function (u) {
+    keys(u, ['record_id', 'reasons'])
+    if (!text(u.record_id, 200) || !Array.isArray(u.reasons) || u.reasons.some(function (v) { return !text(v, 200) })) throw failure('INVALID_RESPONSE')
+  })
+  return {
+    match_state: x.match_state,
+    total: x.total,
+    reasons: x.reasons.slice(),
+    unmatched_reasons: x.unmatched_reasons.map(function (u) { return { record_id: u.record_id, reasons: u.reasons.slice() } }),
+    simulated_excluded: x.simulated_excluded,
+    matched_dimensions: x.matched_dimensions.slice()
+  }
+}
 module.exports = { binding, current, filters, list, detail, listHerbicides, detailHerbicide, herbicideRow, herbicideModeNote,
   HERBICIDE_SOURCES, remember, expected, fingerprint, labels, modeNote, message,
   validId: id => typeof id === 'string' && UUID.test(id), clearSelection: () => { selection = null } }

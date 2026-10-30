@@ -17517,6 +17517,74 @@
           "meta"
         ]
       },
+      "QueryState": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "列表查询的领域判定结果。口径：items 是可见性裁剪后的当前页；total、match_state、reasons、unmatched_reasons、simulated_excluded、matched_dimensions 是裁剪前的领域判定，不随权限过滤重算。",
+        "properties": {
+          "match_state": {
+            "type": "string",
+            "enum": [
+              "matched",
+              "no_match",
+              "insufficient"
+            ],
+            "description": "matched：有命中；no_match：条件已生效且确实不适用；insufficient：条件在资料中未标注/未采集，无法确认是否适用。不得把 insufficient 说成「不满足」。"
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "裁剪前符合条件的记录总数（不是本页条数）。"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unmatched_reasons": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "record_id": {
+                  "type": "string"
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "record_id",
+                "reasons"
+              ]
+            }
+          },
+          "simulated_excluded": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "matched_dimensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "match_state",
+          "total",
+          "reasons",
+          "unmatched_reasons",
+          "simulated_excluded",
+          "matched_dimensions"
+        ]
+      },
       "HerbicidePage": {
         "type": "object",
         "additionalProperties": false,
@@ -17539,11 +17607,15 @@
                 "type": "null"
               }
             ]
+          },
+          "query_state": {
+            "$ref": "#/components/schemas/QueryState"
           }
         },
         "required": [
           "items",
-          "next_cursor"
+          "next_cursor",
+          "query_state"
         ]
       },
       "HerbicidePageEnvelope": {

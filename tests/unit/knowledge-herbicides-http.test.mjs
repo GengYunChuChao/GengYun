@@ -167,11 +167,21 @@ test('/herbicides 列表：契约封套/实体形状对齐、no-store、列表�
     assert.equal(res.headers['etag'], undefined, '契约说明：列表无 ETag');
     const body = res.json();
     assert.deepEqual(Object.keys(body).sort(), ['data', 'meta']);
-    assert.deepEqual(Object.keys(body.data).sort(), ['items', 'next_cursor']);
+    assert.deepEqual(Object.keys(body.data).sort(), ['items', 'next_cursor', 'query_state']);
     assert.deepEqual(Object.keys(body.meta).sort(), ['contract_version', 'execution_mode', 'request_id']);
     assert.equal(body.meta.contract_version, '1.0.0');
     assert.equal(body.meta.execution_mode, 'stub');
     assert.equal(body.data.next_cursor, null);
+    // 判定真值随响应下发（契约 QueryState，六字段全必填）。无筛选条件 + 20 条全命中 ⇒ 逐字段写死，
+    // 不写「只要存在」：这是"服务端真的算过并如实说出"的判据。
+    assert.deepEqual(body.data.query_state, {
+      match_state: 'matched',
+      total: 20,
+      reasons: [],
+      unmatched_reasons: [],
+      simulated_excluded: 0,
+      matched_dimensions: []
+    });
 
     const items = body.data.items;
     assert.equal(items.length, 20, '已合入的真实登记公告记录 20 条');
@@ -238,7 +248,41 @@ test('/herbicides 错误码：未知 id 404、非法 id/参数 400、游标非�
     // 无结果 = 200 + 空列表 + next_cursor null（不是错误，也不伪造记录）。
     const none = await get(app, '/api/v1/herbicides?q=zzz-no-such-herbicide', token);
     assert.equal(none.statusCode, 200);
-    assert.deepEqual(none.json().data, { items: [], next_cursor: null });
+    const empty = none.json().data;
+    assert.deepEqual(Object.keys(empty).sort(), ['items', 'next_cursor', 'query_state']);
+    assert.deepEqual(empty.items, []);
+    assert.equal(empty.next_cursor, null);
+    // 判定不许由客户端猜：`no_match` 由服务端给出，含义是"条件都核对过、确实不匹配"，
+    // 不是"资料没标注所以不知道"（后者必须是 `insufficient`，见下一段）。
+    assert.equal(empty.query_state.match_state, 'no_match');
+    assert.equal(empty.query_state.total, 0);
+    assert.deepEqual(empty.query_state.reasons, ['现有资料均不满足所选条件']);
+    assert.deepEqual(empty.query_state.matched_dimensions, ['q']);
+    assert.equal(empty.query_state.simulated_excluded, 0);
+    // 未命中原因逐条带记录身份（最多 10 条），理由只能是"关键词不匹配"，不许混进"未标注"。
+    assert.deepEqual(
+      empty.query_state.unmatched_reasons.map((entry) => entry.record_id),
+      Array.from({ length: 10 }, (_v, i) => `gy-i03-hb-${String(i + 1).padStart(3, '0')}`)
+    );
+    for (const entry of empty.query_state.unmatched_reasons) {
+      assert.deepEqual(entry.reasons, ['关键词不匹配']);
+    }
+
+    // 同一个"空结果"，理由不同则判定必须不同：零标注的地区条件 ⇒ insufficient（无法确认），
+    // **不是** no_match（"看不到适用性" ≠ "资料不适用"）。客户端据此选"未标注"文案。
+    const unknown = await get(app, '/api/v1/herbicides?region_code=330100', token);
+    assert.equal(unknown.statusCode, 200);
+    const undecided = unknown.json().data;
+    assert.deepEqual(undecided.items, []);
+    assert.equal(undecided.query_state.match_state, 'insufficient');
+    assert.equal(undecided.query_state.total, 0);
+    assert.deepEqual(undecided.query_state.reasons, ['部分条件在资料中未标注，无法确认适用性']);
+    assert.deepEqual(undecided.query_state.matched_dimensions, ['region_code']);
+    assert.equal(undecided.query_state.simulated_excluded, 0);
+    assert.equal(undecided.query_state.unmatched_reasons.length, 10);
+    for (const entry of undecided.query_state.unmatched_reasons) {
+      assert.deepEqual(entry.reasons, ['记录未标注适用地区，无法确认是否适用该地区']);
+    }
   } finally { await app.close(); }
 });
 
