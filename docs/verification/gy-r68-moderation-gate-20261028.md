@@ -25,7 +25,7 @@
 
 `buildApp` 在缺省 `moderationInjection` 时走 `services/api/src/app.ts:935` 的 `??` 兜底，自建审核域服务。`stub` / `preset_demo` 模式下该服务拿到的是**替身端口**（`services/api/src/moderation/provider.ts:48` 的 `label: 'unsure'`），替身只回「无结论」，于是合流层判 `quarantined`：`services/api/src/moderation/decisions.ts:191` 的 `reasons.push('model_not_attempted')`。
 
-`real` 模式下则整域 fail-closed：`services/api/src/moderation/service.ts:457` 的 `createFailClosedModerationService()`（无 `liveWiring` ⇒ 四类写操作全 deny、`503`）。本页只测 `stub`；`real` 的 503 读数属于既有用例（`tests/unit/community-http.test.mjs` 的 real 臂），本页不重复。
+`real` 模式下则整域 fail-closed：`services/api/src/moderation/service.ts:516` 的 `createFailClosedModerationService()`（无 `liveWiring` ⇒ 四类写操作全 deny、`503`）。本页只测 `stub`；`real` 的 503 读数属于既有用例（`tests/unit/community-http.test.mjs` 的 real 臂），本页不重复。
 
 ### 1.2 测试侧的两个旋钮（都不是端口注入，全部披露）
 

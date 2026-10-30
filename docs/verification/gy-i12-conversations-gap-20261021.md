@@ -292,14 +292,14 @@ services/api/src/conversations/service.ts:173-188  interface AnswerComposer（ki
 services/api/src/conversations/service.ts:202      RELEVANCE_RULE = 'cjk-bigram+word-match/1'
 services/api/src/conversations/service.ts:227      COMPOSER_MAX_CITATIONS = 3
 services/api/src/conversations/service.ts:243-279  createDeterministicAnswerComposer
-services/api/src/conversations/service.ts:926-951  answerRowOf（唯一构造回答行；:946-948 写死三串）
+services/api/src/conversations/service.ts:1009-1034  answerRowOf（唯一构造回答行；同段还有三串版本号字面量）
 services/api/src/conversations/service.ts:1017-1022 retrieval.read
 services/api/src/conversations/service.ts:1027-1031 riskScreen.screenSources（生成与守卫之前）
 services/api/src/conversations/service.ts:1035-1039 context.read
 services/api/src/conversations/service.ts:1041-1046 composer.compose（唯一插入点）
 services/api/src/conversations/service.ts:1047-1052 guard.check
 services/api/src/conversations/service.ts:1054-1066 catch ⇒ failed / timed_out（绝不 succeeded）
-services/api/src/conversations/service.ts:1191    createConversationGuard（包装 createAnswerGuard；原记 :1107）
+services/api/src/conversations/service.ts:1289    createConversationGuard（包装 createAnswerGuard；原记 1107）
 services/api/src/conversations/types.ts:52         UNIMPLEMENTED_VERSION_PREFIX = 'unimplemented:no-real-'
 services/api/src/conversations/guard.ts:64-76      interface RetrievalPort
 services/api/src/conversations/guard.ts:78-89      createUnwiredRetrievalPort
