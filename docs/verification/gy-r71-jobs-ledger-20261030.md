@@ -185,10 +185,23 @@ ON CONFLICT (id) DO UPDATE
 
 | 文件 | 改动 |
 |---|---|
-| `deploy/postgres-cvm/sql/20-login-roles.sql:964` | `GRANT SELECT (id,state)` —— `id` 是冲突目标、`state` 被 `DO UPDATE … WHERE` 读 |
-| `deploy/postgres-cvm/sql/20-login-roles.sql:967` | `GRANT INSERT (…15 列…)` |
-| `deploy/postgres-cvm/sql/20-login-roles.sql:969` | `GRANT UPDATE (state,revision,error_code,result_ref,updated_at)` |
+| `deploy/postgres-cvm/sql/20-login-roles.sql:980` | `GRANT SELECT (id,state,revision,error_code,result_ref,updated_at)` —— 冲突目标 `id` + `DO UPDATE … WHERE` 读的 `state` + **`DO UPDATE` 的五个 SET 列**（本片修正，见下方 ⚠） |
+| `deploy/postgres-cvm/sql/20-login-roles.sql:981` | `GRANT INSERT (…15 列…)` |
+| `deploy/postgres-cvm/sql/20-login-roles.sql:984` | `GRANT UPDATE (state,revision,error_code,result_ref,updated_at)` |
 | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | `domain_manifest` 加一行 `('jobs','granted',true)`；`expected` 加一行逐列复述（58 号断言逐列核对）；`\echo` 同步 |
+| `tests/integration/egress-ledger-pg.mjs` | 抽 `deploy/**` 的 `gy-r71-jobs-ledger-grant` 区域原样执行（只替换受权角色），并逐列核对 15/5/6 ⇒ 两条供给路径同源 |
+
+⚠ **本片修正：SELECT 面是 6 列，不是 2 列。** 首版按「`id` 是冲突目标、`state` 被 `WHERE` 读」只授了
+`SELECT (id,state)`，真库实测**不足**：`INSERT … ON CONFLICT (id) DO UPDATE` 会让 PG 读旧行，`DO UPDATE`
+的**每个 SET 列**也必须可 SELECT。真 PG 17.11 留一法实测（`id` / `state` / `revision` / `error_code` /
+`result_ref` / `updated_at` 六列**缺任一列**即 `42501 permission denied for table jobs`；而 `lease_token` /
+`created_at` / `provider_config_version` 等**非 SET 列**并不需要）⇒ 仍是**列级**，不必升到表级 SELECT。
+
+**两条授权供给路径（本片收成一处）**：`public.jobs` 的授权只应有一份来源。CI 臂
+`consent-grant-postgres-17.11` **不执行** `20-login-roles.sql`，它的运行时角色来自
+`services/api/db/roles/*.sql`（8 份，其中**没有一处**提到 `jobs`）⇒ 首版只改了 `deploy/**` 那条，
+臂里 `POST /recognitions` 的台账 upsert 直接 42501，整条臂红。现在臂按 `#region` 抽取 `deploy/**`
+原文执行，「抄一份进测试」的第二次漂移不再可能。
 
 ⛔ **没有**授予表级 DML、也没有 DELETE（台账是作业的账，注销清理不碰它）。
 R34 的裁定没有被推翻：**读面仍然为零**——`/admin/jobs` 还是读三张域内表，台账至今没有读者。

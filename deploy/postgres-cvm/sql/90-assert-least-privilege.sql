@@ -1256,10 +1256,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- `services/api/src/jobs/ledger.ts` 里那条唯一的 upsert（四源共用：ocr / recognition /
     -- transcription / answer）。列面由该语句反推，与 20-login-roles.sql 的 GRANT 逐列同值：
     --   INSERT 15 列（台账一次写全）+ UPDATE 5 列（只有随状态迁移变的列会改）
-    --   + SELECT 2 列（`id` 是冲突目标、`state` 被 `DO UPDATE … WHERE` 读）。
+    --   + SELECT **6** 列 = 冲突目标 `id` + `WHERE` 读的 `state` + `DO UPDATE` 的 5 个 SET 列。
+    --   ⚠ 本片修正：SELECT 原登记为 2 列（id,state）**不足**。`ON CONFLICT (id) DO UPDATE` 会让 PG
+    --   读旧行，SET 列也必须可 SELECT；真 PG 17.11 留一法实测六列缺任一列即
+    --   `42501 permission denied for table jobs`（非 SET 列不需 ⇒ 仍是列级，不升表级 SELECT）。
+    --   复核：`tests/integration/egress-ledger-pg.mjs` 用同一份区域授权真跑那条 upsert。
     -- ⛔ 无 DELETE：台账是作业的账，注销清理不碰它（R34 的撤回面仍不含它）。
     ('jobs',
-     ARRAY['id','state'],
+     ARRAY['id','state','revision','error_code','result_ref','updated_at'],
      ARRAY['id','owner_id','kind','target_type','target_id','entity_revision','input_hash',
            'auth_epoch','state','revision','deadline_at','error_code','result_ref','created_at','updated_at'],
      ARRAY['state','revision','error_code','result_ref','updated_at'],
