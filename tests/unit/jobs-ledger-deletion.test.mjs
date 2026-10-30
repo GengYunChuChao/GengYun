@@ -201,4 +201,3 @@ test('SQL 字面钉子：删的是 `public.jobs` 里该 owner 的行（⛔ 不�
   assert.doesNotMatch(JOB_LEDGER_PURGE_SQL, /;/i, '一条语句：不许夹带第二条');
   assert.doesNotMatch(JOB_LEDGER_PURGE_SQL, /\b(?:TRUNCATE|DROP|UPDATE|INSERT)\b/i, '只能是 DELETE');
 });
-
