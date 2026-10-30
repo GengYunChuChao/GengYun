@@ -17,10 +17,7 @@
 --   已合并的跨 kind 读面 `GET /jobs/{id}` 读到。仓库**唯一的**作业读面是
 --   `services/api/src/jobs/registry.ts` + 各域自己的 `JobSourcePort`；`jobs` 表（0001）
 --   在代码里没有任何写入者（grep `INSERT INTO jobs` 为空），自建一套作业行会与读面口径分叉。
---   【历史快照，别照抄】上面这句是 0013 落地当时的事实；GY-R71（2026-10-30）起 `public.jobs` 有了
---   唯一写入者 `services/api/src/jobs/ledger.ts`（四源、与源表同一事务、`ON CONFLICT (id)` 幂等），
---   本迁移的结论因此只剩一半：轮次行仍是 answer 作业的**权威**（读面走轮次行与各域 store），
---   台账只是它的镜像。裁定与边界见 docs/verification/gy-r71-jobs-ledger-20261030.md。
+--   ↑【历史快照，别照抄】上面这句是 0013 落地当时的事实；GY-R71（2026-10-30）起 `public.jobs` 有了唯一写入者 `services/api/src/jobs/ledger.ts`（四源、与源表同一事务、`ON CONFLICT (id)` 幂等），本迁移的结论只剩一半：轮次行仍是 answer 作业的**权威**，台账只是镜像。裁定与边界见 docs/verification/gy-r71-jobs-ledger-20261030.md。
 --   因此本片把「受理时写下的作业快照」落在**轮次行**上：读写都经轮次行，
 --   状态机仍是契约闭集（`job_state` 列 CHECK 直接抄 `JobState`），
 --   且 `GET /jobs/{id}` 读到的永远是**已发生的状态**（不是重新估算出来的值）。

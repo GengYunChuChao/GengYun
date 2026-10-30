@@ -122,7 +122,7 @@ try {
   assert.equal(after.ocr_jobs, 'ocr_jobs');
   assert.equal(after.recognition_jobs, 'recognition_jobs');
   assert.equal(after.speech_jobs, 'speech_jobs');
-  say(`真实迁移链 ${migrations.length} 条全部执行成功；public.jobs 与三张域内作业表都在（max=${migrations[migrations.length - 1].version}）`);
+  say(`真实迁移链 ${migrations.length} 条全部执行成功；public.jobs 与三张域内作业表都在（不引用目录末位：见 tests/unit/migration-pin-guard.test.mjs）`);
 
   const stateColumnType = await one(
     "SELECT format_type(a.atttypid, a.atttypmod) AS t FROM pg_attribute a WHERE a.attrelid = 'public.jobs'::regclass AND a.attname = 'state'",

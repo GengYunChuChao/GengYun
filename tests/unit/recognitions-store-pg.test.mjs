@@ -206,10 +206,16 @@ test('接口形状：persistent = true，且 13 个方法一个不少（与内�
 test('insertJob：单条 INSERT，值序 = 契约行字段序；23505 翻成与内存实现同文案的冲突错误', async () => {
   const ok = makeDb([[]]);
   await ok.store.insertJob(JOB_ROW);
-  assert.match(ok.sqls()[0], /^INSERT INTO public\.recognition_jobs \(/);
-  assert.match(ok.sqls()[0], /RETURNING id$/);
-  assert.equal(ok.sqls().length, 1);
-  assert.deepEqual(ok.log[0].values, [
+  // GY-R71：insertJob 从「单句」变成「一个事务里的两句」——源表 INSERT + 台账 upsert（同一提交点）。
+  const okSqls = ok.sqls();
+  assert.equal(okSqls[0], 'BEGIN', 'insertJob 必须开事务（台账与源表同一个提交点）');
+  assert.match(okSqls[2], /^INSERT INTO public\.recognition_jobs \(/);
+  assert.match(okSqls[2], /RETURNING id$/);
+  assert.match(okSqls[3], /^INSERT INTO public\.jobs \(/, '台账 upsert 必须紧跟源表 INSERT（同一事务内）');
+  assert.match(okSqls[3], /ON CONFLICT \(id\) DO UPDATE/);
+  assert.equal(okSqls[4], 'COMMIT');
+  assert.equal(okSqls[5], 'RELEASE');
+  assert.deepEqual(ok.log[2].values, [
     JOB_ID,
     2,
     'recognition',
@@ -272,12 +278,13 @@ test('updateJob：CAS 是**一条带 WHERE id AND revision 的 UPDATE**；revisi
   // 命中：SELECT 快照 revision=2，期望 2 ⇒ 发 UPDATE，返回改写后的行。
   const hit = makeDb([[JOB_DB_ROW], [{ ...JOB_DB_ROW, revision: 3, updated_at: T2 }]]);
   const updated = await hit.store.updateJob(JOB_ID, 2, mutate);
-  assert.match(hit.sqls()[0], /^SELECT .* FROM public\.recognition_jobs WHERE id = \$1::uuid$/);
+  assert.match(hit.sqls()[2], /^SELECT .* FROM public\.recognition_jobs WHERE id = \$1::uuid$/);
   assert.match(
-    hit.sqls()[1],
+    hit.sqls()[3],
     /^UPDATE public\.recognition_jobs SET .* WHERE id = \$1::uuid AND revision = \$2 RETURNING /,
   );
-  assert.deepEqual(hit.log[1].values, [
+  assert.match(hit.sqls()[4], /^INSERT INTO public\.jobs \(/, 'running 迁移必须在同一事务里写台账');
+  assert.deepEqual(hit.log[3].values, [
     JOB_ID,
     2,
     3,
@@ -288,15 +295,25 @@ test('updateJob：CAS 是**一条带 WHERE id AND revision 的 UPDATE**；revisi
   ]);
   assert.equal(updated.revision, 3);
 
-  // 不命中（快照 revision 已变）：**不发 UPDATE**，直接 null。
+  // 不命中（快照 revision 已变）：**不发 UPDATE**、不写台账，直接 null。
   const stale = makeDb([[JOB_DB_ROW]]);
   assert.equal(await stale.store.updateJob(JOB_ID, 1, mutate), null);
-  assert.equal(stale.sqls().length, 1, '无效 CAS 不得发第二条语句');
+  assert.equal(stale.sqls().filter((sql) => /^UPDATE/.test(sql)).length, 0, '无效 CAS 不得发 UPDATE');
+  assert.equal(
+    stale.sqls().filter((sql) => sql.startsWith('INSERT INTO public.jobs')).length,
+    0,
+    '无效 CAS 不得写台账',
+  );
 
   // 不命中（UPDATE 0 行：并发已在两次读之间改写）：也必须是 null，不得乐观返回 mutate 结果。
   const raced = makeDb([[JOB_DB_ROW], []]);
   assert.equal(await raced.store.updateJob(JOB_ID, 2, mutate), null);
-  assert.equal(raced.sqls().length, 2);
+  assert.equal(raced.sqls().filter((sql) => /^UPDATE/.test(sql)).length, 1);
+  assert.equal(
+    raced.sqls().filter((sql) => sql.startsWith('INSERT INTO public.jobs')).length,
+    0,
+    'UPDATE 0 行时不得写台账',
+  );
 });
 
 test('commitTerminal：同一事务内 FOR UPDATE → INSERT 记录 → UPDATE 任务；revision 不命中 ⇒ null 且零写入', async () => {
@@ -322,8 +339,9 @@ test('commitTerminal：同一事务内 FOR UPDATE → INSERT 记录 → UPDATE �
   assert.match(db.sqls()[4], /^\s*UPDATE public\.recognition_jobs/);
   assert.match(db.sqls()[4], /\brevision = revision \+ 1,/);
   assert.match(db.sqls()[4], / WHERE id = \$1::uuid AND revision = \$2 RETURNING /);
-  assert.equal(db.sqls()[5], 'COMMIT');
-  assert.equal(db.sqls()[6], 'RELEASE');
+  assert.match(db.sqls()[5], /^INSERT INTO public\.jobs \(/, '终态台账 upsert 必须在同一事务内、紧跟作业行 UPDATE');
+  assert.equal(db.sqls()[6], 'COMMIT');
+  assert.equal(db.sqls()[7], 'RELEASE');
   assert.equal(row.state, 'succeeded');
   assert.equal(row.revision, 3);
 

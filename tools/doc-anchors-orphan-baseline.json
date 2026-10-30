@@ -32,6 +32,18 @@
       "accept": 0,
       "orphans": 3543,
       "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 在 services/api/src 的 ocr/recognitions/speech/conversations/admin-ops 五个文件插入台账写入点，四个历史取证页引用的裸锚点行号随之下移（当时读数，按仓规不改写数字）；孤儿册按线索重算，净增 3 条。",
+      "accept": 3,
+      "orphans": 3479,
+      "outsideRed": 123
+    },
+    {
+      "why": "GY-R71 首次按 CI 的扫描面（--scan docs）重算孤儿册：此前本地那次只按默认扫描面写过，漏掉只在 docs 面可见的 64 条（docs/development-progress.md 等对 services/api/src/jobs/sources.ts 的 OUT_OF_RANGE 引用），另加本片新增证据页的处理增量；本次把册子恢复成覆盖 CI 扫描面的全集。",
+      "accept": 77,
+      "orphans": 3543,
+      "outsideRed": 136
     }
   ],
   "orphans": [
@@ -3641,11 +3653,11 @@
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:326|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:352|SUSPECT",
     "docs/verification/gy-r28-e6-closure-materials-20261021.md|privacy/user-data-deletion.ts:449|SUSPECT",
+    "docs/verification/gy-r28-favorites-history-grants-20261020.md|conversations/store-pg.ts:432|SUSPECT",
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|conversations/store-pg.ts:87|SUSPECT",
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|favorites/store-pg.ts:356|SUSPECT",
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|favorites/store-pg.ts:68|SUSPECT",
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|history/store-pg.ts:250|SUSPECT",
-    "docs/verification/gy-r28-favorites-history-grants-20261020.md|services/api/src/recognitions/store-pg.ts:820|SUSPECT",
     "docs/verification/gy-r28-real-pg-wiring-3-20261020.md|services/api/db/roles/auth_privacy.sql:179|OUT_OF_RANGE",
     "docs/verification/gy-r28-real-pg-wiring-3-20261020.md|tests/integration/account-suspend-pg.mjs:199|SUSPECT",
     "docs/verification/gy-r28-sql-column-coverage-20261021.md|community/store-pg.ts:786|SUSPECT",
@@ -3705,6 +3717,8 @@
     "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:625|SUSPECT",
     "docs/verification/gy-r67-docs-pins-20261027.md|app.ts:1341|SUSPECT",
     "docs/verification/gy-r67-docs-pins-20261027.md|docs/architecture/ai-ops-spec-status.md:203|SUSPECT",
+    "docs/verification/gy-r67-docs-truth-20261027.md|jobs-pg.ts:419|SUSPECT",
+    "docs/verification/gy-r67-docs-truth-20261027.md|services/api/src/admin/ops/jobs-pg.ts:419|SUSPECT",
     "docs/verification/gy-r67-docs-truth-20261027.md|services/api/src/app.ts:2449|SUSPECT",
     "docs/verification/gy-r68-d09b-anchor-recheck-20261028.md|docs/architecture/s4-data-traceability.md:2076|OUT_OF_RANGE",
     "docs/verification/gy-r68-d09b-anchor-recheck-20261028.md|docs/architecture/s4-data-traceability.md:2257|OUT_OF_RANGE",

@@ -743,8 +743,8 @@
     "line": 77,
     "target": "services/api/src/server.ts",
     "from": 27,
-    "to": 62,
-    "reason": "旧锚点 27 在 base 上指到 `const pool = createPool(config.databaseUrl);`，与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪到第 51 行，27 只是它早年的位置）；本提交按符号 `buildApp(` 改指 HEAD 第 62 行 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，不是 27+1 的差值平移。",
+    "to": 68,
+    "reason": "旧锚点 27 在 base 上指到 `const pool = createPool(config.databaseUrl);`，与这一行要说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」无关（该调用在 base 上已被 GY-R28-W2 挪走，27 只是它早年的位置）；本提交按符号 `buildApp(` 改指 HEAD 第 68 行 `const app = buildApp({ config, pool, ...(mediaAssembly ?? {}), ...(synthesisMediaAssembly ?? {}) });`，不是 27+1 的差值平移。**GY-R71（2026-10-30）订正 to 62 → 68**：这条 correction 记的是它落地那一刻的读数，之后 `services/api/src/server.ts` 又长了几行（合成 / 审核注入装配），`buildApp(` 从 62 下移到 68。本片只改台账写入点、不碰 server.ts，但一提交就有了 diff 面，静默失效的旧数字会被 correction 验真抓住 —— 按符号重定位，别按差值平移。",
     "kind": "correction",
     "symbol": "buildApp("
   },

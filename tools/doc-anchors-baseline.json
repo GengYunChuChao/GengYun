@@ -1,49 +1,56 @@
 {
   "schema_version": 1,
-  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。【2026-10-28 GY-R68-A01 × upstream/main 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 现算（合流后的树），与两侧旧基线按 path|reason|reference 取并集、逐条沿用原来的 note：A01 侧 16 条「本片代码插入顶空」的登记全部保留，main 侧 6 条（user-data-deletion.ts 的 4 条 NOT_SYMBOL_LINE 等）保留，新增的几条是合流后行号再次前移所致（如 admin/ops/service.ts:1054→本片已改锚，未登记）。⛔ 仍然不要用 --reanchor 或在正文里改历史取证页的数字。",
-  "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline（2026-10-28 合流后重算，note 逐条继承）",
+  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。",
+  "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
       "path": "sasl.js",
       "reason": "BROKEN",
       "owner": "repo",
-      "reference": "sasl.js:67"
+      "reference": "sasl.js:67",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "services/api/src/ocr/retryable-proof-scratch.ts",
       "reason": "BROKEN",
       "owner": "api-server",
-      "reference": "services/api/src/ocr/retryable-proof-scratch.ts:6"
+      "reference": "services/api/src/ocr/retryable-proof-scratch.ts:6",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "WAServiceMainContext.js",
       "reason": "BROKEN",
       "owner": "repo",
-      "reference": "WAServiceMainContext.js:1"
+      "reference": "WAServiceMainContext.js:1",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "WASubContext.js",
       "reason": "BROKEN",
       "owner": "repo",
-      "reference": "WASubContext.js:1"
+      "reference": "WASubContext.js:1",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "README.md",
       "reason": "OUT_OF_RANGE",
       "owner": "repo",
-      "reference": "README.md:440"
+      "reference": "README.md:440",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "README.md",
       "reason": "OUT_OF_RANGE",
       "owner": "repo",
-      "reference": "README.md:459"
+      "reference": "README.md:459",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
       "reason": "SUSPECT",
       "owner": "deploy",
-      "reference": "verify-cvm-postgres.sh:326"
+      "reference": "verify-cvm-postgres.sh:326",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "docs/architecture/contract-status.json",
@@ -56,31 +63,57 @@
       "path": "docs/architecture/s4-data-traceability.md",
       "reason": "SUSPECT",
       "owner": "docs",
-      "reference": "docs/architecture/s4-data-traceability.md:339"
+      "reference": "docs/architecture/s4-data-traceability.md:339",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "docs/verification/gy-i09-identify-loop-20261011.md",
       "reason": "SUSPECT",
       "owner": "docs",
-      "reference": "gy-i09-identify-loop-20261011.md:334"
+      "reference": "gy-i09-identify-loop-20261011.md:334",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "miniprogram/pages/messages/messages.js",
       "reason": "SUSPECT",
       "owner": "miniprogram",
-      "reference": "messages.js:195"
+      "reference": "messages.js:195",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "miniprogram/pages/messages/messages.js",
       "reason": "SUSPECT",
       "owner": "miniprogram",
-      "reference": "messages.js:195"
+      "reference": "messages.js:195",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:419",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:419",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:450-451",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "services/api/src/admin/ops/service.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/admin/ops/service.ts:1054"
+      "reference": "services/api/src/admin/ops/service.ts:1054",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "services/api/src/admin/ops/service.ts",
@@ -184,7 +217,78 @@
       "path": "services/api/src/conversations/screen.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/conversations/screen.ts:152"
+      "reference": "services/api/src/conversations/screen.ts:152",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "conversations/store-pg.ts:432",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "conversations/store-pg.ts:88",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/conversations/store-pg.ts:215",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/conversations/store-pg.ts:326",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/conversations/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/conversations/store-pg.ts:342",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/ocr/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/ocr/store-pg.ts:376",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/ocr/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/ocr/store-pg.ts:376",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/speech/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/speech/store-pg.ts:122",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/speech/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "speech/store-pg.ts:122",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/speech/store-pg.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "speech/store-pg.ts:142",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "tests/integration/admin-audit-logs-pg.mjs",
@@ -197,49 +301,78 @@
       "path": "tests/integration/ocr-jobs-pg.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
-      "reference": "tests/integration/ocr-jobs-pg.mjs:848"
+      "reference": "tests/integration/ocr-jobs-pg.mjs:848",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "tests/unit/ai-ops-ledger-pins.test.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/unit/ai-ops-ledger-pins.test.mjs:282",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "tests/unit/ocr-store-pg.test.mjs",
+      "reason": "SUSPECT",
+      "owner": "repo",
+      "reference": "tests/unit/ocr-store-pg.test.mjs:473",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "tests/unit/sql-column-coverage.test.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
-      "reference": "sql-column-coverage.test.mjs:152"
+      "reference": "sql-column-coverage.test.mjs:152",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "tests/unit/tts-jobs-http.test.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
-      "reference": "tests/unit/tts-jobs-http.test.mjs:129"
+      "reference": "tests/unit/tts-jobs-http.test.mjs:129",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "tests/unit/user-data-deletion.test.mjs",
       "reason": "SUSPECT",
       "owner": "repo",
-      "reference": "tests/unit/user-data-deletion.test.mjs:127"
+      "reference": "tests/unit/user-data-deletion.test.mjs:127",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
+    },
+    {
+      "path": "services/api/src/admin/ops/jobs-pg.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "services/api/src/admin/ops/jobs-pg.ts:245-247",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:276"
+      "reference": "user-data-deletion.ts:276",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:315"
+      "reference": "user-data-deletion.ts:315",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:91"
+      "reference": "user-data-deletion.ts:91",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:97"
+      "reference": "user-data-deletion.ts:97",
+      "note": "GY-R71 引入的位移：本片在 services/api/src 的 ocr/store-pg.ts、recognitions/store-pg.ts、speech/store-pg.ts、conversations/store-pg.ts、admin/ops/jobs-pg.ts 里插入台账写入点（事务包裹 + 一条 upsert + lockSql/updateSql 各补几列），父提交里这些行号随之下移。引用页是当时的读数，按仓规不改写数字；判据本身不变（SUSPECT 的语义仍是「这条引用指向的位置存疑」）。"
     }
   ]
 }
