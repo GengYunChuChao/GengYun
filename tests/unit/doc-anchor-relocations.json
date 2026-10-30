@@ -690,16 +690,6 @@
   },
   {
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
-    "line": 77,
-    "target": "services/api/src/server.ts",
-    "from": 62,
-    "to": 68,
-    "kind": "correction",
-    "symbol": "const app = buildApp(",
-    "reason": "同上（该页第 77 行表格里同一条锚点）：`server.ts:62` 在 base 上指的是 `moderationAssembly.fatalLine` 判断，不是 `buildApp(` 调用行；本提交按符号改指 68。"
-  },
-  {
-    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
     "line": 17,
     "target": "services/api/src/server.ts",
     "from": 62,
