@@ -390,8 +390,8 @@ export interface ConversationServiceDeps {
    */
   answerVersions?: { model: string; prompt: string };
   /**
-   * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的
-   * `dangerous_usage` + `prompt_injection` 规则层；注入只供负控制，不改默认行为）。
+   * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的 `dangerous_usage` + `prompt_injection`），
+   * 外加**答案侧第四道**：正文另扩 `authority_spoofing` / `safety_claim`；注入只供负控制，不改默认行为）。
    */
   riskScreen?: RiskScreen;
   /** 幂等台账（缺省为进程内实现；real 模式下装配层拒绝把内存存储交给服务层）。 */

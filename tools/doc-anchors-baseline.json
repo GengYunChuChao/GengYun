@@ -184,12 +184,6 @@
       "reference": "services/api/src/app.ts:878"
     },
     {
-      "path": "services/api/src/conversations/screen.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/screen.ts:152"
-    },
-    {
       "path": "services/api/src/routes/knowledge.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
