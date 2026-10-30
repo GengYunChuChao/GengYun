@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。 【GY-R71 补片 2026-10-30】删 2 条陈旧条目（app.ts:1172 / app.ts:680）：它们登记的是「活文档引用指到错行」的遗留，本片把那两处引用按实测行号改写（:1176 / :684）后不再命中，按「修好一条就删一行」删掉；其余条目为合流并集 + 本次 src 插入导致的真实位移重登记。 【2026-10-30 GY-R71 补片】再删 1 条陈旧条目（user-data-deletion.ts:335 NOT_SYMBOL_LINE）：该行引用的是注释块收尾行，本次随 jobs 模块插入整体下移，设计页与符号基线都按实测改写（:359），不再被判 NOT_SYMBOL_LINE。",
+  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。",
   "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
@@ -350,6 +350,12 @@
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
       "reference": "services/api/src/privacy/user-data-deletion.ts:203"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:300"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",

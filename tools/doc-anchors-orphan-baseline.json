@@ -80,6 +80,12 @@
       "accept": 2,
       "orphans": 3477,
       "outsideRed": 120
+    },
+    {
+      "why": "contract-implementation-status.md 的 createSynthesis 行按 app.ts +4 实测行号改写（1157/1158/1172→1161/1162/1176）后，同一行里的裸锚点键随数值变化：1 条新增、1 条陈旧，同一处位移。",
+      "accept": 1,
+      "orphans": 3477,
+      "outsideRed": 120
     }
   ],
   "orphans": [
@@ -186,7 +192,7 @@
     "docs/architecture/s4-data-traceability.md|:2004|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2007|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:202-207|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:2021|ambiguous-block",
+    "docs/architecture/s4-data-traceability.md|:2025|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:203|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:236|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:244|ambiguous-block",
