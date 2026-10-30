@@ -1,0 +1,2010 @@
+{
+  "/api/v1/herbicides": {
+    "status": 200,
+    "data": {
+      "items": [
+        {
+          "id": "bf109c75-8232-5226-b9e1-a649a47b1f9d",
+          "revision": 1,
+          "formulation": {
+            "id": "51b9bc8c-31f7-503e-86e1-4144c6296325",
+            "registration_number": "PD20110805",
+            "producer": "沈阳科创化学品有限公司",
+            "dosage_form": "悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "24%",
+                "unit_text": "%"
+              },
+              {
+                "name": "磺草酮",
+                "content_text": "14%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "e1fcc1fa-d2ed-577d-b77c-dada84f1c37c",
+          "revision": 1,
+          "formulation": {
+            "id": "d7d40e74-c0fb-55a1-a402-64592d8d578e",
+            "registration_number": "PD20111018",
+            "producer": "四川利尔作物科学有限公司",
+            "dosage_form": "水剂",
+            "ingredients": [
+              {
+                "name": "二氯吡啶酸",
+                "content_text": "22.9%",
+                "unit_text": "%"
+              },
+              {
+                "name": "氨氯吡啶酸",
+                "content_text": "5.7%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "36ce8e85-4c90-50b3-9403-351446990dcc",
+          "revision": 1,
+          "formulation": {
+            "id": "f66a3253-38ae-527c-a2ad-9fb3bf60889c",
+            "registration_number": "PD20161175",
+            "producer": "陕西美邦药业集团股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "辛酰溴苯腈",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "硝磺草酮",
+                "content_text": "5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "2%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：中等毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "ee57e13c-3b83-5b43-87f8-2c4b36a98930",
+          "revision": 1,
+          "formulation": {
+            "id": "7827facd-d76f-5fa7-b739-53e76599af8e",
+            "registration_number": "PD20161371",
+            "producer": "山东胜邦绿野化学有限公司",
+            "dosage_form": "水分散粒剂",
+            "ingredients": [
+              {
+                "name": "唑草酮",
+                "content_text": "40%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "de485140-fd58-5c48-8e1a-b78c8f0fe497",
+          "revision": 1,
+          "formulation": {
+            "id": "2d8cea4b-b60e-5452-990a-affbaa4c2f9e",
+            "registration_number": "PD20161375",
+            "producer": "安徽久易农业股份有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "烯草酮",
+                "content_text": "240克/升",
+                "unit_text": "克/升"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "01335373-1ee6-55a1-a7f4-0413a1eb211e",
+          "revision": 1,
+          "formulation": {
+            "id": "6cdf1616-4f52-57cf-8dac-6d9dad6f372a",
+            "registration_number": "PD20161376",
+            "producer": "辽宁壮苗生化科技股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "20%",
+                "unit_text": "%"
+              },
+              {
+                "name": "辛酰溴苯腈",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "4%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "d638d4cc-6a09-56f8-8393-1716db4646e7",
+          "revision": 1,
+          "formulation": {
+            "id": "9177f5de-ff1e-502b-b8f0-ed6abfa174d9",
+            "registration_number": "PD20211218",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "悬乳剂",
+            "ingredients": [
+              {
+                "name": "吡氟酰草胺",
+                "content_text": "2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "二甲戊灵",
+                "content_text": "22%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "81659704-3a0e-5f6b-9728-a1937e0d8cb8",
+          "revision": 1,
+          "formulation": {
+            "id": "1f40dc4f-aa96-5ddf-b6d9-0cf247f062dd",
+            "registration_number": "PD20211624",
+            "producer": "山东东远生物科技有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "26%",
+                "unit_text": "%"
+              },
+              {
+                "name": "硝磺草酮",
+                "content_text": "6%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "4%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "b11ed937-4efd-595d-8c55-cdbf11f47f6c",
+          "revision": 1,
+          "formulation": {
+            "id": "8c9e9b56-44f0-5fc1-aa79-efcd62c6c1e9",
+            "registration_number": "PD20211628",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "烯草酮",
+                "content_text": "30%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "833628ae-0158-573f-9253-b136fc4abace",
+          "revision": 1,
+          "formulation": {
+            "id": "c017ec0e-556d-5148-85ee-196ef9426cf0",
+            "registration_number": "PD20211629",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "颗粒剂",
+            "ingredients": [
+              {
+                "name": "苯噻酰草胺",
+                "content_text": "20.5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "吡嘧磺隆",
+                "content_text": "1%",
+                "unit_text": "%"
+              },
+              {
+                "name": "西草净",
+                "content_text": "8.5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "c2c57352-c983-51ca-9f42-18841455681b",
+          "revision": 1,
+          "formulation": {
+            "id": "b862996e-7c78-55d0-bd3d-d113aa7a4a51",
+            "registration_number": "PD20211636",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "55.3%",
+                "unit_text": "%"
+              },
+              {
+                "name": "2,4-滴异辛酯",
+                "content_text": "20.2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "嗪草酮",
+                "content_text": "6.5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "f2192840-d444-5fa6-a947-4e0846a7738f",
+          "revision": 1,
+          "formulation": {
+            "id": "a5a6d28d-d99d-589d-9aad-b191643bec3e",
+            "registration_number": "PD20211640",
+            "producer": "哈尔滨汇丰生物农化有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "烯草酮",
+                "content_text": "7%",
+                "unit_text": "%"
+              },
+              {
+                "name": "异噁草松",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "氟磺胺草醚",
+                "content_text": "15%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "662bceb1-a489-58b7-bf1a-9ffdbf6283a0",
+          "revision": 1,
+          "formulation": {
+            "id": "2a3dc008-b640-52a3-a15b-aa4b91c6c9de",
+            "registration_number": "PD20212101",
+            "producer": "佛山市盈辉作物科学有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙氧氟草醚",
+                "content_text": "240克/升",
+                "unit_text": "克/升"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "f50d2caf-f671-560d-8c0c-5c085ad294b0",
+          "revision": 1,
+          "formulation": {
+            "id": "45102826-b0cd-52cd-a90a-9704e51b050f",
+            "registration_number": "PD20212137",
+            "producer": "华丰作物科技（黑龙江）有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "60%",
+                "unit_text": "%"
+              },
+              {
+                "name": "嗪草酮",
+                "content_text": "15%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "63363cb6-17b9-5c47-ade2-aa343e84ac22",
+          "revision": 1,
+          "formulation": {
+            "id": "998ad5a6-3054-5ff5-90ca-f4a69dca8dfe",
+            "registration_number": "PD20212138",
+            "producer": "华丰作物科技（黑龙江）有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "70.5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "丙炔氟草胺",
+                "content_text": "2.5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "78c88832-9011-5629-9694-177560118b1d",
+          "revision": 1,
+          "formulation": {
+            "id": "973022aa-87a2-5e1f-bf6a-4a1365ac42bf",
+            "registration_number": "PD20212142",
+            "producer": "华丰作物科技（黑龙江）有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "丁草胺",
+                "content_text": "30%",
+                "unit_text": "%"
+              },
+              {
+                "name": "噁嗪草酮",
+                "content_text": "2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "丙炔噁草酮",
+                "content_text": "5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "61e43c2d-0a88-5164-9caa-6c7d3e43c111",
+          "revision": 1,
+          "formulation": {
+            "id": "14e9bc4a-61a8-5fb9-bd1a-f86e5f756f6f",
+            "registration_number": "PD20212148",
+            "producer": "黑龙江谱农丰生物科技开发有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "60%",
+                "unit_text": "%"
+              },
+              {
+                "name": "2,4-滴异辛酯",
+                "content_text": "18%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "78a0b830-0b6f-574a-9393-5852d4c4c79f",
+          "revision": 1,
+          "formulation": {
+            "id": "b40b9f70-6320-5a81-8732-ac50749c9757",
+            "registration_number": "PD20212226",
+            "producer": "张掖市大弓农化有限公司",
+            "dosage_form": "悬浮剂",
+            "ingredients": [
+              {
+                "name": "硝磺草酮",
+                "content_text": "40%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "3fa55f84-9ffe-5b13-a359-411a934cd683",
+          "revision": 1,
+          "formulation": {
+            "id": "a3462ffb-4251-5c54-9a65-53b143f4b0b6",
+            "registration_number": "PD20212271",
+            "producer": "江西正邦作物保护股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "噁唑酰草胺",
+                "content_text": "10%",
+                "unit_text": "%"
+              },
+              {
+                "name": "二氯喹啉酸",
+                "content_text": "15%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "21fced9a-cea9-53e3-83f2-fa0e9e1cbc44",
+          "revision": 1,
+          "formulation": {
+            "id": "4af0d23d-8bac-5e25-aa79-301e6acc4647",
+            "registration_number": "PD20260472",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "可溶液剂",
+            "ingredients": [
+              {
+                "name": "二氯吡啶酸",
+                "content_text": "24%",
+                "unit_text": "%"
+              },
+              {
+                "name": "氨氯吡啶酸",
+                "content_text": "6%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第1期）#c82c43361c0b",
+            "title": "农药登记信息（2026年第1期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202603/t20260325_6482643.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-03-26T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "/api/v1/herbicides?limit=7": {
+    "status": 200,
+    "data": {
+      "items": [
+        {
+          "id": "bf109c75-8232-5226-b9e1-a649a47b1f9d",
+          "revision": 1,
+          "formulation": {
+            "id": "51b9bc8c-31f7-503e-86e1-4144c6296325",
+            "registration_number": "PD20110805",
+            "producer": "沈阳科创化学品有限公司",
+            "dosage_form": "悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "24%",
+                "unit_text": "%"
+              },
+              {
+                "name": "磺草酮",
+                "content_text": "14%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "e1fcc1fa-d2ed-577d-b77c-dada84f1c37c",
+          "revision": 1,
+          "formulation": {
+            "id": "d7d40e74-c0fb-55a1-a402-64592d8d578e",
+            "registration_number": "PD20111018",
+            "producer": "四川利尔作物科学有限公司",
+            "dosage_form": "水剂",
+            "ingredients": [
+              {
+                "name": "二氯吡啶酸",
+                "content_text": "22.9%",
+                "unit_text": "%"
+              },
+              {
+                "name": "氨氯吡啶酸",
+                "content_text": "5.7%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "36ce8e85-4c90-50b3-9403-351446990dcc",
+          "revision": 1,
+          "formulation": {
+            "id": "f66a3253-38ae-527c-a2ad-9fb3bf60889c",
+            "registration_number": "PD20161175",
+            "producer": "陕西美邦药业集团股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "辛酰溴苯腈",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "硝磺草酮",
+                "content_text": "5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "2%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：中等毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "ee57e13c-3b83-5b43-87f8-2c4b36a98930",
+          "revision": 1,
+          "formulation": {
+            "id": "7827facd-d76f-5fa7-b739-53e76599af8e",
+            "registration_number": "PD20161371",
+            "producer": "山东胜邦绿野化学有限公司",
+            "dosage_form": "水分散粒剂",
+            "ingredients": [
+              {
+                "name": "唑草酮",
+                "content_text": "40%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "de485140-fd58-5c48-8e1a-b78c8f0fe497",
+          "revision": 1,
+          "formulation": {
+            "id": "2d8cea4b-b60e-5452-990a-affbaa4c2f9e",
+            "registration_number": "PD20161375",
+            "producer": "安徽久易农业股份有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "烯草酮",
+                "content_text": "240克/升",
+                "unit_text": "克/升"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "01335373-1ee6-55a1-a7f4-0413a1eb211e",
+          "revision": 1,
+          "formulation": {
+            "id": "6cdf1616-4f52-57cf-8dac-6d9dad6f372a",
+            "registration_number": "PD20161376",
+            "producer": "辽宁壮苗生化科技股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "20%",
+                "unit_text": "%"
+              },
+              {
+                "name": "辛酰溴苯腈",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "4%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "d638d4cc-6a09-56f8-8393-1716db4646e7",
+          "revision": 1,
+          "formulation": {
+            "id": "9177f5de-ff1e-502b-b8f0-ed6abfa174d9",
+            "registration_number": "PD20211218",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "悬乳剂",
+            "ingredients": [
+              {
+                "name": "吡氟酰草胺",
+                "content_text": "2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "二甲戊灵",
+                "content_text": "22%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        }
+      ],
+      "next_cursor": "PD20211218"
+    }
+  },
+  "/api/v1/herbicides?q=%E6%B0%B4%E7%A8%BB": {
+    "status": 200,
+    "data": {
+      "items": [
+        {
+          "id": "ee57e13c-3b83-5b43-87f8-2c4b36a98930",
+          "revision": 1,
+          "formulation": {
+            "id": "7827facd-d76f-5fa7-b739-53e76599af8e",
+            "registration_number": "PD20161371",
+            "producer": "山东胜邦绿野化学有限公司",
+            "dosage_form": "水分散粒剂",
+            "ingredients": [
+              {
+                "name": "唑草酮",
+                "content_text": "40%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "d638d4cc-6a09-56f8-8393-1716db4646e7",
+          "revision": 1,
+          "formulation": {
+            "id": "9177f5de-ff1e-502b-b8f0-ed6abfa174d9",
+            "registration_number": "PD20211218",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "悬乳剂",
+            "ingredients": [
+              {
+                "name": "吡氟酰草胺",
+                "content_text": "2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "二甲戊灵",
+                "content_text": "22%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "833628ae-0158-573f-9253-b136fc4abace",
+          "revision": 1,
+          "formulation": {
+            "id": "c017ec0e-556d-5148-85ee-196ef9426cf0",
+            "registration_number": "PD20211629",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "颗粒剂",
+            "ingredients": [
+              {
+                "name": "苯噻酰草胺",
+                "content_text": "20.5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "吡嘧磺隆",
+                "content_text": "1%",
+                "unit_text": "%"
+              },
+              {
+                "name": "西草净",
+                "content_text": "8.5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "662bceb1-a489-58b7-bf1a-9ffdbf6283a0",
+          "revision": 1,
+          "formulation": {
+            "id": "2a3dc008-b640-52a3-a15b-aa4b91c6c9de",
+            "registration_number": "PD20212101",
+            "producer": "佛山市盈辉作物科学有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙氧氟草醚",
+                "content_text": "240克/升",
+                "unit_text": "克/升"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "78c88832-9011-5629-9694-177560118b1d",
+          "revision": 1,
+          "formulation": {
+            "id": "973022aa-87a2-5e1f-bf6a-4a1365ac42bf",
+            "registration_number": "PD20212142",
+            "producer": "华丰作物科技（黑龙江）有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "丁草胺",
+                "content_text": "30%",
+                "unit_text": "%"
+              },
+              {
+                "name": "噁嗪草酮",
+                "content_text": "2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "丙炔噁草酮",
+                "content_text": "5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "3fa55f84-9ffe-5b13-a359-411a934cd683",
+          "revision": 1,
+          "formulation": {
+            "id": "a3462ffb-4251-5c54-9a65-53b143f4b0b6",
+            "registration_number": "PD20212271",
+            "producer": "江西正邦作物保护股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "噁唑酰草胺",
+                "content_text": "10%",
+                "unit_text": "%"
+              },
+              {
+                "name": "二氯喹啉酸",
+                "content_text": "15%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "/api/v1/herbicides?registration_number=PD20161371": {
+    "status": 200,
+    "data": {
+      "items": [
+        {
+          "id": "ee57e13c-3b83-5b43-87f8-2c4b36a98930",
+          "revision": 1,
+          "formulation": {
+            "id": "7827facd-d76f-5fa7-b739-53e76599af8e",
+            "registration_number": "PD20161371",
+            "producer": "山东胜邦绿野化学有限公司",
+            "dosage_form": "水分散粒剂",
+            "ingredients": [
+              {
+                "name": "唑草酮",
+                "content_text": "40%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        }
+      ],
+      "next_cursor": null
+    }
+  },
+  "__pages__": [
+    {
+      "items": [
+        {
+          "id": "bf109c75-8232-5226-b9e1-a649a47b1f9d",
+          "revision": 1,
+          "formulation": {
+            "id": "51b9bc8c-31f7-503e-86e1-4144c6296325",
+            "registration_number": "PD20110805",
+            "producer": "沈阳科创化学品有限公司",
+            "dosage_form": "悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "24%",
+                "unit_text": "%"
+              },
+              {
+                "name": "磺草酮",
+                "content_text": "14%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "e1fcc1fa-d2ed-577d-b77c-dada84f1c37c",
+          "revision": 1,
+          "formulation": {
+            "id": "d7d40e74-c0fb-55a1-a402-64592d8d578e",
+            "registration_number": "PD20111018",
+            "producer": "四川利尔作物科学有限公司",
+            "dosage_form": "水剂",
+            "ingredients": [
+              {
+                "name": "二氯吡啶酸",
+                "content_text": "22.9%",
+                "unit_text": "%"
+              },
+              {
+                "name": "氨氯吡啶酸",
+                "content_text": "5.7%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "36ce8e85-4c90-50b3-9403-351446990dcc",
+          "revision": 1,
+          "formulation": {
+            "id": "f66a3253-38ae-527c-a2ad-9fb3bf60889c",
+            "registration_number": "PD20161175",
+            "producer": "陕西美邦药业集团股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "辛酰溴苯腈",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "硝磺草酮",
+                "content_text": "5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "2%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：中等毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "ee57e13c-3b83-5b43-87f8-2c4b36a98930",
+          "revision": 1,
+          "formulation": {
+            "id": "7827facd-d76f-5fa7-b739-53e76599af8e",
+            "registration_number": "PD20161371",
+            "producer": "山东胜邦绿野化学有限公司",
+            "dosage_form": "水分散粒剂",
+            "ingredients": [
+              {
+                "name": "唑草酮",
+                "content_text": "40%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "de485140-fd58-5c48-8e1a-b78c8f0fe497",
+          "revision": 1,
+          "formulation": {
+            "id": "2d8cea4b-b60e-5452-990a-affbaa4c2f9e",
+            "registration_number": "PD20161375",
+            "producer": "安徽久易农业股份有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "烯草酮",
+                "content_text": "240克/升",
+                "unit_text": "克/升"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "01335373-1ee6-55a1-a7f4-0413a1eb211e",
+          "revision": 1,
+          "formulation": {
+            "id": "6cdf1616-4f52-57cf-8dac-6d9dad6f372a",
+            "registration_number": "PD20161376",
+            "producer": "辽宁壮苗生化科技股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "20%",
+                "unit_text": "%"
+              },
+              {
+                "name": "辛酰溴苯腈",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "4%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "d638d4cc-6a09-56f8-8393-1716db4646e7",
+          "revision": 1,
+          "formulation": {
+            "id": "9177f5de-ff1e-502b-b8f0-ed6abfa174d9",
+            "registration_number": "PD20211218",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "悬乳剂",
+            "ingredients": [
+              {
+                "name": "吡氟酰草胺",
+                "content_text": "2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "二甲戊灵",
+                "content_text": "22%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        }
+      ],
+      "hasNext": true
+    },
+    {
+      "items": [
+        {
+          "id": "81659704-3a0e-5f6b-9728-a1937e0d8cb8",
+          "revision": 1,
+          "formulation": {
+            "id": "1f40dc4f-aa96-5ddf-b6d9-0cf247f062dd",
+            "registration_number": "PD20211624",
+            "producer": "山东东远生物科技有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "莠去津",
+                "content_text": "26%",
+                "unit_text": "%"
+              },
+              {
+                "name": "硝磺草酮",
+                "content_text": "6%",
+                "unit_text": "%"
+              },
+              {
+                "name": "烟嘧磺隆",
+                "content_text": "4%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "b11ed937-4efd-595d-8c55-cdbf11f47f6c",
+          "revision": 1,
+          "formulation": {
+            "id": "8c9e9b56-44f0-5fc1-aa79-efcd62c6c1e9",
+            "registration_number": "PD20211628",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "烯草酮",
+                "content_text": "30%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "833628ae-0158-573f-9253-b136fc4abace",
+          "revision": 1,
+          "formulation": {
+            "id": "c017ec0e-556d-5148-85ee-196ef9426cf0",
+            "registration_number": "PD20211629",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "颗粒剂",
+            "ingredients": [
+              {
+                "name": "苯噻酰草胺",
+                "content_text": "20.5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "吡嘧磺隆",
+                "content_text": "1%",
+                "unit_text": "%"
+              },
+              {
+                "name": "西草净",
+                "content_text": "8.5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "c2c57352-c983-51ca-9f42-18841455681b",
+          "revision": 1,
+          "formulation": {
+            "id": "b862996e-7c78-55d0-bd3d-d113aa7a4a51",
+            "registration_number": "PD20211636",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "55.3%",
+                "unit_text": "%"
+              },
+              {
+                "name": "2,4-滴异辛酯",
+                "content_text": "20.2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "嗪草酮",
+                "content_text": "6.5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "f2192840-d444-5fa6-a947-4e0846a7738f",
+          "revision": 1,
+          "formulation": {
+            "id": "a5a6d28d-d99d-589d-9aad-b191643bec3e",
+            "registration_number": "PD20211640",
+            "producer": "哈尔滨汇丰生物农化有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "烯草酮",
+                "content_text": "7%",
+                "unit_text": "%"
+              },
+              {
+                "name": "异噁草松",
+                "content_text": "15%",
+                "unit_text": "%"
+              },
+              {
+                "name": "氟磺胺草醚",
+                "content_text": "15%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "662bceb1-a489-58b7-bf1a-9ffdbf6283a0",
+          "revision": 1,
+          "formulation": {
+            "id": "2a3dc008-b640-52a3-a15b-aa4b91c6c9de",
+            "registration_number": "PD20212101",
+            "producer": "佛山市盈辉作物科学有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙氧氟草醚",
+                "content_text": "240克/升",
+                "unit_text": "克/升"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "f50d2caf-f671-560d-8c0c-5c085ad294b0",
+          "revision": 1,
+          "formulation": {
+            "id": "45102826-b0cd-52cd-a90a-9704e51b050f",
+            "registration_number": "PD20212137",
+            "producer": "华丰作物科技（黑龙江）有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "60%",
+                "unit_text": "%"
+              },
+              {
+                "name": "嗪草酮",
+                "content_text": "15%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        }
+      ],
+      "hasNext": true
+    },
+    {
+      "items": [
+        {
+          "id": "63363cb6-17b9-5c47-ade2-aa343e84ac22",
+          "revision": 1,
+          "formulation": {
+            "id": "998ad5a6-3054-5ff5-90ca-f4a69dca8dfe",
+            "registration_number": "PD20212138",
+            "producer": "华丰作物科技（黑龙江）有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "70.5%",
+                "unit_text": "%"
+              },
+              {
+                "name": "丙炔氟草胺",
+                "content_text": "2.5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "78c88832-9011-5629-9694-177560118b1d",
+          "revision": 1,
+          "formulation": {
+            "id": "973022aa-87a2-5e1f-bf6a-4a1365ac42bf",
+            "registration_number": "PD20212142",
+            "producer": "华丰作物科技（黑龙江）有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "丁草胺",
+                "content_text": "30%",
+                "unit_text": "%"
+              },
+              {
+                "name": "噁嗪草酮",
+                "content_text": "2%",
+                "unit_text": "%"
+              },
+              {
+                "name": "丙炔噁草酮",
+                "content_text": "5%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "61e43c2d-0a88-5164-9caa-6c7d3e43c111",
+          "revision": 1,
+          "formulation": {
+            "id": "14e9bc4a-61a8-5fb9-bd1a-f86e5f756f6f",
+            "registration_number": "PD20212148",
+            "producer": "黑龙江谱农丰生物科技开发有限公司",
+            "dosage_form": "乳油",
+            "ingredients": [
+              {
+                "name": "乙草胺",
+                "content_text": "60%",
+                "unit_text": "%"
+              },
+              {
+                "name": "2,4-滴异辛酯",
+                "content_text": "18%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "78a0b830-0b6f-574a-9393-5852d4c4c79f",
+          "revision": 1,
+          "formulation": {
+            "id": "b40b9f70-6320-5a81-8732-ac50749c9757",
+            "registration_number": "PD20212226",
+            "producer": "张掖市大弓农化有限公司",
+            "dosage_form": "悬浮剂",
+            "ingredients": [
+              {
+                "name": "硝磺草酮",
+                "content_text": "40%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "3fa55f84-9ffe-5b13-a359-411a934cd683",
+          "revision": 1,
+          "formulation": {
+            "id": "a3462ffb-4251-5c54-9a65-53b143f4b0b6",
+            "registration_number": "PD20212271",
+            "producer": "江西正邦作物保护股份有限公司",
+            "dosage_form": "可分散油悬浮剂",
+            "ingredients": [
+              {
+                "name": "噁唑酰草胺",
+                "content_text": "10%",
+                "unit_text": "%"
+              },
+              {
+                "name": "二氯喹啉酸",
+                "content_text": "15%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第9期）#bfe97d34e219",
+            "title": "农药登记信息（2026年第9期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202606/t20260604_6484759.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-06-04T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：微毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        },
+        {
+          "id": "21fced9a-cea9-53e3-83f2-fa0e9e1cbc44",
+          "revision": 1,
+          "formulation": {
+            "id": "4af0d23d-8bac-5e25-aa79-301e6acc4647",
+            "registration_number": "PD20260472",
+            "producer": "天津博克百胜科技有限公司",
+            "dosage_form": "可溶液剂",
+            "ingredients": [
+              {
+                "name": "二氯吡啶酸",
+                "content_text": "24%",
+                "unit_text": "%"
+              },
+              {
+                "name": "氨氯吡啶酸",
+                "content_text": "6%",
+                "unit_text": "%"
+              }
+            ]
+          },
+          "source": {
+            "id": "379a6eb7-f950-5e2d-a822-b02c9cdd39da",
+            "version": "src_moa_pd_2026@农药登记信息（2026年第1期）#c82c43361c0b",
+            "title": "农药登记信息（2026年第1期）",
+            "url": "https://zzys.moa.gov.cn/gzdt/202603/t20260325_6482643.htm",
+            "publisher": "农业农村部农药管理司",
+            "validity": "valid",
+            "review_status": "unverified",
+            "updated_at": "2026-03-26T00:00:00.000Z",
+            "source_kind": "verified_seed",
+            "evidence_kind": "research"
+          },
+          "risk_text": "毒性：低毒。记录状态：partial。来源为公开登记公告附表，未逐条复核标签原文；本轮未采集：用药量（制剂量/亩）、施用方法、注意事项、登记有效期起止日期、禁限用状态。不可作为用药量依据。",
+          "reference_state": "available"
+        }
+      ],
+      "hasNext": false
+    }
+  ]
+}
