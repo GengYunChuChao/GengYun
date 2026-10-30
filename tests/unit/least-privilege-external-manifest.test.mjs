@@ -63,11 +63,13 @@ const EXTERNAL_MANIFEST_TABLES = [
 ];
 
 /**
- * `allow_table_dml` 的 18 个三元组（本文件是表级写权限的唯一事实来源）。
+ * `allow_table_dml` 的 19 个三元组（本文件是表级写权限的唯一事实来源）。
  *
  * R34 片 3（#19 / #10）起从 16 长到 18：`ocr_jobs` / `ocr_records` 补表级 `DELETE`，
  * 与早已表级的 `ocr_idempotency` 统一成「OCR 三表一条路线」（PG 无列级 DELETE）。
- * 这两条是**用户 2026-10-24 批准**的唯一删除面例外；其它任何表加进本清单都必须先改裁定。
+ * GY-R71 补片长到 19：`public.jobs` 补表级 `DELETE`（账号注销按 owner 清台账行；
+ * PG 无列级 DELETE）。判据没放松：白名单外的表级写权限照样判红；其它任何表加进本清单
+ * 必须先改裁定。
  */
 const ALLOW_TABLE_DML_TRIPLES = [
   'public.community_idempotency.DELETE',
@@ -80,6 +82,7 @@ const ALLOW_TABLE_DML_TRIPLES = [
   'public.history_idempotency.DELETE',
   'public.idempotency_keys.DELETE',
   'public.idempotency_keys.INSERT',
+  'public.jobs.DELETE',
   'public.media_derivatives.DELETE',
   'public.media_object_cleanup.DELETE',
   'public.messages.DELETE',
@@ -116,7 +119,7 @@ test('external_manifest 恰是 17 张具名表，且 jobs / media 不在其中',
   }
 });
 
-test('allow_table_dml 恰是 18 个三元组，且不含 jobs', () => {
+test('allow_table_dml 恰是 19 个三元组，且 jobs 只有 DELETE 一组（无 INSERT/UPDATE）', () => {
   const body = valuesBlock(SOURCE, /allow_table_dml\(sch, tbl, priv\) AS \(VALUES/);
   const triples = [];
   for (const line of body) {
@@ -124,16 +127,18 @@ test('allow_table_dml 恰是 18 个三元组，且不含 jobs', () => {
     if (m) triples.push(`${m[1]}.${m[2]}.${m[3]}`);
   }
 
-  assert.equal(triples.length, 18, `allow_table_dml 当前 ${triples.length} 组（应为 18）`);
+  assert.equal(triples.length, 19, `allow_table_dml 当前 ${triples.length} 组（应为 19）`);
   assert.deepEqual(
     [...triples].sort(),
     ALLOW_TABLE_DML_TRIPLES,
     'allow_table_dml 漂移：表级写权限白名单是唯一事实来源，多一组 = 悄悄给了某张表表级写权',
   );
-  assert.equal(
-    triples.some((t) => t.includes('.jobs.')),
-    false,
-    'jobs 不得出现在表级写权限白名单里（它连读者都没有）',
+  // GY-R71 补片：`jobs` 进白名单，但**只许 DELETE** —— 表级 INSERT/UPDATE 仍然处处禁止
+  // （台账写入走 15/5 列的列级授权，见 20-login-roles.sql 的 gy-r71-jobs-ledger-grant 区）。
+  assert.deepEqual(
+    triples.filter((t) => t.includes('.jobs.')),
+    ['public.jobs.DELETE'],
+    'jobs 只应有表级 DELETE（注销清理面）；出现表级 INSERT/UPDATE 说明授权面被写宽了',
   );
 });
 

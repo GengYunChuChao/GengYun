@@ -208,7 +208,7 @@
 上一版判「默认未接线、一律 503」，那是把**缺省分支**当成了生产路径。按 #589 后的代码更正：
 
 - 判定变量名骗人但不骗逻辑：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1358`），值只取决于是否 real。
-- 装配：`adminJobPort = adminInjection?.jobPort ?? (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined)`（`services/api/src/app.ts:1376-1378`），显式注入优先；随后注入服务层（real 域 `services/api/src/app.ts:1583`、stub 域同文件 :1722）。
+- 装配：`adminJobPort = adminInjection?.jobPort ?? (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined)`（`services/api/src/app.ts:1376-1378`），显式注入优先；随后注入服务层（real 域 `services/api/src/app.ts:1587`、stub 域同文件 :1726）。
 - 生产端口本体：`services/api/src/admin/ops/jobs-pg.ts:441` 的构造器，`persistent: true` 在 `:518`；读三张域内作业表（`ocr_jobs`／`recognition_jobs`／`speech_jobs`，同文件 :4-9），**不读** `public.jobs`。
 - 503 只剩缺省：未注入（stub／无池）时 `services/api/src/admin/ops/jobs.ts:53-60` 的 `createUnwiredAdminJobPort()` 返回 `PORT_UNAVAILABLE`。`tests/failmatrix/cases.mjs:177` 锁的是这条分支——它证明「没池时不许假绿」，不证明生产也 503。
 - 真库臂已覆盖生产路径：`wired===true`（`tests/integration/admin-jobs-pg.mjs:661`）、`GET /admin/jobs` 200 且字段面恰契约 9 项（同文件 :682）、401／403 与 `jobs:read` 专权（:699）、取消让 revision 1→2（:713）、终态拒绝、过滤下推与闭集 400、游标两页不重不漏（:1157-1252）。

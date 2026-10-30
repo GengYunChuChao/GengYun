@@ -107,16 +107,6 @@
       "path": "services/api/src/app.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "app.ts:471",
-      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
-      "docLine": 27,
-      "kind": "block",
-      "note": "【注释块·装配层纪律自述】文档该行原为裸锚点 `:471`（继承同块 `services/api/src/app.ts:496` 的类型定义），引的是 `services/api/src/app.ts:468-473` 那段「装配层**绝不自行铸造**、也不从 env／原型链／全局对象派生」的自述块，块后第一条非空行是第 474 行的 `realMediaApproval?: RealMediaWiringApproval;`（可选成员签名，不是声明行）。这条自述正是「注入点已存在但不铸造」这一设计判据的原文，只能指注释。（2026-10-28 合流：A01 在 app.ts:80 插 1 行，本锚由 :470 顶到 :471，按符号重取。）"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
       "reference": "services/api/src/app.ts:2013",
       "doc": "docs/architecture/s4-data-traceability.md",
       "docLine": 263,
@@ -302,6 +292,16 @@
       "docLine": 256,
       "kind": "file-header",
       "note": "【文件头自述行】文档引的是整份文件开头的自述第 1 行（「// GY-S4 P1 真库臂：第三方删除持久化的「记住」面（迁移 0044）…」），块后第一条非空行是第 2 行的「//」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
+    },
+    {
+      "path": "services/api/src/privacy/user-data-deletion.ts",
+      "reason": "COMMENT_ANCHOR",
+      "owner": "api-server",
+      "reference": "user-data-deletion.ts:276",
+      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
+      "docLine": 303,
+      "kind": "cited",
+      "note": "【逐字引用历史读数】设计页那句「设计片当时记 `:276`（那是注释行，不是代码行）」本身就是**在引用注释行**：该行内容是一段端口说明注释。它被写出来是为了解释「为什么后来改指声明行」，不是活的代码锚点；GY-R71 补片沿用这个写法（同页另两个锚点已指到 363 与 356-359）。"
     }
   ]
 }
