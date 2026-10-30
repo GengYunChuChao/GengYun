@@ -2698,37 +2698,20 @@
           {
             "name": "q",
             "in": "query",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 80
-            }
+            "schema": {"type": "string", "minLength": 1, "maxLength": 80}
           },
           {
-            "name": "crop_id",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 80
-            }
+            "name": "crop_id", "in": "query",
+            "schema": {"type": "string", "minLength": 1, "maxLength": 80}
           },
           {
-            "name": "region_code",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "pattern": "^33[0-9]{4}$"
-            }
+            "name": "region_code", "in": "query",
+            "schema": {"type": "string", "pattern": "^33[0-9]{4}$"}
           },
           {
             "name": "registration_number",
             "in": "query",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 80
-            }
+            "schema": {"type": "string", "minLength": 1, "maxLength": 80}
           }
         ],
         "responses": {

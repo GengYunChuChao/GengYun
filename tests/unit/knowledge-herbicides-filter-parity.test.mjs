@@ -89,20 +89,42 @@ async function host({ rows }) {
   const store = createMemoryAuthStore();
   const config = loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', SESSION_SIGNING_KEY: SESSION_KEY });
   const app = buildApp({ config, store, idempotency: createMemoryIdempotencyStore(), pool: scriptedPool({ store, rows }) });
-  await app.listen({ host: '127.0.0.1', port: 0 });
-  const origin = `http://127.0.0.1:${app.server.address().port}`;
-  const login = await fetch(`${origin}/api/v1/auth/wechat`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'idempotency-key': IDEM },
-    body: JSON.stringify({ code: 'synthetic-r71-herbfilter' }),
-  });
-  assert.equal(login.status, 200);
-  const token = (await login.json()).data.access_token;
-  const get = async (path) => {
-    const res = await fetch(`${origin}/api/v1${path}`, { headers: { authorization: `Bearer ${token}` } });
-    return { status: res.status, body: await res.json(), port: app.server.address().port };
-  };
-  return { app, get, origin };
+  try {
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const origin = `http://127.0.0.1:${app.server.address().port}`;
+    const login = await fetch(`${origin}/api/v1/auth/wechat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': IDEM },
+      body: JSON.stringify({ code: 'synthetic-r71-herbfilter' }),
+    });
+    assert.equal(login.status, 200);
+    const token = (await login.json()).data.access_token;
+    const get = async (path) => {
+      const res = await fetch(`${origin}/api/v1${path}`, { headers: { authorization: `Bearer ${token}` } });
+      return { status: res.status, body: await res.json(), port: app.server.address().port };
+    };
+    return { app, get, origin };
+  } catch (error) {
+    // 失败也要释放监听口，否则失败路径会把事件循环吊住（门禁变成挂起而不是变红）。
+    await app.close();
+    throw error;
+  }
+}
+
+/**
+ * 取「两读面共同语料」：`/herbicides` 的全量记录（只作语料源，不做断言）。
+ *
+ * 每次都用 `finally` 关宿主：断言失败时**不得**遗留监听中的服务（否则 `--test` 挂起而非报红）。
+ */
+async function sharedCorpus() {
+  const probe = await host({ rows: [] });
+  let corpus;
+  try {
+    corpus = await probe.get('/herbicides?limit=50');
+  } finally {
+    await probe.app.close();
+  }
+  return corpus;
 }
 
 const idsOf = (body) => body.data.items.map((item) => item.id).sort();
@@ -125,11 +147,9 @@ const FILTERS = [
 ];
 
 test('①集合相等（硬判据）：同一语料 × 同一组过滤条件，/knowledge 与 /herbicides 命中 id 集合逐条相等', async () => {
-  const probe = await host({ rows: [] });
-  const corpus = await probe.get('/herbicides?limit=50');
+  const corpus = await sharedCorpus();
   assert.equal(corpus.status, 200);
   assert.equal(corpus.body.data.items.length, RECORDS.length, '语料条数须与仓内真实记录一致');
-  await probe.app.close();
 
   const rows = projectRows(corpus.body.data.items);
   const { app, get } = await host({ rows });
@@ -158,10 +178,7 @@ test('①集合相等（硬判据）：同一语料 × 同一组过滤条件，/
 });
 
 test('②敏感性（防判据空转）：构造一条只在一个面命中的数据 ⇒ 集合相等必须不成立', async () => {
-  const probe = await host({ rows: [] });
-  const corpus = await probe.get('/herbicides?limit=50');
-  await probe.app.close();
-
+  const corpus = await sharedCorpus();
   const rows = projectRows(corpus.body.data.items);
   // 只多出一行：`/knowledge` 面的语料有它，`/herbicides` 面的语料没有它（真实语料不可变）。
   const ghost = { ...rows[0], id: '00000000-0000-4000-8000-00000000dead', crop_ids: ['crop_rice'] };
@@ -188,9 +205,7 @@ test('②敏感性（防判据空转）：构造一条只在一个面命中的�
 });
 
 test('③非法值 ⇒ 4xx + 契约错误码闭集；⛔ 不静默忽略、⛔ 不返回 200 空集', async () => {
-  const probe = await host({ rows: [] });
-  const corpus = await probe.get('/herbicides?limit=50');
-  await probe.app.close();
+  const corpus = await sharedCorpus();
   const { app, get } = await host({ rows: projectRows(corpus.body.data.items) });
   try {
     const allowed400 = ERROR_STATUS_MAP[400];
