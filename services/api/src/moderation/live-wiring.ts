@@ -12,13 +12,13 @@
  * 都由两个 live-adapter 在构造期再逐项硬拒一遍（纵深防御），本文件不做第二套判定。
  *
  * 图片字节来源（`imageSource`）默认取 `createUnwiredModerationImageSource`：图片端口的
- * 网络面是真实的，但字节拿不到 ⇒ 图片送审按「取不到待审图片」fail-closed，**绝不伪造字节**。
+ * 网络面是真实的，但字节拿不到 ⇒ 图片送审按「取不到待审图片」fail-closed，**绝不伪造字节**。（GY-R70：装配层若给出 `imageMedia` —— 媒体域**既有**的 `mediaStore` + `mediaObjectStore` 取值器 —— 改由 `createObjectStoreModerationImageSource()` 构造真实来源，只读去元数据衍生件，见 `moderation/image-source.ts`；⛔ 显式 `imageSource` 仍然优先；两者都不给 ⇒ 仍是上面那一份未接线实现，逐字节不变。）
  *
  * ⛔ 本文件不含任何网络实现、不含任何凭据值、不读 `process.env`、不读文件、不写台账。
  *   凭据经 `ModerationLiveWiring.credentials` 注入（由 config/env 装配层提供，本片不落盘）。
  */
 
-import { createUnwiredModerationImageSource } from './live-vendor.ts';
+import { createUnwiredModerationImageSource } from './live-vendor.ts'; import { createObjectStoreModerationImageSource, type ModerationImagePortsResolver } from './image-source.ts'; /* GY-R70：与上一条**同行**（独占一行会推移本文件行号，令既有对 live-wiring.ts 的行号引用顶漂） */
 import {
   ModerationWiringError,
   type ModerationImageProfile,
@@ -47,7 +47,7 @@ export interface ModerationLiveWiring {
   readonly textProfile: ModerationTextProfile;
   readonly imageProfile: ModerationImageProfile;
   readonly credentials: ModerationLiveCredentials;
-  readonly imageSource?: ModerationImageSource;
+  readonly imageSource?: ModerationImageSource; /* GY-R70：`imageMedia` = 媒体域既有两个端口的**取值器**（晚绑定：`app.ts` 里审核域装配早于媒体域端口解析）。缺省 `undefined` ⇒ 仍走 `createUnwiredModerationImageSource`。 */ readonly imageMedia?: ModerationImagePortsResolver;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
   readonly onObservation?: (observation: ModerationLiveObservation) => void;
@@ -68,7 +68,7 @@ export function createLiveModerationPortsFromWiring(
 ): { tms: ModerationLivePort; ims: ModerationLivePort } | null {
   if (wiring === null || typeof wiring !== 'object') return null;
   try {
-    const imageSource = wiring.imageSource ?? createUnwiredModerationImageSource('对象存储属媒体域，本片未接线');
+    const imageSource = wiring.imageSource ?? (wiring.imageMedia === undefined || wiring.imageMedia === null ? createUnwiredModerationImageSource('对象存储属媒体域，本片未接线') : createObjectStoreModerationImageSource(wiring.imageMedia)); /* GY-R70：三档优先级 —— 显式来源 > 媒体域既有端口的取值器 > 未接线（`undefined`/`null` 都落在未接线这一档，逐字节同本片之前） */
     const tms = createLiveModerationTextPort({
       policy: wiring.policy,
       profile: wiring.textProfile,

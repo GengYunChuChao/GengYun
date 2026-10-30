@@ -17,10 +17,10 @@
  *   3. 响应封套与头部装配：`buildMeta`（`meta.contract_version` / `meta.execution_mode`）、
  *      `ETag: "<revision>"`、`Cache-Control: no-store`（契约 200/202 头部注明「私有/授权访问 no-store」）。
  *
- * **装配（阶段 2b）**：`services/api/src/app.ts` **只加两行**（一行 `import` + 一行
- * `registerSpeechRoutes(app, config, { guards })`，紧随 `registerRecognitionRoutes` 之后）。
- * 产品装配路径**不做任何端口注入**：服务由本模块按 `config.executionMode` 自建
- * （`stub`/`preset_demo` 走明确标注的替身；`real` 缺凭据/未接线一律 fail-closed）。
+ * **装配**：本域在 `services/api/src/app.ts` 的 `registerSpeechRoutes(...)` 处装配（紧随
+ * `registerRecognitionRoutes`）：现行注入键为 `guards` / `store` / `provider` / `media` / `audioMedia` /
+ * `jobDeadlineMs` / `consent` / `egress`（另传持久池）。**历史**：阶段 2b 初装时只传 `{ guards }`，
+ * 服务全由本模块自建；现在 `real` 的转写提供者取 `config.aiProviders.asr` 被校验快照，缺其一律 fail-closed。
  * GY-I11 本片起，`real` 的**媒体引用端口**由本模块从既有注入面派生（对象存储端口 + 媒体登记册 +
  * 媒体域构造期裁决），不再恒用未接线端口 —— 见 {@link mediaDomainRefusal} 与
  * `speech/media.ts` 的四道门；缺任一条件仍有 409 `OBJECT_UNAVAILABLE`。

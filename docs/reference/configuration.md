@@ -23,7 +23,7 @@ API 只读进程环境。下面列变量名、默认值和条件，不列真实�
 | OBJECT_STORAGE_SECRET_KEY | real 必填、秘密 | 同上 |
 | MEDIA_OBJECT_REF_KEY | 非启动必填；`real` 且配了 `DATABASE_URL` 时**事实必填**（键材质：64 位十六进制／32 字节 base64／32 字节原串，秘密） | **媒体域**：`media.object_ref_cipher` 是 `NOT NULL` 密文列，存的是「这条媒体在对象存储里的对象键」经 AES-256-GCM 加密后的信封（明文对象键只在服务进程内出现）。缺键 ⇒ 装配层**不接 PG 存储**并整域 fail-closed：**503 `PROVIDER_UNAVAILABLE`（`retryable:false`）**，7 条媒体路由与语音受理（此时 **409 `OBJECT_UNAVAILABLE`**）一起不可用，绝不退回进程内 `Map` 去假装持久化；键材质非法 ⇒ 启动 `ConfigError`（`INVALID_VALUE`）。判据 `services/api/src/config.ts:509-525`，装配 `services/api/src/app.ts:1784-1804` |
 | MEDIA_ACCESS_GRANT_ORIGIN | 可选；只接受 `https://<host>[:port]`（不带路径／查询／URL 内凭据） | **媒体域（取图句柄）**：`AccessGrant.url` 的 host 来自这里（`<origin>/api/v1/media/{id}/content`）。未配置 ⇒ 句柄指向不可解析的占位域 `https://media.placeholder.invalid`（本仓不提供该数据面）；带 `--approve-real-media-wiring` 启动时缺它 ⇒ **进程拒绝启动**（exit 1，`access_grant_origin_not_deployable`）；格式非法 ⇒ 启动 `ConfigError`（`INVALID_VALUE`）。判据 `services/api/src/config.ts:451-465`，启动期校验 `services/api/src/media/real-ports.ts:260-278` |
-| RECOGNITION_PROVIDER_URL / RECOGNITION_PROVIDER_KEY | 可选；**real** 下两行成对；**不在 `config.ts` 校验**（装配处直读 `process.env`） | **识别域**：`real` 下缺任一 ⇒ 受理 `POST /api/v1/recognitions` 之前即 **503 `PROVIDER_UNAVAILABLE`（`retryable:false`）**，不回退替身；即使配齐，本仓当前没有已审识别适配器，作业仍以 `failed`／`PROVIDER_UNAVAILABLE` 收尾且不产生候选。读取点 `services/api/src/app.ts:1115-1121`，拒绝 `services/api/src/recognitions/service.ts:397-400`，适配器缺席 `services/api/src/recognitions/provider.ts:163-166` |
+| RECOGNITION_PROVIDER_URL / RECOGNITION_PROVIDER_KEY | 可选；**real** 下两行成对；**不在 `config.ts` 校验**（装配处直读 `process.env`） | **识别域**：`real` 下缺任一 ⇒ 受理 `POST /api/v1/recognitions` 之前即 **503 `PROVIDER_UNAVAILABLE`（`retryable:false`）**，不回退替身；两者齐备（且端点通过 https／无查询串／无内嵌凭据等构造期断言）⇒ 装配**协议级**真实适配器（GY-R70：`services/api/src/recognitions/live-adapter.ts:153`），字节只从去元数据衍生件来（`services/api/src/recognitions/image-source.ts:158`）；**本仓仍没有已审识别供应商**，因此配齐只代表「可以受理并发包」，不代表任何一次真实调用成功或识别准确率。装配失败/配置不合法 ⇒ 回落 fail-closed（`available:false`，原因点名「装配失败」），⛔ 绝不回退替身。读取点 `services/api/src/app.ts:1116-1122`，拒绝 `services/api/src/recognitions/service.ts:397-400`，fail-closed 的 `recognize()` 仍返回 `PROVIDER_UNAVAILABLE`（`services/api/src/recognitions/provider.ts:171-174`） |
 | CHAT_LLM_ENDPOINT / CHAT_LLM_MODEL / CHAT_LLM_API_KEY（或 `DEEPSEEK_API_KEY`） | 可选；三项**要么全配、要么全空**（端点须 `https://`、模型名 1..80、密钥 8..200） | **问答域**：三项全空 ⇒ 回答照常 200，但 `model_version`／`prompt_version` 带 `unimplemented:no-real-` 前缀（确定性摘录，不是真实模型，`services/api/src/conversations/service.ts:86-91`）；只配一半或值非法 ⇒ 启动 `ConfigError` 并列出字段名（进程 exit 1），**不**静默退回确定性回答器；三项齐备后仍要 `APP_EXECUTION_MODE=real` **且**外发账本可用（`DATABASE_URL`），否则继续走确定性回答器并记一条 warn（`services/api/src/ai/chat-wiring.ts:52-97`）。判据 `services/api/src/config.ts:275-367` |
 | DEEPSEEK_API_KEY | 可选；`CHAT_LLM_API_KEY` 的同义替代 | 二选一；两者都给时以 `CHAT_LLM_API_KEY` 为准（`services/api/src/config.ts:253-262`） |
 | CHAT_LLM_TIMEOUT_MS | 可选，默认 20000；1000–30000 | 问答域单次外发超时；缺省用默认值，不影响可用性；越界 ⇒ 启动 `ConfigError`（`INVALID_VALUE`） |
@@ -37,11 +37,11 @@ API 只读进程环境。下面列变量名、默认值和条件，不列真实�
 
 ## 启动必填 ≠ 链路可用（四组域内必填字段）
 
-`real` 下的启动门只强制 9 项（`REQUIRED_WHEN_REAL`，`services/api/src/config.ts:147-157`）。上表新增的 `MEDIA_OBJECT_REF_KEY`、`MEDIA_ACCESS_GRANT_ORIGIN`、`RECOGNITION_PROVIDER_URL`／`_KEY`、`CHAT_LLM_*` 都不在其中：进程照常起来，但对应域按域拒绝或降级，是「配了但没生效」的高发点。
+`real` 下的启动门只强制 9 项（`REQUIRED_WHEN_REAL`，`services/api/src/config.ts:147-157`）。上表新增的 `MEDIA_OBJECT_REF_KEY`、`MEDIA_ACCESS_GRANT_ORIGIN`、`RECOGNITION_PROVIDER_URL`／`_KEY` **不在**其中：进程照常起来，但对应域按域拒绝或降级，是「配了但没生效」的高发点。**`CHAT_LLM_*` 是例外——它参与启动校验**：`asChatProvider(env, issues)` 在只配一半或值非法时 `issues.push`，`loadConfig` 随即抛 `ConfigError`、进程 **exit 1**（与本文件 `:27` 的表格行同口径；实跑见 `node services/api/src/server.ts` 只设 `CHAT_LLM_ENDPOINT` 的形态）。
 
-- **媒体域**：缺 `MEDIA_OBJECT_REF_KEY` ⇒ 7 条媒体路由 503 `PROVIDER_UNAVAILABLE`、语音受理 409 `OBJECT_UNAVAILABLE`；即便对象存储四键与 `MEDIA_OBJECT_REF_KEY` 都齐备，只要没有启动参数 `--approve-real-media-wiring`（`services/api/src/server.ts:29-51` 是批准能力的唯一铸造点）仍是整域 503。
+- **媒体域**：缺 `MEDIA_OBJECT_REF_KEY` ⇒ 7 条媒体路由 503 `PROVIDER_UNAVAILABLE`、语音受理 409 `OBJECT_UNAVAILABLE`（**前提是 ASR 凭据齐备**：`services/api/src/speech/service.ts:437` 的 503 闸门在 `:442` 的 `media.resolve` 之前，凭据也缺时先回 503）；即便对象存储四键与 `MEDIA_OBJECT_REF_KEY` 都齐备，只要没有启动参数 `--approve-real-media-wiring`（`services/api/src/server.ts:29-51` 是批准能力的唯一铸造点）仍是整域 503。
 - **问答域**：缺 `CHAT_LLM_*` 不报错，只是继续用确定性回答器——判据看回答的 `model_version` 是否带 `unimplemented:no-real-`。
-- **识别域**：缺 `RECOGNITION_PROVIDER_*` ⇒ 受理 503；配齐也只到「能受理」，作业仍以 `failed` 收尾（无已审适配器）。
+- **识别域**：缺 `RECOGNITION_PROVIDER_*` ⇒ 受理 503；**配齐这两个 env 也仍然是 409 `OBJECT_UNAVAILABLE`**（`real` 下适配器根本不存在 ⇒ `available` 通过后立刻在媒体解析处被拒），**任务建不出来**、不产生候选；「能受理、随后作业 failed」那条路径在当前代码里不可达。
 - **部署模板的关系**：`deploy/cloudrun/env.placeholder.json` 的键集判据只取 `REQUIRED_WHEN_REAL` 与 `config.ts` 里 `trimmed(env, '…')` 的字面量（`tools/verify-release-materials.mjs:351-372`），因此 `MEDIA_*` 两项已在模板中，而 `RECOGNITION_PROVIDER_*`／`CHAT_LLM_*` 不在、也不该为过门禁而加进去（模板「无多余键」同样判红）。
 
 ## 加载方式与联调
@@ -65,3 +65,19 @@ Vite 的项目根在 apps/admin，不自动读取仓库根 .env；从终端注�
 
 集成测试使用独立测试库变量，各入口、库名与角色前置见[数据库交接](../verification/database-run-handoff.md)及[鉴权验证](../verification/gy-i04-27-auth-consent-pg.md)。
 供应商验证配置另见[资源交接](../verification/resource-handoff.md)，没有接入的能力不能凭填变量写成可用。
+
+## 启动参数：审核域真实接线的批准开关（GY-R70）
+
+审核域的真实供应商端口**不是配置项**，是一次显式运维动作。它由三个**命令行**参数决定（⛔ 不接受环境变量、不接受配置文件：那等于「配置即门控」，媒体域两轮对抗复审已否掉这条路；本模块去注释后 `process.env` 命中 0 条）：
+
+| 参数 | 形状 | 作用 |
+| --- | --- | --- |
+| `--approve-moderation-live-wiring` | 整串精确匹配 | 唯一的批准开关；`--approve-moderation-live-wiring=true` 之类的写法**不算**给了 |
+| `--moderation-policy-source=<标识>` | 3–120 位，字母/数字与 `._:/@+-`，不得含空白 | 策略**被独立核对过**的出处（非凭据）；形状合法不等于核对过 |
+| `--moderation-biz-type=<BizType>` | 正则与 `services/api/src/moderation/live-ports.ts` 的 `MODERATION_BIZ_TYPE_PATTERN` 同源 | **真实** BizType（`tools/ai-config.mjs` 里的那份是自描述占位值，不能拿来开户） |
+
+判定在 `services/api/src/moderation/startup-approval.ts` 的 `resolveModerationStartupApproval()`（纯函数：只吃 `config` 与 `argv`，不读 env、不碰网络），铸造点是 `services/api/src/moderation/live-assembly.ts` 的 `approveModerationLiveWiring()`（唯一，`WeakSet` 对象身份），生产入口只转发：`services/api/src/server.ts:61` 取装配片段，第 62–66 行是「有致命诊断就 `exit 1`」那一段，`services/api/src/server.ts:68` 才是 `buildApp(...)`。
+
+**四条前置同时成立才铸造**：① 开关给了；② 两个值齐备且形状合法；③ 共享凭据齐备（`TENCENTCLOUD_SECRET_ID` / `TENCENTCLOUD_SECRET_KEY` 成对，且 `APP_EXECUTION_MODE=real`）；④ 配置合法（铸造后仍由同一模块的 `resolveModerationLiveWiring()` 复核剖面/端点/超时）。任一条不成立 ⇒ **不铸造**、不传任何默认值，并打**一行** `stderr` 点名缺的是哪一条（原因只用既有闭集 `missing_approval` / `missing_credentials` / `invalid_configuration`）⇒ **进程 `exit 1`，服务不会起来**；`real` 下审核域保持既有整域 503 `PROVIDER_UNAVAILABLE`（`retryable:false`），非 `real` 下仍是替身端口。
+
+**与 `--approve-real-media-wiring` 的口径一致（2026-10-30 裁定，实跑读数见 [GY-R70 证据页](../verification/gy-r70-moderation-approval-20261030.md)）**：两个批准开关都是「开关给了但前置不满足 ⇒ **启动失败**（`exit 1`）」。理由：要防的不是「审核没开」（那本来就是 fail-closed 503），而是「**运维以为自己把审核开了**」——一行 warn 混在启动日志里等于没有。唯一保留的静默路径是**开关完全没给**（默认路径，与改前逐字相同）。

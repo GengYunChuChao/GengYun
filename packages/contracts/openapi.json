@@ -2678,8 +2678,8 @@
     "/herbicides": {
       "get": {
         "operationId": "listHerbicides",
-        "summary": "除草剂列表分页 + q/登记号收窄；游标按过滤前的页派生",
-        "description": "作用域 user：需登录会话；只有 q 与 registration_number 两个收窄条件，加 cursor/limit（1..50）；200 返回 {items,next_cursor} + no-store、列表不发 ETag；引用不可见的行整条剔除，而游标仍按过滤前的页派生 ⇒ 单页可见条数可能少于 limit，翻页不会因过滤而漏行或重行（routes/knowledge.ts:137-146）；游标不合法/过期 400 INVALID_CURSOR；数据来自 packages/reference 适配层，未装配 ⇒ 503 PROVIDER_UNAVAILABLE；不需要 Idempotency-Key 与 If-Match。",
+        "summary": "除草剂列表分页 + q/登记号/作物/地区收窄；游标按过滤前的页派生",
+        "description": "作用域 user：需登录会话；收窄条件为 q 与 registration_number，另接 crop_id 与 region_code（参数名与校验同 /knowledge：crop_id 为目录内作物编号，region_code 须匹配 ^33[0-9]{4}$，取值不合法 400 INVALID_REQUEST），加 cursor/limit（1..50）；200 返回 {items,next_cursor} + no-store、列表不发 ETag；引用不可见的行整条剔除，而游标仍按过滤前的页派生 ⇒ 单页可见条数可能少于 limit，翻页不会因过滤而漏行或重行（routes/knowledge.ts:137-146）；游标不合法/过期 400 INVALID_CURSOR；数据来自 packages/reference 适配层，未装配 ⇒ 503 PROVIDER_UNAVAILABLE；不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "herbicides"
         ],
@@ -2698,20 +2698,20 @@
           {
             "name": "q",
             "in": "query",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 80
-            }
+            "schema": {"type": "string", "minLength": 1, "maxLength": 80}
+          },
+          {
+            "name": "crop_id", "in": "query",
+            "schema": {"type": "string", "minLength": 1, "maxLength": 80}
+          },
+          {
+            "name": "region_code", "in": "query",
+            "schema": {"type": "string", "pattern": "^33[0-9]{4}$"}
           },
           {
             "name": "registration_number",
             "in": "query",
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 80
-            }
+            "schema": {"type": "string", "minLength": 1, "maxLength": 80}
           }
         ],
         "responses": {
@@ -2858,6 +2858,75 @@
         "x-scope": "user",
         "x-version-required": false,
         "x-task": "GY-I01"
+      }
+    },
+    "/dose-cards": {
+      "get": {
+        "operationId": "listDoseCards",
+        "summary": "标签原文用量卡只读出口（九道门 + 外层可执行门全过才出现）",
+        "description": "作用域 user：需登录会话；无查询参数。200 返回 {dose_cards,rejections,first_failed_gates,block_codes,gate_ledger,empty,empty_reason,note} + no-store，不发 ETag（不创建也不修改资源）。每一条 dose_cards 都必须同时通过 packages/reference/labels.mjs 的 doseCardDescriptor 九道门（开关、usable_as_dose、非模拟、记录级与来源级双 verified、制剂身份绑定一致、number 与 unit、原文 condition、用量版本绑当前来源版本、当前适用判定）与外层 evaluateDoseBoundary 的可执行门；任一门不过即进 rejections 并指明是哪一道，绝不静默省略。number/unit/condition/reference 逐字取自原文，本出口不做处方混配与用量换算（仓规明令禁止）；conditions 中为 null 的维度是未采集，not_collected 逐项列明。无合规条目时 dose_cards 为空，empty 为 true 且 empty_reason 为可判定的非空原因串 —— 空数组不代表该记录没有用量。数据只来自仓内公开登记公告记录投影（loadHerbicideRecords），不读库、不联网、不调用模型。",
+        "tags": [
+          "herbicides"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "成功；不表示任何真实制剂已可用（只返回同时通过九道用量门与外层可执行门的条目）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DoseCardReadoutEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": false,
+        "x-task": "GY-R71"
       }
     },
     "/registrations/verify": {
@@ -13149,6 +13218,532 @@
           "source",
           "locator",
           "content_hash"
+        ]
+      },
+      "DoseGateId": {
+        "type": "string",
+        "enum": [
+          "feature_switch",
+          "dose_usable_as_dose",
+          "dose_original_condition",
+          "dose_number_unit",
+          "applicability",
+          "review_verified",
+          "dose_source_version",
+          "formulation_binding",
+          "not_simulated",
+          "executable_advice",
+          "unattributed_dose_gate"
+        ]
+      },
+      "DoseGateLedgerEntry": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/DoseGateId"
+          },
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "rule_ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "id",
+          "index",
+          "label",
+          "rule_ref"
+        ]
+      },
+      "DoseCardProvenance": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "registration_number": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "registered_name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "dosage_form": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "ingredients_text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "source_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "source_review_status": {
+            "const": "verified"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uri",
+                "pattern": "^https://"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "source_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_kind": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "validity": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "record_id",
+          "registration_number",
+          "registered_name",
+          "dosage_form",
+          "ingredients_text",
+          "source_version",
+          "source_review_status",
+          "source_id",
+          "source_url",
+          "source_kind",
+          "evidence_kind",
+          "validity"
+        ]
+      },
+      "DoseCardConditionsReadout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "original_condition": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "crop_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "maxItems": 20
+          },
+          "region_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^33[0-9]{4}$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "species_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "growth_stage": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "planting_method": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "use_scene": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "not_collected": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "region_code",
+                "species_id",
+                "growth_stage",
+                "planting_method",
+                "use_scene"
+              ]
+            },
+            "maxItems": 5
+          }
+        },
+        "required": [
+          "original_condition",
+          "crop_ids",
+          "region_code",
+          "species_id",
+          "growth_stage",
+          "planting_method",
+          "use_scene",
+          "not_collected"
+        ]
+      },
+      "DoseCardReadout": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provenance": {
+            "$ref": "#/components/schemas/DoseCardProvenance"
+          },
+          "conditions": {
+            "$ref": "#/components/schemas/DoseCardConditionsReadout"
+          },
+          "dose": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "number": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "unit": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "condition": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              },
+              "reference": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              }
+            },
+            "required": [
+              "number",
+              "unit",
+              "condition",
+              "reference"
+            ]
+          },
+          "rule_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "executable": {
+            "const": true
+          },
+          "renderable": {
+            "const": true
+          },
+          "dose_count": {
+            "const": 1
+          }
+        },
+        "required": [
+          "provenance",
+          "conditions",
+          "dose",
+          "rule_version",
+          "executable",
+          "renderable",
+          "dose_count"
+        ]
+      },
+      "DoseCardRejection": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "record_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registration_number": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failed_gate": {
+            "$ref": "#/components/schemas/DoseGateId"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "executable": {
+            "type": "boolean"
+          },
+          "renderable": {
+            "const": false
+          },
+          "block_codes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "maxItems": 20
+          }
+        },
+        "required": [
+          "record_id",
+          "registration_number",
+          "failed_gate",
+          "reason",
+          "executable",
+          "renderable",
+          "block_codes"
+        ]
+      },
+      "DoseCardReadoutPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "rule_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "rule_spec_digest": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "evaluated_source": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "evaluated": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "dose_cards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DoseCardReadout"
+            }
+          },
+          "rejections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DoseCardRejection"
+            }
+          },
+          "first_failed_gates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "gate": {
+                  "$ref": "#/components/schemas/DoseGateId"
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "gate",
+                "count"
+              ]
+            }
+          },
+          "block_codes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "code",
+                "count"
+              ]
+            }
+          },
+          "gate_ledger": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DoseGateLedgerEntry"
+            }
+          },
+          "empty": {
+            "type": "boolean"
+          },
+          "empty_reason": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "rule_version",
+          "rule_spec_digest",
+          "evaluated_source",
+          "evaluated",
+          "dose_cards",
+          "rejections",
+          "first_failed_gates",
+          "block_codes",
+          "gate_ledger",
+          "empty",
+          "empty_reason",
+          "note"
+        ]
+      },
+      "DoseCardReadoutEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DoseCardReadoutPage"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
         ]
       },
       "Knowledge": {

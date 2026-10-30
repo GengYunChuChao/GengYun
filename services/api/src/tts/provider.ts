@@ -6,13 +6,13 @@
  *   产物 `contentType` 是非音频的标注类型，`substitute=true`，正文是明文的「不可播放」标注，
  *   **不产生任何音频字节**，也不声称任何合成质量／音色／自然度结论。
  * - `real`：缺凭据一律 **fail-closed**（`available=false` ⇒ 受理前 503 `PROVIDER_UNAVAILABLE`）；
- *   **应用装配路径**（`createRealTtsProvider` / `createTtsProvider`）**没有注入端口的位置**，
- *   因此即便凭据齐备，`synthesize` 仍返回 `PROVIDER_UNAVAILABLE`（任务落 `failed`），
- *   行为与接线前**逐字节相同**；**严禁静默回退替身**。
+ *   应用装配路径（`app.ts` 的 `createTtsProvider` 调用）**只在**传了 `config.aiProviders.tts`
+ *   被校验快照时才装真实适配器（`createLiveTtsProviderFromConfig`）；**没传**快照 ⇒ 回落
+ *   `createRealTtsProvider`（`synthesize` 恒 `PROVIDER_UNAVAILABLE`，任务落 `failed`），**严禁静默回退替身**。
  * - 真实发送**只**能经 `createLiveTtsProvider(ports)` 触达：端口字段全部必填、没有默认实现
- *   （见 `live-ports.ts` 的「默认关闭」机制）。端口由独立手工验证工具构造；
- *   应用装配路径永不提供该对象。真实适配器的调用顺序、签名、端点断言、超时与零重试、
- *   错误码映射见下方 `sendLiveTtsOnce` 与 `createLiveTtsProvider` 的注释。
+ *   （见 `live-ports.ts` 的「默认关闭」机制）。端口有两个来源：独立手工验证工具直接构造，或
+ *   `createLiveTtsProviderFromConfig` 从被校验快照装配（应用装配路径**只能**走后者，且缺快照即不装配）。
+ *   真实适配器的调用顺序、签名、端点断言、超时与零重试、错误码映射见下方 `sendLiveTtsOnce` 与 `createLiveTtsProvider` 的注释。
  * - 提供者错误按契约映射：超时 → `PROVIDER_TIMEOUT`（任务 `timed_out`），
  *   配额 → `PROVIDER_QUOTA_EXCEEDED`，结果未知 → `PROVIDER_OUTCOME_UNKNOWN`，
  *   不可用 → `PROVIDER_UNAVAILABLE`。**不得**把提供者失败写成 `succeeded`。
@@ -134,10 +134,10 @@ export function createStubTtsProvider(options: { executionMode?: 'stub' | 'prese
 }
 
 /**
- * 真实提供者（`real`）。**fail-closed**：
+ * 真实提供者（`real`）的**未装适配器兜底**（没拿到 `config.aiProviders.tts` 快照、或快照装配失败时用它）。**fail-closed**：
  * - 缺 endpoint/apiKey → `available=false`，受理直接 503 `PROVIDER_UNAVAILABLE`；
- * - 即使凭据齐备，本片也没有已审真实 TTS 供应商适配器，`synthesize` 仍返回
- *   `PROVIDER_UNAVAILABLE`，任务落 `failed`；
+ * - 即使凭据齐备，本函数**不**装任何适配器，`synthesize` 恒返回 `PROVIDER_UNAVAILABLE`（任务落 `failed`；
+ *   真实发送只在 `createLiveTtsProvider` 一侧）；
  * - 任何路径都**不会**回退到 stub/preset_demo 替身（回退会让证据口径被污染）。
  */
 export function createRealTtsProvider(
@@ -152,11 +152,11 @@ export function createRealTtsProvider(
   return {
     executionMode: 'real',
     providerVersion: 'real-unconfigured',
-    note: '真实 TTS 适配器尚未接入（无已审供应商适配器；缺凭据即受理前 fail-closed，不回退替身）',
+    note: '真实 TTS 适配器未由本次装配提供（缺 config.aiProviders.tts 被校验快照；真实发送只能经 createLiveTtsProvider 的注入式端口；缺凭据即受理前 fail-closed，不回退替身）',
     available: !missing,
     unavailableReason: missing ? (unavailableReason ?? '缺少真实 TTS 供应商凭据（fail-closed，不回退替身）') : null,
     async synthesize() {
-      // 无已审真实适配器：不伪造音频，也不回退替身。
+      // 本函数不装适配器（真实适配器在 createLiveTtsProvider 一侧）：不伪造音频，也不回退替身。
       return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
     },
   };
@@ -322,7 +322,7 @@ export { providerErrorCodeToErrorCode };
  */
 export function createLiveTtsProvider(ports: RealTtsPorts): TtsProvider {
   if (ports === null || typeof ports !== 'object') {
-    throw new TtsWiringError('真实 TTS 端口缺失：真实分支默认关闭（应用装配路径永不提供端口）');
+    throw new TtsWiringError('真实 TTS 端口缺失：真实分支默认关闭（无端口即拒绝构造，不猜默认值）');
   }
   const profile = assertLiveTtsProfile(ports.profile);
   const credentials = ports.credentials;
@@ -350,7 +350,7 @@ export function createLiveTtsProvider(ports: RealTtsPorts): TtsProvider {
   return {
     executionMode: 'real',
     providerVersion: `tencent-tts-${profile.apiVersion}-voicetype${profile.voiceType}`,
-    note: '真实 TTS 适配器（腾讯云 TextToVoice，共享凭据对；只能经注入式端口构造，应用装配路径不可达）',
+    note: '真实 TTS 适配器（腾讯云 TextToVoice，共享凭据对；只能经注入式端口构造：手工装置直传，或应用装配经 createLiveTtsProviderFromConfig 从被校验快照装配）',
     available: true,
     unavailableReason: null,
     async synthesize({ jobId, text, targetRef }) {
