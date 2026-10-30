@@ -295,12 +295,16 @@ const REWRITTEN_ME_OPS = Object.freeze([
  * 其余族（非 admin、非 `/me` 族）operation 实测数（A6）：126 − 49 − 17 = 60。
  * 这是本片改写的那一批，也是 A3 里 `summary === operationId` 必须归零的那一批。
  */
-const REST_OP_COUNT = 60;
+const REST_OP_COUNT = 61;
 
 /**
- * 60 条这一片改写过的其余族 operation（A04 第三片实测：summary 与 description 都按代码真值重写）。
+ * 这一片改写过的其余族 operation（A04 第三片实测：summary 与 description 都按代码真值重写）。
  * 顺序按 spec 里出现的**文件顺序**（JSON 键插入序，同一 path 内 post 先于 get、patch 先于 delete），
  * 便于与本片交付报告里的表格逐行对照。
+ *
+ * 计数 60 → **61**（GY-R71）：新增 `listDoseCards`（`GET /dose-cards`，标签原文用量只读出口），
+ * 它的 summary/description 与其余族同一套写法（summary 写「做什么 + 边界」、description 写门与口径），
+ * 故随本片一起登记进这份名单；旧条目的相对顺序未改。
  */
 const REWRITTEN_REST_OPS = Object.freeze([
   'getPublicHome',
@@ -317,6 +321,7 @@ const REWRITTEN_REST_OPS = Object.freeze([
   'getKnowledge',
   'listHerbicides',
   'getHerbicide',
+  'listDoseCards',
   'verifyRegistration',
   'createRecognition',
   'getRecognition',

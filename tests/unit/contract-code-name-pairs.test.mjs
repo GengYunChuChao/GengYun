@@ -137,8 +137,15 @@ const contractTsSource = readFileSync(CONTRACT_TS_PATH, 'utf8');
 /** 方法白名单：口径与 `admin-contract-docs.test.mjs` 的 `METHODS` 一致。 */
 const METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'trace'];
 
-/** 契约实测的 operation 数（下界，只许涨不许降；`A1+A4+A6 = 49+17+60 = 126`）。 */
-const EXPECTED_OPERATION_COUNT = 126;
+/**
+ * 契约实测的 operation 数（**精确**计数，只许涨不许降）。
+ *
+ * 基线 126；R71 新增 `listDoseCards`（`GET /dose-cards`，摘要与描述里**不含**错误码配对，
+ * 属「压根没有配对」那一档）⇒ 127。配对总数与「带配对的 op 数」两条下界因此都不变。
+ * 精确比较在这里的作用是抓「扫错了 spec 文件」（`GY_CODEPAIR_SPEC_PATH` 指到别处），
+ * 不是对契约规模的判据 —— 涨了就同步加一，降了必须在 PR 里说明为什么。
+ */
+const EXPECTED_OPERATION_COUNT = 127;
 
 /** 实测配对下界（`node` 探针在基线 `ff73a30f` 上数出来的 434），**只许涨不许降**。 */
 const MIN_PAIR_COUNT = 434;
@@ -554,7 +561,7 @@ test('①′不许写反话：「NAME 不是 400」否认了其实成立的一�
 
 // ───────────────────────────── 判据 4：反空转 ─────────────────────────────
 
-test('④反空转：扫到 126 条 operation、配对数 ≥ 434、非 admin 族配对 ≥ 20', () => {
+test('④反空转：扫到 127 条 operation、配对数 ≥ 434、非 admin 族配对 ≥ 20', () => {
   assert.equal(OPERATIONS.length, EXPECTED_OPERATION_COUNT,
     `扫到 ${OPERATIONS.length} 条 operation（应为 ${EXPECTED_OPERATION_COUNT}）`
     + '——检查 `GY_CODEPAIR_SPEC_PATH` 是否指错了文件');
@@ -613,7 +620,7 @@ test('④统计（诊断输出）：配对总数、admin／非 admin、按族分
 
   const opsWithPairs = PAIR_COUNT_BY_OP.size;
   assert.ok(opsWithPairs >= MIN_OPERATIONS_WITH_PAIRS,
-    `只有 ${opsWithPairs} 条 operation 带配对 ⇒ 抽取面太窄，覆盖不了 126 条描述`);
+    `只有 ${opsWithPairs} 条 operation 带配对 ⇒ 抽取面太窄，覆盖不了 127 条描述`);
 });
 
 // ───────────────────────────── 判据 5：抽取器自证 ─────────────────────────────

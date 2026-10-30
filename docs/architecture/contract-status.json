@@ -764,6 +764,47 @@
       "blocker": "取消经共享作业面按 kind 分派；识别、转写、合成与 OCR 四域提供取消能力（含 If-Match、幂等重放与终态守卫）——转写取消已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:666` 的 `cancelJob`），合成取消已于 GY-R27（#322）接线（`services/api/src/jobs/sources.ts:153`，域内 `services/api/src/tts/service.ts:711` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；审核域（GY-I14，kind=moderation）仍无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（`retryable: false`）如实拒绝，不伪造 cancelled（审核任务不是用户可取消的排队作业，且「取消」会掩盖隔离事实）；synthesis 的**读面**已接线（#152），**取消**亦已接线 ⇒ 取消一侧现返回 200 cancelled、不再 503；ocr 的**读面**（#183 追加 kind=ocr 作业源）与**取消**（GY-I10 取消片，services/api/src/jobs/sources.ts:208、services/api/src/ocr/service.ts:687）均已接线：queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；answer 的**读面**已于 #12 片接为纯追加作业源（services/api/src/conversations/job.ts）⇒ 读取可返回契约 Job 与 error_code，但**取消仍未接线**（对话域不提供取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled、不谎称作业不存在；持久租约与外发撤销待接线"
     },
     {
+      "id": "listDoseCards",
+      "method": "get",
+      "path": "/dose-cards",
+      "route": "/api/v1/dose-cards",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/knowledge.ts",
+          "symbol": "readDoseCards()",
+          "lines": "238-238"
+        },
+        {
+          "path": "services/api/src/knowledge/dose-cards.ts",
+          "symbol": "export function readDoseCards",
+          "lines": "374-374"
+        },
+        {
+          "path": "services/api/src/knowledge/dose-cards.ts",
+          "symbol": "export function isEmittable",
+          "lines": "297-297"
+        },
+        {
+          "path": "services/api/src/knowledge/dose-cards.ts",
+          "symbol": "export const DOSE_GATE_LEDGER",
+          "lines": "83-83"
+        },
+        {
+          "test": "tests/unit/knowledge-dose-cards-http.test.mjs",
+          "name": "R71 正控制｜九门 + 外层 executable 门全过 ⇒ 出现，且出处/条件/原文用量字段齐全"
+        },
+        {
+          "test": "tests/unit/knowledge-dose-cards-http.test.mjs",
+          "name": "R71 真实数据｜仓内 20 条记录里没有一条能同时过九门与外层门 ⇒ 空 + 原因"
+        }
+      ],
+      "blocker": "只读出口已通（九道门 + 外层 executable 门逐条判定、空结果必带可判定原因），但**当前合规条目数为 0**：仓内 20 条公开登记公告记录全部 usable_as_dose=false（门 2 未过），且 review_status=unverified（门 6）、禁限用状态未采集（门 5）——故 dose_cards 恒空、如实给出原因，不伪造任何用量。仍缺：真实登记库接线、已核对（verified）的标签原文用量来源、执行模式 real 下的端到端验收；本条不证明任何一条真实制剂可用。"
+    },
+    {
       "id": "listKnowledge",
       "method": "get",
       "path": "/knowledge",
@@ -808,7 +849,7 @@
         {
           "path": "services/api/src/routes/knowledge.ts",
           "symbol": "app.get(`${API_PREFIX}/knowledge/:id`",
-          "lines": "193-199"
+          "lines": "194-200"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
@@ -3227,7 +3268,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminCategories",
-          "locator": { "symbol": "listAdminCategories" }
+          "locator": {
+            "symbol": "listAdminCategories"
+          }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3273,7 +3316,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "editCategory",
-          "locator": { "symbol": "editCategory" }
+          "locator": {
+            "symbol": "editCategory"
+          }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3319,7 +3364,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminUsers",
-          "locator": { "symbol": "listAdminUsers" }
+          "locator": {
+            "symbol": "listAdminUsers"
+          }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3350,7 +3397,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "suspendUser",
-          "locator": { "symbol": "suspendUser" }
+          "locator": {
+            "symbol": "suspendUser"
+          }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3514,7 +3563,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listAdminJobs",
-          "locator": { "symbol": "listAdminJobs" }
+          "locator": {
+            "symbol": "listAdminJobs"
+          }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3638,7 +3689,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "listFlagAuditEvents",
-          "locator": { "symbol": "listFlagAuditEvents" }
+          "locator": {
+            "symbol": "listFlagAuditEvents"
+          }
         },
         {
           "test": "tests/unit/admin-ops-contract.test.mjs",
@@ -3821,7 +3874,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "approvePost",
-          "locator": { "symbol": "approvePost" }
+          "locator": {
+            "symbol": "approvePost"
+          }
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
@@ -3853,7 +3908,9 @@
         {
           "path": "services/api/src/admin/ops/service.ts",
           "symbol": "rejectPost",
-          "locator": { "symbol": "rejectPost" }
+          "locator": {
+            "symbol": "rejectPost"
+          }
         },
         {
           "path": "services/api/src/admin/ops/community-posts.ts",
@@ -4117,7 +4174,7 @@
         {
           "path": "services/api/src/routes/knowledge.ts",
           "symbol": "app.get(`${API_PREFIX}/knowledge/:id`",
-          "lines": "193-199"
+          "lines": "194-200"
         },
         {
           "path": "services/api/src/profile/service.ts",
