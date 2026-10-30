@@ -1065,18 +1065,6 @@
     "reason": "store-pg.ts:359 是 `function recordValues(row: OcrRow)`，store 构造器 `createPostgresOcrStore` 在 :376；按符号重定位"
   },
   {
-    "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 98,
-    "target": "services/api/src/conversations/service.ts",
-    "from": 636,
-    "fromEnd": 679,
-    "to": 695,
-    "toEnd": 738,
-    "reason": "旧区间 636-679 是台账里记的归属块，但 base 上锚点「async function createConversation(」实际已在第 681 行（旧区间上界差 2 行，只是靠 `verify-contract-status` 的 ±2 容差才一直通过，旧行窗口里**没有**这个符号）。GY-R71 让 `settleCodeOf` 保留 `PrivacyError` 的闭集码，`services/api/src/conversations/service.ts` 净 +14 行 ⇒ `--reanchor` 按符号重算归属块为 695-738（起止都是「+59」，不是机械的 +14 平移，因为旧值本来就短了 45 行）。",
-    "kind": "correction",
-    "symbol": "async function createConversation("
-  },
-  {
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
     "line": 17,
     "target": "services/api/src/app.ts",
