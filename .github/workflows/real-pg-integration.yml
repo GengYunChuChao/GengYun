@@ -1250,3 +1250,111 @@ jobs:
           GY_PG_BIN: /usr/lib/postgresql/17/bin
           GY_R34_PG_ROOT: ${{ runner.temp }}/gy-r34-pg
           PGCLIENTENCODING: UTF8
+
+  # 失败矩阵的真 PG 臂（R72-W12）：`tests/failmatrix/run-real.mjs` 把 #22 的权限面矩阵（C1–C4 / C10 / C11
+  # 六族）搬到**真实 PostgreSQL 17** 上逐条重跑，产出「stub 期望 vs 真 PG 实际」的逐条差异 —— 差异是这条臂
+  # 的产品，不是失败。它此前只在本机手跑（`tests/failmatrix/README.md` 的「真实 PG 臂」节），**没有任何
+  # workflow 跑过它**，所以 CI 上一直没有读数；这个 job 就是它的第一个读数口。
+  #
+  # 为什么单独一个 job、而不是并进上面三个 job：那三个 job 的臂都连 runner 上 `services.postgres` 建出来的
+  # 库，而这条臂**自起一次性集群**（`initdb -A trust -E UTF8 --locale=C` + 随机空闲端口 + 只听 127.0.0.1，
+  # 跑完 `pg_ctl stop` 并删数据目录），只要 17 的服务端二进制，不吃 `services.postgres`。把它塞进插着
+  # service 的 job 里，会让「这条臂到底有没有库」重新变成靠猜。
+  #
+  # ⛔ 这条臂不能静默通过 —— 两条独立判决，任一成立就红：
+  #   1) 退出码：77 = 没拿到 PG 二进制 ⇒ **未取得，不是通过**（脚本头注释原文「77 = 未取得，不是通过」），
+  #      下面把它显式升级成 exit 1；其它非 0 = 真失败，原样透出。
+  #   2) 机读自证：`exit 0` 之后再读 `--json` 产物，要求「总条数 > 0」且「三档计数之和 === 总条数」
+  #      （外加 `rows` 长度 === 总条数、`execution_mode === 'real'`）—— 「打完成绩也退 0」的回归在这里红。
+  #   ⛔ 不断言 `different === 0`：差异正是这条臂的产品，全 same 反而该先怀疑用例没换代；
+  #   ⛔ 不断言总条数恰好 180：权限面用例集会演进，180 是**今天**的口径，硬钉等于把「加一条用例」变成假红。
+  #
+  # 数据根键：`GY_I22_PG_ROOT`（`run-real.mjs` 的唯一取值点 `process.env.GY_I22_PG_ROOT ?? tmpdir()`）；
+  # ⛔ 本 job 不 `CREATE DATABASE`：库名硬钉在脚本自己起的临时集群里。
+  #
+  # `timeout-minutes: 55`：**封顶之和 45 + 前置余量 10 = job 级 55**。
+  #   · 45 = 三条前置 25（`actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15）
+  #         + 装包 5 + 真 PG 臂 5 + 机读自证 5 + 归档 5；
+  #   · 10 = job 级的显式常量余量（三条前置已各自封顶并计入 45，它不再是「前置的合计上限」）。
+  # 故 job 级超时必晚于任何单个 step 自己的封顶。
+  failmatrix-real-17-11:
+    name: failmatrix-real-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        timeout-minutes: 5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        timeout-minutes: 5
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+        timeout-minutes: 15
+      # 装 17 服务端二进制：形状与上面三个 job 的装包 step 逐字同形（PGDG 源 + 主版本自证）。
+      - name: 安装 PG 17 服务端二进制（真 PG 臂自起集群需要 initdb/pg_ctl）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+          initdb_version=$(/usr/lib/postgresql/17/bin/initdb --version)
+          echo "$initdb_version"
+          /usr/lib/postgresql/17/bin/pg_ctl --version
+          server_major=$(printf '%s\n' "$initdb_version" | sed -e 's/.*(PostgreSQL) \([0-9][0-9]*\)\..*/\1/')
+          if [ "$server_major" != "17" ]; then
+            echo "::error::装出来的服务端不是 17（initdb 报 $initdb_version）⇒ 真 PG 臂会拿到错的大版本，等于没验证。"
+            exit 1
+          fi
+      # 臂本体：脚本自己 initdb 一次性 17 集群、跑全链迁移、把权限面六族逐条打到真 PG 上并落 `--json`。
+      # 退出码语义（脚本头注释）：0 = 逐条读数取得（**有差异也算 0**）；77 = 未取得（未设/设错 GY_PG_BIN）；
+      # 其它 = 真失败。这里把 77 显式升级成 CI 红 —— 别让「没跑」在读数上消失。
+      - name: 真实 PG 矩阵（R72-W12：failmatrix/run-real / 自起集群 / 权限面六族逐条）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/failmatrix-real.log
+          rc=0
+          node tests/failmatrix/run-real.mjs --json="$RUNNER_TEMP/failmatrix-real/real.json" 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::失败矩阵的真 PG 臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::失败矩阵的真 PG 臂失败（exit $rc）。"
+            exit "$rc"
+          fi
+        env:
+          GY_PG_BIN: /usr/lib/postgresql/17/bin
+          GY_I22_PG_ROOT: ${{ runner.temp }}/gy-i22-pg
+          PGCLIENTENCODING: UTF8
+      # 机读自证（不许「静默通过」）：`exit 0` 不等于有读数。总条数为 0、三档之和与总数对不上、
+      # `rows` 长度对不上、`execution_mode` 不是 `real` —— 任意一条成立就红；同时把这条臂的计数打到日志。
+      # ⚠️ 这里**不写 shell 数值闸门**（`readings` + `-lt` 那套）：读数闸门冻结表只认
+      # `tests/integration/*.mjs` 那条链，本臂是 `tests/failmatrix/` 下的独立矩阵，自证用 JSON 更贴它的产物。
+      - name: 机读结果自证（总条数 > 0、三档之和 === 总条数、execution_mode = real）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          json="$RUNNER_TEMP/failmatrix-real/real.json"
+          test -f "$json" || {
+            echo "::error::没有机读结果 $json ⇒ 退出码 0 却没有产物，同样算未取得，不是通过。"
+            exit 1
+          }
+          node -e 'const p=require(process.argv[1]);const t=p.totals||{};const bad=[];if(!Number.isInteger(t.total)||t.total<1)bad.push(`总条数必须是正整数，实测 ${String(t.total)}`);const three=(t.same||0)+(t.different||0)+(t.not_runnable||0);if(three!==t.total)bad.push(`same ${String(t.same)} + different ${String(t.different)} + not-runnable ${String(t.not_runnable)} = ${three}，与总条数 ${String(t.total)} 不相等`);if(!Array.isArray(p.rows)||p.rows.length!==t.total)bad.push(`rows 长度 ${Array.isArray(p.rows)?String(p.rows.length):"(不是数组)"} 与总条数 ${String(t.total)} 不相等`);if(p.execution_mode!=="real")bad.push(`execution_mode 实测 ${String(p.execution_mode)}，必须是 real`);console.log(`真 PG 矩阵 ${t.total} 条：same ${t.same} / different ${t.different} / not-runnable ${t.not_runnable} · 基线 ${String(p.base_commit).slice(0,12)} · ${p.postgres} · ${p.transport}`);if(bad.length!==0){console.error(`::error::机读结果自证失败：${bad.join("；")}`);process.exit(1);}' "$json"
+      # 归档机读结果（形状照 `failmatrix.yml` 的归档 step；`if-no-files-found: warn` 不阻塞）。
+      # ⚠️ 这里**故意不写 `if: always()`**：本 workflow 的守卫（`tests/unit/ci-real-pg-wiring.test.mjs`
+      # 判据④）把 `if:` 当吞红构造，加了就红。代价是红的时候不归档 —— 摘要行本来就打在日志里，
+      # 产物只是取证方便，不值得为它开一个吞红口子。
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        timeout-minutes: 5
+        with:
+          name: failmatrix-real-${{ github.sha }}
+          path: ${{ runner.temp }}/failmatrix-real/
+          if-no-files-found: warn
+          retention-days: 14

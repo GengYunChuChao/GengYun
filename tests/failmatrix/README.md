@@ -69,7 +69,7 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
 | `cases.mjs` | HTTP 用例表：`id` / `method` / `path` / `headers` / `body` / `expect{status,code,etag}` / `check` / `sameShapeAs` / `concurrent` / `app`（缺省 `'main'`；`'jobs'` = 已接线作业端口的第二个 app） |
 | `seams.mjs` | 受信 seam 用例表：`invoke` + `expect{code}` + `check`（审核回调 / AI 失败 / 下架缓存 / 版本回写） |
 | `run.mjs` | 表驱动 runner：判定 + 拒绝不变量 + 同形对照 + 按族/批次汇总 + `--json` 机读结果 |
-| `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11 的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过） |
+| `run-real.mjs` | **真实 PostgreSQL 17 臂**：自己起一次性真 PG 集群（`GY_PG_BIN` 闸门 + `await import('pg')`），把权限面 C1–C4/C10/C11 的 world 换成真 PG store，逐条记录 stub 期望 vs 真 PG 实际；缺 `GY_PG_BIN` ⇒ 退出 77（未取得，不是通过）。**R72-W12 起已接进 CI**：`.github/workflows/real-pg-integration.yml` 末尾的 job `failmatrix-real-17.11`（键 `failmatrix-real-17-11`）每次 PR 真跑它，`GY_PG_BIN` 由 PGDG 装出的 `postgresql-17` 提供（`/usr/lib/postgresql/17/bin`），`--json` 产物按 artifact 归档；判决口径见下节末「进 CI 后的判决口径」 |
 | `mutations.mjs` | 26 条负控制清单（`file` + 逐字 `find` + `replace` + `watch` 用例；`edits` 支持「同一条负控制改多处」） |
 | `tools/i22-failmatrix-negative-control.mjs` | 负控制执行器：sha256 → 改 → 跑（必须全红）→ 原字节恢复 → sha256 复核 → 复跑（必须全绿） |
 | `tools/i22-failmatrix-evidence-table.mjs` | 证据表生成器：读 `--json` 结果生成三列表，条数与文档声明不符即失败；归档页保护基于真实路径比较 + 文件身份（`dev` + `ino`，硬链接也拦得住）+ 仓库内包含性校验，`--write` 无隐式默认页（必须显式 `--page=`，且目标必须在仓库内；点名归档页要 `--i-know-this-rewrites-archive`，带旗标也仍受条数一致性约束——页内条数必须等于 `EXPECTED`，所以当前 168 / 23 的归档页必被拒），对账不通过一律不写盘 |
@@ -183,6 +183,10 @@ node tools/i22-failmatrix-evidence-table.mjs                       # 只打印�
   真实媒体未接线），无法播种属主行，对应用例如实标 `not-runnable`（占 168 条里的 35 条），⛔ 不拿
   「不存在」当「越权 404」的假同形。
 
+  订正（2026-10-31，基线 `7ada259e`）：上面这条 R34 追加只写了「已接真 PG 臂」，容易被读成「CI 上已经在跑」。
+  事实是 `run-real.mjs` 对 `.github/workflows/` **零命中** —— 它只在本机手跑过，CI 上一直没有读数。R72-W12 起
+  由 `real-pg-integration.yml` 末尾的 job `failmatrix-real-17.11` 每次 PR 真跑，判决口径见下节末。
+
 ## 真实 PG 臂（`run-real.mjs`）· stub vs 真 PG 差异结论
 
 本臂把矩阵 world 的内存 store 换成真 PG store（`execution_mode=real` + 真 `pool`），在**一次性
@@ -209,6 +213,34 @@ C11-39（「B 仍能读自己的会话」正控制）由 200 变为 401 `SESSION
 （`real` 而非 `stub`）。`tests/unit/gy-i22-failmatrix-real.test.mjs` 锁住「缺 `GY_PG_BIN` ⇒ 77」与
 「权限面覆盖范围 = 180 条同源」两条契约。其中 9 条作业过滤腿（`app: 'jobs'`）在本臂记「不跑」：
 它们依赖已接线的内存作业端口种子，real + 真库没有作业读权威可播种（stub 臂与单测里全跑）。
+
+### 进 CI 后的判决口径（R72-W12，基线 `7ada259e`）
+
+这条臂从 R72 起在 CI 上有读数。job 是 `.github/workflows/real-pg-integration.yml` **末尾追加**的
+`failmatrix-real-17.11`（键 `failmatrix-real-17-11`，`runs-on: ubuntu-24.04`，job 级封顶 55 分钟 = Σ step 封顶
+45 + 前置余量 10）。它**不**吃 `services.postgres`：脚本自己 `initdb` 一次性集群，job 只负责用 PGDG 源装
+`postgresql-17`（装完先自证 `initdb --version` 主版本是 17），把 `/usr/lib/postgresql/17/bin` 传给 `GY_PG_BIN`，
+另给 `GY_I22_PG_ROOT`（脚本唯一读的数据根键）与 `PGCLIENTENCODING: UTF8`，然后跑
+`node tests/failmatrix/run-real.mjs --json="$RUNNER_TEMP/failmatrix-real/real.json"`，产物按 artifact 归档 14 天。
+
+**不可静默通过 —— 两条独立判决，任一成立就红：**
+
+1. **退出码**：`77` = 没拿到 17 的服务端二进制 ⇒「未取得」，job 把它显式升级成 `exit 1`
+   （脚本头注释写的就是「77 = 未取得，不是通过」）；其它非 0 原样透出。⛔ workflow 里**不传**任何放宽跳过的
+   开关/环境变量（守卫 `tests/unit/ci-real-pg-wiring.test.mjs` 对这类字样在**任何** workflow 里出现即判红）。
+2. **机读自证**：`exit 0` 之后再读一遍 `--json` 产物（node，不是 shell 数值闸门），要求「总条数 > 0」且
+   「三档计数之和 `same + different + not_runnable` === 总条数」，并顺带核 `rows.length === 总条数`、
+   `execution_mode === 'real'` —— 「打完成绩也退 0」「产物被清空」这两类回归都在这里红。
+   ⛔ **不断言 `different === 0`**：差异正是这条臂的产品，全 `same` 反而应该先怀疑用例没换代；
+   ⛔ **不断言总条数恰好 180**：`180` 是**今天**用例表的口径，硬钉等于把「加一条用例」变成假红。
+
+**读数口径要对齐的两个数字**（本节「实测读数」那段与本条的区别）：`168 条 = same 114 / different 19 /
+not-runnable 35` 是基线 `d4a47206` 上**本机 PG 17.11** 手跑的读数，当时权限面是 `C3` 27 条 + `C4` 18 条；
+当前用例表是 **180 条**（`C3` 36 / `C4` 21，由 `tests/unit/gy-i22-failmatrix-real.test.mjs` 的「同源 = 180 条」
+断言锁着）。所以：**本页没有 180 条口径的真 PG 读数** —— 那条读数要等推送后 CI 首跑才产出，届时把那次 run 的
+`same / different / not_runnable` 三个数补进本节，并注明取自哪一次 run（`generated_at` + run id）。
+本机侧的另一条边界不变：本片交付环境禁回环监听，`initdb` 起的集群在本机连不上 ⇒ 这次没有新读数入账，
+「CI 上这条臂读到什么」只能等推送后的第一次 run。
 
 ## 与 `#22` 的关系
 
