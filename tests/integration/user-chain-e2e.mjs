@@ -722,7 +722,7 @@ async function main() {
      *   - 不带凭据 ⇒ `SESSION_REQUIRED`（`services/api/src/auth/middleware.ts:53-60`）；
      *   - 带凭据但会话已撤销/已过期 ⇒ `SESSION_EXPIRED`（`services/api/src/auth/middleware.ts:74-80`）。
      * 已被 `tests/unit/auth-routes.test.mjs:211`（「退出登录：撤销当前会话后同一令牌立即失效（401 SESSION_EXPIRED）」）
-     * 与 `tests/unit/gy-i22-session-inflight-cross-module.test.mjs:286`（「全部 16 个面一致 401 SESSION_EXPIRED」）固化。
+     * 与 `tests/unit/gy-i22-session-inflight-cross-module.test.mjs:333`（「全部 17 个面一致 401 SESSION_EXPIRED」）固化。
      * 契约 `services/api/src/contract.ts:16` 亦把 401 定义为 `SESSION_REQUIRED` / `SESSION_EXPIRED` 两码。
      * ⇒ 退出后断言「令牌确实失效」＝ 401 + SESSION_EXPIRED 全face同形；再用「不带上令牌」对照证明两码可辨且封套同形。
      */
