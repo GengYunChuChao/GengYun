@@ -146,17 +146,23 @@
 | # | 命令 | 结果 |
 | --- | --- | --- |
 | 1 | `npm run lint` | exit 0（tsc 双工作区 + 仓库卫生扫描 PASS） |
-| 2 | `npm run build` | exit 0 |
+| 2 | `npm run build` | exit 0（之后删掉 `services/api/dist`、`apps/admin/dist` 再跑 unit） |
 | 3 | `npm run test:unit` | exit 0（含本片新增 6 条用例） |
 | 4 | `node --test tests/ui-unified-states.test.mjs` | exit 0 |
 | 5 | `node --test tests/demo-ui-components.test.mjs` | exit 0 |
-| 6 | `npm run test:contract` | exit 0 |
-| 7 | `node tools/verify-contract-status.mjs` | exit 0（`--reanchor` dry-run 与 `--reanchor --write-doc` 均 exit 0 且**不产生 diff**：本片未移动任何行） |
-| 8 | `node tools/verify-doc-anchors.mjs --strict` | exit 0 |
-| 9 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs`（CI-exact） | exit 0 |
-| 10 | `node tools/openapi-route-parity.mjs`（`npm run verify:parity`） | exit 0（126/126 装配、extra 0 / missing 0 / drift 0；该判据是 **operation 级**，不含参数面，故本片改参数**不改**它的读数，也没有手改它的判据或生成块） |
-| 11 | `npm run verify:capability-map` | exit 0 |
-| 12 | `npm run test:evaluation` | exit 0 |
+| 6 | `npm run test:integration:http` | exit 0 |
+| 7 | `npm run test:contract` | exit 0 |
+| 8 | `node tools/verify-contract-status.mjs` | exit 0（`--reanchor` dry-run 与 `--reanchor --write-doc` 均 exit 0 且**不产生 diff**：本片未移动任何行） |
+| 9 | `node tools/verify-doc-anchors.mjs --strict` | exit 0 |
+| 10 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs`（CI-exact） | exit 0 |
+| 11 | `node tools/openapi-route-parity.mjs`（`npm run verify:parity`） | exit 0（126/126 装配、extra 0 / missing 0 / drift 0、exempt 1；该判据是 **operation 级**，不含参数面，故本片改参数**不改**它的读数，也没有手改它的判据或生成块） |
+| 12 | `npm run verify:capability-map` | exit 0（totalOps=46／有入口=46／死按钮=0） |
+| 13 | `npm run test:evaluation` | exit 0（169 条） |
+| 14 | `npm run verify:purge-schedule` | exit 0（10 项判据） |
+| 15 | `npm run test:docs` | exit 0（开发文档校验 + 研究记录校验） |
+| 16 | `node tools/run-python.mjs tools/validate_contracts.py` / `… tools/test_contracts.py`（CI `docs` job 的两条契约校验） | exit 0（126 operations；8 tests OK） |
+| 17 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs`（锚点位移恒等闸门） | exit 0（32 pass / 0 fail / 1 skip：本片文档改动面全是纯新增 hunk） |
+
 
 关于 `docs/architecture/openapi-route-parity.md`：它由 `tools/openapi-route-parity.mjs --write-doc` 生成，
 登记的是 **path × method × operationId × 作用域** 这一层，**不含参数面** —— 因此本片没有可同步的行，
@@ -196,3 +202,17 @@
 一致性用例用 `app.listen({ host:'127.0.0.1', port:0 })`（内核分配空闲端口），每个用例 `finally` 关宿主；
 含一条常驻用例断言"关闭后 `app.server.listening === false` 且该端口不再接受连接"。
 失败路径也会关宿主（`host()` 内 `catch` 先 `close()` 再抛）——否则失败会表现为**挂起**而不是变红（本次实测踩到过）。
+
+收工实测（本片跑完后现场量的；端口号由内核分配，不入库）：
+
+```text
+ephemeral port allocated: 60705
+closed; listening = false
+same port reusable after close: BOUND        # 同一端口号关闭后可被重新绑定 ⇒ 确实回到可用池
+fresh ephemeral port: BOUND 60708
+all handles closed: true
+```
+
+并且 `test:unit` 里常驻的「端口已释放」用例每次都会跑：`ok 6 - 端口已释放：回环宿主关闭后 app.server
+不再监听（动态空闲口，不占固定端口）`；跑完后 `Get-NetTCPConnection -State Listen` 里没有本片宿主
+（`node`，近 60 秒启动）占用的端口。⇒ 无遗留监听。
