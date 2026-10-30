@@ -246,7 +246,7 @@ const DAMAGE_NEEDLE = /damage|herbicide_damage|phytotox|injury/i;
  *  （`S3-a` 追加 `approvePost`/`rejectPost` 两条人审动作）→ **124**
  *  （`#18` S2 PR-3 追加 `grantAdministratorScope` / `revokeAdministratorScope` 两条管理员授权写面）。本钉保护的事实是「damage 类零命中」，
  *  总数只用于证明「抽取没空转」，故随契约增长同步更新。 */
-const CONTRACT_OPERATION_COUNT = 126;
+const CONTRACT_OPERATION_COUNT = 127;
 
 /** 基线实测：`path` 总数（`Object.keys(doc.paths)`）。
  *
@@ -254,7 +254,7 @@ const CONTRACT_OPERATION_COUNT = 126;
  *  （`S3-a` 追加 `/admin/posts/{id}/approve` 与 `/admin/posts/{id}/reject` 两条 path）→ **94**
  *  （`#18` S2 PR-3 的授予面复用既有 `/admin/administrators/{id}/scopes` 这个 path **键**，
  *  只有撤销面新增了 `/admin/administrators/{id}/scopes/{scope}` 一条 ⇒ 键数 +1、operation 数 +2）。 */
-const CONTRACT_PATH_COUNT = 96;
+const CONTRACT_PATH_COUNT = 97;
 
 /** 基线实测：`operationId` 里含 `admin` 的**全部** 23 条（逐条钉住，⛔ 不是 `>=`）。 */
 const ADMIN_OPERATION_IDS = [

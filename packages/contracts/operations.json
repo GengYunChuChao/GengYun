@@ -191,6 +191,13 @@
       "version_required": true
     },
     {
+      "id": "listDoseCards",
+      "path": "/dose-cards",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
       "id": "listKnowledge",
       "path": "/knowledge",
       "method": "get",
