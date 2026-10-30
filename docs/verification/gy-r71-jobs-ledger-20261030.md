@@ -238,16 +238,23 @@ R34 的裁定没有被推翻：**读面仍然为零**——`/admin/jobs` 还是�
 
 | # | 门禁 | 读数 | exit |
 |---|---|---|---|
-| 1 | `npm run build` | api + admin `built`；随后删 dist | 0 |
-| 2 | `npm run lint` | `tsc --noEmit` services/api PASS、apps/admin PASS；仓库卫生扫描 PASS | 0 |
-| 3 | `npm run test:unit` | GATE_UNIT_READING | 0 |
-| 4 | `npm run test:contract` | GATE_CONTRACT_READING | 0 |
-| 5 | `npm run verify:anchors` | GATE_ANCHORS_READING | 0 |
-| 6 | `npm run verify:parity` | GATE_PARITY_READING | 0 |
-| 7 | `npm run verify:capability-map` | GATE_CAPABILITY_READING | 0 |
-| 8 | `npm run test:docs` | GATE_DOCS_READING | 0 |
-| 9 | `npm run test:failmatrix` | GATE_FAILMATRIX_READING | 0 |
-| CI-exact | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | GATE_CIEXACT_READING | 0 |
+| 1 | `npm run build` | api + admin 均 `✓ built`（api `tsc` + admin `vite build`）；随后删 `services/api/dist` 与 `apps/admin/dist`（`dist_removed=True`） | 0 |
+| 2 | `npm run lint` | `PASS tsc --noEmit services/api/tsconfig.json`、`PASS tsc --noEmit apps/admin/tsconfig.json`、`PASS 仓库卫生扫描` | 0 |
+| 3 | `npm run test:unit` | `tests 5861 / pass 5858 / fail 0 / cancelled 0 / skipped 1 / todo 2` | 0 |
+| 4 | `npm run test:contract` | `tests 17 / pass 17 / fail 0` | 0 |
+| 5 | `npm run verify:anchors` | `verify-contract-status` PASS（126 条契约操作；形状错误 0 / 语义错误 0 / 表格漂移 0）+ `verify-doc-anchors --strict` PASS（`--strict` 下无基线外新增） | 0 |
+| 6 | `npm run verify:parity` | `"extra": [] / "missing": [] / "ledgerDrift": []` | 0 |
+| 7 | `npm run verify:capability-map` | `totalOps=46，有入口=46，无入口=0，死按钮=0`；`文档标记块与重算一致` | 0 |
+| 8 | `npm run test:docs` | 研究记录 `5 通过 / 0 失败 / 4 legacy 已钉住`；`docs/research 结构校验` PASS | 0 |
+| 9 | `npm run test:failmatrix` | `矩阵合计 249 条：PASS 249 / FAIL 0`（B1–B6 全绿） | 0 |
+| CI-exact | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | `PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT 与 COMMENT_ANCHOR 都按基线内条目只计数、不判红）` | 0 |
+
+另有两条**本片专项**读数（不计入九条门禁）：
+
+| 项 | 读数 | exit |
+|---|---|---|
+| `node tools/verify-migrations-unique.mjs --strict` | `47 条配对 + 1 条登记允许缺省 = 48 条正向迁移逐条有交代`；`[gap] 缺号有「故意跳过」依据（1 个）：0037`（本片零迁移，读数与基线一致） | 0 |
+| `node tests/integration/jobs-ledger-pg.mjs`（真库） | `SUMMARY: 13 项实测通过（真库 gengyun_jobs_ledger_test）；台账总行数 4` | 0 |
 
 真库臂（非门禁、单独一条）：
 
@@ -260,12 +267,12 @@ R34 的裁定没有被推翻：**读面仍然为零**——`/admin/jobs` 还是�
 
 ## 8 负控制（四条，逐条打红 → 恢复复绿）
 
-| # | 负控制 | 怎么打红 | 红在哪（判据） | 恢复 |
+| # | 负控制 | 怎么打红 | 红在哪（判据原文/读数） | 恢复 |
 |---|---|---|---|---|
-| ① | **台账写在事务外** | 把 `ocr/store-pg.ts` 的 `insertJob` 改回「先 `runWrite` 源表、提交后再写台账」 | 真库 `[T]` 正向读数：拒绝触发器让台账失败后 `ocr_jobs` **留下了行**（行数 4 ≠ 3）⇒ 单事务不变量被证伪；store 单测的语句序列断言同时红（不再有 `BEGIN` 包裹） | 还原文件 → 两条都复绿 |
-| ② | **去掉幂等守卫** | 把 `ON CONFLICT (id) DO UPDATE` 改成纯 `INSERT`（或删掉 `WHERE … IS DISTINCT FROM`） | 真库 `[I]` 读数：同态重放抛 23505（或 `updated_at` 被刷）⇒「不产生重复行 / 严格 no-op」两条不成立；`ai-ops-ledger-pins` 钉子①的 `ON CONFLICT (id) DO UPDATE` 字面锚同时红 | 还原 SQL → 复绿 |
-| ③ | **某源漏写** | 删掉 `speech/store-pg.ts` 里 `commitTerminal` 那一处 `writeJobLedger` | 接线钉子（`tests/unit/jobs-ledger-mapping.test.mjs` 的「每个写点都必须真的调用一次」）读 `speech/store-pg.ts` 预期 3 处、实测 2 处 ⇒ 红；真库臂的 `[L]`/`[C]` 不受影响（说明这条缺口只能靠接线读数抓，映射矩阵抓不到） | 还原调用 → 复绿 |
-| ④ | **台账字段写错（`state` 写成固定值）** | 在 `ledgerRowFromDomainJob` 里把 `state` 写成 `'queued'` 常量 | 矩阵 30 格中除 `queued` 外全部红（`state` 与 `revision` 脱钩）；真库臂 `[L]` 的 `running`/`succeeded` 两读数同时红 | 还原映射 → 复绿 |
+| ① | **台账写在事务外** | 把 `ocr/store-pg.ts` 的 `insertJob` 改成「`withTransaction` 里只写源表 → 提交后再 `writeJobLedger(pool, …)`」 | `tests/unit/ocr-store-pg.test.mjs` 的 `[1] insertJob` 立刻红：语句序列变成 `BEGIN → INSERT ocr_jobs → COMMIT → RELEASE → INSERT jobs`，而断言要求台账语句落在 `BEGIN…COMMIT` **之内**（真库臂 `[T]` 的正向读数也会同时红：拒绝触发器让台账失败后源表行不再回滚） | `git checkout -- services/api/src/ocr/store-pg.ts` → 复绿 |
+| ② | **去掉幂等守卫** | 把 `JOB_LEDGER_UPSERT_SQL` 的 `ON CONFLICT (id) DO UPDATE … WHERE … IS DISTINCT FROM` 换成 `ON CONFLICT (id) DO NOTHING` | `tests/unit/ai-ops-ledger-pins.test.mjs` 钉子①红：字面锚 `/ON CONFLICT \(id\) DO UPDATE/` 不再命中（真库臂 `[I]` 的两条读数也会红：同态重放不再是 no-op、异态不再就地更新） | `git checkout -- services/api/src/jobs/ledger.ts` → 复绿 |
+| ③ | **某源漏写** | 删掉 `speech/store-pg.ts` 的 `commitTerminal` 里那一行 `writeJobLedger(...)` | `tests/unit/jobs-ledger-mapping.test.mjs` 的接线钉子红：`services/api/src/speech/store-pg.ts 的 writeJobLedger 调用数是 2，应为 3` | `git checkout -- services/api/src/speech/store-pg.ts` → 复绿 |
+| ④ | **台账字段写错（`state` 写成固定值）** | 把 `ledgerRowFromDomainJob` 的 `state: assertJobState(job.state)` 改成 `state: assertJobState('queued')` | 矩阵两条同时红：`矩阵：六源 × 五态逐格断言`（除 `queued` 外每格 `state` 都与该态不符）与 `矩阵补充：契约七态全覆盖…且 state 与 revision 不脱钩` | `git checkout -- services/api/src/jobs/ledger.ts` → 复绿 |
 
 负控制 ③ 的价值要单独说一句：它证明了**接线读数**与**映射矩阵**不是同一层证据 —— 删掉一处调用，
 30 格映射断言照样全绿，只有"每域三处 + 取消一处"的静态读数会红。
