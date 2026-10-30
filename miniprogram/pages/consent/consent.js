@@ -14,6 +14,11 @@
 //     时，该行按钮置灰并写明原因；⛔ 不假装可点、⛔ 不静默吞掉。
 //   - **撤回必须二次确认，且按 purpose 说清代价**：`WITHDRAW_COST` 逐条对应服务端真实的判定点
 //     （认领自 `packages/privacy/constants.mjs` 的必需用途集合与各路由的授权门），不是一句通用话。
+//   - **撤回的确认绑「发起时的页面可见周期 + 会话身份」，过期确认连 GET 都不发**（本条为监工复查
+//     修复的跨账号写缺陷）：点「撤回」时把 `{ epoch, identity, purpose, token }` 快照成一次性的
+//     `_pendingConfirm`；离页 / 销毁 / 重进 / 门禁关闭都会**递增本页 `_epoch` 并作废它**；
+//     写链路（`consentApi.withdraw` 的 `guard`）在每一步之前复验「令牌仍是本次确认 + 会话身份未变 +
+//     页面世代未变」，任一不成立就在**发出 GET/DELETE 之前**丢弃，并给出明确原因（⛔ 不静默）。
 //   - 用途名只来自契约枚举的短名映射（`consent-api.PURPOSE_LABELS`）并**同时显示原码**；
 //     页面不写政策正文、不解释"某授权覆盖哪些数据"以外的政策内容。
 //   - `policy_version` 原样展示，不判断是否最新版、不写"已同意最新版"。
@@ -23,6 +28,28 @@ const pageGate = require('../../utils/page-gate')
 const consentApi = require('../../utils/consent-api')
 
 const PAGE_SIZE = 20
+
+/**
+ * 当前会话身份：（访问令牌, 会话世代）。
+ *
+ * 契约禁止客户端声明 `userId`（身份只来自服务端签发的令牌），所以页面能观测到的"这是哪个账号"
+ * 只有这一对事实：令牌 + `auth.sessionEpoch()`。`utils/auth.js` 的 `setSession` 在**令牌变化**时
+ * 递增 `generation`，所以换账号必然让这一对变化。取不到会话 ⇒ `null`（此时连确认都不该弹）。
+ */
+function sessionIdentity() {
+  const session = auth.getSession()
+  if (!session || typeof session.accessToken !== 'string' || session.accessToken === '') return null
+  return session.accessToken + '@' + auth.sessionEpoch()
+}
+
+/**
+ * 一次性确认令牌。**不发给服务端**：它只在本页内存里区分"这一次确认"，让同一个弹窗回调
+ * 重复投递（或被新确认顶替）时不可能再触发第二次写。前缀刻意与 `Idempotency-Key` 分开。
+ */
+function newConfirmToken() {
+  return 'confirm-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)
+}
+
 
 /**
  * 撤回代价：**按用途分别写**，每一句都指得出服务端/隐私模块里的真实判定点。
@@ -91,7 +118,8 @@ Page({
     fontScale.applyFontScale(this)
     const self = this
     // 世代标记：确认弹窗/在飞回调可能在离页、重进、重读之后才回来；旧回执一律丢弃。
-    self._epoch = (self._epoch || 0) + 1
+    // 可见周期从这里开始算（每一步"让确认失去意义的时刻"都递增它，见 invalidate）。
+    self.invalidate()
     self._grantKeys = {}
     self._blocked = {}
     self._rowNotes = {}
@@ -103,14 +131,39 @@ Page({
     })
     pageGate.start(this, function (ok) {
       self.setData({ checking: false })
-      if (!ok) { self.setData({ gatePassed: false }); return }
+      if (!ok) {
+        // 门禁关闭（未登录 / 会话被换掉 / 被取消）同样是一个新周期：旧确认随之作废。
+        self.invalidate()
+        self.setData({ gatePassed: false, busy: false, loading: false })
+        return
+      }
       self.setData({ gatePassed: true, networkOff: !auth.networkEnabled() })
       if (auth.networkEnabled()) self.reload()
     })
   },
 
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  /**
+   * 作废本页一切「一次确认」，并递增可见周期世代。
+   *
+   * 离页 / 销毁 / 重进 / 门禁关闭都必须调它 —— 撤回的确认绑的是**发起时的那一个可见周期**。
+   * 世代同时是读回执的守卫（`load` / `loadPolicy` 都比对 `_epoch`），所以离页时递增也让
+   * 隐藏期间回来的迟到响应写不进页面数据。
+   */
+  invalidate: function () {
+    this._epoch = (this._epoch || 0) + 1
+    this._pendingConfirm = null
+  },
+
+  onHide: function () {
+    // 监工复查修复：离页不只是取消门禁，还必须让本页世代作废（否则隐藏期间的旧确认仍然算数）。
+    this.invalidate()
+    pageGate.cancel(this)
+  },
+  onUnload: function () {
+    this._destroyed = true
+    this.invalidate()
+    pageGate.cancel(this)
+  },
 
   /** 同时重读清单与政策：两条都失败时**各自**如实报，不互相掩盖。 */
   reload: function () {
@@ -306,48 +359,137 @@ Page({
     })
   },
 
-  /** 撤回：二次确认里逐用途说清代价；确认后才发 DELETE（服务端未确认前界面不动）。 */
+  /**
+   * 撤回：二次确认里逐用途说清代价；确认后才发 DELETE（服务端未确认前界面不动）。
+   *
+   * **确认令牌化**：点「撤回」的这一刻把 `{ epoch, identity, purpose, token }` 快照成一次性的
+   * `_pendingConfirm`。弹窗回调回来时先判"令牌还是不是当前这一次"，再判"会话身份/页面世代是否
+   * 与发起时一致"；任一不成立就**丢弃**（连取 revision 的 GET 都不发）并给出明确原因。
+   * 通过判定后也**没有**放松：写链路每一步之前用同一个 `confirmGuard` 再判一次（428 补取会再发 GET）。
+   */
   onWithdraw: function (purpose) {
     const self = this
-    const epoch = self._epoch
     const label = consentApi.PURPOSE_LABELS[purpose] || purpose
+    const identity = sessionIdentity()
+    if (!identity) {
+      self.noteRow(purpose, {
+        busy: false, errorText: '会话已失效，未发出撤回请求。请重新登录后再试。', errorCode: 'SESSION_REQUIRED'
+      })
+      return
+    }
+    const pending = {
+      epoch: self._epoch, identity: identity, purpose: purpose, token: newConfirmToken(), claimed: false
+    }
+    self._pendingConfirm = pending
     wx.showModal({
       title: '撤回「' + label + '」用途授权？',
       content: WITHDRAW_COST[purpose] || '撤回后该用途的授权立即失效，依赖它的能力会被服务端拒绝。',
       confirmText: '确认撤回',
       cancelText: '再想想',
       success: function (res) {
-        if (!res || !res.confirm) return
-        // 晚到的确认（已离页/重进/重读）一律丢弃：不 setData，也不发 DELETE。
-        if (epoch !== self._epoch) return
-        self.noteRow(purpose, { busy: true, errorText: '', errorCode: '' })
-        self.setData({ actionText: '', actionCode: '' })
-        consentApi.withdraw({ purpose: purpose }).then(function (result) {
-          if (epoch !== self._epoch) return
-          delete (self._blocked || {})[purpose]
-          self.noteRow(purpose, { busy: false, errorText: '', errorCode: '' })
-          self.setData({
-            actionCode: '',
-            actionText: '已撤回「' + label + '」：服务端返回 revision ' + result.revision +
-              (result.refetches ? '（428 后自动补取 ' + result.refetches + ' 次版本）' : '') +
-              '。正在按服务端记录重新读取清单…'
-          })
-          self.load('')
-        }).catch(function (error) {
-          if (epoch !== self._epoch) return
-          const blocking = consentApi.blockingReason(error, 'withdraw')
-          if (blocking) {
-            self._blocked = self._blocked || {}
-            self._blocked[purpose] = blocking
-          }
-          self.noteRow(purpose, {
-            busy: false,
-            errorText: consentApi.actionMessage(error, 'withdraw'),
-            errorCode: (error && error.code) || ''
-          })
-          self.setData({ actionCode: (error && error.code) || '', actionText: '' })
-        })
+        // 用户放弃：作废这个令牌（下一次点击是一个新确认）。
+        if (!res || !res.confirm) {
+          if (self._pendingConfirm === pending) self._pendingConfirm = null
+          return
+        }
+        // 一次性：同一个弹窗回调只有第一次算数（重复投递 ⇒ 丢弃）。
+        const stale = pending.claimed === true
+          ? { code: 'CONFIRM_SPENT', text: '这次撤回确认已经用过了（每次点击「撤回」都是一个新确认）。' }
+          : self.confirmGuard(pending)
+        pending.claimed = true
+        if (self._pendingConfirm === pending) self._pendingConfirm = null
+        if (stale) { self.dropConfirm(purpose, label, stale); return }
+        self.sendWithdraw(purpose, label, pending)
       }
+    })
+  },
+
+  /**
+   * 「这次确认此刻还算不算数」：返回 `''` 表示可以继续；返回 `{ code, text }` 表示必须丢弃。
+   *
+   * 判定顺序按**原因的具体程度**排：会话身份 → 页面世代 → 是否仍是当前那次确认。
+   *   - 会话身份与发起时不同（令牌 + 会话世代 ⇒ 换账号必然不等）⇒ `SESSION_CHANGED`；
+   *   - 本页 `_epoch` 变过（离页 / 销毁 / 重进 / 门禁关闭都会递增它）⇒ `PAGE_CYCLE_CHANGED`；
+   *   - 令牌已不是"当前这一次"（被新确认顶替）⇒ `CONFIRM_SPENT`；
+   *   - 已点过确认的令牌在写链路里复验：会话与世代仍须成立（一次性由弹窗回调入口把住）。
+   * 客户端的身份只到这一层：本页拿不到、也不声明 `userId`。
+   */
+  confirmGuard: function (pending) {
+    if (!pending) {
+      return { code: 'CONFIRM_SPENT', text: '这次撤回确认已经用过了（每次点击「撤回」都是一个新确认）。' }
+    }
+    if (sessionIdentity() !== pending.identity) {
+      return {
+        code: 'SESSION_CHANGED',
+        text: '发起这次确认之后账号或登录态已经变了（当前会话不是发起撤回的那个账号）：已丢弃，' +
+          '没有发出任何读取或撤回请求。'
+      }
+    }
+    if (this._epoch !== pending.epoch) {
+      return {
+        code: 'PAGE_CYCLE_CHANGED',
+        text: '发起这次确认之后页面已经离开或重新进入过（可见周期变了）：已丢弃，' +
+          '没有发出任何读取或撤回请求。'
+      }
+    }
+    if (pending.claimed !== true && this._pendingConfirm !== pending) {
+      return { code: 'CONFIRM_SPENT', text: '这次撤回确认已经被新的确认顶替了（每次点击「撤回」都是一个新确认）。' }
+    }
+    return ''
+  },
+
+  /**
+   * 丢弃一次过期 / 已用过的确认：**明确说原因**（⛔ 不静默当成成功，也⛔ 不调 `load` 假装刷新过）。
+   * 页面已销毁时没有可呈现的界面（此时"一条请求都没发出去"由请求数证明）。
+   */
+  dropConfirm: function (purpose, label, reason) {
+    if (this._destroyed) return
+    const text = '未撤回「' + label + '」：' + reason.text
+    this.noteRow(purpose, { busy: false, errorText: text, errorCode: reason.code })
+    this.setData({ actionCode: reason.code, actionText: text })
+  },
+
+  /** 真正发撤回：把 `confirmGuard` 交给适配层，让它在**每一步请求之前**复验（过期的连 GET 都不发）。 */
+  sendWithdraw: function (purpose, label, pending) {
+    const self = this
+    const epoch = self._epoch
+    self.noteRow(purpose, { busy: true, errorText: '', errorCode: '' })
+    self.setData({ actionText: '', actionCode: '' })
+    consentApi.withdraw({
+      purpose: purpose,
+      guard: function () { return self.confirmGuard(pending) }
+    }).then(function (result) {
+      if (epoch !== self._epoch) return
+      delete (self._blocked || {})[purpose]
+      self.noteRow(purpose, { busy: false, errorText: '', errorCode: '' })
+      self.setData({
+        actionCode: '',
+        actionText: '已撤回「' + label + '」：服务端返回 revision ' + result.revision +
+          (result.refetches ? '（428 后自动补取 ' + result.refetches + ' 次版本）' : '') +
+          '。正在按服务端记录重新读取清单…'
+      })
+      self.load('')
+    }).catch(function (error) {
+      // 过期确认：适配层在发请求之前就丢了（`CONFIRM_STALE`），这里只负责把原因说到界面上。
+      // 这条**先于**世代判断：过期正是"世代变了"造成的，丢弃原因必须照实呈现（⛔ 不静默）。
+      if (error && error.code === 'CONFIRM_STALE') {
+        self.dropConfirm(purpose, label, error.reason || {
+          code: 'CONFIRM_STALE', text: '这次确认已经过期：已丢弃，没有发出任何请求。'
+        })
+        return
+      }
+      if (epoch !== self._epoch) return
+      const blocking = consentApi.blockingReason(error, 'withdraw')
+      if (blocking) {
+        self._blocked = self._blocked || {}
+        self._blocked[purpose] = blocking
+      }
+      self.noteRow(purpose, {
+        busy: false,
+        errorText: consentApi.actionMessage(error, 'withdraw'),
+        errorCode: (error && error.code) || ''
+      })
+      self.setData({ actionCode: (error && error.code) || '', actionText: '' })
     })
   },
 

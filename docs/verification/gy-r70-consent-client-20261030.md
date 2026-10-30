@@ -47,7 +47,7 @@
 | 文件 | 改动 | 证据锚点 |
 | --- | --- | --- |
 | `miniprogram/utils/consent-api.js` | `send()` 支持 `expect` 状态、请求体与 `Idempotency-Key`/`If-Match` 头；错误对象带 `status`/`retryable` 而 `code` 原样；新增 `readPolicy`/`grant`/`withdraw`/`newIdempotencyKey`/`grantAvailability`/`actionMessage`/`blockingReason`；`consentView` 透出 `revision`/`epoch`；头注从"只读"改写为四条接口与三条纪律 | `miniprogram/utils/consent-api.js:177`、`:372`、`:440`、`:491`、`:576` |
-| `miniprogram/pages/consent/consent.js` | 四行开关（闭集四用途各一行）、`WITHDRAW_COST` 逐用途代价文案、`buildRows` 计算可用性、`onGrant`（幂等键按动作复用）、`onWithdraw`（二次确认 + 世代守卫）、`loadPolicy`、`onRefresh` 清本地阻塞与键 | `miniprogram/pages/consent/consent.js:42`、`:188`、`:262`、`:310` |
+| `miniprogram/pages/consent/consent.js` | 四行开关（闭集四用途各一行）、`WITHDRAW_COST` 逐用途代价文案、`buildRows` 计算可用性、`onGrant`（幂等键按动作复用）、`onWithdraw`（二次确认 + 世代守卫）、`loadPolicy`、`onRefresh` 清本地阻塞与键 | `miniprogram/pages/consent/consent.js:69`、`:241`、`:315`、`:370` |
 | `miniprogram/pages/consent/consent.wxml` | 删掉「本页只读」「所以这里没有开关」；新增「用途授权」区（每行状态 + 可用性原因 + 上次失败原因 + 服务端码 + 动作按钮）、政策版本说明、四条"关于这份清单"补充说明 | 路径同上；`wxml` 不在锚点工具的目标后缀内，故这一行只给路径、不给行号 |
 | `miniprogram/pages/consent/consent.wxss` | 头注去掉"只读"；新增用途行的左右分栏与三类文字样式（一律取 `styles/tokens.wxss` 变量） | `miniprogram/pages/consent/consent.wxss:1` |
 | `miniprogram/pages/profile/profile.wxml` | 隐私说明改准：`可以随时撤回` **重新写回**但注明边界（只有服务端有可用政策的用途可授予；没有就置灰说明）；新增长期成立的一条（系统权限由微信询问，本页不能替用户开关）；入口行「只读查看」→「查看与撤回」，`aria-label` 与说明同步 | 路径同上；`wxml` 不在锚点目标后缀内，只给路径、不给行号 |
@@ -179,3 +179,239 @@ CI 那条还多扫 `docs/` 下其余页面 —— 扫描面不同，读数不可
    （b）客户端加接收方选择界面并说明每个接收方的留存/核验。两者都超出"不动服务端"的本片范围。
 3. **`recording` 的授予体 `recipient_ids` 为空**是否符合运营预期：服务端允许（只有 `external_inference` 强制非空），但"录音用途不绑定任何接收方"这一语义值得产品确认。
 4. **`identify-api` 的文案改动**属本片顺带修的"已过期声明"（原话"应用内授权入口尚未接入"在本片合入后为假）。若认为超范围，可单独拆出一片只改这一处。
+
+## 10. 监工复查修复（跨账号写）
+
+> 本节为**追加**，§1–§9 的正文一字未改。唯一一处旧行改动：本片改了
+> `miniprogram/pages/consent/consent.js` 之后，§3 那张表中该文件一行的四个锚点按新树重锚
+> （原第 42／188／262／310 行 → 新第 69／241／315／370 行，指的还是同一批构造、原文逐字未变）：
+> 不重锚则 `docs/verification/gy-r70-consent-client-20261030.md:50` 的继承锚点落在空行上（`SUSPECT`），
+> CI-exact 锚点门禁直接红。重锚量等于该文件 `git diff -U0` 的端点位移（+27／+53／+53／+60），
+> 四个构造在新树上的行号分别是 `const WITHDRAW_COST`、`buildRows`、`onGrant`、`onWithdraw`。
+
+### 10.1 缺陷（监工原话，逐字）
+
+> `consent.js:112-113` onHide/onUnload 只调用 `pageGate.cancel`，不递增本页 `_epoch`；
+> `onWithdraw:312-325` 的旧确认因此仍通过。撤回客户端随后按**当前**会话重取 revision 并 DELETE
+> （`consent-api.js` `currentRecordOf`/`withdraw`），会把旧账号的确认变成对新账号的撤回。
+
+因果链（按改前那棵树读出来的三步）：
+
+1. **离页只取消门禁**：`onHide`/`onUnload` 只调 `pageGate.cancel(this)`，本页 `_epoch` 不动。
+   `miniprogram/utils/page-gate.js` 的 `cancel` 会经 `_gateClose` 回调页面把 `gatePassed` 置 false，
+   但那份代码里没有任何一处会递增**页面自己**的世代。
+2. **确认只比对世代**：弹窗回调里唯一的一道闸是 `epoch !== self._epoch`。世代没变 ⇒ 旧确认照样通过。
+3. **写链路按"当前"会话取版本**：`withdraw` 第一步 `currentRecordOf(purpose)` 发
+   `GET /me/consents?limit=50`，令牌取自 `auth.getSession()` **此刻**的值；第二步带 `If-Match` 发 `DELETE`。
+   两步都用当下令牌 ⇒ **A 的确认变成了对 B 的撤回**。
+
+所以它不是"多发一条请求"，而是**跨账号写**：撤回动的是授权状态，替另一个账号撤掉授权。
+
+### 10.2 复现（可跑用例，就是监工那份最小隔离检查）
+
+- 用例：`tests/unit/miniprogram-consent-withdraw-confirm-isolation.test.mjs`（9 条）。
+- 夹具：**真实** `miniprogram/pages/consent/consent.js` + **真实** `miniprogram/utils/consent-api.js` +
+  **真实** `miniprogram/utils/page-gate.js` 跑在 `vm` 沙箱；只替身三样事情——
+  `wx.request`（只入队，要成功由用例显式回放）、`wx.showModal`（手动回放 `success`，让用例决定"确认"什么时候回来）、
+  会话读面（`getSession` / `sessionEpoch`；切账号 = 换令牌 + 世代 +1，与 `utils/auth.js` 的 `setSession`
+  在令牌变化时递增 `generation` 同形）。无真实网络、无用户数据、无供应商、无 PG。
+- 命令：`node --test tests/unit/miniprogram-consent-withdraw-confirm-isolation.test.mjs`
+- **改前（`916aa99e` 的源码 + 本片最终版用例）**：`tests 9 / pass 2 / fail 7`。七条红点原文：
+
+| 用例 | 改前读数（原文照抄） |
+| --- | --- |
+| C1 跨账号 | `actual: [ 'GET http://127.0.0.1:4318/api/v1/me/consents?limit=50 [Bearer token-B-account-b]' ]`、`expected: []` |
+| C2 同账号离页 | `onHide 必须递增本页可见周期世代（改前 1、改后 1…）` → `actual: false` |
+| C4 onUnload | `onUnload 同样必须递增本页可见周期世代` → `actual: false` |
+| C5 账号变化 | `actual: [ 'GET http://127.0.0.1:4318/api/v1/me/consents?limit=50 [Bearer token-B-account-b]' ]` |
+| C7 一次性令牌 | `点「撤回」时必须生成一次性的 _pendingConfirm` → `actual: undefined` |
+| C8 适配层入口 | `actual: [ 'GET http://127.0.0.1:4318/api/v1/me/consents?limit=50' ]`（改前的 `withdraw` 没有 `guard`） |
+| C9 428 补取 | `actual: 2`、`expected: 1`（补取那条 GET 也发了出去） |
+
+C3（正常路径）与 C6（离页后**重新可见**）改前就是绿的：前者说明缺陷不是"撤回根本不通"，后者说明
+`onShow` 的世代递增本来是一道闸 —— 真正漏的是**只离页不重进**、以及**页面还在但账号换了**这两条。
+
+### 10.3 修法（选①确认令牌化；以及为什么不选②）
+
+**① 确认令牌化（本片采用）**
+
+- 点「撤回」这一刻快照一次性的 `_pendingConfirm = { epoch, identity, purpose, token, claimed }`
+  （`miniprogram/pages/consent/consent.js:370`）。`token` 由 `miniprogram/pages/consent/consent.js:49` 生成，
+  **不发给服务端**（C7 断言它不出现在任何 header／URL 里），只在本页内存里区分"这一次确认"。
+- `invalidate()`（`miniprogram/pages/consent/consent.js:152`）= 递增 `_epoch` + 作废令牌；
+  由**重进**、`onHide`（`miniprogram/pages/consent/consent.js:157`）、`onUnload`
+  （`miniprogram/pages/consent/consent.js:162`）、**门禁关闭**四处调用。
+- `confirmGuard(pending)`（`miniprogram/pages/consent/consent.js:417`）按"会话身份 → 页面世代 →
+  是否仍是当前这次确认"的顺序判。会话身份 = 访问令牌 + `auth.sessionEpoch()`
+  （`miniprogram/pages/consent/consent.js:39`）：契约禁止客户端声明 `userId`，这是页面唯一能观测到的账号身份。
+- **写链路每一步复验**：`withdraw` 接受 `guard`，在链路入口、`DELETE` 之前、428 补取的 `GET` 之前
+  各判一次（`miniprogram/utils/consent-api.js:501`、`miniprogram/utils/consent-api.js:510`）；
+  不成立 ⇒ `CONFIRM_STALE`，**一条请求都不发**。
+- 丢弃走 `dropConfirm`（`miniprogram/pages/consent/consent.js:445`）：页面级原因码 + 文案 + 行内原因，
+  ⛔ 不静默（`CONFIRM_STALE` 的文案在 `miniprogram/utils/consent-api.js:584`）。
+
+**为什么不选②（把确认与写合并成一条不可分割的异步链路 + 入口快照）**
+
+② 也能满足监工那三条，但代价更实：
+
+- (a) 撤回**必须**再发一次读：`DELETE` 前要先取当前 `revision`，428 时还要补取一次 —— 链路注定跨多次请求，
+  "快照点在链路入口"因此特别容易被下一次改动挪走（本片正是把 `guard` 放进适配层才把"每一步都复验"钉住的；
+  只在页面入口判一次的写法，428 补取那一步仍会用一个已过期的确认发出读取，C9 就是钉这个的）。
+- (b) ② 里"过期"只有链路内部知道：用户的"再想想"、网络不确定后的重试、428 补取三者状态不同，
+  合并成一条链路会把"这是一次新意图"与"这是同一次意图的续跑"糊在一起，而后者正是幂等键复用所依赖的区别。
+- (c) ① 的状态是**可观测的**：`_pendingConfirm` 与其 `epoch`/`identity` 在页面上就能断言（C7 直接读它），
+  负控制也能一处一处打红；② 的快照藏在闭包里，测试只能通过"有没有发请求"间接推断。
+
+① 的代价（如实登记）：多一个内存字段 + 一个守卫函数；页面必须记住"哪些时刻该 `invalidate`"，
+漏一处就漏一个洞 —— 所以下面用四条负控制逐个证明这些时刻真的在起作用。
+
+### 10.4 用例与前后读数
+
+| 用例 | 改前 | 改后 | 断言的是 |
+| --- | --- | --- | --- |
+| C1 A 打开确认 → onHide → 切 B → 旧 confirm | 红（GET 入队，`Bearer token-B`） | 绿 | 跨账号不写：请求队列为空 |
+| C2 同账号 onHide（不重进）→ 旧 confirm | 红（世代 1→1 + GET 入队） | 绿 | 可见周期已变：请求队列为空 + 原因码 `PAGE_CYCLE_CHANGED` |
+| C3 同账号同周期确认 | 绿 | 绿 | 正常路径不退化：GET + DELETE 各一次、`If-Match` = 当前 revision、写后重读 |
+| C4 onUnload → 旧 confirm | 红（世代未递增） | 绿 | 销毁后不发请求，也不往已销毁页面写"成功" |
+| C5 账号变化（页面仍可见、世代未变） | 红（GET 入队，`Bearer token-B`） | 绿 | 会话身份绑定 + 明确界面原因（`SESSION_CHANGED`） |
+| C6 onHide → 重新可见 → 旧 confirm | 绿 | 绿 | 回归钉（改前靠 `onShow` 递增就挡住了） |
+| C7 同一回调重复触发 | 红（无令牌） | 绿 | 一次性：只发一次；令牌不上网 |
+| C8 适配层入口 `guard` 不成立 | 红（GET 入队） | 绿 | 过期确认连取 revision 的 GET 都不发 |
+| C9 428 补取那一步 `guard` 不成立 | 红（GET 2 条） | 绿 | 补取也复验；`DELETE` 只发过一次 |
+
+改后读数：`tests 9 / pass 9 / fail 0`。
+
+### 10.5 四条负控制（实跑：改源码 → 跑同一份用例 → `git checkout` 还原）
+
+| # | 一次性改法 | 打红 | 恢复后 |
+| --- | --- | --- | --- |
+| ① | `onHide` 只留 `pageGate.cancel(this)`，去掉 `invalidate()`（= 改前形状） | C2 红：`onHide 必须递增本页可见周期世代（改前 1、改后 1）`，8 绿 / 1 红 | 9 绿 |
+| ② | 删掉 `confirmGuard` 里"会话身份与发起时相同"那一段（写前不校验账号） | C5 红：`actual: [ 'GET …limit=50 [Bearer token-B-account-b]' ]`，8 绿 / 1 红 | 9 绿 |
+| ③ | `withdraw` 入口那一道 `checkGuard()` 删掉（只留 `DELETE` 之前那道） | C8 红（入口就发出 GET）+ C9 红（GET 2 条 vs 1），7 绿 / 2 红 | 9 绿 |
+| ④ | `dropConfirm` 改成静默成功（`actionCode` 置空、`actionText` 写"已撤回"、行内不留原因） | C2 + C5 红：`actual: ''`、`expected: 'PAGE_CYCLE_CHANGED'` / `'SESSION_CHANGED'`，7 绿 / 2 红 | 9 绿 |
+
+负控制是"改一处源码 → 跑同一份用例 → 还原"，每次只改一处。
+
+**一条必须说清的边界**：负控制①只去掉 `onHide` 的递增**不足以**让真实代码漏掉 —— 真
+`miniprogram/utils/page-gate.js` 的 `cancel` 会通过 `_gateClose` 回调页面，门禁关闭那条路径同样会
+`invalidate()`，等于修复有**两道闸**。用例夹具的 `cancel` 因此刻意做成**不回调**（只置 `gatePassed:false`），
+按监工原话（"onHide/onUnload 只调用 pageGate.cancel"）单独逼 `onHide` 自己承担递增的责任；
+若不去掉门禁回调那道闸，① 永远不会红，这条负控制就成了摆设。**两道闸都在，是冗余，不是重复劳动**：
+`page-gate` 是另一个模块，页面不该把自己的生命周期不变量寄托在它的回调上。
+
+### 10.6 证明了什么 / 没证明什么
+
+**证明了（全部为本地可复跑的机器断言）**
+
+1. 旧确认在 **onHide / onUnload / 重进 / 账号变化** 之后**一条请求都不发**（C1／C2／C4／C5／C6）。
+   断言是"确认之后的请求队列为空"，不是"发了但失败了"；读数里连令牌都打出来，改前正是 `Bearer token-B`。
+2. **正常路径不退化**（C3）：同账号同周期确认 ⇒ `GET /me/consents?limit=50` 与 `DELETE /me/consents/recording`
+   各一次，`If-Match` 取的是这次读到的当前 revision，写成功后按服务端记录重读清单。
+3. **一次性**（C7）：同一弹窗回调重复投递只发一次；确认令牌不出现在任何请求 header／URL 里。
+4. **适配层两道复验真的在链路上**（C8／C9）：链路入口与 428 补取那一步都能把过期确认拦在请求之前。
+5. **丢弃有明确界面原因**（C5）：`actionCode`、`actionText`（写清"账号/会话变了""没有发出"）、
+   行内 `errorText`／`errorCode` 三处都在，行不留在"进行中"，状态不变。
+
+**没证明什么（这一节比上一节重要）**
+
+1. **真机／微信编译器仍未跑**。`wx.showModal`／`wx.request` 都是替身，所以**不证明**真机上
+   "弹窗还在时切账号"的时序一定这样发生。证的是：**只要**旧确认在离页/换号之后回来，
+   本页不会用新会话的令牌去读或去写。
+2. **没有真实账号体系参与**：客户端拿不到 `userId`，身份只能是（令牌, 会话世代）这一对。
+   若存在某种**不换令牌**的换号路径（服务端把同一令牌改指另一个用户——契约上不该发生，但本片无法证伪），
+   本片的判定会认为"还是同一个账号"。这是本修法最实的边界，也是需要裁定的第 1 条。
+3. **没证明服务端的授权隔离**：`services/api/src/**` 一行未动，服务端是否会在同一令牌下串号，
+   本片既不测也不改。
+4. **本地 stub 无真实政策行 ⇒ 仍不证明真机撤回链路**（沿用 §7 第 1 条）：`201`／`200` 全部来自回放的假响应。
+5. **没做界面截图／真机走查**（沿用 §7 第 2 条）：四态与"丢弃原因"只在数据层被断言。
+6. **`_pendingConfirm` 只在内存里**：杀掉小程序再进来就是新确认（这是对的），但没有"跨进程确认存续"这回事。
+
+### 10.7 本片门禁（2026-10-30 本机实测；九条里八条 exit 0，**构建一条被宿主环境卡住**，见 10.7.2）
+
+| 门禁 | 命令 | 结果 |
+| --- | --- | --- |
+| 单元测试 | `npm run test:unit` | exit 0（读数见 10.7.1） |
+| 锚点（仓内口径） | `npm run verify:anchors` | exit 0 |
+| **CI exact 锚点** | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | exit 0 |
+| 契约 ↔ 路由对拍 | `npm run verify:parity` | exit 0 |
+| 能力图 | `npm run verify:capability-map` | exit 0 |
+| 文档校验 | `npm run test:docs` | exit 0 |
+| lint | `npm run lint` | exit 0 |
+| 契约测试 | `npm run test:contract` | exit 0 |
+| 构建 | `npm run build` | **exit 1（宿主环境受阻，不是代码问题；证据见 10.7.2）** |
+| 失败矩阵 | `npm run test:failmatrix` | exit 0 |
+
+### 10.7.1 读数
+
+- `npm run test:unit`：`tests 5834 / pass 5830 / fail 0 / skipped 2 / todo 2`。本片新增
+  `tests/unit/miniprogram-consent-withdraw-confirm-isolation.test.mjs` 9 条全绿；既有
+  `tests/unit/miniprogram-consent-grant-withdraw.test.mjs` 18 条与 `tests/unit/consent-page-read.test.mjs` 10 条仍绿。
+  `skipped 2 / todo 2` 是仓内既有登记项（`i11` 的 MP3→WAV 缺口等），不是本片引入；
+  无真 bash（WSL 存根不可用），`bash-resolution` 用例按原因 skip。
+- `npm run verify:anchors`：`verify-contract-status` PASS；`verify-doc-anchors --strict` PASS
+  （`BARE_ORPHAN` 命中 3479 条、基线外新增 0 条、作用域外本会红 121 条、新增 0 条；`ANCHOR-COUNT` 计数下降 0 份）。
+- **CI exact** `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs`：PASS
+  （同一批读数；`SYMBOL-STRICT` 基线外新增 0）。
+  两条锚点命令都跑了：`verify:anchors` 走默认面（`docs/architecture` + `docs/verification`），
+  CI 那条还扫 `docs/` 其余页面，扫描面不同，读数不可互换。
+- **「文档锚点位移恒等」这条在本提交上是 SKIP，如实登记**：`node --test tests/unit/doc-anchor-relocation-identity.test.mjs`
+  读数 `tests 33 / pass 32 / fail 0 / skipped 1`，主用例的 SKIP 文案是
+  「本次文档提交只有新增行，没有锚点位移面（1 个纯新增 hunk）」——因为本页相对 base（`d03faf90`）
+  是**新文件**，整页都是新增行、没有"旧行→新行"可配。**后果**：10.1 里那四处重锚（原第 42／188／262／310 行
+  → 新第 69／241／315／370 行）**没有**被这条闸门验过，只被 `--strict` 的"行号在文件范围内 + 该行有实质内容"
+  验过；重锚量按 `miniprogram/pages/consent/consent.js` 自己的 `git diff -U0` 端点位移算（+27／+53／+53／+60），
+  可人工逐条复核。
+- `npm run verify:parity`：`extra: []`、`missing: []`、`ledgerDrift: []`（本片没动服务端与契约）。
+- `npm run verify:capability-map`：`totalOps=46，有入口=46，无入口=0，死按钮=0`；文档标记块与重算一致。
+- `npm run test:docs`：PASS（Markdown 链接/表格校验；研究记录 5 通过 / 0 失败 / 4 legacy 已钉住）。
+- `npm run lint`：PASS（两个工作区 `tsc --noEmit` + 仓库卫生扫描）。
+- `npm run test:contract`：17/17 通过。
+- `npm run build`：**本会话 exit 1 —— 卡在宿主环境，不是本片代码**（证据见 10.7.2）。
+  `npm run build --workspace @gengyun/api`（`tsc`）单独跑 exit 0；`apps/admin` 本片一行未改。
+  build 之后、unit 之前照纪律删掉 `services/api/dist` 与 `apps/admin/dist`（本仓 `apps/*` 只有 `admin`）。
+- `npm run test:failmatrix`：`矩阵合计 249 条：PASS 249 / FAIL 0`。
+- 环境：`TMP`／`TEMP` 指向仓外目录；无真 bash，相关用例带原因 skip。
+
+### 10.7.2 构建门禁的受阻证据（如实登记，⛔ 不冒充绿）
+
+现象：`npm run build` 在 `@gengyun/admin` 的 `vite build` 阶段失败，报文是
+
+> `[vite:esbuild-transpile] remove <TMP>\esbuild-<hash>: Access is denied.`
+
+这段失败与本仓库代码无关，三条证据：
+
+1. **最小复现不含本仓任何代码**：`node -e "const e=require('esbuild'); e.transform('var x=1;\n'.repeat(120000),{loader:'js'})"`
+   —— 1,080,000 字节的输入同样报 `remove …: Access is denied`；同一个调用在 1 MiB 以内的输入上正常返回。
+2. **触发条件是 esbuild 自己的 1 MiB 阈值**：`node_modules/esbuild/lib/main.js` 里
+   `input.length > 1024 * 1024` 就改成"把输入写进临时文件交给 esbuild 二进制"，该二进制读完后
+   `remove` 这个临时文件时被宿主拒绝（Go 的 `remove <path>: Access is denied`）。
+   1 MiB 以内的输入走管道、不建临时文件，所以小程序侧与全部单元测试照常。
+3. **换临时目录／换盘／关压缩都无效**：`C:\Users\MR\AppData\Local\Temp`、`E:\gy-tmp-r70`、
+   `C:\gy-tmp-r70` 三处都失败（跨两个卷）；`vite build --minify false`、`vite build --target esnext`
+   同样失败 —— 说明既不是路径问题，也不是某个开关单独造成的。
+4. **旁证：应用代码本身能构建**。`npx vite build --minify false --target esnext`（在 `apps/admin` 下）
+   exit 0，产出 `dist/assets/index-B-9Crt2j.js 1,351.42 kB / gzip 321.35 kB`；
+   但这不是仓内那条命令，⛔ **不拿它冒充 `npm run build` 的绿**（产物已按纪律删除）。
+5. **指挥已在另一个会话独立复现同一失败**：复现命令同第 1 条，两个读数分别是
+   `>1 MiB（1.08 MB 输入）⇒ FAIL：remove C:\Users\MR\AppData\Local\Temp\esbuild-ebd654e0…: Access is denied`
+   与 `<1 MiB（0.45 MB 输入）⇒ OK`；当时宿主上有 77 个 node 进程、CPU 100%（并发写手所致，与本片无关）。
+   **口径（指挥裁定）**：`build` 的权威读数取 CI（ubuntu-24.04 —— Linux 上不撞这个 Windows `remove` 拒绝）；
+   本机这条按「环境受阻」登记，⛔ 不拿它当阻塞别人的理由，⛔ 也不为它改 `vite.config`／构建配置／esbuild 版本。
+
+结论：**本片没有取得 `npm run build` 的 exit 0 读数**（`apps/admin` 一行未改，`services/api` 的
+`tsc` 构建单独 exit 0，admin 用关压缩+esnext 目标也能过）。这一条要在能走通 esbuild >1 MiB
+临时文件路径的机器／会话上重跑才算数 —— 按上述口径，**权威读数是 CI 的 Linux 构建**。
+
+### 10.8 需要裁定的点
+
+1. **会话身份的粒度**：本片用（访问令牌, `auth.sessionEpoch()`）。若要求把"服务端签发的稳定账号标识"
+   作为身份的一部分，需要 `GET /auth/session` 多返回一个 account 标识（服务端 + 契约改动，
+   超出"不动 `services/api/src/**`"的本片范围）。
+2. **① 是否满足"确认与写是一条不可分割的链路"**：本片的 `guard` 就是那条链路的入口快照，
+   且链路内每一步都复验；差别只在"链路内不再有第二次用户交互"。若口径要求"必须合并成一个 await 链"，
+   那要按 ② 重做，代价见 10.3。
+3. **离页递增世代会丢弃隐藏期间回来的读回执**：这是有意的（隐藏页不该往自己身上写数据），
+   但如果产品希望"后台预取、回前台立刻可见"，需要另设计（例如保留数据但标记为过期）。
+4. **§3 那四个锚点选择重锚而不是登记到孤儿册**：理由是它们指的构造没变、只是行号位移，
+   重锚后仍是指向真实代码的锚点；登记则等于承认它指错了。若监工认为历史证据页不该被重锚，
+   可改用 `--write-orphan-baseline` 登记，本片照办。

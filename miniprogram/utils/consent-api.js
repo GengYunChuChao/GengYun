@@ -17,6 +17,11 @@
 //    重试就把**同一个 key 传回来**；本层绝不在同一次动作里另造一个 key（那样等于新开一次意图）。
 // 3. **撤回先取当前 revision 再带 `If-Match`**；收到 **428 `REVISION_REQUIRED`** 时**补取一次**
 //    再重试，上限 `WITHDRAW_REFETCH_LIMIT`（⛔ 无限重试：那是把服务端故障变成客户端死循环）。
+// 3b. **撤回可以带 `guard`（确认仍然有效的判定）**：撤回是"GET 取 revision → DELETE（428 再补取
+//    再 GET）"的多步链路，页面层的确认可能在链路中间过期（离页/切账号）。`guard()` 在**每一步
+//    请求之前**被调用一次，返回假值才继续；返回 `{ code, text }` ⇒ 以 `CONFIRM_STALE` 直接丢弃，
+//    **在发出任何 GET/DELETE 之前**停下。为什么把判定放进这一层：只在页面入口判一次的话，
+//    428 补取那一步仍会用一个已过期的确认发出读取。
 // 4. **不缓存、不回落假数据、不本地推断状态**：清单与政策读不到就如实抛错，由页面置灰并说明
 //    原因；失败时绝不用旧列表或本地样例顶替（"没读到"与"没授权"是两件事）。
 // 5. 只消费契约已声明的路径与字段：封套 `{data, meta}`、实体形状、闭集逐项核对，不符即
@@ -487,15 +492,32 @@ function currentRecordOf(purpose) {
  * "服务端换了口径/代理吞了头"时不至于把一次可解释的拒绝说成"失败"。
  * 也正因为 428 发生在服务层之前，补取后**复用同一个 key** 是安全的（服务端没有为该 key 写过
  * request_hash；若写过，同键不同 If-Match 会是 409 IDEMPOTENCY_CONFLICT，而我们不会走到那里）。
+ *
+ * `guard`（可选，`() => '' | { code, text }`）：调用方给"这次撤回的确认此刻是否还有效"的判定。
+ * 本层在**入口**以及**每次要发请求之前**（含 428 补取）调它；判定不成立 ⇒ `CONFIRM_STALE`，
+ * 带着调用方给的原因原样上抛，**一条请求都不发**。本层不解释"为什么过期"（那是页面知道的：
+ * 可见周期、会话身份），只保证"过期就不发"。
  */
 function withdraw(input) {
   const req = input || {}
   if (!one(req.purpose, CONSENT_PURPOSES)) return Promise.reject(failure('INVALID_INPUT'))
   let key
   try { key = keyOf(req.idempotencyKey, 'consent-withdraw') } catch (error) { return Promise.reject(error) }
+  const guard = typeof req.guard === 'function' ? req.guard : null
   let refetches = 0
 
+  /** 每一步请求之前都问一次；不成立就抛 `CONFIRM_STALE`（附调用方给的原因）。 */
+  function checkGuard() {
+    if (!guard) return
+    const verdict = guard()
+    if (!verdict) return
+    const error = failure('CONFIRM_STALE')
+    error.reason = verdict
+    throw error
+  }
+
   function attempt(revision) {
+    try { checkGuard() } catch (error) { return Promise.reject(error) }
     return send('DELETE', '/me/consents/' + encodeURIComponent(req.purpose), {
       ifMatch: '"' + revision + '"', idempotencyKey: key, expect: 200
     }).then(function (r) {
@@ -507,6 +529,8 @@ function withdraw(input) {
       // ⛔ 只对 428 补取，且只补 WITHDRAW_REFETCH_LIMIT 次；409/404/403 一律原样上抛给页面。
       if (!error || error.code !== 'REVISION_REQUIRED' || refetches >= WITHDRAW_REFETCH_LIMIT) throw error
       refetches += 1
+      // 补取本身也是一次 GET：确认在这期间过期的话，连这条读取都不许发。
+      checkGuard()
       return currentRecordOf(req.purpose).then(function (fresh) {
         // 补取到了但服务端仍说"没有该用途的当前记录"：原始 428 才是这次动作的真实结论。
         if (!fresh) throw error
@@ -518,6 +542,9 @@ function withdraw(input) {
       })
     })
   }
+
+  // 入口就判：过期确认连"取 revision"的那条 GET 都不发。
+  try { checkGuard() } catch (error) { return Promise.reject(error) }
 
   return currentRecordOf(req.purpose).then(function (record) {
     // 清单里没有该用途的当前记录 ⇒ 不发 DELETE（服务端会回 404，但那是"发了一次注定失败的请求"）。
@@ -554,6 +581,7 @@ const GRANT_MESSAGES = {
 }
 const WITHDRAW_MESSAGES = {
   REVISION_REQUIRED: '服务端要求授权版本（428 REVISION_REQUIRED）：已自动补取一次仍未成功，未改变任何状态。',
+  CONFIRM_STALE: '这次撤回的确认已经过期（发起之后页面可见周期或账号变了）：已在发出任何读取或撤回请求之前丢弃，未改变任何状态。',
   REVISION_CONFLICT: '授权版本已变化（409 REVISION_CONFLICT）：请「重新读取」后按最新状态再撤回。',
   NOT_FOUND: '服务端没有该用途的当前授权记录（404 NOT_FOUND）：可能已撤回或从未授予，未改变任何状态。',
   NOT_GRANTED: '服务端清单里没有该用途的当前授权记录：没有发出撤回请求，也未改变任何状态。',
