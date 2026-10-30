@@ -46,7 +46,7 @@ import { createPostgresOcrStore } from '../../services/api/src/ocr/store-pg.ts';
 import { createPostgresRecognitionStore } from '../../services/api/src/recognitions/store-pg.ts';
 import { createPostgresConversationStore } from '../../services/api/src/conversations/store-pg.ts';
 import { DEFAULT_MIGRATIONS_DIR, discoverMigrations } from '../../services/api/src/db/migrate.ts';
-import { ledgerParams, ledgerRowFromDomainJob, writeJobLedger } from '../../services/api/src/jobs/ledger.ts';
+import { ledgerParams, ledgerRowFromDomainJob, purgeJobLedgerByOwner, writeJobLedger } from '../../services/api/src/jobs/ledger.ts';
 
 const ENV = 'JOBS_LEDGER_PG_TEST_URL';
 const DB = 'gengyun_jobs_ledger_test';
@@ -420,7 +420,45 @@ try {
   assert.equal(total, 4, `台账应恰有 4 行（ocr 作业 2 + answer 作业 1 + recognition 作业 1），实际 ${total}`);
   say('计数总账：public.jobs 恰 4 行（两个 ocr + 一个 answer + 一个 recognition，无孤儿行）');
 
-  console.log(`\nSUMMARY: ${passed} 项实测通过（真库 ${DB}）；台账总行数 ${total}`);
+  // -------------------------------------------------------------------------
+  // [P] 注销清理（GY-R71 补片 · 监工 B 档实质阻塞的正面处置）
+  // -------------------------------------------------------------------------
+  // 先造一个**别人的**主体与一行台账，用来证明「按 owner 收窄」而不是「删全部」
+  // （写入走与上面完全相同的那条路径：ocr store 的 insertJob ⇒ 同事务写台账）。
+  const otherOwnerId = randomUUID();
+  await pool.query('INSERT INTO users (id, auth_epoch) VALUES ($1::uuid, 9)', [otherOwnerId]);
+  const otherJobId = randomUUID();
+  await store.insertJob({
+    ...job,
+    id: otherJobId,
+    ocrId: randomUUID(),
+    ownerUserId: otherOwnerId,
+    state: 'queued',
+    revision: 1,
+  });
+  const countOwner = async (id) =>
+    Number((await one('SELECT count(*)::int AS n FROM public.jobs WHERE owner_id = $1::uuid', [id])).n);
+  const mineBefore = await countOwner(ownerId);
+  assert.equal(mineBefore, 4, `注销前该主体的台账行应为 4（两个 ocr + answer + recognition），实际 ${mineBefore}`);
+  assert.equal(await countOwner(otherOwnerId), 1, '别人的台账行必须先在库里（否则下一条断言不成立）');
+
+  const removed = await purgeJobLedgerByOwner(pool, ownerId);
+  assert.equal(removed, mineBefore, '删除行数必须是该主体台账行的**真实**条数（不是写死常量）');
+  assert.equal(await countOwner(ownerId), 0, '注销清理后该主体在 public.jobs 里必须一行不剩');
+  assert.equal(await countOwner(otherOwnerId), 1, '他人主体的台账行不得被这条删除碰到');
+  assert.equal(await readLedger(otherJobId) !== undefined, true, '别人的那一行仍然是可读的完整行');
+  say(`注销清理（真库）：purgeJobLedgerByOwner 删掉该主体 ${removed} 行台账、他人 1 行不动`);
+
+  assert.equal(await purgeJobLedgerByOwner(pool, ownerId), 0, '重复清理必须 0 行且不抛（幂等）');
+  await assert.rejects(
+    () => purgeJobLedgerByOwner(pool, '   '),
+    /拒绝清空全部作业行/,
+    '空白主体必须抛错（⛔ 不许退化成删全部）',
+  );
+  assert.equal(await countLedger(), 1, '两次清理之后只剩他人那一行');
+  say('注销清理（真库）：重复调用 0 行且不抛；空白主体被拒；总行数只剩他人的 1 行');
+
+  console.log(`\nSUMMARY: ${passed} 项实测通过（真库 ${DB}）；台账总行数 ${total} → 清理后 1`);
 } finally {
   await pool.end();
 }

@@ -565,7 +565,7 @@
         {
           "path": "services/api/src/privacy/user-data-deletion.ts",
           "symbol": "cancelDeletion",
-          "lines": "1429-1443"
+          "lines": "1477-1491"
         },
         {
           "test": "tests/unit/account-deletion-receipts.test.mjs",

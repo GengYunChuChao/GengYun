@@ -77,6 +77,14 @@ const MODULE_TABLE_COVERAGE = Object.freeze({
   ],
   speech: ['speech_jobs', 'transcriptions', 'speech_idempotency'],
   ocr: ['ocr_records', 'ocr_jobs', 'ocr_idempotency'],
+  // GY-R71 补片（监工 B 档实质阻塞）：统一作业台账 `public.jobs`（迁移 0001 建表，R71 起有唯一写入者
+  // `services/api/src/jobs/ledger.ts`）。它是**用户数据表**：带 `owner_id`（`jobs_single_actor` 约束下
+  // owner 与 admin 恰一），且行里还有 `target_id`（媒体 / 轮次）、`entity_revision`、`result_ref`
+  // （ocr_id / recognition_id / transcription_id / answer_id）与 `auth_epoch` —— 全是私有作业关联。
+  // 由 `jobs` 模块按 `owner_id` 一条 DELETE 删完全部 kind（ocr / recognition / transcription / answer）。
+  // ⚠ 它此前登记在 `DECLARED_UNREGISTERED`（「任务表随执行器一起清理」），那条声明在本片作废：
+  //    执行器不跑就不清，注销却必须清 —— 声明与覆盖不得同时成立（本文件最后一条断言会抓）。
+  jobs: ['jobs'],
 });
 
 /**
@@ -102,7 +110,6 @@ const DECLARED_UNREGISTERED = Object.freeze({
   sessions: '受理事务立即撤销全部会话（0016：UPDATE sessions 落 revoked_at），刻意不删行以保留审计；保留期归 #19',
   single_profiles: '资料域无按主体清理原语，未注册处理器；7/30 日集成归 #19',
   media: '媒体实体与对象存储副本的物理清除归 #19（本片不伪造「已删」）',
-  jobs: '任务表随执行器一起清理，当前无按主体原语；归 #19',
   author_links: '社区作者绑定，随社区域清理；阻塞 #19/#22',
   community_media_grants: '社区素材授权，随社区域清理；阻塞 #19',
   consent_records: '授权/撤回**证据**必须保留（撤回不等于删除）；保留期归 #19',
@@ -213,10 +220,11 @@ test('闭集（USER_DATA_DELETION_MODULES）与覆盖映射逐项对齐，不多
   const closure = declaredClosure();
   assert.deepEqual(closure, ['favorites', 'history', 'messages', 'conversations'], '闭集内容与顺序：扩大闭集须同步本断言');
   const conditional = declaredConditionalModules();
-  assert.deepEqual(conditional, ['community', 'recognitions', 'speech', 'ocr'],
+  assert.deepEqual(conditional, ['community', 'recognitions', 'speech', 'ocr', 'jobs'],
     '装配处条件追加的模块与顺序：改造装配方式须同步本断言');
   const effective = [...closure, ...conditional];
-  assert.equal(effective.length, 8, '生产生效闭集 = 四域 + community + recognitions + speech + ocr = 8 项');
+  assert.equal(effective.length, 9,
+    '生产生效闭集 = 四域 + community + recognitions + speech + ocr + jobs = 9 项');
   assert.deepEqual(Object.keys(MODULE_TABLE_COVERAGE).sort(), [...effective].sort(),
     '每个已注册模块都必须在这里声明「它按主体处理哪些表」，否则覆盖断言会漏掉整个域');
 });
@@ -231,6 +239,8 @@ test('在线清除证据名单含识别/语音/OCR 三域、不含社区域，�
   assert.ok(entries.includes('RECOGNITIONS_DELETION_MODULE'), '识别域按行清空 ⇒ 必须有在线清除证据');
   assert.ok(entries.includes('SPEECH_DELETION_MODULE'), '语音域按行清空 ⇒ 必须有在线清除证据');
   assert.ok(entries.includes('OCR_DELETION_MODULE'), 'OCR 域按行清空（表级 DELETE + RETURNING）⇒ 必须有在线清除证据');
+  assert.ok(entries.includes('JOBS_DELETION_MODULE'),
+    '台账域按行清空（一条 DELETE … WHERE owner_id）⇒ 必须有在线清除证据（否则「清没清」变成不可核）');
   assert.ok(!entries.includes('COMMUNITY_DELETION_MODULE'),
     '社区域是「保留 + 脱敏」，没有"清空行数"这个事实 ⇒ ⛔ 不得进在线清除证据名单');
   // 落库门若继续用常量四域，新增两域即使清了也永远留不下凭据（清而无证 = 又一次静默缺口）。
@@ -288,14 +298,15 @@ test('覆盖映射里的表必须确实承载用户数据：有主体列、指�
  *     声明不等于装配处真的传了实参）。
  *
  * 两条腿一起用：
- *   * **运行时腿**：真调 `createUserDataDeletion` —— 全注入 ⇒ 逐字 8 项（含 `ocr`）；缺 `ocrStore`
- *     ⇒ 逐字 7 项且不含 `ocr`（把"静默缩回"这个形态本身钉成断言）。
- *   * **静态腿**：`app.ts` 必须恰好注入一次 `ocrStore: ocrDeletionStore,`，且端口缺原语必须抛
- *     （⛔ 不许"没有就跳过"——那会把 `blocked` 折成 `completed`/0 行）。
+ *   * **运行时腿**：真调 `createUserDataDeletion` —— 全注入 ⇒ 逐字 9 项（含 `ocr` 与 `jobs`）；缺 `ocrStore`
+ *     ⇒ 逐字 8 项且不含 `ocr`（把"静默缩回"这个形态本身钉成断言）。
+ *   * **静态腿**：`app.ts` 必须恰好注入一次 `ocrStore: ocrDeletionStore,` 与一次 `jobsStore`（后者随
+ *     连接池门：`...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore })`），
+ *     且端口缺原语必须抛（⛔ 不许"没有就跳过"——那会把 `blocked` 折成 `completed`/0 行）。
  * 抓得住：装配处删掉/注释掉注入、把注入挪进条件分支、端口改成静默跳过、模块名或顺序被改、项数被改。
  * 抓不住：`deletion-modules.mjs` 将来加模块白名单后的形状校验（那归 0031 的 CHECK 与本文件的静态腿）。
  */
-test('生产生效闭集恰 8 项且含 ocr：漏注入 ocrStore 会静默缩回 7 项（防缩回闸门）', () => {
+test('生产生效闭集恰 9 项且含 ocr/jobs：漏注入 ocrStore 会静默缩回 8 项（防缩回闸门）', () => {
   const now = () => Date.parse('2026-10-24T03:00:00.000Z');
   const base = {
     favoritesStore: createMemoryFavoritesStore({ now }),
@@ -312,12 +323,13 @@ test('生产生效闭集恰 8 项且含 ocr：漏注入 ocrStore 会静默缩回
     recognitionsStore: purgeStub,
     speechStore: purgeStub,
     ocrStore: purgeStub,
+    jobsStore: purgeStub,
   });
   assert.deepEqual(full.requiredModules(), [
     'favorites', 'history', 'messages', 'conversations',
-    'community', 'recognitions', 'speech', 'ocr',
-  ], '生产生效闭集必须逐字是这 8 项、且顺序与追加顺序一致（⛔ 不用 includes/length 放过）');
-  assert.equal(full.requiredModules().length, 8, '闭集项数必须恰好 8（四域 + 四个条件追加域）');
+    'community', 'recognitions', 'speech', 'ocr', 'jobs',
+  ], '生产生效闭集必须逐字是这 9 项、且顺序与追加顺序一致（⛔ 不用 includes/length 放过）');
+  assert.equal(full.requiredModules().length, 9, '闭集项数必须恰好 9（四域 + 五个条件追加域）');
   assert.deepEqual(full.coordinator.missingRegistrations(), [],
     '每个被追加的模块都必须真有处理器（注入了 store 却没注册 ⇒ 受理即拒）');
 
@@ -326,20 +338,43 @@ test('生产生效闭集恰 8 项且含 ocr：漏注入 ocrStore 会静默缩回
     communityStore: purgeStub,
     recognitionsStore: purgeStub,
     speechStore: purgeStub,
+    jobsStore: purgeStub,
   });
   assert.deepEqual(withoutOcr.requiredModules(), [
     'favorites', 'history', 'messages', 'conversations',
-    'community', 'recognitions', 'speech',
-  ], '不注入 ocrStore ⇒ 闭集静默缩回 7 项：这就是要防的形态，`app.ts` 必须永久无条件注入');
+    'community', 'recognitions', 'speech', 'jobs',
+  ], '不注入 ocrStore ⇒ 闭集静默缩回 8 项：这就是要防的形态，`app.ts` 必须永久无条件注入');
+
+  // 同一形态对台账域成立：不注入 jobsStore ⇒ 静默缩回 8 项（且没有任何证据能证明台账被清过）。
+  const withoutJobs = createUserDataDeletion({
+    ...base,
+    communityStore: purgeStub,
+    recognitionsStore: purgeStub,
+    speechStore: purgeStub,
+    ocrStore: purgeStub,
+  });
+  assert.deepEqual(withoutJobs.requiredModules(), [
+    'favorites', 'history', 'messages', 'conversations',
+    'community', 'recognitions', 'speech', 'ocr',
+  ], '不注入 jobsStore ⇒ 闭集缩回 8 项、台账域整段消失：这正是「未被注销闭集发现」的形态');
 
   const appSource = readFileSync(APP_SRC, 'utf8');
   const injections = [...appSource.matchAll(/^\s*ocrStore: ocrDeletionStore,\s*$/gm)];
   assert.equal(injections.length, 1,
     '`app.ts` 必须恰好注入一次 `ocrStore: ocrDeletionStore,`'
-    + '（删掉或挪进条件分支 ⇒ 闭集缩回 7 项，而协议层与其它用例都不会报错）');
+    + '（删掉或挪进条件分支 ⇒ 闭集缩回 8 项，而协议层与其它用例都不会报错）');
   assert.match(
     appSource,
     /if \(typeof purge !== 'function'\) \{\s*\n\s*throw new Error\('OCR 域存储未实现按主体清空（purgeOwnerData）：拒绝假装清空'\);/,
     'OCR 端口缺原语必须抛（⛔ 不许"没有就跳过"：那会把 blocked 折成 completed/0 行）',
   );
+  // 台账域的装配静态腿：注入点必须真的存在、且**恰好一次**（门是 pool，不是别的模式判断）。
+  const jobsInjections = [...appSource.matchAll(/\.\.\.\(jobsLedgerDeletionStore === null \? \{\} : \{ jobsStore: jobsLedgerDeletionStore \}\),/g)];
+  assert.equal(jobsInjections.length, 1,
+    '`app.ts` 必须恰好注入一次 `jobsStore`（`...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore })`）'
+    + '：删掉或挪走 ⇒ 闭集缩回 8 项，而协议层与其它用例都不会报错');
+  assert.match(appSource, /const jobsLedgerDeletionStore: OwnerPurgeStore \| null = pool === null\s*\n\s*\? null/,
+    '台账域的门必须只看 `pool`（有池才有台账行、才有表级 DELETE 可走）');
+  assert.match(appSource, /return \{ records: await purgeJobLedgerByOwner\(pool, ownerId\), idempotency: 0 \};/,
+    '台账清理必须经 `jobs/ledger.ts` 的唯一删除原语，且如实回报真实行数（⛔ 不写死 0）');
 });

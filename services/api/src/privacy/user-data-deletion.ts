@@ -154,6 +154,28 @@ export const SPEECH_DELETION_MODULE = 'speech';
  * speech + ocr = **8 项**。⚠️ 同一代价：漏注入 ⇒ 静默回到更小的闭集（已列待裁定，见证据页）。
  */
 export const OCR_DELETION_MODULE = 'ocr';
+/**
+ * GY-R71 补片（N04 · 监工 B 档实质阻塞）· 统一作业台账 `public.jobs`：**第九个**域（条件追加）。
+ *
+ * ## 为什么它必须进闭集（而不是「台账无读者」就算了）
+ * `services/api/src/jobs/ledger.ts` 是 `public.jobs` 的唯一写入者，写进去的列里有 `owner_id`、
+ * `target_id`（媒体 / 轮次）、`entity_revision`、`result_ref`（`ocr_id` / `recognition_id` /
+ * `transcription_id` / `answer_id`）与 `auth_epoch` —— 这些是**私有作业关联**，不是匿名计数。
+ * 源域清理（识别 / 语音 / OCR / 会话）删的是域内表，台账行不在其中：若没有本模块，
+ * 一次注销之后「该主体做过哪些作业、作用于哪个媒体、产出是哪个 id」仍在库里可查，
+ * 而注销闭集与证据**完全看不见这一行**。那正是监工判词里「未被注销闭集发现」的形态。
+ *
+ * ## 为什么是「条件追加」而不是写进 `USER_DATA_DELETION_MODULES`
+ * 与社区/识别/语音/OCR 四域同一折中（见 {@link COMMUNITY_DELETION_MODULE} 的注释）：常量闭集
+ * 一动，四个测试文件里钉死「四域、不多不少」的既有断言与数十处替身都要同批改，属独立扩集动作。
+ * 生产装配处（`app.ts`）在有真库连接池时**无条件**注入 ⇒ 真实注销路径的有效闭集 = 4 + 4 + `jobs`
+ * = **9 项**；无池时台账一行都不会被写出（`JOB_LEDGER_UPSERT_SQL` 只在真库事务里执行），
+ * 因此那时不追加本模块并不留下任何未清理的台账行。
+ *
+ * ⚠️ 同一代价（与四个条件域一样）：装配处漏注入 ⇒ 静默回到 8 项。`app.ts` 侧的静态腿
+ * （`tests/unit/deletion-registration-coverage.test.mjs`）钉住「恰好注入一次」与「端口缺原语必须抛」。
+ */
+export const JOBS_DELETION_MODULE = 'jobs';
 
 /**
  * 必需模块闭集。
@@ -188,6 +210,7 @@ export const ONLINE_EVIDENCE_MODULES = [
   RECOGNITIONS_DELETION_MODULE,
   SPEECH_DELETION_MODULE,
   OCR_DELETION_MODULE,
+  JOBS_DELETION_MODULE,
 ] as const;
 
 /**
@@ -205,6 +228,7 @@ export const CONDITIONAL_DELETION_MODULES = [
   RECOGNITIONS_DELETION_MODULE,
   SPEECH_DELETION_MODULE,
   OCR_DELETION_MODULE,
+  JOBS_DELETION_MODULE,
 ] as const;
 
 /** 按主体清理的**分表**真实行数：正文表与幂等台账各计各的（两项都进在线清除证据）。 */
@@ -490,6 +514,15 @@ export interface UserDataDeletionDeps {
    */
   ocrStore?: OwnerPurgeStore;
   /**
+   * GY-R71 补片 · 统一作业台账 `public.jobs`（`services/api/src/jobs/ledger.ts` 的唯一写入点）。
+   * **可选**，但**有真库连接池的生产装配处必须给**（`app.ts` 在 `pool !== null` 时无条件注入）。
+   *
+   * 注入 ⇒ 闭集追加 `jobs` 并注册处理器（注销会把该主体在台账里的全部作业行删掉，四个源全在内）；
+   * 不注入 ⇒ 逐字保持本片之前的行为（既有替身零改动）。无池时不注入也不留下未清理的行：
+   * 台账只有在真库事务里才会被写出来。
+   */
+  jobsStore?: OwnerPurgeStore;
+  /**
    * GY-R68（#19 延续片 · 媒体域）· 媒体对象清理端口（`media/store.ts::purgeOwnedMedia`）。
    *
    * 只声明一个方法（社区图片软隐藏 ＋ 对象引用摘除进待删台账，同一事务、幂等、按 `owner_id` 收窄）。
@@ -719,6 +752,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     [RECOGNITIONS_DELETION_MODULE, input.recognitionsStore],
     [SPEECH_DELETION_MODULE, input.speechStore],
     [OCR_DELETION_MODULE, input.ocrStore],
+    [JOBS_DELETION_MODULE, input.jobsStore],
   ];
   for (const [conditionalModule, conditionalStore] of conditionalStores) {
     if (conditionalStore !== undefined) requiredModules.push(conditionalModule);
@@ -1050,6 +1084,20 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     coordinator.registerModule(
       OCR_DELETION_MODULE,
       makeHandler(OCR_DELETION_MODULE, input.ocrStore),
+    );
+  }
+  // GY-R71 补片 · 统一作业台账 `public.jobs`（条件追加，理由见 `JOBS_DELETION_MODULE` 注释）：
+  // 一条 `DELETE FROM public.jobs WHERE owner_id = $1::uuid`（`jobs/ledger.ts` 的
+  // `JOB_LEDGER_PURGE_SQL`）删掉该主体的**全部**作业行（ocr / recognition / transcription / answer
+  // 四个源都在这张表里），行数进证据串 `jobs:online-purged:<n>`。
+  // ⚠️ 与四个域**同序**的边界：本处理器与各域处理器是**同一个 requestId、同一个回执**里的不同行，
+  // 但**不是同一个数据库事务**——识别/语音域的清理走 0034 的 `SECURITY DEFINER` 函数，没有可与
+  // 表级 DML 共用的跨域事务；台账按 `owner_id` 一刀删完，谁先谁后都收敛到「该主体零行」。
+  // 缺权（42501）/连接失败/行数不可读 ⇒ 抛错 ⇒ 协议折叠 `blocked` + `HANDLER_FAILED`。
+  if (input.jobsStore !== undefined) {
+    coordinator.registerModule(
+      JOBS_DELETION_MODULE,
+      makeHandler(JOBS_DELETION_MODULE, input.jobsStore),
     );
   }
 

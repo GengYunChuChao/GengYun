@@ -7,7 +7,7 @@
  * 迁移头注，`tests/unit/ai-ops-ledger-pins.test.mjs` 的钉子①把它钉成了结构事实。真实作业行只落在
  * 三张域内表（`ocr_jobs` / `recognition_jobs` / `speech_jobs`）与会话轮次的作业快照列上。
  *
- * ## 本文件只做三件事
+ * ## 本文件做四件事
  * 1. **映射**：域内作业行 → 台账行（`ledgerRowFromDomainJob` / `ledgerRowFromTurn`）。纯函数，
  *    不碰数据库 ⇒ 六源 × 五态矩阵可以在单测里逐格断言（`tests/unit/jobs-ledger-mapping.test.mjs`）。
  * 2. **一条幂等语句**：{@link JOB_LEDGER_UPSERT_SQL}。表名/列名**写死**，不拼字符串（静态列审计
@@ -15,6 +15,9 @@
  *    进而把「该表未授任何列」判成真红 —— 与 `admin/ops/jobs-pg.ts:166-172` 同一条纪律）。
  * 3. **写入**：{@link writeJobLedger}。调用方**必须**在**已开启的事务**里、**紧随域内表那一笔写之后**
  *    调用它（本文件不自己 `BEGIN`：台账行与源表行要么一起提交、要么一起回滚）。
+ * 4. **注销清理**：{@link JOB_LEDGER_PURGE_SQL} / {@link purgeJobLedgerByOwner}（GY-R71 补片）。
+ *    台账行携带 `owner_id` / `target_id` / `result_ref` 等私有作业关联，因此**必须**在注销闭集里
+ *    被按主体删掉 —— 「今天没有读者」不是保留依据，见该常量的注释。
  *
  * ## 幂等：选 `ON CONFLICT (id)` + 同态守卫（不是"状态机守卫"）
  * 台账主键就是**作业 id**（域内三表的 `id`、会话轮次的 `job_id`），所以「同一 job_id 的重复迁移
@@ -41,7 +44,7 @@
  * ## 边界（如实）
  * - **只写不读**：本片不改任何既有读面。`/admin/jobs` 仍读三张域内表（`admin/ops/jobs-pg.ts:4-9`），
  *   `GET /jobs/{id}` 仍走 `jobs/registry.ts` 与各域 `JobSourcePort` —— 台账今天**没有读者**，
- *   写它不会改变任何一个响应字段。
+ *   写它不会改变任何一个响应字段。（**没有读者 ≠ 可以不删**：注销清理见 {@link JOB_LEDGER_PURGE_SQL}。）
  * - **两源未接**：`moderation` / `synthesis` 没有可落库的作业行（见 {@link UNWIRED_SOURCES_REASON}）。
  */
 import { createHash } from 'node:crypto';
@@ -341,7 +344,8 @@ export function describeLedgerRow(row: JobLedgerRow): string {
 
 /** 事务执行器的最小形状（`PoolClient` / `SqlRunner` 都满足）。 */
 export interface LedgerSqlRunner {
-  query(text: string, values?: readonly unknown[]): Promise<{ rows: unknown[] }>;
+  /** `rowCount` 只有 `pg` 的 `Pool` / `PoolClient` 给；缺它时回退数 `RETURNING` 的行。 */
+  query(text: string, values?: readonly unknown[]): Promise<{ rows: unknown[]; rowCount?: number | null }>;
 }
 
 /**
@@ -354,4 +358,54 @@ export interface LedgerSqlRunner {
  */
 export async function writeJobLedger(sql: LedgerSqlRunner, row: JobLedgerRow): Promise<void> {
   await sql.query(JOB_LEDGER_UPSERT_SQL, ledgerParams(row));
+}
+
+/**
+ * 台账行的**唯一**删除语句（账号注销清理，GY-R71 / 监工 B 档实质阻塞）。
+ *
+ * ## 为什么必须有这一条
+ * 本文件写进 `public.jobs` 的列里有 `owner_id` / `target_id`（媒体或轮次） / `result_ref`
+ * （产出 id）与 `auth_epoch` —— 这些**全都是私有作业关联**。源域表（`ocr_jobs` / `recognition_jobs` /
+ * `speech_jobs` / `conversation_turns` 的快照列）在注销时被各域处理器清掉，若台账行留着，
+ * 用户的作业身份、媒体关联与产出指针就仍在库里，而「注销闭集」看不见它：
+ * 「台账今天没有读者」**不是**保留依据（无读者只说明没人看，不说明没人能看）。
+ *
+ * ## 口径（为什么是这三条）
+ * 1. **只按 `owner_id` 收窄**，一条语句删完该主体的全部作业行（四个源：ocr / recognition /
+ *    transcription / answer 全在 `public.jobs` 里）。为什么不再按 `kind` 分四刀：四个源的处理器
+ *    各自开自己的事务（识别/语音域的清理走 0034 的 `SECURITY DEFINER` 函数，无法与表级 DML 同事务），
+ *    没有「一个跨域事务」可挂；按 `kind` 分刀只会让「哪个域的清理由谁负责」变成四份判断，
+ *    而漏掉一份就等于静默留下该主体的行。因此**一个模块、一条语句、全部 kind**。
+ * 2. **不用 `RETURNING *`**：注销证据只需要行数，把整行再读出来（含 `target_id` / `result_ref`）
+ *    没有用处，徒增一段「删了什么」的日志面。行数取 `rowCount`（`pg` 给真实值），
+ *    拿不到就抛错 —— ⛔ 不把「不知道删了几行」报成 0（那会让 blocked 变成 completed）。
+ * 3. **幂等**：同一主体重复调用第二次删 0 行，不报错（注销重放/重试的既有口径）。
+ *
+ * 主体为空 ⇒ 抛错（⛔ 绝不让空主体退化成「删全部」）。这一条与 `media/store.ts::purgeOwnedMedia`
+ * 的边界同向。
+ */
+export const JOB_LEDGER_PURGE_SQL = 'DELETE FROM public.jobs WHERE owner_id = $1::uuid';
+
+/**
+ * 按主体清空台账行，返回**真实删除行数**（供在线清除证据 `jobs:online-purged:<n>`）。
+ *
+ * 调用方必须已在真库路径上（表级 `DELETE` 面见 `deploy/postgres-cvm/sql/20-login-roles.sql`
+ * 的 `gy-r71-jobs-ledger-grant` 段）；缺权（42501）、连接失败、行数不可读一律抛错，
+ * 由删除协议折叠成 `blocked` + `HANDLER_FAILED` —— ⛔ 不折成 `completed`，也不折成 0 行。
+ */
+export async function purgeJobLedgerByOwner(sql: LedgerSqlRunner, ownerId: string): Promise<number> {
+  if (typeof ownerId !== 'string' || ownerId.trim() === '') {
+    throw new Error('台账清理缺少主体：拒绝清空全部作业行');
+  }
+  const result = await sql.query(JOB_LEDGER_PURGE_SQL, [ownerId]);
+  // `pg` 的 `Pool` / `PoolClient` 一定给 `rowCount`；没有它（假池、或换了 runner）时才回退数 `RETURNING` 行。
+  // ⚠️ 两者都拿不到 ⇒ 抛错：空数组**不能**当作「删了 0 行」的证据 —— 那是「不知道」，而「不知道」
+  // 一旦被写成 0，回执就会把 blocked 显示成完成。
+  const reported = typeof result.rowCount === 'number' ? result.rowCount : null;
+  const fallback = Array.isArray(result.rows) && result.rows.length > 0 ? result.rows.length : null;
+  const removed = reported ?? fallback;
+  if (removed === null || !Number.isSafeInteger(removed) || removed < 0) {
+    throw new Error('台账清理拿不到真实删除行数：拒绝把「不知道」报成 0');
+  }
+  return removed;
 }

@@ -190,6 +190,8 @@ ON CONFLICT (id) DO UPDATE
 | `deploy/postgres-cvm/sql/20-login-roles.sql:984` | `GRANT UPDATE (state,revision,error_code,result_ref,updated_at)` |
 | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` | `domain_manifest` 加一行 `('jobs','granted',true)`；`expected` 加一行逐列复述（58 号断言逐列核对）；`\echo` 同步 |
 | `tests/integration/egress-ledger-pg.mjs` | 抽 `deploy/**` 的 `gy-r71-jobs-ledger-grant` 区域原样执行（只替换受权角色），并逐列核对 15/5/6 ⇒ 两条供给路径同源 |
+| `deploy/postgres-cvm/sql/20-login-roles.sql`（`#region gy-r71-jobs-ledger-purge-grant`，**补片新增**） | `GRANT DELETE ON public.jobs` —— 注销清理面，单独成区（上面那个区被 `egress-ledger-pg.mjs` 抽取并断言「只含列级授权」） |
+| `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`（**补片**） | `allow_table_dml` 加 `('public','jobs','DELETE')`、`expected` 的 `jobs` 行 `del` 由 `false` 翻成 `true`、段 45 加一条 `DELETE … WHERE false` 真执行探针 |
 
 ⚠ **本片修正：SELECT 面是 6 列，不是 2 列。** 首版按「`id` 是冲突目标、`state` 被 `WHERE` 读」只授了
 `SELECT (id,state)`，真库实测**不足**：`INSERT … ON CONFLICT (id) DO UPDATE` 会让 PG 读旧行，`DO UPDATE`
@@ -203,9 +205,14 @@ ON CONFLICT (id) DO UPDATE
 臂里 `POST /recognitions` 的台账 upsert 直接 42501，整条臂红。现在臂按 `#region` 抽取 `deploy/**`
 原文执行，「抄一份进测试」的第二次漂移不再可能。
 
-⛔ **没有**授予表级 DML、也没有 DELETE（台账是作业的账，注销清理不碰它）。
-R34 的裁定没有被推翻：**读面仍然为零**——`/admin/jobs` 还是读三张域内表，台账至今没有读者。
-变的只有"这张表第一次有写入者"这一件事，而它必须带授权，否则写入点是死代码。
+⛔ **首版没有**授予表级 DML、也没有 DELETE（当时的理由是「台账是作业的账」）。
+**该判断在 2026-10-30 的监工复审中被推翻**：台账行携带 `owner_id` / `target_id` / `result_ref`
+等私有作业关联，源域清理之后它们仍在库里而注销闭集看不见 ⇒ 必须接进注销清理。补片因此**新增**
+一条表级 `GRANT DELETE ON public.jobs`（PG 无列级 DELETE），写法与 `messages` / `favorites` 同款，
+授权面变更、事务边界与证据见 **§10**。
+R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` 还是读三张域内表，台账至今没有读者。
+变的只有两件事：「这张表第一次有写入者」与「这张表第一次有按主体的删除面」，两者都必须带授权，
+否则写入点是死代码、删除点是空承诺。
 
 > 这是本片唯一**扩大生产授权面**的改动，按仓规属需要用户明示的事。派单没有单独授权这一步，
 > 所以它被列在 §9「需裁定点」第 1 条：若要维持 R34 的"零授权"现状，唯一自洽的做法是把本片降级为
@@ -307,3 +314,90 @@ R34 的裁定没有被推翻：**读面仍然为零**——`/admin/jobs` 还是�
    两行注释（等长替换，不移动行号），没有改语义；但"改历史迁移文件"这件事本身值得复核。
 6. **CI 接线**：真库臂 `tests/integration/jobs-ledger-pg.mjs` **未接** `real-pg-integration.yml`
    （如实登记为「未接线（真缺口）」）。要不要本片就接进去，请裁定。
+
+---
+
+## 10 注销清理接入（补片 · 2026-10-30 · 监工 B 档实质阻塞的正面处置）
+
+**监工判词（逐字）**：台账首次为 `public.jobs` 写入 `owner_id`、`target_id`、`result_ref` 等**私有作业关联**；
+`purgeOwnerRows` / `purgeOwnerData` 只删原域表，`privacy/user-data-deletion.ts` 的必需模块与处理器**没有该台账**，
+`retention-policy.mjs` 亦无本表保留策略 ⇒ 源域清理后新台账行仍可携带用户/媒体/轮次及产出关联而**未被注销闭集发现**；
+「无读者/是作业的账」不能替代删除或限定保留依据。
+
+本节逐条回应。**结论：选 A（接进注销清理与保留策略），不选 B（关闭写入）** —— 台账写入点已经在真库路径上生效，
+关掉它等于让 §2 的全部事务证据作废，而缺的那一环（删除）是**能补且已补**的。
+
+### 10.1 删什么
+
+| 项 | 事实 |
+|---|---|
+| 语句 | `DELETE FROM public.jobs WHERE owner_id = $1::uuid`（`services/api/src/jobs/ledger.ts:387`，与写入语句同一文件：谁写台账、谁删台账不会分叉成两份口径） |
+| 范围 | 该主体在台账里的**全部**作业行 —— `ocr` / `recognition` / `transcription` / `answer` 四个源全在这张表里，不再按 `kind` 分四刀（理由见下） |
+| 行数 | `pg` 的 `rowCount` 真实值；拿不到就抛（`rowCount` 缺失且没有 `RETURNING` 行 ⇒ 抛「拿不到真实删除行数」，⛔ 不把「不知道」报成 0） |
+| 边界 | 空主体 / 纯空白主体**调用即抛**，一条 SQL 都不发（`services/api/src/jobs/ledger.ts:396` 起），⛔ 不退化成「删全部」 |
+| 幂等 | 同一主体重复调用第二次删 0 行、不抛（注销重放/重试的既有口径） |
+
+### 10.2 谁在删、和谁同序
+
+| 角色 | 位置 |
+|---|---|
+| 闭集里的模块 | `jobs`（`services/api/src/privacy/user-data-deletion.ts:178` 的 `JOBS_DELETION_MODULE`），**条件追加**：`CONDITIONAL_DELETION_MODULES`（`:231`）与真实追加点 `conditionalStores`（`:755`）两处逐项一致，静态腿钉住 |
+| 处理器 | `coordinator.registerModule(JOBS_DELETION_MODULE, makeHandler(...))`（`services/api/src/privacy/user-data-deletion.ts:1097`）；走 `purgeOwnerData` ⇒ 证据串 `jobs:online-purged:<真实行数>` |
+| 端口 | `services/api/src/app.ts:2206` 的 `jobsLedgerDeletionStore`（门＝`pool !== null`），注入点 `services/api/src/app.ts:2264` |
+| 证据落库 | 模块名进 `ONLINE_EVIDENCE_MODULES`（`services/api/src/privacy/user-data-deletion.ts:213`），迁移 0031 的写函数照写 `(requestId, module, removed, idempotency)` ⇒ 审计可复算 |
+
+**同序**：`jobs` 是生效闭集的第 9 项（四域 + community + recognitions + speech + ocr + jobs），
+与其余 8 个模块在**同一个 requestId、同一份回执**里，处理顺序＝追加顺序（`jobs` 最后）。
+**同一事务：做不到，如实登记。** 删除协议里每个模块的处理器各开自己的数据库事务；识别／语音域的清理走
+迁移 0034 的两条 `SECURITY DEFINER` 函数（`public.purge_owner_recognitions` / `purge_owner_speech`），
+没有可与台账表级 `DELETE` 共用的跨域事务。因此本片的口径是：
+- 台账按 `owner_id` **一刀删完**（不按 kind 分刀）⇒ 无论哪个域先跑，收敛结果都是「该主体零行」；
+- `public.jobs` 对三张域内作业表**没有外键**（`0001_initial_schema.sql:203` 建表时就没有），
+  所以台账删除既不被域内删除阻塞，也不会因为顺序不同留下半截；
+- 若将来要把两者放进同一个事务，只有一条路：给台账也做一条 `SECURITY DEFINER` 清理函数并让各域的
+  函数在**同一个**受理事务里调用 —— 那是独立一片（要动 0034 的函数与部署面），本片不假装已做到。
+
+### 10.3 保留策略依据（`packages/privacy/retention-policy.mjs`）
+
+`public.jobs` 进 `RETENTION_EXCLUSIONS`（`packages/privacy/retention-policy.mjs:218`），**不进**
+`RETENTION_POLICY`（日历保留表）。理由写在条目里，摘要：
+
+1. 行内的 `owner_id` / `target_id` / `entity_revision` / `result_ref` / `auth_epoch` 是**私有作业关联**，
+   与它镜像的域内作业行同一生命周期 —— 「私有识别记录原则保存至注销」
+   （`docs/implementation-requirements.md:277`），因此**不走日历保留**；
+2. 「在线 7 日／备份 30 日」是**注销请求的两个到期时刻**（`deletion_requests.online_due_at` /
+   `user_backup_copies.retention_until`），不是本表的日历保留期
+   （口径见 `docs/architecture/gy-r59-retention-backup-thirdparty-map.md:24`）；把 7/30 写成本表的
+   `retentionDays` 会与既有表的口径**撞词不撞义**；
+3. 与 `public.favorites / public.history` 同一条先例：生命周期由注销链负责、不并入日历策略表 ——
+   但**必须有注销清理者**，这一条本片补齐（§10.2）。
+
+⛔ 没有用「台账无读者」当排除理由：exclusion 的正文里根本没有这个说法，反而写明「必须有注销清理者」。
+
+### 10.4 证明了什么 / 没证明什么
+
+**证明了**
+
+1. 注销后该主体在 `public.jobs` 的行**归零**，他人主体的行一行不动，证据串带**真实**删除行数
+   （`tests/unit/jobs-ledger-deletion.test.mjs`「正控制」，假池里真按 owner 删、再读回行数）。
+2. 负控制：把原语换成「报告 0 行但不删」的替身 ⇒ 行仍在库里，说明上面那条断言对「删没删」敏感
+   （同一文件「负控制」）。行级负控制（删掉 `app.ts` 的注入 / 删掉注册块）见 §8 第 ⑤ 条。
+3. 闭集真的覆盖它：注入 `jobsStore` ⇒ `requiredModules()` = 9 项且含 `jobs`；不注入 ⇒ 静默缩回 8 项
+   （这正是要防的形态，`tests/unit/deletion-registration-coverage.test.mjs` 把它钉成断言）。
+4. 用户数据表清单的棘轮：`public.jobs` 从 `DECLARED_UNREGISTERED`（原登记语「任务表随执行器一起清理，
+   当前无按主体原语」）**移进** `MODULE_TABLE_COVERAGE` —— 那条声明已作废：执行器不跑就不清，
+   而注销必须清。
+
+**没证明（诚实边界）**
+
+1. **真库臂有没有跑**：`tests/integration/jobs-ledger-pg.mjs` 的 `[P] 注销清理` 小节已写好
+   （造两个主体、删一个、读回另一个），但本机**没有可用的 PG**（`JOBS_LEDGER_PG_TEST_URL` 未设置），
+   本次**没有取得该臂的读数**；缺变量时脚本按既有约定打印 `SKIP real PG17: …` 并 `exit 77`
+   （未取得 ≠ 通过）。**因此「真库上删掉 0 行」这件事，本片只有假池 + 静态接线作证。**
+2. **运行时角色下的 DELETE 授权没有真执行读数**：`GRANT DELETE ON public.jobs` 的生效性由
+   `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 的段 45 真执行探针
+   （`DELETE … WHERE false`，`SAVEPOINT` 包裹、零行）背书；那条探针要在目标库上执行，
+   本机同样没有跑。
+3. **跨域同一事务**没有做到（§10.2），只有「按 owner 一刀删完 + 无外键 ⇒ 收敛到零行」。
+4. **备份侧**：`jobs` 不生成 `user_backup_copies` 清单行（备份副本只对收藏/历史/消息/会话四域）⇒
+   该模块的 `backupState` 仍如实 `pending`，不冒充完成。

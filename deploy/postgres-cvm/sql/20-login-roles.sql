@@ -984,6 +984,18 @@ GRANT INSERT (id,owner_id,kind,target_type,target_id,entity_revision,input_hash,
 GRANT UPDATE (state,revision,error_code,result_ref,updated_at)
   ON public.jobs TO gengyun_api_runtime;
 -- #endregion gy-r71-jobs-ledger-grant
+-- 同一张表的**删除面**（GY-R71 补片，账号注销清理）：`public.jobs` 的第一次 DELETE 授权。
+-- 为什么需要：台账行里有 `owner_id` / `target_id` / `result_ref` 等私有作业关联，源域表被注销清掉后
+-- 这些行若留着，用户的作业身份与产出指针仍在库中而闭集看不见（「台账无读者」不是保留依据）。
+-- `services/api/src/jobs/ledger.ts::JOB_LEDGER_PURGE_SQL` 一条 `DELETE … WHERE owner_id = $1::uuid`，
+-- 由 `privacy/user-data-deletion.ts` 的 `jobs` 模块驱动（`app.ts` 有池时无条件注入）。
+-- PG 没有列级 DELETE ⇒ 只能表级授予，与 messages / favorites / conversations 同一条理由；
+-- 白名单由 90-assert 的 `allow_table_dml` 与 `expected(..., del=true)` 两处独立复述。
+-- ⛔ 单独成区（不并进上面那个列级区）：`tests/integration/egress-ledger-pg.mjs` 会按 `#region`
+--    抽取 `gy-r71-jobs-ledger-grant` 并**逐条断言它只含列级授权**；DELETE 留在该区里会让那条臂判红。
+-- #region gy-r71-jobs-ledger-purge-grant
+GRANT DELETE ON public.jobs TO gengyun_api_runtime;
+-- #endregion gy-r71-jobs-ledger-purge-grant
 -- #endregion gy-r28-runtime-domain-grants
 
 \echo '20-login-roles.sql：gengyun_api_runtime 已就位并授予 5 个既有 NOLOGIN 组。'
@@ -993,8 +1005,8 @@ GRANT UPDATE (state,revision,error_code,result_ref,updated_at)
 \echo '20-login-roles.sql：已授予 public.feature_flags 的 SELECT 与 public.set_feature_flag(...) 的 EXECUTE（唯一写路径；未授予任何表级写权限）。'
 \echo '20-login-roles.sql：已授予 public.user_backup_copies 的列级 SELECT/INSERT/UPDATE（运行时自写的备份副本清单；无表级 DML、无 DELETE/TRUNCATE）。'
 \echo '20-login-roles.sql：已授予 public.messages、public.community_*（六张）、public.ocr_*（三张）的列级 SELECT/INSERT/UPDATE（写面列由 store-pg.ts 真实语句反推；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：已授予 public.jobs（统一作业台账）的列级 SELECT（6 列：id + DO UPDATE 的 5 个 SET 列）/ INSERT（15 列）/ UPDATE（5 列）——GY-R71 的首个写入者 services/api/src/jobs/ledger.ts；该表至今**零读面**，无表级 DML、无 DELETE。'
-\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.community_likes / public.community_idempotency / public.ocr_idempotency / public.ocr_jobs / public.ocr_records（PG 无列级 DELETE；其中 OCR 三表为 R34 片 3 起**由用户批准**的表级例外，替换此前的 SECURITY DEFINER 路线；其余表的 DELETE 一律未授）。'
+\echo '20-login-roles.sql：已授予 public.jobs（统一作业台账）的列级 SELECT（6 列：id + DO UPDATE 的 5 个 SET 列）/ INSERT（15 列）/ UPDATE（5 列）——GY-R71 的首个写入者 services/api/src/jobs/ledger.ts；该表至今**零读面**，无表级 INSERT/UPDATE/TRUNCATE。'
+\echo '20-login-roles.sql：DELETE 仅**表级**授予 public.community_likes / public.community_idempotency / public.ocr_idempotency / public.ocr_jobs / public.ocr_records / public.jobs（PG 无列级 DELETE；其中 OCR 三表为 R34 片 3 起**由用户批准**的表级例外，jobs 为 GY-R71 补片的注销清理面，其余表的 DELETE 一律未授）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'
 
