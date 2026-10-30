@@ -197,7 +197,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 
 ## 8.6 端口与进程：本片没有常驻监听
 
-- 本片用例一律用**动态空闲端口**（`app.listen({ host: '127.0.0.1', port: 0 })`），每条用例 `t.after` 关闭；文件末尾另有一条**实测**：`close()` 之后对同一 origin 的 `fetch` 必须**拒连**（`tests/unit/jobs-cancel-moderation-answer.test.mjs:576`）⇒ 端口释放是被断言住的，不是「应该会关」。
+- 本片用例一律用**动态空闲端口**（`app.listen({ host: '127.0.0.1', port: 0 })`），每条用例 `t.after` 关闭；文件末尾另有一条**实测**：`close()` 之后对同一 origin 的 `fetch` 必须**拒连**（`tests/unit/jobs-cancel-moderation-answer.test.mjs:581`）⇒ 端口释放是被断言住的，不是「应该会关」。
 - 全套门禁跑完后复查：本片**没有**留下常驻进程/监听端口。宿主机上仍在 127.0.0.1 监听的 node 进程用 `Get-CimInstance Win32_Process` 逐个核过命令行 —— 是 `opencli` daemon、`billion-context`、MCP 桥接（与本片无关，也不是本片启动的）。
 
 ## 9 需裁定点（三条）
