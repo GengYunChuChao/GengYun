@@ -54,14 +54,20 @@ GRANT SELECT,INSERT ON export_writebacks TO gengyun_egress_ledger;
 -- 注意：本组**不在** `20-login-roles.sql:221-225` 给运行时 LOGIN 的 5 个组之内，所以这些授权对
 -- `gengyun_api_runtime` 不生效（与 exports / export_writebacks 同一种结构性缺口）；本片把它们补在
 -- 组文件里，是因为它们本来就该在这一层，且不改变任何既有部署行为（本文件不被任何部署脚本执行）。
-GRANT SELECT (id,job_id,attempt,capability,provider_version,model_version,sdk_version,prompt_version,
-              rule_version,external_request_ref_cipher,invocation_state,sent_at,duration_ms,usage,
-              export_id,created_at)
-  ON provider_invocations TO gengyun_egress_ledger;
-GRANT INSERT (job_id,attempt,capability,provider_version,model_version,sdk_version,prompt_version,
-              rule_version,external_request_ref_cipher,invocation_state,sent_at,duration_ms,usage,
-              export_id)
-  ON provider_invocations TO gengyun_egress_ledger;
+-- 这两条授权必须容忍「0050 还没上」的库：本文件今天仍被
+-- tests/integration/egress-ledger-pg.mjs 用「只跑过 0001/0003/0008/0009/0011」的最小迁移链验证，
+-- 而 provider_invocations 是 0050 才建的表。表在就授、表不在就跳过并留一行 NOTICE，
+-- 绝不静默假装授过（真库上少授一列会 42501，被映射成 503，只体现在读数里）。
+DO $do$
+BEGIN
+  IF to_regclass('public.provider_invocations') IS NULL THEN
+    RAISE NOTICE 'skip provider_invocations grants: table absent (migration 0050 not applied)';
+    RETURN;
+  END IF;
+  EXECUTE 'GRANT SELECT (id,job_id,attempt,capability,provider_version,model_version,sdk_version,prompt_version,rule_version,external_request_ref_cipher,invocation_state,sent_at,duration_ms,usage,export_id,created_at) ON public.provider_invocations TO gengyun_egress_ledger';
+  EXECUTE 'GRANT INSERT (job_id,attempt,capability,provider_version,model_version,sdk_version,prompt_version,rule_version,external_request_ref_cipher,invocation_state,sent_at,duration_ms,usage,export_id) ON public.provider_invocations TO gengyun_egress_ledger';
+END
+$do$;
 GRANT SELECT (id,state,auth_epoch) ON users TO gengyun_egress_ledger;
 GRANT SELECT (user_id,purpose,current_epoch,state,revision) ON privacy_epochs TO gengyun_egress_ledger;
 GRANT SELECT (id,user_id,purpose,state,epoch,recipient_ids,policy_version) ON consent_records TO gengyun_egress_ledger;
