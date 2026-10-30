@@ -250,18 +250,6 @@
       "reference": "services/api/src/conversations/store-pg.ts:342"
     },
     {
-      "path": "services/api/src/ocr/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/store-pg.ts:376"
-    },
-    {
-      "path": "services/api/src/ocr/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/ocr/store-pg.ts:376"
-    },
-    {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "SUSPECT",
       "owner": "api-server",

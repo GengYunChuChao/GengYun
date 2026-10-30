@@ -147,16 +147,6 @@
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:300",
-      "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
-      "docLine": 303,
-      "kind": "cited",
-      "note": "【逐字引用历史读数】设计页那句「设计片当时记 `:300`（那是注释行，不是代码行）」本身就是**在引用注释行**：该行内容是一段端口说明注释。它被写出来是为了解释「为什么后来改指声明行」，不是活的代码锚点；GY-R71 补片沿用这个写法（同页另两个锚点已指到 363 与 356-359）。"
-    },
-    {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
       "reference": "user-data-deletion.ts:359",
       "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
       "docLine": 303,

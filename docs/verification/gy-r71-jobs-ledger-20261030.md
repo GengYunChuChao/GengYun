@@ -258,9 +258,9 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 
 | # | 门禁 | 读数 | exit |
 |---|---|---|---|
-| 1 | `npm run build` | api + admin 均 `✓ built`（api `tsc` + admin `vite build`）；随后删 `services/api/dist` 与 `apps/admin/dist`（`dist_removed=True`） | 0 |
+| 1 | `npm run build` | **环境受阻，不计 PASS**：`tsc` 段通过、`apps/admin` 的 `vite build` 在 `[vite:esbuild-transpile]` 落临时文件后回 `remove C:\Users\MR\AppData\Local\Temp\esbuild-<hash>: Access is denied.`（Windows 拒绝删除 esbuild 的 >1 MiB 输入临时件）。这是本机结构性限制（已实测「>1 MiB 必失败 / <1 MiB 正常」，与仓库代码无关），⛔ 未改构建配置、未写 PASS。build 之后已删 `services/api/dist` 与 `apps/admin/dist`。 | 1（环境受阻） |
 | 2 | `npm run lint` | `PASS tsc --noEmit services/api/tsconfig.json`、`PASS tsc --noEmit apps/admin/tsconfig.json`、`PASS 仓库卫生扫描` | 0 |
-| 3 | `npm run test:unit` | `tests 5861 / pass 5858 / fail 0 / cancelled 0 / skipped 1 / todo 2` | 0 |
+| 3 | `npm run test:unit` | `tests 5937 / pass 5934 / fail 0 / cancelled 0 / skipped 1 / todo 2`（注销接入前的同树读数曾为 `fail 7`，逐条修完归零；其中 `tests/unit/jobs-ledger-deletion.test.mjs` 5/5、`tests/unit/doc-anchor-relocation-identity.test.mjs` 33 条全绿、`tests/unit/doc-anchors-guard.test.mjs` 27/27、`tests/unit/doc-anchors-symbol-baseline-fresh.test.mjs` 5/5） | 0 |
 | 4 | `npm run test:contract` | `tests 17 / pass 17 / fail 0` | 0 |
 | 5 | `npm run verify:anchors` | `verify-contract-status` PASS（126 条契约操作；形状错误 0 / 语义错误 0 / 表格漂移 0）+ `verify-doc-anchors --strict` PASS（`--strict` 下无基线外新增） | 0 |
 | 6 | `npm run verify:parity` | `"extra": [] / "missing": [] / "ledgerDrift": []` | 0 |
@@ -268,6 +268,10 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 | 8 | `npm run test:docs` | 研究记录 `5 通过 / 0 失败 / 4 legacy 已钉住`；`docs/research 结构校验` PASS | 0 |
 | 9 | `npm run test:failmatrix` | `矩阵合计 249 条：PASS 249 / FAIL 0`（B1–B6 全绿） | 0 |
 | CI-exact | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs` | `PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT 与 COMMENT_ANCHOR 都按基线内条目只计数、不判红）` | 0 |
+
+> 补充口径：`verify:anchors` 的默认面（`docs/architecture` + `docs/verification`）与 CI-exact 面
+> （`--scan docs`）都已跑过、都 PASS；两个面共用的三本册子（结构基线 61 条、符号基线 29 条、孤儿册
+> 3541 / 作用域外 133）本轮都按「同一处行号位移」重生成或逐条删陈旧项，不是加豁免。
 
 另有两条**本片专项**读数（不计入九条门禁）：
 
