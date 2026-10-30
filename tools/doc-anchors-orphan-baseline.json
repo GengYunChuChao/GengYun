@@ -56,10 +56,16 @@
       "accept": 7,
       "orphans": 3542,
       "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 dose-cards 片：把 packages/contracts/openapi.json 的契约锚点从旧行号跟到实测行号（本片在 2863 处新增 69 行 ⇒ 该区间整体 +69）后，两处「ambiguous-block」裸锚点的键随行号平移：docs/architecture/ai-ops-spec-status.md 与 docs/verification/gy-r64-pr4c-denial-wiring-20261026.md 的 :11166-11173 变成 :11235-11242（新增 2 条、陈旧 2 条，同一处的位移，不是新增问题）。这是「合流并集 + 按实测重锚」后的重生成，不是放宽判据。",
+      "accept": 2,
+      "orphans": 3542,
+      "outsideRed": 134
     }
   ],
   "orphans": [
-    "docs/architecture/ai-ops-spec-status.md|:11166-11173|ambiguous-block",
+    "docs/architecture/ai-ops-spec-status.md|:11235-11242|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:126|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:1354|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:150|ambiguous-block",
@@ -3122,7 +3128,7 @@
     "docs/verification/gy-r64-closed-set-post-hide-20261027.md|:45-75|no-explicit-in-block",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|:106-117|ambiguous-block",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|:108|no-explicit-in-block",
-    "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|:11166-11173|ambiguous-block",
+    "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|:11235-11242|ambiguous-block",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|:132-143|ambiguous-block",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|:132-143|no-explicit-in-block",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|:133|no-explicit-in-block",
