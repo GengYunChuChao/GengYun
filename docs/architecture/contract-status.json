@@ -1388,7 +1388,7 @@
         },
         {
           "path": "services/api/src/conversations/job.ts",
-          "lines": "62-75",
+          "lines": "63-76",
           "symbol": "export function projectTurnJob(turn: TurnRecord, answer: AnswerRecord | null): ContractJob {"
         },
         {
