@@ -213,7 +213,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 |  | 未登录时整页只渲染 `guest` 状态视图，查询区**不出现**（不是渲染后报错） | `miniprogram/pages/knowledge/knowledge.wxml:10-18`；`miniprogram/pages/knowledge/knowledge.js:68-70` |
 | 依赖 API | `GET /api/v1/knowledge`，operationId **`listKnowledge`**；查询串闭集 = `q` ＋ `crop_id`／`region_code`／`species_id`／`growth_stage`／`planting_method`／`use_scene` ＋ `cursor`／`limit` | 客户端闭集 `miniprogram/utils/knowledge-api.js:9`；请求装配 `miniprogram/utils/knowledge-api.js:95-103` |
 |  | 服务端只读 `catalog_read.current_knowledge`（＝来源已核对 + `validity='valid'` + 已发布 + 最新修订的闭集），**不是**客户端筛 | `services/api/src/knowledge/service.ts:76`；视图定义 `services/api/db/migrations/0012_knowledge_created_at.sql:87-116` |
-| 失败态 | `stateKind` 落 `error` + `state-view`「查询没有成功」；文案取自客户端闭集（如 `NOT_FOUND`＝「资料不存在、已失效或不符合查询条件，请返回列表重新查询。」） | `miniprogram/pages/knowledge/knowledge.wxml:67-69`；`miniprogram/utils/knowledge-api.js:221` |
+| 失败态 | `stateKind` 落 `error` + `state-view`「查询没有成功」；文案取自客户端闭集（如 `NOT_FOUND`＝「资料不存在、已失效或不符合查询条件，请返回列表重新查询。」） | `miniprogram/pages/knowledge/knowledge.wxml:67-69`；`miniprogram/utils/knowledge-api.js:237` |
 |  | 空结果**分两种**：填了未采集维度（生育期／种植方式／使用场景）落 `uncollected` 并点名原因，否则才落 `empty` | `miniprogram/pages/knowledge/knowledge.wxml:61-66` |
 | 清空口径 | 每次查询**先** `clear()`：清 `items`／`nextCursor`／`status`，并作废在途查询与档案预置（迟到的回包不得覆盖当前条件） | `miniprogram/pages/knowledge/knowledge.js:185-213` |
 |  | 失败分支显式 `items: []`／`nextCursor: null` —— 旧结果**不留在屏幕上** | `miniprogram/pages/knowledge/knowledge.js:209-211` |

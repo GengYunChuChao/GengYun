@@ -275,6 +275,175 @@ test('⑤契约对齐：/herbicides 的 crop_id / region_code 参数名与 schem
   for (const name of ['q', 'registration_number']) assert.equal(herbicides.has(name), true, `/herbicides 既有参数 ${name} 不得丢失`);
 });
 
+// ── ⑥ 参数面「逐属性表态」（硬判据；属性集从源码读，不在测试里抄清单）──────────────
+//
+// 触发本判据的缺陷：服务端 `/herbicides` 早已接 `crop_id`／`region_code`，客户端白名单却写死
+// `q`／`registration_number` 并把这两个条件当成「服务端不可表达」直接回退离线副本 —— 服务端绿、
+// App 里不可达、页面对用户说反话。根因不是某一行写错，而是**没有任何判据要求服务端 schema 的
+// 每个属性都得有人表态**：只改一边永远不会变红。本用例把这个缺口钉死：
+//   服务端 querystring schema 的每个属性，要么在客户端白名单里，要么在下表里写明「客户端不提交＋真实原因」；
+//   两边都不在 ⇒ 断言失败（新增参数的人必须同时回答"客户端怎么处理它"）。
+//
+// 属性集**从 `services/api/src/routes/knowledge.ts` 源码解析**（含 `...pagination` 这类展开），
+// 客户端白名单同样从 `miniprogram/utils/knowledge-api.js` 源码解析。任一侧单独增删都会当场对不上，
+// 判据不依赖本文件里抄的任何字符串清单（抄清单 = 测试跟着实现一起漂，正是本缺陷的成因）。
+const API_ROUTE_SOURCE = readFileSync(here('../../services/api/src/routes/knowledge.ts'), 'utf8');
+const CLIENT_API_SOURCE = readFileSync(here('../../miniprogram/utils/knowledge-api.js'), 'utf8');
+
+/** 从 `source[start]`（必须是 `{`）起做花括号配对（跳过字符串字面量），返回配对 `}` 的下标。 */
+function closeBrace(source, start) {
+  assert.equal(source[start], '{', `期望对象字面量起始于下标 ${start}`);
+  let depth = 0;
+  let quote = null;
+  for (let i = start; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote !== null) {
+      if (ch === quote && source[i - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '{') depth += 1;
+    else if (ch === '}') { depth -= 1; if (depth === 0) return i; }
+  }
+  throw new Error(`对象字面量未闭合（起始下标 ${start}）`);
+}
+
+/** 按**顶层**（括号深度 0）逗号切分对象字面量的内部文本；字符串里的逗号不切。 */
+function splitTopLevel(inner) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let from = 0;
+  for (let i = 0; i < inner.length; i += 1) {
+    const ch = inner[i];
+    if (quote !== null) {
+      if (ch === quote && inner[i - 1] !== '\\') quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+    if (ch === '{' || ch === '[' || ch === '(') depth += 1;
+    else if (ch === '}' || ch === ']' || ch === ')') depth -= 1;
+    else if (ch === ',' && depth === 0) { parts.push(inner.slice(from, i)); from = i + 1; }
+  }
+  parts.push(inner.slice(from));
+  return parts.map((part) => part.trim()).filter((part) => part !== '');
+}
+
+/** 读同一文件里 `const <name> = { … }` 的顶层键（供 `...spread` 展开用，支持嵌套展开）。 */
+function declaredObjectKeys(source, name, path = []) {
+  assert.equal(path.includes(name), false, `对象常量 ${name} 出现循环展开：${[...path, name].join(' → ')}`);
+  const decl = new RegExp(`const\\s+${name}\\s*=\\s*\\{`, 'u').exec(source);
+  assert.ok(decl, `源码里读不到 \`const ${name} = { … }\`；属性集必须从源码读，不得在测试里抄清单`);
+  const open = decl.index + decl[0].length - 1;
+  return objectLiteralKeys(source, source.slice(open, closeBrace(source, open) + 1), [...path, name]);
+}
+
+/** 对象字面量文本 ⇒ 顶层键数组（`key:value` 简写、`'key':value`、`...spread` 展开三种写法）。 */
+function objectLiteralKeys(source, literal, path = []) {
+  assert.equal(literal[0], '{', `schema 片段必须以 { 起：${literal.slice(0, 40)}`);
+  const keys = [];
+  for (const entry of splitTopLevel(literal.slice(1, -1))) {
+    if (entry.startsWith('...')) {
+      keys.push(...declaredObjectKeys(source, entry.slice(3).trim(), path));
+      continue;
+    }
+    const colon = entry.indexOf(':');
+    assert.ok(colon > 0, `无法解析 schema 属性条目：${entry}`);
+    const key = entry.slice(0, colon).trim().replace(/^['"\u0060]|['"\u0060]$/gu, '');
+    assert.ok(/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key), `schema 属性名不规范：${JSON.stringify(key)}`);
+    keys.push(key);
+  }
+  return keys;
+}
+
+/** `/herbicides` **列表**路由的 querystring `properties:{…}` 字面量（不是 `/herbicides/:id`）。 */
+function herbicidesQuerystringLiteral(source) {
+  const marker = '${API_PREFIX}/herbicides' + '`'; // 带反引号 ⇒ 只匹配列表路由，不匹配 `/herbicides/:id`
+  const at = source.indexOf(marker);
+  assert.ok(at >= 0, '源码里找不到 `${API_PREFIX}/herbicides` 列表路由 ⇒ 本判据的前提失效，先去核对路由文件');
+  const rest = source.slice(at);
+  const propsAt = rest.indexOf('properties:{');
+  assert.ok(propsAt >= 0, '`/herbicides` 列表路由没有 querystring properties ⇒ 本判据的前提失效');
+  assert.ok(
+    rest.slice(0, propsAt).includes('additionalProperties:false'),
+    '`/herbicides` 列表路由的 querystring 不是 additionalProperties:false ⇒ 判据前提（闭集）失效',
+  );
+  const open = at + propsAt + 'properties:'.length;
+  assert.equal(source[open], '{', '`properties:` 后面应紧跟对象字面量');
+  return source.slice(open, closeBrace(source, open) + 1);
+}
+
+/**
+ * 服务端 schema 里**不进**客户端筛选白名单的属性，必须在这里表态（客户端怎么处理它 + 为什么）。
+ * 这张表就是"表态"的地方：新增属性既不在白名单、也不在这里 ⇒ ⑥ 红；表里写占位符也 ⇒ ⑥ 红。
+ */
+const CLIENT_NOT_A_FILTER = new Map([
+  ['cursor', '分页游标，不是筛选条件：客户端 `herbicideQuery` 的 cursor 分支单独校验（非空字符串、≤2048）后提交，服务端 schema 同形（minLength 1 / maxLength 2048）。'],
+  ['limit', '页长，不是筛选条件：客户端 `herbicideQuery` 的 limit 分支单独校验（整数 1..50）后提交，服务端 schema 同形（minimum 1 / maximum 50 / default 20）。'],
+  // 服务端 schema **接受** `region_code`（pattern ^33[0-9]{4}$），但客户端本版不提交它——原因不是"接口不支持"：
+  // 仓内没有一条记录标注 `region_codes`（`packages/reference/query.mjs` 的 `matchConditions()` 对未标注记录判
+  // "记录未标注适用地区，无法确认"），而该原因只留在 `reference.listHerbicides()` 的 `query_state.reasons` 里、
+  // 不进响应体（`{data:{items,next_cursor},meta}`）⇒ 提交 `region_code` 只会拿到 `items: []`，页面再把"未标注"
+  // 显示成"不满足所选条件"。接它必须先由服务端补上 `match_state`/`reasons` 出口（下一片）。
+  ['region_code', '地区：服务端 schema 接受该参数（pattern ^33[0-9]{4}$），但当前资料零条标注 region_codes（未标注适用地区），且响应体不回 match_state/reasons ⇒ 提交只会把"未标注"误报成"不满足"，故本版不提交，待服务端补 match_state 出口后再接。'],
+]);
+
+const SERVER_PROPERTIES = objectLiteralKeys(API_ROUTE_SOURCE, herbicidesQuerystringLiteral(API_ROUTE_SOURCE));
+const CLIENT_FILTERS = (() => {
+  const decl = /const\s+HERBICIDE_FILTERS\s*=\s*\[([\s\S]*?)\]/u.exec(CLIENT_API_SOURCE);
+  assert.ok(decl, '客户端源码里读不到 `const HERBICIDE_FILTERS = [ … ]` ⇒ 本判据的前提失效');
+  return splitTopLevel(decl[1]).map((entry) => {
+    assert.match(entry, /^['"][^'"]+['"]$/u, `客户端白名单条目必须是字符串字面量：${entry}`);
+    return entry.slice(1, -1);
+  });
+})();
+
+/** 服务端属性里，既不在客户端白名单、也没在表态表里的那些（"没人表态"）。 */
+const unaccounted = (properties) => properties.filter(
+  (name) => !CLIENT_FILTERS.includes(name) && !CLIENT_NOT_A_FILTER.has(name),
+);
+
+test('⑥ 参数面逐属性表态：服务端 schema 每个属性都在客户端白名单或显式表态表里（属性集从源码读）', () => {
+  // 解析器自检：读错路由/读空都会让下面的判据空转，所以先钉住"读到了东西、且是闭集"。
+  assert.ok(SERVER_PROPERTIES.length >= 4, `从 routes/knowledge.ts 读到的 /herbicides 属性只有 ${SERVER_PROPERTIES.length} 个，解析器可能读错了路由`);
+  assert.equal(new Set(SERVER_PROPERTIES).size, SERVER_PROPERTIES.length, `/herbicides 属性表出现重复键：${SERVER_PROPERTIES.join(', ')}`);
+  assert.ok(CLIENT_FILTERS.length > 0, '客户端白名单解析为空 ⇒ 判据会空转');
+
+  // ① 服务端每个属性：在客户端白名单里，或在表态表里写明"客户端怎么处理 + 为什么"。
+  assert.deepEqual(
+    unaccounted(SERVER_PROPERTIES),
+    [],
+    `服务端 /herbicides 的这些属性既不在客户端白名单、也没在表态表里说明 ⇒ 加参数的人只改了一边：${unaccounted(SERVER_PROPERTIES).join(', ')}`,
+  );
+
+  // ② 反向护栏：客户端白名单不得出现服务端 schema 里没有的键（否则客户端会发一个必然 400 的参数）。
+  const phantom = CLIENT_FILTERS.filter((name) => !SERVER_PROPERTIES.includes(name));
+  assert.deepEqual(phantom, [], `客户端白名单出现服务端不存在的键：${phantom.join(', ')}`);
+
+  // ③ 白名单与表态表不得对同一个键自相矛盾（既说"会提交"又说"不提交"）。
+  const contradictory = [...CLIENT_NOT_A_FILTER.keys()].filter((name) => CLIENT_FILTERS.includes(name));
+  assert.deepEqual(contradictory, [], `白名单与表态表互相矛盾：${contradictory.join(', ')}`);
+
+  // ④ 表态表里的每一条都得是"真原因"，不是占位符。
+  for (const [name, reason] of CLIENT_NOT_A_FILTER) {
+    assert.equal(typeof reason, 'string', `表态表 ${name} 的原因必须是字符串`);
+    assert.ok(reason.trim().length >= 12, `表态表 ${name} 的原因太短，疑似占位符：${JSON.stringify(reason)}`);
+  }
+
+  // ⑤ 判据自身非空转（负控制的常驻孪生）：多一个没人表态的属性，`unaccounted` 必须点名它。
+  assert.deepEqual(
+    unaccounted([...SERVER_PROPERTIES, 'synthetic_new_filter']),
+    ['synthetic_new_filter'],
+    '判据必须抓得出"新增了服务端属性却没人表态"，否则 ⑥ 恒真',
+  );
+
+  console.log(
+    `⑥ 读数：服务端 /herbicides 属性 ${SERVER_PROPERTIES.length} 个 [${SERVER_PROPERTIES.join(', ')}]；`
+    + `客户端白名单 ${CLIENT_FILTERS.length} 个 [${CLIENT_FILTERS.join(', ')}]；`
+    + `表态为非筛选 ${CLIENT_NOT_A_FILTER.size} 个 [${[...CLIENT_NOT_A_FILTER.keys()].join(', ')}]`,
+  );
+});
+
 test('端口已释放：回环宿主关闭后 app.server 不再监听（动态空闲口，不占固定端口）', async () => {
   const probe = await host({ rows: [] });
   const port = probe.app.server.address().port;
