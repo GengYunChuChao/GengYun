@@ -381,8 +381,33 @@ export function createPostgresConversationStore(
       });
     },
 
+    async cancelTurnJob(turnId, ownerId) {
+      // 单条 CAS：只有未结算的轮次能被取消；`job_state` 谓词与 `settleTurnJob` 互斥。
+      const { rows } = await pool.query(
+        `UPDATE conversation_turns
+         SET job_state = 'cancelled', job_error_code = NULL, revision = revision + 1, updated_at = now()
+         WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state IN ('queued', 'running')
+         RETURNING ${TURN_COLUMNS}`,
+        [turnId, ownerId],
+      );
+      const row = rows[0];
+      return row === undefined ? null : toTurn(row);
+    },
+
     async settleTurnJob(input) {
       return guarded(async (sql) => {
+        // **先 CAS 再写回答**（GY-R71 取消片）：回答行必须只在"轮次确实还处于 queued/running"
+        // 时才插入。反过来的次序（先插回答再 CAS）在取消竞态下会留下一条**孤儿回答行**——
+        // 轮次停在 `cancelled`、`answer_id` 为空，但源表已经多了一条结论 ⇒ 取消并没有真正
+        // 阻止"落库结论"。同一事务内先抢状态，抢不到就直接返回 null（那时一行回答都不会写）。
+        const claimed = await sql.query(
+          `UPDATE conversation_turns
+           SET job_state = $3, job_error_code = $4, revision = revision + 1, updated_at = $5
+           WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state IN ('queued', 'running')
+           RETURNING id`,
+          [input.turnId, input.ownerId, input.state, input.errorCode, input.at],
+        );
+        if (claimed.rows.length !== 1) return null;
         let answerId: string | null = null;
         if (input.answer !== null) {
           const inserted = await sql.query(
@@ -414,11 +439,10 @@ export function createPostgresConversationStore(
         }
         const { rows } = await sql.query(
           `UPDATE conversation_turns
-           SET job_state = $4, job_error_code = $5, answer_id = COALESCE($3::uuid, answer_id),
-               revision = revision + 1, updated_at = $6
-           WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state IN ('queued', 'running')
+           SET answer_id = COALESCE($2::uuid, answer_id)
+           WHERE id = $1::uuid AND owner_id = $3::uuid
            RETURNING ${TURN_COLUMNS}`,
-          [input.turnId, input.ownerId, answerId, input.state, input.errorCode, input.at],
+          [input.turnId, answerId, input.ownerId],
         );
         const row = rows[0];
         if (row === undefined) return null;

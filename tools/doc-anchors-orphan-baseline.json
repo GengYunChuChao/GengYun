@@ -98,6 +98,78 @@
       "accept": 6,
       "orphans": 3541,
       "outsideRed": 133
+    },
+    {
+      "why": "格式迁移：键从「文档:行:原文|原因」改成「文档|原文|原因」（行号会让插行刷出成批假增删），整份重登；同时把「册上陈旧」纳入 --strict 判红",
+      "accept": 3688,
+      "orphans": 3543,
+      "outsideRed": 145
+    },
+    {
+      "why": "合流 GY-R68-A01 × upstream/main 后重新登记孤儿册：A01 侧的文档改动（ai-ops／s4-data-traceability／state-contract／development-progress）把一批裸锚点连同行号一起改写到合流后的树上，键（文档|原文|原因）因此成对变动——新增 9 条 BARE_ORPHAN + 7 条作用域外「本会红」，同时旧键 26 条陈旧。逐条复核：新增的每一条都是同一处证据的行号前移（如 ai-ops 的 :1353→:1354、s4 的 :2002→:2238 等），没有一条是「删掉路径前缀换绿」；陈旧的都是被新键替代的旧行号。这是登记，不是放宽判据：判据与键形状一个字没改。",
+      "accept": 16,
+      "orphans": 3543,
+      "outsideRed": 135
+    },
+    {
+      "why": "第四轮审查修复：ai-ops-spec-status.md 的 P10 行（mergeAuditSources 声明由 :983 改到 :985、该层头注释由 :838 改到 :840）与 §7.1 的 entity→scope 映射（由 :280-307 改到 :301-328）都是按符号重取的真行号；这几个裸锚点（键里的原文带行号）随之成对变动 ⇒ 登记新键、旧键陈旧，与「删掉路径前缀换绿」无关。未新增任何结构基线条目（同时删掉了 2 条 note 为空的 NOT_SYMBOL_LINE）。",
+      "accept": 2,
+      "orphans": 3543,
+      "outsideRed": 135
+    },
+    {
+      "why": "合流 upstream/main（f0b97e16）后重生成：GY-R68 把 docs/verification/gy-r31-i15-recon-20261022.md:133 的两条裸锚点按符号重取（:51→:62 的 buildApp、:78→:89 的 database_configured），键随行号平移，新增 2 条（:62、:89）、陈旧 2 条（:51、:78）；不是新增问题，且始终带 --scan docs 生成。",
+      "accept": 2,
+      "orphans": 3543,
+      "outsideRed": 135
+    },
+    {
+      "why": "实际历史语义纠正及父源码证明",
+      "accept": 0,
+      "orphans": 3543,
+      "outsideRed": 134
+    },
+    {
+      "why": "R71 新增 GET /dose-cards：openapi.json 文本级 +595 行、docs/architecture/contract-status.json 新增一行台账（+65 行）、services/api/src/routes/knowledge.ts 新增 1 行 import 与路由装配。历史取证页里指向这三个文件的 7 条 path:line 继承锚点因此整体后移：这里只把后移后的行号重新登记（+7），并删掉同一次位移后不再命中的 7 条陈旧条目；裸锚点新增 0 条、判据一字未改。本次按 CI 同口径 --scan docs 生成，未改动任何历史正文数字。",
+      "accept": 7,
+      "orphans": 3543,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 让 settleCodeOf 保留 PrivacyError 的闭集码，services/api/src/conversations/service.ts 净 +14 行（import 1 + 注释 12 + 分支 1）。历史取证页 docs/verification/gy-i12-conversations-gap-20261021.md 的两条裸锚点随行号平移：键里带行号 ⇒ 新增 service.ts:945（SUSPECT）、陈旧 service.ts:1107（SUSPECT）。不是新增问题，按仓规不改写取证页数字。",
+      "accept": 1,
+      "orphans": 3543,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 合流 upstream/main：两侧各有一条同族登记，合并后净增减 0；册上那条陈旧条目来自 #775 合并后路由装配行复位，按实测重生成，非本片放宽判据",
+      "accept": 0,
+      "orphans": 3542,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 dose-cards 片合流 upstream/main（1b152d42）后按实测重生成：孤儿册条目集与 accept 账本按两侧并集（main 的 3542 条条目集 + 两侧 accept 行），条目集由 --scan docs 重新实测落盘。孤儿条目 3542 条与 main 完全一致（新增 0）；净增只发生在「作用域外本会红」这一册：本片新增 services/api/src/routes/knowledge.ts 的 dose-cards HTTP 面（+… 行）并让两份生成台账（contract-status.json / contract-implementation-status.md）行号整体前移，于是三份历史取证页逐字引用的行号漂移，新增 7 条（去重后 6 个键：gy-r29-i07-closure 的 routes/knowledge.ts:201、gy-r31-i07-sort 的 contract-status.json:3267/3333/799、gy-r33-contract-ledger 与 gy-r64-pr4c-denial-wiring 的 contract-implementation-status.md:178/204），另有 5 条旧键因行号复位不再命中被清出。按仓规不改写历史取证页数字，只在本册留痕；这是合流并集后的实测重生成，不是放宽判据。",
+      "accept": 7,
+      "orphans": 3542,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 dose-cards 片：把 packages/contracts/openapi.json 的契约锚点从旧行号跟到实测行号（本片在 2863 处新增 69 行 ⇒ 该区间整体 +69）后，两处「ambiguous-block」裸锚点的键随行号平移：docs/architecture/ai-ops-spec-status.md 与 docs/verification/gy-r64-pr4c-denial-wiring-20261026.md 的 :11166-11173 变成 :11235-11242（新增 2 条、陈旧 2 条，同一处的位移，不是新增问题）。这是「合流并集 + 按实测重锚」后的重生成，不是放宽判据。",
+      "accept": 2,
+      "orphans": 3542,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 取消片合流 #786 后：作用域外本会红 +1 / 陈旧 1，来自 #786 剂量卡路由使历史页引用行位移；按实测重生成，非放宽判据",
+      "accept": 1,
+      "orphans": 3542,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流：合并树按 --scan docs 实测重生成（orphans 3541、outsideRed 133）；相对本分支册只 1 条作用域外新增——tests/moderation/http-jobs.test.mjs 因 #785 取消片接线位移，docs/verification/gy-r27-synthesis-cancel-20261020.md 里继承的 :175 落到断言尾行判 SUSPECT；同时 gy-i12 页的 service.ts:945 一条不再命中（1 换 1）",
+      "accept": 1,
+      "orphans": 3541,
+      "outsideRed": 133
     }
   ],
   "orphans": [
@@ -3684,7 +3756,6 @@
     "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:945|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
@@ -3696,6 +3767,7 @@
     "docs/verification/gy-i22-cross-module-security-e2e-20261027.md|services/api/src/routes/favorites.ts:87|SUSPECT",
     "docs/verification/gy-i22-identity-headers-20261019.md|tests/unit/gy-i22-identity-headers.test.mjs:567|SUSPECT",
     "docs/verification/gy-i28-demo-parity-20261018.md|miniprogram/utils/history-api.js:193|SUSPECT",
+    "docs/verification/gy-r27-synthesis-cancel-20261020.md|http-jobs.test.mjs:175|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:186|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:326|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:352|SUSPECT",

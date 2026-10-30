@@ -102,7 +102,7 @@
 | 11 | 同页 `:33` | drift-gone | 0 命中 | 归属误判（同上，`package.json:34`） |
 | 12 | 同页 `:84` | drift-gone | 0 命中 | 表述差异：SQL 是 `CREATE FUNCTION public.record_third_party_deletion(` 多行签名 |
 | 13 | 同页 `:108` | drift-unique | `services/api/src/privacy/backup-replay-manifest.ts:85` | 真漂移（同句已写 `:85`） |
-| 14 | `docs/architecture/rate-limit-policy.md:185` | drift-gone | 0 命中 | 真漂移：`app.ts:2450-2455` 现为 OCR 作业源注释；`hop < trustProxy` 在 `app.ts:2649` 且带类型标注 |
+| 14 | `docs/architecture/rate-limit-policy.md:185` | drift-gone | 0 命中 | 真漂移：`app.ts:2450-2455` 现为 OCR 作业源注释；`hop < trustProxy` 在 `app.ts:2661` 且带类型标注 |
 | 15 | `docs/architecture/s4-data-traceability.md:186` | drift-unique | `services/api/src/app.ts:2221` | 真漂移 |
 | 16 | `docs/architecture/state-contract.md:117` | drift-unique | `services/api/db/migrations/0023_user_backup_copies.sql:75` | 真漂移（引用写的是 `:34`） |
 

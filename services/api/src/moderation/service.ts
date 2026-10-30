@@ -247,6 +247,30 @@ export interface ModerationService {
   reReview(input: { actor: ModerationActor; target_ref: TargetRef; content?: ModerationContent }): Promise<ReReviewReport>;
   /** 供应商回调（**服务端受信 seam**，不在 OpenAPI 内；验签 + 版本 + 回放 + 下架核对）。 */
   ingestCallback(input: { raw_body: string; signature: string }): Promise<CallbackOutcome>;
+  /**
+   * GY-R71 取消片 · **取消尚未出结论的筛查任务**（`queued`/`running` → `cancelled`）。
+   *
+   * 只走**既有**状态机与既有错误码（不新造码、不新造状态）：
+   * - 可取消窗口 = 任务还没落结论的那一段（`queued`/`running`，现行装配下只出现在
+   *   `defer_model` 的异步供应商路径）；
+   * - 已终态（`succeeded`/`uncertain`/`failed`/`timed_out`）⇒ 409 `OBJECT_UNAVAILABLE`
+   *   ——**`quarantined`（`uncertain`）也算终态**：隔离是已作出的判定，取消它等于抹掉隔离事实；
+   *   已 `cancelled` 的任务不在此列，见下面的幂等口径；
+   * - `If-Match` 不符 ⇒ 409 `REVISION_CONFLICT`；缺失 ⇒ 428 `REVISION_REQUIRED`；格式非法 ⇒ 400；
+   *   不存在与越权**同形** 404 `NOT_FOUND`。
+   *
+   * **真取消**：把 `state` 写成 `cancelled` 之后，`callback.ts` 的 `isTerminalTaskState`
+   * （`succeeded`/`cancelled`）会在**验签通过之后、任何写入之前**拒收迟到回调
+   * （`CALLBACK_JOB_TERMINAL`）⇒ 审核结论不会被补写进台账。取消本身也 `flush` 落库：
+   * 落不了库就**不**对外声称已取消（写面 fail-closed，与本域其它写入点同口径）。
+   *
+   * 幂等（**本片选"重复取消不报错"**，口径与 `conversations/service.ts` 的 `cancelTurn` 一致）：
+   * 任务已 `cancelled` 且 `If-Match` 等于**当前** `job_revision` ⇒ 200 + 当前视图、**不再写**
+   * （`job_revision` 不变、不产生第二次迁移）；持旧 revision 的重放 ⇒ 409 `REVISION_CONFLICT`。
+   * 本域**没有幂等台账**，`Idempotency-Key` 只按契约做存在性/长度校验、**不参与回放**
+   * （这一处与 `answer` 域不同，见证据页「口径差异」，不谎称已回放）。
+   */
+  cancelJob(input: { userId: string; jobId: string; ifMatch: unknown; idempotencyKey: unknown }): Promise<ModerationTaskView>;
   tasks(target_ref: TargetRef): ModerationTaskView[];
   taskByJobId(jobId: string): ModerationTaskView | null;
   humanReview(): ReturnType<typeof humanReviewQueue>;
@@ -301,6 +325,40 @@ function assertActor(actor: ModerationActor | null | undefined): ModerationActor
     throw sessionRequired();
   }
   return actor;
+}
+
+/** 契约 `If-Match` 强 ETag（与识别/转写/合成/OCR 四域同形：`"正整数"`，不允许 `*`）。 */
+const IF_MATCH_PATTERN = /^"[1-9][0-9]*"$/;
+/** 契约 `components.parameters.IdempotencyKey` 的 `minLength`/`maxLength`。 */
+const IDEMPOTENCY_KEY_MIN = 8;
+const IDEMPOTENCY_KEY_MAX = 128;
+
+/** 取消面的 `If-Match`：缺失 428、格式非法 400（不匹配由调用方判 409）。 */
+function requireCancelIfMatch(value: unknown): number {
+  if (value === undefined || value === null || value === '') {
+    throw new ApiError('REVISION_REQUIRED', '缺少 If-Match 版本头');
+  }
+  if (typeof value !== 'string' || !IF_MATCH_PATTERN.test(value)) {
+    throw new ApiError('INVALID_REQUEST', 'If-Match 必须是形如 "3" 的强 ETag，且不允许 *', {
+      details: [{ field: 'If-Match', code: 'INVALID_ETAG' }],
+    });
+  }
+  const revision = Number(value.slice(1, -1));
+  if (!Number.isSafeInteger(revision) || revision < 1) throw new ApiError('INVALID_REQUEST', 'If-Match 版本非法');
+  return revision;
+}
+
+/**
+ * 取消面的 `Idempotency-Key`：只做**契约校验**（缺失/长度不合 ⇒ 400 `IDEMPOTENCY_KEY_REQUIRED`）。
+ *
+ * 本域没有幂等台账，因此该键**不参与回放**——重复取消由 `state` + `If-Match` 判定，
+ * 按既有 409 语义明确告知（见 `cancelJob` 的注释与证据页「口径差异」）。
+ */
+function requireCancelIdempotencyKey(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length < IDEMPOTENCY_KEY_MIN || value.length > IDEMPOTENCY_KEY_MAX) {
+    throw new ApiError('IDEMPOTENCY_KEY_REQUIRED', `缺少或非法的 Idempotency-Key 头（${IDEMPOTENCY_KEY_MIN}..${IDEMPOTENCY_KEY_MAX} 字符）`);
+  }
+  return value;
 }
 
 /** 目标引用校验（契约 `TargetRef`：type 闭集、id 1..80、revision ≥1）。 */
@@ -410,6 +468,7 @@ export function createFailClosedModerationService(): ModerationService {
     readView: async () => deny(),
     reReview: async () => deny(),
     ingestCallback: async () => deny(),
+    cancelJob: async () => deny(),
     tasks: () => [],
     taskByJobId: () => null,
     humanReview: () => humanReviewQueue(),
@@ -1111,6 +1170,51 @@ function createModerationServiceResolved(
     };
   }
 
+  /**
+   * GY-R71 取消片 · 取消尚未出结论的筛查任务（实现在 `ModerationService.cancelJob` 的注释里逐条声明）。
+   *
+   * 次序刻意如此：`If-Match`/`Idempotency-Key` 先校验（缺头 ⇒ 428/400，与其它五源同形），
+   * 再判归属（不存在/越权 ⇒ 同形 404，**不**消耗调用方的版本号），再判版本、再判状态，
+   * 最后**单次**写 `state`/`job_revision`（本域台账无异步 CAS，靠单线程 + 同步 `update` 原子）。
+   */
+  async function cancelJob(input: {
+    userId: string;
+    jobId: string;
+    ifMatch: unknown;
+    idempotencyKey: unknown;
+  }): Promise<ModerationTaskView> {
+    const expectedRevision = requireCancelIfMatch(input.ifMatch);
+    requireCancelIdempotencyKey(input.idempotencyKey);
+    const record = ledger.byJobId(input.jobId);
+    if (record === null) throw new ApiError('NOT_FOUND', '作业不存在');
+    // 归属：他人作业与"作业不存在"同形（不泄露存在性，与 `job-source.ts` 的读面同口径）。
+    if (record.submitted_by !== input.userId) throw new ApiError('NOT_FOUND', '作业不存在');
+    if (record.job_revision !== expectedRevision) {
+      throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+    }
+    // **幂等**（本片选"重复取消不报错"，口径见证据页）：状态已是 `cancelled` ⇒ 返回当前视图、
+    // **不**再写一次（`job_revision` 不变、不产生第二次迁移）。这不是"假装成功"：本次没有副作用；
+    // 持旧 `If-Match` 的重放仍会被上面判 409 `REVISION_CONFLICT`。
+    if (record.state === 'cancelled') return viewOf(record);
+    // 可取消窗口 = 还没落结论的那一段。`uncertain`（隔离）与四个成功/失败态都是**已出结论**：
+    // 取消它们会把"已判定的隔离事实"抹成"从没跑过"，因此按既有 `OBJECT_UNAVAILABLE` 明确拒绝。
+    if (record.state !== 'queued' && record.state !== 'running') {
+      throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${record.state}，不可取消`);
+    }
+    const updated = ledger.update({
+      ...record,
+      job_revision: record.job_revision + 1,
+      state: 'cancelled',
+      // 取消 ⇒ 该任务没有结论可投影：`contract_value` 清空（否则 `result` 会违反注册表的如实性不变式）。
+      contract_value: null,
+      error_code: null,
+      updated_at: nowIso(),
+    });
+    // 取消必须**落库**才算数：落不了库就不许对外声称"已取消"（否则重启后迟到回调还能补写结论）。
+    await flushLedger();
+    return viewOf(updated);
+  }
+
   /** `ingestCallback` 的契约错误码提示（传输层用；本片不注册路由）。 */
   function callbackErrorHint(reasonCode: string): string {
     if (reasonCode === 'CALLBACK_SIGNATURE_INVALID') return 'SCOPE_DENIED';
@@ -1327,6 +1431,7 @@ function createModerationServiceResolved(
     readView,
     reReview,
     ingestCallback,
+    cancelJob,
     tasks: (target_ref) => ledger.forRevision(target_ref).map(viewOf),
     taskByJobId: (jobId) => {
       const record = ledger.byJobId(jobId);

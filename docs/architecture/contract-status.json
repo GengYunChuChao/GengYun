@@ -731,7 +731,7 @@
         {
           "path": "services/api/src/moderation/job-source.ts",
           "symbol": "createModerationJobSource",
-          "lines": "1-33"
+          "lines": "51-75"
         }
       ],
       "blocker": "共享作业面已装配并按 kind 分派（services/api/src/jobs/routes.ts）；识别域、转写域与审核域（GY-I14，kind=moderation）的作业源已接入，均含归属与终态守卫；synthesis 的读面早已接线（#152，零契约变更），ocr 的**读面**已于 #183（1078566）接为纯追加作业源（读面复用 ocr/service.ts 的 getJob）⇒ 经该路径读取 ocr/synthesis 作业现可返回契约 Job 与 error_code；answer 的**读面**已于 #12 片接为纯追加作业源（读面复用对话域轮次上的作业快照，services/api/src/conversations/job.ts）⇒ 经该路径读取 answer 作业现可返回契约 Job 与 error_code（真值来自入库快照，绝不凭空升级为 succeeded）；ocr 的**取消**已于 GY-I10 取消片接线（services/api/src/jobs/sources.ts:208、services/api/src/ocr/service.ts:687）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE，提供者迟到结果因 revision 前进而写不进去、不复活作业；synthesis 的**取消**已于 GY-R27（#322）接线（services/api/src/jobs/sources.ts:153，域内 services/api/src/tts/service.ts:711 的 cancelJob）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE，取消一侧现返回 200 cancelled、不再 503；审核结论可读，但真实 tms/ims 供应商未授权，real 模式审核域整域 fail-closed（送审 503 PROVIDER_UNAVAILABLE retryable；无任务可读）；审核任务的持久队列与租约仍待接线（本片为内存台账）"
@@ -758,10 +758,10 @@
         {
           "path": "services/api/src/moderation/job-source.ts",
           "symbol": "createModerationJobSource",
-          "lines": "1-33"
+          "lines": "51-75"
         }
       ],
-      "blocker": "取消经共享作业面按 kind 分派；识别、转写、合成与 OCR 四域提供取消能力（含 If-Match、幂等重放与终态守卫）——转写取消已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:666` 的 `cancelJob`），合成取消已于 GY-R27（#322）接线（`services/api/src/jobs/sources.ts:153`，域内 `services/api/src/tts/service.ts:711` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；审核域（GY-I14，kind=moderation）仍无取消能力 ⇒ 以 503 PROVIDER_UNAVAILABLE（`retryable: false`）如实拒绝，不伪造 cancelled（审核任务不是用户可取消的排队作业，且「取消」会掩盖隔离事实）；synthesis 的**读面**已接线（#152），**取消**亦已接线 ⇒ 取消一侧现返回 200 cancelled、不再 503；ocr 的**读面**（#183 追加 kind=ocr 作业源）与**取消**（GY-I10 取消片，services/api/src/jobs/sources.ts:208、services/api/src/ocr/service.ts:687）均已接线：queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；answer 的**读面**已于 #12 片接为纯追加作业源（services/api/src/conversations/job.ts）⇒ 读取可返回契约 Job 与 error_code，但**取消仍未接线**（对话域不提供取消入口）⇒ 作业面在确认作业存在后如实 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled、不谎称作业不存在；持久租约与外发撤销待接线"
+      "blocker": "取消经共享作业面按 kind 分派；识别、转写、合成与 OCR 四域提供取消能力（含 If-Match、幂等重放与终态守卫）——转写取消已于 GY-R27（#321）接线（`services/api/src/jobs/sources.ts:107`，域内 `services/api/src/speech/service.ts:666` 的 `cancelJob`），合成取消已于 GY-R27（#322）接线（`services/api/src/jobs/sources.ts:153`，域内 `services/api/src/tts/service.ts:711` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；审核域（GY-I14，kind=moderation）的**取消**已于 GY-R71 取消片接线（`services/api/src/moderation/job-source.ts` 的 `cancel` → 域内 `services/api/src/moderation/service.ts` 的 `cancelJob`）⇒ `queued`/`running` 单次迁移 ⇒ `cancelled`、`job_revision` 恰好 +1 且 `contract_value` 清空，终态（含 `uncertain`/隔离）再取消仍 409 `OBJECT_UNAVAILABLE`（取消不会掩盖隔离事实），取消后迟到回调由 `CALLBACK_JOB_TERMINAL` 拒收 ⇒ 结论不会被补写；可取消窗口现行装配下只出现在 `defer_model` 异步供应商路径；synthesis 的**读面**已接线（#152），**取消**亦已接线 ⇒ 取消一侧现返回 200 cancelled、不再 503；ocr 的**读面**（#183 追加 kind=ocr 作业源）与**取消**（GY-I10 取消片，services/api/src/jobs/sources.ts:208、services/api/src/ocr/service.ts:687）均已接线：queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；answer 的**读面**已于 #12 片接为纯追加作业源（services/api/src/conversations/job.ts）⇒ 读取可返回契约 Job 与 error_code；answer 的**取消**亦已于 GY-R71 取消片接线（同文件 `cancel` → 域内 `services/api/src/conversations/service.ts` 的 `cancelTurn`）⇒ `queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1，终态再取消 409 `OBJECT_UNAVAILABLE`，同键重放回放首次结果，且取消后迟到的结算不再落回答行；持久租约与外发撤销待接线"
     },
     {
       "id": "listDoseCards",
@@ -1312,7 +1312,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "695-738",
+          "lines": "700-743",
           "symbol": "async function createConversation("
         },
         {
@@ -1429,7 +1429,7 @@
         },
         {
           "path": "services/api/src/conversations/job.ts",
-          "lines": "48-61",
+          "lines": "63-76",
           "symbol": "export function projectTurnJob(turn: TurnRecord, answer: AnswerRecord | null): ContractJob {"
         },
         {
@@ -1439,14 +1439,14 @@
         },
         {
           "test": "tests/unit/conversation-http.test.mjs",
-          "name": "answer 作业：202 受理后可被跨 kind 读面读到，状态与失败可区分，且不伪造取消"
+          "name": "answer 作业：202 受理后可被跨 kind 读面读到，状态与失败可区分，已终态取消按既有 409 拒绝"
         },
         {
           "test": "tests/unit/conversation-answer-guard.test.mjs",
           "name": "NC2 绿：回答器无法决定版本串 —— 注入自称\"真实模型\"的替身，落库与读面仍是未接真实模型"
         }
       ],
-      "blocker": "受理已装配为 202 + JobEnvelope（文字轮次直接受理；语音轮次须 confirmed 转写，端口未接线时如实 422 INPUT_UNCERTAIN、查不到 404，均不落假成功）；answer 作业源已接入跨 kind 作业读面（services/api/src/conversations/job.ts，GET /jobs/{id} 可返回契约 Job 与 error_code，取消仍如实 503）；回答经输出守卫（services/api/src/conversations/guard.ts）：引用只能逐字取自本次检索集合、用量卡只能取自确定性权威路径，越界一律拒绝并如实记因；**真实模型已于 GY-R28 W7 接线，四与门不全时回落确定性回答器**：`services/api/src/ai/chat-wiring.ts:74-85` 的 `mode==='live'` 分支给出**装配层拥有**的真实版本串（`model/…` + `prompt/citation-bind/1`；装配点 `services/api/src/app.ts:2348` 调 `planConversationChat`、`services/api/src/app.ts:2390` 注入 `answerVersions`），四个与门＝注入覆盖／`chatProvider≠null`／`egressLedger`+`privacyInFlight`／`executionMode==='real'`；只有 `live` 之外的装配结局（注入覆盖走服务层基线常量；`chatProvider` 为 null／账本不可用／非 `real`）才让 model_version/prompt_version/rule_version **带** `unimplemented:no-real-` 前缀且可被机器判据检出（旧文案的「一律」是绝对量词，与代码不符），此时正文是确定性检索条目摘录而非模型结果；**产品 HTTP 路径的真实外发读数仍未取得**（单测层成立）；真实检索资料覆盖有限（浙江首批 159 条 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发、external_inference 同意闸与 120 题评估仍待后续片"
+      "blocker": "受理已装配为 202 + JobEnvelope（文字轮次直接受理；语音轮次须 confirmed 转写，端口未接线时如实 422 INPUT_UNCERTAIN、查不到 404，均不落假成功）；answer 作业源已接入跨 kind 作业读面（services/api/src/conversations/job.ts，GET /jobs/{id} 可返回契约 Job 与 error_code；GY-R71 取消片已接线取消面（`queued`/`running` ⇒ `cancelled`、revision 恰好 +1，已终态按既有 409 `OBJECT_UNAVAILABLE` 拒绝，取消后迟到的结算不再落回答行））；回答经输出守卫（services/api/src/conversations/guard.ts）：引用只能逐字取自本次检索集合、用量卡只能取自确定性权威路径，越界一律拒绝并如实记因；**真实模型已于 GY-R28 W7 接线，四与门不全时回落确定性回答器**：`services/api/src/ai/chat-wiring.ts:74-85` 的 `mode==='live'` 分支给出**装配层拥有**的真实版本串（`model/…` + `prompt/citation-bind/1`；装配点 `services/api/src/app.ts:2348` 调 `planConversationChat`、`services/api/src/app.ts:2390` 注入 `answerVersions`），四个与门＝注入覆盖／`chatProvider≠null`／`egressLedger`+`privacyInFlight`／`executionMode==='real'`；只有 `live` 之外的装配结局（注入覆盖走服务层基线常量；`chatProvider` 为 null／账本不可用／非 `real`）才让 model_version/prompt_version/rule_version **带** `unimplemented:no-real-` 前缀且可被机器判据检出（旧文案的「一律」是绝对量词，与代码不符），此时正文是确定性检索条目摘录而非模型结果；**产品 HTTP 路径的真实外发读数仍未取得**（单测层成立）；真实检索资料覆盖有限（浙江首批 159 条 review_status=unverified，packages/knowledge/README.md 明言不得作为用药量依据）⇒ 用量卡在本基线恒不可产出；真实外发、external_inference 同意闸与 120 题评估仍待后续片"
     },
     {
       "id": "listTurns",
@@ -1465,7 +1465,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "867-886",
+          "lines": "964-983",
           "symbol": "async function listTurns("
         },
         {
@@ -4344,7 +4344,7 @@
           "lines": "483-488"
         }
       ],
-      "blocker": "共享作业面现由 `services/api/src/app.ts:2515` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:2516`）、transcription（`:2522`）、moderation（`:2525`）、synthesis（`:2531`）、ocr（`:2539`）、answer（`:2547`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:64`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，其余两域（moderation / answer）仍省略 `cancel` ⇒ `services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）对已存在作业返回 503 PROVIDER_UNAVAILABLE（`retryable: false`），不伪造 cancelled；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
+      "blocker": "共享作业面现由 `services/api/src/app.ts:2515` 的 `registerJobRoutes(app, config, guards, createJobRegistry([...]))` 按 kind 分派六源读取：recognition（`services/api/src/app.ts:2516`）、transcription（`:2522`）、moderation（`:2528`）、synthesis（`:2534`）、ocr（`:2542`）、answer（`:2552`，`createAnswerJobSource`，定义见 `services/api/src/conversations/job.ts:79`）。取消能力现有识别、转写、合成与 OCR 四域（下列行号为本基线 `bfbe12cd` 实测）：识别源 `services/api/src/jobs/sources.ts:65`、转写源 `services/api/src/jobs/sources.ts:107`（GY-R27／#321）、合成源 `services/api/src/jobs/sources.ts:153`（GY-R27／#322）、OCR 源 `services/api/src/jobs/sources.ts:208`（域内实现 `services/api/src/ocr/service.ts:687` 的 `cancelJob`）均已实现 `cancel`，GY-R71 取消片把 moderation 与 answer 两源也接上 `cancel`（审核域 `services/api/src/moderation/service.ts` 的 `cancelJob`、问答域 `services/api/src/conversations/service.ts` 的 `cancelTurn`）⇒ **六源全部可取消**，`services/api/src/jobs/registry.ts:306`（`createJobRegistry`，`:265`）的 503「该作业所属能力尚未提供取消」自此只对**未注册/未接线**的源可达；OCR 取消语义：`queued`/`running` 单次 CAS ⇒ `cancelled`、revision 恰好 +1 且 `error_code` 置空，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，提供者迟到结果因 revision 前进而写不进去、不复活作业；`POST /jobs/:id/cancel` 路由见 `services/api/src/jobs/routes.ts:64-80`（`registerJobRoutes`，`:42`）。后台 cancelAdminJob 已装配（`services/api/src/routes/admin.ts:316-324`），但真实任务端口 / 持久租约 / 外发撤销及跨域生命周期仍待验收"
     },
     {
       "key": "timeout",
@@ -4401,7 +4401,7 @@
           "name": "GY-I09 识别任务闭环"
         }
       ],
-      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:71`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:812`，位于 `createTurn`，`:752`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:925`，位于 `jobViewOf`，`:917`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:973-981`，位于 `scheduleAnswer`，`:967`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2336`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
+      "blocker": "数据库/微信调用有截止；识别/OCR/ASR/TTS 默认阶段截止 30 秒并投影 deadline_at，超时进入 timed_out，非成功终态不产结果（阶段截止实现见 `services/api/src/recognitions/service.ts:525` 的 `runProviderWithDeadline`，超时计时器 `:531-533`）。问答域 HTTP 阶段已接同一投影：默认截止 `services/api/src/conversations/service.ts:76`（`DEFAULT_JOB_DEADLINE_MS = 30 * 1000`），受理时写 `job_deadline_at`（`services/api/src/conversations/service.ts:862`，位于 `createTurn`，`:802`），读取投影 `deadline_at`（`services/api/src/conversations/service.ts:1053`，位于 `jobViewOf`，`:1045`），超期结算 `timed_out` / PROVIDER_TIMEOUT（`services/api/src/conversations/service.ts:1106-1114`，位于 `scheduleAnswer`，`:1100`）；HTTP 面见 `services/api/src/routes/conversations.ts:75` 的 `registerConversationRoutes`（7 个端点 `:115` / `:126` / `:136` / `:148` / `:161` / `:174` / `:184`），装配点 `services/api/src/app.ts:2631`。仍缺：持久任务的 15 秒租约 / 5 秒心跳与重启恢复尚未实现（`docs/architecture/state-contract.md:50`）；录音 60 秒限制属于媒体/页面链，不能由此服务层证据推定真机通过"
     }
   ]
 }

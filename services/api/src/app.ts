@@ -2521,7 +2521,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ),
     createTranscriptionJobSource(app.speechService),
     // GY-I14（#14）审核域作业源（纯追加）：`GET /jobs/{id}` 现可返回 `kind=moderation` 的
-    // 契约 `ModerationResult`；`cancel` **不提供** ⇒ 注册表以 503 PROVIDER_UNAVAILABLE 如实拒绝。
+    // 契约 `ModerationResult`；GY-R71 取消片：`cancel` **已提供**（复用 `moderation/service.ts`
+    // 的 `cancelJob`：`queued`/`running` ⇒ `cancelled`，`job_revision` 恰好 +1；终态含 `uncertain`
+    // 再取消 ⇒ 409 `OBJECT_UNAVAILABLE`），`POST /jobs/{id}/cancel` 对审核作业由 503
+    // `PROVIDER_UNAVAILABLE`（未接线）变为 200 `cancelled`。
     createModerationJobSource(moderationService),
     // GY-I13（#13）合成域作业源（**纯追加，不重排上面三项**）：`GET /jobs/{id}` 现可返回
     // `kind=synthesis` 的契约 `SynthesisResult`（`tts/service.ts` 的 `inspectJob` 只读复用）。
@@ -2542,13 +2545,22 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 作业落终态 `succeeded`/`uncertain` 且回答行存在时给出 ⇒ 与注册表的如实性不变式一致）。
     // 作业 id 是 `createTurn` 受理时写下的 `Job.id`（**与 `Turn.id` 不同**），
     // 读面按 `(job_id, owner_id)` 查轮次 ⇒ 越权与不存在**同形** `NOT_FOUND`。
-    // `cancel` **不提供**（本基线无问答取消入口）⇒ 注册表先确认作业存在，再 503
-    // PROVIDER_UNAVAILABLE (`retryable`) 如实拒绝，**不伪造** `cancelled`、不谎称作业不存在。
+    // `cancel` **已提供**（GY-R71 取消片；复用会话域既有的 `cancelTurn`：`queued`/`running`
+    // ⇒ `cancelled`，revision 恰好 +1，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`，同键重放回放首次结果）。
+    // **真取消**：取消只写轮次行的作业快照、不写回答；此后 `settleTurnJob` 的状态谓词不再命中
+    // ⇒ 迟到的生成结果永远落不了库（不靠事后清理、不靠删记录）。
     createAnswerJobSource({
       findByJobId: async ({ userId, jobId }) => {
         const service = app.conversationService;
         if (service === null) return null;
         return service.store.findTurnByJobId(jobId, userId);
+      },
+      cancelJob: async ({ userId, jobId, ifMatch, idempotencyKey }) => {
+        const service = app.conversationService;
+        // 服务未装配（real + 无池）⇒ 该作业不存在（与"越权/不存在"同形 404），不让 503 冒充。
+        if (service === null) return null;
+        const outcome = await service.cancelTurn({ userId, jobId, ifMatch, idempotencyKey });
+        return outcome.data;
       },
     }),
   ]));

@@ -160,25 +160,31 @@ test('GET /jobs/{id}：他人作业与"不存在的 uuid"同形 404；非法 uui
   assert.equal(withQuery.data.error.code, 'INVALID_REQUEST');
 });
 
-test('POST /jobs/{id}/cancel：审核作业**不提供取消** ⇒ 契约 503 PROVIDER_UNAVAILABLE(retryable)，不伪造 cancelled', async (t) => {
+test('POST /jobs/{id}/cancel：审核作业已出结论 ⇒ 409 OBJECT_UNAVAILABLE（不伪造 cancelled、不改状态）', async (t) => {
   const h = await setup(t);
   const out = await h.submit();
   const task = out.tasks[0];
+  assert.equal(task.state, 'succeeded', '同步筛查路径的作业在受理时已有结论');
 
+  // GY-R71 取消片：本域**已提供** cancel（接线前是 503「该能力尚未提供取消」）。可取消窗口只有
+  // `queued`/`running`（异步 `defer_model` 路径）；这里这条作业已 `succeeded` ⇒ 按既有语义拒绝。
+  // 200 `cancelled` 的活体路径（含"取消后迟到回调落不了结论"）见
+  // `tests/unit/jobs-cancel-moderation-answer.test.mjs` 的 moderation·①②③ 三组。
   const cancelled = await h.call('POST', `${API}/jobs/${task.job_id}/cancel`, h.a, {
     headers: { 'if-match': '"1"', 'idempotency-key': 'synthetic-cancel-key-1' },
   });
-  assert.equal(cancelled.status, 503);
-  assert.equal(cancelled.data.error.code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(cancelled.status, 409, JSON.stringify(cancelled.data));
+  assert.equal(cancelled.data.error.code, 'OBJECT_UNAVAILABLE');
   assert.equal(
     cancelled.data.error.retryable,
     false,
-    '审核域无取消能力（未接线）⇒ 需运维改派能力，同一请求重试不会成功 ⇒ 不得标为可重试',
+    '已出结论的作业不可取消（不是瞬时态）⇒ 同一请求重试不会成功 ⇒ 不得标为可重试',
   );
 
-  // 状态未被伪造：仍是 succeeded/approved
+  // 状态未被伪造：仍是 succeeded/approved，revision 不变。
   const after = await h.call('GET', `${API}/jobs/${task.job_id}`, h.a);
   assert.equal(after.data.data.state, 'succeeded');
+  assert.equal(after.data.data.revision, 1);
   assert.equal(after.data.data.result.value.decision, 'approved');
 });
 

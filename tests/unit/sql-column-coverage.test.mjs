@@ -536,23 +536,34 @@ const OPAQUE_ALLOWLIST = [
  *   20 文件块：字面量 290 → **291**、SELECT 155 → **156**、无顶层 FROM 15 → **16**、
  *   逐文件 `community` 43 → **44**；两块的 INSERT/UPDATE/DELETE、RETURNING、ON CONFLICT、
  *   `SELECT *`、引用表、行锁、不可判插值、列要求均不变。
+ *
+ * GY-R71 取消片（`conversations`，2026-10-30）：`conversations/store-pg.ts` 的作业取消面。
+ *   - 新增 `cancelTurnJob` 一条**单语句 CAS** UPDATE（`conversation_turns` 按
+ *     `id`/`owner_id`/`job_state IN ('queued','running')`，带 `RETURNING`）；
+ *   - `settleTurnJob` 的次序修正（**先 CAS 再插回答**）把原来的一条 UPDATE 拆成两条
+ *     （先 `UPDATE … SET job_state/job_error_code/revision … RETURNING id`，再
+ *     `UPDATE … SET answer_id = COALESCE(…) RETURNING …`）⇒ UPDATE +1、RETURNING +1。
+ *   ⇒ 两块同时 +2 条字面量、+2 条 UPDATE、+2 处 RETURNING；逐文件 `conversations` +2；
+ *   列要求仍全部已覆盖（缺 0 条），INSERT/DELETE/SELECT、引用表、行锁、不可判插值**不变**。
+ *   8 文件块：字面量 164 → **166**、UPDATE 29 → **31**、RETURNING 65 → **67**、逐文件 `conversations`
+ *   17 → **19**；21 文件块：字面量 301 → **303**、UPDATE 54 → **56**、RETURNING 93 → **95**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 164,
-  statements: { INSERT: 27, UPDATE: 29, SELECT: 76, DELETE: 32 },
-  returningClauses: 65,
+  sqlLiterals: 166,
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 76, DELETE: 32 },
+  returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1250,
+  columnRequirements: 1269,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
   community: 44,
-  conversations: 17,
+  conversations: 19,
   favorites: 15,
   history: 16,
   messages: 15,
@@ -779,12 +790,25 @@ const TABLE_WIDE_COLUMN = '*';
  *   （`admin/ops/jobs-pg.ts` 的 `lockSql` 补 3 列 ×3 源、`updateSql` 的 `RETURNING` 补 `updated_at` ×3
  *   源 = 12 条 SELECT 要求；那 12 列三表本来就全授，因此只推高列要求总数，没推高缺口）。
  *   本片**零迁移**（表 0001 就有，DDL 不动），故 `verify-migrations-unique` 读数不变。
+ * ㉓ 2026-10-30 R72-W3 合流 `upstream/main`@`344f4423`（GY-R71 作业台账 #785 × GY-R71 取消片 #787）：
+ *   以下读数是**合并树上重新实测**（不是把两侧旧值相加；两侧原值：本片 303／`{47,54,161,41}`／93／30／
+ *   50 表／1943／1889，main 303／`{46,56,161,40}`／95／29／49 表／1928／1874）。本片带入 `jobs/ledger.ts`
+ *   的 2 条字面量（`:269` upsert `INSERT … ON CONFLICT (id) DO UPDATE`、`:387` 注销清理的
+ *   `DELETE FROM public.jobs WHERE owner_id = $1::uuid`）⇒ 字面量 301 → **305**、INSERT 46 → **47**、
+ *   DELETE 40 → **41**、ON CONFLICT 29 → **30**、引用表 49 → **50**（`public.jobs`）、审计文件数 21 → **22**；
+ *   取消片在 `conversations/store-pg.ts` 加的两条 UPDATE（`:370` 的 `cancelTurnJob`、`:387` 的
+ *   `settleTurnJob` 先 CAS 再写回答）各带 `RETURNING` ⇒ UPDATE 54 → **56**、RETURNING 93 → **95**；
+ *   列要求 1909 → **1962**／已覆盖 1855 → **1908**（缺口仍 **0**）= 本片 34 条（`jobs/ledger.ts` 22 +
+ *   `admin/ops/jobs-pg.ts` 12）＋取消片 19 条（那两条 UPDATE 的 SET/WHERE/RETURNING 列），用到的列都已在
+ *   `20-login-roles.sql` 授权面内（本片**零迁移、零新授权**；`GRANT DELETE ON public.jobs` 是既有用户在
+ *   2026-10-30 批准的授权面，登记在 `gy-r71-jobs-ledger-purge-grant` 区）。SELECT 161、`SELECT *` 15
+ *   （`t.*` 4）、行锁 26+17、行锁要求 43＋豁免 1、函数调用 2、无顶层 FROM 17、不可判插值 5、ledger 豁免 33 不变。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 22,
-  sqlLiterals: 303,
-  statements: { INSERT: 47, UPDATE: 54, SELECT: 161, DELETE: 41 },
-  returningClauses: 93,
+  sqlLiterals: 305,
+  statements: { INSERT: 47, UPDATE: 56, SELECT: 161, DELETE: 41 },
+  returningClauses: 95,
   onConflictClauses: 30,
   selectStar: 15,
   qualifiedStar: 4,
@@ -792,8 +816,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 17,
   referencedTables: 50,
-  columnRequirements: 1943,
-  coveredRequirements: 1889,
+  columnRequirements: 1962,
+  coveredRequirements: 1908,
   ledgerExemptions: 33,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
@@ -808,7 +832,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 13,
   'community': 44,
-  'conversations': 17,
+  'conversations': 19,
   'favorites': 15,
   'history': 16,
   'jobs/ledger.ts': 2,
@@ -826,7 +850,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'speech': 17,
 };
 
-/** 扩展审计引用到的表（49 张；含 catalog_read 视图，迁移期不判权限）。 */
+/** 扩展审计引用到的表（50 张；含 catalog_read 视图，迁移期不判权限）。 */
 const EXPECTED_EXTENDED_TABLES = [
   'catalog_read.current_knowledge',
   'public.admin_categories',
