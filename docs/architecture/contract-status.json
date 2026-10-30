@@ -1271,7 +1271,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "686-729",
+          "lines": "700-743",
           "symbol": "async function createConversation("
         },
         {
@@ -1424,7 +1424,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "950-969",
+          "lines": "964-983",
           "symbol": "async function listTurns("
         },
         {
