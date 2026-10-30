@@ -10,19 +10,29 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 import {
+  API_PID_SCHEMA,
   DEFAULT_DATABASE,
   DEFAULT_PORTS,
+  INSTANCE_FLAG_PREFIX,
+  OWNERSHIP,
+  OWNERSHIP_CHECKS,
   PORT_MAX_OFFSET,
   REQUIRED_ENDPOINTS,
+  ROOT_FLAG_PREFIX,
   SCHEMA_ID,
+  START_TIME_TOLERANCE_MS,
   allEndpointsExpected,
+  apiStatusLabel,
+  applyApiStop,
   assertNoSecretLeaks,
   assertSqlIdentifier,
+  assessApiOwnership,
   buildConsentPoliciesCountSql,
   buildCreateDatabaseSql,
   buildDatabaseExistsSql,
   buildDatabaseUrl,
   buildInitdbArgs,
+  buildInstanceFlags,
   buildPgStartArgs,
   buildPgStopArgs,
   buildPsqlArgs,
@@ -30,14 +40,17 @@ import {
   canonicalize,
   classifyMigrateFailure,
   describeHolder,
+  describeOwnershipChecks,
   findSecretLeaks,
   keyDescriptor,
   knownBoundaryLines,
   normalizeOccupancy,
+  parseApiPidFile,
   parseMigrateOutput,
   planPort,
   redactConnectionStrings,
   redactSecrets,
+  serializeApiPidFile,
   serializeSummary,
 } from '../../tools/lib/local-env.mjs';
 
@@ -422,4 +435,370 @@ test('脱敏：连接串口令与密钥值逐字打码（长的先替换）', ()
   assert.equal(redactConnectionStrings('postgres://postgres:pw@127.0.0.1:5555/gengyun'), 'postgres://postgres@127.0.0.1:5555/gengyun');
   assert.equal(redactSecrets(`KEY=${secret} 以及 ${secret}`, [secret]), 'KEY=[REDACTED] 以及 [REDACTED]');
   assert.equal(redactSecrets('nothing to redact', []), 'nothing to redact');
+});
+
+// ---------------------------------------------------------------------------
+// ⑥ 停止前的归属核实（PID 复用 / 端口归属 / 旧格式兼容）
+//
+// 现场的每一块都由用例注入：进程元数据、监听者、`/health` 读数。⛔ 单测里**不真杀进程**
+// （`kill` 是注入的假函数，只记调用次数），也不起服务、不发 HTTP。
+// ---------------------------------------------------------------------------
+
+/** 跨平台绝对路径夹具（沿用本文件既有口径：⛔ 不写字面量 Windows 路径）。 */
+const WORK_TREE_ROOT = path.resolve(path.sep, 'wt', 'localenv');
+const OTHER_WORK_TREE = path.resolve(path.sep, 'wt', 'other');
+
+/** 本实例 UUID（真实运行时每次 `up` 现生成；这里固定一份便于断言）。 */
+const INSTANCE_TOKEN = '11111111-2222-4333-8444-555555555555';
+const FOREIGN_TOKEN = '99999999-8888-4777-8666-555555555555';
+
+/** pid 文件写入时刻（工具侧，毫秒级）。 */
+const PID_FILE_WRITTEN_AT = '2026-10-30T06:00:00.000Z';
+/** 进程 OS 启动时刻（`Win32_Process.CreationDate`，秒级）。 */
+const PROCESS_STARTED_AT = '2026-10-30T06:00:00Z';
+/** 判定用的「当前时刻」：距进程启动 300 秒。 */
+const ASSESS_NOW = new Date('2026-10-30T06:05:00.000Z');
+
+function v2PidRecord(overrides = {}) {
+  return {
+    format: 'v2',
+    pid: 4321,
+    instanceToken: INSTANCE_TOKEN,
+    startedAt: PID_FILE_WRITTEN_AT,
+    workTreeRoot: WORK_TREE_ROOT,
+    apiPort: DEFAULT_PORTS.api,
+    detail: null,
+    ...overrides,
+  };
+}
+
+/** 本工具自己 `spawn` 出来的那个进程：命令行带实例标识与工作树根。 */
+function ownedProcess(overrides = {}) {
+  return {
+    pid: 4321,
+    alive: true,
+    startTime: PROCESS_STARTED_AT,
+    commandLine: [
+      path.join(path.sep, 'Program Files', 'nodejs', 'node.exe'),
+      path.join(WORK_TREE_ROOT, 'services', 'api', 'src', 'server.ts'),
+      `${INSTANCE_FLAG_PREFIX}${INSTANCE_TOKEN}`,
+      `${ROOT_FLAG_PREFIX}${WORK_TREE_ROOT}`,
+    ].join(' '),
+    detail: null,
+    ...overrides,
+  };
+}
+
+function ownedListener(overrides = {}) {
+  return { port: DEFAULT_PORTS.api, listening: true, pid: 4321, psError: null, ...overrides };
+}
+
+/** 当前 API 不回显 instanceToken ⇒ 端口侧走 uptime 反推（300s 前启动 ⇒ 与 OS 启动时刻对齐）。 */
+function ownedHealth(overrides = {}) {
+  return { reachable: true, instanceToken: null, uptimeSeconds: 300, detail: null, ...overrides };
+}
+
+function assess(overrides = {}) {
+  return assessApiOwnership({
+    pidRecord: v2PidRecord(),
+    workTreeRoot: WORK_TREE_ROOT,
+    processInfo: ownedProcess(),
+    listener: ownedListener(),
+    health: ownedHealth(),
+    now: ASSESS_NOW,
+    ...overrides,
+  });
+}
+
+/** 假 killer：⛔ 绝不真杀进程，只记调用次数与参数。 */
+function fakeKiller() {
+  const calls = [];
+  return { calls, kill: (pid) => { calls.push(pid); } };
+}
+
+function failingCheckIds(assessment) {
+  return assessment.checks.filter((item) => item.status === 'fail').map((item) => item.id);
+}
+
+test('归属核实：四条判据全成立 ⇒ 判「在跑」，且 kill 恰好一次', () => {
+  const assessment = assess();
+  assert.equal(assessment.verdict, OWNERSHIP.OWNED);
+  assert.equal(assessment.killAllowed, true);
+  assert.equal(assessment.statusLabel, '在跑');
+  assert.deepEqual(
+    assessment.checks.map((item) => `${item.side}/${item.id}:${item.status}`),
+    [
+      'pid/work_tree:pass',
+      'pid/instance_marker:pass',
+      'pid/start_time:pass',
+      'port/port_owner:pass',
+      'port/instance_echo:pass',
+    ],
+  );
+  const killer = fakeKiller();
+  const outcome = applyApiStop({ assessment, kill: killer.kill });
+  assert.equal(outcome.killed, true);
+  assert.equal(outcome.killCalls, 1);
+  assert.deepEqual(killer.calls, [4321]);
+  assert.equal(describeOwnershipChecks(assessment).length, 5);
+});
+
+test('归属核实：pid 存在但命令行不含实例标识 ⇒ 「不属本工具」，零 kill 调用', () => {
+  // 现场：API 自行退出 ⇒ 系统把同一个 pid 复用给了一个无关进程（命令行里当然没有我们的 UUID）。
+  const assessment = assess({
+    processInfo: ownedProcess({ commandLine: `${path.join(path.sep, 'node.exe')} ${path.join(OTHER_WORK_TREE, 'bridge.js')}` }),
+    listener: ownedListener({ listening: false, pid: null }),
+  });
+  assert.equal(assessment.verdict, OWNERSHIP.NOT_OWNED);
+  assert.equal(assessment.killAllowed, false);
+  assert.equal(assessment.statusLabel, '已复用（不属本工具）');
+  assert.deepEqual(failingCheckIds(assessment), [OWNERSHIP_CHECKS.INSTANCE_MARKER]);
+  assert.match(assessment.headline, /PID 已复用 \/ 归属不符，已跳过/);
+
+  const killer = fakeKiller();
+  const outcome = applyApiStop({ assessment, kill: killer.kill });
+  assert.equal(outcome.killed, false);
+  assert.equal(outcome.killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+});
+
+test('归属核实：进程启动时间早于 pid 文件写入 ⇒ 「不属本工具」，零 kill 调用', () => {
+  // 现场：pid 文件是旧的，pid 上坐着一个**比它更老**的进程 ⇒ 一定不是我们的。
+  // （health 的 uptime 与那个更老的进程自洽：900s 前启动 ⇒ 只剩 start_time 这一条判红。）
+  const assessment = assess({
+    processInfo: ownedProcess({ startTime: '2026-10-30T05:50:00Z' }),
+    health: ownedHealth({ uptimeSeconds: 900 }),
+  });
+  assert.equal(assessment.verdict, OWNERSHIP.NOT_OWNED);
+  assert.equal(assessment.killAllowed, false);
+  assert.deepEqual(failingCheckIds(assessment), [OWNERSHIP_CHECKS.START_TIME]);
+  assert.match(assessment.headline, /早于 pid 文件写入时间/);
+
+  const killer = fakeKiller();
+  assert.equal(applyApiStop({ assessment, kill: killer.kill }).killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+});
+
+test('归属核实：启动时间容差 —— 差 1 秒内算「不早于」，差 2 秒以上判复用', () => {
+  assert.equal(assess({ processInfo: ownedProcess({ startTime: '2026-10-30T05:59:59Z' }) }).verdict, OWNERSHIP.OWNED);
+  assert.equal(assess({ processInfo: ownedProcess({ startTime: '2026-10-30T05:59:57Z' }) }).verdict, OWNERSHIP.NOT_OWNED);
+  assert.equal(START_TIME_TOLERANCE_MS, 2000);
+});
+
+test('归属核实：/health 回显别人的 instanceToken ⇒ 不杀（⛔ 不看状态码、不看固定字符串）', () => {
+  const assessment = assess({ health: ownedHealth({ instanceToken: FOREIGN_TOKEN }) });
+  assert.equal(assessment.verdict, OWNERSHIP.NOT_OWNED);
+  assert.equal(assessment.killAllowed, false);
+  assert.deepEqual(failingCheckIds(assessment), [OWNERSHIP_CHECKS.INSTANCE_ECHO]);
+  assert.match(assessment.headline, /instanceToken/);
+
+  const killer = fakeKiller();
+  assert.equal(applyApiStop({ assessment, kill: killer.kill }).killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+});
+
+test('归属核实：旧格式 pid 文件（纯数字）⇒ 降级成「无法核实」：不杀 + 提示', () => {
+  const assessment = assess({ pidRecord: parseApiPidFile('4321\n') });
+  assert.equal(assessment.verdict, OWNERSHIP.UNVERIFIABLE);
+  assert.equal(assessment.killAllowed, false);
+  assert.equal(assessment.statusLabel, '无法核实（旧格式 pid 文件）');
+  assert.match(assessment.headline, /无法核实/);
+  assert.match(assessment.detail, /处理/);
+
+  const killer = fakeKiller();
+  const outcome = applyApiStop({ assessment, kill: killer.kill });
+  assert.equal(outcome.killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+});
+
+test('status 三态：在跑 / 已复用（不属本工具）/ 已退出 三条互不相同，⛔ 复用的 pid 不许报成「在跑」', () => {
+  const owned = assess();
+  const reused = assess({
+    processInfo: ownedProcess({ commandLine: `${path.join(path.sep, 'node.exe')} other.js` }),
+    listener: ownedListener({ listening: false, pid: null }),
+  });
+  const exited = assess({ processInfo: { pid: 4321, alive: false, startTime: null, commandLine: null, detail: null } });
+  const labels = [owned.statusLabel, reused.statusLabel, exited.statusLabel];
+  assert.deepEqual(labels, ['在跑', '已复用（不属本工具）', '已退出']);
+  assert.equal(new Set(labels).size, 3);
+  assert.notEqual(reused.statusLabel, '在跑');
+  assert.equal(apiStatusLabel(OWNERSHIP.EXITED), '已退出');
+  // 旧格式是第四种降级读数，⛔ 不许并进「在跑」。
+  assert.equal(apiStatusLabel(OWNERSHIP.UNVERIFIABLE), '无法核实（旧格式 pid 文件）');
+  assert.equal(apiStatusLabel('something-else'), '状态未知');
+});
+
+test('pid 文件 v2：序列化 + 解析往返一致、两次逐字节相同，且不含任何密钥字段', () => {
+  const record = {
+    pid: 4321,
+    instanceToken: INSTANCE_TOKEN,
+    startedAt: PID_FILE_WRITTEN_AT,
+    workTreeRoot: WORK_TREE_ROOT,
+    apiPort: DEFAULT_PORTS.api,
+  };
+  const text = serializeApiPidFile(record);
+  assert.equal(serializeApiPidFile(record), text);
+  assert.equal(JSON.parse(text).schema, API_PID_SCHEMA);
+  const parsed = parseApiPidFile(text);
+  assert.equal(parsed.format, 'v2');
+  assert.deepEqual(
+    {
+      pid: parsed.pid,
+      instanceToken: parsed.instanceToken,
+      startedAt: parsed.startedAt,
+      workTreeRoot: parsed.workTreeRoot,
+      apiPort: parsed.apiPort,
+    },
+    record,
+  );
+  for (const banned of ['SESSION_SIGNING_KEY', 'DELETION_LEDGER_KEY', 'password', 'secret']) {
+    assert.equal(text.includes(banned), false, banned);
+  }
+});
+
+test('pid 文件向后兼容：纯数字读成 legacy、坏输入读成 invalid（⛔ 都不许读成一个「能杀」的 pid）', () => {
+  const legacy = parseApiPidFile('4321\n');
+  assert.equal(legacy.format, 'legacy');
+  assert.equal(legacy.pid, 4321);
+  assert.match(legacy.detail, /旧格式/);
+  for (const text of ['', '   \n', 'not a pid', '{"schema":"x"}']) {
+    const parsed = parseApiPidFile(text);
+    assert.notEqual(parsed.format, 'v2', text);
+    assert.equal(parsed.instanceToken, null, text);
+  }
+  // v2 形状但缺 instanceToken ⇒ invalid（⛔ 不许当作「有 pid 就能杀」）。
+  const partial = parseApiPidFile(
+    JSON.stringify({ schema: API_PID_SCHEMA, pid: 4321, startedAt: PID_FILE_WRITTEN_AT, workTreeRoot: WORK_TREE_ROOT }),
+  );
+  assert.equal(partial.format, 'invalid');
+  assert.match(partial.detail, /缺字段/);
+  // 序列化只接受完整身份：⛔ 缺一项就抛错，不许写半份。
+  assert.throws(() => serializeApiPidFile({ pid: 0, instanceToken: INSTANCE_TOKEN, startedAt: PID_FILE_WRITTEN_AT, workTreeRoot: WORK_TREE_ROOT }), /pid/);
+  assert.throws(() => serializeApiPidFile({ pid: 4321, instanceToken: '', startedAt: PID_FILE_WRITTEN_AT, workTreeRoot: WORK_TREE_ROOT }), /instanceToken/);
+  assert.throws(() => serializeApiPidFile({ pid: 4321, instanceToken: INSTANCE_TOKEN, startedAt: 'nope', workTreeRoot: WORK_TREE_ROOT }), /startedAt/);
+  assert.throws(() => serializeApiPidFile({ pid: 4321, instanceToken: INSTANCE_TOKEN, startedAt: PID_FILE_WRITTEN_AT, workTreeRoot: '.local-env' }), /绝对路径/);
+});
+
+test('实例标识：命令行上的两个落点与判据口径一致（含空格路径被加引号后仍成立）', () => {
+  const flags = buildInstanceFlags({ instanceToken: INSTANCE_TOKEN, workTreeRoot: WORK_TREE_ROOT });
+  assert.deepEqual(flags, [`${INSTANCE_FLAG_PREFIX}${INSTANCE_TOKEN}`, `${ROOT_FLAG_PREFIX}${WORK_TREE_ROOT}`]);
+  const commandLine = ['node.exe', 'services/api/src/server.ts', ...flags].join(' ');
+  assert.equal(assess({ processInfo: ownedProcess({ commandLine }) }).verdict, OWNERSHIP.OWNED);
+
+  // 工作树根含空格时，OS 读回来的命令行会带引号 ⇒ 判据必须去引号后比较，否则假红。
+  const spacedRoot = path.resolve(path.sep, 'wt dir', 'localenv');
+  const spacedFlags = buildInstanceFlags({ instanceToken: INSTANCE_TOKEN, workTreeRoot: spacedRoot });
+  const quoted = `"node.exe" "server.ts" "${spacedFlags[0]}" "${spacedFlags[1]}"`;
+  const spaced = assessApiOwnership({
+    pidRecord: v2PidRecord({ workTreeRoot: spacedRoot }),
+    workTreeRoot: spacedRoot,
+    processInfo: ownedProcess({ commandLine: quoted }),
+    listener: ownedListener(),
+    health: ownedHealth(),
+    now: ASSESS_NOW,
+  });
+  assert.equal(spaced.verdict, OWNERSHIP.OWNED);
+
+  assert.throws(() => buildInstanceFlags({ instanceToken: '', workTreeRoot: WORK_TREE_ROOT }), /instanceToken/);
+  assert.throws(() => buildInstanceFlags({ instanceToken: 'a b', workTreeRoot: WORK_TREE_ROOT }), /instanceToken/);
+  assert.throws(() => buildInstanceFlags({ instanceToken: INSTANCE_TOKEN, workTreeRoot: '.local-env' }), /绝对路径/);
+});
+
+test('归属核实：pid 文件属于另一个工作树 ⇒ 不杀', () => {
+  const assessment = assess({ pidRecord: v2PidRecord({ workTreeRoot: OTHER_WORK_TREE }) });
+  assert.equal(assessment.verdict, OWNERSHIP.NOT_OWNED);
+  assert.ok(failingCheckIds(assessment).includes(OWNERSHIP_CHECKS.WORK_TREE));
+  assert.match(assessment.headline, /PID 已复用 \/ 归属不符，已跳过/);
+  const killer = fakeKiller();
+  assert.equal(applyApiStop({ assessment, kill: killer.kill }).killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+});
+
+test('归属核实：端口由别的 pid 持有 ⇒ 不杀（⛔「端口在听」不算归属）', () => {
+  const assessment = assess({ listener: ownedListener({ pid: 9999 }) });
+  assert.equal(assessment.verdict, OWNERSHIP.NOT_OWNED);
+  assert.deepEqual(failingCheckIds(assessment), [OWNERSHIP_CHECKS.PORT_OWNER]);
+  assert.match(assessment.headline, /9999/);
+  const killer = fakeKiller();
+  assert.equal(applyApiStop({ assessment, kill: killer.kill }).killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+});
+
+test('归属核实：端口在听但拿不到持有进程 / 没有端口读数 ⇒ fail-closed（不杀）', () => {
+  const unknownOwner = assess({ listener: ownedListener({ pid: null }) });
+  assert.equal(unknownOwner.verdict, OWNERSHIP.NOT_OWNED);
+  assert.deepEqual(failingCheckIds(unknownOwner), [OWNERSHIP_CHECKS.PORT_OWNER]);
+
+  const noProbe = assess({ listener: null });
+  assert.equal(noProbe.verdict, OWNERSHIP.NOT_OWNED);
+  assert.deepEqual(failingCheckIds(noProbe), [OWNERSHIP_CHECKS.PORT_OWNER]);
+
+  for (const assessment of [unknownOwner, noProbe]) {
+    const killer = fakeKiller();
+    assert.equal(applyApiStop({ assessment, kill: killer.kill }).killCalls, 0);
+    assert.deepEqual(killer.calls, []);
+  }
+});
+
+test('归属核实：端口没在听但 PID 侧身份成立 ⇒ 允许停（没有端口归属可冲突）', () => {
+  const assessment = assess({ listener: ownedListener({ listening: false, pid: null }) });
+  assert.equal(assessment.verdict, OWNERSHIP.OWNED);
+  assert.deepEqual(
+    assessment.checks.filter((item) => item.side === 'port').map((item) => item.status),
+    ['skipped', 'skipped'],
+  );
+});
+
+test('归属核实：端口在听但 /health 无响应 ⇒ 不杀（⛔ 不「尽力而为」）', () => {
+  const assessment = assess({ health: { reachable: false, instanceToken: null, uptimeSeconds: null, detail: '请求失败：TimeoutError' } });
+  assert.equal(assessment.verdict, OWNERSHIP.NOT_OWNED);
+  assert.deepEqual(failingCheckIds(assessment), [OWNERSHIP_CHECKS.INSTANCE_ECHO]);
+  const killer = fakeKiller();
+  assert.equal(applyApiStop({ assessment, kill: killer.kill }).killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+});
+
+test('归属核实：/health 的 uptime 反推启动时刻对不上 ⇒ 不杀（端口上应答的不是这个进程）', () => {
+  // 30 秒前才启动 ≠ 300 秒前启动的那个 pid：差出分钟级 ⇒ 判「归属不符」。
+  const assessment = assess({ health: ownedHealth({ uptimeSeconds: 30 }) });
+  assert.equal(assessment.verdict, OWNERSHIP.NOT_OWNED);
+  assert.deepEqual(failingCheckIds(assessment), [OWNERSHIP_CHECKS.INSTANCE_ECHO]);
+  assert.match(assessment.headline, /相差/);
+  // 读不到 uptime 的响应者（不是我们的 API）同样判红，⛔ 不许当「没法判就算过」。
+  const noUptime = assess({ health: ownedHealth({ uptimeSeconds: null }) });
+  assert.equal(noUptime.verdict, OWNERSHIP.NOT_OWNED);
+  assert.deepEqual(failingCheckIds(noUptime), [OWNERSHIP_CHECKS.INSTANCE_ECHO]);
+});
+
+test('归属核实：没有 pid 记录 / 进程已退出 ⇒ 「已退出」，零 kill（旧格式 + 已退出也报「已退出」）', () => {
+  const none = assessApiOwnership({ pidRecord: null, workTreeRoot: WORK_TREE_ROOT });
+  assert.equal(none.verdict, OWNERSHIP.EXITED);
+  assert.equal(none.statusLabel, '已退出');
+  assert.equal(none.killAllowed, false);
+
+  const dead = assess({ processInfo: { pid: 4321, alive: false, startTime: null, commandLine: null, detail: null } });
+  assert.equal(dead.verdict, OWNERSHIP.EXITED);
+
+  const legacyDead = assess({
+    pidRecord: parseApiPidFile('4321'),
+    processInfo: { pid: 4321, alive: false, startTime: null, commandLine: null, detail: null },
+  });
+  assert.equal(legacyDead.verdict, OWNERSHIP.EXITED);
+
+  for (const assessment of [none, dead, legacyDead]) {
+    const killer = fakeKiller();
+    assert.equal(applyApiStop({ assessment, kill: killer.kill }).killCalls, 0);
+    assert.deepEqual(killer.calls, []);
+  }
+});
+
+test('applyApiStop：⛔ 没有 killAllowed 就一次都不调；pid 不合法/没给 killer 也不瞎杀', () => {
+  const killer = fakeKiller();
+  const blocked = { verdict: OWNERSHIP.NOT_OWNED, killAllowed: false, pid: 4321 };
+  assert.equal(applyApiStop({ assessment: blocked, kill: killer.kill }).killCalls, 0);
+  assert.equal(applyApiStop({ assessment: { verdict: OWNERSHIP.OWNED, killAllowed: true, pid: null }, kill: killer.kill }).killCalls, 0);
+  assert.equal(applyApiStop({ assessment: { verdict: OWNERSHIP.OWNED, killAllowed: true, pid: 4321 }, kill: null }).killCalls, 0);
+  assert.deepEqual(killer.calls, []);
+  assert.throws(() => applyApiStop({}), /assessment/);
+  assert.throws(() => applyApiStop({ assessment: blocked, kill: 'nope' }), /kill/);
 });

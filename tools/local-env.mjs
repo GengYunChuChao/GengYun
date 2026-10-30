@@ -12,6 +12,10 @@
  *   3. **不在仓库里留任何密钥**：两个临时密钥（32 字节 CSPRNG，base64url）只进进程环境与
  *      `<state-dir>/secrets.env`（state-dir 默认在**仓库外**）；输出里只有「生成了/长度满足」布尔，
  *      打印前还会跑一次泄密断言（{@link assertNoSecretLeaks}）。
+ *   4. **停止前必须核实归属**：`api.pid` 里的 pid 会被系统复用（API 自行退出后尤其常见），
+ *      而「pid 活着」「端口在听」都不能证明那个进程是本工具的 API —— 据此发终止信号会**误杀无关进程**
+ *      并可能丢掉对方未保存的工作。判据在 {@link assessApiOwnership}：命令行上的本实例 UUID ＋
+ *      进程启动时间 ＋ 端口套接字归属 ＋ `/health` 身份回显，**任一不成立就不杀**。
  *
  * ⛔ 本工具不修改任何产品代码、不新增迁移、不往 `consent_policies` 插行（那是另一个切片的事）。
  * ⛔ 副作用（建簇/起进程/写文件/发 HTTP）只在本文件；纯判定在 `tools/lib/local-env.mjs`（可单测）。
@@ -19,7 +23,8 @@
  * 退出码（`up`）：
  *   0 全部就绪且 6 个端点都符合预期；1 用法/内部错误；2 端口被占（`--strict-port`）或换号耗尽；
  *   3 服务起来了但端点读数不符合预期（摘要仍会写盘）；4 迁移失败（已回滚）；5 PG 建簇/启动/建库失败（已回滚）。
- * `down` / `status`：0 表示已收干净/读数成功（「本来就没起」也是 0）。
+ * `down` / `status`：0 表示已收干净/读数成功（「本来就没起」也是 0）；
+ * **5** 表示停止失败或端口仍有监听（包括「归属核实没通过 ⇒ 已跳过，API 端口仍在听」这种要人看一眼的情况）。
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -32,17 +37,22 @@ import {
   DEFAULT_DATABASE,
   DEFAULT_PORTS,
   INITDB_DEFAULTS,
+  INSTANCE_ENV_NAME,
+  OWNERSHIP,
   PORT_MAX_OFFSET,
   REQUIRED_ENDPOINTS,
   SCHEMA_ID,
   SECRET_ENV_NAMES,
   allEndpointsExpected,
+  applyApiStop,
   assertNoSecretLeaks,
+  assessApiOwnership,
   buildConsentPoliciesCountSql,
   buildCreateDatabaseSql,
   buildDatabaseExistsSql,
   buildDatabaseUrl,
   buildInitdbArgs,
+  buildInstanceFlags,
   buildPgStartArgs,
   buildPgStatusArgs,
   buildPgStopArgs,
@@ -50,12 +60,15 @@ import {
   buildSummary,
   classifyMigrateFailure,
   describeHolder,
+  describeOwnershipChecks,
   keyDescriptor,
   knownBoundaryLines,
   normalizeOccupancy,
+  parseApiPidFile,
   parseMigrateOutput,
   planPort,
   redactConnectionStrings,
+  serializeApiPidFile,
   serializeSummary,
 } from './lib/local-env.mjs';
 
@@ -90,8 +103,8 @@ export const EXIT = Object.freeze({
 
 const USAGE_TEXT = `用法：
   node tools/local-env.mjs up      [选项]    起 PG + 建库 + 迁移 + 后台起 stub API + 打 6 个端点 + 打印摘要 JSON
-  node tools/local-env.mjs down    [选项]    停 API（按 pid 文件）与 PG；幂等（本来没起 ⇒ exit 0）
-  node tools/local-env.mjs status  [选项]    只读：在跑/没跑 + 端口 + pid
+  node tools/local-env.mjs down    [选项]    停 API（**先核实归属**：核实不过 ⇒ 不杀、只提示）与 PG；幂等（本来没起 ⇒ exit 0）
+  node tools/local-env.mjs status  [选项]    只读：在跑 / 已复用（不属本工具）/ 已退出 + 端口 + pid + 判据读数
 
 选项（up）：
   --pg-port <n>        PG 首选端口（默认 ${DEFAULT_PORTS.pg}）
@@ -296,6 +309,190 @@ function sleep(ms) {
 }
 
 // ---------------------------------------------------------------------------
+// 归属核实的输入采集（进程元数据 / 监听者 / /health 身份）
+//
+// 这一节只负责「读现场」，判定全部交给 `tools/lib/local-env.mjs` 的
+// `assessApiOwnership`（纯函数、可在单测里注入假现场）。⛔ 本文件不自己判归属。
+// ---------------------------------------------------------------------------
+
+/**
+ * 读某个 pid 的 OS 元数据：命令行 + 启动时刻。
+ *
+ * 为什么只信 OS：pid 会被复用，而 `CommandLine` 与 `CreationDate` 是 OS 记的、**跟着进程换人**。
+ * 读不到（PowerShell 不可用 / 进程不存在）时**不猜**：`startTime`/`commandLine` 留 null，
+ * 纯逻辑那边会把两条 PID 侧判据判红 ⇒ 不杀（fail-closed）。
+ */
+function readProcessIdentity(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return { pid: null, alive: false, startTime: null, commandLine: null, detail: 'pid 非法' };
+  const script = [
+    `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}" -ErrorAction SilentlyContinue;`,
+    "if ($p -eq $null) { '' } else {",
+    "$started = if ($p.CreationDate) { $p.CreationDate.ToUniversalTime().ToString('s') + 'Z' } else { $null };",
+    '[pscustomobject]@{ pid = [int]$p.ProcessId; startTime = $started; commandLine = $p.CommandLine } | ConvertTo-Json -Compress',
+    '}',
+  ].join(' ');
+  const result = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { timeoutMs: 30000 });
+  const text = result.stdout.trim();
+  if (result.status === 0 && text === '') {
+    // CIM 明确说没有这个 pid ⇒ 进程已退出（这是「已退出」，不是「归属不明」）。
+    return { pid, alive: false, startTime: null, commandLine: null, detail: null };
+  }
+  if (result.status !== 0) {
+    // 探测本身失败：⛔ 不许把「读不到」当成「活着但没问题」，也不许当成「已退出」。
+    return {
+      pid,
+      alive: pidAlive(pid),
+      startTime: null,
+      commandLine: null,
+      detail: `进程元数据不可读：${(result.stderr || result.errorMessage || 'PowerShell 失败').split(/\r?\n/)[0].slice(0, 200)}`,
+    };
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      pid,
+      alive: true,
+      startTime: typeof parsed?.startTime === 'string' && parsed.startTime !== '' ? parsed.startTime : null,
+      commandLine: typeof parsed?.commandLine === 'string' && parsed.commandLine !== '' ? parsed.commandLine : null,
+      detail: null,
+    };
+  } catch {
+    return { pid, alive: pidAlive(pid), startTime: null, commandLine: null, detail: '进程元数据不是合法 JSON' };
+  }
+}
+
+/** 端口监听者：**端口 ↔ pid 绑定**（不是「端口在听」这一条）。 */
+async function probeListenerOwner(port) {
+  if (!Number.isInteger(port)) return null;
+  const probe = await probePorts([port]);
+  const holder = probe.occupancy.get(port) ?? null;
+  return {
+    port,
+    listening: holder !== null,
+    pid: holder?.pid ?? null,
+    psError: probe.psError,
+  };
+}
+
+/**
+ * 读 `/health` 的身份读数。
+ *
+ * ⛔ 判据不在这里：这里只取回「响应者自称的实例 token（可选）」与 `uptime_s`，
+ * 是不是本实例由 `assessApiOwnership` 判。⛔ 不看状态码、⛔ 不匹配固定字符串
+ * （`status=ok` 那种判据任何无关的 Fastify 服务都能满足）。
+ */
+async function probeHealthIdentity(baseUrl, timeoutMs = 5000, attempts = 3) {
+  let last = { reachable: false, instanceToken: null, uptimeSeconds: null, detail: '尚无响应' };
+  for (let attempt = 0; attempt < Math.max(1, attempts); attempt += 1) {
+    try {
+      const response = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(timeoutMs) });
+      const body = await response.json().catch(() => null);
+      if (body === null) {
+        last = { reachable: false, instanceToken: null, uptimeSeconds: null, detail: '响应不是 JSON' };
+      } else {
+        const token =
+          typeof body?.meta?.instance_token === 'string' && body.meta.instance_token !== ''
+            ? body.meta.instance_token
+            : typeof body?.instance_token === 'string' && body.instance_token !== ''
+              ? body.instance_token
+              : null;
+        const uptime = Number.isFinite(body?.uptime_s) ? body.uptime_s : null;
+        return { reachable: true, instanceToken: token, uptimeSeconds: uptime, detail: null };
+      }
+    } catch (error) {
+      last = { reachable: false, instanceToken: null, uptimeSeconds: null, detail: `请求失败：${error?.name ?? 'Error'}` };
+    }
+    await sleep(300);
+  }
+  return last;
+}
+
+/**
+ * 读 pid 记录：`api.pid` 优先，没有就退回 `state.json`。
+ *
+ * 旧 `state.json` 只有 `api.pid` ⇒ 归一到 `format:'legacy'`（**不猜**它的身份）。
+ */
+function readApiPidRecord(stateDir, state) {
+  const pidFile = join(stateDir, 'api.pid');
+  if (existsSync(pidFile)) {
+    let text = '';
+    try {
+      text = readFileSync(pidFile, 'utf8');
+    } catch {
+      text = '';
+    }
+    return { ...parseApiPidFile(text), source: pidFile };
+  }
+  const pidFromState = Number(state?.api?.pid);
+  if (!Number.isInteger(pidFromState) || pidFromState <= 0) {
+    return {
+      format: 'invalid',
+      pid: null,
+      instanceToken: null,
+      startedAt: null,
+      workTreeRoot: null,
+      apiPort: null,
+      detail: '没有 api.pid，state.json 里也没有 pid',
+      source: null,
+    };
+  }
+  const token = typeof state?.api?.instanceToken === 'string' ? state.api.instanceToken : null;
+  const startedAt = typeof state?.api?.startedAt === 'string' ? state.api.startedAt : null;
+  const workTreeRoot = typeof state?.api?.workTreeRoot === 'string' ? state.api.workTreeRoot : null;
+  const apiPort = Number.isInteger(Number(state?.api?.port)) ? Number(state.api.port) : null;
+  if (token === null || startedAt === null || workTreeRoot === null) {
+    return {
+      format: 'legacy',
+      pid: pidFromState,
+      instanceToken: null,
+      startedAt: null,
+      workTreeRoot: null,
+      apiPort,
+      detail: 'state.json 里只有 pid（旧格式）：没有 instanceToken / 启动时间 / 工作树根',
+      source: join(stateDir, 'state.json'),
+    };
+  }
+  return { format: 'v2', pid: pidFromState, instanceToken: token, startedAt, workTreeRoot, apiPort, detail: null, source: join(stateDir, 'state.json') };
+}
+
+/**
+ * 采一整套现场并判归属（`up` 的复用判定、`down`、`status` 共用**同一条**路径，
+ * ⛔ 不许各自写一份「pid 活着就当在跑」）。
+ */
+async function assessRunningApi({ stateDir, state, fallbackPort }) {
+  const record = readApiPidRecord(stateDir, state);
+  const apiPort = Number.isInteger(record.apiPort)
+    ? record.apiPort
+    : Number.isInteger(Number(state?.api?.port))
+      ? Number(state.api.port)
+      : fallbackPort;
+  const processInfo = record.pid === null ? null : readProcessIdentity(record.pid);
+  const alive = processInfo !== null && processInfo.alive === true;
+  let listener = null;
+  let health = null;
+  if (alive) {
+    listener = await probeListenerOwner(apiPort);
+    if (listener.listening === true) {
+      health = await probeHealthIdentity(`http://127.0.0.1:${apiPort}`, 5000, 3);
+    }
+  }
+  const assessment = assessApiOwnership({
+    pidRecord: record,
+    workTreeRoot: REPO_ROOT,
+    processInfo: alive ? processInfo : { alive: false, pid: record.pid, startTime: null, commandLine: null },
+    listener,
+    health,
+    now: new Date(),
+  });
+  return { record, assessment, processInfo, listener, health, apiPort };
+}
+
+/** 逐条打印判据（失败项一定打出来，⛔ 不隐藏）。 */
+function printOwnership(assessment, indent = '    ') {
+  for (const line of describeOwnershipChecks(assessment)) say(`${indent}${line}`);
+}
+
+// ---------------------------------------------------------------------------
 // 参数解析
 // ---------------------------------------------------------------------------
 
@@ -401,8 +598,12 @@ async function up(options) {
   let pgStartedHere = false;
   let apiStartedHere = false;
   let apiPid = null;
+  /** 本实例的身份读数（`instanceToken` / 写入时刻 / 工作树根）；复用与新建都会填上。 */
+  let apiInstance = null;
 
   const rollback = () => {
+    // 这里停的是**本次运行刚 spawn 的子进程**：归属由 spawn 关系本身保证
+    // （刚生出来的子进程还没 `api.pid` 里那套「可核实身份」，也不能等 /health —— 它可能根本没起来）。
     if (apiStartedHere) stopApi(apiPid, apiPidFile);
     if (pgStartedHere) {
       const result = run(pgTool(pgBin, 'pg_ctl'), buildPgStopArgs({ dataDir }), { timeoutMs: 60000 });
@@ -414,7 +615,17 @@ async function up(options) {
   say('');
   say('[1/8] 端口探测（Get-NetTCPConnection -State Listen + 持有进程命令行）');
   const pgRunning = pgIsRunning(pgBin, dataDir);
-  const apiRunning = Number.isInteger(previous?.api?.pid) && pidAlive(previous.api.pid);
+  // 复用判定必须**核实归属**：只判「pid 还活着」会把系统复用来的无关进程当成自己的 API，
+  // 于是不启动新实例、还把那个无关 pid 写进 state.json —— 收工时就是一次误杀。
+  const previousApi = await assessRunningApi({ stateDir, state: previous, fallbackPort: options.apiPort });
+  const apiRunning = previousApi.assessment.verdict === OWNERSHIP.OWNED;
+  if (previousApi.assessment.verdict === OWNERSHIP.NOT_OWNED) {
+    warn(`  ！${previousApi.assessment.headline}`);
+    warn('     ⇒ 不复用、⛔ 不发送终止信号；按「没有正在运行的 API」处理（端口被占会自动换号）');
+  } else if (previousApi.assessment.verdict === OWNERSHIP.UNVERIFIABLE) {
+    warn(`  ！${previousApi.assessment.headline}`);
+    warn('     ⇒ 不复用、⛔ 不发送终止信号；新版会写 v2 结构化 api.pid，下次即可核实');
+  }
   const scanPorts = [];
   for (let offset = 0; offset <= PORT_MAX_OFFSET; offset += 1) {
     scanPorts.push(options.pgPort + offset, options.apiPort + offset);
@@ -452,8 +663,8 @@ async function up(options) {
   let apiPort;
   let apiSkipped = [];
   if (apiRunning) {
-    apiPort = Number(previous?.api?.port ?? options.apiPort);
-    say(`  API 已在跑（${apiPort}，pid ${previous.api.pid}）⇒ 复用，不重启`);
+    apiPort = previousApi.apiPort;
+    say(`  API 已在跑（${apiPort}，pid ${previousApi.assessment.pid}，归属已核实）⇒ 复用，不重启`);
   } else {
     const decision = planPort({
       preferred: options.apiPort,
@@ -529,7 +740,13 @@ async function up(options) {
     repoRoot: REPO_ROOT,
     stateDir,
     pg: { port: pgPort, dataDir, host: '127.0.0.1', user: INITDB_DEFAULTS.superuser, database: options.database, version },
-    api: { port: apiPort, pid: apiRunning ? previous.api.pid : null },
+    api: {
+      port: apiPort,
+      pid: apiRunning ? previousApi.assessment.pid : null,
+      instanceToken: apiRunning ? previousApi.record.instanceToken : null,
+      startedAt: apiRunning ? previousApi.record.startedAt : null,
+      workTreeRoot: apiRunning ? previousApi.record.workTreeRoot : null,
+    },
     startedAt,
   });
 
@@ -606,6 +823,9 @@ async function up(options) {
   say('[6/8] 后台起 API（APP_EXECUTION_MODE=stub）');
   const baseUrl = `http://127.0.0.1:${apiPort}`;
   if (!apiRunning) {
+    // 每次 `up` 现生成一个 UUID：它只出现在**这个进程的命令行**（与环境变量）里，
+    // 因此「pid 上那个进程的命令行带着它」就等于「它是我刚起的那个 API」。
+    const instanceToken = randomUUID();
     const apiEnv = {
       ...process.env,
       APP_EXECUTION_MODE: 'stub',
@@ -615,10 +835,13 @@ async function up(options) {
       SESSION_SIGNING_KEY: keyValues.SESSION_SIGNING_KEY,
       DELETION_LEDGER_KEY: keyValues.DELETION_LEDGER_KEY,
       LOG_LEVEL: process.env.GY_LOCAL_ENV_API_LOG_LEVEL ?? 'info',
+      [INSTANCE_ENV_NAME]: instanceToken,
     };
+    // 标识同时放到**命令行**上：Windows 读不到别的进程的环境块，命令行才是可核实的那一份。
+    const instanceFlags = buildInstanceFlags({ instanceToken, workTreeRoot: REPO_ROOT });
     const outFd = openSync(apiOutLog, 'a');
     const errFd = openSync(apiErrLog, 'a');
-    const child = spawn(process.execPath, [API_ENTRY], {
+    const child = spawn(process.execPath, [API_ENTRY, ...instanceFlags], {
       cwd: REPO_ROOT,
       env: apiEnv,
       detached: true,
@@ -628,11 +851,27 @@ async function up(options) {
     child.unref();
     apiPid = child.pid ?? null;
     apiStartedHere = true;
-    writeFileSync(apiPidFile, `${String(apiPid)}\n`, 'utf8');
+    const apiStartedAt = new Date().toISOString();
+    apiInstance = { instanceToken, startedAt: apiStartedAt, workTreeRoot: REPO_ROOT };
+    if (Number.isInteger(apiPid)) {
+      writeFileSync(
+        apiPidFile,
+        serializeApiPidFile({ pid: apiPid, instanceToken, startedAt: apiStartedAt, workTreeRoot: REPO_ROOT, apiPort }),
+        'utf8',
+      );
+    } else {
+      warn('  ！spawn 没有返回 pid ⇒ 不写 api.pid（⛔ 不写一个假 pid 进文件）');
+    }
     say(`  已启动：pid ${String(apiPid)}（日志 ${apiOutLog} / ${apiErrLog}）`);
+    say(`  实例标识：${INSTANCE_ENV_NAME}=${instanceToken}（同时写在命令行上，停止前据此核实归属）`);
   } else {
-    apiPid = previous.api.pid;
-    say(`  API 已在跑：pid ${apiPid} ⇒ 不重启`);
+    apiPid = previousApi.assessment.pid;
+    apiInstance = {
+      instanceToken: previousApi.record.instanceToken,
+      startedAt: previousApi.record.startedAt,
+      workTreeRoot: previousApi.record.workTreeRoot,
+    };
+    say(`  API 已在跑：pid ${apiPid}（归属已核实）⇒ 不重启`);
   }
 
   // ---- ⑦ 等就绪 + 打 6 个端点 ---------------------------------------------
@@ -682,7 +921,13 @@ async function up(options) {
     repoRoot: REPO_ROOT,
     stateDir,
     pg: { port: pgPort, dataDir, host: '127.0.0.1', user: INITDB_DEFAULTS.superuser, database: options.database, version },
-    api: { port: apiPort, pid: apiPid },
+    api: {
+      port: apiPort,
+      pid: apiPid,
+      instanceToken: apiInstance?.instanceToken ?? null,
+      startedAt: apiInstance?.startedAt ?? null,
+      workTreeRoot: apiInstance?.workTreeRoot ?? null,
+    },
     startedAt,
   });
 
@@ -810,7 +1055,14 @@ function extractAccessToken(text) {
 // down / status
 // ---------------------------------------------------------------------------
 
-function stopApi(pid, pidFile) {
+/**
+ * 发终止信号并同步等它真的退出。
+ *
+ * ⛔ **调用方必须先证明归属**：要么是本次运行刚 `spawn` 出来的子进程（spawn 关系本身就是归属），
+ * 要么 `assessApiOwnership` 返回 `killAllowed === true`。本函数自己**不判任何东西**，
+ * 这样「该不该杀」只有一处判据（纯逻辑里那四条）。
+ */
+function terminatePid(pid) {
   if (Number.isInteger(pid) && pid > 0 && pidAlive(pid)) {
     try {
       process.kill(pid);
@@ -830,14 +1082,24 @@ function stopApi(pid, pidFile) {
       // 已经没了。
     }
   }
-  if (pidFile !== null && existsSync(pidFile)) {
-    try {
-      rmSync(pidFile);
-    } catch {
-      // pid 文件删不掉不影响「进程已停」这个事实。
-    }
-  }
   return !pidAlive(pid);
+}
+
+/** 删 pid 文件（删不掉不影响「进程已停」这个事实）。 */
+function removePidFile(pidFile) {
+  if (pidFile === null || !existsSync(pidFile)) return;
+  try {
+    rmSync(pidFile);
+  } catch {
+    // 忽略。
+  }
+}
+
+/** 停「已核实归属」的 API：终止 + 清 pid 文件。 */
+function stopApi(pid, pidFile) {
+  const stopped = terminatePid(pid);
+  removePidFile(pidFile);
+  return stopped;
 }
 
 async function down(options) {
@@ -845,9 +1107,6 @@ async function down(options) {
   const pgBin = resolve(options.pgBin ?? pgBinDefault());
   const state = loadState(stateDir);
   const apiPidFile = join(stateDir, 'api.pid');
-  const apiPidFromFile = existsSync(apiPidFile) ? Number(readFileSync(apiPidFile, 'utf8').trim()) : null;
-  const apiPid = Number.isInteger(apiPidFromFile) ? apiPidFromFile : Number(state?.api?.pid ?? NaN);
-  const apiPort = Number(state?.api?.port ?? DEFAULT_PORTS.api);
   const pgPort = Number(state?.pg?.port ?? DEFAULT_PORTS.pg);
   const dataDir = typeof state?.pg?.dataDir === 'string' ? state.pg.dataDir : join(stateDir, 'pg-data');
 
@@ -855,22 +1114,36 @@ async function down(options) {
   if (state === null) say('  没有 state.json ⇒ 这套环境没有被 local:up 起过（仍然继续收尾，幂等）');
 
   let stoppedSomething = false;
+  let apiSkippedByOwnership = false;
 
   say('');
-  say('[1/2] 停 API（按 pid 文件）');
-  if (Number.isInteger(apiPid) && pidAlive(apiPid)) {
-    const stopped = stopApi(apiPid, apiPidFile);
-    say(`  API pid ${apiPid} ⇒ ${stopped ? '已停' : '未能停止（看任务管理器）'}`);
-    stoppedSomething = true;
-  } else {
-    say(`  API 没起（pid ${Number.isInteger(apiPid) ? apiPid : '未知'} 不在）`);
-    if (existsSync(apiPidFile)) {
-      try {
-        rmSync(apiPidFile);
-      } catch {
-        // 忽略。
-      }
+  say('[1/2] 停 API（**先核实归属**，再决定是否发终止信号）');
+  const live = await assessRunningApi({ stateDir, state, fallbackPort: DEFAULT_PORTS.api });
+  const apiPort = live.apiPort;
+  const assessment = live.assessment;
+  say(`  pid 记录：${live.record.source ?? '（无）'}（格式 ${live.record.format}）`);
+  printOwnership(assessment);
+  if (assessment.verdict === OWNERSHIP.OWNED) {
+    // 归属四条判据全过 ⇒ 才允许发一次终止信号（`applyApiStop` 内部保证只调一次 kill）。
+    const outcome = applyApiStop({ assessment, kill: (pid) => terminatePid(pid) });
+    const stillAlive = outcome.killed ? pidAlive(outcome.pid) : true;
+    if (outcome.killed && !stillAlive) {
+      say(`  API pid ${outcome.pid} ⇒ 已停（归属已核实）`);
+      stoppedSomething = true;
+      removePidFile(apiPidFile);
+    } else {
+      warn(`  ✗ API pid ${outcome.pid} 未能停止（看任务管理器）；pid 文件保留，便于下次继续核实`);
+      return EXIT.POSTGRES;
     }
+  } else if (assessment.verdict === OWNERSHIP.EXITED) {
+    say(`  API 没起（${assessment.headline}）`);
+    removePidFile(apiPidFile);
+  } else {
+    // NOT_OWNED / UNVERIFIABLE：⛔ 一个终止信号都不发，也⛔ 不删 pid 文件（它现在是「有争议」的证据）。
+    apiSkippedByOwnership = true;
+    say(`  ⛔ ${assessment.headline}`);
+    if (assessment.detail !== null) warn(`     ${assessment.detail}`);
+    warn(`     pid 文件保留在原处：${apiPidFile}（删它会抹掉「pid 被谁复用」的证据）`);
   }
 
   say('');
@@ -894,8 +1167,18 @@ async function down(options) {
   say('');
   say(`端口实测：${apiPort} ${apiListening ? '仍在监听（✗）' : '已释放'}；${pgPort} ${pgListening ? '仍在监听（✗）' : '已释放'}`);
   if (apiListening || pgListening) {
-    warn('✗ 仍有端口在监听：可能有别的进程占了同名端口，或停止未生效。');
+    if (apiSkippedByOwnership) {
+      warn(`✗ API 端口 ${apiPort} 仍有监听，但归属核实没通过 ⇒ ⛔ 本工具没有发任何终止信号。`);
+      warn('  处理：确认那个监听进程是谁（Get-NetTCPConnection -State Listen -LocalPort ' + apiPort + '），');
+      warn('        若是无关进程就不要动它；若是上次的 local:up 实例，手动结束并删掉 api.pid 后重跑 local:down。');
+    } else {
+      warn('✗ 仍有端口在监听：可能有别的进程占了同名端口，或停止未生效。');
+    }
     return EXIT.POSTGRES;
+  }
+  if (apiSkippedByOwnership) {
+    say('API 侧：归属核实未通过 ⇒ 已跳过（⛔ 未发送终止信号）；PG 已收尾。上面的读数请照实记录。');
+    return EXIT.OK;
   }
   say(stoppedSomething ? '已停：API 与 PG 都已收干净（数据保留在 state-dir）。' : '本来就没起：没有需要停的进程（exit 0）。');
   return EXIT.OK;
@@ -905,13 +1188,13 @@ async function status(options) {
   const stateDir = resolveStateDir(options.stateDir);
   const pgBin = resolve(options.pgBin ?? pgBinDefault());
   const state = loadState(stateDir);
-  const apiPidFile = join(stateDir, 'api.pid');
-  const apiPid = existsSync(apiPidFile) ? Number(readFileSync(apiPidFile, 'utf8').trim()) : Number(state?.api?.pid ?? NaN);
-  const apiPort = Number(state?.api?.port ?? DEFAULT_PORTS.api);
   const pgPort = Number(state?.pg?.port ?? DEFAULT_PORTS.pg);
   const dataDir = typeof state?.pg?.dataDir === 'string' ? state.pg.dataDir : join(stateDir, 'pg-data');
 
-  const apiAlive = Number.isInteger(apiPid) && pidAlive(apiPid);
+  // `status` 与 `down` 走**同一条**归属核实路径：⛔ 不许一个判「pid 活着」、一个判归属。
+  const live = await assessRunningApi({ stateDir, state, fallbackPort: DEFAULT_PORTS.api });
+  const assessment = live.assessment;
+  const apiPort = live.apiPort;
   const pgAlive = existsSync(dataDir) && pgIsRunning(pgBin, dataDir);
   const apiListening = await portListening(apiPort);
   const pgListening = await portListening(pgPort);
@@ -920,15 +1203,31 @@ async function status(options) {
   say(
     `PG   端口 ${pgPort}  ${pgAlive ? '在跑' : '没跑'}  ${pgListening ? '端口在听' : '端口空闲'}  数据目录 ${dataDir}`,
   );
-  // pid 只在**活着**时才打印：`state.json` 里的旧 pid 会在 `down` 之后留下来，
-  // 直接显示它会让「已停」看起来像「还在跑」——那正是这个工具要消灭的那类误读。
-  const pidText = apiAlive ? `${apiPid}` : `无（上次 ${Number.isInteger(apiPid) ? apiPid : '未知'} 已退出）`;
+  // 三态 + 「无法核实」降级态：**只有核实通过才报「在跑」**。
+  // 复用的 pid 绝不显示成「在跑」——那正是这个工具要消灭的那类误读（也是误杀的来源）。
+  const pidText =
+    assessment.verdict === OWNERSHIP.OWNED
+      ? `${assessment.pid}`
+      : assessment.verdict === OWNERSHIP.EXITED
+        ? `无（上次 ${Number.isInteger(assessment.pid) ? assessment.pid : '未知'} 已退出）`
+        : assessment.verdict === OWNERSHIP.UNVERIFIABLE
+          ? `${assessment.pid}（归属未核实，⛔ 不会 kill）`
+          : `${assessment.pid}（不是本工具的进程，⛔ 不会 kill）`;
   say(
-    `API  端口 ${apiPort}  ${apiAlive ? '在跑' : '没起'}  ${apiListening ? '端口在听' : '端口空闲'}  ` +
+    `API  端口 ${apiPort}  ${assessment.statusLabel}  ${apiListening ? '端口在听' : '端口空闲'}  ` +
       `pid ${pidText}  模式 stub`,
   );
+  printOwnership(assessment, '     ');
   say('');
-  say(pgAlive || apiAlive ? '在用：npm run local:down 收工。' : '没起：npm run local:up 起一套。');
+  if (assessment.verdict === OWNERSHIP.OWNED) {
+    say('在用：npm run local:down 收工（会先核实归属再发终止信号）。');
+  } else if (assessment.verdict === OWNERSHIP.EXITED) {
+    say(pgAlive ? 'PG 还在跑：npm run local:down 收尾。' : '没起：npm run local:up 起一套。');
+  } else {
+    say('⚠ 归属核实未通过：local:down 会**跳过**这个 pid（⛔ 不发送终止信号）。');
+    say('  确认现场：Get-CimInstance Win32_Process -Filter "ProcessId=<pid>" | Select-Object ProcessId, CreationDate, CommandLine');
+    say('  确认无误是残留的 local:up 实例后，手动结束进程并删掉 api.pid，再跑一次 local:up。');
+  }
   return EXIT.OK;
 }
 

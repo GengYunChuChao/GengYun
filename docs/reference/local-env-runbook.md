@@ -14,12 +14,12 @@
 | --- | --- | --- |
 | ① 起 | `npm run local:up` | 要跑真库联调 / 手动 smoke / 复现「只有真 PG 才现形」的问题时 |
 | ② 用 | —（保持前台窗口不重要，API 与 PG 都在后台） | 用到什么时候都行；`npm run local:status` 随时看读数 |
-| ③ 收 | `npm run local:down` | **收工前必须跑**（停 API 与 PG，数据保留在 state 目录） |
+| ③ 收 | `npm run local:down` | **收工前必须跑**（先核实 API 归属，再停 API 与 PG；数据保留在 state 目录） |
 
 ```powershell
 npm run local:up        # 起来：打印 8 个阶段 + 6 个端点状态 + 摘要 JSON（同时写盘）
-npm run local:status    # 只读：在跑/没跑 + 端口 + pid
-npm run local:down      # 停：按 pid 文件停 API，再 pg_ctl stop；幂等（本来没起 ⇒ exit 0）
+npm run local:status    # 只读：在跑 / 已复用（不属本工具）/ 已退出 + 端口 + pid + 判据读数
+npm run local:down      # 停：**先核实归属**（不属本工具 ⇒ 不杀、只提示），再停 API 与 PG；幂等（本来没起 ⇒ exit 0）
 ```
 
 `up` 成功时最后一行是 `就绪：API http://127.0.0.1:3111；PG 127.0.0.1:5555；收工前请跑 npm run local:down。`。
@@ -37,6 +37,8 @@ npm run local:down      # 停：按 pid 文件停 API，再 pg_ctl stop；幂等
 | 5 | PG 建簇/启动/建库失败（已回滚） | 看 `<state-dir>/pg.log` |
 
 `down` / `status` 只在「停止失败」或「端口仍有监听」时非 0；「本来就没起」是 **0**。
+`down` 遇到「归属核实没通过」时**不发任何终止信号**：API 端口已空 ⇒ 照样 exit 0（PG 正常收尾）；
+API 端口仍在听 ⇒ exit **5**，并把「那个端口上是谁」指出来（见第五节）。
 
 ## 二、端口表
 
@@ -102,8 +104,8 @@ state 目录默认在**仓库外**的兄弟目录：`<workspace>/.local-env/<rep
 | --- | --- |
 | `pg-data/` | PostgreSQL 数据目录（`initdb` 产物，`-U postgres -A trust --locale=C --encoding=UTF8`） |
 | `secrets.env` | **临时**的 `SESSION_SIGNING_KEY` / `DELETION_LEDGER_KEY`（32 字节 CSPRNG，base64url）。⛔ 不落进仓库 |
-| `state.json` | 端口/pid/数据目录（`down` 与 `status` 读它） |
-| `api.pid` | API 进程 id（`down` 按它停） |
+| `state.json` | 端口/pid/**实例身份**（`instanceToken` / 启动时刻 / 工作树根）；`down` 与 `status` 读它（`api.pid` 缺失时兜底） |
+| `api.pid` | API 的**结构化身份记录**（pid + `instanceToken` + 启动时刻 + 工作树根 + 端口，schema `gengyun.local-env.api-pid/2`）。`down` **核实归属之后**才据此发终止信号；旧格式（纯数字）只能降级成「不可核实 ⇒ 不杀」（见第五节） |
 | `api.log` / `api-error.log` | API 的 stdout/stderr |
 | `pg.log` | `pg_ctl -l` 的 PG 日志 |
 | `migrate.log` | `npm run db:migrate` 的完整输出（失败时看这里；打印出来的片段已脱敏） |
@@ -113,7 +115,94 @@ state 目录默认在**仓库外**的兄弟目录：`<workspace>/.local-env/<rep
 `SESSION_SIGNING_KEY: 已生成，长度满足=true` 这类读数，**⛔ 不打印任何密钥值**；
 打印摘要前后还会各跑一次泄密断言（`assertNoSecretLeaks`），一旦文本里出现密钥值就抛错而不是打印。
 
-## 五、摘要 JSON 的形状
+## 五、停止前的归属核实（`local:down` / `local:status`）
+
+### 为什么「pid 活着」「端口在听」都不够
+
+`api.pid` 里记的是一个**数字**。API 自己退出（崩溃、被任务管理器结束、Ctrl+C）之后，这个数字会留在文件里，
+而 Windows 会**继续把同一个 pid 发给新进程**。下一次 `local:down` 看到「pid 还在」就发终止信号——
+被结束的是另一个程序（编辑器、构建、别的服务），**它没保存过的工作会一起丢**。
+
+「端口在听」同样不能当判据：监听者可能是另一个实例、别人的工具、任何 HTTP 服务；
+「`/health` 回了 200」也一样——健康检查这件事，任何 Fastify 服务都能满足。
+
+所以判据必须是**可核实的身份**，而不是「活着」或「可达」。
+
+### 判据表（每条都要成立；任一不成立 ⇒ ⛔ 不杀）
+
+| 侧 | 判据 | 问的问题 | 不成立时 |
+| --- | --- | --- | --- |
+| PID | 实例标识 `instance_marker` | 进程**命令行**里有 `--gy-local-env-instance=<本次实例的 UUID>` 和 `--gy-local-env-root=<工作树绝对路径>` 吗？ | 打印「PID 已复用 / 归属不符，已跳过」，**零**终止信号 |
+| PID | 启动时间 `start_time` | 进程的真实启动时间**不早于** `api.pid` 的写入时间吗？（容差 2 秒，吸收秒级取整） | 同上 |
+| PID | 工作树根 `work_tree` | `api.pid` 记的工作树根就是**当前这个 checkout** 吗？ | 同上 |
+| 端口 | 端口 ↔ pid 绑定 `port_owner` | **监听套接字**是不是由上面认出来的那个 pid 持有？（⛔ 不是「端口在听」） | 同上 |
+| 端口 | 身份回显 `instance_echo` | `/health` 的响应者是不是这个实例：`instance_token` 回显一致，或 `uptime_s` 反推的启动时刻与这个 pid 的 OS 启动时刻一致（±5 秒）？ | 同上 |
+
+两条 PID 判据盖的是**相反的两个复用方向**，缺一条就留一个洞：
+
+- 我们的 API 退出后 pid 被**更新的**进程复用 ⇒ 新进程不可能带着我们刚生成的 UUID ⇒ `instance_marker` 判红；
+- pid 文件是旧的、pid 上坐着**更老的**进程 ⇒ 它启动得比文件还早 ⇒ `start_time` 判红。
+
+判据**全部**来自 OS 与实例自己（`Win32_Process.CommandLine` / `CreationDate`、`Get-NetTCPConnection` 的
+`OwningProcess`、`/health` 的 `uptime_s`），**没有一条**是「进程存在」或「状态码等于某个值」。
+
+### 三态读数
+
+`local:status` 与 `local:down` 走**同一条**核实路径（同一个纯函数），读数只有这几种：
+
+| 读数 | 含义 | `local:down` 的行为 |
+| --- | --- | --- |
+| `在跑` | 判据全过：pid 上的进程就是本工具的 API，端口与 `/health` 都属于它 | 发**一次**终止信号，随后清掉 `api.pid` |
+| `已复用（不属本工具）` | pid 上的进程不是我们起的（命令行 / 启动时间 / 端口 / 回显任一不符） | ⛔ 不杀；打印未通过的判据与现场核对命令 |
+| `已退出` | pid 不在了，或根本没有 pid 记录 | 没有要停的东西（顺手清掉陈旧 `api.pid`） |
+| `无法核实（旧格式 pid 文件）` | 读到的是 v1 纯数字格式：没有 token、没有启动时间、没有工作树根 | ⛔ 不杀；提示怎么迁移到 v2 |
+
+`已复用` 与 `无法核实` 都**保留** `api.pid` 不删：它是「这个 pid 被谁占了」的证据，删掉等于把现场抹掉。
+
+`local:up` 的「要不要复用上一次那个 API」也走**同一条**核实：判据全过才复用；否则按「没有正在运行的 API」
+处理——不复用、⛔ 不杀（端口被占会自动换号）。⛔ 历史上「pid 还活着就复用」的写法会把复用来的 pid
+写进 `state.json`，于是收工时必然误杀。
+
+### `api.pid` 的新格式（v2）与向后兼容
+
+```json
+{
+  "schema": "gengyun.local-env.api-pid/2",
+  "pid": 87412,
+  "instanceToken": "b032512a-6108-44d5-9cb8-40f2a2e65e39",
+  "startedAt": "2026-10-30T06:53:37.720Z",
+  "workTreeRoot": "E:\\GengYunCommander\\wt-r69-localenv",
+  "apiPort": 3111
+}
+```
+
+- `instanceToken` 每次 `up` 现生成（UUID），**同时注入两处**：进程命令行（`--gy-local-env-instance=…`，OS 可读回）
+  与环境变量 `GY_LOCAL_ENV_INSTANCE`。为什么以命令行为准：Windows 上**读不到别的进程的环境块**
+  （`Win32_Process` 只给 `CommandLine`），而命令行是 OS 记的、pid 复用时一定跟着换人。
+- **向后兼容**：纯数字（v1）读成 `legacy` ⇒ 只降级成「不可核实 ⇒ 不杀 + 提示」，⛔ 绝不因为「格式旧」就当它能杀；
+  空文件 / 坏 JSON / v2 形状缺字段一律 `invalid`；`state.json` 里只有 `pid` 的旧记录同样按 `legacy` 处理。
+- 只写身份读数（pid / token / 写入时刻 / 工作树根 / 端口）：⛔ 不写密钥、⛔ 不写会话令牌。
+
+### 自己核对现场
+
+```powershell
+# 这个 pid 到底是谁（命令行里有没有本实例的 UUID？启动时间是什么时候？）
+Get-CimInstance Win32_Process -Filter "ProcessId=87412" | Select-Object ProcessId, CreationDate, CommandLine
+# 端口上坐着谁
+Get-NetTCPConnection -State Listen -LocalPort 3111 | Select-Object LocalPort, OwningProcess
+```
+
+### 这条判据当前的边界（照实说）
+
+`/health` 回显 `instance_token` 是**可选能力**：本工具不改 `services/api/**`，当前 API 不返回该字段，
+所以端口侧实际走的是 `uptime_s` 反推启动时刻这条**等价**判据（同一个进程才对得上）。
+一旦 API 侧回显 `meta.instance_token`，判据自动升级成 token 比对——逻辑已经在纯函数里，
+用例也覆盖了「回显了别人的 token ⇒ 不杀」。
+
+另一个已知边界：端口在听、但 `/health` 完全不响应（进程卡死）时，`instance_echo` 判红 ⇒ **不杀**。
+这是刻意的（⛔ 不「尽力而为」）：确认是本工具的实例后，手动结束进程并删掉 `api.pid`，再跑一次 `local:up`。
+
+## 六、摘要 JSON 的形状
 
 `up` 结束时打印并落盘（默认 `<state-dir>/local-env-summary.json`）。键名排序、2 空格缩进、末尾换行 ⇒
 同输入两次**逐字节相同**（`tests/unit/local-env.test.mjs` 钉住这条）。
@@ -147,7 +236,7 @@ state 目录默认在**仓库外**的兄弟目录：`<workspace>/.local-env/<rep
 后四条带 `Authorization: Bearer …`，令牌来自前一条登录响应（**不落盘、不进摘要**）。
 `ok` 为 `false` 时 `detail` 给响应片段（已脱敏），退出码为 3 —— 不把 401/503 当成功。
 
-## 六、已知边界：`consent_policies` 0 行 ⇒ 发帖 403
+## 七、已知边界：`consent_policies` 0 行 ⇒ 发帖 403
 
 `up` 会把这条**作为自检项打出来**（摘要里也在 `known_boundaries`）：
 
@@ -160,28 +249,34 @@ state 目录默认在**仓库外**的兄弟目录：`<workspace>/.local-env/<rep
 
 ⛔ 本工具**不**插假政策行、**不**改授权判定。**不要**把「发帖 403」当成 `local:up` 失败来排查。
 
-## 七、负控制（怎么证明这些坑真的被挡住了）
+## 八、负控制（怎么证明这些坑真的被挡住了）
 
 | # | 控制 | 怎么跑 | 应当看到 |
 | --- | --- | --- | --- |
 | ① | 端口被占 + `--strict-port` | `npm run local:up -- --pg-port 3100 --strict-port`（3100 有无关进程时） | exit **2**，输出点名 `pid … (node.exe, node src/bridge.js)`，且**没有**建簇/起服务 |
 | ② | `db:migrate` 失败 | `npm run local:up -- --database-url postgres://postgres@127.0.0.1:1/gengyun` | exit **4**，分类 `CONNECTION_REFUSED`，已起的 PG 被回滚；随后 `npm run local:down` 仍 exit 0 |
 | ③ | 摘要泄密 | `node --test tests/unit/local-env.test.mjs`（泄密回归用例） | 往摘要里塞哨兵密钥 ⇒ 用例抓住并点名路径；真实摘要里一个都搜不到 |
+| ④ | 只判 PID 存活（历史写法） | 把 `assessApiOwnership` 改成「`alive` 即放行」（负控制，看完立刻改回） | 「pid 存在但命令行不含实例标识」「启动时间更早」两组用例立刻红；改回复绿 |
+| ⑤ | 不判启动时间 | 去掉 `start_time` 判据 | 「进程启动时间早于 pid 文件写入」用例红 |
+| ⑥ | 不校验 `instanceToken` | 去掉 `instance_echo` 的 token 比对 | 「`/health` 回显别人的 token」用例红 |
+| ⑦ | 旧格式直接杀 | 让 `legacy` 也返回 `killAllowed: true` | 「旧格式 pid 文件 ⇒ 不杀」用例红 |
+| ⑧ | 实测·pid 被无关进程复用 | 造一份 v2 `api.pid` 指向一个**命令行不含实例标识**的无关进程，跑 `local:down` | 打印「PID 已复用 / 归属不符，已跳过」；那个进程**仍在跑**（实测存活），exit 0 |
+| ⑨ | 实测·旧格式 pid 文件 | 把 `api.pid` 写成纯数字后跑 `local:down` | 读数「无法核实（旧格式 pid 文件）」；进程仍存活，exit 0 |
 
-单测**不**起 PG、**不**起服务（那些只在手动 smoke 里做），因此可以进 CI。
+单测**不**起 PG、**不**起服务、**不**真杀进程（`kill` 是注入的假函数，只记调用次数），因此可以进 CI。
 
-## 八、与 `docs/reference/local-development.md` 的分工
+## 九、与 `docs/reference/local-development.md` 的分工
 
 | 文档 | 管什么 | 什么时候看 |
 | --- | --- | --- |
 | [本地开发与故障排查](local-development.md) | 完整本地联调流程、`tools/local-dev/**` 那套「每人一套隔离产物」的工具链（`prepare.mjs` + `start.ps1` + `stop.ps1`，产物在仓内 `.local/local-dev`，含合成档案引导与微信导入目录）、端口/日志/重置、共用一台机器、常见故障、`/knowledge` 为空的成因判别 | 要**长期**的本地联调环境、要微信开发者工具导入、要排查本地数据缺口时 |
-| 本页（`local-env-runbook.md`） | 一条命令的 `local:up` / `local:down` / `local:status`：端口探测与回退、临时密钥、6 端点自检、结构化摘要 JSON、三类环境坑的落地写法 | 只想**快速**起一套能打端点的受控环境、要一份可复制的读数时 |
+| 本页（`local-env-runbook.md`） | 一条命令的 `local:up` / `local:down` / `local:status`：端口探测与回退、临时密钥、6 端点自检、结构化摘要 JSON、三类环境坑的落地写法、**停止前的归属核实**（判据表 / 三态 / `api.pid` v2） | 只想**快速**起一套能打端点的受控环境、要一份可复制的读数时 |
 
 两者互不替代：`local:up` 是「起一套能打端点的最小受控环境」，`tools/local-dev` 是「一套可长期复用、
 带合成档案与微信导入目录的本地联调产物」。同时跑要给两套不同的端口（例：`local:up --pg-port 5555 --api-port 3111`
 与 `local-dev --pg-port 55436 --api-port 3100`）。
 
-## 九、常见问题
+## 十、常见问题
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
@@ -191,4 +286,7 @@ state 目录默认在**仓库外**的兄弟目录：`<workspace>/.local-env/<rep
 | `✗ initdb 失败` / `PG 二进制缺失` | `--pg-bin` 指错，或本机没装 PG 17 | `--pg-bin <PostgreSQL 17 bin 目录>` 或设 `GY_PG_BIN` |
 | `--state-dir 必须落在仓库外` | 把密钥/数据指进了仓库 | 用默认的 `<workspace>/.local-env/<repo-name>` |
 | `down` 说「本来就没起」 | 上一轮已收干净 | 正常（exit 0），不需要反复 down |
+| `API … 已复用（不属本工具）` | `api.pid` 里的 pid 已被系统发给了别的进程（API 自己退过） | ⛔ 别手改数字去凑。先核对：`Get-CimInstance Win32_Process -Filter "ProcessId=<pid>"`；确认不是本工具的实例后删掉 `api.pid`，重跑 `local:up`（会写 v2） |
+| `API … 无法核实（旧格式 pid 文件）` | 读到的是早期版本写的**纯数字** `api.pid` | 确认没有残留的 `local:up` 进程后删掉 `api.pid`，重跑 `local:up`；之后 `down` 就能核实了 |
+| `local:down` 打印「已跳过」且 exit **5** | 归属核实没通过 ⇒ 不发终止信号；而那个端口上确实有人在听 | 按提示看 `Get-NetTCPConnection -State Listen -LocalPort <端口>` 的 `OwningProcess`；是无关进程就别动它 |
 | 想换端口/重建数据 | 端口与簇都记在 `state.json`/`pg-data` | 先 `local:down`，再删 `<state-dir>`（**会丢本地数据**），然后重跑 `local:up --pg-port … --api-port …` |

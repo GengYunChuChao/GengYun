@@ -5,11 +5,15 @@
  * 因此单测可以注入假的端口占用表、假的迁移 stderr、假的密钥值，**不需要真起 PG、也不需要真起服务**。
  * 副作用（建簇、起进程、写文件、发 HTTP）全部留在 `tools/local-env.mjs`。
  *
- * 三条本文件要负责消灭的坑（每一轮手搓都在踩）：
+ * 四条本文件要负责消灭的坑（每一轮手搓都在踩）：
  *   1. 端口照抄文档 ⇒ 撞上无关进程（本机 3100 被 QQ 桥占着，任何路径回 401，看起来像「API 起好了但鉴权失败」）。
  *      判据在 {@link planPort}：占用必须**点名 pid 与命令行**，回退要显式留痕，`--strict-port` 下必须失败。
  *   2. 密钥泄进摘要/日志 ⇒ 判据在 {@link findSecretLeaks} / {@link assertNoSecretLeaks}。
  *   3. `db:migrate` 失败被当成「起好了」⇒ 判据在 {@link classifyMigrateFailure}（非零退出 + 分类 + 原文脱敏）。
+ *   4. **按 pid 文件里的 pid 直接发终止信号** ⇒ API 自行退出、pid 被系统复用时**误杀无关进程**
+ *      （并且可能丢掉对方未保存的工作）。判据在 {@link assessApiOwnership}：
+ *      必须用**可核实的身份**（进程命令行上的实例标识 + 进程启动时间 + 端口套接字归属 + `/health` 身份回显）
+ *      证明「这个 pid 属于本工具的 API 实例」，任一不成立 ⇒ 不杀。⛔ 不看「pid 活着」、⛔ 不看「端口在听」。
  */
 import { isAbsolute } from 'node:path';
 
@@ -507,6 +511,402 @@ export function keyDescriptor(value) {
   const generated = typeof value === 'string' && value !== '';
   const length = generated ? value.length : 0;
   return { generated, length_ok: generated && length >= SECRET_MIN_LENGTH, length };
+}
+
+// ---------------------------------------------------------------------------
+// API 进程的归属核实（停止前必须核实：⛔ 不能只看 pid 活着 / 端口在听）
+// ---------------------------------------------------------------------------
+
+/**
+ * `api.pid` 的 schema 标识。
+ *
+ * v1（历史格式）是**纯数字**一行；v2 是结构化 JSON，带 `instanceToken` / `startedAt` / `workTreeRoot`。
+ * 形状变化必须改这个串：旧读者（只会 `Number(text)` 的那种）拿到 v2 会读出 `NaN`，
+ * 于是走「没有 pid 记录」这条路——**不会**被读成一个能杀的 pid。
+ */
+export const API_PID_SCHEMA = 'gengyun.local-env.api-pid/2';
+
+/**
+ * 本实例的唯一标识在**进程命令行**上的两次落点。
+ *
+ * 为什么放命令行而不是只放环境变量：Windows 上读**别的进程**的环境块没有可用的标准接口
+ * （`Get-CimInstance Win32_Process` 只给 `CommandLine`），而命令行是 OS 自己记的、pid 复用时
+ * 一定跟着换人。`instanceToken` 每次 `up` 现生成（UUID），所以「命令行里有它」这件事
+ * 只有**本工具启动的那个进程**才可能满足。
+ */
+export const INSTANCE_FLAG_PREFIX = '--gy-local-env-instance=';
+export const ROOT_FLAG_PREFIX = '--gy-local-env-root=';
+
+/** 对应的环境变量名（同时注入，供 API 侧将来回显；当前 API 不回显，见 {@link assessApiOwnership}）。 */
+export const INSTANCE_ENV_NAME = 'GY_LOCAL_ENV_INSTANCE';
+
+/**
+ * 「进程启动时间不早于 pid 文件写入时间」的容差（毫秒）。
+ *
+ * 进程启动时间来自 OS（`Win32_Process.CreationDate`，秒级、取整方向不保证），
+ * pid 文件写入时间来自 JS（毫秒级）。留 2 秒既吸收取整，也吸收 spawn → 记录之间那几十毫秒。
+ */
+export const START_TIME_TOLERANCE_MS = 2000;
+
+/**
+ * `/health` 的 `uptime_s` 反推启动时刻允许的偏差（毫秒）。
+ *
+ * `uptime_s` 是 `Math.round(process.uptime())` 的整数秒，反推出来本身有 ±500ms 误差，
+ * 再叠一次请求往返。5 秒足够区分「同一个进程」（秒级偏差）与「换了一个进程」（差出分钟/小时）。
+ */
+export const UPTIME_TOLERANCE_MS = 5000;
+
+/** 归属判定的四种结局（闭集；`status` 的三态由 {@link apiStatusLabel} 映射）。 */
+export const OWNERSHIP = Object.freeze({
+  /** pid 是本工具的 API 实例，四条判据全部成立 ⇒ 允许停。 */
+  OWNED: 'owned',
+  /** pid 上坐着**别的**进程（复用），或端口/健康检查指向别的实例 ⇒ ⛔ 不杀。 */
+  NOT_OWNED: 'not_owned',
+  /** pid 已经不在（正常退出）⇒ 没有要停的东西。 */
+  EXITED: 'exited',
+  /** 旧格式 pid 文件 ⇒ 没有可核实的身份，只能降级成「不杀 + 提示」。 */
+  UNVERIFIABLE: 'unverifiable',
+});
+
+/** 判据闭集（`checks[].id`），便于用例与日志逐条点名。 */
+export const OWNERSHIP_CHECKS = Object.freeze({
+  WORK_TREE: 'work_tree',
+  INSTANCE_MARKER: 'instance_marker',
+  START_TIME: 'start_time',
+  PORT_OWNER: 'port_owner',
+  INSTANCE_ECHO: 'instance_echo',
+});
+
+/** 三态文案（`status` 与 `down` 共用一处，⛔ 不在 CLI 里另写一份）。 */
+const OWNERSHIP_LABELS = Object.freeze({
+  owned: '在跑',
+  not_owned: '已复用（不属本工具）',
+  exited: '已退出',
+  unverifiable: '无法核实（旧格式 pid 文件）',
+});
+
+/** 归属结局 ⇒ `status` 的三态文案。 */
+export function apiStatusLabel(verdict) {
+  return OWNERSHIP_LABELS[verdict] ?? '状态未知';
+}
+
+/** 路径比较口径：Windows 大小写不敏感、分隔符两种写法混用 ⇒ 归一后再比。 */
+function normalizePathForCompare(value) {
+  return String(value).replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * 构造本实例的两个命令行标识。
+ *
+ * ⛔ 不允许空白字符进 token（否则从命令行读回时无法与别的参数区分）；根必须是绝对路径。
+ */
+export function buildInstanceFlags({ instanceToken, workTreeRoot } = {}) {
+  if (typeof instanceToken !== 'string' || instanceToken === '' || /\s/.test(instanceToken)) {
+    throw new TypeError('instanceToken 必须是非空且不含空白字符的字符串');
+  }
+  requireAbsolute(workTreeRoot, 'workTreeRoot');
+  return [`${INSTANCE_FLAG_PREFIX}${instanceToken}`, `${ROOT_FLAG_PREFIX}${workTreeRoot}`];
+}
+
+/**
+ * pid 文件 v2 的序列化（固定键序 + 末尾换行 ⇒ 同输入逐字节相同）。
+ *
+ * 只写「身份读数」：pid、实例 token、写入时刻、工作树根、端口。⛔ 不写密钥、不写令牌。
+ */
+export function serializeApiPidFile({ pid, instanceToken, startedAt, workTreeRoot, apiPort = null } = {}) {
+  if (!Number.isInteger(pid) || pid <= 0) throw new TypeError('pid 必须是正整数');
+  if (typeof instanceToken !== 'string' || instanceToken === '') throw new TypeError('instanceToken 必须是非空字符串');
+  if (typeof startedAt !== 'string' || !Number.isFinite(Date.parse(startedAt))) throw new TypeError('startedAt 必须是可解析的时间字符串');
+  requireAbsolute(workTreeRoot, 'workTreeRoot');
+  const record = {
+    schema: API_PID_SCHEMA,
+    pid,
+    instanceToken,
+    startedAt,
+    workTreeRoot,
+    apiPort: Number.isInteger(apiPort) ? apiPort : null,
+  };
+  return `${JSON.stringify(record, null, 2)}\n`;
+}
+
+/**
+ * 读 pid 文件（**向后兼容** v1 纯数字）。
+ *
+ * 返回 `{format, pid, instanceToken, startedAt, workTreeRoot, apiPort, detail}`：
+ * - `format: 'v2'`：结构化且字段齐全 ⇒ 可以核实归属；
+ * - `format: 'legacy'`：纯数字（v1）⇒ **只能降级成「不可核实」**，⛔ 不许当成「有 pid 就能杀」；
+ * - `format: 'invalid'`：空文件 / 坏 JSON / 缺字段 ⇒ 同样不可核实。
+ *
+ * `pid` 在三种形状下都尽量读出来（只用于「在不在」的读数，不用于放行终止信号）。
+ */
+export function parseApiPidFile(text) {
+  const raw = typeof text === 'string' ? text.trim() : '';
+  if (raw === '') {
+    return { format: 'invalid', pid: null, instanceToken: null, startedAt: null, workTreeRoot: null, apiPort: null, detail: 'pid 文件为空' };
+  }
+  if (/^\d+$/.test(raw)) {
+    const pid = Number(raw);
+    return {
+      format: 'legacy',
+      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+      instanceToken: null,
+      startedAt: null,
+      workTreeRoot: null,
+      apiPort: null,
+      detail: '旧格式 pid 文件（纯数字）：没有 instanceToken / 启动时间 / 工作树根，无法核实归属',
+    };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { format: 'invalid', pid: null, instanceToken: null, startedAt: null, workTreeRoot: null, apiPort: null, detail: 'pid 文件不是合法 JSON' };
+  }
+  const pid = Number(parsed?.pid);
+  const instanceToken = typeof parsed?.instanceToken === 'string' && parsed.instanceToken !== '' ? parsed.instanceToken : null;
+  const startedAt = typeof parsed?.startedAt === 'string' && Number.isFinite(Date.parse(parsed.startedAt)) ? parsed.startedAt : null;
+  const workTreeRoot = typeof parsed?.workTreeRoot === 'string' && isAbsolute(parsed.workTreeRoot) ? parsed.workTreeRoot : null;
+  const apiPort = Number.isInteger(Number(parsed?.apiPort)) ? Number(parsed.apiPort) : null;
+  const usable = parsed?.schema === API_PID_SCHEMA && Number.isInteger(pid) && pid > 0 && instanceToken !== null && startedAt !== null && workTreeRoot !== null;
+  if (!usable) {
+    return {
+      format: 'invalid',
+      pid: Number.isInteger(pid) && pid > 0 ? pid : null,
+      instanceToken,
+      startedAt,
+      workTreeRoot,
+      apiPort,
+      detail:
+        parsed?.schema === API_PID_SCHEMA
+          ? 'pid 文件是 v2 形状但缺字段（pid / instanceToken / startedAt / workTreeRoot 必须都在）'
+          : `pid 文件的 schema 不是 ${API_PID_SCHEMA}`,
+    };
+  }
+  return { format: 'v2', pid, instanceToken, startedAt, workTreeRoot, apiPort, detail: null };
+}
+
+/**
+ * **停止前的归属核实**：证明「pid 文件里的那个 pid 就是本工具启动的 API 实例」。
+ *
+ * 四条判据，**每条都必须成立**（`skipped` 只用于「端口根本没在听」这种不存在冲突的情形）：
+ *
+ * | 侧 | 判据 id | 问的问题 | 不成立时的处置 |
+ * | --- | --- | --- | --- |
+ * | PID | `work_tree` | pid 文件记的工作树根是**本 checkout** 吗？ | 不杀 |
+ * | PID | `instance_marker` | 进程命令行带 `--gy-local-env-instance=<本实例 token>` 与 `--gy-local-env-root=<根>` 吗？ | 不杀 |
+ * | PID | `start_time` | 进程启动时间**不早于** pid 文件写入时间吗？ | 不杀 |
+ * | 端口 | `port_owner` | 监听套接字由**这个 pid** 持有吗？（不是「端口在听」） | 不杀 |
+ * | 端口 | `instance_echo` | `/health` 的响应者是这个实例吗？（token 回显，或 uptime 反推启动时刻一致） | 不杀 |
+ *
+ * 为什么四条都要：`work_tree` + `instance_marker` 挡「pid 被**换成一个更新的**无关进程」
+ * （新进程不可能带着我们刚生成的 UUID）；`start_time` 挡「pid 被**换成一个更老的**进程」
+ * （pid 文件是旧的、进程比它还老 ⇒ 一定不是我们的）；`port_owner` 挡「端口被别的实例占了」；
+ * `instance_echo` 挡「端口上应答的不是这个进程」。任一不成立就**没有资格**发终止信号。
+ *
+ * ⛔ 判据里**没有**「pid 活着」和「端口在听」这两条：它们恰恰是误杀的来源。
+ *
+ * 全部输入由调用方注入（进程元数据 / 监听者 / `/health` 读数 / 当前时刻），
+ * 本函数不碰 fs、不碰网络、不杀进程 ⇒ 单测可以直接构造「pid 被复用」这类现场。
+ *
+ * @returns `{verdict, statusLabel, killAllowed, pid, headline, detail, checks, instanceToken}`
+ */
+export function assessApiOwnership({
+  pidRecord = null,
+  workTreeRoot = null,
+  processInfo = null,
+  listener = null,
+  health = null,
+  now = null,
+  startTimeToleranceMs = START_TIME_TOLERANCE_MS,
+  uptimeToleranceMs = UPTIME_TOLERANCE_MS,
+} = {}) {
+  const record = pidRecord ?? {
+    format: 'invalid',
+    pid: null,
+    instanceToken: null,
+    startedAt: null,
+    workTreeRoot: null,
+    apiPort: null,
+    detail: '没有 pid 记录',
+  };
+  const pid = Number.isInteger(record.pid) && record.pid > 0 ? record.pid : null;
+  const checks = [];
+  const push = (side, id, status, detail) => checks.push({ side, id, status, detail });
+
+  const finish = (verdict, extra = {}) => ({
+    verdict,
+    statusLabel: apiStatusLabel(verdict),
+    killAllowed: verdict === OWNERSHIP.OWNED,
+    pid,
+    instanceToken: record.instanceToken ?? null,
+    headline: extra.headline ?? null,
+    detail: extra.detail ?? null,
+    checks,
+  });
+
+  // ① 没有 pid 记录 ⇒ 没有要停的东西（这不是「归属不明」，是「本来就没起」）。
+  if (pid === null) {
+    return finish(OWNERSHIP.EXITED, {
+      headline: '已退出：没有可用的 pid 记录（api.pid 与 state.json 都没有 pid）',
+      detail: record.detail,
+    });
+  }
+
+  // ② 进程不在了 ⇒ 已退出。**先判这一条**：没什么可杀的时候不需要身份。
+  if (processInfo === null || processInfo === undefined || processInfo.alive !== true) {
+    return finish(OWNERSHIP.EXITED, { headline: `已退出：pid ${pid} 不在了（进程已自行退出）` });
+  }
+
+  // ③ 旧格式 / 坏格式 ⇒ 没有可核实的身份，只能降级。⛔ 不许「尽力而为」地杀。
+  if (record.format !== 'v2') {
+    return finish(OWNERSHIP.UNVERIFIABLE, {
+      headline: `归属无法核实（${record.detail ?? 'pid 文件不是 v2 格式'}）⇒ 已跳过，⛔ 不发送终止信号`,
+      detail: '处理：确认没有残留的 local:up 进程后，删掉 api.pid 再跑一次 local:up（新版会写 v2 结构化记录）',
+    });
+  }
+
+  // ---- PID 侧 -------------------------------------------------------------
+  const thisRoot = typeof workTreeRoot === 'string' && workTreeRoot !== '' ? workTreeRoot : null;
+  if (thisRoot === null) {
+    push('pid', OWNERSHIP_CHECKS.WORK_TREE, 'fail', '调用方没有给当前工作树根 ⇒ 无法判断这份 pid 文件是不是本 checkout 的');
+  } else if (normalizePathForCompare(record.workTreeRoot) !== normalizePathForCompare(thisRoot)) {
+    push('pid', OWNERSHIP_CHECKS.WORK_TREE, 'fail', `pid 文件属于另一个工作树（${record.workTreeRoot}），当前是 ${thisRoot}`);
+  } else {
+    push('pid', OWNERSHIP_CHECKS.WORK_TREE, 'pass', `工作树根一致（${thisRoot}）`);
+  }
+
+  const commandLine = typeof processInfo.commandLine === 'string' ? processInfo.commandLine : null;
+  // 读回来的命令行可能被 OS 加过引号（路径含空格时）：先去掉引号再做包含判断，避免假红。
+  const haystack = commandLine === null ? null : commandLine.replace(/"/g, '').toLowerCase();
+  const tokenNeedle = `${INSTANCE_FLAG_PREFIX}${record.instanceToken}`.toLowerCase();
+  const rootNeedle = `${ROOT_FLAG_PREFIX}${record.workTreeRoot}`.toLowerCase();
+  if (haystack === null) {
+    push('pid', OWNERSHIP_CHECKS.INSTANCE_MARKER, 'fail', '读不到进程命令行 ⇒ 无法核实实例标识（⛔ 不靠 pid 猜）');
+  } else if (!haystack.includes(tokenNeedle)) {
+    push('pid', OWNERSHIP_CHECKS.INSTANCE_MARKER, 'fail', `进程命令行不含本实例标识（${INSTANCE_FLAG_PREFIX}${record.instanceToken}）⇒ pid 已被别的进程复用`);
+  } else if (!haystack.includes(rootNeedle)) {
+    push('pid', OWNERSHIP_CHECKS.INSTANCE_MARKER, 'fail', `进程命令行不含本工作树根标识（${ROOT_FLAG_PREFIX}${record.workTreeRoot}）⇒ 归属不符`);
+  } else {
+    push('pid', OWNERSHIP_CHECKS.INSTANCE_MARKER, 'pass', `进程命令行带本实例标识（${INSTANCE_FLAG_PREFIX}<instanceToken>）与工作树根`);
+  }
+
+  const startedAtMs = Date.parse(record.startedAt);
+  const processStartMs = typeof processInfo.startTime === 'string' ? Date.parse(processInfo.startTime) : Number.NaN;
+  if (!Number.isFinite(processStartMs)) {
+    push('pid', OWNERSHIP_CHECKS.START_TIME, 'fail', '读不到进程启动时间（Win32_Process.CreationDate 为空）⇒ 无法核实，⛔ 不靠 pid 猜');
+  } else if (!Number.isFinite(startedAtMs)) {
+    push('pid', OWNERSHIP_CHECKS.START_TIME, 'fail', `pid 文件里的写入时间不可解析（${String(record.startedAt)}）`);
+  } else if (processStartMs < startedAtMs - startTimeToleranceMs) {
+    push(
+      'pid',
+      OWNERSHIP_CHECKS.START_TIME,
+      'fail',
+      `进程启动时间 ${new Date(processStartMs).toISOString()} 早于 pid 文件写入时间 ${record.startedAt} ⇒ pid 已被更老的进程复用`,
+    );
+  } else {
+    push(
+      'pid',
+      OWNERSHIP_CHECKS.START_TIME,
+      'pass',
+      `进程启动时间 ${new Date(processStartMs).toISOString()} 不早于 pid 文件写入时间 ${record.startedAt}`,
+    );
+  }
+
+  // ---- 端口侧 -------------------------------------------------------------
+  const port = Number.isInteger(listener?.port) ? listener.port : (Number.isInteger(record.apiPort) ? record.apiPort : null);
+  const portText = port === null ? '端口' : `端口 ${port}`;
+  if (listener === null || listener === undefined || typeof listener.listening !== 'boolean') {
+    // 没有端口读数 ⇒ 不能凭空放行（这也是「只判 pid 活着」那种实现会漏掉的地方）。
+    push('port', OWNERSHIP_CHECKS.PORT_OWNER, 'fail', '没有端口探测读数 ⇒ 无法核实端口归属，⛔ 不发送终止信号');
+    push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'skipped', '端口归属未核实 ⇒ 不做握手');
+  } else if (listener.listening !== true) {
+    // 端口没在听 ⇒ 不存在「端口被别的实例占着」这件事；身份由 PID 侧独立成立即可。
+    push('port', OWNERSHIP_CHECKS.PORT_OWNER, 'skipped', `${portText}没有监听 ⇒ 没有端口归属可冲突（以 PID 侧身份为准）`);
+    push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'skipped', `${portText}没有监听 ⇒ 无从握手`);
+  } else if (Number.isInteger(listener.pid) && listener.pid === pid) {
+    push('port', OWNERSHIP_CHECKS.PORT_OWNER, 'pass', `${portText}的监听套接字由 pid ${pid} 持有（端口 ↔ pid 绑定成立）`);
+  } else if (!Number.isInteger(listener.pid)) {
+    push('port', OWNERSHIP_CHECKS.PORT_OWNER, 'fail', `${portText}在听，但拿不到持有进程（PowerShell 探测失败）⇒ 无法核实`);
+  } else {
+    push('port', OWNERSHIP_CHECKS.PORT_OWNER, 'fail', `${portText}由 pid ${listener.pid} 持有，不是 pid ${pid} ⇒ 端口归属不符`);
+  }
+
+  const portOwnerFailed = checks.some((item) => item.id === OWNERSHIP_CHECKS.PORT_OWNER && item.status === 'fail');
+  if (listener !== null && listener !== undefined && listener.listening === true && !portOwnerFailed) {
+    const healthText = health ?? null;
+    if (healthText === null || healthText.reachable !== true) {
+      push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'fail', `${portText}在听，但 /health 没有响应 ⇒ 无法核实响应者是不是本实例，⛔ 不发送终止信号`);
+    } else if (typeof healthText.instanceToken === 'string' && healthText.instanceToken !== '') {
+      if (healthText.instanceToken !== record.instanceToken) {
+        push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'fail', `/health 回显的 instanceToken（${healthText.instanceToken}）与本实例（${record.instanceToken}）不一致 ⇒ 端口上应答的不是本实例`);
+      } else {
+        push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'pass', '/health 回显的 instanceToken 与本实例一致');
+      }
+    } else if (!Number.isFinite(healthText.uptimeSeconds) || !Number.isFinite(processStartMs) || !Number.isFinite(nowMsOf(now))) {
+      push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'fail', '/health 没有可用的身份读数（既无 instanceToken，也读不出 uptime / 启动时刻）⇒ 无法核实');
+    } else {
+      // 没有 token 回显时（当前 API 不回显）：用 uptime 反推启动时刻，与**本 pid 的 OS 启动时刻**对齐。
+      // 换过人的进程不可能和这个时刻对得上（差出分钟级）。⛔ 不依赖状态码、不依赖固定字符串。
+      const derivedMs = nowMsOf(now) - healthText.uptimeSeconds * 1000;
+      const delta = Math.abs(derivedMs - processStartMs);
+      if (delta <= uptimeToleranceMs) {
+        push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'pass', `/health 的 uptime 反推启动时刻与本 pid 的 OS 启动时刻一致（相差 ${Math.round(delta / 1000)}s）`);
+      } else {
+        push('port', OWNERSHIP_CHECKS.INSTANCE_ECHO, 'fail', `/health 的 uptime 反推启动时刻（${new Date(derivedMs).toISOString()}）与 pid ${pid} 的 OS 启动时刻（${new Date(processStartMs).toISOString()}）相差 ${Math.round(delta / 1000)}s ⇒ 端口上应答的不是这个进程`);
+      }
+    }
+  }
+
+  const failures = checks.filter((item) => item.status === 'fail');
+  if (failures.length === 0) {
+    return finish(OWNERSHIP.OWNED, {
+      headline: `归属已核实（pid ${pid}）：命令行带本实例标识、启动时间不早于 pid 文件、端口与 /health 都属于它`,
+    });
+  }
+  const first = failures[0];
+  return finish(OWNERSHIP.NOT_OWNED, {
+    headline: `PID 已复用 / 归属不符，已跳过：${first.detail}`,
+    detail: `未通过的判据：${failures.map((item) => `${item.side}/${item.id}`).join('、')}`,
+  });
+}
+
+/** `now` 的归一：接受 Date / ISO 字符串 / 毫秒数；不认识就返回 `NaN`（调用方据此判「读不到」）。 */
+function nowMsOf(now) {
+  if (now === null || now === undefined) return Number.NaN;
+  if (now instanceof Date) return now.getTime();
+  if (typeof now === 'number') return now;
+  if (typeof now === 'string') return Date.parse(now);
+  return Number.NaN;
+}
+
+/**
+ * 只做「该不该杀」这一步：**归属核实通过才调用注入的 `kill`**，且只调一次。
+ *
+ * 把「决定」与「副作用」分开，单测才能用假 killer 断言「零 kill 调用」——
+ * 真实的 `process.kill` 永远不进单测（⛔ 不在单测里真杀进程）。
+ */
+export function applyApiStop({ assessment = null, kill = null } = {}) {
+  if (assessment === null || typeof assessment !== 'object') throw new TypeError('assessment 必须是 assessApiOwnership 的结果');
+  if (kill !== null && typeof kill !== 'function') throw new TypeError('kill 必须是函数或 null');
+  if (assessment.killAllowed !== true) {
+    return { killed: false, killCalls: 0, pid: assessment.pid ?? null, verdict: assessment.verdict ?? null, skipped: true };
+  }
+  const pid = assessment.pid;
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return { killed: false, killCalls: 0, pid: null, verdict: assessment.verdict ?? null, skipped: true };
+  }
+  if (kill === null) return { killed: false, killCalls: 0, pid, verdict: assessment.verdict, skipped: true };
+  kill(pid);
+  return { killed: true, killCalls: 1, pid, verdict: assessment.verdict, skipped: false };
+}
+
+/** 把判据表渲染成人话（`down` / `status` 逐条打印；`⛔` 不省略失败项）。 */
+export function describeOwnershipChecks(assessment) {
+  const checks = assessment?.checks ?? [];
+  return checks.map((item) => {
+    const mark = item.status === 'pass' ? '✓' : item.status === 'skip' || item.status === 'skipped' ? '–' : '✗';
+    return `${mark} ${item.side}/${item.id}：${item.detail}`;
+  });
 }
 
 // ---------------------------------------------------------------------------
