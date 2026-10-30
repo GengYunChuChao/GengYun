@@ -107,22 +107,6 @@
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 88,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 359,
-    "to": 376,
-    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 88,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 494,
-    "to": 557,
-    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
     "line": 89,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -164,38 +148,6 @@
   {
     "doc": "docs/architecture/contract-implementation-status.md",
     "line": 91,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 494,
-    "to": 557,
-    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1098,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 359,
-    "to": 376,
-    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1098,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 494,
-    "to": 557,
-    "reason": "旧锚点本来就指错：裸锚点 `:494` 按同行归属是 `services/api/src/ocr/store-pg.ts`，但 494 不是 `persistent: true`；真值是 557 `    persistent: true,`（`createPostgresOcrStore` 返回对象里的持久化标记），`git grep -n \"persistent: true\" 4307bfd7 -- services/api/src/ocr/store-pg.ts` 只命中该行。按符号重锚，目标文件本提交未改动。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1098,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 359,
-    "to": 376,
-    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1098,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 494,
     "to": 557,
@@ -784,30 +736,6 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 1098,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 359,
-    "to": 376,
-    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1120,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 359,
-    "to": 376,
-    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 1142,
-    "target": "services/api/src/ocr/store-pg.ts",
-    "from": 359,
-    "to": 376,
-    "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
     "line": 1164,
     "target": "services/api/src/ocr/store-pg.ts",
     "from": 359,
@@ -821,25 +749,5 @@
     "from": 359,
     "to": 376,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 4347,
-    "target": "services/api/src/app.ts",
-    "from": 2227,
-    "to": 2488,
-    "kind": "correction",
-    "symbol": "registerJobRoutes(app, config, guards",
-    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 4347,
-    "target": "services/api/src/app.ts",
-    "from": 2228,
-    "to": 2489,
-    "kind": "correction",
-    "symbol": "createRecognitionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
   }
 ]
