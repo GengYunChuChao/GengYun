@@ -176,6 +176,12 @@
       "accept": 0,
       "orphans": 3541,
       "outsideRed": 130
+    },
+    {
+      "why": "合流 upstream/main@c622a84b（含 #790 外发账本）：两片新增代码使 gy-r66-wire-audit-logs-arm-20261027.md:218 的两条裸锚点（admin-audit-logs-pg.mjs:398/:468）落在实质行、按同口径本会红，故作用域外快照 +2；同时 #790 的 privacy/ledger-pg.ts +3 条字面量与迁移 0050 让 4 条陈旧条目（ledger-pg.ts:303 ×2、admin-audit-logs-pg.mjs:539/:625）不再命中。新增 2 条逐条写在册上、陈旧 4 条随之删除；判据一字未改，不是放宽。",
+      "accept": 2,
+      "orphans": 3541,
+      "outsideRed": 128
     }
   ],
   "orphans": [
@@ -3789,11 +3795,9 @@
     "docs/verification/gy-r29-i07-closure-20261022.md|routes/knowledge.ts:201|SUSPECT",
     "docs/verification/gy-r29-i07-closure-20261022.md|services/api/src/knowledge/reference-query.ts:779|OUT_OF_RANGE",
     "docs/verification/gy-r29-i19-closure-20261022.md|services/api/src/privacy/backup-replay-manifest.ts:141|SUSPECT",
-    "docs/verification/gy-r29-i19-closure-20261022.md|services/api/src/privacy/ledger-pg.ts:303|SUSPECT",
     "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/app.ts:955|SUSPECT",
     "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/app.ts:973|SUSPECT",
     "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/app.ts:973|SUSPECT",
-    "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/privacy/ledger-pg.ts:303|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:3267|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:3333|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:735|SUSPECT",
@@ -3837,8 +3841,8 @@
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:307|OUT_OF_RANGE",
     "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:173|SUSPECT",
     "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:252|SUSPECT",
-    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:539|SUSPECT",
-    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:625|SUSPECT",
+    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:398|SUSPECT",
+    "docs/verification/gy-r66-wire-audit-logs-arm-20261027.md|tests/integration/admin-audit-logs-pg.mjs:468|SUSPECT",
     "docs/verification/gy-r67-docs-pins-20261027.md|docs/architecture/ai-ops-spec-status.md:203|SUSPECT",
     "docs/verification/gy-r67-docs-truth-20261027.md|jobs-pg.ts:419|SUSPECT",
     "docs/verification/gy-r67-docs-truth-20261027.md|services/api/src/admin/ops/jobs-pg.ts:419|SUSPECT",

@@ -72,6 +72,101 @@ function safeReason(value: unknown): string {
   return typeof value === 'string' && SAFE_TOKEN.test(value) ? value : 'cancelled';
 }
 
+// ---------------------------------------------------------------------------
+// provider_invocations（迁移 0050）：每一次**真实外发**一行的调用记录
+// ---------------------------------------------------------------------------
+
+/**
+ * `invocation_state` 的**唯一**词表（全仓只有这一处定义；库侧是迁移 0050 的
+ * `provider_invocations_state_closed` CHECK，逐字同值 —— `tests/unit/provider-invocations-ledger.test.mjs`
+ * 有一支用例把两者集合比对，多一个/少一个都判红）。
+ *
+ * 每个词的判据（与 `0050_provider_invocations.sql` 头注释的表逐条一致）：
+ * - `sent`        外发**已经发生**，供应商回了成功（拿到正文/合规响应）；
+ * - `send_failed` 外发**已经交给传输/供应商**，但结局是错误或不可判定（回错、超时、传输中断）；
+ * - `blocked`     被拦截、**没有发出**。⛔ 本片（R72-W2）的写点**不产出**该值：`ChatEgress.send` 的
+ *                 零外发路径（非 real 模式、执行前重查拒绝、预留失败）一律**不写行**（见 `task-egress.ts`）。
+ *                 该词先建进闭集，是给下一个拦截点（预算/配额闸门）留出处；在那之前它「有判据、无写入者」。
+ */
+export const INVOCATION_STATE = Object.freeze({
+  sent: 'sent',
+  sendFailed: 'send_failed',
+  blocked: 'blocked',
+});
+export type InvocationState = (typeof INVOCATION_STATE)[keyof typeof INVOCATION_STATE];
+/** 闭集的数组形态（运行期校验与用例共用；顺序即迁移 CHECK 里的书写顺序）。 */
+export const INVOCATION_STATES: readonly InvocationState[] = Object.freeze([
+  INVOCATION_STATE.sent,
+  INVOCATION_STATE.sendFailed,
+  INVOCATION_STATE.blocked,
+]);
+
+/**
+ * 版本串 / 引用 cipher 的形状（与迁移 0050 的 `provider_invocations_version_shape` 同口径）：
+ * 1..80，字符集 `[A-Za-z0-9._:/#+-]`，首字符字母或数字。
+ * ⛔ 不做「看起来像版本就收」的宽松匹配 —— 宽松匹配会把「随手编的串」也写进账。
+ */
+const VERSION_TOKEN = /^[A-Za-z0-9][A-Za-z0-9._:/#+-]{0,79}$/;
+/** `usage` 的键形状：结构读数的键（如 `prompt_tokens`）。⛔ 不收正文/嵌套。 */
+const USAGE_KEY = /^[a-z][a-z0-9_]{0,39}$/;
+const USAGE_MAX_KEYS = 8;
+const USAGE_MAX_VALUE = 1_000_000_000_000;
+
+/** 版本串收口：`null`/`undefined` ⇒ `null`（⛔ 不填占位串）；形状不合 ⇒ `INVALID_REQUEST`。 */
+function versionToken(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value);
+  if (!VERSION_TOKEN.test(text)) {
+    throw new PrivacyError('INVALID_REQUEST', '版本串形状非法（1..80；只允许字母/数字/._:/#+-，首字符为字母或数字）');
+  }
+  return text;
+}
+
+/**
+ * `usage` 的收口：只留**顶层对象的非负整数键值**（例：`{prompt_tokens, completion_tokens}`）。
+ *
+ * 形状不对的键**丢弃**而不是抛错：用量缺一半不该把整条记账废掉（这张表的首要价值是
+ * 「这次外发确实发生过」）。全丢光 ⇒ `null`（⛔ 不写 `{}` 冒充「有读数」）。
+ * ⛔ 不收正文、不收字符串、不收嵌套；键名口径来自供应商文档，本仓**无实测样本**（见派单回报）。
+ */
+function sanitizedUsage(value: unknown): Record<string, number> | null {
+  if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) return null;
+  const out: Record<string, number> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (Object.keys(out).length >= USAGE_MAX_KEYS) break;
+    if (!USAGE_KEY.test(key)) continue;
+    if (typeof raw !== 'number' || !Number.isSafeInteger(raw) || raw < 0 || raw > USAGE_MAX_VALUE) continue;
+    out[key] = raw;
+  }
+  return Object.keys(out).length === 0 ? null : out;
+}
+
+function nullableText(value: unknown): string | null {
+  return value === null || value === undefined ? null : String(value);
+}
+
+/** `provider_invocations` 行 → camelCase 记录（读面只经 `listInvocations`）。 */
+function toInvocationRecord(row: Row) {
+  return {
+    id: String(row['id']),
+    jobId: nullableText(row['job_id']),
+    attempt: int(row['attempt']),
+    capability: String(row['capability']),
+    providerVersion: nullableText(row['provider_version']),
+    modelVersion: nullableText(row['model_version']),
+    sdkVersion: nullableText(row['sdk_version']),
+    promptVersion: nullableText(row['prompt_version']),
+    ruleVersion: nullableText(row['rule_version']),
+    externalRequestRefCipher: nullableText(row['external_request_ref_cipher']),
+    invocationState: String(row['invocation_state']),
+    sentAt: iso(row['sent_at']),
+    durationMs: row['duration_ms'] === null || row['duration_ms'] === undefined ? null : int(row['duration_ms']),
+    usage: (row['usage'] ?? null) as Record<string, number> | null,
+    exportId: String(row['export_id']),
+    createdAt: iso(row['created_at']),
+  };
+}
+
 /**
  * PostgreSQL 错误 → 契约错误（不透出驱动原文）。按裁定逐类分档：
  * - 超时（57014 语句取消 / 55P03 拿不到锁）⇒ `PROVIDER_TIMEOUT`(retryable:true)；
@@ -138,6 +233,33 @@ function toRecord(row: Row) {
 
 export type ExportRecord = ReturnType<typeof toRecord>;
 
+/** `provider_invocations` 行 → camelCase 记录的类型（`listInvocations` 的返回元素）。 */
+export type InvocationRecord = ReturnType<typeof toInvocationRecord>;
+
+/**
+ * `recordInvocation` 的入参（0050 的**唯一**写入口）。
+ *
+ * ⛔ `attempt` **不在此列**：它由账本自己派生（同一 `export_id` 的第几条，1 起），
+ * 让调用方自报会把「第几次尝试」变成可随意填写的一列，`unique (job_id, attempt)` 也就失去意义。
+ */
+export interface RecordInvocationInput {
+  exportId: string;
+  jobId?: string | null;
+  capability: string;
+  invocationState: InvocationState;
+  /** 外发**进入**时刻（`call()` 之前取），不是拿到返回值的时刻；允许 null。 */
+  sentAt?: Date | string | null;
+  durationMs?: number | null;
+  /** 供应商返回的结构用量；经 `sanitizedUsage` 收口后才落库。 */
+  usage?: unknown;
+  providerVersion?: string | null;
+  modelVersion?: string | null;
+  sdkVersion?: string | null;
+  promptVersion?: string | null;
+  ruleVersion?: string | null;
+  externalRequestRefCipher?: string | null;
+}
+
 export interface PostgresExportLedger {
   reserve(input: {
     userId: string;
@@ -175,6 +297,15 @@ export interface PostgresExportLedger {
   markOutcomeUnknown(id: string, options?: { errorCode?: string | null }): Promise<ExportRecord>;
   guardWriteback(input: { exportId: string; userId: string; result: unknown }): Promise<{ written: boolean; exportId: string }>;
   getWriteback(exportId: string): Promise<Row | null>;
+  /**
+   * 写一行 `provider_invocations`（迁移 0050 的**唯一**写入原语）。
+   *
+   * ⛔ 调用方必须先让外发**真的发生**：本原语不判断「该不该发」，只把「已经发生的事」落账。
+   * 零外发路径（非 real 模式、执行前重查拒绝、预留失败）一律**不调用**本函数。
+   */
+  recordInvocation(input: RecordInvocationInput): Promise<InvocationRecord>;
+  /** 读面：按 `export_id` 取本片的调用行（`attempt` 升序）。⛔ 本片不开 HTTP 面。 */
+  listInvocations(input: { exportId: string; limit?: number }): Promise<InvocationRecord[]>;
   cancelVersion(input: { exportId: string; userId: string; objectVersion: number; reason?: string }): Promise<{ cancelled: boolean; alreadyCancelled: boolean; cancelledCount: number }>;
   cancelForJob(input: { jobId: string; userId: string; reason?: string }): Promise<{ cancelled: number }>;
   revokeInFlight(input: { userId: string; purpose?: string | null }): Promise<number>;
@@ -751,6 +882,129 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     }
   }
 
+  /**
+   * 写一行调用记录（0050）。这是这张表**唯一**的写入原语。
+   *
+   * `attempt` 由账本派生（同一 `export_id` 的 `COALESCE(MAX(attempt),0)+1`），调用方**不得**自报：
+   * 自报会让「第几次尝试」变成调用方可随意填写的一列，`unique (job_id, attempt)` 也就形同虚设。
+   * 派生与 INSERT 在**同一事务**内（`withTransaction`），两句之间不会有第三方插进来把序号顶掉。
+   *
+   * 并发（如实记，**真库未验证**）：同一个 `export_id` 的写入方是**单一**外发口顺序调用
+   * （`ChatEgress.send` 一条路径一个事务），跨 `export_id` 并发互不干扰。真出现同一 export 的并发写时：
+   * `job_id` 非空 ⇒ `unique (job_id, attempt)` 把第二条拦成 23505；`job_id` 为 NULL ⇒ 唯一索引不做判定
+   * （NULL 互不相等，见迁移 0050 头注释），此时需要调用方保证串行 —— ⛔ 不是靠这张表。
+   */
+  async function recordInvocation(input: RecordInvocationInput): Promise<InvocationRecord> {
+    const {
+      exportId,
+      jobId = null,
+      capability,
+      invocationState,
+      sentAt = null,
+      durationMs = null,
+      usage = null,
+      providerVersion = null,
+      modelVersion = null,
+      sdkVersion = null,
+      promptVersion = null,
+      ruleVersion = null,
+      externalRequestRefCipher = null,
+    } = input ?? ({} as RecordInvocationInput);
+    if (!UUID.test(String(exportId))) throw new PrivacyError('INVALID_REQUEST', 'export_id 非法');
+    if (jobId !== null && !UUID.test(String(jobId))) throw new PrivacyError('INVALID_REQUEST', 'job_id 非法');
+    if (typeof capability !== 'string' || !SAFE_TOKEN.test(capability)) {
+      throw new PrivacyError('INVALID_REQUEST', 'capability 非法（小写 token，1..40）');
+    }
+    if (!INVOCATION_STATES.includes(invocationState)) {
+      throw new PrivacyError('INVALID_REQUEST', 'invocation_state 不在闭集内（只允许 sent / send_failed / blocked）');
+    }
+    let duration: number | null = null;
+    if (durationMs !== null) {
+      if (!Number.isSafeInteger(durationMs) || durationMs < 0) {
+        throw new PrivacyError('INVALID_REQUEST', 'duration_ms 非法（非负整数或 null）');
+      }
+      duration = durationMs;
+    }
+    let at: string | null = null;
+    if (sentAt !== null) {
+      const parsed = sentAt instanceof Date ? sentAt : new Date(String(sentAt));
+      if (!Number.isFinite(parsed.getTime())) throw new PrivacyError('INVALID_REQUEST', 'sent_at 非法');
+      at = parsed.toISOString();
+    }
+    const rowUsage = sanitizedUsage(usage);
+    // 版本串逐列收口（`null` 放行；形状不合在**落库之前**就拒）。
+    const provider = versionToken(providerVersion);
+    const model = versionToken(modelVersion);
+    const sdk = versionToken(sdkVersion);
+    const prompt = versionToken(promptVersion);
+    const rule = versionToken(ruleVersion);
+    const refCipher = versionToken(externalRequestRefCipher);
+    await assertProvisioned();
+    return withTransaction(async (client) => {
+      const next = (
+        await client.query(
+          'SELECT COALESCE(MAX(attempt), 0) + 1 AS attempt FROM public.provider_invocations WHERE export_id=$1::uuid',
+          [exportId],
+        )
+      ).rows[0] as Row | undefined;
+      const attempt = int(next?.['attempt']);
+      if (attempt <= 0) throw new PrivacyError('PROVIDER_UNAVAILABLE', 'provider_invocations 序号派生失败');
+      const inserted = (
+        await client.query(
+          `INSERT INTO public.provider_invocations
+             (job_id, attempt, capability, provider_version, model_version, sdk_version, prompt_version,
+              rule_version, external_request_ref_cipher, invocation_state, sent_at, duration_ms, usage, export_id)
+           VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$12,$13::jsonb,$14::uuid)
+           RETURNING id, job_id, attempt, capability, provider_version, model_version, sdk_version,
+                     prompt_version, rule_version, external_request_ref_cipher, invocation_state,
+                     sent_at, duration_ms, usage, export_id, created_at`,
+          [
+            jobId,
+            attempt,
+            capability,
+            provider,
+            model,
+            sdk,
+            prompt,
+            rule,
+            refCipher,
+            invocationState,
+            at,
+            duration,
+            rowUsage === null ? null : JSON.stringify(rowUsage),
+            exportId,
+          ],
+        )
+      ).rows[0] as Row | undefined;
+      if (!inserted) throw new PrivacyError('PROVIDER_UNAVAILABLE', 'provider_invocations 写入失败');
+      return toInvocationRecord(inserted);
+    });
+  }
+
+  /** 读面：按 `export_id` 取本片的调用行（`attempt` 升序；`limit` 夹在 1..200）。 */
+  async function listInvocations(input: { exportId: string; limit?: number }): Promise<InvocationRecord[]> {
+    const { exportId, limit = 50 } = input ?? ({} as { exportId: string; limit?: number });
+    if (!UUID.test(String(exportId))) throw new PrivacyError('INVALID_REQUEST', 'export_id 非法');
+    const bounded = typeof limit === 'number' && Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 1), 200) : 50;
+    try {
+      const rows = (
+        await pool.query(
+          `SELECT id, job_id, attempt, capability, provider_version, model_version, sdk_version,
+                  prompt_version, rule_version, external_request_ref_cipher, invocation_state,
+                  sent_at, duration_ms, usage, export_id, created_at
+             FROM public.provider_invocations
+            WHERE export_id=$1::uuid
+            ORDER BY attempt ASC
+            LIMIT $2`,
+          [exportId, bounded],
+        )
+      ).rows as Row[];
+      return rows.map(toInvocationRecord);
+    } catch (error) {
+      return mapPgError(error);
+    }
+  }
+
   return {
     reserve,
     get,
@@ -763,6 +1017,8 @@ export function createPostgresExportLedger({ pool }: { pool: PgPool }): Postgres
     markOutcomeUnknown: (id, options = {}) => markTerminal(id, 'outcome_unknown', options.errorCode ?? null),
     guardWriteback,
     getWriteback,
+    recordInvocation,
+    listInvocations,
     cancelVersion,
     cancelForJob,
     revokeInFlight,

@@ -982,9 +982,19 @@
     "line": 143,
     "target": "tests/unit/sql-column-coverage.test.mjs",
     "from": 1393,
-    "to": 1433,
+    "to": 1495,
     "kind": "correction",
     "symbol": "[\\s\\S]*?",
-    "reason": "该页 §3.1 的高档清单是在 8b646ae1 上按 `git grep -n` 取号的（那时 `.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '')` 正好在 1393）；但 base（344f4423）的 1393 已经是 ` * 反引号形态为什么必须收…` 注释行，旧锚点在 base 上就指错了。合流后按符号实测：`tests/unit/sql-column-coverage.test.mjs` 里出现 `[\\s\\S]*?` 的剥离点只有 :1433（`    .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '');`），端点映射给的 :1422 落在同一句注释上、不是剥离点 ⇒ 按符号重锚到 1433。"
+    "reason": "该页 §3.1 的高档清单是在 8b646ae1 上按 `git grep -n` 取号的（那时 `.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '')` 正好在 1393）；但 base（344f4423）的 1393 已经是 ` * 反引号形态为什么必须收…` 注释行，旧锚点在 base 上就指错了。合流后按符号实测：`tests/unit/sql-column-coverage.test.mjs` 里出现 `[\\s\\S]*?` 的剥离点只有 :1433（`    .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '');`），端点映射给的 :1422 落在同一句注释上、不是剥离点 ⇒ 按符号重锚到 1433。 ｜ 2026-10-31 R72-W3b 合流（#785 × #790）：本片给 sql-column-coverage.test.mjs 增补读数与豁免条目后，同一剥离点下移到 :1495（`.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '')`），故 to 同步改为 1495；from 1393 不变（那是 base 344f4423 上的历史取号）。"
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 197,
+    "target": "tests/unit/ai-ops-ledger-pins.test.mjs",
+    "from": 282,
+    "to": 380,
+    "kind": "correction",
+    "symbol": "钉子④：AUDIT_ACTIONS 与契约 enum 双向相等",
+    "reason": "该行说的是「顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs` 钉住」，但 base（c622a84b）的 :282 是钉子③b 变异测试里的 `assert.equal(after.maxVersion, real.maxVersion + 1);`，不是钉「顺序」的那条用例 —— 旧锚点在 base 上就指错。合并树里钉顺序的是钉子④（HEAD :380 `test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、无重复），扩值必须同 PR 改三件套'…)`）；本片新增钉子①/①b/①c 又把它从 base 的 :302 往下推，故按**符号**重锚到 :380，而不是按位移量机械平移（机械平移只会把它挪到另一条用例的断言行）。"
   }
 ]

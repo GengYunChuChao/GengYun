@@ -111,8 +111,19 @@ const COVERAGE_EXEMPT = [];
  * gengyun_egress_ledger 拿不到 public.exports / public.export_writebacks 的列面；是否接线属
  * 产品/安全裁定，不在本片（纯测试资产）的改动范围内。
  *
- * 条数钉死 = 33 个 table.column.privilege 唯一键（来自 54 条语句级缺口），多一条少一条都判红；
+ * 条数钉死 = 63 个 table.column.privilege 唯一键（来自 101 条语句级缺口），多一条少一条都判红；
  * 反向核对由 evaluateCoverage 的 staleExemptions 负责（NC8 走一遍）。
+ *
+ * R72-W2（`0050_provider_invocations.sql` 落盘）新增 30 条：新表 `public.provider_invocations`
+ * 与上面两张表**同一个原因**——运行时 LOGIN 只继承 5 个组（`20-login-roles.sql:221-225`：
+ * auth_privacy / preview_reader / consent_granter / profile_runtime / knowledge_runtime），
+ * `gengyun_egress_ledger` **不在其中**，所以即使该组的引导文件里补齐了列级授权，运行时仍然
+ * 拿不到这张表的任何列面。这与 exports / export_writebacks 的 33 条完全是同一个结构性缺口，
+ * 不是「本片想放宽」，也不是等某个授权批复：**授权已经补在它该在的地方**
+ * （`services/api/db/roles/egress_ledger.sql`，与 exports 的授权同处），要让这 30 条消失必须
+ * 先改变「运行时是否继承外发账本组」这个架构决定 —— 那是产品/安全裁定，不在本片范围。
+ * 写失败仍被 `ChatEgress` 计成可观测读数（`invocationReadings()` +
+ * `provider_invocation_write_failed`），不会把成功的问答判成失败。
  */
 const LEDGER_COVERAGE_EXEMPT = [
   { ref: 'public.export_writebacks.committed_at', privilege: 'SELECT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.export_writebacks 的 SELECT 面；SQL: privacy/ledger-pg.ts:655', owner: 'R28-S66/接线待裁定' },
@@ -148,6 +159,37 @@ const LEDGER_COVERAGE_EXEMPT = [
   { ref: 'public.exports.state', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:591/612/684/707/729', owner: 'R28-S66/接线待裁定' },
   { ref: 'public.exports.updated_at', privilege: 'UPDATE', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 UPDATE 面；SQL: privacy/ledger-pg.ts:570/591/612/684/707/729', owner: 'R28-S66/接线待裁定' },
   { ref: 'public.exports.user_id', privilege: 'INSERT', reason: 'egress_ledger 组未部署也未被 runtime 继承（provision-db.sh:285；20-login-roles.sql:54/:221-225）：运行时拿不到 public.exports 的 INSERT 面；SQL: privacy/ledger-pg.ts:443', owner: 'R28-S66/接线待裁定' },
+  // ---- R72-W2：`public.provider_invocations`（0050）。原因同上一条族：授权面零 GRANT。
+  { ref: 'public.provider_invocations.attempt', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是「本 export 的第几次调用」序号（由账本派生，调用方不得自报）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.attempt', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列在 MAX()+1 派生、RETURNING 与读面里都要读；SQL: privacy/ledger-pg.ts:946/958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.capability', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是该次外发的能力名（缺省 llm）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.capability', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.created_at', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列是落库时刻（DEFAULT now()，不参与 INSERT 列清单），只在 RETURNING/读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.duration_ms', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是本次调用耗时（外发前后单调钟差，非负整数）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.duration_ms', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.export_id', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是指向 public.exports 的外键（ON DELETE CASCADE），把一行调用挂回它所属的那次外发；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.export_id', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列是读面 WHERE 条件与 RETURNING 列；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.external_request_ref_cipher', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是受控密文引用（本片无写入者，恒 NULL，列保留给后续接线）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.external_request_ref_cipher', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本片读面会取回该列，但写侧恒 NULL；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.id', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列是主键（DEFAULT gen_random_uuid()，不参与 INSERT 列清单），只在 RETURNING/读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.invocation_state', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是闭集结局（sent / send_failed / blocked，带 CHECK；代码里只有 INVOCATION_STATE 一处常量）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.invocation_state', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；闭集结局要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.job_id', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列可空且**无外键**（public.jobs 全仓零 INSERT），写点当前恒传 NULL；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.job_id', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.model_version', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是模型版本串（形如 model/<model>#live-1，由装配层给、没给就 NULL，不填占位串）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.model_version', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.prompt_version', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列取 live 适配器的 CHAT_PROMPT_VERSION（prompt/citation-bind/1），不复制字面量；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.prompt_version', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.provider_version', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列本片**无写入者**（无单一真源，恒 NULL；不冒名 recipients.config_version）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.provider_version', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本片读面会取回该列，但写侧恒 NULL；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.rule_version', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列本片**无写入者**（规则版本真源在 conversations/service.ts 的 answerRuleVersion，外发口拿不到，恒 NULL）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.rule_version', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本片读面会取回该列，但写侧恒 NULL；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.sdk_version', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列本片**无写入者**（仓内无 SDK 版本单一真源，恒 NULL）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.sdk_version', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本片读面会取回该列，但写侧恒 NULL；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.sent_at', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是进入 provider call 之前取的时刻（与 created_at 不可互换）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.sent_at', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.usage', privilege: 'INSERT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 INSERT 面未授任何列；本列是供应商返回顶层的用量摘要（jsonb，只收非负整数键，形状未经真实外发实测）；SQL: privacy/ledger-pg.ts:954', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
+  { ref: 'public.provider_invocations.usage', privilege: 'SELECT', reason: '运行时 LOGIN 只继承 5 个组（20-login-roles.sql:221-225）、不含 gengyun_egress_ledger，故组文件已补的该表授权对运行时无效（与 exports/export_writebacks 同族），运行时该表 SELECT 面未授任何列；本列要随 RETURNING 与读面取回；SQL: privacy/ledger-pg.ts:958/992', owner: 'R72-W2/结构性缺口（与 exports 族同因）' },
 ];
 
 /* ============================================================================
@@ -803,22 +845,41 @@ const TABLE_WIDE_COLUMN = '*';
  *   `20-login-roles.sql` 授权面内（本片**零迁移、零新授权**；`GRANT DELETE ON public.jobs` 是既有用户在
  *   2026-10-30 批准的授权面，登记在 `gy-r71-jobs-ledger-purge-grant` 区）。SELECT 161、`SELECT *` 15
  *   （`t.*` 4）、行锁 26+17、行锁要求 43＋豁免 1、函数调用 2、无顶层 FROM 17、不可判插值 5、ledger 豁免 33 不变。
+ * ㉔ 2026-10-30 R72-W2（`provider_invocations` 垂直片，迁移 0050）：`privacy/ledger-pg.ts` 从
+ *   24 → **27** 条字面量（`recordInvocation` 的 `SELECT COALESCE(MAX(attempt),0)+1` 与
+ *   `INSERT … RETURNING`、`listInvocations` 的显式列 `SELECT`）⇒ 审计文件数仍 **21**、
+ *   字面量 303 → **306**、语句 INSERT 46 → **47** / SELECT 161 → **163** / UPDATE 56 / DELETE 40、
+ *   RETURNING 95 → **96**、引用表 49 → **50**（`public.provider_invocations`）、列要求
+ *   1928 → **1975**、已覆盖 **1874 不变**（新表在授权面零 GRANT，一条都不满足）、零豁免缺口
+ *   54 → **101**、唯一缺口键 33 → **63**、豁免 33 → **63**（新增 30 条逐条写原因与 SQL 行；
+ *   `ON CONFLICT` / `SELECT *` / 行锁 / 不可判插值读数全部不变）。**没有把任何数字往下改**：
+ *   `sqlLiterals` 是 +3、`columnRequirements` 是 +47，都是新 SQL 真带来的。
+ * ㉕ 2026-10-31 R72-W3b 合流 `upstream/main`@`c622a84b`（#785 作业台账 × #790 外发账本）：
+ *   两片**同时**加 SQL（作业台账的 2 条 `jobs/ledger.ts` 字面量 + 外发账本的 3 条
+ *   `privacy/ledger-pg.ts` 字面量），且分属不同的审计文件 ⇒ 读数在合并树上**重新实测**，
+ *   既不等于 #785 那版（305／161／41／30），也不等于 #790 那版（306／163／40／29）。合并树实测：
+ *   字面量 **308**、语句 `{INSERT 48, UPDATE 56, SELECT 163, DELETE 41}`、RETURNING **96**、
+ *   ON CONFLICT **30**、引用表 **51**、列要求 **2009**／已覆盖 **1908**（缺 **0**：新表那 47 条落在
+ *   30 条豁免里，既不是「已覆盖」也不往下改数）、唯一缺口键 **0**、豁免 **63**（本片 33 + 外发账本 30）。
+ *   逐数归因：`INSERT 47→48` 与 `RETURNING 95→96` 都来自外发账本那条 `INSERT … RETURNING`，
+ *   `SELECT 161→163` 是它的 `SELECT COALESCE(MAX(attempt),0)+1` 与 `listInvocations` 的显式列 SELECT；
+ *   作业台账那半的字面量已在 305→308 里，两半互不重叠（不同审计文件、不同表）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 22,
-  sqlLiterals: 305,
-  statements: { INSERT: 47, UPDATE: 56, SELECT: 161, DELETE: 41 },
-  returningClauses: 95,
+  sqlLiterals: 308,
+  statements: { INSERT: 48, UPDATE: 56, SELECT: 163, DELETE: 41 },
+  returningClauses: 96,
   onConflictClauses: 30,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
   noTargetTable: 17,
-  referencedTables: 50,
-  columnRequirements: 1962,
+  referencedTables: 51,
+  columnRequirements: 2009,
   coveredRequirements: 1908,
-  ledgerExemptions: 33,
+  ledgerExemptions: 63,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
@@ -844,7 +905,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'privacy/backup-copies-pg.ts': 4,
   'privacy/consent-pg.ts': 14,
   'privacy/grant-pg.ts': 12,
-  'privacy/ledger-pg.ts': 24,
+  'privacy/ledger-pg.ts': 27,
   'profile/service.ts': 12,
   'recognitions': 21,
   'speech': 17,
@@ -888,6 +949,7 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.ocr_jobs',
   'public.ocr_records',
   'public.privacy_epochs',
+  'public.provider_invocations',
   'public.recipients',
   'public.recognition_idempotency',
   'public.recognition_jobs',
@@ -2528,9 +2590,9 @@ test('sql-column-coverage/扩展 22 文件读数与列覆盖（R28-S66 / R28-W12
   // 缺口只允许落在 ledger 范畴：任一条落到服务的其他文件 ⇒ 判红，交指挥裁定（派单 §5）。
   // `extended.coverage.missing` 已扣掉豁免，所以这里另跑一次**零豁免**审计取原始缺口。
   const raw = auditAll({ storeSources: auditedSources, exemptions: [], opaqueAllowlist: EXTENDED_OPAQUE_ALLOWLIST, rowLockExemptions: [] });
-  assert.equal(raw.coverage.missing.length, 54, `零豁免时扩展审计的语句级缺口条数变了（实际 ${raw.coverage.missing.length}）`);
+  assert.equal(raw.coverage.missing.length, 101, `零豁免时扩展审计的语句级缺口条数变了（实际 ${raw.coverage.missing.length}）`);
   const rawGapKeys = [...new Set(raw.coverage.missing.map((item) => `${item.table}.${item.column}|${item.privilege}`))].sort();
-  assert.equal(rawGapKeys.length, 33, `零豁免时的唯一缺口键必须是 33（实际 ${rawGapKeys.length}）`);
+  assert.equal(rawGapKeys.length, 63, `零豁免时的唯一缺口键必须是 63（实际 ${rawGapKeys.length}）`);
   assert.deepEqual(
     rawGapKeys,
     LEDGER_COVERAGE_EXEMPT.map((entry) => `${entry.ref}|${entry.privilege}`).sort(),
@@ -2543,13 +2605,13 @@ test('sql-column-coverage/扩展 22 文件读数与列覆盖（R28-S66 / R28-W12
   );
   assert.equal(raw.rowLocks.problems.length, 1, `零豁免时行锁缺口必须恰 1 条（ledger 的 exports 行锁），实际：\n${raw.rowLocks.problems.join('\n')}`);
   assert.ok(raw.rowLocks.problems[0].startsWith(`${SITE.ledgerExportsLock} → public.exports`), `行锁缺口必须点名 ${SITE.ledgerExportsLock}：${raw.rowLocks.problems[0]}`);
-  assert.equal(extended.coverage.missing.length, 0, `扩展审计的缺口必须全被 33 条豁免压住（实际还剩 ${extended.coverage.missing.length} 条）`);
+  assert.equal(extended.coverage.missing.length, 0, `扩展审计的缺口必须全被 63 条豁免压住（实际还剩 ${extended.coverage.missing.length} 条）`);
   assert.deepEqual(extended.coverage.problems, [], `扩展审计仍有多余缺口：\n${extended.coverage.problems.join('\n')}`);
   assert.deepEqual(extended.rowLocks.problems, [], `扩展审计仍有多余行锁缺口：\n${extended.rowLocks.problems.join('\n')}`);
   assert.deepEqual(extended.opaque.problems, [], `扩展审计的不可判插值未登记：\n${extended.opaque.problems.join('\n')}`);
 
   // 豁免表本身的形状与条数钉死（派单 §1.3：条数固定 + 逐条 reason/owner）。
-  assert.equal(LEDGER_COVERAGE_EXEMPT.length, EXPECTED_EXTENDED_READINGS.ledgerExemptions, 'ledger 豁免条数必须钉死在 33');
+  assert.equal(LEDGER_COVERAGE_EXEMPT.length, EXPECTED_EXTENDED_READINGS.ledgerExemptions, 'ledger 豁免条数必须钉死在 63');
   assert.equal(ROW_LOCK_EXEMPT.length, EXPECTED_EXTENDED_READINGS.rowLockExemptions, '行锁豁免条数必须钉死在 1');
   for (const entry of [...LEDGER_COVERAGE_EXEMPT, ...ROW_LOCK_EXEMPT]) {
     assert.match(entry.reason, /\S/, `豁免条目缺 reason：${JSON.stringify(entry)}`);
@@ -2565,7 +2627,7 @@ test('sql-column-coverage/扩展 22 文件读数与列覆盖（R28-S66 / R28-W12
   }
 
   const uniqueMissing = new Set(raw.coverage.missing.map((item) => `${item.ref}|${item.table}.${item.column}|${item.privilege}`));
-  console.log(`[sql-column-coverage] 零豁免时缺口站点 ${uniqueMissing.size} 条，全部在 privacy/ledger-pg.ts，且已全部命中 33 条豁免（扩展审计 staleExemptions ${extended.coverage.staleExemptions.length} 条）`);
+  console.log(`[sql-column-coverage] 零豁免时缺口站点 ${uniqueMissing.size} 条，全部在 privacy/ledger-pg.ts（33 条在 exports/export_writebacks、30 条在 0050 的 provider_invocations），且已全部命中 63 条豁免（扩展审计 staleExemptions ${extended.coverage.staleExemptions.length} 条）`);
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 

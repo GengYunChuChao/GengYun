@@ -316,8 +316,10 @@ async function bootstrapDatabase() {
   // `enable_admin_account`）落地，末位随之前移到 0048。
   // 第六次：R68-A01 的 0049（后台分类字典 `public.admin_categories` + 审计窄函数
   // `record_admin_category_update`）落地，末位随之前移到 0049。
-  assert.equal(applied.rows[0].version, '0049', '迁移 0049（R68-A01：后台分类字典 public.admin_categories 与审计窄函数 record_admin_category_update，与审计同事务；此前 0048 是 R68 的 disable_admin_account / enable_admin_account、0047 是 R64 的 record_admin_post_hide_audit）必须是最后一条已应用版本');
-  pass('迁移 0049 经 migrate.ts up 落到真库（schema_migrations 末项 0049）');
+  // 第七次：R72-W2 的 0050（每一次真实外发一行的调用记录 `public.provider_invocations`）落地，
+  // 末位随之前移到 0050。
+  assert.equal(applied.rows[0].version, '0050', '迁移 0050（R72-W2：public.provider_invocations —— job_id 可空无外键 + unique (job_id, attempt)、usage jsonb、invocation_state 闭集 sent/send_failed/blocked，写原语 ledger-pg.ts 的 recordInvocation / 写点 task-egress.ts 的 ChatEgress.send；此前 0049 是 R68-A01 的后台分类字典与 record_admin_category_update、0048 是 R68 的 disable_admin_account / enable_admin_account、0047 是 R64 的 record_admin_post_hide_audit）必须是最后一条已应用版本');
+  pass('迁移 0050 经 migrate.ts up 落到真库（schema_migrations 末项 0050）');
 
   await ownerPool.query(`GRANT USAGE ON SCHEMA public TO ${RUNTIME_ROLE}, ${UNGRANTED_ROLE}`);
   const region = grantRegion('deploy/postgres-cvm/sql/20-login-roles.sql', 'gy-r34-audit-logs-grant');

@@ -3,11 +3,14 @@
  *
  * ## 为什么存在
  * 账本三处形态今天是**结构事实**，不是行为约定：`public.jobs`（建表 `0001_initial_schema.sql:203`）
- * 只有**一个**写入者（GY-R71 起是 `services/api/src/jobs/ledger.ts` 的那一条 upsert）；
- * `provider_invocations` 只活在数据字典（`docs/architecture/data-dictionary.md:48`）
- * 里、**没有迁移**；审计 `action` 是四值闭集（`services/api/src/admin/audit/catalog.ts:41-46`）。
- * 它们漂移时读面**静默分叉**而不报错：多一个 `INSERT INTO jobs` 写入者会让作业账本与 `/admin/jobs`
- * 各说各话。`tests/unit/admin-audit-logs.test.mjs:130` 只钉
+ * 只有**一个**写入者（GY-R71 起是 `services/api/src/jobs/ledger.ts` 的那一条 upsert）；`provider_invocations`
+ * 的字典口径在 `docs/architecture/data-dictionary.md:48`，迁移与**唯一**写点各只有一处
+ * （`0050_provider_invocations.sql` 建表；`privacy/ledger-pg.ts` 的 `recordInvocation` 写、
+ * `privacy/task-egress.ts` 的 `ChatEgress.send` 调）；审计 `action` 是四值闭集
+ * （`services/api/src/admin/audit/catalog.ts:41-46`）。
+ * 它们漂移时读面**静默分叉**而不报错：自建一套 `INSERT INTO jobs` 会让作业账本与 `/admin/jobs` 各说各话
+ * （「零写入者」是 `0013_conversations.sql:19` 写下的旧裁定，R71 已在同片改写为该迁移头注里的历史陈述）；
+ * 给 `AUDIT_ACTIONS` 扩值会让审计查询面 / 契约枚举 / 文档三处不同步。`tests/unit/admin-audit-logs.test.mjs:130` 只钉
  * 「契约 enum === 运行时 AUDIT_ACTIONS」一个方向，本钉子钉**两层**：
  * ① 双向等式（抓单边改动）；② **字面四值锚**（抓"契约与运行时同时扩值"）。缺了 ② 本文件就只能
  * 证明"两边一致"，证明不了"没有未授权扩值" —— 审查实测：只留 ① 时双边同时加第 5 个值，本文件 5/5 绿。
@@ -34,7 +37,9 @@
  *   ① jobs 写入者：**语句级**命中必须恰 1 条且在 `jobs/ledger.ts`；**注释级**命中按 `文件:行`
  *      **逐条白名单登记**（今天 2 条，都是迁移头注释在引用「grep `INSERT INTO jobs`」这句历史判据）。
  *      ⛔ 不退化成一概不看注释：将来哪怕只在注释里多提一句也要红，逼人回来改口径。
- *   ② `provider_invocations` 无迁移、源码零引用，只有文档里有形状。
+ *   ② `provider_invocations`：**恰好一份**正向迁移 + **一份**同名回滚件（表名逐字一致），源码里提到它的
+ *      文件必须**逐条落在一份写死的清单**里（今天 2 个：账本原语 + 外发写点）；数据字典那一行必须还在。
+ *      ⛔ 不是「至少 N 次」：清单外的任何一处（哪怕只是注释里多提一句）都要红，逼人回来登记。
  *   ③ 正向迁移末项**从编号目录派生**（不写死编号 / 文件名：`services/api/src/db/migrate.ts` 的
  *      `discoverMigrations` / `inspectMigrationNumbering` / `formatMigrationVersion` 是唯一真源），
  *      并断言派生值 == 目录里的最大编号、该文件确实存在、`rollback/` 下有同名回滚件；
@@ -201,21 +206,70 @@ test('钉子①c：ledger.ts 抄的 JobState 闭集与契约 states.json 逐值�
 });
 
 // ---------------------------------------------------------------------------
-// 钉子②：provider_invocations 没有迁移
+// 钉子②：provider_invocations 的迁移**恰好两件**（正向 + 回滚），源码引用面白名单
 // ---------------------------------------------------------------------------
-test('钉子②：provider_invocations 无迁移、源码零引用，只有数据字典里有形状', () => {
+/**
+ * 允许在 `services/api/src/**` 里出现 `provider_invocations` 的文件（**逐条登记**，今天 2 个）。
+ *
+ * ⛔ 这份清单是白名单，不是「至少 N 次」：新增一处写面/读面必须在同一次改动里登记到这里，
+ * 否则本钉子会红 —— 目的是让「谁在写这张表」永远是一份能一眼读完的短清单。
+ */
+const PROVIDER_INVOCATIONS_SOURCE_SURFACES = Object.freeze([
+  // 唯一写原语 `recordInvocation` + 唯一读面 `listInvocations` + 词表常量 `INVOCATION_STATE(S)`。
+  'services/api/src/privacy/ledger-pg.ts',
+  // 唯一写点 `ChatEgress.send`（只调用原语，**不**持有任何 SQL）。
+  'services/api/src/privacy/task-egress.ts',
+]);
+
+test('钉子②：provider_invocations 恰好一份正向迁移 + 一份回滚件，表名逐字一致', () => {
   const sqlFiles = walk(MIGRATIONS_DIR).filter((relPath) => relPath.endsWith('.sql'));
-  assert.deepEqual(
-    sqlFiles.filter((relPath) => /provider_invocations/i.test(read(relPath))),
-    [],
-    '有迁移（正向或 rollback）提到 provider_invocations：这张表今天**尚未建**，任何 DDL 都说明'
-      + '「先有字典、后建表」的现状被打破；建表时请把本断言连同 docs/architecture/data-dictionary.md 一起改口径',
+  const hits = sqlFiles.filter((relPath) => /provider_invocations/i.test(read(relPath)));
+  const forward = hits.filter((relPath) => !relPath.startsWith(`${MIGRATIONS_DIR}/rollback/`));
+  const rollback = hits.filter((relPath) => relPath.startsWith(`${MIGRATIONS_DIR}/rollback/`));
+  assert.equal(
+    forward.length,
+    1,
+    `provider_invocations 的正向迁移必须恰好一份（今天 = 0050_provider_invocations.sql），实际 ${forward.length} 份：`
+      + `${JSON.stringify(forward)}。多一份说明有人另开了一支建表/改表迁移；少一份说明建表件被删了`,
   );
-  assert.deepEqual(
-    walk('services/api/src').filter((relPath) => /provider_invocations/i.test(read(relPath))),
-    [],
-    '源码里出现 provider_invocations：表还不存在，此刻写它就是写在空气上（真要建表请先落迁移并同步钉子②）',
+  assert.equal(
+    rollback.length,
+    1,
+    `provider_invocations 的回滚件必须恰好一份（且与正向同名），实际 ${rollback.length} 份：${JSON.stringify(rollback)}`,
   );
+  // 表名逐字一致：正向建的表名 == 回滚删的表名（拼写漂开 ⇒ 回滚删不掉真正要删的东西）。
+  const created = /CREATE TABLE IF NOT EXISTS public\.([a-z0-9_]+) \(/.exec(read(forward[0]));
+  assert.ok(created, '正向迁移里找不到 `CREATE TABLE IF NOT EXISTS public.<表> (`：建表件形状变了');
+  const dropped = /DROP TABLE public\.([a-z0-9_]+);/.exec(read(rollback[0]));
+  assert.ok(dropped, '回滚件里找不到 `DROP TABLE public.<表>;`：回滚件形状变了');
+  assert.equal(created[1], 'provider_invocations', '正向迁移建的表名不是 provider_invocations');
+  assert.equal(dropped[1], created[1], '回滚件删的表名与正向建的表名不一致（拼写漂移）');
+  // 回滚件必须与正向同名配对（`rollback/<stem>.down.sql`），⛔ 不许改名躲过钉子③。
+  assert.equal(
+    rollback[0],
+    `${MIGRATIONS_DIR}/rollback/${forward[0].slice(forward[0].lastIndexOf('/') + 1).replace(/\.sql$/, '')}.down.sql`,
+    '回滚件名与正向迁移不同名：钉子③的配对判据会被改名绕过',
+  );
+});
+
+test('钉子②：源码里提到 provider_invocations 的文件必须落在写死的白名单内', () => {
+  const hits = walk('services/api/src').filter((relPath) => /provider_invocations/i.test(read(relPath)));
+  assert.deepEqual(
+    [...hits].sort(),
+    [...PROVIDER_INVOCATIONS_SOURCE_SURFACES].sort(),
+    '源码里出现 provider_invocations 的文件集合变了：新增位置必须登记到 PROVIDER_INVOCATIONS_SOURCE_SURFACES'
+      + '（白名单式判据，多一处就红 —— 这是「谁在写这张表」的唯一凭据）',
+  );
+  // 只有账本原语可以持有 SQL；其它白名单文件（外发写点）只许调用原语。
+  for (const relPath of PROVIDER_INVOCATIONS_SOURCE_SURFACES) {
+    if (relPath === 'services/api/src/privacy/ledger-pg.ts') continue;
+    assert.doesNotMatch(
+      read(relPath),
+      /(INSERT\s+INTO|FROM|UPDATE|DELETE\s+FROM)\s+public\.provider_invocations/i,
+      `${relPath} 里出现了直接操作 provider_invocations 的 SQL：SQL 只许待在 ledger-pg.ts 的`
+        + ' recordInvocation / listInvocations 里，外发写点只许调用原语',
+    );
+  }
   // 本质是子串/行形状检查：字典那一行是它在仓里唯一的「形状来源」，故用 match 并写死行首字符。
   assert.match(
     read('docs/architecture/data-dictionary.md'),
