@@ -19,7 +19,7 @@
 
 | 上一版编号 | 上一版定性 | 本版定性 | 改判依据 |
 | --- | --- | --- | --- |
-| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1358` 的 `adminRealUnwired` 值只等于「real 模式」，`:1376-1378` 在 real + 有池时即构造生产端口 |
+| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1358` 的 `adminRealUnwired` 值只等于「real 模式」，`:1380-1382` 在 real + 有池时即构造生产端口 |
 | 原 Z02（Q29） | 已搁置 | N08（未实现） | 原文只有「尚未执行」（docs/requirements.md:58），无暂缓记录 |
 | 原 Z07（120 题） | 已搁置 | N09（未实现） | 台账「仍待后续片」是排期自述；门槛原文见 docs/implementation-requirements.md:467 |
 | 原 Z08（原生 PG17 迁移） | 已搁置 | 并入 E39 | 真库臂 workflow 用 `postgres:17.11` 并跑全链迁移（.github/workflows/real-pg-integration.yml:94；全链迁移见同文件 :533） |
