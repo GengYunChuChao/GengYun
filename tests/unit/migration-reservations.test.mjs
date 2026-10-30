@@ -94,6 +94,12 @@
  * **台账不因 0043 新增条目**（它是本片自己落盘的文件，不是"有意缺号"），也**不得**残留
  * 42 号条目（0042 已落盘 ⇒ `reservedButPresent` 立刻判红）；「当前仓库」用例把
  * 0040/0041/0042/0043 四条都断言为**必须出现**，`0037_` 前缀仍断言为**必须不存在**。
+ *
+ * **当前树状态（R72-W2，`0050_provider_invocations.sql` 落盘）**：正向 **49** 个
+ * （`0001..0035` 连续 + `0036` + `0038`…`0050` 里除 `0037` 之外的其余各条）、`rollback/` **49** 个；
+ * 缺号仍只有 `0037`，保留台账仍只有那一条 ⇒ `49 个文件 + 1 保留 === max 50`。
+ * **台账不因 0050 新增条目**（本片自己落盘的文件不是"有意缺号"），也**不得**残留 49 号条目
+ * （0049 已落盘 ⇒ `reservedButPresent` 立刻判红）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -137,7 +143,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库 已落盘 ⇒ 48 文件 + 1 保留 === 49、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录 已落盘 ⇒ 49 文件 + 1 保留 === 50、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -165,7 +171,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（45 = 46 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（49 = 50 − 1）',
   );
 
   const files = migrations.map((item) => item.filename);
