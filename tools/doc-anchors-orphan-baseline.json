@@ -50,6 +50,24 @@
       "accept": 0,
       "orphans": 3542,
       "outsideRed": 136
+    },
+    {
+      "why": "GY-R71 让 settleCodeOf 保留 PrivacyError 的闭集码，services/api/src/conversations/service.ts 净 +14 行（import 1 + 注释 12 + 分支 1）。历史取证页 docs/verification/gy-i12-conversations-gap-20261021.md 的两条裸锚点随行号平移：键里带行号 ⇒ 新增 service.ts:945（SUSPECT）、陈旧 service.ts:1107（SUSPECT）。不是新增问题，按仓规不改写取证页数字。",
+      "accept": 1,
+      "orphans": 3543,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 合流 upstream/main：两侧各有一条同族登记，合并后净增减 0；册上那条陈旧条目来自 #775 合并后路由装配行复位，按实测重生成，非本片放宽判据",
+      "accept": 0,
+      "orphans": 3542,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 jobs 台账片合流 upstream/main（1b152d42）后按实测重生成：孤儿册条目集与 accept 账本按两侧并集（main 3542 条 + 本片条目），条目集由 --scan docs 重新实测落盘；孤儿 3542 条与 main 完全一致（新增 0、消失 0），净增只发生在「作用域外本会红」这一册的 3 条：本片改动了 services/api/src/conversations/store-pg.ts（+85/-… 台账映射与取消回执）、services/api/src/admin/ops/jobs-pg.ts（+69）与 services/api/src/recognitions/store-pg.ts，三份历史取证页（gy-r28-favorites-history-grants-20261020.md 的 conversations/store-pg.ts:432、gy-r67-docs-truth-20261027.md 的 jobs-pg.ts:419 与 services/api/src/admin/ops/jobs-pg.ts:419）逐字引用的行号随之漂移；按仓规不改写历史取证页数字，只在本册留痕。同时 1 条陈旧（gy-r28-favorites-history-grants-20261020.md|recognitions/store-pg.ts:820）因该行复位不再命中而清出。这是合流并集后的实测重生成，不是放宽判据。",
+      "accept": 3,
+      "orphans": 3542,
+      "outsideRed": 136
     }
   ],
   "orphans": [
@@ -3637,7 +3655,7 @@
     "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:1107|SUSPECT",
+    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:945|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
