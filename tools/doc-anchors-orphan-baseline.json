@@ -44,6 +44,12 @@
       "accept": 77,
       "orphans": 3543,
       "outsideRed": 136
+    },
+    {
+      "why": "GY-R71 jobs 台账片合流 upstream/main：两侧各有同族登记，合并后按实测重生成（净增减 0）",
+      "accept": 0,
+      "orphans": 3542,
+      "outsideRed": 136
     }
   ],
   "orphans": [
@@ -51,7 +57,6 @@
     "docs/architecture/ai-ops-spec-status.md|:126|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:1354|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:150|ambiguous-block",
-    "docs/architecture/ai-ops-spec-status.md|:165|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:225|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:301-328|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:557|no-explicit-in-block",
