@@ -70,6 +70,10 @@ const ADDITIONAL_SQL_HOST_FILES = [
   'admin/ops/content-pg.ts',
   'admin/ops/flags-pg.ts',
   'admin/ops/jobs-pg.ts',
+  // GY-R71（2026-10-30）：统一作业台账 `public.jobs` 的唯一写入点（一条 upsert）。它不在 8 个
+  // store-pg 目录里，但写的是**运行时的真表**，所以必须进真审计（不是 UNAUDITED / OPAQUE 桶）：
+  // 15 个 INSERT 列 / 5 个 UPDATE 列 / 1 个 SELECT 列全部要有列级授权，缺一列就红。
+  'jobs/ledger.ts',
   'knowledge/service.ts',
   'media/store-pg.ts',
   'moderation/ledger-pg.ts',
@@ -765,21 +769,31 @@ const TABLE_WIDE_COLUMN = '*';
  *   已覆盖 1837 → **1855**（缺口仍 **0**：这 6/5 列已在 `20-login-roles.sql` 段
  *   `gy-r68-catalog-grant` 授权、`90-assert` 的 `expected` 同步登记）。另一件**不动读数**的事：
  *   `admin/ops/accounts-only.ts` 里两条裸 `reject` 换成带门转发，本审计器不看 TS 逻辑，故无读数变化。
+ * ㉒ 2026-10-30 GY-R71（统一作业台账 `public.jobs` 的首个写入者）：
+ *   `services/api/src/jobs/ledger.ts` 进真审计（1 条字面量：那条 `INSERT … ON CONFLICT (id) DO UPDATE`
+ *   upsert）⇒ 审计文件数 21 → **22**、字面量 301 → **302**、语句 INSERT 46 → **47**、ON CONFLICT
+ *   29 → **30**（DO UPDATE 分支）、引用表 49 → **50**（`public.jobs`）；列要求 1909 → **1942**、
+ *   已覆盖 1855 → **1888**（缺口仍 **0**：15 INSERT / 5 UPDATE / 1 SELECT 列已在
+ *   `20-login-roles.sql` 的 gy-r28-runtime-domain-grants 段尾授给 `gengyun_api_runtime`，
+ *   `90-assert` 的 `domain_manifest` 与 `expected` 同步登记）。另有 12 条**已有语句**的列面变化
+ *   （`admin/ops/jobs-pg.ts` 的 `lockSql` 补 3 列 ×3 源、`updateSql` 的 `RETURNING` 补 `updated_at` ×3
+ *   源 = 12 条 SELECT 要求；那 12 列三表本来就全授，因此只推高列要求总数，没推高缺口）。
+ *   本片**零迁移**（表 0001 就有，DDL 不动），故 `verify-migrations-unique` 读数不变。
  */
 const EXPECTED_EXTENDED_READINGS = {
-  auditedFiles: 21,
-  sqlLiterals: 301,
-  statements: { INSERT: 46, UPDATE: 54, SELECT: 161, DELETE: 40 },
+  auditedFiles: 22,
+  sqlLiterals: 302,
+  statements: { INSERT: 47, UPDATE: 54, SELECT: 161, DELETE: 40 },
   returningClauses: 93,
-  onConflictClauses: 29,
+  onConflictClauses: 30,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 26, SHARE: 17 },
   functionCalls: 2,
   noTargetTable: 17,
-  referencedTables: 49,
-  columnRequirements: 1909,
-  coveredRequirements: 1855,
+  referencedTables: 50,
+  columnRequirements: 1942,
+  coveredRequirements: 1888,
   ledgerExemptions: 33,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
@@ -797,6 +811,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'conversations': 17,
   'favorites': 15,
   'history': 16,
+  'jobs/ledger.ts': 1,
   'knowledge/service.ts': 4,
   'media': 23,
   'messages': 15,
@@ -838,6 +853,7 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.history',
   'public.history_idempotency',
   'public.idempotency_keys',
+  'public.jobs',
   'public.media',
   'public.media_derivatives',
   'public.media_object_cleanup',
@@ -2441,7 +2457,7 @@ function findHostSetProblems(hosts) {
   return problems;
 }
 
-test('sql-column-coverage/扩展 21 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5 / R68-A01）', () => {
+test('sql-column-coverage/扩展 22 文件读数与列覆盖（R28-S66 / R28-W12 / R29-S5 / R68-A01 / R71）', () => {
   const stats = extended.sql.stats;
   const perFile = Object.fromEntries(Object.entries(stats.byFile).map(([key, value]) => [key, value.sqlLiterals]));
   const starStatements = extended.sql.statements.filter((item) => item.selectStar);
@@ -2454,7 +2470,7 @@ test('sql-column-coverage/扩展 21 文件读数与列覆盖（R28-S66 / R28-W12
   console.log(`[sql-column-coverage] SELECT * 语句（列面不可判，只登记不判权限）：${starStatements.map((item) => `${item.file}:${item.line}${item.qualifiedStar ? '（t.*）' : ''}`).join('、')}`);
 
   assert.equal(extended.model.problems.length, 0, `扩展授权面解析出问题：\n${extended.model.problems.join('\n')}`);
-  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 21（8 store + 13 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts、R29 moderation/ledger-pg.ts、R34-I18 admin/ops/content-pg.ts、R68-A01 admin/ops/categories-pg.ts）');
+  assert.equal(stats.storeFiles, EXPECTED_EXTENDED_READINGS.auditedFiles, '审计文件数必须是 22（8 store + 14 新纳管：R28-W12 media/store-pg.ts、R29-S5 admin/ops/jobs-pg.ts、R29 moderation/ledger-pg.ts、R34-I18 admin/ops/content-pg.ts、R68-A01 admin/ops/categories-pg.ts、R71 jobs/ledger.ts）');
   assert.equal(stats.sqlLiterals, EXPECTED_EXTENDED_READINGS.sqlLiterals, 'SQL 字面量条数变了：要么源文件真改了，要么解析器瞎了');
   assert.deepEqual(stats.statements, EXPECTED_EXTENDED_READINGS.statements, `语句条数变了（实际 ${JSON.stringify(stats.statements)}）`);
   assert.equal(stats.returningClauses, EXPECTED_EXTENDED_READINGS.returningClauses);
@@ -2533,7 +2549,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 34, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 35, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2544,6 +2560,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/admin/ops/flags-pg.ts',
       'services/api/src/admin/ops/jobs-pg.ts',
       'services/api/src/ai/checked-content-live-adapter.ts',
+      'services/api/src/jobs/ledger.ts',
       'services/api/src/knowledge/service.ts',
       'services/api/src/media/store-pg.ts',
       'services/api/src/messages/store-pg.ts',

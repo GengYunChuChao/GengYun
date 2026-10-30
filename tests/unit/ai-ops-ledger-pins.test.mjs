@@ -3,11 +3,11 @@
  *
  * ## 为什么存在
  * 账本三处形态今天是**结构事实**，不是行为约定：`public.jobs`（建表 `0001_initial_schema.sql:203`）
- * 全仓**没有写入者**；`provider_invocations` 只活在数据字典（`docs/architecture/data-dictionary.md:48`）
+ * 只有**一个**写入者（GY-R71 起是 `services/api/src/jobs/ledger.ts` 的那一条 upsert）；
+ * `provider_invocations` 只活在数据字典（`docs/architecture/data-dictionary.md:48`）
  * 里、**没有迁移**；审计 `action` 是四值闭集（`services/api/src/admin/audit/catalog.ts:41-46`）。
- * 它们漂移时读面**静默分叉**而不报错：自建一套 `INSERT INTO jobs` 会让作业账本与 `/admin/jobs` 各说各话
- * （「零写入者」是 `0013_conversations.sql:19` 写下的裁定）；给 `AUDIT_ACTIONS` 扩值会让
- * 审计查询面 / 契约枚举 / 文档三处不同步。`tests/unit/admin-audit-logs.test.mjs:130` 只钉
+ * 它们漂移时读面**静默分叉**而不报错：多一个 `INSERT INTO jobs` 写入者会让作业账本与 `/admin/jobs`
+ * 各说各话。`tests/unit/admin-audit-logs.test.mjs:130` 只钉
  * 「契约 enum === 运行时 AUDIT_ACTIONS」一个方向，本钉子钉**两层**：
  * ① 双向等式（抓单边改动）；② **字面四值锚**（抓"契约与运行时同时扩值"）。缺了 ② 本文件就只能
  * 证明"两边一致"，证明不了"没有未授权扩值" —— 审查实测：只留 ① 时双边同时加第 5 个值，本文件 5/5 绿。
@@ -17,10 +17,23 @@
  * （`job.cancel` 固定在**末位**，历史三值顺序不动）就是为了把那个 400 变成 200。所以本钉子从三值翻到
  * 四值：**翻值现场必须留下"为什么"，否则下一个人只看见数字变了，看不见它曾经是一条 bug 的边界**。
  *
+ * ## 钉子①在 GY-R71 翻面（2026-10-30）：从「零 INSERT」翻成「恰一个写入者」
+ * 旧判据是「`INSERT INTO [public.]jobs` 语句级命中必须为**空**」。R71 给这张表落了第一个写入者
+ * （统一作业台账，N04），空集判据因此失效 —— 但它要防的东西没变：**写入者集合必须与已接作业源
+ * 一一对应**。翻面后的判据是：
+ *   ①-a 语句级命中**恰 1 条**，且落在 `services/api/src/jobs/ledger.ts`（唯一写入点；多一个文件、
+ *       多一条语句都红）；
+ *   ①-b 那条语句必须是**幂等**形状（`ON CONFLICT (id) DO UPDATE` + 同态守卫），否则「重复迁移不产生
+ *       重复行」这条不变量只是注释；
+ *   ①-c 写入者只能从**已登记**的源进入（`LEDGER_WIRED_SOURCES` 四值；未接的 `moderation` /
+ *       `synthesis` 必须在 `UNWIRED_SOURCES_REASON` 里有理由），防止"某天悄悄多接一源却没人改口径"。
+ * 翻面的理由与边界见 `docs/verification/gy-r71-jobs-ledger-20261030.md`；`0013_conversations.sql:19`
+ * 的旧裁定（零写入者）**已在同片改写**为该迁移头注里的历史陈述 + 指向新写入点的指针。
+ *
  * ## 判据形态（白名单式，不是「至少 N 次」）
- *   ① jobs 零 INSERT：**语句级**命中必须为空；**注释级**命中按 `文件:行` **逐条白名单登记**（今天 2 条，
- *      都是迁移头注释在引用「grep `INSERT INTO jobs` 为空」这句判据本身）。⛔ 不退化成一概不看注释：
- *      将来哪怕只在注释里多提一句也要红，逼人回来改口径。
+ *   ① jobs 写入者：**语句级**命中必须恰 1 条且在 `jobs/ledger.ts`；**注释级**命中按 `文件:行`
+ *      **逐条白名单登记**（今天 2 条，都是迁移头注释在引用「grep `INSERT INTO jobs`」这句历史判据）。
+ *      ⛔ 不退化成一概不看注释：将来哪怕只在注释里多提一句也要红，逼人回来改口径。
  *   ② `provider_invocations` 无迁移、源码零引用，只有文档里有形状。
  *   ③ 正向迁移末项**从编号目录派生**（不写死编号 / 文件名：`services/api/src/db/migrate.ts` 的
  *      `discoverMigrations` / `inspectMigrationNumbering` / `formatMigrationVersion` 是唯一真源），
@@ -78,13 +91,16 @@ function walk(relDir) {
 }
 
 // ---------------------------------------------------------------------------
-// 钉子①：public.jobs 全仓零 INSERT
+// 钉子①：public.jobs 的写入者**恰一个**（GY-R71 起，从「零 INSERT」翻面而来）
 // ---------------------------------------------------------------------------
 const JOBS_SCAN_ROOTS = ['services/api/src', MIGRATIONS_DIR];
+/** 唯一写入点（相对仓库根）。多一个文件即红 —— 见测试正文的报错文案。 */
+const LEDGER_WRITER_FILE = 'services/api/src/jobs/ledger.ts';
 /** `INSERT INTO [public.]jobs`；`\s+` 容忍被排版成多行的语句（只认单行会漏掉换行写法）。 */
 const JOBS_INSERT = /insert\s+into\s+(?:public\.)?jobs\b/gi;
 /**
- * 注释级命中的白名单（`文件:行`）。两条都是迁移头注释在引用上面那句 grep 判据本身，不是写入代码。
+ * 注释级命中的白名单（`文件:行`）。两条都是迁移头注释在引用「grep `INSERT INTO jobs`」这句**历史**判据
+ * （0013 是当年写下"零写入者"裁定的地方，0035 引用它作论据），不是写入代码。
  * **新增或消失都要同步这里**：白名单不许被随手加宽，也不许留着过期条目。
  */
 const JOBS_INSERT_COMMENT_WHITELIST = Object.freeze([
@@ -106,24 +122,81 @@ function scanJobsInsert() {
   return hits;
 }
 
-test('钉子①：public.jobs 语句级零 INSERT（注释级命中走逐条白名单）', () => {
+test('钉子①：public.jobs 的语句级写入者恰一个文件（jobs/ledger.ts），且那条语句幂等', () => {
   const hits = scanJobsInsert();
+  const statements = hits.filter((hit) => !hit.comment);
+  // 判据：**文件集合**恰是 {ledger.ts}，且语句恰 1 条（同一文件里出现第二条也红）。
   assert.deepEqual(
-    hits.filter((hit) => !hit.comment).map((hit) => hit.loc),
-    [],
-    '出现对 public.jobs 的**真实写入**：这张表今天只读（裁定见 0013_conversations.sql:19），'
-      + '自建插入点会让作业账本与 /admin/jobs 的读面口径分叉；确要新增写入者，先改口径再同步本断言与数据字典',
+    statements.map((hit) => hit.loc.split(':')[0]),
+    [LEDGER_WRITER_FILE],
+    '`public.jobs` 的语句级写入者必须恰是 jobs/ledger.ts 的一条语句：多一个文件、或多一条语句，'
+      + '台账就会有两个写入口径（一条走 ON CONFLICT、一条不走，重复迁移的幂等性立刻失守）；'
+      + '要新增写入点，先把它并进同一个 upsert，再回来改本钉子与证据页',
   );
   assert.deepEqual(
     hits.filter((hit) => hit.comment).map((hit) => hit.loc).sort(),
     [...JOBS_INSERT_COMMENT_WHITELIST].sort(),
     '注释级命中集合变了（多一句、少一句都算红）：白名单是逐条登记的，改完口径请同步这条清单',
   );
+  // 那条语句必须自带幂等形状：`ON CONFLICT (id) DO UPDATE` + 同态守卫。
+  const writer = read(LEDGER_WRITER_FILE);
+  assert.match(
+    writer,
+    /ON CONFLICT \(id\) DO UPDATE/,
+    '写入语句不再是 `ON CONFLICT (id) DO UPDATE`：同一 job_id 的重复迁移会撞主键（或产生第二行），'
+      + '「幂等」就只剩注释里的一句话',
+  );
+  assert.match(
+    writer,
+    /WHERE jobs\.state IS DISTINCT FROM EXCLUDED\.state/,
+    '同态守卫不见了（`WHERE jobs.state IS DISTINCT FROM EXCLUDED.state`）：同态重放会刷 `updated_at`/`revision`，'
+      + '台账的 revision 就不再是"真实状态迁移数"而是"写次数"',
+  );
   // 本质是行形状检查（建表语句只有一种写法），故用 match 而不是把整段 DDL 抄进来。
   assert.match(
     read(`${MIGRATIONS_DIR}/0001_initial_schema.sql`),
     /^CREATE TABLE jobs \($/m,
-    '`jobs` 表本体的建表语句在 0001 里不见了：表都没了，「零 INSERT」就换了含义（可能改成了视图或换了表名）',
+    '`jobs` 表本体的建表语句在 0001 里不见了：表都没了，「写入者恰一个」就换了含义（可能改成了视图或换了表名）',
+  );
+});
+
+test('钉子①b：写入点只从**已登记**的源进入（四源已接、两源必须写明理由）', () => {
+  const ledger = read(LEDGER_WRITER_FILE);
+  const wired = /export const LEDGER_WIRED_SOURCES = \[([^\]]*)\] as const;/.exec(ledger);
+  assert.ok(wired !== null, 'ledger.ts 里找不到 `LEDGER_WIRED_SOURCES` 的字面量数组：写入源的闭集失去守卫');
+  assert.deepEqual(
+    [...wired[1].matchAll(/'([a-z_]+)'/g)].map((match) => match[1]),
+    ['ocr', 'recognition', 'transcription', 'answer'],
+    '已接台账的作业源变了：`transcription` 是语音域在契约里的 kind（域目录叫 speech），'
+      + '写错会让台账 kind 与 /admin/jobs 的 kind 对不上；新增/删除源必须同 PR 改本钉子、'
+      + '矩阵单测（tests/unit/jobs-ledger-mapping.test.mjs）与证据页的六源映射表',
+  );
+  const unwired = /export const UNWIRED_SOURCES_REASON[\s\S]*?Object\.freeze\(\{([\s\S]*?)\}\)/.exec(ledger);
+  assert.ok(unwired !== null, 'ledger.ts 里找不到 `UNWIRED_SOURCES_REASON`：未接源就说不出为什么，等于"尽力而为"');
+  const reasons = [...unwired[1].matchAll(/(moderation|synthesis):\s*'([^']*)'/g)]
+    .map((match) => ({ source: match[1], reason: match[2] }));
+  assert.deepEqual(
+    reasons.map((item) => item.source),
+    ['moderation', 'synthesis'],
+    '未接台账的源变了：这两个源是**结构上没有可同事务写的作业行**（无域内作业表/作业态只在内存），'
+      + '不是"还没做"；真要接入，先给它们落一张域内作业表，再从这里删掉',
+  );
+  for (const item of reasons) {
+    assert.ok(item.reason.length >= 20, `${item.source} 的未接理由太短（${item.reason.length} 字）：理由要能被复核，不是占位`);
+  }
+});
+
+test('钉子①c：ledger.ts 抄的 JobState 闭集与契约 states.json 逐值同序', () => {
+  const ledger = read(LEDGER_WRITER_FILE);
+  const copied = /const LEDGER_JOB_STATES = \[([\s\S]*?)\] as const;/.exec(ledger);
+  assert.ok(copied !== null, 'ledger.ts 里找不到 `LEDGER_JOB_STATES`：状态闭集失去唯一抄写点');
+  const values = [...copied[1].matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+  const contract = JSON.parse(read('packages/contracts/states.json')).states.JobState;
+  assert.deepEqual(
+    values,
+    contract,
+    'ledger.ts 抄的 JobState 与 packages/contracts/states.json 不一致（同值同序）：'
+      + '台账 `state` 是 `job_state` 枚举列，抄错一个值就是运行期 22P02（整笔作业写不进去）',
   );
 });
 

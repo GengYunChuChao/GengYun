@@ -1124,6 +1124,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('ocr_jobs',                       'granted',          true),
     ('ocr_records',                    'granted',          true),
     ('ocr_idempotency',                'granted',          true),
+    -- GY-R71（2026-10-30）：统一作业台账 `public.jobs`（建表 0001）获得**首个写入者**
+    -- （services/api/src/jobs/ledger.ts 的 `JOB_LEDGER_UPSERT_SQL`），故在 20-login-roles.sql
+    -- 的 gy-r28-runtime-domain-grants 段尾按写入者真实列授 SELECT(2)/INSERT(15)/UPDATE(5)。
+    -- 分类进 granted 是**必须**的：47 号元断言的正则没有 `jobs`，但「授权了却不分类」正是该断言
+    -- 要防的漂移；下面的 expected 再给它一份独立列清单复述（58 号断言逐列核对）。
+    ('jobs',                           'granted',          true),
     -- 备份副本由 GY-I19 段（另一次交付）授权给 gengyun_auth_privacy 组；
     -- 本文件只声明“已分类”，列级形状由 tests/integration/backup-purge-pg.mjs 覆盖。
     ('user_backup_copies',             'granted_external', true),
@@ -1246,6 +1252,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
      ARRAY['response_status','outcome'],
      true),
+    -- GY-R71（2026-10-30）· 统一作业台账 `public.jobs`：**第一个**写入者不是某个域，而是
+    -- `services/api/src/jobs/ledger.ts` 里那条唯一的 upsert（四源共用：ocr / recognition /
+    -- transcription / answer）。列面由该语句反推，与 20-login-roles.sql 的 GRANT 逐列同值：
+    --   INSERT 15 列（台账一次写全）+ UPDATE 5 列（只有随状态迁移变的列会改）
+    --   + SELECT 2 列（`id` 是冲突目标、`state` 被 `DO UPDATE … WHERE` 读）。
+    -- ⛔ 无 DELETE：台账是作业的账，注销清理不碰它（R34 的撤回面仍不含它）。
+    ('jobs',
+     ARRAY['id','state'],
+     ARRAY['id','owner_id','kind','target_type','target_id','entity_revision','input_hash',
+           'auth_epoch','state','revision','deadline_at','error_code','result_ref','created_at','updated_at'],
+     ARRAY['state','revision','error_code','result_ref','updated_at'],
+     false),
     ('ocr_jobs',
      ARRAY['id','revision','kind','owner_user_id','ocr_id','media_id','media_revision',
            'state','deadline_at','created_at','updated_at','error_code'],

@@ -56,13 +56,13 @@
 | 开关（三键与十个受控面） | 6 | 6 | 0 | 0 | 0 | 本域全绿，闭集与两个错误码分流都有断言 |
 | 审计 | 5 | 3 | 2 | 0 | 0 | `job.cancel` 已登记进闭集、读面可筛（E40）；审计总台账**已有页面**消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `fetchAuditLogsPage`（operationId 是 `listAuditLogs`，见 `apps/admin/src/lib/admin-audit-logs.mjs:36`），导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`，#633）；剩余是三读面读数已在页面层合并（`apps/admin/src/lib/admin-audit-logs.mjs:985` 的 `mergeAuditSources`，服务端零改动）但页面读数无端到端验收（P10），台账那句已由 #710 抹平（旧句「审计写面仍未落库」「写入点只有三处」已删除，N02 销号）。原写「后台无入口」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | 后台作业台（含真库臂） | 8 | 7 | 1 | 0 | 0 | 端口已接线并通过真库回归；筛选已下发到页面（E41）；剩余投影语义未真实化（P11） |
-| 统一台账·调用记录·版本串 | 3 | 0 | 0 | 3 | 0 | `public.jobs` 零写入、`provider_invocations` 无表（N04／N05） |
+| 统一台账·调用记录·版本串 | 3 | 0 | 1 | 2 | 0 | `public.jobs` 四源已写（ocr／recognition／transcription／answer，GY-R71）、`moderation`／`synthesis` 无域内作业行可写 ⇒ N04 **部分**；`provider_invocations` 无表（N05） |
 | 登记核对 | 1 | 0 | 1 | 0 | 0 | real 无登记库，恒 unavailable（P12） |
 | 契约单源 | 1 | 1 | 0 | 0 | 0 | 错误码单源 28 码，改动必须过 `states.json` |
 | 许可与真实评估排期 | 3 | 0 | 0 | 2 | 1 | 许可调查暂缓（Z01）；Q29 与 120 题属未实现（N08／N09） |
 | 上线／部署／迁移实例 | 2 | 0 | 0 | 0 | 2 | 测试版与服务器部署按用户要求暂缓（Z04／Z05） |
 | 范围决策与外部授权 | 4 | 0 | 0 | 1 | 3 | iOS 与适老为范围决策（Z02／Z03）；注销擦除未并入（N10） |
-| **合计** | **68** | **41** | **11** | **10** | **6** | — |
+| **合计** | **68** | **41** | **12** | **9** | **6** | — |
 
 ## 2 已实现（41 条）
 
@@ -131,7 +131,7 @@
 | 编号 | 判定项 | 判定 | 依据（文件:行号） | 缺口说明 |
 | --- | --- | --- | --- | --- |
 | N03 | `model_version`／`prompt_version`／`rule_version` 的真实值 | 未实现（P0） | docs/architecture/contract-implementation-status.md:97 | 一律 `unimplemented:no-real-` 前缀；审核侧明示不产出这两字段且有源码扫描测试禁占位（docs/moderation/README.md:45-46），见 §7.3 |
-| N04 | 统一作业台账 `public.jobs` 的真实写入 | 未实现（P1） | services/api/src/admin/ops/jobs-pg.ts:4-9 | 表由 0001 建好（services/api/db/migrations/0001_initial_schema.sql:203-231），但全仓**零 INSERT**；真实作业行只落 `ocr_jobs`／`recognition_jobs`／`speech_jobs` 三张域内表 |
+| N04 | 统一作业台账 `public.jobs` 的真实写入 | 部分实现（P1，四源已接／两源无源可写） | services/api/src/jobs/ledger.ts（唯一写入点）+ docs/verification/gy-r71-jobs-ledger-20261030.md | 表由 0001 建好（services/api/db/migrations/0001_initial_schema.sql:203-231）。GY-R71 起四源（ocr／recognition／transcription／answer）在**与源表同一事务**里写台账（`ON CONFLICT (id)`，同态重放 no-op）；`moderation`／`synthesis` 没有可同事务写的作业行（审核只落决定行、合成没有作业表）⇒ 未接，理由登记在 `services/api/src/jobs/ledger.ts` 的 `UNWIRED_SOURCES_REASON`。`/admin/jobs` 仍读三张域内表，台账至今**零读者** |
 | N05 | 调用记录表 `provider_invocations` | 未实现（P1） | docs/architecture/data-dictionary.md:48 | 全仓只出现在四份文档，**无迁移、无代码** ⇒ 无 attempt／版本串／成本的可审计记录 |
 | N06 | 识别真实供应商适配器 | 未实现（P1） | services/api/src/recognitions/provider.ts:151 | 缺凭据即 503；**即使凭据齐备也没有已审适配器**，`recognize` 仍返回 `PROVIDER_UNAVAILABLE`（同文件 :165） |
 | N07 | 审核模型层（LLM 图文／文本模型判定） | 未实现（P1） | services/api/src/moderation/service.ts:366 | 规则层可用、模型层不存在；带媒体投稿因模型层缺失而无法 approved，只能停在待审或隔离 |
@@ -148,7 +148,7 @@
 | 编号 | 解封需要什么 | 卡在哪一类决定 |
 | --- | --- | --- |
 | N03 | 真实模型／提示词上线并产出可核对的版本串；`provider_invocations` 提供落点 | 付费授权（模型）+ 工程（N05） |
-| N04 | 各域作业受理时写 `public.jobs`（现只写三张域内表） | 工程（需先定「域内表与统一表哪张是权威」；后台读面**不**依赖它，见 §7.2） |
+| N04 | 剩下的两源（`moderation`／`synthesis`）接进台账：先各自落一张**域内作业表**（现有状态只有进程内或决定行） | 工程（四源已在 GY-R71 接通，见 `docs/verification/gy-r71-jobs-ledger-20261030.md`；台账仍无读者，读面口径未定） |
 | N05 | 迁移新建 `provider_invocations` + 调用点写入 attempt／版本串／耗时 | 工程（表结构在数据字典已定） |
 | N06 | 一个已审供应商适配器 + 凭据 + 真实样本评估 | 付费授权（供应商）+ 外部样本 |
 | N07 | tms／ims 授权与 BizType 核验，或更换供应商 | 商务授权（当前明确未授权，Z06） |
@@ -158,7 +158,7 @@
 | N11 | 社区侧把 `mime` 带进审核载荷，ims 端口校验后返回 `MODEL_PAYLOAD_INVALID` | 工程（与 N07 同一片最省） |
 | N12 | 部署期接一个可解析的访问网关，取得读句柄端到端读数 | 部署（Z04／Z05 相邻） |
 
-**共同点**：N04／N05／N10／N11 是纯工程活、且都不需要新授权（原 N02「只剩一句台账同步」已随 #710 销号，见 §4 头注）；N03／N06／N07 卡在授权或付费；N08／N09 卡在样本与排期；N12 卡在部署。把四类混在一起排期，是这类缺口最容易反复返工的地方。
+**共同点**：N04（剩下的两源）／N05／N10／N11 是纯工程活、且都不需要新授权（N04 的四源写入已于 GY-R71 接通，见 `docs/verification/gy-r71-jobs-ledger-20261030.md`；原 N02「只剩一句台账同步」已随 #710 销号，见 §4 头注）；N03／N06／N07 卡在授权或付费；N08／N09 卡在样本与排期；N12 卡在部署。把四类混在一起排期，是这类缺口最容易反复返工的地方。
 
 ## 5 已搁置（6 条，均有逐字「暂缓／不做／未授权」记录）
 
@@ -230,7 +230,7 @@
 
 上一版把作业台读面也算进「只能进程内兜底」，那是错的：`ocr_jobs`／`recognition_jobs`／`speech_jobs` 三张域内表一直有真库实现，端口也早就存在，缺的是**装配与用例的默认口径**。更正后的根因链是两截：
 
-1. **承载表缺位**：`public.jobs` 零 INSERT（N04）、`provider_invocations` 无迁移（N05）。于是「统一作业台账」与「调用记录」这两类查询只能落域内表或内存，跨 kind 的运维视图做不出来。
+1. **承载表缺位**：`public.jobs` 曾长期零 INSERT（N04），`provider_invocations` 无迁移（N05）。GY-R71 给台账落了四源写入（同一事务、幂等），但 `moderation`／`synthesis` 仍无源可写、`provider_invocations` 仍无表 ⇒ 「跨 kind 的运维视图」还是做不出来：台账有行，**却没有读者**（`/admin/jobs` 仍读三张域内表）。
 2. **闭集比写点慢一拍**：#589 让 0043 能写 `job.cancel`（真库臂钉住恰 1 行），#609 才把 `AUDIT_ACTIONS` 补成四项（E40）——中间那段时间是「能看见、不能筛」。这是「写面先行、读面与文档滞后」的典型：代码绿、用例绿，运维只能手动查库。台账那半句已由 #710 补齐（**#710 当时口径**：10 处写入点／11 条 INSERT／8 个迁移，覆盖 `AUDIT_ACTIONS` 全部 10 个 action；0049 落地后现值为 11 处写入点／12 条 INSERT／9 个迁移／11 个 action，见 §7.1），N02 随之销号；同一类滞后现在剩在「资料域／分类编辑／帖子审核结论／`flag.set(denied)` 只写进程内审计流」这一面。
 
 另有一条**已被证伪**的旧判断，留在这里防止再犯：上一版说「接线必须同时改用例，否则 CI 会拦」。实测 `tests/failmatrix/cases.mjs:177`（C3-20）锁的是 stub 世界的缺口分支，真库臂走的是另一条路（`tests/integration/admin-jobs-pg.mjs` 全链），因此接线**不需要**动 failmatrix 用例。
@@ -266,7 +266,7 @@ npm run test:docs                            # 文档链接、表格列数、F�
 npm run verify:anchors                       # 契约台账锚点 + 文档手写行号
 ```
 
-读数会因下列改动失效，改一处就要改本页对应行：开关受控面清单扩容（E27）、`AUDIT_ACTIONS` 闭集扩容（E40）、`public.jobs` 出现首个 INSERT（N04）、`provider_invocations` 落迁移（N05）、任一版本串去掉 `unimplemented:no-real-` 前缀（N03）、媒体读句柄网关接线（N12）、真库端口投影改成真值（P11）。
+读数会因下列改动失效，改一处就要改本页对应行：开关受控面清单扩容（E27）、`AUDIT_ACTIONS` 闭集扩容（E40）、`public.jobs` 的**写入源集合**变化（N04；首个 INSERT 已于 GY-R71 落地，再变就是源集合或事务边界变）、`provider_invocations` 落迁移（N05）、任一版本串去掉 `unimplemented:no-real-` 前缀（N03）、媒体读句柄网关接线（N12）、真库端口投影改成真值（P11）。
 
 **不夸大的三条**：本页的「已实现」只证机制在代码里成立且被锁，不证该域可上线；「已实现」不把 operation 从 `partial` 升级；本页不复制真实能力验收，也不替代 §8 的任何门槛读数。
 
