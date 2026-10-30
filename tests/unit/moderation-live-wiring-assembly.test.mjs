@@ -27,6 +27,9 @@
  *   ⑦ **拒因可判定**：拒绝描述对外仍是既有契约码 `PROVIDER_UNAVAILABLE`（503），原因码留在
  *      `details[].code` 里且仍是既有闭集 `MODEL_NOT_EVALUATED`（⛔ 它不是 HTTP 错误码）。
  *   ⑧ **批准能力不可伪造**：形状相同的字面量、`Object.create` 派生、克隆副本一律无效（对象身份判定）。
+ *   ⑨ **判据不得被注释骗过**：⑧ 的「去注释」不是一行惰性正则，而是 `tools/lib/strip-comments.mjs`
+ *      的状态机。注释正文里写 `services/api/src/**` 这种 glob，**不得**让判据把它当成注释开头、
+ *      一路吃掉其后的真实代码（误红＝合法调用点被吞，假绿＝违规写法被吞）。⑨ 用两棵合成树先红后绿钉住。
  *
  * 全部**离线**：不读凭据文件、不联网、不写台账；凭据与 BizType 都是明显合成的占位串。
  * ⛔ 本文件**不**证明审核策略有效、**不**证明违规样本会被拦、**不**证明真实供应商可接受这份剖面——
@@ -34,8 +37,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
@@ -54,6 +58,9 @@ import {
   MODERATION_VENDOR_ENDPOINTS,
 } from '../../services/api/src/moderation/live-ports.ts';
 import { isModelFailureReasonCode, isModelReasonCode } from '../../packages/moderation/model-reason-codes.mjs';
+// 去注释的**唯一**口径：`tools/lib/strip-comments.mjs` 的状态机（保留行号）。
+// ⛔ 不要在本文件里重写 `/\/\*[\s\S]*?\*\//` 那种一行正则——见 ⑨ 的回归用例。
+import { occurrencesWithLines, stripComments } from '../../tools/lib/strip-comments.mjs';
 
 const ROOT = resolve(import.meta.dirname, '../..');
 
@@ -446,16 +453,32 @@ test('⑦ 构造失败（BizType 不合法）⇒ 捕获成 invalid_configuration
   });
 });
 
-test('⑧ 结构钉子：铸造点唯一（定义处 ＋ 恰好一处生产调用点＝生产入口批准通道）', () => {
-  const sourceRoot = join(ROOT, 'services/api/src');
+/** 生产代码里**允许**调用铸造点的唯一文件（GY-R70 · 有名启动开关的批准通道）。 */
+const SANCTIONED_CALL_SITE = 'moderation/startup-approval.ts';
+
+/** 铸造点全名（含左括号）。定义处与调用点都靠它数。 */
+const MINT_CALL = 'approveModerationLiveWiring(';
+
+/** 定义处的前缀；用来把「定义」从「调用」里减掉，且顺序敏感（必须与源码逐字相同）。 */
+const MINT_DEFINITION = 'export function approveModerationLiveWiring(';
+const DEFINITION_PREFIX_LENGTH = 'export function '.length;
+
+/**
+ * 扫一棵源码树，数铸造点的出现：定义处、调用点、以及**不许铸造**的文件。
+ *
+ * 判据同既有结构钉子：只看**去注释后**的代码（注释里提到函数名不算铸造）。去注释走
+ * `tools/lib/strip-comments.mjs` 的状态机，**不是**一行惰性正则——后者会被注释正文里的
+ * `services/api/src/**` 骗过，把其后的真实代码一起吞掉（见 ⑨）。
+ *
+ * @param {string} sourceRoot 绝对路径。
+ * @returns {{ offenders: string[], callSites: Array<{file: string, calls: number}>,
+ *            callSiteLines: Array<{file: string, line: number}>, occurrences: number }}
+ */
+function scanWiringCallSites(sourceRoot) {
   const offenders = [];
-  /** 生产代码里**允许**调用铸造点的唯一文件（GY-R70 · 有名启动开关的批准通道）。 */
-  const SANCTIONED_CALL_SITE = 'moderation/startup-approval.ts';
   const callSites = [];
+  const callSiteLines = [];
   let occurrences = 0;
-  // 判据同既有结构钉子：**去注释后**的产品源码（注释里提到函数名不算铸造）。
-  const strip = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  /** 动态枚举 `services/api/src/**`：不写死文件清单，将来新增的文件同样进扫描面。 */
   const walk = (dir, prefix = '') => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`;
@@ -464,20 +487,32 @@ test('⑧ 结构钉子：铸造点唯一（定义处 ＋ 恰好一处生产调�
         continue;
       }
       if (!relative.endsWith('.ts')) continue;
-      const source = strip(readFileSync(join(dir, entry.name), 'utf8'));
-      const matches = source.match(/approveModerationLiveWiring\(/g) ?? [];
-      if (matches.length === 0) continue;
-      occurrences += matches.length;
+      const source = stripComments(readFileSync(join(dir, entry.name), 'utf8'));
+      const hits = occurrencesWithLines(source, MINT_CALL);
+      if (hits.length === 0) continue;
+      occurrences += hits.length;
       // 唯一允许出现的**定义**位置：`export function approveModerationLiveWiring(`。
-      const definitions = source.match(/export function approveModerationLiveWiring\(/g) ?? [];
-      const calls = matches.length - definitions.length;
-      if (definitions.length !== matches.length && relative !== SANCTIONED_CALL_SITE) {
+      const definitions = occurrencesWithLines(source, MINT_DEFINITION);
+      const definitionIndexes = new Set(
+        definitions.map((hit) => hit.index + DEFINITION_PREFIX_LENGTH),
+      );
+      const callHits = hits.filter((hit) => !definitionIndexes.has(hit.index));
+      const calls = hits.length - definitions.length;
+      if (definitions.length !== hits.length && relative !== SANCTIONED_CALL_SITE) {
         offenders.push(relative);
       }
-      if (calls > 0) callSites.push({ file: relative, calls });
+      if (calls > 0) {
+        callSites.push({ file: relative, calls });
+        for (const hit of callHits) callSiteLines.push({ file: relative, line: hit.line });
+      }
     }
   };
   walk(sourceRoot);
+  return { offenders, callSites, callSiteLines, occurrences };
+}
+
+test('⑧ 结构钉子：铸造点唯一（定义处 ＋ 恰好一处生产调用点＝生产入口批准通道）', () => {
+  const { offenders, callSites, occurrences } = scanWiringCallSites(join(ROOT, 'services/api/src'));
   assert.deepEqual(offenders, [], `除定义处与批准通道外不得铸造批准能力（装配层自我批准＝没批准）：${offenders.join(', ')}`);
   // ⚠ 2026-10-30（GY-R70 · 批准通道）**有据变更，不是放宽**：`#777` 把「生产代码里恰好一处（定义处）」钉成
   // 「装配层从不铸造」，但铸造点**必须**能被生产入口用一次，否则 `real` 下审核域永远开不了、批准能力等于死码。
@@ -490,16 +525,152 @@ test('⑧ 结构钉子：铸造点唯一（定义处 ＋ 恰好一处生产调�
   );
   assert.equal(occurrences, 2, '生产代码里必须恰好两处：定义处 ＋ 唯一获准的调用点');
   for (const relative of ['services/api/src/app.ts', 'services/api/src/server.ts']) {
-    const code = strip(readFileSync(join(ROOT, relative), 'utf8'));
+    const code = stripComments(readFileSync(join(ROOT, relative), 'utf8'));
     assert.equal(code.includes('approveModerationLiveWiring('), false, `${relative} 不得调用铸造点（只许转发）`);
   }
 
   // 真实的适配器符号仍不得进入 app.ts / server.ts（既有结构钉子照旧成立）。
   for (const relative of ['services/api/src/app.ts', 'services/api/src/server.ts']) {
-    const code = strip(readFileSync(join(ROOT, relative), 'utf8'));
+    const code = stripComments(readFileSync(join(ROOT, relative), 'utf8'));
     assert.equal(code.includes('createLiveModerationTextPort'), false);
     assert.equal(code.includes('createLiveModerationImagePort'), false);
     assert.equal(code.includes('tms-live-adapter'), false);
     assert.equal(code.includes('ims-live-adapter'), false);
+  }
+});
+
+// —— ⑨ 回归：判据不得被注释正文里的 `/**` 骗过 ————————————————————————————————
+//
+// 缺陷（`#781` 登记为「已知判据缺陷」）：⑧ 原先用一行惰性正则去注释
+//     source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+// 它**不知道自己在注释里**。只要 `/**` 出现在块注释**之外**——`//` 注释正文里（最典型的就是把仓内
+// 路径写成 `services/api/src/**` 这种 glob），或者字符串字面量里——正则就把那里的开注释二字符
+// 当成注释开头，一路吃到**下一个**闭合二字符，把中间的真实代码整段删掉。两个方向都会坏：
+//   - **误红**：获准调用点被吞 ⇒ `occurrences` 少一个 ⇒ ⑧ 判红，而代码其实是对的；
+//   - **假绿**：违规调用被吞 ⇒ 判据看不见它 ⇒ ⑧ 判绿，而代码其实是错的。
+// 同一个根因：**正则没有状态**。⑧ 现在改走 `tools/lib/strip-comments.mjs` 的状态机（保留行号）。
+//
+// 本用例用两棵**合成树**把两个方向钉住（不依赖产品源码今天的写法），先红后绿：
+//   - 合规树 ⇒ 必须绿；违规树 ⇒ 必须红（违规调用放在触发注释**之后**）。
+// 两棵树都刻意让注释正文含 `services/api/src/**`，并刻意在真实代码**后面**再放一个块注释：
+// 旧正则正是靠那个闭合二字符把中间代码吞掉的（形状与逐字读数见证据页 §2）。
+
+/** 造一棵合成源码树（返回绝对根目录；调用方负责删除）。 */
+function makeWiringTree(files) {
+  const root = mkdtempSync(join(tmpdir(), 'gy-r71-strip-'));
+  for (const [relative, content] of Object.entries(files)) {
+    const absolute = join(root, relative);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, content);
+  }
+  return root;
+}
+
+/** 唯一铸造点（定义处）。定义行本身不算调用点。 */
+const MINT_SOURCE = [
+  '/* 唯一的铸造点。 */',
+  'export function approveModerationLiveWiring(input) {',
+  "  return Object.freeze({ kind: 'moderation-live-wiring', ...input });",
+  '}',
+  '',
+].join('\n');
+
+/**
+ * 获准的调用点。**第 3 行是缺陷的触发器**：`//` 注释正文里写了 `services/api/src/**`；
+ * 第 4 行是**真实调用**（旧正则会被第 3 行骗走，把第 4 行一起吞掉 ⇒ 误红）；
+ * 第 4 行里还有一个带双斜杠的 URL 字面量（负控制③的判别式）；
+ * 第 5 行的块注释提供旧正则要吃的闭合二字符。
+ */
+const SANCTIONED_SOURCE = [
+  "import { approveModerationLiveWiring } from './live-assembly.ts';",
+  '',
+  '// 动态枚举 services/api/src/** 下的所有 .ts（不写死文件清单）',
+  "const REGISTRY = { doc: 'https://api.example.test/v1/moderation', mint: approveModerationLiveWiring({ policySource: 'synthetic' }) };",
+  '/* 装配层只转发，绝不自行铸造。 */',
+  'export function forward(approval) {',
+  '  return approval;',
+  '}',
+  '',
+].join('\n');
+
+/** 合规的装配层：注释正文里提到铸造点名，但**没有**任何真实调用。 */
+const APP_COMPLIANT = [
+  '/*',
+  ' * 动态枚举 `services/api/src/**`：不写死文件清单，将来新增的文件同样进扫描面。',
+  ' * ⛔ 装配层不得调用 approveModerationLiveWiring( —— 装配层不许自批。',
+  ' */',
+  'export function buildApp() {',
+  '  return {};',
+  '}',
+  '',
+].join('\n');
+
+/**
+ * 违规的装配层：第 3 行**真的**铸造了一次。旧正则会被第 1 行的 `/**` 骗到第 5 行，
+ * 把第 3 行的违规调用整段吞掉 ⇒ 假绿。
+ */
+const APP_VIOLATING = [
+  '// 动态枚举 services/api/src/** 下的所有 .ts',
+  'export function buildApproval(input) {',
+  '  return approveModerationLiveWiring({ policySource: input.source });',
+  '}',
+  '/* 装配层只转发，绝不自行铸造。 */',
+  'export function buildApp() {',
+  '  return {};',
+  '}',
+  '',
+].join('\n');
+
+test('⑨ 回归：注释里的 `services/api/src/**` 不得让判据吞掉其后的真实代码', () => {
+  const shared = {
+    'moderation/live-assembly.ts': MINT_SOURCE,
+    'moderation/startup-approval.ts': SANCTIONED_SOURCE,
+  };
+  const compliantRoot = makeWiringTree({ ...shared, 'app.ts': APP_COMPLIANT });
+  const violatingRoot = makeWiringTree({ ...shared, 'app.ts': APP_VIOLATING });
+  try {
+    // —— 去注释自身的两条不变量：行数不变、`//` 注释正文（含 `/**` 那段）不残留 ——
+    const stripped = stripComments(SANCTIONED_SOURCE);
+    assert.equal(
+      stripped.split('\n').length,
+      SANCTIONED_SOURCE.split('\n').length,
+      '去注释必须**保留行号**（空行占位）：输出行数 ≠ 输入行数 ⇒ 报错里的行号不可读',
+    );
+    assert.equal(
+      stripped.includes('services/api/src'),
+      false,
+      '`//` 注释正文必须整体抹掉（含里面的 `/**`）：注释里的路径不许混进「代码」',
+    );
+
+    // —— 合规树：必须绿 ——
+    const clean = scanWiringCallSites(compliantRoot);
+    assert.deepEqual(
+      clean.offenders,
+      [],
+      `合规树被误红（注释里提到铸造点名被当成铸造）：${clean.offenders.join(', ')}`,
+    );
+    assert.deepEqual(
+      clean.callSites,
+      [{ file: SANCTIONED_CALL_SITE, calls: 1 }],
+      '合规树里的获准调用点必须被看见——旧正则会被注释里的 `/**` 吞掉它（误红）',
+    );
+    assert.equal(clean.occurrences, 2, '合规树必须恰好两处：定义处 ＋ 获准调用点');
+    assert.deepEqual(
+      clean.callSiteLines,
+      [{ file: SANCTIONED_CALL_SITE, line: 4 }],
+      '调用点行号必须是**原文件**的行号（去注释丢了行号，这里就会指到第 1 行）',
+    );
+
+    // —— 违规树：必须红 ——
+    const dirty = scanWiringCallSites(violatingRoot);
+    assert.deepEqual(
+      dirty.offenders,
+      ['app.ts'],
+      '违规树必须被点名——旧正则会把它吞进「注释」里（假绿：判据看不见违规写法）',
+    );
+    assert.equal(dirty.occurrences, 3, '违规树必须三处：定义处 ＋ 获准调用点 ＋ 违规调用');
+  } finally {
+    rmSync(compliantRoot, { recursive: true, force: true });
+    rmSync(violatingRoot, { recursive: true, force: true });
   }
 });
