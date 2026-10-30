@@ -58,7 +58,7 @@ import {
   type RecognitionTerminalHistoryPort,
 } from './recognitions/service.ts';
 import { createRecognitionProvider, type RecognitionProvider } from './recognitions/provider.ts';
-import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts';
+import { createRecognitionMediaPort, type RecognitionMediaPort } from './recognitions/media.ts'; import { createObjectStoreRecognitionImageSource } from './recognitions/image-source.ts'; /* GY-R70：与上一条同行，独占一行会推移本文件行号并让 docs/verification 里 11 条历史 app.ts 锚点变 SUSPECT */
 import { createMemoryRecognitionStore, type RecognitionStore } from './recognitions/store.ts';
 import { registerSynthesisRoutes } from './routes/synthesis.ts';
 import { createCheckedContentPortFromConfig } from './ai/checked-content-live-adapter.ts';
@@ -1113,12 +1113,12 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     : createUnwiredOcrTerminalHistoryPort(
         'real 模式且历史域无持久化落点（无 DATABASE_URL / 注入的内存 store）：终态不写历史，不放宽守卫',
       );
-  const recognitionProviderResolved =
+  /* GY-R70：识别域真实调用的两个媒体域端口。`mediaStore` / `mediaObjectStore` 在本函数**更靠后**才解析（装配顺序不得改动：两处解析点各有既有钉子），所以这里只登记**取值器**，识别域在受理/执行时（`buildApp` 返回之后）才真正读到那两个实例。取值器只转发**既有**端口：不新建存储、不读 env、不铸造批准能力（与 `speechAudioMedia` / `ocrImageMedia` 是同一批实例）。 */ const recognitionMediaPorts = () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore }); const recognitionProviderResolved =
     recognitionProvider ??
     createRecognitionProvider({
       executionMode: config.executionMode,
       endpoint: process.env['RECOGNITION_PROVIDER_URL'] ?? null,
-      apiKey: process.env['RECOGNITION_PROVIDER_KEY'] ?? null,
+      apiKey: process.env['RECOGNITION_PROVIDER_KEY'] ?? null, /* GY-R70：真实字节来源（**只**读去元数据衍生件）；非 real 与缺凭据时该端口不被使用。 */ imageSource: createObjectStoreRecognitionImageSource(recognitionMediaPorts),
     });
   const recognitionService = createRecognitionService({
     store: recognitionStore ?? (config.executionMode === 'real' && pool !== null ? createPostgresRecognitionStore({ pool }) : createMemoryRecognitionStore()),
@@ -1127,7 +1127,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     provider: recognitionEgress === undefined
       ? recognitionProviderResolved
       : recognitionEgress.provider(recognitionProviderResolved, 'recognize'),
-    media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode),
+    media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode, recognitionMediaPorts),
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     // GY-I16 #16 跨线接线：识别任务终态 → 服务端识别历史（见上方 `recognitionTerminalHistory`）。
     history: recognitionTerminalHistory,

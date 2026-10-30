@@ -1,8 +1,9 @@
-/* 授权清单页的局部排版（GY-R34 / #29 P1，只读）。
+/* 授权清单页的局部排版（GY-R34 建立 / GY-R70 起本页可授予、可撤回）。
  *
- * 只补样式层没有的两处：① 授权记录是多行元信息，行内需要顶对齐（`.info-row` 默认居中）；
- * ② 说明区多段之间需要段间距。颜色与字号一律取 styles/tokens.wxss 的变量，本文件不新造色值，
- * 也不写裸 px 字号（字号放大统一走 --font-scale）。
+ * 只补样式层没有的三处：① 授权记录是多行元信息，行内需要顶对齐（`.info-row` 默认居中）；
+ * ② 说明区多段之间需要段间距；③ 每个用途一行的「说明 + 动作按钮」左右分栏（窄屏时按钮不挤压
+ * 原因文案）。颜色与字号一律取 styles/tokens.wxss 的变量，本文件不新造色值，也不写裸 px 字号
+ * （字号放大统一走 --font-scale）。
  */
 .consent-row {
   align-items: flex-start;
@@ -14,4 +15,45 @@
 
 .card-text + .card-text {
   margin-top: 10px;
+}
+
+/* 用途行：左边说明（含"为什么不可用"与上次失败原因），右边动作按钮。 */
+.consent-control {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 0;
+}
+
+.consent-control + .consent-control {
+  border-top: 1px solid var(--color-border);
+}
+
+.consent-control__copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  margin-right: 10px;
+}
+
+.consent-control__reason,
+.consent-control__error,
+.consent-control__code {
+  margin-top: 4px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.consent-control__reason {
+  color: var(--color-text-muted);
+}
+
+.consent-control__error {
+  color: var(--color-error);
+}
+
+.consent-control__code {
+  color: var(--color-text-sub);
+  font-family: monospace;
 }

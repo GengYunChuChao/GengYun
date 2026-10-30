@@ -27,8 +27,8 @@ import type { LiveGateErrorCode } from '../tts/live-ports.ts';
  *
  * 目标：把「传输层/供应商层发生了什么」翻译成契约**既有**错误码闭集
  * （`services/api/src/contract.ts` 的 `ERROR_STATUS_MAP`，**不新增**任何 ErrorCode），
- * 并给出是否需要重试的结论。问答服务层的 `settleCodeOf` 只认 `ApiError.code`，
- * 因此这里产出的必须是 `ApiError`；非 `ApiError` 的异常一律被服务层兜底成
+ * 并给出是否需要重试的结论。问答服务层的 `settleCodeOf` 只保留 `ApiError` / `PrivacyError`
+ * 携带的闭集码，因此这里产出的必须是 `ApiError`；**其余**异常一律被服务层兜底成
  * `PROVIDER_UNAVAILABLE`——那会把「超时」误报成「不可用」，所以**所有**适配器异常都必须
  * 先经过本模块。
  *

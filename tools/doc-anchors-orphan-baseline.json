@@ -38,6 +38,24 @@
       "accept": 7,
       "orphans": 3543,
       "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 让 settleCodeOf 保留 PrivacyError 的闭集码，services/api/src/conversations/service.ts 净 +14 行（import 1 + 注释 12 + 分支 1）。历史取证页 docs/verification/gy-i12-conversations-gap-20261021.md 的两条裸锚点随行号平移：键里带行号 ⇒ 新增 service.ts:945（SUSPECT）、陈旧 service.ts:1107（SUSPECT）。不是新增问题，按仓规不改写取证页数字。",
+      "accept": 1,
+      "orphans": 3543,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 合流 upstream/main：两侧各有一条同族登记，合并后净增减 0；册上那条陈旧条目来自 #775 合并后路由装配行复位，按实测重生成，非本片放宽判据",
+      "accept": 0,
+      "orphans": 3542,
+      "outsideRed": 134
+    },
+    {
+      "why": "GY-R71 dose-cards 片合流 upstream/main（1b152d42）后按实测重生成：孤儿册条目集与 accept 账本按两侧并集（main 的 3542 条条目集 + 两侧 accept 行），条目集由 --scan docs 重新实测落盘。孤儿条目 3542 条与 main 完全一致（新增 0）；净增只发生在「作用域外本会红」这一册：本片新增 services/api/src/routes/knowledge.ts 的 dose-cards HTTP 面（+… 行）并让两份生成台账（contract-status.json / contract-implementation-status.md）行号整体前移，于是三份历史取证页逐字引用的行号漂移，新增 7 条（去重后 6 个键：gy-r29-i07-closure 的 routes/knowledge.ts:201、gy-r31-i07-sort 的 contract-status.json:3267/3333/799、gy-r33-contract-ledger 与 gy-r64-pr4c-denial-wiring 的 contract-implementation-status.md:178/204），另有 5 条旧键因行号复位不再命中被清出。按仓规不改写历史取证页数字，只在本册留痕；这是合流并集后的实测重生成，不是放宽判据。",
+      "accept": 7,
+      "orphans": 3542,
+      "outsideRed": 134
     }
   ],
   "orphans": [
@@ -45,7 +63,6 @@
     "docs/architecture/ai-ops-spec-status.md|:126|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:1354|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:150|ambiguous-block",
-    "docs/architecture/ai-ops-spec-status.md|:165|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:225|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:301-328|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:557|no-explicit-in-block",
@@ -3626,7 +3643,7 @@
     "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:1107|SUSPECT",
+    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:945|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",

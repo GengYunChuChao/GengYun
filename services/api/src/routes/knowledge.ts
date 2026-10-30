@@ -179,8 +179,8 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
     ? deps.service
     : (pool === null ? null : createKnowledgeService(pool,config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
       {extraRows: () => reference.seedRows()}));
-  const text = {type:'string',minLength:1,maxLength:80};
-  const filters = {crop_id:text,region_code:{type:'string',pattern:'^33[0-9]{4}$'},species_id:text,growth_stage:text,planting_method:text,use_scene:text};
+  const text = {type:'string',minLength:1,maxLength:80},regionCode = {type:'string',pattern:'^33[0-9]{4}$'};
+  const filters = {crop_id:text,region_code:regionCode,species_id:text,growth_stage:text,planting_method:text,use_scene:text};
   const pagination = {cursor:{type:'string',minLength:1,maxLength:2048},limit:{type:'integer',minimum:1,maximum:50,default:20}};
   function input(request: FastifyRequest) {
     const token = readBearerToken(request.headers.authorization);
@@ -206,9 +206,9 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
     if (resolveReference !== undefined) await assertPubliclyVisible(resolveReference,'knowledge',data,NOT_FOUND_MESSAGE.knowledge);
     return reply.header('Cache-Control','no-store').header('ETag',`"${data.revision}"`).send({data,meta:buildMeta(request,config)});
   });
-  // 契约 /herbicides：仅 q 与 registration_number 两个收窄条件（无额外字段）。
+  // 契约 /herbicides：`q`+`registration_number`，另接 `crop_id`/`region_code`（与 `/knowledge` 同名同义）。
   app.get(`${API_PREFIX}/herbicides`,{preHandler:guards.requireUser,schema:{querystring:{type:'object',additionalProperties:false,
-    properties:{q:text,registration_number:text,...pagination}}}},async(request,reply)=>{
+    properties:{crop_id:text,region_code:regionCode,q:text,registration_number:text,...pagination}}}},async(request,reply)=>{
     const {data} = reference.listHerbicides(queryOf(request));
     // 契约 200 头说明：授权访问 no-store；列表不带 ETag（与 /knowledge 列表一致）。
     // 与 `/knowledge` 列表面同一接线：整条剔除引用不可用的行（详见 `filterVisiblePage`）。
