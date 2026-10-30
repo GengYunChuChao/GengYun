@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。【2026-10-28 GY-R68-A01 × upstream/main 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 现算（合流后的树），与两侧旧基线按 path|reason|reference 取并集、逐条沿用原来的 note：A01 侧 16 条「本片代码插入顶空」的登记全部保留，main 侧 6 条（user-data-deletion.ts 的 4 条 NOT_SYMBOL_LINE 等）保留，新增的几条是合流后行号再次前移所致（如 admin/ops/service.ts:1054→本片已改锚，未登记）。⛔ 仍然不要用 --reanchor 或在正文里改历史取证页的数字。 【2026-10-30 GY-R71】本轮新增 GET /dose-cards：openapi.json 文本级 +595 行（新路径 + 8 个 schema）、docs/architecture/contract-status.json 新增一行台账（+65 行）、services/api/src/routes/knowledge.ts 新增 1 行 import 与一段路由装配。历史取证页里指向这三个文件的 6 条 path:line 因此整体后移，本轮把后移后的行号重新登记（+6），并删掉因同一次位移而不再命中的 1 条陈旧条目（-1）；**没有新增任何一类问题**，正文里的历史数字也一条未改。【2026-10-30 GY-R71 取消片合流】#787 让 services/api/src/app.ts 净 +13 行 ⇒ 原登记的 `services/api/src/app.ts:2573`（SUSPECT）不再命中：该行现在是代码行 `accountDeletionWired === null`，不是注释，工具报 STALE 并点名要求删除。按工具口径删掉这条陈旧条目（-1），本片未新增任何条目、也未改写任何历史取证页里的数字。【2026-10-30 GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 在合并树上现算：与两侧旧基线（本分支 61 条 / main 41 条，按 path|reason|reference 去重得 68 条）逐条分区，命中 56、陈旧 12、新增 7。陈旧 12 条全在 `services/api/src/app.ts` 与 `services/api/src/privacy/user-data-deletion.ts`（SUSPECT／NOT_SYMBOL_LINE）：合流后这些行号落到真实代码行、「悬空括号」的前提不再成立，按工具口径删除。新增 7 条同属一类——历史取证页手写行号随合流净位移错位（本分支 app.ts 净 +27 行、main 侧 +12 行 ⇒ 同一批页面的 `app.ts:NNNN` 落在 `}`／`)`／`});` 上），正文里的历史数字一条未改，也未新增任何问题类别。随后 `node tools/verify-contract-status.mjs --reanchor --write-doc` 按 JSON 重写中文表格，原本由表格行带出的 `services/api/src/app.ts:1172`（SUSPECT）与 `services/api/src/app.ts:2507`（NOT_SYMBOL_LINE）两条引用消失 ⇒ 再删 2 条陈旧，最终登记 61 条、陈旧 0、新增 0。",
+  "note": "文档手写行号的已知遗留（BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE）。--strict 只报本文件之外的**新增**；条目修好后会变「陈旧」，tests/unit/doc-anchors-guard.test.mjs 会点名要求删除。⛔ 不要为了让门禁变绿而把新问题追加进来。【2026-10-28 GY-R68-A01 × upstream/main 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 现算（合流后的树），与两侧旧基线按 path|reason|reference 取并集、逐条沿用原来的 note：A01 侧 16 条「本片代码插入顶空」的登记全部保留，main 侧 6 条（user-data-deletion.ts 的 4 条 NOT_SYMBOL_LINE 等）保留，新增的几条是合流后行号再次前移所致（如 admin/ops/service.ts:1054→本片已改锚，未登记）。⛔ 仍然不要用 --reanchor 或在正文里改历史取证页的数字。 【2026-10-30 GY-R71】本轮新增 GET /dose-cards：openapi.json 文本级 +595 行（新路径 + 8 个 schema）、docs/architecture/contract-status.json 新增一行台账（+65 行）、services/api/src/routes/knowledge.ts 新增 1 行 import 与一段路由装配。历史取证页里指向这三个文件的 6 条 path:line 因此整体后移，本轮把后移后的行号重新登记（+6），并删掉因同一次位移而不再命中的 1 条陈旧条目（-1）；**没有新增任何一类问题**，正文里的历史数字也一条未改。【2026-10-30 GY-R71 取消片合流】#787 让 services/api/src/app.ts 净 +13 行 ⇒ 原登记的 `services/api/src/app.ts:2573`（SUSPECT）不再命中：该行现在是代码行 `accountDeletionWired === null`，不是注释，工具报 STALE 并点名要求删除。按工具口径删掉这条陈旧条目（-1），本片未新增任何条目、也未改写任何历史取证页里的数字。【2026-10-30 GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】条目由 `node tools/verify-doc-anchors.mjs --emit-baseline` 在合并树上现算：与两侧旧基线（本分支 61 条 / main 41 条，按 path|reason|reference 去重得 68 条）逐条分区，命中 56、陈旧 12、新增 7。陈旧 12 条全在 `services/api/src/app.ts` 与 `services/api/src/privacy/user-data-deletion.ts`（SUSPECT／NOT_SYMBOL_LINE）：合流后这些行号落到真实代码行、「悬空括号」的前提不再成立，按工具口径删除。新增 7 条同属一类——历史取证页手写行号随合流净位移错位（本分支 app.ts 净 +27 行、main 侧 +12 行 ⇒ 同一批页面的 `app.ts:NNNN` 落在 `}`／`)`／`});` 上），正文里的历史数字一条未改，也未新增任何问题类别。随后 `node tools/verify-contract-status.mjs --reanchor --write-doc` 按 JSON 重写中文表格，原本由表格行带出的 `services/api/src/app.ts:1172`（SUSPECT）与 `services/api/src/app.ts:2507`（NOT_SYMBOL_LINE）两条引用消失 ⇒ 再删 2 条陈旧，最终登记 61 条、陈旧 0、新增 0。\n\nGY-R72（2026-10-31）：合流 #789（conversations/screen.ts +113 行）后，services/api/src/conversations/screen.ts:152 这条 SUSPECT 已不再命中（真因是它早被 R71 的注释剥离修好、只剩这条陈旧登记），按册内既定口径删掉；本次只删 1 条、新增 0 条，判据一字未改。",
   "generated_by": "node tools/verify-doc-anchors.mjs --emit-baseline",
   "entries": [
     {
@@ -212,12 +212,6 @@
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "services/api/src/app.ts:935"
-    },
-    {
-      "path": "services/api/src/conversations/screen.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/screen.ts:152"
     },
     {
       "path": "services/api/src/conversations/store-pg.ts",

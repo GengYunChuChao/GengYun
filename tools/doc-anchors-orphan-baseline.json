@@ -170,6 +170,12 @@
       "accept": 1,
       "orphans": 3541,
       "outsideRed": 133
+    },
+    {
+      "why": "合流 upstream/main（0c6b3cd8，含 #789 答案侧四类别）：#789 给 conversations/screen.ts 加 113 行，把三条历史取证页里 inheriting 的 screen.ts:152 裸锚点重新落回实质行；本次只删 3 条陈旧、新增 0 条，判据一字未改，不是放宽",
+      "accept": 0,
+      "orphans": 3541,
+      "outsideRed": 130
     }
   ],
   "orphans": [
@@ -3753,9 +3759,6 @@
     "docs/verification/gy-i09i10-recog-20261019.md|tests/unit/recognitions-candidates-selection.test.mjs:529|SUSPECT",
     "docs/verification/gy-i11-voice-input-20261021.md|miniprogram/pages/voice/voice.js:392|SUSPECT",
     "docs/verification/gy-i11-voice-input-20261021.md|voice.js:757|SUSPECT",
-    "docs/verification/gy-i12-chat-20261019.md|tests/unit/conversation-risk-screen.test.mjs:482|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|screen.ts:152|SUSPECT",
-    "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/screen.ts:152|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",

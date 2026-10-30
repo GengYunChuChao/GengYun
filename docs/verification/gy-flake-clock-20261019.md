@@ -67,7 +67,7 @@ fail-closed（超时 ⇒ `quarantined`）一行未改、既有断言一条未删
 
 **「未注入路径 diff 为空」的说明**：
 1. 两个新字段都用**条件展开**（`...(x === undefined ? {} : { x })`），未注入时对象里**不出现该键** ——
-   规则层收到的仍是 `{ rules: [...] }`，与基线 `screen.ts:155-158` 的实参逐字相同；
+   规则层收到的仍是 `{ rules: [...] }`，与基线 `screen.ts:262-265` 的实参逐字相同；
 2. 缺省兜底在引擎侧本来就是 `??`（`engine.mjs:319` `clock = options.clock ?? Date.now`、`:320`
    `budgetMs = options.budget_ms ?? DEFAULT_RULE_BUDGET_MS`），因此"键不存在"与"值 undefined"同义；
 3. 机械读数（§3.4）：不传 deps 构造 `createModerationRiskScreen()` ⇒ 规则层**仍读真实墙钟**

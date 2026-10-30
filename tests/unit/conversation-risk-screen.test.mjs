@@ -1,8 +1,9 @@
 // GY-I12（#12）：问题与**资料原文**的风险/注入筛查回归（纯代码：无真实模型、无真实资料、无外发）。
 //
 // 三件东西：
-//   1) 规则来源：只消费 `packages/moderation` 现成的 `dangerous_usage` + `prompt_injection`
-//      两类规则（**不新写第二套**），规则版本与规则层同源同参；
+//   1) 规则来源：问题侧与资料侧只消费 `packages/moderation` 现成的 `dangerous_usage` +
+//      `prompt_injection` 两类规则（**不新写第二套**），规则版本与规则层同源同参；**答案侧单独**
+//      用 4 类（另加 `authority_spoofing` / `safety_claim`，见文件末尾 T1–T6）；
 //   2) 样本面：危险用法 28 条、提示注入 28 条全部拒答；正常农事问题 30 条零误杀；
 //   3) 接线面（真实回环 HTTP）：问题命中 ⇒ 202 + 作业 `succeeded` + `answer{blocked,blocked}`
 //      固定话术，且**不检索、不调用回答器**；资料原文命中 ⇒ 该条从本次检索集合剔除
@@ -26,6 +27,9 @@ import {
 } from './conversation-fixtures.mjs';
 import {
   ANSWER_RISK_BLOCK_TEXT,
+  ANSWER_RISK_RULES,
+  ANSWER_RISK_RULE_VERSION,
+  ANSWER_SCREEN_CATEGORIES,
   RISK_BLOCK_TEXT,
   RISK_RULES,
   RISK_RULE_VERSION,
@@ -33,6 +37,7 @@ import {
   RISK_SOURCE_REJECTION_PREFIX,
   createModerationRiskScreen,
 } from '../../services/api/src/conversations/screen.ts';
+import { CLEAN_TEXT, RULE_TEXT_FIXTURES } from '../moderation/_fixtures.mjs';
 import { createWiredRetrievalPort } from '../../services/api/src/conversations/guard.ts';
 import { createDeterministicAnswerComposer } from '../../services/api/src/conversations/service.ts';
 import { UNIMPLEMENTED_VERSION_PREFIX } from '../../services/api/src/conversations/types.ts';
@@ -180,7 +185,7 @@ const FROZEN_RISK_DEPS = Object.freeze({ clock: FROZEN_CLOCK });
 // 1) 规则来源：复用规则层，不新写第二套
 // ---------------------------------------------------------------------------
 
-test('规则来源：只取 dangerous_usage + prompt_injection（规则目录子集，版本与规则层同源）', () => {
+test('规则来源：问题侧/资料侧只取 dangerous_usage + prompt_injection（规则目录子集，版本与规则层同源）', () => {
   const expected = RULES.filter(
     (rule) => rule.category === 'dangerous_usage' || rule.category === 'prompt_injection',
   );
@@ -593,4 +598,175 @@ test('输出侧筛查接线：生成侧正文含危险用法（即使挂着合�
   const job = await fixture.call('GET', `${JOBS}/${turn.job_id}`);
   assert.equal(job.body.data.state, 'succeeded');
   assert.equal(job.body.data.error_code, null);
+});
+
+// ---------------------------------------------------------------------------
+// 7) 答案侧扩到 4 类（+ authority_spoofing / safety_claim）：**只扩答案侧**
+//
+// 本段的对照关系（T5 是分界线）：同一句话在答案侧必须拦、在问题侧与资料侧必须不拦。
+// 上一段的 86 条既有夹具（DANGEROUS 28 / INJECTION 28 / BENIGN 30）在 2 类 vs 4 类下
+// 判定不变，所以它们对"把问题侧也扩了"完全不敏感 —— 分界线只能由 T5 这种**跨侧同一句**
+// 的用例来守。
+// ---------------------------------------------------------------------------
+
+const BOUNDARY_ID = 'src-boundary-authority';
+/** 冒充权威的句子，同时是一条看起来完全正常的"资料摘录"（资料侧不该因为这句话被剔除）。 */
+const BOUNDARY_TEXT = '农业农村部推荐的防治时期是稗草 2～3 叶期';
+
+test('T1 答案侧类别：恰好 4 类且顺序固定，规则集与规则目录的 4 类子集逐条对齐', () => {
+  const expected = RULES.filter((rule) => ANSWER_SCREEN_CATEGORIES.includes(rule.category));
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
+
+  // 顺序固定：前两条与问题侧/资料侧同一份，后两条是本片新增的判定面。
+  assert.deepEqual([...ANSWER_SCREEN_CATEGORIES], [
+    'dangerous_usage',
+    'prompt_injection',
+    'authority_spoofing',
+    'safety_claim',
+  ]);
+  // 端口自报两份类别集，且**不是**同一个：问题侧/资料侧仍是 2 类。
+  assert.deepEqual([...port.categories], ['dangerous_usage', 'prompt_injection']);
+  assert.deepEqual([...port.answer_categories], [...ANSWER_SCREEN_CATEGORIES]);
+
+  // 不新写第二套：答案侧规则必须**就是**规则目录里的那几条（按目录顺序）。
+  assert.deepEqual(ANSWER_RISK_RULES.map((rule) => rule.id), expected.map((rule) => rule.id));
+  for (const rule of ANSWER_RISK_RULES) {
+    assert.ok(RULES.includes(rule), `规则 ${rule.id} 必须就是规则目录里的那一条（不得复制/改写）`);
+    assert.ok(ANSWER_SCREEN_CATEGORIES.includes(rule.category), `规则 ${rule.id} 类别越界`);
+  }
+  for (const id of ['MR-01', 'MR-02', 'MR-07', 'MR-08', 'MR-09']) {
+    assert.ok(ANSWER_RISK_RULES.some((rule) => rule.id === id), `答案侧必须消费规则 ${id}`);
+  }
+  // 比问题侧多出来的**恰好**是这两条（多一条就是扩大范围）。
+  assert.deepEqual(
+    ANSWER_RISK_RULES.filter((rule) => !RISK_RULES.includes(rule)).map((rule) => rule.id),
+    ['MR-08', 'MR-09'],
+  );
+});
+
+test('T2 答案侧规则版本：与 4 类子集同源同参，形状合规，且与问题侧版本不同', () => {
+  const expected = RULES.filter((rule) => ANSWER_SCREEN_CATEGORIES.includes(rule.category));
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
+
+  assert.equal(ANSWER_RISK_RULE_VERSION, deriveRuleVersion(expected, MATCHERS, MATCHER_REVISIONS));
+  assert.match(ANSWER_RISK_RULE_VERSION, /^mr1\+sha256:[0-9a-f]{32}$/);
+  assert.ok(ANSWER_RISK_RULE_VERSION.length <= 80, 'rule_version 契约 maxLength 80');
+  assert.equal(port.answer_rule_version, ANSWER_RISK_RULE_VERSION);
+
+  // 用的是不同子集 ⇒ 版本必须不同（否则"只扩答案侧"在留痕上无从体现）。
+  assert.notEqual(ANSWER_RISK_RULE_VERSION, RISK_RULE_VERSION);
+  // 问题侧版本不得被答案侧的扩大带跑（`port.rule_version` 是现有钉子）。
+  assert.equal(port.rule_version, RISK_RULE_VERSION);
+
+  // 规则层自报的版本与端口一致（两边不是各算各的），直调同样注入冻结时钟。
+  const engine = evaluateHardRules(
+    { target_ref: { type: 'answer', id: TURN_ID, revision: 1 }, text: BENIGN[0], media: [] },
+    { rules: [...expected], clock: FROZEN_CLOCK },
+  );
+  assert.equal(engine.rule_version, ANSWER_RISK_RULE_VERSION);
+  assert.equal(engine.decision, 'approved');
+});
+
+test('T3 冒充权威：MR-08 命中样本 + 四条合成冒充全部拦截（类别 authority_spoofing）', () => {
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
+  const mr08 = RULE_TEXT_FIXTURES.find((item) => item.rule_id === 'MR-08');
+  assert.ok(mr08, 'MR-08 夹具必须存在');
+  const samples = [
+    mr08.hit,
+    '官方推荐这个配方。',
+    '权威认证的用药方案。',
+    '农科院指定的施药时期。',
+    '农业农村部已经认可这个用法。',
+  ];
+  for (const text of samples) {
+    const verdict = port.screenAnswer({ turnId: TURN_ID, text });
+    assert.equal(verdict.blocked, true, `冒充权威必须拦截：${JSON.stringify(text)}`);
+    assert.equal(verdict.decision, 'rejected', `必须是规则命中（不是"未能判定"）：${JSON.stringify(text)}`);
+    assert.deepEqual(verdict.categories, ['authority_spoofing'], `类别：${JSON.stringify(text)}`);
+    assert.ok(verdict.reason_codes.includes('FALSE_AUTHORITY'), `原因码：${JSON.stringify(text)}`);
+    assert.deepEqual(verdict.rule_ids, ['MR-08'], `命中规则：${JSON.stringify(text)}`);
+    // 证据红线：判定结果不得夹带命中原文。
+    assert.ok(!JSON.stringify(verdict).includes(text), `筛查结论泄露了原文：${JSON.stringify(text)}`);
+    // 同一句在问题侧仍是 2 类 ⇒ 不得拦（扩到问题侧就与"只扩答案侧"矛盾）。
+    assert.equal(port.screenQuestion({ turnId: TURN_ID, text }).blocked, false, `问题侧不得被本片扩大：${JSON.stringify(text)}`);
+    // 确定性：同一输入两次求值一致。
+    assert.deepEqual(port.screenAnswer({ turnId: TURN_ID, text }), verdict);
+  }
+});
+
+test('T4 绝对安全宣称：MR-09 命中样本 + 四条合成打包票全部拦截（类别 safety_claim）', () => {
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
+  const mr09 = RULE_TEXT_FIXTURES.find((item) => item.rule_id === 'MR-09');
+  assert.ok(mr09, 'MR-09 夹具必须存在');
+  const samples = [
+    mr09.hit,
+    '保证无残留。',
+    '100% 安全。',
+    '永久有效。',
+    '放心用，绝对没事。',
+  ];
+  for (const text of samples) {
+    const verdict = port.screenAnswer({ turnId: TURN_ID, text });
+    assert.equal(verdict.blocked, true, `绝对安全宣称必须拦截：${JSON.stringify(text)}`);
+    assert.equal(verdict.decision, 'rejected', `必须是规则命中：${JSON.stringify(text)}`);
+    assert.deepEqual(verdict.categories, ['safety_claim'], `类别：${JSON.stringify(text)}`);
+    assert.ok(verdict.reason_codes.includes('ABSOLUTE_SAFETY_CLAIM'), `原因码：${JSON.stringify(text)}`);
+    assert.deepEqual(verdict.rule_ids, ['MR-09'], `命中规则：${JSON.stringify(text)}`);
+    assert.ok(!JSON.stringify(verdict).includes(text), `筛查结论泄露了原文：${JSON.stringify(text)}`);
+    assert.equal(port.screenQuestion({ turnId: TURN_ID, text }).blocked, false, `问题侧不得被本片扩大：${JSON.stringify(text)}`);
+  }
+
+  // 实测口径（与派单 T4 的写法**不同**，如实钉住现状）：「放心用没问题」不命中 MR-09 的任何一条
+  // 正则 —— 最后那条是 `(?:放心|随便|尽管)(?:用|打|喷|使)[，,]?(?:绝对|肯定|保证)?(?:没事|安全|不会有事|出不了事)`，
+  // 「没问题」不在枚举里；前一条要求"绝对/保证…+安全/无毒…"这类关键词共现，它也没有。
+  // 所以答案侧今天**放行**它。改正则属于 `packages/moderation/**`（本片禁止触碰）⇒ 这条缺口
+  // 记在报告里，不在测试里假装它已被拦住。同义的「放心用，绝对没事」在上面已被拦住。
+  const gap = port.screenAnswer({ turnId: TURN_ID, text: '放心用没问题。' });
+  assert.equal(gap.blocked, false, '当前口径：该句不命中 MR-09（是缺口，不是放行理由）');
+  assert.deepEqual(gap.reason_codes, []);
+  assert.deepEqual(gap.categories, []);
+});
+
+test('T5 分界线：同一句话答案侧拦、问题侧与资料侧不拦（证明只扩了答案侧）', () => {
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
+
+  // ① 答案侧：拦，且归到 authority_spoofing / MR-08。
+  const answer = port.screenAnswer({ turnId: TURN_ID, text: BOUNDARY_TEXT });
+  assert.equal(answer.blocked, true, '答案侧必须拦');
+  assert.equal(answer.decision, 'rejected');
+  assert.deepEqual(answer.categories, ['authority_spoofing']);
+  assert.deepEqual(answer.rule_ids, ['MR-08']);
+
+  // ② 问题侧：不拦（仍是 2 类）。
+  const question = port.screenQuestion({ turnId: TURN_ID, text: BOUNDARY_TEXT });
+  assert.equal(question.blocked, false, '问题侧必须仍是 2 类');
+  assert.equal(question.decision, 'approved');
+  assert.deepEqual(question.reason_codes, []);
+
+  // ③ 资料侧：这条"资料摘录"必须原样留在集合里、剔除清单为空。
+  const item = retrievalItem({ id: BOUNDARY_ID, title: '合成条目戊：稗草防治时期（测试替身）', body: BOUNDARY_TEXT });
+  const screened = port.screenSources({ turnId: TURN_ID, items: [item] });
+  assert.deepEqual(screened.rejected_citations, [], '资料侧不得因这句话剔除来源');
+  assert.equal(screened.items.length, 1, '保留条数必须不变');
+  assert.equal(screened.items[0].id, BOUNDARY_ID);
+  assert.deepEqual(screened.reason_codes, []);
+});
+
+test('T6 答案侧零误杀：30 条 BENIGN + CLEAN_TEXT + 11 条 miss 对照全部放行', () => {
+  const port = createModerationRiskScreen(FROZEN_RISK_DEPS);
+  assert.equal(RULE_TEXT_FIXTURES.length, 11, 'MR-01..MR-11 各一条');
+  const texts = [
+    ...BENIGN,
+    CLEAN_TEXT,
+    ...RULE_TEXT_FIXTURES.map((item) => item.miss),
+  ];
+  assert.ok(BENIGN.length >= 20, `正常样本必须 ≥20 条，实得 ${BENIGN.length}`);
+  for (const text of texts) {
+    const verdict = port.screenAnswer({ turnId: TURN_ID, text });
+    assert.equal(verdict.blocked, false, `答案侧误杀：${JSON.stringify(text)}（${verdict.reason_codes.join('+')}）`);
+    assert.equal(verdict.decision, 'approved', `决策：${JSON.stringify(text)}`);
+    assert.deepEqual(verdict.reason_codes, [], `不得带原因码：${JSON.stringify(text)}`);
+    assert.deepEqual(verdict.rule_ids, [], `不得带命中规则：${JSON.stringify(text)}`);
+    assert.deepEqual(verdict.categories, [], `不得带类别：${JSON.stringify(text)}`);
+  }
 });

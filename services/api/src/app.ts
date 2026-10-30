@@ -616,8 +616,8 @@ export interface BuildAppOptions {
     guard?: AnswerGuard;
     composer?: AnswerComposer;
     /**
-     * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的
-     * `dangerous_usage` + `prompt_injection` 规则层；注入只供负控制，不改默认行为）。
+     * 问题与资料原文的风险/注入筛查（缺省接 `packages/moderation` 的 `dangerous_usage` + `prompt_injection`）**外加答案侧第四道**：
+     * 候选回答正文另按 `dangerous_usage`+`prompt_injection`+`authority_spoofing`+`safety_claim` 四类筛（注入只供负控制）。
      */
     riskScreen?: RiskScreen;
     transcription?: TranscriptionPort;
@@ -2361,8 +2361,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 5a-2) 版本串**由装配层**给（回答器无权决定，NC2）：只有 `mode === 'live'` 才有覆盖值，
   //      其余一切情况都不传 ⇒ 三个串照旧全部带 `unimplemented:no-real-`。
   const conversationAnswerVersions = conversationChatPlan.answerVersions;
-  // 5b) 风险/注入筛查（问题 + 资料原文）：**复用** `packages/moderation` 现成的
-  //     `dangerous_usage` + `prompt_injection` 规则层，不新写第二套规则；缺省启用（fail-closed）。
+  // 5b) 风险/注入筛查（问题 + 资料原文 + 候选回答）：**复用** `packages/moderation` 现成的规则层，
+  //     问题/资料侧 2 类，答案侧另加 `authority_spoofing` + `safety_claim` 共 4 类；缺省启用（fail-closed）。
   const conversationRiskScreen: RiskScreen = conversationInjection?.riskScreen ?? createModerationRiskScreen();
   // 6) 语音轮次：只读复用已合并的 `app.speechService.getTranscription`（受理时核对
   //    `transcription_id` + `transcription_revision` + `confirmed`），不新建第二套转写存储。

@@ -89,7 +89,7 @@
 | E19 | 「未接真实模型」用机器可判据前缀 `unimplemented:no-real-` 标出 | 已实现 | services/api/src/conversations/types.ts:52 | 标记机制本身已实现；真实版本串是 N03 |
 | E20 | 语音轮次须 `confirmed` 转写，端口未接线时 422／404 而非假成功 | 已实现 | docs/architecture/contract-implementation-status.md:101 | 拒绝路径已锁；真实 ASR 评估另计（§8） |
 | E21 | 删除级联以 `X-GY-Cascade` 三态如实披露（`initiated`／`unwired`／`failed`） | 已实现 | services/api/src/conversations/cascade.ts:76-100 | 披露机制已实现；真实清理器未接（P05／N10 相邻） |
-| E22 | 审核规则层默认 50ms 墙钟预算，超时 ⇒ `RULE_TIMEOUT` ⇒ 隔离 | 已实现 | packages/moderation/constants.mjs:224 | 预算值 50 在该行；调用侧见 services/api/src/conversations/screen.ts:124-130 |
+| E22 | 审核规则层默认 50ms 墙钟预算，超时 ⇒ `RULE_TIMEOUT` ⇒ 隔离 | 已实现 | packages/moderation/constants.mjs:224 | 预算值 50 在该行；调用侧见 services/api/src/conversations/screen.ts:262-265 |
 | E23 | 审核域 real 未接真实供应商 ⇒ 503，拒绝以替身返回成功封套 | 已实现 | services/api/src/moderation/service.ts:366 | fail-closed 已锁；模型层不存在是 N07 |
 | E24 | 媒体域 real 未接对象存储 ⇒ 整域 503 | 已实现 | services/api/src/media/service.ts:613 | 整域 fail-closed 仍在；真实桶接线已获授权并跑通一次真实 ASR（docs/verification/gy-i11-real-media-wiring-20261025.md:75），残余是读句柄网关（N12） |
 | E25 | 开关三键闭集（`submissions_enabled`／`specific_herbicide_output_enabled`／`ai_enabled`）由库约束 | 已实现 | services/api/db/migrations/0020_feature_flags.sql:62-64 | 闭集在 DB 层；新增键必须走迁移，不能靠代码自带 |
