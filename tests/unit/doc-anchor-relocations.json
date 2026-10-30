@@ -630,5 +630,15 @@
     "from": 359,
     "to": 376,
     "reason": "旧锚点本来就指错：`services/api/src/ocr/store-pg.ts:359` 是 `function recordValues(row: OcrRow): unknown[] {`，不是 `createPostgresOcrStore`；真值是 376 `export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrStore {`（`git grep -n \"export function createPostgresOcrStore\" 4307bfd7 -- services/api/src/ocr/store-pg.ts`）。目标文件本提交未改动，按符号 `createPostgresOcrStore` 重锚。"
+  },
+  {
+    "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
+    "line": 27,
+    "target": "services/api/src/app.ts",
+    "from": 471,
+    "to": 545,
+    "kind": "correction",
+    "symbol": "backupPurge?: BackupPurgePort;",
+    "reason": "旧锚点 471（base 与 HEAD 都是同一段注释：「装配层绝不自行铸造…」）本来就不是类型定义行；该行真正要引的是 `BuildAppOptions` 里的成员声明 `backupPurge?: BackupPurgePort;`（HEAD :545，base :541）。GY-R71 补片在 app.ts 顶部插入 4 行后，机械平移（471→475）只会把注释锚挪到注释锚，故按符号纠正到声明行。"
   }
 ]
