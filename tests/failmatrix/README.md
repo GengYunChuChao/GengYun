@@ -242,6 +242,26 @@ not-runnable 35` 是基线 `d4a47206` 上**本机 PG 17.11** 手跑的读数，�
 本机侧的另一条边界不变：本片交付环境禁回环监听，`initdb` 起的集群在本机连不上 ⇒ 这次没有新读数入账，
 「CI 上这条臂读到什么」只能等推送后的第一次 run。
 
+### CI 首跑记录（2026-10-31，运行 `41135206295`）· 一次**真**失败，已修
+
+首跑不是绿的，而且红得有价值 —— 它暴露了一个**只有 Debian 系才存在、Windows 本机永远复现不了**的缺陷：
+
+```
+[pg] bin=/usr/lib/postgresql/17/bin
+[pg] dataDir=/home/runner/work/_temp/gy-i22-pg/gy-i22-failmatrix-realpg-4347-54067f2a port=36271
+真 PG 臂 FAIL：Error: Command failed: /usr/lib/postgresql/17/bin/pg_ctl -D … -o -p 36271 -c listen_addresses=127.0.0.1 start
+FATAL:  could not create lock file "/var/run/postgresql/.s.PGSQL.36271.lock": Permission denied
+```
+
+根因：PGDG 装出来的 `postgresql-17` 把编译默认 `unix_socket_directories` 钉成 `/var/run/postgresql`，而 runner 普通用户
+写不了那个目录 ⇒ `pg_ctl start` 拿不到 socket lock。**同仓 `tests/integration/*` 十余个自起集群脚本早就用
+`if (process.platform !== 'win32') options.push('-k ' + dataDir)` 避开了**（`user-chain-e2e.mjs:313-315`、
+`media-row-purge-pg.mjs:105-110`），只有这条臂漏了 —— 因为它此前从没在 Linux 上跑过。
+
+修法（`tests/failmatrix/run-real.mjs`）：`pg_ctl -o` 的选项改成数组拼装，非 win32 上追加 `-k <dataDir>`；
+本臂只走 TCP，socket 目录只影响这个 lock 文件，不影响任何断言。首跑日志另外证明了两件事：**job 结构、装包、
+主版本自证、env 传递都是对的**（`initdb (PostgreSQL) 17.11` 自证通过、`GY_PG_BIN`/`GY_I22_PG_ROOT` 都到了脚本里）。
+
 ## 与 `#22` 的关系
 
 `#22` 远未完成。本片交付的是**可重复运行的失败回归骨架 + 249 条真读数用例 + 26 条负控制**，

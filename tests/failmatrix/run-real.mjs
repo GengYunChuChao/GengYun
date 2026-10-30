@@ -370,7 +370,18 @@ async function main() {
   try {
     if (existsSync(dataDir)) throw new Error(`数据目录已存在，拒绝复用（请换 GY_I22_PG_ROOT）：${dataDir}`);
     runTool(TOOL('initdb'), ['-D', dataDir, '-U', 'postgres', '-A', 'trust', '-E', 'UTF8', '--locale=C']);
-    runDetached(TOOL('pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', `-p ${port} -c listen_addresses=127.0.0.1`, 'start']);
+    // Debian/Ubuntu 的 `postgresql-17` 把编译默认 `unix_socket_directories` 钉在 `/var/run/postgresql`，
+    // 普通用户（CI 里的 `runner`）写不了它 ⇒ `pg_ctl start` 会
+    // `FATAL: could not create lock file "/var/run/postgresql/.s.PGSQL.<port>.lock": Permission denied`。
+    // 本臂只走 TCP（`postgres://postgres@127.0.0.1:<port>`），socket 目录只影响那个 lock 文件 ⇒ 非 win32 上
+    // 把它显式指到数据目录；Windows 没有 unix socket，传 `-k` 会报错，故只在非 win32 加。
+    // 同仓 `tests/integration/*` 的自起集群脚本（`user-chain-e2e.mjs:313-315`、`media-row-purge-pg.mjs:105-110`
+    // 等十余个）都是同一写法 —— 它们早就踩过这个坑，本臂是最后一个补上的。
+    // ⚠ `-o` 只收**一个**字符串：数组必须 `join(' ')`，否则 postgres 会把 `,` 当成值的一部分
+    // （`FATAL: invalid value for parameter "port": "55902,-c"`）。
+    const startOptions = [`-p ${port}`, '-c listen_addresses=127.0.0.1'];
+    if (process.platform !== 'win32') startOptions.push(`-k ${dataDir}`);
+    runDetached(TOOL('pg_ctl'), ['-D', dataDir, '-l', logFile, '-w', '-t', '60', '-o', startOptions.join(' '), 'start']);
     clusterUp = true;
     await waitForReady(connectionString, 60000);
 
