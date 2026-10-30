@@ -750,7 +750,7 @@
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 97,
+    "line": 98,
     "target": "services/api/src/conversations/service.ts",
     "from": 636,
     "fromEnd": 679,
