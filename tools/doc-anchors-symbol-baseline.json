@@ -97,16 +97,6 @@
       "path": "services/api/src/admin/ops/jobs-pg.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:17-22",
-      "doc": "docs/architecture/ai-ops-spec-status.md",
-      "docLine": 126,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-44 行（「/**…」），块后第一条非空行是第 45 行的「import type { PoolClient } from 'pg';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
       "reference": "services/api/src/admin/ops/jobs-pg.ts:4-9",
       "doc": "docs/architecture/ai-ops-spec-status.md",
       "docLine": 135,
