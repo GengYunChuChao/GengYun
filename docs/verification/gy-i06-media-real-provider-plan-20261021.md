@@ -74,7 +74,7 @@
 | 5 | `services/api/src/app.ts:1723-1733` | `createAppMediaService({ executionMode, objectStore, tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, contentSource: mediaContentSource ?? createClosedContentSource(), accessGrantOrigin: config.mediaAccessGrantOrigin ?? undefined, ... })` |
 | 6 | `services/api/src/app.ts:2305` | `app.decorate('mediaObjectStore', mediaObjectStore)`（测试与自证用） |
 | 7 | `services/api/src/app.ts:2453` | `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate })` —— 7 条路由的唯一注册点（GY-R34-I19 树重取；此前后续片在 `app.ts` 上半部新增装配行，行号已上移） |
-| 8 | `services/api/src/server.ts:62` | ⚠️ 本行记录的是 **W2 之前**的读码结果（当时该调用在第 27 行，形如 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval`）。W2（GY-R28）起改为经 `mediaRealPortsAssemblyOptions` 派生转发；GY-R68（2026-10-28）起同一判定内另有合成域 `synthesisMediaWiring` 派生。现读的调用行即本行左侧这条锚点 |
+| 8 | `services/api/src/server.ts:68` | ⚠️ 本行记录的是 **W2 之前**的读码结果（当时该调用在第 27 行，形如 `buildApp({ config, pool })`：**不传** `mediaObjectStore`、**不传** `realMediaApproval`）。W2（GY-R28）起改为经 `mediaRealPortsAssemblyOptions` 派生转发；GY-R68（2026-10-28）起同一判定内另有合成域 `synthesisMediaWiring` 派生。现读的调用行即本行左侧这条锚点；GY-R70 合流 `upstream/main` 8b646ae1（#781「审核域显式启动批准」）在 `buildApp(...)` 之前插入审核域装配 6 行，该调用由第 62 行下移到第 68 行，左侧锚点按符号 `buildApp(` 重取到第 68 行（该文件本提交未改动，属陈旧锚点重锚，登记见 `tests/unit/doc-anchor-relocations.json`） |
 
 ### 3.2 stub 下一次上传的完整走向
 
