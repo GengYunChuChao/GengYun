@@ -2211,7 +2211,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         },
         async purgeOwnerData(ownerId) {
           // 台账没有"幂等台账表"这一层：`idempotency: 0` 是**事实**（该表只有作业行），
-          // 不是"没查"。证据串因此只有 `jobs:online-purged:<n>` 一段。
+          // 不是"没查"。证据串因此是 `jobs:online-purged:<n>;jobs:idempotency-purged:0`
           return { records: await purgeJobLedgerByOwner(pool, ownerId), idempotency: 0 };
         },
       };

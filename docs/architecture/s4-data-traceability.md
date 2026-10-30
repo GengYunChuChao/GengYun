@@ -260,7 +260,7 @@
   `privacy/third-party-deletion-pg.ts`，对表零 DML/SELECT）；`git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = **15 行**（原页记「0 行」；
   实测 `:158/:162/:166/:167/:336/:339/:562/:567/:1991/:1998/:2002/:2004/:2009/:2538/:2547`）；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口 `third-party-deletion-pg.ts:141`、实现 `:312`、`privacy/user-data-deletion.ts` 一处注释）⇒ **写侧零调用者**。
 - **缺口（2026-10-28 复核重写：原三条里两条已被代码证伪）**：① ~~端口未装配~~ 不成立——读侧装配在 `services/api/src/app.ts:2017`；② ~~适配器未在 `app.ts` 装配~~
-  不成立——装配在 `:2009`（仅注入、不 dispatch）；③ ~~投影没接进回执~~ 不成立——已接在 `services/api/src/routes/account-deletion.ts:148`→`:154`。
+  不成立——装配在 `:2013`（仅注入、不 dispatch）；③ ~~投影没接进回执~~ 不成立——已接在 `services/api/src/routes/account-deletion.ts:148`→`:154`。
   **改判后的真实缺口只剩一条**：运行面上**没有写入口**（`subscribeThirdPartyDeletion` 零调用者，注销受理时不按接收方建行），叠加
   `services/api/src/app.ts:2303` 的 `available` 门（`:2575` 是它的消费点 `accountDeletionWired`；real ⇒ 注销域 operation 一律 503）⇒ 真实执行模式下四件事一条都取不到；本项判「未实现」即按此口径，不按 §0.1「零命中」那一句。
 
