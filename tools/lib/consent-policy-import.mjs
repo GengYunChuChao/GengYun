@@ -18,6 +18,19 @@
  *   * `consent_policy_immutable()` 触发器 ⇒ 一旦 `reviewed_at` 非空，除 `enabled`/`updated_at`
  *     之外的列**一律不可就地修改**（错误码 `23514`）。所以「换正文」只能是**新版本新行**。
  *
+ * ## 同版本重放/启用：**正文 sha 与安全元数据必须同时一致**（本片新增的第五道边界）
+ *
+ * 判「幂等重放」原来只看 `content_sha256`：于是「同版本、同正文、但来源/有效期/复核人/绑定不同」会被判
+ * `unchanged`，而库里那一行可能仍是 `synthetic`、可能已经过期 —— 报告却按**清单**打印 `verified` 与未来日期。
+ * 那是把「没导入过的东西」说成「已生效」，所以现在：
+ *
+ *   * `unchanged` = 正文 sha **且** `POLICY_SAFETY_METADATA_FIELDS` 里每一列都相等；
+ *   * 任何一列不等 ⇒ `METADATA_CONFLICT`（退出码沿用 `POLICY_CONFLICT` 的 4），报错点名字段与旧值→新值；
+ *   * 库行缺列（调用方 SELECT 没取全）同样判冲突，⛔ 不许把「读不到」当成「一致」；
+ *   * `--enable` 也一样：先过这一关，才谈「开起来」，否则就是「启用旧元数据」。
+ *
+ * ⛔ 报错与报告都**不打印正文**（`policy` 里本来就没有正文，只有 sha 与两个长度读数）。
+ *
  * ## 四条硬边界（都在这里，不在命令行里）
  *
  * 1. **`content_sha256` 由本工具算，调用方不许传**：清单里出现这个键 ⇒ 直接判 `INVALID_POLICY`。
@@ -111,6 +124,28 @@ export const PLAN_ACTIONS = Object.freeze({
 });
 
 /**
+ * 同 `(purpose, policy_version)` 的重放/启用必须**逐列相等**的安全元数据。
+ *
+ * 为什么是这几列而不是「全部列」：`id` / `enabled` / `updated_at` 本就会变（启用就是改它们），
+ * `reviewed_at` 由库钟写、清单里没有对应字段（无可比对象），`content_sha256` 由上面的 sha 判据单独管。
+ * 剩下的这七列**决定这一行说了什么**：来源是什么（`source_kind`/`source_ref`）、依据什么复核
+ * （`review_evidence_ref`）、有效期到哪天（`valid_from`/`valid_until`）、谁复核的（`reviewed_by`）、
+ * 绑了哪些接收方（`recipient_bindings`）。它们任何一个与清单不同，「重放成功」就等于把没导入过的
+ * 来源/有效期/复核主体说成已生效。
+ *
+ * ⚠ 调用方的 `SELECT` 必须**取全**这七列（缺列判冲突，见 `comparePolicySafetyMetadata`）。
+ */
+export const POLICY_SAFETY_METADATA_FIELDS = Object.freeze([
+  'source_kind',
+  'source_ref',
+  'review_evidence_ref',
+  'valid_from',
+  'valid_until',
+  'reviewed_by',
+  'recipient_bindings',
+]);
+
+/**
  * 进程退出码（命令行与测试共用一套；⛔ 不要在命令行里另写数字）。
  *
  * | 码 | 名称 | 含义 |
@@ -118,7 +153,7 @@ export const PLAN_ACTIONS = Object.freeze({
  * | 0 | `OK` | 成功（dry-run 已出形状 / apply 已落库 / 二次执行 `unchanged=true`） |
  * | 2 | `CONFIG` | 参数或环境问题：缺子命令、缺 `--file`、缺 `DATABASE_URL`、清单读不到、JSON 解析失败 |
  * | 3 | `INVALID_POLICY` | 政策内容强校验失败（闭集/占位/有效期/调用方传 sha/来源形状/绑定/复核主体） |
- * | 4 | `POLICY_CONFLICT` | 版本回退、同版本不同正文、启用非最新版本 |
+ * | 4 | `POLICY_CONFLICT` | 版本回退、同版本不同正文、启用非最新版本，**以及同版本安全元数据不一致（`METADATA_CONFLICT`）** |
  * | 5 | `DB_ERROR` | 数据库错误（连不上 / 权限 / 表缺失 / 未知），事务已回滚 |
  */
 export const EXIT_CODES = Object.freeze({
@@ -129,11 +164,17 @@ export const EXIT_CODES = Object.freeze({
   DB_ERROR: 5,
 });
 
-/** 失败类别（字符串码，进报错行；与 `EXIT_CODES` 一一对应）。 */
+/**
+ * 失败类别（字符串码，进报错行；与 `EXIT_CODES` 一一对应）。
+ *
+ * `METADATA_CONFLICT` 是「政策冲突」的**细分标签**：它不新增退出码，仍按 `POLICY_CONFLICT` 的 4 退出
+ * ——「同版本、但库行与清单说的不是同一件事」在语义上是冲突，不是内容格式错误（3），也不是库故障（5）。
+ */
 export const FAILURE_KINDS = Object.freeze({
   CONFIG: 'CONFIG',
   INVALID_POLICY: 'INVALID_POLICY',
   POLICY_CONFLICT: 'POLICY_CONFLICT',
+  METADATA_CONFLICT: 'METADATA_CONFLICT',
   DB_ERROR: 'DB_ERROR',
 });
 
@@ -143,6 +184,7 @@ export function exitCodeFor(failureKind) {
     case FAILURE_KINDS.INVALID_POLICY:
       return EXIT_CODES.INVALID_POLICY;
     case FAILURE_KINDS.POLICY_CONFLICT:
+    case FAILURE_KINDS.METADATA_CONFLICT:
       return EXIT_CODES.POLICY_CONFLICT;
     case FAILURE_KINDS.DB_ERROR:
       return EXIT_CODES.DB_ERROR;
@@ -497,11 +539,156 @@ export function readPolicyManifest(input, options = {}) {
   };
 }
 
+/** 稳定键序的 JSON（用于比对 `recipient_bindings`：键序不同不等于绑定不同，值不同才等于）。 */
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const pairs = Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+    return `{${pairs.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/** `jsonb` 列在不同驱动/手写夹具下可能是对象也可能是 JSON 文本 ⇒ 统一成对象再比。 */
+function bindingsObject(value) {
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return value ?? {};
+}
+
+/** 时刻的毫秒值（非法/缺省 ⇒ `null`）：同一时刻的不同写法（`…Z` 与 `….000Z`）不算冲突。 */
+function instantMillis(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const ms = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * 一列安全元数据的**规范化文本**（比对与报告共用同一个渲染，避免「报告说相等、比对说不同」）。
+ * 时刻 ⇒ `toISOString()`（毫秒精度、UTC）；`null` ⇒ 字面量 `(null)`；绑定 ⇒ 稳定键序 JSON。
+ * @param {string} field `POLICY_SAFETY_METADATA_FIELDS` 的成员
+ * @param {unknown} value 库行或清单侧的原值
+ * @returns {string}
+ */
+export function renderSafetyMetadataValue(field, value) {
+  switch (field) {
+    case 'valid_from':
+    case 'valid_until': {
+      const ms = instantMillis(value);
+      return ms === null ? '(null)' : new Date(ms).toISOString();
+    }
+    case 'recipient_bindings':
+      return canonicalJson(bindingsObject(value));
+    default:
+      return value === null || value === undefined ? '(null)' : String(value);
+  }
+}
+
+/** 清单侧那一列的值（`reviewed_by` 不在清单里，来自命令行 `--reviewed-by`）。 */
+function manifestMetadataValue(field, policy, reviewedBy) {
+  switch (field) {
+    case 'source_kind': return policy.source_kind;
+    case 'source_ref': return policy.source_ref;
+    case 'review_evidence_ref': return policy.review_evidence_ref;
+    case 'valid_from': return policy.valid_from;
+    case 'valid_until': return policy.valid_until;
+    case 'reviewed_by': return reviewedBy;
+    case 'recipient_bindings': return policy.recipient_bindings;
+    default: return null;
+  }
+}
+
+/**
+ * 库行那一列的值（报告用；⛔ 读不到就说读不到，不许拿清单顶替）。
+ * @param {string} field @param {object} row
+ * @returns {string} 规范化文本；列缺失 ⇒ `(缺列)`
+ */
+export function libraryMetadataValue(field, row) {
+  if (row === null || row === undefined || !(field in row) || row[field] === undefined) return '(缺列)';
+  return renderSafetyMetadataValue(field, row[field]);
+}
+
+/**
+ * **同版本重放/启用的安全元数据一致性**（纯函数，唯一判据点）。
+ *
+ * 规则（逐字段，⛔ 不许「有一项不同就整体放过」）：
+ *
+ * 1. `source_kind` / `source_ref` / `review_evidence_ref` / `valid_until` / `recipient_bindings`：
+ *    清单一定声明了它们 ⇒ **无条件比对**；
+ * 2. `valid_from`：清单省略它时库列由库钟生成（工具自己写的），清单没有可断言的值 ⇒ 该维度跳过
+ *    （报告里如实写 `(清单未声明)`）；清单声明了就必须与库行**同一时刻**；
+ * 3. `reviewed_by`：清单不许带它，断言来自命令行 `--reviewed-by`。没给 `--reviewed-by` ⇒ 本次不主张
+ *    任何复核主体 ⇒ 跳过；给了而与**已有**的 `reviewed_by` 不同 ⇒ 冲突（否则就是「拿别人的复核记录
+ *    冒充本次复核」，而 `enabled` 那条 UPDATE 的 `COALESCE` 会让它静默不生效）。库行 `reviewed_by`
+ *    仍是 `null`（草稿从未复核）⇒ 不算冲突：本次启用正要写它；
+ * 4. 库行缺列（调用方 `SELECT` 没取全）⇒ **冲突**，不是「一致」：读不到就不能证明相等。
+ *
+ * @param {{ policy: object, row: object|null, reviewedBy?: string|null }} input
+ * @returns {{ ok: true, compared: string[], skipped: string[] }
+ *   | { ok: false, code: string, reason: string, conflicts: Array<{field: string, library: string, manifest: string}> }}
+ */
+export function comparePolicySafetyMetadata({ policy, row, reviewedBy = null }) {
+  /** @type {Array<{field: string, library: string, manifest: string}>} */
+  const conflicts = [];
+  if (row === null || row === undefined) {
+    return { ok: false, code: FAILURE_KINDS.METADATA_CONFLICT, reason: '没有库行可比对安全元数据（调用方必须先读出该行）', conflicts };
+  }
+  const missing = POLICY_SAFETY_METADATA_FIELDS.filter((field) => !(field in row) || row[field] === undefined);
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      code: FAILURE_KINDS.METADATA_CONFLICT,
+      reason: `现库行的安全元数据读不全（缺列：${missing.join(' / ')}）⇒ 无法证明与清单一致，判冲突。`
+        + 'SELECT 必须取全 source_kind/source_ref/review_evidence_ref/valid_from/valid_until/reviewed_by/recipient_bindings（⛔ 不许把「没取」当成「相同」）。',
+      conflicts: missing.map((field) => ({ field, library: '(缺列)', manifest: renderSafetyMetadataValue(field, manifestMetadataValue(field, policy, reviewedBy)) })),
+    };
+  }
+
+  /** @type {string[]} */
+  const compared = [];
+  /** @type {string[]} */
+  const skipped = [];
+  for (const field of POLICY_SAFETY_METADATA_FIELDS) {
+    const asserted = (field !== 'valid_from' || (policy.valid_from !== null && policy.valid_from !== undefined))
+      && (field !== 'reviewed_by' || (reviewedBy !== null && reviewedBy !== undefined));
+    if (!asserted) {
+      skipped.push(field);
+      continue;
+    }
+    compared.push(field);
+    const library = renderSafetyMetadataValue(field, row[field]);
+    const manifest = renderSafetyMetadataValue(field, manifestMetadataValue(field, policy, reviewedBy));
+    if (library === manifest) continue;
+    // 库行还没复核过（草稿）⇒ 本次启用正要写 reviewed_by，不是「旧元数据」。
+    if (field === 'reviewed_by' && (row[field] === null || row[field] === undefined)) continue;
+    conflicts.push({ field, library, manifest });
+  }
+
+  if (conflicts.length === 0) return { ok: true, compared, skipped };
+  const detail = conflicts.map((item) => `${item.field}: 库行 ${item.library} → 清单 ${item.manifest}`).join('；');
+  return {
+    ok: false,
+    code: FAILURE_KINDS.METADATA_CONFLICT,
+    reason: `同 (purpose, policy_version) 已存在，但安全元数据与清单不一致（${detail}）。`
+      + '这一行不能就地改（0009 的 consent_policy_immutable 只放 enabled/updated_at），'
+      + '所以「重放」不能把它变成清单说的样子：要么改用新的 policy_version，要么按库行现状处理 —— '
+      + '⛔ 不许把清单的来源/有效期/复核主体当成已生效。',
+    conflicts,
+  };
+}
+
 /**
  * **幂等 / 单调 / 启用的判定**（纯函数；`existing` 由调用方在事务里读出来）。
  *
  * `existing` 只取目标 `purpose` 的行，元素形状：
- * `{ policy_version, content_sha256, enabled, reviewed_at }`（`reviewed_at` 为 `null` 表示未复核）。
+ * `{ policy_version, content_sha256, enabled, reviewed_at }` **加上** `POLICY_SAFETY_METADATA_FIELDS`
+ * 那七列（`source_kind` / `source_ref` / `review_evidence_ref` / `valid_from` / `valid_until` /
+ * `reviewed_by` / `recipient_bindings`）。⚠ 缺列会被判冲突，不是「一致」。
  *
  * @param {object} input
  * @param {object} input.policy `readPolicyManifest` 返回的 policy
@@ -538,6 +725,12 @@ export function planConsentPolicyImport({ policy, existing, wantEnable, reviewed
         reason: `同 (purpose, policy_version) 已存在但正文 sha256 不同：库内 ${target.content_sha256} / 清单 ${policy.content_sha256}。`
           + '政策正文不可就地修改（0009 的 consent_policy_immutable 触发器），请改用新的 policy_version。',
       };
+    }
+    // 正文相同还不够：来源 / 有效期 / 复核主体 / 绑定也必须与**库行**一致，否则「unchanged」与
+    // 「--enable 旧行」都会把没导入过的元数据说成已生效。这一关在 enable 判定之前。
+    const metadata = comparePolicySafetyMetadata({ policy, row: target, reviewedBy });
+    if (metadata.ok !== true) {
+      return { ok: false, code: metadata.code, reason: metadata.reason, conflicts: metadata.conflicts };
     }
     if (wantEnable && target.enabled !== true) {
       if (maxVersion !== null && comparePolicyVersions(policy.policy_version, maxVersion) < 0) {
@@ -607,32 +800,63 @@ export function policyImportWarnings({ policy, dbNow = null }) {
 /**
  * 政策清单的报告行（**⛔ 不含正文**，只含正文的两项读数）。
  *
- * `key=value` 逐行，稳定可解析（集成用例就是这么读 `unchanged=` 的）。
- * @param {{ policy: object, plan: object, mode: 'dry-run'|'apply', file: string, enabledAfter: boolean,
- *   reviewedBy: string|null, warnings?: string[] }} input
+ * ## 来源纪律（⛔ 这一节就是本片修的东西）
+ *
+ * `source_kind` / `source_ref` / `review_evidence_ref` / `valid_from` / `valid_until` / `reviewed_by` /
+ * `recipient_bindings` 这七行**一律取实际库行**（`row`）：
+ *
+ *   * 重放（`unchanged`）⇒ 传库里的那一行；
+ *   * 写入（`insert` / `enable`）⇒ 传**刚写完再读回来**的那一行；
+ *   * 一行都还没有（首次插入的 dry-run）⇒ 这些键打印 `(未写入)`，并且 `metadata_source=none`，
+ *     清单值只以 `manifest_*` 前缀出现，⛔ 不许用一个裸键冒充库行状态。
+ *
+ * `recipient_bindings` 在报告里是**条数** + `recipient_binding_ids`（键名），不打印绑定正文：
+ * 逐字段的**值**比对在 `comparePolicySafetyMetadata` 里做（不一致就已经 exit 4，轮不到报告），
+ * 报告只需要说明「库行绑了谁、几条」。两处都取自库行，⛔ 不取清单。
+ *
+ * 于是「报告说 verified、库里还是 synthetic」在结构上不可能：报告没有第二个取值来源。
+ * `request_reviewed_by` 是命令行断言（请求），与库行的 `reviewed_by`（事实）分开列。
+ *
+ * @param {{ policy: object, plan: object, mode: 'dry-run'|'apply', file: string,
+ *   row?: object|null, enabledAfter: boolean, reviewedBy: string|null, warnings?: string[] }} input
  * @returns {string[]}
  */
-export function renderPolicyImportReport({ policy, plan, mode, file, enabledAfter, reviewedBy, warnings = [] }) {
+export function renderPolicyImportReport({ policy, plan, mode, file, row = null, enabledAfter, reviewedBy, warnings = [] }) {
+  const hasRow = row !== null && row !== undefined;
+  const fromRow = (field) => (hasRow ? libraryMetadataValue(field, row) : '(未写入)');
+  const bindings = hasRow && row.recipient_bindings !== undefined ? bindingsObject(row.recipient_bindings) : null;
+  const bindingIds = bindings !== null && typeof bindings === 'object' && !Array.isArray(bindings)
+    ? Object.keys(bindings).sort()
+    : [];
   const lines = [
     `mode=${mode}`,
     `file=${file}`,
     `action=${plan.action}`,
     `unchanged=${plan.action === PLAN_ACTIONS.UNCHANGED ? 'true' : 'false'}`,
-    `purpose=${policy.purpose}`,
-    `policy_version=${policy.policy_version}`,
-    `content_sha256=${policy.content_sha256}`,
-    `source_kind=${policy.source_kind}`,
-    `source_ref=${policy.source_ref}`,
-    `review_evidence_ref=${policy.review_evidence_ref}`,
-    `recipient_bindings=${Object.keys(policy.recipient_bindings ?? {}).length}`,
-    `valid_from=${policy.valid_from ?? '(由库里的 clock_timestamp() 决定)'}`,
-    `valid_until=${policy.valid_until}`,
-    `reviewed_by=${reviewedBy ?? '(null)'}`,
+    `metadata_source=${hasRow ? 'library_row' : 'none'}`,
+    `purpose=${hasRow ? (row.purpose ?? policy.purpose) : policy.purpose}`,
+    `policy_version=${hasRow ? (row.policy_version ?? policy.policy_version) : policy.policy_version}`,
+    `content_sha256=${hasRow ? (row.content_sha256 ?? policy.content_sha256) : policy.content_sha256}`,
+    `source_kind=${fromRow('source_kind')}`,
+    `source_ref=${fromRow('source_ref')}`,
+    `review_evidence_ref=${fromRow('review_evidence_ref')}`,
+    `recipient_bindings=${bindings === null ? '(未写入)' : bindingIds.length}`,
+    `recipient_binding_ids=${bindings === null ? '(未写入)' : (bindingIds.length === 0 ? '(none)' : bindingIds.join(','))}`,
+    `valid_from=${hasRow ? fromRow('valid_from') : '(未写入)'}`,
+    `valid_until=${fromRow('valid_until')}`,
+    `reviewed_by=${fromRow('reviewed_by')}`,
+    `request_reviewed_by=${reviewedBy ?? '(null)'}`,
     `enabled_after=${enabledAfter ? 'true' : 'false'}`,
     // 正文只有这两项读数：首行长度 + 总长。⛔ 不打印正文本身。
     `body_first_line_chars=${policy.body_first_line_chars}`,
     `body_chars=${policy.body_chars}`,
   ];
+  // 一行都还没有时，清单里声明的形状只以 manifest_* 出现：看得见「会写成什么」，但不可能被读成库行状态。
+  if (!hasRow) {
+    for (const field of POLICY_SAFETY_METADATA_FIELDS) {
+      lines.push(`manifest_${field}=${renderSafetyMetadataValue(field, manifestMetadataValue(field, policy, reviewedBy))}`);
+    }
+  }
   if (plan.disabled_others.length > 0) lines.push(`disabled_others=${plan.disabled_others.join(',')}`);
   for (const warning of warnings) lines.push(`warning=${warning}`);
   return lines;

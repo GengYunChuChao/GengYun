@@ -29,7 +29,18 @@
  *
  * **默认 dry-run**：连库、在事务里读出该 purpose 的现库行、算出「会写成什么形状」，然后 `ROLLBACK`。
  * dry-run 打印 purpose / 版本 / sha256 / enabled / 有效期 / 正文读数，**⛔ 不打印正文**。
- * 幂等重放（同 `(purpose, policy_version)` 同正文）在 dry-run 里就报 `unchanged=true`。
+ * 幂等重放（同 `(purpose, policy_version)` 同正文**且安全元数据逐列相等**）在 dry-run 里就报 `unchanged=true`。
+ *
+ * ## 报告只报库行（⛔ 这条不是措辞问题）
+ *
+ * 报告里的 `source_kind` / `source_ref` / `review_evidence_ref` / `valid_from` / `valid_until` /
+ * `reviewed_by` / `recipient_bindings` 全部取自**实际库行**：重放取库里那一行，写入取刚写完同事务
+ * 读回的那一行；一行都还没有（首次插入的 dry-run）⇒ 打印 `(未写入)` 且 `metadata_source=none`，
+ * 清单值只以 `manifest_*` 前缀出现。于是「报告说 verified、库里还是 synthetic」在结构上不可能。
+ *
+ * 同版本的安全元数据不一致 ⇒ 明确冲突（`METADATA_CONFLICT`，退出码 4），报错点名每个字段的
+ * 库行值 → 清单值（⛔ 不含正文）。`--enable` 走同一关：先证明库行就是这份清单，再谈开不开 ——
+ * 否则就是「启用旧元数据」。
  *
  * ## 它做的六件事（顺序固定，全在一个事务里）
  *
@@ -40,10 +51,11 @@
  * 3. `--enable` 时**先在应用层查 `admin_accounts`**：`--reviewed-by` 指向的行不存在就直接拒（exit 3），
  *    ⛔ 不把数据库外键抛错当成唯一防线；
  * 4. `recipient_bindings` 里每个 id 都在 `public.recipients` 里存在（不存在 ⇒ exit 3 并点名）；
- * 5. `SELECT … FROM public.consent_policies WHERE purpose=$1 FOR UPDATE` 读出该 purpose 的全部行，
- *    再用纯函数 `planConsentPolicyImport` 判 `insert` / `enable` / `unchanged` / 冲突；
+ * 5. `SELECT … FROM public.consent_policies WHERE purpose=$1 FOR UPDATE` 读出该 purpose 的全部行
+ *    （**含全部安全元数据列**），再用纯函数 `planConsentPolicyImport` 判 `insert` / `enable` /
+ *    `unchanged` / 冲突（同版本先比正文 sha，再逐列比安全元数据）；
  * 6. 按判定写入（`insert` 只插新行；`--enable` 先把同 purpose 其它行 `enabled=false` 再开目标行），
- *    成功才 `COMMIT`；任何一步抛错一律 `ROLLBACK` ⇒ **失败不留半写**。
+ *    写完在同事务内读回目标行供报告使用，成功才 `COMMIT`；任何一步抛错一律 `ROLLBACK` ⇒ **失败不留半写**。
  *
  * ## ⛔ 它明确不做的事
  *
@@ -65,7 +77,7 @@
  * | 0 | 成功：dry-run 已出形状 / `--apply` 已落库 / 二次执行 `unchanged=true`（零行改动） |
  * | 2 | 参数或环境问题（缺子命令、缺 `--file`、缺 `DATABASE_URL`、清单读不到、JSON 不合法、`recipient` 未交付） |
  * | 3 | 政策内容强校验失败（purpose 越界 / 正文空或占位 / 有效期不合法 / 传了 `content_sha256` / 来源形状不符 / 绑定不存在 / 复核主体不存在），或库内 CHECK 拒绝 |
- * | 4 | 政策冲突（版本回退 / 同版本不同正文 / 启用非最新版本） |
+ * | 4 | 政策冲突（版本回退 / 同版本不同正文 / 同版本安全元数据不一致 `METADATA_CONFLICT` / 启用非最新版本） |
  * | 5 | 数据库错误（连不上 / 缺表 / 权限不足 / 未知），事务已回滚 |
  */
 import { readFileSync } from 'node:fs';
@@ -86,6 +98,20 @@ import {
 } from './lib/consent-policy-import.mjs';
 
 const TAG = '[import-consent-policy]';
+
+/**
+ * 读库行时**必须取全**的列：判定与报告都靠它。
+ *
+ * 这七个安全元数据列（`source_kind` / `source_ref` / `review_evidence_ref` / `valid_from` /
+ * `valid_until` / `reviewed_by` / `recipient_bindings`）是本片修的**根因所在**：原来这里只取
+ * `id,purpose,policy_version,content_sha256,enabled,reviewed_at`，于是「同版本同正文」就被判
+ * `unchanged`，报告却按清单打印来源与有效期。少取一列现在会被 `comparePolicySafetyMetadata`
+ * 判成「缺列」冲突（exit 4），⛔ 不会静默通过。
+ */
+const SELECT_POLICY_ROW_COLUMNS = `SELECT id,purpose,policy_version,content_sha256,enabled,
+         source_kind,source_ref,review_evidence_ref,valid_from,valid_until,reviewed_at,
+         reviewed_by::text AS reviewed_by,recipient_bindings
+    FROM public.consent_policies`;
 
 const USAGE = `${TAG} 用法：
   DATABASE_URL=postgresql://… node tools/import-consent-policy.mjs policy --file <仓外政策清单.json> [--apply] [--enable --reviewed-by <admin uuid>]
@@ -274,31 +300,34 @@ async function main() {
     }
 
     // ── 5. 现库行 + 纯函数判定 ────────────────────────────────────────────
-    const existing = (await client.query(
-      `SELECT id,purpose,policy_version,content_sha256,enabled,reviewed_at
-         FROM public.consent_policies WHERE purpose=$1 ORDER BY policy_version FOR UPDATE`,
-      [policy.purpose],
-    )).rows;
+    // ⚠ 这条 SELECT 必须取全**安全元数据列**：同版本重放/启用要按它们与清单逐列比，
+    //   报告里的 source_kind/source_ref/valid_until/reviewed_by 也只从这些列来。
+    //   少取一列 ⇒ `comparePolicySafetyMetadata` 判「缺列」冲突（exit 4），而不是静默 unchanged。
+    const existing = (await client.query(`${SELECT_POLICY_ROW_COLUMNS} WHERE purpose=$1 ORDER BY policy_version FOR UPDATE`, [policy.purpose])).rows;
 
     const plan = planConsentPolicyImport({ policy, existing, wantEnable: enable === true, reviewedBy, dbNow });
     if (plan.ok !== true) {
       return await rollbackAndFail(plan.code, [plan.reason]);
     }
+    /** 该 (purpose, policy_version) 的现库行（可能不存在）。 */
+    const existingTarget = existing.find((row) => row.policy_version === policy.policy_version) ?? null;
 
     const enabledAfter = plan.enabled_after === true;
     const warnings = policyImportWarnings({ policy, dbNow });
-    const report = (mode, changedRows) => {
-      for (const line of renderPolicyImportReport({ policy, plan, mode, file, enabledAfter, reviewedBy, warnings })) console.log(line);
+    /** 报告只认库行：`row` 为空时内部打印 `(未写入)`，⛔ 不会拿清单值顶替。 */
+    const report = (mode, changedRows, row) => {
+      for (const line of renderPolicyImportReport({ policy, plan, mode, file, row, enabledAfter, reviewedBy, warnings })) console.log(line);
       console.log(`changed_rows=${changedRows}`);
     };
 
     if (plan.action === PLAN_ACTIONS.UNCHANGED || apply !== true) {
       // dry-run 与「幂等重放」走同一条路：一次都不写，回滚退出。
+      // 报告用**现库行**（dry-run 首次插入时没有行 ⇒ `(未写入)`）。
       await client.query('ROLLBACK');
       settled = true;
-      report(apply === true ? 'apply' : 'dry-run', 0);
+      report(apply === true ? 'apply' : 'dry-run', 0, existingTarget);
       console.log('transaction=rollback（本次没有写任何行）');
-      if (apply === true) console.log('结论：同 (purpose, policy_version) 同正文已存在且状态一致 ⇒ 幂等重放，零行改动。');
+      if (apply === true) console.log('结论：同 (purpose, policy_version) 同正文且安全元数据逐列一致 ⇒ 幂等重放，零行改动。');
       else console.log('结论：dry-run 结束（加 --apply 才写库）。');
       return;
     }
@@ -327,7 +356,7 @@ async function main() {
           reviewedBy,
         ],
       )).rows[0].id
-      : existing.find((row) => row.policy_version === policy.policy_version).id;
+      : existingTarget.id;
     if (plan.action === PLAN_ACTIONS.INSERT) changedRows += 1;
 
     if (enable === true) {
@@ -352,9 +381,15 @@ async function main() {
       changedRows += enabled.rowCount;
     }
 
+    // 报告读**刚写完、同事务内读回**的那一行（不是内存里的清单、也不是 INSERT 的入参）。
+    const writtenRow = (await client.query(`${SELECT_POLICY_ROW_COLUMNS} WHERE id=$1::uuid`, [targetId])).rows[0] ?? null;
+    if (writtenRow === null) {
+      return await rollbackAndFail(FAILURE_KINDS.DB_ERROR, ['写入后读不回目标行（同事务内），拒绝提交：报告不允许拿清单顶替库行']);
+    }
+
     await client.query('COMMIT');
     settled = true;
-    report('apply', changedRows);
+    report('apply', changedRows, writtenRow);
     console.log('transaction=commit');
   } catch (error) {
     if (!settled) await client.query('ROLLBACK').catch(() => {});

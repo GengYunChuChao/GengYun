@@ -52,18 +52,22 @@ import {
   MIN_BODY_CHARS,
   PLAN_ACTIONS,
   POLICY_MANIFEST_KEYS,
+  POLICY_SAFETY_METADATA_FIELDS,
   RECIPIENT_CAPABILITY_CLOSED_SET,
+  comparePolicySafetyMetadata,
   comparePolicyVersions,
   contentSha256ForBody,
   exitCodeFor,
   isContentSha256,
   isUuid,
+  libraryMetadataValue,
   maxPolicyVersion,
   normalizePolicyBody,
   planConsentPolicyImport,
   policyImportWarnings,
   readPolicyManifest,
   renderPolicyImportReport,
+  renderSafetyMetadataValue,
   validateRecipientBindings,
 } from '../../tools/lib/consent-policy-import.mjs';
 import { pickFreePort } from '../integration/lib/free-port.mjs';
@@ -343,6 +347,9 @@ test('退出码映射：四类失败码 + 成功码', () => {
   assert.deepEqual(EXIT_CODES, { OK: 0, CONFIG: 2, INVALID_POLICY: 3, POLICY_CONFLICT: 4, DB_ERROR: 5 });
   assert.equal(exitCodeFor(FAILURE_KINDS.INVALID_POLICY), 3);
   assert.equal(exitCodeFor(FAILURE_KINDS.POLICY_CONFLICT), 4);
+  // 新错误类是 POLICY_CONFLICT 的**细分标签**：不新增退出码，仍按 4 退出。
+  assert.equal(exitCodeFor(FAILURE_KINDS.METADATA_CONFLICT), EXIT_CODES.POLICY_CONFLICT);
+  assert.notEqual(FAILURE_KINDS.METADATA_CONFLICT, FAILURE_KINDS.POLICY_CONFLICT, '类别名必须能区分「正文不同」与「元数据不同」');
   assert.equal(exitCodeFor(FAILURE_KINDS.DB_ERROR), 5);
   assert.equal(exitCodeFor(FAILURE_KINDS.CONFIG), 2);
   assert.equal(exitCodeFor('不是个类别'), 2, '未知类别退回 CONFIG（不静默当成功）');
@@ -361,8 +368,28 @@ test('版本自然序：数字段按数值比，前缀更短者小', () => {
   assert.equal(maxPolicyVersion([]), null);
 });
 
-/** 现库行的简写（`planConsentPolicyImport` 的 `existing` 元素形状）。 */
-const row = (policy_version, sha, enabled = false, reviewed_at = null) => ({ policy_version, content_sha256: sha, enabled, reviewed_at });
+/**
+ * 现库行的简写（`planConsentPolicyImport` 的 `existing` 元素形状）。
+ *
+ * ⚠ 默认值必须让「与默认清单完全一致」成立（否则每条判定用例都会先撞元数据冲突）：
+ * `source_kind=synthetic` / 两个 `fixture://` 引用 / `valid_until` 与清单默认的 `2099-12-31T00:00:00Z`
+ * 同一时刻 / 空绑定。`valid_from` 与 `reviewed_by` 缺省 `null` —— 清单默认也没声明 `valid_from`，
+ * 而未复核的草稿本来就没有复核人。
+ */
+const row = (policy_version, sha, enabled = false, reviewed_at = null, overrides = {}) => ({
+  policy_version,
+  content_sha256: sha,
+  enabled,
+  reviewed_at,
+  source_kind: 'synthetic',
+  source_ref: 'fixture://consent-import/policy-terms',
+  review_evidence_ref: 'fixture://consent-import/policy-review',
+  valid_from: null,
+  valid_until: new Date('2099-12-31T00:00:00Z'),
+  reviewed_by: null,
+  recipient_bindings: {},
+  ...overrides,
+});
 
 test('幂等判定：同 (purpose, policy_version) 同正文 ⇒ unchanged，且不要求任何写操作', () => {
   const { policy } = readManifest();
@@ -497,6 +524,17 @@ test('只能告警的两件事：external_inference 空绑定、valid_from 在�
   assert.match(futureWarnings[0], /尚未生效/);
 });
 
+/** 把 `key=value` 报告行读成对象（报告格式由 `renderPolicyImportReport` 固定）。 */
+function reportMap(lines) {
+  /** @type {Record<string,string>} */
+  const map = {};
+  for (const line of lines) {
+    const at = line.indexOf('=');
+    if (at > 0) map[line.slice(0, at)] = line.slice(at + 1);
+  }
+  return map;
+}
+
 test('dry-run 报告：形状齐全，但一个字的正文都不出现', () => {
   const { policy } = readManifest();
   const plan = planConsentPolicyImport({ policy, existing: [], wantEnable: true, reviewedBy: REVIEWER });
@@ -506,30 +544,263 @@ test('dry-run 报告：形状齐全，但一个字的正文都不出现', () => 
   const text = lines.join('\n');
   for (const key of [
     'purpose', 'policy_version', 'content_sha256', 'enabled_after', 'valid_from', 'valid_until',
-    'body_first_line_chars', 'body_chars', 'reviewed_by',
+    'body_first_line_chars', 'body_chars', 'reviewed_by', 'metadata_source',
   ]) {
     assert.match(text, new RegExp(`^${key}=`, 'm'), `报告缺少 ${key}`);
   }
   assert.match(text, /^action=insert$/m);
   assert.match(text, /^unchanged=false$/m);
+  // 首次插入的 dry-run：库里还没有行 ⇒ 安全元数据行打印 `(未写入)`，清单值只出现在 manifest_* 下。
+  assert.match(text, /^metadata_source=none$/m);
+  assert.match(text, /^source_kind=\(未写入\)$/m);
+  assert.match(text, /^valid_until=\(未写入\)$/m);
+  assert.match(text, /^reviewed_by=\(未写入\)$/m);
+  assert.match(text, /^manifest_source_kind=synthetic$/m);
+  assert.match(text, /^manifest_valid_until=2099-12-31T00:00:00\.000Z$/m);
+  assert.match(text, new RegExp(`^manifest_reviewed_by=${REVIEWER}$`, 'm'));
   // ⛔ 正文不得出现（首行、段首、任意一行都不行）
   for (const bodyLine of syntheticBody().split('\n')) {
     assert.equal(text.includes(bodyLine), false, 'dry-run 报告里出现了正文行');
   }
   assert.equal(text.replace(/\s/g, '').includes('SYNTHETICTESTFIXTURE'), false);
 
-  const unchanged = renderPolicyImportReport({
+  // 重放：报告的安全元数据行全部来自库行（这里库行的 reviewed_by 有值、命令行没断言 ⇒ 也要如实打印）。
+  const libraryRow = row('2026.10-1', policy.content_sha256, true, new Date('2026-10-01T00:00:00Z'), { reviewed_by: REVIEWER });
+  const replayPlan = planConsentPolicyImport({ policy, existing: [libraryRow], wantEnable: false });
+  const replay = reportMap(renderPolicyImportReport({
+    policy, plan: replayPlan, mode: 'apply', file: 'synthetic.json', row: libraryRow, enabledAfter: false, reviewedBy: null,
+  }));
+  assert.equal(replay.unchanged, 'true');
+  assert.equal(replay.action, 'unchanged');
+  assert.equal(replay.enabled_after, 'false');
+  assert.equal(replay.metadata_source, 'library_row');
+  assert.equal(replay.valid_from, '(null)');
+  assert.equal(replay.reviewed_by, REVIEWER, '`reviewed_by=` 是库行的事实，不是命令行的请求');
+  assert.equal(replay.request_reviewed_by, '(null)', '没给 --reviewed-by 时请求侧就是 (null)');
+  assert.equal('manifest_source_kind' in replay, false, '有库行时不再打印清单值（免得两个来源混着读）');
+});
+
+// ---------------------------------------------------------------------------
+// 一·B、同版本重放/启用的**安全元数据一致性**（本片修的阻塞）
+// ---------------------------------------------------------------------------
+
+/** 另一个合法的复核人 uuid（用来构造「库里是 A、命令行说 B」）。 */
+const OTHER_REVIEWER = '11111111-2222-4333-8444-555555555555';
+/** 监工探针里的库钟（纯逻辑注入，不读本机时钟）。 */
+const PROBE_NOW = new Date('2026-10-30T00:00:00Z');
+
+/**
+ * 监工场景的**逐字复现**（纯逻辑，无 process / 网络 / DB）：
+ *
+ * 库行：`synthetic`、`valid_until=2026-10-02`（已过期）、与清单**同版本同正文 sha**；
+ * 清单：`verified`、`valid_until=2027-10-01`（未来），形状完全合法。
+ *
+ * 旧行为：`action=unchanged`、报告打印 `source_kind=verified` / `valid_until=2027-10-01`，库行仍是
+ * `synthetic` + 过期 —— 等于把没导入过的来源与有效期说成已生效。现在必须**明确冲突**。
+ */
+test('监工场景：库行 synthetic + 已过期、清单 verified + 未来有效期、同版本同正文 ⇒ METADATA_CONFLICT（零写）', () => {
+  // 正文用中性长文（不含夹具措辞）：`verified` 才过得了「冒充夹具」那一筛 —— 这一行的合法性与
+  // 冲突判定无关，冲突来自元数据，不来自内容形状。
+  const { policy } = readManifest({
+    source_kind: 'verified',
+    source_ref: 'https://policy.gengyun.app/consent/v2',
+    review_evidence_ref: 'https://policy.gengyun.app/review/v2',
+    body: neutralBody(),
+    valid_until: '2027-10-01T00:00:00Z',
+  }, PROBE_NOW);
+  assert.equal(policy.content_sha256.length, 64);
+
+  const expiredSynthetic = row('2026.10-1', policy.content_sha256, true, new Date('2026-01-05T00:00:00Z'), {
+    source_kind: 'synthetic',
+    source_ref: 'fixture://consent-import/policy-terms',
+    review_evidence_ref: 'fixture://consent-import/policy-review',
+    valid_from: null,
+    valid_until: new Date('2026-10-02T00:00:00Z'),
+    reviewed_by: REVIEWER,
+    recipient_bindings: {},
+  });
+
+  const plan = planConsentPolicyImport({
+    policy, existing: [expiredSynthetic], wantEnable: true, reviewedBy: OTHER_REVIEWER, dbNow: PROBE_NOW,
+  });
+
+  // ① 必须冲突：既不是 unchanged，也不是 enable。
+  assert.equal(plan.ok, false, '同版本元数据不一致必须冲突，⛔ 不许判 unchanged');
+  assert.equal(plan.code, FAILURE_KINDS.METADATA_CONFLICT);
+  assert.equal(exitCodeFor(plan.code), EXIT_CODES.POLICY_CONFLICT, '沿用既有退出码语义：4');
+  assert.equal('action' in plan, false, '冲突结果里不许带 action（否则调用方可能照它去写）');
+  assert.equal('disabled_others' in plan, false);
+
+  // ② 报错点名字段与旧值→新值。
+  assert.match(plan.reason, /source_kind: 库行 synthetic → 清单 verified/);
+  assert.match(plan.reason, /valid_until: 库行 2026-10-02T00:00:00\.000Z → 清单 2027-10-01T00:00:00\.000Z/);
+  assert.match(plan.reason, /reviewed_by/, '库里是 A、命令行说 B ⇒ 也是元数据不一致');
+  // 这一份清单连来源与复核证据都换了（`fixture://` → `https://`）⇒ 五列冲突，逐列都得点名。
+  assert.deepEqual(
+    plan.conflicts.map((item) => item.field),
+    ['source_kind', 'source_ref', 'review_evidence_ref', 'valid_until', 'reviewed_by'],
+  );
+  // ③ ⛔ 不许打印正文（连正文片段都不许）。
+  assert.equal(plan.reason.includes('填充叙述'), false);
+  assert.equal(plan.reason.includes(neutralBody().split('\n')[0]), false);
+});
+
+test('六类「只差这一列」都必须冲突（source_kind / source_ref / valid_from / valid_until / reviewed_by / recipient_bindings）', () => {
+  const { policy } = readManifest({ valid_from: '2026-10-01T00:00:00Z' }, PROBE_NOW);
+  /** 与清单逐列一致的库行。 */
+  const consistentRow = () => row('2026.10-1', policy.content_sha256, true, new Date('2026-10-01T00:00:00Z'), {
+    source_kind: 'synthetic',
+    source_ref: 'fixture://consent-import/policy-terms',
+    review_evidence_ref: 'fixture://consent-import/policy-review',
+    valid_from: new Date('2026-10-01T00:00:00Z'),
+    valid_until: new Date('2099-12-31T00:00:00Z'),
+    reviewed_by: REVIEWER,
+    recipient_bindings: {},
+  });
+
+  // 正控制：逐列一致 ⇒ 合法重放仍是 unchanged（别把合法路径打死）。
+  const consistent = planConsentPolicyImport({ policy, existing: [consistentRow()], wantEnable: true, reviewedBy: REVIEWER, dbNow: PROBE_NOW });
+  assert.equal(consistent.ok, true);
+  assert.equal(consistent.action, PLAN_ACTIONS.UNCHANGED);
+
+  const cases = [
+    ['source_kind', { source_kind: 'verified' }],
+    ['source_ref', { source_ref: 'fixture://consent-import/policy-terms-v2' }],
+    ['valid_from', { valid_from: new Date('2026-09-01T00:00:00Z') }],
+    ['valid_until', { valid_until: new Date('2098-12-31T00:00:00Z') }],
+    ['reviewed_by', { reviewed_by: OTHER_REVIEWER }],
+    ['recipient_bindings', { recipient_bindings: { 'fixture-llm': binding() } }],
+    // 第七维（同一把尺子也管复核证据）：清单的 review_evidence_ref 与库行不同 ⇒ 同样冲突。
+    ['review_evidence_ref', { review_evidence_ref: 'fixture://consent-import/policy-review-v2' }],
+  ];
+  for (const [field, overrides] of cases) {
+    const plan = planConsentPolicyImport({
+      policy, existing: [{ ...consistentRow(), ...overrides }], wantEnable: true, reviewedBy: REVIEWER, dbNow: PROBE_NOW,
+    });
+    assert.equal(plan.ok, false, `只差 ${field} 必须冲突，实测 ${JSON.stringify(plan)}`);
+    assert.equal(plan.code, FAILURE_KINDS.METADATA_CONFLICT, `只差 ${field} 的类别`);
+    assert.match(plan.reason, new RegExp(`${field}: 库行 `), `报错必须点名 ${field}`);
+    assert.equal(plan.reason.includes('SYNTHETIC TEST FIXTURE'), false);
+  }
+});
+
+test('元数据读不全 ⇒ 冲突（⛔ 不许把「SELECT 没取」当成「一致」）', () => {
+  const { policy } = readManifest();
+  const full = row('2026.10-1', policy.content_sha256, true, new Date('2026-10-01T00:00:00Z'));
+  for (const field of POLICY_SAFETY_METADATA_FIELDS) {
+    const partial = { ...full };
+    delete partial[field];
+    const plan = planConsentPolicyImport({ policy, existing: [partial], wantEnable: false });
+    assert.equal(plan.ok, false, `缺列 ${field} 必须冲突`);
+    assert.equal(plan.code, FAILURE_KINDS.METADATA_CONFLICT);
+    assert.match(plan.reason, /缺列/);
+    assert.match(plan.reason, new RegExp(field));
+  }
+  // 整行都没有（调用方没读库）也一样，不能当成「没有冲突」。
+  const noRow = comparePolicySafetyMetadata({ policy, row: null });
+  assert.equal(noRow.ok, false);
+  assert.equal(noRow.code, FAILURE_KINDS.METADATA_CONFLICT);
+});
+
+test('reviewed_by 的两条特例：库行未复核（草稿）可启用；已有他人复核 ⇒ 冲突（不许借别人的复核记录）', () => {
+  const { policy } = readManifest();
+
+  // 草稿（reviewed_by/reviewed_at 都是 null）= 本次启用正要写它 ⇒ 不是「旧元数据」。
+  const draft = row('2026.10-1', policy.content_sha256, false, null, { reviewed_by: null });
+  const enable = planConsentPolicyImport({ policy, existing: [draft], wantEnable: true, reviewedBy: REVIEWER });
+  assert.equal(enable.ok, true);
+  assert.equal(enable.action, PLAN_ACTIONS.ENABLE);
+
+  // 未被要求复核（没有 --reviewed-by）时不做断言 ⇒ 不算冲突。
+  const noAssertion = planConsentPolicyImport({ policy, existing: [draft], wantEnable: false });
+  assert.equal(noAssertion.action, PLAN_ACTIONS.UNCHANGED);
+
+  // 库行已被 A 复核过，命令行却说是 B ⇒ 冲突：`enabled` 的 UPDATE 用 COALESCE 会让 B 静默不生效。
+  const reviewedByOther = row('2026.10-1', policy.content_sha256, false, new Date('2026-10-01T00:00:00Z'), { reviewed_by: OTHER_REVIEWER });
+  const conflict = planConsentPolicyImport({ policy, existing: [reviewedByOther], wantEnable: true, reviewedBy: REVIEWER });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.code, FAILURE_KINDS.METADATA_CONFLICT);
+  assert.match(conflict.reason, new RegExp(`reviewed_by: 库行 ${OTHER_REVIEWER} → 清单 ${REVIEWER}`));
+});
+
+test('valid_from：清单未声明时该维度跳过（库列由库钟生成），声明了就必须同一时刻', () => {
+  const { policy: undeclared } = readManifest();
+  assert.equal(undeclared.valid_from, null);
+  const anyValidFrom = row('2026.10-1', undeclared.content_sha256, false, null, { valid_from: new Date('2026-01-01T00:00:00Z') });
+  const skipped = comparePolicySafetyMetadata({ policy: undeclared, row: anyValidFrom });
+  assert.equal(skipped.ok, true);
+  assert.deepEqual(skipped.skipped, ['valid_from', 'reviewed_by'], '清单没声明 valid_from、命令行没断言 reviewed_by ⇒ 这两个维度跳过');
+
+  // 同一时刻的两种写法不算冲突（`Z` 与 `.000Z`、`Date` 与字符串）。
+  const { policy: declared } = readManifest({ valid_from: '2026-10-01T00:00:00Z' });
+  const sameInstant = comparePolicySafetyMetadata({ policy: declared, row: row('2026.10-1', declared.content_sha256, false, null, { valid_from: new Date('2026-10-01T00:00:00Z') }) });
+  assert.equal(sameInstant.ok, true);
+  assert.equal(sameInstant.skipped.includes('valid_from'), false, '声明了就必须真的比');
+
+  const offByOneHour = comparePolicySafetyMetadata({ policy: declared, row: row('2026.10-1', declared.content_sha256, false, null, { valid_from: new Date('2026-10-01T01:00:00Z') }) });
+  assert.equal(offByOneHour.ok, false);
+  assert.equal(offByOneHour.conflicts[0].field, 'valid_from');
+});
+
+test('重放报告的安全元数据逐字段等于库行（不是清单）', () => {
+  // 清单侧 `valid_until` 写 `…Z`；库行是同一时刻的 `Date`。报告若取清单，会打印 `…Z`；取库行则是 `.000Z`。
+  const { policy } = readManifest({
+    valid_until: '2026-12-31T00:00:00Z',
+    valid_from: '2026-10-01T00:00:00Z',
+    recipient_bindings: { 'fixture-llm': binding() },
+  }, PROBE_NOW);
+  const libraryRow = row('2026.10-1', policy.content_sha256, true, new Date('2026-10-01T00:00:00Z'), {
+    source_kind: 'synthetic',
+    source_ref: 'fixture://consent-import/policy-terms',
+    review_evidence_ref: 'fixture://consent-import/policy-review',
+    valid_from: new Date('2026-10-01T00:00:00Z'),
+    valid_until: new Date('2026-12-31T00:00:00Z'),
+    reviewed_by: REVIEWER,
+    recipient_bindings: { 'fixture-llm': binding() },
+  });
+  const plan = planConsentPolicyImport({ policy, existing: [libraryRow], wantEnable: true, reviewedBy: REVIEWER, dbNow: PROBE_NOW });
+  assert.equal(plan.action, PLAN_ACTIONS.UNCHANGED);
+
+  const report = reportMap(renderPolicyImportReport({
+    policy, plan, mode: 'apply', file: 'replay.json', row: libraryRow, enabledAfter: false, reviewedBy: REVIEWER,
+  }));
+
+  // 逐字段：报告值 === 库行值的规范化文本（`recipient_bindings` 报告的是条数 + 键名，单独断言）。
+  for (const field of POLICY_SAFETY_METADATA_FIELDS) {
+    if (field === 'recipient_bindings') continue;
+    assert.equal(report[field], libraryMetadataValue(field, libraryRow), `报告 ${field} 必须等于库行`);
+  }
+  assert.equal(report.metadata_source, 'library_row');
+  assert.equal(report.valid_until, new Date(libraryRow.valid_until).toISOString());
+  assert.equal(report.reviewed_by, REVIEWER);
+  assert.equal(report.recipient_bindings, String(Object.keys(libraryRow.recipient_bindings).length));
+  assert.equal(report.recipient_binding_ids, Object.keys(libraryRow.recipient_bindings).sort().join(','),
+    '绑定条数与键名也从库行来');
+
+  // 调用方给的字符串形态不许被原样回显：同一个时刻换个写法（没有 `.000`），报告仍然是库行那一种。
+  const looserPolicy = { ...policy, valid_until: '2026-12-31T00:00:00Z' };
+  const echoed = reportMap(renderPolicyImportReport({
+    policy: looserPolicy, plan, mode: 'apply', file: 'replay.json', row: libraryRow, enabledAfter: false, reviewedBy: REVIEWER,
+  }));
+  assert.equal(echoed.valid_until, '2026-12-31T00:00:00.000Z', '报告的 valid_until 来自库行，不是清单原文');
+  assert.notEqual(echoed.valid_until, looserPolicy.valid_until);
+
+  // 清单侧的四个字段值与库行「看起来一样」时，也要能从 metadata_source 上分辨来源。
+  const manifestOnly = reportMap(renderPolicyImportReport({
     policy,
-    plan: planConsentPolicyImport({ policy, existing: [row('2026.10-1', policy.content_sha256)], wantEnable: false }),
-    mode: 'apply',
-    file: 'synthetic.json',
+    plan: planConsentPolicyImport({ policy, existing: [], wantEnable: false, dbNow: PROBE_NOW }),
+    mode: 'dry-run',
+    file: 'fresh.json',
+    row: null,
     enabledAfter: false,
     reviewedBy: null,
-  }).join('\n');
-  assert.match(unchanged, /^unchanged=true$/m);
-  assert.match(unchanged, /^action=unchanged$/m);
-  assert.match(unchanged, /^enabled_after=false$/m);
-  assert.match(unchanged, /^reviewed_by=\(null\)$/m);
+  }));
+  assert.equal(manifestOnly.metadata_source, 'none');
+  for (const field of POLICY_SAFETY_METADATA_FIELDS) {
+    assert.equal(manifestOnly[field], '(未写入)', `没有库行时 ${field} 必须是 (未写入)，不是清单值`);
+    const manifestSide = field === 'reviewed_by' ? null : (policy[field] ?? null);
+    assert.equal(manifestOnly[`manifest_${field}`], renderSafetyMetadataValue(field, manifestSide), `清单值只能出现在 manifest_${field}`);
+  }
 });
 
 // ===========================================================================
@@ -900,6 +1171,101 @@ BEGIN RAISE EXCEPTION 'synthetic injected failure: enable must be rolled back' U
     assert.equal(strayReviewer.status, EXIT_CODES.CONFIG, '--reviewed-by 只在 --enable 时有意义');
     assert.equal(runTool(['bogus'], databaseUrl).status, EXIT_CODES.CONFIG, '未知子命令 ⇒ exit 2');
     say('缺 DATABASE_URL / 缺子命令 / 缺 --file / recipient 未交付 / 多余 --reviewed-by：全部 exit 2 且不打印连接串');
+
+    // ── ⑥ 重放报告逐字段等于**库行**（不是清单） ─────────────────────────
+    const libraryRow = afterToggle.find((item) => item.policy_version === '2026.11-1');
+    const replayAgain = runTool(['policy', '--file', halfWrite, '--apply', '--enable', '--reviewed-by', reviewer], databaseUrl);
+    assert.equal(replayAgain.status, EXIT_CODES.OK, `合法重放必须 exit 0：${replayAgain.stderr}`);
+    assert.match(replayAgain.stdout, /^action=unchanged$/m);
+    assert.match(replayAgain.stdout, /^unchanged=true$/m);
+    assert.match(replayAgain.stdout, /^changed_rows=0$/m);
+    assert.match(replayAgain.stdout, /^metadata_source=library_row$/m);
+    assert.deepEqual(await snapshot(client), afterToggle, '合法重放仍然零行改动');
+    for (const [key, expected] of [
+      ['source_kind', libraryRow.source_kind],
+      ['source_ref', libraryRow.source_ref],
+      ['review_evidence_ref', libraryRow.review_evidence_ref],
+      // `valid_from` 清单没声明 ⇒ 报告必须打印库里那个真实时刻（旧行为打印的是「由库钟决定」）。
+      ['valid_from', libraryRow.valid_from.toISOString()],
+      ['valid_until', libraryRow.valid_until.toISOString()],
+      ['reviewed_by', libraryRow.reviewed_by],
+      // 快照里绑定是 `::text`（JSON 文本），报告里是条数 ⇒ 先解析再数。
+      ['recipient_bindings', String(Object.keys(JSON.parse(libraryRow.recipient_bindings)).length)],
+    ]) {
+      assert.equal(reportValue(replayAgain.stdout, key), expected, `报告 ${key} 必须逐字等于库行（不是清单）`);
+    }
+    assert.equal(reportValue(replayAgain.stdout, 'request_reviewed_by'), reviewer);
+    say(`重放报告逐字段等于库行：source_kind/source_ref/review_evidence_ref/valid_from/valid_until/reviewed_by/绑定条数 全部取自库行（valid_from=${libraryRow.valid_from.toISOString()}）`);
+
+    // ── ⑦ 监工场景（真库）：库行 synthetic + 已过期、清单 verified + 未来有效期、同版本同正文 ──
+    // 库行按夹具直插（工具本身不给「导入即过期」的清单开门），正文用中性长文：`verified` 才过得了
+    // 「冒充夹具」那一筛 —— 这一行的**内容形状合规**，红只能来自元数据。
+    const smuggledBody = neutralBody();
+    const smuggledSha = contentSha256ForBody(normalizePolicyBody(smuggledBody));
+    await client.query(
+      `INSERT INTO public.consent_policies
+         (purpose,policy_version,source_kind,source_ref,content_sha256,review_evidence_ref,
+          recipient_bindings,valid_from,valid_until,reviewed_by,reviewed_at,enabled)
+       VALUES ('public_posting','2026.12-1','synthetic','fixture://consent-import/policy-terms-v2',$1,
+               'fixture://consent-import/policy-review-v2','{}'::jsonb,
+               '2026-01-01T00:00:00Z','2026-10-02T00:00:00Z',NULL,NULL,false)`,
+      [smuggledSha],
+    );
+    // 库里那一行：synthetic、已过期、未启用（草稿）⇒ `--enable` 正是监工点出的「启用旧元数据」入口。
+    const beforeSmuggle = await snapshot(client);
+    assert.equal(beforeSmuggle.length, 3);
+    const expiredRow = beforeSmuggle.find((item) => item.policy_version === '2026.12-1');
+    assert.equal(expiredRow.source_kind, 'synthetic');
+    assert.equal(expiredRow.enabled, false);
+    assert.equal(expiredRow.reviewed_by, null);
+    assert.equal(expiredRow.valid_until.toISOString(), '2026-10-02T00:00:00.000Z');
+
+    const smuggled = writeManifest('meta-verified.json', {
+      policy_version: '2026.12-1',
+      source_kind: 'verified',
+      source_ref: 'https://policy.gengyun.app/consent/v3',
+      review_evidence_ref: 'https://policy.gengyun.app/review/v3',
+      body: smuggledBody,
+      valid_until: '2027-10-01T00:00:00Z',
+    });
+    const smuggledRun = runTool(['policy', '--file', smuggled, '--apply', '--enable', '--reviewed-by', reviewer], databaseUrl);
+    assert.equal(
+      smuggledRun.status,
+      EXIT_CODES.POLICY_CONFLICT,
+      `同版本元数据不一致必须 exit 4（实测 ${smuggledRun.status}）：${smuggledRun.stdout}${smuggledRun.stderr}`,
+    );
+    assert.match(smuggledRun.stderr, /METADATA_CONFLICT/);
+    assert.match(smuggledRun.stderr, /source_kind: 库行 synthetic → 清单 verified/);
+    assert.match(smuggledRun.stderr, /valid_until: 库行 2026-10-02T00:00:00\.000Z → 清单 2027-10-01T00:00:00\.000Z/);
+    assert.equal(`${smuggledRun.stdout}${smuggledRun.stderr}`.includes('transaction=commit'), false, '冲突时不许出现 commit');
+    assert.equal(`${smuggledRun.stdout}${smuggledRun.stderr}`.includes('unchanged=true'), false, '⛔ 冲突不许被说成 unchanged');
+    // ⛔ 报错与输出里不许出现正文（证据页也不许靠「贴正文」自证）。
+    for (const bodyLine of smuggledBody.split('\n')) {
+      assert.equal(`${smuggledRun.stdout}${smuggledRun.stderr}`.includes(bodyLine), false, '冲突输出里出现了正文行');
+    }
+    const afterSmuggle = await snapshot(client);
+    assert.deepEqual(afterSmuggle, beforeSmuggle, '冲突必须零写：整行快照（含 xmin / enabled / reviewed_by）逐字段不变');
+    const stillDraft = afterSmuggle.find((item) => item.policy_version === '2026.12-1');
+    assert.equal(stillDraft.enabled, false, '⛔ 不许把这条过期草稿启用成「本次复核的策略」');
+    assert.equal(stillDraft.reviewed_by, null, '⛔ 不许给它盖上本次的复核主体');
+    assert.equal(stillDraft.source_kind, 'synthetic', '库行仍如实是 synthetic');
+    say('监工场景（真库）：exit 4 + METADATA_CONFLICT + 点名 source_kind/valid_until 的旧值→新值，整行快照逐字段不变（零写、未启用）');
+
+    // 同一条库行、把清单改成「与库行一致」⇒ 仍然不可重放（库行已过期，清单的 valid_until 必须晚于库钟）
+    // ⇒ 这说明过期行不会被任何一条路径说成「已生效」，也说明上面的红不是「清单形状」造成的。
+    const honestButExpired = writeManifest('meta-honest-expired.json', {
+      policy_version: '2026.12-1',
+      source_kind: 'synthetic',
+      source_ref: 'fixture://consent-import/policy-terms-v2',
+      review_evidence_ref: 'fixture://consent-import/policy-review-v2',
+      body: smuggledBody,
+      valid_until: '2026-10-02T00:00:00Z',
+    });
+    const expiredRun = runTool(['policy', '--file', honestButExpired, '--apply', '--enable', '--reviewed-by', reviewer], databaseUrl);
+    assert.equal(expiredRun.status, EXIT_CODES.INVALID_POLICY, '导入即过期的清单在内容校验就被拒（exit 3）');
+    assert.match(expiredRun.stderr, /valid_until/);
+    assert.deepEqual(await snapshot(client), beforeSmuggle, '被拒后仍是零写');
+    say('库行过期 ⇒ 即使清单如实写 synthetic + 同一个过期日，也会在内容校验被拒（exit 3）⇒ 过期行不可能被说成已生效');
 
     console.log(`[consent-policy-import] 真 PG 集成四连完成：${passed} 条读数，全部 exit 0`);
   } finally {

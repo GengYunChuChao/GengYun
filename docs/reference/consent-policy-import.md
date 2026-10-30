@@ -5,6 +5,8 @@
 
 先读[操作三步](#操作三步)与[⛔ 不许做的事](#-不许做的事)；要判断「导入成功是不是等于闸门开了」，读
 [与三层闸序的关系](#与三层闸序的关系)与[已登记的依赖](#已登记的依赖recipients-仍是零写入)。
+要判断「重放/启用到底证明了什么」，读[重放/启用的元数据一致性](#重放启用的元数据一致性-报告只报库行) ——
+同版本只比正文是不够的。
 
 ## 这一段闸门现在是什么状态
 
@@ -55,12 +57,16 @@ node tools/import-consent-policy.mjs policy --file <仓外政策清单.json>
 ```
 
 输出是稳定的 `key=value` 行，含 `purpose` / `policy_version` / `content_sha256` / `source_kind` / 两个证据引用 /
-绑定条数 / `valid_from` / `valid_until` / `reviewed_by` / `enabled_after` / `body_first_line_chars` / `body_chars` /
-`action` / `unchanged` / `changed_rows`，可能还有 `warning=` 行。**⛔ 不打印正文**：正文只以「首行长度 + 总长 +
-sha256」三项出现。
+绑定条数与键名 / `valid_from` / `valid_until` / `reviewed_by` / `enabled_after` / `body_first_line_chars` /
+`body_chars` / `action` / `unchanged` / `changed_rows`，可能还有 `warning=` 行。**⛔ 不打印正文**：正文只以
+「首行长度 + 总长 + sha256」三项出现。
+
+其中七个安全元数据键**只报库行**，不报清单（见[报告里的七个键取自哪里](#报告里的七个键取自哪里)）：
+首次插入的 dry-run 库里还没有那一行，它们打印 `(未写入)` 且 `metadata_source=none`，清单值只出现在
+`manifest_*` 前缀下。
 
 `action` 的三种取值就是全部可能：`insert`（会插一行）、`enable`（行已在、要把它开起来）、`unchanged`
-（同版本同正文且状态已一致 ⇒ 零行改动）。
+（同版本、同正文**且安全元数据逐列一致**、状态也已一致 ⇒ 零行改动）。
 
 ### 第三步：复核后 `--apply`（要启用就再加 `--enable --reviewed-by`）
 
@@ -101,7 +107,7 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 | `0` | 成功 | dry-run 出形状 / `--apply` 落库 / 幂等重放 `unchanged=true` | 成功的写已提交；重放零改动 |
 | `2` | `CONFIG` | 缺子命令、未知子命令、`recipient` 未交付、缺 `--file`、清单读不到、JSON 不合法、缺 `DATABASE_URL` | 未连库或未写 |
 | `3` | `INVALID_POLICY` | 闭集 purpose 越界、正文空/太短/占位、版本形状或保留值、有效期不合法、清单里带 `content_sha256`/`reviewed_by`、来源或证据形状不符、`verified` 拿夹具措辞冒充、绑定形状不符、绑定指向不存在的 `recipients.id`、复核主体不存在、库内 CHECK 拒绝（`23514`/`23503`/`22P02`） | 事务已回滚 |
-| `4` | `POLICY_CONFLICT` | 同 `(purpose, policy_version)` 已存在但正文 sha 不同、版本回退、启用比库里最新版本更旧的版本、唯一约束冲突（`23505`） | 事务已回滚 |
+| `4` | `POLICY_CONFLICT` | 同 `(purpose, policy_version)` 已存在但正文 sha 不同、**同版本安全元数据不一致（`METADATA_CONFLICT`）**、版本回退、启用比库里最新版本更旧的版本、唯一约束冲突（`23505`） | 事务已回滚 |
 | `5` | `DB_ERROR` | 连不上、缺表（`42P01`）、连接角色无写权限（`42501`）、超时/拿不到锁、未知 SQLSTATE | 事务已回滚 |
 
 报错只给类别、SQLSTATE 与约束名，**⛔ 不回显驱动原文**（可能带主机/用户名/SQL），也**⛔ 不回显连接串**。
@@ -110,12 +116,51 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 
 | 判据 | 规则 | 违反时 |
 | --- | --- | --- |
-| 幂等 | 同 `(purpose, policy_version)` 且 `content_sha256` 相同、`enabled` 状态已与请求一致 ⇒ `unchanged`，**不执行任何写语句** | 永不为错 |
+| 幂等 | 同 `(purpose, policy_version)`、`content_sha256` 相同、**七个安全元数据列逐列相同**、`enabled` 状态已与请求一致 ⇒ `unchanged`，**不执行任何写语句** | 元数据不一致 ⇒ exit 4（`METADATA_CONFLICT`） |
 | 同版本不同正文 | 拒绝，提示改用新的 `policy_version` | exit 4 |
 | 版本单调 | 新版本必须**严格大于**该 `purpose` 已有的最大版本（自然序：`v2 < v10`、`2026.10-1 < 2026.10-2`） | exit 4 |
 | 单条 enabled | `--enable` 先 `enabled=false` 关掉同 `purpose` 其它行，再开目标行；两者同事务 | 永不为错（复用了部分唯一索引） |
 | 不许回退启用 | 目标版本比库里最新版本旧 ⇒ 拒绝启用 | exit 4 |
 | 不可变 | 已有行（`reviewed_at` 非空）的正文/版本/sha 一律不改，只改 `enabled` / `updated_at` | 触发器 `23514`，工具不绕过 |
+
+## 重放/启用的元数据一致性（⛔ 报告只报库行）
+
+同 `(purpose, policy_version)` 的重放**不只看正文**。库里那一行说了什么——来源、复核证据、有效期、
+复核主体、接收方绑定——必须与清单**逐列相同**；否则「重放成功」就等于把没导入过的元数据说成已生效。
+
+| 维度 | 判据 | 例外（不算冲突） |
+| --- | --- | --- |
+| `source_kind` | 与库行逐字相同 | — |
+| `source_ref` | 同上 | — |
+| `review_evidence_ref` | 同上 | — |
+| `valid_until` | 与库行**同一时刻**（`…Z` 与 `….000Z`、`Date` 与字符串都不算不同） | — |
+| `recipient_bindings` | 稳定键序 JSON 逐字段相同（键序不同不算不同） | — |
+| `valid_from` | 清单声明了就比同一时刻 | 清单省略 ⇒ 跳过：库列由库钟生成，清单没有可断言的值 |
+| `reviewed_by` | 命令行 `--reviewed-by` 断言了才比 | ① 没给 `--reviewed-by`；② 库行仍是 `null`（草稿，本次启用正要写它） |
+
+任何一列不等 ⇒ 新错误类 `METADATA_CONFLICT`，**退出码仍是 4**（它是 `POLICY_CONFLICT` 的细分标签），
+报错点名每个字段的**库行值 → 清单值**，⛔ 不含正文。库行**缺列**（调用方 `SELECT` 没取全）同样判冲突：
+读不到不能证明相等。
+
+`--enable` 走同一关，而且**在开启之前**：先证明库行就是这份清单，再谈开不开。于是两条旧路径被关掉：
+①「库里 `synthetic` + 已过期、清单 `verified` + 未来有效期」⇒ 冲突、零写；
+②「未启用草稿 + 元数据与清单不一致」⇒ 冲突，不会把旧元数据开起来。
+
+### 报告里的七个键取自哪里
+
+| 键 | 取值 |
+| --- | --- |
+| `metadata_source` | `library_row`（有库行）或 `none`（一行都还没有） |
+| `source_kind` / `source_ref` / `review_evidence_ref` / `valid_from` / `valid_until` / `reviewed_by` | **实际库行**：重放取库里那一行；写入取刚写完、同事务读回的那一行；一行都没有 ⇒ `(未写入)` |
+| `recipient_bindings` / `recipient_binding_ids` | 库行的绑定**条数与键名**；一行都没有 ⇒ `(未写入)` |
+| `request_reviewed_by` | 命令行断言（请求），与库行的 `reviewed_by`（事实）分开列 |
+| `manifest_*` | 只在**没有库行**时出现：清单声明的值；⛔ 不许拿它冒充库行状态 |
+
+这条纪律是从一个真实缺陷上补回来的：原来的 `SELECT` 只取 `content_sha256` / `enabled` / `reviewed_at`，
+于是同版本同正文就被判 `unchanged`，而报告按**清单**打印 `verified` 与未来有效期——库行仍是 `synthetic`
+且已过期。现在 `SELECT` 取全七列（`tools/import-consent-policy.mjs:111` 的列清单常量），判定在
+`tools/lib/consent-policy-import.mjs:635` 的 `comparePolicySafetyMetadata`，报告在
+`tools/lib/consent-policy-import.mjs:824` 的 `renderPolicyImportReport` 只接受一个库行。
 
 ## 与三层闸序的关系
 
@@ -141,6 +186,8 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 - ⛔ **不许在清单里传 `content_sha256`**：核验列一旦可以由调用方给，「改了正文 sha 不变」就成了合法输入。
 - ⛔ **不许拿 `synthetic` 冒充 `verified`**：工具会按「不存在的域」与「夹具措辞」做启发式拦，但那是启发式，
   不是证明 —— 复核人仍要自己看正文。
+- ⛔ **不许用清单值顶替库行**：同版本重放/启用先逐列比安全元数据，不一致就是冲突（`METADATA_CONFLICT`，
+  exit 4）；报告里的来源/有效期/复核主体只从**实际库行**来。⛔ 也不许把「读不到那一列」当成「相同」。
 - ⛔ **不许用 `--apply` 在生产上跳过 dry-run**：先看形状，再决定写。
 - ⛔ **不把「导入了」说成「AI 链路通了」**：见下两节。
 
@@ -197,3 +244,12 @@ exit 0 —— 库里**一行都不动**（集成用例比对整行快照与 `xmi
 集成用例自带一次性 `initdb` 簇（随机回环端口）、跑真 `0001/0003/0009` 迁移、派生子进程跑真命令，
 覆盖 `dry-run → apply → 重放(unchanged) → 失败回滚` 四连，另加版本冲突、绑定指向不存在的接收方、
 原地改正文被 `23514` 挡住、以及注入「INSERT 之后的 UPDATE 必红」证明事务整体回滚。
+
+元数据那一面另有读数（本机真 PG 17.11 实测 17 条，见
+[证据页](../verification/gy-r69-consent-replay-metadata-20261030.md)）：
+
+- 库行 `synthetic` + 已过期、清单 `verified` + 未来有效期、同版本同正文 ⇒ `exit 4` + `METADATA_CONFLICT`，
+  整行快照（含 `xmin` / `enabled` / `reviewed_by`）逐字段不变；
+- 合法重放仍 `unchanged` + `exit 0`，报告的 `source_kind` / `source_ref` / `review_evidence_ref` /
+  `valid_from` / `valid_until` / `reviewed_by` / 绑定条数**逐字等于库行**；
+- 过期库行 + 如实写 `synthetic` + 同一个过期日 ⇒ 在内容校验就被拒（`exit 3`）：过期行不可能被说成已生效。
