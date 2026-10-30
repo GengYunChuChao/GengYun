@@ -79,7 +79,7 @@
 | E09 | 取消语义不在作业面另写状态机，只在各域一处 | 已实现 | services/api/src/jobs/sources.ts:17-22 | 作业面只透传 409／422 等域内语义 |
 | E10 | 识别四端点 HTTP 闭环（受理／读／删／选种） | 已实现 | services/api/src/routes/recognitions.ts:79-116、`:118-160`（POST 79-116；GET 118、PATCH 130、DELETE 148-160） | 闭环是 HTTP 与内存任务闭环，结果来自替身（P02） |
 | E11 | OCR 五端点原文与校正严格分离（`raw_fields` / `corrected_fields`） | 已实现 | services/api/src/routes/ocr.ts:224-257、`:259-328`（create 224-257；get 259、correct 274、verify 292、delete 310-328） | 分离是形状层强制；真实提供者与媒体未接（P03） |
-| E12 | OCR 任务与记录持久化（0024 三表，real + 有池才接） | 已实现 | services/api/src/ocr/store-pg.ts:376 | 无池或非 real 回落内存 store，并如实标 `persistent:false`（真库 store 的 `persistent: true` 在同文件 :557） |
+| E12 | OCR 任务与记录持久化（0024 三表，real + 有池才接） | 已实现 | services/api/src/ocr/store-pg.ts:377 | 无池或非 real 回落内存 store，并如实标 `persistent:false`（真库 store 的 `persistent: true` 在同文件 :557） |
 | E13 | 转写确认只写 `confirmed_text`／`confirmed_at`，原文与不确定区间逐项不变 | 已实现 | services/api/src/routes/speech.ts:281-287 | 确认动作已锁；转写本身默认内存 store（P04） |
 | E14 | 合成只接受已核对内容引用 | 已实现 | services/api/src/routes/synthesis.ts:112-177 | 受理闸已锁；真实提供者与产物端口未接（P05） |
 | E15 | 问答七端点 PG 持久化（迁移 0013，会话／轮次／回答三表） | 已实现 | services/api/src/conversations/store-pg.ts:220-231 | 持久化已接；模型未接（P06）与版本串未真实（N03）是两件事 |
