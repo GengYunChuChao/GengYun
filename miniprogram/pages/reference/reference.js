@@ -241,8 +241,8 @@ Page({
     self._queryActive = true
     const input = { limit: PAGE_SIZE }
     // 结构化条件：只有 `crop_id` 会真的提交——服务端按记录的 `crop_ids` 收窄，不提交就等于页面显示
-    // "已筛选"而实际是全量。`region_code` **不提交**：服务端虽接受该参数，但资料未标注适用地区、响应也不回
-    // `match_state`，提交它只会把"未标注"误报成"不满足"（详见 querySource 注释）。
+    // "已筛选"而实际是全量。`region_code` 仍**不提交**：服务端虽接受该参数（并已回 `query_state`），
+    // 但当前资料零条标注适用地区，本片不改筛选面（选地区仍走随包副本并如实标注"未标注"）。
     const sent = []
     if (self.data.cropId) { input.crop_id = self.data.cropId; sent.push('crop_id') }
     if (self.data.keyword) input.q = self.data.keyword
@@ -255,22 +255,28 @@ Page({
       if (!alive()) return
       const rows = result.items.map(function (item) { return knowledgeApi.herbicideRow(item) })
       const items = cursor ? self.data.items.concat(rows) : rows
+      // 判定一律取服务端真值 `query_state`，**不按 `items.length` 反推**（旧实现就是那句谎报）：
+      //   · 响应没有该字段 ⇒ `null`，页面如实说"未提供判定"，不猜 matched/no_match；
+      //   · `insufficient` = 该条件在资料里未标注/未采集 ⇒ 文案说"无法确认"，**不许**说成"不满足"；
+      //   · `total`/`match_state` 是**裁剪前**领域判定，`items` 是权限裁剪后的当前页 ⇒ `total` 大于
+      //     本页条数只表示"有记录被隐藏"，不是 `no_match`。
+      const state = result.queryState
       self.setData({
         busy: false,
         modeNote: knowledgeApi.herbicideModeNote(result.mode),
-        matchState: items.length ? 'matched' : 'no_match',
-        matchLabel: reference.matchStateLabel(items.length ? 'matched' : 'no_match'),
+        matchState: state ? state.match_state : '',
+        matchLabel: state ? reference.matchStateLabel(state.match_state) : '服务端未提供匹配判定',
         items: items,
-        total: 0,
+        total: state ? state.total : 0,
         nextCursor: result.nextCursor,
-        reasons: [],
-        unmatchedReasons: [],
-        simulatedExcluded: 0,
+        reasons: state ? state.reasons : [],
+        unmatchedReasons: state ? state.unmatched_reasons : [],
+        simulatedExcluded: state ? state.simulated_excluded : 0,
         sourceVersionNote: rows.length ? rows[0].source_version : '',
-        countNote: rows.length ? '本页 ' + rows.length + ' 条（该接口不返回总数）' : '',
-        // 服务端确实按提交的 `crop_id`／`region_code` 收窄（命中集合已在 parity 判据里与 `/knowledge`
-        // 逐条比对）⇒ 命中条件只列**本次真的提交了**的结构化维度；未提交的不列（不冒充已筛选）。
-        matchedNote: matchedNoteOf(sent),
+        countNote: countNoteOf(state, rows.length),
+        // 命中条件优先用服务端回传的 `matched_dimensions`（服务端**真的**应用过的维度）；没有判定时
+        // 退回"本次真的提交了哪些维度"——两者都不冒充未提交的条件。
+        matchedNote: matchedNoteOf(state ? state.matched_dimensions : sent),
         queryError: '',
         queryErrorCode: '',
         querySession: false
@@ -360,3 +366,12 @@ Page({
     })
   }
 })
+
+// 本页条数说明。口径：`queryState.total` 是服务端**裁剪前**的领域判定，`items` 是权限裁剪后的
+// 可见集 ⇒ 两者可以不等（差额是"存在但你看不到"的记录），所以分开说，不把差额算成"没有资料"。
+// 放在文件末尾是为了不移动上文既有行号——证据页对 `runServerQuery()` 的引用按行号取证。
+function countNoteOf(state, pageCount) {
+  if (!state) return pageCount ? '本页 ' + pageCount + ' 条（服务端未提供匹配判定）' : ''
+  if (!state.total) return ''
+  return '本页 ' + pageCount + ' 条 / 共 ' + state.total + ' 条（总数为裁剪前领域判定）'
+}
