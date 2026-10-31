@@ -65,7 +65,7 @@ import {
 } from './screen.ts';
 import { parseListQuery, validateConversationInput, validateTurnInput } from './validate.ts';
 import { answerViewOf, conversationViewOf, turnViewOf } from './view.ts';
-import type { AnswerInsert, ConversationStore, ListPosition, TurnInsert } from './store.ts';
+import type { AnswerInsert, CascadedTurnRef, ConversationStore, ListPosition, TurnInsert } from './store.ts';
 
 /** 与历史域同口径的强 ETag（契约 `deleteConversation`/`createTurn` 的 If-Match 就是它）。 */
 export function strongEtagOf(revision: number): string {
@@ -769,6 +769,56 @@ export function createConversationService(deps: ConversationServiceDeps) {
     return { status: 200, data: conversationViewOf(stored), etag: strongEtagOf(stored.revision) };
   }
 
+  /**
+   * 会话级级联处置聚合（R72-W25）。
+   *
+   * 与 `deleteTurn` 的关系：轮次级一次只删一条，那边问一次端口就够了；删整会话会一次级联掉任意
+   * 多条轮次，这里**逐条**交给同一个已接线端口，再把处置聚合成**一个**披露值。
+   *
+   * 聚合优先级 `failed` > `unwired` > `initiated`：只要有一条腿失败，披露就不能被更弱的腿洗成
+   * "已启动"；`unwired` 压过 `initiated` 同理（有一条腿没人接线就**不是**全接线）。
+   *
+   * 三条诚实地线写在这里，防止被读成更强的承诺：
+   *   - `initiated` 只表示"该腿已启动并执行到位"，**不等于**转写已从语音域删完
+   *     （真正的完成证据属删除协议回执，不属本端口）；
+   *   - 只对**带 `transcription_ref`** 的轮次发起：文字轮次没有跨域音频可交；
+   *   - 一条腿都没有时不声称 `initiated` —— 什么都没做不能算"已启动"。
+   *
+   * 失败**不**回滚已经生效的会话删除（fail-soft，与 `deleteTurn` 同口径）：`failed` 只进响应头。
+   */
+  async function cascadeConversationDeletion(
+    userId: string,
+    conversationId: string,
+    removedTurns: readonly CascadedTurnRef[],
+  ): Promise<CascadeDisclosure> {
+    const seen = new Set<CascadeDisclosure>();
+    let legs = 0;
+    for (const turn of removedTurns) {
+      const transcriptionRef = turn.transcription_ref;
+      if (transcriptionRef === null) continue;
+      legs += 1;
+      try {
+        const outcome = await cascade.initiate({
+          userId,
+          conversationId,
+          turnId: turn.id,
+          transcriptionRef,
+          answerId: turn.answer_id,
+        });
+        seen.add(outcome.disposition);
+      } catch {
+        // 端口自己承诺不抛；真抛了也只影响披露 —— 会话已经删掉了，这个事实不回滚。
+        seen.add('failed');
+      }
+    }
+    // 零腿：不声称已启动。`unwired` 是"没有任何人主张这件事已执行"的值，
+    // 不是对端口 `kind` 的自述（那也是零腿时唯一诚实的取值）。
+    if (legs === 0) return 'unwired';
+    if (seen.has('failed')) return 'failed';
+    if (seen.has('unwired')) return 'unwired';
+    return 'initiated';
+  }
+
   async function deleteConversation(
     actor: ConversationActor,
     conversationId: string,
@@ -789,7 +839,18 @@ export function createConversationService(deps: ConversationServiceDeps) {
         // 契约 `deleteConversation`：删除会话即级联其下轮次与回答（PG 外键 / 内存显式级联）。
         const result = await store.deleteConversation(conversationId, identity.userId, ifMatch.revision);
         if (!result.ok) throw mapCas(result.reason);
-        return { outcome: { resource: 'conversation', conversation_id: conversationId }, data: { accepted: true } };
+        // R72-W25：本域行删掉之后，被孤立的**语音转写**（`transcription_ref` 无外键）与结果副本
+        // 逐条交给级联端口，聚合成一个披露值 —— 与轮次 DELETE 同形（同一个头、同一组取值）。
+        const disclosure = await cascadeConversationDeletion(
+          identity.userId,
+          conversationId,
+          result.cascadedTurns,
+        );
+        return {
+          outcome: { resource: 'conversation', conversation_id: conversationId },
+          data: { accepted: true },
+          cascade: disclosure,
+        };
       },
       // 同键重放**不**再报 409：首次已受理，重放如实回 accepted（与幂等语义一致）。
       replay: async () => ({ data: { accepted: true } }),

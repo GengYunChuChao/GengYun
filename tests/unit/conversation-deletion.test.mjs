@@ -441,3 +441,215 @@ test('G6/G8：接线备份清除端口后会话域 backup_state 可变 completed
   assert.equal(deletion.completionStatus(requestId).completed, true, '在线+备份四域齐 ⇒ 整体 completed');
   assert.match(deletion.evidenceOf(requestId).conversations, /conversations:backup-purged:/);
 });
+
+// ---------------------------------------------------------------------------
+// R72-W25：会话级删除把被级联掉的轮次交给已接线端口（`transcription_ref` 无外键 ⇒ 语音域
+// 的转写行不会被 PG 外键带走，必须显式交接）。披露头与会话/轮次两个 DELETE 同形。
+// ---------------------------------------------------------------------------
+
+/** 直接造库：一条会话 + 若干轮次（绕过 HTTP，好让每条轮次带自己的 `transcription_ref`）。 */
+async function seedConversation(store, ownerId, conversationId, turns) {
+  await store.insertConversation({
+    id: conversationId,
+    owner_id: ownerId,
+    revision: 1,
+    conditions: null,
+    created_at: new Date(Date.UTC(2026, 9, 14, 6)),
+    updated_at: new Date(Date.UTC(2026, 9, 14, 6)),
+  });
+  for (const [index, turn] of turns.entries()) {
+    await store.insertTurn({
+      id: turn.id,
+      conversation_id: conversationId,
+      owner_id: ownerId,
+      input_text: QUESTION,
+      transcription_ref: turn.transcriptionRef ?? null,
+      job_id: turn.jobId,
+      job_state: 'succeeded',
+      job_deadline_at: new Date(Date.UTC(2026, 9, 14, 7)),
+      job_created_at: new Date(Date.UTC(2026, 9, 14, 6, index)),
+      job_error_code: null,
+      created_at: new Date(Date.UTC(2026, 9, 14, 6, index)),
+    });
+  }
+}
+
+function transcriptionRefOf(id, revision) {
+  return { type: 'transcription', id, revision };
+}
+
+test('deleteConversation：每个带转写引用的轮次各交一条腿，且引用来自它自己的轮次', async (t) => {
+  const offered = [];
+  const fixture = await conversationFixture(t, {
+    injection: {
+      cascade: createWiredTurnCascadePort({
+        cleaners: [
+          async (request) => {
+            offered.push(request);
+            return { state: 'cleaned' };
+          },
+        ],
+      }),
+    },
+  });
+  const owner = fixture.a.user.id;
+  const store = fixture.conversationStore;
+  const conversationId = '00000000-0000-4000-8d00-000000000101';
+  const turns = [
+    {
+      id: '00000000-0000-4000-8d00-000000000201',
+      jobId: '00000000-0000-4000-8d00-000000000401',
+      transcriptionRef: transcriptionRefOf('00000000-0000-4000-8d00-000000000301', 2),
+    },
+    // 纯文字轮次：没有跨域音频可交 ⇒ 不发起（否则会凭空造出一个"要清理"的目标）。
+    { id: '00000000-0000-4000-8d00-000000000202', jobId: '00000000-0000-4000-8d00-000000000402' },
+    {
+      id: '00000000-0000-4000-8d00-000000000203',
+      jobId: '00000000-0000-4000-8d00-000000000403',
+      transcriptionRef: transcriptionRefOf('00000000-0000-4000-8d00-000000000302', 5),
+    },
+  ];
+  await seedConversation(store, owner, conversationId, turns);
+
+  const removed = await fixture.call('DELETE', `${CONVERSATIONS}/${conversationId}`, fixture.a, {
+    headers: { 'idempotency-key': 'idem-conv-delete-voice', 'if-match': '"1"' },
+  });
+
+  assert.equal(removed.status, 202, `受理应 202：${JSON.stringify(removed.body)}`);
+  assert.ok(CASCADE_DISCLOSURE.includes(removed.cascade), `披露取值必须在闭集内：${removed.cascade}`);
+  assert.equal(removed.cascade, 'initiated');
+  assert.equal(offered.length, 2, '三个轮次里只有两个带转写引用 ⇒ 只交两条腿');
+  const byTurnId = new Map(offered.map((request) => [request.turnId, request]));
+  assert.deepEqual([...byTurnId.keys()].sort(), [turns[0].id, turns[2].id].sort(), '腿必须落在带引用的轮次上');
+  // 逐条对应：不是把同一个引用复用两次，也不是把引用"就近"套到别的轮次上。
+  assert.deepEqual(byTurnId.get(turns[0].id).transcriptionRef, turns[0].transcriptionRef);
+  assert.deepEqual(byTurnId.get(turns[2].id).transcriptionRef, turns[2].transcriptionRef);
+  for (const request of offered) {
+    assert.equal(request.userId, owner);
+    assert.equal(request.conversationId, conversationId);
+  }
+  const after = store.snapshot();
+  assert.deepEqual(
+    { conversations: after.conversations.length, turns: after.turns.length, answers: after.answers.length },
+    { conversations: 0, turns: 0, answers: 0 },
+    '本域行确已删除（级联删除不因披露取值而变）',
+  );
+});
+
+test('deleteConversation：无语音轮次时不发起任何腿，披露如实为 unwired（不谎称已启动）', async (t) => {
+  const offered = [];
+  const fixture = await conversationFixture(t, {
+    injection: {
+      cascade: createWiredTurnCascadePort({
+        cleaners: [
+          async (request) => {
+            offered.push(request);
+            return { state: 'cleaned' };
+          },
+        ],
+      }),
+    },
+  });
+  const store = fixture.conversationStore;
+  const conversationId = '00000000-0000-4000-8d00-000000000111';
+  await seedConversation(store, fixture.a.user.id, conversationId, [
+    { id: '00000000-0000-4000-8d00-000000000211', jobId: '00000000-0000-4000-8d00-000000000411' },
+  ]);
+
+  const removed = await fixture.call('DELETE', `${CONVERSATIONS}/${conversationId}`, fixture.a, {
+    headers: { 'idempotency-key': 'idem-conv-delete-text', 'if-match': '"1"' },
+  });
+
+  assert.equal(removed.status, 202, `受理应 202：${JSON.stringify(removed.body)}`);
+  // 一条腿都没有 ⇒ 不声称 initiated。`initiated` 是"已启动"，没有启动过就不能这么说。
+  assert.equal(removed.cascade, 'unwired');
+  assert.deepEqual(offered, [], '没有转写引用 ⇒ 清理器一次都不该被调用');
+  assert.equal(store.snapshot().conversations.length, 0);
+});
+
+test('deleteConversation：清理器抛错时披露 failed，但会话删除仍成功（fail-soft，不回滚）', async (t) => {
+  const attempted = [];
+  const fixture = await conversationFixture(t, {
+    injection: {
+      cascade: createWiredTurnCascadePort({
+        cleaners: [
+          async (request) => {
+            attempted.push(request.turnId);
+            throw new Error('合成清理器故障（R72-W25）');
+          },
+        ],
+      }),
+    },
+  });
+  const store = fixture.conversationStore;
+  const conversationId = '00000000-0000-4000-8d00-000000000121';
+  await seedConversation(store, fixture.a.user.id, conversationId, [
+    {
+      id: '00000000-0000-4000-8d00-000000000221',
+      jobId: '00000000-0000-4000-8d00-000000000421',
+      transcriptionRef: transcriptionRefOf('00000000-0000-4000-8d00-000000000321', 1),
+    },
+    {
+      id: '00000000-0000-4000-8d00-000000000222',
+      jobId: '00000000-0000-4000-8d00-000000000422',
+      transcriptionRef: transcriptionRefOf('00000000-0000-4000-8d00-000000000322', 1),
+    },
+  ]);
+
+  const removed = await fixture.call('DELETE', `${CONVERSATIONS}/${conversationId}`, fixture.a, {
+    headers: { 'idempotency-key': 'idem-conv-delete-boom', 'if-match': '"1"' },
+  });
+
+  // 关键：失败只出现在披露里，**不**把"会话已删"变成失败。
+  assert.equal(removed.status, 202, `清理失败不得改写删除结果：${JSON.stringify(removed.body)}`);
+  assert.deepEqual(removed.body.data, { accepted: true });
+  assert.equal(removed.cascade, 'failed');
+  assert.deepEqual(attempted.sort(), [
+    '00000000-0000-4000-8d00-000000000221',
+    '00000000-0000-4000-8d00-000000000222',
+  ], '一条腿失败不影响其余轮次继续交出去（逐腿独立）');
+  const after = store.snapshot();
+  assert.deepEqual({ conversations: after.conversations.length, turns: after.turns.length }, { conversations: 0, turns: 0 });
+});
+
+test('会话 DELETE 与轮次 DELETE 的级联披露同形：同头名、同取值、同封套', async (t) => {
+  const fixture = await conversationFixture(t, {
+    injection: {
+      cascade: createWiredTurnCascadePort({ cleaners: [async () => ({ state: 'cleaned' })] }),
+    },
+  });
+  const store = fixture.conversationStore;
+  const owner = fixture.a.user.id;
+  // 两条会话：一条走轮次 DELETE，一条走会话 DELETE —— 同一个端口、同一组清理器，读数必须一致。
+  const turnConversation = '00000000-0000-4000-8d00-000000000131';
+  const conversationConversation = '00000000-0000-4000-8d00-000000000132';
+  for (const [conversationId, turnId, suffix] of [
+    [turnConversation, '00000000-0000-4000-8d00-000000000231', '31'],
+    [conversationConversation, '00000000-0000-4000-8d00-000000000232', '32'],
+  ]) {
+    await seedConversation(store, owner, conversationId, [
+      {
+        id: turnId,
+        jobId: `00000000-0000-4000-8d00-0000000004${suffix}`,
+        transcriptionRef: transcriptionRefOf(`00000000-0000-4000-8d00-0000000003${suffix}`, 1),
+      },
+    ]);
+  }
+
+  const turnRemoved = await fixture.call('DELETE', `${CONVERSATIONS}/${turnConversation}/turns/00000000-0000-4000-8d00-000000000231`, fixture.a, {
+    headers: { 'idempotency-key': 'idem-turn-delete-shape', 'if-match': '"1"' },
+  });
+  const conversationRemoved = await fixture.call('DELETE', `${CONVERSATIONS}/${conversationConversation}`, fixture.a, {
+    headers: { 'idempotency-key': 'idem-conv-delete-shape', 'if-match': '"1"' },
+  });
+
+  for (const [label, response] of [['轮次 DELETE', turnRemoved], ['会话 DELETE', conversationRemoved]]) {
+    assert.equal(response.status, 202, `${label} 应 202：${JSON.stringify(response.body)}`);
+    assert.equal(response.etag, null, `${label}：Ack 无 revision ⇒ 不伪造 ETag`);
+    assert.deepEqual(Object.keys(response.body).sort(), ['data', 'meta'], `${label} 封套键集`);
+    assert.deepEqual(response.body.data, { accepted: true }, `${label} 响应体只回 accepted（披露不进 body）`);
+  }
+  assert.equal(turnRemoved.cascade, conversationRemoved.cascade, '同一条规则 ⇒ 同一个取值');
+  assert.equal(conversationRemoved.cascade, 'initiated');
+  assert.equal(turnRemoved.cascade, 'initiated');
+});

@@ -585,23 +585,30 @@ const OPAQUE_ALLOWLIST = [
  *   列要求仍全部已覆盖（缺 0 条），INSERT/DELETE/SELECT、引用表、行锁、不可判插值**不变**。
  *   8 文件块：字面量 164 → **166**、UPDATE 29 → **31**、RETURNING 65 → **67**、逐文件 `conversations`
  *   17 → **19**；21 文件块：字面量 301 → **303**、UPDATE 54 → **56**、RETURNING 93 → **95**。
+ * GY-R72-W25 会话级级联片（`conversations`，2026-10-30）：`conversations/store-pg.ts` 的
+ *   `deleteConversation` 在**同一个 `guarded()` 事务内**、`DELETE` 之前新增一条
+ *   `SELECT id, transcription_ref, answer_id FROM conversation_turns WHERE conversation_id = $1::uuid`
+ *   （删前摘出将被外键级联掉的轮次三键；删完再查为空，事务外查会漏并发新增行）。
+ *   ⇒ 8 文件块：字面量 166 → **167**、SELECT 76 → **77**，逐文件 `conversations` 19 → **20**；
+ *   列要求 1269 → **1272**（新 SQL 点名的 `conversation_turns.id` / `transcription_ref` / `answer_id`
+ *   各算一条要求，三条**全部已覆盖**，缺口仍 0）；引用表、行锁、RETURNING、不可判插值**不变**。
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 166,
-  statements: { INSERT: 27, UPDATE: 31, SELECT: 76, DELETE: 32 },
+  sqlLiterals: 167,
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 77, DELETE: 32 },
   returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1269,
+  columnRequirements: 1272,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
   community: 44,
-  conversations: 19,
+  conversations: 20,
   favorites: 15,
   history: 16,
   messages: 15,
@@ -827,11 +834,17 @@ const TABLE_WIDE_COLUMN = '*';
  *   54 → **101**、唯一缺口键 33 → **63**、豁免 33 → **63**（新增 30 条逐条写原因与 SQL 行；
  *   `ON CONFLICT` / `SELECT *` / 行锁 / 不可判插值读数全部不变）。**没有把任何数字往下改**：
  *   `sqlLiterals` 是 +3、`columnRequirements` 是 +47，都是新 SQL 真带来的。
+ * ㉓ 2026-10-30 R72-W25（会话级级联片）：`conversations/store-pg.ts` 的 `deleteConversation` 在
+ *   事务内新增一条 `SELECT id, transcription_ref, answer_id FROM conversation_turns …`（删前摘轮次三键）
+ *   ⇒ 审计文件数仍 **21**、字面量 306 → **307**、语句 SELECT 163 → **164**（INSERT/UPDATE/DELETE 不变）、
+ *   其余读数：RETURNING / 引用表 / 行锁 / 不可判插值**不变**；列要求 1975 → **1978**、
+ *   已覆盖 1874 → **1877**（新 SQL 只碰 `conversation_turns` 已授权的三列，缺口仍 0）。
+ *   **没有把任何数字往下改**。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 21,
-  sqlLiterals: 306,
-  statements: { INSERT: 47, UPDATE: 56, SELECT: 163, DELETE: 40 },
+  sqlLiterals: 307,
+  statements: { INSERT: 47, UPDATE: 56, SELECT: 164, DELETE: 40 },
   returningClauses: 96,
   onConflictClauses: 29,
   selectStar: 15,
@@ -840,8 +853,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 17,
   referencedTables: 50,
-  columnRequirements: 1975,
-  coveredRequirements: 1874,
+  columnRequirements: 1978,
+  coveredRequirements: 1877,
   ledgerExemptions: 63,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
@@ -856,7 +869,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 13,
   'community': 44,
-  'conversations': 19,
+  'conversations': 20,
   'favorites': 15,
   'history': 16,
   'knowledge/service.ts': 4,
