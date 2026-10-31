@@ -25,16 +25,33 @@
  * 服务层未接线（`service === null`）⇒ 一律 503 `PROVIDER_UNAVAILABLE`（retryable），
  * 让"没接线"与"资源不存在"在响应上可区分。
  */
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.ts';
 import { currentIdentity, readIdentity, type AuthGuards } from '../auth/middleware.ts';
 import { readBearerToken } from '../auth/tokens.ts';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
+import type { CascadeDisclosure } from '../conversations/cascade.ts';
 import type { ConversationService, ConversationSession } from '../conversations/service.ts';
 import { buildMeta } from './support.ts';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
+
+/** 带级联处置的响应（服务层 `ServiceOutcome` 的最小形状：只读 `cascade`）。 */
+type CascadeDisclosing = { cascade?: CascadeDisclosure };
+
+/**
+ * 级联处置的**非契约披露**（R72-W25）：沿用 `routes/history.ts` 的既有先例 —— 头名 `X-GY-Cascade`
+ * 早就存在于本仓，⛔ 不新造头名。
+ *
+ * 会话 DELETE 与轮次 DELETE **共用本函数**：两个删除的披露形状只能差在服务层的取值上，
+ * 不能差在头上（否则同一件事在两个入口说两套话）。
+ * 取值闭集 `initiated` / `unwired` / `failed`，绝不声称"外部副本已清理完成"。
+ */
+function discloseCascade(reply: FastifyReply, outcome: CascadeDisclosing): FastifyReply {
+  if (outcome.cascade !== undefined) reply.header('X-GY-Cascade', outcome.cascade);
+  return reply;
+}
 
 const idParams = {
   type: 'object',
@@ -151,8 +168,9 @@ export function registerConversationRoutes(
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const outcome = await ready().deleteConversation(actorOf(request), id, headersOf(request));
-      // 202 Ack：`Ack` 没有 revision 可绑定 ⇒ 不伪造 ETag。
-      return reply.status(202).headers(noStore).send({ data: outcome.data, meta: buildMeta(request, config) });
+      // 202 Ack：`Ack` 没有 revision 可绑定 ⇒ 不伪造 ETag。级联披露与轮次 DELETE 同形。
+      return discloseCascade(reply.status(202).headers(noStore), outcome)
+        .send({ data: outcome.data, meta: buildMeta(request, config) });
     },
   );
 
@@ -187,11 +205,9 @@ export function registerConversationRoutes(
     async (request, reply) => {
       const { id, turn_id: turnId } = request.params as { id: string; turn_id: string };
       const outcome = await ready().deleteTurn(actorOf(request), id, turnId, headersOf(request));
-      const headers = reply.status(202).headers(noStore);
-      // 级联处置的**非契约披露**（沿用 `routes/history.ts` 的既有先例）：
-      // 只区分 initiated/unwired/failed，绝不声称"外部清理已完成"。
-      if (outcome.cascade !== undefined) headers.header('X-GY-Cascade', outcome.cascade);
-      return headers.send({ data: outcome.data, meta: buildMeta(request, config) });
+      // 级联披露与会话 DELETE **共用** `discloseCascade`：同形不是靠两处注释对齐，是靠同一段代码。
+      return discloseCascade(reply.status(202).headers(noStore), outcome)
+        .send({ data: outcome.data, meta: buildMeta(request, config) });
     },
   );
 }

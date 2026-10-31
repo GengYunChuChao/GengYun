@@ -1308,7 +1308,7 @@
         {
           "path": "services/api/src/routes/conversations.ts",
           "symbol": "ready().createConversation(",
-          "lines": "115-119"
+          "lines": "135-140"
         },
         {
           "path": "services/api/src/conversations/service.ts",
@@ -1317,7 +1317,7 @@
         },
         {
           "path": "services/api/src/conversations/store-pg.ts",
-          "lines": "220-231",
+          "lines": "236-247",
           "symbol": "async insertConversation(record) {"
         },
         {
@@ -1340,7 +1340,7 @@
         {
           "path": "services/api/src/routes/conversations.ts",
           "symbol": "ready().listConversations(",
-          "lines": "126-130"
+          "lines": "147-147"
         },
         {
           "path": "services/api/src/conversations/service.ts",
@@ -1367,7 +1367,7 @@
         {
           "path": "services/api/src/routes/conversations.ts",
           "symbol": "ready().getConversation(",
-          "lines": "136-140"
+          "lines": "156-162"
         },
         {
           "path": "services/api/src/conversations/service.ts",
@@ -1394,7 +1394,7 @@
         {
           "path": "services/api/src/routes/conversations.ts",
           "symbol": "ready().deleteConversation(",
-          "lines": "148-152"
+          "lines": "168-174"
         },
         {
           "path": "services/api/db/migrations/0013_conversations.sql",
@@ -1425,7 +1425,7 @@
         {
           "path": "services/api/src/routes/conversations.ts",
           "symbol": "ready().createTurn(",
-          "lines": "161-165"
+          "lines": "182-189"
         },
         {
           "path": "services/api/src/conversations/job.ts",
@@ -1461,11 +1461,11 @@
         {
           "path": "services/api/src/routes/conversations.ts",
           "symbol": "ready().listTurns(",
-          "lines": "174-178"
+          "lines": "197-197"
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "964-983",
+          "lines": "1025-1044",
           "symbol": "async function listTurns("
         },
         {
@@ -1488,7 +1488,7 @@
         {
           "path": "services/api/src/routes/conversations.ts",
           "symbol": "ready().deleteTurn(",
-          "lines": "184-188"
+          "lines": "205-211"
         },
         {
           "path": "services/api/src/conversations/cascade.ts",

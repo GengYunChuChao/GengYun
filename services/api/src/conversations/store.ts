@@ -38,6 +38,30 @@ export type CasResult<T> =
   | { ok: true; record: T }
   | { ok: false; reason: 'NOT_FOUND' | 'OWNER_CHANGED' | 'REVISION_CHANGED' };
 
+/**
+ * 删会话时被一并级联掉的轮次（R72-W25）。
+ *
+ * 只带**级联端口要用的三键**：`id`（轮次，幂等键的组成部分）、`transcription_ref`（被孤立的转写
+ * 引用，文字轮次为 `null`）、`answer_id`（结果副本的清理目标）。
+ * ⛔ 不带问题正文 / 回答正文：删除路径不读回内容，也不该因为"要级联"把正文多搬一次。
+ */
+export interface CascadedTurnRef {
+  id: string;
+  transcription_ref: { type: string; id: string; revision: number } | null;
+  answer_id: string | null;
+}
+
+/**
+ * 会话删除结果（R72-W25）。
+ *
+ * 与 `CasResult<ConversationRecord>` 的差别**只在成功分支多一个字段**：失败分支逐字仍是
+ * `{ ok: false, reason }` —— 既有断言（`conversation-store-pg.test.mjs` 的 `deepEqual`）拿的是
+ * 完整对象深相等，给失败分支加任何一个键都会红，且那才是对的。
+ */
+export type ConversationDeleteResult =
+  | { ok: true; record: ConversationRecord; cascadedTurns: readonly CascadedTurnRef[] }
+  | { ok: false; reason: 'NOT_FOUND' | 'OWNER_CHANGED' | 'REVISION_CHANGED' };
+
 /** 轮次落库输入（`id` / `revision` / `created_at` 一律由服务端生成，调用方不能预置）。 */
 export interface TurnInsert {
   id: string;
@@ -103,8 +127,13 @@ export interface ConversationStore {
   insertConversation(record: ConversationRecord): Promise<ConversationRecord>;
   getConversation(id: string, ownerId: string): Promise<ConversationRecord | null>;
   listConversations(ownerId: string, options: ListOptions): Promise<ConversationRecord[]>;
-  /** CAS 删除会话（其下轮次与回答由 PG 外键级联、由内存实现显式级联，二者语义一致）。 */
-  deleteConversation(id: string, ownerId: string, expectedRevision: number): Promise<CasResult<ConversationRecord>>;
+  /**
+   * CAS 删除会话（其下轮次与回答由 PG 外键级联、由内存实现显式级联，二者语义一致）。
+   *
+   * R72-W25：成功分支额外回 `cascadedTurns`（被级联掉的轮次三键），供服务层把每个带转写引用的
+   * 轮次交给级联端口。**失败分支一字未改**（仍是 `{ ok: false, reason }`）。
+   */
+  deleteConversation(id: string, ownerId: string, expectedRevision: number): Promise<ConversationDeleteResult>;
   insertTurn(record: TurnInsert): Promise<TurnRecord>;
   getTurn(conversationId: string, turnId: string, ownerId: string): Promise<TurnWithAnswer | null>;
   listTurns(conversationId: string, ownerId: string, options: ListOptions): Promise<TurnWithAnswer[]>;
@@ -229,12 +258,20 @@ export function createMemoryConversationStore(): ConversationStore {
       if (record.revision !== expectedRevision) return { ok: false, reason: 'REVISION_CHANGED' };
       conversations.delete(id);
       // 显式级联：其下轮次与回答一并删除（与 PG 的 ON DELETE CASCADE 语义一致）。
+      // 边删边摘：被级联掉的轮次三键随结果回给服务层（否则删完就查不到了 —— PG 侧同理，
+      // 所以那边是在**同一个事务、同一把行锁内**先 SELECT 再 DELETE）。
+      const cascadedTurns: CascadedTurnRef[] = [];
       for (const [turnId, turn] of [...turns]) {
         if (turn.conversation_id !== id) continue;
+        cascadedTurns.push({
+          id: turn.id,
+          transcription_ref: turn.transcription_ref === null ? null : { ...turn.transcription_ref },
+          answer_id: turn.answer_id,
+        });
         turns.delete(turnId);
         if (turn.answer_id !== null) answers.delete(turn.answer_id);
       }
-      return { ok: true, record: clone(record) };
+      return { ok: true, record: clone(record), cascadedTurns };
     },
     async insertTurn(record) {
       // 受理时落库：`revision` 从 1 起、尚无回答，`updated_at` 与受理时刻一致。
