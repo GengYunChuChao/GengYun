@@ -152,7 +152,7 @@ import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts'
 import { createPostgresHistoryStore } from './history/store-pg.ts';
 import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
 import { createHistoryCascadePort, type HistoryCascadePort } from './history/cascade-wiring.ts';
-import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
+import { createTargetVisibilityWiring, createWiredVisibilityPort, TARGET_VISIBILITY_DELEGATE, type VisibilityPort } from './targetref/visibility.ts';
 import { createReferenceQueryService } from './knowledge/reference-query.ts';
 import {
   createUnavailableBackupPurgePort,
@@ -1922,14 +1922,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const defaultVisibility: VisibilityPort = createWiredVisibilityPort({
     note:
       '引用可用性端口已接线到公开读面：逐次核验目标当前是否出现在 /knowledge 读面'
-      + '（数据库读视图 catalog_read.current_knowledge + 浙江首批投影），type/revision 逐项一致才判可用',
-    resolve: async ({ target_ref }) => {
+      + '（数据库读视图 catalog_read.current_knowledge + 浙江首批投影），type/revision 逐项一致才判可用；识别/OCR 目标另按本人 owner 读面核验：本人记录才可用，他人记录/不存在/读取失败一律不可用',
+    resolve: async ({ target_ref, userId }) => {
+      // 识别/OCR 两型先由 owner 读面判定（服务请求期才装饰 ⇒ 只交闭包）；其余型别原样交回下面的收藏闭集判据。
+      const owned = await createTargetVisibilityWiring({ recognitionService: () => app.recognitionService, ocrService: () => app.ocrService }).resolve(target_ref, userId); if (owned !== TARGET_VISIBILITY_DELEGATE) return owned;
       // 只核验收藏契约闭集（`species|herbicide|scheme`）：其余目标本片没有可核验的读面。
       if (!isFavoriteTargetType(target_ref.type)) return 'unavailable';
       const row = await publicKnowledgeRowOf(target_ref.id);
-      if (row === null) return 'unavailable';
-      if (row.type !== target_ref.type) return 'unavailable';
-      if (row.revision !== target_ref.revision) return 'unavailable';
+      if (row === null || row.type !== target_ref.type || row.revision !== target_ref.revision) return 'unavailable';
       return 'available';
     },
   });

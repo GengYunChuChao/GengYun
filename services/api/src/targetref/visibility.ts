@@ -103,7 +103,7 @@ export interface VisibilityPort {
  *
  * 一律 `unavailable` + 未接线说明：**不得**返回 `'available'` 来"默认可用"。
  * 真实接线已由 #167 部分交付：`species`/`herbicide`/`scheme` 经公开读面逐次核验；
- * **识别/OCR/媒体的当前可见性核验仍未接线**（非收藏闭集目标恒 `unavailable`）。
+ * 识别/OCR 两型另由**本人 owner 读面**判定（见本文件末尾转出的 `targetref/visibility-wiring.ts`）；**媒体、剂量卡、会话等其余目标域仍未接线**（恒 `unavailable`）。
  * 服务层与用例无需改动。
  */
 export function createUnwiredVisibilityPort(
@@ -185,3 +185,7 @@ export async function deriveVisibility(
     reason: isReferenceUnavailableReason(reason) ? reason : OBJECT_UNAVAILABLE_REASON,
   };
 }
+
+// 识别/OCR 两型的「本人记录才可用」适配器独立成文件（`targetref/visibility-wiring.ts`：封装 owner 读面、
+// 三态 `available|unavailable|delegate`、fail-closed）；此处转出，让装配点只维护一条 import 而不新增行。
+export { createTargetVisibilityWiring, TARGET_VISIBILITY_DELEGATE } from './visibility-wiring.ts';
