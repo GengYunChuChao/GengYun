@@ -260,9 +260,9 @@ import { createKnowledgeRetrievalPort } from './conversations/retrieval.ts';
 import { createAnswerJobSource } from './conversations/job.ts';
 import type { ConversationContextPort } from './conversations/context.ts';
 import {
-  createUnwiredTurnCascadePort,
+  createConversationCascadePort,
   type TurnCascadePort,
-} from './conversations/cascade.ts';
+} from './conversations/cascade-wiring.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -2342,7 +2342,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const conversationTranscription = conversationInjection?.transcription ?? createTranscriptionPort({
     getTranscription: (input) => app.speechService.getTranscription(input),
   });
-  const conversationCascade: TurnCascadePort = conversationInjection?.cascade ?? createUnwiredTurnCascadePort();
+  const conversationCascade: TurnCascadePort = conversationInjection?.cascade ?? createConversationCascadePort({ speech: { getTranscription: (input) => app.speechService.getTranscription(input), deleteTranscription: (input) => app.speechService.deleteTranscription(input) }, onError: (error: unknown, detail: { transcriptionId: string }) => app.log?.warn?.({ err: error, ...detail }, 'turn cascade transcription cleanup failed') });
   const conversationService: ConversationService | null =
     // `real` 下只有 `persistent === true` 的 store 才配得上"真实成功"：无 `DATABASE_URL` 时
     // `conversationStore` 为 null，**注入的内存 store 也不例外**（否则测试注入口就成了绕过
