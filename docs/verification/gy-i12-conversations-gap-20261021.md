@@ -6,7 +6,7 @@
 
 理由（按权重排序）：
 
-1. **B 已经过时**：对话持久化**早已合入 main**。`services/api/db/migrations/0013_conversations.sql` 在 `cf2f5ed`（`feat(GY-I12): 服务端问答闭环 … (Refs #12) (#214)`）里，建了 `conversations` / `conversation_turns` / `conversation_answers` 三张表；`services/api/src/conversations/store-pg.ts:182` 已有 `createPostgresConversationStore(`，`:216` 是 `persistent: true`。迁移总数已是 **26**、最大号 `0026_speech_persistence.sql`，不存在「需要补 0027 建表」这件事。派单里 B 的前提（「若 PG 持久化未合入」）不成立。
+1. **B 已经过时**：对话持久化**早已合入 main**。`services/api/db/migrations/0013_conversations.sql` 在 `cf2f5ed`（`feat(GY-I12): 服务端问答闭环 … (Refs #12) (#214)`）里，建了 `conversations` / `conversation_turns` / `conversation_answers` 三张表；`services/api/src/conversations/store-pg.ts:197` 已有 `createPostgresConversationStore(`，`:216` 是 `persistent: true`。迁移总数已是 **26**、最大号 `0026_speech_persistence.sql`，不存在「需要补 0027 建表」这件事。派单里 B 的前提（「若 PG 持久化未合入」）不成立。
 2. **C 的前提（「真跑通单测」）在本仓当前事实下不可能自证**：本片缺的不是「一个可以替换的 stub 函数」，而是**整个仓库里没有任何语言模型提供者、没有任何 LLM 外发通道、也没有可用的真实凭据**：
    - `services/api/src` 内 `provider.ts` 只有 `ocr` / `recognitions` / `speech` 三个，**没有** `conversations/provider.ts`；全目录对 `llm` / `DEEPSEEK` / `ai-config` 的引用只有两处注释（`tts/live-ports.ts:156`、`moderation/provider.ts:5`）。
    - LLM 端点确实存在，但**只给手工验证工具**：`tools/ai-config.mjs:10` 的 `llm` allowlist 条目（`https://api.deepseek.com/chat/completions` / `deepseek-flash` / `DEEPSEEK_API_KEY`），而 `tools/verify-llm-live.mjs:1` 头部逐字写着 "Manual synthetic-input LLM live verification only; never used by application consumers."。
@@ -120,7 +120,7 @@ const candidate = composer.compose({
 
 | 项 | 事实 |
 | --- | --- |
-| 对话持久化 store | **已合入**：`services/api/src/conversations/store-pg.ts:182` `createPostgresConversationStore(`，`:216` `persistent: true` |
+| 对话持久化 store | **已合入**：`services/api/src/conversations/store-pg.ts:197` `createPostgresConversationStore(`，`:216` `persistent: true` |
 | 迁移文件 | `services/api/db/migrations/0013_conversations.sql`（commit `cf2f5ed`，PR #214） |
 | 建了哪些表 | `conversations`、`conversation_turns`、`conversation_answers`；`conversation_turns.conversation_id → conversations(id) ON DELETE CASCADE`、`conversation_answers.turn_id → conversation_turns(id) ON DELETE CASCADE` |
 | 关键约束 | `revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1)`；`citations` 有 `jsonb_array_length(citations) <= 20`；`dose_cards <= 10`；`status IN ('answered','insufficient','blocked')`；`check_state IN ('passed','blocked')` |
@@ -315,7 +315,7 @@ services/api/src/conversations/screen.ts:68        RISK_BLOCK_TEXT
 services/api/src/conversations/screen.ts:192       RISK_RULE_VERSION
 services/api/src/conversations/screen.ts:200       ANSWER_RISK_RULE_VERSION
 services/api/src/conversations/screen.ts:226       createModerationRiskScreen
-services/api/src/conversations/store-pg.ts:181     createPostgresConversationStore
+services/api/src/conversations/store-pg.ts:196     createPostgresConversationStore
 services/api/src/conversations/store-pg.ts:215     persistent: true
 services/api/src/conversations/store.ts:90         interface ConversationStore
 services/api/src/conversations/store.ts:185        createMemoryConversationStore（:184 persistent:false；原记 :156 / :174）

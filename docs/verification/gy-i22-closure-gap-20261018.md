@@ -139,7 +139,7 @@
   收敛提交：`1cb6c9e fix(GY-I22): 合成域缺真实 TTS 凭据的 503 改 retryable=false（Refs #22） (#255)`。
 - **残余形态（语义不同类，不属旧页所指那处）**：仍标 `retryable: true` 的 `PROVIDER_UNAVAILABLE` 只剩"依赖**瞬时**不可用"类 ——
   `services/api/src/db/catalog.ts:25`、`:44`（资料/登记资料数据库暂不可用）、
-  `services/api/src/conversations/store-pg.ts:60`、`:63`（`PROVIDER_TIMEOUT` / 问答数据库暂不可用）、
+  `services/api/src/conversations/store-pg.ts:62`、`:63`（`PROVIDER_TIMEOUT` / 问答数据库暂不可用）、
   `services/api/src/auth/wechat.ts:100`（微信登录服务不可用）。这些是"等一会儿可能就好"，与"能力未装配"不同类；
   本页**只登记行号，不做口径裁定**。
 - **与开放 PR `#256`（`fix/gy-i22-retryable-sweep-residual`）的关系**：**待其合并后复测**。本页不预判其内容或结果。
