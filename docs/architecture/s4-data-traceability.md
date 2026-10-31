@@ -200,7 +200,7 @@
   （backup-copies-purge-pg）、`:485`（backup-purge-pg）。
 - **缺口**：① 恢复重放只有纯函数模块 `services/api/src/privacy/backup-replay-manifest.ts:559`，**没有装配进 `app.ts`**，
   契约里也没有恢复 operation（该文件 `:68` 自陈）；② 调度件的「已安装并生效」不在仓内，没有任何生产读数；
-  ③ 加速演练 `tests/integration/retention-clock-drill-pg.mjs` 未进任何 workflow，未设 `GY_PG_BIN` 时如实 `exit 77`。
+  ③   ③ 加速演练 `tests/integration/retention-clock-drill-pg.mjs` **已进 workflow**（`real-pg-integration.yml` 的 job `real-pg-admin-write-17.11` 第 1201 行起：`exit 77` 被升级成 CI 红、读数 < 10 也红）；未设 `GY_PG_BIN` 时脚本仍如实 `exit 77`，但在 CI 里 77 等于失败。
 
 ### D10 帖评保留、去身份、已注销用户、不可反查
 
@@ -340,7 +340,7 @@
 | 编号 | 事实 | 可复算 |
 | --- | --- | --- |
 | E1 | 真实模式下注销整域 503，任何「注销已实现」的读数都只在替身模式成立 | `services/api/src/app.ts:2276` |
-| E2 | 三条真库臂不在任何 workflow：`tests/integration/media-row-purge-pg.mjs`、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/integration/retention-clock-drill-pg.mjs` | 在 `.github` 下 grep 这三个脚本名，命中 0 行 |
+| E2 | ~~三条真库臂不在任何 workflow~~（**2026-10-31 已失效**：三条都在 `.github/workflows/real-pg-integration.yml` 的 `real-pg-admin-write-17.11` job 里） | 在 `.github` 下 grep 这三个脚本名，现命中 3 行（`real-pg-integration.yml` 第 1234／1174／1201 行） |
 | E3 | 恢复重放只有纯函数，契约无恢复 operation | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | E4 | 加速演练 `exit 77` 是「未取得」，不是通过 | `tests/integration/retention-clock-drill-pg.mjs:20` |
 

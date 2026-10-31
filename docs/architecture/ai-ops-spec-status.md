@@ -126,7 +126,7 @@
 | P11 | 作业台作业投影按契约形状输出 | 部分实现 | services/api/src/admin/ops/jobs-pg.ts:17-22 | `target_ref.revision` **自 #608 起已取记录行真实 revision**（`services/api/src/admin/ops/jobs-pg.ts:413` 的 `targetRevision ?? UNCREATED_RECORD_REVISION`，SQL 投影 `r.revision`；记录尚未创建时才退回 1，常量 `UNCREATED_RECORD_REVISION = 1` 见 `services/api/src/admin/ops/jobs-pg.ts:295`）；`result` 恒 `null` 是契约形状、作业结果在后台读面仍读不到——形状对、语义只真实化一半。原写「`target_ref.revision` 恒取 1」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
 | P12 | 登记核对 `verifyRegistration` 判定内核 | 部分实现 | docs/architecture/contract-implementation-status.md:82 | real 无真实登记库 ⇒ 恒 `unavailable`；无已审用量来源 ⇒ `dose_cards` 恒空 |
 
-## 4 未实现（10 个条目位，含一条 P0；本档实计 6 条——N05／N06／N07 已判部分实现、N11 已判已实现，三者原位留号以免打断本页行号引用；原 N01 已撤条并入 E40，原 N02 已随 #710 销号）
+## 4 未实现（10 个条目位，含一条 P0；本档实计 6 条——N05／N06／N07 已判部分实现、N11 已判已实现，四者原位留号以免打断本页行号引用；原 N01 已撤条并入 E40，原 N02 已随 #710 销号）
 
 | 编号 | 判定项 | 判定 | 依据（文件:行号） | 缺口说明 |
 | --- | --- | --- | --- | --- |
