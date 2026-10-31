@@ -7,7 +7,7 @@
  * 为什么字节必须注入：合流层给图片端口的请求里**只有不透明引用**（`media_id` /
  * `media_revision` / `mime`，见 `packages/moderation/model-ports.mjs` 的图片引用归一器），
  * 没有字节。让适配器自己去读对象存储/磁盘会把"读哪张图"变成隐式行为，因此字节来源由调用方注入；
- * 本片产品侧**尚未接线**（`createUnwiredModerationImageSource` 诚实返回 `null` ⇒ fail-closed）。
+ * **本片交付时**产品侧尚未接线（`createUnwiredModerationImageSource` 诚实返回 `null` ⇒ fail-closed）；**当前状态（2026-10-31）**`app.ts` 已把媒体域既有端口经 `imageMedia` 转发进 `live-wiring.ts`，`real` 下改由 `createObjectStoreModerationImageSource()` 构造真实来源（只读去元数据衍生件），显式来源优先、两者都不给才仍是上面那份未接线实现。
  *
  * 本域特有的三条约束：
  * 1. **2 MiB 上限按 `tools/ai-config.mjs`**（`maxImageBytes: 2097152`）：超限 fail-closed，

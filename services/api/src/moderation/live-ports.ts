@@ -3,12 +3,12 @@
  *
  * 本文件与 `tms-live-adapter.ts` / `ims-live-adapter.ts` 一起补上 `provider.ts` 里点名的缺口：
  *
- *   > 真实端口必须由真实适配器 ＋ 一次显式可审查的接线变更提供（本阶段不存在这样的适配器）
+ *   > 真实端口必须由真实适配器 ＋ 一次显式可审查的接线变更提供（本阶段不存在这样的适配器）——GY-I14 交付时的原文，现状见本节末段
  *
- * **本片只交付库件**：`provider.ts` 的 `resolveModerationPorts` 未被改动，`real` 仍恒
+ * **本片交付时的状态（历史，2026-10-23）**：`provider.ts` 的 `resolveModerationPorts` 未被改动，`real` 仍恒
  * `ports: {}` / `fail_closed: true`；`app.ts` / `server.ts` **不 import** 本目录任何 live-* 文件
- * （证据页 `docs/verification/gy-r34-i14-live-adapter-20261023.md` 给了 `git grep` 证明）。
- * 真正打开真实外呼还需要**另一次**显式、可审查的接线变更（改装配点 + 供应商付费授权）。
+ * （证据页 `docs/verification/gy-r34-i14-live-adapter-20261023.md` 给了当时的 `git grep` 证明）。
+ * **当前状态（2026-10-31）**：本目录已经 `live-assembly.ts` → `live-wiring.ts` 装配进 `app.ts`（`moderationServiceAssemblyOption`）；`real` 下仍需显式 `--approve-moderation-live-wiring` 与真实 TC3／BizType 授权＋凭据，否则审核整域 503 fail-closed。
  *
  * 「默认关闭」的机制与 `ai/ocr-live-ports.ts` / `tts/live-ports.ts` 同构：真实调用所需的全部
  * 向外能力（策略快照、被校验配置快照、凭据三元组、fetch、时钟）都收进端口对象，字段**全部必填**
