@@ -71,7 +71,7 @@ const SITE = { profileUserLock: siteRef('services/api/src/profile/service.ts', N
 | 2 | `:161` `LEDGER_OPAQUE_ALLOWLIST[0].ref = '…ledger-pg.ts:399'` | 同上 | `:234` `ref: SITE.ledgerExpectsTextKey` |
 | 3 | `:165` `…'…ledger-pg.ts:549'` | 同上 | `:238` `ref: SITE.ledgerByKey` |
 | 4 | `:169` `…'…ledger-pg.ts:550'` | 同上 | `:242` `ref: SITE.ledgerScoped` |
-| 5 | `:246` `OPAQUE_ALLOWLIST[0].ref = 'services/api/src/conversations/store-pg.ts:263'` | `services/api/src/conversations/store-pg.ts` | `:319` `ref: SITE.conversationsWhere` |
+| 5 | `:246` `OPAQUE_ALLOWLIST[0].ref = 'services/api/src/conversations/store-pg.ts:263'` | `services/api/src/conversations/store-pg.ts` | `:345` `ref: SITE.conversationsWhere` |
 | 6 | `:251` `…'…store-pg.ts:326'` | 同上 | `:324` `ref: SITE.turnsWhere` |
 | 7 | `:2028` `assert.ok(raw.rowLocks.problems[0].startsWith('services/api/src/privacy/ledger-pg.ts:244 → public.exports'), …)` | `ledger-pg.ts` | `:2101` `startsWith(\`${SITE.ledgerExportsLock} → public.exports\`)` |
 | 8 | `:2111` `assert.ok(hit[0].includes('profile/service.ts:35'), …)` | `services/api/src/profile/service.ts` | `:2184` `includes(SITE.profileUserLock)`（后缀 → 全路径，加严） |
