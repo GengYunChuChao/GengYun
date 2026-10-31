@@ -36,6 +36,7 @@
     "local:down": "node tools/local-env.mjs down",
     "local:status": "node tools/local-env.mjs status",
     "purge:backup-copies": "node tools/purge-expired-backup-copies.mjs",
+    "purge:media-objects": "node tools/purge-expired-media.mjs",
     "purge:online-data": "node tools/purge-expired-online-data.mjs",
     "purge:retention": "node tools/purge-retention-expired.mjs",
     "test:integration:backup-copies-purge-pg": "node tests/integration/backup-copies-purge-pg.mjs",

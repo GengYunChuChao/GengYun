@@ -215,8 +215,8 @@ test('用法·--json 的 stdout 必须是纯 JSON，且带稳定契约字段', (
   assert.equal(report.maxIntervalMinutes, MAX_INTERVAL_MINUTES);
   assert.equal(report.dailyIntervalMinutes, DAILY_INTERVAL_MINUTES);
   assert.deepEqual(report.intervalBudgets, { ...INTERVAL_BUDGET_MINUTES });
-  assert.equal(report.counts.services, 3);
-  assert.equal(report.counts.timers, 3);
+  assert.equal(report.counts.services, 4);
+  assert.equal(report.counts.timers, 4);
   assert.equal(report.counts.setIntervalHits, 0);
   assert.deepEqual(report.failures, []);
 });
@@ -229,8 +229,8 @@ test('正臂·真仓库：10 项判据全部满足，exit 0', () => {
   const { status, stdout } = runCli([]);
   assert.equal(status, 0, `真仓库必须绿（这是本片交付的调度产物本身）：\n${stdout}`);
   assert.match(stdout, new RegExp(`PASS：${CRITERIA.length} 项判据全部满足`));
-  assert.match(stdout, /\.service 3 个 \/ \.timer 3 个逐条有交代/);
-  // 判据不是「有 OnCalendar 就放行」：三条 timer 的**实算**间隔必须真的 ≤ 各自命令的上界。
+  assert.match(stdout, /\.service 4 个 \/ \.timer 4 个逐条有交代/);
+  // 判据不是「有 OnCalendar 就放行」：四条 timer 的**实算**间隔必须真的 ≤ 各自命令的上界。
   assert.match(stdout, /最大间隔 10 分钟/);
   assert.match(stdout, /最大间隔 15 分钟/);
   // 日级那一档：只有驱动 `tools/purge-retention-expired.mjs` 的 timer 才按 1440 分钟判。
@@ -241,11 +241,11 @@ test('正臂·真仓库：10 项判据全部满足，exit 0', () => {
   assert.equal(failureIds(stdout).length, 0);
 });
 
-test('正臂·代码内联调用（不经 CLI）：真仓库 ok=true，且三条必须命令都被覆盖', () => {
+test('正臂·代码内联调用（不经 CLI）：真仓库 ok=true，且四条必须命令都被覆盖', () => {
   const result = verifyPurgeSchedule({});
   assert.equal(result.ok, true, `verifyPurgeSchedule 在真仓库上应 ok=true：${JSON.stringify(result.failures)}`);
-  assert.equal(result.counts.services, 3);
-  assert.equal(result.counts.timers, 3);
+  assert.equal(result.counts.services, 4);
+  assert.equal(result.counts.timers, 4);
   assert.equal(result.counts.setIntervalHits, 0);
   assert.ok(result.counts.setIntervalFiles > 100, `扫描面应覆盖 services/api/src 的代码文件，实际 ${result.counts.setIntervalFiles}`);
   assert.equal(result.counts.coveredNpmScripts, REQUIRED_NPM_SCRIPTS.length);
@@ -573,6 +573,7 @@ test('间隔上界分档·分钟级 60 / 日级 1440 / 未登记回落 60（⛔ 
   assert.equal(intervalBudgetMinutes('tools/purge-expired-online-data.mjs'), 60);
   assert.equal(intervalBudgetMinutes('tools/purge-expired-backup-copies.mjs'), 60);
   assert.equal(intervalBudgetMinutes('tools/purge-retention-expired.mjs'), 1440);
+  assert.equal(intervalBudgetMinutes('tools/purge-expired-media.mjs'), 60);
   // 归一化：反斜杠与 `./` 前缀落到同一档（否则 Windows 上造夹具会被「格式不对」放过）。
   assert.equal(intervalBudgetMinutes('tools\\purge-retention-expired.mjs'), 1440);
   assert.equal(intervalBudgetMinutes('./tools/purge-retention-expired.mjs'), 1440);
@@ -584,6 +585,7 @@ test('间隔上界分档·分钟级 60 / 日级 1440 / 未登记回落 60（⛔ 
     'tools/purge-expired-online-data.mjs': MAX_INTERVAL_MINUTES,
     'tools/purge-expired-backup-copies.mjs': MAX_INTERVAL_MINUTES,
     'tools/purge-retention-expired.mjs': DAILY_INTERVAL_MINUTES,
+    'tools/purge-expired-media.mjs': MAX_INTERVAL_MINUTES,
   });
   // 上界出处文案：日级 / 分钟级必须能分清（红的时候要让人看出按哪一档判的）。
   assert.match(intervalBudgetLabel('tools/purge-retention-expired.mjs'), /日级命令 tools\/purge-retention-expired\.mjs（每天至少一次）/);
