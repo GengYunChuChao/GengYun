@@ -71,7 +71,7 @@ export function planConversationChat(input: ConversationChatPlanInput): Conversa
     executionMode: input.executionMode,
     // 资料类型闭集里唯一的非媒体成员；其必需用途恰为 `external_inference`（packages/privacy/constants.mjs）。
     dataType: 'checked_content',
-    capability: 'llm',
+    capability: 'llm', model: input.chat.model, // 模型名只有装配层有；给了才写 model_version，不给恒 NULL
   });
   if (!egress.engaged) {
     return {

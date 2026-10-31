@@ -29,6 +29,7 @@ import { planConversationChat } from '../../services/api/src/ai/chat-wiring.ts';
 import {
   CHAT_MODEL_VERSION_PREFIX,
   CHAT_PROMPT_VERSION,
+  chatModelVersion,
   createLiveChatComposer,
 } from '../../services/api/src/ai/chat-live-adapter.ts';
 import { createChatEgress } from '../../services/api/src/privacy/task-egress.ts';
@@ -201,6 +202,75 @@ test('四门全开：mode=live，外发口 engaged，版本串由装配层给出
   });
   assert.ok(long.answerVersions.model.length <= 80, `版本串必须 ≤80：${long.answerVersions.model.length}`);
   assert.equal(long.answerVersions.model.startsWith(UNIMPLEMENTED_VERSION_PREFIX), false);
+});
+
+test('四门全开 + 假账本：模型名被喂进外发口 ⇒ provider_invocations.model_version 写 chatModelVersion(model)（不再恒 NULL）', async () => {
+  // 缺陷原状（R72 recon #12 候选 A）：装配层明明知道模型名（同一个 `planConversationChat` 里
+  // `answerVersions.model` 就在用 `input.chat.model`），却没把它传给 `createChatEgress`
+  // ⇒ `task-egress.ts:331-332` 拿不到 `model` ⇒ `provider_invocations.model_version` 恒 `NULL`。
+  // 本用例的唯一判据不是"参数看着传了"，而是**真外发一次**后，账本 `recordInvocation` 收到的那一行
+  // 里 `modelVersion` 必须等于 `chatModelVersion(本次配置的模型名)`（真源
+  // `chat-live-adapter.ts:61-63`，不抄字符串；`#live-1` 后缀也由它给出）。
+  const invocations = [];
+  const events = [];
+  const ledger = {
+    resolveRecipient: async () => 'recipient-llm-1',
+    reserve: async (input) => {
+      events.push('reserve');
+      return { id: 'export-w26-1', userId: input.userId, objectRevision: input.objectRevision, jobId: null };
+    },
+    markSent: async (id) => {
+      events.push('markSent');
+      return { id, userId: 'user-1', objectRevision: 1, jobId: 'job-w26-1' };
+    },
+    markFailed: async () => {
+      events.push('markFailed');
+    },
+    recordInvocation: async (input) => {
+      events.push('recordInvocation');
+      invocations.push(input);
+      return { ...input, attempt: invocations.length };
+    },
+  };
+  const inFlight = {
+    assertExecutable: async () => {
+      events.push('assertExecutable');
+    },
+    saveResult: async () => {
+      events.push('saveResult');
+    },
+  };
+
+  const plan = planConversationChat({
+    chat: profile(),
+    executionMode: 'real',
+    egressLedger: ledger,
+    privacyInFlight: inFlight,
+    fetchImpl: scriptedFetch([completion('稗草叶片光滑无毛[1]。')]),
+  });
+
+  assert.equal(plan.mode, 'live', '四与门全开必须落 live');
+  assert.equal(plan.answerVersions.model, chatModelVersion(MODEL), '回答行版本串取 chatModelVersion(模型名)');
+  assert.equal(plan.egress?.engaged, true);
+
+  // 走生产回答器（而不是直接调 egress）：证明真实外发链路喂到账本的也是同一个模型名。
+  const candidate = await plan.composer.compose({
+    question: QUESTION,
+    conditions: null,
+    set: retrievalSet('user-1', [ITEM_A, ITEM_B]),
+    egress: EGRESS_CONTEXT,
+  });
+  assert.deepEqual(candidate.citations.map((citation) => citation.id), [ITEM_A.id]);
+
+  assert.deepEqual(events, ['reserve', 'assertExecutable', 'markSent', 'recordInvocation', 'saveResult']);
+  assert.equal(invocations.length, 1, '一次外发只许一行调用记录');
+  const row = invocations[0];
+  assert.equal(row.capability, 'llm');
+  assert.equal(row.promptVersion, CHAT_PROMPT_VERSION, 'prompt_version 取 live 适配器常量（不经装配层）');
+  // 这一行就是缺陷本身：装配层不喂 `model` 时它是 `null`（反向控制 NC1 的可判据读数）。
+  assert.equal(row.modelVersion, chatModelVersion(MODEL), 'model_version 必须是 chatModelVersion(模型名)，不是 NULL');
+  assert.equal(row.modelVersion, `${CHAT_MODEL_VERSION_PREFIX}${MODEL}#live-1`, '形状：model/<model>#live-1');
+  assert.deepEqual(plan.egress.invocationReadings(), { written: 1, failed: 0, lastError: null });
 });
 
 // ---------------------------------------------------------------------------
