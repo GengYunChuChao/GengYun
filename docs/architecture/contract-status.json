@@ -1504,7 +1504,7 @@
           "name": "级联端口三态：已接线清理器 ⇒ initiated / 有 unsupported ⇒ unwired / 抛错 ⇒ failed（都不改写成删除失败）"
         }
       ],
-      "blocker": "已装配为 202 + AckEnvelope（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409），随轮次一并处理其回答，并以非契约披露头 X-GY-Cascade 如实区分 initiated / unwired / failed（未接线即如实披露，不谎称已完成，也不回滚已完成的删除）；级联音频/结果/外发处理的真实清理器未接线（本片只有端口与注册点）；**未接真实模型**：删除不改写任何版本串；原生 PG17 实例上的迁移执行仍待后续片"
+      "blocker": "已装配为 202 + AckEnvelope（Idempotency-Key 与 If-Match 强校验；他人与不存在同形 404、revision 不符 409），随轮次一并处理其回答，并以非契约披露头 X-GY-Cascade 如实区分 initiated / unwired / failed（未接线即如实披露，不谎称已完成，也不回滚已完成的删除）；级联音频/结果/外发处理的真实清理器未接线（本片只有端口与注册点）；**未接真实模型**：删除不改写任何版本串；原生 PG17 实例上的迁移执行仍待后续片。语音转写清理已于 R72 接线（本人读面随即取不到该转写）；外发账本按主体清空仍属 GY-I19，故成功路径的级联披露仍如实为 unwired。"
     },
     {
       "id": "listPosts",
