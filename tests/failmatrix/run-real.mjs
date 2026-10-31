@@ -741,6 +741,32 @@ async function main() {
 
     const seeded = await seedOwnerRowsReal(world, b, { pool, attacker: a });
 
+    // ------------------------------------------- 夹具：C3-21 专用「待停用账号」
+    // ⛔ 这个账号**只给** `cases.mjs:178` 的 C3-21（后台停用账号）用；任何其它用例都不许引用它
+    // （自证口径：`git grep -n suspendTargetUserId -- tests` 只应有播种处 + 用例处两处）。
+    //
+    // 为什么必须隔离：C3-21 的 stub 期望是 503（账号写权威未注入），但 real 臂走的是**已接线**的
+    // 真实停用路径，这条会**真的**把目标账号停用（侦察实测：`users.state=suspended`、
+    // `auth_epoch 1→2`、`sessions.revoked_at` 比 `created_at` 晚 48 ms 被全部吊销）。它原先把
+    // `ctx.b.userId` 当目标，而 B 是 C11 那组正控制（C11-35..39「B 仍能读自己的作业/识别/OCR/
+    // 转写/会话」）**唯一**的受害账号 ⇒ B 一被停用，这五条在 real 下恒 401 `SESSION_EXPIRED`，
+    // C11 的 same 就退化成「读不到」，不再证明「越权 404 打的是存在的行」。
+    // 形状照 C3-25 的既有先例（同文件 471-501 另播一帖专供 `ctx.hideTargetPostId`）：
+    // 一条破坏性写播一个专用目标，谁也不许动共享夹具。
+    let suspendTargetUserId;
+    try {
+      const suspendTarget = await createAccount(world, 'mx-c3-21-suspend-target');
+      suspendTargetUserId = suspendTarget.userId;
+      // 它自带一条会话（`createAccount` 内 `createSession`）；该会话被 C3-21 吊销也无所谓——
+      // 这个账号不参与任何正控制，吊销只影响它自己。
+      console.log(`[pg] suspend_target=${suspendTargetUserId}（只给 C3-21 停用，C11 正控制不受影响）`);
+    } catch (error) {
+      // 播不上就留哨兵：C3-21 解析路径时会抛 ⇒ 如实记 not-runnable。
+      // ⛔ 绝不退回 `ctx.b.userId`——那等于把「C11 正控制失真」这个缺陷原样引回来。
+      suspendTargetUserId = unavailableSeed('账号（C3-21 专用停用目标）');
+      warnSeed('停用目标账号（C3-21）', error);
+    }
+
     const ctx = {
       world,
       API,
@@ -751,6 +777,8 @@ async function main() {
       results: new Map(),
       lazy: new Map(),
       hideTargetPostId: seeded.hideTargetPostId,
+      // C3-21 的专用停用目标（见 main() 里的播种块）。stub 臂没有这个槽位，用例行用 `??` 兜底。
+      suspendTargetUserId,
       injection: '',
     };
 
