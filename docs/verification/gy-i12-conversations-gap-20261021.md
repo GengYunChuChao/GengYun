@@ -299,7 +299,7 @@ services/api/src/conversations/service.ts:1035-1039 context.read
 services/api/src/conversations/service.ts:1041-1046 composer.compose（唯一插入点）
 services/api/src/conversations/service.ts:1047-1052 guard.check
 services/api/src/conversations/service.ts:1054-1066 catch ⇒ failed / timed_out（绝不 succeeded）
-services/api/src/conversations/service.ts:1289    createConversationGuard（包装 createAnswerGuard；原记 1107）
+services/api/src/conversations/service.ts:1350    createConversationGuard（包装 createAnswerGuard；原记 1107）
 services/api/src/conversations/types.ts:52         UNIMPLEMENTED_VERSION_PREFIX = 'unimplemented:no-real-'
 services/api/src/conversations/guard.ts:64-76      interface RetrievalPort
 services/api/src/conversations/guard.ts:78-89      createUnwiredRetrievalPort
