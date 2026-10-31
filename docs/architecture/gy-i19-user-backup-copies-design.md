@@ -24,7 +24,7 @@
 | --- | --- | --- |
 | **GY-I19 期间**仓内没有逐用户备份副本地表 | [验证记录](../verification/gy-i19-backup-domain-20261018.md) §1 普查 | 18 个迁移（0001–0018）、54 处 `CREATE TABLE`（按 `schema.table` 限定名去重 54 张）、0 张备份/快照/副本/转储表。**GY-R28 起已落地**：`0023_user_backup_copies.sql` 建 `public.user_backup_copies`（`state='purged'` ⇒ `payload='null'::jsonb` ＋ 清除证据），`services/api/src/privacy/backup-copies-pg.ts` 的 `createPostgresBackupPurgePort()` 是真实端口（`kind: 'wired'`／`available: true`） |
 | 端口已存在但**当时**恒未接线 | [user-data-deletion.ts:339](../../services/api/src/privacy/user-data-deletion.ts)（接口 `BackupPurgePort`；R68-C1 片之前记 `:315`，媒体域补注释使行号下移）、[:321](../../services/api/src/privacy/user-data-deletion.ts)（工厂与返回对象；行号为 GY-R34-I19 树，设计片当时在 `:91`／`:97`，R28 树在 `:141`／`:147-156`，后续片新增常量与注释使行号下移） | 当时 `kind: 'unwired'`、`available: false`、`purge()` 恒 `{ purged: false }`；GY-R28 起不再恒未接线：`app.ts:1798-1805`（`backupPurgeWiring`，原记 :1581-1588；合流当前 main 前在 `:1457-1464`，按符号重取）在「受理端口已接线 ＋ 有真库连接池」时装配 `backup-copies-pg.ts` 的 PG 端口，无真库/未接受理时仍退回本行的 unwired 语义 |
-| 注入点已存在 | [app.ts:496](../../services/api/src/app.ts)（类型定义，原记 :471）、[:1818-1819](../../services/api/src/app.ts)（注入使用处，原记 :1593-1594） | 仅在显式注入 `userDataDeletionInjection.backupPurge` 时传入 |
+| 注入点已存在 | [app.ts:500](../../services/api/src/app.ts)（类型定义见 [app.ts:545](../../services/api/src/app.ts)，原记 471 行）、[:1822-1823](../../services/api/src/app.ts)（注入使用处见 [app.ts:1597-1598](../../services/api/src/app.ts)，原记 1593-1594 行） | 仅在显式注入 `userDataDeletionInjection.backupPurge` 时传入 |
 | 回执照实不谎报 | [tests/unit/user-data-deletion.test.mjs:88](../../tests/unit/user-data-deletion.test.mjs) | 断言逐字「备份副本清除未接线 ⇒ 如实 pending，不得谎称 completed」 |
 | 唯一备份产物是整库 dump | [backup-postgres.sh:56-57](../../deploy/postgres-cvm/backup-postgres.sh) | `KEEP_DAYS=30` 是**文件**保留期，无法逐用户删 |
 
@@ -52,7 +52,7 @@
 | 轴 | 真源（谁写） | 本片 |
 | --- | --- | --- |
 | `online_state` | handler 在线真删后由删除协议回填 | 不碰（已实现） |
-| `backup_state` | handler 调 `BackupPurgePort.purge()` 的结果（[user-data-deletion.ts:259-266](../../services/api/src/privacy/user-data-deletion.ts)） | **只设计**，不接线，取值仍是 `pending` |
+| `backup_state` | handler 调 `BackupPurgePort.purge()` 的结果（[user-data-deletion.ts:283-290](../../services/api/src/privacy/user-data-deletion.ts)） | **只设计**，不接线，取值仍是 `pending` |
 | `third_party_state` | 第三方请求/确认（`third_party_deletions` 表与 `deletion-modules.mjs` 的 thirdParty* 接口） | 不碰，与备份轴分列 |
 
 供应商副本的完成证据只认 `confirmed` + 证据（[deletion.mjs](../../packages/privacy/deletion.mjs) 的 `hasEvidence`），**不得**拿备份行的状态去顶替第三方轴，反之亦然。理由见验证记录 §3 第二条捷径。
@@ -300,7 +300,7 @@ SELECT count(*) FROM user_backup_copies
 
 ### 7.4 端口形状的现状缺口（本片只登记，不改）
 
-现有 `BackupPurgePort.purge()` 只能返回 `{ purged: boolean, evidenceRef?: string }`，handler 又始终返回 `errorCode: null`（[user-data-deletion.ts:342](../../services/api/src/privacy/user-data-deletion.ts)（`BackupPurgePort.purge()` 的声明行）；R68-C1 片之前记 `:335`，设计片当时记 `:276`（那是注释行，不是代码行），媒体域补注释使行号下移），**无法表达 `blocked`**。建议在接线片**新增可选字段**：
+现有 `BackupPurgePort.purge()` 只能返回 `{ purged: boolean, evidenceRef?: string }`，handler 又始终返回 `errorCode: null`（[user-data-deletion.ts:366](../../services/api/src/privacy/user-data-deletion.ts)（`BackupPurgePort.purge()` 的声明行）、端口说明注释见 [user-data-deletion.ts:359](../../services/api/src/privacy/user-data-deletion.ts)；R68-C1 片之前记 335 行，设计片当时记 `:300`（那是注释行，不是代码行），媒体域补注释使行号下移），**无法表达 `blocked`**。建议在接线片**新增可选字段**：
 
 ```ts
 type BackupPurgeOutcome =

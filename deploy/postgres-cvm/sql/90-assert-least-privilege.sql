@@ -153,6 +153,13 @@ DELETE FROM public.ocr_jobs WHERE false;
 \set r28_probe_del_ocr_jobs :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
+-- GY-R71 补片（账号注销清理）：统一作业台账 `public.jobs` 的表级 DELETE 正探针。
+-- 它删的是该主体自己的作业行（owner_id 收窄），与 messages / favorites 同性质。
+SAVEPOINT r28_probe;
+DELETE FROM public.jobs WHERE false;
+\set r28_probe_del_jobs :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
 -- 列级读面：逐表跑一次零行 SELECT（列清单 = 授权清单里的 SELECT 列）
 SAVEPOINT r28_probe;
 SELECT id, revision, owner_id, type, target_ref, read_at, created_at, event_key
@@ -1124,6 +1131,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('ocr_jobs',                       'granted',          true),
     ('ocr_records',                    'granted',          true),
     ('ocr_idempotency',                'granted',          true),
+    -- GY-R71（2026-10-30）：统一作业台账 `public.jobs`（建表 0001）获得**首个写入者**
+    -- （services/api/src/jobs/ledger.ts 的 `JOB_LEDGER_UPSERT_SQL`），故在 20-login-roles.sql
+    -- 的 gy-r28-runtime-domain-grants 段尾按写入者真实列授 SELECT(2)/INSERT(15)/UPDATE(5)。
+    -- 分类进 granted 是**必须**的：47 号元断言的正则没有 `jobs`，但「授权了却不分类」正是该断言
+    -- 要防的漂移；下面的 expected 再给它一份独立列清单复述（58 号断言逐列核对）。
+    ('jobs',                           'granted',          true),
     -- 备份副本由 GY-I19 段（另一次交付）授权给 gengyun_auth_privacy 组；
     -- 本文件只声明“已分类”，列级形状由 tests/integration/backup-purge-pg.mjs 覆盖。
     ('user_backup_copies',             'granted_external', true),
@@ -1245,6 +1258,28 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
      ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
      ARRAY['response_status','outcome'],
+     true),
+    -- GY-R71（2026-10-30）· 统一作业台账 `public.jobs`：**第一个**写入者不是某个域，而是
+    -- `services/api/src/jobs/ledger.ts` 里那条唯一的 upsert（四源共用：ocr / recognition /
+    -- transcription / answer）。列面由该语句反推，与 20-login-roles.sql 的 GRANT 逐列同值：
+    --   INSERT 15 列（台账一次写全）+ UPDATE 5 列（只有随状态迁移变的列会改）
+    --   + SELECT **6** 列 = 冲突目标 `id` + `WHERE` 读的 `state` + `DO UPDATE` 的 5 个 SET 列。
+    --   ⚠ 本片修正：SELECT 原登记为 2 列（id,state）**不足**。`ON CONFLICT (id) DO UPDATE` 会让 PG
+    --   读旧行，SET 列也必须可 SELECT；真 PG 17.11 留一法实测六列缺任一列即
+    --   `42501 permission denied for table jobs`（非 SET 列不需 ⇒ 仍是列级，不升表级 SELECT）。
+    --   复核：`tests/integration/egress-ledger-pg.mjs` 用同一份区域授权真跑那条 upsert。
+    --   ⚠ 本行（del）在 GY-R71 补片里由 false 翻成 true：注销清理要按 owner 删台账行
+    --   （见下方 allow_table_dml 与段 45 的真执行探针）。
+    -- ⛔ GY-R71 补片**已改这一行**：注销清理接入后 `del` 从 false 翻成 true
+    -- （`services/api/src/jobs/ledger.ts::JOB_LEDGER_PURGE_SQL`：
+    -- `DELETE FROM public.jobs WHERE owner_id = $1::uuid`，由 `jobs` 模块驱动）。
+    -- 「台账无读者」不是保留依据：行里带 owner_id / target_id / result_ref。
+    -- 与本行同批改的还有 `allow_table_dml` 的 ('public','jobs','DELETE') 与段 45 的真执行探针。
+    ('jobs',
+     ARRAY['id','state','revision','error_code','result_ref','updated_at'],
+     ARRAY['id','owner_id','kind','target_type','target_id','entity_revision','input_hash',
+           'auth_epoch','state','revision','deadline_at','error_code','result_ref','created_at','updated_at'],
+     ARRAY['state','revision','error_code','result_ref','updated_at'],
      true),
     ('ocr_jobs',
      ARRAY['id','revision','kind','owner_user_id','ocr_id','media_id','media_revision',
@@ -1526,7 +1561,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 若这里判红，先查是不是有人把别的表也改成了表级写权。
     -- 本片新增后，表级写授权白名单为 18 个三元组。
     ('public', 'ocr_jobs',              'DELETE'),
-    ('public', 'ocr_records',           'DELETE')
+    ('public', 'ocr_records',           'DELETE'),
+    -- GY-R71 补片（账号注销清理 · 监工 B 档实质阻塞）：统一作业台账 `public.jobs` 的 DELETE。
+    -- 理由：台账行携带 `owner_id` / `target_id` / `result_ref` 等私有作业关联，注销时必须按主体删掉；
+    -- PG 无列级 DELETE ⇒ 只能表级授予（与 messages / favorites 同一条）。判据没放松：
+    -- 白名单以外的任何表级写权限照样判红。本片新增后，表级写授权白名单为 19 个三元组。
+    ('public', 'jobs',                  'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里；`species` 由 GY-I07 加入）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
@@ -3116,8 +3156,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND :'r28_probe_del_community_idempotency' = 'false'
          AND :'r28_probe_del_ocr_idempotency' = 'false'
          AND :'r28_probe_del_ocr_records' = 'false'
-         AND :'r28_probe_del_ocr_jobs' = 'false',
-         'SET LOCAL ROLE gengyun_api_runtime 后，六张白名单表的 DELETE … WHERE false 必须成功；任一 42501 即失败'
+         AND :'r28_probe_del_ocr_jobs' = 'false'
+         AND :'r28_probe_del_jobs' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，七张白名单表的 DELETE … WHERE false 必须成功；任一 42501 即失败'
 
   UNION ALL
   -- 46. R28-S24 真执行探针（列级读面）：十张表按授权列 SELECT … LIMIT 0 必须成功。

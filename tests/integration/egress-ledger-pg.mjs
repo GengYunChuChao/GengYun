@@ -260,6 +260,66 @@ try {
   }
   say('fresh native PG17.11：0001/0003/0008/0009/0011 up，0011 down 后表与列如实消失，再 up 成功');
 
+  // ---------------------------------------------------------------- 1b. 台账授权（与部署侧同源）
+  const deploySqlFile = (name) => readFileSync(new URL(`../../deploy/postgres-cvm/sql/${name}`, import.meta.url), 'utf8');
+
+  /**
+   * `public.jobs`（GY-R71 统一作业台账）授权在仓内**只有一条**供给路径：
+   * `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r71-jobs-ledger-grant` 区域。
+   *
+   * 本臂**不执行** 20-login-roles.sql：它自建 LOGIN、授权来自 `services/api/db/roles/*.sql`，而那 8 份
+   * 角色文件里**没有任何一处**提到 jobs。于是 `POST /recognitions` 里 `jobs/ledger.ts` 的台账 upsert
+   * 会 `42501 permission denied for table jobs`，整条臂折成 503「识别数据库暂不可用」。
+   *
+   * 所以这里**不复制粘贴 SQL**：按 `#region` 抽部署侧原文，只把受权角色换成本臂的 LOGIN 后原样执行。
+   * 部署侧删掉/改宽这条授权 ⇒ 本臂必须跟着红（抄一份进测试，两条路径就会各自漂 —— 上一次漂移正是这么来的）。
+   */
+  function jobsLedgerGrantRegion() {
+    const matched = deploySqlFile('20-login-roles.sql').match(
+      /-- #region gy-r71-jobs-ledger-grant\r?\n([\s\S]*?)\r?\n\s*-- #endregion gy-r71-jobs-ledger-grant/,
+    );
+    assert.notEqual(matched, null, '20-login-roles.sql 必须含 gy-r71-jobs-ledger-grant 区域');
+    const region = matched[1];
+    // 形状断言只对**语句**做：区域里的说明性注释会提到「无 DELETE / 无 TRUNCATE」这类词，
+    // 拿注释一起做正则检查会把说明文字误判成授权（本臂第一版就这么假红过一次）。
+    const sqlOnly = region
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('--'))
+      .join('\n');
+    assert.equal(
+      /\\(echo|set|pset|if|endif|getenv|gexec|i\s)/.test(sqlOnly),
+      false,
+      '区域必须是纯 SQL（无 psql 元命令），否则本臂无法原样执行',
+    );
+    const statements = sqlOnly
+      .split(';')
+      .map((text) => text.trim())
+      .filter(Boolean);
+    assert.equal(statements.length, 3, '区域必须**恰好三条** GRANT 语句（SELECT / INSERT / UPDATE 各一条）');
+    for (const [index, prefix] of [
+      [0, 'GRANT SELECT ('],
+      [1, 'GRANT INSERT ('],
+      [2, 'GRANT UPDATE ('],
+    ]) {
+      assert.ok(statements[index].startsWith(prefix), `区域第 ${index + 1} 条语句必须是 \`${prefix}…\`：${statements[index]}`);
+      assert.ok(
+        statements[index].endsWith('ON public.jobs TO gengyun_api_runtime'),
+        `区域第 ${index + 1} 条语句必须作用于 public.jobs 且只授予运行时角色：${statements[index]}`,
+      );
+    }
+    // 列级、无表级 DML、无 DELETE/TRUNCATE —— 与部署侧 90-assert 同口径。
+    // 任何一条被写成表级即视为**放宽**，本臂在这里先红，而不是等到 90-assert 才红。
+    assert.equal(
+      /GRANT\s+(INSERT|UPDATE|DELETE|TRUNCATE|ALL|REFERENCES|TRIGGER)\s+ON\s+public\.jobs/i.test(sqlOnly),
+      false,
+      'public.jobs 只允许**列级**授权：出现表级 DML / DELETE / TRUNCATE 即放宽',
+    );
+    // 受权角色只允许出现运行时角色这一个名字（换成自建 LOGIN 后语义必须不变）。
+    const grantees = new Set([...sqlOnly.matchAll(/\bTO\s+([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]));
+    assert.deepEqual([...grantees], ['gengyun_api_runtime'], `区域只能授予 gengyun_api_runtime，实际：${[...grantees].join(', ')}`);
+    return region.replaceAll('gengyun_api_runtime', loginName);
+  }
+
   // ---------------------------------------------------------------- 2. 最小权限角色
   for (const file of ['roles/auth_privacy.sql', 'roles/consent_granter.sql', 'roles/egress_ledger.sql']) {
     await owner.query(sqlFile(file));
@@ -270,6 +330,10 @@ try {
   );
   createdRoles.push(loginName);
   await owner.query(`GRANT ${groups.join(',')} TO ${loginName}`);
+  // 统一作业台账 `public.jobs`（GY-R71）：授权**抽自**部署侧 `gy-r71-jobs-ledger-grant` 区域，
+  // 只把受权角色换成本臂的 LOGIN —— 与 `deploy/**` 语义逐条相同，不在这里另写一份。
+  // 缺了它 ⇒ `POST /recognitions` 的台账 upsert 42501 / 503（本臂原来的唯一红）。
+  await owner.query(jobsLedgerGrantRegion());
   // 识别域（0025）运行时 DML：**只**授给本脚本的测试 LOGIN，不动仓内任何 NOLOGIN 组定义。
   // ① 这是**部署侧应有而当前缺失**的授权：`services/api/db/roles/*.sql` 没有识别域角色文件，
   //    `deploy/postgres-cvm/sql/20-login-roles.sql` 也没有识别域 grant region；而
@@ -300,6 +364,52 @@ try {
   const flags = (await pool.query('SELECT rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname=current_user')).rows[0];
   assert.ok(Object.values(flags).every((value) => value === false));
   say('运行时 LOGIN 继承 auth_privacy + consent_granter + egress_ledger，且无任何超级权限');
+
+  // `public.jobs` 的**列级最小权限**读数（与部署侧 90-assert 同口径：只许收紧，不许改成「有权限就行」）。
+  // 台账 upsert 真实需要的就是这三组列：INSERT 15 列 / UPDATE 5 列 / SELECT 6 列。
+  // SELECT 为什么是 6 列而不是 2 列：`ON CONFLICT (id) DO UPDATE` 让 PG 读旧行，除冲突目标 `id` 与
+  // `WHERE` 里的 `state` 外，DO UPDATE 的**每个 SET 列**也要可 SELECT；真 PG 17.11 留一法实测
+  // 六列缺任一列即 42501（非 SET 列如 lease_token / created_at 并不需要）。多一列或少一列都必须红。
+  const ledgerColumns = {
+    INSERT: [
+      'id', 'owner_id', 'kind', 'target_type', 'target_id', 'entity_revision', 'input_hash',
+      'auth_epoch', 'state', 'revision', 'deadline_at', 'error_code', 'result_ref', 'created_at', 'updated_at',
+    ],
+    UPDATE: ['state', 'revision', 'error_code', 'result_ref', 'updated_at'],
+    SELECT: ['id', 'state', 'revision', 'error_code', 'result_ref', 'updated_at'],
+  };
+  const ledgerPairs = Object.entries(ledgerColumns).flatMap(([action, columns]) =>
+    columns.map((column) => `('${action}','${column}')`),
+  );
+  const ledgerReadings = (
+    await owner.query(
+      `SELECT v.action, v.col, has_column_privilege($1, 'public.jobs', v.col, v.action) AS ok
+         FROM (VALUES ${ledgerPairs.join(',')}) AS v(action, col)`,
+      [loginName],
+    )
+  ).rows;
+  assert.equal(ledgerReadings.length, 26, 'public.jobs 的列权限读数必须是 15+5+6=26 条');
+  const missingLedgerColumns = ledgerReadings.filter((row) => !row.ok).map((row) => `${row.action}(${row.col})`);
+  assert.deepEqual(missingLedgerColumns, [], `运行时在 public.jobs 上缺列权限（台账 upsert 会 42501）：${missingLedgerColumns.join(', ')}`);
+  // 反向：表级 DML / DELETE / TRUNCATE 一律不得存在（本仓对 public.jobs 的既定口径是**列级**、无表级 DML、无 DELETE）。
+  const tableLevel = (
+    await owner.query(
+      `SELECT action FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS action
+        WHERE has_table_privilege($1, 'public.jobs', action)`,
+      [loginName],
+    )
+  ).rows.map((row) => row.action);
+  assert.deepEqual(tableLevel, [], `public.jobs 不得有表级权限（只许列级、无 DELETE）：${tableLevel.join(', ')}`);
+  // 反向：台账列之外的列必须仍是未授权（防止用 `GRANT ALL (…)` 之类悄悄放大到整张表）。
+  const leakedColumns = (
+    await owner.query(`SELECT v.action, v.col FROM (VALUES
+        ('INSERT','actor_admin_id'),('INSERT','consent_epoch'),('INSERT','lease_token'),
+        ('UPDATE','lease_token'),('UPDATE','attempt'),('SELECT','lease_expires_at'),
+        ('SELECT','provider_config_version')) AS v(action, col)
+       WHERE has_column_privilege($1, 'public.jobs', v.col, v.action)`, [loginName])
+  ).rows.map((row) => `${row.action}(${row.col})`);
+  assert.deepEqual(leakedColumns, [], `public.jobs 出现台账列之外的列权限（授权被放宽）：${leakedColumns.join(', ')}`);
+  say('public.jobs 台账授权与部署侧同源：只有 15+5+6 列权限，无表级 DML、无 DELETE、无多余列');
 
   const forbidden = [
     'UPDATE recipients SET deletion_verified=true',

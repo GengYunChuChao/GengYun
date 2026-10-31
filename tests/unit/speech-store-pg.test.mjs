@@ -171,9 +171,16 @@ test('[1] insertJob：单条 INSERT；同 id 冲突由唯一性裁决（23505 �
   const row = jobInput();
   const ok = makeDb([[]]);
   await ok.store.insertJob(row);
-  assert.equal(ok.log.length, 1, 'insertJob 必须只发一条语句');
-  assert.match(ok.sqls()[0], /^INSERT INTO public\.speech_jobs /);
-  assert.equal(ok.log[0].values[0], row.id);
+  // GY-R71：insertJob 从「单句」变成「一个事务里的两句」——源表 INSERT + 台账 upsert。
+  const okSqls = ok.sqls();
+  assert.equal(okSqls[0], 'BEGIN', 'insertJob 必须开事务（台账与源表同一个提交点）');
+  assert.match(okSqls[2], /^INSERT INTO public\.speech_jobs /);
+  assert.match(okSqls[3], /^INSERT INTO public\.jobs \(/, '台账 upsert 必须紧跟源表 INSERT（同一事务内）');
+  assert.match(okSqls[3], /ON CONFLICT \(id\) DO UPDATE/);
+  assert.equal(okSqls[4], 'COMMIT');
+  assert.equal(okSqls[5], 'RELEASE');
+  assert.equal(ok.log[2].values[0], row.id);
+  assert.equal(ok.log[3].values[0], row.id, '台账主键必须是作业 id');
 
   const dup = makeDb([uniqueViolation()]);
   await assert.rejects(
@@ -213,13 +220,18 @@ test('[2] getJob：按主键单条读；未命中 ⇒ null；行逐字段映射�
 test('[3] updateJob：CAS 判定在**单条**带 WHERE revision = $n 的 UPDATE；0 行 ⇒ null', async () => {
   const row = dbJobRow();
 
-  // (a) revision 不匹配 ⇒ null，且**不得**发出 UPDATE
+  // (a) revision 不匹配 ⇒ null，且**不得**发出 UPDATE / 不得写台账
   const stale = makeDb([[row]]);
   const staleResult = await stale.store.updateJob(row.id, 9, (current) => ({ ...current, revision: current.revision + 1 }));
   assert.equal(staleResult, null);
-  assert.equal(stale.log.length, 1, 'revision 不匹配时不得发出 UPDATE（现场发了第二条语句）');
+  assert.equal(stale.sqls().filter((sql) => /^UPDATE/.test(sql)).length, 0, 'revision 不匹配时不得发出 UPDATE');
+  assert.equal(
+    stale.sqls().filter((sql) => sql.startsWith('INSERT INTO public.jobs')).length,
+    0,
+    'CAS 不匹配时不得写台账',
+  );
 
-  // (b) 命中 ⇒ 一条带 revision 谓词的 UPDATE，返回值即库返回行
+  // (b) 命中 ⇒ 一条带 revision 谓词的 UPDATE，返回值即库返回行；台账紧跟着写
   const nextRow = dbJobRow({ id: row.id, revision: 2, state: 'running', updated_at: T1 });
   const hit = makeDb([[row], [nextRow]]);
   const updated = await hit.store.updateJob(row.id, 1, (current) => ({
@@ -230,10 +242,11 @@ test('[3] updateJob：CAS 判定在**单条**带 WHERE revision = $n 的 UPDATE�
   }));
   assert.equal(updated.revision, 2);
   assert.equal(updated.state, 'running');
-  assert.match(hit.sqls()[1], /^UPDATE public\.speech_jobs SET /);
-  assert.match(hit.sqls()[1], / WHERE id = \$1::uuid AND revision = \$2 RETURNING /);
-  assert.equal(hit.log[1].values[1], 1, 'CAS 的比较值必须是调用方给的 expectedRevision');
-  assert.equal(hit.log[1].values[2], 2, '写入的 revision 必须是 mutate 返回的新版本（不是 SQL 再 +1）');
+  assert.match(hit.sqls()[3], /^UPDATE public\.speech_jobs SET /);
+  assert.match(hit.sqls()[3], / WHERE id = \$1::uuid AND revision = \$2 RETURNING /);
+  assert.match(hit.sqls()[4], /^INSERT INTO public\.jobs \(/, 'running 迁移必须在同一事务里写台账');
+  assert.equal(hit.log[3].values[1], 1, 'CAS 的比较值必须是调用方给的 expectedRevision');
+  assert.equal(hit.log[3].values[2], 2, '写入的 revision 必须是 mutate 返回的新版本（不是 SQL 再 +1）');
 
   // (c) SELECT 命中但 UPDATE 0 行（两次读之间被并发改写）⇒ null，不覆盖他人写
   const raced = makeDb([[row], []]);
@@ -261,15 +274,25 @@ test('[4] commitTerminal：单事务 BEGIN → FOR UPDATE → INSERT（可空）
   assert.match(sqls[2], /^SELECT .* FROM public\.speech_jobs WHERE id = \$1::uuid FOR UPDATE$/);
   assert.match(sqls[3], /^INSERT INTO public\.transcriptions /);
   assert.match(sqls[4], /^UPDATE public\.speech_jobs SET state = \$3, error_code = \$4, revision = revision \+ 1/);
-  assert.equal(sqls[5], 'COMMIT');
-  assert.equal(sqls[6], 'RELEASE', '连接必须归还（事务结束后）');
+  assert.match(sqls[5], /^INSERT INTO public\.jobs \(/, '终态台账 upsert 必须在同一事务内、紧跟作业行 UPDATE');
+  assert.equal(sqls[6], 'COMMIT');
+  assert.equal(sqls[7], 'RELEASE', '连接必须归还（事务结束后）');
   // 记录行必须在**同一个事务连接**上写（不是另开一次池查询）
   assert.equal(db.log[3].values[0], record.id);
 
-  // transcription 为 null ⇒ 不写记录表
+  // transcription 为 null ⇒ 不写记录表（台账照写：终态本身是真实迁移）
   const noRecord = makeDb([[row], [committed]]);
   await noRecord.store.commitTerminal(row.id, 2, { state: 'succeeded', errorCode: null }, null, T1);
-  assert.equal(noRecord.sqls().some((sql) => sql.startsWith('INSERT')), false, '无记录时不得 INSERT 转写记录');
+  assert.equal(
+    noRecord.sqls().some((sql) => sql.startsWith('INSERT INTO public.transcriptions')),
+    false,
+    '无记录时不得 INSERT 转写记录',
+  );
+  assert.equal(
+    noRecord.sqls().some((sql) => sql.startsWith('INSERT INTO public.jobs')),
+    true,
+    '无记录也必须有台账行（终态迁移发生了）',
+  );
 
   // CAS 失败：只锁读 + COMMIT，**不得**写记录、不得改任务
   const casFail = makeDb([[row]]);

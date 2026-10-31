@@ -592,6 +592,16 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
       + '（那条链无 PG：既没有真库、也没有能建角色/跑迁移的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
+  {
+    path: 'tests/integration/jobs-ledger-pg.mjs',
+    reason: '未接线（真缺口）：`package.json` 的 `test:integration:http` 链只跑本机回环 HTTP、没有 PG'
+      + '（既没有真库、也没有能跑迁移的超管连接），`.github/workflows/real-pg-integration.yml` 也还没有它的 step，'
+      + '而本脚本要一个**空库**（先断言 public 下 0 张表）再自己按 `discoverMigrations` 顺序跑完整 48 条迁移链。'
+      + '它的门是自己那条 `JOBS_LEDGER_PG_TEST_URL`（缺它即 `SKIP` + 77），**刻意不用** `GY_PG_BIN`：'
+      + '后者那一组脚本的条数被 `tests/unit/ai-ops-ledger-pins.test.mjs` 的钉子⑤冻结，本片不去动那份清单。'
+      + '它证的是「台账与源表同一事务 / ON CONFLICT 幂等 / answer 源 / 取消」四件事（13 条 PASS 读数）；'
+      + '接进真库 job 是后续片的事，在那之前这条缺口如实登记为"未接线"。'
+  },
 ]);
 
 /** 读取并解析 `package.json` 真值。 */

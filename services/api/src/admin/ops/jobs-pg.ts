@@ -47,6 +47,7 @@ import { ApiError } from '../../errors.ts';
 import { ERROR_CODES, type ErrorCode } from '../../contract.ts';
 import { parseAdminJobFilter } from './jobs.ts';
 import { JOB_KINDS } from './types.ts';
+import { ledgerRowFromDomainJob, writeJobLedger, type LedgerWiredSource } from '../../jobs/ledger.ts';
 import type {
   AdminJobCancelAuditInput,
   AdminJobFilter,
@@ -129,7 +130,13 @@ const CANCEL_AUDIT_SQL =
  *    表集与列要求**零漂移**。
  */
 interface JobSource {
-  readonly kind: JobKind;
+  /**
+   * GY-R71：**收窄**成「已接入统一台账的三个域内源」（`ocr` / `recognition` / `transcription`）。
+   * 取消要在同一事务里写 `public.jobs`，而该写入点的映射函数只接受已接源
+   * （`jobs/ledger.ts` 的 `ledgerRowFromDomainJob`）；收窄后「新增一个源却忘了接台账」在类型层就红，
+   * 而不是运行到取消那一刻才炸。仍是 `JobKind` 的子集，`toAdminJobView` 的闭集校验不受影响。
+   */
+  readonly kind: Exclude<LedgerWiredSource, 'answer'>;
   readonly recordColumn: 'ocr_id' | 'recognition_id' | 'transcription_id';
   /**
    * 列表读面的 `SELECT … FROM <真实表>` 部分（**不含** `WHERE` / `ORDER BY` / `LIMIT`）。
@@ -182,9 +189,9 @@ const SOURCES: readonly JobSource[] = [
     getSql:
       'SELECT j.id, j.revision, j.ocr_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.ocr_jobs AS j LEFT JOIN public.ocr_records AS r ON r.id = j.ocr_id WHERE j.id = $1::uuid',
     lockSql:
-      'SELECT id, revision, ocr_id, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid FOR UPDATE',
+      'SELECT id, revision, ocr_id, owner_user_id, media_id, media_revision, state, deadline_at, created_at, error_code FROM public.ocr_jobs WHERE id = $1::uuid FOR UPDATE',
     updateSql:
-      "UPDATE public.ocr_jobs SET state = 'cancelled', revision = revision + 1, updated_at = now() WHERE id = $1::uuid AND revision = $2::integer AND state IN ('queued','running') RETURNING id, revision, ocr_id, state, deadline_at, created_at, error_code",
+      "UPDATE public.ocr_jobs SET state = 'cancelled', revision = revision + 1, updated_at = now() WHERE id = $1::uuid AND revision = $2::integer AND state IN ('queued','running') RETURNING id, revision, ocr_id, state, deadline_at, created_at, error_code, updated_at",
   },
   {
     kind: 'recognition',
@@ -197,9 +204,9 @@ const SOURCES: readonly JobSource[] = [
     getSql:
       'SELECT j.id, j.revision, j.recognition_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.recognition_jobs AS j LEFT JOIN public.recognition_records AS r ON r.id = j.recognition_id WHERE j.id = $1::uuid',
     lockSql:
-      'SELECT id, revision, recognition_id, state, deadline_at, created_at, error_code FROM public.recognition_jobs WHERE id = $1::uuid FOR UPDATE',
+      'SELECT id, revision, recognition_id, owner_user_id, media_id, media_revision, state, deadline_at, created_at, error_code FROM public.recognition_jobs WHERE id = $1::uuid FOR UPDATE',
     updateSql:
-      "UPDATE public.recognition_jobs SET state = 'cancelled', revision = revision + 1, updated_at = now() WHERE id = $1::uuid AND revision = $2::integer AND state IN ('queued','running') RETURNING id, revision, recognition_id, state, deadline_at, created_at, error_code",
+      "UPDATE public.recognition_jobs SET state = 'cancelled', revision = revision + 1, updated_at = now() WHERE id = $1::uuid AND revision = $2::integer AND state IN ('queued','running') RETURNING id, revision, recognition_id, state, deadline_at, created_at, error_code, updated_at",
   },
   {
     kind: 'transcription',
@@ -212,9 +219,9 @@ const SOURCES: readonly JobSource[] = [
     getSql:
       'SELECT j.id, j.revision, j.transcription_id, j.state, j.deadline_at, j.created_at, j.error_code, r.revision AS target_revision FROM public.speech_jobs AS j LEFT JOIN public.transcriptions AS r ON r.id = j.transcription_id WHERE j.id = $1::uuid',
     lockSql:
-      'SELECT id, revision, transcription_id, state, deadline_at, created_at, error_code FROM public.speech_jobs WHERE id = $1::uuid FOR UPDATE',
+      'SELECT id, revision, transcription_id, owner_user_id, media_id, media_revision, state, deadline_at, created_at, error_code FROM public.speech_jobs WHERE id = $1::uuid FOR UPDATE',
     updateSql:
-      "UPDATE public.speech_jobs SET state = 'cancelled', revision = revision + 1, updated_at = now() WHERE id = $1::uuid AND revision = $2::integer AND state IN ('queued','running') RETURNING id, revision, transcription_id, state, deadline_at, created_at, error_code",
+      "UPDATE public.speech_jobs SET state = 'cancelled', revision = revision + 1, updated_at = now() WHERE id = $1::uuid AND revision = $2::integer AND state IN ('queued','running') RETURNING id, revision, transcription_id, state, deadline_at, created_at, error_code, updated_at",
   },
 ];
 
@@ -284,6 +291,14 @@ const listWhereExportFor = (source: JobSource) => ({
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * `pg` 的 `timestamptz` 列读出来是 `Date`，替身/夹具里可能是 ISO 串 ⇒ 两种都收成 `Date`。
+ * GY-R71 的台账写入需要真实 `Date`（列绑定是 `$N::timestamptz`），⛔ 不用 `String(...)` 再塞回去。
+ */
+function toDate(value: unknown): Date {
+  return value instanceof Date ? value : new Date(String(value));
+}
+
+/**
  * 目标记录**尚未创建**时的 `target_ref.revision`（契约下限 `revision >= 1` 的最小合法值）。
  *
  * 这是「记录行的初始版本」而不是"占位 1"：记录只在终态事务里以 `revision = 1` 写入
@@ -309,6 +324,17 @@ export interface JobRow {
    * `null` = **记录行尚不存在**（`LEFT JOIN` 无匹配，或该语句不读记录表：`lockSql` / `updateSql`）。
    */
   readonly target_revision: number | null;
+  /**
+   * GY-R71：取消时写统一台账要用的三个**域事实** —— `owner_id`、`media_id`（台账 `target_id`）、
+   * `media_revision`（台账 `entity_revision`）。只有 `lockSql` 读它们；`listSql` / `getSql` /
+   * `updateSql` 与行锁语句的取舍见各自注释 ⇒ 在那些投影里为 `null`，与 `target_revision`
+   * 同一种「这条语句没读该列」的表示法（⛔ 不是"值为空"）。
+   */
+  readonly owner_user_id: string | null;
+  readonly media_id: string | null;
+  readonly media_revision: number | null;
+  /** 取消 `UPDATE … updated_at = now()` 回传的**库时钟**：台账 `updated_at` 直接沿用它。 */
+  readonly updated_at: unknown;
 }
 
 /**
@@ -329,6 +355,10 @@ function projectRow(source: JobSource, row: Record<string, unknown>): JobRow {
     // `undefined`（语句没读该列，如 `lockSql` / `updateSql`）与 `null`（LEFT JOIN 无匹配）同义：
     // 都表示"这行没有可报的记录版本"，由 `toAdminJobView` 折成初始值。
     target_revision: (row.target_revision ?? null) as number | null,
+    owner_user_id: (row['owner_user_id'] ?? null) as string | null,
+    media_id: (row['media_id'] ?? null) as string | null,
+    media_revision: (row['media_revision'] ?? null) as number | null,
+    updated_at: row['updated_at'] ?? null,
   };
 }
 
@@ -585,6 +615,31 @@ export function createPostgresAdminJobPort(options: {
         // **审计与状态变更同一事务**（监工 #589）：这一步失败 ⇒ 下面的 catch 整体 ROLLBACK，
         // 作业保持取消前的 state/revision，审计表零新增。绝不在 COMMIT 之后补写。
         await recordCancelAudit(client, audit, id, expectedRevision);
+        // GY-R71：统一台账行与「域内取消 + 审计」**同一个事务**。缺列（只可能是装配/授权错）
+        // ⇒ fail-closed 抛 503 并整体回滚，绝不写一条字段残缺的台账行。
+        if (current.owner_user_id === null || current.media_id === null || current.media_revision === null) {
+          throw unavailable('取消事务未取到台账所需列（owner_user_id / media_id / media_revision）');
+        }
+        await writeJobLedger(
+          client,
+          ledgerRowFromDomainJob(
+            source.kind,
+            {
+              id: current.id,
+              revision: updated.revision,
+              kind: updated.kind,
+              ownerUserId: current.owner_user_id,
+              state: updated.state,
+              deadlineAt: toDate(current.deadline_at),
+              createdAt: toDate(current.created_at),
+              updatedAt: toDate(updated.updated_at),
+              errorCode: updated.error_code,
+              mediaId: current.media_id,
+              mediaRevision: current.media_revision,
+            },
+            updated.record_id,
+          ),
+        );
         await client.query('COMMIT');
         return { ok: true, job: toAdminJobView(updated) };
       } catch (error) {

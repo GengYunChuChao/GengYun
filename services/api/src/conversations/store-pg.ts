@@ -20,6 +20,7 @@
  *   CAS 删除仍带 `expected_revision`，以 `rowCount` 判定成功/失败原因。
  */
 import { ApiError } from '../errors.ts';
+import { ledgerRowFromTurn, writeJobLedger } from '../jobs/ledger.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import type {
   AnswerRecord,
@@ -305,30 +306,35 @@ export function createPostgresConversationStore(
     // 轮次与回答
     // -----------------------------------------------------------------------
     async insertTurn(record) {
-      const { rows } = await pool.query(
-        `INSERT INTO conversation_turns
-           (id, conversation_id, owner_id, revision, input_text, transcription_ref, job_id, job_state,
-            job_deadline_at, job_created_at, job_error_code, created_at, updated_at)
-         VALUES ($1::uuid, $2::uuid, $3::uuid, 1, $4, $5::jsonb, $6::uuid, $7, $8, $9, $10, $11, $11)
-         RETURNING ${TURN_COLUMNS}`,
-        [
-          record.id,
-          record.conversation_id,
-          record.owner_id,
-          record.input_text,
-          record.transcription_ref === null ? null : JSON.stringify(record.transcription_ref),
-          record.job_id,
-          record.job_state,
-          record.job_deadline_at,
-          record.job_created_at,
-          record.job_error_code,
-          record.created_at,
-        ],
-      );
-      const row = rows[0];
-      // 写库未返回结果行 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
-      if (row === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: false });
-      return toTurn(row);
+      // GY-R71：台账行与轮次行**同一个事务**（answer 作业的 `queued` 台账行在此产生）。
+      return guarded(async (sql) => {
+        const { rows } = await sql.query(
+          `INSERT INTO conversation_turns
+             (id, conversation_id, owner_id, revision, input_text, transcription_ref, job_id, job_state,
+              job_deadline_at, job_created_at, job_error_code, created_at, updated_at)
+           VALUES ($1::uuid, $2::uuid, $3::uuid, 1, $4, $5::jsonb, $6::uuid, $7, $8, $9, $10, $11, $11)
+           RETURNING ${TURN_COLUMNS}`,
+          [
+            record.id,
+            record.conversation_id,
+            record.owner_id,
+            record.input_text,
+            record.transcription_ref === null ? null : JSON.stringify(record.transcription_ref),
+            record.job_id,
+            record.job_state,
+            record.job_deadline_at,
+            record.job_created_at,
+            record.job_error_code,
+            record.created_at,
+          ],
+        );
+        const row = rows[0];
+        // 写库未返回结果行 ⇒ 确定性缺陷（重试不会改善）：retryable 必须为 false。口径见 services/api/src/errors.ts 的 ApiError 注释。
+        if (row === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '问答数据库未返回写入结果', { retryable: false });
+        const turn = toTurn(row);
+        await writeJobLedger(sql, ledgerRowFromTurn(turn));
+        return turn;
+      });
     },
 
     async getTurn(conversationId, turnId, ownerId) {
@@ -384,15 +390,21 @@ export function createPostgresConversationStore(
     },
 
     async claimTurnJob(turnId, ownerId) {
-      const { rows } = await pool.query(
-        `UPDATE conversation_turns
-         SET job_state = 'running', revision = revision + 1, updated_at = now()
-         WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state = 'queued'
-         RETURNING ${TURN_COLUMNS}`,
-        [turnId, ownerId],
-      );
-      const row = rows[0];
-      return row === undefined ? null : toTurn(row);
+      // GY-R71：`queued → running` 迁移与台账行同一事务（同态重放由 `job_state = 'queued'` 的 WHERE 挡住）。
+      return guarded(async (sql) => {
+        const { rows } = await sql.query(
+          `UPDATE conversation_turns
+           SET job_state = 'running', revision = revision + 1, updated_at = now()
+           WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state = 'queued'
+           RETURNING ${TURN_COLUMNS}`,
+          [turnId, ownerId],
+        );
+        const row = rows[0];
+        if (row === undefined) return null;
+        const turn = toTurn(row);
+        await writeJobLedger(sql, ledgerRowFromTurn(turn));
+        return turn;
+      });
     },
 
     async cancelTurnJob(turnId, ownerId) {
@@ -459,7 +471,12 @@ export function createPostgresConversationStore(
           [input.turnId, answerId, input.ownerId],
         );
         const row = rows[0];
-        return row === undefined ? null : toTurn(row);
+        if (row === undefined) return null;
+        const settled = toTurn(row);
+        // GY-R71：终态台账行与「回答行 + 轮次行」同一个事务（`:402` 的 `job_state IN ('queued','running')`
+        // 已经保证这里看到的是**真实发生**的迁移；没有迁移就没有台账写）。
+        await writeJobLedger(sql, ledgerRowFromTurn(settled));
+        return settled;
       });
     },
 

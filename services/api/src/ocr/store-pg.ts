@@ -55,6 +55,7 @@
  */
 import type { ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
+import { ledgerRowFromDomainJob, writeJobLedger } from '../jobs/ledger.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import {
   canTransitionJob,
@@ -558,7 +559,17 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
 
     async insertJob(row) {
       await requireTables();
-      await runWrite(INSERT_JOB, jobValues(row), JOB_CONFLICT_MESSAGE);
+      // GY-R71：台账行与源表行**同一个事务**（⛔ 不在 `runWrite` 之后补写 —— 那是两个提交点）。
+      // 事务里因此不能再用 `runWrite`：它自己走 pool（自动提交），冲突折叠与未迁移折叠在这里原地重做。
+      await withTransaction(async (sql) => {
+        try {
+          await sql.query(INSERT_JOB, jobValues(row));
+        } catch (error) {
+          if (isUniqueViolation(error)) throw new OcrStoreConflictError(JOB_CONFLICT_MESSAGE);
+          throw error;
+        }
+        await writeJobLedger(sql, ledgerRowFromDomainJob('ocr', row, row.ocrId));
+      });
     },
 
     async getJob(jobId) {
@@ -572,26 +583,35 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
     async updateJob(jobId, expectedRevision, mutate) {
       // 写类：表未迁移 ⇒ 明确 fail-closed（不静默当成"CAS 失败"，那会让调用方无限重试）。
       await requireTables();
-      // 读一次只为算出 mutate 的结果；**判定权在下面的 UPDATE**（`WHERE revision = $2`），
-      // 因此两次读之间即使有并发写，也不会被本方法覆盖（0 行 ⇒ null）。
-      const current = await run(`SELECT ${JOB_COLUMNS} FROM public.ocr_jobs WHERE id = $1::uuid`, [jobId]);
-      const snapshot = current[0];
-      if (snapshot === undefined) return null;
-      if (Number(snapshot['revision']) !== expectedRevision) return null;
-      const next = mutate(jobRowFromRow(snapshot));
-      const rows = await run(
-        `UPDATE public.ocr_jobs
-            SET revision = $3,
-                state = $4,
-                deadline_at = $5::timestamptz,
-                updated_at = $6::timestamptz,
-                error_code = $7
-          WHERE id = $1::uuid AND revision = $2
-        RETURNING ${JOB_COLUMNS}`,
-        [jobId, expectedRevision, next.revision, next.state, next.deadlineAt, next.updatedAt, next.errorCode],
-      );
-      const row = rows[0];
-      return row === undefined ? null : jobRowFromRow(row);
+      // GY-R71：读 / CAS 更新 / 台账 upsert 三句在**同一个事务**里（台账行不得比 CAS 结果先落或后落）。
+      return withTransaction(async (sql) => {
+        // 读一次只为算出 mutate 的结果；**判定权在下面的 UPDATE**（`WHERE revision = $2`），
+        // 因此两次读之间即使有并发写，也不会被本方法覆盖（0 行 ⇒ null）。
+        const current = await sql.query(
+          `SELECT ${JOB_COLUMNS} FROM public.ocr_jobs WHERE id = $1::uuid`,
+          [jobId],
+        );
+        const snapshot = current.rows[0];
+        if (snapshot === undefined) return null;
+        if (Number(snapshot['revision']) !== expectedRevision) return null;
+        const next = mutate(jobRowFromRow(snapshot));
+        const rows = await sql.query(
+          `UPDATE public.ocr_jobs
+              SET revision = $3,
+                  state = $4,
+                  deadline_at = $5::timestamptz,
+                  updated_at = $6::timestamptz,
+                  error_code = $7
+            WHERE id = $1::uuid AND revision = $2
+          RETURNING ${JOB_COLUMNS}`,
+          [jobId, expectedRevision, next.revision, next.state, next.deadlineAt, next.updatedAt, next.errorCode],
+        );
+        const row = rows.rows[0];
+        if (row === undefined) return null;
+        const updated = jobRowFromRow(row);
+        await writeJobLedger(sql, ledgerRowFromDomainJob('ocr', updated, updated.ocrId));
+        return updated;
+      });
     },
 
     async commitTerminal(jobId, expectedRevision, terminal, ocr, at) {
@@ -630,7 +650,11 @@ export function createPostgresOcrStore({ pool }: PostgresOcrStoreOptions): OcrSt
           [jobId, expectedRevision, terminal.state, terminal.errorCode, at],
         );
         const row = updated.rows[0];
-        return row === undefined ? null : jobRowFromRow(row);
+        if (row === undefined) return null;
+        const committed = jobRowFromRow(row);
+        // GY-R71：终态台账行与「记录行 + 作业行」同一个事务（CAS 失败时根本走不到这里）。
+        await writeJobLedger(sql, ledgerRowFromDomainJob('ocr', committed, committed.ocrId));
+        return committed;
       });
     },
 

@@ -214,6 +214,21 @@ export const RETENTION_EXCLUSIONS = Object.freeze([
     table: 'public.exports / public.export_writebacks',
     reason: '外发台账是 F13 取证材料（docs/implementation-requirements.md:281），随注销去身份而非按日历删除。',
   }),
+  Object.freeze({
+    table: 'public.jobs',
+    reason:
+      '统一作业台账（迁移 0001 建表；GY-R71 起的唯一写入者是 services/api/src/jobs/ledger.ts）。'
+      + '**保留依据与期限**：行内带 owner_id / target_id（媒体或轮次）/ entity_revision / result_ref'
+      + '（产出 id）与 auth_epoch，属**私有作业关联**，与它镜像的域内作业行（ocr_jobs / recognition_jobs /'
+      + ' speech_jobs / conversation_turns 的作业快照列）同一生命周期 —— 私有识别记录原则保存至注销'
+      + '（docs/implementation-requirements.md:277），因此**不走日历保留**：本表不登记保留天数，'
+      + '生命周期由注销链负责（「在线 7 日／备份 30 日」是注销请求的两个到期时刻，即'
+      + ' deletion_requests.online_due_at 与 user_backup_copies.retention_until，'
+      + '见 docs/architecture/gy-r59-retention-backup-thirdparty-map.md:24；不是本表的日历保留期）。'
+      + '注销清理由 privacy/user-data-deletion.ts 的 jobs 模块执行'
+      + '（jobs/ledger.ts 的 `DELETE FROM public.jobs WHERE owner_id = $1::uuid`）⇒ 与 favorites / history'
+      + ' 同一条口径：不并入本策略表，但**必须有**注销清理者。',
+  }),
 ]);
 
 /** 策略自洽校验的失败码（稳定、可断言）。 */
