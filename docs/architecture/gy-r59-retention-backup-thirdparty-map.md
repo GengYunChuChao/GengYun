@@ -100,7 +100,7 @@
 
 `docs/architecture/s4-data-traceability.md:238` 的 D13 判定「未实现」仍然成立，但本行原文「`:259` 的三条缺口（应用侧零读写、适配器未装配、投影没接进 `/me/exports`）**今天依然逐条成立**；`:257` 的两条零命中 grep 也依然准确」**已被 2026-10-28 的复核推翻**（订正 2026-10-31／基线 `8da1aeb1`）：三条缺口现于 `docs/architecture/s4-data-traceability.md:262` 起重写为一条，两条零命中 grep 现为 **5 行 / 15 行**（`docs/architecture/s4-data-traceability.md:259`）。
 
-但 `:240` 起的「实现（半成品，逐层都在但没接起来）」原先只列到 0003 表、内存协议、适配器、投影四层，**完全没有 0044 的库层读/写路径、`20-login-roles.sql` 的授权、`90-assert-least-privilege.sql` 的断言、以及 `tests/integration/third-party-deletion-pg.mjs` 真库臂 + CI 接线**。该遗漏已在同分支补上：D13 现于 `docs/architecture/s4-data-traceability.md:248` 多出一段「库层证据（2026-10-26 增补；判定与下面三条缺口均不变）」，**判定列与三条缺口一字未动**。（订正 2026-10-31／基线 `8da1aeb1`：该段现位于 `docs/architecture/s4-data-traceability.md` 第 251 行起，标题已改成「2026-10-26 增补；2026-10-28 复核更正两处符号名与一处 CI 锚」；末句「判定列与三条缺口一字未动」已不成立——三条缺口 2026-10-28 复核后并成一条，判定仍「未实现」，见同页 D13 段。）
+但 `docs/architecture/s4-data-traceability.md` 第 240 行起的「实现（半成品，逐层都在但没接起来）」原先只列到 0003 表、内存协议、适配器、投影四层，**完全没有 0044 的库层读/写路径、`20-login-roles.sql` 的授权、`90-assert-least-privilege.sql` 的断言、以及 `tests/integration/third-party-deletion-pg.mjs` 真库臂 + CI 接线**。该遗漏已在同分支补上：D13 现于 `docs/architecture/s4-data-traceability.md:248` 多出一段「库层证据（2026-10-26 增补；判定与下面三条缺口均不变）」，**判定列与三条缺口一字未动**。（订正 2026-10-31／基线 `8da1aeb1`：该段现位于 `docs/architecture/s4-data-traceability.md` 第 251 行起，标题已改成「2026-10-26 增补；2026-10-28 复核更正两处符号名与一处 CI 锚」；末句「判定列与三条缺口一字未动」已不成立——三条缺口 2026-10-28 复核后并成一条，判定仍「未实现」，见同页 D13 段。）
 
 ## 5. 恢复清单（restore）与恢复重放（replay）：只有纯函数和一对脚本
 
