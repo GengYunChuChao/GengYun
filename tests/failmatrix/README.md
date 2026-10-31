@@ -217,9 +217,19 @@ PostgreSQL 17.11 集群**上实跑权限面 **180** 条（C1 37 + C2 24 + C3 36 
 | 注销受理 fail-closed | C1-30、C4-11、C4-15 | 401/400/202 | 503 | real 模式注销执行链路（7 日在线/30 日备份）未实现 ⇒ 整域 503 |
 | 同意门先于存在性判定 | C2-18、C11-08/14/16/22（改/确认不存在资源） | 404 | 403 `CONSENT_REQUIRED` | real 模式同意门（`public_posting` 等）接 PG 后，PATCH/POST 面先撞 403 再判存在性 |
 
-**一条级联差异（如实记账）**：C3-21 在真 PG 下**真的停用了 B**（stub 该面 503 无副作用），因此排在其后的
-C11-39（「B 仍能读自己的会话」正控制）由 200 变为 401 `SESSION_EXPIRED`——这不是独立差异，而是 C3-21
-真实副作用的级联，正好证明「真 PG 停用面会真的让会话失效」而 stub 做不到。
+**一条级联差异（已修复，2026-11-01 · R72-W27）**：C3-21 在真 PG 下会**真的停用它的目标账号**（stub 该面 503
+无副作用），而它原来打的是全族唯一的受害账号 `ctx.b` ⇒ 排在其后的 `C11-35..39` 五条正控制（「B 仍能读自己的
+作业/识别/OCR/转写/会话」）全都由 200 变 401 `SESSION_EXPIRED`，C11 的 `same` 里有 5 条退化成「读不到」，不再
+证明「越权 404 打的是存在的行」。
+
+修法是给 C3-21 播**专用**停用目标（`ctx.suspendTargetUserId`，`run-real.mjs` 的 `mx-c3-21-suspend-target`），
+和 C3-25 用 `ctx.hideTargetPostId` 同一套先例；`cases.mjs:178` 只把目标表达式换成
+`ctx.suspendTargetUserId ?? ctx.b.userId`（stub 臂没有该槽位，`??` 兜底，503 发生在任何副作用之前），
+`expect` 一字未动 —— C3-21 自己仍是 `different`（stub 503 → real 200），那是真实世界差异。
+
+修后 CI 官方读数（`failmatrix-real-17.11`，run `41246879696` 的 artifact `real.json`）：
+**180 条 = same 149 / different 14 / not-runnable 17**；`C11-35..39` 全部 `same`(200)，`C3-21` 仍 `different`(200)。
+修复前同臂读数是 `same 144 / different 19 / not-runnable 17`（本机 PG 17.11 双跑对照，变动的正好是那五条）。
 
 **同源保障**：本臂的用例表**直接复用 `cases.mjs`**（不另写一套），只换 world（真 PG store）+ 判定口径
 （`real` 而非 `stub`）。`tests/unit/gy-i22-failmatrix-real.test.mjs` 锁住「缺 `GY_PG_BIN` ⇒ 77」与
