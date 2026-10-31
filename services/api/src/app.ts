@@ -1298,7 +1298,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : null;
   const mediaStore: MediaStore = mediaStoreOption
     ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
-      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
+      ? createPostgresMediaStore({ pool, connect: () => pool.connect(), cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
       : createMemoryMediaStore({ now: () => clock().getTime() }));
   // **放行判据 = `communityStore.persistent`**（不是"某处注入了什么"）：内存实现在 real 下
   // 一律 503，PG 实现在 real + 连接池时放行；持久化改造后这条判据仍然成立且更严。
@@ -2237,7 +2237,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ocrStore: ocrDeletionStore,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
-    now: clock,
+    now: clock, ...(mediaPersistenceRefusal === null ? { mediaStore } : {}),
     ...backupPurgeWiring,
     ...backupStatesWiring,
     ...onlineEvidenceWiring,
