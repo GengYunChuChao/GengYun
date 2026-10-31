@@ -29,6 +29,7 @@ import { planConversationChat } from '../../services/api/src/ai/chat-wiring.ts';
 import {
   CHAT_MODEL_VERSION_PREFIX,
   CHAT_PROMPT_VERSION,
+  bodyViolationsOf,
   chatModelVersion,
   createLiveChatComposer,
 } from '../../services/api/src/ai/chat-live-adapter.ts';
@@ -869,6 +870,55 @@ test('适配器：正文里的登记证号必须能在本次检索集合里找�
   // T4 边界：`XPD20161371` / `PD201613710` 都不算号码 ⇒ 不算违规。
   const boundary = await composeWith('XPD20161371 与 PD201613710 都不是证号形态[1]。', [ITEM_NUMBERED]);
   assert.equal(boundary.text_violations, undefined, '粘连字母/多一位数字的串不得被误判成证号');
+});
+
+test('适配器：登记证号形态边界 —— 尾随字母不算登记证号（T4b 尾随字母：既不背书，也不拦下）', async () => {
+  const composeWith = (content, items) => {
+    const composer = createLiveChatComposer({
+      profile: profile(),
+      egress: fakeEgress(),
+      fetchImpl: scriptedFetch([completion(content)]),
+    });
+    return composer.compose({
+      question: QUESTION,
+      conditions: null,
+      set: retrievalSet('user-1', items),
+      egress: EGRESS_CONTEXT,
+    });
+  };
+
+  const ITEM_NUMBERED = retrievalItem({
+    id: '3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a',
+    title: '合成资料戊：带登记证号的识别要点（测试替身）',
+    body: '登记证号：PD20161371\n识别要点：合成正文，仅用于回归，不含真实用量建议。',
+  });
+
+  // 判据函数层（这条是**判别性**断言）：集合里没有 `PD20161371` 时，`PD20161371X` 也不得被截成
+  // "未背书号码"去报 —— 尾边界还是 `(?![0-9])` 时这里会产出
+  // `unattributed_registration_number:PD20161371`，一个正文里根本不存在的号码。
+  assert.deepEqual(
+    bodyViolationsOf({ content: '登记证号 PD20161371X 适用。', used: [ITEM_A] }),
+    [],
+    '尾粘字母的串不得被截成 PD20161371 再报未背书',
+  );
+  assert.deepEqual(bodyViolationsOf({ content: '登记证号 PD20161371x 适用。', used: [ITEM_A] }), []);
+  // 已背书集合下的同一形态：同样不报（本判据不认这个形态 ⇒ 无处可背书、也无处可拦）。
+  assert.deepEqual(bodyViolationsOf({ content: '登记证号 PD20161371X 适用。', used: [ITEM_NUMBERED] }), []);
+
+  // 适配器层：正文原样交付（形态之外的漏拦 —— 与本判据"不认该形态"是同一件事，写进断言留痕）。
+  const trailing = await composeWith('登记证号 PD20161371X 适用。', [ITEM_NUMBERED]);
+  assert.equal(trailing.text_violations, undefined);
+  assert.match(trailing.text, /PD20161371X/u);
+
+  // 适配器层判别：来源里没有该号码时，尾粘字母的串同样不得把正文拦掉（旧边界下这里 text 为空）。
+  const trailingAgainstPlain = await composeWith('登记证号 PD20161371X 适用。', [ITEM_A]);
+  assert.equal(trailingAgainstPlain.text_violations, undefined);
+  assert.match(trailingAgainstPlain.text, /PD20161371X/u);
+
+  // 反向对照：同一条来源，去掉尾字母就是本判据的形态 ⇒ 集合外号码照旧被拦（防止"一律通过"掩盖判据失效）。
+  const control = await composeWith('登记证号 PD20161372 适用。', [ITEM_NUMBERED]);
+  assert.equal(control.text, '');
+  assert.deepEqual(control.text_violations, ['unattributed_registration_number:PD20161372']);
 });
 
 test('注入真实模型回答器：编造登记证号 ⇒ 整条阻断（用户可见正文与持久层都不得留下该号码）', async (t) => {

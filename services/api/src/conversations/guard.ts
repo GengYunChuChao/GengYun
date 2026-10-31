@@ -442,12 +442,12 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
  * 找不到出处的号码一律视为「未检索来源的号码」，不得随正文出给用户。
  *
  * 形态边界（**故意收紧**：宁可漏拦，不可误杀）—— 只认 `PD` + **正好 8 位**数字，且前后不直接
- * 粘 ASCII 字母/数字：`XPD20161371`、`PD201613710`、`PD-SYNTHETIC-0001` 都不算命中。当前仓内
- * 资料的登记证号就是这个形态（`packages/knowledge/herbicides/records-2026.json`）。
+ * 粘 ASCII 字母/数字：`XPD20161371`、`PD201613710`、`PD20161371X`（尾粘字母）都不算命中；
+ * `PD-SYNTHETIC-0001` 同理。当前仓内资料的登记证号就是这个形态（`packages/knowledge/herbicides/records-2026.json`）。
  * ⚠️ 将来原文出现别的形态（带后缀/连字符/位数不同）本判据会**漏**；那时要同步改这里，
  * 而不是让正文自由发挥。
  */
-const TEXT_REGISTRATION_PATTERN = /(?<![A-Za-z0-9])PD\d{8}(?![0-9])/gu;
+const TEXT_REGISTRATION_PATTERN = /(?<![A-Za-z0-9])PD\d{8}(?![A-Za-z0-9])/gu;
 
 /** 提取正文里的登记证号（去重、保持出现顺序）。 */
 export function registrationNumbersInText(text: string): string[] {

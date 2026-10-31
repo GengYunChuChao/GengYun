@@ -352,6 +352,62 @@ test('守卫单元：正文里的登记证号必须出自本次检索集合（�
   assert.deepEqual(noSet.rejected_text, []);
 });
 
+test('守卫单元：登记证号形态边界 —— 尾随字母不算登记证号（T4b 尾随字母：不被背书，也不被拦下）', () => {
+  const guard = createAnswerGuard({ dose: createUnwiredDoseAuthority() });
+  const base = { question: QUESTION, conditions: null };
+
+  const NUMBERED = retrievalItem({
+    id: '7f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f',
+    title: '合成条目丙：带登记证号的正文（测试替身）',
+    body: '登记证号：PD20161371\n登记名称：合成药剂丙（测试替身）\n说明：不含真实用量建议。',
+  });
+  const TRAILING_LETTER = retrievalItem({
+    id: '5c4b3a29-1807-4a6b-8c9d-0e1f2a3b4c5d',
+    title: '合成条目己：登记证号尾随字母的正文（测试替身）',
+    body: '登记证号：PD20161371X\n登记名称：合成药剂己（测试替身）\n说明：不含真实用量建议。',
+  });
+
+  // 抽号：尾粘字母（大写/小写）都不是本判据的形态 ⇒ 不许从长串里截出 `PD20161371`。
+  assert.deepEqual(registrationNumbersInText('PD20161371X'), []);
+  assert.deepEqual(registrationNumbersInText('PD20161371x'), []);
+  assert.deepEqual(registrationNumbersInText('登记证号：PD20161371X。'), []);
+  assert.deepEqual(
+    [...groundedRegistrationNumbersOf([TRAILING_LETTER])],
+    [],
+    '尾粘字母的正文不得背书 PD20161371',
+  );
+
+  // 守卫口径：正文写 `PD20161371X` 时，它既不算"集合内号码"也不算"集合外号码" —— 本判据不认这个
+  // 形态，因此**既不背书、也不拦下**（注释里 ⚠️ 那句"形态之外会漏"的具体落点，写进断言免得日后误读）。
+  const trailing = guard.check({
+    candidate: { text: '登记证号 PD20161371X 适用。', citations: [NUMBERED.source], dose_cards: [] },
+    set: retrievalSet('user-1', [NUMBERED]),
+    ...base,
+  });
+  assert.equal(trailing.status, 'answered');
+  assert.deepEqual(trailing.rejected_text, []);
+  assert.equal(trailing.checked_text.includes('PD20161371X'), true);
+
+  // 关键判别：集合里**没有** `PD20161371` 时，`PD20161371X` 也不得被截成"未背书号码"去拦 ——
+  // 尾边界还是 `(?![0-9])` 时这里会 blocked 且 rejected_text 报出一个正文里根本不存在的号码。
+  const trailingAgainstPlain = guard.check({
+    candidate: { text: '登记证号 PD20161371X 适用。', citations: [ITEM.source], dose_cards: [] },
+    set: retrievalSet('user-1', [ITEM]),
+    ...base,
+  });
+  assert.equal(trailingAgainstPlain.status, 'answered', '尾粘字母的串不得被截成 PD20161371 再判未背书');
+  assert.deepEqual(trailingAgainstPlain.rejected_text, []);
+
+  // 反向对照：同一集合，去掉尾字母就是本判据的形态 ⇒ 集合外号码照旧被拦（防止上面的"通过"掩盖判据失效）。
+  const control = guard.check({
+    candidate: { text: '登记证号 PD20161372 适用。', citations: [NUMBERED.source], dose_cards: [] },
+    set: retrievalSet('user-1', [NUMBERED]),
+    ...base,
+  });
+  assert.equal(control.status, 'blocked');
+  assert.deepEqual(control.rejected_text, ['unattributed_registration_number:PD20161372']);
+});
+
 test('守卫单元：用量卡只能取自确定性权威路径 —— 集合外/未获权威放行的一律拒绝', () => {
   const unwired = createAnswerGuard({ dose: createUnwiredDoseAuthority() });
   const authoritative = createAnswerGuard({ dose: createDeterministicDoseAuthority() });
