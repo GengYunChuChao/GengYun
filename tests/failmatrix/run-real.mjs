@@ -60,7 +60,15 @@ const { buildApp } = await import('../../services/api/src/app.ts');
 const { loadConfig } = await import('../../services/api/src/config.ts');
 const { createPool } = await import('../../services/api/src/db/pool.ts');
 const { discoverMigrations, applyMigrations } = await import('../../services/api/src/db/migrate.ts');
-const { hashToken, mintOpaqueToken } = await import('../../services/api/src/auth/tokens.ts');
+const { hashToken, mintOpaqueToken, sha256Hex } = await import('../../services/api/src/auth/tokens.ts');
+// 真表播种用的域内原语（与生产装配**同一份实现**，列名/约束/摘要口径不另抄一份）。
+const { postModerationText } = await import('../../services/api/src/community/service.ts');
+const { createPostgresCommunityStore } = await import('../../services/api/src/community/store-pg.ts');
+const { createPostgresRecognitionStore } = await import('../../services/api/src/recognitions/store-pg.ts');
+const { createPostgresOcrStore } = await import('../../services/api/src/ocr/store-pg.ts');
+const { createPostgresSpeechStore } = await import('../../services/api/src/speech/store-pg.ts');
+const { RULE_VERSION } = await import('../../packages/moderation/rule-version.mjs');
+const { missingContractFields } = await import('../../packages/moderation/review.mjs');
 
 // ---------------------------------------------------------------------------
 // 一次性 PG 17 集群
@@ -202,10 +210,12 @@ function unavailableSeed(domain) {
 
 /**
  * 真 PG 世界的属主行播种（B 的私有行）。
- * 能播的播（收藏 / 历史 / 消息 / 会话）；播不了的（媒体 / 社区投稿 / 举报 / 识别 / OCR / 转写 / 作业）
- * 置为 `unavailableSeed` 哨兵，对应用例在跑之前就标 `not-runnable`，⛔ 不拿「不存在」当「越权 404」的假同形。
+ * 能播的播（收藏 / 历史 / 消息 / 会话，走 HTTP 或服务原语）；real 模式下 HTTP 写面 fail-closed 的那几组
+ * （社区投稿 / 举报 / 作业 / 识别 / OCR / 转写）改为按**真表**在库里播种（见 `seedFailClosedRowsReal`）。
+ * 任何一组播不上就**保留原 `unavailableSeed` 哨兵**并 `console.warn` 一行原因 ⇒ 对应用例继续 `not-runnable`，
+ * ⛔ 不拿「不存在」当「越权 404」的假同形，也⛔ 不让整臂抛死。
  */
-async function seedOwnerRowsReal(world, owner) {
+async function seedOwnerRowsReal(world, owner, { pool, attacker }) {
   const seeded = {
     media: unavailableSeed('媒体（对象存储未接线）'),
     favoriteId: null,
@@ -218,6 +228,7 @@ async function seedOwnerRowsReal(world, owner) {
     recognitionId: unavailableSeed('识别（需媒体 + 真实供应商）'),
     ocrId: unavailableSeed('OCR（需媒体 + 真实供应商）'),
     transcriptionId: unavailableSeed('转写（需媒体 + 真实供应商）'),
+    hideTargetPostId: unavailableSeed('社区投稿（审核管线未接线，隐藏目标）'),
     conversationId: null,
     conversationEtag: null,
     turnId: null,
@@ -293,7 +304,292 @@ async function seedOwnerRowsReal(world, owner) {
     /* 会话域不可播 */
   }
 
+  // 社区 / 异步 AI 两族：real 模式下没有 HTTP 写路径，直接按迁移定义的真表播种。
+  await seedFailClosedRowsReal({ pool, world, owner, attacker, seeded });
+
   return seeded;
+}
+
+/** 播种失败只 warn 一行（⛔ 不抛死整臂、⛔ 不静默当成功）。 */
+function warnSeed(group, error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.warn(`[seed] ${group}播种失败，保留原哨兵（该组用例继续 not-runnable）：${reason}`);
+}
+
+/**
+ * real 模式 fail-closed 的两族属主行，按**真表**播种（迁移 0022 / 0024–0026）：
+ *   - 社区：`community_posts` / `community_comments` / `community_reports` /
+ *     `community_moderation_decisions`（0022）
+ *   - 异步 AI：`recognition_jobs` / `recognition_records`（0025）、`ocr_records`（0024）、
+ *     `transcriptions`（0026）
+ * 之所以不走 HTTP：`createPost` 先过审核闸（real 审核 fail-closed ⇒ 503），
+ * `POST /recognitions|/ocr|/speech/transcriptions` 需要真实供应商与就绪媒体（⇒ 503）。
+ * ⛔ 不播 `posts`/`comments`/`reports`（0001，与本臂无关），也⛔ 不播 `public.jobs`
+ *   （`services/api/src` 零引用，播了没人读）。列名/约束一律照迁移，摘要与结论口径一律复用域内实现。
+ */
+async function seedFailClosedRowsReal({ pool, world, owner, attacker, seeded }) {
+  const at = new Date(world.dbNowMs);
+  const atIso = at.toISOString();
+  // 小写 uuid 形态：社区域 UUID_PATTERN 无 i 标志（community/validate.ts:36）。
+  const fixtureId = (n) => `00000000-0000-4000-9d00-${String(n).padStart(12, '0')}`;
+  const mediaId = fixtureId(50);
+  const ids = {
+    post: fixtureId(1),
+    comment: fixtureId(2),
+    report: fixtureId(3),
+    hideTarget: fixtureId(4),
+    job: fixtureId(21),
+    recognition: fixtureId(22),
+    ocr: fixtureId(31),
+    transcription: fixtureId(41),
+  };
+
+  /** 让帖/评论在 `effectiveState` 里被判成 `approved` 的台账行（service.ts:583-616 + moderation-gate.ts:218-267）。 */
+  const verdictOf = (kind, targetId, revision, text, n) => ({
+    id: fixtureId(n),
+    target_ref: { type: kind, id: targetId, revision },
+    decision: 'approved',
+    reason_codes: [],
+    hard_rule_passed: true,
+    rule_version: RULE_VERSION,
+    text_digest: sha256Hex(text),
+    contract_complete: false,
+    missing_contract_fields: missingContractFields(),
+    decided_by: null,
+    created_at: atIso,
+  });
+
+  // ---- S0 授权行（攻击者 a）------------------------------------------------
+  // consent 闸只在真池时接上（app.ts:995-999），闸读的是 privacy_epochs + consent_records 这对表
+  // （consent-pg.ts:46-48 的 LEFT JOIN）；被闸住的是 C2-08/C2-09（public_posting）、
+  // C11-07（weed_recognition）、C11-13/15（label_ocr）、C11-21（voice_question）。
+  // ⛔ 不走 `POST /me/consents`：那条路要求现行 policy 与已登记的 verified recipient。
+  // ⛔ 不给属主 b 播：b 命中的都是无闸的 GET/DELETE，多播只会扩大翻转面。
+  try {
+    for (const purpose of ['public_posting', 'media_processing', 'external_inference', 'recording']) {
+      await pool.query(
+        `INSERT INTO public.privacy_epochs (user_id, purpose, current_epoch, state)
+         VALUES ($1::uuid, $2::consent_purpose, 1, 'granted')
+         ON CONFLICT (user_id, purpose)
+         DO UPDATE SET current_epoch = 1, state = 'granted',
+                       revision = public.privacy_epochs.revision + 1, updated_at = now()`,
+        [attacker.userId, purpose],
+      );
+      await pool.query(
+        `INSERT INTO public.consent_records (user_id, purpose, policy_version, recipient_ids, state, epoch, granted_at, withdrawn_at)
+         VALUES ($1::uuid, $2::consent_purpose, 'i22-realpg-fixture-v1', '[]'::jsonb, 'granted', 1, now(), NULL)
+         ON CONFLICT (user_id, purpose, epoch)
+         DO UPDATE SET state = 'granted', withdrawn_at = NULL, granted_at = now()`,
+        [attacker.userId, purpose],
+      );
+    }
+  } catch (error) {
+    warnSeed('授权行（C2-08/C2-09/C11-07/C11-13/C11-15/C11-21）', error);
+  }
+
+  // ---- S1–S4 社区 ---------------------------------------------------------
+  let community = null;
+  try {
+    community = createPostgresCommunityStore({ pool });
+  } catch (error) {
+    warnSeed('社区 store 装配（C2/C3 社区组）', error);
+  }
+
+  let postReady = false;
+  if (community !== null) {
+    try {
+      const title = '真 PG 臂种子的属主 B 帖子（跨账号越权矩阵用）';
+      const body = '这是属主 B 的帖子正文：用于判定他人读、改、删是否被正确拒绝。';
+      const record = {
+        id: ids.post,
+        revision: 1,
+        author_id: owner.userId,
+        anonymized_author_ref: null,
+        title,
+        body,
+        crop_id: null,
+        region_code: null,
+        media_ids: [],
+        linked_knowledge_ref: null,
+        visibility: 'published',
+        audit_state: 'approved',
+        created_at: atIso,
+        updated_at: atIso,
+      };
+      const inserted = await community.insertPost(record, verdictOf('post', ids.post, 1, postModerationText(record), 11));
+      if (inserted !== true) {
+        // insertPost 在 id 已存在时返回 false 且不写台账行 ⇒ 回读确认行确实在，否则当失败。
+        if ((await community.getPost(ids.post)) === null) throw new Error('community_posts 未落行');
+      }
+      seeded.postId = ids.post;
+      postReady = true;
+    } catch (error) {
+      warnSeed('社区帖（C2-07/C2-10/C2-19/C3-07/C3-13/C3-18）', error);
+    }
+  }
+
+  if (community !== null && postReady) {
+    try {
+      const record = {
+        id: ids.comment,
+        revision: 1,
+        post_id: ids.post,
+        author_id: owner.userId,
+        anonymized_author_ref: null,
+        body: '这是属主 B 的评论正文：用于判定他人改、删是否被正确拒绝。',
+        visibility: 'published',
+        audit_state: 'approved',
+        created_at: atIso,
+      };
+      // commentModerationText 不导出（service.ts:229-231 返回 record.body），摘要逐字镜像它。
+      const inserted = await community.insertComment(
+        record,
+        verdictOf('comment', ids.comment, 1, record.body, 12),
+        { id: ids.post, revision: 1 },
+      );
+      if (inserted !== true) throw new Error('community_comments 未落行');
+      seeded.commentId = ids.comment;
+    } catch (error) {
+      warnSeed('社区评论（C2-09）', error);
+    }
+    try {
+      await community.insertReport({
+        id: ids.report,
+        revision: 1,
+        reporter_id: owner.userId,
+        target_ref: { type: 'post', id: ids.post, revision: 1 },
+        state: 'received',
+        reason_code: 'other',
+        detail: '属主 B 的举报细节（真 PG 臂种子）',
+        anonymized_author_ref: null,
+        created_at: atIso,
+      });
+      seeded.reportId = ids.report;
+    } catch (error) {
+      warnSeed('社区举报（C2-20）', error);
+    }
+    // S4：隐藏目标必须是**另一条**帖（cases.mjs:182 的 note），否则 C3-25/C3-27 会与 C2-19 互相污染。
+    try {
+      const title = '真 PG 臂种子的隐藏目标帖（C3-25/C3-27 用）';
+      const body = '这是另一条属主 B 的帖子：只用于验证后台隐藏与隐藏后不可见。';
+      const record = {
+        id: ids.hideTarget,
+        revision: 1,
+        author_id: owner.userId,
+        anonymized_author_ref: null,
+        title,
+        body,
+        crop_id: null,
+        region_code: null,
+        media_ids: [],
+        linked_knowledge_ref: null,
+        visibility: 'published',
+        audit_state: 'approved',
+        created_at: atIso,
+        updated_at: atIso,
+      };
+      const inserted = await community.insertPost(
+        record,
+        verdictOf('post', ids.hideTarget, 1, postModerationText(record), 13),
+      );
+      if (inserted !== true) {
+        if ((await community.getPost(ids.hideTarget)) === null) throw new Error('community_posts 未落行');
+      }
+      seeded.hideTargetPostId = ids.hideTarget;
+    } catch (error) {
+      warnSeed('隐藏目标帖（C3-25/C3-27）', error);
+    }
+  }
+
+  // ---- S5–S7 异步 AI -----------------------------------------------------
+  // 三张记录表对 media **无外键**（0024:110-126 / 0025:131-151 / 0026:112-130 的 media_id 只是 uuid），
+  // 所以不需要媒体行或对象存储；作业表挂在 owner_user_id 上（0025:103-123）。
+  try {
+    const recognition = createPostgresRecognitionStore({ pool });
+    await recognition.insertJob({
+      id: ids.job,
+      revision: 1,
+      kind: 'recognition',
+      ownerUserId: owner.userId,
+      recognitionId: ids.recognition,
+      mediaId,
+      mediaRevision: 1,
+      // queued ⇒ toJob 的 usable 为假、result 为 null（recognitions/service.ts:260-273），不触发结果深校验。
+      state: 'queued',
+      deadlineAt: new Date(at.getTime() + 30_000),
+      createdAt: at,
+      updatedAt: at,
+      errorCode: null,
+    });
+    await recognition.insertRecognition({
+      id: ids.recognition,
+      revision: 1,
+      ownerUserId: owner.userId,
+      mediaId,
+      mediaRevision: 1,
+      candidates: [{ species_id: SPECIES_ID, rank: 1, model_score: 0.91 }],
+      uncertaintyReasons: [],
+      selectedSpeciesId: null,
+      modelVersion: 'i22-realpg-fixture-v1',
+      createdAt: at,
+      updatedAt: at,
+      deleted: false,
+    });
+    seeded.jobId = ids.job;
+    seeded.recognitionId = ids.recognition;
+  } catch (error) {
+    warnSeed('识别作业与识别记录（C11-01/C11-03/C11-05/C11-07/C11-09/C11-35/C11-36）', error);
+  }
+
+  try {
+    const ocr = createPostgresOcrStore({ pool });
+    // ingredients 每项必须 name/content_text/unit_text 三个非空文本，否则读回时 503（ocr/store-pg.ts:233-256）。
+    const fields = {
+      registration_number: 'PD20210001',
+      name: '替身示例草甘膦水剂',
+      ingredients: [{ name: '草甘膦', content_text: '41', unit_text: '%' }],
+      dosage_form: '水剂',
+    };
+    await ocr.insertOcr({
+      id: ids.ocr,
+      revision: 1,
+      ownerUserId: owner.userId,
+      mediaId,
+      mediaRevision: 1,
+      rawFields: fields,
+      correctedFields: fields,
+      verification: { match_state: 'no_match', registration: null, conflict_fields: [], missing_fields: [], dose_cards: [] },
+      modelVersion: 'i22-realpg-fixture-v1',
+      createdAt: at,
+      updatedAt: at,
+      deleted: false,
+    });
+    seeded.ocrId = ids.ocr;
+  } catch (error) {
+    warnSeed('OCR 记录（C11-11/C11-13/C11-15/C11-17/C11-37）', error);
+  }
+
+  try {
+    const speech = createPostgresSpeechStore({ pool });
+    await speech.insertTranscription({
+      id: ids.transcription,
+      revision: 1,
+      ownerUserId: owner.userId,
+      mediaId,
+      mediaRevision: 1,
+      rawText: '真 PG 臂合成转写：稻田稗草三到五叶期用药建议（非真实录音内容）。',
+      uncertainSpans: [],
+      confirmedText: null,
+      confirmedAt: null,
+      modelVersion: 'i22-realpg-fixture-v1',
+      createdAt: at,
+      updatedAt: at,
+      deleted: false,
+    });
+    seeded.transcriptionId = ids.transcription;
+  } catch (error) {
+    warnSeed('转写记录（C11-19/C11-21/C11-23/C11-38）', error);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +739,7 @@ async function main() {
     deleter.receipt = unavailableSeed('注销受理（real 模式整域 fail-closed）');
     deleter.staleReceipt = unavailableSeed('注销受理（real 模式整域 fail-closed）');
 
-    const seeded = await seedOwnerRowsReal(world, b);
+    const seeded = await seedOwnerRowsReal(world, b, { pool, attacker: a });
 
     const ctx = {
       world,
@@ -454,7 +750,7 @@ async function main() {
       seeded,
       results: new Map(),
       lazy: new Map(),
-      hideTargetPostId: unavailableSeed('社区投稿（审核管线未接线，隐藏目标）'),
+      hideTargetPostId: seeded.hideTargetPostId,
       injection: '',
     };
 
