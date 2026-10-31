@@ -684,7 +684,7 @@ export function createOcrService(options: OcrServiceOptions) {
   }
 
   async function getJob(input: { userId: string; jobId: string }): Promise<JobProjection> {
-    const row = await getOwnedJob(input.userId, input.jobId);
+    const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);
     const ocr = row.state === 'succeeded' || row.state === 'uncertain' ? await store.getOcr(row.ocrId) : null;
     return toJob(row, ocr);
   }
@@ -1149,4 +1149,65 @@ async function verifyVerifiableDimensions(
 ): Promise<OcrVerification> {
   const verifiable = normalizeVerifiableFields(verifyInput.fields);
   return projectVerifiableDimensions(await runVerify(verifiable, verifyInput.conditions), verifiable);
+}
+
+// ============================================================================
+// R72 · 作业读面超时裁定（`GET /jobs/{id}` 绝不永远回报 `queued` / `running`）
+// ----------------------------------------------------------------------------
+// 说明：本节整体落在文件末尾是**故意的**——`docs/` 里有 27 处按行号引用本文件，把这段插到
+// `getJob` 旁边会让那些行号全部偏移、逐条变成假话。ESM 的 import 与函数声明都会提升，
+// 因此末尾的 import / 函数声明能被上面的工厂函数正常使用，语义与写在文件头完全一致。
+// ============================================================================
+import { isDeadlineExpired } from '../jobs/expiry.ts';
+
+/**
+ * 读面超时裁定：非终态 + 已过 `deadline_at + 宽限` ⇒ 用 CAS 落 `timed_out` + `PROVIDER_TIMEOUT`。
+ *
+ * 为什么读面必须写：执行器缺席（进程重启、提供者卡死、store 抛错）时没有任何人会把任务推到终态，
+ * 读面是**唯一**还活着的裁定者；不裁定就等于让用户界面的「处理中」永不结束。口径照抄合成域先例
+ * （`tts/service.ts:45-47` 的注释、`:428-442` 的 `adjudicateExpiredJob`），而「宽限多长」「算不算过期」
+ * 的唯一真源在 `jobs/expiry.ts`——本文件不另写一份比较式。
+ *
+ * 三条自我约束：
+ *   - 只处理非终态（`queued` / `running`）；五个终态一律**原样返回**，绝不把已经成功的作业改写成超时；
+ *   - 写只走 `store.updateJob` 的 CAS（期望 revision = 刚读到的 revision），`revision` **恰好 +1**，
+ *     `updated_at` 取裁定时刻；抢不到（并发方已落终态）⇒ 重读一次返回**当前投影**，
+ *     不覆盖、不重试循环——读面绝不因为自己没抢到，就谎报一个自己没写成的终态；
+ *   - **不通知历史端口**：识别历史只由执行路径在终态提交成功后写（`commitTerminal`），读面裁定不是
+ *     一次执行的产物，GET 是读请求，不该让识别历史凭空多出一行。同域先例是取消（`cancelJob`）
+ *     落 `cancelled` 也只用 `store.updateJob`、不写历史。
+ *
+ * 首读与重读走**同一个 `load`**（调用方传的就是 `getOwnedJob`）：重读不另写 SQL、不按 id 直取，
+ * 因此 owner 校验一次都不少；重读抛错（作业被并发删除、存储瞬时失败）时**沿用第一次已授权读到的
+ * 那一行**——它是一行真实读过、已通过 owner 校验的记录，比让整个 GET 变 500 更接近事实，
+ * 而那一瞬的并发写入下一次 GET 就会看到。首读抛错则照旧向上抛（与原来的 GET 语义一致）。
+ *
+ * 非终态只有 `queued` / `running`，两者 → `timed_out` 都是 `canTransitionJob` 允许的迁移
+ * （`state.ts:175-179`），因此这里写的是**合法迁移**，不另立第二套状态机。
+ *
+ * `timed_out` 不产出 OCR 记录 ⇒ 投影里 `result` 恒 `null`（与 `failed` / `running` 同形）。
+ */
+async function adjudicateExpiredOcrJob(
+  load: () => Promise<OcrJobRow>,
+  store: OcrStore,
+  now: () => Date,
+): Promise<OcrJobRow> {
+  const row = await load();
+  if (isTerminalJobState(row.state)) return row;
+  const at = now();
+  if (!isDeadlineExpired(row.deadlineAt, at)) return row;
+  const updated = await store.updateJob(row.id, row.revision, (current) => ({
+    ...current,
+    state: 'timed_out',
+    errorCode: 'PROVIDER_TIMEOUT',
+    revision: current.revision + 1,
+    updatedAt: at,
+  }));
+  if (updated !== null) return updated;
+  // CAS 失败（并发方已落终态）：走同一条 owner 校验路径重读一次，以 store 现值做投影。
+  try {
+    return await load();
+  } catch {
+    return row;
+  }
 }

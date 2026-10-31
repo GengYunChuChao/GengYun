@@ -111,7 +111,7 @@ export const DEFAULT_JOB_DEADLINE_MS = 30 * 1000;
  * 因此读面留一小段宽限，避免把「截止前已完成、只是提交晚了几毫秒」的成功任务误判成
  * `timed_out`：成功与超时谁先提交由 store 的 CAS 决定，宽限把这条竞态窗口让给执行器。
  */
-export const JOB_EXPIRY_GRACE_MS = 5 * 1000;
+/* 宽限的唯一真源：数值与判定都在 jobs/expiry.ts，本文件只 re-export（⛔ 不另写一份）。 */ import { isDeadlineExpired, JOB_EXPIRY_GRACE_MS } from '../jobs/expiry.ts'; export { JOB_EXPIRY_GRACE_MS };
 /** 幂等键长度口径与认证层一致（8..128）。 */
 export const IDEMPOTENCY_KEY_MIN_LENGTH = 8;
 export const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
@@ -428,7 +428,7 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
   async function adjudicateExpiredJob(row: SynthesisJobRow): Promise<SynthesisJobRow> {
     if (row.state !== 'queued' && row.state !== 'running') return row;
     const at = now();
-    if (at.getTime() < row.deadlineAt.getTime() + JOB_EXPIRY_GRACE_MS) return row;
+    if (!isDeadlineExpired(row.deadlineAt, at)) return row;
     const settled = await store.commitTerminal(
       row.id,
       row.revision,
