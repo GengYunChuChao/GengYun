@@ -1,6 +1,6 @@
 # 数据保留 / 备份 / 第三方完成证据：现状清单（GY-R59）
 
-> 一句话：**「在线 7 日／备份 30 日」的执行器、调度单元、门禁都已接线并有真库臂；缺的全在两头——一头是「备份本体怎么恢复、恢复时怎么重放删除清单」只有脚本和纯函数，另一头是「第三方删除完成证据」只有库层读写路径、应用侧零行代码。**
+> 一句话：**「在线 7 日／备份 30 日」的执行器、调度单元、门禁都已接线并有真库臂；缺的全在两头——一头是「备份本体怎么恢复、恢复时怎么重放删除清单」只有脚本和纯函数，另一头是「第三方删除完成证据」：库层读写路径齐全，读侧端口与回执投影都已装配，缺的是写侧 dispatch。**（订正 2026-10-31／基线 `8da1aeb1`：本行原文末段写「只有库层读写路径、应用侧零行代码」，逐句订正见 §4.2。）
 >
 > 本页只做**现状清单**，逐个结论给 `文件:行号` 与可复算命令，不改任何判定、不提方案。判定口径仍以 [数据面需求-实现-证据矩阵（S4）](s4-data-traceability.md) 为准；本页与它冲突处集中列在 §8。
 
@@ -74,7 +74,7 @@
 - `services/api/db/migrations` 下对这两个表名 `CREATE TABLE` **命中 0**（其余 `third_party_deletions`／`deletion_requests`／`deletion_handlers`／`user_backup_copies` 各 1 命中）。
 - 全仓除文档外只有 `packages/privacy/README.md:124` 提到它们：「属 GY-I19 独立受控清单，不在本迁移范围」。
 
-## 4. 第三方删除完成证据：库层已落地，应用层零行
+## 4. 第三方删除完成证据：库层已落地；应用层读侧已装配、写侧未接
 
 ### 4.1 已落地（有代码 + 有真库证据 + 在 CI）
 
@@ -86,21 +86,21 @@
 | 授权 | 前置存在性断言（缺则 RAISE「迁移 0044 未执行」）＋ `REVOKE ... FROM PUBLIC` ＋ `GRANT EXECUTE ... TO gengyun_api_runtime`；表对运行时仍 forbidden | `deploy/postgres-cvm/sql/20-login-roles.sql:405`、`:414`、`:416`、`:417` |
 | 断言 | `function_surface_manifest` 两条 + 形状断言（恰各一个、SECURITY DEFINER、search_path、TimeZone） | `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1803`、`:1805` |
 | 真库臂 | 签名常量 + 八列列序契约 + requested/failed/confirmed/幂等/终态 | `tests/integration/third-party-deletion-pg.mjs:43` |
-| CI | 该真库臂在真库 workflow 里跑 | `.github/workflows/real-pg-integration.yml:203` |
+| CI | 该真库臂在真库 workflow 里跑 | `.github/workflows/real-pg-integration.yml:259`（订正 2026-10-31／基线 `8da1aeb1`：原写 203 行，实测那是 message-events 臂的 `env:` 段；第三方删除臂的 `- run:` 在 259 行） |
 
-### 4.2 未落地（这是「只有契约」的那一半）
+### 4.2 未落地（这是「只有契约」的那一半）——订正 2026-10-31／基线 `8da1aeb1`：读侧已装配，未落地的只剩写侧
 
-- **应用侧零行**：`git grep -n third_party_deletions -- services/api/src` = 0 行；`git grep -nE "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = 0 行。⇒ **无端口、无装配、无调用方**。
-- 唯一的运行时准备是两个未装配的模块：`services/api/src/privacy/third-party-deletion-adapter.ts`（注入式 `fetch`，无凭据或无传输即 `OBJECT_UNAVAILABLE` fail-closed）与 `services/api/src/privacy/third-party-deletion-projection.ts`（只被单测调用）。
-- 内存协议侧有请求/确认/失败/不支持四条（`packages/privacy/deletion.mjs:210`／`:236`／`:252`／`:261`），**后端没有把它接到 0044 的函数上**。
-- 迁移自己在 `services/api/db/migrations/0044_third_party_deletion_persistence.sql:4` 写明「**不接电**：`services/api/src/**` 一行未动」。
+- **应用侧已非零行**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：**应用侧零行**——`git grep -n third_party_deletions -- services/api/src` = 0 行，`git grep -nE "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = 0 行 ⇒ **无端口、无装配、无调用方**）：复算前者 **5 行 / 1 文件**（全在 `services/api/src/privacy/third-party-deletion-pg.ts`，对表零 DML/SELECT）、后者 **15 行**；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口、实现、`services/api/src/privacy/user-data-deletion.ts` 里一句「本文件用不到」注释）⇒ **读侧端口已装配（`services/api/src/app.ts:2017`）、适配器已登记但不 dispatch、回执投影已接到回执；写侧零调用者**。
+- 运行时准备的两个模块**都已装配**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：唯一的运行时准备是两个未装配的模块）：`services/api/src/privacy/third-party-deletion-adapter.ts`（注入式 `fetch`，无凭据或无传输即 `OBJECT_UNAVAILABLE` fail-closed）只**登记**进删除注册表、**不 dispatch**（`services/api/src/app.ts:2028` 建 wiring、`services/api/src/app.ts:2247` 展开进注册表）；`services/api/src/privacy/third-party-deletion-projection.ts` **已接进回执**（`services/api/src/routes/account-deletion.ts:148` → `services/api/src/routes/account-deletion.ts:154` 算出 `third_party_state`），不再只被单测调用。
+- 内存协议侧有请求/确认/失败/不支持四条（`packages/privacy/deletion.mjs:210`／`:236`／`:252`／`:261`）：**读侧已接到 0044 的读函数**，**写函数 `record_third_party_deletion` 仍零调用者**（订正 2026-10-31／基线 `8da1aeb1`：本行原文「后端没有把它接到 0044 的函数上」——对写侧仍成立，对读侧已不成立）。
+- 迁移自己在 `services/api/db/migrations/0044_third_party_deletion_persistence.sql:4` 写明「**不接电**：`services/api/src/**` 一行未动」——那是迁移落盘时点（2026-10-26）的自陈：读侧 2026-10-28 起已接通（见上一条），写侧至今仍不加行（订正 2026-10-31／基线 `8da1aeb1`）。
 - 已知限制（P1 刻意）：`services/api/db/migrations/0044_third_party_deletion_persistence.sql:26` 起——签名只有一个 `p_state`，所以 `online_status` 与 `backup_status` **两列同时写同一个状态**；两面各自推进要等 P2 加 `p_phase`。
 
 ### 4.3 与 S4 D13 的口径核对：**判定仍对，证据层已于 2026-10-26 补齐**
 
-`docs/architecture/s4-data-traceability.md:238` 的 D13 判定「未实现」，`:259` 的三条缺口（应用侧零读写、适配器未装配、投影没接进 `/me/exports`）**今天依然逐条成立**；`:257` 的两条零命中 grep 也依然准确。
+`docs/architecture/s4-data-traceability.md:238` 的 D13 判定「未实现」仍然成立，但本行原文「`:259` 的三条缺口（应用侧零读写、适配器未装配、投影没接进 `/me/exports`）**今天依然逐条成立**；`:257` 的两条零命中 grep 也依然准确」**已被 2026-10-28 的复核推翻**（订正 2026-10-31／基线 `8da1aeb1`）：三条缺口现于 `docs/architecture/s4-data-traceability.md:262` 起重写为一条，两条零命中 grep 现为 **5 行 / 15 行**（`docs/architecture/s4-data-traceability.md:259`）。
 
-但 `:240` 起的「实现（半成品，逐层都在但没接起来）」原先只列到 0003 表、内存协议、适配器、投影四层，**完全没有 0044 的库层读/写路径、`20-login-roles.sql` 的授权、`90-assert-least-privilege.sql` 的断言、以及 `tests/integration/third-party-deletion-pg.mjs` 真库臂 + CI 接线**。该遗漏已在同分支补上：D13 现于 `docs/architecture/s4-data-traceability.md:248` 多出一段「库层证据（2026-10-26 增补；判定与下面三条缺口均不变）」，**判定列与三条缺口一字未动**。
+但 `:240` 起的「实现（半成品，逐层都在但没接起来）」原先只列到 0003 表、内存协议、适配器、投影四层，**完全没有 0044 的库层读/写路径、`20-login-roles.sql` 的授权、`90-assert-least-privilege.sql` 的断言、以及 `tests/integration/third-party-deletion-pg.mjs` 真库臂 + CI 接线**。该遗漏已在同分支补上：D13 现于 `docs/architecture/s4-data-traceability.md:248` 多出一段「库层证据（2026-10-26 增补；判定与下面三条缺口均不变）」，**判定列与三条缺口一字未动**。（订正 2026-10-31／基线 `8da1aeb1`：该段现位于 `docs/architecture/s4-data-traceability.md` 第 251 行起，标题已改成「2026-10-26 增补；2026-10-28 复核更正两处符号名与一处 CI 锚」；末句「判定列与三条缺口一字未动」已不成立——三条缺口 2026-10-28 复核后并成一条，判定仍「未实现」，见同页 D13 段。）
 
 ## 5. 恢复清单（restore）与恢复重放（replay）：只有纯函数和一对脚本
 
@@ -109,7 +109,7 @@
 - 仓内**没有**任何 replay 驱动命令：`tools/`、`deploy/`、`.github/` 下都找不到对应入口。
 - 唯一能算「可执行步骤」的是 `deploy/postgres-cvm/backup-postgres.sh` → `deploy/postgres-cvm/restore-drill.sh` 这一对，而后者自陈从未真正恢复过任何备份（`deploy/postgres-cvm/restore-drill.sh:5`），并明说逐用户删除清单重放未实现（`:40`）。
 
-⇒ 回答用户问的那两类：**恢复清单** = 一对未验证的手工脚本 + 一个没适配器的纯函数；**第三方完成证据** = 库层读写路径齐全且被真库臂钉住，但运行时一行都没接，所以「请求/完成/失败/证据」四件事在运行面上一个都取不到。
+⇒ 回答用户问的那两类：**恢复清单** = 一对未验证的手工脚本 + 一个没适配器的纯函数；**第三方完成证据** = 库层读写路径齐全且被真库臂钉住，运行时**只接了读**（读侧端口 + 回执投影，见 §4.2）、**没有任何写入口**，所以「请求/完成/失败/证据」四件事在运行面上仍然一件都产生不出来（订正 2026-10-31／基线 `8da1aeb1`：本行原文「但运行时一行都没接，所以……四件事在运行面上一个都取不到」）。
 
 ## 6. 三档清点
 
@@ -123,7 +123,7 @@
 
 ### 半落地（契约或脚本在，没人跑／没接 CI／没接电）
 
-1. **第三方删除应用侧**：端口无、装配无、调用方无（§4.2）。库层已能记住，运行时取不到。
+1. **第三方删除的写侧**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：第三方删除应用侧——端口无、装配无、调用方无（§4.2）。库层已能记住，运行时取不到）：读侧端口已装配、回执投影已接，缺的是**写侧**——`subscribeThirdPartyDeletion` 零调用者，库层能记住但运行面没有写入口（§4.2）。
 2. **物理/逻辑备份 + 恢复演练**：脚本自陈未在真实实例执行过，不在 CI、无调度单元（§3.1）。
 3. **调度运行侧**：单元齐全、门禁绿，但目标宿主上没跑过、无 `systemctl list-timers` / `journalctl` 读数（`deploy/purge-schedule/README.md:235`）。
 4. **三条真库臂已在 workflow 里**（2026-10-31 复算：`media-row-purge-pg.mjs` 在 `real-pg-integration.yml` 第 1234 行、`recognitions-speech-purge-pg.mjs` 第 1174 行、`retention-clock-drill-pg.mjs` 第 1201 行）；S4 E2 当年「命中 0 行」的结论已过期，本轮改判（见 `docs/architecture/s4-data-traceability.md` 的 E2 行）。
@@ -137,7 +137,7 @@
 
 ## 7. 最小可执行的 3 件事
 
-1. **把 0044 接到应用侧最小一条腿**：在 `services/api/src/privacy/` 加 `third-party-deletions-pg.ts`（调 `record_third_party_deletion` / `list_third_party_deletions` 两条函数）、在 `services/api/src/app.ts` 装配，并在注销链的第三方分支调用它——单测可以照 `tests/privacy/third-party-deletion-adapter.test.mjs` 的替身写法，真库臂直接复用已有的 `tests/integration/third-party-deletion-pg.mjs` 夹具。**这是把 §4「库层有、运行面没有」这一刀补上的唯一一条。**
+1. **把 0044 接到应用侧最小一条腿**（订正 2026-10-31／基线 `8da1aeb1`：本项**已于 2026-10-28 完成一半**——`third-party-deletions-pg.ts` 端口、`services/api/src/app.ts:2017` 的读侧装配、回执投影都已落地；未完成的只剩**写侧**：`subscribeThirdPartyDeletion` 仍零调用者，注销受理链还不调用它）：在 `services/api/src/privacy/` 加 `third-party-deletions-pg.ts`（调 `record_third_party_deletion` / `list_third_party_deletions` 两条函数）、在 `services/api/src/app.ts` 装配，并在注销链的第三方分支调用它——单测可以照 `tests/privacy/third-party-deletion-adapter.test.mjs` 的替身写法，真库臂直接复用已有的 `tests/integration/third-party-deletion-pg.mjs` 夹具。**这是把 §4「库层有、运行面没有」这一刀补上的唯一一条。**
 2. **（2026-10-26 已完成，保留原样备查）让 S4 D13 与本页口径对齐**（纯文档）：给 `docs/architecture/s4-data-traceability.md` 的 `:240` 增补 0044 那一层，判定保持「未实现」；同时把 ★G3 撤条、`s4-data-traceability.md:354` 的 `:109` 改成 `:117`，并同步 §6 计数与 §7.2 升档条件表（见 §8）。改动只在 `docs/**`，可按 A 档分层自合并。
 3. **给恢复演练留一条可复算读数**：不必上生产——在真实 PG 上用 `deploy/postgres-cvm/backup-postgres.sh` 备一次、`deploy/postgres-cvm/restore-drill.sh` 演一次，把两份输出（含 `pg_restore --list` 的清单行数）落到证据页。**这是把 `deploy/postgres-cvm/restore-drill.sh:5` 的「从未真正恢复过任何备份」从承诺变成读数的唯一动作。**
 
@@ -156,6 +156,6 @@ node tools/verify-doc-anchors.mjs --strict     # 行号不腐烂；本页新增�
 node tools/verify-contract-status.mjs          # 契约台账与装配一致性
 npm run test:docs                              # Markdown 链接与表格、研究记录结构
 npm run verify:purge-schedule                  # 三对单元 / OnCalendar / ExecStart / 必需清单 10 项判据
-git grep -n third_party_deletions -- services/api/src        # 期望 0 行（D13 缺口仍成立）
+git grep -n third_party_deletions -- services/api/src        # 期望 5 行 / 1 文件（全在读侧端口；写侧订阅仍零调用者）
 git grep -nE "restore-drill|backup-postgres" -- .github       # 期望 0 行（备份/演练不在 CI）
 ```

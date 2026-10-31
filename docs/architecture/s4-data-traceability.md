@@ -200,7 +200,7 @@
   （backup-copies-purge-pg）、`:485`（backup-purge-pg）。
 - **缺口**：① 恢复重放只有纯函数模块 `services/api/src/privacy/backup-replay-manifest.ts:559`，**没有装配进 `app.ts`**，
   契约里也没有恢复 operation（该文件 `:68` 自陈）；② 调度件的「已安装并生效」不在仓内，没有任何生产读数；
-  ③   ③ 加速演练 `tests/integration/retention-clock-drill-pg.mjs` **已进 workflow**（`real-pg-integration.yml` 的 job `real-pg-admin-write-17.11` 第 1201 行起：`exit 77` 被升级成 CI 红、读数 < 10 也红）；未设 `GY_PG_BIN` 时脚本仍如实 `exit 77`，但在 CI 里 77 等于失败。
+  ③ 加速演练 `tests/integration/retention-clock-drill-pg.mjs` **已进 workflow**（`real-pg-integration.yml` 的 job `real-pg-admin-write-17.11` 第 1201 行起：`exit 77` 被升级成 CI 红、读数 < 10 也红）；未设 `GY_PG_BIN` 时脚本仍如实 `exit 77`，但在 CI 里 77 等于失败。
 
 ### D10 帖评保留、去身份、已注销用户、不可反查
 
