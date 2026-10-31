@@ -1266,7 +1266,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     // 契约：If-Match 对应 **content_ref.revision**（不是媒体 revision）。
     requireIfMatch(ifMatch, contentRef.revision);
 
-    const content = contentSource.getPublishedContent({
+    const content = await contentSource.getPublishedContent({
       type: contentRef.type,
       id: contentRef.id,
       revision: contentRef.revision,
@@ -1381,7 +1381,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       throw new ApiError('NOT_FOUND', '授权不存在');
     }
     // 每次取图**复核**当前审核/发布/版本状态（短效句柄 ≠ 公开权限）。
-    const content = contentSource.getPublishedContent(grant.contentRef);
+    const content = await contentSource.getPublishedContent(grant.contentRef);
     if (content === null || !content.published || !content.approved) {
       throw new ApiError('NOT_FOUND', '授权不存在');
     }

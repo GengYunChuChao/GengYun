@@ -123,7 +123,7 @@ import { createMemoryMediaStore, type MediaStore } from './media/store.ts';
 import { createPostgresMediaStore } from './media/store-pg.ts';
 import { createObjectRefCipher } from './media/object-ref-cipher.ts';
 import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
-import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
+import { createRealContentSource, type PublishedContentSource } from './media/content-source.ts';
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
 import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
@@ -1809,7 +1809,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         executionMode: config.executionMode,
         objectStore: mediaObjectStore,
         tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-        contentSource: mediaContentSource ?? createClosedContentSource(),
+        contentSource: mediaContentSource ?? createRealContentSource(communityService, mediaStore),
         ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
         // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
         ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
