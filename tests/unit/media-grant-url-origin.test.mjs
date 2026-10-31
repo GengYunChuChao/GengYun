@@ -34,7 +34,7 @@ function mutableContentSource() {
   return {
     kind: 'in_memory',
     note: '本文件专用可变公开内容来源：只做精确 (type,id,revision) 匹配，不构造审核假状态。',
-    getPublishedContent(ref) {
+    async getPublishedContent(ref) {
       const snapshot = state.snapshot;
       if (snapshot === null) return null;
       const same =
