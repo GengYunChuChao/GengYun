@@ -991,5 +991,15 @@
     "reason": "旧锚点本来就指错：base（merge-base 344f4423）的 111 是 `export interface RiskSourceScreenResult {`（资料侧那次查询的结果类型），而本行讲的是 `RiskScreen` 接口——`screenAnswer` 的声明就在这个接口里。端点映射把 111 原样搬到 142（`screenAnswer(...): RiskVerdict;` 那个成员，虽同属该接口但不是接口声明），按文本比对属假位移，故登记纠正到 121。",
     "kind": "correction",
     "symbol": "export interface RiskScreen {"
+  },
+  {
+    "doc": "docs/architecture/gy-r59-retention-backup-thirdparty-map.md",
+    "line": 89,
+    "target": ".github/workflows/real-pg-integration.yml",
+    "from": 203,
+    "to": 259,
+    "reason": "旧锚点本来就指错：真实基线里 workflow 第 203 行是 message-events 臂的 `env:`，与该行所说「第三方删除真库臂在 CI 里跑」无关；本片复算时按脚本名定位到 `real-pg-admin-write-17.11` job 里的第 259 行（`psql … CREATE DATABASE gengyun_third_party_deletion_test && node tests/integration/third-party-deletion-pg.mjs …`）。目标文件本提交未改动，故按登记表纠正，不用端点映射解释。",
+    "kind": "correction",
+    "symbol": "node tests/integration/third-party-deletion-pg.mjs"
   }
 ]

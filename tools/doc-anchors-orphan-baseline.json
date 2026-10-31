@@ -80,6 +80,12 @@
       "accept": 0,
       "orphans": 3542,
       "outsideRed": 129
+    },
+    {
+      "why": "GY-R72 W20 订正：gy-r59 页第 103 行原是裸锚点 :240（承继本页路径、而本页只有 162 行 ⇒ 越界不可判），本次改成具名散文引用后该裸锚点不再存在，孤儿册里对应条目转为陈旧，按现算删除；本次新增 0 条、判据一字未改，不放宽。",
+      "accept": 0,
+      "orphans": 3541,
+      "outsideRed": 129
     }
   ],
   "orphans": [
@@ -157,7 +163,6 @@
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:200|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:208|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:20|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:240|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:240|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:272|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:28|no-explicit-in-block",
