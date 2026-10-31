@@ -92,6 +92,12 @@
       "accept": 8,
       "orphans": 3541,
       "outsideRed": 129
+    },
+    {
+      "why": "R72-W25 收尾：把历史页里随同批位移的裸锚点一并改成新行号（gy-i12-conversations-gap:9/:123 的 :216→:231、gy-i22-closure-gap:142 的 :63→:65、gy-r28-favorites-history-grants:229 的 :432→:458、gy-r31-line-anchors:74 的 :319→:345、s4-data-traceability:165 的 :184→:202），并把「（原记 :87）」改成「（原记 87 行）」使其不再是裸锚点。判据一字未改，不放宽。",
+      "accept": 3,
+      "orphans": 3541,
+      "outsideRed": 129
     }
   ],
   "orphans": [
@@ -193,11 +199,11 @@
     "docs/architecture/s4-data-traceability.md|:154|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:158|no-explicit-in-block",
     "docs/architecture/s4-data-traceability.md|:1803|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:184|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2004|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2007|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:202-207|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2021|ambiguous-block",
+    "docs/architecture/s4-data-traceability.md|:202|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:203|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2238|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:236|ambiguous-block",
@@ -1171,7 +1177,7 @@
     "docs/verification/gy-i22-closure-gap-20261018.md|:2|no-explicit-in-block",
     "docs/verification/gy-i22-closure-gap-20261018.md|:320-330|no-explicit-in-block",
     "docs/verification/gy-i22-closure-gap-20261018.md|:475-476|no-explicit-in-block",
-    "docs/verification/gy-i22-closure-gap-20261018.md|:63|ambiguous-block",
+    "docs/verification/gy-i22-closure-gap-20261018.md|:65|ambiguous-block",
     "docs/verification/gy-i22-closure-gap-20261018.md|:66|ambiguous-block",
     "docs/verification/gy-i22-cross-module-security-e2e-20261027.md|:1|no-explicit-in-block",
     "docs/verification/gy-i22-cross-module-security-e2e-20261027.md|:1|no-explicit-in-block",
@@ -2867,10 +2873,10 @@
     "docs/verification/gy-r31-line-anchors-20261022.md|:242|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:246|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:251|no-explicit-in-block",
-    "docs/verification/gy-r31-line-anchors-20261022.md|:319|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:324|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:332|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:339|no-explicit-in-block",
+    "docs/verification/gy-r31-line-anchors-20261022.md|:345|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:355|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:363|no-explicit-in-block",
     "docs/verification/gy-r31-line-anchors-20261022.md|:64|no-explicit-in-block",
