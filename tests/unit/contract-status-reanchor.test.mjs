@@ -197,3 +197,46 @@ test('⑤ 仓内基线：--reanchor 报「无可重定位项」且不动任何�
   assert.match(result.stdout, /PASS: 中文表格一致/);
   assert.equal(readFileSync(join(ROOT, STATUS_FILE), 'utf8'), before);
 });
+
+test('⑥ 两条候选、第一条新值更长（位置在前的 +2 字符）：写盘不被误判 UNSAFE、逐字节保真', t => {
+  const instance = fixture(t, { source: DRIFTED });
+  // 两条候选分属两个 operation：putProfile 的 cropItems 在前（8-9 → 5-17，值变长 1 个字符），
+  // listProfile 的 list 在后（13-16 → 18-21）。旧实现在「写盘前字节保真自检」里按 order 降序把新值
+  // 换回旧值：位置靠后的那条用原始偏移去切已经变长的文本 ⇒ 还原对不上 ⇒ 把正确的改写误判成 UNSAFE。
+  instance.put('packages/contracts/operations.json', JSON.stringify({
+    contract_version: 'reanchor-test',
+    operations: [
+      { id: 'putProfile', method: 'put', path: '/me/profile' },
+      { id: 'listProfile', method: 'get', path: '/me/profile/list' },
+    ],
+  }, null, 2));
+  const operation = (id, method, path, evidence) => ({
+    id, method, path, route_mounted: false,
+    status: 'partial', blocker: '夹具：只验证锚点重定位', evidence,
+  });
+  const value = {
+    contract_version: 'reanchor-test',
+    operations: [
+      operation('putProfile', 'put', '/me/profile', [{ path: SERVICE, symbol: 'cropItems', lines: '8-9' }]),
+      operation('listProfile', 'get', '/me/profile/list', [{ path: SERVICE, symbol: 'list', lines: '1-2' }]),
+    ],
+    dimensions: DIMENSION_KEYS.map(key => ({
+      key, title: `夹具维度 ${key}`, source_anchor: `夹具：${key} 无来源`,
+      status: 'partial', blocker: '夹具：只验证锚点重定位',
+      evidence: [{ path: ROUTE_FILE, lines: '1-1' }],
+    })),
+  };
+  instance.put(STATUS_FILE, JSON.stringify(value, null, 2));
+  instance.put(DOC_FILE, `# 夹具\n\n${renderStatusTables(value)}\n\n尾部\n`);
+  const before = instance.ledgerText();
+  const result = instance.run(['--reanchor', '--write-doc']);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.doesNotMatch(result.stderr, /UNSAFE/);
+  assert.match(result.stdout, /REANCHOR: 已重写 2 条 lines 值/);
+  const after = instance.ledgerText();
+  const [first, second] = ledgerOf(instance).operations;
+  assert.equal(first.evidence[0].lines, '5-17');
+  assert.equal(second.evidence[0].lines, '18-21');
+  // 字节保真：只替换这两个字符串值，其它字节逐字节相同。
+  assert.equal(after, before.replace('"lines": "8-9"', '"lines": "5-17"').replace('"lines": "1-2"', '"lines": "18-21"'));
+});

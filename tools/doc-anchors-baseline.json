@@ -217,31 +217,19 @@
       "path": "services/api/src/conversations/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "conversations/store-pg.ts:432"
+      "reference": "conversations/store-pg.ts:351"
     },
     {
       "path": "services/api/src/conversations/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "conversations/store-pg.ts:88"
+      "reference": "conversations/store-pg.ts:90"
     },
     {
       "path": "services/api/src/conversations/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/conversations/store-pg.ts:215"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/store-pg.ts:326"
-    },
-    {
-      "path": "services/api/src/conversations/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "services/api/src/conversations/store-pg.ts:342"
+      "reference": "services/api/src/conversations/store-pg.ts:352"
     },
     {
       "path": "services/api/src/privacy/ledger-pg.ts",

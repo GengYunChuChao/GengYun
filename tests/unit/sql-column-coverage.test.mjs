@@ -592,20 +592,20 @@ const OPAQUE_ALLOWLIST = [
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 166,
-  statements: { INSERT: 27, UPDATE: 31, SELECT: 76, DELETE: 32 },
+  sqlLiterals: 167,
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 77, DELETE: 32 },
   returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 25,
-  columnRequirements: 1269,
+  columnRequirements: 1272,
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
   community: 44,
-  conversations: 19,
+  conversations: 20,
   favorites: 15,
   history: 16,
   messages: 15,
@@ -867,8 +867,8 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 22,
-  sqlLiterals: 308,
-  statements: { INSERT: 48, UPDATE: 56, SELECT: 163, DELETE: 41 },
+  sqlLiterals: 309,
+  statements: { INSERT: 48, UPDATE: 56, SELECT: 164, DELETE: 41 },
   returningClauses: 96,
   onConflictClauses: 30,
   selectStar: 15,
@@ -877,8 +877,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 17,
   referencedTables: 51,
-  columnRequirements: 2009,
-  coveredRequirements: 1908,
+  columnRequirements: 2012,
+  coveredRequirements: 1911,
   ledgerExemptions: 63,
   rowLockRequirements: 43,
   rowLockExemptions: 1,
@@ -893,7 +893,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 13,
   'community': 44,
-  'conversations': 19,
+  'conversations': 20,
   'favorites': 15,
   'history': 16,
   'jobs/ledger.ts': 2,

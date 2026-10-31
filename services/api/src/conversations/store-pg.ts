@@ -37,6 +37,8 @@ import type {
   AnswerInsert,
   BackupSnapshotClient,
   CasResult,
+  CascadedTurnRef,
+  ConversationDeleteResult,
   ConversationStore,
   ListOptions,
   TurnInsert,
@@ -124,6 +126,19 @@ function toTurn(row: Record<string, unknown>): TurnRecord {
     answer_id: row['answer_id'] === null || row['answer_id'] === undefined ? null : String(row['answer_id']),
     created_at: asDate(row['created_at']),
     updated_at: asDate(row['updated_at']),
+  };
+}
+
+/**
+ * R72-W25：被删会话下、将被外键级联掉的轮次三键（与 `toTurn` 的解析口径逐字一致，
+ * 只是不搬正文 —— 删除路径不该因为"要级联"多读回内容）。
+ */
+function toCascadedTurnRef(row: Record<string, unknown>): CascadedTurnRef {
+  const ref = parseJson(row['transcription_ref']);
+  return {
+    id: String(row['id']),
+    transcription_ref: (ref as TurnRecord['transcription_ref']) ?? null,
+    answer_id: row['answer_id'] === null || row['answer_id'] === undefined ? null : String(row['answer_id']),
   };
 }
 
@@ -263,16 +278,27 @@ export function createPostgresConversationStore(
           [id],
         );
         const row = found.rows[0];
-        if (row === undefined || String(row['owner_id']) !== ownerId) return { ok: false, reason: 'NOT_FOUND' } as CasResult<ConversationRecord>;
-        if (Number(row['revision']) !== expectedRevision) return { ok: false, reason: 'REVISION_CHANGED' } as CasResult<ConversationRecord>;
+        if (row === undefined || String(row['owner_id']) !== ownerId) return { ok: false, reason: 'NOT_FOUND' } as ConversationDeleteResult;
+        if (Number(row['revision']) !== expectedRevision) return { ok: false, reason: 'REVISION_CHANGED' } as ConversationDeleteResult;
+        // R72-W25：删会话前、**在同一个事务与同一把行锁内**先摘出将被外键级联掉的轮次三键。
+        // 三个"不做"的理由各一条：事务外查会在锁外漏掉并发新增的行（那是已披露的残余窗口，不是被消灭的）；
+        // 删完之后再查一律空（行已经没了）；另开一条连接更糟 —— 它看不见本事务的行锁。
+        const cascading = await sql.query(
+          'SELECT id, transcription_ref, answer_id FROM conversation_turns WHERE conversation_id = $1::uuid',
+          [id],
+        );
         // `RETURNING id` 不是装饰：`SqlRunner` 只有 `rows`（没有 `rowCount`），
         // 不带 RETURNING 的 DELETE 一律回空数组，CAS 判定会被误读成"版本不符"。
         const deleted = await sql.query(
           'DELETE FROM conversations WHERE id = $1::uuid AND owner_id = $2::uuid AND revision = $3 RETURNING id',
           [id, ownerId, expectedRevision],
         );
-        if (deleted.rows.length !== 1) return { ok: false, reason: 'REVISION_CHANGED' } as CasResult<ConversationRecord>;
-        return { ok: true, record: toConversation(row) } as CasResult<ConversationRecord>;
+        if (deleted.rows.length !== 1) return { ok: false, reason: 'REVISION_CHANGED' } as ConversationDeleteResult;
+        return {
+          ok: true,
+          record: toConversation(row),
+          cascadedTurns: cascading.rows.map(toCascadedTurnRef),
+        } as ConversationDeleteResult;
       });
     },
 

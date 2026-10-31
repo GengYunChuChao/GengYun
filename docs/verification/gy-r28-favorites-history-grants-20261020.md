@@ -110,7 +110,7 @@ GitHub runner 实跑。
 | 14 | history_idempotency — `INSERT … ON CONFLICT DO UPDATE RETURNING scope`（`store-pg.ts:315-323`） | 同上 |
 | 15 | history_idempotency — `UPDATE … RETURNING scope`（`store-pg.ts:342-345`） | 同上 |
 | 16 | history_idempotency — `DELETE …`（`store-pg.ts:159-161` / `:295` / `:353`） | 同上 |
-| 17 | conversations — SELECT 6 列（`CONVERSATION_COLUMNS`, `conversations/store-pg.ts:88`（原记 `:87`）） | `42501 … for table conversations` |
+| 17 | conversations — SELECT 6 列（`CONVERSATION_COLUMNS`, `conversations/store-pg.ts:90`（原记 87 行）） | `42501 … for table conversations` |
 | 18 | conversations — INSERT 6 列 `RETURNING` 6 列（`store-pg.ts:222-224`） | 同上 |
 | 19 | conversations — `DELETE … RETURNING id`（`store-pg.ts:269` / `:432`） | 同上 |
 | 20 | conversations — `SELECT … FOR UPDATE`（`store-pg.ts:260`） | 同上 |
@@ -226,7 +226,7 @@ psql:…/experiment-locking.sql:21: ERROR:  42501: permission denied for table f
 | `favorites_idempotency` | `favorites/store-pg.ts:171`（按 `scope` 前缀清主体台账）、`:295`（过期清理）、`:356`（claim 释放） |
 | `history` | `history/store-pg.ts:155`（注销清空）、`:250`（CAS 删除） |
 | `history_idempotency` | `history/store-pg.ts:159`（按主体前缀清）、`:295`（过期清理）、`:353`（claim 释放） |
-| `conversations` | `conversations/store-pg.ts:269`（CAS 删除）、`:432`（注销清空） |
+| `conversations` | `conversations/store-pg.ts:291`（CAS 删除）、`:458`（注销清空） |
 | `conversation_turns` | `conversations/store-pg.ts:351`（CAS 删除） |
 
 PG 没有列级 `DELETE`，所以这六张只能是表级；`TRUNCATE` / `REFERENCES` / `TRIGGER` 一律不给，
