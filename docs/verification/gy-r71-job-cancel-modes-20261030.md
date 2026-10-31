@@ -45,7 +45,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 
 ### 2.2 `answer`（文字问答域）
 
-- 存储端口：`services/api/src/conversations/store.ts:121`（`cancelTurnJob` 声明）与内存实现 `services/api/src/conversations/store.ts:300`；PG 实现 `services/api/src/conversations/store-pg.ts:398`（**单条 CAS**：`UPDATE … WHERE id/owner_id AND job_state IN ('queued','running')`）。
+- 存储端口：`services/api/src/conversations/store.ts:150`（`cancelTurnJob` 声明）与内存实现 `services/api/src/conversations/store.ts:337`；PG 实现 `services/api/src/conversations/store-pg.ts:398`（**单条 CAS**：`UPDATE … WHERE id/owner_id AND job_state IN ('queued','running')`）。
 - **PG 结算次序修正（真取消的必要条件）**：`services/api/src/conversations/store-pg.ts:411` 的 `settleTurnJob` 从"先插回答行、再 CAS 轮次"改成"**先 CAS 抢状态、抢到才写回答行**"。基线形态在取消竞态下会留下一条**孤儿回答行**（轮次停在 `cancelled`、`answer_id` 为空，但 `conversation_answers` 已多一行）⇒ 那就是"取消只改了状态、结论照样落库"。次序不修，本片的核心判据必然假绿（见 §7 负控制 ①）。
 - 服务层：`services/api/src/conversations/service.ts:894` 的 `cancelTurn`，复用域内**既有**的幂等台账与强 ETag 解析（`withIdempotency` 的入参类型收窄为 `Pick<ConversationActor,'userId'>`：作业面由 `guards.requireUser` 完成后到达，没有角色/epoch 可传，也**不伪造**一个 `authEpoch`）。
 - 适配层：`services/api/src/conversations/job.ts:87`（`cancel`）；装配 `services/api/src/app.ts:2525`（`createAnswerJobSource` 的 `cancelJob` 调域内 `cancelTurn`；`app.conversationService === null` 时返回 `null` ⇒ 同形 404，不让 503 冒充）。
