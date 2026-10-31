@@ -63,8 +63,8 @@
 | 引用字段名 | `Answer.citations`（数组，`maxItems 20`），元素是契约 `SourceRef` **十键全必填**：`id` / `version` / `title` / `url` / `publisher` / `source_kind` / `evidence_kind` / `validity` / `review_status` / `updated_at`；`additionalProperties:false`。**没有**"单个来源 URL 字段"，指向只能通过这十键表达 |
 | 指向什么 | 必须**逐字段等于本次检索集合里 `id` 相同那条条目自带的 `source` 对象**（`guard.ts` 的 `sameSourceRef`）；集合外 id、被改写任一字段、契约表达不了的来源（`http://`／枚举外）一律拒绝并 `blocked` |
 | 集合从哪来 | 与 `/knowledge` **同一个** `createKnowledgeService` 实例（`app.ts` 装配），条目来源逐字段校验（`retrieval.ts` 的 `retrievalItemOf`），来源 id ≠ 条目 id 直接 503 |
-| 正文里的编号 | 真实模型只能按送入的编号 `[n]` 指认来源（上限 6 条），适配器把 `[n]` 映射回 `set.items[n-1].source` **原对象**；正文里出现越界编号或未被集合背书的链接 ⇒ **整条正文不交付**（回空正文 + `text_violations` ⇒ 守卫阻断） |
-| `citation-bind` 版本号从哪来 | `CHAT_PROMPT_VERSION = 'prompt/citation-bind/1'`（`services/api/src/ai/chat-live-adapter.ts:52-53`；同处的 `CHAT_MODEL_VERSION_PREFIX='model/'` 与 `chatModelVersion()` 在 `services/api/src/ai/chat-live-adapter.ts:61-63`）⇒ 装配层写进 `answerVersions.prompt`（`services/api/src/ai/chat-wiring.ts:94`）⇒ 落到 `Answer.prompt_version`（`services/api/src/conversations/service.ts:997`）。**只在 live 侧出现**；确定性侧的 `prompt_version` 是 `unimplemented:no-real-prompt/citation-guard-only`（`services/api/src/conversations/service.ts:91`） |
+| 正文里的编号 | 真实模型只能按送入的编号 `[n]` 指认来源（上限 6 条），适配器把 `[n]` 映射回 `set.items[n-1].source` **原对象**；正文里出现越界编号、未被集合背书的链接或未被集合背书的登记证号 ⇒ **整条正文不交付**（回空正文 + `text_violations` ⇒ 守卫阻断） |
+| `citation-bind` 版本号从哪来 | `CHAT_PROMPT_VERSION = 'prompt/citation-bind/1'`（`services/api/src/ai/chat-live-adapter.ts:59-60`；同处的 `CHAT_MODEL_VERSION_PREFIX='model/'` 与 `chatModelVersion()` 在 `services/api/src/ai/chat-live-adapter.ts:68-70`）⇒ 装配层写进 `answerVersions.prompt`（`services/api/src/ai/chat-wiring.ts:94`）⇒ 落到 `Answer.prompt_version`（`services/api/src/conversations/service.ts:997`）。**只在 live 侧出现**；确定性侧的 `prompt_version` 是 `unimplemented:no-real-prompt/citation-guard-only`（`services/api/src/conversations/service.ts:91`） |
 | 三个版本串的关系 | `model_version`/`prompt_version` 只在 live 结局换成装配层的串；`rule_version` **任何**结局都带 `unimplemented:no-real-`（它描述引用/用量判定规则，永不含模型成分） |
 
 **结论**：引用不是空壳 —— 它没有"自由填一个 URL"的表达方式，只能指向本次检索集合里的实体条目。

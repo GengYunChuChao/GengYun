@@ -11,8 +11,9 @@
  * 1. **引用只能取自本次检索集合**：模型只能按提示里的编号 `[n]` 指认来源；本适配器把 `[n]`
  *    再映射回 `set.items[n-1].source` **原对象**。模型正文里出现的其他任何来源表述都不进
  *    `citations`；守卫（`AnswerGuard`）仍会逐字段复核，越界即 `blocked`。
- *    正文本身同样受约束（`bodyViolationsOf`）：正文里出现越界编号或未被检索集合背书的链接时，
- *    **整条正文不交付**（回空正文 + `text_violations` ⇒ 守卫阻断），而不是「丢掉结构、正文照发」。
+ *    正文本身同样受约束（`bodyViolationsOf`）：正文里出现越界编号、未被检索集合背书的链接或
+ *    未被检索集合背书的农药登记证号（`PD` + 8 位）时，**整条正文不交付**
+ *    （回空正文 + `text_violations` ⇒ 守卫阻断），而不是「丢掉结构、正文照发」。
  * 2. **用量卡不来自模型**：`dose_cards` 恒为 `[]` —— 用量只能来自域库确定性权威路径，
  *    语言模型的数字没有判定资格。
  * 3. **无依据不外发**：检索集合为空/null 时**根本不调用模型**（省掉一次无意义的付费外发），
@@ -29,7 +30,13 @@
  */
 import type { AnswerComposer, AnswerEgressContext, ComposedCandidate } from '../conversations/service.ts';
 import type { ContextTurn } from '../conversations/context.ts';
-import { groundedUrlsOf, urlsInText, type RetrievalItem } from '../conversations/guard.ts';
+import {
+  groundedRegistrationNumbersOf,
+  groundedUrlsOf,
+  registrationNumbersInText,
+  urlsInText,
+  type RetrievalItem,
+} from '../conversations/guard.ts';
 import type { SourceRef } from '../conversations/types.ts';
 import type { ChatProviderConfig } from '../config.ts';
 import type { ChatEgress } from '../privacy/task-egress.ts';
@@ -113,11 +120,13 @@ export function renderSources(items: readonly RetrievalItem[]): { block: string;
 /**
  * 正文层面的越界自检（**输出前**的硬判据；返回空数组才算正文可用）。
  *
- * 两条判据，与守卫核对结构化 `citations` 是同一纪律，只是作用在正文文本上：
+ * 三条判据，与守卫核对结构化 `citations` 是同一纪律，只是作用在正文文本上：
  * 1. 正文里每个 `[n]` 都必须落在本次送出的条目范围 `1..used.length` 内（`[0]`/`[99]` 一律越界）；
- * 2. 正文里每个 URL 都必须被本次检索集合背书（来源自带 `url`，或逐字出现在某条来源正文里）。
+ * 2. 正文里每个 URL 都必须被本次检索集合背书（来源自带 `url`，或逐字出现在某条来源正文里）；
+ * 3. 正文里每个农药登记证号（`PD` + 8 位）都必须被本次检索集合背书（逐字出现在某条来源正文里）——
+ *    与第 2 条**对称**：模型编一个看起来像真的证号，和编一个链接是同一类"未检索来源"。
  *
- * 违规项只带回**结构性标识**（编号/URL 本身，用于日志与断言），不回传正文。
+ * 违规项只带回**结构性标识**（编号/URL/证号本身，用于日志与断言），不回传正文。
  */
 export function bodyViolationsOf(input: { content: string; used: readonly RetrievalItem[] }): string[] {
   const violations: string[] = [];
@@ -131,6 +140,10 @@ export function bodyViolationsOf(input: { content: string; used: readonly Retrie
   const grounded = groundedUrlsOf(input.used);
   for (const url of urlsInText(input.content)) {
     if (!grounded.has(url)) push(`unattributed_url:${url}`);
+  }
+  const groundedNumbers = groundedRegistrationNumbersOf(input.used);
+  for (const number of registrationNumbersInText(input.content)) {
+    if (!groundedNumbers.has(number)) push(`unattributed_registration_number:${number}`);
   }
   return violations;
 }
