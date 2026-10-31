@@ -126,7 +126,7 @@
 1. **第三方删除应用侧**：端口无、装配无、调用方无（§4.2）。库层已能记住，运行时取不到。
 2. **物理/逻辑备份 + 恢复演练**：脚本自陈未在真实实例执行过，不在 CI、无调度单元（§3.1）。
 3. **调度运行侧**：单元齐全、门禁绿，但目标宿主上没跑过、无 `systemctl list-timers` / `journalctl` 读数（`deploy/purge-schedule/README.md:235`）。
-4. **三条真库臂不在任何 workflow**：`tests/integration/media-row-purge-pg.mjs`、`tests/integration/recognitions-speech-purge-pg.mjs`、`tests/integration/retention-clock-drill-pg.mjs`（S4 E2，已复算仍成立）。
+4. **三条真库臂已在 workflow 里**（2026-10-31 复算：`media-row-purge-pg.mjs` 在 `real-pg-integration.yml` 第 1234 行、`recognitions-speech-purge-pg.mjs` 第 1174 行、`retention-clock-drill-pg.mjs` 第 1201 行）；S4 E2 当年「命中 0 行」的结论已过期，本轮改判（见 `docs/architecture/s4-data-traceability.md` 的 E2 行）。
 
 ### 只有承诺（文档一句话，DDL/代码都没有）
 
