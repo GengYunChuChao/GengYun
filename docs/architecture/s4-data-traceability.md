@@ -162,7 +162,7 @@
 - **判定**：部分。需求 `docs/implementation-requirements.md:277`。
 - **实现**：`services/api/src/routes/**` 共 **15** 条 `app.delete`（2026-10-28 复核：原记 14，漏了第 15 条），其中 13 条是「本人删单条资源」：社区帖/评/赞 4 条
   （`services/api/src/routes/community.ts:242` 起）、授权撤回（`services/api/src/routes/consents.ts:64`）、
-  会话与轮次（`services/api/src/routes/conversations.ts:165`、`:184`）、收藏 `services/api/src/routes/favorites.ts:109`、
+  会话与轮次（`services/api/src/routes/conversations.ts:165`、`:202`）、收藏 `services/api/src/routes/favorites.ts:109`、
   历史 `services/api/src/routes/history.ts:88`、媒体 `services/api/src/routes/media.ts:278`、
   识别 `services/api/src/routes/recognitions.ts:148`、语音 `services/api/src/routes/speech.ts:256`、
   OCR `services/api/src/routes/ocr.ts:310`；第 14 条注销取消（`services/api/src/routes/account-deletion.ts:324`）、第 15 条后台撤销管理员 scope（`services/api/src/routes/admin.ts:417`）既非本人删单条也非注销取消，**登记但不计入用户面删除面 13 条**（口径写死：用户面删除面 = 13 条本人单条删除 + 1 条注销取消；后台管理面单列），否则下轮 `git grep "app.delete("` 的读数又对不上。
