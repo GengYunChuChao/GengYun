@@ -829,6 +829,95 @@ test('正控制：正文链接有出处时照常交付（不因返修而误杀�
   assert.deepEqual(answer.citations.map((citation) => citation.id), [ITEM_A.id]);
 });
 
+test('适配器：正文里的登记证号必须能在本次检索集合里找到出处（编造的证号 ⇒ 不交付正文）', async () => {
+  const composeWith = (content, items) => {
+    const composer = createLiveChatComposer({
+      profile: profile(),
+      egress: fakeEgress(),
+      fetchImpl: scriptedFetch([completion(content)]),
+    });
+    return composer.compose({
+      question: QUESTION,
+      conditions: null,
+      set: retrievalSet('user-1', items),
+      egress: EGRESS_CONTEXT,
+    });
+  };
+
+  // 带登记证号的来源：号码写在 body 首行（真实资料同一形态，见 records.mjs 的 buildKnowledgeBody）。
+  const ITEM_NUMBERED = retrievalItem({
+    id: '3d2c1b0a-9f8e-4d7c-8b6a-5f4e3d2c1b0a',
+    title: '合成资料戊：带登记证号的识别要点（测试替身）',
+    body: '登记证号：PD20161371\n识别要点：合成正文，仅用于回归，不含真实用量建议。',
+  });
+
+  // T1 集合内号码 ⇒ 不算违规（不得为堵漏误杀"照搬资料原文"的正文）。
+  const grounded = await composeWith('登记证号 PD20161371，识别要点见[1]。', [ITEM_NUMBERED]);
+  assert.equal(grounded.text_violations, undefined, '有出处的登记证号不得被当成越界');
+  assert.match(grounded.text, /PD20161371/u);
+
+  // T2 集合外号码（模型编的）⇒ 正文不交付，违规项可判据（与 `unattributed_url:…` 同型）。
+  const fabricated = await composeWith('登记证号 PD20991234 可湿性粉剂，识别要点见[1]。', [ITEM_NUMBERED]);
+  assert.equal(fabricated.text, '', '正文含未背书登记证号时不得交付正文');
+  assert.deepEqual(fabricated.text_violations, ['unattributed_registration_number:PD20991234']);
+
+  // T3 张冠李戴：号码真实存在，但属于不在本次送出的条目 ⇒ 同样未背书。
+  const borrowed = await composeWith('登记证号 PD20211218 适用[1]。', [ITEM_NUMBERED]);
+  assert.equal(borrowed.text, '');
+  assert.deepEqual(borrowed.text_violations, ['unattributed_registration_number:PD20211218']);
+
+  // T4 边界：`XPD20161371` / `PD201613710` 都不算号码 ⇒ 不算违规。
+  const boundary = await composeWith('XPD20161371 与 PD201613710 都不是证号形态[1]。', [ITEM_NUMBERED]);
+  assert.equal(boundary.text_violations, undefined, '粘连字母/多一位数字的串不得被误判成证号');
+});
+
+test('注入真实模型回答器：编造登记证号 ⇒ 整条阻断（用户可见正文与持久层都不得留下该号码）', async (t) => {
+  const composer = createLiveChatComposer({
+    profile: profile(),
+    egress: fakeEgress(),
+    fetchImpl: scriptedFetch([completion('登记证号 PD20991234 可湿性粉剂，可直接混用[1]。')]),
+  });
+  const fixture = await conversationFixture(t, { injection: { composer, ...retrievalWith([ITEM_A]) } });
+  const answer = await askAndReadAnswer(fixture, 'w28-regnum');
+
+  assert.equal(answer.status, 'blocked', `未背书证号必须整条阻断：${JSON.stringify(answer)}`);
+  assert.equal(answer.check_state, 'blocked');
+  assert.deepEqual(answer.citations, [], '被拒正文不得再挂引用');
+  assert.deepEqual(answer.dose_cards, []);
+  assert.equal(answer.checked_text.includes('PD20991234'), false, '用户可见正文不得含编造的证号');
+  assert.equal(answer.checked_text.includes('混用'), false, '被拒正文一个片段都不得外露');
+  // 阻断话术点名了"登记证号"（与 URL/引用同一句，不加任何可机器判别的细分原因）。
+  assert.match(answer.checked_text, /输出守卫阻断/u);
+  assert.match(answer.checked_text, /登记证号/u);
+  // 持久层同样不得留下编造的证号（"展示层过滤"不算修好）。
+  const stored = JSON.stringify(fixture.conversationStore.snapshot().answers[0]);
+  assert.equal(stored.includes('PD20991234'), false, '持久层不得留下编造的登记证号');
+});
+
+test('注入真实模型回答器：本次检索集合为 null ⇒ 仍是"资料不足"，不被新判据改道成 blocked', async (t) => {
+  const seen = [];
+  const composer = createLiveChatComposer({
+    profile: profile(),
+    egress: fakeEgress(),
+    fetchImpl: scriptedFetch([completion('登记证号 PD20991234 可以直接用。')], seen),
+  });
+  const fixture = await conversationFixture(t, {
+    injection: {
+      composer,
+      retrieval: createWiredRetrievalPort({
+        note: '测试替身检索端口（返回 null = 本次没有检索到任何资料）',
+        read: async () => null,
+      }),
+    },
+  });
+  const answer = await askAndReadAnswer(fixture, 'w28-regnum-noset');
+
+  assert.equal(answer.status, 'insufficient', `set=null 仍须是资料不足：${JSON.stringify(answer)}`);
+  assert.equal(answer.check_state, 'passed');
+  assert.match(answer.checked_text, /资料不足/u);
+  assert.equal(seen.length, 0, 'set=null 时根本不得外发（省掉一次无意义付费调用）');
+});
+
 test('回归：既有精简 config（未走 loadConfig、缺 chatProvider）⇒ 按未配置处理，装配不崩', async () => {
   // 既有测试（如 tests/unit/api-health.test.mjs）直接构造精简 config 对象，缺 `chatProvider`。
   // 问答接线不得因此抛错：缺它必须等价于「未配置」⇒ 不接真实模型、不崩溃。

@@ -370,6 +370,12 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
         if (!grounded.has(url)) rejectedText.push(`unattributed_url:${url}`);
       }
 
+      // ---- 正文登记证号：与上一条**对称** —— 号码同样必须出自本次检索集合 ----
+      const groundedNumbers = groundedRegistrationNumbersOf(set.items);
+      for (const number of registrationNumbersInText(candidate.text)) {
+        if (!groundedNumbers.has(number)) rejectedText.push(`unattributed_registration_number:${number}`);
+      }
+
       const boundedCitations = clipCandidates(accepted, MAX_CITATIONS, rejectedCitations, 'citation');
       const boundedCards = clipCandidates(acceptedCards, MAX_DOSE_CARDS, rejectedDoseCards, 'dose_card');
 
@@ -385,7 +391,7 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
           status: 'blocked',
           check_state: 'blocked',
           checked_text:
-            '本回答已被输出守卫阻断：候选内容含有超出本次检索集合的引用、来源链接或未经确定性判定的用量数据，' +
+            '本回答已被输出守卫阻断：候选内容含有超出本次检索集合的引用、来源链接、登记证号或未经确定性判定的用量数据，' +
             '因此不产出该部分内容。请以资料页的核准来源为准。',
           citations: deliverCitations,
           dose_cards: deliverCards,
@@ -427,4 +433,50 @@ export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {
       };
     },
   };
+}
+
+/**
+ * 正文里的农药登记证号（`PD` + 8 位数字）。
+ *
+ * 与上面的正文 URL 判据**对称**：正文里出现的每个登记证号都必须能在本次检索集合里找到出处，
+ * 找不到出处的号码一律视为「未检索来源的号码」，不得随正文出给用户。
+ *
+ * 形态边界（**故意收紧**：宁可漏拦，不可误杀）—— 只认 `PD` + **正好 8 位**数字，且前后不直接
+ * 粘 ASCII 字母/数字：`XPD20161371`、`PD201613710`、`PD-SYNTHETIC-0001` 都不算命中。当前仓内
+ * 资料的登记证号就是这个形态（`packages/knowledge/herbicides/records-2026.json`）。
+ * ⚠️ 将来原文出现别的形态（带后缀/连字符/位数不同）本判据会**漏**；那时要同步改这里，
+ * 而不是让正文自由发挥。
+ */
+const TEXT_REGISTRATION_PATTERN = /(?<![A-Za-z0-9])PD\d{8}(?![0-9])/gu;
+
+/** 提取正文里的登记证号（去重、保持出现顺序）。 */
+export function registrationNumbersInText(text: string): string[] {
+  const found: string[] = [];
+  for (const match of text.matchAll(TEXT_REGISTRATION_PATTERN)) {
+    const number = match[0];
+    if (!found.includes(number)) found.push(number);
+  }
+  return found;
+}
+
+/**
+ * 本次检索集合**能背书**的登记证号（逐字取自各条目的 `body`）。
+ *
+ * 为什么是 `body`：检索集合里的登记证号就写在条目正文里 —— `packages/reference/records.mjs`
+ * 的 `buildKnowledgeBody` 把 `登记证号：…` 放在首行，经 `conversations/retrieval.ts` 的
+ * `body` 映射进入 `RetrievalItem`。号码缺失时该行是「未采集」占位，抽不到号码；**不**为这种
+ * 情况造默认值。
+ *
+ * ⚠️ **未出现在任何条目里 ⇒ 未背书**（本判据的全部含义）。反过来，某条正文里写到的号码只背书
+ * 它自己：守卫在"号码是否出自本次检索集合"这一层判，不判断号码与问题的语义相关性，也不会把
+ * 别的条目/别的条目正文之外的号码算作出处。
+ *
+ * 作用范围：只作用于**正文**；结构化 `citations` / `dose_cards` 的既有判据不经过这里。
+ */
+export function groundedRegistrationNumbersOf(items: readonly RetrievalItem[]): Set<string> {
+  const grounded = new Set<string>();
+  for (const item of items) {
+    for (const number of registrationNumbersInText(item.body ?? '')) grounded.add(number);
+  }
+  return grounded;
 }

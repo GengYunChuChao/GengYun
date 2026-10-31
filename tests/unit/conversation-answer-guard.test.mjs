@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { conversationFixture, retrievalItem, retrievalSet, assertShape, shapeIssues, loadSchema, CONVERSATIONS, JOBS } from './conversation-fixtures.mjs';
-import { createAnswerGuard, createUnwiredDoseAuthority } from '../../services/api/src/conversations/guard.ts';
+import { createAnswerGuard, createUnwiredDoseAuthority, groundedRegistrationNumbersOf, registrationNumbersInText } from '../../services/api/src/conversations/guard.ts';
 import { createWiredRetrievalPort } from '../../services/api/src/conversations/guard.ts';
 import { UNIMPLEMENTED_VERSION_PREFIX } from '../../services/api/src/conversations/types.ts';
 import { createDeterministicDoseAuthority } from '../../services/api/src/conversations/dose.ts';
@@ -266,6 +266,90 @@ test('守卫单元：正文层面的越界（生成侧自报 / 未检索链接�
     ...base,
   });
   assert.equal(okBody.status, 'answered');
+});
+
+test('守卫单元：正文里的登记证号必须出自本次检索集合（未背书 ⇒ 整条阻断，与正文链接对称）', () => {
+  const guard = createAnswerGuard({ dose: createUnwiredDoseAuthority() });
+  const base = { question: QUESTION, conditions: null };
+
+  // 两条**带登记证号**的合成条目：号码就写在 body 首行（真实资料同一形态：
+  // `packages/reference/records.mjs` 的 `buildKnowledgeBody` 首行 `登记证号：…`）。
+  const NUMBERED = retrievalItem({
+    id: '7f1e2d3c-4b5a-4c6d-8e9f-0a1b2c3d4e5f',
+    title: '合成条目丙：带登记证号的正文（测试替身）',
+    body: '登记证号：PD20161371\n登记名称：合成药剂丙（测试替身）\n说明：不含真实用量建议。',
+  });
+  const OTHER_NUMBERED = retrievalItem({
+    id: '6e5d4c3b-2a19-4b8c-9d0e-1f2a3b4c5d6e',
+    title: '合成条目丁：另一条带登记证号的正文（测试替身）',
+    body: '登记证号：PD20211218\n登记名称：合成药剂丁（测试替身）\n说明：不含真实用量建议。',
+  });
+
+  // 抽号：只认 `PD` + 正好 8 位，去重保序；背书集合逐字取自 body。
+  assert.deepEqual(registrationNumbersInText('XPD20161371 / PD201613710 / PD20161371'), ['PD20161371']);
+  assert.deepEqual([...groundedRegistrationNumbersOf([ITEM])], [], '正文里没有号码 ⇒ 没有任何可背书的号码');
+  assert.deepEqual(
+    [...groundedRegistrationNumbersOf([NUMBERED, OTHER_NUMBERED])].sort(),
+    ['PD20161371', 'PD20211218'],
+  );
+
+  // T1 集合内号码 ⇒ 仍 answered（不得为堵漏误杀：确定性回答器会原样搬资料原文）。
+  const grounded = guard.check({
+    candidate: { text: '据资料 PD20161371，识别要点如上。', citations: [NUMBERED.source], dose_cards: [] },
+    set: retrievalSet('user-1', [NUMBERED]),
+    ...base,
+  });
+  assert.equal(grounded.status, 'answered');
+  assert.deepEqual(grounded.rejected_text, []);
+  assert.equal(grounded.checked_text.includes('PD20161371'), true);
+
+  // T2 集合外号码 ⇒ 整条阻断，原因可判据（与 `unattributed_url:…` 同型）。
+  const fabricated = guard.check({
+    candidate: { text: '登记证号 PD20991234 可湿性粉剂，识别要点如上。', citations: [NUMBERED.source], dose_cards: [] },
+    set: retrievalSet('user-1', [NUMBERED]),
+    ...base,
+  });
+  assert.equal(fabricated.status, 'blocked', '未背书登记证号必须被守卫拦下');
+  assert.deepEqual(fabricated.rejected_text, ['unattributed_registration_number:PD20991234']);
+  assert.deepEqual(fabricated.citations, [], '正文被拒时不得再挂合法引用');
+  assert.equal(fabricated.checked_text.includes('PD20991234'), false, '阻断话术不得含被拒号码');
+
+  // T3 张冠李戴：号码真实存在，但属于**不在本次集合里**的条目 ⇒ 同样未背书。
+  const borrowed = guard.check({
+    candidate: { text: '登记证号 PD20211218 适用。', citations: [NUMBERED.source], dose_cards: [] },
+    set: retrievalSet('user-1', [ITEM, NUMBERED]),
+    ...base,
+  });
+  assert.equal(borrowed.status, 'blocked');
+  assert.deepEqual(borrowed.rejected_text, ['unattributed_registration_number:PD20211218']);
+
+  // T3b 已知边界（写进断言，免得把本判据误当成"号码与条目的绑定核对"）：两条**都在**集合里时，
+  //     引用甲条目却报乙条目的号码**不**会被这一条拦下 —— 本判据只判「号码是否出自本次集合」。
+  const bothInSet = guard.check({
+    candidate: { text: '登记证号 PD20211218 适用[1]。', citations: [NUMBERED.source], dose_cards: [] },
+    set: retrievalSet('user-1', [NUMBERED, OTHER_NUMBERED]),
+    ...base,
+  });
+  assert.equal(bothInSet.status, 'answered', '集合内号码一律放行（语义绑定不在这条判据的范围内）');
+
+  // T4 边界：`XPD20161371` / `PD201613710` 都不算号码（不许误杀长数字串里的片段）。
+  const boundary = guard.check({
+    candidate: { text: 'XPD20161371 与 PD201613710 都不是登记证号形态。', citations: [ITEM.source], dose_cards: [] },
+    set: retrievalSet('user-1', [ITEM]),
+    ...base,
+  });
+  assert.equal(boundary.status, 'answered');
+  assert.deepEqual(boundary.rejected_text, []);
+
+  // T5 没有本次检索集合（`set === null`）⇒ 仍是"资料不足"，不被新判据改道成 blocked。
+  const noSet = guard.check({
+    candidate: { text: '登记证号 PD20991234 的识别要点。', citations: [], dose_cards: [] },
+    set: null,
+    ...base,
+  });
+  assert.equal(noSet.status, 'insufficient');
+  assert.equal(noSet.check_state, 'passed');
+  assert.deepEqual(noSet.rejected_text, []);
 });
 
 test('守卫单元：用量卡只能取自确定性权威路径 —— 集合外/未获权威放行的一律拒绝', () => {
