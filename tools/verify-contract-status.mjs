@@ -205,8 +205,14 @@ function rewriteLineValues(ledger, raw, candidates) {
     updated = updated.slice(0, span.start) + candidate.newLines + updated.slice(span.start + span.value.length);
   }
   // 字节保真自检：把新值逐个换回旧值必须逐字节还原原文，否则说明动到了 lines 以外的字节。
+  //
+  // 还原**必须按位置升序**（与写入时的降序相反）：新值长度可能与旧值不同（例：`964-983` →
+  // `1025-1044` 多两个字符），绝对偏移只在"更靠前的那处已还原、后面的偏移已经归零"时才成立。
+  // 早先这里沿用写入顺序（降序）还原，一旦有一次长度变化，后面（更靠前位置）的还原点就会被
+  // 那次长度差顶偏 —— 自检把**正确**的改写误判成 UNSAFE 并拒绝写盘（R72-W25 实测：9 条候选里
+  // 有一条 +2 字符，自检报 UNSAFE，而按升序还原后与原文逐字节一致）。
   let restored = updated;
-  for (const candidate of ordered) {
+  for (const candidate of [...candidates].sort((left, right) => left.order - right.order)) {
     const span = spans[candidate.order];
     restored = restored.slice(0, span.start) + span.value + restored.slice(span.start + candidate.newLines.length);
   }
