@@ -57,6 +57,8 @@ export interface MediaObjectStore {
   readonly note: string;
   /** 已发起的外部（网络）请求数。替身/未接线端口恒为 0 —— 用于核对「真实存储未被实际调用」。 */
   readonly externalRequestCount: number;
+  /** 该适配器是否支持「对象枚举」这条**诊断**能力：`false` ⇒ 调用方必须读成不可用（`null`），⛔ 不是失败；未声明 = 支持。 */
+  readonly objectCountSupported?: boolean;
   putObject(key: string, bytes: Uint8Array, contentType: string): Promise<void>;
   getObject(key: string): Promise<StoredObject | null>;
   hasObject(key: string): Promise<boolean>;
@@ -64,9 +66,7 @@ export interface MediaObjectStore {
    * 删除对象。**返回值的语义是「已确认删除」而非「本次是否真的移除了条目」**：
    * - `true` = 已确认删除（含幂等删除「对象本就不存在」，与 S3 `DeleteObject` 的 204 一致）；
    * - `false` = **未能确认**（保守：调用方必须保留引用以便重试，不得当成删除成功）；
-   * - 抛出 = 暂时失败（调用方同样必须保留引用）。
-   *
-   * 这条语义是隐私红线的一部分（监工批复 P1）：未确认删除**不得**丢失重试依据。
+   * - 抛出 = 暂时失败（调用方同样必须保留引用）。这条语义是隐私红线的一部分（监工批复 P1）：未确认删除**不得**丢失重试依据。
    */
   deleteObject(key: string): Promise<boolean>;
   /** 当前对象数（诊断/测试断言孤立对象是否被回收）。 */
@@ -381,11 +381,11 @@ export function createS3CompatibleObjectStore(config: ObjectStorageConfig): Medi
       const response = await send('DELETE', key);
       // 2xx / 404 = 已确认删除（幂等）；其余状态**抛错**，让调用方保留引用并可重试。
       if (response.ok || response.status === 404) return true;
-      throw new MediaError('PROVIDER_UNAVAILABLE', `对象存储删除失败（HTTP ${response.status}）`, {
-        retryable: response.status >= 500,
-      });
+      throw new MediaError('PROVIDER_UNAVAILABLE', `对象存储删除失败（HTTP ${response.status}）`, { retryable: response.status >= 500 });
     },
-    async objectCount() {
+    // 能力声明：真实适配器**不提供**对象枚举（需 list 权限，未接线）⇒ 调用方把计数读成 null；下面这个方法**保留抛错**是硬护栏。
+    objectCountSupported: false,
+    async objectCount(): Promise<number> {
       throw new MediaError('PROVIDER_UNAVAILABLE', '真实适配器不提供对象计数（需 list 权限，未接线）');
     },
     async presignUpload({ key, expiresInSeconds }) {

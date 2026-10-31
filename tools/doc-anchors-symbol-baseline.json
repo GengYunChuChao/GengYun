@@ -264,16 +264,6 @@
       "note": "【文件头自述行】文档引的是整份文件开头的自述第 1 行（「// GY-S4 P1 真库臂：第三方删除持久化的「记住」面（迁移 0044）…」），块后第一条非空行是第 2 行的「//」，紧跟另一段注释——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/app.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/app.ts:2013",
-      "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 263,
-      "kind": "block",
-      "note": "【段内块注释·第三方删除读侧四臂】§D1 那句「装配在 `:2013`（仅注入、不 dispatch）」引的是 app.ts 里 GY-R59 P2-b 那段四臂说明（2013-2018：显式注入优先／有真库只读端口／real 无库显式不可用端口／stub 缺省 unwired）的首条注释行，块后没有声明行可指；这段说明正是「装上了但不可达、也不 dispatch」这条判据的原文，只能指注释。（GY-R71 补片：app.ts 顶部 +4 行 ⇒ 2009→2013。）"
-    },
-    {
       "path": "services/api/src/privacy/privacy-policy.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",

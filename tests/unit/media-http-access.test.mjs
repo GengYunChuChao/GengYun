@@ -25,7 +25,7 @@ function dynamicContentSource() {
     source: {
       kind: 'in_memory',
       note: '可变的公开内容来源测试替身。',
-      getPublishedContent(ref) {
+      async getPublishedContent(ref) {
         const snapshot = state.snapshot;
         if (snapshot === null) return null;
         if (snapshot.ref.type !== ref.type || snapshot.ref.id !== ref.id || snapshot.ref.revision !== ref.revision) return null;

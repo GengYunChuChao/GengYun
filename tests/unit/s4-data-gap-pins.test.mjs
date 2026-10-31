@@ -17,14 +17,21 @@
  * （钉 3/4/5 于 2026-10-26 由「缺口」改为「已接线」；钉 1 于同日随 S4-S3 P2-a 的端口落地由「缺口」改为
  * 「已接线」——端口在库层之外，**尚未装配**，那条结论仍由钉 2 守着），每条常数都由实测读数逐条核对过，不是抄文档。
  *
+ * 2026-10-30 追加一次翻转（**#6 缺口 G1**：媒体对象回收有了真实执行者）：钉 3 的单元全集由「恰好六条」改成
+ * 「恰好八条」，并把原先「media 也没有自己的调度单元」那行改成「恰好 `gengyun-purge-media-objects.{service,timer}`
+ * 这两条」；钉 4 的清单由「恰好三条」改成「恰好四条」。形状照 `34d40de1`（#604 加 retention 那对单元 + 同提交
+ * 翻钉）的先例：**同一个提交**里加单元、加必需脚本、翻钉子，不把登记留在两处互相矛盾的状态。
+ * 本次只补「回收有执行者、被调度登记、退出码可判」这一层；真实对象存储的删除语义、真库并发锁、以及 #6 的
+ * G2/G3 都**没有**被本文件证明（本文件只读、不连库、不起子进程）。
+ *
  * ## 六条钉子（判据位置 / 断言什么 / 什么改动会让它红）
  *
  * | # | 判据位置 | 断言什么 | 什么改动会让它红 |
  * | - | --- | --- | --- |
  * | 1 | `services/api/src`、`packages`、`tools` 三处扫字面量 `third_party_deletions` | 命中**恰好两个文件 / 六行**：`services/api/src/privacy/third-party-deletion-pg.ts:8/:14/:59/:79/:142`（S4-S3 P2-a 的真库端口，只经 0044 的两条 `SECURITY DEFINER` 函数进出，⛔ 文件里没有表级 DML）+ `packages/privacy/retention-policy.mjs:208`（策略表自陈，`table:` 字段，不是查询） | 出现**第四处**读写接缝（新 SQL 文本 / `pool.query` / 仓储）；端口文件里出现直写/直读该表的 SQL；或自陈行被挪/改文本 |
  * | 2 | `services/api/src` 扫 `createThirdPartyDeletionAdapter`；单独断 `app.ts` | 除 `privacy/third-party-deletion-adapter.ts` 自身外**零引用**；`app.ts` 里**零出现** ⇒ 未装配 | 任何装配（`app.ts` import/调用、新工厂、路由注入）；或适配器被移到别处 |
- * | 3 | `deploy/purge-schedule/` 的 `*.service` / `*.timer` 全集 | 全集**恰好六条**（online-data、backup-copies、retention 各一 service + 一 timer），retention 那对**在位** | 删掉现存任何一条（尤其 `gengyun-purge-retention.{service,timer}`）；或新出现 `media-*` 等第四族单元 |
- * | 4 | `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` | 唯一定义点 + 数组**恰好三条必需脚本** `['purge:online-data','purge:backup-copies','purge:retention']`，retention **在** | 从数组里拿掉 `purge:retention`；或把该常量挪到别处/复制一份 |
+ * | 3 | `deploy/purge-schedule/` 的 `*.service` / `*.timer` 全集 | 全集**恰好八条**（online-data、backup-copies、retention、media-objects 各一 service + 一 timer），retention 那对与 media 那对都**在位** | 删掉现存任何一条（尤其 `gengyun-purge-retention.{service,timer}` 与 `gengyun-purge-media-objects.{service,timer}`）；或新出现第五族单元 |
+ * | 4 | `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` | 唯一定义点 + 数组**恰好四条必需脚本** `['purge:online-data','purge:backup-copies','purge:retention','purge:media-objects']`，retention 与 media-objects **都在** | 从数组里拿掉 `purge:retention` / `purge:media-objects`；或把该常量挪到别处/复制一份 |
  * | 5 | `.github/workflows/**` 扫 `verify:purge-schedule` / `tools/verify-purge-schedule`、`restore-drill` | 调度门禁**恰一份引用**（= `engineering-shell.yml` 的 `retention-gates`）；`restore-drill` 仍**零命中** | 引用面扩大或消失（多接一份 / 整条摘掉）；或任何 workflow 引用 `deploy/postgres-cvm/restore-drill.*` |
  * | 6 | `services/api/src`、`packages` 扫 `purge_owner_media` | **零命中** ⇒ 媒体行物理删除的唯一入口（0035 的 `SECURITY DEFINER` 函数）至今没人调 | 任何应用侧写 `SELECT public.purge_owner_media($1)`；或迁移 0035 的函数定义消失（后者是恶化，同样要红） |
  *
@@ -353,10 +360,10 @@ test('缺口 2 · createThirdPartyDeletionAdapter 未装配：除自身文件外
 });
 
 // ---------------------------------------------------------------------------
-// 已接线 3 · 保留策略：有 retention 调度单元（#604 / `34d40de1`）
+// 已接线 3 · 保留策略 + 媒体对象：各有调度单元（#604 / `34d40de1`；2026-10-30 #6 G1 补 media）
 // ---------------------------------------------------------------------------
 
-test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10-26 #604 落地；原缺口 3 已补）', () => {
+test('已接线 3 · deploy/purge-schedule/ 含 retention 与 media 调度单元（2026-10-26 #604 落地；2026-10-30 #6 G1 补 media 那对；原缺口 3 已补）', () => {
   const DIR = 'deploy/purge-schedule';
   assert.equal(
     existsSync(join(REPO_ROOT, ...`${DIR}/README.md`.split('/'))),
@@ -370,12 +377,14 @@ test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10
     .sort();
   const units = entries.filter((name) => name.endsWith('.service') || name.endsWith('.timer'));
 
-  // ① 全集恰好六条：这条同时挡住「新增」与「删掉」（两侧都是状态改动）。
+  // ① 全集恰好八条：这条同时挡住「新增」与「删掉」（两侧都是状态改动）。
   assert.deepEqual(
     units,
     [
       'gengyun-purge-backup-copies.service',
       'gengyun-purge-backup-copies.timer',
+      'gengyun-purge-media-objects.service',
+      'gengyun-purge-media-objects.timer',
       'gengyun-purge-online-data.service',
       'gengyun-purge-online-data.timer',
       'gengyun-purge-retention.service',
@@ -383,8 +392,9 @@ test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10
     ],
     '【已接线 3 破了】`deploy/purge-schedule/` 的调度单元全集又变了：'
       + `\n  实测：${JSON.stringify(units)}`
-      + '\n  当前事实（#604 落地后）：online-data/backup-copies/retention 各一对 service+timer，共六条；'
-      + 'retention 单元以 `OnCalendar=*-*-* 03:20:00` 日级触发 `purge:retention`。'
+      + '\n  当前事实（#604 落地 + 2026-10-30 #6 缺口 G1 落地后）：online-data/backup-copies/retention/'
+      + 'media-objects 各一对 service+timer，共八条；retention 以 `OnCalendar=*-*-* 03:20:00` 日级触发 '
+      + '`purge:retention`，media-objects 以 `OnCalendar=*-*-* *:02/15:00` 每 15 分钟触发 `purge:media-objects`。'
       + '\n  若你**又**加了/删了单元 ⇒ 同步本钉子的期望值与标题；若只是改名 ⇒ 同样要同步。'
       + FLIP_HINT,
   );
@@ -397,25 +407,28 @@ test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10
       + `\n  实测：${JSON.stringify(units.filter((name) => /retention/i.test(name)))}`
       + '\n  期望：`gengyun-purge-retention.service` + `gengyun-purge-retention.timer`（#604 落地）。'
       + '\n  删掉它们等于把保留策略退回「只能手工执行」——那要同时改回本钉子与它点名的文档。'
-      + '\n  ⚠ `[calendar]` 判据的日级例外已按入口文件分档解决：`tools/verify-purge-schedule.mjs:152-156`'
+      + '\n  ⚠ `[calendar]` 判据的日级例外已按入口文件分档解决：`tools/verify-purge-schedule.mjs:152-159`'
       + '（`INTERVAL_BUDGET_MINUTES`：retention ⇒ 1440 分钟，其余仍 60 分钟），口径与接线事实记在 '
       + 'docs/architecture/gy-r34-retention-policy.md:173。'
       + FLIP_HINT,
   );
 
-  // ③ 派发单里的对照项经核对**不成立**，如实钉住：media 也没有自己的调度单元。
-  //    （媒体行的物理删除走 0035 的函数面，不是日历任务 —— 见缺口 6。）
+  // ③ 派发单里的对照项曾按实测登记为「media 也没有自己的调度单元」；2026-10-30 随 #6 缺口 G1 落地，
+  //    media 那对单元**在位**了（形状照 `34d40de1` 那对 retention 单元）。这里钉的是「恰好这两条」：
+  //    少了＝回收执行者被拆掉，多了＝又冒出第五族单元。（媒体行的物理删除仍走 0035 的函数面，见缺口 6。）
   assert.deepEqual(
     units.filter((name) => /media/i.test(name)),
-    [],
-    '【已接线 3 · 事实更正】出现了 media 调度单元：'
+    ['gengyun-purge-media-objects.service', 'gengyun-purge-media-objects.timer'],
+    '【已接线 3 · 事实更正】media 调度单元的数量变了：'
       + `\n  实测：${JSON.stringify(units.filter((name) => /media/i.test(name)))}`
-      + '\n  基线（81d8e0b9）：`deploy/purge-schedule/` 里**没有** `media-*` 单元（这条与派发时的假设不符，'
-      + '已按实测登记）。若你新增了它 ⇒ 同步这一行；若只是改名 ⇒ 也同步这一行。'
+      + '\n  基线（81d8e0b9）：`deploy/purge-schedule/` 里**没有** `media-*` 单元（当时这条与派发单的假设不符，'
+      + '已按实测登记）；2026-10-30（#6 缺口 G1）新增 `gengyun-purge-media-objects.{service,timer}`，'
+      + '驱动 `tools/purge-expired-media.mjs` ⇒ 恰好这两条。'
+      + '\n  若你新增/删除了它 ⇒ 同步这一行；若只是改名 ⇒ 也同步这一行。'
       + FLIP_HINT,
   );
 
-  // ④ 两条单元的 `GY-SCHEDULE: npm-script=` 自陈：跨文件核对「计划里挂的是哪两条命令」。
+  // ④ 四条单元的 `GY-SCHEDULE: npm-script=` 自陈：跨文件核对「计划里挂的是哪四条命令」。
   const services = units.filter((name) => name.endsWith('.service'));
   const declared = services.map((name) => {
     const marker = /^# GY-SCHEDULE: npm-script=(\S+)$/m.exec(readRepoText(`${DIR}/${name}`));
@@ -423,24 +436,25 @@ test('已接线 3 · deploy/purge-schedule/ 含 retention 调度单元（2026-10
   });
   assert.deepEqual(
     declared.map((item) => item.script),
-    ['purge:backup-copies', 'purge:online-data', 'purge:retention'],
+    ['purge:backup-copies', 'purge:media-objects', 'purge:online-data', 'purge:retention'],
     '【已接线 3 · 自陈变了】`GY-SCHEDULE: npm-script=` 指向的命令集合变了：'
       + `\n  实测：${JSON.stringify(declared)}`
-      + '\n  当前事实（#604 落地后）：backup-copies ⇒ `purge:backup-copies`；'
-      + 'online-data ⇒ `purge:online-data`；retention ⇒ `purge:retention`。'
+      + '\n  当前事实（#604 落地 + 2026-10-30 #6 缺口 G1 落地后）：backup-copies ⇒ `purge:backup-copies`；'
+      + 'media-objects ⇒ `purge:media-objects`；online-data ⇒ `purge:online-data`；retention ⇒ `purge:retention`。'
       + '\n  （缺标记会得到 `null`，同样让这条红 —— 那是判据标记被删，不是缺口的进展。）'
       + FLIP_HINT,
   );
 });
 
 // ---------------------------------------------------------------------------
-// 已接线 4 · purge:retention 在必需脚本清单（#604 / `34d40de1`）
+// 已接线 4 · purge:retention 与 purge:media-objects 在必需脚本清单
+// （#604 / `34d40de1`；2026-10-30 #6 G1 追加 purge:media-objects）
 // ---------------------------------------------------------------------------
 
-test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention（2026-10-26 #604 落地；原缺口 4 已补）', () => {
+test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention 与 purge:media-objects（2026-10-26 #604 落地、2026-10-30 #6 G1 增补；原缺口 4 已补）', () => {
   const DECL = 'tools/verify-purge-schedule.mjs';
 
-  // ① 唯一定义点：常量被挪走/复制一份都会红（否则「恰好三条」这句话可以对着空气说）。
+  // ① 唯一定义点：常量被挪走/复制一份都会红（否则「恰好四条」这句话可以对着空气说）。
   //    ⚠ 排掉 `SELF_FILE`：本文件在失败提示里逐字写了这个声明，不排会自己数自己（见 SELF_FILE 注释）。
   const defining = ['tools', 'packages', 'services/api/src', 'tests']
     .flatMap((root) => walkFiles(root))
@@ -452,7 +466,7 @@ test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention（2026-10-26 #604 
     '【已接线 4 · 判据位置变了】`REQUIRED_NPM_SCRIPTS` 的定义点集合变了：'
       + `\n  实测：${JSON.stringify(defining)}`
       + `\n  现状：只在 ${DECL}:117 定义一次（其余地方都是 import）。`
-      + '\n  若你把门禁搬家了 ⇒ 请把本钉子的 DECL 与新位置对齐，并确认「三条必需脚本（含 purge:retention）仍在新位置被冻结」。'
+      + '\n  若你把门禁搬家了 ⇒ 请把本钉子的 DECL 与新位置对齐，并确认「四条必需脚本（含 purge:retention 与 purge:media-objects）仍在新位置被冻结」。'
       + FLIP_HINT,
   );
 
@@ -467,16 +481,18 @@ test('已接线 4 · REQUIRED_NPM_SCRIPTS 含 purge:retention（2026-10-26 #604 
       + FLIP_HINT,
   );
 
-  // ③ 清单内容恰好三条（顺序也钉住：它同时决定报告里 joined 文案的顺序）。
+  // ③ 清单内容恰好四条（顺序也钉住：它同时决定报告里 joined 文案的顺序）。
   const names = [...declaration[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
   assert.deepEqual(
     names,
-    ['purge:online-data', 'purge:backup-copies', 'purge:retention'],
+    ['purge:online-data', 'purge:backup-copies', 'purge:retention', 'purge:media-objects'],
     '【已接线 4 破了】`REQUIRED_NPM_SCRIPTS` 的内容又变了：'
       + `\n  实测：${JSON.stringify(names)}`
-      + '\n  当前事实（#604 落地后）：`[\'purge:online-data\', \'purge:backup-copies\', \'purge:retention\']` —— '
-      + '三条日历级命令全覆盖，且 retention 已有对应 `.service`（否则 `[coverage]` 会连带红）。'
-      + '\n  若你删掉 `purge:retention` ⇒ 那是把缺口放回来，必须同时改回本钉子与文档。'
+      + '\n  当前事实（#604 落地 + 2026-10-30 #6 缺口 G1 落地后）：'
+      + '`[\'purge:online-data\', \'purge:backup-copies\', \'purge:retention\', \'purge:media-objects\']` —— '
+      + '四条命令全覆盖（前三条日级/分钟级到期删除 + 媒体对象回收），且每条都有对应 `.service`'
+      + '（否则 `[coverage]` 会连带红）。'
+      + '\n  若你删掉 `purge:retention` 或 `purge:media-objects` ⇒ 那是把缺口放回来，必须同时改回本钉子与文档。'
       + FLIP_HINT,
   );
 

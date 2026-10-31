@@ -1,0 +1,40 @@
+# GY-R72 · #6（缺口 G1）· 媒体对象回收的**调度**（配对 gengyun-purge-media-objects.service）。
+#
+# GY-SCHEDULE: npm-script=purge:media-objects
+#
+# ## 周期口径：分钟级，每 15 分钟一次
+# 媒体域的到期口径是**时间点**（media 行的 expires_at / 授权行的到期），不是日历保留：一条
+# initiated 记录过期后晚一小时回收，就多一小时「用户以为没上传、字节还在」的窗口。所以是按分钟
+# 跑的，不是按天。
+# 判据 [calendar] 是**按命令**（`ExecStart=` 的入口文件）分档的，不是按 timer 分档：本单元驱动
+# tools/purge-expired-media.mjs ⇒ 在 tools/verify-purge-schedule.mjs 的 INTERVAL_BUDGET_MINUTES
+# 里登记为分钟级（上界 60 分钟）。
+# OnCalendar 每 15 分钟一次（:02 / :17 / :32 / :47）：与 `:00/10`（在线数据）、`:05/15`（备份
+# 副本）**错开**，避免三条命令在同一分钟一起建连；展开日历实算的最大间隔是 15 分钟（900 秒），
+# 远小于 60 分钟上界 —— 不是「随便写个 OnCalendar 就放行」。
+#
+# ## 防重叠（两道）
+# ① Type=oneshot 的服务在**仍在运行**时，timer 触发的下一次启动会被 systemd 跳过
+#    （同名单实例语义）——这是单元级互斥；
+# ② 服务侧 TimeoutStartSec=600 给单次运行一个上界，卡住的连接不会永远占着实例。
+# ⛔ 不要靠 RandomizedDelaySec 当互斥（它只是抖动）。
+#
+# ## Persistent 与抖动
+# Persistent=true：关机/停机期间错过的那一次，开机后补跑一次（回收是「越早越好」的方向，
+# 补跑只会更干净）。
+# RandomizedDelaySec=60s：多宿主机同时装本单元时把触发点摊开 1 分钟，避开同一秒的对象存储
+# 峰值；60 秒相对 15 分钟周期只占 1/15，且**不改变** 15 分钟这个上界判据（判据只展开
+# OnCalendar，不看抖动）。⛔ 不要把它调大到接近周期，否则相邻两轮会挤在一起。
+
+[Unit]
+Description=耕云 媒体对象回收 · 每 15 分钟
+
+[Timer]
+OnCalendar=*-*-* *:02/15:00
+AccuracySec=1min
+RandomizedDelaySec=60s
+Persistent=true
+Unit=gengyun-purge-media-objects.service
+
+[Install]
+WantedBy=timers.target

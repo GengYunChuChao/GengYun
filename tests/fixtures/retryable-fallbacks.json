@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 246
+      "files": 253
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 49,
-    "has": 48,
+    "total": 50,
+    "has": 49,
     "none": 1
   },
   "entries": [
@@ -214,6 +214,13 @@
       "owner": "GY-I22"
     },
     {
+      "file": "services/api/src/media/purge-driver.ts",
+      "line": 206,
+      "function": "describeFailure",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
       "file": "services/api/src/media/service.ts",
       "line": 369,
       "function": "rethrowMediaError",
@@ -306,14 +313,14 @@
     },
     {
       "file": "services/api/src/privacy/ledger-pg.ts",
-      "line": 88,
+      "line": 183,
       "function": "mapPgError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/privacy/ledger-pg.ts",
-      "line": 92,
+      "line": 187,
       "function": "mapPgError",
       "judgement": "has",
       "owner": "GY-I22"

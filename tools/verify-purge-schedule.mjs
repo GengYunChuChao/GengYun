@@ -110,14 +110,15 @@ export const DEFAULT_SCHEDULE_DIR = 'deploy/purge-schedule';
 
 /**
  * 必须被调度覆盖的 npm script。加一条＝收紧门禁（同时要有一条对应的 `.service`），刻意留 diff。
- * 三条命令各对应一个到期窗口：在线 7 日（`deletion_requests.online_due_at`）、备份副本 30 日
+ * 四条命令各对应一个到期窗口：在线 7 日（`deletion_requests.online_due_at`）、备份副本 30 日
  * （`user_backup_copies.retention_until`）、保留策略日历（`packages/privacy/retention-policy.mjs`
- * 的策略表：1 天 / 30 天尺度的年龄列 + cutoff）。
+ * 的策略表）、媒体对象（`media` 行的 `expires_at` + `media_object_cleanup` 台账行；#6 G1 前无生产调用者）。
  */
 export const REQUIRED_NPM_SCRIPTS = Object.freeze([
   'purge:online-data',
   'purge:backup-copies',
   'purge:retention',
+  'purge:media-objects',
 ]);
 
 /** 需要「绝对路径游标」的入口文件（仓库相对路径）。 */
@@ -145,7 +146,6 @@ export const DAILY_INTERVAL_MINUTES = 24 * 60;
  * ① 分钟级命令的 timer 写成 `OnCalendar=*-*-* 02:00:00`（每天一次）还是照旧判红；
  * ② 把一个日级 timer 的 `Unit=` 换成分钟级命令，上界立刻回到 60 分钟并判红；
  * ③ 想给自己换个日级预算，只能真的去驱动日级命令（那是一条要过 `[execstart]`/`[coverage]` 的改动）。
- *
  * ⛔ 未登记的命令**不**走「最宽一档」，而是回落到 `MAX_INTERVAL_MINUTES`（见 `intervalBudgetMinutes`）：
  * 新增命令时忘了登记，红面比绿面安全。
  */
@@ -153,6 +153,9 @@ export const INTERVAL_BUDGET_MINUTES = Object.freeze({
   'tools/purge-expired-online-data.mjs': MAX_INTERVAL_MINUTES,
   'tools/purge-expired-backup-copies.mjs': MAX_INTERVAL_MINUTES,
   'tools/purge-retention-expired.mjs': DAILY_INTERVAL_MINUTES,
+  // 媒体对象：媒体行的 expires_at 是**时间点**，过期后晚一小时回收就多一小时「字节还在」的窗口
+  // ⇒ 分钟级，与在线 7 日 / 备份 30 日同一档。
+  'tools/purge-expired-media.mjs': MAX_INTERVAL_MINUTES,
 });
 
 /** `setInterval(` 禁令的扫描面（仓库相对目录）。 */

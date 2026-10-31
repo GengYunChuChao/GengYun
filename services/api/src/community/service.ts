@@ -1858,6 +1858,36 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         }
       },
     }),
+
+    /**
+     * GY-I06（#6）· G3：**只读**取图上下文端口 —— 媒体域据此判定「该 `content_ref` 此刻是否
+     * 已发布且审核通过」，并取回它的附件媒体引用。
+     *
+     * 复用与公开读取同一道闸门 `publiclyVisibleTarget`（其内即 `effectiveState` 的读时重算：
+     * 结论缺失/失真/规则集过期/联动域退回全部现算），因此：
+     *   - **没有作者旁路** —— `readablePost` 里 `record.author_id === user.userId` 那条捷径对
+     *     取图不成立：作者本人没通过筛查的内容同样不得取图；
+     *   - 比真实读取面**不更宽**：不存在、未发布、已下架、已删除、审核退回一律折叠成 `null`；
+     *   - 不新增 SQL、不改任何既有导出签名，只回放库里已有的 `media_ids`。
+     *
+     * **仅供媒体域取图端口内部接线**：不注册路由、不进 OpenAPI、不进任何响应投影。
+     */
+    publishedContent: Object.freeze({
+      async read(
+        ref: { type: 'post' | 'comment'; id: string; revision: number },
+      ): Promise<{ readonly mediaIds: string[] } | null> {
+        let record: PostRecord | CommentRecord;
+        try {
+          record = await publiclyVisibleTarget(ref.type, ref.id);
+        } catch {
+          return null;
+        }
+        // 版本必须与请求的 `content_ref` 一致：旧版本的审核结论不得为当前修订背书。
+        if (record.revision !== ref.revision) return null;
+        // 评论无附件槽位（`CommentRecord` 无 `media_ids`），只有帖子回放媒体引用。
+        return { mediaIds: ref.type === 'post' ? [...(record as PostRecord).media_ids] : [] };
+      },
+    }),
   };
 
   async function like(

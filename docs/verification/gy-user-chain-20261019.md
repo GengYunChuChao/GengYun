@@ -196,3 +196,7 @@ AssertionError [ERR_ASSERTION]: tests/integration 下有既未接线、也未在
 | `bash -n` 等 shell 语法校验 | **未取得** | 本机 `bash` 是 WSL 存根，`bash -n` 不可用 |
 | 自动化 CI workflow（在 CI 里跑本链路） | **未取得** | 本轮不新增 `.github/workflows/**`；脚本已进 `UNWIRED_DECLARATIONS` 白名单并写明原因，不进无 PG 的回环链 |
 | 无 `%TEMP%` 写权限的默认路径 | 已绕过 | 沙箱拒写 `%TEMP%`（`initdb: could not create directory … Permission denied`）⇒ 用 `USER_CHAIN_PG_DATADIR` 指向工作区外目录；脚本默认值对普通开发机仍可用 |
+
+## 订正（2026-10-31）
+
+上文正文按当时提交的历史原文保留。其中指向 `tests/unit/gy-i22-session-inflight-cross-module.test.mjs:286` 的交叉引用，已随该用例扩面而移到 **`:333`**（矩阵因新增 `PUT /me/profile` 写面从 16 个面变成 17 个面，用例标题同步改名）。被引用的语义未变：注销后同一枚旧令牌在全部受保护面一致 `401 SESSION_EXPIRED`。

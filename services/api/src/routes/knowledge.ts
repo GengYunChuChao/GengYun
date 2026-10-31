@@ -125,12 +125,12 @@ async function assertPubliclyVisible(
 /**
  * 列表面的同源接线（`Refs #7`）：逐条过**详情面同一个** `isPubliclyVisible`。
  *
- * 差别只在失败形态：详情面没有"逐条状态码"可用 ⇒ 抛同形 404；列表面 ⇒ **整条剔除**。
- * 判定结论两侧必然一致，故列表面不会返回详情面会拒的行；投影还原不出引用的条目保持返回
- *（`unverifiable` 同理，不谎称失效 ⇒ 未接真实库时生产默认行为不变）。
+ * 差别只在失败形态：详情面没有"逐条状态码"可用 ⇒ 抛同形 404；列表面 ⇒ **整条剔除**。判定结论两侧必然一致，
+ * 故列表面不会返回详情面会拒的行；投影还原不出引用的条目保持返回（`unverifiable` 同理，不谎称失效）。
  *
- * 最小接线：只过滤**本页**条目，分页游标仍由域层按过滤前的页派生 ⇒ 单页可见条数可能少于
- * `limit`（不新增分页实现，也不放宽判定）。
+ * 裁剪口径（**只**改 `items`；取「保持领域值」不「按可见集重算」）：`items` = 裁剪后可见集，`total`/`match_state`/
+ * `reasons` 仍是**裁剪前**领域判定 —— 重算会把「被权限滤掉」伪装成 `no_match`（"看不到" ≠ "资料不适用"）、
+ * `total` 随权限波动；只过滤本页 ⇒ 单页可见条数可能少于 `limit`（游标仍按过滤前派生，不放宽判定）。
  *
  * 异步（#18 迁移 0036 起）：真实落点下每条判定是一次只读库往返，逐条并行 `await`；
  * `Array.prototype.filter` 不接受 Promise ⇒ 先并发求可见性再按**原顺序**过滤（不重排、不丢序）。
@@ -209,10 +209,10 @@ export function registerKnowledgeRoutes(app: FastifyInstance,config: AppConfig,p
   // 契约 /herbicides：`q`+`registration_number`，另接 `crop_id`/`region_code`（与 `/knowledge` 同名同义）。
   app.get(`${API_PREFIX}/herbicides`,{preHandler:guards.requireUser,schema:{querystring:{type:'object',additionalProperties:false,
     properties:{crop_id:text,region_code:regionCode,q:text,registration_number:text,...pagination}}}},async(request,reply)=>{
-    const {data} = reference.listHerbicides(queryOf(request));
+    const {data,queryState} = reference.listHerbicides(queryOf(request));
     // 契约 200 头说明：授权访问 no-store；列表不带 ETag（与 /knowledge 列表一致）。
     // 与 `/knowledge` 列表面同一接线：整条剔除引用不可用的行（详见 `filterVisiblePage`）。
-    return reply.header('Cache-Control','no-store').send({data:await filterVisiblePage(data,resolveReference),meta:buildMeta(request,config)});
+    return reply.header('Cache-Control','no-store').send({data:await filterVisiblePage({...data,query_state:queryState},resolveReference),meta:buildMeta(request,config)});
   });
   app.get(`${API_PREFIX}/herbicides/:id`,{preHandler:guards.requireUser,schema:{params:{type:'object',additionalProperties:false,required:['id'],properties:{id:{type:'string',format:'uuid'}}},
     querystring:{type:'object',additionalProperties:false,properties:{}}}},async(request,reply)=>{

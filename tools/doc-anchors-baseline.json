@@ -334,6 +334,12 @@
       "reference": "services/api/src/admin/ops/jobs-pg.ts:245-247"
     },
     {
+      "path": "services/api/src/app.ts",
+      "reason": "NOT_SYMBOL_LINE",
+      "owner": "api-server",
+      "reference": "services/api/src/app.ts:680"
+    },
+    {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",

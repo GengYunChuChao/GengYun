@@ -436,7 +436,7 @@
     "to": 2515,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
-    "reason": "base（91c800f6）这一格里的 2227 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `registerJobRoutes(app, config, guards` 实测在 services/api/src/app.ts:2515（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2515。（本条目上一版记的 :2488 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号。"
+    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -446,7 +446,7 @@
     "to": 2516,
     "kind": "correction",
     "symbol": "createRecognitionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2228 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createRecognitionJobSource(` 实测在 services/api/src/app.ts:2516（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2516。（本条目上一版记的 :2489 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号。"
+    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -456,7 +456,7 @@
     "to": 2522,
     "kind": "correction",
     "symbol": "createTranscriptionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2204 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createTranscriptionJobSource(` 实测在 services/api/src/app.ts:2522（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2522。（本条目上一版记的 :2495 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号。"
+    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -466,7 +466,7 @@
     "to": 2528,
     "kind": "correction",
     "symbol": "createModerationJobSource(",
-    "reason": "base（91c800f6）这一格里的 2207 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createModerationJobSource(` 实测在 services/api/src/app.ts:2528（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2528。（本条目上一版记的 :2501 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号。"
+    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -476,7 +476,7 @@
     "to": 2534,
     "kind": "correction",
     "symbol": "createSynthesisJobSource(",
-    "reason": "base（91c800f6）这一格里的 2213 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createSynthesisJobSource(` 实测在 services/api/src/app.ts:2534（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2534。（本条目上一版记的 :2507 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号。"
+    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -486,7 +486,7 @@
     "to": 2542,
     "kind": "correction",
     "symbol": "createOcrJobSource(",
-    "reason": "base（91c800f6）这一格里的 2221 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createOcrJobSource(` 实测在 services/api/src/app.ts:2542（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2542。（本条目上一版记的 :2515 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号。"
+    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -496,17 +496,7 @@
     "to": 2552,
     "kind": "correction",
     "symbol": "createAnswerJobSource({",
-    "reason": "base（91c800f6）这一格里的 2229 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createAnswerJobSource({` 实测在 services/api/src/app.ts:2552（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2552。（本条目上一版记的 :2525 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号。"
-  },
-  {
-    "doc": "docs/architecture/contract-implementation-status.md",
-    "line": 43,
-    "target": "services/api/src/app.ts",
-    "from": 2309,
-    "to": 2631,
-    "kind": "correction",
-    "symbol": "registerConversationRoutes(",
-    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -516,7 +506,7 @@
     "to": 2515,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
-    "reason": "base（91c800f6）这一格里的 2227 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `registerJobRoutes(app, config, guards` 实测在 services/api/src/app.ts:2515（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2515。（本条目上一版记的 :2488 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -526,7 +516,7 @@
     "to": 2516,
     "kind": "correction",
     "symbol": "createRecognitionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2228 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createRecognitionJobSource(` 实测在 services/api/src/app.ts:2516（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2516。（本条目上一版记的 :2489 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -536,17 +526,7 @@
     "to": 2522,
     "kind": "correction",
     "symbol": "createTranscriptionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2204 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createTranscriptionJobSource(` 实测在 services/api/src/app.ts:2522（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2522。（本条目上一版记的 :2495 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
-  },
-  {
-    "doc": "docs/architecture/contract-status.json",
-    "line": 4404,
-    "target": "services/api/src/app.ts",
-    "from": 2309,
-    "to": 2631,
-    "kind": "correction",
-    "symbol": "registerConversationRoutes(",
-    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
@@ -557,16 +537,6 @@
     "reason": "这一格说的「生产入口 `buildApp(...)` 只转发、不自行铸造也不读 env」，锚点必须指到那一次调用。历史沿革：该调用早年在本文件第 27 行，靠过一条 `from: 27 → to: 62` 的 correction（GY-R68 时登记）；随后基线提交 8b646ae1（#781「explicit moderation startup approval」）在同一调用里补了一项装配参数，把它推到了**第 68 行** ⇒ 原来的 `to: 62` 在任何 `base != HEAD` 的全量 unit 上都会因「新行里找不到 symbol `buildApp(`」判红（base 第 62 行现在是 `if (moderationAssembly.fatalLine !== null) {`）。GY-R71（2026-10-30）按同一符号把这一格与登记一起复验到真实的第 68 行：`from` 取文档当前写着的 62（不是更早的 27 —— 登记表按「文档现值 → 新值」配对，写 27 配不上），`symbol` 仍是 `buildApp(`，旧行（base:62）不含该符号这一条也成立。",
     "kind": "correction",
     "symbol": "buildApp("
-  },
-  {
-    "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
-    "line": 17,
-    "target": "services/api/src/app.ts",
-    "from": 1614,
-    "to": 1819,
-    "reason": "旧锚点 1614 在 base 上指到 `const released: string[] = [];`（与这条引用无关）；该行要引用的是 `buildApp` 里转发媒体批准能力的 spread。合流后的树按符号 `mediaRealApprovalOption` 实测在 services/api/src/app.ts:1819（`...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),`），`--reanchor --write-doc` 已把文档重写到 :1819（main 侧的 :1815 在合并树上同样不成立）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。",
-    "kind": "correction",
-    "symbol": "mediaRealApprovalOption"
   },
   {
     "doc": "docs/architecture/acceptance-map.md",
@@ -808,7 +778,7 @@
     "to": 2528,
     "kind": "correction",
     "symbol": "createModerationJobSource(",
-    "reason": "base（91c800f6）这一格里的 2207 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createModerationJobSource(` 实测在 services/api/src/app.ts:2528（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2528。（本条目上一版记的 :2501 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -818,7 +788,7 @@
     "to": 2534,
     "kind": "correction",
     "symbol": "createSynthesisJobSource(",
-    "reason": "base（91c800f6）这一格里的 2213 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createSynthesisJobSource(` 实测在 services/api/src/app.ts:2534（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2534。（本条目上一版记的 :2507 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -828,7 +798,7 @@
     "to": 2542,
     "kind": "correction",
     "symbol": "createOcrJobSource(",
-    "reason": "base（91c800f6）这一格里的 2221 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createOcrJobSource(` 实测在 services/api/src/app.ts:2542（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2542。（本条目上一版记的 :2515 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -838,7 +808,7 @@
     "to": 2552,
     "kind": "correction",
     "symbol": "createAnswerJobSource({",
-    "reason": "base（91c800f6）这一格里的 2229 是旧基线值：base 树上该符号早已不在那一行，机械映射只会把错值平移到别处。合流后的树按符号 `createAnswerJobSource({` 实测在 services/api/src/app.ts:2552（`registerJobRoutes(app, config, guards, createJobRegistry([` 在 :2515；六条 `create*JobSource` 实参在合并树上分别是 recognition services/api/src/app.ts:2516、transcription :2522、moderation :2528、synthesis :2534、ocr :2542、answer :2552），所以按符号重锚而不是做差值平移；`--reanchor --write-doc` 已把文档里的这一格重写到 :2552。（本条目上一版记的 :2525 是两侧合流前的读数，合流后 app.ts 净位移后再按符号重取。）【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
@@ -932,9 +902,115 @@
     "fromEnd": 679,
     "to": 700,
     "toEnd": 743,
-    "reason": "旧区间 636-679 是台账里记的归属块，但 base 上锚点 `async function createConversation(` 实际已在第 681 行（旧区间上界差 2 行，只是靠 `verify-contract-status` 的 ±2 容差才一直通过）。合流后按符号实测归属块是 services/api/src/conversations/service.ts:700-743（两侧各有自己的插入，机械平移两边都不对），`--reanchor --write-doc` 已把文档重写到 :700-743。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。",
+    "reason": "旧区间 636-679 是台账里记的归属块，但 base 上锚点「async function createConversation(」实际已在第 681 行（旧区间上界差 2 行，只是靠 `verify-contract-status` 的 ±2 容差才一直通过，旧行窗口里**没有**这个符号）。base 侧文档现值是 695-738（更早一次纠正的结果）；合流 #787 后 `services/api/src/conversations/service.ts` 在 createConversation 之前净 +5 行 ⇒ `--reanchor` 按符号重算归属块为 700-743（本次实测，md:98 与 contract-status.json 的 createConversation 证据行同步为 700-743）。按符号纠正，不做差值平移。",
     "kind": "correction",
     "symbol": "async function createConversation("
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 92,
+    "target": "services/api/src/conversations/screen.ts",
+    "from": 124,
+    "fromEnd": 130,
+    "to": 262,
+    "toEnd": 265,
+    "reason": "旧锚点本来就指错：base 的 124-130 是 `budget_ms` 的 JSDoc 与声明（124 `/**`、125 「预算（毫秒，**可选**…）」、130 `budget_ms?: number;`），不是该行说的「调用侧」。本片按该行语义改指真正的调用侧实参块：HEAD 262-265 是 `evaluateHardRules(空对象, {` 之后的 `rules: [...activeRules]` 与两条条件展开的 `clock`／`budget_ms`（未注入时对象里不出现这两个键）。端点映射只会把旧值原样搬到 158-164（仍是声明块），所以必须登记纠正。",
+    "kind": "correction",
+    "symbol": "rules: [...activeRules]"
+  },
+  {
+    "doc": "docs/verification/gy-flake-clock-20261019.md",
+    "line": 70,
+    "target": "services/api/src/conversations/screen.ts",
+    "from": 155,
+    "fromEnd": 158,
+    "to": 262,
+    "toEnd": 265,
+    "reason": "旧锚点本来就指错：base 的 155-158 是 `chunksOf` 的头四行（155 `function chunksOf(text: string): string[] {`），与该行「规则层收到的实参」不是一回事。真值是 HEAD 262-265 —— `evaluateHardRules` 的第二个实参对象：`rules: [...activeRules]` 加两条条件展开（`clock`／`budget_ms`），正是该行「未注入时对象里不出现该键」的落地处。端点映射会把旧值搬到 211-214（新的 `chunksOf` 头），所以必须登记纠正。",
+    "kind": "correction",
+    "symbol": "rules: [...activeRules]"
+  },
+  {
+    "doc": "docs/verification/gy-i12-chat-20261019.md",
+    "line": 37,
+    "target": "services/api/src/conversations/screen.ts",
+    "from": 200,
+    "fromEnd": 216,
+    "to": 313,
+    "toEnd": 329,
+    "reason": "旧锚点本来就指错：base 的 200-216 是 `screen()` 的 catch 分支（`RULE_ENGINE_ERROR` ⇒ `quarantined`）与决策合并（`DECISION_RANK`／`pushUnique`），不含该行所说的「资料原文命中 ⇒ 剔除该来源」。真值是 HEAD 313-329 —— `screenSources` 实现体：逐条扫 `title + body`、命中的收进 `rejectedCitations`、保留其余进 `kept`。端点映射会把旧值搬到 267-283，所以必须登记纠正。",
+    "kind": "correction",
+    "symbol": "rejectedCitations"
+  },
+  {
+    "doc": "docs/verification/gy-i12-conversations-gap-20261021.md",
+    "line": 115,
+    "target": "screen.ts",
+    "from": 126,
+    "to": 192,
+    "reason": "旧锚点本来就指错：base 的 126 行落在 `budget_ms` 的 JSDoc 里（126 `*`、127 「缺省（不传 / `undefined`）⇒ 规则层沿用 `DEFAULT_RULE_BUDGET_MS`…」），而该行说的是「规则版本由 `:126` 派生」——base 的规则版本其实在 141-144（`export const RISK_RULE_VERSION = deriveRuleVersion(RISK_RULES, …)`）。真值是 HEAD 192（同一行 `RISK_RULE_VERSION`）。端点映射会把旧值搬到 160（仍是 JSDoc），所以必须登记纠正。",
+    "kind": "correction",
+    "symbol": "RISK_RULE_VERSION"
+  },
+  {
+    "doc": "docs/verification/gy-i12-conversations-gap-20261021.md",
+    "line": 115,
+    "target": "screen.ts",
+    "from": 152,
+    "to": 245,
+    "reason": "旧锚点本来就指错：base 的 152 是 `DECISION_RANK` 的收尾 `});`（一行右括号，既不是类起点也不是任何实现），却被写成「原记」附在该行主锚点后面。本片不再保留这处空注记，改为指向三道（问题侧/资料侧/答案侧）共用的内层 `screen()` 定义 HEAD 245——正是该行「判定逻辑一处不复制、只有进这一轮的规则不同」的落地符号。端点映射会把旧值原样搬到 208（仍是那行右括号），所以必须登记纠正。",
+    "kind": "correction",
+    "symbol": "function screen("
+  },
+  {
+    "doc": "docs/verification/gy-i12-chat-20261019.md",
+    "line": 37,
+    "target": "tests/unit/conversation-risk-screen.test.mjs",
+    "from": 482,
+    "to": 494,
+    "reason": "旧锚点本来就指错：base 的 482 是空行（原册里就以 SUSPECT 登记着），既不是断言也不是用例边界。该行证据要的是「资料原文命中 ⇒ 剔除该来源」那条用例的剔除断言，真值是 HEAD 494 `assert.deepEqual(screened.rejected_citations, [`（同一用例 489-497：`screenSources` 两条被剔、剩下 0 条）。+5 端点映射只会把空行原样搬到 487，所以必须登记纠正。",
+    "kind": "correction",
+    "symbol": "screened.rejected_citations"
+  },
+  {
+    "doc": "docs/verification/gy-r28-w7-qa-live-20261021.md",
+    "line": 311,
+    "target": "services/api/src/conversations/screen.ts",
+    "from": 111,
+    "to": 121,
+    "reason": "旧锚点本来就指错：base（merge-base 344f4423）的 111 是 `export interface RiskSourceScreenResult {`（资料侧那次查询的结果类型），而本行讲的是 `RiskScreen` 接口——`screenAnswer` 的声明就在这个接口里。端点映射把 111 原样搬到 142（`screenAnswer(...): RiskVerdict;` 那个成员，虽同属该接口但不是接口声明），按文本比对属假位移，故登记纠正到 121。",
+    "kind": "correction",
+    "symbol": "export interface RiskScreen {"
+  },
+  {
+    "doc": "docs/architecture/gy-r59-retention-backup-thirdparty-map.md",
+    "line": 89,
+    "target": ".github/workflows/real-pg-integration.yml",
+    "from": 203,
+    "to": 259,
+    "reason": "旧锚点本来就指错：真实基线里 workflow 第 203 行是 message-events 臂的 `env:`，与该行所说「第三方删除真库臂在 CI 里跑」无关；本片复算时按脚本名定位到 `real-pg-admin-write-17.11` job 里的第 259 行（`psql … CREATE DATABASE gengyun_third_party_deletion_test && node tests/integration/third-party-deletion-pg.mjs …`）。目标文件本提交未改动，故按登记表纠正，不用端点映射解释。",
+    "kind": "correction",
+    "symbol": "node tests/integration/third-party-deletion-pg.mjs"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 43,
+    "target": "services/api/src/app.ts",
+    "from": 2309,
+    "to": 2631,
+    "kind": "correction",
+    "symbol": "registerConversationRoutes(",
+    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4404,
+    "target": "services/api/src/app.ts",
+    "from": 2309,
+    "to": 2631,
+    "kind": "correction",
+    "symbol": "registerConversationRoutes(",
+    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
   },
   {
     "doc": "docs/verification/gy-i28-demo-parity-20261018.md",

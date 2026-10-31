@@ -123,7 +123,7 @@ import { createMemoryMediaStore, type MediaStore } from './media/store.ts';
 import { createPostgresMediaStore } from './media/store-pg.ts';
 import { createObjectRefCipher } from './media/object-ref-cipher.ts';
 import { resolveMediaObjectStore, type MediaObjectStore } from './media/object-store.ts';
-import { createClosedContentSource, type PublishedContentSource } from './media/content-source.ts';
+import { createRealContentSource, type PublishedContentSource } from './media/content-source.ts';
 // GY-I27 接线单：授权中间件与撤回/注销消费者的 HTTP/服务侧适配（协议层在 packages/privacy/**）。
 import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
@@ -152,7 +152,7 @@ import { createMemoryHistoryStore, type HistoryStore } from './history/store.ts'
 import { createPostgresHistoryStore } from './history/store-pg.ts';
 import { createWiredHistoryJobPort, createUnwiredHistoryJobPort, type HistoryJobPort } from './history/job.ts';
 import { createHistoryCascadePort, type HistoryCascadePort } from './history/cascade-wiring.ts';
-import { createWiredVisibilityPort, type VisibilityPort } from './targetref/visibility.ts';
+import { createTargetVisibilityWiring, createWiredVisibilityPort, TARGET_VISIBILITY_DELEGATE, type VisibilityPort } from './targetref/visibility.ts';
 import { createReferenceQueryService } from './knowledge/reference-query.ts';
 import {
   createUnavailableBackupPurgePort,
@@ -264,9 +264,9 @@ import { createKnowledgeRetrievalPort } from './conversations/retrieval.ts';
 import { createAnswerJobSource } from './conversations/job.ts';
 import type { ConversationContextPort } from './conversations/context.ts';
 import {
-  createUnwiredTurnCascadePort,
+  createConversationCascadePort,
   type TurnCascadePort,
-} from './conversations/cascade.ts';
+} from './conversations/cascade-wiring.ts';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -1302,7 +1302,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : null;
   const mediaStore: MediaStore = mediaStoreOption
     ?? (config.executionMode === 'real' && pool !== null && mediaObjectRefKeyMaterial !== null
-      ? createPostgresMediaStore({ pool, cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
+      ? createPostgresMediaStore({ pool, connect: () => pool.connect(), cipher: createObjectRefCipher(mediaObjectRefKeyMaterial) })
       : createMemoryMediaStore({ now: () => clock().getTime() }));
   // **放行判据 = `communityStore.persistent`**（不是"某处注入了什么"）：内存实现在 real 下
   // 一律 503，PG 实现在 real + 连接池时放行；持久化改造后这条判据仍然成立且更严。
@@ -1813,7 +1813,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
         executionMode: config.executionMode,
         objectStore: mediaObjectStore,
         tokenSecret: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
-        contentSource: mediaContentSource ?? createClosedContentSource(),
+        contentSource: mediaContentSource ?? createRealContentSource(communityService, mediaStore),
         ...(mediaAttachmentCounter === undefined ? {} : { attachmentCounter: mediaAttachmentCounter }),
         // non-defaultable：未显式给出时**不带该属性**（闸门只认自有属性 + WeakSet 品牌）。
         ...(mediaRealApprovalOption === undefined ? {} : { realMediaApproval: mediaRealApprovalOption }),
@@ -1926,14 +1926,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const defaultVisibility: VisibilityPort = createWiredVisibilityPort({
     note:
       '引用可用性端口已接线到公开读面：逐次核验目标当前是否出现在 /knowledge 读面'
-      + '（数据库读视图 catalog_read.current_knowledge + 浙江首批投影），type/revision 逐项一致才判可用',
-    resolve: async ({ target_ref }) => {
+      + '（数据库读视图 catalog_read.current_knowledge + 浙江首批投影），type/revision 逐项一致才判可用；识别/OCR 目标另按本人 owner 读面核验：本人记录才可用，他人记录/不存在/读取失败一律不可用',
+    resolve: async ({ target_ref, userId }) => {
+      // 识别/OCR 两型先由 owner 读面判定（服务请求期才装饰 ⇒ 只交闭包）；其余型别原样交回下面的收藏闭集判据。
+      const owned = await createTargetVisibilityWiring({ recognitionService: () => app.recognitionService, ocrService: () => app.ocrService }).resolve(target_ref, userId); if (owned !== TARGET_VISIBILITY_DELEGATE) return owned;
       // 只核验收藏契约闭集（`species|herbicide|scheme`）：其余目标本片没有可核验的读面。
       if (!isFavoriteTargetType(target_ref.type)) return 'unavailable';
       const row = await publicKnowledgeRowOf(target_ref.id);
-      if (row === null) return 'unavailable';
-      if (row.type !== target_ref.type) return 'unavailable';
-      if (row.revision !== target_ref.revision) return 'unavailable';
+      if (row === null || row.type !== target_ref.type || row.revision !== target_ref.revision) return 'unavailable';
       return 'available';
     },
   });
@@ -2264,7 +2264,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     ...(jobsLedgerDeletionStore === null ? {} : { jobsStore: jobsLedgerDeletionStore }),
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
-    now: clock,
+    now: clock, ...(mediaPersistenceRefusal === null ? { mediaStore } : {}),
     ...backupPurgeWiring,
     ...backupStatesWiring,
     ...onlineEvidenceWiring,
@@ -2369,7 +2369,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const conversationTranscription = conversationInjection?.transcription ?? createTranscriptionPort({
     getTranscription: (input) => app.speechService.getTranscription(input),
   });
-  const conversationCascade: TurnCascadePort = conversationInjection?.cascade ?? createUnwiredTurnCascadePort();
+  const conversationCascade: TurnCascadePort = conversationInjection?.cascade ?? createConversationCascadePort({ speech: { getTranscription: (input) => app.speechService.getTranscription(input), deleteTranscription: (input) => app.speechService.deleteTranscription(input) }, onError: (error: unknown, detail: { transcriptionId: string }) => app.log?.warn?.({ err: error, ...detail }, 'turn cascade transcription cleanup failed') });
   const conversationService: ConversationService | null =
     // `real` 下只有 `persistent === true` 的 store 才配得上"真实成功"：无 `DATABASE_URL` 时
     // `conversationStore` 为 null，**注入的内存 store 也不例外**（否则测试注入口就成了绕过

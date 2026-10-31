@@ -20,7 +20,7 @@
  *
  * 归档页保护：真实路径比较 + **文件身份（dev + ino）** + 仓库内包含性校验；`--write` 无隐式默认页。
  * 本工具原来默认写 `docs/verification/gy-i22-failmatrix-20261022.md`——那是 R29 建页时的**归档快照**
- * （表格 168 行、负控制 23 条）。`EXPECTED` 随当前矩阵继续校正（现为 249 / 26）之后，
+ * （表格 168 行、负控制 23 条）。`EXPECTED` 随当前矩阵继续校正（现为 249 / 27）之后，
  * 那个默认值就变成「裸跑一次 --write 就把归档快照无报错重写成 249 行」，所以：
  *   1. `--write` 无隐式默认页：裸 `--write` 一律 exit 1，必须显式 `--page=`；
  *   2. 目标页按仓库根解析成绝对路径后，**先判文件身份**（`statSync` 的 `dev` + `ino`）是不是归档页：
@@ -31,7 +31,7 @@
  *      不会写到仓库外）；
  *   4. 归档页只允许「同一基线刷新读数」：即便给了 `--i-know-this-rewrites-archive`，
  *      页内表格行数 / 负控制行数仍必须与 `EXPECTED` 逐项相等才放行。本页当前是 168 / 23、
- *      `EXPECTED` 是 249 / 26，所以带旗标也**必然被拒**——旗标只是一句「我知道这是归档页」的
+ *      `EXPECTED` 是 249 / 27，所以带旗标也**必然被拒**——旗标只是一句「我知道这是归档页」的
  *      确认，不是绕过条数校验的开关；要刷新得先迁移台账口径，不是加个旗标改写历史快照；
  *   5. 所有写盘都在 `problems` 对账**之后**：对账不通过一律不写盘、exit 1。
  *
@@ -48,7 +48,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
  * 归档快照页：R29 建页时点（表格 168 行 / 负控制 23 条）的冻结记录。
  * 生成器**不再默认写它**；显式点名时按**文件身份**（`dev` + `ino`）识别——字符串别名、symlink、
  * junction、`\\?\` 前缀路径、硬链接都算同一个文件，不算另一个目标——且即便给了
- * `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 249 / 26
+ * `--i-know-this-rewrites-archive` 也仍要过条数校验：本页 168 / 23 ≠ `EXPECTED` 249 / 27
  * ⇒ 当前必然被拒（见 `planWrite`）。
  */
 const ARCHIVE_PAGE = 'docs/verification/gy-i22-failmatrix-20261022.md';
@@ -82,21 +82,21 @@ const FAMILY_ACCEPTANCE = Object.freeze({
  *     `rows.length`，本版 `totals.total` 与 `rows.length` 同为 249，逐族求和与逐批求和也都是 249。
  *   - `families` / `batches` 是同一批行的**分组计数**，各自的全集必须等于 `total`：
  *     C1…C7 + E1 + E2 + C10 + C11 + F1 + D1…D4 = 249；B1…B6 = 249。
- *   - `negativeControls` 数的是 `tests/failmatrix/mutations.mjs` 的 `MUTATIONS.length`（26）。
+ *   - `negativeControls` 数的是 `tests/failmatrix/mutations.mjs` 的 `MUTATIONS.length`（27）。
  *
  * 时点：`168` 是 R29 建页时点（只有 C1…C7 + E1 + E2 + D1…D4，见 `docs/verification/gy-i22-failmatrix-20261022.md`）
  * 的**同一口径旧读数**，不是另一个维度；R31 补上异步 AI 域 C10(23) + C11(39) ⇒ 168 + 23 + 39 = 230，
- * #546 补 F1(6) ⇒ 236，R34 负控制 23 → 26；R18 补 C4(3) + C6(1) ⇒ 240；S-6 补 C3(9)（作业过滤的
+ * #546 补 F1(6) ⇒ 236，R34 负控制 23 → 26、R72/W10 追加 NC-25 ⇒ 27；R18 补 C4(3) + C6(1) ⇒ 240；S-6 补 C3(9)（作业过滤的
  * 拒绝/降级语义：闭集外/类型错/游标绑筛选/合法空页）⇒ 249。本常量跟**当前**矩阵走。
  * ⚠️ 归档页那份 R29 快照（168 行 / 23 条）**不允许**被本常量改写成 249 行：`--write` 无隐式默认页，
  * 显式点名时按**真实路径**识别归档页，并且页内条数必须已经等于本常量（见 `planWrite`）。
- * 也就是说 `--i-know-this-rewrites-archive` 也改写不了它：本页当前 168 / 23 与 249 / 26 不一致 ⇒ 必然被拒。
+ * 也就是说 `--i-know-this-rewrites-archive` 也改写不了它：本页当前 168 / 23 与 249 / 27 不一致 ⇒ 必然被拒。
  */
 const EXPECTED = Object.freeze({
   families: { C1: 37, C2: 24, C3: 36, C4: 21, C5: 10, C6: 11, C7: 16, E1: 3, E2: 3, C10: 23, C11: 39, D1: 11, D2: 4, D3: 2, D4: 3, F1: 6 },
   batches: { B1: 118, B2: 37, B3: 17, B4: 9, B5: 62, B6: 6 },
   total: 249,
-  negativeControls: 26,
+  negativeControls: 27,
 });
 
 function parseArgs(argv) {

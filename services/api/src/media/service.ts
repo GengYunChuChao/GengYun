@@ -232,15 +232,15 @@ export interface AppMediaService {
    *    「父行已经没有引用」的未确认删除对象，例如 CAS=0 的迟到 `complete` 落下的衍生件）。
    *
    * `pendingObjects` = 端口抛错或返回 `false`（**未能确认删除**）而被保留引用的对象数 ⇒ 仍可重试；
-   * `remainingObjects` = 清扫一次后对象存储中仍然存在的对象数（诊断用）。
+   * `remainingObjects` = 清扫后对象存储中仍然存在的对象数（诊断用）；适配器不提供枚举时为 `null`（⛔ 不是失败）。
    */
   cleanupOrphans(): Promise<{
     removedObjects: number;
     revokedGrants: number;
     pendingObjects: number;
-    remainingObjects: number;
+    remainingObjects: number | null;
   }>;
-  stats(): Promise<{ mediaCount: number; objectCount: number; grantCount: number }>;
+  stats(): Promise<{ mediaCount: number; objectCount: number | null; grantCount: number }>;
   /**
    * **仅服务端/测试用**：读取某条记录的私有对象键（用于在测试里模拟「客户端直传对象存储」）。
    * 绝不进入任何响应投影、日志或公开列表。
@@ -1266,7 +1266,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     // 契约：If-Match 对应 **content_ref.revision**（不是媒体 revision）。
     requireIfMatch(ifMatch, contentRef.revision);
 
-    const content = contentSource.getPublishedContent({
+    const content = await contentSource.getPublishedContent({
       type: contentRef.type,
       id: contentRef.id,
       revision: contentRef.revision,
@@ -1381,7 +1381,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       throw new ApiError('NOT_FOUND', '授权不存在');
     }
     // 每次取图**复核**当前审核/发布/版本状态（短效句柄 ≠ 公开权限）。
-    const content = contentSource.getPublishedContent(grant.contentRef);
+    const content = await contentSource.getPublishedContent(grant.contentRef);
     if (content === null || !content.published || !content.approved) {
       throw new ApiError('NOT_FOUND', '授权不存在');
     }
@@ -1468,17 +1468,19 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       for (const grant of await store.listStaleGrants(timestamp)) {
         await store.deleteGrant(grant.grantId);
       }
+      // 诊断计数：适配器不支持枚举时是 null（⛔ 不是失败），见 `diagnosticObjectCount`。
       return {
         removedObjects,
         revokedGrants,
         pendingObjects,
-        remainingObjects: await attemptAsync(() => objectStore.objectCount()),
+        remainingObjects: await diagnosticObjectCount(objectStore),
       };
     },
     async stats() {
       return {
         mediaCount: await store.countMedia(),
-        objectCount: await attemptAsync(() => objectStore.objectCount()),
+        // 同 `cleanupOrphans`：诊断计数不可用是 null，不是失败。
+        objectCount: await diagnosticObjectCount(objectStore),
         grantCount: await store.countGrants(),
       };
     },
@@ -1491,6 +1493,20 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     },
   };
   return service;
+}
+
+/**
+ * 对象计数是**诊断**能力，不是清理本身：适配器声明不支持枚举（`objectCountSupported === false`，
+ * 例如真实 S3 未接 list 权限）时返回 `null`，⛔ 不得把「诊断不可用」当成「清理失败」——
+ * 否则每一轮已经成功的删除都会被折成一次失败（真实定时任务会永久退出 1）。
+ *
+ * 为什么定义在文件尾而不在 {@link attemptAsync} 旁边：`docs/architecture/**` 里有指向本文件的
+ * 行号锚点（全部在 1400 行以前），在锚点之前增删行会把它们推出容差。这里定义在使用点之后
+ * （函数声明提升），锚点与既有行号都不动。⛔ 不许靠手工改锚点凑 ±2 容差。
+ */
+async function diagnosticObjectCount(objectStore: MediaObjectStore): Promise<number | null> {
+  if (objectStore.objectCountSupported === false) return null;
+  return attemptAsync(() => objectStore.objectCount());
 }
 
 /** 常量再导出：供路由层 schema 与文档核对（避免各处硬编码导致漂移）。 */

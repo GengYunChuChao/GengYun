@@ -165,10 +165,11 @@ export function createReferenceQueryService(options: { includeUnverifiedSeed: bo
   }
 
   /** `/herbicides`、`/herbicides/{id}`：直接消费已合入适配层的真实记录。 */
-  function listHerbicides(input: Record<string, unknown>): { data: Record<string, unknown>; etag?: string } {
+  function listHerbicides(input: Record<string, unknown>): { data: Record<string, unknown>; queryState: Record<string, unknown>; etag?: string } {
     try {
       const result = domain().listHerbicides(input);
-      return { data: result.body.data as Record<string, unknown>, etag: result.headers.ETag };
+      if (result.query_state === undefined) throw new ApiError('PROVIDER_UNAVAILABLE', '资料适配层未返回列表判定 query_state（契约要求必填，不静默降级）');
+      return { data: result.body.data as Record<string, unknown>, queryState: result.query_state, etag: result.headers.ETag };
     } catch (error) {
       return rethrowDomainError(error);
     }

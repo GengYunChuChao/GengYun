@@ -1,0 +1,77 @@
+# GY-R72 · #6（缺口 G1）· 媒体对象回收的 **systemd 单元**
+# （驱动者 = tools/purge-expired-media.mjs，npm script = purge:media-objects）。
+#
+# GY-SCHEDULE: npm-script=purge:media-objects
+# GY-SCHEDULE: role=owner
+#
+# ## 这个单元为什么存在
+# services/api/src/media/service.ts 里的 expireInitiated()（声明 :225 / 实现 :1412）与
+# cleanupOrphans()（声明 :237 / 实现 :1424）早就写完、也有单测，但到 #6 的 G1 为止**没有生产
+# 调用者**——service.ts 自己在 :836 记了这笔账，store.ts:133 / store-pg.ts:472 /
+# privacy/user-data-deletion.ts:289/891/1018 四处注释也都认了同一件事。而回收是「对象存储里的
+# 字节 + media_object_cleanup 台账行」两处状态：没有一个反复运行的调用者，它就永远不会发生。
+# 本单元 + 同名 .timer 就是那个调用者；进程内定时器照旧为零（services/api/src 至今零
+# setInterval，由 tools/verify-purge-schedule.mjs 的 [setinterval] 判据机器化守住）。
+# 形态与三条既有单元（online-data / backup-copies / retention）同族，差异只有两条：
+#   ① 它驱动的是媒体域的**两段**回收（先到期撤销，再孤儿清扫），不是单表到期删除；
+#   ② 它同时需要库和对象存储两个端口都在位：缺任一个就退 2，不静默当 0（见下「失败可见性」）。
+#
+# ## 角色：必须用**属主/运维角色**
+# 命令要读 media_object_cleanup 的台账行、改 media 行上的对象引用列、删 media_access_grant 里
+# 的过期/撤销授权。这些写面对运行时角色只开了最小权限（列级授权），到期回收的写面不在其中
+# ⇒ 用运行时角色跑必然 42501（命令把它归成 PERMISSION_DENIED，记进失败表并退出 1）。
+#
+# ## 凭据：只从 EnvironmentFile 来
+# 单元里**不写**连接串、也不写任何口令：运维把下面四类值放进
+# /etc/gengyun/purge-media-objects.env（root:root 0600），systemd 以 root 读入后再降权执行：
+#   · 数据库连接串（属主/运维角色）
+#   · 对象存储的 endpoint / bucket / 访问键 / 私钥四项
+#   · 对象引用加密密钥 MEDIA_OBJECT_REF_KEY（与 API 侧同一把；解不出引用就等于扫不到对象）
+# 命令侧也只认环境变量：工具**不接受** argv 明文连接串，也不回显任何一项的值（缺项只打印字段名
+# 与 MISSING / INVALID_VALUE）。判据 [secrets] 对本文件**含注释**扫内联连接串与口令键，所以这里
+# 连示例值都不写。
+#
+# ## 失败可见性：退出码是**唯一**判据
+# 0 干净跑完（可能有 retained：未确认删除的对象引用与台账行原样保留，下一轮重试）/
+# 1 有失败表（权限、缺表、端口抛错、返回值形状不对；单段失败只记该段，另一段照跑）/
+# 2 参数或配置错（缺数据库连接串、对象存储未装配、--limit 越界）。
+# 「对象存储未装配」刻意落在 2 而不是 0：没有对象端口时一轮「扫了 0 条」看起来和干净跑完一模一样，
+# 那是最难发现的一类调度假绿。
+# 所以这里不设任何重启或吞错策略：Type=oneshot + 非 0 退出 ⇒ 该次运行在 systemd 里记 failed，
+# 运维看 journal 就知道；⛔ 不写 SuccessExitStatus=、⛔ 不写 Restart=always。
+# `--json` 让每轮末行留一份机读报告（读数 + 失败表，不含连接串与任何凭据）进 journal，作审计留档。
+#
+# ## 与 service.ts 的边界：只调用，不改它
+# 回收语义**全部**在 service.ts 里，本命令一行都不复制：对象端口抛错或返回 false ⇒ 不删引用、
+# 不删台账行（service.ts:708 / :742 的口径），留给下一轮；命令只负责「按顺序调两段 + 把读数与
+# 失败如实报出来」。
+
+[Unit]
+Description=耕云 媒体对象回收（tools/purge-expired-media.mjs）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# 非 root：库侧与对象存储侧都已按最小权限收敛，OS 侧不再给 root。
+User=gengyun-ops
+Group=gengyun-ops
+# 凭据只从这里进（见上「凭据」一节）。
+EnvironmentFile=/etc/gengyun/purge-media-objects.env
+# 状态目录：本命令当前不写文件（幂等靠媒体行的状态列 + 台账行决定），保留给将来的日志/临时
+# 产物一个**非 root 可写**的落点，避免将来有人为了写文件把 User= 改回 root；判据 [hygiene]
+# 要求每个 .service 都声明它。
+StateDirectory=gengyun-purge-media-objects
+StateDirectoryMode=0700
+WorkingDirectory=/opt/gengyun/app
+# 入口文件必须与 package.json 的 purge:media-objects **同一个文件**（判据 [execstart] 核对）。
+# `--json` 让 journal 里每轮留一份机读报告（审计用）；缺省非 dry-run，⛔ 不要靠忘记加参数
+# 变成「每轮数一遍、一行不清」的空转。
+# 单轮口径取命令缺省：--limit 200 是**两段之间**的预算闸（本域到期回收只能整批，limit 不假装
+# 只处理了 N 条）；到限就只跑到期那段、把 truncated 记进读数，清扫留到下一轮。
+ExecStart=/usr/bin/node /opt/gengyun/app/tools/purge-expired-media.mjs --json
+# 防重叠：oneshot 单元在跑时 systemd 不会为同一单元起第二个实例；这条再给「卡住的连接」一个
+# 上界 —— 超时即杀并把该次运行记 failed（不重试、不吞错）。
+# 10 分钟：默认 --limit 200 的一轮里，对象删除是逐个 external 调用，留足余量但不拖到下一轮开始。
+TimeoutStartSec=600
+Nice=10

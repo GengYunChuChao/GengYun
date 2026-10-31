@@ -182,6 +182,24 @@
       "accept": 2,
       "orphans": 3541,
       "outsideRed": 128
+    },
+    {
+      "why": "R72 #785 合流（upstream/main 878dad38）：四条台账/取消片新增代码把 5 条历史页裸锚点顶到实质行或空行，新增与陈旧各 5 条；判据一字未改，不是放宽。",
+      "accept": 5,
+      "orphans": 3541,
+      "outsideRed": 128
+    },
+    {
+      "why": "R72 #785 合流：docs/architecture/s4-data-traceability.md:249 与 :312 的裸锚点随 main 侧文本带入并按 +4 位移重取（:2021→:2025、:2017→:2021），孤儿册净变动 1 新增/1 陈旧，判据一字未改",
+      "accept": 1,
+      "orphans": 3541,
+      "outsideRed": 128
+    },
+    {
+      "why": "R72 #785 合流：ai-ops-spec-status.md:82 的裸锚点由 :557 改成 :558（同格显式锚点已改成 ocr/store-pg.ts:377，但该格仍无法继承），s4-data-traceability.md:111 的历史数字由裸锚点 :2238 改成散文「原引 2238 行」；净变动 1 新增/2 陈旧，判据一字未改。",
+      "accept": 1,
+      "orphans": 3540,
+      "outsideRed": 128
     }
   ],
   "orphans": [
@@ -260,7 +278,6 @@
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:208|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:20|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:240|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:240|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:272|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:28|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:30-33|no-explicit-in-block",
@@ -293,9 +310,9 @@
     "docs/architecture/s4-data-traceability.md|:236|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:244|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:252|ambiguous-block",
+    "docs/architecture/s4-data-traceability.md|:2548|ambiguous-block",
+    "docs/architecture/s4-data-traceability.md|:2548|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2550|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:2575|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:2575|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:261|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:27|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:27|ambiguous-block",
