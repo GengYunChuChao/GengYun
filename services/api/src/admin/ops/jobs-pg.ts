@@ -2,11 +2,11 @@
  * 平台级作业的**真实 Postgres 读面 / 取消面**（`AdminJobPort` 的生产实现，GY-I18 第一批）。
  *
  * ## 为什么读三张域内作业表，而不是 `public.jobs`
- * `services/api/db/migrations/0001_initial_schema.sql:203-231` 确实建了统一作业台账 `public.jobs`，
- * 但全仓**没有任何代码向它 INSERT**；真实作业行只落在各域自己的表里：
- * - `public.ocr_jobs`（`0024_ocr_persistence.sql`）；
- * - `public.recognition_jobs`（`0025_*`）；
- * - `public.speech_jobs`（`0026_speech_persistence.sql`）。
+ * `public.jobs`（建表：`services/api/db/migrations/0001_initial_schema.sql:203-231`）**不是死表**，它有人写：唯一写入点是 `services/api/src/jobs/ledger.ts:268-281` 的 `JOB_LEDGER_UPSERT_SQL`（向 `public.jobs` 写行的 `INSERT`，15 列显式 + `ON CONFLICT (id) DO UPDATE`）；
+ * 已接源 `LEDGER_WIRED_SOURCES` = `ocr` / `recognition` / `transcription` / `answer`（`ledger.ts:78`），未接的只有 `moderation` / `synthesis`（理由见 `UNWIRED_SOURCES_REASON`，`ledger.ts:102`）；
+ * **本文件的取消事务也写同一张表**（`:618-621`）。真实作业行**另**落在各域自己的表：`public.ocr_jobs`（`0024_ocr_persistence.sql`）/ `public.recognition_jobs`（`0025_*`）/ `public.speech_jobs`（`0026_speech_persistence.sql`）。
+ * **读域内表、不读台账的真正理由**：`AdminJobView.target_ref` 要的是**域内记录行**的真实 `revision`（`LEFT JOIN public.ocr_records` / `recognition_records` / `transcriptions` 取 `r.revision`，见 `:114-131`），台账行给的是「作业状态迁移计数」而不是记录版本 —— **不是因为台账没人写**。
+ * ⚠ **已知缺口**：`answer` 已接台账，但下面的 `SOURCES` 不含它 ⇒ 问答作业在运维台既**不可见**也**不可取消**；接上时要同时改 `SOURCES`、`AdminJobView` 映射与本注释。（本段刻意不写那条 `INSERT` 的语句字面量：`tests/unit/ai-ops-ledger-pins.test.mjs` 钉子① 把注释里的语句也记成命中，白名单逐条登记、本片不动它。）
  *
  * 三张表的记录 ID 列名不同（`ocr_id` / `recognition_id` / `transcription_id`），所以下面每条 SQL 都
  * 写成**字面量表名、不做表名拼接**：`tests/unit/sql-column-coverage.test.mjs` 按 SQL 字面量提取
