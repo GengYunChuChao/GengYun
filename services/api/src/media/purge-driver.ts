@@ -150,10 +150,17 @@ export interface MediaPurgePort {
     removedObjects: number;
     revokedGrants: number;
     pendingObjects: number;
-    remainingObjects: number;
+    /**
+     * 清扫后端口自报的对象计数；`null` = 适配器**不提供对象枚举**这条诊断能力
+     * （如真实 S3 未接 list 权限）⇒ ⛔ 不是清理失败，⛔ 不许据此判失败。
+     */
+    remainingObjects: number | null;
   }>;
-  /** `MediaService.stats()`：只读计数（dry-run 的唯一入口）。 */
-  stats(): Promise<{ mediaCount: number; objectCount: number; grantCount: number }>;
+  /**
+   * `MediaService.stats()`：只读计数（dry-run 的唯一入口）。
+   * `objectCount` 同理可为 `null`（诊断能力不可用），⛔ 不是失败。
+   */
+  stats(): Promise<{ mediaCount: number; objectCount: number | null; grantCount: number }>;
 }
 
 /** 驱动入参（全部显式传入，⛔ 不从环境变量兜）。 */
@@ -176,10 +183,10 @@ export interface MediaPurgeRunInput {
   limit?: number;
 }
 
-/** 只读读数（dry-run 的 `scan`）。 */
+/** 只读读数（dry-run 的 `scan`）。`objectCount` 为 `null` = 适配器不提供对象枚举（⛔ 不是失败）。 */
 export interface MediaPurgeScan {
   mediaCount: number;
-  objectCount: number;
+  objectCount: number | null;
   grantCount: number;
 }
 
@@ -301,7 +308,9 @@ export async function runMediaPurge(input: MediaPurgeRunInput): Promise<MediaPur
       const stats = await mediaService.stats();
       scan = {
         mediaCount: count(stats?.mediaCount) ?? 0,
-        objectCount: count(stats?.objectCount) ?? 0,
+        // 保持 null：适配器可能根本不提供对象枚举（真实 S3 未接 list 权限），
+        // 那不是「0 个对象」，⛔ 不许把不可用读成 0。
+        objectCount: count(stats?.objectCount),
         grantCount: count(stats?.grantCount) ?? 0,
       };
     } catch (error) {
@@ -400,12 +409,19 @@ export function formatMediaPurgeReport(report: MediaPurgeReport): string[] {
     `孤儿清扫：扫描对象引用 ${report.orphansScanned} 条 · 确认删除 ${report.deleted} · ` +
       `未确认 ${report.retained}（保留引用与台账行，下一轮重试）· 撤销授权 ${report.revokedGrants}`,
   );
+  // `remainingObjects === null` 时**不印**这一行：null 既可能是「适配器不提供对象枚举」，
+  // 也可能是「本轮根本没跑清扫」（预算闸/前段失败）。两种情况都不是 0，也⛔ 不是失败，
+  // 所以宁可不印，也不猜一个数字出来（⛔ 不写「清扫后对象计数：0」）。
   if (report.remainingObjects !== null) {
     lines.push(`清扫后对象计数：${report.remainingObjects}（端口自报，未与桶侧对账）`);
   }
   if (report.scan !== null) {
+    const objectCount =
+      report.scan.objectCount === null
+        ? '未知（适配器不提供对象计数，未接 list 权限；⛔ 不等于 0，也⛔ 不是失败）'
+        : `${report.scan.objectCount}`;
     lines.push(
-      `只读计数：media=${report.scan.mediaCount} · object=${report.scan.objectCount} · grant=${report.scan.grantCount}`,
+      `只读计数：media=${report.scan.mediaCount} · object=${objectCount} · grant=${report.scan.grantCount}`,
     );
     lines.push('说明：dry-run 无法预知会有多少条到期（到期枚举与回收是同一个整批调用，只读路径给不出条数）');
   }

@@ -3,7 +3,7 @@
 // 被测对象：`services/api/src/media/purge-driver.ts`（`runMediaPurge()` / `formatMediaPurgeReport()` /
 // `normalizeMediaPurgeLimit()`）与它的运维入口 `tools/purge-expired-media.mjs` 的**退出码**面。
 //
-// 覆盖的 6 件事：
+// 覆盖的 8 件事：
 //   [1] 正常一轮：先 `expireInitiated()` 再 `cleanupOrphans()`，读数映射正确、退出码 0；
 //   [2] 到期 0 条时**仍然**跑孤儿清扫（两段互不阻塞，不是「没到期就整轮跳过」）；
 //   [3] `cleanupOrphans()` 抛错 ⇒ 退出码 1 + 一条失败读数（含阶段/错误码/可重试性）；
@@ -11,7 +11,16 @@
 //   [5] 对象端口抛错或返回 `false` ⇒ **未确认的删除不进 `deleted`**，记进 `retained`，引用与台账行
 //       都留着，下一轮端口恢复后才真正删掉（口径照 `services/api/src/media/service.ts:704-751`：
 //       `:708`/`:742` 明确「`deleteObject()` 不是 `true` ⇒ 保留引用与台账行，留给下一轮重试」）；
-//   [6] `--limit` 非法 ⇒ 退出码 2（驱动层一次端口方法都不调；CLI 层同样退 2、⛔ 不退化成 0）。
+//   [6] `--limit` 非法 ⇒ 退出码 2（驱动层一次端口方法都不调；CLI 层同样退 2、⛔ 不退化成 0）；
+//   [7] `stats()` 的 `objectCount` 为 `null`（适配器不提供对象枚举）⇒ dry-run **仍然退 0**，
+//       读数写「未知」而**不是** 0（⛔ 不把「诊断不可用」读成「桶里只有 0 个对象」）；
+//   [8] `cleanupOrphans()` 的 `remainingObjects` 为 `null` ⇒ **仍然退 0**，且不印计数行
+//       （null 既可能是「适配器不枚举」也可能是「本轮没跑清扫」，两种都不是 0，不猜）。
+//
+// [7]/[8] 是 #795 打回后的返工点：真实 S3 适配器的 `objectCount()` 固定抛 `PROVIDER_UNAVAILABLE`
+// （未接 list 权限），过去 `cleanupOrphans()` 无条件调它 ⇒ 每轮**已经成功**的清理都被折成一次失败、退 1。
+// 现在适配器用 `objectCountSupported: false` 显式声明这条**诊断**能力不可用，服务层据此返回 `null`；
+// 驱动层必须把这两个 `null` 当「读数未知」而不是失败。
 //
 // 本文件**不**证明的（见报告「诚实边界」）：真实 S3 的 `DeleteObject`/版本化语义、真 PG 上的并发行为、
 // `#6` 的 G2/G3、任何剂量卡。本机没有真桶真库 ⇒ CLI 的端到端路径跑不了，这里只钉住可判的那一层。
@@ -69,6 +78,8 @@ function createFakeMediaService({
   cleanupError = null,
   statsError = null,
   revokedGrants = 0,
+  // `null` = 端口声明「不提供对象枚举」（真实 S3 的形状）；`undefined` = 照替身口径报真实条数。
+  remainingObjects,
 } = {}) {
   const calls = [];
   const refs = [...objectRefs];
@@ -108,7 +119,7 @@ function createFakeMediaService({
         removedObjects,
         revokedGrants: state.revokedGrants,
         pendingObjects,
-        remainingObjects: state.refs.length,
+        remainingObjects: remainingObjects === undefined ? state.refs.length : remainingObjects,
       };
     },
     async stats() {
@@ -325,4 +336,54 @@ test('[6] --limit 非法 ⇒ 2（驱动层一次端口方法都不调；CLI 层�
   assert.equal(help.status, MEDIA_PURGE_EXIT.OK);
   assert.match(help.stdout, /用法/);
   assert.match(help.stdout, /预算闸/, '用法里必须写清 --limit 不是到期条数的上限');
+});
+
+// ---------------------------------------------------------------------------- [7]
+
+test('[7] stats() 的 objectCount 为 null（适配器不枚举）⇒ dry-run 仍退 0，读数写「未知」而不是 0', async () => {
+  const fake = createFakeMediaService({
+    objectRefs: ['obj-raw-1'],
+    // 真实 S3 适配器的形状：媒体/授权计数照实报，对象计数**不提供**。
+    stats: { mediaCount: 7, objectCount: null, grantCount: 2 },
+  });
+
+  const report = await runMediaPurge({ mediaService: fake.mediaService, now: FIXED_NOW, dryRun: true });
+
+  assert.equal(report.exitCode, MEDIA_PURGE_EXIT.OK, '诊断能力不可用⛔ 不是失败（#795 打回点）');
+  assert.deepEqual(report.failures, []);
+  assert.deepEqual(fake.calls, ['stats']);
+  assert.deepEqual(report.scan, { mediaCount: 7, objectCount: null, grantCount: 2 }, '不可用就读成 null，⛔ 不读成 0');
+  assert.equal(report.scan.objectCount === 0, false);
+
+  const text = formatMediaPurgeReport(report).join('\n');
+  assert.equal(text.includes('未知'), true, '读数必须显式写「未知」，不能省掉这一项');
+  assert.equal(text.includes('object=0'), false, '⛔ 不许把「不提供枚举」印成 0 个对象');
+  assert.equal(text.includes('object=未知'), true);
+});
+
+// ---------------------------------------------------------------------------- [8]
+
+test('[8] cleanupOrphans() 的 remainingObjects 为 null ⇒ 仍退 0，且不印计数行（不可用 ≠ 0 ≠ 失败）', async () => {
+  const fake = createFakeMediaService({
+    expired: 1,
+    objectRefs: ['obj-raw-1', 'obj-deriv-1'],
+    remainingObjects: null,
+  });
+
+  const report = await runMediaPurge({ mediaService: fake.mediaService, now: FIXED_NOW });
+
+  assert.equal(report.exitCode, MEDIA_PURGE_EXIT.OK, '清扫本身成功，只是「清扫后还剩几个」读不出来');
+  assert.deepEqual(report.failures, []);
+  assert.equal(report.deleted, 2, '删除读数照常：诊断不可用不影响「确认删除了几条」');
+  assert.equal(report.retained, 0);
+  assert.equal(report.remainingObjects, null);
+  assert.deepEqual(fake.state.refs, [], '对象引用确实被删掉了');
+  assert.deepEqual(fake.state.ledger, []);
+
+  const text = formatMediaPurgeReport(report).join('\n');
+  assert.equal(text.includes('清扫后对象计数'), false, 'null 时不印计数行（也不印 0）');
+  assert.equal(text.includes('确认删除 2'), true);
+
+  // 读数照样可 JSON 化：null 原样序列化，不会被折叠成 0。
+  assert.equal(JSON.parse(JSON.stringify(report)).remainingObjects, null);
 });
