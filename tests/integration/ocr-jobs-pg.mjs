@@ -341,11 +341,7 @@ async function migrationTriple() {
 // ---------------------------------------------------------------------------
 async function allTwelve(store) {
   // ---- [1] insertJob ----
-  // 读面已有「过期即裁定」能力（GY-R72 OCR 读面超时片）：夹具里的 T0 是固定的过去时刻，
-  // 若任务的 deadline 落在过去，服务层 `getJob` 会按设计裁定成 `timed_out` 并把 revision +1，
-  // 与本用例要考的「写入 / 读回 / 重启不丢」无关。这里显式给一个远未来的 deadline 隔离考点；
-  // 「过期任务读一次会不会被裁定」由 [R4] 单独考。
-  const job = makeJobRow({ deadlineAt: new Date(Date.now() + 24 * 60 * 60 * 1000) });
+  const job = makeJobRow({ deadlineAt: new Date(Date.now() + 86_400_000) }); // 远未来：理由见文件末尾 assertReadFaceAdjudication 的说明
   await store.insertJob(job);
   assert.equal(
     await countOf('SELECT count(*)::int AS v FROM public.ocr_jobs WHERE id = $1', [job.id]),
@@ -767,32 +763,8 @@ try {
     (error) => error?.code === 'NOT_FOUND',
     '[R] 他人读同一条记录必须 NOT_FOUND（归属判定不因换 PG store 而放宽）',
   );
+  await assertReadFaceAdjudication(app2, store2);
   say('[R3] 新 app（real+新池）的 OCR 读面读到重启前的任务；他人读同一条记录仍 NOT_FOUND（归属不放宽）');
-
-  // ---- [R4] 读面过期裁定（真库）：过期任务读一次 ⇒ timed_out + revision 恰好 +1 ----
-  // 这是 GY-R72 OCR 读面超时片的真库证据：仓储层的 CAS 判定权仍在 `WHERE revision = $2` 那条 UPDATE 上，
-  // 服务层只负责「过期就该显式化」的语义，不得把 queued/running 永远挂着。
-  const staleAt = new Date(Date.now() - 60 * 60 * 1000);
-  const staleJob = makeJobRow({ deadlineAt: staleAt, createdAt: staleAt, updatedAt: staleAt });
-  await store2.insertJob(staleJob);
-  const adjudicated = await app2.ocrService.getJob({ userId: OWNER_ID, jobId: staleJob.id });
-  assert.equal(adjudicated.state, 'timed_out', '[R4] 过期任务读面必须显式裁定为 timed_out（不许继续回报 queued）');
-  assert.equal(adjudicated.error_code, 'PROVIDER_TIMEOUT', '[R4] 投影错误码必须是 PROVIDER_TIMEOUT');
-  assert.equal(adjudicated.revision, 2, '[R4] 裁定必须让 revision 恰好 +1（1 → 2）');
-  assert.equal(adjudicated.result, null, '[R4] 裁定不得凭空造出 OCR 结果');
-  const staleInDb = await one('SELECT state, error_code, revision FROM public.ocr_jobs WHERE id = $1', [staleJob.id]);
-  assert.equal(staleInDb.state, 'timed_out', '[R4] 裁定必须真的落库（不是只改内存里的投影）');
-  assert.equal(staleInDb.error_code, 'PROVIDER_TIMEOUT', '[R4] 落库错误码必须是 PROVIDER_TIMEOUT');
-  assert.equal(staleInDb.revision, 2, '[R4] 落库 revision 恰好 +1');
-  assert.equal(
-    await countOf('SELECT count(*)::int AS v FROM public.ocr_records WHERE id = $1', [staleJob.ocrId]),
-    0,
-    '[R4] 裁定不得写 OCR 记录（只有真识别成功才写）',
-  );
-  const adjudicatedAgain = await app2.ocrService.getJob({ userId: OWNER_ID, jobId: staleJob.id });
-  assert.equal(adjudicatedAgain.revision, 2, '[R4] 已裁定的终态再读一次不得再自增 revision');
-  say('[R4] 读面过期裁定（真库）：queued 过期任务读一次 ⇒ timed_out + PROVIDER_TIMEOUT + revision 2；再读一次不增；不写 OCR 记录');
-  await app2.close();
 
   // ---- 子进程臂：真·进程重启（spawn 受限时如实登记未取得） ----
   const child = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--verify-after-restart'], {
@@ -892,3 +864,41 @@ unread('HTTP 面的"重启不丢"', 'real 模式真实 OCR 提供者/媒体端�
 unread('多进程并发写同一任务的压测', '本片只做两路并发 CAS（恰好一次成功），未做 20+ 并发的吞吐/延迟读数');
 unread('真实标签 OCR 模型输出落库', '模型调用未接线；本片用契约合法的手工字段验证持久化，不伪造模型准确率');
 unread('备份恢复演练', '本片只验证单库迁移 UP/ROLLBACK/REPLAY 与关连接重开，未做 pg_dump/pg_restore 演练');
+
+// ---------------------------------------------------------------------------
+// [R4] 读面过期裁定（真库）：调用点在 [R] 段末尾（替换原来的 `await app2.close()`）
+// ---------------------------------------------------------------------------
+/**
+ * 为什么夹具要用两种 deadline：
+ * - [1] / [R] 考的是「写入 / 读回 / 重启不丢」。夹具 `T0` 是**固定的过去时刻**，若 deadline 也在过去，
+ *   服务层 `getJob` 会按设计把任务裁定成 `timed_out` 并把 revision +1 —— 数据被改写与考点无关，
+ *   于是 `[R] 投影 revision 与重启前一致` 会红（CI run 41252034333 就是这么红的）。故 [1] 用远未来 deadline。
+ * - 本函数考的是**裁定本身**：过期任务读一次必须显式落 `timed_out` + `PROVIDER_TIMEOUT`、revision 恰好 +1、
+ *   不得凭空写 OCR 记录，且已裁定的终态再读一次不得再自增。
+ * 本函数整体放在文件末尾：`allTwelve` 与主流程里的行号会被 `docs/**` 按行号引用（如
+ * `docs/verification/gy-r28-migration-pin-guard-20261021.md:187` 引 `tests/integration/ocr-jobs-pg.mjs:848`），
+ * 任何插在中间的新行都会顶走这些锚点；函数声明会提升，末尾定义语义等价。
+ */
+async function assertReadFaceAdjudication(app, store) {
+  const staleAt = new Date(Date.now() - 60 * 60 * 1000);
+  const staleJob = makeJobRow({ deadlineAt: staleAt, createdAt: staleAt, updatedAt: staleAt });
+  await store.insertJob(staleJob);
+  const adjudicated = await app.ocrService.getJob({ userId: OWNER_ID, jobId: staleJob.id });
+  assert.equal(adjudicated.state, 'timed_out', '[R4] 过期任务读面必须显式裁定为 timed_out（不许继续回报 queued）');
+  assert.equal(adjudicated.error_code, 'PROVIDER_TIMEOUT', '[R4] 投影错误码必须是 PROVIDER_TIMEOUT');
+  assert.equal(adjudicated.revision, 2, '[R4] 裁定必须让 revision 恰好 +1（1 → 2）');
+  assert.equal(adjudicated.result, null, '[R4] 裁定不得凭空造出 OCR 结果');
+  const staleInDb = await one('SELECT state, error_code, revision FROM public.ocr_jobs WHERE id = $1', [staleJob.id]);
+  assert.equal(staleInDb.state, 'timed_out', '[R4] 裁定必须真的落库（不是只改内存里的投影）');
+  assert.equal(staleInDb.error_code, 'PROVIDER_TIMEOUT', '[R4] 落库错误码必须是 PROVIDER_TIMEOUT');
+  assert.equal(staleInDb.revision, 2, '[R4] 落库 revision 恰好 +1');
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.ocr_records WHERE id = $1', [staleJob.ocrId]),
+    0,
+    '[R4] 裁定不得写 OCR 记录（只有真识别成功才写）',
+  );
+  const adjudicatedAgain = await app.ocrService.getJob({ userId: OWNER_ID, jobId: staleJob.id });
+  assert.equal(adjudicatedAgain.revision, 2, '[R4] 已裁定的终态再读一次不得再自增 revision');
+  say('[R4] 读面过期裁定（真库）：queued 过期任务读一次 ⇒ timed_out + PROVIDER_TIMEOUT + revision 2；再读一次不增；不写 OCR 记录');
+  await app.close();
+}
