@@ -2537,8 +2537,8 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 已合并的 `getJob`，域内投影本就是契约形状 ⇒ 装配点不 import 该域适配器、不新增契约字段）。
     // 此前该 kind 未接线 ⇒ 与「作业不存在」同形 404，且 `GET /ocr/{id}` 只在产出记录后可读
     // ⇒ `failed`/`timed_out` 与"仍在处理"同形。
-    // `cancel` **不提供**（OCR 域本基线无取消入口）⇒ 注册表先确认作业存在，再 503
-    // PROVIDER_UNAVAILABLE (`retryable`) 如实拒绝，**不伪造** `cancelled`、不谎称作业不存在。
+    // `cancel` **已提供**（GY-I10 取消片）：语义全在 `ocr/service.ts` 的 `cancelJob` —— `queued`/`running` ⇒ `cancelled`、revision 恰好 +1，终态再取消 ⇒ 409 `OBJECT_UNAVAILABLE`；
+    // ⇒ `POST /jobs/{id}/cancel` 对 OCR 作业**已由 503 变为 200**（证据：`tests/unit/ocr-cancel.test.mjs`、`tests/integration/ocr-http.mjs:1972-2043`）；`jobs/registry.ts` 那条 503 `PROVIDER_UNAVAILABLE` 分支只对 `source.cancel === undefined` 的源生效、`retryable` 恒为 `false`，对本源**不再适用**。
     createOcrJobSource(app.ocrService),
     // GY-I12（#12）文字问答域作业源（**纯追加，不重排上面五项**）：`GET /jobs/{id}` 现可返回
     // `kind=answer` 的契约 `Job`（`AnswerResult.kind='answer'` 分支契约里本就有；`result` 只在
