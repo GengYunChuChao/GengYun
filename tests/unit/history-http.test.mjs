@@ -588,9 +588,23 @@ test('历史HTTP·接线：stub 完成一次识别 ⇒ GET /history 恰 1 条（
     id: terminal.target_ref.id,
     revision: terminal.target_ref.revision,
   });
-  // `reference_state` 是逐次派生（不是入库字段）：识别/OCR 目标不在 `/knowledge` 公开读面内
-  // ⇒ 如实 `unavailable`（本片不放宽可见性守卫、也不给它造一个读面）。
-  assert.equal(item.reference_state, 'unavailable', 'reference_state 必须逐次派生（不得在写入时固化）');
+  // `reference_state` 是逐次派生（不是入库字段）：**本人**的识别记录 ⇒ 走 owner 读面判 `available`。
+  assert.equal(item.reference_state, 'available', 'reference_state 必须逐次派生（不得在写入时固化）');
+  // 成对的反面（缺陷的另一半，⛔ 不得放宽）：同一条识别记录写进**别人**的历史 ⇒ owner 读面按 userId
+  // 抛 404 ⇒ 仍如实 `unavailable`（「读不到」绝不等于「可用」；判可用会等于凭空确认他人资源的存在性）。
+  await append(h.app, {
+    owner_id: h.b.user.id,
+    target_ref: { type: 'recognition', id: item.target_ref.id, revision: item.target_ref.revision },
+    event_key: 'evt-rec-foreign-1',
+  });
+  const foreign = await h.call('GET', HISTORY, h.b);
+  assert.equal(foreign.status, 200);
+  assert.equal(foreign.body.data.items.length, 1, '前置：他人历史里确有这 1 条（目标指向不属于他的识别记录）');
+  assert.equal(
+    foreign.body.data.items[0].reference_state,
+    'unavailable',
+    '别人的识别记录不得判可用（否则等于凭空确认他人资源的存在性）',
+  );
   // 内部字段绝不出契约。
   for (const internal of ['job_id', 'event_key', 'owner_id']) {
     assert.equal(Object.hasOwn(item, internal), false, `内部字段不得出契约：${internal}`);

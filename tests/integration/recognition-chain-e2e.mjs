@@ -363,8 +363,10 @@ async function runChain(arm) {
   assert.equal(historyRow.revision, 1);
   assert.deepEqual(historyRow.target_ref, { type: 'recognition', id: first.recognitionId, revision: 1 });
   assert.equal(Number.isNaN(Date.parse(historyRow.created_at)), false, 'created_at 必须是可解析时间');
-  // 无库读面（stub + 无 knowledge 读面）⇒ 如实 unavailable，而不是假装核验过。
-  assert.equal(historyRow.reference_state, 'unavailable');
+  // 可用性逐次派生（`history/service.ts` 的 `project()` → `targetref/visibility-wiring.ts`）：
+  // 这条历史指向的是**本人**的识别记录，owner 读面（`getRecognition({ userId, recognitionId })`）
+  // 正常返回它 ⇒ 如实 `available`。⛔ 不是"因为是历史行就判可用"：他人的/不存在的/读面报错仍 unavailable。
+  assert.equal(historyRow.reference_state, 'available');
   note(
     armName,
     'i09-history',
