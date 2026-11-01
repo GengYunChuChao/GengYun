@@ -122,7 +122,7 @@ ON CONFLICT (id) DO UPDATE
 | ocr 终态 | `services/api/src/ocr/store-pg.ts:656` | 沿用 `commitTerminal` 既有事务（行锁 → 记录 INSERT → 作业 UPDATE → 台账） |
 | recognition 三处 | `services/api/src/recognitions/store-pg.ts:644`（创建）/ `services/api/src/recognitions/store-pg.ts:686`（开始·取消）/ `services/api/src/recognitions/store-pg.ts:730`（终态） | 同 ocr |
 | transcription 三处 | `services/api/src/speech/store-pg.ts:530`（创建）/ `services/api/src/speech/store-pg.ts:572`（开始·取消）/ `services/api/src/speech/store-pg.ts:616`（终态） | 同 ocr |
-| answer 三处 | `services/api/src/conversations/store-pg.ts:309`（创建）/ `services/api/src/conversations/store-pg.ts:379`（开始）/ `services/api/src/conversations/store-pg.ts:428`（终态） | `guarded()`（= `withTransaction` + 可选主体核对） |
+| answer 四处（`GY-R72` 补第四处） | `services/api/src/conversations/store-pg.ts:309`（创建）/ `services/api/src/conversations/store-pg.ts:379`（开始）/ `services/api/src/conversations/store-pg.ts:428`（终态）/ `services/api/src/conversations/store-pg.ts:410`（取消） | `guarded()`（= `withTransaction` + 可选主体核对） |
 | 管理台取消 | `services/api/src/admin/ops/jobs-pg.ts:623` | 既有取消事务（行锁 → 域名 UPDATE → 审计函数 → 台账 → `COMMIT`） |
 
 ⛔ **没有**「提交之后补写一行」的路径：补写式实现会在 §7 的 `[T]` 两条读数里留下源表行
@@ -299,7 +299,7 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 | ④ | **台账字段写错（`state` 写成固定值）** | 把 `ledgerRowFromDomainJob` 的 `state: assertJobState(job.state)` 改成 `state: assertJobState('queued')` | 矩阵两条同时红：`矩阵：六源 × 五态逐格断言`（除 `queued` 外每格 `state` 都与该态不符）与 `矩阵补充：契约七态全覆盖…且 state 与 revision 不脱钩` | `git checkout -- services/api/src/jobs/ledger.ts` → 复绿 |
 
 负控制 ③ 的价值要单独说一句：它证明了**接线读数**与**映射矩阵**不是同一层证据 —— 删掉一处调用，
-30 格映射断言照样全绿，只有"每域三处 + 取消一处"的静态读数会红。
+30 格映射断言照样全绿，只有"每域三处（answer 域自 `GY-R72` 起四处）+ 取消一处"的静态读数会红。
 
 ### 8.1 注销清理的三条负控制（补片实测）
 

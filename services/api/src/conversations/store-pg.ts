@@ -409,15 +409,15 @@ export function createPostgresConversationStore(
 
     async cancelTurnJob(turnId, ownerId) {
       // 单条 CAS：只有未结算的轮次能被取消；`job_state` 谓词与 `settleTurnJob` 互斥。
-      const { rows } = await pool.query(
-        `UPDATE conversation_turns
-         SET job_state = 'cancelled', job_error_code = NULL, revision = revision + 1, updated_at = now()
-         WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state IN ('queued', 'running')
-         RETURNING ${TURN_COLUMNS}`,
-        [turnId, ownerId],
-      );
-      const row = rows[0];
-      return row === undefined ? null : toTurn(row);
+      // GY-R72：取消是终态迁移 ⇒ 台账行必须与轮次行同一个事务（否则 `public.jobs` 停在旧状态）。
+      return guarded(async (sql) => {
+        const { rows } = await sql.query(CANCEL_TURN_JOB_SQL, [turnId, ownerId]);
+        const row = rows[0];
+        if (row === undefined) return null;
+        const turn = toTurn(row);
+        await writeJobLedger(sql, ledgerRowFromTurn(turn));
+        return turn;
+      });
     },
 
     async settleTurnJob(input) {
@@ -518,3 +518,20 @@ export function createPostgresConversationStore(
     },
   };
 }
+
+/**
+ * `cancelTurnJob` 的 CAS 语句（GY-R72：从函数体**整段搬到模块作用域**，语句文本逐字不变）。
+ *
+ * 为什么搬到文件末尾而不是 `TURN_COLUMNS` 旁边：`docs/` 里有 9 处按行号引本文件的取消/结算面
+ * （`gy-i16-i17-deletion-cascade-20261021.md` 的 `:431-434`/`:432`/`:445`、`gy-r28-e4-stale-claims-20261021.md`
+ * 的 `:445`、`gy-r71-job-cancel-modes-20261030.md` 的 `:410`、`gy-r71-jobs-ledger-20261030.md` 的 `:478`）。
+ * 函数体只有保持 12 行（`@@ -410,12 +410,12 @@`）这些锚点才不位移 —— 于是把语句追加在 EOF，
+ * 位移为零；同时也不落在 `TURN_COLUMNS` 声明之前（`const` 有 TDZ，代码顺序要可读）。
+ *
+ * ⚠ `RETURNING ${TURN_COLUMNS}` 仍是常量插值：`tests/unit/sql-column-coverage.test.mjs` 会先把
+ * `TURN_COLUMNS` 代入再判列面，所以搬位置不影响那条审计（字面量条数、列要求都不变）。
+ */
+const CANCEL_TURN_JOB_SQL = `UPDATE conversation_turns
+         SET job_state = 'cancelled', job_error_code = NULL, revision = revision + 1, updated_at = now()
+         WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state IN ('queued', 'running')
+         RETURNING ${TURN_COLUMNS}`;
