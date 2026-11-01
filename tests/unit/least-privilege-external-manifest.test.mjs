@@ -63,13 +63,15 @@ const EXTERNAL_MANIFEST_TABLES = [
 ];
 
 /**
- * `allow_table_dml` 的 19 个三元组（本文件是表级写权限的唯一事实来源）。
+ * `allow_table_dml` 的 20 个三元组（本文件是表级写权限的唯一事实来源）。
  *
  * R34 片 3（#19 / #10）起从 16 长到 18：`ocr_jobs` / `ocr_records` 补表级 `DELETE`，
  * 与早已表级的 `ocr_idempotency` 统一成「OCR 三表一条路线」（PG 无列级 DELETE）。
  * GY-R71 补片长到 19：`public.jobs` 补表级 `DELETE`（账号注销按 owner 清台账行；
- * PG 无列级 DELETE）。判据没放松：白名单外的表级写权限照样判红；其它任何表加进本清单
- * 必须先改裁定。
+ * PG 无列级 DELETE）。R72-W41 长到 20：`public.moderation_idempotency` 补表级 `DELETE`
+ * （`purgeIdempotent` 的过期清理与 `releaseIdempotent` 的占位撤回都是整行删；
+ * PG 无列级 DELETE，授权在 20-login-roles.sql 的 `gy-r72-moderation-idempotency-delete` 独立区）。判据没放松：
+ * 白名单外的表级写权限照样判红；其它任何表加进本清单必须先改裁定。
  */
 const ALLOW_TABLE_DML_TRIPLES = [
   'public.community_idempotency.DELETE',
@@ -86,6 +88,7 @@ const ALLOW_TABLE_DML_TRIPLES = [
   'public.media_derivatives.DELETE',
   'public.media_object_cleanup.DELETE',
   'public.messages.DELETE',
+  'public.moderation_idempotency.DELETE',
   'public.ocr_idempotency.DELETE',
   'public.ocr_jobs.DELETE',
   'public.ocr_records.DELETE',
@@ -119,7 +122,7 @@ test('external_manifest 恰是 17 张具名表，且 jobs / media 不在其中',
   }
 });
 
-test('allow_table_dml 恰是 19 个三元组，且 jobs 只有 DELETE 一组（无 INSERT/UPDATE）', () => {
+test('allow_table_dml 恰是 20 个三元组，且 jobs 只有 DELETE 一组（无 INSERT/UPDATE）', () => {
   const body = valuesBlock(SOURCE, /allow_table_dml\(sch, tbl, priv\) AS \(VALUES/);
   const triples = [];
   for (const line of body) {
@@ -127,7 +130,7 @@ test('allow_table_dml 恰是 19 个三元组，且 jobs 只有 DELETE 一组（�
     if (m) triples.push(`${m[1]}.${m[2]}.${m[3]}`);
   }
 
-  assert.equal(triples.length, 19, `allow_table_dml 当前 ${triples.length} 组（应为 19）`);
+  assert.equal(triples.length, 20, `allow_table_dml 当前 ${triples.length} 组（应为 20）`);
   assert.deepEqual(
     [...triples].sort(),
     ALLOW_TABLE_DML_TRIPLES,

@@ -1532,6 +1532,69 @@ GRANT INSERT (target_type,target_id,target_revision,withdrawn_at)
 
 \echo '20-login-roles.sql：已授予 public.moderation_decisions / public.moderation_withdrawals 的列级 SELECT/INSERT/UPDATE（列清单逐列反推自 moderation/ledger-pg.ts；SELECT 只给 WHERE 与 ON CONFLICT 冲突目标读到的列；无表级写权限）。'
 \echo '20-login-roles.sql：审核判定台账不授 DELETE（不可变审计面；ledger-pg.ts 无任何物理删除语句）。'
+
+-- ----------------------------------------------------------------------------
+-- M4. 审核域**持久幂等台账**的列级授权（R72-W41 / 迁移 0051_moderation_idempotency.sql）
+--
+-- 为什么这段必须真存在：`services/api/src/moderation/idempotency-store.ts` 的
+-- `createPgModerationIdempotencyStore()` 在真实库上读写 `public.moderation_idempotency`；
+-- 迁移 0051 本身**只建表、零 GRANT**（与 0024/0026 同一条纪律），运行角色 gengyun_api_runtime
+-- 对这张表一列都碰不了。缺本段 ⇒ 部署后五个方法全量 42501（fail-closed 的名字有了、库里的路没通），
+-- 而内存实现与单测完全看不出来。
+--
+-- 列清单不是抄文档，而是**从 idempotency-store.ts 的五条语句逐列反推**：
+--   findIdempotent     `SELECT request_hash, payload, pending, expires_at … WHERE scope = $1 AND key_hash = $2`
+--   claimIdempotent    `INSERT … ON CONFLICT (scope, key_hash) DO UPDATE SET request_hash/payload/pending/expires_at
+--                       … WHERE expires_at <= $7 RETURNING scope`
+--   finalizeIdempotent `UPDATE … SET payload = $3, pending = false WHERE scope = $1 AND key_hash = $2`
+--   releaseIdempotent  `DELETE … WHERE scope = $1 AND key_hash = $2`
+--   purgeIdempotent    `DELETE … WHERE expires_at <= $1 RETURNING scope`
+--
+-- SELECT 面为什么是六列、而不是「读出来的四列」：PG 的 UPDATE/DELETE 要求对 WHERE 里出现的列有
+-- SELECT 权，`RETURNING scope` 也要 SELECT 权 ⇒ `scope`/`key_hash` 必须一起授。
+-- （同一课在 90-assert 的 `speech_idempotency` 行旁边记着：只授四列时 find/claim 立刻 42501。）
+--
+-- ⛔ TRUNCATE / REFERENCES / TRIGGER 一律不授、也没有表级 INSERT/UPDATE。
+-- DELETE 见紧随其后的独立 region：`purgeIdempotent`（过期清理）与 `releaseIdempotent`（失败首请求的
+-- 占位撤回）都要物理删一行，而 PG 没有列级 DELETE ⇒ 只能表级授予；把它混进本 region 会让
+-- 「列级区只含列级授权」这条断言失去意义（体例同 `gy-r71-jobs-ledger-purge-grant`）。
+-- 前置：表必须已存在 ⇒ 顺序是 迁移（migrate.ts up）⇒ 本脚本；缺表即显式失败。
+-- #region gy-r72-moderation-idempotency-grant
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['moderation_idempotency']) AS t(name)
+   WHERE to_regclass('public.'||t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少审核幂等台账表：%（迁移 0051_moderation_idempotency.sql 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+REVOKE ALL ON TABLE public.moderation_idempotency FROM PUBLIC;
+
+-- 审核幂等台账（迁移 0051）：六列逐列反推自 idempotency-store.ts 的 find / claim / finalize 三条语句
+-- （WHERE 的 scope/key_hash 与 RETURNING scope 都要 SELECT 权 ⇒ 读面也是完整六列）。
+GRANT SELECT (scope,key_hash,request_hash,payload,pending,expires_at)
+  ON public.moderation_idempotency TO gengyun_api_runtime;
+GRANT INSERT (scope,key_hash,request_hash,payload,pending,expires_at)
+  ON public.moderation_idempotency TO gengyun_api_runtime;
+-- 写面四列：claim 的 ON CONFLICT DO UPDATE 与 finalize 的 UPDATE 只写这四列
+-- （scope/key_hash 只出现在 WHERE 与冲突目标里 ⇒ 不需要 UPDATE 权，但需要 SELECT 权）。
+GRANT UPDATE (request_hash,payload,pending,expires_at)
+  ON public.moderation_idempotency TO gengyun_api_runtime;
+-- #endregion gy-r72-moderation-idempotency-grant
+
+\echo '20-login-roles.sql：已授予 public.moderation_idempotency 的列级 SELECT/INSERT（6/6 列）与 UPDATE（4 列 request_hash/payload/pending/expires_at）；列清单逐列反推自 services/api/src/moderation/idempotency-store.ts 的 find / claim / finalize 三条语句（SELECT 是六列，因为 WHERE 的 scope/key_hash 与 RETURNING scope 都要读权；无表级 INSERT/UPDATE、无 TRUNCATE/REFERENCES/TRIGGER）。'
+
+-- DELETE 单独成区：`purgeIdempotent` 的过期清理与 `releaseIdempotent` 的占位撤回都要物理删行，
+-- PG 没有列级 DELETE ⇒ 只能整表授予。本区**只**含这一条表级授权，理由同上一个 region 的注释。
+-- #region gy-r72-moderation-idempotency-delete
+GRANT DELETE ON public.moderation_idempotency TO gengyun_api_runtime;
+-- #endregion gy-r72-moderation-idempotency-delete
+
+\echo '20-login-roles.sql：已授予 public.moderation_idempotency 的**表级** DELETE（PG 无列级 DELETE；purgeIdempotent 的过期清理与 releaseIdempotent 的占位撤回都要物理删行）；无 TRUNCATE/REFERENCES/TRIGGER。'
 -- --- 后台内容/资料域（R34 · #18 · 迁移 0036）：列级 SELECT/INSERT/UPDATE ---------
 -- 为什么是列级（本文件的一贯口径）：写面逐列反推自 services/api/src/admin/ops/content-pg.ts 的真实语句，
 -- 只给"语句真的碰到的那几列"。实体表的 9 个 UPDATE 列全是发布/撤回的状态机字段，revisions 是纯追加
