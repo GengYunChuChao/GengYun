@@ -1204,7 +1204,8 @@ test('媒体端口·替身与未接线的标注与行为（real 一律 fail-clos
   assert.equal(substitute.kind, 'substitute');
   assert.ok(substitute.note.includes('替身'));
   const ok = await substitute.resolve({ ownerUserId: USER, mediaId: randomUUID(), mediaRevision: 3 });
-  assert.deepEqual(ok, { ok: true, revision: 3 });
+  // GY-R72-I11：替身不持有真实类型 ⇒ `mime` 恒 `null`（「未知」），受理期格式闸据此 fail-open 放行。
+  assert.deepEqual(ok, { ok: true, revision: 3, mime: null });
   const badRevision = await substitute.resolve({ ownerUserId: USER, mediaId: randomUUID(), mediaRevision: 0 });
   assert.deepEqual(badRevision, { ok: false, code: 'REVISION_CONFLICT' });
 

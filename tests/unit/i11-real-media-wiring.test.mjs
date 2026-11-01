@@ -299,7 +299,12 @@ test('A·端口级反向：real 不给接线输入 ⇒ 仍 unwired、仍 OBJECT_
     const built = createSpeechMediaPort(mode, { objectStore: realStore, mediaRecords: registry, mediaDomainRefusal: null });
     assert.equal(built.kind, 'substitute', `${mode} 必须仍是替身（接线输入不参与该分支）`);
     assert.equal(built.note, substituteNote, `${mode} 的 note 必须与替身逐字一致`);
-    assert.deepEqual(await built.resolve({ ownerUserId: 'u', mediaId: MEDIA_ID, mediaRevision: 2 }), { ok: true, revision: 2 });
+    assert.deepEqual(await built.resolve({ ownerUserId: 'u', mediaId: MEDIA_ID, mediaRevision: 2 }), {
+      ok: true,
+      revision: 2,
+      // GY-R72-I11：替身端口不持有真实类型 ⇒ `mime` 恒 `null`（未知），受理期格式闸据此放行。
+      mime: null,
+    });
   }
 });
 
@@ -371,10 +376,13 @@ test('B·端口矩阵：真实端口 + 媒体域打开 ⇒ kind=real，逐条校
   assert.deepEqual(await ok.resolve({ ownerUserId: 'owner-i11-real', mediaId: MEDIA_ID, mediaRevision: 3 }), {
     ok: true,
     revision: 3,
+    // GY-R72-I11：真实端口把登记册上的真实类型原样交出去（这条录音是 WAV）。
+    mime: 'audio/wav',
   });
   assert.deepEqual(await ok.resolve({ ownerUserId: 'owner-i11-real', mediaId: recordingRecord(bytes).id, mediaRevision: 3 }), {
     ok: true,
     revision: 3,
+    mime: 'audio/wav',
   });
 
   const cases = [

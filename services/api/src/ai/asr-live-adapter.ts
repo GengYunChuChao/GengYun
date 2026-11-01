@@ -12,6 +12,10 @@
  *    终态且**不写**转写记录），绝不补一句「听起来像……」。
  * 4. 不确定区间如实为空数组：`SentenceRecognition` **不返回**逐词置信区间，
  *    因此 `uncertain_spans: []` 是「供应商没给」而不是「全都确信」；口径写在证据页。
+ * 5. **格式问题 ≠ 供应商故障**（GY-R72-I11）：拿到字节但 WAV 剖面不符时，若媒体层认得出这是
+ *    另一种音频容器（MP3/AAC）⇒ `failed` + `MEDIA_TYPE_UNSUPPORTED`（415，客户端换 WAV 即可）；
+ *    其余情形（读不到、空字节、认不出、认出来是 WAV 只是超长/声道/位深不符）**维持**
+ *    `PROVIDER_UNAVAILABLE`——字节来源没接线不该被说成「格式不支持」。
  *
  * 证据口径：真实 ASR 样本为 **0**（`docs/evaluation/sample-gap-register.md`），
  * 本文件与全域**不产生、不声称任何准确率或转写质量结论**；一次可达性调用不构成样本。
@@ -32,6 +36,7 @@ import { createProcessLiveGate, LIVE_UNIT_PRICES_CNY } from './live-gate.ts';
 import { liveGateRefusalToErrorCode } from '../tts/live-ports.ts';
 import { sha256Hex, signTc3Request } from '../tts/tc3.ts';
 import type { AsrProviderConfig } from '../config.ts';
+import { detectMediaType } from '../../../../packages/media/index.mjs';
 
 /** 冻结的 ASR 供应商剖面（口径＝`AI_ENDPOINTS.asr` + `configurationIssues()` 的音频剖面）。 */
 export const LIVE_ASR_FROZEN_PROFILE = Object.freeze({
@@ -130,6 +135,26 @@ export function deriveUsrAudioKey(bytes: Uint8Array): string {
 }
 
 /**
+ * 拿到字节、WAV 剖面校验却失败时的**分流判据**（GY-R72-I11）。
+ *
+ * 失败路径必须分清两件事——此前它们被同一个 `catch { PROVIDER_UNAVAILABLE }` 揉成一件：
+ * - **字节不可用**：端口未接线、读不到、空字节、认不出的垃圾 ⇒ 仍报 `PROVIDER_UNAVAILABLE`；
+ * - **格式不合格**：媒体层认得出这是**另一种音频容器**（MP3 / AAC）⇒ `MEDIA_TYPE_UNSUPPORTED`，
+ *   客户端换 WAV 就能成功，不该显示成「供应商不可用」。
+ *
+ * 判据复用媒体层自己的嗅探器 `packages/media/detect.mjs#detectMediaType`（也是上传期认定
+ * `audio/mpeg` / `audio/aac` 合法的那一支），所以「受理期拦什么」与「转写期报什么码」看的是
+ * 同一份事实，不另立魔数表。返回 `null` 的两种情形都**维持**既有 `PROVIDER_UNAVAILABLE`：
+ * 认不出真实类型（`null`），或认出来就是 WAV（只是剖面不符：超长/多声道/位深不对…）。
+ */
+export function foreignAudioMime(raw: unknown): string | null {
+  if (!(raw instanceof Uint8Array) || raw.length === 0) return null;
+  const detected = detectMediaType(raw);
+  if (detected === null || detected.mime === 'audio/wav') return null;
+  return detected.mime;
+}
+
+/**
  * 真实 ASR 提供者。**唯一**能触达真实发送的构造器：没有端口对象就构造不出来。
  */
 export function createLiveSpeechProvider(ports: RealAsrPorts): SpeechProvider {
@@ -171,13 +196,30 @@ export function createLiveSpeechProvider(ports: RealAsrPorts): SpeechProvider {
     unavailableReason: null,
     async transcribe({ jobId, mediaId, mediaRevision }) {
       // ① build（本地）——必须在 reserve 之前：本地拒绝**不占预算、不留账**。
+      //
+      // 取字节 与 剖面校验 刻意分两步（GY-R72-I11）：前者失败＝**字节来源不可用**，
+      // 后者失败可能是**格式不合格**。全揉进一个 `catch` 就会把「请传 WAV」说成
+      // 「供应商不可用」（今天 MP3 的实际表现）。
+      let raw: Uint8Array | null;
+      try {
+        raw = await audioSource.read({ jobId, mediaId, mediaRevision });
+      } catch {
+        // 端口没接线/读不到：字节来源问题，**不是**格式问题，也**不是**供应商故障。
+        // 口径与 `ai/asr-audio-source.ts`、`i11-audio-source-wiring` 一致，维持既有码。
+        return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
+      }
+      if (raw === null || raw.length === 0) {
+        // 空字节/没有预留：同样归「字节不可用」，不猜格式（认不出的字节不构成格式结论）。
+        return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
+      }
       let audio: { bytes: Uint8Array; durationMs: number };
       try {
-        const raw = await audioSource.read({ jobId, mediaId, mediaRevision });
         audio = requireLiveAsrWav(raw, profile);
       } catch {
-        // 取不到/音频不合法：不打供应商，也不把它说成供应商故障。
-        return { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' };
+        // 拿到了字节但剖面不符：认得出是另一种音频容器（MP3/AAC）⇒ 格式不支持；
+        // 认不出、或认出来就是 WAV（只是超长/声道/位深不符）⇒ 维持 `PROVIDER_UNAVAILABLE`。
+        const foreign = foreignAudioMime(raw);
+        return { kind: 'failed', code: foreign === null ? 'PROVIDER_UNAVAILABLE' : 'MEDIA_TYPE_UNSUPPORTED' };
       }
       const payload = {
         ProjectId: 0,

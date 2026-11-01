@@ -38,7 +38,20 @@
  *   （`createObjectStoreAudioSource`）在转写期完成，不成立即 `failed PROVIDER_UNAVAILABLE`、零发包。
  *   在此再 `getObject()` 一次会把整段录音下载两遍（受理一遍、转写一遍），在真实计费桶上纯属浪费。
  * - ⛔ **不读 ambient env、不碰文件系统、不新造错误码**：端口唯一来源是注入；拒绝码全部是契约
- *   `ErrorCode` 闭集成员（`NOT_FOUND` / `REVISION_CONFLICT` / `OBJECT_UNAVAILABLE`）。
+ *   `ErrorCode` 闭集成员（`NOT_FOUND` / `REVISION_CONFLICT` / `OBJECT_UNAVAILABLE` /
+ *   `MEDIA_TYPE_UNSUPPORTED`）。
+ *
+ * ## GY-R72-I11：`resolve()` 多回一个 `mime`（受理期格式闸的唯一事实源）
+ *
+ * 缺口：MP3 会被受理成 202，然后后台作业 failed，且失败码报成**供应商故障**
+ * `PROVIDER_UNAVAILABLE`（真实是「格式不支持」）。修法是把「转写只收 WAV」提前到受理期：
+ *
+ * - `real` 分支从**媒体登记册**多读一个 `mime`（`MediaRecord.mime` 本来就有，不新增列、
+ *   不改上传契约、不读对象存储头部），成功结局变为 `{ ok: true, revision, mime }`；
+ * - 受理期用 {@link speechAudioMimeRefusal} 判一次：非 WAV 家族 ⇒ 415
+ *   `MEDIA_TYPE_UNSUPPORTED`，且**在幂等占位之前**抛出（被拒请求不消耗 `Idempotency-Key`）；
+ * - **`mime` 未知 ⇒ 放行**（`substitute` 恒 `null`、历史行/外部登记册可能缺字段或空串）：
+ *   受理期不读字节、不猜格式，格式一致性仍由转写期 `requireLiveAsrWav` 兜底。
  *
  * ## 现状（本片之后）
  *
@@ -50,7 +63,51 @@ import { SPEECH_AUDIO_PURPOSES } from '../ai/asr-audio-source.ts';
 
 export type MediaResolutionCode = 'NOT_FOUND' | 'REVISION_CONFLICT' | 'OBJECT_UNAVAILABLE';
 
-export type MediaResolution = { ok: true; revision: number } | { ok: false; code: MediaResolutionCode };
+/**
+ * 受理期解析结局。
+ *
+ * 成功结局带 `mime`：
+ * - `string`：登记册记录的真实类型（`real` 分支唯一来源）；
+ * - `null`：**未知**（`substitute` 端口恒 `null`；`real` 分支遇到缺字段/空串也归一成 `null`）。
+ *   未知**不是**「不合规」：受理期按 fail-open 放行，由转写期字节校验兜底。
+ */
+export type MediaResolution =
+  | { ok: true; revision: number; mime: string | null }
+  | { ok: false; code: MediaResolutionCode };
+
+/**
+ * 本域**唯一**接受的音频载体：WAV 家族（`audio/wav` 及其契约外别名）。
+ *
+ * 口径来源：`services/api/src/ai/asr-live-adapter.ts` 的
+ * `LIVE_ASR_FROZEN_PROFILE.voiceFormat === 'wav'`——转写档位只有 WAV 一种载体，
+ * 且本域**不裁剪、不转码**（没有解码器，引依赖须先裁定）。上游 `UploadInput.mime`
+ * 允许的 `audio/mpeg` / `audio/aac` 因此只能**上传**、不能**转写**。
+ */
+export const WAV_ONLY_SPEECH_MIMES = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave'] as const;
+
+/** `mime` 的归一化：非字符串（缺字段）与空串一律视为**未知**（`null`），其余去空白、小写。 */
+export function normalizeSpeechMime(mime: unknown): string | null {
+  if (typeof mime !== 'string') return null;
+  const normalized = mime.trim().toLowerCase();
+  return normalized === '' ? null : normalized;
+}
+
+/**
+ * 受理期格式闸：`null` = 放行；非 `null` = 拒绝原因（唯一取值 `MEDIA_TYPE_UNSUPPORTED`）。
+ *
+ * **fail-open 是刻意的**：`mime` 未知时放行。理由有两条，都不靠猜：
+ * 1. 受理期**不读字节**（再 `getObject()` 一次会把整段录音下载两遍），只能信登记册的声明；
+ * 2. 替身端口（stub/preset_demo）与历史行本来就没有类型信息，把它们判成「格式不支持」
+ *    等于凭空拒绝一批合法请求。
+ *
+ * 反过来，**已知且不是 WAV 家族 ⇒ 拒绝**：这正是「MP3 今天 202 受理、后台才 failed」的
+ * 客户端可修复错误，提前到受理期就是 415 + 一句「请上传 WAV」。
+ */
+export function speechAudioMimeRefusal(mime: unknown): 'MEDIA_TYPE_UNSUPPORTED' | null {
+  const normalized = normalizeSpeechMime(mime);
+  if (normalized === null) return null;
+  return (WAV_ONLY_SPEECH_MIMES as readonly string[]).includes(normalized) ? null : 'MEDIA_TYPE_UNSUPPORTED';
+}
 
 export interface SpeechMediaPort {
   /** 端口类型：substitute=替身（stub/preset_demo）、real=真实登记册校验、unwired=未接线（fail-closed）。 */
@@ -76,7 +133,8 @@ export function createSubstituteMediaPort(): SpeechMediaPort {
       if (!Number.isInteger(mediaRevision) || mediaRevision < 1) {
         return { ok: false, code: 'REVISION_CONFLICT' };
       }
-      return { ok: true, revision: mediaRevision };
+      // 替身不持有真实类型：`mime` 恒 `null`（未知）⇒ 受理期格式闸 fail-open 放行。
+      return { ok: true, revision: mediaRevision, mime: null };
     },
   };
 }
@@ -103,7 +161,13 @@ export function createUnwiredMediaPort(reason = '媒体 HTTP 路由已注册，�
  * 媒体登记册的**只读取值面**（结构上即 `media/store.ts` 的 `MediaStore.getMedia`，
  * 也被 `ai/asr-audio-source.ts` 的 `SpeechRecordingRegistry` 满足）。
  *
- * 只声明本端口真正用到的 5 个字段：不复制整行结构，也不给登记册加写面。
+ * 只声明本端口真正用到的 6 个字段：不复制整行结构，也不给登记册加写面。
+ *
+ * `mime` 是 GY-R72-I11 起新增的读取字段（**不是**新增列：`MediaRecord.mime` 早已存在，
+ * 由上传期「字节与声明必须一致」的校验写入）。声明成**可选**是因为本端口只是登记册的
+ * 一个**窄只读视图**：另一支同样读登记册的视图（`ai/asr-audio-source.ts` 的
+ * `SpeechRecordingRecord`）不含该字段，两者必须能互相赋值（路由装配处两支都用）。
+ * 运行期一律过 {@link normalizeSpeechMime}：缺字段 = 未知 = 受理期放行，不猜格式。
  */
 export interface SpeechMediaRecordView {
   readonly ownerId: string;
@@ -111,6 +175,7 @@ export interface SpeechMediaRecordView {
   readonly state: string;
   readonly purpose: string;
   readonly rawRef: string | null;
+  readonly mime?: string;
 }
 
 export interface SpeechMediaRegistry {
@@ -223,7 +288,8 @@ export function createRealMediaPort(wiring: SpeechMediaPortWiring): SpeechMediaP
       // ⑦ 对象键必须在：没有键就没有「这份录音」，建任务等于建一个必然失败的任务。
       if (record.rawRef === null || record.rawRef === '') return { ok: false, code: 'OBJECT_UNAVAILABLE' };
 
-      return { ok: true, revision: record.revision };
+      // ⑧ 真实类型原样交给受理期格式闸（本端口不判格式：判据只有一处，见 speechAudioMimeRefusal）。
+      return { ok: true, revision: record.revision, mime: normalizeSpeechMime(record.mime) };
     },
   };
 }

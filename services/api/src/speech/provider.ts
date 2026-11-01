@@ -26,12 +26,22 @@ import { createObjectStoreAudioSource, type ObjectStoreAudioSourceOptions } from
 import { PRODUCT_GATE_AUTHORIZATION } from '../ai/live-gate.ts';
 import type { AsrProviderConfig } from '../config.ts';
 
-/** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
+/**
+ * `failed` 结局可携带的错误码闭集：**必须是契约 `ErrorCode` 闭集成员**（不新造码）。
+ *
+ * 口径（GY-R72-I11 起）：这里收的不再是「供应商故障」一种，而是适配器**能如实上报的
+ * 失败结局**，因此分两类：
+ * - `PROVIDER_*` 四条：真打了供应商或真打不了供应商；
+ * - `MEDIA_TYPE_UNSUPPORTED`：**没发包**的本地判定——拿到的字节是另一种音频容器（如 MP3），
+ *   而本域只有 WAV 一个载体（不裁剪、不转码）。它是客户端可修复的格式问题（415），
+ *   不是「供应商不可用」，因此不得再伪装成 `PROVIDER_UNAVAILABLE`。
+ */
 export const PROVIDER_FAILURE_CODES = [
   'PROVIDER_TIMEOUT',
   'PROVIDER_QUOTA_EXCEEDED',
   'PROVIDER_OUTCOME_UNKNOWN',
   'PROVIDER_UNAVAILABLE',
+  'MEDIA_TYPE_UNSUPPORTED',
 ] as const;
 export type ProviderFailureCode = (typeof PROVIDER_FAILURE_CODES)[number];
 
