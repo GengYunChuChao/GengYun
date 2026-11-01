@@ -468,10 +468,10 @@ export interface AdminJobPool {
  * `wired: true` —— 一旦注入，`listAdminJobs` / `cancelAdminJob` 不再走未接线的 503 分支；
  * 但**读失败仍然是 503**（`PROVIDER_UNAVAILABLE`），不会被误读成"没有作业"。
  */
-export function createPostgresAdminJobPort(options: {
-  pool: AdminJobPool;
-  limit?: number;
-}): AdminJobPort {
+export function createPostgresAdminJobPort(
+  // W47：`now` 可注入（只影响 `list` / `get` 的投影时刻，不参与任何 SQL；缺省即真实时钟）。
+  options: PostgresAdminJobPortOptions,
+): AdminJobPort {
   const pool = options.pool;
   const limit = options.limit ?? ADMIN_JOB_LIST_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) throw new Error('ADMIN_JOB_LIST_LIMIT 必须是正整数');
@@ -558,7 +558,7 @@ export function createPostgresAdminJobPort(options: {
             limit,
             ...values,
           ]);
-          return (result.rows as Record<string, unknown>[]).map((row) => projectRow(source, row));
+          return projectReadRows(source, result.rows as Record<string, unknown>[], options);
         }),
       );
       return pages
@@ -572,7 +572,7 @@ export function createPostgresAdminJobPort(options: {
       for (const source of ALL_SOURCES) {
         const result = await pool.query(source.getSql, [id]);
         const row = (result.rows as Record<string, unknown>[])[0];
-        if (row !== undefined) return toAdminJobView(projectRow(source, row));
+        if (row !== undefined) return toAdminJobView(projectReadRow(source, row, readInstant(options)));
       }
       return null;
     },
@@ -767,3 +767,111 @@ export const ADMIN_JOB_SQL = {
   cancelAudit: CANCEL_AUDIT_SQL,
   limit: ADMIN_JOB_LIST_LIMIT,
 } as const;
+
+// ============================================================================
+// W47（GY-R72）读面超时投影：过期作业对运维台报 `timed_out`
+// ----------------------------------------------------------------------------
+// 缺陷：四域读面（`conversations` / `ocr` / `speech` / `recognitions` 的 GET）遇到
+// 「库内仍 `queued` / `running`、但 `deadline_at` 已过」的作业会裁定成 `timed_out`，
+// 运维台的 `list` / `get` 却原样吐 `queued` —— 管理员看到的是一份永远「处理中」的台账。
+// 本节把同一把尺子架到运维台读面上：**只投影，不写库**。
+//
+// 为什么整段落在文件末尾（故意的，别搬走）：
+//   `docs/**` 里有二十余处按行号引用本文件（`jobs-pg.ts:245-247`、`:310`、`:413`、`:573`、
+//   `:618-621`、`:623` …）；`tools/verify-doc-anchors.mjs --strict` 的容差只有 ±2 行，
+//   `tests/unit/docs-truth-pins.test.mjs` 甚至要求 `:413` 与文档里写的行号**精确相等**。
+//   本片不许改 `docs/**`、不许 `--reanchor`，所以新增行一律落在最后一个锚点之后，
+//   上面三处调用点都是**等长替换**（既有行号一个都没动）。ESM 的 import 与函数声明都会提升，
+//   末尾写的东西能被上面的工厂函数正常使用，语义与写在文件头完全一致 —— 同域先例是
+//   `ocr/service.ts` / `speech/service.ts` / `recognitions/service.ts` 末尾的 R72 读面裁定块
+//   （`adjudicateExpiredOcrJob` 等），它们也是这么落的。
+//
+// 与四域读面的**唯一**差别：那边是写面裁定（CAS 落 `timed_out`，GET 顺手把库改了），
+// 这边是**只读投影**（管理员刷新一次列表不该变成一次写入）：只改返回视图的 `state` /
+// `error_code`，`deadline_at` / `revision` / `updated_at` 等列原样透出，SQL 一个字不动。
+//
+// 明确接受的边界（本片不补，别偷偷补）：`list` 的 WHERE 仍作用在库内原始列上
+// （`listWhereFor`，本片一个字没改），投影只改返回视图，因此 `filter.state = 'timed_out'`
+// **不会**命中「库内仍 `queued` 但 `deadline_at` 已过」的行；这类行只有（a）不按 `state`
+// 过滤的列表、（b）`get` 单条读取，才会以 `timed_out` 出现。要补齐得改 WHERE 语义
+// （计算列 / CTE / 联表条件），不在本片范围。
+// ============================================================================
+import { isDeadlineExpired } from '../../jobs/expiry.ts';
+
+/**
+ * 真实作业端口的参数（W47 起把 options 收成具名类型，多了一个可选的 `now`）。
+ *
+ * `now` 只影响**读面投影的时刻**（`list` / `get`），不参与任何 SQL：绑定值仍然是
+ * `[limit, ...values]` 与 `[id]`，一个字没变。它存在是为了让单测能精确钉住宽限边界
+ * （`tests/unit/admin-jobs-expiry-projection.test.mjs` T3）；生产缺省即真实时钟。
+ */
+export interface PostgresAdminJobPortOptions {
+  pool: AdminJobPool;
+  limit?: number;
+  now?: () => Date;
+}
+
+/** 读投影用的「现在」：注入了就用注入的，否则每次读取真实时钟。 */
+function readInstant(options: PostgresAdminJobPortOptions): Date {
+  return (options.now ?? (() => new Date()))();
+}
+
+/**
+ * `deadline_at` 列 → `Date`。`pg` 默认给 `Date`，假池 / JSON 给 ISO 字符串。
+ * `null` / `undefined` / 空串 / 非法值 / `Invalid Date` ⇒ `null`（**不投影**，绝不当成过期）。
+ */
+function deadlineAtOf(value: unknown): Date | null {
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  if (typeof value !== 'string' || value.length === 0) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * 判据：库内仍是非终态（`queued` / `running`）+ `deadline_at` 已过（含 `jobs/expiry.ts` 的 5s 宽限）
+ * ⇒ 读面按 `timed_out` 投影。
+ *
+ * 只调 `isDeadlineExpired`（**含等号**：`at >= deadline + grace` 即过期），不另写第二套比较式。
+ * 五个终态一律**不动**（`succeeded` / `failed` / `timed_out` / `cancelled` / `uncertain`）：
+ * 读面不是第二次判决，绝不把已经成功的作业改成超时。
+ *
+ * 导出只为钉住判据本身（T3 / T4 里 `deadline_at` 为 `null` 的那一条）：
+ * 这类行经 `toAdminJobView` 本来就会 503（`isoAt` 要求合法时间戳），端口层面看不到
+ * 「保持 `queued`」，只能直接验判据。
+ */
+export function isReadDeadlineExpired(row: Record<string, unknown>, at: Date): boolean {
+  const state = row['state'];
+  if (typeof state !== 'string' || !(CANCELLABLE_STATES as readonly string[]).includes(state)) {
+    return false;
+  }
+  const deadline = deadlineAtOf(row['deadline_at']);
+  if (deadline === null) return false;
+  return isDeadlineExpired(deadline, at);
+}
+
+/** 过期作业对外报的错误码：与四域读面同值（契约 504 档 `PROVIDER_TIMEOUT`）。 */
+const EXPIRED_JOB_ERROR_CODE: ErrorCode = 'PROVIDER_TIMEOUT';
+
+/**
+ * 读面投影：`list` / `get` 专用，四个源（`ocr` / `recognition` / `transcription` / `answer`）
+ * 一律生效 —— 判据只看 `state` / `deadline_at` 两列，与源无关。
+ *
+ * `lockRow` / `updateRow`（取消事务）**不**走这里：那条路径按库内原始列判 `'TERMINAL'` 与
+ * `revision`，把投影塞进锁行会让「库里还 `queued` 的过期作业」变成不可取消 —— 那是写面
+ * 行为改动，本片没要求，也不做。
+ */
+function projectReadRow(source: JobSource, row: Record<string, unknown>, at: Date): JobRow {
+  const projected = projectRow(source, row);
+  if (!isReadDeadlineExpired(row, at)) return projected;
+  return { ...projected, state: 'timed_out', error_code: EXPIRED_JOB_ERROR_CODE };
+}
+
+/** `list` 的一次批量投影：同一页共用一个「现在」（逐行各取一次会让同一页横跨宽限边界）。 */
+function projectReadRows(
+  source: JobSource,
+  rows: Record<string, unknown>[],
+  options: PostgresAdminJobPortOptions,
+): JobRow[] {
+  const at = readInstant(options);
+  return rows.map((row) => projectReadRow(source, row, at));
+}
