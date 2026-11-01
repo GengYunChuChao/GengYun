@@ -140,7 +140,7 @@ export const ok = 1; // 这里不是铸造：approveModerationLiveWiring( 只是
 `tests/unit/moderation-live-adapter.test.mjs:883`、
 `tests/unit/moderation-live-wiring-assembly.test.mjs:457`（**本片已修**，现改走 `tools/lib/strip-comments.mjs`）、
 `tests/unit/ocr-image-source.test.mjs:588`、`tests/unit/ocr-media-port.test.mjs:647`、
-`tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:162`、`tests/unit/sql-column-coverage.test.mjs:1495`
+`tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:162`、`tests/unit/sql-column-coverage.test.mjs:1505`
 
 这一档里有几条**风险面更大**，值得指挥单独立片（见 §10）：
 
