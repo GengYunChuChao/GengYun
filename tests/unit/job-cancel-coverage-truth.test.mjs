@@ -172,6 +172,25 @@ describe('T3 进度基线：公共作业源取消不再写「仍 503」', () => 
       `${PROGRESS}:${line} 没有写「六源」：这一格应改成「六源取消均已接线（识别／转写／合成／OCR／审核／问答）」`,
     );
   });
+
+  // 同一份文件里还有一处同性质旧话（问答那一格）。它是 P01 那句假话的第三镜像：
+  // 「问答取消未接、如实 503」在 GY-R71 之后已不成立（answer·① 实测 200 + cancelled + revision +1）。
+  test('`docs/development-progress.md` 的问答格：不再写「问答取消未接」', () => {
+    const { line, judged } = uniqueRow(PROGRESS, '| 问答／社区／消息／后台 |');
+    for (const stale of ['问答取消未接', 'PROVIDER_UNAVAILABLE`（与转写／合成 取消同一口径）']) {
+      assert.equal(
+        judged.includes(stale),
+        false,
+        `${PROGRESS}:${line} 仍写着旧话「${stale}」：问答取消由 GY-R71 接线，`
+          + '实测 answer·① 得 200 + cancelled + revision 恰好 +1 + result=null',
+      );
+    }
+    assert.match(
+      judged,
+      /问答取消已接线/,
+      `${PROGRESS}:${line} 没有写「问答取消已接线」：这句要如实写成已接线（GY-R71），并说明只有未接 cancel 的源才 503`,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
