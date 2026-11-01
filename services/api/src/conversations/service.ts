@@ -1109,7 +1109,7 @@ export function createConversationService(deps: ConversationServiceDeps) {
       id: turn.job_id,
       revision: turn.revision,
       kind: 'answer',
-      target_ref: { type: 'answer', id: turn.id, revision: turn.revision },
+      target_ref: { type: 'answer', id: turn.id, revision: answer === null ? 1 : answer.revision }, // 目标版本 = 回答行自己的版本（answer 行不可修订，恒 1）；未产出时取记录初始版本 1，绝不跟作业 revision 走
       state: turn.job_state,
       deadline_at: turn.job_deadline_at.toISOString(),
       created_at: turn.job_created_at.toISOString(),
