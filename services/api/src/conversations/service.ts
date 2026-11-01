@@ -29,7 +29,7 @@ import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import { PrivacyError } from '../../../../packages/privacy/errors.mjs';
 import { isErrorCode, type ErrorCode } from '../contract.ts';
-import type { ContractJob, JobState } from '../jobs/registry.ts';
+import { isTerminalJobState, type ContractJob, type JobState } from '../jobs/registry.ts';
 import { collectShapeIssues } from '../jobs/result-shape.ts';
 import { idempotencyScope } from '../auth/idempotency.ts';
 import type { AuthenticatedIdentity } from '../auth/types.ts';
@@ -1094,7 +1094,7 @@ export function createConversationService(deps: ConversationServiceDeps) {
     userId: string;
     jobId: string;
   }): Promise<{ turn: TurnRecord; answer: AnswerRecord | null } | null> {
-    return store.findTurnByJobId(input.jobId, input.userId);
+    return adjudicateExpiredAnswerJob(store, now, input.userId, input.jobId);
   }
 
   /**
@@ -1349,4 +1349,70 @@ export type ConversationService = ReturnType<typeof createConversationService>;
 /** 装配层构造守卫的便捷入口（口径集中一处，避免各调用点各写一套）。 */
 export function createConversationGuard(input: { dose: DoseAuthority }): AnswerGuard {
   return createAnswerGuard({ dose: input.dose });
+}
+
+// ============================================================================
+// R72-W34 · 作业读面超时裁定（`GET /jobs/{id}` 绝不永远回报 `queued` / `running`）
+// ----------------------------------------------------------------------------
+// 说明：本节整体落在文件末尾是**故意的**——`docs/` 里有 50 处按行号引用本文件，把这段插到
+// `findByJobId` 旁边会让那些行号全部偏移、逐条变成假话。ESM 的 import 与函数声明都会提升，
+// 因此末尾的 import / 函数声明能被上面的工厂函数正常使用，语义与写在文件头完全一致。
+// ============================================================================
+import { isDeadlineExpired } from '../jobs/expiry.ts';
+
+/**
+ * 读面超时裁定：非终态 + 已过 `deadline_at + 宽限` ⇒ 用 CAS 落 `timed_out` + `PROVIDER_TIMEOUT`。
+ *
+ * 为什么读面必须写：执行器缺席（进程重启、提供者卡死、store 抛错）时没有任何人把任务推到终态，
+ * `GET /jobs/{id}` 于是**永远**回 `queued` / `running`，用户界面的「处理中」永不结束 —— 问答域
+ * 是核心链路上最后一个还没修这个缺陷的域。口径与 OCR／合成同形（`ocr/service.ts:1190` 的
+ * `adjudicateExpiredOcrJob`、`tts/service.ts:428` 的 `adjudicateExpiredJob`），而「宽限多长」
+ * 「怎样算过期」的唯一真源在 `jobs/expiry.ts`：本文件**不**另写一份比较式、不定义第二份宽限
+ * （`tests/unit/answer-job-expiry.test.mjs` 的 T7 钉住这一条）。
+ *
+ * 三条自我约束：
+ *   - 只处理非终态；五个终态（`succeeded` / `uncertain` / `failed` / `timed_out` / `cancelled`）
+ *     一律**原样返回**，绝不把已经成功的作业改写成超时；
+ *   - 写只走 `store.settleTurnJob` 的 CAS（状态谓词是 `queued`/`running`），`revision` **恰好 +1**、
+ *     `updated_at` 取裁定时刻；抢不到（并发方已落终态）⇒ 重读一次返回**当前投影**，
+ *     不覆盖、不重试循环 —— 读面绝不因为自己没抢到，就谎报一个自己没写成的终态；
+ *   - **不写回答、不碰级联端口**：读面裁定不是一次执行的产物，`answer` 恒传 `null`，
+ *     除 `store` 之外不调任何端口（`cascade.initiate` 只由删除路径调）。
+ *
+ * 重读走**同一个** `findTurnByJobId`（不另写查询、不按轮次 id 直取）：owner 谓词一次都不少；
+ * 重读抛错（作业被并发删除、存储瞬时失败）时**沿用第一次已授权读到的那一行** —— 它是一行真实
+ * 读过、已通过归属校验的记录，比让整个 GET 变 500 更接近事实。首读失败则照旧向上抛
+ * （与原来的 GET 语义逐字一致：读不到就是读不到，不在这里改写成分支）。
+ *
+ * 非终态只有 `queued` / `running`，两者 → `timed_out` 都是本域**已有**的迁移（`scheduleAnswer`
+ * 的执行器缺席路径写的就是这同一对 `state`/`errorCode`，见本文件 `:1167-1176`），因此这里写的是
+ * 会话域既有语义，不另立第二套状态机。`timed_out` 不产出回答 ⇒ 投影里 `result` 恒 `null`。
+ */
+async function adjudicateExpiredAnswerJob(
+  store: ConversationStore,
+  now: () => Date,
+  userId: string,
+  jobId: string,
+): Promise<{ turn: TurnRecord; answer: AnswerRecord | null } | null> {
+  const found = await store.findTurnByJobId(jobId, userId);
+  if (found === null) return null;
+  // 终态永不动：读面只在「还没有人落终态」时才是裁定者。
+  if (isTerminalJobState(found.turn.job_state)) return found;
+  const at = now();
+  if (!isDeadlineExpired(found.turn.job_deadline_at, at)) return found;
+  const settled = await store.settleTurnJob({
+    turnId: found.turn.id,
+    ownerId: userId,
+    state: 'timed_out',
+    errorCode: 'PROVIDER_TIMEOUT',
+    answer: null,
+    at,
+  });
+  if (settled !== null) return { turn: settled, answer: null };
+  // CAS 失手（并发方已落终态）：重读一次，以 store 现值做投影；重读抛错沿用首读那一行。
+  try {
+    return (await store.findTurnByJobId(jobId, userId)) ?? found;
+  } catch {
+    return found;
+  }
 }

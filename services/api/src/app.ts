@@ -2553,7 +2553,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       findByJobId: async ({ userId, jobId }) => {
         const service = app.conversationService;
         if (service === null) return null;
-        return service.store.findTurnByJobId(jobId, userId);
+        return service.findByJobId({ userId, jobId });
       },
       cancelJob: async ({ userId, jobId, ifMatch, idempotencyKey }) => {
         const service = app.conversationService;
