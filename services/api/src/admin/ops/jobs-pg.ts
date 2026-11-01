@@ -1,12 +1,12 @@
 /**
  * 平台级作业的**真实 Postgres 读面 / 取消面**（`AdminJobPort` 的生产实现，GY-I18 第一批）。
  *
- * ## 为什么读三张域内作业表，而不是 `public.jobs`
+ * ## 为什么读域内作业表（四源），而不是 `public.jobs`
  * `public.jobs`（建表：`services/api/db/migrations/0001_initial_schema.sql:203-231`）**不是死表**，它有人写：唯一写入点是 `services/api/src/jobs/ledger.ts:268-281` 的 `JOB_LEDGER_UPSERT_SQL`（向 `public.jobs` 写行的 `INSERT`，15 列显式 + `ON CONFLICT (id) DO UPDATE`）；
  * 已接源 `LEDGER_WIRED_SOURCES` = `ocr` / `recognition` / `transcription` / `answer`（`ledger.ts:78`），未接的只有 `moderation` / `synthesis`（理由见 `UNWIRED_SOURCES_REASON`，`ledger.ts:102`）；
  * **本文件的取消事务也写同一张表**（`:618-621`）。真实作业行**另**落在各域自己的表：`public.ocr_jobs`（`0024_ocr_persistence.sql`）/ `public.recognition_jobs`（`0025_*`）/ `public.speech_jobs`（`0026_speech_persistence.sql`）。
  * **读域内表、不读台账的真正理由**：`AdminJobView.target_ref` 要的是**域内记录行**的真实 `revision`（`LEFT JOIN public.ocr_records` / `recognition_records` / `transcriptions` 取 `r.revision`，见 `:114-131`），台账行给的是「作业状态迁移计数」而不是记录版本 —— **不是因为台账没人写**。
- * ⚠ **已知缺口**：`answer` 已接台账，但下面的 `SOURCES` 不含它 ⇒ 问答作业在运维台既**不可见**也**不可取消**；接上时要同时改 `SOURCES`、`AdminJobView` 映射与本注释。（本段刻意不写那条 `INSERT` 的语句字面量：`tests/unit/ai-ops-ledger-pins.test.mjs` 钉子① 把注释里的语句也记成命中，白名单逐条登记、本片不动它。）
+ * ✅ **W36：四源全接** —— `SOURCES` 仍是三张域内作业表，读面/取消面改用 `ALL_SOURCES`（末尾追加 `ANSWER_SOURCE`，DML 落在第 4 张域表 `public.conversation_turns`）⇒ 问答作业在运维台**可见也可取消**，取消走 `ledgerRowFromTurn` 写同一张 `public.jobs`。旧口径「`answer` 已接台账但读面只有三源」的缺口到此闭合。（本段刻意不写那条 `INSERT` 的语句字面量：`tests/unit/ai-ops-ledger-pins.test.mjs` 钉子① 把注释里的语句也记成命中，白名单逐条登记、本片不动它。）
  *
  * 三张表的记录 ID 列名不同（`ocr_id` / `recognition_id` / `transcription_id`），所以下面每条 SQL 都
  * 写成**字面量表名、不做表名拼接**：`tests/unit/sql-column-coverage.test.mjs` 按 SQL 字面量提取
@@ -47,7 +47,7 @@ import { ApiError } from '../../errors.ts';
 import { ERROR_CODES, type ErrorCode } from '../../contract.ts';
 import { parseAdminJobFilter } from './jobs.ts';
 import { JOB_KINDS } from './types.ts';
-import { ledgerRowFromDomainJob, writeJobLedger, type LedgerWiredSource } from '../../jobs/ledger.ts';
+import { ledgerRowFromDomainJob, ledgerRowFromTurn, writeJobLedger, type LedgerWiredSource } from '../../jobs/ledger.ts';
 import type {
   AdminJobCancelAuditInput,
   AdminJobFilter,
@@ -99,45 +99,45 @@ const CANCEL_AUDIT_SQL =
   'SELECT public.record_admin_job_cancel_audit($1::uuid, $2::uuid, $3::integer, $4::text, $5::uuid) AS audit_event_id';
 
 /**
- * 三张域内作业表的**统一读面**。
+ * 四个作业源的**统一读面**（三张域内作业表 + `public.conversation_turns` 的问答轮次）。
  *
  * 为什么不写成 `'ocr'::text AS kind, ocr_id AS record_id … UNION ALL`：本仓库的静态列审计
  * （`tests/unit/sql-column-coverage.test.mjs`）会把 `AS` 别名当成"要读的列名"，于是
- * `record_id` 这类**投影别名**会被判成未授权列（实测 6 条红）。别名只是投影便利，
- * 不该逼着授权面去追一个不存在的列：所以 SQL 里**只出现真实列**（`ocr_id` /
- * `recognition_id` / `transcription_id`），`kind` 与 `record_id` 由这里按来源补上。
+ * `record_id` 这类**投影别名**会被判成未授权列（实测 6 条红）。所以 SQL 里只出现真实列：
+ * `ocr_id` / `recognition_id` / `transcription_id`；`answer` 源把轮次主键投影成 `j.id AS record_id`
+ * （该表主键就叫 `id`，与作业 ID 撞名），`kind` 与 `record_id` 的落地一律由 `projectRow` 按来源补。
  *
- * 每条语句的列面都是 12 列里的 7 列（`id / revision / <record> / state / deadline_at /
+ * 每条语句的列面都是各表 12 列里的 7 列（`id / revision / <record> / state / deadline_at /
  * created_at / error_code`），已在 `deploy/postgres-cvm/sql/20-login-roles.sql:527-534`
- * 等三处按列授予运行时角色。
+ * 等四处按列授予运行时角色（`answer` 源是 `:1115-1124`，两列带 `job_` 前缀）。
  *
  * ## `target_ref.revision` 的真实来源：`LEFT JOIN <记录表>` 取 `revision`
  * 读面（list / get）在作业表上 `LEFT JOIN` 对应记录表（`ocr_records` / `recognition_records` /
  * `transcriptions`），投影 `r.revision AS target_revision`。四条硬约束决定了这个写法：
  * 1. **必须 LEFT JOIN**：`*_jobs.<record>_id` 没有外键（记录由 `commitTerminal` 同一事务落库，
  *    `0024_ocr_persistence.sql:80-101` 注释明说），未到终态的作业查记录表取不到行；INNER JOIN
- *    会让排队中的作业从运维台**整条消失**。
+ *    会让排队中的作业从运维台**整条消失**（`answer` 源没有记录表 ⇒ 不 JOIN，见 `ANSWER_SOURCE`）。
  * 2. **必须显式别名 `j` / `r`**：三张记录表也都有 `id` / `revision` / `created_at`
  *    ⇒ 不限定会 `42702 column reference "id" is ambiguous`。故 `listTail` 的 `ORDER BY` 与
  *    `getSql` 的 `WHERE` 都带 `j.` 前缀。
  * 3. **`state` / `error_code` 不加前缀**：这两列在三张记录表里都不存在（`0024:109-126` /
- *    `0025:131-151` / `0026:112-130`），不歧义；也就不动 `LIST_STATE_EQ` 那组字面量，
- *    导出的 `ADMIN_JOB_SQL.listWhere` 与既有断言逐字不变。
+ *    `0025:131-151` / `0026:112-130`），不歧义 ⇒ `LIST_STATE_EQ` 那组字面量原样不动；只有
+ *    `answer` 源要换列名（`job_state` / `job_error_code`，见 `columnNameFor`）。
  * 4. **⛔ 不能改写成标量子查询**：静态列审计（`tests/unit/sql-column-coverage.test.mjs`）把
  *    SELECT / RETURNING 里的 `public.ocr_records` 当成**列名**（限定名被剥成 `ocr_records`），
  *    于是要求 `ocr_jobs.ocr_records` 列 ⇒ 必红。改成 JOIN 后，`parseSqlText` 只读 `FROM` 后的
- *    第一张表（`:1653`），JOIN 的表不进表集、`ON r.id = j.ocr_id` 不被当列 ⇒ 语句数仍 12、
- *    表集与列要求**零漂移**。
+ *    第一张表（`:1653`），JOIN 的表不进表集、`ON r.id = j.ocr_id` 不被当列 ⇒ 那三源的语句数、
+ *    表集与列要求**零漂移**（`answer` 源的四条另计：`ALL_SOURCES` 把语句数从 12 抬到 16）。
  */
 interface JobSource {
   /**
-   * GY-R71：**收窄**成「已接入统一台账的三个域内源」（`ocr` / `recognition` / `transcription`）。
-   * 取消要在同一事务里写 `public.jobs`，而该写入点的映射函数只接受已接源
-   * （`jobs/ledger.ts` 的 `ledgerRowFromDomainJob`）；收窄后「新增一个源却忘了接台账」在类型层就红，
-   * 而不是运行到取消那一刻才炸。仍是 `JobKind` 的子集，`toAdminJobView` 的闭集校验不受影响。
+   * 四个源都**已接入**统一台账（`LEDGER_WIRED_SOURCES`，`jobs/ledger.ts:78`）。取消要在同一事务里写
+   * `public.jobs`，该写入点按来源分两个映射函数：三个域内源走 `ledgerRowFromDomainJob`，`answer` 走 `ledgerRowFromTurn`
+   * （轮次表列名以 `job_` 打头，入参是 `TurnJobLedgerInput`）。`kind` 全程用 `LedgerWiredSource`：
+   * 新增一个源却忘了接台账仍会在类型层红（两个映射函数都收不到它），而不是运行到取消那一刻才炸；仍是 `JobKind` 子集。
    */
-  readonly kind: Exclude<LedgerWiredSource, 'answer'>;
-  readonly recordColumn: 'ocr_id' | 'recognition_id' | 'transcription_id';
+  readonly kind: LedgerWiredSource;
+  readonly recordColumn: 'ocr_id' | 'recognition_id' | 'transcription_id' | 'record_id';
   /**
    * 列表读面的 `SELECT … FROM <真实表>` 部分（**不含** `WHERE` / `ORDER BY` / `LIMIT`）。
    * 过滤条件拼在 `listSelect` 与 `listTail` 之间，因此拆成两段而不是一整条。
@@ -148,11 +148,11 @@ interface JobSource {
   /**
    * `state` 列的**真实类型**，决定列表过滤里 `state = $2::<cast>` 用哪种 cast。
    *
-   * 三张表并不一致（实测迁移原文）：
+   * 四个源并不一致（实测迁移原文）：
    * - `public.ocr_jobs.state` 是 `text` + `CHECK (state IN (…7 值…))`（`0024_ocr_persistence.sql:93-95`）；
    * - `public.recognition_jobs.state` 是 `job_state` 枚举（`0025_recognitions_persistence.sql:117`）；
-   * - `public.speech_jobs.state` 是 `job_state` 枚举（`0026_speech_persistence.sql:98`）；
-   *   （枚举本体：`0001_initial_schema.sql:24`，七值与契约 `JobState` 逐一对应。）
+   * - `public.speech_jobs.state` 是 `job_state` 枚举（`0026_speech_persistence.sql:98`），枚举本体在 `0001_initial_schema.sql:24`；
+   * - `public.conversation_turns.job_state` 是 `varchar(20)` + `CHECK` 七值（`0013_conversations.sql:71-72`），按文本比。
    *
    * ⚠ 在 PG 里 `枚举列 = text 参数` **没有**隐式转换 ⇒ 统一写 `$2::text` 会让枚举源抛
    * `42883 operator does not exist: job_state = text`（真库臂实测 500）。故 cast 必须按源区分。
@@ -170,7 +170,7 @@ interface JobSource {
 }
 
 /**
- * 三张表的 SQL **逐条写死**（表名/列名都不插值）。
+ * 四张表的 SQL **逐条写死**（表名/列名都不插值）。
  *
  * 为什么不用字符串模板拼表名：静态列审计（`tests/unit/sql-column-coverage.test.mjs`）
  * 读的是源码字面量，`public.${table}` 会被解析成 `public.set` 之类的噪声表名，于是
@@ -234,7 +234,7 @@ const SOURCES: readonly JobSource[] = [
  * 为什么单独成字面量、且**以空格开头**：静态列审计（`tests/unit/sql-column-coverage.test.mjs`
  * 的 `SQL_START = /^\s*(SELECT|INSERT|UPDATE|DELETE)\s+\S/i`）只把首个 token 是那四个动词的
  * 字面量记成语句；`' WHERE …'` 既不计入语句数也不进 opaque 登记，于是本文件的
- * SQL 字面量读数仍是 12（3 源 × list/get/lock/update），全局读数不漂移。
+ * SQL 语句数只由「源数 × list/get/lock/update」决定（四源 ⇒ 16 条），这四个片段一条都不加。
  *
  * ## cast 口径（**按源区分**，别再改回统一 `::text`）
  * `state` 的列类型三表不一致（见 `JobSource.stateCast`）：`ocr_jobs.state` 是 `text`+`CHECK`
@@ -245,8 +245,8 @@ const SOURCES: readonly JobSource[] = [
  * 所以 `state` 的 cast 由 `source.stateCast` 决定；过滤值进 SQL 前已过闭集校验（七值之一），
  * `::job_state` 不会因非法值抛错。
  *
- * `error_code` 三表都是字符串列 `varchar(80)`（`0024:100` / `0025:122` / `0026:103`），
- * `varchar` 与 `text` 是二进制兼容的，故统一 `$2::text` / `$3::text`，无需按源区分。
+ * `error_code` 四表都是字符串列（`0024:100` / `0025:122` / `0026:103` / `0013:75` 的 `job_error_code varchar(80)`），
+ * `varchar` 与 `text` 二进制兼容，故统一 `$2::text` / `$3::text`；cast 不按源区分，只有列名要换（`columnNameFor`）。
  */
 const LIST_WHERE_LEAD = ' WHERE ';
 const LIST_STATE_EQ = 'state = $2::';
@@ -263,15 +263,15 @@ function listWhereFor(
 ): { where: string; values: readonly unknown[] } {
   const hasState = filter.state !== undefined;
   const hasErrorCode = filter.error_code !== undefined;
-  const stateEq = LIST_STATE_EQ + source.stateCast;
+  const stateEq = LIST_STATE_EQ.replace('state', columnNameFor(source, 'state')) + source.stateCast;
   if (hasState && hasErrorCode) {
     return {
-      where: LIST_WHERE_LEAD + stateEq + LIST_AND_ERROR_CODE_AFTER_STATE,
+      where: LIST_WHERE_LEAD + stateEq + LIST_AND_ERROR_CODE_AFTER_STATE.replace('error_code', columnNameFor(source, 'error_code')),
       values: [filter.state, filter.error_code],
     };
   }
   if (hasState) return { where: LIST_WHERE_LEAD + stateEq, values: [filter.state] };
-  if (hasErrorCode) return { where: LIST_WHERE_LEAD + LIST_ERROR_CODE_EQ, values: [filter.error_code] };
+  if (hasErrorCode) return { where: LIST_WHERE_LEAD + LIST_ERROR_CODE_EQ.replace('error_code', columnNameFor(source, 'error_code')), values: [filter.error_code] };
   return { where: '', values: [] };
 }
 
@@ -480,7 +480,7 @@ export function createPostgresAdminJobPort(options: {
     client: PoolClient,
     id: string,
   ): Promise<{ source: JobSource; row: JobRow } | null> {
-    for (const source of SOURCES) {
+    for (const source of ALL_SOURCES) {
       const result = await client.query(source.lockSql, [id]);
       const row = (result.rows as Record<string, unknown>[])[0];
       if (row !== undefined) return { source, row: projectRow(source, row) };
@@ -551,7 +551,7 @@ export function createPostgresAdminJobPort(options: {
       // 绝不静默返回空页。不过滤时 `where` 为空串、`values` 为空 ⇒ 语句与改动前逐字相同。
       const applied = parseAdminJobFilter(filter);
       const pages = await Promise.all(
-        SOURCES.map(async (source) => {
+        ALL_SOURCES.map(async (source) => {
           // WHERE 按**该源**的 `state` 真实类型拼（枚举源 `::job_state`、文本源 `::text`）。
           const { where, values } = listWhereFor(source, applied);
           const result = await pool.query(source.listSelect + where + source.listTail, [
@@ -569,7 +569,7 @@ export function createPostgresAdminJobPort(options: {
     },
     async get(id: string): Promise<AdminJobView | null> {
       if (!UUID_RE.test(id)) return null;
-      for (const source of SOURCES) {
+      for (const source of ALL_SOURCES) {
         const result = await pool.query(source.getSql, [id]);
         const row = (result.rows as Record<string, unknown>[])[0];
         if (row !== undefined) return toAdminJobView(projectRow(source, row));
@@ -616,30 +616,28 @@ export function createPostgresAdminJobPort(options: {
         // 作业保持取消前的 state/revision，审计表零新增。绝不在 COMMIT 之后补写。
         await recordCancelAudit(client, audit, id, expectedRevision);
         // GY-R71：统一台账行与「域内取消 + 审计」**同一个事务**。缺列（只可能是装配/授权错）
-        // ⇒ fail-closed 抛 503 并整体回滚，绝不写一条字段残缺的台账行。
-        if (current.owner_user_id === null || current.media_id === null || current.media_revision === null) {
-          throw unavailable('取消事务未取到台账所需列（owner_user_id / media_id / media_revision）');
+        // ⇒ fail-closed 抛 503 并整体回滚，绝不写一条字段残缺的台账行（`answer` 源没有 media 列）。
+        if (current.owner_user_id === null) {
+          throw unavailable('取消事务未取到台账所需列（owner_user_id）');
         }
-        await writeJobLedger(
-          client,
-          ledgerRowFromDomainJob(
-            source.kind,
-            {
-              id: current.id,
+        // 两个映射函数的入参形状不同：轮次表用 `TurnJobLedgerInput`（`jobs/ledger.ts:123-134`），
+        // 三张域表用 `DomainJobLedgerInput`。先把行对象算好，`writeJobLedger` 只留**一处**调用点
+        // （`tests/unit/jobs-ledger-mapping.test.mjs` 把「本文件只有一处写点」钉成精确读数）。
+        const ledgerRow = source.kind === 'answer'
+          ? ledgerRowFromTurn({
+              id: updated.record_id,
               revision: updated.revision,
-              kind: updated.kind,
-              ownerUserId: current.owner_user_id,
-              state: updated.state,
-              deadlineAt: toDate(current.deadline_at),
-              createdAt: toDate(current.created_at),
-              updatedAt: toDate(updated.updated_at),
-              errorCode: updated.error_code,
-              mediaId: current.media_id,
-              mediaRevision: current.media_revision,
-            },
-            updated.record_id,
-          ),
-        );
+              owner_id: current.owner_user_id,
+              job_id: updated.id,
+              job_state: updated.state,
+              job_deadline_at: toDate(updated.deadline_at),
+              job_created_at: toDate(updated.created_at),
+              job_error_code: updated.error_code,
+              answer_id: null,
+              updated_at: toDate(updated.updated_at),
+            })
+          : domainLedgerRow(source.kind, current, updated);
+        await writeJobLedger(client, ledgerRow);
         await client.query('COMMIT');
         return { ok: true, job: toAdminJobView(updated) };
       } catch (error) {
@@ -653,19 +651,118 @@ export function createPostgresAdminJobPort(options: {
   };
 }
 
+/**
+ * 第 4 个作业源：`public.conversation_turns`（问答轮次的作业三列 `job_id` / `job_state` / `job_*`）。
+ *
+ * 为什么**不调换 `SOURCES`**：把 answer 塞进 `SOURCES` 会挪动那三源声明块的行号，而 `docs/`
+ * 按行号引本文件（`ai-ops-spec-status.md:104/126/212/219` 等）⇒ 用 `ALL_SOURCES` 追加。
+ *
+ * 为什么**不 JOIN `public.conversation_answers` 取记录 revision**：问答的 answer 行**不可修订**
+ * （`conversations/store.ts:80` 的 revision 恒 1，`20-login-roles.sql:1127-1128` 也没有 UPDATE 授权），
+ * 而 `admin/ops/service.ts:1073-1080` 会逐字段比对 `target_ref` ⇒ 多投影一个会变的
+ * `target_revision`，取消一次就 `portIntegrityFailure` 503。所以本条**不投影**它，
+ * `toAdminJobView` 退回 `UNCREATED_RECORD_REVISION = 1`（与三域「记录尚未创建」同一口径）。
+ *
+ * `job_id` 有唯一索引（`0013_conversations.sql:92`）⇒ `getSql` / `lockSql` 的 `WHERE j.job_id = $1::uuid`
+ * 至多一行；`updateSql` 的 SET / `IN ('queued', 'running')` **逐字镜像** `conversations/store-pg.ts:413-416`
+ * 的域内取消（`cancelTurnJob`），故两条路径写出的 `job_state` / `job_error_code` / `revision` 同形，
+ * 且与 `settleTurnJob` 的抢占（`store-pg.ts:429-435`）天然互斥。
+ */
+const ANSWER_SOURCE: JobSource = {
+  kind: 'answer',
+  recordColumn: 'record_id',
+  listSelect:
+    'SELECT j.job_id AS id, j.revision, j.id AS record_id, j.job_state AS state, j.job_deadline_at AS deadline_at, j.job_created_at AS created_at, j.job_error_code AS error_code FROM public.conversation_turns j',
+  listTail: ' ORDER BY j.job_created_at DESC, j.id DESC LIMIT $1::integer',
+  // `conversation_turns.job_state` 是 varchar(20) + CHECK（0013:71-72），按文本比。
+  stateCast: 'text',
+  getSql:
+    'SELECT j.job_id AS id, j.revision, j.id AS record_id, j.job_state AS state, j.job_deadline_at AS deadline_at, j.job_created_at AS created_at, j.job_error_code AS error_code FROM public.conversation_turns j WHERE j.job_id = $1::uuid',
+  lockSql:
+    'SELECT j.job_id AS id, j.revision, j.id AS record_id, j.owner_id AS owner_user_id, j.job_state AS state, j.job_deadline_at AS deadline_at, j.job_created_at AS created_at, j.job_error_code AS error_code, j.updated_at FROM public.conversation_turns j WHERE j.job_id = $1::uuid FOR UPDATE',
+  updateSql:
+    "UPDATE public.conversation_turns SET job_state = 'cancelled', job_error_code = NULL, revision = revision + 1, updated_at = now() WHERE job_id = $1::uuid AND revision = $2::integer AND job_state IN ('queued', 'running') RETURNING job_id AS id, revision, id AS record_id, job_state AS state, job_deadline_at AS deadline_at, job_created_at AS created_at, job_error_code AS error_code, updated_at",
+};
+
+/**
+ * 读面 / 取消面的**全集**：三张域内作业表 + 问答轮次表。
+ *
+ * 顺序有意义：前三源在前 ⇒ 同一个 ID 命中多表时（理论上不可能，四张表的主键各不相干）
+ * 仍按既有次序取第一条；`ADMIN_JOB_SQL` 的数组顺序也随之变成「三源 + answer」。
+ */
+const ALL_SOURCES: readonly JobSource[] = [...SOURCES, ANSWER_SOURCE];
+
+/**
+ * 列表过滤片段里的**列名**：`answer` 源的轮次表把两列写成 `job_state` / `job_error_code`
+ * （`0013_conversations.sql:71-75`），其余三源就是 `state` / `error_code`。
+ *
+ * ⚠ 不能靠 `state AS state` 这类投影别名绕过：PG 的 `WHERE` 不认输出别名（会 42703
+ * `column "state" does not exist`），所以列名必须在拼片段时就换对。
+ */
+function columnNameFor(source: JobSource, column: 'state' | 'error_code'): string {
+  return source.kind === 'answer' ? `job_${column}` : column;
+}
+
+/**
+ * 台账写入需要的两个 media 列（`target_id` / `entity_revision`）：只有三个域内源有，
+ * `answer` 源的轮次表没有媒体列。缺列只可能是装配/授权错 ⇒ 抛 503 让取消整体回滚，
+ * ⛔ 不写一条字段残缺的台账行。
+ */
+function requireMediaColumns(row: JobRow): { mediaId: string; mediaRevision: number } {
+  if (row.media_id === null || row.media_revision === null) {
+    throw unavailable('取消事务未取到台账所需列（media_id / media_revision）');
+  }
+  return { mediaId: row.media_id, mediaRevision: row.media_revision };
+}
+
+/**
+ * 三张域内作业表的台账行：`DomainJobLedgerInput` 需要 `mediaId` / `mediaRevision`，而这两列
+ * 只有那三张表有（`answer` 源的轮次表没有媒体列，见 `ANSWER_SOURCE`）。
+ *
+ * 缺列只可能是装配/授权错 ⇒ 抛 503 让取消整体回滚，⛔ 不写一条字段残缺的台账行。
+ * 取消路径的 `:620` 已对四源统一要求 `owner_user_id` 非空，这里再兜一次类型窄化。
+ */
+function domainLedgerRow(
+  source: Exclude<LedgerWiredSource, 'answer'>,
+  current: JobRow,
+  updated: JobRow,
+) {
+  const media = requireMediaColumns(current);
+  if (current.owner_user_id === null) {
+    throw unavailable('取消事务未取到台账所需列（owner_user_id）');
+  }
+  return ledgerRowFromDomainJob(
+    source,
+    {
+      id: current.id,
+      revision: updated.revision,
+      kind: updated.kind,
+      ownerUserId: current.owner_user_id,
+      state: updated.state,
+      deadlineAt: toDate(current.deadline_at),
+      createdAt: toDate(current.created_at),
+      updatedAt: toDate(updated.updated_at),
+      errorCode: updated.error_code,
+      mediaId: media.mediaId,
+      mediaRevision: media.mediaRevision,
+    },
+    updated.record_id,
+  );
+}
+
 /** 供真库臂与单测复用的语句导出（只读断言用；运行时不直接引用）。 */
 export const ADMIN_JOB_SQL = {
   /** 无过滤时的列表语句（没有 `WHERE`；`target_revision` 由 `LEFT JOIN <记录表>` 取真实值）。 */
-  list: SOURCES.map((source) => source.listSelect + source.listTail),
+  list: ALL_SOURCES.map((source) => source.listSelect + source.listTail),
   /**
    * 列表过滤的 `WHERE` 片段，**逐源分开**（值永远走 `$2` / `$3` 绑定，不拼字符串）。
-   * `state` 的 cast 随源不同：`ocr` ⇒ `::text`；`recognition` / `transcription` ⇒ `::job_state`
+   * `state` 的 cast 随源不同：`ocr` / `answer` ⇒ `::text`；`recognition` / `transcription` ⇒ `::job_state`
    * （枚举列与 text 参数在 PG 里没有隐式转换，写成 `::text` 会 42883 ⇒ 500）。
    */
-  listWhere: SOURCES.map((source) => listWhereExportFor(source)),
-  get: SOURCES.map((source) => source.getSql),
-  lock: SOURCES.map((source) => source.lockSql),
-  update: SOURCES.map((source) => source.updateSql),
+  listWhere: ALL_SOURCES.map((source) => listWhereExportFor(source)),
+  get: ALL_SOURCES.map((source) => source.getSql),
+  lock: ALL_SOURCES.map((source) => source.lockSql),
+  update: ALL_SOURCES.map((source) => source.updateSql),
   /** 取消事务里的审计写入（迁移 0043 的函数调用；真库臂据此断言签名与表级零写入）。 */
   cancelAudit: CANCEL_AUDIT_SQL,
   limit: ADMIN_JOB_LIST_LIMIT,

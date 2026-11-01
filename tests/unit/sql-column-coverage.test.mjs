@@ -867,20 +867,20 @@ const TABLE_WIDE_COLUMN = '*';
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 22,
-  sqlLiterals: 309,
-  statements: { INSERT: 48, UPDATE: 56, SELECT: 164, DELETE: 41 },
-  returningClauses: 96,
+  sqlLiterals: 313,
+  statements: { INSERT: 48, UPDATE: 57, SELECT: 167, DELETE: 41 },
+  returningClauses: 97,
   onConflictClauses: 30,
   selectStar: 15,
   qualifiedStar: 4,
-  rowLocks: { UPDATE: 26, SHARE: 17 },
+  rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
   noTargetTable: 17,
   referencedTables: 51,
-  columnRequirements: 2012,
-  coveredRequirements: 1911,
+  columnRequirements: 2047,
+  coveredRequirements: 1946,
   ledgerExemptions: 63,
-  rowLockRequirements: 43,
+  rowLockRequirements: 44,
   rowLockExemptions: 1,
   opaqueExpressions: 5,
 };
@@ -891,7 +891,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/categories-pg.ts': 4,
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
-  'admin/ops/jobs-pg.ts': 13,
+  'admin/ops/jobs-pg.ts': 17,
   'community': 44,
   'conversations': 20,
   'favorites': 15,
@@ -1769,7 +1769,10 @@ function parseSqlText(sql, origin) {
   if (returningToken !== null) {
     base.hasReturning = true;
     const tail = text.slice(returningToken.end);
-    base.returningColumns = parseColumnList(tail.replace(/;+\s*$/, ''));
+    // 别名不是列（与 `extractExpressionColumns` 同一口径）：`RETURNING job_id AS id` 要的是 `job_id`
+    // 的 SELECT 权。不剥会把 `job_id as id` 当成列名 —— 既报一条不存在的缺口、又漏查真实那一列。
+    base.returningColumns = parseColumnList(tail.replace(/;+\s*$/, ''))
+      .map((item) => item.replace(/\s+as\s+[a-z_][a-z0-9_]*$/, '').trim());
   }
 
   if (verb === 'INSERT') {
