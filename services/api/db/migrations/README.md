@@ -23,8 +23,55 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 ⇒ 正向 `.sql` 48 条、`rollback/` 47 条；缺号恰为 `0037` 且已登记保留。`0040`/`0041`/`0042` 均已真实落盘，
 故保留台账里**不得**再出现 40/41/42 号条目 —— 否则 `reservedButPresent` 会把它判红。
 `0043`/`0044`/`0045`/`0046`/`0047`/`0048`/`0049` 都是各自片自己落盘的文件，**台账同样不新增条目**。）
+（2026-11-01 · R72 两片（`0050` R72-W2、`0051` R72-W41）落盘后复测：`0001..0051`，缺号仍只有 `0037`
+⇒ 目录现为 **50 个正向 `.sql`** ＋ `rollback/` **49 个**（`0001` 无 down）；`count + 保留数 === max`
+⇒ **50 + 1 === 51**。上一段那组 48/47 与 `48 + 1 === 49` 是 2026-10-28 的实测快照，**保留不动** ——
+它记录的日期与当时事实都没错，写在这里只为说明「之后又落了两条」；`0050` 落盘时本文件没登记，
+本次一并补上。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0051_moderation_idempotency.sql`（R72-W41 · **库层基础设施**：审核域取消的**持久幂等台账**
+  —— 本片只落「表 + 列级授权 + store + 测试」，**不改任何运行行为**，接线在 W42）。接在 `0050`
+  之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
+  建 `public.moderation_idempotency`（`scope varchar(200)` / `key_hash varchar(128)` /
+  `request_hash varchar(128)` / `payload jsonb` / `pending boolean` / `expires_at timestamptz`，
+  `PRIMARY KEY (scope, key_hash)`），列/约束/主键与 `0026` 的 `speech_idempotency`（`:137-152`）、
+  `0024` 的 `ocr_idempotency` **逐字同形**（只换表名与索引名 `moderation_idempotency_expires_idx`）。
+  为什么需要：审核域取消**要求** `Idempotency-Key` 却从不回放（`services/api/src/moderation/service.ts:1187`
+  只做形状校验），缺口成文登记在 `docs/verification/gy-r71-job-cancel-modes-20261030.md:67`
+  （原文「本域没有幂等台账；要回放要么内存表（重启即丢）、要么加迁移和列」）。
+  过期语义两处都在服务层：`purgeIdempotent` 物理 `DELETE … WHERE expires_at <= $1`；claim 的
+  `ON CONFLICT … DO UPDATE … WHERE expires_at <= $7` 就地重占过期行（不先删再插 —— 那在并发下会让
+  两个同键请求都判定「不存在」而同时执行副作用）。
+  本迁移**零 GRANT**（与 `0024`/`0026` 同一条纪律），授权在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r72-moderation-idempotency-grant` 区
+  （`SELECT`/`INSERT` 六列、`UPDATE` 四列），`DELETE` 单独在 `gy-r72-moderation-idempotency-delete` 区
+  （PG 没有列级 DELETE，而列级区必须只含列级授权）。
+  配对回滚 `rollback/0051_moderation_idempotency.down.sql`：纯新增 ⇒ `DROP TABLE IF EXISTS` 整表拆除
+  （索引随表消失）；⚠ 回滚会让同键重放重新执行副作用，正确顺序是先回滚到不使用该 store 的应用版本。
+  读数：`tests/unit/moderation-idempotency-store.test.mjs`（内存 M1–M6 + PG 缺表 fail-closed）
+  ＋ `tests/integration/moderation-ledger-pg.mjs` 的新增真库臂一节（CI 跑；本机 `pg_ctl` 绑不上
+  `127.0.0.1`，如实登记「本机不可跑」）。
+- `0050_provider_invocations.sql`（R72-W2 · **库层写通路**：每一次**真实外发**一行的调用记录）。
+  接在 `0049` 之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
+  字段口径逐字照 `docs/architecture/data-dictionary.md:48` 那一行（`id uuid PK` / `job_id uuid NULL`
+  **无外键** / `attempt` / `capability` / `provider_version`·`model_version`·`sdk_version`·`prompt_version`·
+  `rule_version`（本片无单一真源者留 `NULL`，⛔ 不填占位串）/ `external_request_ref_cipher`（⛔ 不收明文）/
+  `invocation_state` 闭集 / `sent_at`（外发**进入**时刻）/ `duration_ms` / `usage jsonb` /
+  `export_id uuid NOT NULL REFERENCES public.exports (id) ON DELETE CASCADE`），另加字典没列的
+  `created_at`（**落库**时刻；`sent_at` 是外发时刻，两者不是同一个量，⛔ 不拿前者兼职）。
+  唯一写入原语是 `services/api/src/privacy/ledger-pg.ts:301` 的 `recordInvocation`（序号由
+  `SELECT COALESCE(MAX(attempt), 0) + 1 … WHERE export_id=$1` 派生，`:946`），写点在
+  `services/api/src/privacy/task-egress.ts`（`ChatEgress.send`，`:345` 是文件内唯一写点；
+  没发生外发的路径**不写**该表）；读面只有 `PostgresExportLedger.listInvocations`，
+  ⛔ 本片不开 HTTP 读面（没有 operation、没有契约）。
+  授权**不在** `20-login-roles.sql`：走组角色 `services/api/db/roles/egress_ledger.sql:59-68`
+  （`to_regclass('public.provider_invocations') IS NULL` 时 `RAISE NOTICE 'skip provider_invocations
+  grants'` 并跳过 ⇒ `0049`/`0050` 跨版本部署不互卡），列级 `SELECT` 16 列 + `INSERT` 14 列
+  给 `gengyun_egress_ledger`。
+  配对回滚 `rollback/0050_provider_invocations.down.sql` **先预检再删表**：表里已有行 ⇒
+  `RAISE EXCEPTION USING ERRCODE='G0019', MESSAGE='PROVIDER_INVOCATIONS_ROLLBACK_BLOCKED'`
+  （调用记录是计费/重试判据，删表会留下「有账无据」），正确动作是**回滚应用版本**。
 - `0049_admin_categories.sql`（R68-A01 · **库层读写通路**：后台「分类字典」读列表 / 改显示与停用
   —— `listAdminCategories` / `editCategory`）。接在 `0048` 之后，号位依据「正向最大号 +1」
   （`0048` 已被 R68 的后台账号停用/恢复占用；`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
