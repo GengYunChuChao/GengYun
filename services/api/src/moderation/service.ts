@@ -1185,7 +1185,7 @@ function createModerationServiceResolved(
   }): Promise<ModerationTaskView> {
     const expectedRevision = requireCancelIfMatch(input.ifMatch);
     const key = requireCancelIdempotencyKey(input.idempotencyKey);
-    const record = ledger.byJobId(input.jobId);
+    let record = ledger.byJobId(input.jobId);
     if (record === null) throw new ApiError('NOT_FOUND', '作业不存在');
     // 归属：他人作业与"作业不存在"同形（不泄露存在性，与 `job-source.ts` 的读面同口径）。
     if (record.submitted_by !== input.userId) throw new ApiError('NOT_FOUND', '作业不存在');
@@ -1198,11 +1198,11 @@ function createModerationServiceResolved(
     if (claim !== null && claim.kind === 'replay') return viewOf(ledger.byJobId(claim.jobId) ?? record);
     if (claim !== null && claim.kind === 'pending') throw cancelInProgress();
     try {
-      if (record.job_revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+      record = ledger.byJobId(input.jobId) ?? record; if (record.job_revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
       // **幂等**（重复取消不报错）：已 `cancelled` 且 `If-Match` = **当前** revision ⇒ 返回当前视图、不再写。
       if (record.state === 'cancelled') { await finalizeCancelClaim(claim, record.job_id); return viewOf(record); }
-      // 可取消窗口 = 还没落结论的那一段。`uncertain`（隔离）与四个成功/失败态都是**已出结论**：
-      // 取消它们会把"已判定的隔离事实"抹成"从没跑过"，因此按既有 `OBJECT_UNAVAILABLE` 明确拒绝。
+      // 占位是 await：期间合法回调可能已把作业写成终态，故上面必须按 jobId 重读；用占位前的快照会把已形成的结论覆盖成 `cancelled`。
+      // 可取消窗口 = 还没落结论的那一段；`uncertain`（隔离）与四个成功/失败态都是**已出结论**，取消它们会把"已判定的隔离事实"抹成"从没跑过" ⇒ 按既有 `OBJECT_UNAVAILABLE` 拒绝。
       if (record.state !== 'queued' && record.state !== 'running') throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${record.state}，不可取消`);
       const updated = ledger.update({ ...record, job_revision: record.job_revision + 1, state: 'cancelled',
         contract_value: null, error_code: null, updated_at: nowIso() }); // 取消 ⇒ 无结论可投影（contract_value 清空）
