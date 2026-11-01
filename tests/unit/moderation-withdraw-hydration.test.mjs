@@ -2,9 +2,9 @@
  * W43 · 持久台账**构造时回填下架集合**（跨进程读回）的单元回归。
  *
  * 被修的缺陷：`createPostgresModerationLedger` 内层是一个**新的**内存台账，`markWithdrawn` 只写库、
- * 从不读库 ⇒ 进程重启后 `isWithdrawn` 一律答 `false`。而 `service.ts` 的两道闸门都只问它
- * （发布前 `:939` 的 `TARGET_WITHDRAWN`、回调闸门 `:1287` 的 `CALLBACK_TARGET_WITHDRAWN`），
- * 于是**一条迟到的旧回调可以把已下架的版本重新翻成 `published`**。
+ * 从不读库 ⇒ 进程重启后 `isWithdrawn` 一律答 `false`。真正被这道缺陷打穿的是**发布闸门** `:939`：
+ * 读到空集合 ⇒ 已下架版本能被重新发布（`#825` 的处置是发布前先 `flushLedger()`）；
+ * 回调路径更早被 `:1260` 的 `ledger.byJobId(...)` ⇒ `CALLBACK_JOB_UNKNOWN` 挡住，`:1287` 在那个窗口不可达。
  *
  * 本文件判的六件事（T1–T6）：
  *   T1 回填真的把库里的行搬进内存：`flush()` 之后 `isWithdrawn(库里的行) === true`；

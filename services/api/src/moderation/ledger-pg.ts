@@ -50,10 +50,10 @@
  * 不改社区契约）。因此 `byJobId/current/forRevision/history` **仍只答内存里的本次进程结论**，
  * 跨进程追溯走审计查询（直接查表）。
  *
- * 但**下架标记不是同一类事实**：它是**终态**、只增不减，而且是"旧回调不得复活已下架版本"这条闸门的
- * **唯一判据**（`service.ts` 的发布前 `TARGET_WITHDRAWN` 与回调闸门 `CALLBACK_TARGET_WITHDRAWN` 都只问
- * `isWithdrawn`）。进程重启后若它失忆，一条迟到的旧回调就能把已下架的版本重新翻成 `published`——
- * 这正是本模块此前"只写不读"留下的口子。所以下架行必须在启动后读回来：`hydrate()` 只读三列
+ * 但**下架标记不是同一类事实**：它是**终态**、只增不减，且是"旧回调不得复活已下架版本"这条闸门的唯一判据——
+ * 发布闸门 `service.ts:939` 的 `TARGET_WITHDRAWN` 与回调闸门 `service.ts:1287` 的 `CALLBACK_TARGET_WITHDRAWN` 都只问 `isWithdrawn`。
+ * 重启后**真正可达的风险在发布闸门**：`:939` 读到空集合 ⇒ 已下架版本会被重新发布（`#825` 的处置是发布前先 `flushLedger()`）；
+ * 回调闸门那个窗口**不可达**：`service.ts:1260` 先 `ledger.byJobId(...)` ⇒ `:1261` `CALLBACK_JOB_UNKNOWN`（真库臂 `[R2]` 实测）。所以下架行必须在启动后读回来：`hydrate()` 只读三列
  * （`target_type/target_id/target_revision`，`20-login-roles.sql` 已授权）逐行
  * `inner.markWithdrawn(...)`，**只动内存、不回写库**（这些行本来就在库里，再写一遍只会白挨一次
  * `ON CONFLICT DO NOTHING` 与一条写面失败风险）。
