@@ -934,8 +934,8 @@ function createModerationServiceResolved(
     };
 
     const snapshot = await authority.read(target);
-    // **下架是终态**：已下架/已撤回的目标一律按 `OBJECT_UNAVAILABLE` 拒绝（比"版本冲突"更强的
-    // 不可用结论，既有口径）；放在版本核对之前，避免把"永久不可复活"改判成版本问题。
+    // **下架是终态**：已下架/已撤回的目标一律按 `OBJECT_UNAVAILABLE` 拒绝（比"版本冲突"更强的不可用结论，既有口径）；放在版本核对之前，避免把"永久不可复活"改判成版本问题。
+    await flushLedger(); // 闸门前先回填持久台账的下架集合：重启后内存为空，不回填这道闸门看不见库里的下架行。
     if ((snapshot !== null && snapshot.visibility === 'hidden' && actor.role !== 'admin') || ledger.isWithdrawn(target)) {
       reasons.push('TARGET_WITHDRAWN');
       return refuse('OBJECT_UNAVAILABLE');
