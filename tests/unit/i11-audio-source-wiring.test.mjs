@@ -357,11 +357,14 @@ test('A·产品链·负向：media_revision 与登记册不一致 ⇒ 任务 fai
 
 test('B·剖面校验仍拦在适配器层：MP3 / 超 60 秒 / 空字节"取得到但不合格" ⇒ 零预留零发包，且与 requireLiveAsrWav 同判据', async () => {
   const cases = [
-    ['MP3 编码（上传合法、转写不合法）', mp3Bytes({ frames: 5 })],
-    ['WAV 时长 61 秒（超 60 秒上限）', syntheticWav(61)],
-    ['空字节', new Uint8Array(0)],
+    // GY-R72-I11：三例都**取得到字节**、都被本地剖面校验拒绝（零预留零发包不变），
+    // 但对外错误码要分流——认得出是另一种音频容器（MP3）⇒ 415 类格式码；
+    // 认不出/空字节/WAV 只是超长 ⇒ 仍是「字节不可用」（PROVIDER_UNAVAILABLE）。
+    ['MP3 编码（上传合法、转写不合法）', mp3Bytes({ frames: 5 }), 'MEDIA_TYPE_UNSUPPORTED'],
+    ['WAV 时长 61 秒（超 60 秒上限）', syntheticWav(61), 'PROVIDER_UNAVAILABLE'],
+    ['空字节', new Uint8Array(0), 'PROVIDER_UNAVAILABLE'],
   ];
-  for (const [label, bytes] of cases) {
+  for (const [label, bytes, expectCode] of cases) {
     // 字节来源这一层**通过**（字节身份、归属、版本、用途全合法）——证明拒绝发生在剖面校验。
     const bag = await assemble({ storedBytes: bytes });
     assert.equal(bag.source.kind, 'wired', label);
@@ -371,7 +374,7 @@ test('B·剖面校验仍拦在适配器层：MP3 / 超 60 秒 / 空字节"取得
     assert.equal(bag.source.lastFailure(), null, label);
 
     const outcome = await bag.provider.transcribe({ jobId: JOB_ID, mediaId: MEDIA_ID, mediaRevision: 1 });
-    assert.deepEqual(outcome, { kind: 'failed', code: 'PROVIDER_UNAVAILABLE' }, label);
+    assert.deepEqual(outcome, { kind: 'failed', code: expectCode }, label);
     assert.equal(bag.gateBag.state.reserves, 0, `${label}：不得预留预算`);
     assert.equal(bag.gateBag.state.settles, 0, `${label}：没预留就没有结算`);
     assert.equal(bag.fetched.state.calls, 0, `${label}：不得发给供应商`);

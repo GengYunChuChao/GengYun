@@ -50,7 +50,7 @@ import {
 } from '../auth/idempotency.ts';
 import { API_PREFIX, type ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
-import type { SpeechMediaPort } from './media.ts';
+import { speechAudioMimeRefusal, type SpeechMediaPort } from './media.ts';
 import type { ProviderFailureCode, SpeechProvider } from './provider.ts';
 import {
   CONFIRMATION_VALUE,
@@ -439,12 +439,12 @@ export function createSpeechService(options: SpeechServiceOptions) {
         retryable: false,
       });
     }
-    const resolution = await media.resolve({
-      ownerUserId: input.userId,
-      mediaId: mediaJobInput.media_id,
-      mediaRevision: mediaJobInput.media_revision,
-    });
+    const resolution = await media.resolve({ ownerUserId: input.userId, mediaId: mediaJobInput.media_id, mediaRevision: mediaJobInput.media_revision });
     if (!resolution.ok) throw new ApiError(resolution.code, '录音引用不可用');
+    // 受理期格式闸（GY-R72-I11）：位置在 `media.resolve` **之后**——`mime` 只能来自登记册（真实分支已确认归属/版本/
+    // 就绪/用途/对象键，拒绝不泄露情报）；在幂等占位**之前**——被拒请求不消耗 `Idempotency-Key`，也不留占位让并发方读到
+    // `REQUEST_IN_PROGRESS`。`mime` 未知（替身端口、缺字段、空串）⇒ 放行：不猜格式，字节一致性仍由转写期兜底。
+    if (speechAudioMimeRefusal(resolution.mime) !== null) throw new ApiError('MEDIA_TYPE_UNSUPPORTED', `转写只收 WAV（不裁剪、不转码）：登记类型是 ${String(resolution.mime)}`, { retryable: false });
 
     const at = now();
     const scope = scopeFor(input.userId, 'POST', `${API_PREFIX}/speech/transcriptions`);
