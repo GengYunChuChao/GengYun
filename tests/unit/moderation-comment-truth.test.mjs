@@ -16,7 +16,7 @@
  *   T3 `90-assert:454-455` 把「只写不读」限定到 `moderation_decisions`、点明 withdrawals 的 W43 回填；
  *      `1510` 行同样限定，不再把两张表一起概括成「台账只写不读」；
  *   T4 防误伤：`jobs/ledger.ts:45` 的「只写不读」是**作业台账** `public.jobs` 的真话，不许被顺手改；
- *   T5 零漂移：四个被改文件的行数与基线逐字相等（插入行 === 删除行）；
+ *   T5 形状护栏：四个被改文件的规模不低于下限、无 BOM、以换行结尾（**不是**零漂移闸门，理由见 T5 注释）；
  *   T6 负向自检：每条「不得包含」常量都在本文件里被真正 `includes(...) === false` 判过一次（防空跑）；
  *   T7 `moderation-withdraw-hydration.test.mjs` 头注释的旧结论同样改成「发布闸门 `:939`」。
  *
@@ -164,11 +164,39 @@ test('T4 防误伤：jobs/ledger.ts:45 的「只写不读」是作业台账 publ
   assert.ok(pinned.includes('本片不改任何既有读面'), `jobs/ledger.ts:45 的限定语已漂移：${pinned}`);
 });
 
-test('T5 零漂移：四个被改文件的行数逐字相等（插入行 === 删除行）', () => {
-  assert.equal(lineCount(LEDGER_PG), 546, 'ledger-pg.ts 行数变了 —— 本片是纯注释改写，必须 546');
-  assert.equal(lineCount(SERVICE), 1450, 'service.ts 行数变了 —— 必须 1450');
-  assert.equal(lineCount(ASSERT_SQL), 4443, '90-assert-least-privilege.sql 行数变了 —— 必须 4443');
-  assert.equal(lineCount(HYDRATION_TEST), 170, 'moderation-withdraw-hydration.test.mjs 行数变了 —— 必须 170');
+test('T5 形状护栏：四个被改文件不低于下限、无 BOM、以换行结尾', () => {
+  // ⛔ 这一条**不是**零漂移闸门。零漂移（「插入行 === 删除行」）由 `verify-doc-anchors` 与
+  //    `doc-anchor-relocation-identity` 判 —— 它们看的是「文档里的 path:line 锚点是否还落在同一行」，
+  //    那才是真正会被行号漂移咬到的东西。
+  //
+  // 这里只挡三种真会咬人的事故：① 文件被截断/覆盖成半截（行数骤降）；
+  //    ② 有人用非 UTF-8 工具改文件、把 BOM 写回文件头（W43 就发生过一次）；
+  //    ③ 末尾换行被吃掉（`git diff` 会出现 `\ No newline at end of file`）。
+  //
+  // ⛔ 不许把这些数字改回「绝对相等」：`service.ts` 会因合法的新片长大
+  //    （`#823` 的幂等回放就把它从 1450 推到 1554），一旦钉绝对值，任何在飞分支的 CI
+  //    都会在「PR head 合入 main」的合并提交上把 main 的钉子判红 —— 2026-11-01 真发生过。
+  //    下面是**下限**，取的是「写这条时实测值向下留出余量」：实测 ledger-pg 546 / service 1450 /
+  //    90-assert 4443 / hydration 170；留余量是为了让**基座更老的分支**也能过（`#823` 的基座里
+  //    `ledger-pg.ts` 只有 426 行，早于 `#824` 的下架集合回填）。要的是「别被截断」，不是「精确到行」。
+  const floors = [
+    [LEDGER_PG, 400],
+    [SERVICE, 1400],
+    [ASSERT_SQL, 4400],
+    [HYDRATION_TEST, 160],
+  ];
+
+  for (const [rel, floor] of floors) {
+    const count = lineCount(rel);
+    assert.ok(count >= floor, `${rel} 行数掉到下限以下（${count} < ${floor}）—— 像是被截断或覆盖了`);
+
+    const text = source(rel);
+    assert.ok(
+      text.startsWith('\uFEFF') === false,
+      `${rel} 文件头有 BOM —— 用 UTF-8 编辑器改，别让 PowerShell 的 here-string 写进去`,
+    );
+    assert.ok(text.endsWith('\n'), `${rel} 末尾缺换行 —— git 会记成 \`\\ No newline at end of file\``);
+  }
 });
 
 test('T6 负向自检：每条「不得包含」常量都真的被判过一次（防空跑）', () => {
