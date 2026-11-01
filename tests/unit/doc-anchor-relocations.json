@@ -906,5 +906,15 @@
     "kind": "correction",
     "symbol": "钉子④：AUDIT_ACTIONS 与契约 enum 双向相等",
     "reason": "该行说的是「顺序另由 `tests/unit/ai-ops-ledger-pins.test.mjs` 钉住」，但 base（c622a84b）的 :282 是钉子③b 变异测试里的 `assert.equal(after.maxVersion, real.maxVersion + 1);`，不是钉「顺序」的那条用例 —— 旧锚点在 base 上就指错。合并树里钉顺序的是钉子④（HEAD :380 `test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、无重复），扩值必须同 PR 改三件套'…)`）；本片新增钉子①/①b/①c 又把它从 base 的 :302 往下推，故按**符号**重锚到 :380，而不是按位移量机械平移（机械平移只会把它挪到另一条用例的断言行）。"
+  },
+  {
+    "doc": "docs/verification/gy-r71-job-cancel-modes-20261030.md",
+    "line": 48,
+    "target": "services/api/src/conversations/store-pg.ts",
+    "from": 398,
+    "to": 410,
+    "kind": "correction",
+    "symbol": "cancelTurnJob",
+    "reason": "base 的 :398 是 `claimTurnJob` 的 `WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state = 'queued'`（旧行原文不含 `cancelTurnJob`），原文把 PG 实现位置写错；`cancelTurnJob` 实际在 :410（HEAD :410 = `async cancelTurnJob(turnId, ownerId) {`）。本片是零位移（SQL 常量搬到文件末尾，:410-521 一行没挪），端点映射只能给出 398→398，故按符号订正到 :410。"
   }
 ]

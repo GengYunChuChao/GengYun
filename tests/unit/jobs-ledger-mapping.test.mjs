@@ -278,7 +278,7 @@ test('轮次入口：ledgerRowFromTurn 与统一入口同形（answer 源只有�
  *
  * 为什么需要它：上面那些用例证明的是「映射对了」，证明不了「**每个**状态迁移都真的调了映射」——
  * 删掉某域 `commitTerminal` 里那一行，映射矩阵照样全绿，而那份台账从此不再随终态前进。
- * 所以这里把"每域三处（创建 / 开始或取消 / 终态）+ 管理台取消一处"写成**精确读数**：
+ * 所以这里把"每域三处（创建 / 开始或取消 / 终态）+ 管理台取消一处"写成**精确读数**（answer 域自 GY-R72 起是**四处**：`cancelTurnJob` 的取消也是终态迁移、与 `settleTurnJob` 不同路径 ⇒ 单独一个写点）：
  * 少一处（漏接）或多一处（多接了个没想清楚的路径）都必须红。
  *
  * 域内三源的 `updateJob` 是**一个**写点覆盖两种迁移（`running` 与 `cancelled`），所以是 3 处而不是 4 处；
@@ -288,7 +288,7 @@ const WIRING_READINGS = Object.freeze([
   ['services/api/src/ocr/store-pg.ts', 3, 'insertJob（queued）/ updateJob（running、cancelled）/ commitTerminal（终态）'],
   ['services/api/src/recognitions/store-pg.ts', 3, '同 ocr：三个写点一个不少'],
   ['services/api/src/speech/store-pg.ts', 3, '同 ocr：三个写点一个不少'],
-  ['services/api/src/conversations/store-pg.ts', 3, 'insertTurn（queued）/ claimTurnJob（running）/ settleTurnJob（终态）'],
+  ['services/api/src/conversations/store-pg.ts', 4, 'insertTurn（queued）/ claimTurnJob（running）/ cancelTurnJob（cancelled）/ settleTurnJob（终态）'],
   ['services/api/src/admin/ops/jobs-pg.ts', 1, '管理台取消（同一事务里，紧跟审计写入）'],
 ]);
 
