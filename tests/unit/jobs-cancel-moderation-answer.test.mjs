@@ -367,7 +367,7 @@ test('moderation·② 重复取消：同一 revision 再取消 200 且**不再�
   assert.equal(first.body.data.revision, 2);
 
   // 已 cancelled + If-Match = 当前 revision ⇒ 幂等 no-op（200、revision 不变）。
-  // 本域**没有幂等台账**，因此这里不假装"按 Idempotency-Key 回放"（见证据页「口径差异」）。
+  // 本夹具**未注入**取消幂等台账（`makeHarness` 不传 `idempotency`）⇒ 走"未接线"分支，同键也不回放；接线后的回放见 `moderation-cancel-idempotency.test.mjs`（GY-R72）。
   const noop = await h.call('POST', `${JOBS}/${task.job_id}/cancel`, h.a, {
     headers: cancelHeaders('"2"', nextKey('mod-idem-again')),
   });
@@ -382,7 +382,7 @@ test('moderation·② 重复取消：同一 revision 再取消 200 且**不再�
   assert.equal(stale.status, 409, JSON.stringify(stale.body));
   assert.equal(stale.body.error.code, 'REVISION_CONFLICT');
 
-  // 契约头缺失：与其它五源同形（400 / 428），不因"本域没有幂等台账"而放宽。
+  // 契约头缺失：与其它五源同形（400 / 428）——缺头在任何台账读写**之前**被拒，与是否回放无关。
   const noKey = await h.call('POST', `${JOBS}/${task.job_id}/cancel`, h.a, { headers: { 'if-match': '"2"' } });
   assert.equal(noKey.status, 400, JSON.stringify(noKey.body));
   assert.equal(noKey.body.error.code, 'IDEMPOTENCY_KEY_REQUIRED');
