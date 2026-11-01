@@ -444,6 +444,99 @@ try {
   assert.equal(afterView.visibility, 'hidden');
   say(`[3] 后台 hidePost 生效 ⇒ 审核域读缓存整链失效（${cacheBefore} → 0）、withdrawn 落库（moderation_withdrawals 处置前版本）、社区行 hidden+rev3、读取面不再复活`);
 
+  // =========================================================================
+  // [R] 重启后：库里已下架的目标必须仍被拒绝（W45 · 持久台账回填 ⇒ 闸门才看得见）
+  // =========================================================================
+  // 现场形状：`[3]` 的 hidePost 已经写下架标记（`moderation_withdrawals` 一行，处置前 rev2），
+  // 社区行 visibility=hidden、revision=3。下面在**同一个 pool** 上再 build 一个 app 实例模拟
+  // "进程重启"：内存台账为空、只有库里的行——这正是本片缺陷链的窗口（老实例的内存标记随进程消失）。
+  // 身份刻意用 **admin**：否则 `service.ts:939` 第一条 disjunct（`visibility === 'hidden'
+  // && role !== 'admin'`）会先命中，读数就分不清"台账回填生效"与"权威侧本来就看得见"。
+  // 夹具用**函数内动态 import**：本文件被 docs 按行号引用，顶部 import 块一个字都不能动。
+  const RESTART_CALLBACK_KEY = 'gy-w45-restart-callback-key';
+  /** `[R]` 节只打印、**不推进 `passed`**：`[ALL PASS] … 共 N 组 PASS` 的历史读数要能逐字复现。 */
+  const trace = (label) => console.log(label);
+  const { callbackEnvelope, captureError, signedCallback, textContent } = await import('../moderation/_http-fixtures.mjs');
+  const WITHDRAWN_REVISION = 2;
+  const restarted = buildApp({
+    config: baseConfig,
+    store: auth,
+    pool,
+    now: () => new Date(),
+    privacyInjection: { consent: publicPosting.gate },
+    communityInjection: { gate: makeGate() },
+    moderationInjection: {
+      ports: { tms: makeSyntheticPassPort('tms') },
+      ruleOptions: { clock: FROZEN_CLOCK },
+      // 回调验签密钥：不给就一律 CALLBACK_SIGNATURE_INVALID（`service.ts:1244`），测不到下游判定。
+      callbackKey: RESTART_CALLBACK_KEY,
+    },
+  });
+  try {
+    assert.notEqual(restarted.moderationService, null, '重启实例：stub + 合成端口 ⇒ 审核域必须开启');
+    const withdrawnBefore = restarted.moderationService.counts().withdrawn;
+    assert.equal(withdrawnBefore, 0, `前提：重启实例的内存台账必须先为空（实际 ${withdrawnBefore}）`);
+
+    // R1：重启后的第一个动作就是发布已下架的那一版 ⇒ 必须被闸门拒绝（不是"版本冲突"）。
+    const publishError = await captureError(() => restarted.moderationService.publish({
+      actor: moderationAdmin,
+      content: textContent({
+        target_ref: { type: 'post', id: postId, revision: WITHDRAWN_REVISION },
+        text: postText(CLEAN_TITLE, CLEAN_BODY),
+      }),
+    }));
+    assert.equal(
+      publishError.code,
+      'OBJECT_UNAVAILABLE',
+      `重启后发布已下架版本必须 OBJECT_UNAVAILABLE，实际 ${publishError.code}：${publishError.message}`,
+    );
+    assert.deepEqual(
+      (publishError.details ?? []).map((d) => d.code),
+      ['TARGET_WITHDRAWN'],
+      `原因码必须是 TARGET_WITHDRAWN（不是 REVISION_CONFLICT），实际 ${JSON.stringify(publishError.details)}`,
+    );
+    // 回填确实发生了：拒绝之后内存台账已经看得见库里那行 ⇒ 拒绝来源就是它，不是别的原因。
+    const withdrawnAfter = restarted.moderationService.counts().withdrawn;
+    assert.equal(withdrawnAfter, 1, `回填后内存台账必须记 1 条 withdrawn（实际 ${withdrawnAfter}）`);
+    // 拒绝路径零可见性写入：社区行仍是 hidden + revision 3，没被"翻回 published"。
+    const rowAfterRestart = (await owner.query(
+      `SELECT visibility::text AS visibility, revision FROM community_posts WHERE id = $1::uuid`,
+      [postId],
+    )).rows[0];
+    assert.equal(rowAfterRestart.visibility, 'hidden', `拒绝路径不得改可见性（实际 ${rowAfterRestart.visibility}）`);
+    assert.equal(rowAfterRestart.revision, 3, `拒绝路径不得推进 revision（实际 ${rowAfterRestart.revision}）`);
+    trace(`[R1] 重启实例（同 pool、内存台账空 withdrawn=${withdrawnBefore}）⇒ 已下架的 rev${WITHDRAWN_REVISION} publish 被拒 OBJECT_UNAVAILABLE+TARGET_WITHDRAWN；回填后 withdrawn=${withdrawnAfter}，社区行仍 hidden+rev${rowAfterRestart.revision}（拒绝路径零可见性写入）`);
+
+    // R2：迟到回调的**现状表征**（如实登记，不是本片要修的东西）。
+    // 库里真实存在的那条 rev2 任务，重启实例内存里没有 ⇒ `service.ts:1260` 的 `byJobId` 返回 null
+    // ⇒ CALLBACK_JOB_UNKNOWN。要变成 CALLBACK_TARGET_WITHDRAWN，需要回调侧按 job_id 回填作业结论
+    // （迁移 0052），**属另一片**；本片不改判定，只把这个读数钉住，避免后来者误以为已经修好。
+    const jobRow = (await owner.query(
+      `SELECT job_id FROM public.moderation_decisions
+        WHERE target_type = 'post' AND target_id = $1::text AND target_revision = $2
+        ORDER BY created_at LIMIT 1`,
+      [postId, WITHDRAWN_REVISION],
+    )).rows[0];
+    assert.ok(jobRow !== undefined, '前提：rev2 的审核域任务必须已落库（否则本读数无意义）');
+    const lateCallback = signedCallback(callbackEnvelope({
+      event_id: 'evt-w45-restart-1',
+      job_id: jobRow.job_id,
+      // 必须落在 ±CALLBACK_MAX_SKEW_MS 内，否则先撞 CALLBACK_EXPIRED，测不到"job 未知"这条。
+      issued_at: new Date().toISOString(),
+      target_ref: { type: 'post', id: postId, revision: WITHDRAWN_REVISION },
+    }), RESTART_CALLBACK_KEY);
+    const lateOutcome = await restarted.moderationService.ingestCallback(lateCallback);
+    assert.equal(lateOutcome.accepted, false, '重启后迟到的合法签名回调不得被接受');
+    assert.ok(
+      lateOutcome.reason_codes.includes('CALLBACK_JOB_UNKNOWN'),
+      `现状表征：原因码必须是 CALLBACK_JOB_UNKNOWN，实际 ${JSON.stringify(lateOutcome.reason_codes)}`,
+    );
+
+    trace(`[R2] 迟到合法签名回调（库里真实存在的那条 rev${WITHDRAWN_REVISION} 任务）⇒ accepted=${lateOutcome.accepted} + ${lateOutcome.reason_codes.join(',')}（现状表征：重启后 byJobId 只问内存，service.ts:1288 的 CALLBACK_TARGET_WITHDRAWN 在该窗口不可达；要补需迁移 0052 回填作业结论，属另一片）`);
+  } finally {
+    await restarted.close().catch(() => {});
+  }
+
   await app.close().catch(() => {});
   app = null;
   await timeoutApp.close().catch(() => {});
