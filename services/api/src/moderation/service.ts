@@ -934,8 +934,8 @@ function createModerationServiceResolved(
     };
 
     const snapshot = await authority.read(target);
-    // **下架是终态**：已下架/已撤回的目标一律按 `OBJECT_UNAVAILABLE` 拒绝（比"版本冲突"更强的
-    // 不可用结论，既有口径）；放在版本核对之前，避免把"永久不可复活"改判成版本问题。
+    // **下架是终态**：已下架/已撤回的目标一律按 `OBJECT_UNAVAILABLE` 拒绝（比"版本冲突"更强的不可用结论，既有口径）；放在版本核对之前，避免把"永久不可复活"改判成版本问题。
+    await flushLedger(); // 闸门前先回填持久台账的下架集合：重启后内存为空，不回填这道闸门看不见库里的下架行。
     if ((snapshot !== null && snapshot.visibility === 'hidden' && actor.role !== 'admin') || ledger.isWithdrawn(target)) {
       reasons.push('TARGET_WITHDRAWN');
       return refuse('OBJECT_UNAVAILABLE');
@@ -1056,7 +1056,7 @@ function createModerationServiceResolved(
     await authority.setVisibility(target, 'hidden');
     await authority.setPublishedRevision(target, null);
     ledger.markWithdrawn(target);
-    // 下架标记同样要落定：标记丢了，旧回调就能把内容复活（`isWithdrawn` 是那道闸门）。
+    // 下架标记同样要落定：标记丢了（或重启后尚未回填）⇒ `publish` 的 `:939` 闸门会放行已下架版本；回调路径更早被 `:1260` 的 `ledger.byJobId(...)` + `CALLBACK_JOB_UNKNOWN` 挡住。
     await flushLedger();
     // 失效在**同一次调用内同步完成**：返回的键就是这次真正清掉的键（不另发事件）。
     const invalidated = cache.invalidateTarget(target);

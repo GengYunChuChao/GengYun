@@ -1485,11 +1485,11 @@ GRANT DELETE ON public.media_object_cleanup TO gengyun_api_runtime;
 -- 的 26 列 + `ON CONFLICT (job_id)`、`:89` UPDATE_SQL 的 14 列 + `WHERE job_id`、`:97`
 -- WITHDRAW_SQL 的 4 列 + `ON CONFLICT (target_type,target_id,target_revision)`。
 --
--- SELECT 面**只给被 WHERE / 冲突目标读到的列**（PG 的 UPDATE/DELETE 要求对 WHERE 里出现的列有
+-- SELECT 面**只给被 WHERE / 冲突目标 / 回填真正读到的列**（PG 的 UPDATE/DELETE 要求 WHERE 里的列有
 -- SELECT 权）：decisions 是 `job_id` + SUPERSEDE 的 `target_type/target_id/target_revision/
--- content_kind/superseded`，withdrawals 是三列主键。台账**只写不读**（`byJobId`/`current`/
--- `forRevision`/`history` 全部读内存 Map，模块里没有一条 SELECT 语句），所以"读台账"的列权限
--- 一列都不给；将来真加读路径，必须同时改本段与 90-assert 的 `expected`。
+-- content_kind/superseded`，withdrawals 是**三列主键**——自 W43 起这三列有真读路径：进程内首次
+-- `flush()`/`hydrate()` 用它把库里已有的下架行回填进内存集合（不回填则重启后旧回调能复活已下架版本），
+-- 读权限就给这三列、也只给这三列；将来再加读路径，必须同时改本段与 90-assert 的 `expected`。
 --
 -- ⛔ DELETE / TRUNCATE / REFERENCES / TRIGGER 一律不授：台账是不可变审计面，ledger-pg.ts 里
 -- 没有任何物理删除语句（下架/撤销都是 `superseded = TRUE` 的单向门）。

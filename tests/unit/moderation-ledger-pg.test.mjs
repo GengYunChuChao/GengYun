@@ -37,19 +37,33 @@ const USER_ID = '33333333-3333-4333-8333-333333333333';
  * 否则"写完读回确认"这条路径在假池上只能答"缺行"，测出来的就不是真行为。
  * 状态推进语句按 `RETURNING job_id` 的**实际命中行**返回（真库命中 0 行不报错），
  * 台账必须靠这个返回行确认落行（#434 复审 §6）。
+ *
+ * W43 起多一条：台账 `flush()` 会先读 `public.moderation_withdrawals` 的三列做**下架集合回填**。
+ * 这类语句读的是另一张表、且是只读的，因此记进独立的 `reads`、**不进入 `calls` 的写面流水**
+ * （LP1–LP8 的语句计数口径原样不动），下架行由 `withdrawals` 显式摆数据。
  */
 function makeRecordingPool(options = {}) {
   const calls = [];
+  /** 回填 SELECT（W43）单独记：它读的是**另一张表**、且是只读语句，不属 `calls` 的写面流水。 */
+  const reads = [];
+  /** 库里的下架行（回填的输入；`markWithdrawn` 的假池不落这张表，留给回填用例显式摆数据）。 */
+  const withdrawals = [];
   const rows = new Map();
   const pool = {
     async query(text, values) {
-      calls.push({ text, values: values ?? [] });
+      const sql = String(text);
+      // 回填读（`SELECT target_type, target_id, target_revision FROM public.moderation_withdrawals`）：
+      // 无参数、读另一张表。**不记进 `calls`**——LP1–LP8 的计数口径是"写面语句"（退位/插入/读回/下架/更新）。
+      if (/SELECT[^;]*FROM public\.moderation_withdrawals/iu.test(sql)) {
+        reads.push({ text: sql, values: values ?? [] });
+        return { rows: withdrawals.map((row) => ({ ...row })) };
+      }
+      calls.push({ text: sql, values: values ?? [] });
       const fail = options.fail;
       if (typeof fail === 'function') {
         const error = fail(calls.length);
         if (error !== null && error !== undefined) throw error;
       }
-      const sql = String(text);
       const label = sql.trim().split(/\s+/u)[0];
       if (label === 'SELECT') {
         const row = rows.get(values[0]);
@@ -97,7 +111,7 @@ function makeRecordingPool(options = {}) {
       return { rows: [] };
     },
   };
-  return { pool, calls, rows };
+  return { pool, calls, reads, withdrawals, rows };
 }
 
 /** 一条形状完整的任务记录（字段取自 `moderation/types.ts:177-212` 的必填面）。 */
@@ -392,7 +406,10 @@ function makeTransactionalPool(options = {}) {
   return {
     seen,
     pool: {
-      async query() {
+      async query(text) {
+        // 回填读（W43）走**池**、不进事务：它是一次独立的只读查询（真库上也是 `pool.query`），
+        // 因此不进 `seen`——`seen` 钉的是"写入事务里的语句序列"。
+        if (/SELECT[^;]*FROM public\.moderation_withdrawals/iu.test(String(text))) return { rows: [] };
         throw new Error('真池路径不得绕过事务直连 query');
       },
       async connect() {

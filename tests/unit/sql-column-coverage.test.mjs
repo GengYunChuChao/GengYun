@@ -870,11 +870,18 @@ const TABLE_WIDE_COLUMN = '*';
  *   逐数归因：`INSERT 47→48` 与 `RETURNING 95→96` 都来自外发账本那条 `INSERT … RETURNING`，
  *   `SELECT 161→163` 是它的 `SELECT COALESCE(MAX(attempt),0)+1` 与 `listInvocations` 的显式列 SELECT；
  *   作业台账那半的字面量已在 305→308 里，两半互不重叠（不同审计文件、不同表）。
+ * ㉖ 2026-11-02 R72-W43（持久台账**构造时回填下架集合**）：`moderation/ledger-pg.ts` 新增 **1** 条字面量
+ *   `HYDRATE_WITHDRAWALS_SQL` = `SELECT target_type, target_id, target_revision FROM public.moderation_withdrawals`
+ *   ⇒ 该文件 5 → **6**、字面量 319 → **320**、语句 SELECT 169 → **170**、列要求 2069 → **2072**（三列主键）、
+ *   已覆盖 1968 → **1971**（这三列本来就在 `20-login-roles.sql` 的列级 SELECT 授权里 ⇒ **零 GRANT 变更**）；
+ *   `INSERT`/`UPDATE`/`DELETE`、RETURNING 99、ON CONFLICT 31、`SELECT *` 15（t.* 4）、行锁 27/17、
+ *   函数调用 2、无顶层 FROM 18、引用表 52、豁免 63、行锁要求 44/豁免 1、不可判插值 5 逐项**不变**。
+ *   **没有把任何数字往下改**：+1 条字面量与 +3 条列要求都是那条真 SELECT 带来的（回填只读三列）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 23,
-  sqlLiterals: 319,
-  statements: { INSERT: 49, UPDATE: 58, SELECT: 169, DELETE: 43 },
+  sqlLiterals: 320,
+  statements: { INSERT: 49, UPDATE: 58, SELECT: 170, DELETE: 43 },
   returningClauses: 99,
   onConflictClauses: 31,
   selectStar: 15,
@@ -883,8 +890,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 18,
   referencedTables: 52,
-  columnRequirements: 2069,
-  coveredRequirements: 1968,
+  columnRequirements: 2072,
+  coveredRequirements: 1971,
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -909,7 +916,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   // R72-W41（2026-11-01）：审核域幂等台账 store 的 6 条 SQL 字面量 —— 五条业务语句
   // （find / claim / finalize / release / purge）+ 一条 `to_regclass` 就绪探测。
   'moderation/idempotency-store.ts': 6,
-  'moderation/ledger-pg.ts': 5,
+  'moderation/ledger-pg.ts': 6,
   'ocr': 19,
   'privacy/backup-copies-pg.ts': 4,
   'privacy/consent-pg.ts': 14,

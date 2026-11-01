@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 审核判定台账的 **PostgreSQL 持久实现**（迁移 `0028_moderation_persistence.sql`）。
  *
  * 在此之前 `services/api/src/moderation/decisions.ts` 只有内存实现（`createModerationLedger()`）：
@@ -45,14 +45,26 @@
  * 判定：不是恰好 1 行 ⇒ 抛错（`flush()` 折成既有 `PROVIDER_UNAVAILABLE`），失败项留在日志里等
  * 下一次重放把这一行补上。
  *
- * ## 不做 hydrate
- * 存量行"当初有没有结论"在库层面也不可区分（决策：只读面用 `present=false ⇒ unknown` 表达，
- * 不改社区契约）。本模块因此**只写不读**：进程启动时不回填内存台账，`byJobId/current/...`
- * 仍答内存里的本次进程结论。跨进程追溯走审计查询（直接查表）。
+ * ## 下架集合**回填**，任务结论仍不回填（W43）
+ * 存量**任务行**"当初有没有结论"在库层面也不可区分（决策：只读面用 `present=false ⇒ unknown` 表达，
+ * 不改社区契约）。因此 `byJobId/current/forRevision/history` **仍只答内存里的本次进程结论**，
+ * 跨进程追溯走审计查询（直接查表）。
+ *
+ * 但**下架标记不是同一类事实**：它是**终态**、只增不减，且是"旧回调不得复活已下架版本"这条闸门的唯一判据——
+ * 发布闸门 `service.ts:939` 的 `TARGET_WITHDRAWN` 与回调闸门 `service.ts:1287` 的 `CALLBACK_TARGET_WITHDRAWN` 都只问 `isWithdrawn`。
+ * 重启后**真正可达的风险在发布闸门**：`:939` 读到空集合 ⇒ 已下架版本会被重新发布（`#825` 的处置是发布前先 `flushLedger()`）；
+ * 回调闸门那个窗口**不可达**：`service.ts:1260` 先 `ledger.byJobId(...)` ⇒ `:1261` `CALLBACK_JOB_UNKNOWN`（真库臂 `[R2]` 实测）。所以下架行必须在启动后读回来：`hydrate()` 只读三列
+ * （`target_type/target_id/target_revision`，`20-login-roles.sql` 已授权）逐行
+ * `inner.markWithdrawn(...)`，**只动内存、不回写库**（这些行本来就在库里，再写一遍只会白挨一次
+ * `ON CONFLICT DO NOTHING` 与一条写面失败风险）。
+ *
+ * 回填是**惰性**的（第一次 `flush()`/`hydrate()` 才打库，构造不做 I/O），失败会重试一次、仍失败则
+ * `flush()` 拒绝。`isWithdrawn` 保持同步签名（读面不许变异步，理由见上一节）：回填成功前它只按内存答，
+ * 调用方必须把"回填未就绪"当成"不许发布"——`flush()` 已经替它把关。
  */
 import { ApiError } from '../errors.ts';
 import { createModerationLedger, type ModerationLedger } from './decisions.ts';
-import type { ModerationTaskRecord } from './types.ts';
+import type { ModerationTaskRecord, TargetRef } from './types.ts';
 
 /** `pg` 连接池的最小形状（与 `db/pool.ts` 的 `PgPool` 结构兼容；测试可传记录型假池）。 */
 export interface SqlRunner {
@@ -82,6 +94,15 @@ export interface PostgresModerationLedger extends ModerationLedger {
    * 不得被当成"已持久化／已批准"用于翻公开可见性（#434 监工 P1）。
    */
   isDurable(record: ModerationTaskRecord): boolean;
+  /**
+   * 把库里已有的**下架行**回填进内存台账（跨进程读回；只读三列、只动内存、不回写）。
+   *
+   * 惰性：不在构造里打库，第一次调用（或第一次 `flush()`）才执行；上次失败会**重试一次**，
+   * 仍失败就抛错。`flush()` 每次都先走它，所以"回填没做成"绝不会被当成"这些版本没下架"。
+   */
+  hydrate(): Promise<void>;
+  /** 下架集合是否**已从库里回填成功**（未开始／上次失败 ⇒ `false`）。 */
+  readonly withdrawalsHydrated: boolean;
   readonly persistent: true;
 }
 
@@ -157,6 +178,17 @@ const WITHDRAW_SQL = `INSERT INTO public.moderation_withdrawals (
 ) VALUES ($1, $2, $3, $4::timestamptz)
 ON CONFLICT (target_type, target_id, target_revision) DO NOTHING`;
 
+/**
+ * 下架集合的**回填**读（`WITHDRAW_SQL` 的另一半：写进去的行必须在重启后读回来）。
+ *
+ * 只读三列主键 `target_type/target_id/target_revision` —— 正是 `deploy/postgres-cvm/sql/20-login-roles.sql`
+ * 里 `GRANT SELECT (target_type,target_id,target_revision) ON public.moderation_withdrawals` 授的三列。
+ * **不得**写成 `SELECT *`：`withdrawn_by`/`withdrawn_at` 未对运行时角色授权（会 42501），
+ * 且回填只需要"哪些版本下架过"，不需要"谁在什么时候"（那是审计查询的事）。
+ */
+const HYDRATE_WITHDRAWALS_SQL = `SELECT target_type, target_id, target_revision
+  FROM public.moderation_withdrawals`;
+
 /** 数据库异常 ⇒ 领域错误（与 `messages/store-pg.ts` 同口径：超时/锁不可得 ⇒ `PROVIDER_TIMEOUT`）。 */
 function ledgerFailure(error: unknown, action: string): ApiError {
   if (error instanceof ApiError) return error;
@@ -214,6 +246,70 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
   const confirmedCreates = new Set<string>();
   /** 最近一次失败（只用于 `flush()` 的错误文案；不承担"是否有未落定写入"的判据）。 */
   let lastFailure: unknown = null;
+
+  // ---- 下架集合的回填（惰性、只读、只动内存） --------------------------------
+  /** 当前这次回填的 promise（`null` ⇒ 没有在跑／上次失败已清空，下次调用重新回填）。 */
+  let hydration: Promise<void> | null = null;
+  /** 是否已成功回填过；一旦为 `true` 就不再打库。 */
+  let hydrated = false;
+  /** 上次回填的失败原因（只用于错误文案）。 */
+  let hydrationError: unknown = null;
+
+  /**
+   * 回填失败 ⇒ 领域错误。文案**必须同时**点明「回填」与「结论未落定」：
+   * 前者让人知道是哪一步没做成，后者保证它不会被读成"已保存"（与写面失败同码不同事）。
+   */
+  function hydrateFailure(error: unknown): ApiError {
+    return ledgerFailure(error, '回填下架集合');
+  }
+
+  /**
+   * 一次回填：读三列 → 逐行 `inner.markWithdrawn(...)`。
+   *
+   * **只动内存，不 enqueue**：这些行本来就在库里，把回填当成"待落库的写入"会让
+   * `isDurable`／`flush()` 因为一次纯读而拒绝，也会让下架行被无意义地再写一遍。
+   */
+  async function startHydration(): Promise<void> {
+    const result = await options.pool.query(HYDRATE_WITHDRAWALS_SQL);
+    for (const row of result.rows) {
+      const revision = Number(row.target_revision);
+      if (typeof row.target_type !== 'string' || typeof row.target_id !== 'string' || !Number.isInteger(revision)) {
+        // 行形状不对 ⇒ 宁可整体失败（flush 因而拒绝），也不许"跳过这一行"：
+        // 漏掉一行下架标记就是给旧回调留一条复活路径。
+        throw new Error(
+          `下架行形状不可用：type=${String(row.target_type)} id=${String(row.target_id)} revision=${String(row.target_revision)}`,
+        );
+      }
+      inner.markWithdrawn({ type: row.target_type as TargetRef['type'], id: row.target_id, revision });
+    }
+    hydrated = true;
+    hydrationError = null;
+  }
+
+  /** 复用正在跑的那次回填；失败即清空（下一次调用重新回填，不缓存失败）。 */
+  function once(): Promise<void> {
+    hydration ??= startHydration().catch((error: unknown) => {
+      hydration = null;
+      hydrationError = error;
+      throw error;
+    });
+    return hydration;
+  }
+
+  async function hydrate(): Promise<void> {
+    if (hydrated) return;
+    try {
+      await once();
+      return;
+    } catch {
+      // 上次（含本次的第一次尝试）失败：存储可能刚恢复，重试一次。再失败就如实抛出。
+    }
+    try {
+      await once();
+    } catch (error) {
+      throw hydrateFailure(hydrationError ?? error);
+    }
+  }
 
   /** 只有**前缀全部确认**才前移：中间失败不会让后面的成功把失败"顶掉"。 */
   function pruneConfirmed(): void {
@@ -383,14 +479,35 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
     },
     isWithdrawn: (target) => inner.isWithdrawn(target),
     snapshotCounts: () => inner.snapshotCounts(),
+    hydrate,
+    get withdrawalsHydrated(): boolean {
+      return hydrated;
+    },
     isDurable(record) {
       // 建行必须真的落定过；且该任务名下不得有**未确认**的写入（含刚失败的那次）。
       if (!confirmedCreates.has(record.job_id)) return false;
       return !journal.some((intent) => intent.job_id === record.job_id);
     },
     async flush() {
+      // **先回填下架集合，再等写入链。** 库里有下架行等于"这些版本已经永久下架"；回填没做成时
+      // 放行 `flush()`，调用方就会接着把公开可见性翻成 `published`（下架标记是那条闸门的唯一判据）。
+      // 回填失败**不跳过**写面收尾（否则失败项不会被标成 reported，重放语义会被饿死），
+      // 但最终**必须拒绝**：文案含「回填」，与写面失败（含「结论未落定」）同码不同事。
+      let hydrationFailure: unknown = null;
+      try {
+        await hydrate();
+      } catch (error) {
+        hydrationFailure = error;
+      }
+      /** 写面已收尾：只有回填也做成才允许放行。 */
+      const settled = (): void => {
+        if (hydrationFailure !== null) throw hydrateFailure(hydrationFailure);
+      };
       await chain;
-      if (journal.length === 0) return;
+      if (journal.length === 0) {
+        settled();
+        return;
+      }
       if (journal.some((intent) => !intent.reported)) {
         // 这些写入是**本次调用自己**刚尝试过的：不再原地重试，先如实拒绝；
         // 重试发生在下一次业务调用（`flush` 一次调用只打一次库，失败就停）。
@@ -404,7 +521,10 @@ export function createPostgresModerationLedger(options: { pool: SqlRunner; now?:
       // 所以"失败一次再来一次"不会写坏账本；真实落定后日志自然清空 ⇒ 本次放行。
       for (const intent of journal.filter((item) => !item.confirmed)) schedule(intent);
       await chain;
-      if (journal.length === 0) return;
+      if (journal.length === 0) {
+        settled();
+        return;
+      }
       // 仍然没落定 ⇒ 继续**拒绝**（沿用既有安全错误码）。失败项留在日志里：
       // 既不会被"空队列"洗白，也不会永久毒化台账（存储恢复后下一次 flush 重放成功即放行）。
       throw ledgerFailure(lastFailure ?? new Error('审核台账写入未落定'), '落库');

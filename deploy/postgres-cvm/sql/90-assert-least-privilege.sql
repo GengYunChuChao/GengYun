@@ -451,8 +451,8 @@ RETURNING id;
 \set r28_probe_ans_ins :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
--- moderation_decisions / moderation_withdrawals（0028 / R29 段 M3）：台账只写不读，
--- 所以三条探针全是**写**语句，形状逐字对着 ledger-pg.ts 抄：
+-- moderation_decisions / moderation_withdrawals（0028 / R29 段 M3）：moderation_decisions 仍**只写不读**；
+-- moderation_withdrawals 自 W43 起由 HYDRATE_WITHDRAWALS_SQL 读回三列（回填），但下面三条探针仍全是**写**语句（探的是写面授权），形状逐字对着 ledger-pg.ts 抄：
 --   * :74 的 INSERT_SQL 26 列 + `ON CONFLICT (job_id) DO NOTHING`；
 --   * :89 的 UPDATE_SQL 14 列 + `WHERE job_id`（WHERE 里的 job_id 也吃 SELECT 权）；
 --   * :66 的 SUPERSEDE_SQL 2 列 + 4 列 WHERE（target_type/target_id/target_revision/content_kind
@@ -1507,8 +1507,8 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      true),
     -- R29（迁移 0028）：审核判定台账两表。列清单与 20-login-roles.sql 段 M3 的 GRANT 是同一事实的
     -- 两次写法（少一列/多一列都会被断言 49-58 抓住：清单内必须有、清单外必须没有）。
-    -- SELECT 面不是"全列"：台账只写不读（byJobId/current/forRevision/history 全读内存），
-    -- 这 6 列纯粹是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求；
+    -- SELECT 面不是"全列"：moderation_decisions 仍只写不读（byJobId/current/forRevision/history 全读内存），
+    -- 这 6 列纯粹是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求；moderation_withdrawals 的三列 SELECT 另有用途（W43 的 HYDRATE_WITHDRAWALS_SQL 回填）。
     -- 名单来源 ledger-pg.ts:66 的 SUPERSEDE_SQL（target_type/target_id/target_revision/
     -- content_kind/superseded）与 :74 的 INSERT_SQL + :89 的 UPDATE_SQL（WHERE job_id）。
     ('moderation_decisions',

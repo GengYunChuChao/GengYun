@@ -133,7 +133,10 @@ function makeFakePool() {
       async connect() {
         return client;
       },
-      async query() {
+      async query(text) {
+        // 下架集合回填（W43）：一次独立的**只读**查询，真库上就是 `pool.query`（不进事务）。
+        // 假池必须答它（库里没有下架行 ⇒ 0 行）；写面语句仍然只许走事务连接。
+        if (/SELECT[^;]*FROM public\.moderation_withdrawals/iu.test(String(text))) return { rows: [] };
         throw new Error('真池路径不得绕过事务直连 query');
       },
     },
