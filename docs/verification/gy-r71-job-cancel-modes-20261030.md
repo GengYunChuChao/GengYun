@@ -55,16 +55,26 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 
 | 场景 | `answer` | `moderation` | 与四源（识别/转写/合成/OCR）的关系 |
 | --- | --- | --- | --- |
-| 同一 `Idempotency-Key` + 同一 `If-Match` 原样重试 | **200**，回放首次结果（域内既有幂等台账） | **200**，返回当前视图（按 `state`+`If-Match` 判，**不**声称"按 Key 回放"） | 四源同为 200 回放；`moderation` 是**唯一**不做 Key 回放的一源 |
+| 同一 `Idempotency-Key` + 同一 `If-Match` 原样重试 | **200**，回放首次结果（域内既有幂等台账） | **200**，回放首次结果（**GY-R72**：同键占位先于版本/终态校验，回放不再写台账、`job_revision` 不再 +1；未注入台账的部署仍按旧口径 409，见 §2.4） | 六源同口径：均为 **200** 回放，`moderation` 自 GY-R72 起**不再是**例外 |
 | 换新 Key、`If-Match` = **当前** revision（已 `cancelled`） | **200**，`revision` **不变**（no-op） | **200**，`revision` **不变**（no-op） | 四源此处是 409 `OBJECT_UNAVAILABLE`（本片**不改**四源） |
 | 换新 Key、`If-Match` = **旧** revision | 409 `REVISION_CONFLICT` | 409 `REVISION_CONFLICT` | 同四源 |
 | 已终态但**不是** `cancelled`（`succeeded`/`uncertain`/`failed`/`timed_out`） | 409 `OBJECT_UNAVAILABLE` | 409 `OBJECT_UNAVAILABLE` | 同四源 |
 
-**为什么选"重复取消不报错"**：派单 §2 给了两个选项，本片取前者——取消是"把作业带到 `cancelled`"的动作，**目标状态已达成就是成功**（没有第二次副作用、`revision` 不再前进）。这不是"假装成功"：① 持旧 `If-Match` 的重放仍判 409；② 除 `cancelled` 之外的终态一律 409，不会把"已成功/已隔离/已失败"改写成"已取消"。
+**为什么选"重复取消不报错"**：派单 §2 给了两个选项，本片取前者——取消是"把作业带到 `cancelled`"的动作，**目标状态已达成就是成功**（没有第二次副作用、`revision` 不再前进）。这不是"假装成功"：① 持旧 `If-Match` **且换了 Key** 的请求仍判 409 `REVISION_CONFLICT`（同 Key 同 `If-Match` 才走回放，见 §2.4）；② 除 `cancelled` 之外的终态一律 409，不会把"已成功/已隔离/已失败"改写成"已取消"。
 
 **与四源的差异如实登记**：四源对"已 `cancelled` 且 `If-Match` 为当前 revision"返回 409 `OBJECT_UNAVAILABLE`。本片**没有**去改它们（超出派单范围），因此同一个端点在"重复取消"这一格上**按 kind 分叉**。若监工要求六源一致，改四源即可对齐（改动只在各自 `cancelJob` 的终态判定前加一条 no-op 分支），**请裁定**。
 
-**`moderation` 不做 Key 回放的理由（不掩盖）**：本域**没有幂等台账**（其写面只有筛查/回调，从来没有 `Idempotency-Key` 机制）；要支持回放，要么加一张非持久的内存表（进程重启即丢 ⇒ 在 `real` 模式下"声称幂等"就是假话），要么加迁移和列（`moderation_decisions` 的 INSERT/UPDATE 是显式列清单，加列即动冻结迁移面）。两者都不在本片范围。因此 `Idempotency-Key` 在本域**只按契约校验**（缺头 400，与其它五源同形），**不参与回放**。
+**`moderation` 当时（GY-R71）不做 Key 回放的理由（不掩盖；现状已由 GY-R72 改变，见 §2.4）**：那时本域**没有幂等台账**（其写面只有筛查/回调，从来没有 `Idempotency-Key` 机制）；当时的判断是"要支持回放，要么加一张非持久的内存表（进程重启即丢 ⇒ 在 `real` 模式下"声称幂等"就是假话），要么加迁移（`moderation_decisions` 的 INSERT/UPDATE 是显式列清单）"。**GY-R72 取了后者**：新增迁移 `0051_moderation_idempotency.sql` 与独立台账 store，`Idempotency-Key` 自此**参与回放**。
+
+### 2.4 `moderation` 的 `Idempotency-Key` 回放（**GY-R72 已接线**，本节订正 §2.3 的旧口径）
+
+- 次序（`services/api/src/moderation/service.ts:1180` 的 `cancelJob`）：取两个头（`:1186`/`:1187`）→ 存在性 + 归属三查**原位不动**（`:1188`-`:1191`，不消耗调用方的键）→ `:1196` 取台账 → `:1197` **占位先于版本/终态校验**（`purgeIdempotent` + `claimIdempotent`；`scope` = `idempotencyScope(userId,'POST','/api/v1/jobs/{id}/cancel')`，`requestHash` = `idempotencyRequestHash(null, '"<If-Match>"', hmacKey)`）→ `:1198` 命中**已结算**占位 ⇒ **回放首次视图**（不再写台账）→ `:1199` 占位仍在途 ⇒ 409 `REQUEST_IN_PROGRESS`（`retryable:true`）→ `try` 内才是版本（`:1201`）/ 终态（`:1206`）/ 单次写（`:1207`-`:1208`）/ `flushLedger`（`:1210`）/ 结算占位（`:1211`）；失败在 `:1214` **释放**占位再抛（否则这个键会被自己的占位挡死）。
+- 同键异体：同一 Key 换了 `If-Match` ⇒ 409 `IDEMPOTENCY_CONFLICT`（`requestHash` 不等），且**不写**台账。
+- 未接线（无 PG 池、`createModerationService` 未注入台账）：`services/api/src/moderation/service.ts:1486` 的 `cancelIdempotencyOf` 返回 `null` ⇒ **一次 store 调用都不发生**，与接线前逐字节等价（同键原样重试仍是 409 `REVISION_CONFLICT`）——不谎称幂等。
+- 缺表 fail-closed：PG store 探测到迁移 `0051` 未跑 ⇒ 写类抛 503 `PROVIDER_UNAVAILABLE`（`retryable:false`），**不静默退回旧路径**（否则"声称幂等"就是假话）。
+- 用例：`tests/unit/moderation-cancel-idempotency.test.mjs`（T1 回放逐字段相等 + `ledger.update` 计数仍 1；T2 同键异体 409；T3 在途 409；T4 缺头 428/400；T5 未接线 = 旧行为；T6 缺表 503；T7 失败释放占位）。既有 `tests/unit/jobs-cancel-moderation-answer.test.mjs` 的 `moderation·②` 三个断言在新语义下**仍然成立**（它用的是**新键**），只订正了其中两条"本域没有幂等台账"的注释。
+- 装配（零行漂移）：`services/api/src/app.ts:954` 同一行内追加 `...(pool === null ? {} : { idempotency: createPgModerationIdempotencyStore({ pool }) }), idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,`；`git diff --numstat -- services/api/src/app.ts` 左右相等、行数不变。
+- 仍存边界：跨进程的 `pending` 占位没有主动回收——进程崩在"已占位、未结算"之间时，该键最长 24h（`IDEMPOTENCY_TTL_SECONDS`）内只能拿到 409 `REQUEST_IN_PROGRESS`，除非下一次 `purge` 清掉它。
 
 ## 3 五组用例读数（逐组：状态码 + 契约码）
 
@@ -73,7 +83,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 | 组 | `answer`（实测） | `moderation`（实测） |
 | --- | --- | --- |
 | ① 取消成功 | **200**，`state=cancelled`、`revision` 2→**3**、`result=null`、`ETag="3"` | **200**，`state=cancelled`、`job_revision` 1→**2**、`result=null`、`ETag="2"` |
-| ② 重复取消 | 同键同 ETag ⇒ **200**（`revision` 仍 3）；新键 + 当前 ETag ⇒ **200**（仍 3）；旧 ETag ⇒ **409 `REVISION_CONFLICT`** | 当前 ETag ⇒ **200**（仍 2）；旧 ETag ⇒ **409 `REVISION_CONFLICT`** |
+| ② 重复取消 | 同键同 ETag ⇒ **200**（`revision` 仍 3）；新键 + 当前 ETag ⇒ **200**（仍 3）；旧 ETag ⇒ **409 `REVISION_CONFLICT`** | 同键同 If-Match（GY-R72 接线后）⇒ **200** 回放首次视图（仍 2）；新键 + 当前 ETag ⇒ **200**（仍 2）；旧 ETag + 新键 ⇒ **409 `REVISION_CONFLICT`** |
 | ③ 取消已终态 | 已 `succeeded` ⇒ **409 `OBJECT_UNAVAILABLE`**（`retryable=false`），`state`/`revision` 不变 | 已 `succeeded` ⇒ **409 `OBJECT_UNAVAILABLE`**；已隔离 `uncertain` ⇒ **409 `OBJECT_UNAVAILABLE`**（隔离事实保留） |
 | ④ 取消不存在 | 随机 uuid ⇒ **404 `NOT_FOUND`** | 随机 uuid ⇒ **404 `NOT_FOUND`** |
 | ⑤ 取消他人作业 | 他人令牌 ⇒ **404 `NOT_FOUND`**，`error` 封套与 ④ **逐字段 `deepEqual`**，作业状态不变 | 同左（`deepEqual` + 作业保持 `queued`） |
@@ -204,4 +214,4 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 
 1. **`moderation` 取消在当前产品装配下不可达**（§6.1）：接受"只在异步供应商路径生效"，还是另开一片把社区发布改成 `defer_model` + 回调？本片**没有**为让"取消可用"而改动发布时序。
 2. **重复取消的跨 kind 分叉**（§2.3）：本片让 `answer`/`moderation` 在"已 `cancelled` + 当前 `If-Match`"上返回 200 no-op，四源仍是 409。是否要求六源统一？统一只需在四源的终态判定前各加一条 no-op 分支（不改契约、不改码表）。
-3. **`moderation` 不做 `Idempotency-Key` 回放**（§2.3）：接受"只校验、不回放"（本片现状，如实登记），还是补一张**持久**幂等表（需迁移列 + `ledger-pg.ts` 的 INSERT/UPDATE 列清单同步）？
+3. ~~**`moderation` 不做 `Idempotency-Key` 回放**（§2.3）~~ ⇒ **已解决（GY-R72）**：补了持久幂等台账（`services/api/src/moderation/idempotency-store.ts` + 迁移 `0051_moderation_idempotency.sql`），`cancelJob` 改为占位先于版本/终态校验、同键同 `If-Match` 回放首次视图（§2.4）。**仍存边界**：跨进程 `pending` 占位无主动回收（最长等 TTL 24h）；缺表时写类 fail-closed（503 `PROVIDER_UNAVAILABLE`，`retryable:false`），不静默退回"只校验不回放"的旧路径。
