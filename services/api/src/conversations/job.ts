@@ -6,12 +6,12 @@
  * 在 `JobResult.oneOf` 里 —— 但注册表里**没有任何源**，因此该 202 作业在跨 kind 读面上永远
  * `NOT_FOUND`。本文件补上这个源（**只追加一个源，不发明新状态、不改注册表**）。
  *
- * 作业状态的唯一事实源是**轮次行上的作业快照**（迁移 0013 的 `job_state` /
- * `job_error_code` / `job_deadline_at` / `job_created_at`）—— 它是受理时写下、之后只在真发生
- * 跃迁时被 CAS 更新的值，**不是**读的时候重新估算出来的。因此：
- *   - `get` 只做投影，不做状态推断（`registry.assertContractJob` 会逐键复核，
- *     并把违规统一折叠为 503 `PROVIDER_UNAVAILABLE`，见其「端口回传不可信 ⇒ fail-closed」）；
- *   - 越权与不存在一律 `null`（与注册表口径一致：调用方不得据此区分二者）；
+ * 作业状态的事实源是**轮次行上的作业快照**（迁移 0013 的 `job_state` /
+ * `job_error_code` / `job_deadline_at` / `job_created_at`）：受理时写下、只在真发生跃迁时被更新，
+ * **不是**读的时候重新估算出来的值。唯一例外是**过期裁定**：
+ *   - 读面在「仍非终态 ∧ 已过 `deadline_at + 宽限`」时，用 `settleTurnJob` 做**一次** CAS 落
+ *     `timed_out` / `PROVIDER_TIMEOUT`（与 OCR／合成同形），除此之外不做状态推断；投影仍经
+ *     `registry.assertContractJob` 逐键复核（违规折 503）；越权与不存在一律 `null`（不得据此区分二者）；
  *   - **取消面**（GY-R71 追加）：本片给本源补上 `cancel`，语义**全部由会话域既有的 `cancelTurn` 决定**
  *     （`queued`/`running` → `cancelled`、revision 恰好 +1、终态不可取消、同键重放回放首次结果）。
  *     取消只写轮次行的作业快照、**不写回答**，因此"取消后仍落一条回答"在存储层即不可能
