@@ -230,7 +230,7 @@ import { createCommunityModerationLink, type CommunityModerationLink } from './c
 import { IDEMPOTENCY_TTL_SECONDS } from './auth/idempotency.ts';
 // GY-I14（#14）审核域：**追加式**装配（只加 import + 一个可选注入项 + 一处作业源注册 + 一处 decorate）。
 // 跨线披露：本块为纯追加（不改既有域行为、不重排既有装配）；回退 = 删除本块四处。
-import { createModerationService } from './moderation/service.ts'; import { demoAwareModerationPorts } from './moderation/demo-port.ts'; import { moderationServiceAssemblyOption } from './moderation/live-assembly.ts';
+import { createModerationService } from './moderation/service.ts'; import { demoAwareModerationPorts } from './moderation/demo-port.ts'; import { moderationServiceAssemblyOption } from './moderation/live-assembly.ts'; import { createPgModerationIdempotencyStore } from './moderation/idempotency-store.ts'; /* GY-R72：取消面幂等台账的 PG 实现（与本行其它三条 import **同行**：本文件零行漂移，`docs/` 有 611 处按行号引它）。 */
 import { createPostgresModerationLedger } from './moderation/ledger-pg.ts';
 import type { ModerationService } from './moderation/service.ts';
 import { createModerationJobSource } from './moderation/job-source.ts';
@@ -951,7 +951,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       ...(moderationInjection?.ruleOptions === undefined
         ? {}
         : { ruleOptions: moderationInjection.ruleOptions }),
-      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), /* GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账。 */ imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore }), /* GY-R70：与 `speechAudioMedia` / `ocrImageMedia` / 识别域取值器**同形**——只转发媒体域**既有**的那两个实例（不新建存储、不读 env、不铸造批准能力；媒体域端口在本函数更靠后解析，故用取值器晚绑定）。审核域只有在**显式注入** `liveWiring`（含凭据与策略闸门）时才消费它；本装配路径不注入 `liveWiring` ⇒ 本键不改变任何行为（`real` 仍整域 fail-closed，逐字节同本片之前）。 */
+      ...(pool === null ? {} : { store: createPostgresModerationLedger({ pool }) }), /* GY-R29 S7 台账落库（0028）；无池 ⇒ 内存台账。 */ imageMedia: () => ({ objectStore: mediaObjectStore, mediaRecords: mediaStore }), /* GY-R70：与 `speechAudioMedia` / `ocrImageMedia` / 识别域取值器**同形**——只转发媒体域**既有**的那两个实例（不新建存储、不读 env、不铸造批准能力；媒体域端口在本函数更靠后解析，故用取值器晚绑定）。审核域只有在**显式注入** `liveWiring`（含凭据与策略闸门）时才消费它；本装配路径不注入 `liveWiring` ⇒ 本键不改变任何行为（`real` 仍整域 fail-closed，逐字节同本片之前）。 */ ...(pool === null ? {} : { idempotency: createPgModerationIdempotencyStore({ pool }) }), /* GY-R72：取消面幂等台账，判据与上一句的 `store:` **同形**——无池 ⇒ 该键不出现 ⇒ `cancelJob` 一次台账调用都不发生、行为与接线前逐字节相同（取消仍只按 `state`+`If-Match` 判）；有池 ⇒ 按 `Idempotency-Key` 回放首次结果（迁移 0051，缺表 ⇒ 503 而非静默退回）。 */ idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY, /* GY-R72：`requestHash` 的 HMAC 密钥，与其它五源同源（`sessionSigningKey` 未配置时退到 stub 键）；只在内存，不入库、不入日志。 */
     });
   // 社区侧的审核域联动端口（版本级任务 / 明确驳回否决 / 下架缓存失效 / 读取时重查）。
   // `communityInjection.moderation === null` 可显式关闭联动（回到接线前行为，供反例与隔离用）。

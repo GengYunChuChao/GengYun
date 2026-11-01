@@ -131,6 +131,9 @@ export function makeHarness(options = {}) {
     ...(options.ports === undefined ? {} : { ports: options.ports }),
     ruleOptions: { clock: FROZEN_CLOCK, budget_ms: RULE_BUDGET_MS, ...(options.ruleOptions ?? {}) },
     ...(options.modelDeadlineMs === undefined ? {} : { modelDeadlineMs: options.modelDeadlineMs }),
+    // GY-R72：取消的 `Idempotency-Key` 回放台账（缺省**不传** ⇒ 与接线前逐字节等价，见 T5）。
+    ...(options.idempotency === undefined ? {} : { idempotency: options.idempotency }),
+    ...(options.idempotencyHmacKey === undefined ? {} : { idempotencyHmacKey: options.idempotencyHmacKey }),
   });
   return { service, ledger, cache, authority, now, newId };
 }

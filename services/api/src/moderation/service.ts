@@ -26,7 +26,7 @@ import { promptIdForPortKind } from '../../../../packages/moderation/prompts.mjs
 import { evaluateBoundHardRules, moderationInputDigest } from '../../../../packages/moderation/input-binding.mjs';
 import { evaluateModelReReview, isModelLayerPublishable } from '../../../../packages/moderation/model-review.mjs';
 import { ApiError } from '../errors.ts';
-import type { ErrorCode } from '../contract.ts';
+import { API_PREFIX, type ErrorCode } from '../contract.ts';
 import {
   buildContractModeration,
   contentKindsFor,
@@ -51,7 +51,7 @@ import type { CallbackOutcome, CallbackReplayGuard } from './callback.ts';
 import { humanReviewQueue } from './nonbypass.ts';
 import { declaredModelVersion, declaredProvider, resolveModerationPorts } from './provider.ts';
 import type { ResolvedModerationPorts, PortKind } from './provider.ts';
-import { createLiveModerationPortsFromWiring, type ModerationLiveWiring } from './live-wiring.ts'; import type { ModerationImagePortsResolver } from './image-source.ts'; /* GY-R70：与上一条**同行**（独占一行会推移本文件行号，令台账/证据页对 service.ts 的行号引用顶漂） */
+import { createLiveModerationPortsFromWiring, type ModerationLiveWiring } from './live-wiring.ts'; import type { ModerationImagePortsResolver } from './image-source.ts'; /* GY-R70：与上一条**同行**（独占一行会推移本文件行号，令台账/证据页对 service.ts 的行号引用顶漂） */ import { IDEMPOTENCY_TTL_SECONDS, idempotencyKeyHashHex, idempotencyRequestHash, idempotencyScope } from '../auth/idempotency.ts'; import type { ModerationIdempotencyStore } from './idempotency-store.ts'; /* GY-R72：取消按 `Idempotency-Key` 回放所需的四个函数与台账类型（同样**同行**：本片承诺零行漂移） */
 import type { ModerationLivePort } from './live-ports.ts';
 import {
   PORT_KIND_BY_CONTENT_KIND,
@@ -146,7 +146,7 @@ export interface ModerationServiceDeps {
   /** 规则层选项（测试可注入冻结时钟/预算/自定义规则集；生产用出厂规则集）。 */
   ruleOptions?: Record<string, unknown>;
   /** 模型端口超时（毫秒），透传合流层 `deadline_ms`。 */
-  modelDeadlineMs?: number;
+  modelDeadlineMs?: number; /* GY-R72：`idempotency` = 取消面的幂等台账（缺省 ⇒ 不注入、取消仍走旧的"重复取消不报错"路径，行为与接线前逐字节相同）；`idempotencyHmacKey` = `requestHash` 的 HMAC 密钥（与其它五源同源：`config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY`，只在内存、不入库不入日志）。与上一字段**同行**以免推移本文件行号。 */ idempotency?: ModerationIdempotencyStore; idempotencyHmacKey?: string;
 }
 
 export interface ScreeningOutcome {
@@ -264,11 +264,11 @@ export interface ModerationService {
    * （`CALLBACK_JOB_TERMINAL`）⇒ 审核结论不会被补写进台账。取消本身也 `flush` 落库：
    * 落不了库就**不**对外声称已取消（写面 fail-closed，与本域其它写入点同口径）。
    *
-   * 幂等（**本片选"重复取消不报错"**，口径与 `conversations/service.ts` 的 `cancelTurn` 一致）：
-   * 任务已 `cancelled` 且 `If-Match` 等于**当前** `job_revision` ⇒ 200 + 当前视图、**不再写**
-   * （`job_revision` 不变、不产生第二次迁移）；持旧 revision 的重放 ⇒ 409 `REVISION_CONFLICT`。
-   * 本域**没有幂等台账**，`Idempotency-Key` 只按契约做存在性/长度校验、**不参与回放**
-   * （这一处与 `answer` 域不同，见证据页「口径差异」，不谎称已回放）。
+   * 幂等（GY-R72 起**按 `Idempotency-Key` 回放首次结果**，与 OCR/语音/TTS/识别/文字问答五源同口径）：
+   * 同一 Key + 同一 `If-Match` 的**原样重试**在版本/终态校验**之前**就认出来并回放首次结果，
+   * 因此不会被已自增的 `job_revision` 判成 409、也不会被已落地的 `cancelled` 判成冲突；
+   * 换**新** Key 则是新请求（旧 revision ⇒ 409 `REVISION_CONFLICT`，已 `cancelled` ⇒ 200 当前视图、不再写）。
+   * 未注入幂等台账（`deps.idempotency` 缺省）⇒ 回落到旧的"重复取消不报错"路径，与接线前逐字节相同。
    */
   cancelJob(input: { userId: string; jobId: string; ifMatch: unknown; idempotencyKey: unknown }): Promise<ModerationTaskView>;
   tasks(target_ref: TargetRef): ModerationTaskView[];
@@ -349,10 +349,10 @@ function requireCancelIfMatch(value: unknown): number {
 }
 
 /**
- * 取消面的 `Idempotency-Key`：只做**契约校验**（缺失/长度不合 ⇒ 400 `IDEMPOTENCY_KEY_REQUIRED`）。
- *
- * 本域没有幂等台账，因此该键**不参与回放**——重复取消由 `state` + `If-Match` 判定，
- * 按既有 409 语义明确告知（见 `cancelJob` 的注释与证据页「口径差异」）。
+ * 取消面的 `Idempotency-Key`：先做**契约校验**（缺失/长度不合 ⇒ 400 `IDEMPOTENCY_KEY_REQUIRED`），
+ * 校验通过后**参与回放**——GY-R72 起该键与 `If-Match` 一起进入 `requestHash`：同一 Key 的
+ * 原样重试按首次结果回放（次序见 `cancelJob` 内的次序注释，实现见文件末尾的
+ * `claimCancelIdempotency` / `finalizeCancelClaim`），换**新** Key 即新请求，仍按 200/409 判。
  */
 function requireCancelIdempotencyKey(value: unknown): string {
   if (typeof value !== 'string' || value.trim().length < IDEMPOTENCY_KEY_MIN || value.length > IDEMPOTENCY_KEY_MAX) {
@@ -1172,10 +1172,10 @@ function createModerationServiceResolved(
 
   /**
    * GY-R71 取消片 · 取消尚未出结论的筛查任务（实现在 `ModerationService.cancelJob` 的注释里逐条声明）。
-   *
-   * 次序刻意如此：`If-Match`/`Idempotency-Key` 先校验（缺头 ⇒ 428/400，与其它五源同形），
-   * 再判归属（不存在/越权 ⇒ 同形 404，**不**消耗调用方的版本号），再判版本、再判状态，
-   * 最后**单次**写 `state`/`job_revision`（本域台账无异步 CAS，靠单线程 + 同步 `update` 原子）。
+   * 次序刻意如此（GY-R72 起）：`If-Match`/`Idempotency-Key` 先校验（缺头 ⇒ 428/400，与其它五源同形），
+   * 再判归属（不存在/越权 ⇒ 同形 404，**不**消耗调用方的版本号），再按 Key **占位/回放**：
+   * 首次成功结果的**原样重试**必须回放首次结果（不能先撞上已自增的 `job_revision`），
+   * 最后判版本、判状态，并**单次**写 `state`/`job_revision`（本域台账无异步 CAS，靠单线程 + 同步 `update` 原子）。
    */
   async function cancelJob(input: {
     userId: string;
@@ -1184,35 +1184,35 @@ function createModerationServiceResolved(
     idempotencyKey: unknown;
   }): Promise<ModerationTaskView> {
     const expectedRevision = requireCancelIfMatch(input.ifMatch);
-    requireCancelIdempotencyKey(input.idempotencyKey);
-    const record = ledger.byJobId(input.jobId);
+    const key = requireCancelIdempotencyKey(input.idempotencyKey);
+    let record = ledger.byJobId(input.jobId);
     if (record === null) throw new ApiError('NOT_FOUND', '作业不存在');
     // 归属：他人作业与"作业不存在"同形（不泄露存在性，与 `job-source.ts` 的读面同口径）。
     if (record.submitted_by !== input.userId) throw new ApiError('NOT_FOUND', '作业不存在');
-    if (record.job_revision !== expectedRevision) {
-      throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+    // GY-R72 · **幂等占位先于版本/终态校验**（理由与 `ocr/service.ts` 的 `cancelJob` 逐条相同）：首次取消已把
+    // `job_revision` +1、把 `state` 落成 `cancelled`；同一 Key + 同一 `If-Match` 的**原样重试**必须先按 Key
+    // 认出"这是同一请求的重试"并回放首次结果，否则会被已自增的 revision 判成 409、或被已落地的 `cancelled` 判成冲突
+    // （接线前该键只做契约校验，这种重试必然撞上 409/终态）。未注入台账 ⇒ 一次 store 调用都不发生，落回下面既有路径。
+    const idem = cancelIdempotencyOf(deps);
+    const claim = idem === null ? null : await claimCancelIdempotency(idem, input.userId, input.jobId, key, expectedRevision, clock());
+    if (claim !== null && claim.kind === 'replay') return viewOf(ledger.byJobId(claim.jobId) ?? record);
+    if (claim !== null && claim.kind === 'pending') throw cancelInProgress();
+    try {
+      record = ledger.byJobId(input.jobId) ?? record; if (record.job_revision !== expectedRevision) throw new ApiError('REVISION_CONFLICT', '作业版本与 If-Match 不一致');
+      // **幂等**（重复取消不报错）：已 `cancelled` 且 `If-Match` = **当前** revision ⇒ 返回当前视图、不再写。
+      if (record.state === 'cancelled') { await finalizeCancelClaim(claim, record.job_id); return viewOf(record); }
+      // 占位是 await：期间合法回调可能已把作业写成终态，故上面必须按 jobId 重读；用占位前的快照会把已形成的结论覆盖成 `cancelled`。
+      // 可取消窗口 = 还没落结论的那一段；`uncertain`（隔离）与四个成功/失败态都是**已出结论**，取消它们会把"已判定的隔离事实"抹成"从没跑过" ⇒ 按既有 `OBJECT_UNAVAILABLE` 拒绝。
+      if (record.state !== 'queued' && record.state !== 'running') throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${record.state}，不可取消`);
+      const updated = ledger.update({ ...record, job_revision: record.job_revision + 1, state: 'cancelled',
+        contract_value: null, error_code: null, updated_at: nowIso() }); // 取消 ⇒ 无结论可投影（contract_value 清空）
+      // 取消必须**落库**才算数：落不了库就不许对外声称"已取消"（否则重启后迟到回调还能补写结论）。
+      await flushLedger();
+      await finalizeCancelClaim(claim, updated.job_id);
+      return viewOf(updated);
+    } catch (error) {
+      await releaseCancelClaim(claim); throw error;
     }
-    // **幂等**（本片选"重复取消不报错"，口径见证据页）：状态已是 `cancelled` ⇒ 返回当前视图、
-    // **不**再写一次（`job_revision` 不变、不产生第二次迁移）。这不是"假装成功"：本次没有副作用；
-    // 持旧 `If-Match` 的重放仍会被上面判 409 `REVISION_CONFLICT`。
-    if (record.state === 'cancelled') return viewOf(record);
-    // 可取消窗口 = 还没落结论的那一段。`uncertain`（隔离）与四个成功/失败态都是**已出结论**：
-    // 取消它们会把"已判定的隔离事实"抹成"从没跑过"，因此按既有 `OBJECT_UNAVAILABLE` 明确拒绝。
-    if (record.state !== 'queued' && record.state !== 'running') {
-      throw new ApiError('OBJECT_UNAVAILABLE', `作业已处于终态 ${record.state}，不可取消`);
-    }
-    const updated = ledger.update({
-      ...record,
-      job_revision: record.job_revision + 1,
-      state: 'cancelled',
-      // 取消 ⇒ 该任务没有结论可投影：`contract_value` 清空（否则 `result` 会违反注册表的如实性不变式）。
-      contract_value: null,
-      error_code: null,
-      updated_at: nowIso(),
-    });
-    // 取消必须**落库**才算数：落不了库就不许对外声称"已取消"（否则重启后迟到回调还能补写结论）。
-    await flushLedger();
-    return viewOf(updated);
   }
 
   /** `ingestCallback` 的契约错误码提示（传输层用；本片不注册路由）。 */
@@ -1447,4 +1447,108 @@ function createModerationServiceResolved(
       callback_key_configured: callbackKey !== null,
     }),
   };
+}
+
+/* ---------------------------------------------------------------------------------------------------
+ * GY-R72 · 取消面的幂等回放（**模块级** helper，整体追加在文件末尾）
+ *
+ * 为什么放在末尾：本片对 `service.ts` 的纪律是「既有行**整行 1 换 1**、新增只许整体追加到末尾」，
+ * 以保证台账/证据页里几十处 `service.ts:NNN` 的行号引用不漂移。这些函数与
+ * `createModerationServiceResolved` 的闭包无耦合（只吃 `deps` 与入参），放模块级没有副作用。
+ * 语义与判据逐条镜像唯一真本 `services/api/src/ocr/service.ts:702-744` 的 `cancelJob`。
+ * --------------------------------------------------------------------------------------------------- */
+
+/** 取消面的幂等台账配置：`deps.idempotency` + `deps.idempotencyHmacKey` 的成对形态。 */
+interface ModerationCancelIdempotency {
+  store: ModerationIdempotencyStore;
+  hmacKey: string;
+}
+
+/**
+ * 一次取消请求的幂等占位结果（三态）：
+ * - `claimed` = 本次**占位成功**，业务完成后必须 `finalize`、失败必须 `release`；
+ * - `replay` = 同键**已结算**，按首次结果回放（不是"再来一次"）；
+ * - `pending` = 同键仍在途，让客户端稍后重试（409 `REQUEST_IN_PROGRESS`）。
+ */
+type ModerationCancelClaim =
+  | { kind: 'claimed'; store: ModerationIdempotencyStore; scope: string; keyHash: string }
+  | { kind: 'replay'; jobId: string }
+  | { kind: 'pending' };
+
+/**
+ * 取取消面的幂等台账配置。
+ *
+ * 未注入 `idempotency` ⇒ `null`：`cancelJob` 落回「只按 `state` + `If-Match` 判」的既有路径，
+ * **一个 store 调用都不发生**（`tests/moderation/_http-fixtures.mjs` 的默认夹具走这条，行为与接线前逐字节相同）。
+ * 注入了 store 却没有 HMAC 密钥 ⇒ fail-closed：没有密钥的 `requestHash` 等于不设防（同键不同请求体会被
+ * 当成同一请求回放），故按 `PROVIDER_UNAVAILABLE` 明确拒绝，不静默降级成"看起来幂等"。
+ */
+function cancelIdempotencyOf(deps: ModerationServiceDeps): ModerationCancelIdempotency | null {
+  const store = deps.idempotency;
+  if (store === undefined) return null;
+  const hmacKey = deps.idempotencyHmacKey;
+  if (typeof hmacKey !== 'string' || hmacKey.length === 0) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '审核取消的幂等台账已注入但缺少 HMAC 密钥：拒绝在无密钥下声称幂等', {
+      retryable: false,
+    });
+  }
+  return { store, hmacKey };
+}
+
+/** 取消面的幂等 scope：与其它源同形（主体 + `POST` + 该作业的取消路由），不含作业内容。 */
+function cancelScopeOf(userId: string, jobId: string): string {
+  return idempotencyScope(userId, 'POST', `${API_PREFIX}/jobs/${jobId}/cancel`);
+}
+
+/** 同键在途：可重试的 409，与 OCR/语音各源同码同句。 */
+function cancelInProgress(): ApiError {
+  return new ApiError('REQUEST_IN_PROGRESS', '同一 Idempotency-Key 的请求正在处理中', { retryable: true });
+}
+
+/**
+ * 先 `purge` 过期行、再**原子占位**，然后按 `requestHash` 三态收敛（顺序/判据/错误码逐条照
+ * `services/api/src/ocr/service.ts:332-364` 的 `claimIdempotentScope`）。
+ *
+ * `requestHash` 吃 `[null, "期望 revision"]`：取消请求没有请求体，真正的「请求身份」就是调用方要求
+ * 从哪个版本上取消 —— 同一 Key 换一个 `If-Match` 是**另一个请求**，必须 409 `IDEMPOTENCY_CONFLICT`，
+ * 而不是把首次结果塞给它。
+ */
+async function claimCancelIdempotency(
+  idem: ModerationCancelIdempotency,
+  userId: string,
+  jobId: string,
+  key: string,
+  expectedRevision: number,
+  at: Date,
+): Promise<ModerationCancelClaim> {
+  const scope = cancelScopeOf(userId, jobId);
+  const keyHash = idempotencyKeyHashHex(scope, key);
+  const requestHash = idempotencyRequestHash(null, `"${expectedRevision}"`, idem.hmacKey);
+  await idem.store.purgeIdempotent(at);
+  const claimed = await idem.store.claimIdempotent(
+    scope,
+    keyHash,
+    { scope, keyHash, requestHash, payload: {}, pending: true, expiresAt: new Date(at.getTime() + IDEMPOTENCY_TTL_SECONDS * 1000) },
+    at,
+  );
+  if (claimed === 'claimed') return { kind: 'claimed', store: idem.store, scope, keyHash };
+  const row = await idem.store.findIdempotent(scope, keyHash);
+  // 占位后被 TTL 清理等极端情形：**不**回 claimed（那会把"从没执行过"当成成功回放），如实让客户端稍后重试。
+  if (row === null) return { kind: 'pending' };
+  if (row.requestHash !== requestHash) throw new ApiError('IDEMPOTENCY_CONFLICT', '同一 Idempotency-Key 已被不同请求体使用');
+  if (row.pending) return { kind: 'pending' };
+  const replayJobId = row.payload['job_id'];
+  return { kind: 'replay', jobId: typeof replayJobId === 'string' ? replayJobId : jobId };
+}
+
+/** 占位落定：把首次结果（作业 id）写进幂等台账。`claim` 为空 / 非 `claimed` ⇒ 空操作。 */
+async function finalizeCancelClaim(claim: ModerationCancelClaim | null, jobId: string): Promise<void> {
+  if (claim === null || claim.kind !== 'claimed') return;
+  await claim.store.finalizeIdempotent(claim.scope, claim.keyHash, { job_id: jobId });
+}
+
+/** 放弃占位（失败路径）：不释放会让同一个 Key 之后一直被自己的占位挡在 `REQUEST_IN_PROGRESS`。 */
+async function releaseCancelClaim(claim: ModerationCancelClaim | null): Promise<void> {
+  if (claim === null || claim.kind !== 'claimed') return;
+  await claim.store.releaseIdempotent(claim.scope, claim.keyHash);
 }
