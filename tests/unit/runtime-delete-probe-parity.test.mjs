@@ -45,11 +45,11 @@ const EXPECTED_DENY = Object.freeze([
   'speech_jobs', 'transcriptions',
 ]);
 
-/** `20-login-roles.sql` 实际授出的表级 DELETE：17 张（GY-R71 补片新增 `jobs`）。 */
+/** `20-login-roles.sql` 实际授出的表级 DELETE：18 张（GY-R71 补片新增 `jobs`；R72-W41 新增 `moderation_idempotency`）。 */
 const EXPECTED_GRANTED = Object.freeze([
   'community_idempotency', 'community_likes', 'conversation_turns', 'conversations',
   'favorites', 'favorites_idempotency', 'history', 'history_idempotency', 'jobs',
-  'media_derivatives', 'media_object_cleanup', 'messages',
+  'media_derivatives', 'media_object_cleanup', 'messages', 'moderation_idempotency',
   'ocr_idempotency', 'ocr_jobs', 'ocr_records', 'recognition_idempotency', 'speech_idempotency',
 ]);
 
@@ -60,8 +60,13 @@ const EXPECTED_GRANTED = Object.freeze([
  * `90-assert-least-privilege.sql` 段 45 的内联正探针（`DELETE FROM public.jobs WHERE false`，
  * `SAVEPOINT` 包裹、零行、随 `provision-db.sh` 在目标库真跑）。因此这里登记的理由是
  * 「本文所指的那一份探针没有」，不是「没有探针」——⛔ 不要把这条读成「jobs 的授权没被验证过」。
+ * R72-W41 同理新增第 5 张 `moderation_idempotency`：它在 90-assert 里的内联探针是**多行**形状探针
+ * （`DELETE … WHERE false AND expires_at <= now() RETURNING scope`，断言 `runtime_moderation_idempotency_dml_exec`），
+ * 不是 ⑤ 那个只认单行 `DELETE FROM public.<t> WHERE false;` 的扫描面 ⇒ 落在这里登记，判据未放松。
  */
-const GRANTED_WITHOUT_PROBE = Object.freeze(['jobs', 'media_derivatives', 'media_object_cleanup', 'messages']);
+const GRANTED_WITHOUT_PROBE = Object.freeze([
+  'jobs', 'media_derivatives', 'media_object_cleanup', 'messages', 'moderation_idempotency',
+]);
 
 /** 90-assert 里内联的同形正向探针（`SET LOCAL ROLE` 之后、SAVEPOINT 里逐条真跑）：7 张表。 */
 const EXPECTED_ASSERT_PROBES = Object.freeze([
@@ -163,10 +168,10 @@ test('③ 正向 ∪ 禁止面 = 18 个对象，两者互斥；每条都是零�
     '探针里出现了不带 `WHERE false` 的 DELETE：那会真的删数据（探针必须可反复跑、零行）');
 });
 
-test('④ 正向面 ⊆ 20-login-roles.sql 实授的 16 张表；禁止面与实授零交集', () => {
+test('④ 正向面 ⊆ 20-login-roles.sql 实授的 18 张表；禁止面与实授零交集', () => {
   const granted = grantedDeleteTables(ROLES_SOURCE);
   assert.deepEqual(granted, [...EXPECTED_GRANTED],
-    '`20-login-roles.sql` 的表级 DELETE 清单变了（本片改了两张表：ocr_jobs / ocr_records）');
+    '`20-login-roles.sql` 的表级 DELETE 清单变了（R72-W41 新增 moderation_idempotency）');
   const positive = [...new Set(PROBE_STATEMENTS.filter((s) => !s.deny).map((s) => s.table))].sort();
   const deny = [...new Set(PROBE_STATEMENTS.filter((s) => s.deny).map((s) => s.table))].sort();
   const missingGrant = positive.filter((table) => !granted.includes(table)).sort();

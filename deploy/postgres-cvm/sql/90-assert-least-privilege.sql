@@ -503,6 +503,60 @@ ON CONFLICT (target_type, target_id, target_revision) DO NOTHING;
 \set r28_probe_mod_wd_ins :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
+-- moderation_idempotency（0051 / R72-W41）：审核域的**持久幂等台账**，五条语句全在
+-- services/api/src/moderation/idempotency-store.ts。四条探针的形状逐字对着那五条抄：
+--   * findIdempotent 的 SELECT 六列（scope/key_hash 是 WHERE 用到的列，也要读权）；
+--   * claimIdempotent 的 INSERT 六列 + `ON CONFLICT (scope, key_hash) DO UPDATE … WHERE expires_at <= $7
+--     RETURNING scope`（冲突目标与 RETURNING 都吃 SELECT 权）；
+--   * finalizeIdempotent 的 UPDATE 四列（request_hash/payload/pending/expires_at）；
+--   * purgeIdempotent / releaseIdempotent 的 DELETE（表级，见 20-login-roles.sql 的
+--     `gy-r72-moderation-idempotency-delete` 区）+ `WHERE` 里的 scope/key_hash/expires_at 读权。
+-- 与上面三条台账探针同一范式：`WHERE false` ⇒ 零行、随后 SAVEPOINT 回滚、失败只留 :ERROR。
+-- ⛔ 四条只探「形状 + 列面」，不探业务：本片**不接线**（service.ts / app.ts 逐字未改），取消回放接线在 W42。
+SAVEPOINT r28_probe;
+SELECT scope, key_hash, request_hash, payload, pending, expires_at
+  FROM public.moderation_idempotency
+ WHERE false
+ LIMIT 0;
+\set r28_probe_mod_idem_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.moderation_idempotency
+       (scope, key_hash, request_hash, payload, pending, expires_at)
+SELECT 'r72-w41-probe:POST:/moderation/jobs','r72-w41-probe-key','r72-w41-probe-request',
+       '{}'::jsonb, true, now() + interval '1 hour'
+ WHERE false
+ON CONFLICT (scope, key_hash) DO UPDATE
+   SET request_hash = EXCLUDED.request_hash,
+       payload = EXCLUDED.payload,
+       pending = EXCLUDED.pending,
+       expires_at = EXCLUDED.expires_at
+ WHERE public.moderation_idempotency.expires_at <= now()
+RETURNING scope;
+\set r28_probe_mod_idem_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+UPDATE public.moderation_idempotency
+   SET request_hash = 'r72-w41-probe-request',
+       payload = '{}'::jsonb,
+       pending = false,
+       expires_at = now() + interval '1 hour'
+ WHERE false
+   AND scope = 'r72-w41-probe:POST:/moderation/jobs'
+   AND key_hash = 'r72-w41-probe-key';
+\set r28_probe_mod_idem_upd :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+DELETE FROM public.moderation_idempotency
+ WHERE false
+   AND expires_at <= now()
+RETURNING scope;
+\set r28_probe_mod_idem_del :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
 ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S26 探针结束 ----------------------------------------------------------
@@ -1186,6 +1240,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 可见关系都被分类"，漏登记即判红；required=true 表示缺表（0028 未执行）直接失败。
     ('moderation_decisions',           'granted',          true),
     ('moderation_withdrawals',         'granted',          true),
+    -- 迁移 0051（R72-W41）：审核域的**持久幂等台账**。它是新表 ⇒ 必须在这里分类（下方断言 47 按
+    -- public 关系全集比对），且 granted ⇒ 必须在 expected 里有对应行（下方 `…_favorites_history` 元断言）。
+    -- required=true：0051 没执行时 20-login-roles.sql 的 `gy-r72-moderation-idempotency-grant` 区
+    -- 本来就 RAISE EXCEPTION，这里再钉一次「缺表即失败」，不留"看似绿、点开 42501"的运行态。
+    ('moderation_idempotency',         'granted',          true),
     -- 迁移 0036（R34 · #18）：后台内容／资料域三表。0036 只建表、零 GRANT ⇒ 本片在
     -- 20-login-roles.sql 段 gy-r34-content-grant 逐列授权（无表级 DML、无 DELETE），
     -- 并在这里同时补分类与下面 expected 的独立列清单复述。required=true：缺表（0036 未执行）直接失败。
@@ -1470,6 +1529,19 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['target_type','target_id','target_revision','withdrawn_at'],
      ARRAY[]::text[],
      false),
+    -- R72-W41（迁移 0051）：审核域的**持久幂等台账**。列清单与 20-login-roles.sql 的
+    -- `gy-r72-moderation-idempotency-grant` 区是同一事实的两次写法（少一列/多一列都会被断言 49-58
+    -- 抓住），六列逐列反推自 services/api/src/moderation/idempotency-store.ts 的 find / claim / finalize。
+    -- SELECT 是**六列全给**、不是"读出来的四列"：WHERE 的 scope/key_hash、`ON CONFLICT (scope, key_hash)`
+    -- 的冲突目标、以及 `RETURNING scope` 都要读权（只授四列时 find/claim 立刻 42501 —— 同一课记在
+    -- 上面 speech_idempotency 行旁边）。upd 四列 = claim 的 DO UPDATE SET 与 finalize 的 SET。
+    -- del=true：purgeIdempotent（过期清理）与 releaseIdempotent（失败首请求的占位撤回）都是
+    -- **表级** DELETE（PG 无列级 DELETE），授权在 `gy-r72-moderation-idempotency-delete` 独立区。
+    ('moderation_idempotency',
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['scope','key_hash','request_hash','payload','pending','expires_at'],
+     ARRAY['request_hash','payload','pending','expires_at'],
+     true),
     -- R34 · #18（迁移 0036）：后台内容／资料域三表。列清单与 20-login-roles.sql 段
     -- gy-r34-content-grant 的列级 GRANT 是同一事实的两次写法（少一列/多一列/换个顺序都会被
     -- 断言 49-58 与 tests/unit/least-privilege-expected-parity.test.mjs 抓住）。
@@ -1565,8 +1637,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- GY-R71 补片（账号注销清理 · 监工 B 档实质阻塞）：统一作业台账 `public.jobs` 的 DELETE。
     -- 理由：台账行携带 `owner_id` / `target_id` / `result_ref` 等私有作业关联，注销时必须按主体删掉；
     -- PG 无列级 DELETE ⇒ 只能表级授予（与 messages / favorites 同一条）。判据没放松：
-    -- 白名单以外的任何表级写权限照样判红。本片新增后，表级写授权白名单为 19 个三元组。
-    ('public', 'jobs',                  'DELETE')
+    -- 白名单以外的任何表级写权限照样判红。
+    ('public', 'jobs',                  'DELETE'),
+    -- R72-W41（迁移 0051）：审核域**持久幂等台账**的表级 DELETE。两条语句都是整行删：
+    -- `purgeIdempotent`（`DELETE … WHERE expires_at <= $1 RETURNING scope`，过期清理）与
+    -- `releaseIdempotent`（`DELETE … WHERE scope = $1 AND key_hash = $2`，失败首请求的占位撤回）。
+    -- PG 没有列级 DELETE ⇒ 只能表级授予，授权在 20-login-roles.sql 的
+    -- `gy-r72-moderation-idempotency-delete` 独立区（列级区只含列级授权）。
+    -- 本片新增后，表级写授权白名单为 20 个三元组。
+    ('public', 'moderation_idempotency', 'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里；`species` 由 GY-I07 加入）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
@@ -3332,6 +3411,19 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'SET LOCAL ROLE gengyun_api_runtime 后，moderation_decisions 的 INSERT 26 列 / UPDATE 14 列 / supersede 的 4 列 WHERE，以及 moderation_withdrawals 的 INSERT … ON CONFLICT DO NOTHING 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 段 M3 的列级授权不足）'
 
   UNION ALL
+  -- R72-W41（迁移 0051）：审核域持久幂等台账的读写面 —— 六列 SELECT / 六列 INSERT
+  -- （含 `ON CONFLICT (scope, key_hash) DO UPDATE … WHERE expires_at <= now() RETURNING scope`）/
+  -- 四列 UPDATE / 表级 DELETE。四类语句任一 42501 即失败，说明 20-login-roles.sql 的
+  -- `gy-r72-moderation-idempotency-grant` 或 `…-delete` 区授予不足（五个方法会全量 42501）。
+  SELECT 'runtime_moderation_idempotency_dml_exec',
+         :'r28_probe_fh_role' = 'false'
+         AND :'r28_probe_mod_idem_sel' = 'false'
+         AND :'r28_probe_mod_idem_ins' = 'false'
+         AND :'r28_probe_mod_idem_upd' = 'false'
+         AND :'r28_probe_mod_idem_del' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，moderation_idempotency 的 SELECT 6 列 / INSERT 6 列 + ON CONFLICT DO UPDATE … WHERE expires_at <= now() RETURNING scope / UPDATE 4 列 / DELETE … RETURNING scope 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 的 gy-r72-moderation-idempotency-grant 或 gy-r72-moderation-idempotency-delete 区授予不足）'
+
+  UNION ALL
   -- 62. R28-S26 反向控制（PUBLIC 面）：七张表的表级与列级 ACL 里都不许出现 grantee = 0。
   --     为什么不能只看 has_table_privilege：列级授权在 relacl 里根本看不见（S24 复核的遗留点①）。
   SELECT 'public_no_privilege_favorites_history',
@@ -4327,6 +4419,12 @@ SELECT CASE
 -- admin_accounts / admin_sessions / admin_audit_events 三行与槽 9 的 protected_columns
 -- **一句未动**（运行时对这三张表仍然零表级、零列级写），新增的只有
 -- `function_surface_manifest` 的两行函数面。
+-- R72-W41（迁移 0051）：再追加**一条**（110 `runtime_moderation_idempotency_dml_exec`：
+-- `moderation_idempotency` 的六列 SELECT / 六列 INSERT（含 `ON CONFLICT … DO UPDATE … WHERE
+-- expires_at <= now()`）/ 四列 UPDATE / 表级 DELETE 四条零行探针必须全部成功）⇒ 静态值 128 条；
+-- 断言 49–58 是**数据驱动**的（`FROM expected e`），`expected` 加一行即自动多一条逐表列面检查，
+-- 本节不为此另写断言；`external_manifest` **一句未动**（本表不属组继承面，没有 `gengyun_*`
+-- 组角色对它授权）。
 DO $$
 DECLARE
   v_failed integer;

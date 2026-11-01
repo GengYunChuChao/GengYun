@@ -27,6 +27,14 @@
 //   [C] 并发：两个台账实例同时建同一目标版本的任务 ⇒ 当前行恒 1 条（数据库判定，不是应用判定）。
 //   [R] real 模式即便本表在场也 fail-closed：`submitScreening` 拒绝且**零行**落库
 //       （不许为了让真库臂变绿伪造 published 写入）。
+//   [I] 审核域**持久幂等台账**（迁移 0051 / R72-W41）：建表形制（六列 / 主键 `(scope, key_hash)` /
+//       `moderation_idempotency_expires_idx`）⇒ `claimIdempotent` → `finalizeIdempotent` → `findIdempotent`
+//       （payload 逐字取回、`pending=false`）⇒ 同键未过期再 claim ⇒ `exists` 且库里的 `request_hash`/`payload`
+//       **不被覆盖**（409 由调用方判，不是 store 判）⇒ 把行改成已过期后 claim ⇒ `claimed`（`WHERE expires_at <= $7`
+//       就地重占）⇒ `purgeIdempotent(未来时刻)` ⇒ 表 0 行 ⇒ 配对回滚整表拆除。
+//       ⛔ 运行时可用的**列级授权**不在本臂判：本臂以库 owner 连库、不跑 20-login-roles.sql；角色面由
+//       deploy/postgres-cvm/sql/90-assert-least-privilege.sql 的 `runtime_moderation_idempotency_dml_exec`
+//       探针在 deploy-sql-gate 作业里判（六列 SELECT / 六列 INSERT + ON CONFLICT / 四列 UPDATE / DELETE 零行必须全成功）。
 
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -40,6 +48,7 @@ import { discoverMigrations, formatMigrationVersion, inspectMigrationNumbering, 
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createPostgresModerationLedger } from '../../services/api/src/moderation/ledger-pg.ts';
+import { createPgModerationIdempotencyStore } from '../../services/api/src/moderation/idempotency-store.ts';
 
 const DB = 'gengyun_moderation_test';
 const MIGRATION = '0028_moderation_persistence.sql';
@@ -322,8 +331,8 @@ function forwardMergeNumbering() {
     );
     assert.equal(
       formatMigrationVersion(numbering.maxVersion),
-      '0050',
-      '合流树末项是 0050（R72-W2 的 0050_provider_invocations.sql：`public.provider_invocations` 是**每一次真实外发**一行的调用记录，16 列（数据字典 14 列 + created_at），`job_id` uuid 可空且**无外键**（public.jobs 全仓零 INSERT ⇒ 加 FK 会让唯一写入方无处落笔）而 `unique (job_id, attempt)` 照建、`usage` 取 jsonb（jsonb_typeof=object）、`invocation_state` 闭集 sent/send_failed/blocked、`export_id` 挂 public.exports ON DELETE CASCADE；写原语是 services/api/src/privacy/ledger-pg.ts 的 recordInvocation、唯一写点是外发口 task-egress.ts 的 ChatEgress.send、读面只有 listInvocations（⛔ 本片无 HTTP 面；⛔ 迁移本身不授权，运行时 GRANT 待批）；配对回滚 rollback/0050_provider_invocations.down.sql 先数行、有任何一行即 G0019 中止；上一支 0049 是 R68-A01 的 0049_admin_categories.sql：后台分类字典 public.admin_categories（id/type/name/description/active/revision/created_at/updated_at）从 public.crops 与 public.species 一次性回填，`ALTER TABLE … ADD COLUMN IF NOT EXISTS` 逐列补 + pg_constraint 预检后加四条 CHECK（type 闭集/name 1..120/description 1..2000/revision>=1），写面靠应用层 CAS `UPDATE … WHERE id = $1 AND revision = $2`、审计走同事务窄口径 SECURITY DEFINER 函数 record_admin_category_update(uuid,text,integer,uuid)（函数内固定 action=category.update / scope=sources:write / result=accepted、target_ref=NULL、target_hint 由形参重建，并核审计 revision 必须等于库内现值）；20-login-roles.sql 段 gy-r68-catalog-grant 按列授 SELECT 6 / UPDATE 5、无 INSERT/DELETE、函数只授运行时 EXECUTE；配对回滚 rollback/0049_admin_categories.down.sql 先数 category.update 审计行与 revision>1 的目录行，>0 即 G0019 中止；上一支 0048 是 R68 的 0048_admin_account_disable.sql：后台**停用/恢复管理员账号**的唯一写入口 disable_admin_account(uuid,uuid,uuid,integer,uuid,text) / enable_admin_account(同形)，窄口径 SECURITY DEFINER + SET search_path=pg_catalog + SET TimeZone=UTC + REVOKE ALL … FROM PUBLIC + 只授运行时 EXECUTE；锁序先拿 0041 同一把事务级 `pg_advisory_xact_lock(hashtextextended(\'admin_scope:\' || \'scopes:write\', 18040))` 再对 admin_accounts 行 FOR UPDATE；停用写 state=suspended + auth_epoch+1 + revision+1（CAS）并同事务把 admin_sessions 的 live 行置 revoked_at，审计行 action 固定 admin_account.disable、before_value/after_value 为 NULL；停用自己 ⇒ G0020 SELF_DISABLE_DENIED、停用唯一持 scopes:write 的管理员 ⇒ G0009（与 0041 同一个码），停用与审计**同一事务** ⇒ 审计写不进去连停用一起 ROLLBACK（fail-closed）；配对回滚 rollback/0048_admin_account_disable.down.sql 只 DROP FUNCTION、⛔ 不删审计行；上一支 0047 是 R64 的 0047_admin_post_hide_audit.sql：后台下架 `post.hide` 的审计**真落库**唯一写入口 record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)，窄口径 SECURITY DEFINER + REVOKE ALL … FROM PUBLIC + 只授运行时 EXECUTE，action/scope/result 由函数体字面量固定、target_ref 由形参重建（调用方伪造不了），下架与审计**同一事务** ⇒ 审计写不进去连帖子一起 ROLLBACK（fail-closed）；配对回滚 rollback/0047_admin_post_hide_audit.down.sql 只删函数；上一支 0046 是 #18 S2 收尾片的 0046_admin_scope_denial_trace.sql：后台 scope 操作**被拒**时的留痕唯一写入口 record_admin_scope_denial(uuid,uuid,text,text,uuid,uuid)，窄口径 SECURITY DEFINER + REVOKE ALL … FROM PUBLIC + 只授运行时 EXECUTE，scope 走后台权限 13 项闭集、reason_code 走四值闭集（self_scope_grant_denied / last_scope_manager / scope_denied / scope_not_held），且刻意只核 actor 存在、不核 active、不核是否持 scopes:write；上一支 0045 是 S3 片 A 的 0045_community_post_review_actor.sql，给 community_moderation_decisions 增 decided_by uuid——人工 approve/reject 的施动者快照列，非外键、不加索引、不参与可见性判定，回滚件同名 .down.sql；0044 是 #18 S4 片的 0044_third_party_deletion_persistence.sql，第三方删除持久化：record_third_party_deletion / list_third_party_deletions 两条 SECURITY DEFINER 函数 + 状态闭集 requested/confirmed/failed/unsupported + 终态不可回退的单调守卫，表本身只授运行时 EXECUTE；0043 是 #18 R18 片的 0043_admin_job_cancel_audit.sql，把后台「作业取消」审计从进程内存落到库：窄口径 SECURITY DEFINER 函数 record_admin_job_cancel_audit + REVOKE PUBLIC + 只授运行时 EXECUTE，回滚件 G0016；0042 是 GY-R37 片的 0042_favorites_history_target_type_conversation_turn.sql，`favorites`/`history` 的 `target_type` 闭集补第 17 值 `conversation_turn`；0041 是 #18 S2 片1 库层的 0041_admin_scope_write_authority.sql，后台管理员 scope 的唯一写路径 + 闭集约束；0040 是 GY-R35 的 0040_export_object_key_contract_backfill.sql，exports 台账 object_key 按契约回填 + 收 80；0039 是 #22 片C 的 deletion_state 增 cancelled；0038 是 #19 片B 的删除回执 bearer 台账持久化、0036 是 #538 的后台内容/资料域落库、0035 是 #535 的 R34 媒体行清理、0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上；仅 0037=#14 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
+      '0051',
+      '合流树末项是 0051（R72-W41 的 0051_moderation_idempotency.sql：审核域**持久幂等台账** public.moderation_idempotency 六列 scope/key_hash/request_hash/payload/pending/expires_at + 主键 (scope, key_hash) + moderation_idempotency_expires_idx，形制与 0026 speech_idempotency / 0024 ocr_idempotency 逐字同形；五条语句在 services/api/src/moderation/idempotency-store.ts，列级授权在 20-login-roles.sql 的 gy-r72-moderation-idempotency-grant 区、表级 DELETE 在 …-delete 独立区，90-assert 三处独立复述 + 四条零行探针 runtime_moderation_idempotency_dml_exec；⛔ 本片不接线（service.ts / app.ts 逐字未改），取消回放接线在 W42）；上一支 0050 是 R72-W2 的 0050_provider_invocations.sql：`public.provider_invocations` 是**每一次真实外发**一行的调用记录，16 列（数据字典 14 列 + created_at），`job_id` uuid 可空且**无外键**（public.jobs 全仓零 INSERT ⇒ 加 FK 会让唯一写入方无处落笔）而 `unique (job_id, attempt)` 照建、`usage` 取 jsonb（jsonb_typeof=object）、`invocation_state` 闭集 sent/send_failed/blocked、`export_id` 挂 public.exports ON DELETE CASCADE；写原语是 services/api/src/privacy/ledger-pg.ts 的 recordInvocation、唯一写点是外发口 task-egress.ts 的 ChatEgress.send、读面只有 listInvocations（⛔ 本片无 HTTP 面；⛔ 迁移本身不授权，运行时 GRANT 待批）；配对回滚 rollback/0050_provider_invocations.down.sql 先数行、有任何一行即 G0019 中止；上一支 0049 是 R68-A01 的 0049_admin_categories.sql：后台分类字典 public.admin_categories（id/type/name/description/active/revision/created_at/updated_at）从 public.crops 与 public.species 一次性回填，`ALTER TABLE … ADD COLUMN IF NOT EXISTS` 逐列补 + pg_constraint 预检后加四条 CHECK（type 闭集/name 1..120/description 1..2000/revision>=1），写面靠应用层 CAS `UPDATE … WHERE id = $1 AND revision = $2`、审计走同事务窄口径 SECURITY DEFINER 函数 record_admin_category_update(uuid,text,integer,uuid)（函数内固定 action=category.update / scope=sources:write / result=accepted、target_ref=NULL、target_hint 由形参重建，并核审计 revision 必须等于库内现值）；20-login-roles.sql 段 gy-r68-catalog-grant 按列授 SELECT 6 / UPDATE 5、无 INSERT/DELETE、函数只授运行时 EXECUTE；配对回滚 rollback/0049_admin_categories.down.sql 先数 category.update 审计行与 revision>1 的目录行，>0 即 G0019 中止；上一支 0048 是 R68 的 0048_admin_account_disable.sql：后台**停用/恢复管理员账号**的唯一写入口 disable_admin_account(uuid,uuid,uuid,integer,uuid,text) / enable_admin_account(同形)，窄口径 SECURITY DEFINER + SET search_path=pg_catalog + SET TimeZone=UTC + REVOKE ALL … FROM PUBLIC + 只授运行时 EXECUTE；锁序先拿 0041 同一把事务级 `pg_advisory_xact_lock(hashtextextended(\'admin_scope:\' || \'scopes:write\', 18040))` 再对 admin_accounts 行 FOR UPDATE；停用写 state=suspended + auth_epoch+1 + revision+1（CAS）并同事务把 admin_sessions 的 live 行置 revoked_at，审计行 action 固定 admin_account.disable、before_value/after_value 为 NULL；停用自己 ⇒ G0020 SELF_DISABLE_DENIED、停用唯一持 scopes:write 的管理员 ⇒ G0009（与 0041 同一个码），停用与审计**同一事务** ⇒ 审计写不进去连停用一起 ROLLBACK（fail-closed）；配对回滚 rollback/0048_admin_account_disable.down.sql 只 DROP FUNCTION、⛔ 不删审计行；上一支 0047 是 R64 的 0047_admin_post_hide_audit.sql：后台下架 `post.hide` 的审计**真落库**唯一写入口 record_admin_post_hide_audit(uuid,uuid,integer,text,uuid)，窄口径 SECURITY DEFINER + REVOKE ALL … FROM PUBLIC + 只授运行时 EXECUTE，action/scope/result 由函数体字面量固定、target_ref 由形参重建（调用方伪造不了），下架与审计**同一事务** ⇒ 审计写不进去连帖子一起 ROLLBACK（fail-closed）；配对回滚 rollback/0047_admin_post_hide_audit.down.sql 只删函数；上一支 0046 是 #18 S2 收尾片的 0046_admin_scope_denial_trace.sql：后台 scope 操作**被拒**时的留痕唯一写入口 record_admin_scope_denial(uuid,uuid,text,text,uuid,uuid)，窄口径 SECURITY DEFINER + REVOKE ALL … FROM PUBLIC + 只授运行时 EXECUTE，scope 走后台权限 13 项闭集、reason_code 走四值闭集（self_scope_grant_denied / last_scope_manager / scope_denied / scope_not_held），且刻意只核 actor 存在、不核 active、不核是否持 scopes:write；上一支 0045 是 S3 片 A 的 0045_community_post_review_actor.sql，给 community_moderation_decisions 增 decided_by uuid——人工 approve/reject 的施动者快照列，非外键、不加索引、不参与可见性判定，回滚件同名 .down.sql；0044 是 #18 S4 片的 0044_third_party_deletion_persistence.sql，第三方删除持久化：record_third_party_deletion / list_third_party_deletions 两条 SECURITY DEFINER 函数 + 状态闭集 requested/confirmed/failed/unsupported + 终态不可回退的单调守卫，表本身只授运行时 EXECUTE；0043 是 #18 R18 片的 0043_admin_job_cancel_audit.sql，把后台「作业取消」审计从进程内存落到库：窄口径 SECURITY DEFINER 函数 record_admin_job_cancel_audit + REVOKE PUBLIC + 只授运行时 EXECUTE，回滚件 G0016；0042 是 GY-R37 片的 0042_favorites_history_target_type_conversation_turn.sql，`favorites`/`history` 的 `target_type` 闭集补第 17 值 `conversation_turn`；0041 是 #18 S2 片1 库层的 0041_admin_scope_write_authority.sql，后台管理员 scope 的唯一写路径 + 闭集约束；0040 是 GY-R35 的 0040_export_object_key_contract_backfill.sql，exports 台账 object_key 按契约回填 + 收 80；0039 是 #22 片C 的 deletion_state 增 cancelled；0038 是 #19 片B 的删除回执 bearer 台账持久化、0036 是 #538 的后台内容/资料域落库、0035 是 #535 的 R34 媒体行清理、0031 是 #19 的在线清理证据、0032 是 #15 的举报者行级注销引用、0033 是 R34/#525 的管理端审计日志读函数、0034 是 #19 的注销内容清理窄函数，均已在树上；仅 0037=#14 为保留号）；若这里变了，说明又落了新迁移，请复核本臂',
     );
     assert.equal(
       numbering.countMatchesMax,
@@ -491,11 +500,158 @@ async function realModeFailClosed() {
 }
 
 // ---------------------------------------------------------------------------
+// [I] 审核域持久幂等台账（迁移 0051 / R72-W41）：表形制 + 五条语句的真库读数
+//
+// 本片**不接线**（service.ts / app.ts 逐字未改），所以这一节判的是「表 + 存储层」两层事实，
+// 而不是「取消端点会不会回放」——那是 W42 的事。判据写死到列名/约束名，是为了让 0051 与
+// 0026（speech_idempotency）/0024（ocr_idempotency）这种**逐字同形**的形制一旦漂移就当场红。
+// ---------------------------------------------------------------------------
+const IDEM_MIGRATION = '0051_moderation_idempotency.sql';
+const IDEM_DOWN = `migrations/rollback/${IDEM_MIGRATION.replace(/\.sql$/, '.down.sql')}`;
+
+async function moderationIdempotency() {
+  await owner.query(readSql(`migrations/${IDEM_MIGRATION}`));
+
+  const columns = (
+    await q(
+      `SELECT column_name, data_type, is_nullable
+         FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'moderation_idempotency'
+        ORDER BY ordinal_position`,
+    )
+  ).map((row) => `${row.column_name}:${row.data_type}:${row.is_nullable}`);
+  assert.deepEqual(
+    columns,
+    [
+      'scope:character varying:NO',
+      'key_hash:character varying:NO',
+      'request_hash:character varying:NO',
+      'payload:jsonb:NO',
+      'pending:boolean:NO',
+      'expires_at:timestamp with time zone:NO',
+    ],
+    `0051 必须建出六列且与 0026/0024 的幂等台账逐字同形（现场 ${JSON.stringify(columns)}）`,
+  );
+  assert.equal(
+    await countOf(
+      `SELECT count(*)::int AS v FROM pg_constraint
+        WHERE conrelid = 'public.moderation_idempotency'::regclass
+          AND contype = 'p'
+          AND pg_get_constraintdef(oid) = 'PRIMARY KEY (scope, key_hash)'`,
+    ),
+    1,
+    '主键必须是 (scope, key_hash)：claim 的 `ON CONFLICT (scope, key_hash)` 冲突目标就是它',
+  );
+  assert.equal(
+    await countOf(
+      `SELECT count(*)::int AS v FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = 'moderation_idempotency'
+          AND indexname = 'moderation_idempotency_expires_idx'`,
+    ),
+    1,
+    '过期清理扫描（purgeIdempotent）必须有 moderation_idempotency_expires_idx',
+  );
+  note('[I] 0051 建表：六列 / 主键 (scope, key_hash) / moderation_idempotency_expires_idx 全部在岗');
+
+  const store = createPgModerationIdempotencyStore({ pool });
+  const scope = `user:${randomUUID()}\nPOST\n/moderation/jobs/${randomUUID()}/cancel`;
+  const keyHash = 'b'.repeat(64);
+  const firstExpiry = new Date('2026-10-22T05:00:00.000Z');
+  const payload = { job_id: randomUUID(), state: 'cancelled', revision: 3 };
+  const at = new Date(TS);
+
+  assert.equal(
+    await store.claimIdempotent(
+      scope,
+      keyHash,
+      { scope, keyHash, requestHash: 'req-1', payload, pending: true, expiresAt: firstExpiry },
+      at,
+    ),
+    'claimed',
+    '首次 claim 必须抢到（INSERT 一路）',
+  );
+  await store.finalizeIdempotent(scope, keyHash, payload);
+  const found = await store.findIdempotent(scope, keyHash);
+  assert.deepEqual(
+    { requestHash: found?.requestHash, payload: found?.payload, pending: found?.pending },
+    { requestHash: 'req-1', payload, pending: false },
+    'claim → finalize → find 必须把 payload 逐字取回（jsonb 往返不掉键）',
+  );
+  note('[I] claim → finalize → find：request_hash=req-1 / pending=false / payload 三键 deepEqual');
+
+  assert.equal(
+    await store.claimIdempotent(
+      scope,
+      keyHash,
+      {
+        scope,
+        keyHash,
+        requestHash: 'req-2',
+        payload: { poisoned: true },
+        pending: false,
+        expiresAt: new Date('2026-10-23T00:00:00.000Z'),
+      },
+      at,
+    ),
+    'exists',
+    '同键未过期再 claim ⇒ exists（那条 `WHERE … expires_at <= $7` 不该命中）',
+  );
+  const stillThere = await store.findIdempotent(scope, keyHash);
+  assert.deepEqual(stillThere?.payload, payload, 'exists 分支不得覆盖既有 payload');
+  assert.equal(stillThere?.requestHash, 'req-1', 'exists 分支不得把新请求的 request_hash 写进去（409 由调用方判）');
+  note('[I] 同键再 claim ⇒ exists：库里仍是 req-1 的 payload（未被 req-2 覆盖）');
+
+  // 就地重占：把行改成**已过期**（不删、不 purge），claim 必须抢到同一行。
+  await owner.query('UPDATE public.moderation_idempotency SET expires_at = $1::timestamptz WHERE scope = $2', [
+    '2026-10-21T00:00:00.000Z',
+    scope,
+  ]);
+  assert.equal(
+    await store.claimIdempotent(
+      scope,
+      keyHash,
+      {
+        scope,
+        keyHash,
+        requestHash: 'req-3',
+        payload: { reclaimed: true },
+        pending: true,
+        expiresAt: new Date('2026-10-24T00:00:00.000Z'),
+      },
+      at,
+    ),
+    'claimed',
+    '已过期行必须被就地重占（`WHERE public.moderation_idempotency.expires_at <= $7` 的唯一用途）',
+  );
+  note('[I] 过期行就地重占：claim ⇒ claimed（req-3 替换 req-1，行数仍是 1）');
+
+  const rowsBeforePurge = await countOf('SELECT count(*)::int AS v FROM public.moderation_idempotency');
+  assert.equal(rowsBeforePurge, 1, `purge 前表里应恰好 1 行（现场 ${rowsBeforePurge}）`);
+  assert.equal(
+    await store.purgeIdempotent(new Date('2030-01-01T00:00:00.000Z')),
+    rowsBeforePurge,
+    'purgeIdempotent 的返回值必须是**删掉的行数**（与 purge 前总行数对齐）',
+  );
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.moderation_idempotency'),
+    0,
+    'purgeIdempotent(未来时刻) 之后表里必须 0 行（物理删除，不是软删）',
+  );
+  note('[I] purgeIdempotent(未来时刻) ⇒ 删除 1 行、表里 0 行');
+
+  await owner.query(readSql(IDEM_DOWN));
+  const afterDown = await one("SELECT to_regclass('public.moderation_idempotency') AS o");
+  assert.equal(afterDown.o, null, '配对回滚必须能整表拆除（索引随表消失）');
+  note('[I] 配对回滚：0051 的表整表拆除（expires_idx 随表消失）');
+}
+
+// ---------------------------------------------------------------------------
 forwardMergeNumbering();
 await migrationTriple();
 await writeThrough();
 await concurrent();
 await realModeFailClosed();
+await moderationIdempotency();
 
 await owner.end();
 await pool.end();
