@@ -18,7 +18,10 @@
  *      `REVISION_CONFLICT`（**故意保留**的兼容路径，见 `service.ts` 末尾 `cancelIdempotencyOf` 的注释）；
  *   T6 缺表 fail-closed：注入 PG store 且就绪探测报 `missing` ⇒ 503 `PROVIDER_UNAVAILABLE` +
  *      `retryable: false`（**不许**静默退回旧路径）；
- *   T7 失败释放占位：版本冲突失败后，同一个 key + 正确 `If-Match` 能正常成功（不是永久在途）。
+ *   T7 失败释放占位：版本冲突失败后，同一个 key + 正确 `If-Match` 能正常成功（不是永久在途）；
+ *   T8 **占位（`await`）期间合法回调先落终态**：取消必须按占位成功后**重读**的最新记录判门禁 ⇒
+ *      409 `REVISION_CONFLICT`（不是 200 `cancelled`、不是 `OBJECT_UNAVAILABLE`），已形成的
+ *      `succeeded@2` + `contract_value` 不得被覆盖成 `cancelled`/`null`，占位必须被 `release`。
  *
  * 声明（如实）：模型/审核端口全部是**合成替身**（`provider.synthetic === true`），不发网络请求、
  * 不持有凭据；PG 臂只有**记录型假池**（探针语句用 `to_regclass` 认出来，不消耗业务应答），
@@ -43,7 +46,7 @@ import {
   idempotencyScope,
 } from '../../services/api/src/auth/idempotency.ts';
 import { ApiError } from '../../services/api/src/errors.ts';
-import { countingPort, makeHarness, textContent } from '../moderation/_http-fixtures.mjs';
+import { countingPort, envelopeForTask, makeHarness, signedCallback, textContent } from '../moderation/_http-fixtures.mjs';
 
 const API = '/api/v1';
 const JOBS = `${API}/jobs`;
@@ -372,4 +375,115 @@ test('T7 失败释放占位：版本冲突失败后，同一个 key + 正确 If-
   assert.equal(replay.status, 200, JSON.stringify(replay.body));
   assert.deepEqual(replay.body.data, ok.body.data, '回放的视图必须与成功那次逐字段相同');
   assert.equal(counter.calls.update, 1, '回放不得再写台账');
+});
+
+// ===========================================================================
+// T8 · 占位（await）期间合法回调先落终态：取消必须重读最新记录，不得覆盖已形成的结论
+// ===========================================================================
+
+/**
+ * **可控制延迟的假幂等台账**：`claimIdempotent` 先挂在 `gate` 上，由用例手动放行。
+ *
+ * 为什么必须手写假 store 而不用 `createMemoryModerationIdempotencyStore()`：要复现的正是
+ * 「占位是一次 `await`」这件事本身（`service.ts:1197`）——内存实现在同一拍就返回，监工那个
+ * 最小并发**挤不进**这段窗口。`held` 复刻内存实现的占位语义（同键未释放 ⇒ `'exists'`），
+ * 于是"占位是否被释放"可以用「同 Key 还能不能再占到位置」来证，而不是只数调用次数。
+ */
+function deferredIdempotency() {
+  const calls = { claim: 0, finalize: 0, release: 0 };
+  const held = new Map();
+  const composite = (scope, keyHash) => `${scope}\u0000${keyHash}`;
+  let openGate;
+  const gate = new Promise((resolve) => {
+    openGate = resolve;
+  });
+  const store = {
+    async purgeIdempotent() {
+      return 0;
+    },
+    async claimIdempotent(scope, keyHashHex, row) {
+      calls.claim += 1;
+      await gate; // ← 「延迟 claim」：占位挂在这里，期间让真实回调先跑完
+      const key = composite(scope, keyHashHex);
+      if (held.has(key)) return 'exists';
+      held.set(key, { ...row, scope, keyHash: keyHashHex });
+      return 'claimed';
+    },
+    async findIdempotent(scope, keyHashHex) {
+      return held.get(composite(scope, keyHashHex)) ?? null;
+    },
+    async finalizeIdempotent(scope, keyHashHex, payload) {
+      calls.finalize += 1;
+      const key = composite(scope, keyHashHex);
+      const row = held.get(key);
+      if (row === undefined) return;
+      held.set(key, { ...row, payload: { ...payload }, pending: false });
+    },
+    async releaseIdempotent(scope, keyHashHex) {
+      calls.release += 1;
+      held.delete(composite(scope, keyHashHex));
+    },
+  };
+  return { store, calls, openClaim: () => openGate() };
+}
+
+test('T8 竞态：占位（await）期间合法回调落成 succeeded@2 ⇒ 取消 409 REVISION_CONFLICT，不得覆盖结论、占位须释放', async (t) => {
+  const deferred = deferredIdempotency();
+  const h = await makeFixture(t, { idempotency: deferred.store });
+  const task = await deferredTask(h);
+  const key = nextKey('t8');
+
+  // 1) 发起取消但**不 await 它**：`service.ts:1188` 的 `record` 就在这一刻被取成 queued@1 的旧快照。
+  const pendingCancel = h.moderation.service.cancelJob({
+    userId: h.a.user.id,
+    jobId: task.job_id,
+    ifMatch: '"1"', // 契约强 ETag（`requireCancelIfMatch` 只收 `"正整数"`）
+    idempotencyKey: key,
+  });
+
+  // 2) 等它**真的进到"占位挂起"**（否则回调可能抢在占位之前，就不是监工那个形状了）。
+  for (let attempt = 0; attempt < 100 && deferred.calls.claim === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(deferred.calls.claim, 1, '取消必须先进入幂等占位（这就是被 await 的那一步）');
+
+  // 3) 占位仍挂着时，一条**逐字段合法、签名有效**的回调把作业写成 succeeded@2（结论已经形成）。
+  const envelope = envelopeForTask(task, { event_id: 'evt-t8-late' });
+  const callback = await h.moderation.service.ingestCallback(signedCallback(envelope));
+  assert.equal(callback.accepted, true, `竞态里的回调本身必须是被接受的合法回调：${JSON.stringify(callback.reason_codes)}`);
+  const settled = h.moderation.ledger.byJobId(task.job_id);
+  assert.equal(settled.state, 'succeeded');
+  assert.equal(settled.job_revision, 2);
+  assert.notEqual(settled.contract_value, null, '回调已经把审核结论写进台账了（这正是不能被抹掉的那份）');
+
+  // 4) 放行占位。
+  deferred.openClaim();
+
+  // 5) 取消必须按**最新**记录判门禁 ⇒ 409 REVISION_CONFLICT（不是 200 cancelled、不是 OBJECT_UNAVAILABLE）。
+  await assert.rejects(pendingCancel, (error) => {
+    assert.ok(error instanceof ApiError, `必须是 ApiError，实际是 ${String(error)}`);
+    assert.equal(error.code, 'REVISION_CONFLICT', `取消必须如实报版本冲突，实际 ${error.code}`);
+    return true;
+  });
+
+  // 6) 结论没被抹掉：仍是 succeeded@2、contract_value 仍非空、记录一个字都没被改写。
+  const final = h.moderation.ledger.byJobId(task.job_id);
+  assert.equal(final.state, 'succeeded', '迟到取消不得把已形成的审核结论覆盖成 cancelled');
+  assert.equal(final.job_revision, 2, '迟到取消不得让 job_revision 再 +1');
+  assert.notEqual(final.contract_value, null, '迟到取消不得清空 contract_value');
+  assert.deepEqual(final.contract_value, settled.contract_value, '已形成的结论对象必须逐字段不变');
+  assert.equal(final.updated_at, settled.updated_at, '失败的取消不得改写记录（updated_at 不动）');
+
+  // 7) 占位被释放（且没被结算成"成功回放"）；同 Key 还能再占到位置 ⇒ 不是永久在途。
+  assert.equal(deferred.calls.release, 1, '失败必须释放占位，否则这个键被自己的占位永久挡死');
+  assert.equal(deferred.calls.finalize, 0, '失败的取消不得把占位结算成成功回放');
+  await assert.rejects(
+    h.moderation.service.cancelJob({ userId: h.a.user.id, jobId: task.job_id, ifMatch: '"1"', idempotencyKey: key }),
+    (error) => {
+      assert.ok(error instanceof ApiError, `必须是 ApiError，实际是 ${String(error)}`);
+      assert.equal(error.code, 'REVISION_CONFLICT', `占位若未释放会撞自己的占位（REQUEST_IN_PROGRESS）；实际 ${error.code}`);
+      return true;
+    },
+  );
+  assert.equal(deferred.calls.claim, 2, '同 Key 第二次请求必须能重新占位（证明第一次的占位真的释放了）');
 });
