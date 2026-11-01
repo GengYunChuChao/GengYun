@@ -382,8 +382,8 @@ async function bootstrapDatabase() {
   const applied = await ownerPool.query(
     'SELECT version FROM public.schema_migrations ORDER BY version DESC LIMIT 1',
   );
-  assert.equal(applied.rows[0].version, '0050', '迁移 0050（R72-W2：public.provider_invocations —— 每一次真实外发一行的调用记录；job_id 可空无外键 + unique (job_id, attempt)、usage jsonb、invocation_state 闭集 sent/send_failed/blocked；写原语 ledger-pg.ts 的 recordInvocation、写点 task-egress.ts 的 ChatEgress.send；上一支 0049 是 R68-A01 的后台分类字典 public.admin_categories + 审计窄函数 record_admin_category_update，写面靠应用层 CAS `WHERE id = $1 AND revision = $2` 后同事务调窄函数；再上 0048 是 R68 的后台**停用/恢复管理员账号**唯一写入口 disable_admin_account / enable_admin_account；再上 0047 是 R64 的后台下架 `post.hide` 审计真落库唯一写入口 record_admin_post_hide_audit）必须是最后一条已应用版本');
-  pass('schema_migrations 末项 = 0050');
+  assert.equal(applied.rows[0].version, '0051', '迁移 0051（R72-W41：public.moderation_idempotency —— 审核域取消的持久幂等台账，六列 scope/key_hash/request_hash/payload/pending/expires_at + PRIMARY KEY (scope, key_hash) + moderation_idempotency_expires_idx，本片只建表不接线；上一支 0050 是 R72-W2：public.provider_invocations —— 每一次真实外发一行的调用记录；job_id 可空无外键 + unique (job_id, attempt)、usage jsonb、invocation_state 闭集 sent/send_failed/blocked；写原语 ledger-pg.ts 的 recordInvocation、写点 task-egress.ts 的 ChatEgress.send；上一支 0049 是 R68-A01 的后台分类字典 public.admin_categories + 审计窄函数 record_admin_category_update，写面靠应用层 CAS `WHERE id = $1 AND revision = $2` 后同事务调窄函数；再上 0048 是 R68 的后台**停用/恢复管理员账号**唯一写入口 disable_admin_account / enable_admin_account；再上 0047 是 R64 的后台下架 `post.hide` 审计真落库唯一写入口 record_admin_post_hide_audit）必须是最后一条已应用版本');
+  pass('schema_migrations 末项 = 0051');
 
   const hasCheck = await ownerPool.query(
     `SELECT count(*)::int AS n FROM pg_constraint

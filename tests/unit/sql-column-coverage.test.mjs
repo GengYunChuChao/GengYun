@@ -76,6 +76,12 @@ const ADDITIONAL_SQL_HOST_FILES = [
   'jobs/ledger.ts',
   'knowledge/service.ts',
   'media/store-pg.ts',
+  // R72-W41（2026-11-01）：审核域持久幂等台账 `public.moderation_idempotency` 的唯一写入点
+  // （迁移 0051；五条语句各是 find/claim/finalize/release/purge 一个方法）。它不在 8 个 store-pg
+  // 目录里，但写的是**运行时的真表**，所以进真审计而不是 UNAUDITED 桶：六列 SELECT / 六列 INSERT /
+  // 四列 UPDATE / 表级 DELETE 缺一列就红（与 20-login-roles.sql 的
+  // `gy-r72-moderation-idempotency-grant` / `…-delete` 两区逐列对应）。
+  'moderation/idempotency-store.ts',
   'moderation/ledger-pg.ts',
   'privacy/backup-copies-pg.ts',
   'privacy/consent-pg.ts',
@@ -866,19 +872,19 @@ const TABLE_WIDE_COLUMN = '*';
  *   作业台账那半的字面量已在 305→308 里，两半互不重叠（不同审计文件、不同表）。
  */
 const EXPECTED_EXTENDED_READINGS = {
-  auditedFiles: 22,
-  sqlLiterals: 313,
-  statements: { INSERT: 48, UPDATE: 57, SELECT: 167, DELETE: 41 },
-  returningClauses: 97,
-  onConflictClauses: 30,
+  auditedFiles: 23,
+  sqlLiterals: 319,
+  statements: { INSERT: 49, UPDATE: 58, SELECT: 169, DELETE: 43 },
+  returningClauses: 99,
+  onConflictClauses: 31,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 17,
-  referencedTables: 51,
-  columnRequirements: 2047,
-  coveredRequirements: 1946,
+  noTargetTable: 18,
+  referencedTables: 52,
+  columnRequirements: 2069,
+  coveredRequirements: 1968,
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -900,6 +906,9 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'knowledge/service.ts': 4,
   'media': 23,
   'messages': 15,
+  // R72-W41（2026-11-01）：审核域幂等台账 store 的 6 条 SQL 字面量 —— 五条业务语句
+  // （find / claim / finalize / release / purge）+ 一条 `to_regclass` 就绪探测。
+  'moderation/idempotency-store.ts': 6,
   'moderation/ledger-pg.ts': 5,
   'ocr': 19,
   'privacy/backup-copies-pg.ts': 4,
@@ -944,6 +953,7 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.media_object_cleanup',
   'public.messages',
   'public.moderation_decisions',
+  'public.moderation_idempotency',
   'public.moderation_withdrawals',
   'public.ocr_idempotency',
   'public.ocr_jobs',
@@ -2634,11 +2644,11 @@ test('sql-column-coverage/扩展 22 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 21 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 22 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01 / R72-W41）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 35, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 36, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2653,6 +2663,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/knowledge/service.ts',
       'services/api/src/media/store-pg.ts',
       'services/api/src/messages/store-pg.ts',
+      'services/api/src/moderation/idempotency-store.ts',
       'services/api/src/moderation/ledger-pg.ts',
       'services/api/src/ocr/store-pg.ts',
       'services/api/src/privacy/backup-copies-pg.ts',

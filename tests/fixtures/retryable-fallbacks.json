@@ -4,7 +4,7 @@
   "scanned": [
     {
       "dir": "services/api/src",
-      "files": 253
+      "files": 258
     },
     {
       "dir": "miniprogram",
@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 50,
-    "has": 49,
+    "total": 52,
+    "has": 51,
     "none": 1
   },
   "entries": [
@@ -124,14 +124,14 @@
     },
     {
       "file": "services/api/src/conversations/store-pg.ts",
-      "line": 63,
+      "line": 66,
       "function": "classifyConversationDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/conversations/store-pg.ts",
-      "line": 69,
+      "line": 72,
       "function": "classifyConversationDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -215,7 +215,7 @@
     },
     {
       "file": "services/api/src/media/purge-driver.ts",
-      "line": 206,
+      "line": 213,
       "function": "describeFailure",
       "judgement": "has",
       "owner": "GY-I22"
@@ -256,6 +256,20 @@
       "owner": "GY-I22"
     },
     {
+      "file": "services/api/src/moderation/idempotency-store.ts",
+      "line": 206,
+      "function": "classifyModerationIdempotencyDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/moderation/idempotency-store.ts",
+      "line": 209,
+      "function": "classifyModerationIdempotencyDatabaseError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
       "file": "services/api/src/moderation/live-assembly.ts",
       "line": 146,
       "function": "refusalOf",
@@ -264,14 +278,14 @@
     },
     {
       "file": "services/api/src/ocr/store-pg.ts",
-      "line": 132,
+      "line": 133,
       "function": "classifyOcrDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/ocr/store-pg.ts",
-      "line": 138,
+      "line": 139,
       "function": "classifyOcrDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -334,14 +348,14 @@
     },
     {
       "file": "services/api/src/recognitions/store-pg.ts",
-      "line": 146,
+      "line": 147,
       "function": "classifyRecognitionDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/recognitions/store-pg.ts",
-      "line": 152,
+      "line": 153,
       "function": "classifyRecognitionDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
@@ -355,14 +369,14 @@
     },
     {
       "file": "services/api/src/speech/store-pg.ts",
-      "line": 123,
+      "line": 124,
       "function": "classifySpeechDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
     },
     {
       "file": "services/api/src/speech/store-pg.ts",
-      "line": 129,
+      "line": 130,
       "function": "classifySpeechDatabaseError",
       "judgement": "has",
       "owner": "GY-I22"
