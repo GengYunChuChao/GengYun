@@ -96,6 +96,22 @@ const ROWS_BY_TABLE = {
       error_code: null,
     },
   ],
+  // W36：第 4 张域表。列名带 `job_` 前缀（`job_state` / `job_deadline_at` / `job_created_at` /
+  // `job_error_code`），主键 `id` 是**轮次** id、作业 id 在 `job_id`，且**没有** media 两列
+  // （取消事务对 answer 源只要求 owner 非空，见 `jobs-pg.ts:620`）。created_at 取最旧 ⇒ 列表里排最后。
+  'public.conversation_turns': [
+    {
+      id: makeUuid(904),
+      revision: 1,
+      record_id: makeUuid(914),
+      owner_user_id: makeUuid(924),
+      state: 'queued',
+      deadline_at: '2026-10-12T01:00:00.000Z',
+      created_at: '2026-10-12T00:00:30.000Z',
+      updated_at: '2026-10-12T00:00:30.000Z',
+      error_code: null,
+    },
+  ],
 };
 
 /** 语句命中的是哪张域表 → 哪个作业源 kind（cast 期望按 kind 查）。 */
@@ -103,6 +119,7 @@ const KIND_BY_TABLE = {
   'public.ocr_jobs': 'ocr',
   'public.recognition_jobs': 'recognition',
   'public.speech_jobs': 'transcription',
+  'public.conversation_turns': 'answer',
 };
 
 /** 语句里出现的是哪张域表（三源语句各不相同，故可反查）。 */
@@ -152,8 +169,9 @@ function fakePool(rowsByTable = ROWS_BY_TABLE) {
       calls.push({ text, values: [...values] });
       const table = Object.keys(rowsByTable).find((candidate) => text.includes(candidate));
       if (table === undefined) throw new Error(`假池不认识这条语句：${text}`);
-      // `getSql` 的形状（`WHERE j.id = $1::uuid`）：按 id 定位单行，别拿 `$1` 当 LIMIT 截断。
-      if (text.includes('WHERE j.id = $1::uuid')) {
+      // `getSql` 的形状（`WHERE j.id = $1::uuid`，`answer` 源是 `WHERE j.job_id = $1::uuid`）：
+      // 按 id 定位单行，别拿 `$1` 当 LIMIT 截断。两个列名都要认，否则 answer 源的 get 永远空。
+      if (/WHERE j\.(id|job_id) = \$1::uuid/.test(text)) {
         return { rows: rowsByTable[table].filter((row) => row.id === values[0]) };
       }
       return { rows: rowsForStatement(text, values, rowsByTable[table]) };
@@ -173,19 +191,25 @@ function portWith(pool) {
 // 1. SQL 下推：WHERE 出现、值只走绑定、$1 恒为 limit
 // ---------------------------------------------------------------------------
 
-test('list(state)：三源各自按真实列类型拼 WHERE（ocr ⇒ ::text，枚举源 ⇒ ::job_state）', async () => {
+test('list(state)：四源各自按真实列名与列类型拼 WHERE（ocr / answer ⇒ ::text，枚举源 ⇒ ::job_state）', async () => {
   const pool = fakePool();
   const jobs = await portWith(pool).list({ state: 'failed' });
 
-  assert.equal(pool.calls.length, 3, '三张域表各一次查询');
+  assert.equal(pool.calls.length, 4, '四张域表各一次查询');
   for (const call of pool.calls) {
     const kind = kindOf(call.text);
-    const cast = kind === 'ocr' ? 'text' : 'job_state';
+    const cast = kind === 'ocr' || kind === 'answer' ? 'text' : 'job_state';
+    // 列名也要对：`public.conversation_turns` 的时间/状态列叫 `job_state`（PG 的 WHERE 认不出输出别名 `state`）。
+    const column = kind === 'answer' ? 'job_state' : 'state';
     assert.ok(
-      call.text.includes(` WHERE state = $2::${cast}`),
-      `${kind} 源的 state 条件必须按真实列类型下推（::${cast}）：${call.text}`,
+      call.text.includes(` WHERE ${column} = $2::${cast}`),
+      `${kind} 源的 state 条件必须按真实列名/列类型下推（${column} ::${cast}）：${call.text}`,
     );
-    assert.ok(call.text.endsWith(' ORDER BY j.created_at DESC, j.id DESC LIMIT $1::integer'));
+    // 排序键同样逐源不同：轮次表的时间列叫 `job_created_at`。
+    const tail = kind === 'answer'
+      ? ' ORDER BY j.job_created_at DESC, j.id DESC LIMIT $1::integer'
+      : ' ORDER BY j.created_at DESC, j.id DESC LIMIT $1::integer';
+    assert.ok(call.text.endsWith(tail), `${kind} 源的尾部必须按真实时间列排序：${call.text}`);
     assert.deepEqual(call.values, [ADMIN_JOB_LIST_LIMIT, 'failed'], '绑定顺序必须是 [$1=limit, $2=state]');
     assert.equal(call.text.includes('failed'), false, '过滤值不得被拼进语句文本（参数化）');
   }
@@ -201,21 +225,24 @@ test('list(state)：三源各自按真实列类型拼 WHERE（ocr ⇒ ::text，�
   assert.equal(jobs[0].error_code, 'PROVIDER_TIMEOUT', '失败分类原样透出（不折叠）');
 });
 
-test('list(error_code)：三源语句都拼 WHERE error_code = $2::text，按文本列比较、不做枚举转换', async () => {
+test('list(error_code)：四源语句都拼 WHERE <error_code 列> = $2::text，按文本列比较、不做枚举转换', async () => {
   const pool = fakePool();
   const jobs = await portWith(pool).list({ error_code: 'PROVIDER_TIMEOUT' });
 
-  assert.equal(pool.calls.length, 3);
+  assert.equal(pool.calls.length, 4);
   for (const call of pool.calls) {
+    const kind = kindOf(call.text);
+    // 列名逐源：轮次表是 `job_error_code`（同表里没有 `error_code` 列）。
+    const column = kind === 'answer' ? 'job_error_code' : 'error_code';
     assert.ok(
-      call.text.includes(' WHERE error_code = $2::text'),
-      `语句必须把 error_code 条件下推：${call.text}`,
+      call.text.includes(` WHERE ${column} = $2::text`),
+      `${kind} 源的 error_code 条件下推（列名 ${column}）：${call.text}`,
     );
     assert.deepEqual(call.values, [ADMIN_JOB_LIST_LIMIT, 'PROVIDER_TIMEOUT']);
     assert.equal(call.text.includes('PROVIDER_TIMEOUT'), false, '过滤值不得被拼进语句文本');
-    // 三张域表的 error_code 是 varchar(80)（不是枚举列）：⛔ 不许出现枚举类型转换/多余的列转换。
+    // 各表的 error_code 是 varchar(80)（不是枚举列）：⛔ 不许出现枚举类型转换/多余的列转换。
     assert.equal(/::(job_state|error_code|public\.)/i.test(call.text), false, `不得做枚举类型转换：${call.text}`);
-    assert.equal(/error_code\s*::\s*\w+/i.test(call.text), false, 'error_code 不得左值转型（按文本列直接比）');
+    assert.equal(/(?:^|[^_])error_code\s*::\s*\w+/i.test(call.text), false, 'error_code 不得左值转型（按文本列直接比）');
   }
   assert.deepEqual(jobs.map((job) => job.kind), ['ocr']);
 });
@@ -226,10 +253,11 @@ test('list(state + error_code)：两个条件按 $2/$3 顺序绑定，state 的 
 
   for (const call of pool.calls) {
     const kind = kindOf(call.text);
-    const cast = kind === 'ocr' ? 'text' : 'job_state';
+    const cast = kind === 'ocr' || kind === 'answer' ? 'text' : 'job_state';
+    const prefix = kind === 'answer' ? 'job_' : '';
     assert.ok(
-      call.text.includes(` WHERE state = $2::${cast} AND error_code = $3::text`),
-      `${kind} 源的两个条件必须同时下推且 cast 正确（::${cast}）：${call.text}`,
+      call.text.includes(` WHERE ${prefix}state = $2::${cast} AND ${prefix}error_code = $3::text`),
+      `${kind} 源的两个条件必须同时下推、列名与 cast 都正确（${prefix}state ::${cast}）：${call.text}`,
     );
     assert.deepEqual(call.values, [ADMIN_JOB_LIST_LIMIT, 'failed', 'PROVIDER_TIMEOUT']);
     assert.equal(call.text.includes('failed'), false);
@@ -238,32 +266,42 @@ test('list(state + error_code)：两个条件按 $2/$3 顺序绑定，state 的 
   assert.deepEqual(jobs.map((job) => job.id), [makeUuid(901)]);
 });
 
-test('逐源 cast 钉子：枚举源绝不出现 state = $2::text（挡住「改回统一 ::text」的回归）', async () => {
-  // 三种组合 × 三个源全扫一遍：真库 42883 的触发条件就是「枚举列配 text 参数」。
+test('逐源 cast/列名钉子：枚举源不许 ::text、answer 源不许裸 `state`（挡住两类回归）', async () => {
+  // 三种组合 × 四个源全扫一遍：真库 42883 的触发条件是「枚举列配 text 参数」；
+  // 42703（column "state" does not exist）的触发条件是「拿输出别名去 WHERE」—— 轮次表只有 `job_state`。
   for (const filter of [{ state: 'failed' }, { state: 'running', error_code: 'PROVIDER_TIMEOUT' }]) {
     const pool = fakePool();
     await portWith(pool).list(filter);
-    assert.equal(pool.calls.length, 3);
+    assert.equal(pool.calls.length, 4);
     for (const call of pool.calls) {
       const kind = kindOf(call.text);
       const isEnumSource = kind === 'recognition' || kind === 'transcription';
+      const column = kind === 'answer' ? 'job_state' : 'state';
+      const cast = isEnumSource ? 'job_state' : 'text';
+      assert.ok(
+        call.text.includes(` WHERE ${column} = $2::${cast}`),
+        `${kind} 源的 state 片段必须是 \` WHERE ${column} = $2::${cast}\`：${call.text}`,
+      );
       if (isEnumSource) {
         assert.equal(
           call.text.includes('state = $2::text'),
           false,
           `${kind}.state 是 job_state 枚举，写 ::text 会 42883 ⇒ 500：${call.text}`,
         );
-        assert.ok(
-          call.text.includes('state = $2::job_state'),
-          `${kind}.state 必须显式转成 job_state：${call.text}`,
-        );
       } else {
         assert.equal(
-          call.text.includes('state = $2::job_state'),
+          / WHERE (?:job_)?state = \$2::job_state/.test(call.text),
           false,
-          `ocr_jobs.state 是 text+CHECK，不该转成枚举：${call.text}`,
+          `${kind} 源不是枚举列，不该转成 job_state：${call.text}`,
         );
-        assert.ok(call.text.includes('state = $2::text'), `ocr_jobs.state 按文本比：${call.text}`);
+      }
+      // 别名不是列：`WHERE state = …` 打轮次表就是 42703（`state` 只是投影别名）。
+      if (kind === 'answer') {
+        assert.equal(
+          / WHERE (?!job_)state = /.test(call.text),
+          false,
+          `answer 源不许用输出别名 \`state\` 做谓词（会 42703）：${call.text}`,
+        );
       }
       // 枚举源与文本源都不许把 state 值拼进语句（否则闭集校验就白做了）。
       assert.equal(call.text.includes(filter.state), false);
@@ -277,15 +315,18 @@ test('逐源 cast 钉子：枚举源绝不出现 state = $2::text（挡住「改
       ['ocr', 'text'],
       ['recognition', 'job_state'],
       ['transcription', 'job_state'],
+      ['answer', 'text'],
     ],
-    'state 的 cast 必须按源区分（0024:93-95 是 text+CHECK，0025:117 / 0026:98 是 job_state 枚举）',
+    'state 的 cast 必须按源区分（0024:93-95 是 text+CHECK，0025:117 / 0026:98 是 job_state 枚举，'
+      + '0013:71-72 的 job_state 是 varchar(20)+CHECK ⇒ 按文本比）',
   );
   for (const entry of ADMIN_JOB_SQL.listWhere) {
-    const cast = entry.stateCast;
+    // 列名同样逐源：只有第 4 张表把状态列叫 `job_state`（同表里没有 `state`）。
+    const prefix = entry.kind === 'answer' ? 'job_' : '';
     assert.deepEqual(entry.where, {
-      state: ` WHERE state = $2::${cast}`,
-      error_code: ' WHERE error_code = $2::text',
-      state_and_error_code: ` WHERE state = $2::${cast} AND error_code = $3::text`,
+      state: ` WHERE ${prefix}state = $2::${entry.stateCast}`,
+      error_code: ` WHERE ${prefix}error_code = $2::text`,
+      state_and_error_code: ` WHERE ${prefix}state = $2::${entry.stateCast} AND ${prefix}error_code = $3::text`,
     });
   }
 });
@@ -305,8 +346,8 @@ test('list() 不传过滤：语句与 ADMIN_JOB_SQL.list 逐字相同（无 WHER
     assert.equal(/\bWHERE\b/.test(call.text), false, `不传过滤不得出现 WHERE：${call.text}`);
     assert.deepEqual(call.values, [ADMIN_JOB_LIST_LIMIT], '不传过滤时只绑 limit');
   }
-  // 三源合并后按 created_at DESC（最新在前），与改前一致。
-  assert.deepEqual(jobs.map((job) => job.kind), ['ocr', 'recognition', 'transcription']);
+  // 四源合并后按 created_at DESC（最新在前）：ocr 00:03 → recognition 00:02 → speech 00:01 → 轮次 00:00:30。
+  assert.deepEqual(jobs.map((job) => job.kind), ['ocr', 'recognition', 'transcription', 'answer']);
 });
 
 test('list({}) / list({state: undefined}) 等价于不传过滤（空对象不产生 WHERE）', async () => {
@@ -516,7 +557,7 @@ const SUCCEEDED_OCR_JOB = {
   target_revision: 4,
 };
 
-/** 三源的库行：ocr 是「已产出记录」的 succeeded，另两条是「记录尚未创建」的非终态。 */
+/** 四源的库行：ocr 是「已产出记录」的 succeeded，另三条是「记录尚未创建」的非终态。 */
 function rowsWithRecordRevision(ocrRow = {}) {
   return {
     'public.ocr_jobs': [{ ...SUCCEEDED_OCR_JOB, ...ocrRow }],
@@ -524,6 +565,8 @@ function rowsWithRecordRevision(ocrRow = {}) {
       { ...ROWS_BY_TABLE['public.recognition_jobs'][0], target_revision: null },
     ],
     'public.speech_jobs': [{ ...ROWS_BY_TABLE['public.speech_jobs'][0], target_revision: null }],
+    // W36：轮次表**没有**记录表可 JOIN（`ANSWER_SOURCE` 不投影 target_revision）⇒ 恒为初始值 1。
+    'public.conversation_turns': [{ ...ROWS_BY_TABLE['public.conversation_turns'][0] }],
   };
 }
 
@@ -571,15 +614,16 @@ test('list：记录已存在 ⇒ target_ref.revision 取记录行真实版本（
   const pool = fakePool(rowsWithRecordRevision());
   const jobs = await portWith(pool).list();
 
-  // created_at DESC：succeeded ocr(00:04) → queued recognition(00:02) → running speech(00:01)。
+  // created_at DESC：succeeded ocr(00:04) → queued recognition(00:02) → running speech(00:01) → 轮次(00:00:30)。
   assert.deepEqual(
     jobs.map((job) => [job.kind, job.target_ref.revision]),
     [
       ['ocr', 4],
       ['recognition', 1],
       ['transcription', 1],
+      ['answer', 1],
     ],
-    '有记录的作业必须透出记录行的真实 revision；没记录的退回初始值 1',
+    '有记录的作业必须透出记录行的真实 revision；没记录的退回初始值 1（轮次表没有记录表 ⇒ 恒 1）',
   );
   // 两条时钟互不冒充：作业行 revision 是 3，目标记录版本是 4。
   assert.equal(jobs[0].revision, 3, '作业行 revision 必须原样是状态迁移计数');
@@ -591,7 +635,8 @@ test('list：记录已存在 ⇒ target_ref.revision 取记录行真实版本（
 test('list：记录尚未创建（LEFT JOIN 无匹配）⇒ 1（记录行初始版本），不是 0 也不是 null', async () => {
   const pool = fakePool(); // 种子行不带 target_revision：模拟三张记录表零行
   const jobs = await portWith(pool).list();
-  assert.deepEqual(jobs.map((job) => job.target_ref.revision), [1, 1, 1]);
+  // 四源：前三个域内源走 LEFT JOIN 无匹配，`answer` 源压根没有记录表可 JOIN ⇒ 四者都是初始值 1。
+  assert.deepEqual(jobs.map((job) => job.target_ref.revision), [1, 1, 1, 1]);
 });
 
 test('get：单条读面同一条 JOIN 口径，透出记录真实版本', async () => {
@@ -613,7 +658,7 @@ test('库里读出非法记录版本（0 / 2.5 / "4" / -1）⇒ 503，不折算�
   }
 });
 
-test('SQL 钉子：三源 list/get 用 LEFT JOIN 取 r.revision；⛔ 不许退成 INNER JOIN 或标量子查询', () => {
+test('SQL 钉子：前三个域内源 list/get 用 LEFT JOIN 取 r.revision；第 4 源不 JOIN、不投影 target_revision', () => {
   const expected = [
     ['public.ocr_jobs', 'public.ocr_records', 'j.ocr_id'],
     ['public.recognition_jobs', 'public.recognition_records', 'j.recognition_id'],
@@ -630,6 +675,13 @@ test('SQL 钉子：三源 list/get 用 LEFT JOIN 取 r.revision；⛔ 不许退�
       // 标量子查询会被静态列审计当成列名（`ocr_records` 会变成 `ocr_jobs` 的列）⇒ 必红。
       assert.equal(sql.includes('(SELECT'), false, sql);
     }
+  }
+  // 第 4 源（`answer` / `public.conversation_turns`）没有记录表：⛔ 不许 JOIN `conversation_answers`
+  // （做题中的轮次根本还没有答案行，JOIN 会把它整条滤掉；且 `target_ref` 一变 service.ts 就 503）。
+  for (const sql of [ADMIN_JOB_SQL.list[3], ADMIN_JOB_SQL.get[3]]) {
+    assert.ok(sql.includes('FROM public.conversation_turns j'), sql);
+    assert.equal(/\bJOIN\b/i.test(sql), false, `轮次表没有记录表可 JOIN：${sql}`);
+    assert.equal(sql.includes('target_revision'), false, `轮次表不投影 target_revision（恒 1）：${sql}`);
   }
   // 取消面故意不读记录表：可被取消的作业必然还没有记录（记录只由终态事务写）。
   for (const sql of [...ADMIN_JOB_SQL.lock, ...ADMIN_JOB_SQL.update]) {
