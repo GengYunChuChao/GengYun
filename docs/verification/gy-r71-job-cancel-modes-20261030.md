@@ -120,7 +120,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 1. **没有真实供应商/真实模型参与**：`moderation` 用的是 `provider.synthetic === true` 的合成端口；`answer` 的回答器是测试注入的替身。⇒ 本页**不得**被引用为任何审核准确率、模型质量或真实可用性证据。
 2. **没有真库读数**：`real` 模式下 `conversation_turns` / `conversation_answers` 的真实 PostgreSQL 行为**未在本机实测**（本机无 `DATABASE_URL`、5432 无监听）。PG 臂只有记录型假池 + 代码路径，真库那一臂在 `tests/integration/conversations-pg.mjs`（不在九条门禁内）。
 3. **没有跨进程/多副本语义**：单进程内存台账与单连接池下的 CAS；多副本并发取消（两个进程同时取消同一作业）未实测。
-4. **没有测"取消后重启"**：`moderation` 的取消在持久台账上是 `flush` 落库的，但"落库后重启、再投迟到回调"这条跨重启链未实测（`ledger-pg.ts` 自己声明不做 hydrate）。
+4. **没有测"取消后重启"**：`moderation` 的取消在持久台账上是 `flush` 落库的，但"落库后重启、再投迟到回调"这条跨重启链未实测（W43 起**下架集合**在首次 `flush()`/`hydrate()` 时回填；作业结论仍不回填 —— 见 `ledger-pg.ts` 头注释）。
 5. **没有测 `real` 模式整域 fail-closed 下的取消**：`real` 无凭据时审核域读面恒空 ⇒ 取消只会得到 404（`cancelJob` 的 `deny()` 分支不可达）。
 6. **没有测前端/小程序侧**：本片只有服务端与用例。
 
