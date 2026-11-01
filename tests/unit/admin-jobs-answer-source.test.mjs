@@ -229,8 +229,10 @@ test('T2 单条读面：按 j.job_id = $1::uuid 命中（唯一索引 0013:92）
 // T3 updateSql 镜像域内取消（逐字）
 // ---------------------------------------------------------------------------
 
-test('T3 answer.updateSql 的 SET 与 IN 谓词逐字镜像域内 cancelTurnJob（store-pg.ts:413-416）', () => {
-  const domain = statementOf(storePgText, 'async cancelTurnJob(', 'RETURNING ${TURN_COLUMNS}');
+test('T3 answer.updateSql 的 SET 与 IN 谓词逐字镜像域内取消语句（store-pg.ts 末尾的 CANCEL_TURN_JOB_SQL）', () => {
+  // GY-R72 W37 把这条 SQL 从 `cancelTurnJob` 函数体搬进了文件末尾的命名常量（零位移）：切段起点跟着改，
+  // 断言一个字没动 —— 仍比「同一笔取消在两侧落成同一组 SET」。
+  const domain = statementOf(storePgText, 'const CANCEL_TURN_JOB_SQL', 'RETURNING ${TURN_COLUMNS}');
   const ops = ADMIN_JOB_SQL.update[ANSWER_INDEX];
 
   assert.equal(
@@ -352,7 +354,8 @@ test('T6 头注释 4–9 行改真话：四源全接，缺口句（不可见／�
 
 test('T7 parity：同一笔取消在两侧落成同样三列，谓词按角色不同但都得挡已结算作业', () => {
   const ops = ADMIN_JOB_SQL.update[ANSWER_INDEX];
-  const domain = statementOf(storePgText, 'async cancelTurnJob(', 'RETURNING ${TURN_COLUMNS}');
+  // 同上：域内取消语句现在住在文件末尾的 `CANCEL_TURN_JOB_SQL` 常量里（GY-R72 W37 零位移搬移）。
+  const domain = statementOf(storePgText, 'const CANCEL_TURN_JOB_SQL', 'RETURNING ${TURN_COLUMNS}');
 
   // 三列同形：job_state / job_error_code / revision（`updated_at` 是时钟，单独留着不算）。
   assert.deepEqual(
