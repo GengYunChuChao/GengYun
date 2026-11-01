@@ -1056,7 +1056,7 @@ function createModerationServiceResolved(
     await authority.setVisibility(target, 'hidden');
     await authority.setPublishedRevision(target, null);
     ledger.markWithdrawn(target);
-    // 下架标记同样要落定：标记丢了，旧回调就能把内容复活（`isWithdrawn` 是那道闸门）。
+    // 下架标记同样要落定：标记丢了（或重启后尚未回填）⇒ `publish` 的 `:939` 闸门会放行已下架版本；回调路径更早被 `:1260` 的 `ledger.byJobId(...)` + `CALLBACK_JOB_UNKNOWN` 挡住。
     await flushLedger();
     // 失效在**同一次调用内同步完成**：返回的键就是这次真正清掉的键（不另发事件）。
     const invalidated = cache.invalidateTarget(target);
