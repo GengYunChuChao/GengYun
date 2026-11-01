@@ -27,7 +27,10 @@
 //   [H] 下架集合**回填**（W43）：实例 A 下架 + flush ⇒ **另起**实例 B，`hydrate()` 后
 //       `isWithdrawn(已下架)=true`、`isWithdrawn(未下架)=false`、`snapshotCounts().withdrawn` 等于库里行数；
 //       实例 C 只走 `flush()`（`service.ts` 的 `flushLedger()` 路径）同样就位。
-//       这是"重启后旧回调不能复活已下架版本"（`service.ts:939` / `:1287`）的真库证据。
+//       这是**发布闸门**（`service.ts:939` 读 `ledger.isWithdrawn`）在重启后能拿到真值的真库证据。
+//       ⛔ 不要把它读成"回调闸门也被保住了"：`ingestCallback` 在 `service.ts:1260` 先 `ledger.byJobId(...)`，
+//       重启后作业结论不回填 ⇒ `:1261` 就用 `CALLBACK_JOB_UNKNOWN` 拒了，`:1287` 的 `CALLBACK_TARGET_WITHDRAWN`
+//       **在这个场景里不可达**（挡住、但理由错）；要精确化需回填作业结论（迁移 0052），属另一片。
 //   [C] 并发：两个台账实例同时建同一目标版本的任务 ⇒ 当前行恒 1 条（数据库判定，不是应用判定）。
 //   [R] real 模式即便本表在场也 fail-closed：`submitScreening` 拒绝且**零行**落库
 //       （不许为了让真库臂变绿伪造 published 写入）。
