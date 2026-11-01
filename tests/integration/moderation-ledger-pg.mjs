@@ -24,6 +24,10 @@
 //   [V] 多版本共存：同目标不同 revision ⇒ 两行都 `superseded=false`（唯一性是**按 revision** 的）。
 //   [U] 更新：状态/结论推进落到同一行；目标身份列（`target_type/target_id/target_revision`）逐字不变。
 //   [X] 下架幂等：两次 `markWithdrawn` ⇒ `moderation_withdrawals` 恰好 1 行。
+//   [H] 下架集合**回填**（W43）：实例 A 下架 + flush ⇒ **另起**实例 B，`hydrate()` 后
+//       `isWithdrawn(已下架)=true`、`isWithdrawn(未下架)=false`、`snapshotCounts().withdrawn` 等于库里行数；
+//       实例 C 只走 `flush()`（`service.ts` 的 `flushLedger()` 路径）同样就位。
+//       这是"重启后旧回调不能复活已下架版本"（`service.ts:939` / `:1287`）的真库证据。
 //   [C] 并发：两个台账实例同时建同一目标版本的任务 ⇒ 当前行恒 1 条（数据库判定，不是应用判定）。
 //   [R] real 模式即便本表在场也 fail-closed：`submitScreening` 拒绝且**零行**落库
 //       （不许为了让真库臂变绿伪造 published 写入）。
@@ -449,6 +453,55 @@ async function writeThrough() {
 }
 
 // ---------------------------------------------------------------------------
+// [H] 下架集合**回填**（W43）：新实例（≈ 重启后的进程）能把库里的下架行读回内存
+// ---------------------------------------------------------------------------
+// 为什么这条臂必须在真库上判：缺陷不是"函数少写了一行"，而是**内存集合是进程私有的**。
+// 单测用假池只能证明"SELECT 发出去了、行搬进去了"，证明不了"另一条连接上真能读到那一行"。
+// 这里让实例 A 下架并落库、再**另起**实例 B（内存台账全新），B 不回填的话 `isWithdrawn` 必答 false ——
+// 而 `service.ts:939`（发布前 TARGET_WITHDRAWN）与 `:1287`（旧回调 CALLBACK_TARGET_WITHDRAWN）
+// 都只问它，于是旧回调能把已下架的版本翻回 published。B 的 true 就是"这条复活路径被堵死"的读数。
+async function withdrawReadback() {
+  const target = { type: 'post', id: randomUUID(), revision: 1 };
+  const untouched = { type: 'post', id: randomUUID(), revision: 1 };
+
+  // 实例 A：只下架、只落库（不依赖任何回填）。
+  const a = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
+  assert.equal(a.withdrawalsHydrated, false, '惰性：构造时还没回填');
+  a.markWithdrawn(target);
+  await a.flush();
+  assert.equal(a.isWithdrawn(target), true, 'A 自己记得（内存集合）');
+  assert.equal(a.withdrawalsHydrated, true, 'A 的 flush 必须先回填');
+  assert.equal(
+    await countOf(
+      'SELECT count(*)::int AS v FROM public.moderation_withdrawals WHERE target_id = $1::text AND target_revision = $2::int',
+      [target.id, target.revision],
+    ),
+    1,
+    '下架行必须真的在库里（回填读的就是这张表）',
+  );
+  const total = await countOf('SELECT count(*)::int AS v FROM public.moderation_withdrawals');
+  note(`[H] 实例 A：markWithdrawn + flush ⇒ 库里 ${total} 行下架记录（本目标 1 行）`);
+
+  // 实例 B：全新实例 = 重启后的进程，内存台账什么都没有。
+  const b = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
+  assert.equal(b.isWithdrawn(target), false, '回填前 B 不记得（这正是被修的缺陷现场）');
+  assert.equal(b.withdrawalsHydrated, false);
+  await b.hydrate();
+  assert.equal(b.withdrawalsHydrated, true, 'hydrate() 成功后必须声称已回填');
+  assert.equal(b.isWithdrawn(target), true, '核心读数：另一条连接上的下架行必须能被 B 答出来');
+  assert.equal(b.isWithdrawn(untouched), false, '没下架过的目标不得被回填误伤');
+  assert.equal(b.snapshotCounts().withdrawn, total, `B 的 withdrawn 读数应等于库里下架行数（现场 ${total}）`);
+  note(`[H] 实例 B：hydrate() ⇒ isWithdrawn(已下架)=true、isWithdrawn(未下架)=false、snapshotCounts().withdrawn=${total}`);
+
+  // 实例 C：只走 `flush()`（service.ts 的真实路径，`flushLedger()` 只调 flush，从不显式调 hydrate）。
+  const c = createPostgresModerationLedger({ pool, now: () => new Date(TS) });
+  await c.flush();
+  assert.equal(c.withdrawalsHydrated, true, 'flush 必须自己先把回填做完（否则闸门读到的是空集合）');
+  assert.equal(c.isWithdrawn(target), true, '只 flush 一次也要读回下架行');
+  note('[H] 实例 C：只 flush 不显式 hydrate ⇒ 下架集合同样就位（service.ts 的 flushLedger 路径）');
+}
+
+// ---------------------------------------------------------------------------
 // [C] 并发：两个台账实例同时建同一目标版本
 // ---------------------------------------------------------------------------
 async function concurrent() {
@@ -649,6 +702,7 @@ async function moderationIdempotency() {
 forwardMergeNumbering();
 await migrationTriple();
 await writeThrough();
+await withdrawReadback();
 await concurrent();
 await realModeFailClosed();
 await moderationIdempotency();
