@@ -1086,5 +1086,16 @@
     "kind": "correction",
     "symbol": "cancelJob",
     "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/development-progress.md:15 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/development-progress.md",
+    "line": 15,
+    "target": "services/api/src/jobs/sources.ts",
+    "from": 169,
+    "to": 208,
+    "kind": "correction",
+    "symbol": "JobSourceCancelInput",
+    "reason": "陈旧锚点重锚：本行原写 `services/api/src/jobs/sources.ts:169-186`，而那段是 `createOcrJobSource` 的 JSDoc（169 `/**` … 189 `*/`），真正的 `async cancel(input: JobSourceCancelInput) {` 在 :208。把地址订正到 cancel 方法那一行（与同表里识别 :107、转写 :153 的写法一致）；symbol 取 `JobSourceCancelInput` 而不是 `cancel`，因为旧窗口的 JSDoc 里已经出现 `cancelJob`/`cancelled` 字面，取 `cancel` 会不满足「旧窗口不含符号」。目标文件本提交一字未改，只能经本登记表重锚。",
+    "fromEnd": 186
   }
 ]
