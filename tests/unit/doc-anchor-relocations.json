@@ -916,5 +916,186 @@
     "kind": "correction",
     "symbol": "cancelTurnJob",
     "reason": "base 的 :398 是 `claimTurnJob` 的 `WHERE id = $1::uuid AND owner_id = $2::uuid AND job_state = 'queued'`（旧行原文不含 `cancelTurnJob`），原文把 PG 实现位置写错；`cancelTurnJob` 实际在 :410（HEAD :410 = `async cancelTurnJob(turnId, ownerId) {`）。本片是零位移（SQL 常量搬到文件末尾，:410-521 一行没挪），端点映射只能给出 398→398，故按符号订正到 :410。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 42,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:42 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 76,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:76 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 77,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:77 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 88,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:88 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 89,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:89 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 90,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:90 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 91,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:91 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 92,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-implementation-status.md:92 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 737,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:737 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 764,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:764 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1098,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:1098 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1120,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:1120 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1142,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:1142 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1164,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:1164 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1186,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:1186 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 4347,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/architecture/contract-status.json:4347 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/development-progress.md",
+    "line": 15,
+    "target": "services/api/src/ocr/service.ts",
+    "from": 687,
+    "to": 702,
+    "kind": "correction",
+    "symbol": "cancelJob",
+    "reason": "陈旧锚点重锚：#811（读面过期裁定）给 getJob 加了裁决调用，把 cancelJob 从 services/api/src/ocr/service.ts:687 推到 :702 —— :687 现在是`const row = await adjudicateExpiredOcrJob(() => getOwnedJob(input.userId, input.jobId), store, now);`（JobProjection 读面），cancelJob 的声明在 :702 的 `async function cancelJob(input: {`。本行 docs/development-progress.md:15 写的「OCR 的取消已接线」原先指的 :687，属陈旧地址订正到真值行（不是纯新增、也不是误配）；目标文件本提交一字未改，只能经本登记表重锚。真值由 node --test tests/unit/contract-status-ocr-anchor-truth.test.mjs 的 T2 钉住（新行必须含 cancelJob，且不许落在 adjudicateExpiredOcrJob 那一行）。"
+  },
+  {
+    "doc": "docs/development-progress.md",
+    "line": 15,
+    "target": "services/api/src/jobs/sources.ts",
+    "from": 169,
+    "to": 208,
+    "kind": "correction",
+    "symbol": "JobSourceCancelInput",
+    "reason": "陈旧锚点重锚：本行原写 `services/api/src/jobs/sources.ts:169-186`，而那段是 `createOcrJobSource` 的 JSDoc（169 `/**` … 189 `*/`），真正的 `async cancel(input: JobSourceCancelInput) {` 在 :208。把地址订正到 cancel 方法那一行（与同表里识别 :107、转写 :153 的写法一致）；symbol 取 `JobSourceCancelInput` 而不是 `cancel`，因为旧窗口的 JSDoc 里已经出现 `cancelJob`/`cancelled` 字面，取 `cancel` 会不满足「旧窗口不含符号」。目标文件本提交一字未改，只能经本登记表重锚。",
+    "fromEnd": 186
   }
 ]
