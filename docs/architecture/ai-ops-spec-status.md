@@ -45,7 +45,7 @@
 
 | 域 | 计入四档 | 已实现 | 部分实现 | 未实现 | 已搁置 | 该域最硬的一条 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 作业面公共（`/jobs/*` 与取消语义） | 10 | 9 | 1 | 0 | 0 | 取消能力按域分派，问答与审核域无取消（P01） |
+| 作业面公共（`/jobs/*` 与取消语义） | 10 | 9 | 1 | 0 | 0 | 取消能力六源全接；只有未接线源才 503（P01） |
 | 识别 | 3 | 1 | 2 | 0 | 0 | 适配器与字节端口已接线（GY-R70），缺「已审供应商」与真实凭据 ⇒ 仍零真实调用；装配失败/缺凭据 fail-closed 503（N06，R72 订正为部分实现） |
 | OCR | 3 | 2 | 1 | 0 | 0 | 真实提供者／媒体／登记源未接（P03） |
 | 语音与转写 | 3 | 2 | 1 | 0 | 0 | 默认内存 store，真实 ASR 未验收（P04） |
@@ -70,7 +70,7 @@
 | --- | --- | --- | --- | --- |
 | E01 | `Job` 九键闭集，出口按契约重建、多余键一律拒绝 | 已实现 | services/api/src/jobs/registry.ts:50-60 | 只管公共作业面；后台 `AdminJob` 另有投影，两套键集不共享 |
 | E02 | `JobState` 七值闭集，不得扩展 | 已实现 | services/api/src/jobs/registry.ts:38-46 | 域内状态机另有迁移表，闭集是出口判定而非库内唯一来源 |
-| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2469-2508 | 「注册」不等于「有能力」：取消能力另按域判定（P01） |
+| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2469-2508 | 注册 ≠ 可取消；取消能力按源判定，六源今已全接（P01） |
 | E04 | 未接线 kind 与「作业不存在」同形 404 | 已实现 | services/api/src/jobs/registry.ts:280-281 | 同形是刻意设计，代价是运维无法从 404 分辨「没接」与「没这条」 |
 | E05 | `result` 如实性不变式：`result` 非空 ⇒ 只能是 `succeeded`／`uncertain` | 已实现 | services/api/src/jobs/registry.ts:177 | 与识别域既有行为有一处口径差（`uncertain` 允许带 `result`），已在同文件注明 |
 | E06 | 端口回传不合契约 ⇒ 503 `PROVIDER_UNAVAILABLE` + `retryable:false`，单通道 | 已实现 | services/api/src/jobs/registry.ts:130-133 | 唯一拒绝通道；不另造错误码，也不放宽冻结契约 |
@@ -114,7 +114,7 @@
 
 | 编号 | 判定项 | 判定 | 依据（文件:行号） | 缺口说明 |
 | --- | --- | --- | --- | --- |
-| P01 | 取消能力按域分派：识别／OCR／转写／合成四域提供；审核与问答两域不提供 ⇒ 503 `retryable:false` | 部分实现 | services/api/src/jobs/registry.ts:99 | 缺的两域不是漏接线，是域内确无取消入口；问答取消「仍如实 503」已写进台账 |
+| P01 | 取消能力六源全部接线（识别／转写／合成／OCR／审核／问答）；只有未接 cancel 的源才 503 `retryable:false` | 部分实现 | services/api/src/jobs/registry.ts:99 | 余量不是「域内无取消入口」：转写/合成 GY-R27 接、OCR 由 GY-I10 接、审核与问答由 GY-R71 接（实测 tests/unit/jobs-cancel-moderation-answer.test.mjs 的 moderation·① 与 answer·① 均 200）；真正待验收的是真实任务端口、持久租约、外发撤销与跨域生命周期（见 contract-implementation-status.md 取消行） |
 | P02 | 识别域端点、任务、选种、删除闭环 | 部分实现 | docs/architecture/contract-implementation-status.md:83-86 | 结果是 stub／preset_demo 合成替身；真实供应商与独立样本评估未验收（N06） |
 | P03 | OCR 域五端点 + 持久化 | 部分实现 | docs/architecture/contract-implementation-status.md:87-91 | 任务读取与取消已接；真实提供者／媒体／登记源未接线，用量端口恒空 |
 | P04 | 转写域四端点 + 确认分离 | 部分实现 | docs/architecture/contract-implementation-status.md:92-95 | 默认内存 store；真实 ASR 评估、媒体持久化、注销清理未验收 |
