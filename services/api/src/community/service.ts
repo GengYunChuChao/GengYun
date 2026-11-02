@@ -1673,8 +1673,20 @@ export function createCommunityService(deps: CommunityServiceDeps) {
      *    也不会产生第二条记录。这同时是"处置后不可再处置"的实现：终态在状态机层就拒绝。
      * 3. **不做归属校验**：处置方是运营侧，不是举报者本人；举报者能读自己的举报（
      *    `getOwnReport`）但**不能**推进它。
+     *
+     * ## 操作留痕（R72 · 迁移 0053）
+     *
+     * 第 3 个可选参数 `audit` 是**谁、哪次请求**在做这次处置（`admin/ops` 侧传
+     * `context.identity.userId` 与 `context.requestId`，⛔ 不接受调用方自报身份）。真库实现
+     * 把它连同 `action` 与**处置前**的 revision 交给 `commitReportIfCurrent`，由迁移 0053 的
+     * 窄口径函数在**同一个事务**里写一行 `report.{triage|resolve|reject}` 审计；审计写不进去
+     * ⇒ 整笔回滚、抛 503，⛔ 不假成功。内存实现忽略它（没有审计表）。
      */
-    async advanceReport(reportId: unknown, input: unknown): Promise<Report> {
+    async advanceReport(
+      reportId: unknown,
+      input: unknown,
+      audit?: { readonly actorId: string; readonly requestId: string },
+    ): Promise<Report> {
       const id = requireUuidParam(reportId, 'report_id');
       const body = validateReportDispositionInput(input);
       const current = await store.getReport(id);
@@ -1690,6 +1702,16 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         id,
         { revision: body.expected_revision, state: current.state },
         { revision: current.revision + 1, state: plan.to },
+        audit === undefined
+          ? null
+          : {
+              actorId: audit.actorId,
+              action: body.action,
+              // 处置**前**的 revision（与内存台账 `previousRevision` 同义）：审计记的是"哪一版被处置"，
+              // 与 `0047` 的 `post.hide` 用隐藏前 revision 同口径。
+              reportRevision: current.revision,
+              requestId: audit.requestId,
+            },
       );
       if (!committed.ok) throw commitRefusal(committed.reason);
       return projectReport(committed.record);

@@ -1,7 +1,7 @@
 /**
  * GY-I18 后台资料／运营／开关 · HTTP 路由（阶段 2：产品装配）。
  *
- * 覆盖契约 `packages/contracts/openapi.json` 里 **46 个 operationId**：
+ * 覆盖契约 `packages/contracts/openapi.json` 里 **47 个 operationId**：
  * - 阶段 1（已合并 #96）25 个：四类资料 × 6（list/create/get/edit/publish/withdraw）
  *   + `listAuditEvents`；
  * - 阶段 1b（已合并 #101）9 个：`listAdminCategories`/`editCategory`、
@@ -621,5 +621,5 @@ export const ADMIN_HTTP_OPERATION_IDS: readonly string[] = Object.freeze([
   'listAuditLogs',
   // R59：后台帖子读面（管理视角，`hidden`/`deleted` 也在候选集里）。
   'listAdminPosts',
-  'getAdminPost',
+  'getAdminPost', 'advanceReport',
 ]);
