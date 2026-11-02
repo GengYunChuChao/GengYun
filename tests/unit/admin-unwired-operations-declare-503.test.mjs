@@ -68,6 +68,13 @@ for (const [path, item] of Object.entries(JSON.parse(read(OPENAPI)).paths ?? {})
  */
 const UNGATED_FORWARDS = new Map([
   ['suspendUser', '放行 1：真实单事务停用权威（迁移 0017 的 suspend_account()），装配期必有权威对象，无独立 wiring 布尔'],
+  [
+    'advanceReport',
+    '放行 2（R72）：举报处置写面没有独立 wiring 布尔 —— 未接线的判定在端口层'
+      + '（services/api/src/admin/ops/reports.ts 的 createReportDispositionAdapter(undefined) 让'
+      + ' advance() 回 STORE_UNAVAILABLE，服务层折成 503 PROVIDER_UNAVAILABLE），故外壳可无条件转发；'
+      + '契约描述里已写明「未接线 ⇒ 503」，与这条登记一致',
+  ],
 ]);
 
 /** 解析 `return { … };` 里的 `name: expr,` 绑定（只认一层、四空格缩进）。 */

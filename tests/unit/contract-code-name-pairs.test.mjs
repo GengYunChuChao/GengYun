@@ -145,7 +145,7 @@ const METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'options', 'tr
  * 精确比较在这里的作用是抓「扫错了 spec 文件」（`GY_CODEPAIR_SPEC_PATH` 指到别处），
  * 不是对契约规模的判据 —— 涨了就同步加一，降了必须在 PR 里说明为什么。
  */
-const EXPECTED_OPERATION_COUNT = 127;
+const EXPECTED_OPERATION_COUNT = 128;
 
 /** 实测配对下界（`node` 探针在基线 `ff73a30f` 上数出来的 434），**只许涨不许降**。 */
 const MIN_PAIR_COUNT = 434;
@@ -561,7 +561,7 @@ test('①′不许写反话：「NAME 不是 400」否认了其实成立的一�
 
 // ───────────────────────────── 判据 4：反空转 ─────────────────────────────
 
-test('④反空转：扫到 127 条 operation、配对数 ≥ 434、非 admin 族配对 ≥ 20', () => {
+test('④反空转：扫到 128 条 operation、配对数 ≥ 434、非 admin 族配对 ≥ 20', () => {
   assert.equal(OPERATIONS.length, EXPECTED_OPERATION_COUNT,
     `扫到 ${OPERATIONS.length} 条 operation（应为 ${EXPECTED_OPERATION_COUNT}）`
     + '——检查 `GY_CODEPAIR_SPEC_PATH` 是否指错了文件');

@@ -598,8 +598,8 @@ const OPAQUE_ALLOWLIST = [
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  sqlLiterals: 167,
-  statements: { INSERT: 27, UPDATE: 31, SELECT: 77, DELETE: 32 },
+  sqlLiterals: 168,
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 78, DELETE: 32 },
   returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
@@ -610,7 +610,7 @@ const EXPECTED_READINGS = {
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 44,
+  community: 45,
   conversations: 20,
   favorites: 15,
   history: 16,
@@ -883,18 +883,25 @@ const TABLE_WIDE_COLUMN = '*';
  *   `20-login-roles.sql` 段 M 的列级 SELECT 授权里 ⇒ **零 GRANT 变更**、零迁移）；字面量 320／语句
  *   `{49,58,170,43}`／RETURNING 99／ON CONFLICT 31／逐文件读数/引用表 **全部不变**。**没有往下改任何数字**：
  *   +1 条列要求就是这条 SELECT 真多读的那一列带来的（服务层要靠它判「预签名句柄是否已失效」）。
+ * ㉘ 2026-11-02 R72 #838（举报处置审计落库）：`community/store-pg.ts` 新增 **1** 条字面量
+ *   `REPORT_DISPOSITION_AUDIT_SQL` = `SELECT public.record_admin_report_disposition_audit($1::uuid, …)`
+ *   （静态整句、零插值、**没有 FROM**，与 R64 的 `hideAudit` 同形）⇒ 字面量 321 → **322**、
+ *   语句 SELECT 171 → **172**、无顶层 FROM 18 → **19**、逐文件 `community` 44 → **45**；
+ *   INSERT/UPDATE/DELETE、RETURNING 99、ON CONFLICT 31、`SELECT *` 15、函数调用 2、引用表 52、
+ *   列要求 2080／已覆盖 1979（该函数不读任何业务列，EXECUTE 归 90-assert 的函数面清单）**全部不变**。
+ *   8 文件块：字面量 167 → **168**、SELECT 77 → **78**、逐文件 `community` 44 → **45**。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 24,
-  sqlLiterals: 321,
-  statements: { INSERT: 49, UPDATE: 58, SELECT: 171, DELETE: 43 },
+  sqlLiterals: 322,
+  statements: { INSERT: 49, UPDATE: 58, SELECT: 172, DELETE: 43 },
   returningClauses: 99,
   onConflictClauses: 31,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 18,
+  noTargetTable: 19,
   referencedTables: 52,
   columnRequirements: 2080,
   coveredRequirements: 1979,
@@ -911,7 +918,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 17,
-  'community': 44,
+  'community': 45,
   'conversations': 20,
   'favorites': 15,
   'history': 16,
