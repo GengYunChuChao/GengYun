@@ -25,17 +25,18 @@ import {
   mediaIdempotencyScope,
 } from '../../services/api/src/media/store.ts';
 import { sha256Hex } from '../../packages/media/validate.mjs';
+import { MEDIA_INITIATED_TTL_MS } from '../../packages/media/constants.mjs';
 import { jpegWithExif } from '../media/_fixtures.mjs';
 
 const NOW_MS = 1_700_000_000_000;
 const KEY = (name) => `media-persist-${name}-0000`;
 
-function makeApp({ mediaStore, objectStore } = {}) {
+function makeApp({ mediaStore, objectStore, now = () => new Date(NOW_MS) } = {}) {
   return buildApp({
     config: { ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }), executionMode: 'stub' },
     mediaObjectStore: objectStore,
     ...(mediaStore === undefined ? {} : { mediaStore }),
-    now: () => new Date(NOW_MS),
+    now,
   });
 }
 
@@ -499,11 +500,14 @@ test('GY-R28 W12 竞态（监工 1927 轮 P1）：已删除的媒体不得被迟
 // 重试器（`cleanupOrphans`）按清理行扫描，天然幂等。
 // ---------------------------------------------------------------------------
 test('GY-R28 W12 竞态（监工 1022-0659 轮 P1）：CAS=0 失利者删不掉衍生件时，清理线索不得丢', async (t) => {
-  const mediaStore = createMemoryMediaStore({ now: () => NOW_MS });
+  // r72：时钟可推进 —— 台账行保留到「预签名上传句柄失效」（`createdAt + MEDIA_INITIATED_TTL_MS`），
+  // 与「桶删除是否被确认」无关。详见 tests/unit/media-cleanup-intent-ttl.test.mjs T1/T2/T3。
+  let clockMs = NOW_MS;
+  const mediaStore = createMemoryMediaStore({ now: () => clockMs });
   const bucket = gatedObjectStore();
   const jpeg = jpegWithExif();
   const declare = { purpose: 'weed_recognition', mime: 'image/jpeg', bytes: jpeg.length, sha256: sha256Hex(jpeg) };
-  const app = makeApp({ mediaStore, objectStore: bucket.store });
+  const app = makeApp({ mediaStore, objectStore: bucket.store, now: () => new Date(clockMs) });
   t.after(async () => { await app.close(); });
   const token = await login(app, 'orphan-owner');
 
@@ -554,7 +558,8 @@ test('GY-R28 W12 竞态（监工 1022-0659 轮 P1）：CAS=0 失利者删不掉�
   assert.equal(tombstone.rawRef, null);
   assert.equal(tombstone.derivativeRef, null);
 
-  // ⑥ 桶侧仍删不掉时清扫一次：本次不收敛是**允许**的，但「可重试的清理线索」必须留存。
+  // ⑥ 桶侧仍删不掉、且**句柄还没失效**时清扫一次：本轮**什么都不动**是 r72 的要求 ——
+  //    未到期的台账行跳过（跳过 ≠ 删除失败），因此读数不是 pending=1，而是「一行都没碰」。
   //    改前这里 pendingObjects=0 / removedObjects=0 / remainingObjects=1 —— 线索已经丢了。
   const blocked = await app.mediaService.cleanupOrphans();
   t.diagnostic(`桶删除不可用时清扫读数：removed=${blocked.removedObjects} `
@@ -562,11 +567,30 @@ test('GY-R28 W12 竞态（监工 1022-0659 轮 P1）：CAS=0 失利者删不掉�
   assert.equal(blocked.removedObjects, 0, '桶侧删不掉时不得报告已回收');
   assert.equal(
     blocked.pendingObjects,
-    1,
-    '未确认删除的衍生对象必须留下可重试的清理线索（pendingObjects 不得为 0）',
+    0,
+    '未到期的台账行本轮跳过：跳过不是「删除未确认」，不得计入 pendingObjects',
   );
   assert.equal(blocked.remainingObjects, 1, '对象此刻确实还在桶里（复现前提）');
   assert.notEqual(await bucket.store.getObject(derivativeKey), null, '对象此刻确实未被删掉（复现前提）');
+  assert.equal(
+    (await mediaStore.listObjectCleanup()).length,
+    2,
+    '原始件与衍生件的台账行都还在：句柄未失效前一条都不得删（r72 的闸门）',
+  );
+
+  // ⑥b 越过 TTL（预签名句柄失效）后再扫一轮：原始件行这次被真正尝试 ⇒ 幂等确认 + 删行；
+  //     衍生件仍删不掉（`failDelete` 还在）⇒「未确认删除」的 pending=1 出现在这里。
+  clockMs = NOW_MS + MEDIA_INITIATED_TTL_MS + 1000;
+  const expired = await app.mediaService.cleanupOrphans();
+  t.diagnostic(`越过 TTL 后清扫读数：removed=${expired.removedObjects} `
+    + `pending=${expired.pendingObjects} remaining=${expired.remainingObjects}`);
+  assert.equal(expired.removedObjects, 1, '原始件对象早已删掉，到期后幂等确认计一次');
+  assert.equal(expired.pendingObjects, 1, '未确认删除的衍生对象必须留下可重试的清理线索');
+  assert.deepEqual(
+    (await mediaStore.listObjectCleanup()).map((row) => row.objectRef),
+    [derivativeKey],
+    '只剩删不掉的那条行',
+  );
 
   // ⑦ 恢复桶删除能力后重试：必须收敛到「对象真的没了、清理行也清空」。
   bucket.unfailDelete();

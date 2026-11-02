@@ -659,7 +659,8 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
     async listObjectCleanup() {
       try {
         const result = await pool.query(
-          `SELECT media_id, object_ref_cipher, reason, attempts
+          `SELECT media_id, object_ref_cipher, reason, attempts,
+                  (extract(epoch FROM created_at) * 1000)::bigint AS created_at_ms
              FROM public.media_object_cleanup ORDER BY created_at, object_ref_digest`,
         );
         return result.rows.map((row) => {
@@ -671,6 +672,7 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
             objectRef,
             reason: asText(row.reason),
             attempts: asNumber(row.attempts),
+            createdAt: asNumber(row.created_at_ms),
           };
         });
       } catch (error) {
