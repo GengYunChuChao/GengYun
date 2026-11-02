@@ -1371,5 +1371,15 @@
     "reason": "旧锚点 51-63 在父 53354fe 上起于 `onLoad` 的 `this._epoch = 0`（51），经 `onShow` 到 `that.setData({ guest: !ok })`（63）就断，既多带 onLoad 尾行、又漏掉真正发起重取的 `if (ok) that.reload()`（64）；本次按符号 `that.reload()` 重锚到 HEAD 54-66。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
     "kind": "correction",
     "symbol": "that.reload()"
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 223,
+    "target": "docs/architecture/contract-implementation-status.md",
+    "from": 97,
+    "to": 102,
+    "kind": "correction",
+    "symbol": "createTurn",
+    "reason": "旧锚点本来就指错：这一行讲的是问答域 P06/N03 的三个版本串口径，base（b9d91bbc）上的 `docs/architecture/contract-implementation-status.md:97` 却是合成域的 `| `createSynthesis` | POST /speech/synthesis |` 行（不含 `createTurn`）；该行真值是 :102 的 `| `createTurn` | POST /conversations/{id}/turns |`，其证据列正是 `services/api/src/ai/chat-wiring.ts:74-85` 的 live 分支与 `services/api/src/app.ts:2348`/`:2390` 的装配点。本 R73 片只订正 `docs/architecture/ai-ops-spec-status.md` 这行的绝对量词（「一律」→ 四与门），目标台账文件一个字未动，所以走 kind=correction 而不是平移。"
   }
 ]
