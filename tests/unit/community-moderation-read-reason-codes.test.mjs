@@ -1,11 +1,13 @@
 /**
- * 读面「审核结论理由码」：`Post`/`Comment` 的可选字段 `reason_codes`。
+ * 读面「审核结论理由码」：`Post`/`Comment` 的**必现**字段 `reason_codes`。
  *
  * 覆盖本片（切法 A）的行为契约：
- *   - **能如实归属**时才带：迟到驳回（审核域读取重查给出 `rejected`）与迟到隔离（`pending`/`quarantined`）
+ *   - **能如实归属**时原样带：迟到驳回（审核域读取重查给出 `rejected`）与迟到隔离（`pending`/`quarantined`）
  *     都从审核域结论里原样带出理由码，逐项相等、不翻译、不改写、不排序；
- *   - **拿不到就不带**：正常通过（`verdict.reason_codes` 为 `[]`）→ 字段整个缺席，**不写空数组**、
- *     不填 `unknown` 之类占位；台账里没有该版本任务（`present:false`）同样缺席；
+ *   - **拿不到就给空数组**：正常通过（`verdict.reason_codes` 为 `[]`）、台账里没有该版本任务
+ *     （`present:false`）等路径一律 `reason_codes: []`——字段**永远在**，不填 `unknown` 之类占位；
+ *     口径理由：响应体是 `additionalProperties:false` 的闭集且全 `required`（真库臂里
+ *     `POST_KEYS === POST_REQUIRED` 那条判据），一个字段"可缺席"就要连带放宽整条闭集不变式；
  *   - 投影口径：读面的降级是**投影**，存储行与写入时那份结论保持原样；
  *   - **如实边界**：规则层否决 ⇒ 写路径 400 且不落行 ⇒ 读面根本没有这条内容，
  *     理由码只存在于错误封套里。这条边界不是漏实现，是"不落行就没有读面"的直接结果。
@@ -34,10 +36,9 @@ const POST_TEXT = `${CLEAN_TITLE}\n${CLEAN_BODY}`;
 const SAFE_COMMENT = '换一种说法：按标签说明处理，注意轮换。';
 const ROOT = resolve(import.meta.dirname, '..', '..');
 
-/** 理由码字段的**形状**守卫：出现即必须合法；不做"应该有哪些码"的内容断言。 */
+/** 理由码字段的**形状**守卫：必现且必须是数组（`[]` 合法）；不做"应该有哪些码"的内容断言。 */
 function assertReasonCodesShape(value, where) {
-  assert.equal(Array.isArray(value), true, `${where}：reason_codes 出现时必须是数组`);
-  assert.ok(value.length >= 1, `${where}：出现即不得为空数组（没有码就不该出现这个字段）`);
+  assert.equal(Array.isArray(value), true, `${where}：reason_codes 必须出现且是数组`);
   assert.ok(value.length <= 30, `${where}：上限 30 条（契约 maxItems），实际 ${value.length}`);
   for (const code of value) {
     assert.equal(typeof code, 'string', `${where}：理由码必须是字符串，实际 ${typeof code}`);
@@ -47,22 +48,19 @@ function assertReasonCodesShape(value, where) {
   }
 }
 
-test('R1. 正常通过且无理由码 ⇒ 读面**不带** reason_codes（帖子 / 我的列表 / 评论都不写空数组）', async () => {
+test('R1. 正常通过且无理由码 ⇒ 读面给空数组 `[]`（帖子 / 详情 / 我的列表 / 评论都必现该字段）', async () => {
   const h = makeWiredHarness({ ports: { tms: passingPort() } });
   const post = await h.service.createPost(USER_A, postInput(), { idempotencyKey: idem(1) });
   assert.equal(post.audit_state, 'approved', '前提：这条内容通过');
-  assert.equal(
-    'reason_codes' in post,
-    false,
-    '通过路径的 verdict.reason_codes 是 []，读面必须整个字段缺席（不写 []，不填占位）',
-  );
+  assert.deepEqual(post.reason_codes, [], '通过路径的 verdict.reason_codes 是 [] ⇒ 读面给 []（字段不缺席）');
+  assertReasonCodesShape(post.reason_codes, '通过路径');
 
   const detail = await h.service.getPost(USER_A, post.id);
-  assert.equal('reason_codes' in detail, false, '详情读面同样缺席');
+  assert.deepEqual(detail.reason_codes, [], '详情读面同样必现（[]）');
 
   const mine = await h.service.listPosts(USER_A);
   assert.equal(mine.items.length, 1);
-  assert.equal('reason_codes' in mine.items[0], false, '列表投影同样缺席');
+  assert.deepEqual(mine.items[0].reason_codes, [], '列表投影同样必现（[]）');
 
   const comment = await h.service.createComment(
     USER_B,
@@ -70,9 +68,9 @@ test('R1. 正常通过且无理由码 ⇒ 读面**不带** reason_codes（帖子
     { body: SAFE_COMMENT },
     { idempotencyKey: idem(2), ifMatch: `"${post.revision}"` },
   );
-  assert.equal('reason_codes' in comment, false, '评论创建回执同样缺席');
+  assert.deepEqual(comment.reason_codes, [], '评论创建回执同样必现（[]）');
   const readComment = await h.service.getComment(USER_B, comment.id);
-  assert.equal('reason_codes' in readComment, false, '评论读面同样缺席');
+  assert.deepEqual(readComment.reason_codes, [], '评论读面同样必现（[]）');
 });
 
 test('R2. 迟到驳回 ⇒ hidden/rejected，且 reason_codes 与审核域结论**逐项相同**（原样透传）', async () => {
@@ -108,7 +106,7 @@ test('R2. 迟到驳回 ⇒ hidden/rejected，且 reason_codes 与审核域结论
   assert.equal((await h.store.getModeration('post', post.id, 1)).decision, 'approved');
 });
 
-test('R3. 迟到隔离 ⇒ hidden + pending/quarantined；理由码有就带、没有就缺席（两种都如实）', async () => {
+test('R3. 迟到隔离 ⇒ hidden + pending/quarantined；理由码有就原样带、没有就是 `[]`（两种都必现）', async () => {
   // ---- (A) 迟到 `pending`（异步供应商路径：该版本被取代为"待回调"）----
   const pendingHarness = makeWiredHarness({ ports: { tms: passingPort() } });
   const pendingPost = await pendingHarness.service.createPost(USER_A, postInput(), { idempotencyKey: idem(1) });
@@ -127,15 +125,12 @@ test('R3. 迟到隔离 ⇒ hidden + pending/quarantined；理由码有就带、�
   const pendingMine = await pendingHarness.service.getPost(USER_A, pendingPost.id);
   assert.equal(pendingMine.visibility, 'hidden');
   assert.equal(pendingMine.audit_state, 'pending');
-  assert.equal(
-    'reason_codes' in pendingMine,
-    pendingConclusion.reason_codes.length > 0,
-    '隔离路径要么原样带上结论里的码，要么整个字段缺席——不得凭空补，也不得丢',
+  assert.deepEqual(
+    pendingMine.reason_codes,
+    pendingConclusion.reason_codes,
+    '隔离路径原样带上结论里的码（结论为空时就是 []）——不得凭空补，也不得丢',
   );
-  if ('reason_codes' in pendingMine) {
-    assert.deepEqual(pendingMine.reason_codes, pendingConclusion.reason_codes);
-    assertReasonCodesShape(pendingMine.reason_codes, '迟到 pending');
-  }
+  assertReasonCodesShape(pendingMine.reason_codes, '迟到 pending');
 
   // ---- (B) 迟到无结论（端口回报 unsure ⇒ 隔离 quarantine）----
   const mutable = mutablePort({ initial: 'pass' });
@@ -153,18 +148,15 @@ test('R3. 迟到隔离 ⇒ hidden + pending/quarantined；理由码有就带、�
   const mine = await quarantineHarness.service.getPost(USER_A, post.id);
   assert.equal(mine.visibility, 'hidden');
   assert.equal(mine.audit_state, 'quarantined');
-  assert.equal(
-    'reason_codes' in mine,
-    conclusion.reason_codes.length > 0,
-    '隔离路径同一口径：有码就带，没码就不带',
+  assert.deepEqual(
+    mine.reason_codes,
+    conclusion.reason_codes,
+    '隔离路径同一口径：字段必现，结论里有什么码就原样给什么码（空就是 []）',
   );
-  if ('reason_codes' in mine) {
-    assert.deepEqual(mine.reason_codes, conclusion.reason_codes);
-    assertReasonCodesShape(mine.reason_codes, '迟到隔离');
-  }
+  assertReasonCodesShape(mine.reason_codes, '迟到隔离');
 });
 
-test('R4. 台账里没有该版本任务（present:false）⇒ 没有结论可归属 ⇒ 字段缺席（不编占位码）', async () => {
+test('R4. 台账里没有该版本任务（present:false）⇒ 没有结论可归属 ⇒ 给空数组（不编占位码）', async () => {
   const h = makeWiredHarness({
     ports: { tms: passingPort() },
     communityLinkWrapper: noTaskConclusionLink,
@@ -174,28 +166,33 @@ test('R4. 台账里没有该版本任务（present:false）⇒ 没有结论可�
   assert.equal(conclusion.present, false, '前提：读取面声称台账里没有该版本任务');
 
   const mine = await h.service.getPost(USER_A, post.id);
-  assert.equal(
-    'reason_codes' in mine,
-    false,
-    '没有结论就没有可归属的理由码：整个字段缺席，比编一个 unknown 诚实',
+  assert.deepEqual(
+    mine.reason_codes,
+    [],
+    '没有结论就没有可归属的理由码：给 []，比编一个 unknown 诚实，也不破坏响应体闭集',
   );
 });
 
-test('R5. 契约侧仍然**可选**：不进 required、不改 additionalProperties、上限 30、minItems 1', () => {
+test('R5. 契约侧**必现**：进 required、不改 additionalProperties、上限 30、minItems 0', () => {
   const openapi = JSON.parse(readFileSync(resolve(ROOT, 'packages/contracts/openapi.json'), 'utf8'));
   for (const name of ['Post', 'Comment']) {
     const schema = openapi.components.schemas[name];
     assert.equal(schema.additionalProperties, false, `${name}：本片不得放开 additionalProperties`);
     assert.equal(
       schema.required.includes('reason_codes'),
-      false,
-      `${name}：reason_codes 必须保持可选（否则"拿不到就不带"会变成违约）`,
+      true,
+      `${name}：reason_codes 必须进 required（闭集 ⇒ 全字段必现，缺理由码时给 []）`,
+    );
+    assert.deepEqual(
+      Object.keys(schema.properties).sort(),
+      [...schema.required].sort(),
+      `${name}：properties 与 required 必须逐项相等（additionalProperties:false ⇒ 闭集不变式）`,
     );
     const field = schema.properties.reason_codes;
     assert.equal(field.type, 'array', `${name}.reason_codes 必须是数组`);
     assert.equal(field.items.type, 'string', `${name}.reason_codes 元素必须是字符串`);
     assert.equal(field.items.minLength, 1, `${name}.reason_codes 元素不得为空串`);
-    assert.equal(field.minItems, 1, `${name}.reason_codes 出现即至少一条（空数组不是"没有理由"的写法）`);
+    assert.equal(field.minItems, 0, `${name}.reason_codes 允许空数组（[] 就是"没有可归属的理由码"）`);
     assert.equal(field.maxItems, 30, `${name}.reason_codes 上限须与 Moderation.reason_codes 一致`);
   }
 });

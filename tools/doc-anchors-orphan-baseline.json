@@ -230,6 +230,12 @@
       "accept": 0,
       "orphans": 3518,
       "outsideRed": 123
+    },
+    {
+      "why": "reason_codes 改为必现后 gy-i17-closeout 的 ui-auth 锚点按 +1 机械位移，两条补回显式路径，只删两条陈旧登记、零新增放行",
+      "accept": 0,
+      "orphans": 3516,
+      "outsideRed": 123
     }
   ],
   "orphans": [
@@ -1136,8 +1142,6 @@
     "docs/verification/gy-i17-closeout-20261023.md|:300|no-explicit-in-block",
     "docs/verification/gy-i17-closeout-20261023.md|:329|no-explicit-in-block",
     "docs/verification/gy-i17-closeout-20261023.md|:384|no-explicit-in-block",
-    "docs/verification/gy-i17-closeout-20261023.md|:459|ambiguous-block",
-    "docs/verification/gy-i17-closeout-20261023.md|:485|ambiguous-block",
     "docs/verification/gy-i17-closeout-20261023.md|:57|no-explicit-in-block",
     "docs/verification/gy-i17-closeout-20261023.md|:59|no-explicit-in-block",
     "docs/verification/gy-i17-closeout-20261023.md|:619|ambiguous-block",

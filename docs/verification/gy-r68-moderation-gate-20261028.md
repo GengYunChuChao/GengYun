@@ -166,7 +166,7 @@ GET /posts      = 200，items = 1
 2. **投稿授权闸是过的**：夹具在请求前按真实实现 `consentStore.grant(...)` 补齐 `public_posting` 授权；若未授权，响应会是 `403 CONSENT_REQUIRED`（`tests/unit/community-posting-consent.test.mjs` 的既有口径），不是 422。
 3. **鉴权与路由是通的**：同一进程、同一 token 的 `GET /posts` 返 200；`GET /posts/<随机 uuid>` 返同形 404 而不是 503——整域可用，只有写面被挡。
 
-对应的代码路径（本基线逐字）：送审在落库**之前**（`services/api/src/community/service.ts:1035` 的 `screenWithModeration(...)`），未获放行即抛（`:1041` 的 `requireDomainClearance(...)`），隔离错误由 `:509-517` 的 `domainIsolation` 造出（`INPUT_UNCERTAIN` + `details[].field='reason_codes'`），落库调用在 `:1073` 的 `insertPost(...)` —— 抛点在落库之前，所以「0 行」是**结构性**的，不是断言口径。
+对应的代码路径（本基线逐字）：送审在落库**之前**（`services/api/src/community/service.ts:1044` 的 `screenWithModeration(...)`），未获放行即抛（`:1050` 的 `requireDomainClearance(...)`），隔离错误由 `:509-517` 的 `domainIsolation` 造出（`INPUT_UNCERTAIN` + `details[].field='reason_codes'`），落库调用在 `:1082` 的 `insertPost(...)` —— 抛点在落库之前，所以「0 行」是**结构性**的，不是断言口径。
 
 ## 5 声明：这是**替身级**证据，不证明真实审核能力
 
@@ -175,7 +175,7 @@ GET /posts      = 200，items = 1
 - 本页三次读数全部由**替身/合成**端口产生。替身端口（`label: 'unsure'`）**不是**真实 tms / ims 供应商，**零真实外呼、无真实凭据、BizType 未核验、无真实样本**（[真实样本缺口登记](../evaluation/sample-gap-register.md)：`ai_moderation_risk` / `ai_moderation_normal` 真实样本各为 0）。
 - 因此本页**不能**被引用成「审核能力已就绪」「召回率／误隔离率达标」或任何质量成绩；它只证明**门的接线与 fail-closed 行为**。
 - 正控制的 201 同样**不是**「真实审核通过」的证据：那是一条**明确标注的合成放行**，`provider.synthetic === true`，四个网络 seam 持有即抛错。
-- 本页不覆盖：`real` 模式的 503 读数（属既有用例）、PG 持久化臂（本文件无池 ⇒ 内存实现）、图片/媒体路径、评论与编辑路径（与发帖同一道门，同源点在 `services/api/src/community/service.ts:1220` / `services/api/src/community/service.ts:1413` / `services/api/src/community/service.ts:1525`，本片未逐条重跑）。
+- 本页不覆盖：`real` 模式的 503 读数（属既有用例）、PG 持久化臂（本文件无池 ⇒ 内存实现）、图片/媒体路径、评论与编辑路径（与发帖同一道门，同源点在 `services/api/src/community/service.ts:1229` / `services/api/src/community/service.ts:1422` / `services/api/src/community/service.ts:1534`，本片未逐条重跑）。
 
 ## 6 要让演示环境能发帖，唯一不破坏 fail-closed 的做法
 

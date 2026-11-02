@@ -44,10 +44,10 @@
           <view wx:if="{{post.authorAnonymized}}" class="post-author__tag pill pill--gray">已注销</view>
           <view class="post-author__tag pill {{post.stateLabel ? 'pill--amber' : 'pill--gray'}}">{{post.stateLabel || post.publicLabel}}</view>
         </view>
-        <!-- 理由码：读面契约里的**可选**字段 `reason_codes`，由 `utils/community-api.js` 的
+        <!-- 理由码：读面契约里**必现**的 `reason_codes`，由 `utils/community-api.js` 的
              `reasonSummary` 翻成一行「理由：…（码：…）」。紧挨 pill，说明「这条结论的理由」；
-             与下面那句「现在是什么状态、接下来会怎样」分工，不覆盖它。服务端没给可如实归属的
-             理由码时 `reasonLine` 是空串（缺席即真相，这里不留「原因未知」的占位）。 -->
+             与下面那句「现在是什么状态、接下来会怎样」分工，不覆盖它。服务端没有可如实归属的
+             理由码时该字段是 `[]` ⇒ `reasonLine` 是空串（这里不留「原因未知」的占位）。 -->
         <view wx:if="{{post.reasonLine}}" class="demo-caption">{{post.reasonLine}}</view>
         <view class="post-title">{{post.title}}</view>
         <!-- 审核结论的整句解释（单一来源 `utils/community-api.js` 的 `outcomeOf`）：

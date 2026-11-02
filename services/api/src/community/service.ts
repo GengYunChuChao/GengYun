@@ -527,7 +527,7 @@ export function createCommunityService(deps: CommunityServiceDeps) {
    * **无法判断 ⇒ 隔离**（B09），不得继续公开。
    *
    * 理由码：**读到结论时**原样带上 `conclusion.reason_codes`（审核域闭集，本服务不翻译、不增删）；
-   * 台账不可读/端口抛错时手上**没有**可引用的理由码 ⇒ `reason_codes: []`（读面据此不带该字段，
+   * 台账不可读/端口抛错时手上**没有**可引用的理由码 ⇒ `reason_codes: []`（读面投影出的就是空数组，
    * 不填占位码）。"无该版本任务"与"明确放行"返回 `null`，同样没有可说的理由。
    */
   function domainWithholdingOf(
@@ -580,18 +580,25 @@ export function createCommunityService(deps: CommunityServiceDeps) {
     }
   }
 
-  /** 读面生效状态。`reason_codes` 是**可选**字段：没有可说的理由时整个字段缺席（缺席即真相）。 */
-  type EffectiveState = { visibility: Visibility; audit_state: AuditState; reason_codes?: string[] };
+  /**
+   * 读面生效状态。`reason_codes` **必现**：没有可归属的理由码时为空数组 `[]`。
+   *
+   * 为什么不再用"缺席"表达"拿不到"：`Post`/`Comment` 是 `additionalProperties:false` 的闭集，
+   * 且全仓把"响应体字段集合 = 契约 properties = 契约 required"当结构不变式钉住
+   * （真库臂里那条 `POST_KEYS === POST_REQUIRED` 判据）。为一个字段开"可缺席"的口子，
+   * 就要连带放宽那条闭集判据，代价远大于收益；而客户端只需要区分"有码/没有码"，
+   * `[]` 与"缺席"的差别在"没有理由就不显示理由行"的语义下不可观察。
+   */
+  type EffectiveState = { visibility: Visibility; audit_state: AuditState; reason_codes: string[] };
 
   /**
-   * 生效状态 + 可选理由码：**没有码就不带该字段**（`Post`/`Comment` 的 `additionalProperties:false`
-   * 与"可选字段的空缺即真相"同时要求：不填 `unknown` 之类的占位，也不给空数组装作"没有理由"）。
+   * 生效状态 + 理由码：**永远带该字段**（没有码就给 `[]`，⛔ 不让字段缺席、⛔ 不填 `unknown` 占位）。
    */
   function withReasonCodes(
     state: { visibility: Visibility; audit_state: AuditState },
     reasonCodes: readonly string[],
   ): EffectiveState {
-    return reasonCodes.length === 0 ? state : { ...state, reason_codes: [...reasonCodes] };
+    return { ...state, reason_codes: [...reasonCodes] };
   }
 
   /**
@@ -605,18 +612,20 @@ export function createCommunityService(deps: CommunityServiceDeps) {
    *   - 结论新鲜且可发布 ⇒ 报 `published` + `approved`。
    * 因此"规则集升级后旧内容自动退出可见"不需要额外的后台任务，也没有"写时信任一次"的窗口。
    *
-   * `reason_codes` 只在**能如实归属**时出现，来源逐条对应：
+   * `reason_codes` **必现**，来源逐条对应（拿不到就给 `[]`，字段本身不缺席）：
    *   - 结论新鲜（可发布或明确不可发布）⇒ `verdict.reason_codes`（台账原码）；
    *   - 结论失效被降级 ⇒ `assessment.reason_codes`（"旧结论为什么不能再用"）；
    *   - 审核域读面退回非放行且读到结论 ⇒ `conclusion.reason_codes`。
    * 无结论／target_ref 或正文摘要不匹配／已删除／台账不可读／端口异常／规则层 veto 未落行等路径
-   * **不带**该字段：拿不到就不说，不填占位码。
+   * **给空数组**：拿不到就不编码，但也不让字段缺席（闭集 + 全 required）。
    */
   async function effectiveState(
     kind: 'post' | 'comment',
     record: PostRecord | CommentRecord,
   ): Promise<EffectiveState> {
-    if (record.visibility === 'deleted') return { visibility: 'deleted', audit_state: record.audit_state };
+    if (record.visibility === 'deleted') {
+      return { visibility: 'deleted', audit_state: record.audit_state, reason_codes: [] };
+    }
     const demoted = (auditState: AuditState, reasonCodes: readonly string[] = []): EffectiveState =>
       withReasonCodes(
         {
@@ -820,8 +829,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       media_ids: [...record.media_ids],
       visibility: state.visibility,
       audit_state: state.audit_state,
-      // 理由码是**可选**字段：`effectiveState` 没给出可归属的码时，这里就不带它。
-      ...(state.reason_codes === undefined ? {} : { reason_codes: [...state.reason_codes] }),
+      // 理由码是**必现**字段：`effectiveState` 给不出可归属的码时就是 `[]`（闭集 + 全 required）。
+      reason_codes: [...state.reason_codes],
       created_at: record.created_at,
       updated_at: record.updated_at,
       // 媒体投影需要"当前已发布且独立筛查通过"的附件版本（阶段 2 接 packages/media）。
@@ -843,8 +852,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       body: record.body,
       visibility: state.visibility,
       audit_state: state.audit_state,
-      // 与帖子同一口径：没有可归属的理由码就不带该字段（不填占位）。
-      ...(state.reason_codes === undefined ? {} : { reason_codes: [...state.reason_codes] }),
+      // 与帖子同一口径：没有可归属的理由码就是 `[]`，字段本身永远在。
+      reason_codes: [...state.reason_codes],
       created_at: record.created_at,
     };
   }

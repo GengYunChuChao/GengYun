@@ -44,6 +44,7 @@ function post(over = {}) {
   return {
     id: POST_ID, revision: 1, author: author(), title: '稗草防除经验交流', body: '按标签说明选择登记药剂。',
     crop_id: 'crop_rice', region_code: '330100', media_ids: [], visibility: 'published', audit_state: 'approved',
+    reason_codes: [],
     created_at: '2026-10-20T04:00:00.000Z', updated_at: '2026-10-20T04:00:00.000Z', media: [],
     linked_knowledge_ref: null, linked_knowledge: null, ...over,
   };
@@ -51,7 +52,8 @@ function post(over = {}) {
 function comment(over = {}) {
   return {
     id: COMMENT_ID, revision: 1, post_id: POST_ID, author: author(), body: '也遇到过类似情况。',
-    visibility: 'published', audit_state: 'approved', created_at: '2026-10-20T04:05:00.000Z', ...over,
+    visibility: 'published', audit_state: 'approved', reason_codes: [],
+    created_at: '2026-10-20T04:05:00.000Z', ...over,
   };
 }
 function envelope(data, mode = 'stub') {
@@ -1062,27 +1064,33 @@ test('⑧ 理由码表不自造：键集合 ⊆ 服务端闭集 ∪ 三条本域
 });
 
 // ---------------------------------------------------------------------------
-// ⑩ 读面**可选**字段 `reason_codes`：适配层收下、形状不合契约就拒、缺席不算错
+// ⑩ 读面**必现**字段 `reason_codes`：适配层要求它在且是数组（`[]` 合法），形状不合契约就拒
 //
-// 为什么两个方向都要钉：这个字段是「缺席即真相」的载体。
-//   - 把它放进 `POST_FIELDS`（必填）⇒ 服务端诚实地不带字段时被判 `INVALID_RESPONSE`，
-//     等于逼服务端编一个占位码（正是本片要避免的事）；
-//   - 完全不管 ⇒ `[]`／字符串／空串元素会一路传到页面，前端再"尽力解析"就成了编理由。
+// 为什么两个方向都要钉：契约把响应体钉成闭集且全 `required`（`additionalProperties:false` +
+// 真库臂里 `POST_KEYS === POST_REQUIRED`），所以这个字段**不能缺席**，没有理由码就是 `[]`。
+//   - 缺席 ⇒ 与契约不符，判 `INVALID_RESPONSE`（不再替服务端"补一个空数组"）；
+//   - 完全不管 ⇒ 字符串／空串元素／超 30 条会一路传到页面，前端再"尽力解析"就成了编理由。
 // ---------------------------------------------------------------------------
-test('⑩ 读面可选字段 `reason_codes`：缺席/合法都收，形状不合契约即 INVALID_RESPONSE', async () => {
-  // ① 缺席：适配层不得凭空补字段（补了就等于替服务端表态）。
-  const absent = load(() => ({ statusCode: 200, data: envelope(post()) }));
-  const plainPost = await absent.api.getPost(POST_ID);
-  assert.equal('reason_codes' in plainPost.post, false, '服务端没给时适配层不得凭空补一个字段');
+test('⑩ 读面必现字段 `reason_codes`：`[]`/有码都收，缺席或形状不合契约即 INVALID_RESPONSE', async () => {
+  // ① 空数组：合法（没有可归属的理由码就是这么表达），原样保留成 []。
+  const empty = load(() => ({ statusCode: 200, data: envelope(post({ reason_codes: [] })) }));
+  const plainPost = await empty.api.getPost(POST_ID);
+  assert.deepEqual(plain(plainPost.post.reason_codes), [], '没有理由码时字段必现且为 []');
 
-  // ② 合法：原样保留（详情页靠它出「理由：…」那一行）。
+  // ② 缺席：闭集契约下不允许，适配层不得替服务端补字段。
+  const absent = post();
+  delete absent.reason_codes;
+  const missing = load(() => ({ statusCode: 200, data: envelope(absent) }));
+  const absentError = await rejects(missing.api.getPost(POST_ID));
+  assert.equal(absentError.code, 'INVALID_RESPONSE', '字段缺席必须判 INVALID_RESPONSE（契约 required）');
+
+  // ③ 合法：原样保留（详情页靠它出「理由：…」那一行）。
   const given = load(() => ({ statusCode: 200, data: envelope(post({ reason_codes: ['misleading_agronomy', 'spam'] })) }));
   const withReasonCodes = await given.api.getPost(POST_ID);
   assert.deepEqual(plain(withReasonCodes.post.reason_codes), ['misleading_agronomy', 'spam']);
 
-  // ③ 形状不合契约（`minItems: 1`、元素为非空字符串、`maxItems: 30`）。
+  // ④ 形状不合契约（数组、元素为非空字符串、`maxItems: 30`）。
   const bad = [
-    ['空数组（契约 minItems:1：没有码就不带字段）', post({ reason_codes: [] })],
     ['不是数组', post({ reason_codes: 'spam' })],
     ['元素是空串', post({ reason_codes: [''] })],
     ['元素不是字符串', post({ reason_codes: ['spam', 3] })],
@@ -1094,19 +1102,28 @@ test('⑩ 读面可选字段 `reason_codes`：缺席/合法都收，形状不合
     assert.equal(error.code, 'INVALID_RESPONSE', label);
   }
 
-  // ④ 评论通道同一口径（`commentOutcomeOf` 也吃这个字段）。
+  // ⑤ 评论通道同一口径（`commentOutcomeOf` 也吃这个字段）：`[]` 合法、有码原样、缺席即拒。
   const onComment = load(() => ({ statusCode: 200, data: envelope(comment({ reason_codes: ['PRIVACY_PII'] })) }));
   const loaded = await onComment.api.getComment(COMMENT_ID);
   assert.deepEqual(plain(loaded.comment.reason_codes), ['PRIVACY_PII']);
+
+  const emptyComment = load(() => ({ statusCode: 200, data: envelope(comment({ reason_codes: [] })) }));
+  assert.deepEqual(plain((await emptyComment.api.getComment(COMMENT_ID)).comment.reason_codes), []);
+
+  const absentComment = comment();
+  delete absentComment.reason_codes;
+  const commentMissing = load(() => ({ statusCode: 200, data: envelope(absentComment) }));
+  const commentError = await rejects(commentMissing.api.getComment(COMMENT_ID));
+  assert.equal(commentError.code, 'INVALID_RESPONSE', '评论通道同样要求该字段必现');
 });
 
 // ---------------------------------------------------------------------------
-// ⑪ `reasonSummary`：详情页 pill 旁那一行。无码返回 `null`（不渲染），有码去重保序、最多 6 条。
+// ⑪ `reasonSummary`：详情页 pill 旁那一行。`[]` 返回 `null`（不渲染），有码去重保序、最多 6 条。
 // ---------------------------------------------------------------------------
-test('⑪ `reasonSummary`：字段缺席 ⇒ null；有码 ⇒ 「理由：…（码：…）。」且去重保序', () => {
+test('⑪ `reasonSummary`：`[]` ⇒ null；有码 ⇒ 「理由：…（码：…）。」且去重保序', () => {
   const h = load(() => DEFER);
-  // 缺席/空 ⇒ 不渲染这一行（不是「原因未知」）。适配层会拒 `[]`，但本函数自己也要守住。
-  assert.equal(h.api.reasonSummary(post()), null, '字段缺席 ⇒ 不渲染这一行');
+  // 空/缺席 ⇒ 不渲染这一行（不是「原因未知」）。适配层会拒缺席，但本函数自己也要守住。
+  assert.equal(h.api.reasonSummary(post()), null, '没有理由码（[]）⇒ 不渲染这一行');
   assert.equal(h.api.reasonSummary(post({ reason_codes: [] })), null);
   assert.equal(h.api.reasonSummary(post({ reason_codes: ['', '   '] })), null, '只有空白元素等于没有码');
   assert.equal(h.api.reasonSummary({}), null);
@@ -1159,14 +1176,14 @@ test('⑫ 详情页：理由行渲染在 pill 旁，整句解释原样保留（�
   assert.match(view.outcomeDesc, /未通过/, '原有整句解释仍在（不得被理由行覆盖）');
   assert.notEqual(view.reasonLine, view.outcomeDesc, '两句话各说一件事，不能变成同一句');
 
-  // 没有码 ⇒ 空串（模板 `wx:if` 不渲染），而不是「原因未知」。
+  // 没有码（`reason_codes: []`）⇒ 空串（模板 `wx:if` 不渲染），而不是「原因未知」。
   const bare = detail._decoratePost(post({ visibility: 'hidden', audit_state: 'rejected' }));
   assert.equal(bare.reasonLine, '');
   assert.match(bare.outcomeDesc, /未通过/, '没有理由码时整句解释照旧');
 
   // 模板真的把这个字段接上了（否则页面拿到数据也不显示）。
   const wxml = readFileSync(resolve(root, DETAIL_WXML), 'utf8');
-  assert.equal(wxml.includes('wx:if="{{post.reasonLine}}"'), true, '理由行必须按字段缺席时不渲染');
+  assert.equal(wxml.includes('wx:if="{{post.reasonLine}}"'), true, '理由行必须按「没有理由码」时不渲染');
   assert.ok(wxml.includes('{{post.reasonLine}}'), '模板必须渲染 reasonLine');
   assert.ok(wxml.includes('{{post.outcomeDesc}}'), '原有整句解释不得被替换');
   const pillAt = wxml.indexOf('{{post.stateLabel || post.publicLabel}}');

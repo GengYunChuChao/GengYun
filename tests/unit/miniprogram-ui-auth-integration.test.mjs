@@ -428,7 +428,8 @@ const commentAuthor = () => ({
 });
 const commentEnvelope = (postId = POST_ID) => messageEnvelope({
   id: COMMENT_ID, revision: 1, post_id: postId, author: commentAuthor(), body: '这季墒情看着不错',
-  visibility: 'published', audit_state: 'approved', created_at: '2026-10-16T04:30:00.000Z',
+  visibility: 'published', audit_state: 'approved', reason_codes: [],
+  created_at: '2026-10-16T04:30:00.000Z',
 });
 
 test('消息页：列表成功 + 未读数失败 ⇒ pill 可点重试，点一下只重拉未读数', async () => {

@@ -465,7 +465,7 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   //    只钉发帖那一处就漏掉了「发帖待审、改帖直接发」的旁路 —— 那正是最该抓的东西。
   pinLines({
     file: COMMUNITY_SERVICE,
-    expectLines: [1111, 1242],
+    expectLines: [1120, 1251],
     expectText: CREATE_POST_VISIBILITY_LINE,
     why: '把初始可见性改回 `published`（例如退化成 `visibility: \'published\'`）、'
       + '改掉三元组的分支条件（`awaitingPublish` → 别的谓词），'
@@ -473,14 +473,14 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   });
   pinLines({
     file: COMMUNITY_SERVICE,
-    expectLines: [1112, 1243],
+    expectLines: [1121, 1252],
     expectText: CREATE_POST_AUDIT_LINE,
     why: '把初始审核态改回 `approved`、让 `private` 与 `pending` 不再成对出现'
       + '（`private` + `approved` 是自相矛盾的状态组合），或只改一处',
   });
   pinLines({
     file: COMMUNITY_SERVICE,
-    expectLines: [1097, 1233],
+    expectLines: [1106, 1242],
     expectText: AWAITING_PUBLISH_LINE,
     why: '**只改这一行就能悄悄关掉先审后发**：`const awaitingPublish = false` 会让上面两行的三元组'
       + '永远走 `published`/`approved` 分支，而文本一个字都不用动 —— 所以这一行必须单独钉住。',
@@ -506,8 +506,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     insertHits.map((hit) => hit.line),
-    [1118],
-    '【钉 2 破了】`createPost` 里 `store.insertPost` 的调用点不再是恰好一处（:1118）：'
+    [1127],
+    '【钉 2 破了】`createPost` 里 `store.insertPost` 的调用点不再是恰好一处（:1127）：'
       + `\n  实测：${JSON.stringify(insertHits)}`
       + '\n  基线：先 `store.insertPost`（落 `private`/`pending`），随后 `link.publish` 把它改成 `published`/`approved`。'
       + because('在 createPost 里新增/挪走写库调用（例如改成先请求审核域、拿到放行才落库 —— '
@@ -515,8 +515,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     publishHits.map((hit) => hit.line),
-    [1129],
-    '【钉 2 破了】`createPost` 里 `link.publish(` 的调用点不再是恰好一处（:1129）：'
+    [1138],
+    '【钉 2 破了】`createPost` 里 `link.publish(` 的调用点不再是恰好一处（:1138）：'
       + `\n  实测：${JSON.stringify(publishHits)}`
       + '\n  基线：审核域放行就是这一个函数（`community/moderation-link.ts` 的 `publish`）。'
       + because('删掉 publish（贴子会永远停在 pending，先审后发变成「只审不发」），'
@@ -580,8 +580,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     editCommitHits.map((hit) => hit.line),
-    [1248],
-    '【钉 2 破了】`editPost` 里 `store.commitPostIfCurrent` 的调用点不再是恰好一处（:1248）：'
+    [1257],
+    '【钉 2 破了】`editPost` 里 `store.commitPostIfCurrent` 的调用点不再是恰好一处（:1257）：'
       + `\n  实测：${JSON.stringify(editCommitHits)}`
       + '\n  基线：改写与审核结论在**同一次 CAS 提交**内写入（`revision`/归属/未删除一起校验），'
       + 'patch 里带的是 `private`/`pending`。'
@@ -589,8 +589,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     editPublishHits.map((hit) => hit.line),
-    [1259],
-    '【钉 2 破了】`editPost` 里 `link.publish(` 的调用点不再是恰好一处（:1259）：'
+    [1268],
+    '【钉 2 破了】`editPost` 里 `link.publish(` 的调用点不再是恰好一处（:1268）：'
       + `\n  实测：${JSON.stringify(editPublishHits)}`
       + '\n  基线：改帖同样走审核域的 `publish`（新版本级任务 + 新输入绑定，旧结论不得套到新版本上）。'
       + because('删掉改帖的 publish（新 revision 永远停在 pending，等于「改了就不再可见」），'

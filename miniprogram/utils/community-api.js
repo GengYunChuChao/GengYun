@@ -24,14 +24,14 @@ const REPORT_REASONS = ['dangerous', 'privacy', 'advertising', 'misleading', 'ot
 const REPORT_STATES = ['received', 'isolated', 'closed']
 const KNOWLEDGE_TYPES = ['species', 'herbicide', 'scheme']
 
+// `reason_codes` 是**必现**字段（`packages/contracts/openapi.json -> Post/Comment.reason_codes`）：
+// 响应体是 `additionalProperties:false` 的闭集且全 `required`，服务端没有可归属的理由码时给 `[]`，
+// **不再用「字段缺席」表达**。所以它进 required 表——缺席即 `INVALID_RESPONSE`，`[]` 合法。
 const POST_FIELDS = ['id', 'revision', 'author', 'title', 'body', 'crop_id', 'region_code', 'media_ids',
-  'visibility', 'audit_state', 'created_at', 'updated_at', 'media', 'linked_knowledge_ref', 'linked_knowledge']
-const COMMENT_FIELDS = ['id', 'revision', 'post_id', 'author', 'body', 'visibility', 'audit_state', 'created_at']
-// 读面**可选**字段（`packages/contracts/openapi.json -> Post/Comment.reason_codes`）：服务端拿不到
-// 可如实归属的理由码时**整个字段缺席**，所以它只能进可选表——放进 required 会把「诚实的缺席」
-// 判成 `INVALID_RESPONSE`，等于逼服务端编一个占位码。
-const POST_OPTIONAL_FIELDS = ['reason_codes']
-const COMMENT_OPTIONAL_FIELDS = ['reason_codes']
+  'visibility', 'audit_state', 'reason_codes', 'created_at', 'updated_at', 'media', 'linked_knowledge_ref',
+  'linked_knowledge']
+const COMMENT_FIELDS = ['id', 'revision', 'post_id', 'author', 'body', 'visibility', 'audit_state', 'reason_codes',
+  'created_at']
 const REPORT_FIELDS = ['id', 'revision', 'target_ref', 'state', 'reason_code']
 
 function failure(code, extra) {
@@ -126,21 +126,20 @@ function linkedKnowledge(link) {
   if (!text(link.summary.title, 200)) throw failure('INVALID_RESPONSE')
 }
 /**
- * 读面**可选**理由码字段：`undefined`（字段缺席）合法——「服务端没有可如实归属的理由码」
- * 就是这么表达的，不当成 `INVALID_RESPONSE`。一旦出现，就必须符合契约
- * （`type: array`、`items: {type: string, minLength: 1}`、`maxItems: 30`）；
- * **空数组同样不合格**：服务端口径是「没有码就不带字段」，`[]` 只说明两端对「没有」的表达不一致，
- * 宁可当场红，也不把它悄悄当成「没有理由」渲染出去。
+ * 读面**必现**理由码字段：必须是数组（`[]` 合法——服务端没有可归属的理由码时就是这么表达的），
+ * 且符合契约（`type: array`、`items: {type: string, minLength: 1}`、`maxItems: 30`）。
+ * 字段缺席 = 两端对形状的理解不一致 ⇒ `INVALID_RESPONSE`（不再把「缺席」当合法的一种写法）。
+ * 命名不叫 `reasonCodes`：那个名字已被「错误封套里的码提取」（本文件 :378，已导出）占用，
+ * 同名会让读面校验和错误路径混成一片。
  */
-function optionalReasonCodes(value) {
-  if (value === undefined) return
-  if (!Array.isArray(value) || value.length === 0 || value.length > 30) throw failure('INVALID_RESPONSE')
+function readReasonCodes(value) {
+  if (!Array.isArray(value) || value.length > 30) throw failure('INVALID_RESPONSE')
   for (let i = 0; i < value.length; i += 1) {
     if (typeof value[i] !== 'string' || value[i].length === 0) throw failure('INVALID_RESPONSE')
   }
 }
 function validPost(post) {
-  keys(post, POST_FIELDS, POST_OPTIONAL_FIELDS)
+  keys(post, POST_FIELDS)
   if (!uuid(post.id) || !Number.isSafeInteger(post.revision) || post.revision < 1 ||
     !text(post.title, 120) || !text(post.body, 8000) || !one(post.visibility, VISIBILITY) ||
     !one(post.audit_state, AUDIT_STATES) || !timestamp(post.created_at) || !timestamp(post.updated_at) ||
@@ -155,16 +154,16 @@ function validPost(post) {
   if (post.linked_knowledge_ref !== null) knowledgeTarget(post.linked_knowledge_ref)
   linkedKnowledge(post.linked_knowledge)
   if ((post.linked_knowledge_ref === null) !== (post.linked_knowledge === null)) throw failure('INVALID_RESPONSE')
-  optionalReasonCodes(post.reason_codes)
+  readReasonCodes(post.reason_codes)
   return post
 }
 function validComment(comment) {
-  keys(comment, COMMENT_FIELDS, COMMENT_OPTIONAL_FIELDS)
+  keys(comment, COMMENT_FIELDS)
   if (!uuid(comment.id) || !Number.isSafeInteger(comment.revision) || comment.revision < 1 || !uuid(comment.post_id) ||
     !text(comment.body, 4000) || !one(comment.visibility, VISIBILITY) || !one(comment.audit_state, AUDIT_STATES) ||
     !timestamp(comment.created_at)) throw failure('INVALID_RESPONSE')
   validAuthor(comment.author)
-  optionalReasonCodes(comment.reason_codes)
+  readReasonCodes(comment.reason_codes)
   return comment
 }
 function validReport(report) {
@@ -524,9 +523,9 @@ function baseOutcomeOf(record) {
  *
  * `options.reasonCodes`：调用方**手上真有**理由码时传进来。现存两条通道：
  *   1. 错误封套的 `details[].code`（写操作当场被拒时拿到的码）；
- *   2. 读面的**可选**字段 `record.reason_codes`（`packages/contracts/openapi.json -> Post` /
- *      `Comment`）。该字段**只在服务端能如实归属理由码时出现**：无结论、结论与目标或正文摘要
- *      不匹配、台账不可读、规则层否决而未落行等路径上它整个缺席——缺席即真相，不是「没有理由」。
+ *   2. 读面的 `record.reason_codes`（`packages/contracts/openapi.json -> Post` / `Comment`）。
+ *      该字段**必现**：服务端没有可归属的理由码时给 `[]`（不再用缺席表达），所以「空数组」
+ *      与「没有理由」是同一件事。
  * 所以本函数**不会**凭空编理由：没传码就只说结论。要把读面的码单独说成一行用 `reasonSummary`。
  */
 function outcomeOf(record, options) {
@@ -727,10 +726,10 @@ const REASON_CODES_FIELD_MAX = 30
 /**
  * 读面理由码 → **一行**给人看的话（只陈述服务端真给了什么）。
  *
- * 入参是读面的 `Post`/`Comment`。`reason_codes` 是**可选**字段：
- *   - 字段缺席 ⇒ 返回 `null`，调用方不渲染这一行。缺席意味着服务端没有可如实归属的理由码
+ * 入参是读面的 `Post`/`Comment`。`reason_codes` 是**必现**字段（形状已由 `readReasonCodes` 把住）：
+ *   - 空数组 ⇒ 返回 `null`，调用方不渲染这一行。`[]` 意味着服务端没有可如实归属的理由码
  *     （无结论／结论与目标或正文摘要不匹配／台账不可读／规则层否决而未落行），
- *     这时补一句「原因未知」就是把「缺席」编成了结论；
+ *     这时补一句「原因未知」就是把「没有码」编成了结论；
  *   - 字段在但形状不对（不是数组、元素不是非空字符串）⇒ 丢掉坏元素；丢完没有可用的码就返回 `null`；
  *   - 码去重保序，最多 `REASON_LINES_MAX`（6）条，超出只说「等 N 条」。
  * 返回 `{ codes, text }`，`text` 形如
@@ -860,7 +859,7 @@ module.exports = {
   commentOutcomeOf: commentOutcomeOf,
   reasonLabel: reasonLabel,
   reasonLines: reasonLines,
-  // 读面可选字段 `reason_codes` → 一行人话（字段缺席 ⇒ null，调用方不渲染）。
+  // 读面必现字段 `reason_codes` → 一行人话（`[]` ⇒ null，调用方不渲染）。
   reasonSummary: reasonSummary,
   sessionFailure: sessionFailure,
   forbidden: forbidden,
