@@ -715,9 +715,9 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
    * **清理线索的落点（监工 1022-0659 轮 P1）**：光靠「保留引用」不够 —— 这个 `record` 可能
    * 只是一份**进程内快照**（`completeUpload` 的 CAS=0 分支一个字节都不写库），而真行也可能
    * 已被并发 `delete` 清空引用，甚至被注销清理物理删除。所以每个对象**先**把意图登记进
-   * 不依赖父行存活的清理台账（`store.saveObjectCleanup`），**再**尝试桶删除；只有桶删除
-   * 被确认成功才删掉那条台账行。登记失败时仍尝试删除（能删掉就万事大吉），删不掉则按
-   * `pending` 计入 —— 这一路只剩「库与桶同时失败」才可能丢线索，落不了库时本也无处可写。
+   * 不依赖父行存活的清理台账（`store.saveObjectCleanup`），**再**尝试桶删除；删除被确认成功**且**该记录的
+   * `createdAt + MEDIA_INITIATED_TTL_MS`（与签句柄同一算式，即句柄失效时刻）已过才删台账行 —— 句柄仍有效
+   * 时删行，迟到 PUT 造出的对象就再没人扫得到；登记失败时仍删，删不掉则按 `pending` 计入（才可能丢线索）。
    */
   async function dropObjects(
     record: MediaRecord,
@@ -736,8 +736,8 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         if (await objectStore.deleteObject(ref)) {
           record[field] = null;
           removed += 1;
-          // ② 只有**确认**删除成功才允许删掉台账行（未确认就删行 = 永久丢线索）。
-          if (recorded) await forgetCleanupIntent(ref);
+          // ② 只有**确认**删除成功、且该记录的预签名句柄已失效，才允许删掉台账行。
+          if (recorded && record.createdAt + MEDIA_INITIATED_TTL_MS <= at()) await forgetCleanupIntent(ref);
         } else {
           // 未确认删除：**保留引用与台账行**，留给 cleanupOrphans / 下次删除重试。
           pending += 1;
@@ -1443,12 +1443,12 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         // 0 行即放弃落库——对象回收本身已发生且可重入，下一轮按真行继续收敛。
         await store.saveMediaIfCurrent(record, snapshotOf(record));
       }
-      // **清理台账扫描**（监工 1022-0659 轮 P1）：上面那一轮只认「还挂在真行上的引用」，
-      // 而本 P1 丢的恰恰是**没有父行可挂**的对象（CAS=0 失利者刚生成、桶又没删掉的衍生件）。
-      // 台账行独立于父行存活，因此这里按行重试即可收敛：确认删除成功 ⇒ 删行；仍未确认 ⇒
-      // 保留行并累加 `attempts`（下一轮再来）。重复执行天然幂等（对象删除本身幂等）。
+      // **清理台账扫描**（监工 1022-0659 轮 P1）：上面那一轮只认「还挂在真行上的引用」；本 P1 丢的是
+      // **没有父行可挂**的对象（CAS=0 失利者刚生成、桶又没删掉的衍生件）。台账行独立于父行存活 ⇒ 按行重试收敛。
+      // r72：**未到期**（`createdAt + MEDIA_INITIATED_TTL_MS > timestamp`）的行本轮一律跳过 —— 句柄未失效时
+      // 删行等于给「迟到 PUT 造出的孤儿对象」销账；跳过时不碰 attempts/updated_at，到期后照旧收敛。
       for (const entry of await store.listObjectCleanup()) {
-        if (attemptedThisSweep.has(entry.objectRef)) continue;
+        if (attemptedThisSweep.has(entry.objectRef) || entry.createdAt + MEDIA_INITIATED_TTL_MS > timestamp) continue;
         let confirmed = false;
         try {
           confirmed = await objectStore.deleteObject(entry.objectRef);

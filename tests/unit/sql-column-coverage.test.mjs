@@ -877,6 +877,12 @@ const TABLE_WIDE_COLUMN = '*';
  *   `INSERT`/`UPDATE`/`DELETE`、RETURNING 99、ON CONFLICT 31、`SELECT *` 15（t.* 4）、行锁 27/17、
  *   函数调用 2、无顶层 FROM 18、引用表 52、豁免 63、行锁要求 44/豁免 1、不可判插值 5 逐项**不变**。
  *   **没有把任何数字往下改**：+1 条字面量与 +3 条列要求都是那条真 SELECT 带来的（回填只读三列）。
+ * ㉗ 2026-11-02 R72（media 清理台账按「句柄还活着」收敛）：`media/store-pg.ts` 的 `listObjectCleanup`
+ *   多读一列 `created_at`（`(extract(epoch FROM created_at) * 1000)::bigint`，与同文件 `:327/:498`
+ *   的时间戳读法同口径）⇒ 列要求 2072 → **2073**、已覆盖 1971 → **1972**（该列本来就在
+ *   `20-login-roles.sql` 段 M 的列级 SELECT 授权里 ⇒ **零 GRANT 变更**、零迁移）；字面量 320／语句
+ *   `{49,58,170,43}`／RETURNING 99／ON CONFLICT 31／逐文件读数/引用表 **全部不变**。**没有往下改任何数字**：
+ *   +1 条列要求就是这条 SELECT 真多读的那一列带来的（服务层要靠它判「预签名句柄是否已失效」）。
  */
 const EXPECTED_EXTENDED_READINGS = {
   auditedFiles: 23,
@@ -890,8 +896,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 18,
   referencedTables: 52,
-  columnRequirements: 2072,
-  coveredRequirements: 1971,
+  columnRequirements: 2073,
+  coveredRequirements: 1972,
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
