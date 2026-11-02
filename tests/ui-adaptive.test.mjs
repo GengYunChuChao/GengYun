@@ -185,13 +185,23 @@ test('五个页面均注册统一状态组件', () => {
   }
 });
 
-test('录音与播放为两个独立按钮，播放需先有录音', () => {
-  const wxml = read('miniprogram/pages/identify/identify.wxml');
-  assert.ok(/bindtap="onRecord"/.test(wxml), '缺少独立录音按钮');
-  assert.ok(/bindtap="onPlay"/.test(wxml), '缺少独立播放按钮');
-  assert.ok(/disabled="\{\{guest \|\| !hasRecording\}\}"/.test(wxml), '播放按钮未在无录音时禁用');
-  const js = read('miniprogram/pages/identify/identify.js');
-  assert.ok(!/getRecorderManager|createInnerAudioContext/.test(js), '不应在未接入时调用录音或播放能力');
+test('录音与播报为两个独立控件，播报前必须过安全检查，页面不直接调用平台能力', () => {
+  // GY-I26：真实录音/播放控件在已登记的语音页；识别页的语音段只是无录音占位。
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  assert.ok(/bindtap="onRecord"/.test(wxml), '缺少独立录音控件');
+  assert.ok(/bind:play="onPlay"/.test(wxml), '缺少独立播报控件');
+  assert.ok(/disabled="\{\{guest \|\| busy \|\| !checkPassed\}\}"/.test(wxml), '合成（播报）入口未由安全检查把关');
+  assert.ok(/recordState/.test(wxml) && /playbackState/.test(wxml), '录音态与播报态必须各自独立');
+  // 只禁「真的调用」：注释/用户文案里出现能力名字是说明，不是调用（与 voice 页回归同一口径）。
+  const js = read('miniprogram/pages/voice/voice.js')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  assert.equal(/wx\.(getRecorderManager|createInnerAudioContext)\s*\(/.test(js), false, '页面不得直接调用平台录音或播放能力');
+  // 识别页不得再把布局占位做成「开始录音／播放录音」；只给到已登记语音页的受控入口。
+  const identify = read('miniprogram/pages/identify/identify.wxml');
+  assert.equal(/<button[^>]*bindtap="onRecord"/.test(identify), false, '识别页不得保留假的录音按钮');
+  assert.equal(/<button[^>]*bindtap="onPlay"/.test(identify), false, '识别页不得保留假的播放按钮');
+  assert.ok(/bindtap="onOpenVoice"/.test(identify), '识别页必须给出到已登记语音页的受控入口');
 });
 
 test('界面文案不含绝对化风险表述', () => {

@@ -228,10 +228,7 @@ Page({
     /** 当前已核实主体标识；为空表示门禁未通过，历史/候选区一律不展示。 */
     historyOwner: '',
     historyNote: '',
-    candidateSource: 'job',
-    /** 语音入口的既有按钮状态（独立录音/播放按钮，播放需先有录音）。 */
-    recording: false,
-    hasRecording: false
+    candidateSource: 'job'
   },
 
   onShow: function () {
@@ -305,16 +302,14 @@ Page({
     if (key === 'text') { this.openQa(); return }
   },
 
-  /** 录音入口：**尚未接入真实录音**，只切换按钮文案；不调用任何录音能力、不采集、不上传。 */
-  onRecord: function () {
-    if (this.data.guest) return
-    this.setData({ recording: !this.data.recording })
-  },
-
-  /** 播放入口（独立按钮，无录音时禁用）：未接入真实播放能力，如实提示，不播放、不上传。 */
-  onPlay: function () {
-    if (this.data.guest || !this.data.hasRecording) return
-    wx.showToast({ title: '播放能力尚未接入', icon: 'none' })
+  /**
+   * 语音入口：识别页这一段**没有录音能力**，只提供一条到已登记播报页的受控入口。
+   *
+   * 不在本页放「开始录音／播放录音」：那两个按钮从来没有真实录音/播放，留着只会把布局占位
+   * 读成「已经录过音」。录音转写（ASR）仍未接线，本页也不采集、不上传任何音频。
+   */
+  onOpenVoice: function () {
+    this.openGatedPage('/pages/voice/voice', '语音页需要微信登录后使用，现在去登录吗？')
   },
 
   choosePhoto: function () {
@@ -1071,18 +1066,21 @@ Page({
   },
 
   /**
-   * GY-I12：打开**文字提问页**（`/pages/qa/qa`）。
+   * 打开**已登记**的受控页面（本页的 qa / 语音入口共用这一条门禁）。
    *
    * 门禁口径（与首页能力卡、本页其余入口逐字一致）：
-   *   1. `beginReturnTo` 记下**本页为qa目标**的一次性意图，然后 `verifySession` 用服务端核实会话；
-   *   2. 已核实 ⇒ 消费该意图并 `navigateTo`（qa 页不是底部 Tab，故不走 switchTab）；
-   *   3. 未核实 ⇒ `wx.showModal` 询问是否登录，确认才 `goLogin`（登录成功后回到 qa 页），
-   *      取消则清掉意图。**不**在客户端放行任何私有数据，也不用游客态打开 qa 页。
+   *   1. 只接受 `navigation.normalizeTarget` 认可的已登记路由（不接受查询参数、不拼临时详情）；
+   *   2. `beginReturnTo` 记下**本页为目标**的一次性意图，然后 `verifySession` 用服务端核实会话；
+   *   3. 已核实 ⇒ 消费该意图并 `navigateTo`（qa / voice 都不是底部 Tab，故不走 switchTab）；
+   *   4. 未核实 ⇒ `wx.showModal` 询问是否登录，确认才 `goLogin`（登录成功后回到目标页），
+   *      取消则清掉意图。**不**在客户端放行任何私有数据，也不用游客态打开目标页。
    */
-  openQa: function () {
+  openGatedPage: function (target, loginContent) {
     if (this.data.guest === true) return
+    const normalized = navigation.normalizeTarget(target)
+    if (normalized === null) return
     const self = this
-    const op = navigation.beginReturnTo('/pages/qa/qa')
+    const op = navigation.beginReturnTo(normalized)
     const action = (this._action || 0) + 1
     this._action = action
     const current = function () { return self._action === action && self.data.guest !== true }
@@ -1093,7 +1091,7 @@ Page({
       if (verified !== true) {
         wx.showModal({
           title: '需要登录',
-          content: '文字提问需要微信登录后使用，现在去登录吗？',
+          content: loginContent,
           confirmText: '去登录',
           cancelText: '暂不',
           success: function (result) {
@@ -1108,6 +1106,11 @@ Page({
         if (current() && error) self.setData({ errorText: error })
       })
     })
+  },
+
+  /** GY-I12：打开**文字提问页**（`/pages/qa/qa`）。 */
+  openQa: function () {
+    this.openGatedPage('/pages/qa/qa', '文字提问需要微信登录后使用，现在去登录吗？')
   }
 })
 

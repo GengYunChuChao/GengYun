@@ -305,16 +305,11 @@
       <view class="section-head__meta">语音提问</view>
     </view>
     <view class="panel">
-      <view class="hint">录音与播放尚未接入真实服务；此处仅演示按钮布局，不会采集录音、不会上传。</view>
+      <view class="hint">本页不录音、不采集、不上传音频，也没有转写结果；录音转写（ASR）尚未接通。</view>
+      <view class="hint">独立语音页有录音入口，以及通过安全检查后的文字播报入口；转写服务和真实供应商尚未核实，合成语音暂不能播放。</view>
       <view class="row-actions">
-        <button class="btn btn--primary row-actions__item" disabled="{{guest}}" bindtap="onRecord">
-          {{recording ? '录音中…' : '开始录音'}}
-        </button>
-        <button class="btn btn--secondary row-actions__item" disabled="{{guest || !hasRecording}}" bindtap="onPlay">
-          播放录音
-        </button>
+        <button class="btn btn--primary row-actions__item" disabled="{{guest}}" bindtap="onOpenVoice">去语音页（录音 / 播报）</button>
       </view>
-      <view class="demo-caption" wx:if="{{!hasRecording}}">还没有录音。录音与播放能力尚未接入，本页不会采集或上传任何音频。</view>
     </view>
   </view>
 
