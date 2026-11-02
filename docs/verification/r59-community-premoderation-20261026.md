@@ -27,7 +27,7 @@
 | 改帖两步（同口径，第二处落点） | `services/api/src/community/service.ts:1197-1198`、`:1203-1222` | 新 revision 必须重送审：先 `commitPostIfCurrent` 落待审，再 `link.publish` 这**个新 revision** |
 | 投稿面路由级门 | `services/api/src/routes/community.ts:212-220` | `POST /community/posts` 的 `preHandler: postingPreHandlers(...)`（功能开关 + 投稿同意门）在**服务层之前** |
 | 下架（发布后） | `services/api/src/routes/admin.ts:416-424` | `POST /admin/posts/:id/hide`，scope `sources:write`；服务层做可见性 CAS 到 `hidden` |
-| 作者侧状态文案（小程序三页） | `miniprogram/pages/community/community.js:190-192`、`miniprogram/pages/communitydetail/communitydetail.js:200-201`、`miniprogram/pages/communitycreate/communitycreate.js:124-134` | 通过 ⇒ 空串或「已通过先行审核」；下架 ⇒「已下架（仅本人可见）」；**其余（含 `pending` 与 `rejected`）⇒「待审／未公开」**；历史三档口径（旧锚点 173-176 在父上实为 `body`/`author` 字段），#749 后统一由 `api.outcomeOf` 投影（现行锚点见本行 200-201） |
+| 作者侧状态文案（小程序三页） | `miniprogram/pages/community/community.js:190-192`、`miniprogram/pages/communitydetail/communitydetail.js:205-206`、`miniprogram/pages/communitycreate/communitycreate.js:124-134` | 通过 ⇒ 空串或「已通过先行审核」；下架 ⇒「已下架（仅本人可见）」；**其余（含 `pending` 与 `rejected`）⇒「待审／未公开」**；历史三档口径（旧锚点 173-176 在父上实为 `body`/`author` 字段），#749 后统一由 `api.outcomeOf` 投影（现行锚点见本行 200-201） |
 
 ### 1.2 半落地（有代码，但离「先审后发」的完整语义还差一截）
 
@@ -92,7 +92,7 @@
    `audit_state = 'rejected'` 的行；也**没有通知对象**可发。把「驳回」想成「先发出去、后被打回」是错的。
 2. **`community.js` 里没有「已通过先行审核」这个字面量。** 列表页作者侧通过态是**空串**
    （`miniprogram/pages/community/community.js:190-192`）；该文案只出现在
-   `miniprogram/pages/communitydetail/communitydetail.js:200`（公开侧 `publicLabel`；历史锚点误指 173，文案表现集中在 `miniprogram/utils/community-api.js` 的 `OUTCOMES`）与
+   `miniprogram/pages/communitydetail/communitydetail.js:205`（公开侧 `publicLabel`；历史锚点误指 173，文案表现集中在 `miniprogram/utils/community-api.js` 的 `OUTCOMES`）与
    `miniprogram/pages/communitycreate/communitycreate.js:129`（发帖 toast）。
    另注意详情页公开侧是「**未公开／待审**」，语序与作者侧「待审／未公开」**相反**。
 3. **两步状态有第二处落点：改帖（`editPost`）。** 之前只登记了发帖；

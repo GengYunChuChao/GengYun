@@ -27,6 +27,11 @@ const KNOWLEDGE_TYPES = ['species', 'herbicide', 'scheme']
 const POST_FIELDS = ['id', 'revision', 'author', 'title', 'body', 'crop_id', 'region_code', 'media_ids',
   'visibility', 'audit_state', 'created_at', 'updated_at', 'media', 'linked_knowledge_ref', 'linked_knowledge']
 const COMMENT_FIELDS = ['id', 'revision', 'post_id', 'author', 'body', 'visibility', 'audit_state', 'created_at']
+// 读面**可选**字段（`packages/contracts/openapi.json -> Post/Comment.reason_codes`）：服务端拿不到
+// 可如实归属的理由码时**整个字段缺席**，所以它只能进可选表——放进 required 会把「诚实的缺席」
+// 判成 `INVALID_RESPONSE`，等于逼服务端编一个占位码。
+const POST_OPTIONAL_FIELDS = ['reason_codes']
+const COMMENT_OPTIONAL_FIELDS = ['reason_codes']
 const REPORT_FIELDS = ['id', 'revision', 'target_ref', 'state', 'reason_code']
 
 function failure(code, extra) {
@@ -120,8 +125,22 @@ function linkedKnowledge(link) {
   keys(link.summary, ['title'])
   if (!text(link.summary.title, 200)) throw failure('INVALID_RESPONSE')
 }
+/**
+ * 读面**可选**理由码字段：`undefined`（字段缺席）合法——「服务端没有可如实归属的理由码」
+ * 就是这么表达的，不当成 `INVALID_RESPONSE`。一旦出现，就必须符合契约
+ * （`type: array`、`items: {type: string, minLength: 1}`、`maxItems: 30`）；
+ * **空数组同样不合格**：服务端口径是「没有码就不带字段」，`[]` 只说明两端对「没有」的表达不一致，
+ * 宁可当场红，也不把它悄悄当成「没有理由」渲染出去。
+ */
+function optionalReasonCodes(value) {
+  if (value === undefined) return
+  if (!Array.isArray(value) || value.length === 0 || value.length > 30) throw failure('INVALID_RESPONSE')
+  for (let i = 0; i < value.length; i += 1) {
+    if (typeof value[i] !== 'string' || value[i].length === 0) throw failure('INVALID_RESPONSE')
+  }
+}
 function validPost(post) {
-  keys(post, POST_FIELDS)
+  keys(post, POST_FIELDS, POST_OPTIONAL_FIELDS)
   if (!uuid(post.id) || !Number.isSafeInteger(post.revision) || post.revision < 1 ||
     !text(post.title, 120) || !text(post.body, 8000) || !one(post.visibility, VISIBILITY) ||
     !one(post.audit_state, AUDIT_STATES) || !timestamp(post.created_at) || !timestamp(post.updated_at) ||
@@ -136,14 +155,16 @@ function validPost(post) {
   if (post.linked_knowledge_ref !== null) knowledgeTarget(post.linked_knowledge_ref)
   linkedKnowledge(post.linked_knowledge)
   if ((post.linked_knowledge_ref === null) !== (post.linked_knowledge === null)) throw failure('INVALID_RESPONSE')
+  optionalReasonCodes(post.reason_codes)
   return post
 }
 function validComment(comment) {
-  keys(comment, COMMENT_FIELDS)
+  keys(comment, COMMENT_FIELDS, COMMENT_OPTIONAL_FIELDS)
   if (!uuid(comment.id) || !Number.isSafeInteger(comment.revision) || comment.revision < 1 || !uuid(comment.post_id) ||
     !text(comment.body, 4000) || !one(comment.visibility, VISIBILITY) || !one(comment.audit_state, AUDIT_STATES) ||
     !timestamp(comment.created_at)) throw failure('INVALID_RESPONSE')
   validAuthor(comment.author)
+  optionalReasonCodes(comment.reason_codes)
   return comment
 }
 function validReport(report) {
@@ -426,9 +447,9 @@ const OUTCOMES = Object.freeze({
  *
  * 为什么必须分（独立审查 7d27727d 的阻塞项）：服务端读面会把「已发布后被驳回／被隔离」
  * 如实降级成 `hidden` 并**原样带 `audit_state`**——
- * `services/api/src/community/service.ts:583-616` 的 `effectiveState`：`demoted()` 把
- * `published` 一律降成 `hidden`（`:588-591`），迟到驳回时 `domainWithholdingOf()` 返回
- * `'rejected'`（`:611-612`），迟到隔离返回 `'quarantined'`；而 `listPosts(mine=true)`
+ * `services/api/src/community/service.ts:615-657` 的 `effectiveState`：`demoted()`（`:620-627`）把
+ * `published` 一律降成 `hidden`，迟到驳回时 `domainWithholdingOf()` 的结果（用在 `:652-653`）是
+ * `'rejected'`，迟到隔离是 `'quarantined'`；而 `listPosts(mine=true)`
  * 明确包含未公开版本 ⇒ 作者在自己的列表/详情里**真的看得到** `{hidden, rejected}` 与
  * `{hidden, quarantined}`。
  *
@@ -501,10 +522,12 @@ function baseOutcomeOf(record) {
 /**
  * 审核结论判定（**单一实现**，页面只调它）：`baseOutcomeOf` + 理由码。
  *
- * `options.reasonCodes`：调用方**手上真有**理由码时传进来（唯一现存通道是错误封套的
- * `details[].code`）。读面契约 `Post`/`Comment` 没有理由码字段
- * （`packages/contracts/openapi.json`：`additionalProperties:false`，15 个 required 里没有理由码），
- * 所以本函数**不会**凭空编理由：没传码就只说结论。
+ * `options.reasonCodes`：调用方**手上真有**理由码时传进来。现存两条通道：
+ *   1. 错误封套的 `details[].code`（写操作当场被拒时拿到的码）；
+ *   2. 读面的**可选**字段 `record.reason_codes`（`packages/contracts/openapi.json -> Post` /
+ *      `Comment`）。该字段**只在服务端能如实归属理由码时出现**：无结论、结论与目标或正文摘要
+ *      不匹配、台账不可读、规则层否决而未落行等路径上它整个缺席——缺席即真相，不是「没有理由」。
+ * 所以本函数**不会**凭空编理由：没传码就只说结论。要把读面的码单独说成一行用 `reasonSummary`。
  */
 function outcomeOf(record, options) {
   return withReasons(baseOutcomeOf(record), options)
@@ -585,7 +608,11 @@ function commentOutcomeOf(record, options) {
  *   - 未结论/隔离：同文件 `FAIL_CLOSED_REASON_CODES`、`packages/moderation/model-reason-codes.mjs`
  *     的模型层理由码闭集（该文件导出的数组），以及 `community/service.ts` 追加的
  *     `IMAGE_MODERATION_UNAVAILABLE` / `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`、审核域读面的
- *     `RESCREEN_REQUIRED`。
+ *     `RESCREEN_REQUIRED`；
+ *   - 运营驳回：`services/api/src/admin/ops/types.ts` 的 `POST_REVIEW_REASON_CODES`（小写；后台逐条勾选，
+ *     语义是「这次为什么被驳回」，不是规则命中）；
+ *   - 复核期：`packages/moderation/review.mjs` 的 `evaluateReReview` 产出的码（`DECISION_*`、
+ *     `RULE_VERSION_CHANGED`、`TARGET_*`）——旧结论不能再用时，这句话要能说清「为什么要重审」。
  * 表里没有的码**一律**走 `未知原因（码：X）`（见 `reasonLabel`），不猜、不合并、不说成通过。
  */
 const REASON_LABELS = Object.freeze({
@@ -628,7 +655,28 @@ const REASON_LABELS = Object.freeze({
   TARGET_REVISION_CHANGED: '审核针对的是旧版本，需要重新审核',
   REASON_CODES_TRUNCATED: '原因码过多已被截断（列出的不是全部原因）',
   RESCREEN_REQUIRED: '内容版本已变化，需要重新审核',
-  NOT_PUBLISHABLE: '没有取得可放行的结论'
+  NOT_PUBLISHABLE: '没有取得可放行的结论',
+  // ---- 运营驳回（`services/api/src/admin/ops/types.ts` 的 `POST_REVIEW_REASON_CODES`，小写）----
+  // 这十条是作者在「审核未通过」时**最常**看到的码：后台由运营逐条勾选，语义是「这次为什么驳回」。
+  // 措辞对齐 `apps/admin/src/lib/admin-moderation-queue.mjs` 的 `POST_REVIEW_REASON_LABELS`，
+  // 但对作者只陈述内容层面的事实，不加评价、不推测动机。
+  spam: '被判定为广告或刷屏内容',
+  harassment: '含骚扰或辱骂性表达',
+  adult_or_violent: '含色情或暴力内容',
+  illegal_or_political: '涉及违法违规或政治敏感内容',
+  privacy: '含他人隐私信息',
+  misleading_agronomy: '农技信息存在误导',
+  banned_agrochemical: '涉及违禁农药',
+  off_topic: '与本社区主题无关',
+  duplicate: '与已有内容重复',
+  other: '运营审核给出的其他原因',
+  // ---- 复核期（`packages/moderation/review.mjs` 的 `evaluateReReview`）：旧结论不能再用 ----
+  DECISION_INCONSISTENT: '审核结论前后不一致，需要重新审核',
+  RULE_VERSION_CHANGED: '审核规则已更新，需要重新审核',
+  TARGET_REF_CHANGED: '审核对象已变化，需要重新审核',
+  DECISION_INVALID: '审核结论不完整，需要重新审核',
+  TARGET_REF_INVALID: '审核对象信息不完整，未取得结论',
+  ENGINE_OPTIONS_INVALID: '审核引擎配置无效，未取得结论'
 })
 
 /**
@@ -671,6 +719,43 @@ function reasonLines(error) {
     if (lines.indexOf(line) === -1) lines.push(line)
   }
   return lines
+}
+
+/** 读面 `Post`/`Comment.reason_codes` 的上限（`packages/contracts/openapi.json`：`maxItems: 30`）。 */
+const REASON_CODES_FIELD_MAX = 30
+
+/**
+ * 读面理由码 → **一行**给人看的话（只陈述服务端真给了什么）。
+ *
+ * 入参是读面的 `Post`/`Comment`。`reason_codes` 是**可选**字段：
+ *   - 字段缺席 ⇒ 返回 `null`，调用方不渲染这一行。缺席意味着服务端没有可如实归属的理由码
+ *     （无结论／结论与目标或正文摘要不匹配／台账不可读／规则层否决而未落行），
+ *     这时补一句「原因未知」就是把「缺席」编成了结论；
+ *   - 字段在但形状不对（不是数组、元素不是非空字符串）⇒ 丢掉坏元素；丢完没有可用的码就返回 `null`；
+ *   - 码去重保序，最多 `REASON_LINES_MAX`（6）条，超出只说「等 N 条」。
+ * 返回 `{ codes, text }`，`text` 形如
+ * `理由：危险混配（码：DANGEROUS_MIX）；含可识别到个人的隐私信息（码：PRIVACY_PII）。`
+ * 开头用「理由：」而不是 `outcomeOf` 的「原因：／审核侧说明：」——这一行常与 `outcomeDesc`
+ * 同屏出现，同一个开头会让两句话读成重复。
+ */
+function reasonSummary(record) {
+  const raw = record && record.reason_codes
+  if (!Array.isArray(raw)) return null
+  const codes = []
+  for (let i = 0; i < raw.length && codes.length < REASON_CODES_FIELD_MAX; i += 1) {
+    const code = typeof raw[i] === 'string' ? raw[i].trim() : ''
+    if (code === '') continue
+    if (codes.indexOf(code) === -1) codes.push(code)
+  }
+  if (codes.length === 0) return null
+  const lines = codes.map(reasonLabel)
+  const shown = lines.slice(0, REASON_LINES_MAX)
+  const overflow = lines.length - shown.length
+  const tail = overflow > 0 ? `等 ${lines.length} 条` : ''
+  return Object.freeze({
+    codes: Object.freeze(codes.slice()),
+    text: '理由：' + shown.join('；') + tail + '。'
+  })
 }
 
 /**
@@ -775,6 +860,8 @@ module.exports = {
   commentOutcomeOf: commentOutcomeOf,
   reasonLabel: reasonLabel,
   reasonLines: reasonLines,
+  // 读面可选字段 `reason_codes` → 一行人话（字段缺席 ⇒ null，调用方不渲染）。
+  reasonSummary: reasonSummary,
   sessionFailure: sessionFailure,
   forbidden: forbidden,
   modeNote: modeNote,
