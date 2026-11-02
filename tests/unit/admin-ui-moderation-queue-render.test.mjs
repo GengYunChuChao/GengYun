@@ -30,6 +30,7 @@ if (globalThis.ShadowRoot === undefined) globalThis.ShadowRoot = class ShadowRoo
 const VIEW_URL = new URL('../../apps/admin/src/views/ModerationQueueView.vue', import.meta.url);
 const LIB_URL = new URL('../../apps/admin/src/lib/admin-moderation-queue.mjs', import.meta.url);
 const VUE_URL = import.meta.resolve('vue');
+const TAKEDOWN_API_URL = import.meta.resolve('../../apps/admin/src/lib/post-takedown-api.mjs');
 
 const SESSION = {
   accessToken: 'synthetic-admin-token',
@@ -80,7 +81,11 @@ function loadViewComponent() {
   const code = compiled.content
     .replace(/from\s+["']vue["']/g, `from '${VUE_URL}'`)
     .replace(new RegExp(`from\\s+["']${escape('../auth/session')}["']`, 'g'), `from '${SESSION_STUB_URL}'`)
-    .replace(new RegExp(`from\\s+["']${escape('../lib/admin-moderation-queue.mjs')}["']`, 'g'), `from '${LIB_URL.href}'`);
+    .replace(new RegExp(`from\\s+["']${escape('../lib/admin-moderation-queue.mjs')}["']`, 'g'), `from '${LIB_URL.href}'`)
+    .replace(
+      new RegExp(`from\\s+["']${escape('../lib/post-takedown-api.mjs')}["']`, 'g'),
+      `from '${TAKEDOWN_API_URL}'`,
+    );
   assert.deepEqual(
     [...code.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1]).filter((spec) => !/^(data:|file:)/.test(spec)),
     [],
@@ -694,6 +699,239 @@ test('应用筛选 ⇒ URL 带 state 与 audit_state，且无条件回第一页�
     const last = fetchImpl.calls.at(-1).url;
     assert.equal(last, '/api/v1/admin/posts?limit=20&state=hidden&audit_state=pending', '换筛选必须回第一页');
     assert.doesNotMatch(last, /cursor=/, '不得把旧游标带进新筛选');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+// ------------------------------------------------------------------ 下架（`hidePost`）
+
+const HIDE_REASON = '社区举报核实为不实用药建议，紧急下架';
+
+/** 路由式 fetch 桩：GET 列表 / GET 详情 / POST .../hide 分开，POST 只认 hide。 */
+function hideFetch({ list, current, onHide }) {
+  const calls = [];
+  const impl = async (url, init = {}) => {
+    const method = init.method ?? 'GET';
+    calls.push({ url, init, method });
+    if (method === 'POST') {
+      assert.match(url, /\/hide$/, '本组用例只允许下架这一个 POST');
+      return onHide({ url, init });
+    }
+    if (/^\/api\/v1\/admin\/posts\?/.test(url)) return list({ url, init });
+    if (/^\/api\/v1\/admin\/posts\/[0-9a-f-]{36}$/.test(url)) {
+      return {
+        json: async () => ({ data: current.post, meta: meta() }),
+        ok: true,
+        status: 200,
+        headers: new Headers({ etag: current.etag }),
+      };
+    }
+    throw new Error(`未预期的请求：${method} ${url}`);
+  };
+  impl.calls = calls;
+  return impl;
+}
+
+function openFirstRow(container) {
+  const row = findBy(container, byTestId('moderation-row'));
+  assert.ok(row !== null, '必须渲染至少一行');
+  row.props.onClick({});
+}
+
+function typeHideReason(container, value) {
+  const area = findBy(container, byTestId('moderation-hide-reason'));
+  assert.ok(area !== null, '详情侧栏必须有下架理由输入框');
+  assert.equal(typeof area.props.onInput, 'function', '下架理由必须挂着 input 处理器');
+  area.props.onInput({ target: { value } });
+}
+
+function checkHideConfirm(container) {
+  const box = findBy(container, byTestId('moderation-hide-confirm'));
+  assert.ok(box !== null, '下架必须有二次确认勾选');
+  assert.equal(typeof box.props.onChange, 'function', '确认勾选必须挂着 change 处理器');
+  box.props.onChange({ target: { checked: true } });
+}
+
+function hideButton(container) {
+  const button = findBy(container, byTestId('moderation-hide'));
+  assert.ok(button !== null, '详情侧栏必须有「下架此帖」按钮');
+  return button;
+}
+
+test('下架成功 ⇒ If-Match="<revision>" + Idempotency-Key，回执只说受理，并重读详情拿新可见性', async () => {
+  const current = { post: adminPost({ visibility: 'private' }), etag: '"3"' };
+  const fetchImpl = hideFetch({
+    list: () => jsonResponse(200, page([adminPost({ visibility: 'private' })])),
+    current,
+    onHide: () => {
+      // 服务端 hide 后重读详情：visibility 变 hidden、revision 进一位、ETag 换新。
+      current.post = adminPost({ revision: 4, visibility: 'hidden', audit_state: 'approved' });
+      current.etag = '"4"';
+      return jsonResponse(200, { data: { accepted: true }, meta: meta() }, { etag: '"4"' });
+    },
+  });
+  const mounted = await mountView({ fetchImpl });
+  try {
+    openFirstRow(mounted.container);
+    await settle();
+    typeHideReason(mounted.container, HIDE_REASON);
+    checkHideConfirm(mounted.container);
+    await settle();
+    assert.equal(hideButton(mounted.container).props.disabled, false, '理由 + 二次确认齐了必须可点');
+
+    hideButton(mounted.container).props.onClick({});
+    await settle();
+
+    const posts = fetchImpl.calls.filter((call) => call.method === 'POST');
+    assert.equal(posts.length, 1, '一次下架只发一个请求');
+    assert.equal(posts[0].url, `/api/v1/admin/posts/${POST_ID}/hide`);
+    assert.equal(posts[0].init.headers['if-match'], '"3"', 'If-Match 取操作前的 revision');
+    assert.notEqual(posts[0].init.headers['if-match'], '*', '不许出现通配 If-Match');
+    assert.match(posts[0].init.headers['idempotency-key'], /^admin-moderation-/);
+    assert.equal(posts[0].init.headers['idempotency-key'].includes('"'), false, '幂等键不得夹带引号');
+    assert.deepEqual(JSON.parse(posts[0].init.body), { reason: HIDE_REASON }, 'hide 的 body 只有 reason');
+
+    const notice = findBy(mounted.container, byTestId('moderation-hide-notice'));
+    assert.ok(notice !== null, '成功必须有回执');
+    assert.equal(notice.props.role, 'status');
+    const noticeText = textOf(notice);
+    assert.match(noticeText, /服务端已受理/);
+    assert.match(noticeText, /accepted/, '回执必须点明服务端只回了 accepted');
+    assert.doesNotMatch(noticeText, /已下架成功|成功下架|社区侧已生效/, '不得把受理写成「已生效」');
+
+    const detailReads = fetchImpl.calls.filter((call) => call.method === 'GET' && /\/admin\/posts\/[0-9a-f-]{36}$/.test(call.url));
+    assert.equal(detailReads.length, 2, '下架成功后必须重读详情（拿真实 visibility 与新 ETag）');
+    const detailText = textOf(findBy(mounted.container, byTestId('moderation-detail')));
+    assert.match(detailText, /hidden（已隐藏）/, '详情里的可见性必须跟着服务端走');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+// 负控制②：hide 的 200 回执里没有 `changed`，所以「已是该状态」只能按「操作前 visibility 已是 hidden」判。
+test('下架一条操作前已是 hidden 的帖 ⇒ 回执说「已是该状态」，不假装发生新改动（负控制②）', async () => {
+  const current = { post: adminPost({ revision: 4, visibility: 'hidden', audit_state: 'approved' }), etag: '"4"' };
+  const fetchImpl = hideFetch({
+    list: () => jsonResponse(200, page([adminPost({ revision: 4, visibility: 'hidden', audit_state: 'approved' })])),
+    current,
+    onHide: () => jsonResponse(200, { data: { accepted: true }, meta: meta() }, { etag: '"4"' }),
+  });
+  const mounted = await mountView({ fetchImpl });
+  try {
+    openFirstRow(mounted.container);
+    await settle();
+    typeHideReason(mounted.container, HIDE_REASON);
+    checkHideConfirm(mounted.container);
+    await settle();
+    hideButton(mounted.container).props.onClick({});
+    await settle();
+
+    const notice = findBy(mounted.container, byTestId('moderation-hide-notice'));
+    assert.ok(notice !== null, '即使「已是该状态」也必须给回执，不得静默');
+    assert.equal(notice.props.role, 'status', '「已是该状态」是 status，不是 error');
+    assert.match(String(notice.props.class ?? ''), /warn/, '「已是该状态」必须是 warn 语气，不是成功');
+    const noticeText = textOf(notice);
+    assert.match(noticeText, /已是该状态/);
+    assert.match(noticeText, /hidden/, '必须点明操作前就是 hidden');
+    assert.doesNotMatch(noticeText, /下架成功|新增了一次下架|已为你下架/, '不得声称发生了一次新下架');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+// 负控制③：缺 `sources:write` ⇒ 按钮禁用 + scope 提示；即使硬点也不发请求。
+test('会话缺 sources:write ⇒ 下架按钮禁用 + scope 提示，硬点也不发请求（负控制③）', async () => {
+  const originalScopes = SESSION.scopes;
+  SESSION.scopes = ['sources:read'];
+  const current = { post: adminPost(), etag: '"3"' };
+  const fetchImpl = hideFetch({
+    list: () => jsonResponse(200, page([adminPost()])),
+    current,
+    onHide: () => {
+      throw new Error('缺 scope 时不得发起下架请求');
+    },
+  });
+  const mounted = await mountView({ fetchImpl });
+  try {
+    openFirstRow(mounted.container);
+    await settle();
+    typeHideReason(mounted.container, HIDE_REASON);
+    checkHideConfirm(mounted.container);
+    await settle();
+
+    assert.equal(hideButton(mounted.container).props.disabled, true, '缺 sources:write 时必须禁用下架按钮');
+    const scopeHint = findBy(mounted.container, byTestId('moderation-hide-scope'));
+    assert.ok(scopeHint !== null, '缺 scope 必须给出提示，不能只是灰按钮');
+    assert.match(textOf(scopeHint), /sources:write/);
+    assert.match(textOf(scopeHint), /同门|禁用/, '提示要说明为什么禁（与审核同门）');
+
+    // 硬点：本地必须拦下（否则就是「按钮灰但逻辑仍会用无权会话发请求」）。
+    hideButton(mounted.container).props.onClick({});
+    await settle();
+    assert.equal(fetchImpl.calls.filter((call) => call.method === 'POST').length, 0, '缺 scope 时一个下架请求都不许发');
+    assert.equal(findBy(mounted.container, byTestId('moderation-hide-notice')), null);
+  } finally {
+    SESSION.scopes = originalScopes;
+    mounted.unmount();
+  }
+});
+
+test('下架缺理由或没勾二次确认 ⇒ 按钮禁用并写明缺什么（不发请求）', async () => {
+  const current = { post: adminPost(), etag: '"3"' };
+  const fetchImpl = hideFetch({
+    list: () => jsonResponse(200, page([adminPost()])),
+    current,
+    onHide: () => {
+      throw new Error('本地应已拦下');
+    },
+  });
+  const mounted = await mountView({ fetchImpl });
+  try {
+    openFirstRow(mounted.container);
+    await settle();
+
+    assert.equal(hideButton(mounted.container).props.disabled, true, '默认（无理由、无确认）必须禁用');
+    assert.match(textOf(findBy(mounted.container, byTestId('moderation-hide-blocked'))), /理由/);
+
+    typeHideReason(mounted.container, HIDE_REASON);
+    await settle();
+    assert.equal(hideButton(mounted.container).props.disabled, true, '缺二次确认仍必须禁用');
+    assert.match(textOf(findBy(mounted.container, byTestId('moderation-hide-blocked'))), /确认/);
+
+    checkHideConfirm(mounted.container);
+    await settle();
+    assert.equal(hideButton(mounted.container).props.disabled, false, '齐了就该可点');
+    assert.equal(fetchImpl.calls.filter((call) => call.method === 'POST').length, 0, '没点就不许发');
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test('下架失败 403 ⇒ 可见 alert 写清缺 sources:write，且没有成功回执', async () => {
+  const current = { post: adminPost(), etag: '"3"' };
+  const fetchImpl = hideFetch({
+    list: () => jsonResponse(200, page([adminPost()])),
+    current,
+    onHide: () => jsonResponse(403, errorEnvelope('SCOPE_DENIED', '缺少所需权限：sources:write')),
+  });
+  const mounted = await mountView({ fetchImpl });
+  try {
+    openFirstRow(mounted.container);
+    await settle();
+    typeHideReason(mounted.container, HIDE_REASON);
+    checkHideConfirm(mounted.container);
+    await settle();
+    hideButton(mounted.container).props.onClick({});
+    await settle();
+
+    const alert = findBy(mounted.container, byTestId('moderation-hide-error'));
+    assert.ok(alert !== null, '403 必须有可见失败提示');
+    assert.equal(alert.props.role, 'alert');
+    assert.match(textOf(alert), /sources:write/);
+    assert.match(textOf(alert), /403|权限/);
+    assert.equal(findBy(mounted.container, byTestId('moderation-hide-notice')), null, '失败不得显示成功回执');
+    assert.ok(findBy(mounted.container, byTestId('moderation-hide-dismiss')) !== null, '失败提示必须可关闭');
   } finally {
     mounted.unmount();
   }

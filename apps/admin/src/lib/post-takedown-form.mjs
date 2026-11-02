@@ -4,9 +4,11 @@
  * 分工：本模块只做「操作员填的东西能不能提交」与「不能提交时第一句该说什么」；
  * 请求形状与错误映射在 `post-takedown-api.mjs`（同一套校验函数由那边复用，口径只有一份）。
  *
- * 为什么必须「按 ID 直接下架」而不是选列表：契约里**没有**帖子读面
- * （`packages/contracts/openapi.json` 只有 `/admin/posts/{id}/hide` 一条 `/admin/posts` path），
- * 造一份帖子列表就是伪造数据（`docs/ui-contract-binding.md` 已就此定口径）。
+ * 为什么仍然「按 ID 直接下架」：契约**有**帖子读面（`GET /admin/posts` 与 `GET /admin/posts/{id}`，
+ * scope `sources:read`），本页也确实先读一次拿 revision（`post-takedown-read.mjs`）；但读面只用来
+ * **回填 revision 与核对帖子身份**，读不到（403／404／网络／503）就回落成手填——读面是便利，不是提交前提。
+ * 所以这里不造第二份帖子列表：列表页是「审核队列」（`ModerationQueueView`），再抄一份就是伪造数据
+ * （`docs/ui-contract-binding.md` 已就此定口径）。
  */
 
 import { buildReason, normalizePostId, validateRevision } from './post-takedown-api.mjs';

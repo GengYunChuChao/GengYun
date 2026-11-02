@@ -118,10 +118,19 @@ test('正向：入口判定是逐 operation 的，缺口清单与文档标记块
 test('正向：入口归属到具体视图，不同 operation 落在各自该在的视图上', () => {
   const map = buildCapabilityMap(loadSources(REPO_ROOT));
 
-  // posts 族 5 条并非同一个视图：hidePost 在 PostTakedownView，其余 4 条在 ModerationQueueView。
-  // 族级判定会把 5 条算成同一个集合 —— 这条断言就是「逐 operation」与「逐族」的分水岭。
-  assert.deepEqual(rowOf(map, 'hidePost').uiEntryViews, ['apps/admin/src/views/PostTakedownView.vue']);
-  for (const operationId of ['listAdminPosts', 'getAdminPost', 'approvePost', 'rejectPost']) {
+  // posts 族 5 条并非同一个视图：listAdminPosts／approvePost／rejectPost 只有 ModerationQueueView 一个入口；
+  // hidePost 与 getAdminPost 各有两个入口——GY-R72 之后审核队列详情也能下架（`hidePost`），
+  // 下架页也会读详情回填 revision（`getAdminPost`）。族级判定会把 5 条算成同一个集合 ——
+  // 这条断言就是「逐 operation」与「逐族」的分水岭。
+  assert.deepEqual(rowOf(map, 'hidePost').uiEntryViews, [
+    'apps/admin/src/views/ModerationQueueView.vue',
+    'apps/admin/src/views/PostTakedownView.vue',
+  ]);
+  assert.deepEqual(rowOf(map, 'getAdminPost').uiEntryViews, [
+    'apps/admin/src/views/ModerationQueueView.vue',
+    'apps/admin/src/views/PostTakedownView.vue',
+  ]);
+  for (const operationId of ['listAdminPosts', 'approvePost', 'rejectPost']) {
     assert.deepEqual(rowOf(map, operationId).uiEntryViews, ['apps/admin/src/views/ModerationQueueView.vue'], operationId);
   }
 
@@ -228,7 +237,7 @@ test('负例三：标记块缺失 ⇒ --check 变红（不许默默放过）', t
   assert.match(`${result.stdout}\n${result.stderr}`, /标记块/);
 });
 
-test('负例四（判别力）：删掉 posts 族的真入口视图 ⇒ 变红，且只损失被删的那 4 条', t => {
+test('负例四（判别力）：删掉 posts 族的真入口视图 ⇒ 变红，且只损失只在它上面有入口的那几条', t => {
   const root = makeTempTree(t);
   rmSync(join(root, 'apps/admin/src/views/ModerationQueueView.vue'), { force: true });
   editFile(root, 'apps/admin/src/App.vue', text => text.replace(/^.*<ModerationQueueView\b.*\n/m, ''));
@@ -236,11 +245,12 @@ test('负例四（判别力）：删掉 posts 族的真入口视图 ⇒ 变红�
   const result = runCli(['--check', '--root', root]);
   const output = `${result.stdout}\n${result.stderr}`;
   assert.equal(result.code, 1, `--check 应为 1\n${output}`);
-  for (const operationId of ['listAdminPosts', 'getAdminPost', 'approvePost', 'rejectPost']) {
+  for (const operationId of ['listAdminPosts', 'approvePost', 'rejectPost']) {
     assert.match(output, new RegExp(operationId), `红报告没有点名 ${operationId}`);
   }
-  // hidePost 仍在 PostTakedownView 上，不该被牵连
+  // hidePost 仍在 PostTakedownView 上；getAdminPost 也在下架页（读面回填 revision）——两条都不该被牵连。
   assert.doesNotMatch(output, /hidePost/, 'hidePost 有独立入口，不该出现在缺口清单里');
+  assert.doesNotMatch(output, /getAdminPost/, 'getAdminPost 还有下架页这个入口，不该出现在缺口清单里');
 });
 
 test('负例五（可达性）：摘掉 App.vue 的挂载行 ⇒ 变红并点名不可达视图', t => {

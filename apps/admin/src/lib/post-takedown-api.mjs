@@ -5,7 +5,11 @@
  * - 契约 `packages/contracts/openapi.json` 的 `/admin/posts/{id}/hide`：operationId `hidePost`，
  *   `x-scope: sources:write`、`x-version-required: true`；参数 `id`(uuid) + `IdempotencyKey` + `IfMatch`；
  *   请求体 `ReasonInput`（`reason` 1..500、`additionalProperties: false`）；200 `AckEnvelope`
- *   （`data.accepted: boolean`，带 `ETag` 头）。契约里**没有**任何帖子读面（`/admin/posts` 只有这一条 path）。
+ *   （`data.accepted: boolean`，带 `ETag` 头）。
+ * - 契约里**有**帖子读面，写面不是唯一的入口：`GET /admin/posts`（`listAdminPosts`）与
+ *   `GET /admin/posts/{id}`（`getAdminPost`），`x-scope` 都是 `sources:read`。读面客户端在
+ *   `admin-moderation-queue.mjs`（`fetchAdminPostDetail`），摘要/回落文案在 `post-takedown-read.mjs`；
+ *   本模块只管**写面**（一次 `hide` 请求），不重复实现读面，也不假设「读不到」是常态。
  * - 路由 `services/api/src/routes/admin.ts`（`POST ${API_PREFIX}/admin/posts/:id/hide`，
  *   `requireAdmin` + `requireScope(OPS_SCOPES.hidePost)`，`params: uuidIdParams`）。
  * - 服务层 `services/api/src/admin/ops/service.ts` 的 `hidePost`：`parseIfMatchHeader` → `assertInput('ReasonInput')`
@@ -514,6 +518,47 @@ export function describeTakedownSuccess(result) {
     detail: parts.join(' · '),
     advice:
       '本页只显示服务端回执：社区侧可见性、审计落库与 real 模式能力均未在本页验证。若该帖子此前已下架，服务端按幂等语义不重复处置，返回的仍是 accepted:true。',
+  };
+}
+
+/**
+ * `hide` 的 200 受理 → 文案，并把「操作前 visibility 已是 hidden」这一**已知事实**上屏。
+ *
+ * 为什么需要 `previousVisibility`：契约 `hidePost` 的 200 只有 `AckEnvelope`（`data.accepted`），
+ * **响应里没有 `changed` 字段**——`changed` 只属于 approve/reject 的 `PostReviewOutcome`；
+ * 服务层 `services/api/src/admin/ops/service.ts` 的 `if (!outcome.changed)` 分支同样只回
+ * `{accepted: true}`（`docs/verification` 里有逐行记录）。所以「这次到底有没有改」页面不能从回执读，
+ * 只能用**操作前**读到的 `visibility === 'hidden'` 判定：那叫「已是该状态」，不叫「刚刚下架成功」。
+ */
+export function describeHideAccepted(result, { previousVisibility = null } = {}) {
+  if (!result || result.ok !== true) return null;
+  const etag = typeof result.etag === 'string' ? result.etag : null;
+  const parts = [];
+  parts.push(etag === null ? '响应未带 ETag（无法核对新 revision）' : `服务端回传新 revision ${etag}`);
+  if (typeof result.requestId === 'string' && result.requestId !== '') parts.push(`request_id ${result.requestId}`);
+  const detail = parts.join(' · ');
+
+  if (previousVisibility === 'hidden') {
+    return {
+      tone: 'warn',
+      role: 'status',
+      alreadyHidden: true,
+      title: '服务端已受理：该帖操作前就已是 hidden（已是该状态，不是新改动）',
+      detail,
+      advice:
+        '契约 hide 的 200 只有 accepted，没有 changed 字段；本页据「操作前 visibility=hidden」判定这次没有状态变化，'
+        + '也不声称记了新的审计行。已删除的内容不可复活。',
+    };
+  }
+  return {
+    tone: 'ready',
+    role: 'status',
+    alreadyHidden: false,
+    title: '服务端已受理（HTTP 200 · accepted:true）',
+    detail,
+    advice:
+      '本页只显示服务端回执：社区公开面的生效值未在本页验证；若该帖此前已被隐藏／删除，服务端按幂等语义不重复处置，'
+      + '回执同样是 accepted:true。',
   };
 }
 
