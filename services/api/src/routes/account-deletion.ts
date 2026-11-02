@@ -234,7 +234,7 @@ export function registerAccountDeletionRoutes(
         now: deps.now,
         produce: async () => {
           // 明文回执 bearer 只在这里出现一次（既有协议只存 sha256 摘要 `<request>.receiptHash`）。
-          const accepted = await wired.service.request({ userId, receiptInput: mintOpaqueToken() });
+          const accepted = await wired.service.request({ userId, receiptInput: mintOpaqueToken(), readThirdPartyState: thirdPartyStateOf.bind(null, deps) }); // GY-R72：受理时用**同一个** `thirdPartyStateOf()` 现算第三方态（与 GET/DELETE 同源），不再回落处理器行的 `null`。
           const deletion = accepted.deletion;
           return {
             status: 202,
