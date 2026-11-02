@@ -4,8 +4,7 @@
 > **计数口径（先读这条，否则数字对不上）**：`packages/contracts/openapi.json` 中以 `/admin` 开头的 path 共 **36** 条，展开成 **45** 个 operation；其中 **44** 个的 `x-scope` 落在 `AdminScope.enum` 闭集（13 项）内，另 **1** 个是 `loginAdmin`（`POST /admin/auth/session`，`x-scope: public`）——它是登录入口，不持任何后台权限；§0 标记块的机器口径从 R72 起把它与另两条 auth（`getAdminSession`、`logoutAdmin`）一并算作 admin 面（`totalOps` 49），本行这套手数仍按 x-scope 闭集口径、不计入。
 > **本页路由与入口的读数以机器重算为准**（`node tools/verify-admin-capability-map.mjs`，CI 在 `contract` job 里跑 `npm run verify:capability-map`）：`services/api/src/routes/*.ts` 里 admin 面的注册逐条数出 **49** 条路由（`admin.ts` 46 条 = 24 条家族路由 + 22 条显式路由；`admin-auth.ts` 3 条 auth），对应 49 个 operationId、14 个路径族；`apps/admin/src` 对其中 **49** 个 operation 全部有调用链入口，**无入口 0 条**（原本仅剩的 `grantAdministratorScope`、`revokeAdministratorScope` 两条授/撤权写面已由 GY-R68 接上 `AdministratorsView.vue`，取证见 §4）。逐条数字见 §0 末尾的标记块——**块内是闸门保护的实时值，块外散文不受保护**。
 > 上一段 `openapi.json` 的「36 条 path／45 个 operation／44 个 x-scope」是契约口径的**手工读数，本行未纳入闸门**（脚本只读 `services/api/src/routes/*.ts` 里 admin 面的注册、`admin/families.ts` 与 `apps/admin/src`；源码没写 operationId 的注册会回落到 `packages/contracts/operations.json` 的 method+path 精确匹配，但仍不数 `openapi.json` 的 path 总数；要把这几个数也钉住，得另加一条契约侧的重算）。旧版本这里写「只数 42 条＝逐条注册的路由数、本页每个 42／30 都要 +2」，那组数字已被代码证伪（实测 49 条路由、49 个 operation；无入口在本片之前是 2 条、GY-R68 之后是 0 条），只在 §8 留作历史记录。
-> 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1354`。
-> 可复跑：`node tools/verify-doc-anchors.mjs --strict`、`node tools/verify-contract-status.mjs`、`npm run test:docs`。
+> 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1354`。可复跑：`node tools/verify-doc-anchors.mjs --strict`、`node tools/verify-contract-status.mjs`、`npm run test:docs`。
 
 ## 0 一页结论
 

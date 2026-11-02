@@ -192,7 +192,7 @@ STATUS_KEYS=12
 
 见 §7.1／§7.5／§7.6／§7.7／§7.8／§7.12／§7.13。
 
-## 5 `admin-console-capability-map.md:215` 的口径统一（任务第 5 条）
+## 5 `admin-console-capability-map.md:214` 的口径统一（任务第 5 条）
 
 ### 5.1 原文（逐字，改前）
 
@@ -400,7 +400,7 @@ STATUS_KEYS=12
 
 - 依据：§3.2；`services/api/src/admin/ops/jobs-pg.ts:419` 逐字 `result: null,`。
 
-### 7.15 `docs/architecture/admin-console-capability-map.md:215`（任务第 5 条，行尾追加）
+### 7.15 `docs/architecture/admin-console-capability-map.md:214`（任务第 5 条，行尾追加）
 
 - 原文（逐字）：见 §5.1。
 - 新文（逐字）：
