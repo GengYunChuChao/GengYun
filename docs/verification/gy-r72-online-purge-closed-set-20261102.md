@@ -2,7 +2,7 @@
 
 - 日期：2026-11-02
 - 分支 / 基线：`feat/gy-r72-online-purge-closed-set`，基线 `1b85e693`（`git rev-parse 1b85e693` = `1b85e69399123b3052427ad6a654d94c89c0c7bf`）
-- 本片只碰：`services/api/src/privacy/online-purge-port.ts`（新）、`services/api/src/privacy/user-data-deletion.ts`（**1 行**，净 0）、`tools/purge-expired-online-data.mjs`、`tests/unit/online-purge-closed-set.test.mjs`（新）、`tests/integration/online-purge-pg.mjs`（追加组 [10]）、`docs/verification/gy-r28-w6-deletion-clock-20261021.md:62`（行数）、本页（新）。
+- 本片只碰：`services/api/src/privacy/online-purge-port.ts`（新）、`services/api/src/privacy/user-data-deletion.ts`（**1 行**，净 0）、`tools/purge-expired-online-data.mjs`、`tests/unit/online-purge-closed-set.test.mjs`（新）、`tests/integration/online-purge-pg.mjs`（追加组 [10]）、本页（新；历史页 `gy-r28-w6-deletion-clock-20261021.md` 的陈旧行数**未改写**，见 §7 复核订正）。
 - **没有**碰：任何迁移、任何 `deploy/**`（`20-login-roles.sql` / `90-assert-least-privilege.sql` 一行未动）、`packages/contracts/**`、`tools/doc-anchors-*.json`、`tests/unit/doc-anchor-relocations.json`、`services/api/src/contract.ts`（无新错误码）、`services/api/src/privacy/online-state-derivation.ts`（读面判据一行未动）。
 
 ## 0 结论先说
@@ -207,11 +207,10 @@
 ## 7 提交后读数
 
 - 提交 SHA：`6b2bc5b5d56f8115a57e53e1f2a86bed6628e1cb`（`git rev-parse HEAD`），父提交 = base `1b85e69399123b3052427ad6a654d94c89c0c7bf`；分支 `feat/gy-r72-online-purge-closed-set`，**只提交未推送**。
-- `git show --stat HEAD`：`8 files changed, 1077 insertions(+), 50 deletions(-)`；逐文件 `--numstat 1b85e693..HEAD`：
+- `git show --stat HEAD`：`7 files changed, 1076 insertions(+), 49 deletions(-)`（复核回退历史行数页之后的最终 diff）；逐文件 `--numstat 1b85e693..HEAD`：
 
 ```
-1	1	docs/verification/gy-r28-w6-deletion-clock-20261021.md
-209	0	docs/verification/gy-r72-online-purge-closed-set-20261102.md
+231	0	docs/verification/gy-r72-online-purge-closed-set-20261102.md
 276	0	services/api/src/privacy/online-purge-port.ts
 1	1	services/api/src/privacy/user-data-deletion.ts
 184	4	tests/integration/online-purge-pg.mjs
@@ -225,5 +224,8 @@
 - 提交后全量单测：`npm run test:unit` ⇒ **exit 0**，`tests 6300 / pass 6297 / fail 0`（3 条为 skip/todo）。
 - 提交后 `sql-column-coverage`：`tests 17 / pass 17 / fail 0`（R72 新宿主以「数组外 `push` 追加」登记：`tests/unit/sql-column-coverage.test.mjs` 自己被 docs 按 `tests/unit/sql-column-coverage.test.mjs:152`、`tests/unit/sql-column-coverage.test.mjs:525`、`tests/unit/sql-column-coverage.test.mjs:1512` 引用，在数组里插条目会把这些历史锚点整片推位；追加式登记对既有行号零影响）。
 - 提交后 `verify-doc-anchors.mjs --strict` ⇒ exit 0（`基线外新增 0 条`）。
+
+- **复核订正 ①（回退历史页）**：本片原本把 `docs/verification/gy-r28-w6-deletion-clock-20261021.md:62` 的行数格子改成 306；复核时**回退**——仓规是「不改写历史取证页数字，只在新册留痕」。该数字在本片之前就已陈旧（base 上该 CLI 实测 **312** 行），本片不动它，只在此处留痕。
+- **复核订正 ②（散文引用漂移，登记未修）**：`docs/architecture/gy-r59-retention-backup-thirdparty-map.md:32` 写「`:28` keyset 分页」，本片把 CLI 从 312 行改到 306 行后 keyset 那句落在**第 29 行**；**未改**，因为该行正是 `tools/verify-doc-anchors.mjs` 的 DRIFT 基线键（`…gy-r59-retention-backup-thirdparty-map.md:32#online_due_at <= cutoff AND state <> 'completed'`），改它会让基线条失配。下一片若动基线再一并修。
 
 > 说明：本页的 §7 是在第二个提交里回填的（需要先有 SHA 才能写 SHA），所以本页自身所在的那个提交的 SHA 不会出现在正文里——否则会自我指涉失配。
