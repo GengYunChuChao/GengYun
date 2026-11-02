@@ -25,6 +25,15 @@
  * `hasReceipt ? 'ready' : ...` 换成固定的 `'error'`，`tests/unit/miniprogram-account-deletion.test.mjs`
  * 的「网络失败保留原状态」那条会立刻变红（这是本片的负控制之一）。
  *
+ * ## 确认意图绑定的是「发起确认时的身份」，不是「发请求时的会话」
+ * `live(op)` 只认页面代数（`_op`），认不出**同一个页面代数里换了账号**：第一层确认挂着
+ * 期间登录会话从 A 换成 B，`_op` 不变，两层回调都会通过；而 `utils/deletion-api.js` 的
+ * `sessionCall` 是在发请求那一刻才取绑定，那时已经是 B —— A 的确认意图会落到 B 头上。
+ * 注销不可逆，所以身份（令牌 + `auth.sessionEpoch()`）在**第一层确认打开时**捕获，
+ * 之后在「第二层打开前 / 第二层回调里 / 真正发请求前」各核一次，不一致就 `settleIdentityChanged`
+ * 中止并给可重试提示；申请与取消两面同构。负控制：把 `identityHeld` 换成恒 `true`，
+ * `tests/unit/miniprogram-account-deletion.test.mjs` 的交叠用例会立刻红（提交次数变成 1）。
+ *
  * ## 回执 bearer 的口径
  * 页面上写的限制与 `utils/deletion-api.js` 的文件头一致：本机保存、只查这一条、
  * 退出登录不删、换设备拿不到、丢了没有补发通道。页面唯一能做的是「如实说」。
@@ -40,6 +49,30 @@ const UNCERTAIN_CODES = ['NETWORK_UNCERTAIN', 'PROVIDER_OUTCOME_UNKNOWN', 'PROVI
 
 /** 回执面「凭据没了」的码：查不到就是查不到，别顺手把登录态也当成没了。 */
 const DEAD_RECEIPT_CODES = ['SESSION_REQUIRED', 'SESSION_EXPIRED', 'NOT_FOUND']
+
+/**
+ * 当前会话身份：（访问令牌, 会话世代）。
+ *
+ * 契约禁止客户端声明 `userId`（身份只来自服务端签发的令牌），所以页面能观测到的
+ * 「这是哪个账号」只有这一对事实：`auth.getSession().accessToken` + `auth.sessionEpoch()`。
+ * `utils/auth.js` 的 `setSession` 在**令牌变化**时递增 `generation`，而 `sessionEpoch()`
+ * 就是 `generation:intentEpoch`，所以换账号必然让这一对变化；退出/清会话同理。
+ * 取不到会话 ⇒ `null`（此时连确认都不该弹）。同构做法见 `pages/consent/consent.js:39-43`。
+ */
+function sessionIdentity() {
+  const session = auth.getSession()
+  if (!session || typeof session.accessToken !== 'string' || session.accessToken === '') return null
+  return session.accessToken + '@' + auth.sessionEpoch()
+}
+
+/**
+ * 确认意图失效的文案。两面各写一句，都必须出现「登录身份已变更，请重新发起」，
+ * 并且点明**没有发出请求** —— 注销不可逆，用户不能靠猜「到底提交了没有」。
+ */
+const IDENTITY_CHANGED_TEXT = {
+  apply: '登录身份已变更，请重新发起：这次确认属于切换之前的那个账号，已作废，没有向服务端提交注销申请。',
+  cancel: '登录身份已变更，请重新发起：这次确认属于切换之前的那个账号，已作废，没有提交取消请求。'
+}
 
 Page({
   data: {
@@ -88,6 +121,46 @@ Page({
 
   live: function (op) {
     return (this._op || 0) === op
+  },
+
+  /**
+   * 确认意图的身份闸门。
+   *
+   * `live(op)` 只认页面代数，认不出「同一个页面代数里换了账号」：第一层确认打开期间
+   * 登录会话从 A 变成 B，`_op` 一个数都没动，两层回调都会通过；而 `utils/deletion-api.js`
+   * 的 `sessionCall` 是在**发请求那一刻**才取绑定的 —— 那时已经是 B，于是 A 的确认意图
+   * 落到了 B 头上（注销不可逆，这条不能靠「请求期间 current(b)」兜）。
+   *
+   * 所以比的是**发起这次确认那一刻**的身份：不一致就当场作废并落可重试的中止态，
+   * 调用方立刻 return，不发任何请求。
+   */
+  identityHeld: function (identity, intent) {
+    if (identity && sessionIdentity() === identity) return true
+    this.settleIdentityChanged(intent)
+    return false
+  },
+
+  /**
+   * 身份变了的中止态：与 `settleFailure` 同一套「有回执就留在 ready」的口径，
+   * 但没有一条契约码能表达「确认作废」这件事 —— 码沿用 `SESSION_CHANGED`，
+   * 文案用本页自己的，重试性显式判 true（这次中止什么都没做，重来一遍是安全的）。
+   */
+  settleIdentityChanged: function (intent) {
+    const text = IDENTITY_CHANGED_TEXT[intent] || IDENTITY_CHANGED_TEXT.apply
+    const hasReceipt = !!this.data.receipt
+    const data = {
+      status: hasReceipt ? 'ready' : 'error',
+      busy: false,
+      loadingTitle: '',
+      errorCode: 'SESSION_CHANGED',
+      errorText: text,
+      retryable: true,
+      retryIntent: intent,
+      message: text,
+      guest: !auth.isLoggedIn()
+    }
+    if (hasReceipt) data.snapshotOnly = true
+    this.setData(data)
   },
 
   // ------------------------------------------------------------ 首屏
@@ -283,10 +356,17 @@ Page({
    *   1) 说清后果（数据不可恢复）与口径（冷静期/生效时间以服务端返回的 deletion 为准）；
    *   2) 再说一次「确认提交」。
    * 两步都要重新算一次 `live(op)`，第一次对话框期间用户切走/换账号，第二步就不再弹。
+   * 「换账号」由 `identityHeld` 判：身份在**第一层确认打开时**捕获，第二层打开前、
+   * 第二层回调里、真正发请求前各核一次 —— 换过账号的确认意图不许落到新账号头上。
    */
   requestDeletion: function () {
     const self = this
     if (!this.canOperate()) return
+    const identity = sessionIdentity()
+    if (!identity) {
+      this.setData({ message: '登录状态已失效，请重新登录后再操作。', guest: true })
+      return
+    }
     const op = this.nextOp()
     this.setData({ busy: true })
     wx.showModal({
@@ -300,10 +380,12 @@ Page({
           self.setData({ busy: false, message: '已取消，没有提交注销申请。' })
           return
         }
+        // 第一层确认挂着期间换了账号：第二层就不弹了，A 的意图不许借 B 的会话继续。
+        if (!self.identityHeld(identity, 'apply')) return
         wx.showModal({
           title: '再次确认',
           content: '确认向服务端提交注销申请？提交后会返回一条回执，凭本机保存的回执凭据可以查询进度，也可以在生效前取消。',
-          confirmText: '确认申请注销',
+          confirmText: '确认注销',
           confirmColor: '#b3261e',
           cancelText: '返回',
           success: function (second) {
@@ -312,7 +394,9 @@ Page({
               self.setData({ busy: false, message: '已取消，没有提交注销申请。' })
               return
             }
-            self.submitDeletion(op)
+            // 第二层弹窗挂着的期间同样可能换账号（用户切到后台换完再回来点确认）。
+            if (!self.identityHeld(identity, 'apply')) return
+            self.submitDeletion(op, identity)
           },
           fail: function () {
             if (self.live(op)) self.setData({ busy: false, message: '确认框没有打开，本次没有提交。' })
@@ -325,7 +409,11 @@ Page({
     })
   },
 
-  submitDeletion: async function (op) {
+  submitDeletion: async function (op, identity) {
+    if (!this.live(op)) return
+    // 最后一道：真的要把请求发出去之前再核一次身份。上面两层都核过，但「第二层回调
+    // 返回」到「这里发请求」之间仍可能换账号，而这一层之后 `sessionCall` 取的就是当前会话了。
+    if (!this.identityHeld(identity, 'apply')) return
     const hadReceipt = !!this.data.receipt
     this.setData({ busy: true, message: '', loadingTitle: '正在提交注销申请' })
     if (!hadReceipt) this.setData({ status: 'loading' })
@@ -351,10 +439,15 @@ Page({
 
   // ------------------------------------------------------------ 取消
 
-  /** 取消入口，同样两次确认（取消会作废回执，算不可轻率的操作）。 */
+  /** 取消入口，同样两次确认（取消会作废回执，算不可轻率的操作），身份闸门与申请同构。 */
   cancelDeletion: function () {
     const self = this
     if (!this.canOperate()) return
+    const identity = sessionIdentity()
+    if (!identity) {
+      this.setData({ message: '登录状态已失效，请重新登录后再操作。', guest: true })
+      return
+    }
     if (!this.data.receipt) {
       this.setData({ message: '本机没有在途回执可取消：先刷新回执，或重新申请后再取消。' })
       return
@@ -372,10 +465,11 @@ Page({
           self.setData({ busy: false, message: '已保留这次注销申请。' })
           return
         }
+        if (!self.identityHeld(identity, 'cancel')) return
         wx.showModal({
           title: '再次确认',
           content: '再确认一次：取消这次注销申请？取消结果以服务端返回的回执为准。',
-          confirmText: '确认取消申请',
+          confirmText: '确认取消',
           cancelText: '返回',
           success: function (second) {
             if (!self.live(op)) return
@@ -383,7 +477,8 @@ Page({
               self.setData({ busy: false, message: '已保留这次注销申请。' })
               return
             }
-            self.submitCancel(op)
+            if (!self.identityHeld(identity, 'cancel')) return
+            self.submitCancel(op, identity)
           },
           fail: function () {
             if (self.live(op)) self.setData({ busy: false, message: '确认框没有打开，本次没有取消。' })
@@ -396,7 +491,10 @@ Page({
     })
   },
 
-  submitCancel: async function (op) {
+  submitCancel: async function (op, identity) {
+    if (!this.live(op)) return
+    // 同 `submitDeletion`：取消会把回执作废，也不能把 A 的取消意图交给 B 去发。
+    if (!this.identityHeld(identity, 'cancel')) return
     this.setData({ busy: true, message: '', loadingTitle: '正在取消注销申请' })
     try {
       const result = await api.cancelDeletion()

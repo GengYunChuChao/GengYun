@@ -11,6 +11,12 @@
  *   · 「二次确认的任一环说不都不发请求」← 删掉 `requestDeletion` 里的两次 `wx.showModal`；
  *   · 「回执 401 只表示凭据失效」← 把 `deletion-api.js` 的 `receiptError` 换成 `sessionError`
  *     （401 会走 `auth.failureFor` → `clearSession()`，用户被登出）。
+ *
+ * 另外两条是本次返修带进来的锚点（同样改坏就红）：
+ *   · 「交叠场景：A 的确认期间只切登录会话到 B」← 把 `deletion.js` 的 `identityHeld`
+ *     换成恒 `true`：提交次数立刻从 0 变成 1（A 的确认落到 B 的会话上）；
+ *   · 「原生弹窗按钮文字…」← 把 `confirmText` 改回 6 字：桩里的 `assertModalText`
+ *     当场抛「上限 4 个字符」。
  */
 
 import { test } from 'node:test';
@@ -29,6 +35,28 @@ const REQUEST_ID = '9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d';
 const TOKEN = 'rcpt-opaque-token-A';
 const EXPIRES_AT = '2026-11-10T02:00:00.000Z';
 const SESSION = 'synthetic-session-a';
+const SESSION_B = 'synthetic-session-b';
+
+/**
+ * 原生弹窗的文字上限：微信文档 `wx.showModal` 的 `confirmText` / `cancelText` 都是
+ * **最多 4 个字符**。超了小程序端不会按这份文案显示（真机上被截断或回落默认值），
+ * 本页两个入口的第二层确认恰好踩过这条（「确认申请注销」「确认取消申请」各 6 字）。
+ * 桩只回答 confirm/cancel 时，这种「测试全绿但按钮文字不可用」的入口缺陷永远抓不到，
+ * 所以这条约束必须写在桩里 —— 越界直接抛，用例立刻红。
+ */
+const MODAL_TEXT_LIMIT = 4;
+function assertModalText(o) {
+  for (const field of ['confirmText', 'cancelText']) {
+    const value = o[field];
+    if (value === undefined) continue;
+    assert.equal(typeof value, 'string', 'wx.showModal 的 ' + field + ' 必须是字符串');
+    assert.ok(
+      value.length <= MODAL_TEXT_LIMIT,
+      'wx.showModal 的 ' + field + ' 上限 ' + MODAL_TEXT_LIMIT + ' 个字符，实际 ' + value.length + ' 个：「' + value + '」'
+    );
+  }
+}
+
 
 const meta = (mode = 'real') => ({ request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: mode });
 const deletion = (state = 'requested', revision = 1) => ({
@@ -58,13 +86,17 @@ function fixture() {
   const answers = [];
   const cache = new Map();
   let page;
+  let holding = false;
   const wx = {
     getStorageSync: (k) => storage.get(k),
     setStorageSync: (k, v) => storage.set(k, v),
     removeStorageSync: (k) => storage.delete(k),
     request: (o) => requests.push(o),
     showModal: (o) => {
+      // 先校验平台约束再记：越界的弹窗在小程序端根本不可用，用例必须红。
+      assertModalText(o);
       modals.push(o);
+      if (holding) return;
       const confirm = answers.length ? answers.shift() : true;
       o.success({ confirm: confirm, cancel: !confirm });
     },
@@ -131,7 +163,35 @@ function fixture() {
       deletion: deletion()
     }, overrides));
   }
-  return { page, auth, api, wx, storage, requests, routes, modals, answers, answer, answerJson, fail, last, count, receiptReads, login, storeReceipt };
+  /** 让确认框「挂着不答」：用来把「第一层确认已经打开」与「用户点确认」分成两步。 */
+  function holdModals() { holding = true; }
+  function releaseModals() { holding = false; }
+  function answerModal(index, confirm = true) {
+    const modal = modals[index];
+    assert.ok(modal, '第 ' + index + ' 个确认框还没打开');
+    modal.success({ confirm: confirm, cancel: !confirm });
+  }
+  /**
+   * 只换登录会话、不离页（不触发 onHide/onShow，`_op` 一个数都不动）：
+   * 这是「确认期间换了账号」的最小可复现动作。`setSession` 见到令牌变化会递增
+   * `generation`，所以 `auth.sessionEpoch()` 必然跟着变。
+   */
+  async function switchAccount(token) {
+    auth.setSession({
+      accessToken: token,
+      audience: 'user',
+      expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      executionMode: 'stub'
+    });
+    auth.verifySession(() => {});
+    answer(last('/auth/session'), { audience: 'user', expires_at: new Date(Date.now() + 3600000).toISOString() });
+    await flush();
+    assert.equal(auth.isLoggedIn(), true, '换账号前置：新会话必须已经服务端核实');
+  }
+  return {
+    page, auth, api, wx, storage, requests, routes, modals, answers, answer, answerJson, fail,
+    last, count, receiptReads, login, storeReceipt, holdModals, releaseModals, answerModal, switchAccount
+  };
 }
 
 test('申请成功：两次确认后才发一次 POST，回执与本机凭据都取自服务端封套', async () => {
@@ -358,6 +418,128 @@ test('替身执行模式：回执照常展示，但顶部明确标出不是真�
   assert.equal(f.page.data.status, 'ready');
   assert.equal(f.page.data.stubNotice, true);
   assert.equal(f.page.data.executionMode, 'stub');
+});
+
+test('原生弹窗按钮文字：申请与取消两面的 confirmText 都在 4 字上限内（桩会校验）', async () => {
+  const f = fixture();
+  await f.login();
+  f.page.onShow();
+
+  f.page.onApply();
+  assert.equal(f.modals.length, 2, '申请两次确认');
+  assert.equal(f.modals[1].confirmText, '确认注销', '第二层按钮文字落在平台允许的 4 字内');
+  assert.equal(f.modals[1].confirmText.length, 4, '「确认注销」正好 4 个字符');
+  assert.ok(f.modals[0].confirmText.length <= MODAL_TEXT_LIMIT, '第一层按钮文字同样受限');
+
+  f.storeReceipt();
+  f.page.onShow();
+  f.answerJson(f.last('/account/deletions/' + RECEIPT_ID), { data: deletion('requested', 1), meta: meta() }, 200);
+  await flush();
+  assert.equal(f.page.data.status, 'ready');
+
+  const before = f.modals.length;
+  f.page.onCancel();
+  assert.equal(f.modals.length, before + 2, '取消两次确认');
+  assert.equal(f.modals.at(-1).confirmText, '确认取消', '取消面的第二层按钮文字同样在 4 字内');
+  assert.equal(f.modals.at(-1).confirmText.length, 4, '「确认取消」正好 4 个字符');
+
+  // 桩里 `assertModalText` 对每个 showModal 都跑：走到这里说明这一页弹过的所有
+  // confirmText / cancelText 都没有越界（超一个字就会在弹窗打开那一刻抛出来）。
+  for (const modal of f.modals) {
+    assert.ok(modal.confirmText.length <= MODAL_TEXT_LIMIT, 'confirmText 越界：' + modal.confirmText);
+    assert.ok(!modal.cancelText || modal.cancelText.length <= MODAL_TEXT_LIMIT, 'cancelText 越界：' + modal.cancelText);
+  }
+});
+
+test('交叠场景：A 的确认期间只切登录会话到 B ⇒ 零提交、旧意图作废、给可重试提示', async () => {
+  const f = fixture();
+  await f.login(SESSION);
+  f.page.onShow();
+  assert.equal(f.page.data.status, 'empty');
+
+  const epochA = f.auth.sessionEpoch();
+  f.holdModals();
+  f.page.onApply();
+  const opBefore = f.page._op;
+  assert.equal(f.modals.length, 1, 'A 的第一层确认已经打开');
+  f.answerModal(0, true);
+  assert.equal(f.modals.length, 2, '身份没变时第二层照常打开（不许把流程一刀切挡死）');
+
+  // 关键动作：**只**换登录会话/世代，页面不离场，`_op` 一个数都不动。
+  await f.switchAccount(SESSION_B);
+  assert.equal(f.page._op, opBefore, '换账号不动页面代数：live(op) 天生看不见这件事');
+  assert.notEqual(f.auth.sessionEpoch(), epochA, '世代必须改变：这正是 live(op) 认不出的那半边事实');
+
+  f.answerModal(1, true);
+  await flush();
+
+  assert.equal(f.count('POST', '/me/account/deletion'), 0, '换账号之后不得向 B 提交 A 的注销确认（调用次数必须为 0）');
+  assert.equal(f.page.data.busy, false);
+  assert.equal(f.page.data.status, 'error', '没有回执可保留 ⇒ 落 error，给重试入口');
+  assert.equal(f.page.data.retryable, true, '可重试：这次中止什么都没做');
+  assert.equal(f.page.data.retryIntent, 'apply');
+  assert.match(f.page.data.message, /登录身份已变更，请重新发起/);
+  assert.equal(f.page.data.receipt, null, '旧意图没有变成任何回执');
+  assert.equal(f.storage.has(RECEIPT_KEY), false, '本机没有为 B 写下任何凭据');
+
+  // 身份没变的正常路径不许被挡死：换到 B 之后由 B 自己重新发起，照常走完两次确认。
+  f.releaseModals();
+  f.answers.push(true, true);
+  f.page.onApply();
+  assert.equal(f.modals.length, 4, 'B 自己发起时两层确认照常弹');
+  assert.equal(f.count('POST', '/me/account/deletion'), 1, '只有 B 在 B 的身份下发起的那一次提交');
+  assert.equal(f.last('/me/account/deletion').header.authorization, 'Bearer ' + SESSION_B);
+});
+
+test('取消面交叠场景同构：A 的取消确认期间切到 B ⇒ 零取消请求、A 的回执照旧在屏', async () => {
+  const f = fixture();
+  await f.login(SESSION);
+  f.storeReceipt();
+  f.page.onShow();
+  f.answerJson(f.last('/account/deletions/' + RECEIPT_ID), { data: deletion('requested', 1), meta: meta() }, 200);
+  await flush();
+  assert.equal(f.page.data.status, 'ready');
+
+  f.holdModals();
+  f.page.onCancel();
+  const opBefore = f.page._op;
+  assert.equal(f.modals.length, 1, 'A 的第一层取消确认已经打开');
+  f.answerModal(0, true);
+  assert.equal(f.modals.length, 2, '身份没变时第二层照常打开');
+
+  await f.switchAccount(SESSION_B);
+  assert.equal(f.page._op, opBefore, '换账号不动页面代数：live(op) 天生看不见这件事');
+  f.answerModal(1, true);
+  await flush();
+
+  assert.equal(f.count('DELETE', '/me/account/deletion'), 0, '不得用 B 的会话取消 A 的注销申请');
+  assert.equal(f.page.data.busy, false);
+  assert.equal(f.page.data.status, 'ready', '失败保留原状态：有回执就仍在 ready');
+  assert.match(f.page.data.message, /登录身份已变更，请重新发起/);
+  assert.equal(f.page.data.retryable, true);
+  assert.equal(f.page.data.retryIntent, 'cancel');
+  assert.equal(f.page.data.receipt.id, RECEIPT_ID, 'A 的回执照旧在屏，没被 B 的操作抹掉');
+  assert.equal(f.storage.get(RECEIPT_KEY).token, TOKEN, 'A 的回执凭据没被这次中止清掉');
+});
+
+test('发请求前的最后一道身份核对：拿 A 的身份在 B 的会话上提交，一个请求都不发', async () => {
+  const f = fixture();
+  await f.login(SESSION);
+  f.page.onShow();
+  // `sessionIdentity()` 的口径是「访问令牌@会话世代」（deletion.js 的同名函数，
+  // 与 pages/consent/consent.js:39-43 同构）；这里直接按同一口径构造 A 的身份。
+  const identityA = SESSION + '@' + f.auth.sessionEpoch();
+  await f.switchAccount(SESSION_B);
+
+  const op = f.page._op;
+  f.page.submitDeletion(op, identityA);
+  await flush();
+  assert.equal(f.count('POST', '/me/account/deletion'), 0, '第三层核对必须挡住这次提交');
+  assert.match(f.page.data.message, /登录身份已变更，请重新发起/);
+
+  f.page.submitCancel(op, identityA);
+  await flush();
+  assert.equal(f.count('DELETE', '/me/account/deletion'), 0, '取消面同样在发请求前挡住');
 });
 
 test('九态闭集：页面的状态分支 ≡ docs/ui-state-inventory.md §2 九态表，且个人中心入口指向这一页', () => {
