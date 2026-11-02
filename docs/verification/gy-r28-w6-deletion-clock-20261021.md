@@ -59,7 +59,7 @@
 | `services/api/src/privacy/online-purge-driver.ts` | 743 | 7 日在线到期驱动：keyset 分页候选枚举、批次推进、批量上限、逐模块隔离、证据、报告、退出码 |
 | `services/api/src/privacy/online-purge-cursor.ts` | 149 | 跨进程进度游标（**零 SQL**）：路径解析、读写、原子落盘；只存到期时刻 + 请求 id |
 | `services/api/src/privacy/backup-state-derivation.ts` | 387 | 回执备份态**只读**推导：`user_backup_copies` 真行 → `completed`/`pending`/`blocked` + reason + 证据 |
-| `tools/purge-expired-online-data.mjs` | 303 | 运维命令（`DATABASE_URL` + `--limit` + `--max-batches` + `--cursor-file` + `--no-cursor` + `--dry-run`） |
+| `tools/purge-expired-online-data.mjs` | 306 | 运维命令（`DATABASE_URL` + `--limit` + `--max-batches` + `--cursor-file` + `--no-cursor` + `--dry-run`） |
 | `tests/unit/online-purge-driver.test.mjs` | 957 | 33 条：边界/幂等/批量/失败隔离/证据/报告口径/SQL 形状/Date 形状/**批次推进 [9]** |
 | `tests/unit/online-purge-cursor.test.mjs` | 210 | 8 条：路径优先级、三态读取、往返归一、原子落盘、坏文件分类、写前归一 |
 | `tests/unit/backup-state-derivation.test.mjs` | 360 | 19 条：六种行集合 → 三态映射、证据复算、聚合、端口形状 |

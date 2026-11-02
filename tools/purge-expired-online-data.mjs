@@ -15,8 +15,9 @@
  * 1. `SELECT now()` 取**一个**时刻作 cutoff（到期筛选、驱动内复核、证据三处同源，不各自读时钟）；
  * 2. 从**上一轮的游标之后**取到期请求（`online_due_at <= cutoff AND state <> 'completed'`，
  *    每页上限 `--limit`，默认 200、硬顶 5000）；
- * 3. 逐请求逐模块调四域 PG store 的既有清理原语（`purgeOwnerData` 优先，`conversations` 退回
- *    `deleteAllByOwner`），并在**同一轮里继续翻页**直到队尾或用满 `--max-batches`：
+ * 3. 逐请求逐模块调**清理闭集**（`online-purge-port.ts::ONLINE_PURGE_MODULES`，与读面推导集合同源）
+ *    里的既有清理原语（`purgeOwnerData` 优先，`conversations` 退回 `deleteAllByOwner`），
+ *    并在**同一轮里继续翻页**直到队尾或用满 `--max-batches`：
  *    成功行产出 `sha256:` 证据并**落库**（迁移 0031 的唯一写函数 `record_online_purge_evidence`；
  *    回执的在线态据此推导）；一行失败只影响该行，**不阻塞**同请求其余模块、后续请求与后续页；
  *    证据写不进去也记该行失败（删除已发生但无凭据，⛔ 不谎称成功）；
@@ -49,10 +50,6 @@
 import { parseArgs } from 'node:util';
 
 import { createPool } from '../services/api/src/db/pool.ts';
-import { createPostgresConversationStore } from '../services/api/src/conversations/store-pg.ts';
-import { createPostgresFavoritesStore } from '../services/api/src/favorites/store-pg.ts';
-import { createPostgresHistoryStore } from '../services/api/src/history/store-pg.ts';
-import { createPostgresMessagesStore } from '../services/api/src/messages/store-pg.ts';
 import {
   DEFAULT_ONLINE_PURGE_BATCH_LIMIT,
   DEFAULT_ONLINE_PURGE_MAX_BATCHES,
@@ -72,7 +69,10 @@ import {
   writeOnlinePurgeCursor,
 } from '../services/api/src/privacy/online-purge-cursor.ts';
 import { createPostgresOnlinePurgeEvidenceRecorder } from '../services/api/src/privacy/online-purge-evidence.ts';
-import { USER_DATA_DELETION_MODULES } from '../services/api/src/privacy/user-data-deletion.ts';
+import {
+  ONLINE_PURGE_MODULES,
+  createOnlinePurgePort,
+} from '../services/api/src/privacy/online-purge-port.ts';
 
 const TAG = '[purge-expired-online-data]';
 const USAGE = `${TAG} 用法：
@@ -96,7 +96,7 @@ function configErrorCode(error) {
   const code = typeof error?.code === 'string' ? error.code : '';
   switch (code) {
     case '42P01':
-      return '缺少 public.deletion_requests（或四域表）：迁移未执行（不是「没有到期请求」）';
+      return '缺少 public.deletion_requests（或闭集里的域表）：迁移未执行（不是「没有到期请求」）';
     case '42501':
       return '当前连接角色缺少 deletion_requests 的读取权限：本命令需属主/运维角色（'
         + '运行时角色对该表零权限，这是 90-assert-least-privilege 的有意设计）';
@@ -123,39 +123,10 @@ function configErrorCode(error) {
 }
 
 /**
- * 四域清理端口的装配。
- *
- * 与 `services/api/src/privacy/user-data-deletion.ts` 的 `makeHandler` 同口径：
- * `purgeOwnerData` 优先（能同时报出正文行与幂等台账行），缺它才退回 `deleteAllByOwner`
- * （只有正文行数，台账计 0 —— 这是**已知**覆盖差异，不假装台账也清了）。
+ * 端口装配已落在 `services/api/src/privacy/online-purge-port.ts`：CLI 与真库臂共用同一份，
+ * 避免「命令传的域」与「端口认得的域」各写一套而悄悄漂移（R72 缺陷的成因之一）。
+ * 本文件只负责：取 cutoff、翻页、落证据、写游标。
  */
-function createFourDomainPurgePort(pool) {
-  const stores = new Map([
-    ['favorites', createPostgresFavoritesStore(pool)],
-    ['history', createPostgresHistoryStore(pool)],
-    ['messages', createPostgresMessagesStore({ pool })],
-    ['conversations', createPostgresConversationStore(pool)],
-  ]);
-
-  return {
-    async purgeModule({ userId, module }) {
-      const store = stores.get(module);
-      if (store === undefined) {
-        // 闭集外的模块名意味着调用方与 `USER_DATA_DELETION_MODULES` 脱钩了：直接拒绝，不猜要删什么。
-        const error = new Error(`未知的必需模块：${module}`);
-        error.code = 'STORE_REJECTED';
-        throw error;
-      }
-      if (typeof store.purgeOwnerData === 'function') {
-        const counts = await store.purgeOwnerData(userId);
-        return { removed: counts.records, idempotency: counts.idempotency };
-      }
-      const removed = await store.deleteAllByOwner(userId);
-      return { removed, idempotency: 0 };
-    },
-  };
-}
-
 let pool = null;
 try {
   const { values } = parseArgs({
@@ -266,13 +237,36 @@ try {
       // 之后回执的在线态就能按它推导 completed/pending/blocked（不再只活在 cron 日志里）。
       // 写入走唯一窄口径函数（属主默认可执行；不新增任何表/列授权）。
       const evidence = createPostgresOnlinePurgeEvidenceRecorder({ pool, now: () => cutoff });
+      // 闭集 = 读面推导集合（`ONLINE_EVIDENCE_MODULES`，8 域）；**实际可清**的域要逐域探测
+      // （缺表的部署不该每轮报错，但也⛔ 不许静默少清）：闭集、实清、跳过（域 + 原因）三行都打。
+      const portSet = await createOnlinePurgePort(pool);
+      console.log(`${TAG} 清理闭集（${ONLINE_PURGE_MODULES.length} 域）：${ONLINE_PURGE_MODULES.join(',')}`);
+      console.log(
+        `${TAG} 本轮可清（${portSet.modules.length}/${ONLINE_PURGE_MODULES.length} 域）：`
+          + `${portSet.modules.length === 0 ? '(无)' : portSet.modules.join(',')}`,
+      );
+      if (portSet.skippedModules.length > 0) {
+        console.log(
+          `${TAG} 跳过 ${portSet.skippedModules.length} 域（缺表/缺授权/端口构造失败不影响退出码；`
+            + '这些域的到期请求仍会被读面推导记 blocked，需要人看）：',
+        );
+        for (const skip of portSet.skippedModules) {
+          console.log(`${TAG}   跳过 ${skip.module}：${skip.reason}`);
+        }
+      }
+      if (portSet.modules.length === 0) {
+        // 一域都装不上 ⇒ 连接/迁移整体不对，绝不能当成"没有到期请求"报 0（走统一的 42P01 分类 ⇒ exit 2）。
+        const unavailable = new Error('一域都装不上（DATABASE_URL 或迁移整体不对）');
+        unavailable.code = '42P01';
+        throw unavailable;
+      }
       const report = await drainDueOnlineDeletions({
         cutoff,
         limit,
         maxBatches,
         dryRun: values['dry-run'],
-        modules: USER_DATA_DELETION_MODULES,
-        purge: createFourDomainPurgePort(pool),
+        modules: portSet.modules,
+        purge: portSet.purge,
         evidence,
         after: cursor,
         fetchPage: (page) => listDueOnlineDeletions(pool, page),
