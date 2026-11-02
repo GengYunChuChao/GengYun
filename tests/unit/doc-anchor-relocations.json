@@ -11,83 +11,83 @@
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 82,
+    "line": 85,
     "target": "services/api/src/routes/admin.ts",
     "from": 295,
     "fromEnd": 299,
     "to": 316,
     "toEnd": 321,
-    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:295-299` 是 restrictions 家族的 withdraw 路由（`app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`…)`），不是 `listAuditLogs`；真值是 316-321（316 `const listAuditLogs = methodOf(services.audit, 'listAuditLogs');`、318 `${API_PREFIX}/admin/audit-logs`）。按符号 `listAuditLogs` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:295-299` 是 restrictions 家族的 withdraw 路由（`app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`…)`），不是 `listAuditLogs`；真值是 316-321（316 `const listAuditLogs = methodOf(services.audit, 'listAuditLogs');`、318 `${API_PREFIX}/admin/audit-logs`）。按符号 `listAuditLogs` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号 82→85（本页上方新增 3 行，锚点文本未变）；`services/api/src/routes/admin.ts` 本提交的改动只在 :4／:624（各 1 行换 1 行），端点映射对 :316-321 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 82,
+    "line": 85,
     "target": "services/api/src/app.ts",
     "from": 1485,
     "fromEnd": 1493,
     "to": 1513,
     "toEnd": 1514,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1513-1514 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 83,
+    "line": 86,
     "target": "services/api/src/routes/admin.ts",
     "from": 377,
     "fromEnd": 390,
     "to": 476,
     "toEnd": 490,
-    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:377-390` 是 `/admin/administrators` 列表与 scopes 读面，不是 jobs 族；真值是 476-490（476 `const listJobs = methodOf(services.ops, 'listAdminJobs');`、478-482 `${API_PREFIX}/admin/jobs`、483-490 `${API_PREFIX}/admin/jobs/:id/cancel`）。按符号 `listAdminJobs`／`cancelAdminJob` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:377-390` 是 `/admin/administrators` 列表与 scopes 读面，不是 jobs 族；真值是 476-490（476 `const listJobs = methodOf(services.ops, 'listAdminJobs');`、478-482 `${API_PREFIX}/admin/jobs`、483-490 `${API_PREFIX}/admin/jobs/:id/cancel`）。按符号 `listAdminJobs`／`cancelAdminJob` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号 83→86（本页上方新增 3 行，锚点文本未变）；`services/api/src/routes/admin.ts` 本提交的改动只在 :4／:624（各 1 行换 1 行），端点映射对 :476-490 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 83,
+    "line": 86,
     "target": "services/api/src/app.ts",
     "from": 1354,
     "fromEnd": 1356,
     "to": 1375,
     "toEnd": 1377,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1375-1377 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 84,
+    "line": 87,
     "target": "services/api/src/routes/admin.ts",
     "from": 430,
     "fromEnd": 438,
     "to": 530,
     "toEnd": 539,
-    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:430-438` 是 R64 管理员账号状态写面的注释块，不是 `hidePost` 路由；真值是 530-539（530 `const hidePost = methodOf(services.ops, 'hidePost');`、532 `${API_PREFIX}/admin/posts/:id/hide`）。按符号 `hidePost` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:430-438` 是 R64 管理员账号状态写面的注释块，不是 `hidePost` 路由；真值是 530-539（530 `const hidePost = methodOf(services.ops, 'hidePost');`、532 `${API_PREFIX}/admin/posts/:id/hide`）。按符号 `hidePost` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号 84→87（本页上方新增 3 行，锚点文本未变）；`services/api/src/routes/admin.ts` 本提交的改动只在 :4／:624（各 1 行换 1 行），端点映射对 :530-539 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 236,
+    "line": 239,
     "target": "services/api/src/app.ts",
     "from": 1354,
     "fromEnd": 1356,
     "to": 1375,
     "toEnd": 1377,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1375-1377 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 236,
+    "line": 239,
     "target": "services/api/src/app.ts",
     "from": 1492,
     "fromEnd": 1493,
     "to": 1513,
     "toEnd": 1514,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1492-1493` 落在账号停用/恢复装配里（1492 `messagesService === null` 一带），不是审计总台账只读端口；真值是 1513-1514 `const realAuditLogPort =` / `adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));`。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1492-1493` 落在账号停用/恢复装配里（1492 `messagesService === null` 一带），不是审计总台账只读端口；真值是 1513-1514 `const realAuditLogPort =` / `adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));`。按符号 `realAuditLogPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1513-1514 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 246,
+    "line": 249,
     "target": "services/api/src/app.ts",
     "from": 1485,
     "fromEnd": 1493,
     "to": 1513,
     "toEnd": 1514,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1513-1514 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
