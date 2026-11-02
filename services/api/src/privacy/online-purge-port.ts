@@ -132,17 +132,17 @@ async function missingRelations(pool: PgPool, names: readonly string[]): Promise
 /**
  * 每域「能不能真的删」的就地探测（只读；用 `has_*_privilege`，⛔ 不试删）。
  *
- * 为什么需要它（GY-R72 真库实测）：`jobs` 的表级 `DELETE` 已经授予
- * （`deploy/postgres-cvm/sql/20-login-roles.sql:997` 的 `gy-r71-jobs-ledger-purge-grant` 段），
- * 但 `JOB_LEDGER_PURGE_SQL` 是 `DELETE … WHERE owner_id = $1::uuid`，而 PG 对 **WHERE 里读到的列**
- * 另要 `SELECT` 权限；该表的出厂列清单（同文件 `:980`）只含
- * id/state/revision/error_code/result_ref/updated_at，**不含 `owner_id`** ⇒ 真库上这一域必然
- * `42501 permission denied for table jobs`（`routine=aclcheck_error`；同一角色执行
- * `DELETE … WHERE false` 反而成功 ⇒ 差的只是那一列的 SELECT）。
- *
- * 缺的是「列级 SELECT」而不是「表在不在」，`to_regclass` 探测看不见它；不提前判就会变成每轮 N 条
- * `DRIVER_EXCEPTION`（重试同一条件也永远不会好）。判定失败 ⇒ 该域进 `skippedModules` 并点名缺的
- * 那一条授权，⛔ 不让整轮非零退出（这是部署事实，不是本轮失败）。
+ * 为什么需要它（GY-R72）：`jobs` 的删除面是**两层**授权 —— 表级 `DELETE`
+ * （`deploy/postgres-cvm/sql/20-login-roles.sql:997` 的 `gy-r71-jobs-ledger-purge-grant` 段）
+ * 加 `JOB_LEDGER_PURGE_SQL`（`DELETE … WHERE owner_id = $1::uuid`）**谓词列**的列级 `SELECT`：
+ * PG 对 DELETE 的 WHERE 列另要 SELECT。同文件 `:980` 的列清单在 GY-R72 前只有
+ * id/state/revision/error_code/result_ref/updated_at，**不含 `owner_id`** ⇒ 真库上必然
+ * `42501 permission denied for table jobs`（`routine=aclcheck_error`；同角色
+ * `DELETE … WHERE false` 反而成功 ⇒ 差的只是那一列的 SELECT）。GY-R72 已把 `owner_id`
+ * 补进那份列清单，授权与 90-assert 的期望清单对齐（证据 docs/verification/gy-r72-jobs-owner-select-20261102.md）。
+ * 探测**保留**：缺的是「列级 SELECT」而不是「表在不在」，`to_regclass` 看不见它；换角色或收紧授权时
+ * 仍要如实跳过，而不是每轮 N 条 `DRIVER_EXCEPTION`（重试同一条件也永远不会好）。判定失败 ⇒ 该域进
+ * `skippedModules` 并点名缺的那条授权，⛔ 不让整轮非零退出（这是部署事实，不是本轮失败）。
  */
 async function jobsPurgeDenial(pool: PgPool): Promise<string | null> {
   const { rows } = await pool.query(
@@ -156,7 +156,7 @@ async function jobsPurgeDenial(pool: PgPool): Promise<string | null> {
     return '缺少表级 DELETE：public.jobs（应见 20-login-roles.sql 的 gy-r71-jobs-ledger-purge-grant 段）';
   }
   if (row.owner_select === false) {
-    return '缺少列级 SELECT(owner_id)：DELETE … WHERE owner_id = $1 需要读该列，而出厂列清单（20-login-roles.sql:980）未含它 ⇒ 该域在真库上必然 42501';
+    return '缺少列级 SELECT(owner_id)：DELETE … WHERE owner_id = $1 需要读该列，而出厂列清单（20-login-roles.sql:980）自 GY-R72 起应为 7 列含 owner_id ⇒ 当前库缺这一列即必然 42501；真库判定见 docs/verification/gy-r72-jobs-owner-select-20261102.md';
   }
   return null;
 }

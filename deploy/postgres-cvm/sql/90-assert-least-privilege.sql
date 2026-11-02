@@ -1205,7 +1205,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('ocr_idempotency',                'granted',          true),
     -- GY-R71（2026-10-30）：统一作业台账 `public.jobs`（建表 0001）获得**首个写入者**
     -- （services/api/src/jobs/ledger.ts 的 `JOB_LEDGER_UPSERT_SQL`），故在 20-login-roles.sql
-    -- 的 gy-r28-runtime-domain-grants 段尾按写入者真实列授 SELECT(2)/INSERT(15)/UPDATE(5)。
+    -- 的 gy-r28-runtime-domain-grants 段尾按写入者真实列授 SELECT(7，含注销清理谓词列 owner_id)/INSERT(15)/UPDATE(5)。
     -- 分类进 granted 是**必须**的：47 号元断言的正则没有 `jobs`，但「授权了却不分类」正是该断言
     -- 要防的漂移；下面的 expected 再给它一份独立列清单复述（58 号断言逐列核对）。
     ('jobs',                           'granted',          true),
@@ -1340,11 +1340,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- `services/api/src/jobs/ledger.ts` 里那条唯一的 upsert（四源共用：ocr / recognition /
     -- transcription / answer）。列面由该语句反推，与 20-login-roles.sql 的 GRANT 逐列同值：
     --   INSERT 15 列（台账一次写全）+ UPDATE 5 列（只有随状态迁移变的列会改）
-    --   + SELECT **6** 列 = 冲突目标 `id` + `WHERE` 读的 `state` + `DO UPDATE` 的 5 个 SET 列。
-    --   ⚠ 本片修正：SELECT 原登记为 2 列（id,state）**不足**。`ON CONFLICT (id) DO UPDATE` 会让 PG
-    --   读旧行，SET 列也必须可 SELECT；真 PG 17.11 留一法实测六列缺任一列即
-    --   `42501 permission denied for table jobs`（非 SET 列不需 ⇒ 仍是列级，不升表级 SELECT）。
-    --   复核：`tests/integration/egress-ledger-pg.mjs` 用同一份区域授权真跑那条 upsert。
+    --   + SELECT **7** 列 = 冲突目标 `id` + `WHERE` 读的 `state` + `DO UPDATE` 的 5 个 SET 列
+    --     + 注销清理谓词列 `owner_id`（GY-R72：`JOB_LEDGER_PURGE_SQL` 是 `DELETE … WHERE owner_id = $1::uuid`，
+    --     PG 对 DELETE 的 WHERE 列另要 SELECT —— 表级 DELETE 已授仍 42501，同角色 `DELETE … WHERE false` 成功）。
+    --     ⚠ 上一版把 SELECT 登记为 2 列（id,state）**不足**：`ON CONFLICT (id) DO UPDATE` 会让 PG 读旧行，
+    --     SET 列也必须可 SELECT；真 PG 17.11 留一法：前 6 列缺任一即 42501（非 SET 列不需）；GY-R72 追加的 `owner_id` 只服务注销 DELETE 的谓词 ⇒ 仍是列级，复核见 egress-ledger-pg.mjs。
     --   ⚠ 本行（del）在 GY-R71 补片里由 false 翻成 true：注销清理要按 owner 删台账行
     --   （见下方 allow_table_dml 与段 45 的真执行探针）。
     -- ⛔ GY-R71 补片**已改这一行**：注销清理接入后 `del` 从 false 翻成 true
@@ -1353,7 +1353,7 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 「台账无读者」不是保留依据：行里带 owner_id / target_id / result_ref。
     -- 与本行同批改的还有 `allow_table_dml` 的 ('public','jobs','DELETE') 与段 45 的真执行探针。
     ('jobs',
-     ARRAY['id','state','revision','error_code','result_ref','updated_at'],
+     ARRAY['id','state','revision','error_code','result_ref','updated_at','owner_id'],
      ARRAY['id','owner_id','kind','target_type','target_id','entity_revision','input_hash',
            'auth_epoch','state','revision','deadline_at','error_code','result_ref','created_at','updated_at'],
      ARRAY['state','revision','error_code','result_ref','updated_at'],

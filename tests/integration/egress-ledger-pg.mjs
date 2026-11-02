@@ -366,17 +366,17 @@ try {
   say('运行时 LOGIN 继承 auth_privacy + consent_granter + egress_ledger，且无任何超级权限');
 
   // `public.jobs` 的**列级最小权限**读数（与部署侧 90-assert 同口径：只许收紧，不许改成「有权限就行」）。
-  // 台账 upsert 真实需要的就是这三组列：INSERT 15 列 / UPDATE 5 列 / SELECT 6 列。
-  // SELECT 为什么是 6 列而不是 2 列：`ON CONFLICT (id) DO UPDATE` 让 PG 读旧行，除冲突目标 `id` 与
-  // `WHERE` 里的 `state` 外，DO UPDATE 的**每个 SET 列**也要可 SELECT；真 PG 17.11 留一法实测
-  // 六列缺任一列即 42501（非 SET 列如 lease_token / created_at 并不需要）。多一列或少一列都必须红。
+  // 台账 upsert 需要 INSERT 15 列 / UPDATE 5 列 / SELECT 6 列：SELECT 那 6 列 = 冲突目标 `id` + `WHERE`
+  // 的 `state` + `DO UPDATE` 的 5 个 SET 列（`ON CONFLICT (id) DO UPDATE` 让 PG 读旧行，每个 SET 列也要
+  // 可 SELECT；真 PG 17.11 留一法：六列缺任一即 42501，非 SET 列如 lease_token / created_at 不需要）。
+  // GY-R72 再 +1 列 `owner_id`（注销清理 `DELETE … WHERE owner_id = $1` 要读该列）⇒ SELECT 面 = 7 列，多一列少一列都必须红。
   const ledgerColumns = {
     INSERT: [
       'id', 'owner_id', 'kind', 'target_type', 'target_id', 'entity_revision', 'input_hash',
       'auth_epoch', 'state', 'revision', 'deadline_at', 'error_code', 'result_ref', 'created_at', 'updated_at',
     ],
     UPDATE: ['state', 'revision', 'error_code', 'result_ref', 'updated_at'],
-    SELECT: ['id', 'state', 'revision', 'error_code', 'result_ref', 'updated_at'],
+    SELECT: ['id', 'state', 'revision', 'error_code', 'result_ref', 'updated_at', 'owner_id'],
   };
   const ledgerPairs = Object.entries(ledgerColumns).flatMap(([action, columns]) =>
     columns.map((column) => `('${action}','${column}')`),
@@ -388,10 +388,10 @@ try {
       [loginName],
     )
   ).rows;
-  assert.equal(ledgerReadings.length, 26, 'public.jobs 的列权限读数必须是 15+5+6=26 条');
+  assert.equal(ledgerReadings.length, 27, 'public.jobs 的列权限读数必须是 15+5+7=27 条');
   const missingLedgerColumns = ledgerReadings.filter((row) => !row.ok).map((row) => `${row.action}(${row.col})`);
   assert.deepEqual(missingLedgerColumns, [], `运行时在 public.jobs 上缺列权限（台账 upsert 会 42501）：${missingLedgerColumns.join(', ')}`);
-  // 反向：表级 DML / DELETE / TRUNCATE 一律不得存在（本仓对 public.jobs 的既定口径是**列级**、无表级 DML、无 DELETE）。
+  // 反向：本区只授列级 ⇒ 表级 DML / DELETE / TRUNCATE 一律不得存在（表级 DELETE 属 `gy-r71-jobs-ledger-purge-grant` 另一个区，不在本区断言范围内）。
   const tableLevel = (
     await owner.query(
       `SELECT action FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) AS action
@@ -409,7 +409,7 @@ try {
        WHERE has_column_privilege($1, 'public.jobs', v.col, v.action)`, [loginName])
   ).rows.map((row) => `${row.action}(${row.col})`);
   assert.deepEqual(leakedColumns, [], `public.jobs 出现台账列之外的列权限（授权被放宽）：${leakedColumns.join(', ')}`);
-  say('public.jobs 台账授权与部署侧同源：只有 15+5+6 列权限，无表级 DML、无 DELETE、无多余列');
+  say('public.jobs 台账授权与部署侧同源：只有 15+5+7 列权限，无表级 DML、无 DELETE、无多余列');
 
   const forbidden = [
     'UPDATE recipients SET deletion_verified=true',
