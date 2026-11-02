@@ -1,5 +1,5 @@
 /**
- * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 18 个 operationId**）。
+ * GY-I18 阶段 1b · 后台运营与开关服务层（**恰好 19 个 operationId**）。
  * 第 10 个是本片新增的 `listFlagAuditEvents`（开关变更留痕 A→B，迁移 0027 提供读函数）。
  * 第 11、12 个是 `#18` S2 PR-2 新增的 `listAdministrators`（管理员目录）与
  * `listAdministratorScopes`（只读展示**他人**权限）；两者门都是 `scopes:read`，
@@ -58,7 +58,7 @@ import { opsValidator } from './fields.ts';
 import { CONTRACT_FLAG_KEYS, classifyFlagKey, DEFAULT_FLAG_EFFECTS, assertNoFlagWeakensFailClosed } from './flags.ts';
 import type { FlagEffect, FlagKey } from './flags.ts';
 import { createUnwiredAdminJobPort, parseAdminJobFilter } from './jobs.ts';
-import { createHidePostAdapter, createPostReviewAdapter } from './community-posts.ts';
+import { createHidePostAdapter, createPostReviewAdapter } from './community-posts.ts'; import { advanceReportImpl, type ReportDispositionSource } from './reports.ts'; import type { Report } from '../../community/types.ts';
 import type { AdminAccountAuthority } from './account-authority-pg.ts';
 import type { AdminAccountsDirectory } from './accounts-pg.ts';
 import type { AdminAdministratorsDirectory, AdministratorView } from './administrators.ts';
@@ -217,7 +217,7 @@ export interface AdminOpsServiceOptions {
    * `createPostReviewAdapter({port, events})` 把这两件事一起注进来，服务层只当它是
    * 一个"能审"的端口——这样 stub 模式与单测可以给假端口，不必装配社区事件总线。
    */
-  postReview?: PostReviewPort;
+  postReview?: PostReviewPort; /* R72：举报处置端口（缺省 ⇒ 未接线 ⇒ 503）；实现与口径见 `./reports.ts` */ reportDisposition?: ReportDispositionSource;
   /** flag 语义分类表；缺省为合同 3 键的"能力门"分类。构造时会自检不得放宽 fail-closed。 */
   flagEffects?: Readonly<Record<string, FlagEffect>>;
 }
@@ -249,7 +249,7 @@ export interface AdminOpsService {
   readonly jobPort: AdminJobPort;
   /** 账号面是否已接线到认证权威（`false` ⇒ 账号读/写面 503 fail-closed）；供测试与接线回归直接核对。 */
   readonly accountsWired: boolean;
-  /** 本片实现的 operationId 全集（实测 18 个；唯一事实源是下方的 `OPS_OPERATION_IDS`）。 */
+  /** 本片实现的 operationId 全集（实测 19 个；唯一事实源是下方的 `OPS_OPERATION_IDS`）。 */
   readonly operationIds: readonly string[];
 
   listAdminCategories(ctx: AdminCallContext, query?: PageQuery): Promise<ServiceResponse<PageEnvelope<CategoryView>>>;
@@ -281,7 +281,7 @@ export interface AdminOpsService {
    * `audit_state='rejected'` **且** `visibility='hidden'`（驳回即不可公开，不交给读面去算）；
    * `reason_code` 必填且在闭集 `POST_REVIEW_REASON_CODES` 内（422 `VALIDATION_FAILED`）。
    */
-  rejectPost(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<PostReviewOutcome>>>;
+  rejectPost(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<PostReviewOutcome>>>; advanceReport(ctx: AdminCallContext, id: string, body: unknown): Promise<ServiceResponse<SingleEnvelope<Report>>>;
 
   /**
    * 开关变更留痕（GY-I18 第一批 + 迁移 0027）：`GET /admin/flag-audit-events`。
@@ -385,7 +385,7 @@ export interface AdminOpsService {
   ): Promise<ServiceResponse<SingleEnvelope<AdminAccountStateView>>>;
 }
 
-/** 本片 operationId（机读形式，供测试断言「恰好 18 个、不越界」）。 */
+/** 本片 operationId（机读形式，供测试断言「恰好 19 个、不越界」）。 */
 export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   'listAdminCategories',
   'editCategory',
@@ -409,11 +409,11 @@ export const OPS_OPERATION_IDS: readonly string[] = Object.freeze([
   // R64：管理员**账号状态**写面（停用 / 启用）。同样**追加在尾部**，
   // 既有 16 项的下标与顺序一格都不动。
   'disableAdministratorAccount',
-  'enableAdministratorAccount',
+  'enableAdministratorAccount', 'advanceReport',
 ]);
 
 /** 契约 scope（来自 `packages/contracts/operations.json`）。 */
-export const OPS_SCOPES = Object.freeze({
+export const OPS_SCOPES = Object.freeze({ advanceReport: 'sources:write', // R72：举报处置沿用 sources:write（⛔ 不新造 reports:*）
   listAdminCategories: 'sources:read',
   editCategory: 'sources:write',
   listAdminUsers: 'accounts:read',
@@ -1866,7 +1866,7 @@ export function createAdminOpsService(options: AdminOpsServiceOptions): AdminOps
     grantAdministratorScope,
     revokeAdministratorScope,
     disableAdministratorAccount,
-    enableAdministratorAccount,
+    enableAdministratorAccount, advanceReport: (ctx, id, body) => advanceReportImpl({ source: options.reportDisposition, writeDeps, executionMode }, ctx, id, body),
   };
 }
 

@@ -65,7 +65,11 @@
     "条目按 remove_when 删。⛔ 这条不是白名单：缺 53 但没登记，undeclaredGaps 照旧判红。",
     "缺少 53 的 [gap] 软档说明在 services/api/db/migrations/README.md —— 该文件在本片是**冻结的既有文件**",
     "（⛔ 本片不动它），故 `tools/verify-migrations-unique.mjs --strict` 在合流前会照旧报 [gap] 53；",
-    "CI 的 migrations-guard 刻意不带 --strict（见 .github/workflows/migrations-guard.yml），硬错为零。"
+    "CI 的 migrations-guard 刻意不带 --strict（见 .github/workflows/migrations-guard.yml），硬错为零。",
+    "【2026-11-03 GY-R73 合流 origin/main · #838 的 0053 已真实落盘 · 53 号条目按 remove_when 删除】",
+    "#838 的 0053_admin_report_disposition_audit.sql 已随 origin/main 落盘，与本片 0054 并存 ⇒ 0037 是唯一缺号；",
+    "合流树读数：53 个文件 + 1 保留（37） === max 54，`verify-migrations-unique --strict` 的 [gap] 53 随之消失。",
+    "⛔ 53 号条目一落盘就必须删（reservedButPresent 会立刻判红）；上面那段只是历史叙述，不是可长期躺着的白名单。"
   ],
   "reservations": [
     {
@@ -74,13 +78,6 @@
       "owner": "#14（已分配，号空出、尚无文件）",
       "reason": "0037 已分配给 #14（人工复核）；本合流树缺 0037 ⇒ 保留登记",
       "remove_when": "#14 落 0037 即删"
-    },
-    {
-      "version": 53,
-      "filename": "0053_issue_838_allocated.sql",
-      "owner": "#838（在飞分支，尚未落盘）",
-      "reason": "0053 已被在飞的 #838 占用；本片（GY-R73 / #17）按协调结果取 0054 ⇒ 0053 属有意缺号",
-      "remove_when": "#838 落 0053 即删"
     }
   ]
 }

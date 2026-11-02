@@ -68,7 +68,7 @@ import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
 import { createMemorySynthesisStore, type SynthesisStore } from './tts/store.ts';
 // GY-I18 后台域（阶段 2 装配）：路由 + 阶段 1／1b 两个已合并的服务。
-import { ADMIN_HTTP_OPERATION_IDS, registerAdminRoutes } from './routes/admin.ts';
+import { ADMIN_HTTP_OPERATION_IDS, registerAdminRoutes } from './routes/admin.ts'; import { registerAdminReportRoutes } from './routes/admin-reports.ts';
 import { createAdminContentService } from './admin/service.ts';
 import type { AdminContentService, AdminContentServiceOptions } from './admin/service.ts';
 import { createAdminOpsService } from './admin/ops/service.ts';
@@ -306,7 +306,7 @@ declare module 'fastify' {
      * 生产读取路径不经此装饰直接暴露给客户端，绝不进入任何响应投影。
      */
     mediaObjectStore: MediaObjectStore;
-    /** Non-real message service; real remains closed until persistent storage is delivered. */
+    /** Real + connection pool ⇒ durable PG store; only real without a pool leaves this null (no storage ⇒ closed). */
     messagesService: MessagesService | null;
     /** GY-I14 审核域服务（供回归测试驱动版本级任务、回调 seam 与可见性重查）。 */
     moderationService: ModerationService;
@@ -343,8 +343,8 @@ declare module 'fastify' {
      */
     thirdPartyDeletion: ThirdPartyDeletionReadPort;
     /**
-     * GY-I15 社区服务（#15）。**未接线**（`real` 模式：真实持久存储未交付）
-     * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
+     * GY-I15 社区服务（#15）。**已接 PG 持久 store**（`real` + 连接池 ⇒ `communityStore.persistent` 为真）
+     * 才放行；仅 `real` 且无池（内存 store 不持久）时为 `null` ⇒ 17 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
      */
     communityService: CommunityService | null;
   /**
@@ -1312,7 +1312,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const reason = 'real 模式未接真实持久后端（无连接池 ⇒ 内存 store 不持久）：社区业务不可用'
       + '（拒绝以内存 store 返回成功封套）';
     communityService = null;
-    app.log.warn({ executionMode: config.executionMode }, `GY-I15 社区域：${reason} ⇒ 16 条社区路由一律 503 PROVIDER_UNAVAILABLE`);
+    app.log.warn({ executionMode: config.executionMode }, `GY-I15 社区域：${reason} ⇒ 17 条社区路由一律 503 PROVIDER_UNAVAILABLE`);
   } else {
     communityService = createCommunityService({
       store: communityStore,
@@ -1593,7 +1593,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           // S3：人工通过/驳回。与下架**共用同一份**社区 store（同一条 CAS 原语、同一个事务），
           // 并把社区事件端口一并注入 —— 审核结论要投影成 `moderation_result` 通知作者；
           // 事件端口未接线时审核**仍可用**，只是 `notified: false`（通知是副作用，不回滚结论）。
-          postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }),
+          postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }), reportDisposition: communityService ?? undefined,
           flagEffects: adminInjection?.flagEffects,
         }),
         reason,
@@ -1729,7 +1729,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // S3：stub 域同样接同一份社区 store + 社区事件端口（内存实现），
       // 因此本地/单测里「通过/驳回」是**真的会改行**的，而不是一律 503；
       // 真正的 fail-closed 在 real 域（`postReviewWired`）与端口缺失（`wired:false`）两处。
-      postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }),
+      postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }), reportDisposition: communityService ?? undefined,
       flagEffects: adminInjection?.flagEffects,
     });
     // GY-I14 ⇄ GY-I15 联动接线：后台下架生效后**驱动审核域下架**（整链缓存失效 + 该版本永久不可复活）。
@@ -2395,7 +2395,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    （见上方 `conversationsStore` 依赖）。本片**不再**另建只含 `conversations` 的第二个
   //    协调器与第二个 requestId —— 一次注销 = 一个请求、一份回执、一条证据链。
   //    备份副本清除属 GY-I19 G6/G8（P1）⇒ 该模块回执如实 `pending`（不谎称完成）。
-
+  registerAdminReportRoutes(app, { guards, ops: adminOpsService });
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);
@@ -2610,10 +2610,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     authService: service,
     now: clock,
   });
-  // GY-I15 社区 16 条路由的**唯一注册点**（real 模式 ⇒ service 为 null ⇒ 整域 503）。
+  // GY-I15 社区 17 条路由的**唯一注册点**（real 且无池 ⇒ service 为 null ⇒ 整域 503）。
   // 本片起：投稿/评论两条 **POST** 面（`POST /posts`、`POST /posts/:id/comments`）纳入全局开关
   // `submissions_enabled`（受控面清单里的 `createPost`/`createComment`），因此传 `gatedGuards`；
-  // 其余 14 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
+  // 其余 15 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
   // 行为与 `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
   // GY-R28 W10：把与识别/媒体**同源的那一个** `consentGate` 交给社区域，社区域只在投稿面
   // （`POST /posts`、`PATCH /posts/:id`、`POST /posts/:id/comments`、`PATCH /comments/:id`）

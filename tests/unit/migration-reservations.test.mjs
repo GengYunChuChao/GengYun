@@ -101,10 +101,23 @@
  * **台账不因 0052 新增条目**（本片自己落盘的文件不是"有意缺号"），也**不得**残留 52 号条目
  * （0052 已落盘 ⇒ `reservedButPresent` 立刻判红）。
  *
- * **GY-R73（#17 撤回通知，`0054_favorites_target_lookup.sql` 落盘）之后的读数**：正向 **52** 个、
- * `rollback/` **51** 个；缺号变成 **`[37, 53]`**——`0053` 已被**在飞**的 `#838` 占用（尚未落盘），
+ * **GY-R73（#17 撤回通知，`0054_favorites_target_lookup.sql` 落盘）单独在树时的读数**：正向 **52** 个、
+ * `rollback/` **51** 个；缺号是 **`[37, 53]`**——`0053` 当时被**在飞**的 `#838` 占用（尚未落盘），
  * 按协调结果本片取 `0054`，所以 53 号是**有意缺号**、必须在台账登记（`remove_when: #838 落 0053 即删`）；
  * ⇒ `52 个文件 + 2 保留 === max 54`。`0054` 是本片自己落盘的文件，**不得**登记进台账。
+ *
+ * **R72 #838 单独在树时的读数（`0053_admin_report_disposition_audit.sql` 落盘）**：正向 **52** 个
+ * （`0001..0035` 连续 + `0036` + `0038`…`0053` 里除 `0037` 之外的其余各条）、`rollback/` **51** 个
+ * （`0001` 无 down）；缺号仍只有 `0037`，保留台账仍只有那一条 ⇒ `52 个文件 + 1 保留 === max 53`。
+ * **台账不因 0053 新增条目**（本片自己落盘的文件不是"有意缺号"），也**不得**残留 53 号条目
+ * （0053 已落盘 ⇒ `reservedButPresent` 立刻判红）。
+ *
+ * **合流后当前树状态（`0053` 与 `0054` 同时落盘，2026-11-03）**：`#838` 的
+ * `0053_admin_report_disposition_audit.sql` 已随 `origin/main` 真实落盘，`#17` 的
+ * `0054_favorites_target_lookup.sql` 同时在本树 ⇒ 正向 **53** 个（`0001..0035` 连续 + `0036`
+ * + `0038`…`0054`）、`rollback/` **52** 个；缺号回到**只有 `0037`**，保留台账也只剩那一条
+ * （53 号条目的 `remove_when` 已兑现 ⇒ 按规则删除，⛔ 不得残留）⇒ `53 个文件 + 1 保留 === max 54`。
+ * 这是两条分支各自「无冲突地都对」的拼接结果，不是谁让位：号位叙述按事实并列保留。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -148,7 +161,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0054/GY-R73 收藏反查索引 已落盘（0053 归在飞 #838 ⇒ 补登保留）⇒ 52 文件 + 2 保留 === 54、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0053/R72 #838 举报处置审计、0054/GY-R73 收藏反查索引 已落盘 ⇒ 53 文件 + 1 保留 === 54、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -157,15 +170,15 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [37, 53],
-    `0040（#568）、0041（#18 S2 片1）、0042（GY-R37 片）、0043（#18 R18：作业取消审计落库）、0044（GY-S4 P1：第三方删除持久化）与 0054（GY-R73：收藏反查索引）都已落盘 ⇒ 合流树的缺号必须是 [37, 53]（#14 保留 + #838 在飞占用 0053；现场 ${JSON.stringify(numbering.gaps)}）`,
+    [37],
+    `0053（#838）与 0054（GY-R73）在合流树上都已落盘 ⇒ 缺号只剩 0037（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(
     numbering.reserved,
-    [37, 53],
-    '0037（#14）与 0053（在飞 #838）两个缺号都必须在台账登记；0052/0054 已落盘 ⇒ ⛔ 不得登记 52/54',
+    [37],
+    '0037（#14）这一个缺号必须在台账登记；0052/0053/0054 已落盘 ⇒ ⛔ 不得登记 52/53/54',
   );
-  assert.equal(reservations.length, 2, '台账眼下必须恰有两条保留项（0037 #14 + 0053 #838；其余各条的 remove_when 都已兑现）');
+  assert.equal(reservations.length, 1, '台账眼下必须恰有一条保留项（0037 #14；53 号条目的 remove_when 已兑现 ⇒ 删除）');
   assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（0037 与 0053 都已登记）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
@@ -176,7 +189,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（52 = 54 − 2）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（53 = 54 − 1）',
   );
 
   const files = migrations.map((item) => item.filename);
@@ -298,23 +311,24 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
     'R72-W54 的 0052 已落盘 ⇒ 真实文件必须在清单里（号位 = 0051 之后的第一号，⛔ 不许占用 0051/0053），'
       + '且台账不得登记 52（否则 reservedButPresent 会先判红）',
   );
-  // GY-R73（#17 撤回通知）：号位按协调结果取 0054（0053 归**在飞**的 #838，尚未落盘 ⇒ 补登保留），
-  // 本片自己落盘的文件不进台账。
+  // R72 #838：0053 已随 origin/main 真实落盘（号位由当时正向最大号 0052 +1 取到），台账不得登记它。
+  assert.equal(
+    files.includes('0053_admin_report_disposition_audit.sql'),
+    true,
+    '#838 的 0053 已随 origin/main 落盘 ⇒ 真实文件必须在清单里（号位 = 0052 之后的第一号，⛔ 不许换号）',
+  );
+  // GY-R73（#17 撤回通知）：号位按协调结果取 0054（当时 0053 归在飞的 #838），
+  // 合流后两条并存 ⇒ 0054 仍在，本片自己落盘的文件不进台账。
   assert.equal(
     files.includes('0054_favorites_target_lookup.sql'),
     true,
-    'GY-R73 的 0054 已落盘 ⇒ 真实文件必须在清单里（号位 = 0054，⛔ 不许占用在飞 #838 的 0053），'
+    'GY-R73 的 0054 已落盘 ⇒ 真实文件必须在清单里（号位 = 0054，⛔ 不许换号），'
       + '且台账不得登记 54（否则 reservedButPresent 会先判红）',
   );
   assert.equal(
     files.some((name) => /^0037_/.test(name)),
     false,
     '0037 属 #14（号空出）⇒ 合流树上不得出现 0037 前缀的文件',
-  );
-  assert.equal(
-    files.some((name) => /^0053_/.test(name)),
-    false,
-    '0053 属在飞 #838（尚未落盘）⇒ 本片（GY-R73）树上不得出现 0053 前缀的文件',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),

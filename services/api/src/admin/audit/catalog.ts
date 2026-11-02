@@ -4,7 +4,7 @@
  * ## 为什么枚举不写死在路由/契约两处
  * 查询参数 `action` / `entity` 的闭集**不是**从契约里编出来的，而是从「谁在写这张表」反推的。
  * 今天往 `public.admin_audit_events` 落库写审计的地方全在 `services/api/db/migrations/` 里，
- * 一共十一种 `action`：
+ * 一共十四种 `action`（`0053` 起同一个函数按动作落三种，见下表末行）：
  *
  * | 写入点（库内函数） | `action` | `scope`（查询参数 `entity` 的取值来源） | 迁移 |
  * | --- | --- | --- | --- |
@@ -19,6 +19,7 @@
  * | `public.disable_admin_account(...)` | `admin_account.disable` | `scopes:write`（共享，见下「admin_account 也需要护栏」） | 0048 `:282-290` |
  * | `public.enable_admin_account(...)`  | `admin_account.enable`  | `scopes:write`（同上） | 0048 `:413-421` |
  * | `public.record_admin_category_update(...)` | `category.update` | `sources:write`（与 `post` 共享，靠动作护栏分开；**没有** `entity=category`） | 0049 `:413` |
+ * | `public.record_admin_report_disposition_audit(...)` | `report.triage` / `report.resolve` / `report.reject`（三值，由 `p_action` 派生） | `sources:write`（同上，靠动作护栏分开；**没有** `entity=report`） | 0053 |
  *
  * ## `?entity=X` 到底匹配哪些行（本文件的**筛选语义**，唯一定义处）
  *
@@ -274,6 +275,11 @@ export const AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE = 'admin_account.enable';
  */
 export const AUDIT_ACTION_CATEGORY_UPDATE = 'category.update';
 
+/** 举报处置（迁移 0053）：三种动作分开记，`closed` 一值两义才可筛（`?action=report.*`）。 */
+export const AUDIT_ACTION_REPORT_TRIAGE = 'report.triage';
+export const AUDIT_ACTION_REPORT_RESOLVE = 'report.resolve';
+export const AUDIT_ACTION_REPORT_REJECT = 'report.reject';
+
 /** `GET /admin/audit-logs` 的 `action` 闭集（= 库内写入点的 `action` 列取值）。 */
 export const AUDIT_ACTIONS = Object.freeze([
   AUDIT_ACTION_ACCOUNT_SUSPEND,
@@ -287,6 +293,9 @@ export const AUDIT_ACTIONS = Object.freeze([
   AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
   AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE,
   AUDIT_ACTION_CATEGORY_UPDATE,
+  AUDIT_ACTION_REPORT_TRIAGE,
+  AUDIT_ACTION_REPORT_RESOLVE,
+  AUDIT_ACTION_REPORT_REJECT,
 ] as const);
 
 export type AdminAuditAction = (typeof AUDIT_ACTIONS)[number];

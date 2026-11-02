@@ -100,3 +100,18 @@ export function describeReportStateMachine(): Array<{
 }> {
   return REPORT_ACTIONS.map((action) => ({ action, from: [...TRANSITIONS[action].from], to: TRANSITIONS[action].to }));
 }
+
+/**
+ * 每个处置动作对应的**审计理由码**（迁移 0053 的库侧闭集，逐动作一个值）。
+ *
+ * ⚠️ 必须与 `services/api/db/migrations/0053_admin_report_disposition_audit.sql` 里的映射
+ * **逐字一致**：库函数按 `p_action` 派生同一个值并与入参比对，不一致就 `G0018 INVALID_REASON_CODE`。
+ * 放在文件末尾（而不是 `REPORT_ACTIONS` 旁边）是刻意的：本文件的行号被台账与证据页按
+ * `path:line` 引用（`planReportTransition` 的 `84-93`），插行会让这些地址整体漂移。
+ * 「动作 → 审计语义」在这里有唯一权威；`action='report.triage'` 等字符串由库函数派生，应用侧不拼。
+ */
+export const REPORT_AUDIT_REASON_CODES = Object.freeze({
+  triage: 'report_triaged',
+  resolve: 'report_resolved',
+  reject: 'report_rejected',
+} as const satisfies Record<ReportAction, string>);

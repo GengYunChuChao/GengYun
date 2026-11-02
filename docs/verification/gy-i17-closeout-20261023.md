@@ -151,7 +151,7 @@
 | 未接线端口（诊断用） | `services/api/src/messages/reference.ts:59` | `export function createUnwiredReferencePort(` |
 | 只接社区域两型（裁定 B 的落点） | `services/api/src/messages/reference-community.ts:53` | `if (target_ref.type !== 'post' && target_ref.type !== 'comment') return 'unavailable';` |
 | 社区权威判据（注入） | `services/api/src/messages/reference-community.ts:56` | `const readable = await community.isPubliclyVisible(target_ref.type, target_ref.id);` |
-| 社区只读谓词（不进路由/不进 OpenAPI） | `services/api/src/community/service.ts:1851` | `visibility: Object.freeze({` |
+| 社区只读谓词（不进路由/不进 OpenAPI） | `services/api/src/community/service.ts:1873` | `visibility: Object.freeze({` |
 | 装配：后绑定读取器 | `services/api/src/app.ts:810` | `const messageReference: MessageReferencePort =`（`:811` `createCommunityReferencePort({ community: () => communityVisibility })`；`:1154` 补赋值） |
 | 页面可点判据（唯一） | `miniprogram/pages/messages/messages.js:310` | `const canOpen = message.reference_state === 'available' && target !== null &&` |
 | 页面跳转（post 直跳／comment 先取父帖） | `miniprogram/pages/messages/messages.js:279`／`:280` | `if (item.targetType === 'post') { open(item.targetId); return }`／`communityApi.getComment(item.targetId).then(function (result) {` |

@@ -606,11 +606,13 @@ const OPAQUE_ALLOWLIST = [
  */
 const EXPECTED_READINGS = {
   storeFiles: 8,
-  // GY-R73（#17）：167 → 168、SELECT 77 → 78 —— avorites/store-pg.ts 新增按对象反查收藏者的 SELECT。
-  sqlLiterals: 168,
-  // GY-R73（#17）：+1 条 SELECT —— `admin/ops/invalidation-events.ts` 的收件人过滤
-  // （`SELECT id FROM public.users WHERE id = ANY($1::uuid[]) AND state = 'active'`，只发给状态正常的账号）。
-  statements: { INSERT: 27, UPDATE: 31, SELECT: 78, DELETE: 32 },
+  // GY-R73（#17）：167 → 168，再叠加 R72 #838 的 +1（本合流树两侧各加一条）⇒ **169**；
+  // 其中 GY-R73 是 `favorites/store-pg.ts` 新增的按对象反查收藏者 SELECT。
+  // SELECT 77 → 79：GY-R73 的 favorites 反查 + `admin/ops/invalidation-events.ts` 的收件人过滤
+  // （`SELECT id FROM public.users WHERE id = ANY($1::uuid[]) AND state = 'active'`，只发给状态正常的账号）
+  // 在本块算 +1，R72 #838 的 `community/store-pg.ts` 举报处置审计再 +1。
+  sqlLiterals: 169,
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 79, DELETE: 32 },
   returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
@@ -622,7 +624,7 @@ const EXPECTED_READINGS = {
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 44,
+  community: 45,
   conversations: 20,
   // GY-R73（#17）：15 → 16 —— 新增 listOwnerIdsByTarget 的按对象反查 SELECT。
   favorites: 16,
@@ -896,22 +898,31 @@ const TABLE_WIDE_COLUMN = '*';
  *   `20-login-roles.sql` 段 M 的列级 SELECT 授权里 ⇒ **零 GRANT 变更**、零迁移）；字面量 320／语句
  *   `{49,58,170,43}`／RETURNING 99／ON CONFLICT 31／逐文件读数/引用表 **全部不变**。**没有往下改任何数字**：
  *   +1 条列要求就是这条 SELECT 真多读的那一列带来的（服务层要靠它判「预签名句柄是否已失效」）。
+ * ㉘ 2026-11-02 R72 #838（举报处置审计落库）：`community/store-pg.ts` 新增 **1** 条字面量
+ *   `REPORT_DISPOSITION_AUDIT_SQL` = `SELECT public.record_admin_report_disposition_audit($1::uuid, …)`
+ *   （静态整句、零插值、**没有 FROM**，与 R64 的 `hideAudit` 同形）⇒ 字面量 321 → **322**、
+ *   语句 SELECT 171 → **172**、无顶层 FROM 18 → **19**、逐文件 `community` 44 → **45**；
+ *   INSERT/UPDATE/DELETE、RETURNING 99、ON CONFLICT 31、`SELECT *` 15、函数调用 2、引用表 52、
+ *   列要求 2080／已覆盖 1979（该函数不读任何业务列，EXECUTE 归 90-assert 的函数面清单）**全部不变**。
+ *   8 文件块：字面量 167 → **168**、SELECT 77 → **78**、逐文件 `community` 44 → **45**。
  */
 const EXPECTED_EXTENDED_READINGS = {
   // GY-R73（#17）：24 → 25 —— 新纳管 `admin/ops/invalidation-events.ts`（一条 `public.users` 的
   // SELECT：收件人只发给 `state='active'` 的账号）。它的 SQL 字面量并进 `sqlLiterals` 计数。
+  // （R72 #838 没有新纳管文件，只给 `community/store-pg.ts` 加了一条字面量 ⇒ 文件数不叠加。）
   auditedFiles: 25,
-  // GY-R73（#17）：字面量 321 → 323、SELECT 171 → 173 —— 两处新 SQL：avorites/store-pg.ts 的
-  // listOwnerIdsByTarget（按对象反查收藏者）与 dmin/ops/invalidation-events.ts 的收件人过滤。
-  sqlLiterals: 323,
-  statements: { INSERT: 49, UPDATE: 58, SELECT: 173, DELETE: 43 },
+  // GY-R73（#17）：321 → 323、SELECT 171 → 173 —— 两处新 SQL：`favorites/store-pg.ts` 的
+  // listOwnerIdsByTarget（按对象反查收藏者）与 `admin/ops/invalidation-events.ts` 的收件人过滤；
+  // 再叠加 R72 #838 的 +1（`community/store-pg.ts` 的举报处置审计）⇒ 字面量 **324**、SELECT **174**。
+  sqlLiterals: 324,
+  statements: { INSERT: 49, UPDATE: 58, SELECT: 174, DELETE: 43 },
   returningClauses: 99,
   onConflictClauses: 31,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 18,
+  noTargetTable: 19,
   referencedTables: 52,
   // GY-R73（#17）：2080 → 2082 —— 两处新 SELECT 的列要求（favorites 的 target/owner 列 + users 的 id/state）。
   columnRequirements: 2082,
@@ -930,7 +941,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 17,
-  'community': 44,
+  'community': 45,
   'conversations': 20,
   // GY-R73（#17）：15 → 16 —— 新增 listOwnerIdsByTarget 的按对象反查 SELECT。
   'favorites': 16,

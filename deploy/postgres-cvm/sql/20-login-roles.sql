@@ -1481,9 +1481,9 @@ GRANT DELETE ON public.media_object_cleanup TO gengyun_api_runtime;
 --
 -- 列清单不是抄文档，而是**从 ledger-pg.ts 的四条语句逐列反推**，并由
 -- `tests/unit/sql-column-coverage.test.mjs` 的 parseSqlText/collectRequirements 管线交叉
--- 验证（少一列立刻判红）：`:66` SUPERSEDE_SQL 的 UPDATE 2 列 + 4 列 WHERE、`:74` INSERT_SQL
--- 的 26 列 + `ON CONFLICT (job_id)`、`:89` UPDATE_SQL 的 14 列 + `WHERE job_id`、`:97`
--- WITHDRAW_SQL 的 4 列 + `ON CONFLICT (target_type,target_id,target_revision)`。
+-- 验证（少一列立刻判红）：`SUPERSEDE_SQL` 的 UPDATE 2 列 + 4 列 WHERE、`INSERT_SQL`
+-- 的 26 列 + `ON CONFLICT (job_id)`、`UPDATE_SQL` 的 14 列 + `WHERE job_id`、`WITHDRAW_SQL`
+-- 的 4 列 + `ON CONFLICT (target_type,target_id,target_revision)`。
 --
 -- SELECT 面**只给被 WHERE / 冲突目标 / 回填真正读到的列**（PG 的 UPDATE/DELETE 要求 WHERE 里的列有
 -- SELECT 权）：decisions 是 `job_id` + SUPERSEDE 的 `target_type/target_id/target_revision/
@@ -1706,3 +1706,35 @@ GRANT EXECUTE ON FUNCTION public.record_admin_category_update(uuid, text, intege
 
 \echo '20-login-roles.sql：已授予 public.admin_categories（6/0/5 列）的列级 SELECT/UPDATE 与 public.record_admin_category_update(uuid,text,integer,uuid) 的 EXECUTE（逐列反推自 admin/ops/categories-pg.ts；无表级 DML、无 INSERT/DELETE）。'
 \echo '20-login-roles.sql：后台分类字典不授 INSERT/DELETE —— 契约没有"新建/删除分类"，目录由迁移 0049 从 crops/species 一次性回填。'
+
+-- ---------------------------------------------------------------------------
+-- 后台「举报处置」审计（R72 / 迁移 0053：`record_admin_report_disposition_audit`）
+--
+-- 为什么又是「函数 EXECUTE」而不是「表写权限」：与 `gy-r64-posthide-audit-grant` 同一条纪律 ——
+-- `admin_audit_events` 对运行时是**零表级、零列级**写权限（`90-assert-least-privilege.sql` 的
+-- external_manifest 把表级 S/I/U/D 钉成 false，槽 9 的 protected_columns 再钉死关键列），
+-- 表上还有 `admin_audit_events_append_only` 触发器（UPDATE/DELETE 一律 `G0006`）。
+-- 举报处置的三种动作因此只能经 0053 的窄口径 SECURITY DEFINER 函数留痕：函数内由 `p_action`
+-- 派生 `action='report.{triage|resolve|reject}'`、`reason_code='report_{triaged|resolved|rejected}'`，
+-- `scope='sources:write'` / `result='accepted'` 固定，`target_ref` 由形参重建，并重核验
+-- 「操作者存在 + `state='active'` + 当前有效持 `sources:write`」三条
+-- ⇒ 调用方拿不到伪造 actor、伪造动作文本或伪造 target 的任何缝隙。
+--
+-- 前置：函数必须已存在。顺序是 迁移（migrate.ts up）⇒ 本脚本，缺失即显式失败，
+-- 绝不留「看似收敛、点开 42501」的运行态。
+--
+-- ⚠ 位置：本区域**追加在文件末尾**（不是插在 0047 那段旁边）。理由：本文件被若干证据页按
+-- `文件:行号` 引用，插行会让这些既有锚点整体漂移；追加在末尾则一行都不动。
+-- #region gy-r72-report-disposition-audit-grant
+DO $$
+BEGIN
+  IF to_regprocedure('public.record_admin_report_disposition_audit(uuid,uuid,integer,text,text,uuid)') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.record_admin_report_disposition_audit(...)：迁移 0053 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_admin_report_disposition_audit(uuid, uuid, integer, text, text, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_admin_report_disposition_audit(uuid, uuid, integer, text, text, uuid) TO gengyun_api_runtime;
+-- #endregion gy-r72-report-disposition-audit-grant
+\echo '20-login-roles.sql：已授予 record_admin_report_disposition_audit(...) 的 EXECUTE（后台举报处置的审计唯一写路径；public.admin_audit_events 对运行时仍然零表级、零列级权限）。'
