@@ -82,7 +82,7 @@ RESULT FAIL 2
 | --- | --- | --- |
 | `MISSING_KEY` | 必填键不存在；父对象整个缺失时**只报父键**，不再逐个报子键 | 按模板补齐该键；若报的是 `wechat` / `providers` 这类父键，说明整段被删了，先整段补回 |
 | `UNFILLED` | 空串、纯空白，或**仍是占位符**：整个值形如 `<...>`，或包含 `TODO`、`changeme`、`change_me`、`xxxx`、`replace me`、`请填写`、`待填写`、`待补充`（大小写不敏感） | 换成真实值；密钥位置换成**环境变量名**（如 `WECHAT_APP_SECRET`），不是密钥本身 |
-| `NOT_PUBLIC` | 不是公网 `https`：非 `https`、URL 里带账号密码、带查询串或 `#` 片段、端口不是 443（显式写了 443 之外的一切端口都算）、**域名类字段带路径**、主机是本机/私网/保留域（`localhost`、`*.local`、`*.test`、`*.internal`、`*.invalid`、`10.x`、`192.168.x`、`172.16–31.x`、`127.x`、`169.254.x`、`100.64–127.x`、`0.x`）、IPv6 字面量、单标签主机名 | 填公网域名 ＋ `https://`，**域名类字段不要带路径**（`https://api.example.com`，不是 `https://api.example.com/v1`）；供应商端点允许固定路径，但同样不许查询串、片段、URL 内凭据与非 443 端口 |
+| `NOT_PUBLIC` | 不是公网安全地址（按通信类型分判协议，不接受互相顶替）：`request`/`uploadFile`/`downloadFile` 与供应商端点要 `https`，`socketDomain` 要 `wss`；非对应协议、URL 里带账号密码、带查询串或 `#` 片段、端口不是 443（显式写了 443 之外的一切端口都算）、**域名类字段带路径**、主机是本机/私网/保留域（`localhost`、`*.local`、`*.test`、`*.internal`、`*.invalid`、`10.x`、`192.168.x`、`172.16–31.x`、`127.x`、`169.254.x`、`100.64–127.x`、`0.x`）、IPv6 字面量、单标签主机名 | 填公网域名 ＋ `https://`（`socketDomain` 用 `wss://`），**域名类字段不要带路径**（`https://api.example.com`，不是 `https://api.example.com/v1`）；供应商端点允许固定路径，但同样不许查询串、片段、URL 内凭据与非 443 端口 |
 | `BAD_APPID` | 小程序 AppID 不匹配 `^wx[0-9a-f]{16}$` | 填微信公众平台里的**正式**小程序 AppID：`wx` ＋ 16 位小写十六进制；测试号/公众号 AppID 不算 |
 | `OUT_OF_RANGE` | 数值项不是十进制整数（`^[0-9]+$`），或超出登记区间 | 写成字符串形式的十进制整数；对照 §2.3 的区间，别把「秒」填成「毫秒」 |
 
@@ -128,9 +128,9 @@ RESULT FAIL 2
 | 维度 | 内容 |
 | --- | --- |
 | 键 | `wechat.requestDomain`、`wechat.uploadFileDomain`、`wechat.downloadFileDomain`、`wechat.socketDomain`、`wechat.icpFilingNumber` |
-| 为什么需要 | 小程序只允许请求已在小程序后台登记的 HTTPS 域名；四类域名分工不同（`request` 走 API、`uploadFile`/`downloadFile` 走媒体、`socket` 走长连接），漏登任一类都会在真机被拒；境内接入还须完成 ICP 备案，备案号是合规证据的一部分 |
+| 为什么需要 | 小程序只允许请求已在小程序后台登记的合法域名；四类域名分工不同（`request` 走 API、`uploadFile`/`downloadFile` 走媒体、`socket` 走长连接），**协议也不同**：`request`/`uploadFile`/`downloadFile` 是 `https`，`socket` 是 `wss`（对应 `wx.connectSocket`），四类互相顶替在真机都会被拒；漏登任一类同样会在真机被拒；境内接入还须完成 ICP 备案，备案号是合规证据的一部分 |
 | 拿不到时的降级 | 真机联调前只能用开发者工具的「不校验合法域名」开关做本地验证，**该开关不得作为验收证据**；未备案时不得对外提供服务，`real` 模式的对应能力保持不可用，演示只能用明确标注的模拟链路 |
-| 验收命令 | `node tools/verify-production-provisioning.mjs --check config/production-provisioning.local.json`（四项域名必须是无路径的公网 `https` origin）；`node tools/verify-env.mjs --probe --json`（对配置里的端点做**无鉴权 HEAD**，`HOST_RESPONDED` 只证主机可达，报告恒 `capabilityVerified=false`） |
+| 验收命令 | `node tools/verify-production-provisioning.mjs --check config/production-provisioning.local.json`（前三项必须是无路径的公网 `https` origin，`socketDomain` 必须是同样形状的 `wss` origin）；`node tools/verify-env.mjs --probe --json`（对配置里的端点做**无鉴权 HEAD**，`HOST_RESPONDED` 只证主机可达，报告恒 `capabilityVerified=false`） |
 | 证据落点 | 小程序后台「开发设置 → 服务器域名」截图（含四类域名）＋ 备案号查询结果截图；截图里的查询串与路径先裁掉；PR 描述注明查询日期 |
 
 ### 3.3 TLS 与证书

@@ -19,7 +19,7 @@
  * | --- | --- |
  * | `MISSING_KEY` | 必填键不存在（父对象不存在时只报父键，不再逐个报子键） |
  * | `UNFILLED` | 空串、纯空白，或仍是占位符（`<...>`、`TODO`、`changeme`、`xxxx`、`请填写` 等） |
- * | `NOT_PUBLIC` | 域名/端点不是公网 `https`：非 https、带查询/片段/凭据、非法端口、带路径（仅域名类字段）、本机/私网/保留域 |
+ * | `NOT_PUBLIC` | 域名/端点不是公网安全地址：`request`/`uploadFile`/`downloadFile` 与供应商端点要 `https`，`socketDomain` 要 `wss`；带查询/片段/凭据、非法端口、带路径（仅域名类字段）、本机/私网/保留域同样不接受 |
  * | `BAD_APPID` | 小程序 AppID 不匹配 `^wx[0-9a-f]{16}$` |
  * | `OUT_OF_RANGE` | 数值项不是十进制整数或超出登记区间 |
  * | `EXPECTED_TYPE` | 结构/类型不对：该是对象的地方不是对象、叶子不是字符串、根不是对象 |
@@ -57,9 +57,11 @@ export const DEFAULT_CONFIG_PATH = 'config/production-provisioning.local.json';
 /**
  * 字段登记表。
  *
- * `kind` 决定值检查：`text` 只要求非空非占位符；`appid`／`domain`／`endpoint`／`number` 各自加一条。
+ * `kind` 决定值检查：`text` 只要求非空非占位符；`appid`／`domain`／`socket`／`endpoint`／`number` 各自加一条。
  * `domain` 只接受 `https://<host>[:443]`（无路径）；`endpoint` 允许固定路径（供应商端点常见），
  * 但同样拒绝查询串、片段、URL 内凭据与非 443 端口。
+ * `socket` 是**按通信类型分开的一类**：`wx.connectSocket` 的合法域名要 `wss`，`wx.request` 要 `https`，
+ * 两者不能互相顶替（把 socket 域名登记成 `https` 或把请求域名登记成 `wss` 真机都会被拒）。
  */
 export const SCHEMA = Object.freeze({
   environment: Object.freeze({ kind: 'text' }),
@@ -69,7 +71,7 @@ export const SCHEMA = Object.freeze({
     requestDomain: Object.freeze({ kind: 'domain' }),
     uploadFileDomain: Object.freeze({ kind: 'domain' }),
     downloadFileDomain: Object.freeze({ kind: 'domain' }),
-    socketDomain: Object.freeze({ kind: 'domain' }),
+    socketDomain: Object.freeze({ kind: 'socket' }),
     icpFilingNumber: Object.freeze({ kind: 'text' }),
     tlsMinVersion: Object.freeze({ kind: 'text' }),
     certificateExpiresOn: Object.freeze({ kind: 'text' }),
@@ -215,9 +217,10 @@ export function isPublicHostname(rawHostname) {
 /**
  * URL 形态判定。
  * `allowPath: false`（域名类字段）只接受 origin；`true`（供应商端点）允许固定路径。
+ * `scheme` 默认 `https:`；socket 类字段传 `wss:`（微信 `wx.connectSocket` 的合法域名口径）。
  * 两种都拒绝查询串、片段、URL 内凭据与非 443 端口（`new URL` 会把显式 `:443` 归一掉）。
  */
-export function isPublicHttpsUrl(value, { allowPath }) {
+export function isPublicHttpsUrl(value, { allowPath, scheme = 'https:' }) {
   if (typeof value !== 'string' || value === '' || /\s/.test(value)) return false;
   let url;
   try {
@@ -225,7 +228,7 @@ export function isPublicHttpsUrl(value, { allowPath }) {
   } catch {
     return false;
   }
-  if (url.protocol !== 'https:') return false;
+  if (url.protocol !== scheme) return false;
   if (url.username !== '' || url.password !== '') return false;
   if (url.search !== '' || url.hash !== '') return false;
   if (url.port !== '') return false;
@@ -238,6 +241,9 @@ function issueCodeForLeaf(spec, value) {
   if (trimmed === '' || isPlaceholder(trimmed)) return ISSUE.UNFILLED;
   if (spec.kind === 'appid') return /^wx[0-9a-f]{16}$/.test(trimmed) ? null : ISSUE.BAD_APPID;
   if (spec.kind === 'domain') return isPublicHttpsUrl(trimmed, { allowPath: false }) ? null : ISSUE.NOT_PUBLIC;
+  if (spec.kind === 'socket') {
+    return isPublicHttpsUrl(trimmed, { allowPath: false, scheme: 'wss:' }) ? null : ISSUE.NOT_PUBLIC;
+  }
   if (spec.kind === 'endpoint') return isPublicHttpsUrl(trimmed, { allowPath: true }) ? null : ISSUE.NOT_PUBLIC;
   if (spec.kind === 'number') {
     if (!/^[0-9]+$/.test(trimmed)) return ISSUE.OUT_OF_RANGE;
@@ -380,6 +386,9 @@ export function runCli({
     stdout(`${JSON.stringify({ tool: TOOL_NAME, example, ok, issueCount: issues.length, issues }, null, 2)}\n`);
   } else {
     for (const issue of issues) stdout(`${issue.code} ${issue.key}\n`);
+    if (example) {
+      stdout('MODE TEMPLATE：顶层 "_example": true ⇒ 只校结构/键集合/类型，未做值检查（UNFILLED、协议、端口、域名类字段一律不判）\n');
+    }
     stdout(ok ? 'RESULT PASS\n' : `RESULT FAIL ${issues.length}\n`);
   }
   return ok ? EXIT_OK : EXIT_ISSUES;

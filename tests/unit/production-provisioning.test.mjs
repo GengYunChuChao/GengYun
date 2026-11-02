@@ -30,7 +30,7 @@ function validConfig() {
       requestDomain: 'https://api.gengyun.example.com',
       uploadFileDomain: 'https://upload.gengyun.example.com',
       downloadFileDomain: 'https://download.gengyun.example.com',
-      socketDomain: 'https://socket.gengyun.example.com',
+      socketDomain: 'wss://socket.gengyun.example.com',
       icpFilingNumber: '浙ICP备00000000号-1',
       tlsMinVersion: '1.2',
       certificateExpiresOn: '2027-06-30',
@@ -201,7 +201,7 @@ test('非 https 或 localhost：都报 NOT_PUBLIC', () => {
   }
 
   const portConfig = validConfig();
-  portConfig.wechat.socketDomain = 'https://socket.gengyun.example.com:8443';
+  portConfig.wechat.socketDomain = 'wss://socket.gengyun.example.com:8443';
   assert.match(run(['--check', writeConfig(portConfig)]).stdout, /^NOT_PUBLIC wechat\.socketDomain$/m);
 });
 
@@ -215,6 +215,35 @@ test('域名类字段带路径要报 NOT_PUBLIC，供应商端点允许固定路
   const queryConfig = validConfig();
   queryConfig.providers.llm.endpoint = 'https://llm.example.com/v1/chat?key=1';
   assert.ok(issuesFor(queryConfig).includes('NOT_PUBLIC providers.llm.endpoint'));
+});
+
+test('按通信类型判协议：socketDomain 要 wss，requestDomain 要 https，不能互相顶替', () => {
+  // 1) 合法 socket 域名是 wss origin：整份配置无 issues。
+  const wssSocket = validConfig();
+  wssSocket.wechat.socketDomain = 'wss://socket.gengyun.example.com';
+  assert.deepEqual(issuesFor(wssSocket), []);
+
+  // 2) socket 登记成 https：真机 wx.connectSocket 会拒，工具也要拒。
+  const httpsSocket = validConfig();
+  httpsSocket.wechat.socketDomain = 'https://socket.gengyun.example.com';
+  assert.ok(issuesFor(httpsSocket).includes('NOT_PUBLIC wechat.socketDomain'));
+
+  // 3) 反方向：request 登记成 wss 同样不合法。
+  const wssRequest = validConfig();
+  wssRequest.wechat.requestDomain = 'wss://api.gengyun.example.com';
+  assert.ok(issuesFor(wssRequest).includes('NOT_PUBLIC wechat.requestDomain'));
+
+  // 4) 换协议不放宽其余防护：路径、查询串、本机名、私网地址一律仍拒。
+  for (const bad of [
+    'wss://socket.gengyun.example.com/socket',
+    'wss://socket.gengyun.example.com?token=1',
+    'wss://localhost',
+    'wss://10.0.0.1',
+  ]) {
+    const config = validConfig();
+    config.wechat.socketDomain = bad;
+    assert.ok(issuesFor(config).includes('NOT_PUBLIC wechat.socketDomain'), `${bad} 应被拒绝`);
+  }
 });
 
 test('坏 AppID：报 BAD_APPID', () => {
@@ -257,7 +286,10 @@ test('类型不对：报 EXPECTED_TYPE', () => {
 test('模板自检：example 文件退出码 0，且不判 UNFILLED', () => {
   const result = run(['--check', EXAMPLE_PATH]);
   assert.equal(result.code, EXIT_OK);
-  assert.equal(result.stdout, 'RESULT PASS\n');
+  // 模板模式要自报家门：先一行 MODE TEMPLATE，再 RESULT PASS。
+  assert.match(result.stdout, /^MODE TEMPLATE：顶层 "_example": true/m);
+  assert.ok(result.stdout.endsWith('RESULT PASS\n'));
+  assert.doesNotMatch(result.stdout, /^(UNFILLED|NOT_PUBLIC) /m);
 });
 
 test('模板自检只查结构：多一个键报 UNKNOWN_KEY', () => {
@@ -271,7 +303,7 @@ test('模板自检只查结构：多一个键报 UNKNOWN_KEY', () => {
   const result = run(['--check', path]);
   assert.equal(result.code, EXIT_ISSUES);
   assert.match(result.stdout, /^UNKNOWN_KEY wechat\.unexpected$/m);
-  assert.doesNotMatch(result.stdout, /UNFILLED/);
+  assert.doesNotMatch(result.stdout, /^UNFILLED /m);
 });
 
 test('输出里不含被检查的密钥字符串（人类读与 --json 两种）', () => {
