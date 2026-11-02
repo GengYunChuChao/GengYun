@@ -43,7 +43,7 @@ npm run verify:real-capability -- --strict --require=asr,chat-llm
 | `media-encryption` | MEDIA_OBJECT_REF_KEY | **不拦启动**：媒体域整域 503 PROVIDER_UNAVAILABLE、语音受理 409 OBJECT_UNAVAILABLE | `aes256-key-material`（64 位十六进制／32 字节 base64／32 字节原串） |
 | `media-access-grant` | MEDIA_ACCESS_GRANT_ORIGIN | **不拦启动**：句柄指向占位域 `media.placeholder.invalid`；带 `--approve-real-media-wiring` 时启动拒绝 | `https-origin-only` |
 | `asr` | TENCENTCLOUD_ASR_SECRET_ID／_KEY **或** TENCENTCLOUD_SECRET_ID／_KEY | ASR 域 fail-closed，语音受理 503 | `non-empty` |
-| `recognition` | RECOGNITION_PROVIDER_URL、RECOGNITION_PROVIDER_KEY | 受理前 503，不回退替身；配齐也只到「能受理」（本仓无已审适配器） | `https-url`、`non-empty` |
+| `recognition` | RECOGNITION_PROVIDER_URL、RECOGNITION_PROVIDER_KEY | 受理前 503，不回退替身；配齐则装配协议级真实适配器并发包（`services/api/src/recognitions/provider.ts:205-219`），但本仓没有已审识别供应商与真实样本 ⇒ 仍不代表任何一次真实调用成功 | `https-url`、`non-empty` |
 | `chat-llm` | CHAT_LLM_ENDPOINT、CHAT_LLM_MODEL、（CHAT_LLM_API_KEY 或 DEEPSEEK_API_KEY） | 问答退回确定性摘录（`model_version` 带 `unimplemented:no-real-` 前缀），不报错 | `https-url-no-query-or-credentials`、`chat-model-name`、`chat-api-key` |
 | `tts` | TENCENTCLOUD_SECRET_ID、TENCENTCLOUD_SECRET_KEY | TTS 域 fail-closed（只认共享对，不逐字段混配） | `non-empty` |
 | `ocr` | TENCENTCLOUD_SECRET_ID、TENCENTCLOUD_SECRET_KEY | OCR 域 fail-closed（与 TTS 同源共享对，两域各自独立判定） | `non-empty` |

@@ -47,10 +47,10 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 作业面公共（`/jobs/*` 与取消语义） | 10 | 9 | 1 | 0 | 0 | 取消能力六源全接；只有未接线源才 503（P01） |
 | 识别 | 3 | 1 | 2 | 0 | 0 | 适配器与字节端口已接线（GY-R70），缺「已审供应商」与真实凭据 ⇒ 仍零真实调用；装配失败/缺凭据 fail-closed 503（N06，R72 订正为部分实现） |
-| OCR | 3 | 2 | 1 | 0 | 0 | 真实提供者／媒体／登记源未接（P03） |
+| OCR | 3 | 2 | 1 | 0 | 0 | 真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口（`services/api/src/routes/ocr.ts:195`、`services/api/src/app.ts:2508-2509`）；真实登记源未接线、用量端口恒空（P03） |
 | 语音与转写 | 3 | 2 | 1 | 0 | 0 | 默认内存 store，真实 ASR 未验收（P04） |
-| 合成 | 2 | 1 | 1 | 0 | 0 | 真实提供者与产物端口不在产品装配（P05） |
-| 问答 | 7 | 6 | 1 | 0 | 0 | 未接真实模型，版本串零真实值（P06／N03） |
+| 合成 | 2 | 1 | 1 | 0 | 0 | 真实提供者与核对内容端口已在产品装配（`services/api/src/app.ts:1161-1162`）；产物端口默认未接线、须显式注入（`:1176`）（P05） |
+| 问答 | 7 | 6 | 1 | 0 | 0 | 真实模型已接线，但装配有四与门（`chatProvider` 非空＋外发账本可用＋`real`＋无注入覆盖，`services/api/src/app.ts:2342-2363`）；任一不成立才走确定性回答器与 `unimplemented:no-real-` 版本串（P06／N03） |
 | 审核规则层与载荷 | 5 | 3 | 2 | 0 | 0 | 模型层适配器与装配路径已在，`real` 缺真实授权与凭据（N07，部分实现）；载荷 mime 已通（N11，已实现） |
 | 媒体 | 2 | 1 | 0 | 1 | 0 | 读句柄网关未接（N12）；写链路已验收（E24） |
 | 开关（三键与十个受控面） | 6 | 6 | 0 | 0 | 0 | 本域全绿，闭集与两个错误码分流都有断言 |
@@ -116,10 +116,10 @@
 | --- | --- | --- | --- | --- |
 | P01 | 取消能力六源全部接线（识别／转写／合成／OCR／审核／问答）；只有未接 cancel 的源才 503 `retryable:false` | 部分实现 | services/api/src/jobs/registry.ts:99 | 余量不是「域内无取消入口」：转写/合成 GY-R27 接、OCR 由 GY-I10 接、审核与问答由 GY-R71 接（实测 tests/unit/jobs-cancel-moderation-answer.test.mjs 的 moderation·① 与 answer·① 均 200）；真正待验收的是真实任务端口、持久租约、外发撤销与跨域生命周期（见 contract-implementation-status.md 取消行） |
 | P02 | 识别域端点、任务、选种、删除闭环 | 部分实现 | docs/architecture/contract-implementation-status.md:83-86 | 结果是 stub／preset_demo 合成替身；真实供应商与独立样本评估未验收（N06） |
-| P03 | OCR 域五端点 + 持久化 | 部分实现 | docs/architecture/contract-implementation-status.md:87-91 | 任务读取与取消已接；真实提供者／媒体／登记源未接线，用量端口恒空 |
+| P03 | OCR 域五端点 + 持久化 | 部分实现 | docs/architecture/contract-implementation-status.md:87-91 | 任务读取与取消已接；真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口，真实登记源未接线，用量端口恒空 |
 | P04 | 转写域四端点 + 确认分离 | 部分实现 | docs/architecture/contract-implementation-status.md:92-95 | 默认内存 store；真实 ASR 评估、媒体持久化、注销清理未验收 |
-| P05 | 合成域受理 + 作业读面 + 取消 | 部分实现 | docs/architecture/contract-implementation-status.md:96 | 真实提供者、核对内容引用、产物端口不在产品装配；听感评估未做 |
-| P06 | 问答域七端点 + PG 持久化 + 输出守卫 | 部分实现 | docs/architecture/contract-implementation-status.md:97 起的七端点块（末行 :103） | 未接真实模型：三个版本串带 `unimplemented:no-real-`，正文是确定性检索摘录 |
+| P05 | 合成域受理 + 作业读面 + 取消 | 部分实现 | docs/architecture/contract-implementation-status.md:96 | 真实提供者与核对内容端口已在产品装配（`services/api/src/app.ts:1161-1162`）；产物端口默认未接线、须显式注入 `synthesisMediaWiring`（`:1176`）；听感评估未做 |
+| P06 | 问答域七端点 + PG 持久化 + 输出守卫 | 部分实现 | docs/architecture/contract-implementation-status.md:97 起的七端点块（末行 :103） | 真实模型已按四与门装配（`services/api/src/app.ts:2342-2363`、`services/api/src/ai/chat-wiring.ts:52-97`）：四门全过 ⇒ 三个版本串取真实模型／提示词版本（不带 `unimplemented:no-real-`）；任一不成立 ⇒ 版本串带该前缀、正文是确定性检索摘录 |
 | P07 | 审核域结论可读 + 规则层可用 | 部分实现 | docs/architecture/contract-implementation-status.md:76 | 真实 tms／ims 未授权 ⇒ real 整域 fail-closed（Z06）；持久队列与租约仍是内存台账 |
 | P09 | 非持久端口的审计台账（内存追加、只增不改） | 部分实现 | services/api/src/admin/ops/content-pg.ts:25-27 | 仍只增不改、重启即丢；但**真库端口已不再走它**：持久端口在自身事务里写库（services/api/src/admin/ops/service.ts:1115 只在 `!jobPort.persistent` 时追加内存） |
 | P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；出口侧：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `fetchAuditLogsPage`（operationId 是 `listAuditLogs`，见 `apps/admin/src/lib/admin-audit-logs.mjs:36`），导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`，#633），另两个审计页仍分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54）⇒ **三读面读数已在页面层合并**（`apps/admin/src/lib/admin-audit-logs.mjs:985` 的 `mergeAuditSources`，合并面板在 `apps/admin/src/views/AuditLogsView.vue:209`；该层头注释 `:840` 写死「服务端零改动：本层只消费既有读面，不新增 operation、不改契约」，故服务端仍是三个独立读面、无统一读面），合并条数／降序／跨源去重／失败隔离／来源筛选由 `tests/unit/admin-ui-audit-merge.test.mjs` 钉住；剩余缺口是页面读数无端到端验收，故仍判部分实现。原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
@@ -130,7 +130,7 @@
 
 | 编号 | 判定项 | 判定 | 依据（文件:行号） | 缺口说明 |
 | --- | --- | --- | --- | --- |
-| N03 | `model_version`／`prompt_version`／`rule_version` 的真实值 | 未实现（P0） | docs/architecture/contract-implementation-status.md:97 | 一律 `unimplemented:no-real-` 前缀；审核侧明示不产出这两字段且有源码扫描测试禁占位（docs/moderation/README.md:45-46），见 §7.3 |
+| N03 | `model_version`／`prompt_version`／`rule_version` 的真实值 | 未实现（P0） | docs/architecture/contract-implementation-status.md:97 | 四与门全过时版本串取真实模型／提示词版本（`services/api/src/ai/chat-wiring.ts:87-94`），任一不成立才带 `unimplemented:no-real-` 前缀；产品 HTTP 路径的真实外发读数仍未取得，故 P0 不销。审核侧明示不产出这两字段且有源码扫描测试禁占位（docs/moderation/README.md:45-46），见 §7.3 |
 | N04 | 统一作业台账 `public.jobs` 的真实写入 | 部分实现（P1，四源已接／两源无源可写） | services/api/src/admin/ops/jobs-pg.ts:4-9（读面口径：四源）+ services/api/src/jobs/ledger.ts（写入点）+ docs/verification/gy-r71-jobs-ledger-20261030.md | 表由 0001 建好（services/api/db/migrations/0001_initial_schema.sql:203-231）。GY-R71 起四源（ocr／recognition／transcription／answer）在**与源表同一事务**里写台账（`ON CONFLICT (id)`，同态重放 no-op）；`moderation`／`synthesis` 没有可同事务写的作业行（审核只落决定行、合成没有作业表）⇒ 未接，理由登记在 `ledger.ts` 的 `UNWIRED_SOURCES_REASON`。`/admin/jobs` 读面自 GY-R72／W36 起覆盖四源（三张域内作业表 + 问答轮次 `conversation_turns`），台账仍是**只写不读**（零读者） |
 | N05 | 调用记录表 `provider_invocations` | 部分实现（P1） | `services/api/db/migrations/0050_provider_invocations.sql`；`services/api/src/privacy/ledger-pg.ts`（`recordInvocation`／`listInvocations`）；写入点 `services/api/src/privacy/task-egress.ts` | 表、迁移、回滚件、写入点与账本读函数已落（#790）⇒ attempt／版本串／耗时／usage 有可审计落点；**仍缺** HTTP 读面、运行时授权（该组不在运行时 5 组内）、`job_id` 与 `model_version` 生产恒 NULL、并发未验证 |
 | N06 | 识别真实供应商适配器 | 部分实现（P1，R72 订正） | services/api/src/recognitions/provider.ts:159；services/api/src/recognitions/live-adapter.ts:153 | GY-R70 起**适配器与字节端口都已接线**：`real` + 凭据齐备 ⇒ 装配 `createLiveRecognitionProvider()`（协议级，`services/api/src/recognitions/live-adapter.ts`），字节只从去元数据衍生件来（`services/api/src/recognitions/image-source.ts:158`）。**仍未实现的是「已审供应商」这一层**：本基线没有已审识别供应商、没有真实凭据、`model_version` 只写协议版本 `gy-recognition-live-v1`；因此**零真实调用、零准确率证据**（见 `docs/verification/gy-r70-recognition-live-20261030.md`）。装配失败/缺凭据仍是 fail-closed 503，绝不回退替身 |
@@ -220,11 +220,11 @@
 
 ### 7.3 模型／提示词版本零真实值（P0）
 
-- 问答侧：`createConversation`／`createTurn` 行明写「三个版本串一律带 `unimplemented:no-real-` 前缀」（`docs/architecture/contract-implementation-status.md:97`），正文是确定性检索条目摘录，不是模型结果。该前缀同时是**机器判据**（`services/api/src/conversations/types.ts:52`）——好处是谎报会被测试抓到，代价是零真实值。
+- 问答侧：`createTurn` 行已按 GY-R28 W7 订正（`docs/architecture/contract-implementation-status.md:102`）——真实模型接线后，四与门全过时版本串取真实 `model`／`prompt`（`services/api/src/ai/chat-wiring.ts:87-94`），任一不成立才带 `unimplemented:no-real-` 前缀、正文是确定性检索条目摘录；`createConversation`／`listConversations`／`getConversation`／`listTurns` 四行仍写「一律」（口径滞后，须与 `contract-status.json` 同源一次改）。该前缀同时是**机器判据**（`services/api/src/conversations/types.ts:52`）——好处是谎报会被测试抓到，代价是不带前缀的读数至今只在单测层出现。
 - 审核侧：`docs/moderation/README.md:45-46` 明示不产 `model_version`／`prompt_version`，且有一条用例**扫描源码**禁止占位赋值（`本片不产出 model_version / prompt_version：源码里没有占位赋值`）。
 - 记录侧：`provider_invocations` 已有承载表与写入原语——迁移 `services/api/db/migrations/0050_provider_invocations.sql`（16 列、`invocation_state` 闭集 CHECK、`(job_id, attempt)` 唯一键，回滚件在同目录 `rollback/`）、账本函数 `services/api/src/privacy/ledger-pg.ts` 的 `recordInvocation`／`listInvocations`、以及 `services/api/src/privacy/task-egress.ts` 在真实外发之后（成功与供应商报错）的写点（N05）。仍缺四项：该组不在运行时 5 组内 ⇒ 运行时写会 42501 并被转成可观测的 `PROVIDER_UNAVAILABLE`、没有 HTTP 读面、生产写入的 `job_id`／`model_version` 恒为 NULL、`MAX(attempt)+1` 的并发派生未验证。
 
-结论：**当前任何「模型版本／提示词版本」的对外读数都不可信**——真实值不存在（三个版本串仍带 `unimplemented:no-real-` 前缀）。承载表与写入原语已经存在（`0050` + `recordInvocation` + 真实外发后写点），但生产写入时 `model_version` 与 `job_id` 仍为 NULL、运行时授权与 HTTP 读面仍缺，所以仍然没有可对外读的真实值。#589 的 0043 只解决审计落库，与本条无关。
+结论：**产品路径上「模型版本／提示词版本」仍没有可对外核对的真实值读数**——live 分支的版本串只在单测层产出过（四与门全过时），产品 HTTP 路径的真实外发读数未取得；其余装配结局下三个版本串仍带 `unimplemented:no-real-` 前缀。承载表与写入原语已经存在（`0050` + `recordInvocation` + 真实外发后写点），但生产写入时 `model_version` 与 `job_id` 仍为 NULL、运行时授权与 HTTP 读面仍缺，所以仍然没有可对外读的真实值。#589 的 0043 只解决审计落库，与本条无关。
 
 ### 7.4 三条缺口的共同根因（7.1 已关闭，其余仍按此链查）
 
@@ -243,10 +243,10 @@
 | --- | --- | --- | --- |
 | 识别（拍草）真实外呼 | 覆盖内 300 张，Top1 ≥ 85%、Top3 ≥ 95% | docs/implementation-requirements.md:460 | 未执行；适配器与字节端口已接线但无已审供应商与真实凭据，零真实调用、零准确率证据（N06，部分实现） |
 | 识别泛化与低质量 | 覆盖外误判 ≤ 5%，低质量图可用 ≥ 95% | docs/implementation-requirements.md:461 | 未执行 |
-| 标签 OCR | ≥ 200 张，字段准确率 ≥ 95% | docs/implementation-requirements.md:462 | 未执行；真实提供者未接（P03） |
+| 标签 OCR | ≥ 200 张，字段准确率 ≥ 95% | docs/implementation-requirements.md:462 | 未执行；真实提供者已装配（`services/api/src/routes/ocr.ts:195`），但无真实样本与真实调用读数（P03） |
 | 登记匹配 | ≥ 100 组 | docs/implementation-requirements.md:463 | 未执行；real 无登记库（P12） |
 | AI 社区筛查 | 200 恶意 + 200 正常，召回 ≥ 95%，误隔离 ≤ 10% | docs/implementation-requirements.md:464 | 未执行；模型层适配器与装配已在、缺授权与凭据（N07 部分实现），故仍无真实读数 |
-| 普通话播报 | ≥ 30 段 | docs/implementation-requirements.md:465 | 未执行；真实 TTS 提供者未接（P05） |
+| 普通话播报 | ≥ 30 段 | docs/implementation-requirements.md:465 | 未执行；真实 TTS 提供者已装配（`services/api/src/app.ts:1162`），但产物端口未接线、听感评估未做（P05） |
 | 普通话 ASR | ≥ 50 段，字符错误率 ≤ 15% | docs/implementation-requirements.md:466 | 未执行（仅 1 次真实 ASR 连通性调用，非准确率证据：docs/verification/gy-i11-real-media-wiring-20261025.md:75） |
 | 大模型资料问答 | 固定 120 题（60 可答／20 不足／20 危险／20 注入） | docs/implementation-requirements.md:467 | 未执行（N09） |
 | 两类识别耗时 | 各 ≥ 30 次真实调用，提交至展示 p95 ≤ 10s，失败率 ≤ 5%，最长 30s 转明确超时 | docs/implementation-requirements.md:480 | 未取得读数 |
