@@ -206,8 +206,8 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 变了就说明改的不止那 8 处地址（例如 JSON 被重排、md 被工具顺手改了别的），那要停下来查。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 267773, lines: 4407 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 191569, lines: 217 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 269681, lines: 4407 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 192765, lines: 218 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

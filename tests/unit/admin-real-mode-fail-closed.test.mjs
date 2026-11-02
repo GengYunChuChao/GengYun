@@ -1,4 +1,4 @@
-/**
+﻿/**
  * 监工返修 P1（PR #121）：**real 默认装配反例**。
  *
  * 缺陷：后台服务默认建**内存** store，而 `app.ts` 把 `config.executionMode` 原样交给服务层。
@@ -147,6 +147,11 @@ function adminRequests() {
   rows.push({ op: 'revokeAdministratorScope', method: 'DELETE', url: `${API}/admin/administrators/${UNKNOWN_UUID}/scopes/audit:read`, body: { reason: 'r' }, ifMatch: '"1"' });
   rows.push({ op: 'disableAdministratorAccount', method: 'POST', url: `${API}/admin/administrators/${UNKNOWN_UUID}/disable`, body: { reason: 'r' }, ifMatch: '"1"' });
   rows.push({ op: 'enableAdministratorAccount', method: 'POST', url: `${API}/admin/administrators/${UNKNOWN_UUID}/enable`, body: { reason: 'r' }, ifMatch: '"1"' });
+  // R72：举报处置 1 条。real 默认装配（社区 store 非持久）下**同样必须 503** ——
+  // 处置写路径在 `CommunityService.advanceReport`，没有 `communityService` 就没有端口。
+  // 形状按契约：`{action, expected_revision}` 走 **body**（本 op 刻意不用 If-Match，
+  // 契约 `x-version-required: false`），所以这里不带 if-match。
+  rows.push({ op: 'advanceReport', method: 'POST', url: `${API}/admin/reports/${UNKNOWN_UUID}/disposition`, body: { action: 'triage', expected_revision: 1 } });
   return rows;
 }
 
@@ -179,13 +184,13 @@ function inject(app, token, row, index) {
   });
 }
 
-test('real 默认装配反例：46 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
+test('real 默认装配反例：47 条后台路由一律 fail-closed（503 PROVIDER_UNAVAILABLE），零成功封套、零内存副作用', async () => {
   const authStore = createMemoryAuthStore();
   const app = buildApp({ config: loadConfig(REAL_ENV), store: authStore });
   try {
     const token = await seedAdmin(authStore);
     const rows = adminRequests();
-    assert.equal(rows.length, 46, '反例必须覆盖全部 46 个 operationId');
+    assert.equal(rows.length, 47, '反例必须覆盖全部 47 个 operationId');
 
     const succeeded = [];
     for (const [index, row] of rows.entries()) {
@@ -199,8 +204,8 @@ test('real 默认装配反例：46 条后台路由一律 fail-closed（503 PROVI
     }
     assert.deepEqual(succeeded, [], `不得有任何后台操作在 real 默认装配下"成功"：${succeeded.join('; ')}`);
 
-    // 契约面不缩水：46 条路由**仍然注册**（只是运行时一律拒绝）。
-    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 46);
+    // 契约面不缩水：47 条路由**仍然注册**（只是运行时一律拒绝）。
+    assert.equal(ADMIN_HTTP_OPERATION_IDS.length, 47);
     for (const opId of ADMIN_HTTP_OPERATION_IDS) {
       const route = CONTRACT_ROUTES.get(opId);
       const url = `${route.path}`
@@ -216,7 +221,7 @@ test('real 默认装配反例：46 条后台路由一律 fail-closed（503 PROVI
     assert.equal(app.adminContentService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminOpsService.store.persistent, false, '默认 store 是内存实现');
     assert.equal(app.adminContentService.operationIds.length, 25);
-    assert.equal(app.adminOpsService.operationIds.length, 18);
+    assert.equal(app.adminOpsService.operationIds.length, 19);
   } finally {
     await app.close();
   }

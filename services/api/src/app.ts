@@ -68,7 +68,7 @@ import { createTtsProvider, type TtsProvider } from './tts/provider.ts';
 import { createSynthesisService, type SynthesisService } from './tts/service.ts';
 import { createMemorySynthesisStore, type SynthesisStore } from './tts/store.ts';
 // GY-I18 后台域（阶段 2 装配）：路由 + 阶段 1／1b 两个已合并的服务。
-import { ADMIN_HTTP_OPERATION_IDS, registerAdminRoutes } from './routes/admin.ts';
+import { ADMIN_HTTP_OPERATION_IDS, registerAdminRoutes } from './routes/admin.ts'; import { registerAdminReportRoutes } from './routes/admin-reports.ts';
 import { createAdminContentService } from './admin/service.ts';
 import type { AdminContentService, AdminContentServiceOptions } from './admin/service.ts';
 import { createAdminOpsService } from './admin/ops/service.ts';
@@ -1593,7 +1593,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
           // S3：人工通过/驳回。与下架**共用同一份**社区 store（同一条 CAS 原语、同一个事务），
           // 并把社区事件端口一并注入 —— 审核结论要投影成 `moderation_result` 通知作者；
           // 事件端口未接线时审核**仍可用**，只是 `notified: false`（通知是副作用，不回滚结论）。
-          postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }),
+          postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }), reportDisposition: communityService ?? undefined,
           flagEffects: adminInjection?.flagEffects,
         }),
         reason,
@@ -1729,7 +1729,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       // S3：stub 域同样接同一份社区 store + 社区事件端口（内存实现），
       // 因此本地/单测里「通过/驳回」是**真的会改行**的，而不是一律 503；
       // 真正的 fail-closed 在 real 域（`postReviewWired`）与端口缺失（`wired:false`）两处。
-      postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }),
+      postReview: createPostReviewAdapter({ port: communityPostPortForAdmin, events: communityEvents }), reportDisposition: communityService ?? undefined,
       flagEffects: adminInjection?.flagEffects,
     });
     // GY-I14 ⇄ GY-I15 联动接线：后台下架生效后**驱动审核域下架**（整链缓存失效 + 该版本永久不可复活）。
@@ -2395,7 +2395,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //    （见上方 `conversationsStore` 依赖）。本片**不再**另建只含 `conversations` 的第二个
   //    协调器与第二个 requestId —— 一次注销 = 一个请求、一份回执、一条证据链。
   //    备份副本清除属 GY-I19 G6/G8（P1）⇒ 该模块回执如实 `pending`（不谎称完成）。
-
+  registerAdminReportRoutes(app, { guards, ops: adminOpsService });
   // 请求身份槽位（GY-I27 接口缝：req.userId / req.authEpoch / req.role）。
   app.decorateRequest('userId', null);
   app.decorateRequest('authEpoch', null);

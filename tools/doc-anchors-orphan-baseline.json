@@ -206,6 +206,12 @@
       "accept": 12,
       "orphans": 3540,
       "outsideRed": 128
+    },
+    {
+      "why": "R72 举报处置接 HTTP（advanceReport）：`node tools/verify-contract-status.mjs --write-doc` 是 docs/architecture/contract-implementation-status.md 的唯一合法渲染路径；新增一条 operation ⇒ 生成表格 +1 行（217 → 218），docs/verification/gy-r33-contract-ledger-20261023.md 引的生成区 end 标记 `:178` 实际落到 `:179`、docs/verification/gy-r64-pr4c-denial-wiring-20261026.md 引的 `:204` 整体下移一行；两页按仓规逐字不改，只在本册留痕。净新增 0：本片只清这 2 个键（gy-r33 的 `:178`、gy-r64 的 `:204` 两条重复，合计 3 条数组元素），判据一字未改。本册未整体重算：只按手术清单删了这 3 条数组元素并追加本条留痕，其余条目逐字未动（复核口径：同参数在 base 68cc44cf 上 emit 得到 orphans 3540 / outsideRed 128，与本册手术前逐键一致）。",
+      "accept": 0,
+      "orphans": 3540,
+      "outsideRed": 125
     }
   ],
   "orphans": [
@@ -3843,7 +3849,6 @@
     "docs/verification/gy-r31-i29-withdraw-deps-20261014.md|docs/verification/gy-i29-closure-20261018.md:215|SUSPECT",
     "docs/verification/gy-r31-i29-withdraw-deps-20261014.md|services/api/src/app.ts:884|SUSPECT",
     "docs/verification/gy-r33-contract-ledger-20261023.md|community/service.ts:1808|SUSPECT",
-    "docs/verification/gy-r33-contract-ledger-20261023.md|docs/architecture/contract-implementation-status.md:178|SUSPECT",
     "docs/verification/gy-r33-contract-ledger-20261023.md|docs/verification/gy-r31-i17-recon-20261022.md:1364|OUT_OF_RANGE",
     "docs/verification/gy-r33-contract-ledger-20261023.md|docs/verification/gy-r31-i17-recon-20261022.md:1546|OUT_OF_RANGE",
     "docs/verification/gy-r33-contract-ledger-20261023.md|docs/verification/gy-r31-i17-recon-20261022.md:1805|OUT_OF_RANGE",
@@ -3857,8 +3862,6 @@
     "docs/verification/gy-r34-jobs-retire-20261024.md|docs/verification/gy-i24-restore-drill-local-20261018.md:55631|OUT_OF_RANGE",
     "docs/verification/gy-r64-admin-console-coverage-20261026.md|services/api/src/routes/admin.ts:99999|OUT_OF_RANGE",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:18|SUSPECT",
-    "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:204|SUSPECT",
-    "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:204|SUSPECT",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:236|OUT_OF_RANGE",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:306|OUT_OF_RANGE",
     "docs/verification/gy-r64-pr4c-denial-wiring-20261026.md|docs/architecture/contract-implementation-status.md:307|OUT_OF_RANGE",

@@ -1,6 +1,6 @@
-/**
+﻿/**
  * GY-I15（#15）/ #444 §S5 残留缺口 · 社区域**列表筛选下推 + 分页确定性**的真库读数 +
- * **举报状态推进通道**的缺口登记（PostgreSQL 17）。
+ * **举报面**的形状核对（PostgreSQL 17；R72 之前这一节是"推进通道缺口登记"，接线后改为形状核对）。
  *
  * 为什么需要这一条（既有脚本的分工，逐条点名）：
  *   - `tests/integration/community-pg.mjs` 只发过 `POST /api/v1/posts`（:517），**没有任何
@@ -36,10 +36,12 @@
  *      B 拿 `mine=true&crop_id=crop-tie` 看不到 A 的同刻行（越权负控制，库里 B 本来也没有）。
  *
  * 本脚本**不**证明什么（必须如实登记，不许被引用成功能证据）：
- *   - 举报 `state` 的推进：`POST /reports` 落库的 `state` 恒为 `received`（服务层 `service.ts:1402`
- *     硬编码），store 接口只有 `insertReport`/`getReport`，契约只有 `createReport`/`getOwnReport`，
- *     没有任何 `/admin/reports` 面。本脚本第 8 节把这条写成**缺口登记**（断言"推不动"），
- *     不是"举报闭环已验证"；B 片把它补上时，这一节必须跟着改。
+ *   - 举报 `state` 的**端到端处置**：`POST /reports` 落库的 `state` 恒为 `received`（创建即此态；
+ *     `createReport` 不接受调用方指定 state）。R72 之后推进通道**已经存在**
+ *     （`POST /admin/reports/{id}/disposition` ⇒ `advanceReport`：契约、路由、转移表、CAS 四处都在），
+ *     但本脚本**不跑**那条 HTTP 臂（本节没有 admin 会话夹具），因此只把"契约面确实多出一条、
+ *     其余候选推进路径仍然 404"钉成事实，**不**等于"真库处置已验证"。真库处置臂需另加 admin
+ *     会话夹具，属后续补测（见 R72 交付报告的诚实边界）。
  *   - 筛选下推 SQL 的性能：本脚本只读 `EXPLAIN` 的**计划形状**（选没选索引），不报执行时间，
  *     也不构成容量/延迟结论。
  *   - 真实审核供应商：全程注入 `provider.synthetic === true` 的合成审核端口（不联网、无凭据），
@@ -454,7 +456,7 @@ async function main() {
     say(`语句读数：${listStatements.length} 条列表查询全部含 WHERE 与绑定 LIMIT；crop_id=$1 / region_code=$2 / LIMIT $3 位序正确，`
       + '公开列表无 author 谓词、mine 列表 author_id=$1 绑定会话主体');
 
-    // ---- 12. 举报：state 恒 received（缺口登记，不是功能验证） -----------
+    // ---- 12. 举报：state 恒 received + R72 处置面形状核对（不是功能验证） ------
     const reported = await call('POST', '/api/v1/reports', {
       token: b.token,
       payload: {
@@ -477,8 +479,9 @@ async function main() {
     const dbState = (await owner.query('SELECT state::text AS state, revision FROM community_reports WHERE id = $1::uuid', [reportId])).rows[0];
     assert.deepEqual(dbState, { state: 'received', revision: 1 }, '库里就是 received，不是只在响应里写成 received');
 
-    // 真库闭集：`community_reports.state` 是 `varchar(16)` + CHECK（不是 enum），
-    // 三个值里只有 received 有写入端 —— 这才是"缺口"的可核对形态。
+    // 真库闭集：`community_reports.state` 是 `varchar(16)` + CHECK（不是 enum）。
+    // R72 之后三个值都有写入端（`received` 由 `createReport`，`isolated`/`closed` 由
+    // `advanceReport` 的转移表），但本脚本只核对**闭集形状**，不跑处置臂（见文件头"不证明什么"）。
     const stateChecks = (await owner.query(
       `SELECT pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
          JOIN pg_class t ON t.oid = c.conrelid
@@ -491,7 +494,9 @@ async function main() {
     }
     note(`真库 state 闭集：${stateChecks[0]}`);
 
-    // 推进通道：HTTP 面没有，store 没有，契约没有 —— 三处都要如实红着登记。
+    // 其余候选推进通道**仍然不存在**（这些是历史上被提过、但没进契约的形状）。
+    // R72 的真实通道是 `POST /admin/reports/{id}/disposition` —— 形状核对在下面单独做；
+    // 本脚本**不**调它（无 admin 会话夹具），因此这里是"别的路走不通"，不是"处置已验证"。
     for (const [label, method, path] of [
       ['PATCH /reports/{id}', 'PATCH', `/api/v1/reports/${reportId}`],
       ['POST /reports/{id}/state', 'POST', `/api/v1/reports/${reportId}/state`],
@@ -499,10 +504,11 @@ async function main() {
       ['POST /admin/reports/{id}/isolate', 'POST', `/api/v1/admin/reports/${reportId}/isolate`],
     ]) {
       const response = await call(method, path, { token: b.token });
-      assert.equal(response.status, 404, `${label} 目前不存在（推进通道缺口），实际 ${response.status}`);
+      assert.equal(response.status, 404, `${label} 目前不存在（非本片通道），实际 ${response.status}`);
     }
-    assert.equal('updateReport' in store, false, 'PG store 不得有改 state 的方法（缺口登记：有的话本行必须红）');
-    assert.equal('setReportState' in store, false);
+    assert.equal('updateReport' in store, false, 'PG store 不得有改 state 的方法（唯一写入口是 CAS `commitReportIfCurrent`）');
+    assert.equal('setReportState' in store, false, 'PG store 不得有裸 setState（同上：只能 CAS）');
+    assert.equal(typeof store.commitReportIfCurrent, 'function', 'PG store 必须暴露 CAS 端口 `commitReportIfCurrent`');
 
     const operations = (() => {
       const parsed = contractJson('operations.json');
@@ -512,18 +518,35 @@ async function main() {
       .filter((operation) => JSON.stringify(operation).toLowerCase().includes('report'))
       .map((operation) => `${operation.method.toUpperCase()} ${operation.path}`)
       .sort();
-    assert.deepEqual(reportOps, ['GET /reports/{id}', 'POST /reports'], '契约里举报只有创建 + 读自己两条（无更新/无管理端列表）');
+    // R72：契约从两条变成三条 —— 多了 `advanceReport`（处置）。创建/读自己两条原样未动。
+    assert.deepEqual(
+      reportOps,
+      ['GET /reports/{id}', 'POST /admin/reports/{id}/disposition', 'POST /reports'],
+      '契约里举报是创建 + 读自己 + 管理端处置三条（无裸更新、无管理端列表）',
+    );
     const openapi = contractJson('openapi.json');
     assert.deepEqual(
       Object.keys(openapi.paths).filter((path) => path.includes('report')).sort(),
-      ['/reports', '/reports/{id}'],
-      '契约 paths 里没有任何 /admin/reports* 面',
+      ['/admin/reports/{id}/disposition', '/reports', '/reports/{id}'],
+      '契约 paths 里举报面恰有这三条（`/admin/reports*` 只有处置那一条）',
+    );
+    // 形状口径：处置必须只接 `{action, expected_revision}`（不许松成"任意字段 PATCH"），
+    // 且版本前置走 body（契约 `x-version-required: false`，⛔ 无 If-Match 参数）。
+    const disposition = openapi.paths['/admin/reports/{id}/disposition'].post;
+    assert.equal(disposition.operationId, 'advanceReport');
+    assert.equal(disposition['x-scope'], 'sources:write', '复用既有 scope，未新造 reports:*');
+    assert.equal(disposition['x-version-required'], false);
+    assert.equal(
+      (disposition.parameters ?? []).some((p) => p.$ref.endsWith('/IfMatch')),
+      false,
+      '版本前置条件在 body（`expected_revision`），契约不得声明 If-Match —— 声明了就要按 428 语义实现',
     );
 
-    note('GAP（缺口登记，不是功能验证）：举报 state 写入端只有 `received`（service.ts:1402 硬编码）；'
-      + 'store 只有 insertReport/getReport；契约只有 createReport/getOwnReport；/admin/reports* 不存在。'
-      + '真库闭集 3 值，可达 1 值。');
-    say('举报缺口登记：真库 state=received 落库可读、他人读 404；推进通道在 HTTP/store/契约三处都不存在（B 片待补）');
+    note('口径（不是功能验证）：举报处置通道已接 HTTP（`POST /admin/reports/{id}/disposition` ⇒ `advanceReport`，'
+      + '转移表在 `community/report-state.ts`、CAS 在 `store-pg.ts` 的 `commitReportIfCurrent`）；'
+      + '本脚本只核对契约/路由**形状**，未跑真库处置臂（无 admin 会话夹具）。'
+      + '另：处置刻意不写审计行、不区分 `closed` 的两种含义（成立/驳回）—— 均需迁移，另批。');
+    say('举报处置接线：契约三条（创建 / 读自己 / 管理端处置）、scope=sources:write、版本前置在 body；真库处置臂未跑（走 CI）');
 
     // ---- 13. EXPLAIN：下推后的真实语句不再全表扫 -------------------------
     // 灌 1200 行合成数据，让规划器对"全表读 + 排序" vs "高选择性谓词"做出真实选择（不是 3 行时的小表假象）。
