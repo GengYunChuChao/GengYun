@@ -509,8 +509,8 @@ async function main() {
     note(`真库 state 闭集：${stateChecks[0]}`);
 
     // 其余候选推进通道**仍然不存在**（这些是历史上被提过、但没进契约的形状）。
-    // R72 的真实通道是 `POST /admin/reports/{id}/disposition` —— 形状核对在下面单独做；
-    // 本脚本**不**调它（无 admin 会话夹具），因此这里是"别的路走不通"，不是"处置已验证"。
+    // R72 的真实通道是 `POST /api/v1/admin/reports/{id}/disposition` —— 契约形状在下面核对；
+    // 写面读数在 12.1 / 12.2（T9/T10），因此这一节只证明"别的路走不通"，不是"处置已验证"。
     for (const [label, method, path] of [
       ['PATCH /reports/{id}', 'PATCH', `/api/v1/reports/${reportId}`],
       ['POST /reports/{id}/state', 'POST', `/api/v1/reports/${reportId}/state`],
@@ -588,7 +588,10 @@ async function main() {
     await owner.query("INSERT INTO admin_scopes (admin_id, scope) VALUES ($1::uuid, 'sources:write')", [auditAdmin]);
     note(`T9 夹具：管理员 ${auditAdmin} 同时镜像进 admin_accounts + admin_scopes(sources:write)（0053 的函数在库侧再核一次）`);
 
-    const dispositionOf = (id, body, key) => call('POST', `/admin/reports/${id}/disposition`, {
+    // 路径必须带 `/api/v1` 前缀：`call()` 只拼了 `base`（host:port），**不**含 `API_PREFIX`。
+    // 少了它 ⇒ Fastify 未匹配到路由 ⇒ 404 `未实现的路径：POST /admin/reports/…`
+    //（与「stub 未装配 adminOps」的 503 `社区举报存储尚未接线` 是两种读数，⛔ 不可混为一谈）。
+    const dispositionOf = (id, body, key) => call('POST', `/api/v1/admin/reports/${id}/disposition`, {
       token: auditToken,
       payload: body,
       headers: { 'idempotency-key': key },
