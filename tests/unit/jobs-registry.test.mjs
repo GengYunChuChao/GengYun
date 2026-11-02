@@ -91,7 +91,7 @@ function assertViolation(job, label) {
 
 // ---------------------------------------------------------------- 契约一致性
 
-test('契约一致性·本模块闭集与 openapi 逐项一致（kind/state/target_ref.type/Job 键）', () => {
+test('契约一致性·本模块闭集与 openapi 逐项一致（kind/state/target_ref.type/Job 键；条数也从契约取，不取被测模块的数组长度）', () => {
   const job = openapi.components.schemas.Job;
   assert.equal(job.additionalProperties, false);
   assert.deepEqual([...job.properties.kind.enum].sort(), [...JOB_KINDS].sort());
@@ -99,8 +99,8 @@ test('契约一致性·本模块闭集与 openapi 逐项一致（kind/state/targ
   assert.deepEqual([...openapi.components.schemas.TargetRef.properties.type.enum].sort(), [...TARGET_REF_TYPES].sort());
   assert.deepEqual([...job.required].sort(), [...JOB_KEYS].sort());
   assert.deepEqual([...openapi.components.schemas.TranscriptionResult.required].sort(), [...JOB_RESULT_KEYS].sort());
-  assert.equal(JOB_KINDS.length, 6);
-  assert.equal(JOB_STATES.length, 7);
+  assert.equal(JOB_KINDS.length, job.properties.kind.enum.length, `JOB_KINDS 条数须等于契约 Job.kind 枚举条数（契约 ${job.properties.kind.enum.length} 条；不从被测模块自己的数组取长度，那是自指判据）`);
+  assert.equal(JOB_STATES.length, openapi.components.schemas.JobState.enum.length, `JOB_STATES 条数须等于契约 JobState 枚举条数（契约 ${openapi.components.schemas.JobState.enum.length} 条；同上，不取被测模块的数组长度）`);
   // JobResult 是 discriminator: kind 的 oneOf
   assert.equal(openapi.components.schemas.JobResult.discriminator.propertyName, 'kind');
   for (const state of ['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled']) {
