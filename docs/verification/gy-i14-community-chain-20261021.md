@@ -101,14 +101,14 @@
 | 幂等 | `service.ts:823-831`（`withIdempotency`）、`:215-290` | 同键同体复用结果、同键异体 409 | 通 |
 | 先审后发 | `service.ts:843-848` | 规则层 `gate.evaluate` **在任何内容行落库之前**；不通过 ⇒ 只补录结论 + 拒绝发布 | 通 |
 | 审核域联动 | `service.ts:852-853`、`:886-898` | 送审审核域；未获明确放行不落行；发布闸门拒绝 ⇒ 行保留 `pending_review`（私有/待审） | 通 |
-| 客户端 | `community-api.js:224-227`（`createPost`，带 `Idempotency-Key`）；`communitycreate.js:77-124` | 只发契约字段；失败**不**显示「已提交成功」 | 通 |
-| 审核结论口径 | `communitycreate.js:104-109` | 201 只是「已受理」，提示语逐字取自详情页 `publicLabel` / `stateLabel` | 通 |
+| 客户端 | `community-api.js:224-227`（`createPost`，带 `Idempotency-Key`）；`communitycreate.js:100-150` | 只发契约字段；失败**不**显示「已提交成功」 | 通 |
+| 审核结论口径 | `communitycreate.js:129-135` | 201 只是「已受理」，提示语逐字取自详情页 `publicLabel` / `stateLabel` | 通 |
 
 ### 2.2 图片／媒体附件 —— 未通（fail-closed 且如实标注）
 
 | 面 | 位置 | 读数 | 判定 |
 |---|---|---|---|
-| 客户端上传 | `communitycreate.js:82`（`media_ids: []`）、`communitycreate.wxml:61-72`（「本轮未取得的能力」） | **不存在**上传入口，`media_ids` 恒 `[]`，并写明原因（规则层对带媒体目标一律不判通过） | 未通（如实） |
+| 客户端上传 | `communitycreate.js:111`（`media_ids: []`；历史引用原写 82，父版本该行是 `return`，真值 88）、`communitycreate.wxml:61-72`（「本轮未取得的能力」） | **不存在**上传入口，`media_ids` 恒 `[]`，并写明原因（规则层对带媒体目标一律不判通过） | 未通（如实） |
 | 服务端拒绝 | `service.ts:854-858`、`:970-972` | 即使 gate 被换成会放行媒体的实现，也必抛 `PROVIDER_UNAVAILABLE`（内部不变式） | **fail-closed** |
 | 规则层行为 | `service.ts:843`（`mediaInputs(body.media_ids)` 交给 gate） | 带媒体 ⇒ 规则层必隔离 ⇒ `recordRefusalVerdict` 后拒绝 | 通（拒绝路径） |
 | 投影 | `service.ts:619` | `media: []`（媒体投影要「已发布且独立筛查通过」的附件版本，阶段 2 才接） | 未通（如实空） |
@@ -156,7 +156,7 @@
 ### 2.7 审核状态 —— 通
 
 - 服务端只返回 `visibility` + `audit_state`（`service.ts:602-625` 的 `projectPost`），客户端**不**自己推断：
-  `community.js:153-177`、`communitydetail.js:200-201`、`communitycreate.js:104-109` 三处标注逐字一致
+  `community.js:153-177`、`communitydetail.js:200-201`、`communitycreate.js:129-135` 三处标注逐字一致
   （`tests/unit/miniprogram-community-api.test.mjs` 的 `AUDIT_CASES` 6 例把这件事钉住）。
 - 编辑生成新 revision 后**必须重审**（`service.ts:914-1000`）；旧版本结论不会被套到新版本
   （`communitydetail.wxml:70` 向用户明说）。

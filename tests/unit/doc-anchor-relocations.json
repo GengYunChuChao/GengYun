@@ -1269,5 +1269,25 @@
     "kind": "correction",
     "symbol": "merged.filter(function (entry) { return entry.failed })",
     "reason": "父基线 53354fe7 的 history.js:74 是 `load: function (cursor) {`（load 声明），该行没有 failedCount，也没有 `entry.failed` 统计——本页 A7 写的「failedCount 逐条统计」在父树上就对不上，属历史语义错，不是本次改 history.js 把这一行挤走的。真正的统计语句是列表写入里的 `failedCount: merged.filter(function (entry) { return entry.failed }).length`，HEAD 在 :104；按符号纠正到 :104，不走 +8 行号平移（平移落到的是 load 声明附近，仍不含该统计）。目标文件本提交的改动来自已冻结的页面生命周期补丁，本片只登记文档锚点。"
+  },
+  {
+    "doc": "docs/verification/r59-community-premoderation-20261026.md",
+    "line": 96,
+    "target": "miniprogram/pages/communitycreate/communitycreate.js",
+    "from": 106,
+    "to": 129,
+    "kind": "correction",
+    "symbol": "wx.showToast",
+    "reason": "旧锚点 106 在本片父版本 53354fe（communitycreate.js 125 行）上就是 `    }).catch(function (error) {`，不是发帖 toast —— 该句的 toast 在父版本 104（`wx.showToast({ title: outcome.title, icon: approved ? 'success' : 'none' })`），所以这是既有错锚，不是本次位移。本片在 :94、:96、:106 后各插 1 行，toast 落到 HEAD 129（全文唯一含 `wx.showToast`）；端点映射会给 106→131（catch），不对。按符号重锚到 129。"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 111,
+    "target": "miniprogram/pages/communitycreate/communitycreate.js",
+    "from": 82,
+    "to": 111,
+    "kind": "correction",
+    "symbol": "media_ids: []",
+    "reason": "旧锚点 82 在本片父版本 53354fe 上就是 `      return`（标题校验分支的 return），不是 `media_ids: []`；真值父版本 88（`const input = { title: title, body: body, media_ids: [] }`），所以这是既有错锚。本片在 onSubmit 前后插入 23 行，端点映射会给 82→105（仍是 return），不对；媒体恒空那行在 HEAD 111（全文唯一含 `media_ids: []`）。按符号重锚到 111。"
   }
 ]
