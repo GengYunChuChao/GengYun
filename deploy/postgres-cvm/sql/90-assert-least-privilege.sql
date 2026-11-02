@@ -1154,6 +1154,24 @@ UPDATE public.users SET nickname = nickname WHERE false;
 \set r28_probe_users_update_extra_state :SQLSTATE
 ROLLBACK TO SAVEPOINT r28_probe_users;
 
+-- --- W54（迁移 0052）：结论事实的**读面**探针 -------------------------------------------------
+-- 端口 services/api/src/moderation/conclusion-facts-pg.ts 的 CONCLUSION_FACTS_SQL 只读七列：
+-- content_kind / decision / rule_version / model_version / prompt_version /
+-- COALESCE(concluded_at, updated_at)；target 三列 + superseded + decision 在 WHERE，concluded_at 在 ORDER BY
+-- ⇒ 列级 SELECT 共 12 列（与 20-login-roles.sql 段 M3、下方 expected 的 moderation_decisions sel 逐列一致）。
+-- 它只为「结论新鲜度」服务：拿不到事实只会少判 RESCREEN_REQUIRED，不参与任何可见性判定。
+SAVEPOINT r28_probe;
+SELECT content_kind, decision, rule_version, model_version, prompt_version,
+       COALESCE(concluded_at, updated_at) AS concluded_at
+  FROM public.moderation_decisions
+ WHERE false
+   AND target_type = 'post' AND target_id = 'probe' AND target_revision = 1
+   AND superseded = FALSE AND decision = 'approved'
+ ORDER BY COALESCE(concluded_at, updated_at) DESC
+ LIMIT 30;
+\set r28_probe_mod_dec_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
 ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S45 探针结束 ----------------------------------------------------------------------
@@ -1511,8 +1529,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 这 6 列纯粹是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求；moderation_withdrawals 的三列 SELECT 另有用途（W43 的 HYDRATE_WITHDRAWALS_SQL 回填）。
     -- 名单来源 ledger-pg.ts:66 的 SUPERSEDE_SQL（target_type/target_id/target_revision/
     -- content_kind/superseded）与 :74 的 INSERT_SQL + :89 的 UPDATE_SQL（WHERE job_id）。
+    -- W54（迁移 0052）：SELECT 面在 6 列之外再加 6 列 —— rule_version/model_version/prompt_version/concluded_at/decision/updated_at，
+    -- 只服务只读端口 createPostgresConclusionFacts（缺表/缺列 ⇒ 空数组 + 一次 warn），不参与任何可见性判定；名单见 conclusion-facts-pg.ts 的 CONCLUSION_FACTS_SQL。
     ('moderation_decisions',
-     ARRAY['job_id','target_type','target_id','target_revision','content_kind','superseded'],
+     ARRAY['job_id','target_type','target_id','target_revision','content_kind','superseded',
+           'rule_version','model_version','prompt_version','concluded_at','decision','updated_at'],
      ARRAY['job_id','target_type','target_id','target_revision','content_kind','port_kind',
            'prompt_id','prompt_version','job_revision','state','lease_token','authorization_epoch',
            'submitted_by','deadline_at','error_code','decision','reason_codes','hard_rule_passed',
@@ -2330,6 +2351,68 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
            EXISTS (SELECT 1 FROM domain_manifest WHERE tbl = 'export_writebacks'
                    UNION ALL
                    SELECT 1 FROM external_manifest WHERE tbl = 'export_writebacks')
+  ),
+  -- ---------------------------------------------------------------------------
+  -- R72-ASSERT-DOMAIN（2026-11-02）：87 号元断言的域从「运行时可见的表」扩到
+  -- 「public 下所有普通表」。这一块是扩展域的**第三类归属**：显式未接线。
+  --
+  -- 缺陷（本片立项时复核成立）：87 号原来只检查「运行时**可见**的关系」，而域是**反查**
+  -- 出来的 —— 它拿 has_table_privilege / has_any_column_privilege 逐个关系问「runtime
+  -- 看得见吗」，看得见才要求分类。于是「迁移建了表、运行时代码真写、却零 GRANT」这类关系
+  -- 对它**天然隐形**：没有授权 ⇒ 不进域 ⇒ 永远不会被要求分类 ⇒ 这类缺口 CI 永远绿。
+  -- 实证就是下面 provider_invocations 那一行（迁移 0050 建表、ledger-pg.ts 的 INSERT 真在，
+  -- 而 20-login-roles.sql 里零 GRANT；扩域之前本文件对 `provider_` 前缀 0 命中）。
+  --
+  -- 扩展域后 87 号要求：public 下每张**普通表**（pg_class.relkind = 'r'；分区子表随父表、
+  -- 扩展成员表除外）必须落进三张清单之一 ——
+  --   ① 已接线：对 runtime 有表级或列级授权 ⇒ 必须在 domain_manifest（20-login-roles.sql
+  --      的域）或 external_manifest（services/api/db/roles/*.sql 的组继承面）里，继续走既有
+  --      的逐表 / 逐列检查；
+  --   ② 显式未接线：就是下面这张字面量清单，逐行「表名 + 为什么运行时不接线 + 出处」。
+  -- 反向也钉（见 87 号 (iv)(v)）：清单每行必须真是 public 普通表、且对 gengyun_api_runtime
+  -- 零表级零列级权限；三张清单两两不相交。所以「把已接线的表塞进这里把断言弄绿」会被当场判红。
+  --
+  -- ⛔ 这里是**声明**，不是修复，更不是「忘了授权」的回收站：
+  --    · 迁移新表 + 运行时代码要用 ⇒ 该补 GRANT（20-login-roles.sql 授 + 本文件 expected
+  --      复述），⛔ 不该登记到这里；登记只用于「设计上运行时不碰这张表」且**已有文字登记**的表。
+  --    · 每行都要有 docs/ 或 migrations/ 出处：离线钉子 tests/unit/assert-domain-visibility.test.mjs
+  --      逐行核对出处，并把本清单与 20-login-roles.sql 的 GRANT 表集合求交（交集非空即红）。
+  --    · 往里加行之前先问一句：这张表是「有意不接线」还是「漏了授权」？漏了就补，别登记。
+  --    · 允许出现「默认部署下可能不存在」的表（当前只有 schema_migrations：本文件 :56-61 把该
+  --      台账定为**软**前置，用 psql -f 应用迁移的等价复跑环境里它确实不存在）⇒ 87 号只要求
+  --      「清单里出现的表零权限」，不强求「清单里每张表都必须存在」；表名是否真存在由离线钉子
+  --      比对 migrations 的 CREATE TABLE 与 migrate.ts 的建表语句。
+  --
+  -- 计数口径（静态）：public 普通表 78 张 = 57（domain_manifest 40 + external_manifest 17）
+  -- + 21（本清单）。78 - 57 = 21 就是扩域**新暴露**的表；扩域前 87 号能看见的是 53 张
+  -- （57 减去 domain_manifest 里 4 张 forbidden 行：运行时对它们零权限，旧域看都不看）。
+  unwired_manifest(tbl, why, source) AS (VALUES
+    -- 目录域（0001 / 0002 建表）：读面是 0005 / 0010 的 catalog_read 视图（属主是迁移管理员），
+    -- 运行时拿到的是视图上的 SELECT，不是表本体上的任何位；写面只经 CLI 组或 SECURITY DEFINER 函数。
+    ('sources', '目录读面 = 0005 的 catalog_read.current_verified_sources 视图（属主迁移管理员）；CLI 写面只授 gengyun_source_executor（不在运行时 5 组内）', 'services/api/db/migrations/0001_initial_schema.sql:131；services/api/db/migrations/0005_catalog_read_views.sql:9；services/api/db/roles/source_operator.sql:25'),
+    ('source_versions', '同 sources：读面走 0005 视图；CLI 只授 gengyun_source_executor 的 UPDATE(validity)', 'services/api/db/migrations/0001_initial_schema.sql:143；services/api/db/migrations/0005_catalog_read_views.sql:9；services/api/db/roles/source_operator.sql:27'),
+    ('formulations', '目录读面 = 0005 registration_evidence 视图（JOIN 本表）；运行时拿的是视图，表上零位', 'services/api/db/migrations/0002_knowledge_catalog.sql:42；services/api/db/migrations/0005_catalog_read_views.sql:44'),
+    ('registrations', '同 formulations：读面 = 0005 registration_evidence 视图', 'services/api/db/migrations/0002_knowledge_catalog.sql:53；services/api/db/migrations/0005_catalog_read_views.sql:43'),
+    ('applicability', '适用判定走 packages/reference 的纯函数（dose-cards 里的 applicability 只是门 id 字符串，不是 SQL）；0002 只建结构，应用侧无 SQL 读写点', 'services/api/db/migrations/0002_knowledge_catalog.sql:34；services/api/db/migrations/0002_knowledge_catalog.sql:68；services/api/src/knowledge/dose-cards.ts:53'),
+    ('restriction_rules', '限制规则同样由目录 / 种子侧落库，应用侧无 SQL 读写点（后台内容域另建 0036 的专用表，不写本表）', 'services/api/db/migrations/0002_knowledge_catalog.sql:100；services/api/db/migrations/0036_r34_admin_content_persistence.sql:28'),
+    ('knowledge_versions', '读面 = 0005 / 0010 的 catalog_read 视图（home_species / current_knowledge）；运行时对表本体零权限', 'services/api/db/migrations/0002_knowledge_catalog.sql:120；services/api/db/migrations/0005_catalog_read_views.sql:26；services/api/db/migrations/0010_knowledge_read_views.sql:12'),
+    ('knowledge_dataset_modes', '读面 = 0005 视图里的模式门（mode 为 real 才算真库）；运行时只经视图取值', 'services/api/db/migrations/0002_knowledge_catalog.sql:140；services/api/db/migrations/0005_catalog_read_views.sql:11'),
+    ('knowledge_dataset_config', '读面 = 0005 视图里的 active_mode / database_connected 两个键', 'services/api/db/migrations/0002_knowledge_catalog.sql:156；services/api/db/migrations/0005_catalog_read_views.sql:12'),
+    ('catalog_import_runs', '导入批次由种子 / CLI 侧落库（tools/knowledge/build_seeds.py），API 侧无写入点；0005 视图也不读 runs', 'services/api/db/migrations/0002_knowledge_catalog.sql:163；services/api/db/migrations/0012_knowledge_created_at.sql:52'),
+    ('catalog_import_conflicts', '读面 = 0005 视图里的冲突探测；写入同样在种子 / CLI 侧，API 侧无写入点', 'services/api/db/migrations/0002_knowledge_catalog.sql:179；services/api/db/migrations/0005_catalog_read_views.sql:55'),
+    ('catalog_source_update_events', '写入只经 0006 的 SECURITY DEFINER 函数（属主是迁移管理员）；表级位只授 gengyun_source_executor', 'services/api/db/migrations/0002_knowledge_catalog.sql:193；services/api/db/migrations/0006_source_lifecycle.sql:96；services/api/db/roles/source_operator.sql:28'),
+    -- 社区 / 媒体域：运行时实际落在 community_* 一组（0022 起），0001 建的表是公开作者投影，
+    -- 取图授权面另有 community_media_grants（它在 domain_manifest 里是 forbidden 行）。
+    ('public_authors', '作者域推迟到阶段 2（GY-I04 / GY-I05）：运行时既没有读点也没有写点，授权面从未开', 'services/api/db/migrations/0001_initial_schema.sql:233；services/api/db/migrations/0030_community_author_ref.sql:15；services/api/src/community/authors.ts:7'),
+    ('posts', '0001 的公开作者投影表；社区域实际落在 0022 的 community_posts，运行时对该表零读写', 'services/api/db/migrations/0001_initial_schema.sql:259；services/api/db/migrations/0022_community_persistence.sql:12'),
+    ('post_versions', '同 posts：0001 的公开作者投影表，社区修订走 0022 的 community_* 表', 'services/api/db/migrations/0001_initial_schema.sql:270；services/api/db/migrations/0022_community_persistence.sql:12'),
+    ('content_media_refs', '媒体仓储当前没有写入方；社区取图另走 community_media_grants（domain_manifest 的 forbidden 行）', 'services/api/db/migrations/0001_initial_schema.sql:294；services/api/src/media/content-source.ts:114'),
+    -- 隐私 / 审计 / 账本域：三张表都是「写入只经 SECURITY DEFINER 函数或被有意冻结」。
+    ('user_training_consents', '首版训练开关关闭（training_enabled 默认 false），运行时读写面未开', 'services/api/db/migrations/0003_privacy_consent.sql:221；services/api/db/migrations/0003_privacy_consent.sql:18'),
+    ('admin_audit_events', '审计写面只经 SECURITY DEFINER 函数；运行时连 SELECT 都没有（20-login-roles.sql 对该表只有 REVOKE ALL）', 'services/api/db/migrations/0017_account_suspend_authority.sql:72；services/api/db/migrations/0020_feature_flags.sql:11；services/api/src/admin/audit/pg.ts:5'),
+    ('export_writebacks', '外发账本随 egress_ledger 组冻结：该组两种部署形态都不执行，运行时对账本恒未就绪（冻结不是缺陷）', 'services/api/db/migrations/0011_export_ledger.sql:50；docs/architecture/contract-implementation-status.md:67；services/api/db/roles/egress_ledger.sql:48'),
+    ('provider_invocations', '调用记录表：写入点已在（task-egress / ledger-pg），但 0050 自述默认部署下运行时零权限、写会 42501 —— 授权是有意冻结', 'services/api/db/migrations/0050_provider_invocations.sql:106；services/api/db/migrations/0050_provider_invocations.sql:147；docs/architecture/ai-ops-spec-status.md:135'),
+    ('schema_migrations', '迁移台账由 migrate.ts 维护（admin 侧）；运行时零权限，且本文件 :56-61 把它的存在定为软前置（等价复跑环境可以没有）', 'services/api/src/db/migrate.ts:205；docs/verification/gy-i02-migrations-negative-20261017.md:24')
   ),
   checks(label, ok, detail) AS (
 
@@ -3407,8 +3490,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND :'r28_probe_mod_dec_ins' = 'false'
          AND :'r28_probe_mod_dec_upd' = 'false'
          AND :'r28_probe_mod_dec_supersede' = 'false'
+         AND :'r28_probe_mod_dec_sel' = 'false'
          AND :'r28_probe_mod_wd_ins' = 'false',
-         'SET LOCAL ROLE gengyun_api_runtime 后，moderation_decisions 的 INSERT 26 列 / UPDATE 14 列 / supersede 的 4 列 WHERE，以及 moderation_withdrawals 的 INSERT … ON CONFLICT DO NOTHING 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 段 M3 的列级授权不足）'
+         'SET LOCAL ROLE gengyun_api_runtime 后，moderation_decisions 的 INSERT 26 列 / UPDATE 14 列 / supersede 的 4 列 WHERE / W54 结论事实的 SELECT 12 列（含 COALESCE 与 ORDER BY 的读权），以及 moderation_withdrawals 的 INSERT … ON CONFLICT DO NOTHING 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 段 M3 的列级授权不足）'
 
   UNION ALL
   -- R72-W41（迁移 0051）：审核域持久幂等台账的读写面 —— 六列 SELECT / 六列 INSERT
@@ -3597,9 +3681,17 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     FROM external_manifest e
 
   UNION ALL
-  -- 87. R28-S43 元断言（本片的泛化兜底）：public 下凡运行时**可见**（表级或列级
-  --     SELECT/INSERT/UPDATE/DELETE/REFERENCES）的关系，必须在 domain_manifest 或
-  --     external_manifest 里被显式分类；反过来 external_manifest 的每一行也必须真存在。
+  -- 87. R28-S43 元断言（本片的泛化兜底；R72-ASSERT-DOMAIN 把域从「运行时可见」扩到
+  --     「public 下所有普通表」）：
+  --     (i)   public 下凡运行时**可见**（表级或列级 SELECT/INSERT/UPDATE/DELETE/REFERENCES）
+  --           的关系，必须在 domain_manifest / external_manifest / unwired_manifest 里被显式分类；
+  --     (ii)  external_manifest 的每一行也必须真存在（清单不许写空气）；
+  --     (iii) 扩域那一半：public 下**每张普通表**（relkind = 'r'，分区子表随父表、扩展成员表
+  --           除外）必须落进上述三张清单之一 —— 旧域是拿 has_table_privilege 反查出来的，
+  --           零授权的关系根本不进域，「建表但忘了授权」永远绿；这一条把它堵上；
+  --     (iv)  unwired_manifest 的每一行，只要库里存在，就必须真是 public 普通表、且对
+  --           gengyun_api_runtime **零**表级零列级权限（防「把已接线的表塞进去变绿」）；
+  --     (v)   三张清单两两不相交（同一张表不许既「已接线」又「未接线」）。
   --     47 号只认「运行时域前缀」的正则，对 roles/*.sql 新授的任意表名是盲的；这条不再
   --     依赖命名约定：只要有人给 runtime 加了新授权（哪怕表名完全陌生），没进清单就判红。
   SELECT 'runtime_surface_parity',
@@ -3617,12 +3709,77 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                        OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'REFERENCES'))
                   AND NOT EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = c.relname)
                   AND NOT EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = c.relname)
+                  AND NOT EXISTS (SELECT 1 FROM unwired_manifest u  WHERE u.tbl = c.relname)
          )
          AND NOT EXISTS (
                SELECT 1 FROM external_manifest e
                 WHERE to_regclass('public.'||e.tbl) IS NULL
+         )
+         -- (iii) R72-ASSERT-DOMAIN：public 下每张普通表都必须被三张清单之一分类。
+         --       旧写法只查「runtime 看得见」的关系，于是「建表 + 运行时真写 + 零授权」
+         --       既不进 domain_manifest 也不进 external_manifest，却永远不会被判红。
+         --       relkind = 'r' 只取普通表：分区父表是 'p'，视图是 'v'，外表是 'f'，
+         --       序列是 'S' —— 它们各有自己的断言面，不在本条的「表」口径里。
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relkind = 'r'
+                  -- 分区 / 继承子表随父表一起分类（父表本身就是那一行），不单独要求；
+                  AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+                  -- 扩展成员表由扩展负责建与删，不归迁移面；
+                  AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                                   WHERE d.classid = 'pg_class'::regclass
+                                     AND d.objid = c.oid
+                                     AND d.deptype = 'e')
+                  AND NOT EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = c.relname)
+                  AND NOT EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = c.relname)
+                  AND NOT EXISTS (SELECT 1 FROM unwired_manifest u  WHERE u.tbl = c.relname)
+         )
+         -- (iv-a) R72-ASSERT-DOMAIN：清单行若在库里存在，就必须是 public 普通表（视图 / 外表 /
+         --        序列都不许登记）。不要求「每行都必须存在」：schema_migrations 在本文件的
+         --        等价复跑环境里允许缺席（见 :56-61 的软前置口径），表名真假由离线钉子核对。
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM unwired_manifest u
+                WHERE to_regclass('public.'||u.tbl) IS NOT NULL
+                  AND NOT EXISTS (
+                        SELECT 1
+                          FROM pg_class c
+                          JOIN pg_namespace n ON n.oid = c.relnamespace
+                         WHERE c.oid = to_regclass('public.'||u.tbl)
+                           AND n.nspname = 'public'
+                           AND c.relkind = 'r'
+                      )
+         )
+         -- (iv-b) R72-ASSERT-DOMAIN：清单行对运行时必须**零**权限。这是扩展域的反向控制：
+         --        把一张已接线的表塞进未接线清单，这一条立刻判红（不是靠人看注释）。
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM unwired_manifest u
+                 JOIN pg_class c ON c.oid = to_regclass('public.'||u.tbl)
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public'
+                  AND c.relkind = 'r'
+                  AND (has_table_privilege('gengyun_api_runtime', c.oid,
+                                           'SELECT,INSERT,UPDATE,DELETE,REFERENCES')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'SELECT')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'INSERT')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'UPDATE')
+                       OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'REFERENCES'))
+         )
+         -- (v) R72-ASSERT-DOMAIN：三张清单两两不相交。
+         AND NOT EXISTS (
+               SELECT 1
+                 FROM unwired_manifest u
+                WHERE EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = u.tbl)
+                   OR EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = u.tbl)
          ),
-         'public 下的每个运行时可见关系都必须被分类（domain_manifest 或 external_manifest）；未分类、或清单里有而库里没有的：' ||
+         'public 下的每个运行时可见关系都必须被分类（domain_manifest 或 external_manifest）；'
+         || 'R72 起域扩到 public 下所有普通表：不接线的关系必须在 unwired_manifest 里逐行声明'
+         || '（表名 + 理由 + docs/ 或 migrations/ 出处），三张清单两两不相交，清单行对 runtime 必须零权限。'
+         || '未分类、或清单里有而库里没有的：' ||
          COALESCE((
            SELECT string_agg(x.tbl, ' / ' ORDER BY x.tbl)
              FROM (
@@ -3639,10 +3796,50 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
                        OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'REFERENCES'))
                   AND NOT EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = c.relname)
                   AND NOT EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = c.relname)
+                  AND NOT EXISTS (SELECT 1 FROM unwired_manifest u  WHERE u.tbl = c.relname)
                UNION
                SELECT e.tbl FROM external_manifest e
                 WHERE to_regclass('public.'||e.tbl) IS NULL
              ) x
+         ), '（无）')
+         || '；未归类的普通表（R72 扩域后新可见）：' ||
+         COALESCE((
+           SELECT string_agg(c.relname, ' / ' ORDER BY c.relname)
+             FROM pg_class c
+             JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'public'
+              AND c.relkind = 'r'
+              AND NOT EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = c.oid)
+              AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                               WHERE d.classid = 'pg_class'::regclass
+                                 AND d.objid = c.oid
+                                 AND d.deptype = 'e')
+              AND NOT EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = c.relname)
+              AND NOT EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = c.relname)
+              AND NOT EXISTS (SELECT 1 FROM unwired_manifest u  WHERE u.tbl = c.relname)
+         ), '（无）')
+         || '；未接线清单里越界的行（已授权 / 不存在 / 与另两张清单重叠）：' ||
+         COALESCE((
+           SELECT string_agg(u.tbl, ' / ' ORDER BY u.tbl)
+             FROM unwired_manifest u
+            WHERE EXISTS (SELECT 1 FROM domain_manifest m   WHERE m.tbl = u.tbl)
+               OR EXISTS (SELECT 1 FROM external_manifest e WHERE e.tbl = u.tbl)
+               OR (to_regclass('public.'||u.tbl) IS NOT NULL
+                   AND NOT EXISTS (SELECT 1
+                                     FROM pg_class c
+                                     JOIN pg_namespace n ON n.oid = c.relnamespace
+                                    WHERE c.oid = to_regclass('public.'||u.tbl)
+                                      AND n.nspname = 'public'
+                                      AND c.relkind = 'r'))
+               OR EXISTS (SELECT 1
+                            FROM pg_class c
+                           WHERE c.oid = to_regclass('public.'||u.tbl)
+                             AND (has_table_privilege('gengyun_api_runtime', c.oid,
+                                                      'SELECT,INSERT,UPDATE,DELETE,REFERENCES')
+                                  OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'SELECT')
+                                  OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'INSERT')
+                                  OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'UPDATE')
+                                  OR has_any_column_privilege('gengyun_api_runtime', c.oid, 'REFERENCES')))
          ), '（无）')
 
   UNION ALL

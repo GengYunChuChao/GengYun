@@ -76,11 +76,13 @@ const HIDE_SCOPE = 'sources:write';
  *   0028 审核判定台账（`moderation_decisions` + `moderation_withdrawals`——审核域台账落库）；
  *   0030 帖/评行级作者注销引用（`POST_COLUMNS` 含 `anonymized_author_ref`）；
  *   0032 举报者行内注销引用（与 0030 同口径）；0045 审核台账 `community_moderation_decisions.decided_by`（人工 approve/reject 的运营者快照列，台账 INSERT/SELECT 都写读它，缺它 ⇒ 42703 ⇒ 社区域 503）；
+ *   0052 审核结论事实 `moderation_decisions.concluded_at`（W54 只读端口 `conclusion-facts-pg.ts` 按它取结论时间；本片只判 `RESCREEN_REQUIRED`，不参与任何可见性判定）：
+ *     缺它 ⇒ 读面端口按 fail-closed 记一次 warn 并返回空数组（少判 stale，不会 500）；
  *   0017 `public.admin_audit_events` + 0047 下架审计函数（`record_admin_post_hide_audit`）：
  *     第 3 段的 `hidePost` 现在把 `post.hide` 审计与可见性变更写在**同一事务**里，
  *     缺 0047 ⇒ 下架 fail-closed 成 503（这是运行时依赖，不是可选装饰）。
  */
-const MIGRATIONS = ['0001', '0017', '0022', '0028', '0030', '0032', '0045', '0047'];
+const MIGRATIONS = ['0001', '0017', '0022', '0028', '0030', '0032', '0045', '0047', '0052'];
 
 // ---------------------------------------------------------------------------
 // GY_PG_BIN 闸门（含 initdb/pg_ctl 的目录）；缺 ⇒ SKIP + 77

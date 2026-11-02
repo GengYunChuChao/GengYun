@@ -134,6 +134,8 @@ export function makeHarness(options = {}) {
     // GY-R72：取消的 `Idempotency-Key` 回放台账（缺省**不传** ⇒ 与接线前逐字节等价，见 T5）。
     ...(options.idempotency === undefined ? {} : { idempotency: options.idempotency }),
     ...(options.idempotencyHmacKey === undefined ? {} : { idempotencyHmacKey: options.idempotencyHmacKey }),
+    // GY-R72 W54：结论事实端口（缺省**不传** ⇒ 读面的 stale 判定与接线前逐字节相同）。
+    ...(options.conclusionFacts === undefined ? {} : { conclusionFacts: options.conclusionFacts }),
   });
   return { service, ledger, cache, authority, now, newId };
 }

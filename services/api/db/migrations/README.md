@@ -29,7 +29,30 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 它记录的日期与当时事实都没错，写在这里只为说明「之后又落了两条」；`0050` 落盘时本文件没登记，
 本次一并补上。）
 
+（2026-11-02 · R72-W54(`0052`) 落盘后复测：`0001..0052`，缺号仍只有 `0037` ⇒ 目录现为 **51 个正向 `.sql`**
+＋ `rollback/` **50 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **51 + 1 === 52**。上一段那组
+50/49 与 `50 + 1 === 51` 是 2026-11-01 的实测快照，**保留不动**。）
+
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0052_moderation_conclusion_facts.sql`（R72-W54 · **只读事实源**：审核**结论新鲜度**跨重启的事实面 ——
+  本片让 `readView` 在内存台账为空（重启后）时还能判出 `RESCREEN_REQUIRED`，**⛔ 不改任何可见性判定**）。
+  接在 `0051` 之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
+  加一列 `public.moderation_decisions.concluded_at timestamptz NULL` ＋ 索引
+  `moderation_decisions_target_concluded_idx (target_type, target_id, target_revision, concluded_at DESC)`
+  ＋ 一次性回填 `SET concluded_at = updated_at WHERE decision = 'approved' AND concluded_at IS NULL`。
+  为什么需要：`services/api/src/moderation/service.ts` 的 `staleReasons` 原先只由 `ledger.forRevision()`
+  （**内存**）派生，而 `moderation/ledger-pg.ts` 的 W43 决策是「任务结论不回填」⇒ 重启后该列表恒空、
+  `RESCREEN_REQUIRED` 永不触发。本迁移提供**可跨进程读回**的「已结案时刻 + 当时三条版本」，
+  `updated_at` 作 `concluded_at` 的近似口径（存量行无法区分「结论时刻」与「最后一次写」）。
+  读面只有一条：`services/api/src/moderation/conclusion-facts-pg.ts` 的
+  `CONCLUSION_FACTS_SQL`（`SELECT content_kind, decision, rule_version, model_version, prompt_version,
+  COALESCE(concluded_at, updated_at)` + 谓词列，`superseded = FALSE AND decision = 'approved'`，`LIMIT 30`）。
+  本迁移**零 GRANT**（与 `0024`/`0026`/`0051` 同一条纪律），列级 `SELECT` 12 列授权在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的段 M3（`gy-r29-moderation-ledger-grant`）；
+  90-assert 三处复述同步（分类清单不动、`expected` 的 `sel` 12 列、`r28_probe_mod_dec_sel` 零行探针）。
+  配对回滚 `rollback/0052_moderation_conclusion_facts.down.sql`：先 `DROP INDEX IF EXISTS`、再
+  `DROP COLUMN IF EXISTS concluded_at`（可重算派生值、不是证据 ⇒ 不用 G 码预检）；回滚后端口因缺列
+  返回空数组并记一次 `warn`，行为退回「只按内存判」。
 - `0051_moderation_idempotency.sql`（R72-W41 · **库层基础设施**：审核域取消的**持久幂等台账**
   —— 本片只落「表 + 列级授权 + store + 测试」，**不改任何运行行为**，接线在 W42）。接在 `0050`
   之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
