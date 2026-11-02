@@ -46,7 +46,10 @@ test('actual native page and client over loopback HTTP: profile catalog save rer
   const located=[];wx.getLocation=o=>{located.push(o);o.success({latitude:SENTINEL.latitude,longitude:SENTINEL.longitude})};
   modal=true;p.onLocate();await until(()=>!p.data.locating);
   assert.equal(p.data.message,locate.MESSAGES.unavailable,'资源未接入必须逐字回落 unavailable，不得假装转换成功');
-  assert.equal(located.length,1);assert.equal(located[0].type,'wgs84');
+  // 旧口径（缺陷）：这里原本断言 located.length===1，即「没有 region-centroids.js 也要先申请一次定位授权」。
+  // A-1 把判定顺序改成「先判资源、再判 wxApi、才调 wx.getLocation」后，资源缺席就不会再取坐标，
+  // 于是调用次数必须是 0——spy 仍装在上面（:46），「一次没调」才是可证伪的。
+  assert.equal(located.length,0,'资源缺席时不得申请定位：wx.getLocation 必须一次都没被调用');
   assert.equal(p.data.cityIndex,before.cityIndex);assert.equal(p.data.countyIndex,before.countyIndex,'资源缺席时不得预选任何地区');
   assert.deepEqual(leak(),[],'原始坐标不得进入存储、请求体或路由');
   assert.equal(requests.filter(r=>r.method==='PUT').length,putsBefore,'资源缺席时不得触发保存');
