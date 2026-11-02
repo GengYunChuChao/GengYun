@@ -1481,9 +1481,9 @@ GRANT DELETE ON public.media_object_cleanup TO gengyun_api_runtime;
 --
 -- 列清单不是抄文档，而是**从 ledger-pg.ts 的四条语句逐列反推**，并由
 -- `tests/unit/sql-column-coverage.test.mjs` 的 parseSqlText/collectRequirements 管线交叉
--- 验证（少一列立刻判红）：`:66` SUPERSEDE_SQL 的 UPDATE 2 列 + 4 列 WHERE、`:74` INSERT_SQL
--- 的 26 列 + `ON CONFLICT (job_id)`、`:89` UPDATE_SQL 的 14 列 + `WHERE job_id`、`:97`
--- WITHDRAW_SQL 的 4 列 + `ON CONFLICT (target_type,target_id,target_revision)`。
+-- 验证（少一列立刻判红）：`SUPERSEDE_SQL` 的 UPDATE 2 列 + 4 列 WHERE、`INSERT_SQL`
+-- 的 26 列 + `ON CONFLICT (job_id)`、`UPDATE_SQL` 的 14 列 + `WHERE job_id`、`WITHDRAW_SQL`
+-- 的 4 列 + `ON CONFLICT (target_type,target_id,target_revision)`。
 --
 -- SELECT 面**只给被 WHERE / 冲突目标 / 回填真正读到的列**（PG 的 UPDATE/DELETE 要求 WHERE 里的列有
 -- SELECT 权）：decisions 是 `job_id` + SUPERSEDE 的 `target_type/target_id/target_revision/

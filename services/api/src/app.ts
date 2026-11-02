@@ -306,7 +306,7 @@ declare module 'fastify' {
      * 生产读取路径不经此装饰直接暴露给客户端，绝不进入任何响应投影。
      */
     mediaObjectStore: MediaObjectStore;
-    /** Non-real message service; real remains closed until persistent storage is delivered. */
+    /** Real + connection pool ⇒ durable PG store; only real without a pool leaves this null (no storage ⇒ closed). */
     messagesService: MessagesService | null;
     /** GY-I14 审核域服务（供回归测试驱动版本级任务、回调 seam 与可见性重查）。 */
     moderationService: ModerationService;
@@ -343,8 +343,8 @@ declare module 'fastify' {
      */
     thirdPartyDeletion: ThirdPartyDeletionReadPort;
     /**
-     * GY-I15 社区服务（#15）。**未接线**（`real` 模式：真实持久存储未交付）
-     * 时为 `null` ⇒ 16 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
+     * GY-I15 社区服务（#15）。**已接 PG 持久 store**（`real` + 连接池 ⇒ `communityStore.persistent` 为真）
+     * 才放行；仅 `real` 且无池（内存 store 不持久）时为 `null` ⇒ 17 条社区路由一律 503 `PROVIDER_UNAVAILABLE`，不返回空页、不假成功。
      */
     communityService: CommunityService | null;
   /**
@@ -1312,7 +1312,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     const reason = 'real 模式未接真实持久后端（无连接池 ⇒ 内存 store 不持久）：社区业务不可用'
       + '（拒绝以内存 store 返回成功封套）';
     communityService = null;
-    app.log.warn({ executionMode: config.executionMode }, `GY-I15 社区域：${reason} ⇒ 16 条社区路由一律 503 PROVIDER_UNAVAILABLE`);
+    app.log.warn({ executionMode: config.executionMode }, `GY-I15 社区域：${reason} ⇒ 17 条社区路由一律 503 PROVIDER_UNAVAILABLE`);
   } else {
     communityService = createCommunityService({
       store: communityStore,
@@ -2610,10 +2610,10 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     authService: service,
     now: clock,
   });
-  // GY-I15 社区 16 条路由的**唯一注册点**（real 模式 ⇒ service 为 null ⇒ 整域 503）。
+  // GY-I15 社区 17 条路由的**唯一注册点**（real 且无池 ⇒ service 为 null ⇒ 整域 503）。
   // 本片起：投稿/评论两条 **POST** 面（`POST /posts`、`POST /posts/:id/comments`）纳入全局开关
   // `submissions_enabled`（受控面清单里的 `createPost`/`createComment`），因此传 `gatedGuards`；
-  // 其余 14 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
+  // 其余 15 条读/改/删路由不在受控面清单里 ⇒ 闸门按 (method, 路由模板) 判**不命中即不判**，
   // 行为与 `upstream/main` 逐字相同（守卫语义与错误码次序不变）。
   // GY-R28 W10：把与识别/媒体**同源的那一个** `consentGate` 交给社区域，社区域只在投稿面
   // （`POST /posts`、`PATCH /posts/:id`、`POST /posts/:id/comments`、`PATCH /comments/:id`）
