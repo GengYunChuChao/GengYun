@@ -1269,5 +1269,25 @@
     "kind": "correction",
     "symbol": "merged.filter(function (entry) { return entry.failed })",
     "reason": "父基线 53354fe7 的 history.js:74 是 `load: function (cursor) {`（load 声明），该行没有 failedCount，也没有 `entry.failed` 统计——本页 A7 写的「failedCount 逐条统计」在父树上就对不上，属历史语义错，不是本次改 history.js 把这一行挤走的。真正的统计语句是列表写入里的 `failedCount: merged.filter(function (entry) { return entry.failed }).length`，HEAD 在 :104；按符号纠正到 :104，不走 +8 行号平移（平移落到的是 load 声明附近，仍不含该统计）。目标文件本提交的改动来自已冻结的页面生命周期补丁，本片只登记文档锚点。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 133,
+    "target": "services/api/src/community/store.ts",
+    "from": 443,
+    "to": 531,
+    "kind": "correction",
+    "symbol": "purgeOwnerData?(ownerId",
+    "reason": "本页 §4.2 第 133 行原文写「`community/store.ts:443` 接口新增**可选** `purgeOwnerData?`」，但 base（28291489 = 本分支 merge-base）的 store.ts:443 是点赞方法上方的一句注释（`* 只读、幂等、与 addLike/removeLike 同一份集合事实；供 GET /posts/{id}/like 的`）——旧锚点在父树上就已经指错（更早一棵树的读数），真实接口声明在 base :503 / HEAD :531（`purgeOwnerData?(ownerId: string, options?: CommunityOwnerPurgeOptions): Promise<CommunityOwnerPurgeCounts>;`）。修这一行的 737 错锚（见下一条）会让整行两枚锚点都进判据面，而本文件（community/store.ts）本提交净 +28 行，机械端点映射给出 443→465，那仍是同一段点赞注释、不含本行要引的接口声明，还会把作用域外红条变多，故按符号订正到 :531。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 133,
+    "target": "services/api/src/community/store.ts",
+    "from": 737,
+    "to": 839,
+    "kind": "correction",
+    "symbol": "async purgeOwnerData(ownerId",
+    "reason": "监工 P2（2026-11-02T15:00:27Z）点名的历史错锚：原句称「内存实现 `:737`」，但 base store.ts:737 是 `      return [...comments.values()]`（listComments 的 return，purgeOwnerData 实现在 base :811），本 HEAD :737 是 `},`（闭合行，purgeOwnerData 在 HEAD :839）——是这条历史语义错锚被本片位移（顶部 +22 行）显露，不是保留原文身份的纯位移。本片因此删掉上一版给这条加的 outsideRed 豁免（community/store.ts:737|SUSPECT），把来源订正到 purgeOwnerData 的真实归属 `async purgeOwnerData(ownerId, options = {}) {`（HEAD :839、父版本 :811），以 kind: correction 留痕；登记的 to 行必须含该符号、base 的 from 行不含，由 identity 用例三件验真钉住。"
   }
 ]

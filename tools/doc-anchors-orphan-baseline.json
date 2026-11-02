@@ -220,10 +220,10 @@
       "outsideRed": 125
     },
     {
-      "why": "R72 #838 返修（迁移 0053：举报处置审计落库）：community/store-pg.ts 的 commitReport 增审计函数调用（同一事务内）、community/service.ts 的 advanceReport 增留痕参数 ⇒ 两份热文件整体后移；历史取证页里两条裸锚点（gy-r28-sql-column-coverage-20261021 的 community/store-pg.ts:786、gy-r33-contract-ledger-20261023 的 community/service.ts:1808）已不再命中、随重算删除，同时 gy-r31-i15-s1-s6-20261022 的同一裸锚点位移后落到 community/store.ts:737（落点不再是原来那段代码），按 0047/0049 的先例（历史取证页逐字不改，只在本册留痕）登记这一条新增。判据一字未改，作用域外本会红条数净减 1。",
-      "accept": 1,
+      "why": "R72 #838 返修（监工 P2）：撤销本片上一版给 gy-r31-i15-s1-s6-20261022 新增的作用域外豁免（community/store.ts:737 SUSPECT）。该行原文声称 :737 是 purgeOwnerData 的内存实现，但父版本 :737 已是 listComments 的 return（purgeOwnerData 在 :811）、本 HEAD :737 变成闭合行（purgeOwnerData 在 :839）——是历史错锚被本片位移显露，不是纯位移，故补回路径并按符号订正为 community/store.ts:839，以 kind:correction 登记（tests/unit/doc-anchor-relocations.json）；同一行另一枚错锚 :443（父版本已漂到点赞注释、真实接口行 base:503/HEAD:531）一并按符号订正为 :531。本条只删陈旧 1 条、新增 0 条，判据一字未改；账本里本片上一版那条 accept=1 记录随之删除，作用域外本会红回到 123 条，不是放宽。",
+      "accept": 0,
       "orphans": 3540,
-      "outsideRed": 124
+      "outsideRed": 123
     }
   ],
   "orphans": [
@@ -3849,7 +3849,6 @@
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:799|SUSPECT",
     "docs/verification/gy-r31-i14-recon-20261022.md|docs/architecture/contract-status.json:684|SUSPECT",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|20-login-roles.sql:511|SUSPECT",
-    "docs/verification/gy-r31-i15-s1-s6-20261022.md|community/store.ts:737|SUSPECT",
     "docs/verification/gy-r31-i17-recon-20261022.md|miniprogram/pages/messages/messages.js:195|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:582|OUT_OF_RANGE",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:587-588|OUT_OF_RANGE",
