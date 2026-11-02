@@ -164,7 +164,7 @@
 
 ### 2.8 可见性刷新 —— 通
 
-- 客户端：`community.js:54-66`（父 53354fe 的 51-63 行起于 `onLoad` 的 `_epoch` 初始化、止于 `setData({guest})`，未含发起重取的 `that.reload()`；按符号重锚）、`communitydetail.js:57-70`、`communitycreate.js:48-52` 每次 `onShow`
+- 客户端：`community.js:54-66`（父 53354fe 的 51-63 行起于 `onLoad` 的 `_epoch` 初始化、止于 `setData({guest})`，未含发起重取的 `that.reload()`；按符号重锚）、`communitydetail.js:57-71`、`communitycreate.js:48-52` 每次 `onShow`
   都经 `pageGate` 重走门禁 + 重取；`onLoadMore` 的游标绑定主体，切筛选即 `reload()` 从第一页重来。
 - 服务端：`service.ts:455-500`（`effectiveState`：删除态直接返回；每次读按**当前规则版本**重判，
   已发布但当前不可发布的降到 `hidden`）、`:498-500`（`isPubliclyVisible` 的唯一判据
