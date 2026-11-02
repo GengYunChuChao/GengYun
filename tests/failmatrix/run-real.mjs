@@ -10,6 +10,11 @@
  * 一直没有实测读数（README「未取得」一节里明确记着「真实 PG 下的同一矩阵」未验）。这一臂
  * 只补**证据**，不改矩阵本身，也不改业务代码。
  *
+ * 作业过滤腿（S-6，C3-28…C3-36）**真跑**：真库侧的作业读面是 `createPostgresAdminJobPort`
+ * （`services/api/src/app.ts:1380-1382`：real + 有池时装配），它读四张域内作业表
+ * （`ocr_jobs` / `recognition_jobs` / `speech_jobs` / `conversation_turns`）⇒ 裸 SQL 就能播种，
+ * 「真库无作业读权威可播种」的旧跳过理由已不成立。种子见 `seedFailClosedRowsReal` 末尾的 S8。
+ *
  * 本臂**不宣称 #22 完成**：media/community 投稿/识别/OCR/转写等域在 real 模式下
  * fail-closed（未接线真实对象存储 / 真实供应商 / 真实媒体），这些域对应的越权用例
  * 无法在真 PG 上播种属主行 ⇒ 如实标 `not-runnable` 并写明原因，不伪装成 PASS。
@@ -69,6 +74,18 @@ const { createPostgresOcrStore } = await import('../../services/api/src/ocr/stor
 const { createPostgresSpeechStore } = await import('../../services/api/src/speech/store-pg.ts');
 const { RULE_VERSION } = await import('../../packages/moderation/rule-version.mjs');
 const { missingContractFields } = await import('../../packages/moderation/review.mjs');
+
+/**
+ * 本臂**已接**的作业过滤腿（`cases.mjs` 里 `app: 'jobs'` 的 9 条，S-6）。
+ * ⛔ 不再按 `c.app === 'jobs'` 一刀切跳过：真库读面是 `createPostgresAdminJobPort`
+ * （`services/api/src/app.ts:1380-1382` 在 real + 有池时装配），读的是四张域内作业表
+ * （`ocr_jobs` / `recognition_jobs` / `speech_jobs` / `conversation_turns`），裸 SQL 即可播种
+ * （种子见 `seedFailClosedRowsReal` 末尾 S8）。其余 `app: 'jobs'` 腿（当前不存在）仍保持「未取得」。
+ */
+const JOB_FILTER_LEGS = new Set(['C3-28', 'C3-29', 'C3-30', 'C3-31', 'C3-32', 'C3-33', 'C3-34', 'C3-35', 'C3-36']);
+
+/** 作业过滤腿的种子 id：与 `cases.mjs:52` 的 `jobId(ordinal)` 逐字同式（末 12 位 = 11 个 0 + 序号）。 */
+const jobSeedId = (ordinal) => `00000000-0000-4000-8d00-00000000000${ordinal}`;
 
 // ---------------------------------------------------------------------------
 // 一次性 PG 17 集群
@@ -590,6 +607,50 @@ async function seedFailClosedRowsReal({ pool, world, owner, attacker, seeded }) 
   } catch (error) {
     warnSeed('转写记录（C11-19/C11-21/C11-23/C11-38）', error);
   }
+
+  // ---- S8 作业过滤腿（C3-28…C3-36）的读面种子 -------------------------------
+  // ⚠️ 这 6 行是**合成播种的真实真库行**（直接 INSERT 进 `public.ocr_jobs`，迁移 0024:80-101），
+  // 不是产品数据、不是生产样本：只为让 `/admin/jobs` 的四源读面（`admin/ops/jobs-pg.ts` 的 `SOURCES`）
+  // 有确定的行可读、可过滤、可翻页。real 模式下没有 `POST /ocr` 这条写路径（供应商未接线 ⇒ 503），
+  // 裸 SQL 是唯一播法，播完仍走**生产同一份**读实现。
+  //   - `id` 用 `cases.mjs:52` 的 `jobId(n)` 同式（末 12 位 = 11 个 0 + 序号）：C3-31/C3-33/C3-36 按 id 断言；
+  //   - `state` 与 `world.mjs:298-305` 的 `ADMIN_JOB_SEED` **同值同序**（stub 臂的固定种子），
+  //     这样「同一矩阵」在真库上过滤的是同一组状态；
+  //   - `created_at = now() + n 秒`：读面排序是 `ORDER BY j.created_at DESC, j.id DESC`（jobs-pg.ts 的
+  //     `listTail`），取未来时刻让 6 行先后**只由序号决定**、不受播种时刻与同秒并列影响
+  //     ⇒ C3-31 首页稳定落在 #2（queued 里较新）、C3-33 页 2 稳定落在 #1；
+  //   - `ocr_id` / `media_id` 无外键（0024:88-90 明文：记录由 commitTerminal 后落，先建任务后产记录是正常时序）
+  //     ⇒ 合成 uuid 即可；`media_revision` 照 CHECK 取 1；
+  //   - `owner_user_id` 是本表唯一有外键的列（0024:87 → `public.users`），挂属主 b。
+  // ⚠️ 这 6 行**不是**该读面的全部：同一次播种还在 `recognition_jobs` 写了 S5 的 `ids.job`（queued），
+  //   `/admin/jobs` 会一并列出 ⇒ 本臂只比 status/code（`verdictFor`），⛔ 不把 stub 种子的「恰 6 条」当本臂判据。
+  try {
+    const ADMIN_JOB_SEED_STATES = [
+      ['queued', null],
+      ['queued', null],
+      ['running', null],
+      ['succeeded', null],
+      ['failed', 'PROVIDER_TIMEOUT'],
+      ['cancelled', null],
+    ];
+    for (const [index, [state, errorCode]] of ADMIN_JOB_SEED_STATES.entries()) {
+      const ordinal = index + 1;
+      await pool.query(
+        `INSERT INTO public.ocr_jobs
+           (id, revision, kind, owner_user_id, ocr_id, media_id, media_revision,
+            state, error_code, created_at, deadline_at, updated_at)
+         VALUES ($1::uuid, 1, 'ocr', $2::uuid, $3::uuid, $4::uuid, 1, $5::text, $6::varchar,
+                 now() + ($7::integer * interval '1 second'),
+                 now() + interval '1 hour',
+                 now() + ($7::integer * interval '1 second'))`,
+        [jobSeedId(ordinal), owner.userId, fixtureId(60 + ordinal), mediaId, state, errorCode, ordinal],
+      );
+    }
+    seeded.jobFilterJobIds = ADMIN_JOB_SEED_STATES.map((_, index) => jobSeedId(index + 1));
+    seeded.jobFilterSeedOk = true;
+  } catch (error) {
+    warnSeed('作业过滤腿种子（C3-28…C3-36）', error);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -863,10 +924,13 @@ async function main() {
         continue;
       }
 
-      if (c.app === 'jobs') {
-        // S-6 的作业过滤腿依赖 `createJobFilterWorld` 的**已接线内存作业端口 + 固定种子**（真 PG 侧没有
-        // 作业读权威可播种）。本臂如实记「未取得」，不算 same、也不伪装 PASS；stub 臂与单测里这 9 条全跑。
-        entry.reason = '作业过滤腿需要已接线的内存作业端口（stub 参考实现 + 固定种子）；real + 真库无作业读权威，本臂不跑';
+      if (c.app === 'jobs' && !(JOB_FILTER_LEGS.has(c.id) && seeded.jobFilterSeedOk === true)) {
+        // ⛔ 按**具体用例**分腿，不再按 `c.app === 'jobs'` 一刀切：C3-28…C3-36 已接真实执行（读面见顶部
+        // `JOB_FILTER_LEGS` 的注释，种子见 `seedFailClosedRowsReal` 的 S8）；其余 `app: 'jobs'` 腿仍记「未取得」。
+        // 种子没落库时同样退回「未取得」——没有行可读的 200 是假读数，不算 same。
+        entry.reason = seeded.jobFilterSeedOk === true
+          ? '作业过滤腿未接线（本臂只接了 C3-28…C3-36 这 9 条，其余 jobs 腿保持未取得）'
+          : '作业过滤腿种子未落库（真库 `public.ocr_jobs` 播种失败，见上方 [seed] 告警）⇒ 无行可读，保持未取得';
         rows.push(entry);
         continue;
       }
@@ -886,6 +950,9 @@ async function main() {
       entry.problems = verdict.problems;
       entry.verdict = verdict.same ? 'same' : 'different';
       ctx.results.set(c.id, result);
+      // 与 `run.mjs:383` 同构：`after` 无论本条 same/different 都执行。C3-31 靠它把**真游标**写进 ctx，
+      // 否则 C3-32/C3-33 会拿 `ctx.jobFilterCursor = null` ⇒ `cursor=no-cursor` 假跑（那是自欺，不是证据）。
+      if (typeof c.after === 'function') c.after(result, ctx);
       rows.push(entry);
     }
 
