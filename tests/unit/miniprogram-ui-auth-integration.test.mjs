@@ -765,7 +765,7 @@ test('tabBar G6：从未读到过读数就失败 ⇒ 角标保持不显示数字
   assert.deepEqual(Object.keys(h.warns[0]).sort(), ['code', 'event']);
 });
 
-test('G7：messages.wxml 不再自陈「仅内容审核结果有生产路径」，且类型说明与服务端事件映射、页面跳转能力一致', () => {
+test('G7：messages.wxml 不再自陈「仅内容审核结果有生产路径」或「系统通知暂无生产点」，且类型说明与服务端事件映射、页面跳转能力一致', () => {
   const wxml = read('miniprogram/pages/messages/messages.wxml');
   const messages = read('miniprogram/pages/messages/messages.js');
   const events = read('services/api/src/community/events.ts');
@@ -777,7 +777,8 @@ test('G7：messages.wxml 不再自陈「仅内容审核结果有生产路径」�
   // 2) 服务端事实：#422 的映射把社区事件落成 comment/like/moderation 三型。
   assert.match(events, /export type CommunityMessageType = 'comment' \| 'like' \| 'moderation'/);
 
-  // 3) 类型段的 meta 行必须点出三类有生产路径，且把「没有生产路径」只留给系统通知。
+  // 3) 类型段的 meta 行必须点出四类都有生产路径（GY-R73 起系统通知也有生产点：
+  //    `services/api/src/admin/ops/invalidation-events.ts` 撤回来源/条目 ⇒ 通知收藏者）。
   //    只在**标记**里找（注释里的同义说明不参与计数），避免把注释也算成用户可见文案。
   const markup = wxml.replace(/<!--[\s\S]*?-->/g, '');
   const metas = markup.split('\n').filter((line) => line.includes('有生产路径'));
@@ -785,15 +786,17 @@ test('G7：messages.wxml 不再自陈「仅内容审核结果有生产路径」�
   for (const label of ['评论', '点赞', '内容审核结果', '系统通知']) {
     assert.ok(metas[0].includes(label), `类型说明必须点名「${label}」`);
   }
-  assert.match(metas[0], /暂无|没有/, '系统通知必须被明确标成「暂无」');
+  assert.doesNotMatch(metas[0], /暂无|尚无|没有/, '四类都真有生产路径了，不许再自陈「暂无」');
 
-  // 4) 页尾说明同样不得把「评论与点赞」写成没有生产路径。
+  // 4) 页尾说明同样不得把任何一类写成没有生产路径，并且必须说明系统通知**来自什么事件**。
   const caption = markup.split('\n').find((line) => line.includes('上面的列表只呈现服务端已产生的消息'));
   assert.ok(caption, '页尾说明仍在（不得靠删文案「修好」缺口）');
   assert.match(caption, /评论与点赞/);
   assert.match(caption, /内容审核结果/);
   assert.match(caption, /系统通知/);
-  assert.match(caption, /尚无|暂无|没有/);
+  assert.doesNotMatch(caption, /系统通知[^。]*?(尚无|暂无|没有)/, '系统通知已有生产点，页尾不许再说它没有来源');
+  assert.match(caption, /撤回/, '页尾必须点明系统通知来自「撤回」这类事件');
+  assert.match(caption, /收藏/, '页尾必须点明收件人是「收藏过该资料」的用户');
 
   // 5) 文案与真实能力一致：可查看的行确实给出跳转入口，不可查看的行仍如实说不提供。
   const noteLine = (state) => messages.split('\n').find((line) => line.trim().startsWith(state + ':'));

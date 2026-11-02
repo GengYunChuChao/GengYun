@@ -100,6 +100,11 @@
  * （`0001` 无 down）；缺号仍只有 `0037`，保留台账仍只有那一条 ⇒ `51 个文件 + 1 保留 === max 52`。
  * **台账不因 0052 新增条目**（本片自己落盘的文件不是"有意缺号"），也**不得**残留 52 号条目
  * （0052 已落盘 ⇒ `reservedButPresent` 立刻判红）。
+ *
+ * **GY-R73（#17 撤回通知，`0054_favorites_target_lookup.sql` 落盘）之后的读数**：正向 **52** 个、
+ * `rollback/` **51** 个；缺号变成 **`[37, 53]`**——`0053` 已被**在飞**的 `#838` 占用（尚未落盘），
+ * 按协调结果本片取 `0054`，所以 53 号是**有意缺号**、必须在台账登记（`remove_when: #838 落 0053 即删`）；
+ * ⇒ `52 个文件 + 2 保留 === max 54`。`0054` 是本片自己落盘的文件，**不得**登记进台账。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -143,7 +148,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度 已落盘 ⇒ 51 文件 + 1 保留 === 52、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0054/GY-R73 收藏反查索引 已落盘（0053 归在飞 #838 ⇒ 补登保留）⇒ 52 文件 + 2 保留 === 54、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -152,16 +157,16 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [37],
-    `0040（#568）、0041（#18 S2 片1）、0042（GY-R37 片）、0043（#18 R18：作业取消审计落库）与 0044（GY-S4 P1：第三方删除持久化）都已落盘 ⇒ 合流树的缺号必须仍只有 [37]（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
+    [37, 53],
+    `0040（#568）、0041（#18 S2 片1）、0042（GY-R37 片）、0043（#18 R18：作业取消审计落库）、0044（GY-S4 P1：第三方删除持久化）与 0054（GY-R73：收藏反查索引）都已落盘 ⇒ 合流树的缺号必须是 [37, 53]（#14 保留 + #838 在飞占用 0053；现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(
     numbering.reserved,
-    [37],
-    '0037 缺号必须在台账登记（否则 undeclaredGaps 会把它判成发现器静默漏项）；0040 已落盘 ⇒ ⛔ 不得再登记 40',
+    [37, 53],
+    '0037（#14）与 0053（在飞 #838）两个缺号都必须在台账登记；0052/0054 已落盘 ⇒ ⛔ 不得登记 52/54',
   );
-  assert.equal(reservations.length, 1, '台账眼下必须恰有一条保留项（0037 #14；0027/0029/0031/0033/0036/0038/0040 七条都已按各自 remove_when 删除）');
-  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（0037 已登记）');
+  assert.equal(reservations.length, 2, '台账眼下必须恰有两条保留项（0037 #14 + 0053 #838；其余各条的 remove_when 都已兑现）');
+  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（0037 与 0053 都已登记）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
     numbering.countMatchesMax,
@@ -171,7 +176,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（51 = 52 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（52 = 54 − 2）',
   );
 
   const files = migrations.map((item) => item.filename);
@@ -293,10 +298,23 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
     'R72-W54 的 0052 已落盘 ⇒ 真实文件必须在清单里（号位 = 0051 之后的第一号，⛔ 不许占用 0051/0053），'
       + '且台账不得登记 52（否则 reservedButPresent 会先判红）',
   );
+  // GY-R73（#17 撤回通知）：号位按协调结果取 0054（0053 归**在飞**的 #838，尚未落盘 ⇒ 补登保留），
+  // 本片自己落盘的文件不进台账。
+  assert.equal(
+    files.includes('0054_favorites_target_lookup.sql'),
+    true,
+    'GY-R73 的 0054 已落盘 ⇒ 真实文件必须在清单里（号位 = 0054，⛔ 不许占用在飞 #838 的 0053），'
+      + '且台账不得登记 54（否则 reservedButPresent 会先判红）',
+  );
   assert.equal(
     files.some((name) => /^0037_/.test(name)),
     false,
     '0037 属 #14（号空出）⇒ 合流树上不得出现 0037 前缀的文件',
+  );
+  assert.equal(
+    files.some((name) => /^0053_/.test(name)),
+    false,
+    '0053 属在飞 #838（尚未落盘）⇒ 本片（GY-R73）树上不得出现 0053 前缀的文件',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),

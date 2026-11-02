@@ -11,7 +11,8 @@
  *   N6 被下架的对象：评论/点赞在落库前就 404，作者的消息数不变（不给不可见对象新增消息）；
  *   N7 端到端（HTTP）：`GET /messages` 里 comment/like 与审核消息并存、`unread-count` 可复核、
  *      标读幂等且单调、他人无权读 404；
- *   N8 守卫：`system` 生产点只允许一处**白名单**（`admin/ops/account-events.ts`，#17 的 S1/S2）；
+ *   N8 守卫：`system` 生产点只允许两处**白名单**（`admin/ops/account-events.ts` 的账号处置
+ *      + `admin/ops/invalidation-events.ts` 的撤回通知，#17 的 S1/S2 与 R73）；
  *      **社区域**（本域）**永不**产出 `system`，其余新增生产点会红，提醒同时补验收。
  *
  * 声明：模型端口是**合成替身**（`passingPort`），不发起任何真实模型/付费调用。
@@ -271,10 +272,12 @@ test('N7. 端到端：GET /messages 含 comment+like+moderation，unread-count �
 // N8 守卫：系统事件首版不虚构
 // ---------------------------------------------------------------------------
 
-test('N8. 守卫：`system` 生产点只允许白名单文件（admin/ops/account-events.ts）；社区事件类型映射永不产出 system', () => {
+test('N8. 守卫：`system` 生产点只允许白名单文件（admin/ops/account-events.ts + admin/ops/invalidation-events.ts）；社区事件类型映射永不产出 system', () => {
   // (a) 代码级：全仓 `services/api/src/**` 的 `system` 生产赋值只允许出现在**白名单**里——
   //     #17 的账号级系统事件生产者 `admin/ops/account-events.ts`（裁定
-  //     `.pg17/ruling-r31-i17-system-events-20261022.md`）；**社区域仍须零命中**。
+  //     `.pg17/ruling-r31-i17-system-events-20261022.md`）；GY-R73 追加的
+  //     `admin/ops/invalidation-events.ts`（来源/条目撤回 ⇒ 通知收藏者，同样是 #17 的系统通知
+  //     生产点，单测见 `tests/unit/admin-invalidation-notices.test.mjs`）；**社区域仍须零命中**。
   const hits = sourceFiles(SRC_ROOT)
     .flatMap((path) => readFileSync(path, 'utf8').split('\n').map((line, index) => ({
       path: path.slice(SRC_ROOT.length).split(/[\\/]/).join('/'),
@@ -282,12 +285,15 @@ test('N8. 守卫：`system` 生产点只允许白名单文件（admin/ops/accoun
       no: index + 1,
     })))
     .filter((hit) => /type:\s*['"]system['"]/.test(hit.line));
-  const allowed = new Set(['admin/ops/account-events.ts']);
+  const allowed = new Set([
+    'admin/ops/account-events.ts',
+    'admin/ops/invalidation-events.ts',
+  ]);
   const label = (hit) => `${hit.path}:${hit.no}`;
   assert.deepEqual(
     hits.filter((hit) => !allowed.has(hit.path)).map(label),
     [],
-    '系统事件只允许由 admin/ops/account-events.ts（#17 S1/S2）生产；新增时必须先补 #17 验收与证据',
+    '系统事件只允许由 admin/ops/account-events.ts（#17 S1/S2）与 admin/ops/invalidation-events.ts（#17 撤回通知）生产；新增时必须先补 #17 验收与证据',
   );
   assert.deepEqual(
     hits.filter((hit) => hit.path.startsWith('community/')).map(label),
