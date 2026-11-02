@@ -856,6 +856,13 @@
       "version_required": true
     },
     {
+      "id": "advanceReport",
+      "path": "/admin/reports/{id}/disposition",
+      "method": "post",
+      "scope": "sources:write",
+      "version_required": false
+    },
+    {
       "id": "listAuditEvents",
       "path": "/admin/audit-events",
       "method": "get",

@@ -1,15 +1,15 @@
 /**
  * GY-R72 W41 · 审核域的**持久幂等台账**（迁移 `0051_moderation_idempotency.sql`）。
  *
- * ⛔ 本文件**不接线**：`services/api/src/moderation/service.ts` / `app.ts` 一个字节都没改，
- * 内存实现与 PG 实现都只是「可注入的形制」，真正把取消端点接上台账是 W42 的事。
- * 因此本片**不改变任何运行行为**，只把「回放要落到哪张表、五条语句长什么样、缺表时怎么失败」钉死。
+ * ✅ **已接线**（GY-R72 W42）：`app.ts` 在 `real` + 连接池时构造 PG 实现并注入审核域（判据与 `store:` 同形）；
+ * 注入后取消端点按 `Idempotency-Key` 回放首次结果（缺表 ⇒ 503），未注入则一次台账调用都不发生。
+ * 本文件只把「回放要落到哪张表、五条语句长什么样、缺表时怎么失败」钉死，判定口径全在 `service.ts`。
  *
  * ## 为什么需要它（成文登记的开放问题，不是顺手加的台账）
  *
  * 审核域取消端点**要求** `Idempotency-Key`，却从不回放：`service.ts:1187` 只走
  * `requireCancelIdempotencyKey`（`:357-360`，长度 8..128，非法即 400 `IDEMPOTENCY_KEY_REQUIRED`）。
- * `service.ts:270-271` 自陈「本域没有幂等台账」。缺口与两条出路写在
+ * 当时 `service.ts` 的 `cancelJob` 文档注释自陈「本域没有幂等台账」（GY-R72 起改为按 Key 回放），缺口与两条出路写在
  * `docs/verification/gy-r71-job-cancel-modes-20261030.md:67`：
  *
  *   > 本域没有幂等台账；要回放要么内存表（重启即丢）、要么加迁移和列。
