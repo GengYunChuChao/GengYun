@@ -2,8 +2,8 @@
 
 > 基线：`68dec742`（2026-10-26 重测；`#640` 以 squash `2bfec9d3`、`#641` 以 `68dec742` 合入后）。本页所有「文件:行号」都以该提交为准；社区审核队列页（原分支 `feat/gy-r62-admin-moderation-queue`）已随之合入，不再单列。
 > **计数口径（先读这条，否则数字对不上）**：契约侧（`packages/contracts/openapi.json` 里以 `/admin` 开头的 path 数、展开出的 operation 数、`x-scope` 落在 `AdminScope.enum` 闭集（13 项）内的个数）**本页一个也不抄写**——加一条路由这些数就变一次，抄进散文必然腐烂；要读就现场数该文件，**口径以 `packages/contracts/openapi.json` 为准**。只留一条不会过期的结构事实：其中 `loginAdmin`（`POST /admin/auth/session`，`x-scope: public`）是登录入口，不持任何后台权限，**任何口径下都不计入**。
-> **本页路由与入口的读数以机器重算为准**（`node tools/verify-admin-capability-map.mjs`，CI 在 `contract` job 里跑 `npm run verify:capability-map`）：`services/api/src/routes/admin.ts` 逐条注册 **46** 条路由（24 条家族路由 + 22 条显式路由），对应 46 个 operationId；`apps/admin/src` 对其中 **46** 个 operation 全部有调用链入口，**无入口 0 条**（原本仅剩的 `grantAdministratorScope`、`revokeAdministratorScope` 两条授/撤权写面已由 GY-R68 接上 `AdministratorsView.vue`，取证见 §4）。逐条数字见 §0 末尾的标记块——**块内是闸门保护的实时值，块外散文不受保护**。
-> 上一段那句「契约侧各是多少」是手数出来的，本页不再维护第二份：闸门（**以 `node tools/verify-admin-capability-map.mjs` 的重算为准**）只读 `admin.ts`、`admin/families.ts` 与 `apps/admin/src`，**不数 `openapi.json`**，所以契约侧的总数只能现场数该文件、本页不写死。旧版本这里写「只数 42 条＝逐条注册的路由数、本页每个 42／30 都要 +2」，那组数字已被代码证伪（实测 46 条路由、46 个 operation；无入口在本片之前是 2 条、GY-R68 之后是 0 条），只在 §8 留作历史记录。
+> **本页路由与入口的读数以机器重算为准**（`node tools/verify-admin-capability-map.mjs`，CI 在 `contract` job 里跑 `npm run verify:capability-map`）：闸门读 `services/api/src/routes/*.ts` 里 admin 面的注册（`admin.ts` 46 条 = 24 条家族路由 + 22 条显式路由，`admin-auth.ts` 3 条 auth），对应 **49** 个 operationId；`apps/admin/src` 对其中 **49** 个 operation 全部有调用链入口，**无入口 0 条**（原本仅剩的 `grantAdministratorScope`、`revokeAdministratorScope` 两条授/撤权写面已由 GY-R68 接上 `AdministratorsView.vue`，取证见 §4）。逐条数字见 §0 末尾的标记块——**块内是闸门保护的实时值，块外散文不受保护**。
+> 上一段不在本页维护第二份读数：闸门只读 `services/api/src/routes/*.ts` 的注册、`admin/families.ts` 与 `apps/admin/src`，**不数 `openapi.json`**，所以契约侧的总数只能现场数该文件。旧版本这里那套「只数逐条注册的路由、本页每个读数都要 +2」的手数已被代码证伪，只在 §8 留作历史记录。
 > 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1354`。
 > 可复跑：`node tools/verify-doc-anchors.mjs --strict`、`node tools/verify-contract-status.mjs`、`npm run test:docs`。
 
@@ -11,37 +11,36 @@
 
 | 面 | 现在的事实 | 锚点 |
 | --- | --- | --- |
-| 服务端 admin 端点 | **46 条注册路由，对应 46 个 operationId**（机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首那套契约口径的 path／operation／scope 读数本页不抄，需要时现场数 `packages/contracts/openapi.json` | services/api/src/routes/admin.ts:198-487 |
-| 前端真实调用 | **46 个 operation 全部有 UI 入口（无入口 0 条）**，机器重算，见标记块。旧版手数的「30 个 operation、33 处物理调用点」是 2026-10-26 的读数；本行只认 §0 标记块的机器重算（`node tools/verify-admin-capability-map.mjs`） | apps/admin/src/lib/admin-content-api.mjs:409 |
+| 服务端 admin 端点 | **49 条 admin 面注册路由，对应 49 个 operationId**（`admin.ts` 46 + `admin-auth.ts` 3；机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首那套契约口径的 path／operation／scope 读数本页不抄，需要时现场数 `packages/contracts/openapi.json` | services/api/src/routes/admin.ts:198-487 |
+| 前端真实调用 | **49 个 operation 全部有 UI 入口（无入口 0 条）**，机器重算，见标记块（含 3 条 auth：`apps/admin/src/auth/session.ts` 的 `loadAdminSession`／`signInAdmin`／`signOutAdmin`）。旧版手数的「30 个 operation、33 处物理调用点」是 2026-10-26 的读数；本行只认 §0 标记块的机器重算（`node tools/verify-admin-capability-map.mjs`） | apps/admin/src/lib/admin-content-api.mjs:409 |
 | 页面 | 19 个 `.vue`（壳 `App.vue` 1 + 主 tab 视图 10 + 子页 6 + 子组件 2）；「社区审核队列」已接入读 + 通过/驳回，「人工审核」仍是空占位 | apps/admin/src/App.vue:27-38 |
 | 死按钮 | 0 个（机器重算 `deadButtons=0`）；另有 6 个 `class="link"` 的「详情/编辑/展开原文」按钮——它们**带**自己的 `@click.stop`（复制父行动作、阻止冒泡），**不是**「自身无 handler」（旧版那句是错的，2026-11-02 逐文件复核，见 §3 第三张表） | apps/admin/src/views/SourcesView.vue:506 |
-| 后端有面、UI 无入口 | **0 个 operation**：原本仅剩的两条授/撤权写面 `grantAdministratorScope`、`revokeAdministratorScope`（`POST`／`DELETE /admin/administrators/{id}/scopes…`，门 `scopes:write`）已由 GY-R68 接上 `AdministratorsView.vue`。旧版写「12 个，只剩两族：注册资料 6、限制资料 6」，已被代码证伪——两族各有页面，见 §4 | services/api/src/routes/admin.ts:408-427 |
+| 后端有面、UI 无入口 | **0 个 operation**：原本仅剩的两条授/撤权写面 `grantAdministratorScope`、`revokeAdministratorScope`（`POST`／`DELETE /admin/administrators/{id}/scopes…`，门 `scopes:write`）已由 GY-R68 接上 `AdministratorsView.vue`；R72 把扫描面扩到全部 `routes/*.ts` 之后新增的 3 条 auth 也不是缺口（`apps/admin/src/auth/session.ts` 是它们的客户端，9 个视图真调了那三个函数）。旧版写「12 个，只剩两族：注册资料 6、限制资料 6」，已被代码证伪——两族各有页面，见 §4 | services/api/src/routes/admin.ts:408-427 |
 | 鉴权 | 登录响应**不含** scopes；9 个页面登录后再读一次 `GET /admin/auth/session` 补 scope | apps/admin/src/auth/session.ts:128 |
 | 两端都缺 | 「人工审核」工作台（审核人 / 投票 / 专家认证）：`ReviewPlaceholderView` 仍是空态说明页、服务层 `wired:false`。**帖子级**人工通过/驳回已不是缺口：`approvePost`/`rejectPost` 自 S3 起在契约内且有路由与页面（§1.1、§2.1） | apps/admin/src/views/ReviewPlaceholderView.vue:2-16 |
-
 <!-- admin-capability-map:begin -->
-> 本块由 `node tools/verify-admin-capability-map.mjs --update` 从源码重算生成（解析 `services/api/src/routes/admin.ts`、`services/api/src/admin/families.ts` 与 `apps/admin/src`），`npm run verify:capability-map` 在 CI 的 `contract` job 里**把整个块逐字节比对**（统一行尾与前后空白后，前言段、读数表、逐 operation 表、族表全在比对范围内），块内手改即红。**块外的散文不受本闸门保护。** ⚠ **`noUiEntry` 只是缺口下界**：入口判据是「视图 import 的客户端函数体里带着这条 operation 的 method+path 证据」，**文本里出现过一次调用就算入口**——哪怕那个函数只在永不被调用的死代码里被调一次（变异实测 `noUiEntry 2→1`，能力没变）；所以 `noUiEntry === 0` 不等于「能力齐」，只等于「扫描器没看见缺口」。
+> 本块由 `node tools/verify-admin-capability-map.mjs --update` 从源码重算生成（解析 `services/api/src/routes/*.ts` 里 admin 面的全部注册——不止 `admin.ts`，源码没写 operationId 的注册按契约 method+path 精确匹配、0 条或多条都抛——再解析 `services/api/src/admin/families.ts` 与 `apps/admin/src`），`npm run verify:capability-map` 在 CI 的 `contract` job 里**把整个块逐字节比对**（统一行尾与前后空白后，前言段、读数表、逐 operation 表、族表全在比对范围内），块内手改即红。**块外的散文不受本闸门保护。** ⚠ **`noUiEntry` 只是缺口下界**：入口判据是「视图 import 的客户端函数体里带着这条 operation 的 method+path 证据」，**文本里出现过一次调用就算入口**——哪怕那个函数只在永不被调用的死代码里被调一次（变异实测 `noUiEntry 2→1`，能力没变）；所以 `noUiEntry === 0` 不等于「能力齐」，只等于「扫描器没看见缺口」。
 
 **读数（operation 级）**——`withUiEntry` / `noUiEntry` 数的是 operation，不是族：
 
 | 读数 | 值 |
 | --- | --- |
-| totalOps | 46 |
-| families | 13 |
-| withUiEntry | 46 |
+| totalOps | 49 |
+| families | 14 |
+| withUiEntry | 49 |
 | noUiEntry | 0 |
 | deadButtons | 0 |
-| operationsWithEvidence | 46 |
-| uiEntryViews | 14 |
+| operationsWithEvidence | 49 |
+| uiEntryViews | 15 |
 | uiRefFiles | 27 |
 | unreachableViews | 0 |
-| familyOps | accounts=2,administrators=6,audit-events=1,audit-logs=1,categories=2,feature-flags=2,flag-audit-events=1,jobs=2,knowledge=6,posts=5,registrations=6,restrictions=6,sources=6 |
+| familyOps | accounts=2,administrators=6,audit-events=1,audit-logs=1,auth=3,categories=2,feature-flags=2,flag-audit-events=1,jobs=2,knowledge=6,posts=5,registrations=6,restrictions=6,sources=6 |
 | noUiEntryList | （空） |
 | deadButtonList | （空） |
 
 **无 UI 入口的 operation（逐条）**——由「被视图 import 且真的调用、且函数体内带着这条 operation 的 method+path 证据」判定；族级「有人引用过这个前缀」不算入口：
 
-（空）46 条 operation 全部有入口。
+（空）49 条 operation 全部有入口。
 
 **族级汇总**——下表按路径族聚合（同族多条 operation 共用一条路径前缀），只供概览；逐 operation 的入口结论以上两张表为准：
 
@@ -51,6 +50,7 @@
 | administrators | /admin/administrators | 6 | scopes:read / scopes:write | apps/admin/src/views/AdministratorsView.vue | 3 |
 | audit-events | /admin/audit-events | 1 | audit:read | apps/admin/src/views/AuditEventsView.vue<br>apps/admin/src/views/CategoriesView.vue<br>apps/admin/src/views/KnowledgeAdminView.vue<br>apps/admin/src/views/RegistrationAdminView.vue<br>apps/admin/src/views/RestrictionAdminView.vue<br>apps/admin/src/views/SourcesView.vue | 4 |
 | audit-logs | /admin/audit-logs | 1 | audit:read | apps/admin/src/views/AuditLogsView.vue | 1 |
+| auth | /admin/auth | 3 | public / session:logout / session:read | apps/admin/src/views/AccountsView.vue<br>apps/admin/src/views/AdministratorsView.vue<br>apps/admin/src/views/AuditEventsView.vue<br>apps/admin/src/views/AuditLogsView.vue<br>apps/admin/src/views/ContentAdminView.vue<br>apps/admin/src/views/FlagAuditView.vue<br>apps/admin/src/views/FlagsView.vue<br>apps/admin/src/views/JobsView.vue<br>apps/admin/src/views/ModerationQueueView.vue | 4 |
 | categories | /admin/categories | 2 | sources:read / sources:write | apps/admin/src/views/CategoriesView.vue | 4 |
 | feature-flags | /admin/feature-flags | 2 | flags:read / flags:write | apps/admin/src/views/FlagsView.vue | 2 |
 | flag-audit-events | /admin/flag-audit-events | 1 | flags:read | apps/admin/src/views/FlagAuditView.vue | 1 |
@@ -65,9 +65,9 @@
 >
 > 客户端在 `apps/admin/src/lib/administrator-scope-api.mjs`，成功后刷新列表并重读该行 scopes；「停用／恢复」与「授权／撤销」是两条不同的写面（都门 `scopes:write`），别互相顶替。
 
-## 1 服务端已挂的 admin 端点（46 条）
+## 1 服务端已挂的 admin 端点（49 条）
 
-operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMILIES.flatMap` 展开 24 个 + 显式列出 22 个），与 `app.get/post/put/patch/delete` 逐条数出的 46 处注册一一对应——这个等式由 `tools/verify-admin-capability-map.mjs` 每次跑都核对。文件头自述「46 个 operationId」与实测一致；本页旧版写的「40 个／42 处」是陈旧手数。
+operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMILIES.flatMap` 展开 24 个 + 显式列出 22 个），与 `admin.ts` 里 `app.get/post/put/patch/delete` 逐条数出的 46 处注册一一对应——这个等式自 R72 起由 `tests/unit/admin-routes-nail.test.mjs` 钉住（它同时把这 46 条逐条对 `openapi.json` 的 method+path 核一遍）。R72 把能力图的扫描面扩到全部 `services/api/src/routes/*.ts` 后，admin 面共 **49** 条（这 46 条 + `admin-auth.ts` 的 3 条 auth），与 `ADMIN_HTTP_OPERATION_IDS` 的 46 不再等值，49 条由 `tools/verify-admin-capability-map.mjs` 每次跑核对。文件头自述「46 个 operationId」与实测一致；本页旧版写的「40 个／42 处」是陈旧手数。
 
 ### 1.1 按域分组
 
@@ -136,13 +136,13 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | apps/admin/src/views/AuditEventsView.vue（555） | listAuditEvents@66 | 1 |
 | apps/admin/src/views/JobsView.vue（798） | listAdminJobs@93、cancelAdminJob@230 | 2 |
 | apps/admin/src/views/ModerationQueueView.vue（1089） | listAdminPosts@165、getAdminPost@185、approvePost/rejectPost@341（同一处 `submitPostReview`）、hidePost@406 | 4 |
-| 合计 | 30 个 operation（已纳入闸门；机器重算的入口读数是 46 个 operation 全部有入口、0 条无入口，见 §0 标记块） | 35 |
+| 合计 | 30 个 operation（已纳入闸门；机器重算的入口读数是 49 个 operation 全部有入口、0 条无入口，见 §0 标记块——比这张表多出的 19 个是族路由与 3 条 auth，它们不在这张按视图逐行抄的表里） | 35 |
 
 `listAuditEvents` 被 4 处调用（`apps/admin/src/views/AuditEventsView.vue:66`、`apps/admin/src/views/SourcesView.vue:360`、`apps/admin/src/views/KnowledgeAdminView.vue:367`、`apps/admin/src/views/CategoriesView.vue:207`），`listAdminSources` 被 2 处调用（`apps/admin/src/views/SourcesView.vue:147`、`apps/admin/src/views/KnowledgeAdminView.vue:218`）。`hidePost` 被 2 处调用（`apps/admin/src/views/PostTakedownView.vue:170`、`apps/admin/src/views/ModerationQueueView.vue:406`），`getAdminPost` 也被 2 处调用（`apps/admin/src/views/ModerationQueueView.vue:185`、`apps/admin/src/views/PostTakedownView.vue:122`）——GY-R72 之前这两条各只有 1 处。而 `approvePost` 与 `rejectPost` 共用一处 `submitPostReview`（`apps/admin/src/views/ModerationQueueView.vue:341`）；所以 30 个 operation 对应 35 处物理调用点（+3 +1 +1 +1 −1；「处数」按 `<视图,行号>` 去重，不按 operation 去重）。这一行里的行号与上表同口径，由 `tests/unit/admin-console-capability-op-claims.test.mjs` 一起判。
 
 ### 2.3 覆盖差集
 
-46 条服务端 operation 中，UI 有入口的 **46** 条，**没有前端入口的 0 条**（`grantAdministratorScope`、`revokeAdministratorScope` 已由 GY-R68 接上，逐条见 §0 标记块与 §4）。本页旧版这里写「有入口 30 条、其余 12 条完全没有前端入口」，那组数字已被代码证伪：注册资料与限制资料两族各 6 条早已有 `RegistrationAdminView.vue`／`RestrictionAdminView.vue` 走完整调用链（见 §4）。§2.2 那张手表只覆盖 30 个 operation，是因为它按 2026-10-26 的视图快照逐行抄的；2026-11-01 起该表已纳入闸门（`tests/unit/admin-console-capability-op-claims.test.mjs` 逐条判行号与行数读数），GY-R72 之后闸门范围是 30 个 operation 的 **36 条 claim（35 处物理调用点）**、12 个页面行数与 11 条散文锚点。 闸门**看不住**、本轮（GY-R72，2026-11-02）靠人工重测补齐的部分，逐条 before/after 与实测命令见 `docs/verification/gy-r72-admin-takedown-truth-20261102.md`：§3 的视图行数表（**14/16 条**读数是 2026-10 的旧数，已按 `node` 的 LF 行数更到 2026-11-02 实测）、§3 的 link 按钮表（旧版 6 条 link 侧锚点**全部**指错、父行侧另有 3 条错，且旧版引导句「link 按钮本身没有 handler，靠父行点击冒泡」**本身是错的**——六个按钮都带自己的 `@click.stop`，已按逐文件实测重写）、§0 第 17 行（复用同一个坏锚 `SourcesView.vue:469`，那是空行，已改为 506 行）、§5「缺 scope」表的两处锚点（`SourcesView.vue:14` 指到注释行、`SourcesView.vue:366` 指到 `}`，已分别改为 394 行与 398 行，并补 `apps/admin/src/views/PostTakedownView.vue:216`、`apps/admin/src/views/ModerationQueueView.vue:663`）。**仍未收**的是 §5 第 7 条里三处已知陈旧的 session 锚点（`AccountsView.vue`、`AdministratorsView.vue`、`JobsView.vue` 各一处，后续片再收）；另外 §3「按钮 / 死按钮」列还有 3 行与 `<button` 实测数不符（AdministratorsView 记 9、实测 17；AuditLogsView 记 9、实测 10；JobsView 记 13、实测 14），本轮未改，留待后续片，不假装已经全部对账。 原因是结构性的，不是漏做：`tools/verify-doc-anchors.mjs` 的 `ANCHOR_EXTENSIONS` 与 `SYMBOL_SOURCE_EXTENSIONS` 都没有 `vue`，那个工具根本看不到 `.vue:行号` 这个形态，要覆盖只能另立闸门（就是上面这份用例）。GY-R72 之后本页的 `.vue` 锚点准确性仍由人工重测＋验证文档保证，**不是**由闸门保证。**所以「§2.2 有闸门」不等于「这张现状页的行号/行数已经全部被机器看住了」**。§1.2 那四条缺省 503 路由的显式锚点也一并重测在此（旧版只写了一条 450-487，那组行号落在 `enableAdministratorAccount` 一带，不是 posts 路由）：列表 services/api/src/routes/admin.ts:551-555、详情 services/api/src/routes/admin.ts:556-561、approve services/api/src/routes/admin.ts:569-577、reject services/api/src/routes/admin.ts:580-588；`tests/unit/doc-anchor-relocation-identity.test.mjs` 要求「目标文件本提交未改动 ⇒ 锚点行号必须恒等，除非在 `tests/unit/doc-anchor-relocations.json` 登记」，本轮按用户约束不碰那张登记表，所以把真行号记在散文里、把显式锚点放在这一行（新锚点没有旧锚点可配对，不触发位移判据），并在验证文档里如实记下这个取舍。
+49 条服务端 operation 中，UI 有入口的 **49** 条，**没有前端入口的 0 条**（`grantAdministratorScope`、`revokeAdministratorScope` 已由 GY-R68 接上；R72 新增的 3 条 auth 由 `apps/admin/src/auth/session.ts` 供入口，逐条见 §0 标记块与 §4）。本页旧版这里写「有入口 30 条、其余 12 条完全没有前端入口」，那组数字已被代码证伪：注册资料与限制资料两族各 6 条早已有 `RegistrationAdminView.vue`／`RestrictionAdminView.vue` 走完整调用链（见 §4）。§2.2 那张手表只覆盖 30 个 operation，是因为它按 2026-10-26 的视图快照逐行抄的；2026-11-01 起该表已纳入闸门（`tests/unit/admin-console-capability-op-claims.test.mjs` 逐条判行号与行数读数），GY-R72 之后闸门范围是 30 个 operation 的 **36 条 claim（35 处物理调用点）**、12 个页面行数与 11 条散文锚点。 闸门**看不住**、本轮（GY-R72，2026-11-02）靠人工重测补齐的部分，逐条 before/after 与实测命令见 `docs/verification/gy-r72-admin-takedown-truth-20261102.md`：§3 的视图行数表（**14/16 条**读数是 2026-10 的旧数，已按 `node` 的 LF 行数更到 2026-11-02 实测）、§3 的 link 按钮表（旧版 6 条 link 侧锚点**全部**指错、父行侧另有 3 条错，且旧版引导句「link 按钮本身没有 handler，靠父行点击冒泡」**本身是错的**——六个按钮都带自己的 `@click.stop`，已按逐文件实测重写）、§0 第 17 行（复用同一个坏锚 `SourcesView.vue:469`，那是空行，已改为 506 行）、§5「缺 scope」表的两处锚点（`SourcesView.vue:14` 指到注释行、`SourcesView.vue:366` 指到 `}`，已分别改为 394 行与 398 行，并补 `apps/admin/src/views/PostTakedownView.vue:216`、`apps/admin/src/views/ModerationQueueView.vue:663`）。**仍未收**的是 §5 第 7 条里三处已知陈旧的 session 锚点（`AccountsView.vue`、`AdministratorsView.vue`、`JobsView.vue` 各一处，后续片再收）；另外 §3「按钮 / 死按钮」列还有 3 行与 `<button` 实测数不符（AdministratorsView 记 9、实测 17；AuditLogsView 记 9、实测 10；JobsView 记 13、实测 14），本轮未改，留待后续片，不假装已经全部对账。 原因是结构性的，不是漏做：`tools/verify-doc-anchors.mjs` 的 `ANCHOR_EXTENSIONS` 与 `SYMBOL_SOURCE_EXTENSIONS` 都没有 `vue`，那个工具根本看不到 `.vue:行号` 这个形态，要覆盖只能另立闸门（就是上面这份用例）。GY-R72 之后本页的 `.vue` 锚点准确性仍由人工重测＋验证文档保证，**不是**由闸门保证。**所以「§2.2 有闸门」不等于「这张现状页的行号/行数已经全部被机器看住了」**。§1.2 那四条缺省 503 路由的显式锚点也一并重测在此（旧版只写了一条 450-487，那组行号落在 `enableAdministratorAccount` 一带，不是 posts 路由）：列表 services/api/src/routes/admin.ts:551-555、详情 services/api/src/routes/admin.ts:556-561、approve services/api/src/routes/admin.ts:569-577、reject services/api/src/routes/admin.ts:580-588；`tests/unit/doc-anchor-relocation-identity.test.mjs` 要求「目标文件本提交未改动 ⇒ 锚点行号必须恒等，除非在 `tests/unit/doc-anchor-relocations.json` 登记」，本轮按用户约束不碰那张登记表，所以把真行号记在散文里、把显式锚点放在这一行（新锚点没有旧锚点可配对，不触发位移判据），并在验证文档里如实记下这个取舍。
 
 ## 3 每个后台页面现在能做什么
 
@@ -231,8 +231,8 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 | 档 | 判定标准 | 条目 |
 | --- | --- | --- |
-| 已可用 | 前端有入口 + 服务端有路由，且失败路径如实显示 | **46 条**（机器重算：`totalOps=46`、`withUiEntry=46`、`noUiEntry=0`，逐族清单见 §0 标记块） |
-| 后端有余、UI 缺入口 | 服务端有 operation，前端零调用点 | **0 条**（GY-R68 之后：原先仅剩的 `grantAdministratorScope`、`revokeAdministratorScope` 已接上入口；旧版写「注册资料 6、限制资料 6 ＝ 12」，已被代码证伪，见 §4） |
+| 已可用 | 前端有入口 + 服务端有路由，且失败路径如实显示 | **49 条**（机器重算：`totalOps=49`、`withUiEntry=49`、`noUiEntry=0`，逐族清单见 §0 标记块；其中 3 条 auth 的入口在 `apps/admin/src/auth/session.ts`） |
+| 后端有余、UI 缺入口 | 服务端有 operation，前端零调用点 | **0 条**（GY-R68 之后：原先仅剩的 `grantAdministratorScope`、`revokeAdministratorScope` 已接上入口；R72 把扫描面扩到全部 `routes/*.ts` 后新增的 3 条 auth 也都有入口；旧版写「注册资料 6、限制资料 6 ＝ 12」，已被代码证伪，见 §4） |
 | 两端都缺 | 契约里本就没有写操作；或只在缺省装配（stub / real 无池）下服务层未接线 | 「人工审核」工作台（审核人 / 投票 / 专家认证）仍缺：`ReviewPlaceholderView` 是空态说明页、服务层 `wired:false`（apps/admin/src/views/ReviewPlaceholderView.vue:38-60、services/api/src/admin/human-review.ts:40）；但**帖子级**通过/驳回已随 S3 进契约并有路由与页面（§1.1、§2.1），不再算「两端都缺」；审计总台账与作业的 503 只出现在缺省装配，`real` + 有库池时端口已构造（services/api/src/app.ts:1375-1377、services/api/src/app.ts:1513-1514） |
 
 三档不是验收结论：第一档只表示「调用链与失败路径都在代码里」，没有对真实数据、真实 PROVIDER 或真实权限组合做过运行验证。

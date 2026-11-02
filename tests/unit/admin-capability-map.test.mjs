@@ -24,7 +24,9 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 /** 工具读的八个入口（相对仓根）。负例只拷这些，避免整仓复制。 */
 const SOURCE_PATHS = [
-  'services/api/src/routes/admin.ts',
+  // 扫描面是**整个 routes 目录**（R72 起），只拷 `admin.ts` 会让 `admin-auth.ts` 的 3 条 auth
+  // 注册在负例副本里凭空消失，跑出「重算 46」这种假红。
+  'services/api/src/routes',
   'services/api/src/admin/families.ts',
   'services/api/src/admin/ops/service.ts',
   'services/api/src/admin/audit/catalog.ts',
@@ -40,10 +42,15 @@ const SOURCE_PATHS = [
  * 2026-10-28 之前这里是 `['grantAdministratorScope', 'revokeAdministratorScope']`——两条授/撤权
  * 写面只有 operationId 常量、没有客户端函数，因此没有入口。GY-R68 把
  * `apps/admin/src/lib/administrator-scope-api.mjs` 与 `AdministratorsView.vue` 的调用链接上之后，
- * 46 条 operation 全部有入口。
+ * 缺口清零。
+ *
+ * R72（扫描面从 `admin.ts` 扩到整个 `services/api/src/routes/`）之后总数是 49 条：`admin.ts`
+ * 46 条 + `admin-auth.ts` 3 条 auth。那 3 条不是缺口——`apps/admin/src/auth/session.ts` 的
+ * `loadAdminSession` / `signInAdmin` / `signOutAdmin` 就是它们的客户端，9 个视图真调了这三个函数。
  *
  * 这个常量是**断言**，不是注释：它和 `noUiEntryList` 双向对拍（多一条少一条都红）。
  * 清单清空不等于判据放宽——哪天有人把入口拆掉，这里必须先被显式改回来，闸门才会重新变绿。
+ * 反过来，任何「登记进来但能力图里没有这一行」的名字同样红（见下方 `KNOWN_NO_UI_ENTRY` 对拍）。
  */
 const KNOWN_NO_UI_ENTRY = [];
 
@@ -222,7 +229,9 @@ test('负例二：改文档标记块里的数字 ⇒ --check 变红并给出「�
   const result = runCli(['--check', '--root', root]);
   const output = `${result.stdout}\n${result.stderr}`;
   assert.equal(result.code, 1);
-  assert.match(output, /文档写 42，重算 46/, output);
+  // 重算侧读数从能力图里取，别把总数写死（写死会在扫描面变化时变成一条假红）。
+  const actualTotal = buildCapabilityMap(loadSources(root)).summary.totalOps;
+  assert.match(output, new RegExp(`文档写 42，重算 ${actualTotal}`), output);
 });
 
 test('负例三：标记块缺失 ⇒ --check 变红（不许默默放过）', t => {
@@ -487,9 +496,10 @@ test('--update 只重写标记块，不动块外散文', t => {
 test('汇总行可直接贴进回报（含四个关键读数）', () => {
   const map = buildCapabilityMap(loadSources(REPO_ROOT));
   const line = renderSummaryLine(map);
-  assert.match(line, /totalOps=46/);
-  assert.match(line, /有入口=46/);
-  assert.match(line, /无入口=0/);
-  assert.match(line, /死按钮=0/);
+  const { totalOps, withUiEntry, noUiEntry, deadButtons } = map.summary;
+  assert.match(line, new RegExp(`totalOps=${totalOps}`));
+  assert.match(line, new RegExp(`有入口=${withUiEntry}`));
+  assert.match(line, new RegExp(`无入口=${noUiEntry}`));
+  assert.match(line, new RegExp(`死按钮=${deadButtons}`));
   assert.equal(readdirSync(join(REPO_ROOT, 'tools/lib')).includes('admin-capability-map.mjs'), true);
 });

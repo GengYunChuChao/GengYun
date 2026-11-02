@@ -28,6 +28,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { MediaError } from '../../packages/media/index.mjs';
+import { MEDIA_INITIATED_TTL_MS } from '../../packages/media/constants.mjs';
 import {
   createS3CompatibleObjectStore,
   createSubstituteObjectStore,
@@ -188,14 +189,17 @@ test('[4] 失败语义没被放宽：删除未确认 ⇒ 仍进 pendingObjects�
   const { store, substitute } = declaredUnsupportedStore({
     deleteObject: (innerDelete) => async (key) => (key === 'objects/raw-1' ? false : innerDelete(key)),
   });
-  const memory = createMemoryMediaStore({ now: () => AT });
+  // r72：时钟可推进 —— 台账行的去留由「预签名上传句柄是否还活着」（`createdAt + MEDIA_INITIATED_TTL_MS`）
+  // 决定，而不是「桶删除是否被确认」。详见 tests/unit/media-cleanup-intent-ttl.test.mjs T1/T2/T3。
+  let clockMs = AT;
+  const memory = createMemoryMediaStore({ now: () => clockMs });
   await memory.createMedia(rejectedRecord());
   const wired = createAppMediaService({
     executionMode: 'real',
     objectStore: store,
     tokenSecret: TOKEN_SECRET,
     persistence: memory,
-    now: () => new Date(AT),
+    now: () => new Date(clockMs),
     realMediaApproval: approveRealMediaWiring({ reason: 'W15 单测：未确认删除必须保留重试依据（零外呼）' }),
   });
 
@@ -212,9 +216,23 @@ test('[4] 失败语义没被放宽：删除未确认 ⇒ 仍进 pendingObjects�
   assert.equal(kept.rawRef, 'objects/raw-1', '未确认删除的对象引用必须留着（重试依据）');
   assert.equal(kept.derivativeRef, null, '已确认删除的那一个引用被清掉');
 
+  // r72：句柄寿命 24h 与「删除是否被确认」无关 —— 同轮刚登记、尚未到期的衍生件行也必须留着
+  // （迟到 PUT 仍能把对象写回来），因此第一轮台账是**两行**（raw 因为删不掉，der 因为句柄还没失效）。
   const ledger = await memory.listObjectCleanup();
   assert.deepEqual(
-    ledger.map((row) => row.objectRef),
+    ledger.map((row) => row.objectRef).sort(),
+    ['objects/der-1', 'objects/raw-1'],
+    '台账行必须留着：raw 删除未确认；der 的句柄尚未失效（保留到 createdAt + MEDIA_INITIATED_TTL_MS）',
+  );
+  assert.equal(await substitute.objectCount(), 1, '桶侧确实还留着那一个');
+
+  // 越过 TTL 之后再扫一轮：未确认的那个仍留着行（旧语义原样保留），已确认的那个行才被删掉。
+  clockMs = AT + MEDIA_INITIATED_TTL_MS + 1000;
+  const expired = await wired.cleanupOrphans();
+  assert.equal(expired.pendingObjects, 1, '未确认删除 ⇒ 仍进 pendingObjects');
+  assert.equal(expired.removedObjects, 1, '到期后才允许删掉已确认删除的那条台账行');
+  assert.deepEqual(
+    (await memory.listObjectCleanup()).map((row) => row.objectRef),
     ['objects/raw-1'],
     '台账行同样必须留着：父行一旦被清空引用，只有台账还记着这个对象',
   );
