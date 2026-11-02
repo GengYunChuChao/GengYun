@@ -85,7 +85,7 @@ export function classifyBashProbe(result = {}) {
  * 否则 `spawn` 直接 EINVAL（CVE-2024-27980 之后不再隐式走 cmd.exe）；真 bash 走直连，不经过 shell。
  */
 export function probeBash(file, { env } = {}) {
-  const options = { encoding: 'utf8', timeout: 30000, windowsHide: true, ...(env === undefined ? {} : { env }) };
+  const options = { encoding: 'utf8', timeout: 180000, windowsHide: true, ...(env === undefined ? {} : { env }) };
   const result = /\.(?:cmd|bat)$/i.test(file)
     ? spawnSync(`"${file}" ${PROBE_ARGS.map((a) => (/\s/.test(a) ? `"${a}"` : a)).join(' ')}`,
       { ...options, shell: true })
@@ -181,3 +181,18 @@ export function resolveGateBash(options = {}) {
   }
   return { ...resolution, bashPath: resolution.path, env: wrapped.env };
 }
+
+// ─────────────────────────── `probeBash` 的 180s 从哪来（抖动修法，不是放宽判据）───────
+// 上面 `probeBash()` 里 `timeout: 180000`（原值 30000）是**实测**定的，不是拍的。同一台
+// Windows 开发机（16 vCPU / Node v24.16.0）上，PATH 兜底候选 `bash`（落到 WSL 后端）跑一次
+// 探针 `bash -c "echo ok"`，串行三次 6739 / 18211 / 48419 ms —— 48419ms 那次是 WSL 虚拟机
+// 在**整套 unit 并发**（15 个测试文件同时跑）下冷启动，已经越过旧的 30000ms 窗口。
+// 越过窗口的后果不是「红」而是「静默变形」：spawnSync 杀进程 → 探针返回 ETIMEDOUT →
+// `classifyBashProbe` 只能报「无法启动（ETIMEDOUT）」，真实原因（它是 WSL 存根）被盖掉；
+// 若某台机器 PATH 里排的是**真** MSYS/Git bash 而首次调用慢（杀毒扫描、网络盘、冷缓存），
+// 就会被误判成不可用 ⇒ 调用方 `t.skip()` ⇒ 三条 release-materials 用例变成假绿。
+// 180000 = 实测上限 48419ms 的 3.72 倍；同时不低于它所门禁的那些用例自己的窗口
+// （`release-materials-index.test.mjs:206` 与 `release-materials-index-strict.test.mjs:95`、
+// `release-runbook-guard.test.mjs:100` 都是 120000/180000）——被门禁的东西允许跑 180s，
+// 那么「探它能不能跑」的探针不该比它还短。
+// 判定语义一个字没动：仍然要「退出码 0 且输出含 ok 且不是 WSL 存根」才算可用，只是肯多等。
