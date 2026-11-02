@@ -591,6 +591,13 @@ const SYMBOL_MAX_LENGTH = 200;
  *   它是**纯子串匹配**（`String.prototype.includes`，区分大小写、不校验标识符边界）：极短符号
  *   （如 `"e"`）几乎任何行都能命中，实际判别力靠 `reason` 写清该锚点应指的 API + 人工 review；
  *   这里**不**加最小长度阈值 —— 那会引入「多短才算符号」的新语义，而本闸门不判语义。
+ * - **单端位移必须带 `kind: "correction"`**：`from === to` 但 `(fromEnd ?? from) !== (toEnd ?? to)`
+ *   （起点不动、只改末端）的条目，缺省 `kind` 一律形状错误。单端位移本身合法（E03 就是
+ *   `services/api/src/app.ts:2515-2560 → 2515-2566`：起点 :2515 不动、末端 +6 修到收尾 `]));`），
+ *   但只有 `kind: "correction"` 这一支才强制机读证据 —— `symbol` 必须出现在新行窗口、且不出现在
+ *   旧窗口（见 `correctionViolation`）。缺省 `kind` 的普通条目零机读证据，只有散文 `reason`，
+ *   而 `reason` 写什么都行：审查实测「普通条目单端越界延伸 `20-21 → 20-25`（末端挪进函数体）」
+ *   与「普通条目单端收缩 `20-25 → 20-21`（静默丢掉 4 行覆盖）」都只有散文可写，没人能核。
  */
 const REGISTRY_ENTRY_SHAPE = (entry) => {
   if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) return '条目不是对象';
@@ -620,6 +627,23 @@ const REGISTRY_ENTRY_SHAPE = (entry) => {
   } else if (entry.symbol !== undefined) {
     return 'symbol 只在 kind="correction" 下允许出现；缺省 kind 却写了 symbol 是半成品登记'
       + '（要么补 kind: "correction"，要么删掉 symbol）';
+  }
+  // 单端位移（起点不动、只改末端）必须带 `kind: "correction"`。单端位移本身是合法的（E03：
+  // `2515-2560 → 2515-2566`），但缺省 kind 的普通条目**没有任何机读证据**：`reason` 是散文，写什么都行。
+  // 审查用四组夹具实测过这条口子 —— 旧谓词（只看 `from === to`）判红、新谓词（与 `correctionViolation`
+  // 同形）转绿的两种形态都没有符号可核：普通条目单端**越界延伸**（`20-21 → 20-25`，末端从注释行挪进
+  // 函数体 6 行）与普通条目单端**收缩**（`20-25 → 20-21`，静默丢掉 4 行覆盖）。合理的那一侧
+  // （`kind: "correction"` + symbol 把末端修到真实收尾行）照旧放行，见 D4。
+  if (entry.kind === undefined
+    && entry.from === entry.to
+    && (entry.fromEnd ?? entry.from) !== (entry.toEnd ?? entry.to)) {
+    return '单端位移（from === to 但末端不同：起点不动、只改末端）必须带 kind: "correction" + 可核 symbol'
+      + ' —— 单端位移本身合法（E03 的 2515-2560 → 2515-2566 就是这样），但只有 kind="correction"'
+      + ' 才强制机读证据：symbol 必须出现在新行窗口里、且不出现在旧窗口里（见 correctionViolation）。'
+      + '缺省 kind 的普通条目没有任何机读证据，只有散文 reason —— 而 reason 写什么都行，没人能核'
+      + '「末端该停在哪一行」：单端越界延伸（20-21 → 20-25，末端一路挪进函数体）与单端收缩'
+      + '（20-25 → 20-21，静默丢掉 4 行覆盖）都会被静默放行。'
+      + '要么补 kind: "correction" 与 symbol，要么删掉这条登记。';
   }
   return null;
 };
@@ -984,10 +1008,10 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
       continue;
     }
     const label = `[登记表] 第 ${index + 1} 条 ⟨${entry.doc}:${entry.line} ${entry.target} :${entry.from} → :${entry.to}⟩`;
-    // 「零位移」的判据必须与 `correctionViolation` 里的零位移判据（同文件 :654）**同形**：起点相同
+    // 「零位移」的判据必须与 `correctionViolation` 里的零位移判据（同文件 :678）**同形**：起点相同
     // **且**末端也相同，才叫「旧锚点根本没动」。这里以前只看起点（`entry.from === entry.to`），于是
     // **单端位移**（起点不动、只改末端，例如 `2515-2560 → 2515-2566`：起点 2515 不变、末端 +6）
-    // 被这里判成「陈旧，必须删」，而 `correctionViolation`（:654）与 `matchRegistry`（逐端比对，
+    // 被这里判成「陈旧，必须删」，而 `correctionViolation`（:678）与 `matchRegistry`（逐端比对，
     // 区间锚点必须同时给出 fromEnd/toEnd 才算命中）都认它 —— 两条规则自相矛盾。
     // 为什么单端位移必须能登记：
     //   ① 目标文件本提交未改动时，`if (!changed)` 那一支要求新旧锚点**两端都恒等**，差值平移根本
@@ -996,8 +1020,16 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
     // 真实案例就是 E03：`services/api/src/app.ts:2515-2560` 的末端落在 `createAnswerJobSource` 的
     // `cancelJob` 函数体里，收尾 `]));` 在 :2566，正确写法是 `2515-2566`（起点不动、末端 +6）——
     // 四个格子（文档值 × 登记 toEnd）没有一个能绿，正是这两条规则互相矛盾的结果。
-    // 改成同形谓词**不是放宽**：四端全同的真正零位移条目下面照样判红、文案逐字不变；单端位移仍要过
-    // `matchRegistry` 的逐端比对，也仍要过下面「两端原文不许同时相同」那条判据。
+    // 改成同形谓词是**必要的**：四端全同的真正零位移条目下面照样判红、文案逐字不变。但它确实给
+    // 「单端位移」开了一条合法通道，所以护栏得写明白，别把下面那条近乎空转的判据当护栏：
+    //   ⛔ 「两端原文不许同时相同」那条判据（同文件 :1083-1085）在**单端形态**下几乎拦不住东西：
+    //   它的第一个合取项是 `base[from-1] === head[to-1]`，而 `from === to` 且目标文件本提交未改动时
+    //   该项**恒真**，于是整条判据退化成「两个末端行的原文不同」—— 它拦得住「两端都是空白行 /
+    //   都是 `}`」这种，拦不住「末端 :21 → :25 一路挪进函数体 6 行」：注释行与 `]));` 当然不同，
+    //   而那正是要修的错误形态本身。
+    //   ✅ 真正的护栏是另外两条：① `REGISTRY_ENTRY_SHAPE` 要求单端位移必须带 `kind: "correction"`
+    //   （因此强制 `symbol` 可核：新行窗口必须含它）；② `correctionViolation` 的 :685-691 要求旧窗口
+    //   不含该符号 —— 「旧锚点本来就指对」一律判红。缺任一条，没有符号的普通条目就能拿散文 reason 藏错。
     if (entry.from === entry.to && (entry.fromEnd ?? entry.from) === (entry.toEnd ?? entry.to)) {
       violations.push(`${label} 陈旧：from 与 to 相同，不可能对应任何位移，必须删`);
       continue;
@@ -2140,11 +2172,13 @@ test('C9 纠正夹具：symbol 是纯空白串 ⇒ 形状错误判红（空白�
   t.diagnostic(`夹具（C9 纯空白 symbol）判红 ${result.violations.length} 条：${shapeLine}`);
 });
 
-// ───────────── D 组夹具：单端位移（起点同、末端不同）—— 登记表自检必须与 :654 同形 ─────────────
+// ───────────── D 组夹具：单端位移（起点同、末端不同）—— 登记表自检必须与 :678 同形 ─────────────
 // 真实形态是 E03：`services/api/src/app.ts:2515-2560 → 2515-2566`（起点 :2515 不动，末端 +6，改到
 // `registerJobRoutes(...)` 的收尾 `]));`）。目标文件本提交未改动 ⇒ 只能走登记表；`matchRegistry`
-// （逐端比对）与 `correctionViolation`（:654 同形谓词）都认单端位移，只有登记表自检的旧判据
-// `entry.from === entry.to` 不认 ⇒ 文档值 × 登记 toEnd 的四个格子没有一个能绿。D1/D2 把两种形状钉住。
+// （逐端比对）与 `correctionViolation`（:678 同形谓词）都认单端位移，只有登记表自检的旧判据
+// `entry.from === entry.to` 不认 ⇒ 文档值 × 登记 toEnd 的四个格子没有一个能绿。D1/D2 钉住「同形谓词
+// 必要且零位移仍红」，D3/D4 钉住它的副作用：缺 `kind` 的单端位移必须判形状错误，带
+// `kind: "correction"` + symbol 的照旧放行（否则 E03 那条合理登记会被一起打死）。
 
 /** D 组目标文件的「装配块」：:20 起头，:21 还是块内，:23 才是含 `]));` 的收尾行（对齐 E03 现场）。 */
 const SINGLE_END_BLOCK_START = 20;
@@ -2188,7 +2222,7 @@ test('D1 单端位移：from === to 但 fromEnd !== toEnd 的登记必须被接�
   assert.deepEqual(
     result.violations,
     [],
-    `单端位移的登记被拦住了（这是 :987 与 :654 不同形的老症状）：${result.violations.join(' | ')}`,
+    `单端位移的登记被拦住了（这是 :1033 与 :678 不同形的老症状）：${result.violations.join(' | ')}`,
   );
   assert.equal(result.stats.registered, 2, '路径锚点 + 同行裸锚点都必须由这条登记接住');
   assert.equal(result.stats.corrected, 2, 'kind=correction 验真通过后按 token 各 +1');
@@ -2206,7 +2240,7 @@ test('D1 单端位移：from === to 但 fromEnd !== toEnd 的登记必须被接�
 });
 
 test('D2 真零位移：四端全同（起点同、末端也同）的登记仍然判红，且「陈旧」文案逐字不变', (t) => {
-  // 把 :987 的判据改成同形谓词**不许**顺手把这条也放行：旧锚点根本没动，谈不上「把错锚点改到正确
+  // 把 :1033 的判据改成同形谓词**不许**顺手把这条也放行：旧锚点根本没动，谈不上「把错锚点改到正确
   // 行号」。文案与 C8 盯的是同一句，这里逐字比对整条 violation。
   const anchor = `${SINGLE_END_BLOCK_START}-${SINGLE_END_TRUNCATED_END}`;
   const baseDoc = docFile({ anchor });
@@ -2246,6 +2280,95 @@ test('D2 真零位移：四端全同（起点同、末端也同）的登记仍�
   assert.equal(result.stats.registered, 0, '失败一律不许计入 registered');
   assert.equal(result.carried.length, 0, '不合格的条目不许退化成「历史保留」');
   t.diagnostic(`夹具（D2 四端全同 20-21→20-21）判红 1 条：${result.violations[0]}`);
+});
+
+test('D3 单端位移缺 kind ⇒ 形状错误判红（无符号证据的合法通道必须关掉）', (t) => {
+  // #858（75d44a0d）把 :1033 的自检谓词改成与 `correctionViolation`（:678）同形后，单端位移
+  // （`from === to`、只改末端）有了合法通道。审查用四组夹具实测：普通条目的单端**越界延伸**
+  // （`20-21 → 20-25`，末端从注释行挪进函数体 6 行）与普通条目的单端**收缩**（`20-25 → 20-21`，
+  // 静默丢掉 4 行覆盖）在旧谓词下判红、在新谓词下**转绿** —— 两者都没有任何机读证据，只有散文
+  // `reason`，写什么都行。加固就是这一条：缺省 `kind` + 单端位移 ⇒ 形状错误（连判定面都不许进）。
+  // 夹具刻意用 D1 那条**合理**形状（`20-21 → 20-23`），只把 `kind` 拿掉：与 D1 的差别只有这一处，
+  // 于是「红」只可能来自形状规则本身，不会被「这个位移本来就不对」混淆。
+  const baseDoc = docFile({ anchor: `${SINGLE_END_BLOCK_START}-${SINGLE_END_TRUNCATED_END}` });
+  const headDoc = docFile({ anchor: `${SINGLE_END_BLOCK_START}-${SINGLE_END_FULL_END}` });
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [{
+      doc: FIXTURE_DOC,
+      line: anchorDocLine(headDoc),
+      target: FIXTURE_TARGET,
+      from: SINGLE_END_BLOCK_START,
+      fromEnd: SINGLE_END_TRUNCATED_END,
+      to: SINGLE_END_BLOCK_START,
+      toEnd: SINGLE_END_FULL_END,
+      // 故意不写 kind / symbol：普通条目，只有散文 reason。
+      reason: '夹具（D3）：同 D1 的单端位移，但缺省 kind —— 没有 symbol 可核，reason 写什么都行',
+    }],
+  });
+  const text = result.violations.join('\n');
+  assert.ok(result.violations.length > 0, 'kind 缺省的单端位移竟然判绿：无符号证据的通道没关掉');
+  assert.match(text, /\[登记表\] 第 1 条形状错误/);
+  assert.match(text, /单端/, '形状错误文案必须点名「单端」，否则读的人不知道哪条形状不对');
+  assert.match(text, /correction/, '形状错误文案必须写明出路是 kind: "correction" + symbol');
+  assert.match(text, /reason/, '文案要写清「只有散文 reason、没有机读证据」这个理由');
+  assert.equal(result.stats.registered, 0, '形状错误一律不许计入 registered');
+  assert.equal(result.stats.corrected, 0, '形状错误一律不许计入 corrected');
+  assert.equal(result.carried.length, 0, '形状错误的条目不许退化成「历史保留」');
+  // 形状不合法的条目不参与匹配（`matchRegistry` 先跑形状校验）⇒ 这一行里的两个 token 必须落回
+  // 判定面真判红，不许被「登记过」静默搬走 —— 否则「形状错误」只会变成一条被忽略的噪音。
+  assert.ok(
+    result.violations.length >= 2,
+    `两个 token 必须各自落回判定面判红（形状错误之外还要有位移判定）：${text}`,
+  );
+  const shapeLine = result.violations.find((item) => /形状错误/.test(item));
+  t.diagnostic(`夹具（D3 单端位移缺 kind）判红 ${result.violations.length} 条：${shapeLine}`);
+});
+
+test('D4 同形态但带 kind="correction" + symbol ⇒ 形状校验通过、整条判绿（合理的那一侧照旧放行）', (t) => {
+  // 与 D3 的差别只有「补上 kind 与 symbol」：起点 :20 不动、末端从 :21 延伸到 :23 的真实收尾行
+  // `]));`。这正是审查给 P2 判「合理」的那一侧 —— 终点修到真实收尾行、symbol 唯一可核。
+  // 用 `20-21 → 20-25`（P1/P2 的越界延伸形态）而不是 `→ 20-23`：末端多出来的 22/23 两行仍是
+  // 同一段装配块，说明「形状规则拦的是缺证据，不是拦延伸长度」。
+  const baseDoc = docFile({ anchor: `${SINGLE_END_BLOCK_START}-${SINGLE_END_TRUNCATED_END}` });
+  const headDoc = docFile({ anchor: `${SINGLE_END_BLOCK_START}-25` });
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const entry = {
+    doc: FIXTURE_DOC,
+    line: anchorDocLine(headDoc),
+    target: FIXTURE_TARGET,
+    from: SINGLE_END_BLOCK_START,
+    fromEnd: SINGLE_END_TRUNCATED_END,
+    to: SINGLE_END_BLOCK_START,
+    toEnd: 25,
+    kind: 'correction',
+    symbol: SINGLE_END_SYMBOL,
+    reason: '夹具（D4）：起点 :20 不动、末端由 :21 延伸到 :25（`]));` 在 :23，落在新窗口内、旧窗口 20-21 不含它）',
+  };
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head, registry: [entry] });
+  assert.deepEqual(
+    result.violations,
+    [],
+    `带 kind + symbol 的单端位移必须放行，实际判红 ${result.violations.length} 条：${result.violations.join(' | ')}`,
+  );
+  assert.equal(result.stats.registered, 2, '路径锚点 + 同行裸锚点都必须由这条登记接住');
+  assert.equal(result.stats.corrected, 2, 'kind=correction 验真通过后按 token 各 +1');
+  assert.equal(result.stats.judged, 0, '前提：本提交的 token 全靠这条登记接住，没有一条落到判定面');
+  assert.equal(result.carried.length, 0, '本次真正生效的条目不许退化成「历史保留」');
+  assert.ok(
+    result.registered.every((message) => /kind=correction/.test(message) && message.includes(SINGLE_END_SYMBOL)),
+    `registered 必须逐条打印 kind=correction 与 symbol 供人工复核：${result.registered.join(' | ')}`,
+  );
+  t.diagnostic(`夹具（D4 单端位移 20-21→20-25 + correction）${summarize(result, 'fixture')}；已登记：${result.registered[0]}`);
 });
 
 test('变异夹具：整行删掉带锚点的文档行（另改一行散文）⇒ 不判红，但锚点必须进 removed，不许隐身', (t) => {
