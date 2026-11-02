@@ -1,0 +1,85 @@
+{
+  "_comment": "耕云正式环境接入清单模板。本文件只有键名与占位符，不含任何真实密钥、连接串、桶名或个人信息，可提交。复制为 config/production-provisioning.local.json 后填写；该文件被 .gitignore 忽略。所有值均为字符串（数值项也写字符串，如 \"30\"）。模板自检：node tools/verify-production-provisioning.mjs --check config/production-provisioning.local.json.example",
+  "_example": true,
+  "environment": "<请填写>",
+  "wechat": {
+    "appid": "<请填写>",
+    "appSecretEnv": "<请填写>",
+    "requestDomain": "<请填写>",
+    "uploadFileDomain": "<请填写>",
+    "downloadFileDomain": "<请填写>",
+    "socketDomain": "<请填写>",
+    "icpFilingNumber": "<请填写>",
+    "tlsMinVersion": "<请填写>",
+    "certificateExpiresOn": "<请填写>"
+  },
+  "privacy": {
+    "agreementVersion": "<请填写>",
+    "declaredInterfaces": "<请填写>",
+    "evidencePath": "<请填写>"
+  },
+  "database": {
+    "urlEnv": "<请填写>",
+    "readonlyUrlEnv": "<请填写>",
+    "poolMax": "<请填写>",
+    "statementTimeoutSeconds": "<请填写>",
+    "tlsMode": "<请填写>"
+  },
+  "providers": {
+    "weedRecognition": {
+      "vendor": "<请填写>",
+      "endpoint": "<请填写>",
+      "apiKeyEnv": "<请填写>",
+      "timeoutSeconds": "<请填写>"
+    },
+    "ocr": {
+      "vendor": "<请填写>",
+      "endpoint": "<请填写>",
+      "apiKeyEnv": "<请填写>",
+      "timeoutSeconds": "<请填写>"
+    },
+    "asr": {
+      "vendor": "<请填写>",
+      "endpoint": "<请填写>",
+      "apiKeyEnv": "<请填写>",
+      "timeoutSeconds": "<请填写>"
+    },
+    "tts": {
+      "vendor": "<请填写>",
+      "endpoint": "<请填写>",
+      "apiKeyEnv": "<请填写>",
+      "timeoutSeconds": "<请填写>"
+    },
+    "llm": {
+      "vendor": "<请填写>",
+      "endpoint": "<请填写>",
+      "apiKeyEnv": "<请填写>",
+      "timeoutSeconds": "<请填写>"
+    },
+    "moderation": {
+      "vendor": "<请填写>",
+      "endpoint": "<请填写>",
+      "imageEndpoint": "<请填写>",
+      "apiKeyEnv": "<请填写>",
+      "timeoutSeconds": "<请填写>"
+    }
+  },
+  "storage": {
+    "endpoint": "<请填写>",
+    "bucket": "<请填写>",
+    "accessKeyEnv": "<请填写>",
+    "secretKeyEnv": "<请填写>",
+    "signedUrlTtlSeconds": "<请填写>"
+  },
+  "observability": {
+    "logEndpoint": "<请填写>",
+    "alertEndpoint": "<请填写>",
+    "retentionDays": "<请填写>"
+  },
+  "backup": {
+    "endpoint": "<请填写>",
+    "schedule": "<请填写>",
+    "retentionDays": "<请填写>",
+    "restoreDrillDate": "<请填写>"
+  }
+}
