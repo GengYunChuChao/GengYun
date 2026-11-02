@@ -39,7 +39,7 @@ node "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js" install --ignore-
 | 其他读者无媒体版本/路径 | Post.media实际媒体版本；Author.revision/avatar_media；POST社区上下文授权+GET带userSession与专属token的二进制取图。If-Match是内容revision，媒体/头像revision另核；旧owner私有接口不扩权 | 作者/其他读者/评论头像完整合成链；独立7/11/5/13版本；私有/未审/识别/问答资源签发拒绝，内容/媒体/作者/用途/会话/父帖/注销变化后取图拒绝；错ETag/媒体版本、错grant/token、把拒绝改200均失败 |
 | Post关联输入无法回传 | linked_knowledge_ref + linked_knowledge统一Post投影；无关联null，可用仅公开标题，不可用保留目标ref但summary=null；编辑省略保留、null解除、原失效引用可原样保留 | 创建→审核→详情/列表→编辑的8组合成往返；无关联/有效/下架/过期/不可见、保留/省略/解除；丢引用、目标版本不一致、旧受限标题泄漏均失败 |
 
-本轮实际命令：`python tools/validate_development_docs.py`、`python tools/validate_contracts.py`、`python tools/test_contracts.py`、`git diff --check`；结果分别为27任务/链接依赖PASS，112操作/29设计fixture/30媒体trace/8资料往返PASS，8组测试PASS，空白检查PASS。所有trace只验证合成快照和契约断言；不是HTTP服务器、真实会话/签名、存储ACL或真实AI运行证据。
+本轮实际命令：`python tools/validate_development_docs.py`、`python tools/validate_contracts.py`、`python tools/test_contracts.py`、`git diff --check`；结果分别为27任务/链接依赖PASS，操作条数以 `python tools/validate_contracts.py` 的当次输出为准/29设计fixture/30媒体trace/8资料往返PASS，8组测试PASS，空白检查PASS。所有trace只验证合成快照和契约断言；不是HTTP服务器、真实会话/签名、存储ACL或真实AI运行证据。
 
 独立标准验证复用受控环境Python3.12、jsonschema4.25.1及同一官方schema/hash，运行 `python tools/validate_openapi_standard.py --schema .supervisor/openapi-3.1-schema.json --dependency-path .supervisor/pydeps`：PASS，205组件及130个wire对象（含29基本fixture和trace内请求/grant/Post往返形状）；新HEAD/CI链接记PR。没有重新下载/安装依赖或变更共享配置。新版本服务端守卫、并发、token验签、图片字节及撤销的实测仍需GY-I06/15/27/19完成，不因设计断言PASS宣称AC08/09/16/19通过。
 
