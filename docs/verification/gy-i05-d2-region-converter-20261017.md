@@ -60,7 +60,7 @@ $ git diff --stat upstream/main...HEAD
 
 ### 2.2 真页面回环证据（`tests/integration/profile-ui-http.test.mjs`）
 
-- 资源缺席支：哨兵坐标 `27.1234/119.5678`（合成长坐标，非任何真实质心）经注入的 `wx.getLocation` 进入；message 逐字等于 `MESSAGES.unavailable`；`getLocation` 恰调用一次且 `type='wgs84'`；不预选；哨兵值不出现在任何 storage 值、任何请求体与任何路由记录中。
+- 资源缺席支：哨兵坐标 `27.1234/119.5678`（合成长坐标，非任何真实质心）经注入的 `wx.getLocation` 进入；message 逐字等于 `MESSAGES.unavailable`；`getLocation` 恰调用一次且 `type='wgs84'`（**该读数已于 GY-R73 被后续实现推翻：资源缺席时调用 0 次，见 §5 校订注**）；不预选；哨兵值不出现在任何 storage 值、任何请求体与任何路由记录中。
 - 正控制支：注入 `() => '330102'` 后按定位预选真目录县区，`onSave` 的 body 键集恰为 `['crop_id','region_catalog_version','region_code']` 且 `region_code` 在目录内（双源交叉校验）。
 
 `tests/integration/local-dev-profile-location.cjs` 亦已扩等价断言（静态无 `null` + 真页面 `build()` 装配），但该脚本需微信开发者工具 automator，**本机三处候选路径均不存在 ⇒ 本轮未真跑**，故以链内 `profile-ui-http.test.mjs` 作为实际回环证据。
@@ -77,3 +77,13 @@ $ git diff --stat upstream/main...HEAD
 - 仓库现有的唯一行政区资源是**字典**而非几何：`packages/knowledge/catalog/regions-zhejiang.json`（来源＝民政部《2023年中华人民共和国县以上行政区划代码》，`mca-xzqh-2023`，102 条／90 县区）与其小程序只读副本 `miniprogram/data/regions.js`，两者均无质心或边界坐标。
 - `miniprogram/data/region-centroids.js` 不存在；仓库与本机均未找到可追溯来源（含许可）的浙江县区几何数据 ⇒ **如实不内置任何坐标**，`build()` 返回 `null`。
 - 因此本页延续 `gy-i05-region-profile-20261014.md` 的结论：坐标→地区转换资源 **未取得**；本片交付的是「资源存在即接线、缺省即 fail-closed」的装配与显式 U3 登记，不是转换能力本身。
+
+## 5 校订注（2026-11-03）
+
+§2.2 首条「资源缺席支」里的「`getLocation` 恰调用一次且 `type='wgs84'`」是 **2026-10-17 的时点读数**；原句按原样保留（上文只在行内加了一句指针），不改写、不删行，以示当时实跑所见。
+
+- 该行为随后被判定为**缺陷**：`miniprogram/utils/location-region.js` 在 `miniprogram/data/region-centroids.js` 缺席时仍先调用 `wx.getLocation`，用户会白被弹一次定位授权，之后才拿到「资源尚未接入」的回落文案。
+- GY-R73 把判定顺序改为「先判转换资源 → 再判 `wxApi` → 最后才 `getLocation`」，资源缺席时 `wx.getLocation` **调用 0 次**，不再申请定位授权；集成断言随之翻转（资源缺席支改为 `located.length === 0`），静态面同步钉住资源缺席时不再多申请一次定位。
+- 对应判据现在钉在 `tests/integration/profile-ui-http.test.mjs:52`（`located.length === 0`，断言文案「资源缺席时不得申请定位：wx.getLocation 必须一次都没被调用」）；静态面在 `tests/unit/miniprogram-location-region.test.mjs:75`。
+- 变更 PR：`#856`（commit `bec6b3c5`）。本注写作时该 PR 尚未合入 main，故上面两处行号按**合入 #856 之后**的树计；合入前 main 上同一断言仍是「恰调用一次」，以本注为准。
+- 旧读数保留的理由：本页是 2026-10-17 的时点证据，抹掉原句等于连带抹掉「当时确实是先申请授权、再回落不可用」这一事实；新行为以本注与上列判据为准，旧读数只作时点留存。
