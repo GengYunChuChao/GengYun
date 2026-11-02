@@ -30,11 +30,16 @@
 //                       终态不可回退（G0003 且行仍 confirmed）／非法态 `accepted` ⇒ G0001（闭集没有第六值）
 //   E-S4-P1-D DDL 可逆：UP ⇒ ROLLBACK ⇒ 再 UP（函数出现—消失—再出现，授权随之消失—再出现）
 //   E-S4-P1-E 读语义：`list_*` 运行时可 EXECUTE、只吐八个预期列、固定按 (recipient_id, export_ref) 排序
+//   E-S4-P1-F 写侧经端口（P2-c，2026-11-03 增补）：**生产端口** `createPostgresThirdPartyDeletionPort`
+//                       的写方法真落库（requested → confirmed、requested_at 不刷新）、终态不回退被映射成
+//                       409 `REVISION_CONFLICT`、端口层预检在**任何 SQL 之前**挡住 confirmed 缺证据
+//                       （不白跑一次库往返）；外加「绕过函数直写 ⇒ 表上 CHECK 兜住」的库层最后一道闸。
 
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import pg from 'pg';
+import { createPostgresThirdPartyDeletionPort } from '../../services/api/src/privacy/third-party-deletion-pg.ts';
 
 const MIGRATION_FILE = '0044_third_party_deletion_persistence.sql';
 const ROLLBACK_FILE = 'rollback/0044_third_party_deletion_persistence.down.sql';
@@ -532,6 +537,222 @@ try {
     '不存在的请求必须返回零行（不抛错：读路径对空集是正常状态）',
   );
   say('⑧ 读语义（真库）：运行时 EXECUTE `list_*` 成功 => 3 行、恰好八列、按 (recipient_id, export_ref) 排序、写进去的值逐字回读、未知请求零行');
+
+  // ------------------------------------------------------------------ [11b] ⑨ 写侧经端口（P2-c）
+  // ⑥ 证明的是「函数能写」；这一面证明的是「**应用侧写侧接线之后**真的会落库」——用的是生产端口
+  // `createPostgresThirdPartyDeletionPort`（`services/api/src/privacy/third-party-deletion-pg.ts`），
+  // 不是再手调一次函数。写侧派发器（`third-party-deletion-dispatch.ts`，本片新增）在这层之上，负责
+  // 「向哪个接收方发、收到什么结论 ⇒ 传什么入参」；那一层由
+  // `tests/unit/third-party-deletion-write.test.mjs` 取证，这里只钉「端口真的写进去了、且不许回退」。
+  //
+  // 计数器包装：端口必须**只**调那两条函数（不拼 DML、不 `SELECT *`），且端口层预检要在**任何 SQL 之前**挡住。
+  const portQueries = [];
+  const countingPool = {
+    async query(text, values) {
+      portQueries.push({ text, values });
+      return runtime.query(text, values);
+    },
+  };
+  const port = createPostgresThirdPartyDeletionPort({ pool: countingPool });
+  const writeRequestId = randomUUID();
+  await owner.query(
+    `INSERT INTO public.deletion_requests
+       (id, user_id, receipt_hash, generation, online_due_at, backup_due_at, receipt_expires_at)
+     VALUES ($1, $2, repeat('b', 64), 1, now() + interval '1 day', now() + interval '2 day', now() + interval '7 day')`,
+    [writeRequestId, userId],
+  );
+
+  const portRequestedAt = '2026-04-11T00:00:00.000Z';
+  const portRequested = await port.subscribeThirdPartyDeletion({
+    requestId: writeRequestId,
+    recipientId: 'recipient-P',
+    state: 'requested',
+    at: portRequestedAt,
+  });
+  assert.equal(portQueries.length, 1, '一次写只该有一条 SQL（单条语句即隐式事务，不需要 BEGIN/COMMIT）');
+  assert.match(
+    portQueries[0].text,
+    /public\.record_third_party_deletion/,
+    `端口必须走 0044 的写函数（表对运行时零 DML），实际语句：${portQueries[0].text}`,
+  );
+  assert.equal(portRequested.requestId, writeRequestId, '端口必须把 request_id 原样带回（写侧要靠它记账）');
+  assert.equal(portRequested.recipientId, 'recipient-P', '接收方标识原样往返');
+  assert.equal(portRequested.exportRef, null, '整账号面没有导出物 ⇒ export_ref 为 null');
+  assert.equal(portRequested.onlineState, 'requested', '首次写入必须落 requested');
+  assert.equal(portRequested.backupState, 'requested', 'P1 单状态限制：两面同值写入');
+  assert.equal(portRequested.requestedAt, portRequestedAt, `requested_at 必须原样记下 p_at，实际：${portRequested.requestedAt}`);
+  assert.equal(portRequested.confirmedAt, null, 'requested 不带 confirmed_at（请求 ≠ 完成）');
+  assert.equal(portRequested.evidenceRef, null, 'requested 不带证据');
+  assert.equal(portRequested.errorCode, null, 'requested 不带错误码');
+
+  const portEvidence = 'evidence:third-party-deletion-port-1';
+  const portConfirmedAt = '2026-04-12T00:00:00.000Z';
+  const portConfirmed = await port.subscribeThirdPartyDeletion({
+    requestId: writeRequestId,
+    recipientId: 'recipient-P',
+    state: 'confirmed',
+    evidenceRef: portEvidence,
+    at: portConfirmedAt,
+  });
+  assert.equal(portConfirmed.onlineState, 'confirmed', 'requested → confirmed 必须被接受');
+  assert.equal(portConfirmed.backupState, 'confirmed', '两面同值');
+  assert.equal(portConfirmed.evidenceRef, portEvidence, 'confirmed 必须与证据同一次写齐');
+  assert.equal(portConfirmed.confirmedAt, portConfirmedAt, `confirmed_at 必须原样记下 p_at，实际：${portConfirmed.confirmedAt}`);
+  assert.equal(portConfirmed.requestedAt, portRequestedAt, '写结论不许刷新 requested_at');
+
+  // 库 owner 视角独立复核（不信端口返回值的自述）。
+  const portRow = await rowAsOwner({ requestId: writeRequestId, recipientId: 'recipient-P' });
+  assert.equal(portRow.online_state, 'confirmed', `库里必须真的是 confirmed，实际：${portRow.online_state}`);
+  assert.equal(portRow.backup_state, 'confirmed', '库里两面都是 confirmed');
+  assert.equal(portRow.requested_at.toISOString(), portRequestedAt, '库里的 requested_at 仍是首次受理时刻');
+  assert.equal(portRow.confirmed_at.toISOString(), portConfirmedAt, '库里的 confirmed_at 就是结论时刻');
+  assert.equal(portRow.evidence_ref, portEvidence, '库里的证据原样');
+
+  // 读路径回读同一行（应用侧回执投影读的就是这条路径）。
+  const portReadBack = await port.listThirdPartyDeletions(writeRequestId);
+  assert.equal(portReadBack.length, 1, '该请求经端口只该读到 1 行');
+  assert.deepEqual(
+    [
+      portReadBack[0].recipientId,
+      portReadBack[0].exportRef,
+      portReadBack[0].onlineState,
+      portReadBack[0].backupState,
+      portReadBack[0].requestedAt,
+      portReadBack[0].confirmedAt,
+      portReadBack[0].evidenceRef,
+      portReadBack[0].errorCode,
+    ],
+    ['recipient-P', null, 'confirmed', 'confirmed', portRequestedAt, portConfirmedAt, portEvidence, null],
+    '端口读回必须与写回逐字一致（读写同体，端口是应用侧唯一的进出通道）',
+  );
+
+  // 终态不回退：端口把库层的 `G0003` 折成 409 `REVISION_CONFLICT`（⛔ 不是「并发重试」、不许 retryable）。
+  const portRegressError = await (async () => {
+    try {
+      await port.subscribeThirdPartyDeletion({
+        requestId: writeRequestId,
+        recipientId: 'recipient-P',
+        state: 'requested',
+        at: '2026-04-13T00:00:00.000Z',
+      });
+      return null;
+    } catch (error) {
+      return error;
+    }
+  })();
+  assert.ok(portRegressError !== null, 'confirmed 是终态：端口再次 requested 必须失败（不许静默吞掉）');
+  assert.equal(
+    portRegressError.code,
+    'REVISION_CONFLICT',
+    `终态回退必须映射成 REVISION_CONFLICT（G0003），实际：${portRegressError.code} / ${portRegressError.message}`,
+  );
+  assert.equal(portRegressError.status, 409, `REVISION_CONFLICT 的 HTTP 状态必须是 409，实际：${portRegressError.status}`);
+  assert.equal(portRegressError.retryable, false, 'G0003 不是并发重试：重试永远得到同一结果，不许标 retryable');
+  assert.match(portRegressError.message, /终态/, `错误文案必须说清是终态，实际：${portRegressError.message}`);
+  const afterPortRegress = await rowAsOwner({ requestId: writeRequestId, recipientId: 'recipient-P' });
+  assert.equal(afterPortRegress.online_state, 'confirmed', '被拒的回退不得改动行');
+  assert.equal(afterPortRegress.confirmed_at.toISOString(), portConfirmedAt, '被拒的回退不得刷新 confirmed_at');
+  assert.equal(afterPortRegress.evidence_ref, portEvidence, '被拒的回退不得抹掉证据');
+
+  // 端口层预检：`confirmed` 缺证据 ⇒ 400，且**一条 SQL 都没发**（不白跑一次库往返、也不把调用方的错报成 503）。
+  const beforePrecheck = portQueries.length;
+  const precheckError = await (async () => {
+    try {
+      await port.subscribeThirdPartyDeletion({
+        requestId: writeRequestId,
+        recipientId: 'recipient-P',
+        state: 'confirmed',
+        evidenceRef: null,
+        at: portConfirmedAt,
+      });
+      return null;
+    } catch (error) {
+      return error;
+    }
+  })();
+  assert.ok(precheckError !== null, 'confirmed 缺 evidence_ref 必须在端口层被拒');
+  assert.equal(
+    precheckError.code,
+    'INVALID_REQUEST',
+    `缺证据必须映射成 400 INVALID_REQUEST，实际：${precheckError.code} / ${precheckError.message}`,
+  );
+  assert.equal(precheckError.status, 400, '参数非法是 400，不是 503');
+  assert.equal(
+    portQueries.length,
+    beforePrecheck,
+    '端口层预检必须在**任何 SQL 之前**跑完（否则调用方的错会白跑一次库往返）',
+  );
+
+  // 同一接收方的**第二次受理**（新 request_id）⇒ 必须是一条新审计事实，而不是覆盖上一次。
+  const secondWriteRequestId = randomUUID();
+  await owner.query(
+    `INSERT INTO public.deletion_requests
+       (id, user_id, receipt_hash, generation, online_due_at, backup_due_at, receipt_expires_at)
+     VALUES ($1, $2, repeat('c', 64), 1, now() + interval '1 day', now() + interval '2 day', now() + interval '7 day')`,
+    [secondWriteRequestId, userId],
+  );
+  await port.subscribeThirdPartyDeletion({
+    requestId: secondWriteRequestId,
+    recipientId: 'recipient-P',
+    state: 'requested',
+    at: '2026-04-14T00:00:00.000Z',
+  });
+  const recipientPRows = (await owner.query(
+    'SELECT request_id, online_status FROM public.third_party_deletions WHERE recipient_id = $1 ORDER BY requested_at',
+    ['recipient-P'],
+  )).rows;
+  assert.equal(
+    recipientPRows.length,
+    2,
+    `同一接收方的两次受理必须是两条审计事实（唯一键是 (request_id, recipient_id, export_ref)），实际 ${recipientPRows.length} 条`,
+  );
+  assert.deepEqual(
+    recipientPRows.map((row) => row.request_id).sort(),
+    [writeRequestId, secondWriteRequestId].sort(),
+    '两条行分属两个不同的注销请求',
+  );
+  assert.deepEqual(
+    recipientPRows.map((row) => row.online_status).sort(),
+    ['confirmed', 'requested'],
+    '第二次受理是新行（requested），不得把上一次的 confirmed 覆盖掉',
+  );
+  say(
+    '⑨ 写侧（真库）：生产端口 requested → confirmed 真落库（owner 视角复核 + 端口回读逐字一致）、终态回退 => 409 REVISION_CONFLICT 且行未动、缺证据 => 400 且零 SQL、同接收方两次受理 => 两行',
+  );
+
+  // 库层最后一道闸：**绕过函数**（库 owner 直写）也会被表上的 CHECK 拦住 —— 即函数被误删/被改动时，
+  // 「confirmed 必须带证据」不是只靠 G0001 一条软约束。这里是负控制 ② 的取证点。
+  const checkError = await (async () => {
+    try {
+      await owner.query(
+        `INSERT INTO public.third_party_deletions
+           (request_id, recipient_id, online_status, backup_status, requested_at, confirmed_at, evidence_ref)
+         VALUES ($1, 'recipient-Q', 'confirmed', 'confirmed', now(), now(), NULL)`,
+        [writeRequestId],
+      );
+      return null;
+    } catch (error) {
+      return error;
+    }
+  })();
+  assert.ok(checkError !== null, '库 owner 绕过函数直写「confirmed 但没有证据」必须被表约束拦住');
+  assert.equal(
+    checkError.code,
+    '23514',
+    `必须由 CHECK 违反（23514）拦住，实际：${checkError.code} / ${checkError.message}`,
+  );
+  assert.equal(
+    checkError.constraint,
+    'third_party_confirmed_evidence',
+    `违反的约束名必须是 third_party_confirmed_evidence，实际：${checkError.constraint}`,
+  );
+  note(`CHECK 原始报错：${checkError.message}`);
+  assert.equal(
+    (await owner.query("SELECT count(*)::int AS n FROM public.third_party_deletions WHERE recipient_id = 'recipient-Q'")).rows[0].n,
+    0,
+    '被约束拦下的行不得落库',
+  );
+  say('⑩ 库层兜底（真库）：绕过函数直写 confirmed 且 evidence_ref=null => 23514 `third_party_confirmed_evidence`，零行落库');
 
   // ------------------------------------------------------------------ [12] 收工读数
   console.log(
