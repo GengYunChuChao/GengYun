@@ -588,7 +588,7 @@ async function main() {
     await owner.query("INSERT INTO admin_scopes (admin_id, scope) VALUES ($1::uuid, 'sources:write')", [auditAdmin]);
     note(`T9 夹具：管理员 ${auditAdmin} 同时镜像进 admin_accounts + admin_scopes(sources:write)（0053 的函数在库侧再核一次）`);
 
-    const dispositionOf = (id, body, key) => call('POST', `${API}/admin/reports/${id}/disposition`, {
+    const dispositionOf = (id, body, key) => call('POST', `/admin/reports/${id}/disposition`, {
       token: auditToken,
       payload: body,
       headers: { 'idempotency-key': key },
