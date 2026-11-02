@@ -122,7 +122,7 @@ PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门�
 | demo（`demo.html:74`） | 小程序 | 结论 |
 | --- | --- | --- |
 | `.stat` 三项，第三项 `data-action="my-posts"`（`S.posts.length`） | `profile.wxml:33` `<view class="stat" bindtap="openMyPosts" role="button" aria-label="…">`，值 `{{myPostCount}}` | **补上可点**；原为无 `bindtap` 的硬编码 `<text class="stat__value">0</text>`（0 是假数据，已弃用） |
-| `:125` `case 'my-posts': modal('我的发布', …)` | 无独立页 ⇒ 跳既有社区 Tab 并预选「我的投稿」 | 契约既有 `GET /posts?mine=true`（`utils/community-api.js:208-219`）；`profile.js:78` `openMyPosts()` → `navigation.requestCommunityMine()` → `community.js:51` `consumeCommunityMine()` 后 `setData({ filterMine: true })` |
+| `:125` `case 'my-posts': modal('我的发布', …)` | 无独立页 ⇒ 跳既有社区 Tab 并预选「我的投稿」 | 契约既有 `GET /posts?mine=true`（`utils/community-api.js:208-219`）；`profile.js:78` `openMyPosts()` → `navigation.requestCommunityMine()` → `community.js:60` `consumeCommunityMine()` 后 `setData({ filterMine: true })`（父 53354fe 的 51 行是 `onLoad` 里的 `this._epoch = 0`；按符号重锚；本页历史基线 de66803 的树本环境无导出，当时行号未复核） |
 | `关于这次体验` 面板（`:74`） | `profile.wxml:142-159` 新增 section：`耕云 Demo`／`Demo 阶段`、`耕云 · 看见田间的可能`、覆盖说明、`demo-caption` | **补上**，措辞按小程序实测（登录走微信登录、档案/收藏/历史走服务端），不照抄 demo 的「均为本地模拟」 |
 | `data-action="reset"`（`demo.html:74`，`:126` 弹窗） | **未加** | 小程序无演示模式、本地无演示数据可清（`git grep -n "demoMode\|DEMO_MODE\|isDemo\|demo 模式" -- miniprogram` = 0 命中）；见 §7 未取得项 |
 | `data-action="toggle-voice"`（`demo.html:74`，`:119` 切换） | **未加** | 有 TTS 合成能力（`utils/voice-api.js` `createSynthesis`），但**没有**「回答就绪即自动朗读」的既有触发点；加开关＝无消费方的假开关 |
