@@ -56,6 +56,11 @@ Page({
 
   onShow: function () {
     fontScale.applyFontScale(this)
+    // 删除操作的生命周期身份：同一页面实例的每次「可见周期」共用一张票。
+    // onHide 换票、onUnload 作废，隐藏／卸载／重进之前的确认与响应因此只丢弃 UI 回调。
+    // 刻意不复用读取的 `_epoch`：同页正常 load 只换代读取结果，不作废用户已确认的删除。
+    if (!this._lifeToken) this._lifeToken = {}
+    this._visible = true
     const that = this
     this.setData({ guest: true, fontScale: fontScale.currentFontScale() })
     pageGate.start(this, function (ok) {
@@ -64,8 +69,18 @@ Page({
     })
   },
 
-  onHide: function () { pageGate.cancel(this) },
-  onUnload: function () { pageGate.cancel(this) },
+  onHide: function () {
+    // 隐藏即结束本次可见周期：隐藏前发出的删除确认／DELETE 响应此后不再改这一页（重进也不复活）。
+    // 只丢弃客户端 UI 回调，不承诺服务端取消（请求可能已经发出）。
+    this._visible = false
+    this._lifeToken = {}
+    pageGate.cancel(this)
+  },
+  onUnload: function () {
+    this._visible = false
+    this._lifeToken = null
+    pageGate.cancel(this)
+  },
 
   load: function () {
     if (!api.validId(this._id)) {
@@ -344,16 +359,33 @@ Page({
   },
   onDeletePost: function () {
     const that = this
+    const post = this.data.post
+    // 发起前：隐藏页／游客／没有有效的帖子（含 id、revision）一律不弹确认、不发 DELETE。
+    if (this._visible !== true || this.data.guest) return
+    if (!post || !api.validId(post.id) || !Number.isSafeInteger(post.revision) || post.revision < 1) return
+    // 点击时快照目标与本次页面可见周期的身份。之后 `data.post` 被 load 换成别的对象，
+    // 或读取的 `_epoch` 前进，都不改变这次删除的目标，也不误杀它。
+    const target = { id: post.id, revision: post.revision }
+    const life = this._lifeToken || (this._lifeToken = {})
+    const stillCurrent = function () {
+      // 独立页面身份 = 同一页面实例 + 同一次可见周期；目标由点击快照固定，不随 data.post 换代。
+      // onHide／onUnload 已换票或作废 ⇒ 旧确认／旧响应只丢弃，绝不 toast、导航、load 或 _writeFail。
+      return that._lifeToken === life && that._visible === true
+    }
     wx.showModal({
       title: '删除这条内容？',
       content: '删除后列表与详情都不再展示（保留审计记录，不可恢复）。',
       confirmText: '删除',
       success: function (result) {
         if (!result.confirm) return
-        api.deletePost(that.data.post.id, that.data.post.revision).then(function () {
+        // 确认回调可能在 hide／unload／重进之后才到：这里只丢弃 UI 回调，不承诺取消已发出的请求。
+        if (!stillCurrent()) return
+        api.deletePost(target.id, target.revision).then(function () {
+          if (!stillCurrent()) return
           wx.showToast({ title: '已删除', icon: 'success' })
           navigation.openTarget('/pages/community/community', true, function () {})
         }).catch(function (error) {
+          if (!stillCurrent()) return
           if (error && error.code === 'REVISION_CONFLICT') {
             wx.showToast({ title: '内容已更新，请刷新后重试', icon: 'none' })
             that.load()

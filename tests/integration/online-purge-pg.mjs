@@ -1278,19 +1278,19 @@ try {
   );
   assert.deepEqual(ownerPortSet.skippedModules, [], '属主角色下不该有跳过项（缺表/缺授权都不该发生）');
   assert.equal(ownerPortSet.modules.includes('community'), false, '社区域是「保留+脱敏」，⛔ 不进时钟闭集');
-  // 运行时角色（受理路径）口径：出厂授权里 `jobs` 缺 `owner_id` 的列级 SELECT
-  // （`DELETE … WHERE owner_id = $1` 要读该列；`20-login-roles.sql:980` 的列清单没含它）⇒ 该域必须被跳过，
-  // 且原因点名缺的那一条。若哪天把这一列补进授权，这里会变成 `[]`：那时把本断言翻成
-  // `assert.deepEqual(runtimePortSet.skippedModules, [])`，可清数随之变成 8/8。
+  // 运行时角色（受理路径）口径：GY-R72 起 `jobs` 的授权**齐了** —— 表级 DELETE
+  // （`gy-r71-jobs-ledger-purge-grant`）+ `owner_id` 的列级 SELECT（`gy-r72-jobs-owner-select`：
+  // `DELETE … WHERE owner_id = $1` 要读该列）。GY-R72 前这里断言 jobs 被跳过并点名缺的列；
+  // 现在翻成「无跳过项、8/8 可清」—— 若哪天又缺回 owner_id，本断言会红（探测仍在 port 里）。
   assert.deepEqual(
     runtimePortSet.skippedModules.map((entry) => entry.module),
-    ['jobs'],
-    `运行时角色下只有 jobs 应被跳过（实际 ${JSON.stringify(runtimePortSet.skippedModules)}）`,
+    [],
+    `运行时角色下不该有跳过项（实际 ${JSON.stringify(runtimePortSet.skippedModules)}）`,
   );
-  assert.match(
-    String(runtimePortSet.skippedModules[0]?.reason ?? ''),
-    /owner_id/,
-    `跳过原因必须点名缺的列级授权：${JSON.stringify(runtimePortSet.skippedModules)}`,
+  assert.deepEqual(
+    [...runtimePortSet.modules],
+    [...ONLINE_PURGE_MODULES],
+    `运行时角色下必须闭集全覆盖 8/8（实际 ${runtimePortSet.modules.join(',')}；跳过 ${JSON.stringify(runtimePortSet.skippedModules)}）`,
   );
   assert.equal(
     runtimePortSet.modules.length + runtimePortSet.skippedModules.length,

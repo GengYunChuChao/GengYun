@@ -1,5 +1,5 @@
 /**
- * W29 · 六源取消能力钉子（`POST /jobs/{id}/cancel` 的能力矩阵 + 装配点注释真话）。
+ * W29 · 作业源取消能力钉子（`POST /jobs/{id}/cancel` 的能力矩阵 + 装配点注释真话）。
  *
  * 为什么有这片：`services/api/src/app.ts:2540-2541` 曾把 OCR 作业源的注释写成
  * 「`cancel` **不提供** ⇒ 503」，并把注册表那条 503 分支的 `retryable` 写成括号形态（暗示 true）；
@@ -7,12 +7,14 @@
  * `services/api/src/jobs/registry.ts:306` 的 `retryable` 真值是 **false**，
  * 测试与 HTTP 面也早已证明 OCR 取消是 200（`tests/unit/ocr-cancel.test.mjs`、
  * `tests/integration/ocr-http.mjs:1972-2043`）。一条假注释会把「某个源悄悄掉 `cancel`」读成设计，
- * 也会把「重试就能好」误导给调用方。本文件把两件事钉住：**六个源都真的提供 `cancel`**，
+ * 也会把「重试就能好」误导给调用方。本文件把两件事钉住：**每个作业源都真的提供 `cancel`**
+ * （源集合必须**恰好覆盖**契约 `Job.kind` 闭集，源的数量本身不写死在断言里），
  * 且**装配点那段注释说的是真话**。
  *
  * 覆盖（逐条可单独指出）：
- * - T1 能力矩阵：`app.ts:2515-2566` 那 6 个 `create*JobSource` 的 `cancel`/`get` 都是函数
- *   （任何源掉 `cancel` ⇒ 红，并打印是哪个源）；
+ * - T1 能力矩阵：`app.ts:2515-2566` 装配的每个 `create*JobSource` 的 `cancel`/`get` 都是函数
+ *   （任何源掉 `cancel` ⇒ 红，并打印是哪个源），且源的 `kind` 集合与契约闭集**双向**对齐
+ *   （少一个 kind ＝ 悄悄掉一种作业的取消能力；多一个 kind ＝ 契约外的源被装配进来）；
  * - T2 委托与参数：OCR 源的 `cancel` 把 `{userId, jobId, ifMatch, idempotencyKey}` **原样**交给
  *   域内 `cancelJob`（恰好一次；`ifMatch` 不做引号加工——`jobs/routes.ts:71` 透传的就是 HTTP 头原文
  *   `"7"` 这种带引号形态，适配层 `sources.ts:208-216` 逐键直传）；
@@ -48,6 +50,8 @@ import { createAnswerJobSource } from '../../services/api/src/conversations/job.
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const APP_TS = resolve(root, 'services/api/src/app.ts');
+/** 契约（唯一权威）：`Job.kind` 闭集在 `:16772-16782`，`AdminJob.kind` 在 `:16842-16852`。 */
+const OPENAPI_JSON = resolve(root, 'packages/contracts/openapi.json');
 
 const USER = 'user-owner-0001';
 const JOB_ID = '11111111-1111-4111-8111-111111111111';
@@ -163,9 +167,42 @@ function buildSources(overrides = {}) {
 
 // ---------------------------------------------------------------- T1 能力矩阵
 
-test('T1 能力矩阵：六个作业源都提供 get 与 cancel（掉一个就红，并指明是哪个源）', () => {
+/**
+ * 读契约里某个 schema 的 `kind` 闭集（`components.schemas.<schema>.properties.kind.enum`）。
+ * 只认契约、不认实现侧常量：调用方把它当**唯一权威**来派生「应该有哪些作业源」。
+ */
+function contractKindEnum(spec, schemaName) {
+  const kind = spec?.components?.schemas?.[schemaName]?.properties?.kind;
+  assert.ok(kind && typeof kind === 'object', `packages/contracts/openapi.json 缺 components.schemas.${schemaName}.properties.kind`);
+  assert.equal(kind.type, 'string', `${schemaName}.properties.kind 必须声明 type: "string"`);
+  assert.ok(Array.isArray(kind.enum) && kind.enum.length > 0, `${schemaName}.properties.kind.enum 必须是非空数组`);
+  for (const value of kind.enum) {
+    assert.equal(typeof value, 'string', `${schemaName}.properties.kind.enum 每一项都必须是字符串，实际 ${JSON.stringify(value)}`);
+  }
+  return [...kind.enum];
+}
+
+test('T1 能力矩阵：每个作业源都提供 get 与 cancel，且源集合恰好覆盖契约 Job.kind 闭集（少一个/多一个都红）', () => {
   const sources = buildSources();
-  assert.equal(sources.length, 6, '`app.ts` 的 `createJobRegistry([...])` 必须仍是 6 个源');
+
+  // 意图一句话：这条钉子钉的是「每个作业源都可取消」，不是「源恰好 6 个」——数量是快照，契约闭集才是权威。
+  const spec = JSON.parse(readFileSync(OPENAPI_JSON, 'utf8'));
+  const contractKinds = contractKindEnum(spec, 'Job');
+
+  // 同一闭集在契约里还有第二处声明（`AdminJob.kind`）：两处必须逐项一致，只信一处等于留一条分叉暗门。
+  const adminKinds = contractKindEnum(spec, 'AdminJob');
+  assert.deepEqual(
+    [...adminKinds].sort(),
+    [...contractKinds].sort(),
+    '契约内两处声明必须一致：components.schemas.AdminJob.properties.kind.enum 与 Job.properties.kind.enum',
+  );
+
+  // 实现侧常量也必须与契约一致：否则注册表会接受契约外的 kind，或拒绝契约内的 kind。
+  assert.deepEqual(
+    [...JOB_KINDS].sort(),
+    [...contractKinds].sort(),
+    '`jobs/registry.ts` 的 `JOB_KINDS` 必须与契约 `Job.kind` 闭集逐项一致',
+  );
 
   const missing = [];
   for (const { label, source } of sources) {
@@ -177,12 +214,14 @@ test('T1 能力矩阵：六个作业源都提供 get 与 cancel（掉一个就�
   }
   assert.deepEqual(missing, [], `这些源掉了取消/读面能力：${missing.join('、')}`);
 
-  // 六个 kind 必须恰好覆盖契约闭集：少一个源同样是「悄悄掉能力」。
-  assert.deepEqual(
-    sources.map((entry) => entry.source.kind).sort(),
-    [...JOB_KINDS].sort(),
-    '六个作业源的 kind 必须恰好覆盖契约 Job.kind 闭集',
-  );
+  // 双向断言（⊇ 且有界），两半都从契约派生，源码里不出现源的总数：
+  //   ⊇ 契约里每个 kind 都得有源在接——少一个源同样是「悄悄掉能力」；
+  //   有界 每个源的 kind 都得在契约闭集里——多一个源是契约外的能力被偷偷装配。
+  const present = sources.map((entry) => entry.source.kind);
+  const absent = contractKinds.filter((kind) => !present.includes(kind));
+  assert.deepEqual(absent, [], `契约 Job.kind 里的这些 kind 没有对应的作业源：${absent.join('、')}`);
+  const outside = present.filter((kind) => !contractKinds.includes(kind));
+  assert.deepEqual(outside, [], `这些作业源的 kind 不在契约 Job.kind 闭集里：${outside.join('、')}`);
 });
 
 // ---------------------------------------------------------------- T2 委托与参数

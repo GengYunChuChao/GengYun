@@ -16,7 +16,7 @@
 
 当前 `services/api/src/app.ts` 的 `buildApp` 尾部 `register*Routes` 连续装配块装配健康、公共主页、两端身份、授权、档案、知识、识别、转写、合成、OCR、共享 Job、后台、媒体、消息、收藏/历史、社区、账号注销与会话（各自真实运行条件与缺口见下表）。锚点以符号定位，勿按行号复现：测量基线 `6c22000` 实测该块为 `:1365-1478`（19 处 `register*Routes` 调用：两端身份为 `registerUserAuthRoutes`＋`registerAdminAuthRoutes` 两次、收藏与历史各一次；单数形式的 `registerPublicHomeRoute` 不在该计数内），本文早先记载的 `:1040-1109` 对应提交 `09abaee`／`9fa045a`，已随合并漂移。健康不计入113条业务契约。共享 Job 读取已接六源：识别、转写、审核、合成、OCR 与文字问答（`answer`，装配见 `services/api/src/app.ts` 的 `createAnswerJobSource`，基线 `1794052` 实测 `:1698`；OCR 读面见 #183，`services/api/src/jobs/routes.ts` 的 `GET ${API_PREFIX}/jobs/:id` 处理器，基线 `6c22000` 实测 `:51-62`；合成读面见 #152）；取消已接识别（`services/api/src/jobs/sources.ts:65`）、转写（`services/api/src/jobs/sources.ts:107`，GY-R27／#321）、合成（`services/api/src/jobs/sources.ts:153`，GY-R27／#322）与 OCR（`services/api/src/jobs/sources.ts:208`，GY-I10 取消片）四域，审核（`moderation`）与文字问答（`answer`）有读面但无 `cancel` ⇒ 作业面如实 503 PROVIDER_UNAVAILABLE（`retryable: false`，`services/api/src/jobs/registry.ts:306`），不存在的作业与越权访问同形 404（`services/api/src/jobs/registry.ts:281` 的 `NOT_FOUND`）。
 
-后台34项与媒体7项已有HTTP装配，仍保留各自真实运行条件/持久化/网关联调缺口；社区16项（帖子9／评论5／举报2）已装配为partial，持久化已交付（迁移 `services/api/db/migrations/0022_community_persistence.sql` 与 `services/api/src/community/store-pg.ts`，`persistent: true`），仅 real 且无持久化落点时整域 503 PROVIDER_UNAVAILABLE（旧文「真实持久存储未交付」已订正）；消息列表、未读数量与读标记已装配为partial：`real` 且无连接池 ⇒ 整域 503，`real` + 连接池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql`（`messages` 表）与 `services/api/src/messages/store-pg.ts`（`persistent: true`，装配见 `services/api/src/app.ts:802-806`），内存 store 不得在 `real` 下冒充持久化。识别/OCR/ASR/TTS均partial，不以替身或回环检查宣称真实能力达标。
+后台与媒体两域已有HTTP装配（逐条条数与状态以本页 §3 生成表为准，本节不手抄第二份），仍保留各自真实运行条件/持久化/网关联调缺口；社区三族（帖子／评论／举报）已装配为partial，持久化已交付（迁移 `services/api/db/migrations/0022_community_persistence.sql` 与 `services/api/src/community/store-pg.ts`，`persistent: true`），仅 real 且无持久化落点时整域 503 PROVIDER_UNAVAILABLE（旧文「真实持久存储未交付」已订正）；消息列表、未读数量与读标记已装配为partial：`real` 且无连接池 ⇒ 整域 503，`real` + 连接池 ⇒ 迁移 `services/api/db/migrations/0019_messages_persistence.sql`（`messages` 表）与 `services/api/src/messages/store-pg.ts`（`persistent: true`，装配见 `services/api/src/app.ts:802-806`），内存 store 不得在 `real` 下冒充持久化。识别/OCR/ASR/TTS均partial，不以替身或回环检查宣称真实能力达标。
 
 ## 0 门禁边界与证据字段口径（人工补记，生成区之外）
 
@@ -203,7 +203,7 @@ node tools/verify-contract-status.mjs --runtime
 node --test tests/unit/contract-status-tool.test.mjs
 ```
 
-默认校验无需安装依赖，检查 112 条操作及 8 个维度覆盖、证据路径/行号/可定位文本片段、路由注册和中文表格一致性。静态扫描跟随 app.ts 实际导入并调用的 register*，支持 routes 目录之外的注册模块；仅存在文件或注释中的调用不计装配。
+默认校验无需安装依赖，检查已装配操作全集（条数以 `node tools/verify-contract-status.mjs` 的输出为准，本节不抄写）及 8 个维度覆盖、证据路径/行号/可定位文本片段、路由注册和中文表格一致性。静态扫描跟随 app.ts 实际导入并调用的 register*，支持 routes 目录之外的注册模块；仅存在文件或注释中的调用不计装配。
 
 `--runtime` 需要项目锁定依赖和 Node 24，在清除业务配置、凭据与 NODE_OPTIONS 的子进程中调用实际 buildApp、ready 和 Fastify.hasRoute。使用 stub，不监听端口、不发 HTTP/供应商请求、不连接数据库。它证明当前注册清单，不能证明响应、鉴权、状态语义或真实能力。
 

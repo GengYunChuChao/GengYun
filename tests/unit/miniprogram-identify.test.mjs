@@ -167,12 +167,22 @@ test('GY-I09 小程序：打包白名单必须包含识别页依赖（既往 MOD
   }
   // 页面不得在缺网络时伪造识别结果：源码中不存在「本地兜底候选」这种写法。
   assert.equal(/fallbackCandidates|fakeResult|MOCK_RESULT/.test(page), false);
-  // 既有独立播放入口与「无录音时禁用」的交互必须保留（ui-adaptive.test.mjs 的既有验收）。
+  // GY-I26：识别页这一段是**没有录音**的能力说明；真实录音/播放控件在已登记的语音页。
+  // 不得再放假的「开始录音／播放录音」按钮（那会把布局占位读成已录音）。
   const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
-  assert.ok(/bindtap="onRecord"/.test(wxml), '缺少独立录音按钮');
-  assert.ok(/bindtap="onPlay"/.test(wxml), '缺少独立播放按钮');
-  assert.ok(/disabled="\{\{guest \|\| !hasRecording\}\}"/.test(wxml), '播放按钮未在无录音时禁用');
-  assert.equal(/getRecorderManager|createInnerAudioContext/.test(readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8')), false);
+  const visible = wxml.replace(/<!--[\s\S]*?-->/g, '');
+  assert.equal(/<button[^>]*bindtap="onRecord"/.test(wxml), false, '识别页不得保留假的录音按钮');
+  assert.equal(/<button[^>]*bindtap="onPlay"/.test(wxml), false, '识别页不得保留假的播放按钮');
+  assert.ok(/bindtap="onOpenVoice"/.test(wxml), '缺少到已登记语音页的受控入口');
+  assert.ok(/录音转写（ASR）尚未接通/.test(wxml), '必须保留 ASR 未接通的口径');
+  assert.ok(/独立语音页有录音入口/.test(wxml), '必须如实说明独立语音页有录音入口');
+  assert.ok(/通过安全检查后的文字播报入口/.test(wxml), '必须说明独立页有经安全检查的文字播报入口');
+  assert.ok(/转写服务和真实供应商尚未核实/.test(wxml), '不得凭 real 模式宣称真实语音服务已验收');
+  assert.ok(/合成语音暂不能播放/.test(wxml), '必须如实说明合成语音暂不能播放');
+  // 界面不写工程验收细节，也不保留已移除假按钮的实现历史。
+  assert.equal(/契约|客户端链路|真机验收/.test(visible), false, '界面不得出现契约／客户端链路／真机验收等工程细节');
+  assert.equal(/原先的「开始录音／播放录音」/.test(visible), false, '不得保留已移除假按钮的实现历史');
+  assert.equal(/wx\.(getRecorderManager|createInnerAudioContext)\s*\(/.test(readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8')), false);
   // 历史区必须绑定「当前已核实主体」，不能只凭本机索引长度。
   assert.ok(/historyOwner/.test(wxml), '历史区未绑定已核实主体（historyOwner）');
   assert.ok(!/wx:if="\{\{history\.length\}\}"/.test(wxml), '历史区不得只凭 history.length 展示');
@@ -1686,4 +1696,67 @@ test('GY-I10 负控制：恰为 2 MiB 的标签图必须放行走到上传（否
   // 失败发生在**上传**这一步 ⇒ 必须用媒体站点的措辞（对象存储未接线），不得说成 OCR 提供者未接线。
   assert.equal(page.data.errorText.includes('对象存储'), true, 'real 模式对象存储未接线必须如实归因，实际：' + page.data.errorText);
   assert.equal(page.data.errorText.includes('OCR 提供者'), false, '上传失败不得归因到 OCR 提供者（站点串了），实际：' + page.data.errorText);
+});
+
+// ---------------------------------------------------------------------------
+// GY-I26：识别页「语音提问」入口的能力口径统一。
+//
+// 这一段本来就没有录音能力；真实录音/播报控件在已登记的 `/pages/voice/voice`。
+// 本用例锁三件事：
+//   ① 识别页不再出现假的「开始录音／播放录音」按钮；
+//   ② 文案保留「本页无录音、ASR 未接通」与「独立页有录音和经安全检查的文字播报入口，但合成语音暂不能播放、真实服务未核实」；
+//   ③ 入口只走已登记路由 + 现有会话门禁（核实前不导航、游客不导航、未登记路由不发起核实）。
+// ---------------------------------------------------------------------------
+test('GY-I26 小程序：识别页语音入口不再造假录音，只经已登记路由与现有门禁进入语音页', () => {
+  const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
+  const visible = wxml.replace(/<!--[\s\S]*?-->/g, '');
+  const source = readFileSync(join(root, 'miniprogram/pages/identify/identify.js'), 'utf8');
+  // ① 入口不再有假按钮；也不存在「录音中／已录音」一类可被读成真实录音的状态文案。
+  assert.equal(/<button[^>]*bindtap="onRecord"/.test(wxml), false, '识别页不得保留假的录音按钮');
+  assert.equal(/<button[^>]*bindtap="onPlay"/.test(wxml), false, '识别页不得保留假的播放按钮');
+  assert.equal(/recording\s*\?|hasRecording/.test(wxml), false, '识别页不得再渲染假录音状态');
+  assert.ok(/<button[^>]*disabled="\{\{guest\}\}"[^>]*bindtap="onOpenVoice"/.test(wxml), '语音入口必须在游客态禁用');
+  // ② 两侧边界同时在场：本页无录音 + ASR 未接通；独立页有录音与经安全检查的文字播报入口，但暂不能出声。
+  assert.ok(/不录音、不采集、不上传音频/.test(wxml), '必须如实说明本页不采集音频');
+  assert.ok(/录音转写（ASR）尚未接通/.test(wxml), '必须保留 ASR 未接通的口径');
+  assert.ok(/独立语音页有录音入口/.test(wxml), '必须如实说明独立语音页有录音入口');
+  assert.ok(/通过安全检查后的文字播报入口/.test(wxml), '必须说明独立页有经安全检查的文字播报入口');
+  assert.ok(/转写服务和真实供应商尚未核实/.test(wxml), '不得凭 real 模式宣称真实语音服务已验收');
+  assert.ok(/合成语音暂不能播放/.test(wxml), '必须如实说明合成语音暂不能播放（不得把未实现写成已可用）');
+  // 用户界面只保留能力与边界，不出现工程验收细节或已移除假按钮的实现历史。
+  assert.equal(/契约|客户端链路|真机验收/.test(visible), false, '界面不得出现契约／客户端链路／真机验收等工程细节');
+  assert.equal(/原先的「开始录音／播放录音」/.test(visible), false, '不得保留已移除假按钮的实现历史');
+  // ③ 入口路由已登记，且复用既有 navigation/auth 门禁，不直连 navigateTo、不拼查询参数。
+  const app = JSON.parse(readFileSync(join(root, 'miniprogram/app.json'), 'utf8'));
+  assert.ok(app.pages.includes('pages/voice/voice'), '语音页必须注册在 app.json');
+  const nav = require(join(root, 'miniprogram/utils/navigation.js'));
+  assert.ok(nav.PAGES.includes('pages/voice/voice'), '语音页必须在导航白名单内');
+  assert.ok(/navigation\.openTarget\(navigation\.consumeReturnTo\(op\.id\)/.test(source), '入口必须走既有 navigation 门禁');
+  assert.equal(/wx\.navigateTo\(\{ url: '\/pages\/voice\/voice/.test(source), false, '入口不得绕过 navigation 直连语音页');
+
+  // 游客态：不发起导航。
+  const guestBox = lifecycle();
+  const guestPage = guestBox.page();
+  guestPage.data.guest = true;
+  guestPage.onOpenVoice();
+  assert.deepEqual(guestBox.launches, [], '游客态不得打开语音页');
+
+  // 已登录：核实完成前不导航；核实通过后只进入已登记语音页。
+  const h = lifecycle();
+  h.seedSession();
+  const page = h.page();
+  page.onLoad();
+  page.onShow();
+  h.acceptVerification(h.requests.at(-1));
+  assert.equal(page.data.guest, false);
+  page.onOpenVoice();
+  assert.deepEqual(h.launches, [], '会话核实完成前不得导航');
+  h.acceptVerification(h.requests.at(-1));
+  assert.deepEqual(h.launches, ['/pages/voice/voice'], '核实通过后必须进入已登记语音页');
+
+  // 未登记路由：连会话核实都不应发起（不靠临时拼路径放行）。
+  const before = h.requests.length;
+  page.openGatedPage('/pages/not-registered/not-registered', '不应出现');
+  assert.equal(h.requests.length, before, '未登记路由不得发起会话核实');
+  assert.deepEqual(h.launches, ['/pages/voice/voice'], '未登记路由不得产生导航');
 });

@@ -284,7 +284,7 @@ npm run verify:anchors                       # 契约台账锚点 + 文档手写
 
 ## 10 附录：契约 operation 与本页判定项的对照
 
-本页判定项不是 operation，但每个 operation 都能追到支撑它的条款编号。契约共 118 个 operation，其中 AI／作业域 30 个（下表按组列出，组内 operation 共用同一批判定项）。
+本页判定项不是 operation，但每个 operation 都能追到支撑它的条款编号。契约 operation 总数以 `packages/contracts/openapi.json` 现数为准（本页不抄写，抄一次就烂一次）；AI／作业域是其中一个子集，逐组列在下表（组内 operation 共用同一批判定项）。
 
 | operation（组） | 域 | 支撑它的判定项 |
 | --- | --- | --- |

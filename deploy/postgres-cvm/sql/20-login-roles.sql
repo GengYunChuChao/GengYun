@@ -956,16 +956,16 @@ GRANT DELETE ON public.ocr_records TO gengyun_api_runtime;
 -- 统一作业台账 `public.jobs`（建表 0001，R34 曾把本表移出授权面）· GY-R71 首个写入者：
 -- `services/api/src/jobs/ledger.ts` 的 `JOB_LEDGER_UPSERT_SQL` **一条**语句 ——
 --   INSERT 15 列；`ON CONFLICT (id) DO UPDATE` 改 5 列（state/revision/error_code/result_ref/updated_at）。
--- ⚠ SELECT 面**实测是 6 列，不是 2 列**（本片修正）：`ON CONFLICT (id) DO UPDATE` 会让 PG 读旧行，
---   除冲突目标 `id` 与 `WHERE` 里的 `state` 外，DO UPDATE 的**每个 SET 列**也必须可 SELECT。
---   真 PG 17.11 留一法实测（`consent-grant-postgres-17.11` 的台账写入）：id / state / revision /
---   error_code / result_ref / updated_at **缺任一列**即 `42501 permission denied for table jobs`；
---   而 lease_token / created_at / provider_config_version 等**非 SET 列**并不需要，故仍是**列级**，
---   不必升到表级 SELECT。复核点：`tests/integration/egress-ledger-pg.mjs` 执行本区授权后真跑那条 upsert。
--- ⚠ R34 的裁定 3 是「零**读者**、零入向外键、无外发账本关联」，本片不改这条：`/admin/jobs` 仍只读
---   三张域内表（`services/api/src/admin/ops/jobs-pg.ts:4-9`），`jobs` 至今**没有读面**。
---   变的是**写入面**：表第一次有了写入者，于是按写入者真实列授权（15/5/6 列）。
---   授权面扩大属需追认的事，证据与边界见 docs/verification/gy-r71-jobs-ledger-20261030.md。
+-- ⚠ SELECT 面是 **7 列 = 6 + 1**（两笔来源不同，别合并计数；GY-R72 修正）：
+--   ① 6 列 = 冲突目标 `id` + `WHERE` 里的 `state` + `DO UPDATE` 的 5 个 SET 列：`ON CONFLICT (id) DO UPDATE`
+--      会让 PG 读旧行，SET 列也必须可 SELECT；真 PG 17.11 留一法实测，这 6 列缺任一列即
+--      `42501 permission denied for table jobs`（lease_token / created_at 等**非 SET 列**并不需要）。
+--   ② +1 列 `owner_id`：注销清理是 `DELETE … WHERE owner_id = $1::uuid`，而 PG 对 **DELETE 的 WHERE 列**
+--      另要 SELECT；真库形状——表级 DELETE 已授仍 42501，同角色 `DELETE … WHERE false` 反而成功。
+--   两笔都仍是**列级**，不必升表级 SELECT。复核点：`tests/integration/egress-ledger-pg.mjs` 真跑 upsert、
+--   `tests/integration/online-purge-pg.mjs` 真跑注销清理那条 DELETE。
+-- ⚠ R34 裁定 3「零**读者**、零入向外键、无外发账本关联」不改：`/admin/jobs` 仍只读三张域内表
+--   （`services/api/src/admin/ops/jobs-pg.ts:4-9`），jobs 至今**没有读面**；变的是写入面与删除面（15/5/7），授权面扩大属需追认，证据 docs/verification/gy-r71-jobs-ledger-20261030.md 与 docs/verification/gy-r72-jobs-owner-select-20261102.md。
 -- #region gy-r71-jobs-ledger-grant
 -- 本区是 `public.jobs` 授权的**唯一来源**，被两条供给路径共用：
 --   ① 生产/部署：本文件每次部署都会执行（理由见下面 I 段开头：`services/api/db/roles/*.sql`
@@ -977,7 +977,7 @@ GRANT DELETE ON public.ocr_records TO gengyun_api_runtime;
 -- `42501 permission denied for table jobs`，`consent-grant-postgres-17.11` 变红。抄一份进测试就会再漂。
 -- ⛔ 因此本区必须是**纯 SQL**（无 psql 元命令）、且只能含 `public.jobs` 的**列级**授权：
 --    无表级 DML、无 DELETE、无 TRUNCATE。抽取方逐条断言这些形状（改宽 ⇒ 两条路径一起红）。
-GRANT SELECT (id,state,revision,error_code,result_ref,updated_at) ON public.jobs TO gengyun_api_runtime;
+GRANT SELECT (id,state,revision,error_code,result_ref,updated_at,owner_id) ON public.jobs TO gengyun_api_runtime;
 GRANT INSERT (id,owner_id,kind,target_type,target_id,entity_revision,input_hash,
               auth_epoch,state,revision,deadline_at,error_code,result_ref,created_at,updated_at)
   ON public.jobs TO gengyun_api_runtime;
@@ -1005,7 +1005,7 @@ GRANT DELETE ON public.jobs TO gengyun_api_runtime;
 \echo '20-login-roles.sql：已授予 public.feature_flags 的 SELECT 与 public.set_feature_flag(...) 的 EXECUTE（唯一写路径；未授予任何表级写权限）。'
 \echo '20-login-roles.sql：已授予 public.user_backup_copies 的列级 SELECT/INSERT/UPDATE（运行时自写的备份副本清单；无表级 DML、无 DELETE/TRUNCATE）。'
 \echo '20-login-roles.sql：已授予 public.messages、public.community_*（六张）、public.ocr_*（三张）的列级 SELECT/INSERT/UPDATE（写面列由 store-pg.ts 真实语句反推；无表级 INSERT/UPDATE/TRUNCATE/REFERENCES/TRIGGER）。'
-\echo '20-login-roles.sql：已授予 public.jobs（统一作业台账）的列级 SELECT（6 列：id + DO UPDATE 的 5 个 SET 列）/ INSERT（15 列）/ UPDATE（5 列）——GY-R71 的首个写入者 services/api/src/jobs/ledger.ts；该表至今**零读面**，无表级 INSERT/UPDATE/TRUNCATE。'
+\echo '20-login-roles.sql：已授予 public.jobs（统一作业台账）的列级 SELECT（7 列：id + DO UPDATE 的 5 个 SET 列 + 注销清理 WHERE 读的 owner_id）/ INSERT（15 列）/ UPDATE（5 列）——GY-R71 的首个写入者 services/api/src/jobs/ledger.ts；该表至今**零读面**，无表级 SELECT/INSERT/UPDATE/TRUNCATE。'
 \echo '20-login-roles.sql：DELETE 仅**表级**授予 public.community_likes / public.community_idempotency / public.ocr_idempotency / public.ocr_jobs / public.ocr_records / public.jobs（PG 无列级 DELETE；其中 OCR 三表为 R34 片 3 起**由用户批准**的表级例外，jobs 为 GY-R71 补片的注销清理面，其余表的 DELETE 一律未授）。'
 \echo '下一步：sql/90-assert-least-privilege.sql 断言最小权限（provision-db.sh 会自动执行）。'
 \echo '未授予（按需单独开通）：gengyun_evidence_reader / gengyun_source_operator / gengyun_staging_importer。'

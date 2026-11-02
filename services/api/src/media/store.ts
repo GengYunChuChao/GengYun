@@ -101,6 +101,16 @@ export interface MediaObjectCleanupEntry {
   /** 为什么需要清（闭集 slug：`cas_conflict` / `owner_delete` / `reject_<failure_code>`）。 */
   reason: string;
   attempts: number;
+  /**
+   * 该行**首次**登记的时刻（epoch ms；真库列 `created_at`，重复登记只刷 `updated_at`/`attempts`）。
+   *
+   * 为什么服务层需要它：删除/拒收时对象往往**还没被 PUT**，而 `initiateUpload` 签出的预签名上传
+   * 句柄在 `MEDIA_INITIATED_TTL_MS` 内一直有效。桶删除对「键不存在」返回**已确认成功**，于是
+   * 「确认删掉了 ⇒ 立刻删台账行」会把句柄的寿命甩在身后：客户端随后用手上那张仍然有效的句柄补一次
+   * PUT，桶里就出现一个**没有任何清扫器还会碰**的对象。重试器因此按 `createdAt` 判断
+   * 「句柄还可能把对象写回来」：未到期 ⇒ **不**删行、**不**累计 `attempts`；到期后才照旧收敛。
+   */
+  createdAt: number;
 }
 
 /** 幂等回执保留时长（与 0008 台账 24h 同口径，见 `auth/idempotency.ts:33`）。 */
@@ -383,6 +393,7 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
             objectRef,
             reason: 'owner_delete',
             attempts: existing === undefined ? 1 : existing.attempts + 1,
+            createdAt: existing === undefined ? at : existing.createdAt,
           });
         }
         if (!liveCommunityImage && fresh.length === 0) continue;
@@ -465,14 +476,17 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
       idempotency.delete(`${scope}\u0000${keyHashHex}`);
     },
 
-    async saveObjectCleanup(intent) {
+    async saveObjectCleanup(intent, atMs) {
       const existing = cleanup.get(intent.objectRef);
       // 与真库的 `INSERT … ON CONFLICT (object_ref_digest) DO UPDATE` 同语义：一行、次数累加。
+      // `createdAt` 与真库的 `created_at` 同口径：**首次**登记时刻，重复登记不刷新（`updatedAt` 才刷）。
+      const createdAt = existing === undefined ? atMs : existing.createdAt;
       cleanup.set(intent.objectRef, {
         mediaId: intent.mediaId,
         objectRef: intent.objectRef,
         reason: intent.reason,
         attempts: existing === undefined ? 1 : existing.attempts + 1,
+        createdAt,
       });
     },
     async listObjectCleanup() {

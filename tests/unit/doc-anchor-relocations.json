@@ -891,11 +891,11 @@
     "doc": "docs/verification/gy-r71-comment-strip-20261030.md",
     "line": 143,
     "target": "tests/unit/sql-column-coverage.test.mjs",
-    "from": 1393,
-    "to": 1512,
+    "from": 1512,
+    "to": 1518,
     "kind": "correction",
     "symbol": "[\\s\\S]*?",
-    "reason": "该页 §3.1 的高档清单是在 8b646ae1 上按 `git grep -n` 取号的（那时 `.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '')` 正好在 1393）；但 base（344f4423）的 1393 已经是 ` * 反引号形态为什么必须收…` 注释行，旧锚点在 base 上就指错了。合流后按符号实测：`tests/unit/sql-column-coverage.test.mjs` 里出现 `[\\s\\S]*?` 的剥离点只有 :1433（`    .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '');`），端点映射给的 :1422 落在同一句注释上、不是剥离点 ⇒ 按符号重锚到 1433。 ｜ 2026-10-31 R72-W3b 合流（#785 × #790）：本片给 sql-column-coverage.test.mjs 增补读数与豁免条目后，同一剥离点下移到 :1495（`.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '')`），故 to 同步改为 1495；from 1393 不变（那是 base 344f4423 上的历史取号）。 ｜ 2026-11-01 R72-W41 合流（审核域持久幂等台账片，迁移 0051）：本片给同一个文件登记第 15 个 SQL 宿主（`moderation/idempotency-store.ts`）并把「扩展」读数从 22 文件推进到 23 文件，净 +10 行、全部落在 1495 之前；同一剥离点按符号重取实测 = :1505（`    .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '');`），故 to 同步改为 1505；from 1393 仍保留 base 344f4423 上的历史取号。 ｜ 2026-11-02 R72-W43 合流（审核域下架集合回填片）：本片给同一个文件补了 ㉖ changelog 段并把「扩展」读数往前推，净 +7 行、全部落在 1505 之前；同一剥离点按符号重取实测 = :1512（仍是那行 `.replace(...)` 注释剥离），故 to 同步改为 1512；from 1393 仍保留 base 344f4423 上的历史取号。"
+    "reason": "docs/verification/gy-r71-comment-strip-20261030.md:143 的 §3.1 高档清单按 git grep -n 取号时写的是 sql-column-coverage.test.mjs:1512，但在 880c938b 上 :1512 已是「 * 带模板串仍然不入表…」注释行、不含 symbol [\\s\\S]*?，旧锚点在 base 上就指错了；实测该文件里唯一的剥离点 .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '') 在 :1518 ⇒ 按符号重锚到 1518（旧 :1393 是更早一棵树上的取号，同样不含 symbol）。本条同时纠正文档里的行号与登记表里的端点，避免任何 base!=HEAD 的提交把这条判红。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -1097,5 +1097,177 @@
     "symbol": "JobSourceCancelInput",
     "reason": "陈旧锚点重锚：本行原写 `services/api/src/jobs/sources.ts:169-186`，而那段是 `createOcrJobSource` 的 JSDoc（169 `/**` … 189 `*/`），真正的 `async cancel(input: JobSourceCancelInput) {` 在 :208。把地址订正到 cancel 方法那一行（与同表里识别 :107、转写 :153 的写法一致）；symbol 取 `JobSourceCancelInput` 而不是 `cancel`，因为旧窗口的 JSDoc 里已经出现 `cancelJob`/`cancelled` 字面，取 `cancel` 会不满足「旧窗口不含符号」。目标文件本提交一字未改，只能经本登记表重锚。",
     "fromEnd": 186
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 23,
+    "target": "communitydetail.js",
+    "from": 272,
+    "fromEnd": 301,
+    "to": 306,
+    "toEnd": 324,
+    "reason": "旧锚点 272-301 是 2026-10-21 切片文档里的 `_report` 引用；在真实父 53354fe7 上，`_report` 已是 291-309（#749 改写 `_decoratePost` 后整体下移 19 行），272-301 实际落在 `onLoadMoreComments` 的 catch、`onReportPost` 与 `_report` 头部，不是完整举报入口。当前 306-324 才是 `_report` 全体；用其尾部 action-sheet `fail: function () {}`（当前 322）作 symbol，base 272-301 不含该符号，故按符号纠正而非机械 +15。",
+    "kind": "correction",
+    "symbol": "fail: function () {}"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 25,
+    "target": "communitydetail.js",
+    "from": 157,
+    "fromEnd": 178,
+    "to": 200,
+    "toEnd": 201,
+    "reason": "旧锚点 157-178 在真实父 53354fe7 上是 `_decoratePost` 的文档注释与字段列表（157 `  /**`、178 `      updated: post.updated_at,`），不含审核标签的赋值；#749 后标签由 `api.outcomeOf` 投影，`publicLabel`/`stateLabel` 在父 185-186、当前 200-201。base 157-178 的注释虽出现 `stateLabel` 字样，但没有 `stateLabel: outcome.key === 'approved'` 赋值，故以该赋值表达式为 symbol 纠正。",
+    "kind": "correction",
+    "symbol": "stateLabel: outcome.key === 'approved'"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 29,
+    "target": "communitydetail.js",
+    "from": 248,
+    "fromEnd": 266,
+    "to": 279,
+    "toEnd": 298,
+    "reason": "旧锚点 248-266 在真实父 53354fe7 上从 `onSubmitComment` 的长度校验跨到 `onLoadMoreComments` 首行（248 `    if (body.length < 1 || body.length > 4000) {`、266 `    if (!this.data.nextCursor) return`），不是游标回收整段；父上 `onLoadMoreComments` 是 264-283、`INVALID_CURSOR` 在 275，当前整段 279-298、`INVALID_CURSOR` 在 290。base 248-266 不含 `INVALID_CURSOR`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "INVALID_CURSOR"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 129,
+    "target": "communitydetail.js",
+    "from": 228,
+    "fromEnd": 243,
+    "to": 262,
+    "toEnd": 278,
+    "reason": "旧锚点 228-243 在真实父 53354fe7 上是 `onUnlikeComment`、`_comment` 与 `_like`（228 `  onUnlikeComment: function (event) {`、243 `  },`），不是发评论；`onSubmitComment` 在父 247-263、当前 262-278。base 228-243 不含 `onSubmitComment`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "onSubmitComment"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 129,
+    "target": "communitydetail.js",
+    "from": 359,
+    "fromEnd": 388,
+    "to": 410,
+    "toEnd": 439,
+    "reason": "旧锚点 359-388 在真实父 53354fe7 上跨 `onDeletePost` 尾部、`onToggleEditComment` 与 `onSaveComment` 前半（359 `        that.load()`、388 `      wx.showToast({ title: '评论已保存并重新审核', icon: 'success' })`），不是改/删评论整块；父上 `onSaveComment` 378-392、`onDeleteComment` 393-406，当前 410-439（`onDeleteComment` 425 起）。base 359-388 不含 `onDeleteComment`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "onDeleteComment"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 138,
+    "target": "communitydetail.js",
+    "from": 214,
+    "fromEnd": 226,
+    "to": 248,
+    "toEnd": 258,
+    "reason": "旧锚点 214-226 在真实父 53354fe7 上是 `onLogin`/`onBack` 与点赞入口（214 `    auth.requireLogin(...`、226 `    const row = this._comment(event.currentTarget.dataset.id)`；`_like('comment', ...)` 在 227），`_like` 本体在父 233-243、当前 248-258。base 214-226 不含 `_like: function`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "_like: function"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 152,
+    "target": "communitydetail.js",
+    "from": 272,
+    "fromEnd": 301,
+    "to": 306,
+    "toEnd": 324,
+    "reason": "同页 §2.6 的举报提交锚点：旧 272-301 在真实父 53354fe7 上不是完整 `_report`（父上 `_report` 291-309），当前 306-324。用 action-sheet 尾部 `fail: function () {}`（当前 322）作 symbol，base 272-301 不含，按符号纠正而非 +15。",
+    "kind": "correction",
+    "symbol": "fail: function () {}"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 154,
+    "target": "communitydetail.js",
+    "from": 277,
+    "fromEnd": 280,
+    "to": 312,
+    "reason": "旧锚点 277-280 在真实父 53354fe7 上是评论加载更多的 `INVALID_CURSOR` toast 块（277 `        wx.showToast({ title: '评论列表已过期，已重新载入', icon: 'none' })`），不是举报反馈；带 `result.report.state` 的 toast 在父 297、当前 312。base 277-280 不含 `result.report.state`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "result.report.state"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 159,
+    "target": "communitydetail.js",
+    "from": 157,
+    "fromEnd": 178,
+    "to": 200,
+    "toEnd": 201,
+    "reason": "同页 §2.7 的三页标注锚点：旧 157-178 在真实父 53354fe7 上是 `_decoratePost` 的注释与字段列表，标签投影在父 185-186、当前 200-201；base 157-178 的注释虽出现 `stateLabel` 字样，但没有 `stateLabel: outcome.key === 'approved'` 赋值，故以该赋值表达式为 symbol 纠正。",
+    "kind": "correction",
+    "symbol": "stateLabel: outcome.key === 'approved'"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 367,
+    "target": "communitydetail.js",
+    "from": 312,
+    "to": 346,
+    "reason": "旧锚点 312 在真实父 53354fe7 上是 `onToggleEditPost: function () {`，不是编辑帖子调用；固定传 `media_ids: []` 的 `api.editPost(...)` 在父 331、当前 346。base 312 不含 `media_ids: []`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "media_ids: []"
+  },
+  {
+    "doc": "docs/verification/gy-i14-community-chain-20261021.md",
+    "line": 368,
+    "target": "communitydetail.js",
+    "from": 277,
+    "fromEnd": 283,
+    "to": 311,
+    "reason": "旧锚点 277-283 在真实父 53354fe7 上是评论加载更多的 catch 尾部，不是举报 `detail` 空串；`api.createReport(..., '')` 在父 296、当前 311。base 277-283 不含 `api.createReport`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "api.createReport"
+  },
+  {
+    "doc": "docs/verification/gy-r29-i15-community-filter-20261022.md",
+    "line": 19,
+    "target": "communitydetail.js",
+    "from": 267,
+    "fromEnd": 278,
+    "to": 306,
+    "toEnd": 324,
+    "reason": "旧锚点 267-278 在真实父 53354fe7 上是 `onLoadMoreComments`（267 `    api.listComments(this._id, { cursor: this.data.nextCursor, limit: 20 }).then(function (page) {`、278 `        that.loadComments()`），不是举报入口 `_report`；父上 `_report` 291-309、当前 306-324。base 267-278 不含 `_report`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "_report"
+  },
+  {
+    "doc": "docs/verification/r59-community-premoderation-20261026.md",
+    "line": 30,
+    "target": "miniprogram/pages/communitydetail/communitydetail.js",
+    "from": 173,
+    "fromEnd": 176,
+    "to": 200,
+    "toEnd": 201,
+    "reason": "旧锚点 173-176 在真实父 53354fe7 上是 `_decoratePost` 返回对象里的 `body`/`author` 字段（173 `      body: post.body,`、174 `      author: author.name,`、175 `      authorAvatar: author.avatar,`、176 `      authorAnonymized: author.anonymized,`），不是作者侧状态标签；父的说明注释在 157-165，#749 后标签由 `api.outcomeOf` 投影，`publicLabel`/`stateLabel` 在父 185-186、当前 200-201。base 173-176 不含 `stateLabel`，按符号纠正；该行翻转前的三档措辞保留为历史。",
+    "kind": "correction",
+    "symbol": "stateLabel"
+  },
+  {
+    "doc": "docs/verification/r59-community-premoderation-20261026.md",
+    "line": 95,
+    "target": "miniprogram/pages/communitydetail/communitydetail.js",
+    "from": 173,
+    "to": 200,
+    "reason": "旧锚点 173 在真实父 53354fe7 上是 `      body: post.body,`，不是公开侧 `publicLabel`；#749 后文案表集中在 `miniprogram/utils/community-api.js` 的 `OUTCOMES`，页面投影 `publicLabel` 在父 185、当前 200。base 173 不含 `publicLabel`，按符号纠正。",
+    "kind": "correction",
+    "symbol": "publicLabel"
+  },
+  {
+    "doc": "docs/verification/gy-r28-e6-closure-materials-20261021.md",
+    "line": 55,
+    "target": "miniprogram/pages/history/history.js",
+    "from": 74,
+    "to": 104,
+    "kind": "correction",
+    "symbol": "merged.filter(function (entry) { return entry.failed })",
+    "reason": "父基线 53354fe7 的 history.js:74 是 `load: function (cursor) {`（load 声明），该行没有 failedCount，也没有 `entry.failed` 统计——本页 A7 写的「failedCount 逐条统计」在父树上就对不上，属历史语义错，不是本次改 history.js 把这一行挤走的。真正的统计语句是列表写入里的 `failedCount: merged.filter(function (entry) { return entry.failed }).length`，HEAD 在 :104；按符号纠正到 :104，不走 +8 行号平移（平移落到的是 load 声明附近，仍不含该统计）。目标文件本提交的改动来自已冻结的页面生命周期补丁，本片只登记文档锚点。"
   }
 ]

@@ -10,15 +10,24 @@
  * 解析口径（**结构优先**，不是整文件正则一把抓）：
  *   1. 词法层先切出「注释区间」与「字符串区间」，把注释与字符串内容替换成空格（保留换行 ⇒
  *      行号不漂）得到 `code` 掩码。所有结构正则只跑在 `code` 上，路径字面量只在字符串区间里读。
- *   2. 服务端面：在 `code` 上找 `app.<method>(`，从 `(` 做括号配平切出**整条注册语句**，
- *      第一实参里的模板字面量给出路径；语句里 `<familyVar>.<slot>(` 给出 operationId
- *      （经 `families.ts` 的 `operations` 表映射），`<familyVar>.readGuards|writeGuards` 给出 scope；
- *      非家族语句用 `const <v> = methodOf(services.<dom>, '<operationId>')` 绑定表定 operationId，
- *      `requireScope(<expr>)` 定 scope（字面量 / `OPS_SCOPES.<k>` / 大写常量）。
+ *   2. 服务端面：扫描面是**整个 `services/api/src/routes/` 目录**（`*.ts`，按文件名排序），不只
+ *      `admin.ts`——R72 之前只读 `admin.ts`，于是 `admin-auth.ts` 的 3 条 auth 注册被静默漏掉
+ *      （能力图 46 条 vs 路由实注册 49 条、契约 admin 面 49 条，闸门仍全绿）。逐文件在 `code` 上找
+ *      `app.<method>(`，从 `(` 做括号配平切出**整条注册语句**，第一实参里的模板字面量给出路径；
+ *      只有路径落在 `/admin` 段上的注册进能力图（非 admin 面的注册照样被数出来，见
+ *      `parseRouteRegistrations` 的 `adminFace`）。
+ *      operationId 三条来源，按优先级：① `<familyVar>.<slot>(`（经 `families.ts` 的 `operations`
+ *      表映射，`<familyVar>.readGuards|writeGuards` 给 scope）；② `const <v> =
+ *      methodOf(services.<dom>, '<operationId>')` 绑定表；③ 源码里根本没有 op 绑定（`admin-auth.ts`
+ *      这三条、R72 的 `deps.ops.advanceReport` 那一族）时，回落到契约的 method+path 精确匹配，
+ *      或从 `deps.ops.<operationId>` 直取。scope 一律 `requireScope(<expr>)`（字面量 /
+ *      `OPS_SCOPES.<k>` / 大写常量）；无守卫的公开读/登录面必须在契约里写明 `scope: public`。
  *   3. UI 入口：**不认「视图里出现过这个路径字符串」**——视图里的路径几乎全是 label、注释、
  *      导航文案（注册页 17 处命中全是这种），按字面量判定会把「删掉视图」判成绿的。
- *      入口判据是**调用链**：`.vue` 的 import 名字 → `lib/*.mjs` 里某个函数体引用了该族路径
- *      （字面量或 `*_PATH` 常量）。文件级「引用」另算一列（`uiFiles`），供人核查，不参与入口判定。
+ *      入口判据是**调用链**：`.vue` 的 import 名字 → 某个**非视图模块**（`*.mjs`／`*.ts`，不再限定
+ *      `lib/` 目录）里的函数体解析出了这条 operation 的 method+path。限定目录会让
+ *      `apps/admin/src/auth/session.ts`（3 条 auth op 的唯一客户端）落在扫描面外，扩扫描面后会
+ *      变成 3 条假缺口。文件级「引用」另算一列（`uiFiles`），供人核查，不参与入口判定。
  *      ⚠ 这条判据只证明「有调用链」，**不证明「调用点可达」**：客户端函数真发 `POST`、但只在
  *      永不被调用的死代码里被调一次，同样算入口（实测变异：`noUiEntry 2→1` 而能力没变）。
  *      因此 `noUiEntry` 只能当**缺口下界**（真缺口 ≥ 报出来的数）：`noUiEntry === 0` 不等于
@@ -27,6 +36,14 @@
  * 失败模式：任何一处解析不出来（路径模板未解析、operationId 对不上、scope 解析不出、
  * 扫出来 0 条），一律抛 `AdminCapabilityMapError`——**绝不静默返回空集合**，否则「空集合 ⇒
  * 一切相等 ⇒ 闸门永远绿」就成了一条假绿通道。
+ *
+ * 静默漏面（R72-W66 补）：本解析器只认 `app.<method>(<字面量路径>, …)`。对象式
+ * `app.route({ method, url })` 与前缀式 `app.register(x, { prefix })` **既不匹配那条正则、
+ * 也不会让任何一条解析抛错**——整面对它们静默失明，读数照旧全绿（单文件 0 条 admin 面注册是
+ * 允许的，所以「整面 0 条才抛」这条兜底也救不了）。`unsupportedRegistrationShapes` 把这两类
+ * 形状变成可判红的命中，`parseRouteRegistrations` 入口用 `assertSupportedRegistrationShapes`
+ * fail-closed：无法判断是不是 admin 面（url/prefix 是变量、表达式、`{ prefix }` 简写）也报，
+ * 不静默放过。
  *
  * 纯函数：零依赖、不联网、不读 git、不写盘（只在本仓库目录里读源码与契约）。
  */
@@ -56,6 +73,7 @@ export const EMPTY_LIST = '（空）';
 /** 源码与文档的相对路径（相对仓库根）。 */
 export const SOURCE_PATHS = Object.freeze({
   adminRoutes: 'services/api/src/routes/admin.ts',
+  routesRoot: 'services/api/src/routes',
   families: 'services/api/src/admin/families.ts',
   opsScopes: 'services/api/src/admin/ops/service.ts',
   auditCatalog: 'services/api/src/admin/audit/catalog.ts',
@@ -77,6 +95,16 @@ const FAMILY_SLOT_TO_OPERATION_KEY = Object.freeze({
 
 const HTTP_METHODS = Object.freeze(['get', 'post', 'put', 'patch', 'delete', 'head', 'options']);
 const UI_FILE_SUFFIXES = Object.freeze(['.mjs', '.ts', '.vue']);
+/** `/admin` 必须是一个**路径段**：`/administrators`（用户面）不算 admin 面。 */
+const ADMIN_SEGMENT = /\/admin(?:\/|$)/;
+
+/**
+ * 路径/前缀字面量是不是 admin 面：先把 `${API_PREFIX}` 还原成 `/api/v1`，再按**路径段**判。
+ * 两条判定（既有注册与未识别注册形状）共用它，避免两份「像不像 /admin」的口径悄悄分叉。
+ */
+function pathLooksAdminFace(raw) {
+  return ADMIN_SEGMENT.test(String(raw).replace(/\$\{\s*API_PREFIX\s*\}/g, API_PREFIX));
+}
 
 // ---------------------------------------------------------------- 词法层
 
@@ -233,13 +261,33 @@ function readStringConsts(scanned) {
 // ---------------------------------------------------------------- 服务端：路由与家族
 
 /**
- * 解析 `services/api/src/routes/admin.ts` 里注册的每条 admin 路由。
- * 返回 `[{ method, registeredPath, path, line, start, end }]`（`path` 把 `:id` 归一成 `{id}`）。
+ * 扫出一个路由文件里**所有** `app.<method>(…)` 注册，并标出哪些落在 admin 面。
+ *
+ * 每条返回 `{ method, line, start, end, raw, adminFace, registeredPath?, path? }`：
+ * - `adminFace === true`：路径里有 `/admin` 段（能力图的扫描面），`registeredPath`／`path` 已归一；
+ * - `adminFace === false`：用户面注册，只留方法/行号/原文，不解析路径——它们的模板里可能有
+ *   任意插值（`${id}`、`${SESSION_ID}`），用 admin 面那套「只认 `${API_PREFIX}`」去卡会误判。
+ *
+ * **非 admin 面的注册也要被数出来**，而不是「跳过不认识的文件」：否则「扫描面扩到全部路由文件」
+ * 会退化成「只看名字像 admin 的文件」，那还是同源自证。
+ *
+ * 认不出就抛（指名文件与行号）：括号配不平、第一实参不是字面量、admin 面模板含
+ * `${API_PREFIX}` 之外的插值。`file` 里 0 条注册**不抛**——`routes/support.ts` 就是路由辅助模块；
+ * 但整份扫描面 0 条 admin 面注册必须抛（由上层 `assertRouteFace` 判）。
+ *
+ * 入口处还有一道 fail-closed：本函数只认 `app.<method>(<字面量路径>, …)`，对象式 `app.route({…})`
+ * 与前缀式 `app.register(x, { prefix })` 会被静默漏掉——所以先跑 `assertSupportedRegistrationShapes`，
+ * 命中就抛（见 `unsupportedRegistrationShapes`）。
  */
-export function parseAdminRoutes(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+export function parseRouteRegistrations(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+  // 位置说明（R72-W66）：守卫放在这里而不是 `parseAdminRoutes`，因为**两条调用链都经过本函数**——
+  // `parseAdminRoutes` 与 `loadSources → buildCapabilityMap → buildOperations`。后者才是闸门
+  // `tools/verify-admin-capability-map.mjs` 真正走的路（它不调用 `parseAdminRoutes`），把守卫只放在
+  // 后者里，闸门对这两类形状就还是 no-op。
+  assertSupportedRegistrationShapes(source, { file });
   const scanned = scanSource(source);
   const lines = makeLineIndex(source);
-  const routes = [];
+  const registrations = [];
   const pattern = new RegExp(`\\bapp\\s*\\.\\s*(${HTTP_METHODS.join('|')})\\s*\\(`, 'g');
   let match = pattern.exec(scanned.code);
   while (match) {
@@ -261,21 +309,166 @@ export function parseAdminRoutes(source, { file = SOURCE_PATHS.adminRoutes } = {
       );
     }
     const raw = scanned.text.slice(span.contentStart, span.contentEnd);
-    const registeredPath = resolveRoutePath(raw, file, lines.lineOf(match.index));
-    routes.push({
-      method: match[1].toUpperCase(),
-      registeredPath,
-      path: normalizePathTemplate(registeredPath),
-      line: lines.lineOf(match.index),
-      start: match.index,
-      end: close + 1,
-      raw,
-    });
+    const line = lines.lineOf(match.index);
+    const adminFace = pathLooksAdminFace(raw);
+    const base = { method: match[1].toUpperCase(), line, start: match.index, end: close + 1, raw, adminFace };
+    if (!adminFace) {
+      registrations.push(base);
+    } else {
+      const registeredPath = resolveRoutePath(raw, file, line);
+      registrations.push({ ...base, registeredPath, path: normalizePathTemplate(registeredPath) });
+    }
     match = pattern.exec(scanned.code);
   }
+  return registrations;
+}
+
+// ---------------------------------------------------------------- 未识别注册形状（fail-closed）
+
+/** 守卫的判定窗口：从调用的 `(` 起往后最多看这么多字符（再与本次调用的配对右括号取小）。 */
+const UNSUPPORTED_SHAPE_WINDOW = 500;
+/** 本闸门**不解析**的两类注册写法：对象式 `app.route({ … })`、前缀式 `app.register(x, { prefix })`。 */
+const UNSUPPORTED_REGISTRATION_CALL = '\\b(?:app|fastify|server)\\s*\\.\\s*(route|register)\\s*\\(';
+
+/** 字面量后面只允许跟这些字符，才算「整个值就是这个字面量」（`,` / `}` / `)`）。 */
+const VALUE_TERMINATORS = new Set([',', '}', ')']);
+
+/**
+ * 这个字符串区间能不能当**完整静态字面量**用（R72-W67，判据只在这里落地）。
+ *
+ * 两条同时成立才算静态，任何一条不成立就交回 `null`＝「无法判断」：
+ * 1. **完整性**：字面量收尾之后，跳过空白（注释已被掩码成空白），下一个字符必须是值的结束标记。
+ *    `'/api/v1/' + 'admin'` 收尾后是 `+` ⇒ 字面量只是拼接的一段，不是完整值；`'/x'.trim()` 同理。
+ * 2. **模板串无未知插值**：除 `${API_PREFIX}`（与 `pathLooksAdminFace` 同一个可证明的替换口径）
+ *    之外还出现 `${` ⇒ 拒绝。本闸门**不做**常量折叠 / 数据流分析：`const face = 'admin'` 之后
+ *    `` `/api/v1/${face}` `` 一律判 dynamic，宁可漏报（把静态写法按 dynamic 报出来、请人扩解析器），
+ *    也不把来路不明的字符串当成 admin 面（或非 admin 面）算进能力图。
+ */
+function isCompleteStaticLiteral(scanned, span) {
+  const raw = scanned.text.slice(span.contentStart, span.contentEnd);
+  if (span.quote === '`' && raw.replace(/\$\{\s*API_PREFIX\s*\}/g, '').includes('${')) return false;
+  let at = span.end;
+  while (at < scanned.code.length && /\s/.test(scanned.code[at])) at += 1;
+  return VALUE_TERMINATORS.has(scanned.code[at] ?? '');
+}
+
+/**
+ * 在 `[from, to)` 里读 `url: …` / `path: …` / `prefix: …` 的值。
+ * 返回 `[{ literal }]`：`literal === null` 表示值不是**完整静态字面量**——变量 / 表达式 / 拼接
+ * （`'/a/' + 'b'`）/ 含未知插值的模板串 / `{ prefix }` 简写，全部归这一档（判据见
+ * `isCompleteStaticLiteral`）。
+ *
+ * 键在 `code` 掩码上定位（注释与字符串里的 `url:` 自动不算）；**值不能在掩码上读**——掩码把字符串
+ * 连同引号整段换成空格，`\s*` 会把值一起吃掉。所以值靠 `strings` 区间的起点反查：冒号到引号之间
+ * 只有空白，才认这个引号是「这个键的值」。
+ */
+function registrationPropertyValues(scanned, keys, from, to) {
+  const values = [];
+  const window = scanned.code.slice(from, to);
+  const pattern = new RegExp(`\\b(?:${keys})\\b`, 'g');
+  let match = pattern.exec(window);
+  while (match) {
+    const keyEnd = from + match.index + match[0].length;
+    const rest = scanned.code.slice(keyEnd, to);
+    const colon = /^\s*:/.exec(rest);
+    if (colon) {
+      const valueStart = keyEnd + colon[0].length;
+      const span = scanned.strings.find(
+        candidate =>
+          candidate.start >= valueStart &&
+          candidate.start <= to &&
+          /^[ \t\r\n]*$/.test(scanned.code.slice(valueStart, candidate.start)),
+      );
+      const complete = span !== undefined && isCompleteStaticLiteral(scanned, span);
+      values.push({ literal: complete ? scanned.text.slice(span.contentStart, span.contentEnd) : null });
+    } else if (/^\s*[,}]/.test(rest)) {
+      // `{ prefix }` 简写：值是同名变量，静态看不到 ⇒ 按「无法判断」报。
+      values.push({ literal: null });
+    }
+    match = pattern.exec(window);
+  }
+  return values;
+}
+
+/**
+ * 找出「本闸门不认、又不会抛错」的注册写法（纯函数、不读盘、可单测）。
+ *
+ * 返回 `[{ line, kind, snippet }]`（`line` 1 基，`snippet` 是那一行 `trim()` 后前 120 字符）：
+ * - `route-object`：`app|fastify|server.route({ url|path: '<admin 面>' })`；
+ * - `route-object-dynamic`：同一个键的值不是**完整静态字面量**——无法判断是不是 admin 面；
+ * - `register-prefix`：`…register(x, { prefix: '<admin 面>' })`；
+ * - `register-prefix-dynamic`：prefix 不是完整静态字面量——同样无法判断。
+ *
+ * 「完整静态字面量」的判据在 `registrationPropertyValues`／`isCompleteStaticLiteral`（R72-W67）：
+ * 尾部拼接（`'/api/v1/' + 'admin'`）与含未知插值的模板串（`` `/api/v1/${face}` ``）都归 dynamic，
+ * 只有整段单/双引号字面量、无插值模板串、以及只含 `${API_PREFIX}` 的模板串才判其路径面。
+ *
+ * 不报：非 admin 面（`/administrators` 是用户面，按**路径段**判）、`register(x)` 不带 prefix、
+ * 以及既有的 `app.<method>('<路径>', …)`（那是本闸门认得、且有自己报错路径的形状）。
+ * 「无法判断就报」是本片的立场：漏报的代价是整个 admin 面静默消失，误报的代价是有人来扩解析器。
+ */
+export function unsupportedRegistrationShapes(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+  // 命中项本身不带文件（`line`/`snippet` 都从 `source` 来）；`file` 只为与 `parseAdminRoutes` 同签名，
+  // 由 `assertSupportedRegistrationShapes` 拼进错误信息。
+  void file;
+  const scanned = scanSource(source);
+  const lines = makeLineIndex(source);
+  const rawLines = source.split('\n');
+  const hits = [];
+  const pattern = new RegExp(UNSUPPORTED_REGISTRATION_CALL, 'g');
+  let match = pattern.exec(scanned.code);
+  while (match) {
+    const open = match.index + match[0].length - 1;
+    const close = matchBracket(scanned.code, open);
+    const from = open + 1;
+    const to = close >= 0 ? Math.min(close, from + UNSUPPORTED_SHAPE_WINDOW) : from + UNSUPPORTED_SHAPE_WINDOW;
+    const isRouteObject = match[1] === 'route';
+    const values = registrationPropertyValues(scanned, isRouteObject ? 'url|path' : 'prefix', from, to);
+    const adminFace = values.some(value => value.literal !== null && pathLooksAdminFace(value.literal));
+    const undecidable = values.some(value => value.literal === null);
+    let kind = null;
+    if (isRouteObject) {
+      if (adminFace) kind = 'route-object';
+      else if (undecidable) kind = 'route-object-dynamic';
+    } else if (adminFace) {
+      kind = 'register-prefix';
+    } else if (undecidable) {
+      kind = 'register-prefix-dynamic';
+    }
+    if (kind !== null) {
+      const line = lines.lineOf(match.index);
+      hits.push({ line, kind, snippet: (rawLines[line - 1] ?? '').trim().slice(0, 120) });
+    }
+    match = pattern.exec(scanned.code);
+  }
+  return hits;
+}
+
+/**
+ * fail-closed 守卫：命中任何未识别形状就抛，**一次列全**（不只报第一条）。
+ * 每条都带 `文件:行号（kind）` 与那一行的源码片段，便于直接定位。
+ */
+export function assertSupportedRegistrationShapes(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+  const hits = unsupportedRegistrationShapes(source, { file });
+  if (hits.length === 0) return;
+  const detail = hits
+    .map(
+      hit =>
+        `未识别的注册形状：${file}:${hit.line}（${hit.kind}）—— 本闸门只解析 app.<method>(<字面量路径>, …)；这类写法会被静默漏掉，请改用该形状或先扩解析器\n    源码：${hit.snippet}`,
+    )
+    .join('\n');
+  throw new AdminCapabilityMapError(detail);
+}
+
+/**
+ * 解析一个路由文件里注册的每条 **admin** 路由。
+ * 返回 `[{ method, registeredPath, path, line, start, end }]`（`path` 把 `:id` 归一成 `{id}`）。
+ */
+export function parseAdminRoutes(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+  const routes = parseRouteRegistrations(source, { file }).filter(route => route.adminFace);
   if (routes.length === 0) {
     throw new AdminCapabilityMapError(
-      `${file}: 一条 app.<method>(…) 都没扫到——解析器与源码形状脱节，拒绝返回空集合`,
+      `${file}: 一条 admin 面 app.<method>(…) 都没扫到——解析器与源码形状脱节，拒绝返回空集合`,
     );
   }
   const seen = new Set();
@@ -415,145 +608,262 @@ export function parseScopeConstants(sources) {
 /**
  * 把路由 + 家族描述符 + scope 表拼成 operation 行。
  * `[{ operationId, method, path, registeredPath, scope, family, routeFile, routeLine }]`
+ *
+ * 扫描面是**一组路由文件**（`routeSources: [{ file, text }]`）：每个文件里 admin 面的注册都要能
+ * 认出 operationId，认不出就抛——含「源码里没有 operationId 的字面形态、契约里也查不到这条
+ * method+path」这一档。只传 `adminSource`／`adminFile` 等价于单文件扫描面（既有单测与夹具仍可
+ * 这样调）。
  */
 export function buildOperations({
   adminSource,
+  routeSources,
   familiesSource,
   opsScopeSource,
   scopeConstantSources = {},
+  contractOperations = [],
   adminFile = SOURCE_PATHS.adminRoutes,
   familiesFile = SOURCE_PATHS.families,
 }) {
-  const routes = parseAdminRoutes(adminSource, { file: adminFile });
+  const files = routeSources && routeSources.length > 0
+    ? routeSources
+    : [{ file: adminFile, text: adminSource }];
   const descriptors = parseFamilyDescriptors(familiesSource, { file: familiesFile });
   const opsScopes = parseOpsScopes(opsScopeSource);
   const scopeConstants = parseScopeConstants(scopeConstantSources);
-  const scanned = scanSource(adminSource);
-  const lines = makeLineIndex(adminSource);
-
-  // `const sources = familyOps(SOURCE_FAMILY);`
-  const familyVars = new Map();
-  const familyVarPattern = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*familyOps\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
-  let match = familyVarPattern.exec(scanned.code);
-  while (match) {
-    const descriptor = descriptors.get(match[2]);
-    if (!descriptor) {
-      throw new AdminCapabilityMapError(
-        `${adminFile}:${lines.lineOf(match.index)} 的 familyOps(${match[2]}) 找不到对应描述符`,
-      );
-    }
-    familyVars.set(match[1], descriptor);
-    match = familyVarPattern.exec(scanned.code);
+  const contractAdminOps = adminFaceContractOperations(contractOperations);
+  const contractById = new Map(contractAdminOps.map(operation => [operation.operationId, operation]));
+  const contractByRoute = new Map();
+  for (const operation of contractAdminOps) {
+    const key = `${operation.method} ${operation.path}`;
+    contractByRoute.set(key, [...(contractByRoute.get(key) ?? []), operation]);
   }
 
-  // `const listCategories = methodOf(services.ops, 'listAdminCategories');`
-  const opVars = new Map();
-  const opVarPattern = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*methodOf\(\s*services\.[A-Za-z_$][\w$]*\s*,\s*'/g;
-  match = opVarPattern.exec(scanned.text);
-  while (match) {
-    if (!isInComment(scanned.comments, match.index)) {
-      const quoteAt = match.index + match[0].length - 1;
-      const span = scanned.strings.find(candidate => candidate.start === quoteAt);
-      if (!span) {
+  const operations = [];
+  for (const { file, text } of files) {
+    const scanned = scanSource(text);
+    const lines = makeLineIndex(text);
+
+    // `const sources = familyOps(SOURCE_FAMILY);`
+    const familyVars = new Map();
+    const familyVarPattern = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*familyOps\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
+    let match = familyVarPattern.exec(scanned.code);
+    while (match) {
+      const descriptor = descriptors.get(match[2]);
+      if (!descriptor) {
         throw new AdminCapabilityMapError(
-          `${adminFile}:${lines.lineOf(match.index)} 的 methodOf(…) operationId 读不出来`,
+          `${file}:${lines.lineOf(match.index)} 的 familyOps(${match[2]}) 找不到对应描述符`,
         );
       }
-      opVars.set(match[1], scanned.text.slice(span.contentStart, span.contentEnd));
+      familyVars.set(match[1], descriptor);
+      match = familyVarPattern.exec(scanned.code);
     }
+
+    // `const listCategories = methodOf(services.ops, 'listAdminCategories');`
+    const opVars = new Map();
+    const opVarPattern = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*methodOf\(\s*services\.[A-Za-z_$][\w$]*\s*,\s*'/g;
     match = opVarPattern.exec(scanned.text);
-  }
+    while (match) {
+      if (!isInComment(scanned.comments, match.index)) {
+        const quoteAt = match.index + match[0].length - 1;
+        const span = scanned.strings.find(candidate => candidate.start === quoteAt);
+        if (!span) {
+          throw new AdminCapabilityMapError(
+            `${file}:${lines.lineOf(match.index)} 的 methodOf(…) operationId 读不出来`,
+          );
+        }
+        opVars.set(match[1], scanned.text.slice(span.contentStart, span.contentEnd));
+      }
+      match = opVarPattern.exec(scanned.text);
+    }
 
-  const operations = routes.map(route => {
-    const block = scanned.code.slice(route.start, route.end);
-    const familyVar = [...familyVars.keys()].find(
-      name => new RegExp(`\\b${name}\\s*\\.\\s*[A-Za-z_$][\\w$]*\\s*\\(`).test(block),
-    );
-    if (familyVar) {
-      const descriptor = familyVars.get(familyVar);
-      const slotPattern = new RegExp(
-        `\\b${familyVar}\\s*\\.\\s*(${Object.keys(FAMILY_SLOT_TO_OPERATION_KEY).join('|')})\\s*\\(`,
-      );
-      const slot = slotPattern.exec(block);
-      if (!slot) {
-        throw new AdminCapabilityMapError(
-          `${adminFile}:${route.line} 用了 ${familyVar} 但认不出槽位调用（read/create/get/edit/publish/withdraw）`,
-        );
+    /** 注册语句里的 `requireScope(<expr>)` → scope；这处调用不存在则返回 null（由调用点判要不要）。 */
+    const requireScopeOf = route => {
+      const block = scanned.code.slice(route.start, route.end);
+      const scopeCall = /requireScope\s*\(/.exec(block);
+      if (!scopeCall) return null;
+      const scopeOpen = scopeCall.index + scopeCall[0].length - 1;
+      const scopeClose = matchBracket(block, scopeOpen);
+      if (scopeClose < 0) {
+        throw new AdminCapabilityMapError(`${file}:${route.line} 的 requireScope(…) 括号配不平`);
       }
-      const operationId = descriptor.operations[FAMILY_SLOT_TO_OPERATION_KEY[slot[1]]];
-      if (!operationId) {
-        throw new AdminCapabilityMapError(
-          `${adminFile}:${route.line} 的槽位 ${slot[1]} 在 ${descriptor.constName}.operations 里没有对应 operationId`,
-        );
-      }
-      const guardsPattern = new RegExp(`\\b${familyVar}\\s*\\.\\s*(read|write)Guards\\b`);
-      const guards = guardsPattern.exec(block);
-      if (!guards) {
-        throw new AdminCapabilityMapError(
-          `${adminFile}:${route.line} 用了 ${familyVar} 但认不出 readGuards/writeGuards`,
-        );
-      }
-      const scope = guards[1] === 'read' ? descriptor.readScope : descriptor.writeScope;
-      assertScope(scope, `${adminFile}:${route.line} ${operationId}`);
-      return {
-        operationId,
+      const argument = text.slice(route.start + scopeOpen + 1, route.start + scopeClose).trim();
+      return resolveScopeExpression(argument, { opsScopes, scopeConstants, line: route.line, adminFile: file });
+    };
+
+    for (const route of parseRouteRegistrations(text, { file })) {
+      // 非 admin 面的注册不归本闸门管（但它们已经**被数出来**了，见 parseRouteRegistrations）。
+      if (!route.adminFace) continue;
+      const block = scanned.code.slice(route.start, route.end);
+      const where = `${file}:${route.line}（${route.method} ${route.path}）`;
+      const row = {
         method: route.method,
         path: route.path,
         registeredPath: route.registeredPath,
-        scope,
-        family: descriptor.family,
-        routeFile: adminFile,
+        family: familyOfPath(route.path) ?? 'unknown',
+        routeFile: file,
         routeLine: route.line,
       };
-    }
 
-    const opVar = [...opVars.keys()].find(name => new RegExp(`\\b${name}\\s*\\(`).test(block));
-    if (!opVar) {
-      throw new AdminCapabilityMapError(
-        `${adminFile}:${route.line}（${route.method} ${route.path}）既没有家族槽位调用、也没有 methodOf 绑定，认不出 operationId`,
+      // ① 家族槽位：`sources.read(...)` + `sources.readGuards`。
+      const familyVar = [...familyVars.keys()].find(
+        name => new RegExp(`\\b${name}\\s*\\.\\s*[A-Za-z_$][\\w$]*\\s*\\(`).test(block),
       );
-    }
-    const operationId = opVars.get(opVar);
-    const scopeCall = /requireScope\s*\(/.exec(block);
-    if (!scopeCall) {
-      throw new AdminCapabilityMapError(
-        `${adminFile}:${route.line}（${route.method} ${route.path}）没有 requireScope(…)，无法判定 scope`,
-      );
-    }
-    const scopeOpen = scopeCall.index + scopeCall[0].length - 1;
-    const scopeClose = matchBracket(block, scopeOpen);
-    if (scopeClose < 0) {
-      throw new AdminCapabilityMapError(`${adminFile}:${route.line} 的 requireScope(…) 括号配不平`);
-    }
-    const scopeArgument = adminSource
-      .slice(route.start + scopeOpen + 1, route.start + scopeClose)
-      .trim();
-    const scope = resolveScopeExpression(scopeArgument, { opsScopes, scopeConstants, line: route.line, adminFile });
-    return {
-      operationId,
-      method: route.method,
-      path: route.path,
-      registeredPath: route.registeredPath,
-      scope,
-      family: familyOfPath(route.path) ?? 'unknown',
-      routeFile: adminFile,
-      routeLine: route.line,
-    };
-  });
+      if (familyVar) {
+        const descriptor = familyVars.get(familyVar);
+        const slotPattern = new RegExp(
+          `\\b${familyVar}\\s*\\.\\s*(${Object.keys(FAMILY_SLOT_TO_OPERATION_KEY).join('|')})\\s*\\(`,
+        );
+        const slot = slotPattern.exec(block);
+        if (!slot) {
+          throw new AdminCapabilityMapError(
+            `${where} 用了 ${familyVar} 但认不出槽位调用（read/create/get/edit/publish/withdraw）`,
+          );
+        }
+        const operationId = descriptor.operations[FAMILY_SLOT_TO_OPERATION_KEY[slot[1]]];
+        if (!operationId) {
+          throw new AdminCapabilityMapError(
+            `${where} 的槽位 ${slot[1]} 在 ${descriptor.constName}.operations 里没有对应 operationId`,
+          );
+        }
+        const guardsPattern = new RegExp(`\\b${familyVar}\\s*\\.\\s*(read|write)Guards\\b`);
+        const guards = guardsPattern.exec(block);
+        if (!guards) {
+          throw new AdminCapabilityMapError(
+            `${where} 用了 ${familyVar} 但认不出 readGuards/writeGuards`,
+          );
+        }
+        const scope = guards[1] === 'read' ? descriptor.readScope : descriptor.writeScope;
+        assertScope(scope, `${where} ${operationId}`);
+        operations.push({ ...row, family: descriptor.family, operationId, scope });
+        continue;
+      }
 
-  const ids = new Set();
+      // ② `methodOf(services.<dom>, '<operationId>')` 绑定 + `requireScope(…)`。
+      const opVar = [...opVars.keys()].find(name => new RegExp(`\\b${name}\\s*\\(`).test(block));
+      if (opVar) {
+        const scope = requireScopeOf(route);
+        if (scope === null) {
+          throw new AdminCapabilityMapError(`${where} 没有 requireScope(…)，无法判定 scope`);
+        }
+        operations.push({ ...row, operationId: opVars.get(opVar), scope });
+        continue;
+      }
+
+      // ③ `deps.ops.<operationId>`：注册处直接写服务层方法名，operationId 只在契约里有一份。
+      const depsOp = /\bdeps\s*\.\s*ops\s*\.\s*([A-Za-z_$][\w$]*)/.exec(block);
+      if (depsOp) {
+        const operationId = depsOp[1];
+        const contractOp = contractById.get(operationId);
+        if (!contractOp) {
+          throw new AdminCapabilityMapError(
+            `${where} 绑定了 deps.ops.${operationId}，但契约里没有这条 admin 面 operation`,
+          );
+        }
+        if (contractOp.method !== route.method || contractOp.path !== route.path) {
+          throw new AdminCapabilityMapError(
+            `${where} 绑定了 deps.ops.${operationId}，契约里这条 operation 却是 ${contractOp.method} ${contractOp.path}`,
+          );
+        }
+        const scope = requireScopeOf(route);
+        if (scope === null) {
+          throw new AdminCapabilityMapError(
+            `${where} 有 deps.ops.${operationId} 绑定却没有 requireScope(…)，无法判定 scope`,
+          );
+        }
+        operations.push({ ...row, operationId, scope });
+        continue;
+      }
+
+      // ④ 契约兜底：源码里没有 operationId 的字面形态（`admin-auth.ts` 那三条就是这种），
+      //    用 method+path 在契约的 admin 面里精确匹配。0 条、多条都抛——绝不猜。
+      const candidates = contractByRoute.get(`${route.method} ${route.path}`) ?? [];
+      if (candidates.length === 0) {
+        throw new AdminCapabilityMapError(
+          `${where} 既没有家族槽位调用、也没有 methodOf／deps.ops 绑定，契约里也没有这条 method+path 的 admin 面 operation，认不出 operationId`,
+        );
+      }
+      if (candidates.length > 1) {
+        throw new AdminCapabilityMapError(
+          `${where} 在契约里命中 ${candidates.length} 条同 method+path 的 admin 面 operation（${candidates
+            .map(operation => operation.operationId)
+            .join(', ')}），歧义，拒绝猜`,
+        );
+      }
+      const contractOp = candidates[0];
+      let scope = requireScopeOf(route);
+      if (scope === null) {
+        if (/\bpreHandler\b/.test(block)) {
+          throw new AdminCapabilityMapError(
+            `${where} 有 preHandler 守卫却没有 requireScope(…)，无法判定 scope`,
+          );
+        }
+        if (contractOp.scope !== 'public') {
+          throw new AdminCapabilityMapError(
+            `${where} 没有守卫、契约却把 ${contractOp.operationId} 登记成 scope=${JSON.stringify(
+              contractOp.scope,
+            )}（只有 public 允许无守卫注册）`,
+          );
+        }
+        scope = 'public';
+      }
+      operations.push({ ...row, operationId: contractOp.operationId, scope });
+    }
+  }
+
+  if (operations.length === 0) {
+    throw new AdminCapabilityMapError(
+      `${files.map(entry => entry.file).join(', ')}: 整个扫描面一条 admin 面注册都没认出来——解析器与源码形状脱节，拒绝返回空集合`,
+    );
+  }
+  const claims = new Map();
   for (const operation of operations) {
     if (!operation.operationId) {
-      throw new AdminCapabilityMapError(`${adminFile}:${operation.routeLine} 的 operationId 为空`);
+      throw new AdminCapabilityMapError(`${operation.routeFile}:${operation.routeLine} 的 operationId 为空`);
     }
-    if (ids.has(operation.operationId)) {
+    const first = claims.get(operation.operationId);
+    if (first) {
       throw new AdminCapabilityMapError(
-        `${adminFile}:${operation.routeLine} 的 operationId ${operation.operationId} 重复注册`,
+        `${operation.routeFile}:${operation.routeLine} 的 operationId ${operation.operationId} 重复注册（另一次在 ${first}）`,
       );
     }
-    ids.add(operation.operationId);
+    claims.set(operation.operationId, `${operation.routeFile}:${operation.routeLine}`);
   }
   return operations;
+}
+
+/**
+ * 契约里 admin 面的 operation，归一成 `{ operationId, method, path, scope }`。
+ *
+ * 契约是 ③④ 两档的唯一真相源：源码里没写 operationId 的注册，只能靠它定 opId。
+ * 它自己形状不对就抛——契约非空却扫不出 admin 面，说明目录/字段口径变了，不能当成「没缺口」。
+ */
+function adminFaceContractOperations(contractOperations) {
+  const all = Array.isArray(contractOperations) ? contractOperations : [];
+  const list = [];
+  for (const entry of all) {
+    if (typeof entry?.id !== 'string' || typeof entry?.path !== 'string') {
+      throw new AdminCapabilityMapError(
+        `契约 operation 清单里有认不出的条目（缺 id 或 path）：${JSON.stringify(entry)?.slice(0, 120)}`,
+      );
+    }
+    if (!ADMIN_SEGMENT.test(entry.path)) continue;
+    const method = String(entry.method ?? '').toUpperCase();
+    if (method === '') {
+      throw new AdminCapabilityMapError(`契约里 ${entry.id} 没有 method，无法与路由注册对齐`);
+    }
+    list.push({
+      operationId: entry.id,
+      method,
+      path: normalizePathTemplate(entry.path),
+      scope: typeof entry.scope === 'string' ? entry.scope : null,
+    });
+  }
+  if (all.length > 0 && list.length === 0) {
+    throw new AdminCapabilityMapError(
+      `契约里 ${all.length} 条 operation 但一条 admin 面（path 含 /admin 段）都没有——口径变了，拒绝返回空集合`,
+    );
+  }
+  return list;
 }
 
 function resolveScopeExpression(expression, { opsScopes, scopeConstants, line, adminFile }) {
@@ -587,8 +897,12 @@ function resolveScopeExpression(expression, { opsScopes, scopeConstants, line, a
   );
 }
 
+/**
+ * `public` 是**契约里显式登记的开放面**（`admin-auth.ts` 的登录注册没有守卫），必须放行；
+ * 但它只能来自契约字段，不能当成「scope 随便写」的兜底——其余一律 `domain:action` 形状。
+ */
 function assertScope(scope, where) {
-  if (typeof scope !== 'string' || !/^[a-z][a-z_]*:[a-z][a-z_]*$/.test(scope)) {
+  if (typeof scope !== 'string' || !/^(?:public|[a-z][a-z_]*:[a-z][a-z_]*)$/.test(scope)) {
     throw new AdminCapabilityMapError(`${where} 的 scope 不合法：${JSON.stringify(scope)}`);
   }
 }
@@ -907,7 +1221,14 @@ export function expandOptionalSegments(raw) {
 
 // ================================================================ 模块图 + 符号求值
 
-/** 从 `from` 解析相对 import 到仓内文件路径（非相对依赖一律返回 null）。 */
+/**
+ * 从 `from` 解析相对 import 到仓内文件路径（非相对依赖一律返回 null）。
+ *
+ * 无扩展名的相对 specifier 按 Vite/TS 的解析顺序补扩展名（`''` → `.ts` → `.mjs` → `.vue` →
+ * `index.*`）。`apps/admin/src/views/*.vue` 里 9 处 `from '../auth/session'` 就是这种形状——
+ * 不补扩展名的话 `auth/session.ts` 根本连不上视图，扫描面扩到 `admin-auth.ts` 之后 3 条 auth
+ * operation 会变成 3 条假缺口。
+ */
 function resolveSpecifier(fromFile, specifier, modules) {
   if (!specifier.startsWith('.')) return null;
   const segments = fromFile.split('/').slice(0, -1);
@@ -917,7 +1238,11 @@ function resolveSpecifier(fromFile, specifier, modules) {
     else segments.push(piece);
   }
   const candidate = segments.join('/');
-  return modules.has(candidate) ? candidate : null;
+  if (modules.has(candidate)) return candidate;
+  for (const suffix of ['.ts', '.mjs', '.vue', '/index.ts', '/index.mjs', '/index.vue']) {
+    if (modules.has(`${candidate}${suffix}`)) return `${candidate}${suffix}`;
+  }
+  return null;
 }
 
 function buildModules(files) {
@@ -1568,11 +1893,17 @@ export function scanUiSurface(files, options = {}) {
     fileEvidence.set(module.file, families);
   }
 
-  /** client function（`lib/*.mjs` 顶层函数）→ 它背书的 operation 集合。 */
+  /**
+   * client function（**非视图模块**——`lib/*.mjs` 与 `auth/session.ts` 这类 `.ts` 客户端——的
+   * 顶层导出函数）→ 它背书的 operation 集合。
+   *
+   * 判据不能限死 `lib/` 目录：`apps/admin/src/auth/session.ts` 是 3 条 auth operation 的唯一
+   * 客户端，按目录筛会把它整个漏掉，让扫描面扩到 `admin-auth.ts` 之后凭空多出 3 条假缺口。
+   */
   const clientOps = new Map();
   const clientEvidence = new Map();
   for (const module of modules.values()) {
-    if (!module.file.includes('/lib/')) continue;
+    if (module.file.endsWith('.vue')) continue;
     for (const fn of module.functions.values()) {
       if (!fn.exported) continue;
       const evidence = urlEvidenceFor(modules, evaluator, module, fn);
@@ -1735,8 +2066,26 @@ export function loadSources(repoRoot) {
       `${SOURCE_PATHS.contractOperations}: 契约 operation 清单不是非空数组（也找不到 .operations 数组）`,
     );
   }
+  /**
+   * 扫描面 = **整个 `services/api/src/routes/` 目录**（`*.ts`，按文件名排序）。
+   *
+   * 只读 `admin.ts` 会让 `admin-auth.ts` 里那 3 条 auth 注册静默消失（能力图 46 vs 路由 49 vs
+   * 契约 49，闸门仍全绿）——所以这里按目录取，一个 `.ts` 都不许漏，也不许空。
+   */
+  const routesDir = join(repoRoot, SOURCE_PATHS.routesRoot);
+  const routeSources = readdirSync(routesDir)
+    .filter(entry => entry.endsWith('.ts'))
+    .sort()
+    .map(entry => ({
+      file: `${SOURCE_PATHS.routesRoot}/${entry}`,
+      text: read(`${SOURCE_PATHS.routesRoot}/${entry}`),
+    }));
+  if (routeSources.length === 0) {
+    throw new AdminCapabilityMapError(`${SOURCE_PATHS.routesRoot}: 目录里一个 .ts 路由文件都没扫到`);
+  }
   return {
     adminSource: read(SOURCE_PATHS.adminRoutes),
+    routeSources,
     familiesSource: read(SOURCE_PATHS.families),
     opsScopeSource: read(SOURCE_PATHS.opsScopes),
     scopeConstantSources: {
@@ -1772,6 +2121,7 @@ function pathIsKnown(path, known) {
  */
 export function buildCapabilityMap({
   adminSource,
+  routeSources,
   familiesSource,
   opsScopeSource,
   scopeConstantSources,
@@ -1780,9 +2130,12 @@ export function buildCapabilityMap({
 }) {
   const operations = buildOperations({
     adminSource,
+    routeSources,
     familiesSource,
     opsScopeSource,
     scopeConstantSources,
+    // 契约是「源码里没写 operationId」那几档（auth 三条、`deps.ops.<id>`）的唯一 opId 来源。
+    contractOperations,
   });
   const surface = scanUiSurface(ui, { operations });
   const known = knownPaths({ operations, contractOperations });
@@ -2009,7 +2362,7 @@ export function renderDocBlock(map) {
   // 在块内加行会把 `admin-console-capability-map.md:214` 这类既有锚点顶空（实测会被
   // `verify-doc-anchors --strict` 判 2 条基线外新增 SUSPECT）。要加说明就并进这一行。
   lines.push(
-    '> 本块由 `node tools/verify-admin-capability-map.mjs --update` 从源码重算生成（解析 `services/api/src/routes/admin.ts`、`services/api/src/admin/families.ts` 与 `apps/admin/src`），`npm run verify:capability-map` 在 CI 的 `contract` job 里**把整个块逐字节比对**（统一行尾与前后空白后，前言段、读数表、逐 operation 表、族表全在比对范围内），块内手改即红。**块外的散文不受本闸门保护。** ⚠ **`noUiEntry` 只是缺口下界**：入口判据是「视图 import 的客户端函数体里带着这条 operation 的 method+path 证据」，**文本里出现过一次调用就算入口**——哪怕那个函数只在永不被调用的死代码里被调一次（变异实测 `noUiEntry 2→1`，能力没变）；所以 `noUiEntry === 0` 不等于「能力齐」，只等于「扫描器没看见缺口」。',
+    '> 本块由 `node tools/verify-admin-capability-map.mjs --update` 从源码重算生成（解析 `services/api/src/routes/*.ts` 里 admin 面的全部注册——不止 `admin.ts`，源码没写 operationId 的注册按契约 method+path 精确匹配、0 条或多条都抛——再解析 `services/api/src/admin/families.ts` 与 `apps/admin/src`），`npm run verify:capability-map` 在 CI 的 `contract` job 里**把整个块逐字节比对**（统一行尾与前后空白后，前言段、读数表、逐 operation 表、族表全在比对范围内），块内手改即红。**块外的散文不受本闸门保护。** ⚠ **`noUiEntry` 只是缺口下界**：入口判据是「视图 import 的客户端函数体里带着这条 operation 的 method+path 证据」，**文本里出现过一次调用就算入口**——哪怕那个函数只在永不被调用的死代码里被调一次（变异实测 `noUiEntry 2→1`，能力没变）；所以 `noUiEntry === 0` 不等于「能力齐」，只等于「扫描器没看见缺口」。',
   );
   lines.push('');
   lines.push('**读数（operation 级）**——`withUiEntry` / `noUiEntry` 数的是 operation，不是族：');
