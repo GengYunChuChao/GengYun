@@ -984,7 +984,21 @@ function judge({ root = ROOT, base, head, registry = [], registryProblems = [] }
       continue;
     }
     const label = `[登记表] 第 ${index + 1} 条 ⟨${entry.doc}:${entry.line} ${entry.target} :${entry.from} → :${entry.to}⟩`;
-    if (entry.from === entry.to) {
+    // 「零位移」的判据必须与 `correctionViolation` 里的零位移判据（同文件 :654）**同形**：起点相同
+    // **且**末端也相同，才叫「旧锚点根本没动」。这里以前只看起点（`entry.from === entry.to`），于是
+    // **单端位移**（起点不动、只改末端，例如 `2515-2560 → 2515-2566`：起点 2515 不变、末端 +6）
+    // 被这里判成「陈旧，必须删」，而 `correctionViolation`（:654）与 `matchRegistry`（逐端比对，
+    // 区间锚点必须同时给出 fromEnd/toEnd 才算命中）都认它 —— 两条规则自相矛盾。
+    // 为什么单端位移必须能登记：
+    //   ① 目标文件本提交未改动时，`if (!changed)` 那一支要求新旧锚点**两端都恒等**，差值平移根本
+    //      表达不了「只修末端」；靠「文档写旧值、登记写新值」又会在登记表自检里撞上「新行号不命中」。
+    //   ② 目标文件本提交有改动时，端点映射也是按两端逐个映射的，只改末端同样落不到映射上。
+    // 真实案例就是 E03：`services/api/src/app.ts:2515-2560` 的末端落在 `createAnswerJobSource` 的
+    // `cancelJob` 函数体里，收尾 `]));` 在 :2566，正确写法是 `2515-2566`（起点不动、末端 +6）——
+    // 四个格子（文档值 × 登记 toEnd）没有一个能绿，正是这两条规则互相矛盾的结果。
+    // 改成同形谓词**不是放宽**：四端全同的真正零位移条目下面照样判红、文案逐字不变；单端位移仍要过
+    // `matchRegistry` 的逐端比对，也仍要过下面「两端原文不许同时相同」那条判据。
+    if (entry.from === entry.to && (entry.fromEnd ?? entry.from) === (entry.toEnd ?? entry.to)) {
       violations.push(`${label} 陈旧：from 与 to 相同，不可能对应任何位移，必须删`);
       continue;
     }
@@ -2124,6 +2138,114 @@ test('C9 纠正夹具：symbol 是纯空白串 ⇒ 形状错误判红（空白�
   assert.match(text, /行号必须落在这个文件自己的端点映射上/);
   const shapeLine = result.violations.find((item) => /形状错误/.test(item));
   t.diagnostic(`夹具（C9 纯空白 symbol）判红 ${result.violations.length} 条：${shapeLine}`);
+});
+
+// ───────────── D 组夹具：单端位移（起点同、末端不同）—— 登记表自检必须与 :654 同形 ─────────────
+// 真实形态是 E03：`services/api/src/app.ts:2515-2560 → 2515-2566`（起点 :2515 不动，末端 +6，改到
+// `registerJobRoutes(...)` 的收尾 `]));`）。目标文件本提交未改动 ⇒ 只能走登记表；`matchRegistry`
+// （逐端比对）与 `correctionViolation`（:654 同形谓词）都认单端位移，只有登记表自检的旧判据
+// `entry.from === entry.to` 不认 ⇒ 文档值 × 登记 toEnd 的四个格子没有一个能绿。D1/D2 把两种形状钉住。
+
+/** D 组目标文件的「装配块」：:20 起头，:21 还是块内，:23 才是含 `]));` 的收尾行（对齐 E03 现场）。 */
+const SINGLE_END_BLOCK_START = 20;
+const SINGLE_END_TRUNCATED_END = 21;
+const SINGLE_END_FULL_END = 23;
+const SINGLE_END_SYMBOL = ']));';
+
+function singleEndTargetFile() {
+  return targetFile({
+    overrides: {
+      [SINGLE_END_BLOCK_START]: 'registerJobRoutes(app, config, guards, createJobRegistry([',
+      [SINGLE_END_TRUNCATED_END]: '  cancelJob: async ({ userId }) => {',
+      22: '    return null;',
+      [SINGLE_END_FULL_END]: '  ]));',
+    },
+  });
+}
+
+test('D1 单端位移：from === to 但 fromEnd !== toEnd 的登记必须被接受（matchRegistry 逐端认它）⇒ 绿，不许判「陈旧」', (t) => {
+  const baseDoc = docFile({ anchor: `${SINGLE_END_BLOCK_START}-${SINGLE_END_TRUNCATED_END}` });
+  const headDoc = docFile({ anchor: `${SINGLE_END_BLOCK_START}-${SINGLE_END_FULL_END}` });
+  const repo = fixtureRepo(t, {
+    // 关键：目标文件本提交一个字都不改 —— 走的正是「目标文件未改动 ⇒ 新旧两端都必须恒等」那一支，
+    // 所以「只把末端改对」这一段只能由登记表接住。
+    baseFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const entry = {
+    doc: FIXTURE_DOC,
+    line: anchorDocLine(headDoc),
+    target: FIXTURE_TARGET,
+    from: SINGLE_END_BLOCK_START,
+    fromEnd: SINGLE_END_TRUNCATED_END,
+    to: SINGLE_END_BLOCK_START,
+    toEnd: SINGLE_END_FULL_END,
+    kind: 'correction',
+    symbol: SINGLE_END_SYMBOL,
+    reason: '夹具（D1）：起点 :20 不动、只把末端从 :21 修到收尾 :23（`]));` 只在 :23）—— 单端位移必须能登记',
+  };
+  const result = judge({ root: repo.root, base: repo.base, head: repo.head, registry: [entry] });
+  assert.deepEqual(
+    result.violations,
+    [],
+    `单端位移的登记被拦住了（这是 :987 与 :654 不同形的老症状）：${result.violations.join(' | ')}`,
+  );
+  assert.equal(result.stats.registered, 2, '路径锚点 + 同行裸锚点都必须由这条登记接住');
+  assert.equal(result.stats.corrected, 2, 'kind=correction 验真通过后按 token 各 +1');
+  assert.equal(result.stats.judged, 0, '前提：本提交的 token 全靠这条登记接住，没有一条落到判定面');
+  for (const message of result.registered) {
+    assert.match(message, /已登记/);
+    assert.match(message, /kind=correction/);
+    assert.ok(
+      message.includes(SINGLE_END_SYMBOL),
+      `registered 必须逐条打印 symbol 供人工复核：${message}`,
+    );
+  }
+  assert.equal(result.carried.length, 0, '本次真正生效的条目不许退化成「历史保留」');
+  t.diagnostic(`夹具（D1 单端位移 20-21→20-23）${summarize(result, 'fixture')}；已登记：${result.registered[0]}`);
+});
+
+test('D2 真零位移：四端全同（起点同、末端也同）的登记仍然判红，且「陈旧」文案逐字不变', (t) => {
+  // 把 :987 的判据改成同形谓词**不许**顺手把这条也放行：旧锚点根本没动，谈不上「把错锚点改到正确
+  // 行号」。文案与 C8 盯的是同一句，这里逐字比对整条 violation。
+  const anchor = `${SINGLE_END_BLOCK_START}-${SINGLE_END_TRUNCATED_END}`;
+  const baseDoc = docFile({ anchor });
+  const headDoc = docFile({ anchor, note: '（本提交只改了措辞，锚点没动）' });
+  const repo = fixtureRepo(t, {
+    baseFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: baseDoc },
+    headFiles: { [FIXTURE_TARGET]: singleEndTargetFile(), [FIXTURE_DOC]: headDoc },
+  });
+  const docLine = anchorDocLine(headDoc);
+  const result = judge({
+    root: repo.root,
+    base: repo.base,
+    head: repo.head,
+    registry: [{
+      doc: FIXTURE_DOC,
+      line: docLine,
+      target: FIXTURE_TARGET,
+      from: SINGLE_END_BLOCK_START,
+      fromEnd: SINGLE_END_TRUNCATED_END,
+      to: SINGLE_END_BLOCK_START,
+      toEnd: SINGLE_END_TRUNCATED_END,
+      kind: 'correction',
+      symbol: SINGLE_END_SYMBOL,
+      reason: '夹具（D2）：四端全同 —— 真正的零位移，必须判红',
+    }],
+  });
+  assert.deepEqual(
+    result.violations,
+    [
+      `[登记表] 第 1 条 ⟨${FIXTURE_DOC}:${docLine} ${FIXTURE_TARGET}`
+      + ` :${SINGLE_END_BLOCK_START} → :${SINGLE_END_BLOCK_START}⟩`
+      + ' 陈旧：from 与 to 相同，不可能对应任何位移，必须删',
+    ],
+    `四端全同的登记竟然放行了（或「陈旧」文案被改了）：${result.violations.join(' | ')}`,
+  );
+  assert.equal(result.stats.corrected, 0, '失败一律不许计入 corrected');
+  assert.equal(result.stats.registered, 0, '失败一律不许计入 registered');
+  assert.equal(result.carried.length, 0, '不合格的条目不许退化成「历史保留」');
+  t.diagnostic(`夹具（D2 四端全同 20-21→20-21）判红 1 条：${result.violations[0]}`);
 });
 
 test('变异夹具：整行删掉带锚点的文档行（另改一行散文）⇒ 不判红，但锚点必须进 removed，不许隐身', (t) => {
