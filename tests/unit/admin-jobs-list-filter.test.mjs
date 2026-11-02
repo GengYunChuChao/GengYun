@@ -411,11 +411,19 @@ test('契约闭集就是判定依据：JOB_STATES 七值全收、闭集外全拒
     await portWith(pool).list({ error_code: code });
     assert.deepEqual(pool.calls[0].values, [ADMIN_JOB_LIST_LIMIT, code]);
   }
-  assert.equal(JOB_STATES.length, 7);
+  // 状态闭集同样不钉死条数：与契约 `components.schemas.JobState.enum` **双边**对拍
+  // （集合相等 ⇒ 条数自然相等；`assert.equal(JOB_STATES.length, 7)` 是从被测模块自己取长度的自指判据）。
+  const openapi = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'));
+  const contractStates = openapi.components.schemas.JobState.enum;
+  assert.ok(contractStates.length > 0, 'packages/contracts/openapi.json 里读不到 JobState.enum');
+  assert.deepEqual(
+    [...JOB_STATES].sort(),
+    [...contractStates].sort(),
+    `jobs 列表过滤接受的状态闭集必须与契约 JobState 枚举逐项相等：代码 ${JOB_STATES.length} / 契约 ${contractStates.length}`,
+  );
   // 错误码闭集不钉死条数：与契约 `components.schemas.ErrorCode.enum` **双边**对拍
   // （集合相等 ⇒ 条数自然相等；单侧 `assert.equal(ERROR_CODES.length, N)` 会在契约加码后永久绿）。
-  const contractEnum = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'))
-    .components.schemas.ErrorCode.enum;
+  const contractEnum = openapi.components.schemas.ErrorCode.enum;
   assert.ok(contractEnum.length > 0, 'packages/contracts/openapi.json 里读不到 ErrorCode.enum');
   assert.deepEqual(
     [...ERROR_CODES].sort(),

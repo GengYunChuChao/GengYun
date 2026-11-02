@@ -229,11 +229,13 @@
     "doc": "docs/architecture/ai-ops-spec-status.md",
     "line": 73,
     "target": "services/api/src/app.ts",
-    "from": 2433,
-    "fromEnd": 2472,
-    "to": 2469,
-    "toEnd": 2508,
-    "reason": "`registerJobRoutes(` 的唯一调用点在 app.ts:2469，收尾 `]));` 在 2508；旧值 2433-2472 是历史错值（注册段已被上游改动），按符号重定位"
+    "from": 2469,
+    "fromEnd": 2508,
+    "to": 2515,
+    "toEnd": 2560,
+    "kind": "correction",
+    "symbol": "registerJobRoutes(app, config, guards",
+    "reason": "旧锚点本来就指错：2469-2508 是上一轮「按端点映射平移」的产物，落在 OCR 装配段（:2508 是 `ocrPersistenceImageMedia` 的字面量注释、:2509 是 `registerOcrRoutes(`），整段不含 `registerJobRoutes`。本次按符号在 cc10d0a5 实测：`registerJobRoutes(app, config, guards` 在 :2515，六条 `create*JobSource` 实参依次在 :2516／:2522／:2528／:2534／:2542／:2552（对应识别／转写／审核／合成／OCR／问答），收尾 `]));` 在 :2566，引导句「共 6 个」在 :2511。旧窗口里没有这个 symbol、新窗口里有 ⇒ 走 `kind: \"correction\"`，不做差值平移。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
