@@ -2,7 +2,7 @@
 
 - 记录：2026-10-09｜分支：`feature/gui-adaptive-pages`｜PR：[#39](https://github.com/GengYunChuChao/GengYun/pull/39)
 - 记录人：尹一（开发者端）
-- 契约来源：`packages/contracts/operations.json`（112 条操作，冻结契约）
+- 契约来源（冻结契约；操作条数以 `packages/contracts/operations.json` 现数为准，本页不抄写——本行 2026-10-09 记的数已过时）：`packages/contracts/operations.json`
 
 > 本文件是任务书「提交证据」第 2 项中「**接口契约绑定记录**」的交付物。
 > **机器归属**：全部结论来自作者本机静态核查，未发起任何网络调用，未读取任何生产凭据。

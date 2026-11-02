@@ -1,9 +1,9 @@
 # 后台（apps/admin）能力现状：已挂端点、真实调用与缺口
 
 > 基线：`68dec742`（2026-10-26 重测；`#640` 以 squash `2bfec9d3`、`#641` 以 `68dec742` 合入后）。本页所有「文件:行号」都以该提交为准；社区审核队列页（原分支 `feat/gy-r62-admin-moderation-queue`）已随之合入，不再单列。
-> **计数口径（先读这条，否则数字对不上）**：`packages/contracts/openapi.json` 中以 `/admin` 开头的 path 共 **36** 条，展开成 **45** 个 operation；其中 **44** 个的 `x-scope` 落在 `AdminScope.enum` 闭集（13 项）内，另 **1** 个是 `loginAdmin`（`POST /admin/auth/session`，`x-scope: public`）——它是登录入口，不持任何后台权限，**任何口径下都不计入**。
+> **计数口径（先读这条，否则数字对不上）**：契约侧（`packages/contracts/openapi.json` 里以 `/admin` 开头的 path 数、展开出的 operation 数、`x-scope` 落在 `AdminScope.enum` 闭集（13 项）内的个数）**本页一个也不抄写**——加一条路由这些数就变一次，抄进散文必然腐烂；要读就现场数该文件，**口径以 `packages/contracts/openapi.json` 为准**。只留一条不会过期的结构事实：其中 `loginAdmin`（`POST /admin/auth/session`，`x-scope: public`）是登录入口，不持任何后台权限，**任何口径下都不计入**。
 > **本页路由与入口的读数以机器重算为准**（`node tools/verify-admin-capability-map.mjs`，CI 在 `contract` job 里跑 `npm run verify:capability-map`）：`services/api/src/routes/admin.ts` 逐条注册 **46** 条路由（24 条家族路由 + 22 条显式路由），对应 46 个 operationId；`apps/admin/src` 对其中 **46** 个 operation 全部有调用链入口，**无入口 0 条**（原本仅剩的 `grantAdministratorScope`、`revokeAdministratorScope` 两条授/撤权写面已由 GY-R68 接上 `AdministratorsView.vue`，取证见 §4）。逐条数字见 §0 末尾的标记块——**块内是闸门保护的实时值，块外散文不受保护**。
-> 上一段 `openapi.json` 的「36 条 path／45 个 operation／44 个 x-scope」是契约口径的**手工读数，本行未纳入闸门**（脚本只读 `admin.ts`、`admin/families.ts` 与 `apps/admin/src`，不数 `openapi.json`；要把这几个数也钉住，得另加一条契约侧的重算）。旧版本这里写「只数 42 条＝逐条注册的路由数、本页每个 42／30 都要 +2」，那组数字已被代码证伪（实测 46 条路由、46 个 operation；无入口在本片之前是 2 条、GY-R68 之后是 0 条），只在 §8 留作历史记录。
+> 上一段那句「契约侧各是多少」是手数出来的，本页不再维护第二份：闸门（**以 `node tools/verify-admin-capability-map.mjs` 的重算为准**）只读 `admin.ts`、`admin/families.ts` 与 `apps/admin/src`，**不数 `openapi.json`**，所以契约侧的总数只能现场数该文件、本页不写死。旧版本这里写「只数 42 条＝逐条注册的路由数、本页每个 42／30 都要 +2」，那组数字已被代码证伪（实测 46 条路由、46 个 operation；无入口在本片之前是 2 条、GY-R68 之后是 0 条），只在 §8 留作历史记录。
 > 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1354`。
 > 可复跑：`node tools/verify-doc-anchors.mjs --strict`、`node tools/verify-contract-status.mjs`、`npm run test:docs`。
 
@@ -11,8 +11,8 @@
 
 | 面 | 现在的事实 | 锚点 |
 | --- | --- | --- |
-| 服务端 admin 端点 | **46 条注册路由，对应 46 个 operationId**（机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首「闭集 44」那套是契约口径的手数，本行未纳入闸门 | services/api/src/routes/admin.ts:198-487 |
-| 前端真实调用 | **46 个 operation 全部有 UI 入口（无入口 0 条）**，机器重算，见标记块。旧版手数的「30 个 operation、33 处物理调用点」是 2026-10-26 的读数，本行未纳入闸门 | apps/admin/src/lib/admin-content-api.mjs:409 |
+| 服务端 admin 端点 | **46 条注册路由，对应 46 个 operationId**（机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首那套契约口径的 path／operation／scope 读数本页不抄，需要时现场数 `packages/contracts/openapi.json` | services/api/src/routes/admin.ts:198-487 |
+| 前端真实调用 | **46 个 operation 全部有 UI 入口（无入口 0 条）**，机器重算，见标记块。旧版手数的「30 个 operation、33 处物理调用点」是 2026-10-26 的读数；本行只认 §0 标记块的机器重算（`node tools/verify-admin-capability-map.mjs`） | apps/admin/src/lib/admin-content-api.mjs:409 |
 | 页面 | 19 个 `.vue`（壳 `App.vue` 1 + 主 tab 视图 10 + 子页 6 + 子组件 2）；「社区审核队列」已接入读 + 通过/驳回，「人工审核」仍是空占位 | apps/admin/src/App.vue:27-38 |
 | 死按钮 | 0 个（机器重算 `deadButtons=0`）；另有 6 个 `class="link"` 的「详情/编辑/展开原文」按钮——它们**带**自己的 `@click.stop`（复制父行动作、阻止冒泡），**不是**「自身无 handler」（旧版那句是错的，2026-11-02 逐文件复核，见 §3 第三张表） | apps/admin/src/views/SourcesView.vue:506 |
 | 后端有面、UI 无入口 | **0 个 operation**：原本仅剩的两条授/撤权写面 `grantAdministratorScope`、`revokeAdministratorScope`（`POST`／`DELETE /admin/administrators/{id}/scopes…`，门 `scopes:write`）已由 GY-R68 接上 `AdministratorsView.vue`。旧版写「12 个，只剩两族：注册资料 6、限制资料 6」，已被代码证伪——两族各有页面，见 §4 | services/api/src/routes/admin.ts:408-427 |
@@ -86,7 +86,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 ## 2 前端真实调用了哪些端点
 
-### 2.1 客户端方法 → 路径（`apps/admin/src/lib/`；本表未纳入闸门，逐条路径与文件以工具输出为准）
+### 2.1 客户端方法 → 路径（`apps/admin/src/lib/`；逐条 operationId、方法与路径、scope 以 `node tools/verify-admin-capability-map.mjs` 的输出为准；客户端方法名与行号是手抄，按该目录现查）
 
 | operationId | 客户端方法 | 方法与路径 | scope |
 | --- | --- | --- | --- |
@@ -156,7 +156,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | apps/admin/src/views/ContentAdminView.vue（313） | 容器：登录表单 + 4 个子 tab（来源 / 科普 / 帖子下架 / 分类） | 无自身业务请求，只下发 baseUrl/token/scopes | 3 / 0 | 无（登录后读会话） |
 | apps/admin/src/views/SourcesView.vue（766） | 来源列表 + 详情 + 新建草稿 / 编辑 / 发布 / 下架表单 + 按 request_id 反查审计 | 4 个写操作（创建、编辑、发布、下架）+ 1 个只读反查（`listAuditEvents`） | 20 / 0 | sources:read / sources:write（apps/admin/src/views/SourcesView.vue:82-84） |
 | apps/admin/src/views/KnowledgeAdminView.vue（809） | 科普列表 + 详情 + 新建 / 编辑 / 发布 / 下架；发布需挑一条来源（读来源列表辅助） | 同为 4 写（创建、编辑、发布、下架）+ 1 只读反查（`listAuditEvents`） | 22 / 0 | sources:read / sources:write（apps/admin/src/views/KnowledgeAdminView.vue:84-86） |
-| apps/admin/src/views/CategoriesView.vue（555） | 分类列表 + 编辑表单 | 只有「保存分类」；**没有新建 / 删除按钮**（契约只有 2 个 operation，页面不造） | 9 / 0 | sources:read / sources:write（apps/admin/src/views/CategoriesView.vue:60-62） |
+| apps/admin/src/views/CategoriesView.vue（555） | 分类列表 + 编辑表单 | 只有「保存分类」；**没有新建 / 删除按钮**（契约侧只给「读目录」与「改分类」两条，页面不造多余的） | 9 / 0 | sources:read / sources:write（apps/admin/src/views/CategoriesView.vue:60-62） |
 | apps/admin/src/views/PostTakedownView.vue（523） | 下架表单（帖子 id + 理由）+「读取帖子确认」一步：先 `GET /admin/posts/{id}` 拿标题/作者/可见性/revision 并**回填成只读**，读不到（403/404/网络）回落手填 | POST /admin/posts/{id}/hide | 3 / 0（「改用手填 revision」只在读面回填后出现） | sources:write 决定下架、sources:read 决定读面（apps/admin/src/views/PostTakedownView.vue:73、apps/admin/src/views/PostTakedownView.vue:78） |
 | apps/admin/src/views/FlagsView.vue（599） | 开关列表 + 行内切换 + 详情侧栏 | PUT /admin/feature-flags/{key}（If-Match + Idempotency-Key） | 12 / 0 | flags:read 读；flags:write 决定可写（apps/admin/src/lib/flags-view-model.mjs:224） |
 | apps/admin/src/views/FlagAuditView.vue（560） | 开关变更留痕只读 + 加载下一页 | 无写操作 | 6 / 0 | flags:read |

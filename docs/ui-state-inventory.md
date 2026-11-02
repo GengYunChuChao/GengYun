@@ -168,16 +168,16 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 项目 | 结果 |
 | --- | --- |
 | 文档与任务图检查 | `python tools/validate_development_docs.py` → PASS（27 任务） |
-| 契约一致性检查 | `python tools/validate_contracts.py` → PASS（112 操作） |
+| 契约一致性检查 | `python tools/validate_contracts.py` → PASS（操作条数以 `python tools/validate_contracts.py` 的当次输出为准，本页不抄写） |
 | 契约测试 | `python tools/test_contracts.py` → OK（8 项） |
 | 微信工程结构检查 | `node tools/check-wechat-project.mjs` → PASS |
-| 界面自动化 | `node --test tests/ui-adaptive.test.mjs` → 26 项 PASS（2026-10-14 起含 demo 色板断言与按钮类触控下限断言） |
+| 界面自动化 | `node --test tests/ui-adaptive.test.mjs` → 29 项 PASS（2026-10-14 起含 demo 色板断言与按钮类触控下限断言；本轮重跑读数） |
 | Demo 样式对齐机检 | `node tools/demo-align.mjs` → PASS（令牌逐值一致／104 条类映射／28 个图标几何一致／无裸 px 字号） |
-| Demo 样式对齐回归 | `node --test tests/ui-demo-align.test.mjs` → 7 项 PASS |
-| 本地诊断测试 | `node --test tests/local-debug.test.mjs` → 4 项 PASS（含打包允许清单随 app.json 的 13 页同步） |
+| Demo 样式对齐回归 | `node --test tests/ui-demo-align.test.mjs` → 10 项 PASS（本轮重跑读数） |
+| 本地诊断测试 | `node --test tests/local-debug.test.mjs` → 6 项 PASS（读数取该命令输出的 `ℹ tests` 计数；含打包允许清单与 `miniprogram/app.json` 的 `pages` 同数，页数读该文件、本页不抄） |
 | 布局静态核算 | `node tools/verify-layout.mjs` → 五档视口 PASS，末屏预留按实际声明在**微信最大字号档**核对（105px ≥ 87.3px） |
 | 五 Tab 导航 | **真机预览逐一导航，五个页面均可打开**，截图已入库 |
-| 截图 | **15 张已入库**（`assets/gui-adaptive-250c4d4/`，绑定提交 250c4d4）：五 Tab 真机、显示大小最大档五页、工具基本信息与本地设置、代码质量扫描、编译成功 |
+| 截图 | **已入库**（绑定提交 250c4d4；张数以 `docs/verification/assets/gui-adaptive-250c4d4/` 现数为准，本页不抄）：五 Tab 真机、显示大小最大档五页、工具基本信息与本地设置、代码质量扫描、编译成功 |
 
 **未完成的走查项**：
 
@@ -189,7 +189,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | Demo 对齐的**工具／模拟器／真机截图** | 2026-10-14 批次的写手机器未安装微信开发者工具（仅有残留 User Data），开发者工具编译、模拟器与真机渲染均未取得 | 见 [gy-i26-demo-align-20261014.md](verification/gy-i26-demo-align-20261014.md) 第 8 节（含复核命令） |
 | 适老版（最大字号／简化布局） | 用户 2026-10-14 指令「适老版后面再弄」 | 后续单，本任务不做 |
 
-数值门槛（44px 触控区、18px 正文、54px 末屏预留）已由 `verify-layout.mjs` 静态核算覆盖；仍需真机验证的是系统级字体缩放是否生效、极窄容器下的实际换行与溢出。
+数值门槛（44px 触控区、18px 正文、54px 末屏预留）已由 `verify-layout.mjs` 静态核算覆盖；仍需真机验证的是系统级字体缩放是否生效、极窄容器下的实际换行与溢出。§6 表里各行的项数是本轮重跑左列命令后的实测读数（不是历史快照），用例增加读数就会变大：要现在的数就重跑该行命令，以当场输出为准（`node --test tests/ui-adaptive.test.mjs`、`node --test tests/ui-demo-align.test.mjs`、`node --test tests/local-debug.test.mjs`、`python tools/validate_contracts.py`、`python tools/test_contracts.py`）。
 
 > 本任务不重复验收语音服务准确率，也不代替 GY-I13 的播放生命周期验证。基础库以 `project.config.json` 的 `libVersion` 为准，本轮曾将不可选的 `3.5.5` 修正为候选 `3.5.8`（未实测、未冻结，详见 `docs/verification/gui-adaptive-evidence.md`）。
 
