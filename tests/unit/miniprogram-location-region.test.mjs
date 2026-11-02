@@ -60,7 +60,7 @@ function harness(reply, convert) {
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // —— 不变量 1：未注入转换资源 ⇒ unavailable，且页面回退手选文案可达 ——
-test('不变量1 未注入地区转换资源：locate 如实返回 unavailable，手选回退文案可达', async () => {
+test('不变量1 未注入地区转换资源：先判资源、不申请定位授权，如实返回 unavailable，手选回退文案可达', async () => {
   const h = harness((options) => options.success(SENTINEL), undefined);
   const result = plain(await h.spawn());
   assert.deepEqual(result, { status: 'unavailable' });
@@ -71,7 +71,8 @@ test('不变量1 未注入地区转换资源：locate 如实返回 unavailable�
   // 无转换资源时坐标不得交给任何东西，也不得顺手开跟踪。
   assert.deepEqual(h.seen.convertArgs, []);
   assert.deepEqual(h.seen.forbidden, []);
-  assert.equal(h.seen.getLocationOptions.length, 1);
+  // 资源缺席时**不应申请定位授权**：0 次 getLocation（旧实现先 getLocation 再判转换器 ⇒ 此处为 1）。
+  assert.equal(h.seen.getLocationOptions.length, 0);
   for (const text of SENTINEL_TEXT) assert.equal(JSON.stringify(result).includes(text), false);
 });
 
@@ -245,14 +246,20 @@ test('边界 wxApi 缺失或 getLocation 非函数/同步抛错：一律 failed�
 });
 
 // —— 边界：unavailable 的可达前提（如实登记 ordering）——
-test('边界 unavailable 只在定位成功之后可达：定位失败时如实报告平台失败档，不冒充资源未接入', async () => {
-  // 未注入转换资源 + 平台失败 ⇒ 报平台失败档（如 cancelled），**不是** unavailable。
+// 2026-11-03（R73 诚实性修复）：判断顺序改为「先看转换资源在不在，再决定要不要申请定位授权」。
+// 资源缺席时**一次 getLocation 都不调用**（旧顺序会先弹授权框、拿到坐标，再告诉用户「资源尚未接入」）。
+test('边界 资源缺席 ⇒ 不申请授权（getLocation 0 次）且如实报 unavailable；资源在时平台失败仍报平台失败档', async () => {
   const h = harness((o) => o.fail({ errMsg: 'getLocation:fail cancel' }), undefined);
-  assert.deepEqual(plain(await h.spawn()), { status: 'cancelled' });
-  assert.equal(h.seen.getLocationOptions.length, 1);
+  assert.deepEqual(plain(await h.spawn()), { status: 'unavailable' });
+  assert.equal(h.seen.getLocationOptions.length, 0);
   assert.deepEqual(h.seen.convertArgs, []);
   const denied = harness((o) => o.fail({ errMsg: 'getLocation:fail auth deny' }), undefined);
-  assert.deepEqual(plain(await denied.spawn()), { status: 'denied' });
+  assert.deepEqual(plain(await denied.spawn()), { status: 'unavailable' });
+  assert.equal(denied.seen.getLocationOptions.length, 0);
+  // 反过来：资源在（convert 是函数）时平台失败必须如实报平台失败档，不得冒充「资源未接入」。
+  const platformFail = harness((o) => o.fail({ errMsg: 'getLocation:fail cancel' }), () => '330102');
+  assert.deepEqual(plain(await platformFail.spawn()), { status: 'cancelled' });
+  assert.equal(platformFail.seen.getLocationOptions.length, 1);
 });
 
 // —— message()/MESSAGES 闭集与兜底 ——
@@ -455,7 +462,8 @@ test('D2 装配·U3 未取得：仓库内没有 region-centroids.js ⇒ build() 
   assert.deepEqual(result, { status: 'unavailable' });
   assert.match(locationRegion.message(result.status), MANUAL);
   assert.deepEqual(h.seen.convertArgs, []);
-  assert.equal(h.seen.getLocationOptions.length, 1);
+  // 装配结果为空（资源缺席）⇒ 同样不申请定位授权：getLocation 0 次。
+  assert.equal(h.seen.getLocationOptions.length, 0);
   assert.deepEqual(h.seen.forbidden, []);
   for (const text of SENTINEL_TEXT) assert.equal(JSON.stringify(result).includes(text), false);
 });

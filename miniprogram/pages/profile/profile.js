@@ -109,8 +109,10 @@ Page({
       patch[kind + 'State'] = 'error'
       patch[kind + 'Count'] = '—'
     } else {
+      // 封套里没有 count 字段，这里拿到的是**已加载条数**（第一页 limit=20）：文案必须自证
+      // 「已加载」，不能让这个数字被读成总数；`+` 只是补充「还有下一页」，不是唯一提示。
       patch[kind + 'State'] = 'ready'
-      patch[kind + 'Count'] = result.items.length + (result.nextCursor ? '+' : '')
+      patch[kind + 'Count'] = '已加载 ' + result.items.length + (result.nextCursor ? '+' : '') + ' 条'
     }
     this.setData(patch)
   },
