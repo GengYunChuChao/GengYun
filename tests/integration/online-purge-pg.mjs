@@ -31,6 +31,10 @@
  *       重跑 0 行不追加、同 (module,evidence_ref) 幂等；**换新进程**（另起 node + 另开池）仍读回 completed；
  *       权限面：运行时直读 `deletion_requests`（含两个新列）仍恰好 42501，只多两函数 EXECUTE；
  *       append-only 触发器（G0005）与成对约束（23514）、写函数四类非法入参（G0001/G0002）。
+ *   [10] R72：**时钟驱动的域 = 读面闭集（8 域；community 保持排除）**——CLI `--dry-run` 打印 8 域
+ *       且不含 community；受理时 recognitions 记 `blocked` 且到期的请求跑一轮 ⇒ 真删
+ *       `recognition_records` 行并落证据 ⇒ `read_online_purge_evidence` 多出 recognitions 条目、
+ *       读面 `completed`（这是「没有执行者」缺口的自愈读数）；第二轮 0 行、`already_purged`、证据不重复。
  */
 
 import assert from 'node:assert/strict';
@@ -50,6 +54,7 @@ import { createPostgresBackupStateReader } from '../../services/api/src/privacy/
 import { createPostgresDeletionRequestStore } from '../../services/api/src/privacy/deletion-requests-pg.ts';
 import { createPostgresOnlinePurgeEvidenceRecorder } from '../../services/api/src/privacy/online-purge-evidence.ts';
 import { createPostgresOnlineStateReader } from '../../services/api/src/privacy/online-state-derivation.ts';
+import { createOnlinePurgePort, ONLINE_PURGE_MODULES } from '../../services/api/src/privacy/online-purge-port.ts';
 import {
   USER_DATA_DELETION_MODULES,
   createUserDataDeletion,
@@ -355,13 +360,13 @@ function fourDomainPort(pool) {
  * 缺省 `maxBatches: 1` ⇒ 一页一轮，读数与旧口径的"单批"一致（[2]–[8] 各臂沿用）。
  * `after` 是上一轮落下的游标；`maxBatches: 1` + 游标 = CLI 每次 cron 调用的行为。
  */
-async function driveOnce({ cutoff, limit, dryRun = false, purge, evidence, after = null, maxBatches = 1 }) {
+async function driveOnce({ cutoff, limit, dryRun = false, purge, evidence, after = null, maxBatches = 1, modules = USER_DATA_DELETION_MODULES }) {
   return drainDueOnlineDeletions({
     cutoff,
     limit,
     maxBatches,
     dryRun,
-    modules: USER_DATA_DELETION_MODULES,
+    modules,
     purge,
     ...(evidence === undefined ? {} : { evidence }),
     after,
@@ -485,7 +490,9 @@ try {
     `CREATE ROLE ${runtimeRole} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${password}'`,
   );
   await owner.query(`GRANT gengyun_auth_privacy TO ${runtimeRole}`);
-  for (const region of ['gy-i19-deletion-grant', 'gy-i19-backup-copies-grant', 'gy-r32-i19-online-evidence-grant', 'gy-r28-runtime-domain-grants']) {
+  // `gy-r34-i19-owner-content-purge-grant`：识别/语音两域清理函数的 EXECUTE（R72 组 [10] 要用；
+  // 出厂 provisioning 里本来就有这一段，本臂此前没抽 ⇒ 这里补抽，⛔ 不是新增授权）。
+  for (const region of ['gy-i19-deletion-grant', 'gy-i19-backup-copies-grant', 'gy-r32-i19-online-evidence-grant', 'gy-r34-i19-owner-content-purge-grant', 'gy-r28-runtime-domain-grants']) {
     const matched = deploySqlFile('20-login-roles.sql').match(
       new RegExp(`-- #region ${region}\\r?\\n([\\s\\S]*?)\\r?\\n\\s*-- #endregion ${region}`),
     );
@@ -1251,7 +1258,180 @@ try {
   assert.equal(wrongSubject.rows[0].state, null, '读路径必须按 (request_id, user_id) 过滤：错误主体读不到任何行');
   say('证据只可追加：清空/置 NULL/删条目 = G0005；只清 purged_at = 23514；模块名/摘要/请求/主体四类非法输入均被拒');
 
-  await retire(owner, [dueRequest.requestId, pendingRequest.requestId, blockedRequest.requestId, exactDueRequest.requestId]);
+  // =========================================================================
+  // [10] R72：时钟驱动的域 = 读面闭集（8 域；community 保持排除）
+  // =========================================================================
+  // 缺陷链（R72）：`online-state-derivation.ts` 按 `ONLINE_EVIDENCE_MODULES`（8 域）推导，而唯一
+  // 按时钟执行的入口此前只驱动 `USER_DATA_DELETION_MODULES`（四域）⇒ 受理时失败的 conditional 域
+  // （识别/语音/OCR/作业）到期后**没有任何执行者**会重试，读面永远把「没有执行者」说成
+  // `blocked`/`STORE_REJECTED`。本组把「扩集后真的会清」钉成读数（`--dry-run` 只证明选择集）。
+  const clockAtCutoff = () => new Date(CUTOFF);
+  // 生产口径：cron 必须用**属主/运维角色**（`docs/verification/gy-r28-w6-deletion-clock-20261021.md:117`：
+  // `deletion_requests` 对运行时角色零表级零列级权限 ⇒ 到期枚举只能走属主）。同一份端口代码要在两种
+  // 角色下都如实：属主下 8/8 可清；运行时角色下**缺哪一条授权就跳过哪一域**，⛔ 不静默少清。
+  const ownerPortSet = await createOnlinePurgePort(ownerPool);
+  const runtimePortSet = await createOnlinePurgePort(runtimePool);
+  assert.deepEqual(
+    [...ownerPortSet.modules],
+    [...ONLINE_PURGE_MODULES],
+    `属主/运维角色下必须闭集全覆盖（实际 ${ownerPortSet.modules.join(',')}；跳过 ${JSON.stringify(ownerPortSet.skippedModules)}）`,
+  );
+  assert.deepEqual(ownerPortSet.skippedModules, [], '属主角色下不该有跳过项（缺表/缺授权都不该发生）');
+  assert.equal(ownerPortSet.modules.includes('community'), false, '社区域是「保留+脱敏」，⛔ 不进时钟闭集');
+  // 运行时角色（受理路径）口径：出厂授权里 `jobs` 缺 `owner_id` 的列级 SELECT
+  // （`DELETE … WHERE owner_id = $1` 要读该列；`20-login-roles.sql:980` 的列清单没含它）⇒ 该域必须被跳过，
+  // 且原因点名缺的那一条。若哪天把这一列补进授权，这里会变成 `[]`：那时把本断言翻成
+  // `assert.deepEqual(runtimePortSet.skippedModules, [])`，可清数随之变成 8/8。
+  assert.deepEqual(
+    runtimePortSet.skippedModules.map((entry) => entry.module),
+    ['jobs'],
+    `运行时角色下只有 jobs 应被跳过（实际 ${JSON.stringify(runtimePortSet.skippedModules)}）`,
+  );
+  assert.match(
+    String(runtimePortSet.skippedModules[0]?.reason ?? ''),
+    /owner_id/,
+    `跳过原因必须点名缺的列级授权：${JSON.stringify(runtimePortSet.skippedModules)}`,
+  );
+  assert.equal(
+    runtimePortSet.modules.length + runtimePortSet.skippedModules.length,
+    ONLINE_PURGE_MODULES.length,
+    `可清(${runtimePortSet.modules.length}) + 跳过(${runtimePortSet.skippedModules.length}) 必须等于闭集 ${ONLINE_PURGE_MODULES.length}`,
+  );
+  for (const skipped of runtimePortSet.skippedModules) {
+    assert.equal(/postgres:\/\/|password=/i.test(skipped.reason), false, `跳原因不得回显连接串：${skipped.reason}`);
+  }
+  say(
+    `端口可用性按角色如实：属主角色 8/8 可清（skipped=[]）；运行时角色 ${runtimePortSet.modules.length}/${ONLINE_PURGE_MODULES.length}`
+      + `（跳过 ${runtimePortSet.skippedModules.map((entry) => `${entry.module}:${entry.reason}`).join('、')}）`,
+  );
+
+  // ---- T1：真跑 CLI（`--dry-run`，DATABASE_URL = 属主/运维角色，与生产 cron 同源）----
+  const dryCli = runCli(['--dry-run', '--limit', '1', '--no-cursor']);
+  assert.equal(dryCli.status, 0, `CLI --dry-run 必须 exit 0（实际 ${dryCli.status}）：${dryCli.stderr}`);
+  const dryOut = String(dryCli.stdout ?? '');
+  const closedLine = dryOut.split(/\r?\n/).find((line) => line.includes('清理闭集')) ?? '';
+  for (const module of ONLINE_PURGE_MODULES) {
+    assert.ok(closedLine.includes(module), `dry-run 必须打印闭集里的 ${module}：${closedLine}`);
+  }
+  assert.equal(closedLine.includes('community'), false, `闭集不得含 community：${closedLine}`);
+  assert.ok(
+    dryOut.includes(`本轮可清（${ownerPortSet.modules.length}/${ONLINE_PURGE_MODULES.length} 域）`),
+    `dry-run 必须报出「可清/闭集」域数（${ownerPortSet.modules.length}/${ONLINE_PURGE_MODULES.length}）：${dryOut}`,
+  );
+  // 只认 CLI 自己的**逐域**跳行（`跳过 <module>：<原因>`）；驱动汇总行里也有「跳过原因」三个字，别误伤。
+  const drySkipLines = dryOut.split(/\r?\n/).filter((line) => /跳过 [a-z]+：/u.test(line));
+  assert.deepEqual(drySkipLines, [], `属主角色下 dry-run 不该有逐域跳过行：${JSON.stringify(drySkipLines)}`);
+  const dryFailLines = dryOut.split(/\r?\n/).filter((line) => /失败 [a-z]+：/u.test(line));
+  assert.deepEqual(dryFailLines, [], `--dry-run 不该有失败行：${JSON.stringify(dryFailLines)}`);
+  say(
+    `CLI 闭集：--dry-run 打印 ${ONLINE_PURGE_MODULES.length} 域（${ONLINE_PURGE_MODULES.join('、')}）、不含 community、可清 ${ownerPortSet.modules.length}/${ONLINE_PURGE_MODULES.length}`,
+  );
+
+  // ---- T2：受理时 recognitions 记 blocked + 已到期 ⇒ 跑一轮必须真的清掉并落证据 ----
+  const healUserId = await insertUser(owner);
+  await owner.query(
+    `INSERT INTO public.recognition_records (
+       id, revision, owner_user_id, media_id, media_revision, candidates,
+       uncertainty_reasons, selected_species_id, model_version, created_at, updated_at, deleted
+     ) VALUES ($1::uuid, 1, $2::uuid, $3::uuid, 1, '[]'::jsonb, '[]'::jsonb, NULL, 'r72-arm', $4::timestamptz, $4::timestamptz, false)`,
+    [randomUUID(), healUserId, randomUUID(), shift(CUTOFF, -DAY_MS)],
+  );
+  const healRequest = await insertDeletionRequest(owner, { userId: healUserId, onlineDueAt: shift(CUTOFF, -DAY_MS) });
+  const recognitionsCountSql = 'SELECT count(*)::integer AS n FROM public.recognition_records WHERE owner_user_id = $1::uuid';
+  const countsBefore = (await owner.query(recognitionsCountSql, [healUserId])).rows[0].n;
+  assert.ok(countsBefore > 0, '造数：判别前 recognitions 必须有行');
+
+  const deriveNow = createPostgresOnlineStateReader({ pool: runtimePool, now: clockAtCutoff });
+  const beforeHeal = await deriveNow.derive({
+    requestId: healRequest.requestId,
+    userId: healUserId,
+    modules: [...ONLINE_PURGE_MODULES],
+  });
+  const beforeRec = beforeHeal.modules.find((one) => one.module === 'recognitions');
+  assert.equal(beforeRec?.state, 'blocked', `到期未清 ⇒ blocked（实际 ${beforeRec?.state}）`);
+  assert.equal(beforeRec?.errorCode, 'STORE_REJECTED', '到期未清的错误码就是 STORE_REJECTED（缺陷期间它永久停在这里）');
+  assert.equal(beforeRec?.entries, 0, '清之前 recognitions 一条证据都没有');
+  assert.equal(beforeHeal.overall, 'blocked', '闭集里有域 blocked ⇒ 整体 blocked');
+
+  // 跑**时钟自己**（真跑 CLI，`DATABASE_URL` = 属主/运维角色，与生产 cron 同源）：这一轮必须把受理时
+  // 清不掉的 recognitions 补清并落 0031 证据 ⇒ 读面自愈。⛔ 不用进程内 `driveOnce` 顶替：本片的论点
+  // 是「只有时钟会自愈」，负控制就是把时钟改回四域后这一段必须红。
+  const clockRun = runCli(['--limit', '200', '--no-cursor']);
+  assert.equal(clockRun.status, 0, `时钟一轮必须 exit 0（实际 ${clockRun.status}）：${clockRun.stderr}`);
+  const clockOut = String(clockRun.stdout ?? '');
+  assert.equal(/失败 request=/u.test(clockOut), false, `时钟一轮不得有逐域失败行：${clockOut}`);
+  const sumOf = (text, pattern) =>
+    [...text.matchAll(pattern)].reduce((total, match) => total + Number(match[1] ?? 0), 0);
+  const clockPurged = sumOf(clockOut, /清除行数 (\d+)/gu);
+  assert.ok(clockPurged > 0, `时钟一轮必须真的删了行（报告读数 ${clockPurged}）：${clockOut}`);
+  assert.ok(/module=recognitions/u.test(clockOut), `CLI 报告里必须有 recognitions 的证据行（证明这一域真被跑过）：${clockOut}`);
+  assert.equal(
+    (await owner.query(recognitionsCountSql, [healUserId])).rows[0].n,
+    0,
+    '清完之后 recognition_records 该主体必须 0 行',
+  );
+
+  const storedRec = (
+    await owner.query('SELECT public.read_online_purge_evidence($1::uuid, $2::uuid) AS payload', [
+      healRequest.requestId,
+      healUserId,
+    ])
+  ).rows[0].payload;
+  const storedRecEntry = jsonArray(storedRec?.evidence).find((entry) => entry?.module === 'recognitions');
+  assert.ok(storedRecEntry !== undefined, '`read_online_purge_evidence` 必须多出 recognitions 条目');
+  assert.ok(storedRecEntry.removed > 0, `落库的 recognitions removed 必须 > 0（实际 ${storedRecEntry.removed}）`);
+  assert.equal(
+    storedRecEntry.evidence_ref,
+    onlinePurgeEvidenceRef({ requestId: healRequest.requestId, module: 'recognitions', removed: storedRecEntry.removed, idempotency: storedRecEntry.idempotency }),
+    '落库证据必须能由 (request_id, module, removed, idempotency) 独立复算',
+  );
+
+  const afterHeal = await deriveNow.derive({
+    requestId: healRequest.requestId,
+    userId: healUserId,
+    modules: [...ONLINE_PURGE_MODULES],
+  });
+  const afterRec = afterHeal.modules.find((one) => one.module === 'recognitions');
+  assert.equal(afterRec?.state, 'completed', `清完 + 有证据 ⇒ completed（实际 ${afterRec?.state}）`);
+  assert.equal(afterRec?.errorCode, null, 'completed 不得带错误码');
+  assert.equal(afterHeal.overall, 'completed', '8 域全有证据 ⇒ 整体 completed');
+  say(
+    `扩集后自愈（时钟真跑 CLI）：recognitions 到期前 blocked/STORE_REJECTED（entries=0）⇒ 一轮共清 ${clockPurged} 行`
+      + `（其中 recognitions removed=${storedRecEntry.removed}）+ 落证据 ⇒ completed，8 域 overall=completed`,
+  );
+
+  // ---- T3：同一时钟再跑一轮 ⇒ 幂等（0 行、already_purged、证据不重复）----
+  const evidenceLenBeforeRerun = jsonArray(storedRec?.evidence).length;
+  const clockRerun = runCli(['--limit', '200', '--no-cursor']);
+  assert.equal(clockRerun.status, 0, `第二个时钟轮必须 exit 0（实际 ${clockRerun.status}）：${clockRerun.stderr}`);
+  const rerunOut = String(clockRerun.stdout ?? '');
+  const rerunPurged = sumOf(rerunOut, /清除行数 (\d+)/gu);
+  assert.equal(rerunPurged, 0, `重复跑不得再删任何行（实际 ${rerunPurged}）：${rerunOut}`);
+  const alreadyPurged = sumOf(rerunOut, /already_purged=(\d+)/gu);
+  assert.ok(alreadyPurged >= 1, `重复跑必须如实落 already_purged：${rerunOut}`);
+  assert.equal(/失败 request=/u.test(rerunOut), false, `重复跑不得报失败：${rerunOut}`);
+  const healEvidenceAfterRerun = (
+    await owner.query('SELECT public.read_online_purge_evidence($1::uuid, $2::uuid) AS payload', [
+      healRequest.requestId,
+      healUserId,
+    ])
+  ).rows[0].payload;
+  assert.equal(
+    jsonArray(healEvidenceAfterRerun?.evidence).length,
+    evidenceLenBeforeRerun,
+    '第二个时钟轮不得追加任何证据（同 (module, evidence_ref) 幂等）',
+  );
+  const rerunRec = jsonArray(healEvidenceAfterRerun?.evidence).find((entry) => entry?.module === 'recognitions');
+  assert.equal(rerunRec.removed, storedRecEntry.removed, '幂等轮不得改写既有证据行数');
+  say(`幂等不变（时钟第二轮）：清除行数 0、already_purged=${alreadyPurged}、exit=0、证据 ${evidenceLenBeforeRerun} 条不变`);
+
+  await retire(owner, [
+    dueRequest.requestId,
+    pendingRequest.requestId,
+    blockedRequest.requestId,
+    exactDueRequest.requestId,
+    healRequest.requestId,
+  ]);
 
   note(`EXITCODE=0（共 ${passed} 组 PASS）`);
   process.exitCode = 0;

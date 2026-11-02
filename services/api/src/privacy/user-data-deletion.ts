@@ -1385,7 +1385,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
           `${one.module}:online-evidence:${one.evidenceRef as string}`,
         ]);
       } else if (one.state === 'blocked') {
-        const code = one.errorCode ?? 'STORE_REJECTED';
+        const code = beforeState === 'blocked' && typeof before.errorCode === 'string' && before.errorCode !== '' ? before.errorCode : (one.errorCode ?? 'STORE_REJECTED'); // C3：有更具体原因就不覆写（同 :1394 守卫）
         row['onlineState'] = 'blocked';
         row['errorCode'] = code;
         row['evidenceRef'] = withOnlineSegments(before.evidenceRef, one.module, [

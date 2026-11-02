@@ -2651,11 +2651,27 @@ test('sql-column-coverage/扩展 22 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 24 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01 / R72-W41 / R72-W54）', () => {
+// R72：时钟驱动域扩集新增的 SQL 宿主（`services/api/src/privacy/online-purge-port.ts`）只含只读探测。
+// 为什么登记写成数组外的 `push`、且放在文件靠后的位置：本文件自己被 docs 按行号引用（`:152`/`:525`/`:1512`），
+// 在数组里插条目会把后面所有行推下去、把那些历史锚点整片挪位；追加式登记对既有行号零影响。
+UNAUDITED_SQL_HOSTS.push({
+  file: 'services/api/src/privacy/online-purge-port.ts',
+  reason: 'R72 新增的「时钟驱动域 = 读面闭集（8 域）」端口实现（CLI 与真库臂共用同一份）：自带的 SQL 只有'
+    + '**只读探测**——(a) 表存在性 `SELECT name FROM unnest($1::text[]) AS t(name) WHERE to_regclass(\'public.\' || name) IS NULL`'
+    + '（`to_regclass` 不需要任何表权限 ⇒ 不会把「没授权」误判成「没这张表」）；'
+    + '(b) 权限 `SELECT has_table_privilege(...), has_column_privilege(...)`（只看当前角色，不碰表内容）。'
+    + '八个域的**清除**一律走既有端口（`purgeOwnerData` / `deleteAllByOwner` / `JOB_LEDGER_PURGE_SQL`），'
+    + '本文件不拼任何 DELETE 列面：识别/语音是迁移 0034 的 `SECURITY DEFINER` 函数、OCR 三表表级 DELETE、'
+    + '`public.jobs` 表级 DELETE，授权全在 `20-login-roles.sql` 既有区段（零新增 GRANT，`deploy/**` 一字未动）。'
+    + '读理由 tests/unit/online-purge-closed-set.test.mjs 与真库臂 tests/integration/online-purge-pg.mjs [10] 覆盖。',
+  owner: 'R72 / 在线清除闭集；静态纳管待 R28-S66 重定读数',
+});
+
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 24 已审计 + 14 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01 / R72-W41 / R72-W54 / R72 在线清除闭集）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 37, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 38, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
