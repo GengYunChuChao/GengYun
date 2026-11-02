@@ -364,3 +364,46 @@ test('T7 契约钉子：新 op 在 openapi/operations.json 里、500: Error500�
   assert.equal(entry.scope, 'sources:write');
   assert.equal(entry.version_required, false);
 });
+
+// 本机测得到、真库臂测不到的那一格：
+// `tests/integration/community-filter-pg.mjs`（CI 的 real-pg-17.11 臂）里也有同一条「无 IfMatch」断言，
+// 但它在那份脚本的第 10 组真库读数里，本机没库时会整脚本 SKIP ⇒ 本机永远走不到；
+// 而这条用例只读契约文本，不连库 ⇒ 本机与 CI 都能跑。
+// 曾经的真实故障：那份脚本写成 `p.$ref.endsWith('/IfMatch')`，而 parameters 里既有 `$ref` 型
+// （`#/components/parameters/IdempotencyKey`）也有**内联对象**（path 的 `id`，没有 `$ref` 字段），
+// 于是 `p.$ref` 为 undefined，`undefined.endsWith` 抛 TypeError —— 只在真库臂暴露。
+test('T8 参数面形状：parameters 不得引用 IfMatch，且必须留至少一个内联参数（本机读契约即可抓；真库臂要走满 10 组才有同一断言，本机无库时走不到）', () => {
+  const openapi = JSON.parse(readFileSync(new URL('../../packages/contracts/openapi.json', import.meta.url), 'utf8'));
+  const op = openapi.paths['/admin/reports/{id}/disposition'].post;
+  const parameters = op.parameters;
+
+  assert.ok(Array.isArray(parameters), '处置 op 必须声明 parameters 数组');
+  assert.ok(parameters.length > 0, 'parameters 不得为空（至少要 path 的 id 与 Idempotency-Key）');
+  for (const [index, parameter] of parameters.entries()) {
+    assert.notEqual(parameter, null, `parameters[${index}] 不能是 null`);
+    assert.equal(typeof parameter, 'object', `parameters[${index}] 必须是对象`);
+  }
+
+  // 语义与真库臂一致：没有任何参数引用 IfMatch ⇒ 版本前置条件只在 body。
+  // 写法上必须容忍「内联对象没有 $ref 字段」这一现实（`?? ''`），否则就是同款空指针。
+  assert.equal(
+    parameters.some((parameter) => (parameter.$ref ?? '').endsWith('/IfMatch')),
+    false,
+    '版本前置条件在 body（`expected_revision`），契约不得声明 If-Match —— 声明了就要按 428 语义实现',
+  );
+
+  // 反向钉子：必须至少有一个**内联**参数（就是 path 的 id）。
+  // 若将来有人把它也改成 `$ref`，上面那种「假定 $ref 一定存在」的写法就会重新变成空指针，
+  // 这条断言先红、提示复核，而不是让契约形状静默退化。
+  assert.ok(
+    parameters.some((parameter) => typeof parameter.$ref !== 'string'),
+    '处置 op 至少要留一个内联参数对象（path 的 id）；全 $ref 化会让「$ref 一定存在」的假设重新成立',
+  );
+
+  // 顺带把「路径参数必须内联声明」也钉住：openapi-route-parity 的路径参数判据依赖它。
+  const inlineId = parameters.find((parameter) => parameter.$ref === undefined && parameter.name === 'id');
+  assert.equal(typeof inlineId, 'object', 'path 参数 id 必须内联声明（name/in/required/schema）');
+  assert.equal(inlineId.in, 'path');
+  assert.equal(inlineId.required, true);
+  assert.equal(inlineId.schema.format, 'uuid');
+});

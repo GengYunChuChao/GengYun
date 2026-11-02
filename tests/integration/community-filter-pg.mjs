@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GY-I15（#15）/ #444 §S5 残留缺口 · 社区域**列表筛选下推 + 分页确定性**的真库读数 +
  * **举报面**的形状核对（PostgreSQL 17；R72 之前这一节是"推进通道缺口登记"，接线后改为形状核对）。
  *
@@ -537,7 +537,7 @@ async function main() {
     assert.equal(disposition['x-scope'], 'sources:write', '复用既有 scope，未新造 reports:*');
     assert.equal(disposition['x-version-required'], false);
     assert.equal(
-      (disposition.parameters ?? []).some((p) => p.$ref.endsWith('/IfMatch')),
+      (disposition.parameters ?? []).some((p) => (p.$ref ?? '').endsWith('/IfMatch')),
       false,
       '版本前置条件在 body（`expected_revision`），契约不得声明 If-Match —— 声明了就要按 428 语义实现',
     );
