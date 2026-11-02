@@ -293,7 +293,7 @@ export interface AccountDeletionRequestService {
    * 受理：建删除请求（未绑定主体 ⇒ 处理器不会清理任何数据）、**驱动既有删除级联**
    * （对**每个已登记模块**都跑一次处理器）并签发回执 bearer。
    */
-  request(input: { userId: string; receiptInput: string }): Promise<DeletionAcceptedProjection>;
+  request(input: { userId: string; receiptInput: string; readThirdPartyState?: DeletionThirdPartyStateReader | null }): Promise<DeletionAcceptedProjection>; // `readThirdPartyState`：受理时**读一次**第三方删除态并交给 `projectReceipt()`，读取器由路由提供（与 GET/DELETE 同源，见文件末尾 `projectReceiptForAccepted()`）。
 }
 
 /**
@@ -325,7 +325,7 @@ export function createAccountDeletionRequestService(input: {
     available,
     unavailableMessage: available ? null : (input.unavailableMessage ?? ACCOUNT_DELETION_UNAVAILABLE_MESSAGE),
     declaredModules: () => input.deletion.requiredModules(),
-    async request({ userId, receiptInput }) {
+    async request({ userId, receiptInput, readThirdPartyState }) {
       if (typeof userId !== 'string' || userId.length === 0) {
         throw new Error('注销申请需要非空主体');
       }
@@ -344,7 +344,7 @@ export function createAccountDeletionRequestService(input: {
       // 驱动**既有**删除级联：注册表里每个已登记模块都会被执行一次（不跳过任何模块）。
       await input.deletion.executeHandlers(requestId);
       const issued = await input.receipts.issue(requestId);
-      const deletion = projectReceipt(input.deletion.receipt(requestId));
+      const deletion = await projectReceiptForAccepted(input, requestId, readThirdPartyState);
       if (deletion === null) throw new Error('删除请求创建后回执缺失');
       return { receipt_token: issued.token, receipt_expires_at: issued.expiresAt, deletion };
     },
@@ -437,4 +437,38 @@ function pickErrorCode(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string' || value.length === 0 || value.length > 80) return 'HANDLER_FAILED';
   return SAFE_ERROR_CODES.includes(value) ? value : 'HANDLER_FAILED';
+}
+
+/**
+ * 受理回执的第三方删除态**读取器**（GY-R72）。由路由提供，本文件不自己算：
+ * `services/api/src/routes/account-deletion.ts::thirdPartyStateOf()`（GET／DELETE／replay 用的
+ * **同一个**函数）被 `bind(null, deps)` 部分应用后传进来，因此 202 与紧随其后的 GET 读的是
+ * 同一份口径（同一端口、同一 `now()`、同一 fail-closed 分支），不再给出两套第三方结论。
+ *
+ * 契约里 `third_party_state: null` 的含义是「没有可信的第三方结论」（`DeletionHandler`
+ * 的 anyOf 允许 `null`），所以读取器**必须自己 fail-closed**：端口/投影抛错时返回 `null`，
+ * 不向上抛。本文件刻意**不**再加一层 try/catch —— 「受理不因第三方查询而 500」只有一处实现。
+ */
+export type DeletionThirdPartyStateReader = (
+  requestId: string,
+  receipt: Record<string, unknown> | null,
+) => Promise<string | null>;
+
+/**
+ * `request()` 的投影入口：**先读一次回执**，再决定要不要把第三方态交给 `projectReceipt()`。
+ *
+ * - 未传读取器（既有调用点／既有断言）⇒ `projectReceipt(receipt)`，**不传 options**，
+ *   行为与改动前逐字相同；
+ * - 传了读取器 ⇒ 现算值走 `projectReceipt(receipt, { thirdPartyState })`，复用该函数已有的
+ *   闭集白名单与「传入值优先、非法值回落处理器行」语义（不另造一套映射）。
+ */
+async function projectReceiptForAccepted(
+  input: { deletion: UserDataDeletionRegistry },
+  requestId: string,
+  readThirdPartyState: DeletionThirdPartyStateReader | null | undefined,
+): Promise<Record<string, unknown> | null> {
+  const receipt = input.deletion.receipt(requestId);
+  const read = readThirdPartyState ?? null;
+  if (read === null) return projectReceipt(receipt);
+  return projectReceipt(receipt, { thirdPartyState: await read(requestId, receipt) });
 }

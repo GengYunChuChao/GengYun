@@ -446,9 +446,12 @@ test('GY-R59 P2-b 读侧：blocked 请求会**真的**问端口（注入端口�
     const { id, initialState } = await startDeletion(app, session.token, 'k-tpd-read-spy');
     assert.equal(initialState, 'blocked', '前提：处理器抛错 ⇒ 受理回执如实 blocked');
     assert.equal(app.userDataDeletion.coordinator.getRequest(id).state, 'blocked', '前提：存储态也是 blocked');
+    // GY-R72：受理（202）现在也用**同一个**读侧口径读一次第三方态 ⇒ 端口在受理时已被问过一次。
+    // 本用例的断言口径因此按「**每次读**各问一次」计（先取受理后的水位，再只比这一次读的调用）。
+    const callsBeforeRefresh = calls.length;
     const refreshed = await app.userDataDeletion.refreshBackupStates(id);
     assert.notEqual(refreshed, null, '接线的推导端口 + 已受理请求 ⇒ 必须真的走完成');
-    assert.deepEqual(calls, [id], '读侧必须按 requestId 问一次端口（⛔ 不拿进程内行冒充持久事实）');
+    assert.deepEqual(calls.slice(callsBeforeRefresh), [id], '读侧必须按 requestId 问一次端口（⛔ 不拿进程内行冒充持久事实）');
     // 处理器仍 blocked ⇒ 不得复位；端口返回空行也不会被当成"第三方没问题"。
     assert.equal(refreshed.stateReset, false, '还有 blocked 的处理器 ⇒ 不得复位成 processing');
   } finally {
