@@ -1,6 +1,7 @@
 // 定位只用于即时选择地区（F02／AC21）：坐标仅在内存中交给调用方注入的地区转换资源，
 // 不写入存储、不进入任何请求体、不跨次复用，也不做持续跟踪（不调用 startLocationUpdate／onLocationChange）。
 // 本模块**不内置任何坐标→行政区数据**：转换资源未接入时如实返回 unavailable，由页面回退手选。
+// 判断顺序是「先看转换资源在不在，再决定要不要申请定位授权」：资源缺席就不弹授权框、不取坐标。
 // 转换资源契约：convert(latitude, longitude) 返回浙江行政区代码（^33[0-9]{4}$）；
 // 返回其他值／null 表示不在首版覆盖的浙江省；抛错表示转换失败。两种情况都回退手选。
 
@@ -76,10 +77,13 @@ function locate(wxApi, convert, settings) {
         if (handle !== null && typeof handle === 'object' && typeof handle.unref === 'function') handle.unref()
       } catch (error) { handle = null }
     }
+    // 先判地区转换资源，再决定要不要申请定位授权：资源缺席时直接如实报 unavailable，
+    // **不弹授权框、不取坐标**。旧顺序是先 getLocation 再判转换器，用户被弹窗、拿到坐标之后
+    // 才被告知「资源尚未接入」——等于白发一次定位授权请求，且坐标白取（只存在内存里）。
+    if (typeof convert !== 'function') { finish({ status: 'unavailable' }); return }
     if (!wxApi || typeof wxApi.getLocation !== 'function') { finish({ status: 'failed' }); return }
     try {
       wxApi.getLocation({ type: 'wgs84', success: function (position) {
-        if (typeof convert !== 'function') { finish({ status: 'unavailable' }); return }
         let code = null
         try { code = regionCode(convert(position && position.latitude, position && position.longitude)) }
         catch (error) { finish({ status: 'failed' }); return }

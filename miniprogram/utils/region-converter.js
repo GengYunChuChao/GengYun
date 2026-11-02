@@ -11,7 +11,7 @@
 //   应由生成脚本从**注明来源与许可**的几何数据产出，且文档本身要带 crs／source／license／retrieved_at
 //   ／catalog_version／max_distance_km 才能通过下方校验。截至 2026-10-17，仓库与本机均**未取得**可追溯
 //   来源（含许可）的浙江县区质心／边界几何数据，该文件**不存在**，因此本模块如实走 fail-closed 分支：
-//   build() 返回 null ⇒ location-region.locate 在定位成功后回落 { status: 'unavailable' }
+//   build() 返回 null ⇒ location-region.locate 在申请授权之前直接回落 { status: 'unavailable' }
 //   （文案「地区转换资源尚未接入，请手选浙江市县。」），页面保留手选。
 //   ⛔ 本模块不内置任何坐标，⛔ 不编造质心／边界，⛔ 不假装转换成功。
 //   资源就位后无需改动本模块或页面：文件存在且校验通过即自动接线；校验不通过则照旧 fail-closed。

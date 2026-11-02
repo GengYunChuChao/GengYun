@@ -94,11 +94,11 @@
 
 ### 5.4 已知功能缺口：地区换算资源缺失
 
-- `miniprogram/utils/location-region.js:81` 会真的调用 `wx.getLocation`；
+- `miniprogram/utils/location-region.js:86` 才是真的调用 `wx.getLocation` 的那一行；它前面新增的一段（同一文件 `:83`）在**申请定位授权之前**先判转换资源：资源缺席时直接落 `unavailable`，**不弹授权框、不取坐标**；
 - 但 `miniprogram/data/region-centroids.js` **在 main 上不存在**（仓库内无等价数据、无 LICENSE）；
-- `miniprogram/utils/region-converter.js:124-126` 的 `build()` → `loadModule`（`:34-36`）吞掉 require 异常 → `inspect`（`:53-54`）判 `resource-missing` → 返回 null ⇒ 运行时只会走 `unavailable`（提示"地区转换资源尚未接入"），成功分支 `ok`／`out_of_coverage` 与 `pages/profile/profile.js:220-230` 的 `applyLocatedRegion` 是死代码。
+- `miniprogram/utils/region-converter.js:124-126` 的 `build()` → `loadModule`（`:34-36`）吞掉 require 异常 → `inspect`（`:53-54`）判 `resource-missing` → 返回 null ⇒ 运行时只会走 `unavailable`（提示"地区转换资源尚未接入"），成功分支 `ok`／`out_of_coverage` 与 `pages/profile/profile.js:222-232` 的 `applyLocatedRegion` 是死代码。
 
-结论：这属**功能无法兑现**，不是审批问题。接口批下来、坐标也拿得到，仍只会给出失败提示。要补就必须提供**带来源与许可**的县级 WGS84 质心数据；不补则承认定位只到"取坐标"这一步。
+结论：这属**功能无法兑现**，不是审批问题。接口批下来、资源不补，点「使用定位选地区」连授权框都不会弹，直接回退手选。要补就必须提供**带来源与许可**的县级 WGS84 质心数据；不补则承认「定位选地区」在本数据源下不可用。
 
 ### 5.5 录音口径（代码由用户实现，本文只记口径）
 

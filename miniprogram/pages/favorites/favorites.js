@@ -39,6 +39,10 @@ Page({
     total: 0,
     nextCursor: null,
     targets: [],
+    /** 可收藏资料的续页游标（空串=没有更多）；与「我的收藏」的 nextCursor 分开存。 */
+    targetNextCursor: '',
+    /** 续页在途：只禁用「加载更多资料」，不影响收藏列表本身的取消/收藏。 */
+    targetBusy: false,
     targetNote: '',
     targetError: ''
   },
@@ -56,7 +60,8 @@ Page({
     // 门禁未通过前清空一切结果，避免残留上一个会话的收藏；同时解除上一轮可能残留的在途态。
     self.setData({
       gatePassed: false, checking: true, items: [], total: 0, nextCursor: null,
-      targets: [], targetNote: '', targetError: '', errorText: '', errorCode: '', message: '',
+      targets: [], targetNextCursor: '', targetBusy: false, targetNote: '', targetError: '',
+      errorText: '', errorCode: '', message: '',
       busy: false, loading: false
     })
     pageGate.start(this, function (ok) {
@@ -147,13 +152,22 @@ Page({
     return favoritesApi.targetTypeLabel(type) + ' · ' + String(id).slice(0, 8)
   },
 
-  /** 可收藏目标（来自已合并的 /knowledge 列表第一页）。 */
-  loadTargets: function () {
+  /**
+   * 可收藏目标（来自已合并的 /knowledge 列表）。第一页与续页共用本函数：
+   * · 续页必须带 cursor；knowledge-api 的 cursor 只接受非空字符串，首页必须整个键不传。
+   * · 续页条目按 type:id 去重后追加，保持已加载顺序（分页+闭集过滤可能返回重复条目）。
+   * · 文案与按钮都自证范围：报「已加载 N 条」，有 nextCursor 就给「加载更多资料」，
+   *   不让人把第一页当成全部（旧实现只读第一页 20 条，且界面没有任何「还有更多」的出口）。
+   */
+  loadTargets: function (cursor) {
     const self = this
     const read = self.beginRead('_targetsRead')
-    knowledgeApi.list({ limit: PAGE_SIZE }).then(function (result) {
+    const more = typeof cursor === 'string' && cursor !== ''
+    const query = more ? { limit: PAGE_SIZE, cursor: cursor } : { limit: PAGE_SIZE }
+    self.setData({ targetBusy: true })
+    knowledgeApi.list(query).then(function (result) {
       if (!self.readAlive(read, '_targetsRead')) return
-      const targets = result.items
+      const page = result.items
         .filter(function (item) { return FAVORITE_TARGET_TYPES.indexOf(item.type) !== -1 })
         .map(function (item) {
           return {
@@ -166,12 +180,24 @@ Page({
             favorited: false
           }
         })
-      self.setData({ targets: targets, targetNote: '来自已上架资料（' + targets.length + ' 条可收藏）', targetError: '' })
+      const targets = appendTargets(more ? self.data.targets : [], page)
+      self.setData({
+        targets: targets,
+        targetBusy: false,
+        targetNextCursor: result.nextCursor || '',
+        targetNote: targetNoteText(targets.length, result.nextCursor),
+        targetError: ''
+      })
       self.reconcileTargets()
     }).catch(function (error) {
       if (!self.readAlive(read, '_targetsRead')) return
-      // 资料列表不可用时如实说明；收藏列表本身仍可查看与取消。
-      self.setData({ targets: [], targetNote: '资料列表不可用', targetError: knowledgeApi.message(error) })
+      // 续页失败：已加载的条目照旧显示（不清空），把失败原因写在提示里，可再点重试。
+      if (more) { self.setData({ targetBusy: false, targetError: knowledgeApi.message(error) }); return }
+      // 首页失败：如实说不可用并清空列表，不让人以为看到的就是全部。
+      self.setData({
+        targets: [], targetBusy: false, targetNextCursor: '',
+        targetNote: '资料列表不可用', targetError: knowledgeApi.message(error)
+      })
     })
   },
 
@@ -234,6 +260,12 @@ Page({
     this.loadFavorites(this.data.nextCursor)
   },
 
+  /** 「加载更多资料」：只续读可收藏目标那一页，不重读收藏列表。 */
+  onMoreTargets: function () {
+    if (this.data.targetBusy || !this.data.targetNextCursor) return
+    this.loadTargets(this.data.targetNextCursor)
+  },
+
   onRefresh: function () {
     if (!this.data.gatePassed) return
     this.loadFavorites()
@@ -257,3 +289,19 @@ Page({
     auth.requireLogin(function (ok) { if (ok) { pageGate.cancel(self); self.onShow() } })
   }
 })
+
+// 续页合并：按 key（type:id）去重后追加，保持已加载顺序（闭集过滤后的分页可能返回重复条目）。
+function appendTargets(existing, page) {
+  const seen = {}
+  return (existing || []).concat(page).filter(function (entry) {
+    if (seen[entry.key]) return false
+    seen[entry.key] = true
+    return true
+  })
+}
+
+// 文案自证范围：只说「已加载 N 条」，并把「还有更多／已全部加载」明写出来。
+// 服务端封套不提供可收藏资料的总数，所以这个数字在任何位置都不得被呈现为总数。
+function targetNoteText(count, nextCursor) {
+  return '来自已上架资料：已加载 ' + count + ' 条可收藏' + (nextCursor ? '（还有更多）' : '（已全部加载）')
+}

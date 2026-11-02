@@ -52,6 +52,15 @@
         title="{{targetError ? '资料列表不可用' : '暂无可收藏的资料'}}"
         desc="{{targetError || '已上架资料为空，或资料查询暂不可用。收藏列表本身仍可查看与取消。'}}"
       ></state-view>
+      <gy-ui-button
+        wx:if="{{targetNextCursor}}"
+        label="{{targetBusy ? '加载中…' : '加载更多资料'}}"
+        variant="secondary"
+        block="{{true}}"
+        disabled="{{targetBusy}}"
+        bind:tap="onMoreTargets"
+      ></gy-ui-button>
+      <view class="demo-caption" wx:if="{{targetError && targets.length}}">继续加载失败：{{targetError}}</view>
 
       <view class="demo-caption">
         目标与版本取自服务端资料列表；重复收藏同一目标不会产生第二条记录（服务端去重）。
@@ -63,7 +72,7 @@
     <view class="section">
       <view class="section-head">
         <text class="section-head__title">我的收藏</text>
-        <text class="section-head__meta">{{items.length}} 条</text>
+        <text class="section-head__meta">已加载 {{items.length}} 条{{nextCursor ? '（还有更多）' : ''}}</text>
       </view>
 
       <view class="row-actions">

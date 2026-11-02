@@ -65,6 +65,8 @@ const sentinel={latitude:123.4567,longitude:89.0123};
 for(const [label,errMsg,expected] of [['授权被拒绝','getLocation:fail auth deny','未获得定位授权'],['用户取消','getLocation:fail cancel','已取消定位'],['定位超时','getLocation:fail timeout','定位超时'],['平台未声明隐私接口','getLocation:fail the api need to be declared in the requiredPrivateInfos field in app.json','定位不可用或平台不支持']])
 test('location '+label+' keeps manual selection and never sends coordinates',async()=>{
  const f=fixture();await f.ready();f.wx.getLocation=o=>o.fail({errMsg});
+ // 要验证「平台失败档」就必须真的发出定位请求：给一个在线的转换资源（资源缺席时不再申请授权）。
+ f.page.regionConverter=()=>'330102';
  f.page.onEdit();f.page.onLocate();await flush();
  assert.ok(f.page.data.message.includes(expected),f.page.data.message);
  assert.equal(f.page.data.editing,true);assert.equal(f.page.data.locating,false);
@@ -77,7 +79,9 @@ test('location '+label+' keeps manual selection and never sends coordinates',asy
 });
 test('location without a conversion resource falls back to manual selection and stores/returns no coordinates',async()=>{
  const f=fixture();await f.ready();const writes=[];const raw=f.wx.setStorageSync;f.wx.setStorageSync=(k,v)=>{writes.push([k,v]);return raw(k,v)};
- f.wx.getLocation=o=>o.success(sentinel);f.page.onEdit();f.page.onLocate();await flush();
+ const located=[];f.wx.getLocation=o=>{located.push(o);o.success(sentinel)};f.page.onEdit();f.page.onLocate();await flush();
+ // 资源缺席时**一次定位授权都不该申请**：先判转换资源，再决定要不要 getLocation（旧顺序相反）。
+ assert.equal(located.length,0,'资源缺席时不得弹定位授权框（getLocation 调用 0 次）');
  assert.ok(f.page.data.message.includes('地区转换资源尚未接入'),f.page.data.message);
  assert.equal(f.page.data.editing,true);assert.equal(f.page.data.locating,false);
  assert.equal(JSON.stringify(f.page.data).includes('123.4567'),false);
@@ -144,6 +148,8 @@ test('location hung platform recovers to an explicit timeout state and manual se
  const clock=fakeClock();
  const f=fixture(undefined,{[root+'/miniprogram/utils/location-region.js']:{setTimeout:clock.setTimeout,clearTimeout:clock.clearTimeout}});
  await f.ready();
+ // 本用例要走到平台层：显式给一个在线的转换资源（资源缺席时页面不再申请定位授权）。
+ f.page.regionConverter=()=>'330102';
  let located=0;f.wx.getLocation=()=>{located++};  // 永不回调：既不 success 也不 fail
  f.page.onEdit();f.page.onLocate();await flush();
  assert.equal(located,1);assert.equal(f.page.data.locating,true);assert.ok(f.page.data.message.includes('正在获取位置'),f.page.data.message);
@@ -167,6 +173,8 @@ test('location hung platform then late permission grant never rewrites the settl
  const clock=fakeClock();
  const f=fixture(undefined,{[root+'/miniprogram/utils/location-region.js']:{setTimeout:clock.setTimeout,clearTimeout:clock.clearTimeout}});
  await f.ready();
+ // 同上：要模拟「系统弹窗挂起」，必须先让定位请求真的发出去。
+ f.page.regionConverter=()=>'330102';
  let options;f.wx.getLocation=o=>{options=o};  // 只记住回调，模拟系统弹窗挂起
  f.page.onEdit();f.page.onLocate();await flush();
  clock.tick(15000);await flush();
@@ -426,7 +434,8 @@ test('D2 页面装配·资源就位即自动接线：region_code 经两份目录
 });
 
 // —— P1（Refs #26）：「我的」页三项计数各自可读的加载/失败状态与显式重试 ——
-// 计数口径不变：只读第一页已加载条数，`N+` 表示还有下一页，服务端封套没有总数。
+// 计数口径：只读第一页**已加载**条数，`已加载 N+ 条` 表示还有下一页，服务端封套没有总数；
+// 因此文案必须自证「已加载」，不得出现会被读成总数的裸数字（R73 诚实性修复）。
 const COUNT_META={request_id:'99999999-9999-4999-8999-999999999999',contract_version:'1.0.0',execution_mode:'stub'};
 const FAV_ITEM={id:'00000000-0000-4000-8a00-000000000001',revision:1,target_ref:{type:'species',id:'crop_rice',revision:1},reference_state:'available',unavailable_reason:null,created_at:'2026-10-14T06:00:00.000Z'};
 const HIST_ITEM={id:'00000000-0000-4000-8b00-000000000002',revision:1,kind:'recognition',target_ref:{type:'recognition',id:'11111111-1111-4111-8111-111111111111',revision:2},job_state:'succeeded',reference_state:'available',created_at:'2026-10-14T06:00:00.000Z'};
@@ -448,10 +457,13 @@ test('三项计数各自结算：一项失败只把该项置为失败，其他�
  answerList(hist,[HIST_ITEM],null);
  answerList(posts,'PROVIDER_UNAVAILABLE',null,503);
  await flush();
- assert.equal(f.page.data.favoriteState,'ready');assert.equal(f.page.data.favoriteCount,'1+');
- assert.equal(f.page.data.historyState,'ready');assert.equal(f.page.data.historyCount,'1');
+ assert.equal(f.page.data.favoriteState,'ready');assert.equal(f.page.data.favoriteCount,'已加载 1+ 条');
+ assert.equal(f.page.data.historyState,'ready');assert.equal(f.page.data.historyCount,'已加载 1 条');
  assert.equal(f.page.data.myPostState,'error');assert.equal(f.page.data.myPostCount,'—');
  assert.equal(/总/.test(String(f.page.data.myPostCount)),false,'失败不得用任何本地数据或总数顶替');
+ // 牙：计数必须自证「已加载」，且不得回退成裸数字（裸数字会被读成总数）。
+ for(const kind of ['favorite','history']) assert.match(String(f.page.data[kind+'Count']),/^已加载 \d+\+? 条$/,kind+' 计数必须写明「已加载」');
+ assert.equal(/^\d+\+?$/.test(String(f.page.data.favoriteCount)),false,'计数不得呈现为裸数字');
 });
 test('失败项重试只重读该项，成功条数与档案编辑表单原样保留',async()=>{
  const f=fixture();await f.ready();
@@ -462,19 +474,19 @@ test('失败项重试只重读该项，成功条数与档案编辑表单原样�
  answerList(f.last('/posts'),[POST_ITEM],null);
  await flush();
  assert.equal(f.page.data.favoriteState,'error');
- assert.equal(f.page.data.historyCount,'2+');assert.equal(f.page.data.myPostCount,'1');
+ assert.equal(f.page.data.historyCount,'已加载 2+ 条');assert.equal(f.page.data.myPostCount,'已加载 1 条');
  const failedFav=f.last('/favorites');
  const before={hist:f.requests.filter(r=>countPath(r)==='/api/v1/history').length,posts:f.requests.filter(r=>countPath(r)==='/api/v1/posts').length};
  f.page.retryCount({currentTarget:{dataset:{kind:'favorite'}}});
  assert.equal(f.page.data.favoriteState,'loading');assert.equal(f.page.data.favoriteCount,'—');
- assert.equal(f.page.data.historyCount,'2+','重试一项不得清掉其他项已成功的条数');
- assert.equal(f.page.data.myPostCount,'1');
+ assert.equal(f.page.data.historyCount,'已加载 2+ 条','重试一项不得清掉其他项已成功的条数');
+ assert.equal(f.page.data.myPostCount,'已加载 1 条');
  const retry=f.last('/favorites');assert.notEqual(retry,failedFav);
  assert.equal(f.requests.filter(r=>countPath(r)==='/api/v1/history').length,before.hist,'重试收藏不得重读识别历史');
  assert.equal(f.requests.filter(r=>countPath(r)==='/api/v1/posts').length,before.posts,'重试收藏不得重读我的发布');
  answerList(retry,[FAV_ITEM],null);await flush();
- assert.equal(f.page.data.favoriteState,'ready');assert.equal(f.page.data.favoriteCount,'1');
- assert.equal(f.page.data.historyCount,'2+');assert.equal(f.page.data.myPostCount,'1');
+ assert.equal(f.page.data.favoriteState,'ready');assert.equal(f.page.data.favoriteCount,'已加载 1 条');
+ assert.equal(f.page.data.historyCount,'已加载 2+ 条');assert.equal(f.page.data.myPostCount,'已加载 1 条');
  assert.equal(f.page.data.editing,true,'重试计数不得重置或修改档案表单');
  assert.equal(JSON.stringify({crops:f.page.data.crops,regions:f.page.data.regions,cropIndex:f.page.data.cropIndex,cityIndex:f.page.data.cityIndex,counties:f.page.data.counties,countyIndex:f.page.data.countyIndex}),form);
  assert.equal(f.requests.filter(r=>r.method==='PUT').length,0,'重试计数不得触发保存');
