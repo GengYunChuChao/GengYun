@@ -145,13 +145,6 @@ Page({
      * 键一变，服务端就把重试当成**另一次**删除——上次其实已删掉、这次回 404，结果就被说反了。
      */
     this._deleteAttempt = null
-    /**
-     * 已弹出的删除确认框对应的目标 id（空串=没有待确认的删除）。
-     *
-     * 弹窗是异步的：用户连点两次「删除这条」会走两遍 `confirmDelete`，若不在**开弹窗时**就置位，
-     * 就会叠出两个确认框、确认后发出两条 DELETE。确认或弹窗失败时都必须放回空串。
-     */
-    this._deletePending = ''
     /** 当前在途轮询对应的 job 与截止时间（有界轮询的唯一边界来源）。 */
     this._poll = null
     /** 当前已核实身份的服务端 epoch（`auth.sessionEpoch()`）；变化即视为换人。 */
@@ -227,10 +220,16 @@ Page({
     // 轮次历史（本次会话内；只展示服务端真实返回）
     turns: [],
     turnsNote: '',
-    // 删除在飞标志：单条删除时是那条记录的 id，整段删除时是 `CONVERSATION_DELETE_ID`；空串=没有在飞。
+    // 删除的两个阶段标志（值都是目标 id：单条=那条记录的 id，整段=`CONVERSATION_DELETE_ID`；空串=该阶段不在）：
+    //  - `deleteConfirm`：确认框已弹出、用户还没答复（`wx.showModal` 是异步的，这段窗口没有任何请求在飞）；
+    //  - `deleting`：删除请求**在飞**。
+    // 两个阶段合起来才等于删除占了互斥（见 `deleteBusy`/`sessionOpBusy`）——只看后者，
+    // 确认框开着的那几百毫秒里发送/重试/刷新照样进得来（P2 的成因之一）。
     //
     // **刻意不复用 `busy`**：`settle`/`refreshJob` 在任务落定时会把 `busy` 清成 false，
     // 若删除守卫也看 `busy`，一次轮询回调就能提前解除守卫，连点就会发出第二条 DELETE。
+    // 反过来 `busy` 也不覆盖删除：删除在飞时 `busy` 一直是 false，只看 `busy` 的入口就会挤进来。
+    deleteConfirm: '',
     deleting: '',
     exitReason: '',
     // 回答来源三态：初始**如实**为未知（还没取得任何版本串，不预设真实或演示）。
@@ -279,7 +278,6 @@ Page({
     this._conversationAttempt = null
     this._sendAttempt = null
     this._deleteAttempt = null
-    this._deletePending = ''
     this._acceptedAttemptKey = ''
     this.setData({
       draft: '', draftLength: 0, inputNote: '',
@@ -287,7 +285,7 @@ Page({
       busy: false, stage: 'idle', mode: '', modeLabel: '', job: null,
       taskNote: '', taskErrorCode: '',
       answer: null, answerGateCode: '', answerGateMessage: '', citations: [], doseCards: null, answerNote: '',
-      turns: [], turnsNote: '', deleting: '',
+      turns: [], turnsNote: '', deleteConfirm: '', deleting: '',
       // 版本态随私有内容一起复位：旧身份的版本说明不得留给新身份看到。
       versionState: 'unknown', versionNote: UNKNOWN_VERSION_NOTE,
       // 只有"用户主动离页"才留一句离页说明；门禁失效/换账号由各自的 taskNote 说明。
@@ -297,6 +295,31 @@ Page({
 
   stopPoll: function () {
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null }
+  },
+
+  // ---------------------------------------------------------------- 会话级操作互斥
+
+  /** 删除是否占着互斥：**确认中**（`deleteConfirm`）或**在飞**（`deleting`）都算。 */
+  deleteBusy: function () {
+    return this.data.deleteConfirm !== '' || this.data.deleting !== ''
+  },
+
+  /**
+   * **会话级操作互斥的唯一判据**：发送在飞（`busy`），或删除占了互斥（确认中/在飞），都算忙。
+   *
+   * 会打服务端会话状态的入口——发送、重试、会话刷新、单条删除、整段删除——**只准**问这一个函数。
+   * 各个入口自己挑一个字段看，就是 P2 的形状：新增的删除只写 `deleting`，而发送/重试只看 `busy`，
+   * 于是删除等待响应时的一次点击就进了 `onSend`，`beginOperation` + `cancelAll` 把删除的代次作废，
+   * 删除成功返回时代次已不是自己的 ⇒ `spec.apply` 被跳过，页面继续持有已删会话。
+   *
+   * 判据是**对称**的，所以反向也成立：发送在飞时删除入口同样进不来——不会出现"删掉正在写的会话
+   * 又继续把回答写回页面"的错位。
+   *
+   * 也不会挡死正常流程：`busy` 由 `settle`/`releaseAll` 解开，删除的两个标志由 `runDelete` 的
+   * `finally` 与 `confirmDelete` 的三条出口（确认/取消/弹窗失败）解开，没有"只置不清"的路径。
+   */
+  sessionOpBusy: function () {
+    return this.data.busy === true || this.deleteBusy()
   },
 
   /**
@@ -370,13 +393,14 @@ Page({
   /**
    * 显式发送：创建/复用会话 → POST 文字轮次 → 有界轮询 → 回答闸门。
    *
-   * 防重复：`busy` 为真或 `_gone`/`guest` 一律直接返回（WXML 的 disabled 同步表达）。
+   * 防重复：`sessionOpBusy()`（发送在飞或删除占着互斥）与 `_gone`/`guest` 一律直接返回——
+   * **连 `beginOperation` 都不做**：进得来的话 `cancelAll` 会作废正在飞的那次删除/发送。
    *
    * **请求身份**：`_sendAttempt` 在 202 受理后依然保留；同一意图的重试因此严格回放同一把
    * `Idempotency-Key`（服务端同键回放同一任务，不重复创建付费作业）。
    */
   onSend: async function () {
-    if (this._gone === true || this.data.guest || this.data.busy) return
+    if (this._gone === true || this.data.guest || this.sessionOpBusy()) return
     const local = this.localGate()
     if (local.ok !== true) {
       // 主流程只说人话：内部校验码（EMPTY_TEXT/TEXT_TOO_LONG）留在 `localGate` 的返回值与报告里。
@@ -586,9 +610,14 @@ Page({
 
   // ---------------------------------------------------------------- 轮次历史
 
-  /** 读取本会话轮次（含每轮回答与 job_id）；只展示服务端真实返回，不推断状态。 */
+  /**
+   * 读取本会话轮次（含每轮回答与 job_id）；只展示服务端真实返回，不推断状态。
+   *
+   * 同样受 `sessionOpBusy()` 约束：本方法会 `beginOperation`（+ 先清列表），
+   * 删除在飞时进来就会作废删除的代次，让删除结果被吞掉。
+   */
   onRefreshTurns: async function () {
-    if (this._gone === true || this.data.guest || this.data.busy) return
+    if (this._gone === true || this.data.guest || this.sessionOpBusy()) return
     const conversation = this._conversation
     if (conversation === null) {
       this.setData({ turns: [], turnsNote: '还没有本次会话的记录：先发送一个问题，再来读取。' })
@@ -608,12 +637,9 @@ Page({
   },
 
   // ---------------------------------------------------------------- 删除入口（#12：单条 / 整段会话）
-
-  /** 是否已有一次删除在进行中（含"确认框已弹出、用户还没答复"）。 */
-  deleteBusy: function () {
-    const pending = typeof this._deletePending === 'string' ? this._deletePending : ''
-    return pending !== '' || this.data.deleting !== ''
-  },
+  //
+  // 互斥判据在 `sessionOpBusy()`（见「会话级操作互斥」一节）：确认中、在飞、发送在飞三种情况下，
+  // 本节的入口与发送/重试/会话刷新一样，**一律不进入**。
 
   /** 从事件里的 `data-turn-id` 取回那条记录（模板只带 id，不把整条对象塞进事件）。 */
   turnOf: function (event) {
@@ -632,10 +658,14 @@ Page({
    * 删除前的二次确认（单条与整段共用）：**用户点了「删除」之后才发请求**。
    *
    * 连点保护分两层，缺任何一层都挡不住重复删除：
-   *  1. `_deletePending` 在**弹窗打开时**就置位——`wx.showModal` 是异步的，连点两次只会开一个弹窗；
-   *  2. `data.deleting` 在**请求在飞时**置位——模板据此把两个入口一起置为不可点。
+   *  1. `data.deleteConfirm` 在**弹窗打开时**就置位——`wx.showModal` 是异步的，连点两次只会开一个弹窗；
+   *     它同时占住 `sessionOpBusy()`，所以确认框开着的时候发送/重试/刷新也进不来。
+   *  2. `data.deleting` 在**请求在飞时**置位——模板据此把四个会话级入口一起置为不可点。
    * 弹窗答复之前用户可能已离页或换了账号，所以确认后**重新核实**页面还活着、身份 epoch 未变：
    * 一次迟到的确认不该删掉别人（或已清空的页面）的记录，口径同 `historydetail.onDelete`。
+   *
+   * 三条出口都必须把 `deleteConfirm` 放回空串（用户点删除、点取消、弹窗打不开），
+   * 否则互斥会永久占着、四个入口一起失效。
    */
   confirmDelete: function (spec) {
     const that = this
@@ -643,22 +673,29 @@ Page({
     const alive = function () {
       return that._gone !== true && that.data.guest !== true && epoch === auth.sessionEpoch()
     }
-    this._deletePending = spec.id
+    this.setData({ deleteConfirm: spec.id })
     wx.showModal({
       title: spec.title,
       content: spec.content,
       confirmText: '删除',
       cancelText: '取消',
       success: function (res) {
-        if (that._deletePending !== spec.id) return
-        that._deletePending = ''
-        if (res === null || typeof res !== 'object' || res.confirm !== true) return
-        if (!alive() || that.data.deleting !== '') return
+        // 这个答复已经不归它管了（用户又点了别的删除，或离页把它清空）：一律不动手、不放开别人的互斥。
+        if (that.data.deleteConfirm !== spec.id) return
+        if (res === null || typeof res !== 'object' || res.confirm !== true) {
+          that.setData({ deleteConfirm: '' })
+          return
+        }
+        if (!alive()) {
+          that.setData({ deleteConfirm: '' })
+          return
+        }
+        // 交接到「在飞」阶段由 `runDelete` 在**一次** setData 里完成，中间不留两个标志都空的缝隙。
         that.runDelete(spec)
       },
       fail: function () {
-        // 弹窗没打开也要放开待确认标记：否则删除入口会永久失效（页面状态本身没变）。
-        if (that._deletePending === spec.id) that._deletePending = ''
+        // 弹窗没打开也要放开待确认标记：否则四个入口会永久失效（页面状态本身没变）。
+        if (that.data.deleteConfirm === spec.id) that.setData({ deleteConfirm: '' })
       }
     })
   },
@@ -671,7 +708,9 @@ Page({
    */
   runDelete: async function (spec) {
     const generation = this.beginOperation()
-    this.setData({ deleting: spec.id, turnsNote: spec.pendingNote })
+    // 「确认中」→「在飞」的交接在**同一次** setData 里完成：中间不留两个标志都空的缝隙，
+    // 否则一次微任务里的点击就能从缝里挤进发送，把这里的代次作废掉。
+    this.setData({ deleteConfirm: '', deleting: spec.id, turnsNote: spec.pendingNote })
     try {
       await spec.request()
       if (!this.isCurrent(generation)) return
@@ -689,7 +728,7 @@ Page({
 
   /** 单条删除：确认 → 一条轮次级 DELETE → 只把这一条从列表里去掉。 */
   onDeleteTurn: function (event) {
-    if (this._gone === true || this.data.guest || this.deleteBusy()) return
+    if (this._gone === true || this.data.guest || this.sessionOpBusy()) return
     const turn = this.turnOf(event)
     const conversation = this._conversation
     if (turn === null || conversation === null) return
@@ -727,7 +766,7 @@ Page({
 
   /** 整段会话删除：确认 → 一条会话级 DELETE → 回到本页初始态。 */
   onDeleteConversation: function () {
-    if (this._gone === true || this.data.guest || this.deleteBusy()) return
+    if (this._gone === true || this.data.guest || this.sessionOpBusy()) return
     const conversation = this._conversation
     if (conversation === null) {
       this.setData({ turns: [], turnsNote: '还没有本次会话的记录：先发送一个问题，再来读取。' })
@@ -773,7 +812,7 @@ Page({
     this._acceptedAttemptKey = ''
     this.setData({
       conversationId: '', conversationRevision: 0,
-      busy: false, stage: 'idle', mode: '', modeLabel: '', job: null,
+      busy: false, deleteConfirm: '', stage: 'idle', mode: '', modeLabel: '', job: null,
       taskNote: '', taskErrorCode: '',
       answer: null, answerGateCode: '', answerGateMessage: '', citations: [], doseCards: null, answerNote: '',
       turns: [], turnsNote: '本次会话已删除：它的提问与回答都不会再出现在这里。'
@@ -783,7 +822,7 @@ Page({
 
   /** 重试：同一个问题（同正文、同会话）严格回放同一请求身份；不会创建新任务。 */
   onRetry: function () {
-    if (this._gone === true || this.data.guest || this.data.busy) return
+    if (this._gone === true || this.data.guest || this.sessionOpBusy()) return
     this.onSend()
   }
 })
