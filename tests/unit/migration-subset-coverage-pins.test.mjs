@@ -32,9 +32,9 @@
  *      这两条立刻红 —— 防「零命中即全绿」。
  *   2. 核心判定：子集脚本（或它直接 import 的模块）提到 (表, 列)，且这张表**由该脚本自己的子集
  *      建得出来** ⇒ 子集必须含该列所属迁移号。需求清单按「`0045` 在不在本树」二选一、
- *      两边都写成**精确清单**：不在树 24 条（today 实测，0 违规；其中 18 条
+ *      两边都写成**精确清单**：不在树 25 条（today 实测，0 违规；其中 18 条
  *      `anonymized_author_ref` 需求 + 2 条 `admin_audit_events` 的 `before_value`/`after_value`）、
- *      在树 30 条（+6 条 `decided_by`）。见「过渡期适配」段。
+ *      在树 31 条（+6 条 `decided_by`，另加 W54 的 `concluded_at` 一条）。见「过渡期适配」段。
  *   3. rollback 重放面：脚本回滚了 `rollback/NNNN`，且它用到了「被 NNNN 建出来的表」上由后续迁移
  *      ADD COLUMN 的列 ⇒ 该版本必须在**回滚点之后**再被 apply 一次。today 实测需求恰为
  *      `community-pg.mjs` 的 0030、0032，各出现 **2 次**（子集一次 + 重放一次）。
@@ -43,7 +43,7 @@
  *      防「迁移里的列名拼错/与代码脱节」——这条也是本文件唯一能抓住「改迁移里的列名」的那一臂。
  *
  * 过渡期适配（看这条，别看错）：需求清单的条数取决于「`0045` 在不在本树」——
- *   **不在**是 24 条（加 R64 后的主干），**在**是 30 条（多出六个 community 脚本各一条
+ *   **不在**是 25 条（加 R64/W54 后的主干），**在**是 31 条（多出六个 community 脚本各一条
  *   `→ 0045 community_moderation_decisions.decided_by`，实测 `de695979` 树）。本文件用
  *   `HAS_MIGRATION_0045` 二选一，两块都是**精确清单**（没有 `>=`、没有 `includes` 兜底、没有
  *   「有 0045 就跳过」）：这样 `#630`（B 档，还开着）合入 main 的那一刻这条钉子在主干上**直接绿**，
@@ -135,7 +135,7 @@ const COLUMN_ENTRY_FLOOR = 18;
 const CODE_FILE_FLOOR = 900;
 
 /**
- * 今天真实的 24 条需求（精确清单）= **0045 不在本树时**的全部需求。
+ * 今天真实的 25 条需求（精确清单）= **0045 不在本树时**的全部需求。
  *
  * 0030/0032/0012 是既成事实：这些迁移已经在树上、相关脚本已经补齐，需求**只会增不会减**。
  * 谁把某一版从某个脚本的子集里删掉，这里逐条报 `文件 → 版本 表.列`。
@@ -174,6 +174,7 @@ const EXPECTED_DEMANDS = Object.freeze([
   'moderation-full-chain-pg.mjs → 0030 community_comments.anonymized_author_ref',
   'moderation-full-chain-pg.mjs → 0030 community_posts.anonymized_author_ref',
   'moderation-full-chain-pg.mjs → 0032 community_reports.anonymized_author_ref',
+  'moderation-full-chain-pg.mjs → 0052 moderation_decisions.concluded_at',
   'qa-citations-pg.mjs → 0012 knowledge_versions.created_at',
 ]);
 
@@ -185,6 +186,8 @@ const EXPECTED_DEMANDS = Object.freeze([
  * 各自提出一条需求。实测 `de695979` 树（#630 的修复提交）上正是这 6 条、需求总数 28。
  * 与 `EXPECTED_DEMANDS` 一样是**精确清单**：`expectedDemands` 按 `HAS_MIGRATION_0045` 二选一，
  * 不做并集、不跳过；`#630` 合入后把这 5 行并进上面那张表并删掉本常量。
+ * W54 的 `0052 moderation_decisions.concluded_at` 与 `0045` 无关，落在 `EXPECTED_DEMANDS` 那半边，
+ * 于是「在树」分支 = 25 条 + 本常量这 6 条 = 31 条。
  */
 const EXPECTED_DEMANDS_WITH_0045 = Object.freeze([
   'admin-community-posts-pg.mjs → 0045 community_moderation_decisions.decided_by',
@@ -778,7 +781,7 @@ test('扫描面自证：需求侧真的读到了 community store（直接 import
   );
 });
 
-test('核心判定：子集脚本或其直接 import 的代码提到 (表, 列) ⇒ 子集必须含该列所属迁移（需求清单精确：无 0045 = 24 条 / 有 0045 = 30 条；today 0 违规）', () => {
+test('核心判定：子集脚本或其直接 import 的代码提到 (表, 列) ⇒ 子集必须含该列所属迁移（需求清单精确：无 0045 = 25 条 / 有 0045 = 31 条；today 0 违规）', () => {
   assert.deepEqual(
     coverageViolations.map(formatViolation),
     [],
@@ -790,7 +793,7 @@ test('核心判定：子集脚本或其直接 import 的代码提到 (表, 列) 
   assert.deepEqual(
     coverageDemands.map(formatDemand).sort(),
     [...expectedDemands],
-    `需求清单变了（分支：${HAS_MIGRATION_0045 ? '0045 在本树 ⇒ 应为 30 条' : '0045 不在本树 ⇒ 应为 24 条'}；`
+    `需求清单变了（分支：${HAS_MIGRATION_0045 ? '0045 在本树 ⇒ 应为 31 条' : '0045 不在本树 ⇒ 应为 25 条'}；`
       + '0030/0032/0012 已经落在树上，需求只会增不会减）：\n  '
       + coverageDemands.map(formatDemand).sort().join('\n  '),
   );

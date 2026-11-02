@@ -46,9 +46,9 @@
  * 下一次重放把这一行补上。
  *
  * ## 下架集合**回填**，任务结论仍不回填（W43）
- * 存量**任务行**"当初有没有结论"在库层面也不可区分（决策：只读面用 `present=false ⇒ unknown` 表达，
- * 不改社区契约）。因此 `byJobId/current/forRevision/history` **仍只答内存里的本次进程结论**，
- * 跨进程追溯走审计查询（直接查表）。
+ * 存量**任务行**"当初有没有结论"在库层面也不可区分（决策：只读面用 `present=false ⇒ unknown` 表达，不改社区契约）。
+ * 因此 `byJobId/current/forRevision/history` **仍只答内存里的本次进程结论**，跨进程追溯走审计查询（直接查表）。
+ * **W54 不改这条决策**：结论新鲜度另走只读端口 `createPostgresConclusionFacts()`（实现在独立文件 `moderation/conclusion-facts-pg.ts`，契约在 `moderation/conclusion-facts.ts`）——只判 `RESCREEN_REQUIRED`，不回填本台账、不抬任何可见性。
  *
  * 但**下架标记不是同一类事实**：它是**终态**、只增不减，且是"旧回调不得复活已下架版本"这条闸门的唯一判据——
  * 发布闸门 `service.ts:939` 的 `TARGET_WITHDRAWN` 与回调闸门 `service.ts:1287` 的 `CALLBACK_TARGET_WITHDRAWN` 都只问 `isWithdrawn`。

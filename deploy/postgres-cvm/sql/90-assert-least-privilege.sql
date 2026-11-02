@@ -1154,6 +1154,24 @@ UPDATE public.users SET nickname = nickname WHERE false;
 \set r28_probe_users_update_extra_state :SQLSTATE
 ROLLBACK TO SAVEPOINT r28_probe_users;
 
+-- --- W54（迁移 0052）：结论事实的**读面**探针 -------------------------------------------------
+-- 端口 services/api/src/moderation/conclusion-facts-pg.ts 的 CONCLUSION_FACTS_SQL 只读七列：
+-- content_kind / decision / rule_version / model_version / prompt_version /
+-- COALESCE(concluded_at, updated_at)；target 三列 + superseded + decision 在 WHERE，concluded_at 在 ORDER BY
+-- ⇒ 列级 SELECT 共 12 列（与 20-login-roles.sql 段 M3、下方 expected 的 moderation_decisions sel 逐列一致）。
+-- 它只为「结论新鲜度」服务：拿不到事实只会少判 RESCREEN_REQUIRED，不参与任何可见性判定。
+SAVEPOINT r28_probe;
+SELECT content_kind, decision, rule_version, model_version, prompt_version,
+       COALESCE(concluded_at, updated_at) AS concluded_at
+  FROM public.moderation_decisions
+ WHERE false
+   AND target_type = 'post' AND target_id = 'probe' AND target_revision = 1
+   AND superseded = FALSE AND decision = 'approved'
+ ORDER BY COALESCE(concluded_at, updated_at) DESC
+ LIMIT 30;
+\set r28_probe_mod_dec_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
 ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S45 探针结束 ----------------------------------------------------------------------
@@ -1511,8 +1529,11 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 这 6 列纯粹是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求；moderation_withdrawals 的三列 SELECT 另有用途（W43 的 HYDRATE_WITHDRAWALS_SQL 回填）。
     -- 名单来源 ledger-pg.ts:66 的 SUPERSEDE_SQL（target_type/target_id/target_revision/
     -- content_kind/superseded）与 :74 的 INSERT_SQL + :89 的 UPDATE_SQL（WHERE job_id）。
+    -- W54（迁移 0052）：SELECT 面在 6 列之外再加 6 列 —— rule_version/model_version/prompt_version/concluded_at/decision/updated_at，
+    -- 只服务只读端口 createPostgresConclusionFacts（缺表/缺列 ⇒ 空数组 + 一次 warn），不参与任何可见性判定；名单见 conclusion-facts-pg.ts 的 CONCLUSION_FACTS_SQL。
     ('moderation_decisions',
-     ARRAY['job_id','target_type','target_id','target_revision','content_kind','superseded'],
+     ARRAY['job_id','target_type','target_id','target_revision','content_kind','superseded',
+           'rule_version','model_version','prompt_version','concluded_at','decision','updated_at'],
      ARRAY['job_id','target_type','target_id','target_revision','content_kind','port_kind',
            'prompt_id','prompt_version','job_revision','state','lease_token','authorization_epoch',
            'submitted_by','deadline_at','error_code','decision','reason_codes','hard_rule_passed',
@@ -3407,8 +3428,9 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          AND :'r28_probe_mod_dec_ins' = 'false'
          AND :'r28_probe_mod_dec_upd' = 'false'
          AND :'r28_probe_mod_dec_supersede' = 'false'
+         AND :'r28_probe_mod_dec_sel' = 'false'
          AND :'r28_probe_mod_wd_ins' = 'false',
-         'SET LOCAL ROLE gengyun_api_runtime 后，moderation_decisions 的 INSERT 26 列 / UPDATE 14 列 / supersede 的 4 列 WHERE，以及 moderation_withdrawals 的 INSERT … ON CONFLICT DO NOTHING 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 段 M3 的列级授权不足）'
+         'SET LOCAL ROLE gengyun_api_runtime 后，moderation_decisions 的 INSERT 26 列 / UPDATE 14 列 / supersede 的 4 列 WHERE / W54 结论事实的 SELECT 12 列（含 COALESCE 与 ORDER BY 的读权），以及 moderation_withdrawals 的 INSERT … ON CONFLICT DO NOTHING 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 段 M3 的列级授权不足）'
 
   UNION ALL
   -- R72-W41（迁移 0051）：审核域持久幂等台账的读写面 —— 六列 SELECT / 六列 INSERT
