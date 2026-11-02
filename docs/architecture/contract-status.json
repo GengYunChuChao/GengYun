@@ -1524,7 +1524,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async listPosts(actor: unknown, query: ListPostsQuery = {}): Promise<PostPage> {",
-          "lines": "960-1026"
+          "lines": "969-969"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1551,7 +1551,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async createPost(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Post> {",
-          "lines": "954-1065"
+          "lines": "963-1074"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1609,7 +1609,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editPost",
-          "lines": "1075-1202"
+          "lines": "1084-1211"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1636,7 +1636,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async deletePost(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1288-1320"
+          "lines": "1297-1297"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1663,7 +1663,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async listComments(actor: unknown, postId: unknown, query: ListCommentsQuery = {}): Promise<CommentPage> {",
-          "lines": "1323-1373"
+          "lines": "1332-1332"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1690,7 +1690,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async createComment(",
-          "lines": "1293-1395"
+          "lines": "1302-1404"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1744,7 +1744,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async editComment(actor: unknown, id: unknown, input: unknown, options: WriteOptions = {}): Promise<Comment> {",
-          "lines": "1492-1569"
+          "lines": "1501-1501"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1771,7 +1771,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async deleteComment(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1572-1603"
+          "lines": "1581-1581"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1937,7 +1937,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async createReport(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Report> {",
-          "lines": "1646-1686"
+          "lines": "1655-1655"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",

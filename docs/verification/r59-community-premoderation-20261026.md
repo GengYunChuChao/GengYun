@@ -96,7 +96,7 @@
    `miniprogram/pages/communitycreate/communitycreate.js:129`（发帖 toast）。
    另注意详情页公开侧是「**未公开／待审**」，语序与作者侧「待审／未公开」**相反**。
 3. **两步状态有第二处落点：改帖（`editPost`）。** 之前只登记了发帖；
-   `services/api/src/community/service.ts:1197` 与 `:1206-1207` 是同一套三元组（新 revision 重送审）。
+   `services/api/src/community/service.ts:1242` 与 `:1251-1252` 是同一套三元组（新 revision 重送审）。
    只钉发帖会漏掉「发帖待审、改帖直接发」这条旁路 —— 所以钉 2 钉的是**两处**。
 4. 顺带登一句**注释漂移**（不影响行为，但会误导后来人）：
    `miniprogram/pages/communitycreate/communitycreate.js:124-126` 的注释里写的交叉引用行号已过期

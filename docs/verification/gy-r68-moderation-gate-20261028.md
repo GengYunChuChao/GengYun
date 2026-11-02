@@ -166,7 +166,7 @@ GET /posts      = 200，items = 1
 2. **投稿授权闸是过的**：夹具在请求前按真实实现 `consentStore.grant(...)` 补齐 `public_posting` 授权；若未授权，响应会是 `403 CONSENT_REQUIRED`（`tests/unit/community-posting-consent.test.mjs` 的既有口径），不是 422。
 3. **鉴权与路由是通的**：同一进程、同一 token 的 `GET /posts` 返 200；`GET /posts/<随机 uuid>` 返同形 404 而不是 503——整域可用，只有写面被挡。
 
-对应的代码路径（本基线逐字）：送审在落库**之前**（`services/api/src/community/service.ts:1044` 的 `screenWithModeration(...)`），未获放行即抛（`:1050` 的 `requireDomainClearance(...)`），隔离错误由 `:509-517` 的 `domainIsolation` 造出（`INPUT_UNCERTAIN` + `details[].field='reason_codes'`），落库调用在 `:1082` 的 `insertPost(...)` —— 抛点在落库之前，所以「0 行」是**结构性**的，不是断言口径。
+对应的代码路径（本基线逐字）：送审在落库**之前**（`services/api/src/community/service.ts:1089` 的 `screenWithModeration(...)`），未获放行即抛（`:1095` 的 `requireDomainClearance(...)`），隔离错误由 `:509-517` 的 `domainIsolation` 造出（`INPUT_UNCERTAIN` + `details[].field='reason_codes'`），落库调用在 `:1127` 的 `insertPost(...)` —— 抛点在落库之前，所以「0 行」是**结构性**的，不是断言口径。
 
 ## 5 声明：这是**替身级**证据，不证明真实审核能力
 

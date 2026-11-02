@@ -36,7 +36,7 @@
 >   这四处的原文保留为当时读数。
 > - **§7 第 2 条「全站同类折叠」也已被后续片做完**：五个适配层现在**都**把 401/403 归因委托给
 >   `miniprogram/utils/auth.js:605` 的 `failureFor`（`attribution` 决定要不要清会话），不再各自
->   `clearSession`＋折成 `SESSION_REQUIRED`——`miniprogram/utils/community-api.js:211`、
+>   `clearSession`＋折成 `SESSION_REQUIRED`——`miniprogram/utils/community-api.js:210`、
 >   `miniprogram/utils/knowledge-api.js:76`、`miniprogram/utils/messages-api.js:137`、
 >   `miniprogram/utils/profile-api.js:23`、`miniprogram/utils/voice-api.js:213`。原文「仍是 401/403 折叠」
 >   保留为 2026-10-21 读数（口径裁决见本页 §5.1 的 superseded 边界）。

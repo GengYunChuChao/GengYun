@@ -114,7 +114,7 @@ if (!outcome.publishable && !mediaAccepted) {
 1. **规则层只是「不评估媒体」**：`services/api/src/community/service.ts:376-379` `ruleLayerDeferredMedia(outcome)` —— `decision !== 'rejected'` 且 `outcome.reason_codes` **全部**等于 `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`（注意用 `reason_codes`，不是含 `NOT_PUBLISHABLE` 的 `refusal_reason_codes`）；驳回／输入非法／引擎异常／扫描截断／任何媒体之外的原因都仍然走原拒绝路径，一处没放宽。
 2. **图片端口真的有**：`imageReadiness.ready === true`。
 
-送审之后的「已提交审核」态：`services/api/src/community/service.ts:967-975`（`mediaReview = mediaAccepted && isMediaReviewPending(screen)`；`!mediaReview` 时才走原来的 `requireDomainClearance` + 「带媒体不得由规则层放行」不变式，该 503 原样保留）、`:992-993`（落库 `visibility:'private'`、`audit_state:'pending'`）、`:1001`（结论取审核域那一条，不伪造成 `approved`）、`:1022-1024`（带媒体此刻没有审核结果 ⇒ **不投递**「审核结果」事件）、`:1007-1019`（`awaitingPublish` 时才调 `link.publish`，`mediaReview` 不调）。`editPost` 同口径：`services/api/src/community/service.ts:1089-1151`。
+送审之后的「已提交审核」态：`services/api/src/community/service.ts:1012-1020`（`mediaReview = mediaAccepted && isMediaReviewPending(screen)`；`!mediaReview` 时才走原来的 `requireDomainClearance` + 「带媒体不得由规则层放行」不变式，该 503 原样保留）、`:1037-1038`（落库 `visibility:'private'`、`audit_state:'pending'`）、`:1046`（结论取审核域那一条，不伪造成 `approved`）、`:1067-1069`（带媒体此刻没有审核结果 ⇒ **不投递**「审核结果」事件）、`:1052-1064`（`awaitingPublish` 时才调 `link.publish`，`mediaReview` 不调）。`editPost` 同口径：`services/api/src/community/service.ts:1134-1196`。
 
 ### 3.4 错误码选择（为什么不新开 503）
 

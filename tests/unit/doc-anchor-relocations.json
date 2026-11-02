@@ -1399,50 +1399,50 @@
     "line": 62,
     "target": "services/api/src/community/service.ts",
     "from": 971,
-    "to": 1097,
+    "to": 1106,
     "kind": "correction",
     "symbol": "const awaitingPublish = !mediaReview && screen !== null && link !== null;",
-    "reason": "原锚点 `:971` 在 base 上落在 `route: 'posts',`（该行没有 `awaitingPublish`，属陈旧锚点）；按符号重取到 HEAD 的 `:1097`。服务端 `community/service.ts` 自 :583 起插了理由码投影（+45 行），本片同时收口这条历史锚点。"
+    "reason": "原锚点 `:971` 在 base 上落在 `route: 'posts',`（该行没有 `awaitingPublish`，属陈旧锚点）；按符号重取到 HEAD 的 `:1106`。服务端 `community/service.ts` 自 :583 起插了理由码投影（本片首轮 +45 行，2026-11-03 把 `reason_codes` 改成必现空数组后再 +9 行，故 to 由 :1097 同步到 :1106）。"
   },
   {
     "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
     "line": 48,
     "target": "services/api/src/community/service.ts",
     "from": 663,
-    "to": 852,
+    "to": 861,
     "kind": "correction",
     "symbol": "function projectReport(record: ReportRecord): Report {",
-    "reason": "原锚点 `:663` 在 base 上落在 `try {`（该行不是 `projectReport()`，属陈旧锚点）；按符号重取到 HEAD 的 `:852`。服务端 `community/service.ts` 自 :583 起插了理由码投影（+45 行），本片同时收口这条历史锚点。"
+    "reason": "原锚点 `:663` 在 base 上落在 `try {`（该行不是 `projectReport()`，属陈旧锚点）；按符号重取到 HEAD 的 `:861`。服务端 `community/service.ts` 自 :583 起插了理由码投影（本片首轮 +45 行，2026-11-03 把 `reason_codes` 改成必现空数组后再 +9 行，故 to 由 :852 同步到 :861）。"
   },
   {
     "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
     "line": 71,
     "target": "services/api/src/community/service.ts",
     "from": 935,
-    "to": 1142,
+    "to": 1151,
     "kind": "correction",
     "symbol": "await publishModerationResult(",
-    "reason": "原锚点 `:935` 在 base 上落在 `route: 'posts',`（该行不是 `publishModerationResult(...)` 的调用点，属陈旧锚点）；按符号重取到 HEAD 里 `moderation_result` 的首个投递点 `:1142`。服务端 `community/service.ts` 自 :583 起插了理由码投影（+45 行），本片同时收口这条历史锚点。"
+    "reason": "原锚点 `:935` 在 base 上落在 `route: 'posts',`（该行不是 `publishModerationResult(...)` 的调用点，属陈旧锚点）；按符号重取到 HEAD 里 `moderation_result` 的首个投递点 `:1151`。服务端 `community/service.ts` 自 :583 起插了理由码投影（本片首轮 +45 行，2026-11-03 把 `reason_codes` 改成必现空数组后再 +9 行，故 to 由 :1142 同步到 :1151）。"
   },
   {
     "doc": "docs/verification/gy-r33-contract-ledger-20261023.md",
     "line": 440,
     "target": "services/api/src/community/service.ts",
     "from": 1805,
-    "to": 1872,
+    "to": 1881,
     "kind": "correction",
     "symbol": "reason_codes: ['NOT_PUBLISHABLE'],",
-    "reason": "原锚点 `:1805` 在 base（main ef22d5a9）上落在注释行「只会拿到 DELETED…」，不是 blocker 的 `reason_codes` 那一行——#838 在本片之外先给它 +22 行，本片再 +45 行；按符号重取到 HEAD 的 `:1872`。"
+    "reason": "原锚点 `:1805` 在 base（main ef22d5a9）上落在注释行「只会拿到 DELETED…」，不是 blocker 的 `reason_codes` 那一行——#838 在本片之外先给它 +22 行，本片首轮再 +45 行、2026-11-03 必现化再 +9 行；按符号重取到 HEAD 的 `:1881`。"
   },
   {
     "doc": "docs/verification/gy-r33-contract-ledger-20261023.md",
     "line": 440,
     "target": "services/api/src/community/service.ts",
     "from": 1808,
-    "to": 1875,
-    "toEnd": 1877,
+    "to": 1884,
+    "toEnd": 1886,
     "kind": "correction",
     "symbol": "throw commitRefusal(committed.reason);",
-    "reason": "原锚点 `:1808` 在 base（main ef22d5a9）上落在 `author_id: user.userId,`，早已不是「该分支收尾与抛错点」；按符号重取到 HEAD 的 `:1875-1877`（`};` / `}` / `throw commitRefusal(committed.reason);`）。"
+    "reason": "原锚点 `:1808` 在 base（main ef22d5a9）上落在 `author_id: user.userId,`，早已不是「该分支收尾与抛错点」；按符号重取到 HEAD 的 `:1884-1886`（`};` / `}` / `throw commitRefusal(committed.reason);`；2026-11-03 必现化再 +9 行后由 `:1875-1877` 同步）。"
   }
 ]
