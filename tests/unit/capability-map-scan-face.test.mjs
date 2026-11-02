@@ -20,6 +20,7 @@ import {
   parseDocBlock,
   parseRouteRegistrations,
   renderSummaryLine,
+  unsupportedRegistrationShapes,
 } from '../../tools/lib/admin-capability-map.mjs';
 
 /**
@@ -596,4 +597,340 @@ test('T6 散文 / 标记块 / 摘要行三处数字互洽（且散文里的机�
     const seen = numbersFromProse(readmeText, new RegExp(`\`${key}=(\\d+)\``, 'g'));
     assert.deepEqual([...new Set(seen)], [value], `README 里的 ${key} 与重算不一致`);
   }
+});
+
+// --- T7 未识别注册形状（守卫） ----------------------------------------------------------------
+
+const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * T7 夹具：合成源码，逐条钉「报 / 不报」。
+ *
+ * 为什么只能靠夹具：对象式 `app.route({…})` 与前缀式 `app.register(x, { prefix })` 在真树里
+ * **今天一处都没有**（T8 钉的就是这一点），所以「守卫还活着」只能由合成源码证明——
+ * 否则把 `parseRouteRegistrations` 里那一行守卫删掉，整套用例照样全绿。
+ */
+const UNSUPPORTED_FIXTURES = [
+  {
+    label: '对象式 app.route({ url }) 指向 admin 面',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: [
+      'export function registerWidgetRoutes(app, handler) {',
+      "  app.route({ method: 'POST', url: '/api/v1/admin/reports/1/disposition', handler });",
+      '}',
+      '',
+    ].join('\n'),
+    expected: [
+      {
+        line: 2,
+        kind: 'route-object',
+        snippet: "app.route({ method: 'POST', url: '/api/v1/admin/reports/1/disposition', handler });",
+      },
+    ],
+  },
+  {
+    label: '前缀式 app.register(x, { prefix }) 指向 admin 面',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.register(adminRoutes, { prefix: '/api/v1/admin' });", ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix',
+        snippet: "app.register(adminRoutes, { prefix: '/api/v1/admin' });",
+      },
+    ],
+  },
+  {
+    label: '同形状但 prefix 落在用户面（/api/v1/public）⇒ 不报',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.register(publicRoutes, { prefix: '/api/v1/public' });", ''].join('\n'),
+    expected: [],
+  },
+  {
+    label: 'prefix 是变量 ⇒ 无法判断，必须报 register-prefix-dynamic',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: [
+      "const adminPrefix = '/api/v1/admin';",
+      'app.register(reportRoutes, { prefix: adminPrefix });',
+      '',
+    ].join('\n'),
+    expected: [
+      { line: 2, kind: 'register-prefix-dynamic', snippet: 'app.register(reportRoutes, { prefix: adminPrefix });' },
+    ],
+  },
+  {
+    label: 'register 不带 prefix ⇒ 不报（注册的是插件，不是挂在 admin 面前缀下）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ['app.register(adminRoutes);', ''].join('\n'),
+    expected: [],
+  },
+  {
+    label: '对照：既有写法 app.post(<字面量>) 不报，且仍解析出 1 条',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.post('/api/v1/admin/widgets', async () => ({ ok: true }));", ''].join('\n'),
+    expected: [],
+    parsed: [{ method: 'POST', path: '/admin/widgets' }],
+  },
+  {
+    label: '用户面 /administrators 不是 admin 路径段 ⇒ 不报（NC2 的判别力夹具）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.register(userRoutes, { prefix: '/api/v1/administrators' });", ''].join('\n'),
+    expected: [],
+  },
+  {
+    label: 'route 的 url 是变量 ⇒ 无法判断，报 route-object-dynamic',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.route({ method: 'POST', url: reportPath, handler });", ''].join('\n'),
+    expected: [
+      { line: 1, kind: 'route-object-dynamic', snippet: "app.route({ method: 'POST', url: reportPath, handler });" },
+    ],
+  },
+  {
+    label: '`{ prefix }` 简写（值是同名变量）⇒ 无法判断，报 register-prefix-dynamic',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ['app.register(reportRoutes, { prefix });', ''].join('\n'),
+    expected: [
+      { line: 1, kind: 'register-prefix-dynamic', snippet: 'app.register(reportRoutes, { prefix });' },
+    ],
+  },
+  // --- R72-W67：值必须是**完整静态字面量**，尾部拼接与未知插值一律归 dynamic（不判其路径面） --------
+  {
+    label: "监工样例①：prefix 是「字面量 + 字面量」拼接 ⇒ 不是完整字面量，报 register-prefix-dynamic",
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.register(routes, { prefix: '/api/v1/' + 'admin' });", ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix-dynamic',
+        snippet: "app.register(routes, { prefix: '/api/v1/' + 'admin' });",
+      },
+    ],
+  },
+  {
+    label: '监工样例②：prefix 是含未知插值 `${face}` 的模板串 ⇒ 不做常量折叠，报 register-prefix-dynamic',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["const face = 'admin';", 'app.register(routes, { prefix: `/api/v1/${face}` });', ''].join('\n'),
+    expected: [
+      {
+        line: 2,
+        kind: 'register-prefix-dynamic',
+        snippet: 'app.register(routes, { prefix: `/api/v1/${face}` });',
+      },
+    ],
+  },
+  {
+    label: 'route 的 url 也走同一个取值口径：尾部拼接 ⇒ 报 route-object-dynamic',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.route({ method: 'GET', url: '/api/v1/' + 'admin/reports', handler });", ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'route-object-dynamic',
+        snippet: "app.route({ method: 'GET', url: '/api/v1/' + 'admin/reports', handler });",
+      },
+    ],
+  },
+  {
+    label:
+      "对照（NC3 的靶子）：prefix 是完整静态字面量 '/api/v1/admin' ⇒ 判静态（kind 必须是 register-prefix，不许降级成 dynamic）",
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.register(routes, { prefix: '/api/v1/admin' });", ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix',
+        snippet: "app.register(routes, { prefix: '/api/v1/admin' });",
+      },
+    ],
+  },
+  {
+    label: '不退化：只含 `${API_PREFIX}` 的模板串仍是可证明的静态前缀 ⇒ 报 register-prefix（不是 dynamic）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ['app.register(routes, { prefix: `${API_PREFIX}/admin` });', ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix',
+        snippet: 'app.register(routes, { prefix: `${API_PREFIX}/admin` });',
+      },
+    ],
+  },
+  {
+    label: '不退化：无插值的模板串仍算完整静态字面量 ⇒ 报 register-prefix（不是 dynamic）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ['app.register(routes, { prefix: `/api/v1/admin` });', ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix',
+        snippet: 'app.register(routes, { prefix: `/api/v1/admin` });',
+      },
+    ],
+  },
+  {
+    label: '只写在注释里的形状不报（先掩码再判，注释不算注册）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["// app.route({ url: '/api/v1/admin/x' }) 只是注释", 'export const nothing = 1;', ''].join('\n'),
+    expected: [],
+  },
+  {
+    label: '一次列全：三条命中必须全列（不许只报第一条）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: [
+      'export function registerAll(app) {',
+      "  app.route({ method: 'GET', path: '/api/v1/admin/reports', handler: list });",
+      "  app.register(adminRoutes, { prefix: '/api/v1/admin' });",
+      '  app.register(reportRoutes, { prefix: computedPrefix });',
+      '}',
+      '',
+    ].join('\n'),
+    expected: [
+      {
+        line: 2,
+        kind: 'route-object',
+        snippet: "app.route({ method: 'GET', path: '/api/v1/admin/reports', handler: list });",
+      },
+      { line: 3, kind: 'register-prefix', snippet: "app.register(adminRoutes, { prefix: '/api/v1/admin' });" },
+      { line: 4, kind: 'register-prefix-dynamic', snippet: 'app.register(reportRoutes, { prefix: computedPrefix });' },
+    ],
+  },
+];
+
+test('T7 未识别的注册形状一律判红：对象式 route / 前缀式 register / 变量前缀（合成夹具逐条钉报与不报）', () => {
+  assert.ok(UNSUPPORTED_FIXTURES.length >= 6, `夹具应当有 6 个以上，实际 ${UNSUPPORTED_FIXTURES.length}`);
+
+  // ① 守卫本身：命中项（行号 / kind / 片段）逐条对齐
+  for (const fixture of UNSUPPORTED_FIXTURES) {
+    assert.deepEqual(
+      unsupportedRegistrationShapes(fixture.source, { file: fixture.file }),
+      fixture.expected,
+      `${fixture.label}：命中项与预期不符`,
+    );
+  }
+
+  // ② 命中的夹具必须让 parseAdminRoutes 抛（证明守卫接在链上，而不是只导出了一个没人调的函数）
+  for (const { label, file, source, expected } of UNSUPPORTED_FIXTURES) {
+    if (expected.length === 0) continue;
+    assert.throws(
+      () => parseAdminRoutes(source, { file }),
+      error => {
+        assert.ok(error instanceof AdminCapabilityMapError, `${label}：抛的不是 AdminCapabilityMapError（${error}）`);
+        for (const hit of expected) {
+          assert.match(
+            error.message,
+            new RegExp(`未识别的注册形状：${escapeRegExp(file)}:${hit.line}（${hit.kind}）—— 本闸门只解析`),
+            `${label}：错误信息里没有「${file}:${hit.line}（${hit.kind}）」`,
+          );
+        }
+        assert.equal(
+          error.message.split('未识别的注册形状：').length - 1,
+          expected.length,
+          `${label}：命中 ${expected.length} 条，错误信息列的条数不是这个数`,
+        );
+        return true;
+      },
+    );
+  }
+
+  // ③ 生产链也必须红：闸门 CLI 走的是 `loadSources → buildCapabilityMap → buildOperations →`
+  //    `parseRouteRegistrations`，它**不经过** `parseAdminRoutes`。守卫要是只挂在后者上，
+  //    闸门对这两类形状就还是 no-op，只有单测红——所以这里单独钉一次生产链入口。
+  const multiHit = UNSUPPORTED_FIXTURES[UNSUPPORTED_FIXTURES.length - 1];
+  assert.throws(
+    () => buildFixtureOperations({ routes: multiHit.source, file: multiHit.file }),
+    error => {
+      assert.ok(error instanceof AdminCapabilityMapError, `生产链抛的不是 AdminCapabilityMapError（${error}）`);
+      assert.match(error.message, /未识别的注册形状/, `生产链没有抛未识别注册形状：${error.message}`);
+      return true;
+    },
+  );
+
+  // ④ 不命中的夹具：守卫不许误报，原有解析行为也不许被顺手改坏
+  for (const { label, file, source, expected, parsed } of UNSUPPORTED_FIXTURES) {
+    if (expected.length > 0) continue;
+    let routes = null;
+    let failure = null;
+    try {
+      routes = parseAdminRoutes(source, { file });
+    } catch (error) {
+      failure = error;
+    }
+    assert.ok(
+      failure === null || !String(failure.message).includes('未识别的注册形状'),
+      `${label}：不该报的形状被守卫误报了——${failure?.message}`,
+    );
+    if (parsed) {
+      assert.deepEqual(
+        routes.map(route => ({ method: route.method, path: route.path })),
+        parsed,
+        `${label}：既有写法的解析结果变了`,
+      );
+    } else if (failure === null) {
+      assert.equal(routes.length, 0, `${label}：不该解析出 admin 面注册，实际 ${routes.length} 条`);
+    } else {
+      assert.ok(failure instanceof AdminCapabilityMapError, `${label}：抛的不是 AdminCapabilityMapError（${failure}）`);
+      assert.match(failure.message, /一条 admin 面/, `${label}：抛的不是「单文件 0 条」那一档：${failure.message}`);
+    }
+  }
+});
+
+// --- T8 真树：守卫全空 + 读数不变 -----------------------------------------------------------
+
+test('T8 真树 22 个路由文件对守卫全空，且扫描面仍 49 条、admin.ts 仍 46 条（守卫不改读数）', () => {
+  const files = listRouteFiles();
+  assert.equal(files.length, 22, `routes 目录里应有 22 个 .ts 路由文件，实际 ${files.length}`);
+
+  const perFile = new Map();
+  let total = 0;
+  for (const file of files) {
+    const text = readRepoFile(file);
+    assert.deepEqual(
+      unsupportedRegistrationShapes(text, { file }),
+      [],
+      `${file} 里出现了本闸门不认的注册形状（对象式 app.route / 前缀式 app.register）`,
+    );
+    let routes;
+    try {
+      routes = parseAdminRoutes(text, { file });
+    } catch (error) {
+      // 单文件 0 条 admin 面注册是**允许**的（`routes/support.ts` 这类辅助模块），parseAdminRoutes 按设计抛；
+      // 但必须确认抛的正是这一档，别的错（认不出 operationId／守卫缺失）不许被这里吞掉。
+      assert.ok(error instanceof AdminCapabilityMapError, `${file}：抛的不是 AdminCapabilityMapError（${error}）`);
+      assert.match(
+        error.message,
+        /一条 admin 面 app\.<method>\(…\) 都没扫到/,
+        `${file}：抛的不是「单文件 0 条」那一档：${error.message}`,
+      );
+      assert.deepEqual(
+        parseRouteRegistrations(text, { file }).filter(route => route.adminFace),
+        [],
+        `${file}：有 admin 面注册却抛了「0 条」`,
+      );
+      routes = [];
+    }
+    perFile.set(file, routes.length);
+    total += routes.length;
+  }
+
+  // 派单钉的两个绝对数：admin.ts 单文件 46、22 个文件合计 49
+  assert.equal(perFile.get(SOURCE_PATHS.adminRoutes), 46, `admin.ts 单文件应仍解析出 46 条，实际 ${perFile.get(SOURCE_PATHS.adminRoutes)}`);
+  assert.equal(total, 49, `22 个路由文件合计应仍解析出 49 条 admin 面注册，实际 ${total}`);
+
+  // 与另两处口径对拍：能力图 totalOps、契约 admin 面条数、T1 的独立写法都必须同一个数
+  assert.equal(total, MAP.summary.totalOps, '逐文件 parseAdminRoutes 合计与能力图 totalOps 不一致');
+  assert.equal(
+    total,
+    SOURCES.contractOperations.filter(entry => /\/admin(?:\/|$)/.test(entry.path)).length,
+    '逐文件 parseAdminRoutes 合计与契约 admin 面条数不一致',
+  );
+  assert.deepEqual(
+    files.filter(file => (perFile.get(file) ?? 0) > 0),
+    [...new Set(ROWS.map(row => row.routeFile))].sort(),
+    '逐文件解析出注册的文件集合与能力图 routeFile 集合对不上',
+  );
+  assert.equal(
+    files.map(file => perFile.get(file)).filter(count => count > 0).reduce((sum, count) => sum + count, 0),
+    total,
+    '有注册的文件条数合计与总数不一致',
+  );
 });
