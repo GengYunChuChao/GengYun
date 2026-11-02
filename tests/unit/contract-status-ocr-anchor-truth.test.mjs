@@ -204,10 +204,15 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 届时把这里的基线同步改掉即可 —— 那不是回归。它存在的唯一理由是：本片做的是**等长文本替换**
  * （`687` → `702`，`--write-doc` 渲染同样等长），所以行数与字节数**必须一个都不许变**；
  * 变了就说明改的不止那 8 处地址（例如 JSON 被重排、md 被工具顺手改了别的），那要停下来查。
+ *
+ * 2026-11-02 同步过一次：R72 把 `docs/architecture/contract-implementation-status.md`
+ * 的 :19 与 :205 两行散文改成「以 X 为准」的指针（**行数不变、字节 +174**），按上面
+ * 那句「正常改台账就同步基线」把 md 的字节数改成 191743 —— 不是回归，也不是本片的
+ * 等长替换被破坏（仍然两行对两行、净 0 行位移）。
  */
 const DELIVERY_SIZE_BASELINE = [
   { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 267773, lines: 4407 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 191569, lines: 217 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 191743, lines: 217 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
