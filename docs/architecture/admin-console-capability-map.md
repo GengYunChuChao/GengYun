@@ -4,7 +4,8 @@
 > **计数口径（先读这条，否则数字对不上）**：`packages/contracts/openapi.json` 中以 `/admin` 开头的 path 共 **36** 条，展开成 **45** 个 operation；其中 **44** 个的 `x-scope` 落在 `AdminScope.enum` 闭集（13 项）内，另 **1** 个是 `loginAdmin`（`POST /admin/auth/session`，`x-scope: public`）——它是登录入口，不持任何后台权限；§0 标记块的机器口径从 R72 起把它与另两条 auth（`getAdminSession`、`logoutAdmin`）一并算作 admin 面（`totalOps` 49），本行这套手数仍按 x-scope 闭集口径、不计入。
 > **本页路由与入口的读数以机器重算为准**（`node tools/verify-admin-capability-map.mjs`，CI 在 `contract` job 里跑 `npm run verify:capability-map`）：`services/api/src/routes/*.ts` 里 admin 面的注册逐条数出 **49** 条路由（`admin.ts` 46 条 = 24 条家族路由 + 22 条显式路由；`admin-auth.ts` 3 条 auth），对应 49 个 operationId、14 个路径族；`apps/admin/src` 对其中 **49** 个 operation 全部有调用链入口，**无入口 0 条**（原本仅剩的 `grantAdministratorScope`、`revokeAdministratorScope` 两条授/撤权写面已由 GY-R68 接上 `AdministratorsView.vue`，取证见 §4）。逐条数字见 §0 末尾的标记块——**块内是闸门保护的实时值，块外散文不受保护**。
 > 上一段 `openapi.json` 的「36 条 path／45 个 operation／44 个 x-scope」是契约口径的**手工读数，本行未纳入闸门**（脚本只读 `services/api/src/routes/*.ts` 里 admin 面的注册、`admin/families.ts` 与 `apps/admin/src`；源码没写 operationId 的注册会回落到 `packages/contracts/operations.json` 的 method+path 精确匹配，但仍不数 `openapi.json` 的 path 总数；要把这几个数也钉住，得另加一条契约侧的重算）。旧版本这里写「只数 42 条＝逐条注册的路由数、本页每个 42／30 都要 +2」，那组数字已被代码证伪（实测 49 条路由、49 个 operation；无入口在本片之前是 2 条、GY-R68 之后是 0 条），只在 §8 留作历史记录。
-> 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1354`。可复跑：`node tools/verify-doc-anchors.mjs --strict`、`node tools/verify-contract-status.mjs`、`npm run test:docs`。
+> 口径：只写从代码里读得到的结构性事实，**不是运行验收**。PROVIDER 接线未连库验证；凡「未接线 / 503」都限定在**缺省装配**（stub，或 `real` 但没拿到库池）这一分支，装配判据见 `services/api/src/app.ts:1354`。
+> 可复跑：`node tools/verify-doc-anchors.mjs --strict`、`node tools/verify-contract-status.mjs`、`npm run test:docs`。
 
 ## 0 一页结论
 
@@ -17,7 +18,6 @@
 | 后端有面、UI 无入口 | **0 个 operation**：原本仅剩的两条授/撤权写面 `grantAdministratorScope`、`revokeAdministratorScope`（`POST`／`DELETE /admin/administrators/{id}/scopes…`，门 `scopes:write`）已由 GY-R68 接上 `AdministratorsView.vue`；R72 把扫描面扩到全部 `routes/*.ts` 之后新增的 3 条 auth 也不是缺口（`apps/admin/src/auth/session.ts` 是它们的客户端，9 个视图真调了那三个函数）。旧版写「12 个，只剩两族：注册资料 6、限制资料 6」，已被代码证伪——两族各有页面，见 §4 | services/api/src/routes/admin.ts:408-427 |
 | 鉴权 | 登录响应**不含** scopes；9 个页面登录后再读一次 `GET /admin/auth/session` 补 scope | apps/admin/src/auth/session.ts:128 |
 | 两端都缺 | 「人工审核」工作台（审核人 / 投票 / 专家认证）：`ReviewPlaceholderView` 仍是空态说明页、服务层 `wired:false`。**帖子级**人工通过/驳回已不是缺口：`approvePost`/`rejectPost` 自 S3 起在契约内且有路由与页面（§1.1、§2.1） | apps/admin/src/views/ReviewPlaceholderView.vue:2-16 |
-
 <!-- admin-capability-map:begin -->
 > 本块由 `node tools/verify-admin-capability-map.mjs --update` 从源码重算生成（解析 `services/api/src/routes/*.ts` 里 admin 面的全部注册——不止 `admin.ts`，源码没写 operationId 的注册按契约 method+path 精确匹配、0 条或多条都抛——再解析 `services/api/src/admin/families.ts` 与 `apps/admin/src`），`npm run verify:capability-map` 在 CI 的 `contract` job 里**把整个块逐字节比对**（统一行尾与前后空白后，前言段、读数表、逐 operation 表、族表全在比对范围内），块内手改即红。**块外的散文不受本闸门保护。** ⚠ **`noUiEntry` 只是缺口下界**：入口判据是「视图 import 的客户端函数体里带着这条 operation 的 method+path 证据」，**文本里出现过一次调用就算入口**——哪怕那个函数只在永不被调用的死代码里被调一次（变异实测 `noUiEntry 2→1`，能力没变）；所以 `noUiEntry === 0` 不等于「能力齐」，只等于「扫描器没看见缺口」。
 
