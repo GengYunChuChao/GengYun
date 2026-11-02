@@ -206,4 +206,24 @@
 
 ## 7 提交后读数
 
-（待补：`git rev-parse` 的提交 SHA、`git show --stat`、提交后复跑 `doc-anchor-relocation-identity`）
+- 提交 SHA：`6b2bc5b5d56f8115a57e53e1f2a86bed6628e1cb`（`git rev-parse HEAD`），父提交 = base `1b85e69399123b3052427ad6a654d94c89c0c7bf`；分支 `feat/gy-r72-online-purge-closed-set`，**只提交未推送**。
+- `git show --stat HEAD`：`8 files changed, 1077 insertions(+), 50 deletions(-)`；逐文件 `--numstat 1b85e693..HEAD`：
+
+```
+1	1	docs/verification/gy-r28-w6-deletion-clock-20261021.md
+209	0	docs/verification/gy-r72-online-purge-closed-set-20261102.md
+276	0	services/api/src/privacy/online-purge-port.ts
+1	1	services/api/src/privacy/user-data-deletion.ts
+184	4	tests/integration/online-purge-pg.mjs
+352	0	tests/unit/online-purge-closed-set.test.mjs
+18	2	tests/unit/sql-column-coverage.test.mjs
+36	42	tools/purge-expired-online-data.mjs
+```
+
+- **`services/api/src/privacy/user-data-deletion.ts` 净 0 行**：`1	1`（`wc -l` 前后都是 1499；`services/api/src/privacy/user-data-deletion.ts:1388` 一行等长替换）。既有 docs 里对这份文件的 `path:line` 引用因此**全部仍然成立**，本片没有改任何基线册（`tools/doc-anchors-*.json`、`tests/unit/doc-anchor-relocations.json` 均零改动——见上表无这些文件）。
+- 提交后 `doc-anchor-relocation-identity`：`node --test tests/unit/doc-anchor-relocation-identity.test.mjs` ⇒ **exit 0**，`tests 33 / pass 33 / fail 0`（提交前那条「base 与 HEAD 同一提交 ⇒ 没有判定面」的红随之消失）。
+- 提交后全量单测：`npm run test:unit` ⇒ **exit 0**，`tests 6300 / pass 6297 / fail 0`（3 条为 skip/todo）。
+- 提交后 `sql-column-coverage`：`tests 17 / pass 17 / fail 0`（R72 新宿主以「数组外 `push` 追加」登记：`tests/unit/sql-column-coverage.test.mjs` 自己被 docs 按 `tests/unit/sql-column-coverage.test.mjs:152`、`tests/unit/sql-column-coverage.test.mjs:525`、`tests/unit/sql-column-coverage.test.mjs:1512` 引用，在数组里插条目会把这些历史锚点整片推位；追加式登记对既有行号零影响）。
+- 提交后 `verify-doc-anchors.mjs --strict` ⇒ exit 0（`基线外新增 0 条`）。
+
+> 说明：本页的 §7 是在第二个提交里回填的（需要先有 SHA 才能写 SHA），所以本页自身所在的那个提交的 SHA 不会出现在正文里——否则会自我指涉失配。
