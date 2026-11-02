@@ -212,6 +212,12 @@
       "accept": 4,
       "orphans": 3476,
       "outsideRed": 110
+    },
+    {
+      "why": "PR #712 把 identify.js 的语音入口改成门控入口后行号整体前移，gy-i02/gy-i11 等取证页里指向 identify.js 的裸锚点随之位移；按干净检出（无 .supervisor 副本身）实测重写，作用域内新增 0、作用域外本会红新增 5、陈旧 0。",
+      "accept": 5,
+      "orphans": 3476,
+      "outsideRed": 115
     }
   ],
   "orphans": [
@@ -3700,6 +3706,8 @@
     "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/utils/messages-api.js:202|SUSPECT",
     "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/utils/messages-api.js:230|SUSPECT",
     "docs/verification/gy-i02-stale-claims-20261016.md|packages/media/README.md:8|SUSPECT",
+    "docs/verification/gy-i02-stale-claims-20261016.md|utils/messages-api.js:202|SUSPECT",
+    "docs/verification/gy-i02-stale-claims-20261016.md|utils/messages-api.js:230|SUSPECT",
     "docs/verification/gy-i03-i20-materials-gap-ledger-20261015.md|real-samples-weeds-docx.md:249|SUSPECT",
     "docs/verification/gy-i05-locate-timeout-20261021.md|tests/unit/release-materials-index.test.mjs:145|SUSPECT",
     "docs/verification/gy-i06-media-real-provider-plan-20261021.md|services/api/src/media/service.ts:465|SUSPECT",
@@ -3710,9 +3718,11 @@
     "docs/verification/gy-i06-private-media-20261014.md|services/api/src/media/service.ts:1134|SUSPECT",
     "docs/verification/gy-i06-private-media-20261014.md|services/api/src/media/service.ts:536|SUSPECT",
     "docs/verification/gy-i06-private-media-20261014.md|tests/unit/knowledge-api.test.mjs:101|SUSPECT",
+    "docs/verification/gy-i07-evidence-index-20261010.md|utils/auth.js:205|SUSPECT",
     "docs/verification/gy-i09i10-recog-20261019.md|miniprogram/utils/history-api.js:399|SUSPECT",
     "docs/verification/gy-i09i10-recog-20261019.md|tests/unit/recognitions-candidates-selection.test.mjs:529|SUSPECT",
     "docs/verification/gy-i11-voice-input-20261021.md|miniprogram/pages/voice/voice.js:392|SUSPECT",
+    "docs/verification/gy-i11-voice-input-20261021.md|voice.js:757|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:945|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|services/api/src/tts/service.ts:652|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
@@ -3764,6 +3774,7 @@
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|ocr-http.mjs:1996|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|services/api/src/routes/admin.ts:179-180|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|tts-content-wiring.mjs:328|OUT_OF_RANGE",
+    "docs/verification/gy-r31-i26-recon-20261022.md|profile.js:75|SUSPECT",
     "docs/verification/gy-r31-i29-withdraw-deps-20261014.md|docs/verification/gy-i29-closure-20261018.md:215|SUSPECT",
     "docs/verification/gy-r31-i29-withdraw-deps-20261014.md|services/api/src/app.ts:884|SUSPECT",
     "docs/verification/gy-r33-contract-ledger-20261023.md|community/service.ts:1808|SUSPECT",
