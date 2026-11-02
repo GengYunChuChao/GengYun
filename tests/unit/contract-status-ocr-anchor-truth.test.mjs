@@ -222,10 +222,16 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * ③ `editPost` 那条 evidence 的裸 `:1030-1157` 按 `git diff -U0` 端点映射改成 `:1075-1202`；
  *    16 处 blocker 文案里的裸 `（`:1213`）` 补成显式 `services/api/src/app.ts:1309`。
  * 本条钉的是「这个切片没有顺手改到别处」，不是「台账不许改」：改台账就同步基线。
+ *
+ * 2026-11-03 同日第二次同步（同一 PR #857 的后续提交：`reason_codes` 从「可选/缺席」改成
+ * 「required 且没有码时给空数组 `[]`」）：`services/api/src/community/service.ts` 再涨 9 行，
+ * 9 条 evidence 的 `lines` 按 `base(ef22d5a9)→HEAD` 端点映射重取（`960-1026`→`969-969` 等），
+ * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 两个文件各**少 1 字节**、
+ * 行数不变（4407 / 218）。仍是「正常改台账」，故同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 271779, lines: 4407 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 194487, lines: 218 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 271778, lines: 4407 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 194486, lines: 218 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
