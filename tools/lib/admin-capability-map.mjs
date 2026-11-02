@@ -37,6 +37,14 @@
  * 扫出来 0 条），一律抛 `AdminCapabilityMapError`——**绝不静默返回空集合**，否则「空集合 ⇒
  * 一切相等 ⇒ 闸门永远绿」就成了一条假绿通道。
  *
+ * 静默漏面（R72-W66 补）：本解析器只认 `app.<method>(<字面量路径>, …)`。对象式
+ * `app.route({ method, url })` 与前缀式 `app.register(x, { prefix })` **既不匹配那条正则、
+ * 也不会让任何一条解析抛错**——整面对它们静默失明，读数照旧全绿（单文件 0 条 admin 面注册是
+ * 允许的，所以「整面 0 条才抛」这条兜底也救不了）。`unsupportedRegistrationShapes` 把这两类
+ * 形状变成可判红的命中，`parseRouteRegistrations` 入口用 `assertSupportedRegistrationShapes`
+ * fail-closed：无法判断是不是 admin 面（url/prefix 是变量、表达式、`{ prefix }` 简写）也报，
+ * 不静默放过。
+ *
  * 纯函数：零依赖、不联网、不读 git、不写盘（只在本仓库目录里读源码与契约）。
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -89,6 +97,14 @@ const HTTP_METHODS = Object.freeze(['get', 'post', 'put', 'patch', 'delete', 'he
 const UI_FILE_SUFFIXES = Object.freeze(['.mjs', '.ts', '.vue']);
 /** `/admin` 必须是一个**路径段**：`/administrators`（用户面）不算 admin 面。 */
 const ADMIN_SEGMENT = /\/admin(?:\/|$)/;
+
+/**
+ * 路径/前缀字面量是不是 admin 面：先把 `${API_PREFIX}` 还原成 `/api/v1`，再按**路径段**判。
+ * 两条判定（既有注册与未识别注册形状）共用它，避免两份「像不像 /admin」的口径悄悄分叉。
+ */
+function pathLooksAdminFace(raw) {
+  return ADMIN_SEGMENT.test(String(raw).replace(/\$\{\s*API_PREFIX\s*\}/g, API_PREFIX));
+}
 
 // ---------------------------------------------------------------- 词法层
 
@@ -258,8 +274,17 @@ function readStringConsts(scanned) {
  * 认不出就抛（指名文件与行号）：括号配不平、第一实参不是字面量、admin 面模板含
  * `${API_PREFIX}` 之外的插值。`file` 里 0 条注册**不抛**——`routes/support.ts` 就是路由辅助模块；
  * 但整份扫描面 0 条 admin 面注册必须抛（由上层 `assertRouteFace` 判）。
+ *
+ * 入口处还有一道 fail-closed：本函数只认 `app.<method>(<字面量路径>, …)`，对象式 `app.route({…})`
+ * 与前缀式 `app.register(x, { prefix })` 会被静默漏掉——所以先跑 `assertSupportedRegistrationShapes`，
+ * 命中就抛（见 `unsupportedRegistrationShapes`）。
  */
 export function parseRouteRegistrations(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+  // 位置说明（R72-W66）：守卫放在这里而不是 `parseAdminRoutes`，因为**两条调用链都经过本函数**——
+  // `parseAdminRoutes` 与 `loadSources → buildCapabilityMap → buildOperations`。后者才是闸门
+  // `tools/verify-admin-capability-map.mjs` 真正走的路（它不调用 `parseAdminRoutes`），把守卫只放在
+  // 后者里，闸门对这两类形状就还是 no-op。
+  assertSupportedRegistrationShapes(source, { file });
   const scanned = scanSource(source);
   const lines = makeLineIndex(source);
   const registrations = [];
@@ -285,7 +310,7 @@ export function parseRouteRegistrations(source, { file = SOURCE_PATHS.adminRoute
     }
     const raw = scanned.text.slice(span.contentStart, span.contentEnd);
     const line = lines.lineOf(match.index);
-    const adminFace = ADMIN_SEGMENT.test(raw.replace(/\$\{\s*API_PREFIX\s*\}/g, API_PREFIX));
+    const adminFace = pathLooksAdminFace(raw);
     const base = { method: match[1].toUpperCase(), line, start: match.index, end: close + 1, raw, adminFace };
     if (!adminFace) {
       registrations.push(base);
@@ -296,6 +321,114 @@ export function parseRouteRegistrations(source, { file = SOURCE_PATHS.adminRoute
     match = pattern.exec(scanned.code);
   }
   return registrations;
+}
+
+// ---------------------------------------------------------------- 未识别注册形状（fail-closed）
+
+/** 守卫的判定窗口：从调用的 `(` 起往后最多看这么多字符（再与本次调用的配对右括号取小）。 */
+const UNSUPPORTED_SHAPE_WINDOW = 500;
+/** 本闸门**不解析**的两类注册写法：对象式 `app.route({ … })`、前缀式 `app.register(x, { prefix })`。 */
+const UNSUPPORTED_REGISTRATION_CALL = '\\b(?:app|fastify|server)\\s*\\.\\s*(route|register)\\s*\\(';
+
+/**
+ * 在 `[from, to)` 里读 `url: …` / `path: …` / `prefix: …` 的值。
+ * 返回 `[{ literal }]`：`literal === null` 表示值不是字面量（变量 / 表达式 / 拼接 / `{ prefix }` 简写）。
+ *
+ * 键在 `code` 掩码上定位（注释与字符串里的 `url:` 自动不算）；**值不能在掩码上读**——掩码把字符串
+ * 连同引号整段换成空格，`\s*` 会把值一起吃掉。所以值靠 `strings` 区间的起点反查：冒号到引号之间
+ * 只有空白，才认这个引号是「这个键的值」。
+ */
+function registrationPropertyValues(scanned, keys, from, to) {
+  const values = [];
+  const window = scanned.code.slice(from, to);
+  const pattern = new RegExp(`\\b(?:${keys})\\b`, 'g');
+  let match = pattern.exec(window);
+  while (match) {
+    const keyEnd = from + match.index + match[0].length;
+    const rest = scanned.code.slice(keyEnd, to);
+    const colon = /^\s*:/.exec(rest);
+    if (colon) {
+      const valueStart = keyEnd + colon[0].length;
+      const span = scanned.strings.find(
+        candidate =>
+          candidate.start >= valueStart &&
+          candidate.start <= to &&
+          /^[ \t\r\n]*$/.test(scanned.code.slice(valueStart, candidate.start)),
+      );
+      values.push({ literal: span ? scanned.text.slice(span.contentStart, span.contentEnd) : null });
+    } else if (/^\s*[,}]/.test(rest)) {
+      // `{ prefix }` 简写：值是同名变量，静态看不到 ⇒ 按「无法判断」报。
+      values.push({ literal: null });
+    }
+    match = pattern.exec(window);
+  }
+  return values;
+}
+
+/**
+ * 找出「本闸门不认、又不会抛错」的注册写法（纯函数、不读盘、可单测）。
+ *
+ * 返回 `[{ line, kind, snippet }]`（`line` 1 基，`snippet` 是那一行 `trim()` 后前 120 字符）：
+ * - `route-object`：`app|fastify|server.route({ url|path: '<admin 面>' })`；
+ * - `route-object-dynamic`：同一个键的值不是字面量——无法判断是不是 admin 面；
+ * - `register-prefix`：`…register(x, { prefix: '<admin 面>' })`；
+ * - `register-prefix-dynamic`：prefix 不是字面量——同样无法判断。
+ *
+ * 不报：非 admin 面（`/administrators` 是用户面，按**路径段**判）、`register(x)` 不带 prefix、
+ * 以及既有的 `app.<method>('<路径>', …)`（那是本闸门认得、且有自己报错路径的形状）。
+ * 「无法判断就报」是本片的立场：漏报的代价是整个 admin 面静默消失，误报的代价是有人来扩解析器。
+ */
+export function unsupportedRegistrationShapes(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+  // 命中项本身不带文件（`line`/`snippet` 都从 `source` 来）；`file` 只为与 `parseAdminRoutes` 同签名，
+  // 由 `assertSupportedRegistrationShapes` 拼进错误信息。
+  void file;
+  const scanned = scanSource(source);
+  const lines = makeLineIndex(source);
+  const rawLines = source.split('\n');
+  const hits = [];
+  const pattern = new RegExp(UNSUPPORTED_REGISTRATION_CALL, 'g');
+  let match = pattern.exec(scanned.code);
+  while (match) {
+    const open = match.index + match[0].length - 1;
+    const close = matchBracket(scanned.code, open);
+    const from = open + 1;
+    const to = close >= 0 ? Math.min(close, from + UNSUPPORTED_SHAPE_WINDOW) : from + UNSUPPORTED_SHAPE_WINDOW;
+    const isRouteObject = match[1] === 'route';
+    const values = registrationPropertyValues(scanned, isRouteObject ? 'url|path' : 'prefix', from, to);
+    const adminFace = values.some(value => value.literal !== null && pathLooksAdminFace(value.literal));
+    const undecidable = values.some(value => value.literal === null);
+    let kind = null;
+    if (isRouteObject) {
+      if (adminFace) kind = 'route-object';
+      else if (undecidable) kind = 'route-object-dynamic';
+    } else if (adminFace) {
+      kind = 'register-prefix';
+    } else if (undecidable) {
+      kind = 'register-prefix-dynamic';
+    }
+    if (kind !== null) {
+      const line = lines.lineOf(match.index);
+      hits.push({ line, kind, snippet: (rawLines[line - 1] ?? '').trim().slice(0, 120) });
+    }
+    match = pattern.exec(scanned.code);
+  }
+  return hits;
+}
+
+/**
+ * fail-closed 守卫：命中任何未识别形状就抛，**一次列全**（不只报第一条）。
+ * 每条都带 `文件:行号（kind）` 与那一行的源码片段，便于直接定位。
+ */
+export function assertSupportedRegistrationShapes(source, { file = SOURCE_PATHS.adminRoutes } = {}) {
+  const hits = unsupportedRegistrationShapes(source, { file });
+  if (hits.length === 0) return;
+  const detail = hits
+    .map(
+      hit =>
+        `未识别的注册形状：${file}:${hit.line}（${hit.kind}）—— 本闸门只解析 app.<method>(<字面量路径>, …)；这类写法会被静默漏掉，请改用该形状或先扩解析器\n    源码：${hit.snippet}`,
+    )
+    .join('\n');
+  throw new AdminCapabilityMapError(detail);
 }
 
 /**
