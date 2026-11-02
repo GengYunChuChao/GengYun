@@ -156,7 +156,7 @@
 ### 2.7 审核状态 —— 通
 
 - 服务端只返回 `visibility` + `audit_state`（`service.ts:602-625` 的 `projectPost`），客户端**不**自己推断：
-  `community.js:153-177`、`communitydetail.js:200-201`、`communitycreate.js:123-129` 三处标注逐字一致
+  `community.js:153-177`、`communitydetail.js:200-201`、`communitycreate.js:129-135` 三处标注逐字一致
   （`tests/unit/miniprogram-community-api.test.mjs` 的 `AUDIT_CASES` 6 例把这件事钉住）。
 - 编辑生成新 revision 后**必须重审**（`service.ts:914-1000`）；旧版本结论不会被套到新版本
   （`communitydetail.wxml:70` 向用户明说）。
