@@ -23,13 +23,19 @@
  *   收藏者 = `favorites.listOwnerIdsByTarget(型别, id)`（迁移 0054 的 `(target_type, target_id, owner_id)`）；
  *   真正收件人 = 收藏者 ∩ `public.users.state = 'active'`（⛔ 不再往永久读不到通知的账号堆消息）。
  *
- * 已知边界（如实登记，⛔ 不要在本文件里"修好"）：
- *   - 后台内容域（迁移 0036 的 `admin_content_*`）与公开读面（`catalog_read.current_knowledge`）
- *     在今天的仓库里**没有桥**：后台 store 的 knowledge 实体从未出现在公开读面。所以本片能做到
- *     "撤回 ⇒ 按 `(型别, id)` 找到收藏者 ⇒ 各写一条消息"，但消息读面的 `reference_state` 由
- *     `messages/service.ts` 按公开读面逐次重算——在桥建起来之前它通常已经是 `unavailable`，
- *     于是小程序那一侧落到既有的「关联内容当前不可查看，本条不提供跳转入口。」空态（⛔ 不是 404）。
- *     这条边界不改本片的投递语义，但决定了"点进去看到什么"，必须写进交付报告。
+ * 已知边界（如实登记，⛔ 不要在本文件里"修好"）：**收件人集合在生产数据上恒空（机制就绪、数据面未接）**。
+ *   ㊀ 收藏的 `target_id` 是**公开目录**的 id：可用性逐次按 `services/api/src/app.ts:1914` 的
+ *     `SELECT id, revision, type FROM catalog_read.current_knowledge WHERE id = $1::uuid` 核验，而目录行
+ *     只由 `db/seeds/seed_zhejiang_materials.sql` 种入（全仓唯一的 `INSERT INTO knowledge_versions`）。
+ *   ㊁ 被撤回的**后台实体** id 由服务端生成、只落 `admin_content_entities`：写入点是
+ *     `services/api/src/admin/ops/content-pg.ts:279`，id 取 `services/api/src/admin/store.ts:142` 的
+ *     `randomUUID()`，且 `services/api/src/admin/service.ts:287` 调 `createEntity` 时**不传 id**
+ *     ⇒ 管理 API 铸不出与目录同号的实体。
+ *   ㊂ `services/api/src/**` 里没有任何 `INSERT INTO knowledge_versions/sources/source_versions`
+ *     （grep 为空）⇒ 两侧 id 空间不同源、也没有写入桥。于是本片能做到「撤回 ⇒ 按 `(型别, id)` 找收藏者
+ *     ⇒ 各写一条消息」，但真实的"收藏过它的人"要等后台实体真正进入公开目录之后才非空。
+ *   ⇒ 消息读面的 `reference_state` 另由 `messages/service.ts` 按公开读面逐次重算：被撤回的条目在公开面
+ *     查不到 ⇒ `unavailable` ⇒ 小程序落到既有的「关联内容当前不可查看，本条不提供跳转入口。」空态（⛔ 不是 404）。
  *   - 消息体只有 `type='system'` + `target_ref`：消息域的公开创建口
  *     （`messages/validate.ts` 的 `validateAppendMessageInput`）**只收**四个字段，没有正文/标题位。
  */

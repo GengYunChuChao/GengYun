@@ -9,9 +9,14 @@
  *
  * 明确**不**声称的事（诚实边界）：
  *   1. 本文件不证明「生产上真有活着的用户读得到这两条通知」——那需要真机/真实令牌验收；
- *   2. 后台内容域（`admin_content_*`）与公开读面（`catalog_read.current_knowledge`）今天
- *      **没有桥**（`0036` 注释 :19-33），所以「后台 knowledge 实体 id 恰好是某条公开资料的 id」
- *      在今天的仓库里没有数据源；本文件只证明**给定 id 空间重合时**通知链闭合。
+ *   2. **收件人集合在生产数据上恒空**（机制就绪、数据面未接）：收藏的 `target_id` 是公开目录 id
+ *      （`services/api/src/app.ts:1914` 按 `catalog_read.current_knowledge` 核验，目录行只由
+ *      `db/seeds/seed_zhejiang_materials.sql` 种入），而被撤回的后台实体 id 是
+ *      `services/api/src/admin/store.ts:142` 的 `randomUUID()`、只落 `admin_content_entities`
+ *      （`services/api/src/admin/ops/content-pg.ts:279`，且 `services/api/src/admin/service.ts:287`
+ *      创建时不传 id）⇒ 两侧 id 不同源，`services/api/src/**` 里也没有任何
+ *      `INSERT INTO knowledge_versions/sources/source_versions`。本文件只证明
+ *      **给定 id 空间重合时**通知链闭合。
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
