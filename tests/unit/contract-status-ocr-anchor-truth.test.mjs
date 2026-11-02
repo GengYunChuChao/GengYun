@@ -204,10 +204,16 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 届时把这里的基线同步改掉即可 —— 那不是回归。它存在的唯一理由是：本片做的是**等长文本替换**
  * （`687` → `702`，`--write-doc` 渲染同样等长），所以行数与字节数**必须一个都不许变**；
  * 变了就说明改的不止那 8 处地址（例如 JSON 被重排、md 被工具顺手改了别的），那要停下来查。
+ *
+ * 2026-11-02 同步过一次（不是回归）：本片把 `advanceReport` 的 blocker 第 ③ 条从「已在
+ * KNOWN_NO_UI_ENTRY 登记」——那是假话（该表实测为空数组，且该 op 因路由落在
+ * `services/api/src/routes/admin-reports.ts`、闸门只扫 `routes/admin.ts` 而没进能力图）——
+ * 改成如实描述，两个台账各 +147 字节。**行数没变**（4407 / 218，仍是同行的等长改写），
+ * 所以只同步字节数：本条钉的是「这个切片没有顺手改到别处」，不是「台账不许改」。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 269681, lines: 4407 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 192765, lines: 218 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 269828, lines: 4407 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 192912, lines: 218 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
