@@ -206,6 +206,12 @@
       "accept": 12,
       "orphans": 3540,
       "outsideRed": 128
+    },
+    {
+      "why": "PR #712 把识别页语音入口改成门控入口，identify.js 行号整体前移，gy-i02/gy-i11 等取证页里同块继承的裸锚点随之位移（作用域内新增 1 + 作用域外本会红新增 3，陈旧 4）；按 docs 扫描面实测重写。",
+      "accept": 4,
+      "orphans": 3540,
+      "outsideRed": 128
     }
   ],
   "orphans": [
@@ -874,7 +880,7 @@
     "docs/verification/gy-i09i10-recog-20261019.md|:314|ambiguous-block",
     "docs/verification/gy-i09i10-recog-20261019.md|:341|ambiguous-block",
     "docs/verification/gy-i09i10-recog-20261019.md|:411|ambiguous-block",
-    "docs/verification/gy-i09i10-recog-20261019.md|:942|ambiguous-block",
+    "docs/verification/gy-i09i10-recog-20261019.md|:952|ambiguous-block",
     "docs/verification/gy-i11-speech-http-20261012.md|:114|no-explicit-in-block",
     "docs/verification/gy-i11-speech-http-20261012.md|:132|no-explicit-in-block",
     "docs/verification/gy-i11-speech-http-20261012.md|:135|no-explicit-in-block",
@@ -3765,9 +3771,9 @@
     "docs/development-progress.md|sources.ts:118|SUSPECT",
     "docs/development-progress.md|sources.ts:40|SUSPECT",
     "docs/verification/gy-i02-migrations-negative-20261017.md|services/api/src/db/migrate.ts:145|SUSPECT",
-    "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/pages/identify/identify.js:292|SUSPECT",
-    "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/pages/identify/identify.js:294|SUSPECT",
-    "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/pages/identify/identify.js:294|SUSPECT",
+    "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/pages/identify/identify.js:289|SUSPECT",
+    "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/pages/identify/identify.js:291|SUSPECT",
+    "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/pages/identify/identify.js:291|SUSPECT",
     "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/utils/messages-api.js:202|SUSPECT",
     "docs/verification/gy-i02-stale-claims-20261016.md|miniprogram/utils/messages-api.js:230|SUSPECT",
     "docs/verification/gy-i02-stale-claims-20261016.md|packages/media/README.md:8|SUSPECT",
