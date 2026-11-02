@@ -483,10 +483,12 @@ test('GET /admin/audit-logs：动作护栏（entity=post 只等于 post.hide；�
 
   // ⑧ R68：闭集扩到**十项** + 第 6 个实体 `admin_account` 自带动作护栏；R68-A01 再追加第 11 项
   //    `category.update`（迁移 0049 的落库写入点，没有对应 entity，只经 `?action=` 可筛）。
+  //    R72 #838 再追加第 12–14 项 `report.triage` / `report.resolve` / `report.reject`（迁移 0053
+  //    的举报处置审计写入点，同样没有 entity）：三者分开列，`closed` 一值两义的「成立/驳回」才可筛。
   //    这两件事是同一枚硬币的两面：`admin_account.*` 的审计行 `scope` 列写的是 `'scopes:write'`
   //    （`0048:286` / `0048:417` 的字面量），与 `admin_scope.*` 共用 ⇒ 不设护栏就会把
   //    权限授予/撤销行命名成「管理员账号被停用」。
-  assert.equal(AUDIT_ACTIONS.length, 11, 'action 闭集必须恰好十一项（原有 8 + admin_account.disable / .enable + category.update）');
+  assert.equal(AUDIT_ACTIONS.length, 14, 'action 闭集必须恰好十四项（原有 8 + admin_account.disable / .enable + category.update + report.triage / .resolve / .reject）');
   assert.deepEqual([...AUDIT_ENTITIES], ['account', 'flag', 'job', 'admin_scope', 'post', 'admin_account']);
   assert.deepEqual(actionsOfAuditEntity('admin_account'), [
     AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE,
@@ -500,7 +502,7 @@ test('GET /admin/audit-logs：动作护栏（entity=post 只等于 post.hide；�
   assert.ok(actionEnum.includes(AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE), '契约 action 枚举漏了 admin_account.disable');
   assert.ok(actionEnum.includes(AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE), '契约 action 枚举漏了 admin_account.enable');
   assert.ok(entityEnum.includes('admin_account'), '契约 entity 枚举漏了 admin_account');
-  assert.equal(actionEnum.length, 11, '契约 action 枚举必须与 AUDIT_ACTIONS 同长（十一项）');
+  assert.equal(actionEnum.length, 14, '契约 action 枚举必须与 AUDIT_ACTIONS 同长（十四项）');
   assert.equal(entityEnum.length, 6, '契约 entity 枚举必须与 AUDIT_ENTITIES 同长（六项）');
 
   const callsBeforeGuard = port.calls.length;

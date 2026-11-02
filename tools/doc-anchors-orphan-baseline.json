@@ -211,11 +211,19 @@
       "why": "PR #712 把识别页语音入口改成门控入口，identify.js 行号整体前移，gy-i02/gy-i11 等取证页里同块继承的裸锚点随之位移（作用域内新增 1 + 作用域外本会红新增 3，陈旧 4）；按 docs 扫描面实测重写。",
       "accept": 4,
       "orphans": 3540,
-      "outsideRed": 128,
+      "outsideRed": 128
+    },
+    {
       "why": "R72 举报处置接 HTTP（advanceReport）：`node tools/verify-contract-status.mjs --write-doc` 是 docs/architecture/contract-implementation-status.md 的唯一合法渲染路径；新增一条 operation ⇒ 生成表格 +1 行（217 → 218），docs/verification/gy-r33-contract-ledger-20261023.md 引的生成区 end 标记 `:178` 实际落到 `:179`、docs/verification/gy-r64-pr4c-denial-wiring-20261026.md 引的 `:204` 整体下移一行；两页按仓规逐字不改，只在本册留痕。净新增 0：本片只清这 2 个键（gy-r33 的 `:178`、gy-r64 的 `:204` 两条重复，合计 3 条数组元素），判据一字未改。本册未整体重算：只按手术清单删了这 3 条数组元素并追加本条留痕，其余条目逐字未动（复核口径：同参数在 base 68cc44cf 上 emit 得到 orphans 3540 / outsideRed 128，与本册手术前逐键一致）。",
       "accept": 0,
       "orphans": 3540,
       "outsideRed": 125
+    },
+    {
+      "why": "R72 #838 返修（迁移 0053：举报处置审计落库）：community/store-pg.ts 的 commitReport 增审计函数调用（同一事务内）、community/service.ts 的 advanceReport 增留痕参数 ⇒ 两份热文件整体后移；历史取证页里两条裸锚点（gy-r28-sql-column-coverage-20261021 的 community/store-pg.ts:786、gy-r33-contract-ledger-20261023 的 community/service.ts:1808）已不再命中、随重算删除，同时 gy-r31-i15-s1-s6-20261022 的同一裸锚点位移后落到 community/store.ts:737（落点不再是原来那段代码），按 0047/0049 的先例（历史取证页逐字不改，只在本册留痕）登记这一条新增。判据一字未改，作用域外本会红条数净减 1。",
+      "accept": 1,
+      "orphans": 3540,
+      "outsideRed": 124
     }
   ],
   "orphans": [
@@ -3820,7 +3828,6 @@
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|history/store-pg.ts:250|SUSPECT",
     "docs/verification/gy-r28-real-pg-wiring-3-20261020.md|services/api/db/roles/auth_privacy.sql:179|OUT_OF_RANGE",
     "docs/verification/gy-r28-real-pg-wiring-3-20261020.md|tests/integration/account-suspend-pg.mjs:199|SUSPECT",
-    "docs/verification/gy-r28-sql-column-coverage-20261021.md|community/store-pg.ts:786|SUSPECT",
     "docs/verification/gy-r28-w3-tts-content-20261021.md|services/api/db/migrations/0010_knowledge_read_views.sql:3-34|OUT_OF_RANGE",
     "docs/verification/gy-r28-w7-qa-live-20261021.md|config.ts:228|SUSPECT",
     "docs/verification/gy-r29-chain-e2e-20261022.md|services/api/src/ocr/service.ts:295|SUSPECT",
@@ -3842,6 +3849,7 @@
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:799|SUSPECT",
     "docs/verification/gy-r31-i14-recon-20261022.md|docs/architecture/contract-status.json:684|SUSPECT",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|20-login-roles.sql:511|SUSPECT",
+    "docs/verification/gy-r31-i15-s1-s6-20261022.md|community/store.ts:737|SUSPECT",
     "docs/verification/gy-r31-i17-recon-20261022.md|miniprogram/pages/messages/messages.js:195|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:582|OUT_OF_RANGE",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:587-588|OUT_OF_RANGE",
@@ -3852,7 +3860,6 @@
     "docs/verification/gy-r31-i26-recon-20261022.md|profile.js:75|SUSPECT",
     "docs/verification/gy-r31-i29-withdraw-deps-20261014.md|docs/verification/gy-i29-closure-20261018.md:215|SUSPECT",
     "docs/verification/gy-r31-i29-withdraw-deps-20261014.md|services/api/src/app.ts:884|SUSPECT",
-    "docs/verification/gy-r33-contract-ledger-20261023.md|community/service.ts:1808|SUSPECT",
     "docs/verification/gy-r33-contract-ledger-20261023.md|docs/verification/gy-r31-i17-recon-20261022.md:1364|OUT_OF_RANGE",
     "docs/verification/gy-r33-contract-ledger-20261023.md|docs/verification/gy-r31-i17-recon-20261022.md:1546|OUT_OF_RANGE",
     "docs/verification/gy-r33-contract-ledger-20261023.md|docs/verification/gy-r31-i17-recon-20261022.md:1805|OUT_OF_RANGE",

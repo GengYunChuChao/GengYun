@@ -214,8 +214,8 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 本条钉的是「这个切片没有顺手改到别处」，不是「台账不许改」：改台账就同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 269828, lines: 4407 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 193086, lines: 218 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 270813, lines: 4407 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 194118, lines: 218 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
