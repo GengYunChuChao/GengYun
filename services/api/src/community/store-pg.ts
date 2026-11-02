@@ -64,9 +64,11 @@ import type {
   PostRecord,
   ReportCommitExpectation,
   ReportCommitPatch,
+  ReportDispositionAudit,
   ReportRecord,
 } from './store.ts';
 import { AUTHOR_REFS_REMAINING_UNKNOWN, readAuthorRefsRemaining } from './store.ts';
+import { REPORT_AUDIT_REASON_CODES } from './report-state.ts';
 import type { AuditState, KnowledgeTarget, ReportTarget, Visibility } from './types.ts';
 import { redactPersonalInfo } from './personal-info.ts';
 import { ANONYMIZED_AUTHOR_REF_PATTERN, createAnonymizedAuthorRef } from './authors.ts';
@@ -120,6 +122,21 @@ function postHideAuditUnavailable(why: unknown): ApiError {
   });
 }
 
+/**
+ * 举报处置的审计写不进去时的错误（迁移 0053，fail-closed）。
+ *
+ * 措辞同样写全「已回滚，处置未生效」：调用方看到 503 时必须能判断出**举报状态没有推进**，
+ * 而不是"处置成功了但没留痕"——后者正是监工在 #838 上要求消灭的缺口。
+ * `retryable: false` 与 `postHideAuditUnavailable` 同口径（能不能成取决于审计面是否恢复）。
+ * ⛔ 不折叠成 `REVISION_CONFLICT`（那会谎称是并发冲突），⛔ 不吞成成功。
+ */
+function reportDispositionAuditUnavailable(why: unknown): ApiError {
+  const detail = why instanceof Error ? why.message : String(why);
+  return new ApiError('PROVIDER_UNAVAILABLE', `审计写入失败（已回滚，举报处置未生效）：${detail}`, {
+    retryable: false,
+  });
+}
+
 /** `awaitIdempotencySettled` 的轮询间隔（与内存实现的有界等待同口径：25ms、不忙等）。 */
 const SETTLE_POLL_INTERVAL_MS = 25;
 
@@ -159,12 +176,25 @@ const OUTCOME_KINDS: readonly IdempotencyOutcome['kind'][] = ['post', 'comment',
 const POST_HIDE_AUDIT_SQL = 'SELECT public.record_admin_post_hide_audit($1::uuid,$2::uuid,$3::integer,$4::text,$5::uuid)';
 
 /**
- * 供真库臂（`tests/integration/admin-post-hide-audit-pg.mjs`）逐字断言的 SQL 常量出口。
+ * 后台「举报处置」审计的唯一写路径（迁移 0053 的窄口径 SECURITY DEFINER 函数）。
+ *
+ * 与 `POST_HIDE_AUDIT_SQL` 同一体例：字面量、无 `FROM`，必须在**举报处置事务的那个 `sql`**
+ * 上执行（同一个 client），且 `p_action` 只接受 {'triage','resolve','reject'}——函数内部
+ * 由动作派生 `action`/`reason_code`，调用方改不了审计语义。
+ */
+const REPORT_DISPOSITION_AUDIT_SQL =
+  'SELECT public.record_admin_report_disposition_audit($1::uuid,$2::uuid,$3::integer,$4::text,$5::text,$6::uuid)';
+
+/**
+ * 供真库臂逐字断言的 SQL 常量出口（本片**尚未**补举报处置的 PG 集成臂，下一轮随测试断言一起加）。
  *
  * 与 `admin/ops/jobs-pg.ts` 的 `ADMIN_JOB_SQL.cancelAudit` 同体例：测试不复制字符串、只比对这个出口，
  * 免得「生产语句」与「测试里手抄的那份」各自漂移。
  */
 export const COMMUNITY_POST_SQL = { hideAudit: POST_HIDE_AUDIT_SQL } as const;
+
+/** 举报处置审计语句的出口（同上：测试只比对这个常量，不手抄 SQL）。 */
+export const COMMUNITY_REPORT_SQL = { dispositionAudit: REPORT_DISPOSITION_AUDIT_SQL } as const;
 
 function closedValue<T extends string>(value: unknown, allowed: readonly T[], label: string): T {
   if (typeof value !== 'string' || !(allowed as readonly string[]).includes(value)) {
@@ -560,13 +590,19 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
   /**
    * 举报状态推进（CAS）。
    *
-   * 只写 `revision`/`state` 两列：`20-login-roles.sql:521-523` 对 `community_reports` 的
-   * UPDATE 是列级的，这里用到的两列都在授权清单里，不需要新增 GRANT。
+   * 只写 `revision`/`state` 两列：`20-login-roles.sql` 对 `community_reports` 的 UPDATE 是
+   * 列级的，这里用到的两列都在授权清单里，不需要新增 GRANT。
+   *
+   * 第 4 个可选参数 `audit`（迁移 0053）：CAS 写成功之后、**同一个事务 COMMIT 之前**调
+   * `public.record_admin_report_disposition_audit(...)` 写一行举报处置审计。函数抛错 ⇒ 抛
+   * `reportDispositionAuditUnavailable` 让 `withTransaction` 整笔 ROLLBACK（举报状态不推进），
+   * ⛔ 不留「处置已提交、审计没写成」的缺口。
    */
   async function commitReport(
     id: string,
     expected: ReportCommitExpectation,
     patch: ReportCommitPatch,
+    audit: ReportDispositionAudit | null = null,
   ): Promise<CommitResult<ReportRecord>> {
     return withTransaction<CommitResult<ReportRecord>>(pool, async (sql) => {
       const current = (await sql.query(
@@ -591,6 +627,25 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
           WHERE id = $1::uuid`,
         [id, next.revision, next.state],
       );
+      // 后台「举报处置」的审计（迁移 0053）：**同一个 sql、同一个事务**，在 COMMIT 之前。
+      // ⛔ 不能挪到事务外（那是"先成后败"的假成功），⛔ 也不能另开一条连接（换了 client 就不是同一事务）。
+      // 函数抛错 ⇒ 本事务 ROLLBACK ⇒ 举报保持原 state/revision，审计表零新增。
+      if (audit !== null) {
+        try {
+          await sql.query(REPORT_DISPOSITION_AUDIT_SQL, [
+            audit.actorId,
+            id,
+            audit.reportRevision,
+            audit.action,
+            // 理由码由库侧按动作闭集再核一次（每个动作只有一个合法值），映射的唯一权威在
+            // `report-state.ts` 的 `REPORT_AUDIT_REASON_CODES` —— 这里不就地拼字符串。
+            REPORT_AUDIT_REASON_CODES[audit.action],
+            audit.requestId,
+          ]);
+        } catch (error) {
+          throw reportDispositionAuditUnavailable(error);
+        }
+      }
       return { ok: true, record: next };
     });
   }
@@ -894,8 +949,8 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       return row === undefined ? null : reportRecordFromRow(row);
     },
 
-    async commitReportIfCurrent(id, expected, patch) {
-      return commitReport(id, expected, patch);
+    async commitReportIfCurrent(id, expected, patch, audit = null) {
+      return commitReport(id, expected, patch, audit);
     },
 
     /**

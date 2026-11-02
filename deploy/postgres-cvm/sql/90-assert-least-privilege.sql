@@ -1998,6 +1998,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 审计的 revision 必须等于库内现值（G0001/G0002/G0010）⇒ 调用方伪造不了 actor、动作文本或 target。
     ('public',         'record_admin_category_update',       'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- 迁移 0053（R72）：后台**举报处置**（report.triage / report.resolve / report.reject）的
+    -- 审计落库。运行时对 `admin_audit_events` 仍然**零表级、零列级权限**（external_manifest
+    -- 与槽 9 的 protected_columns 一句未动），唯一写路径就是这条函数。函数内由 `p_action`
+    -- 派生 action（`report.triage` / `report.resolve` / `report.reject`）与对应 reason_code
+    -- （`report_triaged` / `report_resolved` / `report_rejected`）、scope='sources:write'、
+    -- result='accepted'，`target_ref` = {type:'report', id, revision} 由形参重建，并重核验
+    -- 操作者存在 + active + 当前有效持 sources:write ⇒ 调用方伪造不了 actor、动作文本或 target。
+    ('public',         'record_admin_report_disposition_audit', 'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',

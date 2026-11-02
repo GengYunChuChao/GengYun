@@ -33,7 +33,37 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 ＋ `rollback/` **50 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **51 + 1 === 52**。上一段那组
 50/49 与 `50 + 1 === 51` 是 2026-11-01 的实测快照，**保留不动**。）
 
+（2026-11-02 · R72 #838(`0053`) 落盘后复测：`0001..0053`，缺号仍只有 `0037` ⇒ 目录现为 **52 个正向 `.sql`**
+＋ `rollback/` **51 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **52 + 1 === 53**。上一段那组
+51/50 与 `51 + 1 === 52` 是 2026-11-02 当天的实测快照，**保留不动**。）
+
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0053_admin_report_disposition_audit.sql`（R72 #838 · **审计落库**：后台举报处置
+  `advanceReport` 的操作留痕。接在 `0052` 之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留
+  ⇒ **台账不新增条目**）。
+  只建一个窄口径 `SECURITY DEFINER` 函数
+  `public.record_admin_report_disposition_audit(p_actor_id uuid, p_report_id uuid, p_report_revision integer,
+  p_action text, p_reason_code text, p_request_id uuid) RETURNS uuid`：函数内按 `p_action`
+  （`triage`/`resolve`/`reject`）派生 `action = report.{triage|resolve|reject}` 与
+  `reason_code = report_{triaged|resolved|rejected}`，两者不匹配即 `G0018 INVALID_REASON_CODE`；
+  再核验操作者存在（否则 `G0002`）、`state = 'active'`（否则 `G0010`）、当前仍有效持
+  `sources:write`（`admin_scope_grants` 里 `revoked_at IS NULL`，否则 `G0010`）；通过后往
+  `public.admin_audit_events` 落一行：`scope = 'sources:write'`、`result = 'accepted'`、
+  `target_ref = jsonb_build_object('type','report','id',p_report_id::text,'revision',p_report_revision)`
+  （`0017` 的形状 CHECK 要求 type/id 为字符串且 revision 为数字），`request_id` 取
+  `AdminCallContext.requestId`（缺失时由 `resolveContext` 生成 uuid）。
+  为什么需要：举报处置只改 `community_reports.state/revision`，`closed` 一值两义（成立/驳回不可分），
+  审计面 0 行；本迁移让「谁、以什么动作、在第几版上处置」与举报行**同一次事务**落库。
+  调用点在 `services/api/src/community/store-pg.ts` 的 `commitReport`（`withTransaction` 内、
+  `UPDATE community_reports` 之后），失败即抛 `PROVIDER_UNAVAILABLE` 让整个处置回滚。
+  本迁移**零表级 GRANT**：函数 `REVOKE ALL … FROM PUBLIC`，运行时 `EXECUTE` 只在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r72-report-disposition-audit-grant` 区授予
+  `gengyun_api_runtime`；`public.admin_audit_events` 对运行时仍是零表级/零列级权限。
+  配对回滚 `rollback/0053_admin_report_disposition_audit.down.sql`：先数 `admin_audit_events` 里
+  `action LIKE 'report.%'` 的行，有任何一行即 `G0019 REPORT_DISPOSITION_AUDIT_ROLLBACK_BLOCKED`
+  并列出样本（审计是证据、不是可重算派生值），空表才 `DROP FUNCTION`。
+  读数：`tests/unit/community-report-disposition-http.test.mjs`（HTTP 面，**本机**）＋
+  `tests/integration/admin-audit-logs-pg.mjs` 等真库臂（需 `*_PG_TEST_URL`，**本机无 PG，未跑**）。
 - `0052_moderation_conclusion_facts.sql`（R72-W54 · **只读事实源**：审核**结论新鲜度**跨重启的事实面 ——
   本片让 `readView` 在内存台账为空（重启后）时还能判出 `RESCREEN_REQUIRED`，**⛔ 不改任何可见性判定**）。
   接在 `0051` 之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。

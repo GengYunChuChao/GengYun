@@ -35,6 +35,9 @@ import {
   AUDIT_ACTION_CATEGORY_UPDATE,
   AUDIT_ACTION_JOB_CANCEL,
   AUDIT_ACTION_POST_HIDE,
+  AUDIT_ACTION_REPORT_REJECT,
+  AUDIT_ACTION_REPORT_RESOLVE,
+  AUDIT_ACTION_REPORT_TRIAGE,
   AUDIT_ACTION_SET_FLAG,
 } from './catalog.ts';
 import type { AdminAuditAction } from './catalog.ts';
@@ -112,6 +115,11 @@ export const AUDIT_READING_KIND: Readonly<Record<AdminAuditAction, AuditReadingK
   [AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE]: 'unexposed',
   [AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE]: 'unexposed',
   [AUDIT_ACTION_CATEGORY_UPDATE]: 'unexposed',
+  // 举报处置（迁移 0053）：三种动作都不带 before/after 读数（`target_ref` 记 type/id/revision，
+  // 处置语义在 action 与 reason_code 上），`readingKindOf` 一律 `unexposed`。
+  [AUDIT_ACTION_REPORT_TRIAGE]: 'unexposed',
+  [AUDIT_ACTION_REPORT_RESOLVE]: 'unexposed',
+  [AUDIT_ACTION_REPORT_REJECT]: 'unexposed',
 });
 
 /** 该 action 的读数语义；闭集外一律 `unexposed`（今天没有契约读面能表达它们的读数）。 */
