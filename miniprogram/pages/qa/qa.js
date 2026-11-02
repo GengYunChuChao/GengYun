@@ -43,6 +43,14 @@ const qaApi = require('../../utils/qa-api')
 const PENDING_TASK_NOTE = '问题已发送，正在查找答案…'
 
 /**
+ * 整段会话删除在 `data.deleting` 里的哨兵值（单条删除放的是那条记录的 id）。
+ *
+ * 两处删除共用同一个「在飞」字段而不是各自一个：同一时刻只允许有一次删除在走，
+ * 否则一次整段删除和一次单条删除会互相把对方删到「已不存在的记录」上。
+ */
+const CONVERSATION_DELETE_ID = 'conversation'
+
+/**
  * 执行模式 → 用户能读懂的一句话（原始 `stub`/`preset_demo` 串不进主界面）。
  * 服务端当前基线均为演示数据；`real` 只在真正接上真实服务时才会出现。
  */
@@ -132,6 +140,18 @@ Page({
     this._sendAttempt = null
     /** 已受理作业对应的尝试键（仅用于判断"这次重试还是不是同一个问题"，不参与展示）。 */
     this._acceptedAttemptKey = ''
+    /**
+     * 删除的尝试身份（幂等键固化）：同一次删除意图的重试复用同一把键。
+     * 键一变，服务端就把重试当成**另一次**删除——上次其实已删掉、这次回 404，结果就被说反了。
+     */
+    this._deleteAttempt = null
+    /**
+     * 已弹出的删除确认框对应的目标 id（空串=没有待确认的删除）。
+     *
+     * 弹窗是异步的：用户连点两次「删除这条」会走两遍 `confirmDelete`，若不在**开弹窗时**就置位，
+     * 就会叠出两个确认框、确认后发出两条 DELETE。确认或弹窗失败时都必须放回空串。
+     */
+    this._deletePending = ''
     /** 当前在途轮询对应的 job 与截止时间（有界轮询的唯一边界来源）。 */
     this._poll = null
     /** 当前已核实身份的服务端 epoch（`auth.sessionEpoch()`）；变化即视为换人。 */
@@ -207,6 +227,11 @@ Page({
     // 轮次历史（本次会话内；只展示服务端真实返回）
     turns: [],
     turnsNote: '',
+    // 删除在飞标志：单条删除时是那条记录的 id，整段删除时是 `CONVERSATION_DELETE_ID`；空串=没有在飞。
+    //
+    // **刻意不复用 `busy`**：`settle`/`refreshJob` 在任务落定时会把 `busy` 清成 false，
+    // 若删除守卫也看 `busy`，一次轮询回调就能提前解除守卫，连点就会发出第二条 DELETE。
+    deleting: '',
     exitReason: '',
     // 回答来源三态：初始**如实**为未知（还没取得任何版本串，不预设真实或演示）。
     versionState: 'unknown',
@@ -253,6 +278,8 @@ Page({
     this._conversation = null
     this._conversationAttempt = null
     this._sendAttempt = null
+    this._deleteAttempt = null
+    this._deletePending = ''
     this._acceptedAttemptKey = ''
     this.setData({
       draft: '', draftLength: 0, inputNote: '',
@@ -260,7 +287,7 @@ Page({
       busy: false, stage: 'idle', mode: '', modeLabel: '', job: null,
       taskNote: '', taskErrorCode: '',
       answer: null, answerGateCode: '', answerGateMessage: '', citations: [], doseCards: null, answerNote: '',
-      turns: [], turnsNote: '',
+      turns: [], turnsNote: '', deleting: '',
       // 版本态随私有内容一起复位：旧身份的版本说明不得留给新身份看到。
       versionState: 'unknown', versionNote: UNKNOWN_VERSION_NOTE,
       // 只有"用户主动离页"才留一句离页说明；门禁失效/换账号由各自的 taskNote 说明。
@@ -578,6 +605,180 @@ Page({
       if (isGateLoss(error)) { this.closePrivate(qaApi.messageFor(error)); return }
       this.setData({ turns: [], turnsNote: qaApi.messageFor(error) })
     }
+  },
+
+  // ---------------------------------------------------------------- 删除入口（#12：单条 / 整段会话）
+
+  /** 是否已有一次删除在进行中（含"确认框已弹出、用户还没答复"）。 */
+  deleteBusy: function () {
+    const pending = typeof this._deletePending === 'string' ? this._deletePending : ''
+    return pending !== '' || this.data.deleting !== ''
+  },
+
+  /** 从事件里的 `data-turn-id` 取回那条记录（模板只带 id，不把整条对象塞进事件）。 */
+  turnOf: function (event) {
+    const currentTarget = event === null || event === undefined ? null : event.currentTarget
+    const dataset = currentTarget === null || currentTarget === undefined ? null : currentTarget.dataset
+    const id = dataset === null || dataset === undefined || typeof dataset.turnId !== 'string' ? '' : dataset.turnId
+    if (id === '') return null
+    const turns = this.data.turns
+    for (let i = 0; i < turns.length; i += 1) {
+      if (turns[i].id === id) return turns[i]
+    }
+    return null
+  },
+
+  /**
+   * 删除前的二次确认（单条与整段共用）：**用户点了「删除」之后才发请求**。
+   *
+   * 连点保护分两层，缺任何一层都挡不住重复删除：
+   *  1. `_deletePending` 在**弹窗打开时**就置位——`wx.showModal` 是异步的，连点两次只会开一个弹窗；
+   *  2. `data.deleting` 在**请求在飞时**置位——模板据此把两个入口一起置为不可点。
+   * 弹窗答复之前用户可能已离页或换了账号，所以确认后**重新核实**页面还活着、身份 epoch 未变：
+   * 一次迟到的确认不该删掉别人（或已清空的页面）的记录，口径同 `historydetail.onDelete`。
+   */
+  confirmDelete: function (spec) {
+    const that = this
+    const epoch = this._epoch
+    const alive = function () {
+      return that._gone !== true && that.data.guest !== true && epoch === auth.sessionEpoch()
+    }
+    this._deletePending = spec.id
+    wx.showModal({
+      title: spec.title,
+      content: spec.content,
+      confirmText: '删除',
+      cancelText: '取消',
+      success: function (res) {
+        if (that._deletePending !== spec.id) return
+        that._deletePending = ''
+        if (res === null || typeof res !== 'object' || res.confirm !== true) return
+        if (!alive() || that.data.deleting !== '') return
+        that.runDelete(spec)
+      },
+      fail: function () {
+        // 弹窗没打开也要放开待确认标记：否则删除入口会永久失效（页面状态本身没变）。
+        if (that._deletePending === spec.id) that._deletePending = ''
+      }
+    })
+  },
+
+  /**
+   * 真正发删除请求：**只有 202 受理之后才动列表**。
+   *
+   * 失败一律原样保留列表——本页的老毛病正是 `onRefreshTurns` 先 `turns: []` 再读，
+   * 一次网络失败就把旧内容清光。这里不预清空、不重读，只在原来那一份上移除。
+   */
+  runDelete: async function (spec) {
+    const generation = this.beginOperation()
+    this.setData({ deleting: spec.id, turnsNote: spec.pendingNote })
+    try {
+      await spec.request()
+      if (!this.isCurrent(generation)) return
+      spec.apply()
+    } catch (error) {
+      if (!this.isCurrent(generation)) return
+      if (isGateLoss(error)) { this.closePrivate(qaApi.messageFor(error)); return }
+      // 明确说明"没删成功"，并把失败原因带上；列表与滚动位置都不动，用户可以直接再点一次。
+      this.setData({ turnsNote: qaApi.messageFor(error) + spec.failNote })
+    } finally {
+      // 在飞标志必须解开（否则两个删除入口永久置灰）；离页/换账号时 `releaseAll` 已把它清空。
+      if (this.data.deleting === spec.id) this.setData({ deleting: '' })
+    }
+  },
+
+  /** 单条删除：确认 → 一条轮次级 DELETE → 只把这一条从列表里去掉。 */
+  onDeleteTurn: function (event) {
+    if (this._gone === true || this.data.guest || this.deleteBusy()) return
+    const turn = this.turnOf(event)
+    const conversation = this._conversation
+    if (turn === null || conversation === null) return
+    const that = this
+    this.confirmDelete({
+      id: turn.id,
+      title: '删除这条记录？',
+      content: '将删除这条提问和它的回答，删除后不可恢复；本次会话的其它记录不受影响。',
+      pendingNote: '正在删除这条记录…',
+      failNote: '这条记录没有删除，列表原样保留，可以再点一次「删除这条」。',
+      request: function () {
+        // 同一意图（同会话、同一条、同版本）的重试复用同一把键：服务端按同键回放，
+        // 不会因为"上次其实已删掉、这次回 404"把结果说反。
+        const descriptor = 'delete-turn:' + conversation.id + ':' + turn.id + ':' + turn.revision
+        const key = qaApi.stableKey(that._deleteAttempt, descriptor, 'i12-delete-turn')
+        that._deleteAttempt = { descriptor: descriptor, key: key }
+        return qaApi.deleteTurn({
+          conversationId: conversation.id,
+          turnId: turn.id,
+          turnRevision: turn.revision,
+          idempotencyKey: key
+        })
+      },
+      apply: function () {
+        // 只去掉这一条：其余项与顺序原样保留。**不重读列表**——重读会把滚动位置带回顶部。
+        const kept = []
+        const turns = that.data.turns
+        for (let i = 0; i < turns.length; i += 1) {
+          if (turns[i].id !== turn.id) kept.push(turns[i])
+        }
+        that.setData({ turns: kept, turnsNote: '已删除这条记录：它的提问与回答都不会再出现在这里。' })
+      }
+    })
+  },
+
+  /** 整段会话删除：确认 → 一条会话级 DELETE → 回到本页初始态。 */
+  onDeleteConversation: function () {
+    if (this._gone === true || this.data.guest || this.deleteBusy()) return
+    const conversation = this._conversation
+    if (conversation === null) {
+      this.setData({ turns: [], turnsNote: '还没有本次会话的记录：先发送一个问题，再来读取。' })
+      return
+    }
+    const that = this
+    this.confirmDelete({
+      id: CONVERSATION_DELETE_ID,
+      title: '删除整段会话？',
+      content: '将删除本次会话里的全部提问与回答，删除后不可恢复。',
+      pendingNote: '正在删除整段会话…',
+      failNote: '本次会话没有删除，记录原样保留，可以再点一次「删除整段会话」。',
+      request: function () {
+        const descriptor = 'delete-conversation:' + conversation.id + ':' + conversation.revision
+        const key = qaApi.stableKey(that._deleteAttempt, descriptor, 'i12-delete-conversation')
+        that._deleteAttempt = { descriptor: descriptor, key: key }
+        return qaApi.deleteConversation({
+          conversationId: conversation.id,
+          conversationRevision: conversation.revision,
+          idempotencyKey: key
+        })
+      },
+      apply: function () { that.resetToInitial() }
+    })
+  },
+
+  /**
+   * 整段删除成功后回到本页初始态（会话缓存、轮次、回答、来源、进度一起复位）。
+   *
+   * 与 `releaseAll` 只差两处，都是**有意**的：
+   *  - 保留草稿：草稿是本机还没发出去的输入，不属于被删的那段会话，清掉等于替用户丢字；
+   *  - 留一句"已删除"的说明：初始态本来没有这句话，但内容静默消失同样不可接受。
+   */
+  resetToInitial: function () {
+    this.stopPoll()
+    qaApi.cancelAll()
+    this.beginOperation()
+    this._poll = null
+    this._conversation = null
+    this._conversationAttempt = null
+    this._sendAttempt = null
+    this._deleteAttempt = null
+    this._acceptedAttemptKey = ''
+    this.setData({
+      conversationId: '', conversationRevision: 0,
+      busy: false, stage: 'idle', mode: '', modeLabel: '', job: null,
+      taskNote: '', taskErrorCode: '',
+      answer: null, answerGateCode: '', answerGateMessage: '', citations: [], doseCards: null, answerNote: '',
+      turns: [], turnsNote: '本次会话已删除：它的提问与回答都不会再出现在这里。'
+    })
+    this.applyVersionState('')
   },
 
   /** 重试：同一个问题（同正文、同会话）严格回放同一请求身份；不会创建新任务。 */

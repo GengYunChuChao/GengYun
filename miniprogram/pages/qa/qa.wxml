@@ -171,9 +171,17 @@
           class="btn btn--secondary row-actions__item qa-submit"
           aria-role="button"
           aria-label="查看本次会话的提问与回答"
-          disabled="{{guest || busy}}"
+          disabled="{{guest || busy || deleting !== ''}}"
           bindtap="onRefreshTurns"
         >查看记录</button>
+        <button
+          wx:if="{{conversationId}}"
+          class="btn btn--danger row-actions__item qa-submit"
+          aria-role="button"
+          aria-label="删除本次会话的全部提问与回答"
+          disabled="{{guest || busy || deleting !== ''}}"
+          bindtap="onDeleteConversation"
+        >{{deleting === 'conversation' ? '正在删除…' : '删除整段会话'}}</button>
       </view>
       <view class="notice notice--warn" wx:if="{{turnsNote}}">
         <text class="notice__text">{{turnsNote}}</text>
@@ -188,10 +196,22 @@
             <text class="message-copy__time" wx:if="{{item.showAnswer}}">
               来源 {{item.citationCount}} 条 · 登记用量卡 {{item.doseCardCount}} 条（只报条数）
             </text>
+            <button
+              class="btn btn--ghost btn--block message-copy__delete"
+              aria-role="button"
+              aria-label="删除这条提问和它的回答（第 {{index + 1}} 条）"
+              data-turn-id="{{item.id}}"
+              disabled="{{guest || busy || deleting !== ''}}"
+              bindtap="onDeleteTurn"
+            >{{deleting === item.id ? '正在删除…' : '删除这条'}}</button>
           </view>
         </view>
       </view>
       <view class="demo-caption" wx:if="{{turns.length === 0 && !turnsNote}}">本次会话还没有记录。</view>
+      <view class="hint">
+        删除会同时删掉这条提问的回答（整段删除则删掉本次会话的全部记录），删除后不可恢复；
+        每次删除都会先弹一次确认框，删除过程中按钮暂不可点，重复点击不会重复删除。
+      </view>
     </view>
   </view>
 
