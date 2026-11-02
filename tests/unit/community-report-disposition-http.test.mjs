@@ -13,7 +13,8 @@
  *  T3 版本失配：`expected_revision` 落后 ⇒ 409，且**库内 state/revision 一字未变**（CAS 不是无条件写）；
  *  T4 终态单向门：`closed` 上再处置 ⇒ 409（话术与 `advanceReport` 现有分支逐字一致），库内不变；
  *  T5 守卫：无会话 ⇒ 401；有 admin 但缺 `sources:write` ⇒ 403，**两种都零写入**；
- *  T6 零副作用钉：处置**不写审计行**、**不动目标帖的可见性**（行内读数逐字不变）；
+ *  T6 零副作用钉（**仅内存路径**）：内存实现不写审计行（它没有审计表）、**不动目标帖的可见性**；
+ *     真库路径**会**写一行审计（迁移 0053），由 `tests/integration/community-filter-pg.mjs` 的 T9/T10 判；
  *  T7 契约钉子：「契约里真的有这条 op、而且形状是本片要的那个形状」（不是读实现猜）。
  *
  * ## 为什么 T2 用 `isolated + reject`
@@ -24,18 +25,22 @@
  * 本片以仓库为准，取真正非法的那条：`reject.from = ['received']` ⇒ `isolated + reject` 是
  * `ILLEGAL_TRANSITION`。差异已登记进交付报告。
  *
- * ## 与 `hidePost` 的两处刻意差异（本片如实登记，不是遗漏）
+ * ## 内存路径与真库路径的差异（本片如实登记，不是遗漏）
  *
- *  1. **不落审计行**：`post.hide` 的审计要么走库层同一事务（迁移），要么走内存台账；本片两样都不做
- *     ——要落审计得先扩 `admin/audit/catalog.ts` 的 `AUDIT_ACTIONS` 闭集（+ 迁移 +
- *     `20-login-roles.sql` / `90-assert-least-privilege.sql` 三处同步），属迁移片另批。
- *     T6 把「审计写入次数 === 0」钉成**事实**，免得后来者以为只是没写。
+ *  1. **审计落点分两支**：`post.hide` 的审计要么走库层同一事务（迁移），要么走内存台账。
+ *     R72 第二步之后，**真库**路径由迁移 0053 的 `public.record_admin_report_disposition_audit(...)`
+ *     在举报处置的**同一个事务**里写一行 `admin_audit_events`（`report.triage|resolve|reject`，
+ *     写不进去就整笔回滚）；**内存**实现没有审计表，仍然忽略 `ReportDispositionAudit` 入参。
+ *     T6 只钉**内存实现**这一支（`app.adminOpsService.store.audit.list().length === 0`），
+ *     ⛔ 不能把它读成"这个 op 不落审计"——真库臂见
+ *     `tests/integration/community-filter-pg.mjs` 的 T9（恰好一行 + 逐字段）/ T10（失败整笔回滚）。
  *  2. **不改社区可见性**：处置只推进举报行自己的 `state`/`revision`
- *     （`community/store-pg.ts:563-564` 自述"只写 revision/state 两列，不需要新增 GRANT"），
+ *     （`community/store-pg.ts:593-594` 自述"只写 revision/state 两列，不需要新增 GRANT"），
  *     目标内容是否进隔离/下架归审核与下架链路。T6 用「目标帖行内读数逐字不变」钉住。
  *
  * ⚠ 本文件**不**证明真库行为：存储是内存实现（`persistent: false`）。真库臂在
- * `tests/integration/community-pg.mjs`（需 `COMMUNITY_PG_TEST_URL`，缺库记 77）。
+ * `tests/integration/community-filter-pg.mjs`（需 `COMMUNITY_FILTER_PG_TEST_URL`，缺库记 77；
+ * T9 = 审计恰好一行并逐字段核对，T10 = 审计写入失败 ⇒ 503 且举报行逐字不动）。
  * ⚠ 本文件**不**证明 `closed` 的两种含义（成立 / 驳回）可区分：`closed` 一值两义是本片
  * 已登记的**已知弱化**（要区分得加列 ⇒ 迁移），用例不敢假装能反查结论。
  */
@@ -291,7 +296,7 @@ test('T5 守卫：无会话 ⇒ 401；有 admin 但缺 sources:write ⇒ 403 SCO
   }
 });
 
-test('T6 零副作用钉：处置不写审计行、不动目标帖的可见性（行内读数逐字不变）', async () => {
+test('T6 内存路径零副作用钉：内存实现不写审计行（无审计表）、不动目标帖可见性（行内读数逐字不变）', async () => {
   const { store, row, post } = await seed({ state: 'received', revision: 1 });
   const { app, authStore } = makeApp(store);
   try {
@@ -301,12 +306,15 @@ test('T6 零副作用钉：处置不写审计行、不动目标帖的可见性�
     const res = await dispositionRequest(app, token, row.id, { action: 'triage', expected_revision: 1 });
     assert.equal(res.statusCode, 200, res.body);
 
-    // ① 审计：本片刻意不落审计行（见文件头「两处刻意差异」）。这条断言是**事实钉子**，
-    //    不是"还没测"——将来接上审计时，这个数会变成 1，届时必须同步改这条用例与台账。
+    // ① 审计：钉的是**内存实现**这一支（见文件头「内存路径与真库路径的差异」）。内存 store 没有
+    //    `admin_audit_events`，`ReportDispositionAudit` 入参被刻意忽略 ⇒ 进程内台账仍是 0 条。
+    //    ⛔ 不要把它读成"举报处置不落审计"：真库路径由迁移 0053 在处置事务内写恰好一行，
+    //    判据在 `tests/integration/community-filter-pg.mjs` 的 T9（恰好一行 + 逐字段）与
+    //    T10（审计失败 ⇒ 503 + 举报行逐字不动），本文件不跑真库、不替它作证。
     assert.equal(
       app.adminOpsService.store.audit.list().length,
       0,
-      '举报处置刻意不写审计行（要写得先扩 AUDIT_ACTIONS 闭集 + 迁移，属迁移片）',
+      '内存实现不写审计行（它没有审计表）；真库路径由 community-filter-pg 的 T9/T10 判',
     );
 
     // ② 目标内容：处置只动举报行，不动帖子行（可见性/审核态/版本逐字不变）。

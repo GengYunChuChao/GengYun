@@ -4,15 +4,16 @@
 - 分支 / 基线：`feat/gy-r72-report-disposition`；本片父提交 `52d1e90d`（rebase 后，= `origin/main`），提交 `f96cb2fa`。号段 `git rev-parse` 实取：`52d1e90d` = `52d1e90d1ab25baa467229b4acff24eb08d929c4`、`f96cb2fa` = `f96cb2fada56a7c3e7d3cb241ff9e6d571bda1df`；rebase 前的两个中间态为 `987da21a` = `987da21ae15f8446b5741f4972cc7b8767517d13` 与 `68cc44cf` = `68cc44cf359100f91e77cf7eac21a406aa3ffdf9`（原始基线）。
 - 本片只碰：`packages/contracts/openapi.json`（+126 行）、`packages/contracts/operations.json`（+7 行）、`services/api/src/admin/ops/reports.ts`（新，126 行）、`services/api/src/routes/admin-reports.ts`（新，85 行）、`services/api/src/routes/admin.ts`（2 行，净 0）、`services/api/src/admin/ops/service.ts`（9 行，净 0）、`services/api/src/admin/ops/accounts-only.ts`（+2 行）、`services/api/src/app.ts`（4 行，净 0）、`tests/unit/community-report-disposition-http.test.mjs`（新，366 行）、6 个既有钉线文件与 `tests/integration/community-filter-pg.mjs`、3 份生成物（工具重算）、3 页取证页的行号平移、`tools/doc-anchors-orphan-baseline.json`（手术式删 3 条 + 1 条 accept 留痕）、`tools/doc-anchors-baseline.json`（2 条 reference 平移）、本页（新）。
 - **没有**碰：任何迁移（`services/api/db/migrations/**` 零 diff）、`deploy/**`、`packages/contracts/states.json`、`services/api/src/contract.ts`（无新错误码）、`services/api/src/community/**`（`report-state.ts` / `store.ts` / `store-pg.ts` / `service.ts` 逐字未改，`git diff --numstat` 空）、`tools/doc-anchors-anchor-count-baseline.json`、`tools/doc-anchors-symbol-baseline.json`、`tests/unit/doc-anchor-relocations.json`、`apps/admin/src/lib/review-state.mjs`。
+- **第二步（同一 PR，2026-11-02）只碰**：`tests/unit/community-report-disposition-http.test.mjs`（T6 收窄为内存路径）、`tests/integration/community-filter-pg.mjs`（新增 T9/T10 真库臂 + 迁移子集补 0017/0053）、本页；产品代码与迁移仍零 diff（0053 由第一步落盘）。
 
 ## 0 结论先说（只列读数）
 
 1. 契约多一条 operation：`advanceReport`，`POST /api/v1/admin/reports/:id/disposition`，scope 沿用既有 `sources:write`，**零新 scope / 零新错误码 / 零迁移**。
 2. 版本前置条件走 **body 的 `expected_revision`**，不走 `If-Match`；契约如实声明 `x-version-required: false`，因此不声明 `428`（理由链见 §2.2）。
 3. 状态机语义一行未改：转移表仍以 `services/api/src/community/report-state.ts:84` 的 `planReportTransition` 为唯一权威；两条非法/冲突路径都折叠成 `409 REVISION_CONFLICT`（409 闭集里没有 `STATE_CONFLICT`）。
-4. 新钉线 7/7 通过（T1–T7，§4 原文照抄）；四条负控制里只有「整道门清空」和「去版本校验」能让它们红，「只去路由层 scope」**仍 7/7 绿**——服务层二次判权，属纵深防御（§5）。
+4. 新钉线 8/8 通过（T1–T8，§4 原文照抄）；§5 的四条负控制是在 T1–T7 上做的（T8 只读契约形状，不改变结论）：只有「整道门清空」和「去版本校验」能让它们红，「只去路由层 scope」**仍全绿**——服务层二次判权，属纵深防御（§5）。
 5. 热文件净 0 行：`app.ts` 4/4、`routes/admin.ts` 2/2、`admin/ops/service.ts` 9/9、`admin/ops/community-posts.ts` 零 diff ⇒ `docs/**` 里对它们的 `path:line` 引用一格未动。
-6. 本页不声称「全链完成」「已验收」：不落审计行、不区分 `closed` 一值两义、不建管理台界面、真库臂未在本机执行（§8、§9）。
+6. 本页不声称「全链完成」「已验收」：审计留痕已由迁移 0053 落库（§12），但真库臂 T9/T10 **未在本机执行**（§9、§12.3）；`closed` 一值两义仍未解决；不建管理台界面。
 
 ## 1 缺陷：实现已在，缺的只是 HTTP 面
 
@@ -61,9 +62,9 @@
 
 **产品语义登记（本片不改）**：`resolve.from = ['received','isolated']` 意味着「刚受理、还没隔离」的举报可以被直接判为 `closed`。这在实现上是**合法转移**，不是 bug，但语义上等价于「跳过隔离直接结案」。本片按仓库事实写测试（T2 用 `isolated + reject` 作为非法转移样本），该语义留给产品另批裁定。
 
-## 4 T1–T7 读数（`node --test tests/unit/community-report-disposition-http.test.mjs`）
+## 4 T1–T8 读数（`node --test tests/unit/community-report-disposition-http.test.mjs`）
 
-`tests 7 / pass 7 / fail 0`，exit 0。用例名与关键读数：
+`tests 8 / pass 8 / fail 0`，exit 0。用例名与关键读数：
 
 | 用例 | 断言要点 |
 | --- | --- |
@@ -72,8 +73,9 @@
 | T3 版本失配：expected_revision 落后 ⇒ 409 REVISION_CONFLICT（目标版本已变化），库内 state/revision 一字未变 | 库内 revision 3、传 `expected_revision: 1` ⇒ 409；库内仍 3 |
 | T4 终态单向门：closed 上再处置 ⇒ 409（已处置完毕话术），库内一字未变 | triage / resolve / reject 三动作全 409，库内不变 |
 | T5 守卫：无会话 ⇒ 401；有 admin 但缺 sources:write ⇒ 403 SCOPE_DENIED；两种都零写入 | 401 `SESSION_REQUIRED`；403 `SCOPE_DENIED`；补上 `sources:write` 后同一请求 200（正向对照） |
-| T6 零副作用钉：处置不写审计行、不动目标帖的可见性（行内读数逐字不变） | `app.adminOpsService.store.audit.list().length === 0`；目标帖 `deepEqual` 不变；举报行除 `state` / `revision` 外逐字不变 |
+| T6 内存路径零副作用钉：内存实现不写审计行（无审计表）、不动目标帖可见性（行内读数逐字不变） | `app.adminOpsService.store.audit.list().length === 0`（**只对内存实现**成立；真库路径由 §12.3 的 T9/T10 判）；目标帖 `deepEqual` 不变；举报行除 `state` / `revision` 外逐字不变 |
 | T7 契约钉子：新 op 在 openapi/operations.json 里、500: Error500、action 闭集三值、expected_revision 必填 | path + `operationId` + `x-scope` + `x-version-required: false` + `responses["500"].$ref` + 无 428 + 无 `IfMatch` 参数 + body schema 的 `enum` / `minimum` / `required` / `additionalProperties: false`；operations.json 五字段齐全 |
+| T8 参数面形状：parameters 不得引用 IfMatch，且必须留至少一个内联参数 | 读契约断言 path 级 `parameters` 无 `$ref` 指向 `IfMatch`、至少一个内联参数；真库臂同样的形状核对在 `community-filter-pg` 第 12 节 |
 
 既有域内套件同步通过：`community-report-disposition` 8/8、`community-report-state` 6/6（状态机语义未改，故一条断言都不需要改）。
 
@@ -137,15 +139,15 @@ NC1a 这条特别记下来：**路由层 scope 缺一不致命，整道门缺才
 
 顶层 `x-*` 三个成员（`x-error-status-map` / `x-contract-status` / `x-proposal-revision`）base 与 HEAD **逐字相同**，未做任何 reformat。
 
-## 8 已知缺口三条（本片不做，均已在此登记）
+## 8 已知缺口（本片不做，均已在此登记；第 1 条已由迁移 0053 关闭）
 
-1. **不落审计行**：处置动作不写 `admin_audit`。要落需扩 `services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS` 闭集 + 新增迁移 + `deploy/postgres-cvm/sql/90-assert-least-privilege.sql` 与 `20-login-roles.sql` 三处同步 ⇒ 属迁移片，另批。T6 反过来把「审计写入 0」钉成现状，避免有人以为已经在写。
+1. **审计已落库（已由迁移 0053 补上）**：`services/api/db/migrations/0053_admin_report_disposition_audit.sql` 的窄口径 `SECURITY DEFINER` 函数 `public.record_admin_report_disposition_audit(...)` 在举报处置的**同一个事务**里写一行 `admin_audit_events`（`report.triage` / `report.resolve` / `report.reject`）；审计写不进去 ⇒ 整笔 `ROLLBACK`、HTTP 503，⛔ 不留「处置已提交、审计没写成」。操作者校验、字段派生与授权区见 §12.1。内存实现仍不写审计表（它没有这张表），T6 只钉这一支；真库判据见 §12.3 的 T9/T10。
 2. **`closed` 一值两义**：`received` 之后无论「成立」还是「驳回」都收敛到 `closed`，无法从 `state` 单列反查结论。该弱化在 `services/api/src/community/report-state.ts:28-31` 已逐字登记（要区分需新增一列 ⇒ 迁移 + 两处 SQL 授权同步），本片沿用，不改。
 3. **能力图看不见这条 op**：`tools/verify-admin-capability-map.mjs` 只解析 `routes/admin.ts` 这一个源文件（`SOURCE_PATHS.adminRoutes`），本片路由落在新文件 `services/api/src/routes/admin-reports.ts`，因此能力图仍是 46 条、既不会列出 `advanceReport`，也不会把它记进 `KNOWN_NO_UI_ENTRY`（强行登记会与该用例「登记 id 必须出现在能力图里」的双向对拍冲突）。要修得改工具的扫描面（扫 `routes/*.ts` 或按 operationId 聚合），另批。
 
 ## 9 真库臂：本机未执行
 
-`node tests/integration/community-filter-pg.mjs` 在本机读数为 **exit 77（SKIP）**：`COMMUNITY_FILTER_PG_TEST_URL` 未设置，且本机 `psql` / `pg_ctl` / `initdb` 均不在 `PATH`、无 docker。该脚本这一节的内容已按新 op 改写为「形状核对」（契约面多一条、其余候选推进路径仍 404），但**真库处置臂没有在本地跑过**，真库行为由 CI 判定——本页不把它写成「真库通过」。
+`node tests/integration/community-filter-pg.mjs` 在本机读数为 **exit 77（SKIP）**：`COMMUNITY_FILTER_PG_TEST_URL` 未设置，且本机 `psql` / `pg_ctl` / `initdb` 均不在 `PATH`、无 docker。该脚本这一节现在包含「形状核对 + **T9/T10 写面读数**」（T9 审计恰一行、T10 失败整笔回滚，判据见 §12.3），但**真库处置臂没有在本地跑过**，真库行为由 CI 判定——本页不把它写成「真库通过」。
 
 ## 10 体积 / 行数守恒（可复核）
 
@@ -159,7 +161,7 @@ NC1a 这条特别记下来：**路由层 scope 缺一不致命，整道门缺才
 | 热文件之外 | `apps/admin/src/lib/review-state.mjs`、`tests/unit/doc-anchor-relocations.json`、`tools/doc-anchors-anchor-count-baseline.json`、`tools/doc-anchors-symbol-baseline.json` 全部零 diff |
 | 契约台账形状 | `advanceReport` 记录压在 `rejectPost` 同一行之后（单行 JSON），`contract-status.json` 行数与 base 持平在 4407 行 ⇒ `docs/verification/gy-r29-i07-ledger-lags.json` 的两条行号指针无需改动 |
 
-## 11 门禁读数（本片自跑，2026-11-02）
+## 11 第一步门禁读数（本片自跑，2026-11-02；第二步见 §12.4）
 
 | 门 | 命令 | 读数 |
 | --- | --- | --- |
@@ -178,3 +180,73 @@ NC1a 这条特别记下来：**路由层 scope 缺一不致命，整道门缺才
 | 13 | `npm run test:docs` | 0 |
 | 14 | `doc-anchor-relocation-identity`（提交后） | 0（33/33） |
 | 15 | `npm run test:unit`（`GY_BASH=D:\Git\bin\bash.exe`） | 0（`6296 tests / 6292 pass / 0 fail / 2 skipped / 2 todo`；两条 `todo` 是 I11 既有缺口，非本片） |
+
+## 12 举报处置的持久留痕（迁移 0053）与真库断言 T9 / T10（本片第二步）
+
+### 12.1 机制：窄口径 SECURITY DEFINER + 同事务 + 失败整笔回滚
+
+- **唯一写路径**：`services/api/db/migrations/0053_admin_report_disposition_audit.sql` 的
+  `public.record_admin_report_disposition_audit(p_actor_id uuid, p_report_id uuid, p_report_revision integer, p_action text, p_reason_code text, p_request_id uuid) RETURNS uuid`。
+- **调用方伪造不了**：函数内先核操作者存在 / `state = 'active'` / **当前有效**持 `sources:write`
+  （`revoked_at IS NULL`），再由 `p_action` 派生 `action`、`scope`、`reason_code`、`result` 与
+  `target_ref`（`{type:'report', id, revision: <处置前>}`）为字面量；它**不接受**「以谁的名义写」的旁路参数。
+- **授权面**：迁移只 `REVOKE ALL … FROM PUBLIC`；运行时的 `EXECUTE` 只在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `#region gy-r72-report-disposition-audit-grant`
+  授予。⛔ 没有给运行时 `admin_audit_events` 任何表级/列级写权限（`90-assert-least-privilege.sql`
+  的 external_manifest 与 protected_columns 仍是红线）。
+- **同事务**：`services/api/src/community/store-pg.ts` 的 `commitReport` 在 `withTransaction` 内按
+  `SELECT … FOR UPDATE` → CAS 判定 → `UPDATE community_reports` →
+  `SELECT public.record_admin_report_disposition_audit(…)` → `COMMIT` 执行；审计调用与举报状态推进
+  共用同一个 `sql`（同一个 client）。函数抛错 ⇒ `reportDispositionAuditUnavailable` 让整笔 `ROLLBACK`
+  ⇒ 举报保持原 `state`/`revision`、审计表零新增；HTTP 如实 503 `PROVIDER_UNAVAILABLE`
+  （`retryable:false`，message 含「审计写入失败（已回滚，举报处置未生效）」）。
+- **动作映射**（与 `services/api/src/community/report-state.ts` 的 `REPORT_AUDIT_REASON_CODES` 逐值一致）：
+  `triage → report.triage / report_triaged`、`resolve → report.resolve / report_resolved`、
+  `reject → report.reject / report_rejected`；`scope` 恒 `sources:write`、`result` 恒 `accepted`、
+  `target_hint` 恒 `NULL`。
+
+### 12.2 读面闭集 11 → 14
+
+`services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS` 与契约 `AuditAction` 枚举随 0053 追加
+`report.triage` / `report.resolve` / `report.reject`（**11 → 14 项，同值同序**）；
+`tests/unit/admin-audit-logs.test.mjs` 的长度钉与
+`tests/unit/audit-action-literal-coverage.test.mjs` 的「库内字面量 ∈ 读面闭集」双向对拍把这三值钉住。
+因此 `GET /admin/audit-logs?action=report.*` 能把「成立结案 / 驳回结案」分开筛出来；
+`?entity=` 仍没有 `report` 取值（举报不是六个实体之一）。
+
+### 12.3 T9 / T10 的判据与**未跑**
+
+| 用例 | 判据（`tests/integration/community-filter-pg.mjs`） |
+| --- | --- |
+| **T9 审计恰一行** | 管理员夹具 = 内存会话（HTTP 门）+ 真库 `admin_accounts` / `admin_scopes(sources:write)` 镜像（0053 在库里再核一次）。经 HTTP `resolve` 处置一次 ⇒ 200、`state=closed`、`revision=2`；`select count(*) from public.admin_audit_events where target_ref->>'type'='report' and target_ref->>'id'=$1` **恰好 1**；逐字段核 `action='report.resolve'`、`scope='sources:write'`、`actor_id`=该管理员、`result='accepted'`、`reason_code='report_resolved'`、`target_ref.revision=1`（**处置前**）、`request_id` 与响应 `Meta.request_id` 逐字一致；全表 `report.*` 也恰好 1 行。先 `const auditRow = auditRows[0]` 判存在再取属性（⛔ 不链式取值）。 |
+| **T10 失败必回滚** | 故障注入 = 只对 `NEW.action LIKE 'report.%'` 生效的 `BEFORE INSERT` 触发器（见下「为何不是 revoke」）。同一请求 ⇒ 503 `PROVIDER_UNAVAILABLE`（`retryable:false`、message 含「审计写入失败」「已回滚」）；`select state, revision from public.community_reports where id=$1` 与处置前 `deepEqual`；该举报审计 **0 行**、全表 `report.*` 仍 1 行；`finally` 拆掉触发器后同一路径恢复 200 且**恰增一行**（证明被挡住的确实是审计写入，不是账号/scope/路由）。 |
+
+**为何不是「REVOKE `gengyun_api_runtime` 的 EXECUTE」**：该脚本的 owner 与 pool **都**以
+`COMMUNITY_FILTER_PG_TEST_URL` 的库属主连接，既不 `SET ROLE` 也不建集群角色（本机与 CI 均如此）；
+给 runtime 角色收回 EXECUTE 对当前会话没有作用，而在脚本里 `CREATE ROLE` 又会与相邻 CI step 的角色供给冲突。
+因此沿用 `tests/integration/admin-post-hide-audit-pg.mjs` 的 [B] 同体例（触发器令审计写入必然抛错），
+并在 `finally` 里 `DROP TRIGGER` + `DROP FUNCTION` 拆净，避免后续用例连锁红。
+
+**本机未跑（如实登记）**：`node tests/integration/community-filter-pg.mjs` 仍只能读到
+**exit 77（SKIP）**（无 `COMMUNITY_FILTER_PG_TEST_URL`、本机无 `psql`/`pg_ctl`/`initdb`/docker）。
+T9/T10 是**只写不跑**的真库臂，真库读数由 CI `real-pg-*` 的 `gengyun_community_filter_test` 判；
+本页不把 CI 结果预先写成通过。为了不只靠走查，本轮另用 PGlite（真 PostgreSQL 内核、非 native PG17）
+把同一组 SQL 与 HTTP 路径跑过一遍作**本地自测**：0053 函数返回值/字段、触发器拦截、503 映射、
+举报行回滚都符合上表；PGlite 读数不替代 native PG17 与 CI，故不计入 T9/T10 的通过。
+
+**仍未解决**：`closed` 一值两义——`state` 单列仍反查不出「成立 / 驳回」，二者的区分只落在审计
+`action` 上；要从 `state` 反查需新增列（迁移 + `20-login-roles.sql` / `90-assert-least-privilege.sql`
+授权同步），本片不做。
+
+### 12.4 本轮闸门读数（2026-11-02，第二步）
+
+| 门 | 命令 | 读数 |
+| --- | --- | --- |
+| 1 | `node --test tests/unit/community-report-disposition-http.test.mjs` | 0（`tests 8 / pass 8 / fail 0`） |
+| 2 | `node --test tests/unit/admin-audit-logs.test.mjs` | 0（`tests 14 / pass 14 / fail 0`） |
+| 3 | `node tools/verify-contract-status.mjs` | 0（`PASS: 覆盖 128 条契约操作…形状错误 0 项 / 语义错误 0 项`、`PASS: 中文表格一致`） |
+| 4 | `npm run lint` | 0（两条 `tsc --noEmit` + 卫生扫描；`lint 通过`） |
+| 5 | `node --check tests/integration/community-filter-pg.mjs` | 0（`SYNTAX OK`） |
+| 6 | `node tests/integration/community-filter-pg.mjs` | **77（SKIP，本机无 PG；T9/T10 未跑，见 §12.3）** |
+| 7 | `node --test tests/unit/migration-subset-coverage-pins.test.mjs` | 0（`tests 10 / pass 10 / fail 0`；子集新增 0017/0053 后需求清单仍 31 条、0 违规） |
+| 8 | `node --test tests/unit/audit-action-literal-coverage.test.mjs` | 0（`tests 12 / pass 12 / fail 0`） |

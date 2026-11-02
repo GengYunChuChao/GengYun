@@ -1,6 +1,7 @@
 /**
  * GY-I15（#15）/ #444 §S5 残留缺口 · 社区域**列表筛选下推 + 分页确定性**的真库读数 +
- * **举报面**的形状核对（PostgreSQL 17；R72 之前这一节是"推进通道缺口登记"，接线后改为形状核对）。
+ * **举报面**的形状核对与**处置留痕**读数（PostgreSQL 17；R72 之前这一节是"推进通道缺口登记"，
+ * 接线后先做形状核对，R72 第二步再补 T9/T10 两条写面读数：审计恰一行 / 失败整笔回滚）。
  *
  * 为什么需要这一条（既有脚本的分工，逐条点名）：
  *   - `tests/integration/community-pg.mjs` 只发过 `POST /api/v1/posts`（:517），**没有任何
@@ -33,15 +34,25 @@
  *      + `Limit`；空结果的同类谓词同样不走全表扫；
  *   8. **分页确定性**：40 行同一 `created_at` 的夹具，`limit=9` 逐页遍历 ⇒ 40 行全覆盖、无重复、
  *      顺序与库内 `created_at DESC, id DESC` 逐位相等；游标严格前进（第二页从全序第 10 行开始）；
- *      B 拿 `mine=true&crop_id=crop-tie` 看不到 A 的同刻行（越权负控制，库里 B 本来也没有）。
+ *      B 拿 `mine=true&crop_id=crop-tie` 看不到 A 的同刻行（越权负控制，库里 B 本来也没有）；
+ *   9. **处置留痕（T9，迁移 0053）**：管理员经 HTTP 处置一次 ⇒ `admin_audit_events` **恰好一行**
+ *      `report.resolve`，scope=`sources:write`、actor=该管理员、reason_code=`report_resolved`、
+ *      `target_ref.revision` 是**处置前**的 1、`request_id` 与响应 `Meta.request_id` 逐字一致；
+ *      全表 `report.*` 也恰好一行（0 行 = 没留痕，2 行 = 重复记）；
+ *  10. **失败必回滚（T10）**：让审计写入必然失败（只对 `report.%` 生效的 BEFORE INSERT 触发器）⇒
+ *      503 `PROVIDER_UNAVAILABLE`（`retryable:false`、message 含「审计写入失败」「已回滚」），
+ *      `community_reports` 的 `state`/`revision` 与处置前**逐字相同**、审计零新增；拆掉故障后
+ *      同一路径恢复 200 且恰增一行（证明被挡住的确实是审计写入，不是账号/scope/路由）。
  *
  * 本脚本**不**证明什么（必须如实登记，不许被引用成功能证据）：
- *   - 举报 `state` 的**端到端处置**：`POST /reports` 落库的 `state` 恒为 `received`（创建即此态；
- *     `createReport` 不接受调用方指定 state）。R72 之后推进通道**已经存在**
- *     （`POST /admin/reports/{id}/disposition` ⇒ `advanceReport`：契约、路由、转移表、CAS 四处都在），
- *     但本脚本**不跑**那条 HTTP 臂（本节没有 admin 会话夹具），因此只把"契约面确实多出一条、
- *     其余候选推进路径仍然 404"钉成事实，**不**等于"真库处置已验证"。真库处置臂需另加 admin
- *     会话夹具，属后续补测（见 R72 交付报告的诚实边界）。
+ *   - 举报处置的**运营流程 / 下游副作用**：T9/T10 只证明写面与 CAS 读数，不证明后台界面、通知、
+ *     目标内容隔离（`triage` 的"目标进隔离"仍由审核/下架链路执行，本脚本不做）。
+ *   - `closed` 一值两义：`state` 单列仍反查不出「成立 / 驳回」，区分只落在审计 `action` 上
+ *     （要区分得新增列 ⇒ 迁移，本片不做）。
+ *   - 运行时角色的**授权面**：本脚本以库属主身份连库（不 `SET ROLE`、不建集群角色），
+ *     `gengyun_api_runtime` 对 0053 函数的 `EXECUTE` 由
+ *     `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r72-report-disposition-audit-grant`
+ *     区域授予，其断言归部署 SQL 门禁，不在本文件。
  *   - 筛选下推 SQL 的性能：本脚本只读 `EXPLAIN` 的**计划形状**（选没选索引），不报执行时间，
  *     也不构成容量/延迟结论。
  *   - 真实审核供应商：全程注入 `provider.synthetic === true` 的合成审核端口（不联网、无凭据），
@@ -192,14 +203,17 @@ async function main() {
     assert.equal(versions.includes('0022'), true, '迁移目录里必须有 0022（社区六表）');
     // 0030（F13 帖/评行内注销引用）与 0032（#15 举报者行内注销引用）都是**运行时依赖**，不是可选项：
     // `POST_COLUMNS`/`COMMENT_COLUMNS`/`REPORT_COLUMNS` 都含 `anonymized_author_ref`，缺任一支 ⇒ 42703 ⇒ 社区域 503；0045 同理：`community_moderation_decisions.decided_by`（人工 approve/reject 的运营者快照列）是审核台账 INSERT/SELECT 的列，本脚本用 `store.insertPost(record, verdict)` 造数据必走 `writeModeration`，缺它同样 42703。
-    const migrations = all.filter((m) => ['0001', '0022', '0030', '0032', '0045'].includes(m.version));
+    // 0017 建 `public.admin_audit_events`（0053 的 `INSERT` 依赖它 + 0017 自带的 append-only 触发器）；
+    // 0053 是本轮 T9/T10 的主角：`public.record_admin_report_disposition_audit(...)`（缺它 ⇒ 42883 ⇒ 503
+    // 「审计写入失败」）。这两支只服务于举报处置审计，不改变上面筛选/举报读数的口径。
+    const migrations = all.filter((m) => ['0001', '0017', '0022', '0030', '0032', '0045', '0053'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0022', '0030', '0032', '0045'],
-      '0001（users/枚举底座）+ 0022（社区六表）+ 0030（帖/评注销引用）+ 0032（举报注销引用）+ 0045（审核台账 decided_by）：筛选与举报依赖这五支',
+      ['0001', '0017', '0022', '0030', '0032', '0045', '0053'],
+      '0001（users/枚举底座）+ 0017（admin_audit_events）+ 0022（社区六表）+ 0030（帖/评注销引用）+ 0032（举报注销引用）+ 0045（审核台账 decided_by）+ 0053（举报处置审计函数）：筛选、举报与处置留痕依赖这七支',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：迁移目录 ${versions.length} 个，本脚本只取 0001 + 0022 + 0030 + 0032 + 0045（PG ${version}）`);
+    say(`迁移 apply 可重入：迁移目录 ${versions.length} 个，本脚本只取 0001 + 0017 + 0022 + 0030 + 0032 + 0045 + 0053（PG ${version}）`);
 
     // ---- 2. 两个真实用户（作者 A / 他人 B） ------------------------------
     const auth = createMemoryAuthStore();
@@ -542,11 +556,198 @@ async function main() {
       '版本前置条件在 body（`expected_revision`），契约不得声明 If-Match —— 声明了就要按 428 语义实现',
     );
 
-    note('口径（不是功能验证）：举报处置通道已接 HTTP（`POST /admin/reports/{id}/disposition` ⇒ `advanceReport`，'
+    note('口径：举报处置通道已接 HTTP（`POST /admin/reports/{id}/disposition` ⇒ `advanceReport`，'
       + '转移表在 `community/report-state.ts`、CAS 在 `store-pg.ts` 的 `commitReportIfCurrent`）；'
-      + '本脚本只核对契约/路由**形状**，未跑真库处置臂（无 admin 会话夹具）。'
-      + '另：处置刻意不写审计行、不区分 `closed` 的两种含义（成立/驳回）—— 均需迁移，另批。');
-    say('举报处置接线：契约三条（创建 / 读自己 / 管理端处置）、scope=sources:write、版本前置在 body；真库处置臂未跑（走 CI）');
+      + '契约/路由形状在上面核对，**写面读数**在 12.1 / 12.2（T9 成功恰一行审计、T10 失败整笔回滚）。'
+      + '另：`closed` 一值两义仍未解决（区分只落在审计 `action` 上，`state` 单列仍反查不出）。');
+    say('举报处置接线：契约三条（创建 / 读自己 / 管理端处置）、scope=sources:write、版本前置在 body');
+
+    // ---------------------------------------------------------------------
+    // 12.1 T9：走 HTTP 处置一次 ⇒ 审计**恰好一行**，逐字段与请求对齐
+    // ---------------------------------------------------------------------
+    // 管理员夹具：内存 auth（HTTP 门用它判会话/scope）+ 真库镜像（0053 的函数会在**库里**
+    // 再核一遍「存在 / active / 现行持 sources:write」；只建内存账号 ⇒ G0002/G0010 ⇒ 503）。
+    const auditAdminName = 'synthetic-r72-report-audit-admin';
+    const auditAdmin = await auth.createAdmin({
+      loginName: auditAdminName,
+      credentialHash: 'synthetic-not-a-real-credential-hash',
+      scopes: ['sources:write'],
+    });
+    const auditToken = 'synthetic-r72-report-audit-token';
+    await auth.createSession({
+      userId: auditAdmin,
+      tokenHashHex: hashToken(auditToken),
+      authEpoch: 1,
+      expiresAt: new Date(Date.now() + 3600_000),
+      audience: 'admin',
+    });
+    await owner.query(
+      'INSERT INTO admin_accounts (id, login_name, credential_hash) VALUES ($1::uuid, $2, $3)',
+      [auditAdmin, auditAdminName, 'synthetic-not-a-real-credential-hash'],
+    );
+    await owner.query("INSERT INTO admin_scopes (admin_id, scope) VALUES ($1::uuid, 'sources:write')", [auditAdmin]);
+    note(`T9 夹具：管理员 ${auditAdmin} 同时镜像进 admin_accounts + admin_scopes(sources:write)（0053 的函数在库侧再核一次）`);
+
+    const dispositionOf = (id, body, key) => call('POST', `${API}/admin/reports/${id}/disposition`, {
+      token: auditToken,
+      payload: body,
+      headers: { 'idempotency-key': key },
+    });
+    const reportRowOf = async (id) => (await owner.query(
+      'SELECT state::text AS state, revision FROM public.community_reports WHERE id = $1::uuid',
+      [id],
+    )).rows[0];
+    // 只按 target_ref 取这个举报的审计行；**闭合性**另由「恰好一行」的正向计数钉住。
+    const auditRowsOfReport = async (id) => (await owner.query(
+      `SELECT id, actor_id, action, scope, result, reason_code, request_id, target_ref, target_hint
+         FROM public.admin_audit_events
+        WHERE target_ref->>'type' = 'report' AND target_ref->>'id' = $1`,
+      [id],
+    )).rows;
+    const countReportAudits = async () => (await owner.query(
+      "SELECT count(*)::int AS n FROM public.admin_audit_events WHERE action LIKE 'report.%'",
+    )).rows[0].n;
+
+    const beforeT9 = await reportRowOf(reportId);
+    assert.deepEqual(beforeT9, { state: 'received', revision: 1 }, 'T9 前置：第 12 节创建的举报仍是 received/1');
+    assert.equal((await auditRowsOfReport(reportId)).length, 0, 'T9 前置：这条举报还没有任何审计行');
+    assert.equal(await countReportAudits(), 0, 'T9 前置：全表还没有 report.* 审计（本脚本此前对举报只读不写）');
+
+    const disposed = await dispositionOf(
+      reportId,
+      { action: 'resolve', expected_revision: 1 },
+      'r72-report-disposition-audit-ok',
+    );
+    assert.equal(disposed.status, 200, JSON.stringify(disposed.body));
+    assert.ok(disposed.body?.data !== undefined, '200 响应必须有 data（契约 ReportEnvelope）');
+    assert.equal(disposed.body.data.state, 'closed', 'received + resolve ⇒ closed');
+    assert.equal(disposed.body.data.revision, 2, 'CAS 成功后 revision 恰好 +1');
+    assert.equal(typeof disposed.body.meta?.request_id, 'string', '成功响应必须带 Meta.request_id（审计要对齐它）');
+
+    const auditRows = await auditRowsOfReport(reportId);
+    assert.equal(
+      auditRows.length,
+      1,
+      `一次成功处置必须**恰好**一行 report 审计（实际 ${auditRows.length}；0 行 = 没留痕，2 行 = 重复记）`,
+    );
+    const auditRow = auditRows[0];
+    assert.ok(auditRow !== undefined, '审计行必须存在：先判存在再取属性（⛔ 不要链式取值炸在 undefined 上）');
+    assert.equal(auditRow.action, 'report.resolve', 'resolve 必须记成 report.resolve（不是 report.reject / report.triage）');
+    assert.equal(auditRow.scope, 'sources:write', 'scope 必须是复用既有的 sources:write');
+    assert.equal(auditRow.actor_id, auditAdmin, '审计必须记在真正发起处置的管理员名下（不是调用方自报的名字）');
+    assert.equal(auditRow.result, 'accepted');
+    assert.equal(auditRow.reason_code, 'report_resolved');
+    assert.ok(
+      auditRow.target_ref !== null && typeof auditRow.target_ref === 'object',
+      'target_ref 必须是对象（本查询的 WHERE 就是 target_ref->>\'id\'，命中即证它是对象）',
+    );
+    assert.equal(auditRow.target_ref.type, 'report');
+    assert.equal(auditRow.target_ref.id, reportId);
+    assert.equal(auditRow.target_ref.revision, 1, 'target_ref.revision 必须是**处置前**的 1，不是处置后的 2');
+    assert.equal(auditRow.target_hint, null, '举报在契约 TargetRef 闭集内 ⇒ 不写内部 target_hint');
+    assert.equal(
+      auditRow.request_id,
+      disposed.body.meta.request_id,
+      '审计 request_id 必须与响应 Meta.request_id 逐字一致',
+    );
+    assert.equal(await countReportAudits(), 1, '全表 report.* 此刻必须恰好 1 行（= 本臂唯一一次成功处置）');
+    note(`T9 读数：1 次 HTTP resolve ⇒ 审计恰 1 行 action=${auditRow.action} / scope=${auditRow.scope} / `
+      + `target_ref={report,id,revision:1} / request_id=${auditRow.request_id}`);
+    say('T9 审计恰一行：HTTP resolve 一次 ⇒ admin_audit_events 恰 1 行 report.resolve、scope=sources:write、'
+      + 'target_ref 用处置前 revision、request_id 与 Meta 一致');
+
+    // ---------------------------------------------------------------------
+    // 12.2 T10：审计写不进去 ⇒ 503 且举报行逐字不动（同事务整笔回滚）
+    // ---------------------------------------------------------------------
+    // 故障注入方式（为什么不 revoke `gengyun_api_runtime` 的 EXECUTE）：本脚本的 owner 与 pool
+    // **都**是 `COMMUNITY_FILTER_PG_TEST_URL` 的库属主，既不 `SET ROLE` 也不建集群角色（见文件头
+    // 「运行」：只接受 owner URL，CI 里它不带任何 runtime 角色）。给 `gengyun_api_runtime` 收回
+    // EXECUTE 对当前会话没有影响；在这里 `CREATE ROLE` 又会与相邻 CI step 的角色供给冲突。
+    // 因此按 `tests/integration/admin-post-hide-audit-pg.mjs` 的 [B] 同体例：用一条只对
+    // `NEW.action LIKE 'report.%'` 生效的 BEFORE INSERT 触发器让审计写入必然抛错；
+    // 结束（含异常路径）必在 finally 里拆掉，否则后续用例会连锁红。
+    const secondReport = await call('POST', '/api/v1/reports', {
+      token: b.token,
+      payload: {
+        target_ref: { type: 'post', id: p2.id, revision: p2.revision },
+        reason_code: 'misleading',
+        detail: '审计失败整笔回滚臂（合成数据）',
+      },
+      headers: { 'idempotency-key': 'community-filter-pg-report-audit-fail' },
+    });
+    assert.equal(secondReport.status, 201, JSON.stringify(secondReport.body));
+    assert.ok(secondReport.body?.data?.id !== undefined, '201 响应必须有 data.id（契约 ReportEnvelope）');
+    const failReportId = secondReport.body.data.id;
+    assert.equal(secondReport.body.data.state, 'received');
+    const beforeT10 = await reportRowOf(failReportId);
+    assert.deepEqual(beforeT10, { state: 'received', revision: 1 }, 'T10 前置：第二条举报是 received/1');
+
+    try {
+      // 建故障件也放进 try：无论创建/请求在哪一步抛错，finally 都会把两者清掉（IF EXISTS），
+      // 不让一个半成品触发器把后面的 EXPLAIN/分页用例连锁带红。
+      await owner.query(`
+        CREATE FUNCTION public.r72_reject_report_disposition_audit() RETURNS trigger LANGUAGE plpgsql AS $fn$
+        BEGIN
+          RAISE EXCEPTION 'r72 synthetic failure: refuse report.* audit row';
+        END $fn$;
+        REVOKE ALL ON FUNCTION public.r72_reject_report_disposition_audit() FROM PUBLIC;
+        CREATE TRIGGER r72_reject_report_disposition_audit
+          BEFORE INSERT ON public.admin_audit_events
+          FOR EACH ROW WHEN (NEW.action LIKE 'report.%')
+          EXECUTE FUNCTION public.r72_reject_report_disposition_audit();
+      `);
+      const failed = await dispositionOf(
+        failReportId,
+        { action: 'resolve', expected_revision: 1 },
+        'r72-report-disposition-audit-fail-1',
+      );
+      assert.equal(
+        failed.status,
+        503,
+        `审计写不进去必须 503（不是 409、不是 200），实际 ${failed.status} ${JSON.stringify(failed.body).slice(0, 240)}`,
+      );
+      assert.ok(failed.body?.error !== undefined, '错误响应必须有 error 封套');
+      assert.equal(
+        failed.body.error.code,
+        'PROVIDER_UNAVAILABLE',
+        '错误码必须是 PROVIDER_UNAVAILABLE（`reportDispositionAuditUnavailable` 的口径）',
+      );
+      assert.equal(failed.body.error.retryable, false, '审计写入失败不可重试（同一请求重试仍是同一笔写入）');
+      assert.match(failed.body.error.message, /审计写入失败/, `message 必须含「审计写入失败」，实际 ${failed.body.error.message}`);
+      assert.match(failed.body.error.message, /已回滚/, 'message 必须写清已回滚（调用方要能判断举报状态没有推进）');
+
+      assert.deepEqual(
+        await reportRowOf(failReportId),
+        beforeT10,
+        '审计失败 ⇒ 整笔 ROLLBACK：state/revision 必须与处置前逐字相同',
+      );
+      assert.equal((await auditRowsOfReport(failReportId)).length, 0, '失败路径不得留下审计行');
+      assert.equal(await countReportAudits(), 1, '全表 report.* 仍只有 T9 那一行（失败不得留痕）');
+      note('T10 读数：触发器拒绝 report.* 审计写入 ⇒ 503 PROVIDER_UNAVAILABLE(retryable:false) + '
+        + 'message 含「审计写入失败」「已回滚」；举报仍 received/1，审计零新增');
+    } finally {
+      await owner.query(`
+        DROP TRIGGER IF EXISTS r72_reject_report_disposition_audit ON public.admin_audit_events;
+        DROP FUNCTION IF EXISTS public.r72_reject_report_disposition_audit();
+      `);
+    }
+
+    // 拆掉触发器后同一条路径必须恢复可写（证明上一条红的是审计写入，不是坏掉的账号/scope/路由）。
+    const recovered = await dispositionOf(
+      failReportId,
+      { action: 'resolve', expected_revision: 1 },
+      'r72-report-disposition-audit-recover',
+    );
+    assert.equal(
+      recovered.status,
+      200,
+      `拆掉触发器后必须恢复 200，实际 ${recovered.status} ${JSON.stringify(recovered.body).slice(0, 240)}`,
+    );
+    assert.deepEqual(await reportRowOf(failReportId), { state: 'closed', revision: 2 }, '恢复臂：state=closed、revision=2');
+    assert.equal((await auditRowsOfReport(failReportId)).length, 1, '恢复臂必须**恰好**新增一行审计');
+    assert.equal(await countReportAudits(), 2, '全表 report.* = T9 一行 + 恢复臂一行');
+    say('T10 失败必回滚：审计写入被拒 ⇒ 503（retryable:false）+ 举报 state/revision 逐字不动 + 审计零新增；'
+      + '拆掉故障后同一路径恢复 200 并恰增一行');
 
     // ---- 13. EXPLAIN：下推后的真实语句不再全表扫 -------------------------
     // 灌 1200 行合成数据，让规划器对"全表读 + 排序" vs "高选择性谓词"做出真实选择（不是 3 行时的小表假象）。
