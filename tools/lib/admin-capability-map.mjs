@@ -330,9 +330,33 @@ const UNSUPPORTED_SHAPE_WINDOW = 500;
 /** 本闸门**不解析**的两类注册写法：对象式 `app.route({ … })`、前缀式 `app.register(x, { prefix })`。 */
 const UNSUPPORTED_REGISTRATION_CALL = '\\b(?:app|fastify|server)\\s*\\.\\s*(route|register)\\s*\\(';
 
+/** 字面量后面只允许跟这些字符，才算「整个值就是这个字面量」（`,` / `}` / `)`）。 */
+const VALUE_TERMINATORS = new Set([',', '}', ')']);
+
+/**
+ * 这个字符串区间能不能当**完整静态字面量**用（R72-W67，判据只在这里落地）。
+ *
+ * 两条同时成立才算静态，任何一条不成立就交回 `null`＝「无法判断」：
+ * 1. **完整性**：字面量收尾之后，跳过空白（注释已被掩码成空白），下一个字符必须是值的结束标记。
+ *    `'/api/v1/' + 'admin'` 收尾后是 `+` ⇒ 字面量只是拼接的一段，不是完整值；`'/x'.trim()` 同理。
+ * 2. **模板串无未知插值**：除 `${API_PREFIX}`（与 `pathLooksAdminFace` 同一个可证明的替换口径）
+ *    之外还出现 `${` ⇒ 拒绝。本闸门**不做**常量折叠 / 数据流分析：`const face = 'admin'` 之后
+ *    `` `/api/v1/${face}` `` 一律判 dynamic，宁可漏报（把静态写法按 dynamic 报出来、请人扩解析器），
+ *    也不把来路不明的字符串当成 admin 面（或非 admin 面）算进能力图。
+ */
+function isCompleteStaticLiteral(scanned, span) {
+  const raw = scanned.text.slice(span.contentStart, span.contentEnd);
+  if (span.quote === '`' && raw.replace(/\$\{\s*API_PREFIX\s*\}/g, '').includes('${')) return false;
+  let at = span.end;
+  while (at < scanned.code.length && /\s/.test(scanned.code[at])) at += 1;
+  return VALUE_TERMINATORS.has(scanned.code[at] ?? '');
+}
+
 /**
  * 在 `[from, to)` 里读 `url: …` / `path: …` / `prefix: …` 的值。
- * 返回 `[{ literal }]`：`literal === null` 表示值不是字面量（变量 / 表达式 / 拼接 / `{ prefix }` 简写）。
+ * 返回 `[{ literal }]`：`literal === null` 表示值不是**完整静态字面量**——变量 / 表达式 / 拼接
+ * （`'/a/' + 'b'`）/ 含未知插值的模板串 / `{ prefix }` 简写，全部归这一档（判据见
+ * `isCompleteStaticLiteral`）。
  *
  * 键在 `code` 掩码上定位（注释与字符串里的 `url:` 自动不算）；**值不能在掩码上读**——掩码把字符串
  * 连同引号整段换成空格，`\s*` 会把值一起吃掉。所以值靠 `strings` 区间的起点反查：冒号到引号之间
@@ -355,7 +379,8 @@ function registrationPropertyValues(scanned, keys, from, to) {
           candidate.start <= to &&
           /^[ \t\r\n]*$/.test(scanned.code.slice(valueStart, candidate.start)),
       );
-      values.push({ literal: span ? scanned.text.slice(span.contentStart, span.contentEnd) : null });
+      const complete = span !== undefined && isCompleteStaticLiteral(scanned, span);
+      values.push({ literal: complete ? scanned.text.slice(span.contentStart, span.contentEnd) : null });
     } else if (/^\s*[,}]/.test(rest)) {
       // `{ prefix }` 简写：值是同名变量，静态看不到 ⇒ 按「无法判断」报。
       values.push({ literal: null });
@@ -370,9 +395,13 @@ function registrationPropertyValues(scanned, keys, from, to) {
  *
  * 返回 `[{ line, kind, snippet }]`（`line` 1 基，`snippet` 是那一行 `trim()` 后前 120 字符）：
  * - `route-object`：`app|fastify|server.route({ url|path: '<admin 面>' })`；
- * - `route-object-dynamic`：同一个键的值不是字面量——无法判断是不是 admin 面；
+ * - `route-object-dynamic`：同一个键的值不是**完整静态字面量**——无法判断是不是 admin 面；
  * - `register-prefix`：`…register(x, { prefix: '<admin 面>' })`；
- * - `register-prefix-dynamic`：prefix 不是字面量——同样无法判断。
+ * - `register-prefix-dynamic`：prefix 不是完整静态字面量——同样无法判断。
+ *
+ * 「完整静态字面量」的判据在 `registrationPropertyValues`／`isCompleteStaticLiteral`（R72-W67）：
+ * 尾部拼接（`'/api/v1/' + 'admin'`）与含未知插值的模板串（`` `/api/v1/${face}` ``）都归 dynamic，
+ * 只有整段单/双引号字面量、无插值模板串、以及只含 `${API_PREFIX}` 的模板串才判其路径面。
  *
  * 不报：非 admin 面（`/administrators` 是用户面，按**路径段**判）、`register(x)` 不带 prefix、
  * 以及既有的 `app.<method>('<路径>', …)`（那是本闸门认得、且有自己报错路径的形状）。

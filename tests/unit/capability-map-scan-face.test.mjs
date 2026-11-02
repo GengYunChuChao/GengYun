@@ -693,6 +693,80 @@ const UNSUPPORTED_FIXTURES = [
       { line: 1, kind: 'register-prefix-dynamic', snippet: 'app.register(reportRoutes, { prefix });' },
     ],
   },
+  // --- R72-W67：值必须是**完整静态字面量**，尾部拼接与未知插值一律归 dynamic（不判其路径面） --------
+  {
+    label: "监工样例①：prefix 是「字面量 + 字面量」拼接 ⇒ 不是完整字面量，报 register-prefix-dynamic",
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.register(routes, { prefix: '/api/v1/' + 'admin' });", ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix-dynamic',
+        snippet: "app.register(routes, { prefix: '/api/v1/' + 'admin' });",
+      },
+    ],
+  },
+  {
+    label: '监工样例②：prefix 是含未知插值 `${face}` 的模板串 ⇒ 不做常量折叠，报 register-prefix-dynamic',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["const face = 'admin';", 'app.register(routes, { prefix: `/api/v1/${face}` });', ''].join('\n'),
+    expected: [
+      {
+        line: 2,
+        kind: 'register-prefix-dynamic',
+        snippet: 'app.register(routes, { prefix: `/api/v1/${face}` });',
+      },
+    ],
+  },
+  {
+    label: 'route 的 url 也走同一个取值口径：尾部拼接 ⇒ 报 route-object-dynamic',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.route({ method: 'GET', url: '/api/v1/' + 'admin/reports', handler });", ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'route-object-dynamic',
+        snippet: "app.route({ method: 'GET', url: '/api/v1/' + 'admin/reports', handler });",
+      },
+    ],
+  },
+  {
+    label:
+      "对照（NC3 的靶子）：prefix 是完整静态字面量 '/api/v1/admin' ⇒ 判静态（kind 必须是 register-prefix，不许降级成 dynamic）",
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ["app.register(routes, { prefix: '/api/v1/admin' });", ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix',
+        snippet: "app.register(routes, { prefix: '/api/v1/admin' });",
+      },
+    ],
+  },
+  {
+    label: '不退化：只含 `${API_PREFIX}` 的模板串仍是可证明的静态前缀 ⇒ 报 register-prefix（不是 dynamic）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ['app.register(routes, { prefix: `${API_PREFIX}/admin` });', ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix',
+        snippet: 'app.register(routes, { prefix: `${API_PREFIX}/admin` });',
+      },
+    ],
+  },
+  {
+    label: '不退化：无插值的模板串仍算完整静态字面量 ⇒ 报 register-prefix（不是 dynamic）',
+    file: 'services/api/src/routes/admin-widgets.ts',
+    source: ['app.register(routes, { prefix: `/api/v1/admin` });', ''].join('\n'),
+    expected: [
+      {
+        line: 1,
+        kind: 'register-prefix',
+        snippet: 'app.register(routes, { prefix: `/api/v1/admin` });',
+      },
+    ],
+  },
   {
     label: '只写在注释里的形状不报（先掩码再判，注释不算注册）',
     file: 'services/api/src/routes/admin-widgets.ts',
