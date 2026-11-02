@@ -62,6 +62,7 @@ import {
   readOwnerMediaContent,
 } from '../../services/api/src/media/service.ts';
 import { sha256Hex } from '../../packages/media/validate.mjs';
+import { MEDIA_INITIATED_TTL_MS } from '../../packages/media/constants.mjs';
 import { jpegWithExif } from '../media/_fixtures.mjs';
 
 const OBJECT_REF_KEY = '0f1e2d3c4b5a69788796a5b4c3d2e1f01a2b4c5d6e7f8091a2b3c4d5e6f70819';
@@ -605,16 +606,22 @@ try {
   // [10] 监工 1022-0203 / 1022-0541 / 1022-0659 三轮 P1（同一阻塞项）：
   //      CAS=0 失利者的衍生件**桶侧删不掉**（端口返回 false）时，可重试的清理依据必须**真的落库**。
   //  判据（全部打在真表的字节上，不靠内存实现）：
-  //    ① `media_object_cleanup` 出现且只有一行，解出的对象键 = 本次落下的衍生键，reason 为 CAS 冲突、
-  //       attempts ≥ 1；
+  //    ① `media_object_cleanup` 出现，解出的对象键 = 本次落下的衍生键那一行**恰好一条**，reason 为
+  //       CAS 冲突、attempts ≥ 1（r72 起台账按对象键唯一、按「句柄是否仍有效」保留，整表不再恒为 1 行：
+  //       前序 [9] 等步骤留下的未到期行也在表里，所以这里按对象键筛）；
   //    ② 父行已是 deleted/rev2 且两个对象键都清空（= 线索在父行上已经无处可依）——行仍在；
   //    ③ **物理删掉父行**（模拟注销清理）后清理行**仍然在** ⇒ 证明没有外键级联（这是本表的存在理由）；
-  //    ④ 桶恢复后 `cleanupOrphans()` 收敛：对象真的没了、清理行也被删掉；
+  //    ④ 上传句柄到期（把注入时钟推过 `MEDIA_INITIATED_TTL_MS`）+ 桶恢复后 `cleanupOrphans()` 收敛：
+  //       对象真的没了、清理行也被删掉（未到期时本轮整行跳过，见 ③ 之后的读数）；
   //    ⑤ 再扫一次幂等：不多删、不新造行。
   // -------------------------------------------------------------------------
   const failBucketInner = createSubstituteObjectStore();
   const unfailableKeys = new Set();
   let raceGate = null;
+  // r72：台账行保留到「预签名上传句柄失效」（`createdAt + MEDIA_INITIATED_TTL_MS`，24h）。
+  // 真实时钟下不可能在测试里等到到期，所以给这个实例注入可推进时钟：先在未到期时验「行必须留着」，
+  // 再把时钟推过 TTL 验「到期后才收敛」。口径与 `tests/unit/media-cleanup-intent-ttl.test.mjs` 一致。
+  let failClockMs = Date.now();
   const failBucket = {
     ...failBucketInner,
     async putObject(key, bytes, contentType) {
@@ -637,7 +644,7 @@ try {
     objectStore: failBucket,
     tokenSecret,
     persistence: pgStore,
-    now: () => new Date(),
+    now: () => new Date(failClockMs),
   });
   const failInitiated = await failService.initiateUpload({
     actor: ownerActor,
@@ -682,8 +689,19 @@ try {
     `SELECT media_id, object_ref_cipher, reason, attempts
        FROM public.media_object_cleanup ORDER BY created_at`,
   );
-  assert.equal(cleanupRows.length, 1, `清理台账应有且只有一行（实际 ${cleanupRows.length} 行）`);
-  const cleanupRow = cleanupRows[0];
+  // r72 语义：台账行按「对象键」唯一，但按「上传句柄是否仍有效」保留 ⇒ 之前各步（如 [9] 的迟到
+  // complete）留下的未到期行也在表里，整表行数不再恒为 1（CI 里实测 4 行：本步 2 + [9] 的 2）。
+  assert.ok(cleanupRows.length >= 1, `清理台账应至少一行（实际 ${cleanupRows.length} 行）`);
+  // 本次要证的只有「刚生成的衍生键」这一条：按解出的对象键筛（object_ref_digest 全局唯一 ⇒ 恰好一行）。
+  const orphanCleanupRows = cleanupRows.filter(
+    (row) => cipher.decryptObjectRef(row.object_ref_cipher) === orphanKey,
+  );
+  assert.equal(
+    orphanCleanupRows.length,
+    1,
+    `本次落下的衍生键应恰好一条台账（实际 ${orphanCleanupRows.length} 行；整表 ${cleanupRows.length} 行）`,
+  );
+  const cleanupRow = orphanCleanupRows[0];
   assert.equal(cipher.decryptObjectRef(cleanupRow.object_ref_cipher), orphanKey, '台账里必须能解回那个未确认删除的对象键');
   assert.equal(cleanupRow.media_id, failMediaId);
   assert.equal(cleanupRow.reason, 'cas_conflict_complete');
@@ -706,18 +724,56 @@ try {
   // ③ 物理删父行（= 注销清理的等价动作）：清理行**不得**被级联删掉。
   await q('DELETE FROM public.media WHERE id=$1', [failMediaId]);
   assert.equal(await countOf('SELECT count(*)::int AS v FROM media WHERE id=$1', [failMediaId]), 0);
-  assert.equal(
-    await countOf('SELECT count(*)::int AS v FROM public.media_object_cleanup WHERE media_id=$1', [failMediaId]),
-    1,
+  const survivingRows = await q(
+    `SELECT object_ref_cipher FROM public.media_object_cleanup WHERE media_id=$1`,
+    [failMediaId],
+  );
+  // r72 下这条媒体会有两条台账行（delete 时登记的原图键 + CAS=0 时的衍生键，句柄都未到期），
+  // 所以判「行仍在」而不是「恰好一行」；真正要钉住的是那条衍生键的行没有随父行级联消失。
+  assert.ok(
+    survivingRows.length >= 1,
     '父行被物理删除后，待清理行必须仍在（本表刻意不建外键、不级联）',
   );
+  assert.equal(
+    survivingRows.filter((row) => cipher.decryptObjectRef(row.object_ref_cipher) === orphanKey).length,
+    1,
+    '父行被物理删除后，那条衍生键的待清理行必须仍在（本表刻意不建外键、不级联）',
+  );
 
-  // ④ 桶恢复 ⇒ 重试收敛。
+  // ④-a 句柄**未**失效：清扫必须整行跳过（不碰 attempts、不销账）。
+  //      此刻桶删对 orphanKey 仍返回 false ⇒ 若少了 TTL 闸门，这里会记 pending=1 并给 attempts +1。
+  const heldSweep = await failService.cleanupOrphans();
+  assert.equal(
+    heldSweep.pendingObjects,
+    0,
+    '句柄未失效时清扫不得尝试删除台账行（否则迟到 PUT 造出的孤儿对象会被销账）',
+  );
+  const heldOrphan = (await q(
+    `SELECT object_ref_cipher, attempts FROM public.media_object_cleanup WHERE media_id=$1`,
+    [failMediaId],
+  )).find((row) => cipher.decryptObjectRef(row.object_ref_cipher) === orphanKey);
+  assert.notEqual(heldOrphan, undefined, '句柄未失效：那条衍生键的待清理行必须仍在');
+  assert.equal(
+    Number(heldOrphan.attempts),
+    Number(cleanupRow.attempts),
+    '句柄未失效：清扫不得碰 attempts',
+  );
+  assert.notEqual(await failBucketInner.getObject(orphanKey), null, '句柄未失效：对象不得被销账');
+
+  // ④ 桶恢复 + **上传句柄到期** ⇒ 重试收敛。
+  //    r72：未到期的行清扫时整行跳过（不碰 attempts/updated_at），否则迟到 PUT 的孤儿对象会被销账。
   unfailableKeys.clear();
+  failClockMs += MEDIA_INITIATED_TTL_MS + 1000;
   const healed = await failService.cleanupOrphans();
-  assert.equal(healed.removedObjects, 1, `坏桶恢复后应回收 1 个对象（实际 ${healed.removedObjects}）`);
+  // 到期后整表（含 [9] 留下的行）一起收敛，所以只钉下限；对象与台账的「有没有」由下面逐条判。
+  assert.ok(healed.removedObjects >= 1, `坏桶恢复后应回收对象（实际 ${healed.removedObjects}）`);
   assert.equal(healed.pendingObjects, 0);
   assert.equal(await failBucketInner.getObject(orphanKey), null, '重试后对象必须已从桶里消失');
+  assert.equal(
+    await countOf('SELECT count(*)::int AS v FROM public.media_object_cleanup WHERE media_id=$1', [failMediaId]),
+    0,
+    '到期并确认删除成功后，这条媒体的清理行必须被删掉',
+  );
   assert.equal(
     await countOf('SELECT count(*)::int AS v FROM public.media_object_cleanup'),
     0,
@@ -730,9 +786,10 @@ try {
   assert.equal(healedAgain.pendingObjects, 0);
   assert.equal(await countOf('SELECT count(*)::int AS v FROM public.media_object_cleanup'), 0);
 
-  note(`[10] 清理台账（真库）：CAS=0 落下的衍生件桶删返回 false ⇒ media_object_cleanup 1 行`
-    + `（reason=${cleanupRow.reason} attempts=${cleanupRow.attempts}）；父行 deleted/rev2 且引用清空、`
-    + `物理删父行后该行仍在（无级联）；桶恢复后 cleanupOrphans ⇒ removed=${healed.removedObjects}`
+  note(`[10] 清理台账（真库）：CAS=0 落下的衍生件桶删返回 false ⇒ media_object_cleanup 整表 ${cleanupRows.length} 行`
+    + `（本次衍生键恰 1 行：reason=${cleanupRow.reason} attempts=${cleanupRow.attempts}；其余为 [9] 等步骤未到期的行）；`
+    + `父行 deleted/rev2 且引用清空、物理删父行后该行仍在（无级联）；`
+    + `句柄到期（+${MEDIA_INITIATED_TTL_MS}ms）且桶恢复后 cleanupOrphans ⇒ removed=${healed.removedObjects}`
     + ` pending=${healed.pendingObjects}、对象已删、台账 0 行；复扫 removed=${healedAgain.removedObjects}（幂等）`);
 
   console.log(`\n${notes.length} 条读数，全部断言通过。`);
