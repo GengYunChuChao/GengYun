@@ -223,4 +223,23 @@
       <view class="demo-caption">清单由服务端按当前账号返回（用途、状态、政策版本与 revision），本页不缓存、不代填；授予与撤回都在那一页完成，撤回需二次确认。</view>
     </view>
   </view>
+
+  <!-- 注销账号入口（GY-R73 / #19 的用户可见部分）：跳 pages/deletion/deletion。
+       为什么**不**加 `wx:if="{{!guest}}"`：那一页查回执吃的是「回执 bearer」而不是登录态
+       （服务端 `GET /account/deletions/{id}` 的 security 是 deletionReceipt），退出登录后
+       用户仍可能想确认注销进度；入口藏起来就等于把这个能力一起藏了。游客点进来会看到
+       那一页自己的 guest 态（去登录），不会看到假数据。 -->
+  <view class="section">
+    <view class="section-head">
+      <view class="section-head__title">注销账号</view>
+    </view>
+    <view class="panel">
+      <view class="setting-row" bindtap="openDeletion" role="button" aria-label="申请注销账号或查看注销回执">
+        <text class="setting-row__label">申请注销 / 查看回执</text>
+        <text class="setting-row__value">管理</text>
+        <view class="gy-icon gy-icon--arrow"></view>
+      </view>
+      <view class="demo-caption">注销后账号数据不可恢复。申请与取消都要二次确认；冷静期与生效时间以上面那张回执里服务端返回的字段为准，本页不写死天数。</view>
+    </view>
+  </view>
 </view>

@@ -118,13 +118,14 @@ test('isolated packaging excludes private files and rejects release overrides/st
   const release = join(project, '.local/wechat-release');
   assert.equal(JSON.parse(readFileSync(join(release, 'project.config.json'), 'utf8')).setting.urlCheck, true);
   assert.doesNotMatch(readFileSync(join(release, 'miniprogram/config/runtime.js'), 'utf8'), /http:|local_stub|"mode":"local"/);
-  // —— F2 回归：打包允许清单须随 app.json（21 页 = 13 页 + GY-I15 社区投稿/详情 + GY-I16 收藏/历史/历史详情
-  // + GY-I13 播报页 + GY-I12 文字提问页 + GY-R34 授权清单页）
+  // —— F2 回归：打包允许清单须随 app.json（22 页 = 13 页 + GY-I15 社区投稿/详情 + GY-I16 收藏/历史/历史详情
+  // + GY-I13 播报页 + GY-I12 文字提问页 + GY-R34 授权清单页 + GY-R73 注销账号页）
   // 同步，且参考域/社区域依赖须一并复制 ——
   const appJson = JSON.parse(readFileSync(join(release, 'miniprogram/app.json'), 'utf8'));
-  assert.equal(appJson.pages.length, 21);
+  assert.equal(appJson.pages.length, 22);
   assert.ok(appJson.pages.includes('pages/qa/qa'), 'release package must include the text question page');
   assert.ok(appJson.pages.includes('pages/consent/consent'), 'release package must include the consent page');
+  assert.ok(appJson.pages.includes('pages/deletion/deletion'), 'release package must include the account deletion page');
   for (const page of appJson.pages) {
     for (const suffix of ['.js', '.json', '.wxml']) {
       assert.equal(existsSync(join(release, 'miniprogram', page + suffix)), true, `打包缺失页面文件 ${page}${suffix}`);

@@ -203,6 +203,11 @@ try {
     // 授权清单读取层（GY-R34 / #29 P1，只读 GET /me/consents）：consent 页依赖它；
     // 漏加会导致标准包 MODULE_NOT_FOUND。（授予/撤回属 P2，届时才需要新的写层，本清单不预置。）
     'utils/consent-api.js',
+    // 注销账号适配层（GY-R73 / #19 客户端入口）：deletion 页依赖它。
+    //   POST /me/account/deletion（202，Idempotency-Key）、GET /account/deletions/{id}
+    //   （回执 bearer，不是登录会话）、DELETE /me/account/deletion（200，Idempotency-Key）。
+    // 漏加会让注销页在标准包里 MODULE_NOT_FOUND —— 入口点了就崩，比没有入口更糟。
+    'utils/deletion-api.js',
     'assets/knowledge/leaf.png',
     'assets/knowledge/search.png',
     'assets/knowledge/back.png',
@@ -275,6 +280,8 @@ try {
     'pages/qa/qa',
     // 授权清单页（GY-R34 / #29 P1，只读）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
     'pages/consent/consent',
+    // 注销账号页（GY-R73 / #19 客户端入口）：页面清单须与 app.json 的 pages 逐项一致（下方断言）。
+    'pages/deletion/deletion',
   ];
   if (JSON.stringify(app.pages) !== JSON.stringify(pages)) throw new Error('Unexpected page routes; review packaging allowlist.');
   for (const page of pages) {
