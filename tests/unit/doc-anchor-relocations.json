@@ -1259,5 +1259,15 @@
     "reason": "旧锚点 173 在真实父 53354fe7 上是 `      body: post.body,`，不是公开侧 `publicLabel`；#749 后文案表集中在 `miniprogram/utils/community-api.js` 的 `OUTCOMES`，页面投影 `publicLabel` 在父 185、当前 200。base 173 不含 `publicLabel`，按符号纠正。",
     "kind": "correction",
     "symbol": "publicLabel"
+  },
+  {
+    "doc": "docs/verification/gy-r71-comment-strip-20261030.md",
+    "line": 143,
+    "target": "tests/unit/sql-column-coverage.test.mjs",
+    "from": 1512,
+    "to": 1518,
+    "kind": "correction",
+    "symbol": "[\\s\\S]*?",
+    "reason": "本提交（R72-W62 活文档计数指针化）只改文档、未改目标文件：证据页第 143 行的裸锚点 `tests/unit/sql-column-coverage.test.mjs:1512` 在 base 880c938b 上就已经指错——1512 那段是 ㉗ 段的散文注释（「带 `${` 的模板串仍然不入表…」），真正的剥离点 `.replace(/\\/\\*[\\s\\S]*?\\*\\//g, '')` 在 #835（媒体清理台账 TTL 片）给同一文件补 ㉗ 段读数与豁免条目（净 +6 行、全部落在 1512 之前）之后已移到 :1518。按符号 `[\\s\\S]*?` 重取实测唯一命中 1518，故按 correction 登记 from 1512 → to 1518；第 94 条（from 1393 → to 1518）是同一剥离点在上游更早基座上的取号，两条并存。"
   }
 ]
