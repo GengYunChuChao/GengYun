@@ -1525,10 +1525,10 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      true),
     -- R29（迁移 0028）：审核判定台账两表。列清单与 20-login-roles.sql 段 M3 的 GRANT 是同一事实的
     -- 两次写法（少一列/多一列都会被断言 49-58 抓住：清单内必须有、清单外必须没有）。
-    -- SELECT 面不是"全列"：12 列里 6 列是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求，
-    -- 另 6 列（W54）只服务只读端口；且 `superseded` 另有独立的单列投影读（READ_SUPERSEDED_SQL）⇒ 本表**不是**"只写不读"。
-    -- withdrawals 的三列 SELECT 只服务 W43 的 HYDRATE_WITHDRAWALS_SQL 回填；decisions 的名单来源是 ledger-pg.ts 的 SUPERSEDE_SQL（target_type/target_id/target_revision/content_kind/superseded）、
-    -- INSERT_SQL（26 列）+ UPDATE_SQL（14 列，WHERE job_id）；下架表的 INSERT 见 WITHDRAW_SQL（4 列，三列冲突目标）。
+    -- SELECT 面不是"全列"：moderation_decisions 的 12 列里 6 列是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求，
+    -- 另 6 列（W54/0052）只服务只读端口；moderation_withdrawals 的三列 SELECT 另有用途（W43 的 HYDRATE_WITHDRAWALS_SQL 回填）。
+    -- 且 decisions 的 `superseded` 另有独立的单列投影读（READ_SUPERSEDED_SQL）⇒ 本表**不是**"只写不读"；名单来源是 ledger-pg.ts 的 SUPERSEDE_SQL
+    -- （target_type/target_id/target_revision/content_kind/superseded）、INSERT_SQL（26 列）+ UPDATE_SQL（14 列，WHERE job_id）；下架表的 INSERT 见 WITHDRAW_SQL（4 列，三列冲突目标）。
     -- W54（迁移 0052）：SELECT 面在 6 列之外再加 6 列 —— rule_version/model_version/prompt_version/concluded_at/decision/updated_at，
     -- 只服务只读端口 createPostgresConclusionFacts（缺表/缺列 ⇒ 空数组 + 一次 warn），不参与任何可见性判定；名单见 conclusion-facts-pg.ts 的 CONCLUSION_FACTS_SQL。
     ('moderation_decisions',
