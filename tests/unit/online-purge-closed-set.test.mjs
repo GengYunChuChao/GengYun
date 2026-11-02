@@ -181,8 +181,8 @@ test('T1 跳过：某域缺表 ⇒ 只跳过它、原因写清、不抛错（⛔
 
 test('T1 跳过（授权）：jobs 缺 owner_id 列级 SELECT ⇒ 只跳过 jobs 并点名缺的授权', async () => {
   // 假池子：表都在；权限探测回「表级 DELETE 有、owner_id 列级 SELECT 没有」——
-  // 这正是本仓库出厂授权的实测形状（`20-login-roles.sql:980` 的列清单没含 owner_id，
-  // 而 `DELETE … WHERE owner_id = $1` 要读该列 ⇒ 真库上必然 42501）。
+  // 这是 GY-R72 **修好之前**的出厂形状（`20-login-roles.sql:980` 的列清单当时没含 owner_id，
+  // 而 `DELETE … WHERE owner_id = $1` 要读该列 ⇒ 真库上必然 42501）；修好后本用例仍要守这条跳过路径。
   const pool = {
     query: async (sql) =>
       sql.includes('has_column_privilege')
