@@ -1,0 +1,80 @@
+{
+  "kind": "actual native WeChat simulator (devtools) + local stub API + synthetic WeChat identity; not a real device, not a release build",
+  "startedAt": "2026-11-02T06:57:40.200Z",
+  "automationPort": 9451,
+  "viewport": {
+    "windowWidth": 376,
+    "windowHeight": 742,
+    "pixelRatio": 3.5,
+    "SDKVersion": "3.17.3",
+    "platform": "devtools"
+  },
+  "screenshots": [
+    {
+      "file": "00-guest-login-gate.png",
+      "bytes": 18197
+    },
+    {
+      "file": "01-identify-top.png",
+      "bytes": 42327
+    },
+    {
+      "file": "02-identify-voice-entry.png",
+      "bytes": 57456
+    },
+    {
+      "file": "03-voice-after-click.png",
+      "bytes": 50018
+    }
+  ],
+  "steps": [
+    {
+      "step": "guest-reset",
+      "homePath": "pages/home/home",
+      "guest": true
+    }
+  ],
+  "guestGate": {
+    "redirectedTo": "pages/login/login",
+    "note": "游客门禁画面，只证明未登录被拦下，**不是**识别页布局或入口证据"
+  },
+  "login": {
+    "clickedText": "微信登录",
+    "resumePath": "pages/identify/identify",
+    "guestAfterLogin": false,
+    "note": "合成身份登录（本地 stub API 的 /auth/wechat）；wx.login 由开发者工具真实返回 code，未打印 code/token"
+  },
+  "entry": {
+    "text": "去语音页（录音 / 播报）",
+    "selector": "page.$$('button') 按文本匹配「去语音页」",
+    "offset": {
+      "left": 42,
+      "top": 886.9375
+    },
+    "size": {
+      "width": 292,
+      "height": 47.1953125
+    },
+    "disabledAttribute": "false",
+    "scrollTopBefore": 0,
+    "scrollTopForShot": 318,
+    "note": "截图是完整模拟器画面（该版本 SDK 无区域裁剪），入口已滚到视口上部；offset/size 为 CSS px，供人工核对或后续裁剪"
+  },
+  "navigation": {
+    "action": "element.tap() on 「去语音页（录音 / 播报）」",
+    "expectedPage": "pages/voice/voice",
+    "currentPageAfterTap": "pages/voice/voice",
+    "pageStack": [
+      "pages/identify/identify",
+      "pages/voice/voice"
+    ],
+    "passed": true
+  },
+  "finishedAt": "2026-11-02T06:58:01.272Z",
+  "limits": [
+    "合成身份 + 本地 stub API；不是真实微信身份交换、不是正式环境",
+    "模拟器（platform=devtools），不是 Android/iOS 真机",
+    "不调用真实 ASR/TTS 或付费供应商；voice 页是否可用真实录音/播报未在本次验证",
+    "截图来自模拟器完整画面，未做区域裁剪"
+  ]
+}
