@@ -28,6 +28,15 @@ function fixture(t) {
   const script = join(root, 'tools/knowledge/build_miniprogram_data.mjs');
   mkdirSync(dirname(script), { recursive: true });
   copyFileSync(join(repo, 'tools/knowledge/build_miniprogram_data.mjs'), script);
+  // GY-R73 起生成脚本 `import { deterministicUuid } from '../../packages/reference/records.mjs'`
+  // （与服务端同一个 id 派生函数）。它自己只 import 同目录的 constants.mjs / catalog.mjs，
+  // 三个模块都是「路径常量 + 纯函数」，不读生产资料、不需要网络与数据库。
+  // 夹具要真的把脚本跑起来，就得把这 3 个模块一并复制进离岸目录 —— 只补依赖，不改任何断言口径。
+  for (const mod of ['records.mjs', 'constants.mjs', 'catalog.mjs']) {
+    const target = join(root, 'packages/reference', mod);
+    mkdirSync(dirname(target), { recursive: true });
+    copyFileSync(join(repo, 'packages/reference', mod), target);
+  }
   for (const source of sources) {
     const target = join(root, source);
     mkdirSync(dirname(target), { recursive: true });

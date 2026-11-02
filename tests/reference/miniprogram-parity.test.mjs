@@ -88,6 +88,51 @@ test('F5：小程序侧 source_version 与域库逐条一致（列表 = 详情 =
   }
 });
 
+// ---------------------------------------------------------------------------
+// GY-R73：随包名录的 `id` 必须**逐条**等于服务端同一条记录的 uuid。
+//
+// 为什么必须有这条：随包记录原本只有可读记录号 `gy-i03-hb-NNN`，而 `GET /herbicides/{id}`
+// 的 params 是 `id: {type:'string', format:'uuid'}` ⇒ 拿记录号拼路径恒 400，详情页/收藏链路
+// 在这条数据源上根本走不到服务端。修法不是另发明一套 id，而是用**服务端同一个派生函数**
+// （`deterministicUuid(record.record_id)`，见 packages/reference/records.mjs）在生成物里补 `id`。
+//
+// 这条断言对照的是**服务端读面实际会返回的那批 id**（`createReferenceService().listHerbicides`
+// 就是 `/herbicides` 路由背后的同一函数），按登记证号逐条配对——不是「两边条数一样」也不是
+// 「格式都像 uuid」。同时钉住 `record_id` 原样保留（溯源不能丢）。
+// ---------------------------------------------------------------------------
+test('GY-R73：随包 id 与服务端列表 id 逐条相等（20/20），record_id 原样保留', async () => {
+  const { deterministicUuid } = await import('../../packages/reference/records.mjs');
+  const { createReferenceService } = await import('../../packages/reference/service.mjs');
+  const svc = createReferenceService({ executionMode: 'stub' });
+  const serverList = svc.listHerbicides({ limit: 50 }, 'gy-r73').body.data.items;
+  const serverByRegistration = new Map(serverList.map((item) => [item.formulation.registration_number, item]));
+  assert.equal(serverList.length, 20);
+  assert.equal(miniReference.records.length, 20);
+
+  let equal = 0;
+  for (const record of miniReference.records) {
+    assert.match(record.record_id, /^gy-i03-hb-\d{3}$/, `${record.record_id}：可读记录号必须原样保留`);
+    assert.equal(record.id, deterministicUuid(record.record_id), `${record.record_id}：接口 id 必须由服务端同一函数派生`);
+    const server = serverByRegistration.get(record.registration_number);
+    assert.ok(server, `${record.record_id}：服务端列表里必须有同一条记录（登记证号 ${record.registration_number}）`);
+    assert.equal(record.id, server.id, `${record.record_id}：随包 id 必须等于服务端同一记录的 id`);
+    if (record.id === server.id) equal += 1;
+  }
+  assert.equal(equal, 20, '必须 20/20 相等（不是"同样多"）');
+  // 逐条不同：派生碰撞会让两个随包条目指向服务端同一条详情。
+  assert.equal(new Set(miniReference.records.map((x) => x.id)).size, 20);
+});
+
+test('GY-R73：详情既能用接口 id 打开，也能用旧记录号打开（老链接不失效）', () => {
+  for (const record of miniReference.records) {
+    const byId = miniReference.detail(record.id);
+    const byRecordId = miniReference.detail(record.record_id);
+    assert.equal(byId.record_id, record.record_id, `${record.id} 应命中 ${record.record_id}`);
+    assert.equal(byRecordId.id, record.id, `旧记录号 ${record.record_id} 仍应命中同一条`);
+    assert.equal(byId.source_version, byRecordId.source_version);
+  }
+});
+
 test('小程序侧种子检索按名称/别称精确匹配（不合并记录）', () => {
   assert.equal(miniReference.seedSearch('百草枯').length, 1);
   assert.equal(miniReference.seedSearch('克芜踪').length, 1);

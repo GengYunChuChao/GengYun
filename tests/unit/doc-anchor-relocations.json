@@ -562,7 +562,7 @@
   },
   {
     "doc": "docs/ui-state-inventory.md",
-    "line": 304,
+    "line": 305,
     "target": "miniprogram/pages/favorites/favorites.js",
     "from": 108,
     "fromEnd": 110,
@@ -570,7 +570,7 @@
     "toEnd": 140,
     "kind": "correction",
     "symbol": "canOpen",
-    "reason": "真实父（53354fe7）:126-128 是 `available:`、可用性注释与 `canOpen:`，语义正确；本提交在 :87 前插入 12 行，现平移到 HEAD :138-140（三行原文完全相同，属纯位移）。登记保留历史 from=108-110：真实父 :108-110 是 setData 收尾 `})`、空行与 `},`，不含 canOpen；只更新 to 两端，不按 +21 机械平移。"
+    "reason": "真实父（53354fe7）:126-128 是 `available:`、可用性注释与 `canOpen:`，语义正确；本提交在 :87 前插入 12 行，现平移到 HEAD :138-140（三行原文完全相同，属纯位移）。登记保留历史 from=108-110：真实父 :108-110 是 setData 收尾 `})`、空行与 `},`，不含 canOpen；只更新 to 两端，不按 +21 机械平移。（GY-R73 追记：该文件在表头上方新增一行 GY-R73 括注，表行整体 +1，本条 doc 行号 304→305；锚点内容与目标行号未变。）"
   },
   {
     "doc": "docs/ui-state-inventory.md",
@@ -1371,5 +1371,25 @@
     "reason": "旧锚点 51-63 在父 53354fe 上起于 `onLoad` 的 `this._epoch = 0`（51），经 `onShow` 到 `that.setData({ guest: !ok })`（63）就断，既多带 onLoad 尾行、又漏掉真正发起重取的 `if (ok) that.reload()`（64）；本次按符号 `that.reload()` 重锚到 HEAD 54-66。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
     "kind": "correction",
     "symbol": "that.reload()"
+  },
+  {
+    "doc": "docs/architecture/acceptance-map.md",
+    "line": 92,
+    "target": "miniprogram/utils/knowledge-api.js",
+    "from": 224,
+    "to": 271,
+    "kind": "correction",
+    "symbol": "validId",
+    "reason": "按符号重锚，不是随代码位移：旧值 224 在 base（b9d91bbc）上是 \function remember(item, input) {（选择态记忆的开始），本来就不是 \u000balidId —— 属既有陈旧锚点。GY-R73 给 herbicideRow 加了一行 id: item.id（+3 行），端点映射只会把 224 机械搬到 227，那仍是 remember。真正的 \u000balidId 是 module.exports 里的箭头 \u000balidId: id => typeof id === 'string' && UUID.test(id)，HEAD 在 :271；同一文件 :8 的 const UUID 是它用的正则。改这一行是因为原文「随包记录号恒假 ⇒ 永远走随包支」的前提已被 GY-R73 推翻（随包也带 uuid），必须同时改判据出处，否则文档说的 \u000balidId 指着一个不相干的函数。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 303,
+    "target": "miniprogram/utils/knowledge-api.js",
+    "from": 224,
+    "to": 271,
+    "kind": "correction",
+    "symbol": "validId",
+    "reason": "同上（acceptance-map 第 1 条与本节表行③引的是同一处）：旧值 224 在 base 上是 \function remember(item, input) {，是既有陈旧锚点；GY-R73 的 +3 行端点映射只会把它搬到 227（仍是 remember）。真值 \u000balidId 在 HEAD :271（module.exports 里的箭头），按符号重锚。"
   }
 ]

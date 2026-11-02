@@ -13,12 +13,15 @@ const fontScale = require('../../utils/font-scale')
 //   为空上下文放行具体用量（阻塞 C）。
 //
 // GY-I07 D1 数据来源（两条路径，逐条可判定，互不冒充）：
-// - `data_source='server'`：recordId 是 UUID ⇒ 走服务端 `GET /herbicides/{id}`
-//   （miniprogram/utils/knowledge-api.js）。该接口**不提供**用量卡与适用性字段，
-//   页面据此如实说明并**不展示任何用量**；`registered_name`/`toxicity`/`use_scene`
+// - `data_source='server'`：route id 是 UUID（即 `GET /herbicides/{id}` 的 {id}）⇒ 走服务端
+//   `GET /herbicides/{id}`（miniprogram/utils/knowledge-api.js）。该接口**不提供**用量卡与
+//   适用性字段，页面据此如实说明并**不展示任何用量**；`registered_name`/`toxicity`/`use_scene`
 //   在 Herbicide 契约里不存在，页面按「接口未提供」呈现，不用成分名拼接冒名登记名称。
-// - `data_source='bundled-offline'`：非 UUID 的随包记录 id（如 gy-i03-hb-001）⇒ 读随包
-//   离线副本（utils/reference.js），页面显式标注离线来源与 GY-I08 用量资格口径。
+// - `data_source='bundled-offline'`：读随包离线副本（utils/reference.js），页面显式标注离线
+//   来源与 GY-I08 用量资格口径。进入这一支有**两个**可判定入口：①路由带
+//   `&source=bundled-offline`（列表卡片对随包行显式带上 —— GY-R73 起随包记录的 `id` 也等于
+//   服务端 uuid，光看 id 形状已分不出来源）；②没有 source 提示的旧链接按形状判：非 UUID
+//   （如 gy-i03-hb-001）⇒ 随包副本，老链接不因这次对齐而失效。
 // 失败一律按冻结闭集文案提示（404 ⇒ `NOT_FOUND`），**不落回离线副本**。
 
 const auth = require('../../utils/auth')
@@ -47,6 +50,18 @@ function profileFailureText(code) {
     INVALID_RESPONSE: '档案数据不可用，请重试。'
   }
   return messages[code] || '档案暂时无法读取，请重试。'
+}
+
+// GY-R73：列表卡片对随包行显式带上 `&source=bundled-offline`——随包记录的 `id` 现在也等于
+// 服务端 uuid，光看 id 形状已经分不出来源。这里**只认这一个值**：其余值一概忽略（来源必须
+// 可判定、可解释，不能靠猜；未知来源退回形状判据，不悄悄改变读数口径）。
+function detailSource(options) {
+  const raw = options && options.source
+  if (typeof raw !== 'string' || raw.length > 64) return ''
+  try {
+    const source = decodeURIComponent(raw)
+    return source === knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE ? source : ''
+  } catch (_) { return '' }
 }
 
 Page({
@@ -97,6 +112,7 @@ Page({
   onLoad: function (options) {
     fontScale.applyFontScale(this)
     this._detailId = detailId(options)
+    this._detailSource = detailSource(options)
     this.checkGate()
   },
 
@@ -110,9 +126,12 @@ Page({
         self.setData({ gatePassed: false, recordId: '', found: false, detail: null, labels: null, verifiedScope: [], notCollected: [], unavailableReason: '', queryable: true, doseCard: null, applicability: null, advice: null, profileConfirmed: false, profileContext: null, profileLoading: false, profileError: '', dataSource: '', sourceMarker: '', notFoundText: '', notFoundCode: '', detailFailed: false, doseCardNote: '', busy: false })
         return
       }
-      // 路由判定（可判定，不靠文案）：UUID ⇒ 服务端 `GET /herbicides/{id}`；
-      // 其余（随包记录 id，如 gy-i03-hb-001）⇒ 随包离线副本。
-      const server = knowledgeApi.validId(recordId)
+      // 路由判定（可判定，不靠文案，两个入口互不冒充）：
+      // ① 路由显式带 `source=bundled-offline` ⇒ 随包离线副本（随包 id 现在也是 uuid，形状分不出来）；
+      // ② 无来路提示的旧链接按形状判：UUID ⇒ 服务端 `GET /herbicides/{id}`；其余
+      //    （如随包记录号 gy-i03-hb-001）⇒ 随包离线副本。
+      const bundled = self._detailSource === knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE
+      const server = bundled ? false : knowledgeApi.validId(recordId)
       self.setData({
         gatePassed: true,
         recordId: recordId,
