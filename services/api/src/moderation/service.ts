@@ -38,7 +38,7 @@ import {
   requiredPortKindsFor,
   taskView,
 } from './decisions.ts';
-import type { KindProjection, ModerationLedger } from './decisions.ts';
+import type { KindProjection, ModerationLedger } from './decisions.ts'; import { conclusionStaleReasonsOf, type ModerationConclusionFactsPort } from './conclusion-facts.ts'; /* GY-R72 W54：结论新鲜度的判定逻辑整个住在 `conclusion-facts.ts`——本文件被 `docs/` 按行号引 55 处，只留「一行调用 + 一行 import」，净 0 行。 */
 import {
   CALLBACK_MAX_SKEW_MS,
   createCallbackReplayGuard,
@@ -146,7 +146,7 @@ export interface ModerationServiceDeps {
   /** 规则层选项（测试可注入冻结时钟/预算/自定义规则集；生产用出厂规则集）。 */
   ruleOptions?: Record<string, unknown>;
   /** 模型端口超时（毫秒），透传合流层 `deadline_ms`。 */
-  modelDeadlineMs?: number; /* GY-R72：`idempotency` = 取消面的幂等台账（缺省 ⇒ 不注入、取消仍走旧的"重复取消不报错"路径，行为与接线前逐字节相同）；`idempotencyHmacKey` = `requestHash` 的 HMAC 密钥（与其它五源同源：`config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY`，只在内存、不入库不入日志）。与上一字段**同行**以免推移本文件行号。 */ idempotency?: ModerationIdempotencyStore; idempotencyHmacKey?: string;
+  modelDeadlineMs?: number; /* GY-R72：`idempotency` = 取消面的幂等台账（缺省 ⇒ 不注入、取消仍走旧的"重复取消不报错"路径，行为与接线前逐字节相同）；`idempotencyHmacKey` = `requestHash` 的 HMAC 密钥（与其它五源同源：`config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY`，只在内存、不入库不入日志）。与上一字段**同行**以免推移本文件行号。 */ idempotency?: ModerationIdempotencyStore; idempotencyHmacKey?: string; /* GY-R72 W54：`conclusionFacts` = 结论事实的**只读**端口（只在内存台账为空时被问一次：重启后仍能判 `RESCREEN_REQUIRED`；缺省 ⇒ 不注入、新鲜度只按内存台账算，行为与接线前逐字节相同；它**不参与**任何可见性判定）。同样**同行**以免推移本文件行号。 */ conclusionFacts?: ModerationConclusionFactsPort;
 }
 
 export interface ScreeningOutcome {
@@ -1091,17 +1091,17 @@ function createModerationServiceResolved(
     // 不知道"结论新鲜度"这一维，留着就是脏条目）。契约状态**不新增**：过期沿用既有原因码
     // 词汇（`*_VERSION_CHANGED`/`*_UNKNOWN`），对用户的"待重评"由社区读面既有的
     // `audit_state: 'pending'` 表达。
-    const staleReasons =
-      verdict.visible && verdict.visibility === 'published'
-        ? [
-            ...new Set(
-              ledger.forRevision(target).flatMap((task) => {
-                const fresh = versionFreshnessOf(task);
-                return fresh.stale ? fresh.reason_codes : [];
-              }),
-            ),
-          ].slice(0, 30)
-        : [];
+    // 结论新鲜度：**内存有结论就按内存算**（与改前逐字同口径；端口缺席时行为完全一致）；
+    // 内存里没有（典型：进程刚重启）**才**问只读的结论事实端口（`conclusion-facts.ts`）；
+    // 两者都空 ⇒ 维持改前的 `stale:false`：拿不到事实只允许**少判** stale，
+    // 且端口不参与可见性判定（它一个可见性字段都不带，`present`/`effectiveState` 一字未动）。
+    const staleReasons = await conclusionStaleReasonsOf({
+      target,
+      ledger,
+      port: deps.conclusionFacts,
+      visible_published: verdict.visible && verdict.visibility === 'published',
+      freshness: { task: versionFreshnessOf, rule: currentRuleVersion, model: currentModelVersion, prompt: (kind) => currentPromptVersion(kind === 'image' ? 1 : 0) },
+    });
     if (staleReasons.length > 0) {
       const keys = cache.invalidateTarget(target);
       return {

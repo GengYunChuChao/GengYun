@@ -1509,8 +1509,10 @@ END;
 $$;
 REVOKE ALL ON TABLE public.moderation_decisions, public.moderation_withdrawals FROM PUBLIC;
 
--- 审核判定台账（迁移 0028）：ledger-pg.ts:74 的 INSERT 26 列；SELECT 只给 WHERE/冲突目标用到的 6 列。
-GRANT SELECT (job_id,target_type,target_id,target_revision,content_kind,superseded)
+-- 审核判定台账（迁移 0028）：ledger-pg.ts 的 INSERT 26 列；SELECT 只给 WHERE/冲突目标用到的 6 列；
+-- W54 再补 6 列给结论新鲜度只读端口（moderation/conclusion-facts-pg.ts 的 CONCLUSION_FACTS_SQL，只判 RESCREEN_REQUIRED、不参与可见性）⇒ 共 12 列。
+GRANT SELECT (job_id,target_type,target_id,target_revision,content_kind,superseded,
+              rule_version,model_version,prompt_version,concluded_at,decision,updated_at)
   ON public.moderation_decisions TO gengyun_api_runtime;
 GRANT INSERT (job_id,target_type,target_id,target_revision,content_kind,port_kind,prompt_id,
               prompt_version,job_revision,state,lease_token,authorization_epoch,submitted_by,

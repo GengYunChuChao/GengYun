@@ -76,12 +76,12 @@ const ADDITIONAL_SQL_HOST_FILES = [
   'jobs/ledger.ts',
   'knowledge/service.ts',
   'media/store-pg.ts',
-  // R72-W41（2026-11-01）：审核域持久幂等台账 `public.moderation_idempotency` 的唯一写入点
-  // （迁移 0051；五条语句各是 find/claim/finalize/release/purge 一个方法）。它不在 8 个 store-pg
-  // 目录里，但写的是**运行时的真表**，所以进真审计而不是 UNAUDITED 桶：六列 SELECT / 六列 INSERT /
-  // 四列 UPDATE / 表级 DELETE 缺一列就红（与 20-login-roles.sql 的
-  // `gy-r72-moderation-idempotency-grant` / `…-delete` 两区逐列对应）。
-  'moderation/idempotency-store.ts',
+  // R72-W41 / W54（2026-11-01 / 11-02）：审核域两张持久表的真审计入口——幂等台账
+  // `public.moderation_idempotency`（迁移 0051：find/claim/finalize/release/purge 五条语句）与结论
+  // 事实读面 `public.moderation_decisions`（迁移 0052：W54 的一条只读 SELECT，六列 + 谓词列）。两者都
+  // 不在 8 个 store-pg 目录里，但碰的是**运行时的真表**，所以进真审计而不是 UNAUDITED 桶：缺一列授权
+  // 就红（与 20-login-roles.sql 的 `gy-r72-moderation-idempotency-grant` / `…-delete` 两区、段 M3 对应）。
+  'moderation/conclusion-facts-pg.ts', 'moderation/idempotency-store.ts',
   'moderation/ledger-pg.ts',
   'privacy/backup-copies-pg.ts',
   'privacy/consent-pg.ts',
@@ -879,9 +879,9 @@ const TABLE_WIDE_COLUMN = '*';
  *   **没有把任何数字往下改**：+1 条字面量与 +3 条列要求都是那条真 SELECT 带来的（回填只读三列）。
  */
 const EXPECTED_EXTENDED_READINGS = {
-  auditedFiles: 23,
-  sqlLiterals: 320,
-  statements: { INSERT: 49, UPDATE: 58, SELECT: 170, DELETE: 43 },
+  auditedFiles: 24,
+  sqlLiterals: 321,
+  statements: { INSERT: 49, UPDATE: 58, SELECT: 171, DELETE: 43 },
   returningClauses: 99,
   onConflictClauses: 31,
   selectStar: 15,
@@ -890,8 +890,8 @@ const EXPECTED_EXTENDED_READINGS = {
   functionCalls: 2,
   noTargetTable: 18,
   referencedTables: 52,
-  columnRequirements: 2072,
-  coveredRequirements: 1971,
+  columnRequirements: 2079,
+  coveredRequirements: 1978,
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -913,9 +913,9 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'knowledge/service.ts': 4,
   'media': 23,
   'messages': 15,
-  // R72-W41（2026-11-01）：审核域幂等台账 store 的 6 条 SQL 字面量 —— 五条业务语句
-  // （find / claim / finalize / release / purge）+ 一条 `to_regclass` 就绪探测。
-  'moderation/idempotency-store.ts': 6,
+  // R72-W41（2026-11-01）：审核域幂等台账 store 的 6 条 SQL 字面量 —— 五条业务语句（find / claim /
+  // finalize / release / purge）+ 一条 `to_regclass` 就绪探测。R72-W54：结论事实读面 1 条只读 SELECT。
+  'moderation/conclusion-facts-pg.ts': 1, 'moderation/idempotency-store.ts': 6,
   'moderation/ledger-pg.ts': 6,
   'ocr': 19,
   'privacy/backup-copies-pg.ts': 4,
@@ -2651,11 +2651,11 @@ test('sql-column-coverage/扩展 22 文件读数与列覆盖（R28-S66 / R28-W12
   assert.deepEqual(extended.coverage.staleExemptions, [], `豁免表里有对不上任何缺口的条目：\n${extended.coverage.staleExemptions.join('\n')}`);
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 22 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01 / R72-W41）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 24 已审计 + 13 登记（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01 / R72-W41 / R72-W54）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 36, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 37, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2670,6 +2670,7 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/knowledge/service.ts',
       'services/api/src/media/store-pg.ts',
       'services/api/src/messages/store-pg.ts',
+      'services/api/src/moderation/conclusion-facts-pg.ts',
       'services/api/src/moderation/idempotency-store.ts',
       'services/api/src/moderation/ledger-pg.ts',
       'services/api/src/ocr/store-pg.ts',
