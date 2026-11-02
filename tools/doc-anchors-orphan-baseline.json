@@ -212,6 +212,12 @@
       "accept": 4,
       "orphans": 3540,
       "outsideRed": 128
+    },
+    {
+      "why": "GY-R73：#850 把 cases.mjs 写长 71 行后，gy-r31-i22 归档页那三条原本 OUT_OF_RANGE 的裸锚点落进文件范围，册上三条转陈旧；本次无新增孤儿锚点，按陈旧清理重生成",
+      "accept": 0,
+      "orphans": 3540,
+      "outsideRed": 125
     }
   ],
   "orphans": [
@@ -3839,9 +3845,6 @@
     "docs/verification/gy-r31-i14-recon-20261022.md|docs/architecture/contract-status.json:684|SUSPECT",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|20-login-roles.sql:511|SUSPECT",
     "docs/verification/gy-r31-i17-recon-20261022.md|miniprogram/pages/messages/messages.js:195|SUSPECT",
-    "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:582|OUT_OF_RANGE",
-    "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:587-588|OUT_OF_RANGE",
-    "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:592|OUT_OF_RANGE",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|ocr-http.mjs:1996|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|services/api/src/routes/admin.ts:179-180|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|tts-content-wiring.mjs:328|OUT_OF_RANGE",
