@@ -238,6 +238,7 @@ const CHECKED_ADMIN_OPS = Object.freeze([
   'approvePost',
   'rejectPost',
   'listAuditEvents',
+  'advanceReport',
 ]);
 
 /**
@@ -253,14 +254,14 @@ const PENDING_SUFFIX_OPS = Object.freeze([]);
 const TEMPLATE_DESCRIPTION = '遵循状态协议：服务端归属/当前版本/授权检查；未满足条件返回明确错误。';
 
 /** `/admin/**` operation 实测数（A1）。 */
-const ADMIN_OP_COUNT = 49;
+const ADMIN_OP_COUNT = 50;
 
 /**
  * 49 条 admin op 里**声明了** `Idempotency-Key`／`If-Match` 的条数（C③ 的断言面，实测）。
  * 另外 20 条是纯读面，一个 header 都没声明——`headerProblems` 对它们不产生期望值，也不计入
  * `asserted`，所以 C③ 的断言面只能是 29，⛔ 不能照抄 `ADMIN_OP_COUNT`。
  */
-const ADMIN_HEADER_DECLARING_OP_COUNT = 29;
+const ADMIN_HEADER_DECLARING_OP_COUNT = 30;
 
 /** `/me/**` operation 实测数（A4）：13 条 path、17 条 operation（含 `/media/**` 5 条与 `/messages/**` 3 条）。 */
 const ME_OP_COUNT = 17;
@@ -623,7 +624,7 @@ function headerProblems(entries) {
   return { problems, asserted };
 }
 
-test('A1 `/admin/**` operation 数 === 49（扫描面反空转）', () => {
+test('A1 `/admin/**` operation 数 === 50（扫描面反空转）', () => {
   assert.notEqual(SPEC_PATH, '', '读取路径为空');
   assert.ok(
     Object.keys(spec.paths ?? {}).length > 0,
@@ -665,7 +666,7 @@ test('A2 REWRITTEN_ADMIN_OPS 恰好 28 个，且逐个在 spec 里找得到', ()
   );
 });
 
-test('A2b CHECKED_ADMIN_OPS 恰好 49 条，与 admin 族实际 operationId 集合双向相等（B／C 的遍历面反空转）', () => {
+test('A2b CHECKED_ADMIN_OPS 恰好 50 条，与 admin 族实际 operationId 集合双向相等（B／C 的遍历面反空转）', () => {
   // 1. 长度钉死：少一条 ⇒ 有人把 op 从遍历面里挪走了；多一条 ⇒ 名单里混进了不存在的 id。
   assert.equal(
     CHECKED_ADMIN_OPS.length,

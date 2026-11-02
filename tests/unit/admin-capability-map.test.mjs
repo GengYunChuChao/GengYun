@@ -37,22 +37,27 @@ const SOURCE_PATHS = [
 ];
 
 /**
- * UI 侧真实缺口：**当前为空**。
+ * UI 侧真实缺口：**只有一条**。
  *
  * 2026-10-28 之前这里是 `['grantAdministratorScope', 'revokeAdministratorScope']`——两条授/撤权
  * 写面只有 operationId 常量、没有客户端函数，因此没有入口。GY-R68 把
  * `apps/admin/src/lib/administrator-scope-api.mjs` 与 `AdministratorsView.vue` 的调用链接上之后，
  * 缺口清零。
  *
- * R72（扫描面从 `admin.ts` 扩到整个 `services/api/src/routes/`）之后总数是 49 条：`admin.ts`
- * 46 条 + `admin-auth.ts` 3 条 auth。那 3 条不是缺口——`apps/admin/src/auth/session.ts` 的
- * `loadAdminSession` / `signInAdmin` / `signOutAdmin` 就是它们的客户端，9 个视图真调了这三个函数。
+ * R72（扫描面从 `admin.ts` 扩到整个 `services/api/src/routes/`）之后总数是 50 条：`admin.ts`
+ * 46 条 + `admin-auth.ts` 3 条 auth + `admin-reports.ts` 1 条举报处置。那 3 条 auth 不是缺口——
+ * `apps/admin/src/auth/session.ts` 的 `loadAdminSession` / `signInAdmin` / `signOutAdmin` 就是
+ * 它们的客户端，9 个视图真调了这三个函数。
+ *
+ * R72 把 `POST /admin/reports/{id}/disposition` 接上了 HTTP（`advanceReport`），但后台还没有
+ * 举报处置界面 ⇒ 如实登记为「有后端面、无 UI 入口」，**不是回归**：缺口本来就该被能力图看见，
+ * 不是从 `noUiEntryList` 里抹掉。
  *
  * 这个常量是**断言**，不是注释：它和 `noUiEntryList` 双向对拍（多一条少一条都红）。
  * 清单清空不等于判据放宽——哪天有人把入口拆掉，这里必须先被显式改回来，闸门才会重新变绿。
  * 反过来，任何「登记进来但能力图里没有这一行」的名字同样红（见下方 `KNOWN_NO_UI_ENTRY` 对拍）。
  */
-const KNOWN_NO_UI_ENTRY = [];
+const KNOWN_NO_UI_ENTRY = ['advanceReport'];
 
 function makeTempTree(t) {
   const root = mkdtempSync(join(tmpdir(), 'capmap-'));

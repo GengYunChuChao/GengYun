@@ -303,7 +303,7 @@ test('回滚件 0048：只 DROP FUNCTION，⛔ 不删审计行', () => {
 // ---------------------------------------------------------------------------
 // 闭集：catalog 10 值 + `admin_account` 实体 + 动作护栏
 // ---------------------------------------------------------------------------
-test('审计闭集：AUDIT_ACTIONS 十一值、admin_account 实体自带动作护栏', () => {
+test('审计闭集：AUDIT_ACTIONS 十四值、admin_account 实体自带动作护栏', () => {
   const catalog = read(CATALOG);
   const list = catalog.match(/export const AUDIT_ACTIONS = Object\.freeze\(\[([\s\S]*?)\] as const\);/);
   assert.ok(list !== null, 'AUDIT_ACTIONS 的声明形状变了（本钉子靠解析数组字面量取顺序）');
@@ -320,6 +320,10 @@ test('审计闭集：AUDIT_ACTIONS 十一值、admin_account 实体自带动作�
     'AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE',
     'AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE',
     'AUDIT_ACTION_CATEGORY_UPDATE',
+    // R72 #838（迁移 0053）：举报处置三值追加在末尾，`closed` 一值两义才可筛。
+    'AUDIT_ACTION_REPORT_TRIAGE',
+    'AUDIT_ACTION_REPORT_RESOLVE',
+    'AUDIT_ACTION_REPORT_REJECT',
   ]);
   // 实体名是 `admin_account`（⛔ 不是 `account`：那一个指 0017 的普通用户停用）。
   assert.ok(
@@ -342,10 +346,11 @@ test('契约：`?action=` / `?entity=` enum 与运行时逐字同序，且两个
   const params = openapi.paths['/admin/audit-logs'].get.parameters;
   const actionEnum = params.find((p) => p.name === 'action').schema.enum;
   const entityEnum = params.find((p) => p.name === 'entity').schema.enum;
-  // R68-A01 起 `category.update` 是第 11 值（迁移 0049 的落库写入点），故 0048 的两个值不再是末两项。
-  assert.deepEqual(actionEnum.slice(-3, -1), ['admin_account.disable', 'admin_account.enable']);
-  assert.equal(actionEnum[actionEnum.length - 1], 'category.update', '`category.update` 必须是末位（扩值只能追加）');
-  assert.equal(actionEnum.length, 11, '契约 action 枚举必须与 AUDIT_ACTIONS 同长（十一项）');
+  // R68-A01 起 `category.update` 是第 11 值（迁移 0049 的落库写入点）；R72 #838 追加第 12–14 值
+  // （`report.triage` / `report.resolve` / `report.reject`，迁移 0053 的举报处置审计写入点）。
+  assert.deepEqual(actionEnum.slice(8, 10), ['admin_account.disable', 'admin_account.enable']);
+  assert.equal(actionEnum[actionEnum.length - 1], 'report.reject', '扩值只能追加：末位是 R72 #838 的 `report.reject`（其前是 report.triage / report.resolve）');
+  assert.equal(actionEnum.length, 14, '契约 action 枚举必须与 AUDIT_ACTIONS 同长（十四项）');
   assert.ok(entityEnum.includes('admin_account'), '`?entity=` 的 enum 缺 `admin_account`');
 
   for (const path of ['/admin/administrators/{id}/disable', '/admin/administrators/{id}/enable']) {

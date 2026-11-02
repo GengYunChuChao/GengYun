@@ -11223,7 +11223,7 @@
                 "admin_scope.deny",
                 "post.hide",
                 "admin_account.disable",
-                "admin_account.enable", "category.update"
+                "admin_account.enable", "category.update", "report.triage", "report.resolve", "report.reject"
               ]
             }
           },
@@ -11997,6 +11997,110 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PostRejectionInput"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/reports/{id}/disposition": {
+      "post": {
+        "operationId": "advanceReport",
+        "summary": "按举报状态机推进一条举报（受理隔离 / 处置完毕 / 驳回）",
+        "description": "门 sources:write（复用既有 scope，不新造）；在 ADMIN_HTTP_OPERATION_IDS 与 OPS_SCOPES 双处登记。Idempotency-Key 必填（缺失 ⇒ 400 IDEMPOTENCY_KEY_REQUIRED，同键异体 ⇒ 409 IDEMPOTENCY_CONFLICT，同键进行中 ⇒ 409 REQUEST_IN_PROGRESS）。**版本前置条件走请求体的 expected_revision，不是 If-Match**：底层 community/service.ts 的 advanceReport(reportId, input) 入参类型已冻结、community/validate.ts 的 validateReportDispositionInput 只接受 action 与 expected_revision 两个字段（未知字段一律 400），要从 header 读就必须改这两个签名 ⇒ 本 operation 不声明 If-Match、x-version-required 为 false；因此本 operation 没有「前置条件头缺失」这一档，缺 expected_revision 得到 400 INVALID_REQUEST（details 逐字段）。body 是 ReportDispositionInput：action 取 triage|resolve|reject 闭集（非闭集值 ⇒ 400 INVALID_REQUEST）；expected_revision 为 ≥1 的安全整数；多余字段 ⇒ 400。路径 id 非 uuid ⇒ 400 INVALID_REQUEST。转移表的唯一权威是 community/report-state.ts：triage 只允许 received→isolated；resolve 允许 received|isolated→closed；reject 只允许 received→closed。closed 是终态，再处置一律 409 REVISION_CONFLICT「举报已处置完毕，不可再次处置」；当前状态不接受该动作 ⇒ 409 REVISION_CONFLICT「举报当前状态不接受该处置动作」（契约 409 闭集没有 STATE_CONFLICT，故折叠为同一码）。expected_revision 与库内 revision 不一致 ⇒ 条件更新拒绝 409 REVISION_CONFLICT，库内 state/revision 一字不变（commitReportIfCurrent 是条件更新，不是先读后无条件写）。举报不存在 ⇒ 404 NOT_FOUND。成功 200，封套 data 为处置后的 Report，强 ETag 等于其 revision，Cache-Control 为 no-store。⚠ 本 operation 不写审计行、不改目标内容的社区可见性：triage 只把举报自身推进到 isolated，把内容送进隔离由审核域下架链路另行执行；且 closed 一值两义（community/report-state.ts 的已知弱化里已登记），「成立」与「驳回」不可从 state 单列反查 —— 两项都需要新增列或新增审计动作，属迁移片，另批。",
+        "tags": [
+          "admin"
+        ],
+        "security": [
+          {
+            "adminSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "415": {
+            "$ref": "#/components/responses/Error415"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "sources:write",
+        "x-version-required": false,
+        "x-task": "GY-R72",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportDispositionInput"
               }
             }
           }
@@ -15729,6 +15833,28 @@
           "reason_code"
         ]
       },
+      "ReportDispositionInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "triage",
+              "resolve",
+              "reject"
+            ]
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "action",
+          "expected_revision"
+        ]
+      },
       "FavoriteTarget": {
         "type": "object",
         "additionalProperties": false,
@@ -19286,7 +19412,7 @@
       },
       "AuditAction": {
         "type": "string",
-        "description": "审计 `action` 的**完整闭集（26 值）**，不是自由字符串。前 11 项 = 库内审计台账 `public.admin_audit_events` 的唯一取值域，逐值同序抄自 `services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS`（`GET /admin/audit-logs` 的 `?action=` 参数 enum 与它双向相等）；后 15 项 = 内存审计账本（`services/api/src/admin/audit.ts` 的 `createAuditLog`，`GET /admin/audit-events` 与 `GET /admin/flag-audit-events` 的行源）自己产生的域内动作码：内容域四条族 `<noun>.edit|publish|withdraw`（noun ∈ source/knowledge/registration/restriction）与运营域 `flag.set` / `post.approve` / `post.reject`（`category.update` 自 GY-R68-A01 起改由迁移 `0049` 的窄函数落库，已成库内第 11 值）。两套词表不可合并：库内只有 11 个写入动作，内存账本按域记更细的码（同一件事在库内叫 `set_flag`、在内存账本里叫 `flag.set`），所以「审计事件」这一个 schema 覆盖的取值域是两者的**并集**；只列 10 项会让 `store.audit.append` 的既有写入路径当场 500（`services/api/src/admin/audit.ts:100` 用本 schema 校验每一次追加）。闭集由 `tests/unit/audit-action-literal-coverage.test.mjs` 从源码派生后与契约双向对拍：增、删、改任一值都会红。",
+        "description": "审计 `action` 的**完整闭集（29 值）**，不是自由字符串。前 14 项 = 库内审计台账 `public.admin_audit_events` 的唯一取值域，逐值同序抄自 `services/api/src/admin/audit/catalog.ts` 的 `AUDIT_ACTIONS`（`GET /admin/audit-logs` 的 `?action=` 参数 enum 与它双向相等）；后 15 项 = 内存审计账本（`services/api/src/admin/audit.ts` 的 `createAuditLog`，`GET /admin/audit-events` 与 `GET /admin/flag-audit-events` 的行源）自己产生的域内动作码：内容域四条族 `<noun>.edit|publish|withdraw`（noun ∈ source/knowledge/registration/restriction）与运营域 `flag.set` / `post.approve` / `post.reject`（`category.update` 自 GY-R68-A01 起改由迁移 `0049` 的窄函数落库，已成库内第 11 值；`report.triage` / `report.resolve` / `report.reject` 自 R72 #838 起由迁移 `0053` 的举报处置审计函数按 `p_action` 落库，是库内第 12–14 值 —— 三者分开列，`closed` 一值两义的「成立/驳回」才可筛）。两套词表不可合并：库内只有 14 个写入动作，内存账本按域记更细的码（同一件事在库内叫 `set_flag`、在内存账本里叫 `flag.set`），所以「审计事件」这一个 schema 覆盖的取值域是两者的**并集**；只列 10 项会让 `store.audit.append` 的既有写入路径当场 500（`services/api/src/admin/audit.ts:100` 用本 schema 校验每一次追加）。闭集由 `tests/unit/audit-action-literal-coverage.test.mjs` 从源码派生后与契约双向对拍：增、删、改任一值都会红。",
         "enum": [
           "account.suspend",
           "account.restore",
@@ -19298,7 +19424,7 @@
           "post.hide",
           "admin_account.disable",
           "admin_account.enable",
-          "category.update",
+          "category.update", "report.triage", "report.resolve", "report.reject",
           "source.edit",
           "source.publish",
           "source.withdraw",
