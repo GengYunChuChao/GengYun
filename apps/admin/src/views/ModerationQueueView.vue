@@ -2,11 +2,12 @@
 /**
  * R62 · 社区审核队列（只读 + 审核动作）页面。
  *
- * 只调四个**已经在服务端落地**的 operation，不新增契约：
+ * 只调五个**已经在服务端落地**的 operation，不新增契约：
  * - `GET  /admin/posts`              `listAdminPosts`  scope `sources:read`（limit / cursor / state / audit_state）
  * - `GET  /admin/posts/{id}`         `getAdminPost`    scope `sources:read`
  * - `POST /admin/posts/{id}/approve` `approvePost`     scope `sources:write`（契约里**没有**请求体）
  * - `POST /admin/posts/{id}/reject`  `rejectPost`      scope `sources:write`（body 只有 `reason_code`）
+ * - `POST /admin/posts/{id}/hide`    `hidePost`        scope `sources:write`（body 只有 `reason`；与审核**同一道门**）
  * ⛔ 参数名照抄契约：筛选是 `state` 与 `audit_state`，不是 `entity`／`entity_type`。
  * ⛔ 本页不做人审工作流（审核人、投票、专家认证）：那是另一个概念，占位页仍留在原处。
  *
@@ -16,6 +17,8 @@
  * - 空数组是空态（不是错误）；筛选下为空与「队列本身为空」分开说；
  * - 换筛选／换每页条数一律回第一页（后端游标与 [state,audit_state] 绑定，否则 INVALID_CURSOR）；
  * - 200 + `changed: false` 如实显示「已是该状态」，不假装刚成功，也不改本地行；
+ * - `hide` 的 200 回执里**没有** `changed` 字段（只有 `accepted`）⇒ 页面用「操作前 visibility 已是 hidden」
+ *   判「已是该状态」，不把重放说成刚下架成功；
  * - 动作成功后按回执更新当前行，并**重新读一次详情**拿到真实 ETag。
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
@@ -52,6 +55,12 @@ import {
   VISIBILITY_STATES,
   VISIBILITY_LABELS,
 } from '../lib/admin-moderation-queue.mjs';
+import {
+  buildReason,
+  describeHideAccepted,
+  describeTakedownFailure,
+  hidePost,
+} from '../lib/post-takedown-api.mjs';
 
 const state = ref(initialModerationQueueState());
 const session = ref(null);
@@ -66,6 +75,16 @@ let keySeq = 0;
 let currentToken = null;
 /** 同一次动作的重放复用同一个 Idempotency-Key（契约：同主体/方法/路径的键域）。 */
 const idempotencyKeys = new Map();
+
+/**
+ * 下架（`hidePost`）用**视图本地**状态：不改 `initialModerationQueueState()`／reducer 的既有字段，
+ * 免得动到已经绿的队列状态断言。它只服务详情侧栏那一个动作。
+ */
+const hideReason = ref('');
+const hideConfirmed = ref(false);
+const hideBusy = ref(false);
+const hideNotice = ref(null);
+const hideFailure = ref(null);
 
 const view = computed(() => describeQueueView(state.value));
 const rows = computed(() => moderationQueueRows(state.value));
@@ -87,6 +106,23 @@ const limitChoices = computed(() => {
     : [...MODERATION_LIMIT_OPTIONS, current].sort((left, right) => left - right);
 });
 const actionBlocked = computed(() => state.value.actionBusy === true || state.value.detail === null);
+
+/** 下架与审核同门（`hidePost` 的 `x-scope` 也是 `sources:write`）；缺 scope 只禁用并提示。 */
+const canWrite = computed(() => state.value.scopes.includes(MODERATION_WRITE_SCOPE));
+const hideBlocked = computed(() => {
+  if (hideBusy.value) return { code: 'hide_busy', message: '正在提交下架…（等待服务端回执，勿重复点击）' };
+  if (!canWrite.value) {
+    return {
+      code: 'scope_missing',
+      message: `当前后台会话没有 ${MODERATION_WRITE_SCOPE}：下架按钮已禁用；真实拒绝仍由服务端判定。`,
+    };
+  }
+  if (state.value.detail === null) return { code: 'no_detail', message: '先在左侧选一行读详情，再下架。' };
+  const reason = buildReason(hideReason.value);
+  if (!reason.ok) return { code: 'reason', message: reason.problem };
+  if (hideConfirmed.value !== true) return { code: 'confirm', message: '必须勾选二次确认：下架不可撤销、已删除内容不复活' };
+  return null;
+});
 
 function dispatch(action) {
   state.value = reduceModerationQueue(state.value, action);
@@ -242,6 +278,7 @@ function selectRow(row) {
   if (row === null || typeof row !== 'object') return;
   dispatch({ type: 'SELECT_ROW', postId: row.id });
   reasonCode.value = '';
+  resetHide();
   loadDetail(row.id);
 }
 
@@ -253,6 +290,7 @@ function retryDetail() {
 function closeDetail() {
   ++detailSeq;
   reasonCode.value = '';
+  resetHide();
   dispatch({ type: 'SELECT_ROW', postId: null });
 }
 
@@ -323,6 +361,69 @@ async function runReview(decision) {
 
 function dismissAction() {
   dispatch({ type: 'DISMISS_ACTION' });
+}
+
+/** 换行／收起详情时把下架的本地状态清掉，避免把上一帖的回执挂到这一帖上。 */
+function resetHide() {
+  hideReason.value = '';
+  hideConfirmed.value = false;
+  hideNotice.value = null;
+  hideFailure.value = null;
+}
+
+function onHideReasonInput(event) {
+  hideReason.value = typeof event?.target?.value === 'string' ? event.target.value : '';
+}
+
+function onHideConfirmChange(event) {
+  hideConfirmed.value = event?.target?.checked === true;
+}
+
+function dismissHideFailure() {
+  hideFailure.value = null;
+}
+
+/**
+ * 下架此帖：`POST /admin/posts/{id}/hide`（`hidePost`，scope `sources:write`）。
+ *
+ * 头由既有的 `hidePost`／`buildHidePostRequest` 生成：`If-Match: "<detail.revision>"` +
+ * `Idempotency-Key`（`keyFor(target,'hide')`，同帖同 revision 重放复用同一键），`*` 永不发出。
+ * 200 只是 `accepted:true`——**契约 hide 的回执里没有 `changed`**，所以「已是该状态」只能用
+ * 「操作前 visibility === 'hidden'」判定（见 `describeHideAccepted`）；本页不声称社区侧已生效。
+ */
+async function runHide() {
+  if (hideBlocked.value !== null) return;
+  const target = state.value.detail;
+  if (target === null) return;
+
+  const previousVisibility = target.visibility;
+  const decision = 'hide';
+  const key = keyFor(target, decision);
+  hideBusy.value = true;
+  hideFailure.value = null;
+  hideNotice.value = null;
+  try {
+    const result = await hidePost({
+      baseUrl: API_BASE_URL,
+      token: currentToken,
+      postId: target.id,
+      revision: target.revision,
+      reason: hideReason.value,
+      idempotencyKey: key,
+    });
+    if (result.ok === true) {
+      idempotencyKeys.delete(`${target.id}|${decision}|${target.revision}`);
+      hideNotice.value = describeHideAccepted(result, { previousVisibility });
+      hideReason.value = '';
+      hideConfirmed.value = false;
+      // 回执只有 accepted：重新读一次详情，拿服务端真实的 visibility 与新 ETag（不自证生效）。
+      loadDetail(target.id);
+      return;
+    }
+    hideFailure.value = describeTakedownFailure(result);
+  } finally {
+    hideBusy.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -534,12 +635,71 @@ onBeforeUnmount(() => {
             <span v-if="state.actionBusy" class="hint" data-testid="moderation-action-busy">提交中…</span>
           </div>
 
+          <div class="actions hide" data-testid="moderation-hide-form">
+            <label class="field">
+              <span>下架理由（1..500 字，会进服务端审计 <code>post.hide</code>）</span>
+              <textarea
+                :value="hideReason"
+                rows="2"
+                data-testid="moderation-hide-reason"
+                :disabled="hideBusy"
+                placeholder="例：社区举报核实为不实用药建议，紧急下架"
+                @input="onHideReasonInput"
+              />
+            </label>
+            <label class="confirm">
+              <input
+                type="checkbox"
+                data-testid="moderation-hide-confirm"
+                :checked="hideConfirmed"
+                :disabled="hideBusy"
+                @change="onHideConfirmChange"
+              />
+              <span>我已知晓：下架不可撤销、已删除内容不可复活，且本操作会进服务端审计</span>
+            </label>
+            <button class="danger" type="button" :disabled="hideBlocked !== null" data-testid="moderation-hide" @click="runHide">
+              {{ hideBusy ? '提交中…' : '下架此帖（hidePost）' }}
+            </button>
+            <span v-if="!canWrite" class="hint warn-text" data-testid="moderation-hide-scope">
+              当前后台会话没有 <code>{{ MODERATION_WRITE_SCOPE }}</code>：下架按钮已禁用（与审核同门；真实拒绝仍由服务端判定）。
+            </span>
+            <span v-else-if="hideBlocked !== null" class="hint" data-testid="moderation-hide-blocked">{{ hideBlocked.message }}</span>
+          </div>
+
+          <p
+            v-if="hideNotice !== null"
+            class="banner"
+            :class="hideNotice.tone === 'warn' ? 'warn' : 'ok'"
+            role="status"
+            data-testid="moderation-hide-notice"
+          >
+            <strong>{{ hideNotice.title }}</strong>
+            <span>{{ hideNotice.detail }}</span>
+            <small>{{ hideNotice.advice }}</small>
+          </p>
+
+          <p v-if="hideFailure !== null" class="banner error" role="alert" data-testid="moderation-hide-error">
+            <strong>{{ hideFailure.title }}</strong>
+            <span>{{ hideFailure.detail }}</span>
+            <small>{{ hideFailure.advice }}</small>
+            <button class="link" type="button" data-testid="moderation-hide-dismiss" @click="dismissHideFailure">知道了</button>
+          </p>
+
           <p class="foot">
             approve 写 <code>audit_state=approved</code>，并把 <code>visibility</code> 从 <code>private</code> 推到 <code>published</code>（其余保持原值）；
             reject 同时把 <code>visibility</code> 置为 <code>hidden</code> 并通知作者。两个动作都要 <code>If-Match: "&lt;revision&gt;"</code> 与
             <code>Idempotency-Key</code>；重复提交同一结论时服务端回 <code>changed:false</code>。
             本页<strong>不显示审核人</strong>：<code>audit_state</code> 只记状态，谁审的落在审计台账（<code>audit:read</code>），
             帖子行里没有这个字段，页面不替它编。
+          </p>
+
+          <p class="foot">
+            hide 与 approve／reject 吃<strong>同一道门</strong>（<code>sources:write</code>），头同样是
+            <code>If-Match: "&lt;revision&gt;"</code> + <code>Idempotency-Key</code>。但 hide 的 200 回执<strong>只有</strong>
+            <code>accepted:true</code>——契约里 hide 的响应没有 <code>changed</code> 字段（那是 approve／reject 的
+            <code>PostReviewOutcome</code> 才有）⇒ 本页不用「刚下架成功」糊过去，「已是该状态」按「下架前
+            <code>visibility</code> 已是 <code>hidden</code>」判定，且回执不声称社区侧已生效。动作成功后重读详情拿真实
+            <code>visibility</code> 与新 ETag；左侧行的可见性要「重新读取第一页」才刷新。
           </p>
         </template>
       </aside>
@@ -656,6 +816,35 @@ input {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: flex-end;
+}
+
+.actions.hide {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+  padding-top: 0.55rem;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.actions.hide textarea {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #cbd5e0;
+  border-radius: 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.confirm {
+  display: flex;
+  gap: 0.45rem;
+  align-items: flex-start;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: #4a5568;
+}
+
+.warn-text {
+  color: #975a16;
 }
 
 button {

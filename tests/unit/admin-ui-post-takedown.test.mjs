@@ -21,6 +21,7 @@ import {
   buildReason,
   checkIfMatchHeader,
   classifyHideFailure,
+  describeHideAccepted,
   describeTakedownFailure,
   describeTakedownSuccess,
   hidePost,
@@ -437,4 +438,54 @@ test('submitBlockReason：顺序固定 submitting → scope_missing → post_id 
   assert.equal(submitBlockReason({ ...valid, confirmed: false }).code, 'confirmed');
   // 一条都没填时先报第一项（不是把 4 条一起糊上去）。
   assert.equal(submitBlockReason(emptyTakedownForm()).code, 'post_id');
+});
+
+// ------------------------------------------------------------------ `describeHideAccepted`
+
+const ACCEPTED = {
+  ok: true,
+  status: 200,
+  requestId: '11111111-1111-4111-8111-111111111111',
+  contractVersion: '1.0.0',
+  executionMode: 'real',
+  etag: '"8"',
+  ack: { accepted: true },
+  extras: [],
+};
+
+test('describeHideAccepted：非成功回执 ⇒ null（失败走 describeTakedownFailure，不走这里）', () => {
+  assert.equal(describeHideAccepted(null), null);
+  assert.equal(describeHideAccepted(undefined), null);
+  assert.equal(describeHideAccepted({ ok: false, kind: 'forbidden' }), null);
+});
+
+test('describeHideAccepted：普通受理 ⇒ ready 语气，只说「服务端已受理」，不声称已下架成功', () => {
+  const view = describeHideAccepted(ACCEPTED, { previousVisibility: 'published' });
+  assert.equal(view.tone, 'ready');
+  assert.equal(view.alreadyHidden, false);
+  assert.equal(view.role, 'status');
+  assert.match(view.title, /服务端已受理/);
+  assert.match(view.title, /accepted:true/);
+  assert.match(view.detail, /"8"/, '回执要带上 ETag');
+  assert.match(view.detail, /11111111-1111-4111-8111-111111111111/);
+  assert.doesNotMatch(`${view.title}${view.detail}${view.advice}`, /已下架成功|社区侧已生效/);
+  assert.match(view.advice, /未在本页验证/, '必须说清「受理」不等于「社区公开面已验证」');
+  assert.match(view.advice, /accepted:true/);
+});
+
+test('describeHideAccepted：操作前已是 hidden ⇒ warn 语气 +「已是该状态」，不假装发生了新改动', () => {
+  const view = describeHideAccepted(ACCEPTED, { previousVisibility: 'hidden' });
+  assert.equal(view.tone, 'warn');
+  assert.equal(view.alreadyHidden, true);
+  assert.match(view.title, /已是该状态/);
+  assert.match(view.title, /hidden/);
+  assert.match(view.advice, /没有 changed/, '必须点明 hide 的 200 里没有 changed 字段');
+  assert.match(view.advice, /操作前 visibility=hidden/, '必须写明判定依据是操作前的可见性');
+  assert.doesNotMatch(view.title, /下架成功/);
+});
+
+test('describeHideAccepted：不传 previousVisibility 时按「不知道操作前状态」处理，不猜成已是该状态', () => {
+  const view = describeHideAccepted(ACCEPTED);
+  assert.equal(view.alreadyHidden, false);
+  assert.equal(view.tone, 'ready');
 });

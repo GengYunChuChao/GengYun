@@ -14,7 +14,7 @@
 | 服务端 admin 端点 | **46 条注册路由，对应 46 个 operationId**（机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首「闭集 44」那套是契约口径的手数，本行未纳入闸门 | services/api/src/routes/admin.ts:198-487 |
 | 前端真实调用 | **46 个 operation 全部有 UI 入口（无入口 0 条）**，机器重算，见标记块。旧版手数的「30 个 operation、33 处物理调用点」是 2026-10-26 的读数，本行未纳入闸门 | apps/admin/src/lib/admin-content-api.mjs:409 |
 | 页面 | 19 个 `.vue`（壳 `App.vue` 1 + 主 tab 视图 10 + 子页 6 + 子组件 2）；「社区审核队列」已接入读 + 通过/驳回，「人工审核」仍是空占位 | apps/admin/src/App.vue:27-38 |
-| 死按钮 | 0 个；另有 6 个「详情/编辑」link 按钮自身无 handler，靠父行点击冒泡生效 | apps/admin/src/views/SourcesView.vue:469 |
+| 死按钮 | 0 个（机器重算 `deadButtons=0`）；另有 6 个 `class="link"` 的「详情/编辑/展开原文」按钮——它们**带**自己的 `@click.stop`（复制父行动作、阻止冒泡），**不是**「自身无 handler」（旧版那句是错的，2026-11-02 逐文件复核，见 §3 第三张表） | apps/admin/src/views/SourcesView.vue:506 |
 | 后端有面、UI 无入口 | **0 个 operation**：原本仅剩的两条授/撤权写面 `grantAdministratorScope`、`revokeAdministratorScope`（`POST`／`DELETE /admin/administrators/{id}/scopes…`，门 `scopes:write`）已由 GY-R68 接上 `AdministratorsView.vue`。旧版写「12 个，只剩两族：注册资料 6、限制资料 6」，已被代码证伪——两族各有页面，见 §4 | services/api/src/routes/admin.ts:408-427 |
 | 鉴权 | 登录响应**不含** scopes；9 个页面登录后再读一次 `GET /admin/auth/session` 补 scope | apps/admin/src/auth/session.ts:128 |
 | 两端都缺 | 「人工审核」工作台（审核人 / 投票 / 专家认证）：`ReviewPlaceholderView` 仍是空态说明页、服务层 `wired:false`。**帖子级**人工通过/驳回已不是缺口：`approvePost`/`rejectPost` 自 S3 起在契约内且有路由与页面（§1.1、§2.1） | apps/admin/src/views/ReviewPlaceholderView.vue:2-16 |
@@ -71,7 +71,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 ### 1.1 按域分组
 
-本表的明细（每个族、每条 operation 的 method／path／scope／入口视图／引用文件）已改为**机器重算**，见 §0 末尾标记块里的「路径族」表与工具默认输出（`node tools/verify-admin-capability-map.mjs`）——本页不再手抄第二份，避免两处读数各自腐烂。下面只留两条手写的事实与口径说明，它们不随重算变化：四类「资料」共用同一组 scope：文件名与 operationId 逐条写在 `services/api/src/admin/families.ts:122-216`；`hidePost` 借用 `sources:write` 是契约级粒度问题，前端只能如实标注（`apps/admin/src/views/PostTakedownView.vue:52`）。帖子读面与审核动作同理：契约给的是 `sources:read`（两个读面）与 `sources:write`（下架 + 通过/驳回），没有独立的 `posts:*` scope，页面只能按契约标注。
+本表的明细（每个族、每条 operation 的 method／path／scope／入口视图／引用文件）已改为**机器重算**，见 §0 末尾标记块里的「路径族」表与工具默认输出（`node tools/verify-admin-capability-map.mjs`）——本页不再手抄第二份，避免两处读数各自腐烂。下面只留两条手写的事实与口径说明，它们不随重算变化：四类「资料」共用同一组 scope：文件名与 operationId 逐条写在 `services/api/src/admin/families.ts:122-216`；`hidePost` 借用 `sources:write` 是契约级粒度问题，前端只能如实标注（`apps/admin/src/views/PostTakedownView.vue:73`）。帖子读面与审核动作同理：契约给的是 `sources:read`（两个读面）与 `sources:write`（下架 + 通过/驳回），没有独立的 `posts:*` scope，页面只能按契约标注。
 
 ### 1.2 四条只在缺省装配（stub / real 无池）下 503 的端点
 
@@ -82,7 +82,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | GET /admin/audit-logs（listAuditLogs） | 端口为 null ⇒ 503 PROVIDER_UNAVAILABLE，不返回空页 | services/api/src/routes/admin.ts:316-321；services/api/src/app.ts:1513-1514 |
 | GET /admin/jobs、POST /admin/jobs/{id}/cancel | 端口不构造 ⇒ 读与写都 503 | services/api/src/routes/admin.ts:476-490；services/api/src/app.ts:1375-1377 |
 | POST /admin/posts/{id}/hide | 只有真实持久的社区帖子端口才放行（`hidePostWired`），内存实现恒 false ⇒ 503 | services/api/src/routes/admin.ts:530-539；services/api/src/app.ts:1332-1333、services/api/src/app.ts:1601 |
-| GET /admin/posts、GET /admin/posts/{id}、POST /admin/posts/{id}/approve、POST /admin/posts/{id}/reject | 后台帖子读面端口与运营审核端口未接线 ⇒ 服务层 503 PROVIDER_UNAVAILABLE，路由层不返回空页、也不伪造审核成功 | services/api/src/routes/admin.ts:450-487 |
+| GET /admin/posts、GET /admin/posts/{id}、POST /admin/posts/{id}/approve、POST /admin/posts/{id}/reject | 后台帖子读面端口与运营审核端口未接线 ⇒ 服务层 503 PROVIDER_UNAVAILABLE，路由层不返回空页、也不伪造审核成功 | `services/api/src/routes/admin.ts` 的 551-588 行（2026-11-02 实测的四段：列表 551-555、详情 556-561、approve 569-577、reject 580-588；逐段显式锚点记在 §2.3 的重测清单里，原因见那里） |
 
 ## 2 前端真实调用了哪些端点
 
@@ -112,7 +112,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | listAuditEvents | fetchAuditEventsPage（apps/admin/src/lib/audit-events.mjs:360）；findAuditEventsForRequest（apps/admin/src/lib/admin-content-api.mjs:600） | GET /admin/audit-events | audit:read |
 | listAdminJobs | listJobs（apps/admin/src/lib/jobs-api.mjs:348） | GET /admin/jobs | jobs:read |
 | cancelAdminJob | cancelJob（apps/admin/src/lib/jobs-api.mjs:414） | POST /admin/jobs/{id}/cancel | jobs:cancel |
-| hidePost | hidePost（apps/admin/src/lib/post-takedown-api.mjs:390） | POST /admin/posts/{id}/hide | sources:write |
+| hidePost | hidePost（apps/admin/src/lib/post-takedown-api.mjs:394） | POST /admin/posts/{id}/hide | sources:write |
 | listAdminPosts | fetchModerationQueuePage（apps/admin/src/lib/admin-moderation-queue.mjs:552） | GET /admin/posts | sources:read |
 | getAdminPost | fetchAdminPostDetail（apps/admin/src/lib/admin-moderation-queue.mjs:623） | GET /admin/posts/{id} | sources:read |
 | approvePost | submitPostReview（apps/admin/src/lib/admin-moderation-queue.mjs:798） | POST /admin/posts/{id}/approve | sources:write |
@@ -120,7 +120,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 写面请求头不是页面各自拼的：`writeFamilyResource` 统一要求 `Idempotency-Key`，非 POST 或带 action 时还要 `If-Match`（`apps/admin/src/lib/admin-content-api.mjs:307-406`，头部校验落在其中 325-336 行）。两个审核 POST 不走 `writeFamilyResource`：它们复用下架页已有的 `buildIfMatch` / `normalizeIdempotencyKey`（`apps/admin/src/lib/post-takedown-api.mjs`），请求构造函数在 `apps/admin/src/lib/admin-moderation-queue.mjs:698`。
 
-### 2.2 视图侧调用点（33 处 / 30 个 operation —— 本表已纳入闸门）
+### 2.2 视图侧调用点（35 处 / 30 个 operation —— 本表已纳入闸门）
 
 | 页面（行数） | 调用点：operationId@行 | 计数 |
 | --- | --- | --- |
@@ -130,19 +130,19 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | apps/admin/src/views/SourcesView.vue（766） | listAdminSources@147、getAdminSource@177、createSourceDraft@276、editSourceDraft@296、publishSource@324、withdrawSource@352、listAuditEvents@360 | 7 |
 | apps/admin/src/views/KnowledgeAdminView.vue（809） | listAdminKnowledge@136、getAdminKnowledge@166、listAdminSources@218、createKnowledgeDraft@283、editKnowledgeDraft@303、publishKnowledge@331、withdrawKnowledge@359、listAuditEvents@367 | 8 |
 | apps/admin/src/views/CategoriesView.vue（555） | listAdminCategories@97、editCategory@199、listAuditEvents@207 | 3 |
-| apps/admin/src/views/PostTakedownView.vue（351） | hidePost@89 | 1 |
+| apps/admin/src/views/PostTakedownView.vue（523） | getAdminPost@122、hidePost@170 | 2 |
 | apps/admin/src/views/FlagsView.vue（599） | listFlags@63、setFlag@147 | 2 |
 | apps/admin/src/views/FlagAuditView.vue（560） | listFlagAuditEvents@68 | 1 |
 | apps/admin/src/views/AuditEventsView.vue（555） | listAuditEvents@66 | 1 |
 | apps/admin/src/views/JobsView.vue（798） | listAdminJobs@93、cancelAdminJob@230 | 2 |
-| apps/admin/src/views/ModerationQueueView.vue（900） | listAdminPosts@129、getAdminPost@149、approvePost/rejectPost@303（同一处 `submitPostReview`） | 3 |
-| 合计 | 30 个 operation（已纳入闸门；机器重算的入口读数是 46 个 operation 全部有入口、0 条无入口，见 §0 标记块） | 33 |
+| apps/admin/src/views/ModerationQueueView.vue（1089） | listAdminPosts@165、getAdminPost@185、approvePost/rejectPost@341（同一处 `submitPostReview`）、hidePost@406 | 4 |
+| 合计 | 30 个 operation（已纳入闸门；机器重算的入口读数是 46 个 operation 全部有入口、0 条无入口，见 §0 标记块） | 35 |
 
-`listAuditEvents` 被 4 处调用（`apps/admin/src/views/AuditEventsView.vue:66`、`apps/admin/src/views/SourcesView.vue:360`、`apps/admin/src/views/KnowledgeAdminView.vue:367`、`apps/admin/src/views/CategoriesView.vue:207`），`listAdminSources` 被 2 处调用（`apps/admin/src/views/SourcesView.vue:147`、`apps/admin/src/views/KnowledgeAdminView.vue:218`），而 `approvePost` 与 `rejectPost` 共用一处 `submitPostReview`（`apps/admin/src/views/ModerationQueueView.vue:303`）；所以 30 个 operation 对应 33 处物理调用点（+3 +1 −1；「处数」按 `<视图,行号>` 去重，不按 operation 去重）。这一行里的行号与上表同口径，由 `tests/unit/admin-console-capability-op-claims.test.mjs` 一起判。
+`listAuditEvents` 被 4 处调用（`apps/admin/src/views/AuditEventsView.vue:66`、`apps/admin/src/views/SourcesView.vue:360`、`apps/admin/src/views/KnowledgeAdminView.vue:367`、`apps/admin/src/views/CategoriesView.vue:207`），`listAdminSources` 被 2 处调用（`apps/admin/src/views/SourcesView.vue:147`、`apps/admin/src/views/KnowledgeAdminView.vue:218`）。`hidePost` 被 2 处调用（`apps/admin/src/views/PostTakedownView.vue:170`、`apps/admin/src/views/ModerationQueueView.vue:406`），`getAdminPost` 也被 2 处调用（`apps/admin/src/views/ModerationQueueView.vue:185`、`apps/admin/src/views/PostTakedownView.vue:122`）——GY-R72 之前这两条各只有 1 处。而 `approvePost` 与 `rejectPost` 共用一处 `submitPostReview`（`apps/admin/src/views/ModerationQueueView.vue:341`）；所以 30 个 operation 对应 35 处物理调用点（+3 +1 +1 +1 −1；「处数」按 `<视图,行号>` 去重，不按 operation 去重）。这一行里的行号与上表同口径，由 `tests/unit/admin-console-capability-op-claims.test.mjs` 一起判。
 
 ### 2.3 覆盖差集
 
-46 条服务端 operation 中，UI 有入口的 **46** 条，**没有前端入口的 0 条**（`grantAdministratorScope`、`revokeAdministratorScope` 已由 GY-R68 接上，逐条见 §0 标记块与 §4）。本页旧版这里写「有入口 30 条、其余 12 条完全没有前端入口」，那组数字已被代码证伪：注册资料与限制资料两族各 6 条早已有 `RegistrationAdminView.vue`／`RestrictionAdminView.vue` 走完整调用链（见 §4）。§2.2 那张手表只覆盖 30 个 operation，是因为它按 2026-10-26 的视图快照逐行抄的；2026-11-01 起该表已纳入闸门（`tests/unit/admin-console-capability-op-claims.test.mjs` 逐条判行号与行数读数），但闸门范围就是这 30 个 operation 的 34 条 claim、12 个页面行数与 7 条散文锚点：其余 16 个 op 的入口、本页 §3 的两张表（视图行数表 14/16 条读数仍是 2026-10 的旧数、与 §2.2 改对后的读数自相矛盾；link 按钮表的 link 侧 6 条锚点全部指错，其中 `SourcesView.vue:469` 指到空行，父行侧另有 3 条错）、§0 第 17 行（复用了同一个坏锚 `SourcesView.vue:469`）、§5「缺 scope」表的两处锚点（`SourcesView.vue:14` 指到注释行、`SourcesView.vue:366` 指到 `}`）、以及 §5 第 7 条里三处已知陈旧的 session 锚点（`AccountsView.vue`、`AdministratorsView.vue`、`JobsView.vue` 各一处，后续片再收）都不在闸门内——即本页至少还有 14 个陈旧的行数读数与 11 个指错的 `.vue` 锚点没有被机器看住。原因是结构性的，不是漏做：`tools/verify-doc-anchors.mjs` 的 `ANCHOR_EXTENSIONS` 与 `SYMBOL_SOURCE_EXTENSIONS` 都没有 `vue`，那个工具根本看不到 `.vue:行号` 这个形态，要覆盖只能另立闸门（就是上面这份用例）。**所以「§2.2 有闸门」不等于「这张现状页的行号/行数已经全部被机器看住了」**。
+46 条服务端 operation 中，UI 有入口的 **46** 条，**没有前端入口的 0 条**（`grantAdministratorScope`、`revokeAdministratorScope` 已由 GY-R68 接上，逐条见 §0 标记块与 §4）。本页旧版这里写「有入口 30 条、其余 12 条完全没有前端入口」，那组数字已被代码证伪：注册资料与限制资料两族各 6 条早已有 `RegistrationAdminView.vue`／`RestrictionAdminView.vue` 走完整调用链（见 §4）。§2.2 那张手表只覆盖 30 个 operation，是因为它按 2026-10-26 的视图快照逐行抄的；2026-11-01 起该表已纳入闸门（`tests/unit/admin-console-capability-op-claims.test.mjs` 逐条判行号与行数读数），GY-R72 之后闸门范围是 30 个 operation 的 **36 条 claim（35 处物理调用点）**、12 个页面行数与 11 条散文锚点。 闸门**看不住**、本轮（GY-R72，2026-11-02）靠人工重测补齐的部分，逐条 before/after 与实测命令见 `docs/verification/gy-r72-admin-takedown-truth-20261102.md`：§3 的视图行数表（**14/16 条**读数是 2026-10 的旧数，已按 `node` 的 LF 行数更到 2026-11-02 实测）、§3 的 link 按钮表（旧版 6 条 link 侧锚点**全部**指错、父行侧另有 3 条错，且旧版引导句「link 按钮本身没有 handler，靠父行点击冒泡」**本身是错的**——六个按钮都带自己的 `@click.stop`，已按逐文件实测重写）、§0 第 17 行（复用同一个坏锚 `SourcesView.vue:469`，那是空行，已改为 506 行）、§5「缺 scope」表的两处锚点（`SourcesView.vue:14` 指到注释行、`SourcesView.vue:366` 指到 `}`，已分别改为 394 行与 398 行，并补 `apps/admin/src/views/PostTakedownView.vue:216`、`apps/admin/src/views/ModerationQueueView.vue:663`）。**仍未收**的是 §5 第 7 条里三处已知陈旧的 session 锚点（`AccountsView.vue`、`AdministratorsView.vue`、`JobsView.vue` 各一处，后续片再收）；另外 §3「按钮 / 死按钮」列还有 3 行与 `<button` 实测数不符（AdministratorsView 记 9、实测 17；AuditLogsView 记 9、实测 10；JobsView 记 13、实测 14），本轮未改，留待后续片，不假装已经全部对账。 原因是结构性的，不是漏做：`tools/verify-doc-anchors.mjs` 的 `ANCHOR_EXTENSIONS` 与 `SYMBOL_SOURCE_EXTENSIONS` 都没有 `vue`，那个工具根本看不到 `.vue:行号` 这个形态，要覆盖只能另立闸门（就是上面这份用例）。GY-R72 之后本页的 `.vue` 锚点准确性仍由人工重测＋验证文档保证，**不是**由闸门保证。**所以「§2.2 有闸门」不等于「这张现状页的行号/行数已经全部被机器看住了」**。§1.2 那四条缺省 503 路由的显式锚点也一并重测在此（旧版只写了一条 450-487，那组行号落在 `enableAdministratorAccount` 一带，不是 posts 路由）：列表 services/api/src/routes/admin.ts:551-555、详情 services/api/src/routes/admin.ts:556-561、approve services/api/src/routes/admin.ts:569-577、reject services/api/src/routes/admin.ts:580-588；`tests/unit/doc-anchor-relocation-identity.test.mjs` 要求「目标文件本提交未改动 ⇒ 锚点行号必须恒等，除非在 `tests/unit/doc-anchor-relocations.json` 登记」，本轮按用户约束不碰那张登记表，所以把真行号记在散文里、把显式锚点放在这一行（新锚点没有旧锚点可配对，不触发位移判据），并在验证文档里如实记下这个取舍。
 
 ## 3 每个后台页面现在能做什么
 
@@ -151,32 +151,32 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | 视图（行数） | 列表 / 详情 | 写操作与按钮 | 按钮 / 死按钮 | 权限门 |
 | --- | --- | --- | --- | --- |
 | apps/admin/src/views/AccountsView.vue（726） | 账号列表（游标分页）；行内只有「停用」按钮，无独立详情侧栏 | 停用：确认框必填理由 → POST /admin/accounts/{id}/suspend，成功后就地刷新第一页 | 14 / 0 | accounts:read 读；accounts:suspend 决定「停用」是否可点（apps/admin/src/lib/view-model.mjs:371） |
-| apps/admin/src/views/AdministratorsView.vue（622） | 管理员目录（游标分页）+ 行内「查看权限」侧栏（读 `GET /admin/administrators/{id}/scopes`） | **无写操作**：授/收权在契约里没有对应 operation（见 §5.6 的 `scopes:write`） | 9 / 0 | scopes:read（读列表与权限）；无写门可判 |
-| apps/admin/src/views/AuditLogsView.vue（627） | 审计总台账只读：游标分页 + `action` / `entity` / 时间范围（`from`、`to`）筛选 + 展开原文 | 无写操作 | 9 / 0 | audit:read |
-| apps/admin/src/views/ContentAdminView.vue（292） | 容器：登录表单 + 4 个子 tab（来源 / 科普 / 帖子下架 / 分类） | 无自身业务请求，只下发 baseUrl/token/scopes | 3 / 0 | 无（登录后读会话） |
-| apps/admin/src/views/SourcesView.vue（720） | 来源列表 + 详情 + 新建草稿 / 编辑 / 发布 / 下架表单 + 按 request_id 反查审计 | 4 个写操作（创建、编辑、发布、下架）+ 1 个只读反查（`listAuditEvents`） | 20 / 0 | sources:read / sources:write（apps/admin/src/views/SourcesView.vue:80-82） |
-| apps/admin/src/views/KnowledgeAdminView.vue（760） | 科普列表 + 详情 + 新建 / 编辑 / 发布 / 下架；发布需挑一条来源（读来源列表辅助） | 同为 4 写（创建、编辑、发布、下架）+ 1 只读反查（`listAuditEvents`） | 22 / 0 | sources:read / sources:write（apps/admin/src/views/KnowledgeAdminView.vue:82-84） |
-| apps/admin/src/views/CategoriesView.vue（507） | 分类列表 + 编辑表单 | 只有「保存分类」；**没有新建 / 删除按钮**（契约只有 2 个 operation，页面不造） | 9 / 0 | sources:read / sources:write（apps/admin/src/views/CategoriesView.vue:58-60） |
-| apps/admin/src/views/PostTakedownView.vue（351） | 下架表单（帖子 id + 理由） | POST /admin/posts/{id}/hide | 1 / 0 | sources:write（apps/admin/src/views/PostTakedownView.vue:52） |
-| apps/admin/src/views/FlagsView.vue（595） | 开关列表 + 行内切换 + 详情侧栏 | PUT /admin/feature-flags/{key}（If-Match + Idempotency-Key） | 12 / 0 | flags:read 读；flags:write 决定可写（apps/admin/src/lib/flags-view-model.mjs:224） |
-| apps/admin/src/views/FlagAuditView.vue（546） | 开关变更留痕只读 + 加载下一页 | 无写操作 | 6 / 0 | flags:read |
-| apps/admin/src/views/AuditEventsView.vue（541） | 审计事件只读 + 客户端筛选 + 展开原文 | 无写操作 | 6 / 0 | audit:read |
-| apps/admin/src/views/JobsView.vue（664） | 作业列表 + 详情 + 取消 | 取消只在 queued / running 行可用，终态行按钮禁用 | 13 / 0 | jobs:read 读；jobs:cancel 决定可取消（apps/admin/src/lib/jobs-api.mjs:713） |
-| apps/admin/src/views/ModerationQueueView.vue（888） | 帖子队列（游标分页、`state`/`audit_state` 筛选、去重与成环判断）+ 详情侧栏（正文、审核态、可见性、revision/ETag） | 通过 / 驳回：POST /admin/posts/{id}/approve、POST /admin/posts/{id}/reject（If-Match + Idempotency-Key；`changed:false` 显示「已是该状态」而非假装成功） | 14 / 0 | sources:read 读；sources:write 决定动作（apps/admin/src/lib/admin-moderation-queue.mjs:68-71） |
+| apps/admin/src/views/AdministratorsView.vue（1326） | 管理员目录（游标分页）+ 行内「查看权限」侧栏（读 `GET /admin/administrators/{id}/scopes`） | **无写操作**：授/收权在契约里没有对应 operation（见 §5.6 的 `scopes:write`） | 9 / 0 | scopes:read（读列表与权限）；无写门可判 |
+| apps/admin/src/views/AuditLogsView.vue（820） | 审计总台账只读：游标分页 + `action` / `entity` / 时间范围（`from`、`to`）筛选 + 展开原文 | 无写操作 | 9 / 0 | audit:read |
+| apps/admin/src/views/ContentAdminView.vue（313） | 容器：登录表单 + 4 个子 tab（来源 / 科普 / 帖子下架 / 分类） | 无自身业务请求，只下发 baseUrl/token/scopes | 3 / 0 | 无（登录后读会话） |
+| apps/admin/src/views/SourcesView.vue（766） | 来源列表 + 详情 + 新建草稿 / 编辑 / 发布 / 下架表单 + 按 request_id 反查审计 | 4 个写操作（创建、编辑、发布、下架）+ 1 个只读反查（`listAuditEvents`） | 20 / 0 | sources:read / sources:write（apps/admin/src/views/SourcesView.vue:82-84） |
+| apps/admin/src/views/KnowledgeAdminView.vue（809） | 科普列表 + 详情 + 新建 / 编辑 / 发布 / 下架；发布需挑一条来源（读来源列表辅助） | 同为 4 写（创建、编辑、发布、下架）+ 1 只读反查（`listAuditEvents`） | 22 / 0 | sources:read / sources:write（apps/admin/src/views/KnowledgeAdminView.vue:84-86） |
+| apps/admin/src/views/CategoriesView.vue（555） | 分类列表 + 编辑表单 | 只有「保存分类」；**没有新建 / 删除按钮**（契约只有 2 个 operation，页面不造） | 9 / 0 | sources:read / sources:write（apps/admin/src/views/CategoriesView.vue:60-62） |
+| apps/admin/src/views/PostTakedownView.vue（523） | 下架表单（帖子 id + 理由）+「读取帖子确认」一步：先 `GET /admin/posts/{id}` 拿标题/作者/可见性/revision 并**回填成只读**，读不到（403/404/网络）回落手填 | POST /admin/posts/{id}/hide | 3 / 0（「改用手填 revision」只在读面回填后出现） | sources:write 决定下架、sources:read 决定读面（apps/admin/src/views/PostTakedownView.vue:73、apps/admin/src/views/PostTakedownView.vue:78） |
+| apps/admin/src/views/FlagsView.vue（599） | 开关列表 + 行内切换 + 详情侧栏 | PUT /admin/feature-flags/{key}（If-Match + Idempotency-Key） | 12 / 0 | flags:read 读；flags:write 决定可写（apps/admin/src/lib/flags-view-model.mjs:224） |
+| apps/admin/src/views/FlagAuditView.vue（560） | 开关变更留痕只读 + 加载下一页 | 无写操作 | 6 / 0 | flags:read |
+| apps/admin/src/views/AuditEventsView.vue（555） | 审计事件只读 + 客户端筛选 + 展开原文 | 无写操作 | 6 / 0 | audit:read |
+| apps/admin/src/views/JobsView.vue（798） | 作业列表 + 详情 + 取消 | 取消只在 queued / running 行可用，终态行按钮禁用 | 13 / 0 | jobs:read 读；jobs:cancel 决定可取消（`apps/admin/src/lib/jobs-api.mjs` 的 1117 行 `canCancelNow`，视图在 67 行调用） |
+| apps/admin/src/views/ModerationQueueView.vue（1089） | 帖子队列（游标分页、`state`/`audit_state` 筛选、去重与成环判断）+ 详情侧栏（正文、审核态、可见性、revision/ETag） | 通过 / 驳回：POST /admin/posts/{id}/approve、POST /admin/posts/{id}/reject（If-Match + Idempotency-Key；`changed:false` 显示「已是该状态」而非假装成功）；**下架**：POST /admin/posts/{id}/hide（同门 `sources:write`，理由 1..500 + 二次确认；hide 的 200 回执没有 `changed`，所以「已是该状态」按「操作前 visibility 已是 hidden」判，不声称社区侧已生效） | 16 / 0 | sources:read 读；sources:write 决定动作（同一道门管通过／驳回／下架，apps/admin/src/lib/admin-moderation-queue.mjs:68-71） |
 | apps/admin/src/views/ReviewPlaceholderView.vue（238） | 空态：不发起任何网络请求，不伪造队列与审核人（人审工作流 = 审核人 / 投票 / 专家认证，见 §0 与 §6） | 无 | 0 / 0 | 无 |
-| apps/admin/src/views/ContentFieldGrid.vue（138） | 纯子组件（字段网格），无请求 | 无 | 0 / 0 | 无 |
-| apps/admin/src/views/WriteReceipt.vue（198） | 纯子组件（写入回执），按钮全部 emit | 无网络请求 | 3 / 0 | 无 |
+| apps/admin/src/views/ContentFieldGrid.vue（142） | 纯子组件（字段网格），无请求 | 无 | 0 / 0 | 无 |
+| apps/admin/src/views/WriteReceipt.vue（239） | 纯子组件（写入回执），按钮全部 emit | 无网络请求 | 3 / 0 | 无 |
 
-6 个 link 按钮本身没有 handler，点击命中父行：
+6 个 `class="link"` 按钮**各自带 `@click.stop`**（复制父行动作并阻止冒泡），行本身是 `<tr @click>` + `tabindex="0"` + 键盘 Enter/Space（2026-11-02 逐文件复核；旧版此处写「link 按钮本身没有 handler，靠父行冒泡」，是错的）：
 
-| link 按钮（无自身 handler） | 父行 `<tr @click>`（真正的点击源） |
+| link 按钮（`@click.stop` 行） | 父行 `<tr @click>`（同一动作） |
 | --- | --- |
-| apps/admin/src/views/AuditEventsView.vue:270 「展开原文 / 收起」 | apps/admin/src/views/AuditEventsView.vue:258 |
-| apps/admin/src/views/CategoriesView.vue:265 「编辑」 | apps/admin/src/views/CategoriesView.vue:258 |
-| apps/admin/src/views/FlagAuditView.vue:266 「展开原文 / 收起」 | apps/admin/src/views/FlagAuditView.vue:255 |
-| apps/admin/src/views/KnowledgeAdminView.vue:492 「详情」 | apps/admin/src/views/KnowledgeAdminView.vue:483 |
-| apps/admin/src/views/ModerationQueueView.vue:456 「查看详情」 | apps/admin/src/views/ModerationQueueView.vue:444 |
-| apps/admin/src/views/SourcesView.vue:469 「详情」 | apps/admin/src/views/SourcesView.vue:461 |
+| apps/admin/src/views/AuditEventsView.vue:281 「展开原文 / 收起」 | apps/admin/src/views/AuditEventsView.vue:258（`@click` 在 262 行） |
+| apps/admin/src/views/CategoriesView.vue:308 「编辑」 | apps/admin/src/views/CategoriesView.vue:288（`@click` 在 294 行） |
+| apps/admin/src/views/FlagAuditView.vue:277 「展开原文 / 收起」 | apps/admin/src/views/FlagAuditView.vue:255（`@click` 在 259 行） |
+| apps/admin/src/views/KnowledgeAdminView.vue:536 「详情」 | apps/admin/src/views/KnowledgeAdminView.vue:514（`@click` 在 520 行） |
+| apps/admin/src/views/ModerationQueueView.vue:566 「查看详情」 | apps/admin/src/views/ModerationQueueView.vue:540（`@click` 在 547 行） |
+| apps/admin/src/views/SourcesView.vue:510 「详情」 | apps/admin/src/views/SourcesView.vue:489（`@click` 在 495 行） |
 
 按「有没有点击路径」判，死按钮 0 个；全仓也没有指向空函数的 `@click`——`apps/admin/src/lib/view-model.mjs:450` 的「读面未提供」是如实标注，不是空实现。
 
@@ -224,8 +224,8 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | 情形 | 页面表现 | 锚点 |
 | --- | --- | --- |
 | 账号没有 session:read | 登录成功后读会话 403 ⇒ `loadAdminSession` 返回 null 并清本地令牌，页面停在未登录态报「登录后未能读到会话详情」 | apps/admin/src/auth/session.ts:94；apps/admin/src/views/AccountsView.vue:92-97 |
-| 有 session:read、缺业务读 scope | 列表请求 403 SCOPE_DENIED，页面显示服务端错误码原文，不伪造空列表 | services/api/src/auth/middleware.ts:204；apps/admin/src/views/SourcesView.vue:14 |
-| 缺业务写 scope | 写按钮禁用 + 页内警示条；服务端仍是最终裁决方 | apps/admin/src/views/SourcesView.vue:366；apps/admin/src/views/PostTakedownView.vue:128 |
+| 有 session:read、缺业务读 scope | 列表请求 403 SCOPE_DENIED，页面显示服务端错误码原文，不伪造空列表；下架页的读面（`GET /admin/posts/{id}`）403 时**只**回落成手填 revision，提交按钮照常可用 | services/api/src/auth/middleware.ts:204；apps/admin/src/views/SourcesView.vue:394 |
+| 缺业务写 scope | 写按钮禁用 + 页内警示条；服务端仍是最终裁决方 | apps/admin/src/views/SourcesView.vue:398；apps/admin/src/views/PostTakedownView.vue:216；apps/admin/src/views/ModerationQueueView.vue:663 |
 
 ## 6 三档结论
 
@@ -249,13 +249,13 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 | 说法（来源） | 本页复核结果 | 依据 |
 | --- | --- | --- |
-| 「26 处调用点」（另一份只读取证，未入库；本文以本仓 `apps/admin/src` 的逐行计数为口径） | 本页逐行枚举是 **33 处**、30 个 operation | §2.2 全表 |
+| 「26 处调用点」（另一份只读取证，未入库；本文以本仓 `apps/admin/src` 的逐行计数为口径） | 本页逐行枚举是 **35 处**、30 个 operation（GY-R72 前是 33 处；下架页新增 `getAdminPost` 一处、队列新增 `hidePost` 一处，另有计数口径微调） | §2.2 全表 |
 | 「AccountsView 有一个无 handler 的死按钮」（同上） | 现基线不成立：该处已是 `</td>`，停用按钮带 `@click.stop="beginSuspend(row)"`，全仓死按钮 0 个 | apps/admin/src/views/AccountsView.vue:356-365 |
 | 「登录后 scopes 恒为空导致写入按钮全灭」（同上） | 半过时：`scopes: []` 仍在，但 9 个页面登录后立刻再读会话，按钮不会全灭；真正会全灭的是缺 `session:read` 的账号 | apps/admin/src/auth/session.ts:128；apps/admin/src/views/AccountsView.vue:91 |
 | 「登录响应不含 scope」 | 复核成立 | services/api/src/auth/service.ts:366-374 |
 | 「15 个 operation 无 UI 入口」（本页旧版自己的结论） | **已过时**：`68dec742` 上实为 12 条；旧版的 15 把「审计总台账 1」「管理员权限读面 2」算了进去，而这两条都已有页面（依据见 §4 更正记录）。**2026-10-28 起机器重算为 2 条**（`noUiEntry=2`，见 §0 标记块），**GY-R68 接上授/撤权写面后重算为 0 条**（`noUiEntry=0`）：注册资料与限制资料两族也已各有页面，12 那条读数同样进了历史；当时剩下的两条 `grantAdministratorScope`／`revokeAdministratorScope` 授/收权写面已由 GY-R68 补上入口（见 §4）。取证报告在 `1a583e1d` 上给出的缺口 16 条同理——它多算了帖子族 4 条，而那 4 条随 `#640` 合入已经有页 | §4；§2.2 全表 |
 | 代码内陈旧文案（一） | `apps/admin/src/App.vue:28` 写「账号目录（只读）」、`apps/admin/src/App.vue:95` 写「停用/注销等写操作不在本片」，与实有的停用写面矛盾；`apps/admin/src/auth/session.ts:21` 写「控制台业务页面未实现」，实际 `apps/admin/src/views/` 已有 16 个 `.vue`；`services/api/src/routes/admin.ts:160` 写「注册 40 个后台路由」，实际 46 条（文件头 `services/api/src/routes/admin.ts:4` 的「46 个 operationId」与实测一致；机器重算见 §0 标记块） | 同行号 |
-| 代码内陈旧文案（二）：「契约里没有帖子读面／没有任何帖子读面」（`apps/admin/src/views/PostTakedownView.vue:6`、`apps/admin/src/lib/post-takedown-api.mjs:8`、`apps/admin/src/lib/post-takedown-form.mjs:7-8`） | **已不成立**（措辞与事实相反）：契约有 `GET /admin/posts`、`GET /admin/posts/{id}`，路由在 `services/api/src/routes/admin.ts:450`、`services/api/src/routes/admin.ts:455`；页面在 `apps/admin/src/views/ModerationQueueView.vue:129`、`apps/admin/src/views/ModerationQueueView.vue:149`。**本页只记录，不改代码**（属 B 档） | 同行号 |
+| 代码内陈旧文案（二）：「契约里没有帖子读面／没有任何帖子读面」（旧文案在 `apps/admin/src/views/PostTakedownView.vue:6`、`apps/admin/src/lib/post-takedown-api.mjs:8`、`apps/admin/src/lib/post-takedown-form.mjs:7-8`） | **GY-R72 已改掉（不再是陈旧文案）**：三处都改成真口径——契约有 `GET /admin/posts`（`listAdminPosts`）与 `GET /admin/posts/{id}`（`getAdminPost`），门是 `sources:read`；下架页先读一次拿 revision 并回填只读，读面 403/404/网络失败一律回落手填且不禁提交按钮。路由实测：列表在 `services/api/src/routes/admin.ts` 的 551 行、详情在 556 行——旧版写的 450／455 是错的；调用点实测 `apps/admin/src/views/PostTakedownView.vue:122`（读面）、`apps/admin/src/views/ModerationQueueView.vue:165`（列表）、`apps/admin/src/views/ModerationQueueView.vue:185`（详情）。旧版那句「本页只记录，不改代码」已被本片推翻 | 同行号；`docs/verification/gy-r72-admin-takedown-truth-20261102.md` |
 | 代码内陈旧文案（三）：「契约里根本没有审核队列的读面（path 含 `review` 的数量为 0），`routes/` 也没有任何 review 路由」（`apps/admin/src/views/ReviewPlaceholderView.vue:5-6`、`apps/admin/src/lib/review-state.mjs:9`、`apps/admin/src/lib/review-state.mjs:37`） | **字面断言仍成立、结论已过时**：实测契约中 path 含 `review` 的确实为 0，路由里也没有名字带 review 的路径；但「没有审核面」的结论已被 `GET /admin/posts`（读面）与 `approvePost`/`rejectPost`（动作面）推翻——它们只是不叫 review。**本页只记录，不改代码**（属 B 档） | 同行号；`packages/contracts/openapi.json` |
 
 ## 9 这份现状页没有做的事

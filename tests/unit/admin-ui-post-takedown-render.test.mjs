@@ -30,6 +30,8 @@ const VIEW_URL = new URL('../../apps/admin/src/views/PostTakedownView.vue', impo
 const VUE_URL = import.meta.resolve('vue');
 const API_URL = import.meta.resolve('../../apps/admin/src/lib/post-takedown-api.mjs');
 const FORM_URL = import.meta.resolve('../../apps/admin/src/lib/post-takedown-form.mjs');
+const QUEUE_URL = import.meta.resolve('../../apps/admin/src/lib/admin-moderation-queue.mjs');
+const READ_URL = import.meta.resolve('../../apps/admin/src/lib/post-takedown-read.mjs');
 
 const BASE_URL = '/api/v1';
 const TOKEN = 'synthetic-admin-token';
@@ -61,7 +63,9 @@ function loadViewComponent() {
   const code = compiled.content
     .replace(/from\s+["']vue["']/g, `from '${VUE_URL}'`)
     .replace(/from\s+["']\.\.\/lib\/post-takedown-api\.mjs["']/g, `from '${API_URL}'`)
-    .replace(/from\s+["']\.\.\/lib\/post-takedown-form\.mjs["']/g, `from '${FORM_URL}'`);
+    .replace(/from\s+["']\.\.\/lib\/post-takedown-form\.mjs["']/g, `from '${FORM_URL}'`)
+    .replace(/from\s+["']\.\.\/lib\/admin-moderation-queue\.mjs["']/g, `from '${QUEUE_URL}'`)
+    .replace(/from\s+["']\.\.\/lib\/post-takedown-read\.mjs["']/g, `from '${READ_URL}'`);
   assert.deepEqual(
     [...code.matchAll(/from\s+["']([^"']+)["']/g)].map((match) => match[1]).filter((id) => !/^(data:|file:)/.test(id)),
     [],
@@ -383,6 +387,231 @@ test('会话缺 sources:write ⇒ 按钮 disabled + 顶部提示（只提示不�
     assert.ok(banner !== null, '缺 scope 必须有提示');
     assert.match(textOf(banner), /sources:write/);
     assert.match(textOf(banner), /SCOPE_DENIED/);
+  } finally {
+    app.unmount();
+  }
+});
+
+// ------------------------------------------------------------------ 读面（`getAdminPost`）
+
+const READ_BODY = {
+  data: {
+    id: POST_ID,
+    revision: 7,
+    author_id: '22222222-2222-4222-8222-222222222222',
+    anonymized_author_ref: null,
+    title: '玉米地里的草地贪夜蛾怎么打',
+    body: '早上打药比中午好，避开高温时段。',
+    crop_id: 'corn',
+    region_code: '330100',
+    media_ids: [],
+    visibility: 'private',
+    audit_state: 'pending',
+    created_at: '2026-10-23T08:12:33.000Z',
+    updated_at: '2026-11-01T09:00:00.000Z',
+    linked_knowledge_ref: null,
+  },
+  meta: { request_id: '33333333-3333-4333-8333-333333333333', contract_version: '1.0.0', execution_mode: 'real' },
+};
+
+function errorBody(code, message) {
+  return {
+    error: { code, message, retryable: false, details: [] },
+    meta: { request_id: '44444444-4444-4444-8444-444444444444', contract_version: '1.0.0', execution_mode: 'real' },
+  };
+}
+
+/** 路由式 fetch 桩：GET 详情 → 读面返回；POST hide → ACK。 */
+function routedFetch({ read }) {
+  return fakeFetch(({ url, init }) => {
+    if (init?.method === 'POST') return jsonResponse(200, ACK_BODY, { etag: '"8"' });
+    return read(url);
+  });
+}
+
+function clickRead(container) {
+  const button = findBy(container, byTestId('read-post'));
+  assert.ok(button !== null, '必须渲染「读取帖子确认」按钮');
+  assert.equal(typeof button.props.onClick, 'function', '读取按钮必须挂着 click 处理器');
+  button.props.onClick({});
+}
+
+/** `:readonly="false"` 会被编译成不设置该 prop；这里把两种键名都收口成布尔值。 */
+function readOnlyOf(container) {
+  const input = findBy(container, byTestId('revision'));
+  assert.ok(input !== null, '必须渲染 revision 输入框');
+  return input.props.readOnly === true || input.props.readonly === true || input.props.readonly === '';
+}
+
+test('读面成功 ⇒ 展示标题／作者／可见性／revision，revision 回填为只读，If-Match 用回填值', async () => {
+  const fetchImpl = routedFetch({ read: () => jsonResponse(200, READ_BODY, { etag: '"7"' }) });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  const { app, container } = await mountView();
+  try {
+    type(container, 'post-id', POST_ID);
+    await settle();
+    clickRead(container);
+    await settle();
+
+    const readCall = fetchImpl.calls[0];
+    assert.equal(readCall.url, `${BASE_URL}/admin/posts/${POST_ID}`);
+    assert.equal(readCall.init.method, 'GET');
+    assert.equal(readCall.init.headers.authorization, `Bearer ${TOKEN}`);
+
+    const summary = findBy(container, byTestId('read-summary'));
+    assert.ok(summary !== null, '读面成功必须展示摘要');
+    const summaryText = textOf(summary);
+    assert.match(summaryText, /草地贪夜蛾/);
+    assert.match(summaryText, /22222222-2222-4222-8222-222222222222/);
+    assert.match(summaryText, /private/);
+    assert.match(summaryText, /7/);
+    assert.doesNotMatch(summaryText, /private 帖通过后/, '摘要只是回执，不得编造社区侧状态');
+
+    const revisionInput = findBy(container, byTestId('revision'));
+    assert.equal(revisionInput.props.value, '7', '读到的 revision 必须回填');
+    assert.equal(readOnlyOf(container), true, '回填的 revision 必须是只读值');
+    assert.ok(findBy(container, byTestId('revision-locked')) !== null, '只读时必须说明来源与解锁入口');
+    assert.equal(findBy(container, byTestId('read-fallback')), null, '读面成功不得显示回落提示');
+
+    type(container, 'reason', REASON);
+    checkConfirm(container);
+    await settle();
+    assert.equal(buttonOf(container).props.disabled, false, '读面回填后应可提交');
+
+    submit(container);
+    await settle();
+    const hideCall = fetchImpl.calls[1];
+    assert.equal(hideCall.url, `${BASE_URL}/admin/posts/${POST_ID}/hide`);
+    assert.equal(hideCall.init.headers['if-match'], '"7"', 'If-Match 必须用读回来的 revision');
+    assert.notEqual(hideCall.init.headers['if-match'], '*');
+    assert.equal(hideCall.init.headers['idempotency-key'].startsWith('admin-post-takedown-'), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    app.unmount();
+  }
+});
+
+// 负控制①：读面 403 ⇒ 回落手填、如实说明原因与风险，**提交按钮不得被禁**。
+test('读面 403 ⇒ 回落手填 revision + 如实提示，提交按钮仍可用且真的发出请求（负控制①）', async () => {
+  const fetchImpl = routedFetch({
+    read: () => jsonResponse(403, errorBody('SCOPE_DENIED', '缺少所需权限：sources:read')),
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  const { app, container } = await mountView();
+  try {
+    type(container, 'post-id', POST_ID);
+    await settle();
+    clickRead(container);
+    await settle();
+
+    const fallback = findBy(container, byTestId('read-fallback'));
+    assert.ok(fallback !== null, '读面失败必须如实提示，不得静默');
+    const fallbackText = textOf(fallback);
+    assert.match(fallbackText, /sources:read/, '提示必须说明缺哪个 scope');
+    assert.match(fallbackText, /403/);
+    assert.match(fallbackText, /手填/, '提示必须说明回落成手填');
+    assert.match(fallbackText, /409/, '提示必须说明手填 revision 的风险（不匹配 ⇒ 409）');
+    assert.equal(findBy(container, byTestId('read-summary')), null, '读不到就不得显示摘要');
+
+    assert.equal(readOnlyOf(container), false, '读面失败时 revision 必须回到手填（不是只读）');
+    assert.equal(findBy(container, byTestId('revision-locked')), null, '读面失败不得显示「已锁成只读」');
+
+    // 负控制①的断言本体：读面失败**不许**把提交按钮禁掉。
+    type(container, 'revision', '5');
+    type(container, 'reason', REASON);
+    checkConfirm(container);
+    await settle();
+    assert.equal(buttonOf(container).props.disabled, false, '读面 403 之后提交按钮仍必须可用（读面不是提交前提）');
+    assert.equal(findBy(container, byTestId('blocked')), null, '读面失败不得把表单标记为不可提交');
+
+    submit(container);
+    await settle();
+    const hideCall = fetchImpl.calls[1];
+    assert.equal(hideCall.url, `${BASE_URL}/admin/posts/${POST_ID}/hide`);
+    assert.equal(hideCall.init.headers['if-match'], '"5"', '手填值必须原样进 If-Match');
+    assert.ok(findBy(container, byTestId('receipt')) !== null, '手填路径必须能走到服务端并拿到回执');
+  } finally {
+    globalThis.fetch = originalFetch;
+    app.unmount();
+  }
+});
+
+test('读面网络失败 ⇒ 提示写成网络错误、仍回落手填且可提交', async () => {
+  let readAttempts = 0;
+  const fetchImpl = fakeFetch(({ url, init }) => {
+    if (init?.method === 'POST') return jsonResponse(200, ACK_BODY, { etag: '"8"' });
+    readAttempts += 1;
+    throw new TypeError('connect ECONNREFUSED 127.0.0.1:8787');
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  const { app, container } = await mountView();
+  try {
+    type(container, 'post-id', POST_ID);
+    await settle();
+    clickRead(container);
+    await settle();
+
+    assert.equal(readAttempts, 1, '读面失败不得自动重试');
+    const fallback = findBy(container, byTestId('read-fallback'));
+    assert.ok(fallback !== null, '网络失败同样必须如实提示');
+    assert.match(textOf(fallback), /ECONNREFUSED|网络/);
+
+    type(container, 'revision', '9');
+    type(container, 'reason', REASON);
+    checkConfirm(container);
+    await settle();
+    assert.equal(buttonOf(container).props.disabled, false, '网络失败不得禁提交');
+  } finally {
+    globalThis.fetch = originalFetch;
+    app.unmount();
+  }
+});
+
+test('读面成功后改帖子 ID ⇒ 解锁 revision、摘要消失并提示旧 revision 不再适用', async () => {
+  const fetchImpl = routedFetch({ read: () => jsonResponse(200, READ_BODY, { etag: '"7"' }) });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = fetchImpl;
+  const { app, container } = await mountView();
+  try {
+    type(container, 'post-id', POST_ID);
+    await settle();
+    clickRead(container);
+    await settle();
+    assert.equal(findBy(container, byTestId('revision')).props.value, '7');
+
+    const otherId = '00000000-0000-4000-8000-000000000002';
+    type(container, 'post-id', otherId);
+    await settle();
+
+    assert.equal(findBy(container, byTestId('read-summary')), null, '换了 ID 之后旧摘要必须撤掉（不得继续显示别的帖子的标题）');
+    const stale = findBy(container, byTestId('read-stale'));
+    assert.ok(stale !== null, '必须提示旧 revision 已不适用');
+    assert.match(textOf(stale), /不再适用/);
+    const revisionInput = findBy(container, byTestId('revision'));
+    assert.equal(readOnlyOf(container), false, '换 ID 后必须解锁 revision，允许重新读取或手填');
+    assert.equal(revisionInput.props.value, '7', '换 ID 不替操作员猜新 revision');
+  } finally {
+    globalThis.fetch = originalFetch;
+    app.unmount();
+  }
+});
+
+test('会话缺 sources:read ⇒ 读取按钮禁用并说明原因，提交按钮不受影响', async () => {
+  const { app, container } = await mountView({ scopes: ['sources:write'] });
+  try {
+    const readButton = findBy(container, byTestId('read-post'));
+    assert.equal(readButton.props.disabled, true, '缺读面 scope 时读取按钮必须禁用');
+    assert.match(textOf(findBy(container, byTestId('read-blocked'))), /sources:read/);
+
+    type(container, 'post-id', POST_ID);
+    type(container, 'revision', '7');
+    type(container, 'reason', REASON);
+    checkConfirm(container);
+    await settle();
+    assert.equal(buttonOf(container).props.disabled, false, '缺 sources:read 不等于不能下架');
   } finally {
     app.unmount();
   }
