@@ -5,13 +5,19 @@
 // 于是 202 里的 `third_party_state` 恒为协议处理器行上报的 `null`（= 「没有可信结论」），
 // 而紧接着的 `GET /account/deletions/:id` 会现算成 `requested`/`confirmed` ⇒ 同一请求两套回执。
 //
-// 本文件锁住四条（T1–T4）：
+// 本文件锁住五条（T1–T4 行为 + T5 结构钉子）：
 //   T1  同一请求：POST 202 的 `third_party_state` 向量 === 紧随其后 GET 的同一向量（两种状态都覆盖：
 //       有第三方行 ⇒ `requested`；无第三方行 ⇒ `null`）；
 //   T2  第三方读侧端口抛错 ⇒ 202 的 `third_party_state === null` 且 **HTTP 仍 202**（⛔ 不是 500/503）；
 //   T3  `projectReceipt()` 不传 options 的**老路径**逐字不变（既有 fixture 断言逐字相等，
 //       且 `createAccountDeletionRequestService` 不带读取器时与 `projectReceipt(receipt)` 逐字相等）；
 //   T4  取消（DELETE）路径的读数不受影响：取消前后与 GET 同一口径。
+//   T5  **结构钉子**（纯源码切片 + 文本断言；不按行号，故别人合法插行不会假红；不连库）：
+//       受理读口只允许**一个实现** —— 路由里 `readThirdPartyState:` 只出现 1 次且右值必须是
+//       `thirdPartyStateOf.bind(null, deps)`；`projectReceiptForAccepted()` 只定义 1 处、且其中
+//       「老路径」分支调用的是**不带 options** 的 `projectReceipt(receipt)`；`thirdPartyStateOf()`
+//       只定义 1 处、`catch { return null; }` 仍只在读侧那两处（fail-closed 单一实现）。
+//       ⇒ 专门堵住 R3a 实测抓不到的洞：「复制一份等价实现」行为全绿但结构已分叉。
 //
 // ── 负控制（改一行就必须变红的可重跑说明）──────────────────────────────────────────────
 // R1. 把 `services/api/src/routes/account-deletion.ts` 受理处（`produce` 里的 `service.request()`
@@ -24,6 +30,10 @@
 //     而不走 `thirdPartyStateOf()`）⇒ T1 在**行存在**的臂上可能仍绿，但 T2（端口抛错）与
 //     T3（老路径逐字）会露馅：另造口径要么绕过 fail-closed（T2 红），要么改动了 `projectReceipt()`
 //     的默认语义（T3 红）。若三条都红不出来，说明这条负控制无效 —— 报告里如实写清。
+//     ⚠ 实测：把受理处换成**等价的匿名箭头**（`(rid, rc) => thirdPartyStateOf(deps, rid, rc)`）
+//     ⇒ T1–T4 **全绿**（读数一模一样），只有 T5 会红。这就是加 T5 的原因。
+// R4. 把受理那行的右值改成等价的匿名箭头（同上）⇒ T5 必红（右值不是 `thirdPartyStateOf.bind(null, deps)`
+//     且右值里出现 `=>`），而 T1–T4 仍全绿。还原后必须回到基线 sha256。
 //
 // ── 本文件**不**覆盖的东西（如实写清，不冒充）─────────────────────────────────────────
 // * 真库臂（`createPostgresThirdPartyDeletionPort()`）未跑：本文件用**注入端口**（进程内、无库、无网）。
@@ -33,6 +43,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { buildApp } from '../../services/api/src/app.ts';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
@@ -332,4 +343,122 @@ test('T4 取消（DELETE）路径：取消前的 GET、取消的响应、取消�
   } finally {
     await app.close();
   }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T5 · 结构钉子：「受理读口只有一个实现」必须能被测试抓到（R3a 那个洞）
+//
+// 判据一律是**源码切片 + 正则**，不写行号：
+//   * 别人在上方/下方合法插行 ⇒ 本用例不受影响（切片按函数名/实参键定位）；
+//   * 别人把读口复制一份等价实现 ⇒ 必红（这正是行为测试 T1–T4 抓不到的那种改动）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ROUTES_SRC_URL = new URL('../../services/api/src/routes/account-deletion.ts', import.meta.url);
+const PRIVACY_SRC_URL = new URL('../../services/api/src/privacy/account-deletion.ts', import.meta.url);
+
+/**
+ * 取**顶层函数**切片：从 `function <name>(` 起，到其后第一个「列 0 的 `}` 行」为止（含该行）。
+ * 定位只按函数名，不按行号 ⇒ 上方插行不会假红；函数不存在或重名（>1 处）直接判红。
+ */
+function sliceTopLevelFunction(source, name, fileLabel) {
+  const definition = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`, 'g');
+  const found = [...source.matchAll(definition)];
+  assert.equal(
+    found.length,
+    1,
+    `${fileLabel} 里顶层函数 ${name} 必须恰好定义 1 处（实得 ${found.length} 处）—— ⛔ 复制实现/重名会让「同源」变成两套`,
+  );
+  const start = found[0].index;
+  const end = source.indexOf('\n}\n', start);
+  assert.notEqual(end, -1, `${fileLabel} 里 ${name} 的收尾行（列 0 的 }）必须可定位`);
+  return source.slice(start, end + 3);
+}
+
+/**
+ * `catch { … return null; }` 形态的口径（fail-closed 分支），容忍换行、缩进与夹在中间的注释
+ * ——「补一句解释注释」不该让结构钉子假红，只有**把 null 改掉/加第二层 catch**才该红。
+ */
+const FAIL_CLOSED_SOURCE = String.raw`catch\s*(?:\([^)]*\))?\s*\{(?:\s|//[^\n]*\n|/\*[\s\S]*?\*\/)*return\s+null\s*;?\s*\}`;
+
+test('T5 结构钉子：受理读口只允许一个实现（同一 thirdPartyStateOf + 老路径不带 options + fail-closed 单点）', () => {
+  const routes = readFileSync(ROUTES_SRC_URL, 'utf8');
+  const privacy = readFileSync(PRIVACY_SRC_URL, 'utf8');
+
+  // ── 1) 路由受理处：`readThirdPartyState:` 只作为实参键出现 1 次，右值必须是同一个已存在的函数对象 ──
+  const readerKeys = [...routes.matchAll(/readThirdPartyState\s*:/g)];
+  assert.equal(
+    readerKeys.length,
+    1,
+    `路由里 readThirdPartyState: 只允许出现 1 次（受理处实参键），实得 ${readerKeys.length} 次 —— ⛔ 多一处就是两套读口`,
+  );
+  assert.match(
+    routes,
+    /readThirdPartyState\s*:\s*thirdPartyStateOf\s*\.\s*bind\s*\(\s*null\s*,\s*deps\s*\)/,
+    '202 的第三方读口必须是 GET/DELETE/replay 用的**同一个** thirdPartyStateOf.bind(null, deps)（⛔ 不许匿名箭头、不许另写一份）',
+  );
+  const readerLine = routes.slice(readerKeys[0].index, routes.indexOf('\n', readerKeys[0].index));
+  assert.doesNotMatch(
+    readerLine,
+    /=>/,
+    '受理读口的右值里出现箭头函数 ⇒ 说明另造了一份实现（结构钉子不允许，哪怕行为等价）',
+  );
+
+  // ── 2) 服务层：`projectReceiptForAccepted` 只定义 1 处，且「老路径」分支调用的是不带 options 的
+  //        `projectReceipt(receipt)`；带读取器的分支才传 `{ thirdPartyState }`。 ──
+  const accepted = sliceTopLevelFunction(privacy, 'projectReceiptForAccepted', 'privacy/account-deletion.ts');
+  assert.match(
+    accepted,
+    /if\s*\(\s*read\s*===\s*null\s*\)\s*return\s+projectReceipt\(\s*receipt\s*\)\s*;/,
+    '老路径分支必须是 `if (read === null) return projectReceipt(receipt);`（不传 options，既有调用点行为逐字不变）',
+  );
+  assert.match(
+    accepted,
+    /projectReceipt\(\s*receipt\s*,\s*\{\s*thirdPartyState\s*:/,
+    '带读取器的分支必须把现算值交给 `projectReceipt(receipt, { thirdPartyState })`（复用既有闭集白名单，不另造映射）',
+  );
+  const projections = [...accepted.matchAll(/projectReceipt\(/g)];
+  assert.equal(
+    projections.length,
+    2,
+    `projectReceiptForAccepted 里只允许两次投影调用（老路径 1 次 + 带读取器 1 次），实得 ${projections.length} 次`,
+  );
+  assert.doesNotMatch(
+    accepted,
+    /catch/,
+    '服务层不许自带 try/catch ——「受理不因第三方查询而 500」只能有一处实现（在读侧）',
+  );
+
+  // ── 3) 读侧：`thirdPartyStateOf` 只定义 1 处，其函数体内 catch 只出现 1 次且返回 null；
+  //        全路由文件的 fail-closed（`catch { return null; }`）只有两处：读端口的 thirdPartyRowsFor + 投影的 thirdPartyStateOf。 ──
+  const stateOf = sliceTopLevelFunction(routes, 'thirdPartyStateOf', 'routes/account-deletion.ts');
+  const catchesInStateOf = [...stateOf.matchAll(/catch/g)];
+  assert.equal(
+    catchesInStateOf.length,
+    1,
+    `thirdPartyStateOf() 里只允许一个 catch（fail-closed 单点），实得 ${catchesInStateOf.length} 个`,
+  );
+  assert.match(
+    stateOf,
+    new RegExp(FAIL_CLOSED_SOURCE),
+    'thirdPartyStateOf() 的 catch 必须原样 `return null`（契约语义：null = 没有可信结论；⛔ 不许改成抛出）',
+  );
+  const failClosed = [...routes.matchAll(new RegExp(FAIL_CLOSED_SOURCE, 'g'))];
+  assert.equal(
+    failClosed.length,
+    2,
+    `routes 里 fail-closed 只允许 2 处（thirdPartyRowsFor 读端口 + thirdPartyStateOf 投影），实得 ${failClosed.length} 处`,
+  );
+
+  // ── 4) 反向确认：这三处结构在**同一个提交面**上是自洽的（读口就是 readThirdPartyState 的右值，
+  //        服务层确实把它交给 projectReceiptForAccepted 的第三参）。 ──
+  assert.match(
+    privacy,
+    /readThirdPartyState\?:\s*DeletionThirdPartyStateReader\s*\|\s*null/,
+    '接口上必须仍声明可选读取器 `readThirdPartyState?: DeletionThirdPartyStateReader | null`（不传即老路径）',
+  );
+  assert.match(
+    privacy,
+    /projectReceiptForAccepted\(input,\s*requestId,\s*readThirdPartyState\)/,
+    'request() 必须把读取器原样交给 projectReceiptForAccepted（⛔ 不许在这里另算一遍）',
+  );
 });
