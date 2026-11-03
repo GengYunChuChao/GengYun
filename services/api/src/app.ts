@@ -2621,7 +2621,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   // 的**唯一注册点**。GY-R74 起按域降级而不是整域关闭：`real` + 真库 ⇒ `accountDeletion.available
   // === true` ⇒ 这两个 operation 可受理（POST 202 / GET 可读回执），删除执行则按域如实：
   // 7 日在线清除真跑（受理级联 + 到期驱动），30 日备份与第三方域恒 `blocked`（无真实完成证据）。
-  // 唯一保留的 503 是「`real` 但无真库」：受理无法持久化 ⇒ 不接线（`accountDeletionWired === null`）
+  // 唯一保留的 503 是「`real` 但无真库」：受理无法持久化 ⇒ 不接线（`accountDeletion.available === false`）
   // ⇒ 两个 operation 一律 503 `PROVIDER_UNAVAILABLE`（如实失败，不回 200 空壳、不假装删除成功）。
   // 注：必需模块闭集若未注册齐，由既有协调器在**受理处**抛 `OBJECT_UNAVAILABLE`(409)
   // （`deletion-modules.mjs` 的既有语义）——本片不另加一层「假装能完成」的兜底。
