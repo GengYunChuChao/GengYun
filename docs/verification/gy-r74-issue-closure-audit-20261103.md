@@ -13,7 +13,7 @@
 - **本页不关 issue，也不改任何 issue 正文。** 判定是材料审计，不是验收裁定；任何「可关」字样都只是「可提交关单审查」的意思。
 - 判定只对 `[验收]` 条文；`[范围]` 条目不参与判定，但若某条 `[范围]` 缺口会连带影响验收条文的读法，会在该节「差额」里点名。
 - 三档定义：
-  - **已满足**：该 issue `[验收]` 的每一条，都能在仓内用一条命令或一次 grep 复现出实物，且不依赖真机、真实供应商、真实时间流逝、部署授权或第三方确认。
+  - **已满足**：该 issue `[验收]` 的每一条，都能在仓内用一条命令或一次 grep 复现出实物，且不依赖真机、真实供应商、真实时间流逝、部署授权或第三方确认。**判定基准**：已满足＝条文可在仓内以内存替身／单测复现；真库臂与真机层的验证单列在末节（§5、§6），不参与本档判定，故 #16／#18 的边界不因此改判。
   - **部分满足**：仓内有实物，但至少一条 `[验收]` 条文缺条文明写的某项；「缺什么」逐项写。
   - **未满足**：该 issue 的核心验收条文在仓内找不到兑现物，主体功能只到框架或脚本层面。
 - **全页不写行号锚点**：指位置一律「文件路径 + 符号名 + 逐字片段」。行号会随代码移动漂移，且本仓的文档锚点闸门按这条纪律立。
@@ -30,7 +30,7 @@
 | #5 | GY-I05 单作物地区档案及授权定位 | 部分满足 | † 定位六档与回落手选在回环层齐备（`gy-i05-locate-timeout-20261021.md` 表格） | 真机授权／拒绝／超时三态（该页逐条写「未取得（真机）」） |
 | #6 | GY-I06 私有媒体上传、访问权限及 EXIF 清除 | 部分满足 | † 对象存储适配器与 SigV4 逐字节复算在进程内替身下跑通（`gy-i06-media-real-provider-plan-20261021.md`） | 真实桶的 ACL／签名／删除读数与真机大图性能集（该页自述「不产生任何真实对象存储证据」） |
 | #7 | GY-I07 科普／除草剂查询、详情与来源版本 | 部分满足 | † `packages/reference/query.mjs` 的 `evaluateEligibility`／`isSimulatedSource` 与失效判定（`gy-r29-i07-closure-20261022.md`） | 列表排序口径待用户裁定；详情真 PG 读面读数未取得（该页 §5 仍有未取得项） |
-| #8 | GY-I08 药剂适用过滤与用量安全边界 | 已满足 | 10 个 i08 测试文件 358/358 通过，含「≥100 组全部通过」与规则版本单一事实来源 | —（见 §3.1） |
+| #8 | GY-I08 药剂适用过滤与用量安全边界 | 已满足 | `tests/reference` 28 个 `.mjs` 全跑 358/358 通过（其中 i08 子集 9 个测试文件 54/54），含「≥100 组全部通过」与规则版本单一事实来源 | —（见 §3.1） |
 | #9 | GY-I09 实时拍草识别、Top3 核对及不确定处理 | 部分满足 | † `services/api/src/recognitions/provider.ts` 的 `real` 分支无替身回退，未配置即 503（`gy-i09i10-recog-20261019.md` 表内该行） | 真实供应商调用证据（真实请求编号／耗时／模型版本） |
 | #10 | GY-I10 标签 OCR、用户校正及登记精确核对 | 部分满足 | † 回环 HTTP 回归 11 组，合成身份与替身提供者（`gy-i10-ocr-http-20261012.md` 末行自述未联网、未调真实供应商） | 真实 OCR 供应商与真实标签样本 |
 | #11 | GY-I11 普通话录音、实时 ASR 与发送核对 | 部分满足 | † 音频格式守卫与转写确认链路有单测（`gy-r72-i11-audio-format-20261102.md`） | 真实 ASR 调用与 50 段真实普通话样本 |
@@ -49,7 +49,7 @@
 | #24 | GY-I24 部署联网比赛版、备份恢复并交付材料 | 未满足 | 发布门禁脚本与材料索引存在（`gy-r31-i24-release-20261022.md`） | 任何一次真实部署（该页自述「真实 CVM／云托管的发版仍未执行」） |
 | #27 | GY-I25 正式 AppID、真机域名与六类服务接入 | 部分满足 | † 接入矩阵与六类适配登记（`docs/verification/provider-matrix.md`、`gy-i27-live-ai-20261018.md`） | 正式 AppID／域名归属、真实数据库与对象存储授权 |
 | #28 | GY-I26 五 Tab 骨架、Demo 样式与统一失败态 | 部分满足 | 微信工具走查五 Tab 5/5 命中（`gy-i26-five-tabs-20261103.md`）＋状态层 24 契约码 | Demo 全页遮挡走查记录、静态地区「不假发预警」完整口径（见 §3.5） |
-| #29 | GY-I27 用途授权、外发账本与隐私撤回守卫 | 部分满足 | 写侧 50/50、在途撤回与回执对称 15/15、隐私红线 17/17（本轮实跑） | 「完成」态在仓内装配下不可达：无 `ThirdPartyDeletionRecipientSource`，只会落 `RECIPIENTS_UNWIRED` |
+| #29 | GY-I27 用途授权、外发账本与隐私撤回守卫 | 部分满足 | 写侧 50/50、在途撤回与回执对称 15/15、隐私红线 17/17（本轮实跑） | 「完成」态在仓内装配下不可达：`ThirdPartyDeletionRecipientSource` 只有声明、没有实现被装配，只会落 `RECIPIENTS_UNWIRED` |
 
 判定分布：**已满足 4 张（#8、#16、#17、#18）／部分满足 18 张／未满足 2 张（#21、#24）**。
 
@@ -81,11 +81,14 @@ node --test tests/reference/i08-scenarios-100.test.mjs
   ⇒ tests 7 / pass 7 / fail 0 / duration_ms 169.77
 ```
 
-再把该目录 10 个文件逐个列出后全跑（先试过把目录整个传进去，`node --test tests\reference` 直接报 `'test failed'` 并以退出码 1 结束——这是调用方式错，不是用例失败）：
+`tests/reference` 实为 28 个 `.mjs`（26 个 `*.test.mjs` ＋ `_fixtures.mjs`、`_i08-scenarios.mjs` 两个 helper），358 只在 28 个全跑时出现，i08 子集只有 9 个测试文件、54/54。所以这个数不能用目录传参取，必须写成 glob（先试过把目录整个传进去，`node --test tests\reference` 直接报 `'test failed'` 并以退出码 1 结束——这是调用方式错，不是用例失败）：
 
 ```
-node --test <tests\reference\*.mjs 全 10 个文件>
-  ⇒ tests 358 / suites 0 / pass 358 / fail 0 / cancelled 0 / skipped 0 / duration_ms 7308.04
+node --test tests/reference/*.mjs
+  ⇒ tests 358 / suites 0 / pass 358 / fail 0 / cancelled 0 / skipped 0 / duration_ms 8627.12
+
+node --test tests/reference/i08-*.test.mjs
+  ⇒ tests 54 / pass 54 / fail 0（i08 子集 9 个测试文件）
 ```
 
 开关那条在 `tests/unit/admin-flag-gate.test.mjs`、`admin-reference-invalidity.test.mjs`、`admin-ui-review-state.test.mjs` 一组里跑到 `tests 35 / pass 35 / fail 0`（1976.75ms）。
@@ -253,7 +256,7 @@ node --test tests/unit/admin-content-lifecycle.test.mjs
 
 ## 5 只有用户或外部条件能推进的项
 
-- **#29 的最后一格（第三方删除「完成」态）**：写侧已接通——`services/api/src/privacy/third-party-deletion-dispatch.ts` 是 `subscribeThirdPartyDeletion()` 的唯一调用点，`evidence_ref` 为空不许写 `confirmed`（库层 CHECK `third_party_confirmed_evidence`），终态不回退。但生产今天零写零外发，因为仓内没有 `ThirdPartyDeletionRecipientSource`：未注入时只发一条 `third_party_deletion_dispatch_unwired`，`reason: 'RECIPIENTS_UNWIRED'`。也就是说「完成」这个状态在仓内任何可装配的形态下都不可达。这条差额只能由「谁是真的接收方、谁签 `evidence_ref`」这个产品口径推进，属用户裁定；issue 自己也把 7／30 日完整集成留给 #19。
+- **#29 的最后一格（第三方删除「完成」态）**：写侧已接通——`services/api/src/privacy/third-party-deletion-dispatch.ts` 是 `subscribeThirdPartyDeletion()` 的唯一调用点，`evidence_ref` 为空不许写 `confirmed`（库层 CHECK `third_party_confirmed_evidence`），终态不回退。但生产今天零写零外发，因为 `ThirdPartyDeletionRecipientSource` 只有声明、没有实现被装配——同文件的 `export interface ThirdPartyDeletionRecipientSource {` 就是那份声明，注释逐字写「本接口只声明形状，装配层不传 ⇒ `RECIPIENTS_UNWIRED`」，实现只有测试替身；未注入时只发一条 `third_party_deletion_dispatch_unwired`，`reason: 'RECIPIENTS_UNWIRED'`。也就是说「完成」这个状态在仓内任何可装配的形态下都不可达。这条差额只能由「谁是真的接收方、谁签 `evidence_ref`」这个产品口径推进，属用户裁定；issue 自己也把 7／30 日完整集成留给 #19。
 - **#4、#5、#6、#23 的真机读数**：需要 Android／iOS 真机与正式 AppID，仓内与被测环境都给不出。
 - **#9、#10、#11、#12、#13、#14、#27 的真实供应商调用**：需要开通额度与凭据，且 `provider-adapter-live-wiring.md` 明写该文件「不构成任何真实调用授权」。
 - **#7 的排序口径、#22 的矩阵范围、#28 的「骨架是否算验收」**：需要一次用户裁定，不是补代码。
