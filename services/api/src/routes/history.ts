@@ -14,7 +14,7 @@
  * 归属：一律 `guards.requireUser`；越权/不存在由服务层统一映射 `NOT_FOUND`，不泄露存在性。
  * 私有响应一律 `Cache-Control: no-store`；`GET /history` 是列表 ⇒ **无 `ETag`**（契约
  * `headers.ETag.description`：「资源revision强ETag；列表无此头」）；`GET /history/{id}` 返回
- * **资源表示** ⇒ 回强 ETag `"<revision>"`（与已合并的 `history/service.ts::strongEtagOf` 同一口径）。
+ * **资源表示** ⇒ 回强 ETag `"<revision>"`（同 `history/service.ts::strongEtagOf` 口径）+ `private, no-store`。
  *
  * `DELETE` **不**回 `ETag`：成功响应是 `Ack`（无 revision 字段），资源已删除，回一个
  * "已删除资源的 ETag"是编造；口径与已合并的 `DELETE /recognitions/{id}` 一致。
@@ -92,10 +92,10 @@ export function registerHistoryRoutes(
 
   app.get(`${API_PREFIX}/history/:id`, { preHandler: guards.requireUser, schema: { params: idParams } }, async (request, reply) => {
     const data = await ready(request).getHistory(readIdentity(request), (request.params as { id: string }).id);
-    // 单条读面返回**资源表示** ⇒ 强 ETag `"<revision>"`；仍是私有 no-store。
+    // 单条读面返回**资源表示** ⇒ 强 ETag `"<revision>"`；缓存口径 `private, no-store`（个体资源不进共享缓存）。
     // 不存在 / 不属于本人由服务层 throw notFound()（同一句、同形 404），走统一错误处理，不带 ETag。
     return reply
-      .headers(noStore)
+      .header('Cache-Control', 'private, no-store')
       .header('ETag', strongEtagOf(data.revision))
       .send({ data, meta: buildMeta(request, config) });
   });

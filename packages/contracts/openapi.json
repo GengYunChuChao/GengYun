@@ -7145,7 +7145,7 @@
       "get": {
         "operationId": "getHistory",
         "summary": "读本人一条历史：他人与不存在是同一个 404，投影与列表项同形",
-        "description": "作用域 user：需登录会话；params 必须 uuid（非 uuid 即 400 INVALID_REQUEST）；200 返回与列表项同形的 History 投影 + 强 ETag「\"<revision>\"」+ no-store；只允许本人读：记录为 null 或 owner_id 不是本人 ⇒ 404 NOT_FOUND「历史记录不存在或不可用」，与删除面同一口径（history/service.ts:129-131、390-425），他人拿不到 409 或任何存在性线索；投影不信存储里的快照：job_state 实时优先（deriveJobState）、reference_state 逐次重查（deriveVisibility），所以目标对本人不可见时仍是 200 + 与列表项同形的不可用投影（service.ts:231-247）；单条读面无分页与游标，不需要 Idempotency-Key 与 If-Match。",
+        "description": "作用域 user：需登录会话；params 必须 uuid（非 uuid 即 400 INVALID_REQUEST）；200 返回与列表项同形的 History 投影 + 强 ETag「\"<revision>\"」+ `Cache-Control: private, no-store`；只允许本人读：记录为 null 或 owner_id 不是本人 ⇒ 404 NOT_FOUND「历史记录不存在或不可用」，与删除面同一口径（history/service.ts:129-131、390-425），他人拿不到 409 或任何存在性线索；投影不信存储里的快照：job_state 实时优先（deriveJobState）、reference_state 逐次重查（deriveVisibility），所以目标对本人不可见时仍是 200 + 与列表项同形的不可用投影（service.ts:231-247）；单条读面无分页与游标，不需要 Idempotency-Key 与 If-Match。",
         "tags": [
           "history"
         ],

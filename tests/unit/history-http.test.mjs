@@ -399,7 +399,7 @@ test('历史HTTP：单条读面 GET /history/{id} —— 与列表项同形、�
   const listed = (await h.call('GET', HISTORY)).body.data.items[0];
   const detail = await h.call('GET', `${HISTORY}/${listed.id}`);
   assert.equal(detail.status, 200);
-  assert.equal(detail.cache, 'no-store');
+  assert.equal(detail.cache, 'private, no-store', '单条读面是私有个体资源 ⇒ Cache-Control: private, no-store');
   assert.equal(detail.etag, `"${listed.revision}"`, '单条读面返回资源表示 ⇒ 回该 revision 的强 ETag');
   assert.deepEqual(detail.body.data, listed, '单条读面必须与列表项同形（同一个 History schema，不新造详情 schema）');
   assert.deepEqual(Object.keys(detail.body.data).sort(), [...HISTORY_KEYS].sort());
