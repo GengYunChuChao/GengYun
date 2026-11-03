@@ -46,6 +46,7 @@ function post(over = {}) {
   return {
     id: POST_ID, revision: 1, author: author(), title: '稗草防除经验交流', body: '按标签说明选择登记药剂。',
     crop_id: 'crop_rice', region_code: '330100', media_ids: [], visibility: 'published', audit_state: 'approved',
+    reason_codes: [],
     created_at: '2026-10-20T04:00:00.000Z', updated_at: '2026-10-20T04:00:00.000Z', media: [],
     linked_knowledge_ref: null, linked_knowledge: null, ...over,
   };
@@ -53,7 +54,8 @@ function post(over = {}) {
 function comment(over = {}) {
   return {
     id: COMMENT_ID, revision: 1, post_id: POST_ID, author: author(), body: '也遇到过类似情况。',
-    visibility: 'published', audit_state: 'approved', created_at: '2026-10-20T04:05:00.000Z', ...over,
+    visibility: 'published', audit_state: 'approved', reason_codes: [],
+    created_at: '2026-10-20T04:05:00.000Z', ...over,
   };
 }
 function envelope(data, mode = 'stub') {

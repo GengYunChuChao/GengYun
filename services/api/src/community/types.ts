@@ -114,6 +114,8 @@ export interface Post {
   media_ids: string[];
   visibility: Visibility;
   audit_state: AuditState;
+  /** 结论的理由码（openapi.json -> Post.reason_codes）。**必现**：没有可归属的码时为空数组 `[]`。 */
+  reason_codes: string[];
   created_at: string;
   updated_at: string;
   media: CommunityMediaRef[];
@@ -135,6 +137,8 @@ export interface Comment {
   body: string;
   visibility: Visibility;
   audit_state: AuditState;
+  /** 结论的理由码（openapi.json -> Comment.reason_codes）。**必现**：没有可归属的码时为空数组 `[]`。 */
+  reason_codes: string[];
   created_at: string;
 }
 

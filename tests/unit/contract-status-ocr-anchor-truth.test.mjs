@@ -211,11 +211,27 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  *   ② R72 把 `advanceReport` 的 blocker 第 ③ 条从「已在 KNOWN_NO_UI_ENTRY 登记」——那是假话
  *      （该表实测为空数组，且该 op 因路由落在 `services/api/src/routes/admin-reports.ts`、
  *      闸门只扫 `routes/admin.ts` 而没进能力图）——改成如实描述。
+ *
+ * 2026-11-03 再同步一次（GY-R73-C 审核理由码读面片，与 #838 合并后重锚）：**正常改台账**，
+ * 全部是「同一行的引用换了写法／按当前树重取行号」，没有改判定、没有加豁免条目 ——
+ * ① `services/api/src/community/service.ts` 涨了 45 行（#838 又在其 :1676 之后加了 24 行），
+ *    `listPosts`/`createPost`/`createComment` 等 16 条 evidence 的 `lines` 由
+ *    `--reanchor --write-doc` 重写；
+ * ② 其中 8 条原来只写裸方法名（`listPosts` 等，纯子串会命中注释与 `store.listPosts(`）⇒
+ *    补成完整签名文本才可重锚；`createPost`/`createComment` 两条取机械位移区间；
+ * ③ `editPost` 那条 evidence 的裸 `:1030-1157` 按 `git diff -U0` 端点映射改成 `:1075-1202`；
+ *    16 处 blocker 文案里的裸 `（`:1213`）` 补成显式 `services/api/src/app.ts:1309`。
  * 本条钉的是「这个切片没有顺手改到别处」，不是「台账不许改」：改台账就同步基线。
+ *
+ * 2026-11-03 同日第二次同步（同一 PR #857 的后续提交：`reason_codes` 从「可选/缺席」改成
+ * 「required 且没有码时给空数组 `[]`」）：`services/api/src/community/service.ts` 再涨 9 行，
+ * 9 条 evidence 的 `lines` 按 `base(ef22d5a9)→HEAD` 端点映射重取（`960-1026`→`969-969` 等），
+ * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 两个文件各**少 1 字节**、
+ * 行数不变（4407 / 218）。仍是「正常改台账」，故同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 270813, lines: 4407 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 194118, lines: 218 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 271778, lines: 4407 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 194486, lines: 218 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

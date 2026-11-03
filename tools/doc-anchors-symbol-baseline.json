@@ -124,16 +124,6 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-14 行（「/**…」），块后第一条非空行是第 15 行的「import type { FastifyInstance } from 'fastify';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/community/service.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/community/service.ts:1379",
-      "doc": "docs/architecture/contract-implementation-status.md",
-      "docLine": 126,
-      "kind": "inline",
-      "note": "【行内单行注释】文档引的是第 1379 行这条`//` 行注释（「// 同 `createPost`：活跃作者行的匿名引用恒为 NULL（迁移 0030 的\"恰好一个\"约束）。」），块后第一条非空行是第 1380 行的「anonymized_author_ref: null,」，是接口成员签名不是声明行——引用的是这条注释的自述，没有声明行可指。"
-    },
-    {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",

@@ -15553,6 +15553,16 @@
           "audit_state": {
             "$ref": "#/components/schemas/AuditState"
           },
+          "reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0,
+            "maxItems": 30,
+            "description": "本条审核结论的理由码，原样给出产出方的闭集码（规则层/模型层码，或运营驳回理由码），服务端不翻译、不改写、不按严重程度重排。**必现**：没有可归属的理由码时为空数组 `[]`（不再用缺席表达）——响应体是 `additionalProperties:false` 的闭集且全部字段 `required`，所以本字段不缺席；也不填 `unknown` 之类占位码。`minItems` 为 0（`[]` 合法）；上限 30 条，与 `Moderation.reason_codes` 同一上限。"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -15600,6 +15610,7 @@
           "media_ids",
           "visibility",
           "audit_state",
+          "reason_codes",
           "created_at",
           "updated_at",
           "media",
@@ -15652,6 +15663,16 @@
           "audit_state": {
             "$ref": "#/components/schemas/AuditState"
           },
+          "reason_codes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 0,
+            "maxItems": 30,
+            "description": "本条审核结论的理由码，原样给出产出方的闭集码（规则层/模型层码，或运营驳回理由码），服务端不翻译、不改写、不按严重程度重排。**必现**：没有可归属的理由码时为空数组 `[]`（不再用缺席表达）——响应体是 `additionalProperties:false` 的闭集且全部字段 `required`，所以本字段不缺席；也不填 `unknown` 之类占位码。`minItems` 为 0（`[]` 合法）；上限 30 条，与 `Moderation.reason_codes` 同一上限。"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -15665,6 +15686,7 @@
           "body",
           "visibility",
           "audit_state",
+          "reason_codes",
           "created_at"
         ]
       },
