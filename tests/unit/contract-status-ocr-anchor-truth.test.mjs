@@ -250,6 +250,10 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * timeout 维度的 evidence 先由 `--reanchor --write-doc` 重锚到 `1004-1030`，随后为满足
  * `doc-anchor-relocation-identity` 的端点映射要求改成 `982-1007`（区间仍含声明行 `:1004`）⇒
  * 两份台账各**多 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-03 第六次同步（GY-R75 契约计数口径订正，与 OCR 锚点无关）：`contract-status.json` 的 media blocker
+ * 里「冻结契约（86 条路径 / 113 条 operation，实测 `packages/contracts/openapi.json`）」按基线 `3cdf4740`
+ * 实测改成「99 条路径 / 129 条 operation」并补「，基线 `3cdf4740`」⇒ 两份台账各**多 20 字节**、行数不变
+ * （4434 / 219）。仍是「正常改台账」，故同步基线。
  * 2026-11-03 合入 `origin/main`（3d9b2369）后第七次同步：两侧基线在此取**并集** —— 分支侧（注销真清片）
  * 与 main 侧（音频读面）的台账改动同时保留：取消维度按合流树实测为 `services/api/src/app.ts:2553`
  * （六源 `:2554`/`:2560`/`:2566`/`:2572`/`:2580`/`:2590`），超时维度同时保留分支侧的装配点
@@ -257,10 +261,18 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `## 3 已装配操作` 为 129 条（main 新增 `readSynthesisAudio`）。合流后的实际体积：JSON 274811 字节 /
  * 4434 行、md 196980 字节 / 219 行（行数与 main 一致；字节各比 main 多 814，是分支侧注销片重写文案的净增）。
  * 没有改判定、没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-03 合入 `origin/main`（3b89782f）后第八次同步：基线停在上面那次合流（274811 / 196980）之后，
+ * 又有两笔「正常改台账」没进来 —— ① 分支侧 `c971c11b`（真库臂证据串）把两份台账里「证据串只有两段」
+ * 改成如实描述「两段 + real 模式下按模块追加 `;<module>:backup-<状态>:<码>`」，两份台账各 +864 / +867 字节，
+ * 但该提交没同步基线（于是 T5 在分支 HEAD 上就已经红）；② main 侧 #875 的 media blocker 计数订正各 +20 字节
+ * （即上面那条「第六次同步（GY-R75…）」——它与本片 #857 线的第六次不是同一片，两条编号撞了，这里是历史注释，
+ * 按原样保留不改号）。合流树实测：JSON 275695 字节 / 4434 行、md 197867 字节 / 219 行
+ * （= 274811+20+864、196980+20+867；行数与两侧都一致）。两笔都是正常改台账，没有改判定、
+ * 没有加豁免条目，故按本文件既定规则同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 274811, lines: 4434 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196980, lines: 219 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 275695, lines: 4434 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 197867, lines: 219 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
