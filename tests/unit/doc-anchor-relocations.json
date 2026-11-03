@@ -514,7 +514,7 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 4374,
+    "line": 4405,
     "target": "services/api/src/app.ts",
     "from": 2227,
     "to": 2515,
@@ -524,7 +524,7 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 4374,
+    "line": 4405,
     "target": "services/api/src/app.ts",
     "from": 2228,
     "to": 2516,
@@ -802,7 +802,7 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 4431,
+    "line": 4462,
     "target": "services/api/src/app.ts",
     "from": 2309,
     "to": 2631,
@@ -1033,7 +1033,7 @@
   },
   {
     "doc": "docs/architecture/contract-status.json",
-    "line": 4374,
+    "line": 4405,
     "target": "services/api/src/ocr/service.ts",
     "from": 687,
     "to": 702,
