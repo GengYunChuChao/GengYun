@@ -39,7 +39,7 @@
 
 | 功能点 | 关键行号 | 说明 |
 | --- | --- | --- |
-| 驳回的 HTTP 路由 | `services/api/src/community/service.ts:1757` | `reReviewContent` 在 `services/api/src` 内只被定义（定义行即左列那一行）、未被任何路由注册；**除该定义行本身外**，全仓非 docs 命中都在测试 |
+| 驳回的 HTTP 路由 | `services/api/src/community/service.ts:1811` | `reReviewContent` 在 `services/api/src` 内只被定义（定义行即左列那一行）、未被任何路由注册；**除该定义行本身外**，全仓非 docs 命中都在测试 |
 | 写 `audit_state='rejected'` 的落点 | `services/api/src/community/service.ts:1774-1781` | 唯一**落库**写入口：`services/api/src/community/service.ts:1790-1798` 才提交；读面报 `rejected` 走实时投影、不落库也不发通知（`services/api/src/community/service.ts:583-616`） |
 | 驳回时的通知 | `services/api/src/community/service.ts:696-699` | 注释原文「被拒的写入请求**不投递**：那条 revision 从未落库」 |
 | 驳回时连内容都不写 | `services/api/src/community/moderation-link.ts:37` | 表格行原文：驳回 `vetoed` ⇒ **不落库**（400）+ 读取面退出公开面 |
@@ -111,7 +111,7 @@
 7. `community_moderation_decisions` 的写入是否 UPSERT 未核对。
 
 本页对第 3、7 条的复核结果：
-- 第 3 条：`reReviewContent` 在 `services/api/src` 内只有定义（`services/api/src/community/service.ts:1757`），没有任何路由注册它 ⇒ 维持「无 HTTP 路由」。
+- 第 3 条：`reReviewContent` 在 `services/api/src` 内只有定义（`services/api/src/community/service.ts:1811`），没有任何路由注册它 ⇒ 维持「无 HTTP 路由」。
 - 第 7 条：已核，是 UPSERT —— `services/api/src/community/store-pg.ts:319` 为 `ON CONFLICT (target_type, target_id, target_revision) DO UPDATE`，即同版覆盖写；该结论已并入 §2。
 
 ## 6. 与取证报告的差异（复核后更正）

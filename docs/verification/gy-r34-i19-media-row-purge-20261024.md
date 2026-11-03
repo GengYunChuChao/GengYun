@@ -119,7 +119,7 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
 只清**媒体实体行**。两者共用同一套形态（三件套、`G0001`、单事务、`jsonb` 读数、`REVOKE ALL`），但**不合并**：媒体域的删除时机、
 引用面（**11 列 / 8 类**，其中 9 列无外键）与失败码（`G0007`）都不同，合并会把媒体域的引用语义塞进业务表函数，让两类账混在一个读数里。
 另：0034 删掉识别/语音的行之后，`skipped_referenced_by.recognition` / `.speech` 才会掉下来 —— 这是 §10 顺序前提的一半依据；
-另一半是社区域自己清 `media_ids`（`services/api/src/community/store-pg.ts:866 purgeOwnerData`，但其 `visibility='deleted'` 行会
+另一半是社区域自己清 `media_ids`（`services/api/src/community/store-pg.ts:1000 purgeOwnerData`，但其 `visibility='deleted'` 行会
 `continue` 不清，故 `community` 桶不会完全降到 0）。
 ## 6. 禁止面逐字未变的证据
 

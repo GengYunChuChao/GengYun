@@ -291,7 +291,7 @@ services/api/src/conversations/service.ts:93-95    answerRuleVersion（同前缀
 services/api/src/conversations/service.ts:173-188  interface AnswerComposer（kind 单值字面量在 :175）
 services/api/src/conversations/service.ts:202      RELEVANCE_RULE = 'cjk-bigram+word-match/1'
 services/api/src/conversations/service.ts:227      COMPOSER_MAX_CITATIONS = 3
-services/api/src/conversations/service.ts:243-279  createDeterministicAnswerComposer
+services/api/src/conversations/service.ts:278-314  createDeterministicAnswerComposer
 services/api/src/conversations/service.ts:1009-1034  answerRowOf（唯一构造回答行；同段还有三串版本号字面量）
 services/api/src/conversations/service.ts:1017-1022 retrieval.read
 services/api/src/conversations/service.ts:1027-1031 riskScreen.screenSources（生成与守卫之前）
@@ -316,7 +316,7 @@ services/api/src/conversations/screen.ts:192       RISK_RULE_VERSION
 services/api/src/conversations/screen.ts:200       ANSWER_RISK_RULE_VERSION
 services/api/src/conversations/screen.ts:226       createModerationRiskScreen
 services/api/src/conversations/store-pg.ts:196     createPostgresConversationStore
-services/api/src/conversations/store-pg.ts:215     persistent: true
+services/api/src/conversations/store-pg.ts:232     persistent: true
 services/api/src/conversations/store.ts:90         interface ConversationStore
 services/api/src/conversations/store.ts:185        createMemoryConversationStore（:184 persistent:false；原记 :156 / :174）
 services/api/src/conversations/context.ts:29       CONTEXT_MAX_TURNS = 5
