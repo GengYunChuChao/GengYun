@@ -225,15 +225,15 @@ test at tests\unit\community-atomic.test.mjs:50:1
 
 **代码支撑的机制链（非推测）**：
 
-1. `packages/moderation/constants.mjs:223`：`DEFAULT_RULE_BUDGET_MS = 50`（**50 ms 真实墙钟预算**）。
+1. `packages/moderation/constants.mjs:224`：`DEFAULT_RULE_BUDGET_MS = 50`（**50 ms 的默认预算**；时钟才是墙钟，见下条）。
 2. `packages/moderation/engine.mjs:319-320`：`clock = options.clock ?? Date.now`、`budgetMs = options.budget_ms ?? DEFAULT_RULE_BUDGET_MS`。
 3. `packages/moderation/engine.mjs:373`：`if (now - started > budgetMs) { budgetExhausted = true; failClosed.push('RULE_TIMEOUT'); … }`
    ⇒ `canDecide=false` ⇒ `decision = quarantined`（语义已由仓库自带用例固定：`tests/moderation/fail-closed.test.mjs`「规则预算耗尽（超时）⇒ 未求值的规则不得算通过」断言 `reason_codes` 含 `RULE_TIMEOUT`、`decision === 'quarantined'`）。
 4. `services/api/src/community/service.ts:319-332`：`refusal()` 对**任何非 `rejected`** 判决返回 `new ApiError('INPUT_UNCERTAIN', …)`（422）——社区域**唯一**产生该码之处。
-5. `tests/unit/community-fixtures.mjs:94-100`：`makeHarness()` 用 `createPublishGate(options.gateOptions ?? {})`，**不注入 clock/budget** ⇒ 真实 `Date.now` + 默认 50 ms。
+5. `tests/unit/community-fixtures.mjs:139`（`makeHarness()` 声明处）：**当时**它用 `createPublishGate(options.gateOptions ?? {})`、**不注入 clock/budget** ⇒ 真实 `Date.now` + 默认 50 ms。**2026-11-04 订正**：自 `ffd5bf73`（#100「社区用例注入冻结时钟」）起，`makeHarness()` 改为 `options.gate ?? makeGate(options.gateOptions ?? {})`，而 `makeGate()`（`:65-67`）默认注入 `clock: FROZEN_CLOCK`（`:59` `export const FROZEN_CLOCK = () => 0;`）⇒ 「机器速度变成测试结果」这条路径已被堵死；只有显式传 `clock`/`budget_ms` 的用例才会碰到真实墙钟。
 6. `tests/unit/community-atomic.test.mjs:80` 期望 409/404 冲突码（该用例验证"迟到编辑不得让已删内容重新公开"）。
 
-⇒ 若规则循环跨过 50 ms，判决退化为 `quarantined`，写路径**先**返回 422，**没走到** CAS/删除冲突分支 ⇒ 断言失败。
+⇒ 若规则循环跨过 50 ms，判决退化为 `quarantined`，写路径**先**返回 422，**没走到** CAS/删除冲突分支 ⇒ 断言失败（**这是 #100 之前的状态**；按上条订正，`makeHarness()` 现在默认注入冻结时钟，这条抖动路径不再是本用例的红因，`RULE_TIMEOUT` 语义改由 `community-gate.test.mjs`／`community-service.test.mjs` 的专门用例覆盖）。
 **与 #98 修掉的"`tests/moderation` 规则层真实墙钟依赖"同类，但发生在社区写路径上，未被 #98 覆盖。**
 
 **但必须写明局限**：本条**只观察到 1 次**（在 71 文件并行的 A′ #14）；
