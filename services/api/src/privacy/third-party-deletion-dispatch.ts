@@ -245,6 +245,26 @@ function isThenable(value: unknown): boolean {
   }
 }
 
+/** 只用来给「没人 await 的 thenable」挂 rejection 收尾，不做任何事。 */
+function noop(): void {}
+
+/**
+ * 丢掉一份**没人 await** 的 thenable 之前，必须先给它挂上失败收尾（GY-R73 P2 第三轮 / #860）。
+ *
+ * `readCancellationNow()` 是同步函数：判据返回 thenable 时拿不到布尔值，只能返回
+ * `'unconfirmable'`。但「拿不到值」不等于「可以把这份 Promise 扔掉」——它若 reject，
+ * Node 默认就是 unhandled rejection ⇒ **进程 exit 1**，正好击穿本派发器
+ * 「任何异常不穿透、注销照常」的承诺。这里只消费失败分支，**不改结论**：
+ * 读不到仍然 fail-closed 到「不发」。
+ */
+function settleDetachedThenable(value: unknown): void {
+  try {
+    void Promise.resolve(value).then(noop, noop);
+  } catch {
+    // `Promise.resolve` 对 thenable 取值时自己同步抛（`then` 取值器抛错）：已经没有拒绝可漏。
+  }
+}
+
 function isoOf(value: unknown, fallback: string): string {
   if (typeof value === 'string' && Number.isFinite(Date.parse(value))) return value;
   return fallback;
@@ -422,7 +442,13 @@ export function createThirdPartyDeletionDispatcher(
       if (verdict === true) return 'request_cancelled';
       if (verdict === false) return null;
       // thenable ⇒ 「此刻不知道」，不许当成未取消放行；非 thenable 的其它返回值按既有口径当未取消。
-      return isThenable(verdict) ? 'unconfirmable' : null;
+      if (isThenable(verdict)) {
+        // 这一份 Promise 本函数不 await（同步返回是硬约束），必须在**这一份**上收尾拒绝，
+        // 否则它一旦 reject 就是 unhandled rejection ⇒ 进程退出（#860 审查反例）。
+        settleDetachedThenable(verdict);
+        return 'unconfirmable';
+      }
+      return null;
     }
 
     /**

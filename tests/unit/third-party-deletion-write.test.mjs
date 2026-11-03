@@ -1061,3 +1061,45 @@ test('R73-P1 T-P1-f：异步判据在最后一米无法同步确认 ⇒ fail-clo
   assert.ok(skipped !== undefined, '跳过必须有事件（⛔ 不许静默）');
   assert.equal(skipped.skipped_reason, 'unconfirmable', '原因与「判据抛错」分开：这里是拿不到同步值');
 });
+
+test('R73-P1 T-P1-g：前两次探测成功、最后一次异步 reject ⇒ 拒绝就地收尾，零发零写且不炸进程', async () => {
+  const port = createFakePort();
+  const adapter = createFakeAdapter(confirmedOutcome());
+  const { dispatcher } = makeDispatcher({
+    port,
+    adapter,
+    recipients: createFakeRecipients([{ recipientId: 'alipay-cloud' }]),
+  });
+  const probeCalls = [];
+  const leaked = [];
+  const onUnhandled = (reason) => leaked.push(reason);
+  // 只为取证「有没有漏出 unhandled rejection」；产品侧收尾不依赖这个监听器。
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const result = await dispatcher.dispatch({
+      requestId: randomUUID(),
+      userId: USER_A.userId,
+      // 审查反例的形状：两个远端检查点都 resolve 成「未取消」，紧贴副作用那一读起异步失败。
+      // 失败的那几份 Promise 没人 await（同步读只能返回 `'unconfirmable'`），必须被就地收尾。
+      isRequestCancelled: () => {
+        probeCalls.push(probeCalls.length + 1);
+        return probeCalls.length <= 2
+          ? Promise.resolve(false)
+          : Promise.reject(new Error('SYNTHETIC_PROBE_OFFLINE'));
+      },
+    });
+    // `unhandledRejection` 在微任务清空后才判定：等一个宏任务再断言，免得测早了看不出来。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // 用例能走到这里并跑完断言，本身就是「没被未处理拒绝打断」的证据。
+    assert.equal(leaked.length, 0, 'thenable 的拒绝必须被就地收尾（⛔ 不许漏成 unhandled rejection）');
+    assert.ok(probeCalls.length >= 3, '确实走到了紧贴副作用的补问（前两次成功、之后失败）');
+    assert.equal(result.reason, 'CANCELLED_AFTER_ACCEPT', '读不到同步布尔值 ⇒ fail-closed 到不发');
+    assert.equal(adapter.calls.length, 0, '零外发');
+    assert.equal(port.writes.length, 0, '零写入（连 requested 都不写）');
+    assert.equal(dispatcher.readings.dispatched, 0);
+    assert.equal(dispatcher.readings.skippedCancelled, 1);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
