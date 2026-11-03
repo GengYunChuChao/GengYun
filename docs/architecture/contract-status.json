@@ -4421,7 +4421,7 @@
         {
           "path": "services/api/src/tts/service.ts",
           "symbol": "createSynthesisServiceForMode",
-          "lines": "977-1003"
+          "lines": "964-989"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",

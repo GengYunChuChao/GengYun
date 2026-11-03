@@ -220,7 +220,7 @@
 
 ### 7.3 模型／提示词版本零真实值（P0）
 
-- 问答侧：`createTurn` 行已按 GY-R28 W7 订正（`docs/architecture/contract-implementation-status.md:102`）——真实模型接线后，四与门全过时版本串取真实 `model`／`prompt`（`services/api/src/ai/chat-wiring.ts:87-94`），任一不成立才带 `unimplemented:no-real-` 前缀、正文是确定性检索条目摘录；`createConversation`／`listConversations`／`getConversation`／`listTurns` 四行仍写「一律」（口径滞后，须与 `contract-status.json` 同源一次改）。该前缀同时是**机器判据**（`services/api/src/conversations/types.ts:52`）——好处是谎报会被测试抓到，代价是不带前缀的读数至今只在单测层出现。
+- 问答侧：`createTurn` 行已按 GY-R28 W7 订正（`docs/architecture/contract-implementation-status.md:103`）——真实模型接线后，四与门全过时版本串取真实 `model`／`prompt`（`services/api/src/ai/chat-wiring.ts:87-94`），任一不成立才带 `unimplemented:no-real-` 前缀、正文是确定性检索条目摘录；`createConversation`／`listConversations`／`getConversation`／`listTurns` 四行仍写「一律」（口径滞后，须与 `contract-status.json` 同源一次改）。该前缀同时是**机器判据**（`services/api/src/conversations/types.ts:52`）——好处是谎报会被测试抓到，代价是不带前缀的读数至今只在单测层出现。
 - 审核侧：`docs/moderation/README.md:45-46` 明示不产 `model_version`／`prompt_version`，且有一条用例**扫描源码**禁止占位赋值（`本片不产出 model_version / prompt_version：源码里没有占位赋值`）。
 - 记录侧：`provider_invocations` 已有承载表与写入原语——迁移 `services/api/db/migrations/0050_provider_invocations.sql`（16 列、`invocation_state` 闭集 CHECK、`(job_id, attempt)` 唯一键，回滚件在同目录 `rollback/`）、账本函数 `services/api/src/privacy/ledger-pg.ts` 的 `recordInvocation`／`listInvocations`、以及 `services/api/src/privacy/task-egress.ts` 在真实外发之后（成功与供应商报错）的写点（N05）。仍缺四项：该组不在运行时 5 组内 ⇒ 运行时写会 42501 并被转成可观测的 `PROVIDER_UNAVAILABLE`、没有 HTTP 读面、生产写入的 `job_id`／`model_version` 恒为 NULL、`MAX(attempt)+1` 的并发派生未验证。
 
