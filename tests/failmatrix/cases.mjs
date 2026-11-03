@@ -235,6 +235,11 @@ export const CASES = [
   }, after: (result, ctx) => {
     const cursor = result.body?.data?.next_cursor;
     ctx.jobFilterCursor = typeof cursor === 'string' && cursor.length > 0 ? cursor : null;
+    // 页 1 的 id 留档：`C3-33` 用它判「两页无交集」（集合关系，不是条数）。
+    const items = result.body?.data?.items;
+    ctx.jobFilterPage1Ids = Array.isArray(items)
+      ? items.map((item) => item?.id).filter((id) => typeof id === 'string')
+      : null;
   }, note: '只把**真游标**交给后两条：拿不到就置 null，让 `C3-32` 如实判红，避免用硬编码串自证。变红条件：next_cursor 恒 null（分页退化）或首页顺序/过滤失效' },
   { id: 'C3-32', family: 'C3', app: 'jobs', title: '作业过滤：游标换筛选组合复用 ⇒ 400 INVALID_CURSOR（不串页）', actor: 'adminFull', method: 'GET', path: (ctx) => `${JOB_LIST}?state=failed&cursor=${encodeURIComponent(ctx.jobFilterCursor ?? 'no-cursor')}`, expect: { status: 400, code: 'INVALID_CURSOR' }, check: (result, ctx) => {
     const problems = [];
@@ -244,15 +249,41 @@ export const CASES = [
     if (result.body?.data !== undefined) problems.push('400 响应不得带 data');
     return problems;
   }, note: '游标水印绑 `state/error_code`（`service.ts:738`、失败分支 `service.ts:360`）。变红条件（已实测）：删掉 watermark 判定 ⇒ 落到 `游标位置已失效`，message 不再是「集合已变化，请重新开始分页」；或游标被静默忽略 ⇒ 200 串页。⚠️ 光删 `jobFilterWatermarkParts` 仍是 400（两种组合的 id 集合本身不同，水印照样对不上），所以本条判的是**拒绝的措辞与状态**，不是「有没有把筛选绑进签名」' },
-  { id: 'C3-33', family: 'C3', app: 'jobs', title: '作业过滤：同一筛选组合下同一游标可用（页 2 = 剩下那条）', actor: 'adminFull', method: 'GET', path: (ctx) => `${JOB_LIST}?state=queued&cursor=${encodeURIComponent(ctx.jobFilterCursor ?? 'no-cursor')}`, expect: { status: 200 }, check: (result, ctx) => {
+  { id: 'C3-33', family: 'C3', app: 'jobs', title: '作业过滤：同一筛选组合下同一游标可用（两页无交集、页 2 全过筛选、走完不缺播种行）', actor: 'adminFull', method: 'GET', path: (ctx) => `${JOB_LIST}?state=queued&cursor=${encodeURIComponent(ctx.jobFilterCursor ?? 'no-cursor')}`, expect: { status: 200 }, check: (result, ctx) => {
     const problems = [];
     if (typeof ctx.jobFilterCursor !== 'string') problems.push('前置 C3-31 没拿到真游标 ⇒ 本条判定失去意义');
-    const items = result.body?.data?.items ?? [];
-    if (items.length !== 1) problems.push(`页 2 期望 1 条，实际 ${items.length}`);
-    if (items[0]?.id !== jobId(1)) problems.push(`页 2 应是剩下那条 queued（#1），实际 ${JSON.stringify(items[0]?.id ?? null)}`);
-    if (result.body?.data?.next_cursor !== null) problems.push('页 2 之后 next_cursor 应为 null');
+    const items = result.body?.data?.items;
+    if (!Array.isArray(items)) return [...problems, 'data.items 不是数组'];
+    const ids = items.map((item) => item?.id).filter((id) => typeof id === 'string');
+    if (ids.length !== items.length) problems.push('页 2 有行缺 uuid 形式的 id');
+    if (new Set(ids).size !== ids.length) problems.push(`页 2 自身有重复行：${ids.length} 行 / ${new Set(ids).size} 个 id`);
+    // ① 页 1 与页 2 的 id 集合**无交集**：判据是集合关系，不是「页 2 恰几条」。
+    const page1 = ctx.jobFilterPage1Ids;
+    if (!Array.isArray(page1)) {
+      problems.push('前置 C3-31 没留下页 1 的 id ⇒ 无法判「两页无交集」');
+    } else {
+      const repeated = ids.filter((id) => page1.includes(id));
+      if (repeated.length > 0) problems.push(`页 1 与页 2 出现同一行（游标把已给过的行又给一遍）：${JSON.stringify(repeated)}`);
+    }
+    // ② 页 2 的每一行都必须过得了本腿的过滤条件（state=queued）。
+    const offFilter = items
+      .filter((item) => item?.state !== 'queued')
+      .map((item) => `${String(item?.id ?? '?')}(state=${JSON.stringify(item?.state ?? null)})`);
+    if (offFilter.length > 0) problems.push(`页 2 里有过不了 state=queued 的行：${JSON.stringify(offFilter)}`);
+    // ③ 走完即完整：`next_cursor` 为 null ⇒「页 1 ∪ 页 2」就是该筛选下的全部行。
+    // 于是「两页拼起来（去重后）的规模 == 一次 limit=总数 的查询规模」这条要求，等价于
+    // 「并集无重复 + 行级过滤成立 + 遍历没提前停 + 播种的 queued 行一条不缺」——
+    // 全部用集合断言表达，不写任何固定条数。
+    const nextCursor = result.body?.data?.next_cursor;
+    if (nextCursor !== null) {
+      if (items.length === 0) problems.push('next_cursor 非 null 却给了空页（分页在空转）');
+    } else {
+      const seen = new Set([...(page1 ?? []), ...ids]);
+      const missing = [2, 1].map((ordinal) => jobId(ordinal)).filter((id) => !seen.has(id));
+      if (missing.length > 0) problems.push(`页 1 与页 2 拼起来仍缺该筛选下的播种行（分页漏行）：${JSON.stringify(missing)}`);
+    }
     return problems;
-  }, note: '与 `C3-32` 成对：证明 400 是**组合变化**引起的，不是游标本身坏。变红条件：游标对所有筛选都拒绝（一刀切 400）⇒ 本条 200 变 400' },
+  }, note: '与 `C3-32` 成对：证明 400 是**组合变化**引起的，不是游标本身坏。判据全是集合关系（两页无交集 / 行级过滤 / 走完后播种行不缺），⛔ 不写「页 2 恰 1 条」这类把某个臂的固定种子规模写进断言的期望。变红条件：游标对所有筛选都拒绝（一刀切 400）⇒ 本条 200 变 400；或游标重复给同一行 ⇒ ①红' },
   { id: 'C3-34', family: 'C3', app: 'jobs', title: '作业过滤：合法但无匹配 ⇒ 200 空页（items:[] / next_cursor:null）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=timed_out`, expect: { status: 200 }, check: (result) => {
     const problems = [];
     const items = result.body?.data?.items;
@@ -261,12 +292,42 @@ export const CASES = [
     if (result.body?.data?.next_cursor !== null) problems.push(`next_cursor 期望 null，实际 ${JSON.stringify(result.body?.data?.next_cursor)}`);
     return problems;
   }, note: '种子里没有 `timed_out` 作业。变红条件：把「闭集外」与「无匹配」混为一谈（无匹配返 400，或 404、或 503）⇒ 状态码不对；或空页时仍给 next_cursor' },
-  { id: 'C3-35', family: 'C3', app: 'jobs', title: '作业过滤降级：state=&error_code= 空串 ⇒ 不参与过滤（全量 6 条）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=&error_code=`, expect: { status: 200 }, check: (result) => {
+  { id: 'C3-35', family: 'C3', app: 'jobs', title: '作业过滤降级：state=&error_code= 空串 ⇒ 不参与过滤（与不带参数同一结果集）', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?state=&error_code=`, expect: { status: 200 }, check: (result, ctx) => {
     const problems = [];
-    const items = result.body?.data?.items ?? [];
-    if (items.length !== 6) problems.push(`空串应等价于不过滤（6 条），实际 ${items.length} 条`);
+    const items = result.body?.data?.items;
+    if (!Array.isArray(items)) return ['data.items 不是数组（空串参数不得改变响应形态）'];
+    const ids = items.map((item) => item?.id).filter((id) => typeof id === 'string');
+    if (ids.length !== items.length) problems.push('空串结果里有行缺 uuid 形式的 id');
+    if (new Set(ids).size !== ids.length) problems.push(`空串结果里有重复行：${ids.length} 行 / ${new Set(ids).size} 个 id`);
+    // ① 空串 ≡ 不过滤：与本次运行里**不带参数**的 200 读数逐条比 id 集合（不是比条数）。
+    const bare = ctx.results?.get?.('C3-20');
+    const bareItems = bare?.status === 200 ? bare?.body?.data?.items : null;
+    if (Array.isArray(bareItems)) {
+      const bareIds = bareItems.map((item) => item?.id).filter((id) => typeof id === 'string');
+      const missing = bareIds.filter((id) => !ids.includes(id));
+      const extra = ids.filter((id) => !bareIds.includes(id));
+      if (missing.length > 0 || extra.length > 0) {
+        problems.push(`「state=&error_code=」与不带参数的结果集不一致：少了 ${JSON.stringify(missing)} / 多了 ${JSON.stringify(extra)}`);
+      }
+    } else if (ctx.world?.config?.executionMode === 'real') {
+      problems.push(`空串等价性未验：本次运行没取得不带参数的 /admin/jobs 200 参照（C3-20 实际 ${JSON.stringify(bare?.status ?? null)}）`);
+    }
+    // ② 包含关系：任何带合法过滤词、且本次取得了 200 读数的腿，结果必须整体落在空串结果里。
+    //    空串若被当成真实过滤值（⇒ 空页）或只对部分源生效，这里立刻红。
+    const legs = [
+      ['C3-36', 'error_code=PROVIDER_TIMEOUT'],
+      ['C3-31', 'state=queued&limit=1（页 1）'],
+      ['C3-33', 'state=queued（页 2）'],
+    ];
+    for (const [legId, label] of legs) {
+      const leg = ctx.results?.get?.(legId);
+      if (leg?.status !== 200) continue; // 该腿自己另有判据负责判红，这里不重复计账
+      const legIds = (leg.body?.data?.items ?? []).map((item) => item?.id).filter((id) => typeof id === 'string');
+      const outside = legIds.filter((id) => !ids.includes(id));
+      if (outside.length > 0) problems.push(`包含关系破了：${legId}（${label}）的 ${JSON.stringify(outside)} 不在空串结果里`);
+    }
     return problems;
-  }, note: '`parseClosedSetParam` 对空串返回 null（`jobs.ts:33`）。变红条件：把空串当非法值 ⇒ 400；或空串被当作真实 state 过滤 ⇒ 0 条' },
+  }, note: '`parseClosedSetParam` 对空串返回 null（`services/api/src/admin/ops/jobs.ts:33`）⇒ 空串不参与过滤。判据全用集合关系（与不带参数的结果集相等 / 各过滤腿为其子集），⛔ 不写「全量 6 条」这类把 stub 臂固定种子规模搬进真库臂的期望。变红条件：把空串当非法值 ⇒ 400；或空串被当作真实 state 过滤 ⇒ 结果集缩小，①② 同时红' },
   { id: 'C3-36', family: 'C3', app: 'jobs', title: '作业过滤正控制：error_code=PROVIDER_TIMEOUT 只留 1 条', actor: 'adminFull', method: 'GET', path: `${JOB_LIST}?error_code=PROVIDER_TIMEOUT`, expect: { status: 200 }, check: (result) => {
     const problems = [];
     const items = result.body?.data?.items ?? [];
