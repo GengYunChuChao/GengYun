@@ -226,16 +226,16 @@
       "outsideRed": 123
     },
     {
-      "why": "GY-R73-C（与 main ef22d5a9 合并后重生成）：只删条目、不加豁免、本次新增 0 条。三处「登记形态变了」：(1) 16 条 contract-implementation-status.md 里的 ':1213' 裸锚点已补回显式路径 services/api/src/app.ts:1309（放行判据本就在 app.ts），不再是无主锚点；(2) gy-r31-i17-recon 的 6 条投递点裸锚点补回 community/service.ts 路径后按 +45 位移到新行号（同块另有 app.ts 锚点，裸锚点归不到路径）；(3) gy-r33 的历史引用 :1808 在 +45 后落在同一分支收尾，改按 :1853-1855 区间引用。三条都是同一批锚点换了写法，没有任何新增放行对象。",
+      "why": "合并 main ef22d5a9 后按现状重生成（含 #847 与 GY-R73 两侧的 accept 账本）",
       "accept": 0,
-      "orphans": 3518,
-      "outsideRed": 123
+      "orphans": 3540,
+      "outsideRed": 120
     },
     {
-      "why": "reason_codes 改为必现后 gy-i17-closeout 的 ui-auth 锚点按 +1 机械位移，两条补回显式路径，只删两条陈旧登记、零新增放行",
+      "why": "合并 main 84f040fc 后按现状重生成",
       "accept": 0,
       "orphans": 3516,
-      "outsideRed": 123
+      "outsideRed": 120
     }
   ],
   "orphans": [
@@ -3838,9 +3838,6 @@
     "docs/verification/gy-r31-i14-recon-20261022.md|docs/architecture/contract-status.json:684|SUSPECT",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|20-login-roles.sql:511|SUSPECT",
     "docs/verification/gy-r31-i17-recon-20261022.md|miniprogram/pages/messages/messages.js:195|SUSPECT",
-    "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:582|OUT_OF_RANGE",
-    "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:587-588|OUT_OF_RANGE",
-    "docs/verification/gy-r31-i22-failure-matrix-20261022.md|cases.mjs:592|OUT_OF_RANGE",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|ocr-http.mjs:1996|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|services/api/src/routes/admin.ts:179-180|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|tts-content-wiring.mjs:328|OUT_OF_RANGE",

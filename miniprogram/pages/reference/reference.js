@@ -358,10 +358,18 @@ Page({
   },
 
   goDetail: function (event) {
-    const id = event.currentTarget.dataset.id
+    const dataset = event.currentTarget.dataset
+    const id = dataset.id
+    // 数据来源**显式**带走（卡片上本来就有 `data-source`）：随包行就算 id 现在也是 uuid，
+    // 也仍要读随包离线副本（那份详情才有剂量卡/适用性/毒性），不能因为 id 长得像 uuid 就改成
+    // 走服务端精简详情。服务端行不带该参数，详情页按 id 形状判（uuid ⇒ 服务端）。
+    let url = '/pages/referencedetail/referencedetail?id=' + encodeURIComponent(id)
+    if (dataset.source === knowledgeApi.HERBICIDE_SOURCES.BUNDLED_OFFLINE) {
+      url += '&source=' + encodeURIComponent(dataset.source)
+    }
     // 跳转失败必须可见（页面栈满／路由被拦截时，点了卡片毫无反应会被当成「记录不存在」）。
     wx.navigateTo({
-      url: '/pages/referencedetail/referencedetail?id=' + encodeURIComponent(id),
+      url: url,
       fail: function () { wx.showToast({ title: '没能打开这条资料，请重试', icon: 'none' }) }
     })
   }

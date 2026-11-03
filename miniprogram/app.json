@@ -20,7 +20,8 @@
     "pages/historydetail/historydetail",
     "pages/voice/voice",
     "pages/qa/qa",
-    "pages/consent/consent"
+    "pages/consent/consent",
+    "pages/deletion/deletion"
   ],
   "window": {
     "navigationBarTitleText": "耕云",

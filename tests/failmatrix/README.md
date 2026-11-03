@@ -231,10 +231,24 @@ PostgreSQL 17.11 集群**上实跑权限面 **180** 条（C1 37 + C2 24 + C3 36 
 **180 条 = same 149 / different 14 / not-runnable 17**；`C11-35..39` 全部 `same`(200)，`C3-21` 仍 `different`(200)。
 修复前同臂读数是 `same 144 / different 19 / not-runnable 17`（本机 PG 17.11 双跑对照，变动的正好是那五条）。
 
+**现行读数（R73，基线 `cc10d0a5`，本机 PG 17.11，2026-11-02）**：**180 条 = same 158 / different 14 /
+not-runnable 8**，族分布 `C1` 36/1/0、`C2` 18/3/3、`C3` 31/5/0、`C4` 14/2/5、`C10` 23/0/0、`C11` 36/3/0。
+与上一行 CI 读数的差**只**在 `C3`：9 条作业过滤腿从 `not-runnable` 变成 `same`（`C3` 22/5/9 → **31/5/0**），
+`different` 仍是 **14** 条、一条没少 —— 这一片把「跑不了」变成「真跑并比对」，⛔ 不是把红改绿。
+
 **同源保障**：本臂的用例表**直接复用 `cases.mjs`**（不另写一套），只换 world（真 PG store）+ 判定口径
 （`real` 而非 `stub`）。`tests/unit/gy-i22-failmatrix-real.test.mjs` 锁住「缺 `GY_PG_BIN` ⇒ 77」与
-「权限面覆盖范围 = 180 条同源」两条契约。其中 9 条作业过滤腿（`app: 'jobs'`）在本臂记「不跑」：
-它们依赖已接线的内存作业端口种子，real + 真库没有作业读权威可播种（stub 臂与单测里全跑）。
+「权限面覆盖范围 = 180 条同源」两条契约。其中 9 条作业过滤腿（`app: 'jobs'`，`C3-28`…`C3-36`）**R73 起真跑**：
+真库侧的作业读面是 `createPostgresAdminJobPort`（`services/api/src/app.ts:1380-1382`：real + 有池时装配），
+读四张域内作业表（`public.ocr_jobs` / `recognition_jobs` / `speech_jobs` / `conversation_turns`）⇒ **裸 SQL 就能播种**，
+原来那句「real + 真库没有作业读权威可播种」**已不成立**，分腿判定也随之从「`app === 'jobs'` 一刀切跳过」改成
+按用例 id 子集放行（`run-real.mjs` 的 `JOB_FILTER_LEGS`）。播的是**合成播种的真实真库行**（`seedFailClosedRowsReal`
+末尾 S8：6 行 `public.ocr_jobs`，`id` 取 `cases.mjs:52` 的 `jobId(n)`、`state` 取 `world.mjs:298-305` 的
+`ADMIN_JOB_SEED` 同值同序、`created_at = now() + n 秒` 让游标顺序稳定），**不是产品数据**；C3-31 的真游标由
+`after` 钩子（与 `run.mjs:383` 同构）写进 `ctx`，再交给 C3-32/C3-33，否则后两条会拿 `cursor=no-cursor` 假跑。
+⚠️ 同一读面还装着本臂自己的识别作业夹具（S5 的 1 条 `recognition_jobs`），而本臂判据是 `status`+`code`
+（`verdictFor`）、**不**跑 `check` 里的行数断言（「恰 6 条」「页 2 恰 1 条」是 stub 固定种子世界的口径）⇒
+这 9 条的 `same` 是**状态码/错误码级**的一致，不是行数级的一致。
 
 ### 进 CI 后的判决口径（R72-W12，基线 `7ada259e`）
 

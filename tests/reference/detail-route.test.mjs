@@ -64,6 +64,43 @@ for(const name of ['referencedetail','referenceseeddetail']){
   test(name+': valid encoded ID keeps exact catalog identity and source label',async()=>{const f=fixture(name);const id=name==='referencedetail'?'gy-i03-hb-001':'gy-i07-seed-hb-001';f.page.onLoad({id:id.replace(/-/g,'%2D')});await settle();assert.equal(f.page.data.found,true);assert.equal(f.calls.lookup[0],id);if(name==='referencedetail')assert.equal(f.page.data.detail.source_version,reference.detail(id).source_version);else assert.equal(f.page.data.label,reference.seed.label);});
   test(name+': failed cold-page back opens its known list; hidden callback cannot redirect',async()=>{const f=fixture(name);f.page.onLoad({id:'missing'});await settle();const back=name==='referencedetail'?'backToList':'back';f.page[back]();assert.equal(f.calls.redirects.length,0);f.calls.backs[0].fail();assert.equal(f.calls.redirects[0],name==='referencedetail'?'/pages/reference/reference':'/pages/referenceseed/referenceseed');f.page[back]();f.page.onHide();f.calls.backs[1].fail();assert.equal(f.calls.redirects.length,1)});
 }
+// GY-R73：随包记录的 `id` 现在也等于服务端 uuid（`deterministicUuid(record_id)`），光看 id 形状
+// 已经分不出来源。列表卡片把 `id`（而不是记录号）+ `data-source` 一起带进路由 ⇒ 详情页必须按
+// **显式来源**读随包副本，不能因为 id 长得像 uuid 就把富详情（剂量卡/适用性）退化成服务端精简详情。
+test('referencedetail：uuid + source=bundled-offline 仍走随包副本，记录号原样带出', async()=>{
+  const f=fixture('referencedetail');
+  const record=reference.records[0];
+  assert.match(record.id,/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,'随包记录必须带 uuid 形式的接口 id');
+  assert.match(record.record_id,/^gy-i03-hb-\d{3}$/,'可读记录号必须保留');
+  f.page.onLoad({id:record.id,source:'bundled-offline'});
+  await settle();
+  assert.equal(f.calls.lookup[0],record.id,'随包副本按接口 id 查得同一条');
+  assert.equal(f.page.data.found,true);
+  assert.equal(f.page.data.dataSource,'bundled-offline');
+  assert.equal(f.page.data.sourceMarker,'随包离线副本');
+  assert.equal(f.page.data.detail.record_id,record.record_id,'详情仍带可读记录号（溯源不丢）');
+  assert.equal(f.page.data.sourceDateLabel,'采集日期');
+});
+// 反向钉住：同一 uuid 但**没有** source 提示时按形状走服务端（本夹具 runtime=disabled ⇒ 不发请求、
+// 走失败态）——证明决定读数口径的是「显式来源」，不是更宽松的匹配或偷偷回退随包。
+test('referencedetail：同一条 uuid 无 source 时按形状走服务端，不偷偷读随包', async()=>{
+  const f=fixture('referencedetail');
+  const uuid=reference.records[0].id;
+  f.page.onLoad({id:uuid});
+  await settle();
+  assert.equal(f.page.data.dataSource,'server');
+  assert.equal(f.page.data.sourceMarker,'服务端接口 /herbicides/{id}');
+  assert.equal(f.calls.lookup.length,0,'服务端路径不得退化成随包查找');
+});
+// 负控制：未知的 source 值不得被当成随包（来源必须可判定，不能"猜一个"）。
+test('referencedetail：未知 source 值被忽略，uuid 仍按形状走服务端', async()=>{
+  const f=fixture('referencedetail');
+  const uuid=reference.records[0].id;
+  f.page.onLoad({id:uuid,source:'server-ish'});
+  await settle();
+  assert.equal(f.page.data.dataSource,'server');
+  assert.equal(f.calls.lookup.length,0);
+});
 // 负控制：登记的说明符是**完整且唯一**的。把真实 page-gate 源码的 `require('./auth')` 换成相近写法
 // （`./auth.js`／`./Auth`／`./utils/auth`）后重跑**本站点自己的**装载器 ⇒ 必须显式失败并带原名，
 // 不得近似命中（改前是 blanket `require:()=>auth`：三种写法都会被**静默喂成 auth 替身**，用例照样绿）。
