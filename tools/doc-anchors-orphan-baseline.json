@@ -242,6 +242,12 @@
       "accept": 6,
       "orphans": 3516,
       "outsideRed": 122
+    },
+    {
+      "why": "R74 音频读面：services/api/src/tts/service.ts 在 :156 一带为播放前重查扩了拒绝原因联合类型（+5 行），使 docs/verification/gy-r28-w3-tts-content-20261021.md:229 里继承同块显式锚点的裸锚点 :471 从「指向有内容的行」落到纯括号行（SUSPECT）。该页是 10-21 的历史取证快照、正文逐字记录当时的闸门顺序，不改写历史行号；本片未新增/未改动该锚点本身，故按既有口径登记 1 条放行。",
+      "accept": 1,
+      "orphans": 3516,
+      "outsideRed": 123
     }
   ],
   "orphans": [
@@ -3824,6 +3830,7 @@
     "docs/verification/gy-r28-real-pg-wiring-3-20261020.md|services/api/db/roles/auth_privacy.sql:179|OUT_OF_RANGE",
     "docs/verification/gy-r28-real-pg-wiring-3-20261020.md|tests/integration/account-suspend-pg.mjs:199|SUSPECT",
     "docs/verification/gy-r28-w3-tts-content-20261021.md|services/api/db/migrations/0010_knowledge_read_views.sql:3-34|OUT_OF_RANGE",
+    "docs/verification/gy-r28-w3-tts-content-20261021.md|services/api/src/tts/service.ts:471|SUSPECT",
     "docs/verification/gy-r28-w7-qa-live-20261021.md|config.ts:228|SUSPECT",
     "docs/verification/gy-r29-chain-e2e-20261022.md|services/api/src/ocr/service.ts:295|SUSPECT",
     "docs/verification/gy-r29-chain-e2e-20261022.md|services/api/src/tts/provider.ts:301|SUSPECT",

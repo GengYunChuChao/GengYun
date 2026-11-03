@@ -156,7 +156,10 @@ export type SynthesisUsability =
  *  - `ARTIFACT_EMPTY`：产物是 0 字节（不是可播放音频）；
  *  - `MEDIA_MISSING`：产物已不可用（对象键被删除/索引已清理/端口说没有）；
  *  - `MEDIA_INDEX_MISMATCH`：`media_id` 反查不回刚通过归属校验的那一行（索引不一致）；
- *  - `STORAGE_UNREADABLE`：存储读失败/超时（无法确认字节，按不可用处理）。
+ *  - `STORAGE_UNREADABLE`：存储读失败/超时（无法确认字节，按不可用处理）；
+ *  - 其余取值来自核对判定闭集 `CheckedContentRefusalReason`：播放前重查内容（撤权／下架／审核失效／
+ *    revision 变化／核对源读不到）时**原样沿用**判定给出的原因，不另造措辞（与
+ *    `SynthesisUsabilityReason` 同一做法：`CheckedContentRefusalReason | 'MEDIA_MISSING'`）。
  */
 export type SynthesisAudioRefusalReason =
   | 'READ_PORT_UNWIRED'
@@ -165,7 +168,8 @@ export type SynthesisAudioRefusalReason =
   | 'ARTIFACT_EMPTY'
   | 'MEDIA_MISSING'
   | 'MEDIA_INDEX_MISMATCH'
-  | 'STORAGE_UNREADABLE';
+  | 'STORAGE_UNREADABLE'
+  | CheckedContentRefusalReason;
 
 /**
  * 音频读面的结果（成功 = **可直接当响应体发出去**的字节 + 产物真实内容类型）。
@@ -862,13 +866,17 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
    *   ① 归属：`getOwnedSynthesis` —— 不存在与越权**同形** 404 `NOT_FOUND`（不泄露存在性）；
    *   ② 替身：`row.substitute === true` ⇒ 409 `OBJECT_UNAVAILABLE`。替身产物是**非音频**
    *      标注占位，⛔ 绝不按 `audio/*` 发出去；
-   *   ③ 读端口：未注入（替身/未接线装配）⇒ 409 `OBJECT_UNAVAILABLE`：**没有字节可读**，
+   *   ③ 内容重查：`readAndDecide(row.checkedContentRef, row.ownerUserId, 'verify')` —— 合成成功后
+   *      来源可能下架、撤权、审核失效或 revision 变化，属主不能凭旧合成记录继续取回旧音频；
+   *      判定不通过 ⇒ 原样回它的 `code`/`reason`/`message`（**错误码闭集不扩**），且
+   *      **一个字节都不读**（`readArtifact` 不被调用，返回体里没有 `bytes`）；
+   *   ④ 读端口：未注入（替身/未接线装配）⇒ 409 `OBJECT_UNAVAILABLE`：**没有字节可读**，
    *      这与「读失败」不是一回事，文案要分清；
-   *   ④ 索引：`media_id` 是**全局**键，而 `readArtifact(mediaId)` 不带属主参数 —— 所以取字节前
+   *   ⑤ 索引：`media_id` 是**全局**键，而 `readArtifact(mediaId)` 不带属主参数 —— 所以取字节前
    *      必须把它反查回属主行，确认正是刚通过归属校验的那一行；
-   *   ⑤ 取字节：`readArtifact` 返回 `null` ⇒ 产物已不可用；抛错/超时 ⇒ 存储读不到（都按不可用）；
-   *   ⑥ 类型：产物**真实** `content-type` 必须是 `audio/*`，否则 409 —— 不把非音频字节伪装成音频；
-   *   ⑦ 体积：0 字节 ⇒ 409（空产物不是可播放音频）。
+   *   ⑥ 取字节：`readArtifact` 返回 `null` ⇒ 产物已不可用；抛错/超时 ⇒ 存储读不到（都按不可用）；
+   *   ⑦ 类型：产物**真实** `content-type` 必须是 `audio/*`，否则 409 —— 不把非音频字节伪装成音频；
+   *   ⑧ 体积：0 字节 ⇒ 409（空产物不是可播放音频）。
    *
    * 成功分支的 `contentType` **就是产物自己的标注**：路由按它原样下发，不改写、不猜测、不降级成
    * 某个"通用音频类型"。
@@ -878,9 +886,13 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
    * bodyless，声明即报错），而这里拒绝的理由是**产物**不是音频 —— 产物存在，但作为音频不可提供，
    * 正落在 `OBJECT_UNAVAILABLE`（受保护资源当前不可取）里；具体缘由由 `reason` 与服务文案说清。
    *
-   * 为什么不复用 `verifyUsable`：那是**播放前的内容判定**（重读核对快照、比对 revision），
-   * 会为「字节到底能不能读出来」额外发一次核对读取；读面只回答「这一枚产物现在能不能原样取回」。
-   * 归属与产物存在性仍走同一批既有函数（`getOwnedSynthesis` / `readArtifact`），不另立规则。
+   * **为什么必须在这里重查**：`docs/architecture/state-contract.md` 要求 TTS「生成和播放时都重查
+   * 来源/授权/可见性」。合成记录只固化了**受理时**的核对快照，播放是另一个时间点 —— 只校验归属
+   * 就取字节，等于让「合成成功后撤权／下架／审核失效／内容已修订」的内容继续以旧音频被取回。
+   * 因此本读面直接消费 `verifyUsable` 用的同一条判定（`readAndDecide` + `decideCheckedContent`），
+   * 不复制规则、不另设宽松分支；与 `verifyUsable` 的区别只是：判定通过后**继续**取字节并做类型/
+   * 体积校验。判定失败时拒绝理由原样沿用核对判定闭集（`CheckedContentRefusalReason`），
+   * 不新增错误码。
    */
   async function readAudio(input: { userId: string; synthesisId: string }): Promise<SynthesisAudioRead> {
     const row = await getOwnedSynthesis(input.userId, input.synthesisId);
@@ -892,6 +904,12 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
         message: `该合成产物是替身执行模式的**非音频**标注产物（${SUBSTITUTE_ARTIFACT_CONTENT_TYPE}），`
           + '不可播放；本服务不把替身字节伪装成 audio/* 返回。',
       };
+    }
+    // 播放前重查来源/授权/可见性/revision：与受理、执行、verifyUsable 同一条判定，不复制规则。
+    const decision = await readAndDecide(row.checkedContentRef, row.ownerUserId, 'verify');
+    if (!decision.ok) {
+      // 零字节拒绝：判定不通过时连 readArtifact 都不调用，返回体里没有 bytes。
+      return { ok: false, code: decision.code, reason: decision.reason, message: decision.message };
     }
     if (mediaRead === undefined) {
       return {

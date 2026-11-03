@@ -237,10 +237,14 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 要求「目标文件本提交有改动 ⇒ 行号必须落在该文件自己的端点映射上」，于是 timeout 维度的 evidence
  * 行号 `977-1003` → `964-989`（少 1 个字符位）；中文表格再由 `--write-doc` 从 JSON 重生成 ⇒
  * 两个文件各**少 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-03 第五次同步（同片后续返修：音频读面在返回字节前重查）：tts/service.ts 再涨行，
+ * timeout 维度的 evidence 先由 `--reanchor --write-doc` 重锚到 `1004-1030`，随后为满足
+ * `doc-anchor-relocation-identity` 的端点映射要求改成 `982-1007`（区间仍含声明行 `:1004`）⇒
+ * 两份台账各**多 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 273996, lines: 4434 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196165, lines: 219 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 273997, lines: 4434 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196166, lines: 219 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

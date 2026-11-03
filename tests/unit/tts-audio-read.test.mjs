@@ -58,6 +58,52 @@ function contentPort() {
 }
 
 /**
+ * 可切换的替身核对源（**测试替身**）：同一条 (type,id) 的核对状态可在用例内改掉，用于回归
+ * 「合成成功之后来源下架／撤权／审核失效／revision 变化时，播放前必须重查」。
+ * 仍然是合成夹具，不构成任何真实核对结论，也不触达真实资料库。
+ */
+function switchableContentPort() {
+  const entry = {
+    type: REF.type,
+    id: REF.id,
+    revision: REF.revision,
+    auditState: 'approved',
+    text: CHECKED_TEXT,
+    ownerUserId: null,
+    present: true,
+  };
+  let readFailure = null;
+  return {
+    port: {
+      kind: 'substitute',
+      note: '可切换替身核对源（测试用）：状态可在用例内改掉；非真实资料库、非真实审核结论',
+      async read({ type, id }) {
+        if (readFailure !== null) throw readFailure;
+        if (!entry.present) return null;
+        if (type !== entry.type || id !== entry.id) return null;
+        return { ...entry };
+      },
+    },
+    /** 改核对状态（例如 `'rejected'` = 审核失效/撤权）。 */
+    auditState(next) {
+      entry.auditState = next;
+    },
+    /** 改内容当前 revision（模拟内容已修订）。 */
+    revision(next) {
+      entry.revision = next;
+    },
+    /** 内容下架/不可见：`read` 返回 `null`（与「不存在」同形）。 */
+    withdraw() {
+      entry.present = false;
+    },
+    /** 核对源读不到（端口抛错）。 */
+    breakRead() {
+      readFailure = new Error('模拟核对源读取失败（注入）');
+    },
+  };
+}
+
+/**
  * 注入式产物端口：内存里保存**测试注入的**合成字节，并同时提供读端口
  * （`readArtifact` / `objectKeyFor`）——`asSynthesisMediaReadPort` 的鸭子探测据此接上读面。
  * 全部失败分支可**逐条注入**，用于验证读面对「没有」「读不到」「不是音频」的区分。
@@ -65,6 +111,7 @@ function contentPort() {
 function injectedMediaPort() {
   const objects = new Map();
   const overrides = new Map();
+  let artifactReads = 0;
   return {
     kind: 's3_compatible',
     note: '注入式测试产物端口（内存）：只保存测试注入的合成字节；不接对象存储、不产任何产品样本',
@@ -88,6 +135,7 @@ function injectedMediaPort() {
       return { contentType: item.contentType, byteLength: item.byteLength, substitute: false, note: '注入式测试产物' };
     },
     async readArtifact(mediaId) {
+      artifactReads += 1;
       const override = overrides.get(mediaId);
       if (override === 'throw') throw new Error('模拟对象存储读取失败（注入）');
       if (override === 'missing') return null;
@@ -108,6 +156,10 @@ function injectedMediaPort() {
     },
     raw(mediaId) {
       return objects.get(mediaId) ?? null;
+    },
+    /** `readArtifact` 被调用的次数：用于断言「判定失败时一个字节都不读」。 */
+    artifactReadCount() {
+      return artifactReads;
     },
   };
 }
@@ -140,7 +192,7 @@ async function buildFixture(t, options = {}) {
     store: auth,
     now: () => new Date(START),
     synthesisStore,
-    synthesisContent: contentPort(),
+    synthesisContent: options.content ?? contentPort(),
     ...(options.provider === undefined ? {} : { synthesisProvider: options.provider }),
     ...(mediaPort === undefined ? {} : { synthesisMedia: mediaPort }),
   });
@@ -356,4 +408,96 @@ test('产物缺失/已清理 ⇒ 409 OBJECT_UNAVAILABLE；对象存储读失败 
   const restored = await h.call('GET', AUDIO(synthesisId), h.a);
   assert.equal(restored.status, 200, '清掉注入后应恢复可读（证明上面三条是注入导致的，不是永久性破坏）');
   assert.equal(Buffer.compare(restored.bytes, Buffer.from(SYNTHETIC_TEST_AUDIO)), 0);
+});
+
+// ---------------------------------------------------------------- 播放前重查来源/授权/可见性/revision
+
+test('T-R1 首次可读 → 来源撤权/审核失效后再读 ⇒ 409 OBJECT_UNAVAILABLE、零字节、不再取字节', async (t) => {
+  const mediaPort = injectedMediaPort();
+  const content = switchableContentPort();
+  const h = await buildFixture(t, {
+    real: true,
+    mediaPort,
+    content: content.port,
+    provider: injectedProvider('audio/wav', SYNTHETIC_TEST_AUDIO),
+  });
+  const job = await acceptOne(h);
+  const synthesisId = job.result.value.id;
+
+  const first = await h.call('GET', AUDIO(synthesisId), h.a);
+  assert.equal(first.status, 200, `首次应可读，实际 ${first.status}：${first.json && JSON.stringify(first.json)}`);
+  assert.ok(first.bytes.byteLength > 0, '首次必须真的取到字节（证明后面的拒绝来自重查，不是端口一直读不到）');
+  assert.equal(mediaPort.artifactReadCount(), 1, '首次读应恰好取一次字节');
+
+  // 合成成功后撤权/审核失效：属主不能再凭旧合成记录取回旧音频。
+  content.auditState('rejected');
+  const revoked = await h.call('GET', AUDIO(synthesisId), h.a);
+  assert.equal(revoked.status, 409, `撤权/审核失效后必须拒绝，实际 ${revoked.status}：${JSON.stringify(revoked.json)}`);
+  assert.equal(revoked.json.error.code, 'OBJECT_UNAVAILABLE', '拒绝码必须落在契约既有错误码闭集内（不新增错误码）');
+  assert.equal(revoked.json.error.retryable, false);
+  assert.equal(mediaPort.artifactReadCount(), 1, '内容重查不通过时一个字节都不读（readArtifact 不得再被调用）');
+  assert.equal(
+    revoked.bytes.includes(Buffer.from(SYNTHETIC_TEST_AUDIO)),
+    false,
+    '拒绝时返回体不得含任何音频字节',
+  );
+  assert.equal(revoked.json.data, undefined, '错误封套里没有 data/bytes');
+
+  // 内容下架（核对源说不可见）：同样零字节，理由沿用核对判定闭集。
+  content.withdraw();
+  const withdrawn = await h.call('GET', AUDIO(synthesisId), h.a);
+  assert.equal(withdrawn.status, 404, `内容下架后必须拒绝，实际 ${withdrawn.status}：${JSON.stringify(withdrawn.json)}`);
+  assert.equal(withdrawn.json.error.code, 'NOT_FOUND');
+  assert.equal(mediaPort.artifactReadCount(), 1, '内容下架后同样不得取字节');
+  assert.equal(withdrawn.bytes.includes(Buffer.from(SYNTHETIC_TEST_AUDIO)), false, '拒绝时返回体不得含任何音频字节');
+});
+
+test('T-R2 核对源抛错/不可用 ⇒ fail-closed 拒绝（409 OBJECT_UNAVAILABLE），零字节', async (t) => {
+  const mediaPort = injectedMediaPort();
+  const content = switchableContentPort();
+  const h = await buildFixture(t, {
+    real: true,
+    mediaPort,
+    content: content.port,
+    provider: injectedProvider('audio/wav', SYNTHETIC_TEST_AUDIO),
+  });
+  const job = await acceptOne(h);
+  const synthesisId = job.result.value.id;
+
+  const first = await h.call('GET', AUDIO(synthesisId), h.a);
+  assert.equal(first.status, 200, `首次应可读，实际 ${first.status}：${first.json && JSON.stringify(first.json)}`);
+  assert.equal(mediaPort.artifactReadCount(), 1);
+
+  content.breakRead();
+  const broken = await h.call('GET', AUDIO(synthesisId), h.a);
+  assert.equal(broken.status, 409, `核对源读不到必须 fail-closed，实际 ${broken.status}：${JSON.stringify(broken.json)}`);
+  assert.equal(broken.json.error.code, 'OBJECT_UNAVAILABLE');
+  assert.equal(broken.json.error.retryable, false);
+  assert.match(broken.json.error.message, /核对状态/, '文案必须说清是「取不到核对状态」，不是「没有产物」');
+  assert.equal(mediaPort.artifactReadCount(), 1, '核对源不可用时一个字节都不读');
+  assert.equal(broken.bytes.includes(Buffer.from(SYNTHETIC_TEST_AUDIO)), false, '拒绝时返回体不得含任何音频字节');
+});
+
+test('T-R3 内容 revision 变化 ⇒ 409 REVISION_CONFLICT（不复用旧审核），零字节', async (t) => {
+  const mediaPort = injectedMediaPort();
+  const content = switchableContentPort();
+  const h = await buildFixture(t, {
+    real: true,
+    mediaPort,
+    content: content.port,
+    provider: injectedProvider('audio/wav', SYNTHETIC_TEST_AUDIO),
+  });
+  const job = await acceptOne(h);
+  const synthesisId = job.result.value.id;
+
+  const first = await h.call('GET', AUDIO(synthesisId), h.a);
+  assert.equal(first.status, 200, `首次应可读，实际 ${first.status}：${first.json && JSON.stringify(first.json)}`);
+  assert.equal(mediaPort.artifactReadCount(), 1);
+
+  content.revision(REF.revision + 1);
+  const revised = await h.call('GET', AUDIO(synthesisId), h.a);
+  assert.equal(revised.status, 409, `revision 变化必须拒绝，实际 ${revised.status}：${JSON.stringify(revised.json)}`);
+  assert.equal(revised.json.error.code, 'REVISION_CONFLICT', '旧音频的审核不能复用到新 revision');
+  assert.equal(mediaPort.artifactReadCount(), 1, 'revision 不一致时一个字节都不读');
+  assert.equal(revised.bytes.includes(Buffer.from(SYNTHETIC_TEST_AUDIO)), false, '拒绝时返回体不得含任何音频字节');
 });
