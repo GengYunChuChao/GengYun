@@ -151,6 +151,10 @@ function createHttp() {
  * `globalThis.wx` 是共享的）。qa 页与它们的链路无关，缺这两个面正好保持判据干净。
  */
 function fakeWx(http) {
+  // 二次确认框必须**可脚本化**：删除类用例要能先断言"确认之前一条请求都没发"，
+  // 再自己点确认。这里只收集弹窗选项 + 给用例一个 `answer(confirm)`，
+  // **绝不自动应答**——自动应答就测不出"弹窗还没答复时连点会不会叠出两条请求"。
+  const modals = []
   return {
     request: function (o) {
       const call = { method: o.method, path: new URL(o.url).pathname, header: o.header, data: o.data, raw: o }
@@ -161,7 +165,16 @@ function fakeWx(http) {
     },
     getAccountInfoSync: () => ({ miniProgram: { envVersion: 'develop' } }),
     showToast: () => {},
-    showModal: () => {},
+    showModal: function (o) {
+      const record = { options: o, answered: false }
+      record.answer = function (confirm) {
+        if (record.answered === true) throw new Error('同一个确认框只能答复一次')
+        record.answered = true
+        if (o && o.success) o.success({ confirm: confirm === true, cancel: confirm !== true })
+      }
+      modals.push(record)
+    },
+    modals: modals,
     getStorageSync: () => '',
     setStorageSync: () => {},
     removeStorageSync: () => {},
@@ -333,9 +346,17 @@ function bootQaPage(options) {
     return { status: 200, data: { data: view, meta: metaFixture(opts.mode) }, headers: { ETag: '"1"' } }
   })
 
+  // 轮次列表：默认回一条（本次刚发的那条）；`opts.turns` 可换成任意条 ——
+  // 删除用例要能判别"只移除该条、其余项与顺序不变"，一条列表是判不出来的。
   http.on('GET', paths.turns, () => ({
     status: 200,
-    data: { data: { items: [turnFixture({ job_id: job.id, answer: jobState.answer })], next_cursor: null }, meta: metaFixture(opts.mode) }
+    data: {
+      data: {
+        items: opts.turns === undefined ? [turnFixture({ job_id: job.id, answer: jobState.answer })] : opts.turns,
+        next_cursor: null
+      },
+      meta: metaFixture(opts.mode)
+    }
   }))
 
   const qa = loader.loadReal(join(ROOT, 'miniprogram/utils/qa-api.js'), loader.resolveDep)
@@ -357,7 +378,10 @@ function bootQaPage(options) {
   })
   page.onLoad()
   page.onShow()
-  return { page: page, http: http, qa: qa, job: job, paths: paths, jobState: jobState, loader: loader, identity: loader.identity }
+  return {
+    page: page, http: http, qa: qa, job: job, paths: paths, jobState: jobState, loader: loader,
+    identity: loader.identity, conversationId: conversationId, turnId: turnId, modals: wx.modals
+  }
 }
 
 // ============================================================ A. 契约闭集校验（负例）
@@ -1211,3 +1235,367 @@ test('三态④·负控制：把演示节点改回「无条件常驻」⇒ ①�
     '负控制失效：把节点改回无条件常驻后 ① 居然还能绿'
   )
 })
+
+// ============================================================ J. 删除入口（#12 客户端缺口）
+//
+// 服务端与契约早已完备（`DELETE /conversations/{id}`、`DELETE /conversations/{id}/turns/{turn_id}`
+// 两条 operation 已发布），缺的只是小程序侧入口。本段把"接线"钉在可观测事实上：
+// 打哪一条路径、路径参数是不是那条记录、失败时列表是否原样、连点是否只发一条。
+
+/** 三条同会话的轮次（首条 revision=4，用来证明 If-Match 取的是**那条记录**的版本，不是写死的 1）。 */
+function threeTurns() {
+  return [
+    turnFixture({ input_text: '第一条提问', revision: 4 }),
+    turnFixture({ input_text: '第二条提问' }),
+    turnFixture({ input_text: '第三条提问' })
+  ]
+}
+
+/** 打开页面 → 发一次真问题 → 读回三条轮次（删除入口只在这之后才可用）。 */
+async function bootWithTurns(turns) {
+  const h = bootQaPage({ turns: turns })
+  h.page.setData({ draft: QUESTION })
+  await h.page.onSend()
+  await waitSettled(h.page)
+  await h.page.onRefreshTurns()
+  assert.deepEqual(h.page.data.turns.map((t) => t.id), turns.map((t) => t.id), '前提：列表里就是这几条记录')
+  return h
+}
+
+function ackResponse() {
+  return { status: 202, data: { data: { accepted: true }, meta: metaFixture() } }
+}
+
+test('删除①·单条删除只打一条轮次级 DELETE（路径与 If-Match 都是那条记录），且只移除该条', async () => {
+  const turns = threeTurns()
+  const h = await bootWithTurns(turns)
+  const target = turns[1]
+  const turnPath = h.paths.turns + '/' + target.id
+  const deleted = []
+  h.http.on('DELETE', turnPath, (call) => { deleted.push(call); return ackResponse() })
+  const listReadsBefore = h.http.find('GET', h.paths.turns).length
+
+  h.page.onDeleteTurn({ currentTarget: { dataset: { turnId: target.id } } })
+
+  // ② 二次确认：确认之前**一条请求都不许发**。
+  assert.equal(h.modals.length, 1, '删除必须先弹一次二次确认')
+  assert.equal(h.modals[0].options.title.includes('删除'), true, '确认框标题要说清是删除')
+  assert.equal(h.modals[0].options.content.includes('删除后不可恢复'), true, '确认文案必须说清"删除后不可恢复"')
+  assert.equal(h.modals[0].options.confirmText, '删除')
+  assert.equal(h.modals[0].options.cancelText, '取消')
+  assert.equal(deleted.length, 0, '确认之前一条请求都不许发')
+  assert.deepEqual(h.page.data.turns.map((t) => t.id), turns.map((t) => t.id), '确认之前列表不得变化')
+
+  h.modals[0].answer(true)
+  assert.equal(h.page.data.deleting, target.id, '请求在飞时必须置位（模板据此禁用两个入口）')
+  await waitFor(() => h.page.data.deleting === '', { message: '202 之后在飞标志必须解开' })
+
+  assert.equal(deleted.length, 1, '单条删除只许打一条请求')
+  assert.equal(deleted[0].path, turnPath, '路径必须指向被删的那条记录')
+  assert.equal(h.http.calls.filter((c) => c.method === 'DELETE').length, 1, '整页只应有这一条 DELETE')
+  assert.equal(deleted[0].header['If-Match'], '"' + target.revision + '"', 'If-Match 必须取那条记录的版本（不是写死的 1）')
+  assert.equal(typeof deleted[0].header['Idempotency-Key'], 'string')
+  assert.ok(deleted[0].header['Idempotency-Key'].length >= 8, '删除必须带幂等键')
+
+  assert.deepEqual(h.page.data.turns.map((t) => t.id), [turns[0].id, turns[2].id], '只移除被删的那条，其余顺序不变')
+  assert.equal(h.page.data.turns[0].inputText, '第一条提问', '其余项内容原样保留')
+  assert.equal(h.page.data.turns[1].inputText, '第三条提问')
+  assert.equal(h.page.data.turnsNote.includes('已删除'), true, '成功要如实说明已删除')
+  assert.equal(h.http.find('GET', h.paths.turns).length, listReadsBefore, '删除后不得重读列表（重读会把滚动位置带回顶部）')
+  assert.equal(h.page.data.deleting, '', '在飞标志必须解开，否则删除入口永久置灰')
+  h.page.onUnload()
+})
+
+test('删除②·整段会话删除只打一条会话级 DELETE，成功后回到本页初始态', async () => {
+  const turns = threeTurns()
+  const h = await bootWithTurns(turns)
+  const conversationPath = '/api/v1/conversations/' + h.conversationId
+  const deleted = []
+  h.http.on('DELETE', conversationPath, (call) => { deleted.push(call); return ackResponse() })
+  assert.equal(h.page.data.conversationId, h.conversationId, '前提：页面已缓存会话 id')
+  assert.notEqual(h.page.data.answer, null, '前提：本次会话真的有一条已展示的回答')
+
+  h.page.onDeleteConversation()
+  assert.equal(h.modals.length, 1, '整段删除同样必须先二次确认')
+  assert.equal(h.modals[0].options.content.includes('删除后不可恢复'), true, '确认文案必须说清"删除后不可恢复"')
+  assert.equal(deleted.length, 0, '确认之前一条请求都不许发')
+  h.modals[0].answer(true)
+  assert.equal(h.page.data.deleting, 'conversation', '请求在飞时必须置位')
+  await waitFor(() => h.page.data.deleting === '', { message: '202 之后在飞标志必须解开' })
+
+  assert.equal(deleted.length, 1, '整段删除只许打一条请求')
+  assert.equal(deleted[0].path, conversationPath, '整段删除必须打会话级路径，不能退化成逐条删')
+  assert.equal(deleted[0].header['If-Match'], '"1"', 'If-Match 必须是会话版本（不是某条轮次的）')
+  assert.equal(h.http.calls.filter((c) => c.method === 'DELETE').length, 1, '整段删除只发一条，不逐条删轮次')
+
+  assert.equal(h.page.data.turns.length, 0, '整段删除后不得留下记录')
+  assert.equal(h.page.data.conversationId, '', '会话缓存必须复位')
+  assert.equal(h.page.data.conversationRevision, 0)
+  assert.equal(h.page.data.answer, null, '回答必须一起撤掉')
+  assert.equal(h.page.data.stage, 'idle')
+  assert.equal(h.page.data.busy, false)
+  assert.equal(h.page.data.turnsNote.includes('已删除'), true, '必须如实说明这段会话已删除')
+  h.page.onUnload()
+})
+
+test('删除③·删除失败不清列表：列表逐项原样，给出可重试的明确提示', async () => {
+  const turns = threeTurns()
+  const h = await bootWithTurns(turns)
+  const target = turns[1]
+  const turnPath = h.paths.turns + '/' + target.id
+  const attempts = []
+  let failNext = true
+  h.http.on('DELETE', turnPath, (call) => {
+    attempts.push(call)
+    if (failNext) { failNext = false; return { status: 503, data: { error: { code: 'UNAVAILABLE' } } } }
+    return ackResponse()
+  })
+  const before = h.page.data.turns.map((t) => ({ id: t.id, inputText: t.inputText, revision: t.revision }))
+
+  h.page.onDeleteTurn({ currentTarget: { dataset: { turnId: target.id } } })
+  h.modals[0].answer(true)
+  await waitFor(() => h.page.data.deleting === '' && h.page.data.turnsNote.includes('没有删除'), {
+    message: '失败之后必须落定并给出"没删成功"的说明'
+  })
+
+  assert.equal(attempts.length, 1)
+  // 老毛病回归点：网络/服务失败**不许**清空列表，也不许把未删成功的条目从列表里摘掉。
+  assert.deepEqual(
+    h.page.data.turns.map((t) => ({ id: t.id, inputText: t.inputText, revision: t.revision })),
+    before,
+    '删除失败时列表必须逐项原样（长度、内容、顺序都不变）'
+  )
+  assert.equal(h.page.data.turnsNote.includes('原样保留'), true, '提示必须说明列表未动')
+  assert.equal(h.page.data.turnsNote.includes('稍后重试'), true, '提示必须带上失败原因（可据以重试）')
+  assert.equal(h.page.data.deleting, '', '失败后在飞标志必须解开，否则无法重试')
+
+  // 允许重试：再点一次仍走同一意图 ⇒ 复用同一把幂等键（服务端按同键回放，不会重复删）。
+  h.page.onDeleteTurn({ currentTarget: { dataset: { turnId: target.id } } })
+  assert.equal(h.modals.length, 2, '重试同样要重新确认')
+  h.modals[1].answer(true)
+  await waitFor(() => h.page.data.deleting === '' && h.page.data.turns.length === 2, {
+    message: '重试成功后只应少一条'
+  })
+  assert.equal(attempts.length, 2)
+  assert.equal(attempts[1].header['Idempotency-Key'], attempts[0].header['Idempotency-Key'], '同一次删除意图的重试必须复用同一把幂等键')
+  assert.deepEqual(h.page.data.turns.map((t) => t.id), [turns[0].id, turns[2].id], '重试成功后只移除那一条')
+  h.page.onUnload()
+})
+
+test('删除④·连点保护：确认框未答复时连点只开一个确认框，请求在飞时连点只发一条请求', async () => {
+  const turns = threeTurns()
+  const h = await bootWithTurns(turns)
+  const target = turns[0]
+  const turnPath = h.paths.turns + '/' + target.id
+  const calls = []
+  let release = null
+  h.http.on('DELETE', turnPath, (call) => {
+    calls.push(call)
+    return new Promise((resolve) => { release = () => resolve(ackResponse()) })
+  })
+
+  const ev = { currentTarget: { dataset: { turnId: target.id } } }
+  h.page.onDeleteTurn(ev)
+  h.page.onDeleteTurn(ev) // 连点第二次：确认框还没答复
+  h.page.onDeleteConversation() // 另一个入口也不许插队
+  assert.equal(h.modals.length, 1, '确认框未答复时连点只许开一个确认框')
+  assert.equal(calls.length, 0, '确认之前一条请求都不许发')
+
+  h.modals[0].answer(true)
+  h.page.onDeleteTurn(ev) // 请求在飞时再点
+  h.page.onDeleteTurn(ev)
+  h.page.onDeleteConversation()
+  assert.equal(h.modals.length, 1, '请求在飞时连点不得再开确认框')
+  assert.equal(calls.length, 1, '两次连续触发只许出一条 DELETE')
+  assert.deepEqual(h.page.data.turns.map((t) => t.id), turns.map((t) => t.id), '请求未落定前列表不动')
+
+  release()
+  await waitFor(() => h.page.data.deleting === '' && h.page.data.turns.length === 2, {
+    message: '202 之后列表只应少一条'
+  })
+  assert.equal(calls.length, 1, '落定之后仍然只发过一条请求')
+  assert.equal(h.http.calls.filter((c) => c.method === 'DELETE').length, 1)
+  h.page.onUnload()
+})
+
+test('删除⑤·取消确认不发请求；未取到会话时整段删除入口只给说明、不发请求', async () => {
+  const turns = threeTurns()
+  const h = await bootWithTurns(turns)
+  const turnPath = h.paths.turns + '/' + turns[0].id
+  h.http.on('DELETE', turnPath, () => ackResponse())
+
+  h.page.onDeleteTurn({ currentTarget: { dataset: { turnId: turns[0].id } } })
+  h.modals[0].answer(false) // 用户点「取消」
+  await flushMicrotasks(20)
+  assert.equal(h.http.calls.filter((c) => c.method === 'DELETE').length, 0, '取消确认不得发请求')
+  assert.equal(h.page.data.turns.length, 3, '取消之后列表不得变化')
+  assert.equal(h.page.data.deleting, '')
+
+  // 没有会话（页面刚进来）时，整段删除入口不该假装能删。
+  const fresh = bootQaPage()
+  fresh.page.onDeleteConversation()
+  assert.equal(fresh.modals.length, 0, '没有会话时不该弹删除确认')
+  assert.equal(fresh.http.calls.filter((c) => c.method === 'DELETE').length, 0)
+  assert.equal(fresh.page.data.turnsNote.includes('还没有本次会话的记录'), true, '必须如实说明还没有记录')
+  fresh.page.onUnload()
+  h.page.onUnload()
+})
+
+test('删除⑥·封装与模板接线：deleteConversation 打会话级 DELETE；两个入口都有 aria 文案与禁用条件', async () => {
+  const m = loadQaModule()
+  assert.equal(typeof m.deleteConversation, 'function', '必须导出 deleteConversation（此前只有死代码 deleteTurn）')
+  for (const bad of [undefined, null, {}, { conversationId: 'x', conversationRevision: 1 }, { conversationId: randomUUID() }]) {
+    await assert.rejects(() => m.deleteConversation(bad), (e) => e.code === 'INVALID_INPUT', JSON.stringify(bad) + ' 必须被拒')
+  }
+  // js：确认文案说清不可恢复、两个入口都先走确认、禁用条件覆盖"删除在飞"。
+  const js = read('miniprogram/pages/qa/qa.js')
+  assert.ok(js.includes('wx.showModal('), '删除必须走 wx.showModal 二次确认')
+  assert.equal(js.includes('删除后不可恢复'), true, '确认文案必须说清不可恢复')
+  assert.equal(js.includes("qaApi.deleteTurn("), true, '单条删除必须复用已有封装')
+  assert.equal(js.includes("qaApi.deleteConversation("), true, '整段删除必须用新封装')
+  // wxml：两个入口都在，且**五个会话级入口**（发送/重试/查看/整段删除/单条删除）共用同一个禁用条件。
+  const wxml = read(QA_WXML_PATH)
+  assert.equal(wxml.includes('bindtap="onDeleteTurn"'), true, '每条记录必须有删除入口')
+  assert.equal(wxml.includes('bindtap="onDeleteConversation"'), true, '④ 区必须有整段删除入口')
+  assert.equal(wxml.includes('data-turn-id="{{item.id}}"'), true, '单条删除必须把这条记录的 id 带进事件')
+  // P2 的成因正是"只禁了新加的两个按钮"：发送/重试/查看当时只看 `busy`。这里改成**逐个 handler 枚举**，
+  // 每个会打服务端会话状态的按钮都必须带着同一个条件，且该条件同时覆盖 发送在飞 / 删除确认中 / 删除在飞。
+  const SESSION_LOCK = 'disabled="{{guest || busy || deleting !== \'\' || deleteConfirm !== \'\'}}"'
+  for (const handler of ['onSend', 'onRetry', 'onRefreshTurns', 'onDeleteConversation', 'onDeleteTurn']) {
+    const at = wxml.indexOf('bindtap="' + handler + '"')
+    assert.ok(at > 0, handler + ' 必须真有一个按钮')
+    const open = wxml.lastIndexOf('<button', at)
+    assert.ok(open > 0, handler + ' 的按钮必须有开标签')
+    const tag = wxml.slice(open, at).replace(/\s+/g, ' ')
+    assert.equal(tag.includes(SESSION_LOCK), true, handler + ' 的禁用条件必须同时覆盖发送在飞、删除确认中与删除在飞（实测：' + tag + '）')
+  }
+  assert.equal(
+    (wxml.match(/disabled="\{\{guest \|\| busy \|\| deleting !== '' \|\| deleteConfirm !== ''\}\}"/g) || []).length,
+    5,
+    '五个会话级入口的禁用条件必须逐字一致（少一处就是又一个"只禁了一部分"）'
+  )
+  assert.equal(wxml.includes('aria-label="删除这条提问和它的回答（第 {{index + 1}} 条）"'), true, '单条删除要有可读的 aria 文案')
+  // 样式：删除按钮的触控下限沿用同页令牌（不另发明尺寸）。
+  const css = read('miniprogram/pages/qa/qa.wxss')
+  assert.equal(css.includes('.message-copy__delete'), true)
+  const block = css.slice(css.indexOf('.message-copy__delete'))
+  assert.equal(block.includes('min-height: var(--tap-min, 44px)'), true, '删除按钮不得低于 --tap-min（44px）')
+})
+
+// ------------------------------------------------------------ 交叠互斥（P2 回归）
+//
+// 监工在 #849 上提的 P2：整段删除等待响应期间点发送 ⇒ `onSend` 进入并 `beginOperation`+`cancelAll`，
+// 作废删除的代次；删除成功返回时 `isCurrent` 已为假 ⇒ `spec.apply`/`resetToInitial` 被跳过，
+// 页面继续持有已删会话与旧记录，还可能往正在删除的会话里发新问题。
+// 下面两条用例把"确认中/在飞"与"发送/重试/刷新"两侧的互斥都钉在可观测事实上（请求条数 + apply 后状态）。
+
+test('删除⑦·交叠（P2）：删除确认中与在飞时发送/重试/刷新一律不进入，且删除结果必须真的 apply', async (t) => {
+  const turns = threeTurns()
+  const h = await bootWithTurns(turns)
+  const conversationPath = '/api/v1/conversations/' + h.conversationId
+  const deletes = []
+  let release = null
+  h.http.on('DELETE', conversationPath, (call) => {
+    deletes.push(call)
+    return new Promise((resolve) => { release = () => resolve(ackResponse()) })
+  })
+  const turnsBefore = h.http.find('POST', h.paths.turns).length
+  const readsBefore = h.http.find('GET', h.paths.turns).length
+  const conversationsBefore = h.http.find('POST', h.paths.conversations).length
+
+  h.page.onDeleteConversation()
+  assert.equal(h.modals.length, 1, '前提：整段删除先弹二次确认')
+  assert.equal(deletes.length, 0, '前提：确认之前一条请求都不许发')
+  assert.equal(h.page.data.deleteConfirm, 'conversation', '确认框打开即占住删除互斥')
+  assert.equal(h.page.data.deleting, '', '确认阶段不得置 deleting（它只表示请求在飞）')
+
+  // 阶段一「确认中」：确认框还开着，此时没有任何请求在飞，只看 `deleting`/`busy` 的守卫都拦不住。
+  h.page.setData({ draft: '确认框开着的时候冒出来的新问题' })
+  await h.page.onSend()
+  h.page.onRetry()
+  await h.page.onRefreshTurns()
+  const sendsWhileConfirming = h.http.find('POST', h.paths.turns).length - turnsBefore
+  assert.equal(sendsWhileConfirming, 0, '删除确认期间发送必须不进入：实测新增轮次请求 ' + sendsWhileConfirming + ' 条')
+  assert.equal(h.page.data.busy, false, '被挡下的发送不得把页面置成发送中')
+
+  // 阶段二「在飞」：用户点了「删除」，DELETE 已发出但被扣在途——监工复现的那段窗口。
+  h.modals[0].answer(true)
+  assert.equal(h.page.data.deleting, 'conversation', '前提：删除在飞标志已置位')
+  assert.equal(deletes.length, 1, '前提：DELETE 已发出且未落定')
+  h.page.setData({ draft: '删除在飞的时候冒出来的新问题' })
+  await h.page.onSend()
+  const sendsWhileDeleting = h.http.find('POST', h.paths.turns).length - turnsBefore
+  h.page.onRetry()
+  const sendsAfterRetry = h.http.find('POST', h.paths.turns).length - turnsBefore
+  await h.page.onRefreshTurns()
+  const readsWhileDeleting = h.http.find('GET', h.paths.turns).length - readsBefore
+  assert.equal(sendsWhileDeleting, 0, '删除在飞时发送必须不进入（不是进去后被 cancel）：实测新增轮次请求 ' + sendsWhileDeleting + ' 条')
+  assert.equal(sendsAfterRetry, sendsWhileDeleting, '重试同样不得进入：实测累计轮次请求 ' + sendsAfterRetry + ' 条')
+  assert.equal(h.http.find('POST', h.paths.conversations).length, conversationsBefore, '删除在飞时不得再建会话')
+
+  // 阶段三：删除返回成功 ⇒ 结果必须**真的 apply**。先只等在飞标志解开（`finally` 一定解），
+  // 再用 apply 的后果断言——这样"删除被别的操作作废"不会退化成一个超时错误。
+  release()
+  await waitFor(() => h.page.data.deleting === '', { message: '删除落定后在飞标志必须解开' })
+  const heldConversation = h.page._conversation === null ? null : h.page._conversation.id
+  if (t && typeof t.diagnostic === 'function') {
+    t.diagnostic('[删除⑦ 交叠读数] 确认期间新增轮次请求=' + sendsWhileConfirming
+      + '；删除在飞时新增轮次请求=' + sendsWhileDeleting + '（重试后 ' + sendsAfterRetry + '）'
+      + '；删除在飞时新增列表读=' + readsWhileDeleting
+      + '；DELETE 条数=' + h.http.calls.filter((c) => c.method === 'DELETE').length
+      + '；删除结果apply=' + (h.page.data.conversationId === '')
+      + '；页面仍持有会话=' + JSON.stringify(heldConversation))
+  }
+  assert.equal(
+    h.page.data.conversationId,
+    '',
+    '删除结果必须真的 apply：页面不得继续持有已删会话（实测 conversationId=' + JSON.stringify(h.page.data.conversationId) + '）'
+  )
+  assert.equal(heldConversation, null, '删除结果必须真的 apply：会话缓存必须清空（实测仍持有 ' + JSON.stringify(heldConversation) + '）')
+  assert.equal(h.page.data.turns.length, 0, '删除结果必须真的 apply：旧记录必须一起撤掉')
+  assert.equal(h.page.data.turnsNote.includes('已删除'), true, '必须如实说明这段会话已删除')
+  assert.equal(h.page.data.deleting, '', '落定后在飞标志必须解开（否则四个入口永久置灰）')
+  assert.equal(h.page.data.deleteConfirm, '', '落定后待确认标志必须解开')
+  // 刷新的读数放到 apply 之后再断：如果它插了队，上面的 apply 断言会先红（这正是 P2 的破坏路径）。
+  assert.equal(readsWhileDeleting, 0, '删除在飞时会话刷新必须不进入：实测新增列表读 ' + readsWhileDeleting + ' 条')
+  assert.equal(deletes.length, 1, '整段删除只许打一条 DELETE')
+  h.page.onUnload()
+})
+
+test('删除⑧·反向互斥：发送在飞时两个删除入口都不进入，发送落定后才允许删', async () => {
+  const turns = threeTurns()
+  // 让作业多停几拍：把"发送在飞"的窗口拉长到测试能在这个窗口里点删除
+  // （20 拍 × 5ms ≈ 100ms；必须低于客户端的轮询拍数上限，否则任务永远到不了终态）。
+  const h = bootQaPage({ turns: turns, answerAfterPolls: 20 })
+  const conversationPath = '/api/v1/conversations/' + h.conversationId
+  h.http.on('DELETE', conversationPath, () => ackResponse())
+  h.http.on('DELETE', h.paths.turns + '/' + turns[0].id, () => ackResponse())
+
+  h.page.setData({ draft: QUESTION })
+  const sending = h.page.onSend()
+  await waitFor(() => h.page.data.busy === true && h.page.data.conversationId === h.conversationId, {
+    message: '前提：发送确实在飞（busy=true 且会话已建立）'
+  })
+
+  h.page.onDeleteConversation()
+  h.page.onDeleteTurn({ currentTarget: { dataset: { turnId: turns[0].id } } })
+  const modalsWhileSending = h.modals.length
+  const deletesWhileSending = h.http.calls.filter((c) => c.method === 'DELETE').length
+  assert.equal(modalsWhileSending, 0, '发送在飞时删除入口不得弹确认框：实测 ' + modalsWhileSending + ' 个')
+  assert.equal(deletesWhileSending, 0, '发送在飞时不得发出 DELETE：实测 ' + deletesWhileSending + ' 条')
+  assert.equal(h.page.data.deleteConfirm, '', '发送在飞时不得置删除待确认标志')
+
+  await sending
+  await waitSettled(h.page)
+  h.page.onDeleteConversation()
+  assert.equal(h.modals.length, 1, '发送落定后删除入口必须恢复可用（互斥不得挡死正常流程）')
+  h.modals[0].answer(true)
+  await waitFor(() => h.page.data.deleting === '' && h.page.data.conversationId === '', {
+    message: '落定后发起的整段删除必须正常完成并复位页面'
+  })
+  assert.equal(h.http.calls.filter((c) => c.method === 'DELETE').length, 1, '这次删除只许打一条 DELETE')
+  assert.equal(h.page.data.turns.length, 0, '删除成功后旧记录必须撤掉')
+  assert.equal(h.page.data.turnsNote.includes('已删除'), true)
+  h.page.onUnload()
+})
+
