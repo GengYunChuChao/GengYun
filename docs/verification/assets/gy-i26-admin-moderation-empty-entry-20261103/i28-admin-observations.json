@@ -1,0 +1,54 @@
+{
+  "steps": [
+    {
+      "step": "00-admin-entry",
+      "file": "00-admin-entry.png",
+      "bytes": 182489
+    },
+    {
+      "step": "click 社区审核队列",
+      "result": {
+        "ok": true,
+        "label": "社区审核队列 读 + 通过/驳回已接入"
+      }
+    },
+    {
+      "step": "01-moderation-signin",
+      "file": "01-moderation-signin.png",
+      "bytes": 184176
+    },
+    {
+      "step": "submit moderation signin",
+      "result": {
+        "ok": true
+      }
+    },
+    {
+      "step": "02-moderation-queue-empty",
+      "file": "02-moderation-queue-empty.png",
+      "bytes": 217669
+    },
+    {
+      "step": "click 人工审核（占位）",
+      "result": {
+        "ok": true,
+        "label": "人工审核（占位） 未实现"
+      }
+    },
+    {
+      "step": "03-human-review-empty-entry",
+      "file": "03-human-review-empty-entry.png",
+      "bytes": 349891
+    }
+  ],
+  "consoleErrors": [],
+  "moderationText": "耕云 · 独立后台\n\nAPI 基地址：/api/v1\n\n账号目录（只读）\n读面已接入\n资料管理\n来源 / 科普 / 分类\n功能开关\n读写已接入\n开关留痕（只读）\n读面已接入\n审计事件（只读）\n读面已接入\n审计总台账（只读）\n读面已接入\n管理员权限读面\n读面已接入\n作业台\n读 + 取消已接入\n社区审核队列\n读 + 通过/驳回已接入\n人工审核（占位）\n未实现\n社区审核队列（只读 + 审核动作）\n\n列表调 GET /admin/posts（listAdminPosts，scope sources:read），详情调 getAdminPost，动作调 approvePost 与 rejectPost（scope sources:write）。参数名照抄契约：state 与 audit_state。\n\n退出登录\nstate（可见性）\n全部（不带 state）\nprivate · private（未公开）\npublished · published（已公开）\nhidden · hidden（已隐藏）\ndeleted · deleted（已删除）\naudit_state（审核态）\n全部（不带 audit_state）\npending · pending（待审）\napproved · approved（已通过）\nrejected · rejected（已驳回）\nquarantined · quarantined（隔离待查）\n每页\n20\n50\n应用筛选\n清空筛选\n审核队列为空\n空队列，不是错误：服务端这一次返回了 0 条（items: []），没有可审核的帖子\n\n已读 0 条\n筛选：见工具栏\n\n审核队列为空\n\n空队列，不是错误：服务端这一次返回了 0 条（items: []），没有可审核的帖子\n\n读取下一页\n重新读取第一页\n\n游标与 [state,audit_state] 绑定：换筛选必须回第一页，否则后端回 INVALID_CURSOR（页面会给出「回第一页重读」）。空队列与「无权限」是两件事：403 会显示权限提示与错误码， 不会伪装成 0 条；403 不给重试，503 只在服务端声明 retryable: true 时才给。\n\n后台鉴权接口\n已实现（POST/GET /admin/auth/session、POST /admin/auth/logout）\n账号目录\n只读页：GET /admin/accounts（游标分页）；停用/注销等写操作不在本片\n资料管理\n资料来源 / 科普内容 / 分类：读 sources:read，写 sources:write；写操作带 Idempotency-Key，编辑/发布/下架另带 If-Match；审计由服务端留痕\n功能开关\n读写页：GET /admin/feature-flags（flags:read）；PUT /admin/feature-flags/{key} 带 If-Match 与 Idempotency-Key（flags:write），失败按服务端错误码如实展示\n开关留痕\n只读页：GET /admin/flag-audit-events（scope=flags:read，键集游标 created_at DESC, id DESC，游标 15 分钟有效）；行内容是同契约的 AuditEvent，开关行另带 actor / target_hint / 前后值，缺失时如实显示「未提供」\n审计事件\n只读页：GET /admin/audit-events（游标分页，scope=audit:read）；除契约 8 个必填字段外，另展示 R29-S5 新增的可选留痕字段（actor / target_hint / 前后值），不做本片没有的写操作\n审计总台账\n只读页：GET /admin/audit-logs（operationId listAuditLogs，scope=audit:read，游标分页 + action / entity / from / to 筛选）；游标与筛选组合绑定，换筛选回第一页；403 与空台账分开显示，缺省装配下 503 如实展示、不伪装成 0 条\n管理员权限读面\n只读页：GET /admin/administrators（operationId listAdministrators）与 GET /admin/administrators/{id}/scopes （operationId listAdministratorScopes），scope 均为 scopes:read；列表项的 id 是 admin_accounts.id，不是 users.id； 本页不授权、不撤销（scopes:write 不在本片）\n作业台\n读 + 取消页：GET /admin/jobs（jobs:read，游标分页）；POST /admin/jobs/{id}/cancel 带 If-Match（取该行 revision）与 Idempotency-Key（jobs:cancel），终态行（succeeded / uncertain / failed / timed_out / cancelled）按钮禁用，取消后按响应局部刷新该行\n社区审核队列\n读 + 动作页：GET /admin/posts（operationId listAdminPosts，scope=sources:read，游标分页 + state / audit_state 筛选）、GET /admin/posts/{id}（getAdminPost，响应带 ETag）；动作走 POST /admin/posts/{id}/approve （approvePost，无请求体）与 POST /admin/posts/{id}/reject（rejectPost，body 只有闭集内的 reason_code）， scope 均为 sources:write，两者都必带 If-Match 与 Idempotency-Key；重复提交同一结论时服务端回 changed:false， 页面如实显示「已是该状态」而不当成功；游标与筛选组合绑定，换筛选回第一页；403 不给重试，503 仅在 retryable:true 时给\n人工审核\n空入口占位，未实现；不伪造队列与审核人（审核人 / 投票 / 专家认证属于另一套工作流，不在「社区审核队列」页）\n\n后台与小程序端分别鉴权（audience=admin，独立令牌）；本页不读取任何生产密钥，不写日志、不把令牌放进 URL。",
+  "humanReviewText": "耕云 · 独立后台\n\nAPI 基地址：/api/v1\n\n账号目录（只读）\n读面已接入\n资料管理\n来源 / 科普 / 分类\n功能开关\n读写已接入\n开关留痕（只读）\n读面已接入\n审计事件（只读）\n读面已接入\n审计总台账（只读）\n读面已接入\n管理员权限读面\n读面已接入\n作业台\n读 + 取消已接入\n社区审核队列\n读 + 通过/驳回已接入\n人工审核（占位）\n未实现\n人工审核入口\n本版不实现人审工作流 · 仅保留入口\n\n本版不实现人审工作流，只保留入口：没有审核队列、没有待审列表、没有审核人、没有投票、 没有专家认证、没有「人审已通过」标记。服务端同样未接线（wired: false）， 本页不会用假任务／假审核人让你以为审核能力已可用。\n\n当前待审核对象计数\n\n0\n个待审核对象\n结构性零（wired: false）\n\n这是结构性零，不是「暂时没加载到」，也不是本页编造的数字：服务端人审入口的 items 恒为空数组、四个集合恒为冻结空数组，且全仓没有对应的持久表 （共 4 个集合，全部为空）。\n\n为什么后台拿不到 HTTP 计数：契约里没有审核队列读接口 （packages/contracts/openapi.json 中 path 含 review 的数量为 0）， services/api/src/routes/ 也没有 review 路由 —— 本页因此不发起任何网络请求。\n\n人审入口 public humanReviewQueue() 的 items 恒为空数组：真实待审条数 = 0，且 human_review_state 恒为 under_construction。\n\nservices/api/src/moderation/nonbypass.ts:161-168\n\n后台人审目录 createHumanReviewDirectory() 的 tasks/reviewers/votes/expert_certifications 全为冻结空数组，wired: false。\n\nservices/api/src/admin/human-review.ts:68-89\n\n全仓没有审核队列读接口与审核动作接口：openapi.json 中 path 含 review 的数量为 0，routes/ 下也没有 review 路由。\n\npackages/contracts/openapi.json\n\n需求口径（逐条可核）\n\n「人工审核只空入口。」\n\ndocs/requirements.md:20\n\n「首版没有 人审队列、审核人、专家认证；`humanReviewQueue()` 恒为空态（`human_review_state = 'under_construction'`，取自契约 `Home.human_review_state` 的 `const`）。」\n\ndocs/moderation/http-layer.md:130-131\n\n「人审：未上线（空态）；公众票决：首版不进入。」\n\ndocs/moderation/http-layer.md:206\n\n「`approved` 只说明 AI 筛查，不等于专业审核；AI 超时/异常/不明为 `quarantined`，没有人审放行兜底。」\n\ndocs/architecture/state-contract.md:95\n\n代码与契约现状\n\nhumanReviewQueue() — 人审入口恒返回 { human_review_state: under_construction, voting: disabled, items: [] }；items 空数组即真实待审条数。\n\nservices/api/src/moderation/nonbypass.ts:161-168\n\ncreateHumanReviewDirectory() — tasks／reviewers／votes／expert_certifications 四个集合都是冻结空数组，wired: false，并附 reason 说明；assertNoReviewClaim() 一律抛 OBJECT_UNAVAILABLE。\n\nservices/api/src/admin/human-review.ts:68-89\n\nHUMAN_REVIEW_STATE — 全仓唯一的『人审未上线』事实表达：export const HUMAN_REVIEW_STATE = 'under_construction'；对应契约 packages/contracts/openapi.json:12139-12157 的 const。\n\nservices/api/src/moderation/types.ts:114\n\n公开首页人审位 — 该路由直接硬编码 data: { …, human_review_state: 'under_construction' }，不是从队列读出来的。\n\nservices/api/src/routes/public-home.ts:13\n\nOPS_OPERATION_IDS（9 项） — 后台运维面只有分类/账号/任务/开关/帖子 9 个 operationId，其中没有任何审核队列接口。\n\nservices/api/src/admin/ops/service.ts:155-165\n\n未取得项（要真做需要先有接口）\n契约没有审核队列读接口，也没有审核动作（通过/驳回/隔离）接口 → 前端无法读取真实待审条目。\n契约没有审核人身份与专家认证字段 → 不能展示「审核人是谁」，更不能标「专家已审」。\nAI 筛查结果与 content visibility（private/published/hidden/deleted）由服务端状态机决定，后台读面尚未提供对应查询。\n即使把「待审核」定义为某个 visibility 状态的行数，也没有对应读面；本页不拿账号目录或帖子列表凑数。\n\n结论：本页只做入口与说明；接入真实审核能力需要先补契约与服务端接口，不在本片范围内，也不由前端伪造。 想看「后台到底发生过哪些动作」，请用「审计事件」tab（真实只读台账）。\n\n后台鉴权接口\n已实现（POST/GET /admin/auth/session、POST /admin/auth/logout）\n账号目录\n只读页：GET /admin/accounts（游标分页）；停用/注销等写操作不在本片\n资料管理\n资料来源 / 科普内容 / 分类：读 sources:read，写 sources:write；写操作带 Idempotency-Key，编辑/发布/下架另带 If-Match；审计由服务端留痕\n功能开关\n读写页：GET /admin/feature-flags（flags:read）；PUT /admin/feature-flags/{key} 带 If-Match 与 Idempotency-Key（flags:write），失败按服务端错误码如实展示\n开关留痕\n只读页：GET /admin/flag-audit-events（scope=flags:read，键集游标 created_at DESC, id DESC，游标 15 分钟有效）；行内容是同契约的 AuditEvent，开关行另带 actor / target_hint / 前后值，缺失时如实显示「未提供」\n审计事件\n只读页：GET /admin/audit-events（游标分页，scope=audit:read）；除契约 8 个必填字段外，另展示 R29-S5 新增的可选留痕字段（actor / target_hint / 前后值），不做本片没有的写操作\n审计总台账\n只读页：GET /admin/audit-logs（operationId listAuditLogs，scope=audit:read，游标分页 + action / entity / from / to 筛选）；游标与筛选组合绑定，换筛选回第一页；403 与空台账分开显示，缺省装配下 503 如实展示、不伪装成 0 条\n管理员权限读面\n只读页：GET /admin/administrators（operationId listAdministrators）与 GET /admin/administrators/{id}/scopes （operationId listAdministratorScopes），scope 均为 scopes:read；列表项的 id 是 admin_accounts.id，不是 users.id； 本页不授权、不撤销（scopes:write 不在本片）\n作业台\n读 + 取消页：GET /admin/jobs（jobs:read，游标分页）；POST /admin/jobs/{id}/cancel 带 If-Match（取该行 revision）与 Idempotency-Key（jobs:cancel），终态行（succeeded / uncertain / failed / timed_out / cancelled）按钮禁用，取消后按响应局部刷新该行\n社区审核队列\n读 + 动作页：GET /admin/posts（operationId listAdminPosts，scope=sources:read，游标分页 + state / audit_state 筛选）、GET /admin/posts/{id}（getAdminPost，响应带 ETag）；动作走 POST /admin/pos",
+  "appTitle": "耕云 · 独立后台（骨架）",
+  "url": "http://127.0.0.1:5173/",
+  "viewport": {
+    "width": 1440,
+    "height": 1000,
+    "dpr": 1
+  }
+}
