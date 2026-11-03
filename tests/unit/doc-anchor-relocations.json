@@ -2147,4 +2147,37 @@
     "symbol": "\"/admin/posts\": {",
     "reason": "同 r59-community-notify-dedupe 页：base 的 `:11434` 是 `ETag` schema 的右花括号，不是任何 path；按符号 `\"/admin/posts\": {` 实测在合并树为 11678。正文的「家族只有 hide 一条」同样是旧陈述，行内 ⚠ 注记已指向 gy-r68。"
   }
+,
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 29,
+    "target": "packages/contracts/openapi.json",
+    "from": 6446,
+    "to": 6607,
+    "reason": "§1.2「/reports 家族根 path」的陈旧锚点重锚（目标文件本提交未改动，属跨提交漂移）。base 记的 6446 在 HEAD 上是 `                }`（某 schema 的右花括号），按符号 `\"/reports\": {` 实测 6607；同段第 31 行已写重锚依据（+161，R75 记的 +83 解释不到）。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 29,
+    "target": "openapi.json",
+    "from": 6448,
+    "to": 6609,
+    "reason": "同段 `createReport` 的裸锚点（继承同块显式锚点 packages/contracts/openapi.json）：旧值 6448 是 `            },`，按符号 `\"operationId\": \"createReport\",` 实测 6609。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 30,
+    "target": "packages/contracts/openapi.json",
+    "from": 6541,
+    "to": 6702,
+    "reason": "§1.2「/reports/{id} 家族根 path」的陈旧锚点重锚。旧值 6541 在 HEAD 上是 `              \"application/json\": {`，按符号 `\"/reports/{id}\": {` 实测 6702。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 30,
+    "target": "openapi.json",
+    "from": 6543,
+    "to": 6704,
+    "reason": "同段 `getOwnReport` 的裸锚点：旧值 6543 是 `                  \"$ref\": \"#/components/schemas/AckEnvelope\"`，按符号 `\"operationId\": \"getOwnReport\",` 实测 6704。"
+  }
 ]
