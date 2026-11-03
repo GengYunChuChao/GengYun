@@ -24,7 +24,7 @@
     <view class="section" wx:if="{{!networkOff}}">
       <view class="section-head">
         <text class="section-head__title">全部记录</text>
-        <text class="section-head__meta">{{items.length}} 条 · 未成功 {{failedCount}} 条</text>
+        <text class="section-head__meta">已加载 {{items.length}} 条{{nextCursor ? '（还有更多）' : ''}} · 其中未成功 {{failedCount}} 条</text>
       </view>
 
       <view class="row-actions">

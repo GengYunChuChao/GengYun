@@ -91,7 +91,7 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 1. 该页数据源是**随包离线名录**：每条记录既有可读记录号 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:35`），也有 `id`（= 服务端同一记录的 uuid，同文件 `:34`，由 `tools/knowledge/build_miniprogram_data.mjs` 用 `deterministicUuid(record_id)` 派生）。页面的路由判定是：路由显式带 `source=bundled-offline` 走随包副本，否则 `validId` 为真走服务端、其余走随包副本：`miniprogram/pages/referencedetail/referencedetail.js:133`。GY-R73 之前随包条目**没有** `id`，记录号恒假 ⇒ 永远落在随包支；现在同一条记录两条路都到得了。
 2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假、uuid 恒真：`miniprogram/utils/knowledge-api.js:271`。
 3. `POST /favorites` 的 `target_ref.revision` 只能取自服务端读面（`GET /knowledge/{id}`，该客户端把响应 `id` 强制 UUID），而 `/herbicides` 的客户端投影 `herbicideRow` **不投影 revision**（`miniprogram/utils/knowledge-api.js:195-225`）；随包记录本身也没有 revision 字段。
-4. 就算把 uuid 发过去也不会被挡住：契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format。真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面逐次派生（见下节 GY-R68），`/herbicides` 的 uuid 在那一面不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:140`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
+4. 就算把 uuid 发过去也不会被挡住：契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format。真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面逐次派生（见下节 GY-R68），`/herbicides` 的 uuid 在那一面不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:145`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
 
 **两条出路（二选一，本片不选）**：
 

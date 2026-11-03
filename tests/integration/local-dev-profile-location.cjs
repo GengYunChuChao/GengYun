@@ -105,7 +105,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     }
     return entry;
   }
-  const fail = errMsg => () => mini.evaluate(msg => { wx.__gyGetLocation = wx.__gyGetLocation || wx.getLocation; wx.getLocation = o => o.fail({ errMsg: msg }); }, errMsg);
+  // 平台失败档要真的走到平台层：先装一个受控转换资源，再让 getLocation 失败。
+  // （2026-11-03 起判断顺序是「先看转换资源在不在，再决定要不要申请授权」；资源缺席时根本不调 getLocation。）
+  const fail = errMsg => () => mini.evaluate(msg => {
+    const p = getCurrentPages().slice(-1)[0];
+    p.regionConverter = function () { return '330102'; };
+    wx.__gyGetLocation = wx.__gyGetLocation || wx.getLocation;
+    wx.getLocation = o => o.fail({ errMsg: msg });
+  }, errMsg);
   const succeed = (withConverter) => async () => {
     await mini.evaluate(() => { const p = getCurrentPages().slice(-1)[0]; p.regionConverter = null; });
     if (withConverter) await mini.evaluate(code => { getCurrentPages().slice(-1)[0].regionConverter = function () { return code; }; }, withConverter === 'out' ? null : withConverter);
@@ -144,9 +151,18 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await mini.evaluate((lat, lng) => { wx.__gyGetLocation = wx.__gyGetLocation || wx.getLocation; wx.getLocation = o => o.success({ latitude: lat, longitude: lng }); }, SENTINEL.lat, SENTINEL.lng);
   };
   if (assembly.type === 'null') {
-    // U3 未取得（截至 2026-10-17 的真实状态）：装配如实回 null ⇒ 定位成功后必须回落 unavailable。
-    const entry = await branch('真页面默认装配·资源缺席即 fail-closed', '地区转换资源尚未接入', defaultSetup, null);
-    report.defaultAssembly = { type: assembly.type, message: entry.message };
+    // U3 未取得（截至 2026-11-03 的真实状态）：装配如实回 null ⇒ **不申请定位授权**，直接落 unavailable。
+    // 判据不是文案而是次数：资源缺席时 wx.getLocation 必须 0 次（旧顺序会先弹授权框再报未接入）。
+    const countingSetup = async () => {
+      await mini.evaluate((lat, lng) => {
+        wx.__gyLocated = 0;
+        wx.__gyGetLocation = wx.__gyGetLocation || wx.getLocation;
+        wx.getLocation = o => { wx.__gyLocated += 1; o.success({ latitude: lat, longitude: lng }); };
+      }, SENTINEL.lat, SENTINEL.lng);
+    };
+    const entry = await branch('真页面默认装配·资源缺席即 fail-closed', '地区转换资源尚未接入', countingSetup, null);
+    report.defaultAssembly = { type: assembly.type, message: entry.message, getLocationCalls: await mini.evaluate(() => wx.__gyLocated || 0) };
+    assert.equal(report.defaultAssembly.getLocationCalls, 0, '资源缺席时不得申请定位授权（getLocation 调用 0 次）');
   } else {
     // 资源就位：同一路径必须给出预选或如实报省外；若预选，region_code 必须能在真实区划目录里查到。
     const entry = await branch('真页面默认装配·资源就位即接线', '已按定位预选|不在首版覆盖的浙江省', defaultSetup, null);
@@ -168,7 +184,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await branch('定位超时', '定位超时', fail('getLocation:fail timeout'), null);
   await branch('平台不支持', '定位不可用或平台不支持', fail('getLocation:fail the api need to be declared in the requiredPrivateInfos field in app.json'), null);
 
-  // 6. 允许 + 哨兵坐标 + 无转换资源（首版真实状态：不内置坐标→地区资源）⇒ 只回退手选
+  // 6. 允许 + 哨兵坐标 + 无转换资源（首版真实状态：不内置坐标→地区资源）⇒ 不申请授权，只回退手选
   await branch('哨兵坐标·无转换资源', '地区转换资源尚未接入', succeed(false), null);
 
   // 7. 省外：有转换资源但返回 null
