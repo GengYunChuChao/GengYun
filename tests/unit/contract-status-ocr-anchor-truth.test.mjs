@@ -288,10 +288,26 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `contract-status.json` 278125 字节 / 4465 行、`contract-implementation-status.md` 199688 字节
  * / 220 行 —— 行数与上一次同步相同（#873 只改 evidence 文案与中文表格，没有增删 operation 行），
  * 字节数是两侧文案的净增。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十次同步（`readCommunityMediaContent` 的 blocker 与代码正面矛盾）：该条 blocker 原写
+ * 「真实内容来源未接线（来源关闭时统一 404）」，但 `services/api/src/media/content-source.ts` 的头注释
+ * 自述「真实来源（GY-I06/G3）已接线：默认装配是 `createRealContentSource(communityService, mediaStore)`」，
+ * 装配点也在 `services/api/src/app.ts`（`contentSource: mediaContentSource ?? createRealContentSource(...)`）。
+ * 故改成「……真实内容来源已接线（默认 `createRealContentSource(communityService, mediaStore)`，社区域未接线时
+ * 回落 `createClosedContentSource()` ⇒ 取图统一 404）……」。中文表格同次用 `--write-doc` 重生成。
+ * 两份台账各 +118 字节、行数不变（278243 / 4465、199806 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
+ * 2026-11-04 第十一次同步（六条 admin 的 blocker 把「后台 UI 未消费」写成待办，实际页面已消费）：
+ * `listAdministrators`、`listAdministratorScopes`、`grantAdministratorScope` 由
+ * `apps/admin/src/views/AdministratorsView.vue` 消费；`listAdminUsers`（`GET /admin/accounts`）由
+ * `apps/admin/src/views/AccountsView.vue`、`listFlags`（`GET /admin/feature-flags`）由 `FlagsView.vue`、
+ * `listAuditEvents`（`GET /admin/audit-events`）由 `AuditEventsView.vue` 消费。文案改成「后台 UI 已消费本接口
+ * （路径）……真实环境联调未做」，其余「真实存储／端口／审计待完成」的判断维持不动。中文表格同次重生成。
+ * 两份台账各 +472 字节、行数不变（278715 / 4465、200278 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278125, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 199688, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278715, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200278, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
