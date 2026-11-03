@@ -31,7 +31,7 @@
 | # | 位置 | 角色 | 是不是"真校验" |
 | --- | --- | --- | --- |
 | 1 | `services/api/src/routes/community.ts:406` | `deps.consent({ purpose: 'public_posting' })`——投稿面 preHandler 的**实际构造点** | ✅ **是**（本片负控制证明） |
-| 2 | `services/api/src/routes/community.ts:386-391` | `PUBLIC_POSTING_GATED_ROUTES`：4 条被闸路由的清单，且被单测逐字锁定 | ✅ 是（清单即证据） |
+| 2 | `services/api/src/routes/community.ts:402-407` | `PUBLIC_POSTING_GATED_ROUTES`：4 条被闸路由的清单，且被单测逐字锁定 | ✅ 是（清单即证据） |
 | 3 | `services/api/src/privacy/consent-pg.ts:11` | `CONSENT_PURPOSES = [..., 'public_posting']`——PG 侧用途闭集 | ✅ 是（数据源） |
 | 4 | `packages/privacy/constants.mjs:94` | `community_image: ['media_processing', 'public_posting', 'external_inference']`——**媒体上传**侧对 `public_posting` 的间接要求 | ✅ **是**（第 5 条消费路径，见 §1.3） |
 | 5 | `services/api/src/privacy/grant-pg.ts:33` | 授予口校验 `purpose ∈ {…,'public_posting'}` | ✅ 是（写入侧） |
