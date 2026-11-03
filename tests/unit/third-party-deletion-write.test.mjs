@@ -252,6 +252,34 @@ function createGatedReadPort(port, gate) {
   };
 }
 
+/**
+ * 写端口替身（R73-P1 第二轮）：`requested` 那笔**写完的那一刻**，用三级嵌套 `queueMicrotask`
+ * 排入一次**真实** `cancelDeletion()`。
+ *
+ * 为什么是三级：写完 `requested` 到派发器恢复执行之间隔着几级 promise 解析（端口的写 →
+ * `writeState()` → 派发器）；三级嵌套正好把「取消已受理」排在派发器取最后一读之前的那一拍，
+ * 而取消那一刻适配器一次都还没被调——监工的反例读数（`adapter_calls=0` 时取消已受理，
+ * 之后仍外发）就是这么复现出来的。
+ */
+function createCancelAtRequestedWritePort(port, cancel) {
+  return {
+    ...port,
+    async subscribeThirdPartyDeletion(input) {
+      const written = await port.subscribeThirdPartyDeletion(input);
+      if (input.state === 'requested') {
+        queueMicrotask(() => {
+          queueMicrotask(() => {
+            queueMicrotask(() => {
+              cancel();
+            });
+          });
+        });
+      }
+      return written;
+    },
+  };
+}
+
 /** 注销域四 store 的最小装配（与 `tests/unit/user-data-deletion.test.mjs::seed()` 同形）。 */
 function createStores() {
   return {
@@ -855,6 +883,8 @@ test('回归：回执的 third_party_state 仍由路由投影给出，写侧只�
 //
 // 负控制 N5：把 `third-party-deletion-dispatch.ts` 里的四个取消检查点删掉（或只在入口查一次）⇒
 // T-P1-a / T-P1-b / T-P1-d 变红（取消已受理，但适配器仍被调用一次、`requested`/`confirmed` 仍写下去）。
+// 负控制 N6（第二轮）：把最后一次同步读取那一行临时改成恒 `false`（等于退回「读到未取消」的旧口径，
+// 让读与外发之间的让位点重新出现）⇒ T-P1-e 变红（`adapter_calls=1`、`writes=[requested, confirmed]`）。
 // 反向对照：T-P1-c 证明判据没有把正常路径一起关掉。
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -972,4 +1002,62 @@ test('R73-P1 T-P1-d：取消判据抛错 ⇒ 按取消处理（零外发、零�
   assert.ok(skipped !== undefined, '跳过必须有事件（⛔ 不许静默）');
   assert.equal(skipped.recipient_id, 'alipay-cloud');
   assert.equal(skipped.skipped_reason, 'probe_failed');
+});
+
+test('R73-P1 T-P1-e：requested 写完那一轮里受理取消 ⇒ 零外发、只留 requested、回执 cancelled', async () => {
+  const base = createFakePort();
+  const adapter = createFakeAdapter(confirmedOutcome('ev-too-late'));
+  // 取消受理那一刻的读数（监工反例里那两行：state=cancelled、adapter_calls=0）。
+  const accepted = [];
+  let deletion = null;
+  const port = createCancelAtRequestedWritePort(base, () => {
+    const receipt = deletion.cancelDeletion(USER_A.userId);
+    accepted.push({ state: receipt.state, adapterCalls: adapter.calls.length });
+  });
+  deletion = createUserDataDeletion({
+    ...createStores(),
+    now: () => new Date(CLOCK_MS),
+    thirdParty: port,
+    thirdPartyAdapter: adapter,
+    thirdPartyRecipients: createFakeRecipients([{ recipientId: 'alipay-cloud' }]),
+  });
+  const requestId = String(deletion.requestDeletionFor(USER_A.userId).id);
+  await deletion.executeHandlers(requestId);
+
+  assert.deepEqual(accepted, [{ state: 'cancelled', adapterCalls: 0 }], '反例前置：取消受理时一次外发都还没有');
+  assert.equal(adapter.calls.length, 0, '取消已受理之后不许再发起外发（最后一米的读数必须是最新的）');
+  assert.deepEqual(
+    base.writes.map((write) => write.state),
+    ['requested'],
+    '既成事实只有 requested：取消之后不许再写 confirmed',
+  );
+  assert.equal(deletion.receipt(requestId).state, 'cancelled', '本次回执仍是 cancelled');
+  assert.equal(deletion.lastThirdPartyDispatch().reason, 'CANCELLED_AFTER_ACCEPT', '原因必须可判（⛔ 不许落成 OK）');
+  assert.ok(deletion.thirdPartyWrites.skippedCancelled >= 1, '跳过读数如实计数');
+  assert.equal(deletion.thirdPartyWrites.dispatched, 0, '外发读数为零');
+});
+
+test('R73-P1 T-P1-f：异步判据在最后一米无法同步确认 ⇒ fail-closed 到不发（⛔ 不许静默外发）', async () => {
+  const port = createFakePort();
+  const adapter = createFakeAdapter(confirmedOutcome());
+  const { dispatcher, events } = makeDispatcher({
+    port,
+    adapter,
+    recipients: createFakeRecipients([{ recipientId: 'alipay-cloud' }]),
+  });
+  const result = await dispatcher.dispatch({
+    requestId: randomUUID(),
+    userId: USER_A.userId,
+    // 判据永远 resolve 成「未取消」：最后一米仍拿不到同步布尔值 ⇒ 少发，不多发。
+    isRequestCancelled: async () => false,
+  });
+
+  assert.equal(adapter.calls.length, 0, '异步判据无法同步确认时不许外发');
+  assert.equal(result.reason, 'CANCELLED_AFTER_ACCEPT', '不是静默外发，也不是 OK');
+  assert.equal(port.writes.length, 0, '连 requested 都不写（写之前那一读就没通过）');
+  assert.equal(dispatcher.readings.dispatched, 0);
+  assert.equal(dispatcher.readings.skippedCancelled, 1);
+  const skipped = events.find((event) => event.event === 'third_party_deletion_skipped_cancelled');
+  assert.ok(skipped !== undefined, '跳过必须有事件（⛔ 不许静默）');
+  assert.equal(skipped.skipped_reason, 'unconfirmable', '原因与「判据抛错」分开：这里是拿不到同步值');
 });

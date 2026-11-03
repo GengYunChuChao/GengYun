@@ -168,6 +168,12 @@ export interface ThirdPartyDeletionDispatchResult {
  */
 export type ThirdPartyDeletionCancellationProbe = (requestId: string) => boolean | Promise<boolean>;
 
+/**
+ * 一次取消判定的读数。`null` = 未取消；`'unconfirmable'` = 判据只给了 thenable，
+ * **同步**拿不到布尔值（紧贴副作用的检查点据此 fail-closed，见 `readCancellationNow()`）。
+ */
+type CancellationReading = 'request_cancelled' | 'probe_failed' | 'unconfirmable' | null;
+
 /** `dispatch()` 的输入。 */
 export interface ThirdPartyDeletionDispatchInput {
   requestId: string;
@@ -224,6 +230,19 @@ function codeOf(error: unknown): string {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * `await` 的判据到底是不是异步的：thenable 判断本身抛错也按**是**处理（⇒ `'unconfirmable'`
+ * ⇒ 紧贴副作用处 fail-closed 到「不发」）。方向不对称是故意的：读不出来时宁可少发。
+ */
+function isThenable(value: unknown): boolean {
+  try {
+    const shape = typeof value === 'object' && value !== null ? value : typeof value === 'function' ? value : null;
+    return shape !== null && typeof (shape as { then?: unknown }).then === 'function';
+  } catch {
+    return true;
+  }
 }
 
 function isoOf(value: unknown, fallback: string): string {
@@ -363,6 +382,9 @@ export function createThirdPartyDeletionDispatcher(
      * 把「取消已受理」误判成未取消，代价是一次**不可撤回**的第三方外发；
      * 把未取消误判成已取消，代价只是这次少发、留下一个待补的审计缺口。
      * 「取消已受理」比「多发一次外发」更不可接受，所以这里宁可少发。
+     *
+     * ⚠ 只给**离副作用远**的两个检查点用（收件人返回后 / 读现状返回后）：那里多让一个微任务
+     * 无害，后面每一轮都会重新取值。紧贴副作用的两处必须走 `readCancellationNow()`（同步）。
      */
     async function cancellationOf(): Promise<'request_cancelled' | 'probe_failed' | null> {
       const probe = input.isRequestCancelled;
@@ -376,6 +398,50 @@ export function createThirdPartyDeletionDispatcher(
     }
 
     /**
+     * 取消判据的**同步**取值（GY-R73 P1 第二轮返修）。
+     *
+     * 为什么必须同步：真实判据本来就是同步的（`coordinator.requestState(id) === 'cancelled'`，
+     * 见 `user-data-deletion.ts` 的唯一调用点）。把它包进 `async` 再 `await`，就在「读到未取消」
+     * 与随后的副作用之间插了一个**微任务让位点**——取消恰好在这个让位点被受理，后面的分支就会
+     * 拿着已经过时的 `null` 继续写 `requested` / 继续外发。「读到 false」与「发起副作用」之间
+     * 因此不许出现任何 await：这一行读出来的结论，必须就是副作用发生时的事实。
+     *
+     * 返回 `'unconfirmable'` ⇒ 调用方给的是 thenable，此刻拿不到布尔值。紧贴副作用的两处会
+     * `await` 补问一次，然后**在调用方那一层再同步读一次**；仍拿不到 ⇒ fail-closed 到「不发」。
+     */
+    function readCancellationNow(): CancellationReading {
+      const probe = input.isRequestCancelled;
+      if (probe === undefined) return null;
+      let verdict: unknown;
+      try {
+        verdict = probe(input.requestId);
+      } catch {
+        return 'probe_failed';
+      }
+      // 与既有口径一致：只有严格 `true` 才算已取消（`1` / `'yes'` 之类不放行成取消）。
+      if (verdict === true) return 'request_cancelled';
+      if (verdict === false) return null;
+      // thenable ⇒ 「此刻不知道」，不许当成未取消放行；非 thenable 的其它返回值按既有口径当未取消。
+      return isThenable(verdict) ? 'unconfirmable' : null;
+    }
+
+    /**
+     * 异步判据的补问：**只做这一次 await**，结论一概不作数。
+     *
+     * 依据是 await 之后**调用方那一层**的同步读——那里紧接着就是副作用，中间没有 await。
+     * 补问自身的结论不返回：async 函数返回值要经过一次 promise 解析，那又是在「读值」与
+     * 「副作用」之间插了一个让位点，等于把刚补上的洞重新打开。
+     * 抛错也不在这里折成结论：随后的同步读会重新判一次（判据真坏了 ⇒ `probe_failed`）。
+     */
+    async function awaitAsyncProbe(): Promise<void> {
+      try {
+        await input.isRequestCancelled?.(input.requestId);
+      } catch {
+        // 交给紧随其后的同步读重新判定。
+      }
+    }
+
+    /**
      * 取消命中：停掉**后续**接收方并如实收尾。
      *
      * `remaining` 是这次不会再处理的接收方（含当前这个）。已经写过的行一条不删、不回滚——
@@ -383,7 +449,7 @@ export function createThirdPartyDeletionDispatcher(
      */
     function stopCancelled(
       remaining: readonly ThirdPartyDeletionRecipient[],
-      outcome: 'request_cancelled' | 'probe_failed',
+      outcome: 'request_cancelled' | 'probe_failed' | 'unconfirmable',
     ): ThirdPartyDeletionDispatchResult {
       readings.skippedCancelled += remaining.length;
       // 只记标识与跳过原因：不记凭据、不记正文。
@@ -490,8 +556,18 @@ export function createThirdPartyDeletionDispatcher(
         continue;
       }
 
-      // 检查点 3/4：写 `requested` **之前**重问一次（这个 await 窗口里取消 ⇒ 一行都不写）。
-      const beforeRequested = await cancellationOf();
+      // 检查点 3/4（**紧贴副作用**）：先让出一拍（一次 `await`）把**已经排队**的取消放进来——
+      // 取消受理是同步的，受理后紧跟的几级微任务会在这里落地；然后**同步**读取判据。
+      // 读到取消就停；读到未取消就紧接着同步写 `requested`——这一行与下面的 `writeState()`
+      // 之间**不许有任何 await**（await 就是让位点，取消会正好从那里钻进来，而手里还攥着
+      // 已经过时的「未取消」）。⛔ 不许把这一拍挪到读之后当第二次检查，那只是把让位点换个位置。
+      await Promise.resolve();
+      let beforeRequested = readCancellationNow();
+      if (beforeRequested === 'unconfirmable') {
+        // 异步判据：补问一次，然后**在这一层**再同步读一次（读值之后紧接着就是副作用）。
+        await awaitAsyncProbe();
+        beforeRequested = readCancellationNow();
+      }
       if (beforeRequested !== null) return stopCancelled(targets.slice(index), beforeRequested);
 
       // ⑤ 先写 requested（只有"没有行"才写；failed 直接重发，⛔ 不用 requested 盖掉 failed）。
@@ -512,9 +588,16 @@ export function createThirdPartyDeletionDispatcher(
         row.state = 'requested';
       }
 
-      // 检查点 4/4：外发**之前**再问一次。`requested` 若已经写下去就如实留着（既成审计事实），
-      // 但取消之后绝不再触发新的外发。
-      const beforeDispatch = await cancellationOf();
+      // 检查点 4/4（**紧贴副作用**）：同样先让出一拍（`writeState()` 的 await 之后，可能正有一次
+      // 刚受理的取消排在那里），再同步读取。`requested` 若已经写下去就如实留着（既成审计事实），
+      // 但取消之后绝不再触发新的外发：读到未取消就**紧接着同步**调 `adapter.dispatch()`——
+      // 中间不许有任何 await，否则读到的「未取消」会在让位点里过期。
+      await Promise.resolve();
+      let beforeDispatch = readCancellationNow();
+      if (beforeDispatch === 'unconfirmable') {
+        await awaitAsyncProbe();
+        beforeDispatch = readCancellationNow();
+      }
       if (beforeDispatch !== null) return stopCancelled(targets.slice(index), beforeDispatch);
 
       // ⑥ 外发一次（适配器自己保证"单接收方单次调用"；它抛错也折成 failed，不中断后面的人）。
