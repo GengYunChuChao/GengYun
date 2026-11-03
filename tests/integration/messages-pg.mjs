@@ -522,10 +522,32 @@ try {
 
   const evidenceA = deletion.evidenceOf(requestA.id);
   const messagesEvidence = String(evidenceA['messages'] ?? '');
-  const matched = /^messages:online-purged:(\d+);messages:idempotency-purged:(\d+)$/.exec(messagesEvidence);
-  assert.notEqual(matched, null, `注销证据必须是 messages:online-purged:N;messages:idempotency-purged:M（现场 ${JSON.stringify(messagesEvidence)}）`);
+  // GY-R74（方案 A）· **只放宽尾部**：
+  // `real` 模式**恒**接线「端口可用、但逐模块 blocked」的备份域（`services/api/src/app.ts` 的
+  // `backupPurgeWiring` ⇒ `createUnavailableBackupPurgePort()`：`available: true`，`purge()` 抛
+  // `PROVIDER_UNAVAILABLE`），清除驱动写回证据串时会在尾部追加一段
+  // `;<module>:backup-blocked:<code>`（`services/api/src/privacy/user-data-deletion.ts` 的
+  // `withBackupSegment`）。所以这里允许**可选的一段** `;<module>:backup-(purged|blocked):<token>`。
+  // ⛔ 前两段的形状/顺序/数值口径一个字都不动（`online-purged` 仍是第 1 组、`idempotency-purged` 仍是第 2 组）；
+  // ⛔ 也没有把整串断言退化成 `includes(...)` —— 那样「计数被挪进别的段」或「多出别的段」都会静默变绿。
+  const matched = /^messages:online-purged:(\d+);messages:idempotency-purged:(\d+)(?:;messages:backup-(?:purged|blocked):[^;]+)?$/
+    .exec(messagesEvidence);
+  assert.notEqual(
+    matched,
+    null,
+    '注销证据必须是 messages:online-purged:N;messages:idempotency-purged:M'
+      + `（备份段可选：;messages:backup-purged:<token> / ;messages:backup-blocked:<code>；现场 ${JSON.stringify(messagesEvidence)}）`,
+  );
   assert.equal(Number(matched[1]), 9, `证据里的已清消息行数必须等于清理前的读数（${messagesBeforeA.length}）`);
   assert.equal(Number(matched[2]), ledgerBeforeA, '证据里的已清台账行数必须等于清理前的读数');
+  // 正向断言（本片的设计点，不是"恰好出现"）：本臂的备份端口是「已接线但当前不可用」⇒ 证据串**必须**
+  // 以 `;messages:backup-blocked:PROVIDER_UNAVAILABLE` 收尾。若它哪天缺席，或换成 `backup-purged`，
+  // 就说明回执在「备份介质没有逐用户删除能力」这件事上换了说法（缺席=没提，purged=谎称清完了），这里立刻红。
+  assert.ok(
+    messagesEvidence.endsWith(';messages:backup-blocked:PROVIDER_UNAVAILABLE'),
+    '备份域 blocked 时证据串必须以 ;messages:backup-blocked:PROVIDER_UNAVAILABLE 收尾'
+      + `（现场 ${JSON.stringify(messagesEvidence)}）`,
+  );
 
   // 断言 1：A 的消息行真的没了（物理删除，不是软删）。
   const messagesAfterA = await countOf('SELECT count(*)::int AS v FROM public.messages WHERE owner_id = $1', [userA.id]);
@@ -569,9 +591,14 @@ try {
     '证据表里必须有 messages 域的键',
   );
   const backupState = String(handlerMessages.backup_state);
-  assert.ok(
-    ['pending', 'completed', 'blocked'].includes(backupState),
-    `备份态必须在闭集内（现场 ${backupState}）`,
+  // GY-R74：`real` 装配下备份端口是「已接线但当前不可用」⇒ 只能是 `blocked` + 闭集原因码。
+  // ⛔ 不是 `pending`（那不是"还没轮到"，是"今天做不了"），更不许是 `completed`（那是谎称备份已逐用户清除）。
+  // 与上面证据串尾段的正向断言配对：**状态列**与**证据串**必须说同一件事。
+  assert.equal(backupState, 'blocked', `备份态在 real 装配下必须如实 blocked（现场 ${backupState}）`);
+  assert.equal(
+    handlerMessages.error_code,
+    'PROVIDER_UNAVAILABLE',
+    `备份不可用的原因码必须是闭集内的 PROVIDER_UNAVAILABLE（现场 ${JSON.stringify(handlerMessages.error_code)}）`,
   );
 
   // 断言 8：HTTP 面上的反向控制——B 的会话不受 A 的注销影响，且 B 的列表里 B 的 2 条都在。
