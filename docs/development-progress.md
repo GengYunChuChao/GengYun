@@ -8,7 +8,7 @@
 
 | 模块 | main 已有组件 | 尚未完整验收 |
 | --- | --- | --- |
-| 工程／契约 | 原生小程序、独立后台、Node API、112操作对照及装配校验 | 冻结与一致性收口；不以所有业务接口实现作为纯契约关闭条件 |
+| 工程／契约 | 原生小程序、独立后台、Node API、契约操作对照及装配校验 | 冻结与一致性收口；不以所有业务接口实现作为纯契约关闭条件 |
 | 资料／数据库 | 科普受限PG查询、来源生命周期、暂存导入、本地启动；浙江首批资料清单与适配验证（#131）；标签原文资格守卫 | 完整核准标签／条件／原文用量、正式用户链和云库／全库恢复；资料清单不等于可用DoseCard |
 | 身份／档案／隐私 | 两端鉴权、手选档案、授权签名列表、科普／目录固定15分钟分页；后台及档案／授权新回执24h；外发账本／在途守卫／删除注册协议（#128） | 正式微信身份／Android、定位成功、真实政策／接收方、撤回消费者及注销全链；#133用途消费者接线未合，不计本基线 |
 | 媒体／评估 | 7个私有媒体HTTP操作及归属／EXIF组件（#129）；真实杂草样本登记／答案键／冻结清单与离线评估接入（#130） | 存储网关、持久化及跨模块消费者；样本登记不等于独立评估达标或真实识别能力通过 |
@@ -240,7 +240,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 | [#130](https://github.com/GengYunChuChao/GengYun/pull/130)／[#131](https://github.com/GengYunChuChao/GengYun/pull/131) | `de1004c`／`a15a7f1` | 样本与资料准备已合，不计模型指标或标签用量最终验收 |
 | [#117](https://github.com/GengYunChuChao/GengYun/pull/117) | 未合 | 两份状态文档冲突已在候选协调，待新SHA复查；历史CI付款拒绝不改记成功 |
 
-当前112条业务契约中106条已装配、6条未装配（按 `docs/architecture/contract-status.json` 及 `node tools/verify-contract-status.mjs` 现行输出；读数 2026-10-16，main `bdd12bd2d1578bcfcf285f1234725c800b339c61`，该命令原样输出「已装配 106 条；implemented 13 / partial 93 / planned 6」）。候选对照保留主线新增的34个后台与7个媒体操作；知识列表因既有排序偏差仍partial，分布13 implemented／93 partial／6 planned，横切维度8条中2 implemented／6 partial。6条未装配均为planned且当前HTTP路径返回NOT_FOUND：`listSpecies`、`getPrivacyPolicy`、`listExports`、`requestAccountDeletion`、`getDeletionReceipt`、`verifyRegistration`（本读数不含在途 #217 账户注销HTTP与 #193 媒体运行期闸门）。注册数量只说明路由装配，不代表真实能力与整项验收。
+2026-10-16 读数：112 条业务契约中 106 条已装配、6 条未装配（按 `docs/architecture/contract-status.json` 及 `node tools/verify-contract-status.mjs` 现行输出；读数 2026-10-16，main `bdd12bd2d1578bcfcf285f1234725c800b339c61`，该命令原样输出「已装配 106 条；implemented 13 / partial 93 / planned 6」）。候选对照保留主线新增的34个后台与7个媒体操作；知识列表因既有排序偏差仍partial，分布13 implemented／93 partial／6 planned，横切维度8条中2 implemented／6 partial。6条未装配均为planned且当前HTTP路径返回NOT_FOUND：`listSpecies`、`getPrivacyPolicy`、`listExports`、`requestAccountDeletion`、`getDeletionReceipt`、`verifyRegistration`（本读数不含在途 #217 账户注销HTTP与 #193 媒体运行期闸门）。注册数量只说明路由装配，不代表真实能力与整项验收。
 
 复用各已合组件的绑定SHA证据；本轮只做文档事实、机器／中文同步及无凭据stub装配核对，不冒称重跑业务、PG、微信／Android或供应商。本机 `D:\challenge_cup` main已快进到上述基线。没有部署或切换共享认证。历史证据与本轮返修见[记录](verification/gy-i01-status-sync-20261013.md)。
 
