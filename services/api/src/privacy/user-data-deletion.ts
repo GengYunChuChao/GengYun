@@ -544,6 +544,19 @@ export interface UserDataDeletionDeps {
    * `media_id`（只累加 `attempts`），与既有 `saveObjectCleanup` 同口径 —— 此处不引入新语义。
    */
   mediaStore?: MediaPurgePort;
+  /**
+   * GY-R74 · 媒体域**不可用**的如实原因（`string` ⇒ 不可用；`null`/不传 ⇒ 可用）。
+   *
+   * 为什么需要这一项：缺 `MEDIA_OBJECT_REF_KEY` 时装配层**既不建 PG 媒体 store、也不注入
+   * `mediaStore`**（`app.ts` 的 `mediaPersistenceRefusal`）。此时九个处理器照旧删行、照旧报
+   * `online_state: 'completed'` —— 行删了、桶里的对象还在，`media_object_cleanup` 连登记都没有，
+   * 这就是**静默漏清**：回执说清了，介质上没清。
+   *
+   * 语义：非 `null` ⇒ 每个处理器的在线阶段一律 `blocked` + `PROVIDER_UNAVAILABLE`，
+   * 且**不写**迁移 0031 的在线证据（没完成就没有凭据）。⛔ 不改成"跳过媒体域、其余照报 completed"：
+   * 回执的 `online_state` 是**按域**的事实，媒体对象属于该主体的识别/社区产物，看不见就不能算清完。
+   */
+  mediaPurgeUnavailable?: string | null;
   /** 备份副本清除端口；不传即未接线（`backupState` 恒为 `pending`）。 */
   backupPurge?: BackupPurgePort;
   /**
@@ -857,10 +870,27 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     return userId;
   }
 
+  /**
+   * GY-R74 · 媒体域不可用（缺 `MEDIA_OBJECT_REF_KEY`）时的如实降级原因。
+   * `null` ⇒ 媒体域可用 ⇒ 行为与本片之前逐字一致。
+   */
+  const mediaPurgeUnavailable: string | null = input.mediaPurgeUnavailable ?? null;
+
   function makeHandler(module: string, store: OwnerPurgeStore, mediaPurge?: MediaPurgePort) {
     return async (input_: Record<string, unknown>): Promise<Record<string, unknown>> => {
       const requestId = String(input_['requestId'] ?? '');
       const userId = subjectOf(requestId);
+      // GY-R74 · 「媒体域不可用」只降级**携带媒体端口的那个处理器**（今天只有识别域：
+      // 注册处 `makeHandler(RECOGNITIONS_DELETION_MODULE, input.recognitionsStore, input.mediaStore)`）。
+      //   - 缺 `MEDIA_OBJECT_REF_KEY` ⇒ 装配层连 `mediaStore` 都不注入（PG 媒体 store 解不开
+      //     `object_ref_cipher` ⇒ 根本枚举不到该主体的桶对象）⇒ 这一域的在线清除**没做完**，
+      //     ⛔ 不得报 completed，也⛔ 不得写 0031 在线证据（写了就是给 GET 推导留假凭据）；
+      //   - ⛔ 不扩大到其余八域：它们的行**真的**按主体删掉了并带真实行数，一起报 blocked 等于
+      //     用媒体域的缺口抹掉八域的真实读数，也会让"行已清空"的真库臂全部失真。
+      //   - 注入了可用端口（`mediaPurge !== undefined`）时端口优先，本门不生效。
+      const mediaGateApplies = mediaPurgeUnavailable !== null
+        && mediaPurge === undefined
+        && module === RECOGNITIONS_DELETION_MODULE;
       // GY-R68（#19 延续片 · 媒体域）：先清媒体对象，再删本域行。
       //   - 读数一律来自原语的**真实返回**（⛔ 不写死常量、不造伪数字）；
       //   - 主体为空 ⇒ **不调原语**（空主体="不知道清谁"，绝不能变成"清全部"）；
@@ -896,9 +926,13 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       const blockedReasons = Array.isArray(purged.blockedReasons)
         ? purged.blockedReasons.filter((reason): reason is string => typeof reason === 'string' && reason.length > 0)
         : [];
-      const onlineState: 'completed' | 'blocked' = blocked > 0 ? 'blocked' : 'completed';
+      const onlineState: 'completed' | 'blocked' = mediaGateApplies
+        ? 'blocked'
+        : blocked > 0 ? 'blocked' : 'completed';
       /** 在线阶段的原因码；备份阶段可能再给一个更具体的原因（见下）。 */
-      let onlineErrorCode: string | null = blocked > 0 ? 'POLICY_BLOCKED' : null;
+      let onlineErrorCode: string | null = mediaGateApplies
+        ? 'PROVIDER_UNAVAILABLE'
+        : blocked > 0 ? 'POLICY_BLOCKED' : null;
       let backupState = 'pending';
       /** 备份态为 `blocked` 时如实带出原因码（协议只接受 `SAFE_ERROR_CODES` 内的码）。 */
       let errorCode: string | null = null;
@@ -955,6 +989,8 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       if (
         input.onlineEvidence !== undefined &&
         blocked === 0 &&
+        // GY-R74：媒体域不可用 ⇒ 本域在线阶段没完成 ⇒ ⛔ 不写证据（写了就是给 GET 的推导留假凭据）。
+        !mediaGateApplies &&
         (ONLINE_EVIDENCE_MODULES as readonly string[]).includes(module)
       ) {
         await input.onlineEvidence.record({
@@ -966,22 +1002,43 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
         });
       }
       if (backupPurge.available) {
-        const backup = await backupPurge.purge({ userId, module, onlineRemoved, requestId });
-        const backupEvidence = typeof backup.evidenceRef === 'string' ? backup.evidenceRef.trim() : '';
-        const outcome = typeof backup.outcome === 'string' ? backup.outcome : null;
-        // 三态（设计 §7.4）：`outcome: 'purged'` 必须有证据才算完成；「说清了但拿不出证据」⇒ blocked，
-        // ⛔ 不谎称 completed。未给 `outcome` 的旧端口**逐字保留旧回退语义**
-        // （`purged === true` 且有证据 ⇒ completed，否则 pending），既有用例与替身因此零改动。
-        const claimsPurged = outcome === 'purged' || (outcome === null && backup.purged === true);
-        if (claimsPurged && backupEvidence.length > 0) {
-          backupState = 'completed';
-          evidenceRef = `${evidenceRef};${module}:backup-purged:${backupEvidence}`;
-        } else if (outcome === 'blocked' || (outcome === 'purged' && backupEvidence.length === 0)) {
-          const reported = typeof backup.errorCode === 'string' ? backup.errorCode : '';
-          errorCode = (SAFE_ERROR_CODES as readonly string[]).includes(reported) ? reported : 'EVIDENCE_REQUIRED';
+        // GY-R74：备份端口**抛错**时只把**备份列**如实折成 blocked + 原因码。
+        //
+        // 为什么在这里接住、而不是让协议（`packages/privacy/deletion.mjs` 的逐模块 catch）折：
+        // 协议的 catch 会把**同一个 `row` 的在线列也一并改成 blocked**（那是"该模块整体没完成"的旧口径，
+        // 当时备份/在线是同一件事）。GY-R74 起 `real` 模式**恒**走 `createUnavailableBackupPurgePort()`
+        // （仓库里没有逐用户删备份介质的能力 ⇒ 30 日到点也必然抛 `PROVIDER_UNAVAILABLE`），若照旧让协议折，
+        // 会把「在线行真的删了、0031 证据也真的写了」的在线域一起报成 blocked ⇒ **按域如实**变成整域失败，
+        // 回执再也看不出 7 日在线清除到底做了没有。故此处只折备份列，在线列保持本次执行的实测结论。
+        // ⛔ 这不是"吞错"：状态是 blocked、原因码是闭集内的 `PROVIDER_UNAVAILABLE`、证据串单列
+        // `backup-blocked:<code>`，整体 `completionStatus()` 仍不会判 completed。
+        let backup: BackupPurgeResult | null = null;
+        try {
+          backup = await backupPurge.purge({ userId, module, onlineRemoved, requestId });
+        } catch (failure) {
+          const reported = typeof (failure as { code?: unknown })?.code === 'string' ? String((failure as { code?: string }).code) : '';
+          const folded = (SAFE_ERROR_CODES as readonly string[]).includes(reported) ? reported : 'PROVIDER_UNAVAILABLE';
           backupState = 'blocked';
-          // 证据串保留在线部分并附阻断原因：回执不显示证据，但审计能看出「这个模块卡在哪」。
-          evidenceRef = `${evidenceRef};${module}:backup-blocked:${errorCode}`;
+          errorCode = folded;
+          evidenceRef = `${evidenceRef};${module}:backup-blocked:${folded}`;
+        }
+        if (backup !== null) {
+          const backupEvidence = typeof backup.evidenceRef === 'string' ? backup.evidenceRef.trim() : '';
+          const outcome = typeof backup.outcome === 'string' ? backup.outcome : null;
+          // 三态（设计 §7.4）：`outcome: 'purged'` 必须有证据才算完成；「说清了但拿不出证据」⇒ blocked，
+          // ⛔ 不谎称 completed。未给 `outcome` 的旧端口**逐字保留旧回退语义**
+          // （`purged === true` 且有证据 ⇒ completed，否则 pending），既有用例与替身因此零改动。
+          const claimsPurged = outcome === 'purged' || (outcome === null && backup.purged === true);
+          if (claimsPurged && backupEvidence.length > 0) {
+            backupState = 'completed';
+            evidenceRef = `${evidenceRef};${module}:backup-purged:${backupEvidence}`;
+          } else if (outcome === 'blocked' || (outcome === 'purged' && backupEvidence.length === 0)) {
+            const reported = typeof backup.errorCode === 'string' ? backup.errorCode : '';
+            errorCode = (SAFE_ERROR_CODES as readonly string[]).includes(reported) ? reported : 'EVIDENCE_REQUIRED';
+            backupState = 'blocked';
+            // 证据串保留在线部分并附阻断原因：回执不显示证据，但审计能看出「这个模块卡在哪」。
+            evidenceRef = `${evidenceRef};${module}:backup-blocked:${errorCode}`;
+          }
         }
       }
       auditLog.push({
@@ -1378,7 +1435,10 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       };
       if (one.state === 'completed') {
         row['onlineState'] = 'completed';
-        row['errorCode'] = null;
+        // GY-R74：在线阶段推导完成**只清在线阶段的原因**。`errorCode` 是逐行**单列**，同一行可能带的是
+        // 备份阶段的阻断原因（30 日备份清除在 real 模式恒不可用 ⇒ `PROVIDER_UNAVAILABLE`）：照旧一律清空
+        // 会让回执出现「`backup_state: 'blocked'` 却没有任何原因码」的自相矛盾，等于把原因抹掉。
+        if (row['backupState'] !== 'blocked') row['errorCode'] = null;
         row['evidenceRef'] = withOnlineSegments(before.evidenceRef, one.module, [
           `${one.module}:online-purged:${one.removed ?? 0}`,
           `${one.module}:idempotency-purged:${one.idempotency ?? 0}`,

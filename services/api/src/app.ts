@@ -1992,21 +1992,27 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
       : injectedDeletionRequests;
   // GY-I19（#19）本片：逐用户备份副本清除端口的装配（设计 §7.4 三态；回执里
   // 有备份对象就按「到期清除 + 删除后复核」给出 completed/blocked，不再是恒 pending）。
-  //   - 有真库且**受理已接线**（`durableDeletionRequests !== null`）⇒ 真实 PG 端口：逐请求/逐模块
+  //   - **`real` ⇒ 显式不可用端口（GY-R74 改正）**：备份介质侧今天**没有**逐用户删除能力
+  //     （`deploy/postgres-cvm/backup-postgres.sh` 文件头自陈「未部署、未验收…没有产出过任何真实备份」
+  //     「没有实现逐用户删除」，桶生命周期策略全仓零命中）⇒ 30 日到点也不可能真删。
+  //     因此 real 一律给 `createUnavailableBackupPurgePort()`：模块 `blocked` + `PROVIDER_UNAVAILABLE`
+  //     （`SAFE_ERROR_CODES` 内既有码），⛔ 绝不写 `backup_state: 'completed'`。
+  //     ⚠️ 改前这一臂走的是 `createPostgresBackupPurgePort`（真库端口能写 completed）：那是把
+  //     「清单行已清」当成「备份介质已逐用户清除」，`docs/architecture/gy-i19-user-backup-copies-design.md:343`
+  //     逐字禁止。真库端口只在**非 real**（stub/demo，替身执行模式）下保留，供既有真库臂做端口层证据。
+  //   - 有真库且**受理已接线**但**非 real**（stub/demo）⇒ 真实 PG 端口：逐请求/逐模块
   //     读行、到期判定、清除后复核、证据摘要全部落库；
   //   - 受理**未接线**（`requests: null` 或内存模式）⇒ 保持缺省 unwired：没有受理行就没有清单行，
   //     「未接线 ⇒ pending」是如实状态（既有 `favorites-history-deletion-registration.test.mjs`
   //     反向控制就锁这条：`requests: null` 时 `backup_state` 必须仍是 pending）；
-  //   - 受理已接线但**无真库**（只可能来自注入 store）且是 `real` 模式 ⇒ 显式不可用端口
-  //     （模块 blocked + `PROVIDER_UNAVAILABLE`），⛔ 不静默退回内存实现或 unwired；
   //   - stub/demo 无真库 ⇒ 保持缺省 unwired（进程内没有副本域可清，`pending` 才是如实状态）。
   const backupPurgeWiring: { backupPurge?: BackupPurgePort } =
     userDataDeletionInjection?.backupPurge !== undefined
       ? { backupPurge: userDataDeletionInjection.backupPurge }
-      : durableDeletionRequests !== null && pool !== null
-        ? { backupPurge: createPostgresBackupPurgePort({ pool, now: clock }) }
-        : durableDeletionRequests !== null && config.executionMode === 'real'
-          ? { backupPurge: createUnavailableBackupPurgePort() }
+      : config.executionMode === 'real'
+        ? { backupPurge: createUnavailableBackupPurgePort() }
+        : durableDeletionRequests !== null && pool !== null
+          ? { backupPurge: createPostgresBackupPurgePort({ pool, now: clock }) }
           : {};
   // GY-R59（P2-b）· 第三方删除完成态的**读侧**装配（设计 §1.2 #7；门与 `backupPurgeWiring` 严格同门，
   // 逐字照它的四臂形状）：
@@ -2018,6 +2024,14 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //   - stub/demo 无真库 ⇒ 保持缺省 unwired（进程内协议行就是全部事实，行为与追加前逐字一致）。
   // ⚠ 本片只接**读**：`unavailable` 端口不落库、不写任何行（设计 §5）；写侧（谁在何时 dispatch）
   //   属 P2-c，不在本片。
+  // GY-R74（第三方域「显式不可用」）：**读侧保持真库端口不动**，理由是把这一臂换成
+  // `createUnavailableThirdPartyDeletionPort()` 只会让 blocked 回执在 GET 时 503
+  // （`refreshBackupStates()` 的 blocked 复位要问这个端口，抛即整体 503），而**换不来**任何诚实性：
+  // 写侧（PR #860 的适配器）今天在生产**一条也不写** ⇒ `public.third_party_deletion_*` 恒空 ⇒
+  // `third-party-deletion-projection.ts` 投影出的 `receipt_third_party_state` 恒为 `null`、
+  // 原因恒为 `THIRD_PARTY_NONE`（「没有接收方」），⛔ 永远不会是 `confirmed`。
+  // 「显式不可用」由**投影语义 + 用例**交付（见 tests/integration/third-party-deletion-pg.mjs 与
+  // tests/unit/third-party-deletion-wiring.test.mjs 的臂④），不靠把读侧端口改成抛错。
   const thirdPartyWiring: { thirdParty?: ThirdPartyDeletionReadPort } =
     userDataDeletionInjection?.thirdParty !== undefined
       ? { thirdParty: userDataDeletionInjection.thirdParty }
@@ -2033,10 +2047,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     userDataDeletionInjection?.thirdPartyAdapter === undefined
       ? {}
       : { thirdPartyAdapter: userDataDeletionInjection.thirdPartyAdapter };
-  // GY-R28 W6（G5/G11）：回执 `backupState` 的**只读推导**装配（门与 `backupPurgeWiring` 严格同门）。
-  //   - 有真库且**受理已接线**（存在清单行）⇒ 真实只读端口：回执的备份态由 `user_backup_copies` 的
-  //     真实行推导（四域全 `purged` 且证据可复算 ⇒ `completed`；未到期 ⇒ `pending`；到期未清 /
-  //     缺清单行 / 有 `failed` 行 ⇒ `blocked` + 原因码）；
+  // GY-R28 W6（G5/G11）：回执 `backupState` 的**只读推导**装配。
+  //   - **`real` ⇒ 不接线（GY-R74 改正）**：推导的数据源是 `public.user_backup_copies`——那是
+  //     「清单域」（哪些行等着清），**不是备份介质本身**。real 模式里真正能清备份介质的端口已改成
+  //     显式不可用（见上），此时再让回执按清单行推导，唯一的用途就是把 `blocked` 推成
+  //     `pending`/`completed`，等于拿清单域冒充「备份介质已逐用户清除」
+  //     （`docs/architecture/gy-i19-user-backup-copies-design.md:343` 逐字禁止）。不推导 ⇒ 回执如实
+  //     停留在处理器给出的 `blocked` + `PROVIDER_UNAVAILABLE`，⛔ 不可能被推导成 completed。
+  //   - 有真库且**受理已接线**但**非 real**（stub/demo）⇒ 真实只读端口：回执的备份态由
+  //     `user_backup_copies` 的真实行推导（四域全 `purged` 且证据可复算 ⇒ `completed`；未到期 ⇒
+  //     `pending`；到期未清 / 缺清单行 / 有 `failed` 行 ⇒ `blocked` + 原因码）；
   //   - 受理**未接线**（`requests: null` 或内存模式）⇒ **不接线**：没有清单行就无法判定，
   //     「回执照抄上次执行结论」才是如实状态（既有反向控制用例锁这条：`requests: null` 时
   //     `backup_state` 必须仍是 pending）；
@@ -2044,9 +2064,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   const backupStatesWiring: { backupStates?: BackupStateDerivationPort } =
     userDataDeletionInjection?.backupStates !== undefined
       ? { backupStates: userDataDeletionInjection.backupStates }
-      : durableDeletionRequests !== null && pool !== null
-        ? { backupStates: createPostgresBackupStateReader({ pool, now: clock }) }
-        : {};
+      : config.executionMode === 'real'
+        ? {}
+        : durableDeletionRequests !== null && pool !== null
+          ? { backupStates: createPostgresBackupStateReader({ pool, now: clock }) }
+          : {};
   // GY-R32（#19 片B）：在线证据落库 + 回执在线态推导（迁移 0031）。
   // 门与 `backupPurgeWiring`/`backupStatesWiring` **严格同门**：
   //   - 有真库且受理已接线 ⇒ 真实端口（写走 0031 唯一写函数；读走 0031 唯一读函数）；
@@ -2265,6 +2287,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 与其它服务同源使用应用时钟：回执的 `requested_at`/在线 7 日/备份 30 日截止必须由**同一**时钟推出，
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock, ...(mediaPersistenceRefusal === null ? { mediaStore } : {}),
+    // GY-R74（目标 e）：缺 `MEDIA_OBJECT_REF_KEY` ⇒ 媒体域**不可清**（`object_ref_cipher` 解不开、
+    // 枚举不到桶里的对象）⇒ 把原因传给协调器，九个处理器一律如实 `blocked` + `PROVIDER_UNAVAILABLE`
+    // 且不写在线证据。⛔ 改前这里只有 `...{mediaStore}` 一个分支：缺键 ⇒ 端口不注入 ⇒ 处理器照旧
+    // 报 `online_state: 'completed'` = 行删了、桶里的对象还在的**静默漏清**。
+    ...(mediaPersistenceRefusal === null ? {} : { mediaPurgeUnavailable: mediaPersistenceRefusal }),
     ...backupPurgeWiring,
     ...backupStatesWiring,
     ...onlineEvidenceWiring,
@@ -2282,14 +2309,16 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   //   - `accountDeletion`：申请服务，**复用**上面那份 `userDataDeletion`（模块闭集与处理器同源，
   //     不新建第二套台账）；本片新增的只有**受理持久化**（迁移 0016，复用 0003 已建的
   //     `public.deletion_requests` 表；见上方 `durableDeletionRequests` 装配）；
-  //   - 执行模式门（本片红线「真实依赖缺失 ⇒ 如实失败/503」）：`real` 模式**整域不接线**
-  //     ——真实执行链路（7 日在线 / 30 日备份 / 第三方完成证据）尚未实现，
-  //     因此**不接线**：`available: false` ⇒ 两个 operation 一律 503 `PROVIDER_UNAVAILABLE`
-  //     （`retryable: false`），**不**回 200 空壳、**不**假装删除成功。`stub`/`preset_demo`
-  //     是明确标注的替身执行模式（响应 `meta.execution_mode` 会如实写出来）⇒ 接线可用；
-  //     202 只表示「已受理」：备份副本清除未接线 ⇒ 该请求此刻**确实无法完成** ⇒ `state: 'blocked'`
-  //     （`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期当完成」），
-  //     绝不回 `completed`。
+  //   - 执行模式门（GY-R74 改正为**按域**降级，不再整域关闭）：**受理**在 `real` + 真库下开放 ⇒
+  //     `available: true`、POST 回 202、GET 回可读回执。开放的前提是**受理真的能持久化**
+  //     （`durableDeletionRequests !== null` 且连接池能提供事务连接）——否则 7 日在线清除驱动
+  //     （`services/api/src/privacy/online-purge-driver.ts` + `npm run purge:online-data`）永远读不到这一行，
+  //     202 就是**假受理**。故唯一保留的 503 是「`real` 但无真库」这一种，文案照旧如实：
+  //     **未接线** ⇒ 503 `PROVIDER_UNAVAILABLE`（`retryable: false`），⛔ 不回 200 空壳。
+  //     `stub`/`preset_demo` 是明确标注的替身执行模式（响应 `meta.execution_mode` 会如实写出来）⇒ 接线可用。
+  //   - 202 只表示「已受理」：30 日备份域与第三方域在 real 模式**均无真实完成证据** ⇒ 对应模块 /
+  //     聚合态如实 `blocked`（`state-contract.md:107` 逐字「不能完成时显示blocked和逾期，不把时钟到期
+  //     当完成」），绝不回 `completed`；7 日在线清除则真的执行（受理时级联一遍 + 到期驱动若干遍）。
   // 回执 bearer 台账：有真库且**受理已接线**（`durableDeletionRequests !== null`）⇒ 走迁移 0038
   // 的持久化读写（重启后旧回执仍可反查，不再因进程内台账清空而不可达）；否则进程内实现
   // （stub/demo 无真库时行为与追加前逐字一致）。
@@ -2297,12 +2326,19 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     durableDeletionRequests !== null && pool !== null
       ? createPostgresDeletionReceiptRegistry({ pool, now: clock })
       : createDeletionReceiptRegistry({ now: clock });
+  /** 受理能否真的落库（= `real` 下是否开门）：请求 store 在 + 连接池能提供事务连接。 */
+  const deletionAcceptanceDurable =
+    durableDeletionRequests !== null && pool !== null && typeof pool.connect === 'function';
   const accountDeletion = createAccountDeletionRequestService({
     deletion: userDataDeletion,
     receipts: deletionReceipts,
-    available: config.executionMode !== 'real',
-    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发（state-contract.md:105「冻结外发」）；不注入 ⇒ 行为与接线前逐字一致。
-    // ⚠ 可达性（实测）：本项注入门是「real ⇒ 有」（见上方 `egressRevoker` 装配），`available`（real ⇒ false）与之**互斥** ⇒ real 下 `requireWired()` 先 503、非 real 装配期不建撤销器 ⇒ **两条路都到不了这里**（仅 `privacyInjection` 测试注入可达）；要生效须先开放 real 注销，见 tests/unit/account-deletion-egress-revoker-reachability.test.mjs。
+    // GY-R74：`real` 不再整域 503 —— 受理可用性改为「能否持久化受理」这一条可检验前提
+    //（见上面 `deletionAcceptanceDurable` 与 `tests/integration/account-deletion-pg.mjs` 的真库臂）。
+    available: config.executionMode !== 'real' || deletionAcceptanceDurable,
+    // GY-R74：`real` + 真库时 `available` 为真 ⇒ 注入的撤销器（`real` 才装配）从此**可达**：
+    // 受理时先撤销在途外发（state-contract.md:105「冻结外发」）。这条可达性由
+    // tests/unit/account-deletion-egress-revoker-reachability.test.mjs 的正向臂锁定。
+    // 注销/停用的在途外发撤销：注入 ⇒ 受理时先撤销在途外发；不注入 ⇒ 行为与接线前逐字一致。
     ...(egressRevoker === undefined ? {} : { egressRevoker }),
   });
 
@@ -2580,8 +2616,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   registerFavoriteRoutes(app, config, guards, favoritesService);
   registerHistoryRoutes(app, config, guards, historyService);
   // GY-I19（#19）本片：注销/删除申请 2 条路由（`requestAccountDeletion` / `getDeletionReceipt`）
-  // 的**唯一注册点**。`real` 模式 ⇒ `accountDeletion.available === false` ⇒ 这两个 operation
-  // 全程 503 `PROVIDER_UNAVAILABLE`（如实失败，不回 200 空壳、不假装删除成功）。
+  // 的**唯一注册点**。GY-R74 起按域降级而不是整域关闭：`real` + 真库 ⇒ `accountDeletion.available
+  // === true` ⇒ 这两个 operation 可受理（POST 202 / GET 可读回执），删除执行则按域如实：
+  // 7 日在线清除真跑（受理级联 + 到期驱动），30 日备份与第三方域恒 `blocked`（无真实完成证据）。
+  // 唯一保留的 503 是「`real` 但无真库」：受理无法持久化 ⇒ 不接线（`accountDeletionWired === null`）
+  // ⇒ 两个 operation 一律 503 `PROVIDER_UNAVAILABLE`（如实失败，不回 200 空壳、不假装删除成功）。
   // 注：必需模块闭集若未注册齐，由既有协调器在**受理处**抛 `OBJECT_UNAVAILABLE`(409)
   // （`deletion-modules.mjs` 的既有语义）——本片不另加一层「假装能完成」的兜底。
   const accountDeletionWired = accountDeletion.available ? accountDeletion : null;
@@ -2603,8 +2642,9 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
             thirdPartyStatuses: (requestId: string) => userDataDeletion.coordinator.thirdPartyStatuses(requestId),
           },
     // 读侧端口（装配四臂的产物；未接线臂是 `createUnwiredThirdPartyDeletionPort()` ⇒ 回 `null`）。
-    // ⚠ `real` 模式下这两个 operation 整域 503（`available` 门是既有装配，本片明确不改）
-    // ⇒ 端口在这里的价值是"接线后一旦开门就能读到持久行"，以及 blocked 复位的读路径。
+    // GY-R74：`real` + 真库下这两个 operation 已**开门**（不再是整域 503）⇒ 这个端口从"开门后才用得上"
+    // 变成**生产路径**：受理与回执都要读它。写侧仍零写入（PR #860 适配器未 dispatch）⇒ 读到空集 ⇒
+    // 投影 `third_party_state: null` + 原因 `THIRD_PARTY_NONE`，如实「没有接收方」，⛔ 不写 confirmed。
     thirdPartyRows: thirdPartyWiring.thirdParty ?? null,
     // 幂等台账用既有认证服务（24h 台账；同键同体重新签发，不回放旧 bearer）。
     authService: service,
