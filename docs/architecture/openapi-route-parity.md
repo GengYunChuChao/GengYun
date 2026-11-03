@@ -15,9 +15,9 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 129 |
-| 契约操作（paths × method） | 128 |
-| 实现 ∩ 契约 | 128 |
+| 已挂载路由（不含 HEAD） | 130 |
+| 契约操作（paths × method） | 129 |
+| 实现 ∩ 契约 | 129 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
@@ -174,6 +174,7 @@
 | POST | `/reports` | createReport | user | 不要求 | 是 | partial | 一致 |
 | GET | `/reports/{id}` | getOwnReport | user | 不要求 | 是 | partial | 一致 |
 | POST | `/speech/synthesis` | createSynthesis | user | 不要求 | 是 | partial | 一致 |
+| GET | `/speech/synthesis/{id}/audio` | readSynthesisAudio | user | 不要求 | 是 | partial | 一致 |
 | POST | `/speech/transcriptions` | createTranscription | user | 不要求 | 是 | partial | 一致 |
 | DELETE | `/speech/transcriptions/{id}` | deleteTranscription | user | 需要 | 是 | partial | 一致 |
 | GET | `/speech/transcriptions/{id}` | getTranscription | user | 不要求 | 是 | partial | 一致 |

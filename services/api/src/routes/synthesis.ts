@@ -4,7 +4,8 @@
  * `/speech/synthesis` 的唯一注册点，并受全局开关门控 —— 受控面清单见 `admin/ops/flag-gate.ts`）。
  *
  * 契约（`packages/contracts/openapi.json` 原文）：
- *   POST /speech/synthesis   operationId `createSynthesis`   → 202 `JobEnvelope`
+ *   POST /speech/synthesis                operationId `createSynthesis`      → 202 `JobEnvelope`
+ *   GET  /speech/synthesis/{id}/audio     operationId `readSynthesisAudio`  → 200 `audio/*` 二进制
  *   requestBody: `SynthesisInput = { checked_content_ref: SynthesisTarget, locale: const "zh-CN" }`
  *                —— `additionalProperties:false`，两字段必填
  *   security: `userSession`；参数：`Idempotency-Key`（必填，8..128）
@@ -17,7 +18,12 @@
  * （`createSynthesisJobSource(synthesisService)`），因此**作业存在时** `kind=synthesis` 的终态**可以**经
  * HTTP 读到（`real` 下合成受理本身先 fail-closed ⇒ 不会有新作业，见下方「默认关闭必须保持」）；
  * `cancel` **不提供**（本基线无取消入口）⇒ 注册表先确认作业存在，再 503 `PROVIDER_UNAVAILABLE`
- * (`retryable`) 如实拒绝，**不伪造** `cancelled`。该域契约里**只有 POST**，故本文件**不新增** GET/DELETE 端点。
+ * (`retryable`) 如实拒绝，**不伪造** `cancelled`。
+ *
+ * **本文件注册两个操作**（历史注记：R74 之前该域契约里只有 POST，故当时本文件刻意不挂 GET；
+ * R74 成对新增了 `readSynthesisAudio` 这一条受认证的**音频读面**，理由与边界见其注册处的注释块）：
+ *   `createSynthesis`（写）与 `readSynthesisAudio`（读本人产物字节）。除这两条外**不新增**任何
+ *   `GET`/`DELETE`：没有列表、没有删除、没有重定向/签名 URL、没有 `+content` 别名。
  *
  * **默认关闭必须保持**：应用装配路径**永不注入**真实适配器端口。本文件只调用
  * `createTtsProvider({ executionMode })`；`executionMode:'real'` 时它返回 `createRealTtsProvider`
@@ -172,6 +178,67 @@ export function registerSynthesisRoutes(
         .header('Cache-Control', 'no-store')
         .status(result.status)
         .send({ data: result.job, meta: buildMeta(request, config) });
+    }),
+  );
+
+  // ---------------------------------------------------------------------------------------------
+  // R74 · 音频读面：`GET /api/v1/speech/synthesis/{id}/audio`（operation `readSynthesisAudio`）
+  //
+  // **本条 GET 为什么现在才加**：`POST /speech/synthesis` 只回 `Job`（`job.result` 恒 `null`），
+  // 契约里没有任何客户端可读的音频句柄，于是小程序侧 `audioSourceForJob()` 只能恒
+  // `SOURCE_UNAVAILABLE`、播放分支是死的 —— 到此为止是结构问题，不是文案问题。
+  // `services/api/src/tts/media.ts` 的 `SynthesisMediaReadPort`（`readArtifact`/`objectKeyFor`）与
+  // `tts/service.ts` 的 `verifyUsable` 早已就位，缺的正是这条「把已核对的产物字节按原样读出」的通路。
+  //
+  // **边界（与本域既有口径一致，⛔ 不改这些）**：
+  //   · 只读**本人**的合成产物：`guards.requireUser` + 服务层 `getOwnedSynthesis`，
+  //     越权与不存在**同形** 404 `NOT_FOUND`（不泄露存在性）；
+  //   · `content-type` **原样**取自产物标注，不由本文件猜测/降级/统一成某个"通用音频类型"；
+  //   · 产物**不是** `audio/*`（替身占位、错标、未标注）⇒ 409 `OBJECT_UNAVAILABLE`：GET 是
+  //     bodyless，契约不允许它声明 415，而 415 说的本就是**请求**的媒体类型，不是响应体；
+  //     ⛔ 绝不把非音频字节按 `audio/*` 发出去；产物缺失/未接线同样 409，由文案区分缘由；
+  //   · `Cache-Control: private, no-store`（个人音频不进共享缓存、不落盘）；
+  //     **不引入** ETag/条件请求语义（本路由没有 `If-None-Match`/304 分支，也别加）；
+  //   · 不新增 `+download`/重定向/签名 URL：字节只从本操作的响应体走，不外泄对象键。
+  // ---------------------------------------------------------------------------------------------
+  /**
+   * 路径参数 `{id}`：**不声明** `format:uuid` —— 形状非法与不存在走同一句 404（见服务层
+   * `getOwnedSynthesis` 的 uuid 形状校验），这样「ID 长什么样」不会成为探测信道。
+   */
+  const audioParams = {
+    type: 'object',
+    additionalProperties: false,
+    required: ['id'],
+    properties: { id: { type: 'string', minLength: 1, maxLength: 80 } },
+  } as const;
+  // 与 `routes/media.ts` 的 `NO_QUERY` 同口径：本路由不接受任何查询参数（没有 `?mode=` 之类的开关）。
+  const noQuery = { type: 'object', additionalProperties: false } as const;
+
+  app.get(
+    `${API_PREFIX}/speech/synthesis/:id/audio`,
+    {
+      preHandler: guards.requireUser,
+      schema: { params: audioParams, querystring: noQuery },
+    },
+    withPrivacyErrors(async (request, reply) => {
+      const identity = currentIdentity(request);
+      const outcome = await service.readAudio({
+        userId: identity.userId,
+        synthesisId: (request.params as { id: string }).id,
+      });
+      if (!outcome.ok) {
+        // 错误封套由 `app.ts` 的 errorHandler 统一渲染（状态码只由错误码映射决定）。
+        // `details` 留空：拒绝理由在 `message` 里说清（替身/非音频/未接线/已清理），
+        // 但不回传产物内部标识或对象键 —— 那些是服务端事实，不是给客户端的。
+        throw new ApiError(outcome.code, outcome.message);
+      }
+      return reply
+        .header('Content-Type', outcome.contentType)
+        .header('Cache-Control', 'private, no-store')
+        .header('X-Request-Id', request.id)
+        .header('X-Execution-Mode', config.executionMode)
+        .status(200)
+        .send(Buffer.from(outcome.bytes));
     }),
   );
 }

@@ -46,18 +46,6 @@
       "reference": "verify-cvm-postgres.sh:326"
     },
     {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "contract-status.json:3201"
-    },
-    {
-      "path": "docs/architecture/contract-status.json",
-      "reason": "SUSPECT",
-      "owner": "docs",
-      "reference": "docs/architecture/contract-status.json:3201"
-    },
-    {
       "path": "docs/architecture/s4-data-traceability.md",
       "reason": "SUSPECT",
       "owner": "docs",
@@ -82,22 +70,46 @@
       "reference": "messages.js:195"
     },
     {
-      "path": "packages/contracts/openapi.json",
+      "path": "miniprogram/pages/voice/voice.js",
       "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:13185"
+      "owner": "miniprogram",
+      "reference": "miniprogram/pages/voice/voice.js:772"
     },
     {
       "path": "packages/contracts/openapi.json",
       "reason": "SUSPECT",
       "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:14478"
+      "reference": "openapi.json:11686"
     },
     {
       "path": "packages/contracts/openapi.json",
       "reason": "SUSPECT",
       "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:6541"
+      "reference": "openapi.json:6448"
+    },
+    {
+      "path": "packages/contracts/openapi.json",
+      "reason": "SUSPECT",
+      "owner": "contracts",
+      "reference": "packages/contracts/openapi.json:11434"
+    },
+    {
+      "path": "packages/contracts/openapi.json",
+      "reason": "SUSPECT",
+      "owner": "contracts",
+      "reference": "packages/contracts/openapi.json:11434"
+    },
+    {
+      "path": "packages/contracts/openapi.json",
+      "reason": "SUSPECT",
+      "owner": "contracts",
+      "reference": "packages/contracts/openapi.json:11686"
+    },
+    {
+      "path": "packages/contracts/openapi.json",
+      "reason": "SUSPECT",
+      "owner": "contracts",
+      "reference": "packages/contracts/openapi.json:6446"
     },
     {
       "path": "services/api/src/admin/ops/jobs-pg.ts",
@@ -244,6 +256,24 @@
       "reference": "routes/knowledge.ts:196"
     },
     {
+      "path": "services/api/src/routes/synthesis.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "routes/synthesis.ts:112"
+    },
+    {
+      "path": "services/api/src/routes/synthesis.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/routes/synthesis.ts:112"
+    },
+    {
+      "path": "services/api/src/routes/synthesis.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/routes/synthesis.ts:112-113"
+    },
+    {
       "path": "services/api/src/speech/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
@@ -260,6 +290,24 @@
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "speech/store-pg.ts:142"
+    },
+    {
+      "path": "services/api/src/tts/service.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/tts/service.ts:471"
+    },
+    {
+      "path": "services/api/src/tts/service.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/tts/service.ts:473"
+    },
+    {
+      "path": "services/api/src/tts/service.ts",
+      "reason": "SUSPECT",
+      "owner": "api-server",
+      "reference": "services/api/src/tts/service.ts:535"
     },
     {
       "path": "tests/integration/ocr-jobs-pg.mjs",

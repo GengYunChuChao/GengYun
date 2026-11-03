@@ -7,9 +7,10 @@
 //      七类 `JobState` 与 `error_code` 逐类如实显示，不折叠成"成功/失败"。
 //      目标引用（type/id/revision）**取契约值**：经 `voiceApi.checkedContentRefForSample()`，
 //      并**优先**采用服务端回传的 revision（`rememberServerRevision`）；页面**不内联** `revision: 1`。
-//   ③ 播放：只有"任务成功 **且** 有可播放的音频源"才自动播放；**契约里没有面向客户端的音频出口**
-//      （见 `voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE`）⇒ 取不到可播放来源 ⇒ **自动播放失败**：
-//      页面如实写「本环境无可播放音频（契约无客户端音频出口）」+ 文案 + 主动播放按钮，
+//   ③ 播放：只有"任务成功 **且** 服务端给出可取的音频读面地址"才自动播放。R74 起服务端有私有读面
+//      `GET /speech/synthesis/{id}/audio`（operation `readSynthesisAudio`），但它只回**本人**的**真实**
+//      产物：替身产物是明确标注的非音频占位（读面 409）、真实凭据/产物存储未接线时也没有字节
+//      ⇒ 取不到则**自动播放失败**：页面如实写「本环境暂无可播放音频」+ **具体**原因 + 主动播放按钮，
 //      **不显示「播放中／已播放」**、**不伪造音频**、**不记「已听取」**。
 //      此外，"要不要**自动出声**"还要过 `utils/speech-autoplay.js` 的策略：用户可关（关闭后文字与
 //      「播放」按钮照常可用）、同一页同一版本只自动播报一次（state-contract.md:64）、
@@ -179,7 +180,7 @@ Page({
     ballLabel: '播报已核对内容',
     ballHint: '',
     /**
-     * 来源的**如实**口径（取不到可播放来源时非空；见 `voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE`）。
+     * 来源的**如实**口径（取不到可播放来源时非空；见 `voiceApi.NO_PLAYABLE_AUDIO_NOTE`）。
      * 与「播放中」互斥：取不到来源时页面只会显示失败态 + 本提示，不会显示「正在播报」。
      */
     sourceNotice: '',
@@ -536,15 +537,22 @@ Page({
   /**
    * 合成落定后进入播放段：先判可播源，再决定自动播报或如实走失败出口。
    *
-   * 可播源在契约层面取不到（见 `voiceApi.audioSourceForJob` / `NO_CLIENT_AUDIO_EGRESS_NOTE`）：
-   * 页面如实呈现该口径，**不显示「播放中／已播放」**、不伪造音频、不记「已听取」。
+   * 可播源由 `voiceApi.audioSourceForJob` 逐项判定（终态成功、回执带合法 id/media_id、
+   * 服务端执行模式为 `real`、运行时有 http(s) 后端地址）——任一不成立都返回**具体**原因；
+   * 取不到时页面如实呈现该口径，**不显示「播放中／已播放」**、不伪造音频、不记「已听取」。
    * 唯一的例外是**本地替身工程的显式走查开关**（非真实音频、不产生声音、不计已听取）。
    */
   afterSynthesis: function (job, mode, generation, synthesisError) {
     if (!this.isCurrent(generation)) return
     this.stopPoll()
     const source = job === null
-      ? { ok: false, code: 'SOURCE_UNAVAILABLE', reason: synthesisError ? '合成未成功：没有可播放的产物。' : '没有可播放的产物。' }
+      ? {
+          ok: false,
+          code: 'JOB_NOT_SUCCEEDED',
+          reason: synthesisError
+            ? '合成未成功（' + String(synthesisError.code || '未知错误') + '）：没有产物可取。'
+            : '没有拿到任务回执：没有产物可取。'
+        }
       : voiceApi.audioSourceForJob(job, mode)
     const segments = this.substituteSegmentsFor(job, source)
     this._plan = segments
@@ -619,12 +627,13 @@ Page({
 
   /**
    * 可播放源解析。
-   * - 真实源可用（`audioSourceForJob` 给出 src）⇒ 用真实源（本片恒不可用，见该函数注释）；
+   * - 有真实可播源（`audioSourceForJob` 给出私有点播地址 `url`）⇒ 用该地址播放，真实音频上下文
+   *   由 `playerPort()` 的 `innerAudioPort` 建（带 Authorization 下载后再交给播放器）；
    * - 否则：本地替身工程 + 走查开关打开 ⇒ 用**明确标注的替身源**（非真实音频、不计已听取）；
    * - 否则 ⇒ 空计划（如实走"自动播放失败"出口）。
    */
   substituteSegmentsFor: function (job, source) {
-    if (source.ok === true) return [{ src: source.src, label: '真实音频' }]
+    if (source.ok === true) return [{ src: source.url, label: source.label || '真实音频' }]
     if (this.data.localEnabled !== true || this.data.substituteWalkthrough !== true) {
       this._substituteSegments = []
       return []
@@ -642,28 +651,40 @@ Page({
   /**
    * 来源口径的**如实**呈现（无论走查开不开都要写）。
    *
-   * - 有真实可播源 ⇒ 清空来源提示（本片恒不可用，见 `voiceApi.audioSourceForJob`）；
-   * - 取不到 ⇒ 写 `NO_CLIENT_AUDIO_EGRESS_NOTE` + 该分支的具体原因（契约缺口，不是网络问题），
-   *   并保留既有「没有可播放的音频源：…」一句；页面**不得**因此显示「播放中／已播放」。
+   * - 有真实可播源 ⇒ 清空来源提示；
+   * - 取不到 ⇒ 写 `NO_PLAYABLE_AUDIO_NOTE` + 该分支的**具体**原因与分类码（不是网络问题，
+   *   也不是"契约缺口"泛化说法），并保留既有「没有可播放的音频源：…」一句；
+   *   页面**不得**因此显示「播放中／已播放」。
    */
   applyModeNotice: function (source) {
     if (source.ok === true) {
       this.setData({ sourceNotice: '' })
       return
     }
+    const detail = '（原因分类 ' + String(source.code) + '：' + String(source.reason) + '）'
     this.setData({
-      sourceNotice: voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE + '（具体原因：' + String(source.reason) + '）',
+      sourceNotice: voiceApi.NO_PLAYABLE_AUDIO_NOTE + detail,
       synthesisNote: this.data.synthesisNote === ''
         ? ('没有可播放的音频源：' + String(source.reason))
         : this.data.synthesisNote
     })
   },
 
+  /**
+   * 播放端口。
+   *
+   * 真实源在自家私有读面上（需要 `Authorization`），而 `InnerAudioContext` 不能带自定义头
+   * ⇒ 传入会话头与自家 API 域前缀，由 `inner-audio-port.js` 先用 `wx.downloadFile` 下到临时
+   * 文件再播；**只对自家域**附令牌，第三方地址一律直连（不泄露令牌）。
+   */
   playerPort: function () {
     if (this.data.localEnabled === true && this.data.substituteWalkthrough === true) {
       return substitutePlayer.createSubstitutePlayerPort({ failFirst: this._failFirst })
     }
-    return innerAudioPort.createInnerAudioPort()
+    return innerAudioPort.createInnerAudioPort({
+      authorization: voiceApi.audioAuthorizationHeader,
+      originPrefix: voiceApi.audioOriginPrefix()
+    })
   },
 
   ensureController: function () {
@@ -675,7 +696,17 @@ Page({
       onListened: function (snapshot) { that.applySnapshot(snapshot) },
       onFailure: function (failure, snapshot) {
         that.applySnapshot(snapshot)
-        that.setData({ failure: { title: failure.title, hint: failure.hint, actionText: failure.actionText, code: failure.code } })
+        // 把**具体**原因（如 HTTP 409 替身/非音频、HTTP 404 产物已清理）如实写到页面上，
+        // 不只留一句泛化提示：失败原因必须在界面可复核。
+        // 落点选 `sourceNotice`（wxml 已渲染）+ `failure.reason`，**不**覆盖 `synthesisNote`
+        // ——那里可能是更上游的合成失败原因，覆盖会把更精确的信息丢掉。
+        const reason = typeof failure.reason === 'string' && failure.reason !== '' ? failure.reason : null
+        that.setData({
+          failure: { title: failure.title, hint: failure.hint, actionText: failure.actionText, code: failure.code, reason: reason },
+          sourceNotice: reason !== null && that.data.sourceNotice === ''
+            ? ('播放未完成：' + reason)
+            : that.data.sourceNotice
+        })
       }
     })
     return this._controller

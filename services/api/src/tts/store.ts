@@ -91,6 +91,16 @@ export interface SynthesisStore {
   ): Promise<SynthesisJobRow | null>;
   insertSynthesis(row: SynthesisRow): Promise<void>;
   getSynthesis(synthesisId: string): Promise<SynthesisRow | null>;
+  /**
+   * 按 `media_id` **反查**合成记录（`media_id` 是全局键）。
+   *
+   * 为什么读面需要它：产物读取端口 `SynthesisMediaReadPort.readArtifact(mediaId)` 只吃一个
+   * **全局** media_id，**不带属主参数**；因此「这枚产物属于谁」只能由本表回答。
+   * 音频读面在把字节交给调用方之前必须把 media_id 反查回属主行、确认它就是刚通过归属校验的
+   * 那一行（否则一旦索引被串改，A 的字节就会经 B 的记录被读出去）。
+   * 查不到 ⇒ `null`（与「不存在」同形，调用方据此 fail-closed）。
+   */
+  findByMediaId(mediaId: string): Promise<SynthesisRow | null>;
   findIdempotent(scope: string, keyHashHex: string): Promise<IdempotencyRow | null>;
   /**
    * **原子占位**（先占位再建任务，消除 check-then-act 竞态）：
@@ -122,8 +132,17 @@ function cloneSynthesis(row: SynthesisRow): SynthesisRow {
 export function createMemorySynthesisStore(): SynthesisStore {
   const jobs = new Map<string, SynthesisJobRow>();
   const syntheses = new Map<string, SynthesisRow>();
+  /** `media_id` → 合成记录 id（全局唯一键的反查索引，见 `findByMediaId`）。 */
+  const mediaIndex = new Map<string, string>();
   const idempotency = new Map<string, IdempotencyRow>();
   const composite = (scope: string, keyHashHex: string): string => `${scope}\u0000${keyHashHex}`;
+
+  /** 索引与记录**同一次写入**：只在这里落 media_id，避免出现「有记录没索引」的读面空洞。 */
+  const rememberMedia = (row: SynthesisRow): void => {
+    const owner = mediaIndex.get(row.mediaId);
+    if (owner !== undefined && owner !== row.id) throw new Error('产物 media_id 冲突');
+    mediaIndex.set(row.mediaId, row.id);
+  };
 
   return {
     persistent: false,
@@ -147,8 +166,11 @@ export function createMemorySynthesisStore(): SynthesisStore {
       if (row === undefined || row.revision !== expectedRevision) return null;
       // 终态迁移必须合法：已终态的任务不会被迟到结果改写。
       if (!canTransitionJob(row.state, terminal.state)) return null;
-      if (synthesis !== null && syntheses.has(synthesis.id)) throw new Error('合成记录 id 冲突');
-      if (synthesis !== null) syntheses.set(synthesis.id, cloneSynthesis(synthesis));
+      if (synthesis !== null) {
+        if (syntheses.has(synthesis.id)) throw new Error('合成记录 id 冲突');
+        rememberMedia(synthesis);
+        syntheses.set(synthesis.id, cloneSynthesis(synthesis));
+      }
       const next: SynthesisJobRow = {
         ...cloneJob(row),
         state: terminal.state,
@@ -161,10 +183,17 @@ export function createMemorySynthesisStore(): SynthesisStore {
     },
     async insertSynthesis(row) {
       if (syntheses.has(row.id)) throw new Error('合成记录 id 冲突');
+      rememberMedia(row);
       syntheses.set(row.id, cloneSynthesis(row));
     },
     async getSynthesis(synthesisId) {
       const row = syntheses.get(synthesisId);
+      return row === undefined ? null : cloneSynthesis(row);
+    },
+    async findByMediaId(mediaId) {
+      const id = mediaIndex.get(mediaId);
+      if (id === undefined) return null;
+      const row = syntheses.get(id);
       return row === undefined ? null : cloneSynthesis(row);
     },
     async findIdempotent(scope, keyHashHex) {
