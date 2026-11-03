@@ -1,15 +1,19 @@
 /**
  * GY-I16（#16）· 历史子域服务层；HTTP 装配在 `routes/history.ts`，领域层不注册路由。
  *
- * 覆盖契约 operationId：`listHistory`（`GET /history`）、`deleteHistory`（`DELETE /history/{id}`）。
+ * 覆盖契约 operationId：`listHistory`（`GET /history`）、`getHistory`（`GET /history/{id}`）、
+ * `deleteHistory`（`DELETE /history/{id}`）。
  * 另有**内部创建口** `appendHistory`（**不是**契约 operationId，**不注册**任何路由，
  * 沿用 #17 `messages.appendMessage` 的既有先例）。
  *
- * ## 为什么没有 `GET /history/{id}`
- * 契约里 `/history/{id}` **只有 `delete`**，没有 `get`。所以**详情**由客户端用第 7 项 `target_ref`
- * 指向的**已合并**契约面组合出来：`GET /recognitions/{id}`（#9）或 `GET /ocr/{id}`（#10）。
- * 本片**不新造**契约外路径，也**不复制**候选/选择/OCR 核对/来源版本到历史响应里
- * （那些字段历史契约里没有；自造字段就是编造契约）。
+ * ## 单条读面 `GET /history/{id}`（R75 补齐）
+ * 此前 `/history/{id}` 只有 `delete`，**详情**只能由客户端「扫首页列表 + 依赖内存快照」拼出来：
+ * 记录排到第 50 条之后、或 App 重启后快照丢失，详情页就打不开。R75 在契约里补了 `get`（成对改
+ * `operations.json` + `openapi.json`），**响应体与列表项同形**（同一个 `History` schema，因此
+ * `HISTORY_PROJECTION_FIELDS` 一字未动）；`getHistory` 复用同一个 `project()`：`job_state` 实时
+ * 优先、`reference_state` 逐次重查，**不**把存储里的旧快照当结论。归属仍只看本人，不存在与不属于
+ * 本人**同形** `notFound()`。仍**不复制**候选/选择/OCR 核对/来源版本到历史响应里
+ * （那些字段历史契约里没有；要读它们仍走 `GET /recognitions/{id}`（#9）或 `GET /ocr/{id}`（#10））。
  *
  * ## 核心不变式
  *
@@ -355,6 +359,23 @@ export function createHistoryService(deps: HistoryServiceDeps) {
       const items: History[] = [];
       for (const row of page) items.push(await project(row, user.userId));
       return { items, next_cursor };
+    },
+
+    /**
+     * `getHistory`：`GET /history/{id}`。
+     *
+     * - 归属：非本人（含不存在）一律 404 `NOT_FOUND`，与删除面**同形**（同一个 `notFound()`）；
+     * - 投影与列表项**同形**：复用 `project()` ⇒ `job_state` 实时优先、`reference_state` 逐次重查，
+     *   **不**直接信存储里的快照字段；
+     * - 只读、无副作用 ⇒ 不需要 `Idempotency-Key` / `If-Match`，也没有分页与游标。
+     */
+    async getHistory(actor: unknown, id: unknown): Promise<History> {
+      const user = requireUserActor(actor);
+      const historyId = requireUuidParam(id, 'id');
+      const record = await store.getHistory(historyId);
+      // 归属与"不存在"同形：非本人**不得**得到 409 或任何存在性线索。
+      if (record === null || record.owner_id !== user.userId) throw notFound();
+      return project(record, user.userId);
     },
 
     /**

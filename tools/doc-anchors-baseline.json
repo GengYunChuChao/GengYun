@@ -79,31 +79,7 @@
       "path": "packages/contracts/openapi.json",
       "reason": "SUSPECT",
       "owner": "contracts",
-      "reference": "openapi.json:11686"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
       "reference": "openapi.json:6448"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:11434"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:11434"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:11686"
     },
     {
       "path": "packages/contracts/openapi.json",

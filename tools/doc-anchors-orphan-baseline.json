@@ -262,6 +262,12 @@
       "outsideRed": 123
     },
     {
+      "why": "R75 新增 GET /history/{id}：contract-status.json +31 行、openapi.json +83/+16 行。3 条已登记裸锚点按端点映射换行号后不再命中（:426→:447、:548→:611、openapi.json:13649 因 +83 落回实质行），故删；新增 2 条是 gy-r31-i07-sort 页正文里的历史读数 contract-status.json:3286（该页在讲行号沿革，按仓规不改写历史页数字），登记放行。新增 2、陈旧 3，净 -1。",
+      "accept": 2,
+      "orphans": 3514,
+      "outsideRed": 124
+    },
+    {
       "why": "合入 origin/main(3d9b2369) 时两侧账本取并集：分支侧两条（3500/118、3499/118）与 main 侧两条（3516/122、3516/123）逐条保留，本条只把两个数组在合流树上的实际条数记进账本，让孤儿册可被 load；数组本体与条数随后由 --write-orphan-baseline 按扫描面重生成",
       "accept": 0,
       "orphans": 3499,
@@ -280,6 +286,12 @@
       "outsideRed": 117
     },
     {
+      "why": "合并 origin/main 3b89782f 后按现状重生成：本片 R75 只新增 GET /history/{id}（contract-status.json +31 行、openapi.json 自 7145 行起 +83 行、18572 行起 +16 行），孤儿锚净增 2 条即 gy-r31-i07-sort 页的 contract-status.json:3286 两条 SUSPECT（该页第 23/28 行自认「都已陈旧」，属正当登记）；同时退掉 2 条已不再命中的孤儿锚，并把结构基线里 4 条 openapi SUSPECT 按符号重锚以后退册。",
+      "accept": 2,
+      "orphans": 3514,
+      "outsideRed": 119
+    },
+    {
       "why": "合入 origin/main(3b89782f)：main 的 #875 已把那 6 条历史错锚修好，合并树按同一扫描面重扫后作用域外本会红 121→115（孤儿仍 3499、条目不增不减）；本条先把合流树上的实测条数记进账本让册子可被 load，数组本体随后由 --write-orphan-baseline 重生成，判定逻辑一个字没改",
       "accept": 0,
       "orphans": 3499,
@@ -290,6 +302,24 @@
       "accept": 0,
       "orphans": 3499,
       "outsideRed": 115
+    },
+    {
+      "why": "合并 origin/main(5dd6da3a) 时两侧账本取并集：本片三条（R75 新增 op、合入 3b89782f 两次重生成）与 main 侧四条（#857／#873 线的两次并集登记与其后的重生成）逐条保留，两侧共有的 #875 条目只留一条。本条不新增任何放行（accept=0），只把两个数组在合流树上的实测条数记进账本让孤儿册可被 load；数组本体与条数随后由 --write-orphan-baseline 按同一扫描面重生成。",
+      "accept": 0,
+      "orphans": 3497,
+      "outsideRed": 117
+    },
+    {
+      "why": "合并 origin/main(5dd6da3a) 后按合并树同一次次扫描重生成：accept 账本取两侧并集（本片 R75 与 main 侧 #857／#873 线共 7 条逐条保留，两侧共有的 #875 条目只留一条），数组本体按本轮扫描实测重取（孤儿 3433／作用域外 104，比并集前的 3497／117 更紧）；本轮基线外新增 0 条、陈旧 0 条，判定逻辑与扫描面一个字没改",
+      "accept": 0,
+      "orphans": 3433,
+      "outsideRed": 104
+    },
+    {
+      "why": "合并 origin/main(5dd6da3a) 后按合并树重生成；上一版只按默认面（docs/architecture + docs/verification）取数，漏了默认面外文档，本轮改用与门禁一致的 docs 全扫描面，按工具自报新增 77 条落盘（64 孤儿 + 13 作用域外，全部位于 docs/development-progress.md、docs/evaluation/*、docs/research/*；与册上现有键逐条比对 stale 0，故无删除，只补登记）",
+      "accept": 77,
+      "orphans": 3497,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -1169,7 +1199,6 @@
     "docs/verification/gy-i16-semantics-20261019.md|:228|ambiguous-block",
     "docs/verification/gy-i16-semantics-20261019.md|:339|no-explicit-in-block",
     "docs/verification/gy-i16-semantics-20261019.md|:408|no-explicit-in-block",
-    "docs/verification/gy-i16-semantics-20261019.md|:426|ambiguous-block",
     "docs/verification/gy-i16-semantics-20261019.md|:551|ambiguous-block",
     "docs/verification/gy-i16-semantics-20261019.md|:606|no-explicit-in-block",
     "docs/verification/gy-i16-semantics-20261019.md|:91|no-explicit-in-block",
@@ -2877,7 +2906,6 @@
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|:367|no-explicit-in-block",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|:404|ambiguous-block",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|:542|no-explicit-in-block",
-    "docs/verification/gy-r31-i22-failure-matrix-20261022.md|:548|no-explicit-in-block",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|:587-588|no-explicit-in-block",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|:587-588|no-explicit-in-block",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|:587|no-explicit-in-block",
@@ -3862,6 +3890,8 @@
     "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/app.ts:955|SUSPECT",
     "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/app.ts:973|SUSPECT",
     "docs/verification/gy-r31-closure-matrix-20261022.md|services/api/src/app.ts:973|SUSPECT",
+    "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:3286|SUSPECT",
+    "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:3286|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:735|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:735|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:736|SUSPECT",

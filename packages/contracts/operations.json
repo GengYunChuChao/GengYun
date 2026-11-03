@@ -534,6 +534,13 @@
       "version_required": false
     },
     {
+      "id": "getHistory",
+      "path": "/history/{id}",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
       "id": "deleteHistory",
       "path": "/history/{id}",
       "method": "delete",

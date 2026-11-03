@@ -15,9 +15,9 @@
 
 | 指标 | 读数 |
 | --- | --- |
-| 已挂载路由（不含 HEAD） | 130 |
-| 契约操作（paths × method） | 129 |
-| 实现 ∩ 契约 | 129 |
+| 已挂载路由（不含 HEAD） | 131 |
+| 契约操作（paths × method） | 130 |
+| 实现 ∩ 契约 | 130 |
 | 多出（实现有、契约无） | 0 |
 | 例外（实现有、契约按设计不含） | 1 |
 | 少掉（契约有、实现无，且台账未标 planned） | 0 |
@@ -129,6 +129,7 @@
 | GET | `/herbicides/{id}` | getHerbicide | user | 不要求 | 是 | implemented | 一致 |
 | GET | `/history` | listHistory | user | 不要求 | 是 | implemented | 一致 |
 | DELETE | `/history/{id}` | deleteHistory | user | 需要 | 是 | partial | 一致 |
+| GET | `/history/{id}` | getHistory | user | 不要求 | 是 | implemented | 一致 |
 | GET | `/jobs/{id}` | getJob | user | 不要求 | 是 | partial | 一致 |
 | POST | `/jobs/{id}/cancel` | cancelJob | user | 需要 | 是 | partial | 一致 |
 | GET | `/knowledge` | listKnowledge | user | 不要求 | 是 | partial | 一致 |

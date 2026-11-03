@@ -1,15 +1,20 @@
 /**
  * GY-I16（#16）· 历史路由（契约 operationId 一一对应，不新增字段、不新增路径）：
- *   GET    /history        listHistory  → HistoryPageEnvelope
+ *   GET    /history        listHistory   → HistoryPageEnvelope
+ *   GET    /history/{id}   getHistory    → HistoryEnvelope
  *   DELETE /history/{id}   deleteHistory → AckEnvelope
  *
- * **刻意不注册 `GET /history/{id}`**：契约里 `/history/{id}` 只有 `delete`。
- * 历史详情由客户端用列表项的目标引用去读**已合并**的 `GET /recognitions/{id}`（#9）或
- * `GET /ocr/{id}`（#10）；本片不新造契约外路径。
+ * 单条读面 `GET /history/{id}` 由 R75 补进契约（`operations.json` + `openapi.json` **成对**改，
+ * operation 数 129 → 130）。此前详情只能由客户端「扫 `GET /history` 第一页 + 内存快照」拼出来：
+ * 记录排到第 50 条之后、或 App 重启后快照丢失，详情页就打不开。新读面返回与**列表项同形**的
+ * `History` 投影（服务层同一个 `project()`，`job_state` 实时优先、`reference_state` 逐次重查），
+ * **不**新造 schema、**不**复制候选/选择/OCR 核对等历史契约里没有的字段——那些仍走
+ * `GET /recognitions/{id}`（#9）或 `GET /ocr/{id}`（#10）。
  *
  * 归属：一律 `guards.requireUser`；越权/不存在由服务层统一映射 `NOT_FOUND`，不泄露存在性。
- * 私有响应一律 `Cache-Control: no-store`；`GET` 是列表 ⇒ **无 `ETag`**（契约 `headers.ETag.description`：
- * 「资源revision强ETag；列表无此头」）。
+ * 私有响应一律 `Cache-Control: no-store`；`GET /history` 是列表 ⇒ **无 `ETag`**（契约
+ * `headers.ETag.description`：「资源revision强ETag；列表无此头」）；`GET /history/{id}` 返回
+ * **资源表示** ⇒ 回强 ETag `"<revision>"`（同 `history/service.ts::strongEtagOf` 口径）+ `private, no-store`。
  *
  * `DELETE` **不**回 `ETag`：成功响应是 `Ack`（无 revision 字段），资源已删除，回一个
  * "已删除资源的 ETag"是编造；口径与已合并的 `DELETE /recognitions/{id}` 一致。
@@ -33,7 +38,7 @@ import type { AuthGuards } from '../auth/middleware.ts';
 import type { AppConfig } from '../config.ts';
 import { API_PREFIX } from '../contract.ts';
 import { ApiError } from '../errors.ts';
-import type { HistoryService } from '../history/service.ts';
+import { strongEtagOf, type HistoryService } from '../history/service.ts';
 import { buildMeta } from './support.ts';
 
 const noStore = { 'Cache-Control': 'no-store' } as const;
@@ -83,6 +88,16 @@ export function registerHistoryRoutes(
   app.get(`${API_PREFIX}/history`, { preHandler: guards.requireUser, schema: { querystring: listQuery } }, async (request, reply) => {
     const data = await ready(request).listHistory(readIdentity(request), request.query);
     return reply.headers(noStore).send({ data, meta: buildMeta(request, config) });
+  });
+
+  app.get(`${API_PREFIX}/history/:id`, { preHandler: guards.requireUser, schema: { params: idParams } }, async (request, reply) => {
+    const data = await ready(request).getHistory(readIdentity(request), (request.params as { id: string }).id);
+    // 单条读面返回**资源表示** ⇒ 强 ETag `"<revision>"`；缓存口径 `private, no-store`（个体资源不进共享缓存）。
+    // 不存在 / 不属于本人由服务层 throw notFound()（同一句、同形 404），走统一错误处理，不带 ETag。
+    return reply
+      .header('Cache-Control', 'private, no-store')
+      .header('ETag', strongEtagOf(data.revision))
+      .send({ data, meta: buildMeta(request, config) });
   });
 
   app.delete(

@@ -254,6 +254,20 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 里「冻结契约（86 条路径 / 113 条 operation，实测 `packages/contracts/openapi.json`）」按基线 `3cdf4740`
  * 实测改成「99 条路径 / 129 条 operation」并补「，基线 `3cdf4740`」⇒ 两份台账各**多 20 字节**、行数不变
  * （4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-04 第七次同步（R75 历史详情读面片）：新增 `getHistory`（`GET /history/{id}`）⇒
+ * 台账多一条 operation 条目（+31 行 / +2430 字节），`contract-implementation-status.md`
+ * 多一行 operation 行与标题计数（+1 行 / +1821 字节）。`listHistory`/`deleteHistory` 的 evidence
+ * 行号由 `--reanchor --write-doc` 重写（80-83→88-88、85-98→103-105），中文表格同次重生成。
+ * 仍是「正常改台账」（operations 129 → 130），故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第八次同步（`git merge origin/main` = 3b89782f 之后重取实测值）：上面第六条（#875，在 main 上）
+ * 与第七条（R75，在本分支上）是两条并行分支各自记的「同序号一次同步」，合并后按时间顺序重编号，
+ * 正文逐字保留。合并把 #875 的计数口径订正与 `getHistory` 条目叠在同一份台账上。
+ * ⚠️ 第六／第七次记的行数是按 `split('\n').length` 数出来的（末尾换行多算一行），
+ * 本条改按本用例 `countLines` 的口径实测：合并后 `contract-status.json` 276447 字节 / 4465 行、
+ * `contract-implementation-status.md` 198007 字节 / 220 行（= 本分支 276427/4465 与 197987/220
+ * 各 +20 字节，正是 #875 那一行的增量）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 以下两段是 main 侧（#857／#873 线）自己的历史注释，其「第七／第八次」与本分支的编号撞号，
+ * 按历史注释原样保留、不重编号（历史注释不重写）：
  * 2026-11-03 合入 `origin/main`（3d9b2369）后第七次同步：两侧基线在此取**并集** —— 分支侧（注销真清片）
  * 与 main 侧（音频读面）的台账改动同时保留：取消维度按合流树实测为 `services/api/src/app.ts:2553`
  * （六源 `:2554`/`:2560`/`:2566`/`:2572`/`:2580`/`:2590`），超时维度同时保留分支侧的装配点
@@ -269,10 +283,15 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 按原样保留不改号）。合流树实测：JSON 275695 字节 / 4434 行、md 197867 字节 / 219 行
  * （= 274811+20+864、196980+20+867；行数与两侧都一致）。两笔都是正常改台账，没有改判定、
  * 没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-04 第九次同步：再一次 `git merge origin/main`（3b89782f → 5dd6da3a，即 #873
+ * 「接通注销在线域清理并如实披露备份阻塞」合入 main）。合流后按本用例 `countLines` 口径实测：
+ * `contract-status.json` 278125 字节 / 4465 行、`contract-implementation-status.md` 199688 字节
+ * / 220 行 —— 行数与上一次同步相同（#873 只改 evidence 文案与中文表格，没有增删 operation 行），
+ * 字节数是两侧文案的净增。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 275695, lines: 4434 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 197867, lines: 219 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278125, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 199688, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
