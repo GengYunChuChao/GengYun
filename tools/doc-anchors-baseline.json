@@ -76,12 +76,6 @@
       "reference": "miniprogram/pages/voice/voice.js:772"
     },
     {
-      "path": "miniprogram/pages/voice/voice.js",
-      "reason": "SUSPECT",
-      "owner": "miniprogram",
-      "reference": "voice.js:859"
-    },
-    {
       "path": "packages/contracts/openapi.json",
       "reason": "SUSPECT",
       "owner": "contracts",
@@ -350,12 +344,6 @@
       "reason": "SUSPECT",
       "owner": "repo",
       "reference": "tests/unit/ai-ops-ledger-pins.test.mjs:253"
-    },
-    {
-      "path": "tests/unit/miniprogram-voice-playback.test.mjs",
-      "reason": "SUSPECT",
-      "owner": "repo",
-      "reference": "tests/unit/miniprogram-voice-playback.test.mjs:955"
     },
     {
       "path": "tests/unit/ocr-store-pg.test.mjs",

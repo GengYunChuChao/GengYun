@@ -158,8 +158,21 @@ function loadVoicePage(options = {}) {
     { ok: true, tempFilePath: 'wxfile://tmp/record-1.wav', durationMs: 3200, mime: 'audio/wav', format: 'wav' },
     options.stopResult || {}
   )
+  const settingCalls = []
   const recorderPort = {
     support: () => ({ ok: true, note: '录音能力可用（端口探针）', maxDurationMs: 60000 }),
+    /**
+     * GY-R74（S1）：页面只能在用户 tap 里经**这个原语**打开设置页取回授权结果。
+     * 替身与真实现同契约：**恒返回对象**（`{ok, state, code}`），不 reject、不返回 undefined；
+     * `options.openSettingResult` 可脚本化"用户回来时的授权结果"（缺省＝仍拒绝）。
+     */
+    openSetting: () => {
+      settingCalls.push({ api: 'openSetting' })
+      const scripted = options.openSettingResult === undefined
+        ? { ok: false, state: 'denied', code: 'RECORD_SETTING_STILL_DENIED' }
+        : options.openSettingResult
+      return Promise.resolve(scripted)
+    },
     createRecorderPort: () => ({
       available: true,
       start: (startOptions) => { portCalls.push({ api: 'start', options: startOptions }); return Promise.resolve({ ok: true }) },
@@ -193,6 +206,11 @@ function loadVoicePage(options = {}) {
       if (settingOptions && settingOptions.success) settingOptions.success({ authSetting: { 'scope.record': true } })
     },
     getRecorderManager: () => { throw new Error('本套用例不触达 wx.getRecorderManager（端口已替身）') },
+    /**
+     * GY-R74（S2）：平台 `wx.openSetting` 只能被 `utils/recorder-port.js` 调到；
+     * 页面若直接调用就抛错，让「页面绕过端口」变成红，而不是静默通过。
+     */
+    openSetting: () => { throw new Error('页面必须经 recorderPort.openSetting()，不得直接调用 wx.openSetting') },
     getFileSystemManager: options.noFs === true
       ? undefined
       : () => ({ unlink: (unlinkOptions) => { unlinks.push(unlinkOptions.filePath) } }),
@@ -238,7 +256,7 @@ function loadVoicePage(options = {}) {
   })
 
   return {
-    page, requests, toasts, sets, unlinks, portCalls, uploads, wx: wxApi,
+    page, requests, toasts, sets, unlinks, portCalls, uploads, wx: wxApi, settingCalls,
     boot: async () => { page.onLoad(); page.onShow(); await flush(4) },
     unload: () => { page.onUnload(); delete globalThis.wx }
   }

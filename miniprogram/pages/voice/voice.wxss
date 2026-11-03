@@ -42,3 +42,20 @@
   line-height: 1.5;
   box-sizing: border-box;
 }
+
+/* 录音权限引导块（S2/S3）：全局 .notice 是「图标 + 文字」的一行 flex，
+   这里允许换行，让「打开设置 · 授权录音」按钮独占一行（不被 flex 压成窄条、也不挤掉说明文字）。
+   触控下限与字号仍走全局令牌/字体缩放，窄屏 320px 下也 ≥44px 且文字不裁切。 */
+.voice-permission {
+  flex-wrap: wrap;
+}
+
+.voice-permission__action {
+  flex: 0 0 100%;
+  width: 100%;
+  margin: 4px 0 0;
+  min-height: var(--tap-min, 44px);
+  font-size: calc(16px * var(--font-scale, 1));
+  white-space: normal;
+  word-break: break-word;
+}

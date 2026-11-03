@@ -238,10 +238,10 @@
       "outsideRed": 120
     },
     {
-      "why": "R74 音频读面：新增 speech 读面后 openapi.json/app.ts 未动，但 voice.js、tests 与 tts/service.ts 因客户端+服务端改动而位移；docs/verification 的历史取证页锚点按现状重登记（不改写历史页正文）",
-      "accept": 8,
+      "why": "R74 音频读面：packages/contracts/openapi.json 在 :4396 新增 readSynthesisAudio 的 path 对象（+92 行）与 docs/architecture/contract-status.json 新增一条 operation（净 +27 行），使 docs/verification 历史取证页里 6 条早已漂移的裸锚点从「指向有内容的行」落到纯括号行（SUSPECT），故按既有口径登记；6 条全部是历史页快照（docs/verification/**，不改写历史正文），本片未新增/未改动这些锚点本身，其中 5 条指向 openapi.json:7165/9996/13056/13649、1 条指向 contract-status.json:2083；同时册上 4 条陈旧（voice.js:392、service.ts:652、contract-status.json:3267/3333）因同样的插行落到有内容行而不再复现，一并删行",
+      "accept": 6,
       "orphans": 3516,
-      "outsideRed": 124
+      "outsideRed": 122
     }
   ],
   "orphans": [
@@ -3798,12 +3798,10 @@
     "docs/verification/gy-i07-evidence-index-20261010.md|utils/auth.js:205|SUSPECT",
     "docs/verification/gy-i09i10-recog-20261019.md|miniprogram/utils/history-api.js:399|SUSPECT",
     "docs/verification/gy-i09i10-recog-20261019.md|tests/unit/recognitions-candidates-selection.test.mjs:529|SUSPECT",
-    "docs/verification/gy-i11-voice-input-20261021.md|voice.js:1083|SUSPECT",
     "docs/verification/gy-i11-voice-input-20261021.md|voice.js:757|SUSPECT",
     "docs/verification/gy-i12-conversations-gap-20261021.md|services/api/src/conversations/service.ts:945|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
-    "docs/verification/gy-i13-synthesis-jobs-20261014.md|tests/unit/miniprogram-voice-playback.test.mjs:927|SUSPECT",
     "docs/verification/gy-i14-moderation-http-20261014.md|tests/moderation/model-ports.test.mjs:156|SUSPECT",
     "docs/verification/gy-i15-messages-chain-20261021.md|miniprogram/utils/messages-api.js:36|SUSPECT",
     "docs/verification/gy-i15-messages-chain-20261021.md|packages/contracts/openapi.json:7165|SUSPECT",

@@ -1760,3 +1760,163 @@ test('GY-I26 小程序：识别页语音入口不再造假录音，只经已登�
   assert.equal(h.requests.length, before, '未登记路由不得发起会话核实');
   assert.deepEqual(h.launches, ['/pages/voice/voice'], '未登记路由不得产生导航');
 });
+
+// ---------------------------------------------------------------------------
+// GY-R74 / S4：提交阶段失败（上传照片 / 建立识别任务）必须能被看出「网络 / 服务器 / 内容」，
+// 并只给**可重试**的那一类重试入口；同时不得把"提交没成功"伪装成服务端任务状态。
+//
+// 断言口径：①同一份 state-view 里 site 分类可区分、title/desc 不同；②可重试类有入口、
+// 不可重试类（真实对象存储未接线 / 授权 / 账号）没有入口；③jobStateKnown=false 且 desc 说明
+// "失败发生在任务建立之前"；④既有 errorText 逐字不变（不覆盖 messageFor 的如实文案）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 识别页的重试入口是否可见：**直接取 `identify.wxml` 的表达式**并按同一判据求值
+ * （不复制语义：表达式若被改成别的条件，这里先红）。
+ */
+function retryEntryVisible(page) {
+  const wxml = readFileSync(join(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
+  const match = /wx:if="\{\{!branchInfo && stateView\.retryable\}\}"/.exec(wxml);
+  assert.ok(match, '识别页的通用重试入口必须仍由 !branchInfo && stateView.retryable 判定');
+  const view = page.data.stateView;
+  return !page.data.branchInfo && Boolean(view && view.retryable === true);
+}
+
+/**
+ * 走到「上传照片」这一跳，再用给定的契约错误码把它打回（其余三跳与既有 B 系列同法）。
+ * 返回的 `page` 已落定终态（`prepareMedia` 的 promise 已结）。
+ */
+async function uploadFailurePage(code, statusCode) {
+  const h = lifecycle(undefined, { mode: 'real', fileInfo: () => ({ size: 1024, digest: SYNTHETIC_SHA256 }) });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const pending = page.prepareMedia('/synthetic/tmp/small.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  gated.requests[0].success({
+    statusCode: 200,
+    data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const uploads = mediaUploadRequests(gated.requests);
+  assert.equal(uploads.length, 1, '合规照片必须发出一次 POST /media/uploads');
+  if (code === null) {
+    // 传输层失败（真机上就是断网/超时）：走 `wx.request` 的 fail 回调，而不是服务端错误封套。
+    uploads[0].fail({ errMsg: 'request:fail timeout' });
+  } else {
+    uploads[0].success({
+      statusCode: statusCode === undefined ? 503 : statusCode,
+      data: { error: { code, message: '合成错误（测试）', retryable: true, details: [] } }
+    });
+  }
+  await pending;
+  return { h, page };
+}
+
+/**
+ * 走到「建立识别任务（POST /recognitions）」这一跳并让它在**传输层**失败
+ * （三跳上传全按契约封套兑现，与既有 B 系列同法），用于覆盖 S4 的第二个调用点。
+ */
+async function submitFailurePage() {
+  const meta = { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' };
+  const h = lifecycle(undefined, { mode: 'real', fileInfo: () => ({ size: 1024, digest: SYNTHETIC_SHA256 }) });
+  const gated = gatedPage(h);
+  const page = gated.page;
+  const pending = page.prepareMedia('/synthetic/tmp/small.jpg');
+  await new Promise(resolve => setImmediate(resolve));
+  gated.requests[0].success({ statusCode: 200, data: { data: { mode: 'real' }, meta } });
+  await new Promise(resolve => setImmediate(resolve));
+  mediaUploadRequests(gated.requests)[0].success({
+    statusCode: 201,
+    data: {
+      data: {
+        media: { id: MEDIA_ID, revision: 1, purpose: 'weed_recognition', mime: 'image/jpeg', bytes: 1024, duration_ms: null, state: 'initiated', sha256: SYNTHETIC_SHA256, failure_code: null },
+        upload: { url: 'https://synthetic.invalid/put/handle', expires_at: new Date(Date.now() + 300000).toISOString(), method: 'PUT', access_token: 'synthetic-handle-token' }
+      },
+      meta
+    }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  gated.requests.find(r => r.url === 'https://synthetic.invalid/put/handle').success({ statusCode: 200 });
+  await new Promise(resolve => setImmediate(resolve));
+  mediaUploadRequests(gated.requests).find(r => r.url.endsWith('/complete')).success({
+    statusCode: 202,
+    data: {
+      data: { id: MEDIA_ID, revision: 2, purpose: 'weed_recognition', mime: 'image/jpeg', bytes: 1024, duration_ms: null, state: 'ready', sha256: SYNTHETIC_SHA256, failure_code: null },
+      meta
+    }
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const recognition = recognitionRequests(gated.requests)[0];
+  assert.ok(recognition, '媒体就绪后必须按既有行为创建识别任务');
+  recognition.fail({ errMsg: 'request:fail timeout' });
+  await pending;
+  return { h, page };
+}
+
+test('GY-R74/S4：上传失败要能看出「网络 / 服务器 / 内容」三类，且只给可重试的一类重试入口', async () => {
+  // 网络类（上传这一跳）：传输层直接失败 ⇒ 上传通道如实报 MEDIA_CHANNEL_UNAVAILABLE。
+  const net = await uploadFailurePage(null, 0);
+  const netView = net.page.data.stateView;
+  assert.ok(netView, '上传失败必须写进既有 state-view（不再只有一行 errorText）');
+  assert.equal(netView.site, 'network', '上传通道失败必须归到 network（照片没确定到服务端）');
+  assert.equal(netView.errorCode, 'MEDIA_CHANNEL_UNAVAILABLE', '必须带出真实错误码');
+  assert.equal(netView.phase, 'upload', '必须带出失败发生在哪一跳');
+  assert.equal(netView.jobStateKnown, false, '提交阶段的失败没有服务端任务状态可查');
+  assert.ok(netView.desc.includes('识别任务建立之前'), '必须如实说明失败发生在任务建立之前，实际：' + netView.desc);
+  assert.ok(netView.desc.includes('MEDIA_CHANNEL_UNAVAILABLE'), 'desc 必须点名错误码');
+  assert.equal(netView.retryable, true, '网络类可重试');
+  assert.equal(retryEntryVisible(net.page), true, '可重试类必须给出重试入口');
+  assert.equal(net.page.data.busy, false);
+
+  // 网络类（建立任务这一跳）：POST /recognitions 传输失败 ⇒ NETWORK_UNCERTAIN，且 phase 必须分开。
+  const submitNet = await submitFailurePage();
+  const submitView = submitNet.page.data.stateView;
+  assert.equal(submitView.site, 'network', '建立任务时的传输失败同样归到 network');
+  assert.equal(submitView.errorCode, 'NETWORK_UNCERTAIN');
+  assert.equal(submitView.phase, 'submit', '必须能看出失败发生在「建立任务」而不是上传');
+  assert.ok(submitView.desc.includes('NETWORK_UNCERTAIN'));
+  assert.equal(retryEntryVisible(submitNet.page), true);
+
+  const server = await uploadFailurePage('PROVIDER_TIMEOUT', 504);
+  const serverView = server.page.data.stateView;
+  assert.equal(serverView.site, 'server', '服务端超时必须归到 server（不是网络、不是内容）');
+  assert.notEqual(serverView.title, netView.title, '网络类与服务端类的标题必须不同（用户要能分辨）');
+  assert.notEqual(serverView.desc, netView.desc, '网络类与服务端类的说明必须不同');
+  assert.ok(serverView.desc.includes('不是照片本身的问题'), '服务端类必须排除"照片有问题"的误读');
+  assert.equal(retryEntryVisible(server.page), true, '服务端类可重试');
+  // 逐字保持：既有 errorText 仍等于 messageFor 的如实文案（新增 state-view 不覆盖它）。
+  assert.equal(server.page.data.errorText, identifyApi.messageFor({ code: 'PROVIDER_TIMEOUT' }));
+  assert.equal(server.page.data.busy, false);
+
+  // 内容类（本地预检就判定：扩展名不是 JPG/PNG/WebP）⇒ site=content、文案照旧、可重试（换图重拍）。
+  const badType = await (async () => {
+    const h = lifecycle(undefined, { mode: 'real' });
+    const gated = gatedPage(h);
+    const page = gated.page;
+    const pending = page.prepareMedia('/synthetic/tmp/not-a-photo.txt');
+    await new Promise(resolve => setImmediate(resolve));
+    // 先让「读执行模式」这一跳落定（真实链路里类型预检在它之后，与线上顺序一致）。
+    gated.requests[0].success({
+      statusCode: 200,
+      data: { data: { mode: 'real' }, meta: { request_id: REQUEST_ID, contract_version: '1.0.0', execution_mode: 'real' } }
+    });
+    await pending;
+    return page;
+  })();
+  assert.equal(badType.data.stateView.site, 'content', '类型不受支持必须归到 content');
+  assert.equal(badType.data.stateView.errorCode, 'MEDIA_TYPE_UNSUPPORTED');
+  assert.equal(badType.data.errorText, '无法确定照片类型，请改用 JPG / PNG / WebP。', '既有文案必须逐字不变');
+  assert.equal(retryEntryVisible(badType), true, '内容类可重试（换一张合规照片）');
+  assert.equal(mediaUploadRequests([]).length, 0);
+
+  // 不可重试：真实对象存储未接线 ⇒ 不给重试入口（不把用户推去撞同一堵墙）。
+  const noRetry = await uploadFailurePage('PROVIDER_UNAVAILABLE', 503);
+  assert.equal(noRetry.page.data.stateView.site, 'server');
+  assert.equal(noRetry.page.data.stateView.retryable, false, '未接线的能力不得标成可重试');
+  assert.equal(retryEntryVisible(noRetry.page), false, '不可重试类不得显示重试入口');
+  assert.equal(noRetry.page.data.errorText, identifyApi.messageFor({ code: 'PROVIDER_UNAVAILABLE' }));
+  assert.ok(noRetry.page.data.stateView.desc.includes('重试也不会好转'), '必须如实说明重试无益');
+  // 分支归类不得伪造：提交阶段没有任务，不给"服务端判了哪个分支"的假象。
+  assert.equal(noRetry.page.data.branch, null);
+  assert.equal(noRetry.page.data.branchInfo, null);
+});

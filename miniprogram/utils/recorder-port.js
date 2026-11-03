@@ -77,6 +77,20 @@ const CODES = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT'
 })
 
+/**
+ * 「打开设置」这一趟的如实出参码（**独立闭集**，不与上面的录音失败码混用）。
+ *
+ * 为什么必须分开：`CODES` 里的码会被页面映射成「本次录音为什么失败」的文案；
+ * 而这里描述的是「去设置页这一趟发生了什么」。混用会把「用户没改授权」说成「录音失败」，
+ * 或者把「平台没有 openSetting」说成「用户拒绝授权」——两种都是不实归因。
+ */
+const SETTING_CODES = Object.freeze({
+  STILL_DENIED: 'RECORD_SETTING_STILL_DENIED',
+  UNCHANGED: 'RECORD_SETTING_UNCHANGED',
+  UNSUPPORTED: 'RECORD_SETTING_UNSUPPORTED',
+  UNAVAILABLE: 'RECORD_SETTING_UNAVAILABLE'
+})
+
 /** 默认录音选项：严格由契约上限与冻结 ASR 档位推导，页面不得放宽。 */
 const DEFAULT_OPTIONS = Object.freeze({
   duration: MAX_DURATION_MS,
@@ -142,6 +156,53 @@ function permissionState() {
       })
     } catch (error) {
       resolve({ state: 'unknown' })
+    }
+  })
+}
+
+/**
+ * 打开微信设置页（**只在用户 tap 里调用**），把「用户回来后的真实授权结果」取回给调用方。
+ *
+ * 为什么这个原语放在录音端口：`wx.openSetting` 是平台能力，页面不得直接引用平台 API
+ * （本文件是录音/授权唯一出口）；而且「设置页是否真的跳了、跳回来时授权改了没改」
+ * 只有平台能回答，页面据此才能如实更新提示（不得自己假定成功）。
+ *
+ * ⛔ 这里**没有**任何自动调用路径（不在 `onLoad`/`onShow` 里、不监听页面显示事件）：
+ * 微信要求 `wx.openSetting` 由用户手势触发，本函数只是把该手势的**唯一**调用点收口到一处。
+ *
+ * 出参**恒为对象**（不返回 `undefined`、不 reject），五种落定各自可辨：
+ *   `{ ok:true,  state:'granted', code:null }`                                  —— 回来时已授权，允许重新录音
+ *   `{ ok:false, state:'denied',  code:'RECORD_SETTING_STILL_DENIED' }`         —— 回来时仍是拒绝（授权**没**变）
+ *   `{ ok:false, state:'unknown', code:'RECORD_SETTING_UNCHANGED' }`            —— 读不到 `scope.record`（无法判断，不假装成功）
+ *   `{ ok:false, state:'unknown', code:'RECORD_SETTING_UNSUPPORTED' }`          —— 平台没有 `wx.openSetting`（**未跳转**）
+ *   `{ ok:false, state:'unknown', code:'RECORD_SETTING_UNAVAILABLE', errMsg }`  —— 抛错／失败回调（未跳转或结果不明）
+ *
+ * @returns {Promise<{ ok:boolean, state:'granted'|'denied'|'unknown', code:string|null, errMsg?:string }>}
+ */
+function openSetting() {
+  if (typeof wx === 'undefined' || wx === null || typeof wx.openSetting !== 'function') {
+    return Promise.resolve({ ok: false, state: 'unknown', code: SETTING_CODES.UNSUPPORTED })
+  }
+  return new Promise(function (resolve) {
+    /** 以平台回传的授权快照落定（**不**用 `permissionState()` 二次猜：那会把"没改"读成"改动"）。 */
+    const settle = function (res) {
+      const authSetting = res && res.authSetting
+      const value = authSetting ? authSetting['scope.record'] : undefined
+      if (value === true) { resolve({ ok: true, state: 'granted', code: null }); return }
+      if (value === false) { resolve({ ok: false, state: 'denied', code: SETTING_CODES.STILL_DENIED }); return }
+      resolve({ ok: false, state: 'unknown', code: SETTING_CODES.UNCHANGED })
+    }
+    try {
+      wx.openSetting({
+        success: function (res) { settle(res) },
+        fail: function (err) {
+          const msg = err && typeof err.errMsg === 'string' && err.errMsg !== '' ? err.errMsg : 'wx.openSetting 失败'
+          resolve({ ok: false, state: 'unknown', code: SETTING_CODES.UNAVAILABLE, errMsg: msg })
+        }
+      })
+    } catch (error) {
+      const msg = error && typeof error.message === 'string' && error.message !== '' ? error.message : 'wx.openSetting 异常'
+      resolve({ ok: false, state: 'unknown', code: SETTING_CODES.UNAVAILABLE, errMsg: msg })
     }
   })
 }
@@ -315,7 +376,8 @@ function createRecorderPort() {
 
     /**
      * 开始录音。**先读授权状态**：已明确被拒 ⇒ 不调用 `start()`，直接如实报 `RECORD_AUTH_DENIED`
-     * （避免无意义的平台调用与弹窗），由页面引导到设置页。
+     * （避免无意义的平台调用与弹窗），由页面用本文件的 `openSetting()` 原语引导到设置页
+     * （只由用户 tap 触发；本端口不自动跳转）。
      */
     start: function (options) {
       if (released) return Promise.resolve(failure(CODES.UNAVAILABLE, '录音端口已释放'))
@@ -469,9 +531,11 @@ module.exports = {
   RECORD_FORMAT: RECORD_FORMAT,
   ALLOWED_FORMATS: ALLOWED_FORMATS.slice(),
   CODES: CODES,
+  SETTING_CODES: SETTING_CODES,
   mimeForFormat: mimeForFormat,
   platformSupported: platformSupported,
   permissionState: permissionState,
+  openSetting: openSetting,
   support: support,
   createRecorderPort: createRecorderPort
 }
