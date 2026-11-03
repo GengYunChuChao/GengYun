@@ -23,14 +23,16 @@
 import { idempotencyKeyHashHex, idempotencyScope } from '../auth/idempotency.ts';
 import { ApiError } from '../errors.ts';
 import type { PublishedContentRef } from './content-source.ts';
+import { mediaRetentionDeadline } from './retention.ts';
 
 /**
  * 一个媒体登记册行的**服务层视图**（明文对象键 + 毫秒时间戳）。
  *
  * 列映射见 `store-pg.ts`：`createdAt/updatedAt/expiresAt` ↔ `timestamptz`，`rawRef` ↔
  * `media.object_ref_cipher`，`derivativeRef` ↔ `media_derivatives.object_ref_cipher`。
- * **没有** `metadata_removed`：0001 的表没有这一列，EXIF 剥离结果只在 `completeUpload`
- * 的当次响应里出现，不冒充可持久化事实。
+ * `expiresAt` 是**保留截止时刻**（见 `retention.ts`）：`null` = 无日历到期（活账号的私有
+ * 媒体原则保存至注销；注销受理后写成 `now + 7×24h`），非空且已过 = 该行对象必须回收。
+ * **没有** `metadata_removed`：0001 没有这一列，EXIF 剥离只在 `completeUpload` 响应里出现。
  */
 export interface MediaRecord {
   id: string;
@@ -47,7 +49,7 @@ export interface MediaRecord {
   derivativeRef: string | null;
   createdAt: number;
   updatedAt: number;
-  expiresAt: number;
+  expiresAt: number | null;
 }
 
 /** 一次社区媒体读授权（`community_media_grants` 行的服务层视图；token 只存摘要）。 */
@@ -273,6 +275,37 @@ export interface MediaStore {
    * 重复调用返回 0（幂等）。
    */
   deleteObjectCleanup(objectRef: string): Promise<number>;
+
+  /**
+   * **扫到期行**（清扫器用）：`expiresAt` 非空且 `<= atMs`，且状态落在 `states` 内。
+   *
+   * 为什么不复用 {@link listMediaByState} 再在内存里筛：`ready` 是全量语料，每 15 分钟把整库
+   * 的 `ready` 行拉进进程只为筛掉绝大多数未到期的行，等于用一次全表扫换一次全表扫。真库实现
+   * 在 SQL 侧收窄成 `expires_at IS NOT NULL AND expires_at <= to_timestamp($2/1000.0)`。
+   */
+  listDueMedia(states: readonly string[], atMs: number): Promise<MediaRecord[]>;
+  /**
+   * **物理删除该 owner 已到终态、且不再被引用的媒体行**（注销 7 日到期后的收口，不是「删字节」）。
+   *
+   * 真库实现直接调迁移 0035 的 `public.purge_owner_media(uuid)`（`SECURITY DEFINER`，运行时装配
+   * 只有 `EXECUTE`）：它只删 `state IN ('rejected','deleted')` 且不被 11 处引用面引用的行，并在
+   * 删行**之前**校验「对象键已进清理台账」（否则 `G0007 MEDIA_CLEANUP_NOT_QUEUED` 整批中止）
+   * ⇒ 本方法的读数只证明**行**被移除，字节删除仍由台账重试器确认，两者不许混成一句「已清理」。
+   *
+   * 内存实现同语义（终态 + 两个对象键都已清空），让替身不会被真库的引用面差别掩盖。
+   */
+  purgeOwnerMediaRows(ownerId: string): Promise<PurgeOwnerMediaRowsResult>;
+}
+
+/**
+ * `purgeOwnerMediaRows` 的读数（区别于 {@link PurgeOwnedMediaResult} 的「已登记待删」）：
+ * `rowsDeleted` 是真的从 `public.media` 删掉的行数；`rowsRetainedByReference` 是被 0035 的
+ * 引用面挡下、**仍然存在**的行数（残余，必须在报告里如实登记，不许当成已清）。
+ */
+export interface PurgeOwnerMediaRowsResult {
+  rowsDeleted: number;
+  derivativesDeleted: number;
+  rowsRetainedByReference: number;
 }
 
 /** 幂等键域：主体（owner） + 方法 + 路由模板。与 `auth/idempotency.ts:111-113` 同一格式。 */
@@ -366,6 +399,12 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
     async purgeOwnedMedia(ownerId) {
       const owner = requirePurgeOwnerId(ownerId);
       const at = now();
+      /**
+       * 注销受理后该行对象的保留截止时刻（`docs/implementation-requirements.md:278`：在线个人数据／
+       * 私有原媒体 7 日内删除）。只在行上还没有期限时写入：重试一次注销**不许**把 7 日窗口往后推，
+       * 否则「重试」就能无限延长保留期。
+       */
+      const deadline = mediaRetentionDeadline(at);
       /** 本次交到台账的对象键（去重）：同一个对象键只登记一次，重试器按行扫描，不能越重试越多。 */
       const registered = new Set<string>();
       let softHidden = 0;
@@ -396,7 +435,8 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
             createdAt: existing === undefined ? at : existing.createdAt,
           });
         }
-        if (!liveCommunityImage && fresh.length === 0) continue;
+        const needsDeadline = record.expiresAt === null;
+        if (!liveCommunityImage && fresh.length === 0 && !needsDeadline) continue;
         // 引用清空 ⇒ 行内容变了：`revision` 与 `updatedAt` 一起推进（与服务层「读快照 ⇒ 条件写」同口径，
         // 迟到的 `complete`/`delete` 会因此拿到 REVISION_CONFLICT 而不是把已清空的行覆写回去）。
         media.set(id, {
@@ -406,6 +446,7 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
           updatedAt: at,
           rawRef: null,
           derivativeRef: null,
+          expiresAt: needsDeadline ? deadline : record.expiresAt,
         });
       }
       return { softHidden, objectsRegistered: registered.size };
@@ -413,6 +454,31 @@ export function createMemoryMediaStore(options: { now?: () => number } = {}): Me
     async listMediaByState(states) {
       const wanted = new Set(states);
       return [...media.values()].filter((record) => wanted.has(record.state)).map(copyRecord);
+    },
+    async listDueMedia(states, atMs) {
+      const wanted = new Set(states);
+      return [...media.values()]
+        .filter((record) => wanted.has(record.state))
+        .filter((record) => record.expiresAt !== null && record.expiresAt <= atMs)
+        .map(copyRecord);
+    },
+    async purgeOwnerMediaRows(ownerId) {
+      const owner = requirePurgeOwnerId(ownerId);
+      let rowsDeleted = 0;
+      let rowsRetainedByReference = 0;
+      for (const [id, record] of [...media]) {
+        if (record.ownerId !== owner) continue;
+        if (record.state !== 'rejected' && record.state !== 'deleted') continue;
+        // 与 0035 的「入队先于删行」同口径：对象键还在引用里（未确认删除）⇒ 不许删行，
+        // 否则重试依据随行一起消失。内存实现没有跨表的 media_id 引用面，故只剩这一条判据。
+        if (record.rawRef !== null || record.derivativeRef !== null) {
+          rowsRetainedByReference += 1;
+          continue;
+        }
+        media.delete(id);
+        rowsDeleted += 1;
+      }
+      return { rowsDeleted, derivativesDeleted: 0, rowsRetainedByReference };
     },
     async countMedia() {
       return media.size;

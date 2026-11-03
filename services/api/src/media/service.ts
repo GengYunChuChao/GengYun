@@ -58,8 +58,8 @@ import {
   validateCompleteInput,
   validateUploadInput,
 } from '../../../../packages/media/index.mjs';
-import type { MediaObjectStore, PresignedHandle } from './object-store.ts';
-import { createUnwiredObjectStore } from './object-store.ts';
+import { createUnwiredObjectStore, type MediaObjectStore, type PresignedHandle } from './object-store.ts';
+import { MEDIA_RETENTION_EXPIRED } from './retention.ts';
 import type { PublishedContentRef, PublishedContentSource } from './content-source.ts';
 import { createClosedContentSource } from './content-source.ts';
 import type {
@@ -232,14 +232,14 @@ export interface AppMediaService {
    *    「父行已经没有引用」的未确认删除对象，例如 CAS=0 的迟到 `complete` 落下的衍生件）。
    *
    * `pendingObjects` = 端口抛错或返回 `false`（**未能确认删除**）而被保留引用的对象数 ⇒ 仍可重试；
-   * `remainingObjects` = 清扫后对象存储中仍然存在的对象数（诊断用）；适配器不提供枚举时为 `null`（⛔ 不是失败）。
+   * `remainingObjects` = 清扫后对象存储中仍然存在的对象数（诊断用）；适配器不提供枚举时为 `null`（⛔ 不是失败）。`retention` 把其中 `failure_code = 'retention_expired'` 的那部分单列成「过期回收」三段读数，其余算「孤儿重试」（⛔ 两笔不许混成一个数）。
    */
   cleanupOrphans(): Promise<{
     removedObjects: number;
     revokedGrants: number;
     pendingObjects: number;
     remainingObjects: number | null;
-  }>;
+  } & { retention: { objects: number; pending: number; grants: number } }>;
   stats(): Promise<{ mediaCount: number; objectCount: number | null; grantCount: number }>;
   /**
    * **仅服务端/测试用**：读取某条记录的私有对象键（用于在测试里模拟「客户端直传对象存储」）。
@@ -530,8 +530,8 @@ export function createFailClosedMediaService(reason: string): AppMediaService {
       removedObjects: number;
       revokedGrants: number;
       pendingObjects: number;
-      remainingObjects: number;
-    }> {
+      remainingObjects: number | null;
+    } & { retention: { objects: number; pending: number; grants: number } }> {
       throw fail();
     },
     async stats(): Promise<{ mediaCount: number; objectCount: number; grantCount: number }> {
@@ -807,7 +807,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
     return record;
   }
 
-  /** 上传句柄 = 对象存储预签名 URL + 服务端签发的短效令牌（令牌**不入 URL**，契约 AccessGrant）。 */
+  /** 上传句柄 = 对象存储预签名 URL + 服务端签发的短效令牌（令牌**不入 URL**，契约 AccessGrant）。令牌 `exp` 取该行的保留截止时刻：`initiated` 行就是 24h 上传窗口；`null`（已完成/无日历到期）时退回 `updatedAt + MEDIA_INITIATED_TTL_MS`，⛔ 不从保留期限借值。 */
   function uploadGrant(record: MediaRecord, handle: PresignedHandle): AccessGrantProjection {
     return {
       url: handle.url,
@@ -818,7 +818,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         mediaId: record.id,
         revision: record.revision,
         ownerId: record.ownerId,
-        exp: record.expiresAt,
+        exp: record.expiresAt ?? record.updatedAt + MEDIA_INITIATED_TTL_MS,
       }),
     };
   }
@@ -1077,10 +1077,10 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
           record.derivativeRef = derivativeRef;
         } else {
           transition(record, 'processing', timestamp);
-          // 音频：以**真实时长**为准覆盖声明值（B2 口径）。
-          if (typeof detected.durationMs === 'number') record.duration_ms = detected.durationMs;
+          if (typeof detected.durationMs === 'number') record.duration_ms = detected.durationMs; // 音频：以真实时长为准覆盖声明值（B2 口径）
         }
         transition(record, 'ready', timestamp);
+        record.expiresAt = null; // 24h 是**上传窗口**不是保留期限：活账号「原则保存至注销」⇒ 无日历到期；注销受理后由 purgeOwnedMedia 写 now+7×24h（见 media/retention.ts）
       } catch (error) {
         // 失败即回收对象（不留孤立对象），再按契约错误码抛出。
         if (!isRejectedRecord(record)) await reject(record, 'validation_failed', expected);
@@ -1413,7 +1413,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       const timestamp = at();
       let expired = 0;
       for (const record of await store.listMediaByState(['initiated'])) {
-        if (record.state === 'initiated' && record.expiresAt <= timestamp) {
+        if (record.state === 'initiated' && record.expiresAt !== null && record.expiresAt <= timestamp) {
           // 只有真的把 `rejected` 落库才算「过期了一条」：条件写 0 行说明这行已经被并发的
           // 删除/完成推进过，过期结论不成立，也不许把先到者的终态覆盖回去。
           if (await reject(record, 'expired', snapshotOf(record))) expired += 1;
@@ -1426,6 +1426,12 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       let removedObjects = 0;
       let pendingObjects = 0;
       let revokedGrants = 0;
+      // R74「分账」：把 `reclaimExpired` 扫掉的那些行（`failure_code = retention_expired`）的三段读数
+      // 单列出来，其余算孤儿重试。台账循环里的对象**没有父行可查** ⇒ 一律算孤儿重试，
+      // ⛔ 不许为了读数好看把它们塞进 retention。
+      let retentionObjects = 0;
+      let retentionPending = 0;
+      let retentionGrants = 0;
       // 本轮已经试过的对象键：台账扫描**跳过**它们，避免同一个对象在一轮里被删两次、
       // 也避免 pending 被重复计数（否则「一次清扫重试了几次」这个读数就没意义了）。
       const attemptedThisSweep = new Set<string>();
@@ -1437,7 +1443,13 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         );
         removedObjects += outcome.removed;
         pendingObjects += outcome.pending;
-        revokedGrants += await revokeGrantsForMedia(record.id, timestamp);
+        const revoked = await revokeGrantsForMedia(record.id, timestamp);
+        revokedGrants += revoked;
+        if (record.failure_code === MEDIA_RETENTION_EXPIRED) {
+          retentionObjects += outcome.removed;
+          retentionPending += outcome.pending;
+          retentionGrants += revoked;
+        }
         // 回收结果落库：否则重启后同一个键会被再次尝试删除（pending 永远不收敛）。
         // 但清理器读到的也是快照，所以仍是条件写：期间被并发删除/推进（revision 变了）时
         // 0 行即放弃落库——对象回收本身已发生且可重入，下一轮按真行继续收敛。
@@ -1474,6 +1486,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
         revokedGrants,
         pendingObjects,
         remainingObjects: await diagnosticObjectCount(objectStore),
+        retention: { objects: retentionObjects, pending: retentionPending, grants: retentionGrants },
       };
     },
     async stats() {
@@ -1492,7 +1505,96 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
       return { rawRef: record.rawRef, derivativeRef: record.derivativeRef };
     },
   };
-  return service;
+
+  /**
+   * **按保留期限回收 `ready` 行**（R74）。
+   *
+   * 扫面用 `store.listDueMedia(['ready'], now)`（真库侧 `expires_at IS NOT NULL AND expires_at <= $2`），
+   * 所以不需要「先把全量 `ready` 语料拉进进程再筛」。为什么只扫 `ready`：`completeUpload` 的
+   * `uploaded`/`processing` 只在内存里过渡、结尾一次性条件写落库 ⇒ 库内 `media.state` 实际只有
+   * `initiated`/`ready`/`rejected`/`deleted`；`initiated` 归 `expireInitiated`，`rejected`/`deleted`
+   * 归 `cleanupOrphans`，`ready` 在这之前**没有任何扫描面**（这正是 R74 要修的缺口）。
+   *
+   * 这里只**推进状态**（`ready → deleting → deleted` + `failure_code = retention_expired`）：状态机
+   * 没有 `ready → deleted` 直连（`packages/media/constants.mjs` 的 `MEDIA_STATE_TRANSITIONS`），所以
+   * 照 `deleteMedia` 的办法在内存里走两步、最后**一次**条件写落 `deleted`。对象删除、台账重试、
+   * 撤销授权三段仍由同一轮的 `cleanupOrphans` 做（它扫 `rejected`/`deleted`）⇒ 全仓只有一份删除实现。
+   */
+  async function reclaimExpired(): Promise<{ reclaimed: number }> {
+    const timestamp = at();
+    let reclaimed = 0;
+    for (const record of await store.listDueMedia(['ready'], timestamp)) {
+      if (record.state !== 'ready') continue;
+      // 到期判据（R74 的唯一判据）：`expires_at` 是**绝对**的保留截止时刻，`null` = 无日历到期
+      // ⇒ 活账号的私有媒体（「原则保存至注销」）永远不在这里被回收。
+      if (record.expiresAt === null || record.expiresAt > timestamp) continue;
+      const expected = snapshotOf(record);
+      transition(record, 'deleting', timestamp);
+      transition(record, 'deleted', timestamp);
+      record.failure_code = MEDIA_RETENTION_EXPIRED;
+      record.revision += 1;
+      // 与 `deleteMedia` 同口径：只有真的把 `deleted` 落库才算回收了一条；0 行说明这行在
+      // 我们读快照之后被并发推进过（例如用户自己删了），本轮不重复记账。
+      if ((await store.saveMediaIfCurrent(record, expected)) === 1) reclaimed += 1;
+    }
+    return { reclaimed };
+  }
+
+  /**
+   * **物理删除已到终态、且不再被引用的媒体行**（R74：注销 7 日到期后的收口）。
+   *
+   * 为什么按 owner 逐个调 `store.purgeOwnerMediaRows`、而不是一条 `DELETE … WHERE`：运行时对
+   * `public.media` **没有 DELETE 授权**（删除语义是状态机），删行只能走迁移 0035 的
+   * `public.purge_owner_media(uuid)`；它按 owner 收窄、先校验「对象键已进清理台账」（`G0007`）、
+   * 并跳过仍被作业行/社区帖子 `media_ids` 等引用的行。那些被跳过的行是**残余**
+   * （`rowsRetainedByReference`）：⛔ 不许并进「已清理」，⛔ 也不许在失败时静默返回 0。
+   */
+  async function purgeRetiredRows(): Promise<{
+    ownersScanned: number;
+    ownersPurged: number;
+    rowsDeleted: number;
+    derivativesDeleted: number;
+    rowsRetainedByReference: number;
+    failedOwners: number;
+    lastFailureCode: string | null;
+  }> {
+    const owners = new Set<string>();
+    for (const record of await store.listMediaByState(['rejected', 'deleted'])) owners.add(record.ownerId);
+    let ownersPurged = 0;
+    let rowsDeleted = 0;
+    let derivativesDeleted = 0;
+    let rowsRetainedByReference = 0;
+    let failedOwners = 0;
+    let lastFailureCode: string | null = null;
+    for (const ownerId of owners) {
+      try {
+        const outcome = await store.purgeOwnerMediaRows(ownerId);
+        ownersPurged += 1;
+        rowsDeleted += outcome.rowsDeleted;
+        derivativesDeleted += outcome.derivativesDeleted;
+        rowsRetainedByReference += outcome.rowsRetainedByReference;
+      } catch (error) {
+        // 一个 owner 失败不清零其它 owner 的读数，但**必须**留下失败证据（驱动层据此退出 1）。
+        failedOwners += 1;
+        lastFailureCode = error instanceof ApiError ? error.code : 'UNKNOWN';
+      }
+    }
+    return {
+      ownersScanned: owners.size,
+      ownersPurged,
+      rowsDeleted,
+      derivativesDeleted,
+      rowsRetainedByReference,
+      failedOwners,
+      lastFailureCode,
+    };
+  }
+
+  // 两个清扫面用 `Object.assign` 挂上去，而不是写进上面的对象字面量：字面量的声明类型是
+  // `AppMediaService`，多出来的成员会被 TS 判成 excess property。`Object.assign` 的返回类型是
+  // **交叉类型**，驱动层（`MediaPurgePort`）因此看得见新方法，而 `AppMediaService` 的声明面
+  // 一行不动（它被 `docs/**` 按行号引用）。同理：两个函数体都定义在 1400 行之后，不推动任何锚点。
+  return Object.assign(service, { reclaimExpired, purgeRetiredRows });
 }
 
 /**

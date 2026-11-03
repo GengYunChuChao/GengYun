@@ -63,23 +63,40 @@ function apiError(code, message, { retryable = false } = {}) {
 }
 
 /**
- * 假媒体服务端口：形状与 `createAppMediaService()` 返回值的三个方法是同一套契约。
+ * 假媒体服务端口：形状与 `createAppMediaService()` 返回值的方法是同一套契约。
  *
  * `objectPort(ref)` 模拟**对象存储端口**（`MediaObjectStore.deleteObject`）：返回 `true` 才算删掉；
  * 返回 `false` 或抛错 ⇒ 该引用与它的台账行都留着、计入 `pendingObjects`
  * （这就是 `service.ts:704-751` 的口径，本夹具照抄，供驱动层的记账用例使用）。
+ *
+ * R74 起端口多了两段（`reclaimExpired` / `purgeRetiredRows`，驱动层把它们列进
+ * `assertPortShape()` 的必填清单）——缺任一方法就是「端口没装配」，驱动层必须退 2 而不是报 0 条。
  */
 function createFakeMediaService({
   expired = 0,
+  reclaimed = 0,
   objectRefs = [],
   objectPort = async () => true,
   stats = { mediaCount: 7, objectCount: 3, grantCount: 2 },
   expireError = null,
+  reclaimError = null,
+  purgeRowError = null,
   cleanupError = null,
   statsError = null,
   revokedGrants = 0,
   // `null` = 端口声明「不提供对象枚举」（真实 S3 的形状）；`undefined` = 照替身口径报真实条数。
   remainingObjects,
+  // R74「分账」：`null` = 这个替身不报三段读数（老端口形状，驱动层必须写「未知」而不是 0）。
+  retention = null,
+  retiredRows = {
+    ownersScanned: 0,
+    ownersPurged: 0,
+    rowsDeleted: 0,
+    derivativesDeleted: 0,
+    rowsRetainedByReference: 0,
+    failedOwners: 0,
+    lastFailureCode: null,
+  },
 } = {}) {
   const calls = [];
   const refs = [...objectRefs];
@@ -91,6 +108,16 @@ function createFakeMediaService({
       calls.push('expireInitiated');
       if (expireError !== null) throw expireError;
       return { expired };
+    },
+    async reclaimExpired() {
+      calls.push('reclaimExpired');
+      if (reclaimError !== null) throw reclaimError;
+      return { reclaimed };
+    },
+    async purgeRetiredRows() {
+      calls.push('purgeRetiredRows');
+      if (purgeRowError !== null) throw purgeRowError;
+      return retiredRows;
     },
     async cleanupOrphans() {
       calls.push('cleanupOrphans');
@@ -120,6 +147,7 @@ function createFakeMediaService({
         revokedGrants: state.revokedGrants,
         pendingObjects,
         remainingObjects: remainingObjects === undefined ? state.refs.length : remainingObjects,
+        retention: retention === null ? undefined : retention,
       };
     },
     async stats() {
@@ -143,7 +171,7 @@ test('[1] 正常一轮：先 expireInitiated() 再 cleanupOrphans()，读数与�
 
   const report = await runMediaPurge({ mediaService: fake.mediaService, now: FIXED_NOW });
 
-  assert.deepEqual(fake.calls, ['expireInitiated', 'cleanupOrphans'], '两段的顺序固定：先收到期、再扫孤儿');
+  assert.deepEqual(fake.calls, ['expireInitiated', 'reclaimExpired', 'cleanupOrphans', 'purgeRetiredRows'], '四段的顺序固定：先收上传窗口到期的、再收保留期限到期的，然后扫孤儿，最后物理删终态行');
   assert.equal(report.exitCode, MEDIA_PURGE_EXIT.OK);
   assert.deepEqual(report.failures, []);
   assert.equal(report.expired, 2);
@@ -183,7 +211,7 @@ test('[2] 到期 0 条：仍然跑 cleanupOrphans()（不是「没到期就整�
 
   const report = await runMediaPurge({ mediaService: fake.mediaService, now: FIXED_NOW });
 
-  assert.deepEqual(fake.calls, ['expireInitiated', 'cleanupOrphans']);
+  assert.deepEqual(fake.calls, ['expireInitiated', 'reclaimExpired', 'cleanupOrphans', 'purgeRetiredRows']);
   assert.equal(report.expired, 0);
   assert.equal(report.deleted, 1, '上一轮遗留的孤儿必须在本轮被扫到');
   assert.equal(report.retained, 0);
@@ -201,7 +229,7 @@ test('[3] cleanupOrphans() 抛错 ⇒ 退出码 1 + 一条失败读数，且到�
 
   const report = await runMediaPurge({ mediaService: fake.mediaService, now: FIXED_NOW });
 
-  assert.deepEqual(fake.calls, ['expireInitiated', 'cleanupOrphans'], '第二段抛错不影响第一段已发生的事实');
+  assert.deepEqual(fake.calls, ['expireInitiated', 'reclaimExpired', 'cleanupOrphans', 'purgeRetiredRows'], '第三段抛错不影响前两段已发生的事实，也不许跳过第四段');
   assert.equal(report.exitCode, MEDIA_PURGE_EXIT.FAILED, '有失败读数 ⇒ 1（cron 要能看见）');
   assert.equal(report.expired, 3, '第一段的读数不能被第二段的失败抹掉');
   assert.equal(report.deleted, 0);
