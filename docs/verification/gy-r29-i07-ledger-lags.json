@@ -33,8 +33,8 @@
     {
       "ledger_file": "docs/architecture/contract-status.json",
       "pointer": "dimensions.pagination.blocker",
-      "ledger_line": 4183,
-      "status_field_line": 4152,
+      "ledger_line": 4214,
+      "status_field_line": 4183,
       "status_value": "partial",
       "kind": "台账已订正（原滞后关闭；保留逐字登记以钉住订正后文本）",
       "claimed_sort_absent_from_code": "id_asc",

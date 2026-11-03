@@ -388,6 +388,69 @@ test('历史HTTP：去重（同一任务不产生第二行）、归属隔离、�
   assert.equal(foreignStale.status, 404);
 });
 
+test('历史HTTP：单条读面 GET /history/{id} —— 与列表项同形、状态重算、强 ETag、他人与不存在同形 404', async (t) => {
+  const h = await fixture(t);
+  const rows = recognitionRows(h.a.user.id, 'succeeded');
+  await h.recognitionStore.insertJob(rows.job);
+  await h.recognitionStore.insertRecognition(rows.recognition);
+  const appended = await append(h.app, { owner_id: h.a.user.id, job_state: 'queued' });
+  assert.equal(appended.created, true);
+
+  const listed = (await h.call('GET', HISTORY)).body.data.items[0];
+  const detail = await h.call('GET', `${HISTORY}/${listed.id}`);
+  assert.equal(detail.status, 200);
+  assert.equal(detail.cache, 'no-store');
+  assert.equal(detail.etag, `"${listed.revision}"`, '单条读面返回资源表示 ⇒ 回该 revision 的强 ETag');
+  assert.deepEqual(detail.body.data, listed, '单条读面必须与列表项同形（同一个 History schema，不新造详情 schema）');
+  assert.deepEqual(Object.keys(detail.body.data).sort(), [...HISTORY_KEYS].sort());
+  assert.deepEqual(Object.keys(detail.body.data.target_ref).sort(), [...TARGET_REF_KEYS].sort());
+  // 读取时重算：入库 `queued`、实时 `succeeded` ⇒ 单条读面同样以实时值为准。
+  assert.equal(detail.body.data.job_state, 'succeeded', '单条读面也必须读取时重查任务状态，不得直接信存储字段');
+  for (const internal of ['job_id', 'event_key', 'owner_id']) {
+    assert.equal(Object.hasOwn(detail.body.data, internal), false, `内部字段不得出契约：${internal}`);
+  }
+
+  // 他人与不存在**同形** 404（不泄露存在性），且不带头 ETag。
+  const foreign = await h.call('GET', `${HISTORY}/${listed.id}`, h.b);
+  const absent = await h.call('GET', `${HISTORY}/${ABSENT}`, h.b);
+  assert.equal(foreign.status, 404);
+  assert.equal(absent.status, 404);
+  assert.deepEqual(foreign.body.error, absent.body.error, '他人历史与不存在必须同形（不泄露存在性）');
+  assert.equal(foreign.etag, null);
+  assert.equal(absent.etag, null);
+
+  // 参数与鉴权：非 uuid ⇒ 400；未登录 ⇒ 401。
+  assert.equal((await h.call('GET', `${HISTORY}/not-a-uuid`)).status, 400);
+  assert.equal((await h.call('GET', `${HISTORY}/${listed.id}`, null)).status, 401);
+});
+
+test('历史HTTP：翻页超出 50 条后最老那条仍能按 id 直读（旧实现只扫首页 ⇒ 详情页打不开）', async (t) => {
+  const h = await fixture(t);
+  const ids = [];
+  for (let index = 0; index < 51; index += 1) {
+    h.clock.advance(1000);
+    const suffix = String(index).padStart(12, '0');
+    // 每行必须有**不同目标**（同 `(owner_id, kind, target_id)` 是去重键，复用同一个目标只会得到一行）。
+    const created = await append(h.app, {
+      owner_id: h.a.user.id,
+      event_key: `evt-bulk-${index}`,
+      target_ref: { type: 'recognition', id: `00000000-0000-4000-8a00-${suffix}`, revision: 2 },
+      job_id: `00000000-0000-4000-8b00-${suffix}`,
+    });
+    assert.equal(created.created, true);
+    ids.push(created.history.id);
+  }
+  const first = await h.call('GET', `${HISTORY}?limit=50`);
+  assert.equal(first.body.data.items.length, 50, '列表首页上限 50');
+  const oldest = ids[0];
+  assert.equal(first.body.data.items.some((item) => item.id === oldest), false, '最老那条不在首页里');
+  const detail = await h.call('GET', `${HISTORY}/${oldest}`);
+  assert.equal(detail.status, 200, '超出首页窗口的记录必须能按 id 直读');
+  assert.equal(detail.body.data.id, oldest);
+  assert.equal(detail.body.data.created_at, new Date(START + 1000).toISOString());
+  assert.equal(detail.etag, `"${detail.body.data.revision}"`);
+});
+
 test('历史HTTP：删除历史行 + 级联披露（未接线如实说明，接线后只启动不声称完成）', async (t) => {
   const pushed = [];
   const wired = createWiredHistoryCascadePort({

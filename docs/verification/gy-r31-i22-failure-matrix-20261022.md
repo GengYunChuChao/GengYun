@@ -134,7 +134,7 @@
 | `createFavorite` POST /favorites | ● `C1-02@65` | ○ | ○ | ● `C6-03@229`（同键异体）；`favorites-http.test.mjs:155` | ● 同 `:318` | ○ | ● `C6-04@230`、`C7-13@269` | ○ |
 | `deleteFavorite` DELETE /favorites/:id | ● `C1-03@66` | ○ | ● `C2-14@116`；`favorites-http.test.mjs:188`（他人）、`:189`（不存在）、`:196`（他人+旧 ETag）、`:225`（二次删） | ● `favorites-http.test.mjs:211,390`（`REVISION_CONFLICT`）；`C6-*`；428 见下 | ● 同 `:318` | ○ | ● `favorites-http.test.mjs:382`（**428** `REVISION_REQUIRED`）、`C7-02@258` | ○ |
 | `listHistory` GET /history | ● `C1-04@67`（该文件**没有** `listHistory` 的 401 断言；原挂在这里的 `history-http.test.mjs:477` 实为 DELETE 面，已移到下一行） | ○ | — | — | ● `history-http.test.mjs:548,751` | ○ | ● `C2-23@128`（200 对照） | ○ |
-| `deleteHistory` DELETE /history/:id | ● `C1-05@68`；`history-http.test.mjs:477`（匿名 DELETE ⇒ 401，全文件唯一一条 401） | ○ | ● `C2-15@117`；`history-http.test.mjs:381,382,388,743` | ● `history-http.test.mjs:411,469` | ● 同 `:548` | ○ | ● `history-http.test.mjs:461`（428） | ○ |
+| `deleteHistory` DELETE /history/:id | ● `C1-05@68`；`history-http.test.mjs:540`（匿名 DELETE ⇒ 401，全文件唯一一条 401） | ○ | ● `C2-15@117`；`history-http.test.mjs:381,382,388,806` | ● `history-http.test.mjs:474,532` | ● 同 `history-http.test.mjs:611` | ○ | ● `history-http.test.mjs:524`（428） | ○ |
 
 注：这两域是 failmatrix 覆盖**最厚**的域（C1/C2/C4/C6/C7 全有），也是唯二把 **428** 写进断言的域。另：全页的 `C1-xx@NN` 定位符已于 2026-10-23 整体订正（自 `#449` 起 `cases.mjs` 整体下移 12 行，原 `@行` 全部偏小 12），65 个 id 的「改前 → 改后」对照见文末**附录 A**；`listHistory` 那一格原挂的 `history-http.test.mjs:477` 实为 DELETE 面，已移到 `deleteHistory` 行。
 

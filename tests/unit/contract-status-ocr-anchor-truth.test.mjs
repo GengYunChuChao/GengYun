@@ -241,10 +241,15 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * timeout 维度的 evidence 先由 `--reanchor --write-doc` 重锚到 `1004-1030`，随后为满足
  * `doc-anchor-relocation-identity` 的端点映射要求改成 `982-1007`（区间仍含声明行 `:1004`）⇒
  * 两份台账各**多 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-04 第六次同步（R75 历史详情读面片）：新增 `getHistory`（`GET /history/{id}`）⇒
+ * 台账多一条 operation 条目（+32 行 / +2430 字节），`contract-implementation-status.md`
+ * 多一行 operation 行与标题计数（+2 行 / +1821 字节）。`listHistory`/`deleteHistory` 的 evidence
+ * 行号由 `--reanchor --write-doc` 重写（80-83→88-88、85-98→103-105），中文表格同次重生成。
+ * 仍是「正常改台账」（operations 129 → 130），故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 273997, lines: 4434 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196166, lines: 219 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 276427, lines: 4466 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 197987, lines: 221 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
