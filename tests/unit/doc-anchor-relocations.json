@@ -1424,7 +1424,8 @@
     "to": 271,
     "kind": "correction",
     "symbol": "validId",
-    "reason": "同上（acceptance-map 第 1 条与本节表行③引的是同一处）：旧值 224 在 base 上是 \function remember(item, input) {，是既有陈旧锚点；GY-R73 的 +3 行端点映射只会把它搬到 227（仍是 remember）。真值 \u000balidId 在 HEAD :271（module.exports 里的箭头），按符号重锚。"  },
+    "reason": "同上（acceptance-map 第 1 条与本节表行③引的是同一处）：旧值 224 在 base 上是 \function remember(item, input) {，是既有陈旧锚点；GY-R73 的 +3 行端点映射只会把它搬到 227（仍是 remember）。真值 \u000balidId 在 HEAD :271（module.exports 里的箭头），按符号重锚。"
+  },
   {
     "doc": "docs/verification/gy-r31-i14-recon-20261022.md",
     "line": 62,
@@ -1474,5 +1475,16 @@
     "toEnd": 1886,
     "kind": "correction",
     "symbol": "throw commitRefusal(committed.reason);",
-    "reason": "原锚点 `:1808` 在 base（main ef22d5a9）上落在 `author_id: user.userId,`，早已不是「该分支收尾与抛错点」；按符号重取到 HEAD 的 `:1884-1886`（`};` / `}` / `throw commitRefusal(committed.reason);`；2026-11-03 必现化再 +9 行后由 `:1875-1877` 同步）。"  }
+    "reason": "原锚点 `:1808` 在 base（main ef22d5a9）上落在 `author_id: user.userId,`，早已不是「该分支收尾与抛错点」；按符号重取到 HEAD 的 `:1884-1886`（`};` / `}` / `throw commitRefusal(committed.reason);`；2026-11-03 必现化再 +9 行后由 `:1875-1877` 同步）。"
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 223,
+    "target": "docs/architecture/contract-implementation-status.md",
+    "from": 97,
+    "to": 102,
+    "kind": "correction",
+    "symbol": "createTurn",
+    "reason": "旧锚点本来就指错：这一行讲的是问答域 P06/N03 的三个版本串口径，base（b9d91bbc）上的 `docs/architecture/contract-implementation-status.md:97` 却是合成域的 `| `createSynthesis` | POST /speech/synthesis |` 行（不含 `createTurn`）；该行真值是 :102 的 `| `createTurn` | POST /conversations/{id}/turns |`，其证据列正是 `services/api/src/ai/chat-wiring.ts:74-85` 的 live 分支与 `services/api/src/app.ts:2348`/`:2390` 的装配点。本 R73 片只订正 `docs/architecture/ai-ops-spec-status.md` 这行的绝对量词（「一律」→ 四与门），目标台账文件一个字未动，所以走 kind=correction 而不是平移。"
+  }
 ]
