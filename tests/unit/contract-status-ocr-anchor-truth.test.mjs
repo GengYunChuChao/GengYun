@@ -233,10 +233,14 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `contract-implementation-status.md` 多一行（+1 行 / +1680 字节）。仍是「正常改台账」
  * （operations 128 → 129、中文表格由 `verify-contract-status.mjs --write-doc` 重生成），
  * 故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-03 同日第四次同步（同片、同一 PR 的锚点恒等修正）：`tools/doc-anchor-relocation-identity`
+ * 要求「目标文件本提交有改动 ⇒ 行号必须落在该文件自己的端点映射上」，于是 timeout 维度的 evidence
+ * 行号 `977-1003` → `964-989`（少 1 个字符位）；中文表格再由 `--write-doc` 从 JSON 重生成 ⇒
+ * 两个文件各**少 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 273997, lines: 4434 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196166, lines: 219 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 273996, lines: 4434 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196165, lines: 219 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
