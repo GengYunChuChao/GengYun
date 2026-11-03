@@ -232,10 +232,22 @@
     "from": 2469,
     "fromEnd": 2508,
     "to": 2515,
-    "toEnd": 2560,
+    "toEnd": 2566,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
     "reason": "旧锚点本来就指错：2469-2508 是上一轮「按端点映射平移」的产物，落在 OCR 装配段（:2508 是 `ocrPersistenceImageMedia` 的字面量注释、:2509 是 `registerOcrRoutes(`），整段不含 `registerJobRoutes`。本次按符号在 cc10d0a5 实测：`registerJobRoutes(app, config, guards` 在 :2515，六条 `create*JobSource` 实参依次在 :2516／:2522／:2528／:2534／:2542／:2552（对应识别／转写／审核／合成／OCR／问答），收尾 `]));` 在 :2566，引导句「共 6 个」在 :2511。旧窗口里没有这个 symbol、新窗口里有 ⇒ 走 `kind: \"correction\"`，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 73,
+    "target": "services/api/src/app.ts",
+    "from": 2515,
+    "fromEnd": 2560,
+    "to": 2515,
+    "toEnd": 2566,
+    "kind": "correction",
+    "symbol": "]));",
+    "reason": "只修末端、起点不动：这一格的末端 :2560 落在 `createAnswerJobSource` 的 `cancelJob` 函数**体内**（那行 `// 服务未装配（real + 无池）⇒ 该作业不存在（与\"越权/不存在\"同形 404），不让 503 冒充。` 只是体内注释，下面还有 `if (service === null) return null;` 与 `return outcome.data;`），`registerJobRoutes(app, config, guards, createJobRegistry([` 的收尾 `]));` 在 :2566 —— 上一轮把收尾写成 :2560 就是少了这 6 行。起点 :2515 不变、只把末端 2560 → 2566，属于**单端位移**：目标文件本提交未改动，端点恒等规则要求新旧两端都恒等、差值平移也表达不了「只改末端」，所以只能走 `kind: \"correction\"`；登记表自检的「零位移」判据与 `correctionViolation` 同形（起点同**且**末端同才算零位移），因此单端位移是合法登记。symbol 取收尾那行的真实特征 `]));`（整份 app.ts 只出现这一次，且不在旧窗口 2515-2560 里）。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",

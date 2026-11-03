@@ -220,7 +220,7 @@ M4「同义反复」是**测试文件里另写的一个假实现**（`tautologic
   但这**只**证明「这 11 条现在的 exit 与页面写的一样」，不刷新任何一次性读数（unit / suite / pg 三类一条都没碰，见 §5 第 7 条）。
   在**没有** `node_modules` 的机器上 `lint` 会以「未找到本地 TypeScript」失败、`openapi-route-parity` 会以
   `Cannot find package 'fastify'` 失败 ⇒ 这两条按 SKIP 计、`--live` 以 **2** 退出（§5 第 10 条）。
-- 为什么本片是**两个提交**而不是一个：`tests/unit/doc-anchor-relocation-identity.test.mjs:1271`
+- 为什么本片是**两个提交**而不是一个：`tests/unit/doc-anchor-relocation-identity.test.mjs:1317`
   有一条守卫——`git merge-base HEAD origin/main` 与 HEAD 同提交时**直接判红**（「没有判定面却也不是 CI 浅克隆，
   不允许静默通过」）。所以在基线提交 `1f056b8bf033` 上跑全量单测**必然带 1 条结构性红**（`tests 5557 / pass 5553 /
   fail 1`），实测过两次；只有在「本片自己的提交」上重跑，单测才可能真的全绿。
