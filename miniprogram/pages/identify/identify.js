@@ -341,14 +341,20 @@ Page({
       this.setData({ modeNote: modeNoteFor(mode) })
       if (mode === 'real') {
         const mime = mimeOfPath(tempFilePath)
-        if (mime === null) { this.setData({ busy: false, errorText: '无法确定照片类型，请改用 JPG / PNG / WebP。' }); return }
+        if (mime === null) {
+          // 本地预检就判定的「内容问题」：没有任何请求发出，但同样要能被看出是哪一类失败（S4）。
+          this.recordSubmitFailure({ code: 'MEDIA_TYPE_UNSUPPORTED' }, {
+            phase: 'upload', text: '无法确定照片类型，请改用 JPG / PNG / WebP。'
+          })
+          return
+        }
         const info = await readFileInfo(tempFilePath)
         if (!this.isCurrentOperation(gen)) return
         // 上传前尺寸预检：超限直接给可操作提示，**不发出** POST /media/uploads（服务端必拒）。
         if (info.size > RECOGNITION_MAX_BYTES) {
-          this.setData({
-            busy: false,
-            errorText: '照片过大（' + (info.size / MIB).toFixed(1) + ' MiB）：识别图上限 ' + (RECOGNITION_MAX_BYTES / MIB) +
+          this.recordSubmitFailure({ code: 'MEDIA_TOO_LARGE' }, {
+            phase: 'upload',
+            text: '照片过大（' + (info.size / MIB).toFixed(1) + ' MiB）：识别图上限 ' + (RECOGNITION_MAX_BYTES / MIB) +
               ' MiB，请重新拍摄或压缩后再试；本条未上传任何照片。'
           })
           return
@@ -363,7 +369,7 @@ Page({
     } catch (error) {
       if (!this.isCurrentOperation(gen)) return
       if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
-      this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
+      this.recordSubmitFailure(error, { phase: 'upload' })
       return
     }
     try {
@@ -375,8 +381,36 @@ Page({
     } catch (error) {
       if (!this.isCurrentOperation(gen)) return
       if (isGateLossError(error)) { this.closePrivate(identifyApi.messageFor(error)); return }
-      this.setData({ busy: false, errorText: identifyApi.messageFor(error) })
+      this.recordSubmitFailure(error, { phase: 'submit' })
     }
+  },
+
+  /**
+   * 把「提交阶段（上传照片 / 建立任务）的失败」接进既有 `state-view`（S4）。
+   *
+   * 三条口径：
+   *   1. **保留原 `errorText` 逐字不变**：它由 `identifyApi.messageFor` 按码给出站点特定措辞
+   *      （既有回归用例逐字钉住）；新增的 stateView 只补"归类 + 重试入口"，不改写已有文案。
+   *   2. **如实标注这不是服务端任务状态**：`jobStateKnown:false` 且 `desc` 里写明
+   *      （见 `submitFailureView`），避免把"提交没成功"读成"服务端把识别判失败了"。
+   *   3. 重试入口由既有 WXML 自动给出（`!branchInfo && stateView.retryable` ⇒ 「重新识别」）；
+   *      不可重试的码（真实对象存储未接线/账号停用/权限范围/缺用途授权）**不给**这个按钮。
+   *
+   * @param {object} error `identifyApi` 抛出的 `{ code, ... }`
+   * @param {{ phase?: 'upload'|'submit', text?: string }} [options] 站点与要展示的原样文案
+   */
+  recordSubmitFailure: function (error, options) {
+    const opts = options && typeof options === 'object' ? options : {}
+    const code = error && typeof error.code === 'string' && error.code !== '' ? error.code : 'UNAVAILABLE'
+    const phase = opts.phase === 'submit' ? 'submit' : 'upload'
+    this.setData({
+      busy: false,
+      errorText: typeof opts.text === 'string' ? opts.text : identifyApi.messageFor(error),
+      stateView: submitFailureView(code, phase),
+      // 六类「边界分支」只描述服务端任务的分支归类；提交阶段没有任务，一律清空（不给分支假象）。
+      branch: null,
+      branchInfo: null
+    })
   },
 
   // -------------------------------------------------------------- 标签 OCR（#10）
@@ -1402,4 +1436,111 @@ function modeNoteFor(mode, kind) {
   if (mode === 'preset_demo') return '服务端为 preset_demo（预设演示）模式：结果明显标注为演示，不代表真实' + noun + '。'
   if (mode === 'stub') return '服务端为 stub（替身）模式：结果来自替身，仅供联调，不代表真实' + noun + '。'
   return '未取得服务端执行模式，' + noun + '结果状态未确认。'
+}
+
+// ---------------------------------------------------------------- 提交失败归类（S4）
+
+/**
+ * 「提交阶段失败」的站点归类（S4）：让用户看得出**是网络、是服务端、还是照片（内容）问题**。
+ *
+ * 为什么必须在页面里归类、而不是直接复用 `JOB_STATE_VIEWS` 的七类：
+ *   这里的失败都发生在识别任务**建立之前**（上传私有照片 `POST /media/uploads`、
+ *   或建立任务 `POST /recognitions` 失败），服务端**没有** JobState 可查。
+ *   若把它写成"任务状态 failed"，用户会以为是"服务端把这次识别判失败了"，那是错误归因。
+ *   因此视图额外带 `jobStateKnown:false` / `phase` / `errorCode` / `site`，
+ *   且 `desc` 必须逐字写明这一条（有回归用例钉住这句）。
+ *
+ * 码集与 `utils/identify-api.js` 的 `messageFor` 同源；**未知码按服务端类处理**
+ * （不把说不清原因的失败归因给用户的照片或网络）。
+ */
+const SUBMIT_FAILURE_SITES = Object.freeze({
+  // 网络/传输层：照片**没有确定地**到服务端，或通道本身不可用（这类不是服务端的判断）。
+  NETWORK_UNCERTAIN: 'network',
+  MEDIA_CHANNEL_UNAVAILABLE: 'network',
+  INPUT_UNCERTAIN: 'network',
+  // 服务端：受理/计时/配额/响应可核对性。
+  PROVIDER_TIMEOUT: 'server',
+  PROVIDER_QUOTA_EXCEEDED: 'server',
+  PROVIDER_OUTCOME_UNKNOWN: 'server',
+  INVALID_RESPONSE: 'server',
+  UNAVAILABLE: 'server',
+  PROVIDER_UNAVAILABLE: 'server',
+  REVISION_CONFLICT: 'server',
+  IDEMPOTENCY_CONFLICT: 'server',
+  NOT_FOUND: 'server',
+  // 照片（内容）本身：类型/体积/对象失效/输入不合约。
+  INVALID_REQUEST: 'content',
+  MEDIA_TOO_LARGE: 'content',
+  MEDIA_TYPE_UNSUPPORTED: 'content',
+  OBJECT_UNAVAILABLE: 'content',
+  INVALID_INPUT: 'content',
+  IDEMPOTENCY_KEY_REQUIRED: 'content',
+  REVISION_REQUIRED: 'content',
+  // 授权/账号层面：用户或运维的动作，重试同样无效。
+  CONSENT_REQUIRED: 'permission',
+  SCOPE_DENIED: 'permission',
+  ACCOUNT_INACTIVE: 'permission'
+})
+
+/**
+ * 这一趟**重试也修不了**的码：真实对象存储未接线（服务端能力缺失）、账号停用、
+ * 会话权限范围不足、缺用途授权。给这些码一个"重新识别"按钮就是在骗用户再撞一次同一面墙。
+ */
+const SUBMIT_FAILURE_NO_RETRY = Object.freeze([
+  'PROVIDER_UNAVAILABLE', 'ACCOUNT_INACTIVE', 'SCOPE_DENIED', 'CONSENT_REQUIRED'
+])
+
+/** 各站点的一句话归类（标题）与可操作指引；`重试` 由 `retryable` 决定，不在这里承诺。 */
+const SUBMIT_FAILURE_LABELS = Object.freeze({
+  network: Object.freeze({
+    title: '网络没有走通：这次识别没有提交成功',
+    hint: '照片上传与建立任务都没有拿到确定的答复，先确认网络（或稍后）再试。'
+  }),
+  server: Object.freeze({
+    title: '服务端暂时无法受理：这次识别没有提交成功',
+    hint: '服务端拒绝了这次提交或给出无法核对的结果，稍后再试；这不是照片本身的问题。'
+  }),
+  content: Object.freeze({
+    title: '照片不符合识别用途限制：这次没有提交',
+    hint: '识别图的用途限制（≤2 MiB、仅 JPG / PNG / WebP）或照片状态让服务端拒收，请重新拍摄或压缩后再试。'
+  }),
+  permission: Object.freeze({
+    title: '未获授权：服务端拒绝受理这次识别',
+    hint: '这是授权/账号层面的拒绝，不是照片或网络的问题；按页面下方的说明处理后再来。'
+  })
+})
+
+/** 错误码 → 站点（未知码归 `server`：无法归因时不把责任推给用户的照片或网络）。 */
+function submitFailureSite(code) {
+  const site = SUBMIT_FAILURE_SITES[code]
+  return typeof site === 'string' ? site : 'server'
+}
+
+/**
+ * 提交阶段失败的视图模型（与 `viewModelForJob().view` 同形状，页面只喂给 `state-view` 与状态条）。
+ *
+ * `state:'failed'` 是七类里唯一能承载"这一次没成功"的成员；**是不是服务端任务状态由
+ * `jobStateKnown:false` 说清楚**，`desc` 里也逐字写明，避免被读成"服务端任务失败了"。
+ */
+function submitFailureView(code, phase) {
+  const errorCode = typeof code === 'string' && code !== '' ? code : 'UNAVAILABLE'
+  const site = submitFailureSite(errorCode)
+  const label = SUBMIT_FAILURE_LABELS[site]
+  const stage = phase === 'submit'
+    ? '照片已上传，但建立识别任务（提交）这一步没有完成'
+    : '照片上传这一步没有完成'
+  const retryable = SUBMIT_FAILURE_NO_RETRY.indexOf(errorCode) === -1
+  const retryText = retryable
+    ? '可以点「重新识别」再试一次。'
+    : '这一类问题重试也不会好转：先按上面的说明处理（该能力/授权尚未就绪），再来重试。'
+  return {
+    state: 'failed', tone: 'error', component: 'error',
+    title: label.title,
+    desc: stage + '：失败发生在识别任务建立之前，服务端没有可查的任务状态'
+      + '（本块显示的 JobState 只是本页对这一次失败的归类，不是服务端任务状态）。'
+      + label.hint + retryText + '错误码 ' + errorCode + '。',
+    terminal: true, success: false, retryable: retryable,
+    site: site, phase: phase === 'submit' ? 'submit' : 'upload',
+    errorCode: errorCode, jobStateKnown: false
+  }
 }

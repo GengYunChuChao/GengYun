@@ -203,7 +203,7 @@ Page({
     autoSpeakNote: '',
     failureProbe: '',
     probing: false,
-    // 录音控件（独立）：默认**不录音**，各态逐态可分辨（idle/recording/stopped/uploading/failed）
+    // 录音控件（独立）：默认**不录音**，各态逐态可分辨（idle/recording/stopped/uploading/failed/denied）。`denied` 与 `failed` 必须分开——`denied` 是**麦克风授权**问题（去微信设置页能修），只有它才出现「打开设置」引导与按钮；`failed` 是其它失败（能力缺失/中断/上传失败/超限），去设置页修不了，给按钮就是把用户引向错误动作（见 `onOpenSetting`）。
     recordState: 'idle',
     recordLabel: '开始录音',
     recording: false,
@@ -776,12 +776,21 @@ Page({
     if (!this.isCurrent(epoch)) return
     if (started.ok !== true) {
       // 授权被拒 / 能力失败 / 被中断：**没有任何音频被采集**，如实说明并回到未录音态。
+      //
+      // 权限问题单独落 `denied`（S3）：只有这一态才出现「打开设置」引导与按钮。
+      // 码值与 `utils/recorder-port.js` 的 `CODES.AUTH_DENIED`／`CODES.DENIED` 逐字一致
+      // （回归用例钉住这两个字面量：改端口码必须同步改这里，否则 `denied` 会静默退回 `failed`）。
+      // 这里不用 `recorderPort.CODES.*`：页面在测试里可能被装配成只提供
+      // `support`/`createRecorderPort`/`openSetting` 的端口替身，模块级读 `CODES` 会让整页加载失败。
+      const denied = started.code === 'RECORD_AUTH_DENIED' || started.code === 'RECORD_PERMISSION_DENIED'
       this.setData({
-        recording: false, recordState: 'failed', recordLabel: '开始录音',
+        recording: false, recordState: denied ? 'denied' : 'failed', recordLabel: '开始录音',
         recordElapsedMs: 0,
         recordStageNote: voiceApi.recordUploadMessageFor({ code: started.code }),
         uploadErrorCode: typeof started.code === 'string' ? started.code : 'RECORD_FAILED',
-        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
+        uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: '',
+        // 每次新的拒绝都回到「还没去过设置页」的原始引导（避免上一趟「仍未授权」文案残留成假象）。
+        recordPermissionNote: RECORD_PERMISSION_HINT
       })
       return
     }
@@ -796,6 +805,64 @@ Page({
       // 到达契约上限：主动停（平台也会自动停，这里收在同一出口，避免状态分叉）。
       if (that._recTick * RECORD_TICK_MS >= voiceApi.RECORD_MAX_DURATION_MS) that.stopAndUpload()
     }, RECORD_TICK_MS)
+  },
+
+  /**
+   * 用户点「打开设置 · 授权录音」：本页**唯一**允许跳微信设置页的入口。
+   *
+   * 三条硬口径（照 S2 写的，改之前先读）：
+   *   1. **只能在用户 tap 里发生**：`wx.openSetting` 在微信里必须由用户手势触发；本文件没有任何
+   *      自动调用（不在 `onLoad`/`onShow`/`onReady` 里，也不监听 show 事件），跳转只可能来自本 handler。
+   *   2. 跳转结果**以平台回来的真实授权为准**：已授权 ⇒ 回到可重录（`idle`，且**不自动开录**——
+   *      录音仍要用户再点一次按钮）；仍未授权/读不到/跳不成 ⇒ **保持 `denied`** 并只说这一趟的真实结果，
+   *      绝不写「已修复」。
+   *   3. 用 `_settingEpoch` 而不是 `beginOperation()` 判新鲜度：从设置页返回会触发本页 `onShow`
+   *      （其间 `onHide` 已 `releaseAll` → `beginOperation()` 自增），若用操作代次判新鲜，
+   *      **每一次都会把自己这一趟的结果判掉**，按钮就成了"点了没反应"。
+   */
+  onOpenSetting: async function () {
+    if (this.data.guest || this._gone === true) return
+    if (this.data.recordState !== 'denied') return
+    // single-flight：平台弹窗还在，重复点不再叠一次跳转。
+    if (this._settingOpening === true) return
+    this._settingOpening = true
+    this._settingEpoch = (this._settingEpoch || 0) + 1
+    const epoch = this._settingEpoch
+    let result
+    try {
+      result = await recorderPort.openSetting()
+    } catch (error) {
+      // 端口对失败一律 resolve；这里只兜端口自身崩坏，仍然给出**可辨**的落定（不吞成 undefined）。
+      result = { ok: false, state: 'unknown', code: 'RECORD_SETTING_UNAVAILABLE', errMsg: error && error.message }
+    } finally {
+      this._settingOpening = false
+    }
+    if (this._gone === true || this.data.guest === true) return
+    if (this._settingEpoch !== epoch) return
+    // 这一趟期间状态已被别的路径改走（例如用户又点了录音并被拒）：以那条路径的落态为准，不覆盖。
+    if (this.data.recordState !== 'denied') return
+    if (result && result.ok === true) {
+      this.setData({
+        recordState: 'idle', recordLabel: '开始录音', recording: false, recordElapsedMs: 0,
+        recordStageNote: '已获得麦克风授权：可以重新录音（录音仍需你点一次「开始录音」）。',
+        uploadErrorCode: '', recordPermissionNote: RECORD_PERMISSION_HINT
+      })
+      return
+    }
+    const code = result && typeof result.code === 'string' ? result.code : ''
+    let note = '没能完成这次跳转（微信设置页未打开、或返回结果不明）：本页仍不会开始录音、不会采集、不会上传任何音频。'
+      + '可以再点一次「打开设置 · 授权录音」；也可手动在微信「设置 → 授权管理 → 录音」中开启后返回本页重试。'
+    if (code === 'RECORD_SETTING_STILL_DENIED') {
+      note = '已从微信设置页返回，但「录音」授权仍未开启：本页仍然不会开始录音、不会采集、不会上传任何音频。'
+        + '可以再点一次「打开设置 · 授权录音」；也可在微信「设置 → 授权管理 → 录音」里手动开启后返回本页重试。'
+    } else if (code === 'RECORD_SETTING_UNCHANGED') {
+      note = '已从微信设置页返回，但读不到「录音」的授权状态（无法确认是否已开启）：本页不会据此假装已授权，仍不会录音。'
+        + '请在微信「设置 → 授权管理 → 录音」里确认后返回本页重试。'
+    } else if (code === 'RECORD_SETTING_UNSUPPORTED') {
+      note = '当前运行环境没有「打开设置」能力（wx.openSetting 不可用），这一次没有跳转：本页仍不会录音、不会采集、不会上传。'
+        + '请手动在微信「设置 → 授权管理 → 录音」中开启后返回本页重试。'
+    }
+    this.setData({ recordState: 'denied', recordPermissionNote: note })
   },
 
   /**
