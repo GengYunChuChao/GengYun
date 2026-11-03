@@ -1,0 +1,283 @@
+{
+  "kind": "actual native WeChat simulator (devtools) + local stub API + synthetic WeChat identity; not a real device, not a release build",
+  "startedAt": "2026-11-03T05:34:47.334Z",
+  "automationPort": 9458,
+  "viewport": {
+    "windowWidth": 376,
+    "windowHeight": 742,
+    "pixelRatio": 3.5,
+    "SDKVersion": "3.17.3",
+    "platform": "devtools"
+  },
+  "screenshots": [
+    {
+      "file": "00-home-guest.png",
+      "bytes": 51957
+    },
+    {
+      "file": "01-guest-gate-community.png",
+      "bytes": 18224
+    },
+    {
+      "file": "02-after-login.png",
+      "bytes": 41919
+    },
+    {
+      "file": "02-tab-home.png",
+      "bytes": 51410
+    },
+    {
+      "file": "03-tab-community.png",
+      "bytes": 42039
+    },
+    {
+      "file": "04-tab-identify.png",
+      "bytes": 42320
+    },
+    {
+      "file": "05-tab-messages.png",
+      "bytes": 42712
+    },
+    {
+      "file": "06-tab-profile.png",
+      "bytes": 40165
+    }
+  ],
+  "steps": [
+    {
+      "step": "guest-reset",
+      "ok": true,
+      "page": "pages/home/home",
+      "data": {
+        "fontScale": 1,
+        "guest": true,
+        "entries": "[array:3]",
+        "local": true,
+        "busy": false,
+        "loggedIn": false,
+        "diagPassed": null,
+        "previewStatus": "error",
+        "previewItems": "[array:0]",
+        "previewNote": "",
+        "previewMessage": "公开预览服务暂不可用，请稍后重试。",
+        "previewErrorCode": "PROVIDER_UNAVAILABLE",
+        "status": "开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。",
+        "__webviewId__": 4
+      }
+    },
+    {
+      "step": "guest-gate",
+      "ok": true,
+      "page": "pages/login/login",
+      "note": "游客点「社区」Tab 后落点；登录页是门禁画面，不是社区布局证据"
+    },
+    {
+      "step": "login-button",
+      "ok": true,
+      "text": "微信登录"
+    },
+    {
+      "step": "login",
+      "ok": true,
+      "landedAt": "pages/community/community"
+    },
+    {
+      "step": "tab-home",
+      "ok": true,
+      "page": "pages/home/home"
+    },
+    {
+      "step": "tab-community",
+      "ok": true,
+      "page": "pages/community/community"
+    },
+    {
+      "step": "tab-identify",
+      "ok": true,
+      "page": "pages/identify/identify"
+    },
+    {
+      "step": "tab-messages",
+      "ok": true,
+      "page": "pages/messages/messages"
+    },
+    {
+      "step": "tab-profile",
+      "ok": true,
+      "page": "pages/profile/profile"
+    }
+  ],
+  "tabs": [
+    {
+      "name": "home",
+      "expected": "pages/home/home",
+      "ok": true,
+      "data": {
+        "fontScale": 1,
+        "guest": false,
+        "entries": "[array:3]",
+        "local": true,
+        "busy": false,
+        "loggedIn": true,
+        "diagPassed": null,
+        "previewStatus": "error",
+        "previewItems": "[array:0]",
+        "previewNote": "",
+        "previewMessage": "公开预览服务暂不可用，请稍后重试。",
+        "previewErrorCode": "PROVIDER_UNAVAILABLE",
+        "status": "开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。",
+        "__webviewId__": 9
+      }
+    },
+    {
+      "name": "community",
+      "expected": "pages/community/community",
+      "ok": true,
+      "data": {
+        "fontScale": 1,
+        "guest": false,
+        "status": "error",
+        "errorText": "社区服务暂不可用（服务端未接线真实存储），请稍后再试。",
+        "errorCode": "PROVIDER_UNAVAILABLE",
+        "modeNote": "",
+        "stubNote": "",
+        "posts": "[array:0]",
+        "nextCursor": null,
+        "loadingMore": false,
+        "loadMoreError": "",
+        "filterMine": false,
+        "cropOptions": "[array:5]",
+        "cropLabels": "[array:5]",
+        "cropIndex": 0,
+        "regionOptions": "[array:103]",
+        "regionLabels": "[array:103]",
+        "regionIndex": 0,
+        "__webviewId__": 8
+      },
+      "tabs": null
+    },
+    {
+      "name": "identify",
+      "expected": "pages/identify/identify",
+      "ok": true,
+      "data": {
+        "fontScale": 1,
+        "modes": "[array:3]",
+        "guest": false,
+        "busy": false,
+        "errorText": "",
+        "modeNote": "",
+        "substituteNotice": "",
+        "deleteNote": "",
+        "job": null,
+        "stateView": null,
+        "ocr": null,
+        "labelCorrection": null,
+        "branch": null,
+        "branchInfo": null,
+        "candidates": "[array:0]",
+        "candidatesTrusted": false,
+        "showTop3": false,
+        "uncertaintyReasons": "[array:0]",
+        "recognitionConditions": null,
+        "doseGuard": null,
+        "recordId": null,
+        "recordRevision": 0,
+        "pendingManualId": null,
+        "selectedSpeciesId": null,
+        "relatedKnowledge": null,
+        "history": "[array:0]",
+        "historyOwner": "1:1",
+        "historyNote": "",
+        "candidateSource": "job",
+        "recording": false,
+        "hasRecording": false,
+        "__webviewId__": 10
+      },
+      "voiceEntry": null
+    },
+    {
+      "name": "messages",
+      "expected": "pages/messages/messages",
+      "ok": true,
+      "data": {
+        "fontScale": 1,
+        "guest": false,
+        "status": "empty",
+        "errorText": "",
+        "stateTitle": "",
+        "stateDesc": "",
+        "errorCode": "",
+        "modeNote": "替身服务数据，仅供联调，不代表真实消息投递。",
+        "stubNote": "替身服务数据，仅供联调，不代表真实消息投递。",
+        "items": "[array:0]",
+        "filter": "all",
+        "filterLabel": "全部",
+        "filters": "[array:4]",
+        "visibleItems": "[array:0]",
+        "hasUnread": false,
+        "nextCursor": null,
+        "loadingMore": false,
+        "markingId": "",
+        "markingAll": false,
+        "unreadText": "",
+        "unreadNote": "暂无未读",
+        "unreadRetryable": false,
+        "__webviewId__": 11
+      }
+    },
+    {
+      "name": "profile",
+      "expected": "pages/profile/profile",
+      "ok": true,
+      "data": {
+        "fontScale": 1,
+        "guest": false,
+        "favoriteCount": "0",
+        "historyCount": "0",
+        "myPostCount": "—",
+        "favoriteState": "ready",
+        "historyState": "ready",
+        "myPostState": "error",
+        "profile": "[object]",
+        "crops": "[array:4]",
+        "regions": "[array:102]",
+        "cities": "[array:11]",
+        "counties": "[array:0]",
+        "cropIndex": -1,
+        "cityIndex": -1,
+        "countyIndex": -1,
+        "cropName": "未设置",
+        "regionName": "未设置",
+        "editing": false,
+        "busy": false,
+        "locating": false,
+        "loaded": true,
+        "message": "",
+        "loadError": "",
+        "needsReload": false,
+        "retryPending": false,
+        "loadErrorCode": "",
+        "__webviewId__": 12
+      }
+    }
+  ],
+  "finalHome": {
+    "fontScale": 1,
+    "guest": false,
+    "entries": "[array:3]",
+    "local": true,
+    "busy": false,
+    "loggedIn": true,
+    "diagPassed": null,
+    "previewStatus": "error",
+    "previewItems": "[array:0]",
+    "previewNote": "",
+    "previewMessage": "公开预览服务暂不可用，请稍后重试。",
+    "previewErrorCode": "PROVIDER_UNAVAILABLE",
+    "status": "开发准备工程：识别、标签识别、语音合成播报与社区等业务页已接服务端（录音转写尚未接线）；本页与各页仅供参考，不代表真实业务验收。",
+    "__webviewId__": 9
+  },
+  "finishedAt": "2026-11-03T05:35:44.276Z",
+  "passed": true
+}

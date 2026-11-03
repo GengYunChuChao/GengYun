@@ -265,7 +265,7 @@
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "../../services/api/src/privacy/user-data-deletion.ts:321"
+      "reference": "../../services/api/src/privacy/user-data-deletion.ts:328"
     },
     {
       "path": "services/api/src/routes/knowledge.ts",
@@ -403,31 +403,31 @@
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:300"
+      "reference": "user-data-deletion.ts:104"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:315"
+      "reference": "user-data-deletion.ts:307"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:339"
+      "reference": "user-data-deletion.ts:322"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:91"
+      "reference": "user-data-deletion.ts:346"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:97"
+      "reference": "user-data-deletion.ts:98"
     }
   ]
 }

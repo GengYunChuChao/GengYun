@@ -285,6 +285,19 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
   }
 
   /**
+   * 只读的**当前状态**取值器（无副作用）：返回该请求的原始 `request.state`
+   * （`requested` / `processing` / `blocked` / `completed` / `cancelled`），查不到返回 `null`。
+   *
+   * ⛔ 不要用 `completionStatus()` 代替：它会推进状态（满足完成条件时把 `state` 改成 `completed`、
+   * 写 `completedAt` 并递增 `revision`，见本文件 `completionStatus()`）。拿它当「是否已取消」的判据，
+   * 等于在一个读操作里改写请求，而取消判据只需要**事实**，不需要**判定**。
+   */
+  function requestState(requestId) {
+    const request = requests.get(requestId);
+    return request ? request.state : null;
+  }
+
+  /**
    * 删除完成状态（派生，不回写不推断）：
    *   completed 仅当：请求已进入处理（非 requested）、存在实际工作（handler 或第三方）、
    *   所有 handler 的 online 与 backup 均 completed、所有第三方均 confirmed（有证据）、
@@ -381,6 +394,7 @@ export function createDeletionRegistry({ now = () => new Date() } = {}) {
     failThirdPartyDeletion,
     markUnsupported,
     cancelDeletion,
+    requestState,
     completionStatus,
     receiptProjection,
     _handlers: handlers,
