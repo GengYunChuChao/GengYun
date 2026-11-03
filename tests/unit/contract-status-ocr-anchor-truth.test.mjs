@@ -241,15 +241,26 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * timeout 维度的 evidence 先由 `--reanchor --write-doc` 重锚到 `1004-1030`，随后为满足
  * `doc-anchor-relocation-identity` 的端点映射要求改成 `982-1007`（区间仍含声明行 `:1004`）⇒
  * 两份台账各**多 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
- * 2026-11-04 第六次同步（R75 历史详情读面片）：新增 `getHistory`（`GET /history/{id}`）⇒
- * 台账多一条 operation 条目（+32 行 / +2430 字节），`contract-implementation-status.md`
- * 多一行 operation 行与标题计数（+2 行 / +1821 字节）。`listHistory`/`deleteHistory` 的 evidence
+ * 2026-11-03 第六次同步（GY-R75 契约计数口径订正，与 OCR 锚点无关）：`contract-status.json` 的 media blocker
+ * 里「冻结契约（86 条路径 / 113 条 operation，实测 `packages/contracts/openapi.json`）」按基线 `3cdf4740`
+ * 实测改成「99 条路径 / 129 条 operation」并补「，基线 `3cdf4740`」⇒ 两份台账各**多 20 字节**、行数不变
+ * （4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-04 第七次同步（R75 历史详情读面片）：新增 `getHistory`（`GET /history/{id}`）⇒
+ * 台账多一条 operation 条目（+31 行 / +2430 字节），`contract-implementation-status.md`
+ * 多一行 operation 行与标题计数（+1 行 / +1821 字节）。`listHistory`/`deleteHistory` 的 evidence
  * 行号由 `--reanchor --write-doc` 重写（80-83→88-88、85-98→103-105），中文表格同次重生成。
  * 仍是「正常改台账」（operations 129 → 130），故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第八次同步（`git merge origin/main` = 3b89782f 之后重取实测值）：上面第六条（#875，在 main 上）
+ * 与第七条（R75，在本分支上）是两条并行分支各自记的「同序号一次同步」，合并后按时间顺序重编号，
+ * 正文逐字保留。合并把 #875 的计数口径订正与 `getHistory` 条目叠在同一份台账上。
+ * ⚠️ 第六／第七次记的行数是按 `split('\n').length` 数出来的（末尾换行多算一行），
+ * 本条改按本用例 `countLines` 的口径实测：合并后 `contract-status.json` 276447 字节 / 4465 行、
+ * `contract-implementation-status.md` 198007 字节 / 220 行（= 本分支 276427/4465 与 197987/220
+ * 各 +20 字节，正是 #875 那一行的增量）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 276427, lines: 4466 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 197987, lines: 221 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 276447, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 198007, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

@@ -254,6 +254,18 @@
       "accept": 2,
       "orphans": 3514,
       "outsideRed": 124
+    },
+    {
+      "why": "修正 6 条历史错锚，从册子退场",
+      "accept": 0,
+      "orphans": 3516,
+      "outsideRed": 117
+    },
+    {
+      "why": "合并 origin/main 3b89782f 后按现状重生成：本片 R75 只新增 GET /history/{id}（contract-status.json +31 行、openapi.json 自 7145 行起 +83 行、18572 行起 +16 行），孤儿锚净增 2 条即 gy-r31-i07-sort 页的 contract-status.json:3286 两条 SUSPECT（该页第 23/28 行自认「都已陈旧」，属正当登记）；同时退掉 2 条已不再命中的孤儿锚，并把结构基线里 4 条 openapi SUSPECT 按符号重锚以后退册。",
+      "accept": 2,
+      "orphans": 3514,
+      "outsideRed": 119
     }
   ],
   "orphans": [
@@ -3814,19 +3826,16 @@
     "docs/verification/gy-i13-synthesis-20261019.md|tests/unit/tts-jobs-http.test.mjs:129|SUSPECT",
     "docs/verification/gy-i14-moderation-http-20261014.md|tests/moderation/model-ports.test.mjs:156|SUSPECT",
     "docs/verification/gy-i15-messages-chain-20261021.md|miniprogram/utils/messages-api.js:36|SUSPECT",
-    "docs/verification/gy-i15-messages-chain-20261021.md|packages/contracts/openapi.json:7165|SUSPECT",
     "docs/verification/gy-i16-favorites-history-20261014.md|tests/unit/knowledge-api.test.mjs:101|SUSPECT",
     "docs/verification/gy-i16-semantics-20261019.md|miniprogram/utils/history-api.js:274|SUSPECT",
     "docs/verification/gy-i16-semantics-20261019.md|recognitions-candidates-selection.test.mjs:499|SUSPECT",
     "docs/verification/gy-i22-cross-module-security-e2e-20261027.md|services/api/src/routes/favorites.ts:87|SUSPECT",
     "docs/verification/gy-i22-identity-headers-20261019.md|tests/unit/gy-i22-identity-headers.test.mjs:567|SUSPECT",
-    "docs/verification/gy-i22-secmatrix-20261019.md|packages/contracts/openapi.json:9996|SUSPECT",
     "docs/verification/gy-i28-demo-parity-20261018.md|miniprogram/utils/history-api.js:193|SUSPECT",
     "docs/verification/gy-r27-synthesis-cancel-20261020.md|http-jobs.test.mjs:175|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:186|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:326|SUSPECT",
     "docs/verification/gy-r28-deploy-swallow-audit-20261021.md|verify-cvm-postgres.sh:352|SUSPECT",
-    "docs/verification/gy-r28-e6-closure-materials-20261021.md|docs/architecture/contract-status.json:2083|SUSPECT",
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|conversations/store-pg.ts:458|SUSPECT",
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|favorites/store-pg.ts:356|SUSPECT",
     "docs/verification/gy-r28-favorites-history-grants-20261020.md|favorites/store-pg.ts:68|SUSPECT",
@@ -3853,11 +3862,9 @@
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:765|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:765|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:799|SUSPECT",
-    "docs/verification/gy-r31-i11-audio-20261022.md|packages/contracts/openapi.json:13056|SUSPECT",
     "docs/verification/gy-r31-i14-recon-20261022.md|docs/architecture/contract-status.json:684|SUSPECT",
     "docs/verification/gy-r31-i15-s1-s6-20261022.md|20-login-roles.sql:511|SUSPECT",
     "docs/verification/gy-r31-i17-recon-20261022.md|miniprogram/pages/messages/messages.js:195|SUSPECT",
-    "docs/verification/gy-r31-i17-recon-20261022.md|packages/contracts/openapi.json:7165|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|ocr-http.mjs:1996|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|services/api/src/routes/admin.ts:179-180|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|tts-content-wiring.mjs:328|OUT_OF_RANGE",

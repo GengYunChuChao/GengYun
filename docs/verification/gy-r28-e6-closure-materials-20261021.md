@@ -131,7 +131,7 @@
 | B2 | `real` 装配下注销链路可达 | 同 §1.3 B2：`app.ts:2257`（原记 `:1731`）⇒ 真实环境注销 HTTP 面整域 503 |
 | B3 | 消息域在**真 PG 服务器**上的注销行数读数 | `tests/unit/messages-deletion-purge.test.mjs` 文件头自陈为记录型假池（非真 PG／非 PGlite）；真库 arm `tests/integration/favorites-history-pg.mjs:456-460` 逐字「本 arm 只应用 0001+0018…没有 `public.messages` 表」，消息域在该 arm 走内存 store 且证据恒 0 行；真表级证据只在 PGlite（`tests/unit/favorites-history-fixtures.mjs` 的 `PG_MIGRATIONS_WITH_MESSAGES`）。⇒「PGlite 真表有、真 PG 服务器无」。前置：把 0019＋0023 纳入同一条真库注销 arm |
 | B4 | 共享幂等台账前缀删的跨域副作用裁定 | `messages/store-pg.ts:206-215` 自陈：`public.idempotency_keys` 是共享表，前缀删会连带删本主体在 auth 等其它域写入的幂等行，「属副作用而非本域自清」。前置：监工/合规对该副作用的裁定 |
-| B5 | 台账与代码不同步 | `docs/architecture/contract-status.json:2038`（`:2061`／`:2083` 同文重复）仍把「PG/注销」记为待验收，而 HEAD 已有原语＋闭集＋注册＋备份 scope。本片红线不改该 JSON，只登记。合流后三处按内容重锚（main 记 `:2019`／`:2041`／`:2063`，本片插入 20 行） |
+| B5 | 台账与代码不同步 | `docs/architecture/contract-status.json:2197`（`:2219`／`:2241` 三处同文重复，均为 `"blocker": "消息列表/未读数/读标记HTTP已装配…` 一行）仍把「PG/注销」记为待验收，而 HEAD 已有原语＋闭集＋注册＋备份 scope。本片红线不改该 JSON，只登记。**行号按基线 `3cdf4740` 重锚**：本片当时记第 2038／2061／2083 行（合流前 main 记第 2019／2041／2063 行，本片插入 20 行），合流后三处同文行在第 2166／2188／2210 行；本片（R75 历史详情）又给台账插了 31 行（getHistory 条目），三处同文行再后移到 2197／2219／2241，按 `"blocker": "消息列表/未读数/读标记HTTP已装配` 这段符号复核过 |
 | B6 | issue 前置 5 项 | #17 正文列 #4／#14／#15／#28／#29，gh 读数全 `OPEN` |
 
 ### 2.4 C5 判据（同 §1.4 的 5 子项）
