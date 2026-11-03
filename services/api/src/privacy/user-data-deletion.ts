@@ -748,6 +748,19 @@ export interface UserDataDeletionRegistry {
    * 分开记账，让 fail-open 的每一次降级都可诊断。
    */
   readonly thirdPartyWrites?: ThirdPartyDeletionWriteReadings;
+  /**
+   * GY-R74（P2-a）· 本部署**能不能真的派发**第三方删除（写端口 + 适配器 + 收件人来源三者齐备）。
+   *
+   * 为什么要透出这个布尔：回执契约（`DeletionHandler.third_party_state`）只有枚举、没有自由文本
+   * 字段，而「零接收方」投出来是 `null` —— 读回执的人分不清「没有第三方副本要删」与「这台机器
+   * 根本发不出去」。装配层把本值交给路由（`routes/account-deletion.ts` 的 `thirdPartyWritable`），
+   * 后者在投影为 `null` 且本部署不可派发时如实报 `'unsupported'`（契约闭集内，语义＝无法删除／
+   * 无法证实），⛔ 永不报 `confirmed`。
+   *
+   * 缺省 `undefined` ⇒ 调用方不判断（保持 `null` ＝「没有可信结论」）：不知道就**不猜**。
+   * 今天生产三条缺两条（无适配器、无收件人来源）⇒ 恒 `false`。
+   */
+  readonly thirdPartyWritable?: boolean;
   /** GY-R73（P2-c）· 最近一次写侧派发的结论（`null` ⇒ 还没派发过；永不抛）。 */
   lastThirdPartyDispatch?(): ThirdPartyDeletionDispatchResult | null;
   /** 请求 → 各模块证据串（诊断；契约回执不含证据，这里给出与协调器行同源的完整证据）。 */
@@ -780,10 +793,20 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   const thirdPartyAdapter = input.thirdPartyAdapter ?? null;
   // GY-R73（P2-c）：第三方删除**写侧**派发器。写端口优先取显式注入，否则从读端口上探测
   // （真库端口读写同体）；探测不到 ⇒ 如实"写侧未接线"，⛔ 不补一个假写方法来显得接上了。
+  const thirdPartyWritePort = writePortOf(input.thirdPartyWrite ?? thirdParty);
+  const thirdPartyRecipientsSource = input.thirdPartyRecipients ?? null;
+  /**
+   * GY-R74（P2-a）· 「本部署能不能真的派发」＝写端口 + 适配器 + 收件人来源三条齐备。
+   *
+   * 只用来**如实描述能力**（回执里区分「没有接收方」与「发不出去」），⛔ 不参与任何"完成"判定：
+   * 派发成功与否仍由写侧落库的 `third_party_deletion_*` 行与证据决定。
+   */
+  const thirdPartyWritable =
+    thirdPartyWritePort !== null && thirdPartyAdapter !== null && thirdPartyRecipientsSource !== null;
   const thirdPartyDispatch = createThirdPartyDeletionDispatcher({
-    port: writePortOf(input.thirdPartyWrite ?? thirdParty),
+    port: thirdPartyWritePort,
     adapter: thirdPartyAdapter,
-    recipients: input.thirdPartyRecipients ?? null,
+    recipients: thirdPartyRecipientsSource,
     now,
     ...(input.thirdPartyLog === undefined ? {} : { log: input.thirdPartyLog }),
   });
@@ -1558,6 +1581,7 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
     // `third-party-deletion-dispatch.ts` 调用，本对象只透出读数，不额外 dispatch。
     thirdParty,
     thirdPartyAdapter,
+    thirdPartyWritable,
     thirdPartyWrites: thirdPartyDispatch.readings,
     lastThirdPartyDispatch: () => thirdPartyDispatch.lastResult(),
     requiredModules: () => coordinator.requiredModules(),

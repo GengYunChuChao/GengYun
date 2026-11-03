@@ -60,6 +60,8 @@
 
 > **superseded（2026-10-21 后续合入）**：第 3、5 条的「未做／无驱动者」已被 `#397`／`#398` 推进，逐条以页首「状态更新」块为准；
 > 第 4 条（`ON DELETE CASCADE` 永不触发）、第 6 条（`real` 注销面整域 503）与第 7 条的缺口计数仍按当时读数保留、仍然成立。
+>
+> **GY-R74（2026-11-03）订正**：上句里的「第 6 条仍然成立」**已作废**——`real` 注销受理门已按域打开（`services/api/src/app.ts:2339` `available: config.executionMode !== 'real' || deletionAcceptanceDurable`；`real` + 真库 ⇒ 受理 202，唯一保留的 503 是 `real` 但无可用连接池）。第 4 条与第 7 条的缺口计数仍按当时读数保留；30 日备份域与第三方域按域如实降级（`backup_state: blocked`／`third_party_state: unsupported`），见 `docs/architecture/s4-data-traceability.md` §4 D08／D13。
 
 ---
 
@@ -67,7 +69,7 @@
 
 | # | 跳 | 位置 | 是否硬删 |
 | --- | --- | --- | --- |
-| 1 | `POST /me/account/deletion`（`userSession` 守卫） | `services/api/src/routes/account-deletion.ts:130-131` | — |
+| 1 | `POST /me/account/deletion`（`userSession` 守卫） | `services/api/src/routes/account-deletion.ts:252-255` | — |
 | 2 | `service.request()` → `deletion.requestDeletionFor()` + `await deletion.executeHandlers()` | `services/api/src/privacy/account-deletion.ts:225-228` | — |
 | 3 | 受理事务（SECURITY DEFINER 函数） | `0016_account_deletion_persistence.sql:68` → `:122-128`（users 软改）/`:132-134`（sessions 软撤）/`:138-145`（deletion_requests 插入） | **否**（全是 UPDATE/INSERT） |
 | 4 | 事务内第 2 步：写备份副本清单行 | `services/api/src/privacy/deletion-requests-pg.ts:251` `insertBackupCopySeeds(client, …)` | INSERT（不是删） |

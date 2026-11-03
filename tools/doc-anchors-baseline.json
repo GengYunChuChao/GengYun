@@ -145,18 +145,6 @@
       "path": "services/api/src/app.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "app.ts:2132"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "app.ts:2661"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
       "reference": "app.ts:787-789"
     },
     {

@@ -2288,9 +2288,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 否则同一请求的「受理时刻」与「截止时刻」会来自两个时间源（真实模式下不可复现）。
     now: clock, ...(mediaPersistenceRefusal === null ? { mediaStore } : {}),
     // GY-R74（目标 e）：缺 `MEDIA_OBJECT_REF_KEY` ⇒ 媒体域**不可清**（`object_ref_cipher` 解不开、
-    // 枚举不到桶里的对象）⇒ 把原因传给协调器，九个处理器一律如实 `blocked` + `PROVIDER_UNAVAILABLE`
-    // 且不写在线证据。⛔ 改前这里只有 `...{mediaStore}` 一个分支：缺键 ⇒ 端口不注入 ⇒ 处理器照旧
-    // 报 `online_state: 'completed'` = 行删了、桶里的对象还在的**静默漏清**。
+    // 枚举不到桶里的对象）⇒ 把原因传给协调器；**媒体端口所在的那一域（识别域）**如实
+    // `blocked` + `PROVIDER_UNAVAILABLE` 且不写在线证据。⛔ 改前这里只有 `...{mediaStore}` 一个分支：
+    // 缺键 ⇒ 端口不注入 ⇒ 识别域照旧报 `online_state: 'completed'` = 行删了、桶里的对象还在的**静默漏清**。
+    // ⛔ 门**只**落在识别域：媒体端口只挂在 `RECOGNITIONS_DELETION_MODULE`（`user-data-deletion.ts`
+    // 唯一传第三参的 `makeHandler`），把门扩到其余八域等于用媒体缺口抹掉它们「行真的删了」的读数。
     ...(mediaPersistenceRefusal === null ? {} : { mediaPurgeUnavailable: mediaPersistenceRefusal }),
     ...backupPurgeWiring,
     ...backupStatesWiring,
@@ -2646,6 +2648,11 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // 变成**生产路径**：受理与回执都要读它。写侧仍零写入（PR #860 适配器未 dispatch）⇒ 读到空集 ⇒
     // 投影 `third_party_state: null` + 原因 `THIRD_PARTY_NONE`，如实「没有接收方」，⛔ 不写 confirmed。
     thirdPartyRows: thirdPartyWiring.thirdParty ?? null,
+    // GY-R74：回执要能区分「没有接收方」（投影 `null`）与「这台机器发不出去」（`unsupported`）。
+    // 装配层是唯一知道前者还是后者的一方：写端口／适配器／收件人来源三者缺一 ⇒ `false`。
+    // 今天生产恒 `false`（PR #860 的适配器无凭据、收件人来源全仓零实现）⇒ 回执如实报
+    // `third_party_state: 'unsupported'`，⛔ 不是 `not_requested`，更不是 `confirmed`。
+    thirdPartyWritable: userDataDeletion.thirdPartyWritable === true,
     // 幂等台账用既有认证服务（24h 台账；同键同体重新签发，不回放旧 bearer）。
     authService: service,
     now: clock,

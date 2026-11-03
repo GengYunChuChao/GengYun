@@ -231,11 +231,11 @@
     "target": "services/api/src/app.ts",
     "from": 2469,
     "fromEnd": 2508,
-    "to": 2515,
-    "toEnd": 2566,
+    "to": 2553,
+    "toEnd": 2604,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
-    "reason": "旧锚点本来就指错：2469-2508 是上一轮「按端点映射平移」的产物，落在 OCR 装配段（:2508 是 `ocrPersistenceImageMedia` 的字面量注释、:2509 是 `registerOcrRoutes(`），整段不含 `registerJobRoutes`。本次按符号在 cc10d0a5 实测：`registerJobRoutes(app, config, guards` 在 :2515，六条 `create*JobSource` 实参依次在 :2516／:2522／:2528／:2534／:2542／:2552（对应识别／转写／审核／合成／OCR／问答），收尾 `]));` 在 :2566，引导句「共 6 个」在 :2511。旧窗口里没有这个 symbol、新窗口里有 ⇒ 走 `kind: \"correction\"`，不做差值平移。"
+    "reason": "旧锚点本来就指错：2469-2508 是上一轮「按端点映射平移」的产物，落在 OCR 装配段（:2508 是 `ocrPersistenceImageMedia` 的字面量注释、:2509 是 `registerOcrRoutes(`），整段不含 `registerJobRoutes`。本次按符号在 cc10d0a5 实测：`registerJobRoutes(app, config, guards` 在 :2515，六条 `create*JobSource` 实参依次在 :2516／:2522／:2528／:2534／:2542／:2552（对应识别／转写／审核／合成／OCR／问答），收尾 `]));` 在 :2566，引导句「共 6 个」在 :2511。旧窗口里没有这个 symbol、新窗口里有 ⇒ 走 `kind: \"correction\"`，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -243,11 +243,11 @@
     "target": "services/api/src/app.ts",
     "from": 2515,
     "fromEnd": 2560,
-    "to": 2515,
-    "toEnd": 2566,
+    "to": 2553,
+    "toEnd": 2604,
     "kind": "correction",
     "symbol": "]));",
-    "reason": "只修末端、起点不动：这一格的末端 :2560 落在 `createAnswerJobSource` 的 `cancelJob` 函数**体内**（那行 `// 服务未装配（real + 无池）⇒ 该作业不存在（与\"越权/不存在\"同形 404），不让 503 冒充。` 只是体内注释，下面还有 `if (service === null) return null;` 与 `return outcome.data;`），`registerJobRoutes(app, config, guards, createJobRegistry([` 的收尾 `]));` 在 :2566 —— 上一轮把收尾写成 :2560 就是少了这 6 行。起点 :2515 不变、只把末端 2560 → 2566，属于**单端位移**：目标文件本提交未改动，端点恒等规则要求新旧两端都恒等、差值平移也表达不了「只改末端」，所以只能走 `kind: \"correction\"`；登记表自检的「零位移」判据与 `correctionViolation` 同形（起点同**且**末端同才算零位移），因此单端位移是合法登记。symbol 取收尾那行的真实特征 `]));`（整份 app.ts 只出现这一次，且不在旧窗口 2515-2560 里）。"
+    "reason": "只修末端、起点不动：这一格的末端 :2560 落在 `createAnswerJobSource` 的 `cancelJob` 函数**体内**（那行 `// 服务未装配（real + 无池）⇒ 该作业不存在（与\"越权/不存在\"同形 404），不让 503 冒充。` 只是体内注释，下面还有 `if (service === null) return null;` 与 `return outcome.data;`），`registerJobRoutes(app, config, guards, createJobRegistry([` 的收尾 `]));` 在 :2566 —— 上一轮把收尾写成 :2560 就是少了这 6 行。起点 :2515 不变、只把末端 2560 → 2566，属于**单端位移**：目标文件本提交未改动，端点恒等规则要求新旧两端都恒等、差值平移也表达不了「只改末端」，所以只能走 `kind: \"correction\"`；登记表自检的「零位移」判据与 `correctionViolation` 同形（起点同**且**末端同才算零位移），因此单端位移是合法登记。symbol 取收尾那行的真实特征 `]));`（整份 app.ts 只出现这一次，且不在旧窗口 2515-2560 里）。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -447,100 +447,100 @@
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2227,
-    "to": 2515,
+    "to": 2553,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
-    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2228,
-    "to": 2516,
+    "to": 2554,
     "kind": "correction",
     "symbol": "createRecognitionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2204,
-    "to": 2522,
+    "to": 2560,
     "kind": "correction",
     "symbol": "createTranscriptionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2207,
-    "to": 2528,
+    "to": 2566,
     "kind": "correction",
     "symbol": "createModerationJobSource(",
-    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2213,
-    "to": 2534,
+    "to": 2572,
     "kind": "correction",
     "symbol": "createSynthesisJobSource(",
-    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2221,
-    "to": 2542,
+    "to": 2580,
     "kind": "correction",
     "symbol": "createOcrJobSource(",
-    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
     "line": 42,
     "target": "services/api/src/app.ts",
     "from": 2229,
-    "to": 2552,
+    "to": 2590,
     "kind": "correction",
     "symbol": "createAnswerJobSource({",
-    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2227,
-    "to": 2515,
+    "to": 2553,
     "kind": "correction",
     "symbol": "registerJobRoutes(app, config, guards",
-    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2227 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2227→2488 对应其中一条）——所以按符号 \"registerJobRoutes(app, config, guards\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2228,
-    "to": 2516,
+    "to": 2554,
     "kind": "correction",
     "symbol": "createRecognitionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2228 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2228→2489 对应其中一条）——所以按符号 \"createRecognitionJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2204,
-    "to": 2522,
+    "to": 2560,
     "kind": "correction",
     "symbol": "createTranscriptionJobSource(",
-    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2204 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2204→2495 对应其中一条）——所以按符号 \"createTranscriptionJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/verification/gy-i06-media-real-provider-plan-20261021.md",
@@ -707,40 +707,40 @@
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2207,
-    "to": 2528,
+    "to": 2566,
     "kind": "correction",
     "symbol": "createModerationJobSource(",
-    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2207 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2207→2498 对应其中一条）——所以按符号 \"createModerationJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2213,
-    "to": 2534,
+    "to": 2572,
     "kind": "correction",
     "symbol": "createSynthesisJobSource(",
-    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2213 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2213→2504 对应其中一条）——所以按符号 \"createSynthesisJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2221,
-    "to": 2542,
+    "to": 2580,
     "kind": "correction",
     "symbol": "createOcrJobSource(",
-    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2221 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2221→2512 对应其中一条）——所以按符号 \"createOcrJobSource(\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
     "line": 4347,
     "target": "services/api/src/app.ts",
     "from": 2229,
-    "to": 2552,
+    "to": 2590,
     "kind": "correction",
     "symbol": "createAnswerJobSource({",
-    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。"
+    "reason": "base（91c800f6）这一格里的 2229 是「旧基线值」：base 树自己就把它标成陈旧（真库端口/六源分派当时已在 2469 起，doc 里那七个数字是更早的读数），机械映射只会把错值搬到 2246 一带。合流后的树按符号实测：`registerJobRoutes` 在 app.ts:2488，六条 `create*JobSource` 实参分别是 recognition :2489、transcription :2495、moderation :2498、synthesis :2504、ocr :2512、answer :2520（本锚 2229→2520 对应其中一条）——所以按符号 \"createAnswerJobSource({\" 重锚，不做差值平移。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -845,20 +845,20 @@
     "line": 43,
     "target": "services/api/src/app.ts",
     "from": 2309,
-    "to": 2631,
+    "to": 2678,
     "kind": "correction",
     "symbol": "registerConversationRoutes(",
-    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/architecture/contract-status.json",
     "line": 4404,
     "target": "services/api/src/app.ts",
     "from": 2309,
-    "to": 2631,
+    "to": 2678,
     "kind": "correction",
     "symbol": "registerConversationRoutes(",
-    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。"
+    "reason": "文档写的「装配点」是 services/api/src/app.ts:2309，但 base 的 2309 是 `: createKnowledgeRetrievalPort({ face: knowledgeQueryFace }));`（与「问答域 HTTP 面装配点」无关），端点映射只会把它机械搬到 :2336，仍是错行 ⇒ 属于「旧锚点本来就指错」。合流后的树按符号实测：`registerConversationRoutes(app, config, gatedGuards, conversationService);` 在 services/api/src/app.ts:2631，故按符号重锚到 2631。【GY-R71 作业台账/注销清理片 × upstream/main(#762) 合流】本条目按合并树重取：`node tools/verify-contract-status.mjs --reanchor --write-doc` 已把文档里的这一格重写到同一行号；下面写的是合并树实测值。；【GY-R74 注销真清片】本片改动了 services/api/src/app.ts（受理门 available、thirdPartyWritable 传参、媒体门注释），全文件再次位移，本条 to/toEnd 按 symbol 在新树上重新实测（旧值只对上一轮基线成立）。"
   },
   {
     "doc": "docs/verification/gy-i28-demo-parity-20261018.md",
@@ -1486,5 +1486,17 @@
     "kind": "correction",
     "symbol": "createTurn",
     "reason": "旧锚点本来就指错：这一行讲的是问答域 P06/N03 的三个版本串口径，base（b9d91bbc）上的 `docs/architecture/contract-implementation-status.md:97` 却是合成域的 `| `createSynthesis` | POST /speech/synthesis |` 行（不含 `createTurn`）；该行真值是 :102 的 `| `createTurn` | POST /conversations/{id}/turns |`，其证据列正是 `services/api/src/ai/chat-wiring.ts:74-85` 的 live 分支与 `services/api/src/app.ts:2348`/`:2390` 的装配点。本 R73 片只订正 `docs/architecture/ai-ops-spec-status.md` 这行的绝对量词（「一律」→ 四与门），目标台账文件一个字未动，所以走 kind=correction 而不是平移。"
+  },
+  {
+    "doc": "docs/architecture/rate-limit-policy.md",
+    "line": 185,
+    "target": "services/api/src/app.ts",
+    "from": 2271,
+    "fromEnd": 2276,
+    "to": 2786,
+    "toEnd": 2791,
+    "kind": "correction",
+    "symbol": "hop < trustProxy",
+    "reason": "旧文档写「`services/api/src/app.ts:2488-2493`，原记 :2271-2276」，两处都不是谓词所在：2488-2493 在本树上是 `registerExportRoutes(...)`/`registerProfileRoutes(...)` 一段，2271-2276 是注销装配段的 store 传参。谓词 `(_address: string, hop: number) => hop < trustProxy` 的实测落点是 `export function trustProxyOption(` 的函数体 services/api/src/app.ts:2786-2791（symbol 取该行独有的 `hop < trustProxy`，base 的 2271-2276 窗口里没有它）⇒ 走 kind: \"correction\"，不做机械差值平移。【GY-R74 注销真清片】按合并树重取。"
   }
 ]
