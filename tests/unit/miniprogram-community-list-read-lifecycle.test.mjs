@@ -176,6 +176,7 @@ function post(id, title, body) {
     media_ids: [],
     visibility: 'published',
     audit_state: 'approved',
+    reason_codes: [],
     created_at: '2026-10-20T04:00:00.000Z',
     updated_at: '2026-10-20T04:00:00.000Z',
     media: [],

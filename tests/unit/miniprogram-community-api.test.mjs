@@ -44,6 +44,7 @@ function post(over = {}) {
   return {
     id: POST_ID, revision: 1, author: author(), title: '稗草防除经验交流', body: '按标签说明选择登记药剂。',
     crop_id: 'crop_rice', region_code: '330100', media_ids: [], visibility: 'published', audit_state: 'approved',
+    reason_codes: [],
     created_at: '2026-10-20T04:00:00.000Z', updated_at: '2026-10-20T04:00:00.000Z', media: [],
     linked_knowledge_ref: null, linked_knowledge: null, ...over,
   };
@@ -51,7 +52,8 @@ function post(over = {}) {
 function comment(over = {}) {
   return {
     id: COMMENT_ID, revision: 1, post_id: POST_ID, author: author(), body: '也遇到过类似情况。',
-    visibility: 'published', audit_state: 'approved', created_at: '2026-10-20T04:05:00.000Z', ...over,
+    visibility: 'published', audit_state: 'approved', reason_codes: [],
+    created_at: '2026-10-20T04:05:00.000Z', ...over,
   };
 }
 function envelope(data, mode = 'stub') {
@@ -846,7 +848,7 @@ test('④ 负控制：把两种结论映射成同一句文案 ⇒ ① 与 ② �
 // ---------------------------------------------------------------------------
 // 独立审查 7d27727d 的阻塞项：`hidden` **不是**终态判据。
 //
-// 服务端读面（`community/service.ts:583-616` 的 `effectiveState`）把「已发布后被驳回/被隔离」
+// 服务端读面（`community/service.ts:615-657` 的 `effectiveState`）把「已发布后被驳回/被隔离」
 // 一律降成 `hidden` 并**原样带 `audit_state`**：迟到驳回 ⇒ `{hidden, rejected}`，
 // 迟到隔离/未结论 ⇒ `{hidden, quarantined}`；`listPosts(mine=true)` 包含未公开版本
 // ⇒ 作者在自己的列表/详情里真的看得到。本片第一版先判 `hidden` 就返回
@@ -1007,7 +1009,23 @@ test('⑦ 负控制：hidden 路径把两态折回同一句 ⇒ ⑤ 必红', () 
 //   - `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`：`:429`（规则层不评估媒体的跨片声明码）；
 //   - `RESCREEN_REQUIRED`：`moderation/visibility.ts:36`（读面「需重新审核」）。
 // 前缀族 `NOT_SCREENED:<kind>`：`moderation/service.ts:913`。
+//
+// 第四族（小写）是**运营驳回理由**，与上面三张机器闭集不同源：
+//   - 闭集定义 `services/api/src/admin/ops/types.ts` 的 `POST_REVIEW_REASON_CODES`；
+//   - 写入 `services/api/src/admin/ops/community-posts.ts` 的 `humanVerdict(...)`，进 `ModerationRecord.reason_codes`；
+//   - 读面 `effectiveState` 原样带回 ⇒ 作者最常看到的那条 `rejected` 就带这一族码。
+// 这里**从源文件解析**而不是抄一份字面量：抄一份等于给自己发长期豁免，闭集改了也不会红。
 // ---------------------------------------------------------------------------
+/** 从 `services/api/src/admin/ops/types.ts` 解析 `POST_REVIEW_REASON_CODES`（单一真源，不抄字面量）。 */
+function reviewReasonCodesFromSource() {
+  const text = readFileSync(resolve(root, 'services/api/src/admin/ops/types.ts'), 'utf8');
+  const block = text.match(/POST_REVIEW_REASON_CODES[^=]*=\s*Object\.freeze\(\[([\s\S]*?)\]\)/);
+  if (block === null) throw new Error('解析不到 POST_REVIEW_REASON_CODES（闭集搬家了？先修本解析，别改成豁免）');
+  const codes = [...block[1].matchAll(/'([a-z_]+)'/g)].map((match) => match[1]);
+  assert.ok(codes.length >= 10, `解析到的运营驳回理由码只有 ${codes.length} 条，明显解析失败`);
+  return codes;
+}
+
 test('⑧ 理由码表不自造：键集合 ⊆ 服务端闭集 ∪ 三条本域专有码，且前缀族只登记一处', async () => {
   const constants = await import('../../packages/moderation/constants.mjs');
   const modelCodes = await import('../../packages/moderation/model-reason-codes.mjs');
@@ -1017,10 +1035,13 @@ test('⑧ 理由码表不自造：键集合 ⊆ 服务端闭集 ∪ 三条本域
     ...modelCodes.MODEL_REASON_CODES,
   ]);
   const SERVICE_SPECIFIC = ['IMAGE_MODERATION_UNAVAILABLE', 'MEDIA_NOT_EVALUATED_BY_RULE_LAYER', 'RESCREEN_REQUIRED'];
+  const ADMIN_REVIEW_REASON_CODES = reviewReasonCodesFromSource();
 
   const h = load(() => DEFER);
   const invented = Object.keys(h.api.REASON_LABELS)
-    .filter((code) => !closed.has(code) && SERVICE_SPECIFIC.indexOf(code) === -1);
+    .filter((code) => !closed.has(code)
+      && SERVICE_SPECIFIC.indexOf(code) === -1
+      && ADMIN_REVIEW_REASON_CODES.indexOf(code) === -1);
   assert.deepEqual(invented, [], '理由码表里出现了服务端闭集之外的码（等于编了一个不会来的码）');
 
   // 反向：闭集里的码**不必**全有人话（漏的落「未知原因（码：X）」是可接受的兜底），但已知码必须真的翻出人话。
@@ -1028,7 +1049,162 @@ test('⑧ 理由码表不自造：键集合 ⊆ 服务端闭集 ∪ 三条本域
     assert.equal(Object.prototype.hasOwnProperty.call(h.api.REASON_LABELS, code), true, code + ' 必须有对应人话');
     assert.doesNotMatch(h.api.reasonLabel(code), /未知原因/);
   }
+  // 运营驳回那一族同样要真的有人话：作者最常看到的驳回就来自这里，落「未知原因」等于白做这一片。
+  for (const code of ADMIN_REVIEW_REASON_CODES) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(h.api.REASON_LABELS, code),
+      true,
+      code + ' 必须有对应人话（运营驳回闭集，出处 admin/ops/types.ts）',
+    );
+    assert.doesNotMatch(h.api.reasonLabel(code), /未知原因/);
+  }
   // 前缀族只登记一条，且拼法仍是同一个 `withCode`（`（码：X）`）。
   assert.equal(h.api.reasonLabel('NOT_SCREENED:text'), '这一版内容没有完成送审（码：NOT_SCREENED:text）');
   assert.match(h.api.reasonLabel('NOT_SCREENED'), /（码：NOT_SCREENED）/);
+});
+
+// ---------------------------------------------------------------------------
+// ⑩ 读面**必现**字段 `reason_codes`：适配层要求它在且是数组（`[]` 合法），形状不合契约就拒
+//
+// 为什么两个方向都要钉：契约把响应体钉成闭集且全 `required`（`additionalProperties:false` +
+// 真库臂里 `POST_KEYS === POST_REQUIRED`），所以这个字段**不能缺席**，没有理由码就是 `[]`。
+//   - 缺席 ⇒ 与契约不符，判 `INVALID_RESPONSE`（不再替服务端"补一个空数组"）；
+//   - 完全不管 ⇒ 字符串／空串元素／超 30 条会一路传到页面，前端再"尽力解析"就成了编理由。
+// ---------------------------------------------------------------------------
+test('⑩ 读面必现字段 `reason_codes`：`[]`/有码都收，缺席或形状不合契约即 INVALID_RESPONSE', async () => {
+  // ① 空数组：合法（没有可归属的理由码就是这么表达），原样保留成 []。
+  const empty = load(() => ({ statusCode: 200, data: envelope(post({ reason_codes: [] })) }));
+  const plainPost = await empty.api.getPost(POST_ID);
+  assert.deepEqual(plain(plainPost.post.reason_codes), [], '没有理由码时字段必现且为 []');
+
+  // ② 缺席：闭集契约下不允许，适配层不得替服务端补字段。
+  const absent = post();
+  delete absent.reason_codes;
+  const missing = load(() => ({ statusCode: 200, data: envelope(absent) }));
+  const absentError = await rejects(missing.api.getPost(POST_ID));
+  assert.equal(absentError.code, 'INVALID_RESPONSE', '字段缺席必须判 INVALID_RESPONSE（契约 required）');
+
+  // ③ 合法：原样保留（详情页靠它出「理由：…」那一行）。
+  const given = load(() => ({ statusCode: 200, data: envelope(post({ reason_codes: ['misleading_agronomy', 'spam'] })) }));
+  const withReasonCodes = await given.api.getPost(POST_ID);
+  assert.deepEqual(plain(withReasonCodes.post.reason_codes), ['misleading_agronomy', 'spam']);
+
+  // ④ 形状不合契约（数组、元素为非空字符串、`maxItems: 30`）。
+  const bad = [
+    ['不是数组', post({ reason_codes: 'spam' })],
+    ['元素是空串', post({ reason_codes: [''] })],
+    ['元素不是字符串', post({ reason_codes: ['spam', 3] })],
+    ['超过 30 条', post({ reason_codes: Array.from({ length: 31 }, (_, index) => 'CODE_' + index) })],
+  ];
+  for (const [label, item] of bad) {
+    const h = load(() => ({ statusCode: 200, data: envelope(item) }));
+    const error = await rejects(h.api.getPost(POST_ID));
+    assert.equal(error.code, 'INVALID_RESPONSE', label);
+  }
+
+  // ⑤ 评论通道同一口径（`commentOutcomeOf` 也吃这个字段）：`[]` 合法、有码原样、缺席即拒。
+  const onComment = load(() => ({ statusCode: 200, data: envelope(comment({ reason_codes: ['PRIVACY_PII'] })) }));
+  const loaded = await onComment.api.getComment(COMMENT_ID);
+  assert.deepEqual(plain(loaded.comment.reason_codes), ['PRIVACY_PII']);
+
+  const emptyComment = load(() => ({ statusCode: 200, data: envelope(comment({ reason_codes: [] })) }));
+  assert.deepEqual(plain((await emptyComment.api.getComment(COMMENT_ID)).comment.reason_codes), []);
+
+  const absentComment = comment();
+  delete absentComment.reason_codes;
+  const commentMissing = load(() => ({ statusCode: 200, data: envelope(absentComment) }));
+  const commentError = await rejects(commentMissing.api.getComment(COMMENT_ID));
+  assert.equal(commentError.code, 'INVALID_RESPONSE', '评论通道同样要求该字段必现');
+});
+
+// ---------------------------------------------------------------------------
+// ⑪ `reasonSummary`：详情页 pill 旁那一行。`[]` 返回 `null`（不渲染），有码去重保序、最多 6 条。
+// ---------------------------------------------------------------------------
+test('⑪ `reasonSummary`：`[]` ⇒ null；有码 ⇒ 「理由：…（码：…）。」且去重保序', () => {
+  const h = load(() => DEFER);
+  // 空/缺席 ⇒ 不渲染这一行（不是「原因未知」）。适配层会拒缺席，但本函数自己也要守住。
+  assert.equal(h.api.reasonSummary(post()), null, '没有理由码（[]）⇒ 不渲染这一行');
+  assert.equal(h.api.reasonSummary(post({ reason_codes: [] })), null);
+  assert.equal(h.api.reasonSummary(post({ reason_codes: ['', '   '] })), null, '只有空白元素等于没有码');
+  assert.equal(h.api.reasonSummary({}), null);
+
+  // 单码：中文人话 + 原码（原码留着，作者/客服能拿去对账）。
+  const single = h.api.reasonSummary(post({ reason_codes: ['misleading_agronomy'] }));
+  assert.deepEqual(plain(single.codes), ['misleading_agronomy']);
+  assert.equal(single.text, '理由：农技信息存在误导（码：misleading_agronomy）。');
+  assert.equal(Object.isFrozen(single), true, '返回体要冻结（调用方不该改它）');
+  assert.equal(Object.isFrozen(single.codes), true);
+
+  // 去重保序：同一个码重复出现不该占两个位置、也不该改顺序。
+  const deduped = h.api.reasonSummary(post({ reason_codes: ['spam', 'PRIVACY_PII', 'spam'] }));
+  assert.deepEqual(plain(deduped.codes), ['spam', 'PRIVACY_PII']);
+  assert.equal(deduped.text.indexOf('被判定为广告或刷屏内容'), deduped.text.lastIndexOf('被判定为广告或刷屏内容'));
+
+  // 上限：最多 6 条，超出只说「等 N 条」（不把解释撑成码的流水账）。
+  const nine = ['DANGEROUS_MIX', 'DOSE_UNBOUNDED', 'DOSE_NOT_BOUND_TO_LABEL', 'PRIVACY_PII', 'PRIVACY_COORDS',
+    'PROMPT_INJECTION', 'FALSE_AUTHORITY', 'ABSOLUTE_SAFETY_CLAIM', 'COMMERCE_SOLICITATION'];
+  const many = h.api.reasonSummary(post({ reason_codes: nine }));
+  assert.equal(many.codes.length, 9);
+  assert.match(many.text, /等 9 条。$/);
+  assert.equal((many.text.match(/（码：/g) || []).length, 6, '只列 6 条');
+  assert.equal(many.text.includes('未知原因'), false);
+
+  // 真遇到没有中文说法的码，仍如实给「未知原因（码：X）」——那是兜底，不是编造。
+  const unknown = h.api.reasonSummary(post({ reason_codes: ['MODEL_TIMEOUT'] }));
+  assert.match(unknown.text, /（码：MODEL_TIMEOUT）/);
+});
+
+// ---------------------------------------------------------------------------
+// ⑫ 详情页：理由码渲染在 pill **旁边**（同一屏），且不覆盖原有的整句解释。
+//
+// 本片不是重做状态位：pill（`stateLabel`）与整句（`outcomeDesc`）都是既有的，只多一行理由。
+// ---------------------------------------------------------------------------
+const DETAIL_WXML = 'miniprogram/pages/communitydetail/communitydetail.wxml';
+
+test('⑫ 详情页：理由行渲染在 pill 旁，整句解释原样保留（不互相覆盖）', () => {
+  const h = load(() => DEFER);
+  const detail = loadPage(h, 'communitydetail');
+  const view = detail._decoratePost(post({
+    visibility: 'hidden',
+    audit_state: 'rejected',
+    reason_codes: ['misleading_agronomy', 'spam'],
+  }));
+  assert.notEqual(view.stateLabel, '', 'pill 仍要有结论标签（状态位不在本片重做）');
+  assert.match(view.reasonLine, /^理由：/, '理由行以「理由：」开头');
+  assert.match(view.reasonLine, /农技信息存在误导/, '码要翻成人话');
+  assert.match(view.reasonLine, /（码：misleading_agronomy）/, '原码保留，便于对账');
+  assert.match(view.outcomeDesc, /未通过/, '原有整句解释仍在（不得被理由行覆盖）');
+  assert.notEqual(view.reasonLine, view.outcomeDesc, '两句话各说一件事，不能变成同一句');
+
+  // 没有码（`reason_codes: []`）⇒ 空串（模板 `wx:if` 不渲染），而不是「原因未知」。
+  const bare = detail._decoratePost(post({ visibility: 'hidden', audit_state: 'rejected' }));
+  assert.equal(bare.reasonLine, '');
+  assert.match(bare.outcomeDesc, /未通过/, '没有理由码时整句解释照旧');
+
+  // 模板真的把这个字段接上了（否则页面拿到数据也不显示）。
+  const wxml = readFileSync(resolve(root, DETAIL_WXML), 'utf8');
+  assert.equal(wxml.includes('wx:if="{{post.reasonLine}}"'), true, '理由行必须按「没有理由码」时不渲染');
+  assert.ok(wxml.includes('{{post.reasonLine}}'), '模板必须渲染 reasonLine');
+  assert.ok(wxml.includes('{{post.outcomeDesc}}'), '原有整句解释不得被替换');
+  const pillAt = wxml.indexOf('{{post.stateLabel || post.publicLabel}}');
+  const reasonAt = wxml.indexOf('{{post.reasonLine}}');
+  const descAt = wxml.indexOf('{{post.outcomeDesc}}');
+  assert.ok(pillAt > -1 && reasonAt > pillAt && descAt > reasonAt, '顺序：pill → 理由行 → 整句解释');
+});
+
+// ⑫b 负控制：把一条理由码的中文删成空串 ⇒ ⑫ 的展示断言必红（原文只剩「（码：X）」）。
+test('⑫b 负控制：理由码文案被删成空串 ⇒ ⑫ 的人话断言抓得到', () => {
+  const source = readFileSync(resolve(root, 'miniprogram/utils/community-api.js'), 'utf8');
+  const mutated = source.replace("misleading_agronomy: '农技信息存在误导',", "misleading_agronomy: '',");
+  assert.notEqual(mutated, source, '负控制的替换点没命中（文案被改写/挪走了？先修本用例的替换串）');
+  const h = load(() => DEFER, undefined, { source: mutated });
+  const detail = loadPage(h, 'communitydetail');
+  const view = detail._decoratePost(post({
+    visibility: 'hidden',
+    audit_state: 'rejected',
+    reason_codes: ['misleading_agronomy'],
+  }));
+  assert.equal(view.reasonLine.includes('农技信息存在误导'), false,
+    '文案删空后仍出现原文 ⇒ ⑫ 的 match(/农技信息存在误导/) 抓不到这种回退');
+  assert.match(view.reasonLine, /（码：misleading_agronomy）/, '码仍在（这一行不会整条消失）');
 });

@@ -451,6 +451,20 @@ async function deleteTurn(input) {
   return { accepted: ack.accepted, mode: response.mode, etag: response.etag }
 }
 
+/** `DELETE /conversations/{id}`：删除整段会话（级联其轮次、回答与媒体）。 */
+async function deleteConversation(input) {
+  if (!object(input) || !uuid(input.conversationId) || !integer(input.conversationRevision, 1)) {
+    throw failure('INVALID_INPUT')
+  }
+  const key = validKey(input.idempotencyKey) ? input.idempotencyKey : newKey('i12-delete-conversation')
+  const response = await request('DELETE', '/conversations/' + input.conversationId, {
+    ifMatch: etagOf(input.conversationRevision),
+    idempotencyKey: key
+  })
+  const ack = validateAck(response.data)
+  return { accepted: ack.accepted, mode: response.mode, etag: response.etag }
+}
+
 // ---------------------------------------------------------------- 展示判定（fail-closed）
 
 /**
@@ -649,6 +663,7 @@ module.exports = {
   getJob: getJob,
   listTurns: listTurns,
   deleteTurn: deleteTurn,
+  deleteConversation: deleteConversation,
   cancelAll: cancelAll,
   inFlightEpoch: function () { return inFlight.epoch },
   newKey: newKey,

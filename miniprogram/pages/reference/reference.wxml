@@ -78,7 +78,9 @@
   <view class="catalog-version" wx:if="{{matchedNote}}">{{matchedNote}}</view>
 
   <!-- 列表：每条展示同一 source_version 与同一数据来源标记；不合并不同含量的剂型 -->
-  <view class="card item" wx:for="{{items}}" wx:key="record_id" bindtap="goDetail" data-id="{{item.record_id}}" data-source="{{item.data_source}}">
+  <!-- 路由 id 用 `item.id`（= 服务端 `/herbicides/{id}` 的 uuid），**不**用 `record_id`（gy-i03-hb-NNN 是可读记录号，
+       拿它拼接口会 400）。`data-source` 让详情页显式选路，不再靠「id 长得像不像 uuid」猜。 -->
+  <view class="card item" wx:for="{{items}}" wx:key="id" bindtap="goDetail" data-id="{{item.id}}" data-source="{{item.data_source}}">
     <view class="item-head">
       <text class="item-name">{{item.registered_name || item.registration_number}}</text>
       <text class="item-reg" wx:if="{{item.registered_name}}">{{item.registration_number}}</text>

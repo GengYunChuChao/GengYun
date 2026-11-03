@@ -177,10 +177,15 @@ Page({
    * 现在统一取适配层的 `api.outcomeOf`（唯一一张表）：`stateLabel` = 作者侧标签
    * （通过时为空串，让 pill 落到 `publicLabel`），`publicLabel` = 结论标签，
    * `outcomeDesc` = 详情页的整句解释（含「稍后再看」或「未通过」的区分）。
+   *
+   * `reasonLine` 是**另一件事**：读面契约里**必现**的 `reason_codes`（服务端没有可归属的码时给 `[]`），
+   * 由 `api.reasonSummary` 翻成一行「理由：…（码：…）」。它和 `outcomeDesc` 不互相覆盖——
+   * 前者说「理由是什么」，后者说「现在是什么状态、接下来会怎样」。`[]` 时是空串，模板不渲染。
    */
   _decoratePost: function (post) {
     const author = api.authorView(post.author)
     const outcome = api.outcomeOf(post)
+    const reasons = api.reasonSummary(post)
     return {
       id: post.id,
       revision: post.revision,
@@ -199,6 +204,7 @@ Page({
       outcomeDesc: outcome.desc,
       publicLabel: outcome.title,
       stateLabel: outcome.key === 'approved' ? '' : outcome.title,
+      reasonLine: reasons === null ? '' : reasons.text,
       linkTitle: post.linked_knowledge && post.linked_knowledge.summary ? post.linked_knowledge.summary.title : '',
       linkState: post.linked_knowledge ? post.linked_knowledge.reference_state : ''
     }

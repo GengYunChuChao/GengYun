@@ -79,7 +79,7 @@ import { createPostgresAdminScopeAuthority } from './admin/ops/scope-authority-p
 import { createPostgresAdminAccountStateAuthority } from './admin/ops/admin-account-authority-pg.ts';
 import { createPostgresAdminCategories } from './admin/ops/categories-pg.ts';
 // GY-I17（#17）系统事件：账号停用/恢复 → 消息域 `system` 消息（结构性端口，不 import 消息域）。
-import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts';
+import { createMessagesAccountEventsPort, createUnwiredAccountEventsPort, withAccountSystemEvents, type AccountEventsPort } from './admin/ops/account-events.ts'; import { withWithdrawalInvalidationNotices } from './admin/ops/invalidation-events.ts'; // GY-R73（#17）：撤回 ⇒ 收藏者系统通知（同为结构性端口）
 import { createPostgresAccountsDirectory } from './admin/ops/accounts-pg.ts';
 import { createPostgresFeatureFlags, probeFeatureFlagsTable } from './admin/ops/flags-pg.ts';
 import { createPostgresAdminContentStore } from './admin/ops/content-pg.ts';
@@ -2407,7 +2407,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
   app.decorate('authService', service);
   app.decorate('recognitionService', recognitionService);
   app.decorate('synthesisService', synthesisService);
-  app.decorate('adminContentService', adminContentService);
+  adminContentService = withWithdrawalInvalidationNotices(adminContentService, { store: adminContentStore, favorites: favoritesStore, messages: messagesService, pool, log: app.log }); app.decorate('adminContentService', adminContentService); // GY-R73（#17）
   app.decorate('adminOpsService', adminOpsService);
   app.decorate('adminAuditLogService', adminAuditLogService);
   app.decorate('adminPostReadService', adminPostReadService);

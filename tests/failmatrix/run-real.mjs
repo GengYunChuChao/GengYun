@@ -10,6 +10,11 @@
  * 一直没有实测读数（README「未取得」一节里明确记着「真实 PG 下的同一矩阵」未验）。这一臂
  * 只补**证据**，不改矩阵本身，也不改业务代码。
  *
+ * 作业过滤腿（S-6，C3-28…C3-36）**真跑**：真库侧的作业读面是 `createPostgresAdminJobPort`
+ * （`services/api/src/app.ts:1380-1382`：real + 有池时装配），它读四张域内作业表
+ * （`ocr_jobs` / `recognition_jobs` / `speech_jobs` / `conversation_turns`）⇒ 裸 SQL 就能播种，
+ * 「真库无作业读权威可播种」的旧跳过理由已不成立。种子见 `seedFailClosedRowsReal` 末尾的 S8。
+ *
  * 本臂**不宣称 #22 完成**：media/community 投稿/识别/OCR/转写等域在 real 模式下
  * fail-closed（未接线真实对象存储 / 真实供应商 / 真实媒体），这些域对应的越权用例
  * 无法在真 PG 上播种属主行 ⇒ 如实标 `not-runnable` 并写明原因，不伪装成 PASS。
@@ -33,7 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CASES, FAMILIES } from './cases.mjs';
-import { API, SPECIES_ID, inject } from './world.mjs';
+import { API, SPECIES_ID, envelopeShape, inject } from './world.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
@@ -69,6 +74,18 @@ const { createPostgresOcrStore } = await import('../../services/api/src/ocr/stor
 const { createPostgresSpeechStore } = await import('../../services/api/src/speech/store-pg.ts');
 const { RULE_VERSION } = await import('../../packages/moderation/rule-version.mjs');
 const { missingContractFields } = await import('../../packages/moderation/review.mjs');
+
+/**
+ * 本臂**已接**的作业过滤腿（`cases.mjs` 里 `app: 'jobs'` 的 9 条，S-6）。
+ * ⛔ 不再按 `c.app === 'jobs'` 一刀切跳过：真库读面是 `createPostgresAdminJobPort`
+ * （`services/api/src/app.ts:1380-1382` 在 real + 有池时装配），读的是四张域内作业表
+ * （`ocr_jobs` / `recognition_jobs` / `speech_jobs` / `conversation_turns`），裸 SQL 即可播种
+ * （种子见 `seedFailClosedRowsReal` 末尾 S8）。其余 `app: 'jobs'` 腿（当前不存在）仍保持「未取得」。
+ */
+const JOB_FILTER_LEGS = new Set(['C3-28', 'C3-29', 'C3-30', 'C3-31', 'C3-32', 'C3-33', 'C3-34', 'C3-35', 'C3-36']);
+
+/** 作业过滤腿的种子 id：与 `cases.mjs:52` 的 `jobId(ordinal)` 逐字同式（末 12 位 = 11 个 0 + 序号）。 */
+const jobSeedId = (ordinal) => `00000000-0000-4000-8d00-00000000000${ordinal}`;
 
 // ---------------------------------------------------------------------------
 // 一次性 PG 17 集群
@@ -209,6 +226,21 @@ function unavailableSeed(domain) {
 }
 
 /**
+ * 「本该播出来、这次没播成」的哨兵（与 `unavailableSeed` 的差别只在**措辞**，因为根因不同：
+ * 那一类是域被 real 模式关掉，这一类是播种这一步失败/没拿到 id）。同样一碰就抛 ⇒ 依赖它的用例
+ * 在解析路径时抛 ⇒ 落 `not-runnable`，⛔ 不会拼出 `…/turns/null` 这种被 `format: 'uuid'` 挡成
+ * 400 INVALID_REQUEST 的**假读数**（看起来像一条正常的越权拒绝，实际什么都没验到）。
+ */
+function missingSeed(what) {
+  const message = `夹具未取得：${what} —— 播种没拿到 id（真因见日志里的 [seed] 告警）；⛔ 不用 null 拼路径。`;
+  return new Proxy({}, {
+    get() {
+      throw new Error(message);
+    },
+  });
+}
+
+/**
  * 真 PG 世界的属主行播种（B 的私有行）。
  * 能播的播（收藏 / 历史 / 消息 / 会话，走 HTTP 或服务原语）；real 模式下 HTTP 写面 fail-closed 的那几组
  * （社区投稿 / 举报 / 作业 / 识别 / OCR / 转写）改为按**真表**在库里播种（见 `seedFailClosedRowsReal`）。
@@ -229,9 +261,12 @@ async function seedOwnerRowsReal(world, owner, { pool, attacker }) {
     ocrId: unavailableSeed('OCR（需媒体 + 真实供应商）'),
     transcriptionId: unavailableSeed('转写（需媒体 + 真实供应商）'),
     hideTargetPostId: unavailableSeed('社区投稿（审核管线未接线，隐藏目标）'),
-    conversationId: null,
-    conversationEtag: null,
-    turnId: null,
+    // 缺陷 C-2：三个会话侧 id 用**会响的哨兵**而不是裸 `null`。`?? null` 会把路径拼成
+    // `/conversations/null/turns/null`，被 `routes/conversations.ts:60`/`:67` 的 `format: 'uuid'`
+    // 挡成 400 INVALID_REQUEST —— 读数看着像一条正常的越权拒绝，实际一条判据都没验到。
+    conversationId: missingSeed('B 的会话（POST /conversations）'),
+    conversationEtag: missingSeed('B 的会话 ETag（GET /conversations/:id）'),
+    turnId: missingSeed('B 的会话轮次（POST /conversations/:id/turns）'),
   };
 
   // 收藏：走 HTTP（与 stub 同一路径），真 PG favorites store 落库。
@@ -275,6 +310,8 @@ async function seedOwnerRowsReal(world, owner, { pool, attacker }) {
   }
 
   // 会话：走 HTTP（真 PG conversations store）。
+  // 缺陷 C-2：这里**逐跳验状态码与 data.id**，失败就 `warnSeed` 响一声（原先整块 `catch {}` 静默吞错，
+  // 播种失败在日志里零痕迹，只在下游拼出 `…/turns/null` 的假 400）。id 没拿到时哨兵继续兜底。
   try {
     const conversation = await inject(world.app, {
       method: 'POST',
@@ -283,25 +320,35 @@ async function seedOwnerRowsReal(world, owner, { pool, attacker }) {
       body: {},
       headers: { 'idempotency-key': 'i22-realpg-seed-conv' },
     });
-    if (conversation.status === 201) {
-      const conversationId = conversation.body?.data?.id ?? null;
-      seeded.conversationId = conversationId;
-      if (conversationId !== null) {
-        const read = await inject(world.app, { method: 'GET', path: `${API}/conversations/${conversationId}`, actor: owner });
-        const etag = read.etag ?? `"${conversation.body?.data?.revision}"`;
-        seeded.conversationEtag = etag;
-        const turn = await inject(world.app, {
-          method: 'POST',
-          path: `${API}/conversations/${conversationId}/turns`,
-          actor: owner,
-          body: { input_type: 'text', text: '真 PG 臂合成提问：稻田稗草三到五叶期该用什么药？' },
-          headers: { 'idempotency-key': 'i22-realpg-seed-turn', 'if-match': etag },
-        });
-        seeded.turnId = turn.body?.data?.id ?? null;
-      }
+    if (conversation.status !== 201) {
+      throw new Error(`POST /conversations 期望 201 实际 ${conversation.status}：${conversation.text}`);
     }
-  } catch {
-    /* 会话域不可播 */
+    const conversationId = conversation.body?.data?.id;
+    if (typeof conversationId !== 'string' || conversationId.length === 0) {
+      throw new Error(`POST /conversations 响应缺 data.id：${conversation.text}`);
+    }
+    seeded.conversationId = conversationId;
+    const read = await inject(world.app, { method: 'GET', path: `${API}/conversations/${conversationId}`, actor: owner });
+    const etag = read.etag ?? `"${conversation.body?.data?.revision}"`;
+    seeded.conversationEtag = etag;
+    const turn = await inject(world.app, {
+      method: 'POST',
+      path: `${API}/conversations/${conversationId}/turns`,
+      actor: owner,
+      body: { input_type: 'text', text: '真 PG 臂合成提问：稻田稗草三到五叶期该用什么药？' },
+      headers: { 'idempotency-key': 'i22-realpg-seed-turn', 'if-match': etag },
+    });
+    // `routes/conversations.ts:186` 该路由的成功码是 **202**（作业受理），不是 201。
+    if (turn.status !== 202) {
+      throw new Error(`POST /conversations/:id/turns 期望 202 实际 ${turn.status}：${turn.text}`);
+    }
+    const turnId = turn.body?.data?.id;
+    if (typeof turnId !== 'string' || turnId.length === 0) {
+      throw new Error(`POST /conversations/:id/turns 响应缺 data.id：${turn.text}`);
+    }
+    seeded.turnId = turnId;
+  } catch (error) {
+    warnSeed('会话 / 会话轮次（C11-25…C11-39 的 B 侧夹具）', error);
   }
 
   // 社区 / 异步 AI 两族：real 模式下没有 HTTP 写路径，直接按迁移定义的真表播种。
@@ -590,6 +637,53 @@ async function seedFailClosedRowsReal({ pool, world, owner, attacker, seeded }) 
   } catch (error) {
     warnSeed('转写记录（C11-19/C11-21/C11-23/C11-38）', error);
   }
+
+  // ---- S8 作业过滤腿（C3-28…C3-36）的读面种子 -------------------------------
+  // ⚠️ 这 6 行是**合成播种的真实真库行**（直接 INSERT 进 `public.ocr_jobs`，迁移 0024:80-101），
+  // 不是产品数据、不是生产样本：只为让 `/admin/jobs` 的四源读面（`admin/ops/jobs-pg.ts` 的 `SOURCES`）
+  // 有确定的行可读、可过滤、可翻页。real 模式下没有 `POST /ocr` 这条写路径（供应商未接线 ⇒ 503），
+  // 裸 SQL 是唯一播法，播完仍走**生产同一份**读实现。
+  //   - `id` 用 `cases.mjs:52` 的 `jobId(n)` 同式（末 12 位 = 11 个 0 + 序号）：C3-31/C3-33/C3-36 按 id 断言；
+  //   - `state` 与 `world.mjs:298-305` 的 `ADMIN_JOB_SEED` **同值同序**（stub 臂的固定种子），
+  //     这样「同一矩阵」在真库上过滤的是同一组状态；
+  //   - `created_at = now() + n 秒`：读面排序是 `ORDER BY j.created_at DESC, j.id DESC`（jobs-pg.ts 的
+  //     `listTail`），取未来时刻让 6 行先后**只由序号决定**、不受播种时刻与同秒并列影响
+  //     ⇒ C3-31 首页稳定落在 #2（queued 里较新）、C3-33 页 2 稳定落在 #1；
+  //   - `ocr_id` / `media_id` 无外键（0024:88-90 明文：记录由 commitTerminal 后落，先建任务后产记录是正常时序）
+  //     ⇒ 合成 uuid 即可；`media_revision` 照 CHECK 取 1；
+  //   - `owner_user_id` 是本表唯一有外键的列（0024:87 → `public.users`），挂属主 b。
+  // ⚠️ 这 6 行**不是**该读面的全部：同一次播种还在 `recognition_jobs` 写了 S5 的 `ids.job`（queued），
+  //   会话轮次一旦播成还会经 `jobs-pg.ts` 的 `ANSWER_SOURCE`（`public.conversation_turns`）再进一行
+  //   ⇒ `/admin/jobs` 的行数在真库臂本来就不是 6。故 C3-35 的 `items.length === 6` 是 **stub 臂固定种子**
+  //   的口径，在真库臂不成立：`verdictFor` 接上 `check` 之后它会红——那是读数（真库读面比 stub 种子多源），
+  //   ⛔ 不许改断言、也不许按本臂实际行数把 6 放宽成 8 来凑绿。
+  try {
+    const ADMIN_JOB_SEED_STATES = [
+      ['queued', null],
+      ['queued', null],
+      ['running', null],
+      ['succeeded', null],
+      ['failed', 'PROVIDER_TIMEOUT'],
+      ['cancelled', null],
+    ];
+    for (const [index, [state, errorCode]] of ADMIN_JOB_SEED_STATES.entries()) {
+      const ordinal = index + 1;
+      await pool.query(
+        `INSERT INTO public.ocr_jobs
+           (id, revision, kind, owner_user_id, ocr_id, media_id, media_revision,
+            state, error_code, created_at, deadline_at, updated_at)
+         VALUES ($1::uuid, 1, 'ocr', $2::uuid, $3::uuid, $4::uuid, 1, $5::text, $6::varchar,
+                 now() + ($7::integer * interval '1 second'),
+                 now() + interval '1 hour',
+                 now() + ($7::integer * interval '1 second'))`,
+        [jobSeedId(ordinal), owner.userId, fixtureId(60 + ordinal), mediaId, state, errorCode, ordinal],
+      );
+    }
+    seeded.jobFilterJobIds = ADMIN_JOB_SEED_STATES.map((_, index) => jobSeedId(index + 1));
+    seeded.jobFilterSeedOk = true;
+  } catch (error) {
+    warnSeed('作业过滤腿种子（C3-28…C3-36）', error);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -599,11 +693,25 @@ function codeOf(result) {
   return result.body?.error?.code ?? null;
 }
 
-/** 逐条判定：只比 `status` + `code`（stub 期望 vs 真 PG 实际），并记录真模式的执行模式不变量。 */
-function verdictFor(c, result) {
+/**
+ * 逐条判定：`status` + `code` + **用例自带的 `check` 断言**（同构照搬 `run.mjs:374-377`）。
+ *
+ * ⛔ 旧版只比 status + code：全文件对 `c.check` / `c.sameShapeAs` 的引用是 0，于是 158 条 `same` 里
+ * 有 44 条（`sameWithCheck` 19 + `sameWithShape` 25）携带的断言**一条都没执行**——其中包括 C3-28…C3-36
+ * 九条作业腿的全部判据（C3-35 的 `expect` 只有 `{status:200}`，判据全在 `check`；C3-32 的
+ * 「集合已变化，请重新开始分页」措辞也没验）。`same` 必须意味着「该条携带的断言真跑过且全过」，
+ * 否则读数只是状态码级，不能当证据。
+ *
+ * 三段判据分开记，`different` 才能归因：
+ *   - `problems`       status / code / `meta.execution_mode`（stub 期望 vs 真 PG 实际）
+ *   - `checkProblems`  用例自带的 `check`（调用方式与 `run.mjs` 一致：`c.concurrent === undefined` 传单条结果）
+ *   - `shapeProblems`  同形对照组（**后置** pass，见 `shapePostPass`：对照组可能排在本条之后）
+ */
+function verdictFor(c, result, ctx) {
   const exp = c.expect ?? {};
   const actualCode = codeOf(result);
   const problems = [];
+  const checkProblems = [];
   if (exp.status !== undefined && result.status !== exp.status) {
     problems.push(`status stub期望 ${exp.status} 实际 ${result.status}`);
   }
@@ -614,8 +722,154 @@ function verdictFor(c, result) {
   if (metaMode !== 'real') {
     problems.push(`meta.execution_mode 期望 real 实际 ${JSON.stringify(metaMode ?? null)}`);
   }
-  const same = problems.length === 0;
-  return { same, problems, metaMode };
+  let checkRan = false;
+  if (typeof c.check === 'function') {
+    checkRan = true;
+    let extra;
+    try {
+      extra = c.concurrent === undefined ? c.check(result, ctx) : c.check(ctx.results, ctx);
+    } catch (error) {
+      // 断言自己抛错（多因夹具哨兵被读）⇒ 是真问题，不静默当通过。
+      checkProblems.push(`check 抛错：${error?.message ?? error}`);
+      extra = null;
+    }
+    if (Array.isArray(extra)) checkProblems.push(...extra);
+    else if (extra !== null) checkProblems.push(`check 返回值不是数组（${typeof extra}）⇒ 断言无法判定`);
+  }
+  const same = problems.length === 0 && checkProblems.length === 0;
+  return { same, problems, checkProblems, checkRan, metaMode };
+}
+
+/**
+ * 「整域不可用」的两种形态（缺陷 B 的分流口径）：同一根因不该一半进 `not-runnable`、一半进 `different`。
+ *
+ *   1. `503 PROVIDER_UNAVAILABLE`：整域 fail-closed。媒体域的真原因是缺 `isRealMediaWiringApproved`
+ *      铸造的批准能力（`services/api/src/media/service.ts:603-616`），**不是**缺 `MEDIA_OBJECT_REF_KEY`
+ *      ——本臂已给 `'a'.repeat(64)`，`app.ts:1807-1810` 的 mediaPersistenceRefusal 不触发；注销受理是
+ *      `app.ts:2300-2307` 的 `available: executionMode !== 'real'`；审计事件读面同理未接线。
+ *   2. `409 OBJECT_UNAVAILABLE` 且 `details[0].field === 'feature_flag'`：全局开关关闭
+ *      （`services/api/src/admin/ops/flag-gate.ts:418-422` 的 `closedError()`；`contract.ts:19` 定
+ *      OBJECT_UNAVAILABLE = 409）。
+ *
+ * 两者都不是「本臂判据与真库不一致」，而是「该域在本臂没有可用实现 / 被开关整体关闭」⇒ 断言观察不到，
+ * 如实记 `not-runnable` 并带可读 reason（含服务端原文 message）。⚠️ 只有 `status` + `code` + 形态三样都对上
+ * 才改判，且原状（stub 期望 vs 实际）留在 `entry.actual` / `entry.reclassifiedFrom` 里，不吞差异。
+ */
+function domainUnavailable(result) {
+  const error = result.body?.error ?? {};
+  const details = Array.isArray(error.details) ? error.details : [];
+  const message = typeof error.message === 'string' && error.message !== '' ? error.message : '（服务端未给 message）';
+  if (result.status === 503 && error.code === 'PROVIDER_UNAVAILABLE') {
+    return `整域不可用（real 模式该域 fail-closed）：503 PROVIDER_UNAVAILABLE —— ${message}`;
+  }
+  if (result.status === 409 && error.code === 'OBJECT_UNAVAILABLE' && details[0]?.field === 'feature_flag') {
+    // 开关键名不一定在 `details` 里（`closedError()` 把它写在 message 的 `（key=false）` 里）⇒ 两处都试，取到就报。
+    const fromMessage = /（([a-z_]+)=false）/.exec(message)?.[1];
+    const flag = details[0]?.value ?? details[0]?.flag ?? fromMessage ?? 'unknown';
+    return `整域不可用（全局开关关闭 feature_flag=${flag}）：409 OBJECT_UNAVAILABLE —— ${message}`;
+  }
+  return null;
+}
+
+/**
+ * `sameShapeAs` 后置比对（同构照搬 `run.mjs:386-402`）：对照组可能排在本条之后，故全部用例跑完再比。
+ * 形状指纹用 `world.mjs:202-211` 的 `envelopeShape`（抹掉 `request_id` / `message` 后逐字节可比）。
+ * 对照组本次没取得读数（它自己 `not-runnable`）时**不算通过**：标 `unavailable` 并在汇总里单列，
+ * ⛔ 不把「没比」伪装成「形状一致」。
+ */
+function shapePostPass(rows, ctx) {
+  const byId = new Map(CASES.map((c) => [c.id, c]));
+  const counts = { compared: 0, mismatched: 0, unavailable: 0 };
+  for (const row of rows) {
+    const other = byId.get(row.id)?.sameShapeAs;
+    if (other === undefined) continue;
+    const mine = ctx.results.get(row.id);
+    const twin = ctx.results.get(other);
+    const twinSingle = Array.isArray(twin) ? twin[0] : twin;
+    if (mine === undefined || twinSingle === undefined) {
+      row.shape = {
+        twin: other,
+        state: 'unavailable',
+        reason: `同形对照组 ${other} 本次没取得读数（该条 not-runnable），同形比对未执行`,
+      };
+      row.assertions.shape = 'unavailable';
+      counts.unavailable += 1;
+      continue;
+    }
+    const mineShape = envelopeShape(mine);
+    const theirsShape = envelopeShape(twinSingle);
+    row.assertions.shape = 'compared';
+    if (mineShape === theirsShape) {
+      row.shape = { twin: other, state: 'same' };
+      counts.compared += 1;
+      continue;
+    }
+    row.shape = { twin: other, state: 'different' };
+    row.shapeProblems = [`同形对照组 ${other} 形状不同：本条 ${mineShape} ／ 对照组 ${theirsShape}`];
+    counts.compared += 1;
+    counts.mismatched += 1;
+    // 形状不一致就是真差异（越权 404 与「本来不存在」404 必须同形，否则泄露存在性）。
+    if (row.verdict === 'same') {
+      row.verdict = 'different';
+      row.reclassifiedFrom = row.reclassifiedFrom ?? 'same';
+    }
+  }
+  return counts;
+}
+
+/**
+ * 解析夹具/路径时抛错的原因措辞。
+ * 哨兵自己已经写清了根因（`夹具不可用：…` / `夹具未取得：…`）时**不再**套一层
+ * 「real 模式该域 fail-closed」——把「播种没成」说成「域被关」会把读表的人引向错误的修法。
+ */
+function fixtureReason(error) {
+  const message = String(error?.message ?? error);
+  if (message.startsWith('夹具不可用：') || message.startsWith('夹具未取得：')) return message;
+  return `夹具不可用（real 模式该域 fail-closed）：${message}`;
+}
+
+/**
+ * `not-runnable` 的原因分类（汇总用）：让「没跑到」的 N 条能按根因读，而不是一坨。
+ * ⛔ 分类只用于读表，不改变任何一条的判定。
+ */
+function notRunnableKind(reason) {
+  const text = reason ?? '';
+  if (text.startsWith('夹具未取得')) return 'seed-missing';
+  if (text.startsWith('夹具不可用')) return 'fixture';
+  if (text.startsWith('整域不可用')) return 'domain-unavailable';
+  if (text.startsWith('作业过滤腿')) return 'jobs-unseeded';
+  if (text.startsWith('并发用例')) return 'concurrent';
+  if (text.startsWith('inject 抛错')) return 'inject-error';
+  return 'other';
+}
+
+/**
+ * 缺陷 C-1：真库臂的**夹具前提**——把 `ai_enabled` 打开。
+ *
+ * 依据：`services/api/db/migrations/0020_feature_flags.sql:78-82` 以 `enabled=false` 播种三条开关，
+ * 全仓没有任何迁移把它翻成 true；`services/api/src/admin/ops/flag-gate.ts` 的 `FLAG_GATED_SURFACES`
+ * 把 `createTurn` / `createRecognition` / `createOCR` / `createTranscription` / `createSynthesis`
+ * 挂在 `ai_enabled` 上，关着时一律 409 `OBJECT_UNAVAILABLE`（`details[0].field === 'feature_flag'`）。
+ * 修前实测后果：B 的会话轮次播不出来（`seeded.turnId` 只能是 null）⇒ C11-33 拼出 `…/turns/null`
+ * 拿到「看起来像正常拒绝」的假 400；C11-29/30 只剩 409 一条读数。
+ *
+ * 这里**只动夹具状态，不碰被测代码**：`createPortFlagReader` 的快照在每次进入受控路由时刷新
+ * （`flag-gate.ts:166`、`prepare()`），故 UPDATE 之后的下一个请求就能看到，无需重启 app。
+ * `revision` 一并 +1：真实写面 `public.set_feature_flag()` 每次真变更都会 +1，夹具照同一口径，
+ * 免得「开了但 revision 还是 1」这种真库不可能出现的状态混进读数。
+ */
+async function armFeatureFlags(pool) {
+  const result = await pool.query(
+    `UPDATE public.feature_flags
+        SET enabled = true, revision = revision + 1
+      WHERE key = 'ai_enabled'
+      RETURNING key, enabled, revision`,
+  );
+  const row = result.rows[0];
+  if (result.rowCount !== 1 || row?.enabled !== true) {
+    throw new Error(`夹具前提未成立：ai_enabled 没播成（rowCount=${result.rowCount}）`);
+  }
+  console.log(`[pg] 夹具开关 ai_enabled=true revision=${row.revision}（0020 播的是 false，全仓无迁移翻 true）`);
 }
 
 // ---------------------------------------------------------------------------
@@ -696,6 +950,8 @@ async function main() {
     console.log(`[pg] migrations=${first.applied.length}（一次性空库，全部落地）`);
 
     pool = createPool(connectionString);
+    // 缺陷 C-1：先把 `ai_enabled` 打开，再播种 / 跑用例——否则 createTurn 这族一律 409（见函数注释）。
+    await armFeatureFlags(pool);
     // real 模式装配：loadConfig 走 stub（避免 REQUIRED_WHEN_REAL 的九项校验），再显式覆盖 executionMode。
     // 这与既有集成测试先例（user-chain-e2e.mjs）逐字同口径。
     const config = {
@@ -838,6 +1094,15 @@ async function main() {
         verdict: 'not-runnable',
         reason: null,
         problems: [],
+        checkProblems: [],
+        shapeProblems: [],
+        // 该条**携带**什么断言、有没有真跑：`none` = 不带；`not-reached` = 带了但本条没跑到；
+        // `ran` / `compared` = 真跑过（reading 才算数）。
+        assertions: {
+          check: typeof c.check === 'function' ? 'not-reached' : 'none',
+          shape: c.sameShapeAs !== undefined ? 'not-reached' : 'none',
+        },
+        shape: null,
       };
 
       let actor;
@@ -852,7 +1117,7 @@ async function main() {
           headers: resolveValue(c.headers, ctx) ?? {},
         };
       } catch (error) {
-        entry.reason = `夹具不可用（real 模式该域 fail-closed）：${error?.message ?? error}`;
+        entry.reason = fixtureReason(error);
         rows.push(entry);
         continue;
       }
@@ -863,10 +1128,13 @@ async function main() {
         continue;
       }
 
-      if (c.app === 'jobs') {
-        // S-6 的作业过滤腿依赖 `createJobFilterWorld` 的**已接线内存作业端口 + 固定种子**（真 PG 侧没有
-        // 作业读权威可播种）。本臂如实记「未取得」，不算 same、也不伪装 PASS；stub 臂与单测里这 9 条全跑。
-        entry.reason = '作业过滤腿需要已接线的内存作业端口（stub 参考实现 + 固定种子）；real + 真库无作业读权威，本臂不跑';
+      if (c.app === 'jobs' && !(JOB_FILTER_LEGS.has(c.id) && seeded.jobFilterSeedOk === true)) {
+        // ⛔ 按**具体用例**分腿，不再按 `c.app === 'jobs'` 一刀切：C3-28…C3-36 已接真实执行（读面见顶部
+        // `JOB_FILTER_LEGS` 的注释，种子见 `seedFailClosedRowsReal` 的 S8）；其余 `app: 'jobs'` 腿仍记「未取得」。
+        // 种子没落库时同样退回「未取得」——没有行可读的 200 是假读数，不算 same。
+        entry.reason = seeded.jobFilterSeedOk === true
+          ? '作业过滤腿未接线（本臂只接了 C3-28…C3-36 这 9 条，其余 jobs 腿保持未取得）'
+          : '作业过滤腿种子未落库（真库 `public.ocr_jobs` 播种失败，见上方 [seed] 告警）⇒ 无行可读，保持未取得';
         rows.push(entry);
         continue;
       }
@@ -882,21 +1150,74 @@ async function main() {
 
       entry.path = request.path;
       entry.actual = { status: result.status, code: codeOf(result), mode: result.body?.meta?.execution_mode ?? null };
-      const verdict = verdictFor(c, result);
+      const verdict = verdictFor(c, result, ctx);
       entry.problems = verdict.problems;
-      entry.verdict = verdict.same ? 'same' : 'different';
+      entry.checkProblems = verdict.checkProblems;
+      if (verdict.checkRan) entry.assertions.check = 'ran';
       ctx.results.set(c.id, result);
+      // 与 `run.mjs:383` 同构：`after` 无论本条 same/different 都执行。C3-31 靠它把**真游标**写进 ctx，
+      // 否则 C3-32/C3-33 会拿 `ctx.jobFilterCursor = null` ⇒ `cursor=no-cursor` 假跑（那是自欺，不是证据）。
+      if (typeof c.after === 'function') c.after(result, ctx);
+      if (verdict.same) {
+        entry.verdict = 'same';
+      } else {
+        // 缺陷 B：同一根因「整域不可用」不许一半算 `not-runnable`、一半算 `different`（14 条里 8 条是噪音）。
+        const unavailable = domainUnavailable(result);
+        if (unavailable !== null) {
+          entry.verdict = 'not-runnable';
+          entry.reason = unavailable;
+          entry.reclassifiedFrom = 'different';
+        } else {
+          entry.verdict = 'different';
+        }
+      }
       rows.push(entry);
     }
 
+    // ------------------------------------------------ 后置：`sameShapeAs` 同形比对
+    const shapeTally = shapePostPass(rows, ctx);
+
     // ------------------------------------------------------------------ 打报告
     const commit = baseCommit();
-    const tally = { same: 0, different: 0, notRunnable: 0 };
+    const tally = {
+      same: 0,
+      different: 0,
+      notRunnable: 0,
+      // `same` 的三段拆分（互斥）：真跑过 check / 真比对过同形 / 两者都带（cases.mjs 里没有同时带的）/ 都不带
+      sameWithCheck: 0,
+      sameWithShape: 0,
+      sameWithEither: 0,
+      sameWithNeither: 0,
+      // 携带 `sameShapeAs` 但对照组本次没读数 ⇒ 没比过（⛔ 不算通过，单列出来）
+      sameWithShapeUnchecked: 0,
+      differentFromCheck: 0,
+      differentFromShape: 0,
+      reclassifiedToNotRunnable: 0,
+      notRunnableByKind: {},
+    };
     const familyTally = new Map();
     for (const row of rows) {
-      if (row.verdict === 'same') tally.same += 1;
-      else if (row.verdict === 'different') tally.different += 1;
-      else tally.notRunnable += 1;
+      if (row.verdict === 'same') {
+        tally.same += 1;
+        const ranCheck = row.assertions.check === 'ran';
+        const comparedShape = row.assertions.shape === 'compared';
+        if (ranCheck) tally.sameWithCheck += 1;
+        if (comparedShape) tally.sameWithShape += 1;
+        if (ranCheck || comparedShape) tally.sameWithEither += 1;
+        else {
+          tally.sameWithNeither += 1;
+          if (row.assertions.shape === 'unavailable') tally.sameWithShapeUnchecked += 1;
+        }
+      } else if (row.verdict === 'different') {
+        tally.different += 1;
+        if (row.checkProblems.length > 0) tally.differentFromCheck += 1;
+        if (row.shapeProblems.length > 0) tally.differentFromShape += 1;
+      } else {
+        tally.notRunnable += 1;
+        if (row.reclassifiedFrom === 'different') tally.reclassifiedToNotRunnable += 1;
+        const kind = notRunnableKind(row.reason);
+        tally.notRunnableByKind[kind] = (tally.notRunnableByKind[kind] ?? 0) + 1;
+      }
       const t = familyTally.get(row.family) ?? { total: 0, same: 0, different: 0, notRunnable: 0 };
       t.total += 1;
       if (row.verdict === 'same') t.same += 1;
@@ -922,9 +1243,14 @@ async function main() {
       console.log(`  ${tag} ${row.id.padEnd(6)} ${row.method.padEnd(6)} ${row.path} → 真PG ${actual} · stub期望 ${row.stubExpect.status ?? '-'} ${row.stubExpect.code ?? '-'} · ${row.title}`);
       if (row.verdict === 'different') {
         for (const problem of row.problems) console.log(`       ✗ ${problem}`);
+        for (const problem of row.checkProblems) console.log(`       ✗ [check] ${problem}`);
+        for (const problem of row.shapeProblems) console.log(`       ✗ [shape] ${problem}`);
       }
       if (row.verdict === 'not-runnable' && row.reason) {
         console.log(`       · ${row.reason}`);
+      }
+      if (row.verdict === 'same' && row.shape?.state === 'unavailable') {
+        console.log(`       · ⚠ ${row.shape.reason}（该条 same 只是状态码级）`);
       }
     }
 
@@ -932,7 +1258,15 @@ async function main() {
     for (const [family, t] of familyTally) {
       console.log(`${family} ${String(FAMILIES[family] ?? '').slice(0, 26)}… ${t.total} 条：same ${t.same} / different ${t.different} / not-runnable ${t.notRunnable}`);
     }
-    console.log(`\n权限面合计 ${rows.length} 条：same ${tally.same} / different ${tally.different} / not-runnable ${tally.notRunnable}`);
+    // 六桶读数：`same` 已经要求「携带的断言真跑过且全过」，故 sameWithCheck / sameWithShape 是它的**子集**。
+    console.log(`\n权限面合计 ${rows.length} 条：same ${tally.same} / sameWithCheck ${tally.sameWithCheck} / sameWithShape ${tally.sameWithShape} / different ${tally.different} / not_runnable ${tally.notRunnable}`);
+    console.log(`  判据强度：same 里真跑过断言 ${tally.sameWithEither} 条（check ${tally.sameWithCheck} + 同形 ${tally.sameWithShape}），只比 status/code ${tally.sameWithNeither} 条`);
+    if (tally.sameWithShapeUnchecked > 0) {
+      console.log(`  ⚠ 带了同形判据但对照组没读数 ⇒ 没比过 ${tally.sameWithShapeUnchecked} 条（不算通过）`);
+    }
+    console.log(`  差异归因：different ${tally.different} 条（status/code/check 判红 ${tally.differentFromCheck} · 同形比对判红 ${tally.differentFromShape}）`);
+    console.log(`  not-runnable ${tally.notRunnable} 条：${Object.entries(tally.notRunnableByKind).map(([kind, n]) => `${kind} ${n}`).join(' / ') || '（无）'}；其中由 different 改判 ${tally.reclassifiedToNotRunnable} 条`);
+    console.log(`  同形比对：真比过 ${shapeTally.compared} 条（不一致 ${shapeTally.mismatched}）· 对照组缺读数 ${shapeTally.unavailable} 条`);
 
     // 差异结论（只列 different 与 not-runnable 的标题，供直接贴证据页）。
     console.log('\n———— stub vs 真 PG 差异结论 ————');
@@ -940,7 +1274,8 @@ async function main() {
     const nrun = rows.filter((row) => row.verdict === 'not-runnable');
     if (diffs.length === 0) console.log('（无：权限面在 stub 与真 PG 下逐条一致）');
     for (const row of diffs) {
-      console.log(`  DIFF ${row.id}：stub ${row.stubExpect.status} ${row.stubExpect.code ?? '-'} → 真PG ${row.actual.status} ${row.actual.code ?? '-'}（${row.problems.join('；')}）`);
+      const why = [...row.problems, ...row.checkProblems, ...row.shapeProblems].join('；');
+      console.log(`  DIFF ${row.id}：stub ${row.stubExpect.status} ${row.stubExpect.code ?? '-'} → 真PG ${row.actual.status} ${row.actual.code ?? '-'}（${why}）`);
     }
     for (const row of nrun) {
       console.log(`  NRUN ${row.id}：${row.reason}`);
@@ -956,7 +1291,22 @@ async function main() {
         postgres: serverVersion,
         execution_mode: 'real',
         transport: 'app.inject (real PG stores)',
-        totals: { total: rows.length, same: tally.same, different: tally.different, not_runnable: tally.notRunnable },
+        totals: {
+          total: rows.length,
+          same: tally.same,
+          sameWithCheck: tally.sameWithCheck,
+          sameWithShape: tally.sameWithShape,
+          sameWithEither: tally.sameWithEither,
+          sameWithNeither: tally.sameWithNeither,
+          sameWithShapeUnchecked: tally.sameWithShapeUnchecked,
+          different: tally.different,
+          differentFromCheck: tally.differentFromCheck,
+          differentFromShape: tally.differentFromShape,
+          not_runnable: tally.notRunnable,
+          notRunnableByKind: tally.notRunnableByKind,
+          reclassifiedToNotRunnable: tally.reclassifiedToNotRunnable,
+        },
+        shapePass: shapeTally,
         families: Object.fromEntries([...familyTally].map(([family, t]) => [family, t])),
         rows,
       }, null, 2)}\n`, 'utf8');
@@ -964,7 +1314,7 @@ async function main() {
     }
 
     const elapsed = Date.now() - startedAt;
-    console.log(`\n真 PG 臂完成：${rows.length} 条权限面用例在 PostgreSQL ${serverVersion} 上取得逐条读数，耗时 ${elapsed} ms（same=${tally.same} different=${tally.different} not-runnable=${tally.notRunnable}）。`);
+    console.log(`\n真 PG 臂完成：${rows.length} 条权限面用例在 PostgreSQL ${serverVersion} 上取得逐条读数，耗时 ${elapsed} ms（same=${tally.same} sameWithCheck=${tally.sameWithCheck} sameWithShape=${tally.sameWithShape} different=${tally.different} not-runnable=${tally.notRunnable}）。`);
     return 0;
   } catch (error) {
     const elapsed = Date.now() - startedAt;

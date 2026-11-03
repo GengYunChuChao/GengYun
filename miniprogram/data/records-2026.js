@@ -31,6 +31,7 @@ module.exports = {
   },
   "records": [
     {
+      "id": "ee57e13c-3b83-5b43-87f8-2c4b36a98930",
       "record_id": "gy-i03-hb-001",
       "registration_number": "PD20161371",
       "registered_name": "唑草酮",
@@ -144,6 +145,7 @@ module.exports = {
       }
     },
     {
+      "id": "d638d4cc-6a09-56f8-8393-1716db4646e7",
       "record_id": "gy-i03-hb-002",
       "registration_number": "PD20211218",
       "registered_name": "吡酰·二甲戊",
@@ -250,6 +252,7 @@ module.exports = {
       }
     },
     {
+      "id": "833628ae-0158-573f-9253-b136fc4abace",
       "record_id": "gy-i03-hb-003",
       "registration_number": "PD20211629",
       "registered_name": "苯·吡·西草净",
@@ -356,6 +359,7 @@ module.exports = {
       }
     },
     {
+      "id": "78c88832-9011-5629-9694-177560118b1d",
       "record_id": "gy-i03-hb-004",
       "registration_number": "PD20212142",
       "registered_name": "丙噁酮·丁草胺·噁嗪酮",
@@ -462,6 +466,7 @@ module.exports = {
       }
     },
     {
+      "id": "662bceb1-a489-58b7-bf1a-9ffdbf6283a0",
       "record_id": "gy-i03-hb-005",
       "registration_number": "PD20212101",
       "registered_name": "乙氧氟草醚",
@@ -568,6 +573,7 @@ module.exports = {
       }
     },
     {
+      "id": "3fa55f84-9ffe-5b13-a359-411a934cd683",
       "record_id": "gy-i03-hb-006",
       "registration_number": "PD20212271",
       "registered_name": "噁唑草·二氯喹",
@@ -674,6 +680,7 @@ module.exports = {
       }
     },
     {
+      "id": "01335373-1ee6-55a1-a7f4-0413a1eb211e",
       "record_id": "gy-i03-hb-007",
       "registration_number": "PD20161376",
       "registered_name": "辛·烟·莠去津",
@@ -780,6 +787,7 @@ module.exports = {
       }
     },
     {
+      "id": "81659704-3a0e-5f6b-9728-a1937e0d8cb8",
       "record_id": "gy-i03-hb-008",
       "registration_number": "PD20211624",
       "registered_name": "硝·烟·莠去津",
@@ -886,6 +894,7 @@ module.exports = {
       }
     },
     {
+      "id": "36ce8e85-4c90-50b3-9403-351446990dcc",
       "record_id": "gy-i03-hb-009",
       "registration_number": "PD20161175",
       "registered_name": "硝·烟·辛酰溴",
@@ -992,6 +1001,7 @@ module.exports = {
       }
     },
     {
+      "id": "bf109c75-8232-5226-b9e1-a649a47b1f9d",
       "record_id": "gy-i03-hb-010",
       "registration_number": "PD20110805",
       "registered_name": "磺草·莠去津",
@@ -1098,6 +1108,7 @@ module.exports = {
       }
     },
     {
+      "id": "78a0b830-0b6f-574a-9393-5852d4c4c79f",
       "record_id": "gy-i03-hb-011",
       "registration_number": "PD20212226",
       "registered_name": "硝磺草酮",
@@ -1204,6 +1215,7 @@ module.exports = {
       }
     },
     {
+      "id": "b11ed937-4efd-595d-8c55-cdbf11f47f6c",
       "record_id": "gy-i03-hb-012",
       "registration_number": "PD20211628",
       "registered_name": "烯草酮",
@@ -1319,6 +1331,7 @@ module.exports = {
       }
     },
     {
+      "id": "f50d2caf-f671-560d-8c0c-5c085ad294b0",
       "record_id": "gy-i03-hb-013",
       "registration_number": "PD20212137",
       "registered_name": "嗪酮·乙草胺",
@@ -1425,6 +1438,7 @@ module.exports = {
       }
     },
     {
+      "id": "63363cb6-17b9-5c47-ade2-aa343e84ac22",
       "record_id": "gy-i03-hb-014",
       "registration_number": "PD20212138",
       "registered_name": "丙炔氟·乙草胺",
@@ -1538,6 +1552,7 @@ module.exports = {
       }
     },
     {
+      "id": "f2192840-d444-5fa6-a947-4e0846a7738f",
       "record_id": "gy-i03-hb-015",
       "registration_number": "PD20211640",
       "registered_name": "氟·松·烯草酮",
@@ -1644,6 +1659,7 @@ module.exports = {
       }
     },
     {
+      "id": "e1fcc1fa-d2ed-577d-b77c-dada84f1c37c",
       "record_id": "gy-i03-hb-016",
       "registration_number": "PD20111018",
       "registered_name": "氨氯·二氯吡",
@@ -1750,6 +1766,7 @@ module.exports = {
       }
     },
     {
+      "id": "de485140-fd58-5c48-8e1a-b78c8f0fe497",
       "record_id": "gy-i03-hb-017",
       "registration_number": "PD20161375",
       "registered_name": "烯草酮",
@@ -1856,6 +1873,7 @@ module.exports = {
       }
     },
     {
+      "id": "21fced9a-cea9-53e3-83f2-fa0e9e1cbc44",
       "record_id": "gy-i03-hb-018",
       "registration_number": "PD20260472",
       "registered_name": "氨氯·二氯吡",
@@ -1962,6 +1980,7 @@ module.exports = {
       }
     },
     {
+      "id": "61e43c2d-0a88-5164-9caa-6c7d3e43c111",
       "record_id": "gy-i03-hb-019",
       "registration_number": "PD20212148",
       "registered_name": "乙草·滴辛酯",
@@ -2069,6 +2088,7 @@ module.exports = {
       }
     },
     {
+      "id": "c2c57352-c983-51ca-9f42-18841455681b",
       "record_id": "gy-i03-hb-020",
       "registration_number": "PD20211636",
       "registered_name": "乙·嗪·滴辛酯",

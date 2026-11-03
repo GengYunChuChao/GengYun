@@ -33,8 +33,10 @@ const API = '/api/v1';
 const START = Date.UTC(2026, 9, 20, 4, 0, 0);
 const ABSENT = '00000000-0000-4000-8000-000000000000';
 const POST_KEYS = ['id', 'revision', 'author', 'title', 'body', 'crop_id', 'region_code', 'media_ids',
-  'visibility', 'audit_state', 'created_at', 'updated_at', 'media', 'linked_knowledge_ref', 'linked_knowledge'];
-const COMMENT_KEYS = ['id', 'revision', 'post_id', 'author', 'body', 'visibility', 'audit_state', 'created_at'];
+  'visibility', 'audit_state', 'reason_codes', 'created_at', 'updated_at', 'media', 'linked_knowledge_ref',
+  'linked_knowledge'];
+const COMMENT_KEYS = ['id', 'revision', 'post_id', 'author', 'body', 'visibility', 'audit_state', 'reason_codes',
+  'created_at'];
 const REPORT_KEYS = ['id', 'revision', 'target_ref', 'state', 'reason_code'];
 
 /** 写头：`Idempotency-Key`（required，8..128）+ 可选 `If-Match`（`^"[1-9][0-9]*"$`）。 */

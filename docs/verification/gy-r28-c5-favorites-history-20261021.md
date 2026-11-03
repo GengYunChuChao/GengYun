@@ -36,13 +36,13 @@
 >   这四处的原文保留为当时读数。
 > - **§7 第 2 条「全站同类折叠」也已被后续片做完**：五个适配层现在**都**把 401/403 归因委托给
 >   `miniprogram/utils/auth.js:605` 的 `failureFor`（`attribution` 决定要不要清会话），不再各自
->   `clearSession`＋折成 `SESSION_REQUIRED`——`miniprogram/utils/community-api.js:190`、
+>   `clearSession`＋折成 `SESSION_REQUIRED`——`miniprogram/utils/community-api.js:210`、
 >   `miniprogram/utils/knowledge-api.js:76`、`miniprogram/utils/messages-api.js:137`、
 >   `miniprogram/utils/profile-api.js:23`、`miniprogram/utils/voice-api.js:213`。原文「仍是 401/403 折叠」
 >   保留为 2026-10-21 读数（口径裁决见本页 §5.1 的 superseded 边界）。
 > - **没有变的口径**：P0 链路第 5 步「收藏／取消」的入口仍是**两处**（详情页按钮＋收藏页「可收藏的资料」）；
 >   识别页的 `fav-entry` **不计入**第 5 步（属识别能力、只收 `species`），裁定见
->   `docs/ui-state-inventory.md:282` 与 `docs/ui-state-inventory.md:308`。
+>   `docs/ui-state-inventory.md:282` 与 `docs/ui-state-inventory.md:309`。
 > - 本页其余 `path:line` 仍是 2026-10-21 基线的读数，未随合流重取（合流后部分行号已漂移）；要引用请按符号回查。
 
 ## 2. 服务端面（证据）

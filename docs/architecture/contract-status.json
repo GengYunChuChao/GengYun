@@ -1523,15 +1523,15 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "listPosts",
-          "lines": "915-915"
+          "symbol": "async listPosts(actor: unknown, query: ListPostsQuery = {}): Promise<PostPage> {",
+          "lines": "969-969"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "createPost / getPost / listPosts 的响应形状与契约 Post 完全一致"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "createPost",
@@ -1550,8 +1550,8 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "createPost",
-          "lines": "909-1020"
+          "symbol": "async createPost(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Post> {",
+          "lines": "963-1074"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
@@ -1562,7 +1562,7 @@
           "name": "F. submissions_enabled 关闭 ⇒ createPost 拒绝且**一条内容都没落库**；开启 ⇒ 正常发布"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：**图片审核能力位**（`services/api/src/moderation/service.ts` 的 `capabilities()`，经 `services/api/src/community/moderation-link.ts` 的 `imageReadiness` 只读读取）就绪时，带媒体投稿按内容种类建 `text`+`image` 版本级任务并停在待审（`visibility=private`、`audit_state=pending`，不调发布闸门、不投发布事件）；能力缺失/未接线时 fail-closed 422 `INPUT_UNCERTAIN` 且 details 带 `IMAGE_MODERATION_UNAVAILABLE`；真实图片审核供应商未接线（合成端口注入时任务结论落隔离，不因\"补了路径\"而放行）；规则层仍不对图片做硬规则判定（带媒体恒 `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`，模型层是图片的唯一判定来源），且社区侧媒体元数据当前只传 `media_id` ⇒ ims 端口收不到 mime，载荷校验落 `MODEL_PAYLOAD_INVALID`（如实计入未取得项）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：**图片审核能力位**（`services/api/src/moderation/service.ts` 的 `capabilities()`，经 `services/api/src/community/moderation-link.ts` 的 `imageReadiness` 只读读取）就绪时，带媒体投稿按内容种类建 `text`+`image` 版本级任务并停在待审（`visibility=private`、`audit_state=pending`，不调发布闸门、不投发布事件）；能力缺失/未接线时 fail-closed 422 `INPUT_UNCERTAIN` 且 details 带 `IMAGE_MODERATION_UNAVAILABLE`；真实图片审核供应商未接线（合成端口注入时任务结论落隔离，不因\"补了路径\"而放行）；规则层仍不对图片做硬规则判定（带媒体恒 `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`，模型层是图片的唯一判定来源），且社区侧媒体元数据当前只传 `media_id` ⇒ ims 端口收不到 mime，载荷校验落 `MODEL_PAYLOAD_INVALID`（如实计入未取得项）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getPost",
@@ -1582,14 +1582,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPost(actor: unknown, id: unknown): Promise<Post> {",
-          "lines": "1106-1110"
+          "lines": "1160-1164"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "createPost / getPost / listPosts 的响应形状与契约 Post 完全一致"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "editPost",
@@ -1609,14 +1609,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "editPost",
-          "lines": "1030-1157"
+          "lines": "1084-1211"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "editPost / deletePost / 点赞 的响应形状与契约一致（Post / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：**图片审核能力位**（`services/api/src/moderation/service.ts` 的 `capabilities()`，经 `services/api/src/community/moderation-link.ts` 的 `imageReadiness` 只读读取）就绪时，带媒体投稿按内容种类建 `text`+`image` 版本级任务并停在待审（`visibility=private`、`audit_state=pending`，不调发布闸门、不投发布事件）；能力缺失/未接线时 fail-closed 422 `INPUT_UNCERTAIN` 且 details 带 `IMAGE_MODERATION_UNAVAILABLE`；真实图片审核供应商未接线（合成端口注入时任务结论落隔离，不因\"补了路径\"而放行）；规则层仍不对图片做硬规则判定（带媒体恒 `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`，模型层是图片的唯一判定来源），且社区侧媒体元数据当前只传 `media_id` ⇒ ims 端口收不到 mime，载荷校验落 `MODEL_PAYLOAD_INVALID`（如实计入未取得项）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：**图片审核能力位**（`services/api/src/moderation/service.ts` 的 `capabilities()`，经 `services/api/src/community/moderation-link.ts` 的 `imageReadiness` 只读读取）就绪时，带媒体投稿按内容种类建 `text`+`image` 版本级任务并停在待审（`visibility=private`、`audit_state=pending`，不调发布闸门、不投发布事件）；能力缺失/未接线时 fail-closed 422 `INPUT_UNCERTAIN` 且 details 带 `IMAGE_MODERATION_UNAVAILABLE`；真实图片审核供应商未接线（合成端口注入时任务结论落隔离，不因\"补了路径\"而放行）；规则层仍不对图片做硬规则判定（带媒体恒 `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`，模型层是图片的唯一判定来源），且社区侧媒体元数据当前只传 `media_id` ⇒ ims 端口收不到 mime，载荷校验落 `MODEL_PAYLOAD_INVALID`（如实计入未取得项）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "deletePost",
@@ -1635,15 +1635,15 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "deletePost",
-          "lines": "1243-1243"
+          "symbol": "async deletePost(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
+          "lines": "1297-1297"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "editPost / deletePost / 点赞 的响应形状与契约一致（Post / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "listComments",
@@ -1662,15 +1662,15 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "listComments",
-          "lines": "1278-1278"
+          "symbol": "async listComments(actor: unknown, postId: unknown, query: ListCommentsQuery = {}): Promise<CommentPage> {",
+          "lines": "1332-1332"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "createPost / getPost / listPosts 的响应形状与契约 Post 完全一致"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "createComment",
@@ -1689,15 +1689,15 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "createComment",
-          "lines": "1248-1350"
+          "symbol": "async createComment(",
+          "lines": "1302-1404"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "createPost / getPost / listPosts 的响应形状与契约 Post 完全一致"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getComment",
@@ -1717,14 +1717,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getComment(actor: unknown, id: unknown): Promise<Comment> {",
-          "lines": "1440-1444"
+          "lines": "1494-1498"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "getComment / editComment / deleteComment 的响应形状与契约一致（Comment / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "editComment",
@@ -1743,15 +1743,15 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "editComment",
-          "lines": "1447-1447"
+          "symbol": "async editComment(actor: unknown, id: unknown, input: unknown, options: WriteOptions = {}): Promise<Comment> {",
+          "lines": "1501-1501"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "getComment / editComment / deleteComment 的响应形状与契约一致（Comment / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "deleteComment",
@@ -1770,15 +1770,15 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "deleteComment",
-          "lines": "1527-1527"
+          "symbol": "async deleteComment(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
+          "lines": "1581-1581"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "getComment / editComment / deleteComment 的响应形状与契约一致（Comment / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getPostLike",
@@ -1798,7 +1798,7 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getPostLike(actor: unknown, id: unknown): Promise<LikeStatus> {",
-          "lines": "1591-1598"
+          "lines": "1645-1652"
         },
         {
           "test": "tests/unit/community-like-read.test.mjs",
@@ -1829,14 +1829,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1561-1561"
+          "lines": "1615-1617"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "editPost / deletePost / 点赞 的响应形状与契约一致（Post / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "unlikePosts",
@@ -1856,14 +1856,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikePosts(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1565-1565"
+          "lines": "1619-1621"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "editPost / deletePost / 点赞 的响应形状与契约一致（Post / Ack）"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "likeComments",
@@ -1883,14 +1883,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async likeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1569-1569"
+          "lines": "1623-1625"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "likeComments / unlikeComments 的响应形状与契约一致（Ack），重复 PUT 幂等、未点赞取消不回退"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "unlikeComments",
@@ -1910,14 +1910,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async unlikeComments(actor: unknown, id: unknown, options: WriteOptions = {}): Promise<Ack> {",
-          "lines": "1573-1573"
+          "lines": "1627-1629"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "likeComments / unlikeComments 的响应形状与契约一致（Ack），重复 PUT 幂等、未点赞取消不回退"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "createReport",
@@ -1936,15 +1936,15 @@
         },
         {
           "path": "services/api/src/community/service.ts",
-          "symbol": "createReport",
-          "lines": "1601-1601"
+          "symbol": "async createReport(actor: unknown, input: unknown, options: WriteOptions = {}): Promise<Report> {",
+          "lines": "1655-1655"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "createReport / getOwnReport 的响应形状与契约 Report 一致"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "getOwnReport",
@@ -1964,14 +1964,14 @@
         {
           "path": "services/api/src/community/service.ts",
           "symbol": "async getOwnReport(actor: unknown, id: unknown): Promise<Report> {",
-          "lines": "1644-1650"
+          "lines": "1698-1704"
         },
         {
           "test": "tests/unit/community-contract.test.mjs",
           "name": "createReport / getOwnReport 的响应形状与契约 Report 一致"
         }
       ],
-      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`:1213`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
+      "blocker": "HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归 tests/unit/community-http.test.mjs），含契约头部（Idempotency-Key/If-Match）、强 ETag、no-store 与先审后发隔离；**存储持久化已交付（订正原「真实持久存储未交付／real 整域 503」）**：迁移 `services/api/db/migrations/0022_community_persistence.sql` + `services/api/src/community/store-pg.ts`（`persistent: true`；crop_id/region_code/author/可见性/keyset/LIMIT 下推 SQL，`ORDER BY created_at DESC, id DESC`），装配 `services/api/src/app.ts` 的 `communityStore`，放行判据 `config.executionMode === 'real' && !communityStore.persistent`（`services/api/src/app.ts:1309`）⇒ 仅 real 且无持久化落点（无连接池/注入的内存 store）才整域 503；**未取得**：模型层（LLM）图文审核未接入本装配（带媒体目标因规则层媒体口径不可能 approved）；资料关联读取口**已在装配层接线**（有池 ⇒ 同一 pool 查 catalog_read.current_knowledge，无池仍 fail-closed，错误码与「不泄露存在性」不变；装配级回归 tests/unit/community-knowledge-wiring.test.mjs）；**小程序发帖页仍无填写入口**；正式微信身份/真机与发布环境未取得；相关测试不等于页面或真实审核验收（GY-I15）"
     },
     {
       "id": "listFavorites",

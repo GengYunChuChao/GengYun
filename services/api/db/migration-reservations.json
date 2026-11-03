@@ -56,7 +56,20 @@
     "本合流树实测：正向文件 38 个（0001..0035 连续 + 0036 + 0038 + 0039）、rollback/ 37 个、max=0039、",
     "缺号只有 0037（#14 保留）⇒ 38 个文件 + 1 保留 === 39、未声明缺号 0（三条不变量成立）。",
     "0035_r34_media_row_purge.sql 已随上游落盘 ⇒ 本片旧 README 段里那条 WARN[gap] 0035 的前提作废（届时一并删除）。",
-    "37 号条目继续按它自己的 remove_when 保留（#14 落 0037 即删）。"
+    "37 号条目继续按它自己的 remove_when 保留（#14 落 0037 即删）。",
+    "【2026-11-03 GY-R73（#17 撤回系统通知）· 迁移 0054 · 登记 53】本片落",
+    "0054_favorites_target_lookup.sql（收藏反查索引 (target_type, target_id, owner_id)，只加索引、零 GRANT）。",
+    "行号取号规则是「正向最大号 +1」，而当时的正向最大号是 0052；**0053 已被在飞的 #838 占用**（与本片",
+    "同批分派的另一条分支，尚未落盘）⇒ 本片按协调结果取 0054，树上因此出现「有依据的缺号」0053：",
+    "52 个文件 + 2 保留（37、53） === max 54（三条不变量成立）。53 号一落盘 reservedButPresent 立刻判红，",
+    "条目按 remove_when 删。⛔ 这条不是白名单：缺 53 但没登记，undeclaredGaps 照旧判红。",
+    "缺少 53 的 [gap] 软档说明在 services/api/db/migrations/README.md —— 该文件在本片是**冻结的既有文件**",
+    "（⛔ 本片不动它），故 `tools/verify-migrations-unique.mjs --strict` 在合流前会照旧报 [gap] 53；",
+    "CI 的 migrations-guard 刻意不带 --strict（见 .github/workflows/migrations-guard.yml），硬错为零。",
+    "【2026-11-03 GY-R73 合流 origin/main · #838 的 0053 已真实落盘 · 53 号条目按 remove_when 删除】",
+    "#838 的 0053_admin_report_disposition_audit.sql 已随 origin/main 落盘，与本片 0054 并存 ⇒ 0037 是唯一缺号；",
+    "合流树读数：53 个文件 + 1 保留（37） === max 54，`verify-migrations-unique --strict` 的 [gap] 53 随之消失。",
+    "⛔ 53 号条目一落盘就必须删（reservedButPresent 会立刻判红）；上面那段只是历史叙述，不是可长期躺着的白名单。"
   ],
   "reservations": [
     {
