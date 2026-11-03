@@ -34,12 +34,6 @@
       "reference": "README.md:440"
     },
     {
-      "path": "README.md",
-      "reason": "OUT_OF_RANGE",
-      "owner": "repo",
-      "reference": "README.md:459"
-    },
-    {
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
       "reason": "SUSPECT",
       "owner": "deploy",
