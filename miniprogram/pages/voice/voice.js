@@ -68,14 +68,6 @@ const LEAVE_REASON_TEXT = Object.freeze({
   gate: '会话／门禁已失效'
 })
 
-/**
- * 落 UI 之前本页就已丢弃本机临时录音（隐私优先，见 `discardRecordFile`）⇒ 文案尾部统一补一句
- * 「不能重试同一条，只能重录」。只改措辞，不改任何判定，也不新增加保留或重试通道。
- */
-function withDiscardNote(note) {
-  return note + voiceApi.RECORD_DISCARDED_NOTE
-}
-
 Page({
   onLoad: function () {
     fontScale.applyFontScale(this)
@@ -1639,4 +1631,16 @@ function readFileInfo(filePath) {
       fail: function () { const e = new Error('MEDIA_CHANNEL_UNAVAILABLE'); e.code = 'MEDIA_CHANNEL_UNAVAILABLE'; reject(e) }
     })
   })
+}
+
+/**
+ * 「本机录音已当场丢弃」的固定尾句：失败、不发、超限各分支都在落 UI 之前就回收了本机临时文件
+ * （隐私优先，见 `discardRecordFile`），因此**不能**重试同一条录音，只能重录。
+ *
+ * 这个函数定义在文件末尾，是为了不动本文件上面任何一行的行号：
+ * `docs/verification/gy-i11-voice-input-20261021.md` 按行号锚住本文件多处，行内插入会把它们顶走
+ * （doc-anchors 的 BARE-ORPHAN 判红）。函数声明会提升，放在末尾不影响调用。
+ */
+function withDiscardNote(note) {
+  return note + '本机录音已当场丢弃（不留本机副本），无法重试同一条：请重新录制。'
 }

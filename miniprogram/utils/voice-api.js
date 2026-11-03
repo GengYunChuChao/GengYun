@@ -467,14 +467,6 @@ function recordFormatMessageFor(product) {
 }
 
 /**
- * 「本机录音已当场丢弃」的固定尾句：失败、不发（非 real）、超限、超出摘要等各路径都在落 UI 之前
- * 立刻回收本机临时文件（隐私优先，见页面 `discardRecordFile`），因此**不能**重试同一条录音，只能重录。
- *
- * 这一句只补**说明**，不改变任何判定：不新增保留、不新增缓存，也不给"稍后再试同一条"的错觉。
- */
-const RECORD_DISCARDED_NOTE = '本机录音已当场丢弃（不留本机副本），无法重试同一条：请重新录制。'
-
-/**
  * 录音上传失败的**如实归因**文案（按契约错误码逐码给词，**不**把不同的 403 折叠成同一句话）。
  *
  * 红线（与仓库既有口径一致，见 `utils/identify-api.js` 的 `forbiddenOrSessionLoss` 注释）：
@@ -589,7 +581,6 @@ module.exports = {
   recordFormatMessageFor: recordFormatMessageFor,
   RECORD_UPLOAD_MESSAGES: RECORD_UPLOAD_MESSAGES,
   recordUploadMessageFor: recordUploadMessageFor,
-  RECORD_DISCARDED_NOTE: RECORD_DISCARDED_NOTE,
   substituteSamplesEnabled: substituteSamplesEnabled,
   validateCheckedContentRef: validateCheckedContentRef,
   validateJob: validateJob,
