@@ -473,12 +473,12 @@
         {
           "path": "services/api/src/routes/account-deletion.ts",
           "symbol": "`${API_PREFIX}/me/account/deletion`",
-          "lines": "218-282"
+          "lines": "252-316"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "symbol": "createAccountDeletionRequestService",
-          "lines": "299-352"
+          "lines": "302-355"
         },
         {
           "path": "services/api/src/app.ts",
@@ -512,17 +512,17 @@
         {
           "path": "services/api/src/routes/account-deletion.ts",
           "symbol": "`${API_PREFIX}/account/deletions/:id`",
-          "lines": "284-322"
+          "lines": "318-356"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "symbol": "createDeletionReceiptRegistry",
-          "lines": "120-165"
+          "lines": "123-168"
         },
         {
           "path": "services/api/src/privacy/account-deletion.ts",
           "symbol": "projectReceipt",
-          "lines": "354-388"
+          "lines": "357-391"
         },
         {
           "test": "tests/integration/account-deletion-http.mjs",
@@ -560,7 +560,7 @@
         {
           "path": "services/api/src/routes/account-deletion.ts",
           "symbol": "`${API_PREFIX}/me/account/deletion`",
-          "lines": "324-361"
+          "lines": "358-395"
         },
         {
           "path": "services/api/src/privacy/user-data-deletion.ts",
@@ -4405,3 +4405,4 @@
     }
   ]
 }
+
