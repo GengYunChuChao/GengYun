@@ -194,9 +194,10 @@ function dedupeByFirstSeen(hits) {
 // 已接线 1 · 第三方删除：应用侧由真库端口接线（端口层，未装配进 app.ts）
 // ---------------------------------------------------------------------------
 
-test('已接线 1 · public.third_party_deletions 应用侧恰一处接线（端口层，只经函数）+ 保留策略自陈一处', () => {
+test('已接线 1 · public.third_party_deletions 应用侧两处接线（端口层只经函数 + 写侧派发器只调端口）+ 保留策略自陈一处', () => {
   const ROOTS = ['services/api/src', 'packages', 'tools'];
   const PORT = 'services/api/src/privacy/third-party-deletion-pg.ts';
+  const DISPATCH = 'services/api/src/privacy/third-party-deletion-dispatch.ts';
   const POLICY = 'packages/privacy/retention-policy.mjs';
   const { files, hits } = scanTree(ROOTS, 'third_party_deletions');
 
@@ -218,34 +219,36 @@ test('已接线 1 · public.third_party_deletions 应用侧恰一处接线（端
   );
 
   // ① 文件集（**去重**：同一文件多行命中只算一次；顺序取首次出现 =「按根序、根内按路径排序」）：
-  //    恰两个文件 = 端口 + 保留策略自陈。冒出第三个文件 ⇒ 又出现了新的读写接缝。
+  //    恰三个文件 = 写侧派发器 + 端口 + 保留策略自陈。冒出第四个文件 ⇒ 又出现了新的读写接缝。
   assert.deepEqual(
     dedupeByFirstSeen(hits),
-    [PORT, POLICY],
+    [DISPATCH, PORT, POLICY],
     '【已接线 1 破了】应用侧对 `third_party_deletions` 的**文件集**又变了：'
       + `\n  实测（去重后）：${JSON.stringify(dedupeByFirstSeen(hits))}`
       + `\n  实测（逐条）：${JSON.stringify(hits.map((h) => `${h.file}:${h.line}`))}`
       + `\n  基线（81d8e0b9）：只有保留策略里的一行**自陈**（\`${POLICY}:208\` 的 \`table:\` 字段）；`
       + `\n  2026-10-26 起（S4-S3 P2-a）多了端口 \`${PORT}\`：只调 0044 的两条 SECURITY DEFINER 函数，未装配进 app.ts。`
-      + '\n  若这一处被**回退**（文件删了/改名/搬走）⇒ 请翻回「缺口 1」，把期望值改回只剩自陈那一条；'
+      + `\n  2026-11-03 起（GY-R73）多了写侧派发器 \`${DISPATCH}\`：**只调端口**（不碰 SQL），\`${DISPATCH}:8\` 是文件头注释里提到表名的那一行。`
+      + '\n  若某一处被**回退**（文件删了/改名/搬走）⇒ 请翻回「缺口 1」，把期望值改回当时那一条；'
       + '  若又冒出**第四处**读写接缝（新 SQL / 仓储 / 映射器）⇒ 先确认它该不该存在，再改本常数。'
       + '\n  两种翻转都要同步它点名的文档：docs/architecture/data-dictionary.md:91 与 '
       + 'docs/verification/gy-i29-closure-20261018.md:99-100。'
       + FLIP_HINT,
   );
 
-  // ② 逐条「文件:行」：**不去重、不归并** —— 六条命中逐条钉死。
+  // ② 逐条「文件:行」：**不去重、不归并** —— 七条命中逐条钉死。
   //    行号本身就是判据：同一文件里多出一行仍是新接缝，而「文件集」那条看不出来。
   assert.deepEqual(
     hits.map((h) => `${h.file}:${h.line}`),
     [
+      `${DISPATCH}:8`,
       `${PORT}:8`, `${PORT}:14`, `${PORT}:59`, `${PORT}:79`, `${PORT}:142`,
       `${POLICY}:208`,
     ],
     '【已接线 1 破了】`third_party_deletions` 的逐条命中（文件:行）与登记的不一致。'
       + `\n  实测：${JSON.stringify(hits.map((h) => `${h.file}:${h.line}: ${h.text}`))}`
-      + '\n  登记：端口 5 行（:8 / :14 / :59 / :79 / :142）+ 保留策略自陈 1 行（:208）。'
-      + '\n  ① 若只是端口文件里**上下挪动**（文本与语义都没变）⇒ 把常数改成新行号，语义未变；'
+      + '\n  登记：写侧派发器 1 行（:8，文件头注释）+ 端口 5 行（:8 / :14 / :59 / :79 / :142）+ 保留策略自陈 1 行（:208）。'
+      + '\n  ① 若只是某个文件里**上下挪动**（文本与语义都没变）⇒ 把常数改成新行号，语义未变；'
       + '\n  ② 若**多出/少掉**一条 ⇒ 那才是接线状态变了，按①的命令翻钉子。'
       + FLIP_HINT,
   );
@@ -277,21 +280,23 @@ test('已接线 1 · public.third_party_deletions 应用侧恰一处接线（端
   // ⑤ 接线只能**经函数**（0044 的裁定：运行时对该表零 DML、零 SELECT，唯一入口是两条
   //    SECURITY DEFINER 函数）。端口里一旦出现直写/直读该表的 SQL ⇒ 绕过授权面的接缝；
   //    这条比「文件集」更硬：它管的是「怎么进出」，不只是「谁进来了」。
-  const portSource = readRepoText(PORT);
-  for (const needle of [
-    'INSERT INTO',
-    'UPDATE public.third_party_deletions',
-    'FROM public.third_party_deletions',
-    'DELETE FROM',
-  ]) {
-    assert.equal(
-      occurrences(portSource, needle),
-      0,
-      `【已接线 1 破了】端口 \`${PORT}\` 里出现了直写/直读该表的 SQL 片段：\`${needle}\`。`
-        + '\n  0044 的裁定是「该表对运行时零表级、零列级权限，只能经两条 SECURITY DEFINER 函数进出」，'
-        + '  端口里出现表级 DML ⇒ 不是接线问题，是权限面被绕过。'
-        + FLIP_HINT,
-    );
+  //    写侧派发器同样受管：它只许调端口的方法，⛔ 不许为了「少一跳」自己写 SQL。
+  for (const [owner, source] of [[PORT, readRepoText(PORT)], [DISPATCH, readRepoText(DISPATCH)]]) {
+    for (const needle of [
+      'INSERT INTO',
+      'UPDATE public.third_party_deletions',
+      'FROM public.third_party_deletions',
+      'DELETE FROM',
+    ]) {
+      assert.equal(
+        occurrences(source, needle),
+        0,
+        `【已接线 1 破了】\`${owner}\` 里出现了直写/直读该表的 SQL 片段：\`${needle}\`。`
+          + '\n  0044 的裁定是「该表对运行时零表级、零列级权限，只能经两条 SECURITY DEFINER 函数进出」，'
+          + '  端口里出现表级 DML ⇒ 不是接线问题，是权限面被绕过。'
+          + FLIP_HINT,
+      );
+    }
   }
 });
 
