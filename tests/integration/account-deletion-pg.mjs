@@ -33,8 +33,12 @@
 //       （不得「按全局键取第一行」误伤他人）；
 //   [10] 幂等重放：同一 `Idempotency-Key` 重放 ⇒ 会话已在受理时被撤销 ⇒ 鉴权层先拦，
 //       台账不得出现第二行；
-//   [11] `real` 模式整域不可用：`available === false`，POST/GET 均 503
-//       `PROVIDER_UNAVAILABLE`(`retryable=false`：未接线属确定性缺陷，重试不会成功)，零状态变更。
+//   [11] `real` 模式（GY-R74 起**不再整域不可用**）：受理 202 且回执 GET 200、零 503；
+//       到期后由既有驱动 `tools/purge-expired-online-data.mjs` 的同一份函数
+//       （`drainDueOnlineDeletions`）按 `online_due_at` **真删**正文行并把 `gengyun/online-purge/v1`
+//       证据落到 0031，且**不改回执**；30 日备用域恒 `blocked` + `PROVIDER_UNAVAILABLE`
+//       （备份清单行一行都不 `purged`）；第三方域 `unsupported` 且台账 0 行（永不 `confirmed`）；
+//       缺 `MEDIA_OBJECT_REF_KEY` 时媒体端口所在的那一域（识别域）不得 `completed`。
 //
 // 时钟口径（踩过的坑，别再踩）：注入的 `now` **必须是真时钟**。`idempotency_keys` 表有
 // CHECK `expires_at > created_at`，而该表由**两条不同来源**的语句写入——台账 `claim()` 的
@@ -54,6 +58,15 @@ import pg from 'pg';
 import { loadConfig } from '../../services/api/src/config.ts';
 import { buildApp } from '../../services/api/src/app.ts';
 import { createPool } from '../../services/api/src/db/pool.ts';
+import { createPostgresFavoritesStore } from '../../services/api/src/favorites/store-pg.ts';
+import { createPostgresHistoryStore } from '../../services/api/src/history/store-pg.ts';
+import { createOnlinePurgePort } from '../../services/api/src/privacy/online-purge-port.ts';
+import { createPostgresOnlinePurgeEvidenceRecorder } from '../../services/api/src/privacy/online-purge-evidence.ts';
+import { drainDueOnlineDeletions, listDueOnlineDeletions } from '../../services/api/src/privacy/online-purge-driver.ts';
+import { USER_DATA_DELETION_MODULES } from '../../services/api/src/privacy/user-data-deletion.ts';
+
+/** 在线清除的四个"必需模块"（与 `USER_DATA_DELETION_MODULES` 同源，⛔ 不另抄字面量）。 */
+const FOUR_DOMAIN_MODULES = USER_DATA_DELETION_MODULES;
 
 const url = new URL(process.argv[2] ?? 'postgres://postgres@127.0.0.1:5432/gengyun_deletion_test');
 assert.equal(url.hostname, '127.0.0.1', '本测试只允许回环地址');
@@ -230,6 +243,62 @@ function thirdPartyDeletionGrantRegion() {
   );
   assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(region), false, '区域不得含 psql 元命令（要能被 node 原样执行）');
   return region;
+}
+
+/**
+ * 从**出厂文件**同一份 `20-login-roles.sql` 抽取「运行时域授权」的两个纯 SQL 区域并原样执行。
+ *
+ * 为什么要执行它们（GY-R74 起才**暴露**的缺口）：本文件的真库臂此前全部跑在 `stub` 模式，
+ * 而 `services/api/src/app.ts:1869-1873` 的域 store 只在 `real` + 有池时才是 PG 实现。
+ * real 臂一旦真的跑起来，受理事务里的两步会用到这些授权：
+ *   1. `services/api/src/privacy/deletion-requests-pg.ts:251-261` 的 `insertBackupCopySeeds()`
+ *      ⇒ 逐域 `snapshotOwner()`（如 `services/api/src/favorites/store-pg.ts:295` 的
+ *      `SELECT … FROM favorites`）⇒ 没有 SELECT 就是 `42501 permission denied for table favorites`，
+ *      被 `mapDeletionError()` 折成 503「注销受理暂不可用」（已实测复现）；
+ *   2. 级联的逐域清空（`DELETE FROM favorites …` 等）与幂等台账清理。
+ * 两段区域在出厂文件里**本就是纯 SQL、且注释明写"可被测试原样抽取执行"**；⛔ 不复制粘贴授权文本
+ * （区域被删/被改宽/被改窄 ⇒ 本臂变红）。
+ */
+function runtimeDomainGrantRegions() {
+  const regions = ['gy-i19-backup-copies-grant', 'gy-r28-runtime-domain-grants'];
+  return regions.map((region) => {
+    const matched = deploySqlFile('20-login-roles.sql').match(
+      new RegExp(`-- #region ${region}\\r?\\n([\\s\\S]*?)\\r?\\n\\s*-- #endregion ${region}`),
+    );
+    assert.ok(matched !== null, `20-login-roles.sql 必须含 ${region} 区域`);
+    assert.equal(/\\(echo|set|pset|if|endif|getenv|gexec)/.test(matched[1]), false, `区域 ${region} 不得含 psql 元命令`);
+    return { region, text: matched[1] };
+  });
+}
+
+/**
+ * 从 `20-login-roles.sql` **主体**里取出涉及四域的**原文**单句 `GRANT`/`REVOKE`（未包 region 的那些）。
+ *
+ * 四域（`favorites` / `history` / `conversations` / `messages`）与两张幂等台账的授权在出厂文件的
+ * **主体**里，整份文件含 psql 元命令不能直接执行 ⇒ 只把相关语句原样取出执行。
+ * 与 `tests/integration/online-purge-pg.mjs:218-240` 同一口径：⛔ 不新增、不改写任何授权文本。
+ */
+function domainGrantStatements() {
+  const tables = ['favorites', 'history', 'messages', 'conversations', 'idempotency_keys'];
+  const statements = [];
+  let buffer = null;
+  for (const line of deploySqlFile('20-login-roles.sql').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (buffer === null) {
+      if (trimmed.startsWith('GRANT ') || trimmed.startsWith('REVOKE ')) buffer = [line];
+      continue;
+    }
+    buffer.push(line);
+    if (trimmed.endsWith(';')) {
+      const text = buffer.join('\n');
+      // 含 psql 元命令 ⇒ 一定是「跨过语句末尾又吞了元命令」的假阳性：整句丢掉（区域内授权已单独执行过）。
+      const polluted = text.split('\n').some((row) => row.trim().startsWith('\\'));
+      if (!polluted && tables.some((table) => text.includes(`public.${table}`))) statements.push(text);
+      buffer = null;
+    }
+  }
+  assert.equal(buffer, null, '20-login-roles.sql 里有未闭合的 GRANT/REVOKE 语句');
+  return statements;
 }
 
 /** 回执摘要＝回执 bearer 的 sha256（**独立**用 node:crypto 算，不复用被测代码）。 */
@@ -866,14 +935,20 @@ try {
   assert.equal(hProbe.body.error.code, 'SESSION_EXPIRED');
   say('级联失败（真库）：收藏清理抛错 ⇒ 202 但 state=blocked（如实）；账号撤销**已提交**且旧 token 不得复活（401）⇒ 提交点在级联之前');
 
-  // ---------------------------------------------------------------- [11] real 模式整域闸
-  const codeI = 'i19-del-real';
-  const tokenI1 = await login(http, codeI, 1);
-  const userI = await userIdOf(codeI);
-  const realApp = buildApp({
-    config: loadConfig({
+  // ---------------------------------------------------------------- [11] real 模式：受理可用 + 按域如实降级（GY-R74）
+  //
+  // 部署前置（GY-R74 起才**可达**的一条路径，必须先点出来）：real 装配会建**外发撤销器**
+  // （`services/api/src/app.ts` 的 `egressRevoker`：real + 可用池），而它在受理**之前**先要求账本就绪 ——
+  // `services/api/src/privacy/ledger-pg.ts:353-372` 的 `assertProvisioned()`：`public.export_writebacks`
+  // 存在、且运行时角色对 `exports.revision` / `exports.cancelled_at` 有列级 UPDATE。
+  // 出厂 provisioning **不装这个组**：`deploy/postgres-cvm/sql/20-login-roles.sql:36` 与
+  // `services/api/db/roles/egress_ledger.sql:54-56` 都自陈「`egress_ledger.sql` 当前不被任何部署脚本执行」。
+  // 所以本节先测「没装 ⇒ 如实 409，一个状态都不改」，再按仓内**权威**角色文件把组装齐后测「受理 202」。
+  // ⛔ 不复制粘贴授权语句：直接原样执行 `services/api/db/roles/egress_ledger.sql`（组被删/被改窄 ⇒ 本臂变红）。
+  const realConfig = () =>
+    loadConfig({
       APP_EXECUTION_MODE: 'real',
-      LOG_LEVEL: 'silent',
+      LOG_LEVEL: debugLog ? 'error' : 'silent',
       SESSION_SIGNING_KEY: hashKey,
       DATABASE_URL: 'postgres://synthetic_local_only@127.0.0.1:5432/gengyun_synthetic_never_connected',
       DELETION_LEDGER_KEY: 'synthetic-not-a-real-ledger-key',
@@ -883,38 +958,262 @@ try {
       OBJECT_STORAGE_BUCKET: 'synthetic-not-a-real-bucket',
       OBJECT_STORAGE_ACCESS_KEY: 'synthetic-not-a-real-access-key',
       OBJECT_STORAGE_SECRET_KEY: 'synthetic-not-a-real-secret-key',
-    }),
+    });
+  // 先补齐**域授权**（与出厂 provisioning 同形、原文抽取）：real 臂的域 store 是 PG 实现，
+  // 受理事务里的 `insertBackupCopySeeds()` 要 `snapshotOwner()` 逐域读表、级联要逐域删行。
+  // 这一步与「外发账本组」无关，先做，好让下面 409 那条臂**只**剩 egress 组这一个变量。
+  for (const { region, text } of runtimeDomainGrantRegions()) {
+    await owner.query(text);
+    note(`已执行 20-login-roles.sql 的 ${region} 区域（原文抽取，未新增授权）`);
+  }
+  const domainGrants = domainGrantStatements();
+  assert.ok(domainGrants.length >= 4, `没取到四域授权语句（取到 ${domainGrants.length} 条）`);
+  for (const statement of domainGrants) await owner.query(statement);
+  note(`已执行 20-login-roles.sql 主体里涉及四域的 ${domainGrants.length} 条 GRANT/REVOKE（原文抽取，未新增授权）`);
+
+  const unprovisionedApp = buildApp({
+    config: realConfig(),
     pool,
     wechat: wechatPort,
     now: serverNow,
+    ...(debugStream === undefined ? {} : { logStream: debugStream }),
+  });
+  apps.push(unprovisionedApp);
+  const unprovisionedHttp = makeHttp(await unprovisionedApp.listen({ host: '127.0.0.1', port: 0 }));
+  const codeI0 = 'i19-del-real-unprovisioned';
+  const tokenI0 = await login(unprovisionedHttp, codeI0, 1);
+  const userI0 = await userIdOf(codeI0);
+  const receiptsBeforeUnprovisioned = await unprovisionedApp.deletionReceipts.liveCount();
+  const unprovisionedPost = await requestDeletion(unprovisionedHttp, tokenI0, 'i19-del-i-key-0');
+  assert.equal(
+    unprovisionedPost.status,
+    409,
+    `缺 gengyun_egress_ledger 组时必须在受理前如实拒绝（409 OBJECT_UNAVAILABLE，⛔ 不是 202 空壳、不是 503）：${unprovisionedPost.text}`,
+  );
+  assert.equal(unprovisionedPost.body.error.code, 'OBJECT_UNAVAILABLE');
+  assert.equal(unprovisionedPost.body.error.retryable, false, '账本未就绪属确定性缺陷 ⇒ 不得标成可重试');
+  const iRow0 = await userRow(userI0);
+  assert.equal(iRow0.state, 'active', '409 发生在任何状态变更之前 ⇒ 账号必须仍 active');
+  assert.equal(Number(iRow0.auth_epoch), 1, 'auth_epoch 不得递增');
+  assert.equal(await activeSessions(userI0), 1, '会话不得被撤销');
+  assert.equal(await requestCount(userI0), 0, 'deletion_requests 必须是 0 行');
+  assert.equal(
+    await unprovisionedApp.deletionReceipts.liveCount(),
+    receiptsBeforeUnprovisioned,
+    '未受理 ⇒ 不得签发回执',
+  );
+  say(
+    'real 部署前置（真库）：未装 gengyun_egress_ledger 组 ⇒ 外发撤销器 assertProvisioned 如实 409 OBJECT_UNAVAILABLE(retryable:false)，'
+      + '账号状态/epoch/会话/请求行/回执**零变化**（⛔ 不伪造受理；这条也记录出厂 provisioning 尚未执行该组文件）',
+  );
+  await owner.query(sqlFile('roles/egress_ledger.sql'));
+  createdRoles.push('gengyun_egress_ledger');
+  await owner.query(`GRANT gengyun_egress_ledger TO ${runtimeRole}`);
+
+  const codeI = 'i19-del-real';
+  const tokenI1 = await login(http, codeI, 1);
+  const userI = await userIdOf(codeI);
+  const realApp = buildApp({
+    config: realConfig(),
+    pool,
+    wechat: wechatPort,
+    now: serverNow,
+    ...(debugStream === undefined ? {} : { logStream: debugStream }),
   });
   apps.push(realApp);
   const realOrigin = await realApp.listen({ host: '127.0.0.1', port: 0 });
   const realHttp = makeHttp(realOrigin);
-  assert.equal(realApp.accountDeletion.available, false, 'real 模式下注销域必须不可用（即使装配了真库）');
+  assert.equal(
+    realApp.accountDeletion.available,
+    true,
+    'GY-R74：real + 真库 ⇒ 受理可用。旧断言「real 模式下注销域必须不可用（即使装配了真库）」已随产品行为变更作废：'
+      + '7 日在线清除执行者（tools/purge-expired-online-data.mjs）已接线并有真库臂证据；备份介质与第三方证据仍不可用，'
+      + '因此按域如实降级（backup_state/third_party_state 显式不可用），而不是把整个受理域关掉',
+  );
   // 回执台账是**全局**计数（`count_deletion_receipts()` 跨所有账号）：此前成功臂已签发过回执，
-  // 所以这里不能断言「全库 0 回执」，只能断言「real 模式的 POST/GET 不得新增回执」。
+  // 所以这里不能断言「全库 0 回执」，只能断言「real 模式的 POST/GET 不得新增回执」这种差值口径。
   const receiptsBeforeReal = await realApp.deletionReceipts.liveCount();
   const realPost = await requestDeletion(realHttp, tokenI1, 'i19-del-i-key-1');
-  assert.equal(realPost.status, 503, JSON.stringify(realPost.body));
-  assert.equal(realPost.body.error.code, 'PROVIDER_UNAVAILABLE');
-  // 现状说明：未接线／未装配属**确定性缺陷**（要运维改配置才能好），同一请求重试不会成功 ⇒ 口径必须是
-  // `retryable:false`（唯一口径见 `services/api/src/errors.ts:31-32`；同族断言在 main 的
-  // `tests/integration/account-deletion-http.mjs:406` 已按 #233 收敛为 false）。
-  assert.equal(realPost.body.error.retryable, false);
-  const realGet = await realHttp(`${API}/account/deletions/${requestId}`, { token: receiptToken });
-  assert.equal(realGet.status, 503, 'real 下回执面同样 503（门先于存在性判断）');
-  const iRow = await userRow(userI);
-  assert.equal(iRow.state, 'active');
-  assert.equal(Number(iRow.auth_epoch), 1);
-  assert.equal(await activeSessions(userI), 1);
-  assert.equal(await requestCount(userI), 0);
+  assert.equal(realPost.status, 202, `real + 真库必须受理（⛔ 不允许再整域 503）：${realPost.text}`);
+  assert.notEqual(realPost.status, 503, 'GY-R74：受理面不得再返回 503 —— 503 只留给「real 但连 DATABASE_URL 都没有」的部署');
+  const realDeletion = realPost.body.data.deletion;
+  const realRequestId = String(realDeletion.id);
+  const realReceiptToken = realPost.body.data.receipt_token;
   assert.equal(
-    await realApp.deletionReceipts.liveCount(),
-    receiptsBeforeReal,
-    'real 模式不得签发任何回执（回执台账计数不得增长）',
+    realDeletion.state,
+    'blocked',
+    '在线域真的清了、但备份介质与第三方仍未完成 ⇒ 整体如实 blocked（⛔ 不谎称 completed）',
   );
-  say('real 模式（真库）：`available === false`，POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false：未接线不可重试)，且该账号零状态变化、零回执 ⇒ 真库存在也不放行 real 域');
+
+  // ── (a) 回执可读且零 503：GET 必须 200，不能因为「备份/第三方读不到」把回执打成 503
+  const realGet = await realHttp(`${API}/account/deletions/${realRequestId}`, { token: realReceiptToken });
+  assert.equal(realGet.status, 200, `real 下回执面必须可读：${realGet.text}`);
+  assert.notEqual(realGet.status, 503, '回执 GET 不得再整域 503');
+  const realHandlers = new Map(realGet.body.data.handlers.map((row) => [row.module, row]));
+
+  // ── (c) 30 日备份域：`backup_state` 不得是 completed，且回执里能读到明确原因码
+  for (const module of FOUR_DOMAIN_MODULES) {
+    const row = realHandlers.get(module);
+    assert.ok(row !== undefined, `回执必须含 ${module} 行`);
+    assert.equal(row.backup_state, 'blocked', `${module} 备份域在 real 下恒不可用（backup-postgres.sh 自陈未部署、未验收、没有实现逐用户删除）`);
+    assert.notEqual(row.backup_state, 'completed', `${module} ⛔ 永远不得写 completed（清单域不等于备份介质已逐用户清除）`);
+    assert.equal(row.error_code, 'PROVIDER_UNAVAILABLE', `${module} 必须留下可读原因码（契约无自由文本字段 ⇒ 原因只能落在 SAFE_ERROR_CODES 闭集内的码上）`);
+    assert.equal(row.online_state, 'completed', `${module} 在线域真的删了 ⇒ completed（⛔ 不因备份不可用而抹掉在线读数）`);
+  }
+
+  // ── (c) 库侧：备份清单行存在但**一行都没被标记为 purged**
+  const manifestRows = await owner.query(
+    'SELECT state, count(*)::int AS n FROM user_backup_copies WHERE request_id = $1 GROUP BY state',
+    [realRequestId],
+  );
+  assert.ok(manifestRows.rows.length > 0, '受理时必须写备份清单行（否则"没清"与"没有东西要清"无法分辨）');
+  for (const manifest of manifestRows.rows) {
+    assert.notEqual(manifest.state, 'purged', `备份清单行不得被标记 purged（实际 ${JSON.stringify(manifest)}）`);
+  }
+
+  // ── (e) 媒体域：缺 MEDIA_OBJECT_REF_KEY ⇒ 媒体端口所在的那一域不得 completed
+  const recognitionRow = realHandlers.get('recognitions');
+  assert.ok(recognitionRow !== undefined, '识别域必须在闭集里');
+  assert.equal(
+    recognitionRow.online_state,
+    'blocked',
+    '本臂的 real 装配没有 MEDIA_OBJECT_REF_KEY ⇒ 媒体对象既枚举不到也删不掉 ⇒ 识别域不得报 completed（静默漏清）',
+  );
+  assert.equal(recognitionRow.error_code, 'PROVIDER_UNAVAILABLE', '原因码必须是闭集内的 PROVIDER_UNAVAILABLE');
+
+  // ── (d) 第三方域：显式不可用（unsupported），永不 confirmed
+  for (const row of realGet.body.data.handlers) {
+    assert.notEqual(row.third_party_state, 'confirmed', `${row.module} ⛔ 没有真实第三方证据时永远不得 confirmed`);
+    assert.equal(
+      row.third_party_state,
+      'unsupported',
+      `${row.module} 本部署无凭据/无收件人来源 ⇒ 发不出去也无法证实 ⇒ 契约闭集里的 unsupported（可读结论，不是 null）`,
+    );
+  }
+  // 表名是 `public.third_party_deletions`（`services/api/db/migrations/0003_privacy_consent.sql:185`）；
+  // `0044` 只加了 `record_third_party_deletion()`/`list_third_party_deletions()` 两条函数，
+  // 运行时对该表零表权（写入只能走函数）⇒ 这里用超管 owner 连接直查行数。
+  const thirdPartyLedger = await owner.query(
+    'SELECT count(*)::int AS n FROM third_party_deletions WHERE request_id = $1',
+    [realRequestId],
+  );
+  assert.equal(
+    Number(thirdPartyLedger.rows[0].n),
+    0,
+    '第三方写侧（#860）今天一条也不写 ⇒ 台账必须 0 行（任何"写满"都只能是伪造完成）',
+  );
+
+  // ── (b) 到期后在线域**真删**：用脚本化时钟（库里把 online_due_at 推到过去）驱动既有执行者
+  //
+  // 受理时处理器已经跑过一遍（那时该账号没有任何正文行）。为了让"真删"可证伪，这里在受理**之后**
+  // 重新给该主体写两行正文（收藏 + 历史），再让驱动按 `online_due_at` 到期把它们删掉：
+  // 只有真的删了行、并把 `gengyun/online-purge/v1` 证据落到 0031 时，下面的断言才会同时成立。
+  const favoritesStore = createPostgresFavoritesStore(pool);
+  const historyStore = createPostgresHistoryStore(pool);
+  const seededFavoriteId = randomUUID();
+  const seededHistoryId = randomUUID();
+  assert.equal(
+    await favoritesStore.insertFavorite({
+      id: seededFavoriteId,
+      revision: 1,
+      owner_id: userI,
+      target_ref: { type: 'species', id: 'spc-online-purge', revision: 1 },
+      created_at: new Date().toISOString(),
+    }),
+    'inserted',
+  );
+  await historyStore.insertHistory({
+    id: seededHistoryId,
+    revision: 1,
+    owner_id: userI,
+    kind: 'recognition',
+    target_ref: { type: 'recognition', id: 'rec-online-purge', revision: 1 },
+    job_id: 'job-online-purge',
+    job_state: 'failed',
+    created_at: new Date().toISOString(),
+    event_key: 'evt-online-purge',
+  });
+  /**
+   * 到期：把 7 日期限拉回受理时刻（等价于「已经过了 7 天」；真实生产由时间走到）。
+   * ⛔ 不能写 `now() - interval '1 second'`：`deletion_requests_due_order`
+   * （`services/api/db/migrations/0003_privacy_consent.sql`）要求
+   * `online_due_at >= requested_at AND backup_due_at >= online_due_at`，
+   * 受理刚发生（`requested_at` 就是几秒前），写过去时刻会撞 23514。
+   */
+  await owner.query('UPDATE deletion_requests SET online_due_at = requested_at WHERE id = $1', [
+    realRequestId,
+  ]);
+  const cutoffRow = await owner.query('SELECT now() AS cutoff');
+  const cutoff = cutoffRow.rows[0].cutoff;
+  const onlinePort = await createOnlinePurgePort(pool);
+  /** 驱动跑之前先记下库里的请求行（它承诺「不写 state、不改 revision」，只能拿前后对比证明）。 */
+  const beforePurgeRow = (
+    await owner.query('SELECT state, revision FROM deletion_requests WHERE id = $1', [realRequestId])
+  ).rows[0];
+  const onlineReport = await drainDueOnlineDeletions({
+    cutoff,
+    limit: 50,
+    dryRun: false,
+    purge: onlinePort.purge,
+    evidence: createPostgresOnlinePurgeEvidenceRecorder({ pool, now: () => cutoff }),
+    modules: FOUR_DOMAIN_MODULES,
+    fetchPage: (pageInput) => listDueOnlineDeletions(owner, pageInput),
+  });
+  const purgedRow = onlineReport.pages.flatMap((page) => [page]);
+  assert.ok(purgedRow.length > 0, '驱动至少要跑一页');
+  assert.equal(onlineReport.failed, 0, `驱动不得有失败行：${JSON.stringify(onlineReport.failures)}`);
+  assert.ok(onlineReport.rowsPurged >= 2, `到期后必须真的删掉刚写进去的两行（实际 rowsPurged=${onlineReport.rowsPurged}）`);
+  assert.equal(await favoritesStore.getFavorite(seededFavoriteId), null, '到期后收藏行必须物理删除');
+  assert.equal(await historyStore.getHistory(seededHistoryId), null, '到期后历史行必须物理删除');
+  // 证据落库：0031 的唯一读路径能读到本轮的 `gengyun/online-purge/v1` 证据
+  const evidenceRow = await pool.query('SELECT public.read_online_purge_evidence($1::uuid, $2::uuid) AS payload', [
+    realRequestId,
+    userI,
+  ]);
+  const evidencePayload = evidenceRow.rows[0].payload;
+  const evidenceEntries = Array.isArray(evidencePayload?.evidence) ? evidencePayload.evidence : [];
+  assert.ok(
+    evidenceEntries.some((entry) => entry.module === 'favorites' || entry.module === 'history'),
+    `到期清除必须留下证据（实际 ${JSON.stringify(evidencePayload)}）`,
+  );
+  // 驱动的文件头承诺：**不改回执**。库里的请求行原样（state 与 revision 都不动）。
+  // 注意受理时写进库里的是 `requested`（`deletion_requests.state` 的初始值），
+  // 回执上看到的 `blocked` 是投影按 handler 行折叠出来的 —— 两者本来就不是同一个字段。
+  const afterPurgeRow = (await owner.query('SELECT state, revision FROM deletion_requests WHERE id = $1', [realRequestId]))
+    .rows[0];
+  assert.equal(afterPurgeRow.state, beforePurgeRow.state, '驱动不写 deletion_requests.state');
+  assert.equal(Number(afterPurgeRow.revision), Number(beforePurgeRow.revision), '驱动不改 revision');
+
+  // ── (c) 30 日到点：把 backup_due_at 拉到已到点，回执仍不得 completed
+  // 同上：受 `deletion_requests_due_order` 约束（`backup_due_at >= online_due_at`），
+  // 所以拉到 `online_due_at`（此时已经是受理时刻 ⇒ 已过期），⛔ 不能写 `now() - interval '1 second'`。
+  await owner.query('UPDATE deletion_requests SET backup_due_at = online_due_at WHERE id = $1', [
+    realRequestId,
+  ]);
+  const dueGet = await realHttp(`${API}/account/deletions/${realRequestId}`, { token: realReceiptToken });
+  assert.equal(dueGet.status, 200, `30 日到点后回执仍必须可读：${dueGet.text}`);
+  for (const row of dueGet.body.data.handlers) {
+    assert.notEqual(row.backup_state, 'completed', `${row.module} 30 日到点也不得 completed（没有真实备份介质清除）`);
+    assert.equal(row.backup_state, 'blocked', `${row.module} 到点后仍是 blocked（不是"等一等就会好"）`);
+    assert.equal(row.error_code, 'PROVIDER_UNAVAILABLE', `${row.module} 到点后原因码仍必须可读`);
+    assert.notEqual(row.third_party_state, 'confirmed', `${row.module} 第三方域永不 confirmed`);
+  }
+
+  const iRow = await userRow(userI);
+  assert.equal(iRow.state, 'deletion_pending');
+  assert.equal(Number(iRow.auth_epoch), 2);
+  assert.equal(await activeSessions(userI), 0);
+  assert.equal(await requestCount(userI), 1, 'real 受理必须真的落一行删除请求（否则 7 日驱动读不到请求行）');
+  assert.ok(
+    (await realApp.deletionReceipts.liveCount()) > receiptsBeforeReal,
+    'real 受理必须签发回执（回执计数必须增长）',
+  );
+  say(
+    '(a)(b)(c)(d)(e) real 模式（真库）：受理 202 且回执 GET 200（零 503）；到期驱动按 online_due_at 真删两行并落 0031 证据、'
+      + `不改回执（state=${afterPurgeRow.state}、revision=${afterPurgeRow.revision}）；`
+      + '30 日到点 backup_state 仍 blocked＋PROVIDER_UNAVAILABLE（清单行无一 purged）；'
+      + '第三方 third_party_state=unsupported（台账 0 行、永不 confirmed）；缺 MEDIA_OBJECT_REF_KEY ⇒ 识别域 blocked＋PROVIDER_UNAVAILABLE',
+  );
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外付费请求；发现迁移 ${discovered.length} 个`);
 } finally {

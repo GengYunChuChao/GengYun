@@ -228,16 +228,25 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 9 条 evidence 的 `lines` 按 `base(ef22d5a9)→HEAD` 端点映射重取（`960-1026`→`969-969` 等），
  * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 两个文件各**少 1 字节**、
  * 行数不变（4407 / 218）。仍是「正常改台账」，故同步基线。
- * 2026-11-03 第三次同步（R74 音频读面片）：新增 `readSynthesisAudio`
+ * 2026-11-03 同日第三次同步（GY-R74 注销真清片，`feat/gy-r74-deletion-real`）：**正常改台账** ——
+ * 本片把注销受理门从「real ⇒ 整域 503」改成「real + 真库 ⇒ 可受理」，并把 30 日备份域按域如实降级
+ * （`services/api/src/app.ts` 的 `backupPurgeWiring` real 臂恒 `createUnavailableBackupPurgePort()`）、
+ * 第三方回执补能力布尔、媒体域缺 `MEDIA_OBJECT_REF_KEY` 时识别域如实 blocked。台账侧只有两类变化：
+ * ① 6 条 evidence 的 `lines` 按 `base(7a25d900)→HEAD` 端点映射重取（`account-deletion.ts` 三个文件都长了行）；
+ * ② 3 条 blocker 文案按新真值重写（原「real 模式整域 503」已作废）并改写 `ACCOUNT_DELETION_UNAVAILABLE_MESSAGE`；
+ * 中文表格仍由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成；写回时顺手去掉了这两个文件末尾
+ * 多出来的空行（`git diff --check` 报的 `new blank line at EOF`）⇒ 与分支侧基线相比**各 +814 字节、行数不变**
+ * （4407 / 218）。没有改判定、没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-03 第四次同步（R74 音频读面片，`origin/main` 侧）：新增 `readSynthesisAudio`
  * （`GET /speech/synthesis/{id}/audio`）⇒ 台账多一条 operation 行（+27 行 / +2219 字节），
  * `contract-implementation-status.md` 多一行（+1 行 / +1680 字节）。仍是「正常改台账」
  * （operations 128 → 129、中文表格由 `verify-contract-status.mjs --write-doc` 重生成），
  * 故同步基线；没有改判定、没有加豁免条目。
- * 2026-11-03 同日第四次同步（同片、同一 PR 的锚点恒等修正）：`tools/doc-anchor-relocation-identity`
+ * 2026-11-03 同日第五次同步（同片、同一 PR 的锚点恒等修正）：`tools/doc-anchor-relocation-identity`
  * 要求「目标文件本提交有改动 ⇒ 行号必须落在该文件自己的端点映射上」，于是 timeout 维度的 evidence
  * 行号 `977-1003` → `964-989`（少 1 个字符位）；中文表格再由 `--write-doc` 从 JSON 重生成 ⇒
  * 两个文件各**少 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
- * 2026-11-03 第五次同步（同片后续返修：音频读面在返回字节前重查）：tts/service.ts 再涨行，
+ * 2026-11-03 第六次同步（同片后续返修：音频读面在返回字节前重查）：tts/service.ts 再涨行，
  * timeout 维度的 evidence 先由 `--reanchor --write-doc` 重锚到 `1004-1030`，随后为满足
  * `doc-anchor-relocation-identity` 的端点映射要求改成 `982-1007`（区间仍含声明行 `:1004`）⇒
  * 两份台账各**多 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
@@ -257,10 +266,32 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 本条改按本用例 `countLines` 的口径实测：合并后 `contract-status.json` 276447 字节 / 4465 行、
  * `contract-implementation-status.md` 198007 字节 / 220 行（= 本分支 276427/4465 与 197987/220
  * 各 +20 字节，正是 #875 那一行的增量）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 以下两段是 main 侧（#857／#873 线）自己的历史注释，其「第七／第八次」与本分支的编号撞号，
+ * 按历史注释原样保留、不重编号（历史注释不重写）：
+ * 2026-11-03 合入 `origin/main`（3d9b2369）后第七次同步：两侧基线在此取**并集** —— 分支侧（注销真清片）
+ * 与 main 侧（音频读面）的台账改动同时保留：取消维度按合流树实测为 `services/api/src/app.ts:2553`
+ * （六源 `:2554`/`:2560`/`:2566`/`:2572`/`:2580`/`:2590`），超时维度同时保留分支侧的装配点
+ * `services/api/src/app.ts:2678` 与 main 侧的 `services/api/src/tts/service.ts:982-1007`，
+ * `## 3 已装配操作` 为 129 条（main 新增 `readSynthesisAudio`）。合流后的实际体积：JSON 274811 字节 /
+ * 4434 行、md 196980 字节 / 219 行（行数与 main 一致；字节各比 main 多 814，是分支侧注销片重写文案的净增）。
+ * 没有改判定、没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-03 合入 `origin/main`（3b89782f）后第八次同步：基线停在上面那次合流（274811 / 196980）之后，
+ * 又有两笔「正常改台账」没进来 —— ① 分支侧 `c971c11b`（真库臂证据串）把两份台账里「证据串只有两段」
+ * 改成如实描述「两段 + real 模式下按模块追加 `;<module>:backup-<状态>:<码>`」，两份台账各 +864 / +867 字节，
+ * 但该提交没同步基线（于是 T5 在分支 HEAD 上就已经红）；② main 侧 #875 的 media blocker 计数订正各 +20 字节
+ * （即上面那条「第六次同步（GY-R75…）」——它与本片 #857 线的第六次不是同一片，两条编号撞了，这里是历史注释，
+ * 按原样保留不改号）。合流树实测：JSON 275695 字节 / 4434 行、md 197867 字节 / 219 行
+ * （= 274811+20+864、196980+20+867；行数与两侧都一致）。两笔都是正常改台账，没有改判定、
+ * 没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-04 第九次同步：再一次 `git merge origin/main`（3b89782f → 5dd6da3a，即 #873
+ * 「接通注销在线域清理并如实披露备份阻塞」合入 main）。合流后按本用例 `countLines` 口径实测：
+ * `contract-status.json` 278125 字节 / 4465 行、`contract-implementation-status.md` 199688 字节
+ * / 220 行 —— 行数与上一次同步相同（#873 只改 evidence 文案与中文表格，没有增删 operation 行），
+ * 字节数是两侧文案的净增。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 276447, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 198007, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278125, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 199688, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

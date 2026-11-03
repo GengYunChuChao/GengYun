@@ -16,7 +16,7 @@
 
 「在线 7 日／备份 30 日」里的**备份副本**，指注销受理那一刻为恢复与审计而留存、**只含不透明对象引用与计数**的最小清单行；`retention_until = 受理时刻 + 30×24 小时`，到点即把 `payload` 硬删、行转 `purged` 并留证据。
 
-本片只交付三件：本文档、判定逻辑 [backup-retention.mjs](../../packages/privacy/backup-retention.mjs)、[单测](../../tests/unit/backup-retention.test.mjs)。因此生产行为**没有变化**：`BackupPurgePort` 仍是未接线实现，各模块 `backup_state` 仍如实停在 `pending`，[契约状态对照](contract-status.json) 的 blocker 不动。（以上为**设计片交付时点**的事实；2026-10-20 接线后：有真库且受理已接线时换真实 PG 端口，`real` 模式整域仍 503、契约状态仍未改，见 §13。）
+本片只交付三件：本文档、判定逻辑 [backup-retention.mjs](../../packages/privacy/backup-retention.mjs)、[单测](../../tests/unit/backup-retention.test.mjs)。因此生产行为**没有变化**：`BackupPurgePort` 仍是未接线实现，各模块 `backup_state` 仍如实停在 `pending`，[契约状态对照](contract-status.json) 的 blocker 不动。（以上为**设计片交付时点**的事实；2026-10-20 接线后：有真库且受理已接线时换真实 PG 端口，`real` 模式整域仍 503、契约状态仍未改，见 §13。**2026-11-03 GY-R74 再订正**：`real` 下备份域改为**恒**走 `createUnavailableBackupPurgePort()`（`services/api/src/app.ts:2012-2013`）⇒ `backup_state: blocked` + `PROVIDER_UNAVAILABLE`，`backupStates` 也不再接线；注销受理本身在 `real` + 真库已开放，见 `docs/architecture/s4-data-traceability.md` 的 D08 与 `docs/architecture/state-contract.md:117`。）
 
 ## 1. 现状与为什么不差这一步
 

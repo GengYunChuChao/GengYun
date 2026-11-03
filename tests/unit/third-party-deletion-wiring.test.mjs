@@ -205,7 +205,7 @@ function routeReceipt(reportedThirdPartyState = null) {
 }
 
 /** 只装配 GET 需要的三件东西（`service`/`receipts`/`deletion`）+ 注入的同步来源 + 可选读侧端口。 */
-async function makeRouteApp(thirdParty, reportedThirdPartyState = null, thirdPartyRows = null) {
+async function makeRouteApp(thirdParty, reportedThirdPartyState = null, thirdPartyRows = null, thirdPartyWritable = undefined) {
   const receipt = routeReceipt(reportedThirdPartyState);
   const app = Fastify({ logger: false });
   registerAccountDeletionRoutes(
@@ -227,6 +227,7 @@ async function makeRouteApp(thirdParty, reportedThirdPartyState = null, thirdPar
       },
       thirdParty,
       thirdPartyRows,
+      ...(thirdPartyWritable === undefined ? {} : { thirdPartyWritable }),
       authService: null,
       now: () => new Date(clockMs),
     },
@@ -235,8 +236,8 @@ async function makeRouteApp(thirdParty, reportedThirdPartyState = null, thirdPar
   return app;
 }
 
-async function routeReceiptState(thirdParty, reportedThirdPartyState = null, thirdPartyRows = null) {
-  const app = await makeRouteApp(thirdParty, reportedThirdPartyState, thirdPartyRows);
+async function routeReceiptState(thirdParty, reportedThirdPartyState = null, thirdPartyRows = null, thirdPartyWritable = undefined) {
+  const app = await makeRouteApp(thirdParty, reportedThirdPartyState, thirdPartyRows, thirdPartyWritable);
   try {
     const response = await app.inject({
       method: 'GET',
@@ -298,6 +299,56 @@ test('GY-R59 P2-b 回执投影：来源未装配（null）⇒ 回落处理器行
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 2b) GY-R74：本部署**发不出去**时回执必须给出**可读原因**（而不是含糊的 null）
+//     背景：#860 的写侧已合入，但生产无凭据、无收件人来源 ⇒ 一条也不写；回执若只给 null，
+//     外部读到的"没有第三方副本"与"这台机器根本发不出去"无法区分。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('GY-R74 回执投影：不可派发的部署 + 零接收方 ⇒ third_party_state「unsupported」（可读原因，⛔ 不是 confirmed）', async () => {
+  const observed = await routeReceiptState({ thirdPartyStatuses: () => [] }, null, null, false);
+  assert.equal(observed.status, 200, '如实降级不得变成 5xx');
+  assert.equal(
+    observed.field,
+    'unsupported',
+    '写端口/适配器/收件人来源缺一 ⇒ 本部署发不出去也无法证实 ⇒ 契约闭集里的 unsupported（不是 not_requested、更不是 confirmed）',
+  );
+  assert.notEqual(observed.field, 'confirmed', '没有真实第三方证据时永远不得为 confirmed');
+  assert.notEqual(observed.field, null, '「发不出去」不是「不知道」：必须给出可读结论');
+  assert.equal(
+    observed.body?.data?.handlers?.[0]?.online_state,
+    'completed',
+    '降级只落在第三方字段：同一行的在线态照常返回',
+  );
+});
+
+test('GY-R74 回执投影：具备派发能力的部署 + 零接收方 ⇒ 仍是 null（没有接收方 ≠ 发不出去）', async () => {
+  const observed = await routeReceiptState({ thirdPartyStatuses: () => [] }, null, null, true);
+  assert.equal(observed.status, 200);
+  assert.equal(observed.field, null, '能派发且没有接收方 ⇒ 投影原义 null（⛔ 不升级成 unsupported）');
+});
+
+test('GY-R74 回执投影：未告知能力（undefined）⇒ 保持 null（不知道就不猜）', async () => {
+  const observed = await routeReceiptState({ thirdPartyStatuses: () => [] });
+  assert.equal(observed.status, 200);
+  assert.equal(observed.field, null);
+});
+
+test('GY-R74 回执投影：读侧端口读失败 + 不可派发 ⇒ 仍是 null（「没读到」不许冒充「发不出去」）', async () => {
+  const port = {
+    async listThirdPartyDeletions() {
+      throw new Error('synthetic third-party port failure');
+    },
+  };
+  const observed = await routeReceiptState(null, null, port, false);
+  assert.equal(observed.status, 200, '读失败只降级该字段');
+  assert.equal(
+    observed.field,
+    null,
+    '读侧故障是"没读到"，不是"这台机器不能删"：不得因此报 unsupported（两条语义必须可分辨）',
+  );
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 3) 四态端口装配（#7）——`app.thirdPartyDeletion` 就是本次真正接进注册表的那个端口
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -350,6 +401,9 @@ test('GY-R59 P2-b 装配臂③：有连接池 ⇒ 真库只读端口（persisten
 });
 
 test('GY-R59 P2-b 装配臂④：受理已接线 + real + 无池 ⇒ 显式不可用端口（调用即抛 PROVIDER_UNAVAILABLE，⛔ 不静默回退）', async () => {
+  // GY-R74 说明：本条钉的是**第三方读侧端口**的臂归属，不是「real 整域不可用」。
+  // 整域门已改为「real + 真库 ⇒ 可受理」；本用例没有连接池 ⇒ `deletionAcceptanceDurable === false`
+  // ⇒ 受理仍如实 503（理由：受理无法持久化），端口臂的取舍与那时一致。
   const app = buildApp({
     config: loadConfig(REAL_ENV),
     now: () => new Date(clockMs),
@@ -792,7 +846,7 @@ test('GY-R59 P2-b 装配：注入 persistent 端口 ⇒ 回执由端口行驱动
   }
 });
 
-test('GY-R59 P2-b 装配：real + 有连接池 + 注入 persistent 端口 ⇒ 端口身份落在注入臂（real 面仍 503 是既有门）', async () => {
+test('GY-R59 P2-b 装配：real + 有连接池 + 注入 persistent 端口 ⇒ 端口身份落在注入臂（GY-R74 起 real 面受理门已开，端口身份不受影响）', async () => {
   const pool = {
     async query() {
       throw new Error('synthetic pool：本用例不应发生任何查询');
@@ -814,6 +868,8 @@ test('GY-R59 P2-b 装配：real + 有连接池 + 注入 persistent 端口 ⇒ �
     userDataDeletionInjection: { requests: {}, thirdParty: port },
   });
   try {
+    // GY-R74 起 `real` + 真库不再整域 503（`accountDeletion.available === true`）——本条只钉
+    // 「端口身份仍落在注入臂」，与受理门开不开无关；断言的强度不变（端口对象同一性 + persistent 标记）。
     assert.equal(app.thirdPartyDeletion, port, 'real + 有池 + 注入 ⇒ 注入臂优先（⛔ 不被真库臂顶掉）');
     assert.equal(app.userDataDeletion.thirdParty, port, '注册表里用的必须是同一个端口对象');
     assert.equal(app.thirdPartyDeletion.persistent, true);

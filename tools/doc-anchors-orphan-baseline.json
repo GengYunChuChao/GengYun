@@ -238,6 +238,18 @@
       "outsideRed": 120
     },
     {
+      "why": "GY-R74：历史取证页(docs/verification/**)与部分 architecture 段落的裸锚点按现状重生成册；本轮只减少(补回路径/改写)，无新增放行",
+      "accept": 0,
+      "orphans": 3500,
+      "outsideRed": 118
+    },
+    {
+      "why": "GY-R74：s4 D13 缺口段按真实行号重写后，原裸锚点 :2548/:2004/:2025/:2550 等被显式路径锚点取代；按现状重生成册，无新增放行",
+      "accept": 0,
+      "orphans": 3499,
+      "outsideRed": 118
+    },
+    {
       "why": "R74 音频读面：packages/contracts/openapi.json 在 :4396 新增 readSynthesisAudio 的 path 对象（+92 行）与 docs/architecture/contract-status.json 新增一条 operation（净 +27 行），使 docs/verification 历史取证页里 6 条早已漂移的裸锚点从「指向有内容的行」落到纯括号行（SUSPECT），故按既有口径登记；6 条全部是历史页快照（docs/verification/**，不改写历史正文），本片未新增/未改动这些锚点本身，其中 5 条指向 openapi.json:7165/9996/13056/13649、1 条指向 contract-status.json:2083；同时册上 4 条陈旧（voice.js:392、service.ts:652、contract-status.json:3267/3333）因同样的插行落到有内容行而不再复现，一并删行",
       "accept": 6,
       "orphans": 3516,
@@ -256,6 +268,18 @@
       "outsideRed": 124
     },
     {
+      "why": "合入 origin/main(3d9b2369) 时两侧账本取并集：分支侧两条（3500/118、3499/118）与 main 侧两条（3516/122、3516/123）逐条保留，本条只把两个数组在合流树上的实际条数记进账本，让孤儿册可被 load；数组本体与条数随后由 --write-orphan-baseline 按扫描面重生成",
+      "accept": 0,
+      "orphans": 3499,
+      "outsideRed": 121
+    },
+    {
+      "why": "合入 origin/main(3d9b2369)：孤儿册按两侧账本多重集并集落定（architecture 侧裸锚点 3499 条不变，main 只动作用域外历史取证页 +7/-4 ⇒ outsideRed 118→121）；本轮扫描面基线外新增 0 条、陈旧 0 条，故 accept=0，只重生成册子与账本，不改判定、不新增放行。",
+      "accept": 0,
+      "orphans": 3499,
+      "outsideRed": 121
+    },
+    {
       "why": "修正 6 条历史错锚，从册子退场",
       "accept": 0,
       "orphans": 3516,
@@ -266,6 +290,36 @@
       "accept": 2,
       "orphans": 3514,
       "outsideRed": 119
+    },
+    {
+      "why": "合入 origin/main(3b89782f)：main 的 #875 已把那 6 条历史错锚修好，合并树按同一扫描面重扫后作用域外本会红 121→115（孤儿仍 3499、条目不增不减）；本条先把合流树上的实测条数记进账本让册子可被 load，数组本体随后由 --write-orphan-baseline 重生成，判定逻辑一个字没改",
+      "accept": 0,
+      "orphans": 3499,
+      "outsideRed": 115
+    },
+    {
+      "why": "合并 origin/main(3b89782f) 后按合并树重扫重生成孤儿册：main 的 #875 已修好那 6 条历史错锚（作用域外本会红 121→115），本分支的文档重写又让 main 侧 15 条旧裸锚点不再命中；两侧都没有新增放行，本轮基线外新增 0 条、陈旧 0 条，判定逻辑与扫描面一个字没改",
+      "accept": 0,
+      "orphans": 3499,
+      "outsideRed": 115
+    },
+    {
+      "why": "合并 origin/main(5dd6da3a) 时两侧账本取并集：本片三条（R75 新增 op、合入 3b89782f 两次重生成）与 main 侧四条（#857／#873 线的两次并集登记与其后的重生成）逐条保留，两侧共有的 #875 条目只留一条。本条不新增任何放行（accept=0），只把两个数组在合流树上的实测条数记进账本让孤儿册可被 load；数组本体与条数随后由 --write-orphan-baseline 按同一扫描面重生成。",
+      "accept": 0,
+      "orphans": 3497,
+      "outsideRed": 117
+    },
+    {
+      "why": "合并 origin/main(5dd6da3a) 后按合并树同一次次扫描重生成：accept 账本取两侧并集（本片 R75 与 main 侧 #857／#873 线共 7 条逐条保留，两侧共有的 #875 条目只留一条），数组本体按本轮扫描实测重取（孤儿 3433／作用域外 104，比并集前的 3497／117 更紧）；本轮基线外新增 0 条、陈旧 0 条，判定逻辑与扫描面一个字没改",
+      "accept": 0,
+      "orphans": 3433,
+      "outsideRed": 104
+    },
+    {
+      "why": "合并 origin/main(5dd6da3a) 后按合并树重生成；上一版只按默认面（docs/architecture + docs/verification）取数，漏了默认面外文档，本轮改用与门禁一致的 docs 全扫描面，按工具自报新增 77 条落盘（64 孤儿 + 13 作用域外，全部位于 docs/development-progress.md、docs/evaluation/*、docs/research/*；与册上现有键逐条比对 stale 0，故无删除，只补登记）",
+      "accept": 77,
+      "orphans": 3497,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -331,9 +385,6 @@
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:272|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:28|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:30-33|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:305|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:323|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:335|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:354|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:368|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:3|no-explicit-in-block",
@@ -351,24 +402,17 @@
     "docs/architecture/s4-data-traceability.md|:154|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:158|no-explicit-in-block",
     "docs/architecture/s4-data-traceability.md|:1803|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:2004|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2007|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:202-207|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:2025|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:202|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:203|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:236|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:244|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:252|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:2548|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:2548|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:2550|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:261|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:27|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:27|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:315|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:328|ambiguous-block",
-    "docs/architecture/s4-data-traceability.md|:338|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:416|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:43|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:45|ambiguous-block",
@@ -381,8 +425,6 @@
     "docs/architecture/s4-data-traceability.md|:74|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:90|ambiguous-block",
     "docs/architecture/s4-data-traceability.md|:99|ambiguous-block",
-    "docs/architecture/state-contract.md|:1448-1457|ambiguous-block",
-    "docs/architecture/state-contract.md|:1458-1465|ambiguous-block",
     "docs/architecture/state-contract.md|:248|ambiguous-block",
     "docs/architecture/state-contract.md|:249|ambiguous-block",
     "docs/architecture/state-contract.md|:70-76|ambiguous-block",
@@ -2582,10 +2624,6 @@
     "docs/verification/gy-r29-i19-closure-20261022.md|:132-135|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:185-207|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:185-207|no-explicit-in-block",
-    "docs/verification/gy-r29-i19-closure-20261022.md|:194|no-explicit-in-block",
-    "docs/verification/gy-r29-i19-closure-20261022.md|:197-198|no-explicit-in-block",
-    "docs/verification/gy-r29-i19-closure-20261022.md|:197|no-explicit-in-block",
-    "docs/verification/gy-r29-i19-closure-20261022.md|:201|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:240|ambiguous-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:247-249|ambiguous-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:262|ambiguous-block",
@@ -2599,7 +2637,6 @@
     "docs/verification/gy-r29-i19-closure-20261022.md|:417|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:417|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:450|no-explicit-in-block",
-    "docs/verification/gy-r29-i19-closure-20261022.md|:457|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:457|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:457|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:469|no-explicit-in-block",
@@ -3894,8 +3931,6 @@
     "docs/verification/gy-r67-docs-pins-20261027.md|docs/architecture/ai-ops-spec-status.md:203|SUSPECT",
     "docs/verification/gy-r67-docs-truth-20261027.md|jobs-pg.ts:419|SUSPECT",
     "docs/verification/gy-r67-docs-truth-20261027.md|services/api/src/admin/ops/jobs-pg.ts:419|SUSPECT",
-    "docs/verification/gy-r67-docs-truth-20261027.md|services/api/src/app.ts:2434|SUSPECT",
-    "docs/verification/gy-r67-docs-truth-20261027.md|services/api/src/app.ts:2440|SUSPECT",
     "docs/verification/gy-r68-d09b-anchor-recheck-20261028.md|docs/architecture/s4-data-traceability.md:2076|OUT_OF_RANGE",
     "docs/verification/gy-r68-d09b-anchor-recheck-20261028.md|docs/architecture/s4-data-traceability.md:2257|OUT_OF_RANGE",
     "docs/verification/gy-r68-d09b-anchor-recheck-20261028.md|docs/architecture/s4-data-traceability.md:2257|OUT_OF_RANGE",
