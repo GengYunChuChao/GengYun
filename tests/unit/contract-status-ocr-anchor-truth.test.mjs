@@ -304,10 +304,21 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * （路径）……真实环境联调未做」，其余「真实存储／端口／审计待完成」的判断维持不动。中文表格同次重生成。
  * 两份台账各 +472 字节、行数不变（278715 / 4465、200278 / 220）。仍是「正常改台账」，故同步基线；
  * 没有改判定、没有加豁免条目。
+ * 2026-11-04 第十二次同步（台账 blocker 散文的 file:line 首次有了可执行校验）：新增
+ * `tests/unit/contract-blocker-anchor-truth.test.mjs`，对该 JSON 里 `blocker` / `source_anchor` 散文中以
+ * `services/ apps/ packages/ tools/ tests/ docs/ miniprogram/ deploy/ scripts/` 开头的 `path:line[-line]` 判三件事：
+ * 文件存在、行号在界内（两端都判）、起点不落在空行／纯闭合括号／纯注释行。按它扫出的明确漂移重锚 7 处（3 组）：
+ * `services/api/src/app.ts:802-806`→`893-897`（`listMessages`/`getUnreadCount`/`markMessageRead` 各一处，按
+ * `createPostgresMessagesStore` 的唯一装配点 897 定位）、同样这三条的 `:1126-1130`→`1217-1221`（按
+ * `createMessagesCommunityEventsPort` 的唯一装配点 1221 定位；旧区间落在识别域装配块上）、
+ * `deploy/postgres-cvm/backup-postgres.sh:24`→`188`（脚本里 `pg_dump` 的唯一执行点）。
+ * 前两组等长、只有 `:24`→`:188` 多一个字符位 ⇒ 两份台账各**多 1 字节**，行数不变。
+ * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目（新用例的锚点白名单为空）。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278715, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200278, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278716, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200279, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

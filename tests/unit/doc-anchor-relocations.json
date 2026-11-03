@@ -2458,5 +2458,141 @@
     "from": 2508,
     "to": 2546,
     "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 500,
+    "target": "deploy/postgres-cvm/backup-postgres.sh",
+    "from": 24,
+    "to": 188,
+    "reason": "陈旧锚点重锚（目标文件 deploy/postgres-cvm/backup-postgres.sh 本提交未改）：base 的 `:24` 是脚本头部注释「#   是逐用户删除语义，本脚本**没有**实现…」，而散文指的是「运维侧唯一备份产物 = 该脚本的**整库** pg_dump -Fc」——脚本里 `pg_dump` 只有一处真实执行点，HEAD 为 `:188`（`runuser -u postgres -- \"${PG_BIN}/pg_dump\" \\`，189-191 续 `-h/-U/-d`、`-Fc -Z 6 --lock-wait-timeout=60s`、`-f \"$TMP_DUMP\"`；183 是 `pg_dump --version` 日志、193 是空产出判定，均非执行点）⇒ 本次改到 188。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 2197,
+    "target": "services/api/src/app.ts",
+    "from": 802,
+    "fromEnd": 806,
+    "to": 893,
+    "toEnd": 897,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:802-806` 是 ajv 校验选项前的五句注释（`    // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；` 起、`    // 换方言不换校验口径。` 止），整段没有任何 messages 装配代码，HEAD 同一装配位置已到 `:893-897`（`  const messagesStore: MessagesStore =` … `          : createPostgresMessagesStore({ pool }))`）。按符号 `createPostgresMessagesStore` 的唯一装配点实测 897（139 那条是 import，不算装配点） ⇒ 本次等长改到 893-897。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 2197,
+    "target": "services/api/src/app.ts",
+    "from": 1126,
+    "fromEnd": 1130,
+    "to": 1217,
+    "toEnd": 1221,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1126-1130` 落在识别域装配块（`    });` 起、`    // `real` 才接管派发，替身/演示原样返回（不记账）。` 止），与散文说的社区→消息事件端口无关，HEAD 同一装配位置已到 `:1217-1221`（`  const communityEvents: CommunityEventsPort =` … `      : createMessagesCommunityEventsPort({ messages: messagesService }));`）。按符号 `createMessagesCommunityEventsPort` 的唯一装配点实测 1221（220 那条是 import 解构，不算装配点） ⇒ 本次等长改到 1217-1221。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 2219,
+    "target": "services/api/src/app.ts",
+    "from": 802,
+    "fromEnd": 806,
+    "to": 893,
+    "toEnd": 897,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:802-806` 是 ajv 校验选项前的五句注释（`    // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；` 起、`    // 换方言不换校验口径。` 止），整段没有任何 messages 装配代码，HEAD 同一装配位置已到 `:893-897`（`  const messagesStore: MessagesStore =` … `          : createPostgresMessagesStore({ pool }))`）。按符号 `createPostgresMessagesStore` 的唯一装配点实测 897（139 那条是 import，不算装配点） ⇒ 本次等长改到 893-897。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 2219,
+    "target": "services/api/src/app.ts",
+    "from": 1126,
+    "fromEnd": 1130,
+    "to": 1217,
+    "toEnd": 1221,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1126-1130` 落在识别域装配块（`    });` 起、`    // `real` 才接管派发，替身/演示原样返回（不记账）。` 止），与散文说的社区→消息事件端口无关，HEAD 同一装配位置已到 `:1217-1221`（`  const communityEvents: CommunityEventsPort =` … `      : createMessagesCommunityEventsPort({ messages: messagesService }));`）。按符号 `createMessagesCommunityEventsPort` 的唯一装配点实测 1221（220 那条是 import 解构，不算装配点） ⇒ 本次等长改到 1217-1221。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 2241,
+    "target": "services/api/src/app.ts",
+    "from": 802,
+    "fromEnd": 806,
+    "to": 893,
+    "toEnd": 897,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:802-806` 是 ajv 校验选项前的五句注释（`    // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；` 起、`    // 换方言不换校验口径。` 止），整段没有任何 messages 装配代码，HEAD 同一装配位置已到 `:893-897`（`  const messagesStore: MessagesStore =` … `          : createPostgresMessagesStore({ pool }))`）。按符号 `createPostgresMessagesStore` 的唯一装配点实测 897（139 那条是 import，不算装配点） ⇒ 本次等长改到 893-897。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 2241,
+    "target": "services/api/src/app.ts",
+    "from": 1126,
+    "fromEnd": 1130,
+    "to": 1217,
+    "toEnd": 1221,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1126-1130` 落在识别域装配块（`    });` 起、`    // `real` 才接管派发，替身/演示原样返回（不记账）。` 止），与散文说的社区→消息事件端口无关，HEAD 同一装配位置已到 `:1217-1221`（`  const communityEvents: CommunityEventsPort =` … `      : createMessagesCommunityEventsPort({ messages: messagesService }));`）。按符号 `createMessagesCommunityEventsPort` 的唯一装配点实测 1221（220 那条是 import 解构，不算装配点） ⇒ 本次等长改到 1217-1221。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 68,
+    "target": "deploy/postgres-cvm/backup-postgres.sh",
+    "from": 24,
+    "to": 188,
+    "reason": "陈旧锚点重锚（目标文件 deploy/postgres-cvm/backup-postgres.sh 本提交未改）：base 的 `:24` 是脚本头部注释「#   是逐用户删除语义，本脚本**没有**实现…」，而散文指的是「运维侧唯一备份产物 = 该脚本的**整库** pg_dump -Fc」——脚本里 `pg_dump` 只有一处真实执行点，HEAD 为 `:188`（`runuser -u postgres -- \"${PG_BIN}/pg_dump\" \\`，189-191 续 `-h/-U/-d`、`-Fc -Z 6 --lock-wait-timeout=60s`、`-f \"$TMP_DUMP\"`；183 是 `pg_dump --version` 日志、193 是空产出判定，均非执行点）⇒ 本次改到 188。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 129,
+    "target": "services/api/src/app.ts",
+    "from": 802,
+    "fromEnd": 806,
+    "to": 893,
+    "toEnd": 897,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:802-806` 是 ajv 校验选项前的五句注释（`    // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；` 起、`    // 换方言不换校验口径。` 止），整段没有任何 messages 装配代码，HEAD 同一装配位置已到 `:893-897`（`  const messagesStore: MessagesStore =` … `          : createPostgresMessagesStore({ pool }))`）。按符号 `createPostgresMessagesStore` 的唯一装配点实测 897（139 那条是 import，不算装配点） ⇒ 本次等长改到 893-897。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 129,
+    "target": "services/api/src/app.ts",
+    "from": 1126,
+    "fromEnd": 1130,
+    "to": 1217,
+    "toEnd": 1221,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1126-1130` 落在识别域装配块（`    });` 起、`    // `real` 才接管派发，替身/演示原样返回（不记账）。` 止），与散文说的社区→消息事件端口无关，HEAD 同一装配位置已到 `:1217-1221`（`  const communityEvents: CommunityEventsPort =` … `      : createMessagesCommunityEventsPort({ messages: messagesService }));`）。按符号 `createMessagesCommunityEventsPort` 的唯一装配点实测 1221（220 那条是 import 解构，不算装配点） ⇒ 本次等长改到 1217-1221。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 130,
+    "target": "services/api/src/app.ts",
+    "from": 802,
+    "fromEnd": 806,
+    "to": 893,
+    "toEnd": 897,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:802-806` 是 ajv 校验选项前的五句注释（`    // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；` 起、`    // 换方言不换校验口径。` 止），整段没有任何 messages 装配代码，HEAD 同一装配位置已到 `:893-897`（`  const messagesStore: MessagesStore =` … `          : createPostgresMessagesStore({ pool }))`）。按符号 `createPostgresMessagesStore` 的唯一装配点实测 897（139 那条是 import，不算装配点） ⇒ 本次等长改到 893-897。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 130,
+    "target": "services/api/src/app.ts",
+    "from": 1126,
+    "fromEnd": 1130,
+    "to": 1217,
+    "toEnd": 1221,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1126-1130` 落在识别域装配块（`    });` 起、`    // `real` 才接管派发，替身/演示原样返回（不记账）。` 止），与散文说的社区→消息事件端口无关，HEAD 同一装配位置已到 `:1217-1221`（`  const communityEvents: CommunityEventsPort =` … `      : createMessagesCommunityEventsPort({ messages: messagesService }));`）。按符号 `createMessagesCommunityEventsPort` 的唯一装配点实测 1221（220 那条是 import 解构，不算装配点） ⇒ 本次等长改到 1217-1221。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 131,
+    "target": "services/api/src/app.ts",
+    "from": 802,
+    "fromEnd": 806,
+    "to": 893,
+    "toEnd": 897,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:802-806` 是 ajv 校验选项前的五句注释（`    // 契约 WechatLoginInput / AdminLoginInput 为 additionalProperties:false；` 起、`    // 换方言不换校验口径。` 止），整段没有任何 messages 装配代码，HEAD 同一装配位置已到 `:893-897`（`  const messagesStore: MessagesStore =` … `          : createPostgresMessagesStore({ pool }))`）。按符号 `createPostgresMessagesStore` 的唯一装配点实测 897（139 那条是 import，不算装配点） ⇒ 本次等长改到 893-897。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 131,
+    "target": "services/api/src/app.ts",
+    "from": 1126,
+    "fromEnd": 1130,
+    "to": 1217,
+    "toEnd": 1221,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1126-1130` 落在识别域装配块（`    });` 起、`    // `real` 才接管派发，替身/演示原样返回（不记账）。` 止），与散文说的社区→消息事件端口无关，HEAD 同一装配位置已到 `:1217-1221`（`  const communityEvents: CommunityEventsPort =` … `      : createMessagesCommunityEventsPort({ messages: messagesService }));`）。按符号 `createMessagesCommunityEventsPort` 的唯一装配点实测 1221（220 那条是 import 解构，不算装配点） ⇒ 本次等长改到 1217-1221。"
   }
 ]
