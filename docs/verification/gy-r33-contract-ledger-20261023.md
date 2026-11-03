@@ -226,7 +226,7 @@ const recognitionTerminalHistory: RecognitionTerminalHistoryPort = historyDomain
     );
 ```
 
-`services/api/src/app.ts:1689`（`deleteHistory` 级联端口；R33 时点的 `:1565` 那行是 `?? createUnwiredHistoryCascadePort()`，该符号在 `app.ts` 已 0 命中）：
+`services/api/src/app.ts:1951`（`historyCascadePort` 级联端口接线；R33 时点的 `:1565` 那行是 `?? createUnwiredHistoryCascadePort()`，`deleteHistory`／`createUnwiredHistoryCascadePort` 两个符号在 `app.ts` 已 0 命中）：
 
 ```ts
 const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createHistoryCascadePort({ recognitionService: () => app.recognitionService, ocrService: () => app.ocrService });
@@ -385,7 +385,7 @@ node subms-readout.mjs <worktree> gy_r33_ms 55437
 
 - PG `timestamptz` 是**微秒**精度，SQL `ORDER BY created_at DESC` 按完整精度比较。
 - 应用侧 `pg`（8.23.1）把 `timestamptz` 解成 JS `Date`；`Date` 只有**毫秒**精度（两行的 `toISOString` 都已成为 `.000Z`）。
-- `services/api/src/knowledge/service.ts:28-38` 的 `instantOf` 用 `Date.getTime()` / `Date.parse()`（毫秒）；同毫秒时 `compareKnowledgeRows` 退到 `id DESC`（`:36-37`）。
+- `services/api/src/knowledge/service.ts:24-32` 的 `microsOf` 以 `created_at_micros` 优先，否则把 `Date.getTime() * 1000` / `Date.parse()` 折算成**微秒**；同一微秒时 `compareKnowledgeRows` 退到 `id DESC`（`:33-38`）。
 - 关键：服务在 `:83-84` 对**整份快照**（`dbResult.rows` + extra）重排，不是只排种子；因此 DB 行也会被 JS 重排，SQL 与 HTTP/服务层可不同序。
 
 **影响面**

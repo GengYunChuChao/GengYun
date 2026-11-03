@@ -47,7 +47,7 @@
 
 `guest: true` 是初始值（`miniprogram/pages/home/home.js:29`）。`onShow` 先无条件按游客渲染一行（`miniprogram/pages/home/home.js:34`，避免首帧闪已登录），再核验：`miniprogram/pages/home/home.js:35-39` 收到结果后仍要复查 `_active` 与 `_action`（`miniprogram/pages/home/home.js:36`）才 `setData`。
 
-游客可见：徽标 `游客仅可预览首页`（`miniprogram/pages/home/home.wxml:15`）、登录按钮 `微信登录`（`miniprogram/pages/home/home.wxml:21`）。受控入口恰好 5 处 `openGated`（`miniprogram/pages/home/home.js:63`、`:64`、`:66`、`:67`、`:68`），未登录统一弹同一句：`需要登录` / `该功能需要微信登录后使用，现在去登录吗？` / `去登录` / `暂不`（`miniprogram/pages/home/home.js:92-100`），取消与失败都清 `returnTo`（`miniprogram/pages/home/home.js:97`、`miniprogram/pages/home/home.js:99`）。
+游客可见：徽标 `游客仅可预览首页`（`miniprogram/pages/home/home.wxml:15`）、登录按钮 `微信登录`（`miniprogram/pages/home/home.wxml:21`）。受控入口 7 处 `openGated` 调用（`miniprogram/pages/home/home.js:82`、`:83`、`:99`、`:100`、`:102`、`:103`、`:104`，定义在 `:107`），未登录统一弹同一句：`需要登录` / `该功能需要微信登录后使用，现在去登录吗？` / `去登录` / `暂不`（`miniprogram/pages/home/home.js:128-130`），取消与失败都清 `returnTo`（`miniprogram/pages/home/home.js:133`、`miniprogram/pages/home/home.js:135`），离页且未交接时也清（`:50` 的 `navigation.clearReturnTo(this._navigation)`）。
 
 错误码映射表**存在且取值精确**：`miniprogram/utils/states.js:27-74` 的 `CODE_KIND`（如 `SESSION_REQUIRED: 'session'` 在 `miniprogram/utils/states.js:33`、`PROVIDER_UNAVAILABLE: 'unavailable'` 在 `miniprogram/utils/states.js:66`），可重试性在 `miniprogram/utils/states.js:104-114`（`session: false`，注释写明「需要重新登录，不是重试」）。但**首页不消费这张表**：`home.js` 的 require 只有 4 个模块，不含 `utils/states`（`miniprogram/pages/home/home.js:1-4`），`home.wxml` 也没有 `error-code=` ⇒ **现状缺口**：首页对 `SESSION_REQUIRED` / `PROVIDER_UNAVAILABLE` 没有任何专门处理，全靠 `verified` 布尔值。
 

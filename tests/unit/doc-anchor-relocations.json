@@ -2179,6 +2179,107 @@
     "from": 6543,
     "to": 6704,
     "reason": "同段 `getOwnReport` 的裸锚点：旧值 6543 是 `                  \"$ref\": \"#/components/schemas/AckEnvelope\"`，按符号 `\"operationId\": \"getOwnReport\",` 实测 6704。"
+  },
+  {
+    "doc": "docs/verification/gy-r29-i07-closure-20261022.md",
+    "line": 114,
+    "target": "services/api/src/routes/knowledge.ts",
+    "from": 11,
+    "to": 12,
+    "reason": "旧值 11 在 HEAD 上是 `import { readDoseCards } from \"../knowledge/dose-cards.ts\";`；路由实际使用的是异步版导入 `import { decidePublicVisibilityAsync, type ReferenceResolver } from \"../knowledge/public-invalidation.ts\";`（:12）。"
+  },
+  {
+    "doc": "docs/verification/gy-r33-contract-ledger-20261023.md",
+    "line": 229,
+    "target": "services/api/src/app.ts",
+    "from": 1689,
+    "to": 1951,
+    "reason": "旧值 1689 现为 `          administratorsWired: administratorsDirectory !== null,`；历史级联端口接线在 1951：`const historyCascadePort: HistoryCascadePort = historyInjection?.cascade ?? createHistoryCascadePort({ ... })`（`deleteHistory` 在 app.ts 已 0 命中）。"
+  },
+  {
+    "doc": "docs/verification/gy-r33-contract-ledger-20261023.md",
+    "line": 388,
+    "target": "services/api/src/knowledge/service.ts",
+    "from": 28,
+    "to": 24,
+    "fromEnd": 38,
+    "toEnd": 32,
+    "reason": "旧区间 28-38 起点现为 `const match = typeof value === \"string\" ? ISO_INSTANT.exec(value.trim()) : null;`；`instantOf` 已改名 `microsOf`，实现现于 24-32（24 行 `function microsOf(row: Row): number {`）。"
+  },
+  {
+    "doc": "docs/verification/gy-r33-contract-ledger-20261023.md",
+    "line": 388,
+    "target": "services/api/src/knowledge/service.ts",
+    "from": 36,
+    "to": 33,
+    "fromEnd": 37,
+    "toEnd": 38,
+    "reason": "旧区间 36-37 起点现为 `const aid = String(a.id), bid = String(b.id);`；`compareKnowledgeRows` 现于 33-38（33 行 `export function compareKnowledgeRows(a: Row, b: Row): number {`）。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 63,
+    "to": 82,
+    "reason": "旧值 63 现为 `return publicHome.load().then((result) => {`；`openGated` 调用清单按现码重排后第一处为 :82 `if (kind === \"knowledge\") { this.openGated(\"/pages/knowledge/knowledge\"); return }`。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 64,
+    "to": 83,
+    "reason": "旧值 64 现为 `      if (!current()) return`；第二处 `openGated` 调用在 :83 `if (kind === \"community\") { this.openGated(\"/pages/community/community\"); return }`。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 66,
+    "to": 99,
+    "reason": "旧值 66 现为 `        previewStatus: result.items.length ? \"ready\" : \"empty\",`；语音入口 `openGated` 调用在 :99 `if (key === \"voice\") { this.openGated(\"/pages/voice/voice\"); return }`。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 67,
+    "to": 100,
+    "reason": "旧值 67 现为 `        previewItems: result.items,`；识别入口调用在 :100 `this.openGated(\"/pages/identify/identify\")`。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 68,
+    "to": 102,
+    "reason": "旧值 68 现为 `        previewNote: result.note,`；`:102` 为 `goKnowledge: function () { this.openGated(\"/pages/knowledge/knowledge\") },`。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 92,
+    "to": 103,
+    "fromEnd": 100,
+    "reason": "旧区间 92-100 起点现为注释 `  // GY-I12：能力卡把既有 key 透传过来（data-key=\"{{item.key}}\"），按 key 分派目标：`；清单改按现码列举，`:103` 为 `goReference: function () { this.openGated(\"/pages/reference/reference\") },`。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 97,
+    "to": 104,
+    "reason": "旧值 97 现为 `    const dataset = event && event.currentTarget && event.currentTarget.dataset`；`:104` 为 `goReferenceSeed: function () { this.openGated(\"/pages/referenceseed/referenceseed\") },`。"
+  },
+  {
+    "doc": "docs/verification/r59-mp-home-states-20261026.md",
+    "line": 50,
+    "target": "miniprogram/pages/home/home.js",
+    "from": 99,
+    "to": 107,
+    "reason": "旧值 99 现为 `    if (key === \"voice\") { this.openGated(\"/pages/voice/voice\"); return }`；`openGated` 定义在 :107 `  openGated: function (target) {`。"
   }
 ,
   {
