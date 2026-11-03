@@ -2180,4 +2180,182 @@
     "to": 6704,
     "reason": "同段 `getOwnReport` 的裸锚点：旧值 6543 是 `                  \"$ref\": \"#/components/schemas/AckEnvelope\"`，按符号 `\"operationId\": \"getOwnReport\",` 实测 6704。"
   }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 66,
+    "target": "services/api/src/app.ts",
+    "from": 2445,
+    "fromEnd": 2448,
+    "to": 2483,
+    "toEnd": 2486,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2445-2448` 是 `  app.decorate('authService', service);` 那一代读数，HEAD 同一段已挪到 `:2483-2486`（`  registerConsentRoutes(app, config, pool, guards, {` 起头的注入块）。按符号 `registerConsentRoutes` 实测 2483，旧窗口里没有 `registerConsentRoutes` 字样 ⇒ 旧行号指错、本次等长改到 2483-2486。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 68,
+    "target": "services/api/src/app.ts",
+    "from": 1602,
+    "fromEnd": 1605,
+    "to": 1989,
+    "toEnd": 1992,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1602-1605` 是 `          accountsReadWired: realAccountsDirectory !== null,` 那一代读数，HEAD 已挪到 `:1989-1992`（`  const durableDeletionRequests: DeletionRequestStore | null =`）。按符号 `durableDeletionRequests` 实测 1989，旧窗口里没有该符号 ⇒ 本次等长改到 1989-1992。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 68,
+    "target": "services/api/src/app.ts",
+    "from": 1616,
+    "fromEnd": 1623,
+    "to": 2009,
+    "toEnd": 2016,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1616-1623` 是 `        },` 起头的旧块，HEAD 已挪到 `:2009-2016`（`  const backupPurgeWiring: { backupPurge?: BackupPurgePort } =`）。按符号 `backupPurgeWiring` 实测 2009，旧窗口里没有该符号 ⇒ 本次等长改到 2009-2016。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 73,
+    "target": "services/api/src/app.ts",
+    "from": 1413,
+    "fromEnd": 1416,
+    "to": 1303,
+    "toEnd": 1306,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1413-1416` 落在一段 `onReady` 就绪探测注释上（`  // 就绪探测必须在**服务开始接请求之前**完成：挂到 `onReady`（`listen` 与 `inject` 都会先走它），`），HEAD 已挪到 `:1303-1306`（`  const mediaStore: MediaStore = mediaStoreOption`）。按符号 `createPostgresMediaStore` 实测装配点 1305 ⇒ 本次等长改到 1303-1306。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 88,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 89,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 90,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 91,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 92,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 430,
+    "target": "services/api/src/app.ts",
+    "from": 2445,
+    "fromEnd": 2448,
+    "to": 2483,
+    "toEnd": 2486,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2445-2448` 是 `  app.decorate('authService', service);` 那一代读数，HEAD 同一段已挪到 `:2483-2486`（`  registerConsentRoutes(app, config, pool, guards, {` 起头的注入块）。按符号 `registerConsentRoutes` 实测 2483，旧窗口里没有 `registerConsentRoutes` 字样 ⇒ 旧行号指错、本次等长改到 2483-2486。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 500,
+    "target": "services/api/src/app.ts",
+    "from": 1602,
+    "fromEnd": 1605,
+    "to": 1989,
+    "toEnd": 1992,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1602-1605` 是 `          accountsReadWired: realAccountsDirectory !== null,` 那一代读数，HEAD 已挪到 `:1989-1992`（`  const durableDeletionRequests: DeletionRequestStore | null =`）。按符号 `durableDeletionRequests` 实测 1989，旧窗口里没有该符号 ⇒ 本次等长改到 1989-1992。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 500,
+    "target": "services/api/src/app.ts",
+    "from": 1616,
+    "fromEnd": 1623,
+    "to": 2009,
+    "toEnd": 2016,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1616-1623` 是 `        },` 起头的旧块，HEAD 已挪到 `:2009-2016`（`  const backupPurgeWiring: { backupPurge?: BackupPurgePort } =`）。按符号 `backupPurgeWiring` 实测 2009，旧窗口里没有该符号 ⇒ 本次等长改到 2009-2016。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 656,
+    "target": "services/api/src/app.ts",
+    "from": 1413,
+    "fromEnd": 1416,
+    "to": 1303,
+    "toEnd": 1306,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:1413-1416` 落在一段 `onReady` 就绪探测注释上（`  // 就绪探测必须在**服务开始接请求之前**完成：挂到 `onReady`（`listen` 与 `inject` 都会先走它），`），HEAD 已挪到 `:1303-1306`（`  const mediaStore: MediaStore = mediaStoreOption`）。按符号 `createPostgresMediaStore` 实测装配点 1305 ⇒ 本次等长改到 1303-1306。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1098,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1120,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1142,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1164,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
+,
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 1186,
+    "target": "services/api/src/app.ts",
+    "from": 2508,
+    "to": 2546,
+    "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
+  }
 ]
