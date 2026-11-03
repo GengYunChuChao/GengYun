@@ -3431,7 +3431,7 @@
           "name": "恰好实现 19 个 operationId；显式不做的操作未被实现"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与真实环境 UI 联调待完成（GY-I18；后台 UI 页面已消费本接口：`apps/admin/src/views/AccountsView.vue`）"
     },
     {
       "id": "suspendUser",
@@ -3501,7 +3501,7 @@
           "name": "GET /admin/administrators：列表项 id 来自 admin_accounts，⛔ 不是 users.id（两个 id 空间无映射）"
         }
       ],
-      "blocker": "读面已装配（门 scopes:read；数据源是认证存储的 admin_accounts 五列 + 逐条 admin_scopes.scope，列授权见 services/api/db/roles/auth_privacy.sql:27-28，未新增任何授权）：存在性由 getAdmin() 判定，未接线一律 503（不返回空页）。为什么必须单列一个目录端点：授权写面（PR-3）的目标 id 必须是 admin_accounts.id，而既有 GET /admin/accounts 读的是 public.users（id 是 users.id），全仓没有任何读面能取到管理员账号 id ⇒ 两者 id 不得混用。剩余缺口：真实存储下的一次性集群 HTTP 证据由 tests/integration/admin-scopes-read-pg.mjs 采集，本机沙箱禁回环监听、该臂以 77（未取得）跳过；后台 UI 尚未消费本接口（属 GY-I18 联调）。"
+      "blocker": "读面已装配（门 scopes:read；数据源是认证存储的 admin_accounts 五列 + 逐条 admin_scopes.scope，列授权见 services/api/db/roles/auth_privacy.sql:27-28，未新增任何授权）：存在性由 getAdmin() 判定，未接线一律 503（不返回空页）。为什么必须单列一个目录端点：授权写面（PR-3）的目标 id 必须是 admin_accounts.id，而既有 GET /admin/accounts 读的是 public.users（id 是 users.id），全仓没有任何读面能取到管理员账号 id ⇒ 两者 id 不得混用。剩余缺口：真实存储下的一次性集群 HTTP 证据由 tests/integration/admin-scopes-read-pg.mjs 采集，本机沙箱禁回环监听、该臂以 77（未取得）跳过；后台 UI 已消费本接口（`apps/admin/src/views/AdministratorsView.vue`），真实环境联调未做（属 GY-I18）。"
     },
     {
       "id": "listAdministratorScopes",
@@ -3533,7 +3533,7 @@
           "name": "GET /admin/administrators/{id}/scopes：只返 scope 字符串数组，⛔ 无 granted_by/granted_at"
         }
       ],
-      "blocker": "读面已装配（门 scopes:read；运行时角色对 admin_scopes 只有 (admin_id, scope, revoked_at) 三列 SELECT，granted_by/granted_at 直读即 42501 ⇒ 响应里**不可能**出现这两个字段，不是\"暂时没做\"）：返回体只有 { data: { scopes: string[] }, meta }，去重 + 码元序（与 GET /admin/auth/session 的 scopes 同口径），不发 ETag（admin_scopes 没有自己的修订号，拿 admin_accounts.revision 冒充会把\"账号行没变\"说成\"权限集合没变\"）；目标不存在 ⇒ 既有 404 NOT_FOUND（不用空数组冒充\"这个人没有权限\"）；缺 scopes:read ⇒ 既有 403 SCOPE_DENIED；自查仍走会话接口，未另造端点。剩余缺口：一次性集群的真实 HTTP 证据见 tests/integration/admin-scopes-read-pg.mjs（无 GY_PG_BIN 时 77 未取得）；后台 UI 未消费（GY-I18）。"
+      "blocker": "读面已装配（门 scopes:read；运行时角色对 admin_scopes 只有 (admin_id, scope, revoked_at) 三列 SELECT，granted_by/granted_at 直读即 42501 ⇒ 响应里**不可能**出现这两个字段，不是\"暂时没做\"）：返回体只有 { data: { scopes: string[] }, meta }，去重 + 码元序（与 GET /admin/auth/session 的 scopes 同口径），不发 ETag（admin_scopes 没有自己的修订号，拿 admin_accounts.revision 冒充会把\"账号行没变\"说成\"权限集合没变\"）；目标不存在 ⇒ 既有 404 NOT_FOUND（不用空数组冒充\"这个人没有权限\"）；缺 scopes:read ⇒ 既有 403 SCOPE_DENIED；自查仍走会话接口，未另造端点。剩余缺口：一次性集群的真实 HTTP 证据见 tests/integration/admin-scopes-read-pg.mjs（无 GY_PG_BIN 时 77 未取得）；后台 UI 已消费（`apps/admin/src/views/AdministratorsView.vue`），真实环境联调未做（GY-I18）。"
     },
     {
       "id": "grantAdministratorScope",
@@ -3565,7 +3565,7 @@
           "name": "禁止自授：403 SELF_SCOPE_GRANT_DENIED（retryable:false），且不触达写权威"
         }
       ],
-      "blocker": "写面已装配（门 scopes:write；唯一写路径是迁移 0041 的 public.grant_admin_scope()，运行时只拿 EXECUTE，admin_scopes 仍是零表级/零列级写权）。**单条写入、不做整集合覆盖**（裁定③）：请求体只有 { scope, reason }。CAS：If-Match 必填（缺 428、非法 400、不匹配 409 REVISION_CONFLICT），比对的是 admin_accounts.revision；幂等：Idempotency-Key 必填，同键同体重放不再产生第二次变更、不写第二条审计。自授 ⇒ 403 SELF_SCOPE_GRANT_DENIED（retryable:false）；只能授予自己当前有效持有的 scope（库层 G0011 ⇒ 403 SCOPE_DENIED）；目标不存在 ⇒ 404；目标非 active ⇒ 409 OBJECT_UNAVAILABLE。granted_by/granted_at 由函数**在事务内真实写入**，审计行与变更原子提交（应用层不再补写第二行）。未接线（real 无库池 / stub 无持久端口）⇒ 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回成功封套、⛔ 不占幂等位。剩余缺口：真库 HTTP 证据追加在 tests/integration/admin-accounts-read-pg.mjs（CI real-pg-integration.yml 逐文件列举，新建 integration 文件跑不到）；后台 UI 未消费本端点（属 GY-I18 联调）；拒绝侧留痕（裁定⑥后半句）不在本片。"
+      "blocker": "写面已装配（门 scopes:write；唯一写路径是迁移 0041 的 public.grant_admin_scope()，运行时只拿 EXECUTE，admin_scopes 仍是零表级/零列级写权）。**单条写入、不做整集合覆盖**（裁定③）：请求体只有 { scope, reason }。CAS：If-Match 必填（缺 428、非法 400、不匹配 409 REVISION_CONFLICT），比对的是 admin_accounts.revision；幂等：Idempotency-Key 必填，同键同体重放不再产生第二次变更、不写第二条审计。自授 ⇒ 403 SELF_SCOPE_GRANT_DENIED（retryable:false）；只能授予自己当前有效持有的 scope（库层 G0011 ⇒ 403 SCOPE_DENIED）；目标不存在 ⇒ 404；目标非 active ⇒ 409 OBJECT_UNAVAILABLE。granted_by/granted_at 由函数**在事务内真实写入**，审计行与变更原子提交（应用层不再补写第二行）。未接线（real 无库池 / stub 无持久端口）⇒ 503 PROVIDER_UNAVAILABLE（retryable:false），⛔ 不返回成功封套、⛔ 不占幂等位。剩余缺口：真库 HTTP 证据追加在 tests/integration/admin-accounts-read-pg.mjs（CI real-pg-integration.yml 逐文件列举，新建 integration 文件跑不到）；后台 UI 已消费本端点（`apps/admin/src/views/AdministratorsView.vue`），真实环境联调未做（属 GY-I18）；拒绝侧留痕（裁定⑥后半句）不在本片。"
     },
     {
       "id": "revokeAdministratorScope",
@@ -3692,7 +3692,7 @@
           "name": "恰好实现 19 个 operationId；显式不做的操作未被实现"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与真实环境 UI 联调待完成（GY-I18；后台 UI 页面已消费本接口：`apps/admin/src/views/FlagsView.vue`）"
     },
     {
       "id": "setFlag",
@@ -4011,7 +4011,7 @@
           "name": "只实现派单指定的 25 个 operationId"
         }
       ],
-      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与后台 UI 联调待完成（GY-I18）"
+      "blocker": "独立后台服务已有此操作及 scope/版本守卫；路由已装配（services/api/src/routes/admin.ts，HTTP 集成回归 tests/integration/admin-http.mjs）；真实存储、任务/公开内容等端口、审计与真实环境 UI 联调待完成（GY-I18；后台 UI 页面已消费本接口：`apps/admin/src/views/AuditEventsView.vue`）"
     },
     {
       "id": "grantCommunityMediaAccess",
