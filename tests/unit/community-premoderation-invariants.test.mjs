@@ -29,7 +29,7 @@
  * | # | 判据位置 | 断言什么 | 什么改动会让它红 |
  * | - | --- | --- | --- |
  * | 1 | `packages/contracts/openapi.json`：数 `paths` 键（不是 grep 关键词） | 含 `/admin/posts` 的 path **恰好五条**：两条**只读读面** `GET /admin/posts`（`listAdminPosts`）+ `GET /admin/posts/{id}`（`getAdminPost`，各自只允许 `get`、`x-scope` 恰为 `sources:read`）+ 下架 `POST /admin/posts/{id}/hide`（`hidePost`）+ 人审 `POST /admin/posts/{id}/approve`（`approvePost`）/ `POST /admin/posts/{id}/reject`（`rejectPost`）（三条写面都只允许 `post`、`x-scope` 恰为 `sources:write`）；全家方法全集恰为 `get`×2 + `post`×3；③/③b 的命名式扫描要求全 spec 审核类 operation **恰为那两条** | 契约新增任何**第三类** `/admin/posts/...` 审核动作 path（review/publish/moderate/…）、给这五条换 method/改名、或让读面带写 scope / 写面带读 scope |
- * | 2 | `services/api/src/community/service.ts`：`createPost`（:1052/:1066-1067）**与** `editPost`（:1188/:1197-1198）两处 | 每处三行都**逐字**钉住：`visibility` 三元组落 `'private' : 'published'`、`audit_state` 落 `'pending' : 'approved'`，`awaitingPublish` 定义为 `!mediaReview && screen !== null && link !== null`；且两处都是「先落库（`insertPost` / `commitPostIfCurrent`）→ 再 `link.publish` → 再回读」 | 初始写入被改回 `published/approved`（先审后发被拆掉）；把 `awaitingPublish` 恒置 `false`（三元组文本不变却永远不走待审）；两步顺序颠倒；或**只改一处**（发帖待审、改帖直接发） |
+ * | 2 | `services/api/src/community/service.ts`：`createPost`（:1097/:1111-1112）**与** `editPost`（:1233/:1242-1243）两处 | 每处三行都**逐字**钉住：`visibility` 三元组落 `'private' : 'published'`、`audit_state` 落 `'pending' : 'approved'`，`awaitingPublish` 定义为 `!mediaReview && screen !== null && link !== null`；且两处都是「先落库（`insertPost` / `commitPostIfCurrent`）→ 再 `link.publish` → 再回读」 | 初始写入被改回 `published/approved`（先审后发被拆掉）；把 `awaitingPublish` 恒置 `false`（三元组文本不变却永远不走待审）；两步顺序颠倒；或**只改一处**（发帖待审、改帖直接发） |
  * | 3 | `services/api/src/favorites/**`（`types.ts:24` 为闭集定义、`:74-76` 为唯一判定函数） | `FAVORITE_TARGET_TYPES` **逐字** `['species','herbicide','scheme']`；`isFavoriteTargetType` 仍由该常量派生；`favorites/**` 里**没有任何** `'post'` / `'comment'` 字面量 | 把社区帖子/评论加进收藏闭集（无论加在常量、判定函数还是别处的字面量） |
  * | 4 | `apps/admin/src/views/ReviewPlaceholderView.vue` 全文 | 该页**没有任何真网络调用形态**（`fetch(`/`axios`/`XMLHttpRequest`/`*Api.<method>`/`$fetch`/网络模块 import 等），数据仍只来自 `../lib/review-state.mjs` | **预期会红**：一旦人审后台真的实现（哪怕只是开始拉队列），这一页必须改成读真实数据 —— 届时先加契约读面，再翻转本钉子。⛔ 不要为了让本钉子变绿把模式改窄 |
  * | 5 | 小程序审核结论文案：唯一来源 `miniprogram/utils/community-api.js` 的 `OUTCOMES` + 三页 | 「隔离待复核（`quarantined`）」与「明确驳回（`rejected`）」各有独立条目且**标题互不相同**（前者含「复核」且不得含「未通过」，后者含「未通过」且不得含「复核」）；三页**零**本地文案字面量（`待审／未公开` / `未公开／待审` / `已通过先行审核` / `已下架（仅本人可见）`）且都调 `api.outcomeOf`；理由码「（码：X）」拼接点恰好一处、带「未知原因」兜底、旧的「原因码：」裸码直传零命中 | 把两个结论合回一句（隔离/驳回不可区分）；在页面里重新抄一份文案；去掉 `Object.freeze`；删掉未知码兜底；把理由码改回 `codes.join()` 直传。**本钉子已按 fix/gy-r68-moderation-outcome-copy 翻转**（它改前钉的是「三页同为 `待审／未公开`、且没有已驳回态」这个缺口） |
@@ -465,7 +465,7 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   //    只钉发帖那一处就漏掉了「发帖待审、改帖直接发」的旁路 —— 那正是最该抓的东西。
   pinLines({
     file: COMMUNITY_SERVICE,
-    expectLines: [1066, 1197],
+    expectLines: [1120, 1251],
     expectText: CREATE_POST_VISIBILITY_LINE,
     why: '把初始可见性改回 `published`（例如退化成 `visibility: \'published\'`）、'
       + '改掉三元组的分支条件（`awaitingPublish` → 别的谓词），'
@@ -473,14 +473,14 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   });
   pinLines({
     file: COMMUNITY_SERVICE,
-    expectLines: [1067, 1198],
+    expectLines: [1121, 1252],
     expectText: CREATE_POST_AUDIT_LINE,
     why: '把初始审核态改回 `approved`、让 `private` 与 `pending` 不再成对出现'
       + '（`private` + `approved` 是自相矛盾的状态组合），或只改一处',
   });
   pinLines({
     file: COMMUNITY_SERVICE,
-    expectLines: [1052, 1188],
+    expectLines: [1106, 1242],
     expectText: AWAITING_PUBLISH_LINE,
     why: '**只改这一行就能悄悄关掉先审后发**：`const awaitingPublish = false` 会让上面两行的三元组'
       + '永远走 `published`/`approved` 分支，而文本一个字都不用动 —— 所以这一行必须单独钉住。',
@@ -506,8 +506,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     insertHits.map((hit) => hit.line),
-    [1073],
-    '【钉 2 破了】`createPost` 里 `store.insertPost` 的调用点不再是恰好一处（:1073）：'
+    [1127],
+    '【钉 2 破了】`createPost` 里 `store.insertPost` 的调用点不再是恰好一处（:1127）：'
       + `\n  实测：${JSON.stringify(insertHits)}`
       + '\n  基线：先 `store.insertPost`（落 `private`/`pending`），随后 `link.publish` 把它改成 `published`/`approved`。'
       + because('在 createPost 里新增/挪走写库调用（例如改成先请求审核域、拿到放行才落库 —— '
@@ -515,8 +515,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     publishHits.map((hit) => hit.line),
-    [1084],
-    '【钉 2 破了】`createPost` 里 `link.publish(` 的调用点不再是恰好一处（:1084）：'
+    [1138],
+    '【钉 2 破了】`createPost` 里 `link.publish(` 的调用点不再是恰好一处（:1138）：'
       + `\n  实测：${JSON.stringify(publishHits)}`
       + '\n  基线：审核域放行就是这一个函数（`community/moderation-link.ts` 的 `publish`）。'
       + because('删掉 publish（贴子会永远停在 pending，先审后发变成「只审不发」），'
@@ -543,7 +543,7 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
     refusHoldsPendingAt > -1,
     true,
     '【钉 2 · 自陈没了】`createPost` 里找不到「闸门拒绝 ⇒ 行保留为 pending_review」那段自陈：'
-      + `\n  基线（:1082-1083）：\`// 第二步：交审核域发布。闸门拒绝 ⇒ **行保留为 pending_review**（私有 / 待审，\``
+      + `\n  基线（:1127-1128）：\`// 第二步：交审核域发布。闸门拒绝 ⇒ **行保留为 pending_review**（私有 / 待审，\``
       + ' / `// 不静默丢弃、也不留 published），错误原样上抛（fail-closed）。`'
       + because('删掉/改掉这段注释（它登记的是「publish 失败时内容行怎么处置」的语义，'
         + '容易被顺手改成「失败就删行」而不被任何测试发现）。'),
@@ -554,7 +554,7 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
     true,
     '【钉 2 破了】`link.publish(...)` 之后不再回读内容行（找不到 `const published = await store.getPost(id);`）：'
       + `\n  实测行内偏移：${readBackAt}（publish 在偏移 ${publishHits[0].line - createPostAt}）`
-      + '\n  基线（:1088-1092）：publish 之后 `store.getPost(id)` 读回**已提交**的行，读不到就报内部不变式违反，'
+      + '\n  基线（:1133-1137）：publish 之后 `store.getPost(id)` 读回**已提交**的行，读不到就报内部不变式违反，'
       + '然后 `committedRecord = published` —— 接口返回的是第二步之后的状态，不是第一步的快照。'
       + because('改成 publish 之后不复读（返回值退回第一步的 `record`，于是接口会把 `private`/`pending` 回给作者，'
         + '或者反过来悄悄把期望当成事实回给作者）。'),
@@ -580,8 +580,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     editCommitHits.map((hit) => hit.line),
-    [1203],
-    '【钉 2 破了】`editPost` 里 `store.commitPostIfCurrent` 的调用点不再是恰好一处（:1203）：'
+    [1257],
+    '【钉 2 破了】`editPost` 里 `store.commitPostIfCurrent` 的调用点不再是恰好一处（:1257）：'
       + `\n  实测：${JSON.stringify(editCommitHits)}`
       + '\n  基线：改写与审核结论在**同一次 CAS 提交**内写入（`revision`/归属/未删除一起校验），'
       + 'patch 里带的是 `private`/`pending`。'
@@ -589,8 +589,8 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
   );
   assert.deepEqual(
     editPublishHits.map((hit) => hit.line),
-    [1214],
-    '【钉 2 破了】`editPost` 里 `link.publish(` 的调用点不再是恰好一处（:1214）：'
+    [1268],
+    '【钉 2 破了】`editPost` 里 `link.publish(` 的调用点不再是恰好一处（:1268）：'
       + `\n  实测：${JSON.stringify(editPublishHits)}`
       + '\n  基线：改帖同样走审核域的 `publish`（新版本级任务 + 新输入绑定，旧结论不得套到新版本上）。'
       + because('删掉改帖的 publish（新 revision 永远停在 pending，等于「改了就不再可见」），'
@@ -611,7 +611,7 @@ test('钉 2 · 发帖先落 `private`/`pending`，同请求内再由审核域 pu
     1,
     '【钉 2 破了】`editPost` 在 publish 之后不再回读内容行（找不到 '
       + '`const published = await store.getPost(postId);` 恰好一处）：'
-      + '\n  基线（:1218-1222）：publish 之后读回**已提交**的新 revision，读不到就报内部不变式违反，'
+      + '\n  基线（:1263-1267）：publish 之后读回**已提交**的新 revision，读不到就报内部不变式违反，'
       + '然后 `committedRecord = published`。'
       + because('改成 publish 之后不复读（接口会把改动前的旧快照回给作者）。'),
   );
@@ -841,7 +841,7 @@ test('钉 5 · 「隔离待复核」与「明确驳回」是两句不同的用�
 
   // ②b `hidden` 不再是终态判据：`{hidden, rejected}` 与 `{hidden, quarantined}` 同样必须分开。
   //
-  // 为什么它们真的会出现：读面 `effectiveState`（`community/service.ts:583-616`）的 `demoted()`
+  // 为什么它们真的会出现：读面 `effectiveState`（`community/service.ts:615-657`）的 `demoted()`
   // 把 `published` 一律降成 `hidden` 并**原样带 `audit_state`**，迟到驳回返回 `'rejected'`、
   // 迟到隔离返回 `'quarantined'`；`listPosts(mine=true)` 包含未公开版本 ⇒ 作者看得到这两种。
   // 若 `outcomeOf` 先判 `hidden` 就返回同一句，等于把「两态同形」从「待审」挪到「已下架」。

@@ -19,7 +19,7 @@
  * | 2 | 同文件的 `operationId` 全集 | 不含 `observation` / `feedback` / `symptom` / `observe`（整条线**本无任何 operation**，连只读观察面都没有） | 给这条线补「观察/反馈/症状」端点，或把现成 operation 改名带这些词 |
  * | 3 | `tests/evaluation/fixtures/synthetic-index.json`（顶层**数组**，50 条，首条 `task` 在 `:5`） | `task` 取值集合 `deepEqual` 到实际七类 `['ai_moderation','asr','label_ocr','qa','registration_match','tts','weed_photo']`，且逐类条数 `deepEqual` 到 `{weed_photo:16,label_ocr:6,registration_match:4,ai_moderation:8,tts:4,asr:4,qa:8}`；并单独断 damage 零命中 | 往评测夹具里塞一条 `damage` 任务（哪怕同时删掉一条别的，逐类计数也会红） |
  * | 4 | `packages/evaluation/samples/gy-i20-weeds-labels.json` 的 `entries`（`:23` 起，172 条，`labelClass` 在 `:27`–`:1672`） | `labelClass` 前缀**只**有 `ext_weed`（165 条，`^\d{3}$`）与 `species`（7 条，`[a-z_]+`）两类，172 条**互不相同**；损伤类字面量（`damage`/`injury`/`phytotox`/`symptom`）零命中 | 给标签集加一个损伤类 `labelClass`（如 `damage_light`）——它既破前缀集合，也破计数 |
- * | 5 | `services/api/src/routes/` 下全部 `.ts`（恰好 22 个文件） | 全部文件内容**不含** `damage` / `phytotox`（大小写不敏感）；命中时打印 `文件:行号` | 路由层出现 damage 端点/注释/字段名 |
+ * | 5 | `services/api/src/routes/` 下全部 `.ts`（恰好 23 个文件） | 全部文件内容**不含** `damage` / `phytotox`（大小写不敏感）；命中时打印 `文件:行号` | 路由层出现 damage 端点/注释/字段名 |
  * | 6 | `docs/evaluation/sample-gap-register.md:36`（表 #18 整行）与 `:43-48`（「缺需求」说明段 6 行） | 表 #18 **整行逐字**保持「无需求条目，门槛 N/A / 空（无样本，也无需求）/ N/A / 否」；说明段 6 行**逐行 deepEqual**，且「缺需求」「门槛 N/A」「不计入任何分母」「不列为阻塞」四个关键词各自**只**落在原行上 | 谁把「缺需求」改成「有门槛」（哪怕只改一个格子、或把「不计入任何分母」改成「计入分母」） |
  *
  * ## 为什么「精确」而非「模糊」判据
@@ -246,7 +246,7 @@ const DAMAGE_NEEDLE = /damage|herbicide_damage|phytotox|injury/i;
  *  （`S3-a` 追加 `approvePost`/`rejectPost` 两条人审动作）→ **124**
  *  （`#18` S2 PR-3 追加 `grantAdministratorScope` / `revokeAdministratorScope` 两条管理员授权写面）。本钉保护的事实是「damage 类零命中」，
  *  总数只用于证明「抽取没空转」，故随契约增长同步更新。 */
-const CONTRACT_OPERATION_COUNT = 127;
+const CONTRACT_OPERATION_COUNT = 128;
 
 /** 基线实测：`path` 总数（`Object.keys(doc.paths)`）。
  *
@@ -254,7 +254,7 @@ const CONTRACT_OPERATION_COUNT = 127;
  *  （`S3-a` 追加 `/admin/posts/{id}/approve` 与 `/admin/posts/{id}/reject` 两条 path）→ **94**
  *  （`#18` S2 PR-3 的授予面复用既有 `/admin/administrators/{id}/scopes` 这个 path **键**，
  *  只有撤销面新增了 `/admin/administrators/{id}/scopes/{scope}` 一条 ⇒ 键数 +1、operation 数 +2）。 */
-const CONTRACT_PATH_COUNT = 97;
+const CONTRACT_PATH_COUNT = 98;
 
 /** 基线实测：`operationId` 里含 `admin` 的**全部** 23 条（逐条钉住，⛔ 不是 `>=`）。 */
 const ADMIN_OPERATION_IDS = [
@@ -657,10 +657,11 @@ test('钉 4 · 标签集无损伤类 labelClass：前缀只有 ext_weed / specie
 // 钉 5 · 路由层无 damage 端点
 // ---------------------------------------------------------------------------
 
-/** 基线实测：`services/api/src/routes/` 下 `*.ts` 文件的**全集**（22 个，逐条钉住）。 */
+/** 基线实测：`services/api/src/routes/` 下 `*.ts` 文件的**全集**（23 个，逐条钉住；R72 新增 `admin-reports.ts`）。 */
 const ROUTE_FILES = [
   'account-deletion.ts',
   'admin-auth.ts',
+  'admin-reports.ts',
   'admin.ts',
   'auth.ts',
   'community.ts',
@@ -683,11 +684,11 @@ const ROUTE_FILES = [
   'synthesis.ts',
 ];
 
-test('钉 5 · 路由层无 damage 端点：services/api/src/routes 的 22 个 .ts 零命中', () => {
+test('钉 5 · 路由层无 damage 端点：services/api/src/routes 的 23 个 .ts 零命中', () => {
   const ROUTES_DIR = 'services/api/src/routes';
   const files = walkFiles(ROUTES_DIR);
 
-  // 正向控制 ①：扫描面就是那 22 个文件（`deepEqual`：少一个 ⇒ 扫描面缩了；多一个 ⇒ 有人加了路由文件）。
+  // 正向控制 ①：扫描面就是那 23 个文件（`deepEqual`：少一个 ⇒ 扫描面缩了；多一个 ⇒ 有人加了路由文件）。
   assert.deepEqual(
     files,
     ROUTE_FILES.map((name) => `${ROUTES_DIR}/${name}`),

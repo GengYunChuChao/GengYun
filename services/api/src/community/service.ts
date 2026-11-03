@@ -525,21 +525,32 @@ export function createCommunityService(deps: CommunityServiceDeps) {
    * 没有结论可"退回"，可见性的主判据仍是本服务的结论台账；接线后**新建**内容不存在这种状态
    * （送审先于落库）。台账**不可读**（`readable === false`）或端口抛错时返回 `'quarantined'`：
    * **无法判断 ⇒ 隔离**（B09），不得继续公开。
+   *
+   * 理由码：**读到结论时**原样带上 `conclusion.reason_codes`（审核域闭集，本服务不翻译、不增删）；
+   * 台账不可读/端口抛错时手上**没有**可引用的理由码 ⇒ `reason_codes: []`（读面投影出的就是空数组，
+   * 不填占位码）。"无该版本任务"与"明确放行"返回 `null`，同样没有可说的理由。
    */
-  function domainWithholdingOf(kind: 'post' | 'comment', id: string, revision: number): AuditState | null {
+  function domainWithholdingOf(
+    kind: 'post' | 'comment',
+    id: string,
+    revision: number,
+  ): { audit_state: AuditState; reason_codes: readonly string[] } | null {
     if (moderationLink === null) return null;
     let conclusion: LinkConclusion;
     try {
       conclusion = moderationLink.conclusionFor({ type: kind, id, revision });
     } catch {
       // 端口异常 ⇒ 无法判断 ⇒ 隔离（绝不放行）。
-      return 'quarantined';
+      return { audit_state: 'quarantined', reason_codes: [] };
     }
-    if (conclusion.readable !== true) return 'quarantined'; // 台账读不出来 ⇒ 隔离
+    if (conclusion.readable !== true) return { audit_state: 'quarantined', reason_codes: [] }; // 台账读不出来 ⇒ 隔离
     if (conclusion.present !== true) return null; // 无该版本任务 ⇒ 没有结论可"退回"
     if (conclusion.publishable === true) return null; // 审核域明确放行 ⇒ 不降级
-    if (conclusion.vetoed === true) return conclusion.decision ?? 'rejected'; // 明确驳回
-    return conclusion.decision ?? 'quarantined'; // 隔离/未结论（pending/quarantined）⇒ 退出公开面
+    // 明确驳回 ⇒ 结论与理由码逐字回传（理由码是审核域闭集里的原码）。
+    if (conclusion.vetoed === true) {
+      return { audit_state: conclusion.decision ?? 'rejected', reason_codes: conclusion.reason_codes };
+    }
+    return { audit_state: conclusion.decision ?? 'quarantined', reason_codes: conclusion.reason_codes };
   }
 
   /**
@@ -570,7 +581,28 @@ export function createCommunityService(deps: CommunityServiceDeps) {
   }
 
   /**
-   * **读取时**重算内容的有效状态（可见性 + 审核状态）。
+   * 读面生效状态。`reason_codes` **必现**：没有可归属的理由码时为空数组 `[]`。
+   *
+   * 为什么不再用"缺席"表达"拿不到"：`Post`/`Comment` 是 `additionalProperties:false` 的闭集，
+   * 且全仓把"响应体字段集合 = 契约 properties = 契约 required"当结构不变式钉住
+   * （真库臂里那条 `POST_KEYS === POST_REQUIRED` 判据）。为一个字段开"可缺席"的口子，
+   * 就要连带放宽那条闭集判据，代价远大于收益；而客户端只需要区分"有码/没有码"，
+   * `[]` 与"缺席"的差别在"没有理由就不显示理由行"的语义下不可观察。
+   */
+  type EffectiveState = { visibility: Visibility; audit_state: AuditState; reason_codes: string[] };
+
+  /**
+   * 生效状态 + 理由码：**永远带该字段**（没有码就给 `[]`，⛔ 不让字段缺席、⛔ 不填 `unknown` 占位）。
+   */
+  function withReasonCodes(
+    state: { visibility: Visibility; audit_state: AuditState },
+    reasonCodes: readonly string[],
+  ): EffectiveState {
+    return { ...state, reason_codes: [...reasonCodes] };
+  }
+
+  /**
+   * **读取时**重算内容的有效状态（可见性 + 审核状态 + 理由码）。
    *
    * 这是本片的"先审后发"落点：存储行只记录"写入时"的状态，真正对外投影的
    * `visibility`/`audit_state` 每次读取都按**当前规则版本**重新判定：
@@ -579,16 +611,29 @@ export function createCommunityService(deps: CommunityServiceDeps) {
    *   - 结论新鲜且明确不可发布 ⇒ 按结论如实报 `rejected`/`quarantined`，且不再公开；
    *   - 结论新鲜且可发布 ⇒ 报 `published` + `approved`。
    * 因此"规则集升级后旧内容自动退出可见"不需要额外的后台任务，也没有"写时信任一次"的窗口。
+   *
+   * `reason_codes` **必现**，来源逐条对应（拿不到就给 `[]`，字段本身不缺席）：
+   *   - 结论新鲜（可发布或明确不可发布）⇒ `verdict.reason_codes`（台账原码）；
+   *   - 结论失效被降级 ⇒ `assessment.reason_codes`（"旧结论为什么不能再用"）；
+   *   - 审核域读面退回非放行且读到结论 ⇒ `conclusion.reason_codes`。
+   * 无结论／target_ref 或正文摘要不匹配／已删除／台账不可读／端口异常／规则层 veto 未落行等路径
+   * **给空数组**：拿不到就不编码，但也不让字段缺席（闭集 + 全 required）。
    */
   async function effectiveState(
     kind: 'post' | 'comment',
     record: PostRecord | CommentRecord,
-  ): Promise<{ visibility: Visibility; audit_state: AuditState }> {
-    if (record.visibility === 'deleted') return { visibility: 'deleted', audit_state: record.audit_state };
-    const demoted = (auditState: AuditState): { visibility: Visibility; audit_state: AuditState } => ({
-      visibility: record.visibility === 'published' ? 'hidden' : record.visibility,
-      audit_state: auditState,
-    });
+  ): Promise<EffectiveState> {
+    if (record.visibility === 'deleted') {
+      return { visibility: 'deleted', audit_state: record.audit_state, reason_codes: [] };
+    }
+    const demoted = (auditState: AuditState, reasonCodes: readonly string[] = []): EffectiveState =>
+      withReasonCodes(
+        {
+          visibility: record.visibility === 'published' ? 'hidden' : record.visibility,
+          audit_state: auditState,
+        },
+        reasonCodes,
+      );
     const verdict = await store.getModeration(kind, record.id, record.revision);
     if (verdict === null) return demoted('pending');
     if (
@@ -602,17 +647,22 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       kind === 'post' ? postModerationText(record as PostRecord) : commentModerationText(record as CommentRecord);
     if (verdict.text_digest !== sha256Hex(text)) return demoted('pending');
     const assessment = gate.assess({ type: kind, id: record.id, revision: record.revision }, verdict);
-    if (assessment.stale) return demoted(assessment.landing === 'quarantined' ? 'quarantined' : 'pending');
+    if (assessment.stale) {
+      return demoted(
+        assessment.landing === 'quarantined' ? 'quarantined' : 'pending',
+        assessment.reason_codes,
+      );
+    }
     if (assessment.publishable) {
       // GY-I14 联动接线 · **读取时重查**：本地结论"曾经通过"不是继续可见的理由 ——
       // 审核域台账里该版本若已**退回非放行**（迟到的驳回 / 迟到的隔离·未结论 / 台账不可读），
       // 一律立即降级为不可公开（fail-closed）。降级后的 `audit_state` 如实区分
       // `rejected`（驳回）与 `pending`/`quarantined`（隔离），见 `domainWithholdingOf`。
       const withholding = domainWithholdingOf(kind, record.id, record.revision);
-      if (withholding !== null) return demoted(withholding);
-      return { visibility: record.visibility, audit_state: 'approved' };
+      if (withholding !== null) return demoted(withholding.audit_state, withholding.reason_codes);
+      return withReasonCodes({ visibility: record.visibility, audit_state: 'approved' }, verdict.reason_codes);
     }
-    return demoted(verdict.decision);
+    return demoted(verdict.decision, verdict.reason_codes);
   }
 
   /** 发布口径谓词：只有有效状态恰好是 `published` + `approved` 才算公开可见。 */
@@ -779,6 +829,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       media_ids: [...record.media_ids],
       visibility: state.visibility,
       audit_state: state.audit_state,
+      // 理由码是**必现**字段：`effectiveState` 给不出可归属的码时就是 `[]`（闭集 + 全 required）。
+      reason_codes: [...state.reason_codes],
       created_at: record.created_at,
       updated_at: record.updated_at,
       // 媒体投影需要"当前已发布且独立筛查通过"的附件版本（阶段 2 接 packages/media）。
@@ -800,6 +852,8 @@ export function createCommunityService(deps: CommunityServiceDeps) {
       body: record.body,
       visibility: state.visibility,
       audit_state: state.audit_state,
+      // 与帖子同一口径：没有可归属的理由码就是 `[]`，字段本身永远在。
+      reason_codes: [...state.reason_codes],
       created_at: record.created_at,
     };
   }
@@ -1673,8 +1727,20 @@ export function createCommunityService(deps: CommunityServiceDeps) {
      *    也不会产生第二条记录。这同时是"处置后不可再处置"的实现：终态在状态机层就拒绝。
      * 3. **不做归属校验**：处置方是运营侧，不是举报者本人；举报者能读自己的举报（
      *    `getOwnReport`）但**不能**推进它。
+     *
+     * ## 操作留痕（R72 · 迁移 0053）
+     *
+     * 第 3 个可选参数 `audit` 是**谁、哪次请求**在做这次处置（`admin/ops` 侧传
+     * `context.identity.userId` 与 `context.requestId`，⛔ 不接受调用方自报身份）。真库实现
+     * 把它连同 `action` 与**处置前**的 revision 交给 `commitReportIfCurrent`，由迁移 0053 的
+     * 窄口径函数在**同一个事务**里写一行 `report.{triage|resolve|reject}` 审计；审计写不进去
+     * ⇒ 整笔回滚、抛 503，⛔ 不假成功。内存实现忽略它（没有审计表）。
      */
-    async advanceReport(reportId: unknown, input: unknown): Promise<Report> {
+    async advanceReport(
+      reportId: unknown,
+      input: unknown,
+      audit?: { readonly actorId: string; readonly requestId: string },
+    ): Promise<Report> {
       const id = requireUuidParam(reportId, 'report_id');
       const body = validateReportDispositionInput(input);
       const current = await store.getReport(id);
@@ -1690,6 +1756,16 @@ export function createCommunityService(deps: CommunityServiceDeps) {
         id,
         { revision: body.expected_revision, state: current.state },
         { revision: current.revision + 1, state: plan.to },
+        audit === undefined
+          ? null
+          : {
+              actorId: audit.actorId,
+              action: body.action,
+              // 处置**前**的 revision（与内存台账 `previousRevision` 同义）：审计记的是"哪一版被处置"，
+              // 与 `0047` 的 `post.hide` 用隐藏前 revision 同口径。
+              reportRevision: current.revision,
+              requestId: audit.requestId,
+            },
       );
       if (!committed.ok) throw commitRefusal(committed.reason);
       return projectReport(committed.record);

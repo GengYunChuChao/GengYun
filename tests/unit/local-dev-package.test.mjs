@@ -62,9 +62,22 @@ test('Windows redirected child exit codes survive waiting in both start and stop
    const checked=script.match(/ \$null=\$taskProcess.Handle\r?\n \$taskProcess.WaitForExit\(\)\r?\n  ?if\(\$taskProcess.ExitCode -ne 0\)\{throw '[^']+'\}/)?.[0];assert.ok(checked,file);
    for(const code of [0,7]){
     const prefix="$ErrorActionPreference='Stop';$taskProcess=Start-Process -FilePath cmd.exe -ArgumentList '/c exit "+code+"' -WindowStyle Hidden -PassThru -RedirectStandardOutput '"+join(window,'out').replaceAll("'","''")+"' -RedirectStandardError '"+join(window,'err').replaceAll("'","''")+"';\n";
-    const r=spawnSync('powershell',['-NoProfile','-NonInteractive','-Command',prefix+checked+"\nWrite-Output ('EXIT='+$taskProcess.ExitCode)"],{encoding:'utf8',timeout:15000});
+    const r=spawnSync('powershell',['-NoProfile','-NonInteractive','-Command',prefix+checked+"\nWrite-Output ('EXIT='+$taskProcess.ExitCode)"],{encoding:'utf8',timeout:30000});
     if(code===0){assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/EXIT=0/);}else{assert.notEqual(r.status,0);assert.match(r.stderr,/Local PG (startup|stop) failed/);}
    }
   }
  }finally{cleanup(window);}
 });
+
+// ─────────────── 上面 `:65` 的 30s 从哪来（抖动修法，不是放宽判据）─────────────────
+// 那条 checked-wait 用例每次都要**真的**起一个 `powershell` → `Start-Process cmd.exe` →
+// `WaitForExit()`，一条用例连做 4 次（start.ps1／stop.ps1 × 退出码 0／7），每个 spawn 各带
+// 一个窗口。本机实测（Windows / 16 vCPU / Node v24.16.0）：
+//   · 单独跑那 4 次：1375 / 1937 / 2536 / 2987 ms；
+//   · 整套 unit 并发下（`node --test` 文件级并行）：该用例 `duration_ms` 24812ms ÷ 4 次
+//     = 6203ms/次；同一时刻直接压测单次上限 4785ms。
+// 旧窗口 15000ms 相对「套件内 6203ms/次」只剩 2.4 倍，正落在「负载一抖就红」的区间里
+// （同类的既有教训：#859 的 20000ms 撞上 12.0–27.8s 的采样）。改 30000ms = 套件内均值的
+// 4.8 倍、直接压测上限的 6.3 倍。
+// 判据一个字没动：仍然断言退出码 0 ⇒ stdout 含 `EXIT=0`、退出码 7 ⇒ 非 0 且 stderr 含
+// `Local PG (startup|stop) failed`；只是不再让一台忙机器把「进程起得慢」说成「判据不成立」。

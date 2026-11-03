@@ -222,6 +222,28 @@ export interface ReportCommitExpectation {
 export type ReportCommitPatch = Partial<Pick<ReportRecord, 'revision' | 'state'>>;
 
 /**
+ * 举报处置的审计入参（迁移 0053，`report.triage` / `report.resolve` / `report.reject`）。
+ *
+ * 只在**真库**（PG）实现上有效：`commitReport` 在同一个事务里把它交给
+ * `public.record_admin_report_disposition_audit(...)`，由那条窄口径函数校验操作者并把
+ * `action`/`scope`/`reason_code`/`result`/`target_ref` 全部写成**函数内派生的值**。
+ *
+ * 内存实现**忽略**该入参：它没有审计表，按仓规 `post.hide` 的内存路径也仍在 `admin/ops` 侧
+ * 走进程内台账（库层写与内存台账二选一，⛔ 不重复记两遍）。⛔ 这里不塞 `result`：处置失败
+ * （CAS 不成立 / 状态机拒绝）根本走不到写审计这一步，能进到这里的只有成功。
+ */
+export interface ReportDispositionAudit {
+  /** 操作者 `admin_accounts.id`（= 会话身份，不是调用方自报的名字）。 */
+  actorId: string;
+  /** 处置动作（闭集与 `community/report-state.ts` 的 `REPORT_ACTIONS` 逐值一致）。 */
+  action: 'triage' | 'resolve' | 'reject';
+  /** **处置前**的举报 revision（CAS 读到的 `current.revision`，写进 `target_ref.revision`）。 */
+  reportRevision: number;
+  /** 契约 `Meta.request_id`，用于把审计行与请求对齐。 */
+  requestId: string;
+}
+
+/**
  * 注销清理的分表计数（`community_reports`/`community_posts`/… 一次事务内的真实行数）。
  *
  * 形状与 `privacy` 的 `OwnerPurgeCounts`（`{ records, idempotency }`）**逐字段兼容**，
@@ -464,11 +486,17 @@ export interface CommunityStore {
    * 为什么必须是 CAS 而不是 `updateReport`：处置是**两个人可能同时点**的动作（队列里两条
    * 运营同时打开同一条举报），无条件写入会让后到者覆盖先到者的结论，而举报结论一旦覆盖就
    * 无法从台账上复原。CAS 让它变成「一个成功、一个 409」。
+   *
+   * 第 4 个可选参数 `audit`（迁移 0053）：给定且实现是真库时，**同一个事务**内再调
+   * `public.record_admin_report_disposition_audit(...)` 写一行 `report.{triage|resolve|reject}`
+   * 审计；函数抛错 ⇒ 整笔 `ROLLBACK`（举报状态不推进，⛔ 不假成功）。
+   * 内存实现忽略它（见 `ReportDispositionAudit` 的注释）。
    */
   commitReportIfCurrent(
     id: string,
     expected: ReportCommitExpectation,
     patch: ReportCommitPatch,
+    audit?: ReportDispositionAudit | null,
   ): Promise<CommitResult<ReportRecord>>;
   /**
    * 注销清理（GY-I15 · R31-S6 / F13 保留规则）：把该用户名下**社区域**的数据按既定口径处理，
@@ -792,7 +820,7 @@ export function createMemoryCommunityStore(
       const record = reports.get(id);
       return record === undefined ? null : cloneReport(record);
     },
-    async commitReportIfCurrent(id, expected, patch) {
+    async commitReportIfCurrent(id, expected, patch, _audit = null) {
       const current = reports.get(id);
       if (current === undefined) return { ok: false, reason: 'NOT_FOUND' };
       if (current.revision !== expected.revision) return { ok: false, reason: 'REVISION_CHANGED' };

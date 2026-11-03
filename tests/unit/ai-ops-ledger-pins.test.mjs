@@ -419,6 +419,10 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
       'AUDIT_ACTION_ADMIN_ACCOUNT_DISABLE',
       'AUDIT_ACTION_ADMIN_ACCOUNT_ENABLE',
       'AUDIT_ACTION_CATEGORY_UPDATE',
+      // R72 #838（迁移 0053）：举报处置三值，末尾追加 —— `closed` 一值两义（resolve/reject）靠它们区分。
+      'AUDIT_ACTION_REPORT_TRIAGE',
+      'AUDIT_ACTION_REPORT_RESOLVE',
+      'AUDIT_ACTION_REPORT_REJECT',
     ],
     'AUDIT_ACTIONS 的成员变了（增、删、换顺序都算）：这些值是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '必须与 `admin_audit_events` 的写入点一一对应。第 4 项 `job.cancel` 由 GY-R59 追加：'
@@ -433,11 +437,15 @@ test('钉子④：AUDIT_ACTIONS 与契约 enum 双向相等（同值、同序、
       + '0048_admin_account_disable.sql 在事务内写这两个 action，闭集漏登记同样会让'
       + '`?action=admin_account.disable` 与 `?entity=admin_account` 恒 400。'
       + '第 11 项 `category.update` 由 GY-R68-A01（迁移 0049 的 `record_admin_category_update`）追加：'
+      + '第 12-14 项 `report.triage` / `report.resolve` / `report.reject` 由 R72 #838（迁移 0053 的'
+      + '`record_admin_report_disposition_audit`）追加：`closed` 一值两义，只有按处置动作分开记才能筛出'
+      + '「成立结案」与「驳回」；'
       + '多一个成员就必须同 PR 改契约 enum、库内写入点与文档');
   assert.deepEqual(runtime,
     ['account.suspend', 'account.restore', 'set_flag', 'job.cancel',
       'admin_scope.grant', 'admin_scope.revoke', 'admin_scope.deny', 'post.hide',
-      'admin_account.disable', 'admin_account.enable', 'category.update'],
+      'admin_account.disable', 'admin_account.enable', 'category.update',
+      'report.triage', 'report.resolve', 'report.reject'],
     'AUDIT_ACTIONS 的**取值**变了：这些字符串就是 `GET /admin/audit-logs?action=` 的合法输入，'
       + '改名等于让历史审计行的 action 列与查询参数对不上。`job.cancel` 来自 0043 的库内写入点'
       + '（`record_admin_job_cancel_audit`，迁移 `0043_admin_job_cancel_audit.sql:174`）；'

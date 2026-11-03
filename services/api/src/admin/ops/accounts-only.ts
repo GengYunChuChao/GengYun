@@ -229,5 +229,7 @@ export function restrictAdminOpsToAccountsAuthority(
     // ⛔ 本外壳不自己改 state、不自己踢会话、也不发成功封套。
     disableAdministratorAccount: adminAccountWriteWired ? inner.disableAdministratorAccount : reject,
     enableAdministratorAccount: adminAccountWriteWired ? inner.enableAdministratorAccount : reject,
+    // **放行 10**（R72）：举报处置写面。未接线判定在端口层（admin/ops/reports.ts ⇒ 503），故无条件转发。
+    advanceReport: inner.advanceReport,
   };
 }

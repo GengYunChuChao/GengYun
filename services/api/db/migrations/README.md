@@ -33,7 +33,72 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 ＋ `rollback/` **50 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **51 + 1 === 52**。上一段那组
 50/49 与 `50 + 1 === 51` 是 2026-11-01 的实测快照，**保留不动**。）
 
+（2026-11-02 · R72 #838(`0053`) 落盘后复测：`0001..0053`，缺号仍只有 `0037` ⇒ 目录现为 **52 个正向 `.sql`**
+＋ `rollback/` **51 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **52 + 1 === 53**。上一段那组
+51/50 与 `51 + 1 === 52` 是 2026-11-02 当天的实测快照，**保留不动**。）
+
+（2026-11-03 · GY-R73(`0054`) 落盘后复测：`0001..0054`，缺号仍只有 `0037` ⇒ 目录现为 **53 个正向 `.sql`**
+＋ `rollback/` **52 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **53 + 1 === 54**。上一段那组
+52/51 与 `52 + 1 === 53` 是 2026-11-02 当天的实测快照，**保留不动**。本段实测口径：直接数目录得
+正向 53 条、`rollback/` 52 条、最大号 `0054`、`0037` 不存在；`discoverMigrations()` 报 53 个文件、
+末项 `0054_favorites_target_lookup.sql`。）
+
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0054_favorites_target_lookup.sql`（GY-R73 #17 · **反查索引**：「按被撤回/失效的收藏目标反查收藏者」的索引 ——
+  后台撤回资料来源/条目后，要按对象找出「谁收藏过它」，才谈得上给这些人发失效通知）。
+  接在 `0053` 之后取号（本清单最新在前，故这一条排在 `0053` 条目**之上**），号位依据「正向最大号 +1」
+  （`0037` 仍为 #14 保留 ⇒ **台账不新增条目**；`services/api/db/migration-reservations.json` 的 `$comment` 里
+  那条 0054 是**落盘前**的取号叙述 —— 0054 是真实落盘的号，不是保留号）。
+  只建一条索引 `CREATE INDEX favorites_target_lookup_idx ON public.favorites (target_type, target_id, owner_id)`：
+  本片唯一读法 `listOwnerIdsByTarget`（`services/api/src/favorites/store-pg.ts`，PG/内存两臂逐字同形）的谓词是
+  `WHERE target_type = $1 AND target_id = $2 ORDER BY owner_id`，**不带 owner 前缀** ⇒ `0018` 的
+  `favorites_owner_target_key (owner_id, target_type, target_id)` 与
+  `favorites_owner_created_idx (owner_id, created_at DESC, id DESC)` 都命不中，没有本索引时它退化成整表
+  `Seq Scan`——而这条扫描发生在一次真实的管理写请求里（撤回提交之后、响应返回之前），不该让后台操作的成本
+  随全站收藏量线性增长。
+  列序 `(target_type, target_id, owner_id)`：前两列等值 + `owner_id` 作索引尾列 ⇒ 查询的投影（只有
+  `owner_id`）只扫索引不回表、`ORDER BY owner_id` 也顺尾列直接出序；**不造第二个唯一约束**——
+  「同主体同目标只有一行」的权威仍是 `favorites_owner_target_key`，本索引形状表达不了该约束
+  （尾列在等值列之后），硬造 UNIQUE 只会让同一事实出现两个真相、并把回滚面扩大。
+  本迁移**零 GRANT**：不改表、不改列、不写数据、不建表，也不新增任何表级/列级权限；运行角色对
+  `public.favorites` 的 `SELECT` 早已在 `deploy/postgres-cvm/sql/20-login-roles.sql` 授予
+  （`favorites/store-pg.ts` 的读法一直按运行角色跑），本索引不新增任何可读面 ⇒ 本片 `deploy/**` 一个字未改，
+  运行时的 `favorites` 授权面逐字未变。
+  配对回滚 `rollback/0054_favorites_target_lookup.down.sql` 已同时落盘：`DROP INDEX IF EXISTS
+  public.favorites_target_lookup_idx;`（只删本迁移加的那一个索引，不碰表与数据 —— 损失的是这条反查的性能，
+  不损失任何事实）。
+  读数：`tests/unit/admin-invalidation-notices.test.mjs` 的 R73-10（PGlite 臂，**本机**）按
+  `0001 → 0018 → 0054` 顺序 apply 后查 `pg_indexes`，实测
+  `indexdef = CREATE INDEX favorites_target_lookup_idx ON public.favorites USING btree (target_type, target_id, owner_id)`
+  （`public.favorites` 当时共四条索引：`favorites_owner_created_idx` / `favorites_owner_target_key` /
+  `favorites_pkey` / `favorites_target_lookup_idx`）；真库臂（`tests/integration/admin-audit-logs-pg.mjs` 的
+  `schema_migrations` 末项 `0054` 断言）需 `*_PG_TEST_URL`，**本机无 PG，未跑**。
+- `0053_admin_report_disposition_audit.sql`（R72 #838 · **审计落库**：后台举报处置
+  `advanceReport` 的操作留痕。接在 `0052` 之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留
+  ⇒ **台账不新增条目**）。
+  只建一个窄口径 `SECURITY DEFINER` 函数
+  `public.record_admin_report_disposition_audit(p_actor_id uuid, p_report_id uuid, p_report_revision integer,
+  p_action text, p_reason_code text, p_request_id uuid) RETURNS uuid`：函数内按 `p_action`
+  （`triage`/`resolve`/`reject`）派生 `action = report.{triage|resolve|reject}` 与
+  `reason_code = report_{triaged|resolved|rejected}`，两者不匹配即 `G0018 INVALID_REASON_CODE`；
+  再核验操作者存在（否则 `G0002`）、`state = 'active'`（否则 `G0010`）、当前仍有效持
+  `sources:write`（`admin_scope_grants` 里 `revoked_at IS NULL`，否则 `G0010`）；通过后往
+  `public.admin_audit_events` 落一行：`scope = 'sources:write'`、`result = 'accepted'`、
+  `target_ref = jsonb_build_object('type','report','id',p_report_id::text,'revision',p_report_revision)`
+  （`0017` 的形状 CHECK 要求 type/id 为字符串且 revision 为数字），`request_id` 取
+  `AdminCallContext.requestId`（缺失时由 `resolveContext` 生成 uuid）。
+  为什么需要：举报处置只改 `community_reports.state/revision`，`closed` 一值两义（成立/驳回不可分），
+  审计面 0 行；本迁移让「谁、以什么动作、在第几版上处置」与举报行**同一次事务**落库。
+  调用点在 `services/api/src/community/store-pg.ts` 的 `commitReport`（`withTransaction` 内、
+  `UPDATE community_reports` 之后），失败即抛 `PROVIDER_UNAVAILABLE` 让整个处置回滚。
+  本迁移**零表级 GRANT**：函数 `REVOKE ALL … FROM PUBLIC`，运行时 `EXECUTE` 只在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r72-report-disposition-audit-grant` 区授予
+  `gengyun_api_runtime`；`public.admin_audit_events` 对运行时仍是零表级/零列级权限。
+  配对回滚 `rollback/0053_admin_report_disposition_audit.down.sql`：先数 `admin_audit_events` 里
+  `action LIKE 'report.%'` 的行，有任何一行即 `G0019 REPORT_DISPOSITION_AUDIT_ROLLBACK_BLOCKED`
+  并列出样本（审计是证据、不是可重算派生值），空表才 `DROP FUNCTION`。
+  读数：`tests/unit/community-report-disposition-http.test.mjs`（HTTP 面，**本机**）＋
+  `tests/integration/admin-audit-logs-pg.mjs` 等真库臂（需 `*_PG_TEST_URL`，**本机无 PG，未跑**）。
 - `0052_moderation_conclusion_facts.sql`（R72-W54 · **只读事实源**：审核**结论新鲜度**跨重启的事实面 ——
   本片让 `readView` 在内存台账为空（重启后）时还能判出 `RESCREEN_REQUIRED`，**⛔ 不改任何可见性判定**）。
   接在 `0051` 之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。

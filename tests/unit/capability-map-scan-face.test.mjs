@@ -441,7 +441,7 @@ function readKnownNoUiEntry() {
   return [...match[1].matchAll(/'([^']+)'/g)].map(entry => entry[1]);
 }
 
-test('T5 白名单与 noUiEntryList 双向相等；判据本身能红（本次未登记任何 op）', () => {
+test('T5 白名单与 noUiEntryList 双向相等；判据本身能红（本树登记 advanceReport）', () => {
   const whitelist = readKnownNoUiEntry();
   const noUiEntryList = MAP.summary.noUiEntryList;
 
@@ -453,12 +453,10 @@ test('T5 白名单与 noUiEntryList 双向相等；判据本身能红（本次�
   assert.deepEqual(whitelistProblems({ whitelist, noUiEntryList, rows: ROWS }), []);
   assert.equal(MAP.summary.noUiEntry, noUiEntryList.length);
 
-  // 本树的事实：49 条全部有入口 ⇒ 白名单必须是空的。
-  // 派单 §1.3 要求「白名单恰为 ['advanceReport']、noUiEntry=1」，但那条 admin 面路由
-  // （`services/api/src/routes/admin-reports.ts`，`POST /admin/reports/{id}/disposition`）在本基座上
-  // 不存在——它只在未合并分支 `feat/gy-r72-report-disposition` 上，契约里也没有这条 operation。
-  // 这条用例因此钉的是**不变式**（三处同时不存在或同时存在），而不是某个具体名字：
-  // 哪天 reports 路由真的合进来，这里会立刻红，要求把它登记进白名单或补 UI 入口。
+  // 本树的事实：admin 面 reports 已进契约与能力图 ⇒ 白名单必须恰好登记 `advanceReport`。
+  // 这条用例钉的是**与三处存在性联动的不变式**：路由 `services/api/src/routes/admin-reports.ts`、
+  // 契约 `POST /admin/reports/{id}/disposition`、能力图对应行三处同时存在时白名单恰为该名字；
+  // 三处都不存在时白名单必须为空。断言跟着 `hasReportsRow` 走，不会退化成「不管有没有都通过」。
   const hasReportsRoute = repoPathExists('services/api/src/routes/admin-reports.ts');
   const hasReportsContract = SOURCES.contractOperations.some(entry => /^\/admin\/reports(?:\/|$)/.test(entry.path));
   const hasReportsRow = ROWS.some(row => row.path.startsWith('/admin/reports'));
@@ -466,9 +464,9 @@ test('T5 白名单与 noUiEntryList 双向相等；判据本身能红（本次�
   assert.equal(hasReportsContract, hasReportsRow, '契约里的 admin 面 reports 条目必须与能力图行同时出现');
   assert.deepEqual(
     whitelist,
-    [],
+    hasReportsRow ? ['advanceReport'] : [],
     hasReportsRow
-      ? '本条此时应登记 advanceReport 等真缺口，而不是留空'
+      ? 'admin 面 reports 已进契约与能力图 ⇒ 白名单必须恰好登记 advanceReport'
       : '本树没有任何 admin 面 reports 注册，白名单就不该有名字',
   );
 
@@ -567,9 +565,17 @@ test('T6 散文 / 标记块 / 摘要行三处数字互洽（且散文里的机�
     prose.includes(`${summary.totalOps} 条 admin 面注册路由，对应 ${summary.totalOps} 个 operationId`),
     '§0 表格里的注册路由条数没跟着重算走',
   );
+  // 有真缺口时「全部有 UI 入口」这句话本身就自相矛盾，所以要按 `noUiEntry` 分叉：
+  // 零缺口才允许写「全部有入口」，有缺口必须写「N 个中 M 个有入口」并点出缺口名字。
+  const noEntryNames = summary.noUiEntryList.map(operationId => `\`${operationId}\``).join('、');
+  const noEntrySentence = summary.noUiEntry === 0
+    ? `${summary.totalOps} 个 operation 全部有 UI 入口（无入口 ${summary.noUiEntry} 条）`
+    : `${summary.totalOps} 个 operation 中 ${summary.withUiEntry} 个有 UI 入口（无入口 ${summary.noUiEntry} 条：${noEntryNames}）`;
   assert.ok(
-    prose.includes(`${summary.totalOps} 个 operation 全部有 UI 入口（无入口 ${summary.noUiEntry} 条）`),
-    '§0 表格里的「全部有 UI 入口」没跟着重算走',
+    prose.includes(noEntrySentence),
+    summary.noUiEntry === 0
+      ? '§0 表格里的「全部有 UI 入口」没跟着重算走'
+      : `§0 表格里的入口读数没跟着重算走：有真缺口（noUiEntry=${summary.noUiEntry}：${noEntryNames}）时不许再声称全部有入口，应写成「${noEntrySentence}」`,
   );
   assert.ok(
     prose.includes(`${summary.totalOps} 个 operationId、${summary.families} 个路径族`),
@@ -581,8 +587,8 @@ test('T6 散文 / 标记块 / 摘要行三处数字互洽（且散文里的机�
     '§2.3 的覆盖差集没跟着重算走',
   );
   assert.ok(
-    prose.includes(`**${summary.totalOps} 条**（机器重算：\`totalOps=${summary.totalOps}\``),
-    '§6 三档结论的「已可用」条数没跟着重算走',
+    prose.includes(`**${summary.withUiEntry} 条**（机器重算：\`totalOps=${summary.totalOps}\``),
+    '§6 三档结论的「已可用」条数没跟着重算走（它是 withUiEntry，不是 totalOps——有缺口时两者不等）',
   );
 
   // ④ 索引页（docs/architecture/README.md）同一组读数
@@ -876,9 +882,9 @@ test('T7 未识别的注册形状一律判红：对象式 route / 前缀式 regi
 
 // --- T8 真树：守卫全空 + 读数不变 -----------------------------------------------------------
 
-test('T8 真树 22 个路由文件对守卫全空，且扫描面仍 49 条、admin.ts 仍 46 条（守卫不改读数）', () => {
+test('T8 真树 23 个路由文件对守卫全空，且扫描面仍 50 条、admin.ts 仍 46 条（守卫不改读数）', () => {
   const files = listRouteFiles();
-  assert.equal(files.length, 22, `routes 目录里应有 22 个 .ts 路由文件，实际 ${files.length}`);
+  assert.equal(files.length, 23, `routes 目录里应有 23 个 .ts 路由文件，实际 ${files.length}`);
 
   const perFile = new Map();
   let total = 0;
@@ -912,9 +918,9 @@ test('T8 真树 22 个路由文件对守卫全空，且扫描面仍 49 条、adm
     total += routes.length;
   }
 
-  // 派单钉的两个绝对数：admin.ts 单文件 46、22 个文件合计 49
+  // 派单钉的两个绝对数：admin.ts 单文件 46、23 个文件合计 50
   assert.equal(perFile.get(SOURCE_PATHS.adminRoutes), 46, `admin.ts 单文件应仍解析出 46 条，实际 ${perFile.get(SOURCE_PATHS.adminRoutes)}`);
-  assert.equal(total, 49, `22 个路由文件合计应仍解析出 49 条 admin 面注册，实际 ${total}`);
+  assert.equal(total, 50, `23 个路由文件合计应仍解析出 50 条 admin 面注册，实际 ${total}`);
 
   // 与另两处口径对拍：能力图 totalOps、契约 admin 面条数、T1 的独立写法都必须同一个数
   assert.equal(total, MAP.summary.totalOps, '逐文件 parseAdminRoutes 合计与能力图 totalOps 不一致');

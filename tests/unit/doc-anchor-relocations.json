@@ -11,83 +11,83 @@
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 82,
+    "line": 85,
     "target": "services/api/src/routes/admin.ts",
     "from": 295,
     "fromEnd": 299,
     "to": 316,
     "toEnd": 321,
-    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:295-299` 是 restrictions 家族的 withdraw 路由（`app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`…)`），不是 `listAuditLogs`；真值是 316-321（316 `const listAuditLogs = methodOf(services.audit, 'listAuditLogs');`、318 `${API_PREFIX}/admin/audit-logs`）。按符号 `listAuditLogs` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:295-299` 是 restrictions 家族的 withdraw 路由（`app.post(`${API_PREFIX}/admin/restrictions/:id/withdraw`…)`），不是 `listAuditLogs`；真值是 316-321（316 `const listAuditLogs = methodOf(services.audit, 'listAuditLogs');`、318 `${API_PREFIX}/admin/audit-logs`）。按符号 `listAuditLogs` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号 82→85（本页上方新增 3 行，锚点文本未变）；`services/api/src/routes/admin.ts` 本提交的改动只在 :4／:624（各 1 行换 1 行），端点映射对 :316-321 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 82,
+    "line": 85,
     "target": "services/api/src/app.ts",
     "from": 1485,
     "fromEnd": 1493,
     "to": 1513,
     "toEnd": 1514,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1513-1514 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 83,
+    "line": 86,
     "target": "services/api/src/routes/admin.ts",
     "from": 377,
     "fromEnd": 390,
     "to": 476,
     "toEnd": 490,
-    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:377-390` 是 `/admin/administrators` 列表与 scopes 读面，不是 jobs 族；真值是 476-490（476 `const listJobs = methodOf(services.ops, 'listAdminJobs');`、478-482 `${API_PREFIX}/admin/jobs`、483-490 `${API_PREFIX}/admin/jobs/:id/cancel`）。按符号 `listAdminJobs`／`cancelAdminJob` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:377-390` 是 `/admin/administrators` 列表与 scopes 读面，不是 jobs 族；真值是 476-490（476 `const listJobs = methodOf(services.ops, 'listAdminJobs');`、478-482 `${API_PREFIX}/admin/jobs`、483-490 `${API_PREFIX}/admin/jobs/:id/cancel`）。按符号 `listAdminJobs`／`cancelAdminJob` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号 83→86（本页上方新增 3 行，锚点文本未变）；`services/api/src/routes/admin.ts` 本提交的改动只在 :4／:624（各 1 行换 1 行），端点映射对 :476-490 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 83,
+    "line": 86,
     "target": "services/api/src/app.ts",
     "from": 1354,
     "fromEnd": 1356,
     "to": 1375,
     "toEnd": 1377,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1375-1377 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 84,
+    "line": 87,
     "target": "services/api/src/routes/admin.ts",
     "from": 430,
     "fromEnd": 438,
     "to": 530,
     "toEnd": 539,
-    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:430-438` 是 R64 管理员账号状态写面的注释块，不是 `hidePost` 路由；真值是 530-539（530 `const hidePost = methodOf(services.ops, 'hidePost');`、532 `${API_PREFIX}/admin/posts/:id/hide`）。按符号 `hidePost` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/routes/admin.ts:430-438` 是 R64 管理员账号状态写面的注释块，不是 `hidePost` 路由；真值是 530-539（530 `const hidePost = methodOf(services.ops, 'hidePost');`、532 `${API_PREFIX}/admin/posts/:id/hide`）。按符号 `hidePost` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号 84→87（本页上方新增 3 行，锚点文本未变）；`services/api/src/routes/admin.ts` 本提交的改动只在 :4／:624（各 1 行换 1 行），端点映射对 :530-539 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 236,
+    "line": 239,
     "target": "services/api/src/app.ts",
     "from": 1354,
     "fromEnd": 1356,
     "to": 1375,
     "toEnd": 1377,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1354-1356` 落在「GY-I18 内容/资料域真库落点」注释块里（1354 起是 `// **GY-I18 内容/资料域真库落点（#18，迁移 0036）**…`），不是作业端口构造；真值是 1375-1377 `const adminJobPort =` / `adminInjection?.jobPort ??` / `(adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined);`。按符号 `adminJobPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1375-1377 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 236,
+    "line": 239,
     "target": "services/api/src/app.ts",
     "from": 1492,
     "fromEnd": 1493,
     "to": 1513,
     "toEnd": 1514,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1492-1493` 落在账号停用/恢复装配里（1492 `messagesService === null` 一带），不是审计总台账只读端口；真值是 1513-1514 `const realAuditLogPort =` / `adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));`。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1492-1493` 落在账号停用/恢复装配里（1492 `messagesService === null` 一带），不是审计总台账只读端口；真值是 1513-1514 `const realAuditLogPort =` / `adminInjection?.auditLogPort ?? (pool === null ? null : createPostgresAdminAuditLogPort({ pool }));`。按符号 `realAuditLogPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1513-1514 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/admin-console-capability-map.md",
-    "line": 246,
+    "line": 249,
     "target": "services/api/src/app.ts",
     "from": 1485,
     "fromEnd": 1493,
     "to": 1513,
     "toEnd": 1514,
-    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚，目标文件本提交未改动。"
+    "reason": "旧锚点本来就指错：`services/api/src/app.ts:1485-1493` 是账号停用/恢复系统事件（accountEvents）代码块，整段不含审计总台账只读端口（`:1492-1493` 那对读数同源同错）；真值是 1513-1514（`const realAuditLogPort =` 与其续行）。按符号 `realAuditLogPort` 重锚。【GY-R72 #838 返修 2026-11-02】本轮只位移文档行号（+3，锚点文本未变）；`services/api/src/app.ts` 本提交的改动只在 :71／:1596／:1732／:2398（各 1 行换 1 行），端点映射对 :1513-1514 为恒等，故 `to` 不变。"
   },
   {
     "doc": "docs/architecture/contract-implementation-status.md",
@@ -229,11 +229,25 @@
     "doc": "docs/architecture/ai-ops-spec-status.md",
     "line": 73,
     "target": "services/api/src/app.ts",
-    "from": 2433,
-    "fromEnd": 2472,
-    "to": 2469,
-    "toEnd": 2508,
-    "reason": "`registerJobRoutes(` 的唯一调用点在 app.ts:2469，收尾 `]));` 在 2508；旧值 2433-2472 是历史错值（注册段已被上游改动），按符号重定位"
+    "from": 2469,
+    "fromEnd": 2508,
+    "to": 2515,
+    "toEnd": 2566,
+    "kind": "correction",
+    "symbol": "registerJobRoutes(app, config, guards",
+    "reason": "旧锚点本来就指错：2469-2508 是上一轮「按端点映射平移」的产物，落在 OCR 装配段（:2508 是 `ocrPersistenceImageMedia` 的字面量注释、:2509 是 `registerOcrRoutes(`），整段不含 `registerJobRoutes`。本次按符号在 cc10d0a5 实测：`registerJobRoutes(app, config, guards` 在 :2515，六条 `create*JobSource` 实参依次在 :2516／:2522／:2528／:2534／:2542／:2552（对应识别／转写／审核／合成／OCR／问答），收尾 `]));` 在 :2566，引导句「共 6 个」在 :2511。旧窗口里没有这个 symbol、新窗口里有 ⇒ 走 `kind: \"correction\"`，不做差值平移。"
+  },
+  {
+    "doc": "docs/architecture/ai-ops-spec-status.md",
+    "line": 73,
+    "target": "services/api/src/app.ts",
+    "from": 2515,
+    "fromEnd": 2560,
+    "to": 2515,
+    "toEnd": 2566,
+    "kind": "correction",
+    "symbol": "]));",
+    "reason": "只修末端、起点不动：这一格的末端 :2560 落在 `createAnswerJobSource` 的 `cancelJob` 函数**体内**（那行 `// 服务未装配（real + 无池）⇒ 该作业不存在（与\"越权/不存在\"同形 404），不让 503 冒充。` 只是体内注释，下面还有 `if (service === null) return null;` 与 `return outcome.data;`），`registerJobRoutes(app, config, guards, createJobRegistry([` 的收尾 `]));` 在 :2566 —— 上一轮把收尾写成 :2560 就是少了这 6 行。起点 :2515 不变、只把末端 2560 → 2566，属于**单端位移**：目标文件本提交未改动，端点恒等规则要求新旧两端都恒等、差值平移也表达不了「只改末端」，所以只能走 `kind: \"correction\"`；登记表自检的「零位移」判据与 `correctionViolation` 同形（起点同**且**末端同才算零位移），因此单端位移是合法登记。symbol 取收尾那行的真实特征 `]));`（整份 app.ts 只出现这一次，且不在旧窗口 2515-2560 里）。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -562,7 +576,7 @@
   },
   {
     "doc": "docs/ui-state-inventory.md",
-    "line": 304,
+    "line": 305,
     "target": "miniprogram/pages/favorites/favorites.js",
     "from": 108,
     "fromEnd": 110,
@@ -892,10 +906,10 @@
     "line": 143,
     "target": "tests/unit/sql-column-coverage.test.mjs",
     "from": 1512,
-    "to": 1518,
+    "to": 1551,
     "kind": "correction",
     "symbol": "[\\s\\S]*?",
-    "reason": "docs/verification/gy-r71-comment-strip-20261030.md:143 的 §3.1 高档清单按 git grep -n 取号时写的是 sql-column-coverage.test.mjs:1512，但在 880c938b 上 :1512 已是「 * 带模板串仍然不入表…」注释行、不含 symbol [\\s\\S]*?，旧锚点在 base 上就指错了；实测该文件里唯一的剥离点 .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '') 在 :1518 ⇒ 按符号重锚到 1518（旧 :1393 是更早一棵树上的取号，同样不含 symbol）。本条同时纠正文档里的行号与登记表里的端点，避免任何 base!=HEAD 的提交把这条判红。"
+    "reason": "docs/verification/gy-r71-comment-strip-20261030.md:143 的 §3.1 高档清单按 git grep -n 取号时写的是 sql-column-coverage.test.mjs:1512，但在 880c938b 上 :1512 已是「 * 带模板串仍然不入表…」注释行、不含 symbol [\\s\\S]*?，旧锚点在 base 上就指错了；实测该文件里唯一的剥离点 .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '') 在 :1518 ⇒ 按符号重锚到 1518（旧 :1393 是更早一棵树上的取号，同样不含 symbol）。本条同时纠正文档里的行号与登记表里的端点，避免任何 base!=HEAD 的提交把这条判红。 【2026-11-03 GY-R73 合流 origin/main：按合并后的真实行号取号】同一处位移两侧各登了一条、`to` 不同（本片 GY-R73 在登记表与读数钉区插入 22 行 ⇒ 1540；main 的 R72 #838 加 ㉘ 段净 +7 行 ⇒ 1525），合流后该文件同时含两侧改动（相对 base `git diff --numstat` = 50+/15-），两个旧行号都站不住；实测唯一剥离点 .replace(/\\/\\*[\\s\\S]*?\\*\\//g, '') 在 :1551（`git grep -n` 单条命中，文档 :143 已同步改写为 1551）⇒ 只保留这一条登记、`to` 取合并后的真实行号 1551，不并列留两条（重复登记会被 doc-anchor-relocation-identity 判红）。"
   },
   {
     "doc": "docs/architecture/ai-ops-spec-status.md",
@@ -1104,9 +1118,9 @@
     "target": "communitydetail.js",
     "from": 272,
     "fromEnd": 301,
-    "to": 306,
-    "toEnd": 324,
-    "reason": "旧锚点 272-301 是 2026-10-21 切片文档里的 `_report` 引用；在真实父 53354fe7 上，`_report` 已是 291-309（#749 改写 `_decoratePost` 后整体下移 19 行），272-301 实际落在 `onLoadMoreComments` 的 catch、`onReportPost` 与 `_report` 头部，不是完整举报入口。当前 306-324 才是 `_report` 全体；用其尾部 action-sheet `fail: function () {}`（当前 322）作 symbol，base 272-301 不含该符号，故按符号纠正而非机械 +15。",
+    "to": 312,
+    "toEnd": 330,
+    "reason": "旧锚点 272-301 是 2026-10-21 切片文档里的 `_report` 引用；在真实父 53354fe7 上，`_report` 已是 291-309（#749 改写 `_decoratePost` 后整体下移 19 行），272-301 实际落在 `onLoadMoreComments` 的 catch、`onReportPost` 与 `_report` 头部，不是完整举报入口。当前 306-324 才是 `_report` 全体；用其尾部 action-sheet `fail: function () {}`（当前 322）作 symbol，base 272-301 不含该符号，故按符号纠正而非机械 +15。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :312-330（符号 `fail: function () {}` 仍在区间内：HEAD :328）。",
     "kind": "correction",
     "symbol": "fail: function () {}"
   },
@@ -1116,9 +1130,9 @@
     "target": "communitydetail.js",
     "from": 157,
     "fromEnd": 178,
-    "to": 200,
-    "toEnd": 201,
-    "reason": "旧锚点 157-178 在真实父 53354fe7 上是 `_decoratePost` 的文档注释与字段列表（157 `  /**`、178 `      updated: post.updated_at,`），不含审核标签的赋值；#749 后标签由 `api.outcomeOf` 投影，`publicLabel`/`stateLabel` 在父 185-186、当前 200-201。base 157-178 的注释虽出现 `stateLabel` 字样，但没有 `stateLabel: outcome.key === 'approved'` 赋值，故以该赋值表达式为 symbol 纠正。",
+    "to": 205,
+    "toEnd": 206,
+    "reason": "旧锚点 157-178 在真实父 53354fe7 上是 `_decoratePost` 的文档注释与字段列表（157 `  /**`、178 `      updated: post.updated_at,`），不含审核标签的赋值；#749 后标签由 `api.outcomeOf` 投影，`publicLabel`/`stateLabel` 在父 185-186、当前 200-201。base 157-178 的注释虽出现 `stateLabel` 字样，但没有 `stateLabel: outcome.key === 'approved'` 赋值，故以该赋值表达式为 symbol 纠正。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :205-206（符号 `stateLabel: outcome.key === 'approved'` 在 HEAD :206）。",
     "kind": "correction",
     "symbol": "stateLabel: outcome.key === 'approved'"
   },
@@ -1176,9 +1190,9 @@
     "target": "communitydetail.js",
     "from": 272,
     "fromEnd": 301,
-    "to": 306,
-    "toEnd": 324,
-    "reason": "同页 §2.6 的举报提交锚点：旧 272-301 在真实父 53354fe7 上不是完整 `_report`（父上 `_report` 291-309），当前 306-324。用 action-sheet 尾部 `fail: function () {}`（当前 322）作 symbol，base 272-301 不含，按符号纠正而非 +15。",
+    "to": 312,
+    "toEnd": 330,
+    "reason": "同页 §2.6 的举报提交锚点：旧 272-301 在真实父 53354fe7 上不是完整 `_report`（父上 `_report` 291-309），当前 306-324。用 action-sheet 尾部 `fail: function () {}`（当前 322）作 symbol，base 272-301 不含，按符号纠正而非 +15。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :312-330（符号 `fail: function () {}` 仍在区间内：HEAD :328）。",
     "kind": "correction",
     "symbol": "fail: function () {}"
   },
@@ -1188,8 +1202,8 @@
     "target": "communitydetail.js",
     "from": 277,
     "fromEnd": 280,
-    "to": 312,
-    "reason": "旧锚点 277-280 在真实父 53354fe7 上是评论加载更多的 `INVALID_CURSOR` toast 块（277 `        wx.showToast({ title: '评论列表已过期，已重新载入', icon: 'none' })`），不是举报反馈；带 `result.report.state` 的 toast 在父 297、当前 312。base 277-280 不含 `result.report.state`，按符号纠正。",
+    "to": 318,
+    "reason": "旧锚点 277-280 在真实父 53354fe7 上是评论加载更多的 `INVALID_CURSOR` toast 块（277 `        wx.showToast({ title: '评论列表已过期，已重新载入', icon: 'none' })`），不是举报反馈；带 `result.report.state` 的 toast 在父 297、当前 312。base 277-280 不含 `result.report.state`，按符号纠正。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :318（符号 `result.report.state` 在 HEAD :318）。",
     "kind": "correction",
     "symbol": "result.report.state"
   },
@@ -1199,9 +1213,9 @@
     "target": "communitydetail.js",
     "from": 157,
     "fromEnd": 178,
-    "to": 200,
-    "toEnd": 201,
-    "reason": "同页 §2.7 的三页标注锚点：旧 157-178 在真实父 53354fe7 上是 `_decoratePost` 的注释与字段列表，标签投影在父 185-186、当前 200-201；base 157-178 的注释虽出现 `stateLabel` 字样，但没有 `stateLabel: outcome.key === 'approved'` 赋值，故以该赋值表达式为 symbol 纠正。",
+    "to": 205,
+    "toEnd": 206,
+    "reason": "同页 §2.7 的三页标注锚点：旧 157-178 在真实父 53354fe7 上是 `_decoratePost` 的注释与字段列表，标签投影在父 185-186、当前 200-201；base 157-178 的注释虽出现 `stateLabel` 字样，但没有 `stateLabel: outcome.key === 'approved'` 赋值，故以该赋值表达式为 symbol 纠正。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :205-206（符号 `stateLabel: outcome.key === 'approved'` 在 HEAD :206）。",
     "kind": "correction",
     "symbol": "stateLabel: outcome.key === 'approved'"
   },
@@ -1210,8 +1224,8 @@
     "line": 367,
     "target": "communitydetail.js",
     "from": 312,
-    "to": 346,
-    "reason": "旧锚点 312 在真实父 53354fe7 上是 `onToggleEditPost: function () {`，不是编辑帖子调用；固定传 `media_ids: []` 的 `api.editPost(...)` 在父 331、当前 346。base 312 不含 `media_ids: []`，按符号纠正。",
+    "to": 352,
+    "reason": "旧锚点 312 在真实父 53354fe7 上是 `onToggleEditPost: function () {`，不是编辑帖子调用；固定传 `media_ids: []` 的 `api.editPost(...)` 在父 331、当前 346。base 312 不含 `media_ids: []`，按符号纠正。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :352（符号 `media_ids: []` 在 HEAD :352）。",
     "kind": "correction",
     "symbol": "media_ids: []"
   },
@@ -1221,8 +1235,8 @@
     "target": "communitydetail.js",
     "from": 277,
     "fromEnd": 283,
-    "to": 311,
-    "reason": "旧锚点 277-283 在真实父 53354fe7 上是评论加载更多的 catch 尾部，不是举报 `detail` 空串；`api.createReport(..., '')` 在父 296、当前 311。base 277-283 不含 `api.createReport`，按符号纠正。",
+    "to": 317,
+    "reason": "旧锚点 277-283 在真实父 53354fe7 上是评论加载更多的 catch 尾部，不是举报 `detail` 空串；`api.createReport(..., '')` 在父 296、当前 311。base 277-283 不含 `api.createReport`，按符号纠正。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :317（符号 `api.createReport` 在 HEAD :317）。",
     "kind": "correction",
     "symbol": "api.createReport"
   },
@@ -1244,9 +1258,9 @@
     "target": "miniprogram/pages/communitydetail/communitydetail.js",
     "from": 173,
     "fromEnd": 176,
-    "to": 200,
-    "toEnd": 201,
-    "reason": "旧锚点 173-176 在真实父 53354fe7 上是 `_decoratePost` 返回对象里的 `body`/`author` 字段（173 `      body: post.body,`、174 `      author: author.name,`、175 `      authorAvatar: author.avatar,`、176 `      authorAnonymized: author.anonymized,`），不是作者侧状态标签；父的说明注释在 157-165，#749 后标签由 `api.outcomeOf` 投影，`publicLabel`/`stateLabel` 在父 185-186、当前 200-201。base 173-176 不含 `stateLabel`，按符号纠正；该行翻转前的三档措辞保留为历史。",
+    "to": 205,
+    "toEnd": 206,
+    "reason": "旧锚点 173-176 在真实父 53354fe7 上是 `_decoratePost` 返回对象里的 `body`/`author` 字段（173 `      body: post.body,`、174 `      author: author.name,`、175 `      authorAvatar: author.avatar,`、176 `      authorAnonymized: author.anonymized,`），不是作者侧状态标签；父的说明注释在 157-165，#749 后标签由 `api.outcomeOf` 投影，`publicLabel`/`stateLabel` 在父 185-186、当前 200-201。base 173-176 不含 `stateLabel`，按符号纠正；该行翻转前的三档措辞保留为历史。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :205-206（符号 `stateLabel` 在 HEAD :206）。",
     "kind": "correction",
     "symbol": "stateLabel"
   },
@@ -1255,8 +1269,8 @@
     "line": 95,
     "target": "miniprogram/pages/communitydetail/communitydetail.js",
     "from": 173,
-    "to": 200,
-    "reason": "旧锚点 173 在真实父 53354fe7 上是 `      body: post.body,`，不是公开侧 `publicLabel`；#749 后文案表集中在 `miniprogram/utils/community-api.js` 的 `OUTCOMES`，页面投影 `publicLabel` 在父 185、当前 200。base 173 不含 `publicLabel`，按符号纠正。",
+    "to": 205,
+    "reason": "旧锚点 173 在真实父 53354fe7 上是 `      body: post.body,`，不是公开侧 `publicLabel`；#749 后文案表集中在 `miniprogram/utils/community-api.js` 的 `OUTCOMES`，页面投影 `publicLabel` 在父 185、当前 200。base 173 不含 `publicLabel`，按符号纠正。；[GY-R73-C +6] 理由码读面片给 `communitydetail.js` 的 `_decoratePost` 加了 `reasonLine` 投影（+6 行），按符号重取到 :205（符号 `publicLabel` 在 HEAD :205）。",
     "kind": "correction",
     "symbol": "publicLabel"
   },
@@ -1269,6 +1283,26 @@
     "kind": "correction",
     "symbol": "merged.filter(function (entry) { return entry.failed })",
     "reason": "父基线 53354fe7 的 history.js:74 是 `load: function (cursor) {`（load 声明），该行没有 failedCount，也没有 `entry.failed` 统计——本页 A7 写的「failedCount 逐条统计」在父树上就对不上，属历史语义错，不是本次改 history.js 把这一行挤走的。真正的统计语句是列表写入里的 `failedCount: merged.filter(function (entry) { return entry.failed }).length`，HEAD 在 :104；按符号纠正到 :104，不走 +8 行号平移（平移落到的是 load 声明附近，仍不含该统计）。目标文件本提交的改动来自已冻结的页面生命周期补丁，本片只登记文档锚点。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 133,
+    "target": "services/api/src/community/store.ts",
+    "from": 443,
+    "to": 531,
+    "kind": "correction",
+    "symbol": "purgeOwnerData?(ownerId",
+    "reason": "本页 §4.2 第 133 行原文写「`community/store.ts:443` 接口新增**可选** `purgeOwnerData?`」，但 base（28291489 = 本分支 merge-base）的 store.ts:443 是点赞方法上方的一句注释（`* 只读、幂等、与 addLike/removeLike 同一份集合事实；供 GET /posts/{id}/like 的`）——旧锚点在父树上就已经指错（更早一棵树的读数），真实接口声明在 base :503 / HEAD :531（`purgeOwnerData?(ownerId: string, options?: CommunityOwnerPurgeOptions): Promise<CommunityOwnerPurgeCounts>;`）。修这一行的 737 错锚（见下一条）会让整行两枚锚点都进判据面，而本文件（community/store.ts）本提交净 +28 行，机械端点映射给出 443→465，那仍是同一段点赞注释、不含本行要引的接口声明，还会把作用域外红条变多，故按符号订正到 :531。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 133,
+    "target": "services/api/src/community/store.ts",
+    "from": 737,
+    "to": 839,
+    "kind": "correction",
+    "symbol": "async purgeOwnerData(ownerId",
+    "reason": "监工 P2（2026-11-02T15:00:27Z）点名的历史错锚：原句称「内存实现 `:737`」，但 base store.ts:737 是 `      return [...comments.values()]`（listComments 的 return，purgeOwnerData 实现在 base :811），本 HEAD :737 是 `},`（闭合行，purgeOwnerData 在 HEAD :839）——是这条历史语义错锚被本片位移（顶部 +22 行）显露，不是保留原文身份的纯位移。本片因此删掉上一版给这条加的 outsideRed 豁免（community/store.ts:737|SUSPECT），把来源订正到 purgeOwnerData 的真实归属 `async purgeOwnerData(ownerId, options = {}) {`（HEAD :839、父版本 :811），以 kind: correction 留痕；登记的 to 行必须含该符号、base 的 from 行不含，由 identity 用例三件验真钉住。"
   },
   {
     "doc": "docs/verification/r59-community-premoderation-20261026.md",
@@ -1371,5 +1405,74 @@
     "reason": "旧锚点 51-63 在父 53354fe 上起于 `onLoad` 的 `this._epoch = 0`（51），经 `onShow` 到 `that.setData({ guest: !ok })`（63）就断，既多带 onLoad 尾行、又漏掉真正发起重取的 `if (ok) that.reload()`（64）；本次按符号 `that.reload()` 重锚到 HEAD 54-66。该页历史基线 ee46eb1 的树本环境无导出，当时行号未复核。",
     "kind": "correction",
     "symbol": "that.reload()"
-  }
+  },
+  {
+    "doc": "docs/architecture/acceptance-map.md",
+    "line": 92,
+    "target": "miniprogram/utils/knowledge-api.js",
+    "from": 224,
+    "to": 271,
+    "kind": "correction",
+    "symbol": "validId",
+    "reason": "按符号重锚，不是随代码位移：旧值 224 在 base（b9d91bbc）上是 \function remember(item, input) {（选择态记忆的开始），本来就不是 \u000balidId —— 属既有陈旧锚点。GY-R73 给 herbicideRow 加了一行 id: item.id（+3 行），端点映射只会把 224 机械搬到 227，那仍是 remember。真正的 \u000balidId 是 module.exports 里的箭头 \u000balidId: id => typeof id === 'string' && UUID.test(id)，HEAD 在 :271；同一文件 :8 的 const UUID 是它用的正则。改这一行是因为原文「随包记录号恒假 ⇒ 永远走随包支」的前提已被 GY-R73 推翻（随包也带 uuid），必须同时改判据出处，否则文档说的 \u000balidId 指着一个不相干的函数。"
+  },
+  {
+    "doc": "docs/ui-state-inventory.md",
+    "line": 303,
+    "target": "miniprogram/utils/knowledge-api.js",
+    "from": 224,
+    "to": 271,
+    "kind": "correction",
+    "symbol": "validId",
+    "reason": "同上（acceptance-map 第 1 条与本节表行③引的是同一处）：旧值 224 在 base 上是 \function remember(item, input) {，是既有陈旧锚点；GY-R73 的 +3 行端点映射只会把它搬到 227（仍是 remember）。真值 \u000balidId 在 HEAD :271（module.exports 里的箭头），按符号重锚。"  },
+  {
+    "doc": "docs/verification/gy-r31-i14-recon-20261022.md",
+    "line": 62,
+    "target": "services/api/src/community/service.ts",
+    "from": 971,
+    "to": 1106,
+    "kind": "correction",
+    "symbol": "const awaitingPublish = !mediaReview && screen !== null && link !== null;",
+    "reason": "原锚点 `:971` 在 base 上落在 `route: 'posts',`（该行没有 `awaitingPublish`，属陈旧锚点）；按符号重取到 HEAD 的 `:1106`。服务端 `community/service.ts` 自 :583 起插了理由码投影（本片首轮 +45 行，2026-11-03 把 `reason_codes` 改成必现空数组后再 +9 行，故 to 由 :1097 同步到 :1106）。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 48,
+    "target": "services/api/src/community/service.ts",
+    "from": 663,
+    "to": 861,
+    "kind": "correction",
+    "symbol": "function projectReport(record: ReportRecord): Report {",
+    "reason": "原锚点 `:663` 在 base 上落在 `try {`（该行不是 `projectReport()`，属陈旧锚点）；按符号重取到 HEAD 的 `:861`。服务端 `community/service.ts` 自 :583 起插了理由码投影（本片首轮 +45 行，2026-11-03 把 `reason_codes` 改成必现空数组后再 +9 行，故 to 由 :852 同步到 :861）。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
+    "line": 71,
+    "target": "services/api/src/community/service.ts",
+    "from": 935,
+    "to": 1151,
+    "kind": "correction",
+    "symbol": "await publishModerationResult(",
+    "reason": "原锚点 `:935` 在 base 上落在 `route: 'posts',`（该行不是 `publishModerationResult(...)` 的调用点，属陈旧锚点）；按符号重取到 HEAD 里 `moderation_result` 的首个投递点 `:1151`。服务端 `community/service.ts` 自 :583 起插了理由码投影（本片首轮 +45 行，2026-11-03 把 `reason_codes` 改成必现空数组后再 +9 行，故 to 由 :1142 同步到 :1151）。"
+  },
+  {
+    "doc": "docs/verification/gy-r33-contract-ledger-20261023.md",
+    "line": 440,
+    "target": "services/api/src/community/service.ts",
+    "from": 1805,
+    "to": 1881,
+    "kind": "correction",
+    "symbol": "reason_codes: ['NOT_PUBLISHABLE'],",
+    "reason": "原锚点 `:1805` 在 base（main ef22d5a9）上落在注释行「只会拿到 DELETED…」，不是 blocker 的 `reason_codes` 那一行——#838 在本片之外先给它 +22 行，本片首轮再 +45 行、2026-11-03 必现化再 +9 行；按符号重取到 HEAD 的 `:1881`。"
+  },
+  {
+    "doc": "docs/verification/gy-r33-contract-ledger-20261023.md",
+    "line": 440,
+    "target": "services/api/src/community/service.ts",
+    "from": 1808,
+    "to": 1884,
+    "toEnd": 1886,
+    "kind": "correction",
+    "symbol": "throw commitRefusal(committed.reason);",
+    "reason": "原锚点 `:1808` 在 base（main ef22d5a9）上落在 `author_id: user.userId,`，早已不是「该分支收尾与抛错点」；按符号重取到 HEAD 的 `:1884-1886`（`};` / `}` / `throw commitRefusal(committed.reason);`；2026-11-03 必现化再 +9 行后由 `:1875-1877` 同步）。"  }
 ]

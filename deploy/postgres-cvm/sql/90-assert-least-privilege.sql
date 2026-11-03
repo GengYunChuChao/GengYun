@@ -451,7 +451,7 @@ RETURNING id;
 \set r28_probe_ans_ins :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
--- moderation_decisions / moderation_withdrawals（0028 / R29 段 M3）：moderation_decisions 仍**只写不读**；
+-- moderation_decisions / moderation_withdrawals（0028 / R29 段 M3）：两表都有真读面（decisions 12 列 SELECT、withdrawals 三列，见 20-login-roles.sql 段 M3）；
 -- moderation_withdrawals 自 W43 起由 HYDRATE_WITHDRAWALS_SQL 读回三列（回填），但下面三条探针仍全是**写**语句（探的是写面授权），形状逐字对着 ledger-pg.ts 抄：
 --   * :74 的 INSERT_SQL 26 列 + `ON CONFLICT (job_id) DO NOTHING`；
 --   * :89 的 UPDATE_SQL 14 列 + `WHERE job_id`（WHERE 里的 job_id 也吃 SELECT 权）；
@@ -1525,10 +1525,10 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      true),
     -- R29（迁移 0028）：审核判定台账两表。列清单与 20-login-roles.sql 段 M3 的 GRANT 是同一事实的
     -- 两次写法（少一列/多一列都会被断言 49-58 抓住：清单内必须有、清单外必须没有）。
-    -- SELECT 面不是"全列"：moderation_decisions 仍只写不读（byJobId/current/forRevision/history 全读内存），
-    -- 这 6 列纯粹是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求；moderation_withdrawals 的三列 SELECT 另有用途（W43 的 HYDRATE_WITHDRAWALS_SQL 回填）。
-    -- 名单来源 ledger-pg.ts:66 的 SUPERSEDE_SQL（target_type/target_id/target_revision/
-    -- content_kind/superseded）与 :74 的 INSERT_SQL + :89 的 UPDATE_SQL（WHERE job_id）。
+    -- SELECT 面不是"全列"：moderation_decisions 的 12 列里 6 列是 PG 对 UPDATE/DELETE 的 WHERE 与 INSERT 的 ON CONFLICT 冲突目标的读权要求，
+    -- 另 6 列（W54/0052）只服务只读端口；moderation_withdrawals 的三列 SELECT 另有用途（W43 的 HYDRATE_WITHDRAWALS_SQL 回填）。
+    -- 且 decisions 的 `superseded` 另有独立的单列投影读（READ_SUPERSEDED_SQL）⇒ 本表**不是**"只写不读"；名单来源是 ledger-pg.ts 的 SUPERSEDE_SQL
+    -- （target_type/target_id/target_revision/content_kind/superseded）、INSERT_SQL（26 列）+ UPDATE_SQL（14 列，WHERE job_id）；下架表的 INSERT 见 WITHDRAW_SQL（4 列，三列冲突目标）。
     -- W54（迁移 0052）：SELECT 面在 6 列之外再加 6 列 —— rule_version/model_version/prompt_version/concluded_at/decision/updated_at，
     -- 只服务只读端口 createPostgresConclusionFacts（缺表/缺列 ⇒ 空数组 + 一次 warn），不参与任何可见性判定；名单见 conclusion-facts-pg.ts 的 CONCLUSION_FACTS_SQL。
     ('moderation_decisions',
@@ -1997,6 +1997,15 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 由形参重建，并重核验操作者存在 + active + 当前有效持 sources:write + 目标行存在 +
     -- 审计的 revision 必须等于库内现值（G0001/G0002/G0010）⇒ 调用方伪造不了 actor、动作文本或 target。
     ('public',         'record_admin_category_update',       'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
+    -- 迁移 0053（R72）：后台**举报处置**（report.triage / report.resolve / report.reject）的
+    -- 审计落库。运行时对 `admin_audit_events` 仍然**零表级、零列级权限**（external_manifest
+    -- 与槽 9 的 protected_columns 一句未动），唯一写路径就是这条函数。函数内由 `p_action`
+    -- 派生 action（`report.triage` / `report.resolve` / `report.reject`）与对应 reason_code
+    -- （`report_triaged` / `report_resolved` / `report_rejected`）、scope='sources:write'、
+    -- result='accepted'，`target_ref` = {type:'report', id, revision} 由形参重建，并重核验
+    -- 操作者存在 + active + 当前有效持 sources:write ⇒ 调用方伪造不了 actor、动作文本或 target。
+    ('public',         'record_admin_report_disposition_audit', 'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),

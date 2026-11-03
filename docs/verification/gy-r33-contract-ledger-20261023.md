@@ -437,7 +437,7 @@ other changes=0
 
 另实测 `--write-doc` **幂等**：同一命令再跑一次，`git hash-object docs/architecture/contract-implementation-status.md` 前/后均为 `b764c6189ef7fe7ca2c04f21dff5e0112b038d0a`（`BYTE_IDENTICAL=True`），exit `0` ⇒ 生成区字节一致。
 
-第二次提交相对第一次只再改 **2 条** blocker（`operations.listKnowledge`、`dimensions.pagination`，加亚毫秒限定）；其余 20 条订正与 5 条保留未动；`git diff HEAD^` 实测 `blockers=2 / other=0`。第三次提交（N2）只把 3 条消息 blocker 里的 `community/service.ts:1805` 改为合流后基线 `b1e8fb3e` 的 `:1808`（`#492` 插入 3 行），并同步本页同一引用；其余未动。
+第二次提交相对第一次只再改 **2 条** blocker（`operations.listKnowledge`、`dimensions.pagination`，加亚毫秒限定）；其余 20 条订正与 5 条保留未动；`git diff HEAD^` 实测 `blockers=2 / other=0`。第三次提交（N2）只把 3 条消息 blocker 里的 `community/service.ts:1881`（`reason_codes: ['NOT_PUBLISHABLE']` 那一行；行号按当前树重取，`#838` 插在其前的 22 行已计入）改为合流后基线 `b1e8fb3e` 的 `:1884-1886`（该分支收尾与 `throw commitRefusal(...)` 的抛错点；`#492` 插入 3 行），并同步本页同一引用；其余未动。
 
 ## 6 生成区、人工摘要与防漂移登记
 

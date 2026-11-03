@@ -70,7 +70,7 @@
 | --- | --- | --- | --- | --- |
 | E01 | `Job` 九键闭集，出口按契约重建、多余键一律拒绝 | 已实现 | services/api/src/jobs/registry.ts:50-60 | 只管公共作业面；后台 `AdminJob` 另有投影，两套键集不共享 |
 | E02 | `JobState` 七值闭集，不得扩展 | 已实现 | services/api/src/jobs/registry.ts:38-46 | 域内状态机另有迁移表，闭集是出口判定而非库内唯一来源 |
-| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2469-2508 | 注册 ≠ 可取消；取消能力按源判定，六源今已全接（P01） |
+| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2515-2566 | 注册 ≠ 可取消；取消能力按源判定，六源今已全接（P01） |
 | E04 | 未接线 kind 与「作业不存在」同形 404 | 已实现 | services/api/src/jobs/registry.ts:280-281 | 同形是刻意设计，代价是运维无法从 404 分辨「没接」与「没这条」 |
 | E05 | `result` 如实性不变式：`result` 非空 ⇒ 只能是 `succeeded`／`uncertain` | 已实现 | services/api/src/jobs/registry.ts:177 | 与识别域既有行为有一处口径差（`uncertain` 允许带 `result`），已在同文件注明 |
 | E06 | 端口回传不合契约 ⇒ 503 `PROVIDER_UNAVAILABLE` + `retryable:false`，单通道 | 已实现 | services/api/src/jobs/registry.ts:130-133 | 唯一拒绝通道；不另造错误码，也不放宽冻结契约 |

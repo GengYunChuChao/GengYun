@@ -88,6 +88,7 @@
         "media_ids": [],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -339,6 +340,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -377,6 +379,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -430,6 +433,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -602,6 +606,7 @@
         "body": "合成评论",
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z"
       }
     },
@@ -697,6 +702,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -766,6 +772,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -839,6 +846,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -908,6 +916,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -981,6 +990,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1050,6 +1060,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1118,6 +1129,7 @@
           "body": "合成评论",
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z"
         },
         "requester_id": "fixture-other-reader",
@@ -1173,6 +1185,7 @@
           "body": "合成评论",
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z"
         },
         "requester_id": "fixture-other-reader",
@@ -1237,6 +1250,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1306,6 +1320,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1379,6 +1394,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1448,6 +1464,7 @@
           ],
           "visibility": "hidden",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1521,6 +1538,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1590,6 +1608,7 @@
           ],
           "visibility": "private",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1663,6 +1682,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1732,6 +1752,7 @@
           ],
           "visibility": "published",
           "audit_state": "pending",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1805,6 +1826,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1874,6 +1896,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -1947,6 +1970,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2016,6 +2040,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2089,6 +2114,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2158,6 +2184,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2231,6 +2258,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2300,6 +2328,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2373,6 +2402,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2442,6 +2472,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2515,6 +2546,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2584,6 +2616,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2657,6 +2690,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2723,6 +2757,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2796,6 +2831,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2865,6 +2901,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -2938,6 +2975,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3007,6 +3045,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3080,6 +3119,7 @@
           ],
           "visibility": "hidden",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3130,6 +3170,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3200,6 +3241,7 @@
           ],
           "visibility": "private",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3250,6 +3292,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3320,6 +3363,7 @@
           ],
           "visibility": "published",
           "audit_state": "pending",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3370,6 +3414,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3440,6 +3485,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3490,6 +3536,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3560,6 +3607,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3610,6 +3658,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3680,6 +3729,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3730,6 +3780,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3800,6 +3851,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3850,6 +3902,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3920,6 +3973,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -3989,6 +4043,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4062,6 +4117,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4131,6 +4187,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4204,6 +4261,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4273,6 +4331,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4346,6 +4405,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4415,6 +4475,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4488,6 +4549,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4557,6 +4619,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4630,6 +4693,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4699,6 +4763,7 @@
           ],
           "visibility": "published",
           "audit_state": "approved",
+          "reason_codes": [],
           "created_at": "2026-10-03T08:00:00Z",
           "updated_at": "2026-10-03T08:00:00Z",
           "media": [
@@ -4751,6 +4816,7 @@
         "media_ids": [],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -4775,6 +4841,7 @@
         "media_ids": [],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -4799,6 +4866,7 @@
         "media_ids": [],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -4829,6 +4897,7 @@
         "media_ids": [],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -4871,6 +4940,7 @@
         ],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -4915,6 +4985,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -4964,6 +5035,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5022,6 +5094,7 @@
         ],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5079,6 +5152,7 @@
         ],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5123,6 +5197,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5170,6 +5245,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5226,6 +5302,7 @@
         ],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5281,6 +5358,7 @@
         ],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5325,6 +5403,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5372,6 +5451,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5428,6 +5508,7 @@
         ],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5483,6 +5564,7 @@
         ],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5527,6 +5609,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5574,6 +5657,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5630,6 +5714,7 @@
         ],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5685,6 +5770,7 @@
         ],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5729,6 +5815,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5776,6 +5863,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5832,6 +5920,7 @@
         ],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5887,6 +5976,7 @@
         ],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -5931,6 +6021,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -5980,6 +6071,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -6034,6 +6126,7 @@
         ],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -6076,6 +6169,7 @@
         ],
         "visibility": "private",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],
@@ -6120,6 +6214,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -6167,6 +6262,7 @@
         ],
         "visibility": "published",
         "audit_state": "approved",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [
@@ -6218,6 +6314,7 @@
         ],
         "visibility": "hidden",
         "audit_state": "pending",
+        "reason_codes": [],
         "created_at": "2026-10-03T08:00:00Z",
         "updated_at": "2026-10-03T08:00:00Z",
         "media": [],

@@ -311,5 +311,12 @@ Page({
       self.setData({ guest: true }); wx.reLaunch({ url: '/pages/login/login' })
       if (!result.serverRevoked) wx.showToast({ title: result.serverRevocationUnconfirmed ? '本地已清，服务端撤销未确认' : '已清除本地会话', icon: 'none' })
     })
+  },
+  // 注销账号入口（GY-R73 / #19）：跳 `pages/deletion/deletion`。
+  // 这里**不**做登录判断、也不读回执：那一页查回执用的是「回执 bearer」，与登录会话无关
+  // （退出登录后仍可能要看进度），所以入口对游客也放行，由目标页自己按 guest/empty/ready
+  // 如实呈现。跳转形状与本页同类入口（收藏／历史／授权清单）一致：直接 `wx.navigateTo`。
+  openDeletion: function () {
+    wx.navigateTo({ url: '/pages/deletion/deletion' })
   }
 })

@@ -80,18 +80,18 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 
 验证方式（跨平台可复现）：`node --test tests/unit/admin-ops-governance.test.mjs tests/unit/admin-ui-review-state.test.mjs tests/moderation/http-callback.test.mjs` 在 HEAD 上全绿；把上表任一条**单独**改成"已接线"（例如给 `/admin` 响应加 `wired: { const: true }`）即可看到对应用例变红。
 
-## 已知缺口：`referencedetail` 无收藏入口，且随包名录 id 不是 UUID（待裁定）
+## 已知缺口：`referencedetail` 无收藏入口（随包 id 已对齐服务端 uuid，GY-R73）
 
-2026-10-28 登记（Refs #7 #16，对应上表 F18／AC17／GY-I16 那一行）。**本节只登记，不裁定**——选哪条出路要指挥／用户拍。
+2026-10-28 登记（Refs #7 #16，对应上表 F18／AC17／GY-I16 那一行）。**本节只登记，不裁定**——选哪条出路要指挥／用户拍。**2026-11-03 更新（GY-R73）**：随包名录的 `id` 已对齐服务端 uuid（生成脚本用服务端同一函数 `deterministicUuid(record_id)` 派生），下面第 1、2 条「记录号恒假 ⇒ 永远落在随包支」的前提**已不成立**；第 3、4 条（拿不到 revision、可用性解析只认 `/knowledge` 读面）仍成立，所以「不补收藏按钮」的裁定不变，但**理由换了**：不再是「够不着服务端实体」，而是「够着了也不可用」。
 
 **现象**：P0 链路第 5 步是「详情 → 收藏」，**入口一共两处**（`docs/ui-state-inventory.md` 第 7.6 节是唯一口径）：`pages/knowledgedetail` 的收藏按钮，与 `pages/favorites` 上半区「可收藏的资料」的逐条「收藏」（两者走同一个 `POST /favorites`）。`pages/knowledge` → `pages/knowledgedetail` 这一路走通；`pages/reference` → `pages/referencedetail` 这一路**没有收藏入口**（该页 `.js` 443 行、`.wxml` 160 行逐字读完，对 `收藏`／`favorite`／`fav` 零命中）。
 
 **为什么"补一个按钮"补不上（**在本数据源下**不可为，不是未接线）**：
 
-1. 该页数据源是**随包离线名录**，记录主键形如 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:34`）；页面的路由判定是 `validId` 为真走服务端、否则走随包副本，随包 id 永远落在后一支：`miniprogram/pages/referencedetail/referencedetail.js:115`。
-2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假 ⇒ 这一支永远拿不到服务端实体：`miniprogram/utils/knowledge-api.js:224`。
-3. `POST /favorites` 的 `target_ref.revision` 只能取自服务端读面（`GET /knowledge/{id}`，该客户端把响应 `id` 强制 UUID），随包记录既无服务端 `id` 也无 `revision`。
-4. 契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format ⇒ 强行发一条不会被 400 挡住，但 `reference_state` 由服务端按 `/knowledge` 公开读面逐次派生，随包记录在服务端不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:145`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
+1. 该页数据源是**随包离线名录**：每条记录既有可读记录号 `gy-i03-hb-001`（`miniprogram/data/records-2026.js:35`），也有 `id`（= 服务端同一记录的 uuid，同文件 `:34`，由 `tools/knowledge/build_miniprogram_data.mjs` 用 `deterministicUuid(record_id)` 派生）。页面的路由判定是：路由显式带 `source=bundled-offline` 走随包副本，否则 `validId` 为真走服务端、其余走随包副本：`miniprogram/pages/referencedetail/referencedetail.js:133`。GY-R73 之前随包条目**没有** `id`，记录号恒假 ⇒ 永远落在随包支；现在同一条记录两条路都到得了。
+2. `validId` 就是 UUID 正则，`gy-i03-hb-001` 恒假、uuid 恒真：`miniprogram/utils/knowledge-api.js:271`。
+3. `POST /favorites` 的 `target_ref.revision` 只能取自服务端读面（`GET /knowledge/{id}`，该客户端把响应 `id` 强制 UUID），而 `/herbicides` 的客户端投影 `herbicideRow` **不投影 revision**（`miniprogram/utils/knowledge-api.js:195-225`）；随包记录本身也没有 revision 字段。
+4. 就算把 uuid 发过去也不会被挡住：契约 `FavoriteTarget.id` 只约束 1..80 字符串、**不**设 UUID format。真正挡住的是可用性——`reference_state` 由服务端按 `/knowledge` 公开读面逐次派生（见下节 GY-R68），`/herbicides` 的 uuid 在那一面不存在 ⇒ 恒 `unavailable`；收藏页据此不给「查看资料」入口：`miniprogram/pages/favorites/favorites.js:145`。即：加按钮换来的是**一条永远点不开的坏收藏**，比没有入口更糟。
 
 **两条出路（二选一，本片不选）**：
 
@@ -166,8 +166,8 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 | --- | --- | --- |
 | 1 | **有人** | 结论行带 `decided_by`，值取自会话里的管理员 id（⛔ 不接受调用方自报）：`services/api/src/admin/ops/community-posts.ts:292`；列定义见迁移 `services/api/db/migrations/0045_community_post_review_actor.sql:61`——`NULL` 是机器结论，非 `NULL` 才是人工结论 |
 | 2 | **有 scope** | 路由门是 `requireAdmin` 加 `requireScope`：`services/api/src/routes/admin.ts:569-572`；scope 取 `sources:write`（与 `hidePost` 同门，不新增 scope 值）：`services/api/src/admin/ops/service.ts:429`；没有它即 403 `SCOPE_DENIED`：`services/api/src/admin/identity.ts:69-70` |
-| 3 | **有审计** | 结论与帖子行**同一次原子提交**（不是"先发布、再补一条审计"）：`services/api/src/admin/ops/community-posts.ts:351-361` 只调一次 CAS 原语，结论作第 4 个实参交给它；库层在同一事务里写结论行：`services/api/src/community/store-pg.ts:632`，列与覆盖语义见 `services/api/src/community/store-pg.ts:354` 与 `services/api/src/community/store-pg.ts:366` |
-| 4 | **有 CAS** | 写之前逐项比对修订号、可见性、审核态，不符即拒：`services/api/src/community/store-pg.ts:470-476`；可见性推进只是这次 CAS 的**新态**之一：`services/api/src/admin/ops/community-posts.ts:327-328`（仅对 `private` 生效，`hidden`／`deleted` 不翻案） |
+| 3 | **有审计** | 结论与帖子行**同一次原子提交**（不是"先发布、再补一条审计"）：`services/api/src/admin/ops/community-posts.ts:351-361` 只调一次 CAS 原语，结论作第 4 个实参交给它；库层在同一事务里写结论行：`services/api/src/community/store-pg.ts:687`，列与覆盖语义见 `services/api/src/community/store-pg.ts:384` 与 `services/api/src/community/store-pg.ts:396` |
+| 4 | **有 CAS** | 写之前逐项比对修订号、可见性、审核态，不符即拒：`services/api/src/community/store-pg.ts:500-506`；可见性推进只是这次 CAS 的**新态**之一：`services/api/src/admin/ops/community-posts.ts:327-328`（仅对 `private` 生效，`hidden`／`deleted` 不翻案） |
 
 还容易漏一条：**硬规则层照旧拦得住**。人工放行覆盖的是"引擎没给结论／给了隔离"，不是违禁内容——硬规则否决时 422：`services/api/src/admin/ops/community-posts.ts:318-320`。
 

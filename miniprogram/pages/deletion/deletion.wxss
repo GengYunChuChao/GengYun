@@ -1,0 +1,8 @@
+/* 注销页只补版式细节：颜色与字号一律取 styles/tokens.wxss 与 app.wxss 的变量，
+   不写裸 px 字号（页面根节点已把 --font-scale 注入，字号自动跟随微信字体设置）。 */
+
+/* 回执 id 是 uuid，凭据到期时间是「日期 + 时间」：两者都比容器宽，不换行会把
+   info-row 撑出屏幕（这一条是实测长串溢出，不是预防性写法）。 */
+.info-row__desc {
+  word-break: break-all;
+}

@@ -22,6 +22,22 @@
   font-size: calc(16px * var(--font-scale, 1));
 }
 
+/* 单条记录的删除入口：跟在正文后面整行铺开，触控高度沿用 `var(--tap-min, 44px)`
+ * （与同页「发送/查看记录/删除整段会话」同一个下限），只补一处间距把它与上面的正文分开，
+ * 避免点正文时误触删除。 */
+.message-copy__delete {
+  margin-top: 12px;
+  min-height: var(--tap-min, 44px);
+  font-size: calc(16px * var(--font-scale, 1));
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* 删除口径说明：放在记录列表后面，与列表分开。 */
+.panel .hint {
+  margin-top: 12px;
+}
+
 /* 提问输入框：与全局 .input 同底色/边框/圆角，只增加高度与行距；跟随字体放大，不用固定高度裁切。 */
 .textarea {
   width: 100%;

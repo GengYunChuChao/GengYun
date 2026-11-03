@@ -14,6 +14,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import vm from 'node:vm'
+import { deterministicUuid } from '../../packages/reference/records.mjs'
 
 const root = resolve(import.meta.dirname, '../../miniprogram')
 const BASE = 'http://127.0.0.1:9999/api/v1'
@@ -217,7 +218,10 @@ test('A2 页面：列表页展示的 sourceVersionNote 与详情页展示的 sou
 })
 
 test('A3 页面：随包离线副本对同一记录同样只给一个 source_version（列表行 === 详情）', async () => {
-  const BUNDLED_ID = 'gy-i03-hb-001' // 非 UUID ⇒ 随包记录 id
+  // 可读记录号（溯源用）。**它不再是接口 id**：GY-R73 起随包条目另有 `id`，等于服务端同一记录
+  // 的 uuid（由 `deterministicUuid(record_id)` 派生，与服务端 `packages/reference/records.mjs` 同一函数）。
+  const BUNDLED_RECORD_ID = 'gy-i03-hb-001'
+  const BUNDLED_ID = deterministicUuid(BUNDLED_RECORD_ID)
   const list = fixture('reference')
   list.login()
   // 门禁只认「已联网 + 服务端核实过的会话」（见 D1），所以先按联网状态过门禁，再关联网取随包列表。
@@ -229,27 +233,47 @@ test('A3 页面：随包离线副本对同一记录同样只给一个 source_ver
   await settle()
   assert.equal(list.listCalls().length, serverCalls, '随包路径不得发起 /herbicides')
   assert.equal(list.page.data.dataSource, 'bundled-offline')
-  const row = list.page.data.items.find((item) => item.record_id === BUNDLED_ID)
-  assert.ok(row, '随包列表应含 ' + BUNDLED_ID)
+  const row = list.page.data.items.find((item) => item.record_id === BUNDLED_RECORD_ID)
+  assert.ok(row, '随包列表应含 ' + BUNDLED_RECORD_ID)
   assert.equal(row.data_source, 'bundled-offline')
   assert.equal(row.source_marker, '随包离线副本')
   assert.equal(typeof row.source_version, 'string')
   assert.notEqual(row.source_version.trim(), '', '随包行也必须带可判定的来源版本')
+  // GY-R73：列表卡片交给详情路由的是 `id`（uuid），记录号只作展示/溯源。
+  assert.equal(row.id, BUNDLED_ID, '随包行的 id 必须是服务端同一记录的 uuid（否则 GET /herbicides/{id} 恒 400）')
+  assert.equal(row.record_id, BUNDLED_RECORD_ID, '可读记录号必须原样保留')
 
   const detail = fixture('referencedetail')
   detail.login()
-  // 非 UUID 记录 id 在**联网**状态下同样走随包路径（见 D3），无需关联网。
-  await detail.show({ id: BUNDLED_ID })
-  assert.equal(detail.detailCalls().length, 0)
+  // 卡片把 `id` + `data-source` 一起带进路由：id 虽已是 uuid，仍必须读随包副本（富详情：剂量卡/适用性）。
+  await detail.show({ id: row.id, source: row.data_source })
+  assert.equal(detail.detailCalls().length, 0, '带 source=bundled-offline 时不得请求 /herbicides/{id}')
   assert.equal(detail.page.data.dataSource, 'bundled-offline')
   assert.equal(detail.page.data.sourceMarker, '随包离线副本')
   assert.ok(detail.page.data.detail, '随包详情应加载到记录')
+  assert.equal(detail.page.data.detail.record_id, BUNDLED_RECORD_ID)
   assert.equal(
     detail.page.data.detail.source_version,
     row.source_version,
     '随包列表与详情必须同源同版本'
   )
   assert.equal(detail.page.data.sourceDateLabel, '采集日期')
+
+  // 老链接兼容：只有记录号（没有 source 提示）时按形状判，仍落在随包副本。
+  const legacy = fixture('referencedetail')
+  legacy.login()
+  await legacy.show({ id: BUNDLED_RECORD_ID })
+  assert.equal(legacy.detailCalls().length, 0, '非 UUID 的旧记录号不得请求 /herbicides/{id}')
+  assert.equal(legacy.page.data.dataSource, 'bundled-offline')
+  assert.equal(legacy.page.data.detail.id, BUNDLED_ID, '旧链接命中的也必须是同一条（id 一致）')
+
+  // 反向钉住：**只有** uuid、没有 source 的链接仍按形状走服务端——证明「显式 source」才是保住
+  // 随包富详情的那一位，而不是某个新加的模糊匹配。
+  const shaped = fixture('referencedetail')
+  shaped.login()
+  await shaped.show({ id: BUNDLED_ID })
+  assert.equal(shaped.detailCalls().length, 1, '无 source 的 uuid 链接应按形状请求 /herbicides/{id}')
+  assert.equal(shaped.page.data.dataSource, 'server')
 })
 
 // ── B 非空 dose_cards ⇒ UNSUPPORTED_DOSE_RESPONSE，不可绕过 ─────────────────────

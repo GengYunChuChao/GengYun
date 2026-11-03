@@ -64,7 +64,7 @@
 | --- | --- | --- |
 | 不接微信外部推送 | 已具备 | `git grep -nE 'requestSubscribeMessage\|subscribeMessage\|wx\.cloud\|templateId\|tmplIds' -- miniprogram` ⇒ **命中 0**（实测，`7dd3d699`） |
 | 无客户端创建口 | 已具备 | 契约只有 3 条 operation：`GET /messages`／`GET /messages/unread-count`／`PUT /messages/{id}/read`（`packages/contracts/openapi.json` 实读 `operationId` 分别为 `listMessages`／`getUnreadCount`／`markMessageRead`）；路由只注册这 3 条（`services/api/src/routes/messages.ts:43`、`:53`、`:59`）；`git grep -nE 'app\.(post\|patch\|delete)' -- services/api/src/routes/messages.ts` ⇒ 命中 0；内部创建口不注册路由（`services/api/src/messages/service.ts:422`，文件头 `:6` 自述） |
-| 不虚构真人互动 | 已具备 | 消息只由两类**真实事件**产生：他人评论/点赞/审核（`services/api/src/community/events.ts:136` 按事件来源取 `comment`／`like`／`moderation`）、账号停用/恢复（`services/api/src/admin/ops/account-events.ts:144`）；社区域**永不产** `system`（`services/api/src/community/events.ts:129` 注释）；该边界被钉成守卫断言 `tests/unit/community-message-notifications.test.mjs:274`（N8 白名单：`system` 生产点只允许 `admin/ops/account-events.ts`） |
+| 不虚构真人互动 | 已具备 | 消息只由两类**真实事件**产生：他人评论/点赞/审核（`services/api/src/community/events.ts:136` 按事件来源取 `comment`／`like`／`moderation`）、账号停用/恢复（`services/api/src/admin/ops/account-events.ts:144`）；社区域**永不产** `system`（`services/api/src/community/events.ts:129` 注释）；该边界被钉成守卫断言 `tests/unit/community-message-notifications.test.mjs:275`（N8 白名单：`system` 生产点只允许 `admin/ops/account-events.ts`；GY-R73 起再加 `admin/ops/invalidation-events.ts`——来源/条目撤回 ⇒ 收藏者系统通知） |
 | 无种子/演示消息 | 已具备 | `git grep -nE 'seedMessages\|demoMessages\|presetMessages\|MESSAGE_SEED' -- services/api/src miniprogram` ⇒ **命中 0**；`appendMessage` 的调用方只有两处端口（`services/api/src/community/events.ts:173`、`services/api/src/admin/ops/account-events.ts:144`） |
 
 ### 1.4 AC4「列表、详情、收藏历史和消息均在读取时重查对象权限及当前可见性；隐藏／失效／注销不因缓存或旧链接重新公开」——**部分**（消息域子句已具备；「收藏历史」属 #16）
@@ -88,7 +88,7 @@
 | AC3 | **已具备** | 零推送代码、零创建路由、事件类型按来源取值、无种子消息 |
 | AC4 | **部分** | 消息域四子句齐（读时重查／no-store／注销）；「收藏历史」属 #16 |
 | 提交证据①（事件幂等与对象权限回归） | **已具备** | 幂等：`services/api/db/migrations/0019_messages_persistence.sql:68` ＋ `tests/unit/messages-security.test.mjs:279`；权限：`tests/unit/messages-security.test.mjs:38`、`tests/unit/messages-http.test.mjs:88` |
-| 提交证据②（列表／未读／跳转端到端证据） | **部分** | 列表/未读：`tests/unit/messages-http.test.mjs:203`、`:227`；跳转：服务端 `tests/unit/messages-target-scope.test.mjs:62`、页面 `tests/unit/miniprogram-ui-auth-integration.test.mjs:434`／`:459`／`:485`；**真机端到端未取得**（§5-U1） |
+| 提交证据②（列表／未读／跳转端到端证据） | **部分** | 列表/未读：`tests/unit/messages-http.test.mjs:203`、`:227`；跳转：服务端 `tests/unit/messages-target-scope.test.mjs:62`、页面 `tests/unit/miniprogram-ui-auth-integration.test.mjs:435`／`tests/unit/miniprogram-ui-auth-integration.test.mjs:460`／`tests/unit/miniprogram-ui-auth-integration.test.mjs:486`；**真机端到端未取得**（§5-U1） |
 
 ---
 
@@ -151,7 +151,7 @@
 | 未接线端口（诊断用） | `services/api/src/messages/reference.ts:59` | `export function createUnwiredReferencePort(` |
 | 只接社区域两型（裁定 B 的落点） | `services/api/src/messages/reference-community.ts:53` | `if (target_ref.type !== 'post' && target_ref.type !== 'comment') return 'unavailable';` |
 | 社区权威判据（注入） | `services/api/src/messages/reference-community.ts:56` | `const readable = await community.isPubliclyVisible(target_ref.type, target_ref.id);` |
-| 社区只读谓词（不进路由/不进 OpenAPI） | `services/api/src/community/service.ts:1851` | `visibility: Object.freeze({` |
+| 社区只读谓词（不进路由/不进 OpenAPI） | `services/api/src/community/service.ts:1927` | `visibility: Object.freeze({` |
 | 装配：后绑定读取器 | `services/api/src/app.ts:810` | `const messageReference: MessageReferencePort =`（`:811` `createCommunityReferencePort({ community: () => communityVisibility })`；`:1154` 补赋值） |
 | 页面可点判据（唯一） | `miniprogram/pages/messages/messages.js:310` | `const canOpen = message.reference_state === 'available' && target !== null &&` |
 | 页面跳转（post 直跳／comment 先取父帖） | `miniprogram/pages/messages/messages.js:279`／`:280` | `if (item.targetType === 'post') { open(item.targetId); return }`／`communityApi.getComment(item.targetId).then(function (result) {` |
@@ -249,7 +249,7 @@
 
 | 编号 | 未取得的东西 | 为什么本片拿不到（实测依据） | 若要取得需要什么 |
 | --- | --- | --- | --- |
-| U1 | **真机／微信开发者工具**走查：行点击跳转、pill 点按重试、角标展示 | 本机无微信编译器与真机交互环境；页面侧证据只到 Node 下对页面 JS/WXML 的逻辑断言（`tests/unit/miniprogram-ui-auth-integration.test.mjs:434`／`:459`／`:485` 3 例） | 一台真机或开发者工具 ＋ 可登录账号 ＋ 至少一条 `available` 的 `post` 消息（或合成 stub 模式走查），记录截图与 network |
+| U1 | **真机／微信开发者工具**走查：行点击跳转、pill 点按重试、角标展示 | 本机无微信编译器与真机交互环境；页面侧证据只到 Node 下对页面 JS/WXML 的逻辑断言（`tests/unit/miniprogram-ui-auth-integration.test.mjs:435`／`:460`／`:486` 3 例） | 一台真机或开发者工具 ＋ 可登录账号 ＋ 至少一条 `available` 的 `post` 消息（或合成 stub 模式走查），记录截图与 network |
 | U2 | **真 PG 的 `system` 事件形状** | `git grep -n "system" -- tests/integration/messages-pg.mjs` ⇒ **命中 0**（真库臂不覆盖 `system`）；`#485` 的 PG 证据只到**假池语句形状**（`$4::jsonb` 收 NULL、`read_at` 恒 NULL） | 扩写真库臂：插入 `type='system'`＋`target_ref=NULL` 行，回读 `target_ref IS NULL`、`read_at IS NULL`、唯一约束命中；或由 DBA 侧给 `select` 读数 |
 | U3 | **通知重试 outbox** | `git grep -ni outbox -- services/api/src/messages services/api/src/admin/ops/account-events.ts services/api/src/community/events.ts` ⇒ **命中 0**：投递是**同步、fail-open、不重试**（失败只留 `delivered:false`＋计数＋`warn`，见 `services/api/src/admin/ops/account-events.ts:205` 起与 `:222`）；而契约要求「outbox 与业务更新同事务，dispatcher 消费去重键」（`docs/architecture/state-contract.md:52`） | 要么实现 outbox＋dispatcher（迁移＋端口＋重试语义），要么由监工出具「消息域不走 outbox」的裁定并把口径写进契约；两者都不是本页能做的 |
 | U4 | **停用期间的不可读**（S1 消息读不到） | `#485` 已核：停用会撤会话且 `user.state !== 'active'` ⇒ `/messages` 401/403；**恢复没有 HTTP 路由**（`packages/contracts/operations.json` 只有 `suspendUser`）⇒ 没有「恢复后读到 S2」的端到端读数 | 先补恢复路由（属 #18 边界），再做「停用→恢复→收件箱读到两条」的端到端读数 |
