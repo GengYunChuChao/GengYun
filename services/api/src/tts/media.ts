@@ -85,8 +85,9 @@ export interface SynthesisMediaPort {
  * **读回端口**（只有真实端口提供；替身/未接线端口没有字节可读）。
  *
  * 服务端/测试专用：不进任何响应投影、不进日志（与媒体域 `serverObjectKeys` 同口径）。
- * 当前**没有** HTTP 读面（契约里没有「取合成音频字节」的 operation）⇒ 它只用于
- * 「字节确实落进了对象存储」的逐字节自证，以及将来的播放面接线。
+ * 读面接线（R74 `readSynthesisAudio`）：`service.ts` 的 `readAudio` 经本端口取字节，按产物
+ * 真实 `content-type` 原样返回；非 `audio/*` 与替身产物一律 409 `OBJECT_UNAVAILABLE`（GET 是
+ * bodyless，契约不许它声明 415）——⛔ 绝不把替身/非音频字节伪装成音频；拿不到端口同样 409。
  */
 export interface SynthesisMediaReadPort {
   /**
@@ -531,4 +532,22 @@ export function createSynthesisMediaPort(
     }
     throw error;
   }
+}
+
+/**
+ * 从产物端口上**显式探测**读回端口。
+ *
+ * 为什么需要探测：`createSynthesisMediaPort` 的静态返回类型是 `SynthesisMediaPort`，读回能力
+ * 只在真实对象存储那条分支上存在。若直接类型断言成 `SynthesisMediaReadPort`，「未接线」这件事
+ * 就会在类型上消失 —— 而那正是读面把空字节当音频返回的来源。这里只认**函数形状**
+ * （不认 `kind`、不读 `note`）：替身/未接线端口没有这两个方法 ⇒ `null` ⇒ 读面 fail-closed。
+ */
+export function asSynthesisMediaReadPort(
+  port: SynthesisMediaPort | null | undefined,
+): SynthesisMediaReadPort | null {
+  if (port === null || port === undefined) return null;
+  const candidate = port as unknown as Partial<SynthesisMediaReadPort>;
+  if (typeof candidate.readArtifact !== 'function') return null;
+  if (typeof candidate.objectKeyFor !== 'function') return null;
+  return port as SynthesisMediaPort & SynthesisMediaReadPort;
 }

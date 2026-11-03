@@ -1296,6 +1296,33 @@
       "blocker": "合成受理端点已装配，仅接受已核对内容引用；真实提供者、核对内容与产物端口（GY-R68 起）**已在产品装配接线**——`services/api/src/app.ts:1161` 的 `createCheckedContentPortFromConfig`、`services/api/src/app.ts:1162` 的 `createTtsProvider`、`services/api/src/app.ts:1176` 的 `createSynthesisMediaPort(config.executionMode, synthesisMediaWiring)`，产物端口自身由**生产入口** `services/api/src/server.ts:50` 的 `synthesisMediaWiringAssemblyOptions(mediaRealPorts)` 在带 `--approve-real-media-wiring` 时铸造；旧文案「三样未在产品装配接线、明确拒绝」已过期，当前真实卡点是**凭据与媒体域批准**（无 TTS 凭据 ⇒ 503 `PROVIDER_UNAVAILABLE`；产物端口 `unwired` ⇒ 409 `OBJECT_UNAVAILABLE`；已核对内容读不到 ⇒ 409 + reason `AUDIT_STATE_UNREADABLE`），且产品 HTTP 路径的真实 `TextToVoice` 读数仍未取得；内存任务的**读取**早已接入公共 Job 读面（#152 合成域作业源，读面复用 tts/service.ts 的 inspectJob），**取消**已于 GY-R27（#322）接线（`services/api/src/jobs/sources.ts:153`，域内 `services/api/src/tts/service.ts:711` 的 `cancelJob`）⇒ queued/running 单次 CAS ⇒ cancelled、revision 恰好 +1 且 error_code 置空，终态再取消 ⇒ 409 OBJECT_UNAVAILABLE；真实音频/听感评估、播放消费、持久/删除链待验收"
     },
     {
+      "id": "readSynthesisAudio",
+      "method": "get",
+      "path": "/speech/synthesis/{id}/audio",
+      "route": "/api/v1/speech/synthesis/:id/audio",
+      "scope": "user",
+      "version_required": false,
+      "route_mounted": true,
+      "status": "partial",
+      "evidence": [
+        {
+          "path": "services/api/src/routes/synthesis.ts",
+          "symbol": "service.readAudio(",
+          "lines": "217-243"
+        },
+        {
+          "path": "services/api/src/tts/service.ts",
+          "symbol": "async function readAudio(",
+          "lines": "885-951"
+        },
+        {
+          "test": "tests/unit/tts-audio-read.test.mjs",
+          "name": "（a）本人终态合成 + 端口提供 audio/wav ⇒ 200、content-type 原样、字节逐字相等、private no-store、无 ETag"
+        }
+      ],
+      "blocker": "读面已装配：`guards.requireUser` + 服务层 `getOwnedSynthesis`（不存在与非本人**同形** 404，不泄露存在性），200 按产物**真实** `content-type` 原样下发 + `Cache-Control: private, no-store`，**无** ETag/条件请求、无签名 URL 与下载重定向，对象键不出响应。默认部署**故意没有音频**：替身执行模式的产物是明确标注的**非音频**占位（`application/x-gengyun-tts-substitute`）⇒ 读面一律 409 `OBJECT_UNAVAILABLE`（文案点明「替身/非音频产物」），⛔ 不把非音频字节标成 `audio/*` 返回，也不为此新增任何 fixture 音频。真实音频需要三件同时成立：①真实 TTS 凭据（否则受理面 503 `PROVIDER_UNAVAILABLE`，作业根本不会 succeeded）；②产物端口经生产入口 `--approve-real-media-wiring` 批准后为 `s3_compatible`（否则 `unwired` ⇒ 读面 409 `READ_PORT_UNWIRED`）；③对象存储里真有该 `media_id` 的键（否则 `readArtifact` 回 null ⇒ 409 `MEDIA_MISSING`）。客户端侧另有部署条件：小程序 `InnerAudioContext` **不能**带 `Authorization` 头，真实播放走 `wx.downloadFile`（带 Bearer 头）下载到临时文件后再播，因此还需把 API 域名加入小程序的 downloadFile 合法域名；真实音频听感与端到端播放仍待验收"
+    },
+    {
       "id": "createConversation",
       "method": "post",
       "path": "/conversations",
@@ -4393,8 +4420,8 @@
         },
         {
           "path": "services/api/src/tts/service.ts",
-          "symbol": "SynthesisService",
-          "lines": "819-842"
+          "symbol": "createSynthesisServiceForMode",
+          "lines": "977-1003"
         },
         {
           "test": "tests/unit/recognitions-api.test.mjs",

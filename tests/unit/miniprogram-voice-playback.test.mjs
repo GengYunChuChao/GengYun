@@ -642,6 +642,48 @@ function loadPageHarness(options = {}) {
     }
   };
 
+  /**
+   * R74：**可播放出口**的平台能力探针（默认**不**提供）。
+   *
+   * 默认保持"没有内建音频能力"的原状 —— 既有用例建立在"取不到来源 ⇒ 失败"之上，不因本片改变。
+   * `innerAudio: true` ⇒ 提供 `wx.createInnerAudioContext`（句柄探针：记录 `src`、`play()` 次数，
+   * 并可按需触发 `ended`/`error`）；`downloadFile: fn` ⇒ 提供 `wx.downloadFile`（记录每个入参，
+   * 由用例决定回 2xx 临时文件路径还是失败）。两者都只是**测试替身**，不产生任何声音、不落音频样本。
+   */
+  const audioContexts = [];
+  const downloads = [];
+  if (options.innerAudio === true) {
+    fakeWx.createInnerAudioContext = () => {
+      const context = {
+        src: '',
+        played: 0,
+        paused: 0,
+        stopped: 0,
+        destroyed: false,
+        handlers: {},
+        onPlay: (handler) => { context.handlers.play = handler },
+        onPause: (handler) => { context.handlers.pause = handler },
+        onStop: (handler) => { context.handlers.stop = handler },
+        onEnded: (handler) => { context.handlers.ended = handler },
+        onError: (handler) => { context.handlers.error = handler },
+        onWaiting: (handler) => { context.handlers.waiting = handler },
+        // 平台语义：play() 之后由平台回调 onPlay；这里同步回调，便于用例确定性观察状态。
+        play: () => { context.played += 1; if (context.handlers.play) context.handlers.play() },
+        pause: () => { context.paused += 1; if (context.handlers.pause) context.handlers.pause() },
+        stop: () => { context.stopped += 1; if (context.handlers.stop) context.handlers.stop() },
+        destroy: () => { context.destroyed = true },
+        _ended: () => { if (context.handlers.ended) context.handlers.ended() },
+        _error: (error) => { if (context.handlers.error) context.handlers.error(error || { errMsg: 'synthetic play error' }) }
+      };
+      audioContexts.push(context);
+      return context;
+    };
+  }
+  if (typeof options.downloadFile === 'function') {
+    fakeWx.downloadFile = (input) => { downloads.push(input); options.downloadFile(input) };
+  }
+
+
   const cache = new Map();
   function loadReal(file, resolveDep) {
     if (cache.has(file)) return cache.get(file);
@@ -736,7 +778,7 @@ function loadPageHarness(options = {}) {
     });
     return {
       page, requests, toasts, sets, auth, runtime, wx: fakeWx,
-      recorder, recorderOptions: options.recorderOptions || {}, wxCalls,
+      recorder, recorderOptions: options.recorderOptions || {}, wxCalls, audioContexts, downloads,
       uploads: () => uploadCount,
       deferredOf: () => deferred,
       fileInfoOf: () => fileInfoDeferred,
@@ -1001,7 +1043,7 @@ test('反例·样本未声明契约目标引用 ⇒ 不发明引用、零合成�
   h.page.onUnload();
 });
 
-test('缩片·取不到可播放来源 ⇒ 页面如实呈现「本环境无可播放音频（契约无客户端音频出口）」，绝不显示「播放中／已播放」', async () => {
+test('缩片·取不到可播放来源 ⇒ 页面如实呈现「本环境暂无可播放音频」，绝不显示「播放中／已播放」', async () => {
   const h = bootPage();
   h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
   assert.equal(h.page.data.substituteWalkthrough, false, '替身走查默认必须是关（否则会出现"没有来源 + 正在播报"的自相矛盾态）');
@@ -1018,20 +1060,24 @@ test('缩片·取不到可播放来源 ⇒ 页面如实呈现「本环境无可�
   assert.equal(h.page._plan.length, 0, '没有可播放来源 ⇒ 计划为空');
   assert.equal(h.page.data.ballHint, '');
 
-  // ② 文案口径：必须是**契约层**事实，不是"网络问题"，且与客户端常量逐字一致。
+  // ② 文案口径：必须是**可复核的具体原因**（不是"网络问题"，也不再是"契约缺口"泛化说法）。
   const note = h.page.data.sourceNotice;
-  assert.ok(note.includes('本环境无可播放音频'), note);
-  assert.ok(note.includes('契约无客户端音频出口'), note);
-  assert.equal(note.startsWith(h.voiceApi.NO_CLIENT_AUDIO_EGRESS_NOTE), true, '页面必须原样展示该常量（不得自造措辞）');
+  assert.ok(note.includes('本环境暂无可播放音频'), note);
+  assert.equal(note.startsWith(h.voiceApi.NO_PLAYABLE_AUDIO_NOTE), true, '页面必须原样展示该常量（不得自造措辞）');
+  assert.ok(note.includes('SUBSTITUTE_ARTIFACT'), note);
+  assert.ok(note.includes('替身'), note);
 
-  // ③ 客户端 API 层：stub 与 real 两支都如实不可播，且原因各不相同（不得都写成"网络问题/登录失效"）。
+  // ③ 客户端 API 层：stub 支如实不可播且原因**具体**（不是空泛的 SOURCE_UNAVAILABLE）；
+  //    real 支给出私有读面地址（能否真的取到字节由服务端在取字节那一刻判定）。
   const stubSource = h.voiceApi.audioSourceForJob(jobFixture({ suffix: '4' }), 'stub');
   const realSource = h.voiceApi.audioSourceForJob(jobFixture({ suffix: '5' }), 'real');
-  assert.equal(stubSource.code, 'SOURCE_UNAVAILABLE');
-  assert.equal(realSource.code, 'SOURCE_UNAVAILABLE');
-  assert.notEqual(stubSource.reason, realSource.reason, 'stub 与 real 的如实原因必须各自可指出');
+  assert.equal(stubSource.ok, false);
+  assert.equal(stubSource.code, 'SUBSTITUTE_ARTIFACT', '替身执行模式必须给出具体分类（不是 SOURCE_UNAVAILABLE）');
+  assert.equal(stubSource.code === 'SOURCE_UNAVAILABLE', false);
   assert.ok(stubSource.reason.includes('非音频'), stubSource.reason);
-  assert.ok(realSource.reason.includes('契约没有面向客户端的音频出口'), realSource.reason);
+  assert.equal(realSource.ok, true, 'real 终态必须给出真实读面地址');
+  assert.equal(realSource.url, 'http://127.0.0.1:3000/speech/synthesis/00000000-0000-4000-8000-000000000051/audio');
+  assert.equal(realSource.label, '真实音频');
 
   // ④ 静态口径：wxml 必须渲染该提示，且**渲染内容**里没有任何「已播放」表述（注释不算）。
   const wxml = read('miniprogram/pages/voice/voice.wxml');
@@ -1039,6 +1085,108 @@ test('缩片·取不到可播放来源 ⇒ 页面如实呈现「本环境无可�
   assert.ok(wxml.includes('{{sourceNotice}}'), 'wxml 必须原样展示该提示文本');
   const wxmlRendered = wxml.replace(/<!--[\s\S]*?-->/g, '');
   assert.equal(wxmlRendered.includes('已播放'), false, '页面渲染内容不得出现「已播放」表述');
+  h.page.onUnload();
+});
+
+// ============================================================ 5c. R74：客户端音频出口真的接通
+//
+// 口径（不造假音频）：服务端新增的私有读面 `GET /speech/synthesis/{id}/audio` 要 `authorization`，
+// 而 `InnerAudioContext` **不能**带自定义头 ⇒ 客户端必须先用 `wx.downloadFile`（带会话头）把字节
+// 下到临时文件，再把 `tempFilePath` 交给播放器。下面的用例把这条链**整条**跑通：断言真的创建了
+// 音频上下文、`src` 真的是下载得到的临时文件、`downloadFile` 真的带了 Authorization 且只发给自家域。
+
+/** 可播放出口的完整链路：real 终态 + 注入的平台能力（`innerAudio` + `downloadFile`）。 */
+async function playRealJob(h, options = {}) {
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+  const pending = h.page.onBroadcast();
+  assert.equal(h.requests.length, 1);
+  const job = jobFixture({ suffix: options.suffix === undefined ? '8' : options.suffix });
+  acceptJob(h.requests[0], job, 'real');
+  await pending;
+  await flushMicrotasks();
+  return job;
+}
+
+test('（d）可播放 ⇒ audioSourceForJob ok:true，页面真的创建音频上下文：带 Authorization 下载后播临时文件', async () => {
+  const h = bootPage({
+    innerAudio: true,
+    downloadFile: (input) => { input.success({ statusCode: 200, tempFilePath: 'wxfile://tmp/synthetic-r74-audio.wav' }) }
+  });
+  const job = await playRealJob(h);
+
+  // ① API 层：终态 success + 服务端执行模式 real ⇒ 私有读面地址（绝对地址，带 /api/v1 前缀）。
+  const source = h.voiceApi.audioSourceForJob(job, 'real');
+  assert.equal(source.ok, true);
+  assert.equal(source.url, 'http://127.0.0.1:3000/speech/synthesis/' + job.result.value.id + '/audio');
+
+  // ② 计划里就是那个地址（不是替身占位、不是空计划）。
+  assert.equal(h.page._plan.length, 1);
+  assert.equal(h.page._plan[0].src, source.url);
+  assert.equal(h.page.data.sourceNotice, '', '有真实可播源时必须清空「暂无可播放音频」提示');
+  assert.equal(h.page.data.substitute, false, '真实音频不得标成替身');
+
+  // ③ 真的走了平台下载：URL 正确、带会话头，且**只**发给自家 API 域。
+  assert.equal(h.downloads.length, 1, '必须用 wx.downloadFile 取私有字节（InnerAudioContext 不能带自定义头）');
+  assert.equal(h.downloads[0].url, source.url);
+  assert.deepEqual(h.downloads[0].header, { authorization: 'Bearer synthetic-token' });
+  assert.equal(source.url.startsWith(h.runtime.apiBaseUrl), true, '会话头只发给自家 API 域');
+
+  // ④ 真的创建了音频上下文，且 `src` 是下载得到的**临时文件**（不是远端 URL、不是替身 scheme）。
+  assert.equal(h.audioContexts.length, 1, '必须真的创建音频上下文');
+  assert.equal(h.audioContexts[0].src, 'wxfile://tmp/synthetic-r74-audio.wav');
+  assert.equal(h.audioContexts[0].played, 1, '临时文件就绪后必须真的发起播放（不是只挂一个句柄）');
+  assert.equal(h.page.data.playbackState, 'playing');
+  assert.equal(h.page.data.listened, false, '未播放到 ended 之前不得记「已听取」');
+
+  // ⑤ 播放到结束才记已听取（平台真的回 ended；控制器把末段结束记为 stopped）。
+  assert.equal(h.page.data.listened, false, '播放到 ended 之前不得记「已听取」');
+  h.audioContexts[0]._ended();
+  await flushMicrotasks(2);
+  assert.equal(h.page.data.playbackState, 'stopped');
+  assert.equal(h.page.data.listened, true, '真的播完才记「已听取」');
+  h.page.onUnload();
+});
+
+test('（d）不可播放 ⇒ ok:false 且原因具体：非音频/替身走失败分支并说明「这是替身/非音频」，绝不假装播过', async () => {
+  const h = bootPage({ innerAudio: true, downloadFile: (input) => { input.success({ statusCode: 409, tempFilePath: '' }) } });
+  h.page.onSelectSample({ currentTarget: { dataset: { id: 'sample-i13-passed' } } });
+
+  // ① 非终态 / 非成功：原因逐条不同（不是空泛 SOURCE_UNAVAILABLE）。
+  const failed = h.voiceApi.audioSourceForJob(Object.assign(jobFixture({ suffix: '9' }), { state: 'failed', error_code: 'PROVIDER_TIMEOUT' }), 'real');
+  assert.equal(failed.ok, false);
+  assert.equal(failed.code, 'JOB_NOT_SUCCEEDED');
+  assert.ok(failed.reason.includes('PROVIDER_TIMEOUT') === false, 'reason 只陈述任务未成功这一事实');
+  assert.ok(failed.reason.includes('state=failed'), failed.reason);
+  const noResult = h.voiceApi.audioSourceForJob(Object.assign(jobFixture({ suffix: '9' }), { result: null }), 'real');
+  assert.equal(noResult.code, 'NO_ARTIFACT');
+  assert.ok(noResult.reason.includes('media_id'), noResult.reason);
+
+  // ② 替身执行模式 ⇒ 明确说"非音频占位"，且**不**给出任何地址（不给播放器喂假源）。
+  const substitute = h.voiceApi.audioSourceForJob(jobFixture({ suffix: '9' }), 'stub');
+  assert.equal(substitute.ok, false);
+  assert.equal(substitute.code, 'SUBSTITUTE_ARTIFACT');
+  assert.equal(substitute.url, undefined);
+  assert.ok(substitute.reason.includes('非音频'), substitute.reason);
+  assert.ok(substitute.reason.includes('替身'), substitute.reason);
+
+  // ③ 页面上真实可播场景里服务端以 409 拒绝（替身/非音频或产物已清理）⇒ 走**失败分支**并写出具体原因。
+  const pending = h.page.onBroadcast();
+  acceptJob(h.requests[0], jobFixture({ suffix: '7' }), 'real');
+  await pending;
+  await flushMicrotasks();
+
+  assert.equal(h.downloads.length, 1, '必须真的试着取字节（不能凭空断定可播/不可播）');
+  assert.equal(h.audioContexts.length, 1, '下载失败也要如实走播放器失败路径');
+  assert.equal(h.audioContexts[0].src, '', '下载失败时绝不把远端 URL 直接塞进播放器');
+  assert.equal(h.audioContexts[0].played, 0, '没有字节就不许 play');
+  assert.equal(h.page.data.playbackState, 'failed');
+  assert.equal(h.page.data.listened, false, '取不到字节绝不记「已听取」');
+  assert.equal(h.page.data.failure.code, 'SOURCE_UNAVAILABLE');
+  // 服务端的具体拒绝原因必须**可见可复核**（不是只留一句泛化提示）。
+  assert.ok(String(h.page.data.failure.reason).includes('409'), h.page.data.failure.reason);
+  assert.ok(/替身|非音频/.test(String(h.page.data.failure.reason)), h.page.data.failure.reason);
+  assert.ok(h.page.data.sourceNotice.includes('播放未完成'), h.page.data.sourceNotice);
+  assert.ok(h.page.data.sourceNotice.includes('409'), h.page.data.sourceNotice);
   h.page.onUnload();
 });
 
@@ -1054,8 +1202,8 @@ test('缩片·替身走查**显式**开启时：只走控件生命周期、仍�
   assert.equal(h.page.data.substitute, true, '必须如实标记为替身');
   assert.equal(h.page.data.listened, false, '替身没有声音，绝不记「已听取」');
   assert.ok(h.page._plan.every((item) => String(item.src).startsWith('substitute://segment/')), '替身计划的源必须是标注占位，不得是真实音频');
-  // 来源口径必须仍在（走查不改变"契约无客户端音频出口"这一事实）。
-  assert.ok(h.page.data.sourceNotice.includes('契约无客户端音频出口'), h.page.data.sourceNotice);
+  // 来源口径必须仍在（走查不改变"取不到真实音频字节"这一事实）。
+  assert.equal(h.page.data.sourceNotice.startsWith(h.voiceApi.NO_PLAYABLE_AUDIO_NOTE), true, h.page.data.sourceNotice);
   const wxml = read('miniprogram/pages/voice/voice.wxml');
   assert.ok(wxml.includes('不代表已取得可播放来源'), '替身走查提示必须明示它不代表已取得可播放来源');
   h.page.onUnload();

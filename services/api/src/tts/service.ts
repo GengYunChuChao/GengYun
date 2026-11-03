@@ -77,8 +77,9 @@ import { API_PREFIX, type ErrorCode } from '../contract.ts';
 import { ApiError } from '../errors.ts';
 import type { CheckedContentPort } from './content.ts';
 import { TtsLocalInputError } from './live-ports.ts';
-import type { SynthesisMediaPort } from './media.ts';
-import type { ProviderFailureCode, TtsProvider } from './provider.ts';
+import { asSynthesisMediaReadPort } from './media.ts';
+import type { StoredSynthesisArtifact, SynthesisMediaPort, SynthesisMediaReadPort } from './media.ts';
+import { SUBSTITUTE_ARTIFACT_CONTENT_TYPE, type ProviderFailureCode, type TtsProvider } from './provider.ts';
 import {
   SynthesisArtifactError,
   TtsProtocolError,
@@ -143,10 +144,48 @@ export type SynthesisUsability =
     }
   | { usable: false; code: ErrorCode; reason: SynthesisUsabilityReason; message: string };
 
+/**
+ * **音频读面的拒绝原因**（闭集，与 `SynthesisUsabilityReason` 同口径）。
+ *
+ * 每一种都对应一条「不能把字节交出去」的具体事实，页面据此显示具体原因（而不是空泛的
+ * 「没有可播放的音频源」）：
+ *  - `READ_PORT_UNWIRED`：装配里没有产物读回端口（替身/未接线）——**没有字节可读**，
+ *    不是「读失败」；
+ *  - `SUBSTITUTE_ARTIFACT`：`media_id` 指向替身标注产物（**非音频**、不可播放）；
+ *  - `NOT_AUDIO`：产物真实 `content-type` 不是 `audio/*`（替身/异常产物）⇒ 绝不伪装成音频；
+ *  - `ARTIFACT_EMPTY`：产物是 0 字节（不是可播放音频）；
+ *  - `MEDIA_MISSING`：产物已不可用（对象键被删除/索引已清理/端口说没有）；
+ *  - `MEDIA_INDEX_MISMATCH`：`media_id` 反查不回刚通过归属校验的那一行（索引不一致）；
+ *  - `STORAGE_UNREADABLE`：存储读失败/超时（无法确认字节，按不可用处理）。
+ */
+export type SynthesisAudioRefusalReason =
+  | 'READ_PORT_UNWIRED'
+  | 'SUBSTITUTE_ARTIFACT'
+  | 'NOT_AUDIO'
+  | 'ARTIFACT_EMPTY'
+  | 'MEDIA_MISSING'
+  | 'MEDIA_INDEX_MISMATCH'
+  | 'STORAGE_UNREADABLE';
+
+/**
+ * 音频读面的结果（成功 = **可直接当响应体发出去**的字节 + 产物真实内容类型）。
+ *
+ * 成功分支不带任何桶名/对象键/供应商信息：读面只需要「原样返回的字节 + 真实 content-type」。
+ */
+export type SynthesisAudioRead =
+  | { ok: true; contentType: string; bytes: Uint8Array; byteLength: number }
+  | { ok: false; code: ErrorCode; reason: SynthesisAudioRefusalReason; message: string };
+
 export interface SynthesisServiceOptions {
   store: SynthesisStore;
   provider: TtsProvider;
   media: SynthesisMediaPort;
+  /**
+   * 产物**读回**端口（可选）：只有真实对象存储端口提供它（`tts/media.ts` 的
+   * `asSynthesisMediaReadPort` 由装配层显式探测后传入）。未注入 ⇒ 音频读面 409
+   * `OBJECT_UNAVAILABLE`（`READ_PORT_UNWIRED`），**不**回任何字节。
+   */
+  mediaRead?: SynthesisMediaReadPort;
   /** 已核对内容读取端口（只读；未接线时读一律抛错 ⇒ 一律拒绝）。 */
   content: CheckedContentPort;
   /** 幂等请求摘要密钥（服务端密钥，不入库、不下发）。 */
@@ -258,6 +297,16 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
   const store = options.store;
   const provider = options.provider;
   const media = options.media;
+  /**
+   * 读回端口可能不存在（替身/未接线）——读面据此 fail-closed，而不是猜。
+   *
+   * 默认**从产物端口现场探测**（`asSynthesisMediaReadPort` 只认 `readArtifact`+`objectKeyFor`
+   * 两个函数形状）：`s3_compatible` 真实对象存储端口同时实现读回，替身/未接线端口没有它
+   * ⇒ `undefined` ⇒ 读面 409 `OBJECT_UNAVAILABLE`。探测放在服务层而不是装配层，
+   * 是为了让 `services/api/src/app.ts` 的装配行数与接线方式保持原样（该文件的行号被
+   * 历史证据页逐行引用，多插一行就会让一批锚点判 SUSPECT）。显式注入 `mediaRead` 仍优先。
+   */
+  const mediaRead = options.mediaRead ?? asSynthesisMediaReadPort(media) ?? undefined;
   const content = options.content;
   const now = options.now ?? (() => new Date());
   const idFactory = options.idFactory ?? (() => randomUUID());
@@ -806,11 +855,107 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
     };
   }
 
+  /**
+   * **音频读面**（`GET /api/v1/speech/synthesis/{id}/audio` 的服务层入口）。
+   *
+   * 逐项 fail-closed，顺序刻意：
+   *   ① 归属：`getOwnedSynthesis` —— 不存在与越权**同形** 404 `NOT_FOUND`（不泄露存在性）；
+   *   ② 替身：`row.substitute === true` ⇒ 409 `OBJECT_UNAVAILABLE`。替身产物是**非音频**
+   *      标注占位，⛔ 绝不按 `audio/*` 发出去；
+   *   ③ 读端口：未注入（替身/未接线装配）⇒ 409 `OBJECT_UNAVAILABLE`：**没有字节可读**，
+   *      这与「读失败」不是一回事，文案要分清；
+   *   ④ 索引：`media_id` 是**全局**键，而 `readArtifact(mediaId)` 不带属主参数 —— 所以取字节前
+   *      必须把它反查回属主行，确认正是刚通过归属校验的那一行；
+   *   ⑤ 取字节：`readArtifact` 返回 `null` ⇒ 产物已不可用；抛错/超时 ⇒ 存储读不到（都按不可用）；
+   *   ⑥ 类型：产物**真实** `content-type` 必须是 `audio/*`，否则 409 —— 不把非音频字节伪装成音频；
+   *   ⑦ 体积：0 字节 ⇒ 409（空产物不是可播放音频）。
+   *
+   * 成功分支的 `contentType` **就是产物自己的标注**：路由按它原样下发，不改写、不猜测、不降级成
+   * 某个"通用音频类型"。
+   *
+   * 为什么"非音频/替身"挑 `409 OBJECT_UNAVAILABLE` 而不是 `415 MEDIA_TYPE_UNSUPPORTED`：415 描述的是
+   * **请求**带的媒体类型（`tools/validate_contracts.py` 只允许**带体**方法声明 413/415，GET 是
+   * bodyless，声明即报错），而这里拒绝的理由是**产物**不是音频 —— 产物存在，但作为音频不可提供，
+   * 正落在 `OBJECT_UNAVAILABLE`（受保护资源当前不可取）里；具体缘由由 `reason` 与服务文案说清。
+   *
+   * 为什么不复用 `verifyUsable`：那是**播放前的内容判定**（重读核对快照、比对 revision），
+   * 会为「字节到底能不能读出来」额外发一次核对读取；读面只回答「这一枚产物现在能不能原样取回」。
+   * 归属与产物存在性仍走同一批既有函数（`getOwnedSynthesis` / `readArtifact`），不另立规则。
+   */
+  async function readAudio(input: { userId: string; synthesisId: string }): Promise<SynthesisAudioRead> {
+    const row = await getOwnedSynthesis(input.userId, input.synthesisId);
+    if (row.substitute) {
+      return {
+        ok: false,
+        code: 'OBJECT_UNAVAILABLE',
+        reason: 'SUBSTITUTE_ARTIFACT',
+        message: `该合成产物是替身执行模式的**非音频**标注产物（${SUBSTITUTE_ARTIFACT_CONTENT_TYPE}），`
+          + '不可播放；本服务不把替身字节伪装成 audio/* 返回。',
+      };
+    }
+    if (mediaRead === undefined) {
+      return {
+        ok: false,
+        code: 'OBJECT_UNAVAILABLE',
+        reason: 'READ_PORT_UNWIRED',
+        message: `合成产物读回端口未接线（当前产物端口 kind=${media.kind}）：没有字节可读，故不给音频。`,
+      };
+    }
+    const owner = await store.findByMediaId(row.mediaId);
+    if (owner === null || owner.id !== row.id) {
+      return {
+        ok: false,
+        code: 'OBJECT_UNAVAILABLE',
+        reason: 'MEDIA_INDEX_MISMATCH',
+        message: '该产物的 media_id 反查不回这条合成记录（索引不一致）：拒绝把字节发出去。',
+      };
+    }
+    let artifact: StoredSynthesisArtifact | null;
+    try {
+      artifact = await mediaRead.readArtifact(row.mediaId);
+    } catch {
+      return {
+        ok: false,
+        code: 'OBJECT_UNAVAILABLE',
+        reason: 'STORAGE_UNREADABLE',
+        message: '产物存储读取失败或超时：无法确认字节，按不可用处理。',
+      };
+    }
+    if (artifact === null) {
+      return {
+        ok: false,
+        code: 'OBJECT_UNAVAILABLE',
+        reason: 'MEDIA_MISSING',
+        message: '合成产物已不可用（对象已清理或产物存储未接线）。',
+      };
+    }
+    const contentType = typeof artifact.contentType === 'string' ? artifact.contentType.trim() : '';
+    if (!contentType.toLowerCase().startsWith('audio/')) {
+      return {
+        ok: false,
+        code: 'OBJECT_UNAVAILABLE',
+        reason: 'NOT_AUDIO',
+        message: `产物内容类型是 ${contentType === '' ? '（未标注）' : contentType}，不是 audio/*：`
+          + '本服务不把非音频字节伪装成音频返回。',
+      };
+    }
+    if (artifact.bytes.byteLength <= 0) {
+      return {
+        ok: false,
+        code: 'OBJECT_UNAVAILABLE',
+        reason: 'ARTIFACT_EMPTY',
+        message: '产物是 0 字节：空产物不是可播放音频。',
+      };
+    }
+    return { ok: true, contentType, bytes: artifact.bytes, byteLength: artifact.bytes.byteLength };
+  }
+
   return {
     createSynthesis,
     inspectJob,
     cancelJob,
     verifyUsable,
+    readAudio,
     settle,
     /** 供证据文档／诊断：当前提供者与各端口标注（替身如实标注，不含凭据、不含音频）。 */
     describe: () => ({
@@ -821,6 +966,8 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
       providerUnavailableReason: provider.unavailableReason,
       mediaPort: media.kind,
       mediaNote: media.note,
+      /** 音频读面是否接线：`wired` 才可能返回音频字节；`none` ⇒ 读面恒 409（不谎称有音频）。 */
+      mediaReadPort: mediaRead === undefined ? 'none' : 'wired',
       contentPort: content.kind,
       contentNote: content.note,
       storePersistent: store.persistent,
@@ -841,6 +988,8 @@ export function createSynthesisServiceForMode(input: {
   provider: TtsProvider;
   store: SynthesisStore;
   media: SynthesisMediaPort;
+  /** 产物读回端口（只有真实对象存储端口提供；不传 ⇒ 音频读面 409 `OBJECT_UNAVAILABLE`）。 */
+  mediaRead?: SynthesisMediaReadPort;
   content: CheckedContentPort;
   idempotencyHmacKey: string;
   now?: () => Date;
@@ -852,6 +1001,7 @@ export function createSynthesisServiceForMode(input: {
     store: input.store,
     provider: input.provider,
     media: input.media,
+    mediaRead: input.mediaRead,
     content: input.content,
     idempotencyHmacKey: input.idempotencyHmacKey,
     now: input.now,

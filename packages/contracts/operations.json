@@ -331,6 +331,13 @@
       "version_required": false
     },
     {
+      "id": "readSynthesisAudio",
+      "path": "/speech/synthesis/{id}/audio",
+      "method": "get",
+      "scope": "user",
+      "version_required": false
+    },
+    {
       "id": "createConversation",
       "path": "/conversations",
       "method": "post",

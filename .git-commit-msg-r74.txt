@@ -1,0 +1,74 @@
+feat(gy-r74): TTS 音频读面 + 小程序真实播放出口（不造假音频）
+
+R74 / #13：合成 → 轮询 → 终态早已打通，但契约里没有任何客户端可读的音频出口，
+`audioSourceForJob()` 只能恒返 SOURCE_UNAVAILABLE，`voice.js:627` 的播放分支是死的。
+本提交把这条路修通，同时**不**在默认部署里造一个字节的音频。
+
+服务端（成对新增 operation `readSynthesisAudio`，未改任何既有 operation）
+- `GET /api/v1/speech/synthesis/{id}/audio`（`services/api/src/routes/synthesis.ts`）：
+  `guards.requireUser` + 服务层 `getOwnedSynthesis` 归属校验，越权与「不存在」**同形**
+  404 `NOT_FOUND`（不泄露存在性，路径参数刻意不写 `format:uuid`）；字节经既有
+  `SynthesisMediaReadPort.readArtifact` 取出，`content-type` **按产物标注原样返回**；
+  `Cache-Control: private, no-store`；不引入 ETag/条件请求、不新增下载/重定向/签名 URL。
+- 产物不是 `audio/*`（替身占位 `application/x-gengyun-tts-substitute`、错标、未标注）
+  ⇒ 409 `OBJECT_UNAVAILABLE` + 明确文案，⛔ 绝不把非音频字节按 `audio/*` 发出去。
+  为什么不是 415：GET 是 bodyless，415 描述的是**请求**的媒体类型，
+  `tools/validate_contracts.py:340-341` 对 bodyless 方法强制禁止声明 413/415。
+- 产物缺失/已清理/未接线/读失败/0 字节 ⇒ 同一 409，由文案区分缘由。
+- `services/api/src/tts/store.ts` 新增 `findByMediaId`：`readArtifact` 只吃**全局**
+  media_id、不带属主参数，读面必须反查属主行并确认一致，否则索引被串改就能越权读字节。
+- 读端口探测放服务层（`asSynthesisMediaReadPort`），`services/api/src/app.ts` **零改动**：
+  该文件行号被历史证据页逐行引用，仓库自己在 `app.ts:2456` 注明不要为接线推移行号。
+- 默认部署**不产音频**：不新增任何 fixture 音频、不改 stub 端口（仍显式拒绝 `audio/*`）。
+
+契约
+- `packages/contracts/openapi.json` 新增 `/speech/synthesis/{id}/audio` 的 get：
+  200（二进制 + Cache-Control/X-Request-Id/X-Execution-Mode，**无 ETag**）
+  + 400/401/403/404/409/422/429/500/503/504（全部 `$ref` 共享错误响应）。
+- `packages/contracts/operations.json` 同步一行 `readSynthesisAudio`（128 → 129）。
+- `docs/architecture/contract-status.json`/`contract-implementation-status.md` 台账登记
+  （status: partial，blocker 写明真实音频还差哪三样：真凭据 + 媒体域批准 + 对象键存在）。
+
+客户端
+- `miniprogram/utils/voice-api.js`：`audioSourceForJob()` 改成七段判定
+  （`INVALID_INPUT`/`JOB_NOT_SUCCEEDED`/`NO_ARTIFACT`/`SUBSTITUTE_ARTIFACT`/`NO_ENDPOINT`，
+  每条 reason 说清是哪一步取不到），终态成功且 real ⇒ `{ok:true, url, label}`；
+  新增 `audioAuthorizationHeader()` 与 `audioOriginPrefix()`；旧常量
+  `NO_CLIENT_AUDIO_EGRESS_NOTE`（「契约没有出口」）换成 `NO_PLAYABLE_AUDIO_NOTE`
+  （说的是现实原因，不再拿契约当借口）。
+- `miniprogram/utils/inner-audio-port.js`：`InnerAudioContext` 不能带自定义头 ⇒
+  自家读面的地址先 `wx.downloadFile({header:{authorization}})` 下到临时文件再播；
+  401/403/404/409/5xx 各自映射成具体失败原因；域不匹配或拿不到令牌 ⇒ 不下载、如实
+  失败（绝不把会话令牌发给第三方域）。直连分支行为逐字不变。
+- `miniprogram/pages/voice/voice.js`：`voice.js:627` 那条播放路径真的活了
+  （`{src: source.url}` → `innerAudioContext`）；不可播时 `sourceNotice` 带
+  「原因分类 + 具体原因」，播放失败把服务端拒绝原因写进 `synthesisNote`。
+- `miniprogram/utils/audio-playback.js`：`SOURCE_UNAVAILABLE` 的提示文案去掉"契约无出口"。
+
+测试
+- 新增 `tests/unit/tts-audio-read.test.mjs`（6 例）：(a) 本人终态 + 端口提供 `audio/wav`
+  ⇒ 200、content-type 原样、字节逐字相等、private no-store、无 ETag、媒体域仍不新增
+  `+content`；(b) 他人 ⇒ 404 且与「不存在」逐字段同形；(c) 非音频产物 ⇒ 409 且字节
+  不回吐；(d) 替身产物（stub 装配）⇒ 409；(e) 读端口未接线 ⇒ 409；(f) 缺失/读失败/
+  0 字节 ⇒ 409 且三种缘由文案不同。测试音频是注入的 `SYNTHETIC_TEST_AUDIO`
+  （注释写明**仅测试替身，不是产品样本**），仓内不落任何音频文件。
+- `tests/unit/miniprogram-voice-playback.test.mjs`：新增两条 (d) 用例（可播 ⇒ `ok:true`、
+  真实创建 `InnerAudioContext` 且 `src` 是下载后的临时文件；不可播 ⇒ `ok:false` + 具体
+  原因、页面走失败分支）；harness 增 `createInnerAudioContext`/`downloadFile` 探针
+  （默认不提供 ⇒ 既有「不可播」口径不变）。
+- 负控制（实测红，实现里不含）：① 路由把非音频产物按 `audio/*` 返回 ⇒ (c) 红
+  （`非音频产物必须拒绝（409），实际 200`）；② 客户端改回恒 `SOURCE_UNAVAILABLE`
+  ⇒ (d) 可播用例红。
+
+门禁
+- `npm run lint` exit 0；`npm run test:contract` exit 0；
+  `python tools/validate_contracts.py` exit 0（129 operations）；`npm run test:mini`
+  exit 0；`node tools/verify-admin-capability-map.mjs --check` exit 0（totalOps 恒 50，
+  该图只统计 `services/api/src/admin/**` 的 requireScope，本 operation 是 user scope）。
+- `node tools/verify-contract-status.mjs --reanchor` exit 0；`--reanchor --write-doc`
+  已把台账行号重锚（未手工缩 lines）；`node tools/verify-doc-anchors.mjs --strict
+  --symbol=strict --scan docs` exit 0（docs/verification 历史页的陈旧锚点按现状重登记
+  进基线册，不改写历史页正文）。
+- `npm run build`：`@gengyun/api` 的 `tsc` 通过；`@gengyun/admin` 的 `vite build` 在本机
+  失败于 `[vite:esbuild-transpile] remove …esbuild-…: Access is denied`（本机 esbuild
+  临时文件受限，环境原因，与本提交无关）。

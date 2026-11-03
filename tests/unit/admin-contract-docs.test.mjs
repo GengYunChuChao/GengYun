@@ -293,10 +293,12 @@ const REWRITTEN_ME_OPS = Object.freeze([
 
 
 /**
- * 其余族（非 admin、非 `/me` 族）operation 实测数（A6）：126 − 49 − 17 = 60。
+ * 其余族（非 admin、非 `/me` 族）operation 实测数（A6）：129 − 50 − 17 = 62。
  * 这是本片改写的那一批，也是 A3 里 `summary === operationId` 必须归零的那一批。
+ * 计数 61 → **62**（R74）：新增 `readSynthesisAudio`（`GET /speech/synthesis/{id}/audio`，
+ * 本人合成产物的私有音频读面），description 与其余族同一套写法，故随本片登记。
  */
-const REST_OP_COUNT = 61;
+const REST_OP_COUNT = 62;
 
 /**
  * 这一片改写过的其余族 operation（A04 第三片实测：summary 与 description 都按代码真值重写）。
@@ -338,6 +340,9 @@ const REWRITTEN_REST_OPS = Object.freeze([
   'deleteTranscription',
   'confirmTranscription',
   'createSynthesis',
+  // R74：本人合成产物的私有音频读面（`GET /speech/synthesis/{id}/audio`）。插在
+  // `createSynthesis` 之后 = spec 里的文件顺序（同一 path 前缀 /speech/synthesis）。
+  'readSynthesisAudio',
   'createConversation',
   'listConversations',
   'getConversation',
@@ -1337,7 +1342,7 @@ test('E6 管道自证：每条片段注入正文后必被 matcher 命中（⛔ �
 });
 
 // ── A04 第三片（其余族 60 条）的覆盖面与四组判据（来自 upstream/main，与本片 E 组并存）──
-test('A6 其余族（非 admin、非 /me）operation 数 === 60（扫描面反空转）', () => {
+test('A6 其余族（非 admin、非 /me）operation 数 === 62（扫描面反空转）', () => {
   assert.equal(
     restOps.length,
     REST_OP_COUNT,
@@ -1349,7 +1354,7 @@ test('A6 其余族（非 admin、非 /me）operation 数 === 60（扫描面反�
   );
 });
 
-test('A7 REWRITTEN_REST_OPS 恰好 60 条，且与其余族全部 operation 一一对应', () => {
+test('A7 REWRITTEN_REST_OPS 恰好 62 条，且与其余族全部 operation 一一对应', () => {
   assert.equal(
     REWRITTEN_REST_OPS.length,
     REST_OP_COUNT,
@@ -1380,7 +1385,7 @@ test('A7 REWRITTEN_REST_OPS 恰好 60 条，且与其余族全部 operation 一�
 });
 
 
-test('B-rest 60 条改写过的其余族 op：summary 不再是 operationId、含汉字、description 不再是模板句', () => {
+test('B-rest 62 条改写过的其余族 op：summary 不再是 operationId、含汉字、description 不再是模板句', () => {
   const problems = suffixProblems(entriesOf(restById, REWRITTEN_REST_OPS));
   assert.deepEqual(
     problems,
@@ -1395,7 +1400,7 @@ test('B-rest 60 条改写过的其余族 op：summary 不再是 operationId、�
 });
 
 
-test('C①-rest 其余族 60 条的 description 同样必须含自身 x-scope 字面量', () => {
+test('C①-rest 其余族 62 条的 description 同样必须含自身 x-scope 字面量', () => {
   const { problems, asserted } = scopeProblems(entriesOf(restById, REWRITTEN_REST_OPS));
   assert.equal(
     asserted,
@@ -1406,7 +1411,7 @@ test('C①-rest 其余族 60 条的 description 同样必须含自身 x-scope �
 });
 
 
-test('C②-rest 其余族 60 条：同样要含自身 responses 里的码，且不得出现未声明的三位数字', () => {
+test('C②-rest 其余族 62 条：同样要含自身 responses 里的码，且不得出现未声明的三位数字', () => {
   const { problems, asserted } = statusCodeProblems(entriesOf(restById, REWRITTEN_REST_OPS));
   // 同上：先点名哪条 op 写错码，再守「60 条全被断言到」这条反空转线。
   assert.deepEqual(problems, [], `以下 ${problems.length} 处状态码与描述对不上：\n  - ${problems.join('\n  - ')}`);
@@ -1419,7 +1424,7 @@ test('C②-rest 其余族 60 条：同样要含自身 responses 里的码，且�
 });
 
 
-test('C③-rest 其余族 60 条：声明了的 Idempotency-Key／If-Match 必须写进 description', () => {
+test('C③-rest 其余族 62 条：声明了的 Idempotency-Key／If-Match 必须写进 description', () => {
   const { problems, asserted } = headerProblems(entriesOf(restById, REWRITTEN_REST_OPS));
   // 反空转：其余族里 34 条声明了 Idempotency-Key（其中 23 条另声明 If-Match），命中面必须够大，
   // 否则「参数改形制」时这条会静默变成恒真。
