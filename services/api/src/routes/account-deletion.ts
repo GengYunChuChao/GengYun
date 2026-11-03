@@ -4,7 +4,7 @@
  * | 契约（`packages/contracts/openapi.json`） | operationId | 鉴权 | 成功 |
  * | --- | --- | --- | --- |
  * | `POST /me/account/deletion`（openapi.json:1514） | `requestAccountDeletion` | `userSession` | 202 `DeletionAcceptedEnvelope` |
- * | `GET /account/deletions/{id}`（openapi.json:1609） | `getDeletionReceipt` | `deletionReceipt` | 200 `DeletionReceiptEnvelope` |
+ * | `GET /account/deletions/{id}`（openapi.json:1638） | `getDeletionReceipt` | `deletionReceipt` | 200 `DeletionReceiptEnvelope` |
  *
  * ## 照抄既有同类路由（不新造模式）
  * 守卫/schema/封套写法取自 `routes/consents.ts`（`guards.requireUser` + `Idempotency-Key` 校验 +
