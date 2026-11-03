@@ -20,8 +20,12 @@
 // 跳过：```／~~~ 围栏块（命令输出原样引用）、生成块区间（`<!-- name:begin|start -->` 与
 // `<!-- name:end -->` 成对识别的块，那是工具写的，不由人负责）。
 // 命中判定（三道串联，缺一不红）：
-//   ① 形状：`/(?<![\d.])(\d+)\s*(条|项|个)\s*(操作|operation)(?!Id|Ids)/`——`46 个 operationId`
-//      这类带 Id 的写法是 operationId 计数，不是 operation 计数，排除；
+//   ① 形状：中文 `/(?<![\d.])(\d+)\s*(条|项|个)\s*(操作|operation)(?!Id|Ids)/`，或英文
+//      `/(?<![\w.])(\d+)\s+(?:operations?|ops)(?![.\w])/`——`46 个 operationId` 这类带 Id 的写法是
+//      operationId 计数，不是 operation 计数，排除；`operations.json` 这类文件名也不算（后随点号被
+//      否定前瞻挡掉）。**英文这一支是 2026-11-04 补的**：R76 订正契约总数时实测发现
+//      `PASS: 129 operations` 这种英文句天生躲过中文量词正则，旧数因此活过 #878 合并；补上后活文档
+//      命中 1 处（`docs/GY-I04-衔接说明.md` 的 `PASS: 130 operations`），已改成指向脚本输出的指针；
 //   ② 已声明出处：同一行出现 `以 … 为准`／`标记块`／`机器重算`／`纳入闸门` 任一，视为已经指了
 //      能重算的出处，放行（这正是本片给每处数字换上的写法）；
 //   ③ 契约上下文：同一行还要出现 `契约|openapi.json|operations.json|校验|validate`。
@@ -101,7 +105,8 @@ const GENERATED_BLOCKS = [
   { file: 'docs/architecture/openapi-route-parity.md', name: 'openapi-route-parity', open: 'start' },
 ];
 
-const CLAIM_RE = /(?<![\d.])(\d+)\s*(条|项|个)\s*(操作|operation)(?!Id|Ids)/;
+const CLAIM_RE =
+  /(?<![\d.])(\d+)\s*(条|项|个)\s*(操作|operation)(?!Id|Ids)|(?<![\w.])(\d+)\s+(?:operations?|ops)(?![.\w])/;
 const POINTER_RE = /以[^。；\n]{0,60}?为准|标记块|机器重算|纳入闸门/;
 const CONTRACT_RE = /契约|openapi\.json|operations\.json|校验|validate/i;
 const ASSET_RE = /(?:^|[\s(（`"'|])((?:docs\/)?(?:[A-Za-z0-9_.-]+\/)*assets\/[A-Za-z0-9_.\/-]+)/g;
@@ -254,6 +259,15 @@ test('T1 活文档不得手抄契约总数（§docs/architecture 与 docs/*.md�
     assert.ok(files.includes(required), `扫描集缺了 ${required}`);
   }
   assert.ok(!files.some((f) => f.startsWith('docs/verification/')), 'docs/verification 是历史快照，不该进扫描面');
+
+  // 反空转：中英两支形状都必须真的命中，否则补上的英文支等于没开
+  assert.ok(CLAIM_RE.test('契约共 130 个 operation'), '中文支失灵');
+  assert.ok(CLAIM_RE.test('实测 `PASS: 129 operations`'), '英文复数支失灵');
+  assert.ok(CLAIM_RE.test('工具自报 130 ops'), '英文缩写支失灵');
+  // 两支的排除面也必须真的挡住，否则闸门会误伤 operationId 计数与文件名
+  assert.ok(!CLAIM_RE.test('46 个 operationId'), '中文支没挡 operationId');
+  assert.ok(!CLAIM_RE.test('`packages/contracts/operations.json` 里有 130 条'), '英文支误伤 operations.json');
+  assert.ok(!CLAIM_RE.test('openapi.json 与 operations.json 都在契约目录'), '英文支误伤文件名');
 
   const violations = [];
   for (const rel of files) {
