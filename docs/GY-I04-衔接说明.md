@@ -179,7 +179,7 @@ function isGuest() {
 
 - 任务台账：[development-progress.md](development-progress.md)
 - 领取与并行口径：[development-order.md](development-order.md)
-- 冻结契约校验：`python tools/validate_contracts.py`（112 操作）
+- 冻结契约校验：`python tools/validate_contracts.py`（实测 `PASS: 129 operations`；`packages/contracts/openapi.json` 为 99 paths / 129 operations，以 `3cdf4740` 为基线；旧记 112 操作）
 - 平台核查与正式 AppID 实测：[verification/platform-checklist.md](verification/platform-checklist.md)
 - 微信与供应商实测记录：[verification/continuation-evidence.md](verification/continuation-evidence.md)
 - 任务书原文：[initial-issues.md](initial-issues.md) 中的 `GY-I04` 一节
