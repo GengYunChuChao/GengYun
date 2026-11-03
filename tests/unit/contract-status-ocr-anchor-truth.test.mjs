@@ -315,10 +315,18 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 前两组等长、只有 `:24`→`:188` 多一个字符位 ⇒ 两份台账各**多 1 字节**，行数不变。
  * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成。仍是「正常改台账」，故同步基线；
  * 没有改判定、没有加豁免条目（新用例的锚点白名单为空）。
+ * 2026-11-04 第十三次同步（`requestAccountDeletion` 的 blocker 把自己引的部署文档锚点指错了）：该条 blocker 用
+ * 「`deploy/postgres-cvm/README.md:459-460`／`runbook.md:540` 均自认未实现」当证据，实测 README 的第 459 行是
+ * SCRAM 加固句、真正的「备份不实现"注销后备份 30 日内清理个人数据"」在第 460-461 行；runbook 的第 540 行是
+ * 「`sudo cp -r <备份的 conf.d>`」，真正的自认在 614 行（U9「逐用户删除，本交付未实现」）。另把同段
+ * 「仓根 `README.md` 全文只有 270 行」改回实测的「221 行」（`README.md` 共 222 个 split 行），并把旧文案里那处裸
+ * `README.md:459` 改写成散文「误记到仓根 README 的第 459 行」，免得它继续挂在 relocation 的「未判」桶里。
+ * 两份台账各 +11 字节、行数不变（278727 / 4465、200290 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278716, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200279, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278727, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200290, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
