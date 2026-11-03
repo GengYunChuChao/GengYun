@@ -222,7 +222,7 @@ psql:…/experiment-locking.sql:21: ERROR:  42501: permission denied for table f
 
 | 表 | 代码出处（`DELETE FROM …` 原文所在行） |
 | --- | --- |
-| `favorites` | `favorites/store-pg.ts:167` `DELETE FROM favorites WHERE owner_id = $1::uuid RETURNING id`；`:248` `DELETE FROM favorites WHERE id = … AND owner_id = … AND revision = … RETURNING id`（CAS 删除，`0018` 的正文表是物理删除） |
+| `favorites` | `favorites/store-pg.ts:167` `DELETE FROM favorites WHERE owner_id = $1::uuid RETURNING id`；`:263` `DELETE FROM favorites WHERE id = … AND owner_id = … AND revision = … RETURNING id`（CAS 删除，`0018` 的正文表是物理删除） |
 | `favorites_idempotency` | `favorites/store-pg.ts:171`（按 `scope` 前缀清主体台账）、`:295`（过期清理）、`:356`（claim 释放） |
 | `history` | `history/store-pg.ts:155`（注销清空）、`:250`（CAS 删除） |
 | `history_idempotency` | `history/store-pg.ts:159`（按主体前缀清）、`:295`（过期清理）、`:353`（claim 释放） |

@@ -231,6 +231,21 @@ export function createPostgresFavoritesStore(
       return result.rows.map(toFavorite);
     },
 
+    async listOwnerIdsByTarget(type: string, targetId: string): Promise<readonly string[]> {
+      // 反查（#17 系统通知）：谓词**不带 owner 前缀**，故 `favorites_owner_target_key`
+      // （`owner_id, target_type, target_id`）命中不了；本查询由迁移 `0054` 的
+      // `favorites_target_lookup_idx (target_type, target_id, owner_id)` 直接覆盖，
+      // 且 `owner_id` 是索引尾列 ⇒ 只扫索引即可拿到收件人，不回表。
+      const result = await pool.query(
+        `SELECT owner_id FROM favorites
+          WHERE target_type = $1 AND target_id = $2
+          ORDER BY owner_id`,
+        [type, targetId],
+      );
+      // 排序/去重与内存臂同一口径（唯一索引已保证至多一行，去重只是两臂同形的保险）。
+      return [...new Set(result.rows.map((row) => String(row.owner_id)))];
+    },
+
     async deleteFavorite(id: string, expected: DeleteExpectation): Promise<DeleteResult> {
       return withTransaction(pool, async (sql) => {
         // 锁行后再比较：与内存实现的"无 await 同步临界区"等价（并发取消只成功一次）。

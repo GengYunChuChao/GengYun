@@ -67,6 +67,15 @@ export interface FavoritesStore {
   getFavorite(id: string): Promise<FavoriteRecord | null>;
   /** **去重键**查询：同主体同目标（`type`+`id`）的现有收藏（**不含 revision**）。 */
   findByTarget(ownerId: string, type: string, targetId: string): Promise<FavoriteRecord | null>;
+  /**
+   * **收件人反查**原语（#17「系统通知」的真实生产点）：按对象（`type`+`id`）列出**收藏过它的主体**。
+   *
+   * 与 `findByTarget` 方向相反：那边问"某主体有没有收藏这个"（owner 前缀，走
+   * `favorites_owner_target_key`）；这边问"这个被谁收藏了"（**无 owner 前缀**，
+   * 走迁移 `0054_favorites_target_lookup.sql` 的 `(target_type, target_id, owner_id)`）。
+   * 只返回主体 id（去重、升序），不返回行内容：调用方只需要收件人。
+   */
+  listOwnerIdsByTarget(type: string, targetId: string): Promise<readonly string[]>;
   /** **归属域**列表原语：只返回该主体的行（存储层不把他人行交给上层）。 */
   listFavoritesByOwner(ownerId: string): Promise<FavoriteRecord[]>;
   /** 取消收藏的唯一写入原语（CAS + 物理删除）。 */
@@ -192,6 +201,21 @@ export function createMemoryFavoritesStore(
       return [...favorites.values()]
         .filter((record) => record.owner_id === ownerId)
         .map((record) => freezeDeep(cloneDeep(record)));
+    },
+    /**
+     * 收件人反查（内存臂）：线性扫一遍 `favorites`，**不新造第二套索引**。
+     *
+     * 两臂必须同形：唯一索引 `favorites_owner_target_key` 已保证"同主体同目标至多一行"，
+     * 这里仍去重 + 升序，是为了让内存臂的返回值与 PG 臂的 `ORDER BY owner_id` 逐字可比，
+     * 而不是把"去重"这件事实交给存储实现自己解释。
+     */
+    async listOwnerIdsByTarget(type, targetId) {
+      const owners: string[] = [];
+      for (const record of favorites.values()) {
+        if (record.target_ref.type !== type || record.target_ref.id !== targetId) continue;
+        owners.push(record.owner_id);
+      }
+      return [...new Set(owners)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
     },
     async deleteFavorite(id, expected) {
       return remove(id, expected);

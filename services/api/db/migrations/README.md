@@ -37,7 +37,42 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 ＋ `rollback/` **51 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **52 + 1 === 53**。上一段那组
 51/50 与 `51 + 1 === 52` 是 2026-11-02 当天的实测快照，**保留不动**。）
 
+（2026-11-03 · GY-R73(`0054`) 落盘后复测：`0001..0054`，缺号仍只有 `0037` ⇒ 目录现为 **53 个正向 `.sql`**
+＋ `rollback/` **52 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **53 + 1 === 54**。上一段那组
+52/51 与 `52 + 1 === 53` 是 2026-11-02 当天的实测快照，**保留不动**。本段实测口径：直接数目录得
+正向 53 条、`rollback/` 52 条、最大号 `0054`、`0037` 不存在；`discoverMigrations()` 报 53 个文件、
+末项 `0054_favorites_target_lookup.sql`。）
+
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0054_favorites_target_lookup.sql`（GY-R73 #17 · **反查索引**：「按被撤回/失效的收藏目标反查收藏者」的索引 ——
+  后台撤回资料来源/条目后，要按对象找出「谁收藏过它」，才谈得上给这些人发失效通知）。
+  接在 `0053` 之后取号（本清单最新在前，故这一条排在 `0053` 条目**之上**），号位依据「正向最大号 +1」
+  （`0037` 仍为 #14 保留 ⇒ **台账不新增条目**；`services/api/db/migration-reservations.json` 的 `$comment` 里
+  那条 0054 是**落盘前**的取号叙述 —— 0054 是真实落盘的号，不是保留号）。
+  只建一条索引 `CREATE INDEX favorites_target_lookup_idx ON public.favorites (target_type, target_id, owner_id)`：
+  本片唯一读法 `listOwnerIdsByTarget`（`services/api/src/favorites/store-pg.ts`，PG/内存两臂逐字同形）的谓词是
+  `WHERE target_type = $1 AND target_id = $2 ORDER BY owner_id`，**不带 owner 前缀** ⇒ `0018` 的
+  `favorites_owner_target_key (owner_id, target_type, target_id)` 与
+  `favorites_owner_created_idx (owner_id, created_at DESC, id DESC)` 都命不中，没有本索引时它退化成整表
+  `Seq Scan`——而这条扫描发生在一次真实的管理写请求里（撤回提交之后、响应返回之前），不该让后台操作的成本
+  随全站收藏量线性增长。
+  列序 `(target_type, target_id, owner_id)`：前两列等值 + `owner_id` 作索引尾列 ⇒ 查询的投影（只有
+  `owner_id`）只扫索引不回表、`ORDER BY owner_id` 也顺尾列直接出序；**不造第二个唯一约束**——
+  「同主体同目标只有一行」的权威仍是 `favorites_owner_target_key`，本索引形状表达不了该约束
+  （尾列在等值列之后），硬造 UNIQUE 只会让同一事实出现两个真相、并把回滚面扩大。
+  本迁移**零 GRANT**：不改表、不改列、不写数据、不建表，也不新增任何表级/列级权限；运行角色对
+  `public.favorites` 的 `SELECT` 早已在 `deploy/postgres-cvm/sql/20-login-roles.sql` 授予
+  （`favorites/store-pg.ts` 的读法一直按运行角色跑），本索引不新增任何可读面 ⇒ 本片 `deploy/**` 一个字未改，
+  运行时的 `favorites` 授权面逐字未变。
+  配对回滚 `rollback/0054_favorites_target_lookup.down.sql` 已同时落盘：`DROP INDEX IF EXISTS
+  public.favorites_target_lookup_idx;`（只删本迁移加的那一个索引，不碰表与数据 —— 损失的是这条反查的性能，
+  不损失任何事实）。
+  读数：`tests/unit/admin-invalidation-notices.test.mjs` 的 R73-10（PGlite 臂，**本机**）按
+  `0001 → 0018 → 0054` 顺序 apply 后查 `pg_indexes`，实测
+  `indexdef = CREATE INDEX favorites_target_lookup_idx ON public.favorites USING btree (target_type, target_id, owner_id)`
+  （`public.favorites` 当时共四条索引：`favorites_owner_created_idx` / `favorites_owner_target_key` /
+  `favorites_pkey` / `favorites_target_lookup_idx`）；真库臂（`tests/integration/admin-audit-logs-pg.mjs` 的
+  `schema_migrations` 末项 `0054` 断言）需 `*_PG_TEST_URL`，**本机无 PG，未跑**。
 - `0053_admin_report_disposition_audit.sql`（R72 #838 · **审计落库**：后台举报处置
   `advanceReport` 的操作留痕。接在 `0052` 之后，号位依据「正向最大号 +1」（`0037` 仍为 #14 保留
   ⇒ **台账不新增条目**）。
