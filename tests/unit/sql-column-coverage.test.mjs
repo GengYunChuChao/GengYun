@@ -914,20 +914,20 @@ const EXPECTED_EXTENDED_READINGS = {
   // GY-R73（#17）：321 → 323、SELECT 171 → 173 —— 两处新 SQL：`favorites/store-pg.ts` 的
   // listOwnerIdsByTarget（按对象反查收藏者）与 `admin/ops/invalidation-events.ts` 的收件人过滤；
   // 再叠加 R72 #838 的 +1（`community/store-pg.ts` 的举报处置审计）⇒ 字面量 **324**、SELECT **174**。
-  sqlLiterals: 324,
-  statements: { INSERT: 49, UPDATE: 58, SELECT: 174, DELETE: 43 },
+  sqlLiterals: 326, // GY-R74：324 → 326 —— media/store-pg.ts 新增 listDueMedia 的到期扫描 + purge_owner_media 调用
+  statements: { INSERT: 49, UPDATE: 58, SELECT: 176, DELETE: 43 },
   returningClauses: 99,
   onConflictClauses: 31,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 19,
+  noTargetTable: 20, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM
   referencedTables: 52,
   // GY-R73（#17）：2080 → 2082 —— 两处新 SELECT 的列要求（favorites 的 target/owner 列 + users 的 id/state）。
-  columnRequirements: 2082,
+  columnRequirements: 2099, // GY-R74：2082 → 2099 —— listDueMedia 那 17 处列引用全部落在 media 已授权列上
   // GY-R73（#17）：1979 → 1981 —— 两处新 SELECT 的列要求都已覆盖（缺 0 条不变）。
-  coveredRequirements: 1981,
+  coveredRequirements: 1998, // GY-R74：1981 → 1998 —— 同上 17 条全部已覆盖
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -950,7 +950,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/invalidation-events.ts': 1,
   'jobs/ledger.ts': 2,
   'knowledge/service.ts': 4,
-  'media': 23,
+  'media': 25, // GY-R74：23 → 25 —— listDueMedia 的到期扫描 SELECT + purgeOwnerMediaRows 的删行函数调用
   'messages': 15,
   // R72-W41（2026-11-01）：审核域幂等台账 store 的 6 条 SQL 字面量 —— 五条业务语句（find / claim /
   // finalize / release / purge）+ 一条 `to_regclass` 就绪探测。R72-W54：结论事实读面 1 条只读 SELECT。

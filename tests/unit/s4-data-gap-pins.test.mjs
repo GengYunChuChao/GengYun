@@ -33,7 +33,7 @@
  * | 3 | `deploy/purge-schedule/` 的 `*.service` / `*.timer` 全集 | 全集**恰好八条**（online-data、backup-copies、retention、media-objects 各一 service + 一 timer），retention 那对与 media 那对都**在位** | 删掉现存任何一条（尤其 `gengyun-purge-retention.{service,timer}` 与 `gengyun-purge-media-objects.{service,timer}`）；或新出现第五族单元 |
  * | 4 | `tools/verify-purge-schedule.mjs` 的 `REQUIRED_NPM_SCRIPTS` | 唯一定义点 + 数组**恰好四条必需脚本** `['purge:online-data','purge:backup-copies','purge:retention','purge:media-objects']`，retention 与 media-objects **都在** | 从数组里拿掉 `purge:retention` / `purge:media-objects`；或把该常量挪到别处/复制一份 |
  * | 5 | `.github/workflows/**` 扫 `verify:purge-schedule` / `tools/verify-purge-schedule`、`restore-drill` | 调度门禁**恰一份引用**（= `engineering-shell.yml` 的 `retention-gates`）；`restore-drill` 仍**零命中** | 引用面扩大或消失（多接一份 / 整条摘掉）；或任何 workflow 引用 `deploy/postgres-cvm/restore-drill.*` |
- * | 6 | `services/api/src`、`packages` 扫 `purge_owner_media` | **零命中** ⇒ 媒体行物理删除的唯一入口（0035 的 `SECURITY DEFINER` 函数）至今没人调 | 任何应用侧写 `SELECT public.purge_owner_media($1)`；或迁移 0035 的函数定义消失（后者是恶化，同样要红） |
+ * | 6 | `services/api/src`、`packages` 扫 `purge_owner_media` | **恰好一处可执行调用**：`services/api/src/media/store-pg.ts` 的 `SELECT public.purge_owner_media($1::uuid) AS counts`（GY-R74 接线），其余命中只许是 `service.ts`/`store-pg.ts`/`store.ts` 里的块注释 | 调用被搬走/多出第二处/整条摘掉；出现第二处可执行 SQL；或迁移 0035 的函数定义消失（后者是恶化，同样要红） |
  *
  * ## 硬约束（改本文件时不许破）
  *
@@ -584,16 +584,16 @@ test('已接线 5 · .github/workflows/ 里能 grep 到 verify:purge-schedule（
 });
 
 // ---------------------------------------------------------------------------
-// 缺口 6 · 媒体本体删除：零调用
+// 已接线 6 · 媒体本体删除：应用侧有**恰好一处**可执行调用（GY-R74 接线）
 // ---------------------------------------------------------------------------
 
-test('缺口 6 · purge_owner_media 在应用侧零调用（0035 定义了函数，但没人调它）', () => {
+test('已接线 6 · purge_owner_media 在应用侧恰好一处可执行调用（其余命中只许是注释）', () => {
   const { files, hits } = scanTree(['services/api/src', 'packages'], 'purge_owner_media');
 
   assert.equal(
     files.includes('services/api/src/app.ts'),
     true,
-    '扫描面没覆盖 services/api/src/app.ts ⇒ 本钉子的「零调用」不可信。',
+    '扫描面没覆盖 services/api/src/app.ts ⇒ 本钉子的读数不可信。',
   );
   assert.equal(
     files.includes('packages/privacy/retention-policy.mjs'),
@@ -601,32 +601,51 @@ test('缺口 6 · purge_owner_media 在应用侧零调用（0035 定义了函数
     '扫描面没覆盖 packages/privacy/retention-policy.mjs ⇒ 扫描根走全了吗？',
   );
 
-  // ① 零命中：应用侧（services/api/src + packages）没有任何调用点。
+  // ① 可执行调用**恰好一处**：`media/store-pg.ts::purgeOwnerMediaRows` 的 `SELECT public.purge_owner_media($1::uuid)`。
+  //    判据用「这句 SQL 文本」而不是行号：行号会随无关改动漂移，把钉子变成噪音；而「有且只有一处调用、
+  //    且它在真库仓储里」才是这条缺口真正的接线事实。
+  const CALL_TEXT = 'SELECT public.purge_owner_media($1::uuid) AS counts';
+  const callSites = hits.filter((hit) => hit.text.includes(CALL_TEXT));
   assert.deepEqual(
-    hits.map((hit) => `${hit.file}:${hit.line}`),
-    [],
-    '【缺口 6 破了】`purge_owner_media` 在应用侧出现了：'
+    callSites.map((hit) => hit.file),
+    ['services/api/src/media/store-pg.ts'],
+    '【已接线 6 变了】`purge_owner_media` 的可执行调用点必须恰好一处、且在 PG 仓储里：'
       + `\n  实测命中：${JSON.stringify(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`))}`
-      + '\n  基线（81d8e0b9）：`services/api/src` 与 `packages` **零调用** —— '
-      + '媒体行的物理删除只有函数面（0035 的 `SECURITY DEFINER`），没有任何一段代码去 `SELECT` 它，'
-      + '所以注销时媒体本体不会被真删（迁移 rollback 的注释自陈：「唯一的引用点将是应用侧 SQL 文本'
-      + '（`SELECT public.purge_owner_media($1)`）——本片尚未接线」）。'
-      + '\n  ⇒ 若你刚接上这条写路径，请翻转本钉子，并更新 '
-      + 'docs/verification/gy-r34-i19-media-row-purge-20261024.md。'
+      + '\n  2026-11-03（GY-R74）：媒体终态行删除由 `media/store-pg.ts::purgeOwnerMediaRows` 接线，'
+      + '经 `media/service.ts::purgeRetiredRows` 按 owner 调用，由 `media/purge-driver.ts` 第四段执行。'
+      + '\n  ⇒ 若调用被搬到别处 / 多出第二处 / 整条摘掉 ⇒ 请翻转本钉子并同步它点名的文档。'
       + FLIP_HINT,
   );
 
-  // ② 对照：函数本体确实在迁移里（缺口是「定义了但没人调」，不是「函数不存在」）。
-  //    这条也顺手把「删了迁移却让本文件变绿」这种**恶化**挡住。
+  // ② 其余命中**只许是文档注释**：一旦出现第二处 SQL 文本或 `pool.query` 形态，上面那条来不及分辨。
+  const docOnly = hits.filter((hit) => !hit.text.includes(CALL_TEXT));
+  assert.deepEqual(
+    [...new Set(docOnly.map((hit) => hit.file))].sort(),
+    ['services/api/src/media/service.ts', 'services/api/src/media/store-pg.ts', 'services/api/src/media/store.ts'],
+    '【已接线 6 变了】提到 `purge_owner_media` 的文件面变了：'
+      + `\n  实测命中：${JSON.stringify(docOnly.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`))}`
+      + '\n  这三处是注释（解释「为什么走 0035 的 SECURITY DEFINER 而不是应用侧 DELETE」）。'
+      + FLIP_HINT,
+  );
+  for (const hit of docOnly) {
+    assert.equal(
+      hit.text.trimStart().startsWith('*'),
+      true,
+      `非调用命中必须是块注释行（不允许第二处可执行 SQL 藏在别处）：${hit.file}:${hit.line}: ${hit.text}`,
+    );
+  }
+
+  // ③ 对照：函数本体确实在迁移里。`purge_owner_media` 若被改名/删除，应用侧调用会 42883 直接炸，
+  //    那是**恶化**（连入口都没了），不是接线进展。
   assert.equal(
     readRepoText('services/api/db/migrations/0035_r34_media_row_purge.sql').includes(
       'CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb',
     ),
     true,
-    '【缺口 6 · 对照项变了】迁移 0035 里没有 '
+    '【已接线 6 · 对照项变了】迁移 0035 里没有 '
       + '`CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb`：'
       + '\n  基线（81d8e0b9）：第 121 行就是这个定义。'
-      + '\n  若 0035 被改/被删 ⇒ 那不是缺口进展，是**恶化**：函数没了，「零调用」就退化成「连入口都没有」。'
+      + '\n  若 0035 被改/被删 ⇒ 那不是进展，是**恶化**：函数没了，应用侧调用会以 42883 失败。'
       + '\n  ⇒ 先查清 0035 的改名/迁移顺序，再改本钉子。'
       + FLIP_HINT,
   );

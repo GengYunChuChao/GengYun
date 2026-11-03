@@ -44,12 +44,14 @@ import { createHash } from 'node:crypto';
 import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
 import type { ObjectRefCipher } from './object-ref-cipher.ts';
+import { MEDIA_ONLINE_RETENTION_MS } from './retention.ts';
 import { requirePurgeOwnerId } from './store.ts';
 import type {
   MediaIdempotencyEntry,
   MediaRecord,
   MediaStore,
   MediaWritePrecondition,
+  PurgeOwnerMediaRowsResult,
   PurgeOwnedMediaResult,
 } from './store.ts';
 
@@ -158,7 +160,7 @@ function rowToRecord(row: Record<string, unknown>, cipher: ObjectRefCipher): Omi
     rawRef: cipher.decryptObjectRef(asText(row.object_ref_cipher)),
     createdAt: asNumber(row.created_at),
     updatedAt: asNumber(row.updated_at),
-    expiresAt: asNumber(row.expires_at),
+    expiresAt: asOptionalNumber(row.expires_at),
   };
 }
 
@@ -377,7 +379,8 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
         client = await connect();
         await client.query('BEGIN');
         const readMedia = await client.query(
-          `SELECT id, purpose::text AS purpose, state::text AS state, object_ref_cipher
+          `SELECT id, purpose::text AS purpose, state::text AS state, object_ref_cipher,
+                  (expires_at IS NULL) AS needs_deadline
              FROM public.media WHERE owner_id = $1 ORDER BY id`,
           [owner],
         );
@@ -386,6 +389,7 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
           purpose: asText(row.purpose),
           state: asText(row.state),
           rawRef: cipher.decryptObjectRef(asText(row.object_ref_cipher)),
+          needsDeadline: row.needs_deadline === true,
         }));
         const mediaIds = rows.map((row) => row.id);
         const derivativeRefs = new Map<string, string[]>();
@@ -418,9 +422,12 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
           const hidden = await client.query(
             `UPDATE public.media SET
                state = 'deleted'::media_state, object_ref_cipher = $3,
+               expires_at = CASE WHEN expires_at IS NULL
+                 THEN now() + ($4::bigint * interval '1 millisecond')
+                 ELSE expires_at END,
                revision = revision + 1, updated_at = now()
              WHERE owner_id = $1 AND id = ANY($2::uuid[]) RETURNING id`,
-            [owner, liveCommunityImageIds, emptyRef],
+            [owner, liveCommunityImageIds, emptyRef, MEDIA_ONLINE_RETENTION_MS],
           );
           softHidden = hidden.rows.length;
         }
@@ -449,15 +456,21 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
             [intent.mediaId, cipher.encryptObjectRef(intent.objectRef), objectRefDigest(intent.objectRef)],
           );
         }
-        // ③ 非社区图片行的引用在这里清（社区图片已在 ① 里清过，不重复推进 `revision`）。
+        // ③ 非社区图片行的引用在这里清（社区图片已在 ① 里清过，不重复推进 `revision`）；
+        //    引用早就清空但还没有保留截止时刻的行也走这条，只为了把 7 日截止写上去（否则它永久留下）。
         const clearOtherIds = rows
-          .filter((row) => row.rawRef !== null && row.rawRef !== '' && !liveCommunityImageIds.includes(row.id))
+          .filter((row) => !liveCommunityImageIds.includes(row.id)
+            && ((row.rawRef !== null && row.rawRef !== '') || row.needsDeadline))
           .map((row) => row.id);
         if (clearOtherIds.length > 0) {
           await client.query(
-            `UPDATE public.media SET object_ref_cipher = $3, revision = revision + 1, updated_at = now()
+            `UPDATE public.media SET object_ref_cipher = $3,
+               expires_at = CASE WHEN expires_at IS NULL
+                 THEN now() + ($4::bigint * interval '1 millisecond')
+                 ELSE expires_at END,
+               revision = revision + 1, updated_at = now()
               WHERE owner_id = $1 AND id = ANY($2::uuid[])`,
-            [owner, clearOtherIds, emptyRef],
+            [owner, clearOtherIds, emptyRef, MEDIA_ONLINE_RETENTION_MS],
           );
         }
         // ④ 衍生物行随引用一起删（对象键已在 ② 登记，删行不会丢线索）。
@@ -505,6 +518,58 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
         const records: MediaRecord[] = [];
         for (const row of result.rows) records.push(await hydrate(row));
         return records;
+      } catch (error) {
+        return classifyMediaDatabaseError(error);
+      }
+    },
+
+    async listDueMedia(states, atMs) {
+      if (states.length === 0) return [];
+      try {
+        const result = await pool.query(
+          `SELECT id, owner_id, purpose::text AS purpose, mime, bytes, duration_ms, sha256,
+                  state::text AS state, failure_code, object_ref_cipher, revision,
+                  (extract(epoch FROM expires_at) * 1000)::bigint AS expires_at,
+                  (extract(epoch FROM created_at) * 1000)::bigint AS created_at,
+                  (extract(epoch FROM updated_at) * 1000)::bigint AS updated_at
+             FROM public.media
+            WHERE state = ANY($1::media_state[])
+              AND expires_at IS NOT NULL
+              AND expires_at <= to_timestamp($2::bigint / 1000.0)
+            ORDER BY expires_at, id`,
+          [states, atMs],
+        );
+        const records: MediaRecord[] = [];
+        for (const row of result.rows) records.push(await hydrate(row));
+        return records;
+      } catch (error) {
+        return classifyMediaDatabaseError(error);
+      }
+    },
+
+    /**
+     * 物理删除该 owner 的终态媒体行——**直接调迁移 0035 的 `public.purge_owner_media(uuid)`**。
+     *
+     * 为什么把删行交给那支 `SECURITY DEFINER` 函数、而不是在本域写 DELETE：运行时的 `public.media`
+     * **没有 DELETE 授权**（`deploy/postgres-cvm/sql/20-login-roles.sql` 段 M，删除语义是状态机），
+     * 而 0035 已经把「入队先于删行」（`G0007 MEDIA_CLEANUP_NOT_QUEUED`）与 11 处引用面写成一支
+     * 审计过的函数；在应用侧重写一遍就是给同一件事造第二套口径。本方法只负责按 owner 触发、
+     * 把读数搬回来。⇒ 这也解掉了「应用侧零调用 `purge_owner_media`」那条缺口
+     * （`tests/unit/s4-data-gap-pins.test.mjs` 的缺口 6，pin 已按接线方向更新）。
+     *
+     * ⚠️ 它只删 `rejected`/`deleted`，且**被引用就跳过** ⇒ `rowsRetainedByReference` 是残余
+     * （作业行、社区帖子 `media_ids` 等仍指着它），不是失败；报告里必须单列，不许并进「已清理」。
+     */
+    async purgeOwnerMediaRows(ownerId) {
+      const owner = requirePurgeOwnerId(ownerId);
+      try {
+        const result = await pool.query('SELECT public.purge_owner_media($1::uuid) AS counts', [owner]);
+        const counts = (result.rows[0]?.counts ?? {}) as Record<string, unknown>;
+        return {
+          rowsDeleted: asOptionalNumber(counts.media) ?? 0,
+          derivativesDeleted: asOptionalNumber(counts.derivatives) ?? 0,
+          rowsRetainedByReference: asOptionalNumber(counts.skipped_referenced) ?? 0,
+        };
       } catch (error) {
         return classifyMediaDatabaseError(error);
       }

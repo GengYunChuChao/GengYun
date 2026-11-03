@@ -44,8 +44,12 @@ export const MEDIA_PURGE_PHASES = Object.freeze({
   STATS: 'stats',
   /** `expireInitiated()`：把过了 24h 仍 `initiated` 的记录收到 `rejected`。 */
   EXPIRE_INITIATED: 'expire-initiated',
+  /** `reclaimExpired()`：把过了**保留期限**（`expires_at`）的 `ready` 行收到 `deleted`（R74）。 */
+  RECLAIM_EXPIRED: 'reclaim-expired',
   /** `cleanupOrphans()`：删对象引用、撤授权、重试台账行。 */
   CLEANUP_ORPHANS: 'cleanup-orphans',
+  /** `purgeRetiredRows()`：注销 7 日到期后物理删除终态、无引用的媒体行（R74）。 */
+  PURGE_RETIRED_ROWS: 'purge-retired-rows',
 });
 
 /** 跳过原因（`skipReason` 的取值；正常一轮为 `null`）。 */
@@ -107,6 +111,11 @@ export interface MediaPurgeReport {
   finishedAt: string | null;
   /** `expireInitiated()` 收到的到期记录条数：**真实值**，⛔ 不受 `limit` 截断。 */
   expired: number;
+  /**
+   * `reclaimExpired()` 收到的「过了保留期限的 `ready` 行」条数（R74）：同样是**真实值**，
+   * ⛔ 不受 `limit` 截断。`null` = 该端口方法没给出数值（契约被破坏，见 `failures`）。
+   */
+  reclaimed: number | null;
   /** 本轮动过的对象引用条数 = 确认删除 + 未确认（⛔ 不是库里的孤儿总数）。 */
   orphansScanned: number;
   /** 端口确认删除的对象引用条数（`cleanupOrphans().removedObjects`）。 */
@@ -115,6 +124,20 @@ export interface MediaPurgeReport {
   retained: number;
   /** 本轮撤销的访问授权条数。 */
   revokedGrants: number;
+  /**
+   * R74 分账：上面 `deleted`/`retained`/`revokedGrants` 里**属于「过期回收」的那部分**
+   * （父行 `failure_code = 'retention_expired'`，即 `reclaimExpired` 扫掉的行）。剩下的是「孤儿重试」。
+   * `null` = 端口没给这三段读数（老端口），此时 ⛔ 不许把总数当成过期回收数。
+   */
+  retention: { objects: number; pending: number; grants: number } | null;
+  /** `purgeRetiredRows()`：扫到的 owner 数（`null` = 该阶段没跑或端口没给）。 */
+  ownersScanned: number | null;
+  /** `purgeRetiredRows()`：真的从 `public.media` 删掉的行数。 */
+  rowsDeleted: number;
+  /** `purgeRetiredRows()`：被 0035 的引用面挡下、**仍然存在**的行数（残余，⛔ 不是已清）。 */
+  rowsRetainedByReference: number;
+  /** `purgeRetiredRows()` 里失败的 owner 数（>0 ⇒ 已记 `ROW_PURGE_BLOCKED` 失败并退出 1）。 */
+  failedRowPurges: number;
   /** 清扫后端口自报的对象计数；端口说不清时为 `null`（不猜）。 */
   remainingObjects: number | null;
   /** dry-run 的只读计数；非 dry-run 时是 `null`。 */
@@ -145,6 +168,8 @@ export interface MediaPurgeFailure {
 export interface MediaPurgePort {
   /** `MediaService.expireInitiated()`：整批收到期记录。 */
   expireInitiated(): Promise<{ expired: number }>;
+  /** `MediaService.reclaimExpired()`：整批收「过了保留期限的 `ready` 行」（R74）。 */
+  reclaimExpired(): Promise<{ reclaimed: number }>;
   /** `MediaService.cleanupOrphans()`：删对象引用 / 撤授权 / 重试台账行。 */
   cleanupOrphans(): Promise<{
     removedObjects: number;
@@ -155,6 +180,18 @@ export interface MediaPurgePort {
      * （如真实 S3 未接 list 权限）⇒ ⛔ 不是清理失败，⛔ 不许据此判失败。
      */
     remainingObjects: number | null;
+    /** R74 分账：上面三个总数里属于「过期回收」的那部分（缺这三段时按 `null` 处理）。 */
+    retention?: { objects: number; pending: number; grants: number };
+  }>;
+  /** `MediaService.purgeRetiredRows()`：物理删终态媒体行（注销 7 日到期后的收口，R74）。 */
+  purgeRetiredRows(): Promise<{
+    ownersScanned: number;
+    ownersPurged: number;
+    rowsDeleted: number;
+    derivativesDeleted: number;
+    rowsRetainedByReference: number;
+    failedOwners: number;
+    lastFailureCode: string | null;
   }>;
   /**
    * `MediaService.stats()`：只读计数（dry-run 的唯一入口）。
@@ -222,7 +259,10 @@ function assertPortShape(mediaService: unknown): void {
   if (typeof mediaService !== 'object' || mediaService === null) {
     throw new MediaPurgeArgumentError('mediaService 必须是对象（建议传 createAppMediaService() 的返回值）', 'MISSING_MEDIA_SERVICE');
   }
-  for (const method of ['expireInitiated', 'cleanupOrphans', 'stats'] as const) {
+  // R74：`reclaimExpired`/`purgeRetiredRows` 与原来那三个方法**同级**必填。缺任何一个 ⇒ 端口未装配 ⇒
+  // 退 2。理由：这一层唯一的职责是「把跑没跑、跑了多少如实报出来」，缺方法时最危险的结果恰恰是
+  // 「看起来跑完了、报 0 条」——那会把「ready 媒体永远不回收」这个缺陷伪装成「没有到期媒体」。
+  for (const method of ['expireInitiated', 'reclaimExpired', 'cleanupOrphans', 'purgeRetiredRows', 'stats'] as const) {
     const candidate = (mediaService as Record<string, unknown>)[method];
     if (typeof candidate !== 'function') {
       throw new MediaPurgeArgumentError(
@@ -240,9 +280,11 @@ function assertPortShape(mediaService: unknown): void {
  *   1. 校验 `now` / 端口形状 / `limit`：任一不成立 ⇒ `exitCode=2`，**一个端口方法都不调**；
  *   2. `dryRun` ⇒ 只调 `stats()`（只读计数），`skipReason='dry_run'`，⛔ 不调写入型方法；
  *   3. 调 `expireInitiated()`：把过了 24h 仍 `initiated` 的记录收到 `rejected`；
- *      抛错 ⇒ 记一条失败，**继续**第 4 步（两段互不阻塞）；
- *   4. 预算闸：`expired >= limit` ⇒ 跳过第 5 步，`truncated=true`、`skipReason='limit_reached'`；
- *   5. 调 `cleanupOrphans()`：删对象引用 / 撤授权 / 重试台账行。抛错 ⇒ 记一条失败；
+ *      抛错 ⇒ 记一条失败，**继续**下一步（各段互不阻塞）；
+ *   3b. 调 `reclaimExpired()`：把过了**保留期限**（`media.expires_at`）的 `ready` 行收到 `deleted`（R74）；
+ *   4. 预算闸：`expired + reclaimed >= limit` ⇒ 跳过后面两段，`truncated=true`、`skipReason='limit_reached'`；
+ *   5. 调 `cleanupOrphans()`：删对象引用 / 撤授权 / 重试台账行（R74 起把「过期回收」三段单列）。抛错 ⇒ 记一条失败；
+ *   5b. 调 `purgeRetiredRows()`：物理删终态、无引用的媒体行（注销 7 日到期后的收口）。失败 ⇒ `ROW_PURGE_BLOCKED`；
  *   6. `exitCode = failures.length > 0 ? 1 : 0`。
  *
  * `deleted` / `retained` 直接映射端口的 `removedObjects` / `pendingObjects`：
@@ -260,10 +302,16 @@ export async function runMediaPurge(input: MediaPurgeRunInput): Promise<MediaPur
     startedAt,
     finishedAt: startedAt,
     expired: 0,
+    reclaimed: 0,
     orphansScanned: 0,
     deleted: 0,
     retained: 0,
     revokedGrants: 0,
+    retention: null,
+    ownersScanned: null,
+    rowsDeleted: 0,
+    rowsRetainedByReference: 0,
+    failedRowPurges: 0,
     remainingObjects: null,
     scan: null,
     truncated: false,
@@ -292,10 +340,16 @@ export async function runMediaPurge(input: MediaPurgeRunInput): Promise<MediaPur
   const mediaService = input.mediaService;
   const dryRun = input.dryRun === true;
   let expired = 0;
+  let reclaimed: number | null = 0;
   let orphansScanned = 0;
   let deleted = 0;
   let retained = 0;
   let revokedGrants = 0;
+  let retention: { objects: number; pending: number; grants: number } | null = null;
+  let ownersScanned: number | null = null;
+  let rowsDeleted = 0;
+  let rowsRetainedByReference = 0;
+  let failedRowPurges = 0;
   let remainingObjects: number | null = null;
   let scan: MediaPurgeScan | null = null;
   let truncated = false;
@@ -335,8 +389,29 @@ export async function runMediaPurge(input: MediaPurgeRunInput): Promise<MediaPur
       failures.push(describeFailure(MEDIA_PURGE_PHASES.EXPIRE_INITIATED, error));
     }
 
-    // 4. 预算闸：口径见 `MediaPurgeRunInput.limit` 的说明。
-    if (expired >= limit) {
+    // 3b. 收到期的 `ready` 行（R74 的核心修复：这条扫面在 R74 之前根本不存在，
+    //     `ready` 行的 `expires_at` 因此永远没人看）。
+    try {
+      const result = await mediaService.reclaimExpired();
+      const value = count(result?.reclaimed);
+      if (value === null) {
+        reclaimed = null;
+        failures.push({
+          phase: MEDIA_PURGE_PHASES.RECLAIM_EXPIRED,
+          code: 'MALFORMED_RESULT',
+          message: 'reclaimExpired() 没有返回数值型 reclaimed（端口契约被破坏，按失败记账）',
+          retryable: null,
+        });
+      } else {
+        reclaimed = value;
+      }
+    } catch (error) {
+      reclaimed = null;
+      failures.push(describeFailure(MEDIA_PURGE_PHASES.RECLAIM_EXPIRED, error));
+    }
+
+    // 4. 预算闸：口径见 `MediaPurgeRunInput.limit` 的说明（两段到期回收都吃这个预算）。
+    if (expired + (reclaimed ?? 0) >= limit) {
       truncated = true;
       skipReason = MEDIA_PURGE_SKIP_REASONS.LIMIT_REACHED;
     } else {
@@ -359,9 +434,32 @@ export async function runMediaPurge(input: MediaPurgeRunInput): Promise<MediaPur
           orphansScanned = removed + pending;
         }
         revokedGrants = count(result?.revokedGrants) ?? 0;
+        retention = result?.retention ?? null;
         remainingObjects = count(result?.remainingObjects);
       } catch (error) {
         failures.push(describeFailure(MEDIA_PURGE_PHASES.CLEANUP_ORPHANS, error));
+      }
+
+      // 5b. 物理删终态行（R74：注销 7 日到期后的收口）。失败**不许吞**：记一条失败 ⇒ 退出码 1。
+      try {
+        const result = await mediaService.purgeRetiredRows();
+        ownersScanned = count(result?.ownersScanned) ?? 0;
+        rowsDeleted = count(result?.rowsDeleted) ?? 0;
+        rowsRetainedByReference = count(result?.rowsRetainedByReference) ?? 0;
+        const failed = count(result?.failedOwners) ?? 0;
+        failedRowPurges = failed;
+        if (failed > 0) {
+          const lastCode = typeof result?.lastFailureCode === 'string' ? result.lastFailureCode : 'UNKNOWN';
+          failures.push({
+            phase: MEDIA_PURGE_PHASES.PURGE_RETIRED_ROWS,
+            code: 'ROW_PURGE_BLOCKED',
+            message: `purgeRetiredRows() 有 ${failed} 个 owner 删行失败（最近错误码：${lastCode}）：媒体行仍在库里，下一轮重试`,
+            retryable: true,
+          });
+        }
+      } catch (error) {
+        failedRowPurges = 1;
+        failures.push(describeFailure(MEDIA_PURGE_PHASES.PURGE_RETIRED_ROWS, error));
       }
     }
   }
@@ -376,10 +474,16 @@ export async function runMediaPurge(input: MediaPurgeRunInput): Promise<MediaPur
     limit,
     finishedAt,
     expired,
+    reclaimed,
     orphansScanned,
     deleted,
     retained,
     revokedGrants,
+    retention,
+    ownersScanned,
+    rowsDeleted,
+    rowsRetainedByReference,
+    failedRowPurges,
     remainingObjects,
     scan,
     truncated,
@@ -406,8 +510,27 @@ export function formatMediaPurgeReport(report: MediaPurgeReport): string[] {
       (report.truncated ? '（本轮预算已用尽，孤儿清扫留给下一轮）' : ''),
   );
   lines.push(
+    report.reclaimed === null
+      ? '保留期限回收（ready 行到期）：未知（端口没给读数，已按失败记账）'
+      : `保留期限回收（ready 行到期）：reclaimed=${report.reclaimed}`,
+  );
+  lines.push(
     `孤儿清扫：扫描对象引用 ${report.orphansScanned} 条 · 确认删除 ${report.deleted} · ` +
       `未确认 ${report.retained}（保留引用与台账行，下一轮重试）· 撤销授权 ${report.revokedGrants}`,
+  );
+  // R74 分账：⛔ 不许把「过期回收」和「孤儿重试」混成一个数——前者是保留期限到点的正常回收，
+  // 后者是删不掉的对象的积压，两者的运维含义完全不同。
+  lines.push(
+    report.retention === null
+      ? '分账：该端口没给「过期回收」三段读数 ⇒ ⛔ 不把上面的总数当成过期回收数'
+      : `分账：其中过期回收（failure_code=retention_expired）对象 ${report.retention.objects} · ` +
+        `未确认 ${report.retention.pending} · 撤销授权 ${report.retention.grants}；` +
+        `其余 ${Math.max(0, report.deleted - report.retention.objects)} 条对象删除算「孤儿重试」`,
+  );
+  lines.push(
+    `终态行删除：owner ${report.ownersScanned === null ? '未跑/无读数' : report.ownersScanned} 个 · ` +
+      `从 media 删行 ${report.rowsDeleted} · 仍被引用跳过 ${report.rowsRetainedByReference}（残余，⛔ 不是已清）` +
+      (report.failedRowPurges > 0 ? ` · 失败的 owner ${report.failedRowPurges}` : ''),
   );
   // `remainingObjects === null` 时**不印**这一行：null 既可能是「适配器不提供对象枚举」，
   // 也可能是「本轮根本没跑清扫」（预算闸/前段失败）。两种情况都不是 0，也⛔ 不是失败，
