@@ -1,0 +1,182 @@
+<!-- 注销账号（GY-R73）。九态按 docs/ui-state-inventory.md §2 的闭集铺；每个分支只出现一次，
+     互斥顺序是 guest → loading → empty → cancelled → invalid → denied → error → ready。
+     失败时主区**不换分支**（有回执就继续留在 ready），错误走回执卡里的行内提示 —— 见 deletion.js 的 settleFailure。 -->
+<view class="page" style="--font-scale: {{fontScale}}">
+  <view class="page-heading">
+    <view class="page-heading__main">
+      <view class="page-heading__title">注销账号</view>
+      <view class="page-heading__sub">注销会清空这个账号的数据且不可恢复。这里可以发起申请、用回执查看进度，并在服务端完成前取消。</view>
+    </view>
+  </view>
+
+  <!-- 九态 · stub：替身/演示数据标记，独立于主区，不遮挡回执内容 -->
+  <state-view
+    wx:if="{{stubNotice}}"
+    status="stub"
+    title="当前是替身数据"
+    desc="服务端 meta.execution_mode 为 {{executionMode}}：下面这条回执来自替身执行器，不是真实注销流转。真实环境会换成 real 执行器的回执。"
+  ></state-view>
+
+  <view class="notice notice--warn" wx:if="{{offline}}">
+    <text class="notice__icon">⚠️</text>
+    <text class="notice__text">当前未接服务端（本机没有配置 apiBaseUrl）：申请与取消都发不出去，本页不会用本地数据假装成功。</text>
+  </view>
+
+  <!-- 九态 · guest：没登录，且本机也没有回执凭据 -->
+  <state-view
+    wx:if="{{status === 'guest'}}"
+    status="guest"
+    title="请先登录"
+    desc="申请与取消注销都绑定当前登录账号。若你只是想查一条已经拿到的回执：它用的是回执凭据而不是登录态，只要本机还保存着凭据、且凭据未过期，未登录也能查。"
+    action-text="去登录"
+    bind:action="onLogin"
+  ></state-view>
+
+  <!-- 九态 · loading -->
+  <state-view
+    wx:elif="{{status === 'loading'}}"
+    status="loading"
+    title="{{loadingTitle}}"
+  ></state-view>
+
+  <!-- 九态 · empty：已登录、本机没有在途回执 -->
+  <state-view
+    wx:elif="{{status === 'empty'}}"
+    status="empty"
+    title="当前没有在途的注销申请"
+    desc="本机没有保存的回执，也没有正在处理的注销请求。点下面的按钮开始申请：会先说明后果，再让你确认一次。"
+    action-text="申请注销账号"
+    bind:action="onApply"
+  ></state-view>
+
+  <!-- 九态 · cancelled -->
+  <state-view
+    wx:elif="{{status === 'cancelled'}}"
+    status="cancelled"
+    title="这次注销申请已取消"
+    desc="服务端已受理取消，账号没有被注销，数据没有被删除；这条回执随之作废，本机保存的回执凭据也清掉了。需要的话可以重新申请。"
+    action-text="重新申请注销"
+    bind:action="onApply"
+  ></state-view>
+
+  <!-- 九态 · invalid：回执凭据失效 / 服务端已无这条回执。**不等于**账号已注销 -->
+  <state-view
+    wx:elif="{{status === 'invalid'}}"
+    status="invalid"
+    error-code="{{errorCode}}"
+    title="这条回执已经查不到了"
+    desc="{{errorText}}"
+    action-text="重新申请注销"
+    bind:action="onApply"
+  ></state-view>
+
+  <!-- 九态 · denied：403 契约闭集（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE） -->
+  <state-view
+    wx:elif="{{status === 'denied'}}"
+    status="denied"
+    error-code="{{errorCode}}"
+    title="没有权限执行这项操作"
+    desc="{{errorText}}"
+  ></state-view>
+
+  <!-- 九态 · error：失败且没有可保留的旧状态（可重试性的判断来自 utils/states.js） -->
+  <state-view
+    wx:elif="{{status === 'error'}}"
+    status="error"
+    error-code="{{errorCode}}"
+    title="这一步没有完成"
+    desc="{{errorText}}"
+    action-text="{{retryable ? '重试' : ''}}"
+    bind:action="onRetry"
+  ></state-view>
+
+  <!-- 九态 · ready：正常内容（有回执就展示回执，不渲染状态视图） -->
+  <block wx:elif="{{status === 'ready'}}">
+    <view class="section">
+      <view class="section-head">
+        <text class="section-head__title">注销回执</text>
+        <text class="section-head__meta">{{receipt.stateLabel}} · revision {{receipt.revision}}</text>
+      </view>
+
+      <!-- 失败但保留原状态时的行内提示：回执照常显示，只是标一句「这是上次读到的」 -->
+      <view class="notice notice--warn" wx:if="{{errorText}}">
+        <text class="notice__icon">⚠️</text>
+        <text class="notice__text">{{errorText}}{{errorCode ? '（' + errorCode + '）' : ''}}{{snapshotOnly ? ' 下面这条是本机上次读到的回执，不是刚刚读到的。' : ''}}</text>
+      </view>
+
+      <view class="panel">
+        <view class="info-list">
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">回执 id</text>
+              <text class="info-row__desc">{{receipt.id}}</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">当前状态</text>
+              <text class="info-row__desc">{{receipt.stateLabel}}（state = {{receipt.state}}）</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">申请时间</text>
+              <text class="info-row__desc">{{receipt.requestedAt}}</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">在线数据到期</text>
+              <text class="info-row__desc">{{receipt.onlineDueAt}}</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">备份到期</text>
+              <text class="info-row__desc">{{receipt.backupDueAt}}</text>
+            </view>
+          </view>
+          <view class="info-row">
+            <view class="info-row__copy">
+              <text class="info-row__title">回执凭据到期</text>
+              <text class="info-row__desc">{{receiptExpiresAt}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="card-text" wx:if="{{receipt.rows.length}}">
+        服务端按模块给出的处理进度（`DeletionHandler`）：在线与备份两列各自独立推进，第三方状态与错误码由服务端原样给出。
+      </view>
+      <view class="panel" wx:if="{{receipt.rows.length}}">
+        <view class="info-list">
+          <view class="info-row" wx:for="{{receipt.rows}}" wx:key="module">
+            <view class="info-row__copy">
+              <text class="info-row__title">{{item.module}}</text>
+              <text class="info-row__desc">在线 {{item.online}} · 备份 {{item.backup}}{{item.thirdParty ? ' · 第三方 ' + item.thirdParty : ''}}{{item.errorCode ? ' · 错误码 ' + item.errorCode : ''}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="row-actions">
+        <gy-ui-button label="刷新回执" variant="primary" disabled="{{busy}}" loading="{{busy}}" bind:tap="onRefresh"></gy-ui-button>
+        <gy-ui-button label="取消注销申请" variant="secondary" disabled="{{busy}}" bind:tap="onCancel"></gy-ui-button>
+      </view>
+
+      <view class="demo-caption" role="status">{{message}}</view>
+    </view>
+  </block>
+
+  <view class="section">
+    <view class="section-head">
+      <text class="section-head__title">口径与限制</text>
+    </view>
+    <view class="panel">
+      <view class="card-text">后果：账号注销后数据不可恢复。档案、收藏、识别历史与社区内容都会按服务端流程清除。</view>
+      <view class="card-text">冷静期与生效时间一律以上面回执里服务端返回的 deletion 字段为准（在线数据到期 / 备份到期）。客户端不自己推算天数，也不在文案里写死。</view>
+      <view class="card-text">回执凭据：只保存在本机，只用于查这一条回执。它不是登录态 —— 退出登录不会删它，换设备、清缓存或重装后拿不到，也没有补发通道。到期后本地直接丢弃。</view>
+      <view class="card-text">服务端没有装配注销能力时是 fail-closed：申请会返回不可用，本页如实报错，不会假装已受理。</view>
+    </view>
+  </view>
+</view>

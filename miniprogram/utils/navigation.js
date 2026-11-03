@@ -22,7 +22,11 @@ const PAGES = ['pages/home/home', 'pages/identify/identify', 'pages/knowledge/kn
   'pages/qa/qa',
   // GY-R34 / #29 P1：授权清单页（只读，GET /me/consents）。同样须与 app.json 的 pages 逐项一致；
   // 不是 Tab，也不接受任何查询参数（清单只按当前会话读自己的授权，不认链接参数）。
-  'pages/consent/consent']
+  'pages/consent/consent',
+  // GY-R73 / #19：注销账号页（申请 / 回执 / 取消）。同样须与 app.json 的 pages 逐项一致；
+  // 不是 Tab，也不接受任何查询参数：回执 id 与回执凭据只从本机存储来，不认链接里塞的 id
+  // （否则「能不能查别人的回执」会变成一个 URL 参数问题）。
+  'pages/deletion/deletion']
 const TAB_PAGES = ['pages/home/home', 'pages/community/community', 'pages/identify/identify',
   'pages/messages/messages', 'pages/profile/profile']
 const HOME = '/pages/home/home'
