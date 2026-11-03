@@ -105,7 +105,40 @@ systemd 把单元的 stdout/stderr 收进 journald（`journalctl -u gengyun-purg
 **不需要** `/var/log/gengyun-*` 目录，也不需要 `logrotate`（journald 自己按 `SystemMaxUse=` 等策略轮转）。
 这是有意的：让「日志落在哪、由谁写、怎么轮转」不再成为部署面的第三个可错点。
 
-### 4) 安装并启用 systemd timer（**唯一受支持路线**）
+### 4) 存量媒体行的**一次性 backfill**（启用媒体 timer 之前必须做）
+
+R74 之前，`completeUpload` 把 `expires_at` 写成「**创建 + 24 小时**」——那是**上传窗口**；
+R74 之后，进入 `ready` 的行改写成 `null`（= 无日历到期：活账号「原则保存至注销」，
+真正的保留期限由注销受理时的 `purgeOwnedMedia` 写成「受理 + 7 天」）。
+
+而 `reclaimExpired()`（媒体对象那条命令的回收步骤）唯一判据是「`expires_at` 非 `null` 且
+`expires_at <= now`」，**不看这行是否仍被引用**。两边一叠加：只要库里有 R74 之前完成上传、
+`state = 'ready'` 的行，媒体 timer 的**第一次**触发就会把它们推进 `deleting → deleted`
+（`failure_code = retention_expired`）—— 对象字节还在、台账记录却已不可用，帖子里仍引用着的
+`media_ids` 也随之读不出来。
+
+所以在 `systemctl enable --now gengyun-purge-media-objects.timer` **之前**，用属主/运维角色连库执行一次：
+
+```sql
+-- ① 先看有多少（只读，可反复跑）
+SELECT count(*) AS stale_ready FROM public.media WHERE state = 'ready' AND expires_at IS NOT NULL;
+
+-- ② 只把「上传窗口」这一列的残留清掉（幂等：再跑一次改动 0 行）
+UPDATE public.media SET expires_at = NULL WHERE state = 'ready' AND expires_at IS NOT NULL;
+
+-- ③ 复核：应当为 0
+SELECT count(*) AS stale_ready FROM public.media WHERE state = 'ready' AND expires_at IS NOT NULL;
+```
+
+⛔ 不要改成 `SET expires_at = now()`（那等于立刻到期，比不 backfill 更糟）；
+⛔ 不要为了绕开这一步而不启用媒体 timer（那样 `ready` 就没有任何扫描面，注销 7 日后的对象永远不清）；
+⛔ 不要动 `MEDIA_ACCESS_TTL_MS`（它管的是**上传窗口**与会话内访问签名，不是保留期限）。
+
+这条语句**没有**做成迁移：它是一次性运维步骤，进迁移会牵动迁移保留号与 `sql-column-coverage`
+的列覆盖计数（那些钉子按「第 N 号迁移」登记）。后端已合入的回收语义不受影响：`initiated` 过期归
+`expireInitiated`，`rejected` / `deleted` 归 `cleanupOrphans`，本步只处理 `ready`。
+
+### 5) 安装并启用 systemd timer（**唯一受支持路线**）
 
 ```bash
 sudo install -m 0644 gengyun-purge-online-data.{service,timer} gengyun-purge-backup-copies.{service,timer} \
@@ -249,6 +282,8 @@ npm run verify:purge-schedule                 # 等价入口
 - ⛔ 不证明保留策略的**日级刻度**在生产上够用：`1 天 / 30 天` 的日历保留按天清是本片的设计判断，
   真库臂只证明「按 cutoff 幂等删除」这件事本身；若将来有天级以下的保留需求，`calendar` 上界要重新定档。
 - ⛔ 调度层到位 ≠ #19 整项达标：本项还含「7 日到期」的受理/回执/审计落地等其它切片。
+- ⛔ 不证明「安装」一节第 4 步的 backfill 在真实库上跑过（本机没有可用数据面），也不证明每次部署都做了这一步：
+  它是**一次性运维动作**，仓库能给的只有语句与判据（`stale_ready` 应为 0），给不了「已执行」的证据。
 - ⛔ 不证明「桶里到底还剩几个对象」。真实 S3 适配器**不提供**对象枚举（需 list 权限，本片未接线），
   故 `purge:media-objects` 的「清扫后对象计数」在真实适配器下是**未知**（服务层读成 `null`，
   ⛔ 不是 0、也⛔ 不是失败）；这条**诊断**能力缺失不影响「确认删除 / 未确认保留」两本账。
