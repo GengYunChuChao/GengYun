@@ -196,6 +196,9 @@ function herbicideRow(x) {
   const item = validHerbicide(x), l = labels(item)
   return {
     data_source: HERBICIDE_SOURCES.SERVER,
+    // 接口 id：`GET /herbicides/{id}` 的 {id}，列表卡片与详情路由都用它。
+    id: item.id,
+    // `record_id` 槽位沿用契约 id（Herbicide 契约没有可读记录号）；展示登记号用 registration_number。
     record_id: item.id,
     registration_number: item.formulation.registration_number,
     producer: item.formulation.producer,

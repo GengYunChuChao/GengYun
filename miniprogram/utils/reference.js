@@ -106,6 +106,9 @@ records.records.forEach(function (r, index) {
   const validity = (r.source && (r.source.source_validity || r.source.validity)) || 'unknown'
   const sourceVersion = deriveSourceVersion(r.source)
   normalized.push({
+    // 接口 id（服务端同一个 deterministicUuid(record_id)），与 `GET /herbicides/{id}` 的 {id} 逐字相等；
+    // `record_id` 仍是可读记录号（gy-i03-hb-NNN），只用于展示与溯源，**不**再当接口 id 拼路由。
+    id: r.id || null,
     record_id: r.record_id,
     registration_number: r.registration_number,
     registered_name: r.registered_name,
@@ -404,6 +407,7 @@ function decodeCursor(cursor) {
 
 function listItem(item) {
   return {
+    id: item.id || null,
     record_id: item.record_id,
     registration_number: item.registration_number,
     registered_name: item.registered_name,
@@ -424,11 +428,15 @@ function listItem(item) {
   }
 }
 
+// 详情装载：`recordId` 既可以是接口 id（uuid，列表卡片传的就是它），也可以是可读记录号
+// （gy-i03-hb-NNN —— 旧链接/人工核对仍这么写），两者都能命中同一条记录；命中口径只有「同一条记录」，
+// 不做模糊匹配，也不跨记录兜底。
 function detail(recordId) {
-  const item = normalized.filter(function (x) { return x.record_id === recordId })[0]
+  const item = normalized.filter(function (x) { return x.id === recordId || x.record_id === recordId })[0]
   if (!item) return null
   const v = isEligible(item)
   return {
+    id: item.id || null,
     record_id: item.record_id,
     registration_number: item.registration_number,
     registered_name: item.registered_name,
