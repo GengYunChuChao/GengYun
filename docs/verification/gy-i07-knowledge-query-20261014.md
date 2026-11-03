@@ -392,7 +392,7 @@ $ git fetch upstream --prune ; git merge upstream/main --no-edit
 | `listHerbicides` / `getHerbicide` | **本片** | 主线仍写 `planned`/`route_mounted:false`；本片必须标 `implemented`+`route_mounted:true`（否则 `contract-status-tool.test.mjs` 的装配一致性断言失败） |
 | `listKnowledge`（主线由 `implemented` 改判 `partial`，补 `pagination.ts` 证据与新 blocker）/ `getKnowledge` | **主线** | 本片此前的 `/knowledge` 注册表条目改动**主动放弃**，不覆盖 #134 的协调结论 |
 | `source_kind` 横切维度 blocker | **本片** | 主线仍写「/herbicides 仍未装配」，与事实不符，故更新为「已装配并消费真实公告记录（来源 unverified、用量/禁限用未采集）」 |
-| `withdrawConsent`（`consent-pg.ts:135-179`）等 | **主线** | #134 已修正此前发现的 privacy 行号越界，本轮不再自行修改 |
+| `withdraw`（`consent-pg.ts:135-179`；**2026-11-04 订正：`withdrawConsent` 在 `consent-pg.ts` 已 0 命中，类方法现名 `withdraw`，在 `:148`**）等 | **主线** | #134 已修正此前发现的 privacy 行号越界，本轮不再自行修改 |
 
 冲突文件按「取主线版本 → 用工具 `replaceStatusTables` 从合并后 JSON 重建生成表格」解决，
 **不改动手写正文**。
