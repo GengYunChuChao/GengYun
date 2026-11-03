@@ -29,6 +29,7 @@ import { createMemoryRecognitionStore } from '../../services/api/src/recognition
 import { createMemoryMediaStore } from '../../services/api/src/media/store.ts';
 import { createPostgresMediaStore } from '../../services/api/src/media/store-pg.ts';
 import { createObjectRefCipher } from '../../services/api/src/media/object-ref-cipher.ts';
+import { MEDIA_ONLINE_RETENTION_MS } from '../../services/api/src/media/retention.ts';
 import {
   RECOGNITIONS_DELETION_MODULE,
   USER_DATA_DELETION_MODULES,
@@ -439,6 +440,27 @@ test('PG 原语 ::fake-client：单事务 + 四条语句的顺序/参数/收窄�
   assert.deepEqual(statements[selectMediaIndex].values, [USER_A]);
   // 衍生物行按「该 owner 的**全部**媒体 id」取（含不软隐藏的行：它们的衍生物同样要登记）。
   assert.deepEqual(statements[selectDerivativesIndex].values, [['media-a1', 'media-a2']]);
+
+  // ⑥ R74：注销受理即把本主体媒体行的**保留截止时刻**写进 `expires_at`
+  //    （`docs/implementation-requirements.md:278`「在线个人数据／私有原媒体7日内删除」）。
+  //    读行时必须同时取到「这行还没有截止时刻」这一位，否则无从决定要不要写、也不能避免覆盖更晚的期限。
+  assert.equal(
+    statements[selectMediaIndex].text.includes('(expires_at IS NULL) AS needs_deadline'),
+    true,
+    '读媒体行必须带 needs_deadline：否则 ready 私有行永远不会被写入截止时刻',
+  );
+  for (const [name, statement] of [['软隐藏', softHide], ['清引用', clear]]) {
+    assert.equal(
+      statement.text.includes('expires_at = CASE WHEN expires_at IS NULL'),
+      true,
+      `${name}那条 UPDATE 必须写截止时刻，且不许把已有的更晚期限改小`,
+    );
+    assert.equal(
+      statement.values[3],
+      MEDIA_ONLINE_RETENTION_MS,
+      `${name}的期限参数必须来自 media/retention.ts（= 7×24h），⛔ 不许在这里另写字面量`,
+    );
+  }
 });
 
 test('PG 原语 ::fake-client：未注入 connect ⇒ fail-closed（零语句、不伪事务）', async () => {
