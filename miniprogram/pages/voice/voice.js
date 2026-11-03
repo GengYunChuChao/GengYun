@@ -68,6 +68,14 @@ const LEAVE_REASON_TEXT = Object.freeze({
   gate: '会话／门禁已失效'
 })
 
+/**
+ * 落 UI 之前本页就已丢弃本机临时录音（隐私优先，见 `discardRecordFile`）⇒ 文案尾部统一补一句
+ * 「不能重试同一条，只能重录」。只改措辞，不改任何判定，也不新增加保留或重试通道。
+ */
+function withDiscardNote(note) {
+  return note + voiceApi.RECORD_DISCARDED_NOTE
+}
+
 Page({
   onLoad: function () {
     fontScale.applyFontScale(this)
@@ -954,7 +962,7 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'RECORD_FORMAT_NOT_WAV',
-        recordStageNote: voiceApi.recordFormatMessageFor(result),
+        recordStageNote: withDiscardNote(voiceApi.recordFormatMessageFor(result)),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -975,8 +983,8 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'INVALID_INPUT',
-        recordStageNote: '录音时长 ' + (result.durationMs / 1000).toFixed(1) + ' 秒，超过契约上限 '
-          + (voiceApi.RECORD_MAX_DURATION_MS / 1000) + ' 秒：本条未上传任何音频，请重新录制。',
+        recordStageNote: withDiscardNote('录音时长 ' + (result.durationMs / 1000).toFixed(1) + ' 秒，超过契约上限 '
+          + (voiceApi.RECORD_MAX_DURATION_MS / 1000) + ' 秒：本条未上传任何音频。'),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -993,7 +1001,7 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'MEDIA_CHANNEL_UNAVAILABLE',
-        recordStageNote: '无法读取录音文件摘要：本条未上传任何音频（不伪造上传结果）。',
+        recordStageNote: withDiscardNote('无法读取录音文件摘要：本条未上传任何音频（不伪造上传结果）。'),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -1005,8 +1013,8 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'MEDIA_TOO_LARGE',
-        recordStageNote: '录音文件 ' + (info.size / 1048576).toFixed(1) + ' MiB，超过用途上限 '
-          + (voiceApi.VOICE_MAX_BYTES / 1048576) + ' MiB：本条未上传任何音频，请缩短录制后重试。',
+        recordStageNote: withDiscardNote('录音文件 ' + (info.size / 1048576).toFixed(1) + ' MiB，超过用途上限 '
+          + (voiceApi.VOICE_MAX_BYTES / 1048576) + ' MiB：本条未上传任何音频，请缩短录制后重试。'),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -1056,7 +1064,7 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'stopped', recordLabel: '重新录音',
-        recordStageNote: '执行模式 ' + mode + '（真实对象存储未接线）：录音已在本机完成，但本条没有上传，也没有 media_id。',
+        recordStageNote: withDiscardNote('执行模式 ' + mode + '（真实对象存储未接线）：录音已在本机完成，但本条没有上传，也没有 media_id。'),
         uploadErrorCode: '', uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -1090,7 +1098,7 @@ Page({
         recordState: 'failed', recordLabel: '重新录音',
         uploadErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: '',
-        recordStageNote: voiceApi.recordUploadMessageFor(error) + '（' + String(error && error.code) + '）'
+        recordStageNote: withDiscardNote(voiceApi.recordUploadMessageFor(error) + '（' + String(error && error.code) + '）')
       })
     }
   },
