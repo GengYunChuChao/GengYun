@@ -602,3 +602,12 @@ test('钉子·无取消能力 kind 的 cancel 错误码（缺 Key ⇒ 400 / 缺 
   assert.equal(noCancelNoHeaders?.code, 'PROVIDER_UNAVAILABLE', '无任何有取消能力的源时，缺头不再被前置校验 ⇒ 503');
   assert.equal(noCancelNoHeaders?.status, 503);
 });
+
+// 上面那条「与契约 enum 对拍」只防两侧**不同步**：契约与模块一起少一个 kind 时两侧仍相等 ⇒ 照样全绿，静默缩水无人报警。
+// 故补一条**绝对下界**兜住这种静默：用 `>=` 而非 `===` —— `===` 正是本轮被替换掉的脆弱形状（合法新增一个 kind 就假红），
+// `>=` 只防「一起缩水」这一种静默，多一个 kind 时不误报。
+// 刻意放在文件末尾、而非紧挨那两条对拍断言：任何插入都会位移 docs/** 证据页引用的本文件行号，而那些裸锚点逐条登记在
+// tools/doc-anchors-orphan-baseline.json 里（本片不许动那份册子），所以只追加在无人引用的末尾。
+test('JOB_KINDS 绝对下界：少于 6 个即视为契约与模块同步缩水（与上面的契约对拍互补）', () => {
+  assert.ok(JOB_KINDS.length >= 6, '作业类型少于 6 个 ⇒ 契约与模块同步缩水，必须显式说明');
+});
