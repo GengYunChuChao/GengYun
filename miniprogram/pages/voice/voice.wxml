@@ -178,7 +178,7 @@
   <view class="section">
     <view class="section-head">
       <view class="section-head__title">录音（独立控件）</view>
-      <view class="section-head__meta">{{recordState === 'recording' ? '录音中' : (recordState === 'uploading' ? '上传中' : (recordState === 'stopped' ? '已录音' : (recordState === 'failed' ? '未成功' : '未录音')))}}</view>
+      <view class="section-head__meta">{{recordState === 'recording' ? '录音中' : (recordState === 'uploading' ? '上传中' : (recordState === 'stopped' ? '已录音' : (recordState === 'denied' ? '未授权' : (recordState === 'failed' ? '未成功' : '未录音'))))}}</view>
     </view>
     <view class="panel">
       <view class="hint">{{recordNote}}</view>
@@ -196,7 +196,7 @@
       <view class="hint" wx:if="{{recordDurationMs > 0}}">
         本次录音：{{recordDurationMs}} ms · {{recordedMime || '（未取得编码）'}}
       </view>
-      <view class="notice {{recordState === 'failed' ? 'notice--danger' : (recordState === 'stopped' ? 'notice--stub' : '')}}" wx:if="{{recordStageNote}}">
+      <view class="notice {{recordState === 'denied' ? 'notice--danger' : (recordState === 'failed' ? 'notice--danger' : (recordState === 'stopped' ? 'notice--stub' : ''))}}" wx:if="{{recordStageNote}}">
         <text class="notice__text">{{recordStageNote}}</text>
       </view>
       <view class="hint" wx:if="{{uploadErrorCode}}">错误码：{{uploadErrorCode}}（未收录的码一律如实带出，不折叠成"失败"）</view>
@@ -213,9 +213,20 @@
         >{{recordLabel}}</button>
       </view>
 
-      <view class="notice" wx:if="{{recordState === 'failed'}}">
+      <!--
+        录音权限引导（S2/S3）：只在 `denied` 这一态出现——它专指**麦克风授权**被拒，
+        与其它失败（能力缺失/中断/上传失败/超限，落 `failed`）分开：后者去设置页也修不了。
+        跳转**只能**由这里按钮的 tap 触发（handler 名固定为 onOpenSetting，页面里没有任何自动跳转）。
+      -->
+      <view class="notice voice-permission" wx:if="{{recordState === 'denied'}}">
         <text class="notice__icon">🎙️</text>
         <text class="notice__text">{{recordPermissionNote}}</text>
+        <button
+          class="btn btn--secondary voice-permission__action"
+          aria-role="button"
+          aria-label="打开设置授权录音"
+          bindtap="onOpenSetting"
+        >打开设置 · 授权录音</button>
       </view>
 
       <view class="demo-caption">录音控件与上方播报控件是两个独立控件：录音不会触发播报，播报也不采集任何音频。</view>

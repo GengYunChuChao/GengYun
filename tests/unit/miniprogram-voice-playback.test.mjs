@@ -618,6 +618,13 @@ function loadPageHarness(options = {}) {
   /** `deferredFileInfo: true` ⇒ `wx.getFileInfo` **保持在途**，由用例决定何时兑现（打开 F1-R2 的读摘要窗口）。 */
   let fileInfoDeferred = null;
 
+  /**
+   * 录音授权的**可变**快照（GY-R74）：真机语义是「用户去设置页改了授权，回来读到的就变了」，
+   * 因此这里由 `option` 初始化、由 `wx.openSetting` 探针按脚本改写，而不是每次读同一个常量。
+   * `options.recorderOptions.deny === true` ⇒ 初始为「已拒绝」。
+   */
+  let recordPermissionDenied = Boolean(options.recorderOptions && options.recorderOptions.deny);
+
   const fakeWx = {
     request: (o) => { requests.push(o); },
     getAccountInfoSync: () => ({ miniProgram: { envVersion: 'develop' } }),
@@ -625,8 +632,27 @@ function loadPageHarness(options = {}) {
     getStorageSync: () => '',
     setStorageSync: () => {},
     removeStorageSync: () => {},
-    getSetting: (o) => { if (o && o.success) o.success({ authSetting: { 'scope.record': options.recorderOptions && options.recorderOptions.deny ? false : true } }) },
+    getSetting: (o) => { if (o && o.success) o.success({ authSetting: { 'scope.record': recordPermissionDenied ? false : true } }) },
     getRecorderManager: () => { wxCalls.push({ api: 'getRecorderManager' }); return recorder },
+    /**
+     * 「打开设置」探针（GY-R74 / S1–S2）：页面**只能**经 `utils/recorder-port.js` 的 `openSetting()`
+     * 在用户 tap 里调到它。`options.openSettingResult` 脚本化"用户回来时的授权快照"：
+     *   `{ 'scope.record': true }`  ⇒ 回来已授权（并同步改写 `getSetting` 的读数，与真机一致）
+     *   `{ 'scope.record': false }` ⇒ 回来仍拒绝（缺省）
+     *   `{}`                        ⇒ 读不到 `scope.record`（无法判断）
+     *   `'fail'`                    ⇒ 平台失败回调；`'throw'` ⇒ 同步抛错
+     * 调用次数记进 `wxCalls`，供「只有 tap 才调、一次只调一次」的负控制判据使用。
+     */
+    openSetting: options.noOpenSetting === true ? undefined : (o) => {
+      wxCalls.push({ api: 'openSetting' });
+      const scripted = options.openSettingResult === undefined ? { 'scope.record': false } : options.openSettingResult;
+      if (scripted === 'throw') throw new Error('openSetting:throw');
+      if (scripted === 'fail') { if (o && typeof o.fail === 'function') o.fail({ errMsg: 'openSetting:fail' }); return }
+      const snapshot = scripted && typeof scripted === 'object' ? scripted : {};
+      if (snapshot['scope.record'] === true) recordPermissionDenied = false;
+      if (snapshot['scope.record'] === false) recordPermissionDenied = true;
+      if (o && o.success) o.success({ authSetting: snapshot });
+    },
     getFileSystemManager: () => ({ readFile: (o) => { if (o && o.success) o.success({ data: 'SYNTHETIC_AUDIO_BYTES' }) } }),
     getFileInfo: (o) => {
       const info = { size: options.fileSize === undefined ? 4096 : options.fileSize, digest: 'a'.repeat(64) };
@@ -1183,7 +1209,9 @@ test('验收1反例·拒绝授权 ⇒ 无 start、有如实提示（不假装在
   assert.equal(h.recorder._calls.filter((c) => c.api === 'start').length, 0, '授权被拒时不得调用 start');
   assert.equal(h.recorder.isRecording(), false, '授权被拒时平台录音器不得处于录音中');
   assert.equal(h.page.data.recording, false, '不得假装在录');
-  assert.equal(h.page.data.recordState, 'failed', '必须落在可分辨的失败态');
+  // GY-R74（S3）：权限类失败必须落在 `denied`，与「能力缺失/中断/上传失败」的 `failed` 分开——
+  // 只有 denied 才给「打开设置」按钮（去设置页能修；其它失败去设置页修不了）。
+  assert.equal(h.page.data.recordState, 'denied', '权限被拒必须落在 denied 态');
   assert.equal(h.page.data.recordStageNote.includes('麦克风授权被拒绝'), true, h.page.data.recordStageNote);
   assert.equal(h.page.data.recordStageNote.includes('没有开始录音'), true);
   assert.equal(h.page.data.uploadErrorCode, 'RECORD_AUTH_DENIED');
@@ -1194,13 +1222,14 @@ test('验收1反例·拒绝授权 ⇒ 无 start、有如实提示（不假装在
 
 test('验收1反例·录音启动失败/中断 ⇒ 如实呈现，不伪造「已录音」', async () => {
   for (const scenario of [
-    { options: { failStart: 'operateRecorder:fail auth deny' }, code: 'RECORD_AUTH_DENIED', expect: '麦克风授权被拒绝' },
-    { options: { failStart: 'operateRecorder:fail system error' }, code: 'RECORD_FAILED', expect: '录音未能完成' },
-    { options: { interrupt: true }, code: 'RECORD_INTERRUPTED', expect: '录音被中断' }
+    { options: { failStart: 'operateRecorder:fail auth deny' }, code: 'RECORD_AUTH_DENIED', expect: '麦克风授权被拒绝', state: 'denied' },
+    { options: { failStart: 'operateRecorder:fail system error' }, code: 'RECORD_FAILED', expect: '录音未能完成', state: 'failed' },
+    { options: { interrupt: true }, code: 'RECORD_INTERRUPTED', expect: '录音被中断', state: 'failed' }
   ]) {
     const h = bootPage({ recorderOptions: scenario.options });
     await h.page.onRecord();
-    assert.equal(h.page.data.recordState, 'failed', JSON.stringify(scenario.options));
+    // GY-R74（S3）：只有权限类拒绝落 `denied`；启动失败/中断仍落 `failed`（这两类去微信设置页修不了）。
+    assert.equal(h.page.data.recordState, scenario.state, JSON.stringify(scenario.options));
     assert.equal(h.page.data.recording, false);
     assert.equal(h.page.data.hasRecording, false, '失败不得留下"有录音可播"的假象');
     assert.equal(h.page.data.uploadErrorCode, scenario.code);
@@ -1944,4 +1973,198 @@ test('自动播报·没有可播报来源时不声称「自动播报中」：仍
   assert.ok(h.page.data.autoSpeakNote.includes('不伪造音频'), h.page.data.autoSpeakNote);
   assert.deepEqual(h.page.autoSpeakPolicy().playedKeys(), [], '没出声就不许记账');
   h.page.onUnload();
+});
+
+// ---------------------------------------------------------------------------
+// GY-R74 / S1–S3：麦克风权限被拒后的引导 + 录音失败态如实化
+//
+// 断言口径：①权限被拒 ⇒ `recordState==='denied'`（不是 failed）、notice 在、按钮在场；
+// ②**只有 tap** 才调 `wx.openSetting`，且一次 tap 只调一次（onLoad/onShow 一次都不调）；
+// ③回来已授权 ⇒ 回到 idle（不自动开录）且能真的重新录；④回来仍未授权 ⇒ 仍是 denied，
+// 文案只说这一趟的真实结果（不得写"已修复"）；⑤端口原语对"没能力/抛错/没改授权"都有
+// 明确返回，绝不吞成 undefined；⑥页面不得直接调 `wx.openSetting`（只能经端口）。
+// ---------------------------------------------------------------------------
+
+/** 数这一趟页面调了几次 `wx.openSetting`（只统计平台调用，端口内部也走同一个桩）。 */
+function openSettingCalls(h) {
+  return h.wxCalls.filter((c) => c.api === 'openSetting').length;
+}
+
+/** 从 `voice.wxml` 取「权限引导 notice」的**整段**（不存在即红：按钮/文案都靠它承载）。 */
+function permissionNotice(wxml) {
+  return /<view class="notice voice-permission" wx:if="\{\{recordState === 'denied'\}\}">([\s\S]*?)<\/view>/.exec(wxml);
+}
+
+test('GY-R74/S3·麦克风授权被拒 ⇒ recordState=denied（不是 failed）、权限提示与「打开设置」按钮在场', async () => {
+  const h = bootPage({ recorderOptions: { deny: true } });
+  await h.page.onRecord();
+  await flushMicrotasks(2);
+
+  assert.equal(h.page.data.recordState, 'denied', '权限问题必须落在 denied 态（与其它失败分开）');
+  assert.equal(h.page.data.recording, false, '被拒时不得假装在录');
+  assert.equal(h.page.data.uploadErrorCode, 'RECORD_AUTH_DENIED');
+  assert.equal(h.recorder.isRecording(), false, '被拒时平台录音器不得在录');
+  assert.equal(h.requests.length, 0, '被拒时零上传请求');
+  // 权限提示仍如实（仍不会录音/采集/上传），且这**一路**没去过设置页。
+  assert.ok(h.page.data.recordPermissionNote.includes('不会开始录音'), h.page.data.recordPermissionNote);
+  assert.equal(openSettingCalls(h), 0, 'onLoad/onShow 期间不得自动打开设置页');
+
+  // 按钮：直接从 wxml 取（不复制语义）；notice 必须只由 denied 触发，且里面有一个 bindtap 按钮。
+  const wxml = read('miniprogram/pages/voice/voice.wxml');
+  const notice = permissionNotice(wxml);
+  assert.ok(notice, 'denied 态的权限引导 notice 必须存在，且只能由 recordState === \'denied\' 触发');
+  assert.ok(/<button[^>]*bindtap="onOpenSetting"/.test(notice[1]), '引导 notice 里必须有触发 onOpenSetting 的按钮');
+  assert.ok(/打开设置/.test(notice[1]), '按钮文案必须点名「打开设置」');
+  assert.ok(/aria-label="打开设置授权录音"/.test(notice[1]), '按钮必须带 aria-label（读屏可识别）');
+  assert.equal(typeof h.page.onOpenSetting, 'function', '页面必须提供 onOpenSetting 处理器');
+  // 段落标题也要能分辨：denied 不得与 failed 同词。
+  assert.ok(/recordState === 'denied' \? '未授权'/.test(wxml), '段落标题必须给 denied 单独一档（未授权）');
+  h.page.onUnload();
+});
+
+test('GY-R74/S2·只有用户 tap 才打开设置页，且一次 tap 只调一次 wx.openSetting（并发也不叠加）', async () => {
+  const h = bootPage({ recorderOptions: { deny: true }, openSettingResult: { 'scope.record': true } });
+  await h.page.onRecord();
+  await flushMicrotasks(2);
+  assert.equal(h.page.data.recordState, 'denied');
+  // 前置：tap 通路**必须真的存在**（模板里得有这个按钮）——否则"点了会调"只是空谈。
+  const notice = permissionNotice(read('miniprogram/pages/voice/voice.wxml'));
+  assert.ok(notice, 'denied 态必须有权限引导 notice');
+  assert.ok(/<button[^>]*bindtap="onOpenSetting"/.test(notice[1]), '引导 notice 里必须有触发 onOpenSetting 的按钮（否则没有 tap 通路）');
+  // onLoad/onShow 已经跑完 ⇒ 一次都不能调（这条就是"不许自动跳转"的判据）。
+  assert.equal(openSettingCalls(h), 0, '没有 tap 就不得调用 wx.openSetting');
+
+  // 两次并发 tap（平台弹窗还没回来时的重复点）⇒ 只跳一次。
+  const first = h.page.onOpenSetting({ type: 'tap' });
+  const second = h.page.onOpenSetting({ type: 'tap' });
+  await Promise.all([first, second]);
+  await flushMicrotasks(2);
+  assert.equal(openSettingCalls(h), 1, '一次 tap 只允许调一次 wx.openSetting（single-flight）');
+
+  // 已经不再是 denied ⇒ 再点也不跳（没有权限问题就不该把用户带走）。
+  await h.page.onOpenSetting({ type: 'tap' });
+  await flushMicrotasks(2);
+  assert.equal(openSettingCalls(h), 1, '非 denied 态不得再打开设置页');
+  h.page.onUnload();
+});
+
+test('GY-R74/S2·从设置页回来已授权 ⇒ 回到可重录（idle），且不自动开录', async () => {
+  const h = bootPage({ recorderOptions: { deny: true }, openSettingResult: { 'scope.record': true } });
+  await h.page.onRecord();
+  await flushMicrotasks(2);
+  assert.equal(h.page.data.recordState, 'denied');
+
+  await h.page.onOpenSetting({ type: 'tap' });
+  await flushMicrotasks(2);
+  assert.equal(h.page.data.recordState, 'idle', '已授权必须回到可重录态（不再是 denied）');
+  assert.equal(h.page.data.recording, false, '不得在用户没点「开始录音」时自行开录');
+  assert.equal(h.recorder.isRecording(), false, '平台录音器不得自行开始');
+  assert.ok(h.page.data.recordStageNote.includes('已获得麦克风授权'), h.page.data.recordStageNote);
+  assert.equal(h.page.data.uploadErrorCode, '', '授权已恢复 ⇒ 旧错误码不得残留');
+  // 授权真的恢复了（`getSetting` 的读数随 openSetting 翻转，与真机一致）⇒ 点一下就能真录。
+  await h.page.onRecord();
+  await flushMicrotasks(2);
+  assert.equal(h.page.data.recordState, 'recording', '已授权后必须能真的重新录音');
+  assert.equal(h.recorder.isRecording(), true);
+  const start = h.recorder._lastStart();
+  assert.equal(start.format, 'wav');
+  h.page.onUnload();
+});
+
+test('GY-R74/S2·从设置页回来仍未授权 ⇒ 仍是 denied，文案只说这一趟的真实结果（不得写"已修复"）', async () => {
+  const h = bootPage({ recorderOptions: { deny: true }, openSettingResult: { 'scope.record': false } });
+  await h.page.onRecord();
+  await flushMicrotasks(2);
+  assert.equal(h.page.data.recordState, 'denied');
+
+  await h.page.onOpenSetting({ type: 'tap' });
+  await flushMicrotasks(2);
+  assert.equal(h.page.data.recordState, 'denied', '仍拒绝就必须保持 denied（不得假装成功）');
+  assert.equal(h.page.data.recording, false);
+  assert.equal(h.recorder.isRecording(), false, '仍然不得开始录音');
+  const note = h.page.data.recordPermissionNote;
+  assert.ok(note.includes('仍未'), '必须说明这一趟回来仍未授权，实际：' + note);
+  assert.equal(note.includes('已获得'), false, '不得写成已获得授权');
+  assert.equal(note.includes('已修复'), false, '不得把未修复写成已修复');
+  assert.equal(h.page.data.uploadErrorCode, 'RECORD_AUTH_DENIED', '错误码保持如实');
+  // 还能再点一次（按钮仍在、状态仍是 denied）。
+  assert.ok(permissionNotice(read('miniprogram/pages/voice/voice.wxml')), '按钮必须仍可见（还能再试一次）');
+  h.page.onUnload();
+});
+
+test('GY-R74/S1·端口原语 openSetting()：平台缺失/抛错/fail/没改授权都**有明确返回**（不吞成 undefined）', async () => {
+  const cases = [
+    { label: '已授权', options: { openSettingResult: { 'scope.record': true } }, expect: { ok: true, state: 'granted', code: null } },
+    { label: '仍拒绝', options: { openSettingResult: { 'scope.record': false } }, expect: { ok: false, state: 'denied', code: 'RECORD_SETTING_STILL_DENIED' } },
+    { label: '读不到 scope.record', options: { openSettingResult: {} }, expect: { ok: false, state: 'unknown', code: 'RECORD_SETTING_UNCHANGED' } },
+    { label: '平台 fail 回调', options: { openSettingResult: 'fail' }, expect: { ok: false, state: 'unknown', code: 'RECORD_SETTING_UNAVAILABLE' } },
+    { label: '平台同步抛错', options: { openSettingResult: 'throw' }, expect: { ok: false, state: 'unknown', code: 'RECORD_SETTING_UNAVAILABLE' } },
+    { label: '平台没有 wx.openSetting', options: { noOpenSetting: true }, expect: { ok: false, state: 'unknown', code: 'RECORD_SETTING_UNSUPPORTED' } }
+  ];
+  for (const item of cases) {
+    const h = bootPage(item.options);
+    const result = await h.portModule.openSetting();
+    assert.equal(result === undefined || result === null, false, item.label + '：不得吞成 undefined/null');
+    assert.equal(typeof result, 'object', item.label + '：必须返回对象');
+    assert.equal(result.ok, item.expect.ok, item.label + '：ok');
+    assert.equal(result.state, item.expect.state, item.label + '：state');
+    assert.equal(result.code, item.expect.code, item.label + '：code');
+    // 端口恒 resolve（不 reject）：页面 await 一次就能拿到结论。
+    assert.equal(result.code === 'RECORD_SETTING_UNAVAILABLE' ? typeof result.errMsg === 'string' : true, true,
+      item.label + '：失败必须带 errMsg 供页面如实说明');
+    h.page.onUnload();
+  }
+  // 码集是独立闭集：不得与录音失败码混用（否则"没改授权"会被说成"录音失败"）。
+  const h = bootPage();
+  const codes = h.portModule.CODES;
+  for (const value of Object.values(h.portModule.SETTING_CODES)) {
+    assert.equal(Object.values(codes).includes(value), false, '设置页结果码不得混进录音失败码集：' + value);
+  }
+  h.page.onUnload();
+});
+
+test('GY-R74/S2·平台没有 openSetting／跳转失败 ⇒ 保持 denied 且如实说明"这一次没跳成"（不静默）', async () => {
+  for (const scenario of [
+    { options: { noOpenSetting: true }, expect: '没有「打开设置」能力' },
+    { options: { openSettingResult: 'fail' }, expect: '没能完成这次跳转' },
+    { options: { openSettingResult: 'throw' }, expect: '没能完成这次跳转' },
+    { options: { openSettingResult: {} }, expect: '读不到' }
+  ]) {
+    const h = bootPage(Object.assign({ recorderOptions: { deny: true } }, scenario.options));
+    await h.page.onRecord();
+    await flushMicrotasks(2);
+    await h.page.onOpenSetting({ type: 'tap' });
+    await flushMicrotasks(2);
+    assert.equal(h.page.data.recordState, 'denied', JSON.stringify(scenario.options));
+    assert.ok(h.page.data.recordPermissionNote.includes(scenario.expect),
+      JSON.stringify(scenario.options) + ' 文案必须如实说明原因，实际：' + h.page.data.recordPermissionNote);
+    assert.equal(h.page.data.recordPermissionNote.includes('已获得'), false);
+    h.page.onUnload();
+  }
+});
+
+test('GY-R74/S2·页面不得直接调 wx.openSetting：跳转只能经 recorder-port 的原语', () => {
+  const raw = read('miniprogram/pages/voice/voice.js');
+  const js = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.equal(/wx\.openSetting\s*\(/.test(js), false, '页面不得直接调用平台 openSetting（只能经 recorder-port）');
+  assert.ok(/recorderPort\.openSetting\(\)/.test(js), '页面必须经 recorderPort.openSetting() 取回授权结果');
+  // 唯一调用点必须在 tap 处理器 `onOpenSetting` 内部（生命周期里一次都不许出现）。
+  // 判据用「方法切片」而不是正则贪婪匹配：先取 `onOpenSetting:` 到下一个方法定义之间的正文，
+  // 再要求全文件的 `openSetting(` 调用次数与这段正文里的次数相等。
+  const handlerStart = js.indexOf('onOpenSetting: async function');
+  assert.ok(handlerStart > 0, '页面必须有 onOpenSetting 处理器（且是 async：要 await 平台结果）');
+  const afterHandler = js.indexOf('\n  stopAndUpload: async function');
+  assert.ok(afterHandler > handlerStart, 'onOpenSetting 之后应紧跟既有方法（切片边界可确定）');
+  const handlerBody = js.slice(handlerStart, afterHandler);
+  const allCalls = (js.match(/openSetting\s*\(/g) || []).length;
+  const handlerCalls = (handlerBody.match(/openSetting\s*\(/g) || []).length;
+  assert.ok(handlerCalls >= 1, 'onOpenSetting 必须真的调用原语');
+  assert.equal(allCalls, handlerCalls, 'openSetting 的调用点只允许在 onOpenSetting 里（生命周期不得调用）');
+  for (const name of ['onLoad', 'onShow', 'onReady', 'onHide', 'onUnload']) {
+    const start = js.indexOf('\n  ' + name + ': ');
+    if (start < 0) continue;
+    const end = js.indexOf('\n  },', start);
+    const body = js.slice(start, end === -1 ? js.length : end);
+    assert.equal(/openSetting/.test(body), false, name + ' 里不得调用 openSetting（只允许 tap 触发）');
+  }
 });
