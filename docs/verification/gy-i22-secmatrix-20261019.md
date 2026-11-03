@@ -337,6 +337,9 @@
   - 注意别把两件事混起来：`/jobs/{id}/cancel` 与 `/admin/jobs/{id}/cancel` **有**契约 operation（`packages/contracts/openapi.json:2296`、`:11158`；行号按基线 `3cdf4740` 重锚，原记 2219／9996；本片（R75 历史详情）在 openapi 自 7145 行起插入 83 行后，第一处 2296 未动（在插入点之上）、第二处 11075 后移到 11158，两处都按符号复核过（`"/jobs/{id}/cancel": {`、`"/admin/jobs/{id}/cancel": {`）），那是「在途任务取消」，不是「注销取消」。
 - **要拿到需要什么**：需求侧先定契约（是否允许取消、允许窗口、取消后 `DeletionState` 取值、回执 bearer 是否随之失效）⇒ 再在 openapi / operations.json / states.json 三处加 operation 与枚举 ⇒ 然后写实现 + 矩阵补两条**真**断言。三步都不在本片范围（本片不改契约、不改产品代码）。
 - **是否阻塞 #22 关闭**：**我的判断：不阻塞。** 依据是 #22 验收原文只要求「有限关键安全及权限用例全部通过，未解决严重安全／权限缺陷 0」；一个**契约未定义**的路径既不是「用例失败」也不是「未解决的严重缺陷」，属范围外。但这条判断的代价要写清：**在契约补上之前，任何「注销闭环（含取消）」的说法都不成立**。
+- **2026-11-04 复核（`dc6ae8d2`）：本节结论已失效；上面三段是时点读数，原样留在原处，不改写**。补今天的事实：`packages/contracts/operations.json` 现为 **130** 个 operation（不是 113）；`cancelDeletion`（`DELETE /me/account/deletion`）已于 PR #554（`4e0c3712`，2026-10-24 17:44Z）进入冻结契约；`packages/contracts/states.json` 的 `DeletionState` 已有 `cancelled`（紧接 `completed` 之后，来自迁移 `0039_r34_deletion_state_cancelled.sql` 的 `ALTER TYPE … ADD VALUE`）；本节上一段引的 `packages/contracts/openapi.json:1555-1557` 现在正好落在 `"delete"` → `"operationId": "cancelDeletion"` 上——同一段行号，语义已经从「只有 get」翻成「注销取消这条路就是它」。所以「取消注销：契约里没有对应的 operation」这个标题、以及「矩阵 C4 第 15–16 条只能断言 404」这个推论，对 `dc6ae8d2` 都不再成立；C4 那两条要在新契约下重跑才作数（本片未跑，不冒充取得）。
+- **仍未取得的部分（复核后仍成立，但性质变了）**：`docs/architecture/contract-status.json` 里 `cancelDeletion` 的状态是 `partial`，其 blocker 自述「取消只推进**进程内**协调器状态，数据库侧 `deletion_requests.state` 的 cancelled 写路径未接线（本片只做 0039 枚举值 + 契约／应用层闭集，持久化取消属后续片）」——缺口从「契约没定义」变成「实现只到一半」。要拿到真断言，需在 `real` + 真库装配下跑取消用例。
+- **是否阻塞 #22 关闭（复核后）**：**我的判断：仍不阻塞，但理由要换。** 不再是「契约未定义 ⇒ 范围外」，而是「契约已定义、实现 partial、blocker 已逐条登记」属已知未取得项；不把「取消」从 #22 的未取得清单里划掉，也不因此把 #22 判成阻塞。最终仍以监工按 #22 验收原文的裁定为准。
 
 ### 10.2 真实环境缺失：真机 / 真供应商 / 真 PG 全链
 

@@ -76,18 +76,6 @@
       "reference": "miniprogram/pages/voice/voice.js:772"
     },
     {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "openapi.json:6448"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:6446"
-    },
-    {
       "path": "services/api/src/admin/ops/jobs-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
