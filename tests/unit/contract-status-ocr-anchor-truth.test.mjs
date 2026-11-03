@@ -288,10 +288,18 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `contract-status.json` 278125 字节 / 4465 行、`contract-implementation-status.md` 199688 字节
  * / 220 行 —— 行数与上一次同步相同（#873 只改 evidence 文案与中文表格，没有增删 operation 行），
  * 字节数是两侧文案的净增。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十次同步（`readCommunityMediaContent` 的 blocker 与代码正面矛盾）：该条 blocker 原写
+ * 「真实内容来源未接线（来源关闭时统一 404）」，但 `services/api/src/media/content-source.ts` 的头注释
+ * 自述「真实来源（GY-I06/G3）已接线：默认装配是 `createRealContentSource(communityService, mediaStore)`」，
+ * 装配点也在 `services/api/src/app.ts`（`contentSource: mediaContentSource ?? createRealContentSource(...)`）。
+ * 故改成「……真实内容来源已接线（默认 `createRealContentSource(communityService, mediaStore)`，社区域未接线时
+ * 回落 `createClosedContentSource()` ⇒ 取图统一 404）……」。中文表格同次用 `--write-doc` 重生成。
+ * 两份台账各 +118 字节、行数不变（278243 / 4465、199806 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278125, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 199688, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278243, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 199806, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

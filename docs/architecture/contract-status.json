@@ -4069,7 +4069,7 @@
           "name": "GY-I06 real 模式"
         }
       ],
-      "blocker": "取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源未接线（来源关闭时统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收"
+      "blocker": "取图逐次复核登录主体/会话 epoch/内容发布与审核/媒体与头像版本，失效统一 404，Cache-Control 恒 no-store，只出**去 EXIF 衍生件**；真实内容来源已接线（默认 `createRealContentSource(communityService, mediaStore)`，社区域未接线时回落 `createClosedContentSource()` ⇒ 取图统一 404）；真实 CDN / 访问网关与原桶 URL 重定向策略未验收"
     },
     {
       "id": "disableAdministratorAccount",
