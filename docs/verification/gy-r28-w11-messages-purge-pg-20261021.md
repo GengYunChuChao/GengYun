@@ -121,7 +121,7 @@ PASS 8: 回执：messages.online_state = completed（证据串即上面的行数
 | 本主体 0 行 | 清理前同一条计数 SQL 读到 3；同一脚本里他人 2 行与负控制 2 行仍非 0；表的 8 列清单里没有 `deleted_at/deleted/is_deleted/state/status` ⇒ 0 行只能是硬删 |
 | 他人原样 | 断的是 `id` 数组 `deepEqual`（不是计数），且 A 与 B 的 uuid 只差随机位 ⇒ 谓词写错（如 `LIKE '%…%'` 或漏 `owner_id`）必红 |
 | 台账按前缀删到 0 | 断的是 A 的 `(scope, key_hash)` 行集为空 + 整表从 8 落到 5（若整表清空则 5 这条必红；若谓词写宽则 B/C 必红） |
-| 计数入证据 | 证据串用正则 `^messages:online-purged:(\d+);messages:idempotency-purged:(\d+)$` 全串匹配，并逐项与清理前读数相等；重放一次必须是 `0;0`（若计数来自「调用成功」而非实际行数，重放仍会是非 0 或串形状不对） |
+| 计数入证据 | 证据串用正则 `^messages:online-purged:(\d+);messages:idempotency-purged:(\d+)$` 全串匹配，并逐项与清理前读数相等；重放一次必须是 `0;0`（若计数来自「调用成功」而非实际行数，重放仍会是非 0 或串形状不对）。**口径限定**：本臂直连协调器且未注入备份端口 ⇒ 证据串就是这两段；证据串**不是**恒为两段 —— 走装配层 `real` 模式（`buildApp` 未注入备份端口）的臂会在尾部再按模块追加一段 `;<module>:backup-(purged\|blocked):<token>`（见 `tests/integration/messages-pg.mjs` 的注销断言） |
 | 负控制 | 主体 C 全程不跑清理，同库同连接读到的仍是 2/2 ⇒ 「0 行」不是环境或谓词带来的恒真 |
 
 ## 6. 一处需要决策者知情的行为（**不是缺陷，是已登记的产品决策**）

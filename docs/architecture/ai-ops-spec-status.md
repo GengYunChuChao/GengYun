@@ -47,10 +47,10 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 作业面公共（`/jobs/*` 与取消语义） | 10 | 9 | 1 | 0 | 0 | 取消能力六源全接；只有未接线源才 503（P01） |
 | 识别 | 3 | 1 | 2 | 0 | 0 | 适配器与字节端口已接线（GY-R70），缺「已审供应商」与真实凭据 ⇒ 仍零真实调用；装配失败/缺凭据 fail-closed 503（N06，R72 订正为部分实现） |
-| OCR | 3 | 2 | 1 | 0 | 0 | 真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口（`services/api/src/routes/ocr.ts:195`、`services/api/src/app.ts:2508-2509`）；真实登记源未接线、用量端口恒空（P03） |
+| OCR | 3 | 2 | 1 | 0 | 0 | 真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口（`services/api/src/routes/ocr.ts:195`、`services/api/src/app.ts:2546-2547`）；真实登记源未接线、用量端口恒空（P03） |
 | 语音与转写 | 3 | 2 | 1 | 0 | 0 | 默认内存 store，真实 ASR 未验收（P04） |
 | 合成 | 2 | 1 | 1 | 0 | 0 | 真实提供者与核对内容端口已在产品装配（`services/api/src/app.ts:1161-1162`）；产物端口默认未接线、须显式注入（`:1176`）（P05） |
-| 问答 | 7 | 6 | 1 | 0 | 0 | 真实模型已接线，但装配有四与门（`chatProvider` 非空＋外发账本可用＋`real`＋无注入覆盖，`services/api/src/app.ts:2342-2363`）；任一不成立才走确定性回答器与 `unimplemented:no-real-` 版本串（P06／N03） |
+| 问答 | 7 | 6 | 1 | 0 | 0 | 真实模型已接线，但装配有四与门（`chatProvider` 非空＋外发账本可用＋`real`＋无注入覆盖，`services/api/src/app.ts:2380-2401`）；任一不成立才走确定性回答器与 `unimplemented:no-real-` 版本串（P06／N03） |
 | 审核规则层与载荷 | 5 | 3 | 2 | 0 | 0 | 模型层适配器与装配路径已在，`real` 缺真实授权与凭据（N07，部分实现）；载荷 mime 已通（N11，已实现） |
 | 媒体 | 2 | 1 | 0 | 1 | 0 | 读句柄网关未接（N12）；写链路已验收（E24） |
 | 开关（三键与十个受控面） | 6 | 6 | 0 | 0 | 0 | 本域全绿，闭集与两个错误码分流都有断言 |
@@ -70,7 +70,7 @@
 | --- | --- | --- | --- | --- |
 | E01 | `Job` 九键闭集，出口按契约重建、多余键一律拒绝 | 已实现 | services/api/src/jobs/registry.ts:50-60 | 只管公共作业面；后台 `AdminJob` 另有投影，两套键集不共享 |
 | E02 | `JobState` 七值闭集，不得扩展 | 已实现 | services/api/src/jobs/registry.ts:38-46 | 域内状态机另有迁移表，闭集是出口判定而非库内唯一来源 |
-| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2515-2566 | 注册 ≠ 可取消；取消能力按源判定，六源今已全接（P01） |
+| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2553-2604 | 注册 ≠ 可取消；取消能力按源判定，六源今已全接（P01） |
 | E04 | 未接线 kind 与「作业不存在」同形 404 | 已实现 | services/api/src/jobs/registry.ts:280-281 | 同形是刻意设计，代价是运维无法从 404 分辨「没接」与「没这条」 |
 | E05 | `result` 如实性不变式：`result` 非空 ⇒ 只能是 `succeeded`／`uncertain` | 已实现 | services/api/src/jobs/registry.ts:177 | 与识别域既有行为有一处口径差（`uncertain` 允许带 `result`），已在同文件注明 |
 | E06 | 端口回传不合契约 ⇒ 503 `PROVIDER_UNAVAILABLE` + `retryable:false`，单通道 | 已实现 | services/api/src/jobs/registry.ts:130-133 | 唯一拒绝通道；不另造错误码，也不放宽冻结契约 |
@@ -119,7 +119,7 @@
 | P03 | OCR 域五端点 + 持久化 | 部分实现 | docs/architecture/contract-implementation-status.md:87-91 | 任务读取与取消已接；真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口，真实登记源未接线，用量端口恒空 |
 | P04 | 转写域四端点 + 确认分离 | 部分实现 | docs/architecture/contract-implementation-status.md:92-95 | 默认内存 store；真实 ASR 评估、媒体持久化、注销清理未验收 |
 | P05 | 合成域受理 + 作业读面 + 取消 | 部分实现 | docs/architecture/contract-implementation-status.md:96 | 真实提供者与核对内容端口已在产品装配（`services/api/src/app.ts:1161-1162`）；产物端口默认未接线、须显式注入 `synthesisMediaWiring`（`:1176`）；听感评估未做 |
-| P06 | 问答域七端点 + PG 持久化 + 输出守卫 | 部分实现 | docs/architecture/contract-implementation-status.md:97 起的七端点块（末行 :103） | 真实模型已按四与门装配（`services/api/src/app.ts:2342-2363`、`services/api/src/ai/chat-wiring.ts:52-97`）：四门全过 ⇒ 三个版本串取真实模型／提示词版本（不带 `unimplemented:no-real-`）；任一不成立 ⇒ 版本串带该前缀、正文是确定性检索摘录 |
+| P06 | 问答域七端点 + PG 持久化 + 输出守卫 | 部分实现 | docs/architecture/contract-implementation-status.md:97 起的七端点块（末行 :103） | 真实模型已按四与门装配（`services/api/src/app.ts:2380-2401`、`services/api/src/ai/chat-wiring.ts:52-97`）：四门全过 ⇒ 三个版本串取真实模型／提示词版本（不带 `unimplemented:no-real-`）；任一不成立 ⇒ 版本串带该前缀、正文是确定性检索摘录 |
 | P07 | 审核域结论可读 + 规则层可用 | 部分实现 | docs/architecture/contract-implementation-status.md:76 | 真实 tms／ims 未授权 ⇒ real 整域 fail-closed（Z06）；持久队列与租约仍是内存台账 |
 | P09 | 非持久端口的审计台账（内存追加、只增不改） | 部分实现 | services/api/src/admin/ops/content-pg.ts:25-27 | 仍只增不改、重启即丢；但**真库端口已不再走它**：持久端口在自身事务里写库（services/api/src/admin/ops/service.ts:1115 只在 `!jobPort.persistent` 时追加内存） |
 | P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；出口侧：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `fetchAuditLogsPage`（operationId 是 `listAuditLogs`，见 `apps/admin/src/lib/admin-audit-logs.mjs:36`），导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`，#633），另两个审计页仍分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54）⇒ **三读面读数已在页面层合并**（`apps/admin/src/lib/admin-audit-logs.mjs:985` 的 `mergeAuditSources`，合并面板在 `apps/admin/src/views/AuditLogsView.vue:209`；该层头注释 `:840` 写死「服务端零改动：本层只消费既有读面，不新增 operation、不改契约」，故服务端仍是三个独立读面、无统一读面），合并条数／降序／跨源去重／失败隔离／来源筛选由 `tests/unit/admin-ui-audit-merge.test.mjs` 钉住；剩余缺口是页面读数无端到端验收，故仍判部分实现。原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |

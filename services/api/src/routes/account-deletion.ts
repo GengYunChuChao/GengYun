@@ -97,6 +97,16 @@ export interface AccountDeletionRoutesDeps {
    * 仍然取不到就 `null`：第三方只是回执的一个字段，⛔ 不因它 500。
    */
   thirdPartyRows?: ThirdPartyDeletionReadPort | null;
+  /**
+   * GY-R74（P2-a）· 本部署**能不能真的派发**第三方删除（写端口 + 适配器 + 收件人来源齐备）。
+   *
+   * 只用来把「没有接收方」与「这台机器发不出去」区分开：投影回 `null` 时，若这里明确是 `false`
+   * ⇒ 回执照实报 `'unsupported'`（契约 `ThirdPartyState` 闭集内，语义＝无法删除／无法证实）。
+   *
+   * 缺省 `undefined` ⇒ 不知道就不猜，保持 `null`（"没有可信结论"），与追加本参数前逐字一致。
+   * `true` ⇒ 具备派发能力（此时 `null` 仍按投影原义解释）。
+   */
+  thirdPartyWritable?: boolean;
   now: () => Date;
 }
 
@@ -145,13 +155,15 @@ async function thirdPartyStateOf(
   receipt: Record<string, unknown> | null,
 ): Promise<string | null> {
   if (receipt === null) return null;
-  const rows = await thirdPartyRowsFor(deps.thirdPartyRows ?? null, requestId);
+  const probe = await thirdPartyRowsFor(deps.thirdPartyRows ?? null, requestId);
+  const rows = probe.ok ? probe.rows : null;
   // 端口没给行（未接线/读失败）⇒ 退回落装配的同步来源（与回执同一本账）；再没有就 null。
   const source: ThirdPartyProjectionSource | null =
     rows === null ? deps.thirdParty : { thirdPartyStatuses: () => toProjectionRows(rows) };
   if (source === null) return null;
+  let state: string | null;
   try {
-    return thirdPartyReceiptState({
+    state = thirdPartyReceiptState({
       source,
       requestId,
       requestedAt: receipt['requested_at'] as string,
@@ -164,13 +176,35 @@ async function thirdPartyStateOf(
     // 第三方只是回执的**一个字段**：异常降级为 `null`，其余字段照常返回（不是 500）。
     return null;
   }
+  if (state !== null) return state;
+  /**
+   * 投影回 `null` ＝「没有可信的第三方结论」（零接收方，或现有行里没有任何结论态）。
+   *
+   * GY-R74：装配层若已明确告知本部署**不具备派发能力**（`thirdPartyWritable === false`：写端口／
+   * 适配器／收件人来源三者缺一，今天生产恒如此 —— PR #860 的适配器没有凭据、收件人来源全仓零实现），
+   * 那这就不是「不知道」而是「这台机器发不出去、也无法证实」⇒ 回执照实报 `'unsupported'`。
+   * 为什么要落到这个枚举：回执契约（`DeletionHandler`）没有任何自由文本原因字段
+   * （`packages/contracts/openapi.json`，`additionalProperties: false`），可读原因只能落在
+   * `third_party_state` 的闭集取值上；`'unsupported'` 的语义正是「做不到／无法证实」，
+   * ⛔ 不是 `'not_requested'`（那等于替用户说"不需要删"），也**绝不会**是 `'confirmed'`。
+   *
+   * ⛔ 读侧端口**读失败**（`probe.ok === false`：真库故障 / explicit-unavailable 端口抛错）不在此列：
+   * 那是"没读到"，不是"这台机器不能删"，保持 `null`（既有语义，见本文件 `thirdPartyRowsFor()`）。
+   * 未给该布尔（`undefined`）⇒ 同样保持 `null`：不知道就不猜。
+   */
+  if (!probe.ok) return null;
+  return deps.thirdPartyWritable === false ? 'unsupported' : null;
 }
 
 /**
- * 读侧端口取行（`null` = 没有持久行可读；⛔ 不是"查过了没有接收方"）。
+ * 读侧端口取行（`rows: null` = 没有持久行可读；⛔ 不是"查过了没有接收方"）。
  *
- * 端口抛错（`real` 无池的 explicit-unavailable 端口、或真库故障）在这里**就地降级为 `null`**：
- * 回执的第三方字段不得把整个回执打成 500（本文件 `thirdPartyStateOf()` 约束 1）。
+ * 端口抛错（`real` 无池的 explicit-unavailable 端口、或真库故障）在这里**就地降级**
+ * （`ok: false`，不冒泡）：回执的第三方字段不得把整个回执打成 500（本文件 `thirdPartyStateOf()`
+ * 约束 1）。之所以把"读失败"与"读到空"分开，是因为两者在回执里的诚实结论不同：
+ * 读到空 ⇒ 足以说「没有接收方」（投影给 `null`，可再按装配能力升级为 `'unsupported'`）；
+ * 读失败 ⇒ 只能说「没读到」，⛔ 不许冒充前者的结论。
+ *
  * 注意这与 `user-data-deletion.ts::thirdPartyRowsOf()` 的口径**不同且刻意不同**：那条路是
  * `refreshBackupStates()`/`refreshOnlineStates()` 的 blocked 复位判定，读不到就**不许**复位
  * （异常冒泡 ⇒ 503），两处的取舍各自成立。
@@ -178,12 +212,12 @@ async function thirdPartyStateOf(
 async function thirdPartyRowsFor(
   port: ThirdPartyDeletionReadPort | null,
   requestId: string,
-): Promise<ReadonlyArray<unknown> | null> {
-  if (port === null) return null;
+): Promise<{ ok: true; rows: ReadonlyArray<unknown> | null } | { ok: false }> {
+  if (port === null) return { ok: true, rows: null };
   try {
-    return await port.listThirdPartyDeletions(requestId);
+    return { ok: true, rows: await port.listThirdPartyDeletions(requestId) };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 

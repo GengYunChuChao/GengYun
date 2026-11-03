@@ -309,7 +309,7 @@ STATUS_KEYS=12
 | E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2433-2472 | 「注册」不等于「有能力」：取消能力另按域判定（P01） |
 ```
 
-- 依据：§4.3；`services/api/src/app.ts:2433` `registerJobRoutes(app, config, guards, createJobRegistry([`、`:2472` `]));`、六源 `:2434`／`:2440`／`:2443`／`:2449`／`:2457`／`:2465`。
+- 依据：§4.3；`services/api/src/app.ts:2553` `registerJobRoutes(app, config, guards, createJobRegistry([`、六源 `services/api/src/app.ts:2554`／`services/api/src/app.ts:2560`／`services/api/src/app.ts:2566`／`services/api/src/app.ts:2572`／`services/api/src/app.ts:2580`／`services/api/src/app.ts:2590`。
 
 ### 7.6 `docs/architecture/ai-ops-spec-status.md:100`（E30）
 
