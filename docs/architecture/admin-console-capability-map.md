@@ -204,7 +204,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 1. `apps/admin/src/auth/session.ts` 只存令牌：`sessionStorage` 一条 `gengyun.admin.session`（`apps/admin/src/auth/session.ts:27`），不落盘到别处、不写日志、不进 URL。
 2. 登录调 `POST /admin/auth/session`（`apps/admin/src/auth/session.ts:109-114`，必带 `Idempotency-Key`），服务端返回 `access_token / token_type / expires_at / audience / revision`（`services/api/src/auth/service.ts:366-374`）——**没有 scopes**。
 3. 因此 `signInAdmin` 返回对象的 `scopes` 硬编码为空数组（`apps/admin/src/auth/session.ts:128`），注释也写「登录响应不含 scope，需再次读取」（`apps/admin/src/auth/session.ts:17`）。
-4. 真来源是 `GET /admin/auth/session`：它要 `session:read` 守卫（`services/api/src/routes/admin-auth.ts:90`），把 `listAdminScopes` 的结果塞进 `SessionInfo`（`services/api/src/routes/admin-auth.ts:93-97`），响应体为：
+4. 真来源是 `GET /admin/auth/session`：它要 `session:read` 守卫（`services/api/src/routes/admin-auth.ts:90`），把 `listAdminScopes` 的结果塞进 `sessionInfo`（`services/api/src/routes/admin-auth.ts:93-97`；**2026-11-04 订正：`SessionInfo` 在 `admin-auth.ts` 已 0 命中，builder 现名 `sessionInfo`，由 `services/api/src/auth/service.ts:377` 导出**），响应体为：
 
 ```jsonc
 {
