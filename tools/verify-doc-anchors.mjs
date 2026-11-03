@@ -19,6 +19,17 @@
  *                   这两档原先只进 `SYMBOL-LINE` 读数、谁都不判；`--symbol=strict` 把它们并入
  *                   基线／新增加陈旧这套既有语义（基线见 `tools/doc-anchors-symbol-baseline.json`）。
  *                   `落在文档注释里` 那一档**保持原样**（仍由 `NOT_SYMBOL_LINE` ＋ 结构基线判）。
+ *   SYMBOL-COVERAGE（WARN 级，**缺省只统计、永不判红**）—— 同一行里 `路径:行号` 锚点旁边**紧邻**的
+ *                   反引号符号，是否**还在目标文件里、且还落在锚点区间**（两条任一：声明块上下各外扩
+ *                   ±5 行盖住锚点；或符号字面就写在锚点 ±5 行内——文档引调用／注册点也算数）。上面那条
+ *                   `--symbol=strict` 只证明「锚点行是代码行」，证明不了符号还在不在那儿：文档写
+ *                   `services/api/src/app.ts:2508` 的 `ocrPersistencePool`（真实声明在 2546 行）照样全绿——
+ *                   行号落进了别的函数体，符号名却继续被当成「实现就在这几行」的证据。三档：
+ *                   OK／符号 0 命中（NOT_FOUND）／符号在但不在区间（OUT_OF_RANGE）。
+ *                   **有意不判红**（写在这里就是要让后来人看见这是决定，不是遗漏）：这条判据的配对口径
+ *                   还带着可讨论的噪声（同一行里顺带被反引号框起来的词），先用一轮真实读数看清量级与
+ *                   修法，再决定是否升级；升级开关已经留好——`--symbol-coverage=strict` 配合 `--strict`
+ *                   即判红，缺省 `count` 只打印、`--strict` 下也不改退出码。
  *
  * 为什么**不**用「内容 sha256 全等」当判据：任何合法改代码（加一行日志、改一个错别字）都会让
  * 哈希变红，红的原因与「文档是不是假证据」无关，等于用噪声换掉原有的真信号，最后只能整片关掉。
@@ -49,6 +60,9 @@
  *                                                          # 作用域内锚点必须落在代码行上：
  *                                                          # 未落代码行的走符号基线，基线外新增在
  *                                                          # `--strict` 下 exit 1（CI 用的就是这条）
+ *   node tools/verify-doc-anchors.mjs --symbol-coverage=count   # 符号覆盖统计（WARN，缺省就开，永不判红）
+ *   node tools/verify-doc-anchors.mjs --symbol-coverage=strict  # 将来升级用：配合 --strict 才判红
+ *   node tools/verify-doc-anchors.mjs --symbol-coverage=off     # 关掉这条统计行
  *
  * 裸锚点（只写 `:1316`／`:1341-1350`）：路径从**同块**（同一段落／列表项／表格单元格／代码块）
  * 内最近的显式锚点继承，链接 `[:321](path)` 直接从 href 取；继承到的锚点与显式锚点**同权**——
@@ -81,7 +95,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from '
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { associateSymbol, declarationBlocks, scanComments, symbolLineVerdict } from './lib/anchor-resolve.mjs';
+import { anchorLineNumbers, associateSymbol, declarationBlocks, resolveSymbolBlock, scanComments, symbolLineVerdict } from './lib/anchor-resolve.mjs';
 
 export const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 默认扫描面：架构文档 + 证据页。用 `--scan` 可加，不改这里也能扩。 */
@@ -1214,6 +1228,157 @@ export function countSymbolAssociations({
   return { stats, reasons, undecidable, fallbacks };
 }
 
+// —— 符号覆盖（WARN 级：锚点旁边写着的符号名，还在不在锚点区间里） ————————————————
+/**
+ * 判据面：与 `--symbol=strict` 同一作用域（`docs/architecture/**`）。作用域外（`docs/verification/**`
+ * 以及 `--scan docs` 带出来的其余页面）**只计数**——理由与 `SYMBOL_LINE_SCOPE` 那段完全相同：
+ * 历史取证页的行号按当时的树写、正文也声明了基线，拿今天的树判它等于逼证据跟着代码改写。
+ */
+export const SYMBOL_COVERAGE_SCOPE = SYMBOL_LINE_SCOPE;
+/** 「覆盖」的容差：声明块上下各外扩这么多行（即「锚点 ±5 行」）。 */
+export const SYMBOL_COVERAGE_SLACK = 5;
+/** 「紧邻」的字符间距上限：超过这个距离就不配对（理由见 `collectSymbolCoverage` 的注释）。 */
+export const SYMBOL_COVERAGE_ADJACENCY = 12;
+/** 三档判定结果：只进 WARN 读数，不进 `findings`、不参与任何基线。 */
+export const SYMBOL_COVERAGE_OK = 'OK';
+export const SYMBOL_COVERAGE_NOT_FOUND = 'NOT_FOUND';
+export const SYMBOL_COVERAGE_OUT_OF_RANGE = 'OUT_OF_RANGE';
+/** 行内代码片段**整段**就是一条 `路径:行号` 时才算锚点（`app.ts:2508`；前后带字的不算）。 */
+const COVERAGE_ANCHOR_SPAN = new RegExp(`^((?:[\\w.\\-]+/)*[\\w.\\-]+\\.(?:${ANCHOR_EXTENSIONS.join('|')})):(\\d+)(?:-(\\d+))?$`);
+/** 行内代码片段**整段**就是一个标识符时才算符号（`app.ts`、`a.b()`、`{ }`、中文短语都不算）。 */
+const COVERAGE_SYMBOL_SPAN = /^[A-Za-z_$][\w$]*$/;
+
+/**
+ * 把一行里的行内代码片段分类成 `anchor` / `symbol` / `other`，连带片段在原行里的字符位置。
+ * 扫法与 `ANCHOR_DRIFT` 共用同一个 `INLINE_CODE_SPAN`（同一个正则，不另造一套行内代码语义）。
+ */
+function classifyCoverageSpans(line) {
+  const spans = [];
+  INLINE_CODE_SPAN.lastIndex = 0;
+  let match = INLINE_CODE_SPAN.exec(line);
+  while (match !== null) {
+    const body = match[1].trim();
+    const start = match.index;
+    const end = match.index + match[0].length;
+    const anchor = COVERAGE_ANCHOR_SPAN.exec(body);
+    if (anchor !== null) {
+      const from = Number(anchor[2]);
+      spans.push({ start, end, kind: 'anchor', target: anchor[1], from, to: anchor[3] === undefined ? from : Number(anchor[3]) });
+    } else if (COVERAGE_SYMBOL_SPAN.test(body)) {
+      spans.push({ start, end, kind: 'symbol', symbol: body });
+    } else {
+      spans.push({ start, end, kind: 'other' });
+    }
+    match = INLINE_CODE_SPAN.exec(line);
+  }
+  return spans;
+}
+
+/**
+ * 收集「同一行里既有 `path:N` 锚点、又有紧邻的反引号符号」的配对，判那个符号**还在不在锚点区间里**。
+ *
+ * 为什么需要这条：`--symbol=strict`（`NOT_SYMBOL_LINE`／`COMMENT_ANCHOR`）只判「锚点行是不是代码行」，
+ * 不证明同一行写着的符号名**还在那个文件里、且还落在锚点区间**。于是文档写
+ * `services/api/src/app.ts:2508` 的 `ocrPersistencePool`（真实声明在 2546 行）照样全绿：行号落进了
+ * 别的函数体，符号名却继续被当成「实现就在这几行」的证据。
+ *
+ * 配对口径（宁窄不宽，因为口径要能一句话讲清）：
+ *   ① 同一行里既有一段**整段就是** `路径:行号` 的行内代码（后缀在 `ANCHOR_EXTENSIONS` 内），
+ *      又有一段**整段就是**标识符的行内代码；
+ *   ② 两段按出现顺序**紧邻**（中间不夹别的行内代码），且原始字符间距 ≤ `SYMBOL_COVERAGE_ADJACENCY`；
+ *   ③ 两侧都够近且距离相等 ⇒ **不配对**（不猜），单独计数。
+ * 为什么不取「同一行里最近的符号」：实测 `docs/architecture` 下同行取最近会配出 323 对、其中 69 对
+ * 符号 0 命中（21%），大头是 `id`／`uuid`／`lines` 这类顺带被反引号框起来的词；按 ② 收紧后约 145 对、
+ * 约 16 对 0 命中（11%），被收紧掉的正是这些噪声。代价是覆盖变窄，所以**未配对的同行锚点单独计数**
+ * （读数里的「同行没有紧邻符号」那一格）——不许静默少扫。
+ *
+ * 判定（符号解析**只走** `tools/lib/anchor-resolve.mjs` 的 `resolveSymbolBlock`，不另写一套）：
+ *   OK           —— 两条任一成立：① 某个声明块（上下各外扩 `SYMBOL_COVERAGE_SLACK` 行）完整覆盖锚点
+ *                   区间；② 符号**本身落在锚点区间里**（文档引的是调用/注册点，`requireScope` 这类
+ *                   符号没有自己的声明块）。② 必须留：只在①下判，引用调用点的合法写法会整片变红——
+ *                   首版实测 132 对里 63 对的理由都是「有声明行但不在锚点区间」，而那 63 条里有大量
+ *                   就是「引的是使用处」。
+ *   NOT_FOUND    —— 符号在目标文件里 0 次出现（`anchorLineNumbers` 为空——字面出现，不做词边界判断，
+ *                   所以「`id` 出现在 `identity` 里」也算出现：宁可少报，不拿词边界制造假 0 命中）；
+ *   OUT_OF_RANGE —— 出现过，但既没有声明块覆盖锚点、符号也不在锚点区间里（多半是行号漂走或改了名）。
+ * 返回值**不参与退出码**（缺省 `--symbol-coverage=count`），这是有意为之：先看一轮真实读数，
+ * 再决定要不要升级成判红；升级开关是 `--symbol-coverage=strict`（还要配合 `--strict`）。
+ */
+export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN_TARGETS, fileIndex = null } = {}) {
+  const index = fileIndex ?? buildFileNameIndex(root);
+  const textsByFile = new Map();
+  const textOf = relativePath => {
+    if (!textsByFile.has(relativePath)) textsByFile.set(relativePath, readFileSync(join(root, relativePath), 'utf8'));
+    return textsByFile.get(relativePath);
+  };
+  const freshTally = () => ({ documents: 0, anchors: 0, paired: 0, ok: 0, notFound: 0, outOfRange: 0, unpaired: 0, ambiguous: 0, unresolved: 0 });
+  const judged = freshTally();
+  const outside = freshTally();
+  const misses = [];
+  for (const docPath of resolveScanTargets(root, targets)) {
+    const tally = toPosix(docPath).startsWith(SYMBOL_COVERAGE_SCOPE) ? judged : outside;
+    const docLines = splitLines(readFileSync(join(root, docPath), 'utf8'));
+    let anchorsInDoc = 0;
+    for (let lineIndex = 0; lineIndex < docLines.length; lineIndex += 1) {
+      const line = docLines[lineIndex];
+      if (!line.includes('`')) continue;
+      const spans = classifyCoverageSpans(line);
+      // 一条锚点 + 一个符号至少两段代码；不足两段的行不可能配出对，直接跳过（省掉后面所有路径解析）。
+      if (spans.length < 2) continue;
+      for (let position = 0; position < spans.length; position += 1) {
+        const item = spans[position];
+        if (item.kind !== 'anchor') continue;
+        anchorsInDoc += 1;
+        // 起止颠倒的锚点由结构判据（OUT_OF_RANGE）管，这里不参与配对。
+        if (item.to < item.from) { tally.unpaired += 1; continue; }
+        const neighbours = [];
+        for (const offset of [-1, 1]) {
+          const sibling = spans[position + offset];
+          if (sibling === undefined || sibling.kind !== 'symbol') continue;
+          const gap = offset < 0 ? item.start - sibling.end : sibling.start - item.end;
+          if (gap < 0 || gap > SYMBOL_COVERAGE_ADJACENCY) continue;
+          neighbours.push({ symbol: sibling.symbol, gap });
+        }
+        if (neighbours.length === 0) { tally.unpaired += 1; continue; }
+        if (neighbours.length === 2 && neighbours[0].gap === neighbours[1].gap) { tally.ambiguous += 1; continue; }
+        neighbours.sort((left, right) => left.gap - right.gap);
+        const symbol = neighbours[0].symbol;
+        const resolved = resolveTarget({ root, docPath, target: item.target, fileIndex: index });
+        // 路径找不到／同名多文件不唯一：BROKEN 与「无法唯一解析」那两条已经在管，这里只计数，不当判据。
+        if (resolved.status !== 'resolved') { tally.unresolved += 1; continue; }
+        tally.paired += 1;
+        const sourceText = textOf(resolved.relative);
+        const verdict = resolveSymbolBlock(sourceText, symbol);
+        // 「覆盖」两档都算：① 某个声明块（上下各外扩 SLACK 行）盖住锚点区间；② 符号**本身就出现在
+        // 锚点区间里**（文档引的是一处调用/注册点，不是声明行——`requireScope` 这类没有自己的块体）。
+        // ② 不能省：只认声明块的话，凡是「引用调用点」的合法写法都会被记成 OUT_OF_RANGE。
+        // ② 走 `anchorLineNumbers` 的字面命中，**不能**用 `verdict.hits`／`verdict.occurrences`：
+        // hits 只装声明行，`occurrences` 又只在 MISSING 档才填（其余档恒空），
+        // 于是「符号就写在 797 行、但 797 行不是声明行」这种会被误判成漂走。
+        const declarationCovers = verdict.candidates.some(block =>
+          block.start - SYMBOL_COVERAGE_SLACK <= item.from && item.to <= block.end + SYMBOL_COVERAGE_SLACK);
+        const occurrences = anchorLineNumbers(sourceText, symbol);
+        const appearsInsideAnchor = occurrences.some(line =>
+          line >= item.from - SYMBOL_COVERAGE_SLACK && line <= item.to + SYMBOL_COVERAGE_SLACK);
+        const covered = declarationCovers || appearsInsideAnchor;
+        const found = occurrences.length > 0;
+        const result = covered ? SYMBOL_COVERAGE_OK : found ? SYMBOL_COVERAGE_OUT_OF_RANGE : SYMBOL_COVERAGE_NOT_FOUND;
+        if (result === SYMBOL_COVERAGE_OK) tally.ok += 1;
+        else if (result === SYMBOL_COVERAGE_NOT_FOUND) tally.notFound += 1;
+        else tally.outOfRange += 1;
+        // 明细只收作用域内的：作用域外（历史取证页）按约定只计数，逐条打出来只会把真信号淹掉。
+        if (result !== SYMBOL_COVERAGE_OK && tally === judged) {
+          const range = item.from === item.to ? `${item.from}` : `${item.from}-${item.to}`;
+          misses.push({ doc: docPath, docLine: lineIndex + 1, target: `${resolved.relative}:${range}`, symbol, result, reason: verdict.reason });
+        }
+      }
+    }
+    if (anchorsInDoc > 0) tally.documents += 1;
+    tally.anchors += anchorsInDoc;
+  }
+  return { judged, outside, misses };
+}
+
 // —— 符号落点严格档（`--symbol=strict`：注释里的锚点进「基线／新增／陈旧」） ——————————
 /**
  * `--symbol=strict` 的判据名（也是符号基线条目的 `reason`）：作用域内、目标是源码，但锚点**没有落在
@@ -1799,17 +1964,25 @@ function printAnchorCountBaseline(streams, { baseline, counts, partition }) {
 }
 
 // —— CLI ——————————————————————————————————————————————————————————————
-const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--anchor-count-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline] [--emit-anchor-count-baseline | --write-anchor-count-baseline --accept <净增减> --why "理由"]';
-const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--anchor-count-baseline', '--root', '--symbol', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline', '--emit-anchor-count-baseline', '--write-anchor-count-baseline', '--accept', '--why']);
+const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--anchor-count-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--symbol-coverage=off|count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline] [--emit-anchor-count-baseline | --write-anchor-count-baseline --accept <净增减> --why "理由"]';
+const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--anchor-count-baseline', '--root', '--symbol', '--symbol-coverage', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline', '--emit-anchor-count-baseline', '--write-anchor-count-baseline', '--accept', '--why']);
 /** `--symbol` 的取值是**白名单**：不认识的取值直接报错退出，绝不当成「没传、照旧绿灯」。 */
 const SYMBOL_MODES = new Set(['count', 'strict']);
+/**
+ * `--symbol-coverage` 的取值白名单。缺省 `count`：**只统计、永不判红**——这条 WARN 判据先观察一轮，
+ * 升级成判红要走 `strict`（且仍要配合 `--strict`），所以「缺省行为不变」是可以机械验证的：
+ * 不传这个参数时退出码只可能由既有判据决定。
+ */
+const SYMBOL_COVERAGE_MODES = new Set(['off', 'count', 'strict']);
 const MAX_PRINTED = 300;
 const MAX_PRINTED_UNDECIDABLE = 500;
 /** `BARE_ORPHAN` 的逐条打印上限：作用域内全列，作用域外的历史取证页只抽样（数字仍在汇总行）。 */
 const MAX_PRINTED_ORPHAN_OUTSIDE = 40;
+/** `SYMBOL-COVERAGE` 的逐条打印上限：它是 WARN，逐条只是给人改的线索，不是失败清单。 */
+const MAX_PRINTED_SYMBOL_COVERAGE = 20;
 
 export function parseArgs(argv) {
-  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, anchorCountBaseline: DEFAULT_ANCHOR_COUNT_BASELINE, root: TOOL_ROOT, symbol: null, accept: null, why: null, emit: false, write: false, emitOrphan: false, writeOrphan: false, emitCount: false, writeCount: false };
+  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, anchorCountBaseline: DEFAULT_ANCHOR_COUNT_BASELINE, root: TOOL_ROOT, symbol: null, symbolCoverage: 'count', accept: null, why: null, emit: false, write: false, emitOrphan: false, writeOrphan: false, emitCount: false, writeCount: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const [flag, inline] = argument.includes('=') ? [argument.slice(0, argument.indexOf('=')), argument.slice(argument.indexOf('=') + 1)] : [argument, undefined];
@@ -1844,6 +2017,11 @@ export function parseArgs(argv) {
       if (!SYMBOL_MODES.has(mode)) throw new Error(`--symbol 只支持 ${[...SYMBOL_MODES].join('|')}（收到：${mode}）\n${USAGE}`);
       options.symbol = mode;
     }
+    else if (flag === '--symbol-coverage') {
+      const mode = value();
+      if (!SYMBOL_COVERAGE_MODES.has(mode)) throw new Error(`--symbol-coverage 只支持 ${[...SYMBOL_COVERAGE_MODES].join('|')}（收到：${mode}）\n${USAGE}`);
+      options.symbolCoverage = mode;
+    }
   }
   if (options.emit && options.write) throw new Error('--emit-baseline 与 --write-baseline 只能二选一');
   if (options.emitOrphan && options.writeOrphan) throw new Error('--emit-orphan-baseline 与 --write-orphan-baseline 只能二选一');
@@ -1859,6 +2037,10 @@ export function parseArgs(argv) {
   const writing = options.write || options.writeOrphan || options.writeCount;
   if (generating > 0 && options.symbol !== null) {
     throw new Error(`--symbol=${options.symbol} 不能与基线生成同时用（生成基线时统计会被忽略）`);
+  }
+  // 同一条理由：生成模式在打印读数之前就 return，显式传 off／strict 只会让人以为「这次统计生效了」。
+  if (generating > 0 && options.symbolCoverage !== 'count') {
+    throw new Error(`--symbol-coverage=${options.symbolCoverage} 不能与基线生成同时用（生成基线时统计会被忽略）`);
   }
   // `--accept`／`--why` 只在**写模式**有意义：干跑时给它们会让人以为「已经登记过了」。
   if (!writing && (options.accept !== null || options.why !== null)) {
@@ -2051,6 +2233,13 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
       streams.log(`NOTE: 符号基线 ${symbolBaseline.path} 不存在，按空基线处理（等于所有未落代码行的锚点都算新增）。`);
     }
   }
+  // 符号覆盖：**WARN 级**，缺省 `--symbol-coverage=count` 只打印、绝不改退出码（见文件头与
+  // `collectSymbolCoverage` 的注释）。放在 `SYMBOL-STRICT` 之后，是为了让两条「锚点 → 符号」读数挨着读。
+  let symbolCoverage = null;
+  if (options.symbolCoverage !== 'off') {
+    symbolCoverage = collectSymbolCoverage({ root: options.root, targets: options.scan });
+    printSymbolCoverage(streams, symbolCoverage, options.symbolCoverage);
+  }
   if (baseline.missing) streams.log(`NOTE: 基线 ${options.baseline} 不存在，按空基线处理（等于所有问题都算新增）。`);
   if (stale.length > 0) {
     streams.log(`STALE: ${stale.length} 条基线已不再命中（引用被修好或路径改名）——删掉这些条目，否则基线会慢慢变成免罚名单：`);
@@ -2066,6 +2255,9 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   const symbolStrictFailed = options.strict && symbolStrict !== null && symbolStrict.fresh.length > 0;
   const orphanFailed = options.strict && (orphanPartition.fresh.length > 0 || outsidePartition.fresh.length > 0 || orphanPartition.stale.length > 0 || outsidePartition.stale.length > 0);
   const countFailed = options.strict && (countPartition.drops.length > 0 || countPartition.unscanned.length > 0);
+  // 覆盖判据缺省 `count`，这一位恒 false —— 这就是「缺省行为不变」的代码形态：不显式传
+  // `--symbol-coverage=strict`（且同时给 `--strict`，与 `--symbol=strict` 的既有分工一致）就不可能红。
+  const coverageFailed = options.strict && options.symbolCoverage === 'strict' && symbolCoverage !== null && symbolCoverage.misses.length > 0;
   if (structuralFailed) {
     streams.error(`FAIL: 文档行号闸门未通过（基线之外新增 ${fresh.length} 条）`);
     for (const finding of fresh.slice(0, 40)) streams.error(`  · ${describe(finding)}`);
@@ -2100,7 +2292,15 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     }
     streams.error('  修法：这条锚点必须留在判据里——把删掉的路径写回（`path:N`），或把「第 N 行」这类散文改回锚点。确属有意放弃判据的，本地跑 --scan docs --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记（CI 里拒绝执行）；单改清册数字会被 judged_total 求和、accept 账本、documents 摘要、键必须是规范化路径这四道抓住。⛔ 不要把键换成 `README.md` 这类面外文档，也不要换成 `docs/**` 下不是 .md 的文件或目录名——两种都是「扫不到」，两种都判红；把 CI 那一行改成 glob 面（`--scan docs/**/*.md`）也一样判红，别指望换扫描面参数能让这一闸失效。');
   }
-  if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed || countFailed) return 1;
+  if (coverageFailed) {
+    streams.error(`FAIL: 符号覆盖闸门未通过（--symbol-coverage=strict：${SYMBOL_COVERAGE_SCOPE}** 内 ${symbolCoverage.misses.length} 条锚点的符号 0 命中或不在锚点区间）`);
+    for (const item of symbolCoverage.misses.slice(0, 40)) {
+      const reason = item.reason === '' ? '' : `，${item.reason}`;
+      streams.error(`  · ${item.doc}:${item.docLine} → ${item.target}（${item.symbol}：${item.result}${reason}）`);
+    }
+    streams.error('  修法：按符号在当前文件里的真实声明行改写锚点（报错里带了判定与解析器理由）；确属符号名已改名／挪走的，改文档里那个名字。⛔ 不要为了让它变绿去加基线——这条判据没有基线，缺省 `--symbol-coverage=count` 本来就不判红。');
+  }
+  if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed || countFailed || coverageFailed) return 1;
   if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、${BARE_ORPHAN}、ANCHOR-COUNT${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
   return 0;
 }
@@ -2184,6 +2384,28 @@ function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
       if (seen.size >= 20) break;
     }
     if (seen.size < stats.fallback) streams.log(`  … 其余 ${stats.fallback - seen.size} 条同理`);
+  }
+}
+
+/**
+ * `SYMBOL-COVERAGE` 的读数行：第一行是固定文案的三档计数（测试与 CI 靠它读），第二行交代作用域、
+ * 「没配成对」的三格（同行没有紧邻符号／两侧等距不猜／路径解析不了）与作用域外的同形状计数——
+ * 作用域外的数字只在这一行出现（历史取证页只计数、不判红）。
+ * 逐条明细是**给人改的线索**，所以只抽样 `MAX_PRINTED_SYMBOL_COVERAGE` 条，且永远走 stdout。
+ */
+function printSymbolCoverage(streams, { judged, outside, misses }, mode) {
+  const checkable = judged.ok + judged.notFound + judged.outOfRange;
+  const suffix = mode === 'strict' ? '（--symbol-coverage=strict：配合 --strict 判红）' : '（仅 WARN，不影响 exit code）';
+  streams.log(`SYMBOL-COVERAGE: 可判 ${checkable} 条——OK ${judged.ok}、符号 0 命中 ${judged.notFound}、符号不在区间 ${judged.outOfRange}${suffix}`);
+  streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条（这三格只计数，不进上面三档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号 0 命中 ${outside.notFound}、符号不在区间 ${outside.outOfRange}`);
+  if (misses.length === 0) return;
+  streams.log(`SYMBOL-COVERAGE-MISS: ${misses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样，不改退出码：`);
+  for (const item of misses.slice(0, MAX_PRINTED_SYMBOL_COVERAGE)) {
+    const reason = item.reason === '' ? '' : `，${item.reason}`;
+    streams.log(`  · ${item.doc}:${item.docLine} → ${item.target}（${item.symbol}：${item.result}${reason}）`);
+  }
+  if (misses.length > MAX_PRINTED_SYMBOL_COVERAGE) {
+    streams.log(`  … 另有 ${misses.length - MAX_PRINTED_SYMBOL_COVERAGE} 条未打印（格式同上）`);
   }
 }
 
