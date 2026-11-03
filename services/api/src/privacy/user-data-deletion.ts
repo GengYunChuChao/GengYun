@@ -64,6 +64,13 @@ import type { OnlinePurgeEvidenceRecorder } from './online-purge-evidence.ts';
 import type { DerivedOnlineStates, OnlineStateDerivationPort } from './online-state-derivation.ts';
 import { unreadableOnlineStates } from './online-state-derivation.ts';
 import type { ThirdPartyDeletionAdapter } from './third-party-deletion-adapter.ts';
+import { createThirdPartyDeletionDispatcher, writePortOf } from './third-party-deletion-dispatch.ts';
+import type {
+  ThirdPartyDeletionDispatchResult,
+  ThirdPartyDeletionRecipientSource,
+  ThirdPartyDeletionWriteReadings,
+} from './third-party-deletion-dispatch.ts';
+import type { ThirdPartyDeletionPort } from './third-party-deletion-pg.ts';
 
 /** 注册到 F13 协议的模块名（闭集；`createDeletionCoordinator` 只接受闭集内的名字）。 */
 export const FAVORITES_DELETION_MODULE = 'favorites';
@@ -603,6 +610,25 @@ export interface UserDataDeletionDeps {
    * ⛔ 不 dispatch：谁在何时向接收方发起删除属 P2-c 的裁定。
    */
   thirdPartyAdapter?: ThirdPartyDeletionAdapter;
+  /**
+   * GY-R73（P2-c）· 第三方删除**写侧**的收件人来源（**注入点**，无缺省实现）。
+   *
+   * 不传 ⇒ `dispatch()` 一条也不写、如实回 `RECIPIENTS_UNWIRED`。⛔ 不许为了"看起来接上了"
+   * 而硬编码接收方名单：那等于把「今天没有第三方」写成「已通知第三方」。
+   * 仓内 `public.third_party_recipients` 是**管理表**（谁被允许接收），不是"某次注销该通知谁"。
+   */
+  thirdPartyRecipients?: ThirdPartyDeletionRecipientSource | null;
+  /**
+   * GY-R73（P2-c）· 显式指定写端口。不传 ⇒ 从 `thirdParty` 上探测
+   * `subscribeThirdPartyDeletion()`（真库端口读写同体；`unwired`/`unavailable` 没有写方法 ⇒
+   * 如实判"写侧未接线"）。有了这条探测，`app.ts` 的装配**净 0 行改动**（它在锚点面上）。
+   */
+  thirdPartyWrite?: ThirdPartyDeletionPort | null;
+  /**
+   * GY-R73（P2-c）· 写侧观测出口（缺省 `console.warn(JSON.stringify(event))`，与
+   * `privacy/task-egress.ts:341` 同口径）。⛔ 写失败**不抛**：计数 + 事件，注销照常走完。
+   */
+  thirdPartyLog?: (event: Record<string, unknown>) => void;
   now?: () => Date;
 }
 
@@ -701,6 +727,16 @@ export interface UserDataDeletionRegistry {
   readonly thirdParty: ThirdPartyDeletionReadPort;
   /** 第三方**写侧**适配器（本期只由注入给出；`null` ⇒ 未装配）。⛔ 本片不 dispatch。 */
   readonly thirdPartyAdapter: ThirdPartyDeletionAdapter | null;
+  /**
+   * GY-R73（P2-c）· 第三方删除**写侧**的累计读数（诊断；⛔ 不出契约）。
+   *
+   * 为什么要有它：「今天没有真实接收方」时写侧一条也不写，若只靠库里的行，外部观测看到的
+   * 是"什么都没有"——与"写失败了"无法区分。读数把"为什么没写"（`reason`）与"写失败了几次"
+   * 分开记账，让 fail-open 的每一次降级都可诊断。
+   */
+  readonly thirdPartyWrites?: ThirdPartyDeletionWriteReadings;
+  /** GY-R73（P2-c）· 最近一次写侧派发的结论（`null` ⇒ 还没派发过；永不抛）。 */
+  lastThirdPartyDispatch?(): ThirdPartyDeletionDispatchResult | null;
   /** 请求 → 各模块证据串（诊断；契约回执不含证据，这里给出与协调器行同源的完整证据）。 */
   evidenceOf(requestId: string): Record<string, string>;
   /** 诊断审计（内部；只含模块名/行数/状态，不含任何私有正文或凭据）。 */
@@ -729,6 +765,15 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   // GY-R59（P2-b）：第三方完成态的读侧端口（缺省＝未接线 ⇒ 读进程内协议行，行为与追加前逐字一致）。
   const thirdParty = input.thirdParty ?? createUnwiredThirdPartyDeletionPort();
   const thirdPartyAdapter = input.thirdPartyAdapter ?? null;
+  // GY-R73（P2-c）：第三方删除**写侧**派发器。写端口优先取显式注入，否则从读端口上探测
+  // （真库端口读写同体）；探测不到 ⇒ 如实"写侧未接线"，⛔ 不补一个假写方法来显得接上了。
+  const thirdPartyDispatch = createThirdPartyDeletionDispatcher({
+    port: writePortOf(input.thirdPartyWrite ?? thirdParty),
+    adapter: thirdPartyAdapter,
+    recipients: input.thirdPartyRecipients ?? null,
+    now,
+    ...(input.thirdPartyLog === undefined ? {} : { log: input.thirdPartyLog }),
+  });
   const requests = input.requests ?? null;
   const receiptTtlMs = input.receiptTtlMs ?? null;
   // 接线持久化受理 ⇒ 必须与受理服务的回执期限同源；缺参数就**拒绝装配**（fail closed），
@@ -1449,9 +1494,12 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
   return {
     coordinator,
     // GY-R59（P2-b）：把**实际装配**的读侧端口与写侧适配器透出给装配层取证
-    // （`app.thirdPartyDeletion`；⛔ 本片不调用适配器 dispatch）。
+    // （`app.thirdPartyDeletion`）。写侧由 `executeHandlers()` 经
+    // `third-party-deletion-dispatch.ts` 调用，本对象只透出读数，不额外 dispatch。
     thirdParty,
     thirdPartyAdapter,
+    thirdPartyWrites: thirdPartyDispatch.readings,
+    lastThirdPartyDispatch: () => thirdPartyDispatch.lastResult(),
     requiredModules: () => coordinator.requiredModules(),
     requestDeletionFor(userId, options = {}) {
       if (typeof userId !== 'string' || userId.length === 0) {
@@ -1472,7 +1520,30 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       // 持久化受理（同一事务）必须先有结论：失败 ⇒ 在此抛出，**不进入级联、不签发回执、不返回 202**。
       const pending = durableByRequest.get(requestId);
       if (pending !== undefined) await pending;
-      return coordinator.executeHandlers(requestId);
+      const executed = await coordinator.executeHandlers(requestId);
+      // GY-R73（P2-c）：第三方删除**写侧**的唯一调用点。
+      // 为什么是这里：只有到这一步才同时具备三件事——`request_id` 已在库（`0044` 的外键才不会
+      // `G0002`）、主体已绑定（`subjectByRequest`）、且仍在 `receipts.issue()` 之前（202 的回执
+      // 因此能读到这次刚写的行）。`requestDeletionFor()` 是同步的、不能 await 外发；
+      // `receipt()` / `thirdPartyStateOf()` 只读；handler 行的 `thirdPartyState` 恒为 `null`
+      // （`packages/privacy/deletion.mjs:359`）⇒ 写侧**唯一**的可观测产出就是这里的持久行。
+      // ⚠ 必须 await：受理服务的顺序是 executeHandlers → receipts.issue → 回执投影，
+      // 不等就返回会让本次 202 的 `third_party_state` 漏掉刚写的行（时序竞态，不是四舍五入）。
+      // fail-open：`dispatch()` 永不抛（写失败只计数 + 记事件），但这里**不吞**协调器的错。
+      // 取消判据（GY-R73 P1 返修）：读的是协调器里**同一个**请求对象的当前 `state`——
+      // 不是回执投影（`receipt()` / `thirdPartyStateOf()` 读的是派生状态与持久行），
+      // 也不是本层缓存的快照。`requestState()` 是只读取值器，判据本身不推进任何状态。
+      // 为什么传判据而不是布尔值：`dispatch()` 里有多个 await 窗口（列收件人、读现状、
+      // 写 `requested`、适配器外发），用户可能在任意一个窗口里取消；布尔快照只看得到入口那一刻。
+      const subject = subjectByRequest.get(requestId);
+      if (subject !== undefined) {
+        await thirdPartyDispatch.dispatch({
+          requestId,
+          userId: subject,
+          isRequestCancelled: (id) => coordinator.requestState(id) === 'cancelled',
+        });
+      }
+      return executed;
     },
     cancelDeletion(userId) {
       if (typeof userId !== 'string' || userId.length === 0) {

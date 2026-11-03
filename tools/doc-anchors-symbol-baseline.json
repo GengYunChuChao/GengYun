@@ -127,21 +127,21 @@
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:283-290",
+      "reference": "user-data-deletion.ts:290-297",
       "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
       "docLine": 55,
       "kind": "block",
-      "note": "【段内块注释】文档引的是第 283-291 行的块注释，块后第一条非空行是第 292 行的「snapshotOwner?(」（可选成员签名，不是声明行）——这段说明没有声明行可指。（GY-R71 补片：本文件新增 jobs 模块声明/依赖/注册块，整段下移 24 行 ⇒ 259-266→283-290。）"
+      "note": "【段内块注释】文档引的是第 290-298 行的块注释，块后第一条非空行是第 299 行的「snapshotOwner?(」（可选成员签名，不是声明行）——这段说明没有声明行可指。（GY-R71 补片：本文件新增 jobs 模块声明/依赖/注册块，整段下移 24 行 ⇒ 259-266→283-290。GY-R73 补片：文件前部新增 7 行 import，该块再下移 7 行 ⇒ 283-290→290-297，文档与基线同批改。）"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "user-data-deletion.ts:359",
+      "reference": "user-data-deletion.ts:366",
       "doc": "docs/architecture/gy-i19-user-backup-copies-design.md",
       "docLine": 303,
       "kind": "block",
-      "note": "【注释块】设计页引的是该端口「受理请求 id」那四行注释（359）的原文，块后第一条非空行是 360 的 `requestId?: string;`（可选成员签名，不是声明行）——这段说明没有声明行可指。GY-R71 补片：原记 335 行（当时是注释块收尾行，整段下移 24 行后已不存在），本片与文档同批改成实测的 356-359。"
+      "note": "【注释块】设计页引的是该端口「受理请求 id」那三行注释（363-366）的原文，块后第一条非空行是 367 的 `requestId?: string;`（可选成员签名，不是声明行）——这段说明没有声明行可指。GY-R71 补片：原记 335 行（当时是注释块收尾行，整段下移 24 行后已不存在），本片与文档同批改成实测的 356-359。GY-R73 补片：文件前部新增 7 行 import ⇒ 359→366，文档与基线同批改。"
     },
     {
       "path": "services/api/src/routes/health.ts",

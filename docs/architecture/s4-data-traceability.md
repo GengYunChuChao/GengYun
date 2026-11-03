@@ -247,7 +247,7 @@
   （`thirdPartyRowsFor` 当次请求内预取一次）→ `:154`（`thirdPartyReceiptState`），契约字段 `third_party_state` 见 `packages/contracts/openapi.json:13834`
   （回执是 `getDeletionReceipt`，原页误作 `/me/exports`）；⑤ 真库端口在、**读侧已装配**——`services/api/src/privacy/third-party-deletion-pg.ts`
   只经 0044 两条 `SECURITY DEFINER` 函数进出（表零 DML/SELECT）；装配四臂在 `services/api/src/app.ts:2021`（`:2025` 真库臂、
-  `:2004` 不可用臂），`:2550` 交给注销路由；**写侧方法 `subscribeThirdPartyDeletion` 零调用者**（读数见「证据」）。
+  `:2004` 不可用臂），`:2550` 交给注销路由；**写侧方法 `subscribeThirdPartyDeletion` 自 GY-R73（2026-11-03）起有唯一调用者**：`services/api/src/privacy/third-party-deletion-dispatch.ts`，由注销链 `executeHandlers()` 在 coordinator 之后调；无收件人来源／无凭据时一条也不写（读数见 [gy-r73 证据页](../verification/gy-r73-third-party-deletion-write-20261103.md)）。
 - **库层证据（2026-10-26 增补；2026-10-28 复核更正两处符号名与一处 CI 锚）**：迁移
   `services/api/db/migrations/0044_third_party_deletion_persistence.sql:97` 建了唯一写路径
   `record_third_party_deletion(uuid, text, uuid, text, text, text, timestamptz)`（`SECURITY DEFINER` ＋ `SET search_path = pg_catalog`；
@@ -310,7 +310,7 @@
 ### ★G1 第三方删除（判据：D13）
 
 表、协议、适配器、投影、真库端口都在；**2026-10-28 复核把缺口收窄到一条**：不是「未装配」（适配器在 `services/api/src/app.ts:2032`、读侧真库端口在 `:2021`、投影已接进注销回执 `services/api/src/routes/account-deletion.ts:148`），而是**写侧零调度 + 证据不落**。可复算：
-`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（就是那个端口；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` = 3 行（接口、实现、一处注释）⇒ 零调用者。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2276`，`:2548` 是它的消费点）；回执侧不用再动。
+`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（就是那个端口；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` 原先 3 行（接口、实现、一处注释）⇒ 零调用者；**GY-R73（2026-11-03）起不再是零调用者**：调用点在 `services/api/src/privacy/third-party-deletion-dispatch.ts`，由注销链 `executeHandlers()` 调。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2276`，`:2548` 是它的消费点）；回执侧不用再动。
 这一条直接决定 AC23（`docs/implementation-requirements.md:585`）
 的「第三方证据」判不了。
 
@@ -374,7 +374,7 @@
 ### 7.3 降档条件
 
 出现下列任一事实，已实现/部分要往下调，而不是「解释一下就好」：生产入口被 503 挡掉（D08 的形状）、
-闭集因装配漏注入静默收缩（`services/api/src/privacy/user-data-deletion.ts:156` 已警示）、
+闭集因装配漏注入静默收缩（`services/api/src/privacy/user-data-deletion.ts:163` 已警示）、
 真库臂从 CI 掉出去（E2 的形状）、证据只剩替身模式。
 
 ## 8. 相关页
