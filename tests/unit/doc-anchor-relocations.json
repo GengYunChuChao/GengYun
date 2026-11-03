@@ -2459,4 +2459,13 @@
     "to": 2546,
     "reason": "陈旧锚点重锚（目标文件 services/api/src/app.ts 本提交未改）：base 的 `:2508` 是 `  registerKnowledgeRoutes(app, config, pool, gatedGuards, {`（registerKnowledgeRoutes 的调用行），HEAD 已挪到 `:2546`（`  const ocrPersistencePool = config.executionMode === 'real' ? pool : null;`）。按符号 `ocrPersistencePool` 实测 2546，旧行号指错 ⇒ 本次等长改到 2546。"
   }
+,
+  {
+    "doc": "docs/verification/gy-r29-i19-closure-20261022.md",
+    "line": 159,
+    "target": "packages/contracts/openapi.json",
+    "from": 1555,
+    "to": 1640,
+    "reason": "陈旧锚点重锚（目标文件 packages/contracts/openapi.json 本提交未改）：base 的 `:1555` 是 `\"operationId\": \"cancelDeletion\",`（取消注销，2026-10-24 由 PR #554 进契约，正好占掉了原来删除回执的位置），而该行正文说的是 `getDeletionReceipt` 的 operationId；实测它在 `:1640`（`:1638` 是 `\"/account/deletions/{id}\": {` 路径块起点）。旧行号指错 ⇒ 本次等长改到 1640（同为四位，行宽不变）。"
+  }
 ]
