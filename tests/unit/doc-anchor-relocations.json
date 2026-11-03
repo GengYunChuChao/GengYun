@@ -1436,5 +1436,211 @@
     "kind": "correction",
     "symbol": "createTurn",
     "reason": "旧锚点本来就指错：这一行讲的是问答域 P06/N03 的三个版本串口径，base（b9d91bbc）上的 `docs/architecture/contract-implementation-status.md:97` 却是合成域的 `| `createSynthesis` | POST /speech/synthesis |` 行（不含 `createTurn`）；该行真值是 :102 的 `| `createTurn` | POST /conversations/{id}/turns |`，其证据列正是 `services/api/src/ai/chat-wiring.ts:74-85` 的 live 分支与 `services/api/src/app.ts:2348`/`:2390` 的装配点。本 R73 片只订正 `docs/architecture/ai-ops-spec-status.md` 这行的绝对量词（「一律」→ 四与门），目标台账文件一个字未动，所以走 kind=correction 而不是平移。"
+  },
+  {
+    "doc": "docs/verification/gy-i15-messages-chain-20261021.md",
+    "line": 78,
+    "target": "packages/contracts/openapi.json",
+    "from": 7083,
+    "to": 7244,
+    "kind": "correction",
+    "symbol": "\"/messages\": {",
+    "reason": "R74 音频读面片登记进孤儿册的 6 条之一（本片修正后从册子退场）。这一格写 `GET /messages` 的 :7083 在首次落笔的 ae818469 上确实是 `\"/messages\": {`，此后 openapi.json 整体 +161 行漂到 :7244；按基线 3cdf4740 实测 :7083 现在是 `        \"responses\": {`（不含 path 键）。openapi.json 本提交一字未改，只能经本登记表按符号重锚到 :7244。"
+  },
+  {
+    "doc": "docs/verification/gy-i15-messages-chain-20261021.md",
+    "line": 78,
+    "target": "packages/contracts/openapi.json",
+    "from": 7165,
+    "to": 7326,
+    "kind": "correction",
+    "symbol": "\"/messages/unread-count\": {",
+    "reason": "同格第二条：`:7165` 在 ae818469 上逐字就是 `\"/messages/unread-count\": {`（当时正确），+161 行后真值在 :7326；基线 3cdf4740 的 :7165 只剩 `            }`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-i15-messages-chain-20261021.md",
+    "line": 78,
+    "target": "packages/contracts/openapi.json",
+    "from": 7240,
+    "to": 7401,
+    "kind": "correction",
+    "symbol": "\"/messages/{id}/read\": {",
+    "reason": "同格第三条：`:7240` 在 ae818469 上逐字就是 `\"/messages/{id}/read\": {`（当时正确），+161 行后真值在 :7401；基线 3cdf4740 的 :7240 是 `        \"x-version-required\": true,`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-i22-secmatrix-20261019.md",
+    "line": 337,
+    "target": "packages/contracts/openapi.json",
+    "from": 2219,
+    "to": 2296,
+    "kind": "correction",
+    "symbol": "\"/jobs/{id}/cancel\": {",
+    "reason": "R74 音频读面片登记进孤儿册的 6 条之一。这处是写时就错：:2219 在 ae818469 上就是 `        \"security\": [`（`/jobs/{id}/cancel` 那时已在 :2296，未漂），基线 3cdf4740 仍在 :2296（该行 = `    \"/jobs/{id}/cancel\": {`）。原句要引的正是这条在途任务取消 operation，按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-i22-secmatrix-20261019.md",
+    "line": 337,
+    "target": "packages/contracts/openapi.json",
+    "from": 9996,
+    "to": 11075,
+    "kind": "correction",
+    "symbol": "\"/admin/jobs/{id}/cancel\": {",
+    "reason": "同一句的第二个锚点：:9996 在 ae818469 上落在 `          },`（`/admin/jobs/{id}/cancel` 当时在 :10131），写时就错；基线 3cdf4740 真值在 :11075（= `    \"/admin/jobs/{id}/cancel\": {`，下一行 `post`、operationId `cancelAdminJob`）。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r28-e6-closure-materials-20261021.md",
+    "line": 134,
+    "target": "docs/architecture/contract-status.json",
+    "from": 2038,
+    "to": 2166,
+    "kind": "correction",
+    "symbol": "\"blocker\": \"消息列表/未读数/读标记HTTP已装配",
+    "reason": "R74 音频读面片登记进孤儿册的 6 条之一。B5 行原写「三处同文重复」记 :2038／:2061／:2083，但基线上 :2038 是 `      \"status\": \"implemented\",`、:2083 是 `    },`，三处逐字相同的 message blocker 在 :2166／:2188／:2210。该 JSON 本提交只改了第 656 行的一句计数（行数未变），端点映射给 2038→2038，故必须走 kind=correction 按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r28-e6-closure-materials-20261021.md",
+    "line": 134,
+    "target": "docs/architecture/contract-status.json",
+    "from": 2061,
+    "to": 2188,
+    "kind": "correction",
+    "symbol": "\"blocker\": \"消息列表/未读数/读标记HTTP已装配",
+    "reason": "同上第二处：基线 :2061 是 `      \"route\": \"/api/v1/favorites/:id\",`（favorites 块），不是 message blocker；真值 :2188。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r28-e6-closure-materials-20261021.md",
+    "line": 134,
+    "target": "docs/architecture/contract-status.json",
+    "from": 2083,
+    "to": 2210,
+    "kind": "correction",
+    "symbol": "\"blocker\": \"消息列表/未读数/读标记HTTP已装配",
+    "reason": "同上第三处：基线 :2083 是 `    },`（块收口行），真值 :2210。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i11-audio-20261022.md",
+    "line": 34,
+    "target": "packages/contracts/openapi.json",
+    "from": 14050,
+    "to": 14724,
+    "kind": "correction",
+    "symbol": "\"UploadInput\": {",
+    "reason": "R74 音频读面片登记进孤儿册的 6 条之一。`:14050` 写时就错：ed78b2bb 时 UploadInput 在 :14632，基线 3cdf4740 在 :14724（`:14050` 现在是 `        \"additionalProperties\": false,`）。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i11-audio-20261022.md",
+    "line": 34,
+    "target": "packages/contracts/openapi.json",
+    "from": 13056,
+    "to": 14737,
+    "kind": "correction",
+    "symbol": "\"audio/mpeg\",",
+    "reason": "同一格第二条：`:13056` 在 ed78b2bb 是 `\"name\": {`、基线是 `            ]`，都不是 mime 枚举值；`audio/mpeg` 在 UploadInput 的 mime 枚举里（基线 :14737，与 `audio/wav` :14738、`audio/aac` :14739 同列）。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 31,
+    "target": "packages/contracts/openapi.json",
+    "from": 13907,
+    "fromEnd": 13943,
+    "to": 15893,
+    "toEnd": 15929,
+    "kind": "correction",
+    "symbol": "\"Report\": {",
+    "reason": "R74 音频读面片登记进孤儿册的 6 条之一（册内登记的是这一条引用里的 `:13649`，本片把整句四处行号一并订正）。原写 `Report` schema 在 :13907-13943，但基线的 `          },` 一带不是 Report（ae818469 时 Report 在 :15080），真值是 :15893 `\"Report\": {` 到 :15929 `      },`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 31,
+    "target": "packages/contracts/openapi.json",
+    "from": 13635,
+    "fromEnd": 13639,
+    "to": 15910,
+    "toEnd": 15914,
+    "kind": "correction",
+    "symbol": "\"isolated\",",
+    "reason": "同句第二处：`state` 的枚举 `received | isolated | closed` 原记 :13635-13639，基线上那五行是 `minLength`/`maxLength`/`}`/`{`/`type: null`（不含任何枚举值）；真值是 :15910 `\"enum\": [` 到 :15914 `]`，三个枚举值在 :15911／:15912／:15913。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 31,
+    "target": "packages/contracts/openapi.json",
+    "from": 13626,
+    "fromEnd": 13629,
+    "to": 15922,
+    "toEnd": 15928,
+    "kind": "correction",
+    "symbol": "\"revision\",",
+    "reason": "同句第三处：`revision` 必填所在 `required` 段原记 :13626-13629（基线上是 `{`／`}` 与 `type: null` 分支，不含 `revision`）；真值是 :15922 `\"required\": [` 到 :15928 `]`，其中 :15924 是 `\"revision\",`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
+    "line": 31,
+    "target": "packages/contracts/openapi.json",
+    "from": 13649,
+    "to": 15924,
+    "kind": "correction",
+    "symbol": "\"revision\",",
+    "reason": "同句第四处（也是孤儿册登记的那一条裸锚点 `:13649`）：基线 :13649 是 `              },`（ae818469 时是 `\"minLength\": 1,`），`revision` 必填的真值行是 :15924。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
+    "line": 132,
+    "target": "packages/contracts/operations.json",
+    "from": 517,
+    "to": 544,
+    "kind": "correction",
+    "symbol": "listMessages",
+    "reason": "同一表格里的连带错锚（不在孤儿册 6 条内，但同格一并订正）：原写 :517／:524／:531 指消息域三条 operation，基线上那三行是 `\"path\": \"/favorites\",`、`\"path\": \"/favorites/{id}\",`、`\"path\": \"/history\",`；真值是 :544 `\"id\": \"listMessages\",`、:551 `\"id\": \"getUnreadCount\",`、:558 `\"id\": \"markMessageRead\",`。operations.json 本提交未改，按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
+    "line": 132,
+    "target": "packages/contracts/operations.json",
+    "from": 524,
+    "to": 551,
+    "kind": "correction",
+    "symbol": "getUnreadCount",
+    "reason": "同上第二条：基线 :524 是 `\"path\": \"/favorites/{id}\",`（favorites 域），消息未读数 operation 的真值是 :551 `\"id\": \"getUnreadCount\",`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
+    "line": 132,
+    "target": "packages/contracts/operations.json",
+    "from": 531,
+    "to": 558,
+    "kind": "correction",
+    "symbol": "markMessageRead",
+    "reason": "同上第三条：基线 :531 是 `\"path\": \"/history\",`（浏览历史域），读标记 operation 的真值是 :558 `\"id\": \"markMessageRead\",`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
+    "line": 133,
+    "target": "packages/contracts/openapi.json",
+    "from": 7083,
+    "to": 7244,
+    "kind": "correction",
+    "symbol": "\"/messages\": {",
+    "reason": "R74 音频读面片登记进孤儿册的 6 条之一（`:7165`），同格三个行号一并订正。`:7083` 在 ae818469 上逐字是 `\"/messages\": {`（当时正确），+161 行漂到 :7244；基线 :7083 是 `        \"responses\": {`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
+    "line": 133,
+    "target": "packages/contracts/openapi.json",
+    "from": 7165,
+    "to": 7326,
+    "kind": "correction",
+    "symbol": "\"/messages/unread-count\": {",
+    "reason": "孤儿册登记的那一条：`:7165` 在 ae818469 上逐字正确，+161 行漂到 :7326；基线 :7165 只剩 `            }`。按符号重锚。"
+  },
+  {
+    "doc": "docs/verification/gy-r31-i17-recon-20261022.md",
+    "line": 133,
+    "target": "packages/contracts/openapi.json",
+    "from": 7240,
+    "to": 7401,
+    "kind": "correction",
+    "symbol": "\"/messages/{id}/read\": {",
+    "reason": "同格第三条：`:7240` 在 ae818469 上逐字正确，+161 行漂到 :7401；基线 :7240 是 `        \"x-version-required\": true,`。按符号重锚。"
   }
 ]

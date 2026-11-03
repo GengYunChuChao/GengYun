@@ -241,10 +241,14 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * timeout 维度的 evidence 先由 `--reanchor --write-doc` 重锚到 `1004-1030`，随后为满足
  * `doc-anchor-relocation-identity` 的端点映射要求改成 `982-1007`（区间仍含声明行 `:1004`）⇒
  * 两份台账各**多 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-03 第六次同步（GY-R75 契约计数口径订正，与 OCR 锚点无关）：`contract-status.json` 的 media blocker
+ * 里「冻结契约（86 条路径 / 113 条 operation，实测 `packages/contracts/openapi.json`）」按基线 `3cdf4740`
+ * 实测改成「99 条路径 / 129 条 operation」并补「，基线 `3cdf4740`」⇒ 两份台账各**多 20 字节**、行数不变
+ * （4434 / 219）。仍是「正常改台账」，故同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 273997, lines: 4434 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196166, lines: 219 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 274017, lines: 4434 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196186, lines: 219 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
