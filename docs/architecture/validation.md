@@ -7,7 +7,7 @@
 | 检查 | 环境 / 实际命令 | 结果与范围 |
 | --- | --- | --- |
 | 文档/任务依赖 | Windows，Python3.14.3；`python tools/validate_development_docs.py` | PASS：27项初版任务、无环依赖、F/AC/Q、Markdown链接/表格；扩展到docs嵌套目录 |
-| 契约一致性 | `python tools/validate_contracts.py` | PASS：110操作、内部引用、身份、scope、幂等/版本头、状态/错误映射、16个合成设计示例；不模拟HTTP请求或证明服务端已实现 |
+| 契约一致性 | `python tools/validate_contracts.py` | PASS：操作条数以当次脚本输出为准（首轮读数 110）、内部引用、身份、scope、幂等/版本头、状态/错误映射、16个合成设计示例；不模拟HTTP请求或证明服务端已实现 |
 | 检查器负例 | `python tools/test_contracts.py` | 4组测试PASS，涵盖坏引用/匿名私有/用户token访问后台/缺幂等与版本/状态漂移/终态复活/未确认语音/模拟用量/缺条件/未审公开/超额或用途错误音频/不足回答含用量；测试的是契约检查器 |
 | 独立规范验证 | 临时Python3.12、jsonschema4.25.1；`python tools/validate_openapi_standard.py --schema .supervisor/openapi-3.1-schema.json --dependency-path .supervisor/pydeps` | PASS：官方OpenAPI3.1 schema、197个Draft2020-12组件schema、16个fixture；官方schema不独立证明业务语义，语义还需状态协议/实现测试 |
 | 空白差异 | `git diff --check` | PASS；提交前再次执行 |
