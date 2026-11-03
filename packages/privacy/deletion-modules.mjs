@@ -246,6 +246,8 @@ export function createDeletionCoordinator({ registry, requiredModules, now = () 
     missingModules,
     createDeletionRequest,
     getRequest: (requestId) => registry.getRequest(requestId),
+    /** 只读当前状态（无副作用）：取消判据用它，⛔ 不用 completionStatus（后者会推进状态）。 */
+    requestState: (requestId) => registry.requestState(requestId),
     executeHandlers,
     cancel: (requestId) => registry.cancelDeletion(requestId),
     completionStatus,

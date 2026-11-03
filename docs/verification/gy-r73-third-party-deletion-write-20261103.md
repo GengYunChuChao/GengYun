@@ -142,3 +142,68 @@ CLEANUP=done
 
 本次**只**动：`services/api/src/privacy/`（两个文件）、`tests/`（单测新增、真库臂追加）、`docs/`（本页 + 三处「写侧零调用者」的订正 + 行号位移同步）。
 **不动**：`deploy/**`、迁移（无新增、无修改）、`packages/contracts/openapi.json`。
+
+## 13. 取消交叠（P1 返修）
+
+> 本节按返修任务书要求改用 `文件:行号` 锚点（仅本节）；行号以本次改动后的工作树为准，写完后逐条核过。
+
+### 13.1 缺陷现象（监工复现，原文读数）
+
+`services/api/src/privacy/user-data-deletion.ts:1543` 在 `executeHandlers()` 里 `await …dispatch(...)`，而派发器内部有多段 await 窗口：`third-party-deletion-dispatch.ts:420` 的 `listRecipients()`、第 436 行 的 `listThirdPartyDeletions()`、第 499 行 写 `requested`、第 523 行 适配器 `dispatch()`。用户在这些窗口里取消，`cancelDeletion(userId)` 会成功返回 `state=cancelled`，但**已经在飞的派发继续走完**：
+
+```
+before: cancel_state=cancelled, adapter_calls=0, writes=0
+after:  receipt_state=cancelled, adapter_calls=1, writes=[requested, confirmed]
+assert(adapter_calls === 0): FAIL (actual 1)
+```
+
+本轮要求的语义：请求一旦进入 `cancelled`，此后不得再为该 requestId 写 `requested`、不得再触发任何新的第三方外发；已经发生的写入是既成审计事实，**不伪造回滚、不删行**；取消成功的本次回执仍显示 `cancelled`。
+
+### 13.2 四个检查点（每一处都查，只在入口查一次不够）
+
+判据是 `dispatch()` 输入里的可选 `isRequestCancelled`（`third-party-deletion-dispatch.ts:178`），类型是**活判据**而非布尔快照（第 161–168 行 的注释：await 窗口里状态会变）。四个检查点全部调用 `cancellationOf()`（第 367 行）：
+
+| # | 位置 | 行 | 命中取消后的动作 |
+| --- | --- | --- | --- |
+| 1 | `listRecipients()` 返回、归一之后 | `third-party-deletion-dispatch.ts:429` | `stopCancelled(targets)` ⇒ 后面一条都不写、不发 |
+| 2 | `listThirdPartyDeletions()` 返回之后 | `third-party-deletion-dispatch.ts:442` | 同上（连 `requested` 都不写） |
+| 3 | 每个接收方写 `requested` **之前** | `third-party-deletion-dispatch.ts:494` | 停掉当前及后续接收方 |
+| 4 | 每个接收方调 `adapter.dispatch()` **之前** | `third-party-deletion-dispatch.ts:517` | 已写的 `requested` 如实留着，但绝不再外发 |
+
+命中后的收尾统一走 `stopCancelled()`（第 384–397 行）：`readings.skippedCancelled += remaining.length`（第 388 行，字段声明 第 108 行、初值 第 264 行），记一条 `third_party_deletion_skipped_cancelled` 事件（只含 `request_id` / `recipient_id` / `skipped_reason`，不记凭据与正文），`finish('CANCELLED_AFTER_ACCEPT')`（第 396 行，reason 加入联合类型 第 132 行）。`skippedCancelled` 与幂等读数 `skipped` 分开：后者是「终态/已请求」，前者是「取消之后本就不该再发」。
+
+### 13.3 判据抛错 ⇒ 按取消处理（fail-closed 到「不发」）
+
+`cancellationOf()` 的 `catch`（第 372–375 行）把判据异常折叠成 `probe_failed`，与 `request_cancelled` 一样停止派发。取向写在 第 359–366 行：这不是对称取舍——把「取消已受理」误判成未取消，代价是一次**不可撤回**的第三方外发；把未取消误判成已取消，代价只是这次少发、留下一个待补的审计缺口。前者不可接受，所以判据坏了也**不放行**。
+
+取消判据本身：`services/api/src/privacy/user-data-deletion.ts:1543` 传 `(id) => coordinator.requestState(id) === 'cancelled'`；`requestState()` 是 `packages/privacy/deletion.mjs:295` 新增的**无副作用**只读取值器（查不到返回 `null`，`⛔` 不调会推进状态的 `completionStatus()`），经 `packages/privacy/deletion-modules.mjs:250` 的协调器封套透出，类型见 `services/api/src/privacy/egress-reference.d.ts:109`。读的是协调器里**同一个**请求对象的当前状态，不是回执投影、不是本层缓存的快照。
+
+### 13.4 回归用例效果（`tests/unit/third-party-deletion-write.test.mjs`）
+
+| 用例 | 构造 | 实测 |
+| --- | --- | --- |
+| T-P1-a（第 861 行） | 真实 `createUserDataDeletion` + 合成写端口 + 可用适配器 + 异步 `listRecipients`（闸门）；进入查询后 `cancelDeletion` | 取消时 `state=cancelled`、`adapter_calls=0`、`writes=0`；放行并等 `executeHandlers` 落定后仍 `adapter_calls=0`、`writes=[]`、回执 `cancelled`、`lastResult().reason='CANCELLED_AFTER_ACCEPT'`、`skippedCancelled=1`。**红转绿** |
+| T-P1-b（第 896 行） | 同一链，闸门分别放在 `listRecipients` / `listThirdPartyDeletions` 之后 | 两处取消后均 `adapter_calls=0`、`writes=0`、reason 同上、`skippedCancelled=1` |
+| T-P1-c（第 929 行） | 同一条链**不取消**（正向对照） | `adapter_calls=1`、`writes=[requested, confirmed]`、reason `OK`、`skippedCancelled=0`（判据没把正常路径一起关掉） |
+| T-P1-d（第 948 行） | `isRequestCancelled` 抛错 | `adapter_calls=0`、`writes=0`、reason `CANCELLED_AFTER_ACCEPT`、事件 `skipped_reason='probe_failed'`、`writeFailures=0` |
+
+**负控制 N5**：把 `cancellationOf()` 临时改成恒 `null`（等于退回到「只在入口看一眼」的旧行为）⇒ T-P1-a / T-P1-b / T-P1-d 三条变红（`tests 31 / pass 28 / fail 3`），T-P1-c 仍绿；还原后 `31 / 31` 全绿。这与监工给出的 `assert(adapter_calls === 0): FAIL (actual 1)` 是同一现象。
+
+### 13.5 原始读数
+
+```
+node --test tests/unit/third-party-deletion-write.test.mjs      tests 31 / pass 31 / fail 0
+node --test tests/unit/s4-data-gap-pins.test.mjs                tests  6 / pass  6 / fail 0
+node --test "tests/privacy/*.test.mjs"                          tests 221 / pass 221 / fail 0
+node --test （5 个相邻注销域单测，见 HANDOFF）                    tests 57 / pass 57 / fail 0
+npx tsc -p services/api --noEmit                                exit 0
+```
+
+### 13.6 如实边界
+
+- **生产默认没有真实接收方来源**（未注入 `thirdPartyRecipients` ⇒ `RECIPIENTS_UNWIRED`，零写零发）。因此本条是**注入式路径**（有收件人来源 + 可用适配器）上的缺陷：生产今天不触发，不等于该路径安全；一旦产品定下接收方来源，这条链就会走到。
+- **未重跑真库臂**（`tests/integration/third-party-deletion-pg.mjs` 的 `E-S4-P1-F`）与**未上真机**：本轮只跑进程内单测（无网络、无 PG），真库侧取消交叠没有数据库级证据。
+- **既有 27 条用例未覆盖此交叠**：它们都在 `listRecipients` / 适配器同步返回的路径上跑，没有在 await 窗口里取消，所以此前 27/27 全绿并不代表没有这个缺陷。
+- **跨进程/多实例**：`requestState()` 读的是本进程协调器里的请求对象；多实例共享库、或取消走另一个进程时，本判据看不到对方的状态（本轮不证明分布式可见性）。
+- 取消之后停在 `requested` 的接收方行不会被回滚、删除，也不会自动补 `confirmed`/`failed`；补偿作业不在本轮范围。
+

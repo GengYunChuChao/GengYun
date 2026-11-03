@@ -1530,8 +1530,19 @@ export function createUserDataDeletion(input: UserDataDeletionDeps): UserDataDel
       // ⚠ 必须 await：受理服务的顺序是 executeHandlers → receipts.issue → 回执投影，
       // 不等就返回会让本次 202 的 `third_party_state` 漏掉刚写的行（时序竞态，不是四舍五入）。
       // fail-open：`dispatch()` 永不抛（写失败只计数 + 记事件），但这里**不吞**协调器的错。
+      // 取消判据（GY-R73 P1 返修）：读的是协调器里**同一个**请求对象的当前 `state`——
+      // 不是回执投影（`receipt()` / `thirdPartyStateOf()` 读的是派生状态与持久行），
+      // 也不是本层缓存的快照。`requestState()` 是只读取值器，判据本身不推进任何状态。
+      // 为什么传判据而不是布尔值：`dispatch()` 里有多个 await 窗口（列收件人、读现状、
+      // 写 `requested`、适配器外发），用户可能在任意一个窗口里取消；布尔快照只看得到入口那一刻。
       const subject = subjectByRequest.get(requestId);
-      if (subject !== undefined) await thirdPartyDispatch.dispatch({ requestId, userId: subject });
+      if (subject !== undefined) {
+        await thirdPartyDispatch.dispatch({
+          requestId,
+          userId: subject,
+          isRequestCancelled: (id) => coordinator.requestState(id) === 'cancelled',
+        });
+      }
       return executed;
     },
     cancelDeletion(userId) {

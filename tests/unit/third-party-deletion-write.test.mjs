@@ -203,6 +203,55 @@ function createFakeRecipients(list) {
   };
 }
 
+/**
+ * 一次性异步闸门（R73-P1）：把派发器按在某个 await 窗口里，用例再决定「此刻取消」还是「直接放行」。
+ * `entered` 在窗口入口 resolve，`open()` 才让窗口继续 —— 两者分开，才能稳定复现
+ * 「取消已经受理、但派发仍停在 await 里」这个交叠。
+ */
+function createGate() {
+  let markEntered;
+  let release;
+  const entered = new Promise((resolve) => {
+    markEntered = resolve;
+  });
+  const opened = new Promise((resolve) => {
+    release = resolve;
+  });
+  return {
+    entered,
+    opened,
+    hit() {
+      markEntered();
+    },
+    open() {
+      release();
+    },
+  };
+}
+
+/** 收件人来源替身：进入 `listRecipients()` 后先过闸门（异步窗口可控），放行后才返回清单。 */
+function createGatedRecipients(list, gate) {
+  return {
+    async listRecipients() {
+      gate.hit();
+      await gate.opened;
+      return list;
+    },
+  };
+}
+
+/** 在真库端口的 `listThirdPartyDeletions()` 外面套一道闸门（只为把这个「读现状」窗口按住）。 */
+function createGatedReadPort(port, gate) {
+  return {
+    ...port,
+    async listThirdPartyDeletions(requestId) {
+      gate.hit();
+      await gate.opened;
+      return port.listThirdPartyDeletions(requestId);
+    },
+  };
+}
+
 /** 注销域四 store 的最小装配（与 `tests/unit/user-data-deletion.test.mjs::seed()` 同形）。 */
 function createStores() {
   return {
@@ -799,4 +848,128 @@ test('回归：回执的 third_party_state 仍由路由投影给出，写侧只�
     '写侧不许偷偷改写协调器回执（否则回执与投影会变成两本账）',
   );
   assert.equal(port.snapshot(requestId)[0].onlineState, 'confirmed', '事实在库里，不在这里');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F) R73-P1：取消与派发的交叠（取消受理之后不许再产生新的写入与外发）
+//
+// 负控制 N5：把 `third-party-deletion-dispatch.ts` 里的四个取消检查点删掉（或只在入口查一次）⇒
+// T-P1-a / T-P1-b / T-P1-d 变红（取消已受理，但适配器仍被调用一次、`requested`/`confirmed` 仍写下去）。
+// 反向对照：T-P1-c 证明判据没有把正常路径一起关掉。
+// ─────────────────────────────────────────────────────────────────────────────
+
+test('R73-P1 T-P1-a：收件人查询期间取消 ⇒ 零外发、零写入，回执仍是 cancelled', async () => {
+  const port = createFakePort();
+  const adapter = createFakeAdapter(confirmedOutcome());
+  const gate = createGate();
+  const deletion = createUserDataDeletion({
+    ...createStores(),
+    now: () => new Date(CLOCK_MS),
+    thirdParty: port,
+    thirdPartyAdapter: adapter,
+    thirdPartyRecipients: createGatedRecipients([{ recipientId: 'alipay-cloud' }], gate),
+  });
+  const requestId = String(deletion.requestDeletionFor(USER_A.userId).id);
+
+  // 受理后**不 await**：让 executeHandlers 一路跑到收件人查询，被闸门按住。
+  const running = deletion.executeHandlers(requestId);
+  await gate.entered;
+
+  // 此刻取消：回执必须立刻是 cancelled，且取消之前确实一条也没写、一次也没发。
+  const cancelled = deletion.cancelDeletion(USER_A.userId);
+  assert.equal(cancelled.state, 'cancelled', '取消受理必须立刻在回执里可见');
+  assert.equal(adapter.calls.length, 0, '取消那一刻还没有外发');
+  assert.equal(port.writes.length, 0, '取消那一刻还没有写入');
+
+  gate.open();
+  const executed = await running;
+  assert.equal(typeof executed, 'object');
+
+  assert.equal(adapter.calls.length, 0, '放行之后也不许再外发（取消之后没有新的外发）');
+  assert.deepEqual(port.writes, [], '放行之后也不许再写 requested/confirmed（既成事实之外零新写）');
+  assert.equal(deletion.receipt(requestId).state, 'cancelled', '本次回执仍是 cancelled');
+  assert.equal(deletion.lastThirdPartyDispatch().reason, 'CANCELLED_AFTER_ACCEPT');
+  assert.equal(deletion.thirdPartyWrites.dispatched, 0, '外发读数为零（⛔ 不改口）');
+  assert.equal(deletion.thirdPartyWrites.skippedCancelled, 1);
+});
+
+test('R73-P1 T-P1-b：列收件人 / 读现状两个 await 窗口里取消 ⇒ 都零外发、零新写入', async () => {
+  for (const placement of ['listRecipients', 'listThirdPartyDeletions']) {
+    const gate = createGate();
+    const basePort = createFakePort();
+    const port = placement === 'listThirdPartyDeletions' ? createGatedReadPort(basePort, gate) : basePort;
+    const adapter = createFakeAdapter(confirmedOutcome());
+    const deletion = createUserDataDeletion({
+      ...createStores(),
+      now: () => new Date(CLOCK_MS),
+      thirdParty: port,
+      thirdPartyAdapter: adapter,
+      thirdPartyRecipients:
+        placement === 'listRecipients'
+          ? createGatedRecipients([{ recipientId: 'alipay-cloud' }], gate)
+          : createFakeRecipients([{ recipientId: 'alipay-cloud' }]),
+    });
+    const requestId = String(deletion.requestDeletionFor(USER_A.userId).id);
+
+    const running = deletion.executeHandlers(requestId);
+    await gate.entered;
+    assert.equal(deletion.cancelDeletion(USER_A.userId).state, 'cancelled', `${placement}：取消必须受理`);
+
+    gate.open();
+    await running;
+
+    assert.equal(adapter.calls.length, 0, `${placement}：取消之后不许外发`);
+    assert.equal(basePort.writes.length, 0, `${placement}：取消之后不许写 requested/confirmed`);
+    assert.equal(deletion.lastThirdPartyDispatch().reason, 'CANCELLED_AFTER_ACCEPT', `${placement}：原因必须可判`);
+    assert.equal(deletion.thirdPartyWrites.dispatched, 0, `${placement}：外发读数为零`);
+    assert.equal(deletion.thirdPartyWrites.skippedCancelled, 1, `${placement}：跳过读数如实计数`);
+  }
+});
+
+test('R73-P1 T-P1-c：同一条链不取消 ⇒ 仍是一次外发 + requested→confirmed（判据没关掉正常路径）', async () => {
+  const port = createFakePort();
+  const adapter = createFakeAdapter(confirmedOutcome('ev-r73-p1'));
+  const deletion = createUserDataDeletion({
+    ...createStores(),
+    now: () => new Date(CLOCK_MS),
+    thirdParty: port,
+    thirdPartyAdapter: adapter,
+    thirdPartyRecipients: createFakeRecipients([{ recipientId: 'alipay-cloud' }]),
+  });
+  const requestId = String(deletion.requestDeletionFor(USER_A.userId).id);
+  await deletion.executeHandlers(requestId);
+
+  assert.equal(adapter.calls.length, 1);
+  assert.deepEqual(port.writes.map((write) => write.state), ['requested', 'confirmed']);
+  assert.equal(deletion.lastThirdPartyDispatch().reason, 'OK');
+  assert.equal(deletion.thirdPartyWrites.skippedCancelled, 0);
+});
+
+test('R73-P1 T-P1-d：取消判据抛错 ⇒ 按取消处理（零外发、零写入、原因可判）', async () => {
+  const port = createFakePort();
+  const adapter = createFakeAdapter(confirmedOutcome());
+  const { dispatcher, events } = makeDispatcher({
+    port,
+    adapter,
+    recipients: createFakeRecipients([{ recipientId: 'alipay-cloud' }]),
+  });
+  const result = await dispatcher.dispatch({
+    requestId: randomUUID(),
+    userId: USER_A.userId,
+    // 「判据自己坏了」不能等于「放行外发」：fail-closed 到不发。
+    isRequestCancelled: () => {
+      throw withCode('判据自己坏了', 'PROBE_BROKEN');
+    },
+  });
+
+  assert.equal(result.reason, 'CANCELLED_AFTER_ACCEPT');
+  assert.equal(adapter.calls.length, 0);
+  assert.equal(port.writes.length, 0);
+  assert.equal(dispatcher.readings.dispatched, 0);
+  assert.equal(dispatcher.readings.skippedCancelled, 1);
+  assert.equal(dispatcher.readings.writeFailures, 0, '判据坏了不是持久侧失败（⛔ 不混进写失败读数）');
+  const skipped = events.find((event) => event.event === 'third_party_deletion_skipped_cancelled');
+  assert.ok(skipped !== undefined, '跳过必须有事件（⛔ 不许静默）');
+  assert.equal(skipped.recipient_id, 'alipay-cloud');
+  assert.equal(skipped.skipped_reason, 'probe_failed');
 });

@@ -101,6 +101,11 @@ export interface ThirdPartyDeletionWriteReadings {
   unsupported: number;
   /** 因终态 / 已请求而跳过的条数（幂等读数：重复 dispatch 时它递增、其余不增）。 */
   skipped: number;
+  /**
+   * 因**请求已被取消**而没处理的接收方条数（含「判据抛错按取消处理」的那部分）。
+   * 与 `skipped` 分开：那是幂等跳过，这是取消之后本就不该再发。
+   */
+  skippedCancelled: number;
   /** 持久侧失败次数（写失败 + 读失败都算：两者都说明"这本账现在写不进去"）。 */
   writeFailures: number;
   /** 最近一次持久侧失败的安全码（不含驱动原文）。 */
@@ -120,6 +125,11 @@ export type ThirdPartyDeletionDispatchReason =
   | 'ADAPTER_UNWIRED'
   | 'ADAPTER_UNAVAILABLE'
   | 'READ_FAILED'
+  /**
+   * 请求在**受理之后**被用户取消：此后的接收方一律不写 `requested`、不再外发。
+   * 取消之前已经写过的行是既成审计事实，按既有规则原样保留（⛔ 不删行、不伪造回滚）。
+   */
+  | 'CANCELLED_AFTER_ACCEPT'
   /** 有接收方、也发了，但至少一笔**落库失败**（fail-open：注销照常，账没记全）。 */
   | 'WRITE_FAILED'
   | 'DISPATCH_FAILED';
@@ -147,11 +157,32 @@ export interface ThirdPartyDeletionDispatchResult {
   rows: readonly ThirdPartyDeletionDispatchRow[];
 }
 
+/**
+ * 「这个 requestId **此刻**是否已被取消」的活判据（**不是布尔快照**）。
+ *
+ * 为什么不是快照：`dispatch()` 内部有多个 await 窗口（列收件人 / 读现状 / 写 `requested` /
+ * 适配器外发），用户可以在任意一个窗口里取消。入口只读一次布尔值，窗口里发生的取消就永远看不见，
+ * 于是「已经取消」的请求照样写 `requested`、照样外发。必须在每个窗口后重新问一遍。
+ *
+ * 判据抛错时按「已取消」处理（见 `dispatch()` 里的取向说明）。
+ */
+export type ThirdPartyDeletionCancellationProbe = (requestId: string) => boolean | Promise<boolean>;
+
+/** `dispatch()` 的输入。 */
+export interface ThirdPartyDeletionDispatchInput {
+  requestId: string;
+  userId: string;
+  /**
+   * 可选：受理链传入的取消判据。**不传 ⇒ 行为与本次返修前逐字一致**（既有 27 条用例一字不改）。
+   */
+  isRequestCancelled?: ThirdPartyDeletionCancellationProbe;
+}
+
 export interface ThirdPartyDeletionDispatcher {
   /** 累计读数（活对象：每次 dispatch 就地累加）。 */
   readonly readings: ThirdPartyDeletionWriteReadings;
   /** 受理链调用它；**永不抛**（任何异常都折叠成 `DISPATCH_FAILED` + 计数）。 */
-  dispatch(input: { requestId: string; userId: string }): Promise<ThirdPartyDeletionDispatchResult>;
+  dispatch(input: ThirdPartyDeletionDispatchInput): Promise<ThirdPartyDeletionDispatchResult>;
   /** 最近一次 dispatch 的结论（`null` ⇒ 还没调用过）。 */
   lastResult(): ThirdPartyDeletionDispatchResult | null;
 }
@@ -230,6 +261,7 @@ export function createThirdPartyDeletionDispatcher(
     failed: 0,
     unsupported: 0,
     skipped: 0,
+    skippedCancelled: 0,
     writeFailures: 0,
     lastError: null,
   };
@@ -310,7 +342,7 @@ export function createThirdPartyDeletionDispatcher(
     }
   }
 
-  async function run(input: { requestId: string; userId: string }): Promise<ThirdPartyDeletionDispatchResult> {
+  async function run(input: ThirdPartyDeletionDispatchInput): Promise<ThirdPartyDeletionDispatchResult> {
     const result: ThirdPartyDeletionDispatchResult = {
       requestId: input.requestId,
       reason: 'OK',
@@ -323,6 +355,46 @@ export function createThirdPartyDeletionDispatcher(
       last = final;
       return final;
     };
+
+    /**
+     * 重问一次「现在取消了吗」。每个 await 窗口之后各调一次（⛔ 不在入口只问一次）。
+     *
+     * 判据抛错 ⇒ 按**已取消**处理（fail-closed 到「不发」）：这不是对称取舍——
+     * 把「取消已受理」误判成未取消，代价是一次**不可撤回**的第三方外发；
+     * 把未取消误判成已取消，代价只是这次少发、留下一个待补的审计缺口。
+     * 「取消已受理」比「多发一次外发」更不可接受，所以这里宁可少发。
+     */
+    async function cancellationOf(): Promise<'request_cancelled' | 'probe_failed' | null> {
+      const probe = input.isRequestCancelled;
+      if (probe === undefined) return null;
+      try {
+        return (await probe(input.requestId)) === true ? 'request_cancelled' : null;
+      } catch {
+        // 判据自己坏了也绝不能变成「放行外发」：按取消处理，并在事件里留下可诊断的原因。
+        return 'probe_failed';
+      }
+    }
+
+    /**
+     * 取消命中：停掉**后续**接收方并如实收尾。
+     *
+     * `remaining` 是这次不会再处理的接收方（含当前这个）。已经写过的行一条不删、不回滚——
+     * 取消只承诺「此后不再产生新的写入与外发」，不修改既成审计事实。
+     */
+    function stopCancelled(
+      remaining: readonly ThirdPartyDeletionRecipient[],
+      outcome: 'request_cancelled' | 'probe_failed',
+    ): ThirdPartyDeletionDispatchResult {
+      readings.skippedCancelled += remaining.length;
+      // 只记标识与跳过原因：不记凭据、不记正文。
+      note({
+        event: 'third_party_deletion_skipped_cancelled',
+        request_id: input.requestId,
+        recipient_id: remaining[0]?.recipientId ?? null,
+        skipped_reason: outcome,
+      });
+      return finish('CANCELLED_AFTER_ACCEPT');
+    }
 
     // ① 装配缺口：如实说明为什么一条也不写（今天的生产就走这三条之一）。
     if (port === null) {
@@ -352,6 +424,10 @@ export function createThirdPartyDeletionDispatcher(
     }
     const targets = normalize(listed);
     result.recipients = targets.length;
+    // 检查点 1/4：`listRecipients()` 的 await 窗口结束后立刻重问一次
+    // （中间只有纯函数的归一/去重，没有新的 await；取消落在那个窗口里 ⇒ 这里就该停）。
+    const afterRecipients = await cancellationOf();
+    if (afterRecipients !== null) return stopCancelled(targets, afterRecipients);
     if (targets.length === 0) return finish('NO_RECIPIENTS');
 
     // ③ 现状：读不到就不发（"可能已经发过"比"重复外发"更不可接受）。
@@ -362,6 +438,9 @@ export function createThirdPartyDeletionDispatcher(
       notePersistenceFailure({ event: 'third_party_deletion_read_failed', requestId: input.requestId, error });
       return finish('READ_FAILED');
     }
+    // 检查点 2/4：`listThirdPartyDeletions()` 的 await 窗口结束后重问一次。
+    const afterRead = await cancellationOf();
+    if (afterRead !== null) return stopCancelled(targets, afterRead);
     const byKey = new Map<string, ThirdPartyDeletionRecord>();
     for (const row of Array.isArray(existing) ? existing : []) {
       byKey.set(keyOf(row.recipientId, row.exportRef ?? null), row);
@@ -384,7 +463,7 @@ export function createThirdPartyDeletionDispatcher(
       }
     }
 
-    for (const target of targets) {
+    for (const [index, target] of targets.entries()) {
       const exportRef = target.exportRef ?? null;
       const current = byKey.get(keyOf(target.recipientId, exportRef));
       const row: ThirdPartyDeletionDispatchRow = {
@@ -411,6 +490,10 @@ export function createThirdPartyDeletionDispatcher(
         continue;
       }
 
+      // 检查点 3/4：写 `requested` **之前**重问一次（这个 await 窗口里取消 ⇒ 一行都不写）。
+      const beforeRequested = await cancellationOf();
+      if (beforeRequested !== null) return stopCancelled(targets.slice(index), beforeRequested);
+
       // ⑤ 先写 requested（只有"没有行"才写；failed 直接重发，⛔ 不用 requested 盖掉 failed）。
       if (current === undefined) {
         const wrote = await writeState({
@@ -428,6 +511,11 @@ export function createThirdPartyDeletionDispatcher(
         }
         row.state = 'requested';
       }
+
+      // 检查点 4/4：外发**之前**再问一次。`requested` 若已经写下去就如实留着（既成审计事实），
+      // 但取消之后绝不再触发新的外发。
+      const beforeDispatch = await cancellationOf();
+      if (beforeDispatch !== null) return stopCancelled(targets.slice(index), beforeDispatch);
 
       // ⑥ 外发一次（适配器自己保证"单接收方单次调用"；它抛错也折成 failed，不中断后面的人）。
       let outcome: ThirdPartyAdapterOutcome;
