@@ -199,7 +199,7 @@ test('接线·GET /jobs/{id} 读出 kind=synthesis 的契约 Job（九键/闭集
   assert.equal(raw.includes(SUBSTITUTE_ARTIFACT_CONTENT_TYPE), false, '产物 MIME 不进契约投影');
 });
 
-test('接线·未注册的接口形态不新增：TTS 域仍只有 POST（GET/DELETE /speech/synthesis 仍是 404）', async (t) => {
+test('接线·集合路径仍不新增 GET/DELETE：/speech/synthesis 仍是 404（R74 的读取面只有 {id}/audio）', async (t) => {
   const h = await buildFixture(t);
   for (const method of ['GET', 'DELETE']) {
     const response = await h.call(method, SYNTHESIS_URL, h.a);

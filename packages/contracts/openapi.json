@@ -4393,6 +4393,98 @@
         }
       }
     },
+    "/speech/synthesis/{id}/audio": {
+      "get": {
+        "operationId": "readSynthesisAudio",
+        "summary": "取回本人合成产物的音频字节：按产物真实 content-type 原样返回，非音频/替身一律拒绝",
+        "description": "作用域 user：需登录会话；只读**本人**的合成产物 —— 记录不存在与非本人产物**同形** 404 NOT_FOUND，不泄露存在性（tts/service.ts 的 getOwnedSynthesis）。200 直接回**产物字节** + Content-Type，类型取自产物自己的标注（真实适配器只产 audio/mpeg），不改写、不猜测、不降级成某个\"通用音频类型\"；`Cache-Control: private, no-store`，**没有** ETag/条件请求语义（无 If-None-Match、无「未修改」响应），也没有签名 URL、下载跳转或原桶重定向 —— 字节只从本响应体走，对象键不外泄。拒绝面全部 fail-closed：产物不是 `audio/*`（替身占位、错标、未标注）⇒ 409 OBJECT_UNAVAILABLE，文案点明「这是替身/非音频产物」，⛔ 绝不把非音频字节标成 `audio/*` 返回；产物读回端口未接线（替身/未接线装配）⇒ 409（没有字节可读，不是「读失败」）；产物已不可用/已清理、`media_id` 反查不回该记录、存储读取失败或超时 ⇒ 409；0 字节产物 ⇒ 409。为什么不用「不支持的媒体类型」那个错误码：GET 不携带请求体，它描述的是**请求**的媒体类型，本 operation 因此不声明它、也不声明「请求体过大」（tools/validate_contracts.py 对 bodyless 方法强制）。与 POST /speech/synthesis 的关系：受理面只回 Job（job.result 恒 null），本 GET 是小程序取音频的唯一出口。",
+        "tags": [
+          "speech"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "本人合成的产物字节；Content-Type 就是产物标注的真实类型（不是改写后的通用类型），因此不代表「一定能播放」。",
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "private, no-store"
+                },
+                "description": "个人音频既不进共享缓存也不落盘"
+              },
+              "X-Request-Id": {
+                "schema": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "X-Execution-Mode": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionMode"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      }
+    },
     "/conversations": {
       "post": {
         "operationId": "createConversation",

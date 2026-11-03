@@ -1,8 +1,9 @@
 // GY-I13 合成（普通话 TTS）HTTP 消费层（原生小程序侧）。
 //
 // 契约面（packages/contracts/openapi.json 1.0.0，**只用既有 operation，不自造路径**）：
-//   createSynthesis  POST /speech/synthesis  → 202 JobEnvelope（`Idempotency-Key` 必填 8..128）
-//   getJob           GET  /jobs/{id}         → 200 JobEnvelope（读 JobState 的唯一契约面）
+//   createSynthesis    POST /speech/synthesis                 → 202 JobEnvelope（`Idempotency-Key` 必填 8..128）
+//   getJob             GET  /jobs/{id}                        → 200 JobEnvelope（读 JobState 的唯一契约面）
+//   readSynthesisAudio GET  /speech/synthesis/{id}/audio      → 200 二进制音频（R74 新增的私有读面）
 //
 // 硬口径：
 // 1) **客户端不说内容**：请求体只有 `checked_content_ref`（type/id/revision）与 `locale:'zh-CN'`，
@@ -15,9 +16,9 @@
 //    `assertSpeakable`（`check_state === 'passed'`）；本层只负责把 ref 发出去。
 // 3) **无取消能力如实登记**：契约**没有**「取消合成任务」的语义（`tts/service.ts` 也没有取消入口）。
 //    离页时本层只做**客户端侧**的在途请求失效与轮询停止，**绝不**谎称服务端任务已取消。
-// 4) **不产生、不顶替音频**：`audioSourceForJob()` 只如实回答"现在有没有可播放的音频源"；
-//    替身产物不是音频、契约也没有面向客户端的音频出口 ⇒ 一律 `SOURCE_UNAVAILABLE`，
-//    **不得**用别的音频顶替、**不得**假装能播；页面口径见 `NO_CLIENT_AUDIO_EGRESS_NOTE`。
+// 4) **不产生、不顶替音频**：`audioSourceForJob()` 只如实回答"现在有没有可取的音频读面地址"；
+//    替身产物不是音频、真实凭据/产物存储未接线时也没有字节 ⇒ `ok:false` 且带**具体**原因，
+//    **不得**用别的音频顶替、**不得**假装能播；页面口径见 `NO_PLAYABLE_AUDIO_NOTE`。
 'use strict'
 
 const auth = require('./auth')
@@ -81,17 +82,21 @@ const SUBSTITUTE_NOTE = '替身样本：非真实资料、非真实核对结论�
   + '只在本地替身工程里用于离线核对控件与安全检查断路，不得当作真实播报内容。'
 
 /**
- * **页面必须原样展示的如实口径**（契约层面的结构性事实；既不是网络问题，也不是临时故障）。
+ * **页面必须原样展示的如实口径**（服务端事实；既不是网络问题，也不是临时故障）。
  *
- * 依据（实读证据：`.pg17/handoff/slice451-synthesis-playback-b619e62.md`）：
- * 冻结契约 85 条路径里**没有**面向客户端的音频出口 —— `POST /media/{id}/access` 只回句柄
- * （`AccessGrant` 无字节），其 `url` 是部署期访问网关占位域，`GET /media/{id}/content` 不存在，
- * 唯一返回媒体字节的 `GET /community/media/{grant_id}/content` 硬要求社区图片上下文。
- * ⇒ 合成成功后**也**取不到可播放来源：页面不得显示「播放中／已播放」、不得伪造音频、
- * 不得用别的音频顶替；真实可播放来源需先放开契约（属监制/用户裁定）。
+ * R74 起服务端已有面向客户端的**音频读面**：`GET /api/v1/speech/synthesis/{id}/audio`
+ * （operation `readSynthesisAudio`，装配在 `services/api/src/routes/synthesis.ts`）——只读**本人**的
+ * 合成产物，按产物**真实** `content-type` 原样下发音节。但「有读面」不等于「一定有声音」：
+ *  - 替身执行模式（`stub`/`preset_demo`）的产物是明确标注的**非音频**占位
+ *    （`application/x-gengyun-tts-substitute`，见 `services/api/src/tts/provider.ts`）⇒ 读面 409 拒绝，
+ *    ⛔ 绝不把非音频字节标成 `audio/*`；
+ *  - `real` 模式下若真实 TTS 凭据、产物存储批准（`--approve-real-media-wiring`）或对象键任一缺失，
+ *    受理面就 503、或读面 409 —— 作业根本走不到「有声音」。
+ * ⇒ 取不到可播源时页面必须给出**具体原因**，不得显示「播放中／已播放」、不得伪造音频、
+ * 不得用别的音频顶替、不得记「已听取」。
  */
-const NO_CLIENT_AUDIO_EGRESS_NOTE = '本环境无可播放音频（契约无客户端音频出口）：'
-  + '契约只提供合成受理与任务读取，没有面向客户端的音频下载 operation，合成成功也取不到可播放来源；'
+const NO_PLAYABLE_AUDIO_NOTE = '本环境暂无可播放音频（服务端没给出可取的音频字节）：'
+  + '音频读面只回本人真实合成的产物——替身产物是明确标注的非音频占位，真实凭据/产物存储未接线或产物已清理时也没有字节；'
   + '本页不伪造音频、不用别的音频顶替、不记「已听取」。'
 
 function failure(code) { const error = new Error(code); error.code = code; return error }
@@ -327,39 +332,83 @@ function isTerminal(state) {
 }
 
 /**
- * **如实回答"现在有没有可播放的音频源"**（不顶替、不猜测、不假装能播）。
+ * **如实回答"现在有没有可播源"**（不顶替、不猜测、不预先声称"一定有声"）。
  *
- * 逐项 fail-closed：
- *  - 任务不是 `succeeded` ⇒ 没有产物；
- *  - `stub`/`preset_demo` 的替身产物**不是音频**（服务端 `tts/provider.ts` 的明文标注占位
- *    `application/x-gengyun-tts-substitute`，替身端口与产物校验都拒绝 `audio/*`）⇒ 不可播放；
- *  - `real` 模式下契约**没有**面向客户端的音频出口（`POST /media/{id}/access` 只回句柄、
- *    `AccessGrant.url` 是部署期网关占位域、没有 owner 私有媒体字节读取 operation）
- *    ⇒ 同样取不到可播放来源。
+ * 只有**同时**成立才给 `{ok:true, url}`：
+ *  - 任务 `succeeded` 且带 `result`（`id`/`media_id` 只在这里；`job.result` 在受理响应里恒 null；
+ *  - 回执里的 `id`/`media_id` 是合法 uuid（不拿来路不明的值去拼地址）；
+ *  - 服务端执行模式是 `real`（`meta.execution_mode`）：替身产物是明确标注的**非音频**占位
+ *    （`application/x-gengyun-tts-substitute`），读面必然 409，本层就不该说它可播；
+ *  - 运行时有 http(s) `apiBaseUrl`（否则连地址都拼不出来）。
  *
- * 因此本片在离线/替身与 real 未接线两种情形下**恒**得到 `SOURCE_UNAVAILABLE`；页面据此展示
- * `NO_CLIENT_AUDIO_EGRESS_NOTE`（如实说明契约缺口）与主动播放按钮，**不得**显示「播放中／已播放」、
- * **不得**伪造音频、**不得**记「已听取」。可播放路径的真实接线需先放开契约（属监制/用户裁定）。
+ * 服务端判定在**取字节那一刻**（`GET /api/v1/speech/synthesis/{id}/audio`，operation
+ * `readSynthesisAudio`）：200 且 `content-type: audio/*` 才是真音频；非 `audio/*`/替身/已清理/
+ * 存储未接线一律 409。因此本层给的是「有读面地址可试」，取回失败时由播放端口把服务端的具体
+ * 拒绝原因交给页面（`miniprogram/utils/inner-audio-port.js` 的下载失败映射），**不伪造音频**、
+ * 不记「已听取」、不用别的音频顶替。
+ *
+ * 每个 `ok:false` 都带**具体** `reason` 与分类 `code`（`JOB_NOT_SUCCEEDED`/`NO_ARTIFACT`/
+ * `SUBSTITUTE_ARTIFACT`/`NO_ENDPOINT`/`INVALID_INPUT`），不再退回空泛的"无可播放音频"。
  */
 function audioSourceForJob(job, mode) {
-  if (!object(job) || !one(job.state, JOB_STATES)) return { ok: false, code: 'SOURCE_UNAVAILABLE', reason: '任务状态无法核对。' }
-  if (job.state !== 'succeeded' || job.result === null) {
-    return { ok: false, code: 'SOURCE_UNAVAILABLE', reason: '合成任务未成功完成（state=' + job.state + '），没有可播放的产物。' }
+  if (!object(job) || !one(job.state, JOB_STATES)) {
+    return { ok: false, code: 'INVALID_INPUT', reason: '任务对象形状无法核对（state 不在契约闭集）：不敢判断有没有产物。' }
+  }
+  if (job.state !== 'succeeded') {
+    return { ok: false, code: 'JOB_NOT_SUCCEEDED', reason: '合成任务未成功完成（state=' + String(job.state) + '），没有产物可取。' }
+  }
+  if (!object(job.result)) {
+    return { ok: false, code: 'NO_ARTIFACT', reason: '任务已成功但回执里没有产物（result 为空）：服务端没有登记可取回的合成记录与 media_id。' }
+  }
+  // `validateJob` 把契约 `result: {kind, value}` **归一化**成 `{id, revision, media_id}`
+  // （见 `validateJob` 的返回式）；直接传原始契约回执的调用方则带 `result.value`。两种形状同源，
+  // 这里都按同一判据取值，**不猜测**、不从别的字段拼 id。
+  const value = object(job.result.value) ? job.result.value : job.result
+  if (!uuid(value.id)) {
+    return { ok: false, code: 'NO_ARTIFACT', reason: '回执里的合成记录 id 不是合法 uuid（' + String(value.id) + '）：拼不出音频读面地址。' }
+  }
+  if (!uuid(value.media_id)) {
+    return { ok: false, code: 'NO_ARTIFACT', reason: '回执里的 media_id 不是合法 uuid（' + String(value.media_id) + '）：不拿它去取音频。' }
   }
   if (mode !== 'real') {
     return {
       ok: false,
-      code: 'SOURCE_UNAVAILABLE',
-      reason: '当前为替身执行模式（' + String(mode) + '）：替身产物是明确标注的**非音频**占位，'
-        + '不可播放；本页不用别的音频顶替、不假装能播。'
+      code: 'SUBSTITUTE_ARTIFACT',
+      reason: '当前执行模式是 ' + String(mode) + '（不是 real）：替身产物是明确标注的**非音频**占位'
+        + '（application/x-gengyun-tts-substitute），服务端读面会以 409 拒绝，本页不用别的音频顶替。'
     }
   }
-  return {
-    ok: false,
-    code: 'SOURCE_UNAVAILABLE',
-    reason: '契约没有面向客户端的音频出口（没有私有媒体字节读取 operation，'
-      + '`AccessGrant.url` 是部署期网关占位域）：真实合成产物也取不到可播放来源，本页如实报不可播。'
+  const base = audioOriginPrefix()
+  if (!/^https?:\/\//.test(base)) {
+    return {
+      ok: false,
+      code: 'NO_ENDPOINT',
+      reason: '运行时没有配置后端地址（apiBaseUrl=' + (base === '' ? '空' : String(base)) + '）：拼不出音频读面地址。'
+    }
   }
+  return { ok: true, url: base + '/speech/synthesis/' + value.id + '/audio', label: '真实音频' }
+}
+
+/**
+ * 取音频时用的 `Authorization` 头（音频读面是私有资源，必须带会话）。
+ *
+ * 为什么单独导出：`wx.createInnerAudioContext` **不能**带自定义头，真实播放要先
+ * `wx.downloadFile({ header })` 把字节下到临时文件再交给播放器（见
+ * `miniprogram/utils/inner-audio-port.js`）。这里只回当前会话的令牌，未登录 ⇒ `null`。
+ */
+function audioAuthorizationHeader() {
+  const bound = binding()
+  return bound ? 'Bearer ' + bound.token : null
+}
+
+/**
+ * 音频读面所在的后端域前缀（`runtime.apiBaseUrl`，形如 `https://api.example.com/api/v1`）。
+ *
+ * 播放端口用它做**域校验**：只有前缀匹配的地址才附 `Authorization` 去下载——绝不把会话令牌
+ * 发给第三方域。未配置时返回空串（端口据此直连，不附头）。
+ */
+function audioOriginPrefix() {
+  return typeof runtime.apiBaseUrl === 'string' ? runtime.apiBaseUrl : ''
 }
 
 /** 任务状态 → 页面一行说明（七类逐类呈现，不折叠成"成功/失败"）。 */
@@ -522,7 +571,7 @@ module.exports = {
   SYNTHESIS_KEYS: SYNTHESIS_KEYS.slice(),
   SUBSTITUTE_SPEAK_SAMPLES: SUBSTITUTE_SPEAK_SAMPLES,
   SUBSTITUTE_NOTE: SUBSTITUTE_NOTE,
-  NO_CLIENT_AUDIO_EGRESS_NOTE: NO_CLIENT_AUDIO_EGRESS_NOTE,
+  NO_PLAYABLE_AUDIO_NOTE: NO_PLAYABLE_AUDIO_NOTE,
   EXIT_CANCELLATION_NOTE: EXIT_CANCELLATION_NOTE,
   RECORD_MAX_DURATION_MS: RECORD_MAX_DURATION_MS,
   VOICE_MAX_BYTES: VOICE_MAX_BYTES,
@@ -546,6 +595,8 @@ module.exports = {
   getJob: getJob,
   isTerminal: isTerminal,
   audioSourceForJob: audioSourceForJob,
+  audioAuthorizationHeader: audioAuthorizationHeader,
+  audioOriginPrefix: audioOriginPrefix,
   describeJob: describeJob,
   cancelAll: cancelAll,
   inFlightEpoch: function () { return inFlight.epoch },
