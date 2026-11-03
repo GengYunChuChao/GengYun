@@ -162,7 +162,7 @@ test('T1a 有第三方行：POST 202 的 third_party_state 向量 === 紧随其�
   }
 });
 
-test('T1b 无第三方行：POST 202 与 GET 同为 null（⛔ 不用 not_requested/confirmed 冒充「没有接收方」）', async () => {
+test('T1b 无第三方行 + 本部署不可派发：POST 202 与 GET 同为 unsupported（⛔ 不用 not_requested/confirmed 冒充「没有接收方」）', async () => {
   const { app, session } = await makeStubApp({ userDataDeletionInjection: { thirdParty: readPort([]) } });
   try {
     const accepted = await acceptDeletion(app, session.token, 'r72-t1b-accept-0001');
@@ -176,8 +176,22 @@ test('T1b 无第三方行：POST 202 与 GET 同为 null（⛔ 不用 not_reques
     const fetchedVector = thirdPartyVector(after.body.data);
     assert.deepEqual(acceptedVector, fetchedVector);
     assert.ok(acceptedVector.length > 0);
+    /**
+     * GY-R74 真值变更（不是放宽）：本臂的装配**不具备派发能力**（没有写端口／适配器／收件人来源，
+     * 见 `services/api/src/app.ts` 把 `thirdPartyWritable` 传成 `false`），于是「零接收方」不再等于
+     * 「没有可信结论」（`null`）——它等于「这台机器发不出去、也无法证实」，回执照实报 `'unsupported'`
+     * （契约 `ThirdPartyState` 闭集内，语义正是「做不到／无法证实」）。
+     *
+     * 旧口径（`null`）写于 #860 合入时：那时回执没有任何能力信号可用，`null` 是唯一不撒谎的取值。
+     * GY-R74 把能力信号接到受理链上之后，生产（`real`）回执仍报 `null` 就等于把「做不到」说成
+     * 「不知道」，与「回执必须能读出未完成原因」的产品要求相反 ⇒ 本条按新真值改写。
+     * ⛔ 没有放松的部分：仍钉住 ① POST 202 与 GET 两条回执**逐处理器相同**；② 不许出现
+     * `not_requested`（等于替用户说「不需要删」）；③ 不许出现 `confirmed`（无任何第三方证据）。
+     */
     for (const [module, state] of acceptedVector) {
-      assert.equal(state, null, `${module}：没有接收方行 ⇒ 两边都必须是 null`);
+      assert.equal(state, 'unsupported', `${module}：没有接收方行 + 不可派发 ⇒ 两边都必须是 unsupported`);
+      assert.notEqual(state, 'confirmed', `${module}：没有真实第三方证据 ⇒ ⛔ 不得为 confirmed`);
+      assert.notEqual(state, 'not_requested', `${module}：⛔ 不得替用户说「不需要删」`);
     }
   } finally {
     await app.close();
@@ -443,10 +457,30 @@ test('T5 结构钉子：受理读口只允许一个实现（同一 thirdPartySta
     'thirdPartyStateOf() 的 catch 必须原样 `return null`（契约语义：null = 没有可信结论；⛔ 不许改成抛出）',
   );
   const failClosed = [...routes.matchAll(new RegExp(FAIL_CLOSED_SOURCE, 'g'))];
+  /**
+   * GY-R74：读端口那一处的 fail-closed 形态从 `catch { return null; }` 改成
+   * `catch { return { ok: false }; }`（见 `services/api/src/routes/account-deletion.ts::thirdPartyRowsFor`）。
+   *
+   * 为什么必须区分：读侧端口「**没读到**」（真库故障 / explicit-unavailable 端口抛错）与
+   * 「**读到了空集**」在回执里的诚实结论不同 —— 前者只能说「不知道」（`null`），后者才足以说
+   * 「没有接收方」，再按装配能力升级为 `'unsupported'`。合成一个 `null` 会把这两件事混成一件，
+   * 于是「这台机器发不出去」也会被写成「不知道」，正是本片要堵的静默降级。
+   *
+   * 钉子意图不变、且更紧：routes 里的 fail-closed 仍然是**恰好两处、一处一种形态**
+   * （读端口 `{ ok: false }` + 投影 `return null`），⛔ 不许出现第三处，也不许两种形态互相顶替。
+   */
+  const failClosedProbe = [...routes.matchAll(/catch\s*(?:\([^)]*\))?\s*\{\s*return\s*\{\s*ok:\s*false\s*\}\s*;?\s*\}/g)];
   assert.equal(
-    failClosed.length,
+    failClosed.length + failClosedProbe.length,
     2,
-    `routes 里 fail-closed 只允许 2 处（thirdPartyRowsFor 读端口 + thirdPartyStateOf 投影），实得 ${failClosed.length} 处`,
+    `routes 里 fail-closed 只允许 2 处（thirdPartyRowsFor 读端口 + thirdPartyStateOf 投影），`
+      + `实得 return null ${failClosed.length} 处 + return { ok: false } ${failClosedProbe.length} 处`,
+  );
+  assert.equal(failClosedProbe.length, 1, '读端口的 fail-closed 只在 thirdPartyRowsFor() 里出现一次');
+  assert.match(
+    sliceTopLevelFunction(routes, 'thirdPartyRowsFor', 'routes/account-deletion.ts'),
+    /catch\s*(?:\([^)]*\))?\s*\{\s*return\s*\{\s*ok:\s*false\s*\}\s*;?\s*\}/,
+    'thirdPartyRowsFor() 的 catch 必须是 `return { ok: false }`（区分「没读到」与「读到空集」；⛔ 不许冒泡成 500）',
   );
 
   // ── 4) 反向确认：这三处结构在**同一个提交面**上是自洽的（读口就是 readThirdPartyState 的右值，

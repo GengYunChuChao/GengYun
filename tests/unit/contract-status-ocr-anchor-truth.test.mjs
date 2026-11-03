@@ -228,10 +228,18 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 9 条 evidence 的 `lines` 按 `base(ef22d5a9)→HEAD` 端点映射重取（`960-1026`→`969-969` 等），
  * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 两个文件各**少 1 字节**、
  * 行数不变（4407 / 218）。仍是「正常改台账」，故同步基线。
+ * 2026-11-03 同日第三次同步（GY-R74 注销真清片，`feat/gy-r74-deletion-real`）：**正常改台账** ——
+ * 本片把注销受理门从「real ⇒ 整域 503」改成「real + 真库 ⇒ 可受理」，并把 30 日备份域按域如实降级
+ * （`services/api/src/app.ts` 的 `backupPurgeWiring` real 臂恒 `createUnavailableBackupPurgePort()`）、
+ * 第三方回执补能力布尔、媒体域缺 `MEDIA_OBJECT_REF_KEY` 时识别域如实 blocked。台账侧只有两类变化：
+ * ① 6 条 evidence 的 `lines` 按 `base(7a25d900)→HEAD` 端点映射重取（`account-deletion.ts` 三个文件都长了行）；
+ * ② 3 条 blocker 文案按新真值重写（原「real 模式整域 503」已作废）并改写 `ACCOUNT_DELETION_UNAVAILABLE_MESSAGE`；
+ * 中文表格仍由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 两个文件各 +1 行、各 +815 字节
+ * （4408 / 219）。没有改判定、没有加豁免条目，故按本文件既定规则同步基线。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 271778, lines: 4407 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 194486, lines: 218 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 272593, lines: 4408 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 195301, lines: 219 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
