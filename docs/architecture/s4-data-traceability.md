@@ -365,7 +365,7 @@
 | D13 读写接缝 | `git grep -n third_party_deletions -- services/api/src` | 5 行 / 1 文件（= 端口 `privacy/third-party-deletion-pg.ts`；表零 DML/SELECT）。**注意这条只证明「表不可直写」**，不证明「没装配」——装配读数见下一行 |
 | D13 写侧调度 | `git grep -n subscribeThirdPartyDeletion -- services/api/src` | 3 行（端口接口、端口实现、一处注释）⇒ 零调用者；2026-10-28 复核新增 |
 | G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
-| G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **3/3**（`tools/verify-purge-schedule.mjs:117`；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列 |
+| G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **4/4**（`tools/verify-purge-schedule.mjs:117`；`.service`／`.timer` 各 4 个；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列；2026-11-04 复核：清单已是 4 项（新增 `purge:media-objects`） |
 | D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'` |
 | D07 单条删除面 | `git grep -n "app.delete(" -- services/api/src/routes` | **15** 条（13 条单条删除 + 1 条注销取消 + 1 条后台撤销管理员 scope；2026-10-28 复核由 14 更正为 15） |
 | D08 闭集 | `node --test tests/unit/deletion-registration-coverage.test.mjs` | 全绿；改闭集必须同步改常量 |
