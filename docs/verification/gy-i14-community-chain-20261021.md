@@ -101,7 +101,7 @@
 | 幂等 | `service.ts:823-831`（`withIdempotency`）、`:215-290` | 同键同体复用结果、同键异体 409 | 通 |
 | 先审后发 | `service.ts:843-848` | 规则层 `gate.evaluate` **在任何内容行落库之前**；不通过 ⇒ 只补录结论 + 拒绝发布 | 通 |
 | 审核域联动 | `service.ts:852-853`、`:886-898` | 送审审核域；未获明确放行不落行；发布闸门拒绝 ⇒ 行保留 `pending_review`（私有/待审） | 通 |
-| 客户端 | `community-api.js:224-227`（`createPost`，带 `Idempotency-Key`）；`communitycreate.js:100-150` | 只发契约字段；失败**不**显示「已提交成功」 | 通 |
+| 客户端 | `community-api.js:266-269`（`createPost`，带 `Idempotency-Key`）；`communitycreate.js:100-150` | 只发契约字段；失败**不**显示「已提交成功」 | 通 |
 | 审核结论口径 | `communitycreate.js:129-135` | 201 只是「已受理」，提示语逐字取自详情页 `publicLabel` / `stateLabel` | 通 |
 
 ### 2.2 图片／媒体附件 —— 未通（fail-closed 且如实标注）
@@ -150,7 +150,7 @@
 |---|---|---|---|
 | 提交 | `routes/community.ts:341-349`、`service.ts`（`createReport`） | `POST /reports`，201 + `ETag`，幂等键必填；`REPORT_REASONS` 五码闭集 | 通 |
 | 客户端提交 | `communitydetail.js:312-330`（`_report`） | `wx.showActionSheet` 选原因 → `POST /reports`；`REVISION_CONFLICT` 后 `load()` 重读 | 通 |
-| 状态回执 | `routes/community.ts:353-360`（`GET /reports/{id}`）、`community-api.js:313-318`（`getOwnReport`） | 契约与适配层都在；**页面无任何消费者**（`grep getOwnReport miniprogram/pages` 零命中） | **半通** |
+| 状态回执 | `routes/community.ts:353-360`（`GET /reports/{id}`）、`community-api.js:370-374`（`getOwnReport`） | 契约与适配层都在；**页面无任何消费者**（`grep getOwnReport miniprogram/pages` 零命中） | **半通** |
 | 提交后的可见反馈 | `communitydetail.js:318` | 只在一句 toast 里带 `result.report.state`（`received`/`isolated`/`closed`），关掉就没了 | 半通（如实） |
 
 ### 2.7 审核状态 —— 通
