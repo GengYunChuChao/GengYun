@@ -229,9 +229,9 @@
 - **实现**：行级读数含 `hiddenMedia`（`services/api/src/community/purge.ts:69`），blocked 原因码在 `:32` 起；
   单条媒体的对象删除是「确认后才清引用」（`services/api/src/media/service.ts:736`，先落清理意图再删桶对象）。
 - **证据**：账本脱敏 `packages/privacy/redact.mjs:68`。
-- **缺口**：**注销时按主体批量清媒体未接线**——`git grep -n purge_owner_media -- services/api/src` = 0 行，
+- **缺口**：**注销时强制清媒体未进必需闭集**（2026-11-04 复核已推翻原判「注销时按主体批量清媒体未接线」、「未接线、这一步没有执行者」，见下；另注：原判把「注销主链清媒体」与「7 日到期后清终态行」混成了一条链，今天它们是两段，见本段末）——历史读数：`git grep -n purge_owner_media -- services/api/src` = 0 行，
   迁移自陈见 `services/api/db/migrations/rollback/0035_r34_media_row_purge.down.sql:14`（「本片未接线」，
-  `user-data-deletion.ts` 里还没有媒体模块）。所以「不能可靠脱敏的媒体在注销后被隐藏或移除」这一步没有执行者。
+  `user-data-deletion.ts` 里还没有媒体模块），原判由此得出「不能可靠脱敏的媒体在注销后被隐藏或移除」这一步没有执行者；**2026-11-04 复核：这里今天是两条链，原判把两条混成了一条**——① 注销主链走 `MediaPurgePort.purgeOwnedMedia`（识别域处理器注入 `mediaStore` 后调用，实现与契约注释分别在 `media/store-pg.ts` / `media/store.ts`）：单事务里把社区图软隐藏（`state → 'deleted'`、`revision + 1`）、把对象键 upsert 进清理台账 `media_object_cleanup`（`reason = 'owner_delete'`）、再清 `object_ref_cipher` 与 `media_derivatives` 行，**不删 `media` 行、也不打桶**（契约注释原话：本方法不直接打桶，否则「登记」与「删除」之间没有可重放的凭据），读数 `softHidden` / `objectsRegistered` 落 `recognitions:media-hidden` / `recognitions:media-objects-registered`；② `purge_owner_media` 是另一条链——注销 7 日到期后的终态行清扫，由 `purgeRetiredRows` → `purgeOwnerMediaRows` 按 owner 逐个调，读数 `rowsDeleted` / `derivativesDeleted` / `rowsRetainedByReference`，桶内对象仍由清理台账的重试器真删。`git grep` 今天 5 行 / 3 文件数的是 `purge_owner_media` 这个词（1 处 SQL 文本 ＋ 4 处注释；函数声明在迁移文件里，不在 `services/api/src`），不能当成「注销主链已接线」的证据。这一步已有执行者，**缺的仍是必需闭集不含媒体**（见文末「D11 媒体通道」附注）。
 
 ## 4. 未实现（4 项）
 
@@ -320,16 +320,16 @@
 ### ★G1 第三方删除（判据：D13）
 
 表、协议、适配器、投影、真库端口都在；**2026-10-28 复核把缺口收窄到一条**：不是「未装配」（适配器在 `services/api/src/app.ts:2046`、读侧真库端口在 `:2039`、投影已接进注销回执 `services/api/src/routes/account-deletion.ts:152`），而是**写侧零调度 + 证据不落**。可复算：
-`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（就是那个端口；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` 原先 3 行（接口、实现、一处注释）⇒ 零调用者；**GY-R73（2026-11-03）起不再是零调用者**：调用点在 `services/api/src/privacy/third-party-deletion-dispatch.ts`，由注销链 `executeHandlers()` 调。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2276`，`:2548` 是它的消费点）；回执侧不用再动。
+`git grep -n third_party_deletions -- services/api/src` = 6 行 / 2 文件（那个端口 5 行 + 写侧调度 `privacy/third-party-deletion-dispatch.ts` 1 行；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` 原先 3 行（接口、实现、一处注释）⇒ 零调用者；**GY-R73（2026-11-03）起不再是零调用者**：调用点在 `services/api/src/privacy/third-party-deletion-dispatch.ts`，由注销链 `executeHandlers()` 调。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2276`，`:2548` 是它的消费点）；回执侧不用再动。
 这一条直接决定 AC23（`docs/implementation-requirements.md:585`）
 的「第三方证据」判不了。
 
 ### ★G2 注销时媒体本体批量清除（判据：D11）
 
-`purge_owner_media` 有函数、有授权、有真库臂（`tests/integration/media-row-purge-pg.mjs`），但应用侧零引用、
-注销闭集里没有媒体模块（`services/api/src/privacy/user-data-deletion.ts:164-169` 只有四域，条件追加的四域也不含媒体）。
+`purge_owner_media` 有函数、有授权、有真库臂（`tests/integration/media-row-purge-pg.mjs`），**应用侧也不再是零引用**——但引用它的不是注销主链（2026-11-04 复核：原判把这轮的两条链混成了一条）：注销主链走 `MediaPurgePort.purgeOwnedMedia`（`media/store-pg.ts` 的实现，单事务软隐藏社区图 ＋ 对象键登记进待删台账 ＋ 清密文与派生行，**不删 `media` 行、不打桶**，读数 `softHidden` / `objectsRegistered` 落 `recognitions:media-hidden` / `recognitions:media-objects-registered`）；`purge_owner_media` 由 7 日到期后的终态行清扫 `purgeRetiredRows` → `purgeOwnerMediaRows` 调（`media/service.ts` 与 `media/store-pg.ts`），读数 `rowsDeleted` / `derivativesDeleted` / `retainedByReference`；桶内对象由清理台账的重试器真删。`git grep` 今天 5 行 / 3 文件（1 处 SQL 文本 ＋ 4 处注释；函数声明在迁移里，不在 `services/api/src`）；
+但必需闭集里仍没有媒体模块（`services/api/src/privacy/user-data-deletion.ts:194-199` 只有四域，条件追加的社区／识别／语音／OCR／作业也不含媒体）。
 迁移自己写了「本片未接线」（`services/api/db/migrations/rollback/0035_r34_media_row_purge.down.sql:14`）。
-可复算：`git grep -n purge_owner_media -- services/api/src` = 0 行。
+原读数（2026-10-28）：应用侧零引用、`git grep -n purge_owner_media -- services/api/src` = 0 行；**2026-11-04 复核**：5 行 / 3 文件，但那 5 行全落在「7 日到期后终态行清扫」这条链上，不是注销主链（注销主链的 `purgeOwnedMedia` 不调这个 SQL 函数）；缺的仍是「必需闭集不含媒体」（见文末附注）。
 
 ### ★G3（**已于 2026-10-26 复核消解，整条留档**）保留策略（GY-R34）没有调度单元（判据：D09 的边角，但不属 D09 主体）
 
@@ -362,9 +362,9 @@
 | --- | --- | --- |
 | 行号不腐烂 | `node tools/verify-doc-anchors.mjs --strict` | `exit 0`，基线外新增 0 |
 | 文档结构与链接 | `npm run test:docs` | `exit 0`；`PASS: … Markdown links and tables` 在第 5 行（第一个工具的输出），末行是 `PASS docs/research 结构校验…` |
-| D13 读写接缝 | `git grep -n third_party_deletions -- services/api/src` | 5 行 / 1 文件（= 端口 `privacy/third-party-deletion-pg.ts`；表零 DML/SELECT）。**注意这条只证明「表不可直写」**，不证明「没装配」——装配读数见下一行 |
-| D13 写侧调度 | `git grep -n subscribeThirdPartyDeletion -- services/api/src` | 3 行（端口接口、端口实现、一处注释）⇒ 零调用者；2026-10-28 复核新增 |
-| G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
+| D13 读写接缝 | `git grep -n third_party_deletions -- services/api/src` | 6 行 / 2 文件（= 端口 `privacy/third-party-deletion-pg.ts` 5 行 + 写侧调度 `privacy/third-party-deletion-dispatch.ts` 1 行；表零 DML/SELECT）。**注意这条只证明「表不可直写」**，不证明「没装配」——装配读数见下一行 |
+| D13 写侧调度 | `git grep -n subscribeThirdPartyDeletion -- services/api/src` | 8 行 / 3 文件（端口接口、端口实现、适配器探测 `writePortOf`、真实调用）；**写侧已有唯一调用者**：`privacy/third-party-deletion-dispatch.ts` 的 `writePort.subscribeThirdPartyDeletion(...)`，由注销链 `executeHandlers()` 调——原读数「3 行 ⇒ 零调用者」是 2026-10-28 的，GY-R73 起不成立 |
+| G2 闭集不含媒体 | `git grep -n purge_owner_media -- services/api/src` | 5 行 / 3 文件（都在「7 日到期后终态行清扫」链上：`purgeRetiredRows` → `purgeOwnerMediaRows`；注销主链走 `purgeOwnedMedia`，不删行、不打桶）；缺的是必需闭集不含媒体 |
 | G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **4/4**（`tools/verify-purge-schedule.mjs:117`；`.service`／`.timer` 各 4 个；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列；2026-11-04 复核：清单已是 4 项（新增 `purge:media-objects`） |
 | D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'` |
 | D07 单条删除面 | `git grep -n "app.delete(" -- services/api/src/routes` | **15** 条（13 条单条删除 + 1 条注销取消 + 1 条后台撤销管理员 scope；2026-10-28 复核由 14 更正为 15） |
@@ -421,4 +421,4 @@
 
 但另一条事实仍未达成：注销的**必需模块闭集**（`USER_DATA_DELETION_MODULES`，
 `services/api/src/privacy/user-data-deletion.ts:194-199`）今天只有收藏／历史／消息／会话四域，不含媒体。
-所以 D11 维持「部分」：不能拿「原语可调用」冒充「闭集含媒体」。升档要么把媒体纳入必需闭集，要么补一条真实桶对象的清除读数。
+所以 D11 维持「部分」：不能拿「原语可调用」冒充「闭集含媒体」。升档要么把媒体纳入必需闭集，要么补一条真实桶对象的清除读数。另注：`purge_owner_media` 不在这条链上——它是 7 日到期后的终态行清扫（`purgeRetiredRows` → `purgeOwnerMediaRows`），两条链不要混着算。
