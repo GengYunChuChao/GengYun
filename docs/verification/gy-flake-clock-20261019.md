@@ -141,7 +141,7 @@ node --test tests/unit/community-moderation-clock.test.mjs
 ### 3.3 探针 ③：把默认预算改成 5000 ⇒ 「真实时钟必红」对照用例必须红
 
 ```powershell
-# 变异：packages/moderation/constants.mjs:223  DEFAULT_RULE_BUDGET_MS = 50;  →  5000;
+# 变异：packages/moderation/constants.mjs:224  DEFAULT_RULE_BUDGET_MS = 50;  →  5000;
 node --test tests/unit/community-moderation-clock.test.mjs
 node .pg17/tmp/flake-fix-writer/probe3-budget.mjs     # 行为级读数（脚本已删，全文见附录 A）
 ```
