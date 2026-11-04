@@ -51,3 +51,8 @@ project.private.config.json
 
 # Release-gate report (tools/release-gate.mjs default output): a run artifact, never committed
 /release-gate-report.json
+
+# School competition materials (东湖杯 / 创新赛 / 软著): kept locally, never pushed upstream.
+# `docs/input/` holds the same attachments before they are filed under docs/competition/.
+/docs/competition/
+/docs/input/
