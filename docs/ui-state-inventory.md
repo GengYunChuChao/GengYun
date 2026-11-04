@@ -125,7 +125,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 拍草识别 | 未接入 | 入口仅提示，不调用相机 |
 | 标签 OCR | 未接入 | 入口仅提示，不调用相机 |
 | 语音转写与播放 | 录音已接真实端口；转写核对在 stub/preset_demo 接通 | 录音经 `utils/recorder-port.js`（`wx.getRecorderManager` 在原生侧的唯一出现处）真实采集，按用途 voice_question 上传（real 模式）；`utils/speech-transcript.js` 在 stub/preset_demo 下走通「受理→轮询→可编辑→用户明确确认→发送」，未经确认不外发、取消/失败/迟到回调不外发；**真实 ASR 未接线**，替身文本明确标注 |
-| 文字提问 | 未接入 | 入口仅提示 |
+| 文字提问 | 未接入（**2026-11-04 复核：中列「未接入」已过期** —— `miniprogram/pages/identify/identify.js` 第 1147 行的 `openQa()` 走 `openGatedPage('/pages/qa/qa', …)` 打开真实提问页；该页在 `miniprogram/app.json` 第 22 行注册、在 `miniprogram/utils/navigation.js` 第 22 行白名单内，`miniprogram/pages/qa/qa.js` 第 5、7 行按 `POST /conversations` 与 `POST /conversations/{id}/turns` 真实发问） | 入口仅提示（**2026-11-04 复核：本格「仅提示」同样过期** —— 入口已能真跳转，只有未登录时先弹登录引导，文案见 `openGatedPage` 的提示参数） |
 | 社区内容 | 无数据 | 空态，不生成假帖子与假评论 |
 | 消息 | 无数据 | 空态，不生成假通知 |
 | 人工审核 | 空入口 | 明确写明建设中，不展示任何已审核内容 |
