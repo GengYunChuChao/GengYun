@@ -281,7 +281,7 @@ real 整域 fail-closed、持久队列/租约仍待接线）。中文对照表�
 ## 9 未取得 / 未验证（不得读成已完成）
 
 - 真实 `tms`/`ims` 供应商：**未授权付费** ⇒ 未接、未调、**无**真实请求编号与耗时；
-- 真实持久层（PG 迁移 / `moderation_decisions` 落库）、持久租约与队列：未接线（本片内存台账）；
+- 真实持久层（PG 迁移 / `moderation_decisions` 落库）、持久租约与队列：未接线（本片内存台账）（2026-11-05 复核：PG 迁移与 `moderation_decisions` 落库**已接线**——`services/api/src/app.ts` 第 954 行有池即注入 `createPostgresModerationLedger({ pool })`（同行注释「无池 ⇒ 内存台账」），`services/api/src/moderation/ledger-pg.ts` 第 141 行 `INSERT INTO public.moderation_decisions`，迁移 `services/api/db/migrations/0028_moderation_persistence.sql` 在库 ⇒「本片内存台账」现仅指**无池回退**；持久租约与队列仍未接线，`lease_token` 只在行内、无 PG 租约实现）；
 - 社区发布/编辑链与后台 `hidePost` 调用本域：**未接线**（跨线待派单，接线要求见
   `docs/moderation/http-layer.md` §9）；因此 `real` 的 503 目前只在**服务边界**可见；
 - 供应商回调的 HTTP 端点：**未装配**（ADR-001 §62 明确不在客户端 OpenAPI 开放；是否挂服务端端点由指挥决定）；
