@@ -193,7 +193,7 @@ prompt 模板、结论行、租约），与数据字典 `moderation_decisions` �
 - 契约里**没有**"提交审核"的 operation：审核任务由发布/编辑链在服务端创建（属跨线接线，见 §9）；
   因此 `real` 的 503 在**服务边界**可见，传输层形态由共享错误处理器映射（`buildErrorEnvelope`）。
 - 契约里**没有**供应商回调路径（ADR-001 §62 明确不在客户端 OpenAPI 开放）⇒ 回调是服务端 seam。
-- 持久化是**内存**台账（PG 迁移不属本片）；`moderation_decisions` 的 SQL/迁移待接线。
+- 持久化是**内存**台账（PG 迁移不属本片）；`moderation_decisions` 的 SQL/迁移待接线。（**2026-11-04 复核：本行已过期** —— 迁移 `services/api/db/migrations/0028_moderation_persistence.sql` 第 56 行已建 `moderation_decisions`、第 103 行已建 `moderation_withdrawals`；`services/api/src/app.ts` 第 954 行在 `pool` 非空时以 `createPostgresModerationLedger({ pool })` 注入 `store`，无池才回落内存台账。口径按该迁移与 `services/api/src/moderation/ledger-pg.ts` 文件头自述：**写面穿透落库、读面仍由内存承接**，`flush()` 未落定不得转 `published`）
 - **已合并文档的边界声明需要同步（跨线，本片未改）**：
   `packages/moderation/README.md` 的"本包当前没有 HTTP 消费者"、
   `docs/moderation/model-layer.md` 的同义表述，以及
@@ -203,7 +203,7 @@ prompt 模板、结论行、租约），与数据字典 `moderation_decisions` �
 ## 11 未取得／未验证（不得读成已完成）
 
 - 真实 `tms`/`ims` 供应商：**未授权付费** ⇒ 未接、未调、无真实请求编号与耗时；
-- 真实持久层（PG）与持久租约／队列：未接线；
+- 真实持久层（PG）与持久租约／队列：未接线；（**2026-11-04 复核：本行是半句分裂，只订正前半句** —— 前半句「真实持久层（PG）……未接线」已过期，证据同上一条与迁移 `services/api/db/migrations/0028_moderation_persistence.sql`、`services/api/src/app.ts` 第 954 行；**后半句「持久租约／队列」仍成立**：审核域至今没有持久租约或队列实现，`lease_token` 只作为任务记录字段与回调载荷出现，`queued` 只是 `job_state` 的一个取值，没有租约续期或持久排队）
 - 社区发布/编辑链与后台 `hidePost` 的实际接线：**未做**（跨线待派单）；
 - 200 风险 + 200 正常的独立评估：由 **GY-I21** 执行，**不在本片**；
 - 人审：未上线（空态）；公众票决：首版不进入（钉子已在 `tests/**` 条件化，见 §7）；
