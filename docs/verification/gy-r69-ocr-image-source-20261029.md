@@ -20,7 +20,7 @@
    `createUnwiredImageSource()`（`services/api/src/ai/ocr-live-adapter.ts`）恒返回 `null` ⇒ 适配器在 `extract` 第一步就落
    `failed PROVIDER_UNAVAILABLE`，**一个字节都发不出去**。
 2. `createOcrProvider` 的入参里**没有**任何媒体端口（只有 `executionMode` / `endpoint` / `apiKey` / `aiProviders`）。
-3. 另有**独立**的一处未接线：`services/api/src/ocr/media.ts` 的 `createOcrMediaPort('real')` 恒为 `createUnwiredMediaPort()`，
+3. 另有**独立**的一处未接线：`services/api/src/ocr/media.ts` 的 `createOcrMediaPort('real')` 恒为 `createUnwiredMediaPort()`（2026-11-05 复核：本节是改前读数；此后本条一半失效、一半仍成立——失效半：`createOcrMediaPort` 已收第二参 `wiring?: OcrMediaPortWiring`，`real` 分支先过 `ocrMediaRealRefusal` 判定，端口齐备即 `return createObjectStoreOcrMediaPort(...)`，故「恒为」不再成立；装配点 `services/api/src/app.ts` 第 2547 行已把 `mediaWiring: ocrImageMedia` 传给 `registerOcrRoutes`；`services/api/src/ocr/media.ts` 第 83 行注释亦自述「在本片之前，`real` 分支恒为 `createUnwiredMediaPort()`」。仍成立半：默认 `real` 零注入时 `resolveMediaObjectStore` 仍给未接线对象存储（`kind` 非 `s3_compatible`）⇒ 仍落 `createUnwiredMediaPort()`、拒绝文案与本片之前逐字相同；紧随的「**本片没有动它**」只是那一轮的范围声明（本片未改它），不表示此后仍未改。），
    它让 `POST /ocr` 的**受理前媒体校验**（`ocr/service.ts` 的 `createOcr` → `media.resolve`）恒返回 `OBJECT_UNAVAILABLE`。
    **本片没有动它**（不在本片范围，见 §5）。
 

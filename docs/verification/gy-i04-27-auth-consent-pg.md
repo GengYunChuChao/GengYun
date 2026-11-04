@@ -50,7 +50,7 @@ node tests/integration/auth-privacy-pg.mjs
 
 ## 剩余范围
 
-- POST `/me/consents` 授予仍未实现：生产当前政策版本来源、已验证 Recipient，以及同用途替换授权时取消旧消费者须一起接通；不能以测试夹具或任意字符串政策代替。
+- POST `/me/consents` 授予仍未实现（2026-11-05 复核：本条是那一轮的剩余范围，其中「授予仍未实现」现已作废——`services/api/src/routes/consents.ts` 第 38 行已注册 `POST /me/consents`，第 51 行处理体调 `requireService().grant(...)` 并把幂等键与 `If-Match` 一并传入；PG 实现在 `services/api/src/privacy/consent-pg.ts` 第 120 行 `async grant(...)`，生产装配见 `services/api/src/app.ts` 第 2483 行的 `registerConsentRoutes(...)`。冒号后三项里「同用途替换授权时取消旧消费者」已接：账号下已有媒体／导出／作者链依赖时，grant 先经注入的 `egressRevoker.onConsentWithdrawn(...)` 撤销在途外发、再写新 epoch（未注入才按 `OBJECT_UNAVAILABLE` 拒绝）；「生产当前政策版本来源」「已验证 Recipient」两半**仍需另核**——仓内 `public.consent_policies` 仍无生产种子（唯一写入途径是仓外导入工具）、`public.recipients` 的写入仍只在 `tests/` 里，正式政策与供应商证明不在仓库内。故后半句「不能以测试夹具或任意字符串政策代替」照旧成立，且由 `grant` 的 `source_kind='verified'` 校验强制。）：生产当前政策版本来源、已验证 Recipient，以及同用途替换授权时取消旧消费者须一起接通；不能以测试夹具或任意字符串政策代替。
 - 此 PG 读取守卫不承诺现有内存 reference store 的全部接口，不具备 PG `commitGate`。返回结果不能授权后续异步写入或发请求，不能当 recipient/config 检查或对外推理许可；媒体／外发消费者必须在自己的写入事务重查账号、用途、对象版本并原子提交。
 - 媒体／任务／导出／公共作者关联的撤回、在途结果回写、Recipient 变更、第三方删除请求／确认、完整 7／30 日注销尚未完成；整项 GY-I04／27 及 M1 不因本增量完成。
 - PR #59 依赖已合并，历史组织策略阻塞已解除；本增量仍需自己的 CI 和监工独立复验，写手不调整权限、不批准 run、不借所有者凭据。

@@ -18,6 +18,8 @@
  *      但 `off`／`count`／`strict` 三档都**不进退出码**，`strict` 仍只判 `docs/architecture/**`（C15–C17）。
  *   ⑦ 这一面的逐条明细走自己的 `SYMBOL-COVERAGE-VERIFICATION-MISS`：`count`／`strict` 档打印、`off` 档不打、
  *      上限 20 条（与 architecture 那组同上限但**分列**）；塞进 `SYMBOL-COVERAGE-MISS` 就等于改既有读数（C18–C20）。
+ *   ⑧ 提交 SHA 形态的候选**不算符号**（整段 7–40 位纯十六进制）：`（=``de2aa3c6``）` 这种括注不再配成对、
+ *      也不进 UNDECLARED（C21）；同一位置换成正常标识符则配对照旧成立，规则不许外溢（C22）。
  * 另外用子进程钉住「缺省 `count` 模式不改变退出码」：这条判据是 WARN，先观察一轮，
  * 只有显式 `--symbol-coverage=strict`（且 `--strict`）才会判红。
  *
@@ -731,4 +733,62 @@ test('C20 既有 architecture 四行逐字不变，且新块只追加在末尾',
       assert.ok(order[index - 1] < order[index], `第 ${index} 行（${order[index - 1]}）必须排在 ${order[index]} 之前`);
     }
   });
+});
+
+test('C21 提交 SHA 形态的候选不算符号 ⇒ 不配对、不进 MISS／UNDECLARED（同行的正常锚点照判）', () => {
+  // 真实形状：`docs/architecture/ai-ops-spec-status.md:31` 写「…合并 `upstream/main`（=`de2aa3c6`）后撤 N02：
+  // `docs/architecture/contract-implementation-status.md:166` 已由 #710 改成…」——那个锚点的「紧邻符号」抓到
+  // 的是**提交号**，于是稳定产出一条 `UNDECLARED／ZERO_HIT`（提交号当然不在目标文件的源码里）。
+  // `docs/architecture/contract-implementation-status.md:42` 的 `bfbe12cd` 同形状。规则见工具里
+  // `COVERAGE_COMMIT_HASH_SPAN`：整段就是 7–40 位纯十六进制的片段不算符号。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'docs/architecture/commit-sha.md': [
+        '# 提交号',
+        '',
+        // ① 字母开头的哈希（真实误报的形状，改前会配成对 ⇒ UNDECLARED／ZERO_HIT）；
+        //    同一行后半段再放一条正常配对，证明这条规则不顺手把旁边的锚点也弄丢。
+        //    ⛔ 括注与锚点之间不许夹列举分隔符／按位标记（`，`／`；` 也在清单里）：夹了就会被配对口径 ④／⑤ 先一步
+        //    挡掉，这条用例就变成「测 ④」而不是「测提交号规则」了（本用例第一版写成「…N02，见 …」，正是这么失效的）。
+        '- 合并 `upstream/main`（=`de2aa3c6`）之后见 `services/api/src/alpha.ts:2` 的覆盖成立；同句 `alphaHandler` 在 `services/api/src/alpha.ts:2` 覆盖成立。',
+        // ② 数字开头的十六进制串（`0123abcd`）：它本来也进不了符号位（`COVERAGE_SYMBOL_SPAN` 要求首字符是
+        //    字母／`_`／`$`），留在这里是为了钉住「十六进制 = 不是符号」这条口径本身，而不是只钉住它的副作用。
+        '- 短哈希 `0123abcd` 后面也跟一条 `services/api/src/alpha.ts:2`。',
+        '',
+      ].join('\n'),
+    },
+    root => {
+      const { judged, misses } = coverageOf(root);
+      assert.equal(judged.anchors, 3, '三条锚点都要被扫到（不配对 ≠ 没扫到）');
+      assert.equal(judged.paired, 1, '只有 `alphaHandler` 那条配成对：提交号不是符号，不许当紧邻符号');
+      assert.equal(judged.ok, 1, '同一行那条正常配对照旧判 OK（规则只吃掉十六进制）');
+      assert.equal(judged.undeclared, 0, '提交号不许再产出 UNDECLARED：这条假配对必须整条消失');
+      assert.equal(judged.outOfRange, 0, '更不许因为排掉提交号反而把锚点判成「符号不在区间」');
+      assert.equal(judged.unpaired, 2, '两条锚点退回「同行没有紧邻符号」，显式计数、不静默少扫');
+      assert.deepEqual(misses, [], '没有配对成功项 ⇒ 明细必须为空（改前这里是一条 de2aa3c6：UNDECLARED）');
+    },
+  );
+});
+
+test('C22 反向保护：同一位置写正常标识符 ⇒ 配对照旧成立（规则只吃掉十六进制）', () => {
+  // 与 C21 逐字同构，只把 `（=``de2aa3c6``）` 换成 `（=``createAnswerGuard``）`：位置、距离、括号、
+  // 夹字全都一样。它必须照旧配成对并判 OK——否则这条规则就不是「排掉提交号」，而是把「锚点前面
+  // 那截括注」整片废掉，C1／C9／C11 那些正常写法会连带退化。
+  withFixture(
+    {
+      'services/api/src/guard.ts': sourceWith('createAnswerGuard'),
+      'docs/architecture/normal-symbol.md':
+        '# 正常符号\n\n- 合并 `upstream/main`（=`createAnswerGuard`）之后见 `services/api/src/guard.ts:2` 的覆盖成立。\n',
+    },
+    root => {
+      const { judged, misses } = coverageOf(root);
+      assert.equal(judged.anchors, 1);
+      assert.equal(judged.paired, 1, '`createAnswerGuard` 不是纯十六进制串 ⇒ 必须照旧配成对');
+      assert.equal(judged.ok, 1, '配对之后照常判：声明块盖住 :2 ⇒ OK');
+      assert.equal(judged.undeclared, 0);
+      assert.equal(judged.unpaired, 0, '不许被 C21 那条规则连带排掉（它落在「同行没有紧邻符号」就是回归）');
+      assert.deepEqual(misses, []);
+    },
+  );
 });
