@@ -58,9 +58,9 @@
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
 | 浏览帖子 | `GET /posts` | 游客拦截，未登录不可见 | [GY-I14](https://github.com/GengYunChuChao/GengYun/issues/14) |
-| 发帖／评论（先审后发） | `POST /posts`、`POST /posts/{id}/comments` | 未实现，**不提供任何输入框** | GY-I14/15 |
-| 点赞 | `PUT /posts/{id}/like`、`DELETE /posts/{id}/like` | 未实现 | GY-I14 |
-| **人工审核空入口** | 后台仅 `POST /admin/posts/{id}/hide`（隐藏已发布内容）；**契约中无「帖子审核列表」类操作** | 用户端**不含任何后台入口** | [GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18) |
+| 发帖／评论（先审后发） | `POST /posts`、`POST /posts/{id}/comments` | 未实现，**不提供任何输入框** | GY-I14/15（**2026-11-04 复核：中列「未实现，不提供任何输入框」已过期** —— `miniprogram/pages/communitycreate/communitycreate.wxml` 已有标题输入框、正文输入区与「提交审核」按钮；`miniprogram/pages/communitydetail/communitydetail.wxml` 已有评论输入区与「发送评论」按钮；接口层 `miniprogram/utils/community-api.js` 有 `createPost` 与 `createComment`；`miniprogram/app.json` 已注册这两页，`miniprogram/pages/community/community.wxml` 另有「分享发现」入口） |
+| 点赞 | `PUT /posts/{id}/like`、`DELETE /posts/{id}/like` | 未实现 | GY-I14（**2026-11-04 复核：中列「未实现」已过期** —— `miniprogram/pages/communitydetail/communitydetail.wxml` 已有点赞与取消点赞按钮（帖子一组、每条评论一组），`miniprogram/utils/community-api.js` 有 `likePost` 与 `unlikePost`） |
+| **人工审核空入口** | 后台仅 `POST /admin/posts/{id}/hide`（隐藏已发布内容）；**契约中无「帖子审核列表」类操作** | 用户端**不含任何后台入口** | [GY-I18](https://github.com/GengYunChuChao/GengYun/issues/18)（**2026-11-04 复核：中列「契约中无『帖子审核列表』类操作」已过期** —— 契约已有 `listAdminPosts`（`GET /admin/posts`）、`getAdminPost`（`GET /admin/posts/{id}`）、`approvePost`（`POST /admin/posts/{id}/approve`）、`rejectPost`（`POST /admin/posts/{id}/reject`）；右列「用户端不含任何后台入口」本次未复核，保留原判） |
 
 > AC08 要求「人审入口建设中，无假任务／审核人」。用户端只保留空入口与说明，**未渲染任何审核人、任务或「已通过」字样**，符合范围「只保留人工审核的空入口」与「独立后台与用户端分开」。
 

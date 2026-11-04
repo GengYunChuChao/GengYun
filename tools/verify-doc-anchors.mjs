@@ -19,17 +19,28 @@
  *                   这两档原先只进 `SYMBOL-LINE` 读数、谁都不判；`--symbol=strict` 把它们并入
  *                   基线／新增加陈旧这套既有语义（基线见 `tools/doc-anchors-symbol-baseline.json`）。
  *                   `落在文档注释里` 那一档**保持原样**（仍由 `NOT_SYMBOL_LINE` ＋ 结构基线判）。
- *   SYMBOL-COVERAGE（WARN 级，**缺省只统计、永不判红**）—— 同一行里 `路径:行号` 锚点旁边**紧邻**的
- *                   反引号符号，是否**还在目标文件里、且还落在锚点区间**（两条任一：声明块上下各外扩
- *                   ±5 行盖住锚点；或符号字面就写在锚点 ±5 行内——文档引调用／注册点也算数）。上面那条
- *                   `--symbol=strict` 只证明「锚点行是代码行」，证明不了符号还在不在那儿：文档写
- *                   `services/api/src/app.ts:2508` 的 `ocrPersistencePool`（真实声明在 2546 行）照样全绿——
- *                   行号落进了别的函数体，符号名却继续被当成「实现就在这几行」的证据。三档：
- *                   OK／符号 0 命中（NOT_FOUND）／符号在但不在区间（OUT_OF_RANGE）。
- *                   **有意不判红**（写在这里就是要让后来人看见这是决定，不是遗漏）：这条判据的配对口径
- *                   还带着可讨论的噪声（同一行里顺带被反引号框起来的词），先用一轮真实读数看清量级与
- *                   修法，再决定是否升级；升级开关已经留好——`--symbol-coverage=strict` 配合 `--strict`
- *                   即判红，缺省 `count` 只打印、`--strict` 下也不改退出码。
+ *   SYMBOL-COVERAGE（缺省 `count`：只统计、永不判红；`--symbol-coverage=strict` ＋ `--strict` 才判红）
+ *                   —— 同一行里 `路径:行号` 锚点旁边**紧邻**的反引号符号，是否**还在目标文件里、且还落在
+ *                   锚点区间**（两条任一：声明块上下各外扩 ±5 行盖住锚点；或符号字面就写在锚点 ±5 行内
+ *                   ——文档引调用／注册点也算数）。上面那条 `--symbol=strict` 只证明「锚点行是代码行」，
+ *                   证明不了符号还在不在那儿：文档写 `services/api/src/app.ts:2508` 的
+ *                   `ocrPersistencePool`（真实声明在 2546 行）照样全绿——行号落进了别的函数体，符号名
+ *                   却继续被当成「实现就在这几行」的证据。这条口径分四条，第 ④ 条是 2026-11-04 补的
+ *                   判红面：
+ *                   ① 配对只看**同一行、紧邻**的锚点与反引号符号，且中间不许夹列举分隔符／按位对应标记
+ *                      （细则见 `collectSymbolCoverage` 的配对口径 ①–⑤）；
+ *                   ② 配对之后判三档：OK／符号在但不在区间（OUT_OF_RANGE）／符号在目标文件里没有声明行
+ *                      （UNDECLARED）；
+ *                   ③ 缺省 `count` 只打印；`--strict` 下必须显式 `--symbol-coverage=strict` 才改退出码，
+ *                      且只对 OUT_OF_RANGE 生效；
+ *                   ④ **判红面只对「目标文件里确实有声明行」的符号生效**（本口径的第 4 条，与下文
+ *                      「裁定 ④：JSON/SQL 不强制套函数符号」是两条不相干的规则）：同一行紧挨着锚点的
+ *                      反引号词未必是符号——表格单元里顺手标的 `delete`／`set_flag`／`third_party_state`、
+ *                      提交号 `de2aa3c6`、测试名常量，在目标文件里压根没有声明行，拿它们判「实现漂走了」
+ *                      只会把正确的文档判红。这类配对记 `UNDECLARED`：**只计数、逐条列出、不进判红条件**
+ *                      （判据层面把「符号」与「顺带被框起来的词」分开，不是白名单——没有基线，也没有
+ *                      按文档／按条目的豁免）。声明形态见 `tools/lib/anchor-resolve.mjs` 的
+ *                      `symbolDeclarationLines`。
  *
  * 为什么**不**用「内容 sha256 全等」当判据：任何合法改代码（加一行日志、改一个错别字）都会让
  * 哈希变红，红的原因与「文档是不是假证据」无关，等于用噪声换掉原有的真信号，最后只能整片关掉。
@@ -60,8 +71,10 @@
  *                                                          # 作用域内锚点必须落在代码行上：
  *                                                          # 未落代码行的走符号基线，基线外新增在
  *                                                          # `--strict` 下 exit 1（CI 用的就是这条）
- *   node tools/verify-doc-anchors.mjs --symbol-coverage=count   # 符号覆盖统计（WARN，缺省就开，永不判红）
- *   node tools/verify-doc-anchors.mjs --symbol-coverage=strict  # 将来升级用：配合 --strict 才判红
+ *   node tools/verify-doc-anchors.mjs --symbol-coverage=count   # 符号覆盖统计（缺省就开，永不判红）
+ *   node tools/verify-doc-anchors.mjs --symbol-coverage=strict  # 配合 --strict 才判红，且只判
+ *                                                              # 「目标文件里有声明行」的符号；没有声明行
+ *                                                              # 的配对记 UNDECLARED、只计数（见上 ④）
  *   node tools/verify-doc-anchors.mjs --symbol-coverage=off     # 关掉这条统计行
  *
  * 裸锚点（只写 `:1316`／`:1341-1350`）：路径从**同块**（同一段落／列表项／表格单元格／代码块）
@@ -95,7 +108,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from '
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { anchorLineNumbers, associateSymbol, declarationBlocks, resolveSymbolBlock, scanComments, symbolLineVerdict } from './lib/anchor-resolve.mjs';
+import { anchorLineNumbers, associateSymbol, declarationBlocks, resolveSymbolBlock, scanComments, symbolDeclarationLines, symbolLineVerdict } from './lib/anchor-resolve.mjs';
 
 export const TOOL_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** 默认扫描面：架构文档 + 证据页。用 `--scan` 可加，不改这里也能扩。 */
@@ -1241,10 +1254,30 @@ export const SYMBOL_COVERAGE_SLACK = 5;
 export const SYMBOL_COVERAGE_ADJACENCY = 12;
 /** 「列举分隔符」：两段之间夹着它就说明左边的符号属于上一个列举项，不能配给右侧锚点。 */
 export const SYMBOL_COVERAGE_LIST_SEPARATORS = ['、', '，', ',', ';', '；'];
-/** 三档判定结果：只进 WARN 读数，不进 `findings`、不参与任何基线。 */
+/**
+ * 「按位对应」标记：两段之间夹着它就说明右边是一串**按位置**对应左边那串锚点的符号
+ * （`…service.ts:443`（依次是 `a`／`b`／`c`）` 里的 `a` 属于 `:436`，不属于 `:443`）。
+ * 紧邻配对在这种写法里没有语义，和列举分隔符同族：**不猜**，记进「同行没有紧邻符号」。
+ */
+export const SYMBOL_COVERAGE_POSITIONAL_MARKERS = ['依次', '分别', '各为', 'respectively'];
+/**
+ * 判定结果：只进这条读数，不进 `findings`、不参与任何基线。
+ * 三档里只有 `OUT_OF_RANGE` 判红（`--symbol-coverage=strict` ＋ `--strict`）：
+ *   OK          符号有声明且覆盖锚点区间，或符号本身就写在锚点区间里；
+ *   OUT_OF_RANGE 目标文件里**有**该符号的声明行，但既不覆盖锚点、符号也不在锚点区间里；
+ *   UNDECLARED  目标文件里**没有**该符号的声明行——配对多半是「顺带被反引号框起来的词」，
+ *               **只计数、不判红**（见文件头 ④）。
+ */
 export const SYMBOL_COVERAGE_OK = 'OK';
-export const SYMBOL_COVERAGE_NOT_FOUND = 'NOT_FOUND';
 export const SYMBOL_COVERAGE_OUT_OF_RANGE = 'OUT_OF_RANGE';
+export const SYMBOL_COVERAGE_UNDECLARED = 'UNDECLARED';
+/**
+ * `UNDECLARED` 的两个子档（只出现在读数与逐条明细里，不改判定）：符号在目标文件里 0 次出现
+ * （`ZERO_HIT`），还是出现过、但没有一处是声明行（`NO_DECLARATION`）。
+ * 分开记是因为两者的修法不同：前者多半是符号写错了／实现改名了，后者多半是本行顺带框了个字段名。
+ */
+export const SYMBOL_COVERAGE_ZERO_HIT = 'ZERO_HIT';
+export const SYMBOL_COVERAGE_NO_DECLARATION = 'NO_DECLARATION';
 /** 行内代码片段**整段**就是一条 `路径:行号` 时才算锚点（`app.ts:2508`；前后带字的不算）。 */
 const COVERAGE_ANCHOR_SPAN = new RegExp(`^((?:[\\w.\\-]+/)*[\\w.\\-]+\\.(?:${ANCHOR_EXTENSIONS.join('|')})):(\\d+)(?:-(\\d+))?$`);
 /** 行内代码片段**整段**就是一个标识符时才算符号（`app.ts`、`a.b()`、`{ }`、中文短语都不算）。 */
@@ -1290,7 +1323,9 @@ function classifyCoverageSpans(line) {
  *   ② 两段按出现顺序**紧邻**（中间不夹别的行内代码），且原始字符间距 ≤ `SYMBOL_COVERAGE_ADJACENCY`；
  *   ③ 两侧都够近且距离相等 ⇒ **不配对**（不猜），单独计数；
  *   ④ 两段之间夹着**列举分隔符**（`、`／`，`／`,`／`;`／`；`）的候选不算——分隔符左边的符号属于上一个列举项
- *      （见 `SYMBOL_COVERAGE_LIST_SEPARATORS`）。
+ *      （见 `SYMBOL_COVERAGE_LIST_SEPARATORS`）；
+ *   ⑤ 两段之间夹着**按位对应标记**（`依次`／`分别`／`各为`／`respectively`）的候选不算——右边那串符号是
+ *      按位置对应左边那串锚点的，紧邻配对没有语义（见 `SYMBOL_COVERAGE_POSITIONAL_MARKERS`）。
  *
  * ④ 是 2026-11-04 补的。台账最常见的列举写法是「`a.ts:1162` 的 `createTtsProvider`、`a.ts:1176` 的
  * `createSynthesisMediaPort(...)`」：只按字符距离取最近时，`:1176` 会配给左边的 `createTtsProvider`
@@ -1301,17 +1336,31 @@ function classifyCoverageSpans(line) {
  * 约 16 对 0 命中（11%），被收紧掉的正是这些噪声。代价是覆盖变窄，所以**未配对的同行锚点单独计数**
  * （读数里的「同行没有紧邻符号」那一格）——不许静默少扫。
  *
- * 判定（符号解析**只走** `tools/lib/anchor-resolve.mjs` 的 `resolveSymbolBlock`，不另写一套）：
+ * ⑤ 与 ④ 同族，同样来自正确文档被误判：`docs/architecture/admin-console-capability-map.md:246` 写
+ * 「门值表的四条在 `…service.ts:436`、`…:437`、`…:442`、`…:443`（依次是 `grantAdministratorScope`／…）」
+ * ——`:443` 紧邻的符号是那串「依次是…」的第一个，实际属于 `:436`，于是 `grantAdministratorScope`
+ * （真实声明在 327 与 1661 行）被判 OUT_OF_RANGE。这类句子只能按位置逐项对，配对器不猜：
+ * 记进「同行没有紧邻符号」，逐条数字仍可见。
+ *
+ * 判定（符号解析**只走** `tools/lib/anchor-resolve.mjs`，不另写一套）：
  *   OK           —— 两条任一成立：① 某个声明块（上下各外扩 `SYMBOL_COVERAGE_SLACK` 行）完整覆盖锚点
  *                   区间；② 符号**本身落在锚点区间里**（文档引的是调用/注册点，`requireScope` 这类
  *                   符号没有自己的声明块）。② 必须留：只在①下判，引用调用点的合法写法会整片变红——
  *                   首版实测 132 对里 63 对的理由都是「有声明行但不在锚点区间」，而那 63 条里有大量
  *                   就是「引的是使用处」。
- *   NOT_FOUND    —— 符号在目标文件里 0 次出现（`anchorLineNumbers` 为空——字面出现，不做词边界判断，
- *                   所以「`id` 出现在 `identity` 里」也算出现：宁可少报，不拿词边界制造假 0 命中）；
- *   OUT_OF_RANGE —— 出现过，但既没有声明块覆盖锚点、符号也不在锚点区间里（多半是行号漂走或改了名）。
+ *   OUT_OF_RANGE —— 目标文件里**有**该符号的声明行（`symbolDeclarationLines`），但既没有声明块覆盖锚点、
+ *                   符号也不在锚点区间里（多半是行号漂走或改了名）。**判红。**
+ *   UNDECLARED   —— 目标文件里**没有**该符号的声明行（`symbolDeclarationLines` 为空）。这是第 ④ 条：
+ *                   配对器抓到的是「同一行里顺带被反引号框起来的词」，不是这个文件的声明符号——
+ *                   拿它判「实现漂走了」只会把正确的文档判红（实测 2026-11-04 的 16 条里 15 条是这种）。
+ *                   记 `UNDECLARED`、**只计数不判红**，子档分 `ZERO_HIT`（目标文件里 0 次出现）与
+ *                   `NO_DECLARATION`（出现过但没有一处是声明行），两者修法不同所以分开打。
+ *                   注意这**不是**「放宽已能判定的判定面」：有声明行的符号照样走 OK／OUT_OF_RANGE，
+ *                   声明在另一个文件、目标文件里 0 次出现的符号同样落 UNDECLARED（按第 ④ 条口径，
+ *                   它不是**这个文件**的符号；要判它得先给配对器一个「符号属于哪个文件」的依据）。
  * 返回值**不参与退出码**（缺省 `--symbol-coverage=count`），这是有意为之：先看一轮真实读数，
- * 再决定要不要升级成判红；升级开关是 `--symbol-coverage=strict`（还要配合 `--strict`）。
+ * 再决定要不要升级成判红；升级开关是 `--symbol-coverage=strict`（还要配合 `--strict`），
+ * 且只对 `red`（OK 之外的判红档）生效。
  */
 export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN_TARGETS, fileIndex = null } = {}) {
   const index = fileIndex ?? buildFileNameIndex(root);
@@ -1320,7 +1369,7 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
     if (!textsByFile.has(relativePath)) textsByFile.set(relativePath, readFileSync(join(root, relativePath), 'utf8'));
     return textsByFile.get(relativePath);
   };
-  const freshTally = () => ({ documents: 0, anchors: 0, paired: 0, ok: 0, notFound: 0, outOfRange: 0, unpaired: 0, ambiguous: 0, unresolved: 0 });
+  const freshTally = () => ({ documents: 0, anchors: 0, paired: 0, ok: 0, undeclared: 0, zeroHit: 0, noDeclaration: 0, outOfRange: 0, unpaired: 0, ambiguous: 0, unresolved: 0 });
   const judged = freshTally();
   const outside = freshTally();
   const misses = [];
@@ -1349,6 +1398,8 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
           // ④ 中间的列举分隔符说明这个符号属于上一个列举项（见上方口径注释）。
           const between = offset < 0 ? line.slice(sibling.end, item.start) : line.slice(item.end, sibling.start);
           if (SYMBOL_COVERAGE_LIST_SEPARATORS.some(separator => between.includes(separator))) continue;
+          // ⑤ 「依次／分别」：右边那串符号按位置对应左边那串锚点，紧邻配对没有语义（见上方口径注释）。
+          if (SYMBOL_COVERAGE_POSITIONAL_MARKERS.some(marker => between.includes(marker))) continue;
           neighbours.push({ symbol: sibling.symbol, gap });
         }
         if (neighbours.length === 0) { tally.unpaired += 1; continue; }
@@ -1373,22 +1424,43 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
         const appearsInsideAnchor = occurrences.some(line =>
           line >= item.from - SYMBOL_COVERAGE_SLACK && line <= item.to + SYMBOL_COVERAGE_SLACK);
         const covered = declarationCovers || appearsInsideAnchor;
-        const found = occurrences.length > 0;
-        const result = covered ? SYMBOL_COVERAGE_OK : found ? SYMBOL_COVERAGE_OUT_OF_RANGE : SYMBOL_COVERAGE_NOT_FOUND;
+        // ④ 判红面只对「目标文件里确实有声明行」的符号生效（见 `symbolDeclarationLines` 与文件头 ④）：
+        // 没有声明行的配对是「顺带被反引号框起来的词」，归 UNDECLARED 只计数——它既不是「符号
+        // 0 命中」也不是「符号不在区间」，说成哪一档都会让人去改一段本来正确的文档。
+        const declaredLines = symbolDeclarationLines(sourceText, symbol);
+        const result = covered
+          ? SYMBOL_COVERAGE_OK
+          : declaredLines.length > 0
+            ? SYMBOL_COVERAGE_OUT_OF_RANGE
+            : SYMBOL_COVERAGE_UNDECLARED;
+        const detail = result === SYMBOL_COVERAGE_UNDECLARED
+          ? occurrences.length === 0 ? SYMBOL_COVERAGE_ZERO_HIT : SYMBOL_COVERAGE_NO_DECLARATION
+          : null;
         if (result === SYMBOL_COVERAGE_OK) tally.ok += 1;
-        else if (result === SYMBOL_COVERAGE_NOT_FOUND) tally.notFound += 1;
-        else tally.outOfRange += 1;
+        else if (result === SYMBOL_COVERAGE_UNDECLARED) {
+          tally.undeclared += 1;
+          if (detail === SYMBOL_COVERAGE_ZERO_HIT) tally.zeroHit += 1;
+          else tally.noDeclaration += 1;
+        } else tally.outOfRange += 1;
         // 明细只收作用域内的：作用域外（历史取证页）按约定只计数，逐条打出来只会把真信号淹掉。
         if (result !== SYMBOL_COVERAGE_OK && tally === judged) {
           const range = item.from === item.to ? `${item.from}` : `${item.from}-${item.to}`;
-          misses.push({ doc: docPath, docLine: lineIndex + 1, target: `${resolved.relative}:${range}`, symbol, result, reason: verdict.reason });
+          const reason = detail === null
+            ? verdict.reason
+            : detail === SYMBOL_COVERAGE_ZERO_HIT
+              ? `${detail}：符号在目标文件里出现 0 次`
+              : `${detail}：符号在目标文件里出现 ${occurrences.length} 次，没有一处是声明行`;
+          misses.push({ doc: docPath, docLine: lineIndex + 1, target: `${resolved.relative}:${range}`, symbol, result, detail, reason });
         }
       }
     }
     if (anchorsInDoc > 0) tally.documents += 1;
     tally.anchors += anchorsInDoc;
   }
-  return { judged, outside, misses };
+  // `red` 才是 `--symbol-coverage=strict` 的判红面：目标文件里有声明行、却没覆盖锚点区间的符号
+  // （`OUT_OF_RANGE`）。`UNDECLARED` 永远不在这里（第 ④ 条）；`misses` 是给人看的全量明细（含 `UNDECLARED`）。
+  const red = misses.filter(item => item.result !== SYMBOL_COVERAGE_UNDECLARED);
+  return { judged, outside, misses, red };
 }
 
 // —— 符号落点严格档（`--symbol=strict`：注释里的锚点进「基线／新增／陈旧」） ——————————
@@ -2269,7 +2341,8 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   const countFailed = options.strict && (countPartition.drops.length > 0 || countPartition.unscanned.length > 0);
   // 覆盖判据缺省 `count`，这一位恒 false —— 这就是「缺省行为不变」的代码形态：不显式传
   // `--symbol-coverage=strict`（且同时给 `--strict`，与 `--symbol=strict` 的既有分工一致）就不可能红。
-  const coverageFailed = options.strict && options.symbolCoverage === 'strict' && symbolCoverage !== null && symbolCoverage.misses.length > 0;
+  // 判红面用 `red`（有声明行的符号 0 命中／不在区间），`UNDECLARED` 明细按第 ④ 条只计数。
+  const coverageFailed = options.strict && options.symbolCoverage === 'strict' && symbolCoverage !== null && symbolCoverage.red.length > 0;
   if (structuralFailed) {
     streams.error(`FAIL: 文档行号闸门未通过（基线之外新增 ${fresh.length} 条）`);
     for (const finding of fresh.slice(0, 40)) streams.error(`  · ${describe(finding)}`);
@@ -2305,12 +2378,12 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.error('  修法：这条锚点必须留在判据里——把删掉的路径写回（`path:N`），或把「第 N 行」这类散文改回锚点。确属有意放弃判据的，本地跑 --scan docs --write-anchor-count-baseline --accept=<净增减> --why="<理由>" 登记（CI 里拒绝执行）；单改清册数字会被 judged_total 求和、accept 账本、documents 摘要、键必须是规范化路径这四道抓住。⛔ 不要把键换成 `README.md` 这类面外文档，也不要换成 `docs/**` 下不是 .md 的文件或目录名——两种都是「扫不到」，两种都判红；把 CI 那一行改成 glob 面（`--scan docs/**/*.md`）也一样判红，别指望换扫描面参数能让这一闸失效。');
   }
   if (coverageFailed) {
-    streams.error(`FAIL: 符号覆盖闸门未通过（--symbol-coverage=strict：${SYMBOL_COVERAGE_SCOPE}** 内 ${symbolCoverage.misses.length} 条锚点的符号 0 命中或不在锚点区间）`);
-    for (const item of symbolCoverage.misses.slice(0, 40)) {
+    streams.error(`FAIL: 符号覆盖闸门未通过（--symbol-coverage=strict：${SYMBOL_COVERAGE_SCOPE}** 内 ${symbolCoverage.red.length} 条「目标文件里有声明行」的符号不在锚点区间；另有 ${symbolCoverage.judged.undeclared} 条 ${SYMBOL_COVERAGE_UNDECLARED} 按第 ④ 条只计数、不判红）`);
+    for (const item of symbolCoverage.red.slice(0, 40)) {
       const reason = item.reason === '' ? '' : `，${item.reason}`;
       streams.error(`  · ${item.doc}:${item.docLine} → ${item.target}（${item.symbol}：${item.result}${reason}）`);
     }
-    streams.error('  修法：按符号在当前文件里的真实声明行改写锚点（报错里带了判定与解析器理由）；确属符号名已改名／挪走的，改文档里那个名字。⛔ 不要为了让它变绿去加基线——这条判据没有基线，缺省 `--symbol-coverage=count` 本来就不判红。');
+    streams.error('  修法：按符号在当前文件里的真实声明行改写锚点（报错里带了判定与解析器理由）；确属符号名已改名／挪走的，改文档里那个名字。⛔ 不要为了让它变绿去加基线——这条判据没有基线，缺省 `--symbol-coverage=count` 本来就不判红。被记成 UNDECLARED 的配对**不在**这个判红面里：那是「目标文件里没有该符号的声明行」的噪声（顺带被反引号框起来的字段名／动词／提交号），要它进判据得先让文档写出真正属于该文件的符号。');
   }
   if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed || countFailed || coverageFailed) return 1;
   if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、${BARE_ORPHAN}、ANCHOR-COUNT${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
@@ -2400,18 +2473,19 @@ function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
 }
 
 /**
- * `SYMBOL-COVERAGE` 的读数行：第一行是固定文案的三档计数（测试与 CI 靠它读），第二行交代作用域、
- * 「没配成对」的三格（同行没有紧邻符号／两侧等距不猜／路径解析不了）与作用域外的同形状计数——
- * 作用域外的数字只在这一行出现（历史取证页只计数、不判红）。
+ * `SYMBOL-COVERAGE` 的读数行：第一行是固定文案的判红档计数（测试与 CI 靠它读），第二行是第 ④ 条新增的
+ * `UNDECLARED` 桶（**不进判红面**，但必须一直可见：它同时是「配对器抓到了非符号」与「这条配对没有被判」
+ * 的唯一痕迹），第三行交代作用域、「没配成对」的三格与作用域外的同形状计数。
  * 逐条明细是**给人改的线索**，所以只抽样 `MAX_PRINTED_SYMBOL_COVERAGE` 条，且永远走 stdout。
  */
 function printSymbolCoverage(streams, { judged, outside, misses }, mode) {
-  const checkable = judged.ok + judged.notFound + judged.outOfRange;
+  const checkable = judged.ok + judged.outOfRange;
   const suffix = mode === 'strict' ? '（--symbol-coverage=strict：配合 --strict 判红）' : '（仅 WARN，不影响 exit code）';
-  streams.log(`SYMBOL-COVERAGE: 可判 ${checkable} 条——OK ${judged.ok}、符号 0 命中 ${judged.notFound}、符号不在区间 ${judged.outOfRange}${suffix}`);
-  streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条（这三格只计数，不进上面三档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号 0 命中 ${outside.notFound}、符号不在区间 ${outside.outOfRange}`);
+  streams.log(`SYMBOL-COVERAGE: 可判 ${checkable} 条——OK ${judged.ok}、符号不在区间 ${judged.outOfRange}${suffix}`);
+  streams.log(`SYMBOL-COVERAGE-UNDECLARED: ${judged.undeclared} 条（符号在目标文件里没有声明行；不计入 strict 判定，逐条抽样见下）——其中符号 0 命中 ${judged.zeroHit} 条、出现过但不是声明行 ${judged.noDeclaration} 条`);
+  streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条（这三格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号不在区间 ${outside.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${outside.undeclared}（0 命中 ${outside.zeroHit}／非声明行 ${outside.noDeclaration}）`);
   if (misses.length === 0) return;
-  streams.log(`SYMBOL-COVERAGE-MISS: ${misses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样，不改退出码：`);
+  streams.log(`SYMBOL-COVERAGE-MISS: ${misses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；只有 OUT_OF_RANGE 会在 --symbol-coverage=strict 下判红：`);
   for (const item of misses.slice(0, MAX_PRINTED_SYMBOL_COVERAGE)) {
     const reason = item.reason === '' ? '' : `，${item.reason}`;
     streams.log(`  · ${item.doc}:${item.docLine} → ${item.target}（${item.symbol}：${item.result}${reason}）`);

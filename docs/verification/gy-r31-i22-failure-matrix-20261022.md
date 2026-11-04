@@ -219,7 +219,7 @@
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `hidePost` POST /admin/posts/:id/hide | ○ | ● `C3-*` 系列（后台 403 统一族 `cases.mjs:126-137`） | ● `admin-http.mjs:494-497`（隐藏后他人读 404） | ● `community-moderation-revision-guard.test.mjs:58,71,72,94` | ● `admin-http.mjs:366,375` | ○ | ○ | ○ （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）|
+| `hidePost` POST /admin/posts/:id/hide | ○ | ● `C3-*` 系列（后台 403 统一族 `cases.mjs:126-137`） | ● `admin-http.mjs:494-497`（隐藏后他人读 404） | ● `community-moderation-revision-guard.test.mjs:58,71,72,94` | ● `admin-http.mjs:366,375` | ○ | ○ | ○ （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）（2026-11-04 复核：基线 `7dd3d699` 的第 126 至 137 行其实是 C2 族尾部（`C2-24` 的 check 体），C3 后台族起于第 138 行（`C3-01`）；今天 main 上该族起于第 158 行（`C3-01`），见 tests/failmatrix/cases.mjs:158。）|
 | `listAuditEvents` GET /admin/audit-events | ● `C1` 族（后台未登录） | ● `C3-04@141`、`C3-15@152`（200 对照）、`C3-26@163` | — | — | ○ | ○ | ● `C7` 族游标口径 | ○ |
 
 注：审核**前置门禁**（先审后发）不是契约 operation，其断言在 `community-moderation-read-recheck.test.mjs:54,85,112`、`community-moderation-gate-wiring.test.mjs:125,190,291`（均为 404 形态）——计入 community 域的 404 列，不单独成行。
@@ -299,7 +299,7 @@
 | `admin.ts:365` | POST `/admin/posts/:id/hide` | `hidePost` |
 | `admin-auth.ts:47/89/104` | POST/GET `/admin/auth/session`、POST `/admin/auth/logout` | 登录/会话/登出专用（不套 admin scope，语义正确） |
 
-断言侧：failmatrix C3 族 27 条（`cases.mjs:126-151`）覆盖 6 个后台面「用户会话 → 403 `SCOPE_DENIED`」与「后台缺 scope → 403」与「有 scope → 200」；`auth-routes.test.mjs:202` 断言「客户端自称 `x-role: admin` 无效 → 403」。
+断言侧：failmatrix C3 族 27 条（`cases.mjs:126-151`）覆盖 6 个后台面「用户会话 → 403 `SCOPE_DENIED`」与「后台缺 scope → 403」与「有 scope → 200」；`auth-routes.test.mjs:202` 断言「客户端自称 `x-role: admin` 无效 → 403」。（2026-11-04 复核：该页基线 `7dd3d699` 下 C3 族实为第 138 行（`C3-01`）至第 171 行（`C3-27`），第 126 至 137 行是 C2 族尾部；「27 条」这个条数对得上，区间不对。今天 main 上该族为第 158 行（`C3-01`）至第 191 行（`C3-27`），共 36 条，见 tests/failmatrix/cases.mjs:158 与 tests/failmatrix/cases.mjs:191。）
 
 **发现（非阻塞）**：`admin.ts:151` 的注释说明路径为**逐条字面书写**，静态路由清单工具依赖这一形态；新增后台路由必须同样逐条写，否则清单工具会漏收（这是一条**易复发**的约定，无测试钉住字面书写形态）。
 

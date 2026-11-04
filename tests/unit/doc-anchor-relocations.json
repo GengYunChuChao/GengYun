@@ -2697,5 +2697,160 @@
   "to": 194,
   "toEnd": 199,
   "reason": "R78 第 1 轮：原文引 :93-98 说「注销清理闭集扩到四域」；该处现在是 import 语句区。真身是 `export const USER_DATA_DELETION_MODULES = [`（:194）到 `] as const;`（:199），四项 FAVORITES/HISTORY/MESSAGES/CONVERSATIONS。目标文件本次未改。"
+},
+{
+  "doc": "docs/verification/gy-r29-real-pg-arms-audit-20261022.md",
+  "line": 136,
+  "target": ".github/workflows/workbook-staging.yml",
+  "from": 43,
+  "to": 50,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:43` 现在是 `with:`（setup-node 的字段行）；文档所说「库名硬钉 `gengyun_staging_test`」的 `STAGING_PG_TEST_URL: postgresql://staging_test:synthetic-ci-only@127.0.0.1:5432/gengyun_staging_test` 在 `:50`，故重锚到 50。"
+},
+{
+  "doc": "docs/verification/gy-r73-third-party-deletion-write-20261103.md",
+  "line": 236,
+  "target": "services/api/src/privacy/user-data-deletion.ts",
+  "from": 1543,
+  "to": 1627,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:1543` 现在是 `for (const module of changed) {`；文档所说「同步判据 `(id) => coordinator.requestState(id) === 'cancelled'`」在 `:1627`，故重锚到 1627（漂移 +84）。"
+},
+{
+  "doc": "docs/verification/gy-i28-demo-parity-20261018.md",
+  "line": 100,
+  "target": "miniprogram/pages/messages/messages.js",
+  "from": 217,
+  "to": 362,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:217` 现在是 `return`；文档所说「`onFilter(event)`：只切本地视图、不重新请求」在 `:362` 的 `onFilter: function (event) {`（`:357-361` 注释正是「只切本地视图、不重新请求」），故重锚到 362。"
+},
+{
+  "doc": "docs/verification/gy-r72-online-purge-closed-set-20261102.md",
+  "line": 29,
+  "target": "services/api/src/app.ts",
+  "from": 2218,
+  "fromEnd": 2264,
+  "to": 2272,
+  "toEnd": 2286,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:2218-2264` 现在是别的装配块结尾（`:2218` 是 `},`、`:2264` 是 `: {}),`）；文档所说「生产装配有池即无条件注入四个 conditional 域」在 `:2272-2286`（`:2272` 注释 + 四个 store 依次 `:2276`/`:2278`/`:2282`/`:2286`），故重锚到 2272-2286。"
+},
+{
+  "doc": "docs/verification/gy-r28-deploy-sql-gate-20261021.md",
+  "line": 62,
+  "target": "deploy/postgres-cvm/provision-db.sh",
+  "from": 272,
+  "fromEnd": 275,
+  "to": 282,
+  "toEnd": 287,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:272-275` 现在是 `--with-cli-groups` 之前的角色组列表尾部与「GROUPS 命名返修」注释；`if [[ \"$WITH_CLI_GROUPS\" -eq 1 ]]; then` ＋ 两个 group 文件在 `:282-287`，故重锚到 282-287；同时把「3 组」订正为「2 组」（脚本 `:293` 自述 `egress_ledger.sql` 当前不被本脚本执行）。"
+},
+{
+  "doc": "docs/verification/gy-r31-retryable-guard-20261022.md",
+  "line": 115,
+  "target": "services/api/src/speech/store-pg.ts",
+  "from": 122,
+  "to": 126,
+  "toEnd": 129,
+  "kind": "correction",
+  "symbol": "retryable",
+  "reason": "锚点从单行改成区间（本提交把「分档注释」指到注释块本身）：`:122` 现在是 `}`（`typeof code !== 'string'` 分支的收尾），分档注释块在 `:126-129`，判定调用在 `:130` 的 `throw new ApiError('PROVIDER_UNAVAILABLE', …, { retryable: isTransientDatabaseError(error) })`。"
+},
+{
+  "doc": "docs/architecture/ai-ops-spec-status.md",
+  "line": 172,
+  "target": "services/api/src/moderation/service.ts",
+  "from": 366,
+  "to": 421,
+  "toEnd": 427,
+  "kind": "correction",
+  "symbol": "noPortsForReal",
+  "reason": "锚点从单行改成区间（本提交把「原文」指到承载该句的函数）：`:366` 现在是 `assertTargetRef` 里的 `if`，与「tms/ims 未授权、BizType 未核验」无关；该原文在 `:421-427` 的 `noPortsForReal()`，BizType 在 `:424` 的提示串里。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 23,
+  "target": "user-data-deletion.ts",
+  "from": 93,
+  "fromEnd": 98,
+  "to": 194,
+  "toEnd": 199,
+  "reason": "旧锚点 93-98 落在「会话域并入闭集」的说明段（`会让「一次注销」变成两本账…`），不是常量本身；真值是 `export const USER_DATA_DELETION_MODULES = [` 起的 194-199（四项 + `] as const;` 收口）。user-data-deletion.ts 本提交未改动，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 23,
+  "target": "user-data-deletion.ts",
+  "from": 454,
+  "to": 1143,
+  "toEnd": 1146,
+  "reason": "旧裸锚点 :454 按同行归属为 user-data-deletion.ts，但 454 是第三方删除端口的默认文案（`note = '第三方删除完成态需要数据库连接…'`），不是注册点；`conversations` 的注册真值是 1143-1146 的 `coordinator.registerModule(CONVERSATIONS_DELETION_MODULE, makeHandler(…))`。本提交未改服务代码，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 27,
+  "target": "services/api/src/app.ts",
+  "from": 1775,
+  "fromEnd": 1783,
+  "to": 2620,
+  "toEnd": 2627,
+  "reason": "G10 旧锚点 1775-1783 今天是「媒体对象存储门控为什么必须存在」的注释块（讲 OBJECT_STORAGE_* 与 s3_compatible），与注销无关；注销两条 operation 的唯一注册点注释在 2620-2627（`// GY-I19（#19）本片：注销/删除申请 2 条路由…唯一注册点`，并写明 GY-R74 起按域降级）。app.ts 本提交未改，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 27,
+  "target": "user-data-deletion.ts",
+  "from": 577,
+  "to": 850,
+  "reason": "G11 旧锚点 577 现在是 `receiptTtlMs` 的注释（持久列 receipt_expires_at 期限同源那段），不是审计台账；审计仍在进程内的证据是 850 的 `const auditLog: PurgeAuditEntry[] = [];`。本提交未改服务代码，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 31,
+  "target": "services/api/src/app.ts",
+  "from": 752,
+  "fromEnd": 772,
+  "to": 888,
+  "toEnd": 898,
+  "reason": "消息域 real 口径的旧锚点 752-772 今天是 `catalog_read.current_knowledge` 投影类型的注释，不是消息存储选择点；真值 888-898（888 起注释「real 但 pool === null ⇒ 维持整域 fail-closed」，893-898 的 `const messagesStore: MessagesStore = …`：real + 有池接 PG、无池回落内存实现）。app.ts 本提交未改，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/architecture/contract-implementation-status.md",
+  "line": 38,
+  "target": "services/api/src/routes/knowledge.ts",
+  "from": 194,
+  "fromEnd": 200,
+  "to": 202,
+  "toEnd": 208,
+  "reason": "R78（符号区间复核）：「版本（强 ETag、If-Match 428/409、revision 自增）」这条维度原先与 getKnowledge 共用 `services/api/src/routes/knowledge.ts:194-200`。旧行 194 原文 `  function queryOf(request: FastifyRequest): Record<string, unknown> {`（194-196 是 helper、197-200 是 `/knowledge` 列表路由的头部），整段不含 `app.get(`${API_PREFIX}/knowledge/:id`` 这条注册；新行 202 实际是 `  app.get(`${API_PREFIX}/knowledge/:id`,{preHandler:guards.requireUser,schema:{params:{…}}},`，其注册块由 208 `  });` 收口。台账只改行号（`194-200` → `202-208`，等长替换），`services/api/src/routes/knowledge.ts` 本提交未改，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/architecture/contract-implementation-status.md",
+  "line": 80,
+  "target": "services/api/src/routes/knowledge.ts",
+  "from": 194,
+  "fromEnd": 200,
+  "to": 202,
+  "toEnd": 208,
+  "reason": "R78（符号区间复核）：`getKnowledge`（get /knowledge/{id}）这条 operation 的旧锚点 194-200，旧行 194 原文 `  function queryOf(request: FastifyRequest): Record<string, unknown> {`，197-200 是 `/knowledge` 列表路由的头部；真正该钉的 `app.get(`${API_PREFIX}/knowledge/:id`` 在 202（新行 202 实际 `  app.get(`${API_PREFIX}/knowledge/:id`,{preHandler:guards.requireUser,schema:{params:{…}}},`），注册块 202-208（208 `  });`）。与同维度版本条目同步订正，等长替换；`services/api/src/routes/knowledge.ts` 本提交未改，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/architecture/contract-implementation-status.md",
+  "line": 43,
+  "target": "services/api/src/ocr/service.ts",
+  "from": 53,
+  "fromEnd": 59,
+  "to": 60,
+  "reason": "R78（符号区间复核）：「超时（数据库/健康检查/供应商调用截止）」这条维度钉的符号是 `DEFAULT_JOB_DEADLINE_MS`。旧行 53 原文 `  type LabelFields,`（53-59 是 `import { … } from './state.ts'` 的类型清单尾、空行、`import type … from './store.ts'` 与声明上方的 JSDoc，整段不含声明本身）；新行 60 实际是 `export const DEFAULT_JOB_DEADLINE_MS = 30 * 1000;`，文档侧单行锚点写作 `:60-60`，登记按端点规则不带 `toEnd`（单行 token 要求 toEnd 缺省）。台账只改行号（`53-59` → `60-60`，等长替换），`services/api/src/ocr/service.ts` 本提交未改，只能登记；该文件 1032 行注释仍自述旧数字 `53-59`（结论「放文件末尾以免顶出范围」不受影响），按硬约束不在本档改代码。2026-11-04 复核。"
+},
+{
+  "doc": "docs/architecture/contract-implementation-status.md",
+  "line": 100,
+  "target": "services/api/src/conversations/service.ts",
+  "from": 726,
+  "fromEnd": 744,
+  "to": 745,
+  "toEnd": 763,
+  "reason": "R78（符号区间复核）：`listConversations`（get /conversations）这条 operation 的 service 证据钉的符号是 `async function listConversations(`。旧行 726 原文 `    const stored = await store.insertConversation(record);`——726-744 整段是上一个函数 `createConversation`（700-743）的尾部，743 `  }` 收尾、744 空行，与 listConversations 无关；新行 745 实际是 `  async function listConversations(`，声明块由 763 `  }` 收口。台账只改行号（`726-744` → `745-763`，等长替换），`services/api/src/conversations/service.ts` 本提交未改，只能登记。2026-11-04 复核。"
 }
-]
+,
+  { "doc":"docs/verification/gy-i16-i17-deletion-cascade-20261021.md", "line":165,"target":"app.ts", "from":1490,"fromEnd":1495,"to":2339,"reason":"§5 G10 行的「位置」锚点 1490-1495 今天是 GY-I17 系统事件接线的注释块（`// **GY-I17（#17）系统事件接线**…`，讲账号停用/恢复追加 system 消息），与注销 503 无关；可用性判据 `available` 实测在 2339（`available: config.executionMode !== 'real' || deletionAcceptanceDurable,`，旧区间不含该片段）。app.ts 本提交未改动，只能走登记。2026-11-04 复核。" },
+  { "doc":"docs/verification/gy-i16-i17-deletion-cascade-20261021.md", "line":183,"target":"services/api/src/app.ts", "from":1775,"fromEnd":1783,"to":2620,"toEnd":2627,"reason":"§5.1 G10 行的依据锚点 1775-1783 今天是「对象存储显式注入门为什么必须存在」的注释块（讲 OBJECT_STORAGE_* 与 s3_compatible），与注销 503 无关；按域降级后，注销/删除申请 2 条路由的唯一注册点注释在 2620-2627（写明 GY-R74 起按域降级、唯一保留的 503 是 real 但无真库）。app.ts 本提交未改动，只能走登记。2026-11-04 复核。" },
+  { "doc":"docs/verification/gy-i16-i17-deletion-cascade-20261021.md", "line":184,"target":"user-data-deletion.ts", "from":577,"to":850,"reason":"§5.1 G11 行的依据锚点 577 现在是 `receiptTtlMs` 的注释（持久列 receipt_expires_at 期限必须与回执期限同源那段），不是审计台账；审计仍在进程内的证据是 850 的 `const auditLog: PurgeAuditEntry[] = [];`。本提交未改服务代码，只能走登记。2026-11-04 复核。" }]

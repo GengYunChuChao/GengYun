@@ -169,7 +169,7 @@
 | Z03 | 适老版（独立字号／触控／布局） | 已搁置 | docs/development-plan.md:5 | 原文「先开发 Demo 版本样式，适老版本后续开发，恢复时间待用户决定」；另见 docs/ui-state-inventory.md:108 |
 | Z04 | 服务器部署与真实外呼上线 | 已搁置 | docs/verification/gy-i26-pr69-integration-20261011.md:71 | 原文「服务器部署继续暂缓」；命令不取生产凭据、不调真实识别／语音／问答 |
 | Z05 | 测试版上线前置三项 | 已搁置 | docs/verification/platform-checklist.md:64 | 原文「属上线前置，当前搁置，不作为阻塞项」；用户 2026-10-25 明确测试版暂不上线 |
-| Z06 | 真实 tms／ims 内容安全供应商授权 | 已搁置 | services/api/src/moderation/service.ts:366 | 原文「tms/ims 未授权、BizType 未核验」⇒ 前置是商务授权与核验，不是代码 |
+| Z06 | 真实 tms／ims 内容安全供应商授权 | 已搁置 | services/api/src/moderation/service.ts:421-427 | 原文「tms/ims 未授权、BizType 未核验」⇒ 前置是商务授权与核验，不是代码 |
 
 **这一档只剩 6 条的原因**：上一版另有 6 条（原 Z02／Z07／Z08／Z09／Z11／Z12）引的是「尚未执行」「仍待后续片」「尚未并入」「需授权才能接线」这类**排期或能力自述**，被独立审查判为口径越权——文件内文字不能扩大授权。逐条去向见 §0 的对账表：四条改判未实现（N08／N09／N10／N11；N11 已于 R72 再改判已实现），一条并入 E24（写链路已验收）+ 残余 N12，一条并入 E39（真库臂已覆盖原生 PG17 迁移）。
 

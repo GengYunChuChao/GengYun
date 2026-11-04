@@ -109,7 +109,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run test:contract
       - run: node tools/verify-contract-status.mjs
-      - run: node tools/verify-doc-anchors.mjs --strict --symbol=strict --scan docs
+      - run: node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --scan docs
       - run: npm run verify:capability-map
 
   evaluation:

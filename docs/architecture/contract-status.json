@@ -849,7 +849,7 @@
         {
           "path": "services/api/src/routes/knowledge.ts",
           "symbol": "app.get(`${API_PREFIX}/knowledge/:id`",
-          "lines": "194-200"
+          "lines": "202-208"
         },
         {
           "path": "services/api/src/knowledge/service.ts",
@@ -1371,7 +1371,7 @@
         },
         {
           "path": "services/api/src/conversations/service.ts",
-          "lines": "726-744",
+          "lines": "745-763",
           "symbol": "async function listConversations("
         },
         {
@@ -4232,7 +4232,7 @@
         {
           "path": "services/api/src/routes/knowledge.ts",
           "symbol": "app.get(`${API_PREFIX}/knowledge/:id`",
-          "lines": "194-200"
+          "lines": "202-208"
         },
         {
           "path": "services/api/src/profile/service.ts",
@@ -4442,7 +4442,7 @@
         {
           "path": "services/api/src/ocr/service.ts",
           "symbol": "DEFAULT_JOB_DEADLINE_MS",
-          "lines": "53-59"
+          "lines": "60-60"
         },
         {
           "path": "services/api/src/speech/service.ts",

@@ -233,7 +233,7 @@ assert adapter_calls===0: FAIL, actual 1
 final adapter_calls=1 writes=['requested','confirmed'] state=cancelled reason=OK
 ```
 
-**缺陷本体**：判据本来就是同步的（`services/api/src/privacy/user-data-deletion.ts:1543` 的 `(id) => coordinator.requestState(id) === 'cancelled'`）。把它包成 `async` 再 `await`，等于在「读到未取消」和副作用之间插了一个**微任务让位点**：同步判据不需要这个让位点，它只贡献窗口、不贡献信息。
+**缺陷本体**：判据本来就是同步的（`services/api/src/privacy/user-data-deletion.ts:1627` 的 `(id) => coordinator.requestState(id) === 'cancelled'`）。把它包成 `async` 再 `await`，等于在「读到未取消」和副作用之间插了一个**微任务让位点**：同步判据不需要这个让位点，它只贡献窗口、不贡献信息。
 
 **改动**：
 
