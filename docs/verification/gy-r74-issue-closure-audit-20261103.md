@@ -44,7 +44,7 @@
 | #19 | GY-I19 注销去身份、在线 7 日／备份 30 日与恢复 | 部分满足 | † 注销闭集与在线清除证据（`gy-r34-i19-deletion-closure-20261023.md`，自述「不是关闭依据」） | 7 日／30 日真实时间读数、真实备份介质、第三方删除回执 |
 | #20 | GY-I20 冻结独立评估样本、标准答案及评估程序 | 部分满足 | 172 条 `test` 分割索引在库（`packages/evaluation/samples/gy-i20-weeds-real-index.json`）＋缺口册 `docs/evaluation/sample-gap-register.md` | 拍草其余类目、标签、AI 文字／图片、普通话、TTS、问答六类样本与标准答案独立核实 |
 | #21 | GY-I21 持续评估真实 AI 能力并汇总门槛 | 未满足 | 只有门槛表 `packages/evaluation/src/targets.mjs` 的 `METRIC_GATES` 与 `docs/evaluation/acceptance-thresholds-summary.md`，无任何逐类运行报告 | 六类各一份带样本数、版本、覆盖率、实际失败的运行报告 |
-| #22 | GY-I22 权限、安全规则及端到端失败回归 | 部分满足 | † `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` 为 230、`tests/failmatrix/mutations.mjs` 记 23 条负控制 | 真机回归与四个域纳入矩阵的裁定（`gy-r31-i22-failure-matrix-20261022.md` 自述实测只有两处） |
+| #22 | GY-I22 权限、安全规则及端到端失败回归 | 部分满足 | † `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES` 为 249、`tests/failmatrix/mutations.mjs` 记 27 条负控制 | 真机回归与四个域纳入矩阵的裁定（`gy-r31-i22-failure-matrix-20261022.md` 自述实测只有两处） |
 | #23 | GY-I23 Android／iOS 真机、时延容量与完整演示 | 部分满足 | † 本机回环时延容量页（`gy-i23-latency-capacity-local-20261020.md`） | 真机与真实公网读数（该页自述「不构成 #23 任何条款的达标判定」） |
 | #24 | GY-I24 部署联网比赛版、备份恢复并交付材料 | 未满足 | 发布门禁脚本与材料索引存在（`gy-r31-i24-release-20261022.md`） | 任何一次真实部署（该页自述「真实 CVM／云托管的发版仍未执行」） |
 | #27 | GY-I25 正式 AppID、真机域名与六类服务接入 | 部分满足 | † 接入矩阵与六类适配登记（`docs/verification/provider-matrix.md`、`gy-i27-live-ai-20261018.md`） | 正式 AppID／域名归属、真实数据库与对象存储授权 |
@@ -52,6 +52,8 @@
 | #29 | GY-I27 用途授权、外发账本与隐私撤回守卫 | 部分满足 | 写侧 50/50、在途撤回与回执对称 15/15、隐私红线 17/17（本轮实跑） | 「完成」态在仓内装配下不可达：`ThirdPartyDeletionRecipientSource` 只有声明、没有实现被装配，只会落 `RECIPIENTS_UNWIRED` |
 
 判定分布：**已满足 4 张（#8、#16、#17、#18）／部分满足 18 张／未满足 2 张（#21、#24）**。
+
+> **订正（2026-11-04 复核）**：#22 那一行原先写的 `MIN_CASES` 230 与「23 条负控制」是本页笔误，不是矩阵条数回退——矩阵条数只增不减。复核读数：`tests/unit/gy-i22-failmatrix.test.mjs:43` 的 `MIN_CASES` 实为 **249**（自 2026-10-26 提交 `a3e53fbe` 起即为该值）；`tests/failmatrix/mutations.mjs` 导出的 `MUTATIONS` 实为 **27** 条；矩阵实为 **249** 条（HTTP 229 + seam 20，`node tests/failmatrix/run.mjs --list` 末行原文 `合计 249 条用例（HTTP 229 + seam 20）。`）。本次只订正这三处读数，不改任何判定结论，也不改本页对 #22「真机回归与四个域纳入矩阵的裁定仍缺」的结论。
 
 ## 3 逐节论证
 
@@ -250,7 +252,7 @@ node --test tests/unit/admin-content-lifecycle.test.mjs
 - **#19 注销 7 日／30 日（部分）**：在线 7 日与备份 30 日需要真实时间流逝与真实备份介质。`gy-r34-i19-deletion-closure-20261023.md` 自己写着「不是关闭依据，也不产生关闭结论」。
 - **#20 冻结样本（部分）**：只有拍草 172 条 `test` 分割；标签、AI 文字／图片、普通话 50 段、TTS 30 段、问答 120 题这几类仍是 0。A182「冻结清单、来源、划分与评估口径先经监工审查」也未取得审查记录。
 - **#23 真机与时延容量（部分）**：`gy-i23-latency-capacity-local-20261020.md` 的边界段逐字写「没有真机、没有 ≥20Mbps／RTT≤100ms 公网链路、没有真实供应商调用、没有独立压测机 ⇒ 不构成 #23 任何条款的达标判定」。
-- **#22 失败回归（部分）**：230 条矩阵与 23 条负控制是仓内实物，但 A201「未解决严重安全／权限缺陷 0」需要一次带真机的端到端回归，而该页自述「实测只有两处」。
+- **#22 失败回归（部分）**：249 条矩阵与 27 条负控制是仓内实物，但 A201「未解决严重安全／权限缺陷 0」需要一次带真机的端到端回归，而该页自述「实测只有两处」。
 - **#28 五 Tab（部分）**：不是不能关，是**先补 §3.5 的两条读数**再关——否则 A2 那一半只能靠令牌级核对硬撑。
 - 其余 AI／供应商项（#9、#10、#11、#12、#13、#14、#27）理由同构，不逐条重复：`real` 分支一律无替身回退、未配置即 503，这是**对的**设计，也正因此仓内拿不到真实调用读数。
 
@@ -269,7 +271,7 @@ node --test tests/unit/admin-content-lifecycle.test.mjs
 3. **第三方删除真库臂未跑**：`tests/integration/third-party-deletion-pg.mjs` 与 `third-party-deletion-sql-pg.mjs`。§3 与 §5 里关于 #29 的结论只用了单测臂（50/50 与 15/15）与写侧页的自述。
 4. **撤回与任务竞争的 PG 臂未跑**：`tests/integration/egress-revoke-race-pg.mjs`。本页跑的是 `tests/unit/gy-i22-consent-withdrawal-inflight-http.test.mjs` 与 `deletion-receipt-third-party-parity.test.mjs`（15/15）。
 5. **未跑构建与类型检查**：本页没有跑 `npm run build`、`npx tsc -p services/api --noEmit`。上游 `gy-r73-third-party-deletion-write-20261103.md` 记过 `tsc` exit 0，本页未复跑。
-6. **未跑 failmatrix 全量**：`tests/unit/gy-i22-failmatrix.test.mjs` 的 230 条与 `tests/failmatrix/mutations.mjs` 的 23 条负控制本页未执行，总表里 #22 那一行标 † 即此意。
+6. **未跑 failmatrix 全量**：`tests/unit/gy-i22-failmatrix.test.mjs` 的 249 条与 `tests/failmatrix/mutations.mjs` 的 27 条负控制本页未执行，总表里 #22 那一行标 † 即此意。
 7. **总表 18 行标 † 的依据未逐条重跑**：这些行的「依据」引自既有取证页的自述，页名已给；本页只对 #8、#16、#17、#18、#28 做了实跑并写了节。
 8. **未重新拉 issue 状态**：本页没有跑 `gh issue list`，「24 张仍 OPEN」沿用取样口径；若期间有关闭或新增，总表的行数需要重取。
 9. **未复核 #17 的跳转范围裁定**：`gy-r31-closure-matrix-20261024.md` 记「跳转范围（现仅 post/comment，其余 14 型降级）需用户裁定」，本页没有读 `gy-r31-i17-g2-ruling-20261022.md`，故 §3.3 不对跳转覆盖度下结论。
