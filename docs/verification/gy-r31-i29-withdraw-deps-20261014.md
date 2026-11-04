@@ -44,8 +44,8 @@
 `docs/architecture/contract-status.json:410`（`withdrawConsent`）`blocker` 原文：
 
 > PG撤回在 jobs/media/exports/author_links 存在依赖时仍409 OBJECT_UNAVAILABLE，保留fail-closed；
-> #128提供外发账本/在途守卫/模块删除注册协议，但**本基线尚未接入撤回消费者**。真实政策/接收方与注销全链未验；
-> #133未合不计入本基线
+> #128提供外发账本/在途守卫/模块删除注册协议，但**本基线尚未接入撤回消费者**。真实政策/接收方与注销全链未验；（2026-11-04 复核：台账该 blocker 今日已改写为「撤回消费者已接线：`createEgressRevoker` 于 `services/api/src/app.ts` 第 1021-1023 行构造、第 2483-2486 行注入 `registerConsentRoutes`」，「本基线尚未接入撤回消费者」作废，原文保留为 2026-10-14 基线引文；后半「真实政策/接收方与注销全链未验」仍成立，今日 blocker 末尾仍逐字保留此句）
+> #133未合不计入本基线（2026-11-04 复核：#133 已合入 main，合并提交 `2431cfde`，且该提交已是本页基线 `d4d48088` 与合流后 `f971e35c` 的祖先 ⇒「#133未合」作废；台账今日仍逐字保留这句，属台账侧未清的过期文字，本页不改台账）
 
 同文镜像：`docs/architecture/contract-implementation-status.md:62`。
 
