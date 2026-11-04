@@ -363,10 +363,22 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `purgeRetiredRows()` 收口；真实桶／排班仍待集成验收」，`partial` 判定与其余缺口一字不动。
  * 中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。两份台账各 +426 字节、行数不变
  * （284130 / 4465、206599 / 220）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十八次同步（超时维度把同一识别截止声明块写成了两条几乎相同的重复区间）：
+ * 第 43 行原对 `services/api/src/recognitions/service.ts` 的 `runProviderWithDeadline` 同时登记 `525-542`
+ * 与 `525-544` 两条证据锚点，可 525 行今天是 `      deleted: false,`（前一个 `commitTerminal` 分支的收尾），
+ * 真正的声明块是 530-549 行：530 `  async function runProviderWithDeadline(job: JobRow): Promise<`
+ * … 537-539 建 timeout（`timer = setTimeout(() => resolve({ kind: 'timeout' }), remaining);`）…
+ * 545 `      return await Promise.race([call, timeout]);` … 549 `  }`。故删掉重复的那条、把留存的一条改成
+ * `530-549`，同句散文锚点 `services/api/src/recognitions/service.ts:525` 一并改成 `:530`。
+ * 同句裸锚点 `:531-533`（今天 531-533 是返回类型联合，计时器构造在 537-539）未动：它在
+ * `tools/doc-anchors-orphan-baseline.json` 里按原文登记，改文本会让该键陈旧，本片不改 `tools/**`。
+ * `partial` 判定与其余缺口一字不动。中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。
+ * JSON −159 字节、−5 行（重复证据对象整块删掉），md −51 字节、行数不变
+ * （283971 / 4460、206548 / 220）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284130, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206599, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283971, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206548, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
