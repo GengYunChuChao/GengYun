@@ -76,6 +76,8 @@
  *                                                              # 「目标文件里有声明行」的符号；没有声明行
  *                                                              # 的配对记 UNDECLARED、只计数（见上 ④）
  *   node tools/verify-doc-anchors.mjs --symbol-coverage=off     # 关掉这条统计行
+ *   # 上面三档还会多打一行 `SYMBOL-COVERAGE-VERIFICATION`（＋一行 `-SCOPE`）：`docs/verification/**`
+ *   # 的同口径统计，**三档一律不判红**——`strict` 仍然只判 `docs/architecture/**`，收紧的是读数面。
  *
  * 裸锚点（只写 `:1316`／`:1341-1350`）：路径从**同块**（同一段落／列表项／表格单元格／代码块）
  * 内最近的显式锚点继承，链接 `[:321](path)` 直接从 href 取；继承到的锚点与显式锚点**同权**——
@@ -1253,6 +1255,13 @@ export function countSymbolAssociations({
  * 历史取证页的行号按当时的树写、正文也声明了基线，拿今天的树判它等于逼证据跟着代码改写。
  */
 export const SYMBOL_COVERAGE_SCOPE = SYMBOL_LINE_SCOPE;
+/**
+ * `docs/verification/**` 的**只读**统计面：与 architecture 同一套配对／判定口径，但**只打印**——
+ * `--symbol-coverage=off|count|strict` 三档里它都不参与退出码，`strict` 也只判 `docs/architecture/**`。
+ * 理由与 `SYMBOL_LINE_SCOPE` 那段同源：历史取证页的行号按当时的树写、正文也声明了基线，先把读数铺开
+ * （`MISS` 明细不进这一面，只出计数），确认噪声比例之后再谈升级；升级与否都不该由「顺手多加一行」决定。
+ */
+export const SYMBOL_COVERAGE_VERIFICATION_SCOPE = 'docs/verification/';
 /** 「覆盖」的容差：声明块上下各外扩这么多行（即「锚点 ±5 行」）。 */
 export const SYMBOL_COVERAGE_SLACK = 5;
 /** 「紧邻」的字符间距上限：超过这个距离就不配对（理由见 `collectSymbolCoverage` 的注释）。 */
@@ -1377,9 +1386,21 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
   const freshTally = () => ({ documents: 0, anchors: 0, paired: 0, ok: 0, undeclared: 0, zeroHit: 0, noDeclaration: 0, outOfRange: 0, unpaired: 0, ambiguous: 0, unresolved: 0 });
   const judged = freshTally();
   const outside = freshTally();
+  // `docs/verification/**` 的独立读数（见 `SYMBOL_COVERAGE_VERIFICATION_SCOPE`）。它**不是**从 `outside`
+  // 里拆出来的，而是同一份文档另记的一份「影子账」：`outside` 的数字是既有 `SYMBOL-COVERAGE-SCOPE` 读数，
+  // 拆走一半等于顺手改了 CI 的既有读数（本片明令不许动）。两份账口径相同、互不影响。
+  const verification = freshTally();
   const misses = [];
   for (const docPath of resolveScanTargets(root, targets)) {
-    const tally = toPosix(docPath).startsWith(SYMBOL_COVERAGE_SCOPE) ? judged : outside;
+    const relativeDoc = toPosix(docPath);
+    const inJudgedScope = relativeDoc.startsWith(SYMBOL_COVERAGE_SCOPE);
+    const tally = inJudgedScope ? judged : outside;
+    const shadow = !inJudgedScope && relativeDoc.startsWith(SYMBOL_COVERAGE_VERIFICATION_SCOPE) ? verification : null;
+    /** 记账唯一入口：判据面记 `tally`，verification 页再额外记一份影子账（绕过它就等于静默漏记）。 */
+    const bump = (field, amount = 1) => {
+      tally[field] += amount;
+      if (shadow !== null) shadow[field] += amount;
+    };
     const docLines = splitLines(readFileSync(join(root, docPath), 'utf8'));
     let anchorsInDoc = 0;
     for (let lineIndex = 0; lineIndex < docLines.length; lineIndex += 1) {
@@ -1393,7 +1414,7 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
         if (item.kind !== 'anchor') continue;
         anchorsInDoc += 1;
         // 起止颠倒的锚点由结构判据（OUT_OF_RANGE）管，这里不参与配对。
-        if (item.to < item.from) { tally.unpaired += 1; continue; }
+        if (item.to < item.from) { bump('unpaired'); continue; }
         const neighbours = [];
         for (const offset of [-1, 1]) {
           const sibling = spans[position + offset];
@@ -1407,14 +1428,14 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
           if (SYMBOL_COVERAGE_POSITIONAL_MARKERS.some(marker => between.includes(marker))) continue;
           neighbours.push({ symbol: sibling.symbol, gap });
         }
-        if (neighbours.length === 0) { tally.unpaired += 1; continue; }
-        if (neighbours.length === 2 && neighbours[0].gap === neighbours[1].gap) { tally.ambiguous += 1; continue; }
+        if (neighbours.length === 0) { bump('unpaired'); continue; }
+        if (neighbours.length === 2 && neighbours[0].gap === neighbours[1].gap) { bump('ambiguous'); continue; }
         neighbours.sort((left, right) => left.gap - right.gap);
         const symbol = neighbours[0].symbol;
         const resolved = resolveTarget({ root, docPath, target: item.target, fileIndex: index });
         // 路径找不到／同名多文件不唯一：BROKEN 与「无法唯一解析」那两条已经在管，这里只计数，不当判据。
-        if (resolved.status !== 'resolved') { tally.unresolved += 1; continue; }
-        tally.paired += 1;
+        if (resolved.status !== 'resolved') { bump('unresolved'); continue; }
+        bump('paired');
         const sourceText = textOf(resolved.relative);
         const verdict = resolveSymbolBlock(sourceText, symbol);
         // 「覆盖」两档都算：① 某个声明块（上下各外扩 SLACK 行）盖住锚点区间；② 符号**本身就出现在
@@ -1441,12 +1462,12 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
         const detail = result === SYMBOL_COVERAGE_UNDECLARED
           ? occurrences.length === 0 ? SYMBOL_COVERAGE_ZERO_HIT : SYMBOL_COVERAGE_NO_DECLARATION
           : null;
-        if (result === SYMBOL_COVERAGE_OK) tally.ok += 1;
+        if (result === SYMBOL_COVERAGE_OK) bump('ok');
         else if (result === SYMBOL_COVERAGE_UNDECLARED) {
-          tally.undeclared += 1;
-          if (detail === SYMBOL_COVERAGE_ZERO_HIT) tally.zeroHit += 1;
-          else tally.noDeclaration += 1;
-        } else tally.outOfRange += 1;
+          bump('undeclared');
+          if (detail === SYMBOL_COVERAGE_ZERO_HIT) bump('zeroHit');
+          else bump('noDeclaration');
+        } else bump('outOfRange');
         // 明细只收作用域内的：作用域外（历史取证页）按约定只计数，逐条打出来只会把真信号淹掉。
         if (result !== SYMBOL_COVERAGE_OK && tally === judged) {
           const range = item.from === item.to ? `${item.from}` : `${item.from}-${item.to}`;
@@ -1459,13 +1480,15 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
         }
       }
     }
-    if (anchorsInDoc > 0) tally.documents += 1;
-    tally.anchors += anchorsInDoc;
+    if (anchorsInDoc > 0) bump('documents');
+    bump('anchors', anchorsInDoc);
   }
   // `red` 才是 `--symbol-coverage=strict` 的判红面：目标文件里有声明行、却没覆盖锚点区间的符号
   // （`OUT_OF_RANGE`）。`UNDECLARED` 永远不在这里（第 ④ 条）；`misses` 是给人看的全量明细（含 `UNDECLARED`）。
   const red = misses.filter(item => item.result !== SYMBOL_COVERAGE_UNDECLARED);
-  return { judged, outside, misses, red };
+  // `verification` 只给 `SYMBOL-COVERAGE-VERIFICATION*` 两行读数用：它既不在 `red` 里，也不生成 `misses`
+  // 明细——三档一律只打印（见 `SYMBOL_COVERAGE_VERIFICATION_SCOPE` 的注释）。
+  return { judged, outside, verification, misses, red };
 }
 
 // —— 符号落点严格档（`--symbol=strict`：注释里的锚点进「基线／新增／陈旧」） ——————————
@@ -2481,14 +2504,18 @@ function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
  * `SYMBOL-COVERAGE` 的读数行：第一行是固定文案的判红档计数（测试与 CI 靠它读），第二行是第 ④ 条新增的
  * `UNDECLARED` 桶（**不进判红面**，但必须一直可见：它同时是「配对器抓到了非符号」与「这条配对没有被判」
  * 的唯一痕迹），第三行交代作用域、「没配成对」的三格与作用域外的同形状计数。
+ * 第三行之后再补 `docs/verification/**` 的两行（`SYMBOL-COVERAGE-VERIFICATION` ＋ `-SCOPE`）：同口径的另一面，
+ * 三档都不判红（见 `printSymbolCoverageVerification`）。
  * 逐条明细是**给人改的线索**，所以只抽样 `MAX_PRINTED_SYMBOL_COVERAGE` 条，且永远走 stdout。
  */
-function printSymbolCoverage(streams, { judged, outside, misses }, mode) {
+function printSymbolCoverage(streams, { judged, outside, verification, misses }, mode) {
   const checkable = judged.ok + judged.outOfRange;
   const suffix = mode === 'strict' ? '（--symbol-coverage=strict：配合 --strict 判红）' : '（仅 WARN，不影响 exit code）';
   streams.log(`SYMBOL-COVERAGE: 可判 ${checkable} 条——OK ${judged.ok}、符号不在区间 ${judged.outOfRange}${suffix}`);
   streams.log(`SYMBOL-COVERAGE-UNDECLARED: ${judged.undeclared} 条（符号在目标文件里没有声明行；不计入 strict 判定，逐条抽样见下）——其中符号 0 命中 ${judged.zeroHit} 条、出现过但不是声明行 ${judged.noDeclaration} 条`);
   streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条（这三格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号不在区间 ${outside.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${outside.undeclared}（0 命中 ${outside.zeroHit}／非声明行 ${outside.noDeclaration}）`);
+  // `docs/verification/**` 的两行紧跟着 architecture 的三行读：同口径、不同判据面（那一面三档都不判红）。
+  printSymbolCoverageVerification(streams, verification);
   if (misses.length === 0) return;
   streams.log(`SYMBOL-COVERAGE-MISS: ${misses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；只有 OUT_OF_RANGE 会在 --symbol-coverage=strict 下判红：`);
   for (const item of misses.slice(0, MAX_PRINTED_SYMBOL_COVERAGE)) {
@@ -2498,6 +2525,23 @@ function printSymbolCoverage(streams, { judged, outside, misses }, mode) {
   if (misses.length > MAX_PRINTED_SYMBOL_COVERAGE) {
     streams.log(`  … 另有 ${misses.length - MAX_PRINTED_SYMBOL_COVERAGE} 条未打印（格式同上）`);
   }
+}
+
+/**
+ * `SYMBOL-COVERAGE-VERIFICATION*`：`docs/verification/**` 的同口径读数，**三档（off／count／strict）都不判红**。
+ *
+ * 为什么单列两行、不并进上面三行：`SYMBOL-COVERAGE-SCOPE` 的「作用域外」那一段是 CI 既有读数，把
+ * verification 从里面拆出来就等于顺手改了读数（本片要求逐字不变）；而这一面的**噪声比例**（0 命中／
+ * 非声明行各多少）恰恰是将来「要不要升级成判红」的唯一依据，所以它必须独立可见，不能只留一个总数。
+ * `off` 档由调用方整体跳过（连这两行都不打，与 architecture 一致）；`strict` 下后缀仍写「仅 WARN」——
+ * 这是这一面与 architecture **唯一**、也是有意为之的差别：`strict` 只收紧 `docs/architecture/**`。
+ * 明细（`SYMBOL-COVERAGE-MISS`）不收这一面：它只出计数，逐条打印只会把真信号淹掉。
+ */
+function printSymbolCoverageVerification(streams, verification) {
+  if (verification === undefined) return;
+  const checkable = verification.ok + verification.outOfRange;
+  streams.log(`SYMBOL-COVERAGE-VERIFICATION: 可判 ${checkable} 条——OK ${verification.ok}、符号不在区间 ${verification.outOfRange}（仅 WARN，不影响 exit code）`);
+  streams.log(`SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 ${SYMBOL_COVERAGE_VERIFICATION_SCOPE}**（${verification.documents} 份文档、锚点 ${verification.anchors} 条）——配成对 ${verification.paired} 条：OK ${verification.ok}、符号不在区间 ${verification.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${verification.undeclared}（符号 0 命中 ${verification.zeroHit} 条、出现过但不是声明行 ${verification.noDeclaration} 条）；同行没有紧邻符号 ${verification.unpaired} 条、两侧等距不猜 ${verification.ambiguous} 条、路径找不到或不唯一 ${verification.unresolved} 条（后四格只计数）——本面三档一律不判红，strict 仍只判 ${SYMBOL_COVERAGE_SCOPE}**`);
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -329,23 +329,44 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 当现值（实测 595 条证据中 243 条带 `name`，三类拆分随证据增补而变，已改成「以当次工具输出为准」），三处都改成
  * 「数字 + 复核日期 + 指向脚本」的写法。JSON 未动 ⇒ 体积变为 278727 / 4465 与 **200749 / 220**，行数都不变。
  * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
- * 2026-11-04 第十六次同步（只改第 17 行一句语义、未动闸门块与 JSON；序号跳号的原因是在飞 PR #915
- * 已占用「第十五次同步」，两者合入后编号连续）：
- * `docs/architecture/contract-implementation-status.md` 第 17 行原写「取消已接识别／转写／合成／OCR 四域，
- * 审核（`moderation`）与文字问答（`answer`）有读面但无 `cancel` ⇒ 作业面如实 503 PROVIDER_UNAVAILABLE」
- * ——这句已被代码证伪：`services/api/src/moderation/job-source.ts` 的 `cancel` 转调
- * `services/api/src/moderation/service.ts` 的 `cancelJob`（装配点是 `services/api/src/app.ts` 的
- * `createModerationJobSource`），`services/api/src/app.ts` 里 `createAnswerJobSource` 的 `cancelJob`
- * 转调会话域 `cancelTurn`。故改成「六域今天都提供 `cancel`，`PROVIDER_UNAVAILABLE` 退为兜底语义与防御」，
- * 且**不新增任何 `path:line` 锚点**（只沿用原有的 `jobs/sources.ts:65/:107/:153/:208` 与
- * `jobs/registry.ts:306`、`:281`，新增位置只用符号名 + 散文）。第 17 行在
- * `<!-- contract-status-tables:start -->` 闸门块（第 31–196 行）之外，闸门块与
- * `docs/architecture/contract-status.json` 都未动 ⇒ **行数不变（220）、字节数变化**（200749 → 201196）。
+ * 2026-11-04 第十五次同步（四条 blocker 散文与今日代码对齐：停用/启用、发帖入口、注销媒体）：
+ * ①`disableAdministratorAccount` 与 `enableAdministratorAccount` 原写「剩余：后台 UI 无停用/恢复入口（属 GY-I18 联调）」，
+ * 实际 `apps/admin/src/views/AdministratorsView.vue` 有「停用」「恢复」按钮，经 `apps/admin/src/lib/administrator-state-api.mjs`
+ * 真发 `POST /admin/administrators/{id}/disable` 与 `.../enable` ⇒ 改成「后台 UI 已消费本接口（路径）……，真实环境联调未做
+ * （属 GY-I18）」，两条的 `partial` 判定与其余缺口一字不动；②「小程序发帖页仍无填写入口」这句不是只出现在 `createPost`，
+ * 而是 16 条社区 operation 的 blocker 共用（`listPosts`／`createPost`／`getPost`／`editPost`／`deletePost`／四个评论读写／
+ * 四个点赞／`createReport`／`getOwnReport`），而 `miniprogram/pages/communitycreate/communitycreate.wxml` 已有标题 input、
+ * 正文 textarea 与「提交审核」按钮（`miniprogram/pages/communitycreate/communitycreate.js` 调 `api.createPost`），提交经
+ * `miniprogram/utils/community-api.js` 的 `createPost`／`createComment`，`miniprogram/app.json` 已注册该页 ⇒ 16 处一并改成
+ * 「发帖页已具备填写与提交入口（路径）」，先审后发、正式微信身份/真机与真实审核验收等其余阻塞原样保留；
+ * ③`deleteMedia` 原把「注销 7/30 天删除闭环、备份与第三方完成证据未接线未验收」与**已接线**的媒体逐用户清除原语写在一起，
+ * 实际 `services/api/src/media/store-pg.ts` 的 `purgeOwnedMedia` 调 `public.purge_owner_media`、
+ * `services/api/src/privacy/user-data-deletion.ts` 的 `MediaPurgePort` 经识别域 `input.mediaStore` 注入 ⇒ 改成
+ * 「媒体逐用户清除原语已接线（路径）……；仍成立的是注销 7/30 天删除闭环未执行、备份介质逐用户清理未接线、第三方完成证据未验收」，
+ * 并把「桶对象真删仍走 `cleanupOrphans` 清扫通道（`tools/purge-expired-media.mjs`）」一并写明，不把登记台账说成已删桶对象。
+ * 共 19 条 blocker（16＋2＋1），中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。两份台账各 +4977 字节、
+ * 行数不变（283704 / 4465、205726 / 220）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 另：同日 #925（第十六次同步）只改第 17 行一句语义（取消已覆盖识别/转写/合成/OCR/审核/文字问答六域，
+ * PROVIDER_UNAVAILABLE 退为兜底），未动闸门块、未动 JSON；它先合入，本片在其上重放。
+ * 合并后实测：JSON **283704 / 4465**、md **206173 / 220**（本片 +4977 与 #925 的 +447 相加）。
  * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十七次同步（`deleteMedia` 的 blocker 把两个媒体清除原语写成了一次直接调用）：
+ * 上文第十五次③虽然写明了「原语已接线」，但仍写成 `purgeOwnedMedia` 调 `public.purge_owner_media`。
+ * 实测 `services/api/src/media/store-pg.ts` 的 `purgeOwnedMedia(ownerId)`（单事务：软隐藏社区句柄 ⇒
+ * 把对象键登记进待删台账 ⇒ 清引用 ⇒ 删衍生物）**不调** `public.purge_owner_media` —— 迁移 0035 那个按主体
+ * 删媒体行的窄函数只删 rejected/deleted、且要求台账意图先存在，与本原语「先软隐藏、再动对象」的顺序相反；
+ * 真正执行 `SELECT public.purge_owner_media(...)` 的是同文件另一方法 `purgeOwnerMediaRows()`，由
+ * `purgeRetiredRows()` 调用。故改成「注销路径的媒体逐用户清除原语已接线（`purgeOwnedMedia`，由
+ * `services/api/src/privacy/user-data-deletion.ts` 的 `MediaPurgePort` 经识别域 `input.mediaStore` 注入）：
+ * 注销时在单事务内软隐藏社区句柄、把对象键登记进待删台账、清引用并删衍生物——它不调 `public.purge_owner_media`；
+ * 真实桶对象删除仍由 `cleanupOrphans` 清扫通道承担，物理终态媒体行另由 `purgeOwnerMediaRows()`／
+ * `purgeRetiredRows()` 收口；真实桶／排班仍待集成验收」，`partial` 判定与其余缺口一字不动。
+ * 中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。两份台账各 +426 字节、行数不变
+ * （284130 / 4465、206599 / 220）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278727, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 201196, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284130, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206599, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
