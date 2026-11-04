@@ -332,6 +332,12 @@
       "accept": 0,
       "orphans": 3495,
       "outsideRed": 117
+    },
+    {
+      "why": "R78 第 2 轮 cancel 维度去冗余（基线 9143a4db）：docs/architecture/contract-implementation-status.md:42 的 blocker 把两条归不到路径的裸锚点补成显式引用（:265 -> services/api/src/jobs/registry.ts:265、:42 -> services/api/src/jobs/routes.ts:42，数字未动），原先按 ambiguous-block 登记的两条孤儿不再成立，故删对应条目；同时删掉被 evidence 283-309 包含的 registry.ts:306 与与本段 evidence 完全重复的 routes.ts:64-80。新增 0 条。",
+      "accept": 0,
+      "orphans": 3493,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -362,8 +368,6 @@
     "docs/architecture/contract-implementation-status.md|:1852|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:192|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:202|ambiguous-block",
-    "docs/architecture/contract-implementation-status.md|:265|ambiguous-block",
-    "docs/architecture/contract-implementation-status.md|:42|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:464-465|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:469|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:48|ambiguous-block",
