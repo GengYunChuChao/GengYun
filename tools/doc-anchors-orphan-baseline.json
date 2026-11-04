@@ -344,6 +344,12 @@
       "accept": 0,
       "orphans": 3490,
       "outsideRed": 117
+    },
+    {
+      "why": "GY-R78 2026-11-05（rebase 到 #965 之后重建）：本片在 apps/admin/src/lib/admin-audit-logs.mjs 的 AUDIT_LOG_ACTIONS／AUDIT_LOG_ACTION_LABELS 末尾追加 report.triage／report.resolve／report.reject 三项（改动全在 :51 之后，净 +10 行，既有 11 项一字未动），docs/architecture/ai-ops-spec-status.md 第 125 行的裸锚点随之位移 :840→:850（ambiguous-block）。本文件由工具的写模式整份重建（不是手写条目），因此自动继承 main 上 #965 删掉的那 3 条 no-explicit-in-block 键；本次净变动 1 新增／1 陈旧，键形与判据一字未改。同一批位移的路径锚点已在同批提交里按实测行号重锚（admin-console:199 的 :393→:403、ai-ops 第 57/110/125/202 行的 :985→:995）。",
+      "accept": 1,
+      "orphans": 3490,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -355,8 +361,8 @@
     "docs/architecture/ai-ops-spec-status.md|:301-328|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:558|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:70-71|no-explicit-in-block",
-    "docs/architecture/ai-ops-spec-status.md|:840|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:841-845|ambiguous-block",
+    "docs/architecture/ai-ops-spec-status.md|:850|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:103-105|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:1040-1109|no-explicit-in-block",
     "docs/architecture/contract-implementation-status.md|:1270-1273|ambiguous-block",
