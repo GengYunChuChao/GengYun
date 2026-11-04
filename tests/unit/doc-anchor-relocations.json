@@ -2651,5 +2651,11 @@
     "to": 969,
     "toEnd": 971,
     "reason": "D11 行的判据落点原指 :203（「写落库在线清除证据」的 JSDoc 段；该文件里没有 MediaStore 字样，配对只能落空）。真实证据是注入 mediaStore 时处理器先调媒体原语 purgeOwnedMedia 的调用点 :969-971（读数进证据串后再删本域四表），故重锚到 :969-971；「必需模块闭集含媒体」这半条仍未达成（USER_DATA_DELETION_MODULES 在 :194-199 只有收藏/历史/消息/会话四域），已在文末附注写清，不改变 D11 的「部分」判定。"
-  }
+  },
+  {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":751,"fromEnd":754,"to":939,"toEnd":942,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:751-754` 是 `versionFreshnessOf` 的 JSDoc 段；HEAD 里「下架/撤回是终态 ⇒ TARGET_WITHDRAWN ⇒ refuse(OBJECT_UNAVAILABLE)」在 `:939-942`。"},
+  {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":758,"fromEnd":761,"to":946,"toEnd":949,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:758-761` 是 `versionFreshnessOf` 开头的注释；HEAD 里「权威当前版本已前进 ⇒ REVISION_SUPERSEDED ⇒ refuse(REVISION_CONFLICT)，且先于任何写」在 `:946-949`。"},
+  {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":769,"fromEnd":777,"to":957,"toEnd":965,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:769-777` 是 `versionFreshnessOf` 的 approved 判断与规则版本读取；HEAD 里「规则/提示词版本未知 ⇒ INPUT_UNCERTAIN」在 `:957-965`。"},
+  {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":779,"fromEnd":818,"to":985,"toEnd":1006,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:779-818` 是 `evaluateModelReReview` 调用与后续投影；HEAD 里「逐 kind 双闸门 isModelLayerPublishable（`:985-990`）+ evaluateModelReReview（`:995-1001`）」在 `:985-1006`。"},
+  {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":822,"fromEnd":824,"to":1021,"toEnd":1023,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:822-824` 是 `counts: null` 一带的返回；HEAD 里 `setVisibility(published)`（`:1021`）+ `setPublishedRevision`（`:1023`）在 `:1021-1023`。"},
+  {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":857,"fromEnd":858,"to":1024,"toEnd":1030,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:857-858` 是 `quarantined/uncertain` 的原因码行；HEAD 里「写后核对抛错 ⇒ restoreWrittenVisibility 补偿回写写前可见性后重抛」在 `:1024-1030`（原记「补偿回写 hidden」实为下架路径 `:1047-1058`，已在同句更正）。"}
 ]
