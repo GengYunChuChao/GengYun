@@ -70,7 +70,7 @@
 | --- | --- | --- | --- |
 | 消息列表 | `GET /messages` | 游客拦截 + 空态 | [GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17) |
 | 未读数 | `GET /messages/unread-count` | 未实现（**2026-11-04 复核：中列「未实现」已过期** —— 服务端已注册该端点：`services/api/src/routes/messages.ts` 第 53 行注册 `GET /messages/unread-count`，处理函数调 `getUnreadCount`（`services/api/src/messages/service.ts` 第 350 行）；小程序侧 `miniprogram/utils/messages-api.js` 第 233 行已发该请求，`miniprogram/pages/messages/messages.js` 与 `miniprogram/custom-tab-bar/index.js` 都读它渲染未读数） | GY-I17 |
-| 标记已读 | `PUT /messages/{id}/read` | 未实现 | GY-I17 |
+| 标记已读 | `PUT /messages/{id}/read` | 未实现（**2026-11-04 复核：中列「未实现」已过期** —— 服务端 `services/api/src/routes/messages.ts` 第 59 行已注册 `PUT /messages/:id/read`，处理函数调 `markMessageRead`（实现见 `services/api/src/messages/service.ts` 第 365 行）；小程序侧 `miniprogram/utils/messages-api.js` 第 244 行已发 `send('PUT', '/messages/' + encodeURIComponent(id) + '/read', …)`，`miniprogram/pages/messages/messages.js` 第 385 行调它把消息标为已读） | GY-I17 |
 | 播放控制 | 见 2.2 `POST /speech/synthesis` | 未实现 | [GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13) |
 
 > AC18 要求「首版无外部订阅发送」。全项目搜索「订阅消息／推送通知／短信／公众号」**零命中**，本任务未引入任何外发通道。
