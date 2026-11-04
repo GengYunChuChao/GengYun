@@ -249,7 +249,7 @@
 | 13 | real `GET /posts` | 503 | 503 | 同上 | 通过 |
 | 14 | real `GET /posts/{id}` | 503 | 503 | 同上 | 通过 |
 | 15 | real `GET /admin/sources`（后台 token） | 503 | 503 | 同上 | 通过 |
-| 16 | real `POST /me/account/deletion` | 503 | 503 | 同上 | 通过 |
+| 16 | real `POST /me/account/deletion` | 503 | 503 | 同上 | 通过 （2026-11-04 复核：real + 可用真库时该 POST 回 202、GET 回执可读；503 只在 `real` 且无可用连接池时保留，判据见 `services/api/src/app.ts` 的 `deletionAcceptanceDurable`。） |
 | 17 | real 装配内部状态 | 消息/社区域必须 `null`，媒体域 fail-closed | `messagesService=null`、`communityService=null`、`mediaService.failClosedReason="real 模式缺少真实媒体接线的显式批准能力…"` | `:1062`-`:1065` | 通过 |
 | 18 | real 写面 5 条（posts/reports/favorites/media access/admin sources） | 全 503 ⇒ 反向产不出「真实 id」 | 5/5 503 | `:1068`-`:1080` | 通过 |
 | 19 | 模式标注 | 客户端可解释自己在哪种模式 | 同一 token 的 `/auth/session` 在 stub/real 都 200，`meta.execution_mode` 分别为 `stub`/`real` | `:1083`-`:1088` | 通过 |

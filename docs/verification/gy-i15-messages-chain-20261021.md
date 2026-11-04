@@ -278,7 +278,7 @@ npm run test:unit
 
 - **真机 / 微信开发者工具**：本页所有客户端读数来自 Node + 合成 `wx`（只记录请求，不外发）。**不是**微信编译器或真机证据；`npm run test:mini` 的 `PASS` 只是 JSON/路由/语法检查，脚本自己就写着「Not a WeChat compiler or device test」。
 - **真 PG**：本页未起 `pg17`，`messages/store-pg.ts` 的 SQL 形状只有静态与既有单测（`tests/unit/messages-store-pg-contract.test.mjs`）支撑，本片不重跑真库臂。
-- **删除链路**：契约没有 operation，故**面向用户的**「单条/会话删除」**没有任何实现与证据**。合流带来的 `purgeOwnerData` 是**注销清理**原语（服务端内部、按主体整域删），且**尚未注册进注销闭集**（G2），本页**不**把它当成用户删除或注销清理已完成的证据。
+- **删除链路**：契约没有 operation，故**面向用户的**「单条/会话删除」**没有任何实现与证据**。合流带来的 `purgeOwnerData` 是**注销清理**原语（服务端内部、按主体整域删），且**尚未注册进注销闭集**（G2），本页**不**把它当成用户删除或注销清理已完成的证据。（2026-11-04 复核：消息域**已**注册进注销闭集——`services/api/src/privacy/user-data-deletion.ts` 的 `USER_DATA_DELETION_MODULES` 含 `MESSAGES_DELETION_MODULE`，注册点在同文件的 `coordinator.registerModule(MESSAGES_DELETION_MODULE, …)`；「尚未注册进闭集」已不成立。本页「契约没有用户删除 operation」的结论不变。）
 - **`comment`/`like` 两类消息**：服务端无生产路径（无真实互动事件投递），本页不声称消息中心已覆盖全部四类。
 - **403 的真实触发**：本页证明的是「若服务端返 403，客户端按统一层口径归因、页面落 denied」，**未**在真机/真环境构造出 `ACCOUNT_INACTIVE`（注销待处理账号）端到端场景——那需要真实注销受理与真库，属 C1/注销片。
 - **全量 `test:unit` 的稳定性**：合流后**一次独占运行**即 `3337/3336 pass / 0 fail / 1 skipped / 75.5 s / exit 0`；但合流前出现过的两处异常（release-materials 用例 `git cat-file` 工具自身异常、审核域后长时间无输出）**根因仍未定位**，本页因此**不声称**「全量任何时候必绿」，也不据此改动任何断言。
