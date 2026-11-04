@@ -191,7 +191,7 @@ PASS GY-I09 loopback HTTP integration (synthetic identity + stub provider + memo
    小程序侧已按契约实现 `createUpload → PUT 句柄 URL → completeUpload` 调用链（`utils/identify-api.js#uploadPrivatePhoto`），
    但**未取得一次成功上传的证据**：照片上传在本机不可用（页面如实报 `MEDIA_CHANNEL_UNAVAILABLE`，不使用替身顶替）。
 3. **私有历史**：小程序侧仅保存**本机索引**（jobId/recordId/状态/选择），条目内容以服务端为权威重新核对；
-   服务端历史列表 `GET /history`（listHistory，属 GY-I20 范围）**未实现**。
+   服务端历史列表 `GET /history`（listHistory，属 GY-I20 范围）**未实现**。（2026-11-04 复核：已实现——`services/api/src/routes/history.ts` 第 88 行即 `app.get` 注册历史列表路由，并在 `services/api/src/app.ts` 第 2619 行 `registerHistoryRoutes(...)` 装配；本句「未实现」作废。）
 4. **契约缺口（不改契约，如实记录）**：
    - `SelectionInput.selected_species_id` 只约束 1..80 字符，**未**约束必须是候选之一；本片不发明该约束（记录为缺口）。
    - `JobState` 只挂在 `Job` 上，`Recognition` 无状态字段：客户端必须同时持有 `GET /jobs/{id}`（状态）与

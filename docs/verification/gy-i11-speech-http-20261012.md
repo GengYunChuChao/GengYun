@@ -154,7 +154,7 @@ PASS 11 loopback HTTP groups; production pipeline (buildApp) with only the speec
 - **真实 ASR 供应商／凭据**：未接入；`real` 分支只证明受理前 `PROVIDER_UNAVAILABLE` 与"不回退替身"。**ASR 真实样本为 0**（`docs/evaluation/sample-gap-register.md` 的 `asr_utterances` 0/50、`asr_speakers` 0/10）⇒ 本页**不声称任何转写质量或准确率**，也不声称需求第 6 节评估已运行。
 - **真机／微信开发者工具**：未取得（本轮无小程序改动）。
 - **PG 持久化**：未做；转写任务与记录仍在内存 store（`describe()` 如实标注 `persistent=false`），进程重启即丢。
-- **媒体 HTTP 层**：未接线；`real` 下媒体端口为 `unwired`（受理前 `OBJECT_UNAVAILABLE`）。
+- **媒体 HTTP 层**：未接线；`real` 下媒体端口为 `unwired`（受理前 `OBJECT_UNAVAILABLE`）。（2026-11-04 复核：本条一半失效、一半仍成立——失效半：`services/api/src/app.ts` 第 2615 行 `registerMediaRoutes(app, config, guards, mediaService, { consent: consentGate });` 已装配媒体 HTTP 层，「未接线」不再成立，且未接线端口的错误码是 503 `PROVIDER_UNAVAILABLE`（`retryable: false`）而非 `OBJECT_UNAVAILABLE`；仍成立半：`real` 下端口是否 wired 取决于对象存储注入（第 1803 行 `resolveMediaObjectStore`，未显式注入即按 `real` 走 unwired），因此不能判死为「unwired」。）
 - **`POST /speech/synthesis`**：属 #13 TTS，未做。
 - **未 push、未开 PR**（2a 当时按派单：等 2b 完成 `app.ts` 与页面后一次性开）。⇒ 2a 的提交 `c3aa79e` 随 **2a+2b 合并的同一个 PR** 推送。
 
