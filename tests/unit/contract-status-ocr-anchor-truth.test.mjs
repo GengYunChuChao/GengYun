@@ -460,10 +460,28 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 只有第 66 行变。JSON −37 字节、行数不变；
  * md −31 字节、行数不变（284032 / 4460、206615 / 220）。仍是「正常改台账、非回归」，故同步基线；
  * 没有改判定、没有加豁免条目。
+ * 2026-11-05 第二十四次同步（四处证据／blocker 指针的行号订正：knowledge 196-200→197-201、
+ * synthesis 112-177→118-182、guard 250-365→293-436、real-pg-integration.yml 144-147→201 三处）：
+ * 三个 evidence 的旧窗口都起在声明之前的空行／上一段收尾上（196 是 `queryOf` 的收尾 `  }`；112 起是
+ * 端点之外的铺垫行；250-365 覆盖的是上一段而不是 `createAnswerGuard` 本体），按「区间要覆盖声明所在的
+ * 归属块」改成 197-201（:197 `app.get(`${API_PREFIX}/knowledge``、:201 `  });`）、118-182（:118 `  app.post(`、
+ * :182 `  );`）、293-436（:293 `export function createAnswerGuard(deps: AnswerGuardDeps): AnswerGuard {`、
+ * :436 `}`）——三处都是等位替换，断言文字一字不动。messages 三格逐字相同的 blocker 里
+ * `real-pg-integration.yml:144-147` 原落在社区域筛选 step 的 env 上，与「messages 落库集成」无关，
+ * 改成单行 `:201`（`- run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_messages_test' && node
+ * tests/integration/messages-pg.mjs …`）；三格必须同一提交，否则逐字相同的三行会自相矛盾。
+ * 同批把 `ai-ops-spec-status.md:29` 的 `catalog.ts:278-290` 改成 `284-299`（:284
+ * `export const AUDIT_ACTIONS = Object.freeze([`、:299 `] as const);`，旧窗口漏掉 291-298 的后八值），
+ * 并把同句自相矛盾的「今已十一值」改成「今已十四值」（同页 :110 早已写「今十四值」）。
+ * 中文对照表同次用 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ md 只有第 79／97／103／129-131 行变。
+ * 四处前缀都是等位改写（196-200→197-201、112-177→118-182、250-365→293-436、278-290→284-299），
+ * 只有 yml 那条把四位数区间收成 `201`（每处 −4 字节 ×3）⇒ JSON −12 字节、行数不变；
+ * md −12 字节、行数不变（284020 / 4460、206603 / 220）。仍是「正常改台账、非回归」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284032, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206615, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284020, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206603, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
