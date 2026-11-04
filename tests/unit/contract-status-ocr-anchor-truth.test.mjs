@@ -323,10 +323,16 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `README.md:459` 改写成散文「误记到仓根 README 的第 459 行」，免得它继续挂在 relocation 的「未判」桶里。
  * 两份台账各 +11 字节、行数不变（278727 / 4465、200290 / 220）。仍是「正常改台账」，故同步基线；
  * 没有改判定、没有加豁免条目。
+ * 2026-11-04 第十四次同步（封面散文里三处手抄读数过期，只动 md、不动 JSON）：`docs/architecture/contract-implementation-status.md`
+ * 把「34 个后台端点」当事实沿用（`node tools/verify-admin-capability-map.mjs --check` 实测 `totalOps=50`，媒体仍 7 个）、
+ * 把「113 条业务契约」当现值（`node tools/verify-contract-status.mjs` 实测 130 条）、把「141 条带 `name` 的证据／32／70／39」
+ * 当现值（实测 595 条证据中 243 条带 `name`，三类拆分随证据增补而变，已改成「以当次工具输出为准」），三处都改成
+ * 「数字 + 复核日期 + 指向脚本」的写法。JSON 未动 ⇒ 体积变为 278727 / 4465 与 **200749 / 220**，行数都不变。
+ * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
   { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278727, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200290, lines: 220 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200749, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
