@@ -196,7 +196,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **47** 个（`FAMI
 
 | 原缺口 | 实际页面 | 依据（operation → 客户端函数 → 视图调用点） |
 | --- | --- | --- |
-| 审计总台账 1 条（`listAuditLogs`） | `apps/admin/src/views/AuditLogsView.vue` | `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:393`）→ 视图调用点 `apps/admin/src/views/AuditLogsView.vue:72`；tab 装配 `apps/admin/src/App.vue:33`、`apps/admin/src/App.vue:81` |
+| 审计总台账 1 条（`listAuditLogs`） | `apps/admin/src/views/AuditLogsView.vue` | `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:403`）→ 视图调用点 `apps/admin/src/views/AuditLogsView.vue:72`；tab 装配 `apps/admin/src/App.vue:33`、`apps/admin/src/App.vue:81` |
 | 管理员权限读面 2 条（`listAdministrators`、`listAdministratorScopes`） | `apps/admin/src/views/AdministratorsView.vue` | `listAdministrators` → `fetchAdministratorsPage`（`apps/admin/src/lib/admin-administrators.mjs:363`）→ `apps/admin/src/views/AdministratorsView.vue:104`；`listAdministratorScopes` → `fetchAdministratorScopes`（`apps/admin/src/lib/admin-administrators.mjs:391`）→ `apps/admin/src/views/AdministratorsView.vue:175`；tab 装配 `apps/admin/src/App.vue:34`、`apps/admin/src/App.vue:82` |
 
 ## 5 鉴权面：身份与权限现在怎么来
