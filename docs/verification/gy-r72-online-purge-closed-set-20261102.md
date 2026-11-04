@@ -26,7 +26,7 @@
 
 **8 vs 4 的推导（为什么这是真缺口，而不是「读面把没接入的域报成 blocked」）**：
 推导集合不是常量直出，而是被 `requiredModules` 过滤——`services/api/src/privacy/user-data-deletion.ts:1359` `const modules = [...ONLINE_EVIDENCE_MODULES].filter((module) => requiredModules.includes(module));`（`requiredModules` 在 `:749` 初始化四域、`:758` 只 push **装配时真的注入**的 conditional 域）。
-而生产装配**有池即无条件注入**四个 conditional 域：`services/api/src/app.ts:2218-2264`（`recognitionsStore` / `speechStore` / `ocrStore` / `jobsStore`）⇒ 生产 `requiredModules()` = 4 + 4 = **8** ⇒ 读面推导覆盖这 8 域。
+而生产装配**有池即无条件注入**四个 conditional 域：`services/api/src/app.ts:2272-2286`（`recognitionsStore` / `speechStore` / `ocrStore` / `jobsStore`）⇒ 生产 `requiredModules()` = 4 + 4 = **8** ⇒ 读面推导覆盖这 8 域。
 于是「时钟只跑 4 域」不是保守，而是**少 4 个执行者**：那 4 域一旦在受理时被记 `blocked`，读面按「闭集里有、证据里没有」永远记 `blocked`，而唯一能补证据的时钟从来不去碰它们。
 
 ## 2 改法
