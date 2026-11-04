@@ -395,10 +395,27 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * completionStatus 的真值改用散文写出（第 153-155 行）。体积数字在 #949 删掉那块重复证据对象之后重算：
  * 两份台账各 +36 字节、行数不变（284007 / 4460、206584 / 220）。仍是「正常改台账」，故同步基线；
  * 没有改判定、没有加豁免条目。
+ * 2026-11-05 第二十次同步（cancel 维度去冗余 + 两条裸锚点显式化 + 修 bfbe12cd 括注；基线 9143a4db）：
+ * 第 42 行四处。①evidence 里 `services/api/src/routes/admin.ts` 的取消路由原记 `483-488`，那 6 行只到
+ * `app.post(` 与 schema（488 是 `    },`），没覆盖 handler 与收尾 `);`，改成 `483-491`；②blocker 里
+ * `POST /jobs/:id/cancel` 又抄了一遍 `services/api/src/jobs/routes.ts:64-80`（与本段 evidence 完全重复）⇒
+ * 改成「路由见上表」，不新增锚点；③同句 `services/api/src/jobs/registry.ts:306` 那条 503 分支已被 evidence 的
+ * `283-309` 整块包含 ⇒ 改成「同文件 `cancel` 的 503 分支」，同句两条裸锚点 `:265`（`createJobRegistry` 声明行）
+ * 与 `:42`（`registerJobRoutes` 声明行）补成 `services/api/src/jobs/registry.ts:265`／
+ * `services/api/src/jobs/routes.ts:42`（数字一个没动）：这两条原本按 `ambiguous-block` 登记在
+ * `tools/doc-anchors-orphan-baseline.json`，补前缀后那两条会「册上陈旧」，故按工具允许的方式重跑
+ * `--scan docs --write-orphan-baseline --accept=0` 重建（实测新增 0 条、孤儿 3495→3493、作用域外 117 条不变），
+ * 没有手删条目；④「（下列行号为本基线 `bfbe12cd` 实测）」的反引号让它被符号配对当成紧邻
+ * `services/api/src/jobs/sources.ts:65` 的标识符（中间只隔 9 个字符，判据上限 12）⇒ 去掉反引号写成
+ * 「本基线 bfbe12cd 实测」，该条 `sources.ts:65（ZERO_HIT）` 消失，`SYMBOL-COVERAGE-UNDECLARED`／
+ * `SYMBOL-COVERAGE-MISS` 各 16→15 条，`SYMBOL-COVERAGE-VERIFICATION` 的 805 条与 `-MISS` 的 393 条不变。
+ * `partial` 判定与其余缺口一字不动。中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。
+ * JSON +32 字节、行数不变；md +32 字节、行数不变（284039 / 4460、206616 / 220）。仍是「正常改台账」，
+ * 故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284007, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206584, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284039, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206616, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
