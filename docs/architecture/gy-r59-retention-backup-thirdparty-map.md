@@ -47,7 +47,7 @@
 
 - `tools/verify-purge-schedule.mjs:117` 的 `REQUIRED_NPM_SCRIPTS` = **3 项**（`purge:online-data`、`purge:backup-copies`、`purge:retention`）；`:152` 的 `INTERVAL_BUDGET_MINUTES` 已按命令分档（分钟级 ≤60、日级 ≤1440）。
 - `.github/workflows/engineering-shell.yml:140` 的 job `retention-gates`，`:153` 执行 `npm run verify:purge-schedule`。
-- **运行侧仍未取得**：`deploy/purge-schedule/README.md:46` 自陈「这些命令没有在目标宿主上实跑过」，`:223` 「真库读数未取得」，`:235` 明写门禁「不证明外部调度真的在跑」。
+- **运行侧仍未取得**：`deploy/purge-schedule/README.md:46` 自陈「这些命令没有在目标宿主上实跑过」，`:306` 「真库读数未取得」，`:318` 明写门禁「不证明外部调度真的在跑」。
 
 ## 3. 备份面：三件互不相干的东西被叫成同一个「备份」
 
@@ -125,7 +125,7 @@
 
 1. **第三方删除的写侧**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：第三方删除应用侧——端口无、装配无、调用方无（§4.2）。库层已能记住，运行时取不到）：读侧端口已装配、回执投影已接，缺的是**写侧**——`subscribeThirdPartyDeletion` 零调用者，库层能记住但运行面没有写入口（§4.2）。
 2. **物理/逻辑备份 + 恢复演练**：脚本自陈未在真实实例执行过，不在 CI、无调度单元（§3.1）。
-3. **调度运行侧**：单元齐全、门禁绿，但目标宿主上没跑过、无 `systemctl list-timers` / `journalctl` 读数（`deploy/purge-schedule/README.md:235`）。
+3. **调度运行侧**：单元齐全、门禁绿，但目标宿主上没跑过、无 `systemctl list-timers` / `journalctl` 读数（`deploy/purge-schedule/README.md:319`）。
 4. **三条真库臂已在 workflow 里**（2026-10-31 复算：`media-row-purge-pg.mjs` 在 `real-pg-integration.yml` 第 1234 行、`recognitions-speech-purge-pg.mjs` 第 1174 行、`retention-clock-drill-pg.mjs` 第 1201 行）；S4 E2 当年「命中 0 行」的结论已过期，本轮改判（见 `docs/architecture/s4-data-traceability.md` 的 E2 行）。
 
 ### 只有承诺（文档一句话，DDL/代码都没有）
