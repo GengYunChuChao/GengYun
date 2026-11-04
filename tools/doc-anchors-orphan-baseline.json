@@ -326,6 +326,12 @@
       "accept": 0,
       "orphans": 3496,
       "outsideRed": 117
+    },
+    {
+      "why": "R78 第 1 轮：注销级联页横幅把裸 :454 改成裸 :1143-1146（注册点随代码位移而变，仍归不到路径），因此册上新增 1 条 ambiguous-block 孤儿、旧 :454 条目不再命中而删除；两条都指向 services/api/src/privacy/user-data-deletion.ts，属历史取证页的逐字引用，不补路径",
+      "accept": 1,
+      "orphans": 3496,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -1180,6 +1186,7 @@
     "docs/verification/gy-i16-favorites-history-20261014.md|:94|no-explicit-in-block",
     "docs/verification/gy-i16-favorites-pg-20261017.md|:431|ambiguous-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:105|ambiguous-block",
+    "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:1143-1146|ambiguous-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:1598-1599|ambiguous-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:1598-1599|no-explicit-in-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:1600|ambiguous-block",
@@ -1194,7 +1201,6 @@
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:362-380|no-explicit-in-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:381-388|no-explicit-in-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:410|no-explicit-in-block",
-    "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:454|ambiguous-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:62-67|no-explicit-in-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:66|no-explicit-in-block",
     "docs/verification/gy-i16-i17-deletion-cascade-20261021.md|:68|no-explicit-in-block",
