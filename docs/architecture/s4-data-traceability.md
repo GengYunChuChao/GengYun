@@ -229,9 +229,9 @@
 - **实现**：行级读数含 `hiddenMedia`（`services/api/src/community/purge.ts:69`），blocked 原因码在 `:32` 起；
   单条媒体的对象删除是「确认后才清引用」（`services/api/src/media/service.ts:736`，先落清理意图再删桶对象）。
 - **证据**：账本脱敏 `packages/privacy/redact.mjs:68`。
-- **缺口**：**注销时按主体批量清媒体未接线**——`git grep -n purge_owner_media -- services/api/src` = 0 行，
+- **缺口**：**注销时强制清媒体未进必需闭集**（2026-11-04 复核已推翻原判「注销时按主体批量清媒体未接线」、「未接线、这一步没有执行者」，见下）——历史读数：`git grep -n purge_owner_media -- services/api/src` = 0 行，
   迁移自陈见 `services/api/db/migrations/rollback/0035_r34_media_row_purge.down.sql:14`（「本片未接线」，
-  `user-data-deletion.ts` 里还没有媒体模块）。所以「不能可靠脱敏的媒体在注销后被隐藏或移除」这一步没有执行者。
+  `user-data-deletion.ts` 里还没有媒体模块），原判由此得出「不能可靠脱敏的媒体在注销后被隐藏或移除」这一步没有执行者；**2026-11-04 复核**：原语已有应用侧调用（`media/store-pg.ts` 的 `purge_owner_media`，由 `MediaPurgePort.purgeOwnedMedia` 经识别域处理器驱动，读数进 `recognitions:media-*` 证据串；`git grep` 今天 5 行 / 3 文件），这一步已有执行者；**缺的是必需闭集不含媒体**（见文末「D11 媒体通道」附注）。
 
 ## 4. 未实现（4 项）
 
@@ -320,16 +320,16 @@
 ### ★G1 第三方删除（判据：D13）
 
 表、协议、适配器、投影、真库端口都在；**2026-10-28 复核把缺口收窄到一条**：不是「未装配」（适配器在 `services/api/src/app.ts:2046`、读侧真库端口在 `:2039`、投影已接进注销回执 `services/api/src/routes/account-deletion.ts:152`），而是**写侧零调度 + 证据不落**。可复算：
-`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（就是那个端口；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` 原先 3 行（接口、实现、一处注释）⇒ 零调用者；**GY-R73（2026-11-03）起不再是零调用者**：调用点在 `services/api/src/privacy/third-party-deletion-dispatch.ts`，由注销链 `executeHandlers()` 调。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2276`，`:2548` 是它的消费点）；回执侧不用再动。
+`git grep -n third_party_deletions -- services/api/src` = 6 行 / 2 文件（那个端口 5 行 + 写侧调度 `privacy/third-party-deletion-dispatch.ts` 1 行；对表零 DML/SELECT）、`git grep -n subscribeThirdPartyDeletion -- services/api/src` 原先 3 行（接口、实现、一处注释）⇒ 零调用者；**GY-R73（2026-11-03）起不再是零调用者**：调用点在 `services/api/src/privacy/third-party-deletion-dispatch.ts`，由注销链 `executeHandlers()` 调。修法：受理时按接收方建行 ＋ real 模式注销域开门（门在 `services/api/src/app.ts:2276`，`:2548` 是它的消费点）；回执侧不用再动。
 这一条直接决定 AC23（`docs/implementation-requirements.md:585`）
 的「第三方证据」判不了。
 
 ### ★G2 注销时媒体本体批量清除（判据：D11）
 
-`purge_owner_media` 有函数、有授权、有真库臂（`tests/integration/media-row-purge-pg.mjs`），但应用侧零引用、
-注销闭集里没有媒体模块（`services/api/src/privacy/user-data-deletion.ts:164-169` 只有四域，条件追加的四域也不含媒体）。
+`purge_owner_media` 有函数、有授权、有真库臂（`tests/integration/media-row-purge-pg.mjs`），**应用侧也不再是零引用**：注销链的识别域处理器在注入 `mediaStore` 时先调它（`media/store-pg.ts` 的 `purge_owner_media`，读数落 `recognitions:media-hidden` / `recognitions:media-objects-registered` 两个证据串），`git grep` 今天 5 行 / 3 文件；
+但必需闭集里仍没有媒体模块（`services/api/src/privacy/user-data-deletion.ts:194-199` 只有四域，条件追加的社区／识别／语音／OCR／作业也不含媒体）。
 迁移自己写了「本片未接线」（`services/api/db/migrations/rollback/0035_r34_media_row_purge.down.sql:14`）。
-可复算：`git grep -n purge_owner_media -- services/api/src` = 0 行。
+原读数（2026-10-28）：应用侧零引用、`git grep -n purge_owner_media -- services/api/src` = 0 行；**2026-11-04 复核**：5 行 / 3 文件，缺的是「必需闭集不含媒体」（见文末附注）。
 
 ### ★G3（**已于 2026-10-26 复核消解，整条留档**）保留策略（GY-R34）没有调度单元（判据：D09 的边角，但不属 D09 主体）
 
@@ -362,9 +362,9 @@
 | --- | --- | --- |
 | 行号不腐烂 | `node tools/verify-doc-anchors.mjs --strict` | `exit 0`，基线外新增 0 |
 | 文档结构与链接 | `npm run test:docs` | `exit 0`；`PASS: … Markdown links and tables` 在第 5 行（第一个工具的输出），末行是 `PASS docs/research 结构校验…` |
-| D13 读写接缝 | `git grep -n third_party_deletions -- services/api/src` | 5 行 / 1 文件（= 端口 `privacy/third-party-deletion-pg.ts`；表零 DML/SELECT）。**注意这条只证明「表不可直写」**，不证明「没装配」——装配读数见下一行 |
-| D13 写侧调度 | `git grep -n subscribeThirdPartyDeletion -- services/api/src` | 3 行（端口接口、端口实现、一处注释）⇒ 零调用者；2026-10-28 复核新增 |
-| G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
+| D13 读写接缝 | `git grep -n third_party_deletions -- services/api/src` | 6 行 / 2 文件（= 端口 `privacy/third-party-deletion-pg.ts` 5 行 + 写侧调度 `privacy/third-party-deletion-dispatch.ts` 1 行；表零 DML/SELECT）。**注意这条只证明「表不可直写」**，不证明「没装配」——装配读数见下一行 |
+| D13 写侧调度 | `git grep -n subscribeThirdPartyDeletion -- services/api/src` | 8 行 / 3 文件（端口接口、端口实现、适配器探测 `writePortOf`、真实调用）；**写侧已有唯一调用者**：`privacy/third-party-deletion-dispatch.ts` 的 `writePort.subscribeThirdPartyDeletion(...)`，由注销链 `executeHandlers()` 调——原读数「3 行 ⇒ 零调用者」是 2026-10-28 的，GY-R73 起不成立 |
+| G2 闭集不含媒体 | `git grep -n purge_owner_media -- services/api/src` | 5 行 / 3 文件（应用侧已有调用；缺的是必需闭集不含媒体） |
 | G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **4/4**（`tools/verify-purge-schedule.mjs:117`；`.service`／`.timer` 各 4 个；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列；2026-11-04 复核：清单已是 4 项（新增 `purge:media-objects`） |
 | D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'` |
 | D07 单条删除面 | `git grep -n "app.delete(" -- services/api/src/routes` | **15** 条（13 条单条删除 + 1 条注销取消 + 1 条后台撤销管理员 scope；2026-10-28 复核由 14 更正为 15） |
