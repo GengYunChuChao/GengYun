@@ -1330,6 +1330,76 @@ const COVERAGE_SYMBOL_SPAN = /^[A-Za-z_$][\w$]*$/;
 const COVERAGE_COMMIT_HASH_SPAN = /^[0-9a-f]{7,40}$/i;
 
 /**
+ * 同一行里把「紧邻符号」按出现顺序**一一配给锚点**（口径 ⑦）。
+ *
+ * 为什么需要整行配位、而不是每条锚点各自挑最近：同一行常有「锚点、符号、锚点」这种夹心写法
+ * （`…report.mjs:62`（`FORBIDDEN_ASSERTABLE_PATTERNS`）与 `…report.mjs:291` 声明的 `validateClaims`），
+ * 中间那个符号对左锚点是「右邻」、对右锚点又是「左邻」。各自挑最近时，两个锚点会**同时**认领它，
+ * 于是左锚点拿到的符号（间距 3）挤掉了右锚点自己的符号（间距 6）：`FORBIDDEN_ASSERTABLE_PATTERNS`
+ * 被算到 `:291` 头上，判出一条假 OUT_OF_RANGE（实际声明在 62 行、正好是左锚点）。这不是「谁更近」
+ * 的问题——**一个符号只能属于一条锚点**。
+ *
+ * 配位规则：把这一行所有候选符号按行内出现顺序排开，把锚点按出现顺序排开，取**互不交叉**、
+ * 对数最多（其次总间距最小）的配法——也就是「第 k 条锚点配第 k 个紧邻符号」。符号比锚点少时，
+ * 多出来的锚点**退回「同行没有紧邻符号」**只计数（不判红、不新增档位，和口径 ④／⑤ 同一下场）。
+ *
+ * ③ 两侧等距不猜优先于配位：等距的锚点整条退出配位、记 ambiguous，它的两个候选仍可留给别的锚点。
+ * 非交叉约束在这里不额外裁掉可行解：候选只在紧邻（±1 段）上取，交叉本来就不可能发生。
+ *
+ * @param {Array<Array<{symbol: string, gap: number, span: number}>>} candidateLists 每条锚点（按行内顺序）的候选
+ * @returns {Array<{kind: 'pair', symbol: string, gap: number} | {kind: 'ambiguous'} | {kind: 'unpaired'}>}
+ */
+function pairCoverageSymbols(candidateLists) {
+  const outcomes = candidateLists.map(() => ({ kind: 'unpaired' }));
+  const contenders = [];
+  candidateLists.forEach((candidates, slot) => {
+    if (candidates.length === 0) return;
+    // ③ 两侧都够近且距离相等 ⇒ 不猜（既有口径：配位不许把它降级成「随便挑近的那个」）。
+    if (candidates.length === 2 && candidates[0].gap === candidates[1].gap) { outcomes[slot] = { kind: 'ambiguous' }; return; }
+    contenders.push(slot);
+  });
+  const symbolSpans = [...new Set(contenders.flatMap(slot => candidateLists[slot].map(candidate => candidate.span)))]
+    .sort((left, right) => left - right);
+  const gapOf = (row, column) => {
+    const found = candidateLists[contenders[row]].find(candidate => candidate.span === symbolSpans[column]);
+    return found === undefined ? null : found.gap;
+  };
+  const compare = (left, right) => (left.pairs !== right.pairs
+    ? (left.pairs > right.pairs ? left : right)
+    : (left.gap <= right.gap ? left : right));
+  const sameScore = (left, right) => left.pairs === right.pairs && left.gap === right.gap;
+  const rows = contenders.length;
+  const columns = symbolSpans.length;
+  // `best[row][column]`：只用第 row 条起的锚点与第 column 个起的符号能配出的最优（对数多优先、总间距小其次）。
+  const best = Array.from({ length: rows + 1 }, () => new Array(columns + 1).fill(null));
+  const zero = { pairs: 0, gap: 0 };
+  for (let row = rows; row >= 0; row -= 1) {
+    for (let column = columns; column >= 0; column -= 1) {
+      if (row === rows || column === columns) { best[row][column] = zero; continue; }
+      let value = compare(best[row + 1][column], best[row][column + 1]);
+      const gap = gapOf(row, column);
+      if (gap !== null) value = compare(value, { pairs: best[row + 1][column + 1].pairs + 1, gap: best[row + 1][column + 1].gap + gap });
+      best[row][column] = value;
+    }
+  }
+  let row = 0;
+  let column = 0;
+  while (row < rows && column < columns) {
+    const gap = gapOf(row, column);
+    if (gap !== null && sameScore({ pairs: best[row + 1][column + 1].pairs + 1, gap: best[row + 1][column + 1].gap + gap }, best[row][column])) {
+      outcomes[contenders[row]] = { kind: 'pair', symbol: candidateLists[contenders[row]].find(candidate => candidate.span === symbolSpans[column]).symbol, gap };
+      row += 1;
+      column += 1;
+      continue;
+    }
+    // 平手时先放掉当前符号（它可能属于后面那条锚点），再考虑放掉当前锚点——顺序固定才可复现。
+    if (sameScore(best[row][column], best[row][column + 1])) column += 1;
+    else row += 1;
+  }
+  return outcomes;
+}
+
+/**
  * 把一行里的行内代码片段分类成 `anchor` / `symbol` / `other`，连带片段在原行里的字符位置。
  * 扫法与 `ANCHOR_DRIFT` 共用同一个 `INLINE_CODE_SPAN`（同一个正则，不另造一套行内代码语义）。
  *
@@ -1379,6 +1449,13 @@ function classifyCoverageSpans(line) {
  *   ⑥ 候选**本身就不是符号**时不算：整段是 7–40 位纯十六进制（`de2aa3c6`）的是提交 SHA／短哈希，
  *      绝无可能出现在源码里（见 `COVERAGE_COMMIT_HASH_SPAN`）。这一条在**抽取**处生效（该片段被归成
  *      `other`），所以那条锚点直接落进「同行没有紧邻符号」——不配对、不进任何判定档。
+ *   ⑦ 一行里有多条锚点时，符号**按行内出现顺序一一配位**（一个符号只属于一条锚点）：
+ *      见 `pairCoverageSymbols`。符号比锚点少时，多出来的锚点退回「同行没有紧邻符号」。
+ *
+ * ⑦ 是 2026-11-05 补的。改前每条锚点各自挑最近的符号，于是夹心写法（锚点、符号、锚点）里那个符号
+ * 会被**两条锚点同时认领**，谁抢到取决于字符间距：`docs/verification/gy-i23-latency-capacity-local-20261020.md:195`
+ * 的 `:291` 抢走了本属于 `:62` 的 `FORBIDDEN_ASSERTABLE_PATTERNS`，判出一条假 OUT_OF_RANGE；
+ * verification 面 88 条 `符号不在区间` 里有 11 条是这一类（上一轮只读审计 67fdc0e3 的口径）。
  *
  * ④ 是 2026-11-04 补的。台账最常见的列举写法是「`a.ts:1162` 的 `createTtsProvider`、`a.ts:1176` 的
  * `createSynthesisMediaPort(...)`」：只按字符距离取最近时，`:1176` 会配给左边的 `createTtsProvider`
@@ -1452,13 +1529,16 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
       const spans = classifyCoverageSpans(line);
       // 一条锚点 + 一个符号至少两段代码；不足两段的行不可能配出对，直接跳过（省掉后面所有路径解析）。
       if (spans.length < 2) continue;
+      // 先把这一行所有锚点的候选算齐，再整行一一配位（口径 ⑦）——逐条挑最近会让夹心写法里的同一个
+      // 符号被两条锚点同时认领，判出假 OUT_OF_RANGE。
+      const lineAnchors = [];
       for (let position = 0; position < spans.length; position += 1) {
         const item = spans[position];
         if (item.kind !== 'anchor') continue;
         anchorsInDoc += 1;
         // 起止颠倒的锚点由结构判据（OUT_OF_RANGE）管，这里不参与配对。
         if (item.to < item.from) { bump('unpaired'); continue; }
-        const neighbours = [];
+        const candidates = [];
         for (const offset of [-1, 1]) {
           const sibling = spans[position + offset];
           if (sibling === undefined || sibling.kind !== 'symbol') continue;
@@ -1469,12 +1549,18 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
           if (SYMBOL_COVERAGE_LIST_SEPARATORS.some(separator => between.includes(separator))) continue;
           // ⑤ 「依次／分别」：右边那串符号按位置对应左边那串锚点，紧邻配对没有语义（见上方口径注释）。
           if (SYMBOL_COVERAGE_POSITIONAL_MARKERS.some(marker => between.includes(marker))) continue;
-          neighbours.push({ symbol: sibling.symbol, gap });
+          candidates.push({ symbol: sibling.symbol, gap, span: position + offset });
         }
-        if (neighbours.length === 0) { bump('unpaired'); continue; }
-        if (neighbours.length === 2 && neighbours[0].gap === neighbours[1].gap) { bump('ambiguous'); continue; }
-        neighbours.sort((left, right) => left.gap - right.gap);
-        const symbol = neighbours[0].symbol;
+        lineAnchors.push({ item, candidates });
+      }
+      const outcomes = pairCoverageSymbols(lineAnchors.map(anchor => anchor.candidates));
+      for (let slot = 0; slot < lineAnchors.length; slot += 1) {
+        const { item } = lineAnchors[slot];
+        const outcome = outcomes[slot];
+        // ③ 两侧等距不猜（既有语义）；⑦ 一个符号只配一条锚点，落选的退回「同行没有紧邻符号」只计数。
+        if (outcome.kind === 'ambiguous') { bump('ambiguous'); continue; }
+        if (outcome.kind === 'unpaired') { bump('unpaired'); continue; }
+        const symbol = outcome.symbol;
         const resolved = resolveTarget({ root, docPath, target: item.target, fileIndex: index });
         // 路径找不到／同名多文件不唯一：BROKEN 与「无法唯一解析」那两条已经在管，这里只计数，不当判据。
         if (resolved.status !== 'resolved') { bump('unresolved'); continue; }
