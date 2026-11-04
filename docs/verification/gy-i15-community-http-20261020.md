@@ -277,7 +277,7 @@ CI 跑在 `ubuntu-24.04`（LF 检出）⇒ 该判据在 CI 上成立。因此 §
 2. **真实 AI 图文审核未授权付费/未接线**。本装配只接**确定性硬规则层**（`packages/moderation` 规则层，经 `community/moderation-gate.ts`）；模型层合流组件（`mergeModeration`）**未接入社区装配**，因此不产出 `model_version`/`prompt_version`（`ModerationRecord.contract_complete === false`），也不得声称任何准确率/召回率（真实样本各为 0）。`real` 模式因**真实持久存储未交付**整域 503（而不仅是审核供应商缺失）。
 3. **真实持久存储未交付**：社区 store 仍是内存实现（`persistent:false`），无数据库迁移；`real` 下整域 fail-closed。
 4. **真实资料读取口未接线**：`knowledge.ts` 端口真实接线需要把**请求会话身份**（`knowledge/service.ts` 的 `Identity`：user id + authEpoch + 会话 id + 原始令牌，且在同一事务内复核账号/会话有效期）带入社区服务，属对社区 actor 契约的跨线决定 ⇒ 本单**未接线**，默认 fail-closed（新增/替换引用一律 `409 OBJECT_UNAVAILABLE`）。HTTP 用例注入受控端口验证闸门与投影；**不**代表真实资料查询已可用。
-5. **消息跳转目标读取端口未接线**：消息域 `createUnwiredReferencePort` 保持默认 ⇒ 社区相关消息的 `reference_state` 恒为 `unavailable`（未注入社区目标读取实现，属跨线接线）。
+5. **消息跳转目标读取端口未接线**：消息域 `createUnwiredReferencePort` 保持默认 ⇒ 社区相关消息的 `reference_state` 恒为 `unavailable`（未注入社区目标读取实现，属跨线接线）。（2026-11-04 复核：默认已接线——`app.ts` 第 902 行 `messagesInjection?.reference ?? createCommunityReferencePort({ community: () => communityVisibility })`；接线提交 `88942df4`（2026-10-22，#425），晚于本页基线 `fcfa6de9`。）
 6. **正式微信身份/真机未取得**：小程序未在微信开发者工具/真机编译运行过；本单只跑通 `node tools/check-wechat-project.mjs`（原生 JSON/路由/共享配置/JS 语法自检）+ `tests/local-debug.test.mjs` 的隔离打包回归。`real` 模式未做真机联调。
 7. **正式发布环境未取得**：未做域名/网关/CDN，未发起任何付费调用，未提交密钥/真实 `.env`/个人原始媒体/构建产物。
 8. **公开内容取图来源仍未接线**：`media/content-source.ts` 的 `PublishedContentSource` 是**同步**接口（`getPublishedContent` 返回快照而非 Promise），而社区 store 是异步读取；装配层接线需要给媒体域一个同步可用或异步化的端口 —— 属跨线接口决定，本单**未接线**（社区取图维持统一 404 fail-closed）。
