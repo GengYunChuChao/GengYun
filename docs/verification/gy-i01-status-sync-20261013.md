@@ -49,7 +49,7 @@ Windows，Node `v24.19.0`、npm `11.17.0`。干净子进程只保留系统环境
 依据[监工新 base 反馈](https://github.com/GengYunChuChao/GengYun/pull/117#issuecomment-6146861994)，作者分支正常合成正式 main `769420a`，未重写历史或修改上游业务代码。当前 JSON 基线同步为该 SHA、proposal_revision 为 5，中文摘要和当前进度一并更新。
 
 - getJob／cancelJob 证据改指公共 `jobs/routes.ts` 单一注册与真实 app 装配、作业源及现有 HTTP 反例。识别与转写读取、识别取消已经接通；两条原有路径迁移不增加装配数量。
-- 转写作业虽能读取，取消能力仍未接线，实际注册表返回 503 PROVIDER_UNAVAILABLE（retryable）。OCR／合成仍未注册公共读／取消，持久队列／租约／恢复、真实能力／样本和 Android 剩余保留。
+- 转写作业虽能读取，取消能力仍未接线，实际注册表返回 503 PROVIDER_UNAVAILABLE（retryable）。OCR／合成仍未注册公共读／取消，持久队列／租约／恢复、真实能力／样本和 Android 剩余保留。（2026-11-04 复核：转写取消**已接线**——`services/api/src/jobs/sources.ts` 的 `createTranscriptionJobSource` 内已实现 `cancel`，不再是 503。）
 - 同步四条转写操作和取消维度中的关联缺口描述；修正上游新增 import／装配导致的识别路由与 Retry-After 证据行偏移。没有因共享读面合入而升级任何状态。
 
 新 base 上重新运行 `node tools/verify-contract-status.mjs --write-doc --runtime`、既有 7 项工具回归、开发文档校验及 `git diff --check`，均通过；112 操作、32 装配、11 implemented／74 partial／27 planned 与上一候选一致。逐项核对冻结字段、路由标记、维度状态和历史快照仍未改变，完整 PR diff 相对新 main 仍仅 4 个文档。

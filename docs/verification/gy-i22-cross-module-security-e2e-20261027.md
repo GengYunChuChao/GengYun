@@ -242,7 +242,7 @@ node --test tests/unit/gy-i22-job-inflight-guard-and-ownership.test.mjs
 | 消息域归属同形 404、引用 fail-closed、读取时重查 | `tests/unit/messages-security.test.mjs`、`messages-http.test.mjs` L88/L126 | 消息域已覆盖 |
 | 协议层：撤回/取消后回写阻断、零写入、账本零新增、原子边界竞态 | `tests/privacy/ledger.test.mjs`（65）、`in-flight.test.mjs`（13）、`egress.test.mjs`（15） | 协议层证据充分；本片只补**组合应用层是否接上** |
 | 授权中间件在**合成路由**上的 401/403/ACCOUNT_INACTIVE 与 real fail-closed | `tests/unit/privacy-egress-http.test.mjs` | 合成实例；本片补**真实 4 面装配** |
-| 作业注册表分派、越权 ⇒ 同形 404、无取消能力 ⇒ 503 | `tests/unit/jobs-registry.test.mjs` L212/L260 | 注册表层；本片补**真实域的取消/晚到** |
+| 作业注册表分派、越权 ⇒ 同形 404、无取消能力 ⇒ 503 | `tests/unit/jobs-registry.test.mjs` L212/L260 | 注册表层；本片补**真实域的取消/晚到** （2026-11-04 复核：该 503 用例今天在 `tests/unit/jobs-registry.test.mjs` 的「取消·**域内无取消能力但作业存在 ⇒ 503 `PROVIDER_UNAVAILABLE`**」用例里（用 `withoutCancel` 自造无 cancel 源）；原先引的两行已落在别的用例内，不能用作该断言的锚点。） |
 
 ---
 
