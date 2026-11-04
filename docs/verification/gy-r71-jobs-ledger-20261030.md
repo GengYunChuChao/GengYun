@@ -365,7 +365,7 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 |---|---|
 | 闭集里的模块 | `jobs`（`services/api/src/privacy/user-data-deletion.ts:178` 的 `JOBS_DELETION_MODULE`），**条件追加**：`CONDITIONAL_DELETION_MODULES`（`:231`）与真实追加点 `conditionalStores`（`:755`）两处逐项一致，静态腿钉住 |
 | 处理器 | `coordinator.registerModule(JOBS_DELETION_MODULE, makeHandler(...))`（`services/api/src/privacy/user-data-deletion.ts:1097`）；走 `purgeOwnerData` ⇒ 证据串 `jobs:online-purged:<真实行数>` |
-| 端口 | `services/api/src/app.ts:2206` 的 `jobsLedgerDeletionStore`（门＝`pool !== null`），注入点 `services/api/src/app.ts:2264` |
+| 端口 | `services/api/src/app.ts:2228` 的 `jobsLedgerDeletionStore`（门＝`pool !== null`），注入点 `services/api/src/app.ts:2286` |
 | 证据落库 | 模块名进 `ONLINE_EVIDENCE_MODULES`（`services/api/src/privacy/user-data-deletion.ts:213`），迁移 0031 的写函数照写 `(requestId, module, removed, idempotency)` ⇒ 审计可复算 |
 
 **同序**：`jobs` 是生效闭集的第 9 项（四域 + community + recognitions + speech + ocr + jobs），

@@ -73,7 +73,7 @@ export function readingKindOf(action: string): AuditReadingKind {
 ```
 
 为什么是 `Record<AdminAuditAction, …>` 而不是 `Record<string, …>`：动作闭集在
-`services/api/src/admin/audit/catalog.ts:77-85`（`AUDIT_ACTIONS`）。用闭集当键类型，**闭集新增动作时
+`services/api/src/admin/audit/catalog.ts:284-299`（`AUDIT_ACTIONS`）。用闭集当键类型，**闭集新增动作时
 `tsc` 会在这张表上报缺项**，逼作者显式声明「这个动作有没有开关读数」，而不是静默落进某个 `else` 分支。
 闭集外的动作（例如 0047 的 `post.hide`，尚未登记进 `AUDIT_ACTIONS`）走 `?? 'unexposed'`。
 
