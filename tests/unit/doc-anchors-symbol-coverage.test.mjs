@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   SYMBOL_COVERAGE_ADJACENCY,
+  SYMBOL_COVERAGE_LIST_SEPARATORS,
   SYMBOL_COVERAGE_NOT_FOUND,
   SYMBOL_COVERAGE_OK,
   SYMBOL_COVERAGE_OUT_OF_RANGE,
@@ -235,4 +236,33 @@ test('C8 缺省值就是 count（照样出读数）；`--symbol-coverage=off` �
   assert.equal(SYMBOL_COVERAGE_OK, 'OK');
   assert.equal(SYMBOL_COVERAGE_NOT_FOUND, 'NOT_FOUND');
   assert.equal(SYMBOL_COVERAGE_OUT_OF_RANGE, 'OUT_OF_RANGE');
+});
+
+test('C9 列举串（`anchor 的 symbol、anchor 的 symbol`）不许把左项符号配给右项锚点', () => {
+  // 这是台账里最常见的写法，也是本判据第一版最大的假阳性来源：
+  // 「`alpha.ts:1162` 的 `createTtsProvider`、`alpha.ts:1176` 的 `createSynthesisMediaPort(...)`」——
+  // 右项锚点离左项符号只有 1 字符（中间就一个 `、`），离自己的符号有 3 字符（中间是「 的 」）。
+  // 只按字符距离取最近就会配错，于是**正确的文档**被判 OUT_OF_RANGE（见
+  // `docs/architecture/contract-implementation-status.md:97` 的真实误报）。
+  assert.equal(
+    SYMBOL_COVERAGE_LIST_SEPARATORS.includes('、'),
+    true,
+    '列举分隔符清单必须含中文顿号，否则这条规则对中文台账整片失效',
+  );
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'docs/architecture/listed.md':
+        '# 列举\n\n- `services/api/src/alpha.ts:2` 的 `ghostHandler`、`services/api/src/alpha.ts:2` 的 `alphaHandler`\n',
+    },
+    root => {
+      const { judged, misses } = coverageOf(root);
+      assert.equal(judged.paired, 2, '两个锚点各配各自紧邻的符号');
+      assert.equal(judged.notFound, 1, '只有左项那个真不存在的符号该判 NOT_FOUND');
+      assert.equal(judged.ok, 1, '右项该配到自己的 alphaHandler 并判 OK');
+      assert.equal(misses.length, 1, '配错时这里会是 2 条（ghostHandler 被配给两个锚点）');
+      assert.equal(misses[0].symbol, 'ghostHandler');
+      assert.equal(misses[0].result, SYMBOL_COVERAGE_NOT_FOUND);
+    },
+  );
 });
