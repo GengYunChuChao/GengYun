@@ -80,7 +80,7 @@ EXITCODE=1
 
 `provisionRoles` 里的 `CREATE ROLE` 是**无条件**执行的。本片在「角色已存在」的状态下复跑：
 `首个失败读数：role "gengyun_auth_privacy" already exists`，`code: '42710'`，`routine: 'CreateRole'`，
-调用点 `account-suspend-pg.mjs:177`（`provisionRoles`）／`:493`（顶层），exit=1
+调用点 `account-suspend-pg.mjs:637`（`provisionRoles`）／`:493`（顶层），exit=1
 （日志 `.pg17/handoff/r28-s14-logs/account-suspend-pg.ciparity-rolesexist.log`）。
 
 🔁 **R28-S18 订正（本机真集群实测，2026-10-20，集群 `:55601`）**：上一段结论有两处不准确。
