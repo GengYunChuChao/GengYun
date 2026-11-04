@@ -2,7 +2,7 @@
  * R60 · 「审计总台账（只读）」前端读面的**单元测试**（纯逻辑，不渲染）。
  *
  * 钉住的事：
- * 1. 参数名照抄契约：`entity`（⛔ 不是 `entity_type`）、`action` 四项闭集、`from`/`to` RFC 3339；
+ * 1. 参数名照抄契约：`entity`（⛔ 不是 `entity_type`）、`action` 闭集（14 值，末三位是 `report.*`）、`from`/`to` RFC 3339；
  * 2. 换筛选必须回第一页（游标与 [from,to,action,entity] 绑定，否则后端 INVALID_CURSOR）；
  * 3. 403 与「空台账」是两种状态——无权限不得被渲染成 0 条；
  * 4. 失败态分类只用品格内的 ErrorCode，不自造错误码。
@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  AUDIT_LOG_ACTION_LABELS,
   AUDIT_LOG_ACTIONS,
   AUDIT_LOG_ENTITIES,
   AUDIT_LOGS_PATH,
@@ -35,6 +36,8 @@ import {
 
 const UUID_A = '1b4e28ba-2fa1-11d2-883f-0016d3cca427';
 const UUID_B = '2c5f39cb-3fb2-22e3-9940-1127e4ddb538';
+const UUID_C = '3d6a40dc-4ac3-33f4-aa51-2238f5eed649';
+const UUID_D = '4e7b51ed-5bd4-44f5-bb62-3349a6ffe75a';
 
 function jsonResponse(status, body, headers = {}) {
   return { ok: status >= 200 && status < 300, status, headers: new Headers(headers), json: async () => body };
@@ -80,6 +83,10 @@ test('契约形状：路径/scope/闭集与后端 catalog 逐字一致；⛔ 没
     'admin_account.disable',
     'admin_account.enable',
     'category.update',
+    // 第 12–14 值：PR #838（迁移 0053）的举报处置三动作，服务端 `AUDIT_ACTIONS` 就是追加在这三位。
+    'report.triage',
+    'report.resolve',
+    'report.reject',
   ]);
   assert.deepEqual([...AUDIT_LOG_ENTITIES], ['account', 'flag', 'job', 'admin_scope', 'post', 'admin_account']);
   assert.equal(AUDIT_LOG_ACTIONS.includes('entity_type'), false);
@@ -395,4 +402,53 @@ test('行视图：时间按 UTC 稳定渲染；target_ref 形如 type:id@revisio
 test('页面校验复用收件箱那份：items/next_cursor 的形状即 AuditEventPage', () => {
   assert.equal(validateAuditLogPage(page([event()]).data).ok, true);
   assert.equal(validateAuditLogPage({ items: [], next_cursor: 42 }).ok, false);
+});
+
+test('筛选：report.triage 在闭集内、原样下传，含它的样本筛完只命中 1 条（PR #838 / 迁移 0053）', async () => {
+  // ① 闭集必须含它，否则 `validateAuditLogFilters` 在出网前就把合法筛选判成 enum 错
+  //    （表现正是「下拉里选不到、手输也报错」，页面上看不到这三类处置）。
+  assert.equal(AUDIT_LOG_ACTIONS.includes('report.triage'), true);
+  assert.equal(validateAuditLogFilters({ action: 'report.triage' }).ok, true);
+
+  // ② 每个动作都得有中文名：`auditLogRowView` 是 `labels[action] ?? action`，漏一条就退化成裸串。
+  for (const action of AUDIT_LOG_ACTIONS) {
+    assert.equal(typeof AUDIT_LOG_ACTION_LABELS[action], 'string', `${action} 缺中文标签`);
+    assert.notEqual(AUDIT_LOG_ACTION_LABELS[action], '', `${action} 的中文标签不能是空串`);
+  }
+  assert.equal(AUDIT_LOG_ACTION_LABELS['report.triage'], '举报分流');
+  assert.equal(AUDIT_LOG_ACTION_LABELS['report.resolve'], '举报成立');
+  assert.equal(AUDIT_LOG_ACTION_LABELS['report.reject'], '举报驳回');
+
+  // ③ 行为断言：样本按迁移 0053 的真实落库形状造（scope='sources:write'、
+  //    target_ref={type:'report',…}、reason_code='report_*'），再按下传的 `?action=` 等值筛。
+  const sample = [
+    event({ id: UUID_A, action: 'report.triage', scope: 'sources:write', target_ref: { type: 'report', id: 'r-1', revision: 1 }, reason_code: 'report_triaged' }),
+    event({ id: UUID_B, action: 'report.resolve', scope: 'sources:write', target_ref: { type: 'report', id: 'r-1', revision: 2 }, reason_code: 'report_resolved' }),
+    event({ id: UUID_C, action: 'report.reject', scope: 'sources:write', target_ref: { type: 'report', id: 'r-2', revision: 1 }, reason_code: 'report_rejected' }),
+    event({ id: UUID_D, action: 'category.update', scope: 'sources:write', target_ref: null }),
+  ];
+
+  const sentActions = [];
+  const fetchImpl = async (url) => {
+    const { searchParams } = new URL(url, 'http://x');
+    const action = searchParams.get('action');
+    sentActions.push(action);
+    // 服务端语义：`?action=` 是闭集内的等值筛选，只回该动作的行（`parseActionParam` 之外不过滤）。
+    return jsonResponse(200, page(sample.filter((item) => item.action === action)));
+  };
+
+  const result = await fetchAuditLogsPage({ fetchImpl, baseUrl: '/api/v1', token: 'tok-1', limit: 20, filters: { action: 'report.triage' } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(sentActions, ['report.triage'], '闭集内取值原样下传：不归一化、不丢前缀');
+  assert.equal(result.page.items.length, 1, '含 report.triage 的样本筛完命中恰好 1 条');
+  assert.equal(result.page.items[0].action, 'report.triage');
+  assert.equal(auditLogRowView(result.page.items[0]).actionLabel, '举报分流', '行视图用中文名，不是裸 action');
+
+  // ④ 三个新动作都要能筛（少登记一个，对应下拉项就消失）。
+  for (const action of ['report.triage', 'report.resolve', 'report.reject']) {
+    assert.equal(validateAuditLogFilters({ action }).ok, true, `${action} 必须已登记进闭集`);
+  }
+  // ⑤ ⛔ 没有 `entity=report`：处置动作只能经 `?action=` 筛（catalog 明写不新增实体）。
+  assert.equal(validateAuditLogFilters({ entity: 'report' }).ok, false);
+  assert.equal(AUDIT_LOG_ENTITIES.includes('report'), false);
 });

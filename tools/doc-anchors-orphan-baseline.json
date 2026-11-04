@@ -350,6 +350,12 @@
       "accept": 6,
       "orphans": 3490,
       "outsideRed": 117
+    },
+    {
+      "why": "GY-R78 2026-11-05（#968 追平 a1190d47 后重建）：本片只改 apps/admin/src/lib/admin-audit-logs.mjs 与 docs 侧 6 个行号（admin-audit-logs.mjs:985->995 四处、:393->403 一处、裸 :840->850 一处），孤儿册唯一变动是 ai-ops 页 :840->:850 的键随行号位移（旧键陈旧 1、新键新增 1）；判据一字未改，孤儿总数与作用域外本会红数不变。",
+      "accept": 1,
+      "orphans": 3490,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -361,8 +367,8 @@
     "docs/architecture/ai-ops-spec-status.md|:301-328|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:558|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:70-71|no-explicit-in-block",
-    "docs/architecture/ai-ops-spec-status.md|:840|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:841-845|ambiguous-block",
+    "docs/architecture/ai-ops-spec-status.md|:850|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:103-105|ambiguous-block",
     "docs/architecture/contract-implementation-status.md|:1040-1109|no-explicit-in-block",
     "docs/architecture/contract-implementation-status.md|:132|ambiguous-block",
