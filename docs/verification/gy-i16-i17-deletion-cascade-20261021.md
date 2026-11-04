@@ -23,7 +23,7 @@
 >    `#397` 按 P0-3 的**路径①**执行——`conversations` 进 `USER_DATA_DELETION_MODULES`（`user-data-deletion.ts:194-199` 四域）并注册（`:1143-1146`），
 >    备份清单补 `snapshotOwner`（`conversations/store-pg.ts:445`）。
 >
-> **仍然有效、请照旧引用**：G4（`0019` 迁移注释宣称的级联永不触发）、G7（社区域无清理原语、无 scope）。
+> **仍然有效、请照旧引用**：G4（`0019` 迁移注释宣称的级联永不触发）、G7（社区域无清理原语、无 scope）。（2026-11-04 复核：G7 的「**无清理原语**」半句已失效——社区域现有接口 `CommunityOwnerPurgePort`（`deleteAllByOwner` ＋ `purgeOwnerData`，见 `services/api/src/community/purge.ts`）与 store 上的 `async purgeOwnerData`（`services/api/src/community/store-pg.ts`），装配在 `services/api/src/app.ts` 的 `communityStore: communityPurgePort`，自 `#474`（`1fbe7572`，2026-10-22）起在 `main`；「**无 scope**」半句仍真。G4 不受影响。）
 > **已失效／只对一半（2026-11-04 复核）**：G10 的「注销 HTTP 面整域 503」已被 GY-R74 的**按域降级**取代——`real` + 真库下受理开放（POST 202／GET 回执可读），唯一保留的 503 是「`real` 但无真库」（`services/api/src/app.ts:2620-2627`）；G11 只有「审计」仍成立（进程内 `auditLog`），回执台账自迁移 0038 起已持久化（`user-data-deletion.ts:850`）；
 > §4.1 第 2 条（再受理被 `G0003` 确定性拒绝，`0016:112-114`）。
 >
@@ -82,7 +82,7 @@
 - 处理器拿不到主体，靠 `requestId → subject` 进程内映射反查（`user-data-deletion.ts:336-339`：「反查不到主体 ⇒ 绝不用空主体去清理」）。
 - 证据串构形：`<module>:online-purged:<n>`，若 store 提供 `purgeOwnerData` 再追加 `;<module>:idempotency-purged:<n>`（`:357-361`）。**行数是真计数，不是估算**（`RETURNING id` 的 `rows.length`）。
 - 审计只写进程内数组 `auditLog`（`:381-388`），**没有持久审计表**。
-- 回执 bearer 台账是进程内 `Map`，35 日 TTL，**重启即 404**（已知缺口，`services/api/src/privacy/account-deletion.ts:58-61`）。
+- 回执 bearer 台账是进程内 `Map`，35 日 TTL，**重启即 404**（已知缺口，`services/api/src/privacy/account-deletion.ts:58-61`）。（2026-11-04 复核：该缺口**只对无池臂成立**——有业务库连接池且受理已接线（`durableDeletionRequests !== null`）时，装配层改用持久化台账 `createPostgresDeletionReceiptRegistry`（`services/api/src/app.ts` 的 `deletionReceipts` 装配，迁移 `0038_r34_deletion_receipt_persistence.sql`），重启后旧回执仍可反查；仅 `stub`／`preset_demo` 等无真库形态才回落到进程内 `createDeletionReceiptRegistry`。）
 
 ---
 
@@ -108,7 +108,7 @@
 
 > **superseded（2026-10-21 后续合入）**：本矩阵的 messages 行、消息幂等行、会话三行、会话备份态行、备份副本行已被 `#390`／`#397` 改写
 > ——消息域与会话域现在都在 `USER_DATA_DELETION_MODULES` 四域内并被 `executeHandlers()` 驱动，两份 store 都有 `snapshotOwner`。
-> 社区域（community）行仍如本表所述**零原语**。矩阵一句话的「零硬删」因此只对 community 成立；逐条见页首「状态更新」块。
+> 社区域（community）行仍如本表所述**零原语**。矩阵一句话的「零硬删」因此只对 community 成立；逐条见页首「状态更新」块。（2026-11-04 复核：本行只剩「**无 scope**」成立——「零原语」半句已失效：`services/api/src/community/store-pg.ts` 有 `async purgeOwnerData`、`services/api/src/community/purge.ts` 有 `CommunityOwnerPurgePort`（`deleteAllByOwner` ＋ `purgeOwnerData`），装配于 `services/api/src/app.ts` 的 `communityStore: communityPurgePort`，自 `#474`（`1fbe7572`）起在 `main`；`BACKUP_COPY_SCOPES`（`packages/privacy/backup-copies.mjs`）至今无 `community`，故备份侧仍无 scope。）
 
 ---
 
@@ -148,7 +148,7 @@
 优先级口径：**P0** = 让「注销清干净」这件事在任何环境下为假或不可达（阻塞 #16/#17 的真实收口）；**P1** = 覆盖不全但与 P0 无先后依赖的域；**P2** = 证据/台账/文档订正。
 
 > **superseded（2026-10-21 后续合入）**：下表 G1／G2／G3（`#390`／`#397`）、G5／G6（`#397` 路径①＋快照原语）、G8（`#397` 四域 scope）、
-> G9（`#398` 驱动）**六项的「未做」状态已被推进**，逐条见页首「状态更新」块。**仍有效**：G4、G7、G10、G11。
+> G9（`#398` 驱动）**六项的「未做」状态已被推进**，逐条见页首「状态更新」块。**仍有效**：G4、G7、G10、G11。（2026-11-04 复核：此句须**分读**，不可照旧整句引用——① G4 仍有效；② G7 只剩「**无 scope**」半句成立（`packages/privacy/backup-copies.mjs` 的 `BACKUP_COPY_SCOPES` 只有 `favorite`／`history`／`message`／`conversation`），「无清理原语」半句已失效（`services/api/src/community/purge.ts` 的 `CommunityOwnerPurgePort` ＋ `services/api/src/community/store-pg.ts` 的 `async purgeOwnerData`，自 `#474` 起在 `main`）；③ G10 已**按域降级**——`real` ＋ 真库即受理开放（POST 202／GET 回执可读），`available` 现为 `services/api/src/app.ts` 的 `deletionAcceptanceDurable` 判据（`config.executionMode !== 'real' || deletionAcceptanceDurable`），不再整域 503；④ G11 只剩「审计」成立（进程内 `user-data-deletion.ts` 的 `auditLog` 数组），回执台账自迁移 `0038_r34_deletion_receipt_persistence.sql` 起已持久化。另见页首「已失效／只对一半（2026-11-04 复核）」一条。）
 > 表内措辞保留为当时读数，不据此主张缺口仍全数存在。
 
 | 编号 | 优先级 | 缺口 | 位置（`文件:行`） | 影响（用词严格） |
