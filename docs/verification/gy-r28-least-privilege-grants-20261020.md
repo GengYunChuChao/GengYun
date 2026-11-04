@@ -488,7 +488,7 @@ $$;
    的完整链路没有在真实主机上跑过（`provision-db.sh` 的判据逻辑是读代码确认的，不是跑出来的）。
 2. **GitHub runner：未取得**。`real-pg-integration.yml` 没有触发过；本次门禁只跑 `lint` /
    `test:contract` / `test:docs` / `verify-contract-status.mjs` 四条本地命令。
-3. **`#333`（迁移 `0025`）未合入**：recognition 只有草案与软守卫，**没有**实际授权、**没有**断言。
+3. **`#333`（迁移 `0025`）未合入**：recognition 只有草案与软守卫，**没有**实际授权、**没有**断言。（2026-11-04 复核：`#333` 已合入 `341ad8c`，`services/api/db/migrations/0025_recognitions_persistence.sql` 在册；四表授权在 `deploy/postgres-cvm/sql/20-login-roles.sql` 段 J（第 1141／1148 行），断言在 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`（第 37／592 行）；「未合入／无授权／无断言」三条全不成立）
 4. **域外同类缺口：未修、未验**。`favorites`/`favorites_idempotency`/`history`/`history_idempotency`/
    `conversations`/`conversation_turns`/`conversation_answers` 七张表迁移建了、`20-login-roles.sql`
    从没授权过、本片元断言的数据域也没覆盖，`SET ROLE` 实测全部 `42501`
