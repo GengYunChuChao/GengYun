@@ -425,10 +425,34 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 两处都是等宽替换（250→358、256-257→257-258 位数不变）⇒ 字节数与行数都不变
  * （284039 / 4460、206616 / 220，按 `statSync` 与本用例 `countLines` 实测复核）。仍是「正常改台账」，
  * 故同步基线（数值沿用）；没有改判定、没有加豁免条目。
+ * 2026-11-05 第二十二次同步（messages 域三条 blocker 散文两处指针 + 幂等 evidence 区间 + createTurn 窗口）：
+ * 改的全是 `docs/architecture/contract-status.json` 里的指针数字，内容断言与 `partial` 判定一字不动，
+ * 中文对照表同次用 `verify-contract-status.mjs --write-doc` 从 JSON 重生成。①第 2197／2219／2241 行（三格
+ * 逐字相同的 messages blocker）里，「他人评论真落库写消息」原指 `services/api/src/community/service.ts:1379`
+ * ——那是 `const items: Comment[] = [];`（`async listComments(` 的列表投影），与落库写消息无关——改成
+ * `:1476-1483`（:1476 `await publishInteraction({`、:1477 `event: 'comment_created',`，条件行在 :1475）；
+ * 「他人点赞」的裸锚点 `:1852` 原是 `text,`（`createComment` 里 `gate.evaluate(` 的第二入参）改成
+ * `:2001-2007`（:2001 `await publishInteraction({`、:2002 `event: 'like_created',`，条件行在 :2000）；
+ * 「账号停用／恢复事件」的裸锚点 `:1270-1273` 原是跳转目标可用性读面投影改成 `:1496-1506`（:1496
+ * `const accountEvents: AccountEventsPort =`、:1499 `createMessagesAccountEventsPort({ messages: messagesService })`、
+ * :1506 `withAccountSystemEvents(accountAuthorityBase, …)`）。三处必须同一提交：三格逐字相同，改一半会让
+ * `tests/unit/contract-blocker-anchor-truth.test.mjs` 这类真实性断言打架。②第 4263 行幂等台账 evidence 的
+ * `lines` 原写 `786-2656`（:786 是 `+ '不得在高温时段施药，不要与碱性药剂混用；安全间隔期 14 天。',`，与幂等无关），
+ * 收敛成 `963-2657`（:963 `const idempotencyStore = idempotency ?? (…)`、:2656 幂等台账注释、:2657
+ * `authService: service,`）：末端仍压住装配点，该格证据条数不变，故不拆第二条 evidence。③第 1476 行
+ * createTurn 的窗口 `chat-wiring.ts:74-85` 只覆盖确定性分支收尾与 live 分支的 `return {` 一行，改成 `:85-97`
+ * （:85 `return {`、:86 `mode: 'live',`、:94 `answerVersions: { … prompt: CHAT_PROMPT_VERSION },`）。
+ * 被引的三个源文件本片一个字节没改，故按规矩把 21 条位移登记进 `tests/unit/doc-anchor-relocations.json`
+ * （md 39／103／129-131 与 json 1476／2197／2219／2241）。D2／D3 把两处 `ambiguous-block` 裸锚点显式化成区间后，
+ * 旧键 `:1852`／`:1270-1273` 会在 `tools/doc-anchors-orphan-baseline.json` 上陈旧、新数字同原因再登记 6 条，
+ * 按工具允许的方式重跑 `--scan docs --write-orphan-baseline --accept=6` 重建（没有手删条目）。
+ * 「第二十一次同步」被先开单的 #963 占用（同批把第 68 行两处锚点改成 183-358 / 257-258），本片在其后，
+ * 故为第二十二次。JSON +30 字节、行数不变；md +30 字节、行数不变（284069 / 4460、206646 / 220）。
+ * 只改锚点数字与 blocker 散文指针、没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284039, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206616, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284069, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206646, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
