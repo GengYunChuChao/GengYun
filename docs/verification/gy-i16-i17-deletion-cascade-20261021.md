@@ -20,15 +20,15 @@
 >    `#390`／`#397` 在 `messages/store.ts:104-105,313-318` 与 `messages/store-pg.ts:430-437` 补 `deleteAllByOwner`／`purgeOwnerData`，
 >    同一事务内 `DELETE FROM public.messages … RETURNING id`（`:230`）＋ 按 `scope` 前缀删 `public.idempotency_keys`（`:234`）。
 > 4. **会话域已并入统一注销账本**（推翻 §3 矩阵会话行、§5 G5／G6、§7 P0-3 的「已建未驱动」）：
->    `#397` 按 P0-3 的**路径①**执行——`conversations` 进 `USER_DATA_DELETION_MODULES`（`user-data-deletion.ts:93-98` 四域）并注册（`:454`），
+>    `#397` 按 P0-3 的**路径①**执行——`conversations` 进 `USER_DATA_DELETION_MODULES`（`user-data-deletion.ts:194-199` 四域）并注册（`:1143-1146`），
 >    备份清单补 `snapshotOwner`（`conversations/store-pg.ts:445`）。
 >
-> **仍然有效、请照旧引用**：G4（`0019` 迁移注释宣称的级联永不触发）、G7（社区域无清理原语、无 scope）、
-> G10（`real` 模式**注销 HTTP 面**整域 503，`services/api/src/app.ts:1775-1783`）、G11（审计与回执台账仍在进程内，`user-data-deletion.ts:577`）、
+> **仍然有效、请照旧引用**：G4（`0019` 迁移注释宣称的级联永不触发）、G7（社区域无清理原语、无 scope）。
+> **已失效／只对一半（2026-11-04 复核）**：G10 的「注销 HTTP 面整域 503」已被 GY-R74 的**按域降级**取代——`real` + 真库下受理开放（POST 202／GET 回执可读），唯一保留的 503 是「`real` 但无真库」（`services/api/src/app.ts:2620-2627`）；G11 只有「审计」仍成立（进程内 `auditLog`），回执台账自迁移 0038 起已持久化（`user-data-deletion.ts:850`）；
 > §4.1 第 2 条（再受理被 `G0003` 确定性拒绝，`0016:112-114`）。
 >
 > **另需澄清一处口径**（本页未写错，但容易被读错）：本页 G10 说的是**注销 HTTP 面**。**消息域**的 `real` 口径是
-> 「有连接池 ⇒ 接 PG；仅无池才整域 503」（`services/api/src/app.ts:752-772`，服务对象在 `pool === null` 时才置 `null`），
+> 「有连接池 ⇒ 接 PG；仅无池才整域 503」（`services/api/src/app.ts:888-898`，store 选择在 `pool === null` 时才回落内存实现），
 > 与台账 `docs/architecture/contract-implementation-status.md` 的 `listMessages` 行一致。把「real 模式消息域整域 503」写成**无条件**的句子属过期口径。
 >
 > 逐句对照、以及「本轮发现但不由本片改」的过期点登记，见 [E4 过期口径订正](gy-r28-e4-stale-claims-20261021.md)。
