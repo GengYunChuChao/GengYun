@@ -214,7 +214,7 @@ test('负例一：删掉注册资料的视图与挂载 ⇒ --check 变红并点�
   const root = makeTempTree(t);
   // 删视图文件本身 + 从 ContentAdminView 摘掉挂载：注册族就不再有任何入口
   rmSync(join(root, 'apps/admin/src/views/RegistrationAdminView.vue'), { force: true });
-  editFile(root, 'apps/admin/src/views/ContentAdminView.vue', text => text.replace(/^.*<RegistrationAdminView\b.*\n/m, ''));
+  editFile(root, 'apps/admin/src/views/ContentAdminView.vue', text => text.replace(/^.*<RegistrationAdminView\b.*\r?\n/m, ''));
 
   const result = runCli(['--check', '--root', root]);
   const output = `${result.stdout}\n${result.stderr}`;
@@ -254,7 +254,7 @@ test('负例三：标记块缺失 ⇒ --check 变红（不许默默放过）', t
 test('负例四（判别力）：删掉 posts 族的真入口视图 ⇒ 变红，且只损失只在它上面有入口的那几条', t => {
   const root = makeTempTree(t);
   rmSync(join(root, 'apps/admin/src/views/ModerationQueueView.vue'), { force: true });
-  editFile(root, 'apps/admin/src/App.vue', text => text.replace(/^.*<ModerationQueueView\b.*\n/m, ''));
+  editFile(root, 'apps/admin/src/App.vue', text => text.replace(/^.*<ModerationQueueView\b.*\r?\n/m, ''));
 
   const result = runCli(['--check', '--root', root]);
   const output = `${result.stdout}\n${result.stderr}`;
@@ -269,7 +269,7 @@ test('负例四（判别力）：删掉 posts 族的真入口视图 ⇒ 变红�
 
 test('负例五（可达性）：摘掉 App.vue 的挂载行 ⇒ 变红并点名不可达视图', t => {
   const root = makeTempTree(t);
-  editFile(root, 'apps/admin/src/App.vue', text => text.replace(/^.*<AuditLogsView\b.*\n/m, ''));
+  editFile(root, 'apps/admin/src/App.vue', text => text.replace(/^.*<AuditLogsView\b.*\r?\n/m, ''));
 
   const result = runCli(['--check', '--root', root]);
   const output = `${result.stdout}\n${result.stderr}`;
