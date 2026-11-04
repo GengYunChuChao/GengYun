@@ -238,7 +238,7 @@ GET /health（未受控）            -> 200
 
 ## 8. 未取得 / 未验证（**不得外推**）
 
-1. **真实持久存储未接**：后台四类资料与运营/开关仍是**进程内内存** store
+1. **真实持久存储未接**：后台四类资料与运营/开关仍是**进程内内存** store（2026-11-04 复核：本条一半失效、一半仍成立——失效半：`services/api/src/app.ts` 第 1367 行 `createPostgresAdminContentStore({ pool })`、第 1376 行 `createPostgresFeatureFlags({ pool })`、第 1502 行 `createPostgresAccountAuthority({ pool })`、第 1510 行 `createPostgresAccountsDirectory({ pool })`，`real` 且有池时资料/开关/账号已是 PG store，不再是「进程内内存」；仍成立半：`pool === null` 时整域仍 fail-closed，后台路由一律 503 `PROVIDER_UNAVAILABLE`。）
    （`persistent:false`，重启即回到装配基线）。因此 `real` 执行模式下**后台域整体 fail-closed**
    （34 条路由一律 503 `PROVIDER_UNAVAILABLE`，既有口径未改动）⇒ 本片**不声称**开关在 real 有权威状态
    （闸门 `armed:false`，§2.5）。

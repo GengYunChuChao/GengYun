@@ -347,7 +347,7 @@ GY-I09 第二片探针：识别任务 · Top3 候选与选择闭环（合成数�
 | 微信开发者工具走查 | 未取得 | 开发者工具打开本 worktree；`npm run test:mini` 只证明结构与语法 |
 | ACE3V Android 真机 | 未取得 | 沿用 GY-I08 的手机最小清单流程（本片不含真机证据） |
 | 识别任务与选择的 PG 持久化 | 未取得（内存 store） | `createRecognitionService(...).describe().storePersistent === false` |
-| 识别 → 历史 写入接线 | **跨线未接线**（待 #16 内部口进 main） | `git grep -n appendHistory -- services` 应为空即为未接线（§4） |
+| 识别 → 历史 写入接线 | **跨线未接线**（待 #16 内部口进 main） | `git grep -n appendHistory -- services` 应为空即为未接线（§4）（2026-11-04 复核：已接线——`services/api/src/app.ts` 第 1091 行 `await history.appendHistory({ ...input, event_key: … })`（OCR 终态同款在第 1114 行），定义在 `services/api/src/history/service.ts` 第 447 行；上面这条判定命令今天**非空**，故本行「跨线未接线」「应为空即为未接线」均作废。） |
 | 真实资料用量卡 | 仍为 0 | `node tools/verify-gy-i09-candidates.mjs` §5：`conditionally_renderable_count = 0` |
 
 ## 10 PR 正文（可粘贴）

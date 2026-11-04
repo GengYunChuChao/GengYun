@@ -14,7 +14,7 @@
 | ① | 本主体 messages 注销后行数 | **3 → 0**（硬删：表仍是 8 列、无任何软删列；A 的 `users` 行仍在 ⇒ 不是外键级联带走的）；他人 2 行、负控制主体 2 行 **id 逐一原样** |
 | ② | 共享台账按 `scope` 前缀删 | 本主体 **3 → 0**（`left(scope, len(uuid)+1) = uuid \|\| chr(10)`，其中 1 条是**本主体在 auth 域**的行，见 §6）；他人 3 行、负控制 2 行**逐字原样**（`scope` + `key_hash` 都不变）；整表 **8 → 5**（不是整表清空） |
 | ③ | 负控制读数 | 同库同连接、**不跑清理**的主体 C：消息 **2 行**、台账 **2 行**；清理后共享台账仍 **5 行**（> 0）⇒ 上面的 0 行不是恒真断言 |
-| ④ | 这个脚本现在**有没有被 CI 执行** | **没有。** 已登记 ≠ 已接线：它只出现在 `tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS`（未接线白名单）里；`ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS` / `FROZEN_MANAGED_SCRIPTS` 不含它，`.github/workflows/**` 无任何 `run:` 提到它（本片红线禁改 workflow，CI 接线另开一单） |
+| ④ | 这个脚本现在**有没有被 CI 执行** | **没有。** 已登记 ≠ 已接线：它只出现在 `tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS`（未接线白名单）里；`ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS` / `FROZEN_MANAGED_SCRIPTS` 不含它，`.github/workflows/**` 无任何 `run:` 提到它（本片红线禁改 workflow，CI 接线另开一单）（2026-11-04 复核：④ 读数改为「有」——`real-pg-integration.yml` 第 649 行的 `run:` 已执行该脚本（第 632 行注释记 R29-W13 接入），`ci-real-pg-wiring` 的受管与冻结清单今天也已含它；本行「没有」「无任何 `run:` 提到它」作废。） |
 
 证据串（逐字，取自实跑输出）：
 
@@ -139,7 +139,7 @@ PASS 8: 回执：messages.online_state = completed（证据串即上面的行数
 
 ## 7. 未取得项 / 未接线项（⛔ 显式登记，别读成已完成）
 
-1. **CI 未接线**：`.github/workflows/**` 无任何 `run:` 跑 `tests/integration/messages-purge-pg.mjs`
+1. **CI 未接线**：`.github/workflows/**` 无任何 `run:` 跑 `tests/integration/messages-purge-pg.mjs`（2026-11-04 复核：本项已被推翻——CI 已接线：`.github/workflows/real-pg-integration.yml` 第 649 行的 `run:` 就是 `node tests/integration/messages-purge-pg.mjs`（第 632 行注释记「R29-W13 接入」），故「CI 未接线」的读法与随后「要它变成已接线得另开一单去加 step」的推论都不再成立。）
    （本片红线禁改 workflow）。`tests/unit/ci-integration-chain-structure.test.mjs` 的
    `UNWIRED_DECLARATIONS` 只是**未接线白名单**，其存在恰恰说明「没人跑它」；`ci-real-pg-wiring.test.mjs`
    的受管清单也没有它。要它变成「已接线」，得另开一单去 `real-pg-integration.yml` 加 step（并按该 workflow 的
