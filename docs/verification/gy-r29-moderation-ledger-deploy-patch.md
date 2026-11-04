@@ -205,7 +205,7 @@
    `services/api/db/migration-reservations.json` 里的 27 号条目**（或整文件删除后不再引用）。
 3. 删除后可一并移除 `tests/integration/fixtures/0027_admin_audit_observability.sql` 与
    `moderation-ledger-pg.mjs` 的 `[F]`/`[M]` 里的 0027 段（届时真目录里就是 0027）。
-   在 0027 未合入前**不许**删：那会退化成「等 #428」的空口承诺。
+   在 0027 未合入前**不许**删：那会退化成「等 #428」的空口承诺。（2026-11-04 复核：条件已消失——`0027_admin_audit_observability.sql` 已在 main（#453 `f971e35c`），#428 亦已合入 `fab7a617`；本条作为**条件式处方**保留原意，是否仍然适用请作者裁定）
 4. `docs/verification/gy-i24-release-materials-index-20261017.md` 的迁移数届时仍是 27
    （0027 补进来 ⇒ 28？否：本片 27 = `0001..0026` + `0028`；#428 合入后 **28**）——
    该数字由测试从文件系统实测派生，改完文件跑一次 `release-materials-index` 即会指出应写几。
