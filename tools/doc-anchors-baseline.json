@@ -79,12 +79,6 @@
       "path": "services/api/src/admin/ops/jobs-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/admin/ops/jobs-pg.ts:419"
-    },
-    {
-      "path": "services/api/src/admin/ops/jobs-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
       "reference": "services/api/src/admin/ops/jobs-pg.ts:450-451"
     },
     {

@@ -463,7 +463,7 @@ node --test --test-isolation=none tests/unit/migrations.test.mjs \
 | --- | --- |
 | 「显式维护端点（仅后台能力位）」 | **未实现**。新增对外端点会改契约面（本片纪律禁止），且需要能力位/审计设计 ⇒ 本片只做「请求重放」这一半；重放的驱动者（谁持有 `requestId` 并决定何时重跑）仍在片外 |
 | 进程内「扫描到期请求」的枚举器 | **未实现**。`deletion_requests` 无运行时列权限（既有最小权限口径），运行时无法自行列出到期请求 ⇒ 重放必须由外部 driver 提供 `requestId`（真库集成臂就是这样驱动的）。要补，需先设计窄口径只读函数并过最小权限断言 |
-| `real` 模式整域可用 | **未翻**。`createAccountDeletionRequestService({ available: executionMode !== 'real' })` 保持：7 日在线/30 日备份的完整执行链与第三方完成证据仍未齐，本片不谎称可用（`real` 模式 POST/GET 仍 503 `PROVIDER_UNAVAILABLE`） |
+| `real` 模式整域可用 | **未翻**。`createAccountDeletionRequestService({ available: executionMode !== 'real' })` 保持：7 日在线/30 日备份的完整执行链与第三方完成证据仍未齐，本片不谎称可用（`real` 模式 POST/GET 仍 503 `PROVIDER_UNAVAILABLE`）（2026-11-04 复核：**此格已过期**——`services/api/src/app.ts` 今日为 `available: config.executionMode !== 'real' \|\| deletionAcceptanceDurable`，`real` + 可用真库不再整域 503：受理可 202、回执可读；仍成立的是「真实备份介质逐用户清理」与「第三方完成证据」按域 `blocked`／`unsupported`） |
 | `contract-status.json` 的 blocker | **未改**。§8.2 四条前置（0023 真库可建、写入路径含 0 对象模块、端口三态接通且 `purged` 由复核产生、端到端证据）中，本片只做实了前三项与「本机真 PG 端到端」；CI 真库臂因 `0020`–`0022` 尚未落地而断号仍红（合流波合并序预期，见 `.pg17/dispatch/merge-wave-20261019.md`） ⇒ blocker 保持 |
 | 真实备份介质上的逐用户清除 | **未取得**（仓内无此介质，§11 已登记）；本片只证「清单行落库 + 到期置 `purged` + `payload` 置 null + 证据可复算」 |
 | 30 天真实时间流逝 | **未取得**（集成臂用脚本化时钟推进 31 天，属推算，不代表真实到期执行过） |
