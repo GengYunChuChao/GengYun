@@ -48,7 +48,7 @@ node tests/integration/local-dev-detail-route.cjs <miniprogram-automator目录> 
 
 ## 整项仍待完成
 
-本次不关闭 #7。客户端目前读取随包资料；实际 `services/api/src/app.ts` 仅装配 health、auth、admin auth、consents、profile，尚未装配知识／除草剂查询路由。本地 `GET /api/v1/knowledge` 实测 404，因此生产来源下架及在线治理更新尚未接线，离线失效测试不能称为实时同步验收。
+本次不关闭 #7。客户端目前读取随包资料；实际 `services/api/src/app.ts` 仅装配 health、auth、admin auth、consents、profile，尚未装配知识／除草剂查询路由（2026-11-05 复核：`services/api/src/app.ts` 第 37 行 import `registerKnowledgeRoutes`、第 2508 行已调用它，知识／除草剂查询路由在树（该注册函数内四条：`/knowledge`、`/knowledge/:id`、`/herbicides`、`/herbicides/:id`）⇒「仅装配 health、auth、admin auth、consents、profile」与「尚未装配知识／除草剂查询路由」两句不再成立，同页下方 2026-10-16 校订块已记此次变化）。本地 `GET /api/v1/knowledge` 实测 404，因此生产来源下架及在线治理更新尚未接线，离线失效测试不能称为实时同步验收。
 
 > **校订（2026-10-16 实测；上段为 2026-10-11 快照，原文保留不删）**：上段是**当时**的实测。现在时断言已过期：
 > `services/api/src/app.ts:1298` 已装配知识路由（`registerKnowledgeRoutes(...)`），运行期 `/api/v1/knowledge`、`/api/v1/knowledge/:id`、

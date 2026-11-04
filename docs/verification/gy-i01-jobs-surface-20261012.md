@@ -42,10 +42,10 @@ JobSourcePort = { kind, get({userId, jobId}) → Job|null, cancel?({userId, jobI
 | --- | --- | --- |
 | `recognition` | **已接线**（#87）：`getJob` + `cancelJob` 齐备 | — |
 | `transcription` | **已接线读取**（#11/#102）：`getJob` 齐备；**域内无取消入口** ⇒ cancel 返回 503（见设计 7） | 取消能力需 #11 线补域内 `cancel` |
-| `ocr` | `services/api/src/ocr/service.ts` 在本基线**已存在**，但其路由**未装配进 `app.ts`** | 装配方提供 `getJob`（有取消则一并） |
+| `ocr` | `services/api/src/ocr/service.ts` 在本基线**已存在**，但其路由**未装配进 `app.ts`**（2026-11-05 复核：**已装配**——第 2547 行 `registerOcrRoutes(app, config, { guards: gatedGuards, … }, ocrPersistencePool)`，作业源亦已接线（第 2580 行 `createOcrJobSource(app.ocrService)`）⇒ 本行「未装配」不再成立） | 装配方提供 `getJob`（有取消则一并） |
 | `synthesis` | TTS 在 `services/api/src/tts/service.ts`（#105 已接线 **`/speech/synthesis`**，但**未注册 `/jobs`**） | 作业读面若需要，另接 |
-| `answer` | 本基线**无该域服务** | 领域实现后再接 |
-| `moderation` | `services/api/src/community/service.ts` 存在，**无作业面** | 领域提供作业读面后再接 |
+| `answer` | 本基线**无该域服务**（2026-11-05 复核：该域服务在树——`services/api/src/conversations/service.ts`，且第 2590 行 `createAnswerJobSource({` 已接线 ⇒「无该域服务」不再成立） | 领域实现后再接 |
+| `moderation` | `services/api/src/community/service.ts` 存在，**无作业面**（2026-11-05 复核：作业面已接线——第 2566 行 `createModerationJobSource(moderationService)`，该源同时提供 `get` 与 `cancel`（`services/api/src/moderation/job-source.ts` 第 54、61 行）⇒「无作业面」不再成立） | 领域提供作业读面后再接 |
 
 ## 单一注册的证明（命令与原始输出）
 
@@ -142,7 +142,7 @@ services\api\src\jobs\routes.ts:48:    `${API_PREFIX}/jobs/:id/cancel`,
 
 ## 未取得项
 
-- `ocr`/`synthesis`/`answer`/`moderation` 的作业源**未接线**（见"待接线清单"）；转写域的**取消能力**域内不存在（⇒ 503）。
+- `ocr`/`synthesis`/`answer`/`moderation` 的作业源**未接线**（见"待接线清单"）；转写域的**取消能力**域内不存在（⇒ 503）（2026-11-05 复核：四类作业源**已接线**——第 2566 行 `createModerationJobSource(moderationService)`、第 2572 行 `createSynthesisJobSource(synthesisService)`、第 2580 行 `createOcrJobSource(app.ocrService)`、第 2590 行 `createAnswerJobSource({`，均在 `createJobRegistry` 的实参里（第 2549 行注释自述「共 6 个」）⇒ 前半句不再成立。后半句同样被推翻：转写作业源**已提供** `cancel`（`services/api/src/jobs/sources.ts` 第 107 行；该源第 87-95 行的文档注释自陈「`cancelJob` 取消（GY-R27 接线）」，并写明「**不再**被改写成 `503 PROVIDER_UNAVAILABLE`（本基线之前的形态：无 `cancel` ⇒ 503）」），`cancelJob` 由 speech 域实现（`services/api/src/speech/service.ts` 第 666 行）⇒ 作业注册表那处 503「该作业所属能力尚未提供取消（未接线）」只在 `source.cancel === undefined` 时触发（`services/api/src/jobs/registry.ts` 第 306 行），转写域现走域内终态判定，不再是 503）。
 - **PG 持久化**未做（内存 store；进程重启即丢）。
 - **真实供应商**（识别/转写）未接入；**真实样本为 0** ⇒ 不声称任何识别/转写质量或准确率；**未运行需求第 6 节评估**。
 - **真机 / 微信开发者工具**、小程序页面（`identify` 语音模式等）未取得。

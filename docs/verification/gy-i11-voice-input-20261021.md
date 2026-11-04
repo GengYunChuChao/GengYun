@@ -111,7 +111,7 @@
 
 1. **音频容器元数据无剥离路径**：`services/api/src/media/service.ts:927-942` 只对图片剥离并写衍生件，音频原样存 `rawRef`；`packages/media/exif.mjs:432-440` 也不覆盖音频容器（ID3/其它 tags 保留）。是否要求音频同样「去元数据」需契约/服务端裁决（可能涉及新增用途约束或音频专用剥离器）。
 2. **音频取不到字节**：音频分支 `derivativeRef` 恒 `null`，而读面（`services/api/src/media/service.ts:1218` 社区内容读面、`POST /media/{id}/access` 只回句柄）只读衍生件 ⇒ 即使将来放开客户端音频出口，**录音字节仍不可读**。若产品需要「听自己刚录的那条」，需先补契约与读面。
-3. **被拒授权后的设置页入口未接线**：`recorder-port.js:293-295` 的注释承诺「由页面引导到设置页」，但页面无 `wx.openSetting`。补齐要改 `voice.wxml`（新按钮 + 无障碍/44px 令牌约束），属可见 UI 变更，本片未擅自扩范围。
+3. **被拒授权后的设置页入口未接线**：`recorder-port.js:293-295` 的注释承诺「由页面引导到设置页」，但页面无 `wx.openSetting`（2026-11-05 复核：该入口**已接线**——`miniprogram/pages/voice/voice.wxml` 第 224-229 行 denied 态提示块里是一个「打开设置 · 授权录音」按钮（第 227 行 `aria-label`、第 228 行 `bindtap="onOpenSetting"`），`miniprogram/pages/voice/voice.js` 第 864 行调 `recorderPort.openSetting()`，`miniprogram/utils/recorder-port.js` 第 196 行才是 `wx.openSetting({` ⇒「设置页入口未接线」不再成立；不过「页面无 `wx.openSetting`」在「页面不直接调平台 API」这层字面上仍成立——调用经录音端口转发）。补齐要改 `voice.wxml`（新按钮 + 无障碍/44px 令牌约束），属可见 UI 变更，本片未擅自扩范围。
 4. **B7 统一状态层未接入语音页**：`voice.js` 走自造 `recordState`/`transcriptStage` 与逐码文案，`states.js` 的 `denied` 分支在本域不可达。若要统一，需要把「端侧临时态」定义成页面阶段词表并映射到 `state-view`（跨页改动，建议单独一片）。
 5. **转写超时/失败后的服务端记录回收**：UI 已结算，但不发 `DELETE /speech/transcriptions/{id}`（契约里它是「删记录」而非「取消任务」）。是否需要「超时后清记录」需产品口径。
 6. **未取得（不得当通过）**：真实微信开发者工具/真机录音与权限弹窗、真实 ASR 供应商、真实对象存储与访问网关、真实 PG17、GitHub CI（本机未跑远端流水线）。#11 的四条验收复选框（真实 ASR 可追溯 / 关键字段核对 / 私有保存与外发授权接 F13 / 第 6 节评估）**本片一条也不能判过**。
