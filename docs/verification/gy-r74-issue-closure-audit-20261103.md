@@ -132,14 +132,14 @@ node --test tests/unit/favorites-history-visibility.test.mjs
   ⇒ tests 17 / pass 17 / fail 0 / duration_ms 1727.88
 ```
 
-另外用 grep 核过两件事：`services/api/src/routes/favorites.ts` 只有 `app.get`（列表）、`app.post`、`app.delete` 三条路由，**没有 `{id}` 详情读面**；`services/api/src/routes/history.ts` 只有 `GET /history` 与 `DELETE /history/:id`。`services/api/src/history/service.ts` 文件头自述理由「契约里 `/history/{id}` 只有 delete，详情由客户端用第 7 项 `target_ref` 跳转」。
+另外用 grep 核过两件事：`services/api/src/routes/favorites.ts` 只有 `app.get`（列表）、`app.post`、`app.delete` 三条路由，**没有 `{id}` 详情读面**；`services/api/src/routes/history.ts` 只有 `GET /history` 与 `DELETE /history/:id`。（2026-11-04 复核：#878 起还有 `GET /history/{id}`，本条失效。）`services/api/src/history/service.ts` 文件头自述理由「契约里 `/history/{id}` 只有 delete，详情由客户端用第 7 项 `target_ref` 跳转」。
 
 **差额**
 
 无条文差额。三处边界，审查时会被问到：
 
 1. 上面那个隔离脚本自述 `no PG`——它跑的是内存 store + 真回环 HTTP。真库臂 `tests/integration/favorites-history-pg.mjs` 存在但本页**未跑**（见末节）。
-2. 历史域没有独立详情读面（见上）。A4 的「详情」由 `target_ref` 跳转后的识别／OCR 详情兑现，那两处的归属守卫在 `services/api/src/routes/recognitions.ts`（`GET /recognitions/:id` 等四条）里；本页未单独构造越权请求去打它。
+2. 历史域没有独立详情读面（见上）。（2026-11-04 复核：#878 已补 `GET /history/{id}`，本条失效。）A4 的「详情」由 `target_ref` 跳转后的识别／OCR 详情兑现，那两处的归属守卫在 `services/api/src/routes/recognitions.ts`（`GET /recognitions/:id` 等四条）里；本页未单独构造越权请求去打它。
 3. `[范围]` 里「注销删除接 F13」只有两腿：隔离脚本打印的 `X-GY-Cascade=partial`，`gy-r34-closure-matrix-20261024.md` 记「级联只接识别/OCR 两腿，媒体与外发腿未接」。这条不属 `[验收]` 四行，且注销闭集归 #19；写在这里是为了不让「已满足」被读成「注销全链路已接」。
 
 ### 3.3 #17 GY-I17 应用内消息、未读状态与权限跳转（已满足）
