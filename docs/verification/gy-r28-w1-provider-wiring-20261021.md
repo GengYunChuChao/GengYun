@@ -170,7 +170,7 @@ ASR 的 `attemptKey` 与 OCR 撞车 ⇒ 闸门以 `ATTEMPT_ALREADY_RESERVED` 正
 | `node tests/integration/speech-http.mjs` | `PASS 15 loopback HTTP groups; real assembly via buildApp（默认零端口注入）` |
 | `node tests/integration/tts-http.mjs` | `CHECKS pass=42 fail=0`、`RESULT=PASS` |
 | `npm run test:contract` | `tests 6 / pass 6 / fail 0` |
-| `node tools/verify-contract-status.mjs` | 形状错误 0 / 语义错误 0 / 表格一致；`loadConfig` 锚点仍在 `config.ts:155-283` 区间内 |
+| `node tools/verify-contract-status.mjs` | 形状错误 0 / 语义错误 0 / 表格一致；`loadConfig` 锚点仍在 `config.ts:372-570` 区间内 |
 | `npm run test:docs` | 27 项台账 + Markdown/表格 + 研究记录 5 通过 / 0 失败（4 legacy 钉住） |
 | 凭据泄漏自检（进程内映射后扫描受版本控制的文件） | `tracked_files=1492 credential_keys_present=8 value_hits=0`；工作区改动文件 `value_hits=0` |
 | `node tools/verify-provider-live-r28.mjs`（离线） | `reserves=3 settles=3 tripwire_calls=3 ledger_written=false` |

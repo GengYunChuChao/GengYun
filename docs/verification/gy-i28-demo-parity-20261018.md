@@ -94,7 +94,7 @@ PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门�
 | --- | --- | --- |
 | `:73` `.section-head > .chips` | `messages.wxml:29` `<view class="chips">` | 同一层级 |
 | `:73` `button.chip` / `.chip.active` | `messages.wxml:33` `class="chip {{filter === item.value ? 'chip--active' : ''}}"` | demo `.active` ⇒ 本仓 `.chip--active`（`styles/components.wxss:877/892`） |
-| `:73` chips `全部/互动/系统` | `messages.js:41` `FILTERS` = `all/unread/interaction/system` | 见 §3.2 口径差异 |
+| `:73` chips `全部/互动/系统` | `messages.js:61-62` `FILTERS` = `all/unread/interaction/system` | 见 §3.2 口径差异 |
 | `:73` `${btn('全部已读','read-all','ghost')}` | `messages.wxml:38-42` `<button class="btn btn--ghost" disabled="{{markingAll \|\| !hasUnread}}" bindtap="onMarkAllRead">` | 无未读时禁用；标记中显示「正在标记…」 |
 | `:113` `case 'read-all': S.read = notifications.map(n => n.id)` | `messages.js:447` `onMarkAllRead()`：`targets = items.filter(unread)`，串行 `_markReadOne` | 不新增批量接口；成功只采信服务端返回的本体（`revision`／`read_at`） |
 | `:112` `case 'message-filter': messageFilter = el.dataset.filter; render()` | `messages.js:362` `onFilter(event)`：只切本地视图，**不重新请求** | 同「本地筛选、不重排数据」 |
@@ -104,7 +104,7 @@ PASS: 令牌逐值一致、关键类齐全、图标几何与 demo 一致、门�
 
 - demo 只有 `全部/互动/系统` 三档（`:73`）；派单要求「全部／未读」。
 - 本片落**四档**：`全部／未读／互动／系统`。理由：两条要求都指向真实可用的筛选，且都能用契约字段落地——
-  `Message.type` 是闭集 `comment|like|moderation|system`（`messages.js:21-26` `TYPE_LABELS`），
+  `Message.type` 是闭集 `comment|like|moderation|system`（`messages.js:35-40` `TYPE_LABELS`），
   「互动」= `comment`+`like`、「系统」= `moderation`+`system`，映射由契约类型决定，不是本地编造的分类。
 - 只过滤**已加载**的消息（服务端游标分页，本地不重排、不补数据）；未命中时沿用 `state-view` 的 `empty`
   （`messages.wxml:66-70`），标题/说明带当前档位名（`filterLabel`），并说明这不是「服务端没有消息」。

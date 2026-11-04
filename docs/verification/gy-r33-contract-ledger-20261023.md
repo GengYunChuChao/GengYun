@@ -451,7 +451,7 @@ other changes=0
 `docs/architecture/contract-implementation-status.md:19` 是人工摘要（在 start 标记之前），本片做 3 处一致性订正：
 
 1. 社区段：`real模式整域503 PROVIDER_UNAVAILABLE、真实持久存储未交付` → `持久化已交付（迁移 0022 + store-pg.ts），仅 real 且无持久化落点时整域 503`。
-2. 消息装配行号：`services/api/src/app.ts:765-770` → `services/api/src/app.ts:802-806`（实测 `messagesStore` 装配行）。
+2. 消息装配行号：`services/api/src/app.ts:765-770` → `services/api/src/app.ts:893-896`（实测 `messagesStore` 装配行）。
 3. 契约条数：`112条业务契约` → `113条业务契约`（工具实测 113 条 operation）。
 
 > 这三处都不在生成区；若指挥/监工要求「状态文档零手改」，可只回退这三处，不影响 JSON 与生成区。
