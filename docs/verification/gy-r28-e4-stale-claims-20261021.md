@@ -8,7 +8,7 @@
 | 分支 | `docs/gy-r28-e4-stale-claims`（worktree `E:\GengYunCommander\wt-e4-doc-truth`）；**未 push、未开 PR** |
 | 覆盖 issue | #16、#17、#19（主）；#12、#28 只做口径对齐，不改判 |
 | 是否改代码 | **否**。改动面 = 5 个既有 Markdown + 本页：`README.md`、`docs/development-progress.md`、`docs/verification/gy-i16-i17-deletion-cascade-20261021.md`、`docs/verification/gy-i28-unified-states-20261021.md`、`docs/verification/gy-i19-backup-purge-driver-20261021.md`（后者只加 superseded 注）。**未改**任何 `.ts`／`.js`／`.mjs`／`.sql`、`packages/contracts/openapi.json`、`docs/architecture/contract-status.json`（含其生成区 `contract-implementation-status.md`），也**没有**跑 `--write-doc` |
-| 计数时点 | `gh` 与 `git` 实跑时刻 **2026-10-21T14:56:42Z**（本地 `2026-10-21 22:56:42 +08:00`）；读数：开放 issue 24／已关闭 issue 3／累计合入 PR 312／在飞 PR 3（`#400`、`#399` 非草稿、`#324` 草稿，均 `MERGEABLE`）／`git rev-list --count HEAD` 366／迁移 26 个（最大 `0026_speech_persistence.sql`）／`HEAD` = `ee46eb1dc2b8a5a57acd9b8905b72863d45cfa4e`。本页、README 表头与 `docs/development-progress.md` 的 2026-10-21 快照用的是同一次读数（本轮核对期间在飞数由 2 增至 3，因为 `#400` 新建；以这次为准） |
+| 计数时点 | `gh` 与 `git` 实跑时刻 **2026-10-21T14:56:42Z**（本地 `2026-10-21 22:56:42 +08:00`）；读数：开放 issue 24／已关闭 issue 3／累计合入 PR 312／在飞 PR 3（`#400`、`#399` 非草稿、`#324` 草稿，均 `MERGEABLE`）／`git rev-list --count HEAD` 366／迁移 26 个（最大 `0026_speech_persistence.sql`）／`HEAD` = `ee46eb1dc2b8a5a57acd9b8905b72863d45cfa4e`。本页、README 表头与 `docs/development-progress.md` 的 2026-10-21 快照用的是同一次读数（本轮核对期间在飞数由 2 增至 3，因为 `#400` 新建；以这次为准）（2026-11-04 复核：三者均已合入——#400 `e57b2f8c`、#399 `805b15ce`、#324 `d4a47206`；「在飞／草稿」作废，原文保留为 2026-10-21 时点） |
 | 不做什么 | 不改验收结论：#16／#17 仍记「待前置」、#19 仍记「不可关」，本页**不写**「已验收」「可关闭」。历史页的当时读数不改写，只加 superseded 标注 |
 
 ---
