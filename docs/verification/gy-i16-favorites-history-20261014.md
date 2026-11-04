@@ -378,7 +378,7 @@ app.historyService.appendHistory({
 | 真实目标可见性核验 | 后续 | 端口 + fail-closed 默认 | 真实核验实现 |
 | 注销删除的 HTTP 入口（`requestAccountDeletion`） | GY-I19 | F13 模块可被其直接复用 | 该路由本身 |
 
-`/me/account/deletion`／`/account/deletions/{id}` 在本仓**至今未实现**（`services/api/src` 中无任何命中），
+`/me/account/deletion`／`/account/deletions/{id}` 在本仓**至今未实现**（`services/api/src` 中无任何命中），（2026-11-04 复核：两个路由已实现——`services/api/src/routes/account-deletion.ts` 的 `routePath` 即 `/me/account/deletion`，`/account/deletions/{id}` 同文件注册；落地提交 `9c66cd8c`（2026-10-16，#217），本页原文的「至今未实现」是 2026-10-14 时点读数。）
 本片的 F13 注册表**已就绪可被其复用**；本片**不改**那条流程。
 
 ## 7 PR 正文可粘贴段落（`Refs #16`，**不关闭整项**）

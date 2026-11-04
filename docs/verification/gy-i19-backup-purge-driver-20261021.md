@@ -317,9 +317,9 @@ systemd timer 同理。**本片没有**往 `.github/workflows/**` 里加任何�
 
 > **状态更新（后续，2026-10-21 补注；上表原文不改）**
 >
-> - **D1 已按「建议接」落实**：另有在飞 PR（分支 `test/gy-r28-e5-backup-driver-ci`，PR #400，**尚未合入**）
->   把 `tests/integration/backup-copies-purge-pg.mjs` 接进 `.github/workflows/real-pg-integration.yml`（受管脚本第 14 条，自起集群形态）。
->   因此本表 D1 的「本片红线禁止改 workflows ⇒ 未接线」只是本片的当时状态，**不是现行状态**；未合入前也不得记作「已接线」。
+> - **D1：2026-11-04 复核：#400 已合入**（`e57b2f8c`，2026-10-21）。`backup-copies-purge-pg.mjs` 已由 `.github/workflows/real-pg-integration.yml` 受管执行（受管脚本第 14 条，自起集群形态；第 627 行 `run: node tests/integration/backup-copies-purge-pg.mjs`），
+>   `tests/unit/ci-real-pg-wiring.test.mjs` 亦已登记 ⇒ **该用例可记作已接线**；原「尚未合入」的时点读数作废，
+>   本表 D1 的「本片红线禁止改 workflows ⇒ 未接线」只作当时状态（**不是现行状态**）。
 > - **§1 第 ③ 条与 §7「消息域／会话域／社群域的副本行」的读数已过期**：`#397` 已把 `BACKUP_COPY_SCOPES` 扩到四域
 >   （`packages/privacy/backup-copies.mjs:42-47`：`favorite`／`history`／`message`／`conversation`），消息域与会话域**都有**副本清单行；
 >   只有社群域仍无 scope。本页 §1／§7 原文保留为 `3935c55` 基点的读数。
