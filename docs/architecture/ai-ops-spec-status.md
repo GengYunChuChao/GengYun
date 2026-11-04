@@ -215,7 +215,7 @@
 
 **真正没做到的**（仍是缺口，但级别是 P1）：
 
-- 投影语义只真实化一半：`target_ref.revision` 自 #608 起取记录行真实 revision（`services/api/src/admin/ops/jobs-pg.ts:413`），只有记录尚未创建时才退回 1；`result` 恒 `null`（同文件 :419）是契约形状，即前端看到的「结果」仍不是真值（P11）。
+- 投影语义只真实化一半：`target_ref.revision` 自 #608 起取记录行真实 revision（`services/api/src/admin/ops/jobs-pg.ts:429` 的 `targetRevision`），只有记录尚未创建时才退回 1；`result` 恒 `null`（同文件 :449）是契约形状，即前端看到的「结果」仍不是真值（P11）。
 - 原「能力无入口」已闭合（#694）：后台 UI 的列表 URL 原来只 set `limit` 与 `cursor`，现在 `state`／`error_code` 逐字进查询串（apps/admin/src/lib/jobs-api.mjs:276-297 的 `buildJobsUrl`，闭集外的值在本地就抛错、不发请求），服务端仍是既有的 SQL 下推（services/api/src/admin/ops/jobs-pg.ts:245-247）；渲染级用例 tests/unit/admin-ui-jobs-filter.test.mjs 锁住两个下拉。P08 因此撤条并入 E41。
 
 ### 7.3 模型／提示词版本零真实值（P0）
