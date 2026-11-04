@@ -251,7 +251,7 @@ STATUS_KEYS=12
 - 原文（逐字）：
 
 ```text
-| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1291` 的 `adminRealUnwired` 值只等于「real 模式」，`:1313-1315` 在 real + 有池时即构造生产端口 |
+| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1358` 的 `adminRealUnwired` 值只等于「real 模式」，`:1313-1315` 在 real + 有池时即构造生产端口 |
 ```
 
 - 新文（逐字）：

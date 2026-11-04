@@ -117,7 +117,7 @@ ON CONFLICT (id) DO UPDATE
 
 | 写点 | 位置 | 事务边界 |
 |---|---|---|
-| ocr 创建 | `services/api/src/ocr/store-pg.ts:571` | `withTransaction`（`BEGIN` → 源表 INSERT → 台账 upsert → `COMMIT`） |
+| ocr 创建 | `services/api/src/ocr/store-pg.ts:486` | `withTransaction`（`BEGIN` → 源表 INSERT → 台账 upsert → `COMMIT`） |
 | ocr 开始/取消 | `services/api/src/ocr/store-pg.ts:612` | 同上（读 / CAS UPDATE / 台账三句同一事务） |
 | ocr 终态 | `services/api/src/ocr/store-pg.ts:656` | 沿用 `commitTerminal` 既有事务（行锁 → 记录 INSERT → 作业 UPDATE → 台账） |
 | recognition 三处 | `services/api/src/recognitions/store-pg.ts:644`（创建）/ `services/api/src/recognitions/store-pg.ts:686`（开始·取消）/ `services/api/src/recognitions/store-pg.ts:730`（终态） | 同 ocr |
