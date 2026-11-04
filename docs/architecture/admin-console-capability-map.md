@@ -11,7 +11,7 @@
 
 | 面 | 现在的事实 | 锚点 |
 | --- | --- | --- |
-| 服务端 admin 端点 | **50 条 admin 面注册路由，对应 50 个 operationId**（`admin.ts` 46 + `admin-auth.ts` 3 + `admin-reports.ts` 1；机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首那套契约口径的 path／operation／scope 读数本页不抄，需要时现场数 `packages/contracts/openapi.json` | services/api/src/routes/admin.ts:198-487 |
+| 服务端 admin 端点 | **50 条 admin 面注册路由，对应 50 个 operationId**（`admin.ts` 46 + `admin-auth.ts` 3 + `admin-reports.ts` 1；机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首那套契约口径的 path／operation／scope 读数本页不抄，需要时现场数 `packages/contracts/openapi.json` | services/api/src/routes/admin.ts:198-588 |
 | 前端真实调用 | **50 个 operation 中 49 个有 UI 入口（无入口 1 条：`advanceReport`）**，机器重算，见标记块（含 3 条 auth：`apps/admin/src/auth/session.ts` 的 `loadAdminSession`／`signInAdmin`／`signOutAdmin`）。旧版手数的「30 个 operation、33 处物理调用点」是 2026-10-26 的读数；本行只认 §0 标记块的机器重算（`node tools/verify-admin-capability-map.mjs`） | apps/admin/src/lib/admin-content-api.mjs:409 |
 | 页面 | 19 个 `.vue`（口径：`git ls-files '*.vue'` 实测 19 个＝壳 `apps/admin/src/App.vue` 1 个 + `apps/admin/src/views/` 下 18 个——16 个视图页（主 tab 视图 10 + 子页 6）+ 同目录子组件 2 个：`ContentFieldGrid.vue`、`WriteReceipt.vue`；`apps/admin/src/components/` 目录不存在，子组件与视图同放 `views/`）；「社区审核队列」已接入读 + 通过/驳回，「人工审核」仍是空占位 | apps/admin/src/App.vue:27-38 |
 | 死按钮 | 0 个（机器重算 `deadButtons=0`）；另有 6 个 `class="link"` 的「详情/编辑/展开原文」按钮——它们**带**自己的 `@click.stop`（复制父行动作、阻止冒泡），**不是**「自身无 handler」（旧版那句是错的，2026-11-02 逐文件复核，见 §3 第三张表） | apps/admin/src/views/SourcesView.vue:506 |
