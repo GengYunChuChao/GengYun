@@ -119,7 +119,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 | PR | 内容 | 迁移 | 可合并性 |
 | --- | --- | --- | --- |
-| #324 | 原生文字提问页与识别入口（#12／#28 页面，仍为草稿，未合入） | 无 | MERGEABLE（草稿） |
+| #324 | 原生文字提问页与识别入口（#12／#28 页面，仍为草稿，未合入）（2026-11-04 复核：`#324` 已于 2026-10-24 合入 `d4a47206`（单父提交、标题「Reviewed PR #324」，落 `miniprogram/pages/qa/qa.js` 等 13 个文件）；原句「仍为草稿，未合入」作废） | 无 | MERGEABLE（草稿） |
 | #328 | 台账跟随订正：#325 遗留的 13 处过期行号与「未接作业源」失实表述（只动台账，未合入前不记作事实） | 无 | MERGEABLE |
 
 本轮已合入、不在上表：#278（0019 消息 PG）、#282（0020 feature_flags）、#279（0021 后台账号读面）、#296（0022 社区 PG）、#295（0023 备份副本域）、#320（#6 S3 兼容适配器真实代码路径测试）、#321～#322（转写／合成取消接线）、#323（0024 OCR 持久化，2026-10-20T12:05:48Z）、#325（台账订正，12:03:58Z）、#326（手机号判据，12:05:32Z）、#327（真库门禁第三批，12:11:28Z；`real-pg-integration.yml` 扩到 7 条真库脚本、`MANAGED_SCRIPTS` 7 条）。#248（#11 客户端切片）已于 2026-10-19 关闭、**未合入**，其内容不进 main。`main` 现有 24 个迁移、最大号 `0024_ocr_persistence.sql`。
@@ -165,7 +165,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 | 提交总数／自 10-20 基线新增 | 366／70 | `git rev-list --count HEAD`；`git rev-list --count 4122976..HEAD` |
 | 迁移文件数／最大号 | 26／`0026_speech_persistence.sql`（含 `0025_recognitions_persistence.sql`） | `(Get-ChildItem services/api/db/migrations/*.sql).Count` |
 
-整项完成数仍 3／27（#1、#2、#3），其余 24 项 OPEN。10-20 之后合入的 #389～#399 未改变任何整项 AC：`#391`／`#392`／`#393`／`#394`／`#395`／`#396`／`#397`／`#398` 都是局部实现或证据页，`#399` 尚未合入。
+整项完成数仍 3／27（#1、#2、#3），其余 24 项 OPEN。10-20 之后合入的 #389～#399 未改变任何整项 AC：`#391`／`#392`／`#393`／`#394`／`#395`／`#396`／`#397`／`#398` 都是局部实现或证据页，`#399` 尚未合入。（2026-11-04 复核：`#399` 已合入 `805b15ce`（2026-10-21，提交标题含「(#399)」）；原句「`#399` 尚未合入」作废）
 
 ### 契约门禁（本机重跑 `node tools/verify-contract-status.mjs`，退出码 0）
 
@@ -182,7 +182,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 ### 本节订正的三类过期表述（只订正事实，不动验收结论）
 
-1. **真库 CI 接线（10-20 节第 127 行那句已过期）**：`real-pg-integration.yml` 现有 **13 条受管脚本**（12 条 `-pg` ＋ `recognition-chain-e2e.mjs`；`git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml`=13）。逐条来源：`ocr-jobs-pg.mjs` ← #331（第 8 条）、`recognitions-pg.mjs` ← #349、`account-suspend-pg.mjs` ← #353（脚本自身的 SCRAM 28P01／42710 缺陷已修）、`speech-pg.mjs` ← #354、`backup-purge-pg.mjs` ← #360（用 PGDG apt 装 PG 17 服务端二进制取 `initdb`/`pg_ctl`，故「runner 与容器不共享该二进制 ⇒ 不可接」的判断已过期）、`recognition-chain-e2e.mjs` ← #375（第 13 条）。另有在飞 PR（分支 `test/gy-r28-e5-backup-driver-ci`，PR #400）把 `backup-copies-purge-pg.mjs` 接进去（将成第 14 条，**未合入前不记作事实**）。仍未接的脚本见本节末。
+1. **真库 CI 接线（10-20 节第 127 行那句已过期）**：`real-pg-integration.yml` 现有 **13 条受管脚本**（12 条 `-pg` ＋ `recognition-chain-e2e.mjs`；`git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml`=13）。逐条来源：`ocr-jobs-pg.mjs` ← #331（第 8 条）、`recognitions-pg.mjs` ← #349、`account-suspend-pg.mjs` ← #353（脚本自身的 SCRAM 28P01／42710 缺陷已修）、`speech-pg.mjs` ← #354、`backup-purge-pg.mjs` ← #360（用 PGDG apt 装 PG 17 服务端二进制取 `initdb`/`pg_ctl`，故「runner 与容器不共享该二进制 ⇒ 不可接」的判断已过期）、`recognition-chain-e2e.mjs` ← #375（第 13 条）。另有在飞 PR（分支 `test/gy-r28-e5-backup-driver-ci`，PR #400）把 `backup-copies-purge-pg.mjs` 接进去（将成第 14 条，**未合入前不记作事实**）。仍未接的脚本见本节末。（2026-11-04 复核：受管脚本不止 13 条——按本节同一口径 `git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml` 实测 **40**；`tests/unit/ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS` 逐条数亦 40 条（38 条 `-pg.mjs` ＋ `recognition-chain-e2e.mjs` ＋ `user-chain-e2e.mjs`，与 `FROZEN_MANAGED_SCRIPTS` 同集合），并与 workflow 里真跑 `tests/integration` 脚本的 40 条 `run:` 块双向相等（互不缺失）；#400 已合入 `e57b2f8c`，`backup-copies-purge-pg.mjs` 是其中在跑的一条；原句「13 条受管脚本」与「将成第 14 条，未合入前不记作事实」均作废）
 2. **注销清理链（10-20 节第 109 行「仍缺 7／30 日到期的真实执行」）**：备份 30 日的**执行者已补**——#398 新增运维命令 `tools/purge-expired-backup-copies.mjs` ＋ 驱动 `services/api/src/privacy/backup-purge-driver.ts`（绕过受理函数、只读写 `user_backup_copies`，真库 14 臂 ALL PASS）；#397 把注销清理闭集扩到**四域**（favorites／history／messages／conversations，`services/api/src/privacy/user-data-deletion.ts:194-199`）并给会话域补 `snapshotOwner`，真库臂判「四域清单行齐 ⇒ 整体 `completed`」。**仍未取得**：真实 cron／CVM 调度读数（刻意不做常驻定时器）、7 日在线的真实时钟执行、第三方删除证据、恢复清单重放。
 3. **「受理同一事务撤会话」不再算缺口**：`services/api/db/migrations/0016_account_deletion_persistence.sql:132-134` 本就在同一事务内撤销该用户全部活跃会话；10-20 节若沿用旧口径，以本行为准。
 
@@ -197,7 +197,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 ### 仍未接 CI 的 `-pg` 脚本
 
-截至本节时点：`tests/integration/backup-copies-purge-pg.mjs`（#398 新增，接线由在飞 PR #400 承担，未合入）。其余 `-pg` 脚本都已在 `real-pg-integration.yml` 里。
+截至本节时点：`tests/integration/backup-copies-purge-pg.mjs`（#398 新增，接线由在飞 PR #400 承担，未合入）。其余 `-pg` 脚本都已在 `real-pg-integration.yml` 里。（2026-11-04 复核：`#400` 已合入 `e57b2f8c`（2026-10-21），`.github/workflows/real-pg-integration.yml` 第 627 行即 `run: node tests/integration/backup-copies-purge-pg.mjs`；原句「接线由在飞 PR #400 承担，未合入」作废）
 
 ### 仍未取得的主干（不分整项口径）
 
@@ -222,11 +222,11 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 | 口径 | 读数 | 命令 |
 | --- | --- | --- |
-| 迁移文件数／最大号 | **27**／`0027_admin_audit_observability.sql`（含 `0026_speech_persistence.sql`、`0025_recognitions_persistence.sql`） | `git ls-tree -r --name-only origin/main -- services/api/db/migrations`：顶层 `0001..0027` 共 27 个、最大号 `0027`；`rollback/` 下 `0002..0027` 共 26 个 down |
+| 迁移文件数／最大号 | **27**／`0027_admin_audit_observability.sql`（含 `0026_speech_persistence.sql`、`0025_recognitions_persistence.sql`）（2026-11-04 复核：顶层实测 **53** 个、最大号 `0054_favorites_target_lookup.sql`（`0001`～`0054`，仅缺 `0037` 一号），`rollback/` 下 52 个 down（`0002`～`0054`）；原句「**27**／`0027_admin_audit_observability.sql`」及同格后段「顶层 `0001..0027` 共 27 个、最大号 `0027`；`rollback/` 下 `0002..0027` 共 26 个 down」作废） | `git ls-tree -r --name-only origin/main -- services/api/db/migrations`：顶层 `0001..0027` 共 27 个、最大号 `0027`；`rollback/` 下 `0002..0027` 共 26 个 down |
 
 **订正对象与「不改 10-21 那行」的理由**：上面「2026-10-21 快照」第 166 行记的 **26**／`0026_speech_persistence.sql` 是 `2026-10-21T14:56:42Z` 的实测，当时 `0027` 尚未合入；`0027_admin_audit_observability.sql` 随 `#428`（`fab7a617`，提交时间 2026-10-22 10:20:58 +08:00）才进 `main`，晚于该快照。按该节边界「更新时另起快照、不改本节」，该行**原样保留**（改它等于伪造一次没发生的测量），现行读数以本节为准。
 
-`0027` 之后 `main` 未再出新号，最大号仍是 `0027`；未合入 PR 的迁移号一律不记作既成事实。down 脚本目录是 `services/api/db/migrations/rollback`（`services/api/db/rollback` 不存在，实测 0 个文件），「down 数 = 迁移数 − 1、且无 `0001`」这条不变量在 27／26 下仍成立（`0001` 的永久豁免登记见 `tests/unit/migrations-rollback-pairing.test.mjs` 的 `EXEMPT`）。
+`0027` 之后 `main` 未再出新号，最大号仍是 `0027`；未合入 PR 的迁移号一律不记作既成事实。down 脚本目录是 `services/api/db/migrations/rollback`（`services/api/db/rollback` 不存在，实测 0 个文件），「down 数 = 迁移数 − 1、且无 `0001`」这条不变量在 27／26 下仍成立（`0001` 的永久豁免登记见 `tests/unit/migrations-rollback-pairing.test.mjs` 的 `EXEMPT`）。（2026-11-04 复核：`main` 最大号已是 `0054_favorites_target_lookup.sql`（随 `137454b5`／#851 于 2026-11-03 合入），顶层 53 个、`rollback/` 52 个 down；「down 数 = 迁移数 − 1、且无 `0001`」在 53／52 下仍成立；原句「`0027` 之后 `main` 未再出新号，最大号仍是 `0027`」作废）
 
 ## 本轮合并与返修状态
 
