@@ -196,8 +196,8 @@ const synthesisContentResolved =
 | 未取得 | 原因 |
 | --- | --- |
 | **真库**（真 PostgreSQL）读数 | 本机**没有** PostgreSQL 服务端与客户端（`postgres`/`initdb`/`pg_ctl` 均不在 PATH，无 Docker），`DATABASE_URL` 为空。§3.2 的读数全部来自**注入式只读查询替身**，它只模拟 `where id = $1` 的命中语义与故障注入——**不构成真库已验证** |
-| 真实 TTS 提供者的 HTTP 200 | 真实提供者适配器在 **W1 分支**（PR #404，**未合入** `f5cca8b`）。本分支 `real` 在 `services/api/src/tts/service.ts:471` 即 503，走不到提供者调用 |
-| 合成产物落到真实对象存储 | 媒体端口在 **W2 分支**（PR #408，**未合入**）。本分支 `real` 即便有提供者，也会在 `service.ts:475-478` 因 `media.kind === 'unwired'` 409 |
+| 真实 TTS 提供者的 HTTP 200 | 真实提供者适配器在 **W1 分支**（PR #404，**未合入** `f5cca8b`）。本分支 `real` 在 `services/api/src/tts/service.ts:471` 即 503，走不到提供者调用（2026-11-04 复核：#404 已合入 `d4d48088`，真实提供者由 `app.ts` 的 `createTtsProvider(...)` 装配（`services/api/src/app.ts` 第 1162 行，实现在 `services/api/src/tts/provider.ts`），`tts/service.ts` 入口 503 收窄为「缺凭据」（第 527 行）；「未合入／在 471 行即 503」不再成立） |
+| 合成产物落到真实对象存储 | 媒体端口在 **W2 分支**（PR #408，**未合入**）。本分支 `real` 即便有提供者，也会在 `service.ts:475-478` 因 `media.kind === 'unwired'` 409（2026-11-04 复核：#408 已合入 `5f3cd432`——媒体端口已有 real 接线路径（`createSynthesisMediaPort` 加显式批准，见 `services/api/src/tts/media.ts`），未批准时仍 fail-closed 为 `unwired`、409 改由 `tts/service.ts` 第 531 行判；「W2 分支未合入」不再成立） |
 | 腾讯云内容安全调用 2 次 | **不该有**（见 §1.3：合成期零外呼）。强行接上会把离线审核结论变成合成期现算 + 每受理一次付费一次 |
 
 ### 4.3 费用
