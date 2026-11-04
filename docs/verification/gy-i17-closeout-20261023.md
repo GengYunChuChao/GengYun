@@ -118,7 +118,7 @@
 | 口径（服务端聚合） | `docs/architecture/state-contract.md:32` | `消息未读数量服务端聚合，不从当前页估计` |
 | 失败不清零（页面） | `miniprogram/pages/messages/messages.js:226` | `// G6（#17）：失败分支**不进 \`_applyUnread\`**——一次 setData 都不发给角标，` |
 | 失败不清零（tabBar） | `miniprogram/custom-tab-bar/index.js:55` | `}).catch(function (error) {`（`:57` 注释「失败时一个 setData 都不发」，`:59` 只留 `warnUnreadFailure`） |
-| 可点重试 | `miniprogram/pages/messages/messages.js:244` | `onRetryUnread: function () {` |
+| 可点重试 | `miniprogram/pages/messages/messages.js:246` | `onRetryUnread: function () {` |
 
 ### 2.3 读标记（CAS ＋ 版本 ＋ 强 ETag）
 
