@@ -287,7 +287,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
    ⇒ **2 处命中（`:1074`／`:1116`；原记 :834／:873）**（`services/api/src/app.ts:61`／`:66` 为导入行，不计）。
    ⇒ 上传面即使接线成功，也**不构成**识别／语音／TTS 可用的证据：三个消费域与本域不共享任何媒体事实。
 3. **生命周期清扫有机制、无生产触发点**：本片点到的 `expireInitiated()` 与 `cleanupOrphans()` 在全生产面
-   **零调用点**，24h 过期回收与失败／取消后的孤立对象回收**在运行时永不发生**（只在测试里被直接调用）。
+   **零调用点**，24h 过期回收与失败／取消后的孤立对象回收**在运行时永不发生**（只在测试里被直接调用）。（2026-11-04 复核：#6 的 G1 已补生产调用者——`deploy/purge-schedule/gengyun-purge-media-objects.timer` 触发同名 `.service`，其 `ExecStart` 跑 `tools/purge-expired-media.mjs`，该脚本 import `services/api/src/media/purge-driver.ts`，driver 里调 `expireInitiated()` 与 `cleanupOrphans()`；「零调用点／运行时永不发生」不再成立，本节所述回收机制本身仍照旧）
    本节实测（命中数按命令输出计数；2026-10-25 在 `1d65b7ee` 复测为 25／17／4，下列 12／9／0 为 `95b8e7cf` 时点读数）：
 
    - `git grep -n -E "expireInitiated|cleanupOrphans" upstream/main -- services/ packages/ apps/ tools/ miniprogram/`

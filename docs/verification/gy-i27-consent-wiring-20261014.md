@@ -135,7 +135,7 @@
 | 2 | **HTTP 撤回面（`DELETE /me/consents/{purpose}`）经中间件的端到端** | **未验证** | 该路由要求 `pool !== null`；无 PG 时不可达。测试中的"撤回"直接作用于注入的授权存储（合成撤回） |
 | 3 | **外发账本装配 / 真实外发派发经 `consumer.send`** | **未接线** | 账本需**持久** commitGate（单事务 + 行锁；内存参考实现要求同步快照）与接收方读取口，本片未提供该适配器；`app.ts` 因此不装配账本 ⇒ `real` 仍 fail-closed 503，也**不产生**任何 `sent` 记录（不把替身记为真实外发） |
 | 4 | **任务执行前 `assertExecutable` / 保存前 `saveResult` / `cancelVersion` 的路由级接线** | **未接线** | 依赖第 3 项账本；且任务的真实提供者调用发生在各域异步服务内部（提供者接口不带身份上下文），路由层无法替其保存结果 |
-| 5 | **注销（account deletion）消费者触发** | **未接线** | 契约 `requestAccountDeletion` 仍为 `planned`（属 GY-I19）；`onAccountSuspendedOrDeleted` 接口已交付并单测，但无 HTTP 触发点 |
+| 5 | **注销（account deletion）消费者触发** | **未接线** | 契约 `requestAccountDeletion` 仍为 `planned`（属 GY-I19）；`onAccountSuspendedOrDeleted` 接口已交付并单测，但无 HTTP 触发点（2026-11-04 复核：契约 `requestAccountDeletion` 已非 `planned`——`packages/contracts/openapi.json` 里该 operation 挂在 `POST /me/account/deletion`，`docs/architecture/contract-status.json` 记 `route_mounted: true`／`status: partial`（evidence 指 `services/api/src/routes/account-deletion.ts` 第 252-316 行）；消费者真调用在 `services/api/src/privacy/account-deletion.ts` 第 342 行调 `onAccountSuspendedOrDeleted`；「未接线／无 HTTP 触发点」不再成立） |
 | 6 | **真实第三方外发、真实微信身份、真机** | **未验证** | 本单不做且未授权；身份为合成替身 |
 | 7 | **域名/网关/CDN/自定义域名** | **未做** | 用户明确暂不做，本单未涉及任何相关文件 |
 
