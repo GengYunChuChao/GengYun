@@ -239,7 +239,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 | --- | --- | --- | --- |
 | 媒体域仓储（本片） | `services/api/src/media/service.ts:1323`（`persistence: mediaStore`） | `/api/v1/media/*` 7 条 + 社区取图 | **已接 PG**（缺键/缺池时 fail-closed） |
 | `SynthesisMediaPort`（TTS） | `services/api/src/tts/media.ts:141` | 合成产物存放 | `createUnwiredMediaPort()` fail-closed |
-| `SpeechMediaPort`（ASR） | `services/api/src/speech/media.ts:79` | 转写前媒体引用校验 | `createUnwiredMediaPort()` ⇒ `OBJECT_UNAVAILABLE` |
+| `SpeechMediaPort`（ASR） | `services/api/src/speech/media.ts:112-118` | 转写前媒体引用校验 | `createUnwiredMediaPort()` ⇒ `OBJECT_UNAVAILABLE` |
 | `OcrMediaPort` | `services/api/src/ocr/media.ts:77` | OCR 媒体引用校验 | 同上 |
 | `RecognitionMediaPort` | `services/api/src/recognitions/media.ts:76` | 识别媒体引用校验 | 同上 |
 

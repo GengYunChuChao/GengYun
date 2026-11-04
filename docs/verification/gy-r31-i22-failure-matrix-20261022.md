@@ -695,7 +695,7 @@ Node.js v24.16.0
 > **订正（2026-10-31，基线 `7ada259e`）**：上面这条结论在它自己的基线上为真、**现在过期**——三条查证事实与结论原文
 > 全部保留不改。`9bd14e56`（2026-10-24，PR #534）引入 `GET /me/privacy-policy` 读面后：路由与守卫
 > `services/api/src/routes/consents.ts:90-97`（守卫是 `services/api/src/routes/consents.ts:92` 的
-> `preHandler: guards.requireUser`）、装配 `services/api/src/app.ts:2418` 的 `registerConsentRoutes`、守护测试
+> `preHandler: guards.requireUser`）、装配 `services/api/src/app.ts:2483-2486` 的 `registerConsentRoutes`、守护测试
 > `tests/unit/privacy-policy-read.test.mjs:210`「路由已装配」、真库同形用例
 > `tests/integration/consent-zero-policy-pg.mjs:405-413`。因此「负控制无法成立」已被 **NC-25** 取代
 > （`tests/failmatrix/mutations.mjs` 末尾；变异点＝删掉那行 `preHandler: guards.requireUser,`；靶子是**既有**单测

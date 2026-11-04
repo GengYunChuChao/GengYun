@@ -80,7 +80,7 @@
 module.exports = { mode: 'disabled', apiBaseUrl: '' }
 ```
 
-`miniprogram/utils/auth.js:336-341`（`requireLogin`）：
+`miniprogram/utils/auth.js:546-570`（`requireLogin`）：
 ```js
 function requireLogin(callback) {
   const done = typeof callback === 'function' ? callback : function () {}
