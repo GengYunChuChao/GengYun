@@ -126,7 +126,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 
 仍未接 CI 的 `-pg` 脚本（`git grep -n <name> -- .github/workflows` 均零命中）：`account-suspend-pg.mjs`（脚本自身缺陷，SCRAM 口令 28P01／角色已存在 42710，待 s16 修）、`backup-purge-pg.mjs`（需服务端 `initdb` 自起第二集群，CI 的 runner 与容器不共享该二进制）、`ocr-jobs-pg.mjs`（#323 新增，尚未接线）。
 
-旧段登记的 `#282` 启动探测 fail-open 已随其合并修掉：现行装配走三态探测 `probeFeatureFlagsTable`（`services/api/src/admin/ops/flags-pg.ts:299-303`），`services/api/src/admin/ops/flag-gate.ts:425-430` 与 `:464-466` 只在 `missing`（确认未安装）时降级未武装，`unknown`（探测异常）保持武装并在下次判前重探；据此不再把该缺陷列为在飞阻塞。未合入 PR 的结论仍不当作既成事实。
+旧段登记的 `#282` 启动探测 fail-open 已随其合并修掉：现行装配走三态探测 `probeFeatureFlagsTable`（`services/api/src/admin/ops/flags-pg.ts:572-590`），`services/api/src/admin/ops/flag-gate.ts:519-525` 在 `unknown`（探测异常）时保留武装、下次判前重探，`services/api/src/admin/ops/flag-gate.ts:527-536` 只在 `missing`（确认未安装）时降级未武装；据此不再把该缺陷列为在飞阻塞。未合入 PR 的结论仍不当作既成事实。
 
 ### 逐 issue 判定（两层口径，与 README「当前进度（2026-10-20）」表一致）
 
@@ -183,7 +183,7 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 ### 本节订正的三类过期表述（只订正事实，不动验收结论）
 
 1. **真库 CI 接线（10-20 节第 127 行那句已过期）**：`real-pg-integration.yml` 现有 **13 条受管脚本**（12 条 `-pg` ＋ `recognition-chain-e2e.mjs`；`git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml`=13）。逐条来源：`ocr-jobs-pg.mjs` ← #331（第 8 条）、`recognitions-pg.mjs` ← #349、`account-suspend-pg.mjs` ← #353（脚本自身的 SCRAM 28P01／42710 缺陷已修）、`speech-pg.mjs` ← #354、`backup-purge-pg.mjs` ← #360（用 PGDG apt 装 PG 17 服务端二进制取 `initdb`/`pg_ctl`，故「runner 与容器不共享该二进制 ⇒ 不可接」的判断已过期）、`recognition-chain-e2e.mjs` ← #375（第 13 条）。另有在飞 PR（分支 `test/gy-r28-e5-backup-driver-ci`，PR #400）把 `backup-copies-purge-pg.mjs` 接进去（将成第 14 条，**未合入前不记作事实**）。仍未接的脚本见本节末。
-2. **注销清理链（10-20 节第 109 行「仍缺 7／30 日到期的真实执行」）**：备份 30 日的**执行者已补**——#398 新增运维命令 `tools/purge-expired-backup-copies.mjs` ＋ 驱动 `services/api/src/privacy/backup-purge-driver.ts`（绕过受理函数、只读写 `user_backup_copies`，真库 14 臂 ALL PASS）；#397 把注销清理闭集扩到**四域**（favorites／history／messages／conversations，`services/api/src/privacy/user-data-deletion.ts:93-98`）并给会话域补 `snapshotOwner`，真库臂判「四域清单行齐 ⇒ 整体 `completed`」。**仍未取得**：真实 cron／CVM 调度读数（刻意不做常驻定时器）、7 日在线的真实时钟执行、第三方删除证据、恢复清单重放。
+2. **注销清理链（10-20 节第 109 行「仍缺 7／30 日到期的真实执行」）**：备份 30 日的**执行者已补**——#398 新增运维命令 `tools/purge-expired-backup-copies.mjs` ＋ 驱动 `services/api/src/privacy/backup-purge-driver.ts`（绕过受理函数、只读写 `user_backup_copies`，真库 14 臂 ALL PASS）；#397 把注销清理闭集扩到**四域**（favorites／history／messages／conversations，`services/api/src/privacy/user-data-deletion.ts:194-199`）并给会话域补 `snapshotOwner`，真库臂判「四域清单行齐 ⇒ 整体 `completed`」。**仍未取得**：真实 cron／CVM 调度读数（刻意不做常驻定时器）、7 日在线的真实时钟执行、第三方删除证据、恢复清单重放。
 3. **「受理同一事务撤会话」不再算缺口**：`services/api/db/migrations/0016_account_deletion_persistence.sql:132-134` 本就在同一事务内撤销该用户全部活跃会话；10-20 节若沿用旧口径，以本行为准。
 
 ### 台账滞后（截至本节时点仍存在，生成区不改）
