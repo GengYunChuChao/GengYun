@@ -149,7 +149,7 @@ CLEANUP=done
 
 ### 13.1 缺陷现象（监工复现，原文读数）
 
-`services/api/src/privacy/user-data-deletion.ts:1543` 在 `executeHandlers()` 里 `await …dispatch(...)`，而派发器内部有多段 await 窗口：`third-party-deletion-dispatch.ts:512` 的 `listRecipients()`、`third-party-deletion-dispatch.ts:528` 的 `listThirdPartyDeletions()`、`third-party-deletion-dispatch.ts:601` 写 `requested`、`third-party-deletion-dispatch.ts:632` 的适配器 `dispatch()`。用户在这些窗口里取消，`cancelDeletion(userId)` 会成功返回 `state=cancelled`，但**已经在飞的派发继续走完**：
+`services/api/src/privacy/user-data-deletion.ts:1624` 在 `executeHandlers()` 里 `await …dispatch(...)`，而派发器内部有多段 await 窗口：`third-party-deletion-dispatch.ts:512` 的 `listRecipients()`、`third-party-deletion-dispatch.ts:528` 的 `listThirdPartyDeletions()`、`third-party-deletion-dispatch.ts:601` 写 `requested`、`third-party-deletion-dispatch.ts:632` 的适配器 `dispatch()`。用户在这些窗口里取消，`cancelDeletion(userId)` 会成功返回 `state=cancelled`，但**已经在飞的派发继续走完**：
 
 ```
 before: cancel_state=cancelled, adapter_calls=0, writes=0
@@ -178,7 +178,7 @@ assert(adapter_calls === 0): FAIL (actual 1)
 
 `cancellationOf()` 的 `catch`（`third-party-deletion-dispatch.ts:414`）把判据异常折叠成 `probe_failed`，与 `request_cancelled` 一样停止派发；同步取值那一侧的同一个取向在 `third-party-deletion-dispatch.ts:432`（`try/catch` 在判据调用上）。取向写在 `third-party-deletion-dispatch.ts:398` 起的注释里：这不是对称取舍——把「取消已受理」误判成未取消，代价是一次**不可撤回**的第三方外发；把未取消误判成已取消，代价只是这次少发、留下一个待补的审计缺口。前者不可接受，所以判据坏了也**不放行**。
 
-取消判据本身：`services/api/src/privacy/user-data-deletion.ts:1543` 传 `(id) => coordinator.requestState(id) === 'cancelled'`；`requestState()` 是 `packages/privacy/deletion.mjs:295` 新增的**无副作用**只读取值器（查不到返回 `null`，`⛔` 不调会推进状态的 `completionStatus()`），经 `packages/privacy/deletion-modules.mjs:250` 的协调器封套透出，类型见 `services/api/src/privacy/egress-reference.d.ts:109`。读的是协调器里**同一个**请求对象的当前状态，不是回执投影、不是本层缓存的快照。
+取消判据本身：`services/api/src/privacy/user-data-deletion.ts:1627` 传 `(id) => coordinator.requestState(id) === 'cancelled'`；`requestState()` 是 `packages/privacy/deletion.mjs:295` 新增的**无副作用**只读取值器（查不到返回 `null`，`⛔` 不调会推进状态的 `completionStatus()`），经 `packages/privacy/deletion-modules.mjs:250` 的协调器封套透出，类型见 `services/api/src/privacy/egress-reference.d.ts:109`。读的是协调器里**同一个**请求对象的当前状态，不是回执投影、不是本层缓存的快照。
 
 ### 13.4 回归用例效果（`tests/unit/third-party-deletion-write.test.mjs`）
 
