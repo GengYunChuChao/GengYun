@@ -674,7 +674,7 @@ Node.js v24.16.0
 > `9bd14e56`，那时代码里确实没有这条路由）。`9bd14e56`（2026-10-24，PR #534）之后该域三件东西齐备：路由与守卫
 > `services/api/src/routes/consents.ts:90-97`（守卫在 `services/api/src/routes/consents.ts:92` 的
 > `preHandler: guards.requireUser`；空态口径 `services/api/src/privacy/privacy-policy.ts:37-44`）、装配
-> `services/api/src/app.ts:2418` 的 `registerConsentRoutes`、守护测试 `tests/unit/privacy-policy-read.test.mjs:210`
+> `services/api/src/app.ts:2483` 的 `registerConsentRoutes`、守护测试 `tests/unit/privacy-policy-read.test.mjs:210`
 > 「路由已装配」（真库同形用例 `tests/integration/consent-zero-policy-pg.mjs:405-413`）。故缺口性质从「缺实现」
 > 变为**缺矩阵用例 + 缺负控制**：本条「负控制不成立」已被 **NC-25** 取代（`tests/failmatrix/mutations.mjs` 末尾，
 > 靶子是既有单测「路由已装配」，实测变异后 `# fail 1 / # pass 0`、恢复后 `# fail 0 / # pass 1`）。矩阵用例仍未新增，
