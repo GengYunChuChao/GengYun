@@ -320,6 +320,12 @@
       "accept": 77,
       "orphans": 3497,
       "outsideRed": 117
+    },
+    {
+      "why": "R77 第 8 轮：给 docs/architecture/gy-r59-retention-backup-thirdparty-map.md 第 68 行第二个 workflow 锚点补回路径（:515 → .github/workflows/real-pg-integration.yml:627）；新增 0 条，对应 ambiguous-block 孤儿条目不再命中故删除（净减 1）。",
+      "accept": 0,
+      "orphans": 3496,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -390,7 +396,6 @@
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:3|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:3|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:46|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:515|ambiguous-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:515|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:582|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:66|no-explicit-in-block",

@@ -65,7 +65,7 @@
 
 ### 3.2 备份副本域（在线侧的表）—— 已落地，含真库臂 + CI
 
-`services/api/db/migrations/0023_user_backup_copies.sql`（`:46` `retention_until`、`:66` `CHECK (retention_until >= created_at)`、`:89` 到期索引）＋ `services/api/src/privacy/backup-copies-pg.ts` ＋ `services/api/src/app.ts:157` 的 `createPostgresBackupPurgePort` 装配。真库臂 `tests/integration/backup-purge-pg.mjs`、`tests/integration/backup-copies-purge-pg.mjs` 在 `.github/workflows/real-pg-integration.yml:499`、`:515` 跑。
+`services/api/db/migrations/0023_user_backup_copies.sql`（`:46` `retention_until`、`:66` `CHECK (retention_until >= created_at)`、`:89` 到期索引）＋ `services/api/src/privacy/backup-copies-pg.ts` ＋ `services/api/src/app.ts:2015` 的 `createPostgresBackupPurgePort` 装配。真库臂 `tests/integration/backup-purge-pg.mjs`、`tests/integration/backup-copies-purge-pg.mjs` 在 `.github/workflows/real-pg-integration.yml:610`、`.github/workflows/real-pg-integration.yml:627` 跑。
 
 ### 3.3 只有文档、没有 DDL 的两张表
 
