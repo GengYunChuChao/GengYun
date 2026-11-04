@@ -122,7 +122,7 @@
 - **实现**：EXIF 清理在 `services/api/src/media/service.ts:1069`（`stripImageMetadata(stored.bytes, detected.mime)`，
   导入在 `:57`）；地区只有手选目录 `packages/contracts/operations.json:76`（`/catalog/regions`）。
 - **证据**：`git grep -rn -i location -- services/api/src` 只有 2 行，且都是 `MAX_ALLOCATION_ATTEMPTS` 的误命中
-  （`services/api/src/tts/media.ts:313`）⇒ 仓内没有坐标读写面。
+  （`services/api/src/tts/media.ts:314`）⇒ 仓内没有坐标读写面。
 - **缺口**：「不默认存原始坐标」「仅取地区」没有可复算的运行证据——没有定位接口，就没有「拒绝保存坐标」的行为可取。
   现在能判的只有两件事：EXIF 被清、地区是手选。
 
