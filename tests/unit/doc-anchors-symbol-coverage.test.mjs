@@ -16,6 +16,8 @@
  *   ⑤ 两段之间夹着`依次`／`分别`这类按位对应标记 ⇒ 不配对（右边那串符号按位置对应左边那串锚点）。
  *   ⑥ `docs/verification/**` 另有一份**只读**读数（`SYMBOL-COVERAGE-VERIFICATION` ＋ `-SCOPE`）：同口径、
  *      但 `off`／`count`／`strict` 三档都**不进退出码**，`strict` 仍只判 `docs/architecture/**`（C15–C17）。
+ *   ⑦ 这一面的逐条明细走自己的 `SYMBOL-COVERAGE-VERIFICATION-MISS`：`count`／`strict` 档打印、`off` 档不打、
+ *      上限 20 条（与 architecture 那组同上限但**分列**）；塞进 `SYMBOL-COVERAGE-MISS` 就等于改既有读数（C18–C20）。
  * 另外用子进程钉住「缺省 `count` 模式不改变退出码」：这条判据是 WARN，先观察一轮，
  * 只有显式 `--symbol-coverage=strict`（且 `--strict`）才会判红。
  *
@@ -494,7 +496,11 @@ test('C15 `docs/verification/**` 的读数独立成行，且 count／strict 都�
       counted.text.includes('作用域外（历史取证页等）只计数：锚点 1 条、配成对 1 条——OK 0、符号不在区间 1、UNDECLARED 0（0 命中 0／非声明行 0）'),
       '既有 SCOPE 行的「作用域外」读数必须照旧把 verification 页数进去（影子账不搬家）',
     );
-    assert.doesNotMatch(counted.text, /^SYMBOL-COVERAGE-MISS/m, 'verification 面只出计数，不出逐条明细');
+    assert.doesNotMatch(
+      counted.text,
+      /^SYMBOL-COVERAGE-MISS/m,
+      'architecture 那组明细不许出现（本夹具 architecture 面 0 条 miss）；verification 的条目更不许混进去（2026-11-04 起它走自己的 `-VERIFICATION-MISS` 行，见 C18）',
+    );
 
     const upgraded = runToolOn(root, scans, ['--strict', '--symbol-coverage=strict']);
     assert.equal(upgraded.status, 0, `strict 只判 architecture，verification 的 OUT_OF_RANGE 不许顶红：\n${upgraded.text}`);
@@ -555,7 +561,7 @@ test('C17 verification 页里「符号在但不在区间」计入 z，但不进 
   };
   withFixture(fixture, root => {
     const targets = ['docs/architecture', 'docs/verification'];
-    const { judged, verification, misses, red } = collectSymbolCoverage({ root, targets });
+    const { judged, verification, misses, verificationMisses, red } = collectSymbolCoverage({ root, targets });
     assert.equal(verification.paired, 1);
     assert.equal(verification.outOfRange, 1, '「符号在但不在区间」必须计入 verification 的 z');
     assert.equal(verification.ok, 0);
@@ -563,9 +569,166 @@ test('C17 verification 页里「符号在但不在区间」计入 z，但不进 
     assert.equal(judged.paired, 0, 'architecture 面不许把 verification 的配对算进来');
     assert.deepEqual(misses, [], 'verification 面只出计数，不进 misses 明细');
     assert.deepEqual(red, [], '判红面（red）与 verification 读数彻底分开');
+    // 明细另收一份（2026-11-04）：这一面「能打印」与「会判红」是两件事——`verificationMisses` 只供
+    // `SYMBOL-COVERAGE-VERIFICATION-MISS` 打印用，`misses`／`red` 都不认识它。
+    assert.equal(verificationMisses.length, 1, '这一面的 miss 另收一份，与 `misses` 并列');
+    assert.equal(verificationMisses[0].symbol, 'lateHandler');
+    assert.equal(verificationMisses[0].result, SYMBOL_COVERAGE_OUT_OF_RANGE);
 
     const strictRun = runToolOn(root, targets, ['--strict', '--symbol-coverage=strict']);
     assert.equal(strictRun.status, 0, `verification 的 OUT_OF_RANGE 不许导致 exit 1，实际输出：\n${strictRun.text}`);
-    assert.doesNotMatch(strictRun.text, /lateHandler：OUT_OF_RANGE/m, '它连明细都不该打，更不该判红');
+    // 口径变化（2026-11-04）：这一面现在**会**打明细，但只走自己的那一行；「不进 misses／red、不改退出码」
+    // 三条不变（上面已断言），这里钉住的是「细节归哪一组」——混进 architecture 那组就是改既有读数。
+    assert.match(strictRun.text, /^SYMBOL-COVERAGE-VERIFICATION-MISS: 1 条/m, '明细要能打印（上一轮只能人工复刻配对逻辑才拿到清单）');
+    assert.doesNotMatch(strictRun.text, /^SYMBOL-COVERAGE-MISS/m, 'verification 的条目不许混进 architecture 那组');
+    assert.doesNotMatch(strictRun.text, /^FAIL: 符号覆盖闸门未通过/m, '更不许判红：strict 仍只收紧 architecture');
+  });
+});
+
+test('C18 verification 面的逐条明细可打印：count 档出现、上限 20 条、排在 architecture 那组之后', () => {
+  // 为什么要有这条：汇总行只给 `可判 N 条——OK a、符号不在区间 b`，改文档的人无从下手；上一轮为了拿到
+  // 12 条真漂移，只能自己复刻配对逻辑再用五格反算校验。明细必须能打，但**不能**混进 `SYMBOL-COVERAGE-MISS`
+  // （那一行的条数、顺序、抽样上限都是既有读数）。
+  const many = Array.from({ length: 30 }, (_, index) => `- \`ghost${index}\`（\`services/api/src/alpha.ts:2\`）已不存在。`);
+  const fixture = {
+    'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+    // architecture 面留**一条** miss：用来钉住「两组分列、architecture 那组仍在前」。
+    'docs/architecture/one-miss.md': '# 一条\n\n- `ghostArch`（`services/api/src/alpha.ts:2`）已不存在。\n',
+    'docs/verification/many.md': `# 多\n\n${many.join('\n')}\n`,
+  };
+  const run = args => {
+    const lines = [];
+    const code = main(args, { log: line => lines.push(line), error: line => lines.push(line) });
+    return { code, lines };
+  };
+  withFixture(fixture, root => {
+    const base = ['--root', root, '--scan', 'docs/architecture', '--scan', 'docs/verification'];
+    const counted = run(base);
+    assert.equal(counted.code, 0, 'count 档（缺省）不许因为明细而改退出码');
+
+    const archHeader = counted.lines.findIndex(line => line.startsWith('SYMBOL-COVERAGE-MISS: '));
+    const verificationHeader = counted.lines.findIndex(line => line.startsWith('SYMBOL-COVERAGE-VERIFICATION-MISS: '));
+    assert.notEqual(archHeader, -1, 'architecture 那组照旧要打（本夹具 1 条）');
+    assert.notEqual(verificationHeader, -1, 'verification 那组必须打：这一面的明细就是这条用例来的');
+    assert.ok(archHeader < verificationHeader, '新块只能是追加：architecture 那组必须仍排在前面');
+
+    assert.equal(
+      counted.lines[archHeader],
+      'SYMBOL-COVERAGE-MISS: 1 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；只有 OUT_OF_RANGE 会在 --symbol-coverage=strict 下判红：',
+      'architecture 那组的表头与条数不许被 verification 的 30 条带跑（它只数 architecture 面）',
+    );
+    assert.equal(
+      counted.lines[verificationHeader],
+      'SYMBOL-COVERAGE-VERIFICATION-MISS: 30 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；本面三档都不判红，strict 仍只判 docs/architecture/**：',
+      '表头要带上这一面的真实条数（30 条），而不是 architecture 的 1 条',
+    );
+
+    // 只取「两个表头之间」：`STALE-DRIFT` 那类账本行也是 `  · docs/architecture/…` 开头，不夹住会混进来。
+    const archEntries = counted.lines
+      .slice(archHeader + 1, verificationHeader)
+      .filter(line => line.startsWith('  · docs/architecture/'));
+    const verificationEntries = counted.lines.slice(verificationHeader + 1).filter(line => line.startsWith('  · docs/verification/'));
+    assert.equal(archEntries.length, 1, 'architecture 那组只打自己那条');
+    assert.equal(verificationEntries.length, 20, '抽样上限与 architecture 那组一致：20 条（30 条里只打前 20）');
+    assert.ok(
+      counted.lines.slice(verificationHeader).some(line => line === '  … 另有 10 条未打印（格式同上）'),
+      `截断必须显式说明还剩多少条（不许静默少打），实际输出：\n${counted.lines.slice(verificationHeader).join('\n')}`,
+    );
+    assert.equal(
+      counted.lines.filter(line => line.startsWith('  · docs/verification/')).length,
+      20,
+      '整份输出里 verification 的条目也只许出现 20 条（不许在别处再打一遍）',
+    );
+  });
+});
+
+test('C19 `--symbol-coverage=off` 连 `SYMBOL-COVERAGE-VERIFICATION-MISS` 都不打（同一夹具 count 档打过作对照）', () => {
+  const fixture = {
+    'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+    'docs/architecture/one-miss.md': '# 一条\n\n- `ghostArch`（`services/api/src/alpha.ts:2`）已不存在。\n',
+    'docs/verification/page.md': '# 页\n\n- `ghostPage`（`services/api/src/alpha.ts:2`）已不存在。\n',
+  };
+  const run = args => {
+    const lines = [];
+    const code = main(args, { log: line => lines.push(line), error: line => lines.push(line) });
+    return { code, lines };
+  };
+  withFixture(fixture, root => {
+    const base = ['--root', root, '--scan', 'docs/architecture', '--scan', 'docs/verification'];
+    // 对照组：没有它，「off 档没打」也可能只是「本来就没有明细」，测不出开关。
+    const counted = run(base);
+    assert.equal(
+      counted.lines.some(line => line.startsWith('SYMBOL-COVERAGE-VERIFICATION-MISS: 1 条')),
+      true,
+      'count 档必须先证明这条明细真的会打出来',
+    );
+    const off = run([...base, '--symbol-coverage=off']);
+    assert.equal(off.code, 0, 'off 档同样不改退出码');
+    assert.equal(
+      off.lines.some(line => line.includes('SYMBOL-COVERAGE-VERIFICATION-MISS')),
+      false,
+      'off 档整面不扫：连明细行都不许出现（与 `SYMBOL-COVERAGE*` 同进同出）',
+    );
+    assert.equal(
+      off.lines.some(line => line.startsWith('SYMBOL-COVERAGE')),
+      false,
+      'off 档连读数行都不打（既有口径不变）',
+    );
+  });
+});
+
+test('C20 既有 architecture 四行逐字不变，且新块只追加在末尾', () => {
+  // 这条用例的字面串就是 main@212b8ad **改前**的实测输出（改前/改后 `--scan docs` 整份 diff 只有追加）：
+  // 一旦有人为了打 verification 明细去动这三/四行的文案、顺序或条数，这里立刻红。
+  const fixture = {
+    'services/api/src/late.ts': `${'// 留白\n'.repeat(20)}${sourceWith('lateHandler')}`,
+    'docs/architecture/drifted.md': '# 漂移\n\n- `lateHandler`（`services/api/src/late.ts:2`）在这里。\n',
+    'docs/verification/page.md': '# 取证\n\n- `lateHandler`（`services/api/src/late.ts:2`）写在这里。\n',
+  };
+  const run = args => {
+    const lines = [];
+    const code = main(args, { log: line => lines.push(line), error: line => lines.push(line) });
+    return { code, lines };
+  };
+  withFixture(fixture, root => {
+    const lines = run(['--root', root, '--scan', 'docs/architecture', '--scan', 'docs/verification']).lines;
+    const at = prefix => {
+      const index = lines.findIndex(line => line.startsWith(`${prefix}: `));
+      assert.notEqual(index, -1, `读数行 ${prefix} 不见了（这条判据等于没跑）`);
+      return index;
+    };
+    assert.equal(
+      lines[at('SYMBOL-COVERAGE')],
+      'SYMBOL-COVERAGE: 可判 1 条——OK 0、符号不在区间 1（仅 WARN，不影响 exit code）',
+      '第一行逐字不变（文案、全角标点、后缀都要对得上）',
+    );
+    assert.equal(
+      lines[at('SYMBOL-COVERAGE-UNDECLARED')],
+      'SYMBOL-COVERAGE-UNDECLARED: 0 条（符号在目标文件里没有声明行；不计入 strict 判定，逐条抽样见下）——其中符号 0 命中 0 条、出现过但不是声明行 0 条',
+      'UNDECLARED 那行逐字不变',
+    );
+    assert.equal(
+      lines[at('SYMBOL-COVERAGE-SCOPE')],
+      'SYMBOL-COVERAGE-SCOPE: 作用域 docs/architecture/**（1 份文档、锚点 1 条）——配成对 1 条；同行没有紧邻符号 0 条、两侧等距不猜 0 条、路径找不到或不唯一 0 条（这三格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 1 条、配成对 1 条——OK 0、符号不在区间 1、UNDECLARED 0（0 命中 0／非声明行 0）',
+      'SCOPE 行逐字不变：verification 页照旧只算进「作用域外」那一段（影子账不搬家、合计不变）',
+    );
+    assert.equal(
+      lines[at('SYMBOL-COVERAGE-MISS')],
+      'SYMBOL-COVERAGE-MISS: 1 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；只有 OUT_OF_RANGE 会在 --symbol-coverage=strict 下判红：',
+      'architecture 明细表头逐字不变（条数只数 architecture 面）',
+    );
+    // 顺序：architecture 四行 → verification 读数两行 → architecture 明细 → verification 明细。
+    const order = [
+      'SYMBOL-COVERAGE',
+      'SYMBOL-COVERAGE-UNDECLARED',
+      'SYMBOL-COVERAGE-SCOPE',
+      'SYMBOL-COVERAGE-VERIFICATION',
+      'SYMBOL-COVERAGE-VERIFICATION-SCOPE',
+      'SYMBOL-COVERAGE-MISS',
+      'SYMBOL-COVERAGE-VERIFICATION-MISS',
+    ].map(at);
+    for (let index = 1; index < order.length; index += 1) {
+      assert.ok(order[index - 1] < order[index], `第 ${index} 行（${order[index - 1]}）必须排在 ${order[index]} 之前`);
+    }
   });
 });
