@@ -14,6 +14,8 @@
  *   ③ 符号在目标文件里**有**声明行、但既不覆盖锚点也不在锚点 ±5 行内 ⇒ `OUT_OF_RANGE`（判红）；
  *   ④ 同一行没有紧邻符号 ⇒ **不配对**（配对口径收紧的代价必须显式计数，不许静默少扫）；
  *   ⑤ 两段之间夹着`依次`／`分别`这类按位对应标记 ⇒ 不配对（右边那串符号按位置对应左边那串锚点）。
+ *   ⑥ `docs/verification/**` 另有一份**只读**读数（`SYMBOL-COVERAGE-VERIFICATION` ＋ `-SCOPE`）：同口径、
+ *      但 `off`／`count`／`strict` 三档都**不进退出码**，`strict` 仍只判 `docs/architecture/**`（C15–C17）。
  * 另外用子进程钉住「缺省 `count` 模式不改变退出码」：这条判据是 WARN，先观察一轮，
  * 只有显式 `--symbol-coverage=strict`（且 `--strict`）才会判红。
  *
@@ -43,6 +45,7 @@ import {
   SYMBOL_COVERAGE_POSITIONAL_MARKERS,
   SYMBOL_COVERAGE_SLACK,
   SYMBOL_COVERAGE_UNDECLARED,
+  SYMBOL_COVERAGE_VERIFICATION_SCOPE,
   SYMBOL_COVERAGE_ZERO_HIT,
   collectSymbolCoverage,
   main,
@@ -87,6 +90,17 @@ function runTool(root, extraArgs = []) {
     cwd: REPO_ROOT,
     encoding: 'utf8',
   });
+  return { status: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
+}
+
+/**
+ * 同上，但扫描面由调用方给：`docs/verification/**` **不在** `--scan docs/architecture` 里，
+ * 不显式带上就扫不到那一面（也就测不到新读数）。
+ */
+function runToolOn(root, scans, extraArgs = []) {
+  const args = [TOOL, '--root', root];
+  for (const scan of scans) args.push('--scan', scan);
+  const result = spawnSync(process.execPath, [...args, ...extraArgs], { cwd: REPO_ROOT, encoding: 'utf8' });
   return { status: result.status, text: `${result.stdout ?? ''}${result.stderr ?? ''}` };
 }
 
@@ -446,4 +460,112 @@ test('C14 声明形态清单（`symbolDeclarationLines`）：认哪些、有意�
   expect('doWork', [15], '已知宽松处：整行 `NAME(...)` 的调用也算声明行——只会让判红面更大，不会更小');
   expect('nope', []);
   expect('', [], '空符号不许当成「处处都是声明」');
+});
+
+test('C15 `docs/verification/**` 的读数独立成行，且 count／strict 都不进退出码', () => {
+  // 为什么要单列一面：`docs/verification/**` 是历史取证面（行号按当时的树写、正文自己就写着基线），
+  // 先把读数铺开观察；它一旦并进上面那条判红面，整片历史页立刻把 CI 顶红，等于逼人篡改证据语义。
+  const fixture = {
+    'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+    // lateHandler 声明在 21-23 行，锚点写 :2 —— 距离远超 ±5 行 ⇒ 这一面唯一的判红档形状。
+    'services/api/src/late.ts': `${'// 留白\n'.repeat(20)}${sourceWith('lateHandler')}`,
+    'docs/architecture/within.md': '# 判据面\n\n- `alphaHandler`（`services/api/src/alpha.ts:2`）只做加一。\n',
+    'docs/verification/late-page.md': '# 取证\n\n- `lateHandler`（`services/api/src/late.ts:2`）写在这里。\n',
+  };
+  withFixture(fixture, root => {
+    const scans = ['docs/architecture', 'docs/verification'];
+    const counted = runToolOn(root, scans);
+    assert.equal(counted.status, 0, `verification 面的读数不许改退出码，实际输出：\n${counted.text}`);
+    assert.match(
+      counted.text,
+      /^SYMBOL-COVERAGE: 可判 1 条——OK 1、符号不在区间 0（仅 WARN，不影响 exit code）$/m,
+      'architecture 的读数只数 architecture：verification 那条配对混进来就等于改了既有 CI 读数',
+    );
+    assert.match(
+      counted.text,
+      /^SYMBOL-COVERAGE-VERIFICATION: 可判 1 条——OK 0、符号不在区间 1（仅 WARN，不影响 exit code）$/m,
+      'verification 面必须有自己的读数行，且「符号在但不在区间」要计入 z',
+    );
+    assert.ok(
+      counted.text.includes('SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 docs/verification/**（1 份文档、锚点 1 条）——配成对 1 条：OK 0、符号不在区间 1、UNDECLARED 0（符号 0 命中 0 条、出现过但不是声明行 0 条）'),
+      `SCOPE 行要写清文档份数／锚点数／配对数，实际输出：\n${counted.text}`,
+    );
+    assert.ok(
+      counted.text.includes('作用域外（历史取证页等）只计数：锚点 1 条、配成对 1 条——OK 0、符号不在区间 1、UNDECLARED 0（0 命中 0／非声明行 0）'),
+      '既有 SCOPE 行的「作用域外」读数必须照旧把 verification 页数进去（影子账不搬家）',
+    );
+    assert.doesNotMatch(counted.text, /^SYMBOL-COVERAGE-MISS/m, 'verification 面只出计数，不出逐条明细');
+
+    const upgraded = runToolOn(root, scans, ['--strict', '--symbol-coverage=strict']);
+    assert.equal(upgraded.status, 0, `strict 只判 architecture，verification 的 OUT_OF_RANGE 不许顶红：\n${upgraded.text}`);
+    assert.match(
+      upgraded.text,
+      /^SYMBOL-COVERAGE-VERIFICATION: 可判 1 条——OK 0、符号不在区间 1（仅 WARN，不影响 exit code）$/m,
+      'strict 档下这一面的后缀也必须照旧写「仅 WARN」（与 architecture 那一行有意不同）',
+    );
+    assert.doesNotMatch(upgraded.text, /^FAIL: 符号覆盖闸门未通过/m);
+  });
+});
+
+test('C16 `--symbol-coverage=off` 连 verification 的两行都不打（与 architecture 一致）', () => {
+  const fixture = {
+    'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+    // 夹具里必须有 architecture 面：`--scan` 指向不存在的目录会直接抛「扫描目标不存在」。
+    'docs/architecture/within.md': '# 判据面\n\n- `alphaHandler`（`services/api/src/alpha.ts:2`）只做加一。\n',
+    'docs/verification/page.md': '# 页\n\n- `alphaHandler`（`services/api/src/alpha.ts:2`）在这里。\n',
+  };
+  const run = args => {
+    const lines = [];
+    const code = main(args, { log: line => lines.push(line), error: line => lines.push(line) });
+    return { code, lines };
+  };
+  withFixture(fixture, root => {
+    const base = ['--root', root, '--scan', 'docs/architecture', '--scan', 'docs/verification'];
+    const counted = run(base);
+    assert.equal(counted.code, 0);
+    assert.equal(
+      counted.lines.some(line => line.startsWith('SYMBOL-COVERAGE-VERIFICATION: 可判 1 条')),
+      true,
+      '缺省就是 count：verification 的读数行必须照常打（不打就等于这一面没统计）',
+    );
+    assert.equal(
+      counted.lines.some(line => line.startsWith('SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 docs/verification/**')),
+      true,
+      'SCOPE 行与读数行同进同出',
+    );
+    const off = run([...base, '--symbol-coverage=off']);
+    assert.equal(off.code, 0);
+    assert.equal(
+      off.lines.some(line => line.startsWith('SYMBOL-COVERAGE')),
+      false,
+      'off 档连 `SYMBOL-COVERAGE-VERIFICATION*` 都不许出现（关掉统计就是整面不扫，不许留半行）',
+    );
+  });
+  assert.equal(SYMBOL_COVERAGE_VERIFICATION_SCOPE, 'docs/verification/', '统计面钉在这里：换成更宽的面是另一次决策');
+});
+
+test('C17 verification 页里「符号在但不在区间」计入 z，但不进 misses／red、也不判红', () => {
+  // (c) 的单元版：判据函数层面必须把「计入 z」与「进判红面」分开——两者混在一起时，任何一条历史
+  // 取证页的行号漂移都会变成 CI 红（而这一面的基线本来就写在那些页面自己的正文里）。
+  const fixture = {
+    'services/api/src/late.ts': `${'// 留白\n'.repeat(20)}${sourceWith('lateHandler')}`,
+    // 只有锚点、没有紧邻符号：让 architecture 面的 `paired` 保持 0，好把「这一对算在谁头上」钉死。
+    'docs/architecture/anchor-only.md': '# 只有锚点\n\n- 见 `services/api/src/late.ts:2` 这一行。\n',
+    'docs/verification/late-page.md': '# 取证\n\n- `lateHandler`（`services/api/src/late.ts:2`）写在这里。\n',
+  };
+  withFixture(fixture, root => {
+    const targets = ['docs/architecture', 'docs/verification'];
+    const { judged, verification, misses, red } = collectSymbolCoverage({ root, targets });
+    assert.equal(verification.paired, 1);
+    assert.equal(verification.outOfRange, 1, '「符号在但不在区间」必须计入 verification 的 z');
+    assert.equal(verification.ok, 0);
+    assert.equal(verification.documents, 1);
+    assert.equal(judged.paired, 0, 'architecture 面不许把 verification 的配对算进来');
+    assert.deepEqual(misses, [], 'verification 面只出计数，不进 misses 明细');
+    assert.deepEqual(red, [], '判红面（red）与 verification 读数彻底分开');
+
+    const strictRun = runToolOn(root, targets, ['--strict', '--symbol-coverage=strict']);
+    assert.equal(strictRun.status, 0, `verification 的 OUT_OF_RANGE 不许导致 exit 1，实际输出：\n${strictRun.text}`);
+    assert.doesNotMatch(strictRun.text, /lateHandler：OUT_OF_RANGE/m, '它连明细都不该打，更不该判红');
+  });
 });
