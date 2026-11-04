@@ -11,7 +11,7 @@
 | 账号目录（只读） | 登录 → `GET /api/v1/admin/accounts` 游标分页列表 → 行内筛选 → 加载下一页 / 重新读取 | 已接入真实读面 |
 | 人工审核（占位） | 入口说明与"为什么是占位" | **明确占位**，见下节 |
 
-⛔ 本切片**没有**改动任何产品 API、契约、迁移、依赖清单：只消费已存在的读面 `GET /api/v1/admin/accounts`（`operationId: listAdminUsers`，scope `accounts:read`，见 [`openapi.json:9722-9800`](../../packages/contracts/openapi.json)）。停用/注销等写操作**未接线，页面上没有对应按钮**（不伪造不可用动作）。
+⛔ 本切片**没有**改动任何产品 API、契约、迁移、依赖清单：只消费已存在的读面 `GET /api/v1/admin/accounts`（`operationId: listAdminUsers`，scope `accounts:read`，见 [`openapi.json:9722-9800`](../../packages/contracts/openapi.json)）。停用/注销等写操作**未接线，页面上没有对应按钮**（不伪造不可用动作）。（2026-11-04 复核：停用写面已落地——`AccountsView.vue` 第 286 行模板写明 `POST /admin/accounts/{id}/suspend`，`account-suspend-api.mjs` 第 22 行的 scope 常量为 `accounts:suspend`，服务端 `routes/admin.ts` 第 356 行挂出该路由、第 358 行以 `guards.requireScope(OPS_SCOPES.suspendUser)` 收口，`ops/service.ts` 第 890 行 `parseIfMatchHeader` 校验 `If-Match`、第 899 行 `runIdempotentWrite` 校验 `Idempotency-Key`；注销仍未接线。）
 
 ## 分层：纯逻辑前置，SFC 只做渲染
 
@@ -100,7 +100,7 @@ noToken      { ok: false, kind: "signed_out",     status: null }
 2. **真机/真实浏览器**：没有在浏览器里打开过这个后台页面，也没有截图或交互录像；Demo 手机预览样式未比对。
 3. **真实登录链路联调**：页面令牌来自既有 `session.ts`，本片**没有**跑通"微信/口令换取 → 后台会话 → 列表"的端到端；探针用的是合成会话。
 4. **真实 PG 目录**：读面数据在探针里是内存种子；真实 `public.list_admin_accounts()` 的读数见[账号读面证据](gy-i18-admin-accounts-read-20261018.md)，**那份证据的"未取得项"第 1 条正是后台 UI 联调**，本片只是补上了页面侧的解析与错误分类，两边合起来仍不等于联调。
-5. **写操作**：停用/恢复/注销未接线（本片按派单只读），页面上没有入口，因此也没有对应测试。
+5. **写操作**：停用/恢复/注销未接线（本片按派单只读），页面上没有入口，因此也没有对应测试。（2026-11-04 复核：停用写面已落地——`AccountsView.vue` 第 433-442 行有「停用」按钮、第 226 行调用 `suspendAccount`，`admin-ui-suspend-api.test.mjs` 与 `admin-ui-suspend-view-model.test.mjs` 已覆盖该写面；恢复/注销仍未接线。）
 6. **大数据量**：列表一次一页、翻页靠 `next_cursor`，未压测上万账号；服务端目录本身仍是一次全表读 + 服务层切片（见账号读面证据页「残余限制」）。
 7. **无障碍**：只做了 `aria-label`/`aria-pressed`/表单 `label` 与键盘可达的原生控件；**没有**跑 axe/读屏实测。
 
