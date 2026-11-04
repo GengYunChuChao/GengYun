@@ -1,7 +1,7 @@
 # GY-I16（#16）契约账本收口处方（待合流后执行）
 
 - 任务：R29-S3 / Refs #16（不 Closes）
-- 性质：**处方，不是执行记录**。本文写于 `feat/gy-r29-i16-fav-entry`（基点 `30a4ff7`），此时 `docs/architecture/contract-status.json` 与 `docs/architecture/contract-implementation-status.md` 正被 **#425 / #422 / #419 / #409 / #407** 五个在飞 PR 占用，改动必撞；故本片**只出清单不动账本**，执行时点由合流序位决定。
+- 性质：**处方，不是执行记录**。本文写于 `feat/gy-r29-i16-fav-entry`（基点 `30a4ff7`），此时 `docs/architecture/contract-status.json` 与 `docs/architecture/contract-implementation-status.md` 正被 **#425 / #422 / #419 / #409 / #407** 五个在飞 PR 占用，改动必撞；故本片**只出清单不动账本**，执行时点由合流序位决定。（2026-11-04 复核：五个 PR 均已合入——#425 `88942df4`、#422 `50e3bf40`、#419 `e5c38a2f`、#409 `8a295504`、#407 `7a6b7436`；本句作 2026-10-2x 时点记录保留，今天不存在该占用）
 - 阅读顺序：§1 判据 → §2 五条 blocker 的「应改成」全文（可直接粘）→ §3 落位表 → §4 命令序列与负控制 → §5 工具机理注意 → §6 占用面与留档。
 
 ## 1. 判据：`implemented` 与 `partial` 的边界
