@@ -117,7 +117,7 @@
 | 1 | `services/api/src/jobs/sources.ts` | 追加 `createSynthesisJobSource` + 文件头一段追加说明（既有函数体未动） | 各域作业源适配器集中于此，与 recognition/transcription 同形态 | 删该函数与说明段（`33bd325` 反向） |
 | 2 | `services/api/src/app.ts` | import 增 1 个符号；`createJobRegistry` 数组末位追加 1 行 | 共享作业面的**唯一注册点**；不追加则 `kind=synthesis` 仍同形 404 | 删该行 + import（`9995391` 反向） |
 | 3 | `miniprogram/app.json` | `pages` 末尾追加 `pages/voice/voice` | 微信要求页面注册；三处清单必须逐项一致（既有断言） | 删该行（`706d132` 反向） |
-| 4 | `miniprogram/utils/navigation.js` | `PAGES` 末尾追加同一路由（**未**加入 `TAB_PAGES`，未改任何路由判定逻辑） | `tests/unit/miniprogram-login-return-to.test.mjs:86` 断言 `PAGES === app.json.pages` | 删该行 |
+| 4 | `miniprogram/utils/navigation.js` | `PAGES` 末尾追加同一路由（**未**加入 `TAB_PAGES`，未改任何路由判定逻辑） | `tests/unit/miniprogram-login-return-to.test.mjs:199` 断言 `PAGES === app.json.pages` | 删该行 |
 | 5 | `tools/prepare-wechat.mjs` | 白名单追加：播报页 + 5 个 `utils/*` + `components/gy-voice-ball/*`（4 文件） | 隔离打包白名单与 `app.json.pages` **逐项同序**（脚本内 `JSON.stringify` 断言）；漏加 ⇒ 标准包 `MODULE_NOT_FOUND` | 删对应行 |
 | 6 | `tests/local-debug.test.mjs` | 打包页数断言 `18 ⇒ 19`（注释同步说明新增播报页）；把播报域 5 个 utils 与 `gy-voice-ball` 4 文件纳入既有"打包依赖必须存在"清单 | 该断言是**硬编码页数**；新增页面必使其失效。派单 §5 明确要求"新增页面必须同步三处清单并附该命令输出" | 把 `19` 改回 `18` 并移除新增依赖项（`706d132` 反向） |
 

@@ -81,7 +81,7 @@ $ git diff --stat 43fa6d5..HEAD
 | ① | Android／iOS 授权和拒绝路径可用，手选不依赖定位 | **未取得**（真机）；代码与回环层面六档状态齐备、拒绝／取消／超时／省外均回落手选 | `miniprogram/utils/location-region.js` `MESSAGES` 六档；`tests/integration/profile-ui-http.test.mjs`（真页面 + 注入 `wx.getLocation`）；本页 §2.2 |
 | ② | 修改档案不改写已保存识别、来源或后续实际记录快照 | 已取得 | `tests/unit/profile-api.test.mjs:302`（非 user 角色先拒、档案编辑后记录表 byte-identical）；`services/api/src/profile/service.ts:92-96`（只写 `public.single_profiles`） |
 | ③ | 游客不可修改他人或登录用户档案 | 已取得 | `services/api/src/routes/profile.ts:25`、`:29`（`guards.requireUser`）；`services/api/src/profile/service.ts:31`（角色）、`:35-43`（账号/会话/`auth_epoch` 校验）、`:67`／`:84`／`:92`（一律以 `identity.userId` 读写）；`tests/unit/profile-api.test.mjs:263` |
-| ④ | 首版地区只筛选静态科普，不产生真实地区预警 | 已取得（引用层面） | `tests/unit/miniprogram-profile.test.mjs:134`（`MESSAGES` 序列化后不含「预警」）；无预警路由/任务（契约台账 4 条 #5 操作内无预警面） |
+| ④ | 首版地区只筛选静态科普，不产生真实地区预警 | 已取得（引用层面） | `tests/unit/miniprogram-profile.test.mjs:138`（`MESSAGES` 序列化后不含「预警」）；无预警路由/任务（契约台账 4 条 #5 操作内无预警面） |
 | ⑤ | 定位仅即时选择地区，服务端不接收原始坐标；拒绝、取消、超时、省外与手选能继续 | 已取得（超时一档为本轮补齐） | `services/api/src/routes/profile.ts:24-33`（querystring／body `additionalProperties: false`，闭集为 `crop_id`／`region_code`／`region_catalog_version`）；`tests/unit/profile-api.test.mjs:281-282`（body/query 带坐标被拒）、`:338`（库内无坐标列）、`:379`；`tests/integration/profile-ui-http.test.mjs`（哨兵坐标不进 storage／请求体／路由） |
 
 契约台账口径（`docs/architecture/contract-status.json`，`node tools/verify-contract-status.mjs` 实跑）：`getProfile`／`putProfile`／`listCrops`／`listRegions` 四条均为 `implemented`；全仓 implemented 13 / partial 95 / planned 4（partial／planned 属其他任务，本轮未动）。#5 的缺口不在契约操作层，而在真机证据与（历史登记的）U3 坐标→地区资源。
