@@ -2853,5 +2853,14 @@
   "to": 194,
   "toEnd": 199,
   "reason": "`user-data-deletion.ts:164-169` 今天是 `JOBS_DELETION_MODULE` 的文档注释块开头（`/**` 起），不是注销必需闭集；闭集常量在 194-199 行 `export const USER_DATA_DELETION_MODULES = [`…`] as const;`（四域，不含媒体），这才是「必需闭集不含媒体」该指的读数。本提交未改服务代码，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/architecture/gy-r34-retention-policy.md",
+  "line": 111,
+  "target": "services/api/src/community/store-pg.ts",
+  "from": 1005,
+  "fromEnd": 1011,
+  "to": 1141,
+  "reason": "与同页 :46 同源的同一条陈旧区间：`store-pg.ts:1005-1011` 今天是 `async purgeOwnerData(ownerId, options = {})` 里的 `let redacted = 0;` / `let hiddenMedia = 0;` 计数变量，不是社区举报脱敏 SQL；`SET detail = NULL, revision = revision + 1` 在 1141 行（`UPDATE community_reports` 块 1139-1142）。本提交未改服务代码，只能登记。2026-11-04 复核。"
 }
 ]

@@ -108,7 +108,7 @@ DATABASE_URL=postgresql://… npm run purge:retention -- --yes --table public.se
 | --- | --- | --- |
 | `public.idempotency_keys` | `DELETE` | 运行时角色 `gengyun_auth_privacy` 已有表级 `DELETE`（`services/api/db/roles/auth_privacy.sql:33`） |
 | `public.sessions` | `DELETE` | **没有**（`services/api/db/roles/auth_privacy.sql:24-26` 只有列级 SELECT/INSERT/UPDATE）⇒ 该表必须用**库属主/运维角色**跑；本片**没有**给运行时角色加 `DELETE`（加授权会动到既有授权断言，属另一件事） |
-| （已移出策略表）`public.community_reports.detail` | `UPDATE (detail)` | 运行时角色 `gengyun_api_runtime` **有**该列授权（`deploy/postgres-cvm/sql/20-login-roles.sql:566-568`），注销路径 `services/api/src/community/store-pg.ts:1005-1011` 就是用它写的；本片不登记该表，故与本片无关 |
+| （已移出策略表）`public.community_reports.detail` | `UPDATE (detail)` | 运行时角色 `gengyun_api_runtime` **有**该列授权（`deploy/postgres-cvm/sql/20-login-roles.sql:566-568`），注销路径 `services/api/src/community/store-pg.ts:1141` 就是用它写的；本片不登记该表，故与本片无关 |
 | （已移出策略表）`public.admin_sessions.revoked_at` | `UPDATE (revoked_at)` | 运行时角色已有列级 `UPDATE`（`services/api/db/roles/auth_privacy.sql:31`）；本片不登记该表 |
 
 ⇒ 现实跑法：**用属主/运维连接串**跑（`DATABASE_URL` 只从环境变量读，不接受命令行明文，也不回显）。
