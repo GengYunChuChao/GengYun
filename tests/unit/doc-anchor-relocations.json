@@ -2884,4 +2884,49 @@
   {"doc":"docs/architecture/contract-status.json","line":500,"target":"tests/unit/backup-copies-port-contract.test.mjs","from":572,"fromEnd":582,"to":606,"toEnd":616,"reason":"陈旧锚点重锚（同一处重锚在 JSON 侧也要登记：该 blocker 散文是中文对照表格子的来源，md 那一格由 --write-doc 重生成）：base 的 `:572-582` 是「接线三态」用例（563 起）的端口行为断言，散文要的「real 无真库 ⇒ 端口显式不可用、PROVIDER_UNAVAILABLE」真值在 `:606-616`。2026-11-04 复核。"},
   {"doc":"docs/architecture/contract-status.json","line":500,"target":"tests/integration/backup-purge-pg.mjs","from":413,"fromEnd":414,"to":481,"toEnd":493,"reason":"陈旧锚点重锚（同一处重锚在 JSON 侧也要登记：该 blocker 散文是中文对照表格子的来源，md 那一格由 --write-doc 重生成）：base 的 `:413-414` 是臂 A 的种子数据，散文要的「被驱动的一次重放里可判 completed」真值在 `:481-493`（481 那次 executeHandlers + 483-493 的 completed 断言）。2026-11-04 复核。"},
   {"doc":"docs/architecture/contract-status.json","line":500,"target":"tests/unit/user-data-deletion.test.mjs","from":196,"to":269,"reason":"陈旧锚点重锚（同一处重锚在 JSON 侧也要登记：该 blocker 散文是中文对照表格子的来源，md 那一格由 --write-doc 重生成）：base 的 `:196` 是「未绑定主体」用例标题，散文要的「接真库端口后同一协议被驱动一次即可判 completed」真值在 `:269`（227 起的清理可重跑用例）。2026-11-04 复核。"},
-  {"doc":"docs/verification/gy-i16-semantics-20261019.md","line":42,"target":"tests/integration/favorites-history-isolation-http.mjs","from":376,"fromEnd":378,"to":376,"toEnd":402,"kind":"correction","symbol":"foreignHistoryRead","reason":"旧行原文（favorites-history-isolation-http.mjs:376-378）是 `GET /history/{id}` 自 #878 注册的注释块（:376「已注册：契约 getHistory」），不含任何越权断言；#952（98ac68fc）把「历史详情越权」块从 376-378 扩到 376-402，新增 :383 `const foreignHistoryRead = await http(...)` 与 :384-401 的四维归属隔离断言（404／NOT_FOUND／无 ETag／与「不存在」逐字段同形）。新窗口含 foreignHistoryRead、旧窗口只有注释 ⇒ 该行锚点末端从 378 订正到 402、起点 376 不动（单端位移，按形状要求走 kind=correction）。本提交未改集成脚本，只能登记。2026-11-04 复核。"}]
+  {"doc":"docs/verification/gy-i16-semantics-20261019.md","line":42,"target":"tests/integration/favorites-history-isolation-http.mjs","from":376,"fromEnd":378,"to":376,"toEnd":402,"kind":"correction","symbol":"foreignHistoryRead","reason":"旧行原文（favorites-history-isolation-http.mjs:376-378）是 `GET /history/{id}` 自 #878 注册的注释块（:376「已注册：契约 getHistory」），不含任何越权断言；#952（98ac68fc）把「历史详情越权」块从 376-378 扩到 376-402，新增 :383 `const foreignHistoryRead = await http(...)` 与 :384-401 的四维归属隔离断言（404／NOT_FOUND／无 ETag／与「不存在」逐字段同形）。新窗口含 foreignHistoryRead、旧窗口只有注释 ⇒ 该行锚点末端从 378 订正到 402、起点 376 不动（单端位移，按形状要求走 kind=correction）。本提交未改集成脚本，只能登记。2026-11-04 复核。"},
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 68,
+    "target": "services/api/src/privacy/backup-copies-pg.ts",
+    "from": 183,
+    "fromEnd": 250,
+    "to": 183,
+    "toEnd": 358,
+    "kind": "correction",
+    "symbol": "const after = await readCopies(client, request, userId, module);",
+    "reason": "第 68 行证据锚点 `services/api/src/privacy/backup-copies-pg.ts:183-250` 是既有的**截断锚点**，不是随代码位移：base（fdd5ba53）与 HEAD 上该文件逐字一致（本提交未改 services/**），183 起 `export function createPostgresBackupPurgePort({` 到 358 的 `}` 才是这个端口的完整归属块，而 250 只是函数中段——文档该格声明依赖的三段语义全部落在旧区间之外：281-306 是 `decision.action === 'blocked'` 的四个 blocked 返回与原因码（`STORE_REJECTED`／`POLICY_BLOCKED`／`EVIDENCE_REQUIRED`），320-338 是 `PURGE_COPIES_SQL` 的到期 UPDATE 与**同事务** `readCopies` 复核（复核不通过则 `ROLLBACK` + `markFailed`，通过才 `COMMIT`），350-352 是 `STORE_UNREACHABLE` 的 blocked 返回。起点 183 不动、末端 250→358，属单端位移，按形状要求走 kind=correction：symbol 取全文件唯一的 `const after = await readCopies(client, request, userId, module);`（325 行，同事务复核的实证），旧窗口 183-250 不含它、新窗口 183-358 含它。2026-11-05 订正。"
+  },
+  {
+    "doc": "docs/architecture/contract-implementation-status.md",
+    "line": 68,
+    "target": "deploy/postgres-cvm/roles-and-migration.md",
+    "from": 256,
+    "fromEnd": 257,
+    "to": 257,
+    "toEnd": 258,
+    "reason": "第 68 行 blocker 散文里的 `roles-and-migration.md:256-257` 指错了行：今天 256 是「全库灾备到空集群的完整流程**未演练**，已在 README 第 6 节列为未验证」这条与注销无关的条目；需求 F13/AC23「注销后在线 7 日／备份 30 日内清理个人数据」是**逐用户删除语义**、`backup-postgres.sh` 的 30 天只是备份文件保留期这句在 257-258。该文件本提交未改动（base 与 HEAD 逐字一致），起点与末端一并 +1 属既有陈旧锚点重锚，故走缺省 kind：旧窗口 256-257 与新窗口 257-258 在 257 重叠，任何 symbol 都会两边命中，无法用 kind=correction 的机读证据核。2026-11-05 订正。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 500,
+    "target": "services/api/src/privacy/backup-copies-pg.ts",
+    "from": 183,
+    "fromEnd": 250,
+    "to": 183,
+    "toEnd": 358,
+    "kind": "correction",
+    "symbol": "const after = await readCopies(client, request, userId, module);",
+    "reason": "第 500 行 blocker 散文里的证据锚点 `services/api/src/privacy/backup-copies-pg.ts:183-250` 是既有的**截断锚点**，不是随代码位移：base（fdd5ba53）与 HEAD 上该文件逐字一致（本提交未改 services/**），183 起 `export function createPostgresBackupPurgePort({` 到 358 的 `}` 才是这个端口的完整归属块，而 250 只是函数中段——该 operation 的 blocker 声明依赖的三段语义全部落在旧区间之外：281-306 是 `decision.action === 'blocked'` 的四个 blocked 返回与原因码（`STORE_REJECTED`／`POLICY_BLOCKED`／`EVIDENCE_REQUIRED`），320-338 是 `PURGE_COPIES_SQL` 的到期 UPDATE 与**同事务** `readCopies` 复核（复核不通过则 `ROLLBACK` + `markFailed`，通过才 `COMMIT`），350-352 是 `STORE_UNREACHABLE` 的 blocked 返回。起点 183 不动、末端 250→358，属单端位移，按形状要求走 kind=correction：symbol 取全文件唯一的 `const after = await readCopies(client, request, userId, module);`（325 行，同事务复核的实证），旧窗口 183-250 不含它、新窗口 183-358 含它。2026-11-05 订正。"
+  },
+  {
+    "doc": "docs/architecture/contract-status.json",
+    "line": 500,
+    "target": "deploy/postgres-cvm/roles-and-migration.md",
+    "from": 256,
+    "fromEnd": 257,
+    "to": 257,
+    "toEnd": 258,
+    "reason": "第 500 行 blocker 散文里的 `roles-and-migration.md:256-257` 指错了行：今天 256 是「全库灾备到空集群的完整流程**未演练**，已在 README 第 6 节列为未验证」这条与注销无关的条目；需求 F13/AC23「注销后在线 7 日／备份 30 日内清理个人数据」是**逐用户删除语义**、`backup-postgres.sh` 的 30 天只是备份文件保留期这句在 257-258。该文件本提交未改动（base 与 HEAD 逐字一致），起点与末端一并 +1 属既有陈旧锚点重锚，故走缺省 kind：旧窗口 256-257 与新窗口 257-258 在 257 重叠，任何 symbol 都会两边命中，无法用 kind=correction 的机读证据核。2026-11-05 订正。"
+  }
+]
