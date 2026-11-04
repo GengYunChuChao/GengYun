@@ -2763,5 +2763,52 @@
   "kind": "correction",
   "symbol": "noPortsForReal",
   "reason": "锚点从单行改成区间（本提交把「原文」指到承载该句的函数）：`:366` 现在是 `assertTargetRef` 里的 `if`，与「tms/ims 未授权、BizType 未核验」无关；该原文在 `:421-427` 的 `noPortsForReal()`，BizType 在 `:424` 的提示串里。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 23,
+  "target": "user-data-deletion.ts",
+  "from": 93,
+  "fromEnd": 98,
+  "to": 194,
+  "toEnd": 199,
+  "reason": "旧锚点 93-98 落在「会话域并入闭集」的说明段（`会让「一次注销」变成两本账…`），不是常量本身；真值是 `export const USER_DATA_DELETION_MODULES = [` 起的 194-199（四项 + `] as const;` 收口）。user-data-deletion.ts 本提交未改动，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 23,
+  "target": "user-data-deletion.ts",
+  "from": 454,
+  "to": 1143,
+  "toEnd": 1146,
+  "reason": "旧裸锚点 :454 按同行归属为 user-data-deletion.ts，但 454 是第三方删除端口的默认文案（`note = '第三方删除完成态需要数据库连接…'`），不是注册点；`conversations` 的注册真值是 1143-1146 的 `coordinator.registerModule(CONVERSATIONS_DELETION_MODULE, makeHandler(…))`。本提交未改服务代码，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 27,
+  "target": "services/api/src/app.ts",
+  "from": 1775,
+  "fromEnd": 1783,
+  "to": 2620,
+  "toEnd": 2627,
+  "reason": "G10 旧锚点 1775-1783 今天是「媒体对象存储门控为什么必须存在」的注释块（讲 OBJECT_STORAGE_* 与 s3_compatible），与注销无关；注销两条 operation 的唯一注册点注释在 2620-2627（`// GY-I19（#19）本片：注销/删除申请 2 条路由…唯一注册点`，并写明 GY-R74 起按域降级）。app.ts 本提交未改，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 27,
+  "target": "user-data-deletion.ts",
+  "from": 577,
+  "to": 850,
+  "reason": "G11 旧锚点 577 现在是 `receiptTtlMs` 的注释（持久列 receipt_expires_at 期限同源那段），不是审计台账；审计仍在进程内的证据是 850 的 `const auditLog: PurgeAuditEntry[] = [];`。本提交未改服务代码，只能登记。2026-11-04 复核。"
+},
+{
+  "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
+  "line": 31,
+  "target": "services/api/src/app.ts",
+  "from": 752,
+  "fromEnd": 772,
+  "to": 888,
+  "toEnd": 898,
+  "reason": "消息域 real 口径的旧锚点 752-772 今天是 `catalog_read.current_knowledge` 投影类型的注释，不是消息存储选择点；真值 888-898（888 起注释「real 但 pool === null ⇒ 维持整域 fail-closed」，893-898 的 `const messagesStore: MessagesStore = …`：real + 有池接 PG、无池回落内存实现）。app.ts 本提交未改，只能登记。2026-11-04 复核。"
 }
 ]
