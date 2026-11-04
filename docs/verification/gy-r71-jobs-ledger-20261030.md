@@ -278,13 +278,13 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 | 项 | 读数 | exit |
 |---|---|---|
 | `node tools/verify-migrations-unique.mjs --strict` | `47 条配对 + 1 条登记允许缺省 = 48 条正向迁移逐条有交代`；`[gap] 缺号有「故意跳过」依据（1 个）：0037`（本片零迁移，读数与基线一致） | 0 |
-| `node tests/integration/jobs-ledger-pg.mjs`（真库） | `SUMMARY: 13 项实测通过（真库 gengyun_jobs_ledger_test）；台账总行数 4` | 0 |
+| `node tests/integration/jobs-ledger-pg.mjs`（真库） | `SUMMARY: 13 项实测通过（真库 gengyun_jobs_ledger_test）；台账总行数 4`（2026-11-04 复核：今天该驱动按源码计数输出 15 项——`say(` 出现 15 处、`passed` 每条 +1，`SUMMARY` 直接插值该计数；13 是 2026-10-30 当时的读数。本机未跑真库，此为源码计数。） | 0 |
 
 真库臂（非门禁、单独一条）：
 
 | 臂 | 读数 |
 |---|---|
-| `node tests/integration/jobs-ledger-pg.mjs`（`JOBS_LEDGER_PG_TEST_URL`） | `SUMMARY: 13 项实测通过（真库 gengyun_jobs_ledger_test）；台账总行数 4` |
+| `node tests/integration/jobs-ledger-pg.mjs`（`JOBS_LEDGER_PG_TEST_URL`） | `SUMMARY: 13 项实测通过（真库 gengyun_jobs_ledger_test）；台账总行数 4`（2026-11-04 复核：同上——今天按源码计数 15 项，13 是当时的读数。） |
 | 缺 `JOBS_LEDGER_PG_TEST_URL` 时 | 打印 `SKIP real PG17: …` 并 `exit 77`（未取得 ≠ 通过；⛔ 不静默通过） |
 
 ---
