@@ -2850,4 +2850,7 @@
   "toEnd": 763,
   "reason": "R78（符号区间复核）：`listConversations`（get /conversations）这条 operation 的 service 证据钉的符号是 `async function listConversations(`。旧行 726 原文 `    const stored = await store.insertConversation(record);`——726-744 整段是上一个函数 `createConversation`（700-743）的尾部，743 `  }` 收尾、744 空行，与 listConversations 无关；新行 745 实际是 `  async function listConversations(`，声明块由 763 `  }` 收口。台账只改行号（`726-744` → `745-763`，等长替换），`services/api/src/conversations/service.ts` 本提交未改，只能登记。2026-11-04 复核。"
 }
-]
+,
+  { "doc":"docs/verification/gy-i16-i17-deletion-cascade-20261021.md", "line":165,"target":"app.ts", "from":1490,"fromEnd":1495,"to":2339,"reason":"§5 G10 行的「位置」锚点 1490-1495 今天是 GY-I17 系统事件接线的注释块（`// **GY-I17（#17）系统事件接线**…`，讲账号停用/恢复追加 system 消息），与注销 503 无关；可用性判据 `available` 实测在 2339（`available: config.executionMode !== 'real' || deletionAcceptanceDurable,`，旧区间不含该片段）。app.ts 本提交未改动，只能走登记。2026-11-04 复核。" },
+  { "doc":"docs/verification/gy-i16-i17-deletion-cascade-20261021.md", "line":183,"target":"services/api/src/app.ts", "from":1775,"fromEnd":1783,"to":2620,"toEnd":2627,"reason":"§5.1 G10 行的依据锚点 1775-1783 今天是「对象存储显式注入门为什么必须存在」的注释块（讲 OBJECT_STORAGE_* 与 s3_compatible），与注销 503 无关；按域降级后，注销/删除申请 2 条路由的唯一注册点注释在 2620-2627（写明 GY-R74 起按域降级、唯一保留的 503 是 real 但无真库）。app.ts 本提交未改动，只能走登记。2026-11-04 复核。" },
+  { "doc":"docs/verification/gy-i16-i17-deletion-cascade-20261021.md", "line":184,"target":"user-data-deletion.ts", "from":577,"to":850,"reason":"§5.1 G11 行的依据锚点 577 现在是 `receiptTtlMs` 的注释（持久列 receipt_expires_at 期限必须与回执期限同源那段），不是审计台账；审计仍在进程内的证据是 850 的 `const auditLog: PurgeAuditEntry[] = [];`。本提交未改服务代码，只能走登记。2026-11-04 复核。" }]
