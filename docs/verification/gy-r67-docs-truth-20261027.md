@@ -108,7 +108,7 @@ STATUS_KEYS=12
 
 ### 2.2 反证（证据逐条）
 
-1. 页面存在且只调这一个读面：`apps/admin/src/views/AuditLogsView.vue:5` 的文件头注释逐字「只调 `GET /admin/audit-logs`（operationId `listAuditLogs`，x-scope `audit:read`）：」；`:72` 逐字 `const result = await fetchAuditLogsPage({`，而 `fetchAuditLogsPage` 定义在 `apps/admin/src/lib/admin-audit-logs.mjs:393`，逐字 `export async function fetchAuditLogsPage({ fetchImpl, baseUrl, token, cursor = null, limit = LIMIT_DEFAULT, filters = null, signal } = {}) {`；该文件的读面常量在 `apps/admin/src/lib/admin-audit-logs.mjs:31` 逐字 `export const AUDIT_LOGS_PATH = '/admin/audit-logs';`。
+1. 页面存在且只调这一个读面：`apps/admin/src/views/AuditLogsView.vue:5` 的文件头注释逐字「只调 `GET /admin/audit-logs`（operationId `listAuditLogs`，x-scope `audit:read`）：」；`:72` 逐字 `const result = await fetchAuditLogsPage({`，而 `fetchAuditLogsPage` 定义在 `apps/admin/src/lib/admin-audit-logs.mjs:403`，逐字 `export async function fetchAuditLogsPage({ fetchImpl, baseUrl, token, cursor = null, limit = LIMIT_DEFAULT, filters = null, signal } = {}) {`；该文件的读面常量在 `apps/admin/src/lib/admin-audit-logs.mjs:31` 逐字 `export const AUDIT_LOGS_PATH = '/admin/audit-logs';`。
 2. 导航与渲染都在：`apps/admin/src/App.vue:33` 逐字 `{ key: 'auditLogs', label: '审计总台账（只读）', note: '读面已接入' },`；`apps/admin/src/App.vue:70` 逐字 `<AuditLogsView v-else-if="active === 'auditLogs'" />`。
 3. 引入时间：该页面由提交 `04728c69`「Add read-only admin audit and administrator pages (#633)」引入，早于本页基线 `b1d02c21`，也在 `docs/architecture/admin-console-capability-map.md` 的基线 `68dec742` 上（该提交上 `AuditLogsView.vue:72`、`App.vue:33`、`App.vue:70` 与本页所引逐字相同，已用 `git show 68dec742:...` 抽行核对）。
 4. 另外两个审计页确实只读窄面（这部分原文是真的）：`apps/admin/src/lib/audit-events.mjs:33` 逐字 `export const AUDIT_EVENTS_PATH = '/admin/audit-events';`；`apps/admin/src/lib/flag-audit.mjs:54` 逐字 `export const FLAG_AUDIT_PATH = '/admin/flag-audit-events';`。
@@ -202,7 +202,7 @@ STATUS_KEYS=12
 
 ### 5.2 这一行本身不是假话——矛盾在 ai-ops 页
 
-这一行**本来就写着审计总台账已落地**（还给了页面与锚点），与任务单说的「自相矛盾」相反：矛盾来自 `docs/architecture/ai-ops-spec-status.md` 的 P10 说「全仓没有页面消费」。本页 §4 的更正记录也已逐字给出 `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:393`）→ `AuditLogsView.vue:72`、tab 装配 `App.vue:33`、渲染 `App.vue:70`。
+这一行**本来就写着审计总台账已落地**（还给了页面与锚点），与任务单说的「自相矛盾」相反：矛盾来自 `docs/architecture/ai-ops-spec-status.md` 的 P10 说「全仓没有页面消费」。本页 §4 的更正记录也已逐字给出 `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:403`）→ `AuditLogsView.vue:72`、tab 装配 `App.vue:33`、渲染 `App.vue:70`。
 
 另外它的 `services/api/src/app.ts:1485-1493` 等锚点在**当前 HEAD 上是漂移的**，但该页第 3 行明确声明「本页所有「文件:行号」都以 `68dec742` 为准」，这些锚点在 `68dec742` 上逐行对得上——属「基线相对锚点」，不是假陈述，**本片不改它的行号**（改了反而破坏它自己的口径）。
 

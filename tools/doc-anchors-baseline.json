@@ -217,12 +217,6 @@
       "path": "services/api/src/routes/synthesis.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "services/api/src/routes/synthesis.ts:112"
-    },
-    {
-      "path": "services/api/src/routes/synthesis.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
       "reference": "services/api/src/routes/synthesis.ts:112-113"
     },
     {
