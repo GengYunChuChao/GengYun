@@ -954,7 +954,7 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'RECORD_FORMAT_NOT_WAV',
-        recordStageNote: voiceApi.recordFormatMessageFor(result),
+        recordStageNote: withNoRetryNote(voiceApi.recordFormatMessageFor(result)),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -975,8 +975,8 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'INVALID_INPUT',
-        recordStageNote: '录音时长 ' + (result.durationMs / 1000).toFixed(1) + ' 秒，超过契约上限 '
-          + (voiceApi.RECORD_MAX_DURATION_MS / 1000) + ' 秒：本条未上传任何音频，请重新录制。',
+        recordStageNote: withNoRetryNote('录音时长 ' + (result.durationMs / 1000).toFixed(1) + ' 秒，超过契约上限 '
+          + (voiceApi.RECORD_MAX_DURATION_MS / 1000) + ' 秒：本条未上传任何音频。'),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -993,7 +993,7 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'MEDIA_CHANNEL_UNAVAILABLE',
-        recordStageNote: '无法读取录音文件摘要：本条未上传任何音频（不伪造上传结果）。',
+        recordStageNote: withNoRetryNote('无法读取录音文件摘要：本条未上传任何音频（不伪造上传结果）。'),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -1005,8 +1005,8 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'failed', recordLabel: '重新录音', uploadErrorCode: 'MEDIA_TOO_LARGE',
-        recordStageNote: '录音文件 ' + (info.size / 1048576).toFixed(1) + ' MiB，超过用途上限 '
-          + (voiceApi.VOICE_MAX_BYTES / 1048576) + ' MiB：本条未上传任何音频，请缩短录制后重试。',
+        recordStageNote: withNoRetryNote('录音文件 ' + (info.size / 1048576).toFixed(1) + ' MiB，超过用途上限 '
+          + (voiceApi.VOICE_MAX_BYTES / 1048576) + ' MiB：本条未上传任何音频，请缩短录制后重试。'),
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -1056,7 +1056,7 @@ Page({
       this._recPending = false
       this.setData({
         recordState: 'stopped', recordLabel: '重新录音',
-        recordStageNote: '执行模式 ' + mode + '（真实对象存储未接线）：录音已在本机完成，但本条没有上传，也没有 media_id。',
+        recordStageNote: withNoRetryNote('执行模式 ' + mode + '（真实对象存储未接线）：录音已在本机完成，但本条没有上传，也没有 media_id。'),
         uploadErrorCode: '', uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: ''
       })
       return
@@ -1090,7 +1090,7 @@ Page({
         recordState: 'failed', recordLabel: '重新录音',
         uploadErrorCode: typeof error.code === 'string' ? error.code : 'UNAVAILABLE',
         uploadedMediaId: null, uploadedMediaRevision: 0, uploadedPurpose: '',
-        recordStageNote: voiceApi.recordUploadMessageFor(error) + '（' + String(error && error.code) + '）'
+        recordStageNote: withNoRetryNote(voiceApi.recordUploadMessageFor(error) + '（' + String(error && error.code) + '）')
       })
     }
   },
@@ -1631,4 +1631,20 @@ function readFileInfo(filePath) {
       fail: function () { const e = new Error('MEDIA_CHANNEL_UNAVAILABLE'); e.code = 'MEDIA_CHANNEL_UNAVAILABLE'; reject(e) }
     })
   })
+}
+
+/**
+ * 失败/不发/超限三类结局的固定尾句：说明**本条录音不会被重试复用**，只能重录。
+ *
+ * 措辞边界（监工 2026-11-04 批复）：`discardRecordFile()` 是**尽力而为**的删除——基础库没有文件能力、
+ * 没有删除 API 或同步抛错时返回 `false`，异步 `unlink` 失败也静默吞掉。因此这里**不能**写「已删除／已丢弃」，
+ * 只能写本页真实保证的事：临时文件路径在落 UI 之前就被清空（`_recTempFilePath = ''`），
+ * 本条录音不可能被再次读取或重试上传。
+ *
+ * 这个函数定义在文件末尾，是为了不动本文件上面任何一行的行号：
+ * `docs/verification/gy-i11-voice-input-20261021.md` 按行号锚住本文件多处，行内插入会把它们顶走
+ * （doc-anchors 的 BARE-ORPHAN 判红）。函数声明会提升，放在末尾不影响调用。
+ */
+function withNoRetryNote(note) {
+  return note + '本条录音不会重试复用（页面已清掉它的临时文件路径）：请重新录制。'
 }

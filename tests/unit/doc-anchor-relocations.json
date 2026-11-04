@@ -2699,6 +2699,40 @@
   "reason": "R78 第 1 轮：原文引 :93-98 说「注销清理闭集扩到四域」；该处现在是 import 语句区。真身是 `export const USER_DATA_DELETION_MODULES = [`（:194）到 `] as const;`（:199），四项 FAVORITES/HISTORY/MESSAGES/CONVERSATIONS。目标文件本次未改。"
 },
 {
+  "doc": "docs/verification/gy-r29-real-pg-arms-audit-20261022.md",
+  "line": 136,
+  "target": ".github/workflows/workbook-staging.yml",
+  "from": 43,
+  "to": 50,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:43` 现在是 `with:`（setup-node 的字段行）；文档所说「库名硬钉 `gengyun_staging_test`」的 `STAGING_PG_TEST_URL: postgresql://staging_test:synthetic-ci-only@127.0.0.1:5432/gengyun_staging_test` 在 `:50`，故重锚到 50。"
+},
+{
+  "doc": "docs/verification/gy-r73-third-party-deletion-write-20261103.md",
+  "line": 236,
+  "target": "services/api/src/privacy/user-data-deletion.ts",
+  "from": 1543,
+  "to": 1627,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:1543` 现在是 `for (const module of changed) {`；文档所说「同步判据 `(id) => coordinator.requestState(id) === 'cancelled'`」在 `:1627`，故重锚到 1627（漂移 +84）。"
+},
+{
+  "doc": "docs/verification/gy-i28-demo-parity-20261018.md",
+  "line": 100,
+  "target": "miniprogram/pages/messages/messages.js",
+  "from": 217,
+  "to": 362,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:217` 现在是 `return`；文档所说「`onFilter(event)`：只切本地视图、不重新请求」在 `:362` 的 `onFilter: function (event) {`（`:357-361` 注释正是「只切本地视图、不重新请求」），故重锚到 362。"
+},
+{
+  "doc": "docs/verification/gy-r72-online-purge-closed-set-20261102.md",
+  "line": 29,
+  "target": "services/api/src/app.ts",
+  "from": 2218,
+  "fromEnd": 2264,
+  "to": 2272,
+  "toEnd": 2286,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:2218-2264` 现在是别的装配块结尾（`:2218` 是 `},`、`:2264` 是 `: {}),`）；文档所说「生产装配有池即无条件注入四个 conditional 域」在 `:2272-2286`（`:2272` 注释 + 四个 store 依次 `:2276`/`:2278`/`:2282`/`:2286`），故重锚到 2272-2286。"
+},
+{
   "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
   "line": 23,
   "target": "user-data-deletion.ts",

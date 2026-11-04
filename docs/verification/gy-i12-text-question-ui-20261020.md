@@ -65,8 +65,8 @@
 | `Conversation`/`Turn`/`TurnPage`/`Ack` | `:13003`／`:13169`／`:15469`／`Ack`：键集与闭集逐项核对 |
 | 幂等/版本头 | `Idempotency-Key` 8..128 必填（`:10875`）；`If-Match` pattern `^"[1-9][0-9]*"$` 必填、缺失 428、不匹配 409（`:10886`） |
 | 路由装配 | `services/api/src/app.ts:2573` `registerConversationRoutes(app, config, guards, conversationService)`；`:2435` 起 `createAnswerJobSource` 已接入跨 kind 作业读面 |
-| 契约实现状态 | `docs/architecture/contract-implementation-status.md` 的 `createConversation`/`createTurn`/`listTurns`/`deleteTurn`/`getJob`/`cancelJob` 六行均为 `partial`，且**明言**：未接真实模型（版本串 `unimplemented:no-real-` 前缀）、正文是确定性检索条目摘录、真实资料覆盖有限（浙江首批 159 条 `review_status=unverified`）⇒ **用量卡在本基线恒不可产出**、`answer` 作业**取消仍未接线**（作业面如实 503 `PROVIDER_UNAVAILABLE`）。本片 UI 口径与这三条逐字一致 |
-| 取消能力 | 服务端对回答作业无取消入口 ⇒ 本片**不**发任何"取消任务"请求、**不**谎称服务端任务已取消（页面 `exitReason` 文案如实写明） |
+| 契约实现状态 | `docs/architecture/contract-implementation-status.md` 的 `createConversation`/`createTurn`/`listTurns`/`deleteTurn`/`getJob`/`cancelJob` 六行均为 `partial`，且**明言**：未接真实模型（版本串 `unimplemented:no-real-` 前缀）、正文是确定性检索条目摘录、真实资料覆盖有限（浙江首批 159 条 `review_status=unverified`）⇒ **用量卡在本基线恒不可产出**、`answer` 作业**取消仍未接线**（作业面如实 503 `PROVIDER_UNAVAILABLE`）。本片 UI 口径与这三条逐字一致 （2026-11-04 复核：『`answer` 作业取消仍未接线』已失效——`services/api/src/app.ts` 装配 `createAnswerJobSource` 时已传 `cancelJob: service.cancelTurn`，取消按 200 成功／409 `OBJECT_UNAVAILABLE` 分流，不再 503。） |
+| 取消能力 | 服务端对回答作业无取消入口 ⇒ 本片**不**发任何"取消任务"请求、**不**谎称服务端任务已取消（页面 `exitReason` 文案如实写明） （2026-11-04 复核：服务端已有取消入口；本格「不发取消请求」是当时的 UI 口径，不代表今天仍无入口。） |
 
 ---
 
