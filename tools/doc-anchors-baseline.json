@@ -331,12 +331,6 @@
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
-      "reference": "services/api/src/privacy/user-data-deletion.ts:203"
-    },
-    {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "NOT_SYMBOL_LINE",
-      "owner": "api-server",
       "reference": "user-data-deletion.ts:104"
     },
     {
