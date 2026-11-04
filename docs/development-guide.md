@@ -120,7 +120,7 @@ npm run db:status --workspace @gengyun/api
 | `npm run test:mini` | Node 静态和诊断检查；不代替微信编译 |
 | `npm run build` | API→services/api/dist；后台→apps/admin/dist |
 
-手写行号会随代码漂：文档里的 `路径:起-止` 由 `node tools/verify-doc-anchors.mjs` 校三类（路径不存在／超出文件行数／区间全空行或全右括号），`--strict` 只报基线之外的新增，历史遗留登记在 `tools/doc-anchors-baseline.json`。CI 上跑的同一条命令再带两个开关——`node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --scan docs`：符号覆盖要求锚点旁的符号必须是目标文件里的声明行，否则记 `UNDECLARED` 只计数、不判红。
+手写行号会随代码漂：文档里的 `路径:起-止` 由 `node tools/verify-doc-anchors.mjs` 校三类（路径不存在／超出文件行数／区间全空行或全右括号），`--strict` 只报基线之外的新增，历史遗留登记在 `tools/doc-anchors-baseline.json`。CI 上跑的同一条命令再带两个开关——`node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --scan docs`：符号覆盖要求锚点旁的符号必须是目标文件里的声明行，否则记 `UNDECLARED` 只计数、不判红。同一口径对 `docs/verification/**` 也统计一份，单列成 `SYMBOL-COVERAGE-VERIFICATION` 两行只读读数（off 档同样不打）；这一面任何档位都不进退出码，`strict` 仍只判 `docs/architecture/**`。
 台账锚点（`source_anchor`）的 `--reanchor` 流程、`MISSING`／`AMBIGUOUS`／`UNSAFE` 如何处置，见 [AGENTS.md](../AGENTS.md) 的「契约台账锚点维护」小节；本页只给入口，不重复流程。
 
 纯文档通常只做文档／链接检查；接口改动加契约检查；代码做受影响测试与必要构建。
