@@ -224,7 +224,7 @@ reference,moderation,contract,evaluation}` 与 `tests/local-debug.test.mjs`）�
 | --- | --- | --- | --- |
 | 1 | **真实第三方外发** | **未验证** | 未授权付费/真实调用；`real` 未接真实传输一律 503，且**零 sent 记录**。第 3 节 6–9 的"实际派发"用的是**测试内合成 real 传输**（不联网，脚本内明确标注） |
 | 2 | **合成域（TTS）的在途守卫接入** | **已接线（后续片，2026-10-16）** | 本页记录当时状态：迁移 0003 的 `exports.object_id` 是 **uuid**，而 `createSynthesis` 的 `checked_content_ref.id` 是 1..80 的**任意字符串**（合成目标不一定是 uuid）⇒ 需要一次 **schema/契约决策**（例如新增文本型对象标识列），本片不自造。**该决策已由 GY-I27 第三片落地**：迁移 `0014_export_object_key.sql` 新增文本型对象标识列 `object_key varchar(128)`（既有列类型未改），装配在 `services/api/src/privacy/synthesis-egress.ts`；本页第 2 节读数照旧（当时确未接线） |
-| 3 | **注销的 HTTP 触发面** | **未接线**（契约仍 `planned`） | `requestAccountDeletion` 在契约里仍是 `planned`（属 GY-I19），**不得自造契约外路由**。本片交付消费者接口并在第 3 节 11 按 `state-contract §105` 口径**模拟**注销提交（同一提交里 `deletion_pending` + `auth_epoch+1`）后验证：入口拒绝、在途撤销、晚到零写入 |
+| 3 | **注销的 HTTP 触发面** | **未接线**（契约仍 `planned`） | `requestAccountDeletion` 在契约里仍是 `planned`（属 GY-I19），**不得自造契约外路由**。本片交付消费者接口并在第 3 节 11 按 `state-contract §105` 口径**模拟**注销提交（同一提交里 `deletion_pending` + `auth_epoch+1`）后验证：入口拒绝、在途撤销、晚到零写入（2026-11-04 复核：`requestAccountDeletion` 已由 planned 转 partial 并挂上 `services/api/src/routes/account-deletion.ts`（`contract-status.json` 记 `route_mounted: true`）；「未接线／仍 planned」不再成立） |
 | 4 | **真实微信身份 / 真机** | **未验证** | 合成身份（替身 wechat 提供者）；无小程序改动 |
 | 5 | **真实媒体/对象存储** | **未验证** | 第 3 节用 `createSubstituteMediaPort()`（合成媒体引用端口）；本片测的是账本，不是存储 |
 | 6 | **生产默认装配下的"实际派发"** | **未验证（也不可能发生）** | 应用装配路径**永不注入真实提供者**（既有零端口注入策略）⇒ 生产 `real` 里提供者恒为 `available=false` ⇒ 受理 503、零账本行。真实派发只有在显式注入已审真实传输后才会发生 |
@@ -274,7 +274,7 @@ Refs #29（不关闭整项）。第二片：把协议层接到**持久**外发�
    同对象同版本再次预留被拒（不可复活）。
 3) 注销消费者：`createEgressRevoker` 已注入授权服务；**HTTP 触发面 `requestAccountDeletion` 仍为
    planned（属 GY-I19），故未自造路由** —— 证据以 state-contract §105 口径模拟注销提交后验证
-   入口 403 + 在途撤销 + 晚到零写入。
+   入口 403 + 在途撤销 + 晚到零写入。（2026-11-04 复核：本句「`requestAccountDeletion` 仍为 planned」已不成立——同上，该 operation 已挂 `POST /me/account/deletion`、`contract-status.json` 记 `status: partial`）
 4) 真 PG 端到端：本机隔离 PostgreSQL 17.11（initdb 新建、随机口令、仅回环、跑完停库），
    tests/integration/egress-ledger-pg.mjs 11 组全过，含 **HTTP 撤回 200（不再走 409 兜底）+
    在途置 failed + 晚到结果零写入 + 零新增账本行**、取消墓碑不可复活、real fail-closed 零 sent、

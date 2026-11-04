@@ -61,7 +61,7 @@
 在该页 §8 表格之后加「状态更新（后续，2026-10-21 补注；上表原文不改）」块，覆盖两处：
 
 - **D1 已按「建议接」落实**：另有在飞 PR（分支 `test/gy-r28-e5-backup-driver-ci`，**PR #400，尚未合入**）把
-  `tests/integration/backup-copies-purge-pg.mjs` 接进 `.github/workflows/real-pg-integration.yml`（受管脚本第 14 条，自起集群形态）。
+  `tests/integration/backup-copies-purge-pg.mjs` 接进 `.github/workflows/real-pg-integration.yml`（受管脚本第 14 条，自起集群形态）。（2026-11-04 复核：上条所指 PR #400 已合入 `e57b2f8c`，该脚本已接进 `real-pg-integration.yml`）
   该页 D1 行仍写「本片红线禁止改 workflows ⇒ 未接线」——那只是该片当时的状态；**未合入前也不得记作「已接线」**。
 - **§1 第 ③ 条与 §7「消息域／会话域／社群域的副本行」的读数已过期**：`#397` 已把 `BACKUP_COPY_SCOPES` 扩到四域
   （`packages/privacy/backup-copies.mjs:42-47`），消息域与会话域都有副本清单行，只有社群域仍无 scope。
@@ -73,7 +73,7 @@
 - 改后：现跑 **13 条受管脚本**（12 条 `-pg` ＋ `recognition-chain-e2e.mjs`；`git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml`=13）。逐条来源：
   `ocr-jobs-pg.mjs` ← `#331`（第 8 条）、`recognitions-pg.mjs` ← `#349`、`account-suspend-pg.mjs` ← `#353`（脚本缺陷已修）、
   `speech-pg.mjs` ← `#354`、`backup-purge-pg.mjs` ← `#360`（PGDG apt 装 `postgresql-17` 取 `initdb`/`pg_ctl`，故「不共享该二进制」的判断过期）、
-  `recognition-chain-e2e.mjs` ← `#375`（第 13 条）。另有在飞 PR #400 将把 `backup-copies-purge-pg.mjs` 接成第 14 条（**未合入前不记作事实**）。
+  `recognition-chain-e2e.mjs` ← `#375`（第 13 条）。另有在飞 PR #400 将把 `backup-copies-purge-pg.mjs` 接成第 14 条（**未合入前不记作事实**）。（2026-11-04 复核：#400 已合入 `e57b2f8c`，该脚本已接成第 14 条）
 - `development-progress.md`：按该文件自己的规则**不改 10-20 节读数**，改为在 10-20 节末加一行指路 + 新增「2026-10-21 快照」逐条订正。
 
 ---
@@ -89,7 +89,7 @@
 | **R5** | `README.md` 表「依据」列的 `contract-status.json` 行号（`#4` `:46`、`#7` `:649`／`:668`、`#9` `:777`、`#12` `:1061`、`#13` `:1041`、`#15` `:1261`、`#18` `:2578-2604`、`#22`、`#29` 等） | 全部为旧轮读数；台账经 `#362`／`#369`／`#344`／`#356` 扩写后整体漂移（实测：`createOCR` 913、`createSynthesis` 1111、`createConversation` 1133、`listPosts` 1344、`listMessages` 1915、`listAdminUsers` 2795） | 24 行 × 多处锚点重测属独立一片的体量；本片只动 `#10`／`#16`／`#17`／`#19` 四行 | 单开「台账锚点全表重测」片：逐行 `grep -n '"id": "<operationId>"'` 重锚，或改用 operationId 取代行号 |
 | **R6** | `docs/development-progress.md` 顶部「已合组件与剩余验收」表（2026-10-14 段，`问答／社区／消息／后台` 行） | 「消息只服务进程内存储、real持久存储未接线」「社区real模式整域503 `PROVIDER_UNAVAILABLE`、**真实持久存储未交付**」 | 该表属 2026-10-14 历史段，文件自身规则是「更新时另起快照、不改本节」 | 与 R5 一并处理，或在下一份快照里明写「顶表为 10-14 读数」 |
 | **R7** | `docs/verification/gy-i17-messages-pg-20261018.md:34`、`docs/verification/gy-i16-favorites-history-20261014.md:14`／`:330`／`:391`／`:414` | 同类「real 整域 503／无注销清理」旧口径 | 历史页按仓内惯例不改写当时读数 | 由涉及该域的下一个片统一加 superseded 头注 |
-| **R8** | `#399`（D4，消息域三处修复 + 401/403 收敛）与 `#400`（E5，把 `backup-copies-purge-pg.mjs` 接进真库 CI） | **均在飞**（#399 于 2026-10-21T14:47:52Z 实测为非草稿 `MERGEABLE`；#400 分支 `test/gy-r28-e5-backup-driver-ci`）；#399 的证据页 `docs/verification/gy-i15-messages-chain-20261021.md` **未进 main** | 未合入 PR 的结论不当作既成事实；本页因此**不引用**它们的读数，口径一律以 main 代码与 workflow 为准 | 合入后由各自片核对 README／B4 页／E2 页的引用是否需要再订正 |
+| **R8** | `#399`（D4，消息域三处修复 + 401/403 收敛）与 `#400`（E5，把 `backup-copies-purge-pg.mjs` 接进真库 CI） | **均在飞**（#399 于 2026-10-21T14:47:52Z 实测为非草稿 `MERGEABLE`；#400 分支 `test/gy-r28-e5-backup-driver-ci`）；#399 的证据页 `docs/verification/gy-i15-messages-chain-20261021.md` **未进 main**（2026-11-04 复核：#399 已合入 `805b15ce`、#400 已合入 `e57b2f8c`，「均在飞」不再成立） | 未合入 PR 的结论不当作既成事实；本页因此**不引用**它们的读数，口径一律以 main 代码与 workflow 为准 | 合入后由各自片核对 README／B4 页／E2 页的引用是否需要再订正 |
 | **R9** | `docs/verification/gy-i16-i17-deletion-cascade-20261021.md` §10「未取得」 | 仍写「`messages` 真库注销臂：不存在（本片未实现 G1–G3）」 | 属该页当时读数；本片已在页首状态块与 §1／§3／§4／§4.1／§5／§7／§8／§9／§10 加 superseded 标注，不改原文 | 无需后续片单列 |
 | **R10** | `docs/verification/gy-i19-backup-purge-driver-20261021.md` §8 D1 与 §7「未取得」 | 仍写「本片红线禁止改 workflows ⇒ 未接线」「闭集仍只有 `favorite`/`history`」 | 同为 #398 的实测页；不改原文 | **本轮已加 superseded 注**（§1.5）；E5 #400 合入后由该片自行改「已接线」 |
 
@@ -134,6 +134,6 @@ git rev-list --count HEAD
 - **真 PG17 上的消息域注销行数读数**：`#397` 的行数证据来自 PGlite 真表（`tests/unit/favorites-history-deletion-registration.test.mjs` 注入 `0008`＋`0019`／`0013` 迁移集）与真库臂的清单行，**不是** `messages` 真库注销行数；本片未起 PG，也不改代码，故不产生该读数。
 - **30 日到期的真实调度**：驱动是「可被 cron 调用」的形态，仓内无任何调度器接线，真实 30 日墙钟等待未发生（`docs/verification/gy-i19-backup-purge-driver-20261021.md` §7 同结论）。
 - **`real` 注销面放开**：仍整域 503（G10／P0-5），本片不动也不建议先放开。
-- **#399 的读数**：仍在飞，未合入的结论不作为事实。
-- **`backup-copies-purge-pg.mjs` 的 CI 常驻证据**：把它是接进 `real-pg-integration.yml` 的在飞 PR（`#400`／`test/gy-r28-e5-backup-driver-ci`）**尚未合入**，故本页只写「另有在飞 PR 把它接进去」，不写「已接线」；该脚本的 CI 绿读数需等合入后由 CI 运行记录提供。
+- **#399 的读数**：仍在飞，未合入的结论不作为事实。（2026-11-04 复核：#399 已合入 `805b15ce`，「仍在飞」不再成立）
+- **`backup-copies-purge-pg.mjs` 的 CI 常驻证据**：把它是接进 `real-pg-integration.yml` 的在飞 PR（`#400`／`test/gy-r28-e5-backup-driver-ci`）**尚未合入**，故本页只写「另有在飞 PR 把它接进去」，不写「已接线」；该脚本的 CI 绿读数需等合入后由 CI 运行记录提供。（2026-11-04 复核：#400 已合入 `e57b2f8c`，「尚未合入」不再成立）
 - 本页所有「已补」「已是四域」均指**代码与断言现状**，不构成 #16／#17／#19 任何一项的验收通过。

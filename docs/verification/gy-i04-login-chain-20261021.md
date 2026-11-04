@@ -127,9 +127,9 @@
 - 拒绝语义：缺授权 403 `CONSENT_REQUIRED`、错用途 403 `SCOPE_DENIED`（`services/api/src/privacy/egress.ts:80-105`）。
 
 未通的四点（1/2/3/4 的处置见 §1.3 裁决与 §6.2）：
-1. **客户端没有授权入口**：全仓 `miniprogram/**` 对 `me/consents` **零调用**（`grep` 无命中）。识别页在 403 时给出 `retryAction: 'grant_consent'`，改前按钮文案是「去授权」，但 `pages/identify/identify.wxml` 的 `bind:action="onRetry"` 最终只做状态复位并**重跑同一个必然 403 的请求**（`pages/identify/identify.js:876`）——一个指向空处的按钮。本片按裁决 6 只改文案：按钮 →「重试」，说明句改为「应用内授权入口尚未接入，暂时只能由服务端预置授权」。
-2. **契约缺「读用途政策」面**：`POST /me/consents` 的请求体要求 `purpose` + `policy_version` + `recipient_ids`（`routes/consents.ts:28-32`），而 `openapi.json` 只有 `listConsents` / `grantConsent` / `withdrawConsent`，没有任何「当前生效政策版本 / 已核验接收方」的读取面 ⇒ 客户端**无法**合法组出请求体。
-3. **社区投稿的 `public_posting` 闸未挂**：`services/api/src/privacy/egress.ts:11-19` 的挂载表明确要求「社区投稿入口」挂 `createConsentPreHandler`，但 `routes/community.ts` 的 16 处 `preHandler`（`:203,213,225,234,243,253,266,278,287,296,307,316,325,334,343,355`）**全部只有 `guards.requireUser`**，`app.ts:1735` 也未注入 `consentGate`。
+1. **客户端没有授权入口**：全仓 `miniprogram/**` 对 `me/consents` **零调用**（`grep` 无命中）。识别页在 403 时给出 `retryAction: 'grant_consent'`，改前按钮文案是「去授权」，但 `pages/identify/identify.wxml` 的 `bind:action="onRetry"` 最终只做状态复位并**重跑同一个必然 403 的请求**（`pages/identify/identify.js:876`）——一个指向空处的按钮。本片按裁决 6 只改文案：按钮 →「重试」，说明句改为「应用内授权入口尚未接入，暂时只能由服务端预置授权」。（2026-11-04 复核：客户端已补授权入口——`miniprogram/utils/consent-api.js` 覆盖 GET/POST/DELETE 三条 `/me/consents`（第 255／461／521 行），另有整页 `miniprogram/pages/consent/consent.js`／`.wxml`；「零调用」不再成立，后半句「按钮指向空处」亦失效）
+2. **契约缺「读用途政策」面**：`POST /me/consents` 的请求体要求 `purpose` + `policy_version` + `recipient_ids`（`routes/consents.ts:28-32`），而 `openapi.json` 只有 `listConsents` / `grantConsent` / `withdrawConsent`，没有任何「当前生效政策版本 / 已核验接收方」的读取面 ⇒ 客户端**无法**合法组出请求体。（2026-11-04 复核：读政策面已补——契约 `packages/contracts/openapi.json` 有 `/me/privacy-policy`（第 1029 行），路由 `services/api/src/routes/consents.ts` 已挂同名 GET（第 90 行），客户端 `miniprogram/utils/consent-api.js` 第 378 行已消费；「无法合法组出请求体」不再成立）
+3. **社区投稿的 `public_posting` 闸未挂**：`services/api/src/privacy/egress.ts:11-19` 的挂载表明确要求「社区投稿入口」挂 `createConsentPreHandler`，但 `routes/community.ts` 的 16 处 `preHandler`（`:203,213,225,234,243,253,266,278,287,296,307,316,325,334,343,355`）**全部只有 `guards.requireUser`**，`app.ts:1735` 也未注入 `consentGate`。（2026-11-04 复核：闸已挂——`postingPreHandlers` 在四条写面加 `deps.consent({ purpose: 'public_posting' })`（`services/api/src/routes/community.ts` 第 421／422 行组装，挂到同文件第 214／235／267／288 行），`app.ts` 已在 `registerCommunityRoutes` 注入 `consentGate`（`services/api/src/app.ts` 第 2668 行，定义在同文件第 999 行）；「未挂／未注入」不再成立）
 4. **隐私说明曾说了做不到的事**：`pages/profile/profile.wxml` 原写「拍摄照片、录音和位置信息都需要您单独授权，且可以随时撤回」，但授权与撤回都没有入口 → 本片按裁决 7 改为如实措辞（删「随时撤回」，明写「入口尚未接入、不会默认替您授权」）。
 
 ## 3. 验证命令与真实读数
@@ -380,8 +380,8 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 ### 6.2 仍未决（需后续切片）
 
 1. **`miniprogram/utils/session.js` 生死**：GY-I26 占位层（`SESSION_ENABLED=false`、`isGuest()` 恒 true）在 `auth.js` 落地后已无生产消费者，但 `tests/ui-adaptive.test.mjs:274,285` 仍以源码字面量守着它。删文件 / 改成委托 `auth.js` / 保留现状，三者都要动那条守卫。
-2. **社区投稿 `public_posting` 用途闸**（`routes/community.ts` 16 处 `preHandler` 只有 `requireUser`；`app.ts:1735` 未注入用途闸，而 `privacy/egress.ts:11-19` 的挂载表要求挂（**2026-11-04 订正：原文写的 `consentGate` 在 `egress.ts` 已 0 命中，该表要求的是 `createConsentPreHandler`，定义在同文件第 88 行**））。挂之前要先准备授权夹具，否则 GY-I15 全部社区 HTTP 用例会先 403。
-3. **同意授权入口 + 契约读取面**（裁决 1 只解决了措辞）：服务端需增补「当前生效用途政策 + 已核验接收方」读取 operation（属契约变更），客户端才能合法组出 `POST /me/consents`。
+2. **社区投稿 `public_posting` 用途闸**（`routes/community.ts` 16 处 `preHandler` 只有 `requireUser`；`app.ts:1735` 未注入用途闸，而 `privacy/egress.ts:11-19` 的挂载表要求挂（**2026-11-04 订正：原文写的 `consentGate` 在 `egress.ts` 已 0 命中，该表要求的是 `createConsentPreHandler`，定义在同文件第 88 行**））。挂之前要先准备授权夹具，否则 GY-I15 全部社区 HTTP 用例会先 403。（2026-11-04 复核：闸已挂——`postingPreHandlers` 在四条写面加 `deps.consent({ purpose: 'public_posting' })`，`app.ts` 已在 `registerCommunityRoutes` 注入 `consentGate`（`services/api/src/app.ts` 第 2668 行）；「未挂／未注入」不再成立，「16 处 `preHandler` 只有 `requireUser`」也不再是今天的实况）
+3. **同意授权入口 + 契约读取面**（裁决 1 只解决了措辞）：服务端需增补「当前生效用途政策 + 已核验接收方」读取 operation（属契约变更），客户端才能合法组出 `POST /me/consents`。（2026-11-04 复核：该读取面已补，见本页第 131 条括注）
 4. **denied 动作是否改为跳「我的」页**：本片把按钮改成「重试」且不改跳转；若产品希望 denied 动作真正可用，可改为 `switchTab('/pages/profile/profile')` 并在 `ui-unified-states.test.mjs:206-209` 上按**加强**方式改写（仍禁止「能授权/能撤回」这类失实承诺）。
 8. **「去授权」死按钮**的另一条低成本出口：若短期不加契约读取面，可把识别页 `permission_denied` 分支的动作从「去授权」改为「查看隐私说明」（`pages/profile/profile.wxml:162-172`），并同步把该段文案改成「授权入口尚未接入」。这会动 `ui-unified-states.test.mjs:206-209` 的断言，故列为裁决项而非本期实施。
 

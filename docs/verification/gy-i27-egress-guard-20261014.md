@@ -230,7 +230,7 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 | 3 | **真机 / 小程序端交互** | **未验证** | 本片为服务端协议与接口，无小程序改动 |
 | 4 | **完整 7/30 日注销删除**（对象存储、备份、供应商副本、恢复清单重放） | **未验证**（属 **GY-I19**） | 本片只交付协议与接口；`deletion_tombstones`/`backup_inventory` 不在范围 |
 | 5 | **PG17.11 实库验收**（账本/授权/删除回执落库） | **未验证** | 本片未新增实库适配器；`tests/integration/*-pg.mjs` 需 `CONSENT_GRANT_TEST_URL` 等本地 PG，**本轮未运行**（未声称通过） |
-| 6 | **撤回/注销消费者接入 `consent-pg.ts`／`grant-pg.ts`** | **未接线** | 该文件为 `[GY-I04/27]` 共同线且改动需真实 PG 验证；本片交付 `createEgressRevoker` 接口与装配说明，**默认行为保持不变**（fail-closed 兜底） |
+| 6 | **撤回/注销消费者接入 `consent-pg.ts`／`grant-pg.ts`** | **未接线** | 该文件为 `[GY-I04/27]` 共同线且改动需真实 PG 验证；本片交付 `createEgressRevoker` 接口与装配说明，**默认行为保持不变**（fail-closed 兜底）（2026-11-04 复核：`createEgressRevoker` 已装配并注入同意路由——`services/api/src/app.ts` 第 1023 行（real 且账本可用时构造）、第 2483-2485 行交给 `registerConsentRoutes`；本节判定以页首注所说的接线单证据页为准） |
 | 7 | **外发消费者挂到各 AI 域路由** | **未接线** | `routes/recognitions.ts`／`speech.ts`／`ocr.ts`／`synthesis.ts`／`app.ts` 属其它任务线已合并文件；本片交付协议 + HTTP 适配 + 挂载说明 |
 | 8 | **`contract-status.json` / `contract-implementation-status.md` 状态更新** | **未改** | 本片未新增 HTTP 路由，`listExports`/`requestAccountDeletion`/`getDeletionReceipt` 仍为 `planned`（HTTP 装配属 GY-I19）；不改文档以免出现"已实现"的误导 |
 
