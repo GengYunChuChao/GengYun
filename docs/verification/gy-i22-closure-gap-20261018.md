@@ -70,7 +70,7 @@
   返回空页会把"本进程无权回答"说成"平台没有账号"（伪造结论）」。
 - `services/api/src/admin/ops/service.ts:346-350` —— `requireWiredAccountAuthority()`：
   `throw new ApiError('PROVIDER_UNAVAILABLE', '账号读/停用面尚未接线到认证权威', { retryable: false });`
-- `services/api/src/admin/ops/service.ts:352-356` —— `listAdminUsers` **先** `requireWiredAccountAuthority()` 再分页 ⇒ 读面 503。
+- `services/api/src/admin/ops/service.ts:770-781` —— `listAdminUsers` **先** `requireWiredAccountAuthority()` 再分页 ⇒ 读面 503。
 - `services/api/db/migrations/0017_account_suspend_authority.sql`（**339 行 / 16448 B**，blob `099892fabe82f3b7e6aae8c55baf97f7fc704078`）—— 四步单事务权威：
   `public.suspend_account(uuid,uuid,uuid,integer,uuid)` / `public.restore_account(...)` + `admin_audit_events` + append-only 触发器。
 

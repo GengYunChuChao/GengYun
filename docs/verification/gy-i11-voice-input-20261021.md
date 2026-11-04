@@ -21,7 +21,7 @@
 - 权限**只读不弹窗**：`miniprogram/utils/recorder-port.js:105-123`（`wx.getSetting` 读 `authSetting['scope.record']`；读不到一律 `unknown`，既不当已授权也不当拒绝）、`:126-137` `support()`（能力自述，不触发授权）。
 - 拒绝授权**不调用平台 `start`**：`recorder-port.js:315-317`（`permission.state === 'denied'` ⇒ 直接 `{ok:false, code:'RECORD_AUTH_DENIED'}`）；页面归因在 `miniprogram/pages/voice/voice.js:667-703`（`started.ok !== true` 时落 `recordState:'failed'` + `voiceApi.recordUploadMessageFor({code})`）。
 - 被系统打断：`recorder-port.js:354-357` `onInterruptionBegin` ⇒ `RECORD_INTERRUPTED`；`:263-267` `onError` 按 `isAuthDenial`(:140-144) 区分 `RECORD_AUTH_DENIED` / `RECORD_FAILED`。
-- 平台**自行**停止/报错不被吞：`recorder-port.js:190-196` 的 `lastProduct` 槽 + `:363-372`「未录制但有产物 ⇒ 如实交出」（避免把「已录满」说成「没在录」）。
+- 平台**自行**停止/报错不被吞：`recorder-port.js:281` 的 `lastProduct` 槽 + `:363-372`「未录制但有产物 ⇒ 如实交出」（避免把「已录满」说成「没在录」）。
 - 切后台/返回/切页必须停：`voice.js:125-128` `onHide` → `releaseRecorder('hide')` → `recorder-port.js:410-432` `release()`（`wasRecording` 时 `instance.stop()`，并逐个 `offStop/offError/offInterruptionBegin`）；`voice.js:130-136` `onUnload` 同构且先置 `_gone`。
 - 时长上限单点收口：`recorder-port.js:305-308`（`duration = Math.min(requested, 60000)`）+ `voice.js:709-714`（本地计时到顶主动 `stopAndUpload()`，与平台自动停止收在同一出口）。
 - **本片补齐（原先缺失）**：`voice.js:339-359` 新增 `discardRecordFile()`；`:300` 在 `releaseRecorder` 内调用（离页/门禁失效/切后台）；`:757` 登记平台交回的 `tempFilePath`；`:774/792/804/855/881/886` 在超限、摘要失败、非 real、上传成功、上传失败五类结局处调用。
