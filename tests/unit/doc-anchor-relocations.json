@@ -2659,6 +2659,46 @@
   {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":822,"fromEnd":824,"to":1021,"toEnd":1023,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:822-824` 是 `counts: null` 一带的返回；HEAD 里 `setVisibility(published)`（`:1021`）+ `setPublishedRevision`（`:1023`）在 `:1021-1023`。"},
   {"doc":"docs/verification/gy-r31-i14-recon-20261022.md","line":53,"target":"services/api/src/moderation/service.ts","from":857,"fromEnd":858,"to":1024,"toEnd":1030,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:857-858` 是 `quarantined/uncertain` 的原因码行；HEAD 里「写后核对抛错 ⇒ restoreWrittenVisibility 补偿回写写前可见性后重抛」在 `:1024-1030`（原记「补偿回写 hidden」实为下架路径 `:1047-1058`，已在同句更正）。"},
 {
+  "doc": "docs/development-progress.md",
+  "line": 129,
+  "target": "services/api/src/admin/ops/flags-pg.ts",
+  "from": 299,
+  "fromEnd": 303,
+  "to": 572,
+  "toEnd": 590,
+  "reason": "R78 第 1 轮：`probeFeatureFlagsTable` 的声明行早已不在 :299-303（那一段现在是 flag 审计行的 before_value/after_value 映射）；实文 `export async function probeFeatureFlagsTable(` 在 :572、函数体收在 :590。目标文件本次未改，属陈旧锚点重锚。"
+},
+{
+  "doc": "docs/development-progress.md",
+  "line": 129,
+  "target": "services/api/src/admin/ops/flag-gate.ts",
+  "from": 425,
+  "fromEnd": 430,
+  "to": 519,
+  "toEnd": 525,
+  "reason": "R78 第 1 轮：原文引 :425-430 说明「unknown 保持武装、下次判前重探」；那一段现在是 503 文案 hint 的分支。真身是 `ensureReady()` 里 `if (armingProbe !== undefined && (armingState === 'unprobed' || armingState === 'unknown')) {` 起的重探块（:519-525，探测抛错 ⇒ `armingState = 'unknown'` 保持武装）。目标文件本次未改。"
+},
+{
+  "doc": "docs/development-progress.md",
+  "line": 129,
+  "target": "services/api/src/admin/ops/flag-gate.ts",
+  "from": 464,
+  "fromEnd": 466,
+  "to": 527,
+  "toEnd": 536,
+  "reason": "R78 第 1 轮：原文引裸 `:464-466` 说明「只在 missing 时降级未武装」；那一段现在是 `normalizeProbeValue()` 的 ready/missing 归一。真身是 `if (armingProbe !== undefined && armingState === 'missing') {` ⇒ `armed = false;` 的降级块（:527-531）与 `ready`/`unknown` 都走刷新的注释（:532-536）。目标文件本次未改；本条同时把裸 token 显式化为全路径。"
+},
+{
+  "doc": "docs/development-progress.md",
+  "line": 186,
+  "target": "services/api/src/privacy/user-data-deletion.ts",
+  "from": 93,
+  "fromEnd": 98,
+  "to": 194,
+  "toEnd": 199,
+  "reason": "R78 第 1 轮：原文引 :93-98 说「注销清理闭集扩到四域」；该处现在是 import 语句区。真身是 `export const USER_DATA_DELETION_MODULES = [`（:194）到 `] as const;`（:199），四项 FAVORITES/HISTORY/MESSAGES/CONVERSATIONS。目标文件本次未改。"
+},
+{
   "doc": "docs/verification/gy-r28-deploy-sql-gate-20261021.md",
   "line": 62,
   "target": "deploy/postgres-cvm/provision-db.sh",
