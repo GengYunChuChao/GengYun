@@ -680,7 +680,7 @@
           "name": "GY-I06 HTTP 访问面"
         }
       ],
-      "blocker": "归属 + 强 ETag（缺失 428 / 不匹配 409）+ 同键幂等重放已装配；删除即时回收原始件与衍生件并撤销社区句柄，记录以 deleted 墓碑保留；媒体逐用户清除原语已接线（`services/api/src/media/store-pg.ts` 的 `purgeOwnedMedia` 调 `public.purge_owner_media`；`services/api/src/privacy/user-data-deletion.ts` 的 `MediaPurgePort` 经识别域 `input.mediaStore` 注入）——它软隐藏社区句柄、把对象键登记进待删台账（桶对象真删仍走 `cleanupOrphans` 清扫通道 `tools/purge-expired-media.mjs`）；仍成立的是注销 7/30 天删除闭环未执行、备份介质逐用户清理未接线、第三方完成证据未验收"
+      "blocker": "归属 + 强 ETag（缺失 428 / 不匹配 409）+ 同键幂等重放已装配；删除即时回收原始件与衍生件并撤销社区句柄，记录以 deleted 墓碑保留；注销路径的媒体逐用户清除原语已接线（`services/api/src/media/store-pg.ts` 的 `purgeOwnedMedia`，由 `services/api/src/privacy/user-data-deletion.ts` 的 `MediaPurgePort` 经识别域 `input.mediaStore` 注入）：注销时在**单事务**内软隐藏社区句柄、把对象键登记进待删台账、清引用并删衍生物——它**不调** `public.purge_owner_media`（0035 那个按主体删媒体行的窄函数只删 rejected/deleted 且要求台账意图先存在，与本原语「先软隐藏、再动对象」的顺序相反）；真实桶对象删除仍由 `cleanupOrphans` 清扫通道（`tools/purge-expired-media.mjs`）承担，物理终态媒体行另由 `purgeOwnerMediaRows()`／`purgeRetiredRows()` 调迁移 0035 的 `purge_owner_media` 收口；真实桶／排班仍待集成验收；仍成立的是注销 7/30 天删除闭环未执行、备份介质逐用户清理未接线、第三方完成证据未验收"
     },
     {
       "id": "grantMediaAccess",

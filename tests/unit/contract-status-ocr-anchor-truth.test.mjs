@@ -350,10 +350,23 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * PROVIDER_UNAVAILABLE 退为兜底），未动闸门块、未动 JSON；它先合入，本片在其上重放。
  * 合并后实测：JSON **283704 / 4465**、md **206173 / 220**（本片 +4977 与 #925 的 +447 相加）。
  * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十七次同步（`deleteMedia` 的 blocker 把两个媒体清除原语写成了一次直接调用）：
+ * 上文第十五次③虽然写明了「原语已接线」，但仍写成 `purgeOwnedMedia` 调 `public.purge_owner_media`。
+ * 实测 `services/api/src/media/store-pg.ts` 的 `purgeOwnedMedia(ownerId)`（单事务：软隐藏社区句柄 ⇒
+ * 把对象键登记进待删台账 ⇒ 清引用 ⇒ 删衍生物）**不调** `public.purge_owner_media` —— 迁移 0035 那个按主体
+ * 删媒体行的窄函数只删 rejected/deleted、且要求台账意图先存在，与本原语「先软隐藏、再动对象」的顺序相反；
+ * 真正执行 `SELECT public.purge_owner_media(...)` 的是同文件另一方法 `purgeOwnerMediaRows()`，由
+ * `purgeRetiredRows()` 调用。故改成「注销路径的媒体逐用户清除原语已接线（`purgeOwnedMedia`，由
+ * `services/api/src/privacy/user-data-deletion.ts` 的 `MediaPurgePort` 经识别域 `input.mediaStore` 注入）：
+ * 注销时在单事务内软隐藏社区句柄、把对象键登记进待删台账、清引用并删衍生物——它不调 `public.purge_owner_media`；
+ * 真实桶对象删除仍由 `cleanupOrphans` 清扫通道承担，物理终态媒体行另由 `purgeOwnerMediaRows()`／
+ * `purgeRetiredRows()` 收口；真实桶／排班仍待集成验收」，`partial` 判定与其余缺口一字不动。
+ * 中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。两份台账各 +426 字节、行数不变
+ * （284130 / 4465、206599 / 220）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283704, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206173, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284130, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206599, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
