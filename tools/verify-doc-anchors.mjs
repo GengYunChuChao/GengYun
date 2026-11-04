@@ -78,6 +78,8 @@
  *   node tools/verify-doc-anchors.mjs --symbol-coverage=off     # 关掉这条统计行
  *   # 上面三档还会多打一行 `SYMBOL-COVERAGE-VERIFICATION`（＋一行 `-SCOPE`）：`docs/verification/**`
  *   # 的同口径统计，**三档一律不判红**——`strict` 仍然只判 `docs/architecture/**`，收紧的是读数面。
+ *   # `count`／`strict` 档再补一组 `SYMBOL-COVERAGE-VERIFICATION-MISS`（同样最多 20 条）：这一面的
+ *   # 逐条明细，与 architecture 的 `SYMBOL-COVERAGE-MISS` 分列（不混装，既有读数一字不动）；`off` 档不打。
  *
  * 裸锚点（只写 `:1316`／`:1341-1350`）：路径从**同块**（同一段落／列表项／表格单元格／代码块）
  * 内最近的显式锚点继承，链接 `[:321](path)` 直接从 href 取；继承到的锚点与显式锚点**同权**——
@@ -1391,6 +1393,10 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
   // 拆走一半等于顺手改了 CI 的既有读数（本片明令不许动）。两份账口径相同、互不影响。
   const verification = freshTally();
   const misses = [];
+  // `docs/verification/**` 的逐条明细，与 `misses` **并列、不混装**：`misses` 是 `SYMBOL-COVERAGE-MISS` 的
+  // 数据源（architecture 面，条数与内容都是 CI 既有读数），把 verification 的条目塞进去会直接改那一行；
+  // 而这一面又确实需要逐条打印（否则只能靠人复刻配对逻辑 + 五格校验才能拿到漂移清单）。
+  const verificationMisses = [];
   for (const docPath of resolveScanTargets(root, targets)) {
     const relativeDoc = toPosix(docPath);
     const inJudgedScope = relativeDoc.startsWith(SYMBOL_COVERAGE_SCOPE);
@@ -1469,14 +1475,17 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
           else bump('noDeclaration');
         } else bump('outOfRange');
         // 明细只收作用域内的：作用域外（历史取证页）按约定只计数，逐条打出来只会把真信号淹掉。
-        if (result !== SYMBOL_COVERAGE_OK && tally === judged) {
+        // 唯一例外是 `docs/verification/**`：它另收一份 `verificationMisses`（见上）。
+        if (result !== SYMBOL_COVERAGE_OK && (tally === judged || shadow !== null)) {
           const range = item.from === item.to ? `${item.from}` : `${item.from}-${item.to}`;
           const reason = detail === null
             ? verdict.reason
             : detail === SYMBOL_COVERAGE_ZERO_HIT
               ? `${detail}：符号在目标文件里出现 0 次`
               : `${detail}：符号在目标文件里出现 ${occurrences.length} 次，没有一处是声明行`;
-          misses.push({ doc: docPath, docLine: lineIndex + 1, target: `${resolved.relative}:${range}`, symbol, result, detail, reason });
+          const miss = { doc: docPath, docLine: lineIndex + 1, target: `${resolved.relative}:${range}`, symbol, result, detail, reason };
+          if (tally === judged) misses.push(miss);
+          else verificationMisses.push(miss);
         }
       }
     }
@@ -1488,7 +1497,9 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
   const red = misses.filter(item => item.result !== SYMBOL_COVERAGE_UNDECLARED);
   // `verification` 只给 `SYMBOL-COVERAGE-VERIFICATION*` 两行读数用：它既不在 `red` 里，也不生成 `misses`
   // 明细——三档一律只打印（见 `SYMBOL_COVERAGE_VERIFICATION_SCOPE` 的注释）。
-  return { judged, outside, verification, misses, red };
+  // `verificationMisses` 是这一面**自己的**逐条明细（`SYMBOL-COVERAGE-VERIFICATION-MISS`），与 `misses`
+  // 并列、互不混装：`misses`／`red` 的条数与顺序都是既有读数，一个字都不能因为新增明细而变。
+  return { judged, outside, verification, misses, verificationMisses, red };
 }
 
 // —— 符号落点严格档（`--symbol=strict`：注释里的锚点进「基线／新增／陈旧」） ——————————
@@ -2507,8 +2518,10 @@ function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
  * 第三行之后再补 `docs/verification/**` 的两行（`SYMBOL-COVERAGE-VERIFICATION` ＋ `-SCOPE`）：同口径的另一面，
  * 三档都不判红（见 `printSymbolCoverageVerification`）。
  * 逐条明细是**给人改的线索**，所以只抽样 `MAX_PRINTED_SYMBOL_COVERAGE` 条，且永远走 stdout。
+ * 结构上分两组、**追加在末尾**：`SYMBOL-COVERAGE-MISS`（architecture 面，内容与顺序一字不动）在前，
+ * `SYMBOL-COVERAGE-VERIFICATION-MISS`（verification 面，同样抽样 20 条）在后——新块只追加，不改既有行。
  */
-function printSymbolCoverage(streams, { judged, outside, verification, misses }, mode) {
+function printSymbolCoverage(streams, { judged, outside, verification, misses, verificationMisses = [] }, mode) {
   const checkable = judged.ok + judged.outOfRange;
   const suffix = mode === 'strict' ? '（--symbol-coverage=strict：配合 --strict 判红）' : '（仅 WARN，不影响 exit code）';
   streams.log(`SYMBOL-COVERAGE: 可判 ${checkable} 条——OK ${judged.ok}、符号不在区间 ${judged.outOfRange}${suffix}`);
@@ -2516,14 +2529,41 @@ function printSymbolCoverage(streams, { judged, outside, verification, misses },
   streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条（这三格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号不在区间 ${outside.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${outside.undeclared}（0 命中 ${outside.zeroHit}／非声明行 ${outside.noDeclaration}）`);
   // `docs/verification/**` 的两行紧跟着 architecture 的三行读：同口径、不同判据面（那一面三档都不判红）。
   printSymbolCoverageVerification(streams, verification);
-  if (misses.length === 0) return;
-  streams.log(`SYMBOL-COVERAGE-MISS: ${misses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；只有 OUT_OF_RANGE 会在 --symbol-coverage=strict 下判红：`);
-  for (const item of misses.slice(0, MAX_PRINTED_SYMBOL_COVERAGE)) {
+  if (misses.length > 0) {
+    streams.log(`SYMBOL-COVERAGE-MISS: ${misses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；只有 OUT_OF_RANGE 会在 --symbol-coverage=strict 下判红：`);
+    for (const item of misses.slice(0, MAX_PRINTED_SYMBOL_COVERAGE)) {
+      const reason = item.reason === '' ? '' : `，${item.reason}`;
+      streams.log(`  · ${item.doc}:${item.docLine} → ${item.target}（${item.symbol}：${item.result}${reason}）`);
+    }
+    if (misses.length > MAX_PRINTED_SYMBOL_COVERAGE) {
+      streams.log(`  … 另有 ${misses.length - MAX_PRINTED_SYMBOL_COVERAGE} 条未打印（格式同上）`);
+    }
+  }
+  // verification 面的逐条明细：独立一行、独立抽样（上限同上），**排在 architecture 那组之后**——
+  // 既有三行＋`SYMBOL-COVERAGE-MISS` 的字面、顺序与条数因此一字不动，新块只追加在末尾。
+  printSymbolCoverageVerificationMisses(streams, verificationMisses);
+}
+
+/**
+ * `SYMBOL-COVERAGE-VERIFICATION-MISS`：`docs/verification/**` 的逐条 miss 明细。
+ *
+ * 为什么现在要打它：上一轮要拿这一面的 12 条真漂移，只能人工复刻配对逻辑、再用
+ * `4673/1070/667/122/281` 五格反算校验，成本极高；汇总行只给数字，改文档的人无从下手。
+ * 为什么单独一行、不并进 `SYMBOL-COVERAGE-MISS`：那一行是 architecture 面的既有读数（条数、顺序、抽样
+ * 上限都被 CI 与单测钉着），把 403 条 verification 明细塞进去等于改既有读数；两面的**判据意义也不同**
+ * （这一面三档都不判红，只看不咬）。
+ * 抽样上限沿用 `MAX_PRINTED_SYMBOL_COVERAGE`（20 条），与 architecture 那组一致；`off` 档由调用方
+ * 整体跳过（连这一行都不打）。
+ */
+function printSymbolCoverageVerificationMisses(streams, verificationMisses) {
+  if (verificationMisses.length === 0) return;
+  streams.log(`SYMBOL-COVERAGE-VERIFICATION-MISS: ${verificationMisses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；本面三档都不判红，strict 仍只判 ${SYMBOL_COVERAGE_SCOPE}**：`);
+  for (const item of verificationMisses.slice(0, MAX_PRINTED_SYMBOL_COVERAGE)) {
     const reason = item.reason === '' ? '' : `，${item.reason}`;
     streams.log(`  · ${item.doc}:${item.docLine} → ${item.target}（${item.symbol}：${item.result}${reason}）`);
   }
-  if (misses.length > MAX_PRINTED_SYMBOL_COVERAGE) {
-    streams.log(`  … 另有 ${misses.length - MAX_PRINTED_SYMBOL_COVERAGE} 条未打印（格式同上）`);
+  if (verificationMisses.length > MAX_PRINTED_SYMBOL_COVERAGE) {
+    streams.log(`  … 另有 ${verificationMisses.length - MAX_PRINTED_SYMBOL_COVERAGE} 条未打印（格式同上）`);
   }
 }
 
@@ -2535,7 +2575,8 @@ function printSymbolCoverage(streams, { judged, outside, verification, misses },
  * 非声明行各多少）恰恰是将来「要不要升级成判红」的唯一依据，所以它必须独立可见，不能只留一个总数。
  * `off` 档由调用方整体跳过（连这两行都不打，与 architecture 一致）；`strict` 下后缀仍写「仅 WARN」——
  * 这是这一面与 architecture **唯一**、也是有意为之的差别：`strict` 只收紧 `docs/architecture/**`。
- * 明细（`SYMBOL-COVERAGE-MISS`）不收这一面：它只出计数，逐条打印只会把真信号淹掉。
+ * 明细**不并进** `SYMBOL-COVERAGE-MISS`（那一行只装 architecture 面，条数与顺序是既有读数）；这一面的
+ * 逐条明细走自己的 `SYMBOL-COVERAGE-VERIFICATION-MISS`（见 `printSymbolCoverageVerificationMisses`）。
  */
 function printSymbolCoverageVerification(streams, verification) {
   if (verification === undefined) return;
