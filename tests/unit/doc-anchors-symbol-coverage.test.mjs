@@ -20,6 +20,9 @@
  *      上限 20 条（与 architecture 那组同上限但**分列**）；塞进 `SYMBOL-COVERAGE-MISS` 就等于改既有读数（C18–C20）。
  *   ⑧ 提交 SHA 形态的候选**不算符号**（整段 7–40 位纯十六进制）：`（=``de2aa3c6``）` 这种括注不再配成对、
  *      也不进 UNDECLARED（C21）；同一位置换成正常标识符则配对照旧成立，规则不许外溢（C22）。
+ *   ⑨ 同一行有多条锚点、多个紧邻符号时，符号**按行内出现顺序一一配位**（一个符号只属于一条锚点）：
+ *      夹心写法（锚点、符号、锚点）里那个符号不许被两条锚点同时认领（C23）；符号比锚点少时，
+ *      多出来的锚点退回「同行没有紧邻符号」只计数、不判红（C24）；这条规则不许把提交号重新拉回符号位（C25）。
  * 另外用子进程钉住「缺省 `count` 模式不改变退出码」：这条判据是 WARN，先观察一轮，
  * 只有显式 `--symbol-coverage=strict`（且 `--strict`）才会判红。
  *
@@ -788,6 +791,82 @@ test('C22 反向保护：同一位置写正常标识符 ⇒ 配对照旧成立�
       assert.equal(judged.ok, 1, '配对之后照常判：声明块盖住 :2 ⇒ OK');
       assert.equal(judged.undeclared, 0);
       assert.equal(judged.unpaired, 0, '不许被 C21 那条规则连带排掉（它落在「同行没有紧邻符号」就是回归）');
+      assert.deepEqual(misses, []);
+    },
+  );
+});
+
+test('C23 一行两锚点 + 两符号 ⇒ 按出现顺序一一配位（夹心符号不许被两条锚点同时认领）', () => {
+  // 真实形状（`docs/verification/gy-i23-latency-capacity-local-20261020.md:195`）：
+  // 「`…report.mjs:62`（`FORBIDDEN_ASSERTABLE_PATTERNS`）与 `…report.mjs:291` 声明的 `validateClaims`」——
+  // 中间那个符号对左边锚点是「右邻」（间距 1）、对右边锚点又是「左邻」（间距 3），而右边锚点自己的符号
+  // 在 6 字符外。改前每条锚点各自挑最近，于是两个锚点**同时**认领中间那个符号：`alphaHandler` 被算到
+  // `beta.ts` 头上，判出一条假 `UNDECLARED`（符号在 `beta.ts` 里 0 命中），正确的文档看起来像写错了。
+  // 口径 ⑦：符号按行内出现顺序一一配位，一个符号只属于一条锚点。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'services/api/src/beta.ts': sourceWith('betaHandler'),
+      'docs/architecture/sandwich.md':
+        '# 夹心\n\n- 形态闸门在 `services/api/src/alpha.ts:2`（`alphaHandler`）与 `services/api/src/beta.ts:2` 声明的 `betaHandler`（两处都成立）。\n',
+    },
+    root => {
+      const { judged, misses } = coverageOf(root);
+      assert.equal(judged.anchors, 2);
+      assert.equal(judged.paired, 2, '两条锚点各配自己的符号：改前右锚点抢左符号，这里会判出 1 条 UNDECLARED');
+      assert.equal(judged.ok, 2, '两条都要判 OK（两个符号都声明在自己那个文件的第 1 行，块 1-3 盖住 :2）');
+      assert.equal(judged.undeclared, 0, '`alphaHandler` 若被配给 `beta.ts` 就是 1 条 ZERO_HIT——那正是本片要消掉的噪声');
+      assert.equal(judged.outOfRange, 0);
+      assert.equal(judged.ambiguous, 0, '这里两侧间距不等（1 / 3 / 6），不该落进「等距不猜」');
+      assert.deepEqual(misses, [], '配位正确 ⇒ 明细必须为空');
+    },
+  );
+});
+
+test('C24 一行两锚点 + 一个符号 ⇒ 一条配位、另一条退回「同行没有紧邻符号」（只计数、不判红）', () => {
+  // 符号比锚点少时不许「一符号多配」：改前两条锚点都抢 `alphaHandler`，右锚点（`beta.ts`）稳定产出
+  // 一条 `UNDECLARED／ZERO_HIT`。口径 ⑦ 让距离最近的那条（左锚点，间距 1）拿走符号，右锚点退回
+  // 「同行没有紧邻符号」——只进那一格计数，不新增档位、不判红、不改 strict 的判红面。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'services/api/src/beta.ts': sourceWith('betaHandler'),
+      'docs/architecture/one-symbol.md':
+        '# 一个符号\n\n- 实现见 `services/api/src/alpha.ts:2`（`alphaHandler`）见 `services/api/src/beta.ts:2`。\n',
+    },
+    root => {
+      const { judged, misses, red } = coverageOf(root);
+      assert.equal(judged.anchors, 2, '两条锚点都要扫到（不配对 ≠ 没扫到）');
+      assert.equal(judged.paired, 1, '一个符号只配一条锚点');
+      assert.equal(judged.ok, 1, '配对的是左锚点（间距 1）：右锚点的文件里没有 `alphaHandler`，若它抢到就是 UNDECLARED');
+      assert.equal(judged.undeclared, 0);
+      assert.equal(judged.outOfRange, 0);
+      assert.equal(judged.unpaired, 1, '落选的锚点必须显式计数，不许静默少扫');
+      assert.deepEqual(misses, []);
+      assert.deepEqual(red, []);
+    },
+  );
+});
+
+test('C25 口径 ⑦ 不许把提交号拉回符号位：同一行「括注哈希 + 两条锚点」仍只配出正常那一对', () => {
+  // 与 C21 同一形状，但同行还有一条会抢符号的锚点（`alpha.ts:2`）：它的左邻是 `（=`+哈希`）`，
+  // 右邻是「；同句」隔开的 `alphaHandler`（列举分隔符挡掉）。哈希若被当成符号，左锚点就会配给
+  // `de2aa3c6`（目标文件里 0 命中 ⇒ UNDECLARED），于是这条用例同时钉住两件事：
+  // ⑧ 提交号不是符号、⑨ 一一配位不许把它绕回来。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'services/api/src/beta.ts': sourceWith('alphaHandler'),
+      'docs/architecture/hash-pair.md':
+        '# 哈希配位\n\n- 合并 `upstream/main`（=`de2aa3c6`）见 `services/api/src/alpha.ts:2`；同句 `alphaHandler` 在 `services/api/src/beta.ts:2` 覆盖成立。\n',
+    },
+    root => {
+      const { judged, misses } = coverageOf(root);
+      assert.equal(judged.anchors, 2);
+      assert.equal(judged.paired, 1, '只有 `alphaHandler` 那条配成对：哈希不是符号，左锚点退回计数');
+      assert.equal(judged.ok, 1, '`alphaHandler` 声明在 `beta.ts` 第 1 行，块 1-3 盖住 :2 ⇒ OK');
+      assert.equal(judged.undeclared, 0, '哈希若被拉回符号位，这里就是 1 条 ZERO_HIT');
+      assert.equal(judged.unpaired, 1, '左锚点（`alpha.ts:2`）退回「同行没有紧邻符号」');
       assert.deepEqual(misses, []);
     },
   );
