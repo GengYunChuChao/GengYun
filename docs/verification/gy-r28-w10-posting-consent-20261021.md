@@ -32,7 +32,7 @@
 - `deps.consent === undefined` ⇒ 返回**原样的** `guards.requireUser`（与接线前逐字同形，本地 stub／既有集成脚本不受影响）；
 - 有端口 ⇒ 返回 `[guards.requireUser, deps.consent({ purpose: 'public_posting' })]`，**鉴权先于授权**：游客仍是 401 `SESSION_REQUIRED`，不是 403。
 
-清单本身也是被断言的对象：`PUBLIC_POSTING_GATED_ROUTES`（`services/api/src/routes/community.ts:386`）被
+清单本身也是被断言的对象：`PUBLIC_POSTING_GATED_ROUTES`（`services/api/src/routes/community.ts:402`）被
 `tests/unit/community-posting-consent.test.mjs` 的「闸清单」用例逐字锁定 —— 将来谁多挂一条或少挂一条都会红。
 
 ### 1.1 为什么**不**传 `dataType`
@@ -153,7 +153,7 @@ DELETE /comments/{id} → 200（本人内容）   DELETE /posts/{id} → 200（�
 ## 5 接口/装配纪律遵守情况
 
 - `registerCommunityRoutes` 新增第 5 个参数 `deps: { consent?: CommunityConsentPort } = {}`（`services/api/src/routes/community.ts:189`，**同一行内**改动，不改行号）。
-- `services/api/src/app.ts:2497` 只把**已存在的** `consentGate`（`app.ts:973-977`）传给社区域；`app.ts` 里既有的闸装配顺序**未动**。
+- `services/api/src/app.ts:2668` 只把**已存在的** `consentGate`（`app.ts:999-1003`）传给社区域；`app.ts` 里既有的闸装配顺序**未动**。
 - 社区 16 条路由的 `preHandler` 行号**保持不变**：`:203,213,225,234,243,253,266,278,287,296,307,316,325,334,343,355`（`git diff --numstat` = `5 5`，逐行原位替换）。原因写在文件末尾的注释里 —— `docs` 侧台账把这份文件的行号当锚点，而它是本片不可改的红线文件，所以新增的类型/清单/组装函数**一律追加在文件末尾**（函数声明会提升）。
 - 不新增错误码：拒绝复用既有 403 `CONSENT_REQUIRED`。
 - 台账锚点回归：`node --test tests/unit/contract-status-anchors.test.mjs` ⇒ 11/11 通过。
