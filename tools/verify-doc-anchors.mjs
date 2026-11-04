@@ -1239,6 +1239,8 @@ export const SYMBOL_COVERAGE_SCOPE = SYMBOL_LINE_SCOPE;
 export const SYMBOL_COVERAGE_SLACK = 5;
 /** 「紧邻」的字符间距上限：超过这个距离就不配对（理由见 `collectSymbolCoverage` 的注释）。 */
 export const SYMBOL_COVERAGE_ADJACENCY = 12;
+/** 「列举分隔符」：两段之间夹着它就说明左边的符号属于上一个列举项，不能配给右侧锚点。 */
+export const SYMBOL_COVERAGE_LIST_SEPARATORS = ['、', '，', ',', ';', '；'];
 /** 三档判定结果：只进 WARN 读数，不进 `findings`、不参与任何基线。 */
 export const SYMBOL_COVERAGE_OK = 'OK';
 export const SYMBOL_COVERAGE_NOT_FOUND = 'NOT_FOUND';
@@ -1286,7 +1288,14 @@ function classifyCoverageSpans(line) {
  *   ① 同一行里既有一段**整段就是** `路径:行号` 的行内代码（后缀在 `ANCHOR_EXTENSIONS` 内），
  *      又有一段**整段就是**标识符的行内代码；
  *   ② 两段按出现顺序**紧邻**（中间不夹别的行内代码），且原始字符间距 ≤ `SYMBOL_COVERAGE_ADJACENCY`；
- *   ③ 两侧都够近且距离相等 ⇒ **不配对**（不猜），单独计数。
+ *   ③ 两侧都够近且距离相等 ⇒ **不配对**（不猜），单独计数；
+ *   ④ 两段之间夹着**列举分隔符**（`、`／`，`／`,`／`;`／`；`）的候选不算——分隔符左边的符号属于上一个列举项
+ *      （见 `SYMBOL_COVERAGE_LIST_SEPARATORS`）。
+ *
+ * ④ 是 2026-11-04 补的。台账最常见的列举写法是「`a.ts:1162` 的 `createTtsProvider`、`a.ts:1176` 的
+ * `createSynthesisMediaPort(...)`」：只按字符距离取最近时，`:1176` 会配给左边的 `createTtsProvider`
+ * （间距 1 字符 < 右边的 3 字符），于是**正确的文档**被判 OUT_OF_RANGE——
+ * `docs/architecture/contract-implementation-status.md:97` 就是这么被误报的。
  * 为什么不取「同一行里最近的符号」：实测 `docs/architecture` 下同行取最近会配出 323 对、其中 69 对
  * 符号 0 命中（21%），大头是 `id`／`uuid`／`lines` 这类顺带被反引号框起来的词；按 ② 收紧后约 145 对、
  * 约 16 对 0 命中（11%），被收紧掉的正是这些噪声。代价是覆盖变窄，所以**未配对的同行锚点单独计数**
@@ -1337,6 +1346,9 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
           if (sibling === undefined || sibling.kind !== 'symbol') continue;
           const gap = offset < 0 ? item.start - sibling.end : sibling.start - item.end;
           if (gap < 0 || gap > SYMBOL_COVERAGE_ADJACENCY) continue;
+          // ④ 中间的列举分隔符说明这个符号属于上一个列举项（见上方口径注释）。
+          const between = offset < 0 ? line.slice(sibling.end, item.start) : line.slice(item.end, sibling.start);
+          if (SYMBOL_COVERAGE_LIST_SEPARATORS.some(separator => between.includes(separator))) continue;
           neighbours.push({ symbol: sibling.symbol, gap });
         }
         if (neighbours.length === 0) { tally.unpaired += 1; continue; }
