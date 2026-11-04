@@ -334,15 +334,15 @@
 ### ★G3（**已于 2026-10-26 复核消解，整条留档**）保留策略（GY-R34）没有调度单元（判据：D09 的边角，但不属 D09 主体）
 
 原判称 `purge:retention` **没有 `.service`/`.timer`**，也**不在** 调度门禁的必需清单里（旧文引
-`tools/verify-purge-schedule.mjs:109` 的 `REQUIRED_NPM_SCRIPTS` 只有 `purge:online-data` 与 `purge:backup-copies`），
+`tools/verify-purge-schedule.mjs:109`（2026-11-04 复核：该常量现位于 `tools/verify-purge-schedule.mjs:117`，且已 4 项，见下）的 `REQUIRED_NPM_SCRIPTS` 只有 `purge:online-data` 与 `purge:backup-copies`），
 并与日级频率冲突（门禁要求 `OnCalendar` 展开间隔 ≤60 分钟，保留策略天生按天）⇒ 要么开日级例外，要么明确「仅手工执行」。
 
 **2026-10-26 复核：G3 所述三项均已落地，见 [数据保留／备份／第三方完成证据现状清单](gy-r59-retention-backup-thirdparty-map.md)。**
 ① 单元在——`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer`（`OnCalendar=*-*-* 03:20:00` 日级一次，
-`ExecStart` 带 `--yes --json`，`User=gengyun-ops`）；② 必需清单已是 **3 项**，真实位置 `tools/verify-purge-schedule.mjs:117`
+`ExecStart` 带 `--yes --json`，`User=gengyun-ops`）；② 必需清单已是 **4 项**（2026-11-04 复核：`purge:online-data`／`purge:backup-copies`／`purge:retention`／`purge:media-objects`；`.service`／`.timer` 也各 4 个），真实位置 `tools/verify-purge-schedule.mjs:117`
 （`:109` 实为 `DEFAULT_SCHEDULE_DIR`，旧文引错行）；③ 频率上界已按命令分档（`INTERVAL_BUDGET_MINUTES`，
 `tools/verify-purge-schedule.mjs:152`，日级 ≤1440 分钟），不再与 ≤60 分钟冲突。
-现读数：`node tools/verify-purge-schedule.mjs` = `PASS：10 项判据全部满足`，其中 `[npm-script]` 必需覆盖 3/3。
+现读数：`node tools/verify-purge-schedule.mjs` = `PASS：10 项判据全部满足`，其中 `[npm-script]` 必需覆盖 4/4、`[surface]` `.service` 4 个 / `.timer` 4 个。
 ⇒ 本条**撤出缺口列**，仅留档；§6 开头计数与 §7 两张表已同步。
 
 ### 证据基础设施缺口（不计入上面两条，但会让两条长期不可关）
@@ -365,7 +365,7 @@
 | D13 读写接缝 | `git grep -n third_party_deletions -- services/api/src` | 5 行 / 1 文件（= 端口 `privacy/third-party-deletion-pg.ts`；表零 DML/SELECT）。**注意这条只证明「表不可直写」**，不证明「没装配」——装配读数见下一行 |
 | D13 写侧调度 | `git grep -n subscribeThirdPartyDeletion -- services/api/src` | 3 行（端口接口、端口实现、一处注释）⇒ 零调用者；2026-10-28 复核新增 |
 | G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
-| G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **3/3**（`tools/verify-purge-schedule.mjs:117`；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列 |
+| G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **4/4**（`tools/verify-purge-schedule.mjs:117`；`.service`／`.timer` 各 4 个；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列；2026-11-04 复核：清单已是 4 项（新增 `purge:media-objects`） |
 | D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'` |
 | D07 单条删除面 | `git grep -n "app.delete(" -- services/api/src/routes` | **15** 条（13 条单条删除 + 1 条注销取消 + 1 条后台撤销管理员 scope；2026-10-28 复核由 14 更正为 15） |
 | D08 闭集 | `node --test tests/unit/deletion-registration-coverage.test.mjs` | 全绿；改闭集必须同步改常量 |
