@@ -412,6 +412,19 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `partial` 判定与其余缺口一字不动。中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。
  * JSON +32 字节、行数不变；md +32 字节、行数不变（284039 / 4460、206616 / 220）。仍是「正常改台账」，
  * 故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-05 第二十一次同步（第 68 行两处行号订正：`backup-copies-pg.ts` 证据 183-250→183-358、
+ * `roles-and-migration.md` 256-257→257-258）：`requestAccountDeletion` 的 blocker 散文写「清除端口
+ * services/api/src/privacy/backup-copies-pg.ts:183-250」，可 `createPostgresBackupPurgePort` 从 183 行
+ * `export function createPostgresBackupPurgePort({` 起、到 358 行 `}` 才收尾（359 行是文件尾），散文自己
+ * 依赖的三处语义——到期 UPDATE 后的**同事务复核**（320-338）、`blocked` + 原因码（281-306、350-352）——
+ * 全落在 183-250 之外；故把区间补到 `183-358`（不缩成 `247-358`：起点 183 就是函数声明行）。同段引的
+ * `roles-and-migration.md:256-257` 里，第 256 行今天是「全库灾备到空集群的完整流程**未演练**」，真正要引的
+ * 「逐用户删除语义 ≠ 备份文件保留期」自认在 257-258 行，故改成 `257-258`。这两处都只改字符串本身
+ * （JSON 里同在 `requestAccountDeletion.blocker` 内、各命中 1 次），中文表格同次用
+ * `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 重生成后 md 只有第 68 行变、JSON 只有第 500 行变。
+ * 两处都是等宽替换（250→358、256-257→257-258 位数不变）⇒ 字节数与行数都不变
+ * （284039 / 4460、206616 / 220，按 `statSync` 与本用例 `countLines` 实测复核）。仍是「正常改台账」，
+ * 故同步基线（数值沿用）；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
   { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284039, lines: 4460 },
