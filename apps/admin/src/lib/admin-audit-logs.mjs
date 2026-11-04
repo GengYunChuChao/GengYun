@@ -48,6 +48,11 @@ export const AUDIT_LOG_ACTIONS = Object.freeze([
   'admin_account.disable',
   'admin_account.enable',
   'category.update',
+  // `report.*` 三个处置动作（PR #838 / 迁移 0053）追加在末尾：服务端 `AUDIT_ACTIONS` 就是这个顺序，
+  // ⛔ 不要重排既有项——旧审计行按 `action` 筛选，顺序一变「末几位」就换了含义。
+  'report.triage',
+  'report.resolve',
+  'report.reject',
 ]);
 
 export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
@@ -62,6 +67,11 @@ export const AUDIT_LOG_ACTION_LABELS = Object.freeze({
   'admin_account.disable': '停用管理员账号',
   'admin_account.enable': '恢复管理员账号',
   'category.update': '改分类目录',
+  // `closed` 一值两义（成立／驳回），区分只落在 action 上（见 `admin/ops/reports.ts` 头注）：
+  // 所以这三条中文名必须各自点明处置结果，别合并成一个「举报处置」。
+  'report.triage': '举报分流',
+  'report.resolve': '举报成立',
+  'report.reject': '举报驳回',
 });
 
 /** `entity` 闭集：与 `catalog.ts` 的 `AUDIT_ENTITIES` 逐字同序（⛔ 不是 `entity_type`）。 */
