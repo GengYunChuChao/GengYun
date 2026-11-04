@@ -449,10 +449,21 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 「第二十一次同步」被先开单的 #963 占用（同批把第 68 行两处锚点改成 183-358 / 257-258），本片在其后，
  * 故为第二十二次。JSON +30 字节、行数不变；md +30 字节、行数不变（284069 / 4460、206646 / 220）。
  * 只改锚点数字与 blocker 散文指针、没有改判定、没有加豁免条目。
+ * 2026-11-05 第二十三次同步（`withdrawConsent` 的证据把 `requireConsent` 认成了撤回本体 + 删掉失效的「#133未合」子句）：
+ * 该格 evidence 原写 `services/api/src/privacy/consent-pg.ts` + `symbol: requireConsent` + `lines: 135-179`，可
+ * 135 行是 `list` 的收尾 `    },`、137-146 行是**另一个函数** `requireConsent`，撤回本体
+ * `async withdraw(input: Identity, options: { purpose: string; ifMatch: string; idempotencyKey: string }) {`
+ * 起于 148 行、止于 201 行（174-176 是 media/exports/author_links 依赖判定、178 行是 409 `OBJECT_UNAVAILABLE`、
+ * 183 行是 `await serviceOptions.egressRevoker.onConsentWithdrawn({ userId, purpose })`）⇒ evidence 改成
+ * `symbol: withdraw` + `lines: 148-201`。同格 blocker 句尾「；#133未合不计入本基线」已与事实矛盾（PR #133 已合入
+ * `2431cfde`／2026-10-14，且该格前半句描述的就是 #133 的内容）故删除。中文对照表同次用
+ * `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 只有第 66 行变。JSON −37 字节、行数不变；
+ * md −31 字节、行数不变（284032 / 4460、206615 / 220）。仍是「正常改台账、非回归」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284069, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206646, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284032, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206615, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
