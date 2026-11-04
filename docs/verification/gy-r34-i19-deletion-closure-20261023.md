@@ -44,7 +44,7 @@
 
 - 模块名常量：`services/api/src/privacy/user-data-deletion.ts:132`（`RECOGNITIONS_DELETION_MODULE = 'recognitions'`）、`:140`（`SPEECH_DELETION_MODULE = 'speech'`）。
 - 条件追加的机器可读清单：`:185` `CONDITIONAL_DELETION_MODULES`（顺序＝追加顺序＝回执 `handlers` 行顺序）；真实追加点在 `:525` 的 `conditionalStores` 表与 `:785` / `:796` 两个 `registerModule` 分支。
-- 在线清除证据的落库门：`:694` `(ONLINE_EVIDENCE_MODULES as readonly string[]).includes(module)` —— 名单在 `:169`；社区域**故意不在内**（社区是脱敏/保留语义，不是「清空」）。
+- 在线清除证据的落库门：`:694` `(ONLINE_EVIDENCE_MODULES as readonly string[]).includes(module)` —— 名单在 `:169`（2026-11-04 复核：该断言今天在第 1062 行，`ONLINE_EVIDENCE_MODULES` 名单在第 215 行）；社区域**故意不在内**（社区是脱敏/保留语义，不是「清空」）。
 - 按主体清空的存储层原语：`services/api/src/recognitions/store-pg.ts:624` 与 `services/api/src/speech/store-pg.ts:510` 的 `async function purgeOwnerRows(ownerId)`。**它们不再自己发 DELETE**：写路径是迁移 `0034_r34_owner_content_purge.sql` 的两条 `SECURITY DEFINER` 函数，store 只做一次 `SELECT public.<fn>($1::uuid) AS counts` 并把 jsonb 读数收敛成计数（原因见 §3）。
 
 ### 1.2 关键实现（删除顺序之所以唯一）
