@@ -19,7 +19,7 @@
 | 层／目录 | 技术与职责 | 当前边界 |
 | --- | --- | --- |
 | `miniprogram/` | WXML／WXSS／JavaScript；五 Tab、登录与参考页面 | 共享 runtime 默认关闭网络；原生工程不经 Vite 构建 |
-| `apps/admin/` | Vue 3.5.43／Vite 7.3.6；独立后台 | 有鉴权框架，完整资料／任务管理待接线 |
+| `apps/admin/` | Vue 3.5.43／Vite 7.3.6；独立后台 | 有鉴权框架，完整资料／任务管理待接线（**2026-11-04 复核：后半句已过期** —— 资料面的 `SourcesView.vue`、`KnowledgeAdminView.vue`、`CategoriesView.vue`、`PostTakedownView.vue` 都有写按钮并打真端点；任务面的 `JobsView.vue` 已读 `GET /admin/jobs` 并在行内发 `POST /admin/jobs/{id}/cancel`。「有鉴权框架」仍成立，且已是真会话，见 `apps/admin/src/auth/session.ts`） |
 | `services/api/` | Node 24.16.0／TypeScript 5.9.3／Fastify 5.12.5 | 已装配健康、公共科普预览、用户／后台鉴权和受限授权路由 |
 | `services/api/db/` | PostgreSQL 17；版本迁移与最小权限角色 | PG17.11 有组件验证；不能据此推定全库、云部署和恢复完成 |
 | `packages/` | 契约、资料、隐私、媒体、评估等共享组件 | 参考组件与实际 HTTP 服务分开；小程序不打包服务端 SDK |
@@ -120,7 +120,7 @@ npm run db:status --workspace @gengyun/api
 | `npm run test:mini` | Node 静态和诊断检查；不代替微信编译 |
 | `npm run build` | API→services/api/dist；后台→apps/admin/dist |
 
-手写行号会随代码漂：文档里的 `路径:起-止` 由 `node tools/verify-doc-anchors.mjs` 校三类（路径不存在／超出文件行数／区间全空行或全右括号），`--strict` 只报基线之外的新增，历史遗留登记在 `tools/doc-anchors-baseline.json`。
+手写行号会随代码漂：文档里的 `路径:起-止` 由 `node tools/verify-doc-anchors.mjs` 校三类（路径不存在／超出文件行数／区间全空行或全右括号），`--strict` 只报基线之外的新增，历史遗留登记在 `tools/doc-anchors-baseline.json`。CI 上跑的同一条命令再带两个开关——`node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --scan docs`：符号覆盖要求锚点旁的符号必须是目标文件里的声明行，否则记 `UNDECLARED` 只计数、不判红。
 台账锚点（`source_anchor`）的 `--reanchor` 流程、`MISSING`／`AMBIGUOUS`／`UNSAFE` 如何处置，见 [AGENTS.md](../AGENTS.md) 的「契约台账锚点维护」小节；本页只给入口，不重复流程。
 
 纯文档通常只做文档／链接检查；接口改动加契约检查；代码做受影响测试与必要构建。

@@ -19,9 +19,14 @@
  * 找不到带块体的同名声明 ⇒ MISSING／NO_BLOCK，同名声明落在多个不同块 ⇒ AMBIGUOUS，三种都报候选并
  * 由调用方 exit 1；⛔ 不许静默降级成「不可核」。
  *
+ * 第三问：`symbolDeclarationLines(text, symbol)` 只回答「这个符号在**这一份文件**里有没有声明行」，
+ * 不产块体（`SYMBOL-COVERAGE` 的 `UNDECLARED` 桶靠它）。它比 `isDeclarationLine` 多认 `enum NAME`
+ * 与 SQL 的 `CREATE [OR REPLACE] FUNCTION|TABLE NAME`——文档里的「符号」不都是 JS 函数。
+ *
  * 消费者：`tools/verify-contract-status.mjs`（含 `--reanchor` / `--write-doc`）、
  * `tools/contract-status-core.mjs`（对照表渲染）、`tools/verify-doc-anchors.mjs`（文档锚点闸门的
- * 「符号行」判据 `symbolLineVerdict`）。后续接文档行号闸门时从这里 import，不许再抄一份。
+ * 「符号行」判据 `symbolLineVerdict` 与符号覆盖判据 `collectSymbolCoverage`）。后续接文档行号闸门时
+ * 从这里 import，不许再抄一份。
  */
 
 /** 符号形态的定位器键：证据项上的 `locator: {symbol, file?}`（与行号形态的 `lines` 二选一）。 */
@@ -36,6 +41,24 @@ const DECLARATION_PATTERNS = [
   /^[A-Za-z_$][\w$]*\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(/,
 ];
 const METHOD_DECLARATION = /^(?:(?:public|private|protected|static|readonly|async|get|set|declare)\s+)*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(/;
+/**
+ * `enum NAME`：`DECLARATION_PATTERNS` 不认这一档（`const enum X {` 还会被 `VARIABLE_NAME` 的半截匹配挡住），
+ * 所以「符号在文件里有没有声明行」那一问（`symbolDeclarationLines`）单独补一条。
+ */
+const ENUM_NAME = /^(?:export\s+)?(?:declare\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)/;
+/**
+ * SQL：`CREATE [OR REPLACE] FUNCTION NAME(`、`CREATE TABLE [IF NOT EXISTS] NAME`（大小写不敏感）。
+ * 只认这两种：它们是有名字、可被文档当符号引用的对象；`CREATE ROLE`／`CREATE INDEX` 之类既非实现体
+ * 也不是这里的证据形态，多认一条只会多一批假「有声明」。
+ */
+const SQL_DECLARATION_NAME = /^create\s+(?:or\s+replace\s+)?(?:function|table)\s+(?:if\s+not\s+exists\s+)?([A-Za-z_$][\w$]*)/i;
+/**
+ * `const|let|var NAME;`（无类型标注、无初始值）：`VARIABLE_NAME` 要求名字后面跟 `:` 或 `=`，所以
+ * `let qux;` 这种裸声明它认不出。这里补一条**只给 `symbolDeclarationLines` 用**的宽松形态——不改
+ * `declarationName`，那条是块体解析（`resolveSymbolBlock`）的入口，动它会连带改变 `--symbol=strict`
+ * 与契约台账的判据面。
+ */
+const VARIABLE_DECLARATION_LOOSE = /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?:;|,|$)/;
 const FUNCTION_NAME = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/;
 const CLASS_NAME = /^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/;
 const TYPE_NAME = /^(?:export\s+)?(?:declare\s+)?(?:interface|type)\s+([A-Za-z_$][\w$]*)/;
@@ -58,6 +81,45 @@ export function declarationName(line) {
   const method = METHOD_DECLARATION.exec(trimmed);
   if (method !== null && !DECLARATION_KEYWORDS.has(method[1])) return method[1];
   return null;
+}
+
+/**
+ * 符号 `symbol` 在**这一份文件**里的声明行（1-based，升序）；一处都没有就是 `[]`。
+ *
+ * 这是「符号到底在这个文件里有没有声明」的唯一判据，给 `SYMBOL-COVERAGE` 的 `UNDECLARED` 桶用：
+ * 文档同一行里紧挨着锚点写着的反引号词，可能只是顺手标的字段名／动词／提交号（`delete`、`set_flag`、
+ * `third_party_state`、`de2aa3c6`），拿它当「实现就在这几行」的证据判红就是噪声。
+ *
+ * 认的声明形态（够判「有没有」，不是完整语言语法）：
+ *   · JS/TS：`function NAME(`、`async function NAME(`、`const|let|var NAME`（含 `let NAME;` 这种裸声明，
+ *     见 `VARIABLE_DECLARATION_LOOSE`）、`class NAME`、`interface NAME`、`type NAME =`、
+ *     对象/类方法简写 `NAME(`（都走 `declarationName`）；
+ *   · `enum NAME`（含 `declare enum`、`const enum`）——`isDeclarationLine` 不认这一档，这里单独补；
+ *   · SQL：`CREATE [OR REPLACE] FUNCTION NAME(`、`CREATE TABLE [IF NOT EXISTS] NAME`。
+ * 已知的宽松处（有意留，宁可多认「有声明」也不放走真漂移）：方法简写那条正则认不出「调用」与「声明」的
+ * 区别，一行**整行**就是 `NAME(...)` 的调用（`doWork(1);`）也会算声明行。它只会让判红面更大，不会更小。
+ * **有意不认**：`export { a as b }` 再导出（`b` 不是声明出来的名字，是别名，认了等于给「谁都能声明」
+ * 开口子）、对象字面量属性 `NAME:`（`grantAdministratorScope: 'scopes:write',` 这种行没有自己的块体，
+ * 拿它当声明会让 `declarationBlock` 一路向后扫到外层的 `}`，把「块体覆盖锚点」变成碰运气）。
+ *
+ * ⚠️ 与 `resolveSymbolBlock` 的分工：本函数只回答「有没有声明行」，**不产块体**。于是「声明的块体
+ * 覆盖不覆盖锚点」仍由 JS 花括号口径算——`enum`／SQL 这两类没有花括号块体的声明，只有锚点落在声明行
+ * ±SLACK 行内才算「覆盖」，落得更远仍报 `OUT_OF_RANGE`（与加本函数之前同形，不新增假红）。
+ */
+export function symbolDeclarationLines(text, symbol) {
+  if (typeof symbol !== 'string' || symbol.trim() === '') return [];
+  const rows = String(text).split('\n');
+  const lines = [];
+  for (let line = 1; line <= rows.length; line += 1) {
+    const trimmed = rows[line - 1].trim();
+    if (declarationName(trimmed) === symbol) {
+      lines.push(line);
+      continue;
+    }
+    const extra = SQL_DECLARATION_NAME.exec(trimmed) ?? ENUM_NAME.exec(trimmed) ?? VARIABLE_DECLARATION_LOOSE.exec(trimmed);
+    if (extra !== null && extra[1] === symbol) lines.push(line);
+  }
+  return lines;
 }
 
 /** 1-based 行号：`value` 在 `text` 里每次出现的行号（含重叠命中）。 */

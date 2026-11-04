@@ -346,10 +346,14 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 并把「桶对象真删仍走 `cleanupOrphans` 清扫通道（`tools/purge-expired-media.mjs`）」一并写明，不把登记台账说成已删桶对象。
  * 共 19 条 blocker（16＋2＋1），中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。两份台账各 +4977 字节、
  * 行数不变（283704 / 4465、205726 / 220）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 另：同日 #925（第十六次同步）只改第 17 行一句语义（取消已覆盖识别/转写/合成/OCR/审核/文字问答六域，
+ * PROVIDER_UNAVAILABLE 退为兜底），未动闸门块、未动 JSON；它先合入，本片在其上重放。
+ * 合并后实测：JSON **283704 / 4465**、md **206173 / 220**（本片 +4977 与 #925 的 +447 相加）。
+ * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
   { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283704, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 205726, lines: 220 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206173, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

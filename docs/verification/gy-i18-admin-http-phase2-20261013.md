@@ -160,7 +160,7 @@ FAIL: 契约实现状态对照校验未通过（5 项）
 
 ### 8.1 已知后续项：`/admin/jobs` 与 `#106` 作业注册表的关系（**本片不动手**）
 
-`#106`（`769420a`）已为**用户面** `/jobs/{id}` 与 `/jobs/{id}/cancel` 提供真实作业注册表（`services/api/src/jobs/registry.ts`，按 kind 分派识别域 + 转写域）；而本片的后台面 `/admin/jobs`（`listAdminJobs`/`cancelAdminJob`）仍走 `AdminJobPort` 且**默认未接线 ⇒ 503**。
+`#106`（`769420a`）已为**用户面** `/jobs/{id}` 与 `/jobs/{id}/cancel` 提供真实作业注册表（`services/api/src/jobs/registry.ts`，按 kind 分派识别域 + 转写域）；而本片的后台面 `/admin/jobs`（`listAdminJobs`/`cancelAdminJob`）仍走 `AdminJobPort` 且**默认未接线 ⇒ 503**。（2026-11-04 复核：这一格已由后续切片补上——`buildApp` 在 real 且拿到真库池时装 `createPostgresAdminJobPort`（import 在第 88 行、装配在 services/api/src/app.ts:1382，端口实现 services/api/src/admin/ops/jobs-pg.ts:471）；`real` + 真库下 `GET /admin/jobs` 已返回 200（真库臂 tests/integration/admin-jobs-pg.mjs 的 [J] 组），无池（或非 real）时仍 503。）
 
 - 两者**形状与受众不同**：`#106` 是按 id 的读/取消（`JobEnvelope`，用户 scope）；`listAdminJobs` 是**平台级跨 kind 列表**（`AdminJob`，含 `kind`/`state`/`revision`，后台 scope）——注册表面向"按 id 取源"，不提供列表面。
 - `AdminJobPort` 的形状与"未接线 ⇒ 503、**不返回空页**"是**阶段 1b 派单的裁定语义**；复用需改端口契约 ⇒ 超出本片"只读复用服务层"的边界。

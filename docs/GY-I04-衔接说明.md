@@ -15,7 +15,7 @@ GY-I02（PR #43）建立工程壳时已把本任务需要的骨架铺好：
 | 冻结契约 | `packages/contracts/operations.json` | 已定义 6 个鉴权操作，其中用户端 3 个 |
 | 数据库 | `services/api/db/migrations/0001_initial_schema.sql` | `users`、`sessions`、`admin_accounts`、`admin_sessions`、`admin_scopes` 均已建表 |
 | API 壳 | `services/api/src/app.ts`、`routes/health.ts` | 服务可启动，但**除 `/health` 外无业务路由** |
-| 后台鉴权占位 | `apps/admin/src/auth/session.ts` | 明确占位，恒返回 `null`，与用户端会话**分离** |
+| 后台鉴权占位 | `apps/admin/src/auth/session.ts` | 明确占位，恒返回 `null`，与用户端会话**分离**（**2026-11-04 复核：前两句已过期** —— 该文件现有 `ADMIN_AUTH_API_IMPLEMENTED = true`，`fetchSession()` 真打 `GET /admin/auth/session`，另有 `signInAdmin` 打 `POST /admin/auth/session`、`signOutAdmin` 打 `POST /admin/auth/logout`；「与用户端会话分离」仍成立） |
 
 ### 1.1 用户端契约操作（3 个）
 
@@ -35,7 +35,7 @@ GY-I02（PR #43）建立工程壳时已把本任务需要的骨架铺好：
 CONSTRAINT sessions_audience_is_user CHECK (audience = 'user')
 ```
 
-即**用户会话只能写 `sessions` 表，后台会话只能写 `admin_sessions` 表**，两者不可混用。`apps/admin/src/auth/session.ts` 已按此保持 `ADMIN_AUTH_IMPLEMENTED = false` 的诚实占位，**不要为了「看起来能用」而让它返回伪造会话**。
+即**用户会话只能写 `sessions` 表，后台会话只能写 `admin_sessions` 表**，两者不可混用。`apps/admin/src/auth/session.ts` 已按此保持 `ADMIN_AUTH_IMPLEMENTED = false` 的诚实占位，**不要为了「看起来能用」而让它返回伪造会话**。（**2026-11-04 复核**：该文件已改为 `ADMIN_AUTH_API_IMPLEMENTED = true`，`fetchSession()` 真打 `GET /admin/auth/session`。「保持 `ADMIN_AUTH_IMPLEMENTED = false` 的诚实占位」与「恒返回 `null`」都已不是今天的事实；要防的那件事仍要防——不许返回伪造会话，现在由真端点满足它）
 
 ### 1.3 表结构已包含的安全设计
 

@@ -59,7 +59,7 @@
 | `sql/20-login-roles.sql`（`:352-360`，`\getenv` 取 48 位 hex 口令） | 同名文件，`GENGYUN_API_RUNTIME_PASSWORD` 用合成值 |
 | `sql/90-assert-least-privilege.sql`（`:362-374`） | 同名文件，**末行 ＋ 退出码**双保险 |
 
-`--with-cli-groups` 才追加的 3 组（`provision-db.sh:272-275`：`egress_ledger`／`source_operator`／`staging_importer`）**不在 deploy 链里**，本 job 不 apply。
+`--with-cli-groups` 才追加的 2 组（`provision-db.sh:282-287`：`source_operator`／`staging_importer`）**不在 deploy 链里**，本 job 不 apply；`egress_ledger.sql` 当前不被本脚本执行（脚本自述见 `deploy/postgres-cvm/provision-db.sh:293`），故实际是 2 组、不是 3 组（2026-11-04 订正）。
 
 ### 3.2 为什么必须自己校验末行
 
