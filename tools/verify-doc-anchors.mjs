@@ -1131,7 +1131,6 @@ export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   "docs/architecture/gy-i19-user-backup-copies-design.md:26#{ purged: false }", // drift-unique｜实际在 services/api/src/privacy/user-data-deletion.ts:329｜历史树锚点：该页行号是 GY-R34-I19 树的读数
   "docs/architecture/gy-i19-user-backup-copies-design.md:312#purged === true", // drift-gone｜0 命中｜历史树锚点：同上
   "docs/architecture/gy-i19-user-backup-copies-design.md:354#MIGRATION_COUNT === LAST_VERSION_NUMBER", // drift-gone｜0 命中｜历史树锚点：同上
-  "docs/architecture/gy-r34-retention-policy.md:46#SET \"detail\" = NULL, \"detail\" = \"detail\" + 1 && SET detail = NULL, revision = revision + 1", // drift-unique｜实际在 services/api/src/community/store-pg.ts:1086｜真漂移
   "docs/architecture/gy-r34-retention-policy.md:112#UPDATE (revoked_at)", // drift-gone｜0 命中｜表述差异：实际 SQL 是 GRANT UPDATE (token_hash,revoked_at) ON admin_sessions，片段少了授权前缀
   "docs/architecture/gy-r34-retention-policy.md:156#expires_at <= now()", // drift-unique｜实际在 services/api/src/auth/idempotency.ts:261｜真漂移，同一句里已经写了 :261
   "docs/architecture/gy-r59-retention-backup-thirdparty-map.md:32#online_due_at <= cutoff AND state <> 'completed'", // drift-gone｜0 命中｜归属误判：片段属于同一行的 tools/purge-expired-online-data.mjs:16；package.json:35 引用本身没错
@@ -1144,6 +1143,12 @@ export const ARCHITECTURE_ANCHOR_BASELINE = Object.freeze([
   //   改成真实落点（谓词本体 `export function trustProxyOption(` 的函数体 services/api/src/app.ts:2786-2791，
   //   装配处 services/api/src/app.ts:801），漂移修好后这条 key 再也命中不了 ⇒ 与 2026-10-28 那条同理，
   //   属于「基线治理、不留假基线」；判据逻辑与 ANCHOR_DRIFT_WINDOW 一个字没改。
+  // 2026-11-04（GY-R78，base 27e4f9b2）删去 1 条 ⇒ 12 条。删掉的是原来这条：
+  //   "docs/architecture/gy-r34-retention-policy.md:46#SET \"detail\" = NULL, \"detail\" = \"detail\" + 1 && SET detail = NULL, revision = revision + 1"
+  //   行尾注记当时写「drift-unique｜实际在 services/api/src/community/store-pg.ts:1086｜真漂移」。R78 把该页 :46 与 :111 两处
+  //   `store-pg.ts:1005-1011` 都改成真实落点 `:1141`（`SET detail = NULL, revision = revision + 1` 所在行），片段指纹不再落进窗口外
+  //   ⇒ 漂移修好后这条 key 再也命中不了，与 2026-10-28／2026-11-03 两条同理，属于「基线治理、不留假基线」；
+  //   判据逻辑与 `ANCHOR_DRIFT_WINDOW` 一个字没改，也不是闸门硬要求。
   "docs/architecture/state-contract.md:117#createPostgresBackupPurgePort({ pool, now }) && payload = 'null'::jsonb && state = 'purged'", // drift-unique｜实际在 services/api/db/migrations/0023_user_backup_copies.sql:75｜真漂移（引用写的是 :34）
 ]);
 
