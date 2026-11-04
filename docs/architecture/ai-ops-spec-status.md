@@ -47,10 +47,10 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | 作业面公共（`/jobs/*` 与取消语义） | 10 | 9 | 1 | 0 | 0 | 取消能力六源全接；只有未接线源才 503（P01） |
 | 识别 | 3 | 1 | 2 | 0 | 0 | 适配器与字节端口已接线（GY-R70），缺「已审供应商」与真实凭据 ⇒ 仍零真实调用；装配失败/缺凭据 fail-closed 503（N06，R72 订正为部分实现） |
-| OCR | 3 | 2 | 1 | 0 | 0 | 真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口（`services/api/src/routes/ocr.ts:195`、`services/api/src/app.ts:2508-2509`）；真实登记源未接线、用量端口恒空（P03） |
+| OCR | 3 | 2 | 1 | 0 | 0 | 真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口（`services/api/src/routes/ocr.ts:195`、`services/api/src/app.ts:2546-2547`）；真实登记源未接线、用量端口恒空（P03） |
 | 语音与转写 | 3 | 2 | 1 | 0 | 0 | 默认内存 store，真实 ASR 未验收（P04） |
 | 合成 | 2 | 1 | 1 | 0 | 0 | 真实提供者与核对内容端口已在产品装配（`services/api/src/app.ts:1161-1162`）；产物端口默认未接线、须显式注入（`:1176`）（P05） |
-| 问答 | 7 | 6 | 1 | 0 | 0 | 真实模型已接线，但装配有四与门（`chatProvider` 非空＋外发账本可用＋`real`＋无注入覆盖，`services/api/src/app.ts:2342-2363`）；任一不成立才走确定性回答器与 `unimplemented:no-real-` 版本串（P06／N03） |
+| 问答 | 7 | 6 | 1 | 0 | 0 | 真实模型已接线，但装配有四与门（`chatProvider` 非空＋外发账本可用＋`real`＋无注入覆盖，`services/api/src/app.ts:2380-2401`）；任一不成立才走确定性回答器与 `unimplemented:no-real-` 版本串（P06／N03） |
 | 审核规则层与载荷 | 5 | 3 | 2 | 0 | 0 | 模型层适配器与装配路径已在，`real` 缺真实授权与凭据（N07，部分实现）；载荷 mime 已通（N11，已实现） |
 | 媒体 | 2 | 1 | 0 | 1 | 0 | 读句柄网关未接（N12）；写链路已验收（E24） |
 | 开关（三键与十个受控面） | 6 | 6 | 0 | 0 | 0 | 本域全绿，闭集与两个错误码分流都有断言 |
@@ -70,7 +70,7 @@
 | --- | --- | --- | --- | --- |
 | E01 | `Job` 九键闭集，出口按契约重建、多余键一律拒绝 | 已实现 | services/api/src/jobs/registry.ts:50-60 | 只管公共作业面；后台 `AdminJob` 另有投影，两套键集不共享 |
 | E02 | `JobState` 七值闭集，不得扩展 | 已实现 | services/api/src/jobs/registry.ts:38-46 | 域内状态机另有迁移表，闭集是出口判定而非库内唯一来源 |
-| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2515-2566 | 注册 ≠ 可取消；取消能力按源判定，六源今已全接（P01） |
+| E03 | 六个 kind 全部注册作业源（识别／OCR／转写／问答／合成／审核） | 已实现 | services/api/src/app.ts:2553-2604 | 注册 ≠ 可取消；取消能力按源判定，六源今已全接（P01） |
 | E04 | 未接线 kind 与「作业不存在」同形 404 | 已实现 | services/api/src/jobs/registry.ts:280-281 | 同形是刻意设计，代价是运维无法从 404 分辨「没接」与「没这条」 |
 | E05 | `result` 如实性不变式：`result` 非空 ⇒ 只能是 `succeeded`／`uncertain` | 已实现 | services/api/src/jobs/registry.ts:177 | 与识别域既有行为有一处口径差（`uncertain` 允许带 `result`），已在同文件注明 |
 | E06 | 端口回传不合契约 ⇒ 503 `PROVIDER_UNAVAILABLE` + `retryable:false`，单通道 | 已实现 | services/api/src/jobs/registry.ts:130-133 | 唯一拒绝通道；不另造错误码，也不放宽冻结契约 |
@@ -119,7 +119,7 @@
 | P03 | OCR 域五端点 + 持久化 | 部分实现 | docs/architecture/contract-implementation-status.md:87-91 | 任务读取与取消已接；真实提供者已按 `config.aiProviders.ocr` 装配、图片源走媒体域端口，真实登记源未接线，用量端口恒空 |
 | P04 | 转写域四端点 + 确认分离 | 部分实现 | docs/architecture/contract-implementation-status.md:92-95 | 默认内存 store；真实 ASR 评估、媒体持久化、注销清理未验收 |
 | P05 | 合成域受理 + 作业读面 + 取消 | 部分实现 | docs/architecture/contract-implementation-status.md:96 | 真实提供者与核对内容端口已在产品装配（`services/api/src/app.ts:1161-1162`）；产物端口默认未接线、须显式注入 `synthesisMediaWiring`（`:1176`）；听感评估未做 |
-| P06 | 问答域七端点 + PG 持久化 + 输出守卫 | 部分实现 | docs/architecture/contract-implementation-status.md:97 起的七端点块（末行 :103） | 真实模型已按四与门装配（`services/api/src/app.ts:2342-2363`、`services/api/src/ai/chat-wiring.ts:52-97`）：四门全过 ⇒ 三个版本串取真实模型／提示词版本（不带 `unimplemented:no-real-`）；任一不成立 ⇒ 版本串带该前缀、正文是确定性检索摘录 |
+| P06 | 问答域七端点 + PG 持久化 + 输出守卫 | 部分实现 | docs/architecture/contract-implementation-status.md:97 起的七端点块（末行 :103） | 真实模型已按四与门装配（`services/api/src/app.ts:2380-2401`、`services/api/src/ai/chat-wiring.ts:52-97`）：四门全过 ⇒ 三个版本串取真实模型／提示词版本（不带 `unimplemented:no-real-`）；任一不成立 ⇒ 版本串带该前缀、正文是确定性检索摘录 |
 | P07 | 审核域结论可读 + 规则层可用 | 部分实现 | docs/architecture/contract-implementation-status.md:76 | 真实 tms／ims 未授权 ⇒ real 整域 fail-closed（Z06）；持久队列与租约仍是内存台账 |
 | P09 | 非持久端口的审计台账（内存追加、只增不改） | 部分实现 | services/api/src/admin/ops/content-pg.ts:25-27 | 仍只增不改、重启即丢；但**真库端口已不再走它**：持久端口在自身事务里写库（services/api/src/admin/ops/service.ts:1115 只在 `!jobPort.persistent` 时追加内存） |
 | P10 | 后台审计三读面权威分离（内存／开关库函数／全表库函数） | 部分实现 | services/api/src/admin/audit/service.ts:14-16 | 闭集那半条已随 #609 补齐（E40）；出口侧：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `fetchAuditLogsPage`（operationId 是 `listAuditLogs`，见 `apps/admin/src/lib/admin-audit-logs.mjs:36`），导航 `apps/admin/src/App.vue:33`、渲染 `apps/admin/src/App.vue:81`，#633），另两个审计页仍分别只接内存读面（apps/admin/src/lib/audit-events.mjs:33）与只认 `set_flag` 的开关审计面（apps/admin/src/lib/flag-audit.mjs:54）⇒ **三读面读数已在页面层合并**（`apps/admin/src/lib/admin-audit-logs.mjs:985` 的 `mergeAuditSources`，合并面板在 `apps/admin/src/views/AuditLogsView.vue:209`；该层头注释 `:840` 写死「服务端零改动：本层只消费既有读面，不新增 operation、不改契约」，故服务端仍是三个独立读面、无统一读面），合并条数／降序／跨源去重／失败隔离／来源筛选由 `tests/unit/admin-ui-audit-merge.test.mjs` 钉住；剩余缺口是页面读数无端到端验收，故仍判部分实现。原写「全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md` |
@@ -169,7 +169,7 @@
 | Z03 | 适老版（独立字号／触控／布局） | 已搁置 | docs/development-plan.md:5 | 原文「先开发 Demo 版本样式，适老版本后续开发，恢复时间待用户决定」；另见 docs/ui-state-inventory.md:108 |
 | Z04 | 服务器部署与真实外呼上线 | 已搁置 | docs/verification/gy-i26-pr69-integration-20261011.md:71 | 原文「服务器部署继续暂缓」；命令不取生产凭据、不调真实识别／语音／问答 |
 | Z05 | 测试版上线前置三项 | 已搁置 | docs/verification/platform-checklist.md:64 | 原文「属上线前置，当前搁置，不作为阻塞项」；用户 2026-10-25 明确测试版暂不上线 |
-| Z06 | 真实 tms／ims 内容安全供应商授权 | 已搁置 | services/api/src/moderation/service.ts:366 | 原文「tms/ims 未授权、BizType 未核验」⇒ 前置是商务授权与核验，不是代码 |
+| Z06 | 真实 tms／ims 内容安全供应商授权 | 已搁置 | services/api/src/moderation/service.ts:421-427 | 原文「tms/ims 未授权、BizType 未核验」⇒ 前置是商务授权与核验，不是代码 |
 
 **这一档只剩 6 条的原因**：上一版另有 6 条（原 Z02／Z07／Z08／Z09／Z11／Z12）引的是「尚未执行」「仍待后续片」「尚未并入」「需授权才能接线」这类**排期或能力自述**，被独立审查判为口径越权——文件内文字不能扩大授权。逐条去向见 §0 的对账表：四条改判未实现（N08／N09／N10／N11；N11 已于 R72 再改判已实现），一条并入 E24（写链路已验收）+ 残余 N12，一条并入 E39（真库臂已覆盖原生 PG17 迁移）。
 
@@ -210,7 +210,7 @@
 - 判定变量名骗人但不骗逻辑：`const adminRealUnwired = config.executionMode === 'real'`（`services/api/src/app.ts:1358`），值只取决于是否 real。
 - 装配：`adminJobPort = adminInjection?.jobPort ?? (adminRealUnwired && pool !== null ? createPostgresAdminJobPort({ pool }) : undefined)`（`services/api/src/app.ts:1380-1382`），显式注入优先；随后注入服务层（real 域 `services/api/src/app.ts:1587`、stub 域同文件 :1726）。
 - 生产端口本体：`services/api/src/admin/ops/jobs-pg.ts:441` 的构造器，`persistent: true` 在 `:518`；读四源作业表（`ocr_jobs`／`recognition_jobs`／`speech_jobs` + 问答轮次 `conversation_turns`，同文件 :4-9），**不读** `public.jobs`。
-- 503 只剩缺省：未注入（stub／无池）时 `services/api/src/admin/ops/jobs.ts:53-60` 的 `createUnwiredAdminJobPort()` 返回 `PORT_UNAVAILABLE`。`tests/failmatrix/cases.mjs:177` 锁的是这条分支——它证明「没池时不许假绿」，不证明生产也 503。
+- 503 只剩缺省：未注入（stub／无池）时 `services/api/src/admin/ops/jobs.ts:53-60` 的 `createUnwiredAdminJobPort()` 让读面 `list()` 空、`get()` null、写面 `cancel()` 一律 `PORT_UNAVAILABLE`，服务层把它投影成 503 `PROVIDER_UNAVAILABLE`。**读面**有 `tests/failmatrix/cases.mjs:177`（C3-20 `GET /admin/jobs` ⇒ 503）与 `tests/unit/admin-ops-rejections.test.mjs` 的「反例 8/9」守着；**写面（取消）的未接线分支目前没有专门用例**——`PORT_UNAVAILABLE` 在 failmatrix 用例里 0 命中，`admin-ops-rejections` 里那一次出现只是「脏端口」夹具的 `cancel` 返回值，断言落在投影拒绝上，并未断言取消返 503。所以这两处只证明「没池时读面不许假绿」，不证明取消写面有用例守着，更不证明生产也 503。
 - 真库臂已覆盖生产路径：`wired===true`（`tests/integration/admin-jobs-pg.mjs:661`）、`GET /admin/jobs` 200 且字段面恰契约 9 项（同文件 :682）、401／403 与 `jobs:read` 专权（:699）、取消让 revision 1→2（:713）、终态拒绝、过滤下推与闭集 400、游标两页不重不漏（:1157-1252）。
 
 **真正没做到的**（仍是缺口，但级别是 P1）：

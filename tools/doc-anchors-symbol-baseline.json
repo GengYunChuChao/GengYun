@@ -184,16 +184,6 @@
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-30 行（「/**…」），块后第一条非空行是第 31 行的「import {」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
     },
     {
-      "path": "services/api/src/app.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/app.ts:2259",
-      "doc": "docs/architecture/s4-data-traceability.md",
-      "docLine": 188,
-      "kind": "inline",
-      "note": "【可达性自陈·行内注释】文档 §4 D1「缺口」原写「同一处 `:2078` 自陈」，按当前树 2078 已是 `};`；真正的那句在 `// ⚠ 可达性（实测）：…real 下 `requireWired()` 先 503…两条路都到不了这里`。是单行注释、块后无声明行——这一条正是「注销在 real 模式下不可用」的原文证据，只能指注释。"
-    },
-    {
       "path": "services/api/src/privacy/backup-replay-manifest.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",

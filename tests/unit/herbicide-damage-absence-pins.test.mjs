@@ -246,8 +246,8 @@ const DAMAGE_NEEDLE = /damage|herbicide_damage|phytotox|injury/i;
  *  （`S3-a` 追加 `approvePost`/`rejectPost` 两条人审动作）→ **124**
  *  （`#18` S2 PR-3 追加 `grantAdministratorScope` / `revokeAdministratorScope` 两条管理员授权写面）。本钉保护的事实是「damage 类零命中」，
  *  总数只用于证明「抽取没空转」，故随契约增长同步更新。R74 追加 `readSynthesisAudio`
- *  （`GET /speech/synthesis/{id}/audio`）⇒ 129。 */
-const CONTRACT_OPERATION_COUNT = 129;
+ *  （`GET /speech/synthesis/{id}/audio`）⇒ 129；R75 追加 `getHistory`（`GET /history/{id}`）⇒ 130。 */
+const CONTRACT_OPERATION_COUNT = 130;
 
 /** 基线实测：`path` 总数（`Object.keys(doc.paths)`）。
  *

@@ -112,7 +112,7 @@ git merge --no-ff 0eaf1bde     # #455 的 head；ort 策略，无冲突
 | `admin/ops/service.ts:842` | 有判据（`#455` 修后） | 原判定是「兜底恒 true（真缺陷）」。`#455` 把本地兜底改为委托 `flags-pg.ts` 的同一判据，并把函数改名 `throwFlagReadFailure`（避免与判据重名）。同一功能面于是只有一套口径，与 `flag-gate.ts` 的 `read_error`/`unrecognized` 分档不再互相矛盾。 |
 | `ocr/store-pg.ts:137` | 有判据 | 与 `messages/favorites/history/community/conversations` 的 `classify*DatabaseError` 逐条同口径：57014/55P03 已在上方折成 `PROVIDER_TIMEOUT`，此处 `isTransientDatabaseError` 只放行 08xxx/53xxx/57P0x/40001/40P01；42501/3D000/28P01/42P01/42883 与无法归类一律 false（注释原文 `ocr/store-pg.ts:133-136`）。 |
 | `recognitions/store-pg.ts:150` | 有判据 | 与 ocr/speech 同一分类器、同一条分档注释（瞬时类 true；权限/缺表/缺函数/无法归类 false）。 |
-| `speech/store-pg.ts:122` | 有判据 | 与 ocr/recognitions 同一分类器、同一条分档注释。 |
+| `speech/store-pg.ts:126-129` | 有判据 | 与 ocr/recognitions 同一分类器、同一条分档注释（瞬时类 true；权限/缺表/缺函数/无法归类 false），判定调用在 `services/api/src/speech/store-pg.ts:130`。 |
 
 ### 已删除的 3 条（历史判定：真缺陷，现已被 `#455` 修掉）
 

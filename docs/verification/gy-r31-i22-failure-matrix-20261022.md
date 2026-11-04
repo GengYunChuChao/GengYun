@@ -134,7 +134,7 @@
 | `createFavorite` POST /favorites | ● `C1-02@65` | ○ | ○ | ● `C6-03@229`（同键异体）；`favorites-http.test.mjs:155` | ● 同 `:318` | ○ | ● `C6-04@230`、`C7-13@269` | ○ |
 | `deleteFavorite` DELETE /favorites/:id | ● `C1-03@66` | ○ | ● `C2-14@116`；`favorites-http.test.mjs:188`（他人）、`:189`（不存在）、`:196`（他人+旧 ETag）、`:225`（二次删） | ● `favorites-http.test.mjs:211,390`（`REVISION_CONFLICT`）；`C6-*`；428 见下 | ● 同 `:318` | ○ | ● `favorites-http.test.mjs:382`（**428** `REVISION_REQUIRED`）、`C7-02@258` | ○ |
 | `listHistory` GET /history | ● `C1-04@67`（该文件**没有** `listHistory` 的 401 断言；原挂在这里的 `history-http.test.mjs:477` 实为 DELETE 面，已移到下一行） | ○ | — | — | ● `history-http.test.mjs:548,751` | ○ | ● `C2-23@128`（200 对照） | ○ |
-| `deleteHistory` DELETE /history/:id | ● `C1-05@68`；`history-http.test.mjs:477`（匿名 DELETE ⇒ 401，全文件唯一一条 401） | ○ | ● `C2-15@117`；`history-http.test.mjs:381,382,388,743` | ● `history-http.test.mjs:411,469` | ● 同 `:548` | ○ | ● `history-http.test.mjs:461`（428） | ○ |
+| `deleteHistory` DELETE /history/:id | ● `C1-05@68`；`history-http.test.mjs:540`（匿名 DELETE ⇒ 401，全文件唯一一条 401） | ○ | ● `C2-15@117`；`history-http.test.mjs:381,382,388,806` | ● `history-http.test.mjs:474,532` | ● 同 `history-http.test.mjs:611` | ○ | ● `history-http.test.mjs:524`（428） | ○ |
 
 注：这两域是 failmatrix 覆盖**最厚**的域（C1/C2/C4/C6/C7 全有），也是唯二把 **428** 写进断言的域。另：全页的 `C1-xx@NN` 定位符已于 2026-10-23 整体订正（自 `#449` 起 `cases.mjs` 整体下移 12 行，原 `@行` 全部偏小 12），65 个 id 的「改前 → 改后」对照见文末**附录 A**；`listHistory` 那一格原挂的 `history-http.test.mjs:477` 实为 DELETE 面，已移到 `deleteHistory` 行。
 
@@ -219,7 +219,7 @@
 
 | operation | 401 | 403 | 404 | 409 | 503 | 超时 | 400 | 429 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `hidePost` POST /admin/posts/:id/hide | ○ | ● `C3-*` 系列（后台 403 统一族 `cases.mjs:126-137`） | ● `admin-http.mjs:494-497`（隐藏后他人读 404） | ● `community-moderation-revision-guard.test.mjs:58,71,72,94` | ● `admin-http.mjs:366,375` | ○ | ○ | ○ （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）|
+| `hidePost` POST /admin/posts/:id/hide | ○ | ● `C3-*` 系列（后台 403 统一族 `cases.mjs:126-137`） | ● `admin-http.mjs:494-497`（隐藏后他人读 404） | ● `community-moderation-revision-guard.test.mjs:58,71,72,94` | ● `admin-http.mjs:366,375` | ○ | ○ | ○ （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）（2026-11-04 复核：基线 `7dd3d699` 的第 126 至 137 行其实是 C2 族尾部（`C2-24` 的 check 体），C3 后台族起于第 138 行（`C3-01`）；今天 main 上该族起于第 158 行（`C3-01`），见 tests/failmatrix/cases.mjs:158。）|
 | `listAuditEvents` GET /admin/audit-events | ● `C1` 族（后台未登录） | ● `C3-04@141`、`C3-15@152`（200 对照）、`C3-26@163` | — | — | ○ | ○ | ● `C7` 族游标口径 | ○ |
 
 注：审核**前置门禁**（先审后发）不是契约 operation，其断言在 `community-moderation-read-recheck.test.mjs:54,85,112`、`community-moderation-gate-wiring.test.mjs:125,190,291`（均为 404 形态）——计入 community 域的 404 列，不单独成行。
@@ -299,7 +299,7 @@
 | `admin.ts:365` | POST `/admin/posts/:id/hide` | `hidePost` |
 | `admin-auth.ts:47/89/104` | POST/GET `/admin/auth/session`、POST `/admin/auth/logout` | 登录/会话/登出专用（不套 admin scope，语义正确） |
 
-断言侧：failmatrix C3 族 27 条（`cases.mjs:126-151`）覆盖 6 个后台面「用户会话 → 403 `SCOPE_DENIED`」与「后台缺 scope → 403」与「有 scope → 200」；`auth-routes.test.mjs:202` 断言「客户端自称 `x-role: admin` 无效 → 403」。
+断言侧：failmatrix C3 族 27 条（`cases.mjs:126-151`）覆盖 6 个后台面「用户会话 → 403 `SCOPE_DENIED`」与「后台缺 scope → 403」与「有 scope → 200」；`auth-routes.test.mjs:202` 断言「客户端自称 `x-role: admin` 无效 → 403」。（2026-11-04 复核：该页基线 `7dd3d699` 下 C3 族实为第 138 行（`C3-01`）至第 171 行（`C3-27`），第 126 至 137 行是 C2 族尾部；「27 条」这个条数对得上，区间不对。今天 main 上该族为第 158 行（`C3-01`）至第 191 行（`C3-27`），共 36 条，见 tests/failmatrix/cases.mjs:158 与 tests/failmatrix/cases.mjs:191。）
 
 **发现（非阻塞）**：`admin.ts:151` 的注释说明路径为**逐条字面书写**，静态路由清单工具依赖这一形态；新增后台路由必须同样逐条写，否则清单工具会漏收（这是一条**易复发**的约定，无测试钉住字面书写形态）。
 
@@ -407,7 +407,7 @@
 7. `docs/architecture/contract-status.json` 只读交叉核对，**未改动**（在飞 PR 占用）。
 8. 本页的"断言密度"数字是 `tests/**` 内状态码字面量出现次数的**粗筛**（按域正则聚合），不是断言条数；只用于排序，不作为判定依据。
 
-> **2026-10-23 重绑补记**：本次要求单独登记的三条未取得项（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 属沙箱事实而非产品缺陷）写在 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1–§10.3，每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」。本节上面 8 条的含义与口径**不变**，不因那次登记被弱化或抵消。
+> **2026-10-23 重绑补记**：本次要求单独登记的三条未取得项（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 属沙箱事实而非产品缺陷）写在 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1–§10.3，每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」。本节上面 8 条的含义与口径**不变**，不因那次登记被弱化或抵消。（**2026-11-04 订正：① 已不成立——`4e0c3712` 起契约有 `cancelDeletion`（`DELETE /me/account/deletion`，台账 `partial`）；②③ 与本节其余口径不变**）
 
 ---
 
@@ -563,7 +563,7 @@ Node.js v24.16.0
 
 ### 三、三条「未取得」的登记位置
 
-本次要求如实登记、不得当成已解决的三条（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 是沙箱事实而非产品缺陷）**不在本页展开**，统一登记在同一批重绑的安全矩阵页 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1、§10.2、§10.3（每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」）。本页 §5 的既有未取得条目照旧、不因那次登记而被弱化。
+本次要求如实登记、不得当成已解决的三条（① 取消注销无对应 operation；② 真机 / 真供应商 / 真 PG 全链缺失；③ 本机 `spawn EPERM` 是沙箱事实而非产品缺陷）**不在本页展开**，统一登记在同一批重绑的安全矩阵页 `docs/verification/gy-i22-secmatrix-20261019.md` 的 §10.1、§10.2、§10.3（每条含「为什么未取得 / 需要什么才能取得 / 是否阻塞 #22 关闭（标注为判断）」）。本页 §5 的既有未取得条目照旧、不因那次登记而被弱化。（**2026-11-04 订正：① 已不成立——`4e0c3712` 起契约有 `cancelDeletion`（`DELETE /me/account/deletion`，台账 `partial`）；②③ 与本节其余口径不变**）
 
 本页仍**没有**做的事：未跑全量单测、未起真库/真机、未重算 §2 逐格判定、未改 `docs/architecture/contract-status.json`、未改任何 `status`。
 

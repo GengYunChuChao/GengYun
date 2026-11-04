@@ -228,23 +228,111 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 9 条 evidence 的 `lines` 按 `base(ef22d5a9)→HEAD` 端点映射重取（`960-1026`→`969-969` 等），
  * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ 两个文件各**少 1 字节**、
  * 行数不变（4407 / 218）。仍是「正常改台账」，故同步基线。
- * 2026-11-03 第三次同步（R74 音频读面片）：新增 `readSynthesisAudio`
+ * 2026-11-03 同日第三次同步（GY-R74 注销真清片，`feat/gy-r74-deletion-real`）：**正常改台账** ——
+ * 本片把注销受理门从「real ⇒ 整域 503」改成「real + 真库 ⇒ 可受理」，并把 30 日备份域按域如实降级
+ * （`services/api/src/app.ts` 的 `backupPurgeWiring` real 臂恒 `createUnavailableBackupPurgePort()`）、
+ * 第三方回执补能力布尔、媒体域缺 `MEDIA_OBJECT_REF_KEY` 时识别域如实 blocked。台账侧只有两类变化：
+ * ① 6 条 evidence 的 `lines` 按 `base(7a25d900)→HEAD` 端点映射重取（`account-deletion.ts` 三个文件都长了行）；
+ * ② 3 条 blocker 文案按新真值重写（原「real 模式整域 503」已作废）并改写 `ACCOUNT_DELETION_UNAVAILABLE_MESSAGE`；
+ * 中文表格仍由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成；写回时顺手去掉了这两个文件末尾
+ * 多出来的空行（`git diff --check` 报的 `new blank line at EOF`）⇒ 与分支侧基线相比**各 +814 字节、行数不变**
+ * （4407 / 218）。没有改判定、没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-03 第四次同步（R74 音频读面片，`origin/main` 侧）：新增 `readSynthesisAudio`
  * （`GET /speech/synthesis/{id}/audio`）⇒ 台账多一条 operation 行（+27 行 / +2219 字节），
  * `contract-implementation-status.md` 多一行（+1 行 / +1680 字节）。仍是「正常改台账」
  * （operations 128 → 129、中文表格由 `verify-contract-status.mjs --write-doc` 重生成），
  * 故同步基线；没有改判定、没有加豁免条目。
- * 2026-11-03 同日第四次同步（同片、同一 PR 的锚点恒等修正）：`tools/doc-anchor-relocation-identity`
+ * 2026-11-03 同日第五次同步（同片、同一 PR 的锚点恒等修正）：`tools/doc-anchor-relocation-identity`
  * 要求「目标文件本提交有改动 ⇒ 行号必须落在该文件自己的端点映射上」，于是 timeout 维度的 evidence
  * 行号 `977-1003` → `964-989`（少 1 个字符位）；中文表格再由 `--write-doc` 从 JSON 重生成 ⇒
  * 两个文件各**少 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
- * 2026-11-03 第五次同步（同片后续返修：音频读面在返回字节前重查）：tts/service.ts 再涨行，
+ * 2026-11-03 第六次同步（同片后续返修：音频读面在返回字节前重查）：tts/service.ts 再涨行，
  * timeout 维度的 evidence 先由 `--reanchor --write-doc` 重锚到 `1004-1030`，随后为满足
  * `doc-anchor-relocation-identity` 的端点映射要求改成 `982-1007`（区间仍含声明行 `:1004`）⇒
  * 两份台账各**多 1 字节**、行数不变（4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-03 第六次同步（GY-R75 契约计数口径订正，与 OCR 锚点无关）：`contract-status.json` 的 media blocker
+ * 里「冻结契约（86 条路径 / 113 条 operation，实测 `packages/contracts/openapi.json`）」按基线 `3cdf4740`
+ * 实测改成「99 条路径 / 129 条 operation」并补「，基线 `3cdf4740`」⇒ 两份台账各**多 20 字节**、行数不变
+ * （4434 / 219）。仍是「正常改台账」，故同步基线。
+ * 2026-11-04 第七次同步（R75 历史详情读面片）：新增 `getHistory`（`GET /history/{id}`）⇒
+ * 台账多一条 operation 条目（+31 行 / +2430 字节），`contract-implementation-status.md`
+ * 多一行 operation 行与标题计数（+1 行 / +1821 字节）。`listHistory`/`deleteHistory` 的 evidence
+ * 行号由 `--reanchor --write-doc` 重写（80-83→88-88、85-98→103-105），中文表格同次重生成。
+ * 仍是「正常改台账」（operations 129 → 130），故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第八次同步（`git merge origin/main` = 3b89782f 之后重取实测值）：上面第六条（#875，在 main 上）
+ * 与第七条（R75，在本分支上）是两条并行分支各自记的「同序号一次同步」，合并后按时间顺序重编号，
+ * 正文逐字保留。合并把 #875 的计数口径订正与 `getHistory` 条目叠在同一份台账上。
+ * ⚠️ 第六／第七次记的行数是按 `split('\n').length` 数出来的（末尾换行多算一行），
+ * 本条改按本用例 `countLines` 的口径实测：合并后 `contract-status.json` 276447 字节 / 4465 行、
+ * `contract-implementation-status.md` 198007 字节 / 220 行（= 本分支 276427/4465 与 197987/220
+ * 各 +20 字节，正是 #875 那一行的增量）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 以下两段是 main 侧（#857／#873 线）自己的历史注释，其「第七／第八次」与本分支的编号撞号，
+ * 按历史注释原样保留、不重编号（历史注释不重写）：
+ * 2026-11-03 合入 `origin/main`（3d9b2369）后第七次同步：两侧基线在此取**并集** —— 分支侧（注销真清片）
+ * 与 main 侧（音频读面）的台账改动同时保留：取消维度按合流树实测为 `services/api/src/app.ts:2553`
+ * （六源 `:2554`/`:2560`/`:2566`/`:2572`/`:2580`/`:2590`），超时维度同时保留分支侧的装配点
+ * `services/api/src/app.ts:2678` 与 main 侧的 `services/api/src/tts/service.ts:982-1007`，
+ * `## 3 已装配操作` 为 129 条（main 新增 `readSynthesisAudio`）。合流后的实际体积：JSON 274811 字节 /
+ * 4434 行、md 196980 字节 / 219 行（行数与 main 一致；字节各比 main 多 814，是分支侧注销片重写文案的净增）。
+ * 没有改判定、没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-03 合入 `origin/main`（3b89782f）后第八次同步：基线停在上面那次合流（274811 / 196980）之后，
+ * 又有两笔「正常改台账」没进来 —— ① 分支侧 `c971c11b`（真库臂证据串）把两份台账里「证据串只有两段」
+ * 改成如实描述「两段 + real 模式下按模块追加 `;<module>:backup-<状态>:<码>`」，两份台账各 +864 / +867 字节，
+ * 但该提交没同步基线（于是 T5 在分支 HEAD 上就已经红）；② main 侧 #875 的 media blocker 计数订正各 +20 字节
+ * （即上面那条「第六次同步（GY-R75…）」——它与本片 #857 线的第六次不是同一片，两条编号撞了，这里是历史注释，
+ * 按原样保留不改号）。合流树实测：JSON 275695 字节 / 4434 行、md 197867 字节 / 219 行
+ * （= 274811+20+864、196980+20+867；行数与两侧都一致）。两笔都是正常改台账，没有改判定、
+ * 没有加豁免条目，故按本文件既定规则同步基线。
+ * 2026-11-04 第九次同步：再一次 `git merge origin/main`（3b89782f → 5dd6da3a，即 #873
+ * 「接通注销在线域清理并如实披露备份阻塞」合入 main）。合流后按本用例 `countLines` 口径实测：
+ * `contract-status.json` 278125 字节 / 4465 行、`contract-implementation-status.md` 199688 字节
+ * / 220 行 —— 行数与上一次同步相同（#873 只改 evidence 文案与中文表格，没有增删 operation 行），
+ * 字节数是两侧文案的净增。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十次同步（`readCommunityMediaContent` 的 blocker 与代码正面矛盾）：该条 blocker 原写
+ * 「真实内容来源未接线（来源关闭时统一 404）」，但 `services/api/src/media/content-source.ts` 的头注释
+ * 自述「真实来源（GY-I06/G3）已接线：默认装配是 `createRealContentSource(communityService, mediaStore)`」，
+ * 装配点也在 `services/api/src/app.ts`（`contentSource: mediaContentSource ?? createRealContentSource(...)`）。
+ * 故改成「……真实内容来源已接线（默认 `createRealContentSource(communityService, mediaStore)`，社区域未接线时
+ * 回落 `createClosedContentSource()` ⇒ 取图统一 404）……」。中文表格同次用 `--write-doc` 重生成。
+ * 两份台账各 +118 字节、行数不变（278243 / 4465、199806 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
+ * 2026-11-04 第十一次同步（六条 admin 的 blocker 把「后台 UI 未消费」写成待办，实际页面已消费）：
+ * `listAdministrators`、`listAdministratorScopes`、`grantAdministratorScope` 由
+ * `apps/admin/src/views/AdministratorsView.vue` 消费；`listAdminUsers`（`GET /admin/accounts`）由
+ * `apps/admin/src/views/AccountsView.vue`、`listFlags`（`GET /admin/feature-flags`）由 `FlagsView.vue`、
+ * `listAuditEvents`（`GET /admin/audit-events`）由 `AuditEventsView.vue` 消费。文案改成「后台 UI 已消费本接口
+ * （路径）……真实环境联调未做」，其余「真实存储／端口／审计待完成」的判断维持不动。中文表格同次重生成。
+ * 两份台账各 +472 字节、行数不变（278715 / 4465、200278 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
+ * 2026-11-04 第十二次同步（台账 blocker 散文的 file:line 首次有了可执行校验）：新增
+ * `tests/unit/contract-blocker-anchor-truth.test.mjs`，对该 JSON 里 `blocker` / `source_anchor` 散文中以
+ * `services/ apps/ packages/ tools/ tests/ docs/ miniprogram/ deploy/ scripts/` 开头的 `path:line[-line]` 判三件事：
+ * 文件存在、行号在界内（两端都判）、起点不落在空行／纯闭合括号／纯注释行。按它扫出的明确漂移重锚 7 处（3 组）：
+ * `services/api/src/app.ts:802-806`→`893-897`（`listMessages`/`getUnreadCount`/`markMessageRead` 各一处，按
+ * `createPostgresMessagesStore` 的唯一装配点 897 定位）、同样这三条的 `:1126-1130`→`1217-1221`（按
+ * `createMessagesCommunityEventsPort` 的唯一装配点 1221 定位；旧区间落在识别域装配块上）、
+ * `deploy/postgres-cvm/backup-postgres.sh:24`→`188`（脚本里 `pg_dump` 的唯一执行点）。
+ * 前两组等长、只有 `:24`→`:188` 多一个字符位 ⇒ 两份台账各**多 1 字节**，行数不变。
+ * 中文表格由 `verify-contract-status.mjs --write-doc` 从 JSON 重生成。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目（新用例的锚点白名单为空）。
+ * 2026-11-04 第十三次同步（`requestAccountDeletion` 的 blocker 把自己引的部署文档锚点指错了）：该条 blocker 用
+ * 「`deploy/postgres-cvm/README.md:459-460`／`runbook.md:540` 均自认未实现」当证据，实测 README 的第 459 行是
+ * SCRAM 加固句、真正的「备份不实现"注销后备份 30 日内清理个人数据"」在第 460-461 行；runbook 的第 540 行是
+ * 「`sudo cp -r <备份的 conf.d>`」，真正的自认在 614 行（U9「逐用户删除，本交付未实现」）。另把同段
+ * 「仓根 `README.md` 全文只有 270 行」改回实测的「221 行」（`README.md` 共 222 个 split 行），并把旧文案里那处裸
+ * `README.md:459` 改写成散文「误记到仓根 README 的第 459 行」，免得它继续挂在 relocation 的「未判」桶里。
+ * 两份台账各 +11 字节、行数不变（278727 / 4465、200290 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
+ * 2026-11-04 第十四次同步（封面散文里三处手抄读数过期，只动 md、不动 JSON）：`docs/architecture/contract-implementation-status.md`
+ * 把「34 个后台端点」当事实沿用（`node tools/verify-admin-capability-map.mjs --check` 实测 `totalOps=50`，媒体仍 7 个）、
+ * 把「113 条业务契约」当现值（`node tools/verify-contract-status.mjs` 实测 130 条）、把「141 条带 `name` 的证据／32／70／39」
+ * 当现值（实测 595 条证据中 243 条带 `name`，三类拆分随证据增补而变，已改成「以当次工具输出为准」），三处都改成
+ * 「数字 + 复核日期 + 指向脚本」的写法。JSON 未动 ⇒ 体积变为 278727 / 4465 与 **200749 / 220**，行数都不变。
+ * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 273997, lines: 4434 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 196166, lines: 219 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278727, lines: 4465 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200749, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

@@ -34,12 +34,6 @@
       "reference": "README.md:440"
     },
     {
-      "path": "README.md",
-      "reason": "OUT_OF_RANGE",
-      "owner": "repo",
-      "reference": "README.md:459"
-    },
-    {
       "path": "deploy/postgres-cvm/verify-cvm-postgres.sh",
       "reason": "SUSPECT",
       "owner": "deploy",
@@ -74,42 +68,6 @@
       "reason": "SUSPECT",
       "owner": "miniprogram",
       "reference": "miniprogram/pages/voice/voice.js:772"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "openapi.json:11686"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "openapi.json:6448"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:11434"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:11434"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:11686"
-    },
-    {
-      "path": "packages/contracts/openapi.json",
-      "reason": "SUSPECT",
-      "owner": "contracts",
-      "reference": "packages/contracts/openapi.json:6446"
     },
     {
       "path": "services/api/src/admin/ops/jobs-pg.ts",
@@ -152,18 +110,6 @@
       "reason": "SUSPECT",
       "owner": "api-server",
       "reference": "app.ts:1598"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "app.ts:2132"
-    },
-    {
-      "path": "services/api/src/app.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
-      "reference": "app.ts:2661"
     },
     {
       "path": "services/api/src/app.ts",
@@ -295,12 +241,6 @@
       "path": "services/api/src/speech/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "speech/store-pg.ts:122"
-    },
-    {
-      "path": "services/api/src/speech/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
       "reference": "speech/store-pg.ts:142"
     },
     {
@@ -380,12 +320,6 @@
       "reason": "NOT_SYMBOL_LINE",
       "owner": "api-server",
       "reference": "services/api/src/privacy/user-data-deletion.ts:164-169"
-    },
-    {
-      "path": "services/api/src/privacy/user-data-deletion.ts",
-      "reason": "NOT_SYMBOL_LINE",
-      "owner": "api-server",
-      "reference": "services/api/src/privacy/user-data-deletion.ts:203"
     },
     {
       "path": "services/api/src/privacy/user-data-deletion.ts",

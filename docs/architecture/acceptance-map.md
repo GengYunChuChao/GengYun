@@ -206,7 +206,7 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 | 口径 | 个数 | 具体值 | 出处 |
 | --- | --- | --- | --- |
 | 写入侧（`POST /favorites` 实际接受） | **3** | `species`、`herbicide`、`scheme` | 应用层闭集 `services/api/src/favorites/types.ts:24`；路由 schema `services/api/src/routes/favorites.ts:46` |
-| 读出侧（契约 `TargetRef`，`Favorite.target_ref` 用它投影） | **17** | 上列 3 项 ＋ `static_region`、`recognition`、`ocr`、`transcription`、`answer`、`post`、`comment`、`conversation`、`conversation_turn`、`dose_card`、`media`、`synthesis`、`job`、`source` | `services/api/src/targetref/types.ts:19-36`；契约 `packages/contracts/openapi.json:12554`（`TargetRef`；`type.enum` 在 `12558-12577`） |
+| 读出侧（契约 `TargetRef`，`Favorite.target_ref` 用它投影） | **17** | 上列 3 项 ＋ `static_region`、`recognition`、`ocr`、`transcription`、`answer`、`post`、`comment`、`conversation`、`conversation_turn`、`dose_card`、`media`、`synthesis`、`job`、`source` | `services/api/src/targetref/types.ts:19-36`；契约 `packages/contracts/openapi.json:12902`（`TargetRef`；`type.enum` 在 `12908-12925`） |
 | 数据库 CHECK（`favorites.target_type` 的列约束） | **16** | 上列 17 项**去掉** `conversation_turn` | 迁移 `services/api/db/migrations/0018_favorites_history.sql:46-64`（`CREATE TABLE favorites`；`target_type` 的 CHECK 在 `51-55`） |
 
 **差异项（唯一一处）**：`conversation_turn` 在契约（17 项）与 `TARGET_REF_TYPES`（17 项）里都有，**数据库 CHECK 里没有**（16 项）。同一份迁移里 `history.target_type` 的 CHECK 是同一串 16 项（`0018:76-80`）—— 即这个「少一项」在两个域上是同一口径，不是收藏域独有的笔误。

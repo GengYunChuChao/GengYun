@@ -20,8 +20,12 @@
 // 跳过：```／~~~ 围栏块（命令输出原样引用）、生成块区间（`<!-- name:begin|start -->` 与
 // `<!-- name:end -->` 成对识别的块，那是工具写的，不由人负责）。
 // 命中判定（三道串联，缺一不红）：
-//   ① 形状：`/(?<![\d.])(\d+)\s*(条|项|个)\s*(操作|operation)(?!Id|Ids)/`——`46 个 operationId`
-//      这类带 Id 的写法是 operationId 计数，不是 operation 计数，排除；
+//   ① 形状：中文 `/(?<![\d.])(\d+)\s*(条|项|个)\s*(操作|operation)(?!Id|Ids)/`，或英文
+//      `/(?<![\w.])(\d+)\s+(?:operations?|ops)(?![.\w])/`——`46 个 operationId` 这类带 Id 的写法是
+//      operationId 计数，不是 operation 计数，排除；`operations.json` 这类文件名也不算（后随点号被
+//      否定前瞻挡掉）。**英文这一支是 2026-11-04 补的**：R76 订正契约总数时实测发现
+//      `PASS: 129 operations` 这种英文句天生躲过中文量词正则，旧数因此活过 #878 合并；补上后活文档
+//      命中 1 处（`docs/GY-I04-衔接说明.md` 的 `PASS: 130 operations`），已改成指向脚本输出的指针；
 //   ② 已声明出处：同一行出现 `以 … 为准`／`标记块`／`机器重算`／`纳入闸门` 任一，视为已经指了
 //      能重算的出处，放行（这正是本片给每处数字换上的写法）；
 //   ③ 契约上下文：同一行还要出现 `契约|openapi.json|operations.json|校验|validate`。
@@ -101,13 +105,34 @@ const GENERATED_BLOCKS = [
   { file: 'docs/architecture/openapi-route-parity.md', name: 'openapi-route-parity', open: 'start' },
 ];
 
-const CLAIM_RE = /(?<![\d.])(\d+)\s*(条|项|个)\s*(操作|operation)(?!Id|Ids)/;
+// 契约总数的活口径形状。2026-11-04 起一次补齐三类漏网写法（否则闸门对它们静默放行）：
+//   ① 英文复数/缩写且**不带量词**：`129 operations`、`130 ops`（旧正则要求中文量词才命中）；
+//   ② 中文**不带量词**：`110操作`、`112操作对照`（同因漏网，`docs/architecture/validation.md:10` 与
+//      `docs/development-progress.md:11` 就是靠这个形状活过 #878/#879 的）；
+//   ③ 大小写：`Operations`／`OPERATIONS`（加 `i`）。
+// 数值面只认三位且落在 90–139（`LIVE_RANGE_RE`）：契约总数不可能是一位/两位，四位数是 `1290` 这类误伤；
+// 同时天然放过 admin 面 50/45/36/30/12 与「5 条 messages operation」这类**域内子集**计数。
+// 形状正则**不带 `g`**（`test()` 带 `g` 会移动 `lastIndex`，同一行连判两次结果会翻转）；
+// 取数时在 liveClaims() 里用全局副本 + matchAll。
+const CLAIM_RE =
+  /(?<![\d.])(\d{2,3})\s*(?:条|项|个)?\s*(?:operations?|ops|操作)(?![\w]|\.(?:json|mjs|cjs|js|ts|md))/i;
+const CLAIM_RE_ALL = new RegExp(CLAIM_RE.source, 'gi');
+const LIVE_RANGE_RE = /^(?:9\d|1[0-3]\d)$/;
 const POINTER_RE = /以[^。；\n]{0,60}?为准|标记块|机器重算|纳入闸门/;
 const CONTRACT_RE = /契约|openapi\.json|operations\.json|校验|validate/i;
 const ASSET_RE = /(?:^|[\s(（`"'|])((?:docs\/)?(?:[A-Za-z0-9_.-]+\/)*assets\/[A-Za-z0-9_.\/-]+)/g;
 
 function abs(rel) {
   return path.join(ROOT, rel);
+}
+
+// 一行里出现的**活契约总数**候选（已过 90–139 数值闸、去重）。空数组 = 这行没抄总数。
+function liveClaims(text) {
+  const out = [];
+  for (const match of text.matchAll(CLAIM_RE_ALL)) {
+    if (LIVE_RANGE_RE.test(match[1])) out.push(match[1]);
+  }
+  return [...new Set(out)];
 }
 
 function readLines(rel) {
@@ -255,15 +280,35 @@ test('T1 活文档不得手抄契约总数（§docs/architecture 与 docs/*.md�
   }
   assert.ok(!files.some((f) => f.startsWith('docs/verification/')), 'docs/verification 是历史快照，不该进扫描面');
 
+  // 反空转：三种形状都必须真的命中，否则补上的支路等于没开
+  assert.ok(CLAIM_RE.test('契约共 130 个 operation'), '中文带量词支失灵');
+  assert.ok(CLAIM_RE.test('实测 `PASS: 129 operations`'), '英文复数支失灵');
+  assert.ok(CLAIM_RE.test('工具自报 130 ops'), '英文缩写支失灵');
+  assert.ok(CLAIM_RE.test('PASS：110操作、内部引用'), '中文不带量词支失灵（validation.md 那种写法）');
+  assert.ok(CLAIM_RE.test('Node API、112操作对照及装配校验'), '中文不带量词支失灵（development-progress.md 那种写法）');
+  assert.ok(CLAIM_RE.test('实测 129 OPERATIONS'), '英文大写支失灵');
+  // 排除面也必须真的挡住，否则闸门会误伤 operationId 计数、文件名与域内子集
+  assert.ok(!CLAIM_RE.test('46 个 operationId'), '未挡 operationId');
+  assert.ok(!CLAIM_RE.test('`packages/contracts/operations.json` 里有 130 条'), '误伤 operations.json');
+  assert.ok(!CLAIM_RE.test('openapi.json 与 operations.json 都在契约目录'), '误伤文件名');
+  assert.ok(!CLAIM_RE.test('1290 operations'), '误伤四位数');
+  assert.ok(!CLAIM_RE.test('5 个操作'), '误伤一位数域内计数');
+  assert.ok(!CLAIM_RE.test('getOperationById'), '误伤标识符');
+  // 数值闸：形状先命中、但数值不在 90–139 ⇒ liveClaims 必须把它筛掉（域内子集不能误报）
+  assert.ok(CLAIM_RE.test('45 operations'), '形状面本该命中两位数（数值闸在 liveClaims 里）');
+  assert.deepEqual(liveClaims('45 operations'), [], '数值闸没挡住两位数域内计数');
+  assert.deepEqual(liveClaims('契约共 130 个 operation；46 个 operationId；5 个操作'), ['130']);
+
   const violations = [];
   for (const rel of files) {
     for (const line of scannableLines(readLines(rel))) {
       if (line.skipped) continue;
       const text = stripQuoted(line.text);
-      if (!CLAIM_RE.test(text)) continue;
+      const claims = liveClaims(text);
+      if (claims.length === 0) continue;
       if (POINTER_RE.test(text)) continue;
       if (!CONTRACT_RE.test(text)) continue;
-      violations.push(`${rel}:${line.no} ${line.text.trim().slice(0, 120)}`);
+      violations.push(`${rel}:${line.no} ${claims.join('／')} ${line.text.trim().slice(0, 120)}`);
     }
   }
   assert.deepEqual(violations, [], `活文档又抄了一份契约总数（要留着数字就换成「以 X 为准」的指针）：\n${violations.join('\n')}`);

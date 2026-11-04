@@ -75,7 +75,7 @@ PASS 27: [N4] 负控制：同 id 并发/重复写由主键裁决 ⇒ 行数恒�
 
 共 27 条 PASS，耗时 2294ms
 ALL PASS：OCR 域 PostgreSQL 持久化（迁移 0024 三连 / 12 方法语义 / 关连接重开逐字节仍在 / 4 条负控制）
-未取得 HTTP 面的"重启不丢"：real 模式真实 OCR 提供者/媒体端口未接线 ⇒ POST /ocr 受理前即 503，无法经 HTTP 建任务；本片证据在 store 层 + 迁移层 + app.ocrService 读面
+未取得 HTTP 面的"重启不丢"：real 模式真实 OCR 提供者/媒体端口未接线 ⇒ POST /ocr 受理前即 503，无法经 HTTP 建任务；本片证据在 store 层 + 迁移层 + app.ocrService 读面（2026-11-04 复核：媒体端口已接真——services/api/src/ocr/media.ts:223 的 `createObjectStoreOcrMediaPort` 经 services/api/src/app.ts:2547 的 `mediaWiring` 接进 OCR 路由；今天仍 503 的只剩真实 OCR 提供者闸门，缺已审凭据即 fail-closed。）
 未取得 多进程并发写同一任务的压测：本片只做两路并发 CAS（恰好一次成功），未做 20+ 并发的吞吐/延迟读数
 未取得 真实标签 OCR 模型输出落库：模型调用未接线；本片用契约合法的手工字段验证持久化，不伪造模型准确率
 未取得 备份恢复演练：本片只验证单库迁移 UP/ROLLBACK/REPLAY 与关连接重开，未做 pg_dump/pg_restore 演练

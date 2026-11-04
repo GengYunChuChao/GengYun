@@ -119,7 +119,7 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
 只清**媒体实体行**。两者共用同一套形态（三件套、`G0001`、单事务、`jsonb` 读数、`REVOKE ALL`），但**不合并**：媒体域的删除时机、
 引用面（**11 列 / 8 类**，其中 9 列无外键）与失败码（`G0007`）都不同，合并会把媒体域的引用语义塞进业务表函数，让两类账混在一个读数里。
 另：0034 删掉识别/语音的行之后，`skipped_referenced_by.recognition` / `.speech` 才会掉下来 —— 这是 §10 顺序前提的一半依据；
-另一半是社区域自己清 `media_ids`（`services/api/src/community/store-pg.ts:866 purgeOwnerData`，但其 `visibility='deleted'` 行会
+另一半是社区域自己清 `media_ids`（`services/api/src/community/store-pg.ts:1000 purgeOwnerData`，但其 `visibility='deleted'` 行会
 `continue` 不清，故 `community` 桶不会完全降到 0）。
 ## 6. 禁止面逐字未变的证据
 
@@ -268,3 +268,32 @@ CREATE FUNCTION public.purge_owner_media(p_owner uuid) RETURNS jsonb
   （**互不排斥**，`sum(桶) ≥ skipped_referenced`）——证据串里**不许**用桶和替代 `media_skipped_referenced`。
 - 运行时接线**不阻塞本片**：本片交付的是「有唯一可调用的删除入口 + 授权面 + 形状与真库臂」；
   接线单独立片，开工前提是本片与 0034 都已进 main，且**接线时必须遵守 §10 的顺序前提**。
+
+## 附注（2026-11-04 复核）
+
+**本节只追加，不改正文。** 上面各节（含第 10 节）一字未动，仍是 2026-10-24 基线上的读数；本节只登记今天在 `origin/main` 上重新核到的事实，并据此**收窄**第 10 节那句「`skipped_referenced_by.ocr` 是死桶」。
+
+**一、原判断的时间点。** 第 10 节写的是该页 2026-10-24 写作时对 `services/api/src/privacy/user-data-deletion.ts` 的实测读数（必需四域、条件三项、`ocr` 与 `media` 两个模块都不存在）。该句随 #535 入库，而 OCR 域（#536）比它早三分钟进 main，所以按入库那一刻算，这句话已经过期 —— 不是后来才被改坏的。
+
+**二、今天的事实（逐条复核，非推测）。**
+
+- `services/api/src/privacy/user-data-deletion.ts` 今天有 `export const OCR_DELETION_MODULE = 'ocr';` 与 `export const JOBS_DELETION_MODULE = 'jobs';`。
+- `CONDITIONAL_DELETION_MODULES` 今天是**五项**：`community` / `recognitions` / `speech` / `ocr` / `jobs`；`USER_DATA_DELETION_MODULES` 仍是四域 ⇒ 生产装配处（`services/api/src/app.ts` 无条件注入 `ocrStore`，`jobsStore` 在有真库连接池时注入）的有效闭集 = **九项**。`tests/unit/deletion-registration-coverage.test.mjs` 已把条件清单五项与有效闭集九项逐项钉住（含「社区域不得进在线清除证据名单」）。
+- 订正一处口径：`ONLINE_EVIDENCE_MODULES` **不是五项**，是四域展开 + `recognitions` + `speech` + `ocr` + `jobs` ＝ **八项**；社区域是**刻意排除**（F13 是「保留 + 脱敏」，没有「清空行数」这一事实），不是漏项。
+- `media` 模块仍然**不存在**：`MEDIA_DELETION_MODULE` 在 `services` / `packages` / `tools` / `tests` 里都是零命中，全仓唯一出现处是本页第 9 节「下一片待做」清单里那一行 ⇒ 第 10 节的后半句（没有 media 模块）今天仍成立。
+- 顺手更正第 8.2 节第 3 条的附句「函数的唯一调用方还不存在」：迁移 `0035` 的 `public.purge_owner_media(uuid)` 今天有应用侧调用者 —— `MediaStore.purgeOwnerMediaRows`（`services/api/src/media/store.ts`）→ `purgeRetiredRows`（`services/api/src/media/service.ts`）→ 第四段（`services/api/src/media/purge-driver.ts`），即注销满 7 日后的到期收口扫描。它**不是**注销协调器的模块 ⇒「函数可调用」不等于「闭集含 media」，与 `docs/architecture/s4-data-traceability.md` 对 D11 的判法同一口径。
+
+**三、因此「死桶」收窄成「有下降路径，实际是否下降须真库复测」。** 桶与 OCR 模块指向的是同一批行：
+
+- 桶的判据（迁移 `0035` 的目标集谓词与逐桶读数用的是同一组条件）：`public.ocr_jobs.media_id` 命中 **或** `public.ocr_records.media_id` 命中；
+- OCR 模块的原语 `purgeOwnerRows`（`services/api/src/ocr/store-pg.ts`）：**同一事务**里先 `DELETE FROM public.ocr_records WHERE owner_user_id = …`、再 `DELETE FROM public.ocr_jobs WHERE owner_user_id = …`（各自 `RETURNING` 取真实删除行数），最后按 scope 首段清 `ocr_idempotency`。
+
+⇒ 同一主体的注销跑完后，原先把这些 media 行顶在桶里的那两表行已经不在，桶**具备**下降路径；而媒体行的实际删行时机（满 7 日后的到期收口扫描）天然晚于注销时执行的 OCR 模块，顺序上也对。
+
+但**不能**由「模块存在」直接推「桶会下降」，三条限制：
+
+1. **判据的键不同**：桶按 `media_id` 判、模块按 `owner_user_id` 删，且两列之间没有外键（迁移 `0024` 里 `ocr_jobs.media_id` / `ocr_records.media_id` 都是 `uuid NOT NULL`、不引用 `public.media`）。若某行的 `owner_user_id` 不是该媒体的 `owner_id`，跑完该主体的注销，桶里仍会留着它 —— 这类残余只能读真实行确认。
+2. **没有跨模块读数**：本页第 8.1 节那次真库臂验证的是函数自身的桶读数与三道守卫，不涉及「先跑 OCR 模块、再把桶读一遍」这条路径；`tests/` 里也没有任何一条断言把两件事串起来。
+3. **顺序前提仍未接线**：第 10 节要求的「媒体模块排在 `ocr` / `recognition` / `speech` / `community` 之后」今天没有实现对象（没有 media 模块可排），它仍是纸面要求，不是已生效的运行时保证。
+
+**四、给复审的可执行判据（替换第 10 节判据 1 里针对 `ocr` 桶的那半句）。** 同一主体在真库上：① 先跑注销（OCR 模块在内）；② 再调 `public.purge_owner_media`；③ 比较两次的 `skipped_referenced_by.ocr`。第二次为 0 ⇒ 该桶已被模块清掉，第 10 节的「死桶」判词**作废**；仍非 0 ⇒ 先把桶里那些 media 行对应的 `ocr_jobs` / `ocr_records` 行的 `owner_user_id` 打出来，按上面第 1 条分辨是不是跨主体残余，再决定是补 `owner_user_id` 绑定、还是维持「死桶」。在拿到这条读数之前，「死桶」只按**未复测**理解，不按已证实理解。

@@ -15,7 +15,7 @@ GY-I02（PR #43）建立工程壳时已把本任务需要的骨架铺好：
 | 冻结契约 | `packages/contracts/operations.json` | 已定义 6 个鉴权操作，其中用户端 3 个 |
 | 数据库 | `services/api/db/migrations/0001_initial_schema.sql` | `users`、`sessions`、`admin_accounts`、`admin_sessions`、`admin_scopes` 均已建表 |
 | API 壳 | `services/api/src/app.ts`、`routes/health.ts` | 服务可启动，但**除 `/health` 外无业务路由** |
-| 后台鉴权占位 | `apps/admin/src/auth/session.ts` | 明确占位，恒返回 `null`，与用户端会话**分离** |
+| 后台鉴权占位 | `apps/admin/src/auth/session.ts` | 明确占位，恒返回 `null`，与用户端会话**分离**（**2026-11-04 复核：前两句已过期** —— 该文件现有 `ADMIN_AUTH_API_IMPLEMENTED = true`，`fetchSession()` 真打 `GET /admin/auth/session`，另有 `signInAdmin` 打 `POST /admin/auth/session`、`signOutAdmin` 打 `POST /admin/auth/logout`；「与用户端会话分离」仍成立） |
 
 ### 1.1 用户端契约操作（3 个）
 
@@ -35,7 +35,7 @@ GY-I02（PR #43）建立工程壳时已把本任务需要的骨架铺好：
 CONSTRAINT sessions_audience_is_user CHECK (audience = 'user')
 ```
 
-即**用户会话只能写 `sessions` 表，后台会话只能写 `admin_sessions` 表**，两者不可混用。`apps/admin/src/auth/session.ts` 已按此保持 `ADMIN_AUTH_IMPLEMENTED = false` 的诚实占位，**不要为了「看起来能用」而让它返回伪造会话**。
+即**用户会话只能写 `sessions` 表，后台会话只能写 `admin_sessions` 表**，两者不可混用。`apps/admin/src/auth/session.ts` 已按此保持 `ADMIN_AUTH_IMPLEMENTED = false` 的诚实占位，**不要为了「看起来能用」而让它返回伪造会话**。（**2026-11-04 复核**：该文件已改为 `ADMIN_AUTH_API_IMPLEMENTED = true`，`fetchSession()` 真打 `GET /admin/auth/session`。「保持 `ADMIN_AUTH_IMPLEMENTED = false` 的诚实占位」与「恒返回 `null`」都已不是今天的事实；要防的那件事仍要防——不许返回伪造会话，现在由真端点满足它）
 
 ### 1.3 表结构已包含的安全设计
 
@@ -119,7 +119,7 @@ function isGuest() {
 
 **界面层无需改动**。五个页面的 `guest` 分支按 `isGuest()` 判定，开关一开即自动切换。GY-I26 已把游客态五 Tab 的走查证据留档。
 
-> ⚠️ 改 `session.js` 前先 `git pull`。GY-I26 正在 `feature/gui-adaptive-pages` 上，该文件尚未合入 main；**GY-I27 也很可能触及同一文件**（用途授权与外发账本）。开工前务必确认该文件归属，避免与 GY-I26／GY-I27 冲突。
+> ⚠️ 改 `session.js` 前先 `git pull`。该文件已于 2026-10-11 随 `#69`（`7ac2c8fa`）合入 main（**2026-11-04 订正：原文「尚未合入 main」是 2026-10-13 时点读数**）；**GY-I27 也很可能触及同一文件**（用途授权与外发账本）。开工前务必确认该文件归属，避免与 GY-I26／GY-I27 冲突。
 
 ### 2.3 游客限制的落点
 
@@ -179,7 +179,7 @@ function isGuest() {
 
 - 任务台账：[development-progress.md](development-progress.md)
 - 领取与并行口径：[development-order.md](development-order.md)
-- 冻结契约校验：`python tools/validate_contracts.py`（112 操作）
+- 冻结契约校验：`python tools/validate_contracts.py`（**以该脚本输出为准**；`packages/contracts/openapi.json` 以 `dc6ae8d2` 为基线；2026-11-04 实测两端一致；旧记「129 operations」（基线 `3cdf4740`）与「112 条操作」）
 - 平台核查与正式 AppID 实测：[verification/platform-checklist.md](verification/platform-checklist.md)
 - 微信与供应商实测记录：[verification/continuation-evidence.md](verification/continuation-evidence.md)
 - 任务书原文：[initial-issues.md](initial-issues.md) 中的 `GY-I04` 一节

@@ -389,7 +389,14 @@ async function main() {
   assert.deepEqual(favoritesStore.snapshotCounts(), { favorites: 0, unique_targets: 0 });
   note(`键域按主体隔离：B 用同一 Idempotency-Key 也各自受理（id=${otherSubject.body.data.deletion.id}）`);
 
-  // ---------------------------------------------------------------- [5c] real 模式：整域 503，不假装能删
+  // ---------------------------------------------------------------- [5c] real 模式**缺真库**：受理无法持久化 ⇒ 如实 503
+  //
+  // GY-R74 之前这里钉的是「real ⇒ 整域不可用」；产品行为变更后 real + 真库是**可受理**的
+  // （在线清除执行者已接线，真库臂见 `tests/integration/account-deletion-pg.mjs` 的 PASS 16）。
+  // 本臂**没有连接池**，而受理必须把请求行写进 `deletion_requests`——否则 7 日在线清除驱动
+  // （`services/api/src/privacy/online-purge-driver.ts` + `npm run purge:online-data`）永远读不到
+  // 这一行，202 就是假受理。所以这一条仍然必须是 503，只是理由从「整域关闭」换成「受理未接线」。
+  // ⛔ 没有放松任何断言：状态码、错误码、retryable、零状态变更四条原样保留。
   const realAuthStore = createMemoryAuthStore();
   const realApp = buildApp({
     config: loadConfig({ APP_EXECUTION_MODE: 'real', LOG_LEVEL: 'silent', ...REAL_ENV }),
@@ -399,7 +406,11 @@ async function main() {
   const realOrigin = await realApp.listen({ host: '127.0.0.1', port: 0 });
   const realHttp = makeHttp(realOrigin);
   try {
-    assert.equal(realApp.accountDeletion.available, false, 'real 模式下注销请求存储未接线 ⇒ 整域不可用');
+    assert.equal(
+      realApp.accountDeletion.available,
+      false,
+      'real 但无真库 ⇒ 受理无法持久化 ⇒ 如实不可用（有真库时这条会是 true，见 account-deletion-pg.mjs 的 PASS 16）',
+    );
     assert.equal(await realApp.deletionReceipts.liveCount(), 0);
     const { token: realToken } = await seedSession(realAuthStore, 'acct-del-real');
     const realAccepted = await realHttp(DELETION_PATH, {
@@ -416,7 +427,7 @@ async function main() {
     assert.equal(realReceipt.status, 503, JSON.stringify(realReceipt.body));
     assert.equal(realReceipt.body.error.code, 'PROVIDER_UNAVAILABLE');
     assert.equal(await realApp.deletionReceipts.liveCount(), 0, '未装配路径不得留下任何状态');
-    note('real 模式：POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false)，零状态变更');
+    note('real 缺真库：POST/GET 均 503 PROVIDER_UNAVAILABLE(retryable=false)，零状态变更');
   } finally {
     await realApp.close();
   }

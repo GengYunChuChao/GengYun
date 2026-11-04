@@ -3,7 +3,7 @@
 基线 `upstream/main` = `7dd3d699d71ce5ce69b5254ea8a3e54aed4f7f79`（**本页重绑时点 2026-10-23**）。本页初稿基线为 `8cc9dd8b1ee251c8d7000390d54e0ba07a6ac37f`（初稿开工时为 `0856e49e31bbc5dff3615b146cf9ce12e88a0b49`，收工前已 `fetch` 并 rebase 到**当时**的最新 main）；初稿「断言」列的行号是按分支版矩阵文件数出来的，本次已全部按 `7dd3d699` 重算，口径与差异见 §0.1。本页对应提交见交接文件 `HEAD` 行。
 关联 issue [#22](https://github.com/GengYunChuChao/GengYun/issues/22)（只 `Refs`，不 `Closes`——本片是矩阵与实证，不是整项安全验收）。
 
-**一句话结论**：六类共 146 条实证用例中，143 条**通过**（当次真的发出请求并断言语义），1 条记**缺陷**（F-01：部分域的错误响应缺 `Cache-Control`，非数据泄露、不阻塞），2 条记**未取得**（取消注销的 DELETE 与 PATCH 两个入口，同一根因：契约里没有这条路）。**本页不宣称系统安全**，只覆盖下表列出的面。
+**一句话结论**：六类共 146 条实证用例中，143 条**通过**（当次真的发出请求并断言语义），1 条记**缺陷**（F-01：部分域的错误响应缺 `Cache-Control`，非数据泄露、不阻塞），2 条记**未取得**（取消注销的 DELETE 与 PATCH 两个入口，同一根因：契约里没有这条路）。**本页不宣称系统安全**，只覆盖下表列出的面。（**2026-11-04 订正：契约已有 `cancelDeletion`（`4e0c3712` 引入的 `DELETE /me/account/deletion`），见 §10.1 注；本句是 `7dd3d699` 时点读数**）
 
 ## 0 怎么读这一页
 
@@ -57,12 +57,12 @@
 | C1 游客未登录 | 45（37 面 + 8 附加） | 44 | 1（F-01）（2026-10-23 复测：已不复现，见 §9） | 0 | 37 个私有面/写面**全部** 401 `SESSION_REQUIRED`，封套形状唯一，无一处返回他人数据；游客带非法体时先被 schema 拒（400），不泄露业务数据 |
 | C2 跨用户越权（IDOR） | 24 | 24 | 0 | 0 | 12 组「A 拿 B 的 id」与「拿不存在的 id」响应**逐字节同形** 404；枚举面（消息/收藏/历史）零泄露；query/body 声明身份一律 400 |
 | C3 后台拒绝 | 19 | 19 | 0 | 0 | 普通用户 token 打 9 个后台面一律 403 `SCOPE_DENIED`；8 种伪造身份头 + 伪造 query + 伪造 body 全部与基准同形，头部/字段**不被采信**；拒绝来自已挂载路由的守卫（非前端隐藏） |
-| C4 会话与注销 | 16 | 14 | 0 | 2 | 退出后旧 token **同一时刻**即失效（非 TTL 到期）；重复退出不复活、不假成功；注销回执幂等换发、旧 bearer 立即失效；重复回调不改变状态。**取消注销无契约入口 ⇒ 2 条未取得** |
+| C4 会话与注销 | 16 | 14 | 0 | 2 | 退出后旧 token **同一时刻**即失效（非 TTL 到期）；重复退出不复活、不假成功；注销回执幂等换发、旧 bearer 立即失效；重复回调不改变状态。**取消注销无契约入口 ⇒ 2 条未取得**（**已过期，见 §10.1 订正**） |
 | C5 媒体归属 | 22 | 22 | 0 | 0 | 上传签名绑定 `{kind,mediaId,ownerId,revision,exp}`；对象 key 由服务端随机生成、客户端无法声明；跨用户 4 面 404 同形；社区共享读必须显式凭据 |
 | C6 模拟/真实交叉 | 20 | 20 | 0 | 0 | stub 产出的 id 在 real 装配下一律 503 `PROVIDER_UNAVAILABLE`（可解释、非假 404）；real 侧写面全部 503 ⇒ 反向产不出「真实 id」；知识域不因「公共资料」豁免 |
 | 合计 | 146 | 143 | 1 | 2 | — |
 
-> 计数口径：一行表格 = 一条用例，与测试打印的 146 条 `[I22]` 行一一对应。F-01 那一行覆盖 23 个面，但它是**同一个**工程性问题（错误响应缺 `Cache-Control: no-store`），按一条缺陷记；C4 的两条未取得也同源（契约无 cancel-deletion 入口）。见 §9、§10。
+> 计数口径：一行表格 = 一条用例，与测试打印的 146 条 `[I22]` 行一一对应。F-01 那一行覆盖 23 个面，但它是**同一个**工程性问题（错误响应缺 `Cache-Control: no-store`），按一条缺陷记；C4 的两条未取得也同源（契约无 cancel-deletion 入口）。见 §9、§10。（**2026-11-04 订正：同上**）
 
 ## 2 C1 游客未登录面（37 面）
 
@@ -198,10 +198,10 @@
 | 12 | 新 bearer | 200 | 200 | `:808`-`:810` | 通过 |
 | 13 | 重复回调不改变状态 | 不得把到期当完成 | +1h 后 `state` 仍 `blocked` | `:814`-`:818` | 通过 |
 | 14 | 注销期间本人会话 | 仍 200（7 日异步窗口是设计，与「退出即时失效」两条机制） | 200 | `:821`-`:823` | 通过 |
-| 15 | 取消注销 `DELETE /me/account/deletion` | 契约无入口 ⇒ 不存在 | 404 | `:826`-`:827` | **未取得** |
-| 16 | 取消注销 `PATCH /me/account/deletion {state:'cancelled'}` | 同上 | 404 | `:828`-`:832` | **未取得** |
+| 15 | 取消注销 `DELETE /me/account/deletion` | 契约无入口 ⇒ 不存在 | 404 | `:826`-`:827` | **未取得**（**2026-11-04 订正：契约已有 `cancelDeletion`，见 §10.1 注**） |
+| 16 | 取消注销 `PATCH /me/account/deletion {state:'cancelled'}` | 同上 | 404 | `:828`-`:832` | **未取得**（**2026-11-04 订正：同上订正，见 §10.1 注**） |
 
-> 第 15–16 条不是「拒绝合法请求」而是「契约里根本没有这条路」：`packages/contracts/openapi.json` 无任何 cancel-deletion operation，`DeletionState` 枚举只有 `requested|processing|blocked|completed`（无 `cancelled`），`docs/` 全文 grep `取消注销|撤销注销|撤回注销` 零命中。所以「取消注销后状态回到正确态」这一子项**本片不判**，记未取得，等需求侧先定契约。
+> 第 15–16 条不是「拒绝合法请求」而是「契约里根本没有这条路」：`packages/contracts/openapi.json` 无任何 cancel-deletion operation，`DeletionState` 枚举只有 `requested|processing|blocked|completed`（无 `cancelled`），`docs/` 全文 grep `取消注销|撤销注销|撤回注销` 零命中。所以「取消注销后状态回到正确态」这一子项**本片不判**，记未取得，等需求侧先定契约。订正（2026-11-04，基线 `324d1b22`）：以上三句均已过期——`packages/contracts/openapi.json` 的 `/me/account/deletion` 现有 `delete`（`operationId: cancelDeletion`，`4e0c3712` 引入），`packages/contracts/states.json` 的 `DeletionState` 现为五值、`cancelled` 在第 69 行（迁移 `0039_r34_deletion_state_cancelled.sql` 只加枚举值），`docs/` 已有 17 处相关命中（2026-11-04 改前实测，5 个文件）。本页判定按 `7dd3d699` 原样保留，只加此订正。
 
 ## 6 C5 媒体归属
 
@@ -249,7 +249,7 @@
 | 13 | real `GET /posts` | 503 | 503 | 同上 | 通过 |
 | 14 | real `GET /posts/{id}` | 503 | 503 | 同上 | 通过 |
 | 15 | real `GET /admin/sources`（后台 token） | 503 | 503 | 同上 | 通过 |
-| 16 | real `POST /me/account/deletion` | 503 | 503 | 同上 | 通过 |
+| 16 | real `POST /me/account/deletion` | 503 | 503 | 同上 | 通过 （2026-11-04 复核：real + 可用真库时该 POST 回 202、GET 回执可读；503 只在 `real` 且无可用连接池时保留，判据见 `services/api/src/app.ts` 的 `deletionAcceptanceDurable`。） |
 | 17 | real 装配内部状态 | 消息/社区域必须 `null`，媒体域 fail-closed | `messagesService=null`、`communityService=null`、`mediaService.failClosedReason="real 模式缺少真实媒体接线的显式批准能力…"` | `:1062`-`:1065` | 通过 |
 | 18 | real 写面 5 条（posts/reports/favorites/media access/admin sources） | 全 503 ⇒ 反向产不出「真实 id」 | 5/5 503 | `:1068`-`:1080` | 通过 |
 | 19 | 模式标注 | 客户端可解释自己在哪种模式 | 同一 token 的 `/auth/session` 在 stub/real 都 200，`meta.execution_mode` 分别为 `stub`/`real` | `:1083`-`:1088` | 通过 |
@@ -320,7 +320,7 @@
 
 | 项 | 为什么未取得 | 谁能推进 |
 | --- | --- | --- |
-| 取消注销后状态回到正确态（C4 子项） | 契约无 cancel-deletion operation，`DeletionState` 无 `cancelled`，`docs/` 零命中该需求 | 需求/契约先行；本片不新造契约外路径 |
+| 取消注销后状态回到正确态（C4 子项） | 契约无 cancel-deletion operation，`DeletionState` 无 `cancelled`，`docs/` 零命中该需求 | 需求/契约先行；本片不新造契约外路径（**2026-11-04 订正：见 §10.1，三句均已过期**） |
 | `/knowledge`、`/herbicides`、`/me/profile`、`/catalog/*` 的**正向**可用性 | stub 下 503（资料库/画像库/目录库未接线）；本片只证「游客拿不到」「未配置就 503」 | 接入真实资料库后另建证据 |
 | 真实微信登录、真机、真实对象存储签名、真实供应商 | 无凭据/无设备；矩阵用 stub + 替身存储，**不冒充**真实能力 | GY-I25/I06 等接入任务 |
 | 并发竞态下的越权（同一资源被两人同时写） | 本片是串行矩阵；并发语义属既有的 CAS/幂等台账单测（`tests/unit/messages-security.test.mjs` 等） | 需要时另建并发矩阵 |
@@ -328,15 +328,18 @@
 
 下面三条是本次重绑（2026-10-23，`7dd3d699`）**要求按事实单独登记**的未取得项。每条只写三件事：为什么没拿到 / 要拿到需要什么 / 是否阻塞 #22 关闭。**「是否阻塞」一律标为我的判断**，最终以监工按 #22 验收原文的裁定为准。
 
-### 10.1 取消注销：契约里没有对应的 operation
+### 10.1 取消注销：契约里没有对应的 operation（**订正见本节末尾：2026-10-24 起契约已有 `cancelDeletion`**）
 
 - **为什么未取得（实测口径，`7dd3d699`）**：
   - `packages/contracts/states.json:64-69` 的 `DeletionState` 枚举只有 `requested` / `processing` / `blocked` / `completed`，**没有 `cancelled`**；
   - `packages/contracts/openapi.json` 里 `/me/account/deletion` 只有 `post`（`requestAccountDeletion`，见 `packages/contracts/openapi.json:1460-1462`），`/account/deletions/{id}` 只有 `get`（`getDeletionReceipt`，见 `packages/contracts/openapi.json:1555-1557`）；`packages/contracts/operations.json` 共 **113** 个 operation，按 `deletion` 过滤只有上面这 2 条（自算命令：`node -e "…filter(o => JSON.stringify(o).includes('deletion'))"`）；
   - 因此矩阵 C4 第 15–16 条只能断言 **404**——证的是「契约里没有这条路」，**不是**「取消注销后状态回到正确态」。
-  - 注意别把两件事混起来：`/jobs/{id}/cancel` 与 `/admin/jobs/{id}/cancel` **有**契约 operation（`packages/contracts/openapi.json:2219`、`:9996`），那是「在途任务取消」，不是「注销取消」。
+  - 注意别把两件事混起来：`/jobs/{id}/cancel` 与 `/admin/jobs/{id}/cancel` **有**契约 operation（`packages/contracts/openapi.json:2296`、`:11158`；行号按基线 `3cdf4740` 重锚，原记 2219／9996；本片（R75 历史详情）在 openapi 自 7145 行起插入 83 行后，第一处 2296 未动（在插入点之上）、第二处 11075 后移到 11158，两处都按符号复核过（`"/jobs/{id}/cancel": {`、`"/admin/jobs/{id}/cancel": {`）），那是「在途任务取消」，不是「注销取消」。
 - **要拿到需要什么**：需求侧先定契约（是否允许取消、允许窗口、取消后 `DeletionState` 取值、回执 bearer 是否随之失效）⇒ 再在 openapi / operations.json / states.json 三处加 operation 与枚举 ⇒ 然后写实现 + 矩阵补两条**真**断言。三步都不在本片范围（本片不改契约、不改产品代码）。
 - **是否阻塞 #22 关闭**：**我的判断：不阻塞。** 依据是 #22 验收原文只要求「有限关键安全及权限用例全部通过，未解决严重安全／权限缺陷 0」；一个**契约未定义**的路径既不是「用例失败」也不是「未解决的严重缺陷」，属范围外。但这条判断的代价要写清：**在契约补上之前，任何「注销闭环（含取消）」的说法都不成立**。
+- **2026-11-04 复核（`dc6ae8d2`）：本节结论已失效；上面三段是时点读数，原样留在原处，不改写**。补今天的事实：`packages/contracts/operations.json` 现为 **130** 个 operation（不是 113）；`cancelDeletion`（`DELETE /me/account/deletion`）已于 PR #554（`4e0c3712`，2026-10-24 17:44Z）进入冻结契约；`packages/contracts/states.json` 的 `DeletionState` 已有 `cancelled`（紧接 `completed` 之后，来自迁移 `0039_r34_deletion_state_cancelled.sql` 的 `ALTER TYPE … ADD VALUE`）；本节上一段引的 `packages/contracts/openapi.json:1555-1557` 现在正好落在 `"delete"` → `"operationId": "cancelDeletion"` 上——同一段行号，语义已经从「只有 get」翻成「注销取消这条路就是它」。所以「取消注销：契约里没有对应的 operation」这个标题、以及「矩阵 C4 第 15–16 条只能断言 404」这个推论，对 `dc6ae8d2` 都不再成立；C4 那两条要在新契约下重跑才作数（本片未跑，不冒充取得）。
+- **仍未取得的部分（复核后仍成立，但性质变了）**：`docs/architecture/contract-status.json` 里 `cancelDeletion` 的状态是 `partial`，其 blocker 自述「取消只推进**进程内**协调器状态，数据库侧 `deletion_requests.state` 的 cancelled 写路径未接线（本片只做 0039 枚举值 + 契约／应用层闭集，持久化取消属后续片）」——缺口从「契约没定义」变成「实现只到一半」。要拿到真断言，需在 `real` + 真库装配下跑取消用例。
+- **是否阻塞 #22 关闭（复核后）**：**我的判断：仍不阻塞，但理由要换。** 不再是「契约未定义 ⇒ 范围外」，而是「契约已定义、实现 partial、blocker 已逐条登记」属已知未取得项；不把「取消」从 #22 的未取得清单里划掉，也不因此把 #22 判成阻塞。最终仍以监工按 #22 验收原文的裁定为准。
 
 ### 10.2 真实环境缺失：真机 / 真供应商 / 真 PG 全链
 

@@ -39,12 +39,12 @@
 
 | 功能点 | 关键行号 | 说明 |
 | --- | --- | --- |
-| 驳回的 HTTP 路由 | `services/api/src/community/service.ts:1757` | `reReviewContent` 在 `services/api/src` 内只被定义（定义行即左列那一行）、未被任何路由注册；**除该定义行本身外**，全仓非 docs 命中都在测试 |
+| 驳回的 HTTP 路由 | `services/api/src/community/service.ts:1811` | `reReviewContent` 在 `services/api/src` 内只被定义（定义行即左列那一行）、未被任何路由注册；**除该定义行本身外**，全仓非 docs 命中都在测试 |
 | 写 `audit_state='rejected'` 的落点 | `services/api/src/community/service.ts:1774-1781` | 唯一**落库**写入口：`services/api/src/community/service.ts:1790-1798` 才提交；读面报 `rejected` 走实时投影、不落库也不发通知（`services/api/src/community/service.ts:583-616`） |
 | 驳回时的通知 | `services/api/src/community/service.ts:696-699` | 注释原文「被拒的写入请求**不投递**：那条 revision 从未落库」 |
 | 驳回时连内容都不写 | `services/api/src/community/moderation-link.ts:37` | 表格行原文：驳回 `vetoed` ⇒ **不落库**（400）+ 读取面退出公开面 |
 | 后台的通过 / 驳回动作 | `services/api/src/admin/ops/service.ts:211-224` | 12 项 operationId 闭集里与帖相关的只有 `hidePost`，位置在 `services/api/src/admin/ops/service.ts:237` |
-| 契约里的审核动作 | `packages/contracts/openapi.json:11434` | spec 里 `/admin/posts` 家族恰好一条 `/admin/posts/{id}/hide` （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）|
+| 契约里的审核动作 | `packages/contracts/openapi.json:11678` | spec 里 `/admin/posts` 家族恰好一条 `/admin/posts/{id}/hide` （⚠ 本行陈述与本版实测不符，见 docs/verification/gy-r68-aa-admin-disable-20261027.md §已知陈旧陈述）；行号按符号重锚到家族根 path（合并 main 后在 openapi 自 7145 行起 +83 行，原记 11434 指 `ETag` schema 的右括号，本来就指错）|
 | 同上（被测试钉死） | `tests/unit/community-premoderation-invariants.test.mjs:234-246` | `assert.deepEqual` 直接比对 `['/admin/posts/{id}/hide']` |
 | `notifications` 表 / outbox 表 | `services/api/db/migrations/0016_account_deletion_persistence.sql:36` | 仓库自陈「main 上既无 outbox 表也无消费者，建表就是空承诺」 |
 | docs 侧的既有记录 | `docs/verification/gy-i15-community-http-20261020.md:247` | 该行记录的是「读取时重查负例·用例 6」（删除后 `reReviewContent` 返回 `re_reviewed:false / visibility:'deleted'`，**不复活**）——属于「读取时重查」的行为用例之一。**路由层零调用**：`git grep -n reReviewContent -- services/api/src` 只有定义 `services/api/src/community/service.ts:1757`，没有任何调用点 |
@@ -111,7 +111,7 @@
 7. `community_moderation_decisions` 的写入是否 UPSERT 未核对。
 
 本页对第 3、7 条的复核结果：
-- 第 3 条：`reReviewContent` 在 `services/api/src` 内只有定义（`services/api/src/community/service.ts:1757`），没有任何路由注册它 ⇒ 维持「无 HTTP 路由」。
+- 第 3 条：`reReviewContent` 在 `services/api/src` 内只有定义（`services/api/src/community/service.ts:1811`），没有任何路由注册它 ⇒ 维持「无 HTTP 路由」。
 - 第 7 条：已核，是 UPSERT —— `services/api/src/community/store-pg.ts:319` 为 `ON CONFLICT (target_type, target_id, target_revision) DO UPDATE`，即同版覆盖写；该结论已并入 §2。
 
 ## 6. 与取证报告的差异（复核后更正）

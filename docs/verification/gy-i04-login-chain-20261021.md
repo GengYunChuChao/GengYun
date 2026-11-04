@@ -380,7 +380,7 @@ PASS: native JSON/routes, five empty tabs, shared domain check and JS syntax. No
 ### 6.2 仍未决（需后续切片）
 
 1. **`miniprogram/utils/session.js` 生死**：GY-I26 占位层（`SESSION_ENABLED=false`、`isGuest()` 恒 true）在 `auth.js` 落地后已无生产消费者，但 `tests/ui-adaptive.test.mjs:274,285` 仍以源码字面量守着它。删文件 / 改成委托 `auth.js` / 保留现状，三者都要动那条守卫。
-2. **社区投稿 `public_posting` 用途闸**（`routes/community.ts` 16 处 `preHandler` 只有 `requireUser`；`app.ts:1735` 未注入 `consentGate`，而 `privacy/egress.ts:11-19` 的挂载表要求挂）。挂之前要先准备授权夹具，否则 GY-I15 全部社区 HTTP 用例会先 403。
+2. **社区投稿 `public_posting` 用途闸**（`routes/community.ts` 16 处 `preHandler` 只有 `requireUser`；`app.ts:1735` 未注入用途闸，而 `privacy/egress.ts:11-19` 的挂载表要求挂（**2026-11-04 订正：原文写的 `consentGate` 在 `egress.ts` 已 0 命中，该表要求的是 `createConsentPreHandler`，定义在同文件第 88 行**））。挂之前要先准备授权夹具，否则 GY-I15 全部社区 HTTP 用例会先 403。
 3. **同意授权入口 + 契约读取面**（裁决 1 只解决了措辞）：服务端需增补「当前生效用途政策 + 已核验接收方」读取 operation（属契约变更），客户端才能合法组出 `POST /me/consents`。
 4. **denied 动作是否改为跳「我的」页**：本片把按钮改成「重试」且不改跳转；若产品希望 denied 动作真正可用，可改为 `switchTab('/pages/profile/profile')` 并在 `ui-unified-states.test.mjs:206-209` 上按**加强**方式改写（仍禁止「能授权/能撤回」这类失实承诺）。
 8. **「去授权」死按钮**的另一条低成本出口：若短期不加契约读取面，可把识别页 `permission_denied` 分支的动作从「去授权」改为「查看隐私说明」（`pages/profile/profile.wxml:162-172`），并同步把该段文案改成「授权入口尚未接入」。这会动 `ui-unified-states.test.mjs:206-209` 的断言，故列为裁决项而非本期实施。

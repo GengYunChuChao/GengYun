@@ -75,14 +75,17 @@ export const RECEIPT_TTL_MS = 35 * 24 * 60 * 60 * 1000;
 export const RECEIPT_AUTH_KIND = 'deletionReceipt';
 
 /**
- * 契约未允许本片执行模式时的 503 文案。
+ * 受理未接线时的 503 文案。
  *
- * 注意：**本片（GY-I19 持久化受理）之后，注销请求已有持久写路径**，因此这句话只在
- * `real` 模式的**执行链路**（7 日在线／30 日备份执行、第三方完成证据）缺失时成立 ——
- * 文案说的是「执行链路未接线」，不是「没有持久表」（后者已不成立，勿再照抄旧文案）。
+ * GY-R74 起注销域**不再整域关闭**：`real` + 真库 ⇒ 受理可用（202）、7 日在线清除真跑，
+ * 30 日备份与第三方域按域 `blocked`。因此这句话现在只覆盖**唯一**剩下的未接线情形：
+ * **受理本身无法持久化**（`real` 但无数据库连接池）——此时 7 日在线清除驱动
+ * （`services/api/src/privacy/online-purge-driver.ts`）根本读不到请求行，回 202 就是假受理。
+ * ⛔ 不要再把「备份/第三方没有完成证据」写进这句文案：那两件事现在是**回执里按域可见**
+ * 的 `blocked` + `PROVIDER_UNAVAILABLE`，不是拒绝受理的理由。
  */
 export const ACCOUNT_DELETION_UNAVAILABLE_MESSAGE =
-  '注销删除执行链路未接线（7 日在线／30 日备份执行与第三方完成证据缺失）：如实拒绝，不伪造受理';
+  '注销受理未接线（real 模式缺数据库连接：受理无法持久化，7 日在线清除驱动读不到请求行）：如实拒绝，不伪造受理';
 
 /** 202 响应体（契约 `DeletionAcceptedEnvelope` 的 `data`；`meta` 由路由层补）。 */
 export interface DeletionAcceptedProjection {

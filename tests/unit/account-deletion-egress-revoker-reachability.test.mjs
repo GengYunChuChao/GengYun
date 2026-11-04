@@ -1,19 +1,20 @@
 /**
  * #19（GY-I19）· 「注销受理时先撤销在途外发」（#553 交付的 `egressRevoker` 注入）的**装配可达性台账**。
  *
- * 结论（锁**装配事实**，不锁实现细节）：这条能力在**两道互斥的装配门**之下**没有任何生产可达调用** ——
- *   1. `services/api/src/app.ts` 的 `egressRevoker` **只在 `executionMode === 'real'` 且有连接池
+ * GY-R74 起的事实（方案 A：按域如实降级，不再整域关闭）：
+ *   1. `services/api/src/app.ts` 的 `egressRevoker` 仍**只在 `executionMode === 'real'` 且有连接池
  *      （外发账本 `egressLedger !== null`）**时装配（非 real 无真实外发 ⇒ 不注入，回落无撤销）；
- *   2. 同一文件的 `available: config.executionMode !== 'real'` ⇒ real 下 `accountDeletionWired === null`
- *      ⇒ `routes/account-deletion.ts::requireWired()` 在**任何状态变更之前** 503 `PROVIDER_UNAVAILABLE`
- *      （该 503 是 #424 起的既有红线，由 `tests/integration/account-deletion-http.mjs` 的 `[5c]` 锁定）；
- *   3. 非 real（唯一接线模式）装配期**不建**撤销器 ⇒ 受理时不会撤销任何在途外发
- *      （替身/演示模式本来就不记账，见 `app.ts` 的外发账本注释）。
- * ⇒ 唯一可达的触发面是 `privacyInjection.egressRevoker`（测试/故障注入）。
+ *   2. `available` 不再是 `executionMode !== 'real'`，而是
+ *      `executionMode !== 'real' || 受理可持久化(durableDeletionRequests !== null && pool.connect)`。
+ *      于是 `real` + 真库 ⇒ **本域接线、可受理**（在线清除执行者 GY-R74 已接线；
+ *      备份介质与第三方证据仍不可用 ⇒ 由回执逐域 `blocked` 表达，见 `[5c]`/`account-deletion-pg`）；
+ *   3. `real` 但**没有可用连接池**（无池，或池缺 `connect`）⇒ 受理无法持久化 ⇒ 仍是
+ *      `requireWired()` 之前的 503 `PROVIDER_UNAVAILABLE`（本文件末条用例锁住这条唯一的 503）。
  *
- * 本文件是**当前装配事实的回归锁**：若将来开放 real 注销（`available` 不再排除 real），
- * 前两条用例会变红 —— 那是**需要同步拍板**的信号（real 受理必须连同 `[5c]` 集成臂、
- * 以及「撤销在途外发是否先于受理」一起改），**不是**放宽断言的理由。
+ * 前两条用例因此改成锁「real 受理真的进得去」的**新事实**：受理链会在合成池上走到
+ * 外发冻结/持久化，并按库的真实回答如实 409/503（⛔ 不伪造 202 空壳）。
+ * 它不是放宽断言 —— 旧口径「real 一律 503 且零写入」已随本片的产品行为变更失效，
+ * 取而代之的是更严的三条：`available === true`、`code` 必须是闭集内的真实原因、零假写入。
  *
  * 全部用例用**合成 PG 替身**（只记录 SQL、回空行）＋内存 auth store：
  * 不连任何数据库、不发任何外网请求、不产生费用。
@@ -131,27 +132,36 @@ async function acceptDeletion({ executionMode, pool = null, injectRevoker, memor
   return result;
 }
 
-test('可达性①：real + 有池 + 有 ledger ⇒ 撤销器会装配，但注销整域在 requireWired() 先 503，撤销永不发生', async () => {
+test('可达性①：real + 有池 ⇒ 受理域已接线；外发冻结前置探测在合成池上如实 409，零写入', async () => {
   const pool = spyPool();
   const reading = await acceptDeletion({ executionMode: 'real', pool, label: 'reach-real-pool' });
-  assert.equal(reading.available, false, 'real 下 `available` 必须仍为 false（#424 起的红线，本片不放宽）');
-  assert.equal(reading.status, 503);
-  assert.equal(reading.code, 'PROVIDER_UNAVAILABLE');
+  // GY-R74（方案 A）：real + 真库不再整域 503 —— 受理真的进得去。
+  // 理由：在线清除执行者已于 GY-R74 接线并带真库臂证据；备份介质与第三方证据仍不可用，
+  // 故按域如实降级而不是整域关闭。
+  assert.equal(reading.available, true, 'real + 有池 ⇒ 受理域必须接线（⛔ 不再整域 503）');
+  // 合成池里没有 0011 的外发账本表 ⇒ 「冻结在途外发」的前置探测如实判定不可用，
+  // ⛔ 不降级为"跳过撤销继续受理"（那会在撤销不了在途外发的情况下删号）。
+  assert.equal(reading.status, 409);
+  assert.equal(reading.code, 'OBJECT_UNAVAILABLE');
   assert.equal(reading.retryable, false);
-  assert.equal(reading.revokeSql, 0, 'real 下受理根本到不了撤销器 ⇒ 零 `UPDATE public.exports … CONSENT_WITHDRAWN`');
-  assert.equal(reading.writeSql, 0, '503 必须在任何状态变更之前发生 ⇒ 零写入');
+  assert.equal(reading.revokeSql, 0, '前置探测失败 ⇒ 不该有 `UPDATE public.exports … CONSENT_WITHDRAWN`');
+  assert.equal(reading.writeSql, 0, '前置探测失败必须在任何状态变更之前 ⇒ 零写入');
 });
 
-test('可达性②：real + 注入撤销器也不能救活 ⇒ 仍 503，且注入的撤销器零次调用', async () => {
+test('可达性②：real + 注入撤销器 ⇒ 撤销真的发生（调用一次、带正确主体），随后按库的真实回答 503', async () => {
   const pool = spyPool();
   const revoker = spyRevoker();
   const reading = await acceptDeletion({ executionMode: 'real', pool, injectRevoker: revoker, label: 'reach-real-inject' });
-  assert.equal(reading.available, false);
+  assert.equal(reading.available, true);
+  // GY-R74：受理链在 real 下真的跑到了「受理时先撤销在途外发」这一步（旧口径下这里零调用）。
+  assert.equal(revoker.calls.length, 1, 'real 受理链必须调用注入的撤销器（且只一次）');
+  assert.deepEqual(revoker.calls[0], { userId: reading.userId }, '撤销必须带本次受理的那个主体');
+  // 合成池上 `createRequest` 回空行 ⇒ 受理无法持久化 ⇒ 如实 503（⛔ 不回 200/202 空壳）。
   assert.equal(reading.status, 503);
   assert.equal(reading.code, 'PROVIDER_UNAVAILABLE');
-  assert.equal(revoker.calls.length, 0, 'requireWired() 在受理之前抛错 ⇒ 注入的撤销器不会被调用');
-  assert.equal(reading.revokeSql, 0);
-  assert.equal(reading.writeSql, 0);
+  assert.equal(reading.retryable, false);
+  assert.equal(reading.revokeSql, 0, '注入的替身不碰 `public.exports`（撤销 SQL 由真实账本端口发）');
+  assert.ok(reading.writeSql > 0, '受理持久化确实尝试过写入（不是"什么都没做就 503"）');
 });
 
 test('可达性③：唯一接线模式（非 real）装配期不建撤销器 ⇒ 即便有池有 ledger，受理也零撤销', async () => {
@@ -185,7 +195,9 @@ test('可达性④（正向对照）：唯一可达触发面 = privacyInjection.
   assert.deepEqual(revoker.calls[0], { userId: reading.userId });
 });
 
-test('反向：real 下缺池 / 池不可用（无 connect ⇒ 无 ledger）仍是 503 且零写入', async () => {
+test('反向：real 下缺池 / 池不可用（无 connect ⇒ 受理无法持久化）仍是 503 且零写入', async () => {
+  // GY-R74 起这是**唯一**保留的整域 503：real 但没有可用连接池 ⇒ `deletion_requests` 写不进去 ⇒
+  // 7 日在线清除驱动读不到请求行 ⇒ 受理就不能假装成功。文案见 `ACCOUNT_DELETION_UNAVAILABLE_MESSAGE`。
   const noPool = await acceptDeletion({ executionMode: 'real', pool: null, label: 'reach-real-nopool' });
   assert.equal(noPool.available, false);
   assert.equal(noPool.status, 503);

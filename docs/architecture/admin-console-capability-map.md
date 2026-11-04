@@ -74,7 +74,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 ### 1.1 按域分组
 
-本表的明细（每个族、每条 operation 的 method／path／scope／入口视图／引用文件）已改为**机器重算**，见 §0 末尾标记块里的「路径族」表与工具默认输出（`node tools/verify-admin-capability-map.mjs`）——本页不再手抄第二份，避免两处读数各自腐烂。下面只留两条手写的事实与口径说明，它们不随重算变化：四类「资料」共用同一组 scope：文件名与 operationId 逐条写在 `services/api/src/admin/families.ts:122-216`；`hidePost` 借用 `sources:write` 是契约级粒度问题，前端只能如实标注（`apps/admin/src/views/PostTakedownView.vue:73`）。帖子读面与审核动作同理：契约给的是 `sources:read`（两个读面）与 `sources:write`（下架 + 通过/驳回），没有独立的 `posts:*` scope，页面只能按契约标注。
+本表的明细（每个族、每条 operation 的 method／path／scope／入口视图／引用文件）已改为**机器重算**，见 §0 末尾标记块里的「路径族」表与工具默认输出（`node tools/verify-admin-capability-map.mjs`）——本页不再手抄第二份，避免两处读数各自腐烂。下面只留两条手写的事实与口径说明，它们不随重算变化：四类「资料」共用同一组 scope：文件名与 operationId 逐条写在 `services/api/src/admin/families.ts:125-227`；`hidePost` 借用 `sources:write` 是契约级粒度问题，前端只能如实标注（`apps/admin/src/views/PostTakedownView.vue:73`）。帖子读面与审核动作同理：契约给的是 `sources:read`（两个读面）与 `sources:write`（下架 + 通过/驳回），没有独立的 `posts:*` scope，页面只能按契约标注。
 
 ### 1.2 四条只在缺省装配（stub / real 无池）下 503 的端点
 
@@ -154,7 +154,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 | 视图（行数） | 列表 / 详情 | 写操作与按钮 | 按钮 / 死按钮 | 权限门 |
 | --- | --- | --- | --- | --- |
 | apps/admin/src/views/AccountsView.vue（726） | 账号列表（游标分页）；行内只有「停用」按钮，无独立详情侧栏 | 停用：确认框必填理由 → POST /admin/accounts/{id}/suspend，成功后就地刷新第一页 | 14 / 0 | accounts:read 读；accounts:suspend 决定「停用」是否可点（apps/admin/src/lib/view-model.mjs:371） |
-| apps/admin/src/views/AdministratorsView.vue（1326） | 管理员目录（游标分页）+ 行内「查看权限」侧栏（读 `GET /admin/administrators/{id}/scopes`） | **无写操作**：授/收权在契约里没有对应 operation（见 §5.6 的 `scopes:write`） | 9 / 0 | scopes:read（读列表与权限）；无写门可判 |
+| apps/admin/src/views/AdministratorsView.vue（1326） | 管理员目录（游标分页）+ 行内「查看权限」侧栏（读 `GET /admin/administrators/{id}/scopes`） | **无写操作**：授/收权在契约里没有对应 operation（见 §5.6 的 `scopes:write`） | 9 / 0 | scopes:read（读列表与权限）；无写门可判（**2026-11-04 复核：本行中列「无写操作」「授/收权在契约里没有对应 operation」与右列「无写门可判」均已过期** —— `AdministratorsView.vue` 现有「授权」「撤销」按钮，经 `apps/admin/src/lib/administrator-scope-api.mjs` 真发 `POST /admin/administrators/{id}/scopes` 与 `DELETE /admin/administrators/{id}/scopes/{scope}`；同页另有「停用」「恢复」按钮，经 `apps/admin/src/lib/administrator-state-api.mjs` 真发 `POST /admin/administrators/{id}/disable` 与 `POST /admin/administrators/{id}/enable`。契约侧 `grantAdministratorScope`、`revokeAdministratorScope`、`disableAdministratorAccount`、`enableAdministratorAccount` 都在，写门都是 `scopes:write`。本行「按钮 / 死按钮」列与本节另两行的计数差已在上文登记，不在本片改） |
 | apps/admin/src/views/AuditLogsView.vue（820） | 审计总台账只读：游标分页 + `action` / `entity` / 时间范围（`from`、`to`）筛选 + 展开原文 | 无写操作 | 9 / 0 | audit:read |
 | apps/admin/src/views/ContentAdminView.vue（313） | 容器：登录表单 + 4 个子 tab（来源 / 科普 / 帖子下架 / 分类） | 无自身业务请求，只下发 baseUrl/token/scopes | 3 / 0 | 无（登录后读会话） |
 | apps/admin/src/views/SourcesView.vue（766） | 来源列表 + 详情 + 新建草稿 / 编辑 / 发布 / 下架表单 + 按 request_id 反查审计 | 4 个写操作（创建、编辑、发布、下架）+ 1 个只读反查（`listAuditEvents`） | 20 / 0 | sources:read / sources:write（apps/admin/src/views/SourcesView.vue:82-84） |
@@ -196,7 +196,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 | 原缺口 | 实际页面 | 依据（operation → 客户端函数 → 视图调用点） |
 | --- | --- | --- |
-| 审计总台账 1 条（`listAuditLogs`） | `apps/admin/src/views/AuditLogsView.vue` | `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:374`）→ 视图调用点 `apps/admin/src/views/AuditLogsView.vue:72`；tab 装配 `apps/admin/src/App.vue:33`、`apps/admin/src/App.vue:81` |
+| 审计总台账 1 条（`listAuditLogs`） | `apps/admin/src/views/AuditLogsView.vue` | `listAuditLogs` → `fetchAuditLogsPage`（`apps/admin/src/lib/admin-audit-logs.mjs:393`）→ 视图调用点 `apps/admin/src/views/AuditLogsView.vue:72`；tab 装配 `apps/admin/src/App.vue:33`、`apps/admin/src/App.vue:81` |
 | 管理员权限读面 2 条（`listAdministrators`、`listAdministratorScopes`） | `apps/admin/src/views/AdministratorsView.vue` | `listAdministrators` → `fetchAdministratorsPage`（`apps/admin/src/lib/admin-administrators.mjs:363`）→ `apps/admin/src/views/AdministratorsView.vue:104`；`listAdministratorScopes` → `fetchAdministratorScopes`（`apps/admin/src/lib/admin-administrators.mjs:391`）→ `apps/admin/src/views/AdministratorsView.vue:175`；tab 装配 `apps/admin/src/App.vue:34`、`apps/admin/src/App.vue:82` |
 
 ## 5 鉴权面：身份与权限现在怎么来
@@ -204,7 +204,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 1. `apps/admin/src/auth/session.ts` 只存令牌：`sessionStorage` 一条 `gengyun.admin.session`（`apps/admin/src/auth/session.ts:27`），不落盘到别处、不写日志、不进 URL。
 2. 登录调 `POST /admin/auth/session`（`apps/admin/src/auth/session.ts:109-114`，必带 `Idempotency-Key`），服务端返回 `access_token / token_type / expires_at / audience / revision`（`services/api/src/auth/service.ts:366-374`）——**没有 scopes**。
 3. 因此 `signInAdmin` 返回对象的 `scopes` 硬编码为空数组（`apps/admin/src/auth/session.ts:128`），注释也写「登录响应不含 scope，需再次读取」（`apps/admin/src/auth/session.ts:17`）。
-4. 真来源是 `GET /admin/auth/session`：它要 `session:read` 守卫（`services/api/src/routes/admin-auth.ts:90`），把 `listAdminScopes` 的结果塞进 `SessionInfo`（`services/api/src/routes/admin-auth.ts:93-97`），响应体为：
+4. 真来源是 `GET /admin/auth/session`：它要 `session:read` 守卫（`services/api/src/routes/admin-auth.ts:90`），把 `listAdminScopes` 的结果塞进 `sessionInfo`（`services/api/src/routes/admin-auth.ts:93-97`；**2026-11-04 订正：`SessionInfo` 在 `admin-auth.ts` 已 0 命中，builder 现名 `sessionInfo`，由 `services/api/src/auth/service.ts:377` 导出**），响应体为：
 
 ```jsonc
 {
@@ -242,7 +242,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **46** 个（`FAMI
 
 ## 7 如果要做「后台最小可用」，先补这三件
 
-1. **~~注册资料与限制资料两页（12 个 operation）~~ —— 已落地，不再是缺口**。这两族当时是「12 条无入口」的全部（12/12），服务端四族共用同一批 scope、同一个 `familyOps()` 装配（`services/api/src/routes/admin.ts:184-195`），前端照 `SourcesView` 的既有模式复制即可，不需要新契约、不需要新 scope；现在 `apps/admin/src/views/RegistrationAdminView.vue` 与 `apps/admin/src/views/RestrictionAdminView.vue` 已按这个模式接入（机器重算里这两族 12 条都有入口，见 §0 标记块；原先剩下的 2 条无入口（下面第 2 条的授/收权写面）已由 GY-R68 清零）。
+1. **~~注册资料与限制资料两页（12 个 operation）~~ —— 已落地，不再是缺口**。这两族当时是「12 条无入口」的全部（12/12），服务端四族共用同一批 scope、同一个 `familyOps()` 装配（`services/api/src/routes/admin.ts:205-217`），前端照 `SourcesView` 的既有模式复制即可，不需要新契约、不需要新 scope；现在 `apps/admin/src/views/RegistrationAdminView.vue` 与 `apps/admin/src/views/RestrictionAdminView.vue` 已按这个模式接入（机器重算里这两族 12 条都有入口，见 §0 标记块；原先剩下的 2 条无入口（下面第 2 条的授/收权写面）已由 GY-R68 清零）。
 2. **管理员权限「授/收权」写面（`scopes:write`）**。**订正（GY-R68，A06；2026-10-28 复审后再校口径）**：本条原文写「44 条 operation 零使用」，依据是旧注释里那句「只声明、不实现」——那句话与「零使用」都是旧读数，现已失实（该注释正文现写「**已实现**」，已被本页 §5 第 6 条与 `services/api/src/admin/scopes.ts` 的现状说明取代；本页不再复述它的行号，锚点一律按符号重锚到声明行与门）——服务端**已有 4 条**以 `scopes:write` 为门的写面 operation（`packages/contracts/operations.json` 里 scope=`scopes:write` 的恰好这 4 条）：授/撤 2 条 `grantAdministratorScope`（`POST /admin/administrators/{id}/scopes`）、`revokeAdministratorScope`（`DELETE /admin/administrators/{id}/scopes/{scope}`），加账号状态 2 条 `disableAdministratorAccount`（`POST /admin/administrators/{id}/disable`）、`enableAdministratorAccount`（`POST /admin/administrators/{id}/enable`）。声明与门按符号定位：scope 常量声明在 `services/api/src/admin/scopes.ts:88`（`export const ADMIN_SCOPES_WRITE_SCOPE = 'scopes:write';`）；门值表 `OPS_SCOPES` 的四条在 `services/api/src/admin/ops/service.ts:436`、`services/api/src/admin/ops/service.ts:437`、`services/api/src/admin/ops/service.ts:442`、`services/api/src/admin/ops/service.ts:443`（依次是 `grantAdministratorScope`／`revokeAdministratorScope`／`disableAdministratorAccount`／`enableAdministratorAccount`，四条值都是 `scopes:write`）；对应的四处门在 `services/api/src/routes/admin.ts:411`（`requireScope(OPS_SCOPES.grantAdministratorScope)`）、`services/api/src/routes/admin.ts:420`、`services/api/src/routes/admin.ts:454`、`services/api/src/routes/admin.ts:463`。判别力由 `tests/unit/session-scopes-s1.test.mjs` 的 ③ 三层钉住：门集合存在、以 `scopes:write` 为实参的 `requireScope` 调用条数 = manifest 里该 scope 的 operation 条数、且逐 operationId 仍有那处门（任一处被改值或摘掉即红）。**前端已补齐（GY-R68，2026-10-28）**：授/撤两条 operation 在 `apps/admin` 已有真实调用点——客户端 `src/lib/administrator-scope-api.mjs`（`grantAdministratorScope`／`revokeAdministratorScope`，scope 闭集由契约 `AdminScope` 派生、非法值本地拒绝且一字节不发，`If-Match` + `Idempotency-Key` 与停用/恢复同形），视图 `AdministratorsView` 每行「授权／撤销」按钮 + scope 选择器 + 二次确认，成功后刷新列表并重读该行 scopes；账号状态两条的写面仍走 `src/lib/administrator-state-api.mjs`（`ADMINISTRATOR_STATE_SCOPE='scopes:write'`）。产品侧仍需定「谁能授权管理员」；服务端已有自授门 `SELF_SCOPE_GRANT_DENIED` 与「最后一名 `scopes:write` 持有者」保护 `LAST_SCOPE_MANAGER` 兜底。
 3. **让 scopes 随登录一起到前端（1 处响应或守卫调整）**。理由：现在 9 个页面各抄一遍「登录后再读一次」，且没有 `session:read` 的管理员会直接卡在登录失败；把 scopes 放进登录响应（或允许无 `session:read` 也能读自己的会话）能同时消掉重复代码与这个单点。
 

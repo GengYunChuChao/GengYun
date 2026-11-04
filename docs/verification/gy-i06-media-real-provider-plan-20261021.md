@@ -80,7 +80,7 @@
 
 | 阶段 | 服务方法（行号） | 实际发生 |
 | --- | --- | --- |
-| 受理 | `initiateUploadUnclaimed`（`services/api/src/media/service.ts:936-1006`；原记 :807-874） | 幂等占位（`withKeyClaim` 在任何 await 之前同步取得，`:869-874`）→ `validateUploadInput` 校验用途/类型/字节/哈希 → `presignUpload({ key: rawRef, expiresInSeconds: 86400 })`（`:973-979`，原记 :838-844；句柄 = 本地拼的 `https://substitute.invalid/...`）→ 落 `records` + `idempotency` |
+| 受理 | `initiateUpload`（`services/api/src/media/service.ts:936-1006`；原记 :807-874；**2026-11-04 订正：符号原名 `initiateUploadUnclaimed`，main 上已 0 命中，现名为 `initiateUpload`**） | 幂等占位（`withKeyClaim` 在任何 await 之前同步取得，`:869-874`）→ `validateUploadInput` 校验用途/类型/字节/哈希 → `presignUpload({ key: rawRef, expiresInSeconds: 86400 })`（`:973-979`，原记 :838-844；句柄 = 本地拼的 `https://substitute.invalid/...`）→ 落 `records` + `idempotency` |
 | 完成 | `completeUploadUnclaimed`（`:1008-1133`；原记 :876-953） | `getObject(rawRef)` 取回字节（`:1048`，原记 :907）→ `assertBytesMatchDeclaration`（`:1057`，原记 :916，魔数/字节数/sha256/音频真实时长）→ 图片走 `stripImageMetadata`（`:1069`，原记 :928）→ `putObject(derivativeRef, ...)`（`:1076`，原记 :935）→ `ready`（`:1083`，原记 :943） |
 | 读元数据 | `getMedia`（`:1135-1138`；原记 :975-978） | 只 owner 可读；非本人与不存在**逐字节同形** 404 |
 | 签句柄 | `grantMediaAccess`（`:1194-1225`；原记 :1021-1052） | 仅 owner 且仅 `ready`；`access_token` 是 HMAC 令牌，**不入 URL**；URL = `${accessGrantOrigin}/api/v1/media/${id}/content` |

@@ -16,7 +16,7 @@
 2. 域内取消只走 `services/api/src/tts/state.ts` 既有迁移表（`canTransitionJob`），**未新增**任何迁移边、**未新增迁移文件**、**未新增契约字段**、**未改** `docs/architecture/contract-status.json`。
 3. 终态（`succeeded`/`uncertain`/`failed`/`timed_out`/`cancelled`）再取消 ⇒ 域内 `OBJECT_UNAVAILABLE`（409），作业源**原样透出**（不再被注册表改写成 503）。
 4. 取消**不产生**合成记录；取消后迟到的提供者结果按 revision CAS + 迁移校验落空，**不复活**作业。
-5. 合流后取消能力覆盖 **4/6** 个 kind（识别、OCR、转写、合成）；仍无取消能力的是 **审核** 与 **文字问答**——它们的 503 支仍被钉住（§5 第 8 条）。
+5. 合流后取消能力覆盖 **4/6** 个 kind（识别、OCR、转写、合成）；仍无取消能力的是 **审核** 与 **文字问答**——它们的 503 支仍被钉住（§5 第 8 条）。（2026-11-04 复核：审核与文字问答的取消**均已接线**——审核域 `services/api/src/moderation/service.ts` 的 `cancelJob` 已装配为作业源（`services/api/src/moderation/job-source.ts` 的 `cancel`）；文字问答在 `services/api/src/app.ts` 装配 `createAnswerJobSource` 时传入 `cancelJob: service.cancelTurn`。故今天取消覆盖为 **6/6** 个 kind；`jobs/registry.ts` 的 503 分支只对「源没有 cancel」生效。）
 6. 四条负控制全部**由绿变红**，还原后文件 sha256 与 `git diff HEAD`（空）双双回到原状（`byte_exact_restore=true`）。
 
 ## 2 改动面（相对新基线 `3d72811`）

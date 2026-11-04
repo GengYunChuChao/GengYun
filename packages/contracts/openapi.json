@@ -7142,6 +7142,89 @@
       }
     },
     "/history/{id}": {
+      "get": {
+        "operationId": "getHistory",
+        "summary": "读本人一条历史：他人与不存在是同一个 404，投影与列表项同形",
+        "description": "作用域 user：需登录会话；params 必须 uuid（非 uuid 即 400 INVALID_REQUEST）；200 返回与列表项同形的 History 投影 + 强 ETag「\"<revision>\"」+ `Cache-Control: private, no-store`；只允许本人读：记录为 null 或 owner_id 不是本人 ⇒ 404 NOT_FOUND「历史记录不存在或不可用」，与删除面同一口径（history/service.ts:129-131、390-425），他人拿不到 409 或任何存在性线索；投影不信存储里的快照：job_state 实时优先（deriveJobState）、reference_state 逐次重查（deriveVisibility），所以目标对本人不可见时仍是 200 + 与列表项同形的不可用投影（service.ts:231-247）；单条读面无分页与游标，不需要 Idempotency-Key 与 If-Match。",
+        "tags": [
+          "history"
+        ],
+        "security": [
+          {
+            "userSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "成功；不表示能力已实测",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryEnvelope"
+                }
+              }
+            },
+            "headers": {
+              "ETag": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "资源revision强ETag；列表无此头"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "私有/授权访问no-store"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "500": {
+            "$ref": "#/components/responses/Error500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "504": {
+            "$ref": "#/components/responses/Error504"
+          }
+        },
+        "x-scope": "user",
+        "x-version-required": false,
+        "x-task": "GY-I01"
+      },
       "delete": {
         "operationId": "deleteHistory",
         "summary": "删历史行（202）并启动关联删除：端口未接线就如实披露 unwired",
@@ -18476,6 +18559,22 @@
         "properties": {
           "data": {
             "$ref": "#/components/schemas/HistoryPage"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/Meta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ]
+      },
+      "HistoryEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/History"
           },
           "meta": {
             "$ref": "#/components/schemas/Meta"

@@ -16,14 +16,14 @@
 
 「在线 7 日／备份 30 日」里的**备份副本**，指注销受理那一刻为恢复与审计而留存、**只含不透明对象引用与计数**的最小清单行；`retention_until = 受理时刻 + 30×24 小时`，到点即把 `payload` 硬删、行转 `purged` 并留证据。
 
-本片只交付三件：本文档、判定逻辑 [backup-retention.mjs](../../packages/privacy/backup-retention.mjs)、[单测](../../tests/unit/backup-retention.test.mjs)。因此生产行为**没有变化**：`BackupPurgePort` 仍是未接线实现，各模块 `backup_state` 仍如实停在 `pending`，[契约状态对照](contract-status.json) 的 blocker 不动。（以上为**设计片交付时点**的事实；2026-10-20 接线后：有真库且受理已接线时换真实 PG 端口，`real` 模式整域仍 503、契约状态仍未改，见 §13。）
+本片只交付三件：本文档、判定逻辑 [backup-retention.mjs](../../packages/privacy/backup-retention.mjs)、[单测](../../tests/unit/backup-retention.test.mjs)。因此生产行为**没有变化**：`BackupPurgePort` 仍是未接线实现，各模块 `backup_state` 仍如实停在 `pending`，[契约状态对照](contract-status.json) 的 blocker 不动。（以上为**设计片交付时点**的事实；2026-10-20 接线后：有真库且受理已接线时换真实 PG 端口，`real` 模式整域仍 503、契约状态仍未改，见 §13。**2026-11-03 GY-R74 再订正**：`real` 下备份域改为**恒**走 `createUnavailableBackupPurgePort()`（`services/api/src/app.ts:2012-2013`）⇒ `backup_state: blocked` + `PROVIDER_UNAVAILABLE`，`backupStates` 也不再接线；注销受理本身在 `real` + 真库已开放，见 `docs/architecture/s4-data-traceability.md` 的 D08 与 `docs/architecture/state-contract.md:117`。）
 
 ## 1. 现状与为什么不差这一步
 
 | 事实 | 位置 | 读数 |
 | --- | --- | --- |
 | **GY-I19 期间**仓内没有逐用户备份副本地表 | [验证记录](../verification/gy-i19-backup-domain-20261018.md) §1 普查 | 18 个迁移（0001–0018）、54 处 `CREATE TABLE`（按 `schema.table` 限定名去重 54 张）、0 张备份/快照/副本/转储表。**GY-R28 起已落地**：`0023_user_backup_copies.sql` 建 `public.user_backup_copies`（`state='purged'` ⇒ `payload='null'::jsonb` ＋ 清除证据），`services/api/src/privacy/backup-copies-pg.ts` 的 `createPostgresBackupPurgePort()` 是真实端口（`kind: 'wired'`／`available: true`） |
-| 端口已存在但**当时**恒未接线 | [user-data-deletion.ts:346](../../services/api/src/privacy/user-data-deletion.ts)（接口 `BackupPurgePort` 所在的注释块；本片在文件前部新增 7 行 import，以下行号按同一位移量同步：R68-C1 片当时记 315 行、现为 `:322`）、[:328](../../services/api/src/privacy/user-data-deletion.ts)（工厂与返回对象；行号为 GY-R34-I19 树，设计片当时记 91／97 行、现为 `:98`／`:104`，R28 树记 141／147-156 行、现为 `:148`／`:154-163`，后续片新增常量与注释使行号下移） | 当时 `kind: 'unwired'`、`available: false`、`purge()` 恒 `{ purged: false }`；GY-R28 起不再恒未接线：`app.ts:1798-1805`（`backupPurgeWiring`，原记 :1581-1588；合流当前 main 前在 `:1457-1464`，按符号重取）在「受理端口已接线 ＋ 有真库连接池」时装配 `backup-copies-pg.ts` 的 PG 端口，无真库/未接受理时仍退回本行的 unwired 语义 |
+| 端口已存在但**当时**恒未接线 | [user-data-deletion.ts:346](../../services/api/src/privacy/user-data-deletion.ts)（接口 `BackupPurgePort` 所在的注释块；本片在文件前部新增 7 行 import，以下行号按同一位移量同步：R68-C1 片当时记 315 行、现为 `:322`）、[:328](../../services/api/src/privacy/user-data-deletion.ts)（工厂与返回对象；行号为 GY-R34-I19 树，设计片当时记 91／97 行、现为 `:98`／`:104`，R28 树记 141／147-156 行、现为 `:148`／`:154-163`，后续片新增常量与注释使行号下移） | 当时 `kind: 'unwired'`、`available: false`、`purge()` 恒 `{ purged: false }`；GY-R28 起不再恒未接线：`app.ts:2009-2016`（`backupPurgeWiring`，原记 :1581-1588；合流当前 main 前在 `:1457-1464`，按符号重取）在「受理端口已接线 ＋ 有真库连接池」时装配 `backup-copies-pg.ts` 的 PG 端口，无真库/未接受理时仍退回本行的 unwired 语义 |
 | 注入点已存在 | [app.ts:500](../../services/api/src/app.ts)（类型定义见 [app.ts:545](../../services/api/src/app.ts)，原记 471 行）、[:1822-1823](../../services/api/src/app.ts)（注入使用处见 [app.ts:1597-1598](../../services/api/src/app.ts)，原记 1593-1594 行） | 仅在显式注入 `userDataDeletionInjection.backupPurge` 时传入 |
 | 回执照实不谎报 | [tests/unit/user-data-deletion.test.mjs:88](../../tests/unit/user-data-deletion.test.mjs) | 断言逐字「备份副本清除未接线 ⇒ 如实 pending，不得谎称 completed」 |
 | 唯一备份产物是整库 dump | [backup-postgres.sh:56-57](../../deploy/postgres-cvm/backup-postgres.sh) | `KEEP_DAYS=30` 是**文件**保留期，无法逐用户删 |
@@ -352,7 +352,7 @@ type BackupPurgeOutcome =
 - 在途 PR 已占号（未合入本分支）：`#278` = 0019、`#282` = 0020、`#279` = 0021。
 - 因此本域取 **0022**（推算，不预占）。
 - 「连续无缺号」断言的真正位置是 [tests/integration/migrations-negative-pg.mjs:47-64](../../tests/integration/migrations-negative-pg.mjs)（`MISSING_VERSIONS` 必须为空、`MIGRATION_COUNT === LAST_VERSION_NUMBER`），**不在** `tests/unit/migrations*.test.mjs`（那两支只断言 0001–0003 的存在、校验和、升序、漂移与事务边界）。该集成文件在 `MIGRATIONS_NEGATIVE_TEST_URL` 未设置时打印 SKIP 并 `process.exit(0)`（:22-28），所以本机不红、CI 真库臂才红——`#278` 当前的红因正是这个。
-- 结论：本片**不落 `.sql`**。合入序 `#278` → `#282` → `#279` → 本域 0022；若先合入者改号，本域顺延。
+- 结论：本片**不落 `.sql`**。合入序 `#278` → `#282` → `#279` → 本域 0022；若先合入者改号，本域顺延。（**2026-11-04 订正：本节是 2026-10-19 开工时点读数——`#278`／`#282`／`#279` 已于 2026-10-19 全部合入，main 迁移现有 53 个、最大 `0054_favorites_target_lookup.sql`，本域实落 `0023_user_backup_copies.sql`；见文首增补**）
 
 ## 10. 关键决定
 

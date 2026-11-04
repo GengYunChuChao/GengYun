@@ -41,7 +41,7 @@
 | --- | --- |
 | `tests/integration/migrations-negative-pg.mjs:55-58` | 文件头注释补「①② 的真空洞（2026-10-21 补）」，说明两条只约束内部一致性、对尾部整段丢失恒真，并指向本页 |
 | `tests/integration/migrations-negative-pg.mjs:78-86` | 常量 `MIN_EXPECTED_LAST_VERSION = 25` 的注释：**有意的人工步骤**（新增迁移时须抬到新的最大版本号）；三条「为什么是 ≥ 而不是等于某个数」的理由 |
-| `tests/integration/migrations-negative-pg.mjs:89-93` | 新增一行 `STRUCT 旧的两条结构不变量已通过：…`（`console.log`，**不计入** `say()` 的 PASS 计数），让「旧两条仍绿」在负控制输出里可逐字取证 |
+| `tests/integration/migrations-negative-pg.mjs:106-111` | 新增一行 `STRUCT 旧的两条结构不变量已通过：…`（`console.log`，**不计入** `say()` 的 PASS 计数），让「旧两条仍绿」在负控制输出里可逐字取证 |
 | `tests/integration/migrations-negative-pg.mjs:94-100` | 第一条钉 `assert.ok(LAST_VERSION_NUMBER >= MIN_EXPECTED_LAST_VERSION, …)`，失败文案点名「挡的是迁移发现器把尾部整段漏掉」并声明「不是必须等于某个数」 |
 | `tests/integration/migrations-negative-pg.mjs:101-106` | 第二条钉 `assert.ok(MIGRATION_COUNT >= MIN_EXPECTED_LAST_VERSION, …)`，与上一条共用常量 |
 

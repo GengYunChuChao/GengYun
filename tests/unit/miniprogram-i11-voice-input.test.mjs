@@ -295,6 +295,14 @@ test('上传失败 ⇒ 仍须回收本机临时录音，并如实给出错误码
     assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.wav'], '失败路径同样不许留临时文件')
     assert.equal(harness.page.data.uploadedMediaId, null)
     assert.equal(harness.page.data.uploadedMediaRevision, 0, '失败后 revision 不得残留（会拼出伪引用）')
+    assert.equal(
+      harness.page.data.recordStageNote.includes('本条录音不会重试复用'), true,
+      '失败后本机录音不会再被复用：文案必须说清不能重试同一条，否则用户会反复点重试等一个不可能的恢复'
+    )
+    assert.equal(
+      harness.page.data.recordStageNote.includes('已删除') || harness.page.data.recordStageNote.includes('已当场丢弃'), false,
+      '删除是尽力而为（平台无能力或失败时静默跳过）：文案不得宣称「已删除／已丢弃」，否则等于把没做到的事写成做到'
+    )
   } finally {
     harness.unload()
   }
@@ -328,6 +336,10 @@ test('时长超过契约上限 ⇒ 零上传请求且丢弃本机临时录音', 
     assert.equal(harness.uploads.length, 0, '超限录音不得发出 POST /media/uploads')
     assert.equal(harness.page.data.uploadErrorCode, 'INVALID_INPUT')
     assert.deepEqual(harness.unlinks, ['wxfile://tmp/record-1.wav'])
+    assert.equal(
+      harness.page.data.recordStageNote.includes('本条录音不会重试复用'), true,
+      '超限分支同样不会被复用：文案必须说清只能重录'
+    )
   } finally {
     harness.unload()
   }

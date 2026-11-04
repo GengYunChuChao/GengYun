@@ -409,42 +409,75 @@ test('注销清空·装配：real + pool ⇒ 协调器拿到的是 PG store，�
     'history',
     'messages',
     'conversations',
-    RECOGNITIONS_DELETION_MODULE,
     SPEECH_DELETION_MODULE,
     OCR_DELETION_MODULE,
     JOBS_DELETION_MODULE,
   ]) {
     assert.equal(byModule.get(module).online_state, 'completed', `${module} 必须 completed`);
-    assert.equal(byModule.get(module).backup_state, 'pending');
-    assert.equal(byModule.get(module).error_code, null);
+    // GY-R74（方案 A）：`real` 模式**恒**走 `createUnavailableBackupPurgePort()` —— 仓库里没有
+    // "按用户删备份介质"的能力（`deploy/postgres-cvm/backup-postgres.sh` 自陈未部署、未产出过任何真实备份；
+    // 桶生命周期策略全仓零命中）。所以 30 日备份域到期也只能如实 `blocked` + 闭集原因码，
+    // ⛔ 不再是 `pending`（那不是"还没轮到"，那是"今天做不了"），更不许自己写成 `completed`。
+    assert.equal(byModule.get(module).backup_state, 'blocked', `${module} 备份域必须如实不可用`);
+    assert.equal(byModule.get(module).error_code, 'PROVIDER_UNAVAILABLE');
   }
+  // GY-R74（目标 e）：本臂是 `real` + PGlite，既没有 `MEDIA_OBJECT_REF_KEY`，迁移清单里也没有
+  // `public.media`（`PG_MIGRATIONS_WITH_DELETION_DOMAINS` 不含媒体迁移）⇒ 媒体对象既枚举不到也删不掉。
+  // 媒体端口只挂在识别域处理器上 ⇒ 该域在线阶段**没做完**，如实 `blocked` + `PROVIDER_UNAVAILABLE`，
+  // ⛔ 不写 0031 在线证据；其余八域的行确实删了，保持 `completed`（⛔ 不拿媒体缺口抹掉八域真实读数）。
+  assert.equal(
+    byModule.get(RECOGNITIONS_DELETION_MODULE).online_state,
+    'blocked',
+    '缺媒体键 ⇒ 识别域（媒体对象所在域）在线阶段必须如实 blocked',
+  );
+  assert.equal(byModule.get(RECOGNITIONS_DELETION_MODULE).error_code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(byModule.get(RECOGNITIONS_DELETION_MODULE).backup_state, 'blocked');
   assert.equal(byModule.get('community').online_state, 'completed', '没有未完成项 ⇒ completed');
-  assert.equal(byModule.get('community').error_code, null);
-  assert.equal(byModule.get('community').backup_state, 'pending');
+  assert.equal(byModule.get('community').error_code, 'PROVIDER_UNAVAILABLE');
+  assert.equal(byModule.get('community').backup_state, 'blocked');
   // 备份阶段未接线 ⇒ 整份请求仍不是 completed（"时钟到期不等于完成"），但**不再**因为社区 blocked。
   assert.equal(app.userDataDeletion.completionStatus(requestId).completed, false);
 
   // 证据里**看得见**台账被清了几行（模块完成状态覆盖到新数据，不是只看正文表）。
   // 契约回执形状按 openapi 固定（不含 evidence），证据走同源的诊断视图；社区有独立台账表。
   const evidence = app.userDataDeletion.evidenceOf(requestId);
-  assert.equal(evidence.favorites, 'favorites:online-purged:1;favorites:idempotency-purged:2');
-  assert.equal(evidence.history, 'history:online-purged:2;history:idempotency-purged:1');
-  assert.equal(evidence.messages, 'messages:online-purged:1;messages:idempotency-purged:1');
-  assert.equal(evidence.conversations, 'conversations:online-purged:0');
+  // GY-R74：`real` 模式下 30 日备份域**恒**不可用 ⇒ 每个模块证据串末尾都多一段
+  // `;<module>:backup-blocked:PROVIDER_UNAVAILABLE`。这是**如实标注**（哪一段没做、为什么），
+  // ⛔ 不是吞掉错误：`completionStatus()` 仍不判 completed，回执里该模块 `backup_state: blocked`。
+  const backedUp = (module, base) => `${base};${module}:backup-blocked:PROVIDER_UNAVAILABLE`;
+  assert.equal(
+    evidence.favorites,
+    backedUp('favorites', 'favorites:online-purged:1;favorites:idempotency-purged:2'),
+  );
+  assert.equal(
+    evidence.history,
+    backedUp('history', 'history:online-purged:2;history:idempotency-purged:1'),
+  );
+  assert.equal(
+    evidence.messages,
+    backedUp('messages', 'messages:online-purged:1;messages:idempotency-purged:1'),
+  );
+  assert.equal(evidence.conversations, backedUp('conversations', 'conversations:online-purged:0'));
   // 识别域 / 语音域（GY-R34-I19）：本用例没造行，但证据串里**必须**有这两域，且照实报 0。
   // 两域的台账是各自独立的 `*_idempotency` 表（无主体列、按 scope 前缀删），所以计数字段同样在。
-  assert.equal(evidence.recognitions, 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
-  assert.equal(evidence.speech, 'speech:online-purged:0;speech:idempotency-purged:0');
+  assert.equal(
+    evidence.recognitions,
+    backedUp('recognitions', 'recognitions:online-purged:0;recognitions:idempotency-purged:0'),
+  );
+  assert.equal(
+    evidence.speech,
+    backedUp('speech', 'speech:online-purged:0;speech:idempotency-purged:0'),
+  );
   // OCR 域（R34 片 3）：因为走的是**表级 DELETE + RETURNING**（不是 0034 的函数返回复合计数），
   // 证据串除合计外还多一段 `tables:` 分表读数 —— 审计看得出"哪张表 0 行"，而不是只看到一个合计 0。
   // 键序 = 删除顺序（先子后父：`ocr_records` 在 `ocr_jobs` 之前），不是字典序。
   assert.equal(
     evidence.ocr,
-    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+    backedUp('ocr', 'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0'),
   );
   // 作业台账（GY-R71 补片）：0 行也照实回 0。第二段 `idempotency-purged:0` 是**恒 0 的事实**
   // （`public.jobs` 只有作业行，没有幂等台账层），不是"没查"—— 写出来才和别的域同形可比。
-  assert.equal(evidence.jobs, 'jobs:online-purged:0;jobs:idempotency-purged:0');
+  assert.equal(evidence.jobs, backedUp('jobs', 'jobs:online-purged:0;jobs:idempotency-purged:0'));
   assert.ok(
     evidence.community.startsWith(
       'community:online-purged:2;community:idempotency-purged:2;community:retained:2;community:redacted:0;'
@@ -500,27 +533,45 @@ test('注销清空·再次清空：0 行也如实回 0（不省略、不当作�
     '无行时九个模块都记 0（不是缺项）',
   );
   const receipt = app.userDataDeletion.receipt(requestId);
-  for (const row of receipt.handlers) assert.equal(row.online_state, 'completed');
+  // GY-R74：识别域是唯一挂媒体端口的域，本臂没有媒体键/没有 `public.media` ⇒ 该域在线阶段如实 blocked；
+  // 其余八域（含社区）0 行也照实 completed（⛔ 不把媒体缺口扩成整域失败）。
+  for (const row of receipt.handlers) {
+    assert.equal(
+      row.online_state,
+      row.module === RECOGNITIONS_DELETION_MODULE ? 'blocked' : 'completed',
+      `${row.module} 在线态`,
+    );
+    // 30 日备份域在 `real` 模式恒不可用（见上一用例注释）。
+    assert.equal(row.backup_state, 'blocked', `${row.module} 备份域必须如实不可用`);
+    assert.equal(row.error_code, 'PROVIDER_UNAVAILABLE');
+  }
   // 台账计数同样如实给 0（不省略计数、也不因为在跑就假装清过台账）。
   const evidence = app.userDataDeletion.evidenceOf(requestId);
-  assert.equal(evidence.favorites, 'favorites:online-purged:0;favorites:idempotency-purged:0');
-  assert.equal(evidence.history, 'history:online-purged:0;history:idempotency-purged:0');
-  assert.equal(evidence.messages, 'messages:online-purged:0;messages:idempotency-purged:0');
-  assert.equal(evidence.conversations, 'conversations:online-purged:0');
-  assert.equal(evidence.recognitions, 'recognitions:online-purged:0;recognitions:idempotency-purged:0');
-  assert.equal(evidence.speech, 'speech:online-purged:0;speech:idempotency-purged:0');
+  const backedUp = (module, base) => `${base};${module}:backup-blocked:PROVIDER_UNAVAILABLE`;
+  assert.equal(evidence.favorites, backedUp('favorites', 'favorites:online-purged:0;favorites:idempotency-purged:0'));
+  assert.equal(evidence.history, backedUp('history', 'history:online-purged:0;history:idempotency-purged:0'));
+  assert.equal(evidence.messages, backedUp('messages', 'messages:online-purged:0;messages:idempotency-purged:0'));
+  assert.equal(evidence.conversations, backedUp('conversations', 'conversations:online-purged:0'));
+  assert.equal(
+    evidence.recognitions,
+    backedUp('recognitions', 'recognitions:online-purged:0;recognitions:idempotency-purged:0'),
+  );
+  assert.equal(evidence.speech, backedUp('speech', 'speech:online-purged:0;speech:idempotency-purged:0'));
   // OCR 域（R34 片 3）：同上，0 行也照实回 0，且 `tables:` 分表读数同样逐表写出（缺表时会 42P01/42501
   // 折叠成 blocked，这里能看到的就是"表在、权限在、真跑了语句但没行"）。
   assert.equal(
     evidence.ocr,
-    'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0',
+    backedUp('ocr', 'ocr:online-purged:0;ocr:idempotency-purged:0;ocr:tables:ocr_records=0,ocr_jobs=0'),
   );
   // 社区：0 行也照实回 0，保留/脱敏/媒体/作者指针替换四段同样在（不是"表都没有"折叠成 blocked）。
   // 注意 `author-refs-replaced:0` 必须**写出来**：0 与"没做/没这一段"是两件事（否则真库缺 0030 时
   // 会被误读成"替换了 0 行"而不是"语句根本跑不了"）。
   assert.equal(
     evidence.community,
-    'community:online-purged:0;community:idempotency-purged:0;community:retained:0;community:redacted:0;'
-      + 'community:media-hidden:0;community:author-refs-replaced:0',
+    backedUp(
+      'community',
+      'community:online-purged:0;community:idempotency-purged:0;community:retained:0;community:redacted:0;'
+        + 'community:media-hidden:0;community:author-refs-replaced:0',
+    ),
   );
 });

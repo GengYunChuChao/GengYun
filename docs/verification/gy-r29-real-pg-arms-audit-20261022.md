@@ -133,7 +133,7 @@ Error: EPERM, Permission denied: \\?\E:\GengYunCommander\.pg17\tmp\arms-audit\_c
   code: 'EPERM',
 ```
 
-- 因：`workbook-staging-pg` 的库名是**硬钉的** `gengyun_staging_test`（`workbook-staging.yml:43` 的 `STAGING_PG_TEST_URL` 写死该库名），我夹具的通用「建库」逻辑在它自己的 `pre` 建库之后又建了一次。
+- 因：`workbook-staging-pg` 的库名是**硬钉的** `gengyun_staging_test`（`workbook-staging.yml:50` 的 `STAGING_PG_TEST_URL` 写死该库名），我夹具的通用「建库」逻辑在它自己的 `pre` 建库之后又建了一次。
 - 另一个坑：`pg_ctl stop` 返回时，被 detach 的 `postgres` 进程还持有 `data` 目录句柄 ⇒ 紧接着 `rmSync` 必 `EPERM`。
 - 解法（夹具侧，不进仓）：给该臂 `create:false` 走自己的 `pre`；`rmSync` 加 `{ maxRetries: 5, retryDelay: 250 }`。改后 `workbook-staging-pg` 1.1 s 通过。
 

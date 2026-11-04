@@ -23,7 +23,7 @@
 | 卡点＝真实样本 | #8、#11、#20 |
 | 卡点＝用户裁定 | #7、#17、#22、#27、#28 |
 | 卡点＝部署环境 | #24 |
-| 卡点＝在飞 PR | #19（#528） |
+| 卡点＝在飞 PR | #19（#528；**2026-11-04 订正：已于 2026-10-23T18:48:16Z 合入**） |
 | 卡点＝纯代码 | #18（资料域 PG 落点）、#29（前端授权界面） |
 
 **一句话盘面**：与旧页相比，main 侧材料明显变厚 —— 媒体 PG store、OCR 媒体注入口、审核台账 `0028`、作业台页面、`GET /me/exports`、230 条失败矩阵与 `Retry-After`、撤回依赖臂、real 终态历史端口与 `deleteHistory` 级联腿都已在 main 落地（逐条见订正页）。但**没有一张因此变成「已交付」**：24 张的剩余缺口全部落在真机读数、真实供应商调用、真实样本、用户裁定、部署授权这五类仓库外条件上，其中 #18 与 #29 还各留一条纯代码缺口。
@@ -65,7 +65,7 @@
 | #16 | [初版 GY-I16] 实现收藏与可浏览的识别历史 | 部分交付 | `services/api/src/app.ts:historyDomainEnabled`；`services/api/src/history/cascade-wiring.ts:createHistoryCascadePort`；`services/api/src/favorites/store-pg.ts:createPostgresFavoritesStore` | 真机三页走查未做；级联只接识别/OCR 两腿，媒体与外发腿未接（成功只到 `partial`） | 真机 |
 | #17 | [初版 GY-I17] 实现首版应用内消息、未读状态与权限跳转 | 部分交付 | `services/api/src/messages/store-pg.ts:createPostgresMessagesStore`；`miniprogram/pages/messages/messages.wxml:onRetryUnread`；`docs/verification/gy-r31-i17-g2-ruling-20261022.md` | 跳转范围（现仅 post/comment，其余 14 型降级）需用户裁定；真机走查未做 | 用户裁定 |
 | #18 | [初版 GY-I18] 实现独立后台资料、账号、AI任务及功能开关 | 部分交付 | `apps/admin/src/views/JobsView.vue`；`services/api/src/admin/ops/flags-pg.ts`；`services/api/db/migrations/0033_admin_audit_log_read.sql` | 资料域 27 条路由仍走 `services/api/src/admin/store.ts` 的内存 store（`persistent: false`）⇒ real 全 503；缺内容域 PG 落点 | 纯代码 |
-| #19 | [初版 GY-I19] 贯通注销去身份、在线7日备份30日删除与恢复验收 | 部分交付 | `services/api/src/routes/exports.ts:registerExportRoutes`；`services/api/src/privacy/user-data-deletion.ts:USER_DATA_DELETION_MODULES`；`services/api/db/migrations/0031_online_purge_evidence.sql` | #528 未合入（缺 `0034` 与识别/语音两条删除模块）；真实备份介质与第三方回执未取得 | 在飞 PR |
+| #19 | [初版 GY-I19] 贯通注销去身份、在线7日备份30日删除与恢复验收 | 部分交付 | `services/api/src/routes/exports.ts:registerExportRoutes`；`services/api/src/privacy/user-data-deletion.ts:USER_DATA_DELETION_MODULES`；`services/api/db/migrations/0031_online_purge_evidence.sql` | #528 未合入（缺 `0034` 与识别/语音两条删除模块；**2026-11-04 订正：已合入，两者均在 main**）；真实备份介质与第三方回执未取得 | 在飞 PR |
 | #20 | [初版 GY-I20] 冻结独立评估样本、标准答案及评估程序 | 部分交付 | `packages/evaluation/samples/gy-i20-weeds-real-index.json`（172 条 `test` 分割）；`docs/evaluation/sample-gap-register.md` | 真实杂草图片采集/版权与标准答案评审未取得 | 真实样本 |
 | #21 | [初版 GY-I21] 持续评估各项真实AI能力并汇总首版验收门槛 | 部分交付 | `packages/evaluation/src/targets.mjs:METRIC_GATES`（18 条：12 条 `requirement` + 6 条 `provisional`）；`docs/evaluation/acceptance-thresholds-summary.md` | 6 条 `provisional` 门槛待真实读数校准；真实供应商持续读数未取得 | 真实供应商 |
 | #22 | [初版 GY-I22] 完成权限、安全规则及首版端到端失败回归 | 部分交付 | `tests/unit/gy-i22-failmatrix.test.mjs:MIN_CASES`（230）；`tests/failmatrix/mutations.mjs`（23 条负控制）；`services/api/src/errors.ts:retryAfterSecondsFor` | stdout 私密前缀定级与四个域纳入矩阵的范围需用户裁定；真机回归未跑 | 用户裁定 |
@@ -171,9 +171,9 @@
 
 ### #19 · 注销去身份、在线 7 日备份 30 日删除与恢复验收
 - 已交付证据：`services/api/src/routes/exports.ts:registerExportRoutes`（`GET /me/exports`，`x-scope: user`，无池即 503 不降级内存）、`services/api/src/privacy/exports-list.ts:createExportsListService`、`services/api/src/privacy/user-data-deletion.ts:USER_DATA_DELETION_MODULES`（收藏/历史/消息/会话四项 + 社区条件项）、迁移 `0031`；证据页 `docs/verification/gy-r34-i19-me-exports-20261023.md`、`docs/verification/gy-r29-i19-closure-20261022.md`、`docs/verification/gy-r34-retention-20261023.md`。
-- 缺什么：`#528` 未合入（缺 `0034` 与识别/语音两条删除模块，主线仍只有四面清理）；真实备份介质、第三方完成回执与恢复验收材料未取得。
+- 缺什么：`#528` 未合入（缺 `0034` 与识别/语音两条删除模块，主线仍只有四面清理）——**2026-11-04 订正：`#528` 已于 2026-10-23T18:48:16Z 合入，`0034_r34_owner_content_purge.sql` 与 RECOGNITIONS／SPEECH 两条删除模块已在 main**；真实备份介质、第三方完成回执与恢复验收材料未取得。
 - 谁能推动：监工推进 `#528`；用户提供备份介质与第三方回执。
-- 判定：部分交付（卡点＝在飞 PR）。
+- 判定：部分交付（卡点＝在飞 PR；**2026-11-04 订正：该卡点已消失，剩余卡点是真实备份介质与第三方回执**）。
 
 ### #20 · 独立评估样本、标准答案及评估程序
 - 已交付证据：`packages/evaluation/samples/gy-i20-weeds-real-index.json`（172 条 `test` 分割）、`docs/evaluation/sample-gap-register.md`、`packages/evaluation/src/targets.mjs:METRIC_GATES` 的评估框架；证据页 `docs/verification/gy-i20-real-samples-20261014.md`、`docs/verification/gy-i03-i20-materials-gap-ledger-20261015.md`。
