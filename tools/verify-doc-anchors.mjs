@@ -36,11 +36,13 @@
  *                   ④ **判红面只对「目标文件里确实有声明行」的符号生效**（本口径的第 4 条，与下文
  *                      「裁定 ④：JSON/SQL 不强制套函数符号」是两条不相干的规则）：同一行紧挨着锚点的
  *                      反引号词未必是符号——表格单元里顺手标的 `delete`／`set_flag`／`third_party_state`、
- *                      提交号 `de2aa3c6`、测试名常量，在目标文件里压根没有声明行，拿它们判「实现漂走了」
+ *                      测试名常量，在目标文件里压根没有声明行，拿它们判「实现漂走了」
  *                      只会把正确的文档判红。这类配对记 `UNDECLARED`：**只计数、逐条列出、不进判红条件**
  *                      （判据层面把「符号」与「顺带被框起来的词」分开，不是白名单——没有基线，也没有
  *                      按文档／按条目的豁免）。声明形态见 `tools/lib/anchor-resolve.mjs` 的
  *                      `symbolDeclarationLines`。
+ *                      提交号（`de2aa3c6`）这类**根本不是标识符**的东西比这一条更早被挡掉：它在候选抽取
+ *                      阶段就不算符号（见 `COVERAGE_COMMIT_HASH_SPAN`），连配对都不会发生。
  *
  * 为什么**不**用「内容 sha256 全等」当判据：任何合法改代码（加一行日志、改一个错别字）都会让
  * 哈希变红，红的原因与「文档是不是假证据」无关，等于用噪声换掉原有的真信号，最后只能整片关掉。
@@ -1300,8 +1302,40 @@ const COVERAGE_ANCHOR_SPAN = new RegExp(`^((?:[\\w.\\-]+/)*[\\w.\\-]+\\.(?:${ANC
 const COVERAGE_SYMBOL_SPAN = /^[A-Za-z_$][\w$]*$/;
 
 /**
+ * **提交 SHA／短哈希形态**：整段就是 7–40 位纯十六进制（`de2aa3c6`、`bfbe12cd`、`fdd5ba53d96f86f25078d6a8ff994a1bf079c23f`）。
+ *
+ * 为什么在**候选抽取**这一步就排掉，而不是等判出 `UNDECLARED` 再解释：
+ * `docs/architecture/ai-ops-spec-status.md:31` 的写法是「本片合并 `upstream/main`（=``de2aa3c6``）后撤 **N02**：
+ * `docs/architecture/contract-implementation-status.md:166` 已由 #710 改成…」——同一行里，锚点的「紧邻符号」
+ * 抓到的正是那个**提交号**。提交号绝无可能出现在目标文件的源码里，于是这条配对稳定产出
+ * `UNDECLARED／ZERO_HIT`：它既不说明文档指错了地方（锚点是对的），也不说明实现漂走了（符号根本不是符号），
+ * 只是把 `SYMBOL-COVERAGE-UNDECLARED` 的计数抬高 1，并让 review 的人白查一轮。
+ * 同形状的还有 `docs/architecture/contract-implementation-status.md:42`（`bfbe12cd`）与 8 份 verification 页。
+ *
+ * 口子只开到「整段就是 7–40 位纯十六进制」：
+ *   · `COVERAGE_SYMBOL_SPAN` 本来就要求首字符是字母／`_`／`$`，所以 `0123abcd` 这种**数字开头**的十六进制串
+ *     本来也进不了符号位——这条规则真正生效的是**字母开头**的哈希（`de2aa3c6`、`bfbe12cd`），也就是上面
+ *     那几处真实误报的形状；两条件并列写，是为了让「十六进制 = 不是符号」这条口径自带解释，而不是靠
+ *     「数字开头」这个副作用。
+ *   · 正常标识符一个不动：带下划线／`$`／驼峰的、以及不是全十六进制的（`cafe1234x`、`deadbeefZ`）照旧进符号位。
+ *
+ * **已知取舍（会误伤的那一格）**：真有一个全十六进制、7 位以上、只由 `0-9a-f` 组成的标识符（`deadbeef`、
+ * `cafebabe1`、`cafe1234`）时，它会被这条规则一起排掉——那一对锚点退回「同行没有紧邻符号」只计数，
+ * 不再参与 OK／OUT_OF_RANGE／UNDECLARED 判定。取这个代价是因为：本仓 `services/**`／`apps/**`／
+ * `packages/**`／`tools/**`／`tests/**`／`miniprogram/**` 下的 `.mjs`／`.cjs`／`.js`／`.jsx`／`.ts`／`.tsx`／
+ * `.py`／`.sql`／`.json`／`.yml`／`.yaml`／`.sh`／`.ps1`／`.html`／`.vue`／`.css` 共 1456 份文件扫过一遍：
+ * 命中本正则的 token 12699 个，**出现在声明／赋值标识符位置的 0 个**（全是字符串里的提交号、SQL 数字字面量
+ * 与日期），而「提交号假配对」是每份带 SHA 的文档都在稳定产出的噪声。要收回来只需删掉这一条正则的否定。
+ */
+const COVERAGE_COMMIT_HASH_SPAN = /^[0-9a-f]{7,40}$/i;
+
+/**
  * 把一行里的行内代码片段分类成 `anchor` / `symbol` / `other`，连带片段在原行里的字符位置。
  * 扫法与 `ANCHOR_DRIFT` 共用同一个 `INLINE_CODE_SPAN`（同一个正则，不另造一套行内代码语义）。
+ *
+ * 提交 SHA 形态的片段归 `other`、**不算符号**（理由与取舍见 `COVERAGE_COMMIT_HASH_SPAN`）：它不该成为
+ * 任何锚点的紧邻符号，于是那条锚点退回「同行没有紧邻符号」只计数——这是「配对不成立」的字面含义，
+ * 不新增档位、也不改任何既有读数行的文案。
  */
 function classifyCoverageSpans(line) {
   const spans = [];
@@ -1315,7 +1349,7 @@ function classifyCoverageSpans(line) {
     if (anchor !== null) {
       const from = Number(anchor[2]);
       spans.push({ start, end, kind: 'anchor', target: anchor[1], from, to: anchor[3] === undefined ? from : Number(anchor[3]) });
-    } else if (COVERAGE_SYMBOL_SPAN.test(body)) {
+    } else if (COVERAGE_SYMBOL_SPAN.test(body) && !COVERAGE_COMMIT_HASH_SPAN.test(body)) {
       spans.push({ start, end, kind: 'symbol', symbol: body });
     } else {
       spans.push({ start, end, kind: 'other' });
@@ -1342,6 +1376,9 @@ function classifyCoverageSpans(line) {
  *      （见 `SYMBOL_COVERAGE_LIST_SEPARATORS`）；
  *   ⑤ 两段之间夹着**按位对应标记**（`依次`／`分别`／`各为`／`respectively`）的候选不算——右边那串符号是
  *      按位置对应左边那串锚点的，紧邻配对没有语义（见 `SYMBOL_COVERAGE_POSITIONAL_MARKERS`）。
+ *   ⑥ 候选**本身就不是符号**时不算：整段是 7–40 位纯十六进制（`de2aa3c6`）的是提交 SHA／短哈希，
+ *      绝无可能出现在源码里（见 `COVERAGE_COMMIT_HASH_SPAN`）。这一条在**抽取**处生效（该片段被归成
+ *      `other`），所以那条锚点直接落进「同行没有紧邻符号」——不配对、不进任何判定档。
  *
  * ④ 是 2026-11-04 补的。台账最常见的列举写法是「`a.ts:1162` 的 `createTtsProvider`、`a.ts:1176` 的
  * `createSynthesisMediaPort(...)`」：只按字符距离取最近时，`:1176` 会配给左边的 `createTtsProvider`
