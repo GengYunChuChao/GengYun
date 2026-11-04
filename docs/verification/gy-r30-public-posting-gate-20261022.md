@@ -291,3 +291,12 @@ git_dirty_lines=0
 - 唯一动过产品文件的动作：§4 的负控制（摘闸 → 跑 → 原样回写 → `sha256` 逐字节一致 → `git status` 0 行脏）。
 - §3 的探针脚本为临时文件，跑完即删，未入库。
 - 待裁定：§6 的 A/B/C，等监工裁定后再派实现片；在此之前**不**动 `packages/contracts`、**不**新增迁移、**不**改 `docs/architecture/contract-status.json`、**不**改 consent 语义。
+
+## 附注（2026-11-04 复核：§6 第 7、9 条与部分锚点已过期）
+
+本节结论写于 2026-10-22 的时点读数，**保留原样不改写**；下面只记复核差异，供后续引用时以本条为准。
+
+- **§6 第 7 条「客户端对 `/me/consents` 零调用（全仓仅注释引用）」已不成立**：GY-R70 起 `miniprogram/utils/consent-api.js` 真的发三个调用——`GET /me/consents`（`miniprogram/utils/consent-api.js:255`）、`POST /me/consents`（`miniprogram/utils/consent-api.js:461`，带 `Idempotency-Key`）、`DELETE /me/consents/{purpose}`（`miniprogram/utils/consent-api.js:521`，先取 `revision` 再带 `If-Match`）；入口页 `miniprogram/pages/consent/consent.js` 与 `miniprogram/pages/profile/profile.wxml` 已接。
+- **§6 第 9 条「客户端自承契约缺用途政策读取面、刻意不写『去授权』」的结论仍成立，但所引锚点已过期**：`miniprogram/utils/identify-api.js:202-205` 现在是覆盖范围/画质三类原因文案常量（`COVERAGE_REASON_OUT_OF_SCOPE` 等），相关注释在 `miniprogram/utils/identify-api.js:206-213`（说明「可授予的入口在 `pages/consent`，GY-R70 起真的发 `POST /me/consents`」）与 `miniprogram/utils/identify-api.js:969`；`miniprogram/utils/identify-api.js:960-961` 现在是 `PROVIDER_QUOTA_EXCEEDED`／`PROVIDER_OUTCOME_UNKNOWN` 文案。
+- **§6 第 7 条所引 `miniprogram/utils/identify-api.js:202` 同理**（现为 `COVERAGE_REASON_OUT_OF_SCOPE` 定义行）；「零调用」的实证应改为上一条列出的三处 `miniprogram/utils/consent-api.js` 锚点，它们恰好反证该调用已接线。
+- 其余结论（闸的判定读 `privacy_epochs`、`listConsents` 只回已存在记录、403 文案无动作可给、台账把 `grantConsent` 记为 `partial`）复核后仍成立。
