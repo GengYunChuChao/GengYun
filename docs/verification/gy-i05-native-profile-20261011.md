@@ -35,7 +35,7 @@ PUT 成功后 GET 当前档案，读失败不称“已重读”。不改识别�
 > 档案为空（缺 `crop_id` 或 `region_code`）时**不跳转**，只在入口提示「请先设置档案（作物与地区）再按档案查科普资料。」。
 > **该行为随 #744 变更，未合入前以现状为准**：#744 截至本注记**尚未合入 main**——本页订正时的合流树
 > `f0b97e16` 上，`miniprogram/pages/profile/profile.js:274` 仍是
-> `wx.navigateTo({ url: '/pages/reference/reference?crop_id=…&region_code=…' })`，空档案时提示「请先设置档案。」（同样不跳转）。
+> `wx.navigateTo({ url: '/pages/reference/reference?crop_id=…&region_code=…' })`，空档案时提示「请先设置档案。」（同样不跳转）。（2026-11-04 复核：#744 已于 `35667767` 合入，`openReference` 现落 `pages/knowledge`——`miniprogram/pages/profile/profile.js` 第 297 行已改成 `wx.navigateTo({ url: '/pages/knowledge/knowledge' })`；本块按下一行「合流后以 #744 为准」生效，原文保留为 2026-10-11 时点）
 > 所以：**合流前**，上面「导航只允许固定 reference 路由与两项格式」仍是线上事实；**合流后**以 #744 为准——`pages/reference`
 > 这条路只留随包名录浏览（`docs/ui-state-inventory.md` §7.4 的定位不变），「按档案查资料」走服务端查询面。
 > **旧记录为什么保留**：这一句是 2026-10-11 那次 320px 实机读数的**当时事实**（当时确实只允许固定 reference 路由与两项格式，

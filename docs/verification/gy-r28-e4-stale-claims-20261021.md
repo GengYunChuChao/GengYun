@@ -73,7 +73,7 @@
 - 改后：现跑 **13 条受管脚本**（12 条 `-pg` ＋ `recognition-chain-e2e.mjs`；`git grep -c 'node tests/integration/' -- .github/workflows/real-pg-integration.yml`=13）。逐条来源：
   `ocr-jobs-pg.mjs` ← `#331`（第 8 条）、`recognitions-pg.mjs` ← `#349`、`account-suspend-pg.mjs` ← `#353`（脚本缺陷已修）、
   `speech-pg.mjs` ← `#354`、`backup-purge-pg.mjs` ← `#360`（PGDG apt 装 `postgresql-17` 取 `initdb`/`pg_ctl`，故「不共享该二进制」的判断过期）、
-  `recognition-chain-e2e.mjs` ← `#375`（第 13 条）。另有在飞 PR #400 将把 `backup-copies-purge-pg.mjs` 接成第 14 条（**未合入前不记作事实**）。（2026-11-04 复核：#400 已合入 `e57b2f8c`，该脚本已接成第 14 条）
+  `recognition-chain-e2e.mjs` ← `#375`（第 13 条）。另有在飞 PR #400 将把 `backup-copies-purge-pg.mjs` 接成第 14 条（**未合入前不记作事实**）。（2026-11-04 复核：#400 已合入 `e57b2f8c`，该脚本已接成第 14 条，step 落在 `.github/workflows/real-pg-integration.yml` 第 627 行；「在飞／未合入前不记作事实」作废）
 - `development-progress.md`：按该文件自己的规则**不改 10-20 节读数**，改为在 10-20 节末加一行指路 + 新增「2026-10-21 快照」逐条订正。
 
 ---
