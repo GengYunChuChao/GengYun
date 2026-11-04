@@ -120,11 +120,11 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 | PR | 内容 | 迁移 | 可合并性 |
 | --- | --- | --- | --- |
 | #324 | 原生文字提问页与识别入口（#12／#28 页面，仍为草稿，未合入）（2026-11-04 复核：`#324` 已于 2026-10-24 合入 `d4a47206`（单父提交、标题「Reviewed PR #324」，落 `miniprogram/pages/qa/qa.js` 等 13 个文件）；末列「MERGEABLE（草稿）」同此作废：合入后不再有草稿态；原句「仍为草稿，未合入」作废） | 无 | MERGEABLE（草稿） |
-| #328 | 台账跟随订正：#325 遗留的 13 处过期行号与「未接作业源」失实表述（只动台账，未合入前不记作事实） | 无 | MERGEABLE |
+| #328 | 台账跟随订正：#325 遗留的 13 处过期行号与「未接作业源」失实表述（只动台账，未合入前不记作事实）（2026-11-04 复核：`#328` 已合入 `d6325e86`，标题关键词为「订正 #325 遗留的 13 处过期行号」与「未接作业源失实表述」，『未合入前不记作事实』的限定随之解除） | 无 | MERGEABLE |
 
 本轮已合入、不在上表：#278（0019 消息 PG）、#282（0020 feature_flags）、#279（0021 后台账号读面）、#296（0022 社区 PG）、#295（0023 备份副本域）、#320（#6 S3 兼容适配器真实代码路径测试）、#321～#322（转写／合成取消接线）、#323（0024 OCR 持久化，2026-10-20T12:05:48Z）、#325（台账订正，12:03:58Z）、#326（手机号判据，12:05:32Z）、#327（真库门禁第三批，12:11:28Z；`real-pg-integration.yml` 扩到 7 条真库脚本、`MANAGED_SCRIPTS` 7 条）。#248（#11 客户端切片）已于 2026-10-19 关闭、**未合入**，其内容不进 main。`main` 现有 24 个迁移、最大号 `0024_ocr_persistence.sql`。
 
-仍未接 CI 的 `-pg` 脚本（`git grep -n <name> -- .github/workflows` 均零命中）：`account-suspend-pg.mjs`（脚本自身缺陷，SCRAM 口令 28P01／角色已存在 42710，待 s16 修）、`backup-purge-pg.mjs`（需服务端 `initdb` 自起第二集群，CI 的 runner 与容器不共享该二进制）、`ocr-jobs-pg.mjs`（#323 新增，尚未接线）。
+仍未接 CI 的 `-pg` 脚本（`git grep -n <name> -- .github/workflows` 均零命中）：`account-suspend-pg.mjs`（脚本自身缺陷，SCRAM 口令 28P01／角色已存在 42710，待 s16 修）、`backup-purge-pg.mjs`（需服务端 `initdb` 自起第二集群，CI 的 runner 与容器不共享该二进制）、`ocr-jobs-pg.mjs`（#323 新增，尚未接线）。（2026-11-04 复核：本行「仍未接 CI」与「均零命中」两句均已不成立——`account-suspend-pg.mjs` 已在 real-pg-integration.yml 第 497 行执行（#353 接入，受管清单第 9 条）、`backup-purge-pg.mjs` 在第 610 行（#360 接入，当时称最后一条未接线脚本）、`ocr-jobs-pg.mjs` 在第 425 行（#331 接入，第 8 个受管脚本）；三条均已登记进 `MANAGED_SCRIPTS`（现共 40 条），括注内的未接线原因系当时记录，不再是现状）
 
 旧段登记的 `#282` 启动探测 fail-open 已随其合并修掉：现行装配走三态探测 `probeFeatureFlagsTable`（`services/api/src/admin/ops/flags-pg.ts:572-590`），`services/api/src/admin/ops/flag-gate.ts:519-525` 在 `unknown`（探测异常）时保留武装、下次判前重探，`services/api/src/admin/ops/flag-gate.ts:527-536` 只在 `missing`（确认未安装）时降级未武装；据此不再把该缺陷列为在飞阻塞。未合入 PR 的结论仍不当作既成事实。
 
@@ -160,8 +160,8 @@ Windows PowerShell 5.1 下 `ConvertFrom-Json` 的数组要写成 `@($x).Count`�
 | --- | --- | --- |
 | 开放 issue | 24 | `gh issue list --state open --limit 300 --json number` |
 | 已关闭 issue | 3（#1、#2、#3） | `gh issue list --state closed --limit 300 --json number` |
-| 累计合入 PR | 312 | `gh api 'search/issues?q=repo:GengYunChuChao/GengYun+type:pr+is:merged' --jq .total_count` |
-| 在飞 PR | 3（#400、#399 非草稿，#324 草稿；`mergeable` 均 `MERGEABLE`） | `gh pr list --state open --limit 300 --json number,isDraft,mergeable` |
+| 累计合入 PR | 312（2026-11-04 复核：该数为时点读数，随合入持续增长，原句保留为首次统计口径；未重算） | `gh api 'search/issues?q=repo:GengYunChuChao/GengYun+type:pr+is:merged' --jq .total_count` |
+| 在飞 PR | 3（#400、#399 非草稿，#324 草稿；`mergeable` 均 `MERGEABLE`）（2026-11-04 复核：`#400`／`#399`／`#324` 均已合入（`e57b2f8c`／`805b15ce`／`d4a47206`），『在飞』与「草稿」两处读数不再成立；当日实际在飞 PR 见 PR 列表） | `gh pr list --state open --limit 300 --json number,isDraft,mergeable` |
 | 提交总数／自 10-20 基线新增 | 366／70 | `git rev-list --count HEAD`；`git rev-list --count 4122976..HEAD` |
 | 迁移文件数／最大号 | 26／`0026_speech_persistence.sql`（含 `0025_recognitions_persistence.sql`） | `(Get-ChildItem services/api/db/migrations/*.sql).Count` |
 
