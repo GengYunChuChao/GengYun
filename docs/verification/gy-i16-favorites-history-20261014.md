@@ -330,7 +330,7 @@ const historyService   = config.executionMode === 'real' ? null : createHistoryS
    ⇒ `real` 模式整域 503；**不宣称**收藏/历史已端到端可用。
 4. **引用可用性端口：该日（2026-10-14）状态为未接线；其后 #167 已接线** —— 本记录成文当日，生产装配下所有收藏/历史行的 `reference_state` 恒为 `unavailable`；**其后 #167 已接线**（`createWiredVisibilityPort`；装配点 `services/api/src/app.ts` 的 `defaultVisibility`；可用性按 `/knowledge` 公开读面**每次读取重新派生**）⇒ 该结论**仅描述本记录当日**，**#167 之后的实际可见性本记录未复核**。
    本片用**明确标注的可控替身**证明"每次读取都重新派生、且 fail-closed"；真实可见性核验中，
-   `species`/`herbicide`/`scheme` → `/knowledge` 公开读面已由 #167 接线；**识别/OCR 侧的当前可见性接入仍未接线**（#167 改动面仅 `services/api/src/app.ts` 与其单测）。
+   `species`/`herbicide`/`scheme` → `/knowledge` 公开读面已由 #167 接线；**识别/OCR 侧的当前可见性接入仍未接线**（#167 改动面仅 `services/api/src/app.ts` 与其单测）。（2026-11-04 复核：识别/OCR 侧**已**接线——`services/api/src/targetref/visibility-wiring.ts` 的 `createTargetVisibilityWiring` 认领 `recognition`/`ocr` 两类 target_ref，于 `services/api/src/app.ts` 第 1932 行接入 `defaultVisibility`，落地提交为 #802 `70ae6f1d`，「识别/OCR 侧的当前可见性接入仍未接线」作废；前半 `species`/`herbicide`/`scheme` 经 #167 接线的记述与此行末句「#167 改动面仅 `services/api/src/app.ts` 与其单测」仍成立）
 5. **识别/OCR → 历史的写入接线属跨线（未做）**：那一句调用要加在 `recognitions/**`／`ocr/**`（#9/#10 的文件），
    本片**不改他人已合并实现**，只交付**内部创建口**（签名见 §6.1）与其测试。
 6. **`deleteHistory` 的关联删除级联未接线**（属 GY-I19／跨线）：本片只删除历史行本身，
