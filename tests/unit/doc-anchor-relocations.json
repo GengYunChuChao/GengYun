@@ -2733,6 +2733,38 @@
   "reason": "陈旧锚点重锚（目标文件本提交未改）：`:2218-2264` 现在是别的装配块结尾（`:2218` 是 `},`、`:2264` 是 `: {}),`）；文档所说「生产装配有池即无条件注入四个 conditional 域」在 `:2272-2286`（`:2272` 注释 + 四个 store 依次 `:2276`/`:2278`/`:2282`/`:2286`），故重锚到 2272-2286。"
 },
 {
+  "doc": "docs/verification/gy-r28-deploy-sql-gate-20261021.md",
+  "line": 62,
+  "target": "deploy/postgres-cvm/provision-db.sh",
+  "from": 272,
+  "fromEnd": 275,
+  "to": 282,
+  "toEnd": 287,
+  "reason": "陈旧锚点重锚（目标文件本提交未改）：`:272-275` 现在是 `--with-cli-groups` 之前的角色组列表尾部与「GROUPS 命名返修」注释；`if [[ \"$WITH_CLI_GROUPS\" -eq 1 ]]; then` ＋ 两个 group 文件在 `:282-287`，故重锚到 282-287；同时把「3 组」订正为「2 组」（脚本 `:293` 自述 `egress_ledger.sql` 当前不被本脚本执行）。"
+},
+{
+  "doc": "docs/verification/gy-r31-retryable-guard-20261022.md",
+  "line": 115,
+  "target": "services/api/src/speech/store-pg.ts",
+  "from": 122,
+  "to": 126,
+  "toEnd": 129,
+  "kind": "correction",
+  "symbol": "retryable",
+  "reason": "锚点从单行改成区间（本提交把「分档注释」指到注释块本身）：`:122` 现在是 `}`（`typeof code !== 'string'` 分支的收尾），分档注释块在 `:126-129`，判定调用在 `:130` 的 `throw new ApiError('PROVIDER_UNAVAILABLE', …, { retryable: isTransientDatabaseError(error) })`。"
+},
+{
+  "doc": "docs/architecture/ai-ops-spec-status.md",
+  "line": 172,
+  "target": "services/api/src/moderation/service.ts",
+  "from": 366,
+  "to": 421,
+  "toEnd": 427,
+  "kind": "correction",
+  "symbol": "noPortsForReal",
+  "reason": "锚点从单行改成区间（本提交把「原文」指到承载该句的函数）：`:366` 现在是 `assertTargetRef` 里的 `if`，与「tms/ims 未授权、BizType 未核验」无关；该原文在 `:421-427` 的 `noPortsForReal()`，BizType 在 `:424` 的提示串里。"
+},
+{
   "doc": "docs/verification/gy-i16-i17-deletion-cascade-20261021.md",
   "line": 23,
   "target": "user-data-deletion.ts",

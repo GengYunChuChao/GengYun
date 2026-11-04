@@ -19,7 +19,7 @@
 | 层／目录 | 技术与职责 | 当前边界 |
 | --- | --- | --- |
 | `miniprogram/` | WXML／WXSS／JavaScript；五 Tab、登录与参考页面 | 共享 runtime 默认关闭网络；原生工程不经 Vite 构建 |
-| `apps/admin/` | Vue 3.5.43／Vite 7.3.6；独立后台 | 有鉴权框架，完整资料／任务管理待接线 |
+| `apps/admin/` | Vue 3.5.43／Vite 7.3.6；独立后台 | 有鉴权框架，完整资料／任务管理待接线（**2026-11-04 复核：后半句已过期** —— 资料面的 `SourcesView.vue`、`KnowledgeAdminView.vue`、`CategoriesView.vue`、`PostTakedownView.vue` 都有写按钮并打真端点；任务面的 `JobsView.vue` 已读 `GET /admin/jobs` 并在行内发 `POST /admin/jobs/{id}/cancel`。「有鉴权框架」仍成立，且已是真会话，见 `apps/admin/src/auth/session.ts`） |
 | `services/api/` | Node 24.16.0／TypeScript 5.9.3／Fastify 5.12.5 | 已装配健康、公共科普预览、用户／后台鉴权和受限授权路由 |
 | `services/api/db/` | PostgreSQL 17；版本迁移与最小权限角色 | PG17.11 有组件验证；不能据此推定全库、云部署和恢复完成 |
 | `packages/` | 契约、资料、隐私、媒体、评估等共享组件 | 参考组件与实际 HTTP 服务分开；小程序不打包服务端 SDK |
