@@ -115,11 +115,11 @@
 
 **组 E：注销回执 1 条** —— `getDeletionReceipt`
 - 原文摘要：「回执只投影**进程内**台账，无持久化 ⇒ real 整域 503」
-- 现况：把两件事混了。受理行已落 PG（`services/api/src/app.ts:1462-1465` `createPostgresDeletionRequestStore`，迁移 `0016`），回执投影也来自 `wired.deletion.receipt(id)`；real 模式的 503 来自**刻意的 `available: executionMode !== 'real'` 门**（`:1567-1571`），注释写明「真实执行链路尚未实现」。真正仍在进程内的只有 bearer 台账（`:1566` `createDeletionReceiptRegistry`）。
+- 现况：把两件事混了。受理行已落 PG（原记 `services/api/src/app.ts:1462-1465` `createPostgresDeletionRequestStore`，迁移 `0016`），回执投影也来自 `wired.deletion.receipt(id)`；real 模式的 503 原记来自**刻意的 `available: executionMode !== 'real'` 门**（原记 `:1567-1571`，当时注释写明「真实执行链路尚未实现」）。（2026-11-04 复核：该「整域门」已被 GY-R74 的**按域降级**取代——`available` 今天是 `config.executionMode !== 'real' || deletionAcceptanceDurable`（`services/api/src/app.ts` 第 2339 行），`deletionAcceptanceDurable` = 受理台账非空 ＋ 连接池非空 ＋ `pool.connect` 可用（同文件第 2332-2333 行）⇒ `real` + 真库时受理开放（POST 202、回执可读），唯一保留的 503 是「`real` 但无真库」。bearer 台账也不再只有进程内一份：有池且受理已接线时走迁移 0038 的 `createPostgresDeletionReceiptRegistry`，仅无池时才退回原记的 `createDeletionReceiptRegistry`（原记 `:1566`）。）
 
 **组 F：契约计数 1 条** —— `getMedia`
 - 原文摘要：「冻结契约（**85 条路径 / 112 条 operation**）内没有…」
-- 现况：`packages/contracts/openapi.json` 实测 **86 paths / 113 operation**。数字过期（`getMedia` 本身「无持久化实现」仍真，`#419` 未合）。
+- 现况：`packages/contracts/openapi.json` 实测 **86 paths / 113 operation**。数字过期（`getMedia` 本身「无持久化实现」仍真，`#419` 未合）。（2026-11-04 复核：「`getMedia` 无持久化实现」与「`#419` 未合」两句均已过期——`#419` 已合（`e5c38a2f`），媒体持久化 PG 仓储落在 `services/api/src/media/store-pg.ts`（`createPostgresMediaStore`，`persistent: true`，`getMedia` 读 `public.media`）；装配点在 `services/api/src/app.ts` 第 1303-1306 行，`real` ＋ 池非空 ＋ `MEDIA_OBJECT_REF_KEY` 非空才接 PG，否则退回内存 store；`real` ＋ 有池但缺键时整域 fail-closed 503（同文件第 1807-1810 行 `mediaPersistenceRefusal` → `createFailClosedMediaService`）。）
 
 **组 G：导出 1 条** —— `listExports`
 - 原文摘要：「导出与注销未实现（GY-I19）」
@@ -203,7 +203,7 @@ grep -cE '真正还缺代码的只[有]|真正缺代码只[有]' "$F"          #
 1. **#8 的「≥100 组」其实已经超额**：`tests/reference/_i08-scenarios.mjs` 有 **159** 个场景 id（首 `LIM-001`、末 `MRG-040`），而台账/issue 文案一直按「100 组」表述。判据 ① 已满足，卡的是真实数据而不是数量。
 2. **`getMedia` 的 blocker 里「85 条路径 / 112 条 operation」是过期计数**：实测 `packages/contracts/openapi.json` 是 86 paths / 113 operation。
 3. **`listExports` 的 blocker 把「导出与注销」捆在一起**，而注销这条腿已经实现（受理行落 PG、路由已装配）；只有导出腿仍空。
-4. **#19 的 real 模式 503 不是「没实现」，是刻意门**：`services/api/src/app.ts:1558-1565` 的注释直接写明「real 模式整域不接线——真实执行链路尚未实现」，`available: executionMode !== 'real'`。台账把「刻意门」写成了「无持久化」。
+4. **#19 的 real 模式 503 不是「没实现」，是刻意门**：原记 `services/api/src/app.ts:1558-1565` 的注释直接写明「real 模式整域不接线——真实执行链路尚未实现」，`available: executionMode !== 'real'`。台账把「刻意门」写成了「无持久化」。（2026-11-04 复核：该「整域门」已被 GY-R74 的**按域降级**取代——`available` 现为 `config.executionMode !== 'real' || deletionAcceptanceDurable`（`services/api/src/app.ts` 第 2339 行），`deletionAcceptanceDurable` = 受理台账非空 ＋ 连接池非空 ＋ `pool.connect` 可用（同文件第 2332-2333 行）；`real` + 真库即受理开放（POST 202、回执可读），唯一保留的 503 是「`real` 但无真库」。「不是没实现」这个判断仍成立，但门的范围已从整域收敛到「`real` 但无真库」这一种。）
 5. **`listFlagAuditEvents` 的 blocker 不成立**（组 H）：四件都在，剩下的「人审隔离位」是 AdminJob 的字段问题。
 6. **#13 的「一行注入替身即到 200」不等于验收可过**：`services/api/src/tts/media.ts:141-143` 连替身端口都拒 `substitute===false` 的真实产物，所以 real 链的产物存储是真缺口，不是配置问题。
 7. **`docs/verification` 里没有任何真机页**：#23 的证据现状不是「过期」而是「从未存在」。
