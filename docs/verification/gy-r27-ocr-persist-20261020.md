@@ -8,7 +8,7 @@
   迁移 `0024_ocr_persistence.sql` 与其 rollback，并在 `real` + 有连接池时接线。**真库实测：写入 → 关闭全部连接（后端进程归零）→
   新 Pool／新 store／新 app → 以及另一个新进程 → 任务与记录按指纹逐字节仍在**；`real + 无池` 仍如实用内存 store 并回报 `persistent=false`。
 - 边界（先声明，后文逐项展开）：本片的证据在 **store 层 + 迁移层 + `app.ocrService` 读面**。HTTP 面的"重启不丢"**未取得**——
-  `real` 模式真实 OCR 提供者/媒体端口未接线，`POST /ocr` 在受理前即 503，无法经 HTTP 建任务（见 §9）。
+  `real` 模式真实 OCR 提供者/媒体端口未接线，`POST /ocr` 在受理前即 503，无法经 HTTP 建任务（见 §9）。（2026-11-04 复核：媒体端口已接真——`createOcrMediaPort` 在 `real` 下按 wiring 落 `createObjectStoreOcrMediaPort`（services/api/src/ocr/media.ts:223），装配层又把既有对象存储经 `mediaWiring: ocrImageMedia` 转进 OCR 路由（services/api/src/app.ts:2547）；今天 `POST /ocr` 仍可能 503 的只剩「真实 OCR 提供者未配已审凭据」这道闸门。）
 
 ---
 
