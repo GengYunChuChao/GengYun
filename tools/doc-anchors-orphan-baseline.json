@@ -338,6 +338,12 @@
       "accept": 0,
       "orphans": 3493,
       "outsideRed": 117
+    },
+    {
+      "why": "R78 第 9 轮：gy-r59 保留/备份/第三方对照页第 149 行两个表格单元的裸锚点补上显式路径前缀（数字未动）：:109／:117（第二格）与第三格的 :117 改写为 tools/verify-purge-schedule.mjs:109／:117／:117，原 no-explicit-in-block 孤儿不再成立，故删对应 3 条。第三格 :354、:368 仍保持裸锚点：:354 补 s4 前缀会落到 s4 的 E3 行（语义不符，另开一片）；:368 补 s4 前缀虽语义正确，但同行裸锚点按行内最近前置路径继承，位移恒等闸门会把它读成 tools 的 368→117 改号（需 registry 或工具侧另开一片）",
+      "accept": 0,
+      "orphans": 3490,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -387,9 +393,6 @@
     "docs/architecture/gy-i19-user-backup-copies-design.md|:0|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:00|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:05|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:109|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:117|no-explicit-in-block",
-    "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:117|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:16|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:16|no-explicit-in-block",
     "docs/architecture/gy-r59-retention-backup-thirdparty-map.md|:17|no-explicit-in-block",
