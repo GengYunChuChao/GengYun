@@ -90,8 +90,8 @@
 
 ### 4.2 未落地（这是「只有契约」的那一半）——订正 2026-10-31／基线 `8da1aeb1`：读侧已装配，未落地的只剩写侧
 
-- **应用侧已非零行**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：**应用侧零行**——`git grep -n third_party_deletions -- services/api/src` = 0 行，`git grep -nE "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = 0 行 ⇒ **无端口、无装配、无调用方**）：复算前者 **5 行 / 1 文件**（全在 `services/api/src/privacy/third-party-deletion-pg.ts`，对表零 DML/SELECT）、后者 **15 行**；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口、实现、`services/api/src/privacy/user-data-deletion.ts` 里一句「本文件用不到」注释）⇒ **读侧端口已装配（`services/api/src/app.ts:2039`）、适配器已登记、回执投影已接到回执**；写侧调用者在 2026-11-03（`#860`）已接上唯一入口 `services/api/src/privacy/third-party-deletion-dispatch.ts`，但生产**零写入**（无收件人来源 ⇒ `RECIPIENTS_UNWIRED`、无凭据 ⇒ `ADAPTER_UNAVAILABLE`）。
-- 运行时准备的两个模块**都已装配**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：唯一的运行时准备是两个未装配的模块）：`services/api/src/privacy/third-party-deletion-adapter.ts`（注入式 `fetch`，无凭据或无传输即 `OBJECT_UNAVAILABLE` fail-closed）只**登记**进删除注册表、**不 dispatch**（`services/api/src/app.ts:2046` 建 wiring、`services/api/src/app.ts:2303` 展开进注册表）；`services/api/src/privacy/third-party-deletion-projection.ts` **已接进回执**（`services/api/src/routes/account-deletion.ts:152` → `services/api/src/routes/account-deletion.ts:166` 算出 `third_party_state`），不再只被单测调用。
+- **应用侧已非零行**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：**应用侧零行**——`git grep -n third_party_deletions -- services/api/src` = 0 行，`git grep -nE "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = 0 行 ⇒ **无端口、无装配、无调用方**）：复算前者 **5 行 / 1 文件**（全在 `services/api/src/privacy/third-party-deletion-pg.ts`，对表零 DML/SELECT）、后者 **15 行**；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口、实现、`services/api/src/privacy/user-data-deletion.ts` 里一句「本文件用不到」注释）⇒ **读侧端口已装配（`services/api/src/app.ts:2039`）、适配器已登记、回执投影已接到回执**；写侧调用者在 2026-11-03（`#860`）已接上唯一入口 `services/api/src/privacy/third-party-deletion-dispatch.ts`，但生产**零写入**（无收件人来源 ⇒ `RECIPIENTS_UNWIRED`、无凭据 ⇒ `ADAPTER_UNAVAILABLE`）。（2026-11-04 复核实测已变：`third_party_deletions` **6 行 / 2 文件**、`subscribeThirdPartyDeletion` **8 行 / 3 文件**；写侧调用者已接、生产写入仍为零，故上文「5 行 / 1 文件」「3 行 ⇒ 零调用者」只作历史读数）
+- 运行时准备的两个模块**都已装配**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：唯一的运行时准备是两个未装配的模块）：`services/api/src/privacy/third-party-deletion-adapter.ts`（注入式 `fetch`，无凭据或无传输即 `OBJECT_UNAVAILABLE` fail-closed）只**登记**进删除注册表、**不 dispatch**（2026-11-04 复核：此半句已过期——注销链 `executeHandlers` 今日会 `await thirdPartyDispatch.dispatch({...})`；仍成立的只有「生产零写入」，无收件人来源 ⇒ `RECIPIENTS_UNWIRED`）（`services/api/src/app.ts:2046` 建 wiring、`services/api/src/app.ts:2303` 展开进注册表）；`services/api/src/privacy/third-party-deletion-projection.ts` **已接进回执**（`services/api/src/routes/account-deletion.ts:152` → `services/api/src/routes/account-deletion.ts:166` 算出 `third_party_state`），不再只被单测调用。
 - 内存协议侧有请求/确认/失败/不支持四条（`packages/privacy/deletion.mjs:210`／`:236`／`:252`／`:261`）：**读侧已接到 0044 的读函数**，**写函数 `record_third_party_deletion` 已于 2026-11-03（GY-R73）接上唯一调用者**（写侧在 `services/api/src/privacy/third-party-deletion-dispatch.ts`，由注销链 `executeHandlers()` 调；订正 2026-10-31／基线 `8da1aeb1` 那次「写函数仍零调用者」的结论至此不再成立，读侧那半仍成立）。
 - 迁移自己在 `services/api/db/migrations/0044_third_party_deletion_persistence.sql:4` 写明「**不接电**：`services/api/src/**` 一行未动」——那是迁移落盘时点（2026-10-26）的自陈：读侧 2026-10-28 起已接通（见上一条），写侧至今仍不加行（订正 2026-10-31／基线 `8da1aeb1`）。
 - 已知限制（P1 刻意）：`services/api/db/migrations/0044_third_party_deletion_persistence.sql:26` 起——签名只有一个 `p_state`，所以 `online_status` 与 `backup_status` **两列同时写同一个状态**；两面各自推进要等 P2 加 `p_phase`。
@@ -123,7 +123,7 @@
 
 ### 半落地（契约或脚本在，没人跑／没接 CI／没接电）
 
-1. **第三方删除的写侧**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：第三方删除应用侧——端口无、装配无、调用方无（§4.2）。库层已能记住，运行时取不到）：读侧端口已装配、回执投影已接，缺的是**写侧**——`subscribeThirdPartyDeletion` 零调用者，库层能记住但运行面没有写入口（§4.2）。
+1. **第三方删除的写侧**（订正 2026-10-31／基线 `8da1aeb1`；本行原文：第三方删除应用侧——端口无、装配无、调用方无（§4.2）。库层已能记住，运行时取不到）：读侧端口已装配、回执投影已接，缺的是**写侧**——`subscribeThirdPartyDeletion` 零调用者，库层能记住但运行面没有写入口（§4.2）。（2026-11-04 复核：**调用已接、写入仍为零**——`services/api/src/privacy/third-party-deletion-dispatch.ts` 已有 `await writePort.subscribeThirdPartyDeletion(payload)`，唯一调用点在 `services/api/src/privacy/user-data-deletion.ts` 的 `executeHandlers` 内（`await thirdPartyDispatch.dispatch({...})`）；生产仍无人传收件人来源 ⇒ `RECIPIENTS_UNWIRED`，一条也不写）
 2. **物理/逻辑备份 + 恢复演练**：脚本自陈未在真实实例执行过，不在 CI、无调度单元（§3.1）。
 3. **调度运行侧**：单元齐全、门禁绿，但目标宿主上没跑过、无 `systemctl list-timers` / `journalctl` 读数（`deploy/purge-schedule/README.md:235`）。
 4. **三条真库臂已在 workflow 里**（2026-10-31 复算：`media-row-purge-pg.mjs` 在 `real-pg-integration.yml` 第 1234 行、`recognitions-speech-purge-pg.mjs` 第 1174 行、`retention-clock-drill-pg.mjs` 第 1201 行）；S4 E2 当年「命中 0 行」的结论已过期，本轮改判（见 `docs/architecture/s4-data-traceability.md` 的 E2 行）。
@@ -156,6 +156,6 @@ node tools/verify-doc-anchors.mjs --strict     # 行号不腐烂；本页新增�
 node tools/verify-contract-status.mjs          # 契约台账与装配一致性
 npm run test:docs                              # Markdown 链接与表格、研究记录结构
 npm run verify:purge-schedule                  # 三对单元 / OnCalendar / ExecStart / 必需清单 10 项判据
-git grep -n third_party_deletions -- services/api/src        # 期望 5 行 / 1 文件（全在读侧端口；写侧订阅仍零调用者）
+git grep -n third_party_deletions -- services/api/src        # 旧期望 5 行 / 1 文件（2026-11-04 复核实测 6 行 / 2 文件：读侧端口 + 写侧 dispatch 注记；subscribeThirdPartyDeletion 实测 8 行 / 3 文件，调用者已在，生产写入仍为零）
 git grep -nE "restore-drill|backup-postgres" -- .github       # 期望 0 行（备份/演练不在 CI）
 ```

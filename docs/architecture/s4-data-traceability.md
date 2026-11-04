@@ -77,7 +77,7 @@
 | D08 | 注销即时撤会话角色、停新外发、分对象删除任务 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/routes/account-deletion.ts:239` | GY-R74 起 `real` + 真库可受理（202）；30 日备份介质逐用户清除、第三方完成证据仍不可用（按域 `blocked`/`unsupported`） |
 | D09 | 在线 7 日、备份 30 日、恢复重放 | 部分 | `docs/implementation-requirements.md:278` | `services/api/src/privacy/deletion-aging.ts:60` | 恢复重放未装配；无生产安装证据 |
 | D10 | 帖评保留、去身份、已注销用户、不可反查 | 部分 | `docs/implementation-requirements.md:279` | `services/api/src/community/authors.ts:112` | 进程内 Map（`services/api/src/community/authors.ts:92`）仍以 userId 为键可反查 |
-| D11 | 保留正文脱敏、不能脱敏的媒体隐藏/移除 | 部分 | `docs/implementation-requirements.md:280` | `services/api/src/community/purge.ts:24` | 注销时媒体批量清除未接线 |
+| D11 | 保留正文脱敏、不能脱敏的媒体隐藏/移除 | 部分 | `docs/implementation-requirements.md:280` | `services/api/src/community/purge.ts:24` | 注销时媒体批量清除未接线（2026-11-04 复核：**此句已过期**——`services/api/src/media/store-pg.ts` 的 `purgeOwnedMedia(ownerId)` 今日调 `SELECT public.purge_owner_media(...)`；`services/api/src/privacy/user-data-deletion.ts` 的 `MediaPurgePort`（`purgeOwnedMedia`）已由注销装配注入（识别域注册处传 `input.mediaStore`），有效闭集已是四域 + 条件追加共 9 项。同源另见本页下文「G2 注销时媒体本体批量清除」段与 §7.1「G2 未接线」行，那两处本轮未改） |
 | D12 | 外发记录与接收方门禁 | 已实现 | `docs/implementation-requirements.md:281` | `services/api/src/privacy/ledger-pg.ts:451` | 真实外发通路未接，真库零 sent 记录 |
 | D13 | 第三方删除请求/完成/失败与证据 | 未实现 | `docs/implementation-requirements.md:281` | `services/api/db/migrations/0003_privacy_consent.sql:185` | 写侧调度器已在（`services/api/src/privacy/third-party-deletion-dispatch.ts`）但生产零写入：无凭据 ⇒ `ADAPTER_UNAVAILABLE`、零接收方 ⇒ `RECIPIENTS_UNWIRED`，回执 `unsupported`，无一条完成证据 |
 | D14 | 训练单独授权、撤回 7 日清理衍生物 | 已搁置 | `docs/implementation-requirements.md:282` | 无（产品裁定首版不做） | 无缺口；开启训练即降级为未实现 |
@@ -109,7 +109,7 @@
   接收方门禁强制 `no_training_verified` 见 `packages/privacy/ledger.mjs:205`，授权落库要求两类证据引用见
   `services/api/src/privacy/grant-pg.ts:63`。
 - **证据**：契约 `packages/contracts/openapi.json:1378`（`GET /me/exports`；2026-10-28 合并复核：#707 删掉 540 行错误响应后本锚由 `:1474` 落到 `:1378`，按符号 `"/me/exports"` 复取）；装配 `services/api/src/app.ts:2489`（`registerExportRoutes(app, config, pool, guards)`；2026-10-28 复核纠正：原引 2238 行实测是应用时钟注释段，按符号 `registerExportRoutes` 重锚）。
-- **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接。账本装配在 `services/api/src/app.ts:1007`（`egressPoolUsable` 才建 `createPostgresExportLedger`），同段 `//` 装配注释自述：real 模式
+- **缺口**：**证据缺口，不是能力缺口**——真实外发传输未接。账本装配在 `services/api/src/app.ts:1007`（`egressPoolUsable` 才建 `createPostgresExportLedger`）（2026-11-04 复核：**此锚错位**——该行号今日只是 `egressPoolUsable` 的定义，真正建账本的是它之后第 1012 行的 `createPostgresExportLedger`；按纪律不改锚，只在此说明），同段 `//` 装配注释自述：real 模式
   在任何账本变更**之前** 503（零 `sent` 记录），替身/演示模式**不记账**（注释行按 `--symbol=strict` 不能落锚点，故只给同段代码行）。因此真库上取不到一条真实外发记录，
   「记录得住」这件事只有结构与读面证据，没有一条真实数据流过。这一条不把 D12 降级：能力（表、写面、读面、
   门禁）都在生产装配路径上；缺的是传输这一侧的接线，属外发域而非记录域。
@@ -366,7 +366,7 @@
 | D13 写侧调度 | `git grep -n subscribeThirdPartyDeletion -- services/api/src` | 3 行（端口接口、端口实现、一处注释）⇒ 零调用者；2026-10-28 复核新增 |
 | G2 未接线 | `git grep -n purge_owner_media -- services/api/src` | 0 行 |
 | G3 调度清单 | `node tools/verify-purge-schedule.mjs` | `PASS：10 项判据全部满足`，必需清单 **4/4**（`tools/verify-purge-schedule.mjs:117`；`.service`／`.timer` 各 4 个；旧文误引 `:109` 实为 `DEFAULT_SCHEDULE_DIR`）。2026-10-26 复核后 G3 已撤出缺口列；2026-11-04 复核：清单已是 4 项（新增 `purge:media-objects`） |
-| D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'` |
+| D08 模式门 | `git grep -n "available: config.executionMode" -- services/api/src/app.ts` | 1 行，`!== 'real'`（2026-11-04 复核：仍是 1 行，但判据已不是单看 `real`——该表达式今日为 `!== 'real' \|\| deletionAcceptanceDurable`） |
 | D07 单条删除面 | `git grep -n "app.delete(" -- services/api/src/routes` | **15** 条（13 条单条删除 + 1 条注销取消 + 1 条后台撤销管理员 scope；2026-10-28 复核由 14 更正为 15） |
 | D08 闭集 | `node --test tests/unit/deletion-registration-coverage.test.mjs` | 全绿；改闭集必须同步改常量 |
 
