@@ -163,10 +163,10 @@
 - **实现**：`services/api/src/routes/**` 共 **15** 条 `app.delete`（2026-10-28 复核：原记 14，漏了第 15 条），其中 13 条是「本人删单条资源」：社区帖/评/赞 4 条
   （`services/api/src/routes/community.ts:242` 起）、授权撤回（`services/api/src/routes/consents.ts:64`）、
   会话与轮次（`services/api/src/routes/conversations.ts:165`、`:202`）、收藏 `services/api/src/routes/favorites.ts:109`、
-  历史 `services/api/src/routes/history.ts:88`、媒体 `services/api/src/routes/media.ts:278`、
+  历史 `services/api/src/routes/history.ts:103`、媒体 `services/api/src/routes/media.ts:278`、
   识别 `services/api/src/routes/recognitions.ts:148`、语音 `services/api/src/routes/speech.ts:256`、
   OCR `services/api/src/routes/ocr.ts:310`；第 14 条注销取消（`services/api/src/routes/account-deletion.ts:358`）、第 15 条后台撤销管理员 scope（`services/api/src/routes/admin.ts:417`）既非本人删单条也非注销取消，**登记但不计入用户面删除面 13 条**（口径写死：用户面删除面 = 13 条本人单条删除 + 1 条注销取消；后台管理面单列），否则下轮 `git grep "app.delete("` 的读数又对不上。
-- **证据**：历史删除的级联处置有非契约披露头 `X-GY-Cascade`（`services/api/src/routes/history.ts:103`），
+- **证据**：历史删除的级联处置有非契约披露头 `X-GY-Cascade`（`services/api/src/routes/history.ts:118`），
   只区分 `partial`/`failed`/`unwired`，不声称外部清理已完成。
 - **缺口**：三条。① **消息没有单条删除**：`services/api/src/routes/messages.ts:43` 起只有 GET、GET、PUT；
   ② 删除深度不一致——识别/语音/OCR 只是把行标成 `deleted: true`
@@ -266,9 +266,9 @@
   `:416`（GRANT EXECUTE 给 `gengyun_api_runtime`，该表对运行时仍 `forbidden`，见 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql:1134`），
   函数形状断言在同文件 `:1803`；真库臂在 `tests/integration/third-party-deletion-pg.mjs:1`（自述 P1，子判据 E-S4-P1-A..E 见 `:27`），
   由 `.github/workflows/real-pg-integration.yml:253` 在 CI 跑（PG 17.11、现建空库；原页引 `:203` 实测是 message-events 臂的注释）。
-- **证据（2026-10-26 起；2026-10-28 复核重取）**：`git grep -n third_party_deletions -- services/api/src` = 5 行 / 1 文件（全在端口
-  `privacy/third-party-deletion-pg.ts`，对表零 DML/SELECT）；`git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = **15 行**（原页记「0 行」；
-  实测 `:158/:162/:166/:167/:336/:339/:562/:567/:1991/:1998/:2002/:2004/:2009/:2538/:2547`）；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口 `third-party-deletion-pg.ts:141`、实现 `:312`、`privacy/user-data-deletion.ts` 一处注释）⇒ **写侧零调用者**。
+- **证据（2026-10-26 起；2026-10-28 复核重取）**：`git grep -n third_party_deletions -- services/api/src` = 6 行 / 2 文件（端口
+  `privacy/third-party-deletion-pg.ts` 5 行（第 8／14／59／79／142 行）、写侧调度 `privacy/third-party-deletion-dispatch.ts` 1 行注释（第 8 行），两者对表零 DML/SELECT）；`git grep -n "ThirdPartyDeletion|third-party-deletion" -- services/api/src/app.ts` = **15 行**（原页记「0 行」；
+  实测 `:158/:162/:166/:167/:336/:339/:562/:567/:1991/:1998/:2002/:2004/:2009/:2538/:2547`）；`git grep -n subscribeThirdPartyDeletion -- services/api/src` = **3 行**（接口 `third-party-deletion-pg.ts:141`、实现 `:312`、`privacy/user-data-deletion.ts` 一处注释）⇒ **写侧零调用者**（2026-11-05 复核改判：该 grep 今天是 **8 行 / 3 文件**——`privacy/third-party-deletion-dispatch.ts` 四行、端口接口与实现 `privacy/third-party-deletion-pg.ts` 两行（第 141／312 行）、`privacy/user-data-deletion.ts` 两行注释；唯一生产调用者在 `privacy/third-party-deletion-dispatch.ts:544` `await writePort.subscribeThirdPartyDeletion(payload);`（PR #860，`7a25d900`），故「写侧零调用者」自 GY-R73 起不成立，本行「3 行」为 2026-10-28 旧读数，今日不得再引）。
 - **缺口（2026-10-28 复核重写：原三条里两条已被代码证伪）**：① ~~端口未装配~~ 不成立——读侧装配在 `services/api/src/app.ts:2035`；② ~~适配器未在 `app.ts` 装配~~
   不成立——装配在 `services/api/src/app.ts:2046`（仅注入、不 dispatch）；③ ~~投影没接进回执~~ 不成立——已接在 `services/api/src/routes/account-deletion.ts:152`→`:154`。
   **改判后的真实缺口**（2026-11-03 两次订正：GY-R73 接上写入口、GY-R74 打开受理门，原判两句都已作废，剩下的只是「无一条真实写证据」）：
