@@ -69,8 +69,8 @@
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
 | 消息列表 | `GET /messages` | 游客拦截 + 空态 | [GY-I17](https://github.com/GengYunChuChao/GengYun/issues/17)（2026-11-04 复核：中列「游客拦截 + 空态」已过期——列表已装配并可渲染：服务端 `app.get` 注册在 `services/api/src/routes/messages.ts` 第 43 行（`preHandler` 仍是 `guards.requireUser`，「游客拦截」这半仍成立），第 50 行调 `ready(request).listMessages(...)`；服务实现是 `services/api/src/messages/service.ts` 第 303 行的 `listMessages`（只列本人、`(created_at DESC, id DESC)` 稳定排序＋HMAC 游标），装配点是 `services/api/src/app.ts` 第 2616 行的 `registerMessageRoutes`，实例在第 903 行按执行模式构造。客户端 `miniprogram/utils/messages-api.js` 第 222 行的 `listMessages` 真打 `GET /messages` 并逐字段核对封套，`miniprogram/pages/messages/messages.js` 第 145 行取回后 `setData` 出 `items`／`visibleItems`，`miniprogram/pages/messages/messages.wxml` 第 95 行 `wx:for="{{visibleItems}}"` 逐条渲染；空态仍在（第 150 行 `status: items.length ? 'ready' : 'empty'`）。仍缺：`real` 模式无连接池时服务实例为 `null`（`services/api/src/app.ts` 第 904 行），整域 503 `PROVIDER_UNAVAILABLE`，页面走错误态而非空态（第 126 行 `_fail` 置 `status: 'error'` 并带 `errorCode`）） |
-| 未读数 | `GET /messages/unread-count` | 未实现 | GY-I17 |
-| 标记已读 | `PUT /messages/{id}/read` | 未实现 | GY-I17 |
+| 未读数 | `GET /messages/unread-count` | 未实现（**2026-11-04 复核：中列「未实现」已过期** —— 服务端已注册该端点：`services/api/src/routes/messages.ts` 第 53 行注册 `GET /messages/unread-count`，处理函数调 `getUnreadCount`（`services/api/src/messages/service.ts` 第 350 行）；小程序侧 `miniprogram/utils/messages-api.js` 第 233 行已发该请求，`miniprogram/pages/messages/messages.js` 与 `miniprogram/custom-tab-bar/index.js` 都读它渲染未读数） | GY-I17 |
+| 标记已读 | `PUT /messages/{id}/read` | 未实现（**2026-11-04 复核：中列「未实现」已过期** —— 服务端 `services/api/src/routes/messages.ts` 第 59 行已注册 `PUT /messages/:id/read`，处理函数调 `markMessageRead`（实现见 `services/api/src/messages/service.ts` 第 365 行）；小程序侧 `miniprogram/utils/messages-api.js` 第 244 行已发 `send('PUT', '/messages/' + encodeURIComponent(id) + '/read', …)`，`miniprogram/pages/messages/messages.js` 第 385 行调它把消息标为已读） | GY-I17 |
 | 播放控制 | 见 2.2 `POST /speech/synthesis` | 未实现 | [GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13)（2026-11-04 复核：中列「未实现」已过期——播放控制已装配：服务端 `POST /speech/synthesis` 注册在 `services/api/src/routes/synthesis.ts` 第 118 行（受 `ai_enabled` 开关门，基线为开），装配点是 `services/api/src/app.ts` 第 2525 行的 `registerSynthesisRoutes`；另有音频读面 `GET /speech/synthesis/{id}/audio`（同文件第 217 行），客户端取真实字节只走它。客户端 `miniprogram/utils/voice-api.js` 第 314 行真发 `POST /speech/synthesis` 并轮询任务，第 353 行的 `audioSourceForJob` 在第 389 行拼出上述音频读面地址；播放端口是 `miniprogram/utils/inner-audio-port.js` 第 203 行的 `wx.createInnerAudioContext`（私有读面不能带自定义头 ⇒ 先 `wx.downloadFile` 带会话头再播），控制器 `miniprogram/utils/audio-playback.js` 第 167 行的 `createPlaybackController` 提供 play／pause／resume／stop／replay，页面 `miniprogram/pages/voice/voice.js` 第 727／734／735／736 行接 `onPlay`／`onPause`／`onStop`／`onReplay`（`miniprogram/pages/voice/voice.wxml` 第 136 至 139 行 `bind:play` 等四条绑定）。仍缺：真实 TTS 提供者要 `config.aiProviders.tts` 被校验快照，未配置时 `services/api/src/tts/provider.ts` 第 143 行的 `createRealTtsProvider` 恒 `available: false` ⇒ 受理前 503 `PROVIDER_UNAVAILABLE`，真实供应商调用仍未取得；`services/api/src/tts/service.ts` 第 995 行的 `realAudioProduced: false` 仍成立；`stub`／`preset_demo` 产物是标注过的非音频占位，客户端如实回 `SUBSTITUTE_ARTIFACT`（第 373 行起），所以「能播真实音频」仍不成立） |
 
 > AC18 要求「首版无外部订阅发送」。全项目搜索「订阅消息／推送通知／短信／公众号」**零命中**，本任务未引入任何外发通道。
@@ -79,7 +79,7 @@
 
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
-| 微信登录 | `POST /auth/wechat` | **未接入**，登录按钮仅提示 | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4) |
+| 微信登录 | `POST /auth/wechat` | **未接入**，登录按钮仅提示（**2026-11-04 复核：本格「未接入」与「仅提示」两处均已过期** —— `miniprogram/utils/auth.js` 第 416 行 `wx.login({` 取 code、第 425 行以 `runtime.apiBaseUrl + '/auth/wechat'` 发真实请求；登录页 `miniprogram/pages/login/login.js` 第 43 行调 `auth.login(...)`；服务端 `services/api/src/routes/auth.ts` 第 43 行注册 `POST /auth/wechat`） | [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4) |
 | 会话查询／退出 | `GET /auth/session`、`POST /auth/logout` | 未接入 | GY-I04 |
 | 档案（作物／地区） | `GET /me/profile`、`PUT /me/profile` | 替身·计数 0 条 | [GY-I05](https://github.com/GengYunChuChao/GengYun/issues/5) |
 | 隐私说明 | `GET /me/privacy-policy` | 静态文案 | GY-I27 组件已由 [PR #45](https://github.com/GengYunChuChao/GengYun/pull/45) 合入 main=bb3f20f（`packages/privacy/`）；界面读取待接入 |
@@ -129,7 +129,7 @@
 **仍未通过（不属本任务可解决）**：
 
 - 登录态界面未走查，依赖 [GY-I04](https://github.com/GengYunChuChao/GengYun/issues/4)
-- 真实社区、消息、收藏、历史记录未实现
+- 真实社区、消息、收藏、历史记录未实现（**2026-11-04 复核：本行已过期，且与本文件 2.3／2.4 两节的同日括注自相矛盾** —— 四域各自的最小证据：社区发帖有页面 `miniprogram/pages/communitycreate/`、接口 `services/api/src/routes/community.ts` 第 5 行 `POST /posts`（`createPost`）、迁移 `services/api/db/migrations/0022_community_persistence.sql` 第 62 行 `community_posts`；消息有页面 `miniprogram/pages/messages/`、接口 `services/api/src/routes/messages.ts` 第 43 行 `GET /messages`／第 53 行 `GET /messages/unread-count`、迁移 `services/api/db/migrations/0019_messages_persistence.sql` 第 49 行 `messages`；收藏有页面 `miniprogram/pages/favorites/`、接口 `services/api/src/routes/favorites.ts` 第 89 行 `GET /favorites`、迁移 `services/api/db/migrations/0018_favorites_history.sql` 第 46 行 `favorites`；历史有页面 `miniprogram/pages/history/` 与 `miniprogram/pages/historydetail/`、接口 `services/api/src/routes/history.ts` 第 88 行 `GET /history`、同一迁移第 71 行 `history`）
 - 语音播报未实现，依赖 [GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13)
 - 真机双平台与体验版上传未做，依赖 [GY-I25](https://github.com/GengYunChuChao/GengYun/issues/27) / [GY-I23](https://github.com/GengYunChuChao/GengYun/issues/23)
 
