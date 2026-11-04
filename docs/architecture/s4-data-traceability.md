@@ -375,7 +375,7 @@
 | 项 | 现在 | 升档需要的事实 | 判据落点 |
 | --- | --- | --- | --- |
 | D08 | 部分 | ~~`available` 门不再是 `!== 'real'`，且真实模式有注销受理读数~~（**2026-11-03 GY-R74 已达成**：`services/api/src/app.ts:2339`，真库臂 PASS 16）；升档还差**真实备份介质上的逐用户清除读数**、第三方完成证据与生产安装读数 | `services/api/src/app.ts:2339` |
-| D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或 `MediaStore` 有按主体清空） | `services/api/src/privacy/user-data-deletion.ts:203` |
+| D11 | 部分 | 注销闭集含媒体，且媒体原语可被应用侧调用（或按主体清空媒体对象）；原语今天已有应用侧调用，但必需闭集仍不含媒体（2026-11-04 复核，见文末附注） | `services/api/src/privacy/user-data-deletion.ts:969-971` |
 | D13 | 未实现 | **2026-11-03（GY-R74 复核，`#860` 合入后）只剩两项**：① 接收方来源与适配器凭据（`RECIPIENTS_UNWIRED` / `ADAPTER_UNAVAILABLE`，仓内零实现）；② 一条真实的 `confirmed` 完成证据（写侧调度器已在，生产零写入） | `services/api/src/privacy/third-party-deletion-dispatch.ts:675` |
 | D09 | 部分 | 恢复重放接进装配并有一次重放读数 | `services/api/src/privacy/backup-replay-manifest.ts:559` |
 | D14 | 已搁置 | 出现 training purpose 即降级为未实现（7 日清理衍生物仍无落点） | `packages/privacy/constants.mjs:13` |
@@ -411,3 +411,14 @@
 ④重训前重验闸门。在启用训练、或任何模型被判必须下线之前，这四项必须先具备。
 
 本附注只限定 D15 的生效范围，不改变 D15 的「未实现」结论——一旦启用训练，D15 立即按未实现回到交付清单。
+
+## 附注：D11 媒体通道（2026-11-04 复核）
+
+上面 D11 行原把判据落点写成该文件的第 203 行，那是「写落库在线清除证据」的 JSDoc 段，
+而该文件里没有 `MediaStore` 这个字样，配对只能落空。实测今天的证据链是：注入 `mediaStore` 时处理器**先**调媒体原语
+`purgeOwnedMedia`（`services/api/src/privacy/user-data-deletion.ts:969-971`），读数（`media-hidden` / `media-objects-registered`）
+进证据串，再删本域四表；端口形状见同文件 `services/api/src/privacy/user-data-deletion.ts:325-326` 的 `MediaPurgePort`。
+
+但另一条事实仍未达成：注销的**必需模块闭集**（`USER_DATA_DELETION_MODULES`，
+`services/api/src/privacy/user-data-deletion.ts:194-199`）今天只有收藏／历史／消息／会话四域，不含媒体。
+所以 D11 维持「部分」：不能拿「原语可调用」冒充「闭集含媒体」。升档要么把媒体纳入必需闭集，要么补一条真实桶对象的清除读数。
