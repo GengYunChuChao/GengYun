@@ -375,10 +375,30 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * `partial` 判定与其余缺口一字不动。中文表格同次用 `verify-contract-status.mjs --write-doc` 重生成。
  * JSON −159 字节、−5 行（重复证据对象整块删掉），md −51 字节、行数不变
  * （283971 / 4460、206548 / 220）。仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十九次同步（台账第 68 行「一行 21 个锚点」的大格子里四处测试锚点指错）：改的是
+ * `docs/architecture/contract-status.json` 里 `requestAccountDeletion` 的 blocker 散文，中文对照表的那一格由
+ * `verify-contract-status.mjs --write-doc` 从 JSON 重生成（该行的证据列与缺口列都是 JSON 的镜面，直接手改 md 会被
+ * 重生成打回去）。该格写 F13 注销回执的四类实跑读数，但引的三个测试锚点都落到无关行上：
+ * `tests/unit/user-data-deletion.test.mjs:88` 是「必需模块闭集含四域」的 `MESSAGES_DELETION_MODULE` 常量断言，
+ * 散文说的却是「无真库默认装配下各模块 backup_state 为 pending」，真值在同文件 `:136` 的四模块 for 循环里
+ * （`assert.equal(row.backup_state, 'pending', '备份副本清除未接线 ⇒ 如实 pending，不得谎称 completed')`，132-138）；
+ * `tests/unit/backup-copies-port-contract.test.mjs:572-582` 是「接线三态」（带证据 ⇒ completed／没证据 ⇒ blocked +
+ * EVIDENCE_REQUIRED）的断言，散文要的「real 且注入持久台账但无池 ⇒ 端口显式不可用、模块 blocked +
+ * PROVIDER_UNAVAILABLE」在 `:606-616`；`tests/integration/backup-purge-pg.mjs:413-414` 是臂 A 的种子数据、
+ * `tests/unit/user-data-deletion.test.mjs:196` 是「未绑定主体」用例的标题，两句要的「被驱动的一次重放里可判
+ * completed」分别在 `:481-493`（481 `await deletionA.executeHandlers(requestA.id);`，483-487 四域 completed、
+ * 489-493 整体 completed）与 `:269`（wired 端口驱动一次后 `completionStatus(...).completed === true`，270-271 判不重跑）。
+ * 同格另有一处同文件同符号的重复锚点（`services/api/src/app.ts:2012-2013` 是 `:2009-2016` 的真子区间、同一个 real
+ * 分支的 `createUnavailableBackupPurgePort()`），按 #949 的办法收成一条，散文改写成「该备份清除装配在 real 下恒 …」；
+ * 该重复锚点是同行最后一个 `app.ts` 锚点，收掉后配对不位移，故只登记 4 条按文本重锚（无「非内容重锚」条目）。
+ * 裸锚点（`:132-135`、`:138-145`、`:70-76`、`:469`、`:464-465`、`:103-105`）按规矩一律不动数字，
+ * completionStatus 的真值改用散文写出（第 153-155 行）。体积数字在 #949 删掉那块重复证据对象之后重算：
+ * 两份台账各 +36 字节、行数不变（284007 / 4460、206584 / 220）。仍是「正常改台账」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283971, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206548, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284007, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206584, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
