@@ -329,10 +329,23 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 当现值（实测 595 条证据中 243 条带 `name`，三类拆分随证据增补而变，已改成「以当次工具输出为准」），三处都改成
  * 「数字 + 复核日期 + 指向脚本」的写法。JSON 未动 ⇒ 体积变为 278727 / 4465 与 **200749 / 220**，行数都不变。
  * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-04 第十六次同步（只改第 17 行一句语义、未动闸门块与 JSON；序号跳号的原因是在飞 PR #915
+ * 已占用「第十五次同步」，两者合入后编号连续）：
+ * `docs/architecture/contract-implementation-status.md` 第 17 行原写「取消已接识别／转写／合成／OCR 四域，
+ * 审核（`moderation`）与文字问答（`answer`）有读面但无 `cancel` ⇒ 作业面如实 503 PROVIDER_UNAVAILABLE」
+ * ——这句已被代码证伪：`services/api/src/moderation/job-source.ts` 的 `cancel` 转调
+ * `services/api/src/moderation/service.ts` 的 `cancelJob`（装配点是 `services/api/src/app.ts` 的
+ * `createModerationJobSource`），`services/api/src/app.ts` 里 `createAnswerJobSource` 的 `cancelJob`
+ * 转调会话域 `cancelTurn`。故改成「六域今天都提供 `cancel`，`PROVIDER_UNAVAILABLE` 退为兜底语义与防御」，
+ * 且**不新增任何 `path:line` 锚点**（只沿用原有的 `jobs/sources.ts:65/:107/:153/:208` 与
+ * `jobs/registry.ts:306`、`:281`，新增位置只用符号名 + 散文）。第 17 行在
+ * `<!-- contract-status-tables:start -->` 闸门块（第 31–196 行）之外，闸门块与
+ * `docs/architecture/contract-status.json` 都未动 ⇒ **行数不变（220）、字节数变化**（200749 → 201196）。
+ * 仍是「正常改台账」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
   { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 278727, lines: 4465 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 200749, lines: 220 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 201196, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
