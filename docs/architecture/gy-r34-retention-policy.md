@@ -57,7 +57,7 @@ CI 注册 + 宿主机日级调度已落地**（读数见[证据页](../verificat
 | `public.user_backup_copies` | 另有 30 日驱动（`packages/privacy/backup-retention.mjs` + `tools/purge-expired-backup-copies.mjs`），按 `retention_until` 逐用户判定 | 备份轴（GY-I19） |
 | `public.transcriptions` / `public.conversations` / `public.messages` | 需求要求**保留至注销**，不按日历删 | 注销闭集（F13） |
 | `public.favorites` / `public.history` | 用户私有内容，没有独立的日历出处，随注销链处理：口径**类推**自 `docs/implementation-requirements.md:277`（「私有…识别记录原则保存至注销」，原文没有「收藏」二字），表语义见 `docs/architecture/data-dictionary.md:77-78`（`favorites`、`recognition_history` 两行） | 注销闭集 |
-| 「注销证据」表（`docs/architecture/data-dictionary.md:89-91`）+ `deletion_tombstones` | 注销流程的状态机与第三方证据，删行＝删证据；tombstone 自带「保留期至少覆盖所有 30 日备份和恢复演练」（`docs/architecture/data-dictionary.md:92`） | 注销闭集 |
+| 「注销证据」表（`docs/architecture/data-dictionary.md:89-91`）——`deletion_tombstones` **不在本清单**：`services/api/db/migrations/` 里没有这张表（该名在迁移与 `services/`／`apps/`／`packages/`／`tools/`／`tests/` 的代码里零命中，只出现在文档里），它属 GY-I19 的独立受控清单（`packages/privacy/README.md` 第 124 行附近自述「属 GY-I19 独立受控清单，不在本迁移范围」），数据字典 `docs/architecture/data-dictionary.md:92` 的保留期语义只对那份清单生效，本清单不据此排除它 | 注销流程的状态机与第三方证据，删行＝删证据 | 注销闭集（`deletion_tombstones` 归 GY-I19） |
 | `exports` / `export_writebacks` | 外发台账是合规证据（谁、何时、给谁、依据哪版授权） | 隐私域，按需单独定策略 |
 | `public.jobs` | 统一作业台账（迁移 0001 建表；GY-R71 起的唯一写入者是 `services/api/src/jobs/ledger.ts`，注销时的行清理由 jobs 模块执行）：行内带 `owner_id` / `target_id` / `entity_revision` / `result_ref` 与授权纪元，属**私有作业关联**，与它镜像的域内作业行（`ocr_jobs` / `recognition_jobs` / `speech_jobs` / `conversation_turns` 的作业快照列）同一生命周期 ⇒ 不按日历销毁；「在线 7 日／备份 30 日」是注销请求的两个到期时刻，不是本表的日历保留期 | 注销闭集（口径同 `favorites` / `history`） |
 

@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | 服务端 admin 端点 | **50 条 admin 面注册路由，对应 50 个 operationId**（`admin.ts` 46 + `admin-auth.ts` 3 + `admin-reports.ts` 1；机器重算，见 §0 末尾标记块；旧版写 42 是陈旧手数）。页首那套契约口径的 path／operation／scope 读数本页不抄，需要时现场数 `packages/contracts/openapi.json` | services/api/src/routes/admin.ts:198-487 |
 | 前端真实调用 | **50 个 operation 中 49 个有 UI 入口（无入口 1 条：`advanceReport`）**，机器重算，见标记块（含 3 条 auth：`apps/admin/src/auth/session.ts` 的 `loadAdminSession`／`signInAdmin`／`signOutAdmin`）。旧版手数的「30 个 operation、33 处物理调用点」是 2026-10-26 的读数；本行只认 §0 标记块的机器重算（`node tools/verify-admin-capability-map.mjs`） | apps/admin/src/lib/admin-content-api.mjs:409 |
-| 页面 | 19 个 `.vue`（壳 `App.vue` 1 + 主 tab 视图 10 + 子页 6 + 子组件 2）；「社区审核队列」已接入读 + 通过/驳回，「人工审核」仍是空占位 | apps/admin/src/App.vue:27-38 |
+| 页面 | 19 个 `.vue`（口径：`git ls-files '*.vue'` 实测 19 个＝壳 `apps/admin/src/App.vue` 1 个 + `apps/admin/src/views/` 下 18 个——16 个视图页（主 tab 视图 10 + 子页 6）+ 同目录子组件 2 个：`ContentFieldGrid.vue`、`WriteReceipt.vue`；`apps/admin/src/components/` 目录不存在，子组件与视图同放 `views/`）；「社区审核队列」已接入读 + 通过/驳回，「人工审核」仍是空占位 | apps/admin/src/App.vue:27-38 |
 | 死按钮 | 0 个（机器重算 `deadButtons=0`）；另有 6 个 `class="link"` 的「详情/编辑/展开原文」按钮——它们**带**自己的 `@click.stop`（复制父行动作、阻止冒泡），**不是**「自身无 handler」（旧版那句是错的，2026-11-02 逐文件复核，见 §3 第三张表） | apps/admin/src/views/SourcesView.vue:506 |
 | 后端有面、UI 无入口 | **1 个 operation**：R72 的 `advanceReport`（`POST /admin/reports/{id}/disposition`，门 `sources:write`）只有 HTTP、后台还没有举报处置界面；原本仅剩的两条授/撤权写面 `grantAdministratorScope`、`revokeAdministratorScope`（`POST`／`DELETE /admin/administrators/{id}/scopes…`，门 `scopes:write`）已由 GY-R68 接上 `AdministratorsView.vue`；R72 把扫描面扩到全部 `routes/*.ts` 之后新增的 3 条 auth 也不是缺口（`apps/admin/src/auth/session.ts` 是它们的客户端，9 个视图真调了那三个函数）。旧版写「12 个，只剩两族：注册资料 6、限制资料 6」，已被代码证伪——两族各有页面，见 §4 | services/api/src/routes/admin.ts:408-427 |
 | 鉴权 | 登录响应**不含** scopes；9 个页面登录后再读一次 `GET /admin/auth/session` 补 scope | apps/admin/src/auth/session.ts:128 |
@@ -257,7 +257,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **47** 个（`FAMI
 | 「登录后 scopes 恒为空导致写入按钮全灭」（同上） | 半过时：`scopes: []` 仍在，但 9 个页面登录后立刻再读会话，按钮不会全灭；真正会全灭的是缺 `session:read` 的账号 | apps/admin/src/auth/session.ts:128；apps/admin/src/views/AccountsView.vue:91 |
 | 「登录响应不含 scope」 | 复核成立 | services/api/src/auth/service.ts:366-374 |
 | 「15 个 operation 无 UI 入口」（本页旧版自己的结论） | **已过时**：`68dec742` 上实为 12 条；旧版的 15 把「审计总台账 1」「管理员权限读面 2」算了进去，而这两条都已有页面（依据见 §4 更正记录）。**2026-10-28 起机器重算为 2 条**（`noUiEntry=2`，见 §0 标记块），**GY-R68 接上授/撤权写面后重算为 0 条**（`noUiEntry=0`）：注册资料与限制资料两族也已各有页面，12 那条读数同样进了历史；当时剩下的两条 `grantAdministratorScope`／`revokeAdministratorScope` 授/收权写面已由 GY-R68 补上入口（见 §4）。取证报告在 `1a583e1d` 上给出的缺口 16 条同理——它多算了帖子族 4 条，而那 4 条随 `#640` 合入已经有页 | §4；§2.2 全表 |
-| 代码内陈旧文案（一） | `apps/admin/src/App.vue:28` 写「账号目录（只读）」、`apps/admin/src/App.vue:95` 写「停用/注销等写操作不在本片」，与实有的停用写面矛盾；`apps/admin/src/auth/session.ts:21` 写「控制台业务页面未实现」，实际 `apps/admin/src/views/` 已有 16 个 `.vue`；`services/api/src/routes/admin.ts:191` 的 `registerAdminRoutes` 文档注释自述「注册 44 个后台路由」，实际 46 条（文件头 `services/api/src/routes/admin.ts:4` 的「47 个 operationId」＝ 46 条本文件注册 + `admin-reports.ts` 的 `advanceReport`；机器重算见 §0 标记块） | 同行号 |
+| 代码内陈旧文案（一） | `apps/admin/src/App.vue:28` 写「账号目录（只读）」、`apps/admin/src/App.vue:95` 写「停用/注销等写操作不在本片」，与实有的停用写面矛盾；`apps/admin/src/auth/session.ts:21` 写「控制台业务页面未实现」，实际 `apps/admin/src/views/` 已有 18 个 `.vue`（16 个视图页 + 2 个同目录子组件 `ContentFieldGrid.vue`、`WriteReceipt.vue`，与 §0「页面」行同口径）；`services/api/src/routes/admin.ts:191` 的 `registerAdminRoutes` 文档注释自述「注册 44 个后台路由」，实际 46 条（文件头 `services/api/src/routes/admin.ts:4` 的「47 个 operationId」＝ 46 条本文件注册 + `admin-reports.ts` 的 `advanceReport`；机器重算见 §0 标记块） | 同行号 |
 | 代码内陈旧文案（二）：「契约里没有帖子读面／没有任何帖子读面」（旧文案在 `apps/admin/src/views/PostTakedownView.vue:6`、`apps/admin/src/lib/post-takedown-api.mjs:8`、`apps/admin/src/lib/post-takedown-form.mjs:7-8`） | **GY-R72 已改掉（不再是陈旧文案）**：三处都改成真口径——契约有 `GET /admin/posts`（`listAdminPosts`）与 `GET /admin/posts/{id}`（`getAdminPost`），门是 `sources:read`；下架页先读一次拿 revision 并回填只读，读面 403/404/网络失败一律回落手填且不禁提交按钮。路由实测：列表在 `services/api/src/routes/admin.ts` 的 551 行、详情在 556 行——旧版写的 450／455 是错的；调用点实测 `apps/admin/src/views/PostTakedownView.vue:122`（读面）、`apps/admin/src/views/ModerationQueueView.vue:165`（列表）、`apps/admin/src/views/ModerationQueueView.vue:185`（详情）。旧版那句「本页只记录，不改代码」已被本片推翻 | 同行号；`docs/verification/gy-r72-admin-takedown-truth-20261102.md` |
 | 代码内陈旧文案（三）：「契约里根本没有审核队列的读面（path 含 `review` 的数量为 0），`routes/` 也没有任何 review 路由」（`apps/admin/src/views/ReviewPlaceholderView.vue:5-6`、`apps/admin/src/lib/review-state.mjs:9`、`apps/admin/src/lib/review-state.mjs:37`） | **字面断言仍成立、结论已过时**：实测契约中 path 含 `review` 的确实为 0，路由里也没有名字带 review 的路径；但「没有审核面」的结论已被 `GET /admin/posts`（读面）与 `approvePost`/`rejectPost`（动作面）推翻——它们只是不叫 review。**本页只记录，不改代码**（属 B 档） | 同行号；`packages/contracts/openapi.json` |
 
@@ -265,7 +265,7 @@ operationId 全集由 `ADMIN_HTTP_OPERATION_IDS` 导出，共 **47** 个（`FAMI
 
 - 没有启动任何服务、没有连库、没有跑 `vite build`：`§1.2` 的缺省装配 503、「已可用」都不含运行证据。
 - 没有核对 `packages/contracts/openapi.json` 与实现逐字段一致（那由 `node tools/verify-contract-status.mjs` 与 `npm run test:contract` 负责）。
-- 没有审这 14 个业务视图（`apps/admin/src/views/` 的 16 个 `.vue` 去掉 2 个子组件）的样式、无障碍与文案质量；本页只判「有没有入口、调了哪个端点、点了会不会有反应」。
+- 没有审这 16 个业务视图（`apps/admin/src/views/` 的 18 个 `.vue` 去掉 2 个子组件 `ContentFieldGrid.vue`、`WriteReceipt.vue`）的样式、无障碍与文案质量；本页只判「有没有入口、调了哪个端点、点了会不会有反应」。
 
 ## 附：分类目录的两份真相（GY-R68-A01，2026-10-28）
 
