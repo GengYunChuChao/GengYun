@@ -326,6 +326,12 @@
       "accept": 0,
       "orphans": 3496,
       "outsideRed": 117
+    },
+    {
+      "why": "R78 第 1 轮：docs/development-progress.md:129 的 flag-gate 引用改成两条全路径锚点（:519-525 与 :527-536），原先继承同块显式锚点的裸 :464-466 不再出现，故删对应的 ambiguous-block 孤儿条目；新增 0 条。",
+      "accept": 0,
+      "orphans": 3495,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -453,7 +459,6 @@
     "docs/development-progress.md|:419|no-explicit-in-block",
     "docs/development-progress.md|:447|no-explicit-in-block",
     "docs/development-progress.md|:462-465|ambiguous-block",
-    "docs/development-progress.md|:464-466|ambiguous-block",
     "docs/development-progress.md|:4|no-explicit-in-block",
     "docs/development-progress.md|:614|no-explicit-in-block",
     "docs/development-progress.md|:639|no-explicit-in-block",
