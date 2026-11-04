@@ -122,7 +122,7 @@
 
 顺序本身是对的，且服务端强制：
 - `POST /auth/wechat` **不要求**任何用途授权（`routes/auth.ts:42-83` 无 consent preHandler）——合理：用途授权按「用途 × 资料类型」逐项授予，必须先有身份才能授予。
-- 用途闸挂在**外发/媒体受理面**，且都在 `guards.requireUser` **之后**（先用会话建立 `req.userId`/`req.authEpoch`，再查授权）：`services/api/src/app.ts:850-854` 装配 `consentGate`；`:1640` recognitions、`:1641` speech、`:1642` synthesis、`:1660` ocr、`:1711` media。
+- 用途闸挂在**外发/媒体受理面**，且都在 `guards.requireUser` **之后**（先用会话建立 `req.userId`/`req.authEpoch`，再查授权）：`services/api/src/app.ts:999-1003` 装配 `consentGate`；`:1640` recognitions、`:1641` speech、`:1642` synthesis、`:1660` ocr、`:1711` media。
 - 用途闭集：`recording` / `media_processing` / `external_inference` / `public_posting`（`services/api/src/privacy/consent-pg.ts` 的 `CONSENT_PURPOSES`）。
 - 拒绝语义：缺授权 403 `CONSENT_REQUIRED`、错用途 403 `SCOPE_DENIED`（`services/api/src/privacy/egress.ts:80-105`）。
 

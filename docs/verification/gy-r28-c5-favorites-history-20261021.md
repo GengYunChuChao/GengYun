@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 服务端 `services/api/src`（收藏） | **已通** | 三条路由走 PG store（迁移 0018），归属/去重/物理删除/逐次可见性重查齐备；real 模式无 pool 时整域 503，不用内存 Map 冒充持久化 |
 | 服务端（历史） | **已通** | 识别/OCR 终态由 `recordHistoryTerminal` 写入（确定性 `event_key` 幂等），列表游标分页、删除走 CAS |
-| 契约 `packages/contracts/**`（只读） | **半通** | 五个 operation 与实现一一对应；**没有** `GET /favorites/{id}`、也没有 `GET /history/{id}`，详情只能靠列表 + `GET /recognitions/{id}` / `GET /ocr/{id}` 组合（契约面如实登记，本次不动） |
+| 契约 `packages/contracts/**`（只读） | **半通** | 五个 operation 与实现一一对应；**没有** `GET /favorites/{id}`、也没有 `GET /history/{id}`，详情只能靠列表 + `GET /recognitions/{id}` / `GET /ocr/{id}` 组合（契约面如实登记，本次不动）（2026-11-04 复核：`GET /history/{id}` 已由 #878 注册；`GET /favorites/{id}` 仍不存在。） |
 | 小程序（收藏页 / 历史页 / 历史详情） | **已通（本次修 403）** | 页面齐全、状态组件齐全；但 401 与 403 在消费层被折叠成同一件事，denied 状态永远渲染不出来 —— 本次修好 |
 | 小程序（识别结果页「收藏」） | **未通（缺口，本次不实施）** | `identify.wxml` / `identify.js` 里「收藏」与 `favorit` 两处关键词**零命中**：识别结果页没有收藏入口，只能经「识别 → 资料详情 → 收藏」两跳 |
 | 小程序（识别结果页「写历史」） | **已通** | 写入点在服务端终态端口（不在页面）；页面侧提供 `onOpenServerHistory` 跳 `/pages/history/history` |
@@ -68,7 +68,7 @@
 ### 2.2 历史
 
 - 路由：`services/api/src/routes/history.ts` `:80`（`GET /history`）、`:85-87`（`DELETE /history/{id}`）；`:36` no-store；`:75` `'历史持久存储尚未接线'` 503 fail-closed。
-- 写入时机（识别完成时）：`services/api/src/app.ts:1025` `recordHistoryTerminal`，`:928-934` `recognitionTerminalHistory`、`:936-942` `ocrTerminalHistory`，`:961` `history: recognitionTerminalHistory` 注入识别服务 —— 终态提交成功后才写，real 模式历史域关闭时退回未接线端口（不写、不伪造）。
+- 写入时机（识别完成时）：`services/api/src/app.ts:1077-1092` `recordHistoryTerminal`，`:928-934` `recognitionTerminalHistory`、`:936-942` `ocrTerminalHistory`，`:961` `history: recognitionTerminalHistory` 注入识别服务 —— 终态提交成功后才写，real 模式历史域关闭时退回未接线端口（不写、不伪造）。
 - 服务层：`services/api/src/history/service.ts:323` `listHistory`（游标分页）、`:390`/`:410` `deleteHistory`（`revision` + `owner_id` CAS）、`:447` `appendHistory`；`:129` `notFound()`；`:20` 归属不变式注释（他人历史与不存在同形）。
 - 来源版本：历史行本身**不带**来源版本字段（`history-api.js` 的 `HISTORY_KEYS` 7 字段），来源版本由详情重新读取 `model_version` 提供 —— 见下 §4。
 
@@ -84,7 +84,7 @@
 | `/history` | get | `listHistory` | 200 |
 | `/history/{id}` | delete | `deleteHistory` | 202 |
 
-- **没有 `GET /favorites/{id}`、没有 `GET /history/{id}`** ⇒ 任何「详情页」都必须由列表 + 目标详情组合而成，不得新增契约外路径。
+- **没有 `GET /favorites/{id}`、没有 `GET /history/{id}`**（2026-11-04 复核：`GET /history/{id}` 已由 #878 注册；`GET /favorites/{id}` 仍不存在。） ⇒ 任何「详情页」都必须由列表 + 目标详情组合而成，不得新增契约外路径。
 - `x-error-status-map`：`401: [SESSION_REQUIRED, SESSION_EXPIRED]`、`403: [SCOPE_DENIED, CONSENT_REQUIRED, ACCOUNT_INACTIVE]`、`404: [NOT_FOUND]`、`409: [REVISION_CONFLICT, IDEMPOTENCY_CONFLICT, OBJECT_UNAVAILABLE, REQUEST_IN_PROGRESS]`、`428: [REVISION_REQUIRED]`、`503: [PROVIDER_UNAVAILABLE, PROVIDER_OUTCOME_UNKNOWN]`。
 - 本片据此判断「401 与 403 是两档，不是一档」。
 

@@ -145,7 +145,7 @@ PASS recognition-chain-e2e (内存臂：loopback 真 HTTP；真库臂见上方 a
 | 10 重放不长行 | 同键再发上传 | 该识别的历史仍**恰 1 条**；提供者累计调用仍为 2（两次上传各一次） | 1 条；`calls=2` | `:378` | `#9 AC3` |
 | 11 时间序稳定 | `GET /api/v1/history` ×3 | 三次返回的 id 顺序完全一致；`created_at` 非递增；`next_cursor=null` | 三次一致；倒序成立 | `:387` | —（契约：列表排序/分页稳定，不隶属任一 AC） |
 | 12 跨用户不可见（读） | B：`GET /api/v1/history`；`GET /api/v1/recognitions/{A 的识别 id}` | B 列表 `{items:[],next_cursor:null}`；读 A 的识别 404，且错误体与「不存在 id」**逐字段同形** | B 列表空；404 同形=true | `:439`、`:444` | `#16 AC1` |
-| 13 跨用户不可见（删/详情） | B：`DELETE /api/v1/history/{A 的历史 id}`；`GET /api/v1/history/{id}` | 删除 404 `NOT_FOUND`；`GET /history/{id}` 404（契约未注册该路径，不得悄悄长出） | 均 404；A 的历史仍 2 条未被动 | `:447`（未注册读详情）、`:449`（越权删除） | `#16 AC1` |
+| 13 跨用户不可见（删/详情） | B：`DELETE /api/v1/history/{A 的历史 id}`；`GET /api/v1/history/{id}` | 删除 404 `NOT_FOUND`；`GET /history/{id}` 404（契约未注册该路径，不得悄悄长出）（2026-11-04 复核：契约已注册 `getHistory`，路径已长出；跨用户读仍 404 属归属隔离，不再因未注册。） | 均 404；A 的历史仍 2 条未被动 | `:447`（未注册读详情）、`:449`（越权删除） | `#16 AC1` |
 | 14 删除历史 | `DELETE /api/v1/history/{id}` + `Idempotency-Key` + `If-Match: "1"` | 200 `{accepted:true}`；`meta.execution_mode=stub`；`X-GY-Cascade` 落闭集；只删被点的那一条 | 200 accepted=true `cascade=unwired`；剩余 1 条 | `:464`、`:467` | `#16 AC1`（本人可删；他人不可删的补集见步骤 13） |
 | 15 再读为空 | 删第二条 → `GET /api/v1/history` | `{items:[],next_cursor:null}`，且无 `ETag` | 一致 | `:485`、`:487` | `#16 AC1` |
 | 16 同键重放删除 | 用**同一个**幂等键再删同一条 | 200 回放首次结果与同一份级联披露；**不复活**数据 | 200 accepted=true cascade=unwired；列表仍空 | `:494`、`:496` | `#16 AC1` |

@@ -32,8 +32,8 @@
 | `listHistory` | `GET /history` | 列表（游标分页） |
 | `deleteHistory` | `DELETE /history/{id}` | `If-Match` 必填、`version_required: true` |
 
-**没有** `GET /favorites/{id}`，**也没有** `GET /history/{id}`（`services/api/src/routes/favorites.ts`、`routes/history.ts`
-同样只有列表 + 删除）。所以验收里的「收藏详情／历史详情」在服务端**不存在独立读路由**，其读时语义只能落在：
+**没有** `GET /favorites/{id}`，**也没有** `GET /history/{id}`（2026-11-04 复核：`GET /history/{id}` 已由 #878 补上，见 `services/api/src/routes/history.ts` 第 93 行；`GET /favorites/{id}` 仍不存在。）（`services/api/src/routes/favorites.ts`、`routes/history.ts`
+同样只有列表 + 删除）。所以验收里的「收藏详情／历史详情」在服务端**不存在独立读路由**（2026-11-04 复核：历史域已有独立读路由 `GET /history/{id}`；收藏域仍无。），其读时语义只能落在：
 
 - 收藏详情：小程序详情页用**列表响应**回填（`miniprogram/utils/favorites-api.js`），状态来自当次列表读取；
 - 历史详情：小程序 `locateHistory()` 用**实时列表读取**定位 + 实时状态，快照只用于定位且**不携带状态**

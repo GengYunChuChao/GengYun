@@ -373,9 +373,32 @@ async function testPrivateIsolation(h) {
   assert.deepEqual(listItems(bHistory.body), []);
   assert.equal(bHistory.etag, null);
 
-  // 现行契约**没有** `GET /history/{id}`（只有 delete）⇒ "B 直读 A 的历史详情"无此路径，如实登记。
-  const unregistered = await http(`${HISTORY}/${history.id}`, json(sessionB.token));
-  assert.equal(unregistered.status, 404, '契约未注册 GET /history/{id} ⇒ 不得悄然出现读详情路径');
+  // `GET /history/{id}` 自 #878（`dc6ae8d2`，2026-11-04）起**已注册**：契约 `getHistory`
+  // （`packages/contracts/operations.json:537-541`，`{path:/history/{id}, method:get, scope:user}`）+ 路由
+  // `services/api/src/routes/history.ts:93`。⇒ 本段**不再是**"路径未注册"的登记（那种写法只断言 404，
+  // 与"路径存在但越权被挡"不可区分，越权读面破了也照样绿），而是**归属隔离**：服务层对「不存在」与
+  // 「不属于本人」共用同一个 `notFound()`（`services/api/src/history/service.ts:377`，同句、同形、不带 ETag）。
+  // 另一维区分力：路由若被删/改回"未注册"，`setNotFoundHandler` 给的是「未实现的路径：GET …」
+  // （`services/api/src/app.ts:2686`）⇒ message 与「不存在」不再相同，下面的 deepEqual 会红（旧写法此处仍是绿）。
+  const foreignHistoryRead = await http(`${HISTORY}/${history.id}`, json(sessionB.token));
+  assert.equal(
+    foreignHistoryRead.status,
+    404,
+    'GET /history/{id} 已注册 ⇒ 越权读他人历史必须 404（回 200 是越权，回 403 是泄露"存在但不属于你"）',
+  );
+  assert.equal(
+    foreignHistoryRead.body.error.code,
+    'NOT_FOUND',
+    '越权读他人历史必须是 NOT_FOUND（403／FORBIDDEN 会泄露该行存在）',
+  );
+  assert.equal(foreignHistoryRead.etag, null, '越权 404 不得带 ETag（任何 revision 头都会泄露该行存在）');
+  const absentHistoryRead = await http(`${HISTORY}/${ABSENT_ID}`, json(sessionB.token));
+  assert.equal(absentHistoryRead.status, 404, '完全不存在的 history id 读详情必须 404');
+  assert.deepEqual(
+    foreignHistoryRead.body.error,
+    absentHistoryRead.body.error,
+    '他人历史与不存在必须同形（同 code／同 message／同 details ⇒ 不可区分存在性）',
+  );
 
   // B 直接拿 A 的**历史 id** 做删除：必须非成功，且与"完全不存在的 id"同形。
   const foreignHistoryDelete = await h.deleteHistory(sessionB.token, history.id, history.revision, 'hist-b');
@@ -394,7 +417,7 @@ async function testPrivateIsolation(h) {
   );
 
   note('setup', `A 收藏=${favorite.id}(rev=${favorite.revision}) 识别=${recognitionId} 历史=${history.id}(rev=${history.revision}) 任务=${jobId} 终态=${job.state}`);
-  note('case1', `B 列表：收藏=${JSON.stringify(bList.body.data)} 历史=${JSON.stringify(listItems(bHistory.body))}；B 直接拿 A 的收藏/历史 id 发 DELETE ⇒ ${foreignDelete.status}/${foreignHistoryDelete.status} ${foreignDelete.body.error.code}（与"不存在"同形=${JSON.stringify(foreignDelete.body.error) === JSON.stringify(absentDelete.body.error)}；两域均无 {id} 详情读路由，GET 历史详情未注册=${unregistered.status}）`);
+  note('case1', `B 列表：收藏=${JSON.stringify(bList.body.data)} 历史=${JSON.stringify(listItems(bHistory.body))}；B 直接拿 A 的收藏/历史 id 发 DELETE ⇒ ${foreignDelete.status}/${foreignHistoryDelete.status} ${foreignDelete.body.error.code}（与"不存在"同形=${JSON.stringify(foreignDelete.body.error) === JSON.stringify(absentDelete.body.error)}；收藏域无 {id} 详情读路由；历史域 getHistory 已注册（#878）⇒ B 越权读=${foreignHistoryRead.status}/${foreignHistoryRead.body.error.code}，error 与不存在的 id 同形=${JSON.stringify(foreignHistoryRead.body.error) === JSON.stringify(absentHistoryRead.body.error)}，etag=${foreignHistoryRead.etag === null ? '无（正确）' : foreignHistoryRead.etag}）`);
   return { favorite, history, recognitionId, jobId };
 }
 

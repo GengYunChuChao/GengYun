@@ -18,7 +18,7 @@
    （`put` → `OBJECT_UNAVAILABLE`）。**`env` 从不是开启依据**：本文件零处读取 `process.env`。
 3. **装配（一次可审查的接线）**：`app.ts` 的 `BuildAppOptions.synthesisMediaWiring` 只做**转发**，
    装配层没有 `approveRealSynthesisMediaWiring` 调用点（`git grep` 实测：生产源码里只有定义处与
-   本文件的注释提到它）。**生产入口 `server.ts` 不铸造**该批准能力 ⇒ 真实模式的合成产物存储
+   本文件的注释提到它）。**生产入口 `server.ts` 不铸造**该批准能力（2026-11-04 复核：#742 `7abb7182` 起 `server.ts` 第 50 行经 `tts/real-ports.ts` 第 49 行铸造该能力；`app.ts` 侧仍只转发。） ⇒ 真实模式的合成产物存储
    在默认装配下**仍然是 fail-closed**（§7）。
 4. **测试**：新增 `tests/unit/tts-media-real-store.test.mjs`（18 条），覆盖派单要求的 ①②③④ 四组
    ＋ 装配层/服务层读数；相邻回归与门禁读数见 §5。

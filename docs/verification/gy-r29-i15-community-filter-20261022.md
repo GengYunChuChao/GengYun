@@ -39,8 +39,8 @@ PASS 8: 参数闭集：多余参数 / mine=maybe / region_code 越界·形态 / 
 PASS 9: 语句读数：23 条列表查询全部**没有 WHERE** ⇒ crop_id/region_code/mine 的过滤在内存里做（未下推 SQL）
       真库 state 闭集：CHECK (((state)::text = ANY ((ARRAY['received'::character varying, 'isolated'::character varying, 'closed'::character varying])::text[])))
       GAP（缺口登记，不是功能验证）：举报 state 写入端只有 `received`（service.ts:1402 硬编码）；store 只有 insertReport/getReport；
-      契约只有 createReport/getOwnReport；/admin/reports* 不存在。真库闭集 3 值，可达 1 值。
-PASS 10: 举报缺口登记：真库 state=received 落库可读、他人读 404；推进通道在 HTTP/store/契约三处都不存在（B 片待补）
+      契约只有 createReport/getOwnReport；/admin/reports* 当时不存在。（2026-11-04 复核：契约已增 `advanceReport`，`/admin/reports/{id}/disposition` 已注册。）真库闭集 3 值，可达 1 值。
+PASS 10: 举报缺口登记：真库 state=received 落库可读、他人读 404；推进通道在 HTTP/store/契约三处当时都不存在（B 片待补）（2026-11-04 复核：`services/api/src/community/service.ts` 的第 1739 行已有 `advanceReport`；路由见 `services/api/src/routes/admin-reports.ts` 第 76 行。）
       实际语句计划：Sort (cost=100.71..103.73 rows=1205 width=179) Sort Key: created_at DESC, id DESC
         -> Seq Scan on community_posts (cost=0.00..39.05 rows=1205 width=179)
       下推等价式计划：Limit (cost=0.28..8.30 rows=1 width=179) -> Index Scan using community_posts_feed_idx on community_posts

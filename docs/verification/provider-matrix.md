@@ -7,7 +7,7 @@
 - 记录人：原协作者初版；写手2026-10-04按用户授权接续，保留原台账结构
 - 分支：原`feature/verify-platform-services` / PR #32；接续`codex/gy-i25-access-verification`
 - 关联 issue：#27（`Refs #27`；**本文件为证据留存，不关闭整项 #27**，`Closes` / `Fixes` / `Resolves` 均为 0）
-- 最后更新：2026-10-04；[来源与实际证据](continuation-evidence.md)
+- 最后更新：2026-11-04；[来源与实际证据](continuation-evidence.md)
 
 ---
 
@@ -29,22 +29,52 @@
 
 ## 2 接入矩阵总表
 
-| 能力 | 供应商 | 版本/型号 | 认证方式 | 状态 | 阻塞说明 |
-| --- | --- | --- | --- | --- | --- |
-| 识草 | 腾讯TokenHub候选 | hy-vision-2.0-instruct；新Bearer端点 | 独立TokenHub API Key | 鉴权局部已测 | 既有只读鉴权；新增1次合成图片视觉响应/usage成功，草种结果和准确率未验 |
-| 标签 OCR | 腾讯云候选 | GeneralAccurateOCR / 2018-11-19 | TC3 | 接入局部已测 | 原2次资源错误保留；用户开后付费并单独授权第3次合成OCR，文字匹配成功；非真实瓶身/独立评估 |
-| 普通话 ASR | 腾讯云候选 | SentenceRecognition / 2019-06-14 / 16k_zh | ASR专用TC3 | 接入局部已测 | 第一次UserNotRegistered；新凭据复核准确转写合成短句，非真机/独立评估 |
-| 语音合成 TTS | 腾讯云候选 | TextToVoice / 2019-08-23；精品101001 | TC3 | 接入局部已测 | 第一次PkgExhausted；新状态复核成功MP3并本地解码，未验真机/适老/长期额度 |
-| 大模型 | DeepSeek已有密钥 | 返回`deepseek-flash`（DeepSeek-V4.1-Flash）；`/models`另有`deepseek-v4-pro`未调用 | Bearer（密钥仅服务端env） | 接入局部已测 | 9次有效key发送尝试（8次HTTP200成功、1次超限400）＋1次无效key（401）（见[LLM真实调用证据](llm-live-evidence.md)）；单轮/多轮/长上下文/JSON/工具调用/引用编号成功；受控失败：无效key401、超限400、提示注入**整段响应保守判定**（遍历全部标记与系统提示词泄漏语境；明确拒绝/明确服从/无法判定三态，否定或歉意词不作为通过，矛盾或否定对象不符记`INCONCLUSIVE`）；留存/训练API专项条款、长期额度与模型版本稳定性未验证 |
-| 文字/图片 AI 筛查 | 腾讯云候选 | TMS+IMS / 2020-12-29 | TC3 | 接入局部已测 | 各1次安全合成样例Pass+1次受控参数失败；规则配置有效性/召回率/用途删除运行未验 |
-| 关系数据库 | 腾讯云PostgreSQL候选 | PostgreSQL17；实例未交接 | 连接秘密仅服务端 | 阻塞 | 无获准连接及脱敏样例，实际连接0 |
-| 对象存储 | CloudBase私有存储候选 | 环境未交接 | 环境/桶权限未验 | 阻塞 | ACL/签名/删除均未实测 |
+| 能力 | 供应商 | 版本/型号 | 认证方式 | 状态 | 阻塞说明 | 替代适配方案（仓内已有） |
+| --- | --- | --- | --- | --- | --- | --- |
+| 识草 | 腾讯TokenHub候选 | hy-vision-2.0-instruct；新Bearer端点 | 独立TokenHub API Key | 鉴权局部已测 | 既有只读鉴权；新增1次合成图片视觉响应/usage成功，草种结果和准确率未验 | 非 real 走明确标注的合成替身 `createStubRecognitionProvider`（`services/api/src/recognitions/provider.ts:78`），`real` 才装真实端口（`services/api/src/recognitions/provider.ts:191`）；真实调用预留/结算在识别域闸门（`services/api/src/recognitions/live-adapter.ts:170`）；`APP_EXECUTION_MODE` 未声明按 stub（`services/api/src/config.ts:383`）。真机侧可用开发者工具模拟器（SDK 3.17.3，`docs/verification/gy-i26-five-tabs-20261103.md:9`） |
+| 标签 OCR | 腾讯云候选 | GeneralAccurateOCR / 2018-11-19 | TC3 | 接入局部已测 | 原2次资源错误保留；用户开后付费并单独授权第3次合成OCR，文字匹配成功；非真实瓶身/独立评估 | 非 real 走明确标注的替身 `createStubOcrProvider`（`services/api/src/ocr/provider.ts:86`），`real` 才装真实端口（`services/api/src/ocr/provider.ts:200`）；真实调用预算闸 `services/api/src/ai/live-gate.ts:79`；`APP_EXECUTION_MODE` 未声明按 stub（`services/api/src/config.ts:383`） |
+| 普通话 ASR | 腾讯云候选 | SentenceRecognition / 2019-06-14 / 16k_zh | ASR专用TC3 | 接入局部已测 | 第一次UserNotRegistered；新凭据复核准确转写合成短句，非真机/独立评估 | 非 real 走明确标注的替身 `createStubSpeechProvider`（`services/api/src/speech/provider.ts:135`），`real` 才装真实端口（`services/api/src/speech/provider.ts:240`）；真实调用预算闸 `services/api/src/ai/live-gate.ts:79`；`APP_EXECUTION_MODE` 未声明按 stub（`services/api/src/config.ts:383`） |
+| 语音合成 TTS | 腾讯云候选 | TextToVoice / 2019-08-23；精品101001 | TC3 | 接入局部已测 | 第一次PkgExhausted；新状态复核成功MP3并本地解码，未验真机/适老/长期额度 | 非 real 走明确标注的替身 `createStubTtsProvider`（`services/api/src/tts/provider.ts:109`，产物前缀声明非真实音频，`services/api/src/tts/provider.ts:92`）；`real` 才装真实端口（`services/api/src/tts/provider.ts:174`）；真实调用预算闸 `services/api/src/ai/live-gate.ts:79`；`APP_EXECUTION_MODE` 未声明按 stub（`services/api/src/config.ts:383`） |
+| 大模型 | DeepSeek已有密钥 | 返回`deepseek-flash`（DeepSeek-V4.1-Flash）；`/models`另有`deepseek-v4-pro`未调用 | Bearer（密钥仅服务端env） | 接入局部已测 | 9次有效key发送尝试（8次HTTP200成功、1次超限400）＋1次无效key（401）（见[LLM真实调用证据](llm-live-evidence.md)）；单轮/多轮/长上下文/JSON/工具调用/引用编号成功；受控失败：无效key401、超限400、提示注入**整段响应保守判定**（遍历全部标记与系统提示词泄漏语境；明确拒绝/明确服从/无法判定三态，否定或歉意词不作为通过，矛盾或否定对象不符记`INCONCLUSIVE`）；留存/训练API专项条款、长期额度与模型版本稳定性未验证 | 非 real 走确定性回答器 `createDeterministicAnswerComposer`（`services/api/src/conversations/service.ts:278`）；`services/api/src/ai/chat-wiring.ts:57` 在无真实 chat 配置时选它，非 real 不外发；`APP_EXECUTION_MODE` 未声明按 stub（`services/api/src/config.ts:383`） |
+| 文字/图片 AI 筛查 | 腾讯云候选 | TMS+IMS / 2020-12-29 | TC3 | 接入局部已测 | 各1次安全合成样例Pass+1次受控参数失败；规则配置有效性/召回率/用途删除运行未验 | 非 real 走明确标注的替身审核端口 `createSubstituteModerationPort`（`services/api/src/moderation/provider.ts:42`，恒无结论/fail-closed）；显式演示端口仅非 real 可用（`services/api/src/moderation/demo-port.ts:2`）；`APP_EXECUTION_MODE` 未声明按 stub（`services/api/src/config.ts:383`） |
+| 关系数据库 | 腾讯云PostgreSQL候选 | PostgreSQL17；实例未交接 | 连接秘密仅服务端 | 阻塞 | 无获准连接及脱敏样例，实际连接0 | 本机 PostgreSQL 17.11（`docs/verification/gy-r29-real-pg-arms-audit-20261022.md:9`）与仓内迁移 `services/api/db/migrations/0001..0054`（53 个正向 `.sql`，缺 `0037`）；真库集成臂需 `COMMUNITY_PG_TEST_URL`（`tests/integration/community-pg.mjs:36`）；CVM 侧脚本在 `deploy/postgres-cvm/`（`deploy/postgres-cvm/README.md:1`） |
+| 对象存储 | CloudBase私有存储候选 | 环境未交接 | 环境/桶权限未验 | 阻塞 | ACL/签名/删除均未实测 | 非 real 走明确标注的替身对象存储（`services/api/src/media/object-store.ts:85`，`resolveMediaObjectStore` 按执行模式选择，`services/api/src/media/object-store.ts:448`）；清扫通道 `tools/purge-expired-media.mjs`（`cleanupOrphans()`，`tools/purge-expired-media.mjs:29`）；排班单元在 `deploy/purge-schedule/`（`deploy/purge-schedule/README.md:1`） |
 
 供应商逐项“未验证”明细保留为待填，以上候选不表示已开通，阻塞不表示调用已经失败；没有调用就不生成请求编号/响应schema或宣称供应商版本。每类仍需真实成功+受控失败、字段/时限/额度/留存/训练/删除证据。微信账号鉴权见平台清单，不能转移为六类供应商“已通过”。
 
 ---
 
 当前七端点离线配置、五模块SDK局部兼容及TokenHub鉴权见[配置证据](ai-configuration-evidence.md)。真实配置七端点参数/凭据均齐；用户交接文本、图片两个BizType后已私密配置，实际策略/能力未验；生成/识别/审核请求0。具体候选、官方接口来源、私密交接与SDK安装限制见[资源交接](resource-handoff.md)。DeepSeek只读鉴权不计大模型能力通过。
+
+---
+
+## 2026-11-04 复核
+
+本轮只跑离线配置自检，命令与读数如下（逐字照抄工具输出）：
+
+- 命令：`node tools/verify-real-capability-config.mjs --strict` ⇒ 退出码 `0`，`严格模式判定：PASS`。
+- 汇总行：`ready 0 ｜ needs-user 0 ｜ n-a 12`。
+- 提示：`mode-undeclared: APP_EXECUTION_MODE 未声明（服务按 stub 启动），真实能力一律未接线`。
+- 提示：`mode-not-real: 非 real 模式下所有能力组判 n-a；字段行仍报 present/形态，可看出「切 real 还缺什么」`。
+
+12 个能力组各自缺的字段（照抄工具输出）：
+
+| 能力组 | 缺失字段 |
+| --- | --- |
+| database | `DATABASE_URL` |
+| session | `SESSION_SIGNING_KEY` |
+| deletion-ledger | `DELETION_LEDGER_KEY` |
+| wechat-real | `WECHAT_APP_ID`、`WECHAT_APP_SECRET` |
+| object-storage | `OBJECT_STORAGE_ENDPOINT`、`OBJECT_STORAGE_BUCKET`、`OBJECT_STORAGE_ACCESS_KEY`、`OBJECT_STORAGE_SECRET_KEY` |
+| media-encryption | `MEDIA_OBJECT_REF_KEY` |
+| media-access-grant | `MEDIA_ACCESS_GRANT_ORIGIN` |
+| asr | `TENCENTCLOUD_ASR_SECRET_ID`、`TENCENTCLOUD_ASR_SECRET_KEY`（或 `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY`） |
+| recognition | `RECOGNITION_PROVIDER_URL`、`RECOGNITION_PROVIDER_KEY` |
+| chat-llm | `CHAT_LLM_ENDPOINT`、`CHAT_LLM_MODEL`、`CHAT_LLM_API_KEY`（或 `CHAT_LLM_ENDPOINT`、`CHAT_LLM_MODEL`、`DEEPSEEK_API_KEY`） |
+| tts | `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY` |
+| ocr | `TENCENTCLOUD_SECRET_ID`、`TENCENTCLOUD_SECRET_KEY` |
+
+本页记的是**离线配置自检**结果，不代表任何供应商已接通或已验收。
 
 ## 3 逐能力验证明细
 

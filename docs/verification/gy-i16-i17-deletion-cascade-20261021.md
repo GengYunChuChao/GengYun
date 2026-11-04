@@ -21,7 +21,7 @@
 >    同一事务内 `DELETE FROM public.messages … RETURNING id`（`:230`）＋ 按 `scope` 前缀删 `public.idempotency_keys`（`:234`）。
 > 4. **会话域已并入统一注销账本**（推翻 §3 矩阵会话行、§5 G5／G6、§7 P0-3 的「已建未驱动」）：
 >    `#397` 按 P0-3 的**路径①**执行——`conversations` 进 `USER_DATA_DELETION_MODULES`（`user-data-deletion.ts:194-199` 四域）并注册（`:1143-1146`），
->    备份清单补 `snapshotOwner`（`conversations/store-pg.ts:445`）。
+>    备份清单补 `snapshotOwner`（`conversations/store-pg.ts:512-518`）。
 >
 > **仍然有效、请照旧引用**：G4（`0019` 迁移注释宣称的级联永不触发）、G7（社区域无清理原语、无 scope）。（2026-11-04 复核：G7 的「**无清理原语**」半句已失效——社区域现有接口 `CommunityOwnerPurgePort`（`deleteAllByOwner` ＋ `purgeOwnerData`，见 `services/api/src/community/purge.ts`）与 store 上的 `async purgeOwnerData`（`services/api/src/community/store-pg.ts`），装配在 `services/api/src/app.ts` 的 `communityStore: communityPurgePort`，自 `#474`（`1fbe7572`，2026-10-22）起在 `main`；「**无 scope**」半句仍真。G4 不受影响。）
 > **已失效／只对一半（2026-11-04 复核）**：G10 的「注销 HTTP 面整域 503」已被 GY-R74 的**按域降级**取代——`real` + 真库下受理开放（POST 202／GET 回执可读），唯一保留的 503 是「`real` 但无真库」（`services/api/src/app.ts:2620-2627`）；G11 只有「审计」仍成立（进程内 `auditLog`），回执台账自迁移 0038 起已持久化（`user-data-deletion.ts:850`）；

@@ -18,7 +18,7 @@
 | 保留段核对 | `netsh interface ipv4 show excludedportrange protocol=tcp` 列出 `5357`、`50000-50059*`、`55394-55493`、`56018-56117`、`60338-60437`、`61782-61881`、`62076-62175`、`64448-64547`；**55631 不在其中** | 命令输出 |
 | 服务端 | `server is running (PID: 20776)` | `pg_ctl status` |
 | 源库 | `gengyun`，属主角色 `gengyun_cvm_owner`（超级用户），`SHOW server_version` = `17.11`，`server_encoding` = `UTF8`，`datcollate` = `C` | psql |
-| 迁移来源 | `node services/api/src/db/migrate.ts up` ⇒ 17 个全部应用；`schema_migrations` 由迁移器的 `ensureLedger`（`services/api/src/db/migrate.ts:107`）建，**17 个迁移 `.sql` 里没有任何一个建它** | 命令输出 + 源码行 |
+| 迁移来源 | `node services/api/src/db/migrate.ts up` ⇒ 17 个全部应用；`schema_migrations` 由迁移器的 `ensureLedger`（`services/api/src/db/migrate.ts:203-212`）建，**17 个迁移 `.sql` 里没有任何一个建它** | 命令输出 + 源码行 |
 | 角色／授权 | 8 个 `services/api/db/roles/*.sql` ⇒ 11 个 NOLOGIN 组；`sql/20-login-roles.sql` ⇒ `gengyun_api_runtime`（LOGIN）+ 5 个组成员关系 + 函数 `EXECUTE`；`sql/90-assert-least-privilege.sql` ⇒ 输出 `ok`、exit 0。共 13 个 `gengyun*` 角色，13 条非属主表级授权 | psql 计数 + 断言脚本 |
 | 库内规模 | 基表 **51**、视图 **8**、schema `catalog_ops`/`catalog_read`/`knowledge_staging`/`public`/`staging_intake`；`schema_migrations` **17** 行（`0001`–`0017`） | psql 计数 |
 | 种子数据 | `users` 2 行、`media` 1 行、`jobs` 1 行（固定 UUID；`media.sha256` = `a1`×32） | 种子 SQL 见 §1② |
