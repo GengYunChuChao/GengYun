@@ -77,11 +77,11 @@
       "path": "services/api/src/admin/audit/catalog.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
-      "reference": "services/api/src/admin/audit/catalog.ts:9-21",
+      "reference": "services/api/src/admin/audit/catalog.ts:9-22",
       "doc": "docs/architecture/ai-ops-spec-status.md",
       "docLine": 101,
       "kind": "file-header",
-      "note": "【文件头自述·写入点一览表】E31 引的是 catalog.ts 文件头那张「写入点（库内函数）／`action`／`scope`／迁移」的十一行表（第 9-21 行，第 7 行写明「一共十一种 `action`」），落在整份文件头自述块（1-191 行）里，块后第一条声明行是第 194 行的 `AUDIT_ACTION_ACCOUNT_SUSPEND`——这张表本身就是 E31「十一条落库审计写路径」的证据原文（含 0049 的 `record_admin_category_update` → `category.update`，第 21 行），硬改锚会把「写点一览」换成某一个常量，反而丢掉「十一路径」这个判据。"
+      "note": "【文件头自述·写入点一览表】E31 引的是 catalog.ts 文件头那张「写入点（库内函数）／`action`／`scope`／迁移」的十二行表（第 9-22 行，第 7 行写明「一共十四种 `action`」），落在整份文件头自述块（1-191 行）里，块后第一条声明行是第 194 行的 `AUDIT_ACTION_ACCOUNT_SUSPEND`——这张表本身就是 E31「十二条落库审计写路径」的证据原文（含 0049 的 `record_admin_category_update` → `category.update`，第 21 行；以及 0053 新增末行 `record_admin_report_disposition_audit` 一行按 `p_action` 派生 `report.triage`／`report.resolve`／`report.reject` 三值，第 22 行），硬改锚会把「写点一览」换成某一个常量，反而丢掉「十二路径／十四动作」这个判据。2026-11-05 随 E31 由十一行改判十二行，登记键 reference 同步 9-21 → 9-22。"
     },
     {
       "path": "services/api/src/admin/ops/content-pg.ts",
