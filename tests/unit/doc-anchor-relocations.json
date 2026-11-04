@@ -2642,5 +2642,14 @@
   {"doc":"docs/architecture/gy-r59-retention-backup-thirdparty-map.md","line":68,"target":".github/workflows/real-pg-integration.yml","from":515,"to":627,"reason":"陈旧锚点重锚：`:515` 现在是 `PGPORT: 5432`；`tests/integration/backup-copies-purge-pg.mjs` 的实际运行步骤在 `:627` 的 `run: node tests/integration/backup-copies-purge-pg.mjs`。"},
   {"doc":"docs/architecture/contract-implementation-status.md","line":42,"target":"services/api/src/recognitions/service.ts","from":757,"fromEnd":797,"to":766,"toEnd":806,"reason":"陈旧锚点重锚（目标文件本提交未改）：`:757-797` 起点落在 `deleteRecognition` 的 `updatedAt: at,`、终点是 `revision: current.revision + 1,`（删除路径），而 `cancelJob` 声明在 `:766`（`async function cancelJob(input: {`）、函数体到 `:806` 的 `}`（该文件 `:904` 的自注也写 `cancelJob`（`:765-806`））。"},
   {"doc":"docs/architecture/contract-implementation-status.md","line":42,"target":"services/api/src/routes/admin.ts","from":316,"fromEnd":324,"to":477,"toEnd":491,"reason":"陈旧锚点重锚：`:316-324` 现在是 `const listAuditLogs = methodOf(services.audit, 'listAuditLogs');` 起的一段审计日志路由；`cancelAdminJob` 的装配在 `:477` 的 `const cancelJob = methodOf(services.ops, 'cancelAdminJob');`，路由块 `:483-491`（`app.post(`${API_PREFIX}/admin/jobs/:id/cancel`, …);`）。"},
-  {"doc":"docs/architecture/contract-status.json","line":4405,"target":"services/api/src/routes/admin.ts","from":316,"fromEnd":324,"to":477,"toEnd":491,"reason":"同上（台账 JSON 侧 blocker 散文）：`cancelAdminJob` 装配在 `:477`、路由块 `:483-491`；旧区间 `:316-324` 是审计日志路由。"}
+  {"doc":"docs/architecture/contract-status.json","line":4405,"target":"services/api/src/routes/admin.ts","from":316,"fromEnd":324,"to":477,"toEnd":491,"reason":"同上（台账 JSON 侧 blocker 散文）：`cancelAdminJob` 装配在 `:477`、路由块 `:483-491`；旧区间 `:316-324` 是审计日志路由。"},
+  {
+    "doc": "docs/architecture/s4-data-traceability.md",
+    "line": 378,
+    "target": "services/api/src/privacy/user-data-deletion.ts",
+    "from": 203,
+    "to": 969,
+    "toEnd": 971,
+    "reason": "D11 行的判据落点原指 :203（「写落库在线清除证据」的 JSDoc 段；该文件里没有 MediaStore 字样，配对只能落空）。真实证据是注入 mediaStore 时处理器先调媒体原语 purgeOwnedMedia 的调用点 :969-971（读数进证据串后再删本域四表），故重锚到 :969-971；「必需模块闭集含媒体」这半条仍未达成（USER_DATA_DELETION_MODULES 在 :194-199 只有收藏/历史/消息/会话四域），已在文末附注写清，不改变 D11 的「部分」判定。"
+  }
 ]
