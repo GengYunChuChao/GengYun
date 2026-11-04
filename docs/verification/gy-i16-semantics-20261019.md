@@ -39,8 +39,8 @@
 - 历史详情：小程序 `locateHistory()` 用**实时列表读取**定位 + 实时状态，快照只用于定位且**不携带状态**
   （`miniprogram/utils/history-api.js:277-285` 起，`locateHistory`；原记 :274）；识别正文走 `GET /recognitions/{id}`（#9，删除后 404）。
 
-这一点在集成脚本里也是如实登记的（`tests/integration/favorites-history-isolation-http.mjs:322-325`、`:376-378`
-断言 `GET /history/{id}` 未注册 ⇒ 404），本片**不伪造**详情路由。
+这一点在集成脚本里也是如实登记的（`tests/integration/favorites-history-isolation-http.mjs:322-325` 记「收藏域没有 `GET /favorites/{id}`」；`:376-402`
+记 `GET /history/{id}` 自 #878（`dc6ae8d2`）注册后，越权读他人仍 404／`NOT_FOUND`／不带 ETag，且与「不存在」逐字段同形），本片**不伪造**详情路由。
 
 ## 3 条款 → 现有断言 → 缺口（先建表，再决定补什么）
 
