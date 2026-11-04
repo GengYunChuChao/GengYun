@@ -212,7 +212,7 @@ CI 的 `test:unit` 只断言 `route_mounted` 一致性，不断言行号范围�
    （后端 / 小程序 / GY-I12 问答）一致性未在本轮执行；本轮只沿用既有
    `gy-i08/1.2.0` 规则版本与 `doseCardDescriptor` 负例断言。
 4. **正式微信 / Android 端到端**：未跑真机、未调用腾讯正式身份交换；
-   `miniprogram` 页面端到端消费 `/herbicides` 的新页面/交互未实现，本轮只完成 HTTP 面。
+   `miniprogram` 页面端到端消费 `/herbicides` 的新页面/交互未实现（2026-11-05 复核：本条是那一轮的未取得项；此后 `miniprogram` 侧已接——`miniprogram/utils/knowledge-api.js` 第 176 行的 `listHerbicides` 实调 `request('/herbicides' + ...)`；`miniprogram/pages/reference/reference.js` 第 22 行 `require('../../utils/knowledge-api')`、第 75 行注释写明「'server' = 服务端 `/herbicides` 真实读数」，服务端分支 `runServerQuery`（第 238 行）在第 254 行以 `knowledgeApi.listHerbicides(input)` 取数并按服务端 `query_state` 渲染，故「页面端到端消费 `/herbicides` 的新页面/交互未实现」不再成立；「本轮只完成 HTTP 面」仍是那一轮的范围记录。），本轮只完成 HTTP 面。
 5. **真实数据库与原生 PG 复跑**：`/knowledge` 真实库路径未在本轮重跑原生 PostgreSQL
    （仅沿用 PGlite 回归与既有原生证据）；`/herbicides` 为文件+域库驱动，不依赖数据库，
    但**未在真实环境**验证部署形态与只读文件可用性。
