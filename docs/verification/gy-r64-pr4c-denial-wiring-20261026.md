@@ -72,7 +72,7 @@
 
 | 文件 | 变化 |
 | --- | --- |
-| `services/api/src/admin/audit/catalog.ts:70-130` | `AUDIT_ACTIONS` 末位追加 `admin_scope.grant` / `admin_scope.revoke` / `admin_scope.deny`；`AUDIT_ENTITY_SCOPES` 追加 `admin_scope: 'scopes:write'`；文件头表改为 7 种 action / 5 支迁移，并如实登记「`admin_scope` 实体的 `scope` 列取 `scopes:write`」这处收窄 |
+| `services/api/src/admin/audit/catalog.ts:227-381` | `AUDIT_ACTIONS` 末位追加 `admin_scope.grant` / `admin_scope.revoke` / `admin_scope.deny`；`AUDIT_ENTITY_SCOPES` 追加 `admin_scope: 'scopes:write'`；文件头表改为 7 种 action / 5 支迁移，并如实登记「`admin_scope` 实体的 `scope` 列取 `scopes:write`」这处收窄 |
 | `packages/contracts/openapi.json` | `/admin/audit-logs` 的 `action` enum 4 → 7、`entity` enum 3 → 4（只改枚举，不改路径/参数） |
 | `apps/admin/src/lib/admin-audit-logs.mjs` | 前端镜像同步（`AUDIT_LOG_ACTIONS` / `..._LABELS` / `AUDIT_LOG_ENTITIES` / `..._LABELS` / `..._ENTITY_SCOPES`） |
 | `tests/unit/admin-audit-logs.test.mjs` | `deepEqual(action enum, AUDIT_ACTIONS)`、entity 同理、`AUDIT_ENTITY_SCOPES` 排序断言一起放宽到 7/4 值 |

@@ -26,7 +26,7 @@
 - 于是管理员「授予某人 `sources:write`」时，落库行的 `scope` 就是 `'sources:write'` —— 与下架行的 `scope` **逐字相同**。
 - 若 `entity=post` 只映射成 `scopes:['sources:write']`，那个结果集里就会混进**权限变更行**，而界面上这一页标着「帖子相关」。这比空页更难发现：读者会以为「平台确实对这些帖子做过处置」。
 
-护栏把 `entity=post` 收窄成 `action='post.hide'`。`services/api/src/admin/audit/catalog.ts:198-212` 是护栏表与读取函数（`actionsOfAuditEntity` 在**缺席时返回 `null`** = 「该实体没有护栏」，不是「零个 action」）；`:45-75` 的文件头整节记录上面这段论证。
+护栏把 `entity=post` 收窄成 `action='post.hide'`。`services/api/src/admin/audit/catalog.ts:407-432` 是护栏表与读取函数（`actionsOfAuditEntity` 在**缺席时返回 `null`** = 「该实体没有护栏」，不是「零个 action」）；`:86-114` 的文件头整节记录上面这段论证。
 
 ### 2.2 为什么护栏外的 action 是 **400**，而不是静默取交集
 

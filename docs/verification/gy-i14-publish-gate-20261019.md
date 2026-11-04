@@ -43,7 +43,7 @@
 | 要求 | 代码锚 | 断言 | 实测 |
 | --- | --- | --- | --- |
 | 发帖仍可用、同一请求内完成（对调用方行为不变） | `services/api/src/community/service.ts:863-901`：筛查放行 ⇒ 落 `private/pending` ⇒ `link.publish` ⇒ 返回 `published/approved` | `W1` → `community-moderation-gate-wiring.test.mjs:48`（发布**前一瞬**行是 `private/pending`，返回是 `published/approved`，`calls.publish.length === 1`）；既有 `G1i` 正控制仍绿 | pass |
-| 评论同样先审后发（与发帖同一口径） | `services/api/src/community/service.ts:1158-1186`（`createComment`：`awaitingPublish` ⇒ 行落 `private/pending` ⇒ `link.publish` ⇒ 回读）、`:1252-1277`（`editComment` 同口径，发布的是新 revision） | `W5` → `community-moderation-gate-wiring.test.mjs:199`（`calls.publish.length === 2`，第 2 次 `target_ref` 是 `{comment, id, 1}`，发布那一刻行 `private/pending`）；`W6`（`:255`）评论发布被拒 ⇒ 行停待审、他人 404、评论列表空、作者看到 `private`；`W7`（`:300`）违规评论 400 且 `comments === 0`、零发布调用；`W8`（`:328`）评论编辑 rev2 重新发布；`W9`（`:359`）评论新版本被拒 ⇒ 公开列表空 | pass |
+| 评论同样先审后发（与发帖同一口径） | `services/api/src/community/service.ts:1427-1457`（`createComment`：`awaitingPublish` ⇒ 行落 `private/pending` ⇒ `link.publish` ⇒ 回读）、`:1538-1563`（`editComment` 同口径，发布的是新 revision） | `W5` → `community-moderation-gate-wiring.test.mjs:199`（`calls.publish.length === 2`，第 2 次 `target_ref` 是 `{comment, id, 1}`，发布那一刻行 `private/pending`）；`W6`（`:255`）评论发布被拒 ⇒ 行停待审、他人 404、评论列表空、作者看到 `private`；`W7`（`:300`）违规评论 400 且 `comments === 0`、零发布调用；`W8`（`:328`）评论编辑 rev2 重新发布；`W9`（`:359`）评论新版本被拒 ⇒ 公开列表空 | pass |
 | 先审后发：规则拒绝/隔离一律不落库 | `services/api/src/community/service.ts:842-858`（先 `gate.evaluate`，再 `requireDomainClearance`，之后才写行） | `G1a`／`G1d`／`G1g`／`G7` 保持原断言全绿（`snapshotCounts().posts === 0`） | pass |
 | 人审入口不造假任务、不造假审核人 | 本片**未新增**任何人审任务/审核人；`humanReview` 仍无 HTTP 消费者（见 §8 未做） | 无新增断言（不变量：审核域任务只由 `submitScreening` 创建） | 未放宽 |
 
