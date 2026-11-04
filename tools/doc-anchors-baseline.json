@@ -241,12 +241,6 @@
       "path": "services/api/src/speech/store-pg.ts",
       "reason": "SUSPECT",
       "owner": "api-server",
-      "reference": "speech/store-pg.ts:122"
-    },
-    {
-      "path": "services/api/src/speech/store-pg.ts",
-      "reason": "SUSPECT",
-      "owner": "api-server",
       "reference": "speech/store-pg.ts:142"
     },
     {
