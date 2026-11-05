@@ -75,7 +75,7 @@
 - **internal**：只给运维/导入组用，运行时必须 42501；
 - **trigger**：触发器函数，除属主外谁都不许有 EXECUTE（PUBLIC 也不行）。触发器由 PostgreSQL 在触发语句里以函数属主语义调用，**不检查调用者的 EXECUTE**，所以收回 PUBLIC 不影响触发器本体。
 
-> **与派单 §1 的差异（实测为准）**：派单写 `apply_source_operation`「非属主授予：`gengyun_source_executor` + `gengyun_source_operator`」，写两条 staging 函数「`gengyun_staging_executor` + `gengyun_staging_importer`」。实测 `gengyun_source_executor` / `gengyun_staging_executor` 是**属主**（`source_operator.sql:16`、`staging_importer.sql:17-18` 的 `ALTER FUNCTION … OWNER TO`），不是被 GRANT 的 grantee；把它们写进 `allowed_grantees` 会让断言 3 在基线就判「少授 executor」。清单只列 `gengyun_source_operator` / `gengyun_staging_importer`。另外派单 §2.2 写「§1 的 9 条」，但同一段枚举是 6 + 3 + 2 = 11 条，实现按 11 条。
+> **与派单 §1 的差异（实测为准）**：派单写 `apply_source_operation`「非属主授予：`gengyun_source_executor` + `gengyun_source_operator`」，写两条 staging 函数「`gengyun_staging_executor` + `gengyun_staging_importer`」。实测 `gengyun_source_executor` / `gengyun_staging_executor` 是**属主**（`source_operator.sql:32`、`staging_importer.sql:33-34` 的 `ALTER FUNCTION … OWNER TO`），不是被 GRANT 的 grantee；把它们写进 `allowed_grantees` 会让断言 3 在基线就判「少授 executor」。清单只列 `gengyun_source_operator` / `gengyun_staging_importer`。另外派单 §2.2 写「§1 的 9 条」，但同一段枚举是 6 + 3 + 2 = 11 条，实现按 11 条。
 >
 > `staging_intake.python_json(jsonb)` 不在清单里：它是 0007 建的普通（非 `SECURITY DEFINER`）辅助函数，只授 `gengyun_staging_executor`、0007:45 已 REVOKE PUBLIC，不属于派单 §1 的 runtime/internal/trigger 三类。断言 2 对它的 PUBLIC 面仍有兜底；断言 3 不覆盖它（见 §7 第 3 条）。
 

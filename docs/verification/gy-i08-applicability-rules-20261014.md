@@ -94,7 +94,7 @@ patched_old_mirror: removed 2 lines
 > **订正（绑实测 SHA `95b8e7cf`）**：上表与下段的开关口径**只对域库函数与小程序页面成立**，不是服务端运维开关。
 > 服务端 API 不读这两个键：三符号在 `services/api/src` 下实测 **0 处命中**（定义在
 > `packages/reference/deterministic.mjs:97-100`／`:121`／`:137`）；会话域的用量权威以**无参**构造
-> （`services/api/src/app.ts:1244`）⇒ `doseCardEnabled` 恒 `true`（`services/api/src/conversations/dose.ts:42`）。
+> （`services/api/src/app.ts:2377`）⇒ `doseCardEnabled` 恒 `true`（`services/api/src/conversations/dose.ts:42`）。
 > 详见 §7.1 第 1 条。本节原表**未删改**，仅补适用范围。
 
 ### 2.5 跨线纳入同一规则版本：`services/api/src/ocr/state.ts` 声明 `gy-i08/1.2.0`
