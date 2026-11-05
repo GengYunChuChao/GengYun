@@ -208,7 +208,7 @@
 
 ### P0-2 把 `messages` 注册进注销闭集（G2＋G8 的一半）
 
-> **superseded（2026-10-21）**：**已落地**（`#397`）。`USER_DATA_DELETION_MODULES` 现为四域（`user-data-deletion.ts:93-98`），
+> **superseded（2026-10-21）**：**已落地**（`#397`）。`USER_DATA_DELETION_MODULES` 现为四域（`user-data-deletion.ts:194-199`），
 > `BACKUP_COPY_SCOPES` 增 `messages: 'message'`／`conversations: 'conversation'`（`packages/privacy/backup-copies.mjs:42-47`），
 > `snapshotOwner` 见 `messages/store-pg.ts:341`。本段列的 5 处既定断言没有放宽，而是按「只加强」改写（逐条见 `#397` 提交记录）。
 

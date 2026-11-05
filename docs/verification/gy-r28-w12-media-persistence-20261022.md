@@ -238,7 +238,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 | 端口 | 文件:行 | 覆盖面 | `real` 下现状 |
 | --- | --- | --- | --- |
 | 媒体域仓储（本片） | `services/api/src/media/service.ts:1323`（`persistence: mediaStore`） | `/api/v1/media/*` 7 条 + 社区取图 | **已接 PG**（缺键/缺池时 fail-closed） |
-| `SynthesisMediaPort`（TTS） | `services/api/src/tts/media.ts:141` | 合成产物存放 | `createUnwiredMediaPort()` fail-closed |
+| `SynthesisMediaPort`（TTS） | `services/api/src/tts/media.ts:70` | 合成产物存放 | `createUnwiredMediaPort()` fail-closed |
 | `SpeechMediaPort`（ASR） | `services/api/src/speech/media.ts:112-118` | 转写前媒体引用校验 | `createUnwiredMediaPort()` ⇒ `OBJECT_UNAVAILABLE` |
 | `OcrMediaPort` | `services/api/src/ocr/media.ts:77` | OCR 媒体引用校验 | 同上 |
 | `RecognitionMediaPort` | `services/api/src/recognitions/media.ts:76` | 识别媒体引用校验 | 同上 |
@@ -253,7 +253,7 @@ Dockerfile Node 版本、/health 路由、down 脚本覆盖 0002..0026、migrate
 **接线处方（另派，本片不扩权）**：每个域的 `media.ts` 加一个包本片 `MediaStore` 的适配器，例如
 `createRegistryMediaPort(store: MediaStore)` → `store.getMedia(mediaId)` 判归属/版本/`state === 'ready'`
 与目的（ASR 要 `purpose === 'voice_question'`），返回 `NOT_FOUND`/`REVISION_CONFLICT`/`OBJECT_UNAVAILABLE`；
-装配处用**已建好的** `mediaStore`（`app.ts:1277-1280`（2026-10-26 按符号重取，原记 `:1243`／`:1299`），同一块，不新增工厂调用），判据
+装配处用**已建好的** `mediaStore`（`app.ts:1303-1305`（2026-10-26 按符号重取，原记 `:1243`／`:1299`），同一块，不新增工厂调用），判据
 `config.executionMode === 'real' && mediaStore.persistent`；代价：四个端口的 `kind` 都是闭集
 `'substitute' | 'unwired'`，要加成员并同步各域测试。最小真库臂：在
 `tests/integration/media-persistence-pg.mjs` 增一段——real 装配 + PG 仓储 ⇒ 上传 `purpose='voice_question'`
@@ -454,7 +454,7 @@ tests/unit/*sql-column*.test.mjs` ⇒ 89 pass / 0 fail；`node tools/verify-cont
    （并发 complete 一 202 一 409、跨主体同幂等键、`reject()` 布尔语义、空库自举）与**必须独立库**的理由：
    第 12 条的读数里有**全库** `count(*)`（`media-persistence-pg.mjs:273-275`、`:289-291`、`:426`），共库会让
    「同一幂等键重复 complete 行数不变」与并发臂的行数互相污染 ⇒ 两条臂都变假读数。
-2. `tests/unit/ci-real-pg-wiring.test.mjs:122`（`MANAGED_SCRIPTS`）、`:143`（`FROZEN_MANAGED_SCRIPTS`）、`:221`
+2. `tests/unit/ci-real-pg-wiring.test.mjs:135`（`MANAGED_SCRIPTS`）、`:143`（`FROZEN_MANAGED_SCRIPTS`）、`:221`
    （`REQUIRED_STEP_ORDER` 第 12b 条）三处清单同步加入该脚本，另有 10 行注释写明「与第 12 条同型、独立库、零耦合」。
    判据 ⑦ 的「workflow 里执行的 `-pg.mjs` 集合与 `MANAGED_SCRIPTS` 双向相等」因此把新脚本也纳入管控 —— 这是**加严**：
    接线前它完全没人跑，接线后任何一方漏登记都红。
