@@ -33,6 +33,36 @@
             <text class="info-row__title">{{item.label}}（{{item.purpose}}）</text>
             <text class="info-row__desc">当前状态 {{item.stateLabel}}{{item.changedAt ? ' · 最近更新 ' + item.changedAt : ''}}</text>
             <text class="info-row__desc" wx:if="{{item.policyVersion}}">服务端记录的政策版本 {{item.policyVersion}}</text>
+
+            <!-- 需要第三方接收方的用途（media_processing / external_inference）：把"交给谁"的选择权交回用户。
+                 候选来自政策读面的披露面（比授权面宽）：列出来 ≠ 授予得了，服务端按 recipient_bindings
+                 与核验证据判定，拒绝时该行的「上次操作未完成」会写出原因。已授权后不再显示选择器。 -->
+            <view class="recipient-picker" wx:if="{{item.recipients.length && item.actionKind === 'grant'}}">
+              <text class="recipient-picker__head">交给哪些第三方（{{item.selectedRecipientIds.length}}/{{item.recipients.length}} 已选）</text>
+              <view
+                class="recipient-option"
+                wx:for="{{item.recipients}}"
+                wx:for-item="recipient"
+                wx:key="id"
+                data-purpose="{{item.purpose}}"
+                data-recipient-id="{{recipient.id}}"
+                bindtap="onToggleRecipient"
+              >
+                <view class="recipient-option__mark {{item.selectedRecipientIds.indexOf(recipient.id) === -1 ? '' : 'recipient-option__mark--on'}}">
+                  <text wx:if="{{item.selectedRecipientIds.indexOf(recipient.id) !== -1}}">✓</text>
+                </view>
+                <view class="recipient-option__copy">
+                  <text class="recipient-option__name">{{recipient.displayName}}</text>
+                  <text class="recipient-option__meta">能力 {{recipient.capability}} · 留存 在线 {{recipient.retentionOnlineDays}} 天 / 备份 {{recipient.retentionBackupDays}} 天</text>
+                  <view class="recipient-badges">
+                    <text class="recipient-badge {{recipient.noTrainingVerified ? 'recipient-badge--ok' : 'recipient-badge--warn'}}">{{recipient.noTrainingVerified ? '不用于训练：已核验' : '不用于训练：未核验'}}</text>
+                    <text class="recipient-badge {{recipient.deletionVerified ? 'recipient-badge--ok' : 'recipient-badge--warn'}}">{{recipient.deletionVerified ? '可删除：已核验' : '可删除：未核验'}}</text>
+                  </view>
+                </view>
+              </view>
+              <text class="recipient-picker__note" wx:if="{{!item.selectedRecipientIds.length}}">还没选：这个用途至少需要一个接收方才能授予。</text>
+            </view>
+
             <text class="consent-control__reason" wx:if="{{item.actionDisabled}}">不可用：{{item.actionReason}}</text>
             <text class="consent-control__error" wx:if="{{item.errorText}}">上次操作未完成：{{item.errorText}}</text>
             <text class="consent-control__code" wx:if="{{item.errorCode}}">服务端错误码 {{item.errorCode}}</text>
@@ -128,8 +158,16 @@
           授予体里的 `policy_version` 只取自服务端政策读面 `GET /me/privacy-policy`，本页不编版本号。
         </view>
         <view class="card-text">
-          本页不会替您挑选第三方接收方：授予时的 `recipient_ids` 是空集合（录制/媒体处理/公开发布都不需要接收方）；
-          「外部推理」必须至少绑定一个已核验接收方，因此该用途的授予按钮在这里是置灰的，并写明原因。
+          需要第三方处理数据的用途（媒体处理、外部推理）由**你自己选**交给谁：候选来自政策读面披露的接收方，
+          本页不预选、不代挑；点一行即勾选/取消，选定后「授予」按钮才解除置灰。
+        </view>
+        <view class="card-text">
+          政策读面列出的接收方是**披露面，比授权面宽**：刻意的，不是漏洞——它回答"这份政策允许哪些第三方处理数据"。
+          你选了并授予之后，服务端仍会按该账号的已核验绑定复核；若被拒绝，行内会写「可能该接收方尚未对你启用」。
+          已核验徽标照实显示（不用于训练 / 可删除两项），留存天数也照实列出，本页不据此替你筛掉任何一项。
+        </view>
+        <view class="card-text">
+          录制与公开发布不需要第三方接收方，授予时的 `recipient_ids` 是空集合——那是如实的最小值，不是遗漏。
         </view>
         <view class="card-text">
           写成功后本页会重新读取服务端清单再刷新这四个开关；写失败时该行保持原状态，并在行内显示服务端错误码。
