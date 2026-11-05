@@ -69,7 +69,7 @@
 
 | # | 跳 | 位置 | 是否硬删 |
 | --- | --- | --- | --- |
-| 1 | `POST /me/account/deletion`（`userSession` 守卫） | `services/api/src/routes/account-deletion.ts:252-255` | — |
+| 1 | `POST /me/account/deletion`（`guards.requireUser` 守卫） | `services/api/src/routes/account-deletion.ts:255` | — |
 | 2 | `service.request()` → `deletion.requestDeletionFor()` + `await deletion.executeHandlers()` | `services/api/src/privacy/account-deletion.ts:225-228` | — |
 | 3 | 受理事务（SECURITY DEFINER 函数） | `0016_account_deletion_persistence.sql:68` → `:122-128`（users 软改）/`:132-134`（sessions 软撤）/`:138-145`（deletion_requests 插入） | **否**（全是 UPDATE/INSERT） |
 | 4 | 事务内第 2 步：写备份副本清单行 | `services/api/src/privacy/deletion-requests-pg.ts:251` `insertBackupCopySeeds(client, …)` | INSERT（不是删） |
