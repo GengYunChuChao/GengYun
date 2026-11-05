@@ -165,7 +165,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 
 ### 2.7 关键装配原文（逐字，供复核）
 
-`packages/media/service.mjs:323`（`getMedia` 的 store 选择）：
+`services/api/src/app.ts:1303-1306`（媒体 store 的 PG/内存选择——**装配处原文**，不是 `getMedia` 的内部实现）：
 
 ```ts
 const mediaStore: MediaStore = mediaStoreOption
@@ -494,3 +494,7 @@ other changes=0
 2. 生成区外的人工摘要 3 处订正是否接受（§6.2；可单独回退，不影响 JSON/生成区）。
 3. `docs/verification/gy-r29-i07-ledger-lags.json` 的「已订正后仍保留 2 条逐字登记」是否接受；若要求清空登记，需同时改 `knowledge-ledger-sort-drift.test.mjs` 的 ②/④ 断言（本片按「不删断言」未做）。
 4. **亚毫秒 tie-break 差异是否修**（§3.6）：属产品/契约裁定；若修，需决定统一精度（SQL `date_trunc('milliseconds', …)`）还是保留微秒（把全精度文本带进快照/比较器）。本片**未改代码**。
+
+## 2026-11-05 复核（main `bdf9f765`）
+
+§2.7 媒体 store 那段逐字原文出自 `services/api/src/app.ts:1303-1306` 的**装配处**——`packages/media/service.mjs:323` 的 `getMedia({ ownerId, mediaId })` 只读 `records` Map 并投影，既不选 store 也不含这段代码（本片曾误指该处，现改回装配处；引文一字未动）。

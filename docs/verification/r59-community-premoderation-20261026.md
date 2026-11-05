@@ -107,7 +107,7 @@
 
 | 钉子 | 已知会红的改动 | 同一次改动里必须一起翻转的东西 |
 | --- | --- | --- |
-| 钉 4 | 任何「人审后台真的开始读队列」的实现 | 先加契约读面 + 服务层队列，再改本钉子的期望值；并翻转 `apps/admin/src/lib/review-state.mjs` 的 `REVIEW_COUNT` 与 `apps/admin/src/lib/review-state.mjs:18` |
+| 钉 4 | 任何「人审后台真的开始读队列」的实现 | 先加契约读面 + 服务层队列，再改本钉子的期望值；并翻转 `apps/admin/src/lib/review-state.mjs:18` 的 `REVIEW_COUNT` 与 `tests/unit/admin-ui-review-state.test.mjs:38-44`（原记的那条读取臂；那段现在是 R64×S3b 并集的历史注记，不再承载断言）今天对应的断言臂 `tests/unit/admin-ui-review-state.test.mjs:193-194`——那条「契约无审核读面时占位页仍是结构性零」的断言必须与常量一起翻转 |
 | 钉 1 | 新增 `GET /admin/posts`（队列读面）、`POST /admin/posts/{id}/approve` / `reject` | `packages/contracts/operations.json`、`services/api/src/admin/ops/service.ts:210-224` 的 operation 闭集、`apps/admin` 的「结构性零」自陈 |
 | 钉 5 | 小程序补「已驳回」独立态 | 需先确认后端是否把结论告诉作者（当前：不告诉），否则 UI 无数据可显示 |
 | 钉 2 / 3 / 6 | 真正实现人工审核、或把社区纳入收藏、或给服务层加兜底门 | 各自对应证据页章节与测试头注释里的「翻转提示」 |

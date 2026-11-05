@@ -187,7 +187,7 @@ export function createAnswerProvider({ executionMode, ... }): AnswerModelProvide
 
 ### 5.3 扩 `AnswerComposer.kind`（必须动的类型改动）
 
-`services/api/src/conversations/service.ts:208` 的 `kind` 是**单值字面量** `'deterministic_guard_only'`（`:175`），这是接 real 模型唯一必须改的类型边界：
+`services/api/src/conversations/service.ts:208`（`AnswerComposer` 接口）的 `kind` 今天是**联合** `'deterministic_guard_only' | 'live_model'`；**当时（2026-10-21）** 本节记的是**单值字面量** `'deterministic_guard_only'`（`:175`，该行今天是 `ComposedCandidate` 的 `citations: readonly SourceRef[];`），当页据此判定「这是接 real 模型唯一必须改的类型边界」⇒ 下面的代码块属**当时的提案原文**，现行类型以 `live_model` 为准；联合成员名与本节草案的 `'model_backed'` 不同。
 
 ```ts
 export interface AnswerComposer {
