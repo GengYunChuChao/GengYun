@@ -34,6 +34,11 @@
  *      逐条明细写成稳定排序（doc → 行号 → target → symbol，**码位序**）的 JSON，`items` 条数恒等于同次
  *      运行读数里的 `outOfRange + undeclared`，三个子档（`SYMBOL_NOT_IN_RANGE`／`ZERO_HIT`／`NO_DECLARATION`）
  *      分类可得；与 `--symbol-coverage=off`／基线生成**互斥并报错**（不给「以为写了其实没写」留缝）（C30–C33）。
+ *   ⑫ 2026-11-05 补的两条**候选筛选**口径（只改「候选位上的东西算不算候选」，不动任何判定档）：
+ *      ⑧ 候选位上的非标识符（汉语短语／路径片段／JSON 值／带括号的调用）与语言保留字（`delete`／`return`）
+ *      在**抽候选之前**丢掉，只记一格「候选过滤 N 条」（C34）；⑨ 语言内建／全局对象的方法访问
+ *      （`Array.isArray`／`Promise.all`）单列 `BUILTIN` 档，只计数、不判红、不进 UNDECLARED（C35）；
+ *      ⑧ 的反向守卫：符号真实存在、只是落在调用／注册位的那批**不许**被顺手滤掉（仍判 UNDECLARED）（C36）。
  * 另外用子进程钉住「缺省 `count` 模式不改变退出码」：这条判据是 WARN，先观察一轮，
  * 只有显式 `--symbol-coverage=strict`（且 `--strict`）才会判红。
  *
@@ -727,8 +732,8 @@ test('C20 既有 architecture 四行逐字不变，且新块只追加在末尾',
     );
     assert.equal(
       lines[at('SYMBOL-COVERAGE-SCOPE')],
-      'SYMBOL-COVERAGE-SCOPE: 作用域 docs/architecture/**（1 份文档、锚点 1 条）——配成对 1 条；同行没有紧邻符号 0 条、两侧等距不猜 0 条、路径找不到或不唯一 0 条（这三格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 1 条、配成对 1 条——OK 0、符号不在区间 1、UNDECLARED 0（0 命中 0／非声明行 0）',
-      'SCOPE 行逐字不变：verification 页照旧只算进「作用域外」那一段（影子账不搬家、合计不变）',
+      'SYMBOL-COVERAGE-SCOPE: 作用域 docs/architecture/**（1 份文档、锚点 1 条）——配成对 1 条；同行没有紧邻符号 0 条、两侧等距不猜 0 条、路径找不到或不唯一 0 条、候选过滤 0 条、语言内建 0 条（这五格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 1 条、配成对 1 条——OK 0、符号不在区间 1、UNDECLARED 0（0 命中 0／非声明行 0）',
+      'SCOPE 行逐字不变：verification 页照旧只算进「作用域外」那一段（影子账不搬家、合计不变）；末两格（候选过滤／语言内建）是 2026-11-05 新增的只计数格，位置在「路径找不到或不唯一」之后',
     );
     assert.equal(
       lines[at('SYMBOL-COVERAGE-MISS')],
@@ -958,7 +963,7 @@ test('C26 `count` 档（缺省）verification 的两行读数字面不变、exit
     );
     assert.ok(
       defaults.stdout.includes(
-        'SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 docs/verification/**（1 份文档、锚点 4 条）——配成对 4 条：OK 1、符号不在区间 2、UNDECLARED 1（符号 0 命中 1 条、出现过但不是声明行 0 条）；同行没有紧邻符号 0 条、两侧等距不猜 0 条、路径找不到或不唯一 0 条（后四格只计数）——本面三档一律不判红，strict 仍只判 docs/architecture/**',
+        'SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 docs/verification/**（1 份文档、锚点 4 条）——配成对 4 条：OK 1、符号不在区间 2、UNDECLARED 1（符号 0 命中 1 条、出现过但不是声明行 0 条）；同行没有紧邻符号 0 条、两侧等距不猜 0 条、路径找不到或不唯一 0 条、候选过滤 0 条、语言内建 0 条（后五格只计数）——本面三档一律不判红，strict 仍只判 docs/architecture/**',
       ),
       `SCOPE 行逐字不变（文案、两段分段、UN·DECLARED 明细都要对得上），实际输出：\n${defaults.stdout}`,
     );
@@ -1339,5 +1344,147 @@ test('C33 `renderSymbolCoverageReport` 只重组不重判：乱序输入仍按 (
   assert.deepEqual(multi.scan, ['docs/architecture', 'docs/verification'], '完整清单落在 scan 里');
 
   assert.deepEqual(misses.map(item => item.docLine), [9, 7, 2], '渲染是纯函数：不许就地排序调用方给的数组（那份还要给读数行用）');
+});
+
+test('C34 候选位上的汉语短语／保留字不算候选：候选过滤 +1、unpaired 增 1、undeclared 不变（口径 ⑧）', () => {
+  // 真实形状：`docs/implementation-requirements.md:278` 把 `` `delete` `` 紧挨着写在锚点旁，于是这一对
+  // 稳定产出 `UNDECLARED／ZERO_HIT`——目标文件里当然没有「`delete` 的声明行」。这类候选（汉语短语、
+  // 路径片段、JSON 值、保留字）**从来不是**任何文件的符号，却在读数里冒充「文档漏写了符号」。
+  // 口径 ⑧ 在**抽候选之前**就丢掉它们，只留一格「候选过滤」计数（单位是候选位次，见工具注释）。
+  const phrase = '# 短语\n\n- `符号声明块`（`services/api/src/alpha.ts:2`）见下。\n';
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'docs/architecture/phrase.md': phrase,
+    },
+    root => {
+      const { judged, misses, red } = coverageOf(root);
+      assert.equal(judged.anchors, 1, '锚点照样扫到（不配对 ≠ 没扫到）');
+      assert.equal(judged.candidatesFiltered, 1, '候选位上的汉语短语记进「候选过滤」');
+      assert.equal(judged.paired, 0, '非标识符不是候选 ⇒ 不配成对');
+      assert.equal(judged.unpaired, 1, '锚点仍落「同行没有紧邻符号」：这一行确实没写符号（口径 ⑧ 不新增「无候选」档）');
+      assert.equal(judged.undeclared, 0, '没配成对就不该冒出 UNDECLARED（改前这段也进不了候选位，读数不许因此变）');
+      assert.equal(judged.outOfRange, 0);
+      assert.equal(judged.builtin, 0, '汉语短语不是内建 API：不许串档');
+      assert.deepEqual(misses, [], '被过滤的候选不进明细（明细只装真的配成对、判不上的）');
+      assert.deepEqual(red, []);
+      assert.match(
+        runTool(root).text,
+        /同行没有紧邻符号 1 条、两侧等距不猜 0 条、路径找不到或不唯一 0 条、候选过滤 1 条、语言内建 0 条（这五格只计数，不进上面两档）/,
+        'SCOPE 行必须把「候选过滤」摆出来：过滤本身不许变成静默少扫',
+      );
+    },
+  );
+
+  // 保留字那一半（本片唯一**真的**会改判定的形状）：`delete` 是标识符形状，所以改前它会进候选位、
+  // 配成对，再因为目标文件里没有它的声明行而落 `UNDECLARED／ZERO_HIT`（本仓 architecture 面 2 条）。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'docs/architecture/reserved.md': '# 保留字\n\n- `delete`（`services/api/src/alpha.ts:2`）的语义见下。\n',
+    },
+    root => {
+      const { judged, misses } = coverageOf(root);
+      assert.equal(judged.candidatesFiltered, 1, '保留字同样记进「候选过滤」');
+      assert.equal(judged.paired, 0, '它不再进候选位（改前会配成对）');
+      assert.equal(judged.undeclared, 0, '因此也不再有那条 UNDECLARED／ZERO_HIT');
+      assert.equal(judged.unpaired, 1, '退回「同行没有紧邻符号」只计数');
+      assert.deepEqual(misses, []);
+    },
+  );
+
+  // 对照：同一位置换成**以保留字开头**的普通标识符 ⇒ 一个字都不许过滤，照旧判 OK。
+  // 没有这一条，`startsWith('delete')` 那种写法的实现也能让上面两段通过。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('deleteAll'),
+      'docs/architecture/reserved.md': '# 保留字\n\n- `deleteAll`（`services/api/src/alpha.ts:2`）的语义见下。\n',
+    },
+    root => {
+      const { judged } = coverageOf(root);
+      assert.equal(judged.candidatesFiltered, 0, '`deleteAll` 不是保留字：一个字都不该被过滤');
+      assert.equal(judged.paired, 1, '照旧配成对');
+      assert.equal(judged.ok, 1, '声明覆盖锚点 ⇒ OK（过滤不许外溢到真实符号）');
+    },
+  );
+});
+
+test('C35 候选位上是内建／全局对象的方法访问 ⇒ 单列 `BUILTIN`，不计入 UNDECLARED（口径 ⑨）', () => {
+  // `Array.isArray`／`Promise.all` 这类片段 `COVERAGE_SYMBOL_SPAN` 本来就不收（含 `.`），于是锚点落进
+  // 「同行没有紧邻符号」——计数不算错，但和「这一行真的没写符号」混在一格，读不出比例（审计时正是
+  // 靠人眼才把这一类分出来）。口径 ⑨ 单列 `BUILTIN`：**只计数**，既不判红，也不进 UNDECLARED／OK。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'docs/architecture/builtin.md': '# 内建\n\n- `Array.isArray`（`services/api/src/alpha.ts:2`）在入口先挡一层。\n',
+    },
+    root => {
+      const { judged, misses, red } = coverageOf(root);
+      assert.equal(judged.anchors, 1);
+      assert.equal(judged.builtin, 1, '内建 API 的调用位记进 BUILTIN');
+      assert.equal(judged.paired, 0, '它不进候选位（含 `.`，本来也进不了）');
+      assert.equal(judged.unpaired, 0, 'BUILTIN 与「同行没有紧邻符号」分开：这一行确实写了符号位');
+      assert.equal(judged.undeclared, 0, 'BUILTIN 不计入 UNDECLARED（本片不许把它改判成判据档）');
+      assert.equal(judged.outOfRange, 0);
+      assert.equal(judged.candidatesFiltered, 0, '内建不是「候选过滤」：它被识别出来单列，不是被丢掉');
+      assert.deepEqual(misses, [], 'BUILTIN 不出明细（它不是判定结果）');
+      assert.deepEqual(red, [], 'BUILTIN 不判红');
+      assert.match(
+        runTool(root).text,
+        /候选过滤 0 条、语言内建 1 条（这五格只计数，不进上面两档）/,
+        'SCOPE 行要有「语言内建」这一格',
+      );
+      // 锚点守恒：anchors ＝ 配成对 ＋ 同行没有紧邻符号 ＋ 两侧等距 ＋ 路径解析不了 ＋ BUILTIN。
+      assert.equal(
+        judged.paired + judged.unpaired + judged.ambiguous + judged.unresolved + judged.builtin,
+        judged.anchors,
+        '五个出口必须铺满锚点数（BUILTIN 是从「同行没有紧邻符号」里搬出来的，不是凭空多出来的）',
+      );
+    },
+  );
+
+  // 对照：同一位置换成**普通标识符**（目标文件里没有）⇒ 照旧 UNDECLARED，不许被 BUILTIN 吃掉。
+  withFixture(
+    {
+      'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+      'docs/architecture/builtin.md': '# 内建\n\n- `ghostSymbol`（`services/api/src/alpha.ts:2`）在入口先挡一层。\n',
+    },
+    root => {
+      const { judged } = coverageOf(root);
+      assert.equal(judged.builtin, 0, '`ghostSymbol` 不是内建：不许串档');
+      assert.equal(judged.undeclared, 1, '普通标识符照旧判 UNDECLARED');
+    },
+  );
+});
+
+test('C36 普通标识符只在目标文件的调用位出现 ⇒ 仍是 UNDECLARED（口径 ⑧ 不许把合法判据一起滤掉）', () => {
+  // 这条是 ⑧ 的反向守卫：过滤只认「整段不是标识符」与「整段是保留字」。审计里另有约 115 条是
+  // 「符号真实存在、只是写在调用／注册／字面量位」——那批**不许**改判 OK（会削弱判据），也不许被
+  // 新的过滤顺手滤掉。这里就是它的最小形状：`requireScope` 在目标文件第 21 行被调用，没有声明行。
+  const beta = `${'// 留白\n'.repeat(19)}export function caller(count) {\n  return requireScope(count);\n}\n`;
+  withFixture(
+    {
+      'services/api/src/beta.ts': beta,
+      'docs/architecture/callsite.md': '# 调用位\n\n- `requireScope`（`services/api/src/beta.ts:2`）在入口处取作用域。\n',
+    },
+    root => {
+      const { judged, misses, red } = coverageOf(root);
+      assert.equal(judged.candidatesFiltered, 0, '`requireScope` 是合法标识符：不许被过滤');
+      assert.equal(judged.builtin, 0, '也不是内建 API');
+      assert.equal(judged.paired, 1, '照旧配成对（配对器一个字都没动）');
+      assert.equal(judged.undeclared, 1, '符号出现过、但没有一处是声明行 ⇒ 仍是 UNDECLARED');
+      assert.equal(judged.zeroHit, 0, '它在目标文件里出现过 ⇒ 不是 ZERO_HIT');
+      assert.equal(judged.noDeclaration, 1, '子档是「出现过但不是声明行」');
+      assert.equal(judged.ok, 0, '⛔ 不许改判 OK：这正是本片明确不许碰的那一格');
+      assert.equal(judged.outOfRange, 0);
+      assert.deepEqual(red, [], 'UNDECLARED 不进判红面（与既有口径一致）');
+      assert.equal(misses.length, 1, '明细里必须看得见它（只计数、但一直可见）');
+      assert.equal(misses[0].symbol, 'requireScope');
+      assert.equal(misses[0].detail, SYMBOL_COVERAGE_NO_DECLARATION);
+      // strict 档照旧 exit 0：UNDECLARED 不判红——守卫不许把「只计数」的档变成红。
+      const strict = runTool(root, ['--strict', '--symbol-coverage=strict']);
+      assert.equal(strict.status, 0, `UNDECLARED 不判红，实际输出：\n${strict.text}`);
+    },
+  );
 });
 
