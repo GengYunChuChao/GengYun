@@ -23,30 +23,31 @@
 
 ⇒ **口径结论：「在线 7 日／备份 30 日」不是「日历保留策略」，而是两个到期时刻列**——`deletion_requests.online_due_at` 与 `user_backup_copies.retention_until`。写「7 日／30 日在 `retention-policy.mjs` 里」是错的；那是 `public.sessions` 的 30 天，和备份撞数字不撞语义。
 
-## 2. 执行者：三条命令 + 三个 systemd 单元 + 一个 CI job
+## 2. 执行者：四条命令 + 四个 systemd 单元 + 一个 CI job
 
-### 2.1 命令（`package.json`，三条都存在）
+### 2.1 命令（`package.json`，四条都存在）
 
 | npm script | 入口 | 到期判据 |
 | --- | --- | --- |
 | `purge:online-data`（`package.json:35`） | `tools/purge-expired-online-data.mjs`（`:3` 标题即「在线数据 7 日到期清除」） | `:16` `online_due_at <= cutoff AND state <> 'completed'`；`:28` keyset 分页；`:79` usage 里 `--limit`／`--max-batches`／`--cursor-file` 的缺省约定 |
 | `purge:backup-copies`（`package.json:34`） | `tools/purge-expired-backup-copies.mjs`（`:3` 标题即「备份副本 30 日到期清除」） | `:16` `state <> 'purged' AND retention_until <= cutoff` |
 | `purge:retention`（`package.json:36`） | `tools/purge-retention-expired.mjs` | 读 `RETENTION_POLICY` 按 `retentionDays` 算 cut-off；**默认 dry-run**，`:272` 打印「留 N 天（age_column）」 |
-
+| `purge:media-objects`（`package.json` 第 39 行） | `tools/purge-expired-media.mjs`（第 3 行自陈「媒体对象回收的运维执行者」） | 第 28 行：把 `expiresAt` 已过、状态仍 `initiated` 的记录收成 `rejected`，再跑 `cleanupOrphans()` 清孤儿、撤授权；装配任一步不成立即退出码 2（第 26-27 行），`--limit` 只是两段之间的预算闸、不是到期条数上限（第 32-36 行） |
 两个「到期清除」驱动模块都在 `services/api/src/privacy/`：`online-purge-driver.ts`、`backup-purge-driver.ts`、`online-purge-cursor.ts`。
 
-### 2.2 调度单元（`deploy/purge-schedule/`，7 个文件，三对齐全）
+### 2.2 调度单元（`deploy/purge-schedule/`，9 个文件，四对齐全）
 
 | 单元 | 频率 | ExecStart 入口 |
 | --- | --- | --- |
 | `deploy/purge-schedule/gengyun-purge-online-data.timer:24` | `OnCalendar=*-*-* *:00/10:00`（10 分钟） | `.service:60`，带 `--cursor-file=/var/lib/gengyun-purge-online-data/online-purge-cursor.json`，`User=gengyun-ops`，`TimeoutStartSec=900` |
 | `deploy/purge-schedule/gengyun-purge-backup-copies.timer:17` | `OnCalendar=*-*-* *:05/15:00`（15 分钟） | `.service:55` → `tools/purge-expired-backup-copies.mjs`，`User=gengyun-app` |
 | `deploy/purge-schedule/gengyun-purge-retention.timer:29` | `OnCalendar=*-*-* 03:20:00`（日级一次） | `.service:57` → `tools/purge-retention-expired.mjs --yes --json`，`User=gengyun-ops`（**必须是属主/运维，运行时角色删不了 `public.sessions`**） |
+| `deploy/purge-schedule/gengyun-purge-media-objects.timer` 第 33 行 | `OnCalendar` 分钟字段 `02/15`：每小时第 2、17、32、47 分各一次；`Persistent=true`、`AccuracySec=1min`、`RandomizedDelaySec=60s` | `.service` 第 72 行 → `tools/purge-expired-media.mjs --json`，`User=gengyun-ops`、`EnvironmentFile=/etc/gengyun/purge-media-objects.env`，`TimeoutStartSec=600` |
 
 ### 2.3 门禁与 CI（都已接）
 
-- `tools/verify-purge-schedule.mjs:117` 的 `REQUIRED_NPM_SCRIPTS` = **3 项**（`purge:online-data`、`purge:backup-copies`、`purge:retention`）；`:152` 的 `INTERVAL_BUDGET_MINUTES` 已按命令分档（分钟级 ≤60、日级 ≤1440）。
-- `.github/workflows/engineering-shell.yml:140` 的 job `retention-gates`，`:153` 执行 `npm run verify:purge-schedule`。
+- `tools/verify-purge-schedule.mjs:117` 的 `REQUIRED_NPM_SCRIPTS` = **4 项**（`purge:online-data`、`purge:backup-copies`、`purge:retention`、`purge:media-objects`）；`:152` 的 `INTERVAL_BUDGET_MINUTES` 已按命令分档（分钟级 ≤60、日级 ≤1440）。
+- `.github/workflows/engineering-shell.yml:159` 的 job `retention-gates`，`:172` 执行 `npm run verify:purge-schedule`。
 - **运行侧仍未取得**：`deploy/purge-schedule/README.md:46` 自陈「这些命令没有在目标宿主上实跑过」，`:306` 「真库读数未取得」，`:318` 明写门禁「不证明外部调度真的在跑」。
 
 ## 3. 备份面：三件互不相干的东西被叫成同一个「备份」
@@ -60,7 +61,6 @@
 | 可恢复性 | 脚本自己写「⚠️ exit 0 ≠ 备份已被证明可恢复」 | `deploy/postgres-cvm/backup-postgres.sh:40` |
 | 恢复演练 | 「**未部署、未验收、未在任何真实 CVM/PG 实例上执行过**」 | `deploy/postgres-cvm/restore-drill.sh:5` |
 | 删除清单重放 | 「不能证明……逐用户删除清单重放（**未实现**）」 | `deploy/postgres-cvm/restore-drill.sh:40` |
-
 复算：`.github` 下 grep `restore-drill` 与 `backup-postgres.sh` **各 0 行**；`deploy/purge-schedule/` 里也没有备份单元。⇒ 这对脚本既不在 CI、也不在调度，是纯手工技术准备物。
 
 ### 3.2 备份副本域（在线侧的表）—— 已落地，含真库臂 + CI
@@ -118,7 +118,7 @@
 1. 在线数据 7 日到期清除：`tools/purge-expired-online-data.mjs` ＋ `online-purge-driver.ts` ＋ 单测 ＋ 真库臂 `tests/integration/online-purge-pg.mjs`（`.github/workflows/real-pg-integration.yml:560`）。
 2. 备份副本 30 日到期清除：`tools/purge-expired-backup-copies.mjs` ＋ 驱动 ＋ 真库臂 `tests/integration/backup-copies-purge-pg.mjs`（同文件 `:515`）。
 3. 日历保留执行器：`tools/purge-retention-expired.mjs` ＋ 真库臂 `tests/integration/retention-purge-pg.mjs`（同文件 `:582`）。
-4. 三对 systemd 单元 + `verify:purge-schedule` 门禁 + `retention-gates` CI job（§2.2、§2.3）。
+4. 四对 systemd 单元 + `verify:purge-schedule` 门禁 + `retention-gates` CI job（§2.2、§2.3）。
 5. 第三方删除的**库层**读写路径：0044 两条函数 + 授权 + 断言 + 真库臂 + CI（§4.1）。
 
 ### 半落地（契约或脚本在，没人跑／没接 CI／没接电）
@@ -147,7 +147,7 @@
 | --- | --- | --- | --- |
 | 1 | `docs/architecture/s4-data-traceability.md:336` 曾称 `purge:retention`「**没有 `.service`/`.timer`**，也不在调度门禁的必需清单里」，并称 `REQUIRED_NPM_SCRIPTS` 只有两项 | 单元在（`deploy/purge-schedule/gengyun-purge-retention.service` ＋ `.timer`），必需清单在 `tools/verify-purge-schedule.mjs:117` 已是 **3 项**；同仓 `docs/architecture/gy-r34-retention-policy.md:118` 早在 2026-10-24 就写了「调度接线（已做）」 | **已改 s4**：整条改标「★G3（已于 2026-10-26 复核消解，整条留档）」，G3 小标题在 `docs/architecture/s4-data-traceability.md:334`，原判原文留在 `docs/architecture/s4-data-traceability.md:336` 作历史记录；§6 计数「三条→两条」（`docs/architecture/s4-data-traceability.md:318`）与证据基础设施段标题（`docs/architecture/s4-data-traceability.md:348`）同步 |
 | 2 | `docs/architecture/s4-data-traceability.md:354`（改动前是 `:339`）曾写「`PASS`，但必需清单只有两项（看 `tools/verify-purge-schedule.mjs:109`）」 | `tools/verify-purge-schedule.mjs:109` 实际是 `DEFAULT_SCHEDULE_DIR`；必需清单在 `tools/verify-purge-schedule.mjs:117`，实测覆盖 3/3 | **已改 s4**：`:354` 与 §7.2 升档条件表的 `:368` 均改为 `tools/verify-purge-schedule.mjs:117` ＋ 3/3，并把该行标为「已消解（2026-10-26 复核）」 |
-| 3 | `docs/architecture/README.md:17` 曾称「`verify:purge-schedule` **仍未进 CI**」，`:18` 曾称「#19 的到期执行与第三方证据仍未取得」 | 已进：`.github/workflows/engineering-shell.yml:140` 的 `retention-gates` job，`:153` 执行 | **已改 README**：`:17` 改为「已进 CI ＋ 三对单元在 `deploy/purge-schedule/`」，`:18` 改为只剩第三方证据未取得，同页 `:20` 的「三条缺口」随 G3 撤条改为「两条」 |
+| 3 | `docs/architecture/README.md:17` 曾称「`verify:purge-schedule` **仍未进 CI**」，`:18` 曾称「#19 的到期执行与第三方证据仍未取得」 | 已进：`.github/workflows/engineering-shell.yml:159` 的 `retention-gates` job，`:172` 执行 | **已改 README**：`:17` 改为「已进 CI ＋ 三对单元在 `deploy/purge-schedule/`」，`:18` 改为只剩第三方证据未取得，同页 `:20` 的「三条缺口」随 G3 撤条改为「两条」 |
 
 ## 9. 复核命令
 
@@ -155,7 +155,7 @@
 node tools/verify-doc-anchors.mjs --strict     # 行号不腐烂；本页新增锚点全在此闸门下
 node tools/verify-contract-status.mjs          # 契约台账与装配一致性
 npm run test:docs                              # Markdown 链接与表格、研究记录结构
-npm run verify:purge-schedule                  # 三对单元 / OnCalendar / ExecStart / 必需清单 10 项判据
+npm run verify:purge-schedule                  # 四对单元 / OnCalendar / ExecStart / 必需清单 10 项判据
 git grep -n third_party_deletions -- services/api/src        # 旧期望 5 行 / 1 文件（2026-11-04 复核实测 6 行 / 2 文件：读侧端口 + 写侧 dispatch 注记；subscribeThirdPartyDeletion 实测 8 行 / 3 文件，调用者已在，生产写入仍为零）
 git grep -nE "restore-drill|backup-postgres" -- .github       # 期望 0 行（备份/演练不在 CI）
 ```
