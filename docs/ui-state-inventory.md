@@ -356,3 +356,37 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 **资源真落地时必须同批翻转的钉**（都带「已出现/已就位请更新」提示，变成红是设计）：`tests/unit/miniprogram-location-region.test.mjs` 的 U3 缺席断言与 `resource-missing` 期望、`tests/unit/miniprogram-profile.test.mjs` 的 `regionConverter === null`、`tests/integration/profile-ui-http.test.mjs` 的装配为 `null` 断言，以及 `docs/verification/` 下三页的 U3 登记。
 
 **不得怎么写**：不得把「定位选地区」写成已支持、计划内或「只差一份数据」；`docs/verification/` 任何证据页不得用**合成坐标**充当「地区覆盖」截图；本仓的 `miniprogram/data/region-centroids.js` 至今**不存在**，这不是笔误。
+
+---
+
+## 9 静态地区候选 ≠ 实时预警；人审入口的现状（Refs #28，2026-11-05 复核）
+
+### 9.1 地区在本仓只有「候选」一种含义
+
+`miniprogram/data/regions.js` 是由 `tools/knowledge/build_miniprogram_data.mjs` 从 `packages/knowledge/catalog/regions-zhejiang.json` 生成的**随包静态候选**（`catalog_version` = `mca-xzqh-2023`，`region_count` = 102），只服务于作物／地区 picker 的取值与展示。
+
+| 它是什么 | 依据 |
+| --- | --- |
+| 档案里 `region_code` 为 `null` 时页面显示「未设置」，**不回落**到上级行政区、不猜、不取默认值 | `miniprogram/pages/profile/profile.js:154` |
+| 全仓没有实时预警数据源：`miniprogram/**` 里 `预警`、`weather`、`forecast` 三个词**零命中** | §9.3 的守卫用例（负控制） |
+| 走查记录只写「地区未设置时显示『未设置』，没有凭空编造地区预警」 | `docs/verification/gy-i26-five-tabs-20261103.md:33` |
+
+**口径**：静态地区候选 ≠ 实时预警能力。本版**不产出、不展示任何「你所在地区将……」式预警**，也**不得把 102 项行政区候选写成「已覆盖」**。地区候选只回答「这个用户选了哪里」，不回答「那个地方会怎样」；要做实时预警必须另立需求、另接数据源、单独立项验收，不能在页面文案里提前兑现。
+
+### 9.2 人审入口：已经不是空入口（订正 2026-11-03 的筛查结论）
+
+2026-11-03 的初版筛查把本项记作「后台只留 `ReviewPlaceholderView`」。今天不是这个形态：
+
+| 项 | 现状与依据 |
+| --- | --- |
+| 审核队列视图 | `apps/admin/src/views/ModerationQueueView.vue:8` 声明 `approvePost`／`rejectPost` 两条契约操作；本地契约校验与提交分支在同文件 `apps/admin/src/views/ModerationQueueView.vue:307` |
+| 占位视图 | `apps/admin/src/views/ReviewPlaceholderView.vue` 只在「契约没有审核读面」时作为占位，不是审核入口的现状 |
+
+`approvePost`／`rejectPost` 在契约台账里仍是 `partial` 的原因**不在 UI**，而在真库集成回归与审计库内写面还没跑——那属 #22 的真库项，不改变本节结论：**空入口的说法已作废**。
+
+### 9.3 这条口径怎么被守住
+
+`tests/unit/i28-region-static-not-realtime.test.mjs` 把它变成四条机检：口径三要件逐句仍在；`miniprogram/**` 里三个词零命中（偷偷接数据源即红）；`region_code === null ? '未设置'` 仍在；`regions.js` 的 `region_count`／`catalog_version` 与契约同源一致。
+
+能证明什么：口径文字没被删、仓里没有预警数据源或预警文案、地区缺省显示没有回退、静态候选表与契约同源。
+**不能证明什么**：不启动微信开发者工具、不接触真机，真机逐页渲染仍未取得（属 #23），也不证明地区候选在真实业务里够用。
