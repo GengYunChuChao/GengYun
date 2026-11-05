@@ -284,4 +284,4 @@ EXITCODE=1
 
 ## 2026-11-05 复核（main `2a835064`）
 
-**2026-11-05 复核（main `2a835064`）**：上段的 `tests/integration/account-suspend-pg.mjs:177`（`provisionRoles`）与 `tests/integration/account-suspend-pg.mjs:493`（顶层）是 2026-10-20 那次复跑日志里的**当时**调用栈位置，属历史取证读数，不随此后脚本推移改写。按今天的 `tests/integration/account-suspend-pg.mjs`，顶层调用点是该文件 `:637`，`provisionRoles` 声明在 `tests/integration/account-suspend-pg.mjs:289`，而 `tests/integration/account-suspend-pg.mjs:177` 现在落在 `ROLE_NAMES` 的角色名数组里。给出当前定位**不**代表重现了旧的 `42710` 失败，也不改变上面那次复跑的读数。
+**2026-11-05 复核（main `2a835064`）**：上段的 `tests/integration/account-suspend-pg.mjs:177` 与 `tests/integration/account-suspend-pg.mjs:493` 是 2026-10-20 那次复跑日志里的**当时**调用栈位置，属历史取证读数，不随此后脚本推移改写。按今天的 `tests/integration/account-suspend-pg.mjs`，顶层调用点是该文件 `:637`，`provisionRoles` 声明在 `tests/integration/account-suspend-pg.mjs:289`；同文件 `:177` 今天已落在角色名清单里、不再是调用点。给出当前定位**不**代表重现了旧的 `42710` 失败，也不改变上面那次复跑的读数。
