@@ -117,14 +117,13 @@ ON CONFLICT (id) DO UPDATE
 
 | 写点 | 位置 | 事务边界 |
 |---|---|---|
-| ocr 创建 | `services/api/src/ocr/store-pg.ts:486` | `withTransaction`（`BEGIN` → 源表 INSERT → 台账 upsert → `COMMIT`） |
+| ocr 创建 | `services/api/src/ocr/store-pg.ts:571` | `withTransaction`（`BEGIN` → 源表 INSERT → 台账 upsert → `COMMIT`） |
 | ocr 开始/取消 | `services/api/src/ocr/store-pg.ts:612` | 同上（读 / CAS UPDATE / 台账三句同一事务） |
 | ocr 终态 | `services/api/src/ocr/store-pg.ts:656` | 沿用 `commitTerminal` 既有事务（行锁 → 记录 INSERT → 作业 UPDATE → 台账） |
 | recognition 三处 | `services/api/src/recognitions/store-pg.ts:644`（创建）/ `services/api/src/recognitions/store-pg.ts:686`（开始·取消）/ `services/api/src/recognitions/store-pg.ts:730`（终态） | 同 ocr |
 | transcription 三处 | `services/api/src/speech/store-pg.ts:530`（创建）/ `services/api/src/speech/store-pg.ts:572`（开始·取消）/ `services/api/src/speech/store-pg.ts:616`（终态） | 同 ocr |
 | answer 四处（`GY-R72` 补第四处） | `services/api/src/conversations/store-pg.ts:309`（创建）/ `services/api/src/conversations/store-pg.ts:379`（开始）/ `services/api/src/conversations/store-pg.ts:428`（终态）/ `services/api/src/conversations/store-pg.ts:410`（取消） | `guarded()`（= `withTransaction` + 可选主体核对） |
 | 管理台取消 | `services/api/src/admin/ops/jobs-pg.ts:623` | 既有取消事务（行锁 → 域名 UPDATE → 审计函数 → 台账 → `COMMIT`） |
-
 ⛔ **没有**「提交之后补写一行」的路径：补写式实现会在 §7 的 `[T]` 两条读数里留下源表行
 （真库实测：给 `public.jobs` 挂拒绝触发器后 `insertJob` 抛错、`ocr_jobs` 行数不变）。
 
@@ -425,3 +424,7 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 3. **跨域同一事务**没有做到（§10.2），只有「按 owner 一刀删完 + 无外键 ⇒ 收敛到零行」。
 4. **备份侧**：`jobs` 不生成 `user_backup_copies` 清单行（备份副本只对收藏/历史/消息/会话四域）⇒
    该模块的 `backupState` 仍如实 `pending`，不冒充完成。
+
+## 2026-11-05 复核（main `2a835064`）
+
+**2026-11-05 复核（main `2a835064`）**：本页 2.3 节表格「位置」列给的是**写点**——创建写点是 `services/api/src/ocr/store-pg.ts:571` 的 `await writeJobLedger(...)`（同一事务内 `services/api/src/ocr/store-pg.ts:566` 写源表、`services/api/src/ocr/store-pg.ts:571` 写台账）；`withTransaction` 这个通用事务辅助函数本身现在声明在 `services/api/src/ocr/store-pg.ts:486`，它不含源表 INSERT 也不含台账 upsert，**不是**写点。两个坐标分开记，不要用一个替换另一个。

@@ -251,7 +251,7 @@ STATUS_KEYS=12
 - 原文（逐字）：
 
 ```text
-| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1358` 的 `adminRealUnwired` 值只等于「real 模式」，`:1313-1315` 在 real + 有池时即构造生产端口 |
+| 原 N03 | 未实现（作业台端口未接线） | 撤条 → 并入 E38 | `services/api/src/app.ts:1291` 的 `adminRealUnwired` 值只等于「real 模式」，`:1313-1315` 在 real + 有池时即构造生产端口 |
 ```
 
 - 新文（逐字）：
@@ -261,7 +261,6 @@ STATUS_KEYS=12
 ```
 
 - 依据：§4.1 两行；`services/api/src/app.ts:1341` 与 `:1363-1365` 逐字命中且唯一。
-
 ### 7.2 `docs/architecture/ai-ops-spec-status.md:57`（任务第 2 条）
 
 - 原文（逐字）：
@@ -453,3 +452,7 @@ node tools/verify-doc-anchors.mjs --strict --scan docs
 node tools/verify-contract-status.mjs
 python tools/validate_development_docs.py
 ```
+
+## 2026-11-05 复核（main `2a835064`）
+
+**2026-11-05 复核（main `2a835064`）**：本页 7.1 节「原文（逐字）」里的 `services/api/src/app.ts:1291` 是当时原文的原样，属历史引用，不随后续源码推移改写。按今天的 main，`adminRealUnwired` 声明在 `services/api/src/app.ts:1358`（`const adminRealUnwired = config.executionMode === 'real';`）；给出当前定位**不**改变上面那段逐字引文。
