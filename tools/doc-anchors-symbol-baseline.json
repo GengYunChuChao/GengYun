@@ -112,18 +112,7 @@
       "docLine": 135,
       "kind": "file-header",
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-44 行（「/**…」），块后第一条非空行是第 45 行的「import type { PoolClient } from 'pg';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/routes/admin-auth.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "services/api/src/routes/admin-auth.ts:12-13",
-      "doc": "docs/architecture/contract-implementation-status.md",
-      "docLine": 36,
-      "kind": "file-header",
-      "note": "【文件头自述块·人裁保留注释锚点】引用 services/api/src/routes/admin-auth.ts 第 12-13 行的文件头注释块（契约缺口如实报告：error_status_map 未定义「凭据错误」专用码，后台口令错误沿用 401 SESSION_REQUIRED）；该块之后没有可指的声明行（块后第一条非空行是第 15 行的「import type { FastifyInstance } from 'fastify';」，是 import 不是声明行）、该文件也没有 SESSION_REQUIRED 的代码行，故按人裁保留注释锚点。"
-    },
-    {
+    },    {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",

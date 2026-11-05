@@ -507,13 +507,22 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 增删相抵：删掉一条证据（连同 symbol）、补全路径 +23 字节、两处 symbol 改长 ⇒ 实测 JSON −66 字节；
  * md 第 36 行补全路径 +23 字节、第 180 行少一个锚点 ⇒ 实测 md −22 字节（283954 / 206581，行数都不变）。
  * 同一次同步内补登记 COMMENT_ANCHOR 裁决，字节数 283962→283954（JSON）、206589→206581（md）——中间那版
- * 曾把行号写成散文，恢复 `path:lines` 后两个文件各 −8 字节，行数都不变
- * （284020→283954 / 4460、206603→206581 / 220）。仍是「正常改台账、非回归」，故同步基线；没有改判定、
- * 没有加豁免条目（COMMENT_ANCHOR 是既有条目的裁决更新，entries 仍 26 条）。
+ * 曾把行号写成散文，恢复 `path:lines` 后两个文件各 −8 字节，行数都不变（284020→283954 / 4460、
+ * 206603→206581 / 220）。随后 CI 的 `tests/unit/contract-blocker-anchor-truth.test.mjs` T3
+ * 「锚点起点必须是实质代码」判红——它不许 blocker 锚点落在空行／纯括号／纯注释上，与 `--symbol=strict`
+ * 的 COMMENT_ANCHOR 是两套独立判据，人裁登记救不了它 ⇒ 同一次同步内把该锚点改指真实代码行
+ * `services/api/src/auth/service.ts:283`（`throw new ApiError('SESSION_REQUIRED', '登录名或口令不正确');`，
+ * 后台登录 `service.loginAdmin(...)` 的口令错误就走这里；同文件 209 行是另一条路径的 SESSION_REQUIRED），
+ * 句子改写成「契约缺口（如实报告）：error_status_map 未定义「凭据错误」专用码；后台登录口令错误沿用
+ * SESSION_REQUIRED（401，实现见 …:283，语义为「未建立会话」），不臆造新码。」——原有信息（无专用码、
+ * 沿用 401、语义解释）一条不少。落点既然是真代码行，`tools/doc-anchors-symbol-baseline.json` 里那条
+ * COMMENT_ANCHOR 裁决就撤掉（26→25 条；读数「登记 25、命中 25、陈旧 0、新增 0」）。字节数
+ * 283954→284084（JSON）、206581→206711（md），行数都不变。仍是「正常改台账、非回归」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283954, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206581, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284084, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206711, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
