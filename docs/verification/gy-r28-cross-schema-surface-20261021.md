@@ -66,7 +66,7 @@
 
 授权来源（逐条可核）：`services/api/db/roles/catalog_readers.sql:31`（`home_species` → `gengyun_preview_reader`）、`:32`（`registration_evidence` → `gengyun_evidence_reader`）、`knowledge_runtime.sql:16`（`current_knowledge` → `gengyun_knowledge_runtime`）、`source_operator.sql:25`（`catalog_ops.operations` → `gengyun_source_executor`）、`:30`（INSERT）、`staging_importer.sql:24`（两张 `knowledge_staging` 表 SELECT,INSERT）、`:25`（`workbook_batches` DELETE）、`:29`（两张 `staging_intake` 表 SELECT,INSERT）。`egress_ledger.sql` 对 9 个关系零授权——所以 9 行里没有它。
 
-5 组形态的 5 个空行**不是缺陷**：`gengyun_source_executor` / `gengyun_staging_executor` 由 `source_operator.sql:16`、`staging_importer.sql:17-18` 创建，而这两个文件只在 `--with-cli-groups` 下应用；组不存在 ⇒ 授权语句不执行。这正是断言 94「少授只对真实存在的角色追究」的由来（照抄 S51 返修 1 的口径）。
+5 组形态的 5 个空行**不是缺陷**：`gengyun_source_executor` / `gengyun_staging_executor` 由 `source_operator.sql:9`、`staging_importer.sql:8` 创建，而这两个文件只在 `--with-cli-groups` 下应用；组不存在 ⇒ 授权语句不执行。这正是断言 94「少授只对真实存在的角色追究」的由来（照抄 S51 返修 1 的口径）。
 
 ### 1.3 schema USAGE（8 组形态 5 schema × 11 组角色，两形态同构）
 
