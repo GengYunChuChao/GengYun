@@ -286,7 +286,7 @@ gengyun_api_runtime,gengyun_auth_privacy,gengyun_ci_owner,gengyun_consent_grante
 1. **派单订正**（§1.3）：「本脚本不给 `argv[3]` 即 28P01」不成立 —— 必红必须**给** `argv[3]`；不给只是「部分跑 + PARTIAL + exit 2」。
 2. **上游证据页订正**（`docs/verification/gy-r28-real-pg-wiring-3-20261020.md`）：§2.1 把首失败行写作 `:199`，实测失败点是 `:200`（`:199` 只是构造 `connectionString` 的那行）；§2.4 的「最小修法」只覆盖 `gengyun_api_runtime`，**不足以**修掉 §2.3 里 `gengyun_auth_privacy` 的 42710 —— 组角色区域同样要 CREATE 换 ALTER（本片 §2.2 已实证）。
 3. **本片未做（越界）**：
-   - `tests/unit/ci-integration-chain-structure.test.mjs:76-84` 的 `UNWIRED_DECLARATIONS` 仍把本脚本的理由写成「脚本缺陷 ⇒ … 必 `28P01` … `42710`」；本片修好后该理由过期，但本片**不得改** `tests/unit/` ⇒ 留给接线切片。
+   - `tests/unit/ci-integration-chain-structure.test.mjs:88` 的 `UNWIRED_DECLARATIONS` 仍把本脚本的理由写成「脚本缺陷 ⇒ … 必 `28P01` … `42710`」；本片修好后该理由过期，但本片**不得改** `tests/unit/` ⇒ 留给接线切片。
    - `.github/workflows/real-pg-integration.yml` 接线（把本脚本加进 `MANAGED_SCRIPTS`、按 `admin-flags` 范式只传 owner URL）同样属接线切片，本片未动。
 4. 本地一次性集群（`E:\GengYunCommander\.pg17\tmp-r28s16`）与临时变异脚本 `mutate.mjs` / `ncmut.mjs` **未入库**。
 5. **复审 M1 的订正已补**：§1.5 写明「复用分支要求 owner 是 `SUPERUSER`」并贴 `42501` 原文（`user.c:767` / `AlterRole`，本轮真跑复现，非引用）；§4 补三条派生影响（非超级 owner 残留 7 角色但台账照打「删除」、接线顺序须排 `admin-accounts-read-pg`/`account-deletion-pg` 之后、`[P] 复用…` 打在 `ALTER` 之前）；第 9 行行数由 613 订正为 612（LF 口径）。
