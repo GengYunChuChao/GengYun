@@ -37,7 +37,7 @@
 | 按护栏算（`actions=['post.hide']` ∩ `set_flag` = 空） | 一页空结果 | 空页被读成「平台从未发生过这类操作」，而真相是**这个组合不可查询** |
 | 不按护栏算（`scopes=['sources:write']` + `actions=['set_flag']`） | 一页 flag 域行 | 标着 post 的读面吐出别的域的事实 = 错误命名 |
 
-所以护栏外一律 `INVALID_REQUEST` + `{ field: 'action', code: 'enum' }`（沿用该路由既有的非法参数形态，**没有新造错误码**）。落点 `services/api/src/admin/audit/service.ts:215-228`：护栏判定在 `parseEntityParam` 之后、`watermark` 之前，因此**不会产生任何端口调用**（单测钉住 `port.calls.length === 3` 对应三次护栏外请求，见 §4）。
+所以护栏外一律 `INVALID_REQUEST` + `{ field: 'action', code: 'enum' }`（沿用该路由既有的非法参数形态，**没有新造错误码**）。落点 `services/api/src/admin/audit/service.ts:208-228`：护栏判定在 `parseEntityParam` 之后、`watermark` 之前，因此**不会产生任何端口调用**（单测钉住 `port.calls.length === 3` 对应三次护栏外请求，见 §4）。
 
 ### 2.3 为什么护栏在**服务层**，而不是塞进 `0033` 的 SQL
 
@@ -85,7 +85,7 @@
 | `node --test tests/unit/community-audit-channel-pins.test.mjs` | 同上 |
 | `node --test tests/unit/migration-subset-coverage-pins.test.mjs` | `10 tests / 10 pass / 0 fail` |
 | `node --test tests/unit/migration-last-pin-consistency.test.mjs`、`migration-reservations.test.mjs`、`ci-integration-chain-structure.test.mjs`、`admin-ui-audit-logs.test.mjs` | 四文件合计 `40 tests / 40 pass / 0 fail` |
-| `npm run test:unit`（`GY_BASH=C:\msys64\usr\bin\bash.exe`） | `5157 tests / 5154 pass / 0 fail / 1 skipped / 2 todo`，exit 0（日志里的 `AssertionError` 文本来自 `tests/unit/i11-audio-mp3-wav-guard.test.mjs:206` 那条 **todo**，不是 fail） |
+| `npm run test:unit`（`GY_BASH=C:\msys64\usr\bin\bash.exe`） | `5157 tests / 5154 pass / 0 fail / 1 skipped / 2 todo`，exit 0（日志里的 `AssertionError` 文本来自 `tests/unit/i11-audio-mp3-wav-guard.test.mjs:394` 那条断言——R64 记这条读数时它还是标着 **todo** 的缺口用例（当时在文件第 206 行），R72 的 `1b85e693` 已把它转成真断言（文件头第 15 行有记），今天既不是 todo 也不是 fail） |
 
 ---
 
