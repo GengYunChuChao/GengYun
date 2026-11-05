@@ -1,0 +1,7 @@
+{
+  "note": "verification 面符号覆盖的回归闸门（只判上升；收敛期不逐条钉）",
+  "baselineMain": "2b4acf172e40d8e8eb7aee1b28ee8513f72ecfbc",
+  "outOfRange": 61,
+  "undeclared": 268,
+  "paired": 1067
+}

@@ -110,7 +110,7 @@
  * `--scan docs` 还多扫 `docs/` 下其余页面（README、development-progress、evaluation 等）。
  * 引用 `BARE`／`BARE-SCOPE`／`BARE-ORPHAN`／`ANCHOR-COUNT` 读数前，先确认命令用的是哪一种。
  */
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -1296,6 +1296,26 @@ export const SYMBOL_COVERAGE_UNDECLARED = 'UNDECLARED';
  */
 export const SYMBOL_COVERAGE_ZERO_HIT = 'ZERO_HIT';
 export const SYMBOL_COVERAGE_NO_DECLARATION = 'NO_DECLARATION';
+
+// —— verification 面的回归闸门（只判「计数比基线上升」） ————————————————————————————
+/**
+ * `docs/verification/**` 的基线册：这本是**回归闸门**，不是逐条基线。
+ *
+ * 为什么这一面与另外三本基线册（`doc-anchors-baseline.json`／`-orphan-`／`-anchor-count-`）不同：
+ * 那三本记的是「哪一条已经坏了」（逐条），修好一条就得改一行；verification 面此刻还在**收敛期**
+ * （在飞的取证页 PR 持续把「符号不在区间」往下压），逐条钉住的账本隔夜就过期——过期账本要么把
+ * main 的 CI 顶红（改文档的人没做错任何事），要么靠 `--accept` 一路放行，两头都在磨掉门禁的信誉。
+ * 所以这里只记**三个计数**：`outOfRange`／`undeclared` 一旦**比基线多**就是真回归（新写的取证页把
+ * 锚点指到了符号之外，或凭空框了一批目标文件里没有的符号），判红；计数**下降**只提示 STALE、
+ * **不判红**——下降是收敛的正常形态，红它等于禁止别人把数字改小，这是与另外三本基线册的有意差异。
+ */
+export const DEFAULT_SYMBOL_COVERAGE_VERIFICATION_BASELINE = 'tools/doc-anchors-symbol-coverage-verification-baseline.json';
+/** 计数比基线**上升**（判红；只在 `--symbol-coverage-verification=strict` ＋ `--strict` 下生效）。 */
+export const SYMBOL_COVERAGE_VERIFICATION_REGRESSION = 'SYMBOL-COVERAGE-VERIFICATION-REGRESSION';
+/** 计数**低于**基线（只提示跑写模式收紧，**不**判红：这一面仍在收敛期，见上面那段）。 */
+export const SYMBOL_COVERAGE_VERIFICATION_STALE = 'SYMBOL-COVERAGE-VERIFICATION-STALE';
+/** 读数自相矛盾（`paired !== OK ＋ 不在区间 ＋ UNDECLARED`）：这种时候「没比基线多」不代表没回归。 */
+export const SYMBOL_COVERAGE_VERIFICATION_INCONSISTENT = 'SYMBOL-COVERAGE-VERIFICATION-INCONSISTENT';
 /** 行内代码片段**整段**就是一条 `路径:行号` 时才算锚点（`app.ts:2508`；前后带字的不算）。 */
 const COVERAGE_ANCHOR_SPAN = new RegExp(`^((?:[\\w.\\-]+/)*[\\w.\\-]+\\.(?:${ANCHOR_EXTENSIONS.join('|')})):(\\d+)(?:-(\\d+))?$`);
 /** 行内代码片段**整段**就是一个标识符时才算符号（`app.ts`、`a.b()`、`{ }`、中文短语都不算）。 */
@@ -1623,6 +1643,131 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
   // `verificationMisses` 是这一面**自己的**逐条明细（`SYMBOL-COVERAGE-VERIFICATION-MISS`），与 `misses`
   // 并列、互不混装：`misses`／`red` 的条数与顺序都是既有读数，一个字都不能因为新增明细而变。
   return { judged, outside, verification, misses, verificationMisses, red };
+}
+
+/**
+ * 读 verification 面的回归基线（`--symbol-coverage-verification=strict` 用）。
+ *
+ * 文件**不存在**按「空册」处理（`missing: true`）：这份基线是随本片一起落地的，别人在旧树上跑
+ * `strict` 时它还没有——但「还没写基线」不该把任何人的 CI 顶红，所以跳过关卡并打一行 NOTE。
+ * 坏 JSON／字段不是非负整数**照旧直接抛**：计数读成 0 等于闸门静默失效，比炸掉糟得多。
+ */
+export function loadSymbolCoverageVerificationBaseline(root, baselinePath = DEFAULT_SYMBOL_COVERAGE_VERIFICATION_BASELINE) {
+  const absolute = resolve(root, baselinePath);
+  if (!existsSync(absolute)) {
+    return { path: baselinePath, baselineMain: '', outOfRange: null, undeclared: null, paired: null, missing: true };
+  }
+  const parsed = JSON.parse(readFileSync(absolute, 'utf8'));
+  const counter = field => {
+    const value = parsed[field];
+    if (!Number.isInteger(value) || value < 0) {
+      throw new Error(`verification 符号覆盖基线的 ${field} 必须是非负整数（收到 ${JSON.stringify(value)}）：${baselinePath}`);
+    }
+    return value;
+  };
+  return {
+    path: baselinePath,
+    baselineMain: typeof parsed.baselineMain === 'string' ? parsed.baselineMain : '',
+    outOfRange: counter('outOfRange'),
+    undeclared: counter('undeclared'),
+    paired: counter('paired'),
+    missing: false,
+  };
+}
+
+/** 闸门只看这两格计数；`paired`／`ok` 只用于「配对数对不对得上」的自校验。 */
+const VERIFICATION_GATE_COUNTERS = Object.freeze([
+  Object.freeze({ key: 'outOfRange', label: '不在区间' }),
+  Object.freeze({ key: 'undeclared', label: SYMBOL_COVERAGE_UNDECLARED }),
+]);
+
+/**
+ * verification 面的**回归闸门**：把 `collectSymbolCoverage().verification` 与基线比一比。
+ *
+ * 判法（只在 `--symbol-coverage-verification=strict` ＋ `--strict` 下由调用方判红）：
+ *   INCONSISTENT `paired !== OK ＋ 不在区间 ＋ UNDECLARED`——三格之和与配对数对不上，说明读数本身
+ *                算坏了（或基线的 `paired` 记错了），这时「没比基线多」不代表没回归，先修读数；
+ *   REGRESSION   `不在区间` 或 `UNDECLARED` **比基线多**；每格单独成句，只有真的涨了才出现；
+ *   STALE        计数**低于**基线：只提示跑写模式收紧，**不判红**（理由见常量注释：收敛期）。
+ * 三档之外的情形（与基线持平）一行都不多打：这条命令的输出要能被人一眼扫完。
+ */
+export function evaluateSymbolCoverageVerificationGate({ root = TOOL_ROOT, verification, baselinePath = DEFAULT_SYMBOL_COVERAGE_VERIFICATION_BASELINE }) {
+  const baseline = loadSymbolCoverageVerificationBaseline(root, baselinePath);
+  const current = {
+    ok: verification?.ok ?? 0,
+    outOfRange: verification?.outOfRange ?? 0,
+    undeclared: verification?.undeclared ?? 0,
+    paired: verification?.paired ?? 0,
+  };
+  const expectedPaired = current.ok + current.outOfRange + current.undeclared;
+  const lines = [];
+  if (current.paired !== expectedPaired) {
+    lines.push(`${SYMBOL_COVERAGE_VERIFICATION_INCONSISTENT}: 配成对 ${current.paired} ≠ OK ${current.ok} ＋ 不在区间 ${current.outOfRange} ＋ ${SYMBOL_COVERAGE_UNDECLARED} ${current.undeclared}（＝ ${expectedPaired}）——三个判定格必须正好铺满配对数：读数自相矛盾时，「没比基线多」说明不了没回归`);
+    return { baseline, current, failed: true, inconsistent: true, regression: false, stale: false, lines };
+  }
+  if (baseline.missing) {
+    lines.push(`SYMBOL-COVERAGE-VERIFICATION-NOTE: 基线 ${baseline.path} 不存在，本档跳过回归判定（先用 --write-symbol-coverage-verification-baseline 落盘）`);
+    return { baseline, current, failed: false, inconsistent: false, regression: false, stale: false, lines };
+  }
+  const risen = VERIFICATION_GATE_COUNTERS
+    .filter(({ key }) => current[key] > baseline[key])
+    .map(({ key, label }) => `${label} ${baseline[key]} → ${current[key]}（基线 ${baseline[key]}）`);
+  if (risen.length > 0) {
+    lines.push(`${SYMBOL_COVERAGE_VERIFICATION_REGRESSION}: ${risen.join('；')}——verification 面的计数只许降不许升：涨了说明新写的取证页把锚点指到了符号之外，或凭空框了一批目标文件里没有的符号`);
+    return { baseline, current, failed: true, inconsistent: false, regression: true, stale: false, lines };
+  }
+  const fallen = VERIFICATION_GATE_COUNTERS
+    .filter(({ key }) => current[key] < baseline[key])
+    .map(({ key, label }) => `${label} ${baseline[key]} → ${current[key]}（低于基线 ${baseline[key]}）`);
+  if (fallen.length > 0) {
+    lines.push(`${SYMBOL_COVERAGE_VERIFICATION_STALE}: ${fallen.join('；')}，可跑 --write-symbol-coverage-verification-baseline 收紧`);
+    return { baseline, current, failed: false, inconsistent: false, regression: false, stale: true, lines };
+  }
+  return { baseline, current, failed: false, inconsistent: false, regression: false, stale: false, lines };
+}
+
+/**
+ * 写盘的 verification 基线（`--write-symbol-coverage-verification-baseline`）：三个计数 ＋ 写入时的 main。
+ * 为什么记 `baselineMain`：计数在收敛，账本必须能回答「这是对着哪棵树量的」——没有这个字段，
+ * 半年后没人说得清「268 到底还算不算基线，还是当时已经降到 46 了」。
+ */
+export function renderSymbolCoverageVerificationBaseline({ verification, baselineMain }) {
+  const body = {
+    note: 'verification 面符号覆盖的回归闸门（只判上升；收敛期不逐条钉）',
+    baselineMain,
+    outOfRange: verification.outOfRange,
+    undeclared: verification.undeclared,
+    paired: verification.paired,
+  };
+  return `${JSON.stringify(body, null, 2)}\n`;
+}
+
+/**
+ * 取「写入时的 main」：先问 `origin/main`，再退到当前 `HEAD`（浅克隆／独立工作树里 `origin/main` 未必存在）。
+ * 依次试 `--root` 指的那棵树与工具自己所在的树；四步都拿不到就**抛**——基线要记「对着哪棵树量的」，
+ * 编一个假 sha 比不写更糟（`baselineMain` 就是给人核对的那把尺）。
+ */
+export function resolveBaselineMainSha(root = TOOL_ROOT) {
+  // 为什么内置模块要就地取、而不是在文件顶部 `import { spawnSync } from 'node:child_process'`：
+  // 本文件第 166-169 行（`ANCHOR_EXTENSIONS`）被 `docs/verification/r59-mp-home-states-20261026.md:167`
+  // 当锚点引用，**在它之前插一行**就会把那四行整体下移，`SYMBOL-COVERAGE-VERIFICATION` 的读数当场从
+  // 「OK 738／不在区间 61」变成「OK 737／不在区间 62」，`SYMBOL-COVERAGE-VERIFICATION-MISS` 也从 329 变 330。
+  // 零输出漂移是这条门禁自己的硬约束（改一下读数就没人信基线了），而本片又必须往这个文件里加代码，
+  // 所以新增代码一律落在第 169 行之后，取 `child_process` 走 `process.getBuiltinModule`（Node ≥22.3 的稳定
+  // API，仓里 `engines` 要求 ≥24.16）——效果与顶部 import 相同，且不在文件头占地。
+  const { spawnSync } = process.getBuiltinModule('node:child_process');
+  const attempts = [
+    { cwd: root, ref: 'origin/main' },
+    { cwd: TOOL_ROOT, ref: 'origin/main' },
+    { cwd: root, ref: 'HEAD' },
+    { cwd: TOOL_ROOT, ref: 'HEAD' },
+  ];
+  for (const { cwd, ref } of attempts) {
+    const result = spawnSync('git', ['-C', cwd, 'rev-parse', '--verify', '--quiet', ref], { encoding: 'utf8' });
+    const sha = (result.stdout ?? '').trim();
+    if (result.status === 0 && /^[0-9a-f]{40}$/.test(sha)) return sha;
+  }
+  throw new Error(`无法确定 baselineMain：${root} 与 ${TOOL_ROOT} 下都取不到 origin/main 或 HEAD（git 可用吗？）`);
 }
 
 // —— 符号落点严格档（`--symbol=strict`：注释里的锚点进「基线／新增／陈旧」） ——————————
@@ -2210,8 +2355,8 @@ function printAnchorCountBaseline(streams, { baseline, counts, partition }) {
 }
 
 // —— CLI ——————————————————————————————————————————————————————————————
-const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--anchor-count-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--symbol-coverage=off|count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline] [--emit-anchor-count-baseline | --write-anchor-count-baseline --accept <净增减> --why "理由"]';
-const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--anchor-count-baseline', '--root', '--symbol', '--symbol-coverage', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline', '--emit-anchor-count-baseline', '--write-anchor-count-baseline', '--accept', '--why']);
+const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--anchor-count-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--symbol-coverage=off|count|strict] [--symbol-coverage-verification=off|count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline] [--emit-anchor-count-baseline | --write-anchor-count-baseline --accept <净增减> --why "理由"] [--write-symbol-coverage-verification-baseline]';
+const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--anchor-count-baseline', '--root', '--symbol', '--symbol-coverage', '--symbol-coverage-verification', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline', '--emit-anchor-count-baseline', '--write-anchor-count-baseline', '--write-symbol-coverage-verification-baseline', '--accept', '--why']);
 /** `--symbol` 的取值是**白名单**：不认识的取值直接报错退出，绝不当成「没传、照旧绿灯」。 */
 const SYMBOL_MODES = new Set(['count', 'strict']);
 /**
@@ -2220,6 +2365,15 @@ const SYMBOL_MODES = new Set(['count', 'strict']);
  * 不传这个参数时退出码只可能由既有判据决定。
  */
 const SYMBOL_COVERAGE_MODES = new Set(['off', 'count', 'strict']);
+/**
+ * `--symbol-coverage-verification` 的取值白名单：与 `--symbol-coverage` **同风格、互不影响**。
+ * 两个参数管两个面——前者判 `docs/architecture/**`（逐条基线），后者判 `docs/verification/**`
+ * （只判计数上升，见 `DEFAULT_SYMBOL_COVERAGE_VERIFICATION_BASELINE` 那段）。缺省同样是 `count`：
+ * 不传这个参数时，既有两行读数的字面与退出码都不变（`count` 只统计、永不判红）。
+ * `off` 连那两行读数一起关掉——这一档本来就是「我只想看 architecture」，留着半页 verification
+ * 读数是噪声；但**关闭只发生在 `--symbol-coverage` 也打开的时候**，别指望它能关掉别的面。
+ */
+const SYMBOL_COVERAGE_VERIFICATION_MODES = new Set(['off', 'count', 'strict']);
 const MAX_PRINTED = 300;
 const MAX_PRINTED_UNDECIDABLE = 500;
 /** `BARE_ORPHAN` 的逐条打印上限：作用域内全列，作用域外的历史取证页只抽样（数字仍在汇总行）。 */
@@ -2228,7 +2382,7 @@ const MAX_PRINTED_ORPHAN_OUTSIDE = 40;
 const MAX_PRINTED_SYMBOL_COVERAGE = 20;
 
 export function parseArgs(argv) {
-  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, anchorCountBaseline: DEFAULT_ANCHOR_COUNT_BASELINE, root: TOOL_ROOT, symbol: null, symbolCoverage: 'count', accept: null, why: null, emit: false, write: false, emitOrphan: false, writeOrphan: false, emitCount: false, writeCount: false };
+  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, anchorCountBaseline: DEFAULT_ANCHOR_COUNT_BASELINE, root: TOOL_ROOT, symbol: null, symbolCoverage: 'count', symbolCoverageVerification: 'count', accept: null, why: null, emit: false, write: false, emitOrphan: false, writeOrphan: false, emitCount: false, writeCount: false, writeVerification: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const [flag, inline] = argument.includes('=') ? [argument.slice(0, argument.indexOf('=')), argument.slice(argument.indexOf('=') + 1)] : [argument, undefined];
@@ -2247,6 +2401,7 @@ export function parseArgs(argv) {
     else if (flag === '--write-orphan-baseline') options.writeOrphan = true;
     else if (flag === '--emit-anchor-count-baseline') options.emitCount = true;
     else if (flag === '--write-anchor-count-baseline') options.writeCount = true;
+    else if (flag === '--write-symbol-coverage-verification-baseline') options.writeVerification = true;
     else if (flag === '--scan') options.scan.push(value());
     else if (flag === '--baseline') options.baseline = value();
     else if (flag === '--orphan-baseline') options.orphanBaseline = value();
@@ -2268,6 +2423,11 @@ export function parseArgs(argv) {
       if (!SYMBOL_COVERAGE_MODES.has(mode)) throw new Error(`--symbol-coverage 只支持 ${[...SYMBOL_COVERAGE_MODES].join('|')}（收到：${mode}）\n${USAGE}`);
       options.symbolCoverage = mode;
     }
+    else if (flag === '--symbol-coverage-verification') {
+      const mode = value();
+      if (!SYMBOL_COVERAGE_VERIFICATION_MODES.has(mode)) throw new Error(`--symbol-coverage-verification 只支持 ${[...SYMBOL_COVERAGE_VERIFICATION_MODES].join('|')}（收到：${mode}）\n${USAGE}`);
+      options.symbolCoverageVerification = mode;
+    }
   }
   if (options.emit && options.write) throw new Error('--emit-baseline 与 --write-baseline 只能二选一');
   if (options.emitOrphan && options.writeOrphan) throw new Error('--emit-orphan-baseline 与 --write-orphan-baseline 只能二选一');
@@ -2276,9 +2436,10 @@ export function parseArgs(argv) {
     options.emit || options.write,
     options.emitOrphan || options.writeOrphan,
     options.emitCount || options.writeCount,
+    options.writeVerification,
   ].filter(Boolean).length;
   if (generating > 1) {
-    throw new Error('四份基线的生成要分别做：--emit/--write-baseline、--emit/--write-orphan-baseline、--emit/--write-anchor-count-baseline 一次只能选一组');
+    throw new Error('四份基线的生成要分别做：--emit/--write-baseline、--emit/--write-orphan-baseline、--emit/--write-anchor-count-baseline、--write-symbol-coverage-verification-baseline 一次只能选一组');
   }
   const writing = options.write || options.writeOrphan || options.writeCount;
   if (generating > 0 && options.symbol !== null) {
@@ -2288,9 +2449,16 @@ export function parseArgs(argv) {
   if (generating > 0 && options.symbolCoverage !== 'count') {
     throw new Error(`--symbol-coverage=${options.symbolCoverage} 不能与基线生成同时用（生成基线时统计会被忽略）`);
   }
+  if (generating > 0 && options.symbolCoverageVerification !== 'count') {
+    throw new Error(`--symbol-coverage-verification=${options.symbolCoverageVerification} 不能与基线生成同时用（生成基线时统计会被忽略）`);
+  }
   // `--accept`／`--why` 只在**写模式**有意义：干跑时给它们会让人以为「已经登记过了」。
   if (!writing && (options.accept !== null || options.why !== null)) {
     throw new Error('--accept 与 --why 只跟 --write-*-baseline 一起用（试运行不接受「放行」参数）');
+  }
+  // verification 这本基线没有「放行」这回事：它就是判据门槛本身，改它等于放宽闸门，必须在 PR 里说清为什么。
+  if (options.writeVerification && (options.accept !== null || options.why !== null)) {
+    throw new Error('--write-symbol-coverage-verification-baseline 不接受 --accept/--why：这本基线只记三个计数，改它就是换门槛（要说理由请写进 PR）');
   }
   if (options.scan.length === 0) options.scan = [...DEFAULT_SCAN_TARGETS];
   return options;
@@ -2416,6 +2584,23 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     streams.log(`WRITE: 已写 ${options.anchorCountBaseline}（进判据锚点 ${currentTotal} 条 / ${anchorCounts.size} 份文档；净增减 ${currentTotal - current.total} 条，与 --accept=${options.accept} 一致）。理由已记进 accept 账本：${options.why}`);
     return 0;
   }
+  if (options.writeVerification) {
+    // 量的是**本次扫描面**（CI 用 `--scan docs`，与判据同口径），量完立刻落盘；不打印任何读数——
+    // 写模式只该输出一行 WRITE，否则「这次到底判没判」会被半页读数淹掉。
+    const coverage = collectSymbolCoverage({ root: options.root, targets: options.scan });
+    let baselineMain;
+    try {
+      baselineMain = resolveBaselineMainSha(options.root);
+    } catch (error) {
+      streams.error(`ERROR: ${error.message}`);
+      return 2;
+    }
+    const absolute = resolve(options.root, DEFAULT_SYMBOL_COVERAGE_VERIFICATION_BASELINE);
+    if (!existsSync(dirname(absolute))) mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, renderSymbolCoverageVerificationBaseline({ verification: coverage.verification, baselineMain }));
+    streams.log(`WRITE: verification 符号覆盖基线已更新（outOfRange=${coverage.verification.outOfRange}, undeclared=${coverage.verification.undeclared}, paired=${coverage.verification.paired}, baselineMain=${baselineMain}）`);
+    return 0;
+  }
   const baseline = loadBaseline(options.root, options.baseline);
   const { fresh, covered, stale } = partitionByBaseline(findings, baseline.entries);
   // dry-run 打全量清单（人工排查用）；--strict 只打归纳，失败清单走 stderr——
@@ -2482,9 +2667,18 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   // 符号覆盖：**WARN 级**，缺省 `--symbol-coverage=count` 只打印、绝不改退出码（见文件头与
   // `collectSymbolCoverage` 的注释）。放在 `SYMBOL-STRICT` 之后，是为了让两条「锚点 → 符号」读数挨着读。
   let symbolCoverage = null;
+  // verification 面的**回归闸门**：只在 `--symbol-coverage-verification=strict` 下才算（缺省 `count`
+  // 只打读数、绝不改退出码，与 architecture 面「不显式传 strict 就不可能红」同一形态）。
+  // `--symbol-coverage=off` 时整面关闭，闸门随之失效——`off` 的零输出漂移是硬约束，而缺省值本来就是
+  // `count`，所以「关了 architecture 却还想让 verification 判红」没有对应的参数组合，也不该有。
+  let verificationGate = null;
   if (options.symbolCoverage !== 'off') {
     symbolCoverage = collectSymbolCoverage({ root: options.root, targets: options.scan });
-    printSymbolCoverage(streams, symbolCoverage, options.symbolCoverage);
+    printSymbolCoverage(streams, symbolCoverage, options.symbolCoverage, options.symbolCoverageVerification);
+    if (options.symbolCoverageVerification === 'strict') {
+      verificationGate = evaluateSymbolCoverageVerificationGate({ root: options.root, verification: symbolCoverage.verification });
+      printSymbolCoverageVerificationGate(streams, verificationGate);
+    }
   }
   if (baseline.missing) streams.log(`NOTE: 基线 ${options.baseline} 不存在，按空基线处理（等于所有问题都算新增）。`);
   if (stale.length > 0) {
@@ -2505,6 +2699,9 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
   // `--symbol-coverage=strict`（且同时给 `--strict`，与 `--symbol=strict` 的既有分工一致）就不可能红。
   // 判红面用 `red`（有声明行的符号 0 命中／不在区间），`UNDECLARED` 明细按第 ④ 条只计数。
   const coverageFailed = options.strict && options.symbolCoverage === 'strict' && symbolCoverage !== null && symbolCoverage.red.length > 0;
+  // verification 面的回归闸门：判红同样要 `--strict`（与其它判据一致——不带 `--strict` 时这条命令
+  // 是「体检报告」，不是门禁）。`count` 档不进这里：`evaluateSymbolCoverageVerificationGate` 干脆不会被调用。
+  const verificationGateFailed = options.strict && verificationGate !== null && verificationGate.failed;
   if (structuralFailed) {
     streams.error(`FAIL: 文档行号闸门未通过（基线之外新增 ${fresh.length} 条）`);
     for (const finding of fresh.slice(0, 40)) streams.error(`  · ${describe(finding)}`);
@@ -2547,7 +2744,15 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     }
     streams.error('  修法：按符号在当前文件里的真实声明行改写锚点（报错里带了判定与解析器理由）；确属符号名已改名／挪走的，改文档里那个名字。⛔ 不要为了让它变绿去加基线——这条判据没有基线，缺省 `--symbol-coverage=count` 本来就不判红。被记成 UNDECLARED 的配对**不在**这个判红面里：那是「目标文件里没有该符号的声明行」的噪声（顺带被反引号框起来的字段名／动词／提交号），要它进判据得先让文档写出真正属于该文件的符号。');
   }
-  if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed || countFailed || coverageFailed) return 1;
+  if (verificationGateFailed) {
+    const cause = verificationGate.inconsistent
+      ? '读数自相矛盾（配成对 ≠ OK ＋ 不在区间 ＋ UNDECLARED）'
+      : '计数比基线上升';
+    streams.error(`FAIL: verification 符号覆盖回归闸门未通过（--symbol-coverage-verification=strict：${cause}；基线 ${verificationGate.baseline.path}${verificationGate.baseline.baselineMain === '' ? '' : `，baselineMain=${verificationGate.baseline.baselineMain}`}）`);
+    for (const line of verificationGate.lines) streams.error(`  · ${line}`);
+    streams.error('  修法：把新写的取证页里对不上的锚点改到符号的声明行／锚点区间内（或删掉那一对），别动基线——涨了就是涨了。读数自相矛盾时先修统计或基线的 paired（三格之和必须正好等于配对数），这种时候「没比基线多」说明不了没回归。确属有意放宽闸门的，本地跑 --write-symbol-coverage-verification-baseline 重新量，并把理由写进 PR。⛔ 计数下降只提示 STALE、不判红（verification 面仍在收敛期），别为了消 STALE 去改基线凑数。');
+  }
+  if (structuralFailed || driftFailed || symbolStrictFailed || orphanFailed || countFailed || coverageFailed || verificationGateFailed) return 1;
   if (options.strict) streams.log(`PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、${BARE_ORPHAN}、ANCHOR-COUNT${symbolStrict === null ? '' : ` 与 ${COMMENT_ANCHOR}`} 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN${symbolStrict === null ? '' : '／STALE-SYMBOL'}）`);
   return 0;
 }
@@ -2644,14 +2849,18 @@ function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
  * 结构上分两组、**追加在末尾**：`SYMBOL-COVERAGE-MISS`（architecture 面，内容与顺序一字不动）在前，
  * `SYMBOL-COVERAGE-VERIFICATION-MISS`（verification 面，同样抽样 20 条）在后——新块只追加，不改既有行。
  */
-function printSymbolCoverage(streams, { judged, outside, verification, misses, verificationMisses = [] }, mode) {
+function printSymbolCoverage(streams, { judged, outside, verification, misses, verificationMisses = [] }, mode, verificationMode = 'count') {
   const checkable = judged.ok + judged.outOfRange;
   const suffix = mode === 'strict' ? '（--symbol-coverage=strict：配合 --strict 判红）' : '（仅 WARN，不影响 exit code）';
   streams.log(`SYMBOL-COVERAGE: 可判 ${checkable} 条——OK ${judged.ok}、符号不在区间 ${judged.outOfRange}${suffix}`);
   streams.log(`SYMBOL-COVERAGE-UNDECLARED: ${judged.undeclared} 条（符号在目标文件里没有声明行；不计入 strict 判定，逐条抽样见下）——其中符号 0 命中 ${judged.zeroHit} 条、出现过但不是声明行 ${judged.noDeclaration} 条`);
   streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条（这三格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号不在区间 ${outside.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${outside.undeclared}（0 命中 ${outside.zeroHit}／非声明行 ${outside.noDeclaration}）`);
   // `docs/verification/**` 的两行紧跟着 architecture 的三行读：同口径、不同判据面（那一面三档都不判红）。
-  printSymbolCoverageVerification(streams, verification);
+  // `--symbol-coverage-verification=off` 时连这两行都不打——与 `--symbol-coverage=off` 同语义：
+  // 关掉一面就连它的读数一起关，不留半页「看不出判没判」的数字。
+  if (verificationMode !== 'off') {
+    printSymbolCoverageVerification(streams, verification);
+  }
   if (misses.length > 0) {
     streams.log(`SYMBOL-COVERAGE-MISS: ${misses.length} 条「锚点 + 符号」对不上（文档:行 → 锚点（符号：判定；解析器理由））——WARN，逐条抽样；只有 OUT_OF_RANGE 会在 --symbol-coverage=strict 下判红：`);
     for (const item of misses.slice(0, MAX_PRINTED_SYMBOL_COVERAGE)) {
@@ -2664,7 +2873,9 @@ function printSymbolCoverage(streams, { judged, outside, verification, misses, v
   }
   // verification 面的逐条明细：独立一行、独立抽样（上限同上），**排在 architecture 那组之后**——
   // 既有三行＋`SYMBOL-COVERAGE-MISS` 的字面、顺序与条数因此一字不动，新块只追加在末尾。
-  printSymbolCoverageVerificationMisses(streams, verificationMisses);
+  if (verificationMode !== 'off') {
+    printSymbolCoverageVerificationMisses(streams, verificationMisses);
+  }
 }
 
 /**
@@ -2706,6 +2917,25 @@ function printSymbolCoverageVerification(streams, verification) {
   const checkable = verification.ok + verification.outOfRange;
   streams.log(`SYMBOL-COVERAGE-VERIFICATION: 可判 ${checkable} 条——OK ${verification.ok}、符号不在区间 ${verification.outOfRange}（仅 WARN，不影响 exit code）`);
   streams.log(`SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 ${SYMBOL_COVERAGE_VERIFICATION_SCOPE}**（${verification.documents} 份文档、锚点 ${verification.anchors} 条）——配成对 ${verification.paired} 条：OK ${verification.ok}、符号不在区间 ${verification.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${verification.undeclared}（符号 0 命中 ${verification.zeroHit} 条、出现过但不是声明行 ${verification.noDeclaration} 条）；同行没有紧邻符号 ${verification.unpaired} 条、两侧等距不猜 ${verification.ambiguous} 条、路径找不到或不唯一 ${verification.unresolved} 条（后四格只计数）——本面三档一律不判红，strict 仍只判 ${SYMBOL_COVERAGE_SCOPE}**`);
+}
+
+/**
+ * verification 面**回归闸门**的自述行：只在 `--symbol-coverage-verification=strict` 下打。
+ *
+ * 为什么需要这一行：`SYMBOL-COVERAGE-VERIFICATION`／`-SCOPE` 的字面里有「（仅 WARN，不影响 exit code）」
+ * 与「本面三档一律不判红」，那说的是**读数面**（`--symbol-coverage=off|count|strict` 三档）；本片加的是
+ * **另一条**参数（`--symbol-coverage-verification`），它的 `strict` 档确实会判红。那两行字面必须逐字
+ * 不变（既有读数被 CI 与单测钉着），差别只能由这**新增**的一行交代清楚——否则读者会以为
+ * 「读数说 WARN、退出码却说 FAIL」是工具在自相矛盾。
+ */
+function printSymbolCoverageVerificationGate(streams, { baseline, current, lines }) {
+  const reference = baseline.missing
+    ? `${baseline.path}（不存在，本档跳过判定）`
+    : `${baseline.path}（baselineMain=${baseline.baselineMain === '' ? '未记' : baseline.baselineMain}；基线：不在区间 ${baseline.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${baseline.undeclared}、配成对 ${baseline.paired}）`;
+  streams.log(`SYMBOL-COVERAGE-VERIFICATION-GATE: 回归闸门已启用（--symbol-coverage-verification=strict ＋ --strict）——` +
+    `上面那两行里的「仅 WARN」说的是**读数面**；本闸门只判「计数比基线上升」，下降只提示收紧（verification 面仍在收敛期，故不逐条钉）：` +
+    `基线 ${reference}；本次：不在区间 ${current.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${current.undeclared}、配成对 ${current.paired}`);
+  for (const line of lines) streams.log(line);
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
