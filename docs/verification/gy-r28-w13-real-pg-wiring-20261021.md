@@ -148,7 +148,7 @@ Error [ERR_MODULE_NOT_FOUND]: Cannot find module
 
 | env | 脚本契约（行号取自各自 PR 分支的脚本本体） | 是否必填 |
 | --- | --- | --- |
-| `GY_PG_BIN` | `online-purge-pg.mjs:63` `binDir`；`messages-purge-pg.mjs:63` `binDir`。两脚本都 `assert.ok(existsSync(tool('initdb')))`（`:148` / `:166`），缺它打印 SKIP 并 `process.exit(77)`（`:61` / `:66-70`） | **必填** |
+| `GY_PG_BIN` | `online-purge-pg.mjs:76` `binDir`；`messages-purge-pg.mjs:63` `binDir`。两脚本都 `assert.ok(existsSync(tool('initdb')))`（`:148` / `:166`），缺它打印 SKIP 并 `process.exit(77)`（`:61` / `:66-70`） | **必填** |
 | `GY_I19_PG_ROOT` | `online-purge-pg.mjs:94` `const rootDir = process.env.GY_I19_PG_ROOT ?? tmpdir();` | 选填（缺省 `os.tmpdir()`，故 CI 里必须显式给） |
 | `GY_W11_PG_ROOT` | `messages-purge-pg.mjs:92` `const rootDir = process.env.GY_W11_PG_ROOT ?? tmpdir();` | 选填（同上） |
 | `GY_W11_PG_LOG` | `messages-purge-pg.mjs:75` 服务端日志路径 | 选填 |
