@@ -10,7 +10,7 @@
 监工批复及 reviewed_sha 可追溯：[授权列表](https://github.com/GengYunChuChao/GengYun/pull/109#issuecomment-6144495628)、[普通回执](https://github.com/GengYunChuChao/GengYun/pull/113#issuecomment-6144534448)、[科普分页](https://github.com/GengYunChuChao/GengYun/pull/115#issuecomment-6144472077)。
 #107／#108 已合入 `1117770`／`55b95ce`；本机用户 main 初轮从 `55b95ce` 快进 `3e8f89b`，本轮再快进 `769420a`，未合入待审分支。
 
-#116 的 HEAD `e2208ae` 尚未合，监工说明作者证据可复用，但其 CI 不在前轮获批批次内、未运行：[批复](https://github.com/GengYunChuChao/GengYun/pull/116#issuecomment-6144546119)。
+#116 的 HEAD `e2208ae` 尚未合（2026-11-05 复核：#116 已合入 `78a44868`），监工说明作者证据可复用，但其 CI 不在前轮获批批次内、未运行：[批复](https://github.com/GengYunChuChao/GengYun/pull/116#issuecomment-6144546119)。
 #106 已合入 `769420a`，13 项 CI 成功：[监工合并批复](https://github.com/GengYunChuChao/GengYun/pull/106#issuecomment-6146829321)。#110 装配和 #111／#112／#114 部署技术准备仍开放，不算 main 已交付；保留原作者范围。原 27 项 issue 全部 OPEN，不虚增完成率。
 
 ## 文档缺陷与修订

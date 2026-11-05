@@ -2,7 +2,7 @@
 
 ## 1 缺口
 
-`#456` 的 `--reanchor` 让 `contract-status.json` 里 412 条 `source_anchor` 能在代码漂移后自动重定位，但 `docs/**` 散文里手写的 `路径:起-止` 没有任何机械校验：代码一动，行号就漂，文档继续当「实现就在这几行」的证据。本片补上这条缺口（`tools/verify-doc-anchors.mjs`、`tools/doc-anchors-baseline.json`）并给出本地聚合入口 `npm run verify:anchors`。不改业务代码，不碰 `#456` 在飞的 `tools/contract-status-core.mjs` 与 `tools/verify-contract-status.mjs`。
+`#456` 的 `--reanchor` 让 `contract-status.json` 里 412 条 `source_anchor` 能在代码漂移后自动重定位，但 `docs/**` 散文里手写的 `路径:起-止` 没有任何机械校验：代码一动，行号就漂，文档继续当「实现就在这几行」的证据。本片补上这条缺口（`tools/verify-doc-anchors.mjs`、`tools/doc-anchors-baseline.json`）并给出本地聚合入口 `npm run verify:anchors`。不改业务代码，不碰 `#456` 在飞的 `tools/contract-status-core.mjs` 与 `tools/verify-contract-status.mjs`（2026-11-05 复核：#456 已合入 `93eff4f1`）。
 
 ## 2 扫描范围
 
