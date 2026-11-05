@@ -350,7 +350,7 @@ type BackupPurgeOutcome =
 
 - main 现到 `0018`（实测 `services/api/db/migrations/` 共 18 个 `.sql`，最大 `0018_favorites_history.sql`）。
 - 在途 PR 已占号（未合入本分支）：`#278` = 0019、`#282` = 0020、`#279` = 0021。
-- 因此本域取 **0022**（推算，不预占）。
+- 因此本域取 **0022**（推算，不预占）。（2026-11-05 复核：本节三行是 2026-10-14 的时点读数，均已过期——① 迁移早已越过 0018，今天顶层到 `0054_favorites_target_lookup.sql`（缺号 `0037`）；② `#278`／`#282`／`#279` 三个在途 PR 均已合入，占号落地为 `0019_messages_persistence.sql`、`0020_feature_flags.sql`、`0021_admin_accounts_read.sql`；③ 本域**没有**落在 0022——0022 给了社区持久化（`0022_community_persistence.sql`），备份副本域实际落在 `0023_user_backup_copies.sql`，注销回执台账落 `0038_r34_deletion_receipt_persistence.sql`，媒体行清除落 `0035_r34_media_row_purge.sql`。上三行保留为设计时点原文，不作现状引用。）
 - 「连续无缺号」断言的真正位置是 [tests/integration/migrations-negative-pg.mjs:47-64](../../tests/integration/migrations-negative-pg.mjs)（`MISSING_VERSIONS` 必须为空、`MIGRATION_COUNT === LAST_VERSION_NUMBER`），**不在** `tests/unit/migrations*.test.mjs`（那两支只断言 0001–0003 的存在、校验和、升序、漂移与事务边界）。该集成文件在 `MIGRATIONS_NEGATIVE_TEST_URL` 未设置时打印 SKIP 并 `process.exit(0)`（:22-28），所以本机不红、CI 真库臂才红——`#278` 当前的红因正是这个。
 - 结论：本片**不落 `.sql`**。合入序 `#278` → `#282` → `#279` → 本域 0022；若先合入者改号，本域顺延。（**2026-11-04 订正：本节是 2026-10-19 开工时点读数——`#278`／`#282`／`#279` 已于 2026-10-19 全部合入，main 迁移现有 53 个、最大 `0054_favorites_target_lookup.sql`，本域实落 `0023_user_backup_copies.sql`；见文首增补**）
 

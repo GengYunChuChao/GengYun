@@ -52,7 +52,7 @@
 
 ### 与派单所引参考文件的偏差（如实登记）
 
-派单要求"照 `services/api/src/routes/recognitions.ts` 与 `tests/integration/recognitions-http.mjs` 的既有风格"。实测这两个文件在该基线**均不存在**（`git ls-tree -r upstream/main -- services/api/src/routes tests/integration` 无 recognitions／ocr／tts 项）——#9（PR #87）尚未合并。因此本轮的"既有 HTTP 管道"参照改为实际存在的实现：
+派单要求"照 `services/api/src/routes/recognitions.ts` 与 `tests/integration/recognitions-http.mjs` 的既有风格"。实测这两个文件在该基线**均不存在**（`git ls-tree -r upstream/main -- services/api/src/routes tests/integration` 无 recognitions／ocr／tts 项）——#9（PR #87）尚未合并（2026-11-05 复核：`recognitions.ts` 与 `recognitions-http.mjs` 均在 main（`f8da03bc`，subject `(#87)`））。因此本轮的"既有 HTTP 管道"参照改为实际存在的实现：
 
 - 路由风格／封套／头部：`services/api/src/routes/profile.ts`、`routes/knowledge.ts`、`routes/support.ts`（`buildMeta`）、`app.ts`（`setErrorHandler`／`setNotFoundHandler`／`ajv.removeAdditional:false`）。
 - 鉴权身份读取：`services/api/src/auth/middleware.ts` 的 `readIdentity` 与 `createAuthGuards().requireUser`。

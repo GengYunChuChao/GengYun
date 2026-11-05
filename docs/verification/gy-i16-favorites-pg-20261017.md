@@ -202,7 +202,7 @@ store，也**绕过不了**这道理。`createUserDataDeletion({ favoritesStore,
    `.pg17\pgsql\bin`，只是不在 `PATH`）；PGlite 仍只作 SQL 语义旁证，不冒充 PG17 证据。
 2. **CI workflow：未新增。** 其它 `*-pg.mjs` 各有 `*-postgres.yml`，本片未加；已在
    `ci-integration-chain-structure.test.mjs` 白名单写明原因（「本片未新增对应 CI workflow」）。
-3. **`privacy/**`、`account-deletion-pg.mjs`、`db/pool.ts`**：按派单禁区**未改**（#256 在飞）。
+3. **`privacy/**`、`account-deletion-pg.mjs`、`db/pool.ts`**：按派单禁区**未改**（#256 在飞）（2026-11-05 复核：#256 已合入 `ec8f9d6f`）。
 4. **契约与 miniprogram**：未改（五条 operation 的形状与错误码不变）。
 
 ## 6 边界（做了什么、没做什么）
