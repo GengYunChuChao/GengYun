@@ -165,7 +165,7 @@ HTTP 路由已装配（services/api/src/routes/community.ts；真实回环回归
 
 ### 2.7 关键装配原文（逐字，供复核）
 
-`services/api/src/app.ts:1413-1416`（`getMedia` 的 store 选择）：
+`packages/media/service.mjs:323`（`getMedia` 的 store 选择）：
 
 ```ts
 const mediaStore: MediaStore = mediaStoreOption

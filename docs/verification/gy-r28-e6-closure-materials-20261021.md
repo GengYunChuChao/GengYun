@@ -184,7 +184,7 @@
 
 | 编号 | 缺什么 | 原因与前置 |
 | --- | --- | --- |
-| B1 | 排序口径在**台账**仍未收口（与 A7 方向相反） | `docs/architecture/contract-status.json:781`（`GET /knowledge` 条目 blocker 逐字「当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留」；合流按内容重锚（2026-10-25 #538 解冲突合流树 `upstream/main`=`1d65b7ee`＋本片实测重取），原记 `:716`；⚠ 该 blocker 文本其后已由 R33 按代码事实订正，此处引文为订正前原文，现文见该行与 `docs/verification/gy-r33-contract-ledger-20261023.md`）、`:3644`（跨切面条目同义）；`docs/architecture/contract-implementation-status.md:72`（`listKnowledge` 记 `partial`）。本片红线不改 JSON／台账 ⇒ 只登记口径差 |
+| B1 | 排序口径在**台账**仍未收口（与 A7 方向相反） | `docs/architecture/contract-status.json:781`（`GET /knowledge` 条目 blocker 逐字「当前id_asc排序仍不同于冻结(created_at DESC,id DESC)，实际表/投影无created_at，排序及历史数据方案未完成，按partial保留」；合流按内容重锚（2026-10-25 #538 解冲突合流树 `upstream/main`=`1d65b7ee`＋本片实测重取），原记 `:716`；⚠ 该 blocker 文本其后已由 R33 按代码事实订正，此处引文为订正前原文，现文见该行与 `docs/verification/gy-r33-contract-ledger-20261023.md`）、`:3644`（跨切面条目同义）；`docs/architecture/contract-implementation-status.md:79`（`listKnowledge` 记 `partial`）。本片红线不改 JSON／台账 ⇒ 只登记口径差 |
 | B2 | 真实来源与真实消费者读数 | [知识小程序接线盘点](gy-i07-knowledge-miniprogram-wiring-20261021.md) §8；其中 `source.updated_at` 由 `retrieved_at`（日期）转 `date-time` 的服务端投影**未实测**（同页 §5） |
 | B3 | 真机／开发者工具渲染读数 | 同页 §7（`cli.bat` 返回 `EPERM`／未安装）；`platform-checklist.md:40`「未验证」 |
 | B4 | 「实际来源」的审核与许可事实 | `packages/knowledge/zhejiang/materials-zhejiang-v1.json:42`／`:71`（`review_status: "unverified"`）、`:46`／`:75`（`licensed: false`）⇒ 展示面只能按未核对呈现；取得核准来源属 #3／#10 线 |
