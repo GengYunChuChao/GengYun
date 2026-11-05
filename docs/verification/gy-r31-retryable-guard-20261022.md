@@ -89,7 +89,7 @@ git merge --no-ff 0eaf1bde     # #455 的 head；ort 策略，无冲突
 | --- | --- | --- | --- | --- |
 | `services/api/src/admin/ops/flag-gate.ts:394`（现 `:420`） | `failClosedError` | `failClosedRetryableFor(cause)` | 有判据（合法放宽） | **仍存在，仍有判据** |
 | `services/api/src/admin/ops/flags-pg.ts:336` | `mapFlagReadError` | `true` | **兜底恒 true（真缺陷）** | **已被 `#455` 修掉**：现 `:347` 为 `flagReadFailure(error)`（走 `isTransientDatabaseError`） |
-| `services/api/src/admin/ops/service.ts:842` | `flagReadFailure` → 改名 `throwFlagReadFailure` | `true` | **兜底恒 true（真缺陷）** | **已被 `#455` 修掉**：`throwFlagReadFailure`，委托同一判据 |
+| `services/api/src/admin/ops/flags-pg.ts:315` | `flagReadFailure` → 改名 `throwFlagReadFailure` | `true` | **兜底恒 true（真缺陷）** | **已被 `#455` 修掉**：`throwFlagReadFailure`，委托同一判据 |
 | `services/api/src/ocr/store-pg.ts:137` | `classifyOcrDatabaseError` | `isTransientDatabaseError(error)` | 有判据 | **仍存在，仍有判据** |
 | `services/api/src/ocr/store-pg.ts:424` | `tablesReady` | `true` | **确定性失败却声称可重试** | **已被 `#455` 修掉**：`retryable: false` + `details: PROBE_SHAPE_UNKNOWN`（站点不再是非 false） |
 | `services/api/src/recognitions/store-pg.ts:150` | `classifyRecognitionDatabaseError` | `isTransientDatabaseError(error)` | 有判据 | **仍存在，仍有判据** |
