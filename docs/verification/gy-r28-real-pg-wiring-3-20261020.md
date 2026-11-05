@@ -83,6 +83,7 @@ EXITCODE=1
 调用点 `account-suspend-pg.mjs:177`（`provisionRoles`）／`:493`（顶层），exit=1
 （日志 `.pg17/handoff/r28-s14-logs/account-suspend-pg.ciparity-rolesexist.log`）。
 
+
 🔁 **R28-S18 订正（本机真集群实测，2026-10-20，集群 `:55601`）**：上一段结论有两处不准确。
 
 **（a）首个 `42710` 不是 `:179` 抛的，是 `:177` 抛的。** `provisionRoles`（`:174`）先把
@@ -280,3 +281,7 @@ EXITCODE=1
    （实测 `Cannot find module`），本片无网络可装。workflow 的 3 个新 step 是**逐字照抄**既有 4 个 step
    的缩进与键序，并且守卫的 `run:` 提取器已按 YAML 语法把 7 条受管脚本全部解析出来（19/19 绿）；
    但「这份 YAML 能否被 GitHub 解析」只有 merge 后那次真实 run 能最终确认。
+
+## 2026-11-05 复核（main `2a835064`）
+
+**2026-11-05 复核（main `2a835064`）**：上段的 `tests/integration/account-suspend-pg.mjs:177` 与 `tests/integration/account-suspend-pg.mjs:493` 是 2026-10-20 那次复跑日志里的**当时**调用栈位置，属历史取证读数，不随此后脚本推移改写。按今天的 `tests/integration/account-suspend-pg.mjs`，顶层调用点是该文件 `:637`，`provisionRoles` 声明在 `tests/integration/account-suspend-pg.mjs:289`；同文件 `:177` 今天已落在角色名清单里、不再是调用点。给出当前定位**不**代表重现了旧的 `42710` 失败，也不改变上面那次复跑的读数。

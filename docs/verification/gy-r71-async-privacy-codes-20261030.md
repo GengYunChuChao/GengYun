@@ -98,7 +98,7 @@
 
 - 域外异常（含自带 `CONSENT_REQUIRED` 的第三方错误对象）**仍然**折成 `PROVIDER_UNAVAILABLE`（用例 P3 钉住）；
 - `PrivacyError` 携带**闭集外**的码也仍然折叠（`isErrorCode` 守卫不动，用例 P3 第三行钉住）——
-  否则 `GET /jobs/{id}` 的 `assertContractJob`（`services/api/src/jobs/registry.ts:139`）会把它变成 503；
+  否则 `GET /jobs/{id}` 的 `assertContractJob`（`services/api/src/jobs/registry.ts:177`）会把它变成 503；
 - 这些码在**同步面**本来就原样交给客户端（`services/api/src/privacy/egress.ts:57` 的 `toApiError`
   把码与状态按同一张 `ERROR_STATUS_MAP` 转成 `ApiError`，`withPrivacyErrors`（同文件 `:164`）就挂在路由上）
   ⇒ 作业面保留原码**不新增任何暴露面**。
