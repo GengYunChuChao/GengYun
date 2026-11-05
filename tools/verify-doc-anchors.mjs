@@ -1358,6 +1358,43 @@ const COVERAGE_SYMBOL_SPAN = /^[A-Za-z_$][\w$]*$/;
 const COVERAGE_COMMIT_HASH_SPAN = /^[0-9a-f]{7,40}$/i;
 
 /**
+ * **语言保留字**：整段确实是标识符形状（`COVERAGE_SYMBOL_SPAN` 收它），但它不可能是任何文件里能声明的
+ * 「符号」——没有哪个源码文件会「声明一个 `delete`」。
+ *
+ * 为什么在**候选抽取**这一步就排掉（口径 ⑧）：`docs/implementation-requirements.md:278` 那样的句子把
+ * `` `delete` `` 紧挨着写在锚点旁，于是这一对稳定产出 `UNDECLARED／ZERO_HIT`（目标文件里 0 次出现）——
+ * 它既不说明文档指错了地方（锚点是好的），也不说明实现漂走了（那个词本来就不是实现里的名字），
+ * 只是把 `SYMBOL-COVERAGE-UNDECLARED` 抬高 1，让 review 的人白查一轮。
+ * 口径与 `COVERAGE_COMMIT_HASH_SPAN` 同族：**只排整段恰好等于保留字的**，`deleteAll`／`inRange`／
+ * `asyncPool` 这种以保留字**开头**的标识符一个不动（它们是真实符号，照旧进判定档）。
+ *
+ * **已知取舍**：真有文件把某个保留字当属性名／字段名并且文档正好引它（`` `delete` `` 指向一处
+ * `delete` 方法）时，这一对会退回「只计数」——但 `symbolDeclarationLines` 本来就认不出这种声明，
+ * 判出来的也只是 `UNDECLARED`（只计数、不判红），差别仅在读数落在哪一格。
+ */
+const COVERAGE_RESERVED_WORDS = new Set([
+  'if', 'return', 'const', 'await', 'then', 'catch', 'typeof', 'new', 'this', 'null', 'undefined',
+  'true', 'false', 'void', 'else', 'for', 'while', 'try', 'switch', 'case', 'break', 'continue',
+  'function', 'class', 'export', 'import', 'from', 'default', 'extends', 'super', 'yield', 'delete',
+  'in', 'of', 'let', 'var', 'static', 'async',
+]);
+
+/**
+ * **语言内建／全局对象的方法访问**（`Array.isArray`、`Promise.all`、`JSON.parse`、`Buffer.from`）。
+ *
+ * 这类片段 `COVERAGE_SYMBOL_SPAN` 本来就不收（含 `.`），于是那条锚点落进「同行没有紧邻符号」——
+ * 计数上不算错，但混在「这一行真的没写符号」里就读不出比例：审计 UNDECLARED 时正是靠人眼才分出
+ * 「这里框的是内建 API 的调用位」与「这里漏写了符号」。单列一档 `BUILTIN` 后这一格直接可读，
+ * 并且**只计数**：既不判红、不进 `UNDECLARED`、也不进 `OK`——内建 API 在目标文件里没有「本仓声明行」，
+ * 拿它判覆盖与否没有意义（同理也不该算进「同行没有紧邻符号」：那格的定义是「同一行没写符号」）。
+ *
+ * 口径：整段**以**「内建对象名 + `.`」开头即算（`Array.isArray`、`Array.isArray(x)`、
+ * `Array.prototype.slice` 都算）；`ArrayLike.isArray` 这种以内建名**打头但不是它**的标识符不算
+ * ——那种片段本来也进不了符号位（`COVERAGE_SYMBOL_SPAN` 不许 `.`），只是别让这档误收。
+ */
+const COVERAGE_BUILTIN_SPAN = /^(?:Array|Object|Promise|JSON|Math|Number|String|Boolean|Error|TypeError|RangeError|Reflect|Proxy|Symbol|Map|Set|WeakMap|WeakSet|Date|RegExp|Intl|BigInt|process|console|Buffer|URL|URLSearchParams)\./;
+
+/**
  * 同一行里把「紧邻符号」按出现顺序**一一配给锚点**（口径 ⑦）。
  *
  * 为什么需要整行配位、而不是每条锚点各自挑最近：同一行常有「锚点、符号、锚点」这种夹心写法
@@ -1428,12 +1465,21 @@ function pairCoverageSymbols(candidateLists) {
 }
 
 /**
- * 把一行里的行内代码片段分类成 `anchor` / `symbol` / `other`，连带片段在原行里的字符位置。
+ * 把一行里的行内代码片段分类成 `anchor` / `symbol` / `builtin` / `other`，连带片段在原行里的字符位置。
  * 扫法与 `ANCHOR_DRIFT` 共用同一个 `INLINE_CODE_SPAN`（同一个正则，不另造一套行内代码语义）。
  *
  * 提交 SHA 形态的片段归 `other`、**不算符号**（理由与取舍见 `COVERAGE_COMMIT_HASH_SPAN`）：它不该成为
  * 任何锚点的紧邻符号，于是那条锚点退回「同行没有紧邻符号」只计数——这是「配对不成立」的字面含义，
  * 不新增档位、也不改任何既有读数行的文案。
+ *
+ * 两处新增（口径 ⑧／⑨，只影响「候选位上是什么」的归类，不改 `OK`／`OUT_OF_RANGE`／`UNDECLARED` 的判定）：
+ *   · `builtin`——整段是内建／全局对象的方法访问（`Array.isArray`）：锚点改记 `BUILTIN` 只计数；
+ *   · `other` ＋ `filtered: true`——整段**不是**合法标识符（中文短语、路径片段、JSON 值、带括号／引号的
+ *     调用），或整段是语言保留字（`delete`／`return`）：抽候选前就丢掉，锚点只记一格「候选过滤」。
+ *     `filtered` 在这里标而不是在配对处判，是为了让「候选位上有过什么」与「最后配成没配成」分开看：
+ *     配成对与否由 `pairCoverageSymbols` 决定，这里只回答「这一段配不配当候选」。
+ *     提交号**不标** `filtered`：它早被 `COVERAGE_COMMIT_HASH_SPAN` 排掉了（口径 ⑥），
+ *     再标一次等于把既有规则的功劳记到新计数上。
  */
 function classifyCoverageSpans(line) {
   const spans = [];
@@ -1447,10 +1493,12 @@ function classifyCoverageSpans(line) {
     if (anchor !== null) {
       const from = Number(anchor[2]);
       spans.push({ start, end, kind: 'anchor', target: anchor[1], from, to: anchor[3] === undefined ? from : Number(anchor[3]) });
-    } else if (COVERAGE_SYMBOL_SPAN.test(body) && !COVERAGE_COMMIT_HASH_SPAN.test(body)) {
+    } else if (COVERAGE_SYMBOL_SPAN.test(body) && !COVERAGE_COMMIT_HASH_SPAN.test(body) && !COVERAGE_RESERVED_WORDS.has(body)) {
       spans.push({ start, end, kind: 'symbol', symbol: body });
+    } else if (COVERAGE_BUILTIN_SPAN.test(body)) {
+      spans.push({ start, end, kind: 'builtin', symbol: body });
     } else {
-      spans.push({ start, end, kind: 'other' });
+      spans.push({ start, end, kind: 'other', filtered: !COVERAGE_COMMIT_HASH_SPAN.test(body) });
     }
     match = INLINE_CODE_SPAN.exec(line);
   }
@@ -1479,6 +1527,17 @@ function classifyCoverageSpans(line) {
  *      `other`），所以那条锚点直接落进「同行没有紧邻符号」——不配对、不进任何判定档。
  *   ⑦ 一行里有多条锚点时，符号**按行内出现顺序一一配位**（一个符号只属于一条锚点）：
  *      见 `pairCoverageSymbols`。符号比锚点少时，多出来的锚点退回「同行没有紧邻符号」。
+ *   ⑧ **候选位上的非标识符与保留字不算候选**：整段不是合法标识符（含中文、含 `/` `\` `:` `(` `)` `{` `}`
+ *      `"` `'` `|` `=` 空格、不是 `^[A-Za-z_$][A-Za-z0-9_$]*$`），或整段是语言保留字（`delete`／`return`
+ *      ——见 `COVERAGE_RESERVED_WORDS`）的片段，在**抽候选之前**就丢掉：不配成对、不进 `OK`／
+ *      `OUT_OF_RANGE`／`UNDECLARED`、也**不算**「同行没有紧邻符号」（那格的定义是「同一行没写符号」，
+ *      而这些位置写了东西，只是写的不是符号）。只记一格「候选过滤 N 条」，条数的单位是**候选位次**
+ *      （一行里两处被过滤就记 2）。
+ *   ⑨ 候选位上是**语言内建／全局对象的方法访问**（`Array.isArray`／`Promise.all`，见
+ *      `COVERAGE_BUILTIN_SPAN`）时，锚点记 `BUILTIN` 档：只计数，既不判红、也不进 `UNDECLARED`。
+ *      这档与 ⑧ 同族（都是「这段代码不是这个文件的符号」），分开记是因为修法不同：⑧ 多半是文档里
+ *      顺手框了个汉语词／路径，⑨ 是**故意**引内建 API 的调用位，没有可修的。
+ *      一条锚点两侧同时有内建片段与真实符号时仍走配对（配对成功就不看 ⑨）；只有**没配成对**才落 `BUILTIN`。
  *
  * ⑦ 是 2026-11-05 补的。改前每条锚点各自挑最近的符号，于是夹心写法（锚点、符号、锚点）里那个符号
  * 会被**两条锚点同时认领**，谁抢到取决于字符间距：`docs/verification/gy-i23-latency-capacity-local-20261020.md:195`
@@ -1527,7 +1586,10 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
     if (!textsByFile.has(relativePath)) textsByFile.set(relativePath, readFileSync(join(root, relativePath), 'utf8'));
     return textsByFile.get(relativePath);
   };
-  const freshTally = () => ({ documents: 0, anchors: 0, paired: 0, ok: 0, undeclared: 0, zeroHit: 0, noDeclaration: 0, outOfRange: 0, unpaired: 0, ambiguous: 0, unresolved: 0 });
+  // `candidatesFiltered`／`builtin` 是 ⑧／⑨ 新增的两格：**只计数**，既不在 `paired` 里、
+  // 也不进 `ok`／`outOfRange`／`undeclared`——`paired === ok + outOfRange + undeclared` 这条自校验
+  // （见 `evaluateSymbolCoverageVerificationGate`）因此一个字都不用动。
+  const freshTally = () => ({ documents: 0, anchors: 0, paired: 0, ok: 0, undeclared: 0, zeroHit: 0, noDeclaration: 0, outOfRange: 0, unpaired: 0, ambiguous: 0, unresolved: 0, candidatesFiltered: 0, builtin: 0 });
   const judged = freshTally();
   const outside = freshTally();
   // `docs/verification/**` 的独立读数（见 `SYMBOL_COVERAGE_VERIFICATION_SCOPE`）。它**不是**从 `outside`
@@ -1567,9 +1629,14 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
         // 起止颠倒的锚点由结构判据（OUT_OF_RANGE）管，这里不参与配对。
         if (item.to < item.from) { bump('unpaired'); continue; }
         const candidates = [];
+        // ⑨ 内建／全局对象的方法访问：只计数，不进配对（见 `COVERAGE_BUILTIN_SPAN`）。
+        const builtins = [];
+        // ⑧ 候选位上的非标识符／保留字：只计数，不进配对、也不进「同行没有紧邻符号」。
+        let filtered = 0;
         for (const offset of [-1, 1]) {
           const sibling = spans[position + offset];
-          if (sibling === undefined || sibling.kind !== 'symbol') continue;
+          if (sibling === undefined) continue;
+          if (sibling.kind !== 'symbol' && sibling.kind !== 'builtin' && sibling.filtered !== true) continue;
           const gap = offset < 0 ? item.start - sibling.end : sibling.start - item.end;
           if (gap < 0 || gap > SYMBOL_COVERAGE_ADJACENCY) continue;
           // ④ 中间的列举分隔符说明这个符号属于上一个列举项（见上方口径注释）。
@@ -1577,17 +1644,28 @@ export function collectSymbolCoverage({ root = TOOL_ROOT, targets = DEFAULT_SCAN
           if (SYMBOL_COVERAGE_LIST_SEPARATORS.some(separator => between.includes(separator))) continue;
           // ⑤ 「依次／分别」：右边那串符号按位置对应左边那串锚点，紧邻配对没有语义（见上方口径注释）。
           if (SYMBOL_COVERAGE_POSITIONAL_MARKERS.some(marker => between.includes(marker))) continue;
-          candidates.push({ symbol: sibling.symbol, gap, span: position + offset });
+          if (sibling.kind === 'symbol') { candidates.push({ symbol: sibling.symbol, gap, span: position + offset }); continue; }
+          if (sibling.kind === 'builtin') { builtins.push({ symbol: sibling.symbol, gap }); continue; }
+          filtered += 1;
         }
-        lineAnchors.push({ item, candidates });
+        lineAnchors.push({ item, candidates, builtins, filtered });
       }
       const outcomes = pairCoverageSymbols(lineAnchors.map(anchor => anchor.candidates));
       for (let slot = 0; slot < lineAnchors.length; slot += 1) {
-        const { item } = lineAnchors[slot];
+        const { item, builtins, filtered } = lineAnchors[slot];
         const outcome = outcomes[slot];
+        // ⑧ 候选位上有过非标识符／保留字，就把这一格记上（无论这条锚点最后配没配成对：
+        // 这一格量的是「筛选器挡掉了几个候选位」，不是「有几条锚点被救了」）。
+        if (filtered > 0) bump('candidatesFiltered', filtered);
         // ③ 两侧等距不猜（既有语义）；⑦ 一个符号只配一条锚点，落选的退回「同行没有紧邻符号」只计数。
         if (outcome.kind === 'ambiguous') { bump('ambiguous'); continue; }
-        if (outcome.kind === 'unpaired') { bump('unpaired'); continue; }
+        if (outcome.kind === 'unpaired') {
+          // ⑨ 没配成对、但候选位上是内建／全局对象的方法访问 ⇒ `BUILTIN`（只计数）。
+          // 它不算「同行没有紧邻符号」：那一格的定义是「同一行没写符号」，这两处的性质不同。
+          if (builtins.length > 0) bump('builtin');
+          else bump('unpaired');
+          continue;
+        }
         const symbol = outcome.symbol;
         const resolved = resolveTarget({ root, docPath, target: item.target, fileIndex: index });
         // 路径找不到／同名多文件不唯一：BROKEN 与「无法唯一解析」那两条已经在管，这里只计数，不当判据。
@@ -1809,6 +1887,11 @@ function summarizeSymbolCoverageFace(tally, items) {
     undeclaredZeroHit: tally.zeroHit,
     undeclaredNonDeclaration: tally.noDeclaration,
     paired: tally.paired,
+    // ⑧／⑨ 的两格：只是计数，`judged`／`items` 的口径不受影响（`items` 仍恒等于
+    // `outOfRange + undeclared`）——报表里带上它们，是为了让「这一面有多少锚点是因为
+    // 候选不是符号才没配上」与「有多少是真漏写」能分开对账，而不必再复刻一遍筛选器。
+    candidatesFiltered: tally.candidatesFiltered ?? 0,
+    builtin: tally.builtin ?? 0,
     items,
   };
 }
@@ -2972,7 +3055,8 @@ function printSymbolCount(streams, { stats, reasons, undecidable, fallbacks }) {
 /**
  * `SYMBOL-COVERAGE` 的读数行：第一行是固定文案的判红档计数（测试与 CI 靠它读），第二行是第 ④ 条新增的
  * `UNDECLARED` 桶（**不进判红面**，但必须一直可见：它同时是「配对器抓到了非符号」与「这条配对没有被判」
- * 的唯一痕迹），第三行交代作用域、「没配成对」的三格与作用域外的同形状计数。
+ * 的唯一痕迹），第三行交代作用域、「没配成对」的五格（同行没有紧邻符号／两侧等距不猜／路径找不到或不唯一／
+ * 候选过滤／语言内建 `BUILTIN`）与作用域外的同形状计数。
  * 第三行之后再补 `docs/verification/**` 的两行（`SYMBOL-COVERAGE-VERIFICATION` ＋ `-SCOPE`）：同口径的另一面，
  * 三档都不判红（见 `printSymbolCoverageVerification`）。
  * 逐条明细是**给人改的线索**，所以只抽样 `MAX_PRINTED_SYMBOL_COVERAGE` 条，且永远走 stdout。
@@ -2984,7 +3068,7 @@ function printSymbolCoverage(streams, { judged, outside, verification, misses, v
   const suffix = mode === 'strict' ? '（--symbol-coverage=strict：配合 --strict 判红）' : '（仅 WARN，不影响 exit code）';
   streams.log(`SYMBOL-COVERAGE: 可判 ${checkable} 条——OK ${judged.ok}、符号不在区间 ${judged.outOfRange}${suffix}`);
   streams.log(`SYMBOL-COVERAGE-UNDECLARED: ${judged.undeclared} 条（符号在目标文件里没有声明行；不计入 strict 判定，逐条抽样见下）——其中符号 0 命中 ${judged.zeroHit} 条、出现过但不是声明行 ${judged.noDeclaration} 条`);
-  streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条（这三格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号不在区间 ${outside.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${outside.undeclared}（0 命中 ${outside.zeroHit}／非声明行 ${outside.noDeclaration}）`);
+  streams.log(`SYMBOL-COVERAGE-SCOPE: 作用域 ${SYMBOL_COVERAGE_SCOPE}**（${judged.documents} 份文档、锚点 ${judged.anchors} 条）——配成对 ${judged.paired} 条；同行没有紧邻符号 ${judged.unpaired} 条、两侧等距不猜 ${judged.ambiguous} 条、路径找不到或不唯一 ${judged.unresolved} 条、候选过滤 ${judged.candidatesFiltered} 条、语言内建 ${judged.builtin} 条（这五格只计数，不进上面两档）；作用域外（历史取证页等）只计数：锚点 ${outside.anchors} 条、配成对 ${outside.paired} 条——OK ${outside.ok}、符号不在区间 ${outside.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${outside.undeclared}（0 命中 ${outside.zeroHit}／非声明行 ${outside.noDeclaration}）`);
   // `docs/verification/**` 的两行紧跟着 architecture 的三行读：同口径、不同判据面（那一面三档都不判红）。
   // `--symbol-coverage-verification=off` 时连这两行都不打——与 `--symbol-coverage=off` 同语义：
   // 关掉一面就连它的读数一起关，不留半页「看不出判没判」的数字。
@@ -3046,7 +3130,7 @@ function printSymbolCoverageVerification(streams, verification) {
   if (verification === undefined) return;
   const checkable = verification.ok + verification.outOfRange;
   streams.log(`SYMBOL-COVERAGE-VERIFICATION: 可判 ${checkable} 条——OK ${verification.ok}、符号不在区间 ${verification.outOfRange}（仅 WARN，不影响 exit code）`);
-  streams.log(`SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 ${SYMBOL_COVERAGE_VERIFICATION_SCOPE}**（${verification.documents} 份文档、锚点 ${verification.anchors} 条）——配成对 ${verification.paired} 条：OK ${verification.ok}、符号不在区间 ${verification.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${verification.undeclared}（符号 0 命中 ${verification.zeroHit} 条、出现过但不是声明行 ${verification.noDeclaration} 条）；同行没有紧邻符号 ${verification.unpaired} 条、两侧等距不猜 ${verification.ambiguous} 条、路径找不到或不唯一 ${verification.unresolved} 条（后四格只计数）——本面三档一律不判红，strict 仍只判 ${SYMBOL_COVERAGE_SCOPE}**`);
+  streams.log(`SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 ${SYMBOL_COVERAGE_VERIFICATION_SCOPE}**（${verification.documents} 份文档、锚点 ${verification.anchors} 条）——配成对 ${verification.paired} 条：OK ${verification.ok}、符号不在区间 ${verification.outOfRange}、${SYMBOL_COVERAGE_UNDECLARED} ${verification.undeclared}（符号 0 命中 ${verification.zeroHit} 条、出现过但不是声明行 ${verification.noDeclaration} 条）；同行没有紧邻符号 ${verification.unpaired} 条、两侧等距不猜 ${verification.ambiguous} 条、路径找不到或不唯一 ${verification.unresolved} 条、候选过滤 ${verification.candidatesFiltered} 条、语言内建 ${verification.builtin} 条（后五格只计数）——本面三档一律不判红，strict 仍只判 ${SYMBOL_COVERAGE_SCOPE}**`);
 }
 
 /**
