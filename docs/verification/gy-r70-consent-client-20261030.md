@@ -38,7 +38,7 @@
 
 1. 派单写"`DELETE` 的 `If-Match` 给错的 ⇒ **404**"。代码里 **404 = 该用途没有当前授权记录**（`consent-pg.ts:167`），
    **给错版本 = 409 `REVISION_CONFLICT`**（`consent-pg.ts:170`）。本片按代码实现：428 自动补取、409 原样透出并要求重读，
-   两者**没有**被糊成一句"失败"（见 `miniprogram/utils/consent-api.js:585` 与 `tests/unit/miniprogram-consent-grant-withdraw.test.mjs:319`）。
+   两者**没有**被糊成一句"失败"（见 `miniprogram/utils/consent-api.js:585` 与 `tests/unit/miniprogram-consent-grant-withdraw.test.mjs:333`）。
 2. 派单说"`Idempotency-Key` 格式与范围（既有实现是 8..128）"——代码里**只有长度**，没有任何字符集/前缀要求；
    服务端也不校验格式。本片客户端生成的键是 `consent-grant-<36进制时间戳>-<8位随机>`（≈30 字符），落在 8..128 内。
 
