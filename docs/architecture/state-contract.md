@@ -135,7 +135,7 @@ Deletion状态 `requested → processing → completed`，失败 `blocked` 可�
 
 ### 契约层的已知缺口
 
-契约 `components.schemas.AuditEvent` 的 8 个**必填**字段是 `id`／`action`／`scope`／`target_ref`／`reason_code`／`request_id`／`result`／`created_at`（`packages/contracts/openapi.json:16159`）——内核字段里**没有主体 actor**。R29-S5 之后 `actor` 只是**可选可空**属性（`packages/contracts/openapi.json:16115`）。因此：
+契约 `components.schemas.AuditEvent` 的 8 个**必填**字段是 `id`／`action`／`scope`／`target_ref`／`reason_code`／`request_id`／`result`／`created_at`（`packages/contracts/openapi.json:16951`）——内核字段里**没有主体 actor**。R29-S5 之后 `actor` 只是**可选可空**属性（`packages/contracts/openapi.json:16907`）。因此：
 
 - 不能把 `actor` 当必填字段依赖：缺它的审计事件仍然是合法契约事件；
 - 内部台账的 `actor_id` 比契约多这一列，`projectAuditEvent()`（`services/api/src/admin/audit.ts:67`）是唯一契约出口、会把它剥掉，投影结果只含那 8 个字段；
