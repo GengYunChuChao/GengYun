@@ -30,6 +30,10 @@
  *      仍在收敛期，逐条钉会隔夜过期）；`paired ≠ OK ＋ 不在区间 ＋ UNDECLARED` 打 INCONSISTENT ⇒ exit 1。
  *      `count` 档既有的两行读数字面一字不动（C26），判红只在 strict 档（C27），收敛不判红（C28），
  *      `off` 连读数一起关、写模式落盘（C29）。
+ *   ⑪ 另有一条**产物开关** `--symbol-coverage-report=<路径>`（缺省不写文件、既有 stdout 零漂移）：把两面
+ *      逐条明细写成稳定排序（doc → 行号 → target → symbol，**码位序**）的 JSON，`items` 条数恒等于同次
+ *      运行读数里的 `outOfRange + undeclared`，三个子档（`SYMBOL_NOT_IN_RANGE`／`ZERO_HIT`／`NO_DECLARATION`）
+ *      分类可得；与 `--symbol-coverage=off`／基线生成**互斥并报错**（不给「以为写了其实没写」留缝）（C30–C33）。
  * 另外用子进程钉住「缺省 `count` 模式不改变退出码」：这条判据是 WARN，先观察一轮，
  * 只有显式 `--symbol-coverage=strict`（且 `--strict`）才会判红。
  *
@@ -54,6 +58,7 @@ import {
   SYMBOL_COVERAGE_ADJACENCY,
   SYMBOL_COVERAGE_LIST_SEPARATORS,
   SYMBOL_COVERAGE_NO_DECLARATION,
+  SYMBOL_COVERAGE_NOT_IN_RANGE,
   SYMBOL_COVERAGE_OK,
   SYMBOL_COVERAGE_OUT_OF_RANGE,
   SYMBOL_COVERAGE_POSITIONAL_MARKERS,
@@ -63,6 +68,7 @@ import {
   SYMBOL_COVERAGE_ZERO_HIT,
   collectSymbolCoverage,
   main,
+  renderSymbolCoverageReport,
 } from '../../tools/verify-doc-anchors.mjs';
 import { symbolDeclarationLines } from '../../tools/lib/anchor-resolve.mjs';
 
@@ -1055,3 +1061,283 @@ test('C29 `--symbol-coverage-verification=off` 连两行一起关；写模式落
     );
   });
 });
+
+// —— 机器可读明细报表（`--symbol-coverage-report=<路径>`） ——————————————————————————————
+/**
+ * 报表夹具：**两面都非空**、三个子档全出现，配对总数也非 0——这样「`items` 条数 ＝ outOfRange ＋
+ * undeclared」「两类 kind 都在」「三个子档都在」「按 (doc,line) 升序」几条才都测得到。
+ * 面的账：architecture ＝ OK 0 ＋ 不在区间 1 ＋ UNDECLARED 3（ZERO_HIT 2、NO_DECLARATION 1）；
+ *        verification ＝ OK 1 ＋ 不在区间 1 ＋ UNDECLARED 1（ZERO_HIT 1）。
+ * ⛔ 不读仓内真实文档的计数：那串数字正在收敛，钉进用例隔夜就陈旧。
+ */
+function reportFixture() {
+  return {
+    'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+    // late.ts 的声明在 21-23 行：锚点写 :2 ⇒ 远超 ±5 行，落 OUT_OF_RANGE（子档 SYMBOL_NOT_IN_RANGE）。
+    'services/api/src/late.ts': `${'// 留白\n'.repeat(20)}${sourceWith('lateHandler')}`,
+    // beta.ts 里 `gammaFlag` **只出现在第 1 行注释**里（命中 1 次、0 行声明），锚点却写 :22——
+    // 距离远超 ±5 行，落不进「符号本身就在区间附近」这条豁免 ⇒ UNDECLARED／NO_DECLARATION。
+    'services/api/src/beta.ts': `// gammaFlag 只在注释里出现，不是声明\n${'// 留白\n'.repeat(20)}export const betaValue = 1;\n`,
+    // 文件名字典序是 alpha < zulu，但把 zulu 写在前面：排序必须由报表自己做，不能靠遍历顺序碰运气。
+    'docs/architecture/zulu.md': [
+      '# 乙',
+      '',
+      '- `lateHandler`（`services/api/src/late.ts:2`）行号漂走。',
+      '- `gammaFlag`（`services/api/src/beta.ts:22`）只是注释里的词。',
+      '- `missingOne`（`services/api/src/alpha.ts:9`）已不存在。',
+      '',
+    ].join('\n'),
+    'docs/architecture/alpha.md': [
+      '# 甲',
+      '',
+      '- `ghostArch`（`services/api/src/late.ts:2`）已不存在。',
+      '',
+    ].join('\n'),
+    'docs/verification/page.md': [
+      '# 取证',
+      '',
+      '- `alphaHandler`（`services/api/src/alpha.ts:2`）成立。',
+      '- `lateHandler`（`services/api/src/late.ts:2`）行号漂走。',
+      '- `ghostPage`（`services/api/src/alpha.ts:2`）已不存在。',
+      '',
+    ].join('\n'),
+  };
+}
+
+/** 三个子档的取值域：报表里的 `reason` 只能是这三者之一（`kind` 只有两类）。 */
+const REPORT_REASONS = new Set([SYMBOL_COVERAGE_NOT_IN_RANGE, SYMBOL_COVERAGE_ZERO_HIT, SYMBOL_COVERAGE_NO_DECLARATION]);
+
+/** `(doc, line)` 升序检查（与报表同口径：doc 在前、行号在后）。 */
+function reportItemsAscending(items) {
+  return items.every((item, index) => {
+    if (index === 0) return true;
+    const previous = items[index - 1];
+    if (previous.doc !== item.doc) return previous.doc < item.doc;
+    return previous.line <= item.line;
+  });
+}
+
+test('C30 不开 `--symbol-coverage-report` ⇒ 不多打 REPORT 行、不落文件（缺省零副作用）', () => {
+  withFixture(reportFixture(), root => {
+    const reportPath = join(root, 'out', 'symbol-coverage.json');
+    const plain = runCli(root);
+    assert.equal(plain.status, 0, `缺省档必须 exit 0，实际 stderr：\n${plain.stderr}`);
+    assert.doesNotMatch(
+      plain.stdout,
+      /SYMBOL-COVERAGE-REPORT/,
+      `缺省不许多出这一行：这是本开关在 stdout 上唯一的痕迹，多一行就等于改既有读数，实际 stdout：\n${plain.stdout}`,
+    );
+    assert.equal(existsSync(join(root, 'out')), false, '缺省连父目录都不许建（`fs` 一次都不该碰）');
+    assert.equal(existsSync(reportPath), false, '缺省不写文件');
+    // 既有读数照打：本开关缺省 = **完全不存在**，不是「悄悄换了输出」。
+    assert.match(
+      plain.stdout,
+      /^SYMBOL-COVERAGE: 可判 1 条——OK 0、符号不在区间 1（仅 WARN，不影响 exit code）$/m,
+      `architecture 那几行照旧，实际 stdout：\n${plain.stdout}`,
+    );
+    assert.match(
+      plain.stdout,
+      /^SYMBOL-COVERAGE-VERIFICATION: 可判 2 条——OK 1、符号不在区间 1（仅 WARN，不影响 exit code）$/m,
+      `verification 那几行照旧，实际 stdout：\n${plain.stdout}`,
+    );
+  });
+});
+
+test('C31 开了开关 ⇒ 落盘稳定排序的 JSON 明细，条数与同次读数逐格自洽、其余输出一字不动', () => {
+  withFixture(reportFixture(), root => {
+    // 父目录**故意**不存在：`--symbol-coverage-report=out/…` 不许因为缺目录就失败。
+    const reportPath = join(root, 'out', 'symbol-coverage.json');
+    const before = runCli(root);
+    const run = runCli(root, [`--symbol-coverage-report=${reportPath}`]);
+    assert.equal(run.status, 0, `开关不许改退出码（这是产物，不是判据），实际 stderr：\n${run.stderr}`);
+    assert.equal(run.status, before.status, '开与不开的退出码必须相同');
+
+    const reportLines = run.stdout.split('\n').filter(line => line.startsWith('SYMBOL-COVERAGE-REPORT: '));
+    assert.equal(reportLines.length, 1, `只许多这一行，实际 stdout：\n${run.stdout}`);
+    assert.equal(
+      reportLines[0],
+      `SYMBOL-COVERAGE-REPORT: 已写出 6 条明细（architecture 4 条 ＋ verification 2 条）→ ${reportPath}`,
+      '前缀固定、两面条数分开点名、路径是解出来的绝对路径',
+    );
+    assert.equal(
+      run.stdout.replace(`${reportLines[0]}\n`, ''),
+      before.stdout,
+      '除这一行外 stdout 必须**逐字**相同（开关只加产物，不动读数）',
+    );
+
+    assert.equal(existsSync(reportPath), true, '文件必须落盘（父目录不存在时要自动建）');
+    const raw = readFileSync(reportPath);
+    assert.equal(raw[0], 0x7B, '不带 BOM：第一个字节就是 `{`');
+    assert.equal(raw[raw.length - 1], 0x0A, '以换行结尾（`fs.writeFileSync` 写的是补过 `\\n` 的正文）');
+    const body = JSON.parse(raw.toString('utf8'));
+
+    assert.equal(body.generatedBy, 'tools/verify-doc-anchors.mjs --symbol-coverage-report');
+    assert.deepEqual(body.scan, ['docs/architecture', 'docs/verification'], '扫描面照实记（下家要能复现）');
+    assert.equal(body.scanRoot, null, '两个扫描目标 ⇒ `scanRoot` 为 null（单一目标才给字符串，不许忽类型）');
+
+    // ① 与**同一次运行**打出来的读数行逐格对齐（报表的全部意义就是「和上面那几行对得上」）。
+    const architectureLine = /^SYMBOL-COVERAGE: 可判 (\d+) 条——OK (\d+)、符号不在区间 (\d+)/m.exec(run.stdout);
+    const verificationLine = /^SYMBOL-COVERAGE-VERIFICATION: 可判 (\d+) 条——OK (\d+)、符号不在区间 (\d+)/m.exec(run.stdout);
+    assert.notEqual(architectureLine, null, 'architecture 读数行要在');
+    assert.notEqual(verificationLine, null, 'verification 读数行要在');
+    assert.deepEqual(
+      [body.architecture.judged, body.architecture.ok, body.architecture.outOfRange],
+      architectureLine.slice(1, 4).map(Number),
+      'architecture 三格与 `SYMBOL-COVERAGE:` 行同值',
+    );
+    assert.deepEqual(
+      [body.verification.judged, body.verification.ok, body.verification.outOfRange],
+      verificationLine.slice(1, 4).map(Number),
+      'verification 三格与 `SYMBOL-COVERAGE-VERIFICATION:` 行同值',
+    );
+    assert.match(
+      run.stdout,
+      /UNDECLARED 1（符号 0 命中 1 条、出现过但不是声明行 0 条）/,
+      'verification 的 UNDECLARED 子档与 `-SCOPE` 行同值',
+    );
+    assert.equal(body.verification.undeclaredZeroHit, 1);
+    assert.equal(body.verification.undeclaredNonDeclaration, 0);
+    assert.ok(
+      run.stdout.includes('UNDECLARED: 3 条（符号在目标文件里没有声明行；不计入 strict 判定，逐条抽样见下）——其中符号 0 命中 2 条、出现过但不是声明行 1 条'),
+      `architecture 的 UNDECLARED 子档与报表同值（那个 1 就是 NO_DECLARATION），实际 stdout：\n${run.stdout}`,
+    );
+    assert.equal(body.architecture.undeclaredZeroHit, 2);
+    assert.equal(body.architecture.undeclaredNonDeclaration, 1);
+
+    // ② 每面：items 不是抽样，`outOfRange + undeclared` 条一条不少。
+    for (const face of [body.architecture, body.verification]) {
+      assert.equal(face.judged, face.ok + face.outOfRange, '`judged` 与读数行同口径（ok ＋ outOfRange）');
+      assert.equal(
+        face.items.length,
+        face.outOfRange + face.undeclared,
+        '明细条数必须等于 outOfRange ＋ undeclared（这是这张报表存在的理由：不用再复刻配对逻辑）',
+      );
+      assert.equal(face.undeclaredZeroHit + face.undeclaredNonDeclaration, face.undeclared, '两个子档加起来就是 UNDECLARED');
+      assert.ok(reportItemsAscending(face.items), `必须按 (doc, line) 升序：${JSON.stringify(face.items.map(item => [item.doc, item.line]))}`);
+      for (const item of face.items) {
+        assert.match(item.doc, /^docs\/(architecture|verification)\/[\w./-]+\.md$/, `doc 是仓库相对 posix 路径：${item.doc}`);
+        assert.equal(Number.isInteger(item.line) && item.line > 0, true, `line 是正整数：${item.line}`);
+        assert.equal(item.target.includes(':'), false, `target 只放文件路径，行号已拆进 from／to：${item.target}`);
+        assert.equal(Number.isInteger(item.from) && item.from > 0, true, `from 是正整数：${item.from}`);
+        assert.equal(Number.isInteger(item.to) && item.to >= item.from, true, `to ≥ from：${item.from}-${item.to}`);
+        assert.equal(item.kind === SYMBOL_COVERAGE_OUT_OF_RANGE || item.kind === SYMBOL_COVERAGE_UNDECLARED, true, `kind 只有两类：${item.kind}`);
+        assert.equal(REPORT_REASONS.has(item.reason), true, `reason 只能是三个子档之一：${item.reason}`);
+        assert.equal(typeof item.note, 'string', '解析器原话留在 note（哪怕是空串）');
+      }
+    }
+
+    // ③ 排序与分类的**逐条**期望（顺序、kind、子档一起钉住：单看升序发现不了「子档串了」）。
+    const digest = items => items.map(item => `${item.doc}:${item.line}:${item.kind}:${item.reason}`);
+    assert.deepEqual(digest(body.architecture.items), [
+      'docs/architecture/alpha.md:3:UNDECLARED:ZERO_HIT',
+      'docs/architecture/zulu.md:3:OUT_OF_RANGE:SYMBOL_NOT_IN_RANGE',
+      'docs/architecture/zulu.md:4:UNDECLARED:NO_DECLARATION',
+      'docs/architecture/zulu.md:5:UNDECLARED:ZERO_HIT',
+    ], 'architecture 面：doc → 行号升序，OUT_OF_RANGE 补子档 SYMBOL_NOT_IN_RANGE，UNDECLARED 分两档');
+    assert.deepEqual(digest(body.verification.items), [
+      'docs/verification/page.md:4:OUT_OF_RANGE:SYMBOL_NOT_IN_RANGE',
+      'docs/verification/page.md:5:UNDECLARED:ZERO_HIT',
+    ], 'verification 面同理（OK 的配对不进明细）');
+    assert.deepEqual(
+      [...new Set([...body.architecture.items, ...body.verification.items].map(item => item.reason))].sort(),
+      [SYMBOL_COVERAGE_NO_DECLARATION, SYMBOL_COVERAGE_NOT_IN_RANGE, SYMBOL_COVERAGE_ZERO_HIT].sort(),
+      '三个子档必须都出现（这份夹具就是为「按子档分组批量修」准备的）',
+    );
+
+    const drifted = body.verification.items[0];
+    assert.deepEqual(
+      { target: drifted.target, from: drifted.from, to: drifted.to, symbol: drifted.symbol },
+      { target: 'services/api/src/late.ts', from: 2, to: 2, symbol: 'lateHandler' },
+      '单行锚点：from ＝ to ＝ 2，符号与目标文件都照实记',
+    );
+  });
+});
+
+test('C32 `--symbol-coverage=off` ＋ 报表开关 ⇒ 用法错误 exit 2、不落文件（报错而非静默忽略）', () => {
+  // 为什么选「报错」：`off` 的语义是「这次不做符号覆盖统计」，此时没有明细可写；忽略掉却照样退出 0，
+  // 下家会去读上一轮留下的旧文件（或压根不存在的文件），拿旧明细去修新代码——比当场失败贵得多。
+  withFixture(reportFixture(), root => {
+    const reportPath = join(root, 'out', 'symbol-coverage.json');
+    const run = runCli(root, ['--symbol-coverage=off', `--symbol-coverage-report=${reportPath}`]);
+    assert.equal(run.status, 2, `参数互斥走 exit 2（与其它用法错误同档），实际 stdout：\n${run.stdout}`);
+    assert.match(
+      run.stderr,
+      /--symbol-coverage-report 与 --symbol-coverage=off 互斥/,
+      `报错要说清是哪一对互斥、该怎么办，实际 stderr：\n${run.stderr}`,
+    );
+    assert.match(run.stderr, /usage: node tools\/verify-doc-anchors\.mjs/, '用法错误带 USAGE（与其它参数校验同一形态）');
+    assert.equal(existsSync(reportPath), false, '被拒的组合不许留下文件');
+    assert.doesNotMatch(run.stdout, /SYMBOL-COVERAGE-REPORT/, '没写成就不许打「已写出」');
+  });
+});
+
+test('C33 `renderSymbolCoverageReport` 只重组不重判：乱序输入仍按 (doc,line) 排序、子档补齐、不改调用方数组', () => {
+  // 走渲染函数而不是子进程：夹具里文档的遍历顺序与行号本来就是升序，光看 CLI 产物分不出「排过序」还是
+  // 「本来就这么巧」。这里手给一份**乱序**明细，排序没实现就必红。
+  const misses = [
+    {
+      doc: 'docs/architecture/zulu.md',
+      docLine: 9,
+      target: 'services/api/src/late.ts:12-20',
+      symbol: 'lateHandler',
+      result: SYMBOL_COVERAGE_OUT_OF_RANGE,
+      detail: null,
+      reason: 'NO_BLOCK：符号在第 12 行是声明但没有块体',
+    },
+    {
+      doc: 'docs/architecture/alpha.md',
+      docLine: 7,
+      target: 'services/api/src/alpha.ts:3',
+      symbol: 'alphaHandler',
+      result: SYMBOL_COVERAGE_UNDECLARED,
+      detail: SYMBOL_COVERAGE_NO_DECLARATION,
+      reason: 'NO_DECLARATION：符号在目标文件里出现 2 次，没有一处是声明行',
+    },
+    {
+      doc: 'docs/architecture/alpha.md',
+      docLine: 2,
+      target: 'services/api/src/alpha.ts:1',
+      symbol: 'ghostHandler',
+      result: SYMBOL_COVERAGE_UNDECLARED,
+      detail: SYMBOL_COVERAGE_ZERO_HIT,
+      reason: 'ZERO_HIT：符号在目标文件里出现 0 次',
+    },
+  ];
+  const coverage = {
+    judged: { ok: 1, outOfRange: 1, undeclared: 2, zeroHit: 1, noDeclaration: 1, paired: 4 },
+    verification: { ok: 0, outOfRange: 0, undeclared: 0, zeroHit: 0, noDeclaration: 0, paired: 0 },
+    misses,
+    verificationMisses: [],
+  };
+
+  const single = renderSymbolCoverageReport({ coverage, scan: ['docs'] });
+  assert.equal(single.endsWith('\n'), true, '正文以换行结尾（写盘直接落字节，不靠调用方补）');
+  const body = JSON.parse(single);
+  assert.equal(body.scanRoot, 'docs', '单一扫描目标 ⇒ `scanRoot` 就是那个目标（与读数行同口径）');
+  assert.deepEqual(body.scan, ['docs']);
+  assert.deepEqual(
+    body.architecture.items.map(item => `${item.line}:${item.reason}`),
+    ['2:ZERO_HIT', '7:NO_DECLARATION', '9:SYMBOL_NOT_IN_RANGE'],
+    '按 doc → 行号重排，与输入顺序（9,7,2）无关',
+  );
+  const ranged = body.architecture.items[2];
+  assert.deepEqual(
+    { target: ranged.target, from: ranged.from, to: ranged.to },
+    { target: 'services/api/src/late.ts', from: 12, to: 20 },
+    '`from-to` 拆成两个数（区间锚点不是「把 :12-20 当文件名」）',
+  );
+  assert.equal(ranged.note, 'NO_BLOCK：符号在第 12 行是声明但没有块体', '解析器原话留在 note（不许被吞掉）');
+  assert.equal(ranged.reason, SYMBOL_COVERAGE_NOT_IN_RANGE, '`detail` 为 null 的 OUT_OF_RANGE 补子档 SYMBOL_NOT_IN_RANGE');
+  assert.equal(body.architecture.judged, 2, 'judged ＝ ok ＋ outOfRange（与 `SYMBOL-COVERAGE: 可判 N 条` 同口径）');
+  assert.equal(body.architecture.paired, 4, 'paired 照搬 tally（下家要能算「明细 ÷ 配对」）');
+  assert.equal(body.architecture.items.length, body.architecture.outOfRange + body.architecture.undeclared);
+  assert.deepEqual(body.verification.items, [], '这一面没有明细就是空数组（不是 null、不是缺字段）');
+  assert.equal(body.verification.outOfRange + body.verification.undeclared, 0);
+
+  const multi = JSON.parse(renderSymbolCoverageReport({ coverage, scan: ['docs/architecture', 'docs/verification'] }));
+  assert.equal(multi.scanRoot, null, '多目标 ⇒ null');
+  assert.deepEqual(multi.scan, ['docs/architecture', 'docs/verification'], '完整清单落在 scan 里');
+
+  assert.deepEqual(misses.map(item => item.docLine), [9, 7, 2], '渲染是纯函数：不许就地排序调用方给的数组（那份还要给读数行用）');
+});
+
