@@ -45,7 +45,7 @@
 判据来源：`miniprogram/utils/*-api.js` 的实际请求路径 + `miniprogram/pages/**` 的调用点 + `services/api/src/app.ts` 的注册点（**不看注释自述**）。`runtime.apiBaseUrl` 是**客户端拼接基址**（`miniprogram/config/runtime.js` 出厂 `mode:'disabled'`／`apiBaseUrl:''`；本地联调工具才写入 `http://127.0.0.1:<port>/api/v1`），所以路径字面量出现在 `utils/*-api.js` 里而非 `pages/**`。
 
 **分类小结**（两种口径并列，⛔ 勿混读）：**按主条 = 11 项**（#1–#11；#11b 是 #11 的补充行，不另计为主条）——其中 **#1–#7 共 7 项已过期**、**#8–#11 共 4 项仍成立**（7＋4＝11）；**按 §2 表行数 = 12 行**（因 **#11 跨两个文件**、按文件拆成 #11 与 #11b 两行）——**已过期 8 行**（#1–#7、#11b）、**仍成立 4 行**（#8、#9、#10、#11）、**无法判定 0 行**（8＋4＋0＝12）。两口径相差 1 ＝ #11 在两个文件上结论不同（`utils/messages-api.js` 侧**仍成立**／`pages/messages/messages.js:29-30` 侧**已过期**），故 #11 在主条口径下不并入单侧。
-> 过程留痕：#11 初判为"无法判定"（以为消息域端口装配属禁改范围、无法证实），随后按 `services/api/src/app.ts:897`（装配 `createCommunityReferencePort`）+ `messages/reference.ts:59` 实测**改判为"仍成立"**，并把 `utils/messages-api.js` 的运行时文案**保持原样**；只有 `pages/messages/messages.js` 的**静态**文案因"把前端待接线读成服务端待接线"改为行为陈述。
+> 过程留痕：#11 初判为"无法判定"（以为消息域端口装配属禁改范围、无法证实），随后按 `services/api/src/app.ts:897`（装配 `createCommunityReferencePort`）+ `messages/reference-community.ts:49` 实测**改判为"仍成立"**，并把 `utils/messages-api.js` 的运行时文案**保持原样**；只有 `pages/messages/messages.js` 的**静态**文案因"把前端待接线读成服务端待接线"改为行为陈述。
 
 **已接线（页面真的在调）**：`/auth/*`、`/me/profile`、`/catalog/*`、`/knowledge`、`/knowledge/:id`、`/public/home`、`/recognitions` + `/jobs/:id` + `/recognitions/:id/selection` + `DELETE /recognitions/:id`、`/ocr` + `/jobs/:id` + `/ocr/:id`、`/media/uploads` + `/media/uploads/:id/complete`、`/favorites`、`/history`、`/messages` + `/messages/unread-count` + `PUT /messages/:id/read`、`/speech/synthesis` + `/jobs/:id`、社区域（`utils/community-api.js`）。
 

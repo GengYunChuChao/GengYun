@@ -10,7 +10,7 @@
 
 | 读数 | 接线前（`ee46eb1`） | 本片之后 |
 | --- | --- | --- |
-| `tests/integration/backup-copies-purge-pg.mjs` 被哪个 workflow 执行 | **无**（`git grep` 在 `.github/workflows/` 零命中；只在 `UNWIRED_DECLARATIONS` 里登记） | `real-pg-integration.yml:246-251`（step 17，`GY_PG_BIN=/usr/lib/postgresql/17/bin`） |
+| `tests/integration/backup-copies-purge-pg.mjs` 被哪个 workflow 执行 | **无**（`git grep` 在 `.github/workflows/` 零命中；只在 `UNWIRED_DECLARATIONS` 里登记） | `real-pg-integration.yml:625-631`（step 28，`GY_PG_BIN=/usr/lib/postgresql/17/bin`） |
 | `MANAGED_SCRIPTS` / `FROZEN_MANAGED_SCRIPTS` | 13 / 13 | **14 / 14**（逐字一致；`REQUIRED_STEP_ORDER` 同步 14 项，集合与数组都相等） |
 | `SELF_CLUSTERED_SCRIPTS`（判据⑦⑧ 的等价替换表） | 1（`backup-purge-pg`） | **2**（+ `backup-copies-purge-pg`） |
 | `real-pg-17-11` 的 step 数 | 17 | **18**（只 +1：真跑 step；装包 step 复用，⛔ 没有第二次装包） |
