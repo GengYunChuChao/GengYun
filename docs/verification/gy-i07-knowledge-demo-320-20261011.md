@@ -50,4 +50,4 @@ node tests/integration/local-dev-knowledge-geometry.cjs <SDK目录> <几何截�
 
 ## 依赖与剩余验收
 
-发布前只读核对 PR #79 最新 HEAD `9275762f3d91bbb1673fecd449c38d8b37b5cf80`，仍 open、未合并。该渲染批次没有运行该 HEAD 的业务 HTTP／PostgreSQL，因此这份替身渲染证据不证明真实前后端集成；后来固定组合的前端模块＋业务HTTP／原生PG七组证据见上方独立链接。本 PR 保持 Draft，请求独立复验按钮修复、Demo 对照和组件检查；正式业务集成与主线合并运行树、Android 真机、实际微信身份和生产资料／来源撤回仍待验证。整项 #7 不关闭，DoseCard 仍为零，iOS 本阶段暂缓。
+发布前只读核对 PR #79 最新 HEAD `9275762f3d91bbb1673fecd449c38d8b37b5cf80`，仍 open、未合并（2026-11-05 复核：`237c1e18`（subject `(#79)`）已在 main，该 PR 已合入）。该渲染批次没有运行该 HEAD 的业务 HTTP／PostgreSQL，因此这份替身渲染证据不证明真实前后端集成；后来固定组合的前端模块＋业务HTTP／原生PG七组证据见上方独立链接。本 PR 保持 Draft，请求独立复验按钮修复、Demo 对照和组件检查；正式业务集成与主线合并运行树、Android 真机、实际微信身份和生产资料／来源撤回仍待验证。整项 #7 不关闭，DoseCard 仍为零，iOS 本阶段暂缓。
