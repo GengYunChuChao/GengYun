@@ -57,3 +57,93 @@
   color: var(--color-text-sub);
   font-family: monospace;
 }
+
+/* 接收方多选（媒体处理 / 外部推理）：候选即政策读面的披露面，可点行即勾选/取消。
+   颜色只用 tokens.wxss 的变量；不写裸 px 字号（字号放大走 --font-scale）。 */
+.recipient-picker {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.recipient-picker__head {
+  color: var(--color-text-sub);
+  line-height: 1.5;
+}
+
+.recipient-picker__note {
+  margin-top: 6px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.recipient-option {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  margin-top: 8px;
+}
+
+/* 勾选框：用文字 ✓ 而不是组件库里没有的 checkbox 组件；命中区域整行可点。 */
+.recipient-option__mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--color-primary);
+}
+
+.recipient-option__mark--on {
+  border-color: var(--color-primary);
+  background: var(--tone-low-bg);
+}
+
+.recipient-option__copy {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.recipient-option__name {
+  color: var(--color-text);
+  line-height: 1.5;
+}
+
+.recipient-option__meta {
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+}
+
+.recipient-badges {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.recipient-badge {
+  padding: 1px 6px;
+  margin-right: 4px;
+  border-radius: 4px;
+  line-height: 1.5;
+}
+
+.recipient-badge--ok {
+  background: var(--tone-low-bg);
+  color: var(--tone-low-ink);
+}
+
+.recipient-badge--warn {
+  background: var(--tone-warn-bg);
+  color: var(--tone-warn-ink);
+}
