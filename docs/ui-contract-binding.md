@@ -9,7 +9,7 @@
 
 ---
 
-> 2026-10-10 接续更正：下列原始扫描表属于 PR #39 的历史 UI 壳，不是当前合并结果。当前使用 main 的 `utils/auth.js`，已接入 `POST /auth/wechat`、`GET /auth/session`、`POST /auth/logout`；存在真实请求封装，游客门禁不使用 `utils/session.js` 的恒游客占位。资料查询沿用 main 已实现页面及路由。业务识别、语音、社区内容尚未据 UI 壳接入，不能宣称全项目零 `wx.request`。
+> 2026-10-10 接续更正：下列原始扫描表属于 PR #39 的历史 UI 壳，不是当前合并结果。当前使用 main 的 `utils/auth.js`，已接入 `POST /auth/wechat`、`GET /auth/session`、`POST /auth/logout`；存在真实请求封装，游客门禁不使用 `utils/session.js` 的恒游客占位。资料查询沿用 main 已实现页面及路由。业务识别（`identify.js`）、语音转写（`voice.js`）、社区内容（`community.js` 引入 `utils/community-api`）均已据 UI 壳接入，但仍不能宣称全项目零 `wx.request`。
 
 ## 1 结论先行：绑定为设计级映射，实现尚未开始
 
@@ -43,12 +43,12 @@
 
 | 界面动作 | 契约操作 | 当前实现 | 后续任务 |
 | --- | --- | --- | --- |
-| 拍照识别杂草 | `POST /recognitions`、`GET /recognitions/{id}` | 替身·置灰不可点 | [GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9) |
+| 拍照识别杂草 | `POST /recognitions`、`GET /recognitions/{id}` | 已接：`identify.js` 第 376 行调 `identifyApi.createRecognition`，`identify-api.js` 第 414 行发 `POST /recognitions`、第 420 行轮询 `GET /jobs/{id}` | [GY-I09](https://github.com/GengYunChuChao/GengYun/issues/9) |
 | Top3 核对与选择 | `PATCH /recognitions/{id}/selection` | 未实现（无数据可核对） | GY-I09 |
-| 拍照识别农药标签 | `POST /ocr`、`GET /ocr/{id}` | 替身·置灰不可点 | [GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10) |
+| 拍照识别农药标签 | `POST /ocr`、`GET /ocr/{id}` | 已接：`identify.js` 的 `createOcr`（第 482 行）、`getOcrJob`（第 517 行）、`correctOcrLabel`（第 742 行） | [GY-I10](https://github.com/GengYunChuChao/GengYun/issues/10) |
 | 标签用量校正与登记核对 | `PATCH /ocr/{id}/correction`、`POST /ocr/{id}/verify` | 未实现 | GY-I10 |
-| 语音提问（录音） | `POST /speech/transcriptions`、`PATCH /speech/transcriptions/{id}/confirmation` | 替身·按钮分离但不发请求 | [GY-I11](https://github.com/GengYunChuChao/GengYun/issues/11) |
-| 语音提问（文字） | `POST /conversations/{id}/turns` | 替身·未接入 | [GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12) |
+| 语音提问（录音） | `POST /speech/transcriptions`、`PATCH /speech/transcriptions/{id}/confirmation` | 已接：`voice.js` 第 1199 行 `createTranscription`、第 1267 行 `getTranscription`、第 1342 行 `confirmTranscription`；`speech-transcript.js` 第 321 行发 `POST /speech/transcriptions` | [GY-I11](https://github.com/GengYunChuChao/GengYun/issues/11) |
+| 语音提问（文字） | `POST /conversations/{id}/turns` | 已接：`qa-api.js` 第 401 行发这个 POST，`pages/qa/qa.js` 第 35 行引入该模块 | [GY-I12](https://github.com/GengYunChuChao/GengYun/issues/12) |
 | 文本转语音播报 | `POST /speech/synthesis` | 未实现 | [GY-I13](https://github.com/GengYunChuChao/GengYun/issues/13) |
 
 > 「录音」与「播放」在界面上为两个独立按钮，对应两个不同操作，满足范围「录音与播放按钮分离」。

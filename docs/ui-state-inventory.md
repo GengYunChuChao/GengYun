@@ -121,7 +121,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 
 | 项目 | 当前状态 | 隔离方式 |
 | --- | --- | --- |
-| 登录会话 | **已接真实服务端会话**——**2026-10-28 更正**（原写「恒为游客」是 2026-10 的过期口径，与实际代码相反） | 页面一律 `require('../../utils/auth')` 走 `requireLogin` 门禁与 `Authorization: Bearer` 会话：21 个页面脚本里 20 个如此，唯一例外是不读任何业务数据的走查页 `pages/specimen`（`miniprogram/pages/knowledge/knowledge.js:2`）。`utils/session.js` 是**死代码**（`SESSION_ENABLED = false`、`isGuest()` 恒 `true`，但页面／组件层对它 `require` 零命中），**不要**按它读登录口径；登记与处置见第 7.5 节（本片不删它） |
+| 登录会话 | **已接真实服务端会话**——**2026-10-28 更正**（原写「恒为游客」是 2026-10 的过期口径，与实际代码相反） | 页面一律 `require('../../utils/auth')` 走 `requireLogin` 门禁与 `Authorization: Bearer` 会话：22 个页面脚本里 21 个如此，唯一例外是不读任何业务数据的走查页 `pages/specimen`（`miniprogram/pages/knowledge/knowledge.js:2`）。`utils/session.js` 是**死代码**（`SESSION_ENABLED = false`、`isGuest()` 恒 `true`，但页面／组件层对它 `require` 零命中），**不要**按它读登录口径；登记与处置见第 7.5 节（本片不删它） |
 | 拍草识别 | 未接入 | 入口仅提示，不调用相机 |
 | 标签 OCR | 未接入 | 入口仅提示，不调用相机 |
 | 语音转写与播放 | 录音已接真实端口；转写核对在 stub/preset_demo 接通 | 录音经 `utils/recorder-port.js`（`wx.getRecorderManager` 在原生侧的唯一出现处）真实采集，按用途 voice_question 上传（real 模式）；`utils/speech-transcript.js` 在 stub/preset_demo 下走通「受理→轮询→可编辑→用户明确确认→发送」，未经确认不外发、取消/失败/迟到回调不外发；**真实 ASR 未接线**，替身文本明确标注 |
@@ -259,7 +259,7 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 ### 7.5 `utils/session.js` 是死代码（如实登记，本片不删）
 
 - `miniprogram/utils/session.js:22`：`SESSION_ENABLED = false`；`miniprogram/utils/session.js:38-41`：`isGuest()` 在该开关关闭时**无条件**返回 `true` 且不读存储。
-- 页面／组件／工具层对它的 `require` **零命中**：`miniprogram/` 里 20 个页面脚本一律 `require('../../utils/auth')`（唯一例外是走查页 `pages/specimen`），没有任何页面读 `utils/session` ⇒ 这个文件今天**不参与**任何登录判定。
+- 页面／组件／工具层对它的 `require` **零命中**：`miniprogram/` 里 21 个页面脚本一律 `require('../../utils/auth')`（唯一例外是走查页 `pages/specimen`），没有任何页面读 `utils/session` ⇒ 这个文件今天**不参与**任何登录判定。
 - 处置：**本节只登记，不删除**（本片不动 `miniprogram/**`）。唯一还依赖它的是单测 `tests/ui-adaptive.test.mjs:268-286`（按路径直接读源码并 `createRequire` 加载，断言「关闭状态下 `isGuest()` 恒为 `true`、且不发生存储读取」）——后续任一片要删它，必须同时改掉这条单测，否则那一组断言会 BROKEN 而不是「自动消失」。
 - ⚠ 第 4 节末段那句「会话占位不调用任何登录或手机号授权接口……」**只描述这个死文件**，不描述页面会话；页面会话口径以第 4 节表格的「登录会话」行为准（已按第 4 节的更正改为「已接真实服务端会话」）。
 
