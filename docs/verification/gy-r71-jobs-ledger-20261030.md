@@ -425,3 +425,7 @@ R34 的裁定仍然没有被推翻：**读面仍然为零**——`/admin/jobs` �
 3. **跨域同一事务**没有做到（§10.2），只有「按 owner 一刀删完 + 无外键 ⇒ 收敛到零行」。
 4. **备份侧**：`jobs` 不生成 `user_backup_copies` 清单行（备份副本只对收藏/历史/消息/会话四域）⇒
    该模块的 `backupState` 仍如实 `pending`，不冒充完成。
+
+## 2026-11-05 复核（main `2a835064`）
+
+**2026-11-05 复核（main `2a835064`）**：本页 2.3 节表格「位置」列给的是**写点**——创建写点是 `services/api/src/ocr/store-pg.ts:571` 的 `await writeJobLedger(...)`（同一事务内 `services/api/src/ocr/store-pg.ts:566` 写源表、`services/api/src/ocr/store-pg.ts:571` 写台账）；`withTransaction` 这个通用事务辅助函数本身现在声明在 `services/api/src/ocr/store-pg.ts:486`，它不含源表 INSERT 也不含台账 upsert，**不是**写点。两个坐标分开记，不要用一个替换另一个。
