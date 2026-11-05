@@ -453,3 +453,7 @@ node tools/verify-doc-anchors.mjs --strict --scan docs
 node tools/verify-contract-status.mjs
 python tools/validate_development_docs.py
 ```
+
+## 2026-11-05 复核（main `2a835064`）
+
+**2026-11-05 复核（main `2a835064`）**：本页 7.1 节「原文（逐字）」里的 `services/api/src/app.ts:1291` 是当时原文的原样，属历史引用，不随后续源码推移改写。按今天的 main，`adminRealUnwired` 声明在 `services/api/src/app.ts:1358`（`const adminRealUnwired = config.executionMode === 'real';`）；给出当前定位**不**改变上面那段逐字引文。
