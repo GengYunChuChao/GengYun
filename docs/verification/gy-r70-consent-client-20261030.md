@@ -38,7 +38,7 @@
 
 1. 派单写"`DELETE` 的 `If-Match` 给错的 ⇒ **404**"。代码里 **404 = 该用途没有当前授权记录**（`consent-pg.ts:167`），
    **给错版本 = 409 `REVISION_CONFLICT`**（`consent-pg.ts:170`）。本片按代码实现：428 自动补取、409 原样透出并要求重读，
-   两者**没有**被糊成一句"失败"（见 `miniprogram/utils/consent-api.js:491` 与 `tests/unit/miniprogram-consent-grant-withdraw.test.mjs:319`）。
+   两者**没有**被糊成一句"失败"（见 `miniprogram/utils/consent-api.js:585` 与 `tests/unit/miniprogram-consent-grant-withdraw.test.mjs:319`）。
 2. 派单说"`Idempotency-Key` 格式与范围（既有实现是 8..128）"——代码里**只有长度**，没有任何字符集/前缀要求；
    服务端也不校验格式。本片客户端生成的键是 `consent-grant-<36进制时间戳>-<8位随机>`（≈30 字符），落在 8..128 内。
 
@@ -46,7 +46,7 @@
 
 | 文件 | 改动 | 证据锚点 |
 | --- | --- | --- |
-| `miniprogram/utils/consent-api.js` | `send()` 支持 `expect` 状态、请求体与 `Idempotency-Key`/`If-Match` 头；错误对象带 `status`/`retryable` 而 `code` 原样；新增 `readPolicy`/`grant`/`withdraw`/`newIdempotencyKey`/`grantAvailability`/`actionMessage`/`blockingReason`；`consentView` 透出 `revision`/`epoch`；头注从"只读"改写为四条接口与三条纪律 | `miniprogram/utils/consent-api.js:177`、`:372`、`:440`、`:491`、`:576` |
+| `miniprogram/utils/consent-api.js` | `send()` 支持 `expect` 状态、请求体与 `Idempotency-Key`/`If-Match` 头；错误对象带 `status`/`retryable` 而 `code` 原样；新增 `readPolicy`/`grant`/`withdraw`/`newIdempotencyKey`/`grantAvailability`/`actionMessage`/`blockingReason`；`consentView` 透出 `revision`/`epoch`；头注从"只读"改写为四条接口与三条纪律 | `miniprogram/utils/consent-api.js:177`、`:372`、`:532`、`:585`、`:672` |
 | `miniprogram/pages/consent/consent.js` | 四行开关（闭集四用途各一行）、`WITHDRAW_COST` 逐用途代价文案、`buildRows` 计算可用性、`onGrant`（幂等键按动作复用）、`onWithdraw`（二次确认 + 世代守卫）、`loadPolicy`、`onRefresh` 清本地阻塞与键 | `miniprogram/pages/consent/consent.js:69`、`:241`、`:315`、`:370` |
 | `miniprogram/pages/consent/consent.wxml` | 删掉「本页只读」「所以这里没有开关」；新增「用途授权」区（每行状态 + 可用性原因 + 上次失败原因 + 服务端码 + 动作按钮）、政策版本说明、四条"关于这份清单"补充说明 | 路径同上；`wxml` 不在锚点工具的目标后缀内，故这一行只给路径、不给行号 |
 | `miniprogram/pages/consent/consent.wxss` | 头注去掉"只读"；新增用途行的左右分栏与三类文字样式（一律取 `styles/tokens.wxss` 变量） | `miniprogram/pages/consent/consent.wxss:1` |
@@ -239,8 +239,8 @@ C3（正常路径）与 C6（离页后**重新可见**）改前就是绿的：�
   （`miniprogram/pages/consent/consent.js:370`）。`token` 由 `miniprogram/pages/consent/consent.js:49` 生成，
   **不发给服务端**（C7 断言它不出现在任何 header／URL 里），只在本页内存里区分"这一次确认"。
 - `invalidate()`（`miniprogram/pages/consent/consent.js:152`）= 递增 `_epoch` + 作废令牌；
-  由**重进**、`onHide`（`miniprogram/pages/consent/consent.js:157`）、`onUnload`
-  （`miniprogram/pages/consent/consent.js:162`）、**门禁关闭**四处调用。
+  由**重进**、`onHide`（`miniprogram/pages/consent/consent.js:176`）、`onUnload`
+  （`miniprogram/pages/consent/consent.js:181`）、**门禁关闭**四处调用。
 - `confirmGuard(pending)`（`miniprogram/pages/consent/consent.js:417`）按"会话身份 → 页面世代 →
   是否仍是当前这次确认"的顺序判。会话身份 = 访问令牌 + `auth.sessionEpoch()`
   （`miniprogram/pages/consent/consent.js:39`）：契约禁止客户端声明 `userId`，这是页面唯一能观测到的账号身份。
