@@ -23,6 +23,13 @@
  *   ⑨ 同一行有多条锚点、多个紧邻符号时，符号**按行内出现顺序一一配位**（一个符号只属于一条锚点）：
  *      夹心写法（锚点、符号、锚点）里那个符号不许被两条锚点同时认领（C23）；符号比锚点少时，
  *      多出来的锚点退回「同行没有紧邻符号」只计数、不判红（C24）；这条规则不许把提交号重新拉回符号位（C25）。
+ *   ⑩ 这一面另有一条**回归闸门**参数 `--symbol-coverage-verification`（off／count／strict，缺省 `count`，
+ *      与 `--symbol-coverage` 三档互不影响）：`strict` ＋ `--strict` 时读
+ *      `tools/doc-anchors-symbol-coverage-verification-baseline.json`，只判「不在区间／UNDECLARED 的**计数**
+ *      比基线变大」（REGRESSION ⇒ exit 1）；计数变小只打 STALE 提示跑写模式收紧、**不判红**（verification 面
+ *      仍在收敛期，逐条钉会隔夜过期）；`paired ≠ OK ＋ 不在区间 ＋ UNDECLARED` 打 INCONSISTENT ⇒ exit 1。
+ *      `count` 档既有的两行读数字面一字不动（C26），判红只在 strict 档（C27），收敛不判红（C28），
+ *      `off` 连读数一起关、写模式落盘（C29）。
  * 另外用子进程钉住「缺省 `count` 模式不改变退出码」：这条判据是 WARN，先观察一轮，
  * 只有显式 `--symbol-coverage=strict`（且 `--strict`）才会判红。
  *
@@ -38,7 +45,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -870,4 +877,181 @@ test('C25 口径 ⑦ 不许把提交号拉回符号位：同一行「括注哈�
       assert.deepEqual(misses, []);
     },
   );
+});
+
+// —— verification 面的回归闸门（`--symbol-coverage-verification=off|count|strict`） ——————————
+/** 闸门的扫描面：`docs/verification/**` 不在 `docs/architecture` 里，两面都要显式带上。 */
+const GATE_SCAN = ['docs/architecture', 'docs/verification'];
+
+/**
+ * 子进程实跑，**stdout 与 stderr 分开收**：C26 要逐字比 stdout（新参数一开口多打一行就不叫零漂移），
+ * 混进 WARN 或 FAIL 块会让「逐字相同」这条断言失去意义。
+ */
+function runCli(root, extraArgs = [], scans = GATE_SCAN) {
+  const args = [TOOL, '--root', root];
+  for (const scan of scans) args.push('--scan', scan);
+  const result = spawnSync(process.execPath, [...args, ...extraArgs], { cwd: REPO_ROOT, encoding: 'utf8' });
+  return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+/**
+ * 闸门夹具：verification 面 4 条配对 ＝ OK 1 ＋ 不在区间 2 ＋ UNDECLARED 1——**三个判定格正好铺满配对数**，
+ * 这样「读数自校验」那条（`paired === OK ＋ 不在区间 ＋ UNDECLARED`）过得去，测的才是闸门本身。
+ * ⛔ 不读仓内真实文档数：那串数字正在收敛（#978／#979／#981／#982 合入后「不在区间」还要降），
+ * 把当期数字钉进用例，隔夜就陈旧、还得跟着改基线。
+ */
+function gateFixture() {
+  return {
+    'services/api/src/alpha.ts': sourceWith('alphaHandler'),
+    // late／later 的声明都在第 21 行：锚点写 :2，距离远超 ±5 行 ⇒ 两条 OUT_OF_RANGE。
+    'services/api/src/late.ts': `${'// 留白\n'.repeat(20)}${sourceWith('lateHandler')}`,
+    'services/api/src/later.ts': `${'// 留白\n'.repeat(20)}${sourceWith('laterHandler')}`,
+    'docs/architecture/within.md': '# 判据面\n\n- `alphaHandler`（`services/api/src/alpha.ts:2`）只做加一。\n',
+    'docs/verification/page.md': [
+      '# 取证',
+      '',
+      '- `alphaHandler`（`services/api/src/alpha.ts:2`）成立。',
+      '- `lateHandler`（`services/api/src/late.ts:2`）行号漂走。',
+      '- `laterHandler`（`services/api/src/later.ts:2`）行号漂走。',
+      '- `ghostPage`（`services/api/src/alpha.ts:2`）已不存在。',
+      '',
+    ].join('\n'),
+  };
+}
+
+/** 临时基线：路径就是工具缺省值（相对 `--root` 解析），内容由用例给，不读仓内那份。 */
+function baselineFixture({ outOfRange, undeclared, paired = 4, baselineMain = '0'.repeat(40) }) {
+  const body = {
+    note: 'verification 面符号覆盖的回归闸门（只判上升；收敛期不逐条钉）',
+    baselineMain,
+    outOfRange,
+    undeclared,
+    paired,
+  };
+  return { 'tools/doc-anchors-symbol-coverage-verification-baseline.json': `${JSON.stringify(body, null, 2)}\n` };
+}
+
+test('C26 `count` 档（缺省）verification 的两行读数字面不变、exit 0（本片零输出漂移的回归防线）', () => {
+  // 这条用例是「本片没改既有输出」的证据：新增的是**另一条参数**，它缺省为 `count`，所以既有命令的
+  // stdout 必须逐字不变——两行读数的文案、全角标点、`（仅 WARN，不影响 exit code）` 后缀一个都不许动。
+  // 一旦有人为了接闸门去改这两行，这条先红，而不是等 CI 的 `SYMBOL-COVERAGE-VERIFICATION` 读数悄悄变脸。
+  withFixture(gateFixture(), root => {
+    const defaults = runCli(root);
+    assert.equal(defaults.status, 0, `缺省档不许改退出码，实际 stderr：\n${defaults.stderr}`);
+    const explicit = runCli(root, ['--symbol-coverage-verification=count']);
+    assert.equal(explicit.status, 0, `显式 count 同样不许判红，实际 stderr：\n${explicit.stderr}`);
+    assert.equal(
+      explicit.stdout,
+      defaults.stdout,
+      '显式写 `=count` 与不写必须逐字相同：缺省就是 count，写了这个开关也不许多打或少打一行',
+    );
+    assert.match(
+      defaults.stdout,
+      /^SYMBOL-COVERAGE-VERIFICATION: 可判 3 条——OK 1、符号不在区间 2（仅 WARN，不影响 exit code）$/m,
+      '读数行逐字不变（连后缀「仅 WARN」都在：这是既有读数，判红改由另一行新参数负责）',
+    );
+    assert.ok(
+      defaults.stdout.includes(
+        'SYMBOL-COVERAGE-VERIFICATION-SCOPE: 作用域 docs/verification/**（1 份文档、锚点 4 条）——配成对 4 条：OK 1、符号不在区间 2、UNDECLARED 1（符号 0 命中 1 条、出现过但不是声明行 0 条）；同行没有紧邻符号 0 条、两侧等距不猜 0 条、路径找不到或不唯一 0 条（后四格只计数）——本面三档一律不判红，strict 仍只判 docs/architecture/**',
+      ),
+      `SCOPE 行逐字不变（文案、两段分段、UN·DECLARED 明细都要对得上），实际输出：\n${defaults.stdout}`,
+    );
+    assert.doesNotMatch(
+      defaults.stdout,
+      /SYMBOL-COVERAGE-VERIFICATION-(GATE|REGRESSION|STALE|INCONSISTENT|NOTE)/,
+      'count 档不许出现闸门的任何一行：那四行只在 `--symbol-coverage-verification=strict` 下才存在',
+    );
+  });
+});
+
+test('C27 `strict` 档：verification 的「不在区间」比基线多 2 ⇒ exit 1 且打 REGRESSION', () => {
+  // 「只判上升」的最小形状：基线记 0，本次 2 条 ⇒ 回归。判红要**同时**满足 `--strict` 与
+  // `--symbol-coverage-verification=strict`（与 `--symbol-coverage=strict` 的分工一致）。
+  withFixture({ ...gateFixture(), ...baselineFixture({ outOfRange: 0, undeclared: 1 }) }, root => {
+    const gate = runCli(root, ['--strict', '--symbol-coverage-verification=strict']);
+    assert.equal(gate.status, 1, `计数比基线多必须 exit 1（否则这道闸门等于没装），实际 stdout：\n${gate.stdout}`);
+    assert.match(
+      gate.stdout,
+      /^SYMBOL-COVERAGE-VERIFICATION-REGRESSION: 不在区间 0 → 2（基线 0）——/m,
+      `要写清「哪一格、从几到几、基线几」，并说明为什么涨了就是回归，实际 stdout：\n${gate.stdout}`,
+    );
+    assert.doesNotMatch(gate.stdout, /SYMBOL-COVERAGE-VERIFICATION-STALE/, '上升就只报回归，不许同时报「低于基线」');
+    assert.match(gate.stderr, /^FAIL: verification 符号覆盖回归闸门未通过/m, '判红的归纳行走 stderr（与既有 FAIL 块同一套）');
+    assert.match(gate.stderr, /SYMBOL-COVERAGE-VERIFICATION-REGRESSION/, 'FAIL 块里要带上那条增量的原文');
+
+    // 缺 `--strict`：读数照打、闸门照算，但**不改退出码**（本片只往 CI 那条带 `--strict` 的命令上加开关）。
+    const notStrict = runCli(root, ['--symbol-coverage-verification=strict']);
+    assert.equal(notStrict.status, 0, `没有 --strict 时闸门不许判红，实际 stdout：\n${notStrict.stdout}`);
+    assert.match(notStrict.stdout, /SYMBOL-COVERAGE-VERIFICATION-REGRESSION/, '读数面上照样要看得见这条增量');
+
+    // `--strict` 但这一面停在 count：判据不启用，退出码不许变（既有 CI 行为不受影响）。
+    const countMode = runCli(root, ['--strict', '--symbol-coverage-verification=count']);
+    assert.equal(countMode.status, 0, `count 档永不改退出码，实际 stderr：\n${countMode.stderr}`);
+    assert.doesNotMatch(countMode.stdout, /SYMBOL-COVERAGE-VERIFICATION-REGRESSION/);
+  });
+});
+
+test('C28 `strict` 档：计数低于基线只打 STALE、不判红（收敛期的有意差异）', () => {
+  // verification 面仍在收敛：数字会**自己变小**（既有的取证页被修好、或 #978／#979 那批合入）。
+  // 若照 architecture 面的「陈旧条目就判红」办，收敛期每一轮都会无端红一次——所以这里只提示收紧基线。
+  withFixture({ ...gateFixture(), ...baselineFixture({ outOfRange: 4, undeclared: 1 }) }, root => {
+    const gate = runCli(root, ['--strict', '--symbol-coverage-verification=strict']);
+    assert.equal(gate.status, 0, `计数下降不许判红（这是本片与其它基线册的有意差异），实际 stdout：\n${gate.stdout}`);
+    assert.match(
+      gate.stdout,
+      /^SYMBOL-COVERAGE-VERIFICATION-STALE: 不在区间 4 → 2（低于基线 4），可跑 --write-symbol-coverage-verification-baseline 收紧$/m,
+      `提示里要给出「从几到几」与收紧命令，实际 stdout：\n${gate.stdout}`,
+    );
+    assert.doesNotMatch(gate.stdout, /SYMBOL-COVERAGE-VERIFICATION-REGRESSION/, '下降不是回归');
+    assert.equal(gate.stderr, '', '不判红就一个字都不许写 stderr');
+  });
+});
+
+test('C29 `--symbol-coverage-verification=off` 连两行一起关；写模式落盘且 baselineMain 是 40 位 sha', () => {
+  withFixture(gateFixture(), root => {
+    const off = runCli(root, ['--symbol-coverage-verification=off']);
+    assert.equal(off.status, 0);
+    assert.doesNotMatch(
+      off.stdout,
+      /SYMBOL-COVERAGE-VERIFICATION/,
+      `off 档一行都不许留（读数、明细、闸门同进同出——留半行就看不出「这一面到底判没判」），实际 stdout：\n${off.stdout}`,
+    );
+    assert.match(
+      off.stdout,
+      /^SYMBOL-COVERAGE: 可判 1 条——OK 1、符号不在区间 0（仅 WARN，不影响 exit code）$/m,
+      'architecture 那几行照旧：两条参数互不影响，关这一面不许顺手关掉另一面',
+    );
+
+    const baselinePath = join(root, 'tools', 'doc-anchors-symbol-coverage-verification-baseline.json');
+    assert.equal(existsSync(baselinePath), false, '写模式之前不许有基线（否则测的是「覆盖写」而不是「落盘」）');
+    const written = runCli(root, ['--write-symbol-coverage-verification-baseline']);
+    assert.equal(written.status, 0, `写模式必须 exit 0，实际 stderr：\n${written.stderr}`);
+    assert.match(
+      written.stdout,
+      /^WRITE: verification 符号覆盖基线已更新（outOfRange=2, undeclared=1, paired=4, baselineMain=[0-9a-f]{40}）$/m,
+      `写模式只打这一行 WRITE（读数会淹掉「这次判没判」），实际 stdout：\n${written.stdout}`,
+    );
+    const parsed = JSON.parse(readFileSync(baselinePath, 'utf8'));
+    assert.equal(parsed.outOfRange, 2, '落盘的是**实测**计数，不是抄来的数');
+    assert.equal(parsed.undeclared, 1);
+    assert.equal(parsed.paired, 4);
+    assert.equal(parsed.note, 'verification 面符号覆盖的回归闸门（只判上升；收敛期不逐条钉）', '口径要写进账本：只判上升');
+    assert.match(parsed.baselineMain, /^[0-9a-f]{40}$/, 'baselineMain 必须是 40 位 sha：取不到就报错退出，不许写假值');
+    assert.equal(parsed.baselineMain, parsed.baselineMain.toLowerCase(), '小写十六进制（与 `git rev-parse` 一致）');
+
+    // 刚写下的基线：当场持平 ⇒ 一行都不多打、exit 0（写模式与判据必须是同一把尺）。
+    const gate = runCli(root, ['--strict', '--symbol-coverage-verification=strict']);
+    assert.equal(gate.status, 0, `写完立刻跑必须绿，实际 stdout：\n${gate.stdout}`);
+    assert.match(
+      gate.stdout,
+      /^SYMBOL-COVERAGE-VERIFICATION-GATE: 回归闸门已启用/m,
+      'strict 档要先自述「这一行是新闸门」——上面两行写着「仅 WARN」，读者否则会以为工具自相矛盾',
+    );
+    assert.match(gate.stdout, /baselineMain=[0-9a-f]{40}/, 'GATE 行要带上「对着哪棵树量的」');
+    assert.doesNotMatch(
+      gate.stdout,
+      /SYMBOL-COVERAGE-VERIFICATION-(REGRESSION|STALE|INCONSISTENT|NOTE)/,
+      '持平就是一句话都不多说：这三个词只在真的升／降／矛盾／缺基线时出现',
+    );
+  });
 });
