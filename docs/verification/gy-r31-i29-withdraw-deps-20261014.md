@@ -90,7 +90,7 @@ SELECT EXISTS(SELECT 1 FROM public.jobs WHERE owner_id=$1::uuid)
 - 拿到 service 的唯一入口 `services/api/src/routes/consents.ts:26`：`pool === null ? null : createPostgresConsentService(...)`
   —— 即**有 service 就必然有池**，而**有池就必然有 revoker**。
 - 消费者实现：`services/api/src/privacy/egress.ts:242`（`createApiEgressRevoker`）→
-  `packages/privacy/in-flight.mjs:237`（`createEgressRevoker`）、`:254-261`（`onConsentWithdrawn`
+  `packages/privacy/in-flight.mjs:278`（`createEgressRevoker`）、`:254-261`（`onConsentWithdrawn`
   → `ledger.revokeInFlight({ userId, purpose })`，**不吞错**，错误冒泡到 `consent-pg.ts:185` 变成 409）。
 
 因此生产上 `consent-pg.ts:179`（缺消费者）不可达，`consent-pg.ts:185`（消费者失败）可达 ——
