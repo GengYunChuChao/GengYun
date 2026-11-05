@@ -185,7 +185,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 | `npm run build` | api + admin 均 `built`（`TMP`/`TEMP` 指向仓外 `E:\GengYunCommander\.pg17\tmp\r71cancel`；build 后已删 `services/api/dist` 与 `apps/admin/dist`） | 0 |
 | `npm run test:failmatrix` | `矩阵合计 249 条：PASS 249 / FAIL 0`（B5 批次「异步 AI 域（识别 / OCR / 转写 / 合成 / 作业 / 会话）的游客面与归属面」62 条全绿） | 0 |
 
-**行号与台账**：`node tools/verify-contract-status.mjs --reanchor` 报 4 条候选（`services/api/src/moderation/job-source.ts` 的 `getJob`/`cancelJob` → `services/api/src/moderation/job-source.ts:51-75`；`services/api/src/conversations/service.ts` 的 `createConversation` → `services/api/src/conversations/service.ts:686-729`、`listTurns` → `services/api/src/conversations/service.ts:1025-1044`）。`--reanchor --write-doc` 在写盘前的**字节保真自检**上判 `UNSAFE`（工具自身拒绝写盘），因此把那 4 个**由工具算出**的区间值手工落到台账与中文对照表，再跑 `node tools/verify-contract-status.mjs --write-doc`（同步表格）与 `verify-contract-status.mjs` 到 exit 0。⛔ 没有手工"凑容差"：落盘的就是工具打印的 `归属块` 起止行。
+**行号与台账**：`node tools/verify-contract-status.mjs --reanchor` 报 4 条候选（`services/api/src/moderation/job-source.ts` 的 `getJob`/`cancelJob` → `services/api/src/moderation/job-source.ts:51-75`；`services/api/src/conversations/service.ts` 的 `createConversation` → `services/api/src/conversations/service.ts:686-729`、`listTurns` → `services/api/src/conversations/service.ts:950-969`）。`--reanchor --write-doc` 在写盘前的**字节保真自检**上判 `UNSAFE`（工具自身拒绝写盘），因此把那 4 个**由工具算出**的区间值手工落到台账与中文对照表，再跑 `node tools/verify-contract-status.mjs --write-doc`（同步表格）与 `verify-contract-status.mjs` 到 exit 0。⛔ 没有手工"凑容差"：落盘的就是工具打印的 `归属块` 起止行。
 
 **文档行号面**：本片改动推移了 6 处既有取证页的行号引用（`app.ts`、`conversations/service.ts`、`moderation/service.ts` 各若干），逐条按内容重新定位后复跑；`tools/doc-anchors-baseline.json` 基线外新增 **0** 条。裸锚点孤儿册按工具规定的方式重生成（`--write-orphan-baseline --accept=1 --why=…`），理由已写进该册的 accept 账本：**`tests/moderation/http-jobs.test.mjs` 的取消断言由 503 改为 409**，而 `docs/verification/gy-r27-synthesis-cancel-20261020.md:413` 是对旧断言行的**历史逐字引用**（该裸锚点指向旧用例里 `503` 那条断言行），补回路径等于篡改历史读数。
 
@@ -203,7 +203,8 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 
 ⛔ **没有**把任何 `lines` 手工改小到「凑容差」，也**没有**为了变绿去改被引用的注释：`createConversation` 那一条是 `node tools/verify-contract-status.mjs --reanchor` 自己算出的归属块，本片只是把工具的输出落到台账并按符号登记。
 
-**一处工具限制如实登记**：`node tools/verify-contract-status.mjs --reanchor --write-doc` 在**写盘前的字节保真自检**上判 `UNSAFE`（工具拒绝写盘）。因此那 4 个**由工具自身算出**的区间值（`services/api/src/moderation/job-source.ts` → `services/api/src/moderation/job-source.ts:51-75`；`services/api/src/conversations/service.ts` → `services/api/src/conversations/service.ts:686-729` 与 `services/api/src/conversations/service.ts:1025-1044`）是手工落到台账与中文对照表的，随后用 `--write-doc` 同步表格并复跑到 exit 0。落盘值等于工具打印值，不是人工猜测。
+**一处工具限制如实登记**：`node tools/verify-contract-status.mjs --reanchor --write-doc` 在**写盘前的字节保真自检**上判 `UNSAFE`（工具拒绝写盘）。因此那 4 个**由工具自身算出**的区间值（`services/api/src/moderation/job-source.ts` → `services/api/src/moderation/job-source.ts:51-75`；`services/api/src/conversations/service.ts` → `services/api/src/conversations/service.ts:686-729` 与 `services/api/src/conversations/service.ts:950-969`）是手工落到台账与中文对照表的，随后用 `--write-doc` 同步表格并复跑到 exit 0。落盘值等于工具打印值，不是人工猜测。
+
 
 ## 8.6 端口与进程：本片没有常驻监听
 
@@ -215,3 +216,7 @@ git grep -n "cancel" 8b646ae1 -- services/api/src/jobs services/api/src/routes/j
 1. **`moderation` 取消在当前产品装配下不可达**（§6.1）：接受"只在异步供应商路径生效"，还是另开一片把社区发布改成 `defer_model` + 回调？本片**没有**为让"取消可用"而改动发布时序。
 2. **重复取消的跨 kind 分叉**（§2.3）：本片让 `answer`/`moderation` 在"已 `cancelled` + 当前 `If-Match`"上返回 200 no-op，四源仍是 409。是否要求六源统一？统一只需在四源的终态判定前各加一条 no-op 分支（不改契约、不改码表）。
 3. ~~**`moderation` 不做 `Idempotency-Key` 回放**（§2.3）~~ ⇒ **已解决（GY-R72）**：补了持久幂等台账（`services/api/src/moderation/idempotency-store.ts` + 迁移 `0051_moderation_idempotency.sql`），`cancelJob` 改为占位先于版本/终态校验、同键同 `If-Match` 回放首次视图（§2.4）。**仍存边界**：跨进程 `pending` 占位无主动回收（最长等 TTL 24h）；缺表时写类 fail-closed（503 `PROVIDER_UNAVAILABLE`，`retryable:false`），不静默退回"只校验不回放"的旧路径。
+
+## 2026-11-05 复核（main `2a835064`）
+
+**2026-11-05 复核（main `2a835064`）**：本页「行号与台账」与「一处工具限制如实登记」两段写的是 2026-10-30 那次 `reanchor` 实际打印并落盘的原值（`listTurns` → `services/api/src/conversations/service.ts:950-969`），属历史取证输出，不随此后源码推移改写。按今天的 main，`listTurns` 整段在 `services/api/src/conversations/service.ts:1025-1044`（首行 `async function listTurns(` 起、块体收尾止），原 `services/api/src/conversations/service.ts:950-969` 现在落在 `cancelTurn` 的 JSDoc 与声明行上。给出当前定位**不**改变上面那次的工具读数，也不代表当时的区间值有误。
