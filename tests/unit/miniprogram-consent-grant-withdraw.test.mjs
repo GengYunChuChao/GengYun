@@ -195,6 +195,20 @@ function rowOf(page, purpose) {
 function tap(page, purpose) {
   page.onRowAction({ currentTarget: { dataset: { purpose: purpose } } });
 }
+// #1004 之后：需要第三方接收方的用途必须由用户先选定接收方，才允许授予。
+const RECIPIENT = {
+  id: 'r79-test-weed',
+  display_name: '演示识别服务',
+  capability: 'weed',
+  policy_version: POLICY_VERSION,
+  retention_online_days: 0,
+  retention_backup_days: 0,
+  no_training_verified: true,
+  deletion_verified: true,
+};
+function selectRecipient(page, purpose, recipientId) {
+  page.onToggleRecipient({ currentTarget: { dataset: { purpose: purpose, recipientId: recipientId } } });
+}
 
 // ===========================================================================
 // A. 适配层：契约形状与幂等键
@@ -371,14 +385,22 @@ test('B1 四态之一二：有政策 ⇒ 「可授予」；清单里已授权 �
 
 test('B2 授予：服务端没确认之前不改状态（非乐观）；成功后按服务端清单刷新', async () => {
   const h = createHarness();
-  openPage(h, [], { body: { version: POLICY_VERSION, purposes: ALL_PURPOSES, recipients: [], training_enabled: false } });
+  openPage(h, [], { body: { version: POLICY_VERSION, purposes: ALL_PURPOSES, recipients: [RECIPIENT], training_enabled: false } });
   await settle();
   assert.equal(rowOf(h.page, 'media_processing').state, 'none');
+
+  // #1004：照片处理会把图交给第三方服务，未选接收方时置灰 —— 选择权交回用户，不再替他传空数组。
+  assert.equal(rowOf(h.page, 'media_processing').actionDisabled, true, '未选接收方 ⇒ 不可授予');
+  assert.equal(rowOf(h.page, 'media_processing').recipients.length, 1, '政策里那个 weed 能力的接收方要出现在选择器里');
+  selectRecipient(h.page, 'media_processing', RECIPIENT.id);
+  await settle();
+  assert.equal(rowOf(h.page, 'media_processing').actionDisabled, false, '选定接收方 ⇒ 可以授予');
 
   const before = h.requests.length;
   tap(h.page, 'media_processing');
   const post = h.requests[before];
   assert.equal(post.method, 'POST');
+  assert.deepEqual(plain(post.data).recipient_ids, [RECIPIENT.id], '授予体必须带用户选定的接收方，不是空数组');
   // 在飞：busy 但状态**没有**翻过去。
   assert.equal(rowOf(h.page, 'media_processing').busy, true, '在飞时该行显示进行中');
   assert.equal(rowOf(h.page, 'media_processing').state, 'none', '服务端没确认前界面不许把开关翻过去');
@@ -575,8 +597,8 @@ test('B9 读面失败：清单清空 + 错误码，四行全部置灰并说明"�
     const row = rowOf(h.page, purpose);
     assert.equal(row.actionDisabled, true, `${purpose}：连当前状态都不知道，不许给动作`);
     // `external_inference` 本来就有自己的置灰理由（必须选已核验接收方），它不会被"清单没读到"覆盖；
-    // 其余三个用途的置灰理由必须点名"清单没读到"并带上服务端码。
-    if (purpose === 'external_inference') continue;
+    // #1004 之后 `media_processing` 同理：未选接收方时理由停在"请先选定接收方"，也不再被覆盖。
+    if (purpose === 'external_inference' || purpose === 'media_processing') continue;
     assert.match(row.actionReason, /PROVIDER_UNAVAILABLE/, `${purpose}：置灰原因带码`);
   }
   const before = h.requests.length;
