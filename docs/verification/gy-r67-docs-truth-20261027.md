@@ -261,6 +261,7 @@ STATUS_KEYS=12
 ```
 
 - 依据：§4.1 两行；`services/api/src/app.ts:1341` 与 `:1363-1365` 逐字命中且唯一。
+
 ### 7.2 `docs/architecture/ai-ops-spec-status.md:57`（任务第 2 条）
 
 - 原文（逐字）：

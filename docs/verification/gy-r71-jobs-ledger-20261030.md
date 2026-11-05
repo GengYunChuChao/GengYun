@@ -124,6 +124,7 @@ ON CONFLICT (id) DO UPDATE
 | transcription 三处 | `services/api/src/speech/store-pg.ts:530`（创建）/ `services/api/src/speech/store-pg.ts:572`（开始·取消）/ `services/api/src/speech/store-pg.ts:616`（终态） | 同 ocr |
 | answer 四处（`GY-R72` 补第四处） | `services/api/src/conversations/store-pg.ts:309`（创建）/ `services/api/src/conversations/store-pg.ts:379`（开始）/ `services/api/src/conversations/store-pg.ts:428`（终态）/ `services/api/src/conversations/store-pg.ts:410`（取消） | `guarded()`（= `withTransaction` + 可选主体核对） |
 | 管理台取消 | `services/api/src/admin/ops/jobs-pg.ts:623` | 既有取消事务（行锁 → 域名 UPDATE → 审计函数 → 台账 → `COMMIT`） |
+
 ⛔ **没有**「提交之后补写一行」的路径：补写式实现会在 §7 的 `[T]` 两条读数里留下源表行
 （真库实测：给 `public.jobs` 挂拒绝触发器后 `insertJob` 抛错、`ocr_jobs` 行数不变）。
 
