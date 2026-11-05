@@ -492,23 +492,28 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * admin/posts 187-232→187-245、ops/reports 104-126→112-150），外加两处「指错文件/指错符号」：
  * doc180 删掉 `admin/ops/service.ts:284-284` 那条（`advanceReport` 在该文件 0 命中，同格 `ops/reports.ts:112-150`
  * 已覆盖 `advanceReportImpl`），doc36 blocker 的裸文件名 `admin-auth.ts:12-13` 补成完整路径
- * `services/api/src/routes/admin-auth.ts 第 12-13 行`——该句引的是文件头注释块（1-14 行整块都是注释，
- * 块后没有声明行），补成完整路径后即落进 `--symbol=strict` 的 COMMENT_ANCHOR 判据并被点名；按该判据
- * 「注释不是代码行」的口径，行号留作散文、不再写成 `path:lines` 机器锚点（改指注释块外的声明行会改掉
- * 这句话的指代物）。config.ts 与 consent-pg 两处的 symbol 随区间同步改指区间内声明行
+ * `services/api/src/routes/admin-auth.ts:12-13`——裸文件名解析不出目标路径，补全后这句首度落进
+ * `--symbol=strict` 的 COMMENT_ANCHOR 判据并被点名：它引的是第 1-14 行的文件头注释块（契约缺口
+ * 如实报告：error_status_map 未定义「凭据错误」专用码），该块之后没有可指的声明行（块后第一条非空行
+ * 是第 15 行的 `import type { FastifyInstance } from 'fastify';`，是 import 不是声明行），该文件也没有
+ * SESSION_REQUIRED 的代码行，改指别处会换掉这句话的指代物；按判据给的唯一正路「人工裁决后登记进
+ * `tools/doc-anchors-symbol-baseline.json` 并在 note 写明原因」处理——该文件本来就有一条同 doc／
+ * 同 docLine 36／同 `kind: "file-header"` 的条目，只把它 `reference` 由裸文件名改成完整路径、`note`
+ * 换成裁决文本（不新增第二条：否则旧键永远陈旧、同一锚点两条裁决并存）。config.ts 与 consent-pg 两处的 symbol 随区间同步改指区间内声明行
  * （`loadConfig` 声明在 372、落在 375-393 之外；`consentStore` 是 privacyGuard 的属性名），否则锚点会掉出 ±2 容差。
  * 中文对照表同次用 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ md 只有第 36／37／38／41／64／69／81／
  * 99／106-115／160／161／162／163／169／170／180 行变；被引的 22 个源文件本提交一个字节没改，故按规矩把 38 条位移
  * 登记进 `tests/unit/doc-anchor-relocations.json`（5 条单端位移走 `kind:"correction"` + symbol，其余两端齐动）。
  * 增删相抵：删掉一条证据（连同 symbol）、补全路径 +23 字节、两处 symbol 改长 ⇒ 实测 JSON −66 字节；
  * md 第 36 行补全路径 +23 字节、第 180 行少一个锚点 ⇒ 实测 md −22 字节（283954 / 206581，行数都不变）。
- * 其后 doc36 那句改成「`services/api/src/routes/admin-auth.ts 第 12-13 行`」（同上，行号不作机器锚点）：
- * 两个文件各 +8 字节 ⇒ 最终 JSON −58 字节、md −14 字节，行数都不变
- * （284020→283962 / 4460、206603→206589 / 220）。仍是「正常改台账、非回归」，故同步基线；没有改判定、没有加豁免条目。
+ * 同一次同步内补登记 COMMENT_ANCHOR 裁决，字节数 283962→283954（JSON）、206589→206581（md）——中间那版
+ * 曾把行号写成散文，恢复 `path:lines` 后两个文件各 −8 字节，行数都不变
+ * （284020→283954 / 4460、206603→206581 / 220）。仍是「正常改台账、非回归」，故同步基线；没有改判定、
+ * 没有加豁免条目（COMMENT_ANCHOR 是既有条目的裁决更新，entries 仍 26 条）。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283962, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206589, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283954, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206581, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
