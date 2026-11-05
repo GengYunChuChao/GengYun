@@ -478,10 +478,51 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 只有 yml 那条把四位数区间收成 `201`（每处 −4 字节 ×3）⇒ JSON −12 字节、行数不变；
  * md −12 字节、行数不变（284020 / 4460、206603 / 220）。仍是「正常改台账、非回归」，故同步基线；
  * 没有改判定、没有加豁免条目。
+ * 2026-11-05 第二十五次同步（订正台账中等格的 38 处区间边界，只改 lines/路径、不改语义）：
+ * 38 条 A 类缺陷全是「区间在界内、文件存在」的门禁看不见的语义错——起点压在前一行的空行／上一段收尾上，
+ * 或末端停在归属块中间，甚至整条指到别的符号。改的只是 `operations[].evidence[].lines`（community.ts 十条
+ * 路由 201-209…294-301 整体 +1/+1 到 202-210…295-302；createPost 963-1074→1044-1157、editPost
+ * 1084-1211→1167-1294、createComment 1302-1404→1385-1491；grantAdministratorScope 1659-1688→1661-1704、
+ * revokeAdministratorScope 1700-1734→1716-1750；listAuditLogs 182-232→181-302、audit/pg 380-431→397-448；
+ * admin.ts 378-383/405-413/414-423→381-389/408-416/417-427；errors.ts 42-76→61-80、
+ * consent-pagination 24-65→34-68、profile/pagination 24-65→32-85、profile/service 75-106→89-121、
+ * wechat 66-76→66-132、config 361-519→375-393、consents 54-59→54-63、consent-pg 109-120→123-135、
+ * account-deletion 123-168→143-355 与 357-391→357-409、knowledge 209-215→210-216、
+ * conversations 132-136→132-141、store-pg 236-247→237-248、administrators 113-163→110-174、
+ * admin/posts 187-232→187-245、ops/reports 104-126→112-150），外加两处「指错文件/指错符号」：
+ * doc180 删掉 `admin/ops/service.ts:284-284` 那条（`advanceReport` 在该文件 0 命中，同格 `ops/reports.ts:112-150`
+ * 已覆盖 `advanceReportImpl`），doc36 blocker 的裸文件名 `admin-auth.ts:12-13` 补成完整路径
+ * `services/api/src/routes/admin-auth.ts:12-13`——裸文件名解析不出目标路径，补全后这句首度落进
+ * `--symbol=strict` 的 COMMENT_ANCHOR 判据并被点名：它引的是第 1-14 行的文件头注释块（契约缺口
+ * 如实报告：error_status_map 未定义「凭据错误」专用码），该块之后没有可指的声明行（块后第一条非空行
+ * 是第 15 行的 `import type { FastifyInstance } from 'fastify';`，是 import 不是声明行），该文件也没有
+ * SESSION_REQUIRED 的代码行，改指别处会换掉这句话的指代物；按判据给的唯一正路「人工裁决后登记进
+ * `tools/doc-anchors-symbol-baseline.json` 并在 note 写明原因」处理——该文件本来就有一条同 doc／
+ * 同 docLine 36／同 `kind: "file-header"` 的条目，只把它 `reference` 由裸文件名改成完整路径、`note`
+ * 换成裁决文本（不新增第二条：否则旧键永远陈旧、同一锚点两条裁决并存）。config.ts 与 consent-pg 两处的 symbol 随区间同步改指区间内声明行
+ * （`loadConfig` 声明在 372、落在 375-393 之外；`consentStore` 是 privacyGuard 的属性名），否则锚点会掉出 ±2 容差。
+ * 中文对照表同次用 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ md 只有第 36／37／38／41／64／69／81／
+ * 99／106-115／160／161／162／163／169／170／180 行变；被引的 22 个源文件本提交一个字节没改，故按规矩把 38 条位移
+ * 登记进 `tests/unit/doc-anchor-relocations.json`（5 条单端位移走 `kind:"correction"` + symbol，其余两端齐动）。
+ * 增删相抵：删掉一条证据（连同 symbol）、补全路径 +23 字节、两处 symbol 改长 ⇒ 实测 JSON −66 字节；
+ * md 第 36 行补全路径 +23 字节、第 180 行少一个锚点 ⇒ 实测 md −22 字节（283954 / 206581，行数都不变）。
+ * 同一次同步内补登记 COMMENT_ANCHOR 裁决，字节数 283962→283954（JSON）、206589→206581（md）——中间那版
+ * 曾把行号写成散文，恢复 `path:lines` 后两个文件各 −8 字节，行数都不变（284020→283954 / 4460、
+ * 206603→206581 / 220）。随后 CI 的 `tests/unit/contract-blocker-anchor-truth.test.mjs` T3
+ * 「锚点起点必须是实质代码」判红——它不许 blocker 锚点落在空行／纯括号／纯注释上，与 `--symbol=strict`
+ * 的 COMMENT_ANCHOR 是两套独立判据，人裁登记救不了它 ⇒ 同一次同步内把该锚点改指真实代码行
+ * `services/api/src/auth/service.ts:283`（`throw new ApiError('SESSION_REQUIRED', '登录名或口令不正确');`，
+ * 后台登录 `service.loginAdmin(...)` 的口令错误就走这里；同文件 209 行是另一条路径的 SESSION_REQUIRED），
+ * 句子改写成「契约缺口（如实报告）：error_status_map 未定义「凭据错误」专用码；后台登录口令错误沿用
+ * SESSION_REQUIRED（401，实现见 …:283，语义为「未建立会话」），不臆造新码。」——原有信息（无专用码、
+ * 沿用 401、语义解释）一条不少。落点既然是真代码行，`tools/doc-anchors-symbol-baseline.json` 里那条
+ * COMMENT_ANCHOR 裁决就撤掉（26→25 条；读数「登记 25、命中 25、陈旧 0、新增 0」）。字节数
+ * 283954→284084（JSON）、206581→206711（md），行数都不变。仍是「正常改台账、非回归」，故同步基线；
+ * 没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284020, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206603, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284084, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206711, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {

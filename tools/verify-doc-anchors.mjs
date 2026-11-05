@@ -78,11 +78,11 @@
  *                                                              # 「目标文件里有声明行」的符号；没有声明行
  *                                                              # 的配对记 UNDECLARED、只计数（见上 ④）
  *   node tools/verify-doc-anchors.mjs --symbol-coverage=off     # 关掉这条统计行
- *   # 上面三档还会多打一行 `SYMBOL-COVERAGE-VERIFICATION`（＋一行 `-SCOPE`）：`docs/verification/**`
- *   # 的同口径统计，**三档一律不判红**——`strict` 仍然只判 `docs/architecture/**`，收紧的是读数面。
- *   # `count`／`strict` 档再补一组 `SYMBOL-COVERAGE-VERIFICATION-MISS`（同样最多 20 条）：这一面的
- *   # 逐条明细，与 architecture 的 `SYMBOL-COVERAGE-MISS` 分列（不混装，既有读数一字不动）；`off` 档不打。
- *
+ *   node tools/verify-doc-anchors.mjs --symbol-coverage-report=<路径>   # 两面逐条明细写成 JSON（机器可读、稳定排序）；
+ *   #   ↑ 缺省不写、既有输出一字不动；与 `--symbol-coverage=off` 互斥（off 档给它直接报错，不静默忽略）
+ *   # 上面三档还会多打一行 `SYMBOL-COVERAGE-VERIFICATION`（＋一行 `-SCOPE`）：`docs/verification/**` 的同口径
+ *   # 统计，**三档一律不判红**（`strict` 仍只判 `docs/architecture/**`，收紧的是读数面）；`count`／`strict` 再补
+ *   # 一组 `SYMBOL-COVERAGE-VERIFICATION-MISS`（最多 20 条）逐条明细，与 `SYMBOL-COVERAGE-MISS` 分列；`off` 不打。
  * 裸锚点（只写 `:1316`／`:1341-1350`）：路径从**同块**（同一段落／列表项／表格单元格／代码块）
  * 内最近的显式锚点继承，链接 `[:321](path)` 直接从 href 取；继承到的锚点与显式锚点**同权**——
  * 越界、区间无实质内容、符号落点、`--strict` 汇总都算它，所以把 `path:130` 删成 `:130` 不会洗白。
@@ -1296,6 +1296,14 @@ export const SYMBOL_COVERAGE_UNDECLARED = 'UNDECLARED';
  */
 export const SYMBOL_COVERAGE_ZERO_HIT = 'ZERO_HIT';
 export const SYMBOL_COVERAGE_NO_DECLARATION = 'NO_DECLARATION';
+/**
+ * `OUT_OF_RANGE` 的子档（与上面两个子档对称）：目标文件里**有**该符号的声明行，但那几行既不覆盖锚点
+ * 区间、符号本身也不在区间内——「行号漂走」就是这个形状，与「符号根本不存在」（`ZERO_HIT`）、
+ * 「符号只是顺带被框进来」（`NO_DECLARATION`）的修法完全不同，所以明细报表按三个子档分类。
+ * 只出现在 `--symbol-coverage-report` 的产物里：`collectSymbolCoverage()` 对 `OUT_OF_RANGE` 的 `detail`
+ * 恒为 `null`（判定一律不动，报表只在渲染时补这个值）。
+ */
+export const SYMBOL_COVERAGE_NOT_IN_RANGE = 'SYMBOL_NOT_IN_RANGE';
 
 // —— verification 面的回归闸门（只判「计数比基线上升」） ————————————————————————————
 /**
@@ -1738,6 +1746,92 @@ export function renderSymbolCoverageVerificationBaseline({ verification, baselin
     outOfRange: verification.outOfRange,
     undeclared: verification.undeclared,
     paired: verification.paired,
+  };
+  return `${JSON.stringify(body, null, 2)}\n`;
+}
+
+// —— 机器可读明细报表（`--symbol-coverage-report=<路径>`） ————————————————————————————————
+/**
+ * 一条 miss（`{ doc, docLine, target: '<相对路径>:<from>[-<to>]', symbol, result, detail, reason }`）
+ * → 报表条目：路径与行号拆开（`target`／`from`／`to` 三个字段，下家不必再切字符串），
+ * 分类与子档拆开（`kind` 是 `OUT_OF_RANGE`／`UNDECLARED`，`reason` 是子档，`note` 是解析器原话）。
+ * **只重组、不重判**：字段全部取自 `collectSymbolCoverage()` 已经算好的那一份对象。
+ */
+function symbolCoverageReportItem(item) {
+  // `target` 的形状由 `collectSymbolCoverage` 定死（`resolveTarget` 返回 posix 相对路径 + `:from`／`:from-to`），
+  // 这里只做拆分；万一将来形状变了，退化成「整串当 target、from／to 为 null」，不让报表整个写不出去。
+  const matched = /^(.+):(\d+)(?:-(\d+))?$/.exec(item.target);
+  const from = matched === null ? null : Number.parseInt(matched[2], 10);
+  return {
+    doc: item.doc,
+    line: item.docLine,
+    target: matched === null ? item.target : matched[1],
+    from,
+    to: matched === null || matched[3] === undefined ? from : Number.parseInt(matched[3], 10),
+    symbol: item.symbol,
+    kind: item.result,
+    // `detail` 只对 UNDECLARED 有值（ZERO_HIT／NO_DECLARATION）；OUT_OF_RANGE 的子档在这里补上，判定不动。
+    reason: item.detail ?? SYMBOL_COVERAGE_NOT_IN_RANGE,
+    // 给人读的原话（`MISSING：…`／`NO_BLOCK：…`／`AMBIGUOUS：…`／`ZERO_HIT：…`）：按子档分组之后，
+    // `note` 就是「这一条为什么」的答案，批量修的时候只在需要时才读它。
+    note: item.reason,
+  };
+}
+
+/**
+ * 排序键 (doc, line, target, symbol)，**用码位序比较**（`<`／`>`）而不是 `localeCompare`：
+ * 后者随系统 locale／ICU 数据变，同一棵树在两台机器上会排出不同顺序，这份文件就没法进 diff 复核了。
+ */
+function compareSymbolCoverageReportItems(left, right) {
+  if (left.doc !== right.doc) return left.doc < right.doc ? -1 : 1;
+  if (left.line !== right.line) return left.line - right.line;
+  if (left.target !== right.target) return left.target < right.target ? -1 : 1;
+  if (left.symbol !== right.symbol) return left.symbol < right.symbol ? -1 : 1;
+  return 0;
+}
+
+function symbolCoverageReportItems(misses = []) {
+  return misses.map(symbolCoverageReportItem).sort(compareSymbolCoverageReportItems);
+}
+
+/**
+ * 一个面的汇总：字段名沿用 `freshTally()` 的既有取法（`zeroHit`／`noDeclaration` 在报表里叫
+ * `undeclaredZeroHit`／`undeclaredNonDeclaration`——它们只是 `UNDECLARED` 的两个子档，扁平 JSON 里
+ * 带上父档名才不会被当成第四类）；`judged` 与读数行同口径（`ok + outOfRange`，即
+ * `SYMBOL-COVERAGE: 可判 N 条` 的 N），`items` 恒有 `outOfRange + undeclared` 条（逐条记账，非数字反推）。
+ */
+function summarizeSymbolCoverageFace(tally, items) {
+  return {
+    judged: tally.ok + tally.outOfRange,
+    ok: tally.ok,
+    outOfRange: tally.outOfRange,
+    undeclared: tally.undeclared,
+    undeclaredZeroHit: tally.zeroHit,
+    undeclaredNonDeclaration: tally.noDeclaration,
+    paired: tally.paired,
+    items,
+  };
+}
+
+/**
+ * `--symbol-coverage-report=<路径>` 的正文：**复用** `collectSymbolCoverage()` 的返回值
+ * （`misses`／`verificationMisses` 正是 `SYMBOL-COVERAGE-MISS`／`-VERIFICATION-MISS` 的数据源），
+ * 不重扫一遍——两次扫描之间文档可能已经被人改过，报表与同一次运行打出来的读数就会互相矛盾，
+ * 而这份报表的全部意义就是「和上面那几行读数对得上」。
+ *
+ * `scanRoot` 只在**单一扫描目标**时给字符串（`--scan docs` ⇒ `"docs"`，与 `SYMBOL-COVERAGE-SCOPE` 同口径），
+ * 多目标时给 `null`、完整清单落在 `scan` 里：同一字段忽字符串忽数组，下家每次都得先判类型。
+ *
+ * `--symbol-coverage-verification=off` 只关那两行读数，**不关报表里的 verification 面**：这一面的账
+ * 本来就是同一次扫描算出来的（影子账），不写反而让报表少一半明细；要不要用这一面由读文件的人看 `scan` 决定。
+ */
+export function renderSymbolCoverageReport({ coverage, scan = [] }) {
+  const body = {
+    generatedBy: 'tools/verify-doc-anchors.mjs --symbol-coverage-report',
+    scanRoot: scan.length === 1 ? scan[0] : null,
+    scan: [...scan],
+    verification: summarizeSymbolCoverageFace(coverage.verification, symbolCoverageReportItems(coverage.verificationMisses)),
+    architecture: summarizeSymbolCoverageFace(coverage.judged, symbolCoverageReportItems(coverage.misses)),
   };
   return `${JSON.stringify(body, null, 2)}\n`;
 }
@@ -2355,8 +2449,8 @@ function printAnchorCountBaseline(streams, { baseline, counts, partition }) {
 }
 
 // —— CLI ——————————————————————————————————————————————————————————————
-const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--anchor-count-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--symbol-coverage=off|count|strict] [--symbol-coverage-verification=off|count|strict] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline] [--emit-anchor-count-baseline | --write-anchor-count-baseline --accept <净增减> --why "理由"] [--write-symbol-coverage-verification-baseline]';
-const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--anchor-count-baseline', '--root', '--symbol', '--symbol-coverage', '--symbol-coverage-verification', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline', '--emit-anchor-count-baseline', '--write-anchor-count-baseline', '--write-symbol-coverage-verification-baseline', '--accept', '--why']);
+const USAGE = 'usage: node tools/verify-doc-anchors.mjs [--strict] [--scan <目录或glob>]... [--baseline <路径>] [--orphan-baseline <路径>] [--anchor-count-baseline <路径>] [--root <目录>] [--symbol=count|strict] [--symbol-coverage=off|count|strict] [--symbol-coverage-verification=off|count|strict] [--symbol-coverage-report=<路径>] [--emit-baseline | --write-baseline] [--emit-orphan-baseline | --write-orphan-baseline] [--emit-anchor-count-baseline | --write-anchor-count-baseline --accept <净增减> --why "理由"] [--write-symbol-coverage-verification-baseline]';
+const KNOWN_FLAGS = new Set(['--strict', '--scan', '--baseline', '--orphan-baseline', '--anchor-count-baseline', '--root', '--symbol', '--symbol-coverage', '--symbol-coverage-verification', '--symbol-coverage-report', '--emit-baseline', '--write-baseline', '--emit-orphan-baseline', '--write-orphan-baseline', '--emit-anchor-count-baseline', '--write-anchor-count-baseline', '--write-symbol-coverage-verification-baseline', '--accept', '--why']);
 /** `--symbol` 的取值是**白名单**：不认识的取值直接报错退出，绝不当成「没传、照旧绿灯」。 */
 const SYMBOL_MODES = new Set(['count', 'strict']);
 /**
@@ -2382,7 +2476,7 @@ const MAX_PRINTED_ORPHAN_OUTSIDE = 40;
 const MAX_PRINTED_SYMBOL_COVERAGE = 20;
 
 export function parseArgs(argv) {
-  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, anchorCountBaseline: DEFAULT_ANCHOR_COUNT_BASELINE, root: TOOL_ROOT, symbol: null, symbolCoverage: 'count', symbolCoverageVerification: 'count', accept: null, why: null, emit: false, write: false, emitOrphan: false, writeOrphan: false, emitCount: false, writeCount: false, writeVerification: false };
+  const options = { strict: false, scan: [], baseline: DEFAULT_BASELINE, orphanBaseline: DEFAULT_ORPHAN_BASELINE, anchorCountBaseline: DEFAULT_ANCHOR_COUNT_BASELINE, root: TOOL_ROOT, symbol: null, symbolCoverage: 'count', symbolCoverageVerification: 'count', symbolCoverageReport: null, accept: null, why: null, emit: false, write: false, emitOrphan: false, writeOrphan: false, emitCount: false, writeCount: false, writeVerification: false };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     const [flag, inline] = argument.includes('=') ? [argument.slice(0, argument.indexOf('=')), argument.slice(argument.indexOf('=') + 1)] : [argument, undefined];
@@ -2428,6 +2522,13 @@ export function parseArgs(argv) {
       if (!SYMBOL_COVERAGE_VERIFICATION_MODES.has(mode)) throw new Error(`--symbol-coverage-verification 只支持 ${[...SYMBOL_COVERAGE_VERIFICATION_MODES].join('|')}（收到：${mode}）\n${USAGE}`);
       options.symbolCoverageVerification = mode;
     }
+    else if (flag === '--symbol-coverage-report') {
+      // 空串是**用法错误**而不是「缺省不写」：`--symbol-coverage-report=` 这种手滑会让整条流水线以为报表
+      // 已经落盘了，而文件根本不存在（同 2483 行「参数被静静忽略却显示绿灯，比没有这个参数更糟」）。
+      const raw = value();
+      if (raw.trim() === '') throw new Error(`--symbol-coverage-report 需要一个写文件的路径（收到空串）\n${USAGE}`);
+      options.symbolCoverageReport = raw;
+    }
   }
   if (options.emit && options.write) throw new Error('--emit-baseline 与 --write-baseline 只能二选一');
   if (options.emitOrphan && options.writeOrphan) throw new Error('--emit-orphan-baseline 与 --write-orphan-baseline 只能二选一');
@@ -2451,6 +2552,15 @@ export function parseArgs(argv) {
   }
   if (generating > 0 && options.symbolCoverageVerification !== 'count') {
     throw new Error(`--symbol-coverage-verification=${options.symbolCoverageVerification} 不能与基线生成同时用（生成基线时统计会被忽略）`);
+  }
+  // 报表这一档选**报错**、而不是「off 时静默忽略」：`--symbol-coverage=off` 的语义是「这次不做符号覆盖统计」，
+  // 此时报表没有任何明细可写——忽略掉却照样退出 0，下家会去读上一轮的旧文件（或压根不存在的文件），
+  // 拿旧明细去修新代码，比当场失败贵得多。同理，基线生成那几档在统计之前就 return，报表也写不出来。
+  if (options.symbolCoverage === 'off' && options.symbolCoverageReport !== null) {
+    throw new Error(`--symbol-coverage-report 与 --symbol-coverage=off 互斥：off 档不做符号覆盖统计，没有明细可写（要报表就别关统计）\n${USAGE}`);
+  }
+  if (generating > 0 && options.symbolCoverageReport !== null) {
+    throw new Error('--symbol-coverage-report 不能与基线生成同时用（那几档在统计之前就返回，报表不会写）');
   }
   // `--accept`／`--why` 只在**写模式**有意义：干跑时给它们会让人以为「已经登记过了」。
   if (!writing && (options.accept !== null || options.why !== null)) {
@@ -2679,6 +2789,26 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
       verificationGate = evaluateSymbolCoverageVerificationGate({ root: options.root, verification: symbolCoverage.verification });
       printSymbolCoverageVerificationGate(streams, verificationGate);
     }
+  }
+  // 机器可读明细报表（`--symbol-coverage-report=<路径>`）：**复用**上面这一次扫描的结果，不重扫一遍
+  // （两次扫描之间文档可能被改过，报表就会和同一次运行的读数互相矛盾）。缺省 `null` ⇒ 不写文件、
+  // 不多打任何行；`--symbol-coverage=off` ＋ 本开关的组合在 `parseArgs` 里已经报错，走不到这里。
+  if (options.symbolCoverageReport !== null && symbolCoverage !== null) {
+    // 路径按**当前工作目录**解析（不是 `--root`）：报表是留给调用者/下家流水线的产物，落在调用者站的地方。
+    const absolute = resolve(options.symbolCoverageReport);
+    try {
+      if (!existsSync(dirname(absolute))) mkdirSync(dirname(absolute), { recursive: true });
+      writeFileSync(absolute, renderSymbolCoverageReport({ coverage: symbolCoverage, scan: options.scan }), 'utf8');
+    } catch (error) {
+      // 写不出去就明说是哪个路径：静默吞掉等于让人对着上一轮的旧文件干活。
+      streams.error(`ERROR: 明细报表写不出去（${options.symbolCoverageReport}）：${error.message}`);
+      return 2;
+    }
+    const architectureMisses = symbolCoverage.misses.length;
+    const verificationMisses = symbolCoverage.verificationMisses.length;
+    // 只在开关打开时出现的那一行（前缀固定 `SYMBOL-COVERAGE-REPORT: `）；两面条数分开点名——
+    // 只给总数容易把 verification 面的 61+268=329 误读成 architecture 面的条数。
+    streams.log(`SYMBOL-COVERAGE-REPORT: 已写出 ${architectureMisses + verificationMisses} 条明细（architecture ${architectureMisses} 条 ＋ verification ${verificationMisses} 条）→ ${absolute}`);
   }
   if (baseline.missing) streams.log(`NOTE: 基线 ${options.baseline} 不存在，按空基线处理（等于所有问题都算新增）。`);
   if (stale.length > 0) {
