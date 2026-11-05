@@ -407,7 +407,7 @@ psql -X -q -v ON_ERROR_STOP=0 -f deploy/postgres-cvm/evidence/probe-runtime-gran
 
 ## 10. `recognition_*`（迁移 `0025`）草案与取舍
 
-本分支基线 `4122976` **没有** `0025`（它随未合入的 `#333`）；`20-login-roles.sql` 段 H
+本分支基线 `4122976` **没有** `0025`（它随未合入的 `#333`）（2026-11-05 复核：#333 已合入 `341ad8c6`，`0025_recognitions_persistence.sql` 在树）；`20-login-roles.sql` 段 H
 **不引用**这三张表，`90-assert` 只用 `to_regclass` 软守卫（不存在时零输出）：
 
 ```sql

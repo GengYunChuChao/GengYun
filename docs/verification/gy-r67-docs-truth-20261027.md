@@ -4,7 +4,7 @@
 
 - 基线：`b1d02c21`（detached），分支 `feat/gy-r67-docs-truth`（本片新建），父提交即 `b1d02c21`。
 - 改动范围：只改文档。`docs/architecture/ai-ops-spec-status.md` 14 行、`docs/architecture/admin-console-capability-map.md` 1 行（纯追加）、新增本页。
-- 未碰：`docs/architecture/contract-status.json`（受保护文档）、`tools/**`、`services/**`、`apps/**`、`tests/**`、`.github/**`、`packages/**`、`E:\agri-run\**`；`docs/architecture/ai-ops-spec-status.md` 的 E31（:101）／E40（:110）／N02（:133）三行与 :29 一字未动（在飞 PR #659 的改动面）。
+- 未碰：`docs/architecture/contract-status.json`（受保护文档）、`tools/**`、`services/**`、`apps/**`、`tests/**`、`.github/**`、`packages/**`、`E:\agri-run\**`；`docs/architecture/ai-ops-spec-status.md` 的 E31（:101）／E40（:110）／N02（:133）三行与 :29 一字未动（在飞 PR #659 的改动面）（2026-11-05 复核：#659 已合入 `be8c7880`）。
 - 行数不变：`docs/architecture/ai-ops-spec-status.md` 改动前后均 322 行、`docs/architecture/admin-console-capability-map.md` 均 233 行（全部为单行原地替换／行尾追加，不动段落结构）；两份文件均 UTF-8 无 BOM + LF（`[System.IO.File]::ReadAllBytes` 查 `EF BB BF` 为 False、`ReadAllText` 匹配 `\r\n` 为 False）。
 
 ## 0 三条门禁的末行读数
