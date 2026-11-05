@@ -117,9 +117,9 @@ MR-01／MR-02／MR-03 属于**危险用法与用量**两类，它们的否定护
 
 1. **"没跑"不等于"通过"**：输入闸门不通过时，`counts.evaluated = 0`、`counts.not_evaluated = 规则数`，
    `hard_rule_passed` 保持 false。
-2. **未覆盖该 target type 不等于通过**：`COVERED_TARGET_TYPES` 之外的 8 个契约类型一律 `quarantined`
-   + `TARGET_TYPE_NOT_COVERED`。这条正是"必要条件未知却放行"的反面：本层**声明自己覆盖什么**，
-   覆盖之外一律不给结论。
+2. **未覆盖该 target type 不等于通过**：契约 `TargetRef.type` 共 17 类，本层 `COVERED_TARGET_TYPES`
+   覆盖 8 类，其余 9 类一律 `quarantined` + `TARGET_TYPE_NOT_COVERED`。这条正是"必要条件未知却放行"
+   的反面：本层**声明自己覆盖什么**，覆盖之外一律不给结论。
 3. **带媒体的目标不得由规则层放行**：图片审核属模型层，规则层只看文本；
    输入里的 `media` 非空即 `quarantined` + `MEDIA_NOT_EVALUATED_BY_RULE_LAYER`。
    同理，输入必须**显式**声明 `media`（省略 ≠ 没有媒体）："不确定有没有图片"也不放行。
