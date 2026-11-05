@@ -112,18 +112,7 @@
       "docLine": 135,
       "kind": "file-header",
       "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-44 行（「/**…」），块后第一条非空行是第 45 行的「import type { PoolClient } from 'pg';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
-      "path": "services/api/src/routes/admin-auth.ts",
-      "reason": "COMMENT_ANCHOR",
-      "owner": "api-server",
-      "reference": "admin-auth.ts:12-13",
-      "doc": "docs/architecture/contract-implementation-status.md",
-      "docLine": 36,
-      "kind": "file-header",
-      "note": "【文件头自述块】文档引的是整份文件开头的自述第 1-14 行（「/**…」），块后第一条非空行是第 15 行的「import type { FastifyInstance } from 'fastify';」，是 import 不是声明行——文件级自述没有单个声明行可指，硬改锚会把自述换成不相干的符号。"
-    },
-    {
+    },    {
       "path": "services/api/src/privacy/user-data-deletion.ts",
       "reason": "COMMENT_ANCHOR",
       "owner": "api-server",
