@@ -81,7 +81,7 @@ function postingPreHandlers(
 | 语义实现（纯函数，可注入） | `packages/privacy/guard.mjs:116,124` | 缺授权 ⇒ `PrivacyError('CONSENT_REQUIRED', '缺少用途授权：<purpose>')`；资料型多用途逐个补齐 |
 | PG 实现（生产） | `services/api/src/privacy/consent-pg.ts:138-146` | 单事务读 `privacy_epochs ⨝ consent_records`（`:140-141`），再交 `referenceGuard(...).requireConsent(requirement)`（`:144`）——**与 stub 路径同一份语义代码** |
 | API 适配（把 `identity` 版包成 Fastify preHandler） | `services/api/src/privacy/egress.ts:137-155` | 缺 bearer ⇒ `SESSION_REQUIRED`；否则 `service.requireConsent(...)`；`ApiError` 原样透出 |
-| 社区域端口类型 | `services/api/src/routes/community.ts:383` | `CommunityConsentPort`（结构同形，避免在文件头新增 import 行） |
+| 社区域端口类型 | `services/api/src/routes/community.ts:399` | `CommunityConsentPort`（结构同形，避免在文件头新增 import 行） |
 | 装配 | `services/api/src/app.ts:939-943`（原记 `:896-901`）→ `:2332`（原记 `:1967`） | `privacyInjection.consent ?? (pool === null ? undefined : createPostgresConsentGate(...))` |
 
 ---
