@@ -138,7 +138,7 @@
 ## 7. 最小可执行的 3 件事
 
 1. **把 0044 接到应用侧最小一条腿**（订正 2026-10-31／基线 `8da1aeb1`：本项**已于 2026-10-28 完成一半**——`third-party-deletions-pg.ts` 端口、`services/api/src/app.ts:2035` 的读侧装配、回执投影都已落地。**写侧已于 2026-11-03（GY-R73）接上**：`third-party-deletion-dispatch.ts` 是 `subscribeThirdPartyDeletion` 的唯一调用点，由注销链 `executeHandlers()` 在 coordinator 跑完之后调；今天生产既无收件人来源也无第三方凭据，所以实际一条也不写，[证据页](../verification/gy-r73-third-party-deletion-write-20261103.md) 里是逐条读数）：在 `services/api/src/privacy/` 加 `third-party-deletions-pg.ts`（调 `record_third_party_deletion` / `list_third_party_deletions` 两条函数）、在 `services/api/src/app.ts` 装配，并在注销链的第三方分支调用它——单测可以照 `tests/privacy/third-party-deletion-adapter.test.mjs` 的替身写法，真库臂直接复用已有的 `tests/integration/third-party-deletion-pg.mjs` 夹具。**这是把 §4「库层有、运行面没有」这一刀补上的唯一一条。**
-2. **（2026-10-26 已完成，保留原样备查）让 S4 D13 与本页口径对齐**（纯文档）：给 `docs/architecture/s4-data-traceability.md` 的 `:240` 增补 0044 那一层，判定保持「未实现」；同时把 ★G3 撤条、`s4-data-traceability.md:354` 的 `:109` 改成 `:117`，并同步 §6 计数与 §7.2 升档条件表（见 §8）。改动只在 `docs/**`，可按 A 档分层自合并。
+2. **（2026-10-26 已完成，保留原样备查）让 S4 D13 与本页口径对齐**（纯文档）：给 `docs/architecture/s4-data-traceability.md` 的 `:240` 增补 0044 那一层，判定保持「未实现」；同时把 ★G3 撤条、`docs/architecture/s4-data-traceability.md:354` 的 `:109` 改成 `:117`，并同步 §6 计数与 §7.2 升档条件表（见 §8）。改动只在 `docs/**`，可按 A 档分层自合并。
 3. **给恢复演练留一条可复算读数**：不必上生产——在真实 PG 上用 `deploy/postgres-cvm/backup-postgres.sh` 备一次、`deploy/postgres-cvm/restore-drill.sh` 演一次，把两份输出（含 `pg_restore --list` 的清单行数）落到证据页。**这是把 `deploy/postgres-cvm/restore-drill.sh:5` 的「从未真正恢复过任何备份」从承诺变成读数的唯一动作。**
 
 ## 8. 本页推翻的 3 条既有说法（均已于 2026-10-26 在同一分支修正）
