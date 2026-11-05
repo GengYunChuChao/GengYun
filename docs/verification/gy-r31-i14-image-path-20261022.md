@@ -118,7 +118,7 @@ if (!outcome.publishable && !mediaAccepted) {
 
 ### 3.4 错误码选择（为什么不新开 503）
 
-能力缺失时 `services/api/src/community/service.ts:565-571` 把 `IMAGE_MODERATION_UNAVAILABLE` 追加进既有 `details[].reason_codes`，HTTP 仍是 **422 `INPUT_UNCERTAIN`**。理由：
+能力缺失时 `services/api/src/community/service.ts:677-683` 把 `IMAGE_MODERATION_UNAVAILABLE` 追加进既有 `details[].reason_codes`，HTTP 仍是 **422 `INPUT_UNCERTAIN`**。理由：
 
 - 契约闭集：`packages/contracts/openapi.json` 的 `x-error-status-map` 里 422 只有 `CONDITIONS_INCOMPLETE`／`SOURCE_CONFLICT`／`INPUT_UNCERTAIN`，503 只有 `PROVIDER_UNAVAILABLE`／`PROVIDER_OUTCOME_UNKNOWN`。本片**不改 openapi**，可选集合就是这些。
 - 没有调用任何供应商：这不是「供应商挂了/结果未知」，而是「这一类内容此刻没有可求值的图片审核端口」。用 `PROVIDER_UNAVAILABLE` 会把「没接线」和「接线了但不通」混为一谈。
