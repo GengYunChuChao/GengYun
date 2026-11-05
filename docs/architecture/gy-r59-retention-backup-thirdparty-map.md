@@ -29,11 +29,11 @@
 
 | npm script | 入口 | 到期判据 |
 | --- | --- | --- |
-| `purge:online-data`（`package.json:35`） | `tools/purge-expired-online-data.mjs`（`:3` 标题即「在线数据 7 日到期清除」） | `:16` `online_due_at <= cutoff AND state <> 'completed'`；`:28` keyset 分页；`:79` usage 里 `--limit`／`--max-batches`／`--cursor-file` 的缺省约定 |
-| `purge:backup-copies`（`package.json:34`） | `tools/purge-expired-backup-copies.mjs`（`:3` 标题即「备份副本 30 日到期清除」） | `:16` `state <> 'purged' AND retention_until <= cutoff` |
-| `purge:retention`（`package.json:36`） | `tools/purge-retention-expired.mjs` | 读 `RETENTION_POLICY` 按 `retentionDays` 算 cut-off；**默认 dry-run**，`:272` 打印「留 N 天（age_column）」 |
+| `purge:online-data`（`package.json:40`） | `tools/purge-expired-online-data.mjs`（`:3` 标题即「在线数据 7 日到期清除」） | `:16` `online_due_at <= cutoff AND state <> 'completed'`；`:28` keyset 分页；`:79` usage 里 `--limit`／`--max-batches`／`--cursor-file` 的缺省约定 |
+| `purge:backup-copies`（`package.json:38`） | `tools/purge-expired-backup-copies.mjs`（`:3` 标题即「备份副本 30 日到期清除」） | `:16` `state <> 'purged' AND retention_until <= cutoff` |
+| `purge:retention`（`package.json:41`） | `tools/purge-retention-expired.mjs` | 读 `RETENTION_POLICY` 按 `retentionDays` 算 cut-off；**默认 dry-run**，`:272` 打印「留 N 天（age_column）」 |
 
-两个「到期清除」驱动模块都在 `services/api/src/privacy/`：`online-purge-driver.ts`、`backup-purge-driver.ts`、`online-purge-cursor.ts`。
+三个「到期清除」驱动模块都在 `services/api/src/privacy/`：`online-purge-driver.ts`、`backup-purge-driver.ts`、`online-purge-cursor.ts`（第四条 `purge:media-objects` 由 `tools/purge-expired-media.mjs` 直接执行，无 services 侧驱动）。
 
 ### 2.2 调度单元（`deploy/purge-schedule/`，7 个文件，三对齐全）
 
