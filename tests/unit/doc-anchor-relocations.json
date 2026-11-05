@@ -3042,53 +3042,5 @@
   {"doc":"docs/verification/gy-r28-function-surface-parity-20261021.md","line":78,"target":"source_operator.sql","from":16,"to":32,"reason":"GY-R78 A2（services/api/db/roles/source_operator.sql 本提交未改）：本句说 `gengyun_source_executor` 是**属主**，凭据是文件里的 `ALTER FUNCTION … OWNER TO`；旧 :16 逐字是 `  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'gengyun_source_operator') THEN`（operator 的守卫，与属主无关），属主语句在 :32 `ALTER FUNCTION catalog_ops.apply_source_operation(uuid,text,uuid,uuid,integer,text,text,uuid) OWNER TO gengyun_source_executor;` ⇒ 16→32。"},
   {"doc":"docs/verification/gy-r28-function-surface-parity-20261021.md","line":78,"target":"staging_importer.sql","from":17,"fromEnd":18,"to":33,"toEnd":34,"reason":"GY-R78 A2（services/api/db/roles/staging_importer.sql 本提交未改）：同句第二个锚点，指 `gengyun_staging_executor` 的两条属主语句；旧 :17-18 逐字是 `  END IF;` / `END;`（importer 守卫收尾），今天属主在 :33 `ALTER FUNCTION staging_intake.apply_import(uuid,jsonb,uuid) OWNER TO gengyun_staging_executor;`、:34 `ALTER FUNCTION staging_intake.rollback_import(uuid,uuid,uuid,text) OWNER TO gengyun_staging_executor;` ⇒ 17-18→33-34。"},
   {"doc":"docs/verification/gy-r31-retryable-guard-20261022.md","line":92,"target":"services/api/src/admin/ops/service.ts","from":842,"to":1136,"toEnd":1139,"reason":"2026-11-05 复核：本行主语是包装函数 `throwFlagReadFailure`（真身第 1136-1139 行），原 842 行今天是对应 admin accounts 的 JSDoc 注释；前一版误指 `flags-pg.ts:315`（那是判据函数 `flagReadFailure`）"},
-  {"doc":"docs/verification/gy-r31-retryable-guard-20261022.md","line":262,"target":"services/api/src/media/service.ts","from":781,"fromEnd":793,"to":875,"toEnd":878,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:781-793` 是 `cleanupReasonForReject` 的 JSDoc 与函数体（781 行原文「   * 归一化，并把结果截到列宽内。」），与幂等冲突无关；HEAD 里 `claimInProgress`（875 行「  const claimInProgress = (): ApiError =>」）唯一命中在 :875-878，其 { retryable: true } 的抛点在 :905-907／:930-932 ⇒ 改为 875-878。"},
- {
-  "doc": "docs/verification/gy-r70-consent-client-20261030.md",
-  "line": 41,
-  "target": "miniprogram/utils/consent-api.js",
-  "from": 491,
-  "to": 585,
-  "reason": "2026-11-06 重锚：本行引的是撤回适配层那段说明（原文「`if-match` **缺失**时抛出…它的价值是」）。同提交新增接收方选择器使该文件整体下移，`:491` 在 HEAD 上已是另一段注释，逐字搜索原句唯一命中 :585 ⇒ 改为 :585。"
- },
- {
-  "doc": "docs/verification/gy-r70-consent-client-20261030.md",
-  "line": 242,
-  "target": "miniprogram/pages/consent/consent.js",
-  "from": 157,
-  "to": 176,
-  "reason": "2026-11-06 重锚：本行主语是页面生命周期 `onHide`（原文 `onHide: function () {`）。同提交在页面里新增接收方选择逻辑，`:157` 已是别的语句，`onHide` 唯一命中 :176 ⇒ 改为 :176。"
- },
- {
-  "doc": "docs/verification/gy-r70-consent-client-20261030.md",
-  "line": 243,
-  "target": "miniprogram/pages/consent/consent.js",
-  "from": 162,
-  "to": 181,
-  "reason": "2026-11-06 重锚：本行主语是 `onUnload`（原文 `onUnload: function () {`）。同提交页面新增接收方选择逻辑，`onUnload` 唯一命中 :181 ⇒ 改为 :181。"
- },
- {
-  "doc": "docs/verification/gy-r70-consent-client-20261030.md",
-  "line": 49,
-  "target": "miniprogram/utils/consent-api.js",
-  "from": 440,
-  "to": 532,
-  "reason": "2026-11-06 重锚：本格 `:440` 原指 `readPolicy` 那段 `input` 说明注释；同提交新增接收方选择器使文件下移，原句逐字唯一命中 :532 ⇒ 改为 :532。"
- },
- {
-  "doc": "docs/verification/gy-r70-consent-client-20261030.md",
-  "line": 49,
-  "target": "miniprogram/utils/consent-api.js",
-  "from": 491,
-  "to": 585,
-  "reason": "2026-11-06 重锚：本格 `:491` 原指 `if-match` 缺失那段注释；同提交使文件下移，原句逐字唯一命中 :585 ⇒ 改为 :585。"
- },
- {
-  "doc": "docs/verification/gy-r70-consent-client-20261030.md",
-  "line": 49,
-  "target": "miniprogram/utils/consent-api.js",
-  "from": 576,
-  "to": 672,
-  "reason": "2026-11-06 重锚：本格 `:576` 原指 `INVALID_RESPONSE` 文案那句（「服务端响应无法核对：未改变任何状态，请重试。」）；同提交使文件下移，原句逐字命中 :672（:692 是另一处引用同文案，取首个）⇒ 改为 :672。"
- }
+  {"doc":"docs/verification/gy-r31-retryable-guard-20261022.md","line":262,"target":"services/api/src/media/service.ts","from":781,"fromEnd":793,"to":875,"toEnd":878,"reason":"陈旧锚点重锚（目标文件本提交未改）：base 的 `:781-793` 是 `cleanupReasonForReject` 的 JSDoc 与函数体（781 行原文「   * 归一化，并把结果截到列宽内。」），与幂等冲突无关；HEAD 里 `claimInProgress`（875 行「  const claimInProgress = (): ApiError =>」）唯一命中在 :875-878，其 { retryable: true } 的抛点在 :905-907／:930-932 ⇒ 改为 875-878。"}
 ]
