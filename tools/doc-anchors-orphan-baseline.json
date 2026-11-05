@@ -356,10 +356,16 @@
       "accept": 1,
       "orphans": 3490,
       "outsideRed": 117
+    },
+    {
+      "why": "ai-ops-spec-status.md:197 的第二个裸锚点（承继同行 packages/contracts/openapi.json）随其指向的 entity enum 真值由 :11235-11242 改到 :11410-11417（同句 action enum 那条已同时由 :11216-11227 改到 :11391-11402，另有 doc-anchor-relocations 登记）。按派发要求「其余文字一字不动」，不补 path: 前缀，于是孤儿册键（文档|原文|原因，不含行号）成对变动：新增 1 条 :11410-11417、旧键 :11235-11242 陈旧 1 条。这是同一处证据的行号更正，不是放宽判据：册子形状与 --strict 判据一个字没改。",
+      "accept": 1,
+      "orphans": 3490,
+      "outsideRed": 117
     }
   ],
   "orphans": [
-    "docs/architecture/ai-ops-spec-status.md|:11235-11242|ambiguous-block",
+    "docs/architecture/ai-ops-spec-status.md|:11410-11417|ambiguous-block",
     "docs/architecture/ai-ops-spec-status.md|:126|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:1354|no-explicit-in-block",
     "docs/architecture/ai-ops-spec-status.md|:150|ambiguous-block",
