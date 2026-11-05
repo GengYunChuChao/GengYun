@@ -259,4 +259,4 @@ Remove-Item Env:\GY_RETRYABLE_INVENTORY_UPDATE
 
 1. `services/api/src/auth/wechat.ts:109` `exchange` —— 全仓清单里**唯一**剩下的 `none`。它现在的 `true` 有理由（结果未知），但语义靠注释维系、客户端拿不到「这次到底成没成」：建议改成显式的「结果未知」封套（或 `retryable: false` + 用同一 `state` 核对），否则下一个读代码的人只会看到一处裸 `true`。
 2. `retryable` 的**双语义**：`recognitions/branches.ts:98-153`、`miniprogram/utils/identify-api.js:143-188` 用同名 `retryable` 表达「UI 给不给重试入口」，与 `errors.ts` 的错误封套同名不同义。建议改名（如 `canRetry`）—— 否则下一次「统一 retryable」的清扫要么把展示表扫成缺陷，要么把缺陷当成展示表豁免。
-3. 判据只看**catch 通道**：`media/service.ts:781-793` `withKeyClaim` 在普通 `if` 分支里 `{ retryable: true }`（幂等冲突），既不在 catch 内也没有被 catch 调用的 mapper，因此在边界外。建议把判据扩到「所有返回带 `retryable` 的对象字面量」，或在 `errors.ts` 收口（让 `ApiError` 只接受带判据的 verdict 类型），别指望每个调用点都自觉。
+3. 判据只看**catch 通道**：`media/service.ts:875-878` `claimInProgress`（抛点 `:905-907`／`:930-932`） 在普通 `if` 分支里 `{ retryable: true }`（幂等冲突），既不在 catch 内也没有被 catch 调用的 mapper，因此在边界外。建议把判据扩到「所有返回带 `retryable` 的对象字面量」，或在 `errors.ts` 收口（让 `ApiError` 只接受带判据的 verdict 类型），别指望每个调用点都自觉。
