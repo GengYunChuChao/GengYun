@@ -19,6 +19,8 @@
 | 把新加的 step 整段删掉 | — | 守卫 **9 红**（4 条前向 + 反向控制⑨的前提），每条都逐字点名该脚本 |
 | 门禁 | — | `npm run lint` exit 0；两条守卫 24/24；`npm run test:unit` 全量重跑 **exit 0**（`3339/3340 pass`、1 skipped；首跑有 1 条与本片无关的抖动，两次读数都记在 §8.1） |
 | CI 上的运行读数 | — | **未取得**（不 push／不开 PR；见 §7） |
+⏱ **2026-11-05 复核（main `2b59c146`）**：同一脚本今天在 `.github/workflows/real-pg-integration.yml:625-631`（`run:` 在 `:627`，env 仍是 `GY_PG_BIN=/usr/lib/postgresql/17/bin`、`GY_I19_PG_ROOT`、`PGCLIENTENCODING`）。上表右列写的 `:246-251`／step 17 与「step 数 17→18」都是**接线当时**（`ee46eb1` → 本片）的读数；此后 workflow 又加过别的 step，位置与序号都后移了，这里只补当前定位，⛔ 不改写当时的计数。
+
 
 **一句话：这个脚本现在是真的被 CI 执行了**——它不是「登记在册」而已，`real-pg-integration.yml` 的 step 17 会 `node tests/integration/backup-copies-purge-pg.mjs`，并且有守卫钉住「这行不能被悄悄删掉/挪顺序/丢 env」。**但**「在 GitHub runner 上跑绿」这件事本片**没有**读数（没 push），§7 逐条写清哪些是继承来的、哪些是未取得的。
 
