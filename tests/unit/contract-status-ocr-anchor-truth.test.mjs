@@ -478,10 +478,37 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 只有 yml 那条把四位数区间收成 `201`（每处 −4 字节 ×3）⇒ JSON −12 字节、行数不变；
  * md −12 字节、行数不变（284020 / 4460、206603 / 220）。仍是「正常改台账、非回归」，故同步基线；
  * 没有改判定、没有加豁免条目。
+ * 2026-11-05 第二十五次同步（订正台账中等格的 38 处区间边界，只改 lines/路径、不改语义）：
+ * 38 条 A 类缺陷全是「区间在界内、文件存在」的门禁看不见的语义错——起点压在前一行的空行／上一段收尾上，
+ * 或末端停在归属块中间，甚至整条指到别的符号。改的只是 `operations[].evidence[].lines`（community.ts 十条
+ * 路由 201-209…294-301 整体 +1/+1 到 202-210…295-302；createPost 963-1074→1044-1157、editPost
+ * 1084-1211→1167-1294、createComment 1302-1404→1385-1491；grantAdministratorScope 1659-1688→1661-1704、
+ * revokeAdministratorScope 1700-1734→1716-1750；listAuditLogs 182-232→181-302、audit/pg 380-431→397-448；
+ * admin.ts 378-383/405-413/414-423→381-389/408-416/417-427；errors.ts 42-76→61-80、
+ * consent-pagination 24-65→34-68、profile/pagination 24-65→32-85、profile/service 75-106→89-121、
+ * wechat 66-76→66-132、config 361-519→375-393、consents 54-59→54-63、consent-pg 109-120→123-135、
+ * account-deletion 123-168→143-355 与 357-391→357-409、knowledge 209-215→210-216、
+ * conversations 132-136→132-141、store-pg 236-247→237-248、administrators 113-163→110-174、
+ * admin/posts 187-232→187-245、ops/reports 104-126→112-150），外加两处「指错文件/指错符号」：
+ * doc180 删掉 `admin/ops/service.ts:284-284` 那条（`advanceReport` 在该文件 0 命中，同格 `ops/reports.ts:112-150`
+ * 已覆盖 `advanceReportImpl`），doc36 blocker 的裸文件名 `admin-auth.ts:12-13` 补成完整路径
+ * `services/api/src/routes/admin-auth.ts 第 12-13 行`——该句引的是文件头注释块（1-14 行整块都是注释，
+ * 块后没有声明行），补成完整路径后即落进 `--symbol=strict` 的 COMMENT_ANCHOR 判据并被点名；按该判据
+ * 「注释不是代码行」的口径，行号留作散文、不再写成 `path:lines` 机器锚点（改指注释块外的声明行会改掉
+ * 这句话的指代物）。config.ts 与 consent-pg 两处的 symbol 随区间同步改指区间内声明行
+ * （`loadConfig` 声明在 372、落在 375-393 之外；`consentStore` 是 privacyGuard 的属性名），否则锚点会掉出 ±2 容差。
+ * 中文对照表同次用 `verify-contract-status.mjs --write-doc` 从 JSON 重生成 ⇒ md 只有第 36／37／38／41／64／69／81／
+ * 99／106-115／160／161／162／163／169／170／180 行变；被引的 22 个源文件本提交一个字节没改，故按规矩把 38 条位移
+ * 登记进 `tests/unit/doc-anchor-relocations.json`（5 条单端位移走 `kind:"correction"` + symbol，其余两端齐动）。
+ * 增删相抵：删掉一条证据（连同 symbol）、补全路径 +23 字节、两处 symbol 改长 ⇒ 实测 JSON −66 字节；
+ * md 第 36 行补全路径 +23 字节、第 180 行少一个锚点 ⇒ 实测 md −22 字节（283954 / 206581，行数都不变）。
+ * 其后 doc36 那句改成「`services/api/src/routes/admin-auth.ts 第 12-13 行`」（同上，行号不作机器锚点）：
+ * 两个文件各 +8 字节 ⇒ 最终 JSON −58 字节、md −14 字节，行数都不变
+ * （284020→283962 / 4460、206603→206589 / 220）。仍是「正常改台账、非回归」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 284020, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206603, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 283962, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 206589, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
