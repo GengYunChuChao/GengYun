@@ -106,6 +106,7 @@ test('授权中间件：缺身份版本 ⇒ 401 SESSION_REQUIRED（不得静默�
 test('授权中间件：未授权 ⇒ 403 CONSENT_REQUIRED；错用途 ⇒ 403 SCOPE_DENIED', async () => {
   const env = environment();
   const headers = { 'x-synthetic-user': 'u1', 'x-synthetic-auth-epoch': '1' };
+  let denied;
   const app = await build({
     config: env.config,
     guard: env.guard,
@@ -113,15 +114,18 @@ test('授权中间件：未授权 ⇒ 403 CONSENT_REQUIRED；错用途 ⇒ 403 S
     handler: async () => ({ ok: true }),
   });
   try {
-    const denied = await inject(app, headers);
+    denied = await inject(app, headers);
     assert.equal(denied.statusCode, 403);
     assert.equal(denied.json().error.code, 'CONSENT_REQUIRED');
+    assert.equal(denied.json().error.message, '缺少用途授权：external_inference');
+    assert.equal(denied.json().error.retryable, false);
   } finally {
     await app.close();
   }
 
   const env2 = environment();
   await env2.consentStore.grant({ userId: 'u1', purpose: 'public_posting', policyVersion: '1.0.0', recipientIds: [VERIFIED_RECIPIENT.id] });
+  let wrong;
   const app2 = await build({
     config: env2.config,
     guard: env2.guard,
@@ -129,12 +133,18 @@ test('授权中间件：未授权 ⇒ 403 CONSENT_REQUIRED；错用途 ⇒ 403 S
     handler: async () => ({ ok: true }),
   });
   try {
-    const wrong = await inject(app2, headers);
+    wrong = await inject(app2, headers);
     assert.equal(wrong.statusCode, 403);
     assert.equal(wrong.json().error.code, 'SCOPE_DENIED');
+    assert.equal(wrong.json().error.message, '用途 public_posting 与资料类型 voice_question 不匹配（错用途）');
+    assert.equal(wrong.json().error.retryable, false);
   } finally {
     await app2.close();
   }
+
+  // 两条路径同请求同身份、只因授权事实不同而分叉
+  assert.deepEqual(headers, { 'x-synthetic-user': 'u1', 'x-synthetic-auth-epoch': '1' });
+  assert.notEqual(denied.json().error.code, wrong.json().error.code);
 });
 
 test('授权中间件：注销（auth_epoch 前进）⇒ 403 ACCOUNT_INACTIVE；授权齐全 ⇒ 放行到业务处理', async () => {
