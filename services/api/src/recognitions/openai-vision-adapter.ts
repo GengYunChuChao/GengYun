@@ -50,24 +50,6 @@ export const OPENAI_VISION_FROZEN_PROFILE = Object.freeze({
   maxTokens: 512,
 } as const);
 
-/**
- * 闭集物种 id 的**骨架默认值**：逐条抄自小程序随包目录
- * `miniprogram/data/species.js`（`catalog_version: gy-i03-species-2026.10`）。
- *
- * ⛔ 这不是产品的正确来源：生产必须改成「读已发布的目录」（客户端目录与模型闭集要同源），
- * 否则模型答得出、客户端认不出（`#1003` 的原始事故形态）。放在这里只为让骨架可测、可评审。
- */
-export const OPENAI_VISION_SKELETON_SPECIES_IDS = [
-  'species_barnyardgrass',
-  'species_foxtail',
-  'species_nettle_group',
-  'species_crabgrass',
-  'species_goosegrass',
-  'species_shortawn_foxtail',
-  'species_lambsquarters',
-  'species_alligatorweed',
-] as const;
-
 /** 本剖面对候选分数的写入字段名（契约字段由 `decideOutcome` 校验，这里只填）。 */
 const CANDIDATE_KEY_SPECIES = 'species_id';
 const CANDIDATE_KEY_SCORE = 'model_score';

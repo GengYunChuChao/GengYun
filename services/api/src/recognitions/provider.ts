@@ -18,8 +18,25 @@ import { createHash } from 'node:crypto';
 import type { ExecutionMode } from '../contract.ts';
 import { FAILURE_BRANCHES, type FailureBranch } from './branches.ts';
 import { createUnwiredRecognitionImageSource, createLiveRecognitionProviderFromCredentials } from './live-adapter.ts';
-import { OPENAI_VISION_PROTOCOL, OPENAI_VISION_SKELETON_SPECIES_IDS, createOpenAiVisionRecognitionProvider } from './openai-vision-adapter.ts';
+import { OPENAI_VISION_PROTOCOL, createOpenAiVisionRecognitionProvider } from './openai-vision-adapter.ts';
 import type { RealRecognitionPorts, RecognitionImageSource } from './live-ports.ts';
+import { loadCatalog } from '../../../../packages/reference/catalog.mjs';
+
+/**
+ * `openai-vision-v1` 的闭集来源：**已发布的物种目录**（`packages/knowledge/catalog/species.json`
+ * 经 `loadCatalog()` 同步读出），与小程序随包目录同源（`tools/knowledge/build_miniprogram_data.mjs`）。
+ *
+ * ⛔ 不在代码里抄一份 id：抄一份会在目录换代时静默错位（`#1003` 的原始事故形态）。
+ * 目录读不到 / 空集 ⇒ 抛错，由调用处 fail-closed（⛔ 不回退任何内置清单）。
+ */
+function openAiVisionSpeciesIds(): readonly string[] {
+  const catalog = loadCatalog() as { species?: readonly { id?: unknown }[] };
+  const ids = (catalog.species ?? [])
+    .map((row) => (typeof row.id === 'string' ? row.id.trim() : ''))
+    .filter((id) => id !== '');
+  if (ids.length === 0) throw new Error('物种目录为空：openai-vision-v1 的闭集无法建立（fail-closed）');
+  return ids;
+}
 
 /** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
 export const PROVIDER_FAILURE_CODES = [
@@ -217,7 +234,7 @@ export function createRecognitionProvider(input: {
           endpoint: endpoint ?? '',
           apiKey: apiKey ?? '',
           model: typeof input.model === 'string' ? input.model : '',
-          speciesIds: OPENAI_VISION_SKELETON_SPECIES_IDS,
+          speciesIds: openAiVisionSpeciesIds(),
           imageSource: input.imageSource ?? createUnwiredRecognitionImageSource('真实对象存储未接线：取不到待识别的私有照片字节'),
           ...(input.liveGate === undefined ? {} : { liveGate: input.liveGate }),
           ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
