@@ -4,7 +4,8 @@
  *
  * 干什么：把失败回归矩阵的**权限面用例**（C1–C4 / C10 / C11，共 180 条）跑在
  * **一次性真实 PostgreSQL 17 集群**上，把矩阵 world 的内存 store 换成真 PG store，
- * 逐条记录 `stub 期望`（cases.mjs 里的 `expect`）与 `真 PG 实际` 的差异。
+ * 逐条记录期望与 `真 PG 实际` 的差异：期望缺省取 `cases.mjs` 的 `expect`，写了 `realExpect`
+ * 的用例（R83 起 C3-19/20/21、C4-15/18）改用 real 侧那份，断言同理走 `realCheck ?? check`。
  *
  * 为什么需要这一臂：`run.mjs` 固定 `execution_mode=stub`，内存 store 与 PG store 的行为差异
  * 一直没有实测读数（README「未取得」一节里明确记着「真实 PG 下的同一矩阵」未验）。这一臂
@@ -776,31 +777,38 @@ function codeOf(result) {
  * 否则读数只是状态码级，不能当证据。
  *
  * 三段判据分开记，`different` 才能归因：
- *   - `problems`       status / code / `meta.execution_mode`（stub 期望 vs 真 PG 实际）
+ *   - `problems`       status / code / `meta.execution_mode`（期望 vs 真 PG 实际；期望取 `realExpect ?? expect`）
  *   - `checkProblems`  用例自带的 `check`（调用方式与 `run.mjs` 一致：`c.concurrent === undefined` 传单条结果）
  *   - `shapeProblems`  同形对照组（**后置** pass，见 `shapePostPass`：对照组可能排在本条之后）
+ *
+ * **按执行模式分叉**（R83）：`realExpect` / `realCheck` 是这条用例在**真库臂**下的期望与断言；
+ * 缺省时逐字回退到 `expect` / `check` ⇒ 没写 real 侧的用例，判定与改动前**逐字一致**。stub 臂
+ * （`run.mjs`）不认这两个字段、只读 `expect` / `check`，所以同一份 `cases.mjs` 两条臂的期望
+ * 各自为真（⛔ 不是把断言放宽成「两臂都过」的并集）。
  */
 function verdictFor(c, result, ctx) {
-  const exp = c.expect ?? {};
+  const exp = (c.realExpect ?? c.expect) ?? {};
+  const side = c.realExpect === undefined ? 'stub期望' : 'real期望';
   const actualCode = codeOf(result);
   const problems = [];
   const checkProblems = [];
   if (exp.status !== undefined && result.status !== exp.status) {
-    problems.push(`status stub期望 ${exp.status} 实际 ${result.status}`);
+    problems.push(`status ${side} ${exp.status} 实际 ${result.status}`);
   }
   if (exp.code !== undefined && actualCode !== exp.code) {
-    problems.push(`code stub期望 ${exp.code} 实际 ${actualCode ?? '-'}`);
+    problems.push(`code ${side} ${exp.code} 实际 ${actualCode ?? '-'}`);
   }
   const metaMode = result.body?.meta?.execution_mode;
   if (metaMode !== 'real') {
     problems.push(`meta.execution_mode 期望 real 实际 ${JSON.stringify(metaMode ?? null)}`);
   }
+  const check = c.realCheck ?? c.check;
   let checkRan = false;
-  if (typeof c.check === 'function') {
+  if (typeof check === 'function') {
     checkRan = true;
     let extra;
     try {
-      extra = c.concurrent === undefined ? c.check(result, ctx) : c.check(ctx.results, ctx);
+      extra = c.concurrent === undefined ? check(result, ctx) : check(ctx.results, ctx);
     } catch (error) {
       // 断言自己抛错（多因夹具哨兵被读）⇒ 是真问题，不静默当通过。
       checkProblems.push(`check 抛错：${error?.message ?? error}`);
@@ -1220,6 +1228,11 @@ async function main() {
         method: c.method,
         path: typeof c.path === 'function' ? '<fn>' : c.path,
         stubExpect: { status: c.expect?.status ?? null, code: c.expect?.code ?? null },
+        // 只有真库臂分叉了期望的用例才非 null（判据见 `verdictFor` 的 `realExpect ?? expect`）。
+        realExpect:
+          c.realExpect === undefined
+            ? null
+            : { status: c.realExpect.status ?? null, code: c.realExpect.code ?? null },
         actual: null,
         verdict: 'not-runnable',
         reason: null,
@@ -1229,7 +1242,7 @@ async function main() {
         // 该条**携带**什么断言、有没有真跑：`none` = 不带；`not-reached` = 带了但本条没跑到；
         // `ran` / `compared` = 真跑过（reading 才算数）。
         assertions: {
-          check: typeof c.check === 'function' ? 'not-reached' : 'none',
+          check: typeof (c.realCheck ?? c.check) === 'function' ? 'not-reached' : 'none',
           shape: c.sameShapeAs !== undefined ? 'not-reached' : 'none',
         },
         shape: null,
@@ -1358,7 +1371,7 @@ async function main() {
 
     console.log(`\nGY-I22 失败矩阵 · 真实 PostgreSQL 17 臂 · 基线 ${commit.slice(0, 12)}`);
     console.log(`时间 ${new Date().toISOString()} · node ${process.version} · PostgreSQL ${serverVersion}`);
-    console.log(`权限面 ${selected.length} 条（C1–C4/C10/C11）· 逐条记录 stub 期望 vs 真 PG 实际\n`);
+    console.log(`权限面 ${selected.length} 条（C1–C4/C10/C11）· 逐条记录期望 vs 真 PG 实际（realExpect 分叉的用例两侧并排）\n`);
 
     let lastFamily = null;
     for (const row of rows) {
@@ -1370,7 +1383,11 @@ async function main() {
         ? `${row.actual.status} ${row.actual.code ?? '-'}`
         : '（未跑）';
       const tag = row.verdict === 'same' ? 'SAME' : row.verdict === 'different' ? 'DIFF' : 'NRUN';
-      console.log(`  ${tag} ${row.id.padEnd(6)} ${row.method.padEnd(6)} ${row.path} → 真PG ${actual} · stub期望 ${row.stubExpect.status ?? '-'} ${row.stubExpect.code ?? '-'} · ${row.title}`);
+      // 分叉了 real 侧期望的用例把两侧并排打印：读的人不该以为判定用的是 stub 的 503。
+      const expLabel = row.realExpect
+        ? `stub期望 ${row.stubExpect.status ?? '-'} ${row.stubExpect.code ?? '-'} · real期望 ${row.realExpect.status ?? '-'} ${row.realExpect.code ?? '-'}`
+        : `stub期望 ${row.stubExpect.status ?? '-'} ${row.stubExpect.code ?? '-'}`;
+      console.log(`  ${tag} ${row.id.padEnd(6)} ${row.method.padEnd(6)} ${row.path} → 真PG ${actual} · ${expLabel} · ${row.title}`);
       if (row.verdict === 'different') {
         for (const problem of row.problems) console.log(`       ✗ ${problem}`);
         for (const problem of row.checkProblems) console.log(`       ✗ [check] ${problem}`);
