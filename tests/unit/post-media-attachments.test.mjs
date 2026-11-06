@@ -3,7 +3,8 @@
 // 为什么需要本文件：`real` 模式下「每帖 ≤3 张图」过去只能靠「同一 owner 名下存活记录数」近似，
 // 那是**生命周期累计**口径（`services/api/src/media/service.ts:835-838` 明文禁止：累计数会让用户
 // 传满 3 张后永久锁死，且「先数后写」之间有 TOCTOU）。本片把上限搬到**结构约束**：发帖事务里按
-// `media_ids` 的数组顺序 `INSERT … ordinal = row_number()`，第 4 张撞 `CHECK (ordinal BETWEEN 1 AND 3)`。
+// `media_ids` 的数组顺序 `INSERT … ordinal = row_number()`；第 4 张先撞 `0022` 的
+// `community_posts_media_ids_max`（数组长度 ≤3），绕过数组列直插挂载行时才撞 `CHECK (ordinal BETWEEN 1 AND 3)`。
 // 于是「认领」这件事本身必须先被钉住，否则集成测试绿了也只说明跑通过一次。
 //
 // 本文件钉四件事（都不需要真 PG）：
@@ -19,7 +20,9 @@
 //
 // 负控制（改坏任一处，本文件必须失败）：
 //   - 把认领改回「先查 count 再写」⇒ 用例 1 的语句序列多出一条 SELECT；
-//   - 把空数组也照发一条认领语句 ⇒ 用例 1 断言 `business.length === 2` 失败（既有契约测试同理判红）；
+//   - 去掉认领前的 `pg_advisory_xact_lock` ⇒ 用例 1 的语句序列少一条（集成并发探针同时会红：
+//     同一张图能同时挂在两个存活帖上，PK/UNIQUE 都不跨帖）；
+//   - 把空数组也照发一条认领语句 ⇒ 用例 1 断言 `business.length === 3` 失败（既有契约测试同理判红）；
 //   - 把 23514／23505 映射成 503 或新错误码 ⇒ 用例 2／3 失败；
 //   - 把「挂不上」改成静默跳过 ⇒ 用例 4 失败；
 //   - 让 `unwired` 计数器改口返回 0（放行）⇒ 用例 5 失败；
@@ -132,24 +135,38 @@ function syntheticS3() {
 // 1. 认领映射：按 media_ids 顺序，ordinal 从 1 开始
 // ---------------------------------------------------------------------------
 test('insertPost：media_ids 按数组顺序认领，ordinal 由 row_number() 从 1 起（uuid 只走绑定参数）', async () => {
-  const pool = fakePool([[{ id: POST_ID }], [{ declared: '3', claimed: '3' }]]);
+  const pool = fakePool([[{ id: POST_ID }], [], [{ declared: '3', claimed: '3' }]]);
   const store = createPostgresCommunityStore({ pool });
   const mediaIds = [MEDIA_C, MEDIA_A, MEDIA_B];
 
   assert.equal(await store.insertPost(postRecord({ media_ids: mediaIds }), null), true);
 
   const business = pool.business();
-  assert.equal(business.length, 2, '无图之外只允许「INSERT 帖子 + 认领」两条业务语句（不许多查一次计数）');
+  assert.equal(business.length, 3, '无图之外只允许「INSERT 帖子 + 加锁 + 认领」三条业务语句（不许多查一次计数）');
   assert.ok(business[0].startsWith('INSERT INTO community_posts'), business[0].slice(0, 60));
-  assert.ok(business[1].startsWith('WITH input AS'), business[1].slice(0, 60));
+  assert.ok(business[1].startsWith('WITH ordered AS MATERIALIZED'), business[1].slice(0, 60));
+  assert.ok(business[2].startsWith('WITH input AS'), business[2].slice(0, 60));
 
-  const claim = business[1];
+  // 加锁必须在认领**之前**、且按 media_id 升序逐把取（否则两笔事务可能各判「没人挂」后各插一行）。
+  const lock = business[1];
+  assert.match(lock, /pg_advisory_xact_lock\(hashtext\(ordered\.media_id\)\)/, '跨帖互斥只能靠 advisory lock');
+  assert.match(lock, /ORDER BY 1/, '必须按 media_id 定序加锁，避免两笔事务反向互等');
+  assert.match(lock, /DISTINCT/, '同一帖里重复的 media 不该取第二把锁');
+  const lockCall = pool.businessCalls()[1];
+  assert.deepEqual(lockCall.values, [mediaIds], '加锁语句同样只收绑定参数（数组原序交给 ORDER BY 定序）');
+
+  const claim = business[2];
   assert.match(claim, /unnest\(\$2::text\[\]\) WITH ORDINALITY/, '顺序只能来自数组序位，不能靠 id 排序');
   assert.match(claim, /row_number\(\) OVER \(ORDER BY t\.ord\)::smallint AS ordinal/, 'ordinal 必须是 1..n 的稠密序号');
   assert.match(claim, /INSERT INTO post_media_attachments \(post_id, media_id, ordinal\)/);
   assert.match(claim, /RETURNING ordinal/);
+  assert.match(
+    claim,
+    /SELECT coalesce\(array_length\(\$2::text\[\], 1\), 0\) AS declared/,
+    'declared 必须数**传入**的数组长度，不能数正则过滤后的 input（否则非法 uuid 会被静默少挂）',
+  );
 
-  const claimCall = pool.businessCalls()[1];
+  const claimCall = pool.businessCalls()[2];
   assert.deepEqual(claimCall.values, [POST_ID, mediaIds, AUTHOR], '绑定参数必须是 (postId, mediaIds 原序, ownerId)');
   assert.equal(claimCall.values[1][0], MEDIA_C, '数组顺序必须原样传给 unnest（不许排序/去重）');
   for (const id of mediaIds) {
@@ -174,7 +191,7 @@ test('第 4 张：CHECK(ordinal BETWEEN 1 AND 3) 违反（23514）⇒ 400 INVALI
     new Error('new row for relation "post_media_attachments" violates check constraint "post_media_attachments_ordinal_range"'),
     { code: '23514' },
   );
-  const pool = fakePool([[{ id: POST_ID }], violation]);
+  const pool = fakePool([[{ id: POST_ID }], [], violation]);
   const store = createPostgresCommunityStore({ pool });
 
   await assert.rejects(
@@ -194,16 +211,35 @@ test('第 4 张：CHECK(ordinal BETWEEN 1 AND 3) 违反（23514）⇒ 400 INVALI
   assert.equal(statements.at(-1), 'ROLLBACK', `最后一条必须是 ROLLBACK，实际：${statements.at(-1)}`);
 });
 
-test('第 4 张：迁移 0056 的结构约束原文必须是「ordinal 1..3」+「每帖序号唯一」', () => {
+test('第 4 张：迁移 0056 的结构约束原文必须是「ordinal 1..3」+「每帖序号唯一」（逐行、跳过注释）', () => {
   const migration = readFileSync(
     new URL('../../services/api/db/migrations/0056_post_media_attachments.sql', import.meta.url),
     'utf8',
   );
-  assert.match(migration, /CHECK \(ordinal BETWEEN 1 AND 3\)/, '「每帖 ≤3」的判定权在数据库，不在 JS');
-  assert.match(migration, /UNIQUE \(post_id, ordinal\)/, '序号唯一 ⇒ 第 4 张无处安放');
-  assert.match(migration, /PRIMARY KEY \(post_id, media_id\)/, '同一张图不许在同一帖出现两次');
-  assert.equal(/REFERENCES\s+public\.media/i.test(migration), false, '⛔ 不给 media(id) 加外键：media_ids 是引用串');
-  assert.equal(/REFERENCES\s+public\.community_posts/i.test(migration), false, '⛔ post 侧也不加外键');
+  // ⛔ 不能只对**全文** `assert.match`：0056 的头注释里就写着这两串字，把 DDL 那行注释掉也能绿
+  // （PR #1037 审查 P1 实测：注释掉 UNIQUE、CHECK 放宽成 4，单测 13/13 + 集成 8/8 全绿）。
+  // 所以先逐行剥掉 `--` 注释，再要求「约束名 + 定义」出现在**非注释行**上；行为面另由
+  // `tests/integration/post-media-attachments-pg.mjs` 的直插探针钉（23514／23505 的真实报错）。
+  const ddl = migration
+    .split('\n')
+    .map((line) => line.replace(/--.*$/, '').trim())
+    .filter((line) => line.length > 0)
+    .join('\n');
+
+  assert.ok(
+    /CONSTRAINT\s+post_media_attachments_ordinal_range\s+CHECK\s*\(\s*ordinal\s+BETWEEN\s+1\s+AND\s+3\s*\)/i.test(ddl),
+    '「每帖 ≤3」的判定权在数据库，不在 JS：CHECK (ordinal BETWEEN 1 AND 3) 必须写在**非注释行**上',
+  );
+  assert.ok(
+    /CONSTRAINT\s+post_media_attachments_post_ordinal_key\s+UNIQUE\s*\(\s*post_id\s*,\s*ordinal\s*\)/i.test(ddl),
+    '序号唯一 ⇒ 同一帖的两个 ordinal=1 只能活一个（必须写在**非注释行**上）',
+  );
+  assert.ok(
+    /CONSTRAINT\s+post_media_attachments_pkey\s+PRIMARY\s+KEY\s*\(\s*post_id\s*,\s*media_id\s*\)/i.test(ddl),
+    '同一张图不许在同一帖出现两次（必须写在**非注释行**上）',
+  );
+  assert.equal(/REFERENCES\s+public\.media/i.test(ddl), false, '⛔ 不给 media(id) 加外键：media_ids 是引用串');
+  assert.equal(/REFERENCES\s+public\.community_posts/i.test(ddl), false, '⛔ post 侧也不加外键');
 });
 
 // ---------------------------------------------------------------------------
@@ -214,7 +250,7 @@ test('同一张图在同一帖重复（23505）⇒ 400 post_image_limit（不是
     new Error('duplicate key value violates unique constraint "post_media_attachments_pkey"'),
     { code: '23505' },
   );
-  const pool = fakePool([[{ id: POST_ID }], duplicate]);
+  const pool = fakePool([[{ id: POST_ID }], [], duplicate]);
   const store = createPostgresCommunityStore({ pool });
 
   await assert.rejects(
@@ -228,7 +264,7 @@ test('同一张图在同一帖重复（23505）⇒ 400 post_image_limit（不是
 });
 
 test('挂不上（不存在/非本人/已挂别帖）⇒ 整笔失败 media_not_attachable，不许静默少挂一张', async () => {
-  const pool = fakePool([[{ id: POST_ID }], [{ declared: '2', claimed: '1' }]]);
+  const pool = fakePool([[{ id: POST_ID }], [], [{ declared: '2', claimed: '1' }]]);
   const store = createPostgresCommunityStore({ pool });
 
   await assert.rejects(
@@ -245,8 +281,8 @@ test('挂不上（不存在/非本人/已挂别帖）⇒ 整笔失败 media_not_
 // ---------------------------------------------------------------------------
 // 4. 改稿：只有 media_ids 真的变了才「先删旧序号 → 再认领」
 // ---------------------------------------------------------------------------
-test('commitPost：media_ids 变了 ⇒ UPDATE → DELETE 旧序号 → 重认领（先删后认领，避免 UNIQUE(post_id, ordinal) 假冲突）', async () => {
-  const pool = fakePool([[postRow({ media_ids: [MEDIA_A] })], [], [], [{ declared: '1', claimed: '1' }]]);
+test('commitPost：media_ids 变了 ⇒ UPDATE → DELETE 旧序号 → 加锁 → 重认领（先删后认领，避免 UNIQUE(post_id, ordinal) 假冲突）', async () => {
+  const pool = fakePool([[postRow({ media_ids: [MEDIA_A] })], [], [], [], [{ declared: '1', claimed: '1' }]]);
   const store = createPostgresCommunityStore({ pool });
 
   const result = await store.commitPostIfCurrent(
@@ -258,11 +294,12 @@ test('commitPost：media_ids 变了 ⇒ UPDATE → DELETE 旧序号 → 重认�
   assert.equal(result.ok, true, JSON.stringify(result));
 
   const business = pool.business();
-  assert.equal(business.length, 4, `语句序列必须是 SELECT → UPDATE → DELETE → 认领，实际：${JSON.stringify(business.map((s) => s.slice(0, 30)))}`);
+  assert.equal(business.length, 5, `语句序列必须是 SELECT → UPDATE → DELETE → 加锁 → 认领，实际：${JSON.stringify(business.map((s) => s.slice(0, 30)))}`);
   assert.ok(business[1].startsWith('UPDATE community_posts'), business[1].slice(0, 40));
   assert.ok(business[2].startsWith('DELETE FROM post_media_attachments WHERE post_id = $1::uuid'), business[2]);
-  assert.ok(business[3].startsWith('WITH input AS'), business[3].slice(0, 40));
-  assert.deepEqual(pool.businessCalls()[3].values, [POST_ID, [MEDIA_B], AUTHOR]);
+  assert.ok(business[3].startsWith('WITH ordered AS MATERIALIZED'), business[3].slice(0, 40));
+  assert.ok(business[4].startsWith('WITH input AS'), business[4].slice(0, 40));
+  assert.deepEqual(pool.businessCalls()[4].values, [POST_ID, [MEDIA_B], AUTHOR]);
 });
 
 test('commitPost：media_ids 没变 ⇒ 不发 DELETE、不发认领（CAS 改稿的语句序列不变）', async () => {

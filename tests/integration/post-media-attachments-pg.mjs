@@ -8,11 +8,20 @@
  *
  * 与 `tests/unit/post-media-attachments.test.mjs` 的分工：
  *   - 单元测锁语句形状与错误码映射（23514/23505/少挂 ⇒ 哪一类 400、事务必须整笔 ROLLBACK）；
- *   - 本脚本锁**只有 PG 能证明**的四件事：
+ *   - 本脚本锁**只有 PG 能证明**的七件事：
  *     ① 挂 3 张成功且 ordinal 从 1 起按 media_ids 顺序；第 4 张被拒（`post_image_limit`）且整笔回滚；
  *     ② 删帖（`visibility='deleted'`）后同一 media 可被另一帖挂载（"删帖即释放"）；
  *     ③ 同一 media 不能同时挂在两个**存活**帖子上（认领谓词），同一帖内重复由 PK 裁决；
  *     ④ 跨用户：A 名下的 media 不能挂到 B 的帖子上（认领谓词按 owner 判）。
+ *     ⑤ **直插探针**（PR #1037 审查 P1）：不经 `community_posts.media_ids` 的数组 CHECK，直接
+ *        `INSERT INTO public.post_media_attachments` —— ordinal=4 撞 23514、两个 ordinal=1 撞 23505、
+ *        同一 `(post_id, media_id)` 两次撞 23505 主键。为什么必须有这条：此前只有单元测对迁移**全文**
+ *        做 `assert.match`，而 0056 的头注释里就写着那两串字 ⇒ 注释掉 `UNIQUE (post_id, ordinal)`、
+ *        把 CHECK 放宽成 1..4，单测 13/13 与集成 8/8 仍全绿，真库却能直插 4 行同帖。
+ *     ⑥ 非法 uuid 不许被静默少挂：`insertPost([合法 media, 'not-a-uuid'])` 必须整笔失败
+ *        （`media_not_attachable`），不能「只挂上一张也建帖成功」。
+ *     ⑦ 并发：另一事务先取同一 `media_id` 的 `pg_advisory_xact_lock` 并插行（未提交）时，本实现的
+ *        认领必须**阻塞在锁上**，对方提交后抛 `media_not_attachable` —— 同一张图永远只有一条存活挂载。
  *   另加一条计数口径的实证：挂载后待用池为 0、删帖后回到 3，而 `liveCommunityImageCount`（owner 累计）
  *   始终是 3 —— 这条差就是本 issue 的全部理由。
  *
@@ -263,6 +272,130 @@ async function main() {
     assert.equal(await media.countPendingCommunityImages(userC), 3, '删帖即释放 ⇒ 待用池回到 3');
     assert.equal(await media.liveCommunityImageCount(userC), 3, 'owner 累计口径在删帖后仍是 3（永不衰减）');
     say('计数口径：挂载后待用池 0 / 删帖后 3，而 owner 累计恒为 3 —— 待用池会随挂载与删帖释放');
+
+    // ---- 8. ⑤ 直插探针：绕过 community_posts 的数组 CHECK，结构约束必须自己咬住 ----
+    // `post_id` 没有外键（悬空引用语义），所以这里可以给一个**根本不存在的**帖子 id 直插挂载行 ——
+    // 这才是「数组 CHECK 够不着」的那条路：真实入库路径上第 4 张会先在 `0022` 的
+    // `community_posts_media_ids_max` 上被拒，0056 的约束从来没有机会被检验。
+    const insertAttachment = (postId, mediaId, ordinal) =>
+      owner.query(
+        'INSERT INTO public.post_media_attachments (post_id, media_id, ordinal) VALUES ($1::uuid, $2::uuid, $3::smallint)',
+        [postId, mediaId, ordinal],
+      );
+    const expectPgError = async (run, expected, label) => {
+      let captured = null;
+      try {
+        await run();
+      } catch (error) {
+        captured = error;
+      }
+      assert.notEqual(captured, null, `${label}：必须被数据库拒绝，但插进去了（结构约束没生效）`);
+      assert.equal(captured.code, expected.code, `${label}：SQLSTATE 必须是 ${expected.code}，实际 ${captured.code}`);
+      assert.equal(
+        captured.constraint,
+        expected.constraint,
+        `${label}：必须由约束 ${expected.constraint} 裁决，实际 ${captured.constraint}`,
+      );
+      return captured;
+    };
+
+    const directPost = randomUUID();
+    const directMedia = [
+      await newMedia(userA, 'd1'),
+      await newMedia(userA, 'd2'),
+      await newMedia(userA, 'd3'),
+      await newMedia(userA, 'd4'),
+    ];
+    for (const [index, mediaId] of directMedia.slice(0, 3).entries()) {
+      await insertAttachment(directPost, mediaId, index + 1);
+    }
+    await expectPgError(
+      () => insertAttachment(directPost, directMedia[3], 4),
+      { code: '23514', constraint: 'post_media_attachments_ordinal_range' },
+      '直插第 4 行（ordinal=4）',
+    );
+    say('⑤ 直插探针：同帖 ordinal=4 被 CHECK(post_media_attachments_ordinal_range) 以 23514 拒绝（不经 media_ids 数组 CHECK）');
+
+    const dupOrdinalPost = randomUUID();
+    const dupOrdinalMedia = [await newMedia(userA, 'd5'), await newMedia(userA, 'd6')];
+    await insertAttachment(dupOrdinalPost, dupOrdinalMedia[0], 1);
+    await expectPgError(
+      () => insertAttachment(dupOrdinalPost, dupOrdinalMedia[1], 1),
+      { code: '23505', constraint: 'post_media_attachments_post_ordinal_key' },
+      '直插第二个 ordinal=1',
+    );
+    say('⑤ 直插探针：同一帖两个 ordinal=1 被 UNIQUE(post_media_attachments_post_ordinal_key) 以 23505 拒绝');
+
+    const dupPkPost = randomUUID();
+    const dupPkMedia = await newMedia(userA, 'd7');
+    await insertAttachment(dupPkPost, dupPkMedia, 1);
+    await expectPgError(
+      () => insertAttachment(dupPkPost, dupPkMedia, 2),
+      { code: '23505', constraint: 'post_media_attachments_pkey' },
+      '同一 (post_id, media_id) 插两次',
+    );
+    say('⑤ 直插探针：同一 (post_id, media_id) 插两次被 PRIMARY KEY 以 23505 拒绝');
+    await owner.query('DELETE FROM public.post_media_attachments WHERE post_id = ANY($1::uuid[])', [
+      [directPost, dupOrdinalPost, dupPkPost],
+    ]);
+
+    // ---- 9. ⑥ 非法 uuid 不许被静默少挂（declared 数的是**传入**长度）---------------
+    const badPost = randomUUID();
+    const badMedia = await newMedia(userA, 'bad1');
+    await rejectsWith(
+      () => community.insertPost(postRecord(badPost, userA, [badMedia, 'not-a-uuid']), null),
+      'media_not_attachable',
+      '传入 [合法 media, not-a-uuid]',
+    );
+    assert.equal(await postExists(badPost), 0, '非法 uuid 导致「传入 2 张只挂上 1 张」⇒ 整笔回滚，帖子不得留下');
+    assert.deepEqual(await attached(badPost), [], '回滚后不得残留挂载行');
+    say('⑥ 非法 uuid：declared = array_length($2) 而非正则过滤后的行数 ⇒ 抛 media_not_attachable（⛔ 不静默少挂一张）');
+
+    // ---- 10. ⑦ 并发：同一 media 不能同时挂两个存活帖（advisory lock 定序）----------
+    const lockPost = randomUUID();
+    assert.equal(await community.insertPost(postRecord(lockPost, userA, []), null), true);
+    const lockMedia = await newMedia(userA, 'lock1');
+    const blocker = new pg.Client({ connectionString: url.href });
+    await blocker.connect();
+    let competing = null;
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT pg_advisory_xact_lock(hashtext($1::text))', [lockMedia]);
+      await blocker.query(
+        'INSERT INTO public.post_media_attachments (post_id, media_id, ordinal) VALUES ($1::uuid, $2::uuid, 1)',
+        [lockPost, lockMedia],
+      );
+      competing = community
+        .insertPost(postRecord(randomUUID(), userA, [lockMedia]), null)
+        .then(() => ({ ok: true, error: null }), (error) => ({ ok: false, error }));
+      let waiting = 0;
+      for (let i = 0; i < 60 && waiting === 0; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        waiting = (await owner.query(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock'",
+        )).rows[0].n;
+      }
+      assert.ok(
+        waiting > 0,
+        '第二个认领必须**阻塞在** pg_advisory_xact_lock 上：没有锁时两笔事务的 NOT EXISTS 都判「没人挂」'
+          + '（PK/UNIQUE 都不跨帖），同一张图就会同时挂上两个存活帖',
+      );
+      await blocker.query('COMMIT');
+    } finally {
+      await blocker.end();
+    }
+    const settled = await competing;
+    assert.equal(settled.ok, false, 'A 提交后 B 必须看到「已挂到存活帖」而失败，不许两个存活帖同挂一张图');
+    assert.deepEqual(settled.error.details, [{ field: '/media_ids', code: 'media_not_attachable' }]);
+    const liveAttach = (await owner.query(
+      `SELECT count(*)::int AS n
+         FROM public.post_media_attachments a
+         JOIN public.community_posts p ON p.id = a.post_id
+        WHERE a.media_id = $1::uuid AND p.visibility <> 'deleted'`,
+      [lockMedia],
+    )).rows[0].n;
+    assert.equal(liveAttach, 1, '同一张图只允许一条存活挂载（并发下也一样）');
+    say('⑦ 并发：A 未提交时 B 阻塞在 advisory lock；A 提交后 B 抛 media_not_attachable，存活挂载仍只有 1 条');
 
     console.log(`OK ${passed} 项真库断言全部通过（PostgreSQL ${version}）`);
   } finally {

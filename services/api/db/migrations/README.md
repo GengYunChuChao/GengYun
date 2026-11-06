@@ -60,8 +60,11 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
   created_at timestamptz NOT NULL DEFAULT now())`，三条约束：
   `post_media_attachments_pkey PRIMARY KEY (post_id, media_id)`（同一张图不许在同一帖占两个号位）、
   `post_media_attachments_post_ordinal_key UNIQUE (post_id, ordinal)`（号位不重复）、
-  `post_media_attachments_ordinal_range CHECK (ordinal BETWEEN 1 AND 3)`（**上限就是这条**）。
-  ⇒ 「每帖 ≤3」由唯一键 + CHECK 裁决，不依赖任何计数，也不需要清理器才能解锁（这正是 #1030 的缺口：
+  `post_media_attachments_ordinal_range CHECK (ordinal BETWEEN 1 AND 3)`（另一道结构上限）。
+  ⇒ 「每帖 ≤3」的**真实首拒点**是 `0022` 的 `community_posts_media_ids_max`（数组长度 ≤3，写
+  `community_posts` 那一步就拒）；本表的唯一键 + CHECK 是**第二道结构约束**（绕过数组列直插挂载行时只剩它挡 ——
+  `tests/integration/post-media-attachments-pg.mjs` 的直插探针专门钉这两条约束的**行为**，而不只是迁移文本）。
+  两道都不依赖任何计数，也不需要清理器才能解锁（这正是 #1030 的缺口：
   累计口径会让用户传满 3 张后永久锁死，且「先数后写」有 TOCTOU 超发）。
   **两侧都不加外键**：`media_id` 不加（`0022` 明写 media_ids 是引用串、媒体域才是 uuid 权威；既有集成夹具
   `tests/integration/community-pg.mjs` 的 `postRecord()` 一直用随机 uuid），`post_id` 也不加
@@ -74,6 +77,12 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
   （PG 无列级 DELETE：改稿要先 `DELETE … WHERE post_id = $1` 再重认领），**不授** `UPDATE`。
   配对回滚 `rollback/0056_post_media_attachments.down.sql`：`DROP TABLE IF EXISTS public.post_media_attachments;`
   （丢的是「谁挂了哪张图」的索引性事实，`community_posts.media_ids` 里的引用串仍在 ⇒ 回滚不让帖子丢图）。
+  **运行期并发**：`claimPostMedia` 先按 `media_id` 升序取 `pg_advisory_xact_lock` 再认领（PK/UNIQUE 都**不跨帖**，
+  兜不住「同一张图同时挂在两个存活帖」），本表约束是最后一道闸（23505/23514 ⇒ 既有 400 `post_image_limit`）。
+  **不回填**（迁移不写数据）：既有帖只有 `media_ids`、没有挂载行，读路径仍以 `media_ids` 为准 ⇒ 旧帖显示不变；
+  副作用是待用池口径（`countPendingCommunityImages`）把「迁移前上传、又挂到旧帖的 media」当未挂载，
+  24h 窗口内占位、最多 24h 自愈。待用池有界：同一 owner 同时最多 **3** 张未挂载 `community_image`
+  （上传侧 `post_image_limit` 先挡一道），挂载即释放、删帖也释放 —— 是上界，不是锁死。
 - `0054_favorites_target_lookup.sql`（GY-R73 #17 · **反查索引**：「按被撤回/失效的收藏目标反查收藏者」的索引 ——
   后台撤回资料来源/条目后，要按对象找出「谁收藏过它」，才谈得上给这些人发失效通知）。
   接在 `0053` 之后取号（本清单最新在前，故这一条排在 `0053` 条目**之上**），号位依据「正向最大号 +1」

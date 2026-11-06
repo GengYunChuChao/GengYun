@@ -378,18 +378,17 @@ async function withTransaction<T>(pool: TransactionalPool, run: (sql: SqlRunner)
  * 上传侧 `attachmentLimitFor` 按 owner 计数只能近似（PR #1029 的累计口径已因此被撤回）。
  *
  * 口径（本片确立）：
- * - `ordinal` 由 `WITH ORDINALITY` 按 `media_ids` **数组顺序**从 1 起算；「每帖 ≤3」由
- *   `UNIQUE (post_id, ordinal)` + `CHECK (ordinal BETWEEN 1 AND 3)` **结构性**保证 —— 第 4 张必然 23514，
- *   同一帖重复同一张图必然 23505；两者都映射成既有的 400 `INVALID_REQUEST` +
- *   `details[].code = 'post_image_limit'`（⛔ 不新造 ErrorCode）；
- * - 两侧都**不加外键**：`community_posts.media_ids` 本来允许悬空引用（`0022:84-85`，
- *   `tests/integration/community-pg.mjs:96` 就用随机 uuid 当 media_ids），本表沿用同一语义，
- *   `media` 行不存在时按「引用串」照挂（悬空引用语义与 media 侧一致）；
+ * - `ordinal` 由 `WITH ORDINALITY` 按 `media_ids` **数组顺序**从 1 起算；「每帖 ≤3」的**真实首拒点**是
+ *   `0022` 的 `community_posts_media_ids_max`（数组长度 ≤3，`INSERT/UPDATE community_posts` 那一步就拒），
+ *   0056 的 `UNIQUE (post_id, ordinal)` + `CHECK (ordinal BETWEEN 1 AND 3)` 是**第二道结构约束**（直插
+ *   挂载行、绕过数组列时只剩它挡）；两条都映射成既有 400 + `post_image_limit`（⛔ 不新造 ErrorCode）；
+ * - 并发：**先**按 `media_id` 升序取 `pg_advisory_xact_lock`（`lockClaimedMedia`）**再**认领 —— 否则两笔事务的 `NOT EXISTS` 都判「没人挂」，同一张图能同时挂两个存活帖（PK/UNIQUE 都不跨帖）；
+ * - 两侧都**不加外键**：`community_posts.media_ids` 本来允许悬空引用（`0022:84-85`；`community-pg.mjs:96`
+ *   就用随机 uuid 当 media_ids），本表沿用同一语义，`media` 行不存在时按「引用串」照挂（与 media 侧一致）；
  * - 归属只在 `media` 行**存在时**校验（`m.owner_id = $3`）：行缺失时无从判定，与悬空引用口径一致；
  *   判到不匹配即整笔事务 ROLLBACK（⛔ 不静默丢掉那一张）；
  * - 同一张图**不许同时挂在两个未删除的帖子**上：已挂在别的 `visibility <> 'deleted'` 帖子上的 media
- *   不可再认领 —— **删帖即释放**（行保留，靠 `visibility` 判定，不靠物理删除）。
- *   这也是「待用池」计数口径的来源，见 `services/api/src/media/store-pg.ts` 的 `countPendingCommunityImages`。
+ *   不可再认领 —— **删帖即释放**（行保留，靠 `visibility` 判定；待用池口径见 `countPendingCommunityImages`）。
  */
 async function claimPostMedia(
   sql: SqlRunner,
@@ -401,6 +400,7 @@ async function claimPostMedia(
   // 「insertPost 只有 INSERT + 结论 upsert 两条语句」是硬断言（空数组也照发会判红）。
   if (mediaIds.length === 0) return;
   let result;
+  await lockClaimedMedia(sql, mediaIds);
   try {
     result = await sql.query(
       `WITH input AS (
@@ -427,7 +427,7 @@ async function claimPostMedia(
          SELECT $1::uuid, c.media_id::uuid, c.ordinal FROM claimable c
          RETURNING ordinal
        )
-       SELECT (SELECT count(*) FROM input) AS declared,
+       SELECT coalesce(array_length($2::text[], 1), 0) AS declared,
               (SELECT count(*) FROM inserted) AS claimed`,
       [postId, mediaIds, ownerId],
     );
@@ -1470,4 +1470,34 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       };
     },
   };
+}
+
+/**
+ * 认领前的**并发闸**：按 `media_id` 升序取事务级 advisory lock（只给 `claimPostMedia` 用）。
+ *
+ * 为什么光靠 `NOT EXISTS` 不够：两笔事务同时认领同一张图时，各自的 `NOT EXISTS` 都判「没人挂」，
+ * 随后各自 INSERT —— 两条都成功，同一张图就挂在两个存活帖上了。`post_media_attachments` 的主键是
+ * `(post_id, media_id)`、唯一键是 `(post_id, ordinal)`，**都不跨帖**，谁都兜不住这件事。
+ *
+ * 为什么是一条独立语句而不是塞进认领用的 CTE：CTE 之间没有求值顺序保证（计划器可以把
+ * `claimable` 的 `NOT EXISTS` 放到加锁之前），只有「先发这条语句、再发认领」才保证次序。
+ * 锁的顺序按 `media_id` 升序定死（`MATERIALIZED` 保证先排序、再逐行加锁），
+ * 两笔事务即使认领同一组 media 也不会以相反顺序互等；`hashtext` 只把 uuid 折成 int4 当钥匙，
+ * 碰撞只会让两笔无关的认领多串行一次，不会错挂。锁随事务释放：持有者 COMMIT/ROLLBACK 之后，
+ * 后来者的认领语句在 READ COMMITTED 下取新快照，才能看见它写入的挂载行（「先锁后判」才成立）。
+ *
+ * 追加在文件尾部：`docs/**` 有大量锚点钉着本文件的行号（`AGENTS.md` 的锚点纪律），
+ * 新符号一律只加在最后一行之后，不动既有行。
+ */
+async function lockClaimedMedia(sql: SqlRunner, mediaIds: readonly string[]): Promise<void> {
+  await sql.query(
+    `WITH ordered AS MATERIALIZED (
+       SELECT DISTINCT t.value AS media_id
+         FROM unnest($1::text[]) AS t(value)
+        WHERE t.value ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+        ORDER BY 1
+     )
+     SELECT pg_advisory_xact_lock(hashtext(ordered.media_id)) FROM ordered`,
+    [mediaIds],
+  );
 }

@@ -161,11 +161,11 @@ export interface CommunityContentOutcome {
  * （属社区线 GY-I15），不在本端点。这里显式建模为端口，避免悄悄放宽或悄悄按错口径计数：
  * - `substitute`（stub/preset_demo/测试）：按**同一 owner 名下存活的 `community_image` 记录数**计数 ——
  *   这是**保守替身**（大于等于真实每帖数），并已如实标注；
- * - `unwired`（real 默认）：端口自己无法判定（恒 `null`）⇒ 该用途的 `createUpload` **仍 503
- *   fail-closed**，文案明确到「每帖上限计数未接线」。**不得**改用同一 owner 名下存活记录数顶替：
- *   那是**生命周期累计**口径，而清理器（`expireInitiated`／`cleanupOrphans`）与权威每帖计数
- *   （GY-I15）今天都没有生产调用者 ⇒ 累计数会让用户传满 3 张后**永久锁死**，且「先数后写」之间
- *   存在 TOCTOU（并发可超发）。**缺清理器／权威计数器时不得放行**。
+ * - `unwired`（`real` 且装配层**没给** `persistence.countPendingCommunityImages`）：端口自己无法判定
+ *   （恒 `null`）⇒ 该用途的 `createUpload` **仍 503 fail-closed**，文案明确到「每帖上限计数未接线」；
+ *   `real` + 持久化装配走的是 `postgres`（见 `defaultAttachmentCounter`，口径是待用池），不再是 `unwired`。
+ *   **不得**改用同一 owner 名下存活记录数顶替：那是**生命周期累计**口径（清理器 `expireInitiated`／
+ *   `cleanupOrphans` 与权威每帖计数 GY-I15 都没有生产调用者 ⇒ 传满 3 张后**永久锁死** + TOCTOU）。
  */
 export interface CommunityAttachmentCounter {
   readonly kind: 'substitute' | 'unwired' | 'injected' | 'postgres';
@@ -348,7 +348,7 @@ export function createInjectedAttachmentCounter(
 }
 
 /**
- * 每帖上限计数缺位时 `createUpload` 的 **503 文案**（`real` 默认的 `unwired` 装配走这里）。
+ * 每帖上限计数缺位时 `createUpload` 的 **503 文案**（`unwired` 装配走这里：`real` 且装配层没给持久化计数口）。
  *
  * 必须**具体到「每帖上限计数未接线」**：泛化的「服务不可用」会把「能力未装配」误报成瞬时故障，
  * 既误导调用方重试，也会掩盖真实缺口（见 `.pg17/ruling-i06-d1-substitute-rework-20261017.md`）。
@@ -791,8 +791,8 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   /**
    * 同一 owner 名下存活的 community_image 记录数。
    *
-   * 只作为**已接线**端口的输入（`substitute` 的占位数、`injected` 探针的 `liveCommunityImages`）。
-   * `unwired` **不使用**它——见 `attachmentLimitFor` 的 `null` 分支（累计口径会锁死 + TOCTOU）。
+   * 只作为**已接线**端口的输入（`substitute` 的占位数、`injected` 探针的 `liveCommunityImages`）——
+   * 故 `attachmentLimitFor` 只对这两种 `kind` 调用它：`postgres`（待用池自查）与 `unwired`（恒 `null`）都不读。
    */
   function liveCommunityImageCount(ownerId: string): Promise<number> {
     return store.liveCommunityImageCount(ownerId);
@@ -830,8 +830,8 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
    * `.pg17/ruling-i06-d1-substitute-rework-20261017.md` 方案 A）：
    * - **判定只认端口**：`substitute`／`injected` 由 `countFor` 给出占位数，语义不变
    *   （`substitute` ＝同一 owner 名下存活 `community_image` 记录数，上传侧**保守替身**）。
-   * - 端口返回 `null`（含 `real` 默认的 `unwired`）⇒ `503 PROVIDER_UNAVAILABLE`
-   *   （`retryable: false`），文案明确到「每帖上限计数未接线」，**不猜测、不放宽**。
+   * - 端口返回 `null`（`real` 且装配层没给持久化计数口时的 `unwired`；`real` + 持久化已走 `postgres`）
+   *   ⇒ `503 PROVIDER_UNAVAILABLE`（`retryable: false`），文案明确到「每帖上限计数未接线」，**不猜测、不放宽**。
    * - ⛔ **不得**用同一 owner 名下存活记录数顶替 `unwired`：那是**生命周期累计**口径，而清理器
    *   （`expireInitiated`／`cleanupOrphans`）与权威每帖计数（GY-I15）今天都没有生产调用者
    *   ⇒ 累计数会让用户传满 3 张后**永久锁死**（只能手删），并且「先数后写」之间存在 TOCTOU
@@ -839,7 +839,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
    */
   async function attachmentLimitFor(actor: MediaActor, purpose: unknown): Promise<number> {
     if (purpose !== 'community_image') return 0;
-    const liveCommunityImages = await liveCommunityImageCount(actor.ownerId);
+    const liveCommunityImages = attachmentCounter.kind === 'substitute' || attachmentCounter.kind === 'injected' ? await liveCommunityImageCount(actor.ownerId) : 0;
     const counted = await attachmentCounter.countFor({
       ownerId: actor.ownerId,
       liveCommunityImages,
@@ -1705,9 +1705,9 @@ function defaultAttachmentCounter(
  *
  * 口径（⛔ 不是 owner 生命周期累计）：待用池 = `purpose='community_image'`、状态在
  * `initiated`/`uploaded`/`processing`/`ready`、创建于 24h 内、**且没挂在任何未删除的帖子**上 ——
- * 挂载即释放、删帖即释放、24h 窗口自衰减。并发只是「先数后写」的预检（未取
- * `pg_advisory_xact_lock`）：每帖 ≤3 的权威判定在挂载口的结构约束（`UNIQUE (post_id, ordinal)`
- * + `CHECK (ordinal BETWEEN 1 AND 3)`），不靠这里的计数。
+ * 挂载即释放、删帖即释放、24h 窗口自衰减。这里的计数只是「先数后写」的预检（本身不取
+ * `pg_advisory_xact_lock`）；每帖 ≤3 的权威判定在挂载口 —— `claimPostMedia` 先按 media 取锁，再由
+ * `UNIQUE (post_id, ordinal)` + `CHECK (ordinal BETWEEN 1 AND 3)` 兜底（`0022` 的数组 CHECK 是首拒点）。
  */
 function createPostgresAttachmentCounter(
   countPending: (ownerId: string) => Promise<number | null>,
