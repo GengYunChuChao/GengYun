@@ -43,7 +43,7 @@ CI 注册 + 宿主机日级调度已落地**（读数见[证据页](../verificat
 | `basisRef` | 依据出处，`文件:行` 或 `文件:起-止` | 必填、非空白；**且该行原文必须出现该天数或窗口词**（单测 §1b 实读校验；小时按 /24 折算） |
 | `disposition` | `delete` / `anonymize` / `archive_marker` | 三选一，且与 `targetColumn`/`markerSource`/`revisionColumn` 的搭配必须自洽 |
 | `targetColumn` | 匿名化或标记的列 | `delete` 必须为 `null`；`anonymize`/`archive_marker` 必须给 |
-| `revisionColumn` | 匿名化时要一起推进的版本列 | **`anonymize` 必须声明**且不得等于 `targetColumn`；其它两种必须为 `null`。这道闸在**校验器与 SQL 生成器各查一次**（绕过 `assertRetentionPolicy` 直接拼 SQL 也会被拒），否则会拼出 `SET "detail" = NULL, "detail" = "detail" + 1` 到库才报 42601。口径对齐注销路径 `services/api/src/community/store-pg.ts:1141`（`SET detail = NULL, revision = revision + 1`）：以 `revision` 做 CAS/失效判定的读者必须看得见这次变化 |
+| `revisionColumn` | 匿名化时要一起推进的版本列 | **`anonymize` 必须声明**且不得等于 `targetColumn`；其它两种必须为 `null`。这道闸在**校验器与 SQL 生成器各查一次**（绕过 `assertRetentionPolicy` 直接拼 SQL 也会被拒），否则会拼出 `SET "detail" = NULL, "detail" = "detail" + 1` 到库才报 42601。口径对齐注销路径 `services/api/src/community/store-pg.ts:1279`（`SET detail = NULL, revision = revision + 1`）：以 `revision` 做 CAS/失效判定的读者必须看得见这次变化 |
 | `markerSource` | 标记值来源 | 仅 `archive_marker` 需要；当前只支持 `age_column`（`SET <target> = <ageColumn>`，**不读时钟**，重跑结果稳定） |
 
 ## 3. 排除清单（写进代码里的 `RETENTION_EXCLUSIONS`，不只是本文档）

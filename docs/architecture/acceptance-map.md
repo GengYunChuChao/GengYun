@@ -166,8 +166,8 @@ PR记录实际命令、环境、HEAD和CI链接；监工独立验证后决定是
 | --- | --- | --- |
 | 1 | **有人** | 结论行带 `decided_by`，值取自会话里的管理员 id（⛔ 不接受调用方自报）：`services/api/src/admin/ops/community-posts.ts:292`；列定义见迁移 `services/api/db/migrations/0045_community_post_review_actor.sql:61`——`NULL` 是机器结论，非 `NULL` 才是人工结论 |
 | 2 | **有 scope** | 路由门是 `requireAdmin` 加 `requireScope`：`services/api/src/routes/admin.ts:569-572`；scope 取 `sources:write`（与 `hidePost` 同门，不新增 scope 值）：`services/api/src/admin/ops/service.ts:429`；没有它即 403 `SCOPE_DENIED`：`services/api/src/admin/identity.ts:69-70` |
-| 3 | **有审计** | 结论与帖子行**同一次原子提交**（不是"先发布、再补一条审计"）：`services/api/src/admin/ops/community-posts.ts:351-361` 只调一次 CAS 原语，结论作第 4 个实参交给它；库层在同一事务里写结论行：`services/api/src/community/store-pg.ts:687`，列与覆盖语义见 `services/api/src/community/store-pg.ts:384` 与 `services/api/src/community/store-pg.ts:396` |
-| 4 | **有 CAS** | 写之前逐项比对修订号、可见性、审核态，不符即拒：`services/api/src/community/store-pg.ts:500-506`；可见性推进只是这次 CAS 的**新态**之一：`services/api/src/admin/ops/community-posts.ts:327-328`（仅对 `private` 生效，`hidden`／`deleted` 不翻案） |
+| 3 | **有审计** | 结论与帖子行**同一次原子提交**（不是"先发布、再补一条审计"）：`services/api/src/admin/ops/community-posts.ts:351-361` 只调一次 CAS 原语，结论作第 4 个实参交给它；库层在同一事务里写结论行：`services/api/src/community/store-pg.ts:825`，列与覆盖语义见 `services/api/src/community/store-pg.ts:501` 与 `services/api/src/community/store-pg.ts:513` |
+| 4 | **有 CAS** | 写之前逐项比对修订号、可见性、审核态，不符即拒：`services/api/src/community/store-pg.ts:617-622`；可见性推进只是这次 CAS 的**新态**之一：`services/api/src/admin/ops/community-posts.ts:327-328`（仅对 `private` 生效，`hidden`／`deleted` 不翻案） |
 
 还容易漏一条：**硬规则层照旧拦得住**。人工放行覆盖的是"引擎没给结论／给了隔离"，不是违禁内容——硬规则否决时 422：`services/api/src/admin/ops/community-posts.ts:318-320`。
 
