@@ -71,7 +71,7 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 - 探针实测坐实这条不可达：受理后用**同一张**会话重放同键 → 401 `SESSION_EXPIRED`（探针 1）；改用 `auth_epoch` 递增后**新铸**的会话 → 403 `ACCOUNT_INACTIVE`（探针 2）。两条路径都拿不到第二个 202，自然也谈不上「同一单 + 换发回执」。
   - 边界：这里说的是**串行**情形。`services/api/src/routes/account-deletion.ts:281-311` 的 replay 分支本身不校验账号状态，判定入口只是「同 subject 同幂等键已存在台账」；理论上存在一个并发窗口（第二条请求在首条受理事务提交**前**过了 `:255` 的鉴权、提交**后**才进 `:261` 的 handler）。本页没有复现这个窗口，也不据此下「对任何会话都不可达」的绝对结论；裁定本身不受影响（同账号同单换发回执，既不越权也不放行）。
 - 因此：**不是产品缺陷，不是 503 域门**（真库臂实测 202，受理面是开着的），是「真库臂没播种 + 断言拿哨兵当基准」的夹具口径。不计入 A1「未解决严重安全/权限缺陷」的缺陷计数：这里没有越权、没有跨账号读、失效方向是拒绝而不是放行。
-- 要让读数对齐 stub，改这两处：`tests/failmatrix/cases.mjs` 里 C4-15 那条用例补 real 侧期望（受理后重放只可能 401），并把 `tests/failmatrix/run-real.mjs` 判定器里的 `const exp = c.expect ?? {}` 换成先读 real 侧期望、缺省回落到 `c.expect`（这一行现在是 `realExpect ?? expect`，行号见 §9）；同时把 `tests/failmatrix/run-real.mjs:994-996` 的哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`）。只改前者也能让读数不再红，但那是把「不可达」写成「期望 401」，语义上要把用例改名（「受理后重放不得再签发回执」）。
+- 要让读数对齐 stub，改这两处：`tests/failmatrix/cases.mjs` 里 C4-15 那条用例补 real 侧期望（受理后重放只可能 401），并把 `tests/failmatrix/run-real.mjs` 判定器里的 `const exp = c.expect ?? {}` 换成先读 real 侧期望、缺省回落到 `c.expect`（这一行现在是 `realExpect ?? expect`，行号见 §9）；同时把同一文件里给 `deleter.deletionId` / `.receipt` / `.staleReceipt` 播种 `unavailableSeed(...)` 的那三行（见本节上一条与 §7 第 1 行）换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`）。只改前者也能让读数不再红，但那是把「不可达」写成「期望 401」，语义上要把用例改名（「受理后重放不得再签发回执」）。
 
 ## §5 裁定 C4-18
 
@@ -111,12 +111,25 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 - 没有验证第三方删除、备份清除、7 日／30 日到期这些外部世界事实；本页所有读数都停在本机 PG 17.11 + 进程内 app 的边界内。
 - 没有做任何 commit / push / gh；工作树除新增本页外无改动。
 
-## §9 行号现状（2026-11-07，`test/gy-r83-real-expect`）
+## §9 行号现状（2026-11-07 追加，不改写本页既有读数）
+## §9 行号现状（2026-11-07 追加，不改写本页既有读数）
 
-本页写于 2026-11-06 基线，正文里的行号是当时的读数。按 §11「不回填旧读数」，本轮只对**本提交改动过**的文件负责：
+本页 §1–§8 的读数与行号都是**基线 `7155b9e7`** 上的事实，按 §11 的证据纪律不回填。此后 `#1028` 合入（`main = 1dec1bbb`）把 `tests/failmatrix` 四个文件从 460 行推到 567 行（合计 +215/−20，其中 `run-real.mjs` 单文件 +151/−11），本页引用的 `run-real.mjs` 位置**全部**平移。
 
-- `tests/failmatrix/cases.mjs` 因 C3-19/20/21、C4-15/18 补 real 侧期望而净增 58 行（64 增 6 删）。本页 §2 的 C4-15／C4-18 两行与 §7 第 3 行指向该文件的陈旧定位，已在本次提交里重锚到用例的**定义行**（两种映射、三条登记写在 `tests/unit/doc-anchor-relocations.json`，均为 `kind: "correction"`）。
-- 这几处的旧锚点本来就指错了：按页面基线，C4-15 与 C4-18 在 `tests/failmatrix/cases.mjs` 里的定义行与页面所写的行号不是同一条用例（基线那两行分别是 C4-02 与 C4-15）。本次按用例定义行重锚，旧错不再被机械平移到相邻用例上。
-- 本页对 `tests/failmatrix/run-real.mjs` 的七组引用是**页面基线（`7155b9e7`）**上的坐标：在页面基线上它们都成立（例如页面写的第 711 行确实是 `const exp = c.expect ?? {};`），但到本 PR 的 base（`8130afd1`）时该文件已从 1353 行长到 1493 行、整体漂移（同一句落在第 784 行，本 PR 之后又下移到第 790 行）。本轮**不重锚**这七处：它们的位移与本提交无关，统一重锚留给 docs-only 小 PR，避免把本提交的验证面从「夹具两文件」扩到整页。
-- 本页 §2 里 C4-15／C4-18 的「different」分类是基线读数：本 PR 之前真库臂这两条确实与 stub 期望不一致；本 PR 之后两条都读 `SAME`（真库臂 `same 175 → 180 / different 5 → 0`），分歧已按模式写进用例，不再靠打红维持可见。
-- 判定器口径已随本提交改成分模式：判定器现在读 `realExpect ?? expect` 与 `realCheck ?? check`（stub 侧断言一字未改）。因此 C4-18 的真库期望 401 `SESSION_EXPIRED` 写进了 `realExpect`，本页 §2 对它「期望与冻结契约冲突」的定性已过时——重锚那一行的同一提交把它改成了分模式期望；本页保留原文读数，差异见 §2 的指针。
+| 本页引用 | 基线 `7155b9e7` | `main = 1dec1bbb` |
+| --- | --- | --- |
+| `freePort()`（真库臂取空闲端口） | `tests/failmatrix/run-real.mjs:93-102` | `tests/failmatrix/run-real.mjs:141-150` |
+| `createAccount()`（铸账号与会话） | `tests/failmatrix/run-real.mjs:165-178` | `tests/failmatrix/run-real.mjs:213-226` |
+| `unavailableSeed()`（哨兵工厂） | `tests/failmatrix/run-real.mjs:217-226` | `tests/failmatrix/run-real.mjs:265-274` |
+| 注销夹具哨兵（`deleter.deletionId` / `.receipt` / `.staleReceipt`） | `tests/failmatrix/run-real.mjs:994-996` | `tests/failmatrix/run-real.mjs:1103-1105` |
+| 真库臂判定器 `verdictFor()` 全体 | `tests/failmatrix/run-real.mjs:710-741` | `tests/failmatrix/run-real.mjs:783-814` |
+| 判定器取期望那一行（`const exp = c.expect ?? {};`） | `tests/failmatrix/run-real.mjs:711` | `tests/failmatrix/run-real.mjs:784` |
+| `domainUnavailable()`（整域失闭判据） | `tests/failmatrix/run-real.mjs:758-772` | `tests/failmatrix/run-real.mjs:835-849` |
+
+上表七行逐条按**内容比对**核过（同一函数/语句的首末行在两侧逐字相同），不是按差值推算；哨兵那行在 `main` 上从第 1096 行起是 7 行注释、赋值语句落在第 1103–1105 行，故区间取赋值行本身。
+
+本轮只重锚本页对 `cases.mjs` 的两条陈旧指针（见页首 §2 与 §7 第 3 行，登记在 `tests/unit/doc-anchor-relocations.json`）；`run-real.mjs` 的七处留给 docs-only 小 PR 一并重锚，本页先给出映射，避免把这次改动的验证面从「夹具两文件」扩到整页。
+
+同一次合入还把真库臂的 `notRunnable` 从 13 条清到 0（`same 162 → 175`、`sameWithCheck 19 → 20`、`sameWithShape 27 → 30`、`different` 仍 5），所以本页 §1 那张「13 条 not runnable」的表**只代表基线**，不再代表 `main`。两条 `different`（C4-15、C4-18）的裁定结论不变，仍是本页 §2 的裁定。
+
+承接提交（本 PR，分支 `test/gy-r83-real-expect`）已把本页 §2 的两行与 §7 第 3 行的 `tests/failmatrix/cases.mjs` 定位改为用例新位置（C4-15 在**第 407 行**、C4-18 在**第 438 行**），三条映射登记在 `tests/unit/doc-anchor-relocations.json`（`kind: "correction"`，`symbol` 分别为 C4-15、C4-18、C4-18）。上表里 `run-real.mjs` 的七组引用仍按上表处理，不属本 PR 的重锚范围。
