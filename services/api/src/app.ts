@@ -1121,7 +1121,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     recognitionProvider ??
     createRecognitionProvider({
       executionMode: config.executionMode,
-      endpoint: process.env['RECOGNITION_PROVIDER_URL'] ?? null,
+      endpoint: process.env['RECOGNITION_PROVIDER_URL'] ?? null, profile: process.env['RECOGNITION_PROVIDER_PROFILE'] ?? null, model: process.env['RECOGNITION_PROVIDER_MODEL'] ?? null,
       apiKey: process.env['RECOGNITION_PROVIDER_KEY'] ?? null, /* GY-R70：真实字节来源（**只**读去元数据衍生件）；非 real 与缺凭据时该端口不被使用。 */ imageSource: createObjectStoreRecognitionImageSource(recognitionMediaPorts),
     });
   const recognitionService = createRecognitionService({

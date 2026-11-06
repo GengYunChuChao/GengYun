@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import type { ExecutionMode } from '../contract.ts';
 import { FAILURE_BRANCHES, type FailureBranch } from './branches.ts';
 import { createUnwiredRecognitionImageSource, createLiveRecognitionProviderFromCredentials } from './live-adapter.ts';
+import { OPENAI_VISION_PROTOCOL, OPENAI_VISION_SKELETON_SPECIES_IDS, createOpenAiVisionRecognitionProvider } from './openai-vision-adapter.ts';
 import type { RealRecognitionPorts, RecognitionImageSource } from './live-ports.ts';
 
 /** 提供者失败码：必须是契约 ErrorCode 闭集成员。 */
@@ -198,10 +199,35 @@ export function createRecognitionProvider(input: {
   fetchImpl?: typeof fetch;
   now?: () => number;
   onObservation?: RealRecognitionPorts['onObservation'];
+  /**
+   * ADR-002 选项 A：剖面名。缺省或 `gy-recognition-live-v1` ⇒ 走既有适配器（行为逐字不变）；
+   * `openai-vision-v1` ⇒ 走 `openai-vision-adapter.ts`。装配不合法时仍 fail-closed，不回退替身。
+   */
+  profile?: string | null;
+  /** `openai-vision-v1` 的模型名（由运维显式给出；本基线没有已审供应商，故不设默认值）。 */
+  model?: string | null;
 }): RecognitionProvider {
   if (input.executionMode === 'real') {
     const endpoint = typeof input.endpoint === 'string' && input.endpoint.trim() !== '' ? input.endpoint.trim() : null;
     const apiKey = typeof input.apiKey === 'string' && input.apiKey.trim() !== '' ? input.apiKey.trim() : null;
+    const profile = typeof input.profile === 'string' ? input.profile.trim().toLowerCase() : '';
+    if (profile === OPENAI_VISION_PROTOCOL) {
+      try {
+        return createOpenAiVisionRecognitionProvider({
+          endpoint: endpoint ?? '',
+          apiKey: apiKey ?? '',
+          model: typeof input.model === 'string' ? input.model : '',
+          speciesIds: OPENAI_VISION_SKELETON_SPECIES_IDS,
+          imageSource: input.imageSource ?? createUnwiredRecognitionImageSource('真实对象存储未接线：取不到待识别的私有照片字节'),
+          ...(input.liveGate === undefined ? {} : { liveGate: input.liveGate }),
+          ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+          ...(input.now === undefined ? {} : { now: input.now }),
+          onObservation: input.onObservation,
+        });
+      } catch {
+        return createRealRecognitionProvider({ endpoint, apiKey }, '真实识别端口装配失败（配置不合法；fail-closed，未发包，不回退替身）');
+      }
+    }
     if (endpoint !== null && apiKey !== null) {
       try {
         return createLiveRecognitionProviderFromCredentials({
