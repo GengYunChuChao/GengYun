@@ -368,25 +368,31 @@ tabBar 在 `app.json` 注册，selectedColor 与主题绿一致；首页为唯�
 | 它是什么 | 依据 |
 | --- | --- |
 | 档案里 `region_code` 为 `null` 时页面显示「未设置」，**不回落**到上级行政区、不猜、不取默认值 | `miniprogram/pages/profile/profile.js:154` |
-| 全仓没有实时预警数据源：`miniprogram/**` 里 `预警`、`weather`、`forecast` 三个词**零命中** | §9.3 的守卫用例（负控制） |
+| 扫描面内没有实时预警痕迹：`miniprogram/**` 的 `.js`／`.json`／`.wxml`／`.wxss` 里 `预警`、`weather`、`forecast` 三个词**零命中**——只证明这三个词不在扫描面内出现，**不能单独证明**仓里不存在任何实时预警数据源 | §9.3 的守卫用例（负控制） |
 | 走查记录只写「地区未设置时显示『未设置』，没有凭空编造地区预警」 | `docs/verification/gy-i26-five-tabs-20261103.md:33` |
 
 **口径**：静态地区候选 ≠ 实时预警能力。本版**不产出、不展示任何「你所在地区将……」式预警**，也**不得把 102 项行政区候选写成「已覆盖」**。地区候选只回答「这个用户选了哪里」，不回答「那个地方会怎样」；要做实时预警必须另立需求、另接数据源、单独立项验收，不能在页面文案里提前兑现。
 
-### 9.2 人审入口：已经不是空入口（订正 2026-11-03 的筛查结论）
+### 9.2 两件不同的事：「社区审核队列」已接线，「人工评审入口」仍占位
 
-2026-11-03 的初版筛查把本项记作「后台只留 `ReviewPlaceholderView`」。今天不是这个形态：
+后台导航里这两个页签**并列存在**，不能合并成一句结论：
 
 | 项 | 现状与依据 |
 | --- | --- |
-| 审核队列视图 | `apps/admin/src/views/ModerationQueueView.vue:8` 声明 `approvePost`／`rejectPost` 两条契约操作；本地契约校验与提交分支在同文件 `apps/admin/src/views/ModerationQueueView.vue:307` |
-| 占位视图 | `apps/admin/src/views/ReviewPlaceholderView.vue` 只在「契约没有审核读面」时作为占位，不是审核入口的现状 |
+| **社区运营审核队列——已接线**（帖子通过／驳回） | 页签 `moderation` 自注「读 + 通过/驳回已接入」（`apps/admin/src/App.vue:36`），渲染 `apps/admin/src/App.vue:84` 的 `ModerationQueueView`；该视图声明 `approvePost`／`rejectPost` 两条契约操作（`apps/admin/src/views/ModerationQueueView.vue:8`），本地契约校验与提交分支在同文件 `apps/admin/src/views/ModerationQueueView.vue:307` |
+| **人工评审入口——仍占位／未实现**（审核人、投票、专家认证的工作流） | 页签 `review` 自注「人工审核（占位）·未实现」（`apps/admin/src/App.vue:37`），仍渲染 `apps/admin/src/App.vue:85` 的 `ReviewPlaceholderView`；该组件自称「人工审核入口——**真实空态**」（`apps/admin/src/views/ReviewPlaceholderView.vue:3`），依据是 `humanReviewQueue()` 恒空与 `createHumanReviewDirectory()` 四个集合全空且 `wired: false`（`apps/admin/src/views/ReviewPlaceholderView.vue:11-13`）、以及没有任何持久表（`apps/admin/src/views/ReviewPlaceholderView.vue:14-15`） |
+| 两件事为什么不能互相证明 | 社区审核视图自己写明「本页**不做**人审工作流（审核人、投票、专家认证）：那是另一个概念，占位页仍留在原处」（`apps/admin/src/views/ModerationQueueView.vue:12`） |
 
-`approvePost`／`rejectPost` 在契约台账里仍是 `partial` 的原因**不在 UI**，而在真库集成回归与审计库内写面还没跑——那属 #22 的真库项，不改变本节结论：**空入口的说法已作废**。
+**结论**：社区侧（对已投稿帖子做通过／驳回）**已接线**；人工评审（有审核人、投票与专家认证的独立工作流）**仍只有占位页**。因此：
+
+- 「后台只留 `ReviewPlaceholderView`」这句 2026-11-03 的初版筛查结论，对**社区审核队列**已作废，对**人工评审入口**仍然成立；
+- `approvePost`／`rejectPost` 的存在**不能**用来宣布人工评审入口已交付；
+- 占位页**不是**「契约缺审核读面时才启用的后备视图」，它就是当前人审入口的唯一形态（服务端 `human_review_state` 仍是空态）。
+- `approvePost`／`rejectPost` 在契约台账里仍是 `partial`，原因**不在 UI**，而在真库集成回归与审计库内写面还没跑——那属 #22 的真库项，与本节的实体区分无关。
 
 ### 9.3 这条口径怎么被守住
 
 `tests/unit/i28-region-static-not-realtime.test.mjs` 把它变成四条机检：口径三要件逐句仍在；`miniprogram/**` 里三个词零命中（偷偷接数据源即红）；`region_code === null ? '未设置'` 仍在；`regions.js` 的 `region_count`／`catalog_version` 与契约同源一致。
 
-能证明什么：口径文字没被删、仓里没有预警数据源或预警文案、地区缺省显示没有回退、静态候选表与契约同源。
+能证明什么：口径文字没被删、扫描面内没有出现预警字样或天气数据源标识（**不等于**已穷尽证明仓里不存在此类数据源）、地区缺省显示没有回退、静态候选表与契约同源。
 **不能证明什么**：不启动微信开发者工具、不接触真机，真机逐页渲染仍未取得（属 #23），也不证明地区候选在真实业务里够用。
