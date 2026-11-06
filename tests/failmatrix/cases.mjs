@@ -38,6 +38,20 @@ const SYNTHESIS_BODY = { checked_content_ref: { type: 'answer', id: ABSENT, revi
 const CONFIRMATION_BODY = { confirmed_text: '合成确认文本（矩阵），非真实录音内容。', confirmation: 'checked_and_sendable' };
 
 // ---------------------------------------------------------------------------
+// R83 · 按执行模式分叉的期望（`realExpect` / `realCheck`）
+//
+// 真库臂（`run-real.mjs` 的 `verdictFor`）读 `realExpect ?? expect` / `realCheck ?? check`；stub 臂
+// （`run.mjs`）只读 `expect` / `check`、不认识这两个字段。⇒ 「只在 stub 世界成立」的读数（账号读权威
+// 未接线 ⇒ 503、`deleter` 不真受理注销 ⇒ 会话仍可用）不再被硬写成两臂同码，也⛔不是把断言放宽成
+// 两边都过的并集：缺省的用例两侧行为逐字不变。
+// ---------------------------------------------------------------------------
+
+/** 小写 uuid 形态（与契约 `format: 'uuid'` 同式；`ABSENT` 也是这个形态）。 */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** `AccountState` 的契约闭集（`services/api/src/admin/ops/types.ts` 的 `ACCOUNT_STATES`）。 */
+const ACCOUNT_STATE_CLOSED_SET = ['active', 'suspended', 'deletion_pending'];
+
+// ---------------------------------------------------------------------------
 // S-6 · 作业过滤（`GET /admin/jobs?state=…&error_code=…`）的判定常量
 //
 // 语义来源是服务层的**唯一**判定点 `parseAdminJobFilter`
@@ -186,9 +200,35 @@ export const CASES = [
   { id: 'C3-16', family: 'C3', title: '正控制：全 scope 后台会话读特性开关', actor: 'adminFull', method: 'GET', path: `${API}/admin/feature-flags`, expect: { status: 200 } },
   { id: 'C3-17', family: 'C3', title: '正控制：全 scope 后台会话读后台会话', actor: 'adminFull', method: 'GET', path: `${API}/admin/auth/session`, expect: { status: 200 } },
   { id: 'C3-18', family: 'C3', title: '后台隐藏帖子缺 If-Match', actor: 'adminFull', method: 'POST', path: (ctx) => `${API}/admin/posts/${ctx.seeded.postId}/hide`, body: { reason: 'synthetic-hide' }, headers: key('i22-c3-18'), expect: { status: 428, code: 'REVISION_REQUIRED' } },
-  { id: 'C3-19', family: 'C3', title: '后台读账号列表（账号权威未接线）', actor: 'adminFull', method: 'GET', path: `${API}/admin/accounts`, expect: { status: 503, code: 'PROVIDER_UNAVAILABLE' }, note: 'fail-closed：stub 世界没有账号读权威，返回 503 而不是空列表' },
-  { id: 'C3-20', family: 'C3', title: '后台读作业面（未接线）', actor: 'adminFull', method: 'GET', path: `${API}/admin/jobs`, expect: { status: 503, code: 'PROVIDER_UNAVAILABLE' } },
-  { id: 'C3-21', family: 'C3', title: '后台停用账号（未接线）', actor: 'adminFull', method: 'POST', path: (ctx) => `${API}/admin/accounts/${ctx.suspendTargetUserId ?? ctx.b.userId}/suspend`, body: { reason: 'synthetic-suspend' }, headers: wkey('i22-c3-21', '"1"'), expect: { status: 503, code: 'PROVIDER_UNAVAILABLE' }, note: '账号写权威未注入时 fail-closed 503，绝不假装成功；停用目标是 runner 单独播种的账号（ctx.suspendTargetUserId），⛔ 不打共享受害账号 ctx.b——real 臂里这条会**真的**停用目标，B 一被停用，C11-35..39 五条正控制就恒 401 而失真；stub 臂（run.mjs）没有该槽位 ⇒ `??` 兜底到 ctx.b.userId，503 发生在任何副作用之前、不改任何状态' },
+  { id: 'C3-19', family: 'C3', title: '后台读账号列表（stub：账号读权威未接线 / real：真库读面）', actor: 'adminFull', method: 'GET', path: `${API}/admin/accounts`, expect: { status: 503, code: 'PROVIDER_UNAVAILABLE' }, realExpect: { status: 200 }, realCheck: (result, ctx) => {
+    const problems = [];
+    const items = result.body?.data?.items;
+    if (!Array.isArray(items)) return ['data.items 不是数组（真库读面的封套是 PageEnvelope）'];
+    const ids = items.map((item) => item?.id).filter((id) => typeof id === 'string');
+    if (!ids.includes(ctx.b.userId)) problems.push(`首页 ${items.length} 条里没有 B（${ctx.b.userId}）：${JSON.stringify(ids)}`);
+    const offContract = items
+      .filter((item) => !ACCOUNT_STATE_CLOSED_SET.includes(item?.state))
+      .map((item) => `${String(item?.id ?? '?')}(state=${JSON.stringify(item?.state ?? null)})`);
+    if (offContract.length > 0) problems.push(`有行的 state 越出契约闭集 ${ACCOUNT_STATE_CLOSED_SET.join(' / ')}：${JSON.stringify(offContract)}`);
+    return problems;
+  }, note: 'stub 世界没有账号读权威 ⇒ fail-closed 503，⛔ 不是空列表（空页＝伪造读数）；real 世界有迁移 0021 的 `list_admin_accounts()` 读面（`admin/ops/service.ts:917` 走真读）⇒ 200 + 行级断言（含 B 且 state 在闭集内）。变红条件：真库读面退回 503、给出空页、首页缺 B、或 state 越出闭集' },
+  { id: 'C3-20', family: 'C3', title: '后台读作业面（stub：未接线 / real：真库作业读面）', actor: 'adminFull', method: 'GET', path: `${API}/admin/jobs`, expect: { status: 503, code: 'PROVIDER_UNAVAILABLE' }, realExpect: { status: 200 }, realCheck: (result) => {
+    const problems = [];
+    const items = result.body?.data?.items;
+    if (!Array.isArray(items)) return ['data.items 不是数组'];
+    const bad = items
+      .filter((item) => typeof item?.id !== 'string' || !UUID_SHAPE.test(item.id))
+      .map((item) => String(item?.id ?? '?'));
+    if (bad.length > 0) problems.push(`有行 id 不是 uuid 形状：${JSON.stringify(bad)}`);
+    return problems;
+  }, note: 'stub 世界作业读面未接线 ⇒ fail-closed 503；real 世界读真库作业表 ⇒ 200 + 每行 id 是 uuid 形状。⛔ 不写死行数（作业表规模随播种/清理变化）。变红条件：真库读面退回 503，或行 id 缺失/非 uuid' },
+  { id: 'C3-21', family: 'C3', title: '后台停用账号（stub：未接线 / real：真停用专用目标）', actor: 'adminFull', method: 'POST', path: (ctx) => `${API}/admin/accounts/${ctx.suspendTargetUserId ?? ctx.b.userId}/suspend`, body: { reason: 'synthetic-suspend' }, headers: wkey('i22-c3-21', '"1"'), expect: { status: 503, code: 'PROVIDER_UNAVAILABLE' }, realExpect: { status: 200 }, realCheck: (result) => {
+    const problems = [];
+    const state = result.body?.data?.state;
+    if (state !== 'suspended') problems.push(`data.state 期望 suspended 实际 ${JSON.stringify(state ?? null)}`);
+    if (typeof result.headers?.etag !== 'string') problems.push(`响应头 ETag 期望字符串实际 ${JSON.stringify(result.headers?.etag ?? null)}`);
+    return problems;
+  }, note: '账号写权威未注入时 fail-closed 503，绝不假装成功。real 臂这条会**真的**停用目标账号（单事务：state + auth_epoch 递增 + 撤会话 + 审计，`admin/ops/service.ts:128`）——停用目标是 runner 单独播种的账号（ctx.suspendTargetUserId），⛔ 不打共享受害账号 ctx.b：B 一被停用，C11-35..39 五条正控制就恒 401 而失真；stub 臂（run.mjs）没有该槽位 ⇒ `??` 兜底到 ctx.b.userId，503 发生在任何副作用之前、不改任何状态。real 侧 `data.revision` 实测为 2（CAS 前 1 → 后 2），但增量语义未单独实测，故只记 note、不断言' },
   { id: 'C3-22', family: 'C3', title: '后台读不存在的内容族条目', actor: 'adminFull', method: 'GET', path: `${API}/admin/sources/${ABSENT}`, expect: { status: 404, code: 'NOT_FOUND' } },
   { id: 'C3-23', family: 'C3', title: '后台会话读用户会话（不得代替）', actor: 'adminFull', method: 'GET', path: `${API}/auth/session`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C3-24', family: 'C3', title: '后台会话读社区面（不得代替）', actor: 'adminFull', method: 'GET', path: `${API}/posts`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
@@ -364,20 +404,38 @@ export const CASES = [
   { id: 'C4-12', family: 'C4', title: '回执 bearer 读自己的注销单', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 200, etag: true }, note: '注销单与回执来自 runner 另起的 receiptHolder 账号（真 inject(POST) 受理 + 换发一次）；⛔ 不用 deleter——受理会撤销它全部会话，把 C4-10/11/15/18 打红（见 run-real.mjs 播种处注释）；本条 expect 里的 etag:true 目前只有 stub 臂判定（run.mjs:144-148），真库臂比较器只看 status/code/meta/check——两臂强度不对等属既有实现（PR #1028 审查 P2-1）' },
   { id: 'C4-13', family: 'C4', title: '用户会话不能当回执用', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C4-14', family: 'C4', title: '回执跨单使用（改路径 id）', actor: 'receiptHolder', method: 'GET', path: `${API}/account/deletions/${ABSENT}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
-  { id: 'C4-15', family: 'C4', title: '注销申请重放：同一单 + 换发回执', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete_account' }, headers: key('i22-c4-deletion'), expect: { status: 202 }, check: (result, ctx) => {
+  { id: 'C4-15', family: 'C4', title: '注销申请：stub 同键重放 / real 首次受理', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete_account' }, headers: key('i22-c4-deletion'), expect: { status: 202 }, realExpect: { status: 202 }, check: (result, ctx) => {
     const problems = [];
     const prior = ctx.actors.deleter;
     if (result.body?.data?.deletion?.id !== prior.deletionId) problems.push(`重放产生了新的注销单 id（幂等失效）：${result.body?.data?.deletion?.id}`);
     if (typeof result.body?.data?.receipt_token !== 'string' || result.body.data.receipt_token === prior.receipt) problems.push('重放没有换发新回执');
     return problems;
+  }, realCheck: (result, ctx) => {
+    const problems = [];
+    const data = result.body?.data;
+    const id = data?.deletion?.id;
+    if (typeof id !== 'string' || !UUID_SHAPE.test(id)) problems.push(`data.deletion.id 期望 uuid 实际 ${JSON.stringify(id ?? null)}`);
+    // 真库臂从不播种「已受理的注销单」（`run-real.mjs:1110-1112` 的 deleter 三槽位是哨兵）⇒ 202 只能是
+    // **首次受理**，⛔ 不是重放；拿哨兵比一下就是这条「不是旧单」的判据。
+    if (id === ctx.actors.deleter.deletionId) problems.push('注销单 id 恰是夹具哨兵 ⇒ 本条不是真受理');
+    const token = data?.receipt_token;
+    if (typeof token !== 'string' || token.length === 0) problems.push(`receipt_token 期望非空字符串实际 ${JSON.stringify(token ?? null)}`);
+    const expiresAt = data?.receipt_expires_at;
+    const expiresMs = typeof expiresAt === 'string' ? Date.parse(expiresAt) : Number.NaN;
+    if (!Number.isFinite(expiresMs)) problems.push(`receipt_expires_at 不可解析：${JSON.stringify(expiresAt ?? null)}`);
+    else if (!(expiresMs > Date.now())) problems.push(`receipt_expires_at 不在未来：${expiresAt}`);
+    return problems;
   }, after: (result, ctx) => {
+    // real 世界这次是**首次受理**：deleter 的 receipt/staleReceipt 仍是哨兵，⛔ 不往哨兵上写（回执换发
+    // 在真库下由 `seedReceiptHolder` 的专用账号证明，见 C4-16/17）。
+    if (ctx.mode === 'real') return;
     const deleter = ctx.actors.deleter;
     deleter.staleReceipt = deleter.receipt;
     if (typeof result.body?.data?.receipt_token === 'string') deleter.receipt = result.body.data.receipt_token;
-  } },
+  }, note: 'stub 世界：deleter 已播种一条「同键已受理」的注销单 ⇒ 同键重放命中**换发**分支（同一单 id + 新回执）。real 世界：deleter 从不预先受理（`run-real.mjs` 的三个槽位是哨兵）⇒ 这条的 202 是**首次受理**（新铸注销单 id + 新回执 + 未来到期时刻），⛔ 不能沿用 stub 的「同单重放」判据。⚠️ real 侧这次受理就是 C4-18 那条 401 的因：`db/migrations/0016_account_deletion_persistence.sql:130-135` 在同一事务里撤掉该用户全部会话。变红条件：真库受理不再返回 202、回执缺失/到期时刻不可解析、或注销单 id 仍是夹具哨兵' },
   { id: 'C4-16', family: 'C4', title: '换发后旧回执失效', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.staleReceipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C4-17', family: 'C4', title: '换发后新回执可用', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 200 } },
-  { id: 'C4-18', family: 'C4', title: '冷静期内原会话仍可用（注销在线 7 日到期前）', actor: 'deleter', method: 'GET', path: `${API}/favorites`, expect: { status: 200 }, note: '契约：注销申请后在线数据保留 7 日（cooling-off），到期前会话仍可用；到期后的失效由 deletion 执行面负责（未取得）' },
+  { id: 'C4-18', family: 'C4', title: '注销受理后原会话立即失效（冷静期只保在线数据，凭证是回执 bearer）', actor: 'deleter', method: 'GET', path: `${API}/favorites`, expect: { status: 200 }, realExpect: { status: 401, code: 'SESSION_EXPIRED' }, note: 'stub 世界：deleter 不真受理注销（三槽位是哨兵）⇒ 会话仍可用 200。real 世界：冻结契约要求这条 401——`docs/architecture/state-contract.md:105` 写着受理的 202「在**同一事务**将账号改 deletion_pending、撤所有用户会话/角色、auth_epoch 递增」，并明确「受理成功后旧会话不再可调用 API」；`:107` 写着回执查询用专用 `deletionReceipt` bearer、「不允许用户session代替」。⇒ 冷静期保的是**在线数据**（截止受理时刻 + 7×24h，`:109`），⛔ 不是「会话还能用」。因果：这条的 401 由 C4-15 那次受理造成（`db/migrations/0016_account_deletion_persistence.sql:130-135` 同事务撤该用户全部会话）。变红条件：受理后旧会话仍能读 200（撤销没在同事务里发生）' },
   // 退出后多面同形 401：C4-03 只钉了 /favorites 一面。这三条把同一张封套钉到个人资料 / 目录 /
   // 资料库三个面上（`sameShapeAs` 与 C4-03 交叉引用：message 归一化，code/retryable/details + meta 逐字节比），
   // 任一面的守卫「顺手放宽成 401 另一套封套」或「漏挂 requireUser 变成 200/其他码」都会独立转红。
