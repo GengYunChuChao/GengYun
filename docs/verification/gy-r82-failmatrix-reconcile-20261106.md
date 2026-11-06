@@ -112,12 +112,22 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 - 没有做任何 commit / push / gh；工作树除新增本页外无改动。
 
 ## §9 行号现状（2026-11-07 追加，不改写本页既有读数）
+## §9 行号现状（2026-11-07 追加，不改写本页既有读数）
 
-本页 §1–§8 的读数与行号都是**基线 `7155b9e7`** 上的事实，按 §11 的证据纪律不回填。此后 `#1028` 合入（`main = 1dec1bbb`，`tests/failmatrix` 4 文件 +151/−11），两个被本页引用的位置在今天的 `main` 上已经平移：
+本页 §1–§8 的读数与行号都是**基线 `7155b9e7`** 上的事实，按 §11 的证据纪律不回填。此后 `#1028` 合入（`main = 1dec1bbb`）把 `tests/failmatrix` 四个文件从 460 行推到 567 行（合计 +215/−20，其中 `run-real.mjs` 单文件 +151/−11），本页引用的 `run-real.mjs` 位置**全部**平移。
 
 | 本页引用 | 基线 `7155b9e7` | `main = 1dec1bbb` |
 | --- | --- | --- |
-| 注销夹具哨兵（`deleter.deletionId` / `.receipt` / `.staleReceipt`） | `tests/failmatrix/run-real.mjs:994-996` | `tests/failmatrix/run-real.mjs:1096-1105` |
-| 真库臂判定器取期望 | `tests/failmatrix/run-real.mjs:711` | `tests/failmatrix/run-real.mjs:784` |
+| `freePort()`（真库臂取空闲端口） | `tests/failmatrix/run-real.mjs:93-102` | `tests/failmatrix/run-real.mjs:141-150` |
+| `createAccount()`（铸账号与会话） | `tests/failmatrix/run-real.mjs:165-178` | `tests/failmatrix/run-real.mjs:213-226` |
+| `unavailableSeed()`（哨兵工厂） | `tests/failmatrix/run-real.mjs:217-226` | `tests/failmatrix/run-real.mjs:265-274` |
+| 注销夹具哨兵（`deleter.deletionId` / `.receipt` / `.staleReceipt`） | `tests/failmatrix/run-real.mjs:994-996` | `tests/failmatrix/run-real.mjs:1103-1105` |
+| 真库臂判定器 `verdictFor()` 全体 | `tests/failmatrix/run-real.mjs:710-741` | `tests/failmatrix/run-real.mjs:783-814` |
+| 判定器取期望那一行（`const exp = c.expect ?? {};`） | `tests/failmatrix/run-real.mjs:711` | `tests/failmatrix/run-real.mjs:784` |
+| `domainUnavailable()`（整域失闭判据） | `tests/failmatrix/run-real.mjs:758-772` | `tests/failmatrix/run-real.mjs:835-849` |
+
+上表七行逐条按**内容比对**核过（同一函数/语句的首末行在两侧逐字相同），不是按差值推算；哨兵那行在 `main` 上从第 1096 行起是 7 行注释、赋值语句落在第 1103–1105 行，故区间取赋值行本身。
+
+本轮只重锚本页对 `cases.mjs` 的两条陈旧指针（见页首 §2 与 §7 第 3 行，登记在 `tests/unit/doc-anchor-relocations.json`）；`run-real.mjs` 的七处留给 docs-only 小 PR 一并重锚，本页先给出映射，避免把这次改动的验证面从「夹具两文件」扩到整页。
 
 同一次合入还把真库臂的 `notRunnable` 从 13 条清到 0（`same 162 → 175`、`sameWithCheck 19 → 20`、`sameWithShape 27 → 30`、`different` 仍 5），所以本页 §1 那张「13 条 not runnable」的表**只代表基线**，不再代表 `main`。两条 `different`（C4-15、C4-18）的裁定结论不变，仍是本页 §2 的裁定。
