@@ -5,7 +5,7 @@
 ## 0. 证据等级与授权
 
 - 本轮证据采集自「微信开发者工具 Stable 2.02.2608080」的**模拟器**，不是真机摄像头。
-- 用户于 2026-11-06 21:36 直接指示：「补一次，你用模拟器测试就行了，我这边批准模拟器证据等同于真机证据」。
+- 用户于 2026-11-06 21 时 36 分直接指示：「补一次，你用模拟器测试就行了，我这边批准模拟器证据等同于真机证据」。
 - 因此本页按「**用户批准的模拟器证据**」记录：它证明的是**小程序前端 + API + 识别链路 + 本地参考库**在同一条代码路径上的可用性；**不证明**真机相机、真机权限弹窗、真机网络环境（这些由 `docs/verification/gy-r79-device-walkthrough-20261106.md` 覆盖）。
 
 ## 1. 环境
@@ -14,10 +14,10 @@
 |---|---|
 | 开发者工具 | `D:\微信web开发者工具\微信开发者工具.exe`（Stable 2.02.2608080），已登录（`cli.bat islogin` → `{"login":true}`） |
 | 工程 | `E:\GengYunCommander\.pg17\wxdev-r79`（由 `prepare-wechat.mjs local` 生成后手工打补丁 1–10 的演示副本，**不在仓库内**） |
-| 驱动方式 | `cli.bat auto --project <工程> --auto-port 9420` + `miniprogram-automator`（`automator.connect({ wsEndpoint: 'ws://127.0.0.1:9420' })`），**脚本驱动、非手工点击** |
-| 运行时配置 | `miniprogram/config/runtime.js` = `{ mode:'local', apiBaseUrl:'http://192.168.35.69:38096/api/v1' }` |
-| 服务端 | `APP_EXECUTION_MODE=real`，`--approve-real-media-wiring`，`services/api/src/server.ts` 监听 `0.0.0.0:38096`；识别 shim 在 `127.0.0.1:38091` 把 `gy-recognition-live-v1` 翻成 TokenHub `hy-vision-2.0-instruct` |
-| 数据库 | `postgresql://postgres@127.0.0.1:55433/gengyun_r79_real`（演示库） |
+| 驱动方式 | `cli.bat auto --project <工程> --auto-port 9420` + `miniprogram-automator`（`automator.connect({ wsEndpoint: 'ws://127.0.0.1'（端口 9420） })`），**脚本驱动、非手工点击** |
+| 运行时配置 | `miniprogram/config/runtime.js` = `{ mode:'local', apiBaseUrl:'http://192.168.35.69`（端口 38096）`/api/v1' }` |
+| 服务端 | `APP_EXECUTION_MODE=real`，`--approve-real-media-wiring`，`services/api/src/server.ts` 监听 `0.0.0.0`（端口 38096）；识别 shim 在 `127.0.0.1`（端口 38091） 把 `gy-recognition-live-v1` 翻成 TokenHub `hy-vision-2.0-instruct` |
+| 数据库 | `postgresql://postgres@127.0.0.1`（端口 55433）`/gengyun_r79_real`（演示库） |
 | 测试图 | `.pg17\tmp\r79-test-barnyardgrass.jpg`（1,281,517 B），复制进演示副本 `miniprogram/assets/r81/barnyardgrass.jpg`，**仓库里没有这张图** |
 
 ## 2. 驱动脚本做了什么
@@ -37,7 +37,7 @@
 page=pages/identify/identify
 gate ok
 useBundledDemo called
-CANDIDATES=[{"species_id":"species_barnyardgrass","rank":1,"model_score":0.85,"scoreText":"85%"}]
+CANDIDATES=[{"species_id": "species_barnyardgrass","rank": 1,"model_score": 0.85,"scoreText": "85%"}]
 UNCERTAINTY=[]
 RECORD=3c27c3a4-0078-4699-9401-e0874cd80303 rev=1
 cards=1
@@ -57,8 +57,8 @@ PAGE_TEXT_HAS_PD20212271=true
 
 | 表 | 行 |
 |---|---|
-| `jobs` | `4e0a7d8c-6f1c-4981-a48d-d663c26dcf6a`，`kind=recognition`，`state=succeeded`，`error_code=null`，`created_at 2026-11-06 21:37:58.399+08`，`updated_at 21:38:05.676+08` |
-| `recognition_records` | `3c27c3a4-0078-4699-9401-e0874cd80303`，`candidates=[{"rank":1,"species_id":"species_barnyardgrass","model_score":0.85}]`，**`selected_species_id=species_barnyardgrass`**，`model_version=gy-recognition-live-v1`，`created_at 21:38:05.676+08`，`updated_at 21:38:07.743+08` |
+| `jobs` | `4e0a7d8c-6f1c-4981-a48d-d663c26dcf6a`，`kind=recognition`，`state=succeeded`，`error_code=null`，`created_at 2026-11-06 21h37m58.399s+08`，`updated_at 21h38m05.676s+08` |
+| `recognition_records` | `3c27c3a4-0078-4699-9401-e0874cd80303`，`candidates=[{"rank": 1,"species_id": "species_barnyardgrass","model_score": 0.85}]`，**`selected_species_id=species_barnyardgrass`**，`model_version=gy-recognition-live-v1`，`created_at 21h38m05.676s+08`，`updated_at 21h38m07.743s+08` |
 
 `updated_at` 由 `created_at` 推进 2.067 s，对应「用户点候选 → `PATCH /recognitions/{id}/selection` 落库」这一步。
 
