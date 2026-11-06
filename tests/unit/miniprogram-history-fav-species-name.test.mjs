@@ -124,23 +124,22 @@ async function mountPage(options) {
 }
 
 /** 挂载 `components/fav-entry`：替身 3 个依赖，并把内部 `speciesNameOf` 探针取出。 */
-function mountComponent() {
+function mountComponent(options) {
   const stubs = {};
   stubs[p('miniprogram/utils/identify-api.js')] = { describeJobState: function () { return { title: '识别完成', desc: '', tone: 'ok' } } };
   stubs[p('miniprogram/utils/favorites-api.js')] = { listFavorites: async function () { return { items: [] } } };
   stubs[p('miniprogram/utils/knowledge-api.js')] = {
-    detail: async function (id) { return { item: { id: id, type: 'species', revision: 5 } } }
+    // 服务端 detail 一定带非空 title（knowledge-api.js:46/:49-50 校验），这里照抄该形状。
+    detail: async function (id) {
+      const title = options && typeof options.title === 'string' ? options.title : '稗草';
+      return { item: { id: id, type: 'species', revision: 5, title: title } };
+    }
   };
-  const append = {};
-  // 组件文件不对外导出任何东西；这里只在测试侧追加一行探针，读同作用域里的内部函数，
-  // 生产文件不为测试开任何 export 口子。
-  append[COMPONENT_JS] = ';module.exports.__scope = { speciesNameOf: speciesNameOf };';
-  const { load, defs } = makeLoader({ stubs: stubs, append: append });
-  const exported = load(COMPONENT_JS);
+  const { load, defs } = makeLoader({ stubs: stubs, append: null });
+  load(COMPONENT_JS);
   const def = defs[COMPONENT_JS];
   assert.ok(def && def.methods && typeof def.methods.resolve === 'function', '组件定义未装载');
-  assert.ok(exported.__scope && typeof exported.__scope.speciesNameOf === 'function', '未取到 speciesNameOf 探针');
-  return { def: def, scope: exported.__scope };
+  return { def: def };
 }
 
 test('目录内 id → 中文组名来自 reference.js 的 species 索引（group_name），不是写死表', function () {
@@ -169,24 +168,25 @@ test('历史详情页：候选带 speciesName，目录内取中文名、目录�
   assert.equal(shown[1].scoreText, '0.31');
 });
 
-test('收藏入口：resolve 的 label 是中文名兜底，未知 id 回落原始 id，绑定键不变', async function () {
+test('收藏入口：resolve 用资料标题当 label（UUID 真通路），取不到标题才回落原始 id', async function () {
   const mounted = mountComponent();
   const resolveFn = mounted.def.methods.resolve;
+  // 既有 UUID 闸门不变：slug 形态仍被丢弃，本 PR 不放宽它。
   const known = await resolveFn.call({}, [{ species_id: KNOWN_ID, rank: 1 }], {});
-  // 组件只接受 UUID 形态的 species_id（既有闸门 uuid 正则），slug 会被丢弃 —— 这是既有行为，不在本次修改范围。
   assert.equal(known.length, 0, 'slug 形态仍被既有 UUID 闸门丢弃（未放宽）');
+  // UUID 候选走真实通路：label 取 knowledgeApi.detail 返回的 item.title。
   const items = await resolveFn.call({}, [{ species_id: UNKNOWN_ID, rank: 2 }], {});
   assert.equal(items.length, 1);
   assert.equal(items[0].speciesId, UNKNOWN_ID, '绑定键仍是原始 id');
-  assert.equal(items[0].label, UNKNOWN_ID, '未知 id 回落原始 id（不是空串/undefined）');
-  // 组件侧的中文名通路：目录内 id 能解析出中文组名，目录外给空串让调用方兜底。
-  assert.equal(mounted.scope.speciesNameOf(KNOWN_ID), KNOWN_NAME);
-  assert.equal(mounted.scope.speciesNameOf(UNKNOWN_ID), '');
-  assert.equal(mounted.scope.speciesNameOf(undefined), '');
+  assert.equal(items[0].label, '稗草', 'label 取资料标题，不再回落 UUID 原文');
+  // 服务端没给标题时回落原始 id，不出现空串/undefined。
+  const noTitle = await mountComponent({ title: '' }).def.methods.resolve.call({}, [{ species_id: UNKNOWN_ID, rank: 3 }], {});
+  assert.equal(noTitle[0].label, UNKNOWN_ID, '没有标题时回落原始 id');
 });
 
+
 test('历史详情页：物种目录装载失败时不抛错，留空串由 wxml 回落原始 id', async function () {
-  const mounted = await mountPage({ fail: [p('miniprogram/utils/reference.js')] });
+  const mounted = await mountPage({ fail: [p('miniprogram/data/species.js')] });
   const shown = mounted.page.data.modelCandidates;
   assert.equal(shown.length, 2, '目录失败不得打断候选投影');
   assert.equal(shown[0].speciesName, '', '取不到名字只留空串，不编造文案');
@@ -200,16 +200,17 @@ test('静态锁：wxml/组件不再把原始 id 直接当展示文案，且中�
   assert.match(wxml, /wx:key="rank"/, '候选列表 key 未变');
 
   const component = readFileSync(COMPONENT_JS, 'utf8');
-  assert.match(component, /label: speciesNameOf\(speciesId\) \|\| speciesId,/);
+  assert.match(component, /label: \(title \|\| speciesId\),/, 'label 必须走标题兜底');
   assert.doesNotMatch(component, /label: speciesId,/, '组件不得再把原始 id 当 label');
-  assert.match(component, /require\('\.\.\/\.\.\/utils\/reference'\)/, '中文名必须复用 reference.js');
-  assert.match(component, /group_name/, '目录字段是 group_name');
+  assert.doesNotMatch(component, /speciesNameOf/, '组件不再保留未生效的目录查表 helper');
+  assert.match(component, /title = typeof item\.title === 'string'/, '标题必须来自 knowledgeApi.detail 的 item.title');
 
   const page = readFileSync(PAGE_JS, 'utf8');
   assert.match(page, /speciesName: name\b/, '页面要给候选补 speciesName');
-  assert.match(page, /const s = \(require\('\.\.\/\.\.\/utils\/reference'\)\.species \|\| \[\]\)/, '页面须复用 reference.js 的 species 索引');
+  assert.match(page, /const s = \(require\('\.\.\/\.\.\/data\/species'\)\.species \|\| \[\]\)/, '页面只引 3.8KB 物种目录，不引 474KB 的 reference.js');
   assert.match(page, /catch \(error\) \{ name = '' \}/, '目录装载失败必须吞掉并留空串（回落原始 id）');
   // 硬约束：不自己写死物种中文名映射表。
+  assert.doesNotMatch(page + component, /require\('\.\.\/\.\.\/utils\/reference'\)/, '不得再为物种名拉进 reference.js');
   for (const file of [page, component]) {
     assert.doesNotMatch(file, /稗草|狗尾草|牛筋草/, '不得把物种中文名写死在页面/组件里');
   }

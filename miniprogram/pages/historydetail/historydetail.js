@@ -129,7 +129,7 @@ Page({
           const detail = historyApi.recognitionDetailView(result.recognition, located.jobState === null ? '' : located.jobState)
           self.setData(Object.assign(base, {
             recognized: detail.recognized,
-            modelCandidates: detail.modelCandidates.map(function (c) { let name = ''; try { const s = (require('../../utils/reference').species || []).filter(function (x) { return x && x.id === c.species_id })[0]; if (s && typeof s.group_name === 'string') name = s.group_name } catch (error) { name = '' } return Object.assign({}, c, { speciesName: name }) }), // #1020 只加展示用中文组名（reference.species 的 group_name，不是 name_cn）；目录外 id 或目录装载失败一律留空串，由 wxml 的 `speciesName || species_id` 回落原始 id；species_id 本身不改
+            modelCandidates: detail.modelCandidates.map(function (c) { let name = ''; try { const s = (require('../../data/species').species || []).filter(function (x) { return x && x.id === c.species_id })[0]; if (s && typeof s.group_name === 'string') name = s.group_name } catch (error) { name = '' } return Object.assign({}, c, { speciesName: name }) }), // #1020 只加展示用中文组名（data/species.js 的 group_name，不是 name_cn；只引 3.8KB 目录而非 474KB 的 utils/reference）；目录外 id 或目录装载失败一律留空串，由 wxml 的 `speciesName || species_id` 回落原始 id；species_id 本身不改
             modelCandidateNote: detail.modelCandidateNote,
             manualSelection: detail.manualSelection,
             uncertaintyReasons: detail.uncertaintyReasons,

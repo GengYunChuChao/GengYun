@@ -176,20 +176,20 @@ Component({
         const candidate = candidates[i]
         const speciesId = candidate && typeof candidate.species_id === 'string' ? candidate.species_id : ''
         if (!UUID.test(speciesId)) continue
-        let revision = 0
+        let revision = 0; let title = ''
         try {
           const detail = await knowledgeApi.detail(speciesId)
           const item = detail && detail.item
           // 只有 species 实体能当 FavoriteTarget；资料类型不符不猜（闭集见 routes/favorites.ts:46）。
           if (!item || item.type !== TARGET_TYPE || !Number.isSafeInteger(item.revision) || item.revision < 1) continue
-          revision = item.revision
+          revision = item.revision; title = typeof item.title === 'string' ? item.title : ''
         } catch (_) {
           continue
         }
         const ownedRow = owned[keyOf(TARGET_TYPE, speciesId)] || null
         items.push({
           speciesId: speciesId,
-          label: speciesNameOf(speciesId) || speciesId,
+          label: (title || speciesId),
           rank: candidate && candidate.rank ? candidate.rank : 0,
           revision: revision,
           favorited: ownedRow !== null,
@@ -276,16 +276,3 @@ Component({
     }
   }
 })
-
-// #1020 候选的**展示用**中文组名：复用 reference.js 的 species 索引（目录字段是 group_name，不是 name_cn），
-// 查不到（目录外 id / 目录装载失败）返回空串，由调用方回落原始 species_id；只影响展示，绑定仍用 speciesId。
-// 放在文件末尾：本文件行号被 docs 锚点引用（gy-r28-c5 → fav-entry.js:181），新增实现只追加在末尾。
-function speciesNameOf(speciesId) {
-  try {
-    const reference = require('../../utils/reference')
-    const entry = (reference.species || []).filter(function (s) { return s && s.id === speciesId })[0]
-    return entry && typeof entry.group_name === 'string' ? entry.group_name : ''
-  } catch (error) {
-    return ''
-  }
-}
