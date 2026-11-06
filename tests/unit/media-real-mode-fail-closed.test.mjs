@@ -581,6 +581,12 @@ const REPO_ROOT_URL = new URL('../../', import.meta.url);
 const APP_AMBIENT_ENV_ALLOWLIST = Object.freeze([
   'RECOGNITION_PROVIDER_URL',
   'RECOGNITION_PROVIDER_KEY',
+  // GY-R80 追补（ADR-002 选项 A）：识别域**剖面选择**与**模型名**。人工过了一遍——
+  // ① 键名不命中 `STORAGE_SHAPED_ENV_KEY`；② 不是存储门控、不改变媒体域行为（媒体域仍只认显式注入的端口）；
+  // ③ 只在 `APP_EXECUTION_MODE=real` 且剖面为 `openai-vision-v1` 时才有意义，缺省路径逐字不变；
+  // ④ 与既有 `RECOGNITION_PROVIDER_URL/KEY` 同一族、同一个装配点（`app.ts` 的识别端口注入行）读取，不新增读取面。
+  'RECOGNITION_PROVIDER_PROFILE',
+  'RECOGNITION_PROVIDER_MODEL',
   'APP_KNOWLEDGE_UNVERIFIED_SEED', 'MODERATION_DEMO_PORT',
 ]);
 
