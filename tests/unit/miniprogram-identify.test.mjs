@@ -1929,4 +1929,13 @@ test('GY-R81 候选卡片显示中文组名、缺失时回退 species_id（#1017
   const wxml = readFileSync(resolve(root, 'miniprogram/pages/identify/identify.wxml'), 'utf8');
   assert.ok(wxml.includes('{{item.speciesName || item.species_id}}'), 'wxml 必须以中文名回退 species_id');
   assert.equal(/candidate__name">\{\{item\.species_id\}\}</.test(wxml), false, '不得只渲染 species_id');
+  assert.equal(/candidate__name">\s*\{\{\s*item\.species_id\s*\}\}/.test(wxml), false, '不得只渲染 species_id（允许空白的写法同样不许）');
+  // 绑定与请求的唯一键不得被中文名顶替（wxml 静态锁，补 P2-2）。
+  assert.ok(wxml.includes('wx:key="species_id"'), 'wx:key 必须仍是 species_id');
+  assert.ok(wxml.includes('data-id="{{item.species_id}}"'), 'data-id 必须仍是 species_id');
+  // 三条候选构造路径（applyJob / recordSelection 返回 / onOpenHistoryItem）都必须带中文组名。
+  // 这是静态锁：删掉其中任意一条（哪怕行为用例恰好没走到）都会变红，补 P2-1 的 MUT-D 缺口。
+  const identifyJs = readFileSync(resolve(root, 'miniprogram/pages/identify/identify.js'), 'utf8');
+  const nameSites = identifyJs.match(/speciesName:\s*speciesNameText\(/g) || [];
+  assert.ok(nameSites.length >= 3, '候选映射必须三处都带 speciesName，实际 ' + nameSites.length + ' 处');
 });
