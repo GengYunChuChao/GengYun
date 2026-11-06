@@ -1039,7 +1039,7 @@ test('GY-I09 小程序：记录选择后的关联科普**恒不含用量**，并
 });
 
 test('GY-I09 小程序：目录外对象（stub 替身候选）不得下发无条件查询，更不得显示为「已找到」', async () => {
-  // F1/F2 护栏：stub 模式的三个替身候选（services/api/src/recognitions/provider.ts:54
+  // F1/F2 护栏：stub 模式的三个替身候选（services/api/src/recognitions/provider.ts:55
   // 的 synthetic_weed_a/b/c）都不在本地杂草目录里 ⇒ speciesNameText 取不到名称文本。
   // 此时若"清空查询条件"下发 reference.query({limit:5})，本地层按**无条件**语义全量命中
   // （match_state='matched'、total=20），页面会渲染「关联科普（已找到符合条件的资料）」
