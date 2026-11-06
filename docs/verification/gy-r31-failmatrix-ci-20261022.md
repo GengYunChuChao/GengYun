@@ -61,7 +61,7 @@ EXIT=0  ELAPSED_SEC=1.86
 
 放在 `test:evaluation` 与 `test:integration:http` 之间，与既有 `test:*` 排序一致；其余脚本一字未动。
 
-### 2.2 `.github/workflows/failmatrix.yml`（新增 64 行）
+### 2.2 `.github/workflows/failmatrix.yml`（新增时 64 行，现 66 行）
 
 关键行（行号对应当前文件）：
 
@@ -202,7 +202,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 ## 4 失败判定的三层（为什么它真的会红）
 
 1. **退出码**：`run.mjs:550` `return fail === 0 ? 0 : 1;` —— 任意一条 FAIL ⇒ 步骤退出 1 ⇒ job 红。实测见 §3.3。
-2. **机读二次判定**：workflow `.github/workflows/failmatrix.yml:52-59` 读 `--json` 产物，`fail!==0 || pass!==total || total===0` 就 `exit 1`。这层挡的是「将来有人把 runner 改成『打完成绩也退 0』」和「产物被清空却显示 0 条」。本地验证：好产物 `GOOD_EXIT=0`；把 `fail` 改成 1 的产物 `BAD_EXIT=1` 且日志打印 `矩阵有失败或被清空：FAIL 1 / 合计 168`。
+2. **机读二次判定**：workflow `.github/workflows/failmatrix.yml:52-59` 读 `--json` 产物，`fail!==0 || pass!==total || total===0` 就 `exit 1`。这层挡的是「将来有人把 runner 改成『打完成绩也退 0』」和「产物被清空却显示 0 条」。本地验证：好产物 `GOOD_EXIT=0`；把 `fail` 改成 1 的产物 `BAD_EXIT=1` 且日志打印 `矩阵有失败或被清空：FAIL 1 / 合计 168`（168 是 2026-10-22 当时的用例总数，本页不改写这条历史日志；现为 249，见 §4 第 3 条）。
 3. **条数不缩水**：`tests/unit/gy-i22-failmatrix.test.mjs` 仍在 `test:unit` 里，`MIN_CASES = 249`（下限随用例增长只会往上调）与分族/分批次计数会挡「悄悄删用例」。
 
 ## 5 未覆盖（本页不宣称的部分）
@@ -226,7 +226,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 1. 写进 `tests/failmatrix/cases.mjs` 的 `CASES` 数组：`{ id, family, title, method, path, headers?, body?, expect: { status, code?, etag?, ... }, check? }`。`path` 可以是函数（依赖世界装配）。
 2. 期望值必须是**实跑读数**，行尾注释写清日期与执行模式（沿用现有风格）。
 3. 族必须已登记在 `FAMILIES`，**并且**被某个 `BATCHES[].families` 收口；否则 `test:unit` 的「用例表自洽」会红。
-4. 同步改 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES`（`:28`）、`FAMILY_COUNTS`（`:30`）、`BATCH_COUNTS`（`:32`）。**不改就红**——这是防止用例被悄悄删的机制；⛔ 只准往上调。
+4. 同步改 `tests/unit/gy-i22-failmatrix.test.mjs:43` 的 `MIN_CASES`、`:45` 的 `FAMILY_COUNTS`、`:47` 的 `BATCH_COUNTS`。**不改就红**——这是防止用例被悄悄删的机制；⛔ 只准往上调。
 
 ### 6.2 新增一条 seam 用例（回调 / AI 失败 / 下架 / 版本回写）
 
@@ -243,7 +243,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 ### 6.4 `--only` / `--list` / `--json` 怎么用
 
 ```
-node tests/failmatrix/run.mjs --list                  # 列出全部用例 + 总数（现为 168）
+node tests/failmatrix/run.mjs --list                  # 列出全部用例 + 总数（现为 249：HTTP 229 + seam 20）
 node tests/failmatrix/run.mjs --only=C1                # 整个 C1 族（37 条）
 node tests/failmatrix/run.mjs --only=C1,C2-01,D3       # 族名或用例 id，前缀匹配
 npm run test:failmatrix -- --only=C5                   # 经 npm 传参（注意  --  分隔符）

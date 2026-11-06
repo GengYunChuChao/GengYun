@@ -368,6 +368,12 @@
       "accept": 0,
       "orphans": 3481,
       "outsideRed": 117
+    },
+    {
+      "why": "页内第 229 条的三条裸锚点（MIN_CASES/FAMILY_COUNTS/BATCH_COUNTS）改为带完整路径的 tests/unit/gy-i22-failmatrix.test.mjs:43/45/47（审查 P2-1），旧孤儿键 :28/:30/:32 随之陈旧 3 条；无新增裸锚点",
+      "accept": 0,
+      "orphans": 3478,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -2788,9 +2794,6 @@
     "docs/verification/gy-r31-closure-matrix-20261022.md|:867|ambiguous-block",
     "docs/verification/gy-r31-closure-matrix-20261022.md|:867|ambiguous-block",
     "docs/verification/gy-r31-closure-matrix-20261022.md|:91|no-explicit-in-block",
-    "docs/verification/gy-r31-failmatrix-ci-20261022.md|:28|no-explicit-in-block",
-    "docs/verification/gy-r31-failmatrix-ci-20261022.md|:30|no-explicit-in-block",
-    "docs/verification/gy-r31-failmatrix-ci-20261022.md|:32|no-explicit-in-block",
     "docs/verification/gy-r31-i07-sort-20261022.md|:261|ambiguous-block",
     "docs/verification/gy-r31-i07-sort-20261022.md|:327|ambiguous-block",
     "docs/verification/gy-r31-i07-sort-20261022.md|:331|ambiguous-block",
