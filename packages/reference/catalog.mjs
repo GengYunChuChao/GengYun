@@ -47,10 +47,13 @@ export function loadCatalog() {
     if (typeof s.id !== 'string' || s.id.trim() === '') {
       throw new Error(`species 条目缺少 id：${JSON.stringify(s).slice(0, 120)}`);
     }
-    if (seenSpeciesIds.has(s.id)) {
-      throw new Error(`species id 重复：${s.id}`);
+    // 比较前 trim：闭集侧（provider/adapter）会 trim，若这里用原值比较，
+    // `" species_x"` 与 `"species_x"` 都能过校验，随后在闭集里变成两个同名 id。
+    const speciesId = s.id.trim();
+    if (seenSpeciesIds.has(speciesId)) {
+      throw new Error(`species id 重复：${speciesId}`);
     }
-    seenSpeciesIds.add(s.id);
+    seenSpeciesIds.add(speciesId);
     if (!COVERAGE_STATES.includes(s.coverage_state)) {
       throw new Error(`species ${s.id} 的 coverage_state 非法：${s.coverage_state}`);
     }
