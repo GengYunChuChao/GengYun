@@ -33,6 +33,37 @@ export function extractRegionCode(value) {
   return m ? m[0] : null;
 }
 
+/**
+ * 校验物种条目的 `id`：必须是非空字符串，且 trim 后唯一。
+ *
+ * 单独导出是为了让「目录里出现缺 id / 重复 id 时必须抛错」可被直接断言——
+ * `loadCatalog()` 读固定路径、没有注入点，不导出就只能靠改真实 JSON 才能测到（`#1014`）。
+ *
+ * @param {readonly unknown[]} rows 物种条目数组（`species.json` 的 `species` 字段）
+ * @returns {readonly string[]} trim 后的 id 列表（顺序与入参一致）
+ */
+export function assertSpeciesIds(rows) {
+  if (!Array.isArray(rows)) {
+    throw new Error(`species 列表不是数组：${typeof rows}`);
+  }
+  const seen = new Set();
+  const ids = [];
+  for (const s of rows) {
+    if (typeof s !== 'object' || s === null || typeof s.id !== 'string' || s.id.trim() === '') {
+      throw new Error(`species 条目缺少 id：${JSON.stringify(s).slice(0, 120)}`);
+    }
+    // 比较前 trim：闭集侧（provider/adapter）会 trim，若这里用原值比较，
+    // `" species_x"` 与 `"species_x"` 都能过校验，随后在闭集里变成两个同名 id。
+    const speciesId = s.id.trim();
+    if (seen.has(speciesId)) {
+      throw new Error(`species id 重复：${speciesId}`);
+    }
+    seen.add(speciesId);
+    ids.push(speciesId);
+  }
+  return ids;
+}
+
 /** 装载目录字典（作物／杂草／来源／地区），返回冻结结构。 */
 export function loadCatalog() {
   const crops = readJson(CATALOG_PATHS.crops);
@@ -41,19 +72,9 @@ export function loadCatalog() {
   const regions = readJson(CATALOG_PATHS.regions);
 
   // 杂草覆盖状态校验：未知取值直接抛错，不静默接受。
-  // 同时校验 `id` 非空且唯一：闭集靠 id 建立，缺行/重复都会让闭集静默变短（#1014）。
-  const seenSpeciesIds = new Set();
+  // id 的非空与唯一交给 assertSpeciesIds（同一个校验，装配路径与单测共用，`#1014`）。
+  assertSpeciesIds(species.species);
   for (const s of species.species) {
-    if (typeof s.id !== 'string' || s.id.trim() === '') {
-      throw new Error(`species 条目缺少 id：${JSON.stringify(s).slice(0, 120)}`);
-    }
-    // 比较前 trim：闭集侧（provider/adapter）会 trim，若这里用原值比较，
-    // `" species_x"` 与 `"species_x"` 都能过校验，随后在闭集里变成两个同名 id。
-    const speciesId = s.id.trim();
-    if (seenSpeciesIds.has(speciesId)) {
-      throw new Error(`species id 重复：${speciesId}`);
-    }
-    seenSpeciesIds.add(speciesId);
     if (!COVERAGE_STATES.includes(s.coverage_state)) {
       throw new Error(`species ${s.id} 的 coverage_state 非法：${s.coverage_state}`);
     }
