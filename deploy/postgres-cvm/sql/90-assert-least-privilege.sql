@@ -1200,6 +1200,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     ('community_reports',              'granted',          true),
     ('community_moderation_decisions', 'granted',          true),
     ('community_idempotency',          'granted',          true),
+    -- 迁移 0056（GY-R83 #1030）：**帖子级媒体挂载**表。发帖/改稿在同一事务里按 `media_ids` 顺序认领
+    -- 槽位（`services/api/src/community/store-pg.ts` 的 `claimPostMedia`），「每帖 ≤3」由
+    -- `UNIQUE (post_id, ordinal)` + `CHECK (ordinal BETWEEN 1 AND 3)` 结构性承担。
+    -- 20-login-roles.sql 段 gy-r83-post-media-grant 授 SELECT/INSERT 三列 + 表级 DELETE（换图先删后认领），
+    -- ⛔ 不授 UPDATE（否则可绕过序号唯一键）。required=true：0056 未执行时那段本来就会 RAISE EXCEPTION。
+    ('post_media_attachments',         'granted',          true),
     ('ocr_jobs',                       'granted',          true),
     ('ocr_records',                    'granted',          true),
     ('ocr_idempotency',                'granted',          true),
@@ -1335,6 +1341,17 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
      ARRAY['scope','key_hash','request_hash','response_status','outcome','expires_at'],
      ARRAY['response_status','outcome'],
+     true),
+    -- 迁移 0056（GY-R83 #1030）：帖子级媒体挂载。列面由 services/api/src/community/store-pg.ts 的
+    -- `claimPostMedia` 反推：INSERT 三列 + `RETURNING ordinal` 要 SELECT `ordinal`；
+    -- 反查「是否已挂在别的未删除帖子」要 SELECT `post_id`/`media_id`（media/store-pg.ts 的
+    -- `countPendingCommunityImages` 同口径）。upd 恒空：换图＝删旧行 + 认领新行，⛔ 不给 UPDATE，
+    -- 否则可绕过 `UNIQUE (post_id, ordinal)` + `CHECK (ordinal BETWEEN 1 AND 3)` 的「每帖 ≤3」。
+    -- del=true 是**显式例外**（PG 没有列级 DELETE）：换图前必须按 post_id 物理删旧挂载，见 allow_table_dml。
+    ('post_media_attachments',
+     ARRAY['post_id','media_id','ordinal'],
+     ARRAY['post_id','media_id','ordinal'],
+     ARRAY[]::text[],
      true),
     -- GY-R71（2026-10-30）· 统一作业台账 `public.jobs`：**第一个**写入者不是某个域，而是
     -- `services/api/src/jobs/ledger.ts` 里那条唯一的 upsert（四源共用：ocr / recognition /
@@ -1666,7 +1683,14 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- PG 没有列级 DELETE ⇒ 只能表级授予，授权在 20-login-roles.sql 的
     -- `gy-r72-moderation-idempotency-delete` 独立区（列级区只含列级授权）。
     -- 本片新增后，表级写授权白名单为 20 个三元组。
-    ('public', 'moderation_idempotency', 'DELETE')
+    ('public', 'moderation_idempotency', 'DELETE'),
+    -- GY-R83（迁移 0056，#1030 帖子级媒体挂载）：`commitPost` 改稿换图时先按 post_id 物理删旧挂载
+    -- （`DELETE FROM public.post_media_attachments WHERE post_id = $1::uuid`），再按新 `media_ids`
+    -- 顺序重新认领 —— 旧序号必须让位，否则 `UNIQUE (post_id, ordinal)` 会假冲突。PG 没有列级
+    -- DELETE ⇒ 只能表级授予（与 community_likes / community_idempotency 同一条）。
+    -- ⛔ UPDATE 仍然不给：挂载行不可改写，改了就绕过「每帖 ≤3」的结构约束。
+    -- 本片新增后，表级写授权白名单为 21 个三元组。
+    ('public', 'post_media_attachments', 'DELETE')
   ),
   -- R28-S43：运行时**经 5 个 NOLOGIN 组继承来的** public 授权面（17 张表，不在 domain_manifest 里；`species` 由 GY-I07 加入）。
   -- 这些权限不是 20-login-roles.sql 里的域段落给的，而是 services/api/db/roles/*.sql 的角色文件
@@ -4631,6 +4655,11 @@ SELECT CASE
 -- 断言 49–58 是**数据驱动**的（`FROM expected e`），`expected` 加一行即自动多一条逐表列面检查，
 -- 本节不为此另写断言；`external_manifest` **一句未动**（本表不属组继承面，没有 `gengyun_*`
 -- 组角色对它授权）。
+-- GY-R83（迁移 0056 / #1030 帖子级媒体挂载）：`expected` 增**一行** `post_media_attachments`
+-- （SELECT/INSERT 各三列、upd 空、del=true）⇒ 断言 7 的逐表展开自动多一条
+-- `runtime_grants_post_media_attachments`，静态值 129 条；`domain_manifest` 同时增一行
+-- `granted / required=true`（第 47 条「每个 public 关系都要被分类」据此才不判红）。
+-- `allow_table_dml` 增一个三元组（20 → 21），它只进 detail 文案、不增减断言行。
 DO $$
 DECLARE
   v_failed integer;

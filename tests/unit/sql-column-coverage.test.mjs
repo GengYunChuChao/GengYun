@@ -611,20 +611,19 @@ const EXPECTED_READINGS = {
   // SELECT 77 → 79：GY-R73 的 favorites 反查 + `admin/ops/invalidation-events.ts` 的收件人过滤
   // （`SELECT id FROM public.users WHERE id = ANY($1::uuid[]) AND state = 'active'`，只发给状态正常的账号）
   // 在本块算 +1，R72 #838 的 `community/store-pg.ts` 举报处置审计再 +1。
-  sqlLiterals: 169,
-  statements: { INSERT: 27, UPDATE: 31, SELECT: 79, DELETE: 32 },
+  sqlLiterals: 170, // GY-R83（#1030）：+1 —— `community/store-pg.ts` 的换图前 `DELETE FROM post_media_attachments`（认领语句是 CTE，不计入本条正则）
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 79, DELETE: 33 },
   returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
-  referencedTables: 25,
-  // GY-R73（#17）：1272 → 1273 —— avorites 的按对象反查 SELECT 多一条列要求。
-  columnRequirements: 1273,
+  referencedTables: 26, // GY-R83（#1030）：25 → 26 —— 发帖事务里的 `post_media_attachments`（帖级挂载表）
+  columnRequirements: 1274, // GY-R83（#1030）：1273 → 1274 —— 换图 DELETE 只读谓词列 `post_id`（已授权）
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 45,
+  community: 46, // GY-R83（#1030）：45 → 46 —— 换图前 `DELETE FROM post_media_attachments`
   conversations: 20,
   // GY-R73（#17）：15 → 16 —— 新增 listOwnerIdsByTarget 的按对象反查 SELECT。
   favorites: 16,
@@ -654,7 +653,8 @@ const EXPECTED_TABLES = [
   'public.messages',
   'public.ocr_idempotency',
   'public.ocr_jobs',
-  'public.ocr_records',
+  // GY-R83（#1030）：发帖/改稿在 `community/store-pg.ts` 的 `claimPostMedia` 里认领槽位。
+  'public.ocr_records', 'public.post_media_attachments',
   'public.recognition_idempotency',
   'public.recognition_jobs',
   'public.recognition_records',
@@ -914,8 +914,8 @@ const EXPECTED_EXTENDED_READINGS = {
   // GY-R73（#17）：321 → 323、SELECT 171 → 173 —— 两处新 SQL：`favorites/store-pg.ts` 的
   // listOwnerIdsByTarget（按对象反查收藏者）与 `admin/ops/invalidation-events.ts` 的收件人过滤；
   // 再叠加 R72 #838 的 +1（`community/store-pg.ts` 的举报处置审计）⇒ 字面量 **324**、SELECT **174**。
-  sqlLiterals: 326, // GY-R74：324 → 326 —— media/store-pg.ts 新增 listDueMedia 的到期扫描 + purge_owner_media 调用
-  statements: { INSERT: 49, UPDATE: 58, SELECT: 176, DELETE: 43 },
+  sqlLiterals: 328, // GY-R83（#1030）：324 → 326 再加 2 —— 帖级认领 CTE（`INSERT … RETURNING ordinal`）+ 换图前 `DELETE FROM post_media_attachments`
+  statements: { INSERT: 49, UPDATE: 58, SELECT: 177, DELETE: 44 },
   returningClauses: 99,
   onConflictClauses: 31,
   selectStar: 15,
@@ -923,11 +923,11 @@ const EXPECTED_EXTENDED_READINGS = {
   rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
   noTargetTable: 20, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM
-  referencedTables: 52,
+  referencedTables: 53, // GY-R83（#1030）：52 → 53 —— `public.post_media_attachments`
   // GY-R73（#17）：2080 → 2082 —— 两处新 SELECT 的列要求（favorites 的 target/owner 列 + users 的 id/state）。
-  columnRequirements: 2099, // GY-R74：2082 → 2099 —— listDueMedia 那 17 处列引用全部落在 media 已授权列上
+  columnRequirements: 2100, // GY-R83（#1030）：认领 CTE 的 post_id/media_id/ordinal + 换图 DELETE 的 post_id
   // GY-R73（#17）：1979 → 1981 —— 两处新 SELECT 的列要求都已覆盖（缺 0 条不变）。
-  coveredRequirements: 1998, // GY-R74：1981 → 1998 —— 同上 17 条全部已覆盖
+  coveredRequirements: 1999, // GY-R83（#1030）：同上，三列 + 谓词列都在本轮 GRANT 里，缺 0 条不变
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -941,7 +941,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 17,
-  'community': 45,
+  'community': 46, // GY-R83（#1030）：45 → 46 —— 同上（换图前 DELETE）
   'conversations': 20,
   // GY-R73（#17）：15 → 16 —— 新增 listOwnerIdsByTarget 的按对象反查 SELECT。
   'favorites': 16,
@@ -950,7 +950,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/invalidation-events.ts': 1,
   'jobs/ledger.ts': 2,
   'knowledge/service.ts': 4,
-  'media': 25, // GY-R74：23 → 25 —— listDueMedia 的到期扫描 SELECT + purgeOwnerMediaRows 的删行函数调用
+  'media': 26, // GY-R83（#1030）：25 → 26 —— countPendingCommunityImages 的待用池计数 SELECT
   'messages': 15,
   // R72-W41（2026-11-01）：审核域幂等台账 store 的 6 条 SQL 字面量 —— 五条业务语句（find / claim /
   // finalize / release / purge）+ 一条 `to_regclass` 就绪探测。R72-W54：结论事实读面 1 条只读 SELECT。
@@ -1003,7 +1003,7 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.moderation_withdrawals',
   'public.ocr_idempotency',
   'public.ocr_jobs',
-  'public.ocr_records',
+  'public.ocr_records', 'public.post_media_attachments',
   'public.privacy_epochs',
   'public.provider_invocations',
   'public.recipients',

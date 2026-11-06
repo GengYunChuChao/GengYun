@@ -168,10 +168,10 @@ export interface CommunityContentOutcome {
  *   存在 TOCTOU（并发可超发）。**缺清理器／权威计数器时不得放行**。
  */
 export interface CommunityAttachmentCounter {
-  readonly kind: 'substitute' | 'unwired' | 'injected';
+  readonly kind: 'substitute' | 'unwired' | 'injected' | 'postgres';
   readonly note: string;
-  /** 返回该 owner 当前已占用的图片槽位数；无法判定返回 null。 */
-  countFor(input: { ownerId: string; liveCommunityImages: number }): number | null;
+  /** 返回该 owner 当前已占用的图片槽位数；无法判定返回 null（可以是异步读数：`postgres` 端口要查库）。 */
+  countFor(input: { ownerId: string; liveCommunityImages: number }): number | null | Promise<number | null>;
 }
 
 // `MediaRecord` / `CommunityGrantRecord` 自 W12 起定义在 `./store.ts`（持久化端口的行视图），
@@ -624,7 +624,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   const contentSource = options.contentSource ?? createClosedContentSource();
   const attachmentCounter =
     options.attachmentCounter ??
-    (executionMode === 'real' ? createUnwiredAttachmentCounter() : createSubstituteAttachmentCounter());
+    defaultAttachmentCounter(executionMode, options.persistence);
   const now = options.now ?? (() => new Date());
   const idFactory = options.idFactory ?? (() => randomUUID());
   const tokenFactory = createAccessTokenFactory(options.tokenSecret);
@@ -840,7 +840,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   async function attachmentLimitFor(actor: MediaActor, purpose: unknown): Promise<number> {
     if (purpose !== 'community_image') return 0;
     const liveCommunityImages = await liveCommunityImageCount(actor.ownerId);
-    const counted = attachmentCounter.countFor({
+    const counted = await attachmentCounter.countFor({
       ownerId: actor.ownerId,
       liveCommunityImages,
     });
@@ -1674,5 +1674,50 @@ export async function readOwnerMediaContent(
     contentType: projection.mime,
     source,
     revision: projection.revision,
+  };
+}
+
+/**
+ * `real` 模式**默认**计数端口的选择（GY-R83 / #1030）。
+ *
+ * - `stub`/`preset_demo`：仍是 `substitute`（同一 owner 名下存活 `community_image` 数的保守替身）；
+ * - `real` + 持久化端口能给出「待用池」：`postgres`（迁移 0056 的挂载表反查，见
+ *   `services/api/src/media/store.ts` 的 `countPendingCommunityImages`）；
+ * - `real` + 端口给不出：仍是 `unwired`（恒 `null` ⇒ `attachmentLimitFor` 503 fail-closed，⛔ 不降级为 0）。
+ *
+ * 为什么在**文件末尾**声明工厂而不在装配层接线：`services/api/src/app.ts:1817` 只在显式注入时
+ * 才传 `attachmentCounter`，本文件必须能从 `options.persistence` 自己推出能力；而本文件顶部任何
+ * **新增 import 行**都会把下方文档锚点整体推位（`AGENTS.md` 的锚点纪律），所以新符号一律追加在
+ * 文件尾部（只增行、不移动既有行），既有工厂一行不改。
+ */
+function defaultAttachmentCounter(
+  executionMode: string,
+  persistence: MediaStore | undefined,
+): CommunityAttachmentCounter {
+  if (executionMode !== 'real') return createSubstituteAttachmentCounter();
+  const countPending = persistence?.countPendingCommunityImages;
+  if (persistence === undefined || countPending === undefined) return createUnwiredAttachmentCounter();
+  return createPostgresAttachmentCounter((ownerId) => countPending.call(persistence, ownerId));
+}
+
+/**
+ * `postgres` 计数端口：只把端口读数转出去；`null`（迁移未 apply）仍由 `attachmentLimitFor` 折成 503。
+ *
+ * 口径（⛔ 不是 owner 生命周期累计）：待用池 = `purpose='community_image'`、状态在
+ * `initiated`/`uploaded`/`processing`/`ready`、创建于 24h 内、**且没挂在任何未删除的帖子**上 ——
+ * 挂载即释放、删帖即释放、24h 窗口自衰减。并发只是「先数后写」的预检（未取
+ * `pg_advisory_xact_lock`）：每帖 ≤3 的权威判定在挂载口的结构约束（`UNIQUE (post_id, ordinal)`
+ * + `CHECK (ordinal BETWEEN 1 AND 3)`），不靠这里的计数。
+ */
+function createPostgresAttachmentCounter(
+  countPending: (ownerId: string) => Promise<number | null>,
+): CommunityAttachmentCounter {
+  return {
+    kind: 'postgres',
+    note: '待用池口径（迁移 0056）：已上传未挂载的社区图才占位，挂载即释放／删帖即释放／24h 自衰减；'
+      + '⛔ 不是同一 owner 名下存活记录数（生命周期累计会永久锁死）；并发只作预检。',
+    countFor(input) {
+      return countPending(input.ownerId);
+    },
   };
 }

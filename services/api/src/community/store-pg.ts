@@ -370,6 +370,123 @@ async function withTransaction<T>(pool: TransactionalPool, run: (sql: SqlRunner)
   }
 }
 
+/**
+ * 认领帖子的图片附件（迁移 0056 `public.post_media_attachments`）。
+ *
+ * 为什么要这张表：`community_posts.media_ids` 只是**引用串数组**（`0022_community_persistence.sql:84-85`
+ * 明写「媒体域才是 uuid 的权威」），它既反查不了「这张图挂在哪一帖」，也没法用约束表达「每帖 ≤3」；
+ * 上传侧 `attachmentLimitFor` 按 owner 计数只能近似（PR #1029 的累计口径已因此被撤回）。
+ *
+ * 口径（本片确立）：
+ * - `ordinal` 由 `WITH ORDINALITY` 按 `media_ids` **数组顺序**从 1 起算；「每帖 ≤3」由
+ *   `UNIQUE (post_id, ordinal)` + `CHECK (ordinal BETWEEN 1 AND 3)` **结构性**保证 —— 第 4 张必然 23514，
+ *   同一帖重复同一张图必然 23505；两者都映射成既有的 400 `INVALID_REQUEST` +
+ *   `details[].code = 'post_image_limit'`（⛔ 不新造 ErrorCode）；
+ * - 两侧都**不加外键**：`community_posts.media_ids` 本来允许悬空引用（`0022:84-85`，
+ *   `tests/integration/community-pg.mjs:96` 就用随机 uuid 当 media_ids），本表沿用同一语义，
+ *   `media` 行不存在时按「引用串」照挂（悬空引用语义与 media 侧一致）；
+ * - 归属只在 `media` 行**存在时**校验（`m.owner_id = $3`）：行缺失时无从判定，与悬空引用口径一致；
+ *   判到不匹配即整笔事务 ROLLBACK（⛔ 不静默丢掉那一张）；
+ * - 同一张图**不许同时挂在两个未删除的帖子**上：已挂在别的 `visibility <> 'deleted'` 帖子上的 media
+ *   不可再认领 —— **删帖即释放**（行保留，靠 `visibility` 判定，不靠物理删除）。
+ *   这也是「待用池」计数口径的来源，见 `services/api/src/media/store-pg.ts` 的 `countPendingCommunityImages`。
+ */
+async function claimPostMedia(
+  sql: SqlRunner,
+  postId: string,
+  ownerId: string | null,
+  mediaIds: readonly string[],
+): Promise<void> {
+  // 无图帖子**一条语句都不发**：`tests/unit/community-store-pg-contract.test.mjs` 的
+  // 「insertPost 只有 INSERT + 结论 upsert 两条语句」是硬断言（空数组也照发会判红）。
+  if (mediaIds.length === 0) return;
+  let result;
+  try {
+    result = await sql.query(
+      `WITH input AS (
+         SELECT t.value AS media_id, row_number() OVER (ORDER BY t.ord)::smallint AS ordinal
+           FROM unnest($2::text[]) WITH ORDINALITY AS t(value, ord)
+          WHERE t.value ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       ), claimable AS (
+         SELECT i.media_id, i.ordinal
+           FROM input i
+           LEFT JOIN media m ON m.id = i.media_id::uuid
+          WHERE m.id IS NULL
+             OR (($3::uuid IS NULL OR m.owner_id = $3::uuid)
+                 AND m.purpose = 'community_image'
+                 AND m.state NOT IN ('deleted', 'rejected')
+                 AND NOT EXISTS (
+                   SELECT 1
+                     FROM post_media_attachments a
+                     JOIN community_posts p ON p.id = a.post_id
+                    WHERE a.media_id = i.media_id::uuid
+                      AND a.post_id <> $1::uuid
+                      AND p.visibility <> 'deleted'))
+       ), inserted AS (
+         INSERT INTO post_media_attachments (post_id, media_id, ordinal)
+         SELECT $1::uuid, c.media_id::uuid, c.ordinal FROM claimable c
+         RETURNING ordinal
+       )
+       SELECT (SELECT count(*) FROM input) AS declared,
+              (SELECT count(*) FROM inserted) AS claimed`,
+      [postId, mediaIds, ownerId],
+    );
+  } catch (error) {
+    rejectPostMediaClaim(error);
+  }
+  const declared = Number(result.rows[0]?.declared ?? 0);
+  const claimed = Number(result.rows[0]?.claimed ?? 0);
+  if (claimed === declared) return;
+  throw postMediaUnavailableError();
+}
+
+/** 认领冲突 → 既有的 400 信封 + `post_image_limit`（与 `packages/media/validate.mjs:85-88` 同一个机器码）。 */
+function postImageLimitError(message = '每个帖子最多 3 张图片'): ApiError {
+  return new ApiError('INVALID_REQUEST', message, {
+    details: [{ field: '/media_ids', code: 'post_image_limit' }],
+  });
+}
+
+/** 有「挂不上」的行（不存在／非本人／用途不符／已挂别帖）⇒ 整笔失败：不偷偷少挂一张。 */
+function postMediaUnavailableError(): ApiError {
+  return new ApiError('INVALID_REQUEST', '图片无法挂载：不存在、不属于本人、用途不符或已挂在其他帖子', {
+    details: [{ field: '/media_ids', code: 'media_not_attachable' }],
+  });
+}
+
+/**
+ * 认领语句的异常折叠：唯一键／CHECK 是本设计**故意**让结构约束来拒的地方，
+ * 所以必须先于 `classifyCommunityDatabaseError` 把它们翻译成 400；其余交给统一分类器。
+ */
+function rejectPostMediaClaim(error: unknown): never {
+  if (error instanceof ApiError) throw error;
+  const sqlState = (error as { code?: unknown } | null)?.code;
+  if (sqlState === '23514') throw postImageLimitError('每个帖子最多 3 张图片（第 4 张会被结构约束拒绝）');
+  if (sqlState === '23505') throw postImageLimitError('同一张图片不能在同一个帖子重复挂载');
+  throw error;
+}
+
+/**
+ * 帖子行自带的 `media_ids ≤ 3`（迁移 `0022` 的 `community_posts_media_ids_max`）被拒时的折叠。
+ *
+ * 这条 CHECK 与 0056 的 `ordinal BETWEEN 1 AND 3` 是**同一件事的两道闸**：第 4 张图在
+ * `INSERT/UPDATE community_posts` 这一步就先撞上它（认领语句还没轮到），所以这里也必须映射成
+ * 既有的 400 `post_image_limit`。⛔ 不能落成 503：那是**调用方输入**的问题，不是库不可用；
+ * 也不能只靠服务层的 `validatePostInput`（直连 store 的内部调用者、迟到重放都可能绕过它）。
+ */
+function rejectPostMediaIdsOverflow(error: unknown): never {
+  const detail = error as { code?: unknown; constraint?: unknown } | null;
+  if (detail?.code === '23514' && detail?.constraint === 'community_posts_media_ids_max') {
+    throw postImageLimitError();
+  }
+  throw error;
+}
+
+/** `media_ids` 内容比较：`mergePostPatch` 在 patch 不带该键时**沿用同一数组引用**，不能靠 `!==`。 */
+function sameMediaIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 /** 审核结论写入（提交路径专用：同键**覆盖**，与内存实现的 `Map.set` 同义）。 */
 async function writeModeration(
   sql: SqlRunner,
@@ -506,29 +623,41 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
       }
       const next = mergePostPatch(before, patch);
       const linked = next.linked_knowledge_ref;
-      await sql.query(
-        `UPDATE community_posts
-            SET revision = $2, title = $3, body = $4, crop_id = $5, region_code = $6, media_ids = $7::text[],
-                linked_knowledge_type = $8::linked_target_type, linked_knowledge_id = $9,
-                linked_knowledge_revision = $10, visibility = $11::visibility, audit_state = $12::audit_state,
-                updated_at = $13::timestamptz
-          WHERE id = $1::uuid`,
-        [
-          id,
-          next.revision,
-          next.title,
-          next.body,
-          next.crop_id,
-          next.region_code,
-          next.media_ids,
-          linked === null ? null : linked.type,
-          linked === null ? null : linked.id,
-          linked === null ? null : linked.revision,
-          next.visibility,
-          next.audit_state,
-          next.updated_at,
-        ],
-      );
+      try {
+        await sql.query(
+          `UPDATE community_posts
+              SET revision = $2, title = $3, body = $4, crop_id = $5, region_code = $6, media_ids = $7::text[],
+                  linked_knowledge_type = $8::linked_target_type, linked_knowledge_id = $9,
+                  linked_knowledge_revision = $10, visibility = $11::visibility, audit_state = $12::audit_state,
+                  updated_at = $13::timestamptz
+            WHERE id = $1::uuid`,
+          [
+            id,
+            next.revision,
+            next.title,
+            next.body,
+            next.crop_id,
+            next.region_code,
+            next.media_ids,
+            linked === null ? null : linked.type,
+            linked === null ? null : linked.id,
+            linked === null ? null : linked.revision,
+            next.visibility,
+            next.audit_state,
+            next.updated_at,
+          ],
+        );
+      } catch (error) {
+        // 改稿塞进第 4 张：与发帖同一条 `community_posts_media_ids_max` ⇒ 同样折成 400 `post_image_limit`。
+        rejectPostMediaIdsOverflow(error);
+      }
+      // 迁移 0056：`media_ids` **真的变了**才重认领（`tests/unit/community-store-pg-contract.test.mjs`
+      // 的两例 CAS 改稿都不动 media_ids，语句序列必须是 UPDATE → 结论 upsert；空数组同理整条跳过）。
+      // 先 `DELETE` 再认领：旧序号必须先让位，否则换图时 `UNIQUE (post_id, ordinal)` 会假冲突。
+      if (sameMediaIds(before.media_ids, next.media_ids) === false) {
+        await sql.query('DELETE FROM post_media_attachments WHERE post_id = $1::uuid', [id]);
+        await claimPostMedia(sql, id, next.author_id, next.media_ids);
+      }
       // 结论绑定到**写入后的 revision**（与内存实现 `moderationComposite(..., next.revision)` 同义）。
       if (moderation !== null) await writeModeration(sql, 'post', id, next.revision, moderation);
       // 后台「隐藏帖子」的审计（迁移 0047）：**同一个 sql、同一个事务**，在 COMMIT 之前。
@@ -656,34 +785,43 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
     async insertPost(record, moderation) {
       return withTransaction<boolean>(pool, async (sql) => {
         const linked = record.linked_knowledge_ref;
-        const rows = (await sql.query(
-          `INSERT INTO community_posts
-             (id, author_id, revision, title, body, crop_id, region_code, media_ids, linked_knowledge_type,
-              linked_knowledge_id, linked_knowledge_revision, visibility, audit_state, created_at, updated_at)
-           VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::text[], $9::linked_target_type, $10, $11,
-                   $12::visibility, $13::audit_state, $14::timestamptz, $15::timestamptz)
-           ON CONFLICT (id) DO NOTHING
-             RETURNING id`,
-          [
-            record.id,
-            record.author_id,
-            record.revision,
-            record.title,
-            record.body,
-            record.crop_id,
-            record.region_code,
-            record.media_ids,
-            linked === null ? null : linked.type,
-            linked === null ? null : linked.id,
-            linked === null ? null : linked.revision,
-            record.visibility,
-            record.audit_state,
-            record.created_at,
-            record.updated_at,
-          ],
-        )).rows;
+        let rows: Array<Record<string, unknown>>;
+        try {
+          rows = (await sql.query(
+            `INSERT INTO community_posts
+               (id, author_id, revision, title, body, crop_id, region_code, media_ids, linked_knowledge_type,
+                linked_knowledge_id, linked_knowledge_revision, visibility, audit_state, created_at, updated_at)
+             VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8::text[], $9::linked_target_type, $10, $11,
+                     $12::visibility, $13::audit_state, $14::timestamptz, $15::timestamptz)
+             ON CONFLICT (id) DO NOTHING
+               RETURNING id`,
+            [
+              record.id,
+              record.author_id,
+              record.revision,
+              record.title,
+              record.body,
+              record.crop_id,
+              record.region_code,
+              record.media_ids,
+              linked === null ? null : linked.type,
+              linked === null ? null : linked.id,
+              linked === null ? null : linked.revision,
+              record.visibility,
+              record.audit_state,
+              record.created_at,
+              record.updated_at,
+            ],
+          )).rows;
+        } catch (error) {
+          // 超过 3 张在这里就被 `community_posts_media_ids_max` 拒掉（帖子行没写进去 ⇒ 整笔干净回滚）。
+          rejectPostMediaIdsOverflow(error);
+        }
         // 内容没写进去 ⇒ 结论也不写（同一次提交，与内存实现的顺序一致）。
         if (rows.length === 0) return false;
+        // 迁移 0056：**同一个事务**内按 `media_ids` 顺序认领图片槽位（`media_ids` 为空时一条语句都不发）。
+        // 认领失败 ⇒ 抛错 ⇒ `withTransaction` ROLLBACK ⇒ 帖子与结论一起不落库。
+        await claimPostMedia(sql, record.id, record.author_id, record.media_ids);
         if (moderation !== null) await writeModeration(sql, 'post', record.id, record.revision, moderation);
         return true;
       });
