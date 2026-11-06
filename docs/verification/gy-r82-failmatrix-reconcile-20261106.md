@@ -131,9 +131,9 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 
 同一次合入还把真库臂的 `notRunnable` 从 13 条清到 0（`same 162 → 175`、`sameWithCheck 19 → 20`、`sameWithShape 27 → 30`、`different` 仍 5），所以本页 §1 那张「13 条 not runnable」的表**只代表基线**，不再代表 `main`。两条 `different`（C4-15、C4-18）的裁定结论不变，仍是本页 §2 的裁定。
 
-承接提交（PR `#1033`，分支 `test/gy-r83-real-expect`）已把本页 §2 的两行与 §7 第 3 行的 `tests/failmatrix/cases.mjs` 定位改为用例新位置（C4-15 在**第 407 行**、C4-18 在**第 438 行**），三条映射登记在 `tests/unit/doc-anchor-relocations.json`（`kind: "correction"`，`symbol` 分别为 C4-15、C4-18、C4-18）。上表里 `run-real.mjs` 的七组引用仍按上表处理，不属本 PR 的重锚范围。
+承接提交（PR `#1033`，分支 `test/gy-r83-real-expect`）已把本页 §2 的两行与 §7 第 3 行的 `tests/failmatrix/cases.mjs` 定位改为用例新位置（C4-15 在**第 407 行**、C4-18 在**第 438 行**），三条映射登记在 `tests/unit/doc-anchor-relocations.json`（`kind: "correction"`，`symbol` 分别为 C4-15、C4-18、C4-18）。上表里 `run-real.mjs` 的七组引用仍按上表处理，不属 PR `#1033` 的重锚范围。
 
 ### 承接 PR `#1033` 合入之后（2026-11-07）
 
-`tests/failmatrix/run-real.mjs` 又被 `#1033` 加长 17 行（1493 → 1510），上表右列是 `main = 1dec1bbb` 的快照：哨兵那三条赋值现在落在第 1111–1113 行，判定器取期望那一行现在是第 790 行（`const exp = (c.realExpect ?? c.expect) ?? {};`）。同理，本页 §7 引的 `tests/failmatrix/run-real.mjs:994-996` 在当前树上已落到真库臂启动段的 `dataDir` / `logFile` 两行，不再指向哨兵——那处属 §1–§8 的基线读数，按 §11 不回填，换算时请以行内容为准。
+`tests/failmatrix/run-real.mjs` 又被 `#1033` 加长 17 行（1493 → 1510），上表右列是 `main = 1dec1bbb` 的快照：哨兵那三条赋值现在落在第 1111–1113 行，判定器取期望那一行现在是第 790 行（`const exp = (c.realExpect ?? c.expect) ?? {};`）。其余五组在上表左侧同样各偏 1～8 行（142／214／266／789／843），换算时同样以行内容为准。同理，本页 §7 引的 `tests/failmatrix/run-real.mjs:994-996` 在当前树上已落到真库臂启动段的三行（`dataDir`、`logFile` 与 `keep`），不再指向哨兵——那处属 §1–§8 的基线读数，按 §11 不回填，换算时请以行内容为准。
 
