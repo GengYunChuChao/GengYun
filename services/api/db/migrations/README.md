@@ -43,7 +43,37 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 正向 53 条、`rollback/` 52 条、最大号 `0054`、`0037` 不存在；`discoverMigrations()` 报 53 个文件、
 末项 `0054_favorites_target_lookup.sql`。）
 
+（2026-11-07 · GY-R83(`0056`) 落盘后复测：`0001..0054` + `0056`，缺号是 `0037` 与 `0055` ⇒ 目录现为
+**54 个正向 `.sql`** ＋ `rollback/` **53 个**（`0001` 无 down）；`count + 保留数 === max` ⇒
+**54 + 2 === 56**（保留号 = `0037` #14、`0055` 在飞的 `feat/gy-r83-provider-call-ledger`）。上一段那组
+53/52 与 `53 + 1 === 54` 是 2026-11-03 当天的实测快照，**保留不动**。`0055` 让号的依据见
+`services/api/db/migration-reservations.json` 的 `$comment` 末段。）
+
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0055` 预留：**在飞**的 `feat/gy-r83-provider-call-ledger`（`0055_provider_call_ledger.sql`，provider_call_ledger
+  调用台账）占用；本片（`0056`）按协调结果让号，落地后按 `remove_when` 删除台账条目。
+- `0056_post_media_attachments.sql`（GY-R83 #1030 · **帖子级媒体挂载表**：把「real 模式每帖 ≤3 张图」从
+  owner 生命周期累计的计数近似改成**结构约束**）。
+  依赖 `0022_community_persistence.sql` 的 `public.community_posts`；**只建一张新表**，不改既有列/CHECK、
+  不写数据、不改 `community_posts.media_ids` 的既有语义（它继续存**引用串**）。
+  表体 `public.post_media_attachments(post_id uuid NOT NULL, media_id uuid NOT NULL, ordinal smallint NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now())`，三条约束：
+  `post_media_attachments_pkey PRIMARY KEY (post_id, media_id)`（同一张图不许在同一帖占两个号位）、
+  `post_media_attachments_post_ordinal_key UNIQUE (post_id, ordinal)`（号位不重复）、
+  `post_media_attachments_ordinal_range CHECK (ordinal BETWEEN 1 AND 3)`（**上限就是这条**）。
+  ⇒ 「每帖 ≤3」由唯一键 + CHECK 裁决，不依赖任何计数，也不需要清理器才能解锁（这正是 #1030 的缺口：
+  累计口径会让用户传满 3 张后永久锁死，且「先数后写」有 TOCTOU 超发）。
+  **两侧都不加外键**：`media_id` 不加（`0022` 明写 media_ids 是引用串、媒体域才是 uuid 权威；既有集成夹具
+  `tests/integration/community-pg.mjs` 的 `postRecord()` 一直用随机 uuid），`post_id` 也不加
+  （与 media 侧保持同一种悬空引用语义；删帖由 `visibility = 'deleted'` 状态机表达，不靠级联）。
+  `community_posts` 侧删帖**不级联**，因此「删帖即释放」的读法按 `community_posts.visibility` 过滤实现。
+  一条反查索引 `post_media_attachments_media_idx (media_id)`（待用池口径与「删帖释放」都按 media 反查）；
+  `(post_id)` **不另建索引**（主键前缀已覆盖）。
+  本迁移**零 GRANT**（与 0024/0026/0051/0054 同一纪律）：运行角色 `gengyun_api_runtime` 的最小权限写在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的社区域段——列级 `SELECT`／`INSERT` + **表级** `DELETE`
+  （PG 无列级 DELETE：改稿要先 `DELETE … WHERE post_id = $1` 再重认领），**不授** `UPDATE`。
+  配对回滚 `rollback/0056_post_media_attachments.down.sql`：`DROP TABLE IF EXISTS public.post_media_attachments;`
+  （丢的是「谁挂了哪张图」的索引性事实，`community_posts.media_ids` 里的引用串仍在 ⇒ 回滚不让帖子丢图）。
 - `0054_favorites_target_lookup.sql`（GY-R73 #17 · **反查索引**：「按被撤回/失效的收藏目标反查收藏者」的索引 ——
   后台撤回资料来源/条目后，要按对象找出「谁收藏过它」，才谈得上给这些人发失效通知）。
   接在 `0053` 之后取号（本清单最新在前，故这一条排在 `0053` 条目**之上**），号位依据「正向最大号 +1」

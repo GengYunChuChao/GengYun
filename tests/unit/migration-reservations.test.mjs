@@ -161,7 +161,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0053/R72 #838 举报处置审计、0054/GY-R73 收藏反查索引 已落盘 ⇒ 53 文件 + 1 保留 === 54、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0053/R72 #838 举报处置审计、0054/GY-R73 收藏反查索引、0056/GY-R83 #1030 帖子级媒体挂载 已落盘（0055 由在飞的 provider_call_ledger 占用）⇒ 54 文件 + 2 保留 === 56、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -170,16 +170,22 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(numbering.maxVersion, Math.max(...migrations.map((item) => Number(item.version))));
   assert.deepEqual(
     numbering.gaps,
-    [37],
-    `0053（#838）与 0054（GY-R73）在合流树上都已落盘 ⇒ 缺号只剩 0037（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
+    [37, 55],
+    `0053（#838）、0054（GY-R73）与 0056（GY-R83 #1030）都已落盘 ⇒ 缺号是 0037（#14 保留）与 0055`
+      + `（在飞的 provider_call_ledger；现场 ${JSON.stringify(numbering.gaps)}）`,
   );
   assert.deepEqual(
     numbering.reserved,
-    [37],
-    '0037（#14）这一个缺号必须在台账登记；0052/0053/0054 已落盘 ⇒ ⛔ 不得登记 52/53/54',
+    [37, 55],
+    '0037（#14）与 0055（在飞的 provider_call_ledger）两个缺号必须在台账登记；'
+      + '0052/0053/0054/0056 已落盘 ⇒ ⛔ 不得登记 52/53/54/56',
   );
-  assert.equal(reservations.length, 1, '台账眼下必须恰有一条保留项（0037 #14；53 号条目的 remove_when 已兑现 ⇒ 删除）');
-  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（0037 与 0053 都已登记）');
+  assert.equal(
+    reservations.length,
+    2,
+    '台账眼下必须恰有两条保留项（0037 #14、0055 在飞的 provider_call_ledger；53 号条目的 remove_when 已兑现 ⇒ 删除）',
+  );
+  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（0037 与 0055 都已登记）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
     numbering.countMatchesMax,
@@ -189,7 +195,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（53 = 54 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（54 = 56 − 2）',
   );
 
   const files = migrations.map((item) => item.filename);
@@ -329,6 +335,19 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
     files.some((name) => /^0037_/.test(name)),
     false,
     '0037 属 #14（号空出）⇒ 合流树上不得出现 0037 前缀的文件',
+  );
+  // GY-R83（#1030）：0055 已被在飞的 provider_call_ledger 占用 ⇒ 本片取 0056，
+  // 0055 必须在台账登记（上面的 reserved 断言），且**不得**在本树上出现真实文件。
+  assert.equal(
+    files.includes('0056_post_media_attachments.sql'),
+    true,
+    'GY-R83 的 0056 已落盘 ⇒ 真实文件必须在清单里（号位 = 0055 让给在飞的 provider_call_ledger 后取 0056，⛔ 不许换号/借号）',
+  );
+  assert.equal(
+    files.includes('0055_provider_call_ledger.sql'),
+    false,
+    '0055 属在飞的 feat/gy-r83-provider-call-ledger（provider_call_ledger）⇒ 本片树上不得出现 0055 真实文件'
+      + '（否则 reservedButPresent 会先判红）',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),
