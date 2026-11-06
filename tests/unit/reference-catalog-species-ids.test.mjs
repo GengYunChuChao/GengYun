@@ -31,6 +31,11 @@ test('合法目录：原样返回 trim 后的 id，顺序不变', () => {
   assert.deepEqual(ids, SPECIES_IDS);
 });
 
+test('返回值已去掉首尾空白（输入带空格时也能看出来）', () => {
+  const ids = assertSpeciesIds([' species_barnyardgrass\t', '\tspecies_goosegrass ', 'species_foxtail'].map(row));
+  assert.deepEqual(ids, ['species_barnyardgrass', 'species_goosegrass', 'species_foxtail']);
+});
+
 test('负控制：缺 id 必须抛错，且错误信息点出是「缺少 id」', () => {
   assert.throws(() => assertSpeciesIds([...SPECIES_IDS.slice(1).map(row), { coverage_state: 'planned' }]), /species 条目缺少 id/);
 });
