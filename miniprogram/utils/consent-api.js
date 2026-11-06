@@ -381,16 +381,93 @@ function readPolicy() {
 }
 
 /**
- * 某用途此刻能否**授予**：只看政策读面能证明的事，不做推测。
+ * 某用途**可让用户挑的接收方候选**（政策读面的披露面，不是授权面）。
+ *
+ * 为什么单独一个纯函数：本页要把「你愿意把图片/推理请求交给谁」这个决定权交回用户，就必须先给出
+ * 一份候选清单；但候选从哪来、宽到什么程度，必须写清楚依据，不能偷偷替服务端收紧或放宽。
+ *
+ * ## 能力映射的依据（`PURPOSE_CAPABILITIES`）
+ *
+ * - `media_processing` ⇒ `weed` / `ocr` / `asr`：服务端媒体外发的三种 capability 就是这三个
+ *   （`services/api/src/app.ts:1034-1036` 的 `mediaEgress('weed_recognition','weed')` /
+ *   `('voice_question','asr')` / `('label_ocr','ocr')`；`community_image` 没有接外发端口，
+ *   只有 `media_processing` + `public_posting` 的授权门 ⇒ 没有对应 capability）。
+ * - `external_inference` ⇒ `weed` / `ocr` / `asr` / `tts` / `llm`：四条外发入口各自的 capability
+ *   （识别/OCR/ASR 见上；`tts` 见 `app.ts:1171` 的 `capability: 'tts'`；问答 `llm` 见
+ *   `privacy/task-egress.ts:323` 的 `capability = deps.capability ?? 'llm'`）。
+ * - **刻意不收窄到单一能力**：服务端 `ledger-pg.ts:553` 的判定只是「该用途授权里**含**这个接收方
+ *   id」，`grant-pg.ts:61-69` 也不按 capability 给 `media_processing` 分流 ⇒ 同一用途下多个能力
+ *   的接收方都可能是合法绑定。客户端按能力收窄会把服务端允许的绑定挡在界面外（隐私缺陷）。
+ *
+ * ## 披露面 ≠ 授权面（**必须看这条再改这个函数**）
+ *
+ * 政策读面 `GET /me/privacy-policy` 的 `recipients[]` 是**披露面**：它回答「这份政策允许哪些第三方
+ * 处理数据」（`privacy/privacy-policy.ts:49-57` 的「披露面比授权面宽 —— 刻意的，不是漏洞」）。
+ * 授权面更窄：`grant-pg.ts` 还要求 `policy.recipient_bindings[id]` 存在且核验证据通过，且
+ * `public.recipients` 那一行的 `config_version/policy_version/capability/retention_*` 与 binding
+ * **逐项相等**。所以这里列出的每一项都**不保证**授予成功。
+ *
+ * 本函数只负责「让用户选他愿意交给谁」：**不**在这里判 `no_training_verified` / `deletion_verified`，
+ * 也不据此过滤（那两个布尔字段连同留存天数一起原样返回给界面标注，读面口径 `privacy-policy.ts:56-57`
+ * 要求逐行原样返回）。最终是否可用由服务端 `grant-pg.ts` 按 `recipient_bindings` 与核验证据判定；
+ * 服务端拒绝时 `GRANT_MESSAGES.CONSENT_REQUIRED` 会把「或该接收方尚未对你启用」说到界面上。
+ *
+ * 顺序：按 `display_name` 再按 `id` 稳定排序，不依赖服务端 `ORDER BY`（读面确实是这个顺序，但客户端
+ * 不该把排序的正确性押在别人的 SQL 上）。
+ */
+const PURPOSE_CAPABILITIES = {
+  media_processing: ['weed', 'ocr', 'asr'],
+  external_inference: ['weed', 'ocr', 'asr', 'tts', 'llm']
+}
+
+function grantRecipientOptions(policy, purpose) {
+  const capabilities = PURPOSE_CAPABILITIES[purpose]
+  if (!capabilities) return []
+  const listed = policy && Array.isArray(policy.recipients) ? policy.recipients : []
+  const seen = {}
+  return listed
+    .filter(function (item) {
+      if (!item || typeof item !== 'object' || !text(item.id, 80)) return false
+      if (!one(item.capability, capabilities)) return false
+      if (Object.prototype.hasOwnProperty.call(seen, item.id)) return false
+      seen[item.id] = true
+      return true
+    })
+    .slice()
+    .sort(function (a, b) {
+      const left = String(a.display_name || '') + '\u0000' + String(a.id)
+      const right = String(b.display_name || '') + '\u0000' + String(b.id)
+      return left < right ? -1 : left > right ? 1 : 0
+    })
+    .map(function (item) {
+      return {
+        id: item.id,
+        displayName: item.display_name,
+        capability: item.capability,
+        retentionOnlineDays: item.retention_online_days,
+        retentionBackupDays: item.retention_backup_days,
+        noTrainingVerified: item.no_training_verified === true,
+        deletionVerified: item.deletion_verified === true
+      }
+    })
+}
+
+/**
+ * 某用途此刻能否**授予**：只看政策读面 + 用户本次已选接收方能证明的事，不做推测。
  *
  * - 政策没读到 ⇒ 不可授予（页面把"没读到"如实说成"没读到"，不说成"没有政策"）；
  * - `unpublished`（服务端尚无已发布政策）⇒ 全部不可授予；
  * - `purposes` 不含该用途 ⇒ 不可授予；
- * - `external_inference` ⇒ 单独不可授予：`POST` 强制"至少一个已核验接收方"
- *   （服务端 `grant-pg.ts` 对空 `recipient_ids` 直接 403），而政策读面露出的 `recipients[]` 是**披露面**
- *   （比授权面宽），拿它当授权面的接收方会是"替用户挑第三方"——本页不做这个决定。
+ * - `external_inference` / `media_processing` ⇒ **至少要选一个接收方**才可授予：
+ *   服务端 `grant-pg.ts:60` 对 `external_inference` 空 `recipient_ids` 直接 403；`media_processing`
+ *   虽然授予时能过（`grant-pg.ts` 只对 `external_inference` 强制非空），但外发时
+ *   `ledger-pg.ts:553` 要求该用途授权里**含**实际外发用的接收方 id —— 空数组能授予却传不了图，
+ *   那就是把用户骗进一个「授予成功但功能不可用」的状态。这里按同一口径置灰，理由写清。
+ *
+ * `selectedRecipientIds` 省略时**行为与改动前逐字相同**（`external_inference` 仍无条件不可授予）：
+ * 本函数被多处既有调用点以两参调用，加第三参不能改变它们的返回值。
  */
-function grantAvailability(policy, purpose) {
+function grantAvailability(policy, purpose, selectedRecipientIds) {
   if (!policy) {
     return { grantable: false, reason: '用途政策尚未读取成功，无法判断该用途此刻能否授予；请先「重新读取」。' }
   }
@@ -400,11 +477,26 @@ function grantAvailability(policy, purpose) {
   if (policy.purposes.indexOf(purpose) === -1) {
     return { grantable: false, reason: '服务端当前没有该用途的可用政策（政策读面的 purposes 未包含它），因此不能授予。' }
   }
+  const selected = Array.isArray(selectedRecipientIds) ? selectedRecipientIds.filter(function (id) {
+    return typeof id === 'string' && id.length > 0
+  }) : []
   if (purpose === 'external_inference') {
-    return {
-      grantable: false,
-      reason: '对外推理必须至少绑定一个已核验接收方；政策读面的 recipients 是披露面（比授权面宽），本页不替你挑接收方，因此这里不给授予。'
+    if (selected.length === 0) {
+      return {
+        grantable: false,
+        reason: '外部推理需要选定至少一个已核验接收方（政策里未列出任何接收方时无法授予）。'
+      }
     }
+    return { grantable: true, reason: '' }
+  }
+  if (purpose === 'media_processing') {
+    if (selected.length === 0) {
+      return {
+        grantable: false,
+        reason: '照片处理会把图片交给第三方服务，请先选定接收方。'
+      }
+    }
+    return { grantable: true, reason: '' }
   }
   return { grantable: true, reason: '' }
 }
@@ -438,8 +530,10 @@ function keyOf(value, prefix) {
  * 授予某用途（`POST /me/consents`，成功 201）。
  *
  * `input`：`{ purpose, policyVersion, recipientIds?, idempotencyKey? }`
- *   - `recipientIds` 缺省 `[]`：录制/媒体处理/公开发布三类不需要第三方接收方，**空数组是如实的最小值**
- *     （替用户填接收方等于替他决定把数据交给谁）；
+ *   - `recipientIds` 缺省 `[]`：录制/公开发布两类**确实**不需要第三方接收方，空数组是如实的最小值；
+ *   - `media_processing` / `external_inference` 由调用方（授权清单页）把用户选定的接收方传进来
+ *     （见 `grantRecipientOptions`），本层不猜、不默认：传空就是空，服务端与 `ledger-pg.ts:553`
+ *     会据实拒绝。
  *   - `idempotencyKey` 缺省由本层生成一次；重试请把**同一个** key 传回来。
  */
 function grant(input) {
@@ -560,10 +654,12 @@ function withdraw(input) {
 
 /**
  * 写面文案。**按端点分开**：`403 CONSENT_REQUIRED` 在两条写面上的含义不同 ——
- * 授予面是"没有可用的已核验用途政策"，撤回面是"该用途当前没有授权"，不能共用一句。
+ * 授予面是"没有可用的已核验用途政策，或该接收方尚未对你启用"，撤回面是"该用途当前没有授权"，
+ * 不能共用一句。
  */
 const GRANT_MESSAGES = {
-  CONSENT_REQUIRED: '授予被拒绝（403 CONSENT_REQUIRED）：服务端没有可用的已核验用途政策。未改变任何授权状态。',
+  CONSENT_REQUIRED: '授予被拒绝（403 CONSENT_REQUIRED）：服务端没有可用的已核验用途政策，或该接收方尚未对你启用' +
+    '（政策披露了它，但你的账号没有对应的已核验绑定）。未改变任何授权状态。',
   REVISION_CONFLICT: '用途政策版本已变化（409 REVISION_CONFLICT）：服务端当前政策版本与本页读到的不一致，请「重新读取」后按最新版本再试。',
   IDEMPOTENCY_CONFLICT: '同一幂等键被复用于不同请求（409 IDEMPOTENCY_CONFLICT）：这次动作与之前那次不一致，请重新读取后重试。',
   IDEMPOTENCY_KEY_REQUIRED: '请求缺少合法幂等键（400 IDEMPOTENCY_KEY_REQUIRED）：请重试。',
@@ -637,6 +733,7 @@ module.exports = {
   withdraw: withdraw,
   newIdempotencyKey: newIdempotencyKey,
   grantAvailability: grantAvailability,
+  grantRecipientOptions: grantRecipientOptions,
   consentView: consentView,
   reasonCodes: reasonCodes,
   sessionFailure: sessionFailure,

@@ -28,7 +28,7 @@
 
 ### 1.1 契约只给了一个三元组
 
-- `packages/contracts/openapi.json:13353-13383` — `SynthesisTarget`：
+- `packages/contracts/openapi.json:15488` — `SynthesisTarget`：
   `{ type: SynthesisTargetType（闭集）, id: string(1..80), revision: integer >= 1 }`。
 - `packages/contracts/openapi.json:13388-13389` — `checked_content_ref: { $ref: SynthesisTarget }`。
 - `packages/contracts/openapi.json:13777-13780` — `checked_content_ref` 是 **required**，与 `locale` 并列。

@@ -2,7 +2,8 @@
 //
 // 数据来源：契约 `GET /me/consents`（清单）、`POST /me/consents`（授予）、
 // `DELETE /me/consents/{purpose}`（撤回），外加 `GET /me/privacy-policy`（授予体需要的政策版本与
-// "当前哪些用途有生效政策"）。三条写读路径都经 `utils/consent-api.js`，本页不发裸请求。
+// "当前哪些用途有生效政策"、以及该政策披露的第三方接收方）。三条写读路径都经 `utils/consent-api.js`，
+// 本页不发裸请求。
 //
 // 硬口径（逐条对应证据页 docs/verification/gy-r70-consent-client-20261030.md）：
 //   - **不做乐观更新**：服务端确认成功之前，界面不把开关翻过去。写成功后**重新读取**清单，
@@ -10,8 +11,13 @@
 //   - **失败不折叠成空列表**：读取失败时清空 items，同时给出 errorText + errorCode，由 state-view
 //     按 error / denied / guest 呈现。空态只在服务端**确实**返回 0 条时出现。
 //   - **不可用就如实置灰**：政策读不到 / 服务端无已发布政策 / 该用途不在政策 `purposes` 里 /
-//     服务端回 403 CONSENT_REQUIRED（无可用已核验政策）或 409 OBJECT_UNAVAILABLE（撤回消费者未接线）
-//     时，该行按钮置灰并写明原因；⛔ 不假装可点、⛔ 不静默吞掉。
+//     需要第三方的用途还没选定接收方 / 服务端回 403 CONSENT_REQUIRED 或 409 OBJECT_UNAVAILABLE 时，
+//     该行按钮置灰并写明原因；⛔ 不假装可点、⛔ 不静默吞掉。
+//   - **需要第三方接收方的用途（media_processing / external_inference）把选择权交回用户**：
+//     候选来自政策读面 `recipients`（**披露面，比授权面宽**），本页不预选、不代挑；授予时原样提交，
+//     可用性由服务端 `grant-pg.ts` 按 `recipient_bindings` + 核验证据判定。空 `recipient_ids` 对
+//     这两类用途是"授予了也传不出图/音"（外发 `ledger-pg.ts` 要求授权里含实际外发的接收方 id），
+//     所以按钮在选定之前保持置灰，理由写清。
 //   - **撤回必须二次确认，且按 purpose 说清代价**：`WITHDRAW_COST` 逐条对应服务端真实的判定点
 //     （认领自 `packages/privacy/constants.mjs` 的必需用途集合与各路由的授权门），不是一句通用话。
 //   - **撤回的确认绑「发起时的页面可见周期 + 会话身份」，过期确认连 GET 都不发**（本条为监工复查
@@ -28,6 +34,9 @@ const pageGate = require('../../utils/page-gate')
 const consentApi = require('../../utils/consent-api')
 
 const PAGE_SIZE = 20
+
+/** 一次最多可选定几个接收方：与服务端 `grant` 的 `recipient_ids.length <= 30` 对齐。 */
+const RECIPIENT_PICK_LIMIT = 30
 
 /**
  * 当前会话身份：（访问令牌, 会话世代）。
@@ -105,6 +114,15 @@ Page({
     policyPurposeText: '',
     policyLoaded: false,
     policyError: '',
+    /** 政策读面披露的接收方（披露面：比授权面宽，见 `consentApi.grantRecipientOptions` 的注释）。 */
+    policyRecipients: [],
+    /**
+     * 用户为「需要第三方接收方」的用途选定的接收方 id：`{ [purpose]: string[] }`。
+     *
+     * 只由用户点击产生（`onToggleRecipient`），**不预选**任何一项 —— 预选等于替他决定把数据交给谁。
+     * 授予时原样提交给服务端，服务端按 `recipient_bindings` + 核验证据判定，本页不据此承诺可用。
+     */
+    recipientSelection: {},
     /** 最近一次写动作的结果说明（成功也写，且写的是服务端返回的 revision，不是"应该成功了"）。 */
     actionText: '',
     actionCode: ''
@@ -127,6 +145,7 @@ Page({
       gatePassed: false, checking: true, items: [], nextCursor: null, rows: [],
       errorText: '', errorCode: '', mode: '', modeText: '',
       policyVersion: '', policyPurposes: [], policyPurposeText: '', policyLoaded: false, policyError: '',
+      policyRecipients: [], recipientSelection: {},
       actionText: '', actionCode: ''
     })
     pageGate.start(this, function (ok) {
@@ -216,7 +235,8 @@ Page({
         policyError: '',
         policyVersion: policy.version,
         policyPurposes: policy.purposes.slice(),
-        policyPurposeText: labels.length ? labels.join('、') : '无（服务端当前没有任何生效政策）'
+        policyPurposeText: labels.length ? labels.join('、') : '无（服务端当前没有任何生效政策）',
+        policyRecipients: (policy.recipients || []).slice()
       })
       self.buildRows()
     }).catch(function (error) {
@@ -226,6 +246,7 @@ Page({
         policyVersion: '',
         policyPurposes: [],
         policyPurposeText: '',
+        policyRecipients: [],
         policyError: consentApi.message(error) + '（服务端码 ' + ((error && error.code) || '未知') + '）'
       })
       self.buildRows()
@@ -236,17 +257,23 @@ Page({
    * 把「清单记录 + 政策 + 本次会话里写失败带来的阻塞原因」合成四行开关。
    *
    * 状态只来自服务端清单：有记录取 `state`；没有记录就是 `none`（"未授权"），⛔ 不推断"应该已授权"。
-   * 可用性只来自能证明的事实：政策读面 + 服务端刚刚给出的错误码。
+   * 可用性只来自能证明的事实：政策读面 + 用户本次已选的接收方 + 服务端刚刚给出的错误码。
+   *
+   * 每行还带 `recipients`（该用途**可让用户挑**的候选，政策披露面）与 `selectedRecipientIds`（用户已选）。
+   * 披露面比授权面宽：列出来不等于授予得了，服务端 `grant-pg.ts` 按 `recipient_bindings` + 核验证据
+   * 说了算；本页只把选择权交回用户，不在这里承诺"一定能授予"。
    */
   buildRows: function () {
     const self = this
     const items = self.data.items || []
     const blocked = self._blocked || {}
+    const selection = self.data.recipientSelection || {}
     const policy = self.data.policyLoaded
       ? {
           version: self.data.policyVersion,
           published: self.data.policyVersion !== 'unpublished',
-          purposes: (self.data.policyPurposes || []).slice()
+          purposes: (self.data.policyPurposes || []).slice(),
+          recipients: (self.data.policyRecipients || []).slice()
         }
       : null
     const rows = consentApi.CONSENT_PURPOSES.map(function (purpose) {
@@ -257,7 +284,7 @@ Page({
       let available = true
       let reason = ''
       if (actionKind === 'grant') {
-        const verdict = consentApi.grantAvailability(policy, purpose)
+        const verdict = consentApi.grantAvailability(policy, purpose, selection[purpose] || [])
         available = verdict.grantable
         reason = verdict.reason
       }
@@ -280,6 +307,8 @@ Page({
         actionLabel: actionKind === 'withdraw' ? '撤回' : '授予',
         actionDisabled: !available,
         actionReason: available ? '' : reason,
+        recipients: consentApi.grantRecipientOptions(policy, purpose),
+        selectedRecipientIds: (selection[purpose] || []).slice(),
         cost: WITHDRAW_COST[purpose] || '',
         busy: prior.busy === true,
         errorText: prior.errorText || '',
@@ -324,10 +353,12 @@ Page({
     const key = keys[purpose]
     self.noteRow(purpose, { busy: true, errorText: '', errorCode: '' })
     self.setData({ actionText: '', actionCode: '' })
-    // 空 recipient_ids 是如实的最小值：录制/媒体处理/公开发布都不需要第三方接收方；
-    // external_inference 在 `grantAvailability` 里已按"必须选已核验接收方"置灰，不会走到这里。
+    // 接收方原样提交：录制/公开发布确实不需要第三方 ⇒ 空数组（如实的最小值）；
+    // media_processing / external_inference ⇒ 用户本次选定的那几项（本页不预选、不代挑）。
+    // 服务端 `grant-pg.ts` 仍按 recipient_bindings + 核验证据复核，拒绝时由下面的 catch 如实呈现。
+    const selected = ((self.data.recipientSelection || {})[purpose] || []).slice()
     consentApi.grant({
-      purpose: purpose, policyVersion: self.data.policyVersion, recipientIds: [], idempotencyKey: key
+      purpose: purpose, policyVersion: self.data.policyVersion, recipientIds: selected, idempotencyKey: key
     }).then(function (result) {
       if (epoch !== self._epoch) return
       delete keys[purpose]
@@ -357,6 +388,50 @@ Page({
       })
       self.setData({ actionCode: (error && error.code) || '', actionText: '' })
     })
+  },
+
+  /**
+   * 勾选/取消一个接收方（只对需要第三方的用途渲染；录制/公开发布不渲染选择器）。
+   *
+   * 选择只影响本页的 `recipientSelection` 与「授予」按钮可否点击，**不**在本页做任何"该接收方可用"
+   * 的承诺 —— 服务端 `grant-pg.ts` 按 `recipient_bindings` 与核验证据判定，拒绝时 `onGrant` 的
+   * catch 会把 `CONSENT_REQUIRED` 文案（含"或该接收方尚未对你启用"）原样贴到行内。
+   *
+   * 勾选会重算该行可用性：`media_processing` / `external_inference` 至少选一项才解除置灰。
+   */
+  onToggleRecipient: function (event) {
+    const dataset = event && event.currentTarget && event.currentTarget.dataset
+      ? event.currentTarget.dataset
+      : {}
+    const purpose = dataset.purpose || ''
+    const recipientId = dataset.recipientId || ''
+    if (!purpose || !recipientId) return
+    const selection = this.data.recipientSelection || {}
+    const current = (selection[purpose] || []).slice()
+    const at = current.indexOf(recipientId)
+    if (at === -1) {
+      // 上限与服务端 `grant` 的 ≤30 对齐：超了就不再加，并如实说明，不静默丢勾选。
+      if (current.length >= RECIPIENT_PICK_LIMIT) {
+        this.noteRow(purpose, {
+          busy: false,
+          errorText: '一次最多选定 ' + RECIPIENT_PICK_LIMIT + ' 个接收方（服务端契约上限），请先取消一些再选。',
+          errorCode: ''
+        })
+        return
+      }
+      current.push(recipientId)
+    } else {
+      current.splice(at, 1)
+    }
+    const next = {}
+    next[purpose] = current
+    this.setData({ recipientSelection: Object.assign({}, selection, next) })
+    // 取消某个刚被选中的项时把该行的失败备注清掉（原因已不存在），重新计算按钮可用性。
+    const notes = this._rowNotes || {}
+    if (notes[purpose] && notes[purpose].errorText) {
+      notes[purpose] = Object.assign({}, notes[purpose], { errorText: '', errorCode: '' })
+    }
+    this.buildRows()
   },
 
   /**
@@ -497,11 +572,12 @@ Page({
   onRefresh: function () {
     if (this.data.busy || !this.data.gatePassed) return
     if (this.data.networkOff) return
-    // 重新读取 = 用服务端事实覆盖本地一切推测：清掉本次会话的阻塞原因与幂等键。
+    // 重新读取 = 用服务端事实覆盖本地一切推测：清掉本次会话的阻塞原因、幂等键与接收方勾选。
+    // （政策读面的 recipients 也要重取 ⇒ 勾选跟着刷新；已授予/已撤回的状态一律以重读的清单为准。）
     this._blocked = {}
     this._grantKeys = {}
     this._rowNotes = {}
-    this.setData({ actionText: '', actionCode: '' })
+    this.setData({ recipientSelection: {}, actionText: '', actionCode: '' })
     this.reload()
   },
 

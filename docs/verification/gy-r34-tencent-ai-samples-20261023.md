@@ -129,7 +129,7 @@
 
 ## 4 凭据与脱敏自证
 
-- 凭据来源 = **env 或显式传入的私密文件路径，均在进程内使用**（与 `docs/verification/README.md:52`
+- 凭据来源 = **env 或显式传入的私密文件路径，均在进程内使用**（与 `docs/verification/README.md:53`
   的「`--credentials <私密文件>` 仅在进程内映射环境变量」同一口径）：环境变量，或 `--private-env <私密 JSON>` /
   `--tencent-txt <私密 txt>` 两个路径入参（BizType 与 ASR 专用配对不同源）。本次以路径传入：
   `E:\GengYunPrivate\credentials.local.json`（JSONC）与 `E:\GengYunPrivate\腾讯云.txt`（两个 BizType ＋ ASR 专用配对）。
