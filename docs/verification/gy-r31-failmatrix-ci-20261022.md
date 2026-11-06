@@ -10,7 +10,7 @@
 | # | 文件:行 | 内容 |
 | --- | --- | --- |
 | 1 | `package.json:24` | 新增 `"test:failmatrix": "node tests/failmatrix/run.mjs"`（唯一改动；`git diff` 只有这一行） |
-| 2 | `.github/workflows/failmatrix.yml:1-64` | 新增独立 workflow（`failmatrix` job），失败即红、上传机读产物 |
+| 2 | `.github/workflows/failmatrix.yml`（全文件 66 行） | 新增独立 workflow（`failmatrix` job），失败即红、上传机读产物 |
 | 3 | `docs/verification/gy-r31-failmatrix-ci-20261022.md` | 本页 |
 
 - 分支已推：`git ls-remote origin refs/heads/test/gy-r31-failmatrix-ci` → `fcb744a4046bb39c855dab13feac8db530c4d0fd  refs/heads/test/gy-r31-failmatrix-ci`。
@@ -47,7 +47,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 EXIT=0  ELAPSED_SEC=1.86
 ```
 
-> 用例条数写「159」只是那个测试**标题**里的旧文案，实际断言的是 `MIN_CASES = 168` 条——标题没跟上加用例，不影响判定；本页不改它（改它就得动 `tests/unit/`，与本轮无关）。
+> 用例条数写「159」只是那个测试**标题**里的旧文案，实际断言的是 `MIN_CASES = 249` 条（下限随用例增长只会往上调）——标题没跟上加用例，不影响判定；本页不改它（改它就得动 `tests/unit/`，与本轮无关）。
 
 **本轮补的正是这三件缺的事**：一个固定检查名（`failmatrix`）、一条命令（`npm run test:failmatrix`）、一份可下载的机读产物（`failmatrix-<sha>`），并且**不依赖** `test:unit` 是否被人盯着。
 
@@ -67,14 +67,14 @@ EXIT=0  ELAPSED_SEC=1.86
 
 | 关心点 | 行 | 原文 |
 | --- | --- | --- |
-| 触发 | `:21-26` | `on:` / `pull_request: branches: [main]` / `push: branches: [main]` / `workflow_dispatch:` |
-| 运行环境 | `:34` | `runs-on: ubuntu-24.04` |
-| Node 版本 | `:42` | `node-version: '24.16.0'`（照抄既有 19 处） |
-| 依赖安装 | `:44` | `npm ci --no-audit --no-fund`（与既有 job 同款） |
-| 跑矩阵 | `:47` | `npm run test:failmatrix -- --json="$RUNNER_TEMP/failmatrix/matrix.json"` |
-| 失败判定① | `:47` | 上面这步的退出码：`run.mjs:550` `return fail === 0 ? 0 : 1;` ⇒ 步骤红 ⇒ job 红 |
-| 失败判定② | `:50-57` | 读机读产物二次判定：`t.fail!==0 \|\| t.pass!==t.total \|\| t.total===0` ⇒ `exit 1` |
-| 产物上传 | `:58-64` | `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`（v4.6.2，按 SHA 钉住）；`name: failmatrix-${{ github.sha }}`；`if: always()`；`retention-days: 14` |
+| 触发 | `.github/workflows/failmatrix.yml:23-28` | `on:` / `pull_request: branches: [main]` / `push: branches: [main]` / `workflow_dispatch:` |
+| 运行环境 | `.github/workflows/failmatrix.yml:36` | `runs-on: ubuntu-24.04` |
+| Node 版本 | `.github/workflows/failmatrix.yml:44` | `node-version: '24.16.0'`（照抄既有 19 处） |
+| 依赖安装 | `.github/workflows/failmatrix.yml:46` | `npm ci --no-audit --no-fund`（与既有 job 同款） |
+| 跑矩阵 | `.github/workflows/failmatrix.yml:49` | `npm run test:failmatrix -- --json="$RUNNER_TEMP/failmatrix/matrix.json"` |
+| 失败判定① | `.github/workflows/failmatrix.yml:49` | 上面这步的退出码：`run.mjs:550` `return fail === 0 ? 0 : 1;` ⇒ 步骤红 ⇒ job 红 |
+| 失败判定② | `.github/workflows/failmatrix.yml:52-59` | 读机读产物二次判定：`t.fail!==0 \|\| t.pass!==t.total \|\| t.total===0` ⇒ `exit 1` |
+| 产物上传 | `.github/workflows/failmatrix.yml:60-66` | `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`（v4.6.2，按 SHA 钉住）；`name: failmatrix-${{ github.sha }}`；`if: always()`；`retention-days: 14` |
 
 - `permissions: contents: read`：不写、不评论、不推。
 - **没有**任何 PG / 网络 / 密钥 / 微信开发者工具步骤：世界装配里的四个网络 seam **持有即抛错**，执行模式固定 `stub`。
@@ -202,8 +202,8 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 ## 4 失败判定的三层（为什么它真的会红）
 
 1. **退出码**：`run.mjs:550` `return fail === 0 ? 0 : 1;` —— 任意一条 FAIL ⇒ 步骤退出 1 ⇒ job 红。实测见 §3.3。
-2. **机读二次判定**：workflow `:50-57` 读 `--json` 产物，`fail!==0 || pass!==total || total===0` 就 `exit 1`。这层挡的是「将来有人把 runner 改成『打完成绩也退 0』」和「产物被清空却显示 0 条」。本地验证：好产物 `GOOD_EXIT=0`；把 `fail` 改成 1 的产物 `BAD_EXIT=1` 且日志打印 `矩阵有失败或被清空：FAIL 1 / 合计 168`。
-3. **条数不缩水**：`tests/unit/gy-i22-failmatrix.test.mjs` 仍在 `test:unit` 里，`MIN_CASES = 168` 与分族/分批次计数会挡「悄悄删用例」。
+2. **机读二次判定**：workflow `.github/workflows/failmatrix.yml:52-59` 读 `--json` 产物，`fail!==0 || pass!==total || total===0` 就 `exit 1`。这层挡的是「将来有人把 runner 改成『打完成绩也退 0』」和「产物被清空却显示 0 条」。本地验证：好产物 `GOOD_EXIT=0`；把 `fail` 改成 1 的产物 `BAD_EXIT=1` 且日志打印 `矩阵有失败或被清空：FAIL 1 / 合计 168`。
+3. **条数不缩水**：`tests/unit/gy-i22-failmatrix.test.mjs` 仍在 `test:unit` 里，`MIN_CASES = 249`（下限随用例增长只会往上调）与分族/分批次计数会挡「悄悄删用例」。
 
 ## 5 未覆盖（本页不宣称的部分）
 
@@ -252,7 +252,7 @@ node tests/failmatrix/run.mjs --json=out.json          # 另存机读结果
 
 未知参数直接报错（`run.mjs:62` 的注释：避免「以为筛了，其实没筛」）。
 
-**门禁里永远跑全量**：`failmatrix.yml:47` 不带 `--only`。`--only` 只用于本地定位与调试，或将来真的超预算时按整族拆分。
+**门禁里永远跑全量**：`.github/workflows/failmatrix.yml:49` 不带 `--only`。`--only` 只用于本地定位与调试，或将来真的超预算时按整族拆分。
 
 ### 6.5 维护这套门禁时要盯的三件事
 
