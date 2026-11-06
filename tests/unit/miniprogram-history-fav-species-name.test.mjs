@@ -87,6 +87,15 @@ async function mountPage(options) {
         createdAt: '2026-11-01T00:00:00.000Z', historyRevision: 3
       };
     },
+    // #1025 起页面改走 locateHistoryDetail(id, PAGE_LIMIT_MAX)：三级回落（列表 → 快照 → 单条读面），
+    // 返回形状与 locateHistory 相同（页面直接用 located.kind / jobState / targetId）。
+    locateHistoryDetail: async function () {
+      return {
+        id: JOB, kind: 'recognition', targetId: REC, jobState: 'succeeded',
+        referenceState: 'available', locatedBy: 'live',
+        createdAt: '2026-11-01T00:00:00.000Z', historyRevision: 3
+      };
+    },
     recognitionDetailView: function () {
       return {
         recognized: true,
