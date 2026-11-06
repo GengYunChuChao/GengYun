@@ -56,7 +56,7 @@
 
 ### 3.3 (c) 发送 / 写路径 —— 契约无「发送」，唯一写口是标记已读；改前「半通」，已补
 
-**先纠一个前提**：消息域**没有客户端「发送」入口，也没有 create operation**。服务端的创建口是内部方法 `appendMessage`（`service.ts:422-444`），不注册任何路由、`owner_id`/`event_key` 只由服务端调用方给出（客户端若能指定就等于允许伪造他人消息）。真实生产路径只有一条：审核域经 `createMessagesCommunityEventsPort` 投递（`services/api/src/app.ts:1040-1042`）。因此本段「发送」= **客户端唯一的写操作 `PUT /messages/{id}/read`**。
+**先纠一个前提**：消息域**没有客户端「发送」入口，也没有 create operation**。服务端的创建口是内部方法 `appendMessage`（`service.ts:422-444`），不注册任何路由、`owner_id`/`event_key` 只由服务端调用方给出（客户端若能指定就等于允许伪造他人消息）。真实生产路径只有一条：审核域经 `createMessagesCommunityEventsPort` 投递（`services/api/src/community/events.ts:164`）。因此本段「发送」= **客户端唯一的写操作 `PUT /messages/{id}/read`**。
 
 | 面 | 位置 | 读数 | 判定 |
 | --- | --- | --- | --- |
@@ -65,7 +65,7 @@
 | `If-Match` 语义 | `service.ts:369,383-385`、`store.ts:161-175`、`store-pg.ts:191-219` | 缺失 428、不匹配 409、不做 last-write-wins；首次读转换 `revision` 恰好 +1 | 通 |
 | **重试换新幂等键（改前缺陷）** | 改前 `messages-api.js:164-166` + `:190-192` | 每次调用都 `newIdempotencyKey()`。若首发已落库但响应丢失（`NETWORK_UNCERTAIN`），重试带**旧的** `If-Match` 再打一次 ⇒ 服务端 `revision` 已 +1 ⇒ 409 `REVISION_CONFLICT`；用户看到「消息状态已更新」，事实却是**这条早就标记成功了** | **半通 → 已补** |
 | **409 不重同步（改前缺陷）** | 改前 `messages.js:285-288` | 409 后只弹 toast，本地 `revision` 仍是旧的 ⇒ 后续每次点击继续 409，页面无法自愈，只能整页重进 | **半通 → 已补** |
-| 乐观更新与回滚 | `messages.js:268-294`（`_markReadOne`） | **本页没有乐观更新**：只在服务端返回后改写 `revision/unread/readAt`，`markingId` 在成功（`:272`）与失败（`:291`）两路都回收。⇒ 派单里「乐观态不回收」在本域**不成立**，本片**不做假的修复**（改成先本地翻转再回滚只会更差） | 不适用（已核） |
+| 乐观更新与回滚 | `messages.js:382`（`_markReadOne`） | **本页没有乐观更新**：只在服务端返回后改写 `revision/unread/readAt`，`markingId` 在成功（`:272`）与失败（`:291`）两路都回收。⇒ 派单里「乐观态不回收」在本域**不成立**，本片**不做假的修复**（改成先本地翻转再回滚只会更差） | 不适用（已核） |
 
 补法两条：
 1. `messages-api.js:182-219` + `:240-251`：同一 `(id, revision)` 的重试**复用**同一幂等键（窗口 5 分钟、容量 32 条，与 `service.ts:57` 的 `IDEMPOTENCY_TTL_MS` 同量级），**成功即释放**（`:247-248`；下一次标记是另一版本、另一件事，必须新键）。
@@ -110,7 +110,7 @@ Select-String -Path miniprogram/pages/messages/*,miniprogram/utils/messages-api.
 | 统一口径（#396，**不属于本片**） | `miniprogram/utils/auth.js` 的 `attribution()`（`SESSION_LOSS_CODES` / `FORBIDDEN_CODES` / `RETIRED_SESSION_CODES`） | 401 ⇒ `SESSION_REQUIRED` + 清会话；403 ⇒ 三码原样带出，其中 **`ACCOUNT_INACTIVE` 例外：码保留 + 清会话**；403 无封套 ⇒ `SCOPE_DENIED` 且不清会话 |
 | 本域改法 | `miniprogram/utils/messages-api.js:131-136`（委托 `auth.failureFor(failure, statusCode, response.data)`）；原 `:146`/`:163` 两处「403 兜底」**已删除**（委托后不可达，留着就是第二份口径） | 本模块**不再有**任何 401/403 判定分支 |
 | 文案 | `messages-api.js:289-291` | 三码各有本域句子，不落「消息服务暂不可用」兜底（与 main 版逐字一致） |
-| 页面收口 | `messages.js:103-113`（`_fail` 统一生成 `status/errorText/errorCode/stateTitle/stateDesc`）、`:306-314`（**写路径** 403 系 ⇒ 整页 denied，而不是一句 toast）、`:357-366`（「全部已读」同口径） | `errorCode` 透传给 `state-view` 的 `error-code`（`messages.wxml:58`）——已核对确实落在该参数上 |
+| 页面收口 | `messages.js:126`（`_fail` 统一生成 `status/errorText/errorCode/stateTitle/stateDesc`）、`:306-314`（**写路径** 403 系 ⇒ 整页 denied，而不是一句 toast）、`:357-366`（「全部已读」同口径） | `errorCode` 透传给 `state-view` 的 `error-code`（`messages.wxml:58`）——已核对确实落在该参数上 |
 
 端到端断言（真实页面 + 真实适配层 + 真实 `states.js` + 真实 `state-view` 组件，非替身）：
 - **读路径**：`tests/unit/miniprogram-ui-auth-integration.test.mjs`「消息页：列表 403 SCOPE_DENIED ⇒ 不清会话、落 denied 态」——断言 ①`auth.isLoggedIn()` 仍 true ②`launches` 为空 ③`errorCode === 'SCOPE_DENIED'` ④`state-view` 的 `effectiveStatus === 'denied'`、`actionSuppressed === true`、`kindTag === '没有权限'`。

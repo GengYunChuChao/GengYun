@@ -79,7 +79,7 @@ model_layer=not_wired），一律不得发布","retryable":false,"details":[{"fi
 关键点：**规则层有两个各自独立的装配点**。
 
 1. 社区发布闸门 `createPublishGate()`：`tests/unit/community-fixtures.mjs:65-67` 的 `makeGate()` 早已把 `clock: FROZEN_CLOCK`（`:59` `export const FROZEN_CLOCK = () => 0`）透传下去 ⇒ 这一支本来就免疫机器负载；
-2. 审核域服务 `createModerationService()`：`services/api/src/app.ts:766-777` 构造时**没有**把 `ruleOptions` 传下去，`app.ts:395-400` 的 `moderationInjection` 在本基线也只接受 `{ service, ports, authority, callbackKey }`，**没有** `ruleOptions` 键 ⇒ 被测进程里这一支吃的是 `Date.now` 墙钟 + 50ms 预算。
+2. 审核域服务 `createModerationService()`：当时的装配调用（`services/api/src/app.ts:766-777`）构造时**没有**把 `ruleOptions` 传下去，`app.ts:395-400` 的 `moderationInjection` 在本基线也只接受 `{ service, ports, authority, callbackKey }`，**没有** `ruleOptions` 键 ⇒ 被测进程里这一支吃的是 `Date.now` 墙钟 + 50ms 预算。⏱ 2026-11-05 复核（main `bdf9f765`）：今天的装配调用在 `services/api/src/app.ts:941`，且 `services/api/src/app.ts:951-953` 已能按 `moderationInjection?.ruleOptions` 注入 ⇒ 本句「没有 `ruleOptions` 键」只对**当时那个基线**成立；原稿改指 `services/api/src/moderation/service.ts:581` 是误指被调用函数的内部变量（那里只是 `deps.ruleOptions ?? {}`），已改回装配调用。
 
 于是「机器每读一次钟停顿 200ms」时，闸门那一支照常放行，审核域那一支必然 `RULE_TIMEOUT` ⇒ 隔离 ⇒ 422。这解释了为什么 4 个文件里的失败全部集中在**写/发**路径（投稿 201、评论、编辑、下架、读取时重查），而纯读面用例不受影响。
 
