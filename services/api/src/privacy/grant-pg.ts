@@ -57,7 +57,14 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
     if (fresh.rows.length !== 1) throw new ApiError('CONSENT_REQUIRED', '用途政策已到期');
   };
   const bindings = policy.recipient_bindings as Record<string, unknown>;
-  if (input.purpose === 'external_inference' && input.recipient_ids.length === 0) throw new ApiError('CONSENT_REQUIRED', '对外推理需要已核验接收方');
+  // 是否要求显式选择接收方，按「这一用途会不会把数据发出去」判，不按单个用途硬编码：
+  // 对外推理恒定外发；媒体处理只在政策已登记已核验接收方时才要求（本地录音等不外发用途不受影响）。
+  // 这样「政策登记了接收方 ⇒ 授予必须指名道姓」在服务端也成立，不至于只靠客户端自觉。
+  const bound = bindings && typeof bindings === 'object' ? Object.keys(bindings).length : 0;
+  const outbound = input.purpose === 'external_inference' || input.purpose === 'media_processing';
+  if (outbound && (input.purpose === 'external_inference' || bound > 0) && input.recipient_ids.length === 0) {
+    throw new ApiError('CONSENT_REQUIRED', input.purpose === 'external_inference' ? '对外推理需要已核验接收方' : '该用途政策已登记已核验接收方，授予时必须至少选择一个');
+  }
   for (const id of [...input.recipient_ids].sort()) {
     const binding = bindings[id] as Record<string, unknown> | undefined;
     if (!binding || !evidence(binding['no_training_evidence_ref'], synthetic) || !evidence(binding['deletion_evidence_ref'], synthetic)) throw new ApiError('CONSENT_REQUIRED', '接收方核验证据不可用');

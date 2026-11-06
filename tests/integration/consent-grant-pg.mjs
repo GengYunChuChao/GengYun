@@ -197,6 +197,12 @@ try {
   say('unusable source/expired policy denies; separately reviewed local purpose can grant without third-party recipients');
   await policy('media_processing','fixture-no-proof',{bindings:{'fixture-llm':{...bindings['fixture-llm'],deletion_evidence_ref:''}}});
   await error(grant(await login('missing-proof'),body('media_processing','fixture-no-proof')),403,'CONSENT_REQUIRED');
+  await policy('media_processing','fixture-bound',{bindings});
+  await error(grant(await login('media-no-pick'),body('media_processing','fixture-bound',[])),403,'CONSENT_REQUIRED');
+  const mediaBound=await grant(await login('media-picked'),body('media_processing','fixture-bound',['fixture-llm'])); assert.equal(mediaBound.status,201,JSON.stringify(mediaBound.body));
+  await policy('media_processing','fixture-unbound');
+  const mediaUnbound=await grant(await login('media-unbound'),body('media_processing','fixture-unbound',[])); assert.equal(mediaUnbound.status,201,JSON.stringify(mediaUnbound.body));
+  say('media processing: policy with verified bindings requires an explicit pick; policy without bindings still grants empty');
   const adminToken=randomBytes(24).toString('hex');
   await owner.query("INSERT INTO admin_sessions(admin_id,token_hash,auth_epoch,expires_at) VALUES($1,decode($2,'hex'),1,now()+interval '1 hour')",[reviewer,hashToken(adminToken)]);
   await error(grant({token:adminToken}),401,'SESSION_EXPIRED');
