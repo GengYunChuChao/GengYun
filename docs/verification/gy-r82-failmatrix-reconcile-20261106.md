@@ -110,3 +110,14 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 - 没有验证 `deletion_pending` 账号是否存在别的自助入口（例如前端撤回页面、客服工单），只验证了 API 层的 401/403。
 - 没有验证第三方删除、备份清除、7 日／30 日到期这些外部世界事实；本页所有读数都停在本机 PG 17.11 + 进程内 app 的边界内。
 - 没有做任何 commit / push / gh；工作树除新增本页外无改动。
+
+## §9 行号现状（2026-11-07 追加，不改写本页既有读数）
+
+本页 §1–§8 的读数与行号都是**基线 `7155b9e7`** 上的事实，按 §11 的证据纪律不回填。此后 `#1028` 合入（`main = 1dec1bbb`，`tests/failmatrix` 4 文件 +151/−11），两个被本页引用的位置在今天的 `main` 上已经平移：
+
+| 本页引用 | 基线 `7155b9e7` | `main = 1dec1bbb` |
+| --- | --- | --- |
+| 注销夹具哨兵（`deleter.deletionId` / `.receipt` / `.staleReceipt`） | `tests/failmatrix/run-real.mjs:994-996` | `tests/failmatrix/run-real.mjs:1096-1105` |
+| 真库臂判定器取期望 | `tests/failmatrix/run-real.mjs:711` | `tests/failmatrix/run-real.mjs:784` |
+
+同一次合入还把真库臂的 `notRunnable` 从 13 条清到 0（`same 162 → 175`、`sameWithCheck 19 → 20`、`sameWithShape 27 → 30`、`different` 仍 5），所以本页 §1 那张「13 条 not runnable」的表**只代表基线**，不再代表 `main`。两条 `different`（C4-15、C4-18）的裁定结论不变，仍是本页 §2 的裁定。
