@@ -22,7 +22,7 @@
 - 拒绝授权**不调用平台 `start`**：`recorder-port.js:315-317`（`permission.state === 'denied'` ⇒ 直接 `{ok:false, code:'RECORD_AUTH_DENIED'}`）；页面归因在 `miniprogram/pages/voice/voice.js:667-703`（`started.ok !== true` 时落 `recordState:'failed'` + `voiceApi.recordUploadMessageFor({code})`）。
 - 被系统打断：`recorder-port.js:354-357` `onInterruptionBegin` ⇒ `RECORD_INTERRUPTED`；`:263-267` `onError` 按 `isAuthDenial`(:140-144) 区分 `RECORD_AUTH_DENIED` / `RECORD_FAILED`。
 - 平台**自行**停止/报错不被吞：`recorder-port.js:281` 的 `lastProduct` 槽 + `:363-372`「未录制但有产物 ⇒ 如实交出」（避免把「已录满」说成「没在录」）。
-- 切后台/返回/切页必须停：`voice.js:125-128` `onHide` → `releaseRecorder('hide')` → `recorder-port.js:410-432` `release()`（`wasRecording` 时 `instance.stop()`，并逐个 `offStop/offError/offInterruptionBegin`）；`voice.js:130-136` `onUnload` 同构且先置 `_gone`。
+- 切后台/返回/切页必须停：`voice.js:141` `onHide` → `releaseRecorder('hide')` → `recorder-port.js:410-432` `release()`（`wasRecording` 时 `instance.stop()`，并逐个 `offStop/offError/offInterruptionBegin`）；`voice.js:146` `onUnload` 同构且先置 `_gone`。
 - 时长上限单点收口：`recorder-port.js:305-308`（`duration = Math.min(requested, 60000)`）+ `voice.js:709-714`（本地计时到顶主动 `stopAndUpload()`，与平台自动停止收在同一出口）。
 - **本片补齐（原先缺失）**：`voice.js:339-359` 新增 `discardRecordFile()`；`:300` 在 `releaseRecorder` 内调用（离页/门禁失效/切后台）；`:757` 登记平台交回的 `tempFilePath`；`:774/792/804/855/881/886` 在超限、摘要失败、非 real、上传成功、上传失败五类结局处调用。
 - **仍未通**：被拒授权后**没有** `wx.openSetting` 入口（`recorder-port.js:293-295` 的注释承诺「由页面引导到设置页」，但 `miniprogram/**` 全树无 `openSetting` 引用）⇒ 用户只能自己翻微信设置。见 §8 待裁决 3。
@@ -47,7 +47,7 @@
 
 ## 5. (d) 转写文本进入问答 + 端侧临时态的 B7 呈现
 
-- 确认 → 发送两段式：`voice.js:1106-1248` `onConfirmAndSend`（先 `PATCH` 确认，再 `evaluateSendGate`，最后 `POST /conversations` + `POST /conversations/{id}/turns`）；闸门是纯函数 `speech-transcript.js:452-481`（取消/作废/未确认/记录缺失/版本不符/服务端未确认，六条 fail-closed）。
+- 确认 → 发送两段式：`voice.js:1306` `onConfirmAndSend`（先 `PATCH` 确认，再 `evaluateSendGate`，最后 `POST /conversations` + `POST /conversations/{id}/turns`）；闸门是纯函数 `speech-transcript.js:452-481`（取消/作废/未确认/记录缺失/版本不符/服务端未确认，六条 fail-closed）。
 - 回答内容**不在本页呈现**（只回报 `job id/state`），这对 #11 是「已接线到受理」，不是「已交付问答结果」——如实登记。
 - B7 统一状态层：`miniprogram/utils/states.js:1-13`（五态 + 「`denied` 与 `guest` 必须分开」）、`:27-74` `CODE_KIND`（`SCOPE_DENIED`/`CONSENT_REQUIRED`/`ACCOUNT_INACTIVE → denied`；`SESSION_* → session`）、`:147-154` `statusForCode`、`:170-181` `resolve`。
 - **端侧临时态现状**：`miniprogram/pages/voice/*` 对 `states` / `state-view` **零引用**（grep 命中数 0）。录音/上传/转写阶段全是页面私有 data（`voice.js:138-226` 的 `recordState`/`recordLabel`/`recordStageNote`/`transcriptStage`/`transcriptBusy`/`exitNote`），失败文案走各域 `messageFor`/`recordUploadMessageFor` 的**逐码文案表**而非 B7 的 `code → kind → status`。

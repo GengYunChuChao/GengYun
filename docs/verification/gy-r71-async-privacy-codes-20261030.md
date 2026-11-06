@@ -34,7 +34,7 @@
 | F1 | `services/api/src/conversations/service.ts:499` | `function settleCodeOf(error)`：`instanceof ApiError && isErrorCode(code)` ⇒ 保留，**否则** `return 'PROVIDER_UNAVAILABLE'` | **折叠点本身**（本片改的就是这一行的前置分支） |
 | F2 | `services/api/src/conversations/service.ts:1154` | 任务 IIFE 的 `catch` 里 `const code = settleCodeOf(error)`，随后 `state = code === 'PROVIDER_TIMEOUT' ? 'timed_out' : 'failed'` | 唯一调用点（`git grep -n "settleCodeOf"` 只命中定义 + 这一处 + 1 条注释） |
 | F3 | `services/api/src/privacy/task-egress.ts:289` | 非 `real` 模式 ⇒ `throw new PrivacyError('PROVIDER_UNAVAILABLE', …)` | 隐私域错误的**类**来源（`PrivacyError`，不是 `ApiError`） |
-| F4 | `services/api/src/privacy/task-egress.ts:298` | `CHAT_OBJECT_KEY` 不匹配 ⇒ `PrivacyError('INVALID_REQUEST', …)` | 400 档被折叠的那条 |
+| F4 | `services/api/src/privacy/task-egress.ts:406-407` | `CHAT_OBJECT_KEY` 不匹配 ⇒ `PrivacyError('INVALID_REQUEST', …)` | 400 档被折叠的那条 |
 | F5 | `services/api/src/privacy/task-egress.ts:313` / `:314` | `inFlight.assertExecutable(…)` / `ledger.markSent(…)` | 403/409 档被折叠的两条（由守卫与账本抛出） |
 | F6 | `packages/privacy/in-flight.mjs:132` | 用途授权已撤回 ⇒ `PrivacyError('CONSENT_REQUIRED', …)` | 「去授权」类失败的真实抛点之一 |
 | F7 | `packages/privacy/in-flight.mjs:151` | 外发已终态 ⇒ `PrivacyError('OBJECT_UNAVAILABLE', …)` | 「对象取不到」类失败的真实抛点之一 |
@@ -87,7 +87,7 @@
 | --- | --- | --- |
 | 改动面 | `services/api/src/conversations/service.ts` 一个函数 + 一行 import（净 +14 行，其中 12 行是注释） | `packages/privacy/errors.mjs` 的公共类型 + 跨包依赖 |
 | 依赖方向 | 不变（`services/api` **本来就**依赖 `packages/privacy`：25 个文件里有 import，`task-egress.ts:25` 就是） | **反转**：`packages/privacy` 目前对 `services/api` **零依赖**（`git grep -n "ApiError" -- packages` 只有 4 处，全是注释引用，没有 import）；要继承就得让 `.mjs` 去 import 一个 `.ts` 的错误类 |
-| 影响面实测 | 1 个函数、1 条调用链（`answer` 作业源） | `new PrivacyError` **198 处 / 14 个文件**；`instanceof ApiError` **47 处 / 43 个文件**——**每一处**都会因为「`PrivacyError` 突然也是 `ApiError`」而改变行为（典型：`if (error instanceof ApiError) throw error` 这类 store 层包装会把隐私错误**从折叠改成透传**，另有 `app.ts:2613` 的统一错误出口与 `retryAfterSecondsFor` 的 `Retry-After` 判定） |
+| 影响面实测 | 1 个函数、1 条调用链（`answer` 作业源） | `new PrivacyError` **198 处 / 14 个文件**；`instanceof ApiError` **47 处 / 43 个文件**——**每一处**都会因为「`PrivacyError` 突然也是 `ApiError`」而改变行为（典型：`if (error instanceof ApiError) throw error` 这类 store 层包装会把隐私错误**从折叠改成透传**，另有 `app.ts:2613` 处的统一错误出口，以及 `retryAfterSecondsFor` 的 `Retry-After` 判定（⏱ 2026-11-05 复核（main `d93c40a9`）：统一出口今天是 `services/api/src/app.ts:2692` 的 `app.setErrorHandler`，`instanceof ApiError` 的分类与写响应在 `services/api/src/app.ts:2699-2706`；等待头判据在 `services/api/src/errors.ts:111`） |
 | 语义风险 | 只在作业结算这一处生效；`retryable`、`details`、`status` 全不参与（`settleCodeOf` 只取 `code`） | 改变的是**所有**错误处理点的分类结果，需要逐点复核 47 处 `instanceof` 与 198 处抛点 |
 | 契约面 | 零改动（九键不变，码都在既有闭集内） | 零契约改动，但**错误封套语义**全仓变宽（`toApiError`、`toErrorEnvelope`、`Retry-After`） |
 | 结论 | **外科手术，代价 1 天以内** | 一个跨包重构，代价是「全仓错误分类复核」——与本缺陷的收益完全不成比例 |

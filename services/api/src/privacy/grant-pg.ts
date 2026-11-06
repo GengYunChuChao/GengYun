@@ -57,7 +57,7 @@ export async function persistConsentGrant(client: PoolClient, userId: string, hm
     if (fresh.rows.length !== 1) throw new ApiError('CONSENT_REQUIRED', '用途政策已到期');
   };
   const bindings = policy.recipient_bindings as Record<string, unknown>;
-  if (input.purpose === 'external_inference' && input.recipient_ids.length === 0) throw new ApiError('CONSENT_REQUIRED', '对外推理需要已核验接收方');
+  if ((input.purpose === 'external_inference' || (input.purpose === 'media_processing' && ((bindings && typeof bindings === 'object') ? Object.keys(bindings).length : 0) > 0)) && input.recipient_ids.length === 0) throw new ApiError('CONSENT_REQUIRED', input.purpose === 'external_inference' ? '对外推理需要已核验接收方' : '该用途政策已登记已核验接收方，授予时必须至少选择一个');
   for (const id of [...input.recipient_ids].sort()) {
     const binding = bindings[id] as Record<string, unknown> | undefined;
     if (!binding || !evidence(binding['no_training_evidence_ref'], synthetic) || !evidence(binding['deletion_evidence_ref'], synthetic)) throw new ApiError('CONSENT_REQUIRED', '接收方核验证据不可用');

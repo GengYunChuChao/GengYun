@@ -144,4 +144,4 @@ requiredFields=9
 - `CHAT_LLM_API_KEY` 不由 `loadPrivateEnvironment()` 导出（私密文件只提供 `deepseekApiKey`）：`config.ts` 走 `apiKeyFallback`，这是既有语义，本切片没有改。
 - 探针读的是真实私密文件，但只输出变量名与计数；脚本放在仓外，不入库、不进 CI。
 - 「13 键」是 2026-10-23 的字段集：私密文件新增键时映射表与单测需同步（见 §2 末尾提示）。
-- 本页**没有**加进 `docs/verification/README.md` 的文件清单：那张表在 §1，新增一行会把该文件后续行号整体下移，实测让另一份证据页（`gy-r34-tencent-ai-samples-20261023.md`）对 `docs/verification/README.md:52` 的引用从「有实质内容」变成「空行」，`verify-doc-anchors --strict` 因此多报一条 SUSPECT；而索引并非必需项（同目录 260 份证据页大多不在该表内），故不改 README。
+- 本页**没有**加进 `docs/verification/README.md` 的文件清单：那张表在 §1，新增一行会把该文件后续行号整体下移，实测让另一份证据页（`gy-r34-tencent-ai-samples-20261023.md`）对 `docs/verification/README.md:53` 的引用从「有实质内容」变成「空行」，`verify-doc-anchors --strict` 因此多报一条 SUSPECT；而索引并非必需项（同目录 260 份证据页大多不在该表内），故不改 README。
