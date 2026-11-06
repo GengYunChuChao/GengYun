@@ -457,14 +457,14 @@ function cascadeNote(cascade) {
 /**
  * `GET /history/{id}`（issue #1021）：按 id 单条读取，供详情页在列表未命中时使用。
  * 与 `GET /history` 同一响应形状（`HistoryEnvelope`），带强 `ETag`；不存在/越权同形 404。
- * 走同一个 `request()`：鉴权头、`no-store` 与错误码口径全部复用，不另造一套。
+ * 走同一个 `request()`：鉴权头、`no-cache` 与错误码口径全部复用，不另造一套。
  */
 async function fetchRecordById(historyId) {
   if (typeof historyId !== 'string' || !UUID.test(historyId)) throw failure('INVALID_INPUT')
   const r = await request('GET', '/history/' + historyId, {})
   const record = validateHistory(r.data)
   if (record.id !== historyId) throw failure('INVALID_RESPONSE')
-  return { record: record, mode: r.mode, etag: r.etag }
+  return { record: record, mode: r.mode }
 }
 
 /**

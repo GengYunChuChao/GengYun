@@ -235,6 +235,26 @@ test('历史详情（#1021）⑤：单条读面 503 ⇒ 可重试错误态（不
   assert.equal(f.page.data.historyRevision, 2);
 });
 
+test('历史详情（#1021）⑦：单条读面 200 但 id 不符 ⇒ INVALID_RESPONSE（不得张冠李戴）', async () => {
+  const f = fixture();
+  assert.equal(await login(f), true);
+  await open(f);
+  answerList(f, []);
+  await flush();
+
+  const req = byIdRequests(f).at(-1);
+  assert.ok(req, '列表未命中后必须补发 GET /history/{id}');
+  req.success(envelope(historyItem({ id: '00000000-0000-4000-8000-0000000000ff' })));
+  await flush();
+
+  assert.equal(f.page.data.errorCode, 'INVALID_RESPONSE', '响应 id 与请求 id 不一致必须被判为无效响应');
+  assert.equal(f.page.data.invalid, false, '无效响应是可重试错误，不是「记录不存在」');
+  assert.notEqual(f.page.data.errorText, '');
+  assert.equal(/不存在|已删除|不属于当前账号/.test(f.page.data.errorText), false);
+  assert.equal(f.page.data.canDelete, false);
+  assert.equal(f.requests.filter((r) => r.url.includes('/recognitions/')).length, 0, '无效响应不得拿去读目标正文');
+});
+
 test('历史详情（#1021）⑥：单条读面网络失败 ⇒ NETWORK_UNCERTAIN 错误态（不是「找不到」）', async () => {
   const f = fixture();
   assert.equal(await login(f), true);
