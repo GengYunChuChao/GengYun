@@ -8,7 +8,10 @@
  * 3. ⛔ **记账失败不改判**：`record()` 抛错时识别结果**逐字节不变**，但 `readings.failed` +1、
  *    `lastError` 是契约码、并留下一条安全事件；
  * 4. 拿不到外发预留行 ⇒ **不写行**（没有 `export_id` 就没有归属），只记失败读数；
- * 5. 非 `real` / 无台账 ⇒ **原样返回内层提供者**（同一个对象引用），连一次读都不做。
+ * 5. 非 `real` / 无台账 ⇒ **原样返回内层提供者**（同一个对象引用），连一次读都不做；
+ * 6. `startedAt` 取在**读账本之后** ⇒ `duration_ms` 只量 provider 段、`sent_at` 不含读账本的推迟（P2-1）；
+ * 7. 注入会抛的 `log` ⇒ 提供者照调、已成功的识别不被改判（P2-2：日志出口不是业务错误）；
+ * 8. 读**永不 settle** ⇒ 预算兜底，作业照发、`failed+1`、账本零写行（P2-4：删掉 `withDeadline` 必红）。
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -274,3 +277,136 @@ test('jobId 空串 ⇒ 落 null（列可空、无外键；⛔ 不写空串冒充
   await wrapped.recognize({ jobId: '', mediaId: MEDIA_ID, mediaRevision: 7 });
   assert.equal(ledger.rows[0].jobId, null);
 });
+
+// ---------------------------------------------------------------------------
+// P2 跟进（独立审查 442f732b）：口径与注入点
+// ---------------------------------------------------------------------------
+
+test('P2-1 读账本 150ms + provider 30ms ⇒ duration_ms 只量 provider 段，sent_at 取在读之后', async () => {
+  const READ_MS = 150;
+  const PROVIDER_MS = 30;
+  const ledger = ledgerOf();
+  let providerEnteredAt = 0;
+  let providerLeftAt = 0;
+  const exportLedger = exportLedgerOf(async () => {
+    await new Promise((resolve) => setTimeout(resolve, READ_MS));
+    return { id: EXPORT_ID, state: 'reserved' };
+  });
+  // 不注入 `now`：要量的就是真实时钟下两段延迟的分界。
+  const wrapped = withProviderCallAccounting(
+    providerOf(async () => {
+      providerEnteredAt = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, PROVIDER_MS));
+      providerLeftAt = Date.now();
+      return { kind: 'completed', candidates: [] };
+    }),
+    { ledger, exportLedger, capability: 'weed', executionMode: 'real' },
+  );
+
+  const enteredAt = Date.now();
+  await wrapped.recognize(INPUT);
+
+  const row = ledger.rows[0];
+  const providerSpan = providerLeftAt - providerEnteredAt;
+  // provider 口径（±20ms 抖动，⛔ 不写成脆弱的精确值）：只含 provider 段，不含读账本的 150ms。
+  assert.ok(row.durationMs >= providerSpan - 20, `duration_ms=${row.durationMs} 小于 provider 段 ${providerSpan}`);
+  assert.ok(row.durationMs <= providerSpan + 20, `duration_ms=${row.durationMs} 超出 provider 段 ${providerSpan}`);
+  assert.ok(row.durationMs < READ_MS, `duration_ms=${row.durationMs} 把读账本的 ${READ_MS}ms 也算了进去`);
+  // `sent_at` 是「外发**进入**时刻」（0055 :362-363）：读账本之后、调 provider 之前。
+  assert.ok(
+    row.sentAt.getTime() - enteredAt >= READ_MS - 20,
+    `sent_at 比进入适配器只早 ${row.sentAt.getTime() - enteredAt}ms：读账本的推迟被算进了外发时刻`,
+  );
+  assert.ok(row.sentAt.getTime() <= providerEnteredAt, 'sent_at 必须早于 provider 真正被调用的时刻');
+});
+
+test('P2-2 注入会抛的 log（拿不到预留行）⇒ 提供者仍被调用、识别结果照常返回', async () => {
+  const ledger = ledgerOf();
+  const readings = readingsOf();
+  const expected = { kind: 'completed', candidates: [] };
+  let providerCalls = 0;
+  const wrapped = withProviderCallAccounting(
+    providerOf(async () => {
+      providerCalls += 1;
+      return expected;
+    }),
+    {
+      ledger,
+      // 走到 `provider_call_ledger_unresolved` 那条 emit（读账本没拿到预留行）。
+      exportLedger: exportLedgerOf(null),
+      capability: 'weed',
+      executionMode: 'real',
+      now: clock([0, 0]),
+      readings,
+      log: () => {
+        throw new Error('log sink exploded');
+      },
+    },
+  );
+
+  const outcome = await wrapped.recognize(INPUT);
+
+  assert.equal(providerCalls, 1, '⛔ 日志出口抛错不许把识别挡在**外发之前**（提供者一次都没调到）');
+  assert.equal(outcome, expected);
+  assert.equal(ledger.rows.length, 0);
+  assert.deepEqual(readings, { written: 0, failed: 1, lastError: 'OBJECT_UNAVAILABLE' });
+});
+
+test('P2-2 注入会抛的 log（record 抛错）⇒ 已成功的识别不被改判，结果对象仍在', async () => {
+  const readings = readingsOf();
+  const expected = { kind: 'completed', candidates: [{ species_id: 'species_barnyardgrass', rank: 1, model_score: 0.8 }] };
+  const wrapped = withProviderCallAccounting(providerOf(async () => expected), {
+    ledger: ledgerOf(new Error('permission denied')),
+    exportLedger: exportLedgerOf(),
+    capability: 'weed',
+    executionMode: 'real',
+    now: clock([0, 10]),
+    readings,
+    log: () => {
+      throw new Error('log sink exploded');
+    },
+  });
+
+  const outcome = await wrapped.recognize(INPUT);
+
+  assert.equal(outcome, expected, '⛔ 写失败事件出口再抛错，也不许把已成功的识别改判（结果会被整条丢掉）');
+  assert.deepEqual(readings, { written: 0, failed: 1, lastError: 'PROVIDER_UNAVAILABLE' });
+});
+
+test(
+  'P2-4 读永不 settle ⇒ 预算兜底：作业照发、failed+1、账本零写行',
+  { timeout: 5000 },
+  async () => {
+    const ledger = ledgerOf();
+    const readings = readingsOf();
+    const events = [];
+    let providerCalls = 0;
+    const expected = { kind: 'completed', candidates: [] };
+    const wrapped = withProviderCallAccounting(
+      providerOf(async () => {
+        providerCalls += 1;
+        return expected;
+      }),
+      {
+        ledger,
+        // 读预留行永不 settle：没有预算兜底，这个作业会永远挂在外发之前。
+        exportLedger: { findReservedByObject: () => new Promise(() => {}) },
+        capability: 'weed',
+        executionMode: 'real',
+        budgetMs: 30,
+        readings,
+        log: (event) => events.push(event),
+      },
+    );
+
+    const outcome = await wrapped.recognize(INPUT);
+
+    assert.equal(outcome, expected, '预算耗尽只影响记账，作业照发、结果照回');
+    assert.equal(providerCalls, 1);
+    assert.equal(ledger.rows.length, 0, '没有 export_id ⇒ 零写行（⛔ 不猜归属）');
+    assert.deepEqual(readings, { written: 0, failed: 1, lastError: 'PROVIDER_TIMEOUT' });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].event, 'provider_call_ledger_unresolved');
+    assert.equal(events[0].code, 'PROVIDER_TIMEOUT');
+  },
+);

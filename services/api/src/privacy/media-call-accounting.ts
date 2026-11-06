@@ -74,6 +74,11 @@ export interface ProviderCallAccountingOptions {
   /** 可注入时钟（计时与 `sent_at` 都用它；单测里给固定值即可确定性断言 `duration_ms`）。 */
   now?: () => number;
   /**
+   * 读/写**各自**的短预算（毫秒，默认 `ACCOUNTING_BUDGET_MS`）。可注入只为一件事：让「读永不
+   * settle ⇒ 作业照发」这类用例不必真等 1.5s。默认值不变，生产装配**不传**。
+   */
+  budgetMs?: number;
+  /**
    * 读数出口：传入的对象会被**就地累加**（`written` / `failed` / `lastError`）。
    * 生产装配**不传**这个对象（本片不开 HTTP 读面）：读数改随**事件**走既有日志出口
    * （每条事件带 `readings_written` / `readings_failed` 两个计数字段，见 `readingFields()`）；
@@ -111,11 +116,13 @@ function versionOrNull(value: unknown): string | null {
 }
 
 /**
- * 记账的**短预算**（毫秒）：读一次预留行、写一行，各自最多等这么久。
+ * 记账的**短预算**（毫秒）：读一次预留行、写一行，**各自**最多等这么久（可由 `options.budgetMs` 注入）。
  *
- * **最坏增量 ≤1.5s，且不改变识别判定**：读预留行发生在调用之前，最多把这次外发**推迟** 1.5s；
- * 写行发生在结果已经拿到之后，只推迟返回。预算耗尽**只**让 `readings.failed` +1、
- * `lastError = PROVIDER_TIMEOUT`（借既有契约码，⛔ 不新增 ErrorCode），识别结果/异常逐字节不变。
+ * **最坏增量 ≈3s，且不改变识别判定**：读预留行发生在调用之前，最多把这次外发**推迟** 1.5s；
+ * 写行发生在结果已经拿到之后，最多把返回**再推迟** 1.5s（客户端也套同一个上限）；两者之外还要
+ * 加上 `pool.connect()` 取连接的时间 —— 服务端 `statement_timeout` 只在 `BEGIN` 之后生效，
+ * 管不到取连接。预算耗尽**只**让 `readings.failed` +1、`lastError = PROVIDER_TIMEOUT`
+ * （借既有契约码，⛔ 不新增 ErrorCode），识别结果/异常逐字节不变。
  * 数据库侧另有一份同额度的 `SET LOCAL statement_timeout`（`provider-call-ledger-pg.ts` 的
  * `record({ timeoutMs })`），所以本层不等了以后，服务端也会把那条语句掐掉，不会长期占着连接。
  */
@@ -169,6 +176,7 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
   if (typeof original !== 'function') return inner;
 
   const now = options.now ?? ((): number => Date.now());
+  const budgetMs = options.budgetMs ?? ACCOUNTING_BUDGET_MS;
   // 收窄后的局部别名：`recordRow` 是闭包，上面的「非 null」收窄不会被带进闭包体。
   const sink: ProviderCallLedger = ledger;
   const source: Pick<PostgresExportLedger, 'findReservedByObject'> = exportLedger;
@@ -191,14 +199,14 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     mediaRevision: number;
   }): Promise<string | null> {
     try {
-      // 预算只在**读**这一侧兜底；底层驱动的 `statement_timeout` 另有 5s 的池级上限。
+      // 读侧也套客户端上限；底层驱动的 `statement_timeout` 另有 5s 的池级上限。
       const record = await withDeadline(
         source.findReservedByObject({
           objectType: 'media',
           objectId: input.mediaId,
           objectRevision: input.mediaRevision,
         }),
-        ACCOUNTING_BUDGET_MS,
+        budgetMs,
       );
       const exportId = typeof record?.id === 'string' && record.id !== '' ? record.id : null;
       if (exportId !== null) return exportId;
@@ -210,14 +218,19 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
       readings.failed += 1;
       readings.lastError = errorCodeOf(error) ?? 'OBJECT_UNAVAILABLE';
     }
-    emit({
-      event: 'provider_call_ledger_unresolved',
-      code: readings.lastError,
-      capability,
-      media_id: input.mediaId,
-      media_revision: input.mediaRevision,
-      ...readingFields(),
-    });
+    try {
+      emit({
+        event: 'provider_call_ledger_unresolved',
+        code: readings.lastError,
+        capability,
+        media_id: input.mediaId,
+        media_revision: input.mediaRevision,
+        ...readingFields(),
+      });
+    } catch {
+      // ⛔ 日志出口是**注入点**（`log: () => { throw }`）：它自己坏了不算业务错误 —— 这里若漏出去，
+      // 识别会在**外发之前**被打红（提供者一次都没调到）。只当这一次没记上事件。
+    }
     return null;
   }
 
@@ -244,6 +257,9 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
 
     // 状态只由「这次调用有没有拿到可用的业务回包」决定：
     // 抛错（含超时）/ 内层自报 `kind: 'failed'` ⇒ send_failed。⛔ 没有第三种状态（0055 没有 blocked）。
+    // ⚠ 口径边界：`send_failed` 目前**分不出**「已触达供应商后失败」与「内层在触达之前就拒绝」
+    // （`task-egress.ts` 的 `assertExecutable` / `markSent` 抛错时，本层看到的同样是抛错）——
+    // 两种都写 `send_failed`，措辞以 0055 该列 COMMENT 为准。
     const invocationState: ProviderCallInvocationState =
       ctx.threw || outcomeFailed(ctx.outcome) ? 'send_failed' : 'sent';
     // 用量只在 `sent` 时带：失败/超时那次没有可采信的回包，⛔ 不猜、不补零。
@@ -253,31 +269,39 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     );
 
     try {
-      await sink.record({
-        domain,
-        jobId: typeof ctx.input.jobId === 'string' && ctx.input.jobId !== '' ? ctx.input.jobId : null,
-        exportId,
-        capability,
-        providerConfigVersion,
-        modelVersion: versionOrNull(inner.modelVersion),
-        invocationState,
-        usage,
-        sentAt: ctx.sentAt,
-        durationMs: ctx.durationMs,
-        timeoutMs: ACCOUNTING_BUDGET_MS,
-      });
+      // 写侧同样套客户端上限：服务端 `statement_timeout` 只在 `BEGIN` 之后生效，管不到取连接。
+      await withDeadline(
+        sink.record({
+          domain,
+          jobId: typeof ctx.input.jobId === 'string' && ctx.input.jobId !== '' ? ctx.input.jobId : null,
+          exportId,
+          capability,
+          providerConfigVersion,
+          modelVersion: versionOrNull(inner.modelVersion),
+          invocationState,
+          usage,
+          sentAt: ctx.sentAt,
+          durationMs: ctx.durationMs,
+          timeoutMs: budgetMs,
+        }),
+        budgetMs,
+      );
       readings.written += 1;
     } catch (error) {
       readings.failed += 1;
       readings.lastError = errorCodeOf(error) ?? 'PROVIDER_UNAVAILABLE';
-      emit({
-        event: 'provider_call_ledger_write_failed',
-        code: readings.lastError,
-        export_id: exportId,
-        invocation_state: invocationState,
-        capability,
-        ...readingFields(),
-      });
+      try {
+        emit({
+          event: 'provider_call_ledger_write_failed',
+          code: readings.lastError,
+          export_id: exportId,
+          invocation_state: invocationState,
+          capability,
+          ...readingFields(),
+        });
+      } catch {
+        // ⛔ 同一处注入点：事件出口再抛错，也不许把**已经成功**的识别改判（结果会被整条丢掉）。
+      }
     }
   }
 
@@ -287,10 +311,11 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     mediaId: string;
     mediaRevision: number;
   }): Promise<unknown> => {
-    // `startedAt` = 外发**进入**时刻：它既是 `sent_at`（0055 :362-363 的口径），也是耗时起点。
-    const startedAt = now();
     // ⛔ 这两行的顺序不可换：内层会先 `markSent`，之后按对象回查再也不可能命中（见文件头）。
     const exportId = await resolveExportId(input);
+    // `startedAt` = 外发**进入**时刻：它既是 `sent_at`（0055 :362-363 的口径），也是耗时起点。
+    // ⛔ 必须在读账本**之后**取：读预留行是本层自己的前置开销，算进 `duration_ms` 会把 provider 段撑大。
+    const startedAt = now();
     let outcome: unknown = null;
     let failure: unknown = null;
     let threw = false;

@@ -51,7 +51,7 @@
 --   | 值 | 判据 | 写入路径 |
 --   | --- | --- | --- |
 --   | `sent` | 外发**已经发生**，供应商回了成功（拿到正文）| 成功分支 |
---   | `send_failed` | 外发**已经交给传输/供应商**，但结局是错误或不可判定（回错、超时、传输中断）| 抛错分支 |
+--   | `send_failed` | **已进入外发层**但没拿到可用回包（含内层在触达供应商之前的拒绝/失败）| 抛错分支 |
 -- 0050 里的 `blocked`（被拦截、**没有发出**）在本表**没有写入者**：本片的零外发路径
 -- （非 `real` 模式、适配器根本不被调用）一律**不写行** —— 没发出去就不该在这张表里留下一条
 -- 「像发过」的读数。既然没有写入者，就不把值建进闭集（⛔ 不复制 0050 的「有判据、无写入者」）。
@@ -352,8 +352,9 @@ COMMENT ON COLUMN public.provider_call_ledger.model_version IS
   '模型标识串（可空；装配层没给就是 NULL，⛔ 不填占位串）。形状与 provider_config_version 同。';
 
 COMMENT ON COLUMN public.provider_call_ledger.invocation_state IS
-  '闭集：sent=外发已发生且供应商回成功；send_failed=外发已发生但回错/超时/结局不可判定。'
-  '⛔ 没有 blocked：没发出去就不写行（见迁移头注释）。';
+  '闭集：sent=外发已发生且供应商回成功；send_failed=已进入外发层但没拿到可用回包'
+  '（含内层在触达供应商之前的拒绝/失败：本层无法区分触达前/后）。'
+  '⛔ 没有 blocked：适配器根本没被调用（非 real / 零外发路径）就不写行（见迁移头注释）。';
 
 COMMENT ON COLUMN public.provider_call_ledger.usage IS
   '供应商返回的**结构用量**（jsonb 对象，只留非负整数键值，如 {prompt_tokens, completion_tokens}）。'
