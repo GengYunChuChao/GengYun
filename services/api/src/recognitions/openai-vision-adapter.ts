@@ -146,6 +146,16 @@ export function normalizeOpenAiVisionCandidates(
 }
 
 /**
+ * 闭集的规范化：去空白、去空串，**不做任何裁剪或截断**。
+ *
+ * 单独导出是为了让「闭集只能来自入参、且必须原样全量保留」这件事可被测试直接断言
+ * （`#1014`：只保留首个 id 的回归必须能让用例变红）。
+ */
+export function openAiVisionAllowedIds(speciesIds: readonly string[]): readonly string[] {
+  return speciesIds.map((id) => id.trim()).filter((id) => id !== '');
+}
+
+/**
  * 构造 `openai-vision-v1` 提供者。
  *
  * 构造期不合法（端点非 https、模型名空、闭集空、超时越界）⇒ **抛** `RecognitionWiringError`，
@@ -178,7 +188,7 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
   }
   const model = typeof options.model === 'string' ? options.model.trim() : '';
   if (model === '') throw new RecognitionWiringError('openai-vision 缺少模型名（fail-closed，未发包）');
-  const allowedIds = options.speciesIds.map((id) => id.trim()).filter((id) => id !== '');
+  const allowedIds = openAiVisionAllowedIds(options.speciesIds);
   if (allowedIds.length === 0) {
     throw new RecognitionWiringError('openai-vision 的闭集物种列表为空（等于没有任何约束，fail-closed）');
   }

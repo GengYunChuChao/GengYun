@@ -29,7 +29,7 @@ import { loadCatalog } from '../../../../packages/reference/catalog.mjs';
  * ⛔ 不在代码里抄一份 id：抄一份会在目录换代时静默错位（`#1003` 的原始事故形态）。
  * 目录读不到 / 空集 ⇒ 抛错，由调用处 fail-closed（⛔ 不回退任何内置清单）。
  */
-function openAiVisionSpeciesIds(): readonly string[] {
+export function openAiVisionSpeciesIds(): readonly string[] {
   const catalog = loadCatalog() as { species?: readonly { id?: unknown }[] };
   const ids = (catalog.species ?? [])
     .map((row) => (typeof row.id === 'string' ? row.id.trim() : ''))
@@ -241,8 +241,8 @@ export function createRecognitionProvider(input: {
           ...(input.now === undefined ? {} : { now: input.now }),
           onObservation: input.onObservation,
         });
-      } catch {
-        return createRealRecognitionProvider({ endpoint, apiKey }, '真实识别端口装配失败（配置不合法；fail-closed，未发包，不回退替身）');
+      } catch (error) {
+        return createRealRecognitionProvider({ endpoint, apiKey }, `真实识别端口装配失败（${error instanceof Error ? error.message : String(error)}；fail-closed，未发包，不回退替身）`);
       }
     }
     if (endpoint !== null && apiKey !== null) {

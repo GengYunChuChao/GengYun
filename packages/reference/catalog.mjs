@@ -41,7 +41,19 @@ export function loadCatalog() {
   const regions = readJson(CATALOG_PATHS.regions);
 
   // 杂草覆盖状态校验：未知取值直接抛错，不静默接受。
+  // 同时校验 `id` 非空且唯一：闭集靠 id 建立，缺行/重复都会让闭集静默变短（#1014）。
+  const seenSpeciesIds = new Set();
   for (const s of species.species) {
+    if (typeof s.id !== 'string' || s.id.trim() === '') {
+      throw new Error(`species 条目缺少 id：${JSON.stringify(s).slice(0, 120)}`);
+    }
+    // 比较前 trim：闭集侧（provider/adapter）会 trim，若这里用原值比较，
+    // `" species_x"` 与 `"species_x"` 都能过校验，随后在闭集里变成两个同名 id。
+    const speciesId = s.id.trim();
+    if (seenSpeciesIds.has(speciesId)) {
+      throw new Error(`species id 重复：${speciesId}`);
+    }
+    seenSpeciesIds.add(speciesId);
     if (!COVERAGE_STATES.includes(s.coverage_state)) {
       throw new Error(`species ${s.id} 的 coverage_state 非法：${s.coverage_state}`);
     }
