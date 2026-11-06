@@ -78,7 +78,7 @@
             <view class="info-row" wx:for="{{modelCandidates}}" wx:key="rank">
               <view class="tiny-art"><view class="gy-icon gy-icon--leaf"></view></view>
               <view class="info-row__copy">
-                <text class="info-row__title">候选 {{item.rank}} · {{item.species_id}}</text>
+                <text class="info-row__title">候选 {{item.rank}} · {{item.speciesName || item.species_id}}</text>
                 <text class="info-row__desc">模型自报分数 {{item.scoreText}}</text>
               </view>
             </view>

@@ -176,20 +176,20 @@ Component({
         const candidate = candidates[i]
         const speciesId = candidate && typeof candidate.species_id === 'string' ? candidate.species_id : ''
         if (!UUID.test(speciesId)) continue
-        let revision = 0
+        let revision = 0; let title = ''
         try {
           const detail = await knowledgeApi.detail(speciesId)
           const item = detail && detail.item
           // 只有 species 实体能当 FavoriteTarget；资料类型不符不猜（闭集见 routes/favorites.ts:46）。
           if (!item || item.type !== TARGET_TYPE || !Number.isSafeInteger(item.revision) || item.revision < 1) continue
-          revision = item.revision
+          revision = item.revision; title = typeof item.title === 'string' ? item.title : ''
         } catch (_) {
           continue
         }
         const ownedRow = owned[keyOf(TARGET_TYPE, speciesId)] || null
         items.push({
           speciesId: speciesId,
-          label: speciesId,
+          label: (title || speciesId),
           rank: candidate && candidate.rank ? candidate.rank : 0,
           revision: revision,
           favorited: ownedRow !== null,
