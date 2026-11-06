@@ -262,7 +262,7 @@ try {
   const epochOf = async (user,purpose) => (await owner.query('SELECT current_epoch,state FROM privacy_epochs WHERE user_id=$1 AND purpose=$2',[user.id,purpose])).rows[0];
   const withdrawP = (user,purpose,revision,keyValue=randomBytes(12).toString('hex')) => request(`/me/consents/${purpose}`,user,{method:'DELETE',headers:{'if-match':`"${revision}"`,'idempotency-key':keyValue}});
 
-  // N1: the requested purpose has no policy row at all, while a fully valid policy of another
+  // N1: the requested purpose has no *enabled* policy row (the row still exists -- :268 only disables it), while a fully valid policy of another
   // purpose exists and is handed the same recipient binding shape. Only the purpose-scoped lookup
   // (grant-pg.ts:47) can tell them apart -- the recipient proofs would otherwise match.
   await owner.query("UPDATE consent_policies SET enabled=false WHERE purpose='external_inference'");
@@ -271,14 +271,14 @@ try {
   const deniedPurpose=await error(grant(u1,body('external_inference','fixture-neg-rec-v1',['fixture-llm'])),403,'CONSENT_REQUIRED');
   assert.equal(deniedPurpose.body.error.message,'没有可用的已核验用途政策');
   assert.deepEqual(await counts(u1),{records:0,epochs:0,receipts:0});
-  assert.equal(await recordOf(u1,'external_inference'),undefined);
-  assert.equal(await epochOf(u1,'external_inference'),undefined);
+  assert.deepEqual((await owner.query('SELECT purpose FROM consent_records WHERE user_id=$1',[u1.id])).rows,[],'a denied grant must not create any record row');
+  assert.deepEqual((await owner.query('SELECT purpose FROM privacy_epochs WHERE user_id=$1',[u1.id])).rows,[],'a denied grant must not create any epoch row');
   // Positive control: the same version/recipients are accepted for the purpose they belong to, so
   // the denial above cannot be explained by a malformed fixture or an unverifiable recipient.
   const recGrant=await grant(u1,body('recording','fixture-neg-rec-v1',['fixture-llm']));
   assert.equal(recGrant.status,201,JSON.stringify(recGrant.body));
   assert.equal((await recordOf(u1,'recording')).state,'granted');
-  assert.equal(await recordOf(u1,'external_inference'),undefined);
+  assert.deepEqual((await owner.query('SELECT purpose FROM consent_records WHERE user_id=$1 ORDER BY purpose',[u1.id])).rows.map((r)=>r.purpose),['recording'],'positive control: only the granted purpose has a record row');
   say('N1 recording policy_version cannot authorise external_inference: 403 CONSENT_REQUIRED, zero rows, same fixture still grants recording');
 
   // N2: both purposes have their own live policy; the client quotes the recording version while
@@ -307,7 +307,7 @@ try {
   assert.equal((await recordOf(u3,'external_inference')).state,'granted');
   assert.equal(Number((await recordOf(u3,'external_inference')).revision),2);
   assert.deepEqual(await epochOf(u3,'external_inference'),{current_epoch:'1',state:'granted'});
-  assert.equal(await recordOf(u3,'recording'),undefined);
+  assert.deepEqual((await owner.query('SELECT purpose FROM consent_records WHERE user_id=$1 ORDER BY purpose',[u3.id])).rows.map((r)=>r.purpose),['external_inference'],'withdrawing recording must not touch or create a recording row');
   // Positive control: the record is withdrawable through its own purpose, so the 404 above is
   // path-scoping and not a defect that blocks all withdrawals.
   const okWithdraw=await withdrawP(u3,'external_inference',2);
