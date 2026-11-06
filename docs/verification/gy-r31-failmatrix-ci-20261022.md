@@ -1,7 +1,7 @@
 # GY-R31：`#22` 失败回归矩阵接入 CI（2026-10-22）
 
 - 分支：`test/gy-r31-failmatrix-ci`，基线 `origin/main = d4d48088`（`d4d48088532377adb54c278b24ba90be42cb5aaf`）。
-- 机器：Windows / node v24.16.0 / npm 11.13.0（CI 侧 `ubuntu-24.04` + node `24.16.0`，与本仓其它 19 处 `setup-node` 一致）。
+- 机器：Windows / node v24.16.0 / npm 11.13.0（CI 侧 `ubuntu-24.04` + node `24.16.0`，与本仓其它 workflow 的 `setup-node` 配置一致（全仓计数会持续过期，故不写数））。
 - 本页所有读数都是**在本工作树里实跑**的原文，不是估算；每条都给了复现命令。
 - ⚠ 本页包含一条对任务前提的**更正**（§1.2）：这套矩阵在 `d4d48088` 上**并非无人执行**，它此前是通过 `npm run test:unit` 间接跑的。见下。
 
@@ -28,7 +28,7 @@
 
 ### 1.2 更正：「谁都不跑」不成立，但「没有自己的门禁」成立
 
-`tests/unit/gy-i22-failmatrix.test.mjs`（随 `903ad629` 进入 main，是 `d4d48088` 的祖先）已经把整套矩阵包进了 `npm run test:unit`：它 `spawnSync` 跑一遍 `run.mjs --json=`，再断言全绿、条数不少于 `MIN_CASES`、每条都有真实读数、分族/分批次条数与基线一致。`engineering-shell.yml:46` 的 `unit-tests` job 在 `engineering-shell.yml:58` 跑 `npm run test:unit`。
+`tests/unit/gy-i22-failmatrix.test.mjs`（随 `903ad629` 进入 main，是 `d4d48088` 的祖先）已经把整套矩阵包进了 `npm run test:unit`：它 `spawnSync` 跑一遍 `run.mjs --json=`，再断言全绿、条数不少于 `MIN_CASES`、每条都有真实读数、分族/分批次条数与基线一致。`.github/workflows/engineering-shell.yml:46` 的 `unit-tests` job 在 `.github/workflows/engineering-shell.yml:63` 跑 `npm run test:unit`。
 
 所以准确说法是：
 
@@ -47,7 +47,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 EXIT=0  ELAPSED_SEC=1.86
 ```
 
-> 用例条数写「159」只是那个测试**标题**里的旧文案，实际断言的是 `MIN_CASES = 249` 条（下限随用例增长只会往上调）——标题没跟上加用例，不影响判定；本页不改它（改它就得动 `tests/unit/`，与本轮无关）。
+> 用例条数写「159」是 2026-10-22 那次跑的测试**标题**文案（按 §11 原样保留，不回填）；标题已随 `a3e53fbe` 改成 249（现见 `tests/unit/gy-i22-failmatrix.test.mjs:66`），与 `MIN_CASES = 249`（同页第 206 条）一致。
 
 **本轮补的正是这三件缺的事**：一个固定检查名（`failmatrix`）、一条命令（`npm run test:failmatrix`）、一份可下载的机读产物（`failmatrix-<sha>`），并且**不依赖** `test:unit` 是否被人盯着。
 
@@ -82,7 +82,7 @@ EXIT=0  ELAPSED_SEC=1.86
 
 ### 2.3 为什么另开一个 workflow 而不是并进 `engineering-shell.yml`
 
-`engineering-shell.yml` 是 13 个 job 的大文件，正被多张在飞 PR 反复改；往里加 job 会抢同一个文件、冲掉别人的改动。另开一个小文件：零冲突面、检查名独立（`failmatrix`）、可以单独 `workflow_dispatch` 重跑一次。
+`engineering-shell.yml` 是个大文件（写此页时 13 个 job，现 8 个），正被多张在飞 PR 反复改；往里加 job 会抢同一个文件、冲掉别人的改动。另开一个小文件：零冲突面、检查名独立（`failmatrix`）、可以单独 `workflow_dispatch` 重跑一次。
 
 ## 3 读数（原文）
 
@@ -129,7 +129,7 @@ RUN3 EXIT=0 WALL_SEC=5.72 :: 矩阵合计 168 条：PASS 168 / FAIL 0
 
 ### 3.3 非空证明：门禁真的会红
 
-把 `cases.mjs:52` 里 `C1-01` 的 `expect: { status: 401, ... }` 临时改成 `status: 999`（expect 自身不改判定逻辑，故意让它对不上真实读数 401）：
+把 `tests/failmatrix/cases.mjs:111` 里 `C1-01` 的 `expect: { status: 401, ... }` 临时改成 `status: 999`（expect 自身不改判定逻辑，故意让它对不上真实读数 401）：
 
 ```
   FAIL C1-01  GET    /api/v1/favorites → 401 SESSION_REQUIRED · cache=no-store etag=- · 游客读收藏列表
