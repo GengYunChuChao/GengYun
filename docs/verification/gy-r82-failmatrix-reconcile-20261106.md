@@ -1,6 +1,6 @@
 # R82 failmatrix 真库臂：C4-15 与 C4-18 逐条裁定（2026-11-06）
 
-- 工作树 `E:\GengYunCommander\.pg17\wt-r82-reconcile`，分支 `docs/gy-r82-failmatrix-reconcile`，基线 `7155b9e75ec3`（`git rev-parse HEAD`）。
+- 工作树 `E:\GengYunCommander\.pg17\wt-r82-reconcile`，分支 `docs/gy-r82-failmatrix-reconcile`，基线 `7155b9e7`（= `origin/main`，也是 `git merge-base origin/main <branch>` 的结果；本页描述的是「基线 = `7155b9e7`、本页提交 = 其直接子提交」这一对读数，不是「工作树 HEAD 永远是 7155b9e7」）。
 - 本页只做两件事：把 failmatrix 真库臂里**尚未裁定的两条分歧**（C4-15、C4-18）逐条读到位，并给出裁定。
 - 只读 + 写文档：没有 commit、没有 push、没有改任何代码或测试。跑出来的原始日志在 `.pg17\tmp\r82-real-arm.log`（真库臂）、`.pg17\tmp\r82-stub-arm.log`（stub 臂）、`.pg17\tmp\r82-probe.log`、`.pg17\tmp\r82-probe2.log`（两条探针）。
 - 引 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md` 时一律**标注它是旧读数**并给行号，不与本页读数混算。
@@ -20,6 +20,18 @@ stub 臂（`tests/failmatrix/run.mjs`）本轮 249 条全 PASS、0 FAIL，其中
 真库臂 5 条 `different`：C3-19、C3-20、C3-21（stub 期望 503 `PROVIDER_UNAVAILABLE`、真库 200，属旧页已裁过的「按模式的合法分歧」），加上本页要裁的 **C4-15** 与 **C4-18**。
 
 真库臂 13 条 `not runnable`：C2-01/02/03（媒体夹具未播种）、C2-11/12/13（媒体域 503）、C3-15/C3-26（后台审计域 503）、C4-12/13/14/16/17（注销夹具哨兵）。
+
+合计行原文（`.pg17\tmp\r82-real-arm.log` 尾行，逐字）：
+
+```
+total=180 same=162 sameWithCheck=19 sameWithShape=27 different=5 notRunnable=13 elapsedMs=24936
+```
+
+族级分布（同文件，逐字）：
+
+```
+C1=37(37/0/0) C2=24(18/0/6) C3=36(31/3/2) C4=21(14/2/5) C10=23(23/0/0) C11=39(39/0/0)
+```
 
 ## §2 两条分歧的四列读数
 
@@ -55,8 +67,9 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 
 - 真库臂根本没有播种过「一张已经受理过的注销单」：`tests/failmatrix/run-real.mjs:994-996` 把 `deleter.deletionId`、`.receipt`、`.staleReceipt` 三个字段都设成 `unavailableSeed(...)` 哨兵；对照 stub 臂 `tests/failmatrix/run.mjs:285-298`，那里是**真发一次 202** 再把读数写回夹具。
 - 哨兵是个 `Proxy`，`tests/failmatrix/run-real.mjs:217-226` 的 `get` 陷阱在取值时才抛。而 `tests/failmatrix/cases.mjs:355-359` 的 `check` 里，判等那一行是 `tests/failmatrix/cases.mjs:357`：`result.body?.data?.deletion?.id !== prior.deletionId`——右侧只是一个普通属性取值，返回代理本身不抛；`'f9b4271e-…' !== proxy` 恒为真。所以那句话的正确读法是「这一次 202 的 id 与一个哨兵不相等」，不是「重放换单了」。
-- 真库臂这一次 202 是**首次受理**：探针 1 首次 POST 就返回 202 并给出新 id，与真库臂红出来的 `f9b4271e-…` 是同一种读数。至于「重放」分支 `services/api/src/routes/account-deletion.ts:281-311`，在真库臂对**任何**用户会话都不可达——理由是三段串联的：`:255` 的 `preHandler` 先做鉴权（鉴权先于幂等台账）；受理事务按契约撤掉该账号全部会话，`services/api/db/migrations/0016_account_deletion_persistence.sql:130-135`；账号转 `deletion_pending` 后一律拒绝，`services/api/src/auth/middleware.ts:88`。
+- 真库臂这一次 202 是**首次受理**：探针 1 首次 POST 就返回 202 并给出新 id，与真库臂红出来的 `f9b4271e-…` 是同一种读数。至于「重放」分支 `services/api/src/routes/account-deletion.ts:281-311`，在**串行**场景（首条受理事务已提交之后）对任何用户会话都不可达——理由是三段串联的：`:255` 的 `preHandler` 先做鉴权（鉴权先于幂等台账）；受理事务按契约撤掉该账号全部会话，`services/api/db/migrations/0016_account_deletion_persistence.sql:130-135`；账号转 `deletion_pending` 后一律拒绝，`services/api/src/auth/middleware.ts:88`。
 - 探针实测坐实这条不可达：受理后用**同一张**会话重放同键 → 401 `SESSION_EXPIRED`（探针 1）；改用 `auth_epoch` 递增后**新铸**的会话 → 403 `ACCOUNT_INACTIVE`（探针 2）。两条路径都拿不到第二个 202，自然也谈不上「同一单 + 换发回执」。
+  - 边界：这里说的是**串行**情形。`services/api/src/routes/account-deletion.ts:281-311` 的 replay 分支本身不校验账号状态，判定入口只是「同 subject 同幂等键已存在台账」；理论上存在一个并发窗口（第二条请求在首条受理事务提交**前**过了 `:255` 的鉴权、提交**后**才进 `:261` 的 handler）。本页没有复现这个窗口，也不据此下「对任何会话都不可达」的绝对结论；裁定本身不受影响（同账号同单换发回执，既不越权也不放行）。
 - 因此：**不是产品缺陷，不是 503 域门**（真库臂实测 202，受理面是开着的），是「真库臂没播种 + 断言拿哨兵当基准」的夹具口径。不计入 A1「未解决严重安全/权限缺陷」的缺陷计数：这里没有越权、没有跨账号读、失效方向是拒绝而不是放行。
 - 要让读数对齐 stub，改这两处：`tests/failmatrix/cases.mjs:354` 给这条用例补 real 侧期望（受理后重放只可能 401），并把 `tests/failmatrix/run-real.mjs:711` 的 `const exp = c.expect ?? {}` 换成先读 real 侧期望、缺省回落到 `c.expect`；同时把 `tests/failmatrix/run-real.mjs:994-996` 的哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`）。只改前者也能让读数不再红，但那是把「不可达」写成「期望 401」，语义上要把用例改名（「受理后重放不得再签发回执」）。
 
