@@ -2,10 +2,10 @@
 //
 // 契约面（packages/contracts/openapi.json 1.0.0）：
 //   listHistory      GET    /history            → HistoryPageEnvelope
+//   getHistory       GET    /history/{id}       → HistoryEnvelope（强 ETag；不存在/越权同形 404）
 //   deleteHistory    DELETE /history/{id}       → AckEnvelope（If-Match + Idempotency-Key 必填）
-//   （详情**没有**契约外路径：历史只给 `target_ref`，详情由已合并的
-//     `GET /recognitions/{id}`（#9，经 utils/identify-api.js 复用）与
-//     `GET /ocr/{id}`（#10）组合出来。）
+//   （历史行只给 `target_ref`：目标正文仍由已合并的 `GET /recognitions/{id}`（#9，经 utils/identify-api.js
+//     复用）与 `GET /ocr/{id}`（#10）组合出来；任务状态与可见性由**实时读取**给出，不用链接或缓存顶替。）
 //
 // 硬口径：
 // 1) **候选与人工选择分开**：模型候选（`candidates` + `model_score`）与用户的人工选择
@@ -242,8 +242,8 @@ async function getOcr(ocrId) {
  * **只接受** `id`（历史行的 uuid）：任何随链接夹带的状态字段（`job_state`／`reference_state`／
  * `created_at` 等）都被**忽略**并如实回报，因此"旧链接 + 缓存状态"不可能让页面显示一个
  * 与服务端实时读取不一致的状态（issue #16 的针对性负例）。
- * 记录本身**没有**契约 `GET /history/{id}`，所以详情的任务状态与可见性一律由
- * `locateHistory()` 的**实时列表读取**给出，不由链接承载。
+ * 记录本身**有**契约 `GET /history/{id}`（R75 补进契约：强 ETag、不存在/越权同形 404）：
+ * 任务状态与可见性由**实时读取**（`locateHistory` / `locateHistoryDetail`）给出，不由链接承载。
  */
 function parseDetailQuery(options) {
   const q = options || {}
@@ -280,7 +280,7 @@ function clearSelection() { snapshot = null }
  *   2. 实时读不到（例如记录在第 2 页之后）时，退回列表页带入的**引用快照**，
  *      但**不携带任何状态**（`jobState`/`referenceState` 为 null）——页面必须如实说明
  *      "状态未从实时读取取得"，而不是展示过期状态（`locatedBy: 'snapshot'`）；
- *   3. 都没有 ⇒ `null`（页面显示"不存在/已删除/不属于当前账号"）。
+ *   3. 都没有 ⇒ `null`（`locateHistoryDetail()` 再补单条读面，404 才算不存在；页面显示"不存在/已删除/不属于当前账号"）。
  */
 async function locateHistory(id, limit) {
   if (typeof id !== 'string' || !UUID.test(id)) throw failure('INVALID_INPUT')
@@ -454,6 +454,46 @@ function cascadeNote(cascade) {
   }[cascade === undefined ? null : cascade] || '未取得级联状态。'
 }
 
+/**
+ * `GET /history/{id}`（issue #1021）：按 id 单条读取，供详情页在列表未命中时使用。
+ * 与 `GET /history` 同一响应形状（`HistoryEnvelope`），带强 `ETag`；不存在/越权同形 404。
+ * 走同一个 `request()`：鉴权头、`no-store` 与错误码口径全部复用，不另造一套。
+ */
+async function fetchRecordById(historyId) {
+  if (typeof historyId !== 'string' || !UUID.test(historyId)) throw failure('INVALID_INPUT')
+  const r = await request('GET', '/history/' + historyId, {})
+  const record = validateHistory(r.data)
+  if (record.id !== historyId) throw failure('INVALID_RESPONSE')
+  return { record: record, mode: r.mode, etag: r.etag }
+}
+
+/**
+ * 详情页定位（issue #1021）：列表实时读取／引用快照优先，未命中再走单条读面。
+ *   - 列表实时命中 ⇒ `locatedBy: 'live'`；引用快照命中 ⇒ `locatedBy: 'snapshot'`（**不带状态**）；
+ *   - 都没有 ⇒ `GET /history/{id}`：404 ⇒ `null`（页面按不存在/已删除/不属于当前账号显示）；
+ *   - 其它失败（网络／5xx／401／403）**原样抛出**，由页面走可重试错误态，**不**静默当不存在。
+ * `locatedBy` 只有 `live`／`snapshot` 两个值（页面据此显示「实时读取」或「未取得」）；
+ * 实际来源另由 `locatedVia`（`live`／`snapshot`／`detail`）说明，供测试与排障区分。
+ */
+async function locateHistoryDetail(id, limit) {
+  const located = await locateHistory(id, limit)
+  if (located) return Object.assign({}, located, { locatedVia: located.locatedBy })
+  let fetched
+  try {
+    fetched = await fetchRecordById(id)
+  } catch (e) {
+    if (e && e.code === 'NOT_FOUND') return null
+    throw e
+  }
+  const record = fetched.record
+  return {
+    locatedBy: 'live', locatedVia: 'detail', kind: record.kind,
+    targetId: record.target_ref.id, targetType: record.target_ref.type,
+    historyRevision: record.revision, jobState: record.job_state, referenceState: record.reference_state,
+    createdAt: record.created_at, mode: fetched.mode
+  }
+}
+
 module.exports = {
   HISTORY_KINDS: HISTORY_KINDS.slice(),
   HISTORY_KEYS: HISTORY_KEYS.slice(),
@@ -468,6 +508,8 @@ module.exports = {
   expected: expected,
   clearSelection: clearSelection,
   locateHistory: locateHistory,
+  fetchRecordById: fetchRecordById,
+  locateHistoryDetail: locateHistoryDetail,
   historyItemView: historyItemView,
   recognitionDetailView: recognitionDetailView,
   ocrDetailView: ocrDetailView,

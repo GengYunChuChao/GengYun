@@ -855,12 +855,25 @@ async function openHistoryDetail(f, id) {
   return f.requests.filter((r) => r.url.includes('/history?')).at(-1);
 }
 
+/**
+ * 列表未命中后详情页会再走 `GET /history/{id}`（issue #1021）：
+ * 这里按服务端**同形 404** 作答，表达"列表没有、单条读面也没有 ⇒ 记录确实不可用"。
+ */
+function answerMissingById(f) {
+  const byId = f.requests.filter((r) => /\/history\/[0-9a-f-]{36}$/.test(r.url)).at(-1);
+  assert.ok(byId, '列表未命中后必须先发单条读面请求');
+  byId.success({ statusCode: 404, data: forbiddenPayload('NOT_FOUND') });
+  return byId;
+}
+
 test('历史详情：记录已删除/不存在（实时列表未命中）呈现 invalid，不用链接或快照顶替内容', async () => {
   const f = fixture({ route: 'pages/historydetail/historydetail' });
   f.load(HISTORY_DETAIL_PAGE);
   assert.equal(await login(f), true);
   await openHistoryDetail(f, UUID_B);
   answer(f, { items: [], next_cursor: null });
+  await flush();
+  answerMissingById(f);
   await flush();
 
   assert.equal(f.page.data.invalid, true);
@@ -1005,6 +1018,8 @@ test('历史详情：删除成功后重试不得用定位快照把已删记录�
   answer(f, { items: [], next_cursor: null });
   await flush();
   await flush();
+  answerMissingById(f);
+  await flush();
 
   assert.equal(f.page.data.invalid, true, '已删除的记录重试后仍是不可用');
   assert.equal(f.page.data.locatedBy, '');
@@ -1124,6 +1139,8 @@ test('历史列表：翻页后详情定位快照累积每一页，第 2 页之�
   assert.equal(await login(gone), true);
   await openHistoryDetail(gone, historyRow(999).id);
   answer(gone, { items: [], next_cursor: null });
+  await flush();
+  answerMissingById(gone);
   await flush();
   assert.equal(gone.page.data.invalid, true);
   assert.match(gone.page.data.invalidReason, /不存在|已删除|不属于当前账号/);

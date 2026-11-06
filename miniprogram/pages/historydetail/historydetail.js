@@ -1,12 +1,12 @@
 // GY-I16 识别历史详情页。
 //
-// 契约面：**没有** `GET /history/{id}`。因此本页：
+// 契约面：**有** `GET /history/{id}`（R75 补进契约：强 ETag、不存在/越权同形 404）。定位顺序：
 //   1. 用 `GET /history`（**实时**读取，第一页）定位该记录 ⇒ 拿到实时 `job_state` 与
 //      `reference_state`（这就是"读取时重查"的落点；旧链接里的状态字段一律忽略）；
-//   2. 用列表页带入的**引用快照**兜底定位（记录在第 2 页之后时），但此时**不携带状态**：
+//   2. 列表页带入的**引用快照**兜底（记录在第 2 页之后、或从消息/深链重启后再进详情），此时**不携带状态**：
 //      页面如实说明"任务状态未从实时读取取得"，**不**展示可能过期的状态；
-//   3. 目标详情由**已合并**的契约面提供：`GET /recognitions/{id}`（#9）或 `GET /ocr/{id}`（#10）。
-//
+//   3. 都没有 ⇒ 调 `GET /history/{id}`（issue #1021）：404 保持原「找不到」文案，网络/5xx 走既有可重试错误态；
+//   4. 目标详情仍由**已合并**的契约面提供：`GET /recognitions/{id}`（#9）或 `GET /ocr/{id}`（#10）。
 // 候选与人工选择**分开**呈现（模型候选 ≠ 用户的人工选择）；OCR 的模型原始字段、人工更正字段
 // 与核对结果三者分开；来源版本取 `model_version`。
 // 用药安全：本页**不渲染**用量卡正文与登记用量数字，只报"存在 N 条"并提示以核验资料为准。
@@ -90,10 +90,10 @@ Page({
     const alive = function () { return epoch === self._epoch }
     // 新一轮读取同时清掉上一轮的删除提示（删除在飞时重读，旧结果已被代次挡掉，不得留下"正在删除…"）。
     self.setData({ busy: true, message: '', errorText: '', errorCode: '', invalid: false })
-    historyApi.locateHistory(id, historyApi.PAGE_LIMIT_MAX).then(function (located) {
+    historyApi.locateHistoryDetail(id, historyApi.PAGE_LIMIT_MAX).then(function (located) {
       if (!alive()) return null
       if (!located) {
-        // 实时未命中且没有快照 ⇒ 记录确实不可用；清空所有旧内容与动作入口（不猜 revision）。
+        // 列表实时未命中、没有快照、单条读面也 404 ⇒ 记录确实不可用；清空所有旧内容与动作入口（不猜 revision）。
         self.setData({
           busy: false, invalid: true,
           invalidReason: '该记录不存在、已删除、或不属于当前账号（服务端与"不存在"同形返回）。',
@@ -150,7 +150,7 @@ Page({
       })
     }).catch(function (error) {
       if (!alive()) return
-      // 目标详情读取失败（含已删除/不可用）如实说明；**不**用链接里的旧状态顶替。
+      // 定位或目标详情读取失败（网络、5xx、401/403）如实说明并可重试；**不**当不存在，也不从链接或缓存顶替。
       // 错误码原样带出：401 仍是"登录失效"，403 是"没有权限"，404 是"记录不可用"。
       // 同时撤掉上一次成功读取留下的状态面板与删除入口：读不到就不得继续显示旧结论，
       // 也不得让用户对着一条无法核对版本的记录点「删除」。
