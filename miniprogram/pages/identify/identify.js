@@ -874,7 +874,7 @@ Page({
       // 六类失败/边界分支：页面据此给出**唯一**重试动作（不可重试时不给入口）。
       branch: model.branch,
       branchInfo: model.branchInfo,
-      candidates: model.candidates,
+      candidates: (model.candidates || []).map(function (c) { return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.scoreText, speciesName: speciesNameText(c.species_id) } }),
       candidatesTrusted: model.candidatesTrusted,
       showTop3: model.showTop3,
       uncertaintyReasons: model.reasons,
@@ -983,7 +983,7 @@ Page({
     if (this.data.recordId !== recordId) return
     // selection 只写用户选择：模型原始候选/分数由服务端保持，客户端不重算、不覆盖。
     this.setData({ busy: false, selectedSpeciesId: speciesId, recordRevision: recognition.revision, candidates: recognition.candidates.map(function (c) {
-      return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%' }
+      return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%', speciesName: speciesNameText(c.species_id) }
     }) })
     // 关联科普与条件：条件不完整即阻断用量查询（页面如实列出缺项）。
     this.setData({ relatedKnowledge: queryRelatedKnowledge(speciesId, this.data.recognitionConditions) })
@@ -1027,7 +1027,7 @@ Page({
       if (!this.isCurrentOperation(gen)) return
       if (this.data.recordId !== previousRecordId) return
       const candidates = r.recognition.candidates.map(function (c) {
-        return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%' }
+        return { species_id: c.species_id, rank: c.rank, model_score: c.model_score, scoreText: c.model_score === null ? '无分数' : Math.round(c.model_score * 100) + '%', speciesName: speciesNameText(c.species_id) }
       })
       // 历史记录只展示服务端保存的模型原始候选；**不**据此推断任务状态（JobState 需要任务读面），
       // 因此也不给「分支 + 重试动作」（那是任务读面的结论）。

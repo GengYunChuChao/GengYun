@@ -203,7 +203,7 @@
     <view class="candidate {{pendingManualId === item.species_id ? 'candidate--picked' : ''}}" wx:for="{{candidates}}" wx:key="species_id" data-id="{{item.species_id}}" bindtap="onTapCandidate">
       <view class="candidate__rank">#{{item.rank}}</view>
       <view class="candidate__body">
-        <view class="candidate__name">{{item.species_id}}</view>
+        <view class="candidate__name">{{item.speciesName || item.species_id}}</view>
         <view class="candidate__score">模型分数：{{item.scoreText}}</view>
       </view>
       <view class="candidate__state" wx:if="{{selectedSpeciesId === item.species_id}}">已选择</view>
