@@ -557,6 +557,38 @@ RETURNING scope;
 \set r28_probe_mod_idem_del :ERROR
 ROLLBACK TO SAVEPOINT r28_probe;
 
+-- GY-R83（#1003 / 迁移 0055）：识别链路**外发记账**台账的读写面 —— 2 列 SELECT（子查询的
+-- export_id / MAX(attempt) 读权、RETURNING attempt 的回读）+ 11 列 INSERT（id/created_at 吃表默认值）。
+-- 形状逐字对着 services/api/src/privacy/provider-call-ledger-pg.ts 的 record() 抄：
+-- 序号由**同一条语句**里的 `COALESCE((SELECT MAX(attempt) … WHERE export_id = $3), 0) + 1` 派生，
+-- 调用方不得自报 attempt ⇒ 这条探针顺带证明「只授 INSERT 不授 SELECT 会 42501」这个跨权限组合。
+-- 读面探针**只**列这两列：多列一列就等于替运行时要了一份本不该有的读权（⛔ 别把 13 列抄回来）。
+-- 与上面三条台账探针同一范式：`WHERE false` ⇒ 零行、随后 SAVEPOINT 回滚、失败只留 :ERROR。
+-- ⛔ 不授 UPDATE/DELETE 的「禁止面」不在这里探：它由 `expected` 的 `upd = ARRAY[]::text[]` /
+--    `del = false` 经数据驱动的逐表列面断言（49–58）与表级写白名单（allow_table_dml）覆盖。
+SAVEPOINT r28_probe;
+SELECT export_id, attempt
+  FROM public.provider_call_ledger
+ WHERE false
+ LIMIT 0;
+\set r28_probe_pcl_sel :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
+SAVEPOINT r28_probe;
+INSERT INTO public.provider_call_ledger
+       (domain, job_id, export_id, attempt, capability, provider_config_version,
+        model_version, invocation_state, usage, sent_at, duration_ms)
+SELECT 'recognition', NULL::uuid, '00000000-0000-0000-0000-000000000000'::uuid,
+       COALESCE((SELECT MAX(attempt)
+                   FROM public.provider_call_ledger
+                  WHERE export_id = '00000000-0000-0000-0000-000000000000'::uuid), 0) + 1,
+       'vision', 'openai-vision#gpt-4o-mini@1a2b3c4d', NULL::varchar(80),
+       'sent', '{}'::jsonb, now(), 0
+ WHERE false
+RETURNING attempt;
+\set r28_probe_pcl_ins :ERROR
+ROLLBACK TO SAVEPOINT r28_probe;
+
 ROLLBACK;
 \set ON_ERROR_STOP on
 -- --- R28-S26 探针结束 ----------------------------------------------------------
@@ -1272,7 +1304,16 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 迁移 0049（R68）：后台分类字典表。0049 只建表 + 一次性回填 ⇒ 本片在 20-login-roles.sql
     -- 段 gy-r68-catalog-grant 逐列授权（SELECT 6 / UPDATE 5，无 INSERT、无 DELETE），
     -- 并在这里补分类与下面 expected 的独立列清单复述。required=true：缺表（0049 未执行）直接失败。
-    ('admin_categories',               'granted',          true)
+    ('admin_categories',               'granted',          true),
+    -- 迁移 0055（GY-R83 · #1003）：识别链路**外发记账**表。0055 只建表、零 GRANT ⇒ 本片在
+    -- 20-login-roles.sql 的 `gy-r83-provider-call-ledger-grant` 区逐列授权（2 列 SELECT / 11 列
+    -- INSERT，无 UPDATE/DELETE），并在这里补分类与下面 expected 的独立列清单复述。
+    -- 它是新表 ⇒ 必须在这里分类（断言 47 按 public 关系全集比对），且 granted ⇒ 必须在 expected
+    -- 里有对应行。required=true：0055 没执行时 20-login-roles.sql 的授权区本来就 RAISE EXCEPTION，
+    -- 这里再钉一次「缺表即失败」，不留"看似绿、点开 42501"的运行态。
+    -- ⛔ 它与 `provider_invocations`（0050，本文件的 unwired_manifest 行）不是同一件事：
+    --    后者的写入权仍被**有意冻结**，本片没有解冻它，一行断言都没动。
+    ('provider_call_ledger',           'granted',          true)
   ),
 -- 授权清单的**独立复述**：下面逐表断言“清单内的列必须有、清单外的列必须没有”。
 -- 它与 20-login-roles.sql 段 H 的 GRANT 是同一事实的两次写法：任一处写错/漂移都会被
@@ -1600,6 +1641,25 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
      ARRAY['id','revision','type','name','description','active'],
      ARRAY[]::text[],
      ARRAY['name','description','active','revision','updated_at'],
+     false),
+    -- GY-R83 · #1003（迁移 0055）：识别链路的外发记账台账。列清单与 20-login-roles.sql 的
+    -- `gy-r83-provider-call-ledger-grant` 区是同一事实的两次写法（少一列/多一列都会被断言 49–58
+    -- 与 tests/unit/least-privilege-expected-parity.test.mjs 抓住）。
+    -- sel 2 列 = 运行时的**全部**读面：`record()` 的唯一语句是
+    -- `INSERT … SELECT …, COALESCE((SELECT MAX(attempt) FROM public.provider_call_ledger
+    --  WHERE export_id = $3), 0) + 1, … RETURNING attempt` ⇒ 子查询的 export_id/attempt 与
+    -- RETURNING 的回读要 SELECT 权，且**只有这两列**。⛔ 不授整行读权：写点写完不回读任何业务列，
+    -- 「按作业/按导出回查烧了多少」是排障面的只读角色的事，不是运行时的权限。
+    -- ins 11 列 = 上面那条语句的 INSERT 清单（`id` 吃 gen_random_uuid()、`created_at` 吃 now()，
+    -- 两列都**不许**运行时自报 ⇒ 不在 ins 里）。
+    -- upd 空数组 / del=false：记账行是**追加式事实**（哪次外发、哪套剖面、烧了多少 token），
+    -- 本域没有任何 UPDATE 或整行删除语句；行随 public.exports 的 ON DELETE CASCADE 清理，
+    -- 那条路径以**属主身份**执行，不需要本角色持有表级 DELETE。
+    ('provider_call_ledger',
+     ARRAY['export_id','attempt'],
+     ARRAY['domain','job_id','export_id','attempt','capability','provider_config_version',
+           'model_version','invocation_state','usage','sent_at','duration_ms'],
+     ARRAY[]::text[],
      false)
   ),
   -- 表级写权限白名单：本文件内的**唯一事实来源**。断言 7 的判定与失败提示都由它生成，
@@ -3517,6 +3577,18 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          'SET LOCAL ROLE gengyun_api_runtime 后，moderation_idempotency 的 SELECT 6 列 / INSERT 6 列 + ON CONFLICT DO UPDATE … WHERE expires_at <= now() RETURNING scope / UPDATE 4 列 / DELETE … RETURNING scope 零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 的 gy-r72-moderation-idempotency-grant 或 gy-r72-moderation-idempotency-delete 区授予不足）'
 
   UNION ALL
+  -- GY-R83 · #1003（迁移 0055）：识别链路**外发记账**台账的读写面 —— 2 列 SELECT / 11 列 INSERT。
+  -- 只断言 has_column_privilege 不够：这条语句里「INSERT 里内嵌 SELECT（MAX(attempt)）」是跨权限
+  -- 组合，只有真执行才会在缺 SELECT 时 42501；`RETURNING attempt` 同理。两处任一失败 ⇒
+  -- `privacy/media-call-accounting.ts` 的每次记账都被 try/catch 吞掉（识别结果不受影响、但 #1003
+  -- 的「usage 记账」口径静默落空），所以这里必须硬断言，不能只靠 expected 的列面比对。
+  SELECT 'runtime_provider_call_ledger_dml_exec',
+         :'r28_probe_fh_role' = 'false'
+         AND :'r28_probe_pcl_sel' = 'false'
+         AND :'r28_probe_pcl_ins' = 'false',
+         'SET LOCAL ROLE gengyun_api_runtime 后，provider_call_ledger 的 SELECT 2 列（export_id / attempt）/ INSERT 11 列（含子查询 MAX(attempt) 的读权与 RETURNING attempt）零行语句必须全部成功；任一 42501 即失败（说明 20-login-roles.sql 的 gy-r83-provider-call-ledger-grant 区授予不足）'
+
+  UNION ALL
   -- 62. R28-S26 反向控制（PUBLIC 面）：七张表的表级与列级 ACL 里都不许出现 grantee = 0。
   --     为什么不能只看 has_table_privilege：列级授权在 relacl 里根本看不见（S24 复核的遗留点①）。
   SELECT 'public_no_privilege_favorites_history',
@@ -4631,6 +4703,13 @@ SELECT CASE
 -- 断言 49–58 是**数据驱动**的（`FROM expected e`），`expected` 加一行即自动多一条逐表列面检查，
 -- 本节不为此另写断言；`external_manifest` **一句未动**（本表不属组继承面，没有 `gengyun_*`
 -- 组角色对它授权）。
+-- GY-R83（`#1003` / 迁移 0055）：再追加**一条**（111 `runtime_provider_call_ledger_dml_exec`：
+-- `provider_call_ledger` 的 2 列 SELECT（`export_id` / `attempt`）与 11 列 INSERT 两条零行探针必须全部成功，后者内嵌
+-- `COALESCE((SELECT MAX(attempt) … WHERE export_id = $3), 0) + 1` 与 `RETURNING attempt`
+-- —— 这是「只授 INSERT、不授 SELECT 就 42501」的同一课）⇒ 静态值 129 条；
+-- `expected` 再加一行 ⇒ 断言 49–58 各自动多一条逐表列面检查（该行 `upd` 是空数组、`del = false`，
+-- 即记账行**不可改判、不可整行删**）；`unwired_manifest` 里 `provider_invocations`（0050）的
+-- **有意冻结**行与断言 48 **一句未动**（本片没有解冻任何既有写面，只新开了一张窄表）。
 DO $$
 DECLARE
   v_failed integer;

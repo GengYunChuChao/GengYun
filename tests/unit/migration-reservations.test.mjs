@@ -118,6 +118,12 @@
  * + `0038`…`0054`）、`rollback/` **52** 个；缺号回到**只有 `0037`**，保留台账也只剩那一条
  * （53 号条目的 `remove_when` 已兑现 ⇒ 按规则删除，⛔ 不得残留）⇒ `53 个文件 + 1 保留 === max 54`。
  * 这是两条分支各自「无冲突地都对」的拼接结果，不是谁让位：号位叙述按事实并列保留。
+ *
+ * **GY-R83（`#1003` 的 `0055_provider_call_ledger.sql` 落盘，2026-11-07）复核读数**：正向 **54** 个
+ * （`0001..0055` 里除 `0037` 之外的各条）、`rollback/` **53** 个（`0001` 无 down）；缺号仍**只有 `0037`**
+ * （`#14` 的预留号，台账里那一条 `remove_when` 未兑现），保留台账仍只有那一条
+ * ⇒ `54 个文件 + 1 保留 === max 55`。**台账不因 0055 新增条目**（本片自己落盘的文件不是"有意缺号"），
+ * 也**不得**残留 55 号条目（0055 已落盘 ⇒ `reservedButPresent` 会立刻判红）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -161,7 +167,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0053/R72 #838 举报处置审计、0054/GY-R73 收藏反查索引 已落盘 ⇒ 53 文件 + 1 保留 === 54、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0053/R72 #838 举报处置审计、0054/GY-R73 收藏反查索引、0055/GY-R83 #1003 识别外发记账台账 已落盘 ⇒ 54 文件 + 1 保留 === 55、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);

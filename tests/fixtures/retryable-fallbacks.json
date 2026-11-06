@@ -12,8 +12,8 @@
     }
   ],
   "counts": {
-    "total": 52,
-    "has": 51,
+    "total": 54,
+    "has": 53,
     "none": 1
   },
   "entries": [
@@ -336,6 +336,20 @@
       "file": "services/api/src/privacy/ledger-pg.ts",
       "line": 187,
       "function": "mapPgError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/privacy/provider-call-ledger-pg.ts",
+      "line": 100,
+      "function": "classifyProviderCallLedgerError",
+      "judgement": "has",
+      "owner": "GY-I22"
+    },
+    {
+      "file": "services/api/src/privacy/provider-call-ledger-pg.ts",
+      "line": 103,
+      "function": "classifyProviderCallLedgerError",
       "judgement": "has",
       "owner": "GY-I22"
     },
