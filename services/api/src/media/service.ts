@@ -58,7 +58,7 @@ import {
   validateCompleteInput,
   validateUploadInput,
 } from '../../../../packages/media/index.mjs';
-import { createUnwiredObjectStore, type MediaObjectStore, type PresignedHandle } from './object-store.ts';
+import { createUnwiredObjectStore, type MediaObjectStore, type PresignedHandle } from './object-store.ts'; import { createPostgresAttachmentCounter } from './attachment-counter-pg.ts';
 import { MEDIA_RETENTION_EXPIRED } from './retention.ts';
 import type { PublishedContentRef, PublishedContentSource } from './content-source.ts';
 import { createClosedContentSource } from './content-source.ts';
@@ -161,14 +161,14 @@ export interface CommunityContentOutcome {
  * （属社区线 GY-I15），不在本端点。这里显式建模为端口，避免悄悄放宽或悄悄按错口径计数：
  * - `substitute`（stub/preset_demo/测试）：按**同一 owner 名下存活的 `community_image` 记录数**计数 ——
  *   这是**保守替身**（大于等于真实每帖数），并已如实标注；
- * - `unwired`（real 默认）：端口自己无法判定（恒 `null`）⇒ 该用途的 `createUpload` **仍 503
+ * - `unwired`（real 且持久化端口不是 PG 时的默认；PG 装配走 `postgres`，见 attachment-counter-pg.ts）：端口自己无法判定（恒 `null`）⇒ 该用途的 `createUpload` **仍 503
  *   fail-closed**，文案明确到「每帖上限计数未接线」。**不得**改用同一 owner 名下存活记录数顶替：
  *   那是**生命周期累计**口径，而清理器（`expireInitiated`／`cleanupOrphans`）与权威每帖计数
  *   （GY-I15）今天都没有生产调用者 ⇒ 累计数会让用户传满 3 张后**永久锁死**，且「先数后写」之间
  *   存在 TOCTOU（并发可超发）。**缺清理器／权威计数器时不得放行**。
  */
 export interface CommunityAttachmentCounter {
-  readonly kind: 'substitute' | 'unwired' | 'injected';
+  readonly kind: 'substitute' | 'unwired' | 'postgres' | 'injected';
   readonly note: string;
   /** 返回该 owner 当前已占用的图片槽位数；无法判定返回 null。 */
   countFor(input: { ownerId: string; liveCommunityImages: number }): number | null;
@@ -624,7 +624,7 @@ export function createAppMediaService(options: AppMediaServiceOptions): AppMedia
   const contentSource = options.contentSource ?? createClosedContentSource();
   const attachmentCounter =
     options.attachmentCounter ??
-    (executionMode === 'real' ? createUnwiredAttachmentCounter() : createSubstituteAttachmentCounter());
+    (options.persistence?.kind === 'postgres' ? createPostgresAttachmentCounter(options.persistence) : executionMode === 'real' ? createUnwiredAttachmentCounter() : createSubstituteAttachmentCounter());
   const now = options.now ?? (() => new Date());
   const idFactory = options.idFactory ?? (() => randomUUID());
   const tokenFactory = createAccessTokenFactory(options.tokenSecret);
