@@ -120,7 +120,7 @@ const SYNTHETIC_STORAGE_ENV = {
   OBJECT_STORAGE_REGION: 'ap-shanghai',
   OBJECT_STORAGE_FORCE_PATH_STYLE: 'true',
 };
-/** 访问凭据的签发原点：`real-ports.ts:214` 要求「可部署」（https、非 localhost、非 `.example` 顶级域）。 */
+/** 访问凭据的签发原点：装配期只经 `media/real-ports.ts:260-278` 的 `assertAccessGrantOriginDeployable` 校验（拒「规范化失败」与占位 `.invalid`；无 localhost / `.example` 黑名单），占位判定点在 `media/service.ts:559`。 */
 const SYNTHETIC_MEDIA_GRANT_ORIGIN = 'https://media.example.test';
 
 /**
