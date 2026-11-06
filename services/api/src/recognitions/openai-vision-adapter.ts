@@ -10,7 +10,8 @@
  *   `{"type":"image_url","image_url":{"url":"data:<mime>;base64,..."}}`；
  * - 回包是 `choices[0].message.content` 里的一段 JSON（`response_format: json_object`），
  *   本适配器负责把它解析成 `candidates`；
- * - `request_id` 由 `id` 字段（或缺失时按 `x-request-id` 响应头）取，取不到即「结果未知」。
+ * - **不依赖 `request_id`**：只认 `choices[0].message.content` 里的 JSON；HTTP 200 且可解析即 `completed`，
+ *   解析不出来才判「结果未知」（`RESPONSE_EVIDENCE_INCOMPLETE` + `PROVIDER_OUTCOME_UNKNOWN`）。
  *
  * ## 三条硬约束（与既有剖面一致，逐条保留）
  * 1. **字节只来自注入端口**（`RecognitionImageSource`），不读磁盘、不读对象存储默认值；
@@ -22,7 +23,8 @@
  */
 import type { ProviderOutcome, RecognitionProvider } from './provider.ts';
 import { RECOGNITION_GATE_AUTHORIZATION, RecognitionWiringError, createProcessRecognitionGate } from './live-ports.ts';
-import type { RealRecognitionPorts, RecognitionImageSource } from './live-ports.ts';
+import type { LiveRecognitionObservation, RealRecognitionPorts, RecognitionImageSource } from './live-ports.ts';
+import type { ProviderCallState } from '../tts/live-ports.ts';
 import { assertRecognitionEndpoint, requireLiveRecognitionImage } from './live-adapter.ts';
 import { liveGateRefusalToErrorCode } from '../tts/live-ports.ts';
 
@@ -98,7 +100,7 @@ export type OpenAiVisionOptions = {
   liveGate?: RealRecognitionPorts['liveGate'];
   fetchImpl?: typeof fetch;
   now?: () => number;
-  onObservation?: (observation: { state: string; httpStatus?: number; elapsedMs: number; candidateCount: number }) => void;
+  onObservation?: (observation: LiveRecognitionObservation) => void;
 };
 
 function errorCodeForStatus(status: number): 'PROVIDER_QUOTA_EXCEEDED' | 'PROVIDER_UNAVAILABLE' | 'PROVIDER_OUTCOME_UNKNOWN' {
@@ -167,6 +169,23 @@ export function normalizeOpenAiVisionCandidates(
  * 构造期不合法（端点非 https、模型名空、闭集空、超时越界）⇒ **抛** `RecognitionWiringError`，
  * 由 `recognitions/provider.ts` 回落 fail-closed，⛔ 绝不回退替身。
  */
+function r80Observation(partial: Partial<LiveRecognitionObservation> & { state: ProviderCallState }): LiveRecognitionObservation {
+  return {
+    protocol: OPENAI_VISION_PROTOCOL,
+    errorCode: null,
+    providerErrorCode: null,
+    httpStatus: null,
+    requestId: null,
+    candidateCount: null,
+    imageBytes: null,
+    resultMayHaveBeenProcessed: true,
+    elapsedMs: 0,
+    endpointAsserted: true,
+    sendAttempts: 1,
+    ...partial,
+  };
+}
+
 export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptions): RecognitionProvider {
   if (options === null || typeof options !== 'object') {
     throw new RecognitionWiringError('openai-vision 装配缺少入参（fail-closed）');
@@ -255,16 +274,16 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
         await liveGate.settle(ticket, {
           state: timedOut ? 'TIMEOUT' : 'OUTCOME_UNKNOWN',
           providerErrorCode: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN',
-          resultMayHaveBeenProcessed: timedOut ? false : true,
+          resultMayHaveBeenProcessed: true,
         });
-        options.onObservation?.({ state: timedOut ? 'TIMEOUT' : 'OUTCOME_UNKNOWN', elapsedMs: now() - startedAt, candidateCount: 0 });
+        options.onObservation?.(r80Observation({ state: timedOut ? 'TIMEOUT' : 'OUTCOME_UNKNOWN', providerErrorCode: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN', resultMayHaveBeenProcessed: true, elapsedMs: now() - startedAt, candidateCount: 0 }));
         return { kind: 'failed', code: timedOut ? 'PROVIDER_TIMEOUT' : 'PROVIDER_OUTCOME_UNKNOWN' };
       }
 
       if (!response.ok) {
         const failureCode = errorCodeForStatus(response.status);
         await liveGate.settle(ticket, { state: 'HTTP_ERROR', providerErrorCode: failureCode, resultMayHaveBeenProcessed: response.status >= 500 });
-        options.onObservation?.({ state: 'HTTP_ERROR', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 });
+        options.onObservation?.(r80Observation({ state: 'HTTP_ERROR', providerErrorCode: failureCode, httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 }));
         return { kind: 'failed', code: failureCode };
       }
 
@@ -284,23 +303,26 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
       if (parsed === null) {
         // 供应商回了 200 但没给出可解析的候选 ⇒ 结果未知（绝不把「没读懂」当成功）。
         await liveGate.settle(ticket, { state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', resultMayHaveBeenProcessed: true });
-        options.onObservation?.({ state: 'RESPONSE_EVIDENCE_INCOMPLETE', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 });
+        options.onObservation?.(r80Observation({ state: 'RESPONSE_EVIDENCE_INCOMPLETE', providerErrorCode: 'PROVIDER_OUTCOME_UNKNOWN', httpStatus: response.status, elapsedMs: now() - startedAt, candidateCount: 0 }));
         return { kind: 'failed', code: 'PROVIDER_OUTCOME_UNKNOWN' };
       }
 
       // ④ settle（无论成败）。
       const candidates = normalizeOpenAiVisionCandidates(parsed, allowedIds);
       await liveGate.settle(ticket, { state: 'BUSINESS_RESPONSE', providerErrorCode: null, resultMayHaveBeenProcessed: true });
-      options.onObservation?.({
-        state: 'BUSINESS_RESPONSE',
-        httpStatus: response.status,
-        elapsedMs: now() - startedAt,
-        candidateCount: candidates.length,
-      });
+      options.onObservation?.(
+        r80Observation({
+          state: 'BUSINESS_RESPONSE',
+          httpStatus: response.status,
+          elapsedMs: now() - startedAt,
+          candidateCount: candidates.length,
+        }),
+      );
       const reason = typeof parsed['reason'] === 'string' ? parsed['reason'] : '';
       if (candidates.length === 0) {
-        // 空候选是「正常调用但没结果」：显式上报 `no_result` 分支（仍由 `decideOutcome` 判 uncertain）。
-        return { kind: 'completed', candidates: [], uncertainty_reasons: [reason === '' ? '模型未返回任何候选' : reason] };
+        // 空候选是「正常调用但没结果」：本分支**不**上报 `no_result`（那由调用方按 `branch` 语义决定），
+        // 终态仍由 `decideOutcome` 判 `uncertain`；reason 截断到 80 字符，避免超长文案让终态判定抛协议违规。
+        return { kind: 'completed', candidates: [], uncertainty_reasons: [reason === '' ? '模型未返回任何候选' : reason.slice(0, 80)] };
       }
       return { kind: 'completed', candidates };
     },
