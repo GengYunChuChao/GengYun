@@ -42,7 +42,7 @@ API 只读进程环境。下面列变量名、默认值和条件，不列真实�
 
 - **媒体域**：缺 `MEDIA_OBJECT_REF_KEY` ⇒ 7 条媒体路由 503 `PROVIDER_UNAVAILABLE`、语音受理 409 `OBJECT_UNAVAILABLE`（**前提是 ASR 凭据齐备**：`services/api/src/speech/service.ts:437` 的 503 闸门在 `:442` 的 `media.resolve` 之前，凭据也缺时先回 503）；即便对象存储四键与 `MEDIA_OBJECT_REF_KEY` 都齐备，只要没有启动参数 `--approve-real-media-wiring`（`services/api/src/server.ts:29-51` 是批准能力的唯一铸造点）仍是整域 503。
 - **问答域**：缺 `CHAT_LLM_*` 不报错，只是继续用确定性回答器——判据看回答的 `model_version` 是否带 `unimplemented:no-real-`。
-- **识别域**：缺 `RECOGNITION_PROVIDER_*` ⇒ 受理前 503（`services/api/src/recognitions/service.ts:397-401`）；两者齐备且端点通过构造期断言 ⇒ 装配**协议级真实适配器并发包**（`services/api/src/recognitions/provider.ts:231-245`、`services/api/src/recognitions/live-adapter.ts:153`）——旧口径「配齐这两个 env 也仍然是 409 `OBJECT_UNAVAILABLE`、`real` 下适配器根本不存在」已被 GY-R70 推翻，**不要再照抄**。媒体解析确实在 `available` 闸门**之后**（`services/api/src/recognitions/service.ts:402`）：媒体引用不可用时才是 409 `OBJECT_UNAVAILABLE`，与「适配器不存在」无关；本仓仍没有已审识别供应商与真实样本 ⇒ 配齐只代表「可以受理并发包」。
+- **识别域**：缺 `RECOGNITION_PROVIDER_*` ⇒ 受理前 503（`services/api/src/recognitions/service.ts:397-401`）；两者齐备且端点通过构造期断言 ⇒ 装配**协议级真实适配器并发包**（`services/api/src/recognitions/provider.ts:248-262`、`services/api/src/recognitions/live-adapter.ts:153`）——旧口径「配齐这两个 env 也仍然是 409 `OBJECT_UNAVAILABLE`、`real` 下适配器根本不存在」已被 GY-R70 推翻，**不要再照抄**。媒体解析确实在 `available` 闸门**之后**（`services/api/src/recognitions/service.ts:402`）：媒体引用不可用时才是 409 `OBJECT_UNAVAILABLE`，与「适配器不存在」无关；本仓仍没有已审识别供应商与真实样本 ⇒ 配齐只代表「可以受理并发包」。
 - **部署模板的关系**：`deploy/cloudrun/env.placeholder.json` 的键集判据只取 `REQUIRED_WHEN_REAL` 与 `config.ts` 里 `trimmed(env, '…')` 的字面量（`tools/verify-release-materials.mjs:351-372`），因此 `MEDIA_*` 两项已在模板中，而 `RECOGNITION_PROVIDER_*`／`CHAT_LLM_*` 不在、也不该为过门禁而加进去（模板「无多余键」同样判红）。
 
 ## 加载方式与联调
