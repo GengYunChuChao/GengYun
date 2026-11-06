@@ -26,16 +26,24 @@
 
 ## 撤回之后，`main` 上钉住了什么
 
-`tests/unit/media-attachment-counter-withdrawal.test.mjs`（零网络、只读源码）。它锁的是**口径**而不是名字，所以既不挡 `#1030` 的正确实现（`fde1659e` 加了 `kind: 'postgres'` 且走待用池），也能咬住 `#1029` 的形状：
+`tests/unit/media-attachment-counter-withdrawal.test.mjs`（三条用例，零网络；第一条会 import `services/api/src/media/service.ts` 做运行时探针）。
 
-1. **owner 存活记录数只允许出现在 `substitute` / `injected` 计数器里**：扫 `services/api/src/media/**/*.ts`（先剥注释），对每个 `countFor` **实现**取 ±600 字符窗口，窗口里出现 `liveCommunityImages` 就必须同时出现 `kind: 'substitute'` 或 `kind: 'injected'`。生效点：`createSubstituteAttachmentCounter`（替身，允许）、`createPostgresAttachmentCounter`（持久化，不允许）。
-2. **持久化计数器必须走待用池**：`kind` 联合里只要有 `'postgres'`／`'persistence'`／`'storage'`／`'pg'` 之一，`service.ts` 就必须引用 `countPendingCommunityImages`；联合里一个都没有时（当前 `main` 的未接线状态），退化为要求 real 默认仍落 `createUnwiredAttachmentCounter()`（fail-closed）。
-3. **`kind` 联合只有一处声明**：黑名单不能被第二份 `readonly kind:` 声明绕过。
-4. **测试注入缝不得成为生产默认**：默认计数器表达式里不得出现 `createInjectedAttachmentCounter`（否则把 `'injected'` 当生产口径用，第 1 条就成了摆设）。
-5. **承载「按 owner 存活记录计数」的新模块不得出现**：`services/api/src/media/attachment-counter-*.ts` 若存在且引用 `liveCommunityImages` 即红——`#1029` 正是把实现搬进新文件、绕过只扫 `service.ts` 的结构闸门。
-6. **禁令原文仍在**（「不得用同一 owner 名下存活记录数顶替」「永久锁死」）——撤回的依据不能被悄悄删掉。
+**第一版与第二版锁的是源码文本形状，走不通。** 第二版独立审查（子代理 `08fbc066`）实测证明：那一版把 `#1030` 的**正确**实现（`fde1659e`）判红（它要的字面量 `createSubstituteAttachmentCounter());` 已不存在，实测 5 pass / 1 fail），同时被一句话变异绕过——展开运算符、类型别名、箭头函数体、换目录、`let` 重绑定，M2–M8 全绿。现在的判据是**运行时行为**：
 
-三条变异自证（在 `#1030` 的正确实现 `fde1659e` 的树上做，改完即还原、`git status` 干净）：把持久化计数器的 `countFor` 换成 `countFor({ liveCommunityImages }) { return liveCommunityImages; }`（`kind` 仍是 `'postgres'`）⇒ **exit 1**，红在第 1 条，报错原文「有 countFor 在消费「同一 owner 名下存活记录数」，但所在计数器不是 substitute / injected」。
+1. **除替身与测试缝外，任何计数器的返回值都不得随 owner 存活记录数变化**：枚举 `service.ts` 导出的每个零参 `create*AttachmentCounter()` 工厂，各造一个，用 `liveCommunityImages` 取 0 与取 7 各问一次 `countFor`；两者不等、且 `kind` 不是 `substitute`／`injected` 即红。它读运行时行为与运行时 `kind`，所以展开、别名、字符串拼接、换目录都绕不过；`#1030` 的 `createPostgresAttachmentCounter` 在 `fde1659e` 里是本地函数（未导出）⇒ 不误伤。查询抛错（需要真实存储）的计数器记为 inconclusive，不据此判红也不据此判绿。
+2. **测试注入缝不得出现在生产装配里**：`createInjectedAttachmentCounter` 在 `services/api/src/**` 里只允许定义处出现；`kind: 'injected'` 也只允许出现在 `service.ts`（换目录自造一个「测试缝」同样算违规）。
+3. **禁令原文仍在**：`service.ts` 里「不得用同一 owner 名下存活记录数顶替」与「永久锁死」两句不能被悄悄删掉——那是撤回的依据。
+
+**已知边界**：不导出、且只能靠真实存储构造的持久化计数器，运行时探针摸不到；那种实现的行为由既有 `tests/unit/media-attachment-limit.test.mjs`（默认 real 必须 `unwired`、`unwired` 对 `live=3` 必须返 `null`）兜底。本页不声称两条合起来证明了「不可能再写出 owner 累计口径」。
+
+**变异自证**（在 `#1030` 的正确实现 `fde1659e` 的树上做，改完即还原、`git status` 干净；基线不改 ⇒ 3 pass / 0 fail、exit 0）：
+
+| 变异 | 改动 | 读数 |
+| --- | --- | --- |
+| M2 | `createUnwiredAttachmentCounter().countFor` 改成返回 `liveCommunityImages`（`kind` 仍是 `'unwired'`） | 2 pass / 1 fail，exit 1 |
+| M8 | 新导出 `createPostgresLikeAttachmentCounter()`，返回 `{ ...createSubstituteAttachmentCounter(), kind: 'postgres' }` | 2 pass / 1 fail，exit 1 |
+| M3 | 新导出工厂：`kind` 走类型别名、`countFor` 写成箭头函数体直接返回 `liveCommunityImages` | 2 pass / 1 fail，exit 1 |
+| M7 | 在 `services/api/src/community/` 新建文件，自造 `kind: 'injected'` 且按 owner 计数的计数器 | 2 pass / 1 fail，exit 1 |
 
 ## 这条记录不证明什么
 

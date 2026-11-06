@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 
+import * as mediaService from '../../services/api/src/media/service.ts';
+
 /**
  * 结构锁：`#1029` 的**口径**不得回来。
  *
@@ -11,31 +13,22 @@ import test from 'node:test';
  * 随后按仓库自己的禁令撤回（`#1031`）。`services/api/src/media/service.ts` 的 docblock 明写：
  * 「⛔ 不得用同一 owner 名下存活记录数顶替 `unwired`……累计数会让用户传满 3 张后永久锁死」。
  *
- * 这条禁令此前没有机器可读的守护——`#1029` 把实现搬进新文件后，只扫 `service.ts` 的结构闸门就放过了它。
- *
- * 本用例锁的是**口径**，不是名字：owner 存活记录数只允许出现在 `substitute`（stub/演示替身）与
- * `injected`（测试注入缝）这两种计数器里；一旦有持久化计数器（`'postgres'` 之类，见 `#1030`/`#1037`），
- * 它必须走**待用池**计数（`countPendingCommunityImages`），不得回落到 owner 生命周期累计。
+ * 前两版把判据写成「源码文本形状」（正则抓默认表达式、黑名单抓 `kind` 字面量），结果是：
+ * 它会把 `#1030` 的**正确**实现判红，同时被「别名 / 展开运算符 / 换目录 / 邻居窗口」一句话绕过。
+ * 现在锁的是**运行时行为**：把 `service.ts` 里导出的每一个 `create*AttachmentCounter()` 工厂造出来，
+ * 用两个不同的 `liveCommunityImages` 喂它 —— 除 `substitute`（替身）与 `injected`（测试注入缝）之外，
+ * 任何计数器都**不得**让返回值随 owner 存活记录数变化。
  *
  * 它不证明「每帖 ≤3」已实现——那条属 `#1030`（post-scoped 挂载），不在本用例范围。
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
-const mediaDir = join(repoRoot, 'services/api/src/media');
-const servicePath = join(mediaDir, 'service.ts');
+const servicePath = join(repoRoot, 'services/api/src/media/service.ts');
+const srcRoot = join(repoRoot, 'services/api/src');
 
-/** 允许消费 `liveCommunityImages` 的计数器种类：替身与测试注入缝。 */
-const ALLOWED_KINDS = ["kind: 'substitute'", "kind: 'injected'"];
-
-/** 持久化计数器必须使用的待用池计数口（`#1030` 的正确方向）。 */
-const PENDING_POOL_CALL = 'countPendingCommunityImages';
-
-function stripComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:\w])\/\/[^\n]*/g, '$1 ');
-}
+/** owner 存活记录数只允许作为这两种计数器的输入（替身与测试注入缝）。 */
+const LIVE_COUNT_KINDS = new Set(['substitute', 'injected']);
 
 function listTsFiles(dir) {
   const out = [];
@@ -50,109 +43,97 @@ function listTsFiles(dir) {
   return out;
 }
 
-function read(file) {
-  assert.ok(existsSync(file), `找不到 ${file}`);
-  return stripComments(readFileSync(file, 'utf8'));
+async function probe(counter) {
+  const base = { ownerId: 'r83-probe-owner' };
+  let low;
+  let high;
+  try {
+    low = await counter.countFor({ ...base, liveCommunityImages: 0 });
+    high = await counter.countFor({ ...base, liveCommunityImages: 7 });
+  } catch {
+    // 需要真实存储/网络的持久化计数器：构造得出但查询会抛（本机无 PG）。这里不下判断，
+    // 因为「抛错」本身不构成「按 owner 计数」的证据。
+    return { inconclusive: true };
+  }
+  return { low, high };
 }
 
-test('owner 存活记录数只允许出现在 substitute / injected 计数器里（#1029 的口径）', () => {
-  const files = listTsFiles(mediaDir);
-  assert.ok(files.length > 0, `在 ${mediaDir} 下没有找到 .ts 文件（判据可能已过时，需人工核对）`);
+test('除替身与测试缝外，任何计数器的返回值都不得随 owner 存活记录数变化', async () => {
+  const factories = Object.entries(mediaService).filter(
+    ([name, value]) => typeof value === 'function' && /^create\w*AttachmentCounter$/.test(name)
+  );
+  assert.ok(
+    factories.length > 0,
+    'service.ts 里没有导出任何 create*AttachmentCounter() 工厂（判据可能已过时，需人工核对）'
+  );
 
-  let sites = 0;
   const violations = [];
-  for (const file of files) {
-    const source = read(file);
-    // 只认**实现**（`countFor(...) { ... }` 或 `countFor(...): T { ... }`），不认调用点
-    // （`attachmentCounter.countFor({ ownerId, liveCommunityImages })` 是消费方，不应被本条判据判红）。
-    const implementations = [...source.matchAll(/countFor\s*\([^)]*\)\s*(?::[^{;]*)?\{/g)];
-    for (const hit of implementations) {
-      sites += 1;
-      const start = Math.max(0, hit.index - 600);
-      const window = source.slice(start, hit.index + 600);
-      if (!window.includes('liveCommunityImages')) continue;
-      if (ALLOWED_KINDS.some((kind) => window.includes(kind))) continue;
-      violations.push(`${file.slice(repoRoot.length + 1)}：${window.trim().slice(0, 240)}`);
+  let probed = 0;
+  for (const [name, factory] of factories) {
+    if (factory.length > 0) continue; // 需要注入参数的工厂（如 createInjectedAttachmentCounter）另行构造
+    let counter;
+    try {
+      counter = factory();
+    } catch {
+      continue;
+    }
+    if (!counter || typeof counter.countFor !== 'function') continue;
+    if (LIVE_COUNT_KINDS.has(counter.kind)) continue;
+    const result = await probe(counter);
+    if (result.inconclusive) continue;
+    probed += 1;
+    if (result.low !== result.high) {
+      violations.push(
+        `${name}()：kind=${String(counter.kind)}，countFor 对 liveCommunityImages=0 返回 ${String(
+          result.low
+        )}、对 =7 返回 ${String(result.high)}`
+      );
     }
   }
 
-  assert.ok(sites > 0, '一个 countFor 实现都没找到（判据可能已过时，需人工核对）');
+  assert.ok(probed > 0, '一个可探的计数器都没有（判据可能已过时，需人工核对）');
   assert.deepEqual(
     violations,
     [],
-    '有 countFor 在消费「同一 owner 名下存活记录数」，但所在计数器不是 substitute / injected：\n' +
-      `${violations.join('\n---\n')}\n` +
+    '有计数器在按「同一 owner 名下存活记录数」计数，但它不是替身/测试缝：\n' +
+      `${violations.join('\n')}\n` +
       '这正是 #1029 被撤回的口径（生命周期累计 ⇒ 传满 3 张后永久锁死）。'
   );
 });
 
-test('持久化计数器必须走待用池计数，不得回落到 owner 累计', () => {
-  const source = read(servicePath);
-  const union = source.match(/readonly kind:\s*([^;]+);/);
-  assert.ok(union, '在 service.ts 里没找到 CommunityAttachmentCounter.kind 的联合类型');
-
-  const persistenceKinds = ['postgres', 'persistence', 'storage', 'pg'].filter((kind) =>
-    union[1].includes(`'${kind}'`)
-  );
-  if (persistenceKinds.length === 0) {
-    // 未接线的现状：没有任何持久化计数器。此时只要求 real 默认仍是 fail-closed。
-    assert.match(
-      source,
-      /executionMode === 'real'[\s\S]{0,120}?createUnwiredAttachmentCounter\(\)/,
-      'real 默认必须落 createUnwiredAttachmentCounter()（fail-closed），否则每帖上限会被静默放行'
-    );
-    return;
-  }
-
-  assert.ok(
-    source.includes(PENDING_POOL_CALL),
-    `kind 联合里出现了持久化计数器（${persistenceKinds.map((k) => `'${k}'`).join('／')}），` +
-      `但 service.ts 没有引用 ${PENDING_POOL_CALL}——持久化计数器必须数待用池，不能数 owner 存活记录` +
-      '（#1029 的口径会让用户传满 3 张后永久锁死）'
-  );
-});
-
-test('kind 联合只有一处声明（黑名单不能被第二份声明绕过）', () => {
-  const source = read(servicePath);
-  const declarations = [...source.matchAll(/readonly kind:\s*[^;]+;/g)];
-  assert.equal(
-    declarations.length,
-    1,
-    `service.ts 里有 ${declarations.length} 处 CommunityAttachmentCounter.kind 声明：\n` +
-      declarations.map((d) => d[0]).join('\n')
-  );
-});
-
-test('承载「按 owner 存活记录计数」的新模块不得出现', () => {
+test('测试注入缝不得出现在生产装配里（只允许它在 service.ts 的定义处）', () => {
   const offenders = [];
-  for (const file of listTsFiles(mediaDir)) {
-    const name = file.slice(mediaDir.length + 1);
-    if (!/^attachment-counter[-.]/.test(name)) continue;
-    const source = read(file);
-    if (source.includes('liveCommunityImages')) offenders.push(name);
+  const serviceRel = servicePath.slice(repoRoot.length + 1);
+  for (const file of listTsFiles(srcRoot)) {
+    const rel = file.slice(repoRoot.length + 1);
+    const source = readFileSync(file, 'utf8');
+
+    const calls = [...source.matchAll(/createInjectedAttachmentCounter\s*\(/g)].length;
+    if (calls > 0) {
+      // 允许的唯一一处：service.ts 里的定义本身 `export function createInjectedAttachmentCounter(`。
+      const definitions = [
+        ...source.matchAll(/export function createInjectedAttachmentCounter\s*\(/g),
+      ].length;
+      if (calls > definitions) {
+        offenders.push(`${rel}：调用注入缝 ${calls} 次（定义 ${definitions} 处）`);
+      }
+    }
+
+    // `kind: 'injected'` 是同一个注入缝的另一种写法：换个文件自己造一个同 kind 的计数器，
+    // 就能让判据以为「这是测试缝」而放行。除定义处外不允许出现。
+    if (rel !== serviceRel && /kind:\s*'injected'/.test(source)) {
+      offenders.push(`${rel}：自己声明了 kind: 'injected' 的计数器`);
+    }
   }
   assert.deepEqual(
     offenders,
     [],
-    `${offenders.join('、')} 在按 owner 存活记录计数：这正是 #1029 搬文件绕结构闸门的路径（#1031 已撤回）`
-  );
-});
-
-test('测试注入缝不得成为生产默认计数器', () => {
-  const source = read(servicePath);
-  const match = source.match(/attachmentCounter\s*=\s*[\s\S]{0,400}?createSubstituteAttachmentCounter\(\)\);\s*\n/);
-  assert.ok(match, '在 service.ts 里没找到默认附计数器表达式（判据可能已过时，需人工核对）');
-  const expression = match[0];
-  assert.equal(
-    expression.includes('createInjectedAttachmentCounter'),
-    false,
-    `默认计数器落到了测试注入缝（kind:'injected'）——那是测试专用入口，放它当默认等于把「按 owner 计数」\n` +
-      `重新变成生产口径：\n${expression}`
+    '生产装配里出现了测试注入缝（`createInjectedAttachmentCounter` / `kind: \'injected\'`）——' +
+      `它是测试专用入口，放它进装配等于把「按 owner 计数」变成生产口径：\n${offenders.join('\n')}`
   );
 });
 
 test('禁令原文仍在（撤回的理由不能被悄悄删掉）', () => {
-  // 禁令本身写在 docblock 里，所以这一条用**原始文本**，不做注释剥离。
   assert.ok(existsSync(servicePath), `找不到 ${servicePath}`);
   const source = readFileSync(servicePath, 'utf8');
   assert.match(
