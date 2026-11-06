@@ -34,7 +34,7 @@
 | F1 | `services/api/src/conversations/service.ts:499` | `function settleCodeOf(error)`：`instanceof ApiError && isErrorCode(code)` ⇒ 保留，**否则** `return 'PROVIDER_UNAVAILABLE'` | **折叠点本身**（本片改的就是这一行的前置分支） |
 | F2 | `services/api/src/conversations/service.ts:1154` | 任务 IIFE 的 `catch` 里 `const code = settleCodeOf(error)`，随后 `state = code === 'PROVIDER_TIMEOUT' ? 'timed_out' : 'failed'` | 唯一调用点（`git grep -n "settleCodeOf"` 只命中定义 + 这一处 + 1 条注释） |
 | F3 | `services/api/src/privacy/task-egress.ts:289` | 非 `real` 模式 ⇒ `throw new PrivacyError('PROVIDER_UNAVAILABLE', …)` | 隐私域错误的**类**来源（`PrivacyError`，不是 `ApiError`） |
-| F4 | `services/api/src/privacy/task-egress.ts:298` | `CHAT_OBJECT_KEY` 不匹配 ⇒ `PrivacyError('INVALID_REQUEST', …)` | 400 档被折叠的那条 |
+| F4 | `services/api/src/privacy/task-egress.ts:406-407` | `CHAT_OBJECT_KEY` 不匹配 ⇒ `PrivacyError('INVALID_REQUEST', …)` | 400 档被折叠的那条 |
 | F5 | `services/api/src/privacy/task-egress.ts:313` / `:314` | `inFlight.assertExecutable(…)` / `ledger.markSent(…)` | 403/409 档被折叠的两条（由守卫与账本抛出） |
 | F6 | `packages/privacy/in-flight.mjs:132` | 用途授权已撤回 ⇒ `PrivacyError('CONSENT_REQUIRED', …)` | 「去授权」类失败的真实抛点之一 |
 | F7 | `packages/privacy/in-flight.mjs:151` | 外发已终态 ⇒ `PrivacyError('OBJECT_UNAVAILABLE', …)` | 「对象取不到」类失败的真实抛点之一 |
