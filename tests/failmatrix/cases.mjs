@@ -55,6 +55,19 @@ const JOB_STATE_CLOSED_SET = 'queued / running / succeeded / uncertain / failed 
 /** 作业读面（查询串由各条腿自己拼）。 */
 const JOB_LIST = `${API}/admin/jobs`;
 
+/**
+ * 审计**读**面按执行模式取端点 —— 同一条正控制的两个真实实现，⛔ 不是「跳过校验」：
+ *   - `stub`：`/admin/audit-events` 读进程内 ops 台账（`admin/service.ts:532` 的 `listAudit`）⇒ 200；
+ *   - `real`：**同一路径被刻意失闭** `503`（`admin/fail-closed-services.ts:106-117` 的
+ *     `restrictAdminContentAuditRead()`：审计写面仍未落库、`appendAudit` 仍落进程内台账，放行只会给出
+ *     内存空页＝伪造读数，故由 `app.ts:1454` 传入理由串）；真库的读面是 `/admin/audit-logs`（迁移 0033 的
+ *     `list_admin_audit_logs()`，`admin/audit/catalog.ts:443` 同一把 `audit:read` 门）⇒ 也断言 200。
+ * 两臂都真的读到一个审计读面、都要求 `200`（`expect` 一字未改，没有任何一条腿被跳过）⇒ 谁把真库读面
+ * 换回 503、或拆掉 `audit:read` 门，对应臂立刻红。模式由 `ctx.mode` 给出：真库臂显式设 `'real'`
+ * （`run-real.mjs` 的 ctx），stub 臂不设（缺省即走 `stub` 分支，见 `run.mjs` 的 ctx）。
+ */
+const auditReadPath = (ctx) => (ctx.mode === 'real' ? `${API}/admin/audit-logs` : `${API}/admin/audit-events`);
+
 export const BATCHES = [
   { id: 'B1', title: '批次 1：身份与权限面（游客 / 越权 / 后台 / 会话与注销）', families: ['C1', 'C2', 'C3', 'C4'] },
   { id: 'B2', title: '批次 2：媒体归属、重复请求与无效输入', families: ['C5', 'C6', 'C7'] },
@@ -169,7 +182,7 @@ export const CASES = [
   { id: 'C3-12', family: 'C3', title: '零 scope 后台会话登出', actor: 'adminNone', method: 'POST', path: `${API}/admin/auth/logout`, headers: key('i22-c3-12'), expect: { status: 403, code: 'SCOPE_DENIED' } },
   { id: 'C3-13', family: 'C3', title: '只有 sources:read 的后台会话隐藏帖子', actor: 'adminRead', method: 'POST', path: (ctx) => `${API}/admin/posts/${ctx.seeded.postId}/hide`, body: { reason: 'synthetic-hide' }, headers: wkey('i22-c3-13', '"1"'), expect: { status: 403, code: 'SCOPE_DENIED' } },
   { id: 'C3-14', family: 'C3', title: '正控制：sources:read 后台会话读内容族', actor: 'adminRead', method: 'GET', path: `${API}/admin/sources`, expect: { status: 200 } },
-  { id: 'C3-15', family: 'C3', title: '正控制：全 scope 后台会话读审计事件', actor: 'adminFull', method: 'GET', path: `${API}/admin/audit-events`, expect: { status: 200 } },
+  { id: 'C3-15', family: 'C3', title: '正控制：全 scope 后台会话读审计（stub 事件台账／real 总台账）', actor: 'adminFull', method: 'GET', path: auditReadPath, expect: { status: 200 }, note: '端点按执行模式取（见上方 auditReadPath）：stub 读 /admin/audit-events（进程内台账），real 读 /admin/audit-logs（迁移 0033 的真库读面）——real 下前者被 fail-closed-services.ts 刻意 503，200 只能是内存空页＝伪造读数' },
   { id: 'C3-16', family: 'C3', title: '正控制：全 scope 后台会话读特性开关', actor: 'adminFull', method: 'GET', path: `${API}/admin/feature-flags`, expect: { status: 200 } },
   { id: 'C3-17', family: 'C3', title: '正控制：全 scope 后台会话读后台会话', actor: 'adminFull', method: 'GET', path: `${API}/admin/auth/session`, expect: { status: 200 } },
   { id: 'C3-18', family: 'C3', title: '后台隐藏帖子缺 If-Match', actor: 'adminFull', method: 'POST', path: (ctx) => `${API}/admin/posts/${ctx.seeded.postId}/hide`, body: { reason: 'synthetic-hide' }, headers: key('i22-c3-18'), expect: { status: 428, code: 'REVISION_REQUIRED' } },
@@ -180,7 +193,7 @@ export const CASES = [
   { id: 'C3-23', family: 'C3', title: '后台会话读用户会话（不得代替）', actor: 'adminFull', method: 'GET', path: `${API}/auth/session`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C3-24', family: 'C3', title: '后台会话读社区面（不得代替）', actor: 'adminFull', method: 'GET', path: `${API}/posts`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C3-25', family: 'C3', title: '正控制：全 scope 后台隐藏帖子', actor: 'adminFull', method: 'POST', path: (ctx) => `${API}/admin/posts/${ctx.hideTargetPostId}/hide`, body: { reason: 'synthetic-hide' }, headers: wkey('i22-c3-25', '"1"'), expect: { status: 200 }, check: (result) => (result.body?.data?.accepted === true ? [] : [`data.accepted 期望 true 实际 ${JSON.stringify(result.body?.data?.accepted)}`]), note: '隐藏目标是 runner 单独播种的一帖（ctx.hideTargetPostId），避免污染其它族对 ctx.seeded.postId 的用例' },
-  { id: 'C3-26', family: 'C3', title: '正控制：隐藏留痕（审计事件指向被隐藏帖子）', actor: 'adminFull', method: 'GET', path: `${API}/admin/audit-events`, expect: { status: 200 }, check: (result, ctx) => {
+  { id: 'C3-26', family: 'C3', title: '正控制：隐藏留痕（审计读面 post.hide 指向被隐藏帖子）', actor: 'adminFull', method: 'GET', path: (ctx) => `${auditReadPath(ctx)}?entity=post`, expect: { status: 200 }, check: (result, ctx) => {
     const problems = [];
     const items = result.body?.data?.items ?? [];
     const hit = items.find((item) => item.action === 'post.hide');
@@ -348,9 +361,9 @@ export const CASES = [
   { id: 'C4-09', family: 'C4', title: '小写 bearer（不合规 scheme）', method: 'GET', path: `${API}/favorites`, headers: { authorization: 'bearer c3ludGhldGlj' }, expect: { status: 401, code: 'SESSION_REQUIRED' } },
   { id: 'C4-10', family: 'C4', title: '注销申请确认词错误', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete' }, headers: key('i22-c4-10'), expect: { status: 400, code: 'INVALID_REQUEST' } },
   { id: 'C4-11', family: 'C4', title: '注销申请缺幂等键', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete_account' }, expect: { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' } },
-  { id: 'C4-12', family: 'C4', title: '回执 bearer 读自己的注销单', actor: 'deleter', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.deleter.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.deleter.receipt}` }), expect: { status: 200, etag: true } },
-  { id: 'C4-13', family: 'C4', title: '用户会话不能当回执用', actor: 'deleter', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.deleter.deletionId}`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
-  { id: 'C4-14', family: 'C4', title: '回执跨单使用（改路径 id）', actor: 'deleter', method: 'GET', path: `${API}/account/deletions/${ABSENT}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.deleter.receipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
+  { id: 'C4-12', family: 'C4', title: '回执 bearer 读自己的注销单', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 200, etag: true }, note: '注销单与回执来自 runner 另起的 receiptHolder 账号（真 inject(POST) 受理 + 换发一次）；⛔ 不用 deleter——受理会撤销它全部会话，把 C4-10/11/15/18 打红（见 run-real.mjs 播种处注释）；本条 expect 里的 etag:true 目前只有 stub 臂判定（run.mjs:144-148），真库臂比较器只看 status/code/meta/check——两臂强度不对等属既有实现（PR #1028 审查 P2-1）' },
+  { id: 'C4-13', family: 'C4', title: '用户会话不能当回执用', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
+  { id: 'C4-14', family: 'C4', title: '回执跨单使用（改路径 id）', actor: 'receiptHolder', method: 'GET', path: `${API}/account/deletions/${ABSENT}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C4-15', family: 'C4', title: '注销申请重放：同一单 + 换发回执', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete_account' }, headers: key('i22-c4-deletion'), expect: { status: 202 }, check: (result, ctx) => {
     const problems = [];
     const prior = ctx.actors.deleter;
@@ -362,8 +375,8 @@ export const CASES = [
     deleter.staleReceipt = deleter.receipt;
     if (typeof result.body?.data?.receipt_token === 'string') deleter.receipt = result.body.data.receipt_token;
   } },
-  { id: 'C4-16', family: 'C4', title: '换发后旧回执失效', actor: 'deleter', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.deleter.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.deleter.staleReceipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
-  { id: 'C4-17', family: 'C4', title: '换发后新回执可用', actor: 'deleter', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.deleter.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.deleter.receipt}` }), expect: { status: 200 } },
+  { id: 'C4-16', family: 'C4', title: '换发后旧回执失效', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.staleReceipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
+  { id: 'C4-17', family: 'C4', title: '换发后新回执可用', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 200 } },
   { id: 'C4-18', family: 'C4', title: '冷静期内原会话仍可用（注销在线 7 日到期前）', actor: 'deleter', method: 'GET', path: `${API}/favorites`, expect: { status: 200 }, note: '契约：注销申请后在线数据保留 7 日（cooling-off），到期前会话仍可用；到期后的失效由 deletion 执行面负责（未取得）' },
   // 退出后多面同形 401：C4-03 只钉了 /favorites 一面。这三条把同一张封套钉到个人资料 / 目录 /
   // 资料库三个面上（`sameShapeAs` 与 C4-03 交叉引用：message 归一化，code/retryable/details + meta 逐字节比），

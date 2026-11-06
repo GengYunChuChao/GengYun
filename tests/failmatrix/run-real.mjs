@@ -38,7 +38,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CASES, FAMILIES } from './cases.mjs';
-import { API, SPECIES_ID, envelopeShape, inject } from './world.mjs';
+import { API, SPECIES_ID, envelopeShape, inject, seedReceiptHolder } from './world.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
@@ -72,6 +72,11 @@ const { createPostgresCommunityStore } = await import('../../services/api/src/co
 const { createPostgresRecognitionStore } = await import('../../services/api/src/recognitions/store-pg.ts');
 const { createPostgresOcrStore } = await import('../../services/api/src/ocr/store-pg.ts');
 const { createPostgresSpeechStore } = await import('../../services/api/src/speech/store-pg.ts');
+// 媒体真端口装配：与生产入口**同一份** resolver（`media/real-ports.ts:195` 的 `resolveMediaRealPorts`
+// 是唯一铸造批准能力的入口），本臂只「显式接线 + 合成端点」，不碰真实桶、不发包。
+const { MEDIA_REAL_WIRING_FLAG, resolveMediaRealPorts, mediaRealPortsAssemblyOptions } =
+  await import('../../services/api/src/media/real-ports.ts');
+const { readObjectStorageConfig } = await import('../../services/api/src/media/object-store.ts');
 const { RULE_VERSION } = await import('../../packages/moderation/rule-version.mjs');
 const { missingContractFields } = await import('../../packages/moderation/review.mjs');
 
@@ -86,6 +91,49 @@ const JOB_FILTER_LEGS = new Set(['C3-28', 'C3-29', 'C3-30', 'C3-31', 'C3-32', 'C
 
 /** 作业过滤腿的种子 id：与 `cases.mjs:52` 的 `jobId(ordinal)` 逐字同式（末 12 位 = 11 个 0 + 序号）。 */
 const jobSeedId = (ordinal) => `00000000-0000-4000-8d00-00000000000${ordinal}`;
+
+// ---------------------------------------------------------------------------
+// C2 媒体族的**合成**对象存储（⛔ 不读 ambient env、不读凭据文件、不发任何外呼）
+// ---------------------------------------------------------------------------
+/**
+ * 端点用 RFC 6761 保留域 `.example.test`（DNS 永不解析，也没人能把它注册走），AK/SK 是明显合成串。
+ *
+ * 为什么不是「没配桶就继续跳过」：C2-01/02/03 是 NC-09 变异的**唯一**检出点
+ * （`tests/failmatrix/README.md:122`：删 `media/service.ts` 的属主判断 ⇒ C2-01、C2-02 跨主体读媒体变
+ * 200 泄露），而真库臂原先因为**装配层没注入批准能力**整域 503 ⇒ 媒体域的安全断言在这一臂上是空的。
+ *
+ * 会不会真发包：不会。上传只做**本地 SigV4 预签名**（`media/object-store.ts` 的 `presignUpload` 不
+ * `fetch`）；对象存储适配器唯一的 `fetch` 点是 `send()`，而 C2 这 6 条都在碰字节之前就返回 404
+ * （`getMedia` 只读元数据；`deleteMedia` 的 `dropObjects` 在属主 / `If-Match` 判定之后；
+ * `grantMediaAccess` 同理）。另有两道绊线：装配后与整臂结束后都断言外呼计数为 0，且
+ * `globalThis.fetch` 被换成会抛的绊线（见下）。
+ *
+ * ⚠ 口径不一致（既有，非本片引入，⛔ 不得据此宣称「媒体已持久化接线」）：批准串的 `persistence` 被
+ * `real-ports.ts:149-154` 硬钉成 `process_memory`，而 `app.ts` 在有池时用 `createPostgresMediaStore`
+ * 落库 ⇒ 批准的是**端口形态**（`s3_compatible` + 显式批准能力），不是持久化层。
+ */
+const SYNTHETIC_STORAGE_ENV = {
+  OBJECT_STORAGE_ENDPOINT: 'https://storage.example.test',
+  OBJECT_STORAGE_BUCKET: 'gy-media',
+  OBJECT_STORAGE_ACCESS_KEY: 'AKIDSYNTHETICONLYR82ARM',
+  OBJECT_STORAGE_SECRET_KEY: 'r82-synthetic-not-a-credential',
+  OBJECT_STORAGE_REGION: 'ap-shanghai',
+  OBJECT_STORAGE_FORCE_PATH_STYLE: 'true',
+};
+/** 访问凭据的签发原点：装配期只经 `media/real-ports.ts:260-278` 的 `assertAccessGrantOriginDeployable` 校验（拒「规范化失败」与占位 `.invalid`；无 localhost / `.example` 黑名单），占位判定点在 `media/service.ts:559`。 */
+const SYNTHETIC_MEDIA_GRANT_ORIGIN = 'https://media.example.test';
+
+/**
+ * 外呼绊线：把 `globalThis.fetch` 换掉，任何一次调用都**记录下来并抛出**。
+ * 判据是「一次都不许有」——本臂是离线的，真发出去就说明夹具漏了隔离
+ * （先例：`tests/unit/i11-real-media-wiring.test.mjs:150-158`）。
+ */
+const fetchCalls = [];
+globalThis.fetch = (...args) => {
+  const target = String(args[0]);
+  fetchCalls.push(target);
+  throw new Error(`真库臂禁止外呼，但发生了 fetch：${target}`);
+};
 
 // ---------------------------------------------------------------------------
 // 一次性 PG 17 集群
@@ -249,7 +297,9 @@ function missingSeed(what) {
  */
 async function seedOwnerRowsReal(world, owner, { pool, attacker }) {
   const seeded = {
-    media: unavailableSeed('媒体（对象存储未接线）'),
+    // 媒体属主行见下方「媒体属主行」段：走服务原语 `initiateUpload` 播一条**真 `media` 行**（属主 = B）。
+    // 播不上就保留会响的哨兵 ⇒ C2-01/02/03 继续如实 not-runnable（⛔ 不拿「不存在」冒充「越权 404」的假同形）。
+    media: missingSeed('B 的媒体（app.mediaService.initiateUpload 播种失败）'),
     favoriteId: null,
     historyId: null,
     messageId: null,
@@ -349,6 +399,29 @@ async function seedOwnerRowsReal(world, owner, { pool, attacker }) {
     seeded.turnId = turnId;
   } catch (error) {
     warnSeed('会话 / 会话轮次（C11-25…C11-39 的 B 侧夹具）', error);
+  }
+
+  // 媒体属主行（C2-01/02/03 的 B 侧夹具 = C2-11/12/13 的 `sameShapeAs` 对照组）。
+  // 走**服务原语**而不是 HTTP：`POST /media/uploads` 要过 `media_processing` 同意门
+  // （`routes/media.ts` 的 consent 检查），而本臂刻意只给攻击者 a 播同意行 ⇒ 属主 b 会被 409/403 挡住。
+  // ⚠ `purpose` 必须避开 `community_image`：那条会撞「每帖 ≤3 张」的**未接线**计数口 ⇒ 503
+  // （`media/service.ts:840-856`），本族不依赖它。`weed_recognition` 只要求 image/png + ≤2MiB。
+  // 全程无外呼：`initiateUpload` 只在本进程算 SigV4 预签名，不取上传字节。
+  try {
+    const upload = await world.app.mediaService.initiateUpload({
+      actor: { ownerId: owner.userId, authEpoch: owner.user.authEpoch, sessionRef: 'mx-real-media-seed' },
+      input: { purpose: 'weed_recognition', mime: 'image/png', bytes: 1024, sha256: 'b'.repeat(64) },
+      idempotencyKey: 'i22-realpg-seed-media',
+    });
+    if (upload.status !== 201) throw new Error(`initiateUpload 期望 201 实际 ${upload.status}`);
+    const mediaId = upload.media?.id;
+    const revision = upload.media?.revision;
+    if (typeof mediaId !== 'string' || mediaId === '') throw new Error('initiateUpload 响应缺 media.id');
+    if (typeof revision !== 'number') throw new Error('initiateUpload 响应缺 media.revision');
+    seeded.media = { mediaId, revision };
+    console.log(`[pg] media_seed=${mediaId} revision=${revision}（属主 B，state=initiated，未上传字节）`);
+  } catch (error) {
+    warnSeed('媒体属主行（C2-01/02/03 的 B 侧夹具；C2-11/12/13 的对照组）', error);
   }
 
   // 社区 / 异步 AI 两族：real 模式下没有 HTTP 写路径，直接按迁移定义的真表播种。
@@ -745,8 +818,12 @@ function verdictFor(c, result, ctx) {
  *
  *   1. `503 PROVIDER_UNAVAILABLE`：整域 fail-closed。媒体域的真原因是缺 `isRealMediaWiringApproved`
  *      铸造的批准能力（`services/api/src/media/service.ts:603-616`），**不是**缺 `MEDIA_OBJECT_REF_KEY`
- *      ——本臂已给 `'a'.repeat(64)`，`app.ts:1807-1810` 的 mediaPersistenceRefusal 不触发；注销受理是
- *      `app.ts:2300-2307` 的 `available: executionMode !== 'real'`；审计事件读面同理未接线。
+ *      ——本臂已给 `'a'.repeat(64)`，`app.ts:1807-1810` 的 mediaPersistenceRefusal 不触发；
+ *      审计事件读面（`GET /admin/audit-events`）同理未接线（`admin/fail-closed-services.ts` 的 `reject`）。
+ *      ⚠ **注销受理不属于这一类**（本注释 2026-10-30 前的口径已过期）：`app.ts:2339` 逐字
+ *      `available: config.executionMode !== 'real' || deletionAcceptanceDurable`，而
+ *      `deletionAcceptanceDurable`（`app.ts:2332-2333`）在 real + 真库下为真 ⇒ 受理是**开着**的
+ *      （`app.ts:2314-2319`：real 下唯一保留的 503 是「real 但无真库」）。C4-15 在真库臂真拿到 202 即证。
  *   2. `409 OBJECT_UNAVAILABLE` 且 `details[0].field === 'feature_flag'`：全局开关关闭
  *      （`services/api/src/admin/ops/flag-gate.ts:418-422` 的 `closedError()`；`contract.ts:19` 定
  *      OBJECT_UNAVAILABLE = 409）。
@@ -954,12 +1031,29 @@ async function main() {
     await armFeatureFlags(pool);
     // real 模式装配：loadConfig 走 stub（避免 REQUIRED_WHEN_REAL 的九项校验），再显式覆盖 executionMode。
     // 这与既有集成测试先例（user-chain-e2e.mjs）逐字同口径。
+    //
+    // 媒体域：real 下「有没有真实接线」由**装配层是否注入批准能力**决定
+    // （`media/service.ts:603-616` 的 real 闸门 + `app.ts` 的 `realMediaApproval`），不是由「有没有桶」决定。
+    // 这里用合成端点（见 SYNTHETIC_STORAGE_ENV）走生产同一个 resolver 显式接线，以让 C2 媒体族 6 条可跑。
+    const storage = readObjectStorageConfig(SYNTHETIC_STORAGE_ENV);
+    if (storage.config === null) {
+      throw new Error(`合成对象存储配置非法：${storage.issues.map((issue) => `${issue.field}:${issue.code}`).join('; ')}`);
+    }
     const config = {
       ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
       executionMode: 'real',
       requiresRealCredentials: true,
       mediaObjectRefKey: 'a'.repeat(64),
+      objectStorage: storage.config,
+      mediaAccessGrantOrigin: SYNTHETIC_MEDIA_GRANT_ORIGIN,
     };
+    // 与生产入口同一条路径：`--approve-real-media-wiring` 显式运维动作 ⇒ 铸造批准能力 + s3_compatible 端口。
+    // ⛔ 本臂是测试夹具，**没有**真凭据：端点固定 `.example.test`，AK/SK 是合成串，一次外呼都不许发生。
+    const mediaPorts = resolveMediaRealPorts({
+      config,
+      argv: ['node', 'tests/failmatrix/run-real.mjs', MEDIA_REAL_WIRING_FLAG],
+    });
+    if (mediaPorts === null) throw new Error('媒体端口未解析（启动参数与 config 不一致）');
     // 应用时钟：**真 PG 臂走真实时钟**，不沿用 stub 臂那个冻结在 `START` 的脚本化时钟。
     // 理由是库侧的硬约束：`sessions` / `admin_sessions` / `idempotency_keys` 都有
     // `CHECK (expires_at > created_at)`，而 `created_at` 是列的 `DEFAULT now()`（真实墙钟），
@@ -971,7 +1065,17 @@ async function main() {
     const clock = {
       now: () => new Date(),
     };
-    app = buildApp({ config, pool, now: clock.now });
+    app = buildApp({ config, pool, now: clock.now, ...mediaRealPortsAssemblyOptions(mediaPorts) });
+    // 装配期就该是 0：`presignUpload` 只在本进程算签名，装配阶段连签名都不该跑。
+    if (mediaPorts.objectStore.externalRequestCount !== 0) {
+      throw new Error(`媒体端口在**装配期**就发了 ${mediaPorts.objectStore.externalRequestCount} 次外呼（隔离破防，⛔ 不得继续跑）`);
+    }
+    if (app.mediaService.failClosedReason !== null) {
+      throw new Error(`媒体域接线后仍是 fail-closed：${app.mediaService.failClosedReason}`);
+    }
+    console.log(
+      `[pg] media_ports=s3_compatible@${SYNTHETIC_STORAGE_ENV.OBJECT_STORAGE_ENDPOINT} external_requests=${mediaPorts.objectStore.externalRequestCount} fail_closed=null`,
+    );
 
     // 播种时间基准取**库内 now()**（而不是 Node 的 Date.now()）：让夹具的 `expires_at` 与
     // `created_at` 的 `DEFAULT now()` 同源，钳制关系不因容器时钟/时区漂移再翻。
@@ -989,11 +1093,35 @@ async function main() {
     const adminNone = await createAdmin(world, [], 'none');
     const adminRead = await createAdmin(world, ['sources:read'], 'read');
     const deleter = await createAccount(world, 'mx-deleter');
-    // 注销受理在 real 模式整域 fail-closed（503），注销单/回执 bearer 无法播种 ⇒ 置哨兵，
-    // 依赖它们的 C4 注销回执用例在跑之前解析即抛 ⇒ 如实标 not-runnable。
-    deleter.deletionId = unavailableSeed('注销受理（real 模式整域 fail-closed）');
-    deleter.receipt = unavailableSeed('注销受理（real 模式整域 fail-closed）');
-    deleter.staleReceipt = unavailableSeed('注销受理（real 模式整域 fail-closed）');
+    // ⚠ deleter 自己**不**真受理注销（2026-10-30 前这里写的是「real 模式整域 fail-closed」——那是过期口径，
+    // 受理在 real + 真库下是开着的，见 domainUnavailable 上方注释）。不用的真因是**副作用**：受理会在同一
+    // 事务里把 `users.state` 改成 `deletion_pending` 并撤销该账号**全部**会话
+    //（`db/migrations/0016_account_deletion_persistence.sql:122-135`），而 C4-10/11/15/18 都靠 deleter 自己的
+    // 用户会话过 `guards.requireUser`（`routes/account-deletion.ts:255`）⇒ 一受理就把它们打红。
+    // 故这三个槽位**保持哨兵**：任何用例若回头从这里取注销单/回执，会在解析路径时抛 ⇒ 如实标 not-runnable，
+    // ⛔ 而不是拿到别的账号的回执去凑绿（那是空断言）。
+    deleter.deletionId = unavailableSeed('deleter 不真受理注销（受理会撤销它的全部会话）');
+    deleter.receipt = unavailableSeed('deleter 不真受理注销（受理会撤销它的全部会话）');
+    deleter.staleReceipt = unavailableSeed('deleter 不真受理注销（受理会撤销它的全部会话）');
+
+    // -------------------------------------- 夹具：C4 回执族专用「已受理注销」账号
+    // C4-12/13/14/16/17 要的是「一条真 `deletion_requests` 行 + 该单当前有效的回执摘要」。
+    // 缺口是**能力**不是数据：回执摘要的投影走进程内/PG 台账（`privacy/account-deletion.ts:246-283`），
+    // 且 GET 要求摘要反查命中且等于 path id（`routes/account-deletion.ts:329-331`）⇒ 只能在本进程里
+    // 真 `inject(POST)` 受理一次，⛔ 不能退化成一份 `.sql` 种子。受理细节、换发语义与「为什么必须是
+    // 另一个账号」写在 `world.mjs` 的 `seedReceiptHolder` 里（stub 臂用同一份夹具，两臂必须同构）。
+    let receiptHolder;
+    try {
+      receiptHolder = await seedReceiptHolder(world, { createAccount, dispatch: (spec) => inject(app, spec) });
+      console.log(`[pg] receipt_holder=${receiptHolder.userId} deletion=${receiptHolder.deletionId}（回执已换发一次）`);
+    } catch (error) {
+      // 播不上就把三个槽位一起换成会响的哨兵（**全或无**：绝不半套值混进读数）⇒ 这 5 条如实 not-runnable，
+      // ⛔ 不让整臂抛死（否则连一份 180 条的诊断报告都拿不到）。
+      const reason = error instanceof Error ? error.message : String(error);
+      const dead = missingSeed(`注销受理（C4 回执族专用账号）—— ${reason}`);
+      receiptHolder = { deletionId: dead, receipt: dead, staleReceipt: dead };
+      console.warn(`[seed] 注销受理（C4 回执族）播种失败，C4-12/13/14/16/17 退回哨兵（继续 not-runnable）：${reason}`);
+    }
 
     const seeded = await seedOwnerRowsReal(world, b, { pool, attacker: a });
 
@@ -1026,9 +1154,11 @@ async function main() {
     const ctx = {
       world,
       API,
+      // 供用例按执行模式选端点（`cases.mjs` 的 `auditReadPath`：审计读面在两种模式下是两条不同的真实实现）。
+      mode: 'real',
       a,
       b,
-      actors: { a, b, adminFull, adminNone, adminRead, deleter },
+      actors: { a, b, adminFull, adminNone, adminRead, deleter, receiptHolder },
       seeded,
       results: new Map(),
       lazy: new Map(),
@@ -1253,6 +1383,16 @@ async function main() {
         console.log(`       · ⚠ ${row.shape.reason}（该条 same 只是状态码级）`);
       }
     }
+
+    // ---------------------------------------------------- 隔离终检：整臂零外呼（媒体域接线后新增的判据）
+    // 六个 C2 媒体腿都在「碰字节之前」返回；一旦有人把判据改宽到真取字节，这里立刻炸。
+    if (mediaPorts.objectStore.externalRequestCount !== 0) {
+      throw new Error(`媒体端口在整臂运行期发了 ${mediaPorts.objectStore.externalRequestCount} 次外呼（隔离破防）`);
+    }
+    if (fetchCalls.length !== 0) {
+      throw new Error(`整臂发生了 ${fetchCalls.length} 次 fetch（隔离破防）：${fetchCalls.join(' | ')}`);
+    }
+    console.log(`[pg] media_external_requests=${mediaPorts.objectStore.externalRequestCount} fetch_calls=${fetchCalls.length}（整臂零外呼）`);
 
     console.log('\n———————————————— 汇总 ————————————————');
     for (const [family, t] of familyTally) {

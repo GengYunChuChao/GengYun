@@ -36,7 +36,7 @@ import {
   inject,
   loopbackInject,
   envelopeShape,
-  seedOwnerRows,
+  seedOwnerRows, seedReceiptHolder,
 } from './world.mjs';
 
 /**
@@ -295,7 +295,7 @@ async function main() {
   deleter.deletionId = deletion.body.data.deletion.id;
   deleter.receipt = deletion.body.data.receipt_token;
   deleter.staleReceipt = null;
-  ctx.actors.deleter = deleter;
+  ctx.actors.deleter = deleter; ctx.actors.receiptHolder = await seedReceiptHolder(world, { createAccount, dispatch });
 
   /** 懒建 actor：`fresh/expired/stale/logout` 每条用例一份；`deleter` 全局一份。 */
   async function resolveActor(name, caseId) {

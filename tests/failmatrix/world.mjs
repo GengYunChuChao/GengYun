@@ -105,6 +105,48 @@ export async function createAccount(world, label, options = {}) {
   return { kind: 'user', user, userId: user.id, token, session };
 }
 
+/**
+ * C4 回执族（C4-12/13/14/16/17）的「已受理注销」账号：受理一次 + 回执换发一次。
+ *
+ * 为什么必须是**独立**账号：受理在同一个事务里把 `users.state` 改成 `deletion_pending` 并撤销该账号
+ * **全部**会话（`services/api/db/migrations/0016_account_deletion_persistence.sql:122-135`）。deleter 的会话
+ * 还被 C4-10/11/15/18 依赖（`routes/account-deletion.ts` 的 POST 挂的是 `guards.requireUser`）⇒ 拿 deleter
+ * 自己受理会把这四条打红，所以另起一个账号。
+ *
+ * 为什么要换发一次：同一个删除请求**至多一个**有效 bearer——`issue()` 先 `forgetRequest()` 再换摘要
+ * （`services/api/src/privacy/account-deletion.ts:111`、`:157-172`）⇒ 202 里拿到的旧 token 正好是 C4-16
+ * 「旧回执失效」的夹具，换发后的新 token 是 C4-17「新回执可用」的夹具。
+ *
+ * `dispatch` 由调用方给：stub 臂传 `dispatch`（进程内 `app.inject` 或 loopback），真库臂传
+ * `(spec) => inject(app, spec)`。播不上就抛，让调用方决定退回哨兵（真库臂）还是整臂失败（stub 臂）。
+ */
+export async function seedReceiptHolder(world, { createAccount, dispatch, label = 'mx-receipt-holder' }) {
+  const holder = await createAccount(world, label);
+  const accepted = await dispatch({
+    method: 'POST',
+    path: `${API}/me/account/deletion`,
+    actor: holder,
+    body: { confirmation: 'delete_account' },
+    headers: { 'idempotency-key': 'i22-c4-receipt-holder' },
+  });
+  if (accepted.status !== 202) {
+    throw new Error(`受理注销失败 ${accepted.status}：${accepted.text ?? JSON.stringify(accepted.body ?? null)}`);
+  }
+  const deletionId = accepted.body?.data?.deletion?.id;
+  const firstToken = accepted.body?.data?.receipt_token;
+  if (typeof deletionId !== 'string' || deletionId === '') {
+    throw new Error(`受理注销的 202 响应没有 data.deletion.id：${accepted.text ?? ''}`);
+  }
+  if (typeof firstToken !== 'string' || firstToken === '') {
+    throw new Error(`受理注销的 202 响应没有 data.receipt_token：${accepted.text ?? ''}`);
+  }
+  const rotated = await world.app.deletionReceipts.issue(deletionId);
+  holder.deletionId = deletionId;
+  holder.staleReceipt = firstToken;
+  holder.receipt = rotated.token;
+  return holder;
+}
+
 /** 直接播种一个后台会话（含 scope 列表）。 */
 export async function createAdmin(world, scopes, label = 'admin') {
   const userId = await world.auth.createAdmin({
