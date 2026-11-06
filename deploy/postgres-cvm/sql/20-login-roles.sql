@@ -1738,3 +1738,65 @@ REVOKE ALL ON FUNCTION public.record_admin_report_disposition_audit(uuid, uuid, 
 GRANT EXECUTE ON FUNCTION public.record_admin_report_disposition_audit(uuid, uuid, integer, text, text, uuid) TO gengyun_api_runtime;
 -- #endregion gy-r72-report-disposition-audit-grant
 \echo '20-login-roles.sql：已授予 record_admin_report_disposition_audit(...) 的 EXECUTE（后台举报处置的审计唯一写路径；public.admin_audit_events 对运行时仍然零表级、零列级权限）。'
+
+-- ---------------------------------------------------------------------------
+-- 识别链路**外发记账**的列级授权（GY-R83 · #1003 / 迁移 0055：`provider_call_ledger`）
+--
+-- 为什么这段必须真存在：`services/api/src/privacy/provider-call-ledger-pg.ts` 的
+-- `createProviderCallLedger(pool).record(...)` 在真实库上读一次 `MAX(attempt)` 再 INSERT 一行；
+-- 迁移 0055 本身**只建表、零 GRANT**（与 0024/0026/0050/0051 同一条纪律），
+-- 运行角色 gengyun_api_runtime 对这张表一列都碰不了。缺本段 ⇒ 部署后每一次记账都 42501，
+-- 被 `privacy/media-call-accounting.ts` 的 try/catch 吞掉、只留 `readings.failed` 与一条事件 ——
+-- 「静默地什么都记不下来」正是 #1003 要修的那个洞，所以授权必须显式、可断言，不能靠"看起来能跑"。
+--
+-- 为什么**单独成区**（不并进上面任何既有区）：`tests/integration/egress-ledger-pg.mjs` 会按
+-- `#region` 抽取 `gy-r71-jobs-ledger-grant` 区并**逐条断言「本区只含 public.jobs 的列级授权」**；
+-- 把新表并进去会让那条臂立刻判红。本区**只**含 public.provider_call_ledger 的列级授权。
+--
+-- 列清单不是抄文档，而是从 provider-call-ledger-pg.ts 的**唯一一条**语句逐列反推：
+--   `INSERT INTO public.provider_call_ledger (domain, job_id, export_id, attempt, capability,
+--      provider_config_version, model_version, invocation_state, usage, sent_at, duration_ms)
+--    SELECT …, COALESCE((SELECT MAX(attempt) FROM public.provider_call_ledger WHERE export_id = $3), 0) + 1, …
+--    RETURNING attempt`
+-- ⇒ INSERT 面 11 列（`id` 与 `created_at` 吃表默认值）；
+-- ⇒ SELECT 面**只要 2 列**：`export_id`（子查询 `WHERE export_id = $3`）与 `attempt`
+--   （子查询 `MAX(attempt)` 与 `RETURNING attempt` 的回读）。运行时的读面就这两处，
+--   所以这里**不**给 13 列整行读权 —— 授权面按「代码真正读的列」收敛，多授的每一列都是
+--   一条本角色本不需要的读路径（`usage` / `sent_at` 这类字段留给排障用的只读角色）。
+--
+-- ⛔ UPDATE / DELETE / TRUNCATE / REFERENCES / TRIGGER 一律不授：记账行是**追加式事实**
+-- （哪次外发、用了哪套剖面、烧了多少），改判面一个都不开。行随 `public.exports` 的
+-- `ON DELETE CASCADE` 走，**不需要**本角色持有表级 DELETE。
+-- ⛔ 也不改 `public.provider_invocations`（0050）的任何授权：那张表的「有意冻结」姿态本片一字未动。
+--
+-- 前置：表必须已存在 ⇒ 顺序是 迁移（migrate.ts up）⇒ 本脚本；缺表即显式失败，
+-- 绝不留「看似收敛、点开 42501」的运行态。
+--
+-- ⚠ 位置：本区域**追加在文件末尾**（理由同 gy-r72-report-disposition-audit-grant）：本文件被若干
+-- 证据页按 `文件:行号` 引用，插行会让这些既有锚点整体漂移；追加在末尾则一行都不动。
+-- #region gy-r83-provider-call-ledger-grant
+DO $$
+DECLARE
+  missing text;
+BEGIN
+  SELECT string_agg(t.name, ', ' ORDER BY t.name) INTO missing
+    FROM unnest(ARRAY['provider_call_ledger']) AS t(name)
+   WHERE to_regclass('public.'||t.name) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION '缺少识别外发记账表：%（迁移 0055_provider_call_ledger.sql 未执行；顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。', missing;
+  END IF;
+END;
+$$;
+REVOKE ALL ON TABLE public.provider_call_ledger FROM PUBLIC;
+
+-- 识别外发记账（迁移 0055）：读面**2 列**（子查询的 export_id + MAX(attempt)/RETURNING 的 attempt）。
+-- ⚠ 只授这两列 ⇒ 运行时**不能**整行回读账本（`SELECT id, usage …` 会 42501）。这是有意的：
+--   写点（`privacy/media-call-accounting.ts`）写完后不需要回读任何业务列。
+GRANT SELECT (export_id,attempt)
+  ON public.provider_call_ledger TO gengyun_api_runtime;
+-- 写面 11 列：id 与 created_at 由表默认值给（uuid / now()），调用方不得自报。
+GRANT INSERT (domain,job_id,export_id,attempt,capability,provider_config_version,
+              model_version,invocation_state,usage,sent_at,duration_ms)
+  ON public.provider_call_ledger TO gengyun_api_runtime;
+-- #endregion gy-r83-provider-call-ledger-grant
+\echo '20-login-roles.sql：已授予 public.provider_call_ledger 的列级 SELECT（2 列：export_id、attempt）与 INSERT（11 列，除 id/created_at 外的全列）；列清单逐列反推自 services/api/src/privacy/provider-call-ledger-pg.ts 的 record() 语句（读面只有子查询 MAX(attempt) 的 export_id/attempt 与 RETURNING attempt，故只授 2 列）；无 UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER，行随 public.exports 的 ON DELETE CASCADE 清理，public.provider_invocations 仍零授权（有意冻结）。'

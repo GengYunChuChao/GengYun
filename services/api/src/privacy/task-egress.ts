@@ -483,3 +483,18 @@ export function createChatEgress(deps: {
   };
   return egress;
 }
+
+// ── GY-R83 · #1003：识别链路的外发记账（迁移 0055）────────────────────────────
+//
+// 为什么这两个符号从**本文件**转出，而不是让 `app.ts` 直接 import 两个新模块：
+// `app.ts` 被 479 处文档锚点按 `文件:行号` 引用，**插一行 import 就会让全部锚点漂移**。
+// 装配点只有一处（`mediaEgress` 那三行），把「记账层 + 台账」跟着「外发账本」一起出口，
+// 装配处就能在**既有 import 行**里取到它们，净增 0 行。
+//
+// ⛔ 只是转出：本文件**没有**任何行为变化 —— 上面 `MediaJobEgress` / `ChatEgress` 的
+// 时序、读写、错误折叠一个字都没动（识别记账在**外层**组合，见 `media-call-accounting.ts`
+// 头注释里「为什么包在外面」）。
+export { createProviderCallLedger } from './provider-call-ledger-pg.ts';
+export type { ProviderCallLedger, ProviderCallInvocationState } from './provider-call-ledger-pg.ts';
+export { withProviderCallAccounting } from './media-call-accounting.ts';
+export type { ProviderCallAccountingReadings } from './media-call-accounting.ts';

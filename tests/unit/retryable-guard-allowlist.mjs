@@ -217,6 +217,25 @@ export const ALLOWED_RETRYABLE = [
       + '57P0x/40001/40P01，42501/3D000/28P01/42P01/42883 与无法归类一律 false。⛔ 不用 `set_flag` 那类「同 scope '
       + '的现成动作」冒充分类编辑，也不把这条兜底改成恒 true。',
   },
+  // —— GY-R83（#1003 识别外发记账台账，迁移 0055）按 R31 扩域同一口径登记 ——
+  // 本片在 `privacy/provider-call-ledger-pg.ts` 新增识别外发记账的写入口，异常折叠照抄
+  // `media/store-pg.ts::classifyMediaDatabaseError`（`GY-I06`，W12）与 privacy 既有台账
+  // （`privacy/ledger-pg.ts`，`GY-I22`）两处先例：57014/55P03 有具名 SQLSTATE 判据，其余交给
+  // 全仓共享判据 `isTransientDatabaseError`。⛔ 没有自造第二套分档。
+  // owner 记为 R31：受控范围（`privacy/**`、`recognitions/**`）由 R31 扩域那一轮定义，
+  // 本片沿用既有口径、没有新增受控面；本文件自检只接受 `GY-Ixx` / `R31` 两种责任片。
+  {
+    file: 'services/api/src/privacy/provider-call-ledger-pg.ts',
+    function: 'classifyProviderCallLedgerError',
+    retryable: 'isTransientDatabaseError(error)',
+    message: '识别外发记账暂不可用',
+    owner: 'R31',
+    reason:
+      '**有判据**（合法放宽）：记账的 catch-all 兜底，交给全仓共享判据 `isTransientDatabaseError`'
+      + '（`db/pool.ts`）—— 只放行 08xxx/53xxx/57P0x/40001/40P01；42501（授权不足）、3D000、28P01、'
+      + '42P01、42883 与无法归类一律 false。这条兜底**不**改成恒 true：记账失败虽被调用方吞掉，'
+      + '但「可不可重试」的读数仍要如实（`readings.lastError` 会带着它）。',
+  },
 ];
 
 /** 条目声明的判据类别（缺省只对 `PROVIDER_UNAVAILABLE` 站点生效）。 */

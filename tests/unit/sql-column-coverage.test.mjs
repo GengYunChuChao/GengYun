@@ -910,24 +910,25 @@ const EXPECTED_EXTENDED_READINGS = {
   // GY-R73（#17）：24 → 25 —— 新纳管 `admin/ops/invalidation-events.ts`（一条 `public.users` 的
   // SELECT：收件人只发给 `state='active'` 的账号）。它的 SQL 字面量并进 `sqlLiterals` 计数。
   // （R72 #838 没有新纳管文件，只给 `community/store-pg.ts` 加了一条字面量 ⇒ 文件数不叠加。）
-  auditedFiles: 25,
+  // GY-R83（#1003）：25 → 26 —— 新纳管 `privacy/provider-call-ledger-pg.ts`（识别外发记账的唯一写入点）。
+  auditedFiles: 26,
   // GY-R73（#17）：321 → 323、SELECT 171 → 173 —— 两处新 SQL：`favorites/store-pg.ts` 的
   // listOwnerIdsByTarget（按对象反查收藏者）与 `admin/ops/invalidation-events.ts` 的收件人过滤；
   // 再叠加 R72 #838 的 +1（`community/store-pg.ts` 的举报处置审计）⇒ 字面量 **324**、SELECT **174**。
-  sqlLiterals: 326, // GY-R74：324 → 326 —— media/store-pg.ts 新增 listDueMedia 的到期扫描 + purge_owner_media 调用
-  statements: { INSERT: 49, UPDATE: 58, SELECT: 176, DELETE: 43 },
-  returningClauses: 99,
+  sqlLiterals: 328, // GY-R83：326 → 327 → 328（P2-3 短预算多一条 `SELECT set_config('statement_timeout', $1, true)`；`BEGIN`/`COMMIT`/`ROLLBACK` 不是 SELECT/INSERT/UPDATE/DELETE，本解析器不计入）
+  statements: { INSERT: 50, UPDATE: 58, SELECT: 177, DELETE: 43 },
+  returningClauses: 100, // GY-R83 P2-2：99 → 100 —— 记账 INSERT 加了 `RETURNING attempt`（调用方直接拿到落库的是第几次）
   onConflictClauses: 31,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 20, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM
-  referencedTables: 52,
+  noTargetTable: 21, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM；GY-R83 P2-3：20 → 21 —— `SELECT set_config(...)` 同样没有顶层 FROM
+  referencedTables: 53, // GY-R83：52 → 53 —— 新增 `public.provider_call_ledger`
   // GY-R73（#17）：2080 → 2082 —— 两处新 SELECT 的列要求（favorites 的 target/owner 列 + users 的 id/state）。
-  columnRequirements: 2099, // GY-R74：2082 → 2099 —— listDueMedia 那 17 处列引用全部落在 media 已授权列上
+  columnRequirements: 2111, // GY-R83 P2-2：2110 → 2111 —— `RETURNING attempt` 要读回 `attempt` 列（授权面已从 13 列收敛到 `(export_id, attempt)`）；P2-3 起写面仍是 11 列（⚠ 子查询里读的 attempt / export_id 两列不被本解析器计入）
   // GY-R73（#17）：1979 → 1981 —— 两处新 SELECT 的列要求都已覆盖（缺 0 条不变）。
-  coveredRequirements: 1998, // GY-R74：1981 → 1998 —— 同上 17 条全部已覆盖
+  coveredRequirements: 2010, // GY-R83：1998 → 2009 —— 同上 11 条全部已覆盖（本表**有**列级授权，零豁免）
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -961,6 +962,10 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'privacy/consent-pg.ts': 14,
   'privacy/grant-pg.ts': 12,
   'privacy/ledger-pg.ts': 27,
+  // GY-R83（#1003，2026-11-07）：识别外发记账 `public.provider_call_ledger` 的唯一写入点。
+  // 一条字面量（`INSERT … SELECT … COALESCE((SELECT MAX(attempt) …), 0) + 1`）：写面 11 列 + 读面
+  // `attempt`/`export_id` 两列，全部由 20-login-roles.sql 的 `gy-r83-provider-call-ledger-grant` 区授予（GY-R83 P2-3：1 → 2 —— 第二条是短预算里的 `SELECT set_config('statement_timeout', $1, true)`）。
+  'privacy/provider-call-ledger-pg.ts': 2,
   'profile/service.ts': 12,
   'recognitions': 21,
   'speech': 17,
@@ -1005,6 +1010,9 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.ocr_jobs',
   'public.ocr_records',
   'public.privacy_epochs',
+  // GY-R83（#1003）：识别外发记账表（迁移 0055）。运行时**有**列级授权（2 列 SELECT / 11 列 INSERT），
+  // 所以它不需要 LEDGER_COVERAGE_EXEMPT 里的任何一条 —— 缺列照样红。
+  'public.provider_call_ledger',
   'public.provider_invocations',
   'public.recipients',
   'public.recognition_idempotency',
@@ -2554,6 +2562,16 @@ test('sql-column-coverage/parser_negative_controls NC4：登记源码里不存�
  * ========================================================================== */
 
 const EXTENDED_OPAQUE_ALLOWLIST = [...OPAQUE_ALLOWLIST, ...LEDGER_OPAQUE_ALLOWLIST];
+
+// GY-R83（#1003，2026-11-07）：识别外发记账 `public.provider_call_ledger` 的唯一写入点。
+// 按**真审计**纳管（不是 UNAUTHORIZED / OPAQUE 桶）：它写的是运行时的真表，而且这张表是**有**列级
+// 授权的（`20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant`：2 列 SELECT / 11 列 INSERT），
+// 所以缺任何一列都必须红 —— 与 0050 的 `provider_invocations`（运行时零授权、只能靠豁免）正相反。
+// ⚠ 为什么是数组外 `push`、而且必须放在这里：本文件自己被 docs 按 `:152`/`:525`/`:1512`/`:1551`/`:1909`
+// 引用，往上面的数组里插一行会把那些历史锚点整片推位；而 `loadAuditedSources()` 是一次性求值，
+// 追加在文件末尾的 push 对它无效 —— 只能落在这一行**之前**（这一段之后没有 docs 行号锚点）。
+ADDITIONAL_SQL_HOST_FILES.push('privacy/provider-call-ledger-pg.ts');
+
 const auditedSources = loadAuditedSources();
 const extended = auditAll({
   storeSources: auditedSources,
@@ -2706,11 +2724,11 @@ UNAUDITED_SQL_HOSTS.push({
   owner: 'R72 / 在线清除闭集；静态纳管待 R28-S66 重定读数',
 });
 
-test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 25 已审计 + 14 登记（GY-R73 追加 admin/ops/invalidation-events.ts）（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01 / R72-W41 / R72-W54 / R72 在线清除闭集）', () => {
+test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 = 26 已审计 + 14 登记（GY-R83 追加 privacy/provider-call-ledger-pg.ts）（R28-S66 / R28-E2 / R28-W6 / R28-W3 / R28-W12 / R29-S5 / R29 / R32 片B / R34 / R34-S1 / S4-S3 P2-a / R68-A01 / R72-W41 / R72-W54 / R72 在线清除闭集）', () => {
   const publicQualified = sqlHosts.filter((host) => host.publicQualified).map((host) => host.file);
   console.log(`[sql-column-coverage] SQL 宿主文件 ${sqlHosts.length} 个（含 public. 限定语句的 ${publicQualified.length} 个；派单 §0 的 grep 只看见后者）`);
 
-  assert.equal(sqlHosts.length, 39, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
+  assert.equal(sqlHosts.length, 40, `SQL 宿主文件数变了（实际 ${sqlHosts.length}）：新宿主必须显式登记，不能靠忽略`);
   assert.deepEqual(findHostSetProblems(sqlHosts), [], '文件集不变量被破坏（新宿主未登记，或登记了却不复存在）');
   assert.deepEqual(
     publicQualified.sort(),
@@ -2740,6 +2758,8 @@ test('sql-column-coverage/sql_host_file_set_is_exactly_registered：SQL 宿主 =
       'services/api/src/privacy/consent-pg.ts',
       'services/api/src/privacy/grant-pg.ts',
       'services/api/src/privacy/ledger-pg.ts',
+      // GY-R83（#1003）：识别外发记账的唯一写入点（`public.provider_call_ledger`）。
+      'services/api/src/privacy/provider-call-ledger-pg.ts',
       'services/api/src/privacy/third-party-deletion-pg.ts',
       'services/api/src/profile/service.ts',
       'services/api/src/recognitions/store-pg.ts',
