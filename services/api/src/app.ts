@@ -128,7 +128,7 @@ import { createRealContentSource, type PublishedContentSource } from './media/co
 import { createPostgresConsentGate, type ConsentGate } from './privacy/egress.ts';
 import { createPostgresConsentService, type EgressRevoker } from './privacy/consent-pg.ts';
 import { createPostgresExportLedger, createPostgresPrivacyPorts } from './privacy/ledger-pg.ts';
-import { createChatEgress, createMediaJobEgress, type ChatEgress, type MediaJobEgress } from './privacy/task-egress.ts';
+import { createChatEgress, createMediaJobEgress, createProviderCallLedger, withProviderCallAccounting, type ChatEgress, type MediaJobEgress } from './privacy/task-egress.ts';
 // GY-R28 W7（#12）：文字问答的真实模型适配器与装配决策（供应商细节只在这两个文件里）。
 import { planConversationChat } from './ai/chat-wiring.ts';
 import { createSynthesisEgress, type SynthesisEgress } from './privacy/synthesis-egress.ts';
@@ -1130,7 +1130,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // `real` 才接管派发，替身/演示原样返回（不记账）。
     provider: recognitionEgress === undefined
       ? recognitionProviderResolved
-      : recognitionEgress.provider(recognitionProviderResolved, 'recognize'),
+      : withProviderCallAccounting(recognitionEgress.provider(recognitionProviderResolved, 'recognize'), { ledger: createProviderCallLedger(pool ?? null), exportLedger: egressLedger, capability: 'weed', executionMode: config.executionMode }),
     media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode, recognitionMediaPorts),
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     // GY-I16 #16 跨线接线：识别任务终态 → 服务端识别历史（见上方 `recognitionTerminalHistory`）。

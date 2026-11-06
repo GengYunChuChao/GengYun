@@ -30,8 +30,8 @@ const REPO_ROOT = resolve(HERE, '..', '..');
 const STRUCTURE_TEST = join(REPO_ROOT, 'tests', 'unit', 'ci-integration-chain-structure.test.mjs');
 const WORKFLOW_ROOT = join(REPO_ROOT, '.github', 'workflows');
 
-/** 白名单条目数：与 `ci-integration-chain-structure.test.mjs` 的「恰好 55 条」是同一个数（GY-R71 加了 jobs-ledger-pg.mjs）。 */
-const ENTRY_COUNT = 55;
+/** 白名单条目数：与 `ci-integration-chain-structure.test.mjs` 的「恰好 56 条」是同一个数（GY-R71 加了 jobs-ledger-pg.mjs；GY-R83 加了 recognitions-provider-call-ledger-pg.mjs）。 */
+const ENTRY_COUNT = 56;
 
 const WIRED = '已接线（workflow）：';
 const NON_GATE = '非门禁入口：';
