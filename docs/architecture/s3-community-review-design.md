@@ -59,7 +59,7 @@ S3 不去重；去重需要改观察器，属 S4 范围。
 
 ## 5. 本页不管的两件事
 
-- **审计读面**：本片不写 `public.admin_audit_events`（`AUDIT_ACTIONS` 四值闭集不动），
+- **审计读面**：本片不写 `public.admin_audit_events`（`AUDIT_ACTIONS` 已增至 14 值，见 `services/api/src/admin/audit/catalog.ts:284-299`），
   `GET /admin/audit-logs` 查不到审核动作——这是有意的路线选择，「谁批的」落在结论行上、与帖子状态同事务。
   要进审计读面留给 S3b（新迁移号 0046）。
 - **后台 UI**：S3-c 另做；`apps/admin` 的人审占位页在本片仍不发请求。
