@@ -217,8 +217,8 @@ export interface MediaStore {
    * 见 `services/api/src/media/service.ts:835-838`）。
    *
    * 返回 `null` = 判定不了（迁移未 apply／存储不支持）：调用方必须 fail-closed 503，
-   * ⛔ 不得把 `null` 降级成 0。⚠️ 并发：这是**先数后写**的预检，没有 `pg_advisory_xact_lock` 时
-   * 两个并发上传可同时通过；每帖 ≤3 的权威判定在挂载口（`UNIQUE (post_id, ordinal)` + `CHECK`）。
+   * ⛔ 不得把 `null` 降级成 0。⚠️ 并发：这是**先数后写**的预检，没有 `pg_advisory_xact_lock` 时两个并发上传可同时通过；每帖 ≤3 的**首拒点**是 `0022` 的数组 CHECK（`media_ids` 长度 ≤3，写帖行那一步就拒）；
+   * 0056 的 `UNIQUE (post_id, ordinal)` + `CHECK` 是**第二道**结构闸（直插挂载行、绕开数组列时只剩它挡），`claimPostMedia` 另有 per-media advisory lock（`hashtext(lower(media_id))`）串行化并发认领。
    */
   countPendingCommunityImages?(ownerId: string): Promise<number | null>;
   /**

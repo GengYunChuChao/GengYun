@@ -427,7 +427,7 @@ async function claimPostMedia(
          SELECT $1::uuid, c.media_id::uuid, c.ordinal FROM claimable c
          RETURNING ordinal
        )
-       SELECT coalesce(array_length($2::text[], 1), 0) AS declared,
+       SELECT coalesce(array_length($2::text[], 1), 0) AS declared, -- 必须数**传入数组**长度，不能数过滤后的行数（否则非法 uuid 静默少挂、claimed === declared 恒真）
               (SELECT count(*) FROM inserted) AS claimed`,
       [postId, mediaIds, ownerId],
     );
@@ -447,9 +447,9 @@ function postImageLimitError(message = '每个帖子最多 3 张图片'): ApiErr
   });
 }
 
-/** 有「挂不上」的行（不存在／非本人／用途不符／已挂别帖）⇒ 整笔失败：不偷偷少挂一张。 */
+/** 有「挂不上」的行（不存在／非本人／用途不符／不是合法 uuid／已挂别帖）⇒ 整笔失败：不偷偷少挂一张。 */
 function postMediaUnavailableError(): ApiError {
-  return new ApiError('INVALID_REQUEST', '图片无法挂载：不存在、不属于本人、用途不符或已挂在其他帖子', {
+  return new ApiError('INVALID_REQUEST', '图片无法挂载：不存在、不属于本人、用途不符、不是合法 uuid 或已挂在其他帖子', {
     details: [{ field: '/media_ids', code: 'media_not_attachable' }],
   });
 }
@@ -1482,8 +1482,8 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
  * 为什么是一条独立语句而不是塞进认领用的 CTE：CTE 之间没有求值顺序保证（计划器可以把
  * `claimable` 的 `NOT EXISTS` 放到加锁之前），只有「先发这条语句、再发认领」才保证次序。
  * 锁的顺序按 `media_id` 升序定死（`MATERIALIZED` 保证先排序、再逐行加锁），
- * 两笔事务即使认领同一组 media 也不会以相反顺序互等；`hashtext` 只把 uuid 折成 int4 当钥匙，
- * 碰撞只会让两笔无关的认领多串行一次，不会错挂。锁随事务释放：持有者 COMMIT/ROLLBACK 之后，
+ * 两笔事务即使认领同一组 media 也不会以相反顺序互等；`hashtext(lower(...))` 只把 uuid 折成 int4 当钥匙 ——
+ * `lower()` **必须**在：`::uuid` 比较不分大小写而 `hashtext` 分，一大写一小写就是两把锁（等号仍判同图）⇒ 同图两帖；碰撞只会多串行一次，不会错挂。锁随事务释放：持有者 COMMIT/ROLLBACK 之后，
  * 后来者的认领语句在 READ COMMITTED 下取新快照，才能看见它写入的挂载行（「先锁后判」才成立）。
  *
  * 追加在文件尾部：`docs/**` 有大量锚点钉着本文件的行号（`AGENTS.md` 的锚点纪律），
@@ -1497,7 +1497,7 @@ async function lockClaimedMedia(sql: SqlRunner, mediaIds: readonly string[]): Pr
         WHERE t.value ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
         ORDER BY 1
      )
-     SELECT pg_advisory_xact_lock(hashtext(ordered.media_id)) FROM ordered`,
+     SELECT pg_advisory_xact_lock(hashtext(lower(ordered.media_id))) FROM ordered ORDER BY ordered.media_id`,
     [mediaIds],
   );
 }

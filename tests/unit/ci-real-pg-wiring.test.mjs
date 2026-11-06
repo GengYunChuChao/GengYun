@@ -221,9 +221,13 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
+  // R83（#1037）：`post-media-attachments-pg`（帖子级媒体挂载 / 迁移 0056）。它排在 `real-pg-17-11` 里
+  // `recognition-chain-e2e` 之后、`consent-zero-policy-pg` 之前：第 8 节那三条**直插探针**（绕开 `0022`
+  // 的数组 CHECK 直接 INSERT）是「每帖 ≤3 张」唯一抓得住 0056 约束变异的地方，故必须进真库门禁。
+  'tests/integration/post-media-attachments-pg.mjs',
   // R69：`consent-zero-policy-pg`（`consent_policies` **0 行**时的真实后果矩阵 + 三级负控制）。
   // 与 `FROZEN_MANAGED_SCRIPTS` 同一份集合（只允许顺序不同）；它排在 `real-pg-17-11` 的最后一步，
-  // 故在 `REQUIRED_STEP_ORDER` 里紧跟 `recognition-chain-e2e`、在 admin 读/写 job 的条目之前。
+  // 故在 `REQUIRED_STEP_ORDER` 里紧跟 `post-media-attachments-pg`、在 admin 读/写 job 的条目之前。
   'tests/integration/consent-zero-policy-pg.mjs',
   // R67-C3：与 `FROZEN_MANAGED_SCRIPTS` 同一份集合（只允许顺序不同）。
   'tests/integration/media-row-purge-pg.mjs',
@@ -276,6 +280,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/recognitions-speech-purge-pg.mjs',
   'tests/integration/retention-clock-drill-pg.mjs',
   'tests/integration/recognition-chain-e2e.mjs',
+  // R83：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/post-media-attachments-pg.mjs',
   // R69：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/consent-zero-policy-pg.mjs',
   // R67-C3：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
@@ -514,11 +520,21 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //    排**最后**的两个理由：它对前后无前提（⑦⑧⑨ 都不依赖前面的库/角色），而它自己会起 loopback 监听
   //    并反复轮询「历史行异步落库」（有界等待，最慢的一步）⇒ 放最后不会把别人的失败混进它的读秒。
   'tests/integration/recognition-chain-e2e.mjs',
+  // R83（#1037）. `post-media-attachments-pg`（帖子级媒体挂载 / 迁移 0056）：
+  //    同形的 owner-URL 臂——step 里 `CREATE DATABASE gengyun_post_media_test`，脚本硬钉同名库、要求**空库**
+  //    （public 下 0 张表）、只 apply 0001/0022/0030/0032/0045/0056 六段、全程库 owner 连接
+  //    ⇒ 不建组角色、不复用别人的运行时角色，对前后 step 零耦合。
+  //    为什么要进真库门禁：0056 的 `UNIQUE (post_id, ordinal)` / `CHECK (ordinal BETWEEN 1 AND 3)` 是「每帖
+  //    ≤3 张」的**唯一**结构闸——应用路径传 4 张会先被 `0022_community_persistence.sql` 的数组 CHECK 挡住
+  //    （400 `post_image_limit`），DROP/放宽 0056 后 `insertPost` 的读数照样不变；只有它第 8 节那三条
+  //    **直插探针**（绕开数组 CHECK 直接 INSERT）能抓到那种变异。
+  //    ⛔ 它不进 `SELF_CLUSTERED_SCRIPTS`：集群由调用方提供，判据⑦⑧ 走「先 `CREATE DATABASE` 再 `node`」。
+  'tests/integration/post-media-attachments-pg.mjs',
   // R69. `consent-zero-policy-pg`（`consent_policies` **0 行**时的真实后果矩阵 + 三级负控制）：
   //    与相邻各臂同形的 owner-URL 臂——step 里 `CREATE DATABASE gengyun_consent_zero_test`，脚本硬钉同名库、
   //    要求**空库**（public 下 0 张表）、自己 apply**全链 48 个**迁移、全程只用库 owner 连接
   //    ⇒ 不建组角色、不复用别人的运行时角色，对前后 step 零耦合。它排在 `real-pg-17-11` 的**最后一步**
-  //    （紧接 `recognition-chain-e2e`）：那条臂的注释里「故排最后」描述的是它当时的相对位置与零前提，
+  //    （紧接 `post-media-attachments-pg`）：那条臂的注释里「故排最后」描述的是它当时的相对位置与零前提，
   //    本臂同样零前提且自带 `CREATE DATABASE`，追加在它之后不改变任何既有 step 的语义。
   //    ⛔ 它不进 `SELF_CLUSTERED_SCRIPTS`：集群由调用方提供（CI 里是 `services.postgres`），判据⑦⑧ 走
   //    「先 `CREATE DATABASE` 再 `node`」那条路径。

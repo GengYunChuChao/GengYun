@@ -149,8 +149,9 @@ test('insertPost：media_ids 按数组顺序认领，ordinal 由 row_number() �
 
   // 加锁必须在认领**之前**、且按 media_id 升序逐把取（否则两笔事务可能各判「没人挂」后各插一行）。
   const lock = business[1];
-  assert.match(lock, /pg_advisory_xact_lock\(hashtext\(ordered\.media_id\)\)/, '跨帖互斥只能靠 advisory lock');
+  assert.match(lock, /pg_advisory_xact_lock\(hashtext\(lower\(ordered\.media_id\)\)\)/, '跨帖互斥只能靠 advisory lock，且锁键必须 lower()：`::uuid` 比较不分大小写而 `hashtext` 分，一大写一小写会拿两把锁');
   assert.match(lock, /ORDER BY 1/, '必须按 media_id 定序加锁，避免两笔事务反向互等');
+  assert.match(lock, /FROM ordered ORDER BY ordered\.media_id/, '外层也要显式 ORDER BY，⛔ 不靠 MATERIALIZED CTE 的扫描顺序');
   assert.match(lock, /DISTINCT/, '同一帖里重复的 media 不该取第二把锁');
   const lockCall = pool.businessCalls()[1];
   assert.deepEqual(lockCall.values, [mediaIds], '加锁语句同样只收绑定参数（数组原序交给 ORDER BY 定序）');
@@ -218,14 +219,23 @@ test('第 4 张：迁移 0056 的结构约束原文必须是「ordinal 1..3」+�
   );
   // ⛔ 不能只对**全文** `assert.match`：0056 的头注释里就写着这两串字，把 DDL 那行注释掉也能绿
   // （PR #1037 审查 P1 实测：注释掉 UNIQUE、CHECK 放宽成 4，单测 13/13 + 集成 8/8 全绿）。
-  // 所以先逐行剥掉 `--` 注释，再要求「约束名 + 定义」出现在**非注释行**上；行为面另由
+  // 所以先剥注释、再要求「约束名 + 定义」出现在**非注释行**上；行为面另由
   // `tests/integration/post-media-attachments-pg.mjs` 的直插探针钉（23514／23505 的真实报错）。
-  const ddl = migration
+  // ⛔ 只剥 `--` 不够（PR #1037 第三轮审查 P1-3 实测）：`/* UNIQUE (post_id, ordinal) */` 与
+  // `COMMENT ON COLUMN … IS '… UNIQUE (post_id, ordinal)'` 都能让只剥 `--` 的版本假绿，所以
+  // ① 先用块注释正则整段删掉 `/* … */`（含跨行），② 再逐行剥 `--`，③ 最后禁止 `COMMENT ON`
+  // （0056 全文没有 `/* */`，一行 `COMMENT ON` 就能把约束「描述」成存在）。
+  const withoutBlockComments = migration.replace(/\/\*[\s\S]*?\*\//g, '');
+  const ddl = withoutBlockComments
     .split('\n')
     .map((line) => line.replace(/--.*$/, '').trim())
     .filter((line) => line.length > 0)
     .join('\n');
 
+  assert.ok(
+    !/COMMENT\s+ON/i.test(ddl),
+    '0056 不得用 COMMENT ON 描述约束：约束必须是真 DDL，⛔ 不能只是一句注释文本',
+  );
   assert.ok(
     /CONSTRAINT\s+post_media_attachments_ordinal_range\s+CHECK\s*\(\s*ordinal\s+BETWEEN\s+1\s+AND\s+3\s*\)/i.test(ddl),
     '「每帖 ≤3」的判定权在数据库，不在 JS：CHECK (ordinal BETWEEN 1 AND 3) 必须写在**非注释行**上',

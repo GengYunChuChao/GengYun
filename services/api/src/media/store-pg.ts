@@ -359,8 +359,8 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
      * 删帖即释放（帖子的 `visibility = 'deleted'`，行保留）、`created_at` 超过 24h 自衰减。
      * ⛔ **不是**「同一 owner 名下存活记录数」：那是生命周期累计口径（`service.ts:835-838` 明令禁止），
      * 会让用户传满 3 张后永久锁死。返回 `null` = 判定不了（迁移未 apply，42P01）⇒ 调用方 503 fail-closed。
-     * ⚠️ 并发：只做**先数后写**的预检，未取 `pg_advisory_xact_lock`；每帖 ≤3 由挂载口的唯一约束 +
-     * CHECK 承担（挂载即释放，所以这里的上界对 `media_ids` 超发不构成安全边界）。
+     * ⚠️ 并发：只做**先数后写**的预检，未取 `pg_advisory_xact_lock`；每帖 ≤3 的**首拒点**是 `0022` 的数组 CHECK（`community_posts.media_ids` 长度 ≤3），
+     * 0056 的 `UNIQUE (post_id, ordinal)` + `CHECK` 是**第二道**结构闸（直插挂载行、绕开数组列时只剩它挡；挂载即释放，故这里的上界对 `media_ids` 超发不构成安全边界），`claimPostMedia` 另有 per-media advisory lock 串行化并发认领。
      */
     async countPendingCommunityImages(ownerId) {
       try {

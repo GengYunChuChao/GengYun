@@ -70,13 +70,13 @@ permissions:
   contents: read
 jobs:
   # ↓↓↓ 本 job 的运行纪律：每个真库臂 step 各自封顶 5 分钟，job 级只做算术兜底 ↓↓↓
-  # `timeout-minutes: 200`：**封顶之和 190 + 前置余量 10 = job 级 200**。
-  #   · 190 = 32 条真库臂 step 各 5 分钟
+  # `timeout-minutes: 205`：**封顶之和 195 + 前置余量 10 = job 级 205**。
+  #   · 195 = 33 条真库臂 step 各 5 分钟
   #         + 装 PG 17 服务端二进制 5（`apt-get update`/`install` 卡死时同样只死这一步）；
   #         + 三条前置 25 = `actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15
   #           （R68 之前这三条**没有** step 级封顶，最坏要一直等到 job 级超时；现在它们自己先红）；
-  #   · 10  = job 级的显式常量余量（三条前置已各自封顶并计入上面的 190，它不再是「前置的合计上限」）。
-  # R69 把 31 → 32 条臂（新增「零政策矩阵」：consent-zero-policy-pg），故 185 → 190、195 → 200；
+  #   · 10  = job 级的显式常量余量（三条前置已各自封顶并计入上面的 195，它不再是「前置的合计上限」）。
+  # R69 把 31 → 32 条臂（新增「零政策矩阵」：consent-zero-policy-pg），故 185 → 190、195 → 200；R83（#1037）把 32 → 33 条臂（新增 post-media-attachments-pg），故 190 → 195、200 → 205；
   # 算式与 job 级数值必须与 `tests/unit/ci-real-pg-step-timeouts.test.mjs` 的现场重算一致。
   # 这两个数是**防卡死的上界，不是预计耗时**。CI 上的真读数：本 job 整跑 **104 秒**、41 个 step 全部走完
   # （`main` 上的成功 run 40547840506，2026-10-27T17:09:09Z）；同一次 run 的 `real-pg-admin-read-17.11`
@@ -94,7 +94,7 @@ jobs:
   real-pg-17-11:
     name: real-pg-17.11
     runs-on: ubuntu-24.04
-    timeout-minutes: 200
+    timeout-minutes: 205
     services:
       postgres:
         image: postgres:17.11
@@ -825,6 +825,23 @@ jobs:
           PGDATABASE: gengyun_ci_bootstrap
           RECOGNITION_CHAIN_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_recognition_chain_test
           PGCLIENTENCODING: UTF8
+      # 帖子级媒体挂载（#1030 / 迁移 0056，PR #1037 第三轮审查 P1）：库名硬钉 `gengyun_post_media_test`，
+      # 脚本自己断言 public 下 0 张表，只 apply 0001/0022/0030/0032/0045/0056 六段。
+      # 为什么必须接：0056 的 `UNIQUE (post_id, ordinal)` / `CHECK (ordinal BETWEEN 1 AND 3)` 是「每帖 ≤3 张」
+      # 的**唯一**结构闸——应用路径传 4 张先被 `0022_community_persistence.sql` 的数组 CHECK 挡住（400
+      # `post_image_limit`），即便 DROP/放宽 0056，`insertPost` 的读数照样不变；只有本脚本第 8 节的**直插探针**
+      # （绕开数组 CHECK，直接 INSERT post_media_attachments）能抓到那种变异 ⇒ 它必须在门禁里真跑。
+      # 连接串只走 env（`POST_MEDIA_PG_TEST_URL`）：缺 env 时脚本打印 SKIP 并 exit 77 ⇒ 缺库必红（⛔ 不加放宽开关）。
+      # 位置：与相邻各臂同形（专用空库 + 库 owner + 不建组角色）⇒ 对前后 step 零耦合。
+      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_post_media_test' && node tests/integration/post-media-attachments-pg.mjs
+        timeout-minutes: 5
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          POST_MEDIA_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_post_media_test
       # 零政策矩阵（R69）：`consent_policies` **0 行**时每个入口返回什么 —— 只读侦察
       # （`.pg17/tmp/r69-consent-gate/RECON.md` §7.1）给出了一张全矩阵，但**全部是读码推定**，侦察方自己把
       # 「无注入 + 真 PG + 零政策行 + 生产装配」列为最大的未核实项。本臂就是那份矩阵的第一份真库读数：
