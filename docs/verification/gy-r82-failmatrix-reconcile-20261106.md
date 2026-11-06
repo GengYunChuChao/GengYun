@@ -56,37 +56,37 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 ## §3 手法（这两条读数是怎么来的）
 
 1. 用 `E:\GengYunCommander\.pg17\pgsql\bin` 起一次性 PG 17.11 簇，端口 55410（55433、55439 被既有簇占用），`initdb -U postgres -A trust -E UTF8 --locale=C`，建全新库 `gengyun_r82_reconcile`。
-2. 真库臂自建临时簇、自跑迁移（日志首行 `[pg] server_version=17.11`、`[pg] migrations=53（一次性空库，全部落地）`）；端口不可由外部指定，`tests/failmatrix/run-real.mjs:142-151` 的 `freePort()` 走 `listen(0)` 取 OS 临时端口。
+2. 真库臂自建临时簇、自跑迁移（日志首行 `[pg] server_version=17.11`、`[pg] migrations=53（一次性空库，全部落地）`）；端口不可由外部指定，`tests/failmatrix/run-real.mjs:93-102` 的 `freePort()` 走 `listen(0)` 取 OS 临时端口。
 3. 命令：`$env:GY_PG_BIN='E:\GengYunCommander\.pg17\pgsql\bin'; $env:GY_I22_PG_ROOT='E:\GengYunCommander\.pg17\tmp\realpg-r82'; node tests/failmatrix/run-real.mjs --json=E:\GengYunCommander\.pg17\tmp\r82-real-arm.json`，退出码 0。
 4. 两条探针（不入库，落在 `.pg17\tmp\`）把「会话在受理后到底还能不能用」直接测出来：探针 1 用受理前那张会话，探针 2 另铸一张 `auth_epoch` 已递增后的新会话。
-5. 判定器口径：`tests/failmatrix/run-real.mjs:789-822` 比 status/code 并要求 `meta.execution_mode === 'real'`，`c.check` 抛错进 `checkProblems`；`:843-857` 的 `domainUnavailable` **只认** 503 `PROVIDER_UNAVAILABLE` 或 409 `OBJECT_UNAVAILABLE` + `feature_flag`，401 不在其中——这决定了本页两条都只能落 `different`，不会被顺手改判成 `not runnable`。
+5. 判定器口径：`tests/failmatrix/run-real.mjs:710-741` 比 status/code 并要求 `meta.execution_mode === 'real'`，`c.check` 抛错进 `checkProblems`；`:758-772` 的 `domainUnavailable` **只认** 503 `PROVIDER_UNAVAILABLE` 或 409 `OBJECT_UNAVAILABLE` + `feature_flag`，401 不在其中——这决定了本页两条都只能落 `different`，不会被顺手改判成 `not runnable`。
 
 ## §4 裁定 C4-15
 
 **能由仓内补齐**：是，且只涉及夹具与断言两侧。
 
-- 真库臂根本没有播种过「一张已经受理过的注销单」：`tests/failmatrix/run-real.mjs:1111-1113` 把 `deleter.deletionId`、`.receipt`、`.staleReceipt` 三个字段都设成 `unavailableSeed(...)` 哨兵；对照 stub 臂 `tests/failmatrix/run.mjs:285-298`，那里是**真发一次 202** 再把读数写回夹具。
-- 哨兵是个 `Proxy`，`tests/failmatrix/run-real.mjs:266-275` 的 `get` 陷阱在取值时才抛。而 `tests/failmatrix/cases.mjs:408-412` 的 `check` 里，判等那一行是 `tests/failmatrix/cases.mjs:410`：`result.body?.data?.deletion?.id !== prior.deletionId`——右侧只是一个普通属性取值，返回代理本身不抛；`'f9b4271e-…' !== proxy` 恒为真。所以那句话的正确读法是「这一次 202 的 id 与一个哨兵不相等」，不是「重放换单了」。
+- 真库臂根本没有播种过「一张已经受理过的注销单」：`tests/failmatrix/run-real.mjs:994-996` 把 `deleter.deletionId`、`.receipt`、`.staleReceipt` 三个字段都设成 `unavailableSeed(...)` 哨兵；对照 stub 臂 `tests/failmatrix/run.mjs:285-298`，那里是**真发一次 202** 再把读数写回夹具。
+- 哨兵是个 `Proxy`，`tests/failmatrix/run-real.mjs:217-226` 的 `get` 陷阱在取值时才抛。而 `tests/failmatrix/cases.mjs:355-359` 的 `check` 里，判等那一行是 `tests/failmatrix/cases.mjs:357`：`result.body?.data?.deletion?.id !== prior.deletionId`——右侧只是一个普通属性取值，返回代理本身不抛；`'f9b4271e-…' !== proxy` 恒为真。所以那句话的正确读法是「这一次 202 的 id 与一个哨兵不相等」，不是「重放换单了」。
 - 真库臂这一次 202 是**首次受理**：探针 1 首次 POST 就返回 202 并给出新 id，与真库臂红出来的 `f9b4271e-…` 是同一种读数。至于「重放」分支 `services/api/src/routes/account-deletion.ts:281-311`，在**串行**场景（首条受理事务已提交之后）对任何用户会话都不可达——理由是三段串联的：`:255` 的 `preHandler` 先做鉴权（鉴权先于幂等台账）；受理事务按契约撤掉该账号全部会话，`services/api/db/migrations/0016_account_deletion_persistence.sql:130-135`；账号转 `deletion_pending` 后一律拒绝，`services/api/src/auth/middleware.ts:88`。
 - 探针实测坐实这条不可达：受理后用**同一张**会话重放同键 → 401 `SESSION_EXPIRED`（探针 1）；改用 `auth_epoch` 递增后**新铸**的会话 → 403 `ACCOUNT_INACTIVE`（探针 2）。两条路径都拿不到第二个 202，自然也谈不上「同一单 + 换发回执」。
   - 边界：这里说的是**串行**情形。`services/api/src/routes/account-deletion.ts:281-311` 的 replay 分支本身不校验账号状态，判定入口只是「同 subject 同幂等键已存在台账」；理论上存在一个并发窗口（第二条请求在首条受理事务提交**前**过了 `:255` 的鉴权、提交**后**才进 `:261` 的 handler）。本页没有复现这个窗口，也不据此下「对任何会话都不可达」的绝对结论；裁定本身不受影响（同账号同单换发回执，既不越权也不放行）。
 - 因此：**不是产品缺陷，不是 503 域门**（真库臂实测 202，受理面是开着的），是「真库臂没播种 + 断言拿哨兵当基准」的夹具口径。不计入 A1「未解决严重安全/权限缺陷」的缺陷计数：这里没有越权、没有跨账号读、失效方向是拒绝而不是放行。
-- 要让读数对齐 stub，改这两处：`tests/failmatrix/cases.mjs:407` 给这条用例补 real 侧期望（受理后重放只可能 401），并把 `tests/failmatrix/run-real.mjs:790` 的 `const exp = c.expect ?? {}` 换成先读 real 侧期望、缺省回落到 `c.expect`；同时把 `tests/failmatrix/run-real.mjs:1111-1113` 的哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`）。只改前者也能让读数不再红，但那是把「不可达」写成「期望 401」，语义上要把用例改名（「受理后重放不得再签发回执」）。
+- 要让读数对齐 stub，改这两处：`tests/failmatrix/cases.mjs:354` 给这条用例补 real 侧期望（受理后重放只可能 401），并把 `tests/failmatrix/run-real.mjs:711` 的 `const exp = c.expect ?? {}` 换成先读 real 侧期望、缺省回落到 `c.expect`；同时把 `tests/failmatrix/run-real.mjs:994-996` 的哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`）。只改前者也能让读数不再红，但那是把「不可达」写成「期望 401」，语义上要把用例改名（「受理后重放不得再签发回执」）。
 
 ## §5 裁定 C4-18
 
 **不能由仓内补齐到与 stub 一致**：真库 401 是冻结契约要求的正确行为；要对齐只能让 stub 世界也撤会话（或把期望改成 401）。
 
-- 真库 401 的成因不是「会话没播好」：`tests/failmatrix/run-real.mjs:214-227` 的 `createAccount` 铸的会话是受理**之前**签发的，受理事务按契约把它撤销（`0016…sql:130-135`，探针 1 读到 `sessions=1 / revoked=1`）。撤销的直接后果是 `services/api/src/auth/middleware.ts:78-80` 的 401 `SESSION_EXPIRED`。
+- 真库 401 的成因不是「会话没播好」：`tests/failmatrix/run-real.mjs:165-178` 的 `createAccount` 铸的会话是受理**之前**签发的，受理事务按契约把它撤销（`0016…sql:130-135`，探针 1 读到 `sessions=1 / revoked=1`）。撤销的直接后果是 `services/api/src/auth/middleware.ts:78-80` 的 401 `SESSION_EXPIRED`。
 - 也不是「冷静期内会话被错误作废」：即使用 `auth_epoch` 递增后新铸的会话来问，读数也只是从 401 变成 403 `ACCOUNT_INACTIVE`（`middleware.ts:88`），拿不到 200。所以 200 在真库里根本不可达，换哪张会话都一样。
 - 契约侧逐字：`docs/architecture/state-contract.md:105`「注销请求202的返回在**同一事务**将账号改deletion_pending、撤所有用户会话/角色、auth_epoch递增……受理成功后旧会话不再可调用 API」。`:109` 的 7×24 小时是**在线数据**的保留期限，不是会话可用期限——用例标题里的「冷静期内原会话仍可用」把这两件事混成了一件。`:107` 说明回执用专用 `deletionReceipt` bearer、不允许用户 session 代替，也就是说冷静期内留给用户的通道是**回执**，不是旧会话。
 - stub 臂为什么是 200：stub 世界的注销受理没有做同事务撤销，会话还活着（stub 臂实测 C4-18 `PASS 200`）。这是 stub 世界的实现缺口，不是真库的缺陷。
-- 因此：**不是产品缺陷**，不计入 A1；同时**不能把真库改成 200**——那要动 `state-contract.md:105` 这条冻结口径。要消掉这条分歧，改 `tests/failmatrix/cases.mjs:438` 的期望（200 → 401 `SESSION_EXPIRED`）并同步让 stub 世界的受理撤会话；后者属产品内存实现的改动，本片不做，也不能在本片做。
+- 因此：**不是产品缺陷**，不计入 A1；同时**不能把真库改成 200**——那要动 `state-contract.md:105` 这条冻结口径。要消掉这条分歧，改 `tests/failmatrix/cases.mjs:367` 的期望（200 → 401 `SESSION_EXPIRED`）并同步让 stub 世界的受理撤会话；后者属产品内存实现的改动，本片不做，也不能在本片做。
 
 ## §6 与旧页的关系（旧读数，不得回填）
 
 - 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:35` 把 C4-15 归为 `domain-unavailable`「注销域整域失闭（受理面本身 503，202 无从产生）」。**本轮推翻**：真库臂 C4-15 实测 202，探针也 202，装配层 `services/api/src/app.ts:2339` 的 `available` 在 real + 真库下为真。
-- 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:36` 说 C4-12 的夹具字段「唯一生产者是 C4-15 的 202」。方向对，但前提已不成立：C4-15 现在能产出 202，缺的是**播种回写**（`tests/failmatrix/run-real.mjs:1111-1113`），所以 C4-12/13/14/16/17 仍落 `not runnable`。
+- 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:36` 说 C4-12 的夹具字段「唯一生产者是 C4-15 的 202」。方向对，但前提已不成立：C4-15 现在能产出 202，缺的是**播种回写**（`tests/failmatrix/run-real.mjs:994-996`），所以 C4-12/13/14/16/17 仍落 `not runnable`。
 - 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:8` 与同页 `:17-18` 记的是 180 = same 161 / different 3 / not runnable 16（旧读数）。本页是 180 = same 162 / different 5 / not runnable 13；差值来自注销域这组用例的状态迁移：旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:33` 的 C1-30、`:34` 的 C4-11 本轮已不在 `not runnable` 名单里，而 C4-15、C4-18 从「不可跑」变成「跑起来了但不一致」。三组数字不可互相换算。
 - 旧页 `docs/verification/gy-r75-failmatrix-reconcile-20261103.md:71` 与同页 `:78` 对 C3-19/20/21 的「不改期望、不记缺陷、按模式的合法分歧」结论本轮继续成立（本轮它们仍是 503/200 的差异）。
 
@@ -94,8 +94,8 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 
 | # | 改哪里 | 改什么 | 谁来做 |
 | --- | --- | --- | --- |
-| 1 | `tests/failmatrix/run-real.mjs:1111-1113` | 哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`） | 夹具片 |
-| 2 | `tests/failmatrix/cases.mjs:407` ＋ `tests/failmatrix/run-real.mjs:790` | 加 real 侧期望（受理后重放 401），判定器先读 real 侧 | 夹具片 |
+| 1 | `tests/failmatrix/run-real.mjs:994-996` | 哨兵换成真播一次 202 的读数（照 `tests/failmatrix/run.mjs:285-298`） | 夹具片 |
+| 2 | `tests/failmatrix/cases.mjs:354` ＋ `tests/failmatrix/run-real.mjs:711` | 加 real 侧期望（受理后重放 401），判定器先读 real 侧 | 夹具片 |
 | 3 | `tests/failmatrix/cases.mjs:438` | 期望 200 → 401，标题去掉「原会话仍可用」 | 夹具片 + 契约确认 |
 | 4 | stub 世界的注销受理 | 补同事务撤销，让两臂同码 | 单开产品问题（改内存实现） |
 | 5 | `DELETE /api/v1/me/account/deletion` | 受理后取消入口不可达（见下） | 单开产品问题 |
@@ -110,3 +110,11 @@ stub 臂对应两行（`.pg17\tmp\r82-stub-arm.log`）：C4-15 `PASS … 202 - �
 - 没有验证 `deletion_pending` 账号是否存在别的自助入口（例如前端撤回页面、客服工单），只验证了 API 层的 401/403。
 - 没有验证第三方删除、备份清除、7 日／30 日到期这些外部世界事实；本页所有读数都停在本机 PG 17.11 + 进程内 app 的边界内。
 - 没有做任何 commit / push / gh；工作树除新增本页外无改动。
+
+## §9 行号现状（2026-11-07，`test/gy-r83-real-expect`）
+
+本页写于 2026-11-06 基线，正文里的行号是当时的读数。按 §11「不回填旧读数」，本轮只对**本提交改动过**的文件负责：
+
+- `tests/failmatrix/cases.mjs` 因 C3-19/20/21、C4-15/18 补 real 侧期望而净增约 40 行 ⇒ 本页 §2 与 §7 里指向该文件的三处陈旧定位已重锚（`:354` → `:407`、`:367` → `:438`，两种映射、三条登记写在 `tests/unit/doc-anchor-relocations.json`，均为 `kind: "correction"`）。这三处原本就指错了：`cases.mjs:354` 在基线上是 C4-02、`cases.mjs:367` 是 C4-15，与它们声称的 C4-15／C4-18 不是同一条用例。
+- 本页对 `tests/failmatrix/run-real.mjs` 的七组引用（`:93-102`、`:165-178`、`:217-226`、`:710-741`、`:758-772`、`:711`、`:994-996`）仍是 2026-11-06 基线读数，本轮**不重锚**：该文件的位移与本提交无关，统一重锚留给 docs-only 小 PR，避免把本提交的验证面从「夹具两文件」扩到整页。
+- 判定器口径已随本提交改成分模式：`run-real.mjs` 的判定器现在读 `realExpect ?? expect` 与 `realCheck ?? check`（stub 侧断言一字未改）。因此 C4-18 的真库期望 401 `SESSION_EXPIRED` 写进了 `realExpect`，本页 §2 对它「期望与冻结契约冲突」的定性已过时——重锚这一行的同一提交把它改成了分模式期望；本页保留原文读数，差异见上面的 `:438` 指针。
