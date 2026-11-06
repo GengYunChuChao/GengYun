@@ -484,7 +484,7 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '该臂要真实 PostgreSQL 17 —— 先 `DROP DATABASE … WITH (FORCE)` + `CREATE DATABASE`'
       + '（默认库名 `gengyun_provider_call_ledger_test`，只允许 `127.0.0.1`），再跑生产路径 `migrate.ts up` 到 0055，'
       + '然后钉三件事：表形状与 9 条约束、`UNIQUE (export_id, attempt)` 与 `export_id` 级联删除、'
-      + '以及「迁移本身零 GRANT（运行时 42501）」到「`20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant` 区执行后 13 列 SELECT / 11 列 INSERT 可用、UPDATE/DELETE 仍 42501」的翻转。'
+      + '以及「迁移本身零 GRANT（运行时 42501）」到「`20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant` 区执行后 2 列 SELECT（export_id / attempt）/ 11 列 INSERT 可用、整行回读与 UPDATE/DELETE 仍 42501」的翻转。'
       + '`test:integration:http` 是回环 HTTP 链（无真库、也无能建角色的超管连接），装不下它；'
       + '判据 4 的 `wired` 只认该链 ⇒ 条目留在白名单。缺 `GY_PG_BIN` 时本机跑不了（如实登记为「未跑」）。'
   },

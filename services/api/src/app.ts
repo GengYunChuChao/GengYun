@@ -1130,7 +1130,7 @@ export function buildApp({ config, pool = null, now, store, idempotency, wechat,
     // `real` 才接管派发，替身/演示原样返回（不记账）。
     provider: recognitionEgress === undefined
       ? recognitionProviderResolved
-      : withProviderCallAccounting(recognitionEgress.provider(recognitionProviderResolved, 'recognize'), { ledger: createProviderCallLedger(pool ?? null), exportLedger: egressLedger, capability: 'weed', executionMode: config.executionMode }),
+      : withProviderCallAccounting(recognitionEgress.provider(recognitionProviderResolved, 'recognize'), { ledger: createProviderCallLedger(pool ?? null), exportLedger: egressLedger, capability: 'weed', executionMode: config.executionMode, log: event => app.log.warn(event) }),
     media: recognitionMedia ?? createRecognitionMediaPort(config.executionMode, recognitionMediaPorts),
     idempotencyHmacKey: config.sessionSigningKey ?? STUB_IDEMPOTENCY_HMAC_KEY,
     // GY-I16 #16 跨线接线：识别任务终态 → 服务端识别历史（见上方 `recognitionTerminalHistory`）。

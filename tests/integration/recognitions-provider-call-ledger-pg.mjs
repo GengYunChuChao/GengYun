@@ -1,4 +1,4 @@
-// GY-R83 · `#1003` · 识别外发记账表接真实 PostgreSQL 17.11 · 端到端证据（迁移 0055）
+// GY-R83 · `#1003` · 识别外发记账表接真实 PostgreSQL 17.11 · **未接线（本机无 PG，未执行）**（迁移 0055）
 //
 // 运行（本机隔离集群，仅回环；**自带建库**，不需要事先 createdb）：
 //   node tests/integration/recognitions-provider-call-ledger-pg.mjs postgres://postgres@127.0.0.1:<port>/postgres
@@ -12,8 +12,11 @@
 //       `job_id uuid` **可空且无外键**、`export_id` 挂 `public.exports ON DELETE CASCADE`）。
 //   [K] 约束面：8 条命名约束 + 主键在位；`UNIQUE (export_id, attempt)` 真的拦重复；`provider_call_ledger_job_idx`
 //       是 `(job_id)` 上的普通索引。
-//   [W] 写原语 `createProviderCallLedger(pool).record()`：单语句 `INSERT … SELECT COALESCE(MAX(attempt),0)+1`
-//       ⇒ 同一 `export_id` 的两次外发得到 attempt=1、2（序号由数据库派生，⛔ 应用不传）；
+//   [W] 写原语 `createProviderCallLedger(pool).record()`：单语句 `INSERT … SELECT COALESCE(MAX(attempt),0)+1
+//       … RETURNING attempt` ⇒ 同一 `export_id` 的两次外发得到 attempt=1、2（序号由数据库派生，⛔ 应用不传）；
+//       返回 `{attempt}`（RETURNING 回读，⛔ 不做「写完再 SELECT 一次」的二次读）；
+//       带 `timeoutMs` 时同一条语句被包进 `BEGIN / SET LOCAL statement_timeout / COMMIT`（短预算路径，
+//       默认装配就是这样写的：最坏增量 ≤1.5s，超时按 57014 折成 `PROVIDER_TIMEOUT`）；
 //       `usage` 落成 jsonb 对象、`sent_at` 取传入值、`duration_ms` 是整数；
 //       不存在的 `export_id` ⇒ 外键拒绝（23503）但**抛出的是契约错误** `PROVIDER_UNAVAILABLE`（不泄驱动原文）；
 //       非 uuid 的 `export_id` ⇒ `INVALID_REQUEST`（装配错误，不是数据库故障）。
@@ -23,8 +26,9 @@
 //   [G] 级联：删 `public.exports` 那一行 ⇒ 该 export 的记账行随之消失（⛔ 不靠应用清理）。
 //   [A] 授权面：迁移本身**零 GRANT**（新角色直连 ⇒ SELECT/INSERT 都 42501）；
 //       把 `20-login-roles.sql` 的 `#region gy-r83-provider-call-ledger-grant` **原文**（只把角色名换成本臂探针角色）
-//       执行一遍 ⇒ 13 列 SELECT / 11 列 INSERT（含 `attempt` 子查询与 `RETURNING attempt`）全部成功；
-//       且该区**恰好**只授这两条（无 UPDATE/DELETE/TRUNCATE）。
+//       执行一遍 ⇒ 2 列 SELECT（`export_id` / `attempt`）/ 11 列 INSERT（含 `attempt` 子查询与
+//       `RETURNING attempt`）全部成功；且该区**恰好**只授这两条（无 UPDATE/DELETE/TRUNCATE，
+//       也不授整行读权：`SELECT id, domain …` 仍必须 42501）。
 //   [R] 回滚件：表里有行 ⇒ `G0019 / PROVIDER_CALL_LEDGER_ROLLBACK_BLOCKED` 中止（⛔ 不静默丢记账）；
 //       清空后 ⇒ 整表拆除（不用 IF EXISTS：缺表就跑说明迁移没落过盘）。
 //
@@ -266,7 +270,7 @@ async function expectRejected(overrides, label, codes = ['23514']) {
   assert.equal(createProviderCallLedger(null), null, '没有池 ⇒ 返回 null（不记账，⛔ 不伪造内存账本）');
 
   const sentAt = new Date('2026-11-07T01:02:03.000Z');
-  await ledger.record({
+  const written = await ledger.record({
     domain: 'recognition',
     jobId,
     exportId,
@@ -280,6 +284,7 @@ async function expectRejected(overrides, label, codes = ['23514']) {
   });
   const first = await one('SELECT * FROM public.provider_call_ledger WHERE export_id = $1 ORDER BY attempt', [exportId]);
   assert.equal(first.attempt, 1, '第一次外发 attempt 必须是 1');
+  assert.deepEqual(written, { attempt: 1 }, 'record() 必须把 RETURNING 的 attempt 直接回给调用方（⛔ 不二次读）');
   assert.equal(first.domain, 'recognition');
   assert.equal(first.capability, 'weed');
   assert.equal(first.invocation_state, 'sent');
@@ -295,7 +300,9 @@ async function expectRejected(overrides, label, codes = ['23514']) {
   note('[W] record(sent) ⇒ attempt=1、usage jsonb 对象、sent_at/duration_ms 逐字落库');
 
   // 同一 export 的第二次外发（失败那一趟）：序号由 SQL 派生 ⇒ 2；失败恒不带 usage。
-  await ledger.record({
+  // 这一笔走**短预算路径**（`timeoutMs` ⇒ BEGIN / SET LOCAL statement_timeout / COMMIT），
+  // 顺带证明事务包裹不会改变「序号由数据库派生」这件事。
+  const second = await ledger.record({
     domain: 'recognition',
     jobId: null,
     exportId,
@@ -306,7 +313,9 @@ async function expectRejected(overrides, label, codes = ['23514']) {
     usage: null,
     sentAt: new Date('2026-11-07T01:05:00.000Z'),
     durationMs: 15000,
+    timeoutMs: 1500,
   });
+  assert.deepEqual(second, { attempt: 2 }, '短预算路径（BEGIN / SET LOCAL statement_timeout / COMMIT）下序号仍由数据库派生');
   const rows = await q('SELECT attempt, invocation_state, usage, job_id, model_version FROM public.provider_call_ledger WHERE export_id = $1 ORDER BY attempt', [exportId]);
   assert.equal(rows.length, 2);
   assert.equal(rows[1].attempt, 2, '第二次外发 attempt 必须由 `COALESCE(MAX(attempt),0)+1` 派生');
@@ -460,8 +469,9 @@ async function expectRejected(overrides, label, codes = ['23514']) {
     await owner.query(region);
     await probe.query(`SET ROLE ${PROBE_ROLE}`);
 
-    // 13 列 SELECT 可用。
-    assert.equal((await probe.query('SELECT count(*)::int AS n FROM public.provider_call_ledger')).rows[0].n, 0);
+    // 2 列 SELECT 可用（列级读权 ⇒ `count(export_id)` 这种只碰已授列的聚合就行；
+    // ⛔ 别在这里写 `count(*)`：那会把「表级读权」当成前提，掩盖列面收敛）。
+    assert.equal((await probe.query('SELECT count(export_id)::int AS n FROM public.provider_call_ledger')).rows[0].n, 0);
     // 11 列 INSERT + 与写原语同形的 `attempt` 子查询 + `RETURNING attempt` 可用。
     const inserted = await probe.query(
       `INSERT INTO public.provider_call_ledger
@@ -475,6 +485,12 @@ async function expectRejected(overrides, label, codes = ['23514']) {
       [exportId],
     );
     assert.equal(inserted.rows[0].attempt, 1, 'region 授予的列面必须足够写原语那条单语句（含 attempt 子查询与 RETURNING attempt）');
+    // ⛔ 也只授 (export_id, attempt) 两列：整行回读必须仍然 42501（多授一列 = 多一条本角色不需要的读路径）。
+    await assert.rejects(
+      () => probe.query('SELECT id, domain FROM public.provider_call_ledger LIMIT 1'),
+      (error) => error.code === '42501',
+      '授权区只授 (export_id, attempt) 两列：整行回读必须 42501',
+    );
     // ⛔ 没授 UPDATE / DELETE：这两条必须仍然 42501。
     await assert.rejects(
       () => probe.query('UPDATE public.provider_call_ledger SET capability = capability'),
@@ -486,7 +502,7 @@ async function expectRejected(overrides, label, codes = ['23514']) {
       (error) => error.code === '42501',
       '授权区不许授 DELETE',
     );
-    note('[A] region 原文（角色名替换后）执行 ⇒ 13 列 SELECT + 11 列 INSERT（含 attempt 子查询/RETURNING）成功；UPDATE/DELETE 仍 42501');
+    note('[A] region 原文（角色名替换后）执行 ⇒ 2 列 SELECT（export_id/attempt）+ 11 列 INSERT（含 attempt 子查询/RETURNING）成功；整行回读与 UPDATE/DELETE 仍 42501');
   } finally {
     await probe.end();
     await owner.query(`SET ROLE NONE`).catch(() => {});

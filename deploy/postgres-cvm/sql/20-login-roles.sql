@@ -1759,8 +1759,10 @@ GRANT EXECUTE ON FUNCTION public.record_admin_report_disposition_audit(uuid, uui
 --    SELECT …, COALESCE((SELECT MAX(attempt) FROM public.provider_call_ledger WHERE export_id = $3), 0) + 1, …
 --    RETURNING attempt`
 -- ⇒ INSERT 面 11 列（`id` 与 `created_at` 吃表默认值）；
--- ⇒ SELECT 面 13 列**全给**：子查询的 `export_id` / `attempt` 读权、`RETURNING attempt` 的回读，
---   以及「某个作业/某次导出烧了多少」这个唯一预期读法都需要整行读权。
+-- ⇒ SELECT 面**只要 2 列**：`export_id`（子查询 `WHERE export_id = $3`）与 `attempt`
+--   （子查询 `MAX(attempt)` 与 `RETURNING attempt` 的回读）。运行时的读面就这两处，
+--   所以这里**不**给 13 列整行读权 —— 授权面按「代码真正读的列」收敛，多授的每一列都是
+--   一条本角色本不需要的读路径（`usage` / `sent_at` 这类字段留给排障用的只读角色）。
 --
 -- ⛔ UPDATE / DELETE / TRUNCATE / REFERENCES / TRIGGER 一律不授：记账行是**追加式事实**
 -- （哪次外发、用了哪套剖面、烧了多少），改判面一个都不开。行随 `public.exports` 的
@@ -1787,13 +1789,14 @@ END;
 $$;
 REVOKE ALL ON TABLE public.provider_call_ledger FROM PUBLIC;
 
--- 识别外发记账（迁移 0055）：读面 13 列全给（子查询 MAX(attempt) 与 RETURNING 都要读权）。
-GRANT SELECT (id,domain,job_id,export_id,attempt,capability,provider_config_version,
-              model_version,invocation_state,usage,sent_at,duration_ms,created_at)
+-- 识别外发记账（迁移 0055）：读面**2 列**（子查询的 export_id + MAX(attempt)/RETURNING 的 attempt）。
+-- ⚠ 只授这两列 ⇒ 运行时**不能**整行回读账本（`SELECT id, usage …` 会 42501）。这是有意的：
+--   写点（`privacy/media-call-accounting.ts`）写完后不需要回读任何业务列。
+GRANT SELECT (export_id,attempt)
   ON public.provider_call_ledger TO gengyun_api_runtime;
 -- 写面 11 列：id 与 created_at 由表默认值给（uuid / now()），调用方不得自报。
 GRANT INSERT (domain,job_id,export_id,attempt,capability,provider_config_version,
               model_version,invocation_state,usage,sent_at,duration_ms)
   ON public.provider_call_ledger TO gengyun_api_runtime;
 -- #endregion gy-r83-provider-call-ledger-grant
-\echo '20-login-roles.sql：已授予 public.provider_call_ledger 的列级 SELECT（13/13 列）与 INSERT（11 列，除 id/created_at 外的全列）；列清单逐列反推自 services/api/src/privacy/provider-call-ledger-pg.ts 的 record() 语句（SELECT 全给是因为子查询 MAX(attempt) 与 RETURNING attempt 都要读权）；无 UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER，行随 public.exports 的 ON DELETE CASCADE 清理，public.provider_invocations 仍零授权（有意冻结）。'
+\echo '20-login-roles.sql：已授予 public.provider_call_ledger 的列级 SELECT（2 列：export_id、attempt）与 INSERT（11 列，除 id/created_at 外的全列）；列清单逐列反推自 services/api/src/privacy/provider-call-ledger-pg.ts 的 record() 语句（读面只有子查询 MAX(attempt) 的 export_id/attempt 与 RETURNING attempt，故只授 2 列）；无 UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER，行随 public.exports 的 ON DELETE CASCADE 清理，public.provider_invocations 仍零授权（有意冻结）。'

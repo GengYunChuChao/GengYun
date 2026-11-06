@@ -915,20 +915,20 @@ const EXPECTED_EXTENDED_READINGS = {
   // GY-R73（#17）：321 → 323、SELECT 171 → 173 —— 两处新 SQL：`favorites/store-pg.ts` 的
   // listOwnerIdsByTarget（按对象反查收藏者）与 `admin/ops/invalidation-events.ts` 的收件人过滤；
   // 再叠加 R72 #838 的 +1（`community/store-pg.ts` 的举报处置审计）⇒ 字面量 **324**、SELECT **174**。
-  sqlLiterals: 327, // GY-R83：326 → 327 —— privacy/provider-call-ledger-pg.ts 的唯一一条 INSERT…SELECT
-  statements: { INSERT: 50, UPDATE: 58, SELECT: 176, DELETE: 43 },
-  returningClauses: 99,
+  sqlLiterals: 328, // GY-R83：326 → 327 → 328（P2-3 短预算多一条 `SELECT set_config('statement_timeout', $1, true)`；`BEGIN`/`COMMIT`/`ROLLBACK` 不是 SELECT/INSERT/UPDATE/DELETE，本解析器不计入）
+  statements: { INSERT: 50, UPDATE: 58, SELECT: 177, DELETE: 43 },
+  returningClauses: 100, // GY-R83 P2-2：99 → 100 —— 记账 INSERT 加了 `RETURNING attempt`（调用方直接拿到落库的是第几次）
   onConflictClauses: 31,
   selectStar: 15,
   qualifiedStar: 4,
   rowLocks: { UPDATE: 27, SHARE: 17 },
   functionCalls: 2,
-  noTargetTable: 20, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM
+  noTargetTable: 21, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM；GY-R83 P2-3：20 → 21 —— `SELECT set_config(...)` 同样没有顶层 FROM
   referencedTables: 53, // GY-R83：52 → 53 —— 新增 `public.provider_call_ledger`
   // GY-R73（#17）：2080 → 2082 —— 两处新 SELECT 的列要求（favorites 的 target/owner 列 + users 的 id/state）。
-  columnRequirements: 2110, // GY-R83：2099 → 2110 —— 写面 11 列（⚠ 子查询里读的 attempt / export_id 两列不被本解析器计入）
+  columnRequirements: 2111, // GY-R83 P2-2：2110 → 2111 —— `RETURNING attempt` 要读回 `attempt` 列（授权面已从 13 列收敛到 `(export_id, attempt)`）；P2-3 起写面仍是 11 列（⚠ 子查询里读的 attempt / export_id 两列不被本解析器计入）
   // GY-R73（#17）：1979 → 1981 —— 两处新 SELECT 的列要求都已覆盖（缺 0 条不变）。
-  coveredRequirements: 2009, // GY-R83：1998 → 2009 —— 同上 11 条全部已覆盖（本表**有**列级授权，零豁免）
+  coveredRequirements: 2010, // GY-R83：1998 → 2009 —— 同上 11 条全部已覆盖（本表**有**列级授权，零豁免）
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -964,8 +964,8 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'privacy/ledger-pg.ts': 27,
   // GY-R83（#1003，2026-11-07）：识别外发记账 `public.provider_call_ledger` 的唯一写入点。
   // 一条字面量（`INSERT … SELECT … COALESCE((SELECT MAX(attempt) …), 0) + 1`）：写面 11 列 + 读面
-  // `attempt`/`export_id` 两列，全部由 20-login-roles.sql 的 `gy-r83-provider-call-ledger-grant` 区授予。
-  'privacy/provider-call-ledger-pg.ts': 1,
+  // `attempt`/`export_id` 两列，全部由 20-login-roles.sql 的 `gy-r83-provider-call-ledger-grant` 区授予（GY-R83 P2-3：1 → 2 —— 第二条是短预算里的 `SELECT set_config('statement_timeout', $1, true)`）。
+  'privacy/provider-call-ledger-pg.ts': 2,
   'profile/service.ts': 12,
   'recognitions': 21,
   'speech': 17,
@@ -1010,7 +1010,7 @@ const EXPECTED_EXTENDED_TABLES = [
   'public.ocr_jobs',
   'public.ocr_records',
   'public.privacy_epochs',
-  // GY-R83（#1003）：识别外发记账表（迁移 0055）。运行时**有**列级授权（13 列 SELECT / 11 列 INSERT），
+  // GY-R83（#1003）：识别外发记账表（迁移 0055）。运行时**有**列级授权（2 列 SELECT / 11 列 INSERT），
   // 所以它不需要 LEDGER_COVERAGE_EXEMPT 里的任何一条 —— 缺列照样红。
   'public.provider_call_ledger',
   'public.provider_invocations',
@@ -2565,7 +2565,7 @@ const EXTENDED_OPAQUE_ALLOWLIST = [...OPAQUE_ALLOWLIST, ...LEDGER_OPAQUE_ALLOWLI
 
 // GY-R83（#1003，2026-11-07）：识别外发记账 `public.provider_call_ledger` 的唯一写入点。
 // 按**真审计**纳管（不是 UNAUTHORIZED / OPAQUE 桶）：它写的是运行时的真表，而且这张表是**有**列级
-// 授权的（`20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant`：13 列 SELECT / 11 列 INSERT），
+// 授权的（`20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant`：2 列 SELECT / 11 列 INSERT），
 // 所以缺任何一列都必须红 —— 与 0050 的 `provider_invocations`（运行时零授权、只能靠豁免）正相反。
 // ⚠ 为什么是数组外 `push`、而且必须放在这里：本文件自己被 docs 按 `:152`/`:525`/`:1512`/`:1551`/`:1909`
 // 引用，往上面的数组里插一行会把那些历史锚点整片推位；而 `loadAuditedSources()` 是一次性求值，

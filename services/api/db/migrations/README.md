@@ -83,14 +83,26 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
   按 `#region` 抽取并逐条断言「只含 `public.jobs` 的列级授权」，往里加表会让那条臂判红），
   分类/列面复述/零行探针在 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`
   （`domain_manifest` 的 `granted` 行 + `expected` 的独立列清单 + 一条 `SET LOCAL ROLE` 探针）。
-  配对回滚 `rollback/0055_provider_call_ledger.down.sql` **先预检再删表**：表里已有行 ⇒
+  授权面就两句话：**写 11 列，读 2 列**（`export_id` / `attempt` —— 子查询的 `WHERE export_id`、
+  `MAX(attempt)` 与 `RETURNING attempt` 的回读）。不授整行读权：写点写完不回读任何业务列，
+  多授一列就是多一条本角色本不需要的读路径（`90-assert` 的读面探针只列这两列）。
+  配对回滚 `rollback/0055_provider_call_ledger.down.sql` **同一事务内先 `count(*)` 再 `DROP`**：
+  表里已有行 ⇒
   `RAISE EXCEPTION USING ERRCODE='G0019', MESSAGE='PROVIDER_CALL_LEDGER_ROLLBACK_BLOCKED'`
   （记账行是**已经付出的外发代价**的唯一结构记录，删表会留下「有账无据」），正确动作是**回滚应用版本**。
+  没有提交中间态（预检与删表同一事务）；⚠ 但**未 `LOCK TABLE`**，所以「预检读空」到「`DROP` 拿到锁」
+  之间仍可能插进一行随表一起消失 —— 这是有意的取舍（回滚是运维动作，不为此给生产表加排他锁）。
   读数：`tests/unit/recognitions-call-metadata.test.mjs`（usage 读音与版本串形状/降级）、
   `tests/unit/recognitions-usage-accounting.test.mjs`（sent / send_failed / 记账抛错不改判 / 非 real 零写，
-  假 ledger、零网络）、`tests/integration/recognitions-provider-call-ledger-pg.mjs`（真库：表形状、
+  假 ledger、零网络）、`tests/unit/recognitions-ledger-composition.test.mjs`（**组合臂**：真
+  `createMediaJobEgress` × 真 `withProviderCallAccounting` × 假 exports 账本，钉住「`export_id` 必须在
+  **调用之前**取、`markSent` 之后按 `state='reserved'` 回查恒查不到」这条时序 —— 把取 id 改回调用之后，
+  该臂立刻红）、`tests/integration/recognitions-provider-call-ledger-pg.mjs`（真库：表形状、
   `usage` jsonb、`UNIQUE(export_id,attempt)`、`export_id` 级联删除、未授权角色 42501）；真库臂需
-  `*_PG_TEST_URL`，**本机无 PG，未跑**。
+  `*_PG_TEST_URL`，**本机无 PG，未跑**（该臂标题已改成「未接线（本机无 PG，未执行）」）。
+  在 CI 中真正执行 0055 DDL / 授权面的是 `.github/workflows/deploy-sql-gate.yml`（`migrate.ts up` +
+  `20-login-roles.sql` + `90-assert`，PG 17.11）；未验的是回滚件、`UNIQUE (export_id, attempt)`
+  实际拦重复、`export_id` 级联删除。
 - `0054_favorites_target_lookup.sql`（GY-R73 #17 · **反查索引**：「按被撤回/失效的收藏目标反查收藏者」的索引 ——
   后台撤回资料来源/条目后，要按对象找出「谁收藏过它」，才谈得上给这些人发失效通知）。
   接在 `0053` 之后取号（本清单最新在前，故这一条排在 `0053` 条目**之上**），号位依据「正向最大号 +1」

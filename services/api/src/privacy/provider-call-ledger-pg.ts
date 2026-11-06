@@ -19,7 +19,8 @@
  *   2. 序号维度是 `UNIQUE (export_id, attempt)`（0050 是 `(job_id, attempt)`）—— 同一次外发预留行
  *      可以被提供者重试多次，序号必须跟着**预留行**走；
  *   3. `attempt` **由本文件的语句自己派生**：`COALESCE(MAX(attempt), 0) + 1`，调用方**不得自报**。
- *      这样「第二个写入者」不可能写出重复序号而不被 `UNIQUE` 抓住。
+ *      这样「第二个写入者」不可能写出重复序号而不被 `UNIQUE` 抓住；并发撞号（`23505`）时
+ *      本模块**重试一次**（只重试这一种），再冲突就折成契约错误交给记账层。
  *
  * ## 失败语义（由调用方决定吞不吞）
  * 本模块**只抛不吞**：`record()` 的失败一律折成契约错误后 `throw`（与
@@ -30,9 +31,11 @@
  * 「这次记账失败该不该影响识别结果」——答案永远是**不该**，但那条判断必须留在看得见的地方。
  *
  * ## 证据边界
- * 本文件零网络、零真实外呼；`record()` 只有**一条** SQL 语句，其逐列清单与
+ * 本文件零网络、零真实外呼；`record()` 只写**一条** INSERT（`RETURNING attempt`），短预算路径把它
+ * 包进 `BEGIN` / `SET LOCAL statement_timeout` / `COMMIT` 三句事务语句里。其逐列清单与
  * `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant` 区、
  * `90-assert-least-privilege.sql` 的 `expected` 行是同一事实的三种写法（改一处必须三处同改）。
+ * 运行时的读权只落在 `(export_id, attempt)` 两列（子查询读、回执读），INSERT 权落在写入的 11 列。
  */
 import { ApiError } from '../errors.ts';
 import { isTransientDatabaseError } from '../db/pool.ts';
@@ -63,10 +66,22 @@ export interface ProviderCallLedgerRecordInput {
   /** 本次外发的尝试时刻（拿到响应或失败都写它；「没发出去」用**不写行**表达，不用 NULL 表达）。 */
   sentAt?: Date | null;
   durationMs?: number | null;
+  /**
+   * 这条语句的**短预算**（毫秒，≤1500）：以 `SET LOCAL statement_timeout` 落在独立连接的事务里。
+   * 超时 ⇒ PostgreSQL `57014` ⇒ 折成可重试的 `PROVIDER_TIMEOUT`；⛔ 不影响调用方对识别结果的判定。
+   * 不传 ⇒ 用连接池的默认 `statement_timeout`（`db/pool.ts` 的 5s）。
+   */
+  timeoutMs?: number | null;
+}
+
+/** `record()` 的回执：只有 `RETURNING attempt` 才能给出「这一行实际拿到了哪个序号」。 */
+export interface ProviderCallLedgerRecordResult {
+  /** 本次落库行的序号（由 SQL 派生，同一 `export_id` 上递增）。 */
+  attempt: number;
 }
 
 export interface ProviderCallLedger {
-  record(input: ProviderCallLedgerRecordInput): Promise<void>;
+  record(input: ProviderCallLedgerRecordInput): Promise<ProviderCallLedgerRecordResult>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -77,6 +92,17 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
  * 为什么是 `INSERT … SELECT` 而不是 `INSERT … VALUES`：序号要读「同一 `export_id` 上已有的最大
  * `attempt`」，`VALUES` 里放子查询不合法（PostgreSQL 的 `VALUES` 行不允许标量子查询），
  * `SELECT` 还可以让 `$3`（`export_id`）在两处复用同一个参数位。
+ *
+ * `RETURNING attempt`：回执必须给出**实际落库**的序号（`INSERT … SELECT` 选中零行时会静默不写，
+ * 只有回执能识别这种异常）。运行时的读权因此只需要 `(export_id, attempt)` 两列 —— 子查询读
+ * `attempt`/`export_id`，回执读 `attempt`；授权面见 `20-login-roles.sql` 的 `gy-r83-…` 区。
+ *
+ * ## 并发语义（`UNIQUE (export_id, attempt)` 是唯一裁决者）
+ * `COALESCE(MAX(attempt), 0) + 1` 是**读后写**：两个并发事务各自读到同一个 `MAX` 时会算出同一个
+ * 序号，后提交的那个被唯一键拒（SQLSTATE `23505`）。这是**预期**，不是缺陷 —— 序号不该由应用侧
+ * 自增或加锁串行化（那会把记账锁进识别热路径）。本模块对 `23505` **重试一次**（只重试这一种，
+ * 且只在写语句层面重试）：重试会重算 `MAX`，通常一次即成功；再冲突就按契约错误上抛，
+ * 由记账层折成 `readings.failed`（⛔ 不改判识别结果）。
  */
 const INSERT_SQL = `INSERT INTO public.provider_call_ledger
        (domain, job_id, export_id, attempt, capability, provider_config_version,
@@ -85,7 +111,11 @@ SELECT $1::text, $2::uuid, $3::uuid,
        COALESCE((SELECT MAX(attempt)
                    FROM public.provider_call_ledger
                   WHERE export_id = $3::uuid), 0) + 1,
-       $4::text, $5::text, $6::text, $7::text, $8::jsonb, $9::timestamptz, $10::integer`;
+       $4::text, $5::text, $6::text, $7::text, $8::jsonb, $9::timestamptz, $10::integer
+RETURNING attempt`;
+
+/** 唯一键冲突（并发下两个事务算出了同一个 `attempt`）：只对它重试一次。 */
+const UNIQUE_VIOLATION = '23505';
 
 /**
  * 数据库异常 → 契约错误（**抛出**，不返回类别）。
@@ -115,6 +145,20 @@ function durationArg(value: unknown): number | null {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
+/** 短预算收口：只接受 1..5000 的安全整数；不合法按「没给」处理（⛔ 不把 0/负数当无上限下发）。 */
+function timeoutArg(value: unknown): number | null {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 && value <= 5000 ? value : null;
+}
+
+/** 从 `RETURNING attempt` 的回执里取序号；拿不到就是异常（⛔ 不用 0/1 充数）。 */
+function attemptOf(result: unknown): number {
+  const attempt = (result as { rows?: Array<{ attempt?: unknown }> } | null)?.rows?.[0]?.attempt;
+  if (typeof attempt !== 'number' || !Number.isSafeInteger(attempt) || attempt < 1) {
+    throw new ApiError('PROVIDER_UNAVAILABLE', '识别外发记账未返回 attempt');
+  }
+  return attempt;
+}
+
 /**
  * 构造写入原语。
  *
@@ -124,26 +168,64 @@ function durationArg(value: unknown): number | null {
  */
 export function createProviderCallLedger(pool: PgPool | null): ProviderCallLedger | null {
   if (!pool || typeof pool.query !== 'function') return null;
+  // 收窄后的局部别名：`insertOnce` 是闭包，上面的「非 null」收窄不会被带进闭包体。
+  const sink: PgPool = pool;
+  // 短预算要一个**独立连接**（`SET LOCAL` 只在事务里有效）；没有 `connect` 的极简池/假池
+  // ⇒ 退回池级默认 `statement_timeout`（`db/pool.ts` 的 5s），⛔ 不静默改成「没有预算」。
+  const transactional = typeof (sink as { connect?: unknown }).connect === 'function';
+
+  /** 下发一条 INSERT，并取回它实际写下的 `attempt`。 */
+  async function insertOnce(params: readonly unknown[], budgetMs: number | null): Promise<number> {
+    if (budgetMs === null || !transactional) {
+      return attemptOf(await sink.query(INSERT_SQL, params as unknown[]));
+    }
+    const client = await sink.connect();
+    try {
+      await client.query('BEGIN');
+      // `SET LOCAL` 的作用域就是本事务：超时由服务端执行，客户端不必再等。
+      await client.query("SELECT set_config('statement_timeout', $1, true)", [`${budgetMs}ms`]);
+      const attempt = attemptOf(await client.query(INSERT_SQL, params as unknown[]));
+      await client.query('COMMIT');
+      return attempt;
+    } catch (error) {
+      // 回滚失败不许掩盖原始错误（连接已断时 `ROLLBACK` 自己也会抛）。
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   return {
-    async record(input: ProviderCallLedgerRecordInput): Promise<void> {
+    async record(input: ProviderCallLedgerRecordInput): Promise<ProviderCallLedgerRecordResult> {
       const exportId = typeof input?.exportId === 'string' ? input.exportId.trim() : '';
       if (!UUID.test(exportId)) {
         // 没有合法 export_id 就没有外键归属：这是**调用方的装配错误**，不是数据库故障。
         throw new ApiError('INVALID_REQUEST', '识别外发记账缺少合法的 export_id');
       }
+      const params: readonly unknown[] = [
+        input.domain,
+        typeof input.jobId === 'string' && UUID.test(input.jobId) ? input.jobId : null,
+        exportId,
+        input.capability,
+        input.providerConfigVersion,
+        typeof input.modelVersion === 'string' && input.modelVersion.trim() !== '' ? input.modelVersion.trim() : null,
+        input.invocationState,
+        usageArg(input.usage),
+        input.sentAt instanceof Date && Number.isFinite(input.sentAt.getTime()) ? input.sentAt.toISOString() : null,
+        durationArg(input.durationMs),
+      ];
+      const budgetMs = timeoutArg(input.timeoutMs);
       try {
-        await pool.query(INSERT_SQL, [
-          input.domain,
-          typeof input.jobId === 'string' && UUID.test(input.jobId) ? input.jobId : null,
-          exportId,
-          input.capability,
-          input.providerConfigVersion,
-          typeof input.modelVersion === 'string' && input.modelVersion.trim() !== '' ? input.modelVersion.trim() : null,
-          input.invocationState,
-          usageArg(input.usage),
-          input.sentAt instanceof Date && Number.isFinite(input.sentAt.getTime()) ? input.sentAt.toISOString() : null,
-          durationArg(input.durationMs),
-        ]);
+        try {
+          return { attempt: await insertOnce(params, budgetMs) };
+        } catch (error) {
+          // 并发下两个事务会算出同一个序号（见 `INSERT_SQL` 的「并发语义」）：唯一键拒 ⇒ **重试一次**。
+          if ((error as { code?: unknown } | null)?.code === UNIQUE_VIOLATION) {
+            return { attempt: await insertOnce(params, budgetMs) };
+          }
+          throw error;
+        }
       } catch (error) {
         classifyProviderCallLedgerError(error);
       }
