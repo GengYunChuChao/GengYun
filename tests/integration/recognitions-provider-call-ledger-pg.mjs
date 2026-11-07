@@ -6,7 +6,10 @@
 //   ① `[T]` 的 export_id 外键正则硬写 `REFERENCES public.exports(id)`，而 `pg_get_constraintdef`
 //      在 `search_path` 能解析到 `public` 时输出 `REFERENCES exports(id)`（无 schema 限定词）；
 //   ② `[R]` 期望回滚件抛 `G0019` 后没有 `ROLLBACK`，会话停在 aborted 状态，后续语句一律 25P02。
-// 这两处说明「写了但没跑过」的判据不能算证据——本文件此后按实跑记账。⚠️ 本臂仍**不在任何 workflow 的 `run:` 里**（白名单登记见 `tests/unit/ci-integration-chain-structure.test.mjs`），所以「本文件有实跑读数」不等于「CI 覆盖了它」。
+// 这两处说明「写了但没跑过」的判据不能算证据——本文件此后按实跑记账。R87（`#29` 尾巴）起本臂**已接线**：
+// `.github/workflows/real-pg-integration.yml` 的 `real-pg-ledger-17.11` job 用 `services.postgres:17.11`（发布在
+// `127.0.0.1:5432`，`POSTGRES_USER` 即超管）真跑它 —— 先建 `gengyun_provider_call_ledger_test` 再经 `argv[2]` 传连接串；
+// 白名单条目已从「未接线（真缺口）」改成「已接线（workflow）」（`tests/unit/ci-integration-chain-structure.test.mjs`）。
 //
 // 运行（本机隔离集群，仅回环；**自带建库**，不需要事先 createdb）：
 //   node tests/integration/recognitions-provider-call-ledger-pg.mjs postgres://postgres@127.0.0.1:<port>/postgres
