@@ -526,8 +526,8 @@ try {
   //     （M5 变异就是把它改回 ajv 文案，必须变红）；
   //   · store 侧的 `postImageLimitError()`（`services/api/src/community/store-pg.ts:457`，
   //     `field`/`code` 与上面逐字相同）经 HTTP **仍不可达**：preValidation 在进服务层之前就抢先拒了。
-  //     下面第二个探针（同一个 4 元数组打到**不存在的** post id 上，也拿到逐字相同的信封）就是
-  //     「首拒发生在进服务层之前」的证据 —— 若首拒改由 store 裁决，那里会先撞 404（帖子不存在）。
+  //     第二个探针（4 元数组打到不存在的 post id）只到指纹级：同 `field`+`code` 指纹不需要帖子行 ⇒ 排除 store 路径（它要先查到
+  //     真行才判上限，查不到是 404）；而 400 区分不了 ajv / preValidation / 服务层（摘掉 preValidation 后未知 post id 仍 400，只是换回 ajv 信封）——**与 ajv 的区分只靠**上面的整对象 `deepEqual` 与 `message` 逐字断言。
   // =========================================================================
   const tooMany = await call(authorA.token, 'PATCH', `${API}/posts/${postA}`, {
     payload: postBody([a1, a2, a3, a4]),
@@ -559,8 +559,8 @@ try {
   assert.deepEqual(
     tooManyUnknownPost.body.error.details,
     [{ field: '/media_ids', code: 'post_image_limit' }],
-    '对不存在的帖子，首拒信封必须与真实帖子上的逐字相同 ⇒ 拒点在进服务层之前'
-      + '（不是 store 的 postImageLimitError）',
+    '对不存在的帖子，首拒信封必须与真实帖子上的逐字相同 ⇒ 该指纹不依赖帖子行'
+      + '（store 的 postImageLimitError 要先查到真行才判上限，故可排除 store 裁决）',
   );
   const afterTooMany = await attachedRows(postA);
   assert.deepEqual(afterTooMany.map((row) => row.media_id), [a1, a2, a3], '被拒的 PATCH 不得改动挂载行（整笔没生效）');
@@ -569,7 +569,7 @@ try {
   say('挂载侧上限（正控制）：PATCH 一次提交 4 个 media_ids ⇒ HTTP 400 INVALID_REQUEST + '
     + 'details[0]={field:/media_ids,code:post_image_limit} + message=每个帖子最多 3 张图片'
     + '（#1057 的 preValidation 抢先，不是 ajv 文案；store 的 postImageLimitError 经 HTTP 仍不可达）；'
-    + '不存在的 post id 也拿到同一个信封 ⇒ 首拒在进服务层之前；库里挂载行仍是 3 行');
+    + '不存在的 post id 也拿到同一个 field+code 指纹（不需要帖子行 ⇒ 排除 store 裁决）；库里挂载行仍是 3 行');
 
   // =========================================================================
   // PASS 6 · 状态过滤：被删的行不进待用池（负控制：放宽 state 即红）
