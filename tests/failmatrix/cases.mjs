@@ -401,7 +401,7 @@ export const CASES = [
   { id: 'C4-09', family: 'C4', title: '小写 bearer（不合规 scheme）', method: 'GET', path: `${API}/favorites`, headers: { authorization: 'bearer c3ludGhldGlj' }, expect: { status: 401, code: 'SESSION_REQUIRED' } },
   { id: 'C4-10', family: 'C4', title: '注销申请确认词错误', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete' }, headers: key('i22-c4-10'), expect: { status: 400, code: 'INVALID_REQUEST' } },
   { id: 'C4-11', family: 'C4', title: '注销申请缺幂等键', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete_account' }, expect: { status: 400, code: 'IDEMPOTENCY_KEY_REQUIRED' } },
-  { id: 'C4-12', family: 'C4', title: '回执 bearer 读自己的注销单', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 200, etag: true }, note: '注销单与回执来自 runner 另起的 receiptHolder 账号（真 inject(POST) 受理 + 换发一次）；⛔ 不用 deleter——受理会撤销它全部会话，把 C4-10/11/15/18 打红（见 run-real.mjs 播种处注释）；本条 expect 里的 etag:true 目前只有 stub 臂判定（run.mjs:144-148），真库臂比较器只看 status/code/meta/check——两臂强度不对等属既有实现（PR #1028 审查 P2-1）' },
+  { id: 'C4-12', family: 'C4', title: '回执 bearer 读自己的注销单', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 200, etag: true }, realCheck: assertStrongEtagMatchesRevision, note: '注销单与回执来自 runner 另起的 receiptHolder 账号（真 inject(POST) 受理 + 换发一次）；⛔ 不用 deleter——受理会撤销它全部会话，把 C4-10/11/15/18 打红（见 run-real.mjs 播种处注释）；ETag 强度两臂已对等（PR #1028 审查 P2-1 的遗留项在本条修掉）：stub 臂按 expect.etag:true 在 run.mjs:144-148 判「强修订号 "n"」，真库臂的 verdictFor 不读 expect.etag（只看 status/code/meta/check），故同一强度由本条 realCheck=assertStrongEtagMatchesRevision 判（声明在本文件末尾，理由见那里），并把 ETag 逐字钉到正文 data.revision（真库 GET 的 ETag 就取自该字段，services/api/src/routes/account-deletion.ts:353）⇒ 真库侧不再只比状态码。变红条件：真库不再回 ETag、回弱形式 W/"n"、或与 data.revision 不再逐字相等' },
   { id: 'C4-13', family: 'C4', title: '用户会话不能当回执用', actor: 'receiptHolder', method: 'GET', path: (ctx) => `${API}/account/deletions/${ctx.actors.receiptHolder.deletionId}`, expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C4-14', family: 'C4', title: '回执跨单使用（改路径 id）', actor: 'receiptHolder', method: 'GET', path: `${API}/account/deletions/${ABSENT}`, headers: (ctx) => ({ authorization: `Bearer ${ctx.actors.receiptHolder.receipt}` }), expect: { status: 401, code: 'SESSION_EXPIRED' } },
   { id: 'C4-15', family: 'C4', title: '注销申请：stub 同键重放 / real 首次受理', actor: 'deleter', method: 'POST', path: `${API}/me/account/deletion`, body: { confirmation: 'delete_account' }, headers: key('i22-c4-deletion'), expect: { status: 202 }, realExpect: { status: 202 }, check: (result, ctx) => {
@@ -674,3 +674,36 @@ export const CASES = [
     return problems;
   } },
 ];
+
+/**
+ * C4-12 的真库侧判据（PR #1028 审查 P2-1）。
+ *
+ * 为什么需要它：`run-real.mjs` 的比较器 `verdictFor` **不读** `expect.etag`（只看 status/code/meta/check），
+ * 所以 `expect: { status: 200, etag: true }` 原先只有 stub 臂（`run.mjs:144-148`）判 ETag，
+ * 真库侧只剩状态码级 —— 同一条用例两臂强度不对等。真库路由**确实**出强 ETag
+ * （services/api/src/routes/account-deletion.ts:353 的 GET 处理器 `.header('ETag', "\"<revision>\"")`），
+ * 没有任何「真库侧只能更弱」的理由，故按同口径在本条补 realCheck。
+ *
+ * 为什么声明在文件末尾：本文件前面那些行（如 C4-15/C4-18 的定义行）被 `docs/verification/` 里
+ * 的取证页按行号锚着，其中三条走 `tests/unit/doc-anchor-relocations.json` 的 `kind: "correction"`
+ * 登记；把判据插在用例中间会把这些行整体下推，重锚就得连同登记表一起改。函数声明会提升，
+ * 用例对象里先引用、文末声明是安全的，且**零行号位移**。
+ *
+ * 判据（任一不满足即该条判 DIFF）：① ETag 是强格式 `"<数字>"`（与 stub 臂 run.mjs:144-148 同口径，
+ * 显式排除 `W/` 弱前缀）；② 正文 `data.revision` 是 ≥1 的安全整数（ETag 的来源）；
+ * ③ ETag 逐字等于 `"${data.revision}"`。
+ */
+function assertStrongEtagMatchesRevision(result) {
+  const problems = [];
+  const etag = result.headers?.etag;
+  const revision = result.body?.data?.revision;
+  if (typeof etag !== 'string' || !/^"\d+"$/.test(etag)) {
+    problems.push(`ETag 期望强修订号 "n"（不带 W/ 弱前缀；与 stub 臂 run.mjs:144-148 同口径），实际 ${JSON.stringify(etag ?? null)}`);
+  }
+  if (!Number.isSafeInteger(revision) || revision < 1) {
+    problems.push(`data.revision 期望正整数（ETag 的来源），实际 ${JSON.stringify(revision ?? null)}`);
+  } else if (etag !== `"${String(revision)}"`) {
+    problems.push(`ETag 必须逐字等于正文修订号：期望 ${JSON.stringify(`"${String(revision)}"`)}，实际 ${JSON.stringify(etag ?? null)}`);
+  }
+  return problems;
+}
