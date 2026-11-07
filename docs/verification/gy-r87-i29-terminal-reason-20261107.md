@@ -1,9 +1,9 @@
 # GY-R87 / #29：撤回导致的 job 终态原因可读（2026-11-07）
 
-- 基线：本片起点 `040867a7`（2026-11-07 23:26:16 +0800）；合并时 `origin/main` 为 `1f623228`（#1059 的撤回作用域负控制、#1064 的注销文案已合入），本片以 **merge 提交**并入；推送前按复核要求 **rebase 到 `2aa5d433`**，该 merge 提交在 rebase 中重建、第二父即 `2aa5d433`，`238f9f7c` 及其之前的历史未改写。`1f623228..2aa5d433` 实测是 **4 个合入**（`git rev-list --count` = 4：#1065 `8d30d4a1`、#1060 `3ac94018`、#1066 `fd6a225c`、#1068 `2aa5d433`）、**10 个文件**（`git diff --stat 1f623228 2aa5d433`：`.github/workflows/engineering-shell.yml`、`package.json`、`tools/verify-reading-pages.mjs`、`tools/lib/g-drill-readings.mjs`、`tests/integration/post-media-attachments-pg.mjs`、`tests/reference/i26-tabbar-skeleton.test.mjs`、`tests/unit/post-media-attachments-say-floor.test.mjs`、`tests/unit/verify-reading-pages.test.mjs`、`docs/verification/gy-i26-demo-align-20261014.md`、`docs/verification/gy-r69-drill-full-20261028.md`，合计 2027 增 / 14 删）；这 10 个文件与本片改动面**逐文件零交集**——本片只碰 `services/api/src/**`、`packages/contracts/**`、`packages/{media,privacy}/constants.mjs`、`apps/admin/src/lib/**`、`miniprogram/utils/**`、`tests/**` 与 `docs/**` 里的相应几处（`git diff --name-only 2aa5d433 HEAD` 共 28 个文件；同一棵 `tests/**`、`docs/**` 树下也是不同文件）。所以 rebase 只需解 2 处冲突，且两处都不来自上述 4 个合入，而是 #1059（`07880810`）与本片各自改到同两个文件：`tests/integration/egress-ledger-pg.mjs`、`docs/verification/gy-r71-comment-strip-20261030.md`
+- 基线：本片起点 `040867a7`（2026-11-07 23:26:16 +0800）；合并时 `origin/main` 为 `1f623228`（#1059 的撤回作用域负控制、#1064 的注销文案已合入），本片以 **merge 提交**并入；推送前按复核要求 **rebase 到 `2aa5d433`**，该 merge 提交在 rebase 中重建、第二父即 `2aa5d433`，`238f9f7c` 及其之前的历史未改写。`1f623228..2aa5d433` 实测是 **4 个合入**（`git rev-list --count` = 4：#1065 `8d30d4a1`、#1060 `3ac94018`、#1066 `fd6a225c`、#1068 `2aa5d433`）、**10 个文件**（`git diff --stat 1f623228 2aa5d433`：`.github/workflows/engineering-shell.yml`、`package.json`、`tools/verify-reading-pages.mjs`、`tools/lib/g-drill-readings.mjs`、`tests/integration/post-media-attachments-pg.mjs`、`tests/reference/i26-tabbar-skeleton.test.mjs`、`tests/unit/post-media-attachments-say-floor.test.mjs`、`tests/unit/verify-reading-pages.test.mjs`、`docs/verification/gy-i26-demo-align-20261014.md`、`docs/verification/gy-r69-drill-full-20261028.md`，合计 2027 增 / 14 删）；这 10 个文件与本片改动面**逐文件零交集**——本片只碰 `services/api/src/**`、`packages/contracts/**`、`packages/{media,privacy}/constants.mjs`、`apps/admin/src/lib/**`、`miniprogram/utils/**`、`tests/**` 与 `docs/**` 里的相应几处（`git diff --name-only 2aa5d433 HEAD` 共 28 个文件；同一棵 `tests/**`、`docs/**` 树下也是不同文件）。所以 rebase 只需解 2 处冲突，且两处都不来自上述 4 个合入，而是各自与本片改到同一个文件：`tests/integration/egress-ledger-pg.mjs` 的对家是 #1059（`07880810`，在其中加第 12 节「撤回的作用域负控制」）；`docs/verification/gy-r71-comment-strip-20261030.md` 的对家是 #1037（`6e7f7465`，把 `tests/unit/sql-column-coverage.test.mjs` 的锚点 `1559→1562`），与 #1059 无关——#1059 只动 `tests/integration/egress-ledger-pg.mjs` 一个文件
 - 分支：`feat/gy-r87-i29-terminal-reason`
 - 范围：只把「因撤回而终止」这条原因送到 `GET /api/v1/jobs/{id}` 的读面；**不**级联改 `public.jobs` 的 `state`，**不**动 `public.exports` 的取消列。
-- 真库：**作者本机**的一次性隔离簇 PostgreSQL **17.11**，`127.0.0.1:55441`，库名 `gengyun_egress_test`，2026-11-08 04:0x HKT 的**作者侧复跑**（**不是**本次独立复核的实例——审查者另起 `127.0.0.1:55471`，见 §5.6）；未发出任何对外/付费请求。
+- 真库：**作者本机**的一次性隔离簇 PostgreSQL **17.11**，`127.0.0.1:55441`，库名 `gengyun_egress_test`，≤ 2026-11-08 03:59 HKT 的**作者侧复跑**（**不是**本次独立复核的实例——审查者另起 `127.0.0.1:55471`，见 §5.6）；未发出任何对外/付费请求。
 
 ## 1. 缺口原状（改前，基线 `040867a7`）
 
@@ -136,9 +136,9 @@ TTS 的 `services/api/src/tts/service.ts:663` 的 `SynthesisArtifactError` 分�
 | 会话 | **未改——该域无此问题** | `services/api/src/conversations/service.ts:499-503` 的 `settleCodeOf` 已经「`instanceof ApiError` / `instanceof PrivacyError` 且 `isErrorCode` ⇒ 保留原码」，唯一调用点 `services/api/src/conversations/service.ts:1298` 在异步任务 IIFE 的 catch 里，**不经过** `.catch(()=>({kind:'threw'}))` 折损。加契约码后它自动能写出 `CONSENT_WITHDRAWN` |
 | TTS（合成） | **改**（见 §3.3 末行与 §3.4） | 缺口与三域同形、且更靠下一层：`services/api/src/privacy/synthesis-egress.ts:315` / `:333` 的两处守卫是**裸调用**，撤回时抛 `OBJECT_UNAVAILABLE` 不翻译；`services/api/src/tts/service.ts:645` 的 threw 分支再把它折成 `PROVIDER_OUTCOME_UNKNOWN`。本片补上包装器并让 threw 分支走 `terminalFailureCodeOf`；`services/api/src/tts/service.ts:698` 与 `services/api/src/tts/service.ts:710` 的 threw 形态本来就在，缺的只是「原因怎么裁决」 |
 
-## 5. 实跑读数（**作者侧**：作者本机一次性簇 `127.0.0.1:55441`，PG 17.11，库 `gengyun_egress_test`，2026-11-08 04:0x HKT）
+## 5. 实跑读数（**作者侧**：作者本机一次性簇 `127.0.0.1:55441`，PG 17.11，库 `gengyun_egress_test`，≤ 2026-11-08 03:59 HKT）
 
-命令：`node tests/integration/egress-ledger-pg.mjs`（`EGRESS_LEDGER_TEST_URL=postgres://postgres@127.0.0.1:55441/gengyun_egress_test`，每次先 drop/create 空库）。本节的 `55441` 是**作者本机**的簇、读数是**作者侧复跑**（PG 17.11，2026-11-08 04:0x HKT）；**本次独立复核另起 `127.0.0.1:55471`**，两组读数不可互替，见 §5.6。
+命令：`node tests/integration/egress-ledger-pg.mjs`（`EGRESS_LEDGER_TEST_URL=postgres://postgres@127.0.0.1:55441/gengyun_egress_test`，每次先 drop/create 空库）。本节的 `55441` 是**作者本机**的簇、读数是**作者侧复跑**（PG 17.11，≤ 2026-11-08 03:59 HKT）；**本次独立复核另起 `127.0.0.1:55471`**，两组读数不可互替，见 §5.6。
 
 ### 5.1 正控制（读面）——`PASS 9`
 
@@ -240,7 +240,7 @@ stderr 有一行既有噪音 `GY-I16 识别终态历史写入失败（端口=wir
 | 闸门 | 结果 |
 | --- | --- |
 | `node --test tests/ui-unified-states.test.mjs` | **10 tests / 10 pass / 0 fail**，EXIT=0（修前 `EXIT=1`：10 tests / 9 pass / 1 fail，见 §3.5） |
-| `node tests/integration/egress-ledger-pg.mjs`（**作者本机**一次性簇 `127.0.0.1:55441`，PG 17.11，2026-11-08 04:0x HKT，作者侧复跑；审查者复核的 `127.0.0.1:55471` 见 §5.6） | `RESULT=PASS 16 组`，EXIT=0；`PASS 14` 是 #1059 的作用域负控制，`PASS 15`/`PASS 16` 是本片的负控制 B／C |
+| `node tests/integration/egress-ledger-pg.mjs`（**作者本机**一次性簇 `127.0.0.1:55441`，PG 17.11，≤ 2026-11-08 03:59 HKT，作者侧复跑；审查者复核的 `127.0.0.1:55471` 见 §5.6） | `RESULT=PASS 16 组`，EXIT=0；`PASS 14` 是 #1059 的作用域负控制，`PASS 15`/`PASS 16` 是本片的负控制 B／C |
 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | **37 tests / 37 pass / 0 fail**，EXIT=0 |
 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | EXIT=0（`COUNT: BROKEN 4 / OUT_OF_RANGE 1 / SUSPECT 43 / NOT_SYMBOL_LINE 8`；`PASS: --strict 下没有基线之外的新增`） |
 | `node tools/verify-contract-status.mjs` | EXIT=0（7 条 PASS：覆盖 130 条契约操作、语义可核 124 条区间、证据锚点 593 条、中文表格一致等） |

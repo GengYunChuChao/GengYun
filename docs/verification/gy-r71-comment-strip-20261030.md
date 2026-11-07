@@ -140,7 +140,7 @@ export const ok = 1; // 这里不是铸造：approveModerationLiveWiring( 只是
 `tests/unit/moderation-live-adapter.test.mjs:883`、
 `tests/unit/moderation-live-wiring-assembly.test.mjs:457`（**本片已修**，现改走 `tools/lib/strip-comments.mjs`）、
 `tests/unit/ocr-image-source.test.mjs:588`、`tests/unit/ocr-media-port.test.mjs:647`、
-`tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:168`、`tests/unit/sql-column-coverage.test.mjs:1561-1562`（`buildConstMap` 的去注释链：1561 行是 `^\s*\/\/` 行注释正则、1562 行是 `/* */` 正则，两颗各一行）
+`tests/unit/privacy-egress-ledger-error-code-closed-set.test.mjs:168`、`tests/unit/sql-column-coverage.test.mjs:1562`（`buildConstMap` 的去注释链里 1562 行是 `/* */` 正则；同一链的上一行 1561 才是 `^\s*\/\/` 行注释正则，本项只锚前者）
 
 这一档里有几条**风险面更大**，值得指挥单独立片（见 §10）：
 
