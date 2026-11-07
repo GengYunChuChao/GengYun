@@ -1320,7 +1320,7 @@ jobs:
           set -euo pipefail
           log=/tmp/failmatrix-real.log
           rc=0
-          node tests/failmatrix/run-real.mjs --json="$RUNNER_TEMP/failmatrix-real/real.json" 2>&1 | tee "$log" || rc=$?
+          node tests/failmatrix/run-real.mjs --require-no-not-runnable --json="$RUNNER_TEMP/failmatrix-real/real.json" 2>&1 | tee "$log" || rc=$?
           if [ "$rc" -eq 77 ]; then
             echo "::error::失败矩阵的真 PG 臂被跳过（exit 77）：GY_PG_BIN 没装好/没传到，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
             exit 1
@@ -1335,6 +1335,8 @@ jobs:
           PGCLIENTENCODING: UTF8
       # 机读自证（不许「静默通过」）：`exit 0` 不等于有读数。总条数为 0、三档之和与总数对不上、
       # `rows` 长度对不上、`execution_mode` 不是 `real` —— 任意一条成立就红；同时把这条臂的计数打到日志。
+      # 另：上面那条调用带 `--require-no-not-runnable` —— `not_runnable > 0` 直接 exit 1（不是 shell 闸门，是脚本自己的判据）；
+      #     背景见 #1028 审查 P2-2 / #22 被重开的原因（13 条 not_runnable 曾让「未运行」被读成通过）。
       # ⚠️ 这里**不写 shell 数值闸门**（`readings` + `-lt` 那套）：读数闸门冻结表只认
       # `tests/integration/*.mjs` 那条链，本臂是 `tests/failmatrix/` 下的独立矩阵，自证用 JSON 更贴它的产物。
       - name: 机读结果自证（总条数 > 0、三档之和 === 总条数、execution_mode = real）
