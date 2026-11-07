@@ -1,7 +1,7 @@
 # 注销「受理即不可撤回」裁定记录：收回「可凭回执取消」的产品承诺（2026-11-07）
 
-- 基线：`origin/main = 040867a71f3e9401eceab2b91705b59eb8e19d14`（`git fetch origin --prune` 后实测）；本页的取证行号全部在这条基线上复核，**不是**从派单里照抄的旧读数。
-- 工作树 `E:\GengYunCommander\.pg17\wt-r87-i19copy`，分支 `docs/gy-r87-i19-cancel-honest`，`git rev-parse HEAD` = `040867a7`。
+- 基线：本提交 parent `040867a7`；取证行号按此基线复核，**不是**从派单里照抄的旧读数。
+- 工作树 `E:\GengYunCommander\.pg17\wt-r87-i19copy`，分支 `docs/gy-r87-i19-cancel-honest`，本页落笔时 HEAD = `f94c4ad4`（父 `040867a7`）。
 - 本页只做两件事：① 把小程序里「受理后还能凭回执取消」的产品承诺收回；② 把「为什么现在不做撤销链」的裁定、证据与遗留登记下来。**没有**改 `services/**`、**没有**新增迁移、**没有**改契约与契约台账（`packages/contracts/openapi.json`、`docs/architecture/contract-status.json`、`docs/architecture/contract-implementation-status.md` 三个文件本片一个字都没动）。
 - 同一缺口此前已登记过两处，本页引用而不改写它们：`docs/verification/gy-r82-failmatrix-reconcile-20261106.md:103`（§7 第 5 条：real 模式下「受理后撤销注销」走不通，只实测到 401/403，「没有验证前端是否另有撤回入口」）与 `docs/verification/gy-r82-user-verification-checklist-20261106.md:43`（D-c 条目：同一问题，未开单）。本页补齐的正是那两句留下的空白——**前端确实另有撤回入口**，而且它在文案里明确承诺过「可以凭回执取消」。
 
@@ -52,7 +52,7 @@
 - `miniprogram/pages/deletion/deletion.js` 第一层确认（旧行 374）：「…在服务端完成之前，**你可以用回执取消**。」
 - 同文件第二层确认（旧行 387）：「…凭本机保存的回执凭据可以查询进度，**也可以在生效前取消**。」
 - 页面副标题 `miniprogram/pages/deletion/deletion.wxml:8`（改前）：「…用回执查看进度，**并在服务端完成前取消**。」
-- 取消入口自己的第一次确认（旧行 459，改后 `miniprogram/pages/deletion/deletion.js:461`）：「**取消后账号恢复为未申请注销**，数据不会被删除；这条回执随即作废。确认取消这次申请？」——受理后这条路会 401，所以这句话在 real 下同样是空头承诺（见 §3 最后一行）。
+- 取消入口自己的第一次确认（旧行 459，改后 `miniprogram/pages/deletion/deletion.js:461`）：「**取消后账号恢复为未申请注销**，数据不会被删除；这条回执随即作废。确认取消这次申请？」——受理后这条路会 401，所以这句话在 real 下同样是空头承诺（见 §3 最后一行；该句已按审查意见改成条件式）。
 - `miniprogram/utils/deletion-api.js:11` 的接口表写 `cancelDeletion | DELETE /me/account/deletion | 登录会话 [user]` —— 这一行是**事实描述**（接口确实挂会话鉴权），保留不改。
 
 ## §3 已收回的文案（旧文 → 新文）
@@ -65,10 +65,12 @@
 | `miniprogram/pages/deletion/deletion.wxml:8` | 「…用回执查看进度，**并在服务端完成前取消**。」 | 「…用回执查看进度；**申请一经服务端受理就不可撤回**。」 |
 | `miniprogram/pages/deletion/deletion.wxml:22` | 「…**申请与取消**都发不出去…」 | 「…**申请与查回执**都发不出去…」 |
 | `miniprogram/pages/deletion/deletion.wxml:30` | 「**申请与取消注销**都绑定当前登录账号。」 | 「**申请注销**绑定当前登录账号。」 |
-| `miniprogram/pages/deletion/deletion.wxml:180`（新增一行） | —（无） | 「不可撤回：申请一经服务端受理，这个账号的全部登录会话就会在同一事务里被撤销；此后没有自助撤回通道（下面的「取消注销申请」走的是用户会话鉴权，会话撤销后它不会成功）。」 |
+| `miniprogram/pages/deletion/deletion.wxml:180`（新增一行） | —（无） | 「不可撤回：申请一经服务端受理，这个账号的全部登录会话就会在同一事务里被撤销；此后**没有任何撤回通道**（**上面**的「取消注销申请」走的是用户会话鉴权，会话撤销后它不会成功）。」 |
 | `miniprogram/pages/profile/profile.wxml:242` | 「…**申请与取消都要二次确认**；冷静期与生效时间…」 | 「…**申请要二次确认；一经服务端受理就会立即撤销这个账号的全部登录会话，申请不可撤回**。冷静期与生效时间…」 |
 | `miniprogram/pages/deletion/deletion.js:6-8`（文件头注释） | 「→ **生效前取消**（DELETE /me/account/deletion，二次确认）。」 | 「→ 取消（…二次确认；**real 模式下受理事务已撤销该用户全部会话 ⇒ 这条路径 401/403 不可达**，用户文案因此不承诺可撤回…）。」 |
-| `miniprogram/pages/deletion/deletion.js:461`（取消入口第一次确认） | 「取消后账号恢复为未申请注销，数据不会被删除；这条回执随即作废。确认取消这次申请？」 | 「…这条回执随即作废。**注意：真实服务端在受理注销时已撤销这个账号的全部登录会话，此时这次取消会被判会话失效而失败。**确认取消这次申请？」 |
+| `miniprogram/pages/deletion/deletion.js:461`（取消入口第一次确认） | 「取消后账号恢复为未申请注销，数据不会被删除；这条回执随即作废。确认取消这次申请？」 | 「**若取消成功：**账号恢复为未申请注销、数据不会被删除、这条回执随即作废。**注意：真实服务端受理注销时已撤销该账号的全部登录会话，这一步通常会被判会话失效而失败。**确认取消这次申请？」 |
+
+补丁（审查 7 条里落在文案上的三条，行号不变，逐条见提交说明）：`miniprogram/pages/deletion/deletion.js:461` 的原句**先无条件承诺**「取消后账号恢复为未申请注销、数据不会被删除」、再补一句免责，已改成「**若取消成功：**…」的条件式，承诺只在成功分支成立；`miniprogram/pages/deletion/deletion.wxml:180` 删去「自助」二字——这两个字预设了「另有非自助（人工/客服）通道」，而全仓没有；同句「下面」改为「上面」（按钮在 `miniprogram/pages/deletion/deletion.wxml:164`，在这个 panel 上方，同 panel `:177` 也写「上面回执」）。
 
 测试兼容性：`tests/unit/miniprogram-account-deletion.test.mjs:206-208` 钉住的是「第一次确认必须含 `不可恢复`」「必须含 `以服务端返回的 deletion 字段为准`」「第二次确认含 `确认向服务端提交注销申请`」三条正则 —— 新文案把这三处全部保留，只换尾句。取消面那些用例（同文件 306、423-444、494-515 行）只断言「两次确认」「`confirmText` 恰 4 字」「不发请求」，没有任何一条逐字钉住弹窗正文，所以改 `miniprogram/pages/deletion/deletion.js:461` 的正文也不破测试：**全程没有改任何测试**。同一文件（`tests/unit/miniprogram-account-deletion.test.mjs`）546-563 行的九态闭集只看 `status="…"` 属性，`miniprogram/pages/deletion/deletion.wxml` 的九个状态属性一个字都没动。
 
@@ -79,6 +81,7 @@
 - **状态机也没有这一格**：`docs/architecture/state-contract.md:107` 写的是 `requested → processing → completed`、失败 `blocked`，全篇没有 `cancelled`。
 - **本页不决定**：这个契约操作是**从契约里删掉**、**降级成 admin-only**、还是**保留并在文档里标注「real 下不可达」**——三选一属监工改判权限，需要同步动的三个文件（`packages/contracts/openapi.json`、`docs/architecture/contract-status.json`、`docs/architecture/contract-implementation-status.md`）本片按派单要求一个字都没碰。本页只把事实摆出来。
 - **客户端仍保留入口**：`miniprogram/pages/deletion/deletion.wxml:164` 的「取消注销申请」按钮与 `miniprogram/pages/deletion/deletion.js:444-494` 的取消入口（两次确认）都还在（stub 路径下它真的能走通，`tests/unit/miniprogram-account-deletion.test.mjs:316` 等用例依赖它）。是否移除按钮、或按 `meta.execution_mode` 做模式门控，同属改判，本片只在文案里写明它「不会成功」，不动按钮与流程。
+- **另**：`miniprogram/pages/deletion/deletion.wxml:52-60` 的 cancelled 落点与 `docs/ui-state-inventory.md:37` 的登记，在 real 下同样不可达，去留随本节的监工改判。
 
 ## §5 另开需求单草案（只写在本页，不建 GitHub issue）
 
@@ -97,13 +100,15 @@
 
 ## §6 锚点与闸门
 
-- **锚点位移**：改 `miniprogram/pages/deletion/deletion.js` 前先查 `git grep -n 'deletion.js:' -- docs miniprogram tests tools` ⇒ **零命中**（没有任何文档按行号引用这个文件），因此本次改动**不产生**文档锚点位移，也不需要动 `tests/unit/doc-anchor-relocations.json` 或 `tools/doc-anchors-*.json`。
+- **锚点位移**：改 `miniprogram/pages/deletion/deletion.js` 前先查 `git grep -n 'deletion.js:' -- docs miniprogram tests tools` ⇒ 当时**零命中**（没有任何文档按行号引用这个文件），所以收回文案这一步本身不产生文档锚点位移，也不需要动 `tests/unit/doc-anchor-relocations.json` 或 `tools/doc-anchors-*.json`。
+- **本页自己造的锚点**：本页写完就多出 14 类 21 处 miniprogram 行号引用（`deletion.wxml`／`deletion.js`／`profile.wxml`／`deletion-api.js`）。这些锚点**行号按 `f94c4ad4` 计**，后续按语义定位——改了那两页的措辞就先复核这里，不指望行号自己跟得上；撤销窗口真做起来时（§5），这批锚点随需求单一起重算。
 - 闸门读数见提交前实跑，逐条退出码记在交付报告里（本页不复制读数行，避免两处不同步）。
 
 ## §7 本页不声称什么
 
 - **不声称撤销能力已实现**：`DELETE /me/account/deletion` 在 real + 真库下依旧不可达，DB 侧没有 `cancelled` 写路径；本页只收回**文案承诺**，没有补能力。
-- **不声称有客服/人工通道**：仓库里没有任何客服入口（`git grep -in 'kefu'` 零命中；`客服` 只出现在「便于客服对账」这类旁白里），所以新文案**没有**写「请联系客服」——没有的入口不写进产品话术。
+- **不声称有客服/人工通道**：仓库里没有任何客服入口（`git grep -in 'kefu'` **除本页外**零命中；`客服` **除本页外**只出现在「便于客服对账」这类旁白里），所以新文案**没有**写「请联系客服」——没有的入口不写进产品话术。
+- **不声称取消成功的落点在 real 下可达**：`cancelled` 那一屏（`miniprogram/pages/deletion/deletion.wxml:52-60`）与 `docs/ui-state-inventory.md:37` 的登记，在 real + 真库下同样走不到（取消必 401/403，见 §2 ③）；本页只登记这条不一致，去留随 §4 的监工改判，不改那一屏、不改台账、不改 `packages/contracts/states.json` 的 `DeletionState`。
 - **不声称契约已定稿**：`cancelDeletion` 是删、是降级、还是留着标注，属监工改判（§4），本页不预设结论。
 - **不声称法条解读已合规确认**：§1 的法条要点只用于解释「为什么不必须设冷静期」，条文与条号的对应**需法务确认**。
 - **不声称 `#19` 因此可关**：本页只处理「承诺 vs 现实」这一条不一致，`#19` 的其余验收项按各自证据单算。
