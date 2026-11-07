@@ -211,7 +211,7 @@ export function registerCommunityRoutes(
 
   app.post(
     `${API_PREFIX}/posts`,
-    { onRequest: noStoreHook, preHandler: postingPreHandlers(guards, deps), schema: { body: postBody } },
+    { onRequest: noStoreHook, preValidation: rejectMediaIdsOverflow, preHandler: postingPreHandlers(guards, deps), schema: { body: postBody } },
     async (request, reply) => {
       const data = await ready().createPost(actorOf(request), request.body, writeOptions(request));
       return noStore(reply)
@@ -232,7 +232,7 @@ export function registerCommunityRoutes(
 
   app.patch(
     `${API_PREFIX}/posts/:id`,
-    { onRequest: noStoreHook, preHandler: postingPreHandlers(guards, deps), schema: { params: ID_PARAMS, body: postBody } },
+    { onRequest: noStoreHook, preValidation: rejectMediaIdsOverflow, preHandler: postingPreHandlers(guards, deps), schema: { params: ID_PARAMS, body: postBody } },
     async (request, reply) => {
       const data = await ready().editPost(actorOf(request), idOf(request), request.body, writeOptions(request));
       return noStore(reply).header('ETag', strongEtagOf(data.revision)).send({ data, meta: buildMeta(request, config) });
@@ -420,4 +420,50 @@ function postingPreHandlers(
 ) {
   if (deps.consent === undefined) return guards.requireUser;
   return [guards.requireUser, deps.consent({ purpose: 'public_posting' })];
+}
+
+/** 每个帖子最多挂几张图：直接取自 `postBody` 的 schema，避免「schema 一个数、判据另一个数」漂移。 */
+const MAX_MEDIA_IDS_PER_POST: number = postBody.properties.media_ids.maxItems;
+
+/**
+ * `media_ids` 超过 3 个 ⇒ 领域同款机器码 `post_image_limit`（而不是 ajv 的英文文案）。
+ *
+ * 挂在 `POST`/`PATCH /posts` 的 `preValidation` 上（见上面两条路由的选项行），
+ * 对应缺口：`postBody.media_ids.maxItems: 3` 先被 ajv 拦下后，`app.ts` 把校验失败折叠成
+ * `400 INVALID_REQUEST`，`details[].code` 只剩 `must NOT have more than 3 items in array`。
+ *
+ * ## 为什么补在这一层、而不是放宽 `maxItems` 让领域层去拒
+ *
+ * 上限本来有两道闸：`postBody.media_ids.maxItems`（进程内、零成本）＋真实存储侧配套的
+ * 库内 CHECK（`community_posts_media_ids_max`，把 `23514` 映射成
+ * `INVALID_REQUEST` + `details: [{ field: '/media_ids', code: 'post_image_limit' }]`，
+ * 见 #1037 引入的 `services/api/src/community/store-pg.ts::postImageLimitError`）。
+ * 若为了拿机器码而放宽或去掉 `maxItems`：① 一次注定被 CHECK 拒掉的投稿要先穿过 ajv、
+ * 处理器、幂等收据与事务边界，等于用一次数据库往返换掉本可在进程内拒掉的 4xx；
+ * ② stub/内存 store 根本没有那条 CHECK，放宽后走不到领域侧，机器码在这些模式下
+ * **永远**拿不到，缺口照旧；③ 契约 `packages/contracts/openapi.json` 明写
+ * `media_ids` 是「≤3 个 uuid」，放宽 schema 会让实现比契约更宽、描述失真。
+ * 所以闸门留在原处，这里只把 ajv 那句英文文案换成机器码，契约描述仍为真。
+ *
+ * ## 为什么 `field` 是 `/media_ids` 而不是 `/purpose`
+ *
+ * 上传面（`packages/media/validate.mjs:84-91`）报 `/purpose`，因为它判的是
+ * 「这次上传的 purpose 会不会让该帖超限」，那时手里只有上传意图、还没有帖子请求体。
+ * 这里超限的是**帖子请求体自己的** `media_ids` 字段，JSON 实例路径就是 `/media_ids`，
+ * 与领域侧逐字一致 ⇒ 客户端按同一个 `field` 就能定位到出问题的字段。
+ *
+ * ## 只认「数组长度 > 3」这一种
+ *
+ * 其它校验失败（`additionalProperties`、uuid 格式、`uniqueItems`…）一律不动，
+ * 继续由 `app.ts` 把 ajv 的 `validation[]` 折叠成 `INVALID_REQUEST`。
+ * `preValidation` 在 schema 校验**之前**、`preHandler` 鉴权**之前**执行，拿到的是
+ * 已解析的 body；ajv 本来也在 `preHandler` 之前跑，所以这里不改写任何 401/400 优先级。
+ */
+async function rejectMediaIdsOverflow(request: { body: unknown }): Promise<void> {
+  const body = request.body as { media_ids?: unknown } | null | undefined;
+  const mediaIds = body?.media_ids;
+  if (!Array.isArray(mediaIds) || mediaIds.length <= MAX_MEDIA_IDS_PER_POST) return;
+  throw new ApiError('INVALID_REQUEST', `每个帖子最多 ${MAX_MEDIA_IDS_PER_POST} 张图片`, {
+    details: [{ field: '/media_ids', code: 'post_image_limit' }],
+  });
 }
