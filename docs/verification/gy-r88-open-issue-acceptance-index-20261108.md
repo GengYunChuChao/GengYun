@@ -23,7 +23,7 @@
 5. `#1065` → `8d30d4a1`（19:33，`test(media): 钉住同帖并发挂图与负控制`）：`tests/integration/post-media-attachments-pg.mjs` 增 225 行，补 ⑩ 同帖并发（`tests/integration/post-media-attachments-pg.mjs:600`）与 ⑪ `owner_id`/`state` 计数过滤负控制。
 6. `#1061` → `c327274e`（23:17，`test(reference): 给 #28 真机台账加状态闭集与证据闸门`）：`tests/reference/i26-tabbar-skeleton.test.mjs` 增 494 行，真机台账状态只许闭集、证据必须落在 `docs/verification/assets/` 且 ≥1024 字节。
 7. `#1062` → `040867a7`（23:26，`docs(verification): 出 R87 开放 issue 验收现状快照`）：R87 页 76 行落地，并在 R83 页首行加「已被 R87 取代」的指路。
-8. `#1063` → `6980d8f1`（2026-11-08 00:18，`test(failmatrix): 真库臂也读 expect.etag（C4-12 的 ETag 期望不再只在 stub 侧判）`）：真库臂 `sameWithCheck` 24→25、`either` 54→55、`neither` 126→125（`docs/verification/gy-r87-etag-parity-20261107.md:52`），整臂七列合计为 `total 180`、`same 180`、`sameWithCheck 25`、`sameWithShape 30`、`二者皆无 125`、`different 0`、`not_runnable 0`（`docs/verification/gy-r87-etag-parity-20261107.md:64`）；同一提交自陈这条断言在 CI 里红不了，因为真库臂退出码只由 `not_runnable` 决定（`docs/verification/gy-r87-etag-parity-20261107.md:74`）。
+8. `#1063` → `6980d8f1`（2026-11-08 00:18，`test(failmatrix): 真库臂也读 expect.etag（C4-12 的 ETag 期望不再只在 stub 侧判）`）：真库臂 `sameWithCheck` 24→25、`sameWithEither` 54→55、`sameWithNeither` 126→125（`docs/verification/gy-r87-etag-parity-20261107.md:52`），整臂七列合计为 `total 180`、`same 180`、`sameWithCheck 25`、`sameWithShape 30`、`二者皆无 125`、`different 0`、`not_runnable 0`（`docs/verification/gy-r87-etag-parity-20261107.md:64`）；同一提交自陈这条断言在 CI 里红不了，因为真库臂退出码只由 `not_runnable` 决定（`docs/verification/gy-r87-etag-parity-20261107.md:74`）。
 9. `#1037` → `6e7f7465`（02:25，`feat(media): real 模式社区图片改用帖子级挂载（每帖 ≤3 成为结构约束）`）：新增迁移 `services/api/db/migrations/0056_post_media_attachments.sql`（`ordinal BETWEEN 1 AND 3` 在 `services/api/db/migrations/0056_post_media_attachments.sql:70`），每帖 ≤3 从接口校验升级为结构约束。
 10. `#1060` → `3ac94018`（03:44，`test(tools): 新增读数页闸门，核对证据页七条算术自洽`）：`tools/verify-reading-pages.mjs`（1042 行）进 main，B 档，由指挥用带 workflows 权限的 PAT 代合；它只做页内算术，不与上游产物对账（`tools/verify-reading-pages.mjs:32`）。
 11. `#1066` → `fd6a225c`（03:47，`test(reference): 堵住 #28 台账闸门的证据路径写法绕过（同一张图不得点亮多行）`）：证据路径先归一化再比较（`tests/reference/i26-tabbar-skeleton.test.mjs:953-955`），`/./`、`//`、大写、尾段反斜杠写成多行现在会被抓；A 档，含 `ad627283`/`026b9ab4`/`31adc2cf` 三提交。
@@ -33,9 +33,9 @@
 仍在飞、尚未落 main 的（都不算「今天变了」）：
 
 - `#1058` `ci: 把账本臂接进 CI，新增 real-pg-ledger-17.11（#29）`：线上 head 仍 `e67ef1b7`，`mergeable=CONFLICTING`；rebase 只提交到本地 `b424be9a`，等闸门跑完再推。
-- `#1030` 真库 HTTP 端到端：本地分支 `feat/gy-r87-i30-http-e2e` @ `b0513fb4`，未推、未开 PR。
+- `#1030` 真库 HTTP 端到端：本地分支 `feat/gy-r87-i30-http-e2e` @ `b0513fb4`，未推、未开 PR。——2026-11-08 05:20 校正：已合入 `#1071`（`ecbe343c`），见第八节末条。
 - `#29` 终态原因：本地分支 `feat/gy-r87-i29-terminal-reason` @ `a4eb4400`，未推、未开 PR。
-- `#6`/`#15` 逐条 AC 证据页：本地分支 `docs/gy-r87-i06-i15-ac-evidence` @ `27a81fb8`，未推、未开 PR。
+- `#6`/`#15` 逐条 AC 证据页：本地分支 `docs/gy-r87-i06-i15-ac-evidence` @ `27a81fb8`，未推、未开 PR。——2026-11-08 05:20 校正：已合入 `#1069`（`c026558c`），见第八节末条。
 
 ## 二、21 张开放 issue 总表
 
@@ -53,7 +53,7 @@
 | #12 | 有来源问答的会话与消息路由在位 | 依赖未清 | `services/api/src/routes/conversations.ts:133`、`services/api/src/routes/messages.ts:43` | 先清 #7、#6、#27、#29 |
 | #13 | TTS 合成路由在位 | 依赖未清 | `services/api/src/routes/synthesis.ts:119` | 先清 #28、#27、#29 |
 | #14 | 文字/图片筛查按 fail-closed 走（无结论判 `quarantined`） | 依赖未清 | `services/api/src/moderation/provider.ts:9`（503 + `retryable:false`）、`services/api/src/moderation/provider.ts:11`（无结论按 fail-closed 判） | 先清 #6、#27；供应商开通与密钥（用户/业主） |
-| #15 | 社区发帖/评论/点赞/举报在仓内可跑，每帖 ≤3 有结构约束 | 代码在飞 | `services/api/src/routes/community.ts:426`（`MAX_MEDIA_IDS_PER_POST` 取自 schema）、`services/api/src/community/store-pg.ts:397`（`claimPostMedia` 挂载口） | `docs/gy-r87-i06-i15-ac-evidence` @ `27a81fb8` 未推，逐条 AC 证据页缺（指挥） |
+| #15 | 社区发帖/评论/点赞/举报在仓内可跑，每帖 ≤3 有结构约束 | 代码在飞 | `services/api/src/routes/community.ts:426`（`MAX_MEDIA_IDS_PER_POST` 取自 schema）、`services/api/src/community/store-pg.ts:397`（`claimPostMedia` 挂载口） | `docs/gy-r87-i06-i15-ac-evidence` @ `27a81fb8` 未推，逐条 AC 证据页缺（指挥）→ 2026-11-08 05:20 校正：逐条 AC 证据页已合入 `#1069`（`c026558c`），落在 `docs/verification/gy-r87-i06-i15-ac-evidence-20261108.md`（8 条三档、五项阻断）；本行「代码在飞」指的是这张页，页已合入，今天最卡的是 B1 真实审核供应商凭据（用户提供）与 B5 的 `#4 #5 #7 #14 #28 #29` 六张依赖全 OPEN |
 | #19 | 注销受理后不可撤回的文案已如实改好，去身份链路有测试钉住 | 待裁定 | `services/api/src/routes/account-deletion.ts:253`、`services/api/db/migrations/0017_account_suspend_authority.sql:272-273`（受理即抛 `G0004`，连管理员都 restore 不了） | 「撤销注销」要不要另立需求单，需产品/监工一句话；另需清 #4、#6、#11、#12、#15、#29 |
 | #21 | 真实 AI 能力评估只有候选矩阵，没有一条开通读数 | 外部条件 | `docs/verification/provider-matrix.md:32`（接入矩阵表头）、`docs/verification/provider-matrix.md:43`（「以上候选不表示已开通」） | 腾讯云审核 BizType 与各服务密钥（用户/业主） |
 | #22 | 权限面失败矩阵真库臂 180 条同源，ETag 期望真库侧也判 | 依赖未清 | `docs/verification/gy-r87-etag-parity-20261107.md:64`（七列合计 180 / 180 / 25 / 30 / 125 / 0 / 0） | 先清 #5、#9、#10、#12、#14、#15、#19 |
@@ -63,7 +63,7 @@
 | #28 | 五 Tab 骨架与台账闸门都硬了：状态闭集 + 证据归一化 | 外部条件 | `tests/reference/i26-tabbar-skeleton.test.mjs:462`（同一条证据不得跨行复用）、`docs/verification/gy-i26-demo-align-20261014.md:783`（已知限制同步句） | 真机截图与原 demo 并排、Android/iOS 各一台（用户/业主） |
 | #29 | 用途授权与外发账本有作用域负控制；级联终止经查不是漏洞 | 待裁定 | `tests/integration/egress-ledger-pg.mjs:720-731`（撤回的跨用户/跨用途负控制，走真实 HTTP 触发面）、`services/api/src/privacy/ledger-pg.ts:765`（生产侧 `guardWriteback`） | 「终态原因被抹平成 `PROVIDER_OUTCOME_UNKNOWN`」是否算必须修的缺口，需裁定；修法在 `a4eb4400` |
 | #1003 | 识别协议适配层已在仓内（`openai-vision-v1` + 真实 fetch） | 外部条件 | `services/api/src/recognitions/openai-vision-adapter.ts:46`、`services/api/src/recognitions/openai-vision-adapter.ts:271` | 真实厂商端点与密钥、一次真调用读数（用户/业主） |
-| #1030 | real 模式每帖 ≤3 已是结构约束，并发与计数负控制有测试钉住；但 ⑩/⑪ 目前无 CI 计数闸门覆盖（`tests/integration/post-media-attachments-pg.mjs:506` 自述） | 代码在飞 | `services/api/db/migrations/0056_post_media_attachments.sql:70`、`services/api/src/community/store-pg.ts:397`、`tests/integration/post-media-attachments-pg.mjs:600` | real+PG 的 **HTTP** 端到端仍缺（现有用例是 store 层直连）：`feat/gy-r87-i30-http-e2e` @ `b0513fb4` 未推（指挥） |
+| #1030 | real 模式每帖 ≤3 已是结构约束，并发与计数负控制有测试钉住；但 ⑩/⑪ 目前无 CI 计数闸门覆盖（`tests/integration/post-media-attachments-pg.mjs:506` 自述） | 代码在飞 | `services/api/db/migrations/0056_post_media_attachments.sql:70`、`services/api/src/community/store-pg.ts:397`、`tests/integration/post-media-attachments-pg.mjs:600` | real+PG 的 **HTTP** 端到端仍缺（现有用例是 store 层直连）：`feat/gy-r87-i30-http-e2e` @ `b0513fb4` 未推（指挥）→ 2026-11-08 05:20 校正：已补上，`#1071`（`ecbe343c`）把 `tests/integration/post-media-attach-http-pg.mjs` 合入 main（建 app、走 HTTP 面，真库 + 503 信封 + 待用池释放），读数在 `docs/verification/gy-r87-i30-http-e2e-20261107.md`；仓内仍剩两处缺口：24h 自衰减未测（`docs/verification/gy-r87-i30-http-e2e-20261107.md:161`）与上传完成 ⇒ ready 的 `/complete` 状态迁移未覆盖（`docs/verification/gy-r87-i30-http-e2e-20261107.md:159`） |
 
 ## 三、依赖墙：今天可关 = 0 张
 
@@ -133,13 +133,13 @@
 
 - `#1058` 档位 B 的依据：它改 `.github/workflows/real-pg-integration.yml`（+128）与 `tests/**`，前者落在「不在正面清单一律 B 档」里（`docs/pr-review-policy.md:173`）；A 档正面清单只收 `tests/**` 与 `docs/**` 下的证据/进度记录（`docs/pr-review-policy.md:164-167`）。
 - `#1058` 的 CI 全绿与 `CONFLICTING` 同时成立：绿的是它自己的 head，冲突的是它相对现在 main 的合并面。rebase 版只在本地 `b424be9a`，推上去才作数。
-- 另有 3 条只在本地、未开 PR 的在飞改动（`b0513fb4`、`a4eb4400`、`27a81fb8`），它们不进上面这张表，因为 `gh pr list` 看不到，任何 CI 也没跑过。
+- 另有 1 条只在本地、未开 PR 的在飞改动（`a4eb4400`），它不进上面这张表，因为 `gh pr list` 看不到，任何 CI 也没跑过；原列的 `b0513fb4` 与 `27a81fb8` 已于 2026-11-08 05:20 前合入（`#1071` `ecbe343c`、`#1069` `c026558c`，见第八节末条）。
 
 ## 六、待裁定与已知限制
 
 - `#19`：撤销注销要不要另立需求单，待产品/监工一句话。事实是受理即撤全部会话，连管理员都 restore 不了（`services/api/db/migrations/0017_account_suspend_authority.sql:272-273` 抛 `G0004`）。
 - `#29`：「撤回是否级联终止已受理 job」经查不是漏洞——仓内没有 worker，执行前有 `assertExecutable`（`services/api/src/privacy/task-egress.ts:127`）、保存前有 `guardWriteback`（`services/api/src/privacy/ledger-pg.ts:765`）两道复查。真缺口只是终态原因被抹平成 `PROVIDER_OUTCOME_UNKNOWN`，修法在本地 `a4eb4400`，要不要算必修仍待裁定。
-- `#28` 台账闸门的已知限制写在测试里：只比路径、不比字节，同一张图另存 4 份物理拷贝仍能点亮多行（`tests/reference/i26-tabbar-skeleton.test.mjs:950-951`）；8.3 短名与长名是不同字符串键，在关闭 8dot3name 的卷上连造都造不出来，只能靠人工复核。
+- `#28` 台账闸门的已知限制写在测试里：只比路径、不比字节，同一张图另存 4 份物理拷贝仍能点亮多行（`tests/reference/i26-tabbar-skeleton.test.mjs:950-951`）；证据下限已从 1024 上调到 8192 字节（`tests/reference/i26-tabbar-skeleton.test.mjs:122`），8 KB 只抬高占位成本，挡不住「同一张图另存四份」，也不是画质判据（清晰度、真机与否仍靠人看）；8.3 短名与长名是不同字符串键，在关闭 8dot3name 的卷上连造都造不出来，只能靠人工复核。
 - 读数页闸门（`tools/verify-reading-pages.mjs`，随 `#1060` 进 main）只做页内算术：不与上游 json 产物对账（`tools/verify-reading-pages.mjs:32`）；页内没有「这一行属于哪一组」的声明时会误报（`tools/verify-reading-pages.mjs:30`）；historical 前缀规则靠 `旧读数|旧基线|旧版本|修前` 正则（`tools/verify-reading-pages.mjs:314-315`、`tools/verify-reading-pages.mjs:322`），把读数写成散文标「（旧读数）」即可绕开比对。
 
 ## 七、本页不声称什么
@@ -167,3 +167,4 @@
 - 旧页 §五 的「22:54 复核」那组读数（`#1037` `8bf16e72`、`#1057` `0e2e380a`、`#1058` `523f7170`）全部过期，以本页第五节为准。
 - 旧页引的 `services/api/src/routes/ocr.ts:224` 与 `services/api/src/routes/media.ts:218` 不是「今天漂了」，而是**当时就偏一行**：这两行是 `app.post(` 的开括号，路径字面量在下一行 `services/api/src/routes/ocr.ts:225` 与 `services/api/src/routes/media.ts:219`；这两个文件今天没有被任何提交碰过，旧页指的是一处早就存在的行号错位。
 - 旧页写在飞的 `#1060` 已由 `3ac94018` 合入，读数页闸门现在是 main 上的常驻闸门，不再是「待合入」。
+- 2026-11-08 05:20 校正（两笔都合在本页快照 03:51:50 之后，故第一节的「10 次本仓合入」不动）：`#1071` → `ecbe343c`（04:45:47 +0800）把 real+PG 的 **HTTP** 端到端合入 main，第二节 `#1030` 行据此改写，只剩 24h 自衰减与 `/complete` 状态迁移两处仓内缺口；`#1069` → `c026558c`（05:03:08 +0800）把 `#6`/`#15` 的逐条 AC 证据页合入 main（`docs/verification/gy-r87-i06-i15-ac-evidence-20261108.md`，8 条三档、五项阻断），第一节「仍在飞」清单里 `#6`/`#15` 那条与第二节 `#15` 行的在飞表述据此改写。两行的「阻断项类型」格仍写「代码在飞」：那是判定列，本次只改事实句与锚点，不动判定。
