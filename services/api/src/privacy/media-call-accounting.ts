@@ -259,6 +259,7 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     // 抛错（含超时）/ 内层自报 `kind: 'failed'` ⇒ send_failed。⛔ 没有第三种状态（0055 没有 blocked）。
     // ⚠ 口径边界：`send_failed` 目前**分不出**「已触达供应商后失败」与「内层在触达之前就拒绝」
     // （`task-egress.ts` 的 `assertExecutable` / `markSent` 抛错时，本层看到的同样是抛错）——
+    // 本层**不读** `exports.state`（`reserved` vs `sent` 才是判别位）；要区分需另加一次读，属后续改动。
     // 两种都写 `send_failed`，措辞以 0055 该列 COMMENT 为准。
     const invocationState: ProviderCallInvocationState =
       ctx.threw || outcomeFailed(ctx.outcome) ? 'send_failed' : 'sent';
@@ -314,7 +315,9 @@ export function withProviderCallAccounting<T extends RecognizableProvider>(
     // ⛔ 这两行的顺序不可换：内层会先 `markSent`，之后按对象回查再也不可能命中（见文件头）。
     const exportId = await resolveExportId(input);
     // `startedAt` = 外发**进入**时刻：它既是 `sent_at`（0055 :362-363 的口径），也是耗时起点。
-    // ⛔ 必须在读账本**之后**取：读预留行是本层自己的前置开销，算进 `duration_ms` 会把 provider 段撑大。
+    // ⛔ 必须在读账本**之后**取：读预留行是本层自己的前置开销，算进 `duration_ms` 会把它撑大。
+    // ⚠ 口径（P2-1）：`duration_ms` **不含**本层这次读账本，但**含**内层适配器自己的前置开销 ——
+    // `linkJob` / `assertExecutable` / `markSent` 的库往返都在 `original.call` 里（task-egress.ts:126-128）。
     const startedAt = now();
     let outcome: unknown = null;
     let failure: unknown = null;
