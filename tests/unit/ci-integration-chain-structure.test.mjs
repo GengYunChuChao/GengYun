@@ -94,14 +94,14 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
+    path: 'tests/integration/post-media-attach-http-pg.mjs',
+    reason: '未接线（真缺口）：缺 CI 接线——脚本自起临时 PG 17 簇（`GY_PG_BIN` 闸门，缺则 SKIP + 77）并把全链迁移跑到 0056，再用 real 装配 + `app.inject` 走完整路由（上传／发帖／PATCH／删除）；本片未改 `.github/workflows/**` ⇒ 追踪号：并入 #1058 的接线（PR #1058 正在同一份 `real-pg-integration.yml` 里加「自起簇」job，骨架可照抄；但该 PR 不含本脚本本身，故本条目仍留在白名单），接线时同一 job 里加一步 `node tests/integration/post-media-attach-http-pg.mjs` 即可（脚本自建簇，不依赖 service 容器）。'
+  },
+  {
     path: 'tests/integration/account-suspend-pg.mjs',
     reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
-      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_suspend_test`，只给 owner URL 作 argv[2]）。'
-      + '该臂证账号停用／恢复接真实认证权威：要求空库，自己 apply 0001–0017 后把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；'
-      + 'argv[3]（运行时角色 URL）可省略——省略时脚本自己生成口令、建／改同一个角色，给了 argv[3] 就取 URL 里的口令去建／改'
-      + '（旧版把 `CREATE ROLE … PASSWORD` 与 argv[3] 的口令割裂 ⇒ scram 下必 28P01，本版两种形态在 scram-sha-256 上都自洽）；'
-      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
-      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_suspend_test`，只给 owner URL 作 argv[2]）。该臂证账号停用／恢复接真实认证权威：要求空库，自己 apply 0001–0017 后把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；argv[3]（运行时角色 URL）可省略——省略时脚本自己生成口令、建／改同一个角色，给了 argv[3] 就取 URL 里的口令去建／改'
+      + '（旧版把 `CREATE ROLE … PASSWORD` 与 argv[3] 的口令割裂 ⇒ scram 下必 28P01，本版两种形态在 scram-sha-256 上都自洽）；判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/admin-accounts-read-pg.mjs',
