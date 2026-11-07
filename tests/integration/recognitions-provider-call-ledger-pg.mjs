@@ -6,7 +6,7 @@
 //   ① `[T]` 的 export_id 外键正则硬写 `REFERENCES public.exports(id)`，而 `pg_get_constraintdef`
 //      在 `search_path` 能解析到 `public` 时输出 `REFERENCES exports(id)`（无 schema 限定词）；
 //   ② `[R]` 期望回滚件抛 `G0019` 后没有 `ROLLBACK`，会话停在 aborted 状态，后续语句一律 25P02。
-// 这两处说明「写了但没跑过」的判据不能算证据——本文件此后按实跑记账。
+// 这两处说明「写了但没跑过」的判据不能算证据——本文件此后按实跑记账。⚠️ 本臂仍**不在任何 workflow 的 `run:` 里**（白名单登记见 `tests/unit/ci-integration-chain-structure.test.mjs`），所以「本文件有实跑读数」不等于「CI 覆盖了它」。
 //
 // 运行（本机隔离集群，仅回环；**自带建库**，不需要事先 createdb）：
 //   node tests/integration/recognitions-provider-call-ledger-pg.mjs postgres://postgres@127.0.0.1:<port>/postgres
@@ -539,7 +539,7 @@ async function expectRejected(overrides, label, codes = ['23514']) {
   // 回滚件自己开了 `BEGIN;`，异常路径既没有 COMMIT 也没有 ROLLBACK ⇒ 会话停在 aborted 状态，
   // 之后的任何语句都会 25P02。这里显式回滚，才能继续验证「中止后表还在」。
   await owner.query('ROLLBACK');
-  assert.ok((await one("SELECT to_regclass('public.provider_call_ledger') AS o")).o, '中止后表必须还在');
+  assert.ok((await one("SELECT to_regclass('public.provider_call_ledger') AS o")).o && (await countOf('SELECT count(*)::int AS v FROM public.provider_call_ledger')) > 0, '中止后表与记账行必须原样还在（不是只剩空表）');
   note('[R] 表里有行 ⇒ 回滚件以 G0019 / PROVIDER_CALL_LEDGER_ROLLBACK_BLOCKED 中止，表原样还在');
 
   await owner.query('DELETE FROM public.provider_call_ledger');
