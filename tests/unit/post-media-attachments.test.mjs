@@ -223,10 +223,6 @@ test('第 4 张：迁移 0056 的结构约束原文必须是「ordinal 1..3」+�
   // `tests/integration/post-media-attachments-pg.mjs` 的直插探针钉（23514／23505 的真实报错）。
   // ⛔ 只剥 `--` 不够（PR #1037 第三轮审查 P1-3 实测）：`/* UNIQUE (post_id, ordinal) */` 与
   // `COMMENT ON COLUMN … IS '… UNIQUE (post_id, ordinal)'` 都能让只剥 `--` 的版本假绿，所以
-  // ① 先用块注释正则整段删掉 `/* … */`（含跨行），② 再逐行剥 `--`，③ 最后禁止 `COMMENT ON`
-  // （0056 全文没有 `/* */`，一行 `COMMENT ON` 就能把约束「描述」成存在）。
-  // ⛔ 只剥 `--` 不够（PR #1037 第三轮审查 P1-3 实测）：`/* UNIQUE (post_id, ordinal) */` 与
-  // `COMMENT ON COLUMN … IS '… UNIQUE (post_id, ordinal)'` 都能让只剥 `--` 的版本假绿，所以
   // ① 先按**嵌套深度**剥掉 SQL 注释（PG 支持 `/* /* */ */` 嵌套），② 再禁止 `COMMENT ON`
   // （0056 全文没有块注释，一行 `COMMENT ON` 就能把约束「描述」成存在）。
   // ⛔ 也不能用非贪婪正则 `/\/\*[\s\S]*?\*\//g`（PR #1037 第五轮审查 P2-a 实测）：
