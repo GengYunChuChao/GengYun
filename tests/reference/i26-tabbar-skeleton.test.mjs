@@ -845,38 +845,82 @@ test('真机台账闸门负控制：合成行必须逐条咬红，合法行必�
     dupViolations.some((line) => line.includes('同一条证据不得同时点亮多个设备行')),
     `同一证据跨行复用必须被咬住：\n${dupViolations.join('\n')}`
   )
-  // 19b) 同一张图换写法（中段 `/./`、中段 `//`、大小写、尾段反斜杠）⇒ 仍必须红：比较键归一化才拦得住
-  const respelledEvidence = [
-    realEvidence,
-    realEvidence.replace('250c4d4/', '250c4d4/./'),
-    realEvidence.replace('250c4d4/', '250c4d4//'),
-    realEvidence.replace('01-home.jpg', '01-HOME.jpg'),
-    realEvidence.replace('250c4d4/', '250c4d4\\')
-  ]
-  const respelledLedger = DEVICE_ROWS.map((rowLabel, index) => [
-    rowLabel,
-    '已取得',
-    `2026-11-07 证据 ${respelledEvidence[index]}`,
-    recheck
-  ])
-  assert.ok(
-    deviceLedgerViolations(DEVICE_TABLE_HEADER, respelledLedger, () => true, () => 612672).some((line) =>
-      line.includes('同一条证据不得同时点亮多个设备行')
-    ),
-    '同一张图的 `/./`、`//`、大小写、反斜杠写法必须归一到同一个比较键'
+  // 19b) 同一张图换写法（中段 `/./`、中段 `//`、大小写、尾段反斜杠）⇒ **每种写法各自**必须咬红。
+  //     原来是一条 OR 断言：只要任意一种写法撞键就绿。于是把 `normalizeEvidencePath` 削成
+  //     只 `toLowerCase()`／只 `replace(/\\/g, '/')`／只 `posix.normalize(...trim())`／
+  //     `normalize+lower`（缺反斜杠）四种残缺实现，都能靠其余写法把那条断言点亮并 8/8 绿
+  //     （2026-11-08 实测），CI 看不见「只归一化了一半」。故逐写法断言，每条只放一种改写。
+  //     断言要匹配的是**台账里的原始写法**（违规文案按行回显 `label→raw`）：`owners.push`
+  //     漏带 `raw` 时文案退化成 `→undefined`，四条一起红——这同时就是「必须带 raw」的护栏。
+  //     本用例的 FS 是打桩的（`isRepoFileOnDisk` 返回 `() => true`，字节 `() => 612672`）：
+  //     只验比较键、不验磁盘可核性（可核性另由第 8/9/11 条与 19c 的零违规覆盖）。
+  const distinctEvidence = ['01-home', '02-identify', '03-community', '04-messages', '05-profile']
+  const assetOf = (slug) => `${LEDGER_EVIDENCE_DIR}gui-adaptive-250c4d4/${slug}.jpg`
+  // 每条断言的表形状固定 5 行：1 行改写写法 + 1 行**同一张图的常规写法**（撞键的另一半）
+  // + 3 张互不相同的填充图。缺行会先触发「§12 缺行」，就看不出究竟是哪种写法没被归一化。
+  const ledgerOf = (overrides) =>
+    DEVICE_ROWS.map((rowLabel, index) => {
+      const [label, spelling] = overrides[index] || [rowLabel, assetOf(distinctEvidence[index])]
+      return [label, '已取得', `2026-11-07 证据 ${spelling}`, recheck]
+    })
+  const dupTextOf = (overrides) =>
+    deviceLedgerViolations(DEVICE_TABLE_HEADER, ledgerOf(overrides), () => true, () => 612672)
+      .filter((line) => line.includes('同一条证据不得同时点亮多个设备行'))
+      .join('\n')
+
+  // 19b-1) 中段 `/./`：只有 `posix.normalize` 收得掉
+  assert.match(
+    dupTextOf([
+      [DEVICE_ROWS[0], realEvidence.replace('250c4d4/', '250c4d4/./')],
+      [DEVICE_ROWS[1], realEvidence]
+    ]),
+    /gui-adaptive-250c4d4\/\.\/01-home\.jpg/,
+    '`…/250c4d4/./01-home.jpg` 必须与 `…/250c4d4/01-home.jpg` 归一成同一个比较键（缺 posix.normalize 时红在这条）'
+  )
+  // 19b-2) 中段 `//`：只有 `posix.normalize` 收得掉
+  assert.match(
+    dupTextOf([
+      [DEVICE_ROWS[0], realEvidence.replace('250c4d4/', '250c4d4//')],
+      [DEVICE_ROWS[1], realEvidence]
+    ]),
+    /gui-adaptive-250c4d4\/\/01-home\.jpg/,
+    '`…/250c4d4//01-home.jpg` 必须与 `…/250c4d4/01-home.jpg` 归一成同一个比较键（缺 posix.normalize 时红在这条）'
+  )
+  // 19b-3) 大小写：只有 `toLowerCase` 收得掉
+  assert.match(
+    dupTextOf([
+      [DEVICE_ROWS[0], realEvidence.replace('01-home.jpg', '01-HOME.jpg')],
+      [DEVICE_ROWS[1], realEvidence]
+    ]),
+    /01-HOME\.jpg/,
+    '`01-HOME.jpg` 必须与 `01-home.jpg` 归一成同一个比较键（缺 toLowerCase 时红在这条）'
+  )
+  // 19b-4) 尾段反斜杠：只有 `replace(/\\/g, '/')` 收得掉。前缀必须是真目录名
+  //         `gui-adaptive-250c4d4`——写成 `…/250c4d4\…` 会先退化成「不可核」，
+  //        测到的就不是「归一化」而是别的分支了。
+  assert.match(
+    dupTextOf([
+      [DEVICE_ROWS[0], realEvidence.replace('250c4d4/', '250c4d4\\')],
+      [DEVICE_ROWS[1], realEvidence]
+    ]),
+    /gui-adaptive-250c4d4\\01-home\.jpg/,
+    '`…250c4d4\\01-home.jpg` 必须与 `…/250c4d4/01-home.jpg` 归一成同一个比较键（缺 `\\`→`/` 时红在这条）'
   )
   // 19c) 五张真正不同的截图 ⇒ 零违规（归一化不得把不同的图判成同一张，否则等于误伤）
-  const distinctEvidence = ['01-home', '02-identify', '03-community', '04-messages', '05-profile']
-  const distinctLedger = DEVICE_ROWS.map((rowLabel, index) => [
-    rowLabel,
-    '已取得',
-    `2026-11-07 证据 docs/verification/assets/gui-adaptive-250c4d4/${distinctEvidence[index]}.jpg`,
-    recheck
-  ])
   assert.deepEqual(
-    deviceLedgerViolations(DEVICE_TABLE_HEADER, distinctLedger, () => true, () => 612672),
+    deviceLedgerViolations(DEVICE_TABLE_HEADER, ledgerOf([]), () => true, () => 612672),
     [],
-    `五张真正不同的截图必须零违规：\n${deviceLedgerViolations(DEVICE_TABLE_HEADER, distinctLedger, () => true, () => 612672).join('\n')}`
+    `五张真正不同的截图必须零违规：\n${deviceLedgerViolations(DEVICE_TABLE_HEADER, ledgerOf([]), () => true, () => 612672).join('\n')}`
+  )
+  // 19d) 去重键是**行身份**（`cells` 引用）而不是 label：同名两行写同一张图不得互相吞掉
+  //      （只按 label 去重时，台账里出现重复项目名，同一张图点亮两行仍是绿的）
+  assert.match(
+    dupTextOf([
+      [DEVICE_ROWS[0], realEvidence],
+      [DEVICE_ROWS[0], realEvidence.replace('250c4d4/', '250c4d4/./')]
+    ]),
+    /gui-adaptive-250c4d4\/01-home\.jpg/,
+    '去重键必须用行身份（cells）而非 label：同名两行写同一张图时，后一行不能被前一行吞掉'
   )
   // 20) 只有一行已取得、其余是合法欠账 ⇒ 零违规（逐行唯一性不是「永远红」）
   const oneAcquired = DEVICE_ROWS.map((rowLabel, index) =>
