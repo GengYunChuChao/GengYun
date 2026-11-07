@@ -103,6 +103,7 @@ function stripComments(source) {
   ]);
   let i = 0;
   let prevSignificant = '';
+  let prevSignificantPrev = '';
   let tailBuf = '';
   const emit = (text) => {
     out.push(text);
@@ -141,8 +142,17 @@ function stripComments(source) {
       emit(' ');
       continue;
     }
+    // ⛔ P3-a（增量复审实测）：`++`/`--` 之后的 `/` 不是正则起点 —— `const y = a++ / 2;` 里它是除号，
+    // 而此刻 `prevSignificant` 恰是 `+`/`-`（两者都在上面的 `regexStart` 里）⇒ 会把后面的行注释
+    // 当成正则体一直吃到行尾，同文件若有 `countFor` 就变成假红。判据：`+`/`-` 且它的**前一个**
+    // 有意义字符也是它本身 ⇒ 自增/自减。`!` 不能一并排除：`!/re/.test(x)` 是取反正则的主流写法
+    // （本仓 `!` 接 `/` 的命中全是这种）；代价是 `x! / 2;` 会被误判成正则起点（语料无实例，见盲区）。
+    const plusMinusPair =
+      (prevSignificant === '+' || prevSignificant === '-') && prevSignificantPrev === prevSignificant;
     const looksLikeRegex =
-      ch === '/' && (regexStart.has(prevSignificant) || /(^|[^\w$])return\s*$/.test(tailBuf));
+      ch === '/' &&
+      !plusMinusPair &&
+      (regexStart.has(prevSignificant) || /(^|[^\w$])return\s*$/.test(tailBuf));
     if (looksLikeRegex) {
       emit(ch);
       i += 1;
@@ -166,7 +176,10 @@ function stripComments(source) {
       continue;
     }
     emit(ch);
-    if (!/\s/.test(ch)) prevSignificant = ch;
+    if (!/\s/.test(ch)) {
+      prevSignificantPrev = prevSignificant;
+      prevSignificant = ch;
+    }
     i += 1;
   }
   return out.join('');
