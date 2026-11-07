@@ -389,6 +389,10 @@ async function withTransaction<T>(pool: TransactionalPool, run: (sql: SqlRunner)
  *   判到不匹配即整笔事务 ROLLBACK（⛔ 不静默丢掉那一张）；
  * - 同一张图**不许同时挂在两个未删除的帖子**上：已挂在别的 `visibility <> 'deleted'` 帖子上的 media
  *   不可再认领 —— **删帖即释放**（行保留，靠 `visibility` 判定；待用池口径见 `countPendingCommunityImages`）。
+ * - 占用检查**同时覆盖旧帖数组引用**：0056 **不回填**历史，迁移前发的老帖只有 `community_posts.media_ids`
+ *   里的引用串、没有挂载行；只看本表会把它当「没人挂」⇒ 旧帖的图能被另一存活帖抢走。因此候选 `media_id`
+ *   只要出现在**任一** `id <> $1` 且 `visibility <> 'deleted'` 的帖子 `media_ids` 数组里，就不可认领
+ *   （数组是 `text[]`、候选是 `text`，直接 `= ANY(...)` 比，不转型）。
  */
 async function claimPostMedia(
   sql: SqlRunner,
@@ -411,17 +415,26 @@ async function claimPostMedia(
          SELECT i.media_id, i.ordinal
            FROM input i
            LEFT JOIN media m ON m.id = i.media_id::uuid
-          WHERE m.id IS NULL
-             OR (($3::uuid IS NULL OR m.owner_id = $3::uuid)
-                 AND m.purpose = 'community_image'
-                 AND m.state NOT IN ('deleted', 'rejected')
-                 AND NOT EXISTS (
-                   SELECT 1
-                     FROM post_media_attachments a
-                     JOIN community_posts p ON p.id = a.post_id
-                    WHERE a.media_id = i.media_id::uuid
-                      AND a.post_id <> $1::uuid
-                      AND p.visibility <> 'deleted'))
+          WHERE (m.id IS NULL
+                 OR (($3::uuid IS NULL OR m.owner_id = $3::uuid)
+                     AND m.purpose = 'community_image'
+                     AND m.state NOT IN ('deleted', 'rejected')
+                     AND NOT EXISTS (
+                       SELECT 1
+                         FROM post_media_attachments a
+                         JOIN community_posts p ON p.id = a.post_id
+                        WHERE a.media_id = i.media_id::uuid
+                          AND a.post_id <> $1::uuid
+                          AND p.visibility <> 'deleted')))
+            -- 0056 不回填历史 community_posts.media_ids：旧帖的图没有挂载行，只看上面那条
+            -- NOT EXISTS 会把它当「没人挂」⇒ 另一存活帖仍能认领。故占用检查必须同时覆盖数组引用
+            -- （media_ids 是 text[]，候选是 text，直接 = ANY 比；悬空 uuid 也一视同仁）。
+            AND NOT EXISTS (
+              SELECT 1
+                FROM community_posts old_post
+               WHERE old_post.id <> $1::uuid
+                 AND old_post.visibility <> 'deleted'
+                 AND i.media_id = ANY(old_post.media_ids))
        ), inserted AS (
          INSERT INTO post_media_attachments (post_id, media_id, ordinal)
          SELECT $1::uuid, c.media_id::uuid, c.ordinal FROM claimable c
@@ -1107,6 +1120,9 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
      * 3. **不能可靠脱敏的媒体 ⇒ 移除引用**（`media_ids='{}'`）。社区存储没有媒体去标识的证据面
      *    （媒体投影未接线），按 F13"不能可靠脱敏的媒体隐藏／移除"处理；正文照旧保留。
      *    仅移除媒体时**不推进 revision**（正文摘要未变 ⇒ 旧审核结论仍有效、内容继续可见）。
+     *    0056 的挂载行是**第二处**媒体引用（两侧无外键、删媒体行也回收不到它）⇒ 清数组的**同一事务**
+     *    里同步 `DELETE FROM post_media_attachments WHERE post_id = …`，否则注销后仍留着
+     *    「哪张图曾挂在这帖」的关联。
      * 4. **作者主动删除（`visibility='deleted'`）的行：内容与可见性原样保留**（不复活、不脱敏、
      *    不推进 revision、不改 `updated_at`），但**作者关联照样清除**——「保留作者的删除语义」
      *    与「删除账号映射」不冲突（P2 返修：监工 PR #483 指出旧实现把这类行整行跳过，
@@ -1197,6 +1213,9 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
                 WHERE id = $1::uuid`,
               [id, title.text, body.text, stamp],
             );
+            // 迁移 0056 的挂载行是**第二处**媒体引用（两侧无外键、删媒体行也回收不到它）：
+            // 只清 `media_ids` 会在注销后留下「哪张图曾挂在这帖」⇒ 同一事务里删掉本帖的挂载行。
+            await sql.query('DELETE FROM post_media_attachments WHERE post_id = $1::uuid', [id]);
             records += 1;
             redacted += 1;
             hiddenMedia += media.length;
@@ -1207,6 +1226,8 @@ export function createPostgresCommunityStore(options: PostgresCommunityStoreOpti
                 WHERE id = $1::uuid`,
               [id, stamp],
             );
+            // 同上：第二处媒体引用（0056 挂载行）与数组同生共死，⛔ 不能只清数组。
+            await sql.query('DELETE FROM post_media_attachments WHERE post_id = $1::uuid', [id]);
             records += 1;
             retained += 1;
             hiddenMedia += media.length;

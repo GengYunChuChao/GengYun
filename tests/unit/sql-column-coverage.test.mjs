@@ -611,19 +611,19 @@ const EXPECTED_READINGS = {
   // SELECT 77 → 79：GY-R73 的 favorites 反查 + `admin/ops/invalidation-events.ts` 的收件人过滤
   // （`SELECT id FROM public.users WHERE id = ANY($1::uuid[]) AND state = 'active'`，只发给状态正常的账号）
   // 在本块算 +1，R72 #838 的 `community/store-pg.ts` 举报处置审计再 +1。
-  sqlLiterals: 170, // GY-R83（#1030）：+1 —— `community/store-pg.ts` 的换图前 `DELETE FROM post_media_attachments`（认领语句是 CTE，不计入本条正则）
-  statements: { INSERT: 27, UPDATE: 31, SELECT: 79, DELETE: 33 },
+  sqlLiterals: 172, // GY-R83（#1030）：+1 —— 换图前 `DELETE FROM post_media_attachments`（认领语句是 CTE，不计入本条正则）；PR #1037 审查 P1：+2 —— 注销清 `media_ids` 的两处各补一条 `DELETE FROM post_media_attachments WHERE post_id = $1::uuid`（0056 两侧无外键：只清数组不会回收挂载行）。⚠ 本注释保持单行：文件行数一变，docs 里指向 152/525/1512 的历史锚点会整片推位。
+  statements: { INSERT: 27, UPDATE: 31, SELECT: 79, DELETE: 35 },
   returningClauses: 67,
   onConflictClauses: 17,
   selectStar: 0,
   referencedTables: 26, // GY-R83（#1030）：25 → 26 —— 发帖事务里的 `post_media_attachments`（帖级挂载表）
-  columnRequirements: 1274, // GY-R83（#1030）：1273 → 1274 —— 换图 DELETE 只读谓词列 `post_id`（已授权）
+  columnRequirements: 1276, // GY-R83（#1030）：1273 → 1274 —— 换图 DELETE 只读谓词列 `post_id`（已授权）；PR #1037 P1 再 +2（两处注销 DELETE 同样只读 `post_id`）
   opaqueExpressions: 2,
 };
 
 /** 逐文件读数（钉死条数）：任何一条归零或暴增都说明解析器出事了，而不是 store 改了。 */
 const EXPECTED_PER_FILE = {
-  community: 46, // GY-R83（#1030）：45 → 46 —— 换图前 `DELETE FROM post_media_attachments`
+  community: 48, // GY-R83（#1030）：45 → 46 —— 换图前 `DELETE FROM post_media_attachments`；PR #1037 P1：46 → 48 —— 注销两处清挂载行 DELETE
   conversations: 20,
   // GY-R73（#17）：15 → 16 —— 新增 listOwnerIdsByTarget 的按对象反查 SELECT。
   favorites: 16,
@@ -918,8 +918,8 @@ const EXPECTED_EXTENDED_READINGS = {
   // GY-R83 合流（2026-11-07）：0055 侧（provider_call_ledger 记账）与 0056 侧（post_media_attachments 帖级挂载）
   // 的 SQL 同时进树 ⇒ 下面全部读数按**合并树实测**填写，不是任一侧旧值相加（实测手段：跑本文件，读
   // `[sql-column-coverage] 扩展审计：` 那几行）。
-  sqlLiterals: 330, // GY-R83 合流实测：0055 侧 3 条记账 SQL + 0056 侧 2 条（认领 CTE 与换图 DELETE）
-  statements: { INSERT: 50, UPDATE: 58, SELECT: 178, DELETE: 44 },
+  sqlLiterals: 332, // GY-R83 合流实测：0055 侧 3 条记账 SQL + 0056 侧 2 条（认领 CTE 与换图 DELETE）；PR #1037 P1 +2 —— 注销清 `media_ids` 的两处各补一条 `DELETE … WHERE post_id = $1::uuid`（0056 无外键，只清数组不回收挂载行）
+  statements: { INSERT: 50, UPDATE: 58, SELECT: 178, DELETE: 46 },
   returningClauses: 100,
   onConflictClauses: 31,
   selectStar: 15,
@@ -929,9 +929,9 @@ const EXPECTED_EXTENDED_READINGS = {
   noTargetTable: 21, // GY-R74：19 → 20 —— `SELECT public.purge_owner_media($1) AS counts` 没有顶层 FROM；GY-R83 P2-3：20 → 21 —— `SELECT set_config(...)` 同样没有顶层 FROM
   referencedTables: 54, // GY-R83 合流：52 → 54 —— 0055 的 `public.provider_call_ledger` 与 0056 的 `public.post_media_attachments` 两张新表
   // GY-R73（#17）：2080 → 2082 —— 两处新 SELECT 的列要求（favorites 的 target/owner 列 + users 的 id/state）。
-  columnRequirements: 2112, // GY-R83 合流实测（0055 侧 11 条记账列 + 0056 侧认领/换图列）
+  columnRequirements: 2114, // GY-R83 合流实测（0055 侧 11 条记账列 + 0056 侧认领/换图列）；PR #1037 P1 +2（两处注销 DELETE 只读谓词列 `post_id`）
   // GY-R73（#17）：1979 → 1981 —— 两处新 SELECT 的列要求都已覆盖（缺 0 条不变）。
-  coveredRequirements: 2011, // GY-R83 合流实测：同上全部已覆盖（0055 有列级授权、0056 有本轮 GRANT），缺 0 条不变
+  coveredRequirements: 2013, // GY-R83 合流实测：同上全部已覆盖（0055 有列级授权、0056 有本轮 GRANT；`post_media_attachments` 的 DELETE 是表级授权 ⇒ 两处注销 DELETE 的 `post_id` 也算已覆盖），缺 0 条不变
   ledgerExemptions: 63,
   rowLockRequirements: 44,
   rowLockExemptions: 1,
@@ -945,7 +945,7 @@ const EXPECTED_EXTENDED_PER_FILE = {
   'admin/ops/content-pg.ts': 16,
   'admin/ops/flags-pg.ts': 5,
   'admin/ops/jobs-pg.ts': 17,
-  'community': 46, // GY-R83（#1030）：45 → 46 —— 同上（换图前 DELETE）
+  'community': 48, // GY-R83（#1030）：45 → 46 —— 同上（换图前 DELETE）；PR #1037 P1：46 → 48 —— 注销两处清挂载行 DELETE
   'conversations': 20,
   // GY-R73（#17）：15 → 16 —— 新增 listOwnerIdsByTarget 的按对象反查 SELECT。
   'favorites': 16,

@@ -8,7 +8,7 @@
  *
  * 与 `tests/unit/post-media-attachments.test.mjs` 的分工：
  *   - 单元测锁语句形状与错误码映射（23514/23505/少挂 ⇒ 哪一类 400、事务必须整笔 ROLLBACK）；
- *   - 本脚本锁**只有 PG 能证明**的七件事：
+ *   - 本脚本锁**只有 PG 能证明**的九件事：
  *     ① 挂 3 张成功且 ordinal 从 1 起按 media_ids 顺序；第 4 张被拒（`post_image_limit`）且整笔回滚；
  *     ② 删帖（`visibility='deleted'`）后同一 media 可被另一帖挂载（"删帖即释放"）；
  *     ③ 同一 media 不能同时挂在两个**存活**帖子上（认领谓词），同一帖内重复由 PK 裁决；
@@ -22,6 +22,12 @@
  *        （`media_not_attachable`），不能「只挂上一张也建帖成功」。
  *     ⑦ 并发：另一事务先取同一 `media_id` 的 `pg_advisory_xact_lock` 并插行（未提交）时，本实现的
  *        认领必须**阻塞在锁上**，对方提交后抛 `media_not_attachable` —— 同一张图永远只有一条存活挂载。
+ *     ⑧ **旧帖数组引用**（PR #1037 审查 P2）：0056 不回填，直接 `INSERT INTO community_posts` 造一条
+ *        只把图放进 `media_ids` 的老帖（没有任何挂载行）⇒ 新帖再认领同一张图必须失败
+ *        （`media_not_attachable`）且不静默少挂；老帖 `visibility='deleted'` 后释放。
+ *     ⑨ **注销同事务清理挂载行**（PR #1037 审查 P1）：注销清 `media_ids` 的两处（有 PII 的帖、
+ *        只有图片的帖）必须同时删掉 `post_media_attachments` 的本帖行；安全正文（title/body）
+ *        按原口径保留（media-only 分支不推进 revision）。
  *   另加一条计数口径的实证：挂载后待用池为 0、删帖后回到 3，而 `liveCommunityImageCount`（owner 累计）
  *   始终是 3 —— 这条差就是本 issue 的全部理由。
  *
@@ -351,7 +357,41 @@ async function main() {
     assert.deepEqual(await attached(badPost), [], '回滚后不得残留挂载行');
     say('⑥ 非法 uuid：declared = array_length($2) 而非正则过滤后的行数 ⇒ 抛 media_not_attachable（⛔ 不静默少挂一张）');
 
-    // ---- 10. ⑦ 并发：同一 media 不能同时挂两个存活帖（advisory lock 定序）----------
+    // ---- 10. ⑧ 旧帖数组引用：0056 不回填，旧帖的图仍算占用 -----------------------
+    // 直接 INSERT 造「迁移前的老帖」：media_ids 里有图、`post_media_attachments` 里**没有**行
+    // （不走 `claimPostMedia`，因为 0056 不回填历史）。这条正是只看挂载行时会漏掉的占用面。
+    const legacyMedia = await newMedia(userA, 'legacy1');
+    const legacyPost = randomUUID();
+    await owner.query(
+      `INSERT INTO public.community_posts
+         (id, author_id, revision, title, body, media_ids, visibility, audit_state, created_at, updated_at)
+       VALUES ($1::uuid, $2::uuid, 1, '迁移前的老帖', '只存在于 media_ids 数组里的图', ARRAY[$3::text], 'published', 'approved',
+               $4::timestamptz, $4::timestamptz)`,
+      [legacyPost, userA, legacyMedia, CREATED],
+    );
+    assert.deepEqual(await attached(legacyPost), [], '旧帖按定义没有挂载行（0056 不回填）');
+    const stolenPost = randomUUID();
+    await rejectsWith(
+      () => community.insertPost(postRecord(stolenPost, userA, [legacyMedia]), null),
+      'media_not_attachable',
+      '旧帖 media_ids 数组里的图被另一存活帖认领',
+    );
+    assert.equal(await postExists(stolenPost), 0, '不得静默少挂：整笔回滚，帖子不得留下');
+    assert.deepEqual(await attached(stolenPost), [], '被拒后不得残留挂载行');
+    say('⑧ 旧帖数组：只存在于 community_posts.media_ids 的图仍算占用 ⇒ 新帖认领被拒（media_not_attachable），不静默少挂');
+
+    // 反证：老帖软删后释放同一张图（与挂载行同一口径：删帖即释放，⛔ 不是永久占用）。
+    await owner.query("UPDATE public.community_posts SET visibility = 'deleted' WHERE id = $1::uuid", [legacyPost]);
+    const afterRelease = randomUUID();
+    assert.equal(await community.insertPost(postRecord(afterRelease, userA, [legacyMedia]), null), true);
+    assert.deepEqual(
+      (await attached(afterRelease)).map((row) => row.media_id),
+      [legacyMedia],
+      '旧帖 visibility=deleted 后同一 media 必须能被认领（删帖即释放）',
+    );
+    say('⑧ 旧帖数组：老帖 visibility=deleted 后同一 media 可被认领（删帖即释放，与挂载行口径一致）');
+
+    // ---- 11. ⑦ 并发：同一 media 不能同时挂两个存活帖（advisory lock 定序）----------
     const lockPost = randomUUID();
     assert.equal(await community.insertPost(postRecord(lockPost, userA, []), null), true);
     const lockMedia = await newMedia(userA, 'lock1');
@@ -396,6 +436,60 @@ async function main() {
     )).rows[0].n;
     assert.equal(liveAttach, 1, '同一张图只允许一条存活挂载（并发下也一样）');
     say('⑦ 并发：A 未提交时 B 阻塞在 advisory lock；A 提交后 B 抛 media_not_attachable，存活挂载仍只有 1 条');
+
+    // ---- 12. ⑨ 注销：清 media_ids 的两处必须同事务删挂载行 ------------------------
+    // 0056 两侧无外键：只清 `community_posts.media_ids` 不会回收挂载行，后续删 media 行也回收不到
+    // ⇒ 注销后仍留着「哪张图曾挂在这帖」的关联。这里走真实的 `purgeOwnerData`（同一事务）验证两处。
+    const userD = randomUUID();
+    await owner.query("INSERT INTO public.users (id, state, nickname) VALUES ($1::uuid, 'active', 'gy-r83')", [userD]);
+    const purgeMedia = [
+      await newMedia(userD, 'p1'),
+      await newMedia(userD, 'p2'),
+      await newMedia(userD, 'p3'),
+    ];
+    const mediaOnlyPost = randomUUID();
+    const piiPost = randomUUID();
+    assert.equal(
+      await community.insertPost(postRecord(mediaOnlyPost, userD, [purgeMedia[0], purgeMedia[1]]), null),
+      true,
+    );
+    assert.equal(
+      await community.insertPost(
+        postRecord(piiPost, userD, [purgeMedia[2]], { body: '联系方式 nongyou@example.com，拔节期看麦娘。' }),
+        null,
+      ),
+      true,
+    );
+    const purgeCounts = await community.purgeOwnerData(userD);
+    assert.deepEqual(
+      purgeCounts,
+      { records: 2, idempotency: 0, retained: 1, redacted: 1, hiddenMedia: 3, authorRefsReplaced: 2, authorRefsRemaining: 0 },
+      '注销读数不变：清数组不新增记录口径（hiddenMedia 仍按媒体数组长度）',
+    );
+
+    // 同一事务**外**校验：安全正文按原口径保留、两处媒体引用都已消失。
+    const purgedRows = (await owner.query(
+      `SELECT id, revision, title, body, media_ids, author_id::text AS author_id, anonymized_author_ref
+         FROM public.community_posts
+        WHERE id = ANY($1::uuid[])`,
+      [[mediaOnlyPost, piiPost]],
+    )).rows;
+    const byId = new Map(purgedRows.map((row) => [row.id, row]));
+    const mediaOnlyRow = byId.get(mediaOnlyPost);
+    assert.ok(mediaOnlyRow, '只有图片的帖必须保留（注销不清安全正文）');
+    assert.equal(mediaOnlyRow.title, '春小麦田除草记录', 'media-only 分支不得改标题');
+    assert.equal(mediaOnlyRow.body, '拔节期，看麦娘为主，人工拔除后补喷。', 'media-only 分支不得改正文');
+    assert.equal(mediaOnlyRow.revision, 1, '仅移除媒体不推进 revision（旧审核结论仍有效）');
+    assert.deepEqual(mediaOnlyRow.media_ids, [], '(b) community_posts.media_ids 必须清空');
+    assert.equal(mediaOnlyRow.author_id, null, '作者指针必须换成注销引用');
+    assert.notEqual(mediaOnlyRow.anonymized_author_ref, null, '必须写入注销引用（0030 的 CHECK 要求恰好一个）');
+    const piiRow = byId.get(piiPost);
+    assert.equal(piiRow.revision, 2, '有 PII 的帖改写正文 ⇒ revision+1');
+    assert.equal(String(piiRow.body).includes('nongyou@example.com'), false, 'PII 必须已脱敏');
+    assert.deepEqual(piiRow.media_ids, [], '有 PII 的帖同样清空数组');
+    assert.deepEqual(await attached(mediaOnlyPost), [], '(b) media-only 帖不得残留任何挂载行');
+    assert.deepEqual(await attached(piiPost), [], '有 PII 的帖同样不得残留挂载行');
+    say('⑨ 注销：清 media_ids 的两处都同事务删掉 post_media_attachments 行；media-only 帖的 title/body/revision 原样保留');
 
     console.log(`OK ${passed} 项真库断言全部通过（PostgreSQL ${version}）`);
   } finally {

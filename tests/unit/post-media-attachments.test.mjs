@@ -18,6 +18,12 @@
 //      能判定待用池的持久化端口才切到 `postgres` 计数器；`42P01`（0056 未 apply）必须折叠成 `null`，
 //      ⛔ 不得降级成 0（降级成 0 就是放行）。
 //
+// 另钉两处 PR #1037 审查阻塞（0056 **不回填**、两侧无外键的直接后果）：
+//   - P2：认领的占用检查必须**同时**看旧帖的 `community_posts.media_ids` 数组，否则只存在于旧帖数组里的
+//     图片仍能被另一存活帖认领；
+//   - P1：注销清理清 `community_posts.media_ids` 的两处，必须**同事务**删掉本帖的 `post_media_attachments`
+//     行，否则注销后仍留「哪张图曾挂在这帖」的关联（软删帖保留挂载行是**已知边界**，不走这两处）。
+//
 // 负控制（改坏任一处，本文件必须失败）：
 //   - 把认领改回「先查 count 再写」⇒ 用例 1 的语句序列多出一条 SELECT；
 //   - 去掉认领前的 `pg_advisory_xact_lock` ⇒ 用例 1 的语句序列少一条（集成并发探针同时会红：
@@ -26,7 +32,9 @@
 //   - 把 23514／23505 映射成 503 或新错误码 ⇒ 用例 2／3 失败；
 //   - 把「挂不上」改成静默跳过 ⇒ 用例 4 失败；
 //   - 让 `unwired` 计数器改口返回 0（放行）⇒ 用例 5 失败；
-//   - 让 `42P01` 折叠成 0 ⇒ 用例 6 失败。
+//   - 让 `42P01` 折叠成 0 ⇒ 用例 6 失败；
+//   - 去掉旧帖数组的 EXISTS ⇒「认领覆盖旧帖数组」用例红（集成 `post-media-attachments-pg.mjs` 同时红）；
+//   - 去掉注销里任一处 `DELETE FROM post_media_attachments` ⇒「注销同事务删除挂载行」用例红。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -174,6 +182,36 @@ test('insertPost：media_ids 按数组顺序认领，ordinal 由 row_number() �
     assert.equal(claim.includes(id), false, `认证的 uuid 不得进 SQL 文本（只能走绑定参数）：${id}`);
   }
   assert.equal(claim.includes(POST_ID), false, 'postId 同样只走绑定参数');
+});
+
+test('认领占用检查覆盖旧帖 media_ids 数组（0056 不回填 ⇒ 旧帖的图不能被另一存活帖抢走）', async () => {
+  const pool = fakePool([[{ id: POST_ID }], [], [{ declared: '1', claimed: '0' }]]);
+  const store = createPostgresCommunityStore({ pool });
+
+  // 行为面：旧帖数组占着这张图 ⇒ 认领语句返回 claimed=0 ⇒ 整笔失败（⛔ 不静默少挂）。
+  await assert.rejects(
+    () => store.insertPost(postRecord({ media_ids: [MEDIA_A] }), null),
+    (error) => {
+      assert.equal(error.code, 'INVALID_REQUEST');
+      assert.deepEqual(error.details, [{ field: '/media_ids', code: 'media_not_attachable' }]);
+      return true;
+    },
+  );
+  assert.ok(pool.statements().includes('ROLLBACK'), '认领失败必须整笔回滚');
+
+  // 语句面：旧帖数组必须是**第二条独立的** `NOT EXISTS`（旧帖没有挂载行，只看挂载行会判「没人挂」）。
+  const claim = pool.business()[2];
+  assert.match(
+    claim,
+    /AND NOT EXISTS \(\s*SELECT 1\s+FROM community_posts old_post\s+WHERE old_post\.id <> \$1::uuid\s+AND old_post\.visibility <> 'deleted'\s+AND i\.media_id = ANY\(old_post\.media_ids\)\)/,
+    '0056 不回填历史 media_ids：占用检查必须同时覆盖旧帖数组引用',
+  );
+  const text = flat(claim);
+  assert.ok(
+    text.indexOf('old_post.id') > text.indexOf("p.visibility <> 'deleted'"),
+    '旧帖数组检查必须与挂载行检查**并列**（在媒体行 OR 分组之外），⛔ 不能塞进那条 NOT EXISTS 的子查询里'
+      + '（塞进去后「挂载行 + 旧帖引用」同时存在时内层 EXISTS 为真 ⇒ 外层 NOT EXISTS 反而放行）',
+  );
 });
 
 test('insertPost：media_ids 为空 ⇒ 一条认领语句都不发（既有语句序列契约不变）', async () => {
@@ -382,6 +420,63 @@ test('commitPost：media_ids 没变 ⇒ 不发 DELETE、不发认领（CAS 改�
     pool.statements().some((sql) => sql.startsWith('DELETE FROM post_media_attachments')),
     false,
     '没换图就不该清挂载',
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 4b. 注销：清 media_ids 的两处必须**同事务**删本帖挂载行
+// ---------------------------------------------------------------------------
+test('注销清理：清 media_ids 的两处都同事务删除本帖挂载行；软删帖保留挂载行（已知边界）', async () => {
+  const PII_POST = 'aaaaaaaa-2222-4222-8222-222222222222';
+  const PLAIN_POST = 'aaaaaaaa-3333-4333-8333-333333333333';
+  const GONE_POST = 'aaaaaaaa-4444-4444-8444-444444444444';
+  const pool = fakePool([
+    // ① SELECT … FROM community_posts … FOR UPDATE：PII 帖 + 只有图片的帖 + 作者已软删的帖
+    [
+      { id: PII_POST, revision: 1, title: '除草记录', body: '联系方式 nongyou@example.com', media_ids: [MEDIA_A], visibility: 'published' },
+      { id: PLAIN_POST, revision: 1, title: '安全标题', body: '安全正文', media_ids: [MEDIA_B], visibility: 'published' },
+      { id: GONE_POST, revision: 2, title: '已删标题', body: '已删正文', media_ids: [MEDIA_C], visibility: 'deleted' },
+    ],
+    [], // ② PII 帖 UPDATE
+    [], // ③ PII 帖 DELETE 挂载行
+    [], // ④ 只有图片的帖 UPDATE
+    [], // ⑤ 只有图片的帖 DELETE 挂载行
+    [], // ⑥ SELECT comments（空）
+    [{ id: PII_POST }, { id: PLAIN_POST }, { id: GONE_POST }], // ⑦ 统一换作者指针
+    [], // ⑧ 举报清 detail
+    [], // ⑨ 举报者指针替换
+    [], // ⑩ 点赞物理删
+    [], // ⑪ 幂等台账清空
+    [{ remaining: 0 }, { remaining: 0 }, { remaining: 0 }], // ⑫ 剩余引用读数（恰好 3 行）
+  ]);
+  const store = createPostgresCommunityStore({ pool });
+
+  const counts = await store.purgeOwnerData(AUTHOR);
+
+  const business = pool.business();
+  const deletes = pool
+    .businessCalls()
+    .filter((call) => flat(call.text) === 'DELETE FROM post_media_attachments WHERE post_id = $1::uuid');
+  assert.equal(deletes.length, 2, '两处清 media_ids 的地方都必须在同一事务里删挂载行');
+  assert.deepEqual(deletes.map((call) => call.values), [[PII_POST], [PLAIN_POST]], '只删被清空媒体的那两个帖');
+  assert.equal(
+    deletes.some((call) => call.values[0] === GONE_POST),
+    false,
+    '作者已软删（visibility=deleted）的帖按既有规则「正文/媒体/版本一律不动」⇒ 挂载行也保留（已知边界）',
+  );
+  // 语句顺序：DELETE 紧跟各自的 UPDATE（同一事务、同一次循环里），不是事务末尾的批量补删。
+  assert.ok(business[1].startsWith('UPDATE community_posts'), business[1].slice(0, 40));
+  assert.ok(business[2].startsWith('DELETE FROM post_media_attachments WHERE post_id = $1::uuid'), business[2]);
+  assert.ok(business[3].startsWith('UPDATE community_posts'), business[3].slice(0, 40));
+  assert.ok(business[4].startsWith('DELETE FROM post_media_attachments WHERE post_id = $1::uuid'), business[4]);
+  const statements = pool.statements();
+  assert.equal(statements[0], 'BEGIN');
+  assert.equal(statements.at(-1), 'COMMIT', '删除必须发生在注销的同一事务内');
+
+  assert.deepEqual(
+    counts,
+    { records: 2, idempotency: 0, retained: 1, redacted: 1, hiddenMedia: 2, authorRefsReplaced: 3, authorRefsRemaining: 0 },
+    '计数口径不因新增 DELETE 改变：hiddenMedia 仍按媒体数组长度计',
   );
 });
 
