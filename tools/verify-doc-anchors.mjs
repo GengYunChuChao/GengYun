@@ -329,10 +329,21 @@ export function resolveScanTargets(root, targets = DEFAULT_SCAN_TARGETS) {
 // —— 引用抽取 ——————————————————————————————————————————————————————————
 /**
  * 从一份文档里抽出所有 `路径:起-止` 与 `路径:单行`。
- * 返回 `{ reference, raw, target, from, to }`；`to` 单行引用时等于 `from`。
+ * 返回 `{ reference, raw, target, from, to, fenced }`；`to` 单行引用时等于 `from`。
+ *
+ * `fenced` 是**围栏代码块**标记（规则与兜底见 `fencedCodeLines`）：围栏里是原样抄下来的栈帧、
+ * `psql` 报错原文、命令输出，不是这份文档对仓内行号的断言，所以——**判据面跳过整行**（不产生
+ * BROKEN／OUT_OF_RANGE／SUSPECT／NOT_SYMBOL_LINE，也不进 unresolved／outsideRed），见 `collectFindings`。
+ *
+ * 为什么仍然抽出来、打标记而不是直接丢掉：两份「册子」盯的不是「判没判」，而是「这条锚点还在不在
+ * 文档里」（`tools/doc-anchors-anchor-count-baseline.json` 堵「整条改写成散文」、
+ * `tools/doc-anchors-orphan-baseline.json` 堵「删掉路径前缀」）。围栏感知要是把它们一起丢出册子，
+ * 一次「把报文挪进围栏」就会同时从判据面和册面上静默消失，两道防逃逸判据都被绕过。所以标记留在
+ * 抽取这一层，由各判据面自己决定看不看；汇总行的 `FENCED:` 读数把「因围栏而不判」的条数如实报出来。
  */
 export function extractReferences(text) {
   const lines = text.split('\n');
+  const fencedLines = fencedCodeLines(lines);
   const references = [];
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -352,6 +363,7 @@ export function extractReferences(text) {
           from,
           to,
           docLine: index + 1,
+          fenced: fencedLines.has(index + 1),
         });
       }
       match = ANCHOR_PATTERN.exec(line);
@@ -370,6 +382,50 @@ const TABLE_ROW_LINE = /^\s*\|/;
 const QUOTE_LINE = /^\s*>/;
 const FENCE_LINE = /^\s*(?:```|~~~)/;
 const CLOSING_FENCE_LINE = /^\s*(?:```+|~~~+)\s*$/;
+const FENCE_OPEN_RUN = /^\s*(`{3,}|~{3,})/;
+
+/**
+ * 标出「落在围栏代码块内」的行（1 起的行号 `Set`，含开启行与闭合行本身）。
+ *
+ * 为什么要整段不判：围栏里的内容是**原样抄下来的代码／报文**——小程序 Console 栈帧
+ * （`at … WASubContext.js:1`）、`psql` 报错原文、`node_modules` 里的第三方路径、命令输出。
+ * 它们不是「这份文档对仓内文件的断言」，拿去核对仓内行号只会产出噪声（今天 7 条判红就在围栏里）。
+ * 反过来，散文里的锚点一条都不许因此丢失，所以掩码只按下面的**定界规则**取，不猜内容。
+ *
+ * 规则（一律与 `segmentDocumentBlocks` 的切分同口径，否则同一行会在「归属」眼里是代码块、
+ * 在「抽取」眼里是正文，两条判据各说各话）：
+ *  ① 开启行：`^\s*(` + 连续 3 个及以上 ` 或 ~ + `)`，其后可以跟 info string（` ```js `）；缩进不限
+ *     （与 `FENCE_LINE` 一致：列表项里缩进的围栏同样是围栏）。
+ *  ② 闭合行：`^\s*(` + 同类围栏 + `)\s*$`（与 `CLOSING_FENCE_LINE` 一致），且必须与开启串**同字符**、
+ *     长度**不短于**开启串——`~~~` 关不掉 ``` ，四个反引号也关不掉三个反引号开的块（CommonMark 同口径）。
+ *  ③ 围栏内的空行不切断围栏，一直掩到闭合行；开启行与闭合行本身也掩（定界行上写的东西不是正文）。
+ *  ④ 兜底：读到文件末尾仍未闭合 ⇒ 从开启行一路掩到末行（CommonMark 同口径，未闭合围栏整体算代码）。
+ *
+ * 兜底方向只有一种：**只会少报，不会多报**。漏认围栏最多让一条本该忽略的报文进判据面（噪声），
+ * 而多认一行的代价是把散文里的真锚点静默丢掉——两条错法的代价不对等，所以规则宁可简单僵硬。
+ */
+export function fencedCodeLines(lines) {
+  const fenced = new Set();
+  let open = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const lineNumber = index + 1;
+    if (open === null) {
+      const opener = FENCE_OPEN_RUN.exec(line);
+      if (opener === null) continue;
+      open = opener[1];
+      fenced.add(lineNumber);
+      continue;
+    }
+    fenced.add(lineNumber);
+    // 闭合行整行只有围栏字符（`CLOSING_FENCE_LINE` 已把 info string 排除在外），所以这里一定能取到串。
+    if (CLOSING_FENCE_LINE.test(line)) {
+      const run = FENCE_OPEN_RUN.exec(line)[1];
+      if (run[0] === open[0] && run.length >= open.length) open = null;
+    }
+  }
+  return fenced;
+}
 
 /** 表格行里，第 `offset` 个字符落在第几个单元格（`\|` 是转义竖线，不算分隔）。 */
 function cellIndexAt(line, offset) {
@@ -441,6 +497,10 @@ const canonicalAnchor = (target, from, to) => (
 export function attributeBareAnchors({ text, references, resolveIdentity = null }) {
   const lines = text.split('\n');
   const { blockOf, blocks } = segmentDocumentBlocks(lines);
+  // 围栏代码块内的行**照旧归属**（口径见 `fencedCodeLines`），只给产出盖 `fenced` 章，由 `collectFindings`
+  // 决定判不判。这里不能提前跳过：孤儿册（`doc-anchors-orphan-baseline.json`）记的是「这条裸锚点还在不在
+  // 文档里」，一旦把围栏内的行筛掉，册上 275 条会集体陈旧——那正是「把报文挪进围栏就同时绕过判据面与册面」。
+  const fenced = fencedCodeLines(lines);
   const identityOf = resolveIdentity ?? (reference => reference.reference);
   const links = new Map();
   for (let index = 0; index < lines.length; index += 1) {
@@ -490,6 +550,7 @@ export function attributeBareAnchors({ text, references, resolveIdentity = null 
           to,
           docLine,
           bare: true,
+          fenced: fenced.has(docLine),
           via: 'link',
           inheritedFrom: { reference: link.rawLink, docLine },
         });
@@ -524,6 +585,7 @@ export function attributeBareAnchors({ text, references, resolveIdentity = null 
               to,
               docLine,
               bare: true,
+              fenced: fenced.has(docLine),
               via: 'block',
               inheritedFrom: { reference: nearest.reference.reference, docLine: nearest.reference.docLine },
             });
@@ -673,6 +735,7 @@ export function collectFindings({
     candidates: 0,
     resolved: 0,
     deduped: 0,
+    fenced: 0,
     blankStart: 0,
     commentOnly: 0,
     symbol: { inScope: 0, code: 0, detached: 0, cited: 0, attached: 0, outside: 0 },
@@ -694,6 +757,7 @@ export function collectFindings({
   for (const docPath of files) {
     const text = readFileSync(join(root, docPath), 'utf8');
     const docLines = splitLines(text);
+    // 引用照旧全部抽出（判据面在下面按 `fenced` 章跳过，清册／孤儿册读数因此一分不动）。
     const explicit = extractReferences(text);
     // 裸锚点先归属：继承到的锚点与显式锚点走同一段判据；`report` 只决定它是否真的进 findings／commentAnchors
     // （作用域外的历史取证页只计数，见 `BARE_ANCHOR_SCOPE`）。
@@ -738,6 +802,13 @@ export function collectFindings({
         else stats.bare.outside += 1;
       } else {
         stats.candidates += 1;
+      }
+      // 围栏代码块里的行**整行不判**：那里是原样抄下来的栈帧、`psql` 报错原文、命令输出，不是这份
+      // 文档对仓内行号的断言（定界规则与兜底见 `fencedCodeLines`）。上面已按原文记账，所以清册与孤儿册
+      // 的读数一分不动——「把报文挪进围栏」只离开判据面，不会连册面一起消失。少报也要报数：计入 `stats.fenced`。
+      if (reference.fenced === true && report) {
+        stats.fenced += 1;
+        continue;
       }
       const resolved = resolveTarget({ root, docPath, target: reference.target, fileIndex: index });
       if (resolved.status !== 'resolved') {
@@ -2973,6 +3044,8 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
 function printSummary(streams, { stats, unresolved, findings, fresh, covered, stale, baseline, strict }) {
   const { counts } = stats;
   streams.log(`SCAN: 文档 ${stats.documents} 份；抽出「路径:行号」引用 ${stats.candidates} 条（解析成功 ${stats.resolved} 条、同名多文件无法唯一解析 ${unresolved.length} 条不计红${stats.deduped > 0 ? `、同文档重复 ${stats.deduped} 条已去重` : ''}）`);
+  // 少报也要报数：围栏里那些栈帧／报文原文不是「判轻了」，是**按设计不看**，但必须留下可核对的数字。
+  streams.log(`FENCED: 围栏代码块（\`\`\`／~~~）内另有 ${stats.fenced} 条「路径:行号」按设计不进判据面（定界规则见 fencedCodeLines：同字符、闭合串不短于开启串、未闭合掩到末行）`);
   streams.log(`COUNT: BROKEN ${counts[BROKEN]} / OUT_OF_RANGE ${counts[OUT_OF_RANGE]} / SUSPECT ${counts[SUSPECT]} / ${NOT_SYMBOL_LINE} ${counts[NOT_SYMBOL_LINE]}（合计 ${findings.length} 条；另只计数不判红：区间首行为空行 ${stats.blankStart} 条、区间全是注释行 ${stats.commentOnly} 条）`);
   streams.log(`SYMBOL-LINE: 作用域 ${SYMBOL_LINE_SCOPE}** × 源码后缀——可判 ${stats.symbol.inScope} 条：落代码行 ${stats.symbol.code}、注释但非文档注释 ${stats.symbol.detached}、逐字引用注释文案 ${stats.symbol.cited}、落在文档注释里 ${stats.symbol.attached}（其中判红 ${counts[NOT_SYMBOL_LINE]} 条）；作用域外（历史证据页）同形状 ${stats.symbol.outside} 条只统计、不判红`);
   const bare = stats.bare;
