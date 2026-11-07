@@ -1,18 +1,20 @@
 /**
  * GY-R87 · #1030 的「⑩ / ⑪ 不许被静默删除」静态守卫（A 档内闭合）。
  *
- * 缺口（#1037 审查 `369b9d9a`）：`.github/workflows/real-pg-integration.yml:859` 的读数闸门是
+ * 背景（#1037 审查 `369b9d9a`）：`.github/workflows/real-pg-integration.yml` 的读数闸门**原本**是
  *
  *     if [ "$readings" -lt 13 ]; then … exit 1
  *
- * 而 `tests/integration/post-media-attachments-pg.mjs` 现在真跑产出 **19** 条 `PASS n:`。
- * 把 ⑩（同帖并发）/ ⑪（owner_id / state 行为级负控制）两节**整段删掉** ⇒ 16 条仍 ≥ 13，
- * step 照样绿，缺口静默消失。改 workflow 的 13 ⇒ 会把 PR 从 A 档升到 B 档（丢自合并资格），
- * 所以这里在 `tests/unit/` 里补一条**纯静态**守卫：不连库、不读 workflow。
+ * 而 `tests/integration/post-media-attachments-pg.mjs` 现在真跑产出 **19** 条 `PASS n:` ——
+ * 把 ⑩（同帖并发）/ ⑪（owner_id / state 行为级负控制）两节**整段删掉** ⇒ 16 条仍 ≥ 13，step 照样绿。
+ * 这个缺口已由 workflow 侧的 `-lt 19` 堵上（本 PR，B 档）：删节后真跑只剩 16 条 ⇒ CI step 当场红。
+ * 这里再补一条**更快的纯静态**守卫：不连库、不读 workflow，`tests/unit` 一遍就红。
+ * 两个数字必须同时改：workflow 的 `-lt 19` ＋ `tests/unit/ci-real-pg-readings-gates.test.mjs`
+ * 的 `baseline: 19` ＋ 本文件的 `SAY_FLOOR = 19`。
  *
  * 两条判据：
- *   ① **计数**：`say(` 调用点 ≥ 19（⑩ 占 1 个、⑪ 占 2 个）。删掉 ⑩ 或 ⑪ 的 state 支 ⇒ 18，
- *      本文件立刻红。失败文案点名「workflow 的 `-lt 13` 覆盖不到这里」，避免有人以为是 CI 的事。
+ *   ① **计数**：**可执行** `say(` 调用点 ≥ 19（⑩ 占 1 个、⑪ 占 2 个）。删掉 ⑩ 或 ⑪ 的 state 支 ⇒ 18，
+ *      本文件立刻红；workflow 侧 `-lt 19` 那道也会在真跑时跟着红（本守卫只是更快的静态补位）。
  *   ② **锚点**：⑩/⑪ 的关键文案与结构串必须仍在（每节的 say 行前缀、⑩ 的并发断言文案、
  *      ⑪ 的 owner/state 夹具与 4 个 state 值）。这条比①硬：只删节、别处补 `say(` 凑够 19
  *      也照样红。
@@ -38,8 +40,10 @@ const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const INTEGRATION_RELATIVE = 'tests/integration/post-media-attachments-pg.mjs';
 
 /**
- * 读数下限：本文件实测 19 个 `say(` 调用点（①–⑨ + 迁移那节 12 个既有 + ⑩ 1 + ⑪ 2）。
- * ⛔ 这个数字**不是** workflow 的 `-lt 13`：那条闸门只看 `PASS n:` 条数，删两节仍是 16。
+ * 读数下限：本文件实测 19 个**可执行** `say(` 调用点（①–⑨ + 迁移那节 12 个既有 + ⑩ 1 + ⑪ 2；
+ * 另有 3 处 `say(` 只出现在注释里 —— 裸 `grep` 会数出 22，别拿它当基线）。
+ * ⛔ 这个数字**不是** workflow 的 `-lt 19` 那道读数闸门的替代：那条看的是真跑 `PASS n:` 条数，
+ * 这条数的是脚本里的调用点（不连库）。两者互补，数字必须同时改。
  */
 export const SAY_FLOOR = 19;
 
@@ -211,7 +215,8 @@ test(`真库臂的 say( 调用点不少于 ${SAY_FLOOR} 个（删 ⑩/⑪ 必红
     count >= SAY_FLOOR,
     `${INTEGRATION_RELATIVE} 只剩 ${count} 个 say( 调用点（下限 ${SAY_FLOOR}）。\n` +
       '⑩（同帖并发）/ ⑪（owner_id、state 行为级负控制）两节被整段删除时这条会红；\n' +
-      'workflow 的 `-lt 13` 闸门覆盖不到这里：那两节删掉后本文件仍有 16 条 PASS n: ≥ 13，CI 照样绿。\n' +
+      'workflow 侧已有一条 `-lt 19` 的读数闸门（真跑删节后只剩 16 条 ⇒ CI 红）；本守卫是更快的静态补位，' +
+      '两个数字（`SAY_FLOOR` 与 workflow 的 `-lt 19`）必须同时改。\n' +
       '新增/改写读数请同步上调 SAY_FLOOR，⛔ 不要靠调低它来变绿。',
   );
 });

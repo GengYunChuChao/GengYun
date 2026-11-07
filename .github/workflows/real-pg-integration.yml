@@ -837,14 +837,15 @@ jobs:
       # 把第 5 节的断言组删空、只留建库与迁移，step 照样绿 —— 而它正是唯一能抓 0056 约束变异的臂。
       # 故与相邻各臂同形：冻结「该臂当前稳定产出的 PASS 读数条数」（真跑 PG 17.11 一遍，19 条），
       # `readings < 19` 即红 —— 语义是「PASS 读数不得少于 19 条」。
-      # 19 = `tests/integration/post-media-attachments-pg.mjs` **当前**打出的 PASS 条数（19 个 `say(` 调用点；
+      # 19 = `tests/integration/post-media-attachments-pg.mjs` **当前**打出的 PASS 条数（19 个**可执行** `say(`
+      # 调用点；另有 3 处 `say(` 只出现在注释里 ⇒ 裸 grep 会数出 22，别拿裸 grep 当基线；
       # 其中第 17–19 条是 #1030 新增的两节：⑩ 同帖并发 1 条、⑪ owner_id / state 2 条）。删掉任一节
       # 读数必然掉到 < 19 ⇒ 这一步当场红。旧基线 13 时删掉 ⑩/⑪ 仍剩 16 ≥ 13、step 照样绿，
       # 那两节等于没有闸门 —— 抬到 19 就是为了堵这个洞。
       # 数字与计数式都登记在 `tests/unit/ci-real-pg-readings-gates.test.mjs`
       # 的 `READING_GATE_BASELINES`（守卫逐条比对「表 ↔ 本文件」，只改一边就红）。
-      # 另一层静态守卫（A 档）是 `tests/unit/post-media-attachments-say-floor.test.mjs`：它数臂脚本里的
-      # `say(` 调用点（下限同样是 19）。本处是 workflow 侧的「真跑 PASS 读数」下限（B 档），两者互补：
+      # 另一层静态守卫（A 档）是 `tests/unit/post-media-attachments-say-floor.test.mjs`（已在 main 上）：它数臂脚本里
+      # 的**可执行** `say(` 调用点（下限同样是 19）。本处是 workflow 侧的「真跑 PASS 读数」下限（B 档），两者互补：
       # 删节 ⇒ 静态守卫先红；静态守卫被绕（例如把两条 `say(` 合成一行）⇒ 这里的读数照样掉到 < 19。
       - name: 帖子级媒体挂载（R83 / 迁移子集六段 / 约束直插探针 / 并发 advisory lock）
         timeout-minutes: 5
