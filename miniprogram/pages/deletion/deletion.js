@@ -3,7 +3,9 @@
  * ------------------------------------------------------------
  * 这一页把契约里那三个 operation 串成一条用户能走完的路：
  *   申请（POST /me/account/deletion，二次确认）→ 看回执（GET /account/deletions/{id}，
- *   回执 bearer）→ 生效前取消（DELETE /me/account/deletion，二次确认）。
+ *   回执 bearer）→ 取消（DELETE /me/account/deletion，二次确认；real 模式下受理事务已撤销该用户
+ *   全部会话 ⇒ 这条路径 401/403 不可达，用户文案因此不承诺可撤回，见
+ *   docs/verification/gy-r87-i19-cancel-ruling-20261107.md）。
  *
  * ## 九态（`docs/ui-state-inventory.md:33-41` 的闭集，一个不多一个不少）
  * | 状态      | 本页什么时候用它                                                        |
@@ -342,7 +344,7 @@ Page({
     }
     if (!auth.isLoggedIn()) {
       this.setData({
-        message: '需要先登录：注销与取消都绑定当前登录账号。',
+        message: '需要先登录：注销绑定当前登录账号。',
         guest: true,
         status: this.data.receipt ? this.data.status : 'guest'
       })
@@ -371,7 +373,7 @@ Page({
     this.setData({ busy: true })
     wx.showModal({
       title: '注销账号',
-      content: '注销后账号数据不可恢复：档案、收藏、识别历史与社区内容都会按服务端流程清除。现在提交只是发起申请：生效时间与冷静期以服务端返回的 deletion 字段为准（申请后会显示在回执里），客户端不自己算天数；在服务端完成之前，你可以用回执取消。',
+      content: '注销后账号数据不可恢复：档案、收藏、识别历史与社区内容都会按服务端流程清除。现在提交只是发起申请：生效时间与冷静期以服务端返回的 deletion 字段为准（申请后会显示在回执里），客户端不自己算天数。注意：服务端受理这个申请时会立即撤销这个账号的所有登录会话；该申请一旦受理就不能在客户端撤回。',
       confirmText: '继续',
       cancelText: '不注销',
       success: function (first) {
@@ -384,7 +386,7 @@ Page({
         if (!self.identityHeld(identity, 'apply')) return
         wx.showModal({
           title: '再次确认',
-          content: '确认向服务端提交注销申请？提交后会返回一条回执，凭本机保存的回执凭据可以查询进度，也可以在生效前取消。',
+          content: '确认向服务端提交注销申请？提交后会返回一条回执，凭本机保存的回执凭据可以查询进度。受理后服务端会立即撤销这个账号的所有登录会话，该申请不能在客户端撤回。',
           confirmText: '确认注销',
           confirmColor: '#b3261e',
           cancelText: '返回',
@@ -456,7 +458,7 @@ Page({
     this.setData({ busy: true })
     wx.showModal({
       title: '取消注销申请',
-      content: '取消后账号恢复为未申请注销，数据不会被删除；这条回执随即作废。确认取消这次申请？',
+      content: '若取消成功：账号恢复为未申请注销、数据不会被删除、这条回执随即作废。注意：真实服务端受理注销时已撤销该账号的全部登录会话，这一步通常会被判会话失效而失败。确认取消这次申请？',
       confirmText: '继续',
       cancelText: '保留申请',
       success: function (first) {
