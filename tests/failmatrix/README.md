@@ -257,18 +257,22 @@ not-runnable 8**，族分布 `C1` 36/1/0、`C2` 18/3/3、`C3` 31/5/0、`C4` 14/2
 45 + 前置余量 10）。它**不**吃 `services.postgres`：脚本自己 `initdb` 一次性集群，job 只负责用 PGDG 源装
 `postgresql-17`（装完先自证 `initdb --version` 主版本是 17），把 `/usr/lib/postgresql/17/bin` 传给 `GY_PG_BIN`，
 另给 `GY_I22_PG_ROOT`（脚本唯一读的数据根键）与 `PGCLIENTENCODING: UTF8`，然后跑
-`node tests/failmatrix/run-real.mjs --json="$RUNNER_TEMP/failmatrix-real/real.json"`，产物按 artifact 归档 14 天。
+`node tests/failmatrix/run-real.mjs --require-no-not-runnable --json="$RUNNER_TEMP/failmatrix-real/real.json"`，产物按 artifact 归档 14 天。
 
-**不可静默通过 —— 两条独立判决，任一成立就红：**
+**不可静默通过 —— 三条独立判决，任一成立就红：**
 
 1. **退出码**：`77` = 没拿到 17 的服务端二进制 ⇒「未取得」，job 把它显式升级成 `exit 1`
    （脚本头注释写的就是「77 = 未取得，不是通过」）；其它非 0 原样透出。⛔ workflow 里**不传**任何放宽跳过的
-   开关/环境变量（守卫 `tests/unit/ci-real-pg-wiring.test.mjs` 对这类字样在**任何** workflow 里出现即判红）。
+   开关/环境变量（守卫 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `FORBIDDEN_ESCAPE_HATCHES` 对这类字样在**任何** workflow 里出现即判红）；**收紧类开关不在此列** —— 例如 `--require-no-not-runnable` 只会让这条臂更容易红，属允许项。
 2. **机读自证**：`exit 0` 之后再读一遍 `--json` 产物（node，不是 shell 数值闸门），要求「总条数 > 0」且
    「三档计数之和 `same + different + not_runnable` === 总条数」，并顺带核 `rows.length === 总条数`、
    `execution_mode === 'real'` —— 「打完成绩也退 0」「产物被清空」这两类回归都在这里红。
    ⛔ **不断言 `different === 0`**：差异正是这条臂的产品，全 `same` 反而应该先怀疑用例没换代；
    ⛔ **不断言总条数恰好 180**：`180` 是**今天**用例表的口径，硬钉等于把「加一条用例」变成假红。
+3. **`not_runnable` 回归**（PR `#1049` 起）：CI 调用带 `--require-no-not-runnable`，脚本在 `not_runnable > 0` 时
+   打印 `FAIL：…`（含 `byKind` 分布）并 `return 1` —— 这是**脚本自带判据**，不是 shell 数值闸门。
+   `not_runnable` 表示「用例根本没跑」（real 下该域 fail-closed、夹具不可播种），把它当通过会让播种回归**静默变绿**；
+   `#22` 那次被重开的直接成因就是它（13 条静默退回而 CI 仍绿）。
 
 **读数口径要对齐的两个数字**：`168 条 = same 114 / different 19 / not-runnable 35` 是基线 `d4a47206` 上**本机
 PG 17.11** 手跑的读数（当时权限面 `C3` 27 条 + `C4` 18 条）；当前用例表是 **180 条**（`C3` 36 / `C4` 21，由
@@ -282,7 +286,7 @@ PG 17.11** 手跑的读数（当时权限面 `C3` 27 条 + `C4` 18 条）；当�
 | --- | --- | --- |
 | `same` | 116 | 真 PG 与 stub 判定一致 |
 | `different` | 20 | 真 PG 下的实际与 stub 期望不同（**这是本臂的产品，不是失败**） |
-| `not-runnable` | 44 | real 模式下该域 fail-closed、夹具不可播种 |
+| `not-runnable` | 44 | real 模式下该域 fail-closed、夹具不可播种（2026-10-31 读数；后续批次已逐步清零，且 `#1049` 之后 `not_runnable > 0` 会直接判红） |
 
 族分布与用例表一致：`C1` 37 / `C2` 24 / `C3` 36 / `C4` 21 / `C10` 23 / `C11` 39 = 180；产物里
 `execution_mode: "real"`、`postgres: 17.11`、`base_commit: 439970c2…`。
