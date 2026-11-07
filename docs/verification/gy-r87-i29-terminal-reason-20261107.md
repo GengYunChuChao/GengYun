@@ -1,6 +1,6 @@
 # GY-R87 / #29：撤回导致的 job 终态原因可读（2026-11-07）
 
-- 基线：本片起点 `040867a7`（2026-11-07 23:26:16 +0800）；合并时 `origin/main` 已前进到 `1f623228`（#1059 的撤回作用域负控制、#1064 的注销文案已合入），本片以 **merge 提交**并入（不 rebase、不改写既有提交）
+- 基线：本片起点 `040867a7`（2026-11-07 23:26:16 +0800）；合并时 `origin/main` 为 `1f623228`（#1059 的撤回作用域负控制、#1064 的注销文案已合入），本片以 **merge 提交**并入；推送前按复核要求 **rebase 到 `2aa5d433`**（#1068 媒体附件静态守卫，只动 `tests/**` 与 `docs/**` 的媒体附件面，不碰本片文件），该 merge 提交在 rebase 中重建、第二父即 `2aa5d433`，`238f9f7c` 及其之前的历史未改写
 - 分支：`feat/gy-r87-i29-terminal-reason`
 - 范围：只把「因撤回而终止」这条原因送到 `GET /api/v1/jobs/{id}` 的读面；**不**级联改 `public.jobs` 的 `state`，**不**动 `public.exports` 的取消列。
 - 真库：本机隔离 PostgreSQL **17.11**，`127.0.0.1:55441`，库名 `gengyun_egress_test`；未发出任何对外/付费请求。
@@ -242,7 +242,8 @@ stderr 有一行既有噪音 `GY-I16 识别终态历史写入失败（端口=wir
 | `node tools/verify-contract-status.mjs` | EXIT=0（7 条 PASS：覆盖 130 条契约操作、语义可核 124 条区间、证据锚点 593 条、中文表格一致等） |
 | `npm run test:docs` | EXIT=0（`PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables`；研究记录 `5 通过 / 0 失败 / 4 legacy 已钉住`） |
 | `npm run test:contract` | EXIT=0（`tests 22 / pass 22 / fail 0`） |
-| `node --test "tests/unit/*.test.mjs"`（`GY_BASH=D:\Git\bin\bash.exe`） | 见下方「单元全量」一行 |
+| `node --test "tests/unit/*.test.mjs"`（`GY_BASH=D:\Git\bin\bash.exe`） | `tests 5660 / pass 5658 / fail 0 / skipped 2`，EXIT=0 |
+| `npm run test:unit`（CI 用的宽 glob：`unit,privacy,media,reference,moderation`） | `tests 6762 / pass 6760 / fail 0 / skipped 2`，EXIT=0（rebase 到 `2aa5d433` 后重跑；合并 `1f623228` 那版为 6743/6741，差的 19 条是 #1068 新增用例） |
 | `node tools/lint-workspaces.mjs` | EXIT=0（`tsc --noEmit` 服务端 + 管理端、仓库卫生扫描三条 PASS） |
 | `git merge-tree --write-tree --name-only origin/main HEAD` | EXIT=0（合并后无冲突标记） |
 
