@@ -89,8 +89,14 @@ const KNOWN_SITES = Object.freeze([
   'services/api/src/privacy/task-egress.ts:OBJECT_UNAVAILABLE',
 ]);
 
-/** 已登记、未在本片修的例外（理由见文件头）。⛔ 加宽必须同时写清为什么不改，不许当逃生门用。 */
-const DOCUMENTED_EXCEPTIONS = Object.freeze(['OBJECT_CANCELLED', 'CONSENT_WITHDRAWN']);
+/**
+ * 已登记、未在本片修的例外（理由见文件头）。⛔ 加宽必须同时写清为什么不改，不许当逃生门用。
+ *
+ * GY-R87（#29）起 `CONSENT_WITHDRAWN` **已进契约闭集**（403 档），按本文件 `:145-155` 的规矩
+ * 必须从这张例外表删掉——例外表的语义是「账本会写、但契约表达不了」，它现在表达得了了。
+ * `OBJECT_CANCELLED` 仍留在表里：取消墓碑是另一件事，契约今天没有对应码。
+ */
+const DOCUMENTED_EXCEPTIONS = Object.freeze(['OBJECT_CANCELLED']);
 
 function scanSites() {
   const hits = [];

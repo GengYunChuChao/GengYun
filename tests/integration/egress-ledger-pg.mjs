@@ -54,6 +54,8 @@ const sqlFile = (path) => readFileSync(new URL(`../../services/api/db/${path}`, 
 
 let app;
 let realFallbackApp;
+/** 负控制 C 专用：同一池、同一合成传输，但 `recognitionJobDeadlineMs` 压到 500ms（不必等 30 秒）。 */
+let deadlineApp;
 let pool;
 let passed = 0;
 const createdRoles = [];
@@ -84,6 +86,11 @@ function syntheticRecognitionProvider() {
       unavailableReason: null,
       async recognize(input) {
         calls.push(input);
+        if (mode === 'boom') {
+          // 负控制 C（GY-R87 / #29）：提供者**抛未知错**（不是撤回、也不是超时）
+          // ⇒ 读面仍必须是 `failed / PROVIDER_OUTCOME_UNKNOWN`，不许被标成撤回。
+          throw new Error('synthetic provider exploded');
+        }
         if (mode === 'hang') {
           return new Promise((resolve) => {
             releaseHang = () =>
@@ -108,6 +115,9 @@ function syntheticRecognitionProvider() {
     calls,
     hang() {
       mode = 'hang';
+    },
+    boom() {
+      mode = 'boom';
     },
     normal() {
       mode = 'normal';
@@ -201,6 +211,19 @@ async function terminalJobState(token, jobId) {
   if (res.status !== 200) return null;
   const state = res.body.data.state;
   return ['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'].includes(state) ? state : null;
+}
+/**
+ * 读面快照（GY-R87 / #29 新增）：`GET /api/v1/jobs/{id}` 的 `state` **和** `error_code` 一起取。
+ *
+ * 为什么另开一个函数而不改 `terminalJobState`：上面那个只回状态串，既有场景全靠它「等终态」；
+ * 本片要的正是「终态的**原因**可读」，两件事分开写，既有断言零改动。
+ */
+async function terminalJobReadout(token, jobId) {
+  const res = await http(`/jobs/${jobId}`, { token });
+  if (res.status !== 200) return null;
+  const state = res.body.data.state;
+  if (!['succeeded', 'uncertain', 'failed', 'timed_out', 'cancelled'].includes(state)) return null;
+  return { state, errorCode: res.body.data.error_code ?? null };
 }
 
 try {
@@ -529,13 +552,22 @@ try {
   assert.equal(afterWithdraw.state, 'failed', '撤回必须撤销在途外发');
   assert.equal(afterWithdraw.error_code, 'CONSENT_WITHDRAWN');
   synthetic.release();
-  await waitFor(() => terminalJobState(b.token, createdB.body.data.id), 'B 任务终态');
+  const terminalB = await waitFor(() => terminalJobReadout(b.token, createdB.body.data.id), 'B 任务终态');
+  // 正控制（GY-R87 / #29，本片新增的**读面**断言）：终态原因必须自证「因撤回而终止」，
+  // 而不是供应商超时/网络炸的 `PROVIDER_OUTCOME_UNKNOWN`。改前这条只等「任意终态」，
+  // 于是「撤回是否终止已受理的 job」在读面上没有任何断言。
+  assert.equal(terminalB.state, 'failed', '撤回导致的终态必须是 failed');
+  assert.equal(
+    terminalB.errorCode,
+    'CONSENT_WITHDRAWN',
+    `读面必须自证撤回：期望 CONSENT_WITHDRAWN，实际 ${terminalB.errorCode}（落成 PROVIDER_OUTCOME_UNKNOWN ＝ 仍然分不清撤回与供应商故障）`,
+  );
   assert.equal(await writebackCount(sentB.id), 0, '撤回后晚到的提供者结果必须零写入');
   const entryAfterWithdraw = await postRecognition(b.token, randomUUID());
   assert.equal(entryAfterWithdraw.status, 403, JSON.stringify(entryAfterWithdraw.body));
   assert.equal(entryAfterWithdraw.body.error.code, 'CONSENT_REQUIRED');
   assert.equal(await countExports(b.id), 1, '被拒的入口不得新增账本行');
-  say('HTTP 撤回端到端（真 PG）：撤回 200 + 在途外发置 failed + 晚到结果零写入 + 入口拒绝且不新增账本行');
+  say('HTTP 撤回端到端（真 PG）：撤回 200 + 在途外发置 failed + 读面 error_code=CONSENT_WITHDRAWN + 晚到结果零写入 + 入口拒绝且不新增账本行');
 
   // ---------------------------------------------------------------- 8. 取消墓碑不可复活
   const c = await login('ledger-c');
@@ -717,10 +749,148 @@ try {
     'findReservedByObject 属主过滤（真 PG）：合法 uuid 只命中自己的行（同对象另一属主的更新行不被取走）、未命中 ⇒ null、非 uuid 属主 ⇒ SESSION_REQUIRED 且零账本变更、不传属主语义不变',
   );
 
+  // ---------------------------------------------------------------- 12. 负控制 A：撤回不误伤（其他用途 / 其他用户）
+  //
+  // `ledger.revokeInFlight` 只圈 `user_id=$1 AND state IN ('reserved','sent') AND
+  // required_consents ? $2`（services/api/src/privacy/ledger-pg.ts:864-883）。所以撤回
+  // `external_inference` 时，(a) 同用户**另一用途**的行、(b) **另一用户**的同名用途行，
+  // 都必须原样留着——否则「撤回」会变成一把横扫的锁。
+  //
+  // ⚠ 诚实记账：「另一用途」这一行不是产品流程能造出来的。`requiredConsentsForDataType`
+  //    （packages/privacy/constants.mjs 的两张表）里**每个**已知资料类型都要求
+  //    `external_inference`，所以真实 reserve 出来的行必然含该用途。这里先按真实 reserve
+  //    落行（授权/接收方/epoch 全走真路径），再把该行的 `required_consents` 改成
+  //    `{"model_improvement": <epoch>}`（直接 SQL），覆盖的是**SQL 谓词本身**，
+  //    不是某条产品路径。这条边界写进证据页，别当成「另一用途端到端已验收」。
+  const a2 = await login('ledger-a2-other-purpose');
+  const grantA2 = await grantForRecognition(a2.token);
+  const rowKeepUserPurpose = await ledger.reserve({
+    userId: a2.id,
+    authEpoch: 1,
+    objectType: 'media',
+    objectId: randomUUID(),
+    objectRevision: 1,
+    dataType: 'weed_recognition',
+    purpose: 'external_inference',
+    recipientId: 'fixture-weed',
+    sourceVersion: null,
+  });
+  await ledger.markSent(rowKeepUserPurpose.id);
+  const rowOtherPurpose = await ledger.reserve({
+    userId: a2.id,
+    authEpoch: 1,
+    objectType: 'answer',
+    objectKey: `synthetic-other-purpose-${randomUUID().slice(0, 8)}`,
+    objectRevision: 1,
+    dataType: 'checked_content',
+    purpose: 'external_inference',
+    recipientId: 'fixture-weed',
+    sourceVersion: null,
+  });
+  await ledger.markSent(rowOtherPurpose.id);
+  await owner.query(`UPDATE exports SET required_consents='{"model_improvement": 1}'::jsonb WHERE id=$1`, [rowOtherPurpose.id]);
+  const a3 = await login('ledger-a3-other-user');
+  await grantForRecognition(a3.token);
+  const rowOtherUser = await ledger.reserve({
+    userId: a3.id,
+    authEpoch: 1,
+    objectType: 'media',
+    objectId: randomUUID(),
+    objectRevision: 1,
+    dataType: 'weed_recognition',
+    purpose: 'external_inference',
+    recipientId: 'fixture-weed',
+    sourceVersion: null,
+  });
+  await ledger.markSent(rowOtherUser.id);
+  const exportState = async (id) =>
+    (await owner.query('SELECT state, error_code FROM exports WHERE id=$1', [id])).rows[0];
+  const withdrawnA2 = await http('/me/consents/external_inference', {
+    method: 'DELETE',
+    headers: { 'if-match': `"${grantA2.revision}"`, 'idempotency-key': `wd-a2-${randomUUID().slice(0, 12)}` },
+    token: a2.token,
+  });
+  assert.equal(withdrawnA2.status, 200, JSON.stringify(withdrawnA2.body));
+  assert.equal((await exportState(rowKeepUserPurpose.id)).state, 'failed', '被撤回的用途必须撤销在途行');
+  assert.equal((await exportState(rowKeepUserPurpose.id)).error_code, 'CONSENT_WITHDRAWN');
+  assert.equal((await exportState(rowOtherPurpose.id)).state, 'sent', '同用户**另一用途**的行不得被撤回连带撤销');
+  assert.equal((await exportState(rowOtherUser.id)).state, 'sent', '**另一用户**的同名用途行不得被撤回连带撤销');
+  say('负控制 A（真 PG）：撤回只圈「该用户 × 该用途」——同行被置 failed/CONSENT_WITHDRAWN，同用户另一用途行与另一用户行仍为 sent');
+
+  // ---------------------------------------------------------------- 13. 负控制 B：撤回后晚到的回调不许复活
+  //
+  // 既有 `tests/integration/egress-revoke-race-pg.mjs` 用 HTTP 竞态覆盖过这条；这里在账本面上
+  // **直接**再钉一次：晚到的回写既要被拒（`OBJECT_UNAVAILABLE`），又必须**零写入**，
+  // 而且 exports 的 `error_code` 仍写着 `CONSENT_WITHDRAWN`（不许被失败码覆盖成别的）。
+  await assert.rejects(
+    () => ledger.guardWriteback({ exportId: rowKeepUserPurpose.id, userId: a2.id, result: { content_class: 'structural_only' } }),
+    (error) => {
+      assert.equal(error.code, 'OBJECT_UNAVAILABLE', `晚到回写必须被拒：实际 ${error.code}`);
+      return true;
+    },
+  );
+  await assert.rejects(
+    () => inFlight.saveResult({ exportId: rowKeepUserPurpose.id, userId: a2.id, objectVersion: 1, result: { outcome: 'late' } }),
+    (error) => {
+      assert.equal(error.code, 'OBJECT_UNAVAILABLE', `在途守卫的晚到 saveResult 必须被拒：实际 ${error.code}`);
+      assert.match(error.message, /回写被阻断|已终态/, `文案必须说清是终态阻断：${error.message}`);
+      return true;
+    },
+  );
+  assert.equal(await writebackCount(rowKeepUserPurpose.id), 0, '撤回后的晚到回调必须零写入（export_writebacks 0 行）');
+  assert.equal((await exportState(rowKeepUserPurpose.id)).error_code, 'CONSENT_WITHDRAWN', '晚到回调不得改写出错原因');
+  say('负控制 B（真 PG）：撤回后晚到回调 ⇒ guardWriteback/saveResult 均 OBJECT_UNAVAILABLE + export_writebacks 0 行 + error_code 仍 CONSENT_WITHDRAWN');
+
+  // ---------------------------------------------------------------- 14. 负控制 C：不许把正常失败标成撤回
+  //
+  // 两半：(a) 提供者**真超时** ⇒ `timed_out / PROVIDER_TIMEOUT`；
+  //       (b) 提供者**抛未知错** ⇒ `failed / PROVIDER_OUTCOME_UNKNOWN`。
+  // 若 `terminalFailureCodeOf` 被改成「一律 CONSENT_WITHDRAWN」，这两条必然红。
+  deadlineApp = buildApp({
+    config: realConfig,
+    pool,
+    wechat,
+    recognitionProvider: synthetic.provider,
+    recognitionMedia: mediaPort,
+    consentGrantTestOptions: { allowSyntheticGrantPolicy: true },
+    recognitionJobDeadlineMs: 500,
+  });
+  const deadlineOrigin = await deadlineApp.listen({ host: '127.0.0.1', port: 0 });
+  const deadlineHttp = makeHttp(deadlineOrigin);
+  const t1 = await login('ledger-t1-timeout');
+  await grantForRecognition(t1.token);
+  synthetic.hang();
+  const createdT1 = await deadlineHttp('/recognitions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': `rec-t1-${randomUUID().slice(0, 12)}` },
+    body: JSON.stringify({ media_id: randomUUID(), media_revision: 1 }),
+    token: t1.token,
+  });
+  assert.equal(createdT1.status, 202, JSON.stringify(createdT1.body));
+  const terminalT1 = await waitFor(() => terminalJobReadout(t1.token, createdT1.body.data.id), 'T1 任务终态');
+  assert.equal(terminalT1.state, 'timed_out', '真超时必须仍是 timed_out');
+  assert.equal(terminalT1.errorCode, 'PROVIDER_TIMEOUT', `真超时的原因必须仍是 PROVIDER_TIMEOUT：实际 ${terminalT1.errorCode}`);
+  synthetic.release();
+  const u1 = await login('ledger-u1-boom');
+  await grantForRecognition(u1.token);
+  synthetic.boom();
+  const createdU1 = await postRecognition(u1.token, randomUUID());
+  assert.equal(createdU1.status, 202, JSON.stringify(createdU1.body));
+  const terminalU1 = await waitFor(() => terminalJobReadout(u1.token, createdU1.body.data.id), 'U1 任务终态');
+  synthetic.normal();
+  assert.equal(terminalU1.state, 'failed', '提供者抛未知错必须仍是 failed');
+  assert.equal(
+    terminalU1.errorCode,
+    'PROVIDER_OUTCOME_UNKNOWN',
+    `提供者炸了绝不能被标成撤回：实际 ${terminalU1.errorCode}`,
+  );
+  say('负控制 C（真 PG）：真超时 ⇒ timed_out/PROVIDER_TIMEOUT；提供者抛未知错 ⇒ failed/PROVIDER_OUTCOME_UNKNOWN（撤回分支不误伤）');
+
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求`);
 } finally {
   await app?.close?.();
   await realFallbackApp?.close?.();
+  await deadlineApp?.close?.();
   await pool?.end?.();
   // `EGRESS_LEDGER_KEEP=1`：保留角色/表/数据，供后继只追加脚本（如
   // `egress-object-key-pg.mjs` 的 0014 迁移演练）在**已有行**的库上继续验收。

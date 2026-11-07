@@ -9,7 +9,7 @@
  * `CONTRACT_VERSION` 的 const（`1.0.0`），`execution_mode` 取自 `ExecutionMode`。三者都是必填，
  * `meta` 与 `error` 都是封闭对象（`additionalProperties: false`），多一个字段契约就判红。
  */
-import { CONTRACT_VERSION, type ErrorCode, statusForErrorCode } from './contract.ts';
+import { CONTRACT_VERSION, type ErrorCode, isErrorCode, statusForErrorCode } from './contract.ts';
 import type { ExecutionMode } from './contract.ts';
 
 export interface FieldError {
@@ -140,4 +140,25 @@ export function buildErrorEnvelope(
       execution_mode: meta.execution_mode,
     },
   };
+}
+
+/**
+ * 媒体三域（识别／OCR／语音）共用的**终态原因**裁决：提供者调用抛错时，job 的 `error_code` 取哪个。
+ *
+ * 为什么需要这一层（GY-R87 / #29 的读面缺口）：三域过去把「提供者调用抛错」一律写成
+ * `PROVIDER_OUTCOME_UNKNOWN`，于是 `GET /api/v1/jobs/{id}` 的读面**分不清**
+ * 「因撤回同意而终止」与「供应商超时／网络炸了」。撤回要能自证「这次确实没继续处理」，
+ * 所以这一族单独成码：403 `CONSENT_WITHDRAWN`（与 `public.exports.error_code` 同名，便于逐行对账）。
+ *
+ * ⛔ 只认两个**契约闭集内**的码：`CONSENT_REQUIRED`（执行前重查时授权已撤回，直接抛）
+ * 与 `CONSENT_WITHDRAWN`（`privacy/task-egress.ts` 读账本终态原因后翻译出来的）。
+ * 其余一律仍 `PROVIDER_OUTCOME_UNKNOWN`——绝不把「供应商炸了」「提供者协议违规」「账号停用」
+ * 都标成撤回（那会把合规自证写成一门假证据）。`isErrorCode` 先兜一道：域外错误对象的
+ * 任意 `{code}` 鸭子类型冒充不了契约码。
+ */
+export function terminalFailureCodeOf(error: unknown): ErrorCode {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (typeof code !== 'string' || !isErrorCode(code)) return 'PROVIDER_OUTCOME_UNKNOWN';
+  if (code === 'CONSENT_REQUIRED' || code === 'CONSENT_WITHDRAWN') return 'CONSENT_WITHDRAWN';
+  return 'PROVIDER_OUTCOME_UNKNOWN';
 }

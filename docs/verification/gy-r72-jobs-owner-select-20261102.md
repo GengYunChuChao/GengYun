@@ -108,8 +108,8 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
 
 | 位置 | 修前 | 修后 | 理由 |
 | --- | --- | --- | --- |
-| `tests/integration/egress-ledger-pg.mjs:379` | `SELECT: [ … 6 列 ]` | `SELECT: [ … + 'owner_id' ]` | 该臂按 `#region` 抽文本自建角色后**真查** `has_column_privilege`，列数要跟授权同源 |
-| `tests/integration/egress-ledger-pg.mjs:391` | `length === 26`（15+5+6） | `length === 27`（15+5+7） | 同上，读数条数 |
+| `tests/integration/egress-ledger-pg.mjs:402` | `SELECT: [ … 6 列 ]` | `SELECT: [ … + 'owner_id' ]` | 该臂按 `#region` 抽文本自建角色后**真查** `has_column_privilege`，列数要跟授权同源 |
+| `tests/integration/egress-ledger-pg.mjs:414` | `length === 26`（15+5+6） | `length === 27`（15+5+7） | 同上，读数条数 |
 | `tests/integration/online-purge-pg.mjs:1281` | 断言「运行时角色下只有 `jobs` 被跳过、reason 含 `owner_id`」 | 断言「`skippedModules` 为 `[]`、`modules` 等于 `ONLINE_PURGE_MODULES`（8/8）」 | 授权补齐后该域装得上；若又缺回 `owner_id`，这条断言会红（探测仍在 port 里） |
 | `tests/unit/online-purge-closed-set.test.mjs:182` | 注释说「这正是出厂授权的实测形状」 | 注释改成「GY-R72 **修好之前**的出厂形状」 | 断言本身不动：假池 `{table_delete:true, owner_select:false}` 仍必须只跳 `jobs` |
 | `services/api/src/privacy/online-purge-port.ts:147` | 失败文案只说「出厂列清单未含它」 | 文案改成「自 GY-R72 起应为 7 列含 `owner_id`；当前库缺这一列即必然 42501」并指向本页 | 探测保留、`skippedModules` 机制一字未动 |
@@ -177,7 +177,7 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
   脚本自建角色），两个真库臂已在这套隔离环境里真跑通过；但**部署面**（真实迁移集、真实角色链与凭据、
   CI 上两个臂的串联时序）仍由 CI 的 `consent-grant-postgres-17.11` 判定。
 - 若将来收紧这条授权（例如把 `owner_id` 从列清单里拿掉），**三处必须同改**：
-  `20-login-roles.sql:980` 的列清单、`90-assert:1356` 的期望清单、`tests/integration/egress-ledger-pg.mjs:379` 的读数数组；
+  `20-login-roles.sql:980` 的列清单、`90-assert:1356` 的期望清单、`tests/integration/egress-ledger-pg.mjs:402` 的读数数组；
   漏一处就会被 T1/T2 或真库臂抓住。
 - `owner_id` 进列级 SELECT 后，`public.jobs` 的**读面依旧为零**（T3 逐文件守）；
   `/admin/jobs` 仍只读三张域内表，R34 裁定 3 不变。

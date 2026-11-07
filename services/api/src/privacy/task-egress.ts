@@ -124,7 +124,7 @@ export function createMediaJobEgress(deps: {
           throw new PrivacyError('OBJECT_UNAVAILABLE', '无外发预留（未登记的外发被拒绝）');
         }
         if (typeof input.jobId === 'string') await ledger.linkJob({ exportId: record.id, jobId: input.jobId });
-        await inFlight.assertExecutable({ exportId: record.id, userId: record.userId });
+        await assertExecutableOrWithdrawn(inFlight, ledger, record);
         const sent = await ledger.markSent(record.id);
         let outcome: unknown;
         try {
@@ -140,7 +140,7 @@ export function createMediaJobEgress(deps: {
           return outcome;
         }
         // 保存前重查 + 结果写入（与校验同事务）；被拒 ⇒ 抛错 ⇒ 域服务不保存结果（零写入）。
-        await inFlight.saveResult({
+        await saveResultOrWithdrawn(inFlight, ledger, {
           exportId: record.id,
           userId: sent.userId,
           objectVersion: sent.objectRevision,
@@ -421,7 +421,7 @@ export function createChatEgress(deps: {
       // 执行前重查：撤回/注销后不得再起新外发。
       // ⛔ 这里被拒 ⇒ 同样**不写** `provider_invocations`（没有外发）；`reserve` 失败同理，
       //    所以那条路径连 `sent` 都到不了，这张表自然零行。
-      await inFlight.assertExecutable({ exportId: record.id, userId: record.userId });
+      await assertExecutableOrWithdrawn(inFlight, ledger, record);
       const sent = await ledger.markSent(record.id);
       // 下三行是**外发即将发生**的时刻读数：`sentAt` 取进入 `call()` 之前（不是拿到返回值的时刻），
       // `startedAt` 只计这一次调用；两者都进 `provider_invocations.sent_at` / `duration_ms`。
@@ -472,7 +472,7 @@ export function createChatEgress(deps: {
         usage: usageOfOutcome(outcome),
       });
       // 保存前重查 + 写回结构分类（与校验同事务）；被拒 ⇒ 抛错 ⇒ 调用方不保存结果（零写入）。
-      await inFlight.saveResult({
+      await saveResultOrWithdrawn(inFlight, ledger, {
         exportId: record.id,
         userId: sent.userId,
         objectVersion: sent.objectRevision,
@@ -498,3 +498,72 @@ export { createProviderCallLedger } from './provider-call-ledger-pg.ts';
 export type { ProviderCallLedger, ProviderCallInvocationState } from './provider-call-ledger-pg.ts';
 export { withProviderCallAccounting } from './media-call-accounting.ts';
 export type { ProviderCallAccountingReadings } from './media-call-accounting.ts';
+
+// ── GY-R87 · #29：撤回导致的终态原因（读面可自证）─────────────────────────────
+//
+// 缺口原状：撤回提交后 `ledger.revokeInFlight` 把 `public.exports` 置成终态
+// （`state` 为 `failed`、`error_code` 为 `CONSENT_WITHDRAWN`）；紧接着在途的外发调用撞上
+// `in-flight.mjs` 的守卫，拿到的是 `OBJECT_UNAVAILABLE`（「外发已终态（failed），回写被阻断」）。
+// 这个码一路抛到域服务的 `runProviderWithDeadline` 的 `.catch`，过去会被折成
+// `PROVIDER_OUTCOME_UNKNOWN`（503）——于是 `GET /api/v1/jobs/{id}` 读面**分不清**
+// 「因撤回同意而终止」与「供应商超时／网络炸了」。
+//
+// 这里的翻译是**窄**的：只有账本自己写着 `CONSENT_WITHDRAWN` 的那一行才认（读一次 `get`），
+// 或守卫直接抛 `CONSENT_REQUIRED`（执行前重查发现授权已撤回）时才认。
+// ⛔ 不把 `OBJECT_UNAVAILABLE` 一律当撤回：取消墓碑（`OBJECT_CANCELLED`）、无预留、
+//    版本不符也用同一个码，那样会把「取消」写成「撤回」，等于造假证据。
+// ⛔ 也不改 `in-flight.mjs` 的守卫码：`tests/integration/egress-revoke-race-pg.mjs` 与
+//    `tests/unit/conversation-async-privacy-codes.test.mjs` 已经把 `OBJECT_UNAVAILABLE`
+//    钉成「晚到回调不得复活」的对外读数。
+type InFlightCalls = Pick<InFlightGuard, 'assertExecutable' | 'saveResult'>;
+type TerminalReasonReader = Pick<PostgresExportLedger, 'get'>;
+
+/** 撤回/同意缺失 ⇒ 契约码 `CONSENT_WITHDRAWN`；**其余错误一律原样返回**（域层照旧折成 503）。 */
+async function withdrawalAwareFailure(
+  ledger: TerminalReasonReader,
+  exportId: string,
+  error: unknown,
+): Promise<unknown> {
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === 'CONSENT_REQUIRED') {
+    return new PrivacyError('CONSENT_WITHDRAWN', '外发因撤回同意而终止，结果不予写入');
+  }
+  if (code !== 'OBJECT_UNAVAILABLE') return error;
+  let record: ExportRecord | null = null;
+  try {
+    record = await ledger.get(exportId);
+  } catch {
+    // 账本读不出来（被替身/桩替掉、或库抖）⇒ 不猜原因，保持原错误。
+    return error;
+  }
+  if (record !== null && record.state === 'failed' && record.errorCode === 'CONSENT_WITHDRAWN') {
+    return new PrivacyError('CONSENT_WITHDRAWN', '外发因撤回同意而终止，结果不予写入');
+  }
+  return error;
+}
+
+/** `inFlight.assertExecutable` 的撤回感知包装：执行前重查被撤回拒绝 ⇒ `CONSENT_WITHDRAWN`。 */
+async function assertExecutableOrWithdrawn(
+  inFlight: InFlightCalls,
+  ledger: TerminalReasonReader,
+  record: { id: string; userId: string },
+): Promise<void> {
+  try {
+    await inFlight.assertExecutable({ exportId: record.id, userId: record.userId });
+  } catch (error) {
+    throw await withdrawalAwareFailure(ledger, record.id, error);
+  }
+}
+
+/** `inFlight.saveResult` 的撤回感知包装：保存前重查被撤回拒绝 ⇒ `CONSENT_WITHDRAWN`。 */
+async function saveResultOrWithdrawn(
+  inFlight: InFlightCalls,
+  ledger: TerminalReasonReader,
+  input: Parameters<InFlightCalls['saveResult']>[0],
+): Promise<void> {
+  try {
+    await inFlight.saveResult(input);
+  } catch (error) {
+    throw await withdrawalAwareFailure(ledger, input.exportId, error);
+  }
+}

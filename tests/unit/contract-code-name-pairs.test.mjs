@@ -490,7 +490,7 @@ function formatViolations(violations) {
 
 test('①权威 名字集：admin-contract.mjs 的 ERROR_CODES === openapi 的 ErrorCode.enum === states.json 的 error_status_map', () => {
   assert.ok(Array.isArray(ERROR_CODES), 'ERROR_CODES 必须是数组（该模块导出的是 Object.freeze([...])）');
-  assert.equal(ERROR_CODES.length, 28, `ERROR_CODES 有 ${ERROR_CODES.length} 项（基线 28）`);
+  assert.equal(ERROR_CODES.length, 29, `ERROR_CODES 有 ${ERROR_CODES.length} 项（基线 28 ＋ GY-R87「撤回读面」1 项 CONSENT_WITHDRAWN）`);
   assert.equal(new Set(ERROR_CODES).size, ERROR_CODES.length, 'ERROR_CODES 内部有重复项');
 
   const enumCodes = spec.components?.schemas?.ErrorCode?.enum;
@@ -527,7 +527,7 @@ test('①权威 状态档：states.json 的 error_status_map 与 services/api/sr
       `${status} 档：\`contract.ts\` 与 \`states.json\` 的码集不一致`
       + '（这正说明闸门会对着一份过期镜像判绿）');
   }
-  assert.equal(new Set(Object.values(SPEC_STATUS_MAP).flat()).size, 28, '状态档摊平去重后必须是 28 码');
+  assert.equal(new Set(Object.values(SPEC_STATUS_MAP).flat()).size, 29, '状态档摊平去重后必须是 29 码（基线 28 ＋ GY-R87 的 CONSENT_WITHDRAWN）');
 });
 
 // ───────────────────────────── 判据 1／2／3 ─────────────────────────────
