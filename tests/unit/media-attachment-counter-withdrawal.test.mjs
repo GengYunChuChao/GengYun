@@ -7,6 +7,10 @@ import test from 'node:test';
 import * as mediaService from '../../services/api/src/media/service.ts';
 import { approveRealMediaWiring, createAppMediaService } from '../../services/api/src/media/service.ts';
 import { createUnwiredObjectStore } from '../../services/api/src/media/object-store.ts';
+import { buildApp } from '../../services/api/src/app.ts';
+import { loadConfig } from '../../services/api/src/config.ts';
+import { createMemoryAuthStore } from '../../services/api/src/auth/store.ts';
+import { createMemoryMediaStore } from '../../services/api/src/media/store.ts';
 
 /**
  * 结构锁：`#1029` 的**口径**不得回来。
@@ -141,7 +145,11 @@ test('real + PG 持久化、但没有权威计数能力时，默认计数器必�
     objectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' },
     tokenSecret: 'x'.repeat(48),
     realMediaApproval: approveRealMediaWiring({ reason: 'r83 structural lock' }),
-    persistence: { kind: 'postgres' }, // 有 PG 持久化，但没有 countPendingCommunityImages
+    // 有 PG 持久化，但没有 countPendingCommunityImages。`persistent: true` 必须给：
+    // 生产端口（`services/api/src/media/store-pg.ts`）返回的就是 `{ kind: 'postgres', persistent: true }`，
+    // 缺这个字段的假 store 会让「`&& options.persistence.persistent === true`」这类旁路绕过本断言
+    // （第二轮审查 P1-1 实测过这条旁路）。
+    persistence: { kind: 'postgres', persistent: true },
   });
 
   // 防「拿 fail-closed 服务凑出 unwired」：那条分支的计数器同样是 unwired，不设这个前提断言就会假绿。
@@ -161,7 +169,41 @@ test('real + PG 持久化、但没有权威计数能力时，默认计数器必�
   );
 });
 
-test('除替身与测试缝外，任何计数器的返回值都不得随 owner 存活记录数变化', async () => {
+test('生产装配位点（buildApp 透传 PG mediaStore）注入后，默认计数器仍必须是 unwired', async (t) => {
+  // 第二轮审查 P1-2：第 1 条只查 `createAppMediaService` 的默认；生产真正透传持久化端口的是
+  // `services/api/src/app.ts` 的 `mediaStore`（`:1824` 传入 `createAppMediaService`），而那里没有用例——
+  // 把 `#1029` 的计数器接在 app 层（而不是 service 默认）能让上一版全部判据保持绿色。
+  const app = buildApp({
+    config: {
+      ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+      executionMode: 'real',
+    },
+    store: createMemoryAuthStore(),
+    mediaObjectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' },
+    // 用真实形状的持久化端口：`kind: 'postgres'` + `persistent: true`（缺后者就是 P1-1 的旁路）。
+    mediaStore: { ...createMemoryMediaStore(), kind: 'postgres', persistent: true },
+    realMediaApproval: approveRealMediaWiring({ reason: 'r83 structural lock' }),
+  });
+  t.after(() => app.close());
+
+  assert.equal(
+    app.mediaService.failClosedReason,
+    null,
+    '本用例要探的是真装配，不能靠 fail-closed 分支拿到 unwired'
+  );
+  assert.equal(
+    app.mediaService.attachmentCounter.kind,
+    'unwired',
+    'buildApp 透传 PG mediaStore 后默认计数器不是 unwired：这正是把 #1029 接在 app 层的旁路'
+  );
+  assert.equal(
+    await app.mediaService.attachmentCounter.countFor({ ownerId: 'o', liveCommunityImages: 3 }),
+    null,
+    '生产装配位点的默认计数器必须对 owner 存活记录数不敏感（恒 null）'
+  );
+});
+
+test('除替身与测试缝外，任何计数器的返回值都不得随 owner 存活记录数变化', async (t) => {
   const factories = Object.entries(mediaService).filter(
     ([name, value]) => typeof value === 'function' && /^create\w*AttachmentCounter$/.test(name)
   );
@@ -200,6 +242,14 @@ test('除替身与测试缝外，任何计数器的返回值都不得随 owner �
         )}、对 =7 返回 ${String(result.high)}`
       );
     }
+  }
+
+  if (inconclusive > 0) {
+    // 两次都抛错 ⇒ 不判红（需要真实存储/网络的持久化计数器），但不能**无声**：把它数出来，
+    // 否则「坏实现靠抛错永久藏进 inconclusive 桶」会被静默放过（第二轮审查 P2-2）。
+    t.diagnostic(
+      `inconclusive ${inconclusive} 个：这些计数器两次 countFor 都抛错，本次未判定其口径`
+    );
   }
 
   assert.ok(
