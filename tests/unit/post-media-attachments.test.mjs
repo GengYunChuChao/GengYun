@@ -225,10 +225,68 @@ test('第 4 张：迁移 0056 的结构约束原文必须是「ordinal 1..3」+�
   // `COMMENT ON COLUMN … IS '… UNIQUE (post_id, ordinal)'` 都能让只剥 `--` 的版本假绿，所以
   // ① 先用块注释正则整段删掉 `/* … */`（含跨行），② 再逐行剥 `--`，③ 最后禁止 `COMMENT ON`
   // （0056 全文没有 `/* */`，一行 `COMMENT ON` 就能把约束「描述」成存在）。
-  const withoutBlockComments = migration.replace(/\/\*[\s\S]*?\*\//g, '');
-  const ddl = withoutBlockComments
+  // ⛔ 只剥 `--` 不够（PR #1037 第三轮审查 P1-3 实测）：`/* UNIQUE (post_id, ordinal) */` 与
+  // `COMMENT ON COLUMN … IS '… UNIQUE (post_id, ordinal)'` 都能让只剥 `--` 的版本假绿，所以
+  // ① 先按**嵌套深度**剥掉 SQL 注释（PG 支持 `/* /* */ */` 嵌套），② 再禁止 `COMMENT ON`
+  // （0056 全文没有块注释，一行 `COMMENT ON` 就能把约束「描述」成存在）。
+  // ⛔ 也不能用非贪婪正则 `/\/\*[\s\S]*?\*\//g`（PR #1037 第五轮审查 P2-a 实测）：
+  // 它只吃到第一个 `*/`，把 `/* outer /* inner */ CONSTRAINT … UNIQUE … */` 的后半截当真实 DDL ⇒ 假绿；
+  // PG 会把整段当注释，约束其实不存在。
+  const stripSqlComments = (sql) => {
+    const out = [];
+    let depth = 0;
+    let inString = false;
+    for (let index = 0; index < sql.length; index += 1) {
+      const ch = sql[index];
+      const next = sql[index + 1];
+      if (depth > 0) {
+        if (ch === '/' && next === '*') {
+          depth += 1;
+          index += 1;
+          continue;
+        }
+        if (ch === '*' && next === '/') {
+          depth -= 1;
+          index += 1;
+          continue;
+        }
+        if (ch === '\n') out.push('\n');
+        continue;
+      }
+      if (inString) {
+        out.push(ch);
+        if (ch === "'" && next === "'") {
+          out.push(next);
+          index += 1;
+          continue;
+        }
+        if (ch === "'") inString = false;
+        continue;
+      }
+      if (ch === "'") {
+        inString = true;
+        out.push(ch);
+        continue;
+      }
+      if (ch === '-' && next === '-') {
+        while (index < sql.length && sql[index] !== '\n') index += 1;
+        out.push('\n');
+        continue;
+      }
+      if (ch === '/' && next === '*') {
+        depth = 1;
+        index += 1;
+        continue;
+      }
+      out.push(ch);
+    }
+    // 剥完还有未闭合的块注释 ⇒ 说明注释结构不合法（也别把残文当 DDL 读）
+    assert.equal(depth, 0, '0056 的块注释必须闭合：⛔ 未闭合会让本判据把注释内容当成 DDL');
+    return out.join('');
+  };
+  const ddl = stripSqlComments(migration)
     .split('\n')
-    .map((line) => line.replace(/--.*$/, '').trim())
+    .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .join('\n');
 

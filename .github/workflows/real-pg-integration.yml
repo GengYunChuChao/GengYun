@@ -833,8 +833,33 @@ jobs:
       # （绕开数组 CHECK，直接 INSERT post_media_attachments）能抓到那种变异 ⇒ 它必须在门禁里真跑。
       # 连接串只走 env（`POST_MEDIA_PG_TEST_URL`）：缺 env 时脚本打印 SKIP 并 exit 77 ⇒ 缺库必红（⛔ 不加放宽开关）。
       # 位置：与相邻各臂同形（专用空库 + 库 owner + 不建组角色）⇒ 对前后 step 零耦合。
-      - run: psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_post_media_test' && node tests/integration/post-media-attachments-pg.mjs
+      # 读数闸门（#1037 第五轮审查 P2-b）：本臂此前只有 `exit 0` + 脚本自报 `OK n 项`，
+      # 把第 5 节的断言组删空、只留建库与迁移，step 照样绿 —— 而它正是唯一能抓 0056 约束变异的臂。
+      # 故与相邻各臂同形：冻结「该臂当前稳定产出的 PASS 读数条数」（真跑 PG 17.11 一遍，13 条），
+      # `readings < 13` 即红。数字与计数式都登记在 `tests/unit/ci-real-pg-readings-gates.test.mjs`
+      # 的 `READING_GATE_BASELINES`（守卫逐条比对「表 ↔ 本文件」，只改一边就红）。
+      - name: 帖子级媒体挂载（R83 / 迁移子集六段 / 约束直插探针 / 并发 advisory lock）
         timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/post-media-attachments-pg.log
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_post_media_test'
+          rc=0
+          node tests/integration/post-media-attachments-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::帖子级媒体挂载臂被跳过（exit 77）：POST_MEDIA_PG_TEST_URL 没传，或脚本的跳过判据被改过。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::帖子级媒体挂载臂失败（exit $rc）。"
+            exit "$rc"
+          fi
+          readings=$(awk '/^PASS [0-9]+:/{n++} END{print n+0}' "$log")
+          echo "PASS 读数：${readings} 条"
+          if [ "$readings" -lt 13 ]; then
+            echo "::error::帖子级媒体挂载臂 exit 0 但 PASS 读数只有 ${readings} 条（基线 13）⇒ 断言组被删减；0 条断言不是通过。"
+            exit 1
+          fi
         env:
           PGHOST: 127.0.0.1
           PGPORT: '5432'
