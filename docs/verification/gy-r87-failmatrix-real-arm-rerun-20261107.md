@@ -2,7 +2,7 @@
 
 - 基线 `origin/main = 3561b1fc31558409242829b4610213c00f95f7fb`（`git fetch origin --prune` 后实测，2026-11-07 21:34 HKT）；本页跑的树就是它：工作树 `E:\GengYunCommander\.pg17\wt-r87-realarm`、分支 `docs/gy-r87-i22-real-arm-reading`、`git rev-parse HEAD` = `3561b1fc`、`status --porcelain` 空。
 - 本页补的是 `#22` 一直欠着的**新读数**：`#1033`（`0ecae98c test(failmatrix): 按执行模式分叉真库期望`）把 5 条 `different` 改成 real 侧期望，但那次**没有重跑真库臂**，所以「改完到底读数是什么」此前没有本机实测。
-- 本页读数**全部来自本机实跑**：`run-real.mjs` 的 stdout 与它写出的 `--json` 产物。⛔ 没有抄 CI artifact `failmatrix-real-17.11` 的任何数字，也没抄任何旧页的读数来充本轮。
+- 本页读数**全部来自本机实跑**：`run-real.mjs` 的 stdout 与它写出的 `--json` 产物。⛔ 没有抄 CI artifact 的任何数字——那个 artifact 的实名是 `failmatrix-real-<sha>`（`.github/workflows/real-pg-integration.yml:1359`；`failmatrix-real-17.11` 是同文件 `.github/workflows/real-pg-integration.yml:1281` 的 **job/check 名**，不是 artifact 名）——也没抄任何旧页的读数来充本轮。
 - 只读 + 写文档：没有改 `cases.mjs` / `run-real.mjs` / 任何业务代码，没有 push，没有合并，没有碰 `#1037` 占用的文件。
 
 ## §1 基线与环境
@@ -18,6 +18,9 @@
 | 端口 / 库名 | 端口 **58055**（脚本自取，见 §2 说明）；库名 **`postgres`**（`tests/failmatrix/run-real.mjs:1000` 的连接串固定 `/postgres`，本臂不另建库、不跑 `createdb`） |
 | 迁移 | `[pg] migrations=54（一次性空库，全部落地）` |
 | Node | `v24.16.0`（json `node` 字段） |
+| transport | `app.inject (real PG stores)`（json `transport` 字段原文：用例经 `app.inject` 直接打到真实 PG 支撑的存储层，不起 HTTP 监听） |
+
+**哪些读数来自日志、哪些来自 json**：端口 `58055`、耗时 `12586 ms`、`migrations=54` 三项**只来自日志**（`.pg17\tmp\r87-real-arm.log`）。json 的元数据只有 `generated_at` / `node` / `base_commit` / `postgres` / `execution_mode` / `transport` 六项，其余是 `totals` / `shapePass` / `families` / `rows` 四块数据；端口、耗时、迁移数都不在机读产物里，无法从 json 复算。
 
 **端口为什么不是指挥派单里写的 554xx**：本臂的簇由脚本自己 `initdb` + `pg_ctl start`、并在 `finally` 里 stop + 删目录，端口在 `tests/failmatrix/run-real.mjs:143` 的 `freePort()` 里用 `listen(0, '127.0.0.1')` 向 OS 取临时端口，外部无法指定。能钉住的只有**监听地址**——`tests/failmatrix/run-real.mjs:1023` 把 `-c listen_addresses=127.0.0.1` 写进 `pg_ctl -o`，即只听回环。本轮实测取到 58055；开跑前本机 55400–55500 段只有 55433 在听（既有 `data-r74` 簇），与本轮无关。
 
@@ -90,6 +93,8 @@ C11 异步 AI 域归属面：A 碰 B 的作业 / 识别 … 39 条：same 39 / d
 
 上面那句「权限面合计 …」由 `tests/failmatrix/run-real.mjs:1421` 打印，末句由 `tests/failmatrix/run-real.mjs:1476` 打印。另有整臂零外呼自证：`[pg] media_external_requests=0 fetch_calls=0（整臂零外呼）`。
 
+**关于「（无：权限面在 stub 与真 PG 下逐条一致）」这行**：这是 `run-real.mjs` 在 `different=0` 时打印的**固定文案**，不是逐条比对 stub 期望与 real 期望后的结论。本轮 5 条（C3-19/20/21、C4-15、C4-18）按 `realExpect` / `realCheck` 分叉口径比对：stub 侧对 C3-19/20/21 仍是 503 `PROVIDER_UNAVAILABLE`、对 C4-18 仍是 200，real 侧实测分别是 200 与 401 `SESSION_EXPIRED`（逐条见 §6）。因此这行的「逐条一致」只能读作「在**当次判定口径**（real 期望优先）下没有判红的那一条」，**不能**读作「stub 与真 PG 的原始期望值相同」——后者与 §6 的五条分叉自相矛盾，故在此显式澄清。
+
 ## §5 族分布（本轮，含判据强度分列）
 
 | 族 | total | same | sameWithCheck | sameWithShape | 二者皆无 | different | not_runnable | 旧基线（`docs/verification/gy-r82-failmatrix-reconcile-20261106.md:18`：total/same/diff/nr） |
@@ -101,6 +106,8 @@ C11 异步 AI 域归属面：A 碰 B 的作业 / 识别 … 39 条：same 39 / d
 | C10 | 23 | 23 | 0 | 0 | 23 | 0 | 0 | 23（23/0/0） |
 | C11 | 39 | 39 | 5 | 17 | 17 | 0 | 0 | 39（39/0/0） |
 | **合计** | **180** | **180** | **24** | **30** | **126** | **0** | **0** | 180（162/5/13） |
+
+表里 `sameWithCheck` / `sameWithShape` / 「二者皆无」三列**是由 json 的 `rows`（180 条逐条行）复算的**，不是 json 自带字段：json 的 `families` 每族只存 `total` / `same` / `different` / `notRunnable` 四个数。复算口径与脚本一致——`assertions.check === "ran"` 计 check、`assertions.shape === "compared"` 计同形；同一行两者互斥（同时成立的 0 条），故 24 + 30 = 54（= `sameWithEither`），180 − 54 = 126（= `sameWithNeither`）。复算的六族逐格与上表一致，合计与 §3 的 `totals` 逐字段相等。
 
 六族逐条 `same`，`different` 与 `not_runnable` 全 0——包括 r82 页记为 13 条 `not runnable` 的那批（C2-01/02/03、C2-11/12/13、C3-15/C3-26、C4-12/13/14/16/17）：本轮它们全部取得了真实读数且与 stub 期望一致。
 
