@@ -22,6 +22,9 @@
  *   9. `findReservedByObject` 的**属主过滤 fail-closed**（GY-I22 #22）：同一 object 两个属主各持
  *      `reserved` 时只命中自己那行（不是「全局最新」那行）；合法 uuid 未命中 ⇒ null；**非 uuid 属主**
  *      ⇒ `SESSION_REQUIRED` 且零账本变更（改前会静默退回全局最新行）；不传属主口径逐字不变。
+ *  10. **撤回的作用域负控制**（跨用户／跨用途，补 i29 页 §6② 的缺口）：A 撤回 → A 的目标行被撤（正控制），
+ *      而 B 的两行（一行 `sent`、一行 `reserved`）与 A 的**另一用途**行**逐字段**不变；注销级
+ *      （`purpose=null`）撤回撤掉 A 剩下的那行，B 仍逐字段不变。
  *
  * 不联网（除本机回环 PG）；不发任何真实第三方请求；不打印凭据。
  */
@@ -715,6 +718,94 @@ try {
   assert.equal(unscoped.id, reservedG.id, '不传属主仍取最新 reserved 行（媒体维 task-egress 依赖此口径）');
   say(
     'findReservedByObject 属主过滤（真 PG）：合法 uuid 只命中自己的行（同对象另一属主的更新行不被取走）、未命中 ⇒ null、非 uuid 属主 ⇒ SESSION_REQUIRED 且零账本变更、不传属主语义不变',
+  );
+
+  // ---------------------------------------------------------------- 12. 撤回的作用域负控制（跨用户／跨用途）
+  //
+  // 缺口出处（原文，`docs/verification/gy-r83-i29-consent-negatives-20261107.md` §6②）：
+  //   「**`revokeInFlight` 的跨用户／跨用途过滤缺负控制**：`services/api/src/privacy/ledger-pg.ts:864-883`
+  //     里 `user_id=$1` 与 `required_consents ? $2` 两处过滤都没有「另一个用户/另一个用途的 export
+  //     不受影响」的用例。」同页 §5⑥：「**不证明跨用户隔离。** …跨用户的账本/撤回隔离不在本片。」
+  //
+  // 本节的判据不是「数行数」，而是**逐字段**（`SELECT *` 整行 deepEqual，含 state/revision/error_code/
+  // updated_at/required_consents）：
+  //   ① 正控制：A 的目标行**确实**被撤（failed + CONSENT_WITHDRAWN + revision+1）——否则「不变」是空断言；
+  //   ② 跨用途：同用户另一用途（`checked_content` 只依赖 `external_inference`）的行逐字段不变；
+  //   ③ 跨用户：B 的两行（一行 `sent`、一行 `reserved`）逐字段不变；
+  //   ④ 注销级（`purpose=null`）撤回：撤掉 A 那一行、计数恰为 1，B 仍逐字段不变。
+  // 撤回走**真实 HTTP 触发面**（`DELETE /me/consents/media_processing`），不是直接调 SQL。
+  const exportRowById = async (id) =>
+    (await owner.query('SELECT * FROM exports WHERE id=$1::uuid', [id])).rows[0] ?? null;
+  const exportRowsByIds = async (ids) => {
+    const rows = [];
+    for (const id of ids) rows.push(await exportRowById(id));
+    return rows;
+  };
+  const reserveScoped = (who, dataType, ident) =>
+    ledger.reserve({
+      userId: who.id,
+      authEpoch: 1,
+      objectType: dataType === 'checked_content' ? 'synthesis' : 'media',
+      ...(dataType === 'checked_content' ? { objectKey: ident } : { objectId: ident }),
+      objectRevision: 1,
+      dataType,
+      purpose: 'external_inference',
+      recipientId: 'fixture-weed',
+    });
+  const scopeA = await login('ledger-h-scope-withdrawer');
+  const scopeB = await login('ledger-i-scope-bystander');
+  // A 的 media_processing 授权对象要留着取 revision（`DELETE` 的 `if-match` 用它）。
+  const scopeAGrantMedia = await grant(scopeA.token, 'media_processing');
+  await grant(scopeA.token, 'external_inference');
+  await grantForRecognition(scopeB.token);
+  // `weed_recognition` 的 `required_consents` = {media_processing, external_inference}（横跨两个用途）；
+  // `checked_content` 只 = {external_inference}（只挂一个用途）⇒ 才能把「用途过滤」与「用户过滤」分开打。
+  const aRecognition = await reserveScoped(scopeA, 'weed_recognition', randomUUID());
+  const aChecked = await reserveScoped(scopeA, 'checked_content', `rev-a-${randomUUID()}`);
+  const bRecognition = await reserveScoped(scopeB, 'weed_recognition', randomUUID());
+  const bChecked = await reserveScoped(scopeB, 'checked_content', `rev-b-${randomUUID()}`);
+  // 旁观者那行推进到 `sent`：`revokeInFlight` 的 `state IN ('reserved','sent')` 两种状态都要被覆盖。
+  await ledger.markSent(bRecognition.id);
+  assert.deepEqual(
+    Object.keys(aRecognition.requiredConsents).sort(),
+    ['external_inference', 'media_processing'],
+    '前提：A 的 weed_recognition 行横跨两个用途',
+  );
+  assert.deepEqual(Object.keys(aChecked.requiredConsents).sort(), ['external_inference'], '前提：checked_content 只挂外发用途');
+  const beforeA = await exportRowsByIds([aRecognition.id, aChecked.id]);
+  const beforeB = await exportRowsByIds([bRecognition.id, bChecked.id]);
+  assert.deepEqual(beforeA.map((row) => row.state), ['reserved', 'reserved'], '前提：A 两行都在途');
+  assert.deepEqual(beforeB.map((row) => row.state), ['sent', 'reserved'], '前提：B 一行 sent、一行 reserved');
+
+  const scopeWithdrawn = await http('/me/consents/media_processing', {
+    method: 'DELETE',
+    headers: { 'if-match': `"${scopeAGrantMedia.revision}"`, 'idempotency-key': `wd-scope-${randomUUID().slice(0, 12)}` },
+    token: scopeA.token,
+  });
+  assert.equal(scopeWithdrawn.status, 200, `撤回必须成功（否则下面的「不变」无从谈起）：${JSON.stringify(scopeWithdrawn.body)}`);
+
+  const afterA = await exportRowsByIds([aRecognition.id, aChecked.id]);
+  const afterB = await exportRowsByIds([bRecognition.id, bChecked.id]);
+  // ① 正控制：目标行（A × media_processing）真的被撤了 —— 这条不绿，②③ 的「不变」就没有意义。
+  assert.equal(afterA[0].state, 'failed', 'A 的目标行必须被撤回置 failed');
+  assert.equal(afterA[0].error_code, 'CONSENT_WITHDRAWN');
+  assert.equal(Number(afterA[0].revision), Number(beforeA[0].revision) + 1, '撤回必须推进 revision（CAS 语义）');
+  assert.notEqual(afterA[0].updated_at.getTime(), beforeA[0].updated_at.getTime(), '撤回必须刷新 updated_at');
+  // ② 跨用途：同用户、另一用途（`required_consents` 里没有 media_processing）⇒ **逐字段**不变。
+  assert.deepEqual(afterA[1], beforeA[1], '同用户不同用途的行必须逐字段不变（含 state/revision/error_code/updated_at）');
+  // ③ 跨用户：B 的两行（sent + reserved）⇒ **逐字段**不变。
+  assert.deepEqual(afterB, beforeB, 'B 的两行必须逐字段不变（含 state/revision/error_code/updated_at/required_consents）');
+  assert.equal(await countExports(scopeB.id), 2, 'B 的账本行数不变');
+
+  // ④ 注销级撤回（`purpose=null`）：撤掉 A 剩下的那一行（证明 ② 的「不变」不是「撤回根本没生效」的假绿），
+  //    且计数恰为 1（A 的 media 行已是 failed，不再计入）；B 仍逐字段不变。
+  assert.equal((await revoker.onAccountSuspendedOrDeleted({ userId: scopeA.id })).revokedInFlight, 1, '注销级撤回只应命中 A 剩下的那 1 行');
+  const afterA2 = await exportRowsByIds([aRecognition.id, aChecked.id]);
+  assert.equal(afterA2[1].state, 'failed', 'purpose=null 必须撤掉 A 的另一用途行（跨用途过滤只在带 purpose 时生效）');
+  assert.equal(afterA2[1].error_code, 'CONSENT_WITHDRAWN');
+  assert.deepEqual(await exportRowsByIds([bRecognition.id, bChecked.id]), beforeB, '注销级撤回同样不得波及其他用户（逐字段）');
+  say(
+    '撤回作用域负控制（真 PG）：A 走 HTTP 撤回只撤自己那一行（failed + CONSENT_WITHDRAWN + revision+1）；同用户另一用途行与 B 的 sent/reserved 两行逐字段不变；purpose=null 撤回恰撤 1 行且 B 仍逐字段不变',
   );
 
   console.log(`\nRESULT=PASS ${passed} 组；真实 PostgreSQL ${version}（本机隔离、仅回环）；未发出任何对外/付费请求`);
