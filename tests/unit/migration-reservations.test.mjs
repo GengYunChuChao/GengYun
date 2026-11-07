@@ -124,6 +124,12 @@
  * （`#14` 的预留号，台账里那一条 `remove_when` 未兑现），保留台账仍只有那一条
  * ⇒ `54 个文件 + 1 保留 === max 55`。**台账不因 0055 新增条目**（本片自己落盘的文件不是"有意缺号"），
  * 也**不得**残留 55 号条目（0055 已落盘 ⇒ `reservedButPresent` 会立刻判红）。
+ *
+ * **合流后当前树状态（`0055` 与 `0056` 同时落盘，2026-11-07，实测口径）**：`origin/main`（`ca3b26f0`）
+ * 的 `0055_provider_call_ledger.sql`（#1003 / `54a4ab23`）与本片的
+ * `0056_post_media_attachments.sql`（#1030）并存 ⇒ 正向 **55** 个（`0001..0056` 里除 `0037` 之外的各条）、
+ * `rollback/` **54** 个（`0001` 无 down，`0037` 无 down）；缺号回到**只有 `0037`**，保留台账也只剩那一条
+ * ⇒ `55 个文件 + 1 保留 === max 56`。55 号条目按它自己的 `remove_when` 删除（⛔ 不得残留）。
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, writeFileSync, rmSync } from 'node:fs';
@@ -167,7 +173,7 @@ function reservation(overrides = {}) {
   };
 }
 
-test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0053/R72 #838 举报处置审计、0054/GY-R73 收藏反查索引、0055/GY-R83 #1003 识别外发记账台账 已落盘 ⇒ 54 文件 + 1 保留 === 55、三条不变量成立', () => {
+test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568、0041/#18 S2、0042/#37、0043/#18 R18、0044/GY-S4 P1、0045/S3 片 A、0046/#18 S2 收尾、0047/R64 post.hide 审计、0048/R68 后台管理员账号停用恢复、0049/R68-A01 后台分类字典落库、0050/R72-W2 provider_invocations 调用记录、0051/R72-W41 审核域持久幂等台账、0052/R72-W54 审核结论事实新鲜度、0053/R72 #838 举报处置审计、0054/GY-R73 收藏反查索引、0055/GY-R83 #1003 识别外发记账台账、0056/GY-R83 #1030 帖子级媒体挂载 已落盘 ⇒ 55 文件 + 1 保留 === 56、三条不变量成立', () => {
   const migrations = discoverMigrations();
   const reservations = loadMigrationReservations();
   const numbering = inspectMigrationNumbering(migrations, reservations);
@@ -177,15 +183,21 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.deepEqual(
     numbering.gaps,
     [37],
-    `0053（#838）与 0054（GY-R73）在合流树上都已落盘 ⇒ 缺号只剩 0037（#14 保留；现场 ${JSON.stringify(numbering.gaps)}）`,
+    `0053（#838）、0054（GY-R73）、0055（GY-R83 #1003）与 0056（GY-R83 #1030）都已落盘`
+      + ` ⇒ 缺号只剩 0037（#14 保留）；现场 ${JSON.stringify(numbering.gaps)}`,
   );
   assert.deepEqual(
     numbering.reserved,
     [37],
-    '0037（#14）这一个缺号必须在台账登记；0052/0053/0054 已落盘 ⇒ ⛔ 不得登记 52/53/54',
+    '只有 0037（#14）这一个缺号必须在台账登记；'
+      + '0052/0053/0054/0055/0056 已落盘 ⇒ ⛔ 不得登记 52/53/54/55/56',
   );
-  assert.equal(reservations.length, 1, '台账眼下必须恰有一条保留项（0037 #14；53 号条目的 remove_when 已兑现 ⇒ 删除）');
-  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（0037 与 0053 都已登记）');
+  assert.equal(
+    reservations.length,
+    1,
+    '台账眼下必须恰有一条保留项（0037 #14；55 号条目随 0055 落盘按 remove_when 删除，53 号同理早已删）',
+  );
+  assert.deepEqual(numbering.undeclaredGaps, [], '未声明的缺号必须为空（只有 0037 一个缺号，已登记）');
   assert.deepEqual(numbering.reservedButPresent, [], '登记过的号一旦变成真实文件，条目必须立刻删（防躺平）');
   assert.equal(
     numbering.countMatchesMax,
@@ -195,7 +207,7 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
   assert.equal(
     numbering.count,
     numbering.maxVersion - numbering.reserved.length,
-    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（53 = 54 − 1）',
+    '同一事实的第二种写法：文件数 = 最大版本号 − 保留号数（55 = 56 − 1）',
   );
 
   const files = migrations.map((item) => item.filename);
@@ -335,6 +347,19 @@ test('迁移编号/当前仓库：0036/#538、0038/#553、0039/#22、0040/#568�
     files.some((name) => /^0037_/.test(name)),
     false,
     '0037 属 #14（号空出）⇒ 合流树上不得出现 0037 前缀的文件',
+  );
+  // GY-R83 合流（2026-11-07）：0055（#1003 provider_call_ledger，origin/main 的 54a4ab23）与本片
+  // 0056（#1030 帖子级媒体挂载）**并存落盘** ⇒ 两条都必须出现在清单里，且台账都不得登记它们。
+  assert.equal(
+    files.includes('0056_post_media_attachments.sql'),
+    true,
+    'GY-R83 的 0056 已落盘 ⇒ 真实文件必须在清单里（号位 = 0055 让给 provider_call_ledger 后取 0056，⛔ 不许换号/借号）',
+  );
+  assert.equal(
+    files.includes('0055_provider_call_ledger.sql'),
+    true,
+    '0055 的 provider_call_ledger 已随 origin/main（54a4ab23 / #1003）落盘 ⇒ 真实文件必须在清单里，'
+      + '且台账里的 55 号条目必须已按 remove_when 删除（否则 reservedButPresent 会先判红）',
   );
   assert.ok(
     reservations.every((item) => item.filename.startsWith(`${formatMigrationVersion(item.version)}_`)),

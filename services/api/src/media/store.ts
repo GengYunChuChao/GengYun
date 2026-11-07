@@ -209,6 +209,19 @@ export interface MediaStore {
    */
   liveCommunityImageCount(ownerId: string): Promise<number>;
   /**
+   * **待用池**里该 owner 还剩几个图位（无 post 上下文时的判定口，迁移 0056 配套；可选端口）。
+   *
+   * 口径：`purpose='community_image'`、状态在 `initiated`/`uploaded`/`processing`/`ready`、
+   * 创建于 24h 内、且**没有挂在任何未删除的帖子**上 —— 挂载即释放、删帖即释放、24h 窗口自衰减。
+   * 因此**不是**「同一 owner 名下存活记录数」那种生命周期累计口径（那会让用户传满 3 张后永久锁死，
+   * 见 `services/api/src/media/service.ts:835-838`）。
+   *
+   * 返回 `null` = 判定不了（迁移未 apply／存储不支持）：调用方必须 fail-closed 503，
+   * ⛔ 不得把 `null` 降级成 0。⚠️ 并发：这是**先数后写**的预检，没有 `pg_advisory_xact_lock` 时两个并发上传可同时通过；每帖 ≤3 的**首拒点**是 `0022` 的数组 CHECK（`media_ids` 长度 ≤3，写帖行那一步就拒）；
+   * 0056 的 `UNIQUE (post_id, ordinal)` + `CHECK` 是**第二道**结构闸（直插挂载行、绕开数组列时只剩它挡），`claimPostMedia` 另有 per-media advisory lock（`hashtext(lower(media_id))`）串行化并发认领。
+   */
+  countPendingCommunityImages?(ownerId: string): Promise<number | null>;
+  /**
    * **按主体清理媒体对象**（注销闭集用的原语）：把该 owner 的社区图片**软隐藏**，并把其对象键
    * 全部交到清理台账（`media_object_cleanup`，`reason = 'owner_delete'`）后清掉引用。
    *
