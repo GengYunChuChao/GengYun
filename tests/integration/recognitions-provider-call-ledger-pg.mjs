@@ -6,7 +6,10 @@
 //   ① `[T]` 的 export_id 外键正则硬写 `REFERENCES public.exports(id)`，而 `pg_get_constraintdef`
 //      在 `search_path` 能解析到 `public` 时输出 `REFERENCES exports(id)`（无 schema 限定词）；
 //   ② `[R]` 期望回滚件抛 `G0019` 后没有 `ROLLBACK`，会话停在 aborted 状态，后续语句一律 25P02。
-// 这两处说明「写了但没跑过」的判据不能算证据——本文件此后按实跑记账。⚠️ 本臂仍**不在任何 workflow 的 `run:` 里**（白名单登记见 `tests/unit/ci-integration-chain-structure.test.mjs`），所以「本文件有实跑读数」不等于「CI 覆盖了它」。
+// 这两处说明「写了但没跑过」的判据不能算证据——本文件此后按实跑记账。R87（`#29` 尾巴）起本臂**已接线**：
+// `.github/workflows/real-pg-integration.yml` 的 `real-pg-ledger-17.11` job 用 `services.postgres:17.11`（发布在
+// `127.0.0.1:5432`，`POSTGRES_USER` 即超管）真跑它 —— 先建 `gengyun_provider_call_ledger_test` 再经 `argv[2]` 传连接串；
+// 白名单条目已从「未接线（真缺口）」改成「已接线（workflow）」（`tests/unit/ci-integration-chain-structure.test.mjs`）。
 //
 // 运行（本机隔离集群，仅回环；**自带建库**，不需要事先 createdb）：
 //   node tests/integration/recognitions-provider-call-ledger-pg.mjs postgres://postgres@127.0.0.1:<port>/postgres
@@ -15,7 +18,8 @@
 //
 // 本脚本只讲一件事：**「哪次外发、烧了多少 token、用的是哪套剖面」是数据库给的**，不是应用自己
 // 记账、自己相信。因此逐条钉数据库侧的判据：
-//   [N] 迁移串：全量 `up` ⇒ `schema_migrations` 末项是 0055（本片新增），且 0055 之后没有别的行。
+//   [N] 迁移串：全量 `up` ⇒ `schema_migrations` 与磁盘迁移集逐条一致，且本片 0055 在位
+//       （⛔ 不钉「末项是 0055」：基线一落新迁移——`0056_post_media_attachments` 就是——这条就假红）。
 //   [T] 表形状：13 列的名字/类型/可空/varchar 长度逐列复述（含 `id uuid PK default gen_random_uuid()`、
 //       `job_id uuid` **可空且无外键**、`export_id` 挂 `public.exports ON DELETE CASCADE`）。
 //   [K] 约束面：8 条命名约束 + 主键在位；`UNIQUE (export_id, attempt)` 真的拦重复；`provider_call_ledger_job_idx`
@@ -65,8 +69,14 @@ const dbUrl = new URL(serverUrl.href);
 dbUrl.pathname = `/${DB}`;
 
 const notes = [];
+/**
+ * 分段行计数（P2-1 的读数源）：只数判据段落行 `^\[[A-Z]\] `（`[N]/[T]/[K]/[W]/[C]/[G]/[A]/[R]`），
+ * ⛔ 不数 `[√]` 那两行 —— 否则末尾自己那条读数会把计数抬高，正好掩盖「整段被删」。
+ */
+let segments = 0;
 function note(line) {
   notes.push(line);
+  if (/^\[[A-Z]\] /.test(line)) segments += 1;
   console.log(line);
 }
 
@@ -151,13 +161,24 @@ async function expectRejected(overrides, label, codes = ['23514']) {
 // [N] 迁移串：全量 up 到 0055
 // ---------------------------------------------------------------------------
 {
-  const result = await applyMigrations(owner, discoverMigrations());
+  const migrations = discoverMigrations();
+  const result = await applyMigrations(owner, migrations);
   assert.ok(result.applied.includes('0055'), `0055 必须在本次 applied 里（实际 ${result.applied.join(',')}）`);
-  const last = await one('SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1');
-  assert.equal(last.version, '0055', `schema_migrations 末项必须是 0055（实际 ${last.version}）`);
-  assert.equal(last.name, 'provider_call_ledger', '末项的迁移名必须与本片迁移一致（文件名去掉号位与后缀）');
-  assert.equal(await countOf("SELECT count(*)::int AS v FROM schema_migrations WHERE version > '0055'"), 0, '0055 之后不许有更新的迁移');
-  note(`[N] 全量 up：applied=${result.applied.length} 条，schema_migrations 末项 = 0055（${MIGRATION}）`);
+  const ledger = await one("SELECT version, name FROM schema_migrations WHERE version = '0055'");
+  assert.ok(ledger, '0055 必须落进 schema_migrations（本片迁移没落盘）');
+  assert.equal(ledger.name, 'provider_call_ledger', '0055 的迁移名必须与本片迁移一致（文件名去掉号位与后缀）');
+  // ⛔ 不钉「末项是 0055」：那只是分支时点事实。基线 #1037 落了 `0056_post_media_attachments` 之后
+  // 「0055 是最后一条」立刻变假（2026-11-08 rebase 到 6e7f7465 实测本臂因此假红），而它要判的是**迁移串本身**。
+  // 改成「台账与磁盘迁移集逐条对齐 + 本片 0055 在位」：漏跑、多跑、跳号仍然会红。
+  const applied = (await q('SELECT version FROM schema_migrations ORDER BY version')).map((row) => row.version);
+  assert.deepEqual(
+    applied,
+    migrations.map((migration) => migration.version),
+    'schema_migrations 必须与磁盘迁移集逐条一致（漏跑或多跑都算红）',
+  );
+  note(
+    `[N] 全量 up：applied=${result.applied.length} 条，schema_migrations ${applied.length} 条与磁盘迁移集逐条一致，含本片 0055（${MIGRATION}）`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -556,4 +577,23 @@ async function expectRejected(overrides, label, codes = ['23514']) {
 
 await owner.end();
 await pool.end();
+
+// ---------------------------------------------------------------------------
+// 段落计数闸（P2-1）：`[√] ALL PASS` 只证明「跑到了最后一行」，证明不了「每组判据都还在」。
+// 反例（审查实测 M6）：把上面 `[R]` 回滚那组 32 行整段删掉 ⇒ 脚本照样 exit 0、照样打 `[√] ALL PASS`,
+// 只剩 note 行数从 27 掉到 25。所以这里把「段落行条数」也变成断言语义：
+// 低于基线即按「整段断言被删」判红，且读数先进日志（失败时也看得见实际条数）。
+// 基线 27 = 2026-11-07 本机 PG 17.11 实跑实测（`grep -c '^\[[A-Z]\] '` ⇒ 27）。
+// ⛔ 不要在下调这个数「凑绿」：它要挡的正是「悄悄少一组断言」。
+const EXPECTED_SEGMENTS = 27;
+note(`[√] 分段 ${segments}/${EXPECTED_SEGMENTS}`);
+assert.ok(
+  segments >= EXPECTED_SEGMENTS,
+  `分段行只有 ${segments} 条，少于基线 ${EXPECTED_SEGMENTS}：疑似整段断言被删`,
+);
 note('[√] ALL PASS');
+
+// ⚠️ 上面那道闸的边界（P2-1 已知限制，审查 2026-11-08 实测）：`EXPECTED_SEGMENTS` 校验的是
+// **日志分段行数**（`^\[[A-Z]\] `），不是断言条数。删掉「整组 16 行以内、但分段标记还在」的改动
+// ——例如只删 `[A]` 组那 16 行（三条 `assert.rejects`）——仍会得到 27/27 全绿：本闸只挡
+// 「整段消失」，不挡「组内少一条」。要锁断言条数得另设断言计数器，那不在本片范围。
