@@ -239,7 +239,7 @@
         <text class="setting-row__value">管理</text>
         <view class="gy-icon gy-icon--arrow"></view>
       </view>
-      <view class="demo-caption">注销后账号数据不可恢复。申请与取消都要二次确认；冷静期与生效时间以上面那张回执里服务端返回的字段为准，本页不写死天数。</view>
+      <view class="demo-caption">注销后账号数据不可恢复。申请要二次确认；一经服务端受理就会立即撤销这个账号的全部登录会话，申请不可撤回。冷静期与生效时间以上面那张回执里服务端返回的字段为准，本页不写死天数。</view>
     </view>
   </view>
 </view>
