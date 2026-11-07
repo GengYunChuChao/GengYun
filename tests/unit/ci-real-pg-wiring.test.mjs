@@ -231,6 +231,9 @@ const MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/consent-zero-policy-pg.mjs',
   // R67-C3：与 `FROZEN_MANAGED_SCRIPTS` 同一份集合（只允许顺序不同）。
   'tests/integration/media-row-purge-pg.mjs',
+  // R87（`#29` 的最后一块）：provider 调用记账臂住**独立 job** `real-pg-ledger-17.11`（它要建库 + 建全局角色，
+  // 而 `real-pg-17-11` 里多条臂对「集群里有没有同名角色」有顺序依赖），故在清单与顺序表里都排最后。
+  'tests/integration/recognitions-provider-call-ledger-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -286,6 +289,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/consent-zero-policy-pg.mjs',
   // R67-C3：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/media-row-purge-pg.mjs',
+  // R87（`#29`）：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/recognitions-provider-call-ledger-pg.mjs',
 ]);
 
 /**
@@ -570,6 +575,11 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   'tests/integration/retention-clock-drill-pg.mjs',
   // R67-C3：`media-row-purge-pg`（媒体行清除驱动）接在写 job 的**最后一步** ⇒ 清单尾部同位置追加。
   'tests/integration/media-row-purge-pg.mjs',
+  // 24. `recognitions-provider-call-ledger-pg`：**不吃 `services.postgres` 之外的任何前置**，但要一条
+  //     能 `CREATE DATABASE` / `CREATE ROLE` 的超管连接 + 建全局角色（`gy_r83_pcl_probe` 与
+  //     `20-login-roles.sql` 的授权区）⇒ 住独立 job `real-pg-ledger-17.11`，在文件里排最后，
+  //     故这里也排最后；它与上面 23 条之间**没有任何状态依赖**（不同集群）。
+  'tests/integration/recognitions-provider-call-ledger-pg.mjs',
 ]);
 
 /**
