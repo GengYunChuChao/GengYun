@@ -66,6 +66,125 @@ function listTsFiles(dir) {
   return out;
 }
 
+/** 去掉注释后再扫描：本仓注释里引用判据是常态（JSDoc 写 `kind: 'injected'` 很自然），而扫描要找的是
+ * **代码里的**注入缝。剥注释不是放宽判据——保留代码、删掉注释文本即可。
+ *
+ * 逐字符扫描，而不是「正则删块注释 + 按行找 //」（PR #1046 审查 P2-1/P2-2/P2-3 的三个反例）：
+ * 正则版会把字符串里的 `/*` 当注释开头（`const open = '/*';` 之后整段被吞 ⇒ 永久假绿），
+ * 会把正则字面量里的 `//` 当行注释（`/^https:\/\//` 被截断），也不计反引号与转义引号。
+ *
+ * 已知边界（证据页同款）：正则字面量的**起点**靠「上一个有意义字符」猜（`=`、`(`、`,`、`:`、`[`、
+ * `!`、`&`、`|`、`?`、`{`、`;`、`return` 之后）；模板串里的 `${…}` 整体当字符串，内部注释不剥。
+ * 猜错的最坏结果是少剥或多剥一段文本——本判据只判「代码里是否存在」，不判位置。 */
+function stripComments(source) {
+  const out = [];
+  const n = source.length;
+  const regexStart = new Set([
+    '',
+    '=',
+    '(',
+    ',',
+    ':',
+    '[',
+    '!',
+    '&',
+    '|',
+    '?',
+    '{',
+    ';',
+    '>',
+    '+',
+    '-',
+    '*',
+    '%',
+    '^',
+    '~',
+    '<',
+  ]);
+  let i = 0;
+  let prevSignificant = '';
+  let prevSignificantPrev = '';
+  let tailBuf = '';
+  const emit = (text) => {
+    out.push(text);
+    tailBuf = (tailBuf + text).slice(-12);
+  };
+  while (i < n) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      emit(ch);
+      i += 1;
+      while (i < n) {
+        const c = source[i];
+        if (c === '\\') {
+          emit(c);
+          if (i + 1 < n) emit(source[i + 1]);
+          i += 2;
+          continue;
+        }
+        emit(c);
+        i += 1;
+        if (c === quote) break;
+      }
+      prevSignificant = quote;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (i < n && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i + 1 < n && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i = Math.min(i + 2, n);
+      emit(' ');
+      continue;
+    }
+    // ⛔ P3-a（增量复审实测）：`++`/`--` 之后的 `/` 不是正则起点 —— `const y = a++ / 2;` 里它是除号，
+    // 而此刻 `prevSignificant` 恰是 `+`/`-`（两者都在上面的 `regexStart` 里）⇒ 会把后面的行注释
+    // 当成正则体一直吃到行尾，同文件若有 `countFor` 就变成假红。判据：`+`/`-` 且它的**前一个**
+    // 有意义字符也是它本身 ⇒ 自增/自减。`!` 不能一并排除：`!/re/.test(x)` 是取反正则的主流写法
+    // （本仓 `!` 接 `/` 的命中全是这种）；代价是 `x! / 2;` 会被误判成正则起点（语料无实例，见盲区）。
+    const plusMinusPair =
+      (prevSignificant === '+' || prevSignificant === '-') && prevSignificantPrev === prevSignificant;
+    const looksLikeRegex =
+      ch === '/' &&
+      !plusMinusPair &&
+      (regexStart.has(prevSignificant) || /(^|[^\w$])return\s*$/.test(tailBuf));
+    if (looksLikeRegex) {
+      emit(ch);
+      i += 1;
+      let inClass = false;
+      while (i < n) {
+        const c = source[i];
+        if (c === '\\') {
+          emit(c);
+          if (i + 1 < n) emit(source[i + 1]);
+          i += 2;
+          continue;
+        }
+        if (c === '[') inClass = true;
+        else if (c === ']') inClass = false;
+        emit(c);
+        i += 1;
+        if (c === '\n') break;
+        if (c === '/' && !inClass) break;
+      }
+      prevSignificant = '/';
+      continue;
+    }
+    emit(ch);
+    if (!/\s/.test(ch)) {
+      prevSignificantPrev = prevSignificant;
+      prevSignificant = ch;
+    }
+    i += 1;
+  }
+  return out.join('');
+}
+
 /** 给一次 `countFor` 加超时：超时是**可疑**（不是「无法判定」），由调用方计入违规。 */
 function withProbeTimeout(promise, label) {
   let timer;
@@ -287,7 +406,8 @@ test('测试注入缝不得出现在生产装配里（只允许它在 service.ts
   const serviceRel = servicePath.slice(repoRoot.length + 1);
   for (const file of listTsFiles(srcRoot)) {
     const rel = file.slice(repoRoot.length + 1);
-    const source = readFileSync(file, 'utf8');
+    // 扫描对象是**代码**：先剥注释（审查 P2-2 残余——JSDoc 里写 `kind: 'injected'` 曾被判红）。
+    const source = stripComments(readFileSync(file, 'utf8'));
 
     const calls = [...source.matchAll(/createInjectedAttachmentCounter\s*\(/g)].length;
     if (calls > 0) {
