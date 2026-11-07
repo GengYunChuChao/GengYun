@@ -879,7 +879,7 @@ jobs:
       # 零政策矩阵（R69）：`consent_policies` **0 行**时每个入口返回什么 —— 只读侦察
       # （`.pg17/tmp/r69-consent-gate/RECON.md` §7.1）给出了一张全矩阵，但**全部是读码推定**，侦察方自己把
       # 「无注入 + 真 PG + 零政策行 + 生产装配」列为最大的未核实项。本臂就是那份矩阵的第一份真库读数：
-      #   ① 全链迁移（现场 48 个 `NNNN_*.sql`）后断言 `consent_policies` = 0 行（前提，不是结论），
+      #   ① 全链迁移（当时现场 48 个 `NNNN_*.sql`；R88 时已 55，现以运行打印为准）后断言 `consent_policies` = 0 行（前提，不是结论），
       #      并读出 `admin_accounts` = 0 行（=「造一行政策前有没有合法 `reviewed_by` 主体」的实测答案）；
       #   ② **生产装配** `buildApp({config,pool,wechat})`：零 `privacyInjection`、零假 gate、
       #      零 `consentGrantTestOptions`；`APP_EXECUTION_MODE=stub` + 真 `DATABASE_URL` + 两个临时密钥；

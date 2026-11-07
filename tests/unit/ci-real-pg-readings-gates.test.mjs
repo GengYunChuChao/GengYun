@@ -198,7 +198,7 @@ export const READING_GATE_BASELINES = [
     script: 'tests/integration/consent-zero-policy-pg.mjs',
     baseline: 14,
     counter: `awk '/^PASS /{n++} END{print n+0}' "$log"`,
-    source: '真跑（本机 PG 17.11 + 空库 + 全链 48 迁移 ⇒ `PASS n:` 14 条；与脚本里 `say(` 的调用点数相等）',
+    source: '真跑（本机 PG 17.11 + 空库 + 全链迁移 ⇒ `PASS n:` 14 条；与脚本里 `say(` 的调用点数相等；迁移条数当时记 48，R88 时已 55，现以运行打印为准）',
   },
   {
     step: '帖子级媒体挂载（R83 / 迁移子集六段 / 约束直插探针 / 并发 advisory lock）',
