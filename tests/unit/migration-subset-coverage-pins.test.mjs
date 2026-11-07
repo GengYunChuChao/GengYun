@@ -27,8 +27,9 @@
  * 五条臂（全部只读：读文件、读目录，不连库、不执行 SQL、不起进程）：
  *
  *   1. 扫描面自证：真正识别出的「子集脚本」必须**恰好**是 `SUBSET_SCRIPTS` 这 13 个（today 实测
- *      13/67）；另外把「朴素扫描命中但不是真子集」的差集钉成**恰好** `NAIVE_ONLY_SCRIPTS`
- *      （today 实测就 `moderation-ledger-pg.mjs` 一个，原因见那里的注释）。正则一旦失配成「零命中」，
+ *      13/72）；另外把「朴素扫描命中但不是真子集」的差集钉成**恰好** `NAIVE_ONLY_SCRIPTS`
+ *      （today 实测两个：`moderation-ledger-pg.mjs` 的断言期望值、
+ *      `post-media-attach-http-pg.mjs` 的必需版本清单，原因见那里的注释）。正则一旦失配成「零命中」，
  *      这两条立刻红 —— 防「零命中即全绿」。
  *   2. 核心判定：子集脚本（或它直接 import 的模块）提到 (表, 列)，且这张表**由该脚本自己的子集
  *      建得出来** ⇒ 子集必须含该列所属迁移号。需求清单按「`0045` 在不在本树」二选一、
@@ -112,20 +113,30 @@ const SUBSET_SCRIPTS = Object.freeze([
 ]);
 
 /**
- * 「朴素扫描命中、但不是迁移子集」的差集，today 实测恰好这一个。
+ * 「朴素扫描命中、但不是迁移子集」的差集，today 实测恰好这两个。
  *
- * `moderation-ledger-pg.mjs:301` 是
+ * ① `moderation-ledger-pg.mjs:301` 是
  * `assert.deepEqual(numbering.reservedButPresent.map(formatMigrationVersion), ['0027'], …)`：
  * 那个 `['0027']` 是**断言期望值**（保留台账里「躺平」的号），不是 apply 子集。
  * 朴素扫描（任何四位数版本串数组）把它当子集，会凭空造出
  * `exports.revision/error_code/job_id ← 0011`、`exports.object_key ← 0014` 四条**假违规**。
+ * ② `post-media-attach-http-pg.mjs` 的 `['0001','0008','0022','0056']` 是
+ * 「全链迁移里**必须出现**这四段」的必需版本清单（断言 `versions.includes(...)`），
+ * 也不是 apply 子集：该脚本走的是 `discoverMigrations()` **全链** + `assert.deepEqual(applied, versions)`
+ * （逐条真 apply）+ 重跑 no-op，朴素扫描却只看见那四个号 ⇒ 误判成子集。
  * ⇒ 精确识别必须带语境（见 `collectSubsetDeclarations` 的三条形态）；这份差集钉住「带语境的
- * 识别没有把真子集也一起丢出去」。
+ * 识别没有把真子集也一起丢出去」，也钉住「登记过的两条仍然朴素命中」（登记过期要删掉）。
  */
 const NAIVE_ONLY_SCRIPTS = Object.freeze([
   {
     file: 'moderation-ledger-pg.mjs',
     why: ':301 的 [\'0027\'] 是 assert.deepEqual 的期望值（保留台账躺平项），不是迁移子集',
+  },
+  {
+    file: 'post-media-attach-http-pg.mjs',
+    why: ':267 的 [\'0001\',\'0008\',\'0022\',\'0056\'] 是「全链必须含这四段」的必需版本清单；'
+      + '本脚本真跑全链（discoverMigrations + assert.deepEqual(applied, versions) + 重跑 no-op），'
+      + '朴素扫描误判为子集',
   },
 ]);
 
@@ -687,7 +698,7 @@ const orphanColumns = findOrphanColumns(columnEntries, codeFiles);
 // 1. 扫描面自证
 // ---------------------------------------------------------------------------
 
-test('扫描面自证：真正识别的子集脚本恰是这 13 个（today 13/67），防正则失配后零命中即全绿', () => {
+test('扫描面自证：真正识别的子集脚本恰是这 13 个（today 13/72），防正则失配后零命中即全绿', () => {
   const actual = subsetScripts.map((script) => script.file);
   assert.deepEqual(
     actual,
@@ -700,7 +711,7 @@ test('扫描面自证：真正识别的子集脚本恰是这 13 个（today 13/6
   );
 });
 
-test('扫描面自证：「朴素命中但不是子集」的差集恰是 moderation-ledger-pg.mjs（语境识别没丢真子集）', () => {
+test('扫描面自证：「朴素命中但不是子集」的差集恰是 NAIVE_ONLY_SCRIPTS 登记的两个（语境识别没丢真子集）', () => {
   assert.deepEqual(
     naiveOnlyNames,
     NAIVE_ONLY_SCRIPTS.map((script) => script.file),
