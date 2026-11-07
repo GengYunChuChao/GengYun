@@ -26,15 +26,21 @@
  *        · `未取得` ⇒ `缺什么条件` 必须是具体阻塞物（≥24 字、含阻塞词、非占位符），
  *          `复核入口` 必须是可执行动作（≥12 字、含动作词），且整行不得出现
  *          `已取得／已通过／已实测`、`证据见／截图见／已留存／已归档／已验／已见／
- *          截图显示／实测通过／人工确认`、截图资产路径 —— 在册欠账不许顺手声称已有证据。
- *          后六个词是 2026-11-07 复查补的：只收「证据见」这类书面语时，
+ *          截图显示／实测通过`、截图资产路径 —— 在册欠账不许顺手声称已有证据。
+ *          后四个词是 2026-11-07 复查补的：只收「证据见」这类书面语时，
  *          「真机已验，截图显示五 Tab 全部正常」这种口语句式能整行绿着空转；
- *        · `已取得` ⇒ 行内必须同时有**真实且不晚于今天**的日历日（`YYYY-MM-DD`；
- *          `2026-13-45` 因 UTC 往返不等而红、`2099-12-31` 因晚于今天而红）、
+ *          `人工确认` 故意**不在**黑名单里 —— 它是合法阻塞物（「需人工确认三档字体倍率…」）。
+ *        · `已取得` ⇒ 行内必须同时有**真实且不晚于今天（本地日期）**的日历日（`YYYY-MM-DD`；
+ *          `2026-13-45` 因 UTC 往返不等而红、`2099-12-31` 因晚于今天而红；用
+ *          `toISOString()` 取「今天」会在 HKT 00:00–07:59 把合法的今天判成未来，故取本地日期）、
  *          **落在 `docs/verification/assets/` 下的截图证据**（扩展名限 png/jpg/jpeg/webp，
  *          故指向 `docs/requirements.md` 或台账自身都不算证据）、该文件真实存在、是文件、
  *          且 ≥1024 字节（只防 0 字节占位，不是画质判据），以及**仍可执行的复核入口**
  *          —— 只验「路径存在」时，一行字没动就能靠 `docs/requirements.md` 变绿；
+ *        · **逐行唯一**：同一条证据路径不得同时点亮多个设备行（`Set` 收已用路径，重复即红），
+ *          否则拿到一张图就能一次「取得」五条设备项，台账上看不出哪一行对应哪张图；
+ *        · 证据口径只作用于证据本身：`复核入口` 列里的 `node tools/verify-layout.mjs`
+ *          这类复跑命令不算证据，只有截图扩展名或紧跟「证据／截图／留存／归档」的路径才算；
  *        · 表头之后必须紧跟 Markdown 分隔行，删掉它表格在渲染层就散架了。
  *      —— date/evidence 为什么不新开列：§12 表只有四列（项目/状态/缺什么条件/复核入口），
  *         加列会让现有五行立刻缺列、也等于改写台账内容；故两者以「行内必须出现的形状」
@@ -102,10 +108,11 @@ const LEDGER_ACTION_WORDS = /→|打开|记录|读取|截图|截一张|复跑|�
 /** 「未取得」行不得出现的已取得措辞。 */
 const LEDGER_ACQUIRED_WORDS = /已取得|已通过|已实测/
 /** 「未取得」行不得出现的证据声称（不收「工具内计算样式证据」这类历史表述）。
- *  2026-11-07 复查补 `已验|已见|截图显示|实测通过|人工确认`：断言「一律红」就得真的盖住
- *  口语说法——否则「真机已验，截图显示五 Tab 全部正常，逐页记录异常」整行绿着空转。 */
-const LEDGER_EVIDENCE_CLAIM =
-  /证据见|截图见|已留存|已归档|已验|已见|截图显示|实测通过|人工确认/
+ *  2026-11-07 复查补 `已验|已见|截图显示|实测通过`：断言「一律红」就得真的盖住口语说法——
+ *  否则「真机已验，截图显示五 Tab 全部正常，逐页记录异常」整行绿着空转。
+ *  **不含 `人工确认`**：它是合法的阻塞物（如「需人工确认三档字体倍率是否达标」），
+ *  收进黑名单会把正常的欠账登记误判成「声称已有证据」。 */
+const LEDGER_EVIDENCE_CLAIM = /证据见|截图见|已留存|已归档|已验|已见|截图显示|实测通过/
 /** 已取得项的证据必须落在截图资产目录下。只验「路径存在」时，指向 `docs/requirements.md`
  *  这类受保护文档也能整行变绿——台账一个字没改，真机项却「取得」了。锁目录 + 锁扩展名
  *  同时排除了台账自身（台账是 `.md`，被扩展名挡掉）。 */
@@ -121,6 +128,10 @@ const LEDGER_ASSET_PATH = /[^\s|`'「」（）(),，;；、]*\.(?:png|jpe?g|webp
 const LEDGER_REPO_PATH = /\b(?:docs|tests|tools|miniprogram|services|apps|packages)\/[^\s|`'「」（）(),，;；、]+\.(?:md|png|jpe?g|webp|gif|json|txt|mjs|js|yml|yaml)\b/gi
 /** 日期令牌：`已取得` 行必须能解析出一个真实日历日。 */
 const LEDGER_DATE_TOKEN = /\b\d{4}-\d{2}-\d{2}\b/g
+/** 证据引导词：`复核入口` 列里只有紧跟这些词的仓库路径才算「证据」。
+ *  「复核入口」列天然会写复跑命令（`node tools/verify-layout.mjs`），把执行入口当成证据
+ *  会让合法的已取得行误红；故该列只在「截图扩展名」或「紧跟在证据引导词后」时才算证据。 */
+const LEDGER_EVIDENCE_MARKER = /证据|截图|留存|归档/
 
 function readText(relPath) {
   return readFileSync(join(ROOT, relPath), 'utf8')
@@ -286,6 +297,25 @@ function evidenceBytesOf(relPath) {
 }
 
 /**
+ * 一行里「算作证据」的仓库相对路径。四列台账没有独立证据列，故按列分口径：
+ * · `缺什么条件` 列（第 3 列）在已取得行里只该写日期与证据 ⇒ 出现的仓库路径一律当证据；
+ * · `复核入口` 列（第 4 列）是执行入口 ⇒ 只有截图扩展名、或紧跟「证据/截图/留存/归档」的路径才算证据，
+ *   `node tools/verify-layout.mjs` 这种复跑命令不算（否则合法的已取得行会被误判成「证据指向文档」）。
+ */
+function evidencePathsOf(cells) {
+  const [, , blockedBy = '', recheck = ''] = cells
+  const paths = new Set()
+  for (const matched of blockedBy.matchAll(LEDGER_REPO_PATH)) paths.add(matched[0])
+  for (const matched of recheck.matchAll(LEDGER_REPO_PATH)) {
+    const before = recheck.slice(Math.max(0, matched.index - 6), matched.index)
+    if (LEDGER_EVIDENCE_EXT.test(matched[0]) || LEDGER_EVIDENCE_MARKER.test(before)) {
+      paths.add(matched[0])
+    }
+  }
+  return [...paths]
+}
+
+/**
  * 单行形状校验（纯函数，`isRepoFile`／`bytesOf` 可注入 ⇒ 负控制不依赖新增或伪造文件）。
  * 返回违规描述数组，空数组表示这一行符合对应分支的形状契约。
  */
@@ -352,7 +382,13 @@ function deviceRowViolations(cells, isRepoFile = isRepoFileOnDisk, bytesOf = evi
   if (dates.length === 0) {
     violations.push(`「${label}」状态为已取得，但没有日期（须写 YYYY-MM-DD）`)
   }
-  const today = new Date().toISOString().slice(0, 10)
+  // 本地日期，不用 toISOString()：UTC 口径在 HKT 00:00–07:59 窗口会把合法的「今天」判成未来。
+  const now = new Date()
+  const today = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-')
   for (const date of dates) {
     if (!isRealCalendarDate(date)) {
       violations.push(`「${label}」的日期「${date}」不是真实日历日`)
@@ -370,7 +406,7 @@ function deviceRowViolations(cells, isRepoFile = isRepoFileOnDisk, bytesOf = evi
       `「${label}」的「复核入口」不可执行（已取得项也要能复验，须含 打开/核对/复跑 一类动作词）：${recheck}`
     )
   }
-  const paths = [...new Set([...rowText.matchAll(LEDGER_REPO_PATH)].map((matched) => matched[0]))]
+  const paths = evidencePathsOf(cells)
   if (paths.length === 0) {
     violations.push(`「${label}」状态为已取得，但没有仓库内相对路径证据`)
   }
@@ -422,6 +458,25 @@ function deviceLedgerViolations(header, rows, isRepoFile = isRepoFileOnDisk, byt
       continue
     }
     violations.push(...deviceRowViolations(cells, isRepoFile, bytesOf))
+  }
+  // 逐行唯一性：同一条证据不得跨行复用。否则「拿到一张图」就能一次点亮五条设备行，
+  // 而台账上看不出哪一行对应哪张图 —— 与「长期空转」是同一类空转。
+  const evidenceOwners = new Map()
+  for (const cells of rows) {
+    const status = (cells[1] || '').replace(/\*/g, '').trim()
+    if (status !== '已取得') continue
+    for (const repoPath of evidencePathsOf(cells)) {
+      const owners = evidenceOwners.get(repoPath) || []
+      owners.push(cells[0])
+      evidenceOwners.set(repoPath, owners)
+    }
+  }
+  for (const [repoPath, owners] of evidenceOwners) {
+    if (owners.length > 1) {
+      violations.push(
+        `同一条证据不得同时点亮多个设备行（哪一行是哪张图必须能对上）：${repoPath}（${owners.join('、')}）`
+      )
+    }
   }
   return violations
 }
@@ -739,4 +794,62 @@ test('真机台账闸门负控制：合成行必须逐条咬红，合法行必�
       `| ${label} | 未取得 | ${blockedBy} | ${recheck} |\n`
   )
   assert.equal(noSeparator.separator, null, '删掉分隔行后 separator 必须为 null')
+
+  // 16) 本地「今天」必须绿：UTC 口径会在 HKT 00:00–07:59 窗口把合法的「今天」判成未来
+  const localNow = new Date()
+  const localToday = [
+    localNow.getFullYear(),
+    String(localNow.getMonth() + 1).padStart(2, '0'),
+    String(localNow.getDate()).padStart(2, '0')
+  ].join('-')
+  assert.equal(violationsOf([label, '已取得', `${localToday} 证据 ${realEvidence}`, recheck]), '')
+  // 17) 复核入口里写复跑命令（`tools/*.mjs`）不算证据 —— 收窄后不该误红
+  assert.equal(
+    violationsOf([
+      label,
+      '已取得',
+      `2026-11-07 证据 ${realEvidence}`,
+      `${recheck} → node tools/verify-layout.mjs 对照计算样式`
+    ]),
+    ''
+  )
+  // 17b) 但把脚本当证据（「证据 tools/verify-layout.mjs」）仍须红：收窄的是口径，不是漏洞
+  assert.match(
+    violationsOf([label, '已取得', '2026-11-07', '证据 tools/verify-layout.mjs → 打开核对计算样式']),
+    /证据必须落在 docs\/verification\/assets\//
+  )
+  // 18) 合法的阻塞物可以写「人工确认」（不该被当成证据声称）
+  assert.equal(
+    violationsOf([
+      label,
+      '未取得',
+      '需人工确认三档字体倍率与首屏耗时是否达标，缺真机复跑与对照截图',
+      recheck
+    ]),
+    ''
+  )
+  // 18b) 但「已验」仍属声称
+  assert.match(
+    violationsOf([label, '未取得', '已验通过，需补齐三档字体倍率人工比对与首屏耗时复跑记录', recheck]),
+    /却含证据声称/
+  )
+  // 19) 同一张图点亮五行 ⇒ 必须红（审查 R6 反例）
+  const fiveAcquired = DEVICE_ROWS.map((rowLabel) => [
+    rowLabel,
+    '已取得',
+    `2026-11-07 证据 ${realEvidence}`,
+    recheck
+  ])
+  const dupViolations = deviceLedgerViolations(DEVICE_TABLE_HEADER, fiveAcquired, fakeRepoFile, fakeBytes)
+  assert.ok(
+    dupViolations.some((line) => line.includes('同一条证据不得同时点亮多个设备行')),
+    `同一证据跨行复用必须被咬住：\n${dupViolations.join('\n')}`
+  )
+  // 20) 只有一行已取得、其余是合法欠账 ⇒ 零违规（逐行唯一性不是「永远红」）
+  const oneAcquired = DEVICE_ROWS.map((rowLabel, index) =>
+    index === 0
+      ? [rowLabel, '已取得', `2026-11-07 证据 ${realEvidence}`, recheck]
+      : [rowLabel, '未取得', blockedBy, recheck]
+  )
+  assert.deepEqual(deviceLedgerViolations(DEVICE_TABLE_HEADER, oneAcquired, fakeRepoFile, fakeBytes), [])
 })
