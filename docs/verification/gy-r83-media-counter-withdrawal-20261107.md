@@ -32,13 +32,15 @@
 
 **第三版只锁运行时行为，仍漏掉 `#1029` 的接线口。** 第三轮独立审查（P1）指出：`#1029` 的计数器在**独立模块** `services/api/src/media/attachment-counter-pg.ts`、**不从** `services/api/src/media/service.ts` 导出、且是**单参**工厂（被工厂枚举的 `factory.length > 0` 跳过），只在 `options.persistence?.kind === 'postgres'` 时接线——把那个实现原样放回来，运行时探针一条都不会响。现在一共五条判据：
 
-1. **装配断言（P1 的补口）**：`createAppMediaService({ executionMode: 'real', objectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' }, realMediaApproval: approveRealMediaWiring({ reason: 'r83 structural lock' }), persistence: { kind: 'postgres' } })` —— real + 有 PG 持久化、但没有任何权威计数能力时，默认计数器必须是 `unwired`，且 `countFor({ ownerId: 'o', liveCommunityImages: 3 })` 必须是 `null`。语义是「默认计数器不允许随 owner 存活数变化」，与 `services/api/src/media/service.ts:835-838` 的禁令同一件事。**附加前提** `assert.equal(app.failClosedReason, null)`：fail-closed 分支内部同样用 `createUnwiredAttachmentCounter()`，不钉这个前提，「构造失败后退化到 unwired」也能凑出假绿。
+1. **装配断言（P1 的补口）**：`createAppMediaService({ executionMode: 'real', objectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' }, realMediaApproval: approveRealMediaWiring({ reason: 'r83 structural lock' }), persistence: { kind: 'postgres', persistent: true } })` —— real + 有 PG 持久化、但没有任何权威计数能力时，默认计数器必须是 `unwired`，且 `countFor({ ownerId: 'o', liveCommunityImages: 3 })` 必须是 `null`。语义是「默认计数器不允许随 owner 存活数变化」，与 `services/api/src/media/service.ts:835-838` 的禁令同一件事。**附加前提** `assert.equal(app.failClosedReason, null)`：fail-closed 分支内部同样用 `createUnwiredAttachmentCounter()`，不钉这个前提，「构造失败后退化到 unwired」也能凑出假绿。
 2. **运行时行为**：枚举 `services/api/src/media/service.ts` 导出的每个零参 `create*AttachmentCounter()` 工厂，各造一个，用 `liveCommunityImages` 取 0 与取 7 各问一次 `countFor`；两者不等、且 `kind` 不是 `substitute`／`injected` 即红。它读运行时行为与运行时 `kind`，所以展开、别名、字符串拼接、换目录都绕不过；`#1030` 的 `createPostgresAttachmentCounter` 在 `fde1659e` 里是本地函数（未导出）⇒ 不误伤。**两次调用各自 `try`、各自 2 秒超时**（P2-1／P2-4）：任一次超时记 suspicious、**恰好一次抛错也记 suspicious**（「一半能查一半不能查」本身就可疑），只有两次都抛错（需要真实存储/网络的持久化计数器）才记 inconclusive。
-3. **注入缝扫描**：`createInjectedAttachmentCounter` 在 `services/api/src/**` 里只允许定义处出现；`kind` 值的字面量按**单/双/反引号**宽匹配（``/kind\s*:\s*["'`]injected["'`]/``，P2-2），且除 `services/api/src/media/service.ts` 外**任何文件同时出现 `injected` 与 `countFor` 即违规**——换个文件用模板串/常量拼出同义写法也算复刻测试缝。
+3. **注入缝扫描**：`createInjectedAttachmentCounter` 在 `services/api/src/**` 里只允许定义处出现；`kind` 值的字面量按**单/双/反引号**宽匹配（``/kind\s*:\s*["'`]injected["'`]/``，P2-2），且除 `services/api/src/media/service.ts` 外，**同一文件同时出现带引号的 `'injected'` 字面量与 `countFor`** 即违规（第三轮审查 P2-2：早先那条只看裸标识符 `injected` 的判据会误伤 `services/api/src/app.ts` 里本来就有的 `injected:`／`injectedDeletionRequests`，任何在 app 层包一层计数器的正当改动都会被判红，现已收窄到带引号字面量 + `countFor` 同文件）。
 4. **禁令原文仍在**：`services/api/src/media/service.ts` 里「不得用同一 owner 名下存活记录数顶替」与「永久锁死」两句不能被悄悄删掉——那是撤回的依据。
 5. **生产装配位点断言（第二轮审查 P1-2 的补口）**：`buildApp({ config: { ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }), executionMode: 'real' }, mediaObjectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' }, mediaStore: { ...createMemoryMediaStore(), kind: 'postgres', persistent: true }, realMediaApproval: approveRealMediaWiring({ reason: 'r83 structural lock' }) })` —— 生产真正透传持久化端口的是 `services/api/src/app.ts` 的 `mediaStore`（`services/api/src/app.ts:1824`），把 `#1029` 的计数器接在 app 层而不是 service 默认，前四条判据全绿；本条只看 `app.mediaService.attachmentCounter` 的 `kind` 与 `countFor` 返回值。第 1 条的假 store 同时补上 `persistent: true`（真实端口 `services/api/src/media/store-pg.ts` 的形状）：缺这个字段时，「`&& options.persistence.persistent === true`」这类旁路能让第 1 条自以为在测 PG 路径（P1-1 实测过）。
 
 **已知边界**：不导出、且只能靠真实存储构造的持久化计数器，运行时探针与注入缝扫描都摸不到；这类实现在本文件里由**两条装配断言**兜底——第 1 条查 `createAppMediaService` 的默认选择（`persistence: { kind: 'postgres', persistent: true }`，真实端口的形状），第 5 条查生产装配位点 `buildApp` 透传 `mediaStore` 之后的选择。两条都不看实现形状，只看「最终选中的是哪个计数器」。
+
+**第 5 条必须带非空 `pool` 与非空 `MEDIA_OBJECT_REF_KEY`**（第三轮审查 P1）：app 层自己的「真库」判词是 `pool !== null`（`services/api/src/app.ts:1304`），不给 pool 时这条用例只覆盖「不看 pool 的接线」——把接线条件写成 `pool !== null && mediaStore.kind === 'postgres' && mediaStore.persistent === true`，旧版 5 条全绿而该旁路在生产里是活的。现在用例传一个**不查库的假 pool**（`query`/`connect` 抛错、`end` 空实现）与 `MEDIA_OBJECT_REF_KEY: '0'.repeat(64)`，并把 `mediaStore` 显式给出（不触发 `createPostgresMediaStore`），装配仍成功、`failClosedReason` 仍为 `null`。
 
 **旧用例兜不住这件事，本页不再那样声称**：审查者实测把 `#1029` 原样复活后，`tests/unit/media-attachment-limit.test.mjs` 仍 **6/6 全绿**。原因是四层叠加——计数器定义在独立模块（不在 `services/api/src/media/service.ts` 的导出面）、未从该模块导出（工厂枚举看不到）、单参工厂（被 `factory.length > 0` 跳过）、real 装配路径不注入 `persistence`（那条用例的 `realApp()` 不传，`persistence?.kind === 'postgres'` 永不成立）。旧用例测的是「real 且无 persistence 时默认 unwired」，与 `#1029` 的接线条件是互斥的两条路径。
 
@@ -46,17 +48,18 @@
 
 | 树 | 内容 | 读数 |
 | --- | --- | --- |
-| A | `fde1659e`（`#1030` 的正确实现） | 5 pass / 0 fail，**exit 0**（不误伤正确实现；第 5 条在 `fde1659e` 上同样绿） |
-| B | `736c0b47` + 把 `#1029` 原样复活：`git checkout 5f5e8ca7 -- services/api/src/media/attachment-counter-pg.ts`，再把 `services/api/src/media/service.ts` 的 import／union／wiring 三处改写回 `5f5e8ca7` 的原文 | 3 pass / 1 fail，**exit 1**；红在第 1 条装配断言：`actual 'postgres'` ≠ `expected 'unwired'`，报错文本 `real + PG 持久化时默认计数器不是 unwired：这正是 #1029 的接线口`，不是语法/导入错 |
+| A | `fde1659e`（`#1030` 的正确实现） | 5 pass / 0 fail，**exit 0**（不误伤正确实现；第 5 条在 `fde1659e` 上同样绿，2026-11-07 在本机重跑确认） |
+| B | `736c0b47` + 把 `#1029` 原样复活：`git checkout 5f5e8ca7 -- services/api/src/media/attachment-counter-pg.ts`，再把 `services/api/src/media/service.ts` 的 import／union／wiring 三处改写回 `5f5e8ca7` 的原文 | 3 pass / 2 fail，**exit 1**（第三轮审查 `012d830d` 复现；旧版记的「3 pass / 1 fail」是四条判据时代的读数，已订正）；红在第 1 条装配断言：`actual 'postgres'` ≠ `expected 'unwired'`，报错文本 `real + PG 持久化时默认计数器不是 unwired：这正是 #1029 的接线口`，不是语法/导入错 |
 
-**变异自证**（在 B 上 `git reset --hard 736c0b47` + 本文件后逐条施加，改完即还原；基线 5 pass / 0 fail、exit 0）：
+**变异自证**（在 B 上 `git reset --hard 736c0b47` + 本文件后逐条施加，改完即还原）。下表只记**红在哪条判据**、不记 pass 计数——判据条数改过一次，早先那几个 pass 数字已不可比（第三轮审查指出旧表还与本页「基线 5 pass」算术矛盾）：
 
-| 变异 | 改动 | 读数 |
+| 变异 | 改动 | 结果 |
 | --- | --- | --- |
-| M2 | `createUnwiredAttachmentCounter().countFor` 改成返回 `liveCommunityImages`（`kind` 仍是 `'unwired'`） | 2 pass / 2 fail，exit 1（装配断言与运行时探针同时响） |
-| M8 | 新导出 `createPostgresLikeAttachmentCounter()`，返回 `{ ...createSubstituteAttachmentCounter(), kind: 'postgres' }` | 3 pass / 1 fail，exit 1 |
-| M3 | 新导出工厂：`kind` 走类型别名、`countFor` 写成箭头函数体直接返回 `liveCommunityImages` | 3 pass / 1 fail，exit 1 |
-| M7 | 在 `services/api/src/community/` 新建文件，自造 `kind: "injected"`（**双引号**）且按 owner 计数的计数器 | 3 pass / 1 fail，exit 1（引号宽匹配与「injected + countFor 同文件」两条同时命中） |
+| M2 | `createUnwiredAttachmentCounter().countFor` 改成返回 `liveCommunityImages`（`kind` 仍是 `'unwired'`） | exit 1，装配断言与运行时探针同时响 |
+| M8 | 新导出 `createPostgresLikeAttachmentCounter()`，返回 `{ ...createSubstituteAttachmentCounter(), kind: 'postgres' }` | exit 1，运行时探针（`kind` 非替身且对存活数敏感）响 |
+| M3 | 新导出工厂：`kind` 走类型别名、`countFor` 写成箭头函数体直接返回 `liveCommunityImages` | exit 1，运行时探针响 |
+| M7 | 在 `services/api/src/community/` 新建文件，自造 `kind: "injected"`（**双引号**）且按 owner 计数的计数器 | exit 1，注入缝扫描响（带引号字面量 + `countFor` 同文件） |
+| **P1（第三轮）** | 在 `services/api/src/app.ts:1824` 之前按 `config.executionMode === 'real' && pool !== null && mediaStore.kind === 'postgres' && mediaStore.persistent === true` 注入一个按 owner 存活数计的 `'postgres'` 计数器（独立模块、零参） | 修 P1 **前**：5 pass / 0 fail（假绿）；修 P1 **后**：4 pass / 1 fail，exit 1，红在第 5 条 `actual: 'postgres'` ≠ `expected: 'unwired'` |
 
 ## 这条记录不证明什么
 
@@ -75,14 +78,14 @@ node --test tests/unit/media-attachment-counter-withdrawal.test.mjs
 git show fde1659e:services/api/src/media/service.ts | grep -n 'countPendingCommunityImages' | head
 ```
 
-## 本轮复核读数（2026-11-07，分支 `test/gy-r83-withdraw-assembly`，基于 `736c0b47`）
+## 本轮复核读数（2026-11-07，分支 `test/gy-r83-withdraw-assembly`；本页读数在本页所属提交的树上实跑，起点 `736c0b47`、第三轮修订后见 PR head）
 
 | 闸门 | 命令 | 读数 |
 | --- | --- | --- |
-| 结构锁 | `node --test tests/unit/media-attachment-counter-withdrawal.test.mjs` | 4 pass / 0 fail，exit 0 |
+| 结构锁 | `node --test tests/unit/media-attachment-counter-withdrawal.test.mjs` | **5 pass / 0 fail，exit 0** |
 | 误伤面 A | 同一命令在 `fde1659e`（`#1030` 正确实现）的临时树上 | 5 pass / 0 fail，exit 0 |
-| 命中面 B | 同一命令在「`736c0b47` + 复活 `#1029`」的临时树上 | 3 pass / 1 fail，exit 1（红在装配断言） |
-| 文档锚点 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | PASS，exit 0（UNDECLARED 242、配成对 1083；基线内无新增） |
+| 命中面 B | 同一命令在「`736c0b47` + 复活 `#1029`」的临时树上 | **3 pass / 2 fail**，exit 1（红在装配断言；第三轮审查复现） |
+| 文档锚点 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | PASS，exit 0（UNDECLARED 242、**配成对 1084**；基线内无新增） |
 | 契约台账 | `node tools/verify-contract-status.mjs` | PASS，exit 0（130 条操作、形状错误 0、语义错误 0） |
-| media 单测 | `node --test tests/unit/media-*.test.mjs`（20 个文件） | 167 pass / 0 fail，exit 0 |
+| media 单测 | `node --test tests/unit/media-*.test.mjs`（20 个文件） | **168 pass / 0 fail**，exit 0 |
 
