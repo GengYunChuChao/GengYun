@@ -29,17 +29,17 @@ node tools/verify-g-drill-readings.mjs --update    # 用上一步的读数重写
 | 键 | 读数 | 下界 / 关系 |
 | --- | --- | --- |
 | workflows | 15 | >= 15（`.github/workflows/` 下的 `*.yml` 与 `*.yaml` 文件数） |
-| workflowJobs | 25 | >= 25（各 workflow `jobs:` 段两空格缩进键之和） |
+| workflowJobs | 26 | >= 25（各 workflow `jobs:` 段两空格缩进键之和） |
 | drillCommands | 21 | 必须精确相等（`DRILL_PLAN` 的条数；稳定型：两种口径都不许滞后，反空转下界 ≥ 20） |
-| allTestFiles | 507 | >= 490（`tests/**/*.test.mjs` 递归计数） |
-| verificationDocs | 299 | >= 297（`docs/verification/*.md`） |
-| totalTestFiles | 478 | = 五条 `test:unit` glob 的分文件数之和 |
-| unitGlobUnion | 478 | 必须等于 totalTestFiles（五条 glob 不许重叠） |
-| packageScripts | 26 | -（`package.json` 的 scripts 条数） |
-| verifyTestScripts | 18 | 每条都必须出现在本块里（跑或写明原因） |
-| realPgArms | 14 | >= 13（`ci-real-pg-readings-gates.test.mjs` 里的臂条数；只读，不复制基线） |
+| allTestFiles | 596 | >= 490（`tests/**/*.test.mjs` 递归计数） |
+| verificationDocs | 340 | >= 297（`docs/verification/*.md`） |
+| totalTestFiles | 566 | = 五条 `test:unit` glob 的分文件数之和 |
+| unitGlobUnion | 566 | 必须等于 totalTestFiles（五条 glob 不许重叠） |
+| packageScripts | 31 | -（`package.json` 的 scripts 条数） |
+| verifyTestScripts | 19 | 每条都必须出现在本块里（跑或写明原因） |
+| realPgArms | 15 | >= 13（`ci-real-pg-readings-gates.test.mjs` 里的臂条数；只读，不复制基线） |
 | drilledArms | 0 | 闸门表（`realPgArms`）里同时出现在演练清单中的条数；本片真跑的 3 条自起集群臂不在那张表里，故为 0（它们逐条写在下面「未跑」表之外的真实读数里） |
-| globFiles.unit | 407 | -（`tests/unit/*.test.mjs` 的分文件数） |
+| globFiles.unit | 495 | -（`tests/unit/*.test.mjs` 的分文件数） |
 | globFiles.privacy | 17 | -（`tests/privacy/*.test.mjs` 的分文件数） |
 | globFiles.media | 8 | -（`tests/media/*.test.mjs` 的分文件数） |
 | globFiles.reference | 26 | -（`tests/reference/*.test.mjs` 的分文件数） |
@@ -76,12 +76,13 @@ node tools/verify-g-drill-readings.mjs --update    # 用上一步的读数重写
 | 条目 | 判定 |
 | --- | --- |
 | `npm run test:reference` | 不在演练范围：它的 glob（`tests/reference/*.test.mjs`）已被清单 #1 `npm run test:unit` 的第 4 条 glob 覆盖，单跑一遍不增读数 |
-| `npm run test:docs` | 不在演练范围：它的两条子命令已逐条在清单里（`validate_development_docs.py` / `verify-research-records.mjs`） |
+| `npm run test:docs` | 不在演练范围：它的前两条子命令已逐条在清单里（`validate_development_docs.py` / `verify-research-records.mjs`）；链尾追加的 `verify-reading-pages.mjs` 也在本表单列一条原因（见下面 `verify:readings` 那条） |
 | `npm run verify:anchors` | 不在演练范围：它的两条子命令已逐条在清单里（`verify-contract-status.mjs` / `verify-doc-anchors.mjs --strict --symbol=strict --scan docs`） |
 | `npm run verify:parity` | 不在演练范围：它全部内容就是清单里的 `node tools/openapi-route-parity.mjs` |
 | `npm run verify:capability-map` | 不在演练范围：它全部内容就是清单里的 `node tools/verify-admin-capability-map.mjs --check` |
 | `npm run verify:purge-schedule` | 不在演练范围：它全部内容就是清单里的 `node tools/verify-purge-schedule.mjs` |
 | `npm run verify:real-capability` | 不在演练范围：它是自检命令（默认恒 exit 0、不判红），且 `--strict` 要有真实凭据才有意义（无凭据时所有能力组判 n-a ⇒ 判定恒 PASS）；演练清单收的是会判红的门禁 |
+| `npm run verify:readings` | 不在演练范围：演练计划条数（`drillCommands`）是稳定型读数、必须精确相等，往里加一条命令就得把 21 条一次性读数整体重采（每行绑当时的 sha / 主机 / 时刻）；本片只修 CI 红、不重跑演练 ⇒ 不塞第 22 条。这条闸门在 CI 里由 `engineering-shell.yml` 单独一步跑、`test:docs` 链尾也会跑；本机 2026-11-08 实跑 `npm run verify:readings`：exit 0，识别 5 页、跳过 339 页（扫描面 344 页，`docs/verification`），耗时约 1.9s（含 npm 外壳） |
 | `node tools/run-python.mjs tools/validate_openapi_standard.py` | 未跑：需网络下载官方 OAS 3.1 规范文件（`--schema` 必填，脚本明示自己不做下载/安装），且本机未安装 jsonschema；它也只出现在 `development-docs.yml` 的 `paths:` 里，任何 workflow 都没有它的 `run:` 步骤 ⇒ **CI 里没有等价的 OAS 3.1 元模式校验**（CI 跑的 `validate_contracts.py` 只做「自仓 openapi 的版本号串 == 3.1.1」这一条自检，不等于元模式校验；这是既有缺口，本片不改） |
 | `npm run test:mini` | 未跑：微信开发者工具 SDK 未安装（本机没有该 CLI，`check-wechat-project.mjs` 之后那条 `node --test` 无从跑起） |
 | `npm run test:integration:recognition-chain-pg` | 未跑：网络与凭据都不在本机：该臂打真实供应商链路，CI 外一律禁用真实外部调用 |
@@ -103,6 +104,7 @@ node tools/verify-g-drill-readings.mjs --update    # 用上一步的读数重写
 | `node tests/integration/retention-clock-drill-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
 | `node tests/integration/media-row-purge-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
 | `node tests/integration/consent-zero-policy-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
+| `node tests/integration/post-media-attachments-pg.mjs` | 未跑：本片按 §4 只真跑三条自起集群臂；该臂在 CI 里挂 `services: postgres` 容器（库名与连接串由 workflow 注入），本机未起该容器 |
 <!-- G-DRILL:END -->
 
 ## 3. 两类读数，不要混

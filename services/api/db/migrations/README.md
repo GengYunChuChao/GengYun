@@ -43,11 +43,45 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 正向 53 条、`rollback/` 52 条、最大号 `0054`、`0037` 不存在；`discoverMigrations()` 报 53 个文件、
 末项 `0054_favorites_target_lookup.sql`。）
 
-（2026-11-07 · GY-R83(`0055`) 落盘后复测：`0001..0055`，缺号仍只有 `0037` ⇒ 目录现为 **54 个正向 `.sql`**
-＋ `rollback/` **53 个**（`0001` 无 down）；`count + 保留数 === max` ⇒ **54 + 1 === 55**。上一段那组
-53/52 与 `53 + 1 === 54` 是 2026-11-03 的实测快照，**保留不动**。）
+（2026-11-07 · GY-R83 合流后复测（`origin/main` @ `ca3b26f0` 的 `0055` 与本分支 `0056` **同时落盘**）：
+`0001..0056`，缺号仍只有 `0037` ⇒ 目录现为 **55 个正向 `.sql`** ＋ `rollback/` **54 个**（`0001` 与 `0037` 无 down）；
+`count + 保留数 === max` ⇒ **55 + 1 === 56**。上一段那组 54/53 与 `54 + 2 === 56` 是 2026-11-07
+**合流前本分支单侧**的实测快照（当时 `0055` 由在飞的 `feat/gy-r83-provider-call-ledger` 让号、尚未落盘），
+**保留不动**；更早的 53/52 与 52/51 同样保留。本段实测口径：直接数目录得正向 55 条、`rollback/` 54 条、
+最大号 `0056`、缺号只有 `0037`；`discoverMigrations()` 同样报 55 个文件、末项 `0056_post_media_attachments.sql`。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
+- `0056_post_media_attachments.sql`（GY-R83 #1030 · **帖子级媒体挂载表**：把「real 模式每帖 ≤3 张图」从
+  owner 生命周期累计的计数近似改成**结构约束**）。
+  依赖 `0022_community_persistence.sql` 的 `public.community_posts`；**只建一张新表**，不改既有列/CHECK、
+  不写数据、不改 `community_posts.media_ids` 的既有语义（它继续存**引用串**）。
+  表体 `public.post_media_attachments(post_id uuid NOT NULL, media_id uuid NOT NULL, ordinal smallint NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now())`，三条约束：
+  `post_media_attachments_pkey PRIMARY KEY (post_id, media_id)`（同一张图不许在同一帖占两个号位）、
+  `post_media_attachments_post_ordinal_key UNIQUE (post_id, ordinal)`（号位不重复）、
+  `post_media_attachments_ordinal_range CHECK (ordinal BETWEEN 1 AND 3)`（另一道结构上限）。
+  ⇒ 「每帖 ≤3」的**真实首拒点**是 `0022` 的 `community_posts_media_ids_max`（数组长度 ≤3，写
+  `community_posts` 那一步就拒）；本表的唯一键 + CHECK 是**第二道结构约束**（绕过数组列直插挂载行时只剩它挡 ——
+  `tests/integration/post-media-attachments-pg.mjs` 的直插探针专门钉这两条约束的**行为**，而不只是迁移文本）。
+  两道都不依赖任何计数，也不需要清理器才能解锁（这正是 #1030 的缺口：
+  累计口径会让用户传满 3 张后永久锁死，且「先数后写」有 TOCTOU 超发）。
+  **两侧都不加外键**：`media_id` 不加（`0022` 明写 media_ids 是引用串、媒体域才是 uuid 权威；既有集成夹具
+  `tests/integration/community-pg.mjs` 的 `postRecord()` 一直用随机 uuid），`post_id` 也不加
+  （与 media 侧保持同一种悬空引用语义；删帖由 `visibility = 'deleted'` 状态机表达，不靠级联）。
+  `community_posts` 侧删帖**不级联**，因此「删帖即释放」的读法按 `community_posts.visibility` 过滤实现。
+  一条反查索引 `post_media_attachments_media_idx (media_id)`（待用池口径与「删帖释放」都按 media 反查）；
+  `(post_id)` **不另建索引**（主键前缀已覆盖）。
+  本迁移**零 GRANT**（与 0024/0026/0051/0054 同一纪律）：运行角色 `gengyun_api_runtime` 的最小权限写在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的社区域段——列级 `SELECT`／`INSERT` + **表级** `DELETE`
+  （PG 无列级 DELETE：改稿要先 `DELETE … WHERE post_id = $1` 再重认领），**不授** `UPDATE`。
+  配对回滚 `rollback/0056_post_media_attachments.down.sql`：`DROP TABLE IF EXISTS public.post_media_attachments;`
+  （丢的是「谁挂了哪张图」的索引性事实，`community_posts.media_ids` 里的引用串仍在 ⇒ 回滚不让帖子丢图）。
+  **运行期并发**：`claimPostMedia` 先按 `media_id` 升序取 `pg_advisory_xact_lock` 再认领（PK/UNIQUE 都**不跨帖**，
+  兜不住「同一张图同时挂在两个存活帖」），本表约束是最后一道闸（23505/23514 ⇒ 既有 400 `post_image_limit`）。
+  **不回填**（迁移不写数据）：既有帖只有 `media_ids`、没有挂载行，读路径仍以 `media_ids` 为准 ⇒ 旧帖显示不变；
+  副作用是待用池口径（`countPendingCommunityImages`）把「迁移前上传、又挂到旧帖的 media」当未挂载，
+  24h 窗口内占位、最多 24h 自愈。待用池有界：同一 owner 同时最多 **3** 张未挂载 `community_image`
+  （上传侧 `post_image_limit` 先挡一道），挂载即释放、删帖也释放 —— 是上界，不是锁死。
 - `0055_provider_call_ledger.sql`（GY-R83 #1003 · **库层记账**：识别链路**外发那一行**的用量与
   剖面版本 —— issue #1003 剩下的两条验收口径「`usage` 记账」「`provider_config_version` 落库」）。
   接在 `0054` 之后取号（本清单最新在前，故这一条排在 `0054` 条目**之上**），号位依据「正向最大号 +1」

@@ -90,3 +90,12 @@
 2. **`revokeInFlight` 的跨用户／跨用途过滤缺负控制**：`services/api/src/privacy/ledger-pg.ts:864-883` 里 `user_id=$1` 与 `required_consents ? $2` 两处过滤都没有「另一个用户/另一个用途的 export 不受影响」的用例。
 3. **CI 覆盖是「搭车」而非「新接线」**：新用例落在 `tests/integration/consent-grant-pg.mjs`，而该文件已由 `.github/workflows/consent-grant-postgres.yml:35` 在真库 job 里跑、`.github/workflows/consent-grant-postgres.yml:37` 提供 `CONSENT_GRANT_TEST_URL` ⇒ 三条新用例**不需要**改 CI 就进了流水线。代价是它们与既有的 28 组同生共死：该 job 没有 skip 分支——缺 `CONSENT_GRANT_TEST_URL`／PG 时 `tests/integration/consent-grant-pg.mjs:11-15` 会立刻断言失败（`.github/workflows/real-pg-integration.yml:843-844` 自述该组脚本「没有 SKIP、没有 77：真库没起来就是红」），所以新用例与既有 28 组一样，真库没起来就红、不会静默跳过。另外该文件仍不在 `package.json` 的 `test:integration:http` 链里（那条链要求无 PG 可跑），`tests/unit/ci-integration-chain-structure.test.mjs` 的 `UNWIRED_DECLARATIONS` 条目保持原样未动。
 4. **撤回侧只补了「无该用途记录」这一面**：`If-Match` 与当前 revision 不符的 `REVISION_CONFLICT` 已由 `tests/integration/consent-grant-pg.mjs` 与 `tests/integration/auth-privacy-pg.mjs` 的既有断言覆盖，本片未重复造。
+
+## 7 R87 补片：§6② 的跨用户／跨用途负控制（2026-11-07，只追加，不改上文任何读数）
+
+§6② 登记的缺口已由 `tests/integration/egress-ledger-pg.mjs` 的**第 12 节**补上（真实 PostgreSQL 17.11，本机隔离、仅回环）：
+
+- **判据是逐字段**（`SELECT *` 整行 `deepStrictEqual`，含 `state`／`revision`／`error_code`／`updated_at`／`required_consents`），不是数行数；并带一条**正控制**（A 的目标行确实被撤：`failed` + `CONSENT_WITHDRAWN` + `revision+1`），否则「不变」是空断言。
+- **四条判据腿**（编号随 `tests/integration/egress-ledger-pg.mjs:729-732`）：① **正控制**——撤回后 A 的目标行 `failed` + `CONSENT_WITHDRAWN` + `revision+1`（否则「不变」是空断言）；② **跨用途**——同用户另一用途的行不变（`checked_content` 的 `required_consents` 只有 `external_inference`）；③ **跨用户**——另一个用户的两行（一行 `sent`、一行 `reserved`）不变；④ **注销级**——`purpose=null` 的撤回只撤 A 剩下的那一行（计数恰为 1），B 仍逐字段不变。
+- **负控制自证**（改源码 → 跑同一用例 → 还原，还原后 `sha256` 逐字节一致 = `2269C5F4…DB1D`）：把 `user_id=$1::uuid` 改宽成 `$1::uuid IS NOT NULL` ⇒ **腿③（跨用户）**变红（`tests/integration/egress-ledger-pg.mjs:794`：B 那行 `error_code` 由 `null` 变 `CONSENT_WITHDRAWN`）；把 `required_consents ? $2::text` 改宽成 `TRUE` ⇒ **腿②（跨用途）**变红（`tests/integration/egress-ledger-pg.mjs:792`）；两处还原后同一命令 14 组全 PASS。编号随 `tests/integration/egress-ledger-pg.mjs:729-732`（①正控制／②跨用途／③跨用户／④注销级），回跳请以行号锚点为准。
+- 因此本页 §5⑥「不证明跨用户隔离」只适用于本片当时那三条用例，**不再适用于账本撤回路径**（本补片的证据只覆盖 `exports` 表的**撤回**——`revokeInFlight` 的 `UPDATE … WHERE user_id=…`；账本的列表／读面跨用户隔离仍无断言）；§6①（撤回不动 `jobs`）仍然开放，本补片没碰。

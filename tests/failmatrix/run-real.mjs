@@ -779,7 +779,7 @@ function codeOf(result) {
  *
  * 三段判据分开记，`different` 才能归因：
  *   - `problems`       status / code / `meta.execution_mode`（期望 vs 真 PG 实际；期望取 `realExpect ?? expect`）
- *   - `checkProblems`  用例自带的 `check`（调用方式与 `run.mjs` 一致：`c.concurrent === undefined` 传单条结果）
+ *   - `checkProblems`  用例自带的 `check`（调用方式与 `run.mjs` 一致：`c.concurrent === undefined` 传单条结果）；⚠️ 本函数**不读** `expect.etag`（PR #1028 审查 P2-1 的另一半：stub 臂在 `run.mjs:144-148` 判强修订号，这里只有用例自带的 `check`/`realCheck` 才判 ETag）——新增带 `expect.etag` 的权限面用例必须**同时**给 real 侧断言，否则真库侧会静默退化成状态码级（C4-12 已按此补 `realCheck`）
  *   - `shapeProblems`  同形对照组（**后置** pass，见 `shapePostPass`：对照组可能排在本条之后）
  *
  * **按执行模式分叉**（R83）：`realExpect` / `realCheck` 是这条用例在**真库臂**下的期望与断言；

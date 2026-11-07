@@ -138,10 +138,10 @@ async function main() {
         + '本片只占用 0022，不占用 0020–0021、不补占位迁移',
     );
 
-    const migrations = all.filter((m) => ['0001', '0017', '0019', '0022', '0028', '0030', '0032', '0045', '0047'].includes(m.version));
+    const migrations = all.filter((m) => ['0001', '0017', '0019', '0022', '0028', '0030', '0032', '0045', '0047', '0056'].includes(m.version));
     assert.deepEqual(
       (await applyMigrations(owner, migrations)).applied,
-      ['0001', '0017', '0019', '0022', '0028', '0030', '0032', '0045', '0047'],
+      ['0001', '0017', '0019', '0022', '0028', '0030', '0032', '0045', '0047', '0056'],
       '0001（users/枚举底座）+ 0017（`public.admin_audit_events`：0047 的下架审计落点，本片新增依赖）'
         + ' + 0019（messages：GY-I18 admin 臂要证明"下架后消息跳转目标由 available 变 unavailable"，'
         + '该判据经消息域读取时重查，因此需要真消息表）+ 0022（本片六表）+ 0028（审核判定台账：装配层有池即注入，发布闸门会落库）'
@@ -150,10 +150,12 @@ async function main() {
         + ' + 0045（community_moderation_decisions.decided_by：人工 approve/reject 的运营者快照列，'
         + '审核判定台账的 INSERT/SELECT 都会写读该列，故真实库臂必须把它 apply 进来）'
         + ' + 0047（`public.record_admin_post_hide_audit`：下架必须与可见性变更同事务落审计，'
-        + '缺它则真实库臂的下架会 fail-closed 成 503 —— 这不是可选项，是运行时依赖）',
+        + '缺它则真实库臂的下架会 fail-closed 成 503 —— 这不是可选项，是运行时依赖）'
+        + ' + 0056（GY-R83 #1030 `public.post_media_attachments`：本片的 `postRecord` 默认带两条媒体引用，'
+        + '发帖事务会在同一事务里认领槽位；缺它则 insertPost 撞 42P01）',
     );
     assert.equal((await applyMigrations(owner, migrations)).applied.length, 0, '重跑迁移必须是 no-op');
-    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0017 + 0019 + 0022 + 0028 + 0030 + 0032 + 0045 + 0047`);
+    say(`迁移 apply 可重入：${versions.length} 个迁移目录读数，本片只取 0001 + 0017 + 0019 + 0022 + 0028 + 0030 + 0032 + 0045 + 0047 + 0056`);
 
     const tables = (await owner.query(
       "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename",

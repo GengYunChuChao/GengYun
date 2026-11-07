@@ -74,6 +74,15 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
+    path: 'tests/integration/post-media-attachments-pg.mjs',
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_post_media_test`，连接串走 env `POST_MEDIA_PG_TEST_URL`）。'
+      + '该臂证帖子级媒体挂载（#1030 / 迁移 0056）：要求空库，自己 apply 0001/0022/0030/0032/0045/0056 六段；'
+      + '第 8 节三条直插探针绕开 `0022` 的数组 CHECK 直接 INSERT，'
+      + '因为应用路径传 4 张先被那层数组 CHECK 挡住（400 `post_image_limit`）⇒ 0056 的 UNIQUE/CHECK 只有直插探针抓得住。'
+      + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
+  },
+  {
     path: 'tests/integration/third-party-deletion-pg.mjs',
     reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
       + '（同一 `run:` 行先 `CREATE DATABASE gengyun_third_party_deletion_test`，再把该库 owner URL 作 argv[2]）。'

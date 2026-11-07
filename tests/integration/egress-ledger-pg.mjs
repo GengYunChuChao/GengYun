@@ -749,96 +749,154 @@ try {
     'findReservedByObject 属主过滤（真 PG）：合法 uuid 只命中自己的行（同对象另一属主的更新行不被取走）、未命中 ⇒ null、非 uuid 属主 ⇒ SESSION_REQUIRED 且零账本变更、不传属主语义不变',
   );
 
-  // ---------------------------------------------------------------- 12. 负控制 A：撤回不误伤（其他用途 / 其他用户）
+  // ---------------------------------------------------------------- 12. 撤回的作用域负控制（跨用户／跨用途）
   //
-  // `ledger.revokeInFlight` 只圈 `user_id=$1 AND state IN ('reserved','sent') AND
-  // required_consents ? $2`（services/api/src/privacy/ledger-pg.ts:864-883）。所以撤回
-  // `external_inference` 时，(a) 同用户**另一用途**的行、(b) **另一用户**的同名用途行，
-  // 都必须原样留着——否则「撤回」会变成一把横扫的锁。
+  // 缺口出处（原文，`docs/verification/gy-r83-i29-consent-negatives-20261107.md` §6②）：
+  //   「**`revokeInFlight` 的跨用户／跨用途过滤缺负控制**：`services/api/src/privacy/ledger-pg.ts:864-883`
+  //     里 `user_id=$1` 与 `required_consents ? $2` 两处过滤都没有「另一个用户/另一个用途的 export
+  //     不受影响」的用例。」同页 §5⑥：「**不证明跨用户隔离。** …跨用户的账本/撤回隔离不在本片。」
   //
-  // ⚠ 诚实记账：「另一用途」这一行不是产品流程能造出来的。`requiredConsentsForDataType`
-  //    （packages/privacy/constants.mjs 的两张表）里**每个**已知资料类型都要求
-  //    `external_inference`，所以真实 reserve 出来的行必然含该用途。这里先按真实 reserve
-  //    落行（授权/接收方/epoch 全走真路径），再把该行的 `required_consents` 改成
-  //    `{"model_improvement": <epoch>}`（直接 SQL），覆盖的是**SQL 谓词本身**，
-  //    不是某条产品路径。这条边界写进证据页，别当成「另一用途端到端已验收」。
-  const a2 = await login('ledger-a2-other-purpose');
-  const grantA2 = await grantForRecognition(a2.token);
-  const rowKeepUserPurpose = await ledger.reserve({
-    userId: a2.id,
-    authEpoch: 1,
-    objectType: 'media',
-    objectId: randomUUID(),
-    objectRevision: 1,
-    dataType: 'weed_recognition',
-    purpose: 'external_inference',
-    recipientId: 'fixture-weed',
-    sourceVersion: null,
-  });
-  await ledger.markSent(rowKeepUserPurpose.id);
-  const rowOtherPurpose = await ledger.reserve({
-    userId: a2.id,
-    authEpoch: 1,
-    objectType: 'answer',
-    objectKey: `synthetic-other-purpose-${randomUUID().slice(0, 8)}`,
-    objectRevision: 1,
-    dataType: 'checked_content',
-    purpose: 'external_inference',
-    recipientId: 'fixture-weed',
-    sourceVersion: null,
-  });
-  await ledger.markSent(rowOtherPurpose.id);
-  await owner.query(`UPDATE exports SET required_consents='{"model_improvement": 1}'::jsonb WHERE id=$1`, [rowOtherPurpose.id]);
-  const a3 = await login('ledger-a3-other-user');
-  await grantForRecognition(a3.token);
-  const rowOtherUser = await ledger.reserve({
-    userId: a3.id,
-    authEpoch: 1,
-    objectType: 'media',
-    objectId: randomUUID(),
-    objectRevision: 1,
-    dataType: 'weed_recognition',
-    purpose: 'external_inference',
-    recipientId: 'fixture-weed',
-    sourceVersion: null,
-  });
-  await ledger.markSent(rowOtherUser.id);
-  const exportState = async (id) =>
-    (await owner.query('SELECT state, error_code FROM exports WHERE id=$1', [id])).rows[0];
-  const withdrawnA2 = await http('/me/consents/external_inference', {
+  // 本节的判据不是「数行数」，而是**逐字段**（`SELECT *` 整行 deepEqual，含 state/revision/error_code/
+  // updated_at/required_consents）：
+  //   ① 正控制：A 的目标行**确实**被撤（failed + CONSENT_WITHDRAWN + revision+1）——否则「不变」是空断言；
+  //   ② 跨用途：同用户另一用途（`checked_content` 只依赖 `external_inference`）的行逐字段不变；
+  //   ③ 跨用户：B 的两行（一行 `sent`、一行 `reserved`）逐字段不变；
+  //   ④ 注销级（`purpose=null`）撤回：撤掉 A 那一行、计数恰为 1，B 仍逐字段不变。
+  // 撤回走**真实 HTTP 触发面**（`DELETE /me/consents/media_processing`），不是直接调 SQL。
+  const exportRowById = async (id) =>
+    (await owner.query('SELECT * FROM exports WHERE id=$1::uuid', [id])).rows[0] ?? null;
+  const exportRowsByIds = async (ids) => {
+    const rows = [];
+    for (const id of ids) rows.push(await exportRowById(id));
+    return rows;
+  };
+  const reserveScoped = (who, dataType, ident) =>
+    ledger.reserve({
+      userId: who.id,
+      authEpoch: 1,
+      objectType: dataType === 'checked_content' ? 'synthesis' : 'media',
+      ...(dataType === 'checked_content' ? { objectKey: ident } : { objectId: ident }),
+      objectRevision: 1,
+      dataType,
+      purpose: 'external_inference',
+      recipientId: 'fixture-weed',
+    });
+  const scopeA = await login('ledger-h-scope-withdrawer');
+  const scopeB = await login('ledger-i-scope-bystander');
+  // A 的 media_processing 授权对象要留着取 revision（`DELETE` 的 `if-match` 用它）。
+  const scopeAGrantMedia = await grant(scopeA.token, 'media_processing');
+  await grant(scopeA.token, 'external_inference');
+  await grantForRecognition(scopeB.token);
+  // `weed_recognition` 的 `required_consents` = {media_processing, external_inference}（横跨两个用途）；
+  // `checked_content` 只 = {external_inference}（只挂一个用途）⇒ 才能把「用途过滤」与「用户过滤」分开打。
+  const aRecognition = await reserveScoped(scopeA, 'weed_recognition', randomUUID());
+  const aChecked = await reserveScoped(scopeA, 'checked_content', `rev-a-${randomUUID()}`);
+  const bRecognition = await reserveScoped(scopeB, 'weed_recognition', randomUUID());
+  const bChecked = await reserveScoped(scopeB, 'checked_content', `rev-b-${randomUUID()}`);
+  // 旁观者那行推进到 `sent`：`revokeInFlight` 的 `state IN ('reserved','sent')` 两种状态都要被覆盖。
+  await ledger.markSent(bRecognition.id);
+  assert.deepEqual(
+    Object.keys(aRecognition.requiredConsents).sort(),
+    ['external_inference', 'media_processing'],
+    '前提：A 的 weed_recognition 行横跨两个用途',
+  );
+  assert.deepEqual(Object.keys(aChecked.requiredConsents).sort(), ['external_inference'], '前提：checked_content 只挂外发用途');
+  const beforeA = await exportRowsByIds([aRecognition.id, aChecked.id]);
+  const beforeB = await exportRowsByIds([bRecognition.id, bChecked.id]);
+  assert.deepEqual(beforeA.map((row) => row.state), ['reserved', 'reserved'], '前提：A 两行都在途');
+  assert.deepEqual(beforeB.map((row) => row.state), ['sent', 'reserved'], '前提：B 一行 sent、一行 reserved');
+
+  const scopeWithdrawn = await http('/me/consents/media_processing', {
     method: 'DELETE',
-    headers: { 'if-match': `"${grantA2.revision}"`, 'idempotency-key': `wd-a2-${randomUUID().slice(0, 12)}` },
-    token: a2.token,
+    headers: { 'if-match': `"${scopeAGrantMedia.revision}"`, 'idempotency-key': `wd-scope-${randomUUID().slice(0, 12)}` },
+    token: scopeA.token,
   });
-  assert.equal(withdrawnA2.status, 200, JSON.stringify(withdrawnA2.body));
-  assert.equal((await exportState(rowKeepUserPurpose.id)).state, 'failed', '被撤回的用途必须撤销在途行');
-  assert.equal((await exportState(rowKeepUserPurpose.id)).error_code, 'CONSENT_WITHDRAWN');
-  assert.equal((await exportState(rowOtherPurpose.id)).state, 'sent', '同用户**另一用途**的行不得被撤回连带撤销');
-  assert.equal((await exportState(rowOtherUser.id)).state, 'sent', '**另一用户**的同名用途行不得被撤回连带撤销');
-  say('负控制 A（真 PG）：撤回只圈「该用户 × 该用途」——同行被置 failed/CONSENT_WITHDRAWN，同用户另一用途行与另一用户行仍为 sent');
+  assert.equal(scopeWithdrawn.status, 200, `撤回必须成功（否则下面的「不变」无从谈起）：${JSON.stringify(scopeWithdrawn.body)}`);
+
+  const afterA = await exportRowsByIds([aRecognition.id, aChecked.id]);
+  const afterB = await exportRowsByIds([bRecognition.id, bChecked.id]);
+  // ① 正控制：目标行（A × media_processing）真的被撤了 —— 这条不绿，②③ 的「不变」就没有意义。
+  assert.equal(afterA[0].state, 'failed', 'A 的目标行必须被撤回置 failed');
+  assert.equal(afterA[0].error_code, 'CONSENT_WITHDRAWN');
+  assert.equal(Number(afterA[0].revision), Number(beforeA[0].revision) + 1, '撤回必须推进 revision（CAS 语义）');
+  assert.notEqual(afterA[0].updated_at.getTime(), beforeA[0].updated_at.getTime(), '撤回必须刷新 updated_at');
+  // ② 跨用途：同用户、另一用途（`required_consents` 里没有 media_processing）⇒ **逐字段**不变。
+  assert.deepEqual(afterA[1], beforeA[1], '同用户不同用途的行必须逐字段不变（含 state/revision/error_code/updated_at）');
+  // ③ 跨用户：B 的两行（sent + reserved）⇒ **逐字段**不变。
+  assert.deepEqual(afterB, beforeB, 'B 的两行必须逐字段不变（含 state/revision/error_code/updated_at/required_consents）');
+  assert.equal(await countExports(scopeB.id), 2, 'B 的账本行数不变');
+
+  // ④ 注销级撤回（`purpose=null`）：撤掉 A 剩下的那一行（证明 ② 的「不变」不是「撤回根本没生效」的假绿），
+  //    且计数恰为 1（A 的 media 行已是 failed，不再计入）；B 仍逐字段不变。
+  assert.equal((await revoker.onAccountSuspendedOrDeleted({ userId: scopeA.id })).revokedInFlight, 1, '注销级撤回只应命中 A 剩下的那 1 行');
+  const afterA2 = await exportRowsByIds([aRecognition.id, aChecked.id]);
+  assert.equal(afterA2[1].state, 'failed', 'purpose=null 必须撤掉 A 的另一用途行（跨用途过滤只在带 purpose 时生效）');
+  assert.equal(afterA2[1].error_code, 'CONSENT_WITHDRAWN');
+  assert.deepEqual(await exportRowsByIds([bRecognition.id, bChecked.id]), beforeB, '注销级撤回同样不得波及其他用户（逐字段）');
+
+  // ⑤ 本节自行清理：**不留行给下游 job**。同一 CI job 的下一步 `egress-object-key-pg.mjs` 在**同一个库**上
+  //    演练 `0014 up→down→up`，而 `down` 里有 `DROP COLUMN object_key`：任何遗留的 `object_key` 非空行都会在
+  //    往返中丢掉键、退化成「哨兵 `object_id` + NULL 键」的无标识形态，随后 0015 重放的双向 XOR 就在既有行上
+  //    失败（实测红：`0015_export_object_key_shape.sql:38: ERROR: check constraint "exports_object_ident_xor"
+  //    of relation "exports" is violated by some row`）。媒体行（真实 uuid + NULL 键）不受该往返影响，键行才会。
+  //
+  //    清理必须放在**全部断言之后**（①正控制／②跨用途／③跨用户／④注销级都要读这些行），并断言删掉的
+  //    行数恰为本节插入的行数（4 = A 两行 + B 两行），防止静默漏删。
+  const scopeRowIds = [aRecognition.id, aChecked.id, bRecognition.id, bChecked.id];
+  assert.equal(scopeRowIds.length, 4, '本节恰插入 4 行（A 两行 + B 两行）');
+  assert.deepEqual(
+    [await countExports(scopeA.id), await countExports(scopeB.id)],
+    [2, 2],
+    '清理前：本节插入的 4 行都还在（清理不得掩盖上面的逐字段断言）',
+  );
+  const removedScoped = await owner.query('DELETE FROM public.exports WHERE id = ANY($1::uuid[]) RETURNING id', [
+    scopeRowIds,
+  ]);
+  assert.equal(removedScoped.rowCount, scopeRowIds.length, '本节必须删掉自己插入的全部 4 行（勿留行给下游 job）');
+  assert.deepEqual(
+    [await countExports(scopeA.id), await countExports(scopeB.id)],
+    [0, 0],
+    '清理后：A/B 的账本行必须为 0（本节自行清理，勿留行给下游 job）',
+  );
+  console.log(
+    'NOTE 12: 本节自行清理插入的 4 行（勿留行给下游 job）—— 0014 down/up 会 DROP COLUMN object_key，遗留的键行会退化成「哨兵 + NULL 键」并使 0015 重放失败',
+  );
+  say(
+    '撤回作用域负控制（真 PG）：A 走 HTTP 撤回只撤自己那一行（failed + CONSENT_WITHDRAWN + revision+1）；同用户另一用途行与 B 的 sent/reserved 两行逐字段不变；purpose=null 撤回恰撤 1 行且 B 仍逐字段不变',
+  );
 
   // ---------------------------------------------------------------- 13. 负控制 B：撤回后晚到的回调不许复活
   //
   // 既有 `tests/integration/egress-revoke-race-pg.mjs` 用 HTTP 竞态覆盖过这条；这里在账本面上
-  // **直接**再钉一次：晚到的回写既要被拒（`OBJECT_UNAVAILABLE`），又必须**零写入**，
-  // 而且 exports 的 `error_code` 仍写着 `CONSENT_WITHDRAWN`（不许被失败码覆盖成别的）。
+  // **直接**再钉一次。夹具复用 §7 那行已被真实 HTTP 撤回置终态的外发（`sentB`）——它同时满足
+  // 两个前提：`state='failed'` 且 `error_code='CONSENT_WITHDRAWN'`（§7 已断言），所以下面
+  // 「被拒」测的是**终态守卫本身**，不是「行不存在」这种弱拒绝。
+  // 晚到的回写既要被拒（`OBJECT_UNAVAILABLE`），又必须**零写入**，而且 exports 的
+  // `error_code` 仍写着 `CONSENT_WITHDRAWN`（不许被失败码覆盖成别的）。
+  const bWithdrawnRow = (await owner.query('SELECT state, error_code FROM exports WHERE id=$1', [sentB.id])).rows[0];
+  assert.equal(bWithdrawnRow.state, 'failed', '前提：§7 的那行已被撤回置 failed');
+  assert.equal(bWithdrawnRow.error_code, 'CONSENT_WITHDRAWN', '前提：§7 的那行已写明撤回原因');
   await assert.rejects(
-    () => ledger.guardWriteback({ exportId: rowKeepUserPurpose.id, userId: a2.id, result: { content_class: 'structural_only' } }),
+    () => ledger.guardWriteback({ exportId: sentB.id, userId: b.id, result: { content_class: 'structural_only' } }),
     (error) => {
       assert.equal(error.code, 'OBJECT_UNAVAILABLE', `晚到回写必须被拒：实际 ${error.code}`);
       return true;
     },
   );
   await assert.rejects(
-    () => inFlight.saveResult({ exportId: rowKeepUserPurpose.id, userId: a2.id, objectVersion: 1, result: { outcome: 'late' } }),
+    () => inFlight.saveResult({ exportId: sentB.id, userId: b.id, objectVersion: 1, result: { outcome: 'late' } }),
     (error) => {
       assert.equal(error.code, 'OBJECT_UNAVAILABLE', `在途守卫的晚到 saveResult 必须被拒：实际 ${error.code}`);
       assert.match(error.message, /回写被阻断|已终态/, `文案必须说清是终态阻断：${error.message}`);
       return true;
     },
   );
-  assert.equal(await writebackCount(rowKeepUserPurpose.id), 0, '撤回后的晚到回调必须零写入（export_writebacks 0 行）');
-  assert.equal((await exportState(rowKeepUserPurpose.id)).error_code, 'CONSENT_WITHDRAWN', '晚到回调不得改写出错原因');
+  assert.equal(await writebackCount(sentB.id), 0, '撤回后的晚到回调必须零写入（export_writebacks 0 行）');
+  assert.equal(
+    (await owner.query('SELECT error_code FROM exports WHERE id=$1', [sentB.id])).rows[0].error_code,
+    'CONSENT_WITHDRAWN',
+    '晚到回调不得改写出错原因',
+  );
   say('负控制 B（真 PG）：撤回后晚到回调 ⇒ guardWriteback/saveResult 均 OBJECT_UNAVAILABLE + export_writebacks 0 行 + error_code 仍 CONSENT_WITHDRAWN');
 
   // ---------------------------------------------------------------- 14. 负控制 C：不许把正常失败标成撤回

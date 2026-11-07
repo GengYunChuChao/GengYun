@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GY-R68-D05 · 真库 CI 的「读数闸门」守卫：`-lt 1` ⇒ **冻结基线常量 N**。
  *
  * 背景：`.github/workflows/real-pg-integration.yml` 里每条真库臂在脚本 `exit 0` 之后都会数一遍自己
@@ -199,6 +199,13 @@ export const READING_GATE_BASELINES = [
     baseline: 14,
     counter: `awk '/^PASS /{n++} END{print n+0}' "$log"`,
     source: '真跑（本机 PG 17.11 + 空库 + 全链 48 迁移 ⇒ `PASS n:` 14 条；与脚本里 `say(` 的调用点数相等）',
+  },
+  {
+    step: '帖子级媒体挂载（R83 / 迁移子集六段 / 约束直插探针 / 并发 advisory lock）',
+    script: 'tests/integration/post-media-attachments-pg.mjs',
+    baseline: 13,
+    counter: `awk '/^PASS [0-9]+:/{n++} END{print n+0}' "$log"`,
+    source: '真跑（本机 PG 17.11 + 专用空库 gengyun_post_media_test ⇒ `PASS n:` 13 条：第 5–7 条为约束直插探针（ordinal=4 / 双 ordinal=1 / 同 (post,media) 二次插入）、第 8 条非法 uuid、第 9 条并发）',
   },
 ];
 
