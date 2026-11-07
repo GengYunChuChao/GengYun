@@ -1287,3 +1287,48 @@ test('可重试口径·同键占位未落定 ⇒ 409 REQUEST_IN_PROGRESS 且 ret
     },
   );
 });
+
+// 下面三条用例要抛「契约错误实例」：用动态 import 在文件末尾取，**不在文件头加 import 行**——
+// 本文件既有行号被多份取证页钉着，加行会让它们整体下移（本片按 ±0 位移处理）。
+const { PrivacyError } = await import('../../packages/privacy/errors.mjs');
+const { ApiError } = await import('../../services/api/src/errors.ts');
+
+test('反例·提供者抛 PrivacyError(CONSENT_WITHDRAWN)（撤回后晚到的回写被阻断）⇒ failed + CONSENT_WITHDRAWN', async () => {
+  // 真实链路：撤回把外发行置终态后，`synthesis-egress` 的 `saveResultOrWithdrawn` 会把守卫抛的
+  // `OBJECT_UNAVAILABLE` 翻译成这个 `PrivacyError`，一路抛到服务的 `threw` 分支。
+  const scripted = scriptedProvider(() => {
+    throw new PrivacyError('CONSENT_WITHDRAWN', '外发因撤回同意而终止，结果不予写入');
+  });
+  const { service } = boot({ provider: scripted.provider });
+  const { settled, synthesis } = await createAndSettle(service, USER);
+  assert.equal(settled.state, 'failed');
+  assert.equal(
+    settled.error_code,
+    'CONSENT_WITHDRAWN',
+    '撤回原因必须写进 job.error_code（否则读面分不清「因撤回终止」与「供应商炸了」）',
+  );
+  assert.equal(settled.result, null);
+  assert.equal(synthesis, null, '撤回后不得产出合成记录');
+});
+
+test('反例·提供者抛 ApiError(CONSENT_REQUIRED)（执行前重查发现授权已撤回）⇒ failed + CONSENT_WITHDRAWN', async () => {
+  const scripted = scriptedProvider(() => {
+    throw new ApiError('CONSENT_REQUIRED', '执行前重查：授权已撤回（测试替身）');
+  });
+  const { service } = boot({ provider: scripted.provider });
+  const { settled } = await createAndSettle(service, USER);
+  assert.equal(settled.state, 'failed');
+  assert.equal(settled.error_code, 'CONSENT_WITHDRAWN', 'CONSENT_REQUIRED 必须与 CONSENT_WITHDRAWN 落同一个终态码');
+});
+
+test('负控制·提供者抛的不是契约实例（只是形状像 CONSENT_REQUIRED）⇒ 仍 PROVIDER_OUTCOME_UNKNOWN，不得冒充撤回', async () => {
+  // 这一行是**负空间**断言：域外异常哪怕自带 `code: 'CONSENT_REQUIRED'`（第三方 SDK 常见形状），
+  // 也不得被写成撤离原因。判定口径见 `errors.ts` 的 `terminalFailureCodeOf`（只认 instanceof）。
+  const scripted = scriptedProvider(() => {
+    throw Object.assign(new Error('第三方 SDK 错误（测试替身）'), { code: 'CONSENT_REQUIRED' });
+  });
+  const { service } = boot({ provider: scripted.provider });
+  const { settled } = await createAndSettle(service, USER);
+  assert.equal(settled.state, 'failed');
+  assert.equal(settled.error_code, 'PROVIDER_OUTCOME_UNKNOWN', '鸭子类型冒充不了撤回');
+});

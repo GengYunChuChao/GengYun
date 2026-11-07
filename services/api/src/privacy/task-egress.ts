@@ -519,7 +519,7 @@ type InFlightCalls = Pick<InFlightGuard, 'assertExecutable' | 'saveResult'>;
 type TerminalReasonReader = Pick<PostgresExportLedger, 'get'>;
 
 /** 撤回/同意缺失 ⇒ 契约码 `CONSENT_WITHDRAWN`；**其余错误一律原样返回**（域层照旧折成 503）。 */
-async function withdrawalAwareFailure(
+export async function withdrawalAwareFailure(
   ledger: TerminalReasonReader,
   exportId: string,
   error: unknown,
@@ -543,7 +543,7 @@ async function withdrawalAwareFailure(
 }
 
 /** `inFlight.assertExecutable` 的撤回感知包装：执行前重查被撤回拒绝 ⇒ `CONSENT_WITHDRAWN`。 */
-async function assertExecutableOrWithdrawn(
+export async function assertExecutableOrWithdrawn(
   inFlight: InFlightCalls,
   ledger: TerminalReasonReader,
   record: { id: string; userId: string },
@@ -556,7 +556,7 @@ async function assertExecutableOrWithdrawn(
 }
 
 /** `inFlight.saveResult` 的撤回感知包装：保存前重查被撤回拒绝 ⇒ `CONSENT_WITHDRAWN`。 */
-async function saveResultOrWithdrawn(
+export async function saveResultOrWithdrawn(
   inFlight: InFlightCalls,
   ledger: TerminalReasonReader,
   input: Parameters<InFlightCalls['saveResult']>[0],

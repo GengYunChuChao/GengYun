@@ -74,7 +74,7 @@ import {
   idempotencyScope,
 } from '../auth/idempotency.ts';
 import { API_PREFIX, type ErrorCode } from '../contract.ts';
-import { ApiError } from '../errors.ts';
+import { ApiError, terminalFailureCodeOf } from '../errors.ts';
 import type { CheckedContentPort } from './content.ts';
 import { TtsLocalInputError } from './live-ports.ts';
 import { asSynthesisMediaReadPort } from './media.ts';
@@ -641,8 +641,8 @@ export function createSynthesisService(options: SynthesisServiceOptions) {
     }
     if (outcome.kind === 'threw') {
       // 本地入参拒绝（如真实适配器的文本上限，**未发包、不占预算**）按契约入参错误码如实落账；
-      // 其余抛出（提供者内部异常）一律「结果不可判定」，绝不落 succeeded。
-      const code = outcome.error instanceof TtsLocalInputError ? outcome.error.code : 'PROVIDER_OUTCOME_UNKNOWN';
+      // 撤回（`CONSENT_REQUIRED`／已翻译的 `CONSENT_WITHDRAWN`）必须自证成撤回，其余照旧「结果不可判定」。
+      const code = outcome.error instanceof TtsLocalInputError ? outcome.error.code : terminalFailureCodeOf(outcome.error);
       await commitTerminal(jobId, running, { state: 'failed', errorCode: code }, null);
       return;
     }

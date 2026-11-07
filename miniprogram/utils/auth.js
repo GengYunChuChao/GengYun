@@ -50,7 +50,7 @@ function isFutureIso(value) {
  *
  * 为什么需要：401 与 403 是两件不同的事——401 是「还没登录 / 登录过期」，403 是
  * 「登录了，但这件事不给你」（`SCOPE_DENIED` 权限范围不足 / `CONSENT_REQUIRED` 缺用途授权 /
- * `ACCOUNT_INACTIVE` 账号不可用）。把 403 也一并当成「登录状态已失效」并清会话，会让用户被
+ * `CONSENT_WITHDRAWN` 授权已撤回 / `ACCOUNT_INACTIVE` 账号不可用）。把 403 也一并当成「登录状态已失效」并清会话，会让用户被
  * 踢回登录页反复重登却始终不明白为什么不行，也让 B7 统一状态层（`utils/states.js` 的
  * `CODE_KIND`）永远收不到真实的 403 码——它一直是「登录失效」。
  *
@@ -61,7 +61,7 @@ function isFutureIso(value) {
 const SESSION_LOSS_CODES = Object.freeze(
   Object.keys(states.CODE_KIND).filter(function (code) { return states.CODE_KIND[code] === 'session' })
 )
-// 契约 403 闭集（SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE），同样由 B7 的 kind 反推。
+// 契约 403 闭集（SCOPE_DENIED / CONSENT_REQUIRED / CONSENT_WITHDRAWN / ACCOUNT_INACTIVE），同样由 B7 的 kind 反推。
 const FORBIDDEN_CODES = Object.freeze(
   Object.keys(states.CODE_KIND).filter(function (code) { return states.CODE_KIND[code] === 'denied' })
 )
@@ -88,7 +88,7 @@ function isForbiddenCode(code) {
 /**
  * 把一次 401/403 响应归因为「可展示的契约错误码 + 语义标记」（**纯函数**，不读写存储、不发请求）。
  * - 401：一律归一为 `SESSION_REQUIRED`（会话失效 + 清会话；契约 401 里的 `SESSION_EXPIRED` 与之等价）。
- * - 403：契约闭集为 `SCOPE_DENIED` / `CONSENT_REQUIRED` / `ACCOUNT_INACTIVE`，**原样带出**；
+ * - 403：契约闭集为 `SCOPE_DENIED` / `CONSENT_REQUIRED` / `CONSENT_WITHDRAWN` / `ACCOUNT_INACTIVE`，**原样带出**；
  *   封套读不到、或码不在该闭集 ⇒ `SCOPE_DENIED`（服务端确实拒绝了，只是没说清原因——不假装是登录问题）。
  * - 403 里若出现会话类码（越界实现）：仍按会话失效处理并清会话（不放宽守卫）。
  */
