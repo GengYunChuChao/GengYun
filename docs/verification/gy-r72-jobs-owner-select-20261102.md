@@ -166,7 +166,7 @@ PostgreSQL 17.11 on x86_64-windows, compiled by msvc-19.44.35228, 64-bit
 覆盖来源 列级 1224 + 表级 48（扩展：1851 + 127）。
 
 原因在解析器：`collectRequirements` 对 `DELETE` **只**产出一条 `TABLE_WIDE_COLUMN`（`'*'`）的 DELETE 需求
-（`tests/unit/sql-column-coverage.test.mjs:1956`：`if (statement.verb === 'DELETE') add(statement, TABLE_WIDE_COLUMN, 'DELETE', …)`），
+（`tests/unit/sql-column-coverage.test.mjs:1959`：`if (statement.verb === 'DELETE') add(statement, TABLE_WIDE_COLUMN, 'DELETE', …)`），
 **DELETE 的 WHERE 列不产生 SELECT 需求** ⇒ 给 DELETE 补谓词列的 SELECT 权，不会改变任何被钉死的读数。
 该测试里也没有「每表授权列数」这类钉子。本片因此**没有**改任何读数；如果哪天有人「按 +1 去改」，
 那才是把真实读数改坏。
