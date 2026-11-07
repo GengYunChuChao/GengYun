@@ -801,6 +801,34 @@ try {
   assert.equal(afterA2[1].state, 'failed', 'purpose=null 必须撤掉 A 的另一用途行（跨用途过滤只在带 purpose 时生效）');
   assert.equal(afterA2[1].error_code, 'CONSENT_WITHDRAWN');
   assert.deepEqual(await exportRowsByIds([bRecognition.id, bChecked.id]), beforeB, '注销级撤回同样不得波及其他用户（逐字段）');
+
+  // ⑤ 本节自行清理：**不留行给下游 job**。同一 CI job 的下一步 `egress-object-key-pg.mjs` 在**同一个库**上
+  //    演练 `0014 up→down→up`，而 `down` 里有 `DROP COLUMN object_key`：任何遗留的 `object_key` 非空行都会在
+  //    往返中丢掉键、退化成「哨兵 `object_id` + NULL 键」的无标识形态，随后 0015 重放的双向 XOR 就在既有行上
+  //    失败（实测红：`0015_export_object_key_shape.sql:38: ERROR: check constraint "exports_object_ident_xor"
+  //    of relation "exports" is violated by some row`）。媒体行（真实 uuid + NULL 键）不受该往返影响，键行才会。
+  //
+  //    清理必须放在**全部断言之后**（①正控制／②跨用途／③跨用户／④注销级都要读这些行），并断言删掉的
+  //    行数恰为本节插入的行数（4 = A 两行 + B 两行），防止静默漏删。
+  const scopeRowIds = [aRecognition.id, aChecked.id, bRecognition.id, bChecked.id];
+  assert.equal(scopeRowIds.length, 4, '本节恰插入 4 行（A 两行 + B 两行）');
+  assert.deepEqual(
+    [await countExports(scopeA.id), await countExports(scopeB.id)],
+    [2, 2],
+    '清理前：本节插入的 4 行都还在（清理不得掩盖上面的逐字段断言）',
+  );
+  const removedScoped = await owner.query('DELETE FROM public.exports WHERE id = ANY($1::uuid[]) RETURNING id', [
+    scopeRowIds,
+  ]);
+  assert.equal(removedScoped.rowCount, scopeRowIds.length, '本节必须删掉自己插入的全部 4 行（勿留行给下游 job）');
+  assert.deepEqual(
+    [await countExports(scopeA.id), await countExports(scopeB.id)],
+    [0, 0],
+    '清理后：A/B 的账本行必须为 0（本节自行清理，勿留行给下游 job）',
+  );
+  console.log(
+    'NOTE 12: 本节自行清理插入的 4 行（勿留行给下游 job）—— 0014 down/up 会 DROP COLUMN object_key，遗留的键行会退化成「哨兵 + NULL 键」并使 0015 重放失败',
+  );
   say(
     '撤回作用域负控制（真 PG）：A 走 HTTP 撤回只撤自己那一行（failed + CONSENT_WITHDRAWN + revision+1）；同用户另一用途行与 B 的 sent/reserved 两行逐字段不变；purpose=null 撤回恰撤 1 行且 B 仍逐字段不变',
   );
