@@ -4,7 +4,7 @@
 >
 > 本片交付 GY-I14（#14）的**模型层组件**，是该项的**第二片**（第一片确定性规则层已由 PR #88 合并，`d5562923`）。
 >
-> - 本片**不注册路由、不改 `services/api/**`**，因此**本组件暂无 HTTP 消费者**，应用装配路径**未接线**；
+> - 本片**自身不注册路由**；HTTP 侧的唯一受信消费者是 `services/api/src/moderation/**`（审核域装配片已接线，逐文件白名单见 `tests/moderation/model-ports.test.mjs:174-181`，结论经 `GET /jobs/{id}` 只读暴露，real 模式整域 fail-closed）；
 > - 真实 `tms`（文本）／`ims`（图片）网络能力**只能**来自**注入式端口**，本包**不内置任何端口实现**；
 >   真实调用需要用户交接两个真实 `BizType`（现为占位值，`policySelectionVerified:false`），本片**一律不调**；
 > - **不得**把本片读成"AI 筛查已完成"、"发布链已通"；**不得**声称任何准确率／召回率
@@ -82,10 +82,12 @@
    因此"关闭"不依赖任何运行期判断，而是"类型上就没有实现"；
 2. **本包源码零命中网络原语**：无 HTTP 客户端调用、无 Node HTTP 模块、无供应商 SDK、
    无环境变量读取、无绝对 URL 字面量（逐文件正则扫描，命中即失败）；
-3. **本包不导出任何端口实现**；且"应用装配未接线"由**模型合流 API 符号**判定（返修 3 · 监工 `4248262118`）：
+3. **本包不导出任何端口实现**；"模型合流 API 符号不被未受信路径消费"由负控制判定（返修 3 · 监工 `4248262118`；GY-I14 装配片于 2026-10-14 达成前提后改口径，注释见 `tests/moderation/model-ports.test.mjs:158-173`）：
    在 `services/` `apps/` `miniprogram/` `tools/` 中扫描本片模型合流的对外符号
    （`mergeModeration` / `checkMergedInvariant` / `isModelLayerPublishable` / `evaluateModelReReview` /
-   `evaluateBoundHardRules` / `requiredModelPortKinds` 等），**必须零命中** ⇒ 暂无 HTTP 消费者。
+   `evaluateBoundHardRules` / `requiredModelPortKinds` 等），判据为**白名单内允许、白名单外仍零命中**——
+   唯一受信消费者是 `services/api/src/moderation/**`（逐文件白名单：`service.ts`/`provider.ts`/`decisions.ts`/`callback.ts`/`types.ts`/`packages.d.ts`，
+   见 `tests/moderation/model-ports.test.mjs:174-181`）；该目录内未列出的新文件及任何其它目录命中仍判失败。
    > 判据**不是**"扫 `packages/moderation` 这个包路径"：已合并的 #94（community）等线**合法消费规则层**
    > （同一个包路径），用包路径当判据会把合法引用误判为越界。用例对两种形态各给一例：
    > 合法规则层消费（真实取社区线 `moderation-gate.ts` 的 import 形态）放行；真实模型合流接线
@@ -324,7 +326,7 @@
 | 文本 prompt 单独版本 | `mp1+sha256:e24f2f6a556034373f889fa6b5fec386` |
 | 图片 prompt 单独版本 | `mp1+sha256:d00373e881c3bbc72998d05fc8342d50` |
 | 文本 + 图片集合版本 | `mp1+sha256:f0e8f336b99eddb91c035d429912e323` |
-| 规则层 `rule_version`（未改动） | `mr1+sha256:736efcf2abc48c2c39a5036140eabbea` |
+| 规则层 `rule_version`（**当前示例，2026-11-07 复核**；规则集此后已变更，样例以代码常量 `RULE_VERSION` 为准） | `mr1+sha256:511e7f2cf65626bbde5c5f38be950a13` |
 
 ## 9 契约缺口（如实登记，未自行扩权）
 
@@ -348,8 +350,10 @@
 
 ## 10 已知限制（不掩饰）
 
-1. **无 HTTP 消费者**：无路由、无鉴权、无持久化；`Moderation` 落库、契约错误码映射、幂等与
-   `If-Match` 语义都属 API 接线增量。
+1. **HTTP 侧唯一受信消费者是 `services/api/src/moderation/**`**（白名单逐文件列出，见
+   `tests/moderation/model-ports.test.mjs:174-181`）：结论经 `GET /jobs/{id}` 只读暴露、台账落 PG
+   （迁移 `0028`）；白名单之外对本片模型合流符号仍要求零命中，契约错误码映射、幂等与
+   `If-Match` 语义等进一步增量不属本片。
 2. **端口是注入式的，本仓库当前没有任何真实端口**：全部用例使用 `provider.synthetic === true`
    的合成替身，因此**正控制里的 `approved` 不是"真实模型认可"**，只是"本层口径下通过"；
    真实 `BizType` 未交接前，本片不具备任何真实审核能力。

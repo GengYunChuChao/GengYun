@@ -194,11 +194,12 @@ prompt 模板、结论行、租约），与数据字典 `moderation_decisions` �
   因此 `real` 的 503 在**服务边界**可见，传输层形态由共享错误处理器映射（`buildErrorEnvelope`）。
 - 契约里**没有**供应商回调路径（ADR-001 §62 明确不在客户端 OpenAPI 开放）⇒ 回调是服务端 seam。
 - 持久化是**内存**台账（PG 迁移不属本片）；`moderation_decisions` 的 SQL/迁移待接线。（**2026-11-04 复核：本行已过期** —— 迁移 `services/api/db/migrations/0028_moderation_persistence.sql` 第 56 行已建 `moderation_decisions`、第 103 行已建 `moderation_withdrawals`；`services/api/src/app.ts` 第 954 行在 `pool` 非空时以 `createPostgresModerationLedger({ pool })` 注入 `store`，无池才回落内存台账。口径按该迁移与 `services/api/src/moderation/ledger-pg.ts` 文件头自述：**写面穿透落库、读面仍由内存承接**，`flush()` 未落定不得转 `published`）
-- **已合并文档的边界声明需要同步（跨线，本片未改）**：
-  `packages/moderation/README.md` 的"本包当前没有 HTTP 消费者"、
-  `docs/moderation/model-layer.md` 的同义表述，以及
-  `tests/moderation/model-ports.test.mjs` 的负控制（后者已按"前提被达成"同步，
-  白名单为**逐个受信文件**，其它目录仍判失败）。前者留给指挥/监工与 `packages/moderation/**` 的所有者更新。
+- **已合并文档的边界声明同步（跨线）已于 2026-11-05 执行**：
+  `packages/moderation/README.md` 的"本包当前没有 HTTP 消费者"与
+  `docs/moderation/model-layer.md` 的同义表述已改为"唯一受信消费者是 `services/api/src/moderation/**`、
+  判据为白名单内允许、白名单外仍零命中"，与
+  `tests/moderation/model-ports.test.mjs` 的负控制口径一致（后者早已按"前提被达成"同步，
+  白名单为**逐个受信文件**，其它目录仍判失败）。
 
 ## 11 未取得／未验证（不得读成已完成）
 

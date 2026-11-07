@@ -54,7 +54,7 @@ node tools/release-gate.mjs --list
 | `contract` | 契约测试与契约状态一致性 | 两步：`npm run test:contract`，然后 `node tools/verify-contract-status.mjs` | 两步都退出码 0 | 首个失败步骤的关键行 ≤3 行 | 跑 |
 | `secrets` | 私密信息泄漏扫描 | 进程内扫 `git diff <base>...HEAD` 的**新增行** | 0 条命中 | 命中 `文件:行 规则 ⇒ 掩码/路径`，最多 3 条 | 跑 |
 | `artifacts` | 大文件与二进制检查 | 进程内对 diff 里新增/修改的文件 `stat` + 读前 8 KiB 找 NUL | 无 `too-large`、无未放行 `binary` | 超阈值/二进制的文件名与字节数，最多 3 条 | 跑 |
-| `pg` | 真库集成臂 | 默认不执行；`--pg` 时逐个跑 `test:integration:*-pg`（本仓 5 个：`recognition-chain-pg`、`conversations-pg`、`media-persistence-pg`、`backup-copies-purge-pg`、`online-purge-pg`） | 每个都退出码 0 | 首个失败脚本的关键行 ≤3 行 | **跳过**（见 §4） |
+| `pg` | 真库集成臂 | 默认不执行；`--pg` 时逐个跑 `test:integration:*-pg`（本仓 6 个：`recognition-chain-pg`、`conversations-pg`、`media-persistence-pg`、`backup-copies-purge-pg`、`online-purge-pg`、`retention-purge-pg`） | 每个都退出码 0 | 首个失败脚本的关键行 ≤3 行 | **跳过**（见 §4） |
 
 三条共性：
 
@@ -165,7 +165,7 @@ node tools/release-gate.mjs --only pg --pg
 
 ## 7 与 CI 的关系
 
-`.github/workflows/engineering-shell.yml` 把判据拆成 7 个 job 并行跑（docs/static/unit/integration/contract/evaluation/build），
+`.github/workflows/engineering-shell.yml` 把判据拆成 8 个 job 并行跑（docs/static/unit/integration/contract/evaluation/build/retention-gates），
 那是**合并前的事实来源**；本脚本是**本地一条命令的汇总视图**，用于提 PR 前自查与发版记录，
 不取代 CI、也不放宽任何 CI 判据。两者口径对齐处：`contract` 门禁与 CI 的 `contract` job 同为
 `npm run test:contract` + `node tools/verify-contract-status.mjs`。
