@@ -203,9 +203,9 @@ export const READING_GATE_BASELINES = [
   {
     step: '帖子级媒体挂载（R83 / 迁移子集六段 / 约束直插探针 / 并发 advisory lock）',
     script: 'tests/integration/post-media-attachments-pg.mjs',
-    baseline: 13,
+    baseline: 19,
     counter: `awk '/^PASS [0-9]+:/{n++} END{print n+0}' "$log"`,
-    source: '真跑（本机 PG 17.11 + 专用空库 gengyun_post_media_test ⇒ `PASS n:` 13 条：第 5–7 条为约束直插探针（ordinal=4 / 双 ordinal=1 / 同 (post,media) 二次插入）、第 8 条非法 uuid、第 9 条并发）',
+    source: '真跑（本机 PG 17.11 + 专用空库 gengyun_post_media_test ⇒ `PASS n:` 19 条 = 臂脚本 19 个 `say(` 调用点：第 8 节约束直插探针 3 条（ordinal=4 / 双 ordinal=1 / 同 (post,media) 二次插入）、第 9 节非法 uuid、第 11 节 advisory lock 并发，另含 #1030 两节 —— 第 13 节 ⑩ 同帖并发 1 条、第 14 节 ⑪ owner_id / state 两个过滤 2 条；删掉 ⑩/⑪ 只剩 16 条 ⇒ `-lt 19` 当场红）',
   },
 ];
 
