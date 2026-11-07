@@ -68,8 +68,14 @@ const dbUrl = new URL(serverUrl.href);
 dbUrl.pathname = `/${DB}`;
 
 const notes = [];
+/**
+ * 分段行计数（P2-1 的读数源）：只数判据段落行 `^\[[A-Z]\] `（`[N]/[T]/[K]/[W]/[C]/[G]/[A]/[R]`），
+ * ⛔ 不数 `[√]` 那两行 —— 否则末尾自己那条读数会把计数抬高，正好掩盖「整段被删」。
+ */
+let segments = 0;
 function note(line) {
   notes.push(line);
+  if (/^\[[A-Z]\] /.test(line)) segments += 1;
   console.log(line);
 }
 
@@ -559,4 +565,18 @@ async function expectRejected(overrides, label, codes = ['23514']) {
 
 await owner.end();
 await pool.end();
+
+// ---------------------------------------------------------------------------
+// 段落计数闸（P2-1）：`[√] ALL PASS` 只证明「跑到了最后一行」，证明不了「每组判据都还在」。
+// 反例（审查实测 M6）：把上面 `[R]` 回滚那组 32 行整段删掉 ⇒ 脚本照样 exit 0、照样打 `[√] ALL PASS`,
+// 只剩 note 行数从 27 掉到 25。所以这里把「段落行条数」也变成断言语义：
+// 低于基线即按「整段断言被删」判红，且读数先进日志（失败时也看得见实际条数）。
+// 基线 27 = 2026-11-07 本机 PG 17.11 实跑实测（`grep -c '^\[[A-Z]\] '` ⇒ 27）。
+// ⛔ 不要在下调这个数「凑绿」：它要挡的正是「悄悄少一组断言」。
+const EXPECTED_SEGMENTS = 27;
+note(`[√] 分段 ${segments}/${EXPECTED_SEGMENTS}`);
+assert.ok(
+  segments >= EXPECTED_SEGMENTS,
+  `分段行只有 ${segments} 条，少于基线 ${EXPECTED_SEGMENTS}：疑似整段断言被删`,
+);
 note('[√] ALL PASS');
