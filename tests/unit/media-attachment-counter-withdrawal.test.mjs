@@ -175,8 +175,25 @@ test('生产装配位点（buildApp 透传 PG mediaStore）注入后，默认计
   // 把 `#1029` 的计数器接在 app 层（而不是 service 默认）能让上一版全部判据保持绿色。
   const app = buildApp({
     config: {
-      ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent' }),
+      // 第三轮审查 P1：app 层自己的「真库」判词是 `pool !== null`（`services/api/src/app.ts:1304`），
+      // 所以这里必须给一个非空 pool——否则「只看 pool 的接线」在 CI 里全绿，而它在生产里是活的。
+      // `MEDIA_OBJECT_REF_KEY` 同理：缺它 app 会走 fail-closed，探不到真装配。
+      ...loadConfig({
+        APP_EXECUTION_MODE: 'stub',
+        LOG_LEVEL: 'silent',
+        MEDIA_OBJECT_REF_KEY: '0'.repeat(64),
+      }),
       executionMode: 'real',
+    },
+    // 假 pool：本用例不查库（mediaStore 显式给出），只要能过 `pool !== null` 这道门并让 app 装配成功。
+    pool: {
+      query: async () => {
+        throw new Error('r83 lock probe：本用例不查库');
+      },
+      connect: async () => {
+        throw new Error('r83 lock probe：本用例不查库');
+      },
+      end: async () => {},
     },
     store: createMemoryAuthStore(),
     mediaObjectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' },
@@ -292,8 +309,12 @@ test('测试注入缝不得出现在生产装配里（只允许它在 service.ts
     // 上面那条正则只管「字面量形状」。换个文件把 `injected` 与 `countFor` 拼在一起（模板串、
     // 常量、类型断言……）同样是自造测试缝：计数方法定义在 `countFor` 旁边、kind 里带 `injected`，
     // 就等于在 service.ts 之外复刻了那个注入缝。同一文件同时出现两者即违规。
-    if (rel !== serviceRel && source.includes('injected') && source.includes('countFor')) {
-      offenders.push(`${rel}：service.ts 之外同时出现 injected 与 countFor（自造测试注入缝）`);
+    // 第三轮审查 P2-2：原来的「同文件同时出现 injected 与 countFor」判据会误伤合法生产代码——
+    // `services/api/src/app.ts` 本来就有 `injected:`/`injectedDeletionRequests` 等标识符，任何在 app 层
+    // 包一层计数器的正当改动都会被判成「自造测试缝」。收窄成「**带引号的 'injected' 字面量** 与 countFor 同文件」，
+    // 这才是绕过实际用的写法（`kind: 'injected'`），也不会把裸标识符当证据。
+    if (rel !== serviceRel && /['"`]injected['"`]/.test(source) && source.includes('countFor')) {
+      offenders.push(`${rel}：service.ts 之外同时出现带引号的 'injected' 字面量与 countFor（自造测试注入缝）`);
     }
   }
   assert.deepEqual(
