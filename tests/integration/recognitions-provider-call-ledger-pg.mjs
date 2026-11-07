@@ -525,7 +525,8 @@ async function expectRejected(overrides, label, codes = ['23514']) {
 // [R] 回滚件：有行 ⇒ G0019 中止；清空后 ⇒ 整表拆除
 // ---------------------------------------------------------------------------
 {
-  assert.ok(await countOf('SELECT count(*)::int AS v FROM public.provider_call_ledger') > 0, '回滚臂要求表里先有行');
+  const ledgerRowsBefore = await countOf('SELECT count(*)::int AS v FROM public.provider_call_ledger');
+  assert.ok(ledgerRowsBefore > 0, '回滚臂要求表里先有行');
   const downSql = readSql(DOWN);
   await assert.rejects(
     () => owner.query(downSql),
@@ -539,7 +540,7 @@ async function expectRejected(overrides, label, codes = ['23514']) {
   // 回滚件自己开了 `BEGIN;`，异常路径既没有 COMMIT 也没有 ROLLBACK ⇒ 会话停在 aborted 状态，
   // 之后的任何语句都会 25P02。这里显式回滚，才能继续验证「中止后表还在」。
   await owner.query('ROLLBACK');
-  assert.ok((await one("SELECT to_regclass('public.provider_call_ledger') AS o")).o && (await countOf('SELECT count(*)::int AS v FROM public.provider_call_ledger')) > 0, '中止后表与记账行必须原样还在（不是只剩空表）');
+  assert.ok((await one("SELECT to_regclass('public.provider_call_ledger') AS o")).o && (await countOf('SELECT count(*)::int AS v FROM public.provider_call_ledger')) === ledgerRowsBefore, '中止后表与记账行必须原样还在（不是只剩空表/少行）');
   note('[R] 表里有行 ⇒ 回滚件以 G0019 / PROVIDER_CALL_LEDGER_ROLLBACK_BLOCKED 中止，表原样还在');
 
   await owner.query('DELETE FROM public.provider_call_ledger');
