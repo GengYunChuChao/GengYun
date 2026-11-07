@@ -12,6 +12,11 @@
  *   ③ 区间全空行／全右括号 → SUSPECT
  * 另外三条正向控制防「永远红」与「误伤」：合法引用不报、引用注释块不报、URL／IP 端口不被当成引用。
  *
+ * 围栏代码块（```／~~~）内的行**不进判据面**（2026-11-08 起）：那里是栈帧、`psql` 报错原文、命令输出，
+ * 是「原样抄下来的报文」，不是这份文档对仓内行号的断言。T6 钉住这条政策的四边：围栏内不判、闭合后照判、
+ * 三种围栏形态（```／~~~／列表项里缩进）与未闭合兜底都要掩到，且围栏内引用**照样进锚点清册**——
+ * 少判可以，静默消失不行（否则「把报文挪进围栏」就能同时绕过判据面与册面）。
+ *
  * 基线（`tools/doc-anchors-baseline.json`）是**人工裁决过的历史遗留**，不是免罚名单，故这里要求
  * 双向一致：既有条目必须**仍然命中**（stale 反查），当前扫描也不许有**基线外新增**。
  * 修好一条旧引用 ⇒ 基线那一条就陈旧 ⇒ 本测试点名要求删掉它；把新问题塞进基线 ⇒ 新增为 0 但
@@ -35,6 +40,7 @@ import {
   SUSPECT,
   anchorCountDocumentsDigest,
   attributeBareAnchors,
+  buildAnchorCounts,
   collectFindings,
   extractReferences,
   loadAnchorCountBaseline,
@@ -291,13 +297,22 @@ test('基线 stale 反查：`tools/doc-anchors-baseline.json` 每条都必须仍
     ].join('\n'),
   );
 
-  // 三类都要真的出现：只留一类说明判据或扫描面坏了（否则「基线全绿」可能只是扫了个寂寞）。
-  for (const reason of [BROKEN, OUT_OF_RANGE, SUSPECT]) {
+  // 判据没坏的自证：至少两类历史遗留仍要在册。
+  for (const reason of [OUT_OF_RANGE, SUSPECT]) {
     assert.ok(
       baseline.entries.some(entry => entry.reason === reason),
       `基线里没有 ${reason} 这一类：判据或扫描面可能已失效`,
     );
   }
+  // BROKEN（目标文件不存在）自 2026-11-08 起零容忍：基线里**一条都不许有**。
+  // 不再靠「册上还留着旧 BROKEN」证明判据还活着——那种证法奖励留旧账，而旧账正是这次要清的。
+  // BROKEN 判据活着的证据改由下面第 ① 条负控制（凭空一条不存在的路径必须判 BROKEN）与
+  // 围栏策略用例 T6 承担：那里是真判出 BROKEN／真不判围栏内，比数一遍旧条目硬。
+  assert.deepEqual(
+    baseline.entries.filter(entry => entry.reason === BROKEN).map(entry => entry.reference),
+    [],
+    '「目标文件不存在」是零容忍：这份基线不得再登记 BROKEN（登记一条等于给文件缺失发免罚单）',
+  );
 });
 
 test('基线条目必须带 path／reason／owner／reference，且 reason 只能是工具认的四类之一', () => {
@@ -496,18 +511,58 @@ test('T5 裸区间 `:N-M` 同样继承，并参与 SUSPECT 判定', () => {
   }
 });
 
-test('T6 围栏代码块（```）内的裸锚点同样继承（块内空行不切断，围栏不逃逸判据）', () => {
+test('T6 围栏代码块内的行不进判据面（```／~~~／缩进／未闭合／闭得太短），围栏外一条都不许少判，册面一分不减', () => {
   const root = makeBareFixture({
-    'docs/architecture/bare-fence.md': ['# 标题', '', '```js', '见 `src/x.mjs:3` 与 `:999`', '```', ''].join('\n'),
+    // ① ``` 围栏：栈帧、`psql` 报错原文、命令输出就是这种形态。显式锚点、裸锚点、表格行都不判。
+    'docs/architecture/fence-triple.md': [
+      '# 标题',
+      '',
+      '```js',
+      '报错：`src/gone.ts:12`（该文件不存在）',
+      '栈帧：`src/x.mjs:3` 与 `:999`',
+      '| 1 | `src/gone2.ts:1` |',
+      '```',
+      '',
+      '围栏外照判：`src/gone3.ts:7`',
+      '',
+    ].join('\n'),
+    // ② `~~~` 是另一种围栏，同样要认；闭合之后散文恢复判据。
+    'docs/architecture/fence-tilde.md': ['# 标题', '', '~~~', '`src/gone4.ts:1` 不存在', '~~~', ''].join('\n'),
+    // ③ 列表项里缩进的围栏（`gy-i22` 的栈帧就是 5 空格缩进）：定界口径与 `FENCE_LINE` 同源，缩进不影响。
+    'docs/architecture/fence-indent.md': ['- 列表项：', '', '     ```', '     `src/gone5.ts:2`', '     ```', ''].join('\n'),
+    // ④ 未闭合围栏：兜底掩到文件末尾（与 CommonMark「未闭合的围栏延伸到文档结束」同口径）。
+    'docs/architecture/fence-unclosed.md': ['# 标题', '', '```', '`src/gone6.ts:3` 到文件末尾都算代码', ''].join('\n'),
+    // ⑤ 闭得太短不算闭合：四个反引号开的块不会被三个反引号关掉（否则掉一个反引号就能逃出围栏）。
+    'docs/architecture/fence-short-close.md': [
+      '````',
+      '`src/gone7.ts:4`',
+      '```',
+      '`src/gone8.ts:5`',
+      '````',
+      '围栏外照判：`src/gone9.ts:6`',
+      '',
+    ].join('\n'),
   });
   try {
-    const { findings, stats } = collectFindings({ root, targets: ['docs/architecture'] });
+    const { findings, stats, judgedByDoc } = collectFindings({ root, targets: ['docs/architecture'] });
     assert.deepEqual(
-      findings.map(finding => `${finding.reason} ${finding.reference}`),
-      ['OUT_OF_RANGE src/x.mjs:999'],
-      '代码块里的裸锚点不能成为免检区',
+      findings.map(finding => `${finding.reason} ${finding.reference}`).sort(),
+      ['BROKEN src/gone3.ts:7', 'BROKEN src/gone9.ts:6'],
+      '围栏内一条都不判（那是原样报文，不是本文档对仓内行号的断言）；围栏外——含闭合后的散文——必须照判。少判是免检区，多判是把报文当断言',
     );
-    assert.equal(stats.bare.inherited, 1);
+    // 少报也要报数：围栏内被跳过的是 3＋1＋1＋1＋2＝8 条显式锚点（外加围栏内那条裸锚点，见下），
+    // 不许有任何一条静默消失。
+    assert.equal(stats.fenced, 8, '围栏内跳过的条数必须如实计数（少报可以，静默不行）');
+    // 围栏内的裸锚点照旧进**孤儿册**口径：围栏在块切分里自成一块（`segmentDocumentBlocks` 的既有规则，
+    // 本次不改），块内没有散文显式锚点可继承，于是按 `no-explicit-in-block` 记册。关键是它既没消失
+    // （册面照数）也没判红（判据面跳过）——两件事同时成立才叫「只挡判据面」。
+    assert.equal(stats.bare.orphanInScope, 1, '围栏内的裸锚点仍进孤儿册口径（不判红），不因围栏而消失的证明');
+    // 册面（锚点清册）一分不减：围栏内引用照样记账。否则「把报文挪进围栏」就能同时绕过判据面与册面，
+    // 而清册存在的意义正是「这条锚点还在不在文档里」。
+    const counts = buildAnchorCounts(judgedByDoc);
+    assert.equal(counts.get('docs/architecture/fence-triple.md'), 4, '3 条围栏内 + 1 条围栏外，全部计入清册口径');
+    assert.equal(counts.get('docs/architecture/fence-short-close.md'), 3, '围栏内 2 条 + 围栏外 1 条');
+    assert.equal(counts.get('docs/architecture/fence-unclosed.md'), 1, '未闭合围栏内的引用照样记账');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
