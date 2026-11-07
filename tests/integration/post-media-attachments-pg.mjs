@@ -33,11 +33,16 @@
  *        `media_ids` 长度=1、输家的图零挂载行。per-media advisory lock 只按 media_id 串行化（两把锁
  *        不同 ⇒ 互不阻塞），挡不住这一条 —— 帖子级 `SELECT … FOR UPDATE` + revision CAS 才是唯一互斥。
  *     ⑪ **计数事实源的 owner_id / state 过滤**（#1030，行为级负控制）：走真实上传配额判定
- *        （`initiateUpload`），别人名下的 ready 媒体与 `state='deleted'` 的媒体都不许占本 owner 的名额；
- *        删掉任一过滤 ⇒ 第 `COMMUNITY_MAX_IMAGES_PER_POST` 张就会被错拒成 400 `post_image_limit`。
+ *        （`initiateUpload`），别人名下的 ready 媒体与 `state='deleted'` / `state='rejected'` 的媒体
+ *        都不许占本 owner 的名额；`media_state` 7 值里只有「在途 4 态」（initiated / uploaded /
+ *        processing / ready）算数，所以 state 支另钉一张 `processing`：它不是 initiated/ready，
+ *        把 IN 列表缩窄就会漏计。删掉/放宽任一过滤 ⇒ 第 `COMMUNITY_MAX_IMAGES_PER_POST` 张
+ *        （或第 N+1 张）就会被错拒/错放成 400、201。
  *        单测的五条 SQL 文本正则抓不到这两条（见第 14 节注释）。
- *   ⚠️ ⑩/⑪ 目前**没有 CI 计数闸门覆盖**：`.github/workflows/real-pg-integration.yml` 的读数闸门仍是
+ *   ⚠️ ⑩/⑪ **不在 workflow 的读数闸门覆盖范围内**：`.github/workflows/real-pg-integration.yml` 仍是
  *   `readings < 13`，而本文件现在真跑产出 19 条 `PASS n:` —— 把这两节整段删掉，step 照样绿（16 ≥ 13）。
+ *   补位的是**静态守卫** `tests/unit/post-media-attachments-say-floor.test.mjs`：数本文件的 `say(`
+ *   调用点（下限 19，⑩ 占 1、⑪ 占 2）并钉住两节的文案/结构锚点 ⇒ 删节在 `tests/unit` 就红。
  *   另加一条计数口径的实证：挂载后待用池为 0、删帖后回到 3，而 `liveCommunityImageCount`（owner 累计）
  *   始终是 3 —— 这条差就是本 issue 的全部理由。
  *
@@ -503,11 +508,15 @@ async function main() {
     say('⑨ 注销：清 media_ids 的两处都同事务删掉 post_media_attachments 行；media-only 帖的 title/body/revision 原样保留');
 
     // ---- 13. ⑩ 并发（帖子级）：同一帖子同时挂两张**不同**的图 ⇒ 恰好 1 笔成功 ------
-    // ⚠️ **本两节（⑩/⑪）目前无 CI 计数闸门覆盖**（#1037 审查 P3）：`.github/workflows/real-pg-integration.yml`
-    // 的读数闸门是 `if [ "$readings" -lt 13 ]`，基线 13；本文件现在真跑产出 19 条 `PASS n:`
-    // ⇒ 把本节与第 14 节整段删掉，`readings` 仍是 16 ≥ 13，CI step 照样绿。要真覆盖，得同时改
-    // workflow 的基线、`tests/unit/ci-real-pg-readings-gates.test.mjs` 的 `READING_GATE_BASELINES`
-    // （守卫逐条比对表 ↔ 文件，只改一边就红）和两处注释里的数字 —— 本提交只登记，不改 CI。
+    // ⚠️ **本两节（⑩/⑪）不在 workflow 的读数闸门覆盖范围内**（#1037 审查 P3）：
+    // `.github/workflows/real-pg-integration.yml` 的读数闸门是 `if [ "$readings" -lt 13 ]`，基线 13；
+    // 本文件现在真跑产出 19 条 `PASS n:` ⇒ 把本节与第 14 节整段删掉，`readings` 仍是 16 ≥ 13，
+    // CI step 照样绿。要真覆盖，得同时改 workflow 的基线、
+    // `tests/unit/ci-real-pg-readings-gates.test.mjs` 的 `READING_GATE_BASELINES`
+    // （守卫逐条比对表 ↔ 文件，只改一边就红）和两处注释里的数字。
+    // 本提交不改 CI（那会把 PR 升成 B 档）；补位的是静态守卫
+    // `tests/unit/post-media-attachments-say-floor.test.mjs`（数 `say(` 调用点 ≥ 19 + 钉本节与
+    // 第 14 节的文案/结构锚点）—— 删掉任一节，`tests/unit` 立刻红。
     // `#1037` 的并发闸门有两道，都不是「帖子级」：
     //   * `claimPostMedia` → `lockClaimedMedia` 只按 **media_id** 取 `pg_advisory_xact_lock`
     //     （挡的是「同一张图同时挂两帖」，见第 11 节）；
@@ -699,21 +708,51 @@ async function main() {
     await rejectsUploadWithLimit(() => uploadAs(quotaOwner, 'gy-r87-quota-fourth-1'), `A 的第 ${maxPerPost + 1} 张`);
     say(`⑪ owner_id：B 名下 ${maxPerPost} 张 ready 不占 A 的名额（A 第 ${maxPerPost} 张 201、第 ${maxPerPost + 1} 张 400）；删掉 owner_id 过滤 ⇒ 第 ${maxPerPost} 张即 400`);
 
-    // 支二（state）：C 名下 `maxPerPost-1` 张 ready + 1 张 state=deleted（未挂载、且在 24h 窗口内）。
-    // `deleted` 不在 `state IN ('initiated','uploaded','processing','ready')` 里 ⇒ 不占名额；
-    // 删掉这条过滤，C 的第 `maxPerPost` 张就会被错误 400。
+    // 支二（state）：`media_state` 有 7 个值（`0001_initial_schema.sql:23`：
+    // initiated / uploaded / processing / ready / rejected / deleting / deleted），谓词只收前 4 个
+    // 「在途」态（`media/store-pg.ts:370`）。这里两侧各钉一张：
+    //   * 计入侧：1 张 `processing`（**不在** `initiated`/`ready` 里 ⇒ 把 IN 列表缩窄就会漏计）；
+    //   * 不计侧：1 张 `deleted` + 1 张 `rejected`（都不在 IN 列表里 ⇒ 删掉/放宽 state 过滤就会多计）。
+    // C 名下真在途 = 1 张 ready + 1 张 processing，另加 2 张不该计的（未挂载、都落在 24h 窗口内）。
     const stateOwner = randomUUID();
     await owner.query("INSERT INTO public.users (id, state, nickname) VALUES ($1::uuid, 'active', 'gy-r87')", [stateOwner]);
-    for (let i = 1; i < maxPerPost; i += 1) await newMedia(stateOwner, `state-r${i}`);
+    for (let i = 1; i <= maxPerPost - 2; i += 1) await newMedia(stateOwner, `state-r${i}`);
+    const inFlightProcessing = await newMediaInState(stateOwner, 'state-processing1', 'processing');
     const unusableMedia = await newMediaInState(stateOwner, 'state-deleted1', 'deleted');
-    assert.equal(await media.countPendingCommunityImages(stateOwner), maxPerPost - 1, 'state=deleted 的媒体不得算进待用池');
+    const rejectedMedia = await newMediaInState(stateOwner, 'state-rejected1', 'rejected');
+    assert.equal(
+      await media.countPendingCommunityImages(stateOwner),
+      maxPerPost - 1,
+      `state 支的在途基线 = ${maxPerPost - 2} 张 ready + 1 张 processing（deleted / rejected 不得计），实际不是 ${maxPerPost - 1}`,
+    );
     const stateThird = await uploadAs(stateOwner, 'gy-r87-state-third-1');
-    assert.equal(stateThird.status, 201, `state=deleted 的媒体不得占名额：C 的第 ${maxPerPost} 张必须 201`);
-    assert.equal(await media.countPendingCommunityImages(stateOwner), maxPerPost, `待用池 = ${maxPerPost - 1} 张 ready + 刚落的 1 张（deleted 仍不计）`);
+    assert.equal(
+      stateThird.status,
+      201,
+      `deleted / rejected 的媒体不得占名额：C 的第 ${maxPerPost} 张必须 201（也有可能是 processing 被漏计 ⇒ 第 ${maxPerPost} 张被错拒）`,
+    );
+    assert.equal(
+      await media.countPendingCommunityImages(stateOwner),
+      maxPerPost,
+      `待用池 = ${maxPerPost - 2} 张 ready + 1 张 processing + 刚落的 1 张（deleted / rejected 仍不计）`,
+    );
     await rejectsUploadWithLimit(() => uploadAs(stateOwner, 'gy-r87-state-fourth-1'), `C 的第 ${maxPerPost + 1} 张`);
-    const unusableRow = (await owner.query('SELECT state FROM public.media WHERE id = $1::uuid', [unusableMedia])).rows[0];
-    assert.equal(unusableRow.state, 'deleted', '那条不可用媒体仍在库里（不是被物理删掉才「不计」）');
-    say(`⑪ state：state=deleted 的媒体不占名额（第 ${maxPerPost} 张 201、第 ${maxPerPost + 1} 张 400）；删掉 state IN (…) ⇒ 第 ${maxPerPost} 张即 400`);
+    const unusableRow = (await owner.query('SELECT id::text AS id, state FROM public.media WHERE id = ANY($1::uuid[])', [
+      [unusableMedia, rejectedMedia],
+    ])).rows;
+    assert.deepEqual(
+      [...unusableRow].map((row) => `${row.id}:${row.state}`).sort(),
+      [`${unusableMedia}:deleted`, `${rejectedMedia}:rejected`].sort(),
+      '两条「不该计」的媒体仍在库里且状态没被改写（不是被物理删掉才「不计」）',
+    );
+    assert.equal(
+      (await owner.query('SELECT state FROM public.media WHERE id = $1::uuid', [inFlightProcessing])).rows[0].state,
+      'processing',
+      'processing 那条也在库里（它被算进名额，但状态没被上传路径改写）',
+    );
+    say(
+      `⑪ state：state IN ('initiated','uploaded','processing','ready') 才占名额 —— processing 计入、deleted/rejected 不计（第 ${maxPerPost} 张 201、第 ${maxPerPost + 1} 张 400）；把 IN 列表缩成 ('initiated','ready') ⇒ processing 漏计 ⇒ 第 ${maxPerPost + 1} 张本应 400 却 201`,
+    );
 
     console.log(`OK ${passed} 项真库断言全部通过（PostgreSQL ${version}）`);
   } finally {
