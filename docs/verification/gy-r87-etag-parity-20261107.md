@@ -71,6 +71,8 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 
 两次变异都只改 `cases.mjs` 里新加的那一条断言，跑完立即还原；判定「红」是读数行与 `DIFF` 行，因为 `--require-no-not-runnable` 按设计**只**把 `not_runnable` 变成 exit 1（`tests/failmatrix/run-real.mjs:1479`），`different` 不进退出码。
 
+**⚠️ 交付价值说准一点：这条断言在 CI 里红不了——它是「人肉可见」，不是「门禁」。** 真库臂的退出码只由 `not_runnable` 决定：`tests/failmatrix/run-real.mjs:1477-1481` 只在 `--require-no-not-runnable` 且 `tally.notRunnable > 0` 时 `return 1`，正常走到底就是 `return 0`（`:1483`）；脚本也没有 `--require-no-different` 这类开关（`:972` 列的合法参数只有 `--json=` / `--allow-skip` / `--require-no-not-runnable`）。CI 侧 `.github/workflows/real-pg-integration.yml:1264-1270` 的两条判决是「退出码（77 显式升级成 1、其它非 0 原样透出）」与「`--json` 的条数自证」，并且明文写着「⛔ 不断言 `different === 0`」。所以下表变异 A/B 判出的那种红，在 CI 里只会落在合计行的 `different 1` 与一条 `DIFF C4-12：…`（`run-real.mjs:1437`）上，**流水线照旧绿，得有人去翻日志才看得见**。要变成门禁得另开 B 档改动（给 `run-real.mjs` 加 `--require-no-different`，或改成与基线 json 逐条比对）；本页**不声称**它已进 CI 门禁。
+
 | 变异 | 改法 | 读数 | 判红原文 |
 | --- | --- | --- | --- |
 | A 强→弱 | `cases.mjs:700` 的 `/^"\d+"$/` 改成 `/^W\/"\d+"$/`（要求弱校验前缀） | `same 179 / sameWithCheck 24 / different 1` | `DIFF C4-12：… （ETag 期望强修订号 "n"（不带 W/ 弱前缀；与 stub 臂 run.mjs:144-148 同口径），实际 "\"2\""）` |
@@ -89,7 +91,7 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 
 原因是 r82 那三处不是普通锚点，而是 `tests/unit/doc-anchor-relocations.json` 第 598/599/600 条 `kind: "correction"` 登记（`from 354 → to 407`、`from 367 → to 438`，`symbol` 分别是 `C4-15`／`C4-18`）：闸门按「HEAD 上是否仍成立」重验每一条，文档行必须仍然含指向 `tests/failmatrix/cases.mjs:407` 的那个锚点。**只改文档数字会把它判成「陈旧」，而把 `to` 跟着改成 424/455 就得动登记表**——本片明确不动那张表（它不在 `tests/failmatrix/**` 里）。反过来把文档数字留着不动也不行：`to=407` 那条 `correction` 要求「HEAD 的 407 行含 `C4-15`」，而位移后 407 行是别的内容。
 
-所以改成**零位移**的写法：C4-12 仍是第 404 行（一条长对象字面量的单个 `realCheck: assertStrongEtagMatchesRevision` 引用），判据函数 `assertStrongEtagMatchesRevision` 声明在文件末尾（`tests/failmatrix/cases.mjs:696`），函数声明提升让「用例先引用、文末声明」成立。实测：`prefixIdentical: true`（前 403 行逐字未动）、`tailIdentical: true`（原 421 行之后的每一行逐字未动），`git diff --numstat` 只有 `34 18 tests/failmatrix/cases.mjs`（+33 行是文末函数、-17/+1 是 C4-12 那行由多行折回单行）。
+所以改成**零位移**的写法：C4-12 仍是第 404 行（一条长对象字面量的单个 `realCheck: assertStrongEtagMatchesRevision` 引用），判据函数 `assertStrongEtagMatchesRevision` 声明在文件末尾（`tests/failmatrix/cases.mjs:696`），函数声明提升让「用例先引用、文末声明」成立。实测：`prefixIdentical: true`（前 403 行逐字未动）、`tailIdentical: true`（原 421 行之后的每一行逐字未动），`git diff --numstat 1b0a3b63 aeaa5c24 -- tests/failmatrix/cases.mjs` 只有 `34 1 tests/failmatrix/cases.mjs`：**34 行新增 = 文末追加的 33 行（第 677 行的分隔空行 + 第 678–709 行的 JSDoc 与函数本体）＋ 第 404 行原位改写的 1 行**；**1 行删除 = 第 404 行的旧内容**。C4-12 **没有折行**——改动前后它都是第 404 行的一整行，变的是 `note` 文案、以及多出 `realCheck: assertStrongEtagMatchesRevision` 这一段引用；文件从 676 行长到 709 行（+33）。（第一版把 `realCheck` 写成 C4-12 里的多行箭头函数，那一版才是折行；§5 开头 676→693 的 +17 讲的就是那一版，最终版已无折行。）
 
 代价写在函数注释里：判据离用例远了 290 行。收益是**一条文档锚点都不用动**，登记表不用动，`doc-anchor-relocation-identity` 这条闸门本轮判决面为空（`git diff` 的 docs 侧只有本页这一份纯新增文件 ⇒ 显式 SKIP）。
 
@@ -100,5 +102,6 @@ C4-12 行原文：`  SAME C4-12  GET    /api/v1/account/deletions/<uuid> → 真
 - **本机 PG 17.11 ≠ CI**：不是 CI 的 ubuntu-24.04 + PGDG `postgresql-17`；读数一致只说明同一脚本、同一棵树、同一大版本下相同。
 - **只证明 C4-12 这一条**：`realCheck` 只加在这一条；`verdictFor` 仍然不读 `exp.etag`，所以**将来**新增带 `expect.etag` 的权限面用例仍会静默退化——这一条靠 `run-real.mjs:782` 的注释警告挡，不是靠代码强制。要强制得改公共判定器（见 §2 的代价说明）。
 - **不覆盖 12 条里的另外 11 条**：C5/C6/E1/E2 的 etag 用例只在 stub 臂判定，本页不声称它们有真库判据。
+- **这条判据隐含「200 + 有正文」**：它除了取响应头 `ETag`，还要拿正文 `result.body.data.revision` 做逐字比对（`cases.mjs:705`），所以只适用于「200 且带正文」的用例；304／空正文一类即使也回 ETag 也不能照抄这条 `realCheck`——`revision` 取不到就会落进「`data.revision` 期望正整数」那一支判红。
 - **`--require-no-not-runnable` 的拒红分支仍未触发**：本轮 `not_runnable = 0`，那个 `return 1` 分支没执行过。
-- 变异自证的两处改动已逐字还原（`git diff --numstat` 为 `34 18 tests/failmatrix/cases.mjs`、`1 1 tests/failmatrix/run-real.mjs`），本页是唯一新增文件。
+- 变异自证的两处改动已逐字还原（`git diff --numstat 1b0a3b63 aeaa5c24` 为 `104 0 docs/verification/gy-r87-etag-parity-20261107.md`、`34 1 tests/failmatrix/cases.mjs`、`1 1 tests/failmatrix/run-real.mjs`），本页是唯一新增文件。
