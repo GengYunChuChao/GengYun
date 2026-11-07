@@ -8,7 +8,7 @@
  *
  * 与 `tests/unit/post-media-attachments.test.mjs` 的分工：
  *   - 单元测锁语句形状与错误码映射（23514/23505/少挂 ⇒ 哪一类 400、事务必须整笔 ROLLBACK）；
- *   - 本脚本锁**只有 PG 能证明**的九件事：
+ *   - 本脚本锁**只有 PG 能证明**的十一件事（①–⑨ 是 #1037 原有的，⑩/⑪ 是 #1030 这两节）：
  *     ① 挂 3 张成功且 ordinal 从 1 起按 media_ids 顺序；第 4 张被拒（`post_image_limit`）且整笔回滚；
  *     ② 删帖（`visibility='deleted'`）后同一 media 可被另一帖挂载（"删帖即释放"）；
  *     ③ 同一 media 不能同时挂在两个**存活**帖子上（认领谓词），同一帖内重复由 PK 裁决；
@@ -28,6 +28,16 @@
  *     ⑨ **注销同事务清理挂载行**（PR #1037 审查 P1）：注销清 `media_ids` 的两处（有 PII 的帖、
  *        只有图片的帖）必须同时删掉 `post_media_attachments` 的本帖行；安全正文（title/body）
  *        按原口径保留（media-only 分支不推进 revision）。
+ *     ⑩ **同帖并发挂两张不同的图**（#1030）：两笔 `commitPostIfCurrent` 都带 `expected.revision=1`，
+ *        必须恰好 1 笔成功、输的那笔是 `{ ok: false, reason: 'REVISION_CHANGED' }`；事后该帖挂载行=1、
+ *        `media_ids` 长度=1、输家的图零挂载行。per-media advisory lock 只按 media_id 串行化（两把锁
+ *        不同 ⇒ 互不阻塞），挡不住这一条 —— 帖子级 `SELECT … FOR UPDATE` + revision CAS 才是唯一互斥。
+ *     ⑪ **计数事实源的 owner_id / state 过滤**（#1030，行为级负控制）：走真实上传配额判定
+ *        （`initiateUpload`），别人名下的 ready 媒体与 `state='deleted'` 的媒体都不许占本 owner 的名额；
+ *        删掉任一过滤 ⇒ 第 `COMMUNITY_MAX_IMAGES_PER_POST` 张就会被错拒成 400 `post_image_limit`。
+ *        单测的五条 SQL 文本正则抓不到这两条（见第 14 节注释）。
+ *   ⚠️ ⑩/⑪ 目前**没有 CI 计数闸门覆盖**：`.github/workflows/real-pg-integration.yml` 的读数闸门仍是
+ *   `readings < 13`，而本文件现在真跑产出 19 条 `PASS n:` —— 把这两节整段删掉，step 照样绿（16 ≥ 13）。
  *   另加一条计数口径的实证：挂载后待用池为 0、删帖后回到 3，而 `liveCommunityImageCount`（owner 累计）
  *   始终是 3 —— 这条差就是本 issue 的全部理由。
  *
@@ -45,6 +55,7 @@ import { createPool } from '../../services/api/src/db/pool.ts';
 import { applyMigrations, discoverMigrations } from '../../services/api/src/db/migrate.ts';
 import { createPostgresCommunityStore } from '../../services/api/src/community/store-pg.ts';
 import { createPostgresMediaStore } from '../../services/api/src/media/store-pg.ts';
+import { COMMUNITY_MAX_IMAGES_PER_POST } from '../../packages/media/constants.mjs';
 
 const ENV = 'POST_MEDIA_PG_TEST_URL';
 const rawUrl = process.env[ENV];
@@ -490,6 +501,219 @@ async function main() {
     assert.deepEqual(await attached(mediaOnlyPost), [], '(b) media-only 帖不得残留任何挂载行');
     assert.deepEqual(await attached(piiPost), [], '有 PII 的帖同样不得残留挂载行');
     say('⑨ 注销：清 media_ids 的两处都同事务删掉 post_media_attachments 行；media-only 帖的 title/body/revision 原样保留');
+
+    // ---- 13. ⑩ 并发（帖子级）：同一帖子同时挂两张**不同**的图 ⇒ 恰好 1 笔成功 ------
+    // ⚠️ **本两节（⑩/⑪）目前无 CI 计数闸门覆盖**（#1037 审查 P3）：`.github/workflows/real-pg-integration.yml`
+    // 的读数闸门是 `if [ "$readings" -lt 13 ]`，基线 13；本文件现在真跑产出 19 条 `PASS n:`
+    // ⇒ 把本节与第 14 节整段删掉，`readings` 仍是 16 ≥ 13，CI step 照样绿。要真覆盖，得同时改
+    // workflow 的基线、`tests/unit/ci-real-pg-readings-gates.test.mjs` 的 `READING_GATE_BASELINES`
+    // （守卫逐条比对表 ↔ 文件，只改一边就红）和两处注释里的数字 —— 本提交只登记，不改 CI。
+    // `#1037` 的并发闸门有两道，都不是「帖子级」：
+    //   * `claimPostMedia` → `lockClaimedMedia` 只按 **media_id** 取 `pg_advisory_xact_lock`
+    //     （挡的是「同一张图同时挂两帖」，见第 11 节）；
+    //   * 帖子行的 `SELECT … FOR UPDATE` + revision CAS（`community/store-pg.ts:619-622` / `:630`）
+    //     才是「同一帖子两笔并发改稿」的唯一互斥 —— 而挂图走的就是 PATCH 改稿这条路。
+    // 本用例两笔挂的是**不同 media**（两把 advisory lock 不同 ⇒ 互不阻塞），所以它只压第二道：
+    // 谁把 `for update` 或 revision 比较拿掉，下面就会读到 2 笔成功、2 行挂载、media_ids 只剩后到者。
+    const raceOwner = randomUUID();
+    await owner.query("INSERT INTO public.users (id, state, nickname) VALUES ($1::uuid, 'active', 'gy-r87')", [raceOwner]);
+    const racePost = randomUUID();
+    assert.equal(
+      await community.insertPost(postRecord(racePost, raceOwner, []), null),
+      true,
+      '并发用例的基底帖必须先落库（空 media_ids 的已发布帖）',
+    );
+    const raceMedia = [await newMedia(raceOwner, 'race1'), await newMedia(raceOwner, 'race2')];
+
+    // 同步装置：blocker 先持住帖子行的 FOR SHARE，让两笔认领都读到 revision=1 之后才放行。
+    // 这样「删掉帖子级保护 ⇒ 两笔都成功」是**确定性**读数，不靠调度运气
+    // （plain SELECT 不被 FOR SHARE 挡，所以两笔都能先读到 revision=1 再去抢 UPDATE）。
+    const raceBlocker = new pg.Client({ connectionString: url.href });
+    await raceBlocker.connect();
+    let raceSettled = null;
+    try {
+      const raceBlockerPid = (await raceBlocker.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+      await raceBlocker.query('BEGIN');
+      await raceBlocker.query('SELECT 1 FROM public.community_posts WHERE id = $1::uuid FOR SHARE', [racePost]);
+      // 与 `PATCH /posts/:id` 同一条生产存储调用（`community/service.ts:1257` 的 `commitPostIfCurrent`）：
+      // 两笔都带 `expected.revision = 1`，都提交 revision=2 + 各自的 media_ids —— 都想当唯一赢家。
+      const attemptAttach = async (mediaId) => {
+        const result = await community.commitPostIfCurrent(
+          racePost,
+          { revision: 1 },
+          { revision: 2, media_ids: [mediaId], updated_at: LATER },
+          null,
+        );
+        return { ok: result.ok === true, reason: result.ok === true ? null : result.reason };
+      };
+      const inFlight = Promise.all([attemptAttach(raceMedia[0]), attemptAttach(raceMedia[1])]);
+      // 等两笔都进到「在飞行中」（被行锁挡住 / 正在跑）；不计入 blocker 与本次探测连接。
+      let running = 0;
+      for (let i = 0; i < 100 && running < 2; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        running = (await owner.query(
+          `SELECT count(*)::int AS n
+             FROM pg_stat_activity
+            WHERE datname = current_database()
+              AND pid <> pg_backend_pid()
+              AND pid <> $1::int
+              AND state <> 'idle'`,
+          [raceBlockerPid],
+        )).rows[0].n;
+      }
+      await raceBlocker.query('COMMIT');
+      raceSettled = await inFlight;
+      assert.ok(running >= 2, `两笔认领必须同时在飞行中（实际 ${running}）：否则并发用例退化成串行，测不到帖子级互斥`);
+    } finally {
+      await raceBlocker.end();
+    }
+
+    const raceWins = raceSettled.filter((row) => row.ok === true);
+    const raceSummary = JSON.stringify(raceSettled);
+    assert.equal(raceWins.length, 1, `同一帖子并发挂两张不同的图必须恰好 1 笔成功，实际 ${raceWins.length} 笔成功（${raceSummary}）`);
+    const raceLoss = raceSettled.find((row) => row.ok !== true);
+    // 只判 `{ ok: false, reason: 'REVISION_CHANGED' }`：`commitPostIfCurrent` 是**返回值**型原语
+    // （`services/api/src/community/store-pg.ts` 里 revision CAS 不符直接 `return { ok:false,
+    // reason:'REVISION_CHANGED' }`，见 `:630`；调用方 `community/service.ts:1263` 才把它折成
+    // ApiError），这条调用形状下**不会抛 ApiError** ⇒ `error.code` / `error.details` / `status === 409`
+    // 三支永远取不到（#1037 审查 P3-a：那是死判据）。宽判据还有第二个坏处：失败原因漂成
+    // `post_image_limit` 之类的也照样绿 —— 这里把 reason 钉死，输了就必须是 CAS 输的。
+    assert.deepEqual(
+      raceLoss,
+      { ok: false, reason: 'REVISION_CHANGED' },
+      `失败那笔必须是 revision CAS 的 REVISION_CHANGED（不是 409 / post_image_limit），实际 ${raceSummary}`,
+    );
+    const raceRows = await attached(racePost);
+    const racePostRow = (await owner.query('SELECT revision, media_ids FROM public.community_posts WHERE id = $1::uuid', [racePost])).rows[0];
+    assert.equal(raceRows.length, 1, `事后 post_media_attachments 里该帖只许有 1 行，实际 ${raceRows.length} 行`);
+    assert.equal(racePostRow.revision, 2, '恰好一笔赢家推进到 revision=2（失败那笔整笔回滚，不再推进）');
+    assert.equal(racePostRow.media_ids.length, 1, `事后 community_posts.media_ids 长度必须是 1，实际 ${JSON.stringify(racePostRow.media_ids)}`);
+    assert.deepEqual(raceRows.map((row) => row.media_id), racePostRow.media_ids, '挂载行与 media_ids 必须是同一张图');
+    assert.equal(raceRows[0].ordinal, 1, '唯一赢家的图落在 ordinal=1');
+    const raceLoserMedia = raceMedia.find((mediaId) => mediaId !== racePostRow.media_ids[0]);
+    assert.equal(
+      (await owner.query('SELECT count(*)::int AS n FROM public.post_media_attachments WHERE media_id = $1::uuid', [raceLoserMedia]))
+        .rows[0].n,
+      0,
+      '失败那笔必须整笔回滚：它那张图不得留下任何挂载行',
+    );
+    say('⑩ 同帖并发挂不同的图：两笔都带 revision=1 ⇒ 恰好 1 笔成功、1 笔 REVISION_CHANGED；挂载行=1、media_ids 长度=1（per-media 锁挡不住这个，帖子级行锁 + revision CAS 才挡得住）');
+
+    // ---- 14. ⑪ 计数事实源的 owner_id / state 过滤：行为级负控制 -------------------
+    // 现状：`tests/unit/post-media-attachments.test.mjs:562-567` 的五条 SQL 文本正则里**没有**
+    // `owner_id`，`state IN (…)` 也只被正则扫过 —— 两条过滤删掉后单测仍然全绿。这里让它们各自
+    // 承担一次**真实的上传配额判定**：`createAppMediaService` 的 `initiateUpload`（与
+    // `POST /api/v1/media/uploads` 同一方法、同一个 `defaultAttachmentCounter` 装配）在真库上先数
+    // 待用池再校验；删掉哪条过滤，下面哪一条 201 就会变成 400 `post_image_limit`。
+    // ⚠️ **落点更正**（#1037 审查 `8a70cec3` 的真库全量跑实测；作者 PR 自述把落点记错了）：删 `owner_id`
+    // 过滤的**首个红灯不在本节**，而在既有第 7 节 `:280` —— 那里 `countPendingCommunityImages(userC)`
+    // 会读到 `actual 5, expected 0`（A 名下 5 张待用媒体被算进了 C 的池子），全量跑根本走不到本节。
+    // 本节这两条 201/400 断言是**第二道**防线（把第 7 节那两条计数断言拿掉时才轮到它咬住；
+    // 实测：注掉之后同一个变异改红在本节的待用池基线断言 —— `actual 25, expected 2`）。
+    // ⚠️ 计数闸门：本两节目前无 CI 计数闸门覆盖（读数闸门仍是 `-lt 13`，详见第 13 节节头）。
+    // 上限一律从常量派生、⛔ 不硬编码 2/3/4（#1037 审查 P3-b）：
+    // `packages/media/constants.mjs:75` 的 `COMMUNITY_MAX_IMAGES_PER_POST` 是上传侧配额的唯一权威
+    // （`services/api/src/media/service.ts` 也是 import 同一个常量），写死数字会在常量改动后变成
+    // 「测的是旧上限，真上限早变了」的假绿。
+    const maxPerPost = COMMUNITY_MAX_IMAGES_PER_POST;
+    const { createAppMediaService, approveRealMediaWiring } = await import('../../services/api/src/media/service.ts');
+    const { createS3CompatibleObjectStore } = await import('../../services/api/src/media/object-store.ts');
+    // 上传路径要先占幂等台账 `public.idempotency_keys`（0008，只依赖 0001）：本脚本的迁移子集里没有它，
+    // 这里单独补 apply；⛔ 不改上面 144-154 行对既有子集的断言（也不引入第二个「子集声明」形态）。
+    const idempotencyLedger = discoverMigrations().find((migration) => migration.version === '0008');
+    assert.ok(idempotencyLedger !== undefined, '迁移 0008（幂等台账 public.idempotency_keys）必须存在');
+    assert.deepEqual(
+      (await applyMigrations(owner, [idempotencyLedger])).applied,
+      ['0008'],
+      '上传路径需要 0008 的幂等台账（只依赖 0001）',
+    );
+    const uploadObjectStore = createS3CompatibleObjectStore({
+      endpoint: 'https://cos.ap-shanghai.myqcloud.com',
+      bucket: 'gengyun-media-placeholder',
+      accessKey: 'synthetic-access-key-id',
+      secretKey: 'synthetic-secret-key-value',
+      region: 'ap-shanghai',
+      forcePathStyle: false,
+    });
+    const uploader = createAppMediaService({
+      executionMode: 'real',
+      objectStore: uploadObjectStore,
+      tokenSecret: 'gy-r87-integration-upload-secret',
+      persistence: media,
+      realMediaApproval: approveRealMediaWiring({
+        reason: 'tests/integration/post-media-attachments-pg.mjs：owner_id / state 过滤的行为级负控制',
+      }),
+    });
+    assert.equal(uploader.failClosedReason, null, `real 媒体域必须装配成功，实际 fail-closed：${uploader.failClosedReason}`);
+    const uploadAs = (ownerId, idempotencyKey) =>
+      uploader.initiateUpload({
+        actor: { ownerId, authEpoch: 1, sessionRef: 'gy-r87-i30' },
+        input: { purpose: 'community_image', mime: 'image/jpeg', bytes: 2048, sha256: 'a'.repeat(64) },
+        idempotencyKey,
+      });
+    const rejectsUploadWithLimit = async (run, label) => {
+      let captured = null;
+      try {
+        await run();
+      } catch (error) {
+        captured = error;
+      }
+      assert.notEqual(captured, null, `${label}：必须被拒（400 post_image_limit），但上传成功了`);
+      assert.equal(captured.status, 400, `${label}：HTTP 面必须是 400，实际 ${captured.status}`);
+      assert.equal(captured.code, 'INVALID_REQUEST', `${label}：信封码必须是 INVALID_REQUEST，实际 ${captured.code}`);
+      assert.deepEqual(
+        captured.details,
+        [{ field: '/purpose', code: 'post_image_limit' }],
+        `${label}：details 必须是既有的 post_image_limit`,
+      );
+    };
+    const newMediaInState = async (ownerId, ordinalTag, state) => {
+      const id = randomUUID();
+      await owner.query(
+        `INSERT INTO public.media (id, owner_id, purpose, mime, bytes, sha256, state, object_ref_cipher)
+         VALUES ($1::uuid, $2::uuid, 'community_image', 'image/jpeg', 2048, repeat('a', 64), $3::media_state, $4)`,
+        [id, ownerId, state, `v1:gy-r87-${ordinalTag}`],
+      );
+      return id;
+    };
+
+    // 支一（owner_id）：A 名下 `maxPerPost-1` 张待用；B 名下 `maxPerPost` 张待用。若计数不按 owner_id
+    // 收口，A 一上传就会看到 `(maxPerPost-1) + maxPerPost ≥ maxPerPost` ⇒ 被错误拒；正确实现下
+    // A 的第 `maxPerPost` 张必须放行、第 `maxPerPost+1` 张才该拒。
+    const quotaOwner = randomUUID();
+    const foreignOwner = randomUUID();
+    for (const id of [quotaOwner, foreignOwner]) {
+      await owner.query("INSERT INTO public.users (id, state, nickname) VALUES ($1::uuid, 'active', 'gy-r87')", [id]);
+    }
+    for (let i = 1; i < maxPerPost; i += 1) await newMedia(quotaOwner, `quota-a${i}`);
+    for (let i = 1; i <= maxPerPost; i += 1) await newMedia(foreignOwner, `quota-b${i}`);
+    assert.equal(await media.countPendingCommunityImages(quotaOwner), maxPerPost - 1, `A 的待用池基线只有自己的 ${maxPerPost - 1} 张`);
+    assert.equal(await media.countPendingCommunityImages(foreignOwner), maxPerPost, `B 的待用池是自己的 ${maxPerPost} 张（都未挂载）`);
+    const quotaThird = await uploadAs(quotaOwner, 'gy-r87-quota-third-1');
+    assert.equal(quotaThird.status, 201, `别人名下的 ${maxPerPost} 张 ready 不得占 A 的名额：A 的第 ${maxPerPost} 张必须 201`);
+    const quotaThirdRow = (await owner.query('SELECT owner_id::text AS owner_id, state FROM public.media WHERE id = $1::uuid', [quotaThird.media.id]))
+      .rows[0];
+    assert.equal(quotaThirdRow.owner_id, quotaOwner, '新落的媒体必须在上传者名下');
+    assert.equal(quotaThirdRow.state, 'initiated', '上传只落 initiated（真库真行）');
+    assert.equal(await media.countPendingCommunityImages(quotaOwner), maxPerPost, `刚落的 initiated 也占 A 的名额（待用池 ${maxPerPost}）`);
+    await rejectsUploadWithLimit(() => uploadAs(quotaOwner, 'gy-r87-quota-fourth-1'), `A 的第 ${maxPerPost + 1} 张`);
+    say(`⑪ owner_id：B 名下 ${maxPerPost} 张 ready 不占 A 的名额（A 第 ${maxPerPost} 张 201、第 ${maxPerPost + 1} 张 400）；删掉 owner_id 过滤 ⇒ 第 ${maxPerPost} 张即 400`);
+
+    // 支二（state）：C 名下 `maxPerPost-1` 张 ready + 1 张 state=deleted（未挂载、且在 24h 窗口内）。
+    // `deleted` 不在 `state IN ('initiated','uploaded','processing','ready')` 里 ⇒ 不占名额；
+    // 删掉这条过滤，C 的第 `maxPerPost` 张就会被错误 400。
+    const stateOwner = randomUUID();
+    await owner.query("INSERT INTO public.users (id, state, nickname) VALUES ($1::uuid, 'active', 'gy-r87')", [stateOwner]);
+    for (let i = 1; i < maxPerPost; i += 1) await newMedia(stateOwner, `state-r${i}`);
+    const unusableMedia = await newMediaInState(stateOwner, 'state-deleted1', 'deleted');
+    assert.equal(await media.countPendingCommunityImages(stateOwner), maxPerPost - 1, 'state=deleted 的媒体不得算进待用池');
+    const stateThird = await uploadAs(stateOwner, 'gy-r87-state-third-1');
+    assert.equal(stateThird.status, 201, `state=deleted 的媒体不得占名额：C 的第 ${maxPerPost} 张必须 201`);
+    assert.equal(await media.countPendingCommunityImages(stateOwner), maxPerPost, `待用池 = ${maxPerPost - 1} 张 ready + 刚落的 1 张（deleted 仍不计）`);
+    await rejectsUploadWithLimit(() => uploadAs(stateOwner, 'gy-r87-state-fourth-1'), `C 的第 ${maxPerPost + 1} 张`);
+    const unusableRow = (await owner.query('SELECT state FROM public.media WHERE id = $1::uuid', [unusableMedia])).rows[0];
+    assert.equal(unusableRow.state, 'deleted', '那条不可用媒体仍在库里（不是被物理删掉才「不计」）');
+    say(`⑪ state：state=deleted 的媒体不占名额（第 ${maxPerPost} 张 201、第 ${maxPerPost + 1} 张 400）；删掉 state IN (…) ⇒ 第 ${maxPerPost} 张即 400`);
 
     console.log(`OK ${passed} 项真库断言全部通过（PostgreSQL ${version}）`);
   } finally {
