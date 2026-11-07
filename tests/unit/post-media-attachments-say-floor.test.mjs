@@ -8,9 +8,10 @@
  * 而 `tests/integration/post-media-attachments-pg.mjs` 现在真跑产出 **19** 条 `PASS n:` ——
  * 把 ⑩（同帖并发）/ ⑪（owner_id / state 行为级负控制）两节**整段删掉** ⇒ 16 条仍 ≥ 13，step 照样绿。
  * 这个缺口已由 workflow 侧的 `-lt 19` 堵上（本 PR，B 档）：删节后真跑只剩 16 条 ⇒ CI step 当场红。
- * 这里再补一条**更快的纯静态**守卫：不连库、不读 workflow，`tests/unit` 一遍就红。
- * 两个数字必须同时改：workflow 的 `-lt 19` ＋ `tests/unit/ci-real-pg-readings-gates.test.mjs`
- * 的 `baseline: 19` ＋ 本文件的 `SAY_FLOOR = 19`。
+ * 这里再补一条**更快的纯静态**守卫：不连库，`tests/unit` 一遍就红。
+ * 三处数字必须同时改：workflow 的 `-lt 19` ＋ `tests/unit/ci-real-pg-readings-gates.test.mjs`
+ * 的 `baseline: 19` ＋ 本文件的 `SAY_FLOOR = 19`。末尾「跨文件互校」那两条断言就是钉这件事的：
+ * 三者不一致即红，且 `SAY_FLOOR` 还必须等于臂脚本实测的 `say(` 调用点数（只改数字会红）。
  *
  * 两条判据：
  *   ① **计数**：**可执行** `say(` 调用点 ≥ 19（⑩ 占 1 个、⑪ 占 2 个）。删掉 ⑩ 或 ⑪ 的 state 支 ⇒ 18，
@@ -28,6 +29,11 @@
  * 抹注释/字面量时用一个空格占位，避免把两侧 token 粘成一个词。
  *
  * ⛔ 本文件不判 ⑩/⑪ 的**语义正确性**（那是真库臂的事）：它只挡「整节被悄悄拿走」。
+ *
+ * 边界（R88 审查 P2，设计使然）：本守卫只保证「条数**不减少**」，**不保证每条读数仍是真话** ——
+ * 「净 0 换条」（删一条 `say(`、在别处补一条）与「删断言但留着 `say(` 文案」都能过。
+ * 每条读数是否仍为真，由真库实跑（workflow 的读数闸门 + 臂里的断言本身）与 review 负责，
+ * 静态计数替代不了它。
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -240,4 +246,134 @@ test('⑩ 恰好 1 个、⑪ 恰好 2 个 say 调用点（读数条数不许悄�
   const sectionSays = (marker) => (SOURCE.match(new RegExp(`say\\(\\s*['\\\`]${marker}`, 'g')) ?? []).length;
   assert.equal(sectionSays('⑩'), 1, '⑩ 应恰好 1 条 say（同帖并发那种「恰好 1 笔成功」的读数）');
   assert.equal(sectionSays('⑪'), 2, '⑪ 应恰好 2 条 say（owner_id 支 + state 支各一条）');
+});
+
+// ---------------------------------------------------------------------------
+// 跨文件互校（R88 独立审查 P2）：`SAY_FLOOR` 此前**全仓只有本文件引用**，没有任何跨文件比对
+// ⇒ 单改 `SAY_FLOOR 19→18` 全绿；把 workflow 的 `-lt 18` ＋ `::error::` 文案 ＋ 读数表的
+// `baseline: 18` ＋ `SAY_FLOOR=18` 四处一起改也全绿。下面两条补的正是「静态守卫 ↔ yml / 读数表」
+// 这一环；「yml ↔ 表」那一环已由 `ci-real-pg-readings-gates.test.mjs` 的判据① / ⑥ 双向核对。
+//
+// ⛔ 不 import `./ci-real-pg-readings-gates.test.mjs`：那个文件顶层有 7 个 `test(...)`，import 会把
+//    它们**重复注册**进本文件的运行（`node --test post-media-attachments-say-floor.test.mjs` 会从
+//    6 条变成 13 条，两个文件的红/绿表面互相污染）。所以这里只按它的判据形状写两个最小正则，
+//    并靠「同一份 yml 文本 + 同一个脚本路径」保证与它看到的是同一处闸门。
+// ---------------------------------------------------------------------------
+
+/** 读数闸门所在的 workflow（与 `ci-real-pg-readings-gates.test.mjs` 的 `WORKFLOW_RELATIVE` 同值）。 */
+export const WORKFLOW_RELATIVE = '.github/workflows/real-pg-integration.yml';
+
+/** 逐条比对「workflow ↔ 读数表」的那个静态守卫：本文件只读它的 `baseline:`，不 import（理由见上）。 */
+export const GATES_TEST_RELATIVE = 'tests/unit/ci-real-pg-readings-gates.test.mjs';
+
+const WORKFLOW_TEXT = readFileSync(`${ROOT}${WORKFLOW_RELATIVE}`, 'utf8');
+const GATES_TEST_TEXT = readFileSync(`${ROOT}${GATES_TEST_RELATIVE}`, 'utf8');
+
+/** 整行注释抹成空行（**保留行号**）：注释里正当地写着旧写法 `-lt 1` 作反面例子。 */
+function blankCommentLines(text) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => (/^\s*#/.test(line) ? '' : line))
+    .join('\n');
+}
+
+/**
+ * 本臂那个 step 的正文（按 `- name:` 切块，取**点名本臂脚本**的那一块）。
+ * 找不到返回 `null`：让断言报「闸门整体消失」，⛔ 不要静默返回一个默认值。
+ */
+export function armStepText(workflowText = WORKFLOW_TEXT, script = INTEGRATION_RELATIVE) {
+  const lines = blankCommentLines(workflowText).split(/\r?\n/);
+  const starts = [];
+  lines.forEach((line, index) => {
+    if (/^\s*- name:/.test(line)) starts.push(index);
+  });
+  for (let k = 0; k < starts.length; k += 1) {
+    const from = starts[k];
+    const to = k + 1 < starts.length ? starts[k + 1] : lines.length;
+    const chunk = lines.slice(from, to).join('\n');
+    if (chunk.includes(script)) return chunk;
+  }
+  return null;
+}
+
+/** step 正文里「`readings` 与 `-lt N` 同一行」的那个 N；找不到返回 `null`。 */
+export function workflowFloor(stepText) {
+  if (stepText === null) return null;
+  for (const line of stepText.split(/\r?\n/)) {
+    if (!line.includes('readings') || !line.includes('-lt')) continue;
+    const matched = /(?<![\w-])-lt\s+["']?(\d+)["']?/.exec(line);
+    if (matched !== null) return Number(matched[1]);
+  }
+  return null;
+}
+
+/** 读数表里本臂那条的 `baseline`：从 `script:` 那行往下 12 行内找 `baseline: N`。 */
+export function tableBaseline(gatesText = GATES_TEST_TEXT, script = INTEGRATION_RELATIVE) {
+  const lines = gatesText.split(/\r?\n/);
+  const pattern = new RegExp(`script:\\s*'${script.replace(/\./g, '\\.')}'`);
+  const anchor = lines.findIndex((line) => pattern.test(line));
+  if (anchor < 0) return null;
+  for (const line of lines.slice(anchor + 1, anchor + 12)) {
+    const matched = /baseline:\s*(\d+)/.exec(line);
+    if (matched !== null) return Number(matched[1]);
+  }
+  return null;
+}
+
+test('三处读数下限必须相等：workflow 的 -lt / 读数表 baseline / SAY_FLOOR（跨文件互校）', () => {
+  const stepText = armStepText();
+  assert.notEqual(
+    stepText,
+    null,
+    `${WORKFLOW_RELATIVE} 里找不到点名 ${INTEGRATION_RELATIVE} 的 step`
+      + ' ⇒ 本臂的读数闸门整体消失了，静态守卫不该在闸门不在时还绿。',
+  );
+  const gate = workflowFloor(stepText);
+  const baseline = tableBaseline();
+  assert.notEqual(
+    gate,
+    null,
+    `${WORKFLOW_RELATIVE} 的「帖子级媒体挂载」step 正文里找不到 \`readings … -lt N\`。`,
+  );
+  assert.notEqual(
+    baseline,
+    null,
+    `${GATES_TEST_RELATIVE} 的 \`READING_GATE_BASELINES\` 里找不到本臂的 \`baseline: N\`。`,
+  );
+
+  const places = [
+    { where: `${WORKFLOW_RELATIVE} 的 \`-lt\``, value: gate },
+    { where: `${GATES_TEST_RELATIVE} 的 \`baseline\``, value: baseline },
+    { where: '本文件的 `SAY_FLOOR`', value: SAY_FLOOR },
+  ];
+  const differing = [];
+  for (let i = 0; i < places.length; i += 1) {
+    for (let j = i + 1; j < places.length; j += 1) {
+      if (places[i].value !== places[j].value) {
+        differing.push(`  · ${places[i].where} = ${places[i].value} ⇎ ${places[j].where} = ${places[j].value}`);
+      }
+    }
+  }
+  assert.deepEqual(
+    differing,
+    [],
+    '三处读数下限不一致（下面每行就是「哪两处不等、各自的值」）：\n'
+      + differing.join('\n')
+      + '\n三处必须同时改：workflow 的 `-lt N`、读数表的 `baseline: N`、本文件的 `SAY_FLOOR`。\n'
+      + '（第四处 `::error::` 文案里的「基线 N / < N」由 `ci-real-pg-readings-gates.test.mjs` 的判据⑥ 校，'
+      + '这里不重复造轮子。）',
+  );
+});
+
+test('SAY_FLOOR 必须等于臂脚本实测的 say( 调用点数（四处一致地改小也拦得住）', () => {
+  const count = countSayCalls(SOURCE);
+  assert.equal(
+    count,
+    SAY_FLOOR,
+    `${INTEGRATION_RELATIVE} 实测 ${count} 个**可执行** \`say(\` 调用点，而本文件 \`SAY_FLOOR\` = ${SAY_FLOOR}。\n`
+      + '这条钉的是「读数下限 = 当前真实产量」：只改数字（哪怕把 workflow 的 `-lt N`、读数表的 `baseline`、\n'
+      + '`::error::` 文案与本处的 `SAY_FLOOR` **四处一起**改小）会在「实测 vs 声明」这里红。\n'
+      + '真要把下限降下来，必须真的从臂脚本里删掉对应读数（`say(` 调用点跟着减少），并在 PR 描述里写明\n'
+      + '删了哪条、为什么 —— ⛔ 只改数字不算。',
+  );
 });

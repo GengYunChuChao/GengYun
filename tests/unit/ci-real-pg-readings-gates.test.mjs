@@ -205,7 +205,7 @@ export const READING_GATE_BASELINES = [
     script: 'tests/integration/post-media-attachments-pg.mjs',
     baseline: 19,
     counter: `awk '/^PASS [0-9]+:/{n++} END{print n+0}' "$log"`,
-    source: '真跑（本机 PG 17.11 + 专用空库 gengyun_post_media_test ⇒ `PASS n:` 19 条 = 臂脚本 19 个**可执行** `say(` 调用点（另有 3 处 `say(` 只出现在注释里 ⇒ 裸 grep 会数出 22，别拿裸 grep 当基线）：第 8 节约束直插探针 3 条（ordinal=4 / 双 ordinal=1 / 同 (post,media) 二次插入）、第 9 节非法 uuid、第 11 节 advisory lock 并发，另含 #1030 两节 —— 第 13 节 ⑩ 同帖并发 1 条、第 14 节 ⑪ owner_id / state 两个过滤 2 条；删掉 ⑩/⑪ 只剩 16 条 ⇒ `-lt 19` 当场红）',
+    source: '真跑（本机 PG 17.11 + 专用空库 gengyun_post_media_test ⇒ `PASS n:` 19 条 = 臂脚本 19 个**可执行** `say(` 调用点（另有 3 处 `say(` 只出现在注释里 ⇒ 裸 grep 会数出 22，别拿裸 grep 当基线）：第 8 节约束直插探针 3 条（ordinal=4 / 双 ordinal=1 / 同 (post,media) 二次插入）、第 9 节非法 uuid、第 11 节 advisory lock 并发，另含 #1030 两节 —— 第 13 节 ⑩ 同帖并发 1 条、第 14 节 ⑪ owner_id / state 两个过滤 2 条；删掉 ⑩/⑪ 只剩 16 条 ⇒ `-lt 19` 当场红）；⚠️ provenance（R88 审查 P2 更正）：本臂**不是「全链迁移」**——只 apply 六段（`0001/0022/0030/0032/0045/0056`，臂脚本 `:152` 的 `filter`）+ 第 5 节单补 `0008`（`:633`），而迁移目录在 base `2aa5d433` 有 55 个上行 `.sql`；「全链」是 #1071 新臂 `tests/integration/post-media-attach-http-pg.mjs` 的事，不是本臂。前一提交 `ba37aef9` 的信息写「全链 48 个迁移真跑」，以此处为准',
   },
 ];
 
