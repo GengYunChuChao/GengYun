@@ -770,7 +770,7 @@ Refs #28（不关闭整项）
 
 ## 12. 真机项台账（2026-10-17 追加，如实登记）
 
-本节只登记**未取得**项与取得条件，不改写 §8／§11 的任何既有读数，也不把模拟器或工具内结果算作真机结论。工具内 `MiniProgram.remote(true)` 实测能切到真机（`RMX3706`／Android 15／355×792／SDK 3.17.4），但随后的 AppService 调用与 `remote(false)` 均 `timeout waiting for automator response`，端口卡死需换新 `--auto-port` —— 因此下列五项仍为「未取得」。
+本节登记未取得项、已取得项及其可核证据（状态只取这两种，形状判据见 `tests/reference/i26-tabbar-skeleton.test.mjs`），不改写 §8／§11 的任何既有读数，也不把模拟器或工具内结果算作真机结论。工具内 `MiniProgram.remote(true)` 实测能切到真机（`RMX3706`／Android 15／355×792／SDK 3.17.4），但随后的 AppService 调用与 `remote(false)` 均 `timeout waiting for automator response`，端口卡死需换新 `--auto-port` —— 因此下列五项仍为「未取得」。
 
 | 项目 | 状态 | 缺什么条件 | 复核入口 |
 | --- | --- | --- | --- |
