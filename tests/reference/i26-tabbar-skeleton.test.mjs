@@ -468,7 +468,7 @@ function deviceLedgerViolations(header, rows, isRepoFile = isRepoFileOnDisk, byt
     for (const repoPath of evidencePathsOf(cells)) {
       const key = normalizeEvidencePath(repoPath)
       const owners = evidenceOwners.get(key) || []
-      if (!owners.some((owner) => owner.label === cells[0])) owners.push({ label: cells[0], raw: repoPath })
+      if (!owners.some((owner) => owner.cells === cells)) owners.push({ cells, label: cells[0], raw: repoPath })
       evidenceOwners.set(key, owners)
     }
   }
@@ -845,6 +845,39 @@ test('真机台账闸门负控制：合成行必须逐条咬红，合法行必�
     dupViolations.some((line) => line.includes('同一条证据不得同时点亮多个设备行')),
     `同一证据跨行复用必须被咬住：\n${dupViolations.join('\n')}`
   )
+  // 19b) 同一张图换写法（中段 `/./`、中段 `//`、大小写、尾段反斜杠）⇒ 仍必须红：比较键归一化才拦得住
+  const respelledEvidence = [
+    realEvidence,
+    realEvidence.replace('250c4d4/', '250c4d4/./'),
+    realEvidence.replace('250c4d4/', '250c4d4//'),
+    realEvidence.replace('01-home.jpg', '01-HOME.jpg'),
+    realEvidence.replace('250c4d4/', '250c4d4\\')
+  ]
+  const respelledLedger = DEVICE_ROWS.map((rowLabel, index) => [
+    rowLabel,
+    '已取得',
+    `2026-11-07 证据 ${respelledEvidence[index]}`,
+    recheck
+  ])
+  assert.ok(
+    deviceLedgerViolations(DEVICE_TABLE_HEADER, respelledLedger, () => true, () => 612672).some((line) =>
+      line.includes('同一条证据不得同时点亮多个设备行')
+    ),
+    '同一张图的 `/./`、`//`、大小写、反斜杠写法必须归一到同一个比较键'
+  )
+  // 19c) 五张真正不同的截图 ⇒ 零违规（归一化不得把不同的图判成同一张，否则等于误伤）
+  const distinctEvidence = ['01-home', '02-identify', '03-community', '04-messages', '05-profile']
+  const distinctLedger = DEVICE_ROWS.map((rowLabel, index) => [
+    rowLabel,
+    '已取得',
+    `2026-11-07 证据 docs/verification/assets/gui-adaptive-250c4d4/${distinctEvidence[index]}.jpg`,
+    recheck
+  ])
+  assert.deepEqual(
+    deviceLedgerViolations(DEVICE_TABLE_HEADER, distinctLedger, () => true, () => 612672),
+    [],
+    `五张真正不同的截图必须零违规：\n${deviceLedgerViolations(DEVICE_TABLE_HEADER, distinctLedger, () => true, () => 612672).join('\n')}`
+  )
   // 20) 只有一行已取得、其余是合法欠账 ⇒ 零违规（逐行唯一性不是「永远红」）
   const oneAcquired = DEVICE_ROWS.map((rowLabel, index) =>
     index === 0
@@ -856,9 +889,10 @@ test('真机台账闸门负控制：合成行必须逐条咬红，合法行必�
 
 /**
  * 证据路径的**比较键**：只回答「两行写的是不是同一张图」，断言文案仍保留台账里的原始写法，
- * 便于按行定位。同一张图可以写成 `01-home.jpg` / `./01-home.jpg` / `/./01-home.jpg` /
- * `//01-home.jpg` / `01-HOME.jpg`，文件系统上是同一个文件；裸字符串比较会给每种写法各发一个
- * 键，于是「逐行唯一」让给了排版——五张图的台账用四种写法就能点亮五行。
+ * 便于按行定位。实测能绕过裸字符串比较的写法都出在**路径中段或尾段**：`250c4d4/./01-home.jpg`、
+ * `gui-adaptive//assets`、`250c4d4\01-home.jpg`、`01-HOME.jpg` —— 文件系统上都是同一个文件，
+ * 裸字符串比较却给每种写法各发一个键，「逐行唯一」于是让给了排版（一张图点亮五行）。前置的
+ * `./docs/…` 不算绕过：`LEDGER_REPO_PATH` 从 `docs` 起匹配，前缀根本进不了比较键。
  * · `\` → `/`：台账是人手写的，Windows 与 POSIX 分隔符混用（`join`/`existsSync` 两种都认）；
  * · `posix.normalize`：消掉 `./`、`/./`、`//`、`a/../a` 这类不改变目标的写法（`..` 逃逸另由
  *   `isRepoFileOnDisk` 拦，不靠这里）；
@@ -869,6 +903,8 @@ test('真机台账闸门负控制：合成行必须逐条咬红，合法行必�
  *
  * 追加在文件末尾：函数声明会提升，位置不影响调用，而既有行号一行不动（本文件被 docs/** 多处
  * 以纯路径文字引用，中段插行会让行号整体位移）。
+ * 已知限制：只比路径、不比字节——同一张图另存四份字节相同的拷贝仍能点亮四行，这条拦不住，
+ * 也不该假装拦住（内容去重要么存哈希、要么人眼看，都不属于本闸门的职责）。
  */
 function normalizeEvidencePath(repoPath) {
   return posix.normalize(String(repoPath).replace(/\\/g, '/').trim()).toLowerCase()
