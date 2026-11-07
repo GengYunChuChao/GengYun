@@ -434,10 +434,14 @@ const MAX_MEDIA_IDS_PER_POST: number = postBody.properties.media_ids.maxItems;
  *
  * ## 为什么补在这一层、而不是放宽 `maxItems` 让领域层去拒
  *
- * 上限本来有两道闸：`postBody.media_ids.maxItems`（进程内、零成本）＋真实存储侧配套的
- * 库内 CHECK（`community_posts_media_ids_max`，把 `23514` 映射成
- * `INVALID_REQUEST` + `details: [{ field: '/media_ids', code: 'post_image_limit' }]`，
- * 见 #1037 引入的 `services/api/src/community/store-pg.ts::postImageLimitError`）。
+ * 上限本来有两道闸。第一道是进程内的 `postBody.media_ids.maxItems`（零成本）；
+ * 第二道是真实存储侧的库内 CHECK `community_posts_media_ids_max`
+ * （`services/api/db/migrations/0022_community_persistence.sql:86`，这条在 main 上早就存在）。
+ * 但把该 CHECK 的 `23514` 翻译成 `INVALID_REQUEST` + `post_image_limit` 的那层映射
+ * **不在 main 上**：它是 #1037 引入的
+ * `services/api/src/community/store-pg.ts::postImageLimitError`
+ * （`8bf16e72:services/api/src/community/store-pg.ts:456-461`），随 #1037 才落地。
+ * 两件事分开看，别把「CHECK 已有」误读成「机器码映射已有」。
  * 若为了拿机器码而放宽或去掉 `maxItems`：① 一次注定被 CHECK 拒掉的投稿要先穿过 ajv、
  * 处理器、幂等收据与事务边界，等于用一次数据库往返换掉本可在进程内拒掉的 4xx；
  * ② stub/内存 store 根本没有那条 CHECK，放宽后走不到领域侧，机器码在这些模式下
@@ -454,8 +458,21 @@ const MAX_MEDIA_IDS_PER_POST: number = postBody.properties.media_ids.maxItems;
  *
  * ## 只认「数组长度 > 3」这一种
  *
- * 其它校验失败（`additionalProperties`、uuid 格式、`uniqueItems`…）一律不动，
- * 继续由 `app.ts` 把 ajv 的 `validation[]` 折叠成 `INVALID_REQUEST`。
+ * 其它校验失败**单独出现**时不动，继续由 `app.ts` 把 ajv 的 `validation[]` 折叠成
+ * `INVALID_REQUEST`；与超限**并存**时超限优先（`preValidation` 先跑，本函数直接抛）。
+ * 已实测（base `3561b1fc` 与本文件同一探针、stub 模式 `app.inject`）：
+ * - 4 个 uuid + 额外字段：base 报 `[{"field":"/","code":"must NOT have additional properties"}]`，
+ *   这里报 `[{"field":"/media_ids","code":"post_image_limit"}]`；
+ * - 4 个 uuid 且含非 uuid 成员：base 报 `must NOT have more than 3 items`，
+ *   这里报 `post_image_limit`。
+ * 两种取向下 HTTP 状态码都是 `400 INVALID_REQUEST`，变的只是 `details[].code` 与 `message`。
+ *
+ * 已知取舍：`PATCH /posts/not-a-uuid` 同时带 4 个 `media_ids` 时，base 报
+ * `[{"field":"/id","code":"must match format \"uuid\""}]`（params 先失败），
+ * 这里报「每个帖子最多 3 张图片」⇒ params 的错误被遮住。两者都还是 `400 INVALID_REQUEST`，
+ * 只是先报哪一条；`preValidation` 拿不到 ajv（含 params）的校验结果，要消掉这条取舍就得
+ * 在这里连 params 一起自校验（重复一份 schema 判据），代价大于收益，故接受。
+ *
  * `preValidation` 在 schema 校验**之前**、`preHandler` 鉴权**之前**执行，拿到的是
  * 已解析的 body；ajv 本来也在 `preHandler` 之前跑，所以这里不改写任何 401/400 优先级。
  */
