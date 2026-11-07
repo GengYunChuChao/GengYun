@@ -314,7 +314,8 @@ export const SCOPE_NOTES = Object.freeze([
   {
     script: 'test:docs',
     marker: '不在演练范围',
-    reason: '它的两条子命令已逐条在清单里（`validate_development_docs.py` / `verify-research-records.mjs`）',
+    reason: '它的前两条子命令已逐条在清单里（`validate_development_docs.py` / `verify-research-records.mjs`）；'
+      + '链尾追加的 `verify-reading-pages.mjs` 也在本表单列一条原因（见下面 `verify:readings` 那条）',
   },
   {
     script: 'verify:anchors',
@@ -340,6 +341,14 @@ export const SCOPE_NOTES = Object.freeze([
     script: 'verify:real-capability',
     marker: '不在演练范围',
     reason: '它是自检命令（默认恒 exit 0、不判红），且 `--strict` 要有真实凭据才有意义（无凭据时所有能力组判 n-a ⇒ 判定恒 PASS）；演练清单收的是会判红的门禁',
+  },
+  {
+    script: 'verify:readings',
+    marker: '不在演练范围',
+    reason: '演练计划条数（`drillCommands`）是稳定型读数、必须精确相等，往里加一条命令就得把 21 条一次性读数整体重采'
+      + '（每行绑当时的 sha / 主机 / 时刻）；本片只修 CI 红、不重跑演练 ⇒ 不塞第 22 条。'
+      + '这条闸门在 CI 里由 `engineering-shell.yml` 单独一步跑、`test:docs` 链尾也会跑；'
+      + '本机 2026-11-08 实跑 `npm run verify:readings`：exit 0，识别 5 页、跳过 339 页（扫描面 344 页，`docs/verification`），耗时约 1.9s（含 npm 外壳）',
   },
   {
     entry: 'node tools/run-python.mjs tools/validate_openapi_standard.py',
