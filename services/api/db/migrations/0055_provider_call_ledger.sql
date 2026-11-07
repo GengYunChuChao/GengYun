@@ -51,10 +51,10 @@
 --   | 值 | 判据 | 写入路径 |
 --   | --- | --- | --- |
 --   | `sent` | 外发**已经发生**，供应商回了成功（拿到正文）| 成功分支 |
---   | `send_failed` | 外发**已经交给传输/供应商**，但结局是错误或不可判定（回错、超时、传输中断）| 抛错分支 |
--- 0050 里的 `blocked`（被拦截、**没有发出**）在本表**没有写入者**：本片的零外发路径
--- （非 `real` 模式、适配器根本不被调用）一律**不写行** —— 没发出去就不该在这张表里留下一条
--- 「像发过」的读数。既然没有写入者，就不把值建进闭集（⛔ 不复制 0050 的「有判据、无写入者」）。
+--   | `send_failed` | **已进入外发层**但没拿到可用回包（含内层在触达供应商之前的拒绝/失败）| 抛错分支 |
+-- ⛔ 本表**不建** 0050 的 `blocked`：那个值只覆盖「**适配器根本没被调用**」的零外发路径（非 `real` 模式、装配层直接拒绝）——
+-- 这些路径一律**不写行**，本表因此没有该值的写入者，也就不把值建进闭集（⛔ 不复制 0050 的「有判据、无写入者」）。
+-- ⚠ 但**别**反推成「没外发就绝不写行」：适配器**内层**（`assertExecutable` / `markSent` 等）在触达供应商之前的拒绝，同样落 `send_failed` 并占用 `attempt`（`attempt` 按同 export 的 `MAX+1` 派生）—— 因此 `attempt` 会把「未真正外发的拒绝」也计入尝试次数，与上面表格里 `send_failed` 的判据是同一件事。
 --
 -- ## `usage` 为什么是 `jsonb` 而不是拆列
 --
@@ -352,8 +352,9 @@ COMMENT ON COLUMN public.provider_call_ledger.model_version IS
   '模型标识串（可空；装配层没给就是 NULL，⛔ 不填占位串）。形状与 provider_config_version 同。';
 
 COMMENT ON COLUMN public.provider_call_ledger.invocation_state IS
-  '闭集：sent=外发已发生且供应商回成功；send_failed=外发已发生但回错/超时/结局不可判定。'
-  '⛔ 没有 blocked：没发出去就不写行（见迁移头注释）。';
+  '闭集：sent=外发已发生且供应商回成功；send_failed=已进入外发层但没拿到可用回包'
+  '（含内层在触达供应商之前的拒绝/失败：判别位是 exports.state 的 reserved/sent，写行时本层不读它，故分不出触达前/后 —— 要区分需另加一次读）。'
+  '⛔ 没有 blocked：适配器根本没被调用（非 real / 零外发路径）就不写行（见迁移头注释）。⚠ 因此 attempt 会把未真正外发的拒绝也计入尝试次数。';
 
 COMMENT ON COLUMN public.provider_call_ledger.usage IS
   '供应商返回的**结构用量**（jsonb 对象，只留非负整数键值，如 {prompt_tokens, completion_tokens}）。'
