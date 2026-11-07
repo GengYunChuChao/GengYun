@@ -326,7 +326,7 @@
 | 文本 prompt 单独版本 | `mp1+sha256:e24f2f6a556034373f889fa6b5fec386` |
 | 图片 prompt 单独版本 | `mp1+sha256:d00373e881c3bbc72998d05fc8342d50` |
 | 文本 + 图片集合版本 | `mp1+sha256:f0e8f336b99eddb91c035d429912e323` |
-| 规则层 `rule_version`（规则集此后已变更，样例以代码常量 `RULE_VERSION` 为准） | `mr1+sha256:511e7f2cf65626bbde5c5f38be950a13` |
+| 规则层 `rule_version`（**当前示例，2026-11-07 复核**；规则集此后已变更，样例以代码常量 `RULE_VERSION` 为准） | `mr1+sha256:511e7f2cf65626bbde5c5f38be950a13` |
 
 ## 9 契约缺口（如实登记，未自行扩权）
 

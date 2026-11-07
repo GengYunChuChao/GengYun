@@ -226,8 +226,8 @@ PASS: 27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown 
 | 文本 prompt 单独版本 | `mp1+sha256:e24f2f6a556034373f889fa6b5fec386` |
 | 图片 prompt 单独版本 | `mp1+sha256:d00373e881c3bbc72998d05fc8342d50` |
 | 文本 + 图片集合版本 | `mp1+sha256:f0e8f336b99eddb91c035d429912e323` |
-| 规则层 `rule_version`（本片交付时未改动；规则集此后已变更，样例以代码常量 `RULE_VERSION` 为准） | `mr1+sha256:511e7f2cf65626bbde5c5f38be950a13` |
-
+| 规则层 `rule_version`（**2026-10-12 本片交付时的运行值**；本片未改动规则集） | `mr1+sha256:736efcf2abc48c2c39a5036140eabbea` |
+> **当前值（2026-11-07 复核）**：规则层 `rule_version` 现为 `mr1+sha256:511e7f2cf65626bbde5c5f38be950a13`（规则集此后已变更，样例以代码常量 `RULE_VERSION` 为准）。本节其余读数仍是 2026-10-12 本片的取证结果，按 §11 不回填。
 "改一个字符 ⇒ 版本必变"已覆盖 `user_template` / `system` / `purpose` / `policy_notes` /
 `required_output_fields` / `verdict_labels` / `placeholders` 六类字段，全部断言版本改变。
 
