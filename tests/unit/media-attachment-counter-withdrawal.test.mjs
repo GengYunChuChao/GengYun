@@ -67,6 +67,23 @@ function listTsFiles(dir) {
 }
 
 /** 给一次 `countFor` 加超时：超时是**可疑**（不是「无法判定」），由调用方计入违规。 */
+/** 去掉行注释与块注释后再扫描：本仓注释里引用判据是常态（JSDoc 写 `kind: 'injected'` 很自然），
+ * 而扫描要找的是**代码里的**注入缝。剥注释不是放宽判据——保留代码、删掉注释文本即可。 */
+function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .map((line) => {
+      const idx = line.indexOf('//');
+      if (idx < 0) return line;
+      // 只在「// 之前不是引号内的字符」时截断：够用即可，判据统计的是存在性。
+      const head = line.slice(0, idx);
+      const quotes = (head.match(/'/g) || []).length + (head.match(/"/g) || []).length;
+      return quotes % 2 === 0 ? head : line;
+    })
+    .join('\n');
+}
+
 function withProbeTimeout(promise, label) {
   let timer;
   const guard = new Promise((_resolve, reject) => {
@@ -287,7 +304,8 @@ test('测试注入缝不得出现在生产装配里（只允许它在 service.ts
   const serviceRel = servicePath.slice(repoRoot.length + 1);
   for (const file of listTsFiles(srcRoot)) {
     const rel = file.slice(repoRoot.length + 1);
-    const source = readFileSync(file, 'utf8');
+    // 扫描对象是**代码**：先剥注释（审查 P2-2 残余——JSDoc 里写 `kind: 'injected'` 曾被判红）。
+    const source = stripComments(readFileSync(file, 'utf8'));
 
     const calls = [...source.matchAll(/createInjectedAttachmentCounter\s*\(/g)].length;
     if (calls > 0) {
