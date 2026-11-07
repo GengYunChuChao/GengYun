@@ -511,21 +511,26 @@ test('T5 裸区间 `:N-M` 同样继承，并参与 SUSPECT 判定', () => {
   }
 });
 
+// T6 ① 号夹具。注意围栏块内**确实**有三条显式锚点（`src/gone.ts:12`／`src/x.mjs:3`／表格行里的
+// `src/gone2.ts:1`），所以围栏内那条裸锚点 `:999` 的记账原因**不是**「块内没有显式锚点可继承」：
+// 同块候选指向两个**不同文件**，工具不猜，按 `ambiguous-block` 记册（候选清单见下面的断言）。
+const FENCE_TRIPLE_MD = [
+  '# 标题',
+  '',
+  '```js',
+  '报错：`src/gone.ts:12`（该文件不存在）',
+  '栈帧：`src/x.mjs:3` 与 `:999`',
+  '| 1 | `src/gone2.ts:1` |',
+  '```',
+  '',
+  '围栏外照判：`src/gone3.ts:7`',
+  '',
+].join('\n');
+
 test('T6 围栏代码块内的行不进判据面（```／~~~／缩进／未闭合／闭得太短），围栏外一条都不许少判，册面一分不减', () => {
   const root = makeBareFixture({
     // ① ``` 围栏：栈帧、`psql` 报错原文、命令输出就是这种形态。显式锚点、裸锚点、表格行都不判。
-    'docs/architecture/fence-triple.md': [
-      '# 标题',
-      '',
-      '```js',
-      '报错：`src/gone.ts:12`（该文件不存在）',
-      '栈帧：`src/x.mjs:3` 与 `:999`',
-      '| 1 | `src/gone2.ts:1` |',
-      '```',
-      '',
-      '围栏外照判：`src/gone3.ts:7`',
-      '',
-    ].join('\n'),
+    'docs/architecture/fence-triple.md': FENCE_TRIPLE_MD,
     // ② `~~~` 是另一种围栏，同样要认；闭合之后散文恢复判据。
     'docs/architecture/fence-tilde.md': ['# 标题', '', '~~~', '`src/gone4.ts:1` 不存在', '~~~', ''].join('\n'),
     // ③ 列表项里缩进的围栏（`gy-i22` 的栈帧就是 5 空格缩进）：定界口径与 `FENCE_LINE` 同源，缩进不影响。
@@ -553,10 +558,35 @@ test('T6 围栏代码块内的行不进判据面（```／~~~／缩进／未闭�
     // 少报也要报数：围栏内被跳过的是 3＋1＋1＋1＋2＝8 条显式锚点（外加围栏内那条裸锚点，见下），
     // 不许有任何一条静默消失。
     assert.equal(stats.fenced, 8, '围栏内跳过的条数必须如实计数（少报可以，静默不行）');
-    // 围栏内的裸锚点照旧进**孤儿册**口径：围栏在块切分里自成一块（`segmentDocumentBlocks` 的既有规则，
-    // 本次不改），块内没有散文显式锚点可继承，于是按 `no-explicit-in-block` 记册。关键是它既没消失
-    // （册面照数）也没判红（判据面跳过）——两件事同时成立才叫「只挡判据面」。
-    assert.equal(stats.bare.orphanInScope, 1, '围栏内的裸锚点仍进孤儿册口径（不判红），不因围栏而消失的证明');
+    // 围栏内的裸锚点照样进**裸锚点账**，且一条都不判红。实测（2026-11-08 探针读数）：
+    // `stats.bare = { total: 1, inherited: 0, link: 0, orphan: 1, orphanInScope: 1, judged: 0,
+    // outside: 0, outsideRed: 0 }`。注意 `inherited` 是 **0**：T6 ① 号夹具的围栏块里**有**三条显式
+    // 锚点（`src/gone.ts:12`／`src/x.mjs:3`／表格行里的 `src/gone2.ts:1`），所以 `:999` 并不是
+    // 「块内没有散文显式锚点可继承」。它落 `ambiguous-block`，候选是 `["src/gone.ts:12",
+    // "src/x.mjs:3"]`（表格行按单元格另起一块，第三条不在候选里）——同块候选指向不同文件时工具不猜，
+    // 只记册、不判红。上一版注释写的「块内没有散文显式锚点可继承」与实测不符；随
+    // `assert.equal(stats.bare.inherited, 1)` 一起被删掉的「围栏内裸锚点仍有人钉」这条，由下面补回。
+    assert.equal(stats.bare.total, 1, '围栏内那条裸锚点必须进裸锚点总账（不因围栏而消失）');
+    assert.equal(stats.bare.orphan, 1, '它归不到任何文件（候选互相矛盾）⇒ 记进孤儿');
+    assert.equal(stats.bare.orphanInScope, 1, '孤儿册口径照数：作用域内无主 1 条，不是 0');
+    assert.equal(stats.bare.inherited, 0, '块内有显式锚点但分属不同文件 ⇒ 不许猜继承，继承数必须是 0');
+    assert.equal(stats.bare.judged, 0, 'judged 必须是 0：围栏内的裸锚点不进判据面，不判红');
+    assert.equal(
+      findings.filter(finding => finding.bare === true).length,
+      0,
+      '围栏内的裸锚点不得以任何理由出现在判据结果里（判红只能来自围栏外那两条 BROKEN）',
+    );
+    // 归因口径按实测钉住：`ambiguous-block` ＋ 候选清单，不是 `no-explicit-in-block`。
+    const fenceTripleBare = attributeBareAnchors({
+      text: FENCE_TRIPLE_MD,
+      references: extractReferences(FENCE_TRIPLE_MD),
+    });
+    assert.deepEqual(fenceTripleBare.inherited, [], '这份夹具的围栏块内没有可继承的裸锚点（候选互相矛盾）');
+    assert.deepEqual(
+      fenceTripleBare.orphans.map(orphan => [orphan.docLine, orphan.raw, orphan.reason, orphan.candidates]),
+      [[5, ':999', 'ambiguous-block', ['src/gone.ts:12', 'src/x.mjs:3']]],
+      '围栏内的裸锚点按 `ambiguous-block` 记册，候选是同块那两条指向不同文件的显式锚点；写成 `no-explicit-in-block` 等于假装块里没有锚点',
+    );
     // 册面（锚点清册）一分不减：围栏内引用照样记账。否则「把报文挪进围栏」就能同时绕过判据面与册面，
     // 而清册存在的意义正是「这条锚点还在不在文档里」。
     const counts = buildAnchorCounts(judgedByDoc);

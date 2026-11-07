@@ -327,6 +327,7 @@ STATUS_KEYS=12
 ```
 
 - 依据：§4.1 前两行。
+- 复核（2026-11-08）：该行号已漂移到 `services/api/src/admin/ops/jobs-pg.ts:547-548`——第 547 行是「唯一 `persistent: true` 的实现：取消走真事务，审计行与状态变更同一 `COMMIT`」注释、第 548 行是 `persistent: true,`；当次写的 450-451 两行今只是 `  };` 与 `}`（`projectRow` 返回对象的收尾）。围栏内原文按「当次输出」保留不改，权威页 `docs/architecture/ai-ops-spec-status.md` 的同一处已按实测改对。
 
 ### 7.8 `docs/architecture/ai-ops-spec-status.md:125`（P10，任务第 2 条）
 
