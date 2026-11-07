@@ -1,5 +1,5 @@
 /**
- * 读数页闸门（`tools/verify-reading-pages.mjs`）的守卫：六条判据各一条红用例 + 三条「不误伤」。
+ * 读数页闸门（`tools/verify-reading-pages.mjs`）的守卫：七条判据各一条红用例 + 三条「不误伤」。
  *
  * 缺口（为什么需要这个文件）：`docs/verification/**` 的举证页把 failmatrix 读数写成
  * `total=180 same=162 …` 或表格，**没有任何机械校验**——把 `same 180` 改成 `179`，
@@ -14,6 +14,7 @@
  *   ④ 族列加总      → T6
  *   ⑤ Δ 列 / 基线冲突 → T7、T8
  *   ⑥ 跨页逐字      → T9（数字不符）、T10（文件读不到）
+ *   ⑦ 同页副本一致  → T13（表与 kv 各改一半）、T14（引用旧读数不算副本）、T15（多副本一致不误伤）
  *   不误伤          → T11（纯日志页）、T12（只有族读数没有总量）
  *
  * 全部用临时目录夹具 + 直接调 `main()`，⛔ 不 spawn 子进程、不联网、不写仓库内文件。
@@ -281,3 +282,77 @@ test('T12 不误伤：只有族三元组、没有总量的页 ⇒ 跳过、exit 
     cleanup();
   }
 });
+
+test('T13 ⑦同页副本：表改 same 162→161 且 different 5→6（自己仍守恒），kv 不动 ⇒ 打架', () => {
+  const page = [
+    '# 同页冲突',
+    '',
+    '| 条数 | same | different | not runnable |',
+    '| --- | --- | --- | --- |',
+    '| 180 | 161 | 6 | 13 |',
+    '',
+    '```',
+    'total=180 same=162 different=5 notRunnable=13',
+    '```',
+    '',
+  ].join('\n');
+  const { root, cleanup } = fixture({ 'bad.md': page });
+  try {
+    const result = run(root);
+    assert.equal(result.code, 1, result.text);
+    assert.match(result.text, new RegExp(REASONS.SAME_PAGE_CONFLICT));
+    // 两条记录都要点名（kv 在 :8、表在 :5），且带两侧值与差值。
+    assert.match(result.text, /bad\.md:5 SAME_PAGE_CONFLICT 同页两处读数打架：docs\/verification\/bad\.md:8（kv）与 docs\/verification\/bad\.md:5（table）/);
+    assert.match(result.text, /same 162 vs 161（差 -1）、different 5 vs 6（差 1）/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('T14 ⑦同上但不误伤：散文里引别人的旧读数（标了「旧读数」）不算本页副本', () => {
+  const page = [
+    '# 引用旧读数',
+    '',
+    '```',
+    'total=180 same=162 different=5 notRunnable=13',
+    '```',
+    '',
+    '- 旧页 `docs/verification/base.md:1` 记的是 180 = same 161 / different 3 / not runnable 16（旧读数）。',
+    '',
+  ].join('\n');
+  const base = 'total=180 same=161 different=3 notRunnable=16\n';
+  const { root, cleanup } = fixture({ 'base.md': base, 'ok.md': page });
+  try {
+    const result = run(root);
+    assert.equal(result.code, 0, result.text);
+    assert.ok(!result.text.includes(REASONS.SAME_PAGE_CONFLICT), result.text);
+    assert.match(result.text, /PASS: 识别 2 页 \/ 跳过 0 页/);
+  } finally {
+    cleanup();
+  }
+});
+
+test('T15 ⑦同上正控制：合计行 + kv 两份副本数字一致 ⇒ 不误伤', () => {
+  const page = [
+    '# 多副本一致',
+    '',
+    '| 族 | total | same | different | not_runnable |',
+    '| --- | --- | --- | --- | --- |',
+    '| C1 | 180 | 162 | 5 | 13 |',
+    '| 合计 | 180 | 162 | 5 | 13 |',
+    '',
+    '```',
+    'total=180 same=162 different=5 notRunnable=13',
+    '```',
+    '',
+  ].join('\n');
+  const { root, cleanup } = fixture({ 'ok.md': page });
+  try {
+    const result = run(root);
+    assert.equal(result.code, 0, result.text);
+    assert.match(result.text, /PASS: 识别 1 页 \/ 跳过 0 页/);
+  } finally {
+    cleanup();
+  }
+});
+

@@ -21,6 +21,16 @@
  *      `docs/verification/<file>.md:<line>`）给出的旧值必须前后一致。
  *   ⑥ 跨页基线一致：页里写「旧基线来自 `docs/verification/<file>.md:<line>`」并在同一句里给了
  *      数字的，就去读那个文件那一行，逐字比对；文件读不到、行号越界、行里没有数字 ⇒ 直接 FAIL。
+ *   ⑦ 同页多副本互不矛盾：同一页里同一字段出现多处（表 + kv + 六键 + 散文），**只要两条都给出了
+ *      该字段**就必须相同；只比共享字段，只有一条给出的字段不参与（否则部分副本会假红）。
+ *      这一条堵的是「改一处、另一处不动」——只让每条各自自洽，`180 = 161 + 6 + 13` 仍能溜过去。
+ *
+ * 已知限制（明知不做，别当成漏洞）：
+ *   - 同页出现**两套各自自洽**的读数（例如两臂实跑各一套数字、或存根臂与真库臂并列）时，族表与
+ *     合计的交叉校验会误报，因为页内没有「这一行属于哪一组」的声明；修法是给页内读数加分组标记。
+ *     当前全仓只有 `gy-r75-failmatrix-reconcile-20261103.md` 一页有两臂读数，且两臂数值相同。
+ *   - 本闸门**只做页内算术自洽**，不核对上游 json 产物（failmatrix 的 `readings.json`）：读数整体
+ *     写错而内部仍然守恒（例如 total 与三个分项一起改）不归它管，那是跨产物对账的活。
  *
  * 识别口径（只认 failmatrix 读数，纯日志页一律跳过，不误伤）：
  *   `kv`      一行里 `total=<n>` 且 `same=<n>`（如 `total=180 same=162 ... notRunnable=13`）；
@@ -62,6 +72,7 @@ export const REASONS = {
   FAMILY_SUM: 'FAMILY_SUM',
   DELTA_MISMATCH: 'DELTA_MISMATCH',
   BASELINE_CONFLICT: 'BASELINE_CONFLICT',
+  SAME_PAGE_CONFLICT: 'SAME_PAGE_CONFLICT',
   CROSS_PAGE_MISMATCH: 'CROSS_PAGE_MISMATCH',
   CROSS_PAGE_UNREADABLE: 'CROSS_PAGE_UNREADABLE',
   READING_UNREADABLE: 'READING_UNREADABLE',
@@ -300,11 +311,18 @@ export function extractPage(relPath, text) {
     const kv = extractKvFields(line);
     if (kv !== null) records.push({ path: relPath, line: lineNo, source: 'kv', fields: kv });
 
-    for (const group of extractProseGroups(line)) {
-      if (group.fields.different !== undefined || group.fields.nr !== undefined) {
-        records.push({ path: relPath, line: lineNo, source: 'prose', fields: group.fields });
-      }
-    }
+    // 一句话读数可能一行多组（旧读数 + 本页读数）；跟了「（旧读数）」或前面紧邻跨页引用的那组
+    // 标记成 historical，判据 ⑦ 不拿它跟本页读数比对（否则引用旧值会假红）。
+    const proseGroups = extractProseGroups(line)
+      .filter(group => group.fields.different !== undefined || group.fields.nr !== undefined);
+    proseGroups.forEach((group, at) => {
+      const stop = at + 1 < proseGroups.length ? proseGroups[at + 1].index : line.length;
+      const segment = line.slice(group.index, stop);
+      const before = line.slice(Math.max(0, group.index - 40), group.index);
+      const historical = /旧读数|旧基线|旧版本|修前/.test(segment)
+        || /md:\d+|`:\d|记的是|旧页|旧基线|修前/.test(before);
+      records.push({ path: relPath, line: lineNo, source: 'prose', fields: group.fields, historical });
+    });
 
     // 六键裸序列：键名清单在代码段里、读数在 `**a / b / ...**` 里。
     const boldSequence = /\*\*\s*(\d+(?:\s*\/\s*\d+){2,})\s*\*\*/.exec(line);
@@ -590,6 +608,40 @@ export function checkRecordArithmetic(record, report) {
   return findings;
 }
 
+/**
+ * 判据 ⑦：同页多副本互不矛盾。
+ *
+ * 一条读数自己守恒没用：`180 = 161 + 6 + 13` 也守恒。页里往往有 3~4 份副本（普通表、kv 块、
+ * 六键裸序列、一句话散文），只要改其中一份而别人不动，副本之间就会打架。这里对**同一页内所有**
+ * 读数记录两两比**共享字段**（两边都给出了才比，只给一边的字段不比——跨页引用/部分副本会假红）。
+ * `historical: true` 的散文读数（引用别人的旧值）不参与。
+ */
+export function checkSamePageConsistency(records) {
+  const findings = [];
+  const comparable = records.filter(record => record.fields !== undefined && record.historical !== true);
+  for (let i = 0; i < comparable.length; i += 1) {
+    for (let j = i + 1; j < comparable.length; j += 1) {
+      const left = comparable[i];
+      const right = comparable[j];
+      const conflicts = [];
+      for (const field of FIELD_ORDER) {
+        const a = left.fields[field];
+        const b = right.fields[field];
+        if (a === undefined || b === undefined || a === b) continue;
+        conflicts.push(`${label(field)} ${a} vs ${b}（差 ${b - a}）`);
+      }
+      if (conflicts.length === 0) continue;
+      findings.push({
+        path: right.path,
+        line: right.line,
+        reason: REASONS.SAME_PAGE_CONFLICT,
+        detail: `同页两处读数打架：${left.path}:${left.line}（${left.source}）与 ${right.path}:${right.line}（${right.source}）—— ${conflicts.join('、')}`,
+      });
+    }
+  }
+  return findings;
+}
+
 /** 判据 ④：族表逐列加总 = 权威总量。 */
 export function checkFamilySums(page, families, groups, authoritative, report) {
   const findings = [];
@@ -752,7 +804,28 @@ export function parseArgs(argv) {
 }
 
 /**
- * 主流程：扫面 → 逐页抽取 → 六条判据 → 打印。
+ * 跳过页的「看着像读数页」启发式：≥3 行「字段名 | 单个整数」的表行，且字段名带读数词。
+ * 只用来打 WARN（提示「可能是新格式，识别口径没覆盖」），⛔ 不判红——否则会变成噪音源。
+ * 刻意比「含关键词 + 含数字」严得多：后者在 341 页里会误报上百页。
+ */
+const READING_LABEL_RE = /total|same|different|not[ _]runnable|条数|总数|合计|总计|通过|不一致|不可跑|用例/i;
+
+export function readingPageShape(text) {
+  let rows = 0;
+  for (const line of String(text).split('\n')) {
+    if (!line.includes('|')) continue;
+    const cells = line.split('|').map(cell => cell.trim()).filter(cell => cell !== '');
+    if (cells.length !== 2) continue;
+    if (!/^\d+$/.test(cells[1])) continue;
+    if (!READING_LABEL_RE.test(cells[0])) continue;
+    rows += 1;
+  }
+  if (rows < 3) return null;
+  return { rows };
+}
+
+/**
+ * 主流程：扫面 → 逐页抽取 → 七条判据 → 打印。
  * `streams` 可注入（单测用），返回值就是进程退出码。
  */
 export function main(argv = process.argv.slice(2), streams = { log: console.log, error: console.error }) {
@@ -809,11 +882,16 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     if (readingRecords.length === 0) {
       skipped.push(page);
       if (families.length > 0) report.push(`INFO: ${page} 有 ${families.length} 条族读数但没有总量，按跳过处理`);
+      const shape = readingPageShape(analysis.lines.join('\n'));
+      if (shape !== null) {
+        report.push(`WARN: ${page} 看起来像读数页（有 ${shape.rows} 行「字段名 | 整数」的读数行）但取不出总量，按跳过处理——若是新格式，请扩展识别口径`);
+      }
       continue;
     }
     identified.push({ page, records: readingRecords.length, families: families.length });
 
     for (const record of readingRecords) findings.push(...checkRecordArithmetic(record, report));
+    findings.push(...checkSamePageConsistency(readingRecords));
 
     const authoritative = pickAuthoritative(readingRecords);
     findings.push(...checkFamilySums(page, families, groups, authoritative, report));
@@ -933,6 +1011,10 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
     }
   }
 
+  if (pages.length > 0 && identified.length === 0) {
+    report.push(`WARN: 扫描面 ${pages.length} 页（${options.scan.join('、')}）里没有任何页被识别，闸门实际零覆盖——确认 --scan 指向 docs/verification（该目录若确实没有读数页，这行可忽略）`);
+  }
+
   findings.push(...checkBaselineConflicts(allBaselines, report));
   findings.push(...checkDeltas(allDeltas));
 
@@ -945,7 +1027,7 @@ export function main(argv = process.argv.slice(2), streams = { log: console.log,
 
   const summary = `识别 ${identified.length} 页 / 跳过 ${skipped.length} 页（扫描面 ${pages.length} 页：${options.scan.join('、')}）`;
   if (findings.length === 0) {
-    streams.log(`PASS: ${summary}——读数六条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字）`);
+    streams.log(`PASS: ${summary}——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）`);
     return 0;
   }
   for (const finding of findings) {
