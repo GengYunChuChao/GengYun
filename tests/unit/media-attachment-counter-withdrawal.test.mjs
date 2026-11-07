@@ -66,24 +66,113 @@ function listTsFiles(dir) {
   return out;
 }
 
-/** 给一次 `countFor` 加超时：超时是**可疑**（不是「无法判定」），由调用方计入违规。 */
-/** 去掉行注释与块注释后再扫描：本仓注释里引用判据是常态（JSDoc 写 `kind: 'injected'` 很自然），
- * 而扫描要找的是**代码里的**注入缝。剥注释不是放宽判据——保留代码、删掉注释文本即可。 */
+/** 去掉注释后再扫描：本仓注释里引用判据是常态（JSDoc 写 `kind: 'injected'` 很自然），而扫描要找的是
+ * **代码里的**注入缝。剥注释不是放宽判据——保留代码、删掉注释文本即可。
+ *
+ * 逐字符扫描，而不是「正则删块注释 + 按行找 //」（PR #1046 审查 P2-1/P2-2/P2-3 的三个反例）：
+ * 正则版会把字符串里的 `/*` 当注释开头（`const open = '/*';` 之后整段被吞 ⇒ 永久假绿），
+ * 会把正则字面量里的 `//` 当行注释（`/^https:\/\//` 被截断），也不计反引号与转义引号。
+ *
+ * 已知边界（证据页同款）：正则字面量的**起点**靠「上一个有意义字符」猜（`=`、`(`、`,`、`:`、`[`、
+ * `!`、`&`、`|`、`?`、`{`、`;`、`return` 之后）；模板串里的 `${…}` 整体当字符串，内部注释不剥。
+ * 猜错的最坏结果是少剥或多剥一段文本——本判据只判「代码里是否存在」，不判位置。 */
 function stripComments(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .split('\n')
-    .map((line) => {
-      const idx = line.indexOf('//');
-      if (idx < 0) return line;
-      // 只在「// 之前不是引号内的字符」时截断：够用即可，判据统计的是存在性。
-      const head = line.slice(0, idx);
-      const quotes = (head.match(/'/g) || []).length + (head.match(/"/g) || []).length;
-      return quotes % 2 === 0 ? head : line;
-    })
-    .join('\n');
+  const out = [];
+  const n = source.length;
+  const regexStart = new Set([
+    '',
+    '=',
+    '(',
+    ',',
+    ':',
+    '[',
+    '!',
+    '&',
+    '|',
+    '?',
+    '{',
+    ';',
+    '>',
+    '+',
+    '-',
+    '*',
+    '%',
+    '^',
+    '~',
+    '<',
+  ]);
+  let i = 0;
+  let prevSignificant = '';
+  let tailBuf = '';
+  const emit = (text) => {
+    out.push(text);
+    tailBuf = (tailBuf + text).slice(-12);
+  };
+  while (i < n) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      emit(ch);
+      i += 1;
+      while (i < n) {
+        const c = source[i];
+        if (c === '\\') {
+          emit(c);
+          if (i + 1 < n) emit(source[i + 1]);
+          i += 2;
+          continue;
+        }
+        emit(c);
+        i += 1;
+        if (c === quote) break;
+      }
+      prevSignificant = quote;
+      continue;
+    }
+    if (ch === '/' && next === '/') {
+      while (i < n && source[i] !== '\n') i += 1;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      i += 2;
+      while (i + 1 < n && !(source[i] === '*' && source[i + 1] === '/')) i += 1;
+      i = Math.min(i + 2, n);
+      emit(' ');
+      continue;
+    }
+    const looksLikeRegex =
+      ch === '/' && (regexStart.has(prevSignificant) || /(^|[^\w$])return\s*$/.test(tailBuf));
+    if (looksLikeRegex) {
+      emit(ch);
+      i += 1;
+      let inClass = false;
+      while (i < n) {
+        const c = source[i];
+        if (c === '\\') {
+          emit(c);
+          if (i + 1 < n) emit(source[i + 1]);
+          i += 2;
+          continue;
+        }
+        if (c === '[') inClass = true;
+        else if (c === ']') inClass = false;
+        emit(c);
+        i += 1;
+        if (c === '\n') break;
+        if (c === '/' && !inClass) break;
+      }
+      prevSignificant = '/';
+      continue;
+    }
+    emit(ch);
+    if (!/\s/.test(ch)) prevSignificant = ch;
+    i += 1;
+  }
+  return out.join('');
 }
 
+/** 给一次 `countFor` 加超时：超时是**可疑**（不是「无法判定」），由调用方计入违规。 */
 function withProbeTimeout(promise, label) {
   let timer;
   const guard = new Promise((_resolve, reject) => {

@@ -34,7 +34,7 @@
 
 1. **装配断言（P1 的补口）**：`createAppMediaService({ executionMode: 'real', objectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' }, realMediaApproval: approveRealMediaWiring({ reason: 'r83 structural lock' }), persistence: { kind: 'postgres', persistent: true } })` —— real + 有 PG 持久化、但没有任何权威计数能力时，默认计数器必须是 `unwired`，且 `countFor({ ownerId: 'o', liveCommunityImages: 3 })` 必须是 `null`。语义是「默认计数器不允许随 owner 存活数变化」，与 `services/api/src/media/service.ts:835-838` 的禁令同一件事。**附加前提** `assert.equal(app.failClosedReason, null)`：fail-closed 分支内部同样用 `createUnwiredAttachmentCounter()`，不钉这个前提，「构造失败后退化到 unwired」也能凑出假绿。
 2. **运行时行为**：枚举 `services/api/src/media/service.ts` 导出的每个零参 `create*AttachmentCounter()` 工厂，各造一个，用 `liveCommunityImages` 取 0 与取 7 各问一次 `countFor`；两者不等、且 `kind` 不是 `substitute`／`injected` 即红。它读运行时行为与运行时 `kind`，所以展开、别名、字符串拼接、换目录都绕不过；`#1030` 的 `createPostgresAttachmentCounter` 在 `fde1659e` 里是本地函数（未导出）⇒ 不误伤。**两次调用各自 `try`、各自 2 秒超时**（P2-1／P2-4）：任一次超时记 suspicious、**恰好一次抛错也记 suspicious**（「一半能查一半不能查」本身就可疑），只有两次都抛错（需要真实存储/网络的持久化计数器）才记 inconclusive。
-3. **注入缝扫描**：`createInjectedAttachmentCounter` 在 `services/api/src/**` 里只允许定义处出现；`kind` 值的字面量按**单/双/反引号**宽匹配（``/kind\s*:\s*["'`]injected["'`]/``，P2-2），且除 `services/api/src/media/service.ts` 外，**同一文件同时出现带引号的 `'injected'` 字面量与 `countFor`** 即违规（第三轮审查 P2-2：早先那条只看裸标识符 `injected` 的判据会误伤 `services/api/src/app.ts` 里本来就有的 `injected:`／`injectedDeletionRequests`，任何在 app 层包一层计数器的正当改动都会被判红，现已收窄到带引号字面量 + `countFor` 同文件）。扫描前**先剥注释**（`stripComments`，行注释与块注释都去）：本仓注释里引用判据是常态，JSDoc 写一句 `kind: 'injected'` 不该被判红——`#1045` 审查 `96966b11` 实测过这种假红（剥注释后 5 pass / 0 fail，代码里真自造注入缝仍 4 pass / 1 fail）。
+3. **注入缝扫描**：`createInjectedAttachmentCounter` 在 `services/api/src/**` 里只允许定义处出现；`kind` 值的字面量按**单/双/反引号**宽匹配（``/kind\s*:\s*["'`]injected["'`]/``，P2-2），且除 `services/api/src/media/service.ts` 外，**同一文件同时出现带引号的 `'injected'` 字面量与 `countFor`** 即违规（第三轮审查 P2-2：早先那条只看裸标识符 `injected` 的判据会误伤 `services/api/src/app.ts` 里本来就有的 `injected:`／`injectedDeletionRequests`，任何在 app 层包一层计数器的正当改动都会被判红，现已收窄到带引号字面量 + `countFor` 同文件）。扫描前**先剥注释**（`stripComments`）：本仓注释里引用判据是常态，JSDoc 写一句 `kind: 'injected'` 不该被判红——`#1045` 审查回合实测过这种假红（剥注释后 5 pass / 0 fail，代码里真自造注入缝仍 4 pass / 1 fail）。剥注释是**逐字符扫描**（字符串／模板串／正则字面量／行注释／块注释各有状态），不是「正则删块注释 + 按行找 `//`」：后者会把字符串里的 `/*` 当注释开头、把正则字面量里的 `//` 当行注释、也不计反引号与转义引号（`#1046` 审查 P2-1/P2-2/P2-3 的三个反例，见下方 C1–C4 探针表）。
 4. **禁令原文仍在**：`services/api/src/media/service.ts` 里「不得用同一 owner 名下存活记录数顶替」与「永久锁死」两句不能被悄悄删掉——那是撤回的依据。
 5. **生产装配位点断言（第二轮审查 P1-2 的补口）**：`buildApp({ config: { ...loadConfig({ APP_EXECUTION_MODE: 'stub', LOG_LEVEL: 'silent', MEDIA_OBJECT_REF_KEY: '0'.repeat(64) }), executionMode: 'real' }, pool: { query: async () => { throw new Error('r83 lock probe') }, connect: async () => { throw new Error('r83 lock probe') }, end: async () => {} }, mediaObjectStore: { ...createUnwiredObjectStore('r83 lock probe'), kind: 's3_compatible' }, mediaStore: { ...createMemoryMediaStore(), kind: 'postgres', persistent: true }, realMediaApproval: approveRealMediaWiring({ reason: 'r83 structural lock' }) })` —— 生产真正透传持久化端口的是 `services/api/src/app.ts` 的 `mediaStore`（`services/api/src/app.ts:1824`），把 `#1029` 的计数器接在 app 层而不是 service 默认，前四条判据全绿；本条只看 `app.mediaService.attachmentCounter` 的 `kind` 与 `countFor` 返回值。第 1 条的假 store 同时补上 `persistent: true`（真实端口 `services/api/src/media/store-pg.ts` 的形状）：缺这个字段时，「`&& options.persistence.persistent === true`」这类旁路能让第 1 条自以为在测 PG 路径（P1-1 实测过）。
 
@@ -49,7 +49,9 @@
 | 树 | 内容 | 读数 |
 | --- | --- | --- |
 | A | `fde1659e`（`#1030` 的正确实现） | 5 pass / 0 fail，**exit 0**（不误伤正确实现；第 5 条在 `fde1659e` 上同样绿，2026-11-07 在本机重跑确认） |
-| B | `736c0b47` + 把 `#1029` 原样复活：`git checkout 5f5e8ca7 -- services/api/src/media/attachment-counter-pg.ts`，再把 `services/api/src/media/service.ts` 的 import／union／wiring 三处改写回 `5f5e8ca7` 的原文 | 3 pass / 2 fail，**exit 1**（第三轮审查 `012d830d` 与 `#1045` 审查 `96966b11` 各自复现；旧版记的「3 pass / 1 fail」是四条判据时代的读数，已订正）；**第 1 条与第 5 条两条装配断言同时红**（`actual 'postgres'` ≠ `expected 'unwired'`；第 1 条报错文本 `real + PG 持久化时默认计数器不是 unwired：这正是 #1029 的接线口`），不是语法/导入错 |
+| B | `736c0b47` + 把 `#1029` 原样复活：`git checkout 5f5e8ca7 -- services/api/src/media/attachment-counter-pg.ts`，再把 `services/api/src/media/service.ts` 的 import／union／wiring 三处改写回 `5f5e8ca7` 的原文 | 3 pass / 2 fail，**exit 1**（第三轮与 `#1045` 两轮审查各自复现；旧版记的「3 pass / 1 fail」是四条判据时代的读数，已订正）；**第 1 条与第 5 条两条装配断言同时红**（`actual 'postgres'` ≠ `expected 'unwired'`；第 1 条报错文本 `real + PG 持久化时默认计数器不是 unwired：这正是 #1029 的接线口`），不是语法/导入错 |
+
+> 说明：本页出现的 `dcd552dd`、`08fbc066`、`012d830d`、`96966b11`、`851d9556` 都是**审查回合的子代理 id**，不是 git 对象（`git cat-file -t` 会报 `Not a valid object name`）；能复核的是它们各自给出的读数与本页记录的复跑结果。
 
 **变异自证**（在 B 上 `git reset --hard 736c0b47` + 本文件后逐条施加，改完即还原）。下表只记**红在哪条判据**、不记 pass 计数——判据条数改过一次，早先那几个 pass 数字已不可比（第三轮审查指出旧表还与本页「基线 5 pass」算术矛盾）：
 
@@ -61,10 +63,20 @@
 | M7 | 在 `services/api/src/community/` 新建文件，自造 `kind: "injected"`（**双引号**）且按 owner 计数的计数器 | exit 1，注入缝扫描响（带引号字面量 + `countFor` 同文件） |
 | **P1（第三轮）** | 在 `services/api/src/app.ts:1824` 之前按 `config.executionMode === 'real' && pool !== null && mediaStore.kind === 'postgres' && mediaStore.persistent === true` 注入一个按 owner 存活数计的 `'postgres'` 计数器（独立模块、零参） | 修 P1 **前**：5 pass / 0 fail（假绿）；修 P1 **后**：4 pass / 1 fail，exit 1，红在第 5 条 `actual: 'postgres'` ≠ `expected: 'unwired'` |
 
+**剥注释器的对抗输入**（`#1046` 审查 P2-1/P2-2/P2-3 给的三类反例；每例都在 `services/api/src/media/` 放一个临时探针文件，跑完即删）：
+
+| 探针 | 内容 | 期望 | 实测 |
+| --- | --- | --- | --- |
+| C1 | `const open = '/*';` + `{ kind: 'injected' }` + `countFor` + `const close = '*/';` | 中间那段代码**必须还在** ⇒ 判据红 | 4 pass / 1 fail（红在注入缝扫描）——改前是 5 pass（整段被吞、假绿） |
+| C2 | `const HTTPS = /^https:\/\//;` 与同一行的 `{ kind: 'injected' }; const countFor = 1;` | 正则里的 `//` 不得截断 ⇒ 判据红 | 4 pass / 1 fail |
+| C3 | `const u = 'http://a'; // 别写 kind: 'injected' 也别写 countFor` | 行注释必须剥掉 ⇒ **不**该红 | 5 pass / 0 fail（改前因引号奇偶判断失效而假红） |
+| C4 | `const s = 'it\'s'; // kind: 'injected' countFor` | 转义引号后的行注释同样剥掉 ⇒ 不红 | 5 pass / 0 fail |
+
 ## 这条记录不证明什么
 
 - **不证明「每帖 ≤3 张」在 real 下可用**：现状仍是显式未接线（`503 post_image_limit_unwired`，`retryable:false`），正确实现在 `#1030`／`#1037`。
 - **已知边界（`#1045` 审查 P2-3）**：判据要求**带引号的** `injected` 字面量，所以 `kind: ATTACHMENT_COUNTER_KINDS.injected`（值由 `'inj' + 'ected'` 拼成）+ `countFor` 的文件能过——需刻意规避才绕过，旧判据（裸子串）会红，属收窄的已知让出的检测面。
+- **剥注释器自身的盲区（`#1046` 审查 P2-1…P2-4）**：`stripComments` 是逐字符扫描（字符串／模板串／正则字面量／行注释／块注释），但**正则字面量的起点靠启发式猜**（上一个有意义字符是 `=`、`(`、`,`、`:`、`[`、`!`、`&`、`|`、`?`、`{`、`;`、`>`、算术符或 `return` 之后），模板串里的 `${…}` 整体当字符串、内部注释不剥。猜错时最坏是多剥或少剥一段文本——本判据只判「代码里是否存在」，不判位置。三条已修的反例（字符串里的 `/*` 吞代码、正则里的 `//` 截断代码、转义引号后行注释漏剥）见下方 C1–C4 探针表。
 - **不证明撤回没有副作用**：`#1031` 把 `services/api/src/media/service.ts` 恢复到 4 行原样、删掉三个文件；`tests/unit/media-*.test.mjs` 163 pass 是撤回后的读数，与撤回前不可比。
 - **不覆盖 `#1031` 审查里仍开放的两条 P2**：real+PG 的 503 缺自动化断言、符号覆盖 `UNDECLARED 265 → 238`（读数随时间漂，此处只记审查当时的观察）。其中「撤回在 docs 侧无留档」已由本页吸收；PR 正文的 CI 读数口径（当时写「未跑 CI」，PR 页面上实为 24/24）属历史原文，本页不改写它。
 - **不含任何真库/真机读数**：本页所有事实都来自 git、源码文本与 GitHub API 元数据；其中 `closed_at`／`created_at` 等 API 字段未离线复核。
