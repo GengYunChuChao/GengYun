@@ -15,9 +15,10 @@
  *
  * 钉住的四件事（全部按**实测**表名与张数写死，⛔ 不用 `>=` / `includes` 这种能悄悄放过的写法）：
  *   ⓐ 正向 DELETE 对象集合 = 13 张表；ⓑ 禁止面 DELETE 对象集合 = 5 张表；ⓒ 两者互斥、并集 = 18 个对象；
- *   ⓓ 正向集合 ⊆ `20-login-roles.sql` 实际授出的 16 张表，禁止面与实际授出**零交集**。
- * 另外记下既有事实：16 张授权表里有 3 张（`media_derivatives` / `media_object_cleanup` / `messages`）
- * 本片之前就没有 DELETE 探针，本片不改变这一点 —— 写死成差集，避免它被误当成「探针已全覆盖」。
+ *   ⓓ 正向集合 ⊆ `20-login-roles.sql` 实际授出的 19 张表，禁止面与实际授出**零交集**。
+ * 另外记下既有事实：19 张授权表里有 6 张（`media_derivatives` / `media_object_cleanup` / `messages` /
+ * `jobs` / `moderation_idempotency` / `post_media_attachments`）没有本文所指那份探针的 DELETE 语句，
+ * 本片不改变这一点 —— 写死成差集，避免它被误当成「探针已全覆盖」。
  *
  * 纯静态：只 `readFileSync` 读三份文本，⛔ 不连库、不 spawn、不 import 兄弟测试（会把那边的 test 注册进本进程）。
  */
@@ -45,12 +46,16 @@ const EXPECTED_DENY = Object.freeze([
   'speech_jobs', 'transcriptions',
 ]);
 
-/** `20-login-roles.sql` 实际授出的表级 DELETE：18 张（GY-R71 补片新增 `jobs`；R72-W41 新增 `moderation_idempotency`）。 */
+/**
+ * `20-login-roles.sql` 实际授出的表级 DELETE：19 张
+ * （GY-R71 补片新增 `jobs`；R72-W41 新增 `moderation_idempotency`；PR #1037 新增 `post_media_attachments`）。
+ */
 const EXPECTED_GRANTED = Object.freeze([
   'community_idempotency', 'community_likes', 'conversation_turns', 'conversations',
   'favorites', 'favorites_idempotency', 'history', 'history_idempotency', 'jobs',
   'media_derivatives', 'media_object_cleanup', 'messages', 'moderation_idempotency',
-  'ocr_idempotency', 'ocr_jobs', 'ocr_records', 'recognition_idempotency', 'speech_idempotency',
+  'ocr_idempotency', 'ocr_jobs', 'ocr_records', 'post_media_attachments',
+  'recognition_idempotency', 'speech_idempotency',
 ]);
 
 /**
@@ -63,9 +68,14 @@ const EXPECTED_GRANTED = Object.freeze([
  * R72-W41 同理新增第 5 张 `moderation_idempotency`：它在 90-assert 里的内联探针是**多行**形状探针
  * （`DELETE … WHERE false AND expires_at <= now() RETURNING scope`，断言 `runtime_moderation_idempotency_dml_exec`），
  * 不是 ⑤ 那个只认单行 `DELETE FROM public.<t> WHERE false;` 的扫描面 ⇒ 落在这里登记，判据未放松。
+ * PR #1037 同理新增第 6 张 `post_media_attachments`：`20-login-roles.sql:933` 的
+ * `GRANT DELETE ON public.post_media_attachments TO gengyun_api_runtime;` 是真授出（注销级联要能删
+ * 帖子级挂载行，换图也是先删后认领），但 `probe-runtime-grants.sql` 与 90-assert 的内联探针都还没有它
+ * ⇒ 本片只登记这个事实、⛔ 不放宽判据（判据 ④ 的 `unprobed === GRANTED_WITHOUT_PROBE` 仍然逐条相等）。
  */
 const GRANTED_WITHOUT_PROBE = Object.freeze([
   'jobs', 'media_derivatives', 'media_object_cleanup', 'messages', 'moderation_idempotency',
+  'post_media_attachments',
 ]);
 
 /** 90-assert 里内联的同形正向探针（`SET LOCAL ROLE` 之后、SAVEPOINT 里逐条真跑）：7 张表。 */
@@ -168,10 +178,10 @@ test('③ 正向 ∪ 禁止面 = 18 个对象，两者互斥；每条都是零�
     '探针里出现了不带 `WHERE false` 的 DELETE：那会真的删数据（探针必须可反复跑、零行）');
 });
 
-test('④ 正向面 ⊆ 20-login-roles.sql 实授的 18 张表；禁止面与实授零交集', () => {
+test('④ 正向面 ⊆ 20-login-roles.sql 实授的 19 张表；禁止面与实授零交集', () => {
   const granted = grantedDeleteTables(ROLES_SOURCE);
   assert.deepEqual(granted, [...EXPECTED_GRANTED],
-    '`20-login-roles.sql` 的表级 DELETE 清单变了（R72-W41 新增 moderation_idempotency）');
+    '`20-login-roles.sql` 的表级 DELETE 清单变了（R72-W41 新增 moderation_idempotency；PR #1037 新增 post_media_attachments）');
   const positive = [...new Set(PROBE_STATEMENTS.filter((s) => !s.deny).map((s) => s.table))].sort();
   const deny = [...new Set(PROBE_STATEMENTS.filter((s) => s.deny).map((s) => s.table))].sort();
   const missingGrant = positive.filter((table) => !granted.includes(table)).sort();

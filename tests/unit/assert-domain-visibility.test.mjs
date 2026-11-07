@@ -15,8 +15,10 @@
  *      `docs/` 或 `migrations/` 的 `path:line`，表名唯一且至少含 `provider_invocations`；
  *   3) 清单与 `deploy/postgres-cvm/sql/20-login-roles.sql` 里**已 GRANT** 的表集合不相交
  *      ——「把已接线的表塞进未接线清单把断言弄绿」当场判红；
- *   4) 三张清单（domain 41 + external 17 + unwired 21）加满 79 张 = 迁移建的 78 张 public
+ *   4) 三张清单（domain 42 + external 17 + unwired 21）加满 80 张 = 迁移建的 79 张 public
  *      普通表 + `schema_migrations`（`services/api/src/db/migrate.ts` 建），且两两不相交。
+ *      2026-11-07 合流 origin/main（ca3b26f0）后：0055 的 `provider_call_ledger` 与本片 0056 的
+ *      `post_media_attachments` 各进一张表，domain 41→42、建表 79→80（三张清单合计 79→80）。
  *
  * 为什么第 4 条要冻数字：这正是「新建表必须被分类」的**离线**镜像。以后有人加迁移建表却没更新
  * 清单，本文件先红（CI 里 87 号也会红）；此时正确动作是分类（补授权走 `domain_manifest` /
@@ -131,7 +133,7 @@ function createdPublicTables() {
     while ((match = pattern.exec(text))) {
       const raw = match[1].replace(/"/g, '').replace(/^public\./, '');
       // 少数建表语句里 `CREATE TABLE` 与 `IF NOT EXISTS` 之间夹了换行 / 注释，可选组没吃到，
-      // 于是把 `IF` 当成表名；这里直接丢掉这个噪声，别让它污染「79 张」的口径。
+      // 于是把 `IF` 当成表名；这里直接丢掉这个噪声，别让它污染「80 张」的口径。
       if (raw === 'IF') continue;
       if (raw.includes('.')) {
         nonPublic.push(`${file}:${raw}`);
@@ -213,26 +215,26 @@ test('未接线清单与 20-login-roles.sql 已 GRANT 的表集合不相交', ()
   );
 });
 
-test('三张清单 79 张 = 迁移建的 78 张 + schema_migrations，且两两不相交', () => {
+test('三张清单 80 张 = 迁移建的 79 张 + schema_migrations，且两两不相交', () => {
   const domain = manifestNames(
     manifestRows(SOURCE, /^\s*(?:WITH\s+)?domain_manifest\(tbl, classification, required\) AS \(VALUES$/),
   );
   const external = manifestNames(manifestRows(SOURCE, /^  external_manifest\(tbl, source_group/));
 
-  assert.equal(domain.length, 41, `domain_manifest 应为 41 行，实际 ${domain.length} 行`);
+  assert.equal(domain.length, 42, `domain_manifest 应为 42 行，实际 ${domain.length} 行`);
   assert.equal(external.length, 17, `external_manifest 应为 17 行，实际 ${external.length} 行`);
   assert.equal(
     domain.length + external.length + UNWIRED_NAMES.length,
-    79,
-    '三张清单合计应为 79 张（58 已分类 + 21 未接线）',
+    80,
+    '三张清单合计应为 80 张（59 已分类 + 21 未接线）',
   );
 
   const union = new Set([...domain, ...external, ...UNWIRED_NAMES]);
-  assert.equal(union.size, 79, '三张清单之间出现了重复表名（87 号 (v) 会判红）');
+  assert.equal(union.size, 80, '三张清单之间出现了重复表名（87 号 (v) 会判红）');
 
   const { tables: created, nonPublic } = createdPublicTables();
   assert.equal(nonPublic.length, 5, `非 public 建表应为 5 处，实际 ${nonPublic.length} 处：${nonPublic.join(', ')}`);
-  assert.equal(created.size, 79, `migrations + migrate.ts 建了 ${created.size} 张 public 表，应为 79 张`);
+  assert.equal(created.size, 80, `migrations + migrate.ts 建了 ${created.size} 张 public 表，应为 80 张`);
 
   const unclassified = [...created].filter((table) => !union.has(table));
   assert.deepEqual(unclassified, [], `有 public 表没被三张清单之一分类（87 号 (iii) 会判红）：${unclassified.join(', ')}`);
