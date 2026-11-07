@@ -73,9 +73,12 @@ function listTsFiles(dir) {
  * 正则版会把字符串里的 `/*` 当注释开头（`const open = '/*';` 之后整段被吞 ⇒ 永久假绿），
  * 会把正则字面量里的 `//` 当行注释（`/^https:\/\//` 被截断），也不计反引号与转义引号。
  *
- * 已知边界（证据页同款）：正则字面量的**起点**靠「上一个有意义字符」猜（`=`、`(`、`,`、`:`、`[`、
- * `!`、`&`、`|`、`?`、`{`、`;`、`return` 之后）；模板串里的 `${…}` 整体当字符串，内部注释不剥。
- * 猜错的最坏结果是少剥或多剥一段文本——本判据只判「代码里是否存在」，不判位置。 */
+ * 已知边界（与证据页 `docs/verification/gy-r83-media-counter-withdrawal-20261107.md` 同款）：正则字面量的
+ * **起点**靠「上一个有意义字符」猜（`=`、`(`、`,`、`:`、`[`、`!`、`&`、`|`、`?`、`{`、`;`、`>`、`<`、`~`、
+ * `^`、`%`、`*`、`+`/`-`，或文件开头、或 `return` 之后）；`++`／`--` 只在**紧邻**时按自增/自减处理，
+ * `+ +`（有空格）仍算正则起点。模板串里的 `${…}` 整体当字符串，内部注释不剥。
+ * ⛔ **两种猜错后果不对称**：少剥只会假红（看得见、能修）；**多剥会把真实代码当注释吞掉，让该文件本轮
+ * 判据静默失效（假绿、无告警）**——所以多剥是更危险的一类，别用「只判存在性」给它开脱。 */
 function stripComments(source) {
   const out = [];
   const n = source.length;
@@ -104,6 +107,8 @@ function stripComments(source) {
   let i = 0;
   let prevSignificant = '';
   let prevSignificantPrev = '';
+  let prevSignificantIndex = -2;
+  let prevSignificantPrevIndex = -3;
   let tailBuf = '';
   const emit = (text) => {
     out.push(text);
@@ -129,6 +134,7 @@ function stripComments(source) {
         if (c === quote) break;
       }
       prevSignificant = quote;
+      prevSignificantIndex = i - 1;
       continue;
     }
     if (ch === '/' && next === '/') {
@@ -144,11 +150,16 @@ function stripComments(source) {
     }
     // ⛔ P3-a（增量复审实测）：`++`/`--` 之后的 `/` 不是正则起点 —— `const y = a++ / 2;` 里它是除号，
     // 而此刻 `prevSignificant` 恰是 `+`/`-`（两者都在上面的 `regexStart` 里）⇒ 会把后面的行注释
-    // 当成正则体一直吃到行尾，同文件若有 `countFor` 就变成假红。判据：`+`/`-` 且它的**前一个**
-    // 有意义字符也是它本身 ⇒ 自增/自减。`!` 不能一并排除：`!/re/.test(x)` 是取反正则的主流写法
-    // （本仓 `!` 接 `/` 的命中全是这种）；代价是 `x! / 2;` 会被误判成正则起点（语料无实例，见盲区）。
+    // 当成正则体一直吃到行尾，同文件若有 `countFor` 就变成假红。判据：`+`/`-`、它的**前一个**
+    // 有意义字符也是它本身，且**两者紧邻**（`a++`／`a--` 是自增/自减）⇒ 不算正则起点。
+    // 紧邻这一条是 P3-3 的补丁：`1 + +/a\/*b/.test(s)` 是「二元 `+` 紧跟一元 `+`」，两个 `+`
+    // 之间有空格 ⇒ 仍按正则起点处理，否则那里的 `/*` 会被当成块注释、把后文吞掉（静默假绿）。
+    // `!` 不能一并排除：`!/re/.test(x)` 是取反正则的主流写法（本仓 `!` 接 `/` 的命中全是这种）；
+    // 代价是 `x! / 2;` 会被误判成正则起点（语料无实例，见证据页的盲区段）。
     const plusMinusPair =
-      (prevSignificant === '+' || prevSignificant === '-') && prevSignificantPrev === prevSignificant;
+      (prevSignificant === '+' || prevSignificant === '-') &&
+      prevSignificantPrev === prevSignificant &&
+      prevSignificantPrevIndex === prevSignificantIndex - 1;
     const looksLikeRegex =
       ch === '/' &&
       !plusMinusPair &&
@@ -173,12 +184,15 @@ function stripComments(source) {
         if (c === '/' && !inClass) break;
       }
       prevSignificant = '/';
+      prevSignificantIndex = i - 1;
       continue;
     }
     emit(ch);
     if (!/\s/.test(ch)) {
       prevSignificantPrev = prevSignificant;
+      prevSignificantPrevIndex = prevSignificantIndex;
       prevSignificant = ch;
+      prevSignificantIndex = i;
     }
     i += 1;
   }
