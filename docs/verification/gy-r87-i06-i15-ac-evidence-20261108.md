@@ -6,9 +6,9 @@
 
 | 项 | 值 |
 | --- | --- |
-| 快照时间（HKT） | 2026-11-08 03:30（UTC+8） |
-| 基线提交 | `origin/main` = `1f62322859f7b8aa6a4a2e2e2bf06a0cc94f3aac`（2026-11-08 03:04:53 +0800，`fix(miniprogram): 如实说明注销受理后不可撤回`） |
-| 本页工作树 | `E:\GengYunCommander\.pg17\wt-r87-i06i15ac`，分支 `docs/gy-r87-i06-i15-ac-evidence`，HEAD 与上面同一提交 |
+| 快照时间（HKT） | `2026-11-08T04:03:00+08:00`（本页 rebase 到基线后逐条重核的时刻） |
+| 基线提交 | `origin/main` = `fd6a225c5c032857411f186765c94497b604f21e`（2026-11-08T03:47:35+08:00，`test(reference): 堵住 #28 台账闸门的证据路径写法绕过（同一张图不得点亮多行） (#1066)`） |
+| 本页工作树 | `E:\GengYunCommander\.pg17\wt-r87-i06i15ac`，分支 `docs/gy-r87-i06-i15-ac-evidence`（本页提交在基线之上，未 push） |
 | 行号口径 | 表中每个 `path:line` 都由本页作者用 `git show origin/main:<path>` 逐行核对后写下；行号对不上说明 main 已前进，请按当时的 `origin/main` 重核，不要沿用本页数字 |
 | 本页立场 | **不背书关单**：本页不主张 #6 / #15 的任何一条 AC 已由用户验收，也不主张这两个 issue 现在可以关 |
 
@@ -125,8 +125,8 @@ issue #15「[初版 GY-I15] 实现真实社区发帖、评论、点赞、筛选�
 | # | 阻断项 | 谁提供 | 现状证据 | 仓库内能否自行补 |
 | --- | --- | --- | --- | --- |
 | B1 | **真实审核供应商凭据**（最硬的一条：没有它就没有一条经真实审核的帖子） | **用户**（`TENCENTCLOUD_*` 成对凭据 + BizType 核验 + 预算授权） | 出厂替身恒 `unsure` ⇒ 隔离 ⇒ `POST /posts` 恒 422 `INPUT_UNCERTAIN`：`services/api/src/moderation/provider.ts:42-51`；负控制用例 `tests/unit/community-moderation-negative-control.test.mjs:230`；接线要显式运维动作 `services/api/src/moderation/startup-approval.ts:46`，铸造点唯一在 `services/api/src/moderation/startup-approval.ts:270-274` | **不能。仓库内做不到，需用户提供**：没有真实凭据就没有一条经真实审核的帖子，AC15-1 与 #6 的「服务商适配真实核实」都卡在这里 |
-| B2 | real + PG 的 **HTTP** 端到端 | 本项目（写手） | main 上的真库集成只有存储级：`tests/integration/post-media-attachments-pg.mjs:46-47` 直接 import 两个 PG store、`tests/integration/post-media-attachments-pg.mjs:176-177` 直接构造 store，全程不建 app ⇒ 不是 HTTP 面；未设库地址时按 `tests/integration/post-media-attachments-pg.mjs:38` 以 77 跳过 | 能。补 HTTP 版的真库用例即可，但**该文件目前不在 main**：`tests/integration/post-media-attach-http-pg.mjs` 只存在于本地分支 `feat/gy-r87-i30-http-e2e`（提交 `b0513fb4`，`git cat-file -e origin/main:tests/integration/post-media-attach-http-pg.mjs` 报 `fatal: path ... does not exist in 'origin/main'`，`origin/feat/gy-r87-i30-http-e2e` 不存在）⇒ 它的行号本页**一律不引**，只按「未合入」记 |
-| B3 | 待用池 24h / state 的**行为级负控制** | 本项目（写手） | 默认套件只有 SQL **文本**正则：`tests/unit/post-media-attachments.test.mjs:563-566`（state 四值、`interval '24 hours'`、`NOT EXISTS`、`visibility <> 'deleted'` 各一条 assert.match）；`tests/unit/post-media-attachments.test.mjs:578-582` 只钉「表不存在 ⇒ null 不是 0」。真库臂已断言挂载与删帖释放、第 4 张回滚：`tests/integration/post-media-attachments-pg.mjs:276-291`（挂载后待用池 0 ⇒ 删帖后回到 3，而 owner 累计口径恒为 3）、`tests/integration/post-media-attachments-pg.mjs:197-221`（3 张按 ordinal 落位、第 4 张 23514 被拒且整笔回滚）；该臂需 `POST_MEDIA_PG_TEST_URL`，未设即按 `tests/integration/post-media-attachments-pg.mjs:38` 以 77 跳过。**仍缺 24h 窗口衰减与 HTTP 面** | 能。缺的是「24h 过后释放」的真库行为断言与 HTTP 面复算（文本正则和现有真库臂都读不出时间衰减） |
+| B2 | real + PG 的 **HTTP** 端到端 | 本项目（写手） | main 上的真库集成只有存储级：`tests/integration/post-media-attachments-pg.mjs:56-57` 直接 import 两个 PG store、`tests/integration/post-media-attachments-pg.mjs:187-188` 直接构造 store，全程不建 app ⇒ 不是 HTTP 面；未设库地址时按 `tests/integration/post-media-attachments-pg.mjs:74` 以 77 退出 | 能。补 HTTP 版的真库用例即可，但**该文件目前不在 main**：`tests/integration/post-media-attach-http-pg.mjs` 只存在于本地分支 `feat/gy-r87-i30-http-e2e`（提交 `b0513fb4`，`git cat-file -e origin/main:tests/integration/post-media-attach-http-pg.mjs` 报 `fatal: path ... does not exist in 'origin/main'`，`origin/feat/gy-r87-i30-http-e2e` 不存在；`gh pr list --head feat/gy-r87-i30-http-e2e --state all` 也返回空，即连 PR 都还没开）⇒ 它的行号本页**一律不引**，只按「未合入、未开 PR」记 |
+| B3 | 待用池 24h / state 的**行为级负控制** | 本项目（写手） | 默认套件只有 SQL **文本**正则：`tests/unit/post-media-attachments.test.mjs:563-566`（state 四值、`interval '24 hours'`、`NOT EXISTS`、`visibility <> 'deleted'` 各一条 assert.match）、`tests/unit/post-media-attachments.test.mjs:578-582`（表不存在 ⇒ `null` 不是 0）。真库臂已断言挂载与删帖释放、第 4 张回滚：`tests/integration/post-media-attachments-pg.mjs:276-291`（挂载后待用池 0 ⇒ 删帖后回到 3，而 owner 累计口径恒为 3）、`tests/integration/post-media-attachments-pg.mjs:197-221`（3 张按 ordinal 落位、第 4 张 23514 被拒且整笔回滚）；`#1065` 之后又补了 **owner_id / state 过滤的行为级负控制**（第 ⑪ 节 `tests/integration/post-media-attachments-pg.mjs:602-716`：owner_id 支 `tests/integration/post-media-attachments-pg.mjs:690-700`、state 支 `tests/integration/post-media-attachments-pg.mjs:709-716`，删掉任一过滤即红；按该节自述，删 `owner_id` 的首个红灯其实落在第 7 节 `tests/integration/post-media-attachments-pg.mjs:280`，本节是第二道防线）。该臂需 `POST_MEDIA_PG_TEST_URL`，未设即按 `tests/integration/post-media-attachments-pg.mjs:74` 以 77 退出。**仍缺 24h 窗口衰减**（该文件的 `created_at` 只有夹具固定值 `tests/integration/post-media-attachments-pg.mjs:91` 与其使用处 `tests/integration/post-media-attachments-pg.mjs:107-108`、`tests/integration/post-media-attachments-pg.mjs:381`，没有任何相对 `now()` 的时间偏移或 25h 夹具）**与 HTTP 面端到端**（HTTP 面在飞：分支 `feat/gy-r87-i30-http-e2e`，`gh pr list --head feat/gy-r87-i30-http-e2e --state all` 返回空 ⇒ 未开 PR） | 能。缺的是「24h 过后释放」的真库行为断言与 HTTP 面复算（现有真库臂只钉挂载/释放/第 4 张与两条过滤，时间衰减没有夹具） |
 | B4 | 真实对象存储桶上的图片链路（用户侧） | 用户（桶与凭据） | 用例全部跑在替身对象存储上，例如 `tests/unit/media-http-upload.test.mjs:529` 如实标注替身；真实桶链路无读数 | 不能（需要用户侧桶与凭据） |
 | B5 | 依赖未清 | 其他 issue | #6 → `#4`、`#29`；#15 → `#4 #5 #7 #14 #28 #29`。今天实测：`#4 #5 #7 #14 #28 #29` **全 OPEN**（`#2` 已 CLOSED，不再是 #6 的门） | 不能（要等这些 issue 自己推进） |
 
@@ -156,22 +156,27 @@ issue #15「[初版 GY-I15] 实现真实社区发帖、评论、点赞、筛选�
 | L14 | 「`#1030` 的修复在两条在飞 PR 上，不在一处」…「两处都 `state=OPEN`」 | 两条都已合入 main：`#1037` squash `6e7f7465`（`2026-11-08 feat(media): real 模式社区图片改用帖子级挂载（每帖 ≤3 成为结构约束）`）、`#1057` squash `da96c9b6`（`2026-11-07 feat(community): return post_image_limit for over-limit posts`）；`gh pr view` 两条均 `MERGED`，`git merge-base --is-ancestor` 对两者均返回 0。**`#1030` 的 issue 本身仍 OPEN**（代码合入 ≠ 该 issue 已处置） |
 | L29 | 「`#6` … 「每帖 ≤3」的 post-scoped 形态**不在 main**」，阻断类型记为「代码在飞」 | 已在 main，且是三道结构闸：`services/api/db/migrations/0056_post_media_attachments.sql:63-71`、`services/api/src/routes/community.ts:81-86`、`services/api/src/routes/community.ts:479-486` ⇒ 「代码在飞」这个阻断类型对 #6 已不成立；#6 剩下的阻断是 B1（真实凭据，最硬）、B2（real+PG 的 HTTP 端到端）、B3（待用池行为级负控制）、B4（真实桶链路，需用户侧桶与凭据）、B5（`#4` `#29` 未清），另有 §6 待裁定 ①（上传取消是否入契约） |
 | L37 | 「`#15` … 每帖上限**依赖 `#1030`**」 | 不再依赖在飞项：上限已在 main（同上三道闸），用例 `tests/unit/community-post-media-limit-code.test.mjs:82` 与 `tests/unit/post-media-attachments.test.mjs:228` 都在 main；#15 剩下的阻断是 B1（真实凭据，最硬）、B2、B3、B4（真实桶链路）与 B5（`#4 #5 #7 #14 #28 #29` 全 OPEN），另有 §6 待裁定 ②（帖子收藏/历史是否属 #15） |
-| L47 | 「`#1030` … 两处修复在飞」「缺三件：同帖并发真库用例、`owner_id`/`state` 行为级负控制、real+PG HTTP 端到端」 | 前两件已有落点：同帖并发的真库用例在 `tests/integration/post-media-attachments-pg.mjs:394-438`（advisory lock 定序——第二个认领必须阻塞在锁上，没有锁时两笔事务的 `NOT EXISTS` 都会判「没人挂」），计数行为在 `tests/integration/post-media-attachments-pg.mjs:276-291`（挂载后待用池 0 ⇒ 删帖后回到 3，而 owner 累计口径恒为 3）；**第三件仍未合入**（B2）。因此这三件今天的状态是「两件有落点、一件未合入」，不是「全在飞」 |
+| L47 | 「`#1030` … 两处修复在飞」「缺三件：同帖并发真库用例、`owner_id`/`state` 行为级负控制、real+PG HTTP 端到端」 | 三件里前两件已进 main：同帖并发的真库用例在 `tests/integration/post-media-attachments-pg.mjs:405-449`（advisory lock 定序——第二个认领必须阻塞在锁上，没有锁时两笔事务的 `NOT EXISTS` 都会判「没人挂」；收尾还断言失败那笔 details 是 `media_not_attachable`、存活挂载仍只有 1 条），`owner_id`/`state` 的行为级负控制由 `#1065` 补在第 ⑪ 节 `tests/integration/post-media-attachments-pg.mjs:602-716`，计数口径的实证在 `tests/integration/post-media-attachments-pg.mjs:276-291`（挂载后待用池 0 ⇒ 删帖后回到 3，而 owner 累计口径恒为 3）；**只有第三件仍未合入**（B2：分支 `feat/gy-r87-i30-http-e2e`，未开 PR）。因此这三件今天的状态是「两件在 main、一件在飞且未开 PR」，不是「全在飞」 |
 | L76 | 「不声称在飞 PR 已接线：`#1037`/`#1057`/… 均为 `state=OPEN`」 | 该条的前提已消失：`#1037` / `#1057` 均 `MERGED` 且已在 main 历史里。新的同类义务是「不声称未合入的 `feat/gy-r87-i30-http-e2e`（`b0513fb4`）已接线」，本页 §7 第 6 条承接 |
 
 ## 9. 复核方法与闸门读数
 
-本页写完后的自检（工作树 `E:\GengYunCommander\.pg17\wt-r87-i06i15ac`，基线 `1f623228`）：
+本页写完后的自检（工作树 `E:\GengYunCommander\.pg17\wt-r87-i06i15ac`，基线 `fd6a225c`）：
 
 | 闸门 | 命令 | 读数 | 退出码 |
 | --- | --- | --- | --- |
-| 文档锚点 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 扫 427 份文档、抽出「路径:行号」引用 7702 条（解析成功 7467、同名多文件 225 不计红）；BROKEN 4 / OUT_OF_RANGE 1 / SUSPECT 43 / NOT_SYMBOL_LINE 8 = 56 条，与基线登记 56 条逐条命中、**基线外新增 0**；符号覆盖回归闸门：不在区间 44（=基线 44）、UNDECLARED 250（基线 265，未上升）、配成对 1121；末行 PASS | 0 |
+| 文档锚点 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 扫 427 份文档、抽出「路径:行号」引用 7718 条（解析成功 7483、同名多文件 225 不计红、同文档重复 17 已去重）；BROKEN 4 / OUT_OF_RANGE 1 / SUSPECT 43 / NOT_SYMBOL_LINE 8 = 56 条，与基线登记 56 条逐条命中、**基线外新增 0、陈旧 0**；符号覆盖回归闸门：不在区间 44（=基线 44）、UNDECLARED 251（基线 265，未上升）、配成对 1122；末行 PASS | 0 |
 | 契约台账 | `node tools/verify-contract-status.mjs` | 覆盖 130 条契约操作、已装配 130 条；implemented 19 / partial 111 / planned 0；形状错误 0、语义错误 0；证据锚点 593 条；中文表格一致 | 0 |
-| 文档测试 | `npm run test:docs` | 「27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables」；研究记录 5 通过 / 0 失败 / 4 legacy 已钉住；docs/research 结构校验 PASS | 0 |
+| 证据页读数 | `node tools/verify-reading-pages.mjs` | 识别 5 页 / 跳过 341 页（扫描面 346 页：`docs/verification`）——七条判据全部自洽；本页不含 failmatrix 读数（`total=`/`same=` 键、条数表），按识别口径跳过（跳过不等于本页读懂了对） | 0 |
+| 文档测试 | `npm run test:docs` | 「27 initial tasks; acyclic dependencies; complete F/AC/Q mapping; Markdown links and tables」；研究记录 5 通过 / 0 失败 / 4 legacy 已钉住；docs/research 结构校验 PASS；该脚本现已串上读数页闸门，同上「识别 5 页 / 跳过 341 页」 | 0 |
 
 闸门对本页的处置（如实记）：本页初稿在 §4 有一处「只写行号区间、同块没有显式路径」的裸锚点，被 `BARE-ORPHAN` 判为「基线外新增 1 条」；改成带完整路径的 `services/api/db/migrations/0056_post_media_attachments.sql:53-56` 后复跑归零。**没有改基线文件、没有改 `tools/**`**。
 
 本页另经一轮独立审查后做过事实更正（B3 的真库臂落点、§6 裁定 ① 的媒体路由条数、§8-L47 的两处锚点、B1 的「唯一」措辞、AC6-1 的「断点续传」措辞、AC15-3 补评论读面用例），更正后三条闸门复跑仍全部 exit 0、基线外新增 0。
+
+此后 main 又前进三个提交，本页跟到 `fd6a225c` 并重核了一遍：`#1065`（`8d30d4a1`）给真库臂补上「计数事实源的 owner_id / state 过滤」行为级负控制、`#1060`（`3ac94018`）新增证据页读数闸门、`#1066`（`fd6a225c`）堵 #28 台账的证据路径写法。相应改动：B3 的负控制描述与真库臂锚点（第 ⑪ 节 `tests/integration/post-media-attachments-pg.mjs:602-716`、owner_id 支 `tests/integration/post-media-attachments-pg.mjs:690-700`、state 支 `tests/integration/post-media-attachments-pg.mjs:709-716`）、§8-L47 的并发锚点改 `tests/integration/post-media-attachments-pg.mjs:405-449`、B2 的三处行号改 `tests/integration/post-media-attachments-pg.mjs:56-57`（import）、`tests/integration/post-media-attachments-pg.mjs:187-188`（构造 store）、`tests/integration/post-media-attachments-pg.mjs:74`（77 退出）。
+
+**这里有个教训要写在明处**：`#1065` 的 225 行**不全在文件尾部**——它在头注释里新增了第 ⑪ 颗 bullet 与 `tests/integration/post-media-attachments-pg.mjs:39-40` 的 `⚠️ ⑩/⑪` 说明，把「运行方式 / import / 构造 store」整段整体后移了约 10 行（import 原 `:46-47` → 今 `:56-57`，store 原 `:176-177` → 今 `:187-188`，77 跳过说明原 `:38` → 运行处今 `:74`）。所以「插行都在 `:438` 之后、之前不会动」这句话只对尾部成立，**对头部注释不成立**；引用这个文件必须整段重读，不能按偏移量推。
 
 行号复核方式（可复现）：`git -C <repo> show origin/main:<path>` 后用 `Select-Object -Skip N-1 -First M` 打印目标区间，逐行比对表里的断言——本页每条锚点都是这样核的。
 
