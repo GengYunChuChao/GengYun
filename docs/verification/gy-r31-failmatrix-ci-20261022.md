@@ -1,7 +1,7 @@
 # GY-R31：`#22` 失败回归矩阵接入 CI（2026-10-22）
 
 - 分支：`test/gy-r31-failmatrix-ci`，基线 `origin/main = d4d48088`（`d4d48088532377adb54c278b24ba90be42cb5aaf`）。
-- 机器：Windows / node v24.16.0 / npm 11.13.0（CI 侧 `ubuntu-24.04` + node `24.16.0`，与本仓其它 19 处 `setup-node` 一致）。
+- 机器：Windows / node v24.16.0 / npm 11.13.0（CI 侧 `ubuntu-24.04` + node `24.16.0`，与本仓其它 workflow 的 `setup-node` 配置一致（全仓计数会持续过期，故不写数））。
 - 本页所有读数都是**在本工作树里实跑**的原文，不是估算；每条都给了复现命令。
 - ⚠ 本页包含一条对任务前提的**更正**（§1.2）：这套矩阵在 `d4d48088` 上**并非无人执行**，它此前是通过 `npm run test:unit` 间接跑的。见下。
 
@@ -10,7 +10,7 @@
 | # | 文件:行 | 内容 |
 | --- | --- | --- |
 | 1 | `package.json:24` | 新增 `"test:failmatrix": "node tests/failmatrix/run.mjs"`（唯一改动；`git diff` 只有这一行） |
-| 2 | `.github/workflows/failmatrix.yml:1-64` | 新增独立 workflow（`failmatrix` job），失败即红、上传机读产物 |
+| 2 | `.github/workflows/failmatrix.yml`（全文件 66 行） | 新增独立 workflow（`failmatrix` job），失败即红、上传机读产物 |
 | 3 | `docs/verification/gy-r31-failmatrix-ci-20261022.md` | 本页 |
 
 - 分支已推：`git ls-remote origin refs/heads/test/gy-r31-failmatrix-ci` → `fcb744a4046bb39c855dab13feac8db530c4d0fd  refs/heads/test/gy-r31-failmatrix-ci`。
@@ -28,7 +28,7 @@
 
 ### 1.2 更正：「谁都不跑」不成立，但「没有自己的门禁」成立
 
-`tests/unit/gy-i22-failmatrix.test.mjs`（随 `903ad629` 进入 main，是 `d4d48088` 的祖先）已经把整套矩阵包进了 `npm run test:unit`：它 `spawnSync` 跑一遍 `run.mjs --json=`，再断言全绿、条数不少于 `MIN_CASES`、每条都有真实读数、分族/分批次条数与基线一致。`engineering-shell.yml:46` 的 `unit-tests` job 在 `engineering-shell.yml:58` 跑 `npm run test:unit`。
+`tests/unit/gy-i22-failmatrix.test.mjs`（随 `903ad629` 进入 main，是 `d4d48088` 的祖先）已经把整套矩阵包进了 `npm run test:unit`：它 `spawnSync` 跑一遍 `run.mjs --json=`，再断言全绿、条数不少于 `MIN_CASES`、每条都有真实读数、分族/分批次条数与基线一致。`.github/workflows/engineering-shell.yml:46` 的 `unit-tests` job 在 `.github/workflows/engineering-shell.yml:63` 跑 `npm run test:unit`。
 
 所以准确说法是：
 
@@ -47,7 +47,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 EXIT=0  ELAPSED_SEC=1.86
 ```
 
-> 用例条数写「159」只是那个测试**标题**里的旧文案，实际断言的是 `MIN_CASES = 168` 条——标题没跟上加用例，不影响判定；本页不改它（改它就得动 `tests/unit/`，与本轮无关）。
+> 用例条数写「159」是 2026-10-22 那次跑的测试**标题**文案（按 §11 原样保留，不回填）；标题已随 `a3e53fbe` 改成 249（现见 `tests/unit/gy-i22-failmatrix.test.mjs:66`），与 `MIN_CASES = 249`（同页第 206 条）一致。
 
 **本轮补的正是这三件缺的事**：一个固定检查名（`failmatrix`）、一条命令（`npm run test:failmatrix`）、一份可下载的机读产物（`failmatrix-<sha>`），并且**不依赖** `test:unit` 是否被人盯着。
 
@@ -61,20 +61,20 @@ EXIT=0  ELAPSED_SEC=1.86
 
 放在 `test:evaluation` 与 `test:integration:http` 之间，与既有 `test:*` 排序一致；其余脚本一字未动。
 
-### 2.2 `.github/workflows/failmatrix.yml`（新增 64 行）
+### 2.2 `.github/workflows/failmatrix.yml`（新增时 64 行，现 66 行）
 
 关键行（行号对应当前文件）：
 
 | 关心点 | 行 | 原文 |
 | --- | --- | --- |
-| 触发 | `:21-26` | `on:` / `pull_request: branches: [main]` / `push: branches: [main]` / `workflow_dispatch:` |
-| 运行环境 | `:34` | `runs-on: ubuntu-24.04` |
-| Node 版本 | `:42` | `node-version: '24.16.0'`（照抄既有 19 处） |
-| 依赖安装 | `:44` | `npm ci --no-audit --no-fund`（与既有 job 同款） |
-| 跑矩阵 | `:47` | `npm run test:failmatrix -- --json="$RUNNER_TEMP/failmatrix/matrix.json"` |
-| 失败判定① | `:47` | 上面这步的退出码：`run.mjs:550` `return fail === 0 ? 0 : 1;` ⇒ 步骤红 ⇒ job 红 |
-| 失败判定② | `:50-57` | 读机读产物二次判定：`t.fail!==0 \|\| t.pass!==t.total \|\| t.total===0` ⇒ `exit 1` |
-| 产物上传 | `:58-64` | `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`（v4.6.2，按 SHA 钉住）；`name: failmatrix-${{ github.sha }}`；`if: always()`；`retention-days: 14` |
+| 触发 | `.github/workflows/failmatrix.yml:23-28` | `on:` / `pull_request: branches: [main]` / `push: branches: [main]` / `workflow_dispatch:` |
+| 运行环境 | `.github/workflows/failmatrix.yml:36` | `runs-on: ubuntu-24.04` |
+| Node 版本 | `.github/workflows/failmatrix.yml:44` | `node-version: '24.16.0'`（照抄既有 19 处） |
+| 依赖安装 | `.github/workflows/failmatrix.yml:46` | `npm ci --no-audit --no-fund`（与既有 job 同款） |
+| 跑矩阵 | `.github/workflows/failmatrix.yml:49` | `npm run test:failmatrix -- --json="$RUNNER_TEMP/failmatrix/matrix.json"` |
+| 失败判定① | `.github/workflows/failmatrix.yml:49` | 上面这步的退出码：`run.mjs:550` `return fail === 0 ? 0 : 1;` ⇒ 步骤红 ⇒ job 红 |
+| 失败判定② | `.github/workflows/failmatrix.yml:52-59` | 读机读产物二次判定：`t.fail!==0 \|\| t.pass!==t.total \|\| t.total===0` ⇒ `exit 1` |
+| 产物上传 | `.github/workflows/failmatrix.yml:60-66` | `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`（v4.6.2，按 SHA 钉住）；`name: failmatrix-${{ github.sha }}`；`if: always()`；`retention-days: 14` |
 
 - `permissions: contents: read`：不写、不评论、不推。
 - **没有**任何 PG / 网络 / 密钥 / 微信开发者工具步骤：世界装配里的四个网络 seam **持有即抛错**，执行模式固定 `stub`。
@@ -82,7 +82,7 @@ EXIT=0  ELAPSED_SEC=1.86
 
 ### 2.3 为什么另开一个 workflow 而不是并进 `engineering-shell.yml`
 
-`engineering-shell.yml` 是 13 个 job 的大文件，正被多张在飞 PR 反复改；往里加 job 会抢同一个文件、冲掉别人的改动。另开一个小文件：零冲突面、检查名独立（`failmatrix`）、可以单独 `workflow_dispatch` 重跑一次。
+`engineering-shell.yml` 是个大文件（写此页时 13 个 job，现 8 个），正被多张在飞 PR 反复改；往里加 job 会抢同一个文件、冲掉别人的改动。另开一个小文件：零冲突面、检查名独立（`failmatrix`）、可以单独 `workflow_dispatch` 重跑一次。
 
 ## 3 读数（原文）
 
@@ -129,7 +129,7 @@ RUN3 EXIT=0 WALL_SEC=5.72 :: 矩阵合计 168 条：PASS 168 / FAIL 0
 
 ### 3.3 非空证明：门禁真的会红
 
-把 `cases.mjs:52` 里 `C1-01` 的 `expect: { status: 401, ... }` 临时改成 `status: 999`（expect 自身不改判定逻辑，故意让它对不上真实读数 401）：
+把 `tests/failmatrix/cases.mjs:111` 里 `C1-01` 的 `expect: { status: 401, ... }` 临时改成 `status: 999`（expect 自身不改判定逻辑，故意让它对不上真实读数 401）：
 
 ```
   FAIL C1-01  GET    /api/v1/favorites → 401 SESSION_REQUIRED · cache=no-store etag=- · 游客读收藏列表
@@ -202,8 +202,8 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 ## 4 失败判定的三层（为什么它真的会红）
 
 1. **退出码**：`run.mjs:550` `return fail === 0 ? 0 : 1;` —— 任意一条 FAIL ⇒ 步骤退出 1 ⇒ job 红。实测见 §3.3。
-2. **机读二次判定**：workflow `:50-57` 读 `--json` 产物，`fail!==0 || pass!==total || total===0` 就 `exit 1`。这层挡的是「将来有人把 runner 改成『打完成绩也退 0』」和「产物被清空却显示 0 条」。本地验证：好产物 `GOOD_EXIT=0`；把 `fail` 改成 1 的产物 `BAD_EXIT=1` 且日志打印 `矩阵有失败或被清空：FAIL 1 / 合计 168`。
-3. **条数不缩水**：`tests/unit/gy-i22-failmatrix.test.mjs` 仍在 `test:unit` 里，`MIN_CASES = 168` 与分族/分批次计数会挡「悄悄删用例」。
+2. **机读二次判定**：workflow `.github/workflows/failmatrix.yml:52-59` 读 `--json` 产物，`fail!==0 || pass!==total || total===0` 就 `exit 1`。这层挡的是「将来有人把 runner 改成『打完成绩也退 0』」和「产物被清空却显示 0 条」。本地验证：好产物 `GOOD_EXIT=0`；把 `fail` 改成 1 的产物 `BAD_EXIT=1` 且日志打印 `矩阵有失败或被清空：FAIL 1 / 合计 168`（168 是 2026-10-22 当时的用例总数，本页不改写这条历史日志；现为 249，见 §4 第 3 条）。
+3. **条数不缩水**：`tests/unit/gy-i22-failmatrix.test.mjs` 仍在 `test:unit` 里，`MIN_CASES = 249`（下限随用例增长只会往上调）与分族/分批次计数会挡「悄悄删用例」。
 
 ## 5 未覆盖（本页不宣称的部分）
 
@@ -226,7 +226,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 1. 写进 `tests/failmatrix/cases.mjs` 的 `CASES` 数组：`{ id, family, title, method, path, headers?, body?, expect: { status, code?, etag?, ... }, check? }`。`path` 可以是函数（依赖世界装配）。
 2. 期望值必须是**实跑读数**，行尾注释写清日期与执行模式（沿用现有风格）。
 3. 族必须已登记在 `FAMILIES`，**并且**被某个 `BATCHES[].families` 收口；否则 `test:unit` 的「用例表自洽」会红。
-4. 同步改 `tests/unit/gy-i22-failmatrix.test.mjs` 的 `MIN_CASES`（`:28`）、`FAMILY_COUNTS`（`:30`）、`BATCH_COUNTS`（`:32`）。**不改就红**——这是防止用例被悄悄删的机制；⛔ 只准往上调。
+4. 同步改 `tests/unit/gy-i22-failmatrix.test.mjs:43` 的 `MIN_CASES`、`:45` 的 `FAMILY_COUNTS`、`:47` 的 `BATCH_COUNTS`。**不改就红**——这是防止用例被悄悄删的机制；⛔ 只准往上调。
 
 ### 6.2 新增一条 seam 用例（回调 / AI 失败 / 下架 / 版本回写）
 
@@ -243,7 +243,7 @@ $ node --test tests/unit/gy-i22-failmatrix.test.mjs
 ### 6.4 `--only` / `--list` / `--json` 怎么用
 
 ```
-node tests/failmatrix/run.mjs --list                  # 列出全部用例 + 总数（现为 168）
+node tests/failmatrix/run.mjs --list                  # 列出全部用例 + 总数（现为 249：HTTP 229 + seam 20）
 node tests/failmatrix/run.mjs --only=C1                # 整个 C1 族（37 条）
 node tests/failmatrix/run.mjs --only=C1,C2-01,D3       # 族名或用例 id，前缀匹配
 npm run test:failmatrix -- --only=C5                   # 经 npm 传参（注意  --  分隔符）
@@ -252,7 +252,7 @@ node tests/failmatrix/run.mjs --json=out.json          # 另存机读结果
 
 未知参数直接报错（`run.mjs:62` 的注释：避免「以为筛了，其实没筛」）。
 
-**门禁里永远跑全量**：`failmatrix.yml:47` 不带 `--only`。`--only` 只用于本地定位与调试，或将来真的超预算时按整族拆分。
+**门禁里永远跑全量**：`.github/workflows/failmatrix.yml:49` 不带 `--only`。`--only` 只用于本地定位与调试，或将来真的超预算时按整族拆分。
 
 ### 6.5 维护这套门禁时要盯的三件事
 

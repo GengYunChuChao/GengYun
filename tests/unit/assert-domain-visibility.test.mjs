@@ -131,7 +131,7 @@ function createdPublicTables() {
     while ((match = pattern.exec(text))) {
       const raw = match[1].replace(/"/g, '').replace(/^public\./, '');
       // 少数建表语句里 `CREATE TABLE` 与 `IF NOT EXISTS` 之间夹了换行 / 注释，可选组没吃到，
-      // 于是把 `IF` 当成表名；这里直接丢掉这个噪声，别让它污染「78 张」的口径。
+      // 于是把 `IF` 当成表名；这里直接丢掉这个噪声，别让它污染「79 张」的口径。
       if (raw === 'IF') continue;
       if (raw.includes('.')) {
         nonPublic.push(`${file}:${raw}`);

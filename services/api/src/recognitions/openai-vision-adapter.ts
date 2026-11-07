@@ -27,6 +27,20 @@ import type { LiveRecognitionObservation, RealRecognitionPorts, RecognitionImage
 import type { ProviderCallState } from '../tts/live-ports.ts';
 import { assertRecognitionEndpoint, requireLiveRecognitionImage } from './live-adapter.ts';
 import { liveGateRefusalToErrorCode } from '../tts/live-ports.ts';
+import { providerConfigVersionOf, readCallMetadata } from './call-metadata.ts';
+
+/**
+ * 带记账元数据的识别结果。
+ *
+ * 用**本文件局部**的交叉类型，而不是给 `provider.ts` 的 `ProviderOutcome` 加可选字段：
+ * `usage` 与 `providerConfigVersion` 只服务记账（`privacy/media-call-accounting.ts` 按可选属性读，
+ * 读不到就记 `null` / `unknown`），不该扩公共契约面 —— 一旦写进 `ProviderOutcome`，
+ * 每个识别提供者都得为「本基线没有的」字段表态。
+ *
+ * ⛔ `usage` 是**未收口**的外来数据：形状由 `readCallMetadata` 收口后才落库（迁移 0055 的
+ * `usage` 列还有 `jsonb_typeof = 'object'` 兜底）。
+ */
+type OpenAiVisionOutcome = ProviderOutcome & { usage?: unknown; providerConfigVersion?: string };
 
 /** 剖面名（也写入 `model_version`：本基线没有已审供应商，绝不写一个模型名冒充能力主张）。 */
 export const OPENAI_VISION_PROTOCOL = 'openai-vision-v1';
@@ -202,13 +216,19 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
   const now = options.now ?? ((): number => Date.now());
   const prompt = buildOpenAiVisionPrompt(allowedIds);
   const timeoutMs = OPENAI_VISION_FROZEN_PROFILE.defaultTimeoutMs;
+  /**
+   * 剖面版本串：`<剖面>#<模型>@<端点主机摘要8>`（构造期算一次，不逐次重算）。
+   * 只含主机名的 8 字符 sha256 前缀 —— ⛔ 端点原文/路径/query/凭据都不出现；
+   * 形状不合法时 `providerConfigVersionOf` 自己降级（先丢掉主机摘要，再退到剖面名）。
+   */
+  const providerConfigVersion = providerConfigVersionOf(OPENAI_VISION_PROTOCOL, model, endpoint);
 
   return {
     executionMode: 'real',
     modelVersion: OPENAI_VISION_PROTOCOL,
     available: true,
     unavailableReason: null,
-    async recognize({ jobId, mediaId, mediaRevision }): Promise<ProviderOutcome> {
+    async recognize({ jobId, mediaId, mediaRevision }): Promise<OpenAiVisionOutcome> {
       // ① build（本地）：本地拒绝不占预算、不建连。
       let image: Uint8Array;
       try {
@@ -314,9 +334,9 @@ export function createOpenAiVisionRecognitionProvider(options: OpenAiVisionOptio
       if (candidates.length === 0) {
         // 空候选是「正常调用但没结果」：本分支**不**上报 `no_result`（那由调用方按 `branch` 语义决定），
         // 终态仍由 `decideOutcome` 判 `uncertain`；reason 截断到 80 字符，避免超长文案让终态判定抛协议违规。
-        return { kind: 'completed', candidates: [], uncertainty_reasons: [reason === '' ? '模型未返回任何候选' : reason.slice(0, 80)] };
+        return { kind: 'completed', candidates: [], uncertainty_reasons: [reason === '' ? '模型未返回任何候选' : reason.slice(0, 80)], usage: readCallMetadata(root), providerConfigVersion };
       }
-      return { kind: 'completed', candidates };
+      return { kind: 'completed', candidates, usage: readCallMetadata(root), providerConfigVersion };
     },
   };
 }

@@ -78,7 +78,13 @@
     "`feat/gy-r83-provider-call-ledger`（`0055_provider_call_ledger.sql`，provider_call_ledger 调用台账）占用，",
     "尚未落盘 ⇒ 本片按协调结果取 0056，树上因此出现「有依据的缺号」0055：",
     "54 个文件 + 2 保留（37、55） === max 56（三条不变量成立）。55 号一落盘 reservedButPresent 立刻判红，",
-    "条目按 remove_when 删。⛔ 这条不是白名单：缺 55 但没登记，undeclaredGaps 照旧判红。"
+    "条目按 remove_when 删。⛔ 这条不是白名单：缺 55 但没登记，undeclaredGaps 照旧判红。",
+    "【2026-11-07 GY-R83 合流 origin/main @ ca3b26f0 · #1003 的 0055 已真实落盘 · 55 号条目按 remove_when 删除】",
+    "54a4ab23 的 0055_provider_call_ledger.sql（`public.provider_call_ledger` 识别外发记账）已随 origin/main 落盘，",
+    "与本片的 0056_post_media_attachments.sql 并存 ⇒ 0037 是唯一缺号；合流树实测读数：",
+    "55 个正向文件 + 1 保留（37） === max 56（rollback/ 54 个：0001 与 0037 无 down），",
+    "`verify-migrations-unique --strict` 的 [gap] 55 随之消失。⛔ 55 号条目已删（落盘即删，reservedButPresent 会判红）；",
+    "上面 0056 那段的「缺号 0055」只是当时的取号依据，不是可长期躺着的白名单。"
   ],
   "reservations": [
     {
@@ -87,13 +93,6 @@
       "owner": "#14（已分配，号空出、尚无文件）",
       "reason": "0037 已分配给 #14（人工复核）；本合流树缺 0037 ⇒ 保留登记",
       "remove_when": "#14 落 0037 即删"
-    },
-    {
-      "version": 55,
-      "filename": "0055_provider_call_ledger.sql",
-      "owner": "feat/gy-r83-provider-call-ledger（GY-R83 同批分派的另一条分支，尚未落盘）",
-      "reason": "0055 已被 provider_call_ledger 调用台账占用；本片（#1030）按协调结果取 0056，缺 0055 ⇒ 保留登记",
-      "remove_when": "feat/gy-r83-provider-call-ledger 落 0055 即删（含其 rollback/0055_provider_call_ledger.down.sql）"
     }
   ]
 }

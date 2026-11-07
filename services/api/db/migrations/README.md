@@ -43,15 +43,14 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
 正向 53 条、`rollback/` 52 条、最大号 `0054`、`0037` 不存在；`discoverMigrations()` 报 53 个文件、
 末项 `0054_favorites_target_lookup.sql`。）
 
-（2026-11-07 · GY-R83(`0056`) 落盘后复测：`0001..0054` + `0056`，缺号是 `0037` 与 `0055` ⇒ 目录现为
-**54 个正向 `.sql`** ＋ `rollback/` **53 个**（`0001` 无 down）；`count + 保留数 === max` ⇒
-**54 + 2 === 56**（保留号 = `0037` #14、`0055` 在飞的 `feat/gy-r83-provider-call-ledger`）。上一段那组
-53/52 与 `53 + 1 === 54` 是 2026-11-03 当天的实测快照，**保留不动**。`0055` 让号的依据见
-`services/api/db/migration-reservations.json` 的 `$comment` 末段。）
+（2026-11-07 · GY-R83 合流后复测（`origin/main` @ `ca3b26f0` 的 `0055` 与本分支 `0056` **同时落盘**）：
+`0001..0056`，缺号仍只有 `0037` ⇒ 目录现为 **55 个正向 `.sql`** ＋ `rollback/` **54 个**（`0001` 与 `0037` 无 down）；
+`count + 保留数 === max` ⇒ **55 + 1 === 56**。上一段那组 54/53 与 `54 + 2 === 56` 是 2026-11-07
+**合流前本分支单侧**的实测快照（当时 `0055` 由在飞的 `feat/gy-r83-provider-call-ledger` 让号、尚未落盘），
+**保留不动**；更早的 53/52 与 52/51 同样保留。本段实测口径：直接数目录得正向 55 条、`rollback/` 54 条、
+最大号 `0056`、缺号只有 `0037`；`discoverMigrations()` 同样报 55 个文件、末项 `0056_post_media_attachments.sql`。）
 
 - `0037` 预留：**#14** 人工复核（已裁定分配、尚无分支/文件；文件名待该片落定时核）。
-- `0055` 预留：**在飞**的 `feat/gy-r83-provider-call-ledger`（`0055_provider_call_ledger.sql`，provider_call_ledger
-  调用台账）占用；本片（`0056`）按协调结果让号，落地后按 `remove_when` 删除台账条目。
 - `0056_post_media_attachments.sql`（GY-R83 #1030 · **帖子级媒体挂载表**：把「real 模式每帖 ≤3 张图」从
   owner 生命周期累计的计数近似改成**结构约束**）。
   依赖 `0022_community_persistence.sql` 的 `public.community_posts`；**只建一张新表**，不改既有列/CHECK、
@@ -83,6 +82,61 @@ S3 片 A 落 `0045_community_post_review_actor.sql`、`#18` S2 收尾片落
   副作用是待用池口径（`countPendingCommunityImages`）把「迁移前上传、又挂到旧帖的 media」当未挂载，
   24h 窗口内占位、最多 24h 自愈。待用池有界：同一 owner 同时最多 **3** 张未挂载 `community_image`
   （上传侧 `post_image_limit` 先挡一道），挂载即释放、删帖也释放 —— 是上界，不是锁死。
+- `0055_provider_call_ledger.sql`（GY-R83 #1003 · **库层记账**：识别链路**外发那一行**的用量与
+  剖面版本 —— issue #1003 剩下的两条验收口径「`usage` 记账」「`provider_config_version` 落库」）。
+  接在 `0054` 之后取号（本清单最新在前，故这一条排在 `0054` 条目**之上**），号位依据「正向最大号 +1」
+  （`0037` 仍为 #14 保留 ⇒ **台账不新增条目**）。
+  建 `public.provider_call_ledger`（`id uuid PK` / `domain text NOT NULL` 闭集 `('recognition')` /
+  `job_id uuid NULL` **无外键** / `export_id uuid NOT NULL REFERENCES public.exports (id) ON DELETE CASCADE` /
+  `attempt integer NOT NULL`（≥ 1）/ `capability varchar(40)` / `provider_config_version varchar(80) NOT NULL`
+  / `model_version varchar(80) NULL`（两者同形状 `^[A-Za-z0-9][A-Za-z0-9._:/#+@-]{0,79}$`）/
+  `invocation_state text NOT NULL` 闭集 `('sent','send_failed')` / `usage jsonb NULL`（必须是对象）/
+  `sent_at timestamptz NULL` / `duration_ms integer NULL`（≥ 0）/ `created_at timestamptz NOT NULL DEFAULT now()`，
+  `UNIQUE (export_id, attempt)` ＋ `provider_call_ledger_job_idx (job_id)`）。
+  ⚠ **与 `0050` 的唯一形状差异**：本表两列版本串的字符类**多一个 `@`**（`[A-Za-z0-9._:/#+@-]`）。
+  理由是本片的版本串格式就是 `` `${profile}#${model}@${sha256(hostname).slice(0,8)}` ``，分隔符就是 `@`；
+  照抄 `0050` 的字符类会让**每一个**带主机摘要的串都被 `23514` 拒掉（`record()` 抛错 ⇒ 记账静默丢行）。
+  两处必须同步：`services/api/src/recognitions/call-metadata.ts` 的 `CALL_VERSION_SHAPE`
+  与 `tests/unit/recognitions-call-metadata.test.mjs`（有断言逐字比对正则来源）。
+  **为什么另开一张表而不复用 `0050` 的 `provider_invocations`**：后者对运行时的写入权被三处文档明写
+  「有意冻结」（`0050_provider_invocations.sql:106`、`90-assert-least-privilege.sql:2423`、
+  `docs/architecture/ai-ops-spec-status.md:135` 的 N05）⇒ 默认部署下恒 `42501`，记不进也不报错
+  （正是本片要修的静默缺口）；解冻那张表属**安全姿态变更**，不在本片范围。列名刻意与之同构
+  （`job_id`/`attempt`/`capability`/`model_version`/`invocation_state`/`sent_at`/`duration_ms`/`usage`/
+  `export_id`/`created_at`），日后解冻时是**并入**而不是重写。
+  **为什么不给 `recognition_records` 加列**：那是识别终态行，与 `commitTerminal` 同事务 ⇒ 记账失败会让
+  整笔终态回滚、作业卡 `running`；且只记得住成功终态，超时/HTTP 错那次已烧掉的 token 记不到。
+  本表刻意**不进终态事务**：写入是 best-effort（`privacy/media-call-accounting.ts` 的
+  `withProviderCallAccounting`，失败只留 `readings.failed` + 一条事件，绝不改判识别结果）。
+  与 `0050` 的两处刻意差异：① `invocation_state` 闭集**没有** `blocked`（本表零外发路径不写行，
+  没有写入者就不建值）；② 唯一性锚在**非空**的 `export_id` 上（`0050` 的 `(job_id, attempt)` 在
+  `job_id` 为 NULL 时 PG 不做唯一性判定）。
+  本迁移**零 GRANT**（与 `0024`/`0026`/`0050`/`0051` 同一条纪律），授权在
+  `deploy/postgres-cvm/sql/20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant` 区
+  （**独立 region**：既有 `gy-r71-jobs-ledger-grant` 区被 `tests/integration/egress-ledger-pg.mjs`
+  按 `#region` 抽取并逐条断言「只含 `public.jobs` 的列级授权」，往里加表会让那条臂判红），
+  分类/列面复述/零行探针在 `deploy/postgres-cvm/sql/90-assert-least-privilege.sql`
+  （`domain_manifest` 的 `granted` 行 + `expected` 的独立列清单 + 一条 `SET LOCAL ROLE` 探针）。
+  授权面就两句话：**写 11 列，读 2 列**（`export_id` / `attempt` —— 子查询的 `WHERE export_id`、
+  `MAX(attempt)` 与 `RETURNING attempt` 的回读）。不授整行读权：写点写完不回读任何业务列，
+  多授一列就是多一条本角色本不需要的读路径（`90-assert` 的读面探针只列这两列）。
+  配对回滚 `rollback/0055_provider_call_ledger.down.sql` **同一事务内先 `count(*)` 再 `DROP`**：
+  表里已有行 ⇒
+  `RAISE EXCEPTION USING ERRCODE='G0019', MESSAGE='PROVIDER_CALL_LEDGER_ROLLBACK_BLOCKED'`
+  （记账行是**已经付出的外发代价**的唯一结构记录，删表会留下「有账无据」），正确动作是**回滚应用版本**。
+  没有提交中间态（预检与删表同一事务）；⚠ 但**未 `LOCK TABLE`**，所以「预检读空」到「`DROP` 拿到锁」
+  之间仍可能插进一行随表一起消失 —— 这是有意的取舍（回滚是运维动作，不为此给生产表加排他锁）。
+  读数：`tests/unit/recognitions-call-metadata.test.mjs`（usage 读音与版本串形状/降级）、
+  `tests/unit/recognitions-usage-accounting.test.mjs`（sent / send_failed / 记账抛错不改判 / 非 real 零写，
+  假 ledger、零网络）、`tests/unit/recognitions-ledger-composition.test.mjs`（**组合臂**：真
+  `createMediaJobEgress` × 真 `withProviderCallAccounting` × 假 exports 账本，钉住「`export_id` 必须在
+  **调用之前**取、`markSent` 之后按 `state='reserved'` 回查恒查不到」这条时序 —— 把取 id 改回调用之后，
+  该臂立刻红）、`tests/integration/recognitions-provider-call-ledger-pg.mjs`（真库：表形状、
+  `usage` jsonb、`UNIQUE(export_id,attempt)`、`export_id` 级联删除、未授权角色 42501）；真库臂需
+  `*_PG_TEST_URL`，**本机无 PG，未跑**（该臂标题已改成「未接线（本机无 PG，未执行）」）。
+  在 CI 中真正执行 0055 DDL / 授权面的是 `.github/workflows/deploy-sql-gate.yml`（`migrate.ts up` +
+  `20-login-roles.sql` + `90-assert`，PG 17.11）；未验的是回滚件、`UNIQUE (export_id, attempt)`
+  实际拦重复、`export_id` 级联删除。
 - `0054_favorites_target_lookup.sql`（GY-R73 #17 · **反查索引**：「按被撤回/失效的收藏目标反查收藏者」的索引 ——
   后台撤回资料来源/条目后，要按对象找出「谁收藏过它」，才谈得上给这些人发失效通知）。
   接在 `0053` 之后取号（本清单最新在前，故这一条排在 `0053` 条目**之上**），号位依据「正向最大号 +1」
