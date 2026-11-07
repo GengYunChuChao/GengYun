@@ -1,4 +1,12 @@
-// GY-R83 · `#1003` · 识别外发记账表接真实 PostgreSQL 17.11 · **未接线（本机无 PG，未执行）**（迁移 0055）
+// GY-R83 · `#1003` · 识别外发记账表接真实 PostgreSQL 17.11（迁移 0055）
+//
+// 首次实跑：2026-11-07，PostgreSQL 17.11（本机回环 `127.0.0.1:55400`），结果为 `[√] ALL PASS`，
+// 读数见 `docs/verification/gy-r86-provider-call-ledger-pg-first-run-20261107.md`。该次实跑当场暴露出
+// 两处**从未被执行过**的判据缺陷（都是判据写错、产品代码无缺陷），已在本文件内修正：
+//   ① `[T]` 的 export_id 外键正则硬写 `REFERENCES public.exports(id)`，而 `pg_get_constraintdef`
+//      在 `search_path` 能解析到 `public` 时输出 `REFERENCES exports(id)`（无 schema 限定词）；
+//   ② `[R]` 期望回滚件抛 `G0019` 后没有 `ROLLBACK`，会话停在 aborted 状态，后续语句一律 25P02。
+// 这两处说明「写了但没跑过」的判据不能算证据——本文件此后按实跑记账。
 //
 // 运行（本机隔离集群，仅回环；**自带建库**，不需要事先 createdb）：
 //   node tests/integration/recognitions-provider-call-ledger-pg.mjs postgres://postgres@127.0.0.1:<port>/postgres
@@ -205,7 +213,9 @@ async function expectRejected(overrides, label, codes = ['23514']) {
         AND pg_get_constraintdef(oid) ILIKE '%export_id%'`,
   );
   assert.ok(exportFk, 'export_id 必须有外键');
-  assert.match(exportFk.def, /REFERENCES public\.exports\(id\) ON DELETE CASCADE/i, `export_id 外键必须是 ON DELETE CASCADE（实际 ${exportFk?.def}）`);
+  // PostgreSQL 在 `search_path` 能解析到 `public` 时会省掉 schema 限定词（pg_get_constraintdef 输出
+  // `REFERENCES exports(id)`，而建表语句写的是 `public.exports`），两种写法都必须接受。
+  assert.match(exportFk.def, /REFERENCES (public\.)?exports\(id\) ON DELETE CASCADE/i, `export_id 外键必须是 ON DELETE CASCADE（实际 ${exportFk?.def}）`);
   note('[T] 13 列形状逐列一致；job_id 无外键；export_id → public.exports ON DELETE CASCADE');
 }
 
@@ -526,6 +536,9 @@ async function expectRejected(overrides, label, codes = ['23514']) {
     },
     '有记账行时回滚必须中止（⛔ 不静默丢记账）',
   );
+  // 回滚件自己开了 `BEGIN;`，异常路径既没有 COMMIT 也没有 ROLLBACK ⇒ 会话停在 aborted 状态，
+  // 之后的任何语句都会 25P02。这里显式回滚，才能继续验证「中止后表还在」。
+  await owner.query('ROLLBACK');
   assert.ok((await one("SELECT to_regclass('public.provider_call_ledger') AS o")).o, '中止后表必须还在');
   note('[R] 表里有行 ⇒ 回滚件以 G0019 / PROVIDER_CALL_LEDGER_ROLLBACK_BLOCKED 中止，表原样还在');
 
