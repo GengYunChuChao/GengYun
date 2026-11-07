@@ -84,6 +84,12 @@ node tests/integration/recognitions-provider-call-ledger-pg.mjs postgres://postg
 | --- | --- |
 | P3-1 §2 里「表原样还在」只由 `to_regclass` 非空支撑 | **已加固**：判据改成「表在 **且** 记账行数与中止前**相等**」——只断言表存在（甚至只断言「行数 > 0」）都允许「表在、行没了/少了一半」。变异自证：在 `ROLLBACK` 之后插一句删空表，判据红在「中止后表与记账行必须原样还在（不是只剩空表/少行）」 |
 | P3-2 §2 的 `[K] 9 条约束 + job_idx 在场（实际约束 10 条）` 里 9 与 10 并列却不说明第 10 条 | 本页不改动那行读数（它是当次实跑的原样转录），在此说明：**第 10 条是 `export_id` → `public.exports(id)` 的外键**（前 9 条 = 8 条命名 CHECK/UNIQUE + 主键 `provider_call_ledger_pkey`） |
-| P3-3 抬头删掉「未接线」后，单看本文件可能被读成 CI 已覆盖 | **已加固**：抬头补一句「本臂仍**不在任何 workflow 的 `run:` 里**（白名单登记见 `tests/unit/ci-integration-chain-structure.test.mjs`）」 |
+| P3-3 抬头删掉「未接线」后，单看本文件可能被读成 CI 已覆盖 | **已加固**：抬头补一句「本臂仍**不在任何 workflow 的 `run:` 里**（白名单登记见 `tests/unit/ci-integration-chain-structure.test.mjs`）」（R87 起该句已改为「已接线」，见 §7） |
 
 加固后本臂复跑仍 `[√] ALL PASS`、exit 0；除每次运行随机的 `[F]` 夹具 UUID 外，输出逐行相同（读数表 §2 无需回填：本次加固不改任何被记录的读数）。
+
+## 7 R87 接线与「分段计数闸」的边界（2026-11-08）
+
+- **已接线**：`#29` 尾巴由 R87 接上——`.github/workflows/real-pg-integration.yml` 新增 job `real-pg-ledger-17-11`（`services.postgres:17.11`，发布在 `127.0.0.1:5432`，`POSTGRES_USER` 即超管；先 `CREATE DATABASE gengyun_provider_call_ledger_test`，再经 `argv[2]` 把连接串交给脚本，末行闸门要求日志里出现 `[√] ALL PASS`）。§5 的本机手动跑仍是复现方式，但不再是唯一路径。
+- **闸的性质**：脚本末尾新增 `EXPECTED_SEGMENTS` 分段计数闸（基线 27）。它数的是**日志分段行数**（`^\[[A-Z]\] `），**不是断言条数**——只证「每组判据都还在」，不证「组内每条断言都在」。
+- **已知限制**（审查实测）：删掉整组 `[R]`（32 行）⇒ 分段 25/27、`AssertionError` 判红；只删 `[A]` 组 16 行（三条 `assert.rejects`）⇒ **仍 27/27 全绿**。本闸挡「整段消失」，不挡「组内少一条」；要锁断言条数需另设断言计数器，不在本片范围。
