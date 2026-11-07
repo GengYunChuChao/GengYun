@@ -29,6 +29,7 @@
  *   0   真库起得来、矩阵权限面在真 PG 上取得逐条读数，且如实记录差异（不是「全绿」才算 0）；
  *   77  没设 GY_PG_BIN ⇒ **未取得**（POSIX skipped），不是通过；`--allow-skip`/`GY_ALLOW_SKIP=1` 才降级 0（仅本机开发，⛔ 不得接门禁）；
  *   其它非 0（通常 1）真失败（集群起不来 / 迁移失败 / 装配抛错）。
+ *   --require-no-not-runnable  打开后：not_runnable > 0 也算 exit 1（「没跑」不等于通过；CI 用它把 13→0 钉住）。
  */
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -961,13 +962,14 @@ async function armFeatureFlags(pool) {
 // 主流程
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const out = { json: null };
+  const out = { json: null, requireNoNotRunnable: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === '--allow-skip') continue; // 已在闸门处消费
+    if (arg === '--require-no-not-runnable') { out.requireNoNotRunnable = true; continue; }
     if (arg.startsWith('--json=')) out.json = arg.slice('--json='.length);
     else if (arg === '--json') out.json = argv[++i] ?? '';
-    else throw new Error(`未知参数：${arg}（只支持 --json= / --allow-skip）`);
+    else throw new Error(`未知参数：${arg}（只支持 --json= / --allow-skip / --require-no-not-runnable）`);
   }
   return out;
 }
@@ -1472,6 +1474,12 @@ async function main() {
 
     const elapsed = Date.now() - startedAt;
     console.log(`\n真 PG 臂完成：${rows.length} 条权限面用例在 PostgreSQL ${serverVersion} 上取得逐条读数，耗时 ${elapsed} ms（same=${tally.same} sameWithCheck=${tally.sameWithCheck} sameWithShape=${tally.sameWithShape} different=${tally.different} not-runnable=${tally.notRunnable}）。`);
+    if (opts.requireNoNotRunnable && tally.notRunnable > 0) {
+      const kinds = Object.entries(tally.notRunnableByKind).map(([kind, n]) => `${kind} ${n}`).join(' / ');
+      console.error(`\nFAIL：--require-no-not-runnable 下有 ${tally.notRunnable} 条 not_runnable（${kinds || '未分类'}）。not_runnable 不是通过：它表示这些用例在本环境里根本没执行。`);
+      return 1;
+    }
+
     return 0;
   } catch (error) {
     const elapsed = Date.now() - startedAt;

@@ -164,3 +164,29 @@ test('GY-I22 真 PG 臂：权限面覆盖范围与 stub 用例表同源（C1–C
   const permissionCases = CASES.filter((one) => PERMISSION_FAMILIES.includes(one.family));
   assert.equal(permissionCases.length, 180, '权限面 C1–C4/C10/C11 必须是 180 条（与 stub 用例表同源）');
 });
+
+test('GY-I22 真 PG 臂：--require-no-not-runnable 被接受，且 not_runnable > 0 会让退出码非 0（CI 用它）', () => {
+  // 缺 GY_PG_BIN 时仍必须先走 77 闸门：证明这个开关被 parseArgs 认识（不是「未知参数」）。
+  const result = runReal(['--require-no-not-runnable']);
+  const stdout = `${result.stdout ?? ''}${result.stderr ?? ''}`;
+  assert.equal(result.status, 77, `开关必须被接受并仍然先走 77 闸门，实际 ${result.status}：\n${stdout.slice(-2000)}`);
+  assert.doesNotMatch(stdout, /未知参数/);
+
+  // 结构契约：开关打开时，not_runnable > 0 ⇒ return 1（而不是 return 0）。
+  const source = readFileSync(path.join(ROOT, 'tests', 'failmatrix', 'run-real.mjs'), 'utf8');
+  const flagAt = source.indexOf("arg === '--require-no-not-runnable'");
+  assert.ok(flagAt > 0, 'run-real.mjs 必须解析 --require-no-not-runnable');
+  const guardAt = source.indexOf('opts.requireNoNotRunnable && tally.notRunnable > 0');
+  assert.ok(guardAt > flagAt, 'run-real.mjs 必须有「开关打开且 not_runnable > 0」的判据');
+  const guardBlock = source.slice(guardAt, guardAt + 600);
+  assert.match(guardBlock, /return 1;/, '该判据必须 return 1（不是 0）');
+  assert.match(guardBlock, /not_runnable 不是通过/, '该判据必须写明 not_runnable 不是通过');
+
+  // CI 契约：真 PG 臂的调用必须带这个开关（否则「13 条又变回 not_runnable」会静默变绿）。
+  const workflow = readFileSync(path.join(ROOT, '.github', 'workflows', 'real-pg-integration.yml'), 'utf8');
+  assert.match(
+    workflow,
+    /node tests\/failmatrix\/run-real\.mjs --require-no-not-runnable/,
+    'real-pg-integration.yml 的真 PG 臂必须带 --require-no-not-runnable',
+  );
+});
