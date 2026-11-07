@@ -47,7 +47,7 @@
 | 作业源（`Job.kind`） | 结算路径 | 经 `settleCodeOf`？ | 隐私类失败的落地形态 |
 | --- | --- | --- | --- |
 | `answer`（文字问答） | `conversations/service.ts` 的任务 IIFE（F2） | **是** | **折叠前**：全部 `PROVIDER_UNAVAILABLE`（503）+ `failed`。**折叠后**：保留闭集原码（本片） |
-| `recognition` / `ocr` / `speech`（媒体三域） | 各域 `execute()` 的 `runProviderWithDeadline` | 否 | 自己的折叠：`provider` 抛错被 `.catch(() => ({ kind: 'threw' }))` 吞掉 ⇒ `failed` + `PROVIDER_OUTCOME_UNKNOWN`（`recognitions/service.ts:543`、`ocr/service.ts:635`、`speech/service.ts:620`）。**同族、不同码，本片未动**（见 §10） |
+| `recognition` / `ocr` / `speech`（媒体三域） | 各域 `execute()` 的 `runProviderWithDeadline` | 否 | 自己的折叠：`provider` 抛错被 `.catch(() => ({ kind: 'threw' }))` 吞掉 ⇒ `failed` + `PROVIDER_OUTCOME_UNKNOWN`（`recognitions/service.ts:543`、`ocr/service.ts:635`、`speech/service.ts:620`）。**同族、不同码，本片未动**（见 §10）。该折叠已在 `docs/architecture/acceptance-map.md:299` 登记为相邻面、需另行裁定，不是本页未修项 |
 | `synthesis`（TTS） | `tts/service.ts` 自己的失败码闭集 | 否 | 闸门拒绝经 `liveGateRefusalToErrorCode`（`tts/live-ports.ts:122`）。其中 `AUTHORIZATION_REQUIRED` ⇒ `PROVIDER_UNAVAILABLE` 是**同类名不同义**：那是「授权串与闸门不一致＝未接线」（`ai/live-gate.ts:102`），不是用户用途授权 ⇒ **不属于本缺陷**，已核对 |
 
 **被保住 / 被折叠的码（折叠前基线口径）**：
