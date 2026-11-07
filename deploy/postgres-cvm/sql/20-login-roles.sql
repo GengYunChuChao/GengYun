@@ -931,7 +931,7 @@ GRANT SELECT (post_id,media_id,ordinal)
 GRANT INSERT (post_id,media_id,ordinal)
   ON public.post_media_attachments TO gengyun_api_runtime;
 GRANT DELETE ON public.post_media_attachments TO gengyun_api_runtime;
-\echo '[grants] post_media_attachments: SELECT(post_id,media_id,ordinal) INSERT(post_id,media_id,ordinal) DELETE（整表；换图先删后认领），无 UPDATE'
+-- [grants] post_media_attachments: SELECT(post_id,media_id,ordinal) INSERT(post_id,media_id,ordinal) DELETE（整表；换图先删后认领），无 UPDATE（本区禁 psql 元命令：account-deletion-pg.mjs 按 #region 抽取本区文本后原样执行）
 
 -- OCR 任务（迁移 0024）：:167 的 INSERT_JOB、:521/:560 的 UPDATE、:540 的 SELECT … FOR UPDATE。
 GRANT SELECT (id,revision,kind,owner_user_id,ocr_id,media_id,media_revision,
