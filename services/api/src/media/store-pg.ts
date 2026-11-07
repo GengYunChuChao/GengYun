@@ -354,6 +354,37 @@ export function createPostgresMediaStore(options: PostgresMediaStoreOptions): Me
     },
 
     /**
+     * 待用池口径（迁移 0056 配套，`services/api/src/media/store.ts` 的 `countPendingCommunityImages`）：
+     * **已上传但没挂到任何未删除帖子**的社区图数 —— 挂载即释放（`post_media_attachments` 有行）、
+     * 删帖即释放（帖子的 `visibility = 'deleted'`，行保留）、`created_at` 超过 24h 自衰减。
+     * ⛔ **不是**「同一 owner 名下存活记录数」：那是生命周期累计口径（`service.ts:835-838` 明令禁止），
+     * 会让用户传满 3 张后永久锁死。返回 `null` = 判定不了（迁移未 apply，42P01）⇒ 调用方 503 fail-closed。
+     * ⚠️ 并发：只做**先数后写**的预检，未取 `pg_advisory_xact_lock`；每帖 ≤3 的**首拒点**是 `0022` 的数组 CHECK（`community_posts.media_ids` 长度 ≤3），
+     * 0056 的 `UNIQUE (post_id, ordinal)` + `CHECK` 是**第二道**结构闸（直插挂载行、绕开数组列时只剩它挡；挂载即释放，故这里的上界对 `media_ids` 超发不构成安全边界），`claimPostMedia` 另有 per-media advisory lock 串行化并发认领。
+     */
+    async countPendingCommunityImages(ownerId) {
+      try {
+        const result = await pool.query(
+          `SELECT count(*) AS count FROM public.media m
+            WHERE m.owner_id = $1::uuid AND m.purpose = 'community_image'
+              AND m.state IN ('initiated', 'uploaded', 'processing', 'ready')
+              AND m.created_at > now() - interval '24 hours'
+              AND NOT EXISTS (
+                SELECT 1
+                  FROM public.post_media_attachments a
+                  JOIN public.community_posts p ON p.id = a.post_id
+                 WHERE a.media_id = m.id
+                   AND p.visibility <> 'deleted')`,
+          [ownerId],
+        );
+        return asNumber(result.rows[0]?.count);
+      } catch (error) {
+        if ((error as { code?: unknown } | null)?.code === '42P01') return null;
+        return classifyMediaDatabaseError(error);
+      }
+    },
+
+    /**
      * 按主体清理媒体（注销闭集用）——**单事务**，顺序：软隐藏 ⇒ 登记清理意图 ⇒ 清引用 ⇒ 删衍生物。
      *
      * ## 为什么不用 0035 那个按主体删媒体行的窄函数

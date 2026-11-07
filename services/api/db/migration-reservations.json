@@ -69,7 +69,22 @@
     "【2026-11-03 GY-R73 合流 origin/main · #838 的 0053 已真实落盘 · 53 号条目按 remove_when 删除】",
     "#838 的 0053_admin_report_disposition_audit.sql 已随 origin/main 落盘，与本片 0054 并存 ⇒ 0037 是唯一缺号；",
     "合流树读数：53 个文件 + 1 保留（37） === max 54，`verify-migrations-unique --strict` 的 [gap] 53 随之消失。",
-    "⛔ 53 号条目一落盘就必须删（reservedButPresent 会立刻判红）；上面那段只是历史叙述，不是可长期躺着的白名单。"
+    "⛔ 53 号条目一落盘就必须删（reservedButPresent 会立刻判红）；上面那段只是历史叙述，不是可长期躺着的白名单。",
+    "【2026-11-07 GY-R83（#1030 real 模式每帖 ≤3 图 · post-scoped 挂载）· 迁移 0056 · 登记 55】本片落",
+    "0056_post_media_attachments.sql（`public.post_media_attachments(post_id, media_id, ordinal, created_at)`：",
+    "PRIMARY KEY (post_id, media_id) + UNIQUE (post_id, ordinal) + CHECK (ordinal BETWEEN 1 AND 3)，",
+    "两侧**都不加外键**（与 0022 的 media_ids 引用串语义一致）、`(media_id)` 一条反查索引、零 GRANT；",
+    "授权落在 deploy/postgres-cvm/sql/20-login-roles.sql）。当时的正向最大号是 0054，而 **0055 已被在飞的**",
+    "`feat/gy-r83-provider-call-ledger`（`0055_provider_call_ledger.sql`，provider_call_ledger 调用台账）占用，",
+    "尚未落盘 ⇒ 本片按协调结果取 0056，树上因此出现「有依据的缺号」0055：",
+    "54 个文件 + 2 保留（37、55） === max 56（三条不变量成立）。55 号一落盘 reservedButPresent 立刻判红，",
+    "条目按 remove_when 删。⛔ 这条不是白名单：缺 55 但没登记，undeclaredGaps 照旧判红。",
+    "【2026-11-07 GY-R83 合流 origin/main @ ca3b26f0 · #1003 的 0055 已真实落盘 · 55 号条目按 remove_when 删除】",
+    "54a4ab23 的 0055_provider_call_ledger.sql（`public.provider_call_ledger` 识别外发记账）已随 origin/main 落盘，",
+    "与本片的 0056_post_media_attachments.sql 并存 ⇒ 0037 是唯一缺号；合流树实测读数：",
+    "55 个正向文件 + 1 保留（37） === max 56（rollback/ 54 个：0001 与 0037 无 down），",
+    "`verify-migrations-unique --strict` 的 [gap] 55 随之消失。⛔ 55 号条目已删（落盘即删，reservedButPresent 会判红）；",
+    "上面 0056 那段的「缺号 0055」只是当时的取号依据，不是可长期躺着的白名单。"
   ],
   "reservations": [
     {

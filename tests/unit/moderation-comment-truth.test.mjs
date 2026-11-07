@@ -144,17 +144,18 @@ test('T3 90-assert：只写不读限定到 moderation_decisions；withdrawals �
   );
   assert.ok(probeHead.includes('**写**'), '454-455 必须仍说明三条探针是**写**语句（形状逐字对着 ledger-pg.ts 抄）');
 
-  // 1569-1570：列清单那段话必须点名 decisions，且 withdrawals 的三列 SELECT 另有用途
+  // 1586-1587：列清单那段话必须点名 decisions，且 withdrawals 的三列 SELECT 另有用途
   //（W54 的 0052 探针插在更上方，整段随之下移 18 行：原 1510-1511 ⇒ 1528-1529；
-  //   GY-R83 的 0055 在更上方又插了两条探针（`:560-589`），整段再下移 41 行 ⇒ 现 1569-1570，判据不变）
-  assert.ok(lineAt(ASSERT_SQL, 1569).includes('moderation_decisions'), '1569 行必须点名 moderation_decisions');
-  const columnBlock = sourceLines(ASSERT_SQL).slice(1568, 1570).join('\n');
-  assert.ok(columnBlock.includes('moderation_withdrawals'), '1569-1570 必须点名 moderation_withdrawals');
+  //   GY-R83 的 0055 在更上方又插了两条探针（`:560-589`），整段再下移 41 行 ⇒ 1569-1570；
+  //   合流 origin/main（ca3b26f0）后 0056 的探针段也插在更上方，整段再下移 17 行 ⇒ 现 1586-1587，判据不变）
+  assert.ok(lineAt(ASSERT_SQL, 1586).includes('moderation_decisions'), '1586 行必须点名 moderation_decisions');
+  const columnBlock = sourceLines(ASSERT_SQL).slice(1585, 1587).join('\n');
+  assert.ok(columnBlock.includes('moderation_withdrawals'), '1586-1587 必须点名 moderation_withdrawals');
   assert.ok(
     columnBlock.includes('W43') || columnBlock.includes('回填'),
-    '1569-1570 必须说明 withdrawals 的三列 SELECT 另有用途（W43 回填）',
+    '1586-1587 必须说明 withdrawals 的三列 SELECT 另有用途（W43 回填）',
   );
-  assert.ok(columnBlock.includes('6 列'), '1569-1570 必须仍解释 decisions 那 6 列读权的来源');
+  assert.ok(columnBlock.includes('6 列'), '1586-1587 必须仍解释 decisions 那 6 列读权的来源');
 });
 
 test('T4 防误伤：jobs/ledger.ts:45 的「只写不读」是作业台账 public.jobs 的真话，本片不动它', () => {

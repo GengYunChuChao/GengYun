@@ -909,6 +909,30 @@ GRANT UPDATE (response_status,outcome)
 -- 过期占位与「放弃认领」都要物理删除（见 :703/:732/:761）。
 GRANT DELETE ON public.community_idempotency TO gengyun_api_runtime;
 
+-- 帖子级媒体挂载（迁移 0056，GY-R83 #1030）：`services/api/src/community/store-pg.ts` 的
+-- `claimPostMedia` 在发帖/改稿**同一个事务**里认领槽位。
+--   · INSERT：`(post_id, media_id, ordinal)` 三列由 `WITH ORDINALITY` + `row_number()` 写入；
+--     `created_at` 只由列默认值写 ⇒ 不授。
+--   · SELECT：认领回读 `RETURNING ordinal`；「是否已挂在别的未删除帖子」要读 `post_id`/`media_id`
+--     （`media` 侧 `countPendingCommunityImages` 同口径反查）。
+--   · DELETE：改稿换图要先 `DELETE … WHERE post_id = $1` 让旧序号让位（PG 没有列级 DELETE，只能表级）。
+--   · ⛔ 不授 UPDATE：挂载行**不可改写**（换图＝删旧行 + 认领新行），给了 UPDATE 就能绕过
+--     `UNIQUE (post_id, ordinal)` + `CHECK (ordinal BETWEEN 1 AND 3)` 的「每帖 ≤3」。
+DO $$
+BEGIN
+  IF to_regclass('public.post_media_attachments') IS NULL THEN
+    RAISE EXCEPTION '缺少 public.post_media_attachments：迁移 0056 未执行（顺序必须是 migrate.ts up ⇒ 20-login-roles.sql）。';
+  END IF;
+END;
+$$;
+REVOKE ALL ON TABLE public.post_media_attachments FROM PUBLIC;
+GRANT SELECT (post_id,media_id,ordinal)
+  ON public.post_media_attachments TO gengyun_api_runtime;
+GRANT INSERT (post_id,media_id,ordinal)
+  ON public.post_media_attachments TO gengyun_api_runtime;
+GRANT DELETE ON public.post_media_attachments TO gengyun_api_runtime;
+-- [grants] post_media_attachments: SELECT(post_id,media_id,ordinal) INSERT(post_id,media_id,ordinal) DELETE（整表；换图先删后认领），无 UPDATE（本区禁 psql 元命令：account-deletion-pg.mjs 按 #region 抽取本区文本后原样执行）
+
 -- OCR 任务（迁移 0024）：:167 的 INSERT_JOB、:521/:560 的 UPDATE、:540 的 SELECT … FOR UPDATE。
 GRANT SELECT (id,revision,kind,owner_user_id,ocr_id,media_id,media_revision,
               state,deadline_at,created_at,updated_at,error_code)

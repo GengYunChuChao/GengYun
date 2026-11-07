@@ -104,6 +104,7 @@ const SUBSET_SCRIPTS = Object.freeze([
   'conversations-pg.mjs',
   'favorites-history-pg.mjs',
   'moderation-full-chain-pg.mjs',
+  'post-media-attachments-pg.mjs',
   'qa-citations-pg.mjs',
   'recognition-chain-e2e.mjs',
   'source-lifecycle-pg.mjs',
@@ -175,6 +176,9 @@ const EXPECTED_DEMANDS = Object.freeze([
   'moderation-full-chain-pg.mjs → 0030 community_posts.anonymized_author_ref',
   'moderation-full-chain-pg.mjs → 0032 community_reports.anonymized_author_ref',
   'moderation-full-chain-pg.mjs → 0052 moderation_decisions.concluded_at',
+  'post-media-attachments-pg.mjs → 0030 community_comments.anonymized_author_ref',
+  'post-media-attachments-pg.mjs → 0030 community_posts.anonymized_author_ref',
+  'post-media-attachments-pg.mjs → 0032 community_reports.anonymized_author_ref',
   'qa-citations-pg.mjs → 0012 knowledge_versions.created_at',
 ]);
 
@@ -196,6 +200,7 @@ const EXPECTED_DEMANDS_WITH_0045 = Object.freeze([
   'community-filter-pg.mjs → 0045 community_moderation_decisions.decided_by',
   'community-pg.mjs → 0045 community_moderation_decisions.decided_by',
   'moderation-full-chain-pg.mjs → 0045 community_moderation_decisions.decided_by',
+  'post-media-attachments-pg.mjs → 0045 community_moderation_decisions.decided_by',
 ]);
 
 /**
@@ -212,6 +217,7 @@ const EXPECTED_STORE_IMPORTERS = Object.freeze([
   'community-filter-pg.mjs',
   'community-pg.mjs',
   'moderation-full-chain-pg.mjs',
+  'post-media-attachments-pg.mjs',
 ]);
 
 /** 需求侧要跟的 import 深度：只跟一层（理由见文件头「边界」段）。 */
