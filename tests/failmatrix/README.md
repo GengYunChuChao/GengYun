@@ -26,6 +26,7 @@ node tools/i22-failmatrix-negative-control.mjs --only=NC-09  # 只跑一条
 $env:GY_PG_BIN = 'E:\GengYunCommander\.pg17\pgsql\bin'        # 必填：含 initdb/pg_ctl 的目录（PG 17.x）
 node tests/failmatrix/run-real.mjs                            # 缺 GY_PG_BIN ⇒ 退出 77（未取得，不是通过）
 node tests/failmatrix/run-real.mjs --json=out.json            # 另存机读结果
+node tests/failmatrix/run-real.mjs --require-no-not-runnable  # CI 判决口径：not_runnable > 0 直接退 1（本地复现 CI 用）
 
 # 证据页三列表（读上面两条命令的 --json，重跑即复核）
 node tools/i22-failmatrix-evidence-table.mjs                       # 只打印不写盘（对账）；要写页必须 --write --page=<目标页>
@@ -269,8 +270,10 @@ not-runnable 8**，族分布 `C1` 36/1/0、`C2` 18/3/3、`C3` 31/5/0、`C4` 14/2
    `execution_mode === 'real'` —— 「打完成绩也退 0」「产物被清空」这两类回归都在这里红。
    ⛔ **不断言 `different === 0`**：差异正是这条臂的产品，全 `same` 反而应该先怀疑用例没换代；
    ⛔ **不断言总条数恰好 180**：`180` 是**今天**用例表的口径，硬钉等于把「加一条用例」变成假红。
-3. **`not_runnable` 回归**（PR `#1049` 起）：CI 调用带 `--require-no-not-runnable`，脚本在 `not_runnable > 0` 时
-   打印 `FAIL：…`（含 `byKind` 分布）并 `return 1` —— 这是**脚本自带判据**，不是 shell 数值闸门。
+3. **`not_runnable` 回归**（PR `#1049` 起）：CI 调用带 `--require-no-not-runnable`。**仅当带这个旗标时**
+   脚本才在 `not_runnable > 0` 时向 **stderr** 打印 `FAIL：--require-no-not-runnable 下有 N 条 not_runnable（…）`
+   （分类串取自 `tally.notRunnableByKind`，按 `kind n / kind n` 拼；空则记「未分类」）并 `return 1`；
+   不带旗标（本地默认）**不会**因此变红 —— 这是**脚本自带判据**，不是 shell 数值闸门，消息打在「真 PG 臂完成…」之后。
    `not_runnable` 表示「用例根本没跑」（real 下该域 fail-closed、夹具不可播种），把它当通过会让播种回归**静默变绿**；
    `#22` 那次被重开的直接成因就是它（13 条静默退回而 CI 仍绿）。
 
@@ -286,7 +289,7 @@ PG 17.11** 手跑的读数（当时权限面 `C3` 27 条 + `C4` 18 条）；当�
 | --- | --- | --- |
 | `same` | 116 | 真 PG 与 stub 判定一致 |
 | `different` | 20 | 真 PG 下的实际与 stub 期望不同（**这是本臂的产品，不是失败**） |
-| `not-runnable` | 44 | real 模式下该域 fail-closed、夹具不可播种（2026-10-31 读数；后续批次已逐步清零，且 `#1049` 之后 `not_runnable > 0` 会直接判红） |
+| `not-runnable` | 44 | real 模式下该域 fail-closed、夹具不可播种（**2026-10-31 读数**）。此后逐批复位 `44 → 17 → 8 → 0`：末跳 0 见 PR `#1049` 的 CI（23/23，含 `failmatrix-real-17.11`）与本页 head `6a634c90` 的本地实跑（`same 180 / different 0 / not_runnable 0`）；`#1049` 之后该臂 `not_runnable > 0` 直接判红 |
 
 族分布与用例表一致：`C1` 37 / `C2` 24 / `C3` 36 / `C4` 21 / `C10` 23 / `C11` 39 = 180；产物里
 `execution_mode: "real"`、`postgres: 17.11`、`base_commit: 439970c2…`。
