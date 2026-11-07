@@ -18,7 +18,8 @@
 //
 // 本脚本只讲一件事：**「哪次外发、烧了多少 token、用的是哪套剖面」是数据库给的**，不是应用自己
 // 记账、自己相信。因此逐条钉数据库侧的判据：
-//   [N] 迁移串：全量 `up` ⇒ `schema_migrations` 末项是 0055（本片新增），且 0055 之后没有别的行。
+//   [N] 迁移串：全量 `up` ⇒ `schema_migrations` 与磁盘迁移集逐条一致，且本片 0055 在位
+//       （⛔ 不钉「末项是 0055」：基线一落新迁移——`0056_post_media_attachments` 就是——这条就假红）。
 //   [T] 表形状：13 列的名字/类型/可空/varchar 长度逐列复述（含 `id uuid PK default gen_random_uuid()`、
 //       `job_id uuid` **可空且无外键**、`export_id` 挂 `public.exports ON DELETE CASCADE`）。
 //   [K] 约束面：8 条命名约束 + 主键在位；`UNIQUE (export_id, attempt)` 真的拦重复；`provider_call_ledger_job_idx`
@@ -160,13 +161,24 @@ async function expectRejected(overrides, label, codes = ['23514']) {
 // [N] 迁移串：全量 up 到 0055
 // ---------------------------------------------------------------------------
 {
-  const result = await applyMigrations(owner, discoverMigrations());
+  const migrations = discoverMigrations();
+  const result = await applyMigrations(owner, migrations);
   assert.ok(result.applied.includes('0055'), `0055 必须在本次 applied 里（实际 ${result.applied.join(',')}）`);
-  const last = await one('SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1');
-  assert.equal(last.version, '0055', `schema_migrations 末项必须是 0055（实际 ${last.version}）`);
-  assert.equal(last.name, 'provider_call_ledger', '末项的迁移名必须与本片迁移一致（文件名去掉号位与后缀）');
-  assert.equal(await countOf("SELECT count(*)::int AS v FROM schema_migrations WHERE version > '0055'"), 0, '0055 之后不许有更新的迁移');
-  note(`[N] 全量 up：applied=${result.applied.length} 条，schema_migrations 末项 = 0055（${MIGRATION}）`);
+  const ledger = await one("SELECT version, name FROM schema_migrations WHERE version = '0055'");
+  assert.ok(ledger, '0055 必须落进 schema_migrations（本片迁移没落盘）');
+  assert.equal(ledger.name, 'provider_call_ledger', '0055 的迁移名必须与本片迁移一致（文件名去掉号位与后缀）');
+  // ⛔ 不钉「末项是 0055」：那只是分支时点事实。基线 #1037 落了 `0056_post_media_attachments` 之后
+  // 「0055 是最后一条」立刻变假（2026-11-08 rebase 到 6e7f7465 实测本臂因此假红），而它要判的是**迁移串本身**。
+  // 改成「台账与磁盘迁移集逐条对齐 + 本片 0055 在位」：漏跑、多跑、跳号仍然会红。
+  const applied = (await q('SELECT version FROM schema_migrations ORDER BY version')).map((row) => row.version);
+  assert.deepEqual(
+    applied,
+    migrations.map((migration) => migration.version),
+    'schema_migrations 必须与磁盘迁移集逐条一致（漏跑或多跑都算红）',
+  );
+  note(
+    `[N] 全量 up：applied=${result.applied.length} 条，schema_migrations ${applied.length} 条与磁盘迁移集逐条一致，含本片 0055（${MIGRATION}）`,
+  );
 }
 
 // ---------------------------------------------------------------------------
