@@ -4136,16 +4136,16 @@
       "doc": "docs/verification/gy-r28-speech-grants-20261021.md",
       "line": 109,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 787,
-      "to": 790,
+      "from": 811,
+      "to": 814,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r28-speech-grants-20261021.md",
       "line": 129,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 787,
-      "to": 790,
+      "from": 811,
+      "to": 814,
       "kind": "sql-comment"
     },
     {
@@ -4160,8 +4160,8 @@
       "doc": "docs/verification/gy-r28-sql-column-coverage-20261021.md",
       "line": 43,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 559,
-      "to": 559,
+      "from": 583,
+      "to": 583,
       "kind": "sql-comment"
     },
     {
@@ -4176,8 +4176,8 @@
       "doc": "docs/verification/gy-r28-sql-column-coverage-20261021.md",
       "line": 84,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 714,
-      "to": 716,
+      "from": 738,
+      "to": 740,
       "kind": "sql-comment"
     },
     {
@@ -4296,8 +4296,8 @@
       "doc": "docs/verification/gy-r28-w11-messages-purge-pg-20261021.md",
       "line": 93,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 567,
-      "to": 571,
+      "from": 591,
+      "to": 595,
       "kind": "sql-comment"
     },
     {
@@ -4574,14 +4574,6 @@
     },
     {
       "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
-      "line": 32,
-      "target": "deploy/postgres-cvm/sql/90-assert-least-privilege.sql",
-      "from": 2555,
-      "to": 2560,
-      "kind": "sql-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
       "line": 108,
       "target": "services/api/src/routes/account-deletion.ts",
       "from": 199,
@@ -4592,32 +4584,24 @@
       "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
       "line": 114,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 770,
-      "to": 770,
+      "from": 794,
+      "to": 794,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
       "line": 114,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 780,
-      "to": 780,
+      "from": 804,
+      "to": 804,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
       "line": 115,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 361,
-      "to": 382,
-      "kind": "sql-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
-      "line": 116,
-      "target": "deploy/postgres-cvm/sql/90-assert-least-privilege.sql",
-      "from": 2555,
-      "to": 2560,
+      "from": 385,
+      "to": 406,
       "kind": "sql-comment"
     },
     {
@@ -4627,14 +4611,6 @@
       "from": 1775,
       "to": 1783,
       "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
-      "line": 376,
-      "target": "deploy/postgres-cvm/sql/90-assert-least-privilege.sql",
-      "from": 2555,
-      "to": 2560,
-      "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r28-w6-deletion-clock-20261021.md",
@@ -6176,24 +6152,24 @@
       "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
       "line": 128,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 616,
-      "to": 616,
+      "from": 640,
+      "to": 640,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
       "line": 134,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 481,
-      "to": 493,
+      "from": 505,
+      "to": 517,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r31-i15-s1-s6-20261022.md",
       "line": 134,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 514,
-      "to": 523,
+      "from": 538,
+      "to": 547,
       "kind": "sql-comment"
     },
     {
@@ -7824,8 +7800,8 @@
       "doc": "docs/verification/gy-r34-jobs-retire-20261024.md",
       "line": 158,
       "target": "deploy/postgres-cvm/sql/90-assert-least-privilege.sql",
-      "from": 3608,
-      "to": 3617,
+      "from": 3698,
+      "to": 3707,
       "kind": "sql-comment"
     },
     {
@@ -9248,24 +9224,24 @@
       "doc": "docs/verification/gy-r71-jobs-ledger-20261030.md",
       "line": 188,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r71-jobs-ledger-20261030.md",
       "line": 189,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 981,
-      "to": 981,
+      "from": 1005,
+      "to": 1005,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r71-jobs-ledger-20261030.md",
       "line": 190,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 984,
-      "to": 984,
+      "from": 1008,
+      "to": 1008,
       "kind": "sql-comment"
     },
     {
@@ -9328,24 +9304,24 @@
       "doc": "docs/verification/gy-r72-assert-domain-visibility-20261102.md",
       "line": 32,
       "target": "deploy/postgres-cvm/sql/90-assert-least-privilege.sql",
-      "from": 2368,
-      "to": 2368,
+      "from": 2374,
+      "to": 2374,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-assert-domain-visibility-20261102.md",
       "line": 37,
       "target": "deploy/postgres-cvm/sql/90-assert-least-privilege.sql",
-      "from": 2396,
-      "to": 2396,
+      "from": 2402,
+      "to": 2402,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-assert-domain-visibility-20261102.md",
       "line": 58,
       "target": "deploy/postgres-cvm/sql/90-assert-least-privilege.sql",
-      "from": 2368,
-      "to": 2368,
+      "from": 2374,
+      "to": 2374,
       "kind": "sql-comment"
     },
     {
@@ -9456,24 +9432,24 @@
       "doc": "docs/verification/gy-r72-jobs-owner-select-20261102.md",
       "line": 13,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 997,
-      "to": 997,
+      "from": 1021,
+      "to": 1021,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-jobs-owner-select-20261102.md",
       "line": 34,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 997,
-      "to": 997,
+      "from": 1021,
+      "to": 1021,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-jobs-owner-select-20261102.md",
       "line": 35,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
@@ -9488,24 +9464,24 @@
       "doc": "docs/verification/gy-r72-jobs-owner-select-20261102.md",
       "line": 132,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-jobs-owner-select-20261102.md",
       "line": 163,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-jobs-owner-select-20261102.md",
       "line": 180,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
@@ -9536,16 +9512,16 @@
       "doc": "docs/verification/gy-r72-moderation-conclusion-freshness-20261102.md",
       "line": 72,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 1510,
-      "to": 1510,
+      "from": 1535,
+      "to": 1535,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-moderation-conclusion-freshness-20261102.md",
       "line": 72,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 1512,
-      "to": 1516,
+      "from": 1537,
+      "to": 1541,
       "kind": "sql-comment"
     },
     {
@@ -9696,8 +9672,8 @@
       "doc": "docs/verification/gy-r72-online-purge-closed-set-20261102.md",
       "line": 53,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 997,
-      "to": 997,
+      "from": 1021,
+      "to": 1021,
       "kind": "sql-comment"
     },
     {
@@ -9712,32 +9688,32 @@
       "doc": "docs/verification/gy-r72-online-purge-closed-set-20261102.md",
       "line": 107,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-online-purge-closed-set-20261102.md",
       "line": 195,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-online-purge-closed-set-20261102.md",
       "line": 195,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 997,
-      "to": 997,
+      "from": 1021,
+      "to": 1021,
       "kind": "sql-comment"
     },
     {
       "doc": "docs/verification/gy-r72-online-purge-closed-set-20261102.md",
       "line": 197,
       "target": "deploy/postgres-cvm/sql/20-login-roles.sql",
-      "from": 980,
-      "to": 980,
+      "from": 1004,
+      "to": 1004,
       "kind": "sql-comment"
     },
     {
@@ -10112,8 +10088,8 @@
       "doc": "docs/verification/gy-r87-i19-cancel-ruling-20261107.md",
       "line": 42,
       "target": "services/api/src/privacy/deletion-requests-pg.ts",
-      "from": 109,
-      "to": 109,
+      "from": 134,
+      "to": 134,
       "kind": "jsdoc"
     },
     {
@@ -10245,22 +10221,6 @@
       "kind": "jsdoc"
     },
     {
-      "doc": "docs/verification/gy-r87-i30-http-e2e-20261107.md",
-      "line": 164,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 767,
-      "to": 767,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r87-i30-http-e2e-20261107.md",
-      "line": 164,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 877,
-      "to": 877,
-      "kind": "line-comment"
-    },
-    {
       "doc": "docs/verification/gy-r87-open-issue-acceptance-index-20261107.md",
       "line": 15,
       "target": "services/api/src/privacy/ledger-pg.ts",
@@ -10373,38 +10333,6 @@
       "kind": "block-comment"
     },
     {
-      "doc": "docs/verification/gy-r88-i30-pool-decay-20261108.md",
-      "line": 125,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 767,
-      "to": 767,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r88-i30-pool-decay-20261108.md",
-      "line": 126,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 820,
-      "to": 820,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r88-i30-pool-decay-20261108.md",
-      "line": 128,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 820,
-      "to": 820,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r88-i30-pool-decay-20261108.md",
-      "line": 129,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 877,
-      "to": 877,
-      "kind": "line-comment"
-    },
-    {
       "doc": "docs/verification/gy-r88-open-issue-acceptance-index-20261108.md",
       "line": 28,
       "target": "tools/verify-reading-pages.mjs",
@@ -10434,22 +10362,6 @@
       "target": "tests/reference/i26-tabbar-skeleton.test.mjs",
       "from": 462,
       "to": 462,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r88-open-issue-acceptance-index-20261108.md",
-      "line": 68,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 767,
-      "to": 767,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r88-open-issue-acceptance-index-20261108.md",
-      "line": 68,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 877,
-      "to": 877,
       "kind": "line-comment"
     },
     {
@@ -10502,54 +10414,6 @@
     },
     {
       "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 30,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 767,
-      "to": 767,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 30,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 820,
-      "to": 820,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 30,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 877,
-      "to": 877,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 53,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 767,
-      "to": 767,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 71,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 767,
-      "to": 767,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 71,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 877,
-      "to": 877,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
       "line": 153,
       "target": "tests/reference/i26-tabbar-skeleton.test.mjs",
       "from": 950,
@@ -10579,22 +10443,6 @@
       "from": 31,
       "to": 31,
       "kind": "block-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 179,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 767,
-      "to": 767,
-      "kind": "line-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
-      "line": 180,
-      "target": "tests/integration/post-media-attach-http-pg.mjs",
-      "from": 877,
-      "to": 877,
-      "kind": "line-comment"
     },
     {
       "doc": "docs/verification/gy-r89-open-issue-acceptance-index-20261108.md",
@@ -10694,7 +10542,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 82,
+      "line": 86,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 240,
       "to": 240,
@@ -10702,7 +10550,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 83,
+      "line": 87,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 243,
       "to": 243,
@@ -10710,7 +10558,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 84,
+      "line": 88,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 243,
       "to": 243,
@@ -10718,7 +10566,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 84,
+      "line": 88,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 258,
       "to": 258,
@@ -10726,7 +10574,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 85,
+      "line": 89,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 351,
       "to": 351,
@@ -10734,7 +10582,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 86,
+      "line": 90,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 545,
       "to": 545,
@@ -10742,7 +10590,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 87,
+      "line": 91,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 585,
       "to": 585,
@@ -10750,7 +10598,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 88,
+      "line": 92,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 684,
       "to": 684,
@@ -10758,7 +10606,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 89,
+      "line": 93,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 737,
       "to": 737,
@@ -10766,7 +10614,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 90,
+      "line": 94,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 750,
       "to": 750,
@@ -10774,7 +10622,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 91,
+      "line": 95,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 753,
       "to": 753,
@@ -10782,7 +10630,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 92,
+      "line": 96,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 780,
       "to": 780,
@@ -10790,7 +10638,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 93,
+      "line": 97,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 844,
       "to": 844,
@@ -10798,7 +10646,7 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 124,
+      "line": 128,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 1676,
       "to": 1676,
@@ -10806,18 +10654,10 @@
     },
     {
       "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 124,
+      "line": 128,
       "target": ".github/workflows/real-pg-integration.yml",
       "from": 1678,
       "to": 1678,
-      "kind": "hash-comment"
-    },
-    {
-      "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
-      "line": 124,
-      "target": ".github/workflows/real-pg-integration.yml",
-      "from": 1699,
-      "to": 1699,
       "kind": "hash-comment"
     },
     {
@@ -10827,6 +10667,62 @@
       "from": 1699,
       "to": 1699,
       "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
+      "line": 132,
+      "target": ".github/workflows/real-pg-integration.yml",
+      "from": 1699,
+      "to": 1699,
+      "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
+      "line": 206,
+      "target": ".github/workflows/deploy-sql-gate.yml",
+      "from": 17,
+      "to": 17,
+      "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
+      "line": 207,
+      "target": ".github/workflows/deploy-sql-gate.yml",
+      "from": 19,
+      "to": 19,
+      "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
+      "line": 208,
+      "target": ".github/workflows/deploy-sql-gate.yml",
+      "from": 21,
+      "to": 21,
+      "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-ci-gate-prose-consistency-20261109.md",
+      "line": 208,
+      "target": ".github/workflows/deploy-sql-gate.yml",
+      "from": 58,
+      "to": 58,
+      "kind": "hash-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-contract-runtime-schema-parity-20261109.md",
+      "line": 93,
+      "target": "tests/unit/contract-runtime-schema-parity.test.mjs",
+      "from": 289,
+      "to": 289,
+      "kind": "line-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-contract-runtime-schema-parity-20261109.md",
+      "line": 243,
+      "target": "tests/unit/contract-runtime-schema-parity.test.mjs",
+      "from": 345,
+      "to": 345,
+      "kind": "line-comment"
     },
     {
       "doc": "docs/verification/gy-r90-i1030-closeout-20261108.md",
@@ -10893,6 +10789,46 @@
       "kind": "line-comment"
     },
     {
+      "doc": "docs/verification/gy-r90-i1112-assertion-audit-20261109.md",
+      "line": 9,
+      "target": "tests/unit/miniprogram-voice-hardening.test.mjs",
+      "from": 903,
+      "to": 903,
+      "kind": "line-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-i1112-assertion-audit-20261109.md",
+      "line": 11,
+      "target": "tests/unit/miniprogram-voice-hardening.test.mjs",
+      "from": 903,
+      "to": 903,
+      "kind": "line-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-i1112-assertion-audit-20261109.md",
+      "line": 66,
+      "target": "tests/unit/miniprogram-voice-hardening.test.mjs",
+      "from": 903,
+      "to": 903,
+      "kind": "line-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-i1112-assertion-audit-20261109.md",
+      "line": 88,
+      "target": "tests/unit/miniprogram-voice-hardening.test.mjs",
+      "from": 903,
+      "to": 903,
+      "kind": "line-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-i1112-assertion-audit-20261109.md",
+      "line": 114,
+      "target": "tests/unit/miniprogram-voice-hardening.test.mjs",
+      "from": 934,
+      "to": 934,
+      "kind": "line-comment"
+    },
+    {
       "doc": "docs/verification/gy-r90-i14-takedown-subscription-20261108.md",
       "line": 21,
       "target": "services/api/src/community/takedown.ts",
@@ -10923,6 +10859,30 @@
       "from": 1481,
       "to": 1483,
       "kind": "line-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-open-issue-acceptance-index-20261109.md",
+      "line": 176,
+      "target": "services/api/src/recognitions/openai-vision-adapter.ts",
+      "from": 22,
+      "to": 22,
+      "kind": "block-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-open-issue-acceptance-index-20261109.md",
+      "line": 429,
+      "target": "services/api/src/recognitions/openai-vision-adapter.ts",
+      "from": 22,
+      "to": 22,
+      "kind": "block-comment"
+    },
+    {
+      "doc": "docs/verification/gy-r90-open-issue-acceptance-index-20261109.md",
+      "line": 456,
+      "target": "services/api/src/recognitions/openai-vision-adapter.ts",
+      "from": 22,
+      "to": 22,
+      "kind": "block-comment"
     },
     {
       "doc": "docs/verification/gy-real-pg-ci-20261020.md",

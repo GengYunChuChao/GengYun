@@ -5,7 +5,7 @@
  * `// PASS 9 · 24h 自衰减…` 这样的块首注释），主工具 `tools/verify-doc-anchors.mjs` 的符号行判据
  * 只覆盖 `docs/architecture/**`，这类锚点因此既不进 `commentAnchors` 也不进 `findings`，
  * 「拿注释当行为证据」可以长期全绿。本文件钉住新加的**独立只读**影子闸门，防止它退化成
- * 「扫了个寂寞」「永远红」或「把既有 1590 条一次判死」。
+ * 「扫了个寂寞」「永远红」或「把既有的 1427 条基线一次判死」（回归基准：去掉 `tools/verify-verification-comment-anchors.mjs:99` 的「整行以 `/*` 开头才开块状态」、换回「行内出现 `/*` 就开状态」，同一棵 `6497031` 树上会虚报 1683 条 / 基线外新增 256 条，多出来的全是对 `packages/contracts/openapi.json` 的误判）。
  *
  * 四条边（与任务要求一一对应）：
  *   ① 基线内命中 ⇒ EXIT 0，逐条 WARN；
