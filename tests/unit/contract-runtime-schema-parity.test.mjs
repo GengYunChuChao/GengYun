@@ -21,6 +21,9 @@
  * `createJsonSchema2020ValidatorCompiler()`（`services/api/src/schema-validator.ts:64-68`）会编译的那一份。
  * 不是另抄一份 fixture：抄一份就只能证明「抄得对」，证明不了「运行期还是它」。
  *
+ * 注册时 `config` 传 `{}`：今天这 4 个 body 全是字面量、不读 config。若将来某个 body 改成按 config 拼装，
+ * 这里会安静地比一份「空配置下的产物」—— 届时要么给该用例喂真实 config，要么把它从 `CASES` 摘掉。
+ *
  * ## 规范化规则（`canonicalizeSchema`）
  *
  * 1. 递归解析**本地** `$ref`（`#/components/schemas/<Name>`）后比较：契约用 `$ref` 复用的
@@ -32,6 +35,11 @@
  *    本身承载优先级与分支顺序，排序会把真分叉抹平）。
  * 4. 其它键（`pattern`、`minLength`、`maxItems`、`format`、`uniqueItems`、`additionalProperties`、
  *    `minimum`/`maximum`…）逐字比，不做任何等价代换 —— 少一个 `required`、把 `false` 改成 `true` 都必须红。
+ * 5. **按容器区分**：`properties`/`patternProperties`/`$defs`/`definitions`/`dependentSchemas`（以及 draft-07
+ *    遗留的 `dependencies`）里装的是**属性名/定义名**，不是 schema 关键字。进这些容器后键名原样保留、只对值
+ *    递归；否则一个恰好叫 `title` 的属性会被当文档键整块丢掉 —— `PostInput` 就有一个 required 的 `title`，
+ *    那样「运行期把标题上限从 120 放宽到 200」会全绿（P1 假绿，判据③c 是它的回归钉子，判据④-M5/M6/M7 再从真守卫钉三次）。
+ * 6. `enum`/`const`/`default` 的值是**数据**不是 schema：整块原样保留，不进去过滤文档键。
  *
  * ## 覆盖（4 个 schema，见 `CASES` 的 `why`）
  *
@@ -53,8 +61,17 @@ const CONTRACT = JSON.parse(read('packages/contracts/openapi.json'));
 /** 契约 `servers[0].url` ＝ 运行期路由前缀（`/api/v1`）。两边靠它对上号，写死前缀会掩盖漂移。 */
 const API_PREFIX = CONTRACT.servers[0]?.url;
 
-/** 只影响阅读、不进 Ajv 判定的键（规范化规则 2）。 */
+/** 只影响阅读、不进 Ajv 判定的键（规范化规则 2）。**只在 schema 对象自身的键上生效**，见 `KEYED_MAP_KEYS`。 */
 const DOC_ONLY_KEYS = new Set(['$schema', 'title', 'description', 'examples', 'example', 'deprecated', '$comment', 'summary']);
+
+/**
+ * 装「名字 → 子 schema」的容器（规范化规则 5）：这些键的值里，键名是**属性名/定义名**，不是 schema 关键字。
+ * 显式列出来，而不是靠「不在 `DOC_ONLY_KEYS` 里」隐式兜住 —— 隐式兜住正是 P1 假绿的成因。
+ */
+const KEYED_MAP_KEYS = new Set(['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies']);
+
+/** 值是数据而不是 schema 的关键字（规范化规则 6）：`enum` 里可以放对象，那些对象的键不能当文档键过滤。 */
+const DATA_POSITION_KEYS = new Set(['enum', 'const', 'default']);
 
 // ---------------------------------------------------------------------------------------------------
 // 规范化
@@ -84,13 +101,22 @@ export function resolveLocalRefs(node, doc) {
   return out;
 }
 
-/** 规则 2＋3：丢文档键、`required` 排序；其它数组保序（见文件头）。返回新对象，不改入参。 */
+/** 规则 2＋3＋5＋6：丢文档键（只在 schema 对象自身的键上）、`required` 排序、容器键名原样保留；返回新对象，不改入参。 */
 export function canonicalizeSchema(node) {
   if (Array.isArray(node)) return node.map(canonicalizeSchema);
   if (node === null || typeof node !== 'object') return node;
   const out = {};
   for (const [key, value] of Object.entries(node)) {
     if (DOC_ONLY_KEYS.has(key)) continue;
+    if (DATA_POSITION_KEYS.has(key)) {
+      out[key] = value;
+      continue;
+    }
+    if (KEYED_MAP_KEYS.has(key) && value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      // 容器：键名是属性名/定义名，原样保留；只对每个子 schema 递归。
+      out[key] = Object.fromEntries(Object.entries(value).map(([name, sub]) => [name, canonicalizeSchema(sub)]));
+      continue;
+    }
     out[key] = key === 'required' && Array.isArray(value) && value.every(item => typeof item === 'string')
       ? [...value].sort()
       : canonicalizeSchema(value);
@@ -185,6 +211,18 @@ export const CASES = [
   },
 ];
 
+/**
+ * 捕获到的其它「带 body」路由（判据①c 的豁免表）：每一条都写明为什么不进 `CASES`。
+ * 这张表是**封闭**的 —— 将来新增一条带 body 的路由而没登记，判据①c 会在新增那一刻红；
+ * 反过来，路由消失而豁免还留着也会红（过期的豁免是「看着还守着」的假象）。
+ */
+const BODY_ROUTE_EXEMPTIONS = new Map([
+  ['PATCH /api/v1/posts/:id', '契约写作 /posts/{id}（postUpdateBody 子集）：比较面要先做 :id→{id} 换算，未纳入本片'],
+  ['POST /api/v1/posts/:id/comments', '契约 /posts/{id}/comments（CommentInput）：同上，需 :id→{id} 换算'],
+  ['PATCH /api/v1/comments/:id', '契约 /comments/{id}（commentUpdateBody）：同上，需 :id→{id} 换算'],
+  ['DELETE /api/v1/me/consents/:purpose', '路径参数路由；运行期 body 固定为 {type:"null"}（不收任何请求体），契约这一侧没有 requestBody ⇒ 没有可比的字段面'],
+]);
+
 // ---------------------------------------------------------------------------------------------------
 // 断言本体：真实用例与三条变异都走同一个函数（变异若只测一个旁路函数，证明不了真守卫会红）
 // ---------------------------------------------------------------------------------------------------
@@ -218,6 +256,19 @@ test('判据①b：契约侧每条 operation 的 requestBody $ref 都指向本�
     const {refName} = contractBodyOf(definition);
     assert.equal(refName, definition.schema, `${definition.method} ${definition.route} 的契约 requestBody 指向 ${refName}`);
   }
+});
+
+test('判据①c：捕获到的每条带 body 路由，要么在 CASES，要么在豁免表里写明理由（封闭，不留默认放行）', () => {
+  const withBody = REGISTERED.filter(entry => entry.schema?.body && typeof entry.schema.body === 'object');
+  const covered = new Set(CASES.map(definition => `${definition.method} ${definition.route}`));
+  const registered = new Set(withBody.map(entry => `${entry.method} ${entry.url}`));
+
+  const unregistered = [...registered].filter(key => !covered.has(key) && !BODY_ROUTE_EXEMPTIONS.has(key));
+  assert.deepEqual(unregistered, [],
+    `这些路由带 schema.body，但既不在 CASES 也不在 BODY_ROUTE_EXEMPTIONS：${unregistered.join('、')} —— 新路由要么进 CASES，要么在豁免表写明为什么不比`);
+
+  const stale = [...BODY_ROUTE_EXEMPTIONS.keys()].filter(key => !registered.has(key));
+  assert.deepEqual(stale, [], `豁免表里有不再带 body（或已不存在）的路由：${stale.join('、')} —— 过期豁免会让人以为它还被守着`);
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -291,7 +342,47 @@ test('判据③b：$ref 与内联同构必须判为等价，未知 $ref 必须�
 });
 
 // ---------------------------------------------------------------------------------------------------
-// 判据④：三条变异自证（全部在内存里做，不落盘改契约/生产代码）
+// 判据③c：属性名与文档键同名时不许被丢掉（P1 回归；独立于 CASES，不依赖任何真实路由）
+// ---------------------------------------------------------------------------------------------------
+
+test('判据③c：`properties`/`patternProperties`/`$defs`/`dependentSchemas` 的键名原样保留，只有 schema 自身的关键字才当文档键', () => {
+  // 1) 属性名撞上文档键：`title` 的 maxLength 120→200 必须判为分叉（P1：修复前这里是安静相等）。
+  const title120 = {type: 'object', additionalProperties: false, properties: {title: {type: 'string', maxLength: 120}}};
+  const title200 = {type: 'object', additionalProperties: false, properties: {title: {type: 'string', maxLength: 200}}};
+  assert.equal(isDeepStrictEqual(canonicalizeSchema(title120), canonicalizeSchema(title200)), false,
+    '属性名 title 的 maxLength 变化必须判为分叉（P1 假绿：容器键被当文档键丢了）');
+
+  // 2) 直接钉住「没被丢」：规范化结果里必须真的存在 properties.title。
+  const canonical = canonicalizeSchema(title120);
+  assert.ok(canonical.properties && Object.hasOwn(canonical.properties, 'title'), 'properties 里名为 title 的属性被整块丢掉了');
+  assert.deepEqual(canonical.properties.title, {type: 'string', maxLength: 120}, 'properties.title 的内容被改写');
+
+  // 3) 另外三个文档键同名属性，逐个钉住（description / examples / $comment）。
+  for (const name of ['description', 'examples', '$comment', 'summary', 'deprecated']) {
+    const schema = {type: 'object', properties: {[name]: {type: 'string', minLength: 3}}};
+    const result = canonicalizeSchema(schema);
+    assert.ok(Object.hasOwn(result.properties, name), `properties 里名为 ${name} 的属性被当成文档键丢掉了`);
+    assert.deepEqual(result.properties[name], {type: 'string', minLength: 3}, `properties.${name} 的内容被改写`);
+  }
+
+  // 4) 其它装「名字 → 子 schema」的容器同样不许丢键。
+  assert.ok(Object.hasOwn(canonicalizeSchema({patternProperties: {title: {type: 'string'}}}).patternProperties, 'title'),
+    'patternProperties 的键被丢掉了');
+  assert.ok(Object.hasOwn(canonicalizeSchema({$defs: {title: {type: 'string'}}}).$defs, 'title'), '$defs 的键被丢掉了');
+  assert.ok(Object.hasOwn(canonicalizeSchema({dependentSchemas: {title: {required: ['a']}}}).dependentSchemas, 'title'),
+    'dependentSchemas 的键被丢掉了');
+
+  // 5) 反向：schema 对象**自身**的文档键仍然要丢（否则 M3 会假红）。
+  assert.deepEqual(canonicalizeSchema({type: 'object', title: '说明', description: '说明', properties: {a: {type: 'string'}}}),
+    {type: 'object', properties: {a: {type: 'string'}}}, 'schema 自身的文档键必须仍然被丢掉');
+
+  // 6) `enum` 里是数据不是 schema：里面对象的键不许被当文档键过滤。
+  assert.equal(isDeepStrictEqual(canonicalizeSchema({enum: [{title: 'a'}]}), canonicalizeSchema({enum: [{title: 'b'}]})), false,
+    'enum 里的对象被当成 schema 过滤了文档键（数据位被误伤）');
+});
+
+// ---------------------------------------------------------------------------------------------------
+// 判据④：变异自证（全部在内存里做，不落盘改契约/生产代码）
 // ---------------------------------------------------------------------------------------------------
 
 test('判据④-M1：契约侧给 ProfileInput 加一个字段 ⇒ 必须红（同一个 assertFieldParity 抛错）', () => {
@@ -331,4 +422,39 @@ test('判据④-M4：契约侧把地区码 pattern 改宽 ⇒ 必须红（字段
   mutated.components.schemas.ProfileInput.properties.region_code.pattern = '^[0-9]{6}$';
   const definition = CASES.find(item => item.schema === 'ProfileInput');
   assert.throws(() => assertFieldParity(definition, {contractDoc: mutated}), /分叉/, 'pattern 放宽后省外地区码在契约上变合法，守卫必须红');
+});
+
+test('判据④-M5：运行期把 PostInput 的 title.maxLength 从 120 放宽到 200 ⇒ 必须红（P1 现场，属性名撞文档键）', () => {
+  const definition = CASES.find(item => item.schema === 'PostInput');
+  const original = runtimeBodyOf(definition);
+  assert.equal(original.properties?.title?.maxLength, 120, '运行期 title 的上限不再是 120，变异前提不成立（先看 M5 的基线）');
+  const widened = structuredClone(original);
+  widened.properties.title.maxLength = 200;
+  assert.throws(() => assertFieldParity(definition, {runtimeBody: widened}), /分叉/,
+    '运行期把标题上限放宽到 200、契约仍写 120，守卫必须红（修复前这里 12/12 全绿）');
+  // 反向对照：`title` 的 maxLength 不动、只加文档键，仍不许红 —— 修复没有顺带把 title 变成「一律敏感」。
+  assert.doesNotThrow(() => assertFieldParity(definition, {runtimeBody: {...structuredClone(original), properties: {
+    ...structuredClone(original).properties,
+    title: {...structuredClone(original).properties.title, description: '纯说明'},
+  }}}), '给 title 加 description 不该判成分叉');
+});
+
+test('判据④-M6：契约侧把 PostInput 的 title.maxLength 从 120 放宽到 200 ⇒ 必须红（P1 的另一半）', () => {
+  const mutated = structuredClone(CONTRACT);
+  mutated.components.schemas.PostInput.properties.title.maxLength = 200;
+  const definition = CASES.find(item => item.schema === 'PostInput');
+  assert.equal(mutated.components.schemas.PostInput.properties.title.maxLength, 200);
+  assert.equal(runtimeBodyOf(definition).properties.title.maxLength, 120, '运行期 title 的上限不再是 120，M6 前提不成立');
+  assert.throws(() => assertFieldParity(definition, {contractDoc: mutated}), /分叉/,
+    '契约侧把标题上限放宽到 200、运行期仍写 120，守卫必须红（修复前这里同样全绿）');
+});
+
+test('判据④-M7：运行期把 PostInput 的 title 类型从 string 改成 number ⇒ 必须红（属性名撞文档键的第二种形状）', () => {
+  const definition = CASES.find(item => item.schema === 'PostInput');
+  const original = runtimeBodyOf(definition);
+  assert.equal(original.properties?.title?.type, 'string', '运行期 title 的类型不再是 string，M7 前提不成立');
+  const retyped = structuredClone(original);
+  retyped.properties.title = {type: 'number'};
+  assert.throws(() => assertFieldParity(definition, {runtimeBody: retyped}), /分叉/,
+    '运行期把 title 改成 number、契约仍写 string，守卫必须红（修复前这里也是全绿）');
 });
