@@ -1673,9 +1673,9 @@ jobs:
   # HTTP 端到端真库臂（R87 · `#1030` 图片上限的「真 SQL → 路由 → 信封」链路）：
   # `tests/integration/post-media-attach-http-pg.mjs`。接线前它**不在任何 workflow 的 `run:` 里**
   # （白名单原文「未接线（真缺口）：缺 CI 接线——脚本自起临时 PG 17 簇（`GY_PG_BIN` 闸门，缺则 SKIP + 77）」），
-  # 所以「本机 8 组 PASS」不等于「CI 覆盖了它」——这个 job 是它的第一个 CI 读数口。
+  # 所以「本机 11 组 PASS」不等于「CI 覆盖了它」——这个 job 是它的第一个 CI 读数口。
   #
-  # 它钉的是 8 组 PASS：每帖 ≤3 张的上限计数（owner 隔离、「挂载即释放」、状态过滤）、挂载侧
+  # 它钉的是 11 组 PASS：每帖 ≤3 张的上限计数（owner 隔离、「挂载即释放」、状态过滤）、挂载侧
   # `preValidation` 首拒的领域信封（`field: /media_ids` + `code: post_image_limit` + 领域文案）、
   # 未接线时的 `503 PROVIDER_UNAVAILABLE` 逐字文案 —— 全是「真 SQL → 路由 → 响应信封」的裁决，
   # stub 钉不住（`tests/unit/media-attachment-limit.test.mjs` 只能钉纯函数那一层）。
@@ -1696,7 +1696,7 @@ jobs:
   # `CREATE DATABASE` 的库名比对。写进一个不叫 `*_PG_TEST_URL` 的 env，等于「库名无从核对」，判红。
   #
   # 退出码语义（与上面四个 job 同款）：77 ⇒ `exit 1`；其它非 0 ⇒ 原样透出 rc；退 0 还要过两道读数闸
-  # （末行 `[ALL PASS] … 共 N 组 PASS` + `N ≥ 8`）—— 只 grep 一道时，删掉整组 PASS 断言仍会 exit 0
+  # （末行 `[ALL PASS] … 共 N 组 PASS` + `N ≥ 11`）—— 只 grep 一道时，删掉整组 PASS 断言仍会 exit 0
   # 并打 pass，那是「job 绿、覆盖为零」。
   #
   # `timeout-minutes: 45`：**封顶之和 35 + 前置余量 10 = job 级 45**。
