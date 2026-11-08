@@ -645,21 +645,21 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/deidentify-account-pg.mjs',
-    reason: '未接线（真缺口）：`#19` 片1（迁移 0057 注销去身份）的真库臂，'
-      + '与 `admin-scopes-read-pg.mjs` 同一「自起集群」族——`GY_PG_BIN` 指 PG 17 二进制、'
-      + '`GY_I19_PG_ROOT` 指可写根，`initdb`/`pg_ctl` 起只监听 127.0.0.1 的一次性集群，'
-      + '按生产顺序跑 `discoverMigrations` 全链 + `roles/*.sql` + `20-login-roles.sql` 的 '
-      + '`#region gy-i19-deletion-grant` / `#region gy-i19-deidentify-grant`，'
-      + '再跑 A1–A11（擦除读数、幂等、G0015／G0002 守卫、exports 逐列、writebacks 不动、'
-      + '`SET ROLE` 直改 42501、真实 `createRequest` 合流、收回 EXECUTE 后 503 且零写入、'
-      + '后台 `display_name` 回落）。本地口径：`node tests/integration/deidentify-account-pg.mjs`'
-      + '（本机 PG 17.11 实测 12.0 秒 11 臂全过）；缺 `GY_PG_BIN` 时打印 3 行 SKIP 并 **exit 77**'
-      + '（未取得，⛔ 不是通过；也不加任何吞红开关）。'
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-deidentify-17-11` 的 step'
+      + '「注销去身份真库臂」跑 `node tests/integration/deidentify-account-pg.mjs`（该 step 不 `CREATE DATABASE`——'
+      + '脚本自己 `initdb` 出一次性 17 簇：`GY_PG_BIN` 指二进制、`GY_I19_PG_ROOT` 指可写根、`pickFreePort()` 选端口，'
+      + '跑完 `pg_ctl -m immediate stop` 并删数据目录，所以 CI 里没有「CI 建出来的库」可核对）。'
+      + '臂本体：按生产顺序跑 `discoverMigrations` 全链 + `roles/*.sql` + `20-login-roles.sql` 的 '
+      + '`#region gy-i19-deletion-grant` / `#region gy-i19-deidentify-grant`，再跑 A1–A11（擦除读数、幂等、'
+      + 'G0015／G0002 守卫、exports 逐列、writebacks 不动、`SET ROLE` 直改 42501、真实 `createRequest` 合流、'
+      + '收回 EXECUTE 后 503 且零写入、后台 `display_name` 回落）。CI 口径：`exit 77` ⇒ 红（未取得不是通过），'
+      + '退 0 后还要过「结论行闸」与读数闸 `pass_lines -lt 11`（逐行数 `  ✓ A…`）⇒ 期望 11 条 A 断言。'
       + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
-      + '（无 PG 回环链：既没有真库、也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
-      + '接线的后续动作（本片不做，`.github/**` 不在 B 档 services/deploy/tests/packages/privacy 范围）：'
-      + '在 `.github/workflows/real-pg-integration.yml` 里照 `real-pg-admin-read-17-11` 加一个自起集群 job，'
-      + '并同步 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`。'
+      + '（无 PG 回环链：既没有真库，也没有能建角色的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
+      + '因此这里只换前缀（未接线（真缺口）→ 已接线（workflow）），条目本身保留：删掉它会立刻变成'
+      + '「既不在 http 链里、也不在白名单里」的未声明红（判据 4）。'
+      + '旁证：`tests/unit/ci-real-pg-wiring.test.mjs` 的 `MANAGED_SCRIPTS`／`SELF_CLUSTERED_SCRIPTS`／'
+      + '`SELF_CLUSTERED_ROOT_KEY`（键 `GY_I19_PG_ROOT`）均已登记，白名单条目数（59）不变。'
   },
 ]);
 

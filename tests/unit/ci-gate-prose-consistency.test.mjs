@@ -30,7 +30,7 @@
 //   ⑥ 允许清单**会失效**：每条都必须仍能复现出「同一 file/job/line/claim、同一 kind、同一 gate」的 finding；
 //      散文被修好、闸门被改、行号漂了 —— 都会让条目变成 stale 而判红。⛔ 不允许把清单当永久豁免。
 //   ⑦ 每个带 `-lt` 闸门的 job 里，每道闸门都必须至少有一处散文钉住（`unclaimed` finding），否则「闸门是隐形的」：
-//      改散文没人红、改闸门也没人红。本文件今天 16/16 全钉住。
+//      改散文没人红、改闸门也没人红。本文件今天 17/17 全钉住。
 //
 // 允许清单为什么存在：`.github/**` 属 B 档，本单（GY-R90）**明确禁止**改 yml ⇒ 今天扫出来的每一处判不了/不一致
 // 只能就地登记，逐条写「为什么本轮不改 + 应该由谁改」。清单里每一条都会在每次跑测试时重新验证（判据⑥）。
@@ -636,10 +636,10 @@ test('判据⑤：多道闸门时按变量名选对（fixture）', () => {
   assert.equal(bad[0].kind, 'mismatch');
 });
 
-test('判据⑦：真实文件里 16 道组数闸门全部有散文钉住，且 http 臂那道就是 11（事故锚点）', () => {
+test('判据⑦：真实文件里 17 道组数闸门全部有散文钉住，且 http 臂那道就是 11（事故锚点）', () => {
   const scan = scanWorkflow('real-pg-integration.yml', readWorkflow('real-pg-integration.yml'));
   const gates = scan.jobs.flatMap((job) => job.countGates);
-  assert.equal(gates.length, 16, `real-pg-integration.yml 的组数闸门从 16 道变成了 ${gates.length} 道`);
+  assert.equal(gates.length, 17, `real-pg-integration.yml 的组数闸门从 17 道变成了 ${gates.length} 道`);
   const unclaimed = scan.findings.filter((f) => f.kind === 'unclaimed');
   assert.deepEqual(unclaimed.map((f) => `${f.job}:${f.line}`), [], '有闸门没有任何散文钉住 ⇒ 闸门是隐形的');
   const http = scan.jobs.find((job) => job.name === 'real-pg-http-17-11');

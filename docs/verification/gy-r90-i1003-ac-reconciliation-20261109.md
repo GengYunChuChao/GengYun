@@ -37,7 +37,7 @@
 | AC①-1（AC (a) 前半） | 生产代码内不再有「本地 shim」 | **已满足** | `services/api/src/recognitions/openai-vision-adapter.ts:241` 组请求体；`services/api/src/recognitions/openai-vision-adapter.ts:271` 唯一发送点；`services/api/src/recognitions/provider.ts:231` 选路进新剖面。全仓 `git grep -i tokenhub` 无翻译层实现（命中仅配置/文档/验证工具） | 无。注意：`.pg17` 下那个本机 shim 从未进版本控制，也不该进——`#1003` 正文自述「只存在于本机」 |
 | AC①-2（AC (a) 后半） | 识别链路在 real 下由仓内实现完成一次真实调用并留证 | **外部件阻塞** | 代码路径可走通：`services/api/src/app.ts:1124` 读三键；`services/api/src/app.ts:1125` 取真实字节端口；`services/api/src/app.ts:1131` 记账包装；`services/api/src/recognitions/provider.ts:231` 进 openai-vision 分支；`services/api/src/recognitions/openai-vision-adapter.ts:271` 发送。闸门：`services/api/src/recognitions/live-ports.ts:191` 授权串、`services/api/src/recognitions/live-ports.ts:197` 同尝试不重发 | **本页未取得键值、未获付费授权**；账号与密钥在仓外本机另有存放处（`E:\GengYunPrivate`，本页未读取其内容）但未用于本次取证。缺的三件外部件：真实 `RECOGNITION_PROVIDER_URL`／`KEY`／`MODEL` 取值；付费授权与次数上限口径（§3 第 2 条）；一次 real 跑通的调用记录与留证页（§3 第 4 条）。另需一张真实杂草照片（§3 第 3 条） |
 | AC②（AC (b)） | `species_id` 必须落在 `species.json` 闭集内，否则如实回不确定 | **部分满足（严格读）** | **剖面内成立**（`RECOGNITION_PROVIDER_PROFILE=openai-vision-v1`）：`services/api/src/recognitions/openai-vision-adapter.ts:145` 闭集外直接丢弃；`services/api/src/recognitions/openai-vision-adapter.ts:123` 归一化入口；`services/api/src/recognitions/openai-vision-adapter.ts:168` 允许集只 trim 不裁剪；`services/api/src/recognitions/provider.ts:32` 读目录、`services/api/src/recognitions/provider.ts:37` 空目录即抛（fail-closed）；目录实体 `packages/knowledge/catalog/species.json:8`（8 个物种）；丢弃后落不确定 `services/api/src/recognitions/state.ts:189`、`services/api/src/recognitions/state.ts:193`；单测 `tests/unit/recognitions-species-catalog.test.mjs:117`、`tests/unit/recognitions-species-catalog.test.mjs:169`。**读法：丢弃后继续，不是整次回不确定**——`tests/unit/recognitions-openai-vision.test.mjs:127` 的用例喂 4 条候选（含 1 条 `not_in_catalog`），断言仍 `completed` 且只留 2 条有效候选（`tests/unit/recognitions-openai-vision.test.mjs:141`）；只有全部候选都非法才经 `services/api/src/recognitions/state.ts:189`、`services/api/src/recognitions/state.ts:193` 落 `uncertain`。**默认剖面反证**：选路缺省仍走 live（`services/api/src/recognitions/provider.ts:248`、`.env.example:78`）；live 只判「数组 + 条数」（`services/api/src/recognitions/live-adapter.ts:410`）；状态机只判 `species_id` 是长度 1..80 的字符串（`services/api/src/recognitions/state.ts:96`）；`git grep -n species -- services/api/src/recognitions/live-adapter.ts` 命中 0 条（命令退出码 1） | **默认 real 路径不满足**：live 剖面不读物种目录、不过滤，目录外 `species_id` 会原样进候选，分数达阈值且无同分时照样落 `succeeded`（`services/api/src/recognitions/state.ts:210`）。按 AC 原文（未限定剖面）判「部分满足」；若裁定 AC② 只约束 `openai-vision-v1` 剖面，则该条在剖面内**已满足**——这是裁定项，不是本页能替它定的 |
-| AC③-1（AC (c) 之二态） | 失败与超时：都有明确错误码与用户可读文案 | **已满足** | 错误码闭集四条 `services/api/src/recognitions/provider.ts:42`；状态码映射本体 `services/api/src/recognitions/openai-vision-adapter.ts:102`（429→配额，401/403/≥500→不可用，其余→结果未知，调用点在 `services/api/src/recognitions/openai-vision-adapter.ts:295`）；超时映射 `services/api/src/recognitions/openai-vision-adapter.ts:283`；码→任务态 `services/api/src/recognitions/service.ts:276`（超时→`timed_out`，其余→`failed`）；落 Job `services/api/src/recognitions/service.ts:488`；文案 `miniprogram/utils/identify-api.js:92`（识别失败）、`miniprogram/utils/identify-api.js:93`（识别超时）；单测 `tests/unit/recognitions-openai-vision.test.mjs:93`、`tests/unit/recognitions-openai-vision.test.mjs:107`、`tests/unit/recognitions-openai-vision.test.mjs:120` | 无新代码。真实供应商下这两态各触发一次并留证，属 AC①-2 的范围（`docs/architecture/adr-002-recognition-provider-route.md:62` 的证据口径同此要求） |
+| AC③-1（AC (c) 之二态） | 失败与超时：都有明确错误码与用户可读文案 | **已满足** | 错误码闭集四条 `services/api/src/recognitions/provider.ts:42`；状态码映射调用点 `services/api/src/recognitions/openai-vision-adapter.ts:295`；超时映射 `services/api/src/recognitions/openai-vision-adapter.ts:283`；映射本体 `services/api/src/recognitions/openai-vision-adapter.ts:102`（429→配额，401/403/≥500→不可用，其余→结果未知）；码→任务态 `services/api/src/recognitions/service.ts:276`（超时→`timed_out`，其余→`failed`）；落 Job `services/api/src/recognitions/service.ts:488`；文案 `miniprogram/utils/identify-api.js:92`（识别失败）、`miniprogram/utils/identify-api.js:93`（识别超时）；单测 `tests/unit/recognitions-openai-vision.test.mjs:93`、`tests/unit/recognitions-openai-vision.test.mjs:107`、`tests/unit/recognitions-openai-vision.test.mjs:120` | 无新代码。真实供应商下这两态各触发一次并留证，属 AC①-2 的范围（`docs/architecture/adr-002-recognition-provider-route.md:62` 的证据口径同此要求） |
 | AC③-2（AC (c) 之一态） | 零候选：同样要有明确错误码与用户可读文案 | **部分满足** | 有如实原因与分支归类：`services/api/src/recognitions/state.ts:141` 原因文本、`services/api/src/recognitions/state.ts:193` 空候选必带原因；适配器如实返回空候选 `services/api/src/recognitions/openai-vision-adapter.ts:337`；分支落 `no_result` `miniprogram/utils/identify-api.js:838`（按原因文本子串匹配）；分支文案 `miniprogram/utils/identify-api.js:171`；但该分支错误码按设计为 null `services/api/src/recognitions/branches.ts:146`、`services/api/src/recognitions/branches.ts:150` | **裁定前无法判定工作量**：零候选现被当作「正常调用但没结果」（`services/api/src/recognitions/live-adapter.ts:234` 同口径），只给 `uncertain` + 分支 `no_result` + 原因文本，`error_code` 恒 null。若 AC③ 字面要求「零候选也有错误码」，需先裁定是新增一个错误码，还是承认「分支归类 + 原因文本」为等价物；**若裁定新增错误码，则含契约 + 代码 + 文案 + 测试四块**（错误码闭集 `services/api/src/recognitions/provider.ts:42` 也要动），不是一句文案能收口的 |
 
 ### 1.3 判定构成
@@ -70,7 +70,8 @@
 - `services/api/src/recognitions/openai-vision-adapter.ts:263` —— 过闸门。
 - `services/api/src/recognitions/openai-vision-adapter.ts:271` —— 唯一网络发送。
 - `services/api/src/recognitions/openai-vision-adapter.ts:283` —— 超时／异常出口。
-- `services/api/src/recognitions/openai-vision-adapter.ts:102` —— HTTP 状态码→错误码的映射本体（429→配额，401/403/≥500→不可用，其余→结果未知）；调用点在 `services/api/src/recognitions/openai-vision-adapter.ts:295`。
+- `services/api/src/recognitions/openai-vision-adapter.ts:295` —— HTTP 状态码→错误码的调用点（`if (!response.ok)`）。
+- `services/api/src/recognitions/openai-vision-adapter.ts:102` —— 上一条的映射本体：429→配额，401/403/≥500→不可用，其余→结果未知。
 - `services/api/src/recognitions/openai-vision-adapter.ts:315` —— 200 但解析不出 JSON。
 - `services/api/src/recognitions/openai-vision-adapter.ts:337` —— 空候选如实返回。
 
@@ -156,7 +157,7 @@ v1 把 AC② 记成「已满足」，漏了一句限定：**闭集过滤只在�
 
 ### 3.1 外部件清单（五件，逐件写「谁才能提供」）
 
-1. **真实供应商账号与三键取值。** 缺一即 fail-closed：`services/api/src/recognitions/openai-vision-adapter.ts:204`（模型名空即抛，取值在 `services/api/src/recognitions/openai-vision-adapter.ts:203`）、`services/api/src/recognitions/provider.ts:248`（端点与密钥齐备才走真实剖面）、`.env.example:80`、`.env.example:81`、`.env.example:83`（三键缺一 ⇒ 受理前 503）。仓内自查也给出同一结论：`tests/integration/recognition-chain-e2e.mjs:20` 自陈 real 分支 fail-closed。**谁提供**：持有供应商账号与密钥的运维／用户本人；仓内只能声明键名，不能声明值。**本页状态**：未取得键值、未获付费授权；账号与密钥在仓外本机另有存放处（`E:\GengYunPrivate`，本页未读取其内容），未用于本次取证。
+1. **真实供应商账号与三键取值。** 缺一即 fail-closed：`services/api/src/recognitions/openai-vision-adapter.ts:203`（取模型名）、`services/api/src/recognitions/openai-vision-adapter.ts:204`（空即抛）、`services/api/src/recognitions/provider.ts:248`（端点与密钥齐备才走真实剖面）、`.env.example:80`、`.env.example:81`、`.env.example:83`（三键缺一 ⇒ 受理前 503）。仓内自查也给出同一结论：`tests/integration/recognition-chain-e2e.mjs:20` 自陈 real 分支 fail-closed。**谁提供**：持有供应商账号与密钥的运维／用户本人；仓内只能声明键名，不能声明值。**本页状态**：未取得键值、未获付费授权；账号与密钥在仓外本机另有存放处（`E:\GengYunPrivate`，本页未读取其内容），未用于本次取证。
 2. **付费授权与次数上限口径。** 识别域闸门只有三件事：授权串逐字比对（`services/api/src/recognitions/live-ports.ts:191`）、同一尝试不重发（`services/api/src/recognitions/live-ports.ts:197`）、可选次数上限（`services/api/src/recognitions/live-ports.ts:200`）；上限默认 0 = **不限次**（`services/api/src/recognitions/live-ports.ts:184`），预留金额恒 0（`services/api/src/recognitions/live-ports.ts:205`）。仓内写死的 `MAX_PAID_CALLS` 只属于问答／LLM 装置（`tools/verify-chat-live.mjs:17`、`tools/verify-llm-live.mjs:38`），那个手工 live 装置也只放行 tts（`tools/verify-provider-adapter-live.mjs:30`）。**谁提供**：能批「花一次钱」并定上限的人；代码侧能做的（闸门、去重、账本列）已经在。
 3. **真实杂草照片与使用许可。** 原始私有媒体不入仓是硬约束（`docs/evaluation/README.md:91`），所以仓内不存在可用于真实验收的照片。此前唯一一次真实的 TokenHub 视觉 200 用的是合成图，该页自己写「无草种真值」（`docs/verification/gy-i27-live-ai-20261018.md:78`），且 `docs/verification/ai-configuration-evidence.md:11` 明写视觉推理与草种 Top3／分数／准确率均为 0。**谁提供**：能授权拍摄／使用真实样本的样本方，且要过脱敏与留存口径。
 4. **一次真实调用记录与留证页。** ADR-002 把证据口径写成上线前置（`docs/architecture/adr-002-recognition-provider-route.md:62`），`#1003` 正文同向要求跨线登记（对照物 `docs/moderation/http-layer.md` 在仓内）。目前识别域没有任何真实调用记录；唯一的真实视觉调用属 AI 配置域，不是识别链路。**谁提供**：能拿账号与付费授权做一次受控调用、并把 `usage`／HTTP 状态／落库行如实写下的人。
@@ -166,7 +167,7 @@ v1 把 AC② 记成「已满足」，漏了一句限定：**闭集过滤只在�
 
 - 协议翻译与请求体：`services/api/src/recognitions/openai-vision-adapter.ts:241`。
 - 闭集过滤：`services/api/src/recognitions/openai-vision-adapter.ts:145`。
-- 失败码映射本体与超时出口：`services/api/src/recognitions/openai-vision-adapter.ts:102`、`services/api/src/recognitions/openai-vision-adapter.ts:283`。
+- 失败码映射的调用点与超时出口：`services/api/src/recognitions/openai-vision-adapter.ts:295`、`services/api/src/recognitions/openai-vision-adapter.ts:283`；映射本体 `services/api/src/recognitions/openai-vision-adapter.ts:102`。
 - 零候选出口：`services/api/src/recognitions/openai-vision-adapter.ts:337`。
 - 选路与 fail-closed：`services/api/src/recognitions/provider.ts:231`、`services/api/src/recognitions/provider.ts:245`、`services/api/src/recognitions/provider.ts:248`。
 - 装配与记账：`services/api/src/app.ts:1124`、`services/api/src/app.ts:1131`；版本串落库 `services/api/src/privacy/media-call-accounting.ts:268`。
@@ -181,14 +182,14 @@ v1 把 AC② 记成「已满足」，漏了一句限定：**闭集过滤只在�
 
 ## §4 闸门读数
 
-基线 `af39bfe6`，工作树内容即本文件；六道闸门逐条实跑，命令与尾行照录。
+基线 `af39bfe6`（写作时的 main）；本页所在提交另合并了 `a372bd91`（v2 提交时 main 已前移到该 SHA，且已含本页 v1），六道闸门在**合并后的提交**上逐条实跑，命令与尾行照录。
 
 | # | 闸门 | 命令 | EXIT | 尾行（摘要） |
 | --- | --- | --- | --- | --- |
 | 1 | 文档锚点 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `PASS: --strict 下没有基线之外的新增` |
-| 2 | 锚点重定位 identity | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `ℹ pass 36` / `ℹ fail 0` / `ℹ skipped 1` |
+| 2 | 锚点重定位 identity | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `ℹ pass 37` / `ℹ fail 0` |
 | 3 | 契约台账 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。` |
-| 4 | 文档测试 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 361 页` |
+| 4 | 文档测试 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 365 页` |
 | 5 | 合并树 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 只打印合并树对象名，无冲突文件名 |
 | 6 | 改动面 | `git diff --name-only origin/main...HEAD` | 0 | 只有本文件一行 |
 
@@ -199,13 +200,13 @@ v1 把 AC② 记成「已满足」，漏了一句限定：**闭集过滤只在�
 PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT 与 COMMENT_ANCHOR 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN／STALE-SYMBOL）
 
 > node --test tests/unit/doc-anchor-relocation-identity.test.mjs
-ℹ pass 36  ℹ fail 0  ℹ skipped 1  EXIT 0
+ℹ pass 37  ℹ fail 0  EXIT 0
 
 > node tools/verify-contract-status.mjs
 PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。
 
 > npm run test:docs
-PASS: 识别 5 页 / 跳过 361 页（扫描面 366 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）
+PASS: 识别 5 页 / 跳过 365 页（扫描面 370 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）
 
 > git merge-tree --write-tree --name-only origin/main HEAD
 <合并树对象名一行；不照录具体 SHA——它随本页字节变化，出现文件名即表示与 main 冲突>
@@ -219,6 +220,8 @@ docs/verification/gy-r90-i1003-ac-reconciliation-20261109.md
 - 闸门 2 在**提交前**必红一次，属自证：纯新增文档在提交前 base 与 HEAD 是同一提交，用例据此判红，断言原文为「base 与 HEAD 同一提交（git merge-base HEAD origin/main），本用例没有判定面却也不是 CI 浅克隆 —— 取 base 的逻辑有问题，不允许静默通过」（`tests/unit/doc-anchor-relocation-identity.test.mjs:1317`）。本页提交后同命令为 EXIT 0。
 - 闸门 5 打印的只有合并树对象名；一旦出现文件名即表示与 main 冲突。闸门 6 用来证明「改动只有本文件」。
 - 本页不含裸行号引用（全部写成完整路径），不动 `docs/architecture/**` 的符号基线面。
+- 闸门 2 的比对口径是「同一文档行内、同一目标文件的锚点序列」**按位置配对**，且目标文件本提交未改动时行号必须恒等；要把旧锚点改到新行号，必须在 `tests/unit/doc-anchor-relocations.json` 登记 `doc/line/target/from/to/reason`。本页因此把 v2 的锚点修订写成**只追加**：旧锚点保位，新锚点补在同目标文件序列的末尾，不改测试、不改登记表。可复核：`git diff -U0 refs/heads/main..HEAD -- docs/verification/gy-r90-i1003-ac-reconciliation-20261109.md` 里 `services/api/src/recognitions/openai-vision-adapter.ts` 的旧序列前缀不变。
+- v2 追加时 main 已含本页 v1（`e537a099`），`git merge-tree` 先报 add/add 冲突；本页的做法是 `git merge --no-ff origin/main` 并保留本页 v2 一侧，再跑闸门，闸门 5 才为 0。**未 force-push**，合并提交留在分支历史里。
 
 ## §5 边界
 
