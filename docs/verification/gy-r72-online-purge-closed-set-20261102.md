@@ -54,7 +54,7 @@
 
 ### 2.3 CLI：选择集 + 报告，不再自带实现
 
-`tools/purge-expired-online-data.mjs`（306 行）删掉本地 `createFourDomainPurgePort`（原 `tools/purge-expired-online-data.mjs:125-157`）与四个 store 的直接 import，改为 `import { ONLINE_PURGE_MODULES, createOnlinePurgePort }`；启动时打印：
+`tools/purge-expired-online-data.mjs`（306 行）删掉本地 `createFourDomainPurgePort`，原 `tools/purge-expired-online-data.mjs:125-157`（今该段为 `pool` 初始化与参数解析）与四个 store 的直接 import，改为 `import { ONLINE_PURGE_MODULES, createOnlinePurgePort }`；启动时打印：
 
 - `清理闭集（8 域）：favorites、history、messages、conversations、recognitions、speech、ocr、jobs`
 - `本轮可清（N/8 域）：…`

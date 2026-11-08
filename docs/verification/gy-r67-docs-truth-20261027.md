@@ -101,7 +101,7 @@ STATUS_KEYS=12
 `docs/architecture/ai-ops-spec-status.md` §7.1（改前原文，原「仍没做到的两处」第 1 条；该项已随 #710 闭合，本节标题现为「仍没做到的一处」）：
 
 ```text
-- 后台仍无入口：两个审计页分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54`），全仓没有页面消费 `GET /admin/audit-logs`（P10）。
+- 后台仍无入口：两个审计页分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33` 的 `AUDIT_EVENTS_PATH`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54` 的 `FLAG_AUDIT_PATH`），全仓没有页面消费 `GET /admin/audit-logs`（P10）。
 ```
 
 同一断言在同一页还有两处：`:110`（E40 缺口列末句「剩余边界：后台无页面消费该读面（P10）」）与 `:206`（「只剩「后台点不到」与「台账说没写」」）。`:110` 属在飞 PR #659 的改动面，**本片不动**（列入 §9）；`:206` 是同一假陈述的隐性出现，本片一并改（见 §7.11）。
@@ -356,7 +356,7 @@ STATUS_KEYS=12
 - 新文（逐字）：
 
 ```text
-- 三读面读数不合并：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`），另两个审计页仍分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54`），三面读数无法合并、页面读数也无端到端验收（P10）。原写「后台仍无入口…全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md`。
+- 三读面读数不合并：审计总台账页已消费全表读面（`apps/admin/src/views/AuditLogsView.vue:72` 调 `listAuditLogs`），另两个审计页仍分别只接内存读面（`apps/admin/src/lib/audit-events.mjs:33` 的 `AUDIT_EVENTS_PATH`）与只认 `set_flag` 的开关审计面（`apps/admin/src/lib/flag-audit.mjs:54` 的 `FLAG_AUDIT_PATH`），三面读数无法合并、页面读数也无端到端验收（P10）。原写「后台仍无入口…全仓没有页面消费 `GET /admin/audit-logs`」为误，见 `docs/verification/gy-r67-docs-truth-20261027.md`。
 ```
 
 - 依据：§2.2、§2.5。
