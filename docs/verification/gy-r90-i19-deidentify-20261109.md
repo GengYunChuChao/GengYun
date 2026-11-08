@@ -6,12 +6,13 @@
 | 取证时刻 | `2026-11-09`（PowerShell，Node `v24.16.0`，PostgreSQL `17.11` 二进制取自 `E:\GengYunCommander\.pg17\pgsql\bin`） |
 | 仓库 / 基线 | `GengYunChuChao/GengYun`，`origin/main` = `d7160e4070ce841dee2c111635bb5a11bce17907`（**写作时的 main**，此值会随主干前进而漂移；本页所有行号按该提交的树读出） |
 | 被取证对象 | `#19`「注销去身份」**片1**（由 `#1108` 合入）：迁移 `0057` + 回滚件 + 权限登记（`20-login-roles.sql` / `90-assert-least-privilege.sql`）+ 受理调用点 + 真库臂 `A1–A11` |
-| 本 PR 改动面 | A 档文档：新增本页 + `docs/architecture/contract-status.json` 里 `requestAccountDeletion` 的 `blocker` 一行 + 中文镜像表同一行。`services/**`、`deploy/**`、`.github/**`、`tests/**` **0 行** |
-| 结论 | 片1 的函数面、权限面与受理事务接线在本机一次性集群上 `A1–A11` 全过（`EXIT=0`，11 秒）；**整项 `#19` 仍未完成**：未接 CI、取消注销不回滚身份、7/30 日生命周期与第三方删除证据未验 |
+| 本 PR 改动面 | **B 档文档**：新增本页 + `docs/architecture/contract-status.json` 里 `requestAccountDeletion` 的 `blocker` 一行 + 中文镜像表同一行 + `tests/unit/contract-status-ocr-anchor-truth.test.mjs` 的台账体积基线常量。`services/**`、`deploy/**`、`.github/**`、`tests/**` 的产品行为 **0 行** |
+| 为什么是 B 档 | `docs/pr-review-policy.md:169` 的受保护清单逐字含 `docs/architecture/contract-status.json`（"命中任一条即 B 档，不论是否在 `docs/**` 下"），`docs/pr-review-policy.md:173` 再兜一句"不在正面清单内的路径一律 B 档" ⇒ 本 PR **不是** A 档，须监工批复、指挥不能自合 |
+| 结论 | 片1 的函数面、权限面与受理事务接线在本机一次性集群上 `A1–A11` 全过（`EXIT=0`，11 秒）；**整项 `#19` 仍未完成**：未接 CI、取消注销不回滚身份、7/30 日生命周期与第三方删除证据未验；**媒体行删除（片2）与附件面不在本片**（§3.6）⇒ 本片**不满足** `#19` 验收① |
 
 ## 本页**不声称**什么
 
-1. **不声称 `#19` 已完成。** 片1 只交付"注销受理那一刻把身份擦掉"的数据库写路径与调用点接线；`#19` 的验收面（7 日在线到期执行、30 日备份到期执行、第三方删除证据、恢复清单重放）一条都不在本片。
+1. **不声称 `#19` 已完成。** 片1 只交付"注销受理那一刻把身份擦掉"的数据库写路径与调用点接线；`#19` 的验收面（**媒体/附件的行删除**（片2，见 §3.6）、7 日在线到期执行、30 日备份到期执行、第三方删除证据、恢复清单重放）一条都不在本片；`#19` 验收① 原文列的"账号、音频/转写/问答、识别、**媒体**、收藏消息、缓存/导出"里，媒体一项由片2 负责，本片**不满足**该条。
 2. **不声称已接 CI。** 新真库臂 `tests/integration/deidentify-account-pg.mjs` 目前**只在白名单里登记为"未接线（真缺口）"**，在 CI 里不会跑；本页的 `A1–A11` 读数是我在本机手动起的一次性集群上跑出来的（§4），不是 CI 绿。
 3. **不声称取消注销可回滚身份。** 去身份**不可逆**：被擦的四列在回滚件里也明写"不会被回滚恢复"，取消注销只把请求推进到 `cancelled`，账号停在 `deletion_pending`（§3.1）。
 4. 不声称去身份让账号"消失"。`users` 行、`exports` 行、`export_writebacks` 行都**保留**；擦的是四列 PII 与 `exports.provider_request_ref_cipher`（§1.1、§3.2）。
@@ -20,7 +21,7 @@
 
 - 页内每条 `path:line` 都是先用 `node -e "readFileSync(p,'utf8').split('\n')"` 逐行读原文、确认那行是**实质行**（SQL 语句 / 断言行 / 导出声明 / 表格行）之后才写下的；没有一条锚在块首注释或空行上。页内**不出现裸行号**，行号一律带全路径。
 - 行号按 `d7160e40` 的树。本 PR 未动 `services/**`、`deploy/**`、`tests/**`，故这些行号在该树内稳定。
-- 真库臂只跑**一个**脚本（`tests/integration/deidentify-account-pg.mjs`），未跑全量 `npm run test:unit`；闸门只跑派单点名的六道（§4）。
+- 真库臂只跑**一个**脚本（`tests/integration/deidentify-account-pg.mjs`）；本片未在本地跑全量 `npm run test:unit`（本机 node 进程 48 个 > 6，按纪律只跑受影响文件，全量以 CI 为准）；CI 首轮暴露 T5 体积基线红 —— `tests/unit/contract-status-ocr-anchor-truth.test.mjs` 钉两份台账的字节数，改台账必然撞上，已在追加提交中同步基线常量（见该文件的"第二十七次同步"注释）。闸门只跑派单点名的六道（§4）。
 - 真库臂的环境：`GY_PG_BIN` 指 PG 17 二进制、`GY_I19_PG_ROOT` 指可写根（默认 `tmpdir()` 下 `initdb` 会 `could not create directory ... Permission denied`，故必须显式指到仓外可写目录）。**端口不固定**：脚本用 `pickFreePort()` 现取，我这次拿到 `62982`。
 - 读数一律抄我这次运行的原文（§4 表格里"本机读数"列），不引用别处页面里别人的读数。
 
@@ -28,7 +29,7 @@
 
 ### 1.1 迁移与函数：一条唯一写路径
 
-`services/api/db/migrations/0057_deidentify_account_on_deletion.sql`（157 行）建一个函数，函数体内**没有任何 `GRANT`**：
+`services/api/db/migrations/0057_deidentify_account_on_deletion.sql`（**156** 行，`split('\n')` 末尾空串不计）建一个函数，函数体内**没有任何 `GRANT`**：
 
 | 面 | 位置 | 事实 |
 | --- | --- | --- |
@@ -153,7 +154,7 @@
 
 - `services/api/src/privacy/user-data-deletion.ts:1632` 是 `cancelDeletion(userId)` 的定义，整段（`services/api/src/privacy/user-data-deletion.ts:1637` … `services/api/src/privacy/user-data-deletion.ts:1645`）只有"挑本人的最新请求 → 交协调器取消 → 返回回执"，**零 `users` 写入**。
 - 路由侧同此：`services/api/src/routes/account-deletion.ts:377` 只是转调 `cancelDeletion`。
-- 唯一"把账号改回 active"的函数是 `public.restore_account`（`services/api/db/migrations/0017_account_suspend_authority.sql:238`），但它对 `deletion_pending`/`deleted` 直接抛 `G0004`：`services/api/db/migrations/0017_account_suspend_authority.sql:272`、`services/api/db/migrations/0017_account_suspend_authority.sql:273`；即便走到它的 `UPDATE`（`services/api/db/migrations/0017_account_suspend_authority.sql:291`），写的也只有 `state`/`auth_epoch`/`revision`/`updated_at`，**不写昵称与三列微信身份**。
+- 唯一把 `users` 行改回 `active` 的路径是 `public.restore_account`（`services/api/db/migrations/0017_account_suspend_authority.sql:238`）；措辞必须限定到 `users`：另一处 `SET state = 'active'` 在 `services/api/db/migrations/0048_admin_account_disable.sql:395`，改的是 `public.admin_accounts`（后台账号，该表无 PII 列），与用户身份无关。而 `restore_account` 对 `deletion_pending`/`deleted` 直接抛 `G0004`：`services/api/db/migrations/0017_account_suspend_authority.sql:272`、`services/api/db/migrations/0017_account_suspend_authority.sql:273`；即便走到它的 `UPDATE`（`services/api/db/migrations/0017_account_suspend_authority.sql:291`），写的也只有 `state`/`auth_epoch`/`revision`/`updated_at`，**不写昵称与三列微信身份**。
 
 **派单写的 vs 实测**：派单说"全仓无 `UPDATE users SET state='active'` 的恢复路径"。实测**存在**这条 `UPDATE`（在 `restore_account` 里），但它被 `deletion_pending` 守卫挡在门外、且不恢复任何 PII。结论不变（取消注销后身份不可回滚），措辞要按实测改：不是"没有恢复函数"，而是"恢复函数对注销中账号直接拒绝、且不恢复 PII"。
 
@@ -188,6 +189,19 @@
 - **第三方删除证据**：第三方（如微信）侧的删除回执/对账证据一条未取；`exports.provider_request_ref_cipher` 被清掉之后，对账只能靠 `recipient_id`/`object_id`/`object_key`（§1.1 明确不动）。
 - **恢复清单重放**：`backup-replay-manifest` 那条链本片未碰，未验证"用备份清单把已注销账号重放回来"会得到什么形状。
 
+### 3.6 不在本片的功能面：媒体行删除（片2，已有实现与证据）
+
+`#19` 验收① 原文含"**媒体**"，AC23 原文含"**附件处理**"（`docs/implementation-requirements.md:585` 那一行：「注销删除与保留 | 会话立即失效，在线7日备份30日；帖评去身份／附件处理、第三方证据、模型停止及恢复清单生效」）。片1 的迁移文件头自己就写明这块**不属于**本函数：「不在本函数内：状态迁移/auth_epoch（属 `request_account_deletion`）、删除 `media` 行、备份副本清单写入（属 `#19` 后续片）」（在 `services/api/db/migrations/0057_deidentify_account_on_deletion.sql` 的第 42–43 行；那两行是文件头注释、不是实质行，故此处只引原文，不给 `path:line` 锚点）。**因此本片不满足 `#19` 验收① 的媒体/附件面。**
+
+这块有独立实现与独立证据，但都不在本 PR：
+
+- 写路径：`public.purge_owner_media(p_owner uuid) RETURNS jsonb` —— `services/api/db/migrations/0035_r34_media_row_purge.sql:121`（`SECURITY DEFINER` + 钉死 `search_path`；谓词自带 owner 绑定，跨 owner 一行都删不到）。
+- 真库臂：`tests/integration/media-row-purge-pg.mjs:272` 是该脚本对 `SELECT public.purge_owner_media($1::uuid) AS r` 的调用点（脚本自己起一次性集群，741 行）。
+- 证据页：`docs/verification/gy-r34-i19-media-row-purge-20261024.md`（300 行）。
+- 授权面：该迁移不加任何表级授权，media 域在探针里零命中 —— `deploy/postgres-cvm/evidence/probe-runtime-grants.sql`。
+
+读本页时请把片1 与片2 分开算：**片1 擦的是"身份列"，片2 删的是"媒体行与派生文件"**；两者都到位才谈得上 `#19` 验收①。台账 blocker 已按同一口径写明「媒体行删除（#19 片2）不在本片」。
+
 ## 4 闸门读数（我实跑）
 
 - 取证环境：本 PR 的 worktree（`E:\GengYunCommander\.pg17\wt-i19page`），Windows + PowerShell 7。`origin/main` = `d7160e4070ce841dee2c111635bb5a11bce17907`（写作时的 main）。真库臂用 `E:\GengYunCommander\.pg17\pgsql\bin` 里的 PostgreSQL 17.11。
@@ -195,8 +209,8 @@
 
 | # | 命令 | EXIT | 尾行 / 关键读数 |
 | --- | --- | --- | --- |
-| 1 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `PASS: --strict 下没有基线之外的新增`（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT、COMMENT_ANCHOR 均按基线内条目只计数）；读数行：`BARE-ORPHAN` 命中 3469 条、基线外新增 0 条；`ANCHOR-COUNT` 进判据锚点 8985 条 / 298 份文档、计数下降的文档 0 份 |
-| 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `pass 37` / `fail 0`；判定面 `base=d7160e4070ce`、`documented files=3 docLines=2 tokens=50 pairs=50 judged=50 identical=50 relocated=0 registered=0 corrected=0 carried=685 removed=0 unresolved=0` ⇒ **不需要任何登记**：本页是纯新增（一个 `add=1` hunk，不进判定面），被改的两行是台账 JSON 与中文镜像的同一行 blocker，其中 `services/api/src/privacy/deletion-requests-pg.ts:255-325` 这个锚点改前改后逐字相同 |
+| 1 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `PASS: --strict 下没有基线之外的新增`（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT、COMMENT_ANCHOR 均按基线内条目只计数）；读数行：`BARE-ORPHAN` 命中 3469 条、基线外新增 0 条、面内陈旧 0 条；`ANCHOR-COUNT` 进判据锚点 8991 条 / 298 份文档、计数下降的文档 0 份（上升 109 份，清册只判下降） |
+| 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `pass 37` / `fail 0`；判定面 `base=d7160e4070ce`、`documented files=3 docLines=2 tokens=50 pairs=50 judged=50 identical=50 relocated=0 registered=0 corrected=0 carried=685 removed=0 unresolved=0 hunks(pair=2 add=1 del=0)` ⇒ **不需要任何登记**：本页两个提交都只有新增的文档行（`add=1` 的纯新增 hunk 不进判定面），被改的两行是台账 JSON 与中文镜像的同一行 blocker，其中 `services/api/src/privacy/deletion-requests-pg.ts:255-325` 这个锚点改前改后逐字相同 |
 | 3 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。`；另有 `PASS: 中文表格一致`、`PASS: 覆盖 130 条契约操作；已装配 130 条；implemented 19 / partial 111 / planned 0` |
 | 4 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 360 页（扫描面 365 页：docs/verification）——读数七条判据全部自洽` |
 | 5 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 29 / 演练 21 条 / 测试文件 608（glob 合计 578）`；生长型读数按下界判，8 条滞后已逐行打印 |
@@ -206,6 +220,6 @@
 
 ## 5 本页的边界
 
-本页只提供证据：哪一行写了什么、我本机跑出什么读数。**是否判定 `#19` 片1 通过、是否关 `#19`、是否把 `#19` 从 `partial` 抬到 `implemented`，都不是本页的事**，由监工按 `#19` 的完整验收面（含 §3.3、§3.5 的未取得项）决定。本 PR 对台账只做"口径同步"：`status` 仍是 `partial`。
+本页只提供证据：哪一行写了什么、我本机跑出什么读数。**是否判定 `#19` 片1 通过、是否关 `#19`、是否把 `#19` 从 `partial` 抬到 `implemented`，都不是本页的事**，由监工按 `#19` 的完整验收面（含 §3.3、§3.5 的未取得项与 §3.6 的片2 功能面）决定。本 PR 对台账只做"口径同步"：`status` 仍是 `partial`。
 
 同样地，本页不声称上述行号会永久稳定：一旦有人改动 `services/**`、`deploy/**`、`tests/**`，这些锚点会漂移，届时按 `tools/verify-doc-anchors.mjs` 与 `tests/unit/doc-anchor-relocation-identity.test.mjs` 的口径处理。
