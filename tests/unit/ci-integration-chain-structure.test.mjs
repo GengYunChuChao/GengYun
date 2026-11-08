@@ -95,7 +95,7 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/post-media-attach-http-pg.mjs',
-    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-http-17-11` 的臂 step 真跑它（同一 `run:` 里先 `psql -c CREATE DATABASE gengyun_post_media_http_test`，再把该库 owner URL 作 argv[2]）。该臂验「真 SQL → 路由 → 信封」：要求空库，自己 apply 全链迁移到 0056，再 real 装配 + 真 HTTP 走完上传／发帖／PATCH／删除，8 组 PASS。77 的语义没放宽：既没给 argv[2]（或 env `POST_MEDIA_HTTP_PG_TEST_URL`）也没设 `GY_PG_BIN` 时脚本仍 exit 77，job 把 77 显式升成 `::error::` + `exit 1`，退 0 后还要过 `[ALL PASS]` 末行闸与「组数 ≥ 8」读数闸（77 静默跳过＝job 绿但零覆盖，不是通过）。判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-http-17-11` 的臂 step 真跑它（同一 `run:` 里先 `psql -c CREATE DATABASE gengyun_post_media_http_test`，再把该库 owner URL 作 argv[2]）。该臂验「真 SQL → 路由 → 信封」：要求空库，自己 apply 全链迁移到 0056，再 real 装配 + 真 HTTP 走完上传／发帖／PATCH／删除，11 组 PASS。77 的语义没放宽：既没给 argv[2]（或 env `POST_MEDIA_HTTP_PG_TEST_URL`）也没设 `GY_PG_BIN` 时脚本仍 exit 77，job 把 77 显式升成 `::error::` + `exit 1`，退 0 后还要过 `[ALL PASS]` 末行闸与「组数 ≥ 11」读数闸（77 静默跳过＝job 绿但零覆盖，不是通过）。判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/account-suspend-pg.mjs',

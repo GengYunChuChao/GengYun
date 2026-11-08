@@ -69,7 +69,7 @@ EXITCODE=1
 
 ### 2.2 为什么 CI 一定是 scram（不是我这边自己加的）
 
-- `.github/workflows/real-pg-integration.yml:44-51` 的 service 只给了 `POSTGRES_PASSWORD`
+- `.github/workflows/real-pg-integration.yml:98-105` 的 service 只给了 `POSTGRES_PASSWORD`
   （`synthetic-ci-owner-only`），**没有**给 `POSTGRES_HOST_AUTH_METHOD`；官方 `postgres` 镜像在
   「给了 `POSTGRES_PASSWORD`、没显式指定认证方式」时的行为就是 `host all all all scram-sha-256`
   （镜像文档 `POSTGRES_HOST_AUTH_METHOD` 一节：默认 `scram-sha-256`，要 `trust` 必须显式设）。
