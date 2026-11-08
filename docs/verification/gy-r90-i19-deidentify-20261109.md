@@ -4,23 +4,23 @@
 | --- | --- |
 | 文档性质 | **证据页**（只登记"哪一行写了什么、我本机跑出什么读数"）。不代监工判定，不代关 `#19` |
 | 取证时刻 | `2026-11-09`（PowerShell，Node `v24.16.0`，PostgreSQL `17.11` 二进制取自 `E:\GengYunCommander\.pg17\pgsql\bin`） |
-| 仓库 / 基线 | `GengYunChuChao/GengYun`，`origin/main` = `d7160e4070ce841dee2c111635bb5a11bce17907`（**写作时的 main**，此值会随主干前进而漂移；本页所有行号按该提交的树读出） |
+| 仓库 / 基线 | `GengYunChuChao/GengYun`，`origin/main` = `a372bd91f420f869c8f3b0b122ef3e9576411ffc`（**写作时的 main**，此值会随主干前进而漂移；初版按 `d7160e4070ce841dee2c111635bb5a11bce17907` 取证，合并 `#1128` 后本页所有行号已按 `a372bd91` 的树逐条复核） |
 | 被取证对象 | `#19`「注销去身份」**片1**（由 `#1108` 合入）：迁移 `0057` + 回滚件 + 权限登记（`20-login-roles.sql` / `90-assert-least-privilege.sql`）+ 受理调用点 + 真库臂 `A1–A11` |
 | 本 PR 改动面 | **B 档文档**：新增本页 + `docs/architecture/contract-status.json` 里 `requestAccountDeletion` 的 `blocker` 一行 + 中文镜像表同一行 + `tests/unit/contract-status-ocr-anchor-truth.test.mjs` 的台账体积基线常量。`services/**`、`deploy/**`、`.github/**`、`tests/**` 的产品行为 **0 行** |
 | 为什么是 B 档 | `docs/pr-review-policy.md:169` 的受保护清单逐字含 `docs/architecture/contract-status.json`（"命中任一条即 B 档，不论是否在 `docs/**` 下"），`docs/pr-review-policy.md:173` 再兜一句"不在正面清单内的路径一律 B 档" ⇒ 本 PR **不是** A 档，须监工批复、指挥不能自合 |
-| 结论 | 片1 的函数面、权限面与受理事务接线在本机一次性集群上 `A1–A11` 全过（`EXIT=0`，11 秒）；**整项 `#19` 仍未完成**：未接 CI、取消注销不回滚身份、7/30 日生命周期与第三方删除证据未验；**媒体行删除（片2）与附件面不在本片**（§3.6）⇒ 本片**不满足** `#19` 验收① |
+| 结论 | 片1 的函数面、权限面与受理事务接线在本机一次性集群上 `A1–A11` 全过（`EXIT=0`，11 秒）；CI 已接线（`#1128` 合入 job `real-pg-deidentify-17-11`，main 上 run `42514774873` 该 job 跑绿，见 §3.3）；**整项 `#19` 仍未完成**：取消注销不回滚身份、7/30 日生命周期与第三方删除证据未验；**媒体行删除（片2）与附件面不在本片**（§3.6）⇒ 本片**不满足** `#19` 验收① |
 
 ## 本页**不声称**什么
 
 1. **不声称 `#19` 已完成。** 片1 只交付"注销受理那一刻把身份擦掉"的数据库写路径与调用点接线；`#19` 的验收面（**媒体/附件的行删除**（片2，见 §3.6）、7 日在线到期执行、30 日备份到期执行、第三方删除证据、恢复清单重放）一条都不在本片；`#19` 验收① 原文列的"账号、音频/转写/问答、识别、**媒体**、收藏消息、缓存/导出"里，媒体一项由片2 负责，本片**不满足**该条。
-2. **不声称已接 CI。** 新真库臂 `tests/integration/deidentify-account-pg.mjs` 目前**只在白名单里登记为"未接线（真缺口）"**，在 CI 里不会跑；本页的 `A1–A11` 读数是我在本机手动起的一次性集群上跑出来的（§4），不是 CI 绿。
+2. **不声称"接上 CI"是本页或本 PR 的功劳，也不声称接上之后就有人兜底。** 接线由 `#1128` 完成并已合入 main：job `real-pg-deidentify-17-11`，main 上实跑绿（run `42514774873` / headSha `a372bd91` / job `128835278181`，见 §3.3）；本 PR 只改文档与台账，`.github/**` 零改动、`tests/**` 只改台账体积基线常量。§2 的 `A1–A11` 读数仍是我在本机手动起的一次性集群上跑出来的（§4），不是抄 CI 日志；那道 job 也只覆盖这一个脚本，7/30 日生命周期与第三方证据依旧没有 CI 覆盖（§3.5）。
 3. **不声称取消注销可回滚身份。** 去身份**不可逆**：被擦的四列在回滚件里也明写"不会被回滚恢复"，取消注销只把请求推进到 `cancelled`，账号停在 `deletion_pending`（§3.1）。
 4. 不声称去身份让账号"消失"。`users` 行、`exports` 行、`export_writebacks` 行都**保留**；擦的是四列 PII 与 `exports.provider_request_ref_cipher`（§1.1、§3.2）。
 
 ## 0 取证口径
 
 - 页内每条 `path:line` 都是先用 `node -e "readFileSync(p,'utf8').split('\n')"` 逐行读原文、确认那行是**实质行**（SQL 语句 / 断言行 / 导出声明 / 表格行）之后才写下的；没有一条锚在块首注释或空行上。页内**不出现裸行号**，行号一律带全路径。
-- 行号按 `d7160e40` 的树。本 PR 未动 `services/**`、`deploy/**`、`tests/**`，故这些行号在该树内稳定。
+- 行号按 `a372bd91` 的树（合并 `#1128` 之后的 main）。本 PR 未动 `services/**`、`deploy/**`、`.github/**`，`tests/**` 只动台账体积基线常量那一处，故这些行号在该树内稳定。
 - 真库臂只跑**一个**脚本（`tests/integration/deidentify-account-pg.mjs`）；本片未在本地跑全量 `npm run test:unit`（本机 node 进程 48 个 > 6，按纪律只跑受影响文件，全量以 CI 为准）；CI 首轮暴露 T5 体积基线红 —— `tests/unit/contract-status-ocr-anchor-truth.test.mjs` 钉两份台账的字节数，改台账必然撞上，已在追加提交中同步基线常量（见该文件的"第二十七次同步"注释）。闸门只跑派单点名的六道（§4）。
 - 真库臂的环境：`GY_PG_BIN` 指 PG 17 二进制、`GY_I19_PG_ROOT` 指可写根（默认 `tmpdir()` 下 `initdb` 会 `could not create directory ... Permission denied`，故必须显式指到仓外可写目录）。**端口不固定**：脚本用 `pickFreePort()` 现取，我这次拿到 `62982`。
 - 读数一律抄我这次运行的原文（§4 表格里"本机读数"列），不引用别处页面里别人的读数。
@@ -169,13 +169,31 @@
 
 后果：一个已注销（或被去身份）的人用同一个微信再登录，会拿到一个**全新的 `users` 行**（新 id、`state=active`、`revision` 从 1 起），而不是"账号已注销"的报错。这是产品决策层面的已知行为，不是本片要修的东西；但它意味着"注销去身份"不是"账号封禁"，不要把它当后者宣传。
 
-### 3.3 未接 CI（真缺口，已登记）
+### 3.3 CI 接线：`real-pg-deidentify-17-11`（已接线，有我实查得到的一次绿）
 
-- 真库臂在 CI 白名单里登记为**未接线**：`tests/unit/ci-integration-chain-structure.test.mjs:647` 是条目路径，`tests/unit/ci-integration-chain-structure.test.mjs:648` 的 `reason` 以「未接线（真缺口）」开头，`tests/unit/ci-integration-chain-structure.test.mjs:656` 记的是本地口径（该行原文写"实测 12.0 秒"，我这次跑是 11 秒，见 §4）。
-- 为什么没接：判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链，那条链里没有"能建角色的超管连接"，真库 job 不算接线 —— `tests/unit/ci-integration-chain-structure.test.mjs:658`。
-- 后续动作（本片不做，`.github/**` 不在本片范围）：照 `real-pg-admin-read-17-11` 加一个自起集群 job，并同步 `MANAGED_SCRIPTS` —— `tests/unit/ci-integration-chain-structure.test.mjs:661`、`tests/unit/ci-integration-chain-structure.test.mjs:662`。
+**先纠正一处过期口径。** 本页初版（基线 `d7160e40`）把这条臂写成"未接线（真缺口）"，那是接线前的真实状态；`#1128` 已把它接进 CI 并合入 main。下面的位置与读数按合并后的树（`a372bd91`）重写。
 
-因此：**本页的 `A1–A11` 是手动读数，主干上没有任何 CI 会在别人改坏它时变红。** 这是本片最大的敞口，必须由后续片补。
+接线位置（`.github/workflows/real-pg-integration.yml`，自起集群形态的 job，不 `CREATE DATABASE`）：
+
+- job 键与超时：`.github/workflows/real-pg-integration.yml:1815`（`real-pg-deidentify-17-11:`）、`.github/workflows/real-pg-integration.yml:1818`（`timeout-minutes: 45`）。
+- 跑臂的那一行：`.github/workflows/real-pg-integration.yml:1855`（`node tests/integration/deidentify-account-pg.mjs 2>&1 | tee "$log" || rc=$?`）。
+- 三道判据，任一不满足就红：`exit 77` ⇒ 红（"未取得"不是"通过"）——`.github/workflows/real-pg-integration.yml:1856`；退 0 但日志里没有「结论行」⇒ 红——`.github/workflows/real-pg-integration.yml:1864`；A 断言条数 `< 11` ⇒ 红——`.github/workflows/real-pg-integration.yml:1870`（计数写在前一行 `.github/workflows/real-pg-integration.yml:1868`）。
+- 环境：`GY_PG_BIN` 钉到 17 那一份——`.github/workflows/real-pg-integration.yml:1875`。
+
+**哪一次运行可以引用**（`gh run list -R GengYunChuChao/GengYun -b main -L 30` 实测；workflow 名是 `Real PostgreSQL integration gates`）：
+
+- run `42514774873`、`run_number 2284`、headSha `a372bd91f420f869c8f3b0b122ef3e9576411ffc`、`2026-11-08T19:23:10Z`、结论 `success`。
+- 同一 run 的 job `real-pg-deidentify-17.11`：job id `128835278181`、结论 `success`、`19:23:31Z → 19:24:07Z`（36 秒），其 step「注销去身份真库臂（R90 / …」也是 `success`。
+- 该 job 的日志里能读到这两行（原文抄录）：
+
+```text
+2026-11-08T19:24:04.4093258Z   ✓ 结论：注销去身份的函数擦除面（A1–A7）+ 最小权限（A8）+ 受理事务接线与 fail-closed（A9–A10）+ 后台展示名回落（A11）全部通过
+2026-11-08T19:24:04.6449094Z 注销去身份真库臂断言读数：A 段 11 条
+```
+
+清册口径也随 `#1128` 改了（不在本 PR 的改动面内）：`tests/unit/ci-integration-chain-structure.test.mjs:647` 仍是条目路径，但 `tests/unit/ci-integration-chain-structure.test.mjs:648` 的 `reason` 现在以「已接线（workflow）」开头，`tests/unit/ci-integration-chain-structure.test.mjs:656` 写的是 CI 口径（`exit 77` 判红 + 读数闸 `pass_lines -lt 11` ⇒ 期望 11 条 A 断言）。条目**不删**：判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（那条链没有能建角色的超管连接），真库 job 不算"接线"，删条目反而会变成"未声明"的红——`tests/unit/ci-integration-chain-structure.test.mjs:659`。所以本条现在的准确说法是：**已接线（`#1128`，job `real-pg-deidentify-17-11`）；接线前为真缺口。** `#1128` 自带一份接线证据页：`docs/verification/gy-r90-i19-deidentify-ci-wiring-20261109.md`。
+
+结论：**主干上现在有 CI 会在别人改坏 `A1–A11` 时变红**；但它只覆盖这一个脚本——7 日/30 日生命周期、第三方删除证据、恢复清单重放仍然没有 CI 覆盖（§3.5），本页 §2 的读数也仍是我本机跑的（§4），不是抄 CI 日志。
 
 ### 3.4 断言覆盖的已知边界
 
@@ -185,7 +203,7 @@
 ### 3.5 不在本片的手动项（未取得，不是通过）
 
 - **7 日在线数据到期的真实执行**：本片只落"受理即擦身份"，没有任何调度器/定时任务真跑过一次 7 日到期。
-- **30 日备份到期的真实执行**：同理；备份副本的清理由 `backup-purge` 那条链负责，本片未接线、未取读数。
+- **30 日备份到期的真实执行**：同理；备份副本的清理由 `backup-purge` 那条链负责（它有自己的 CI step：`.github/workflows/real-pg-integration.yml:610`），本片既没改它、也没取它的到期读数。
 - **第三方删除证据**：第三方（如微信）侧的删除回执/对账证据一条未取；`exports.provider_request_ref_cipher` 被清掉之后，对账只能靠 `recipient_id`/`object_id`/`object_key`（§1.1 明确不动）。
 - **恢复清单重放**：`backup-replay-manifest` 那条链本片未碰，未验证"用备份清单把已注销账号重放回来"会得到什么形状。
 
@@ -204,17 +222,17 @@
 
 ## 4 闸门读数（我实跑）
 
-- 取证环境：本 PR 的 worktree（`E:\GengYunCommander\.pg17\wt-i19page`），Windows + PowerShell 7。`origin/main` = `d7160e4070ce841dee2c111635bb5a11bce17907`（写作时的 main）。真库臂用 `E:\GengYunCommander\.pg17\pgsql\bin` 里的 PostgreSQL 17.11。
+- 取证环境：本 PR 的 worktree（`E:\GengYunCommander\.pg17\wt-i19page`），Windows + PowerShell 7。`origin/main` = `a372bd91f420f869c8f3b0b122ef3e9576411ffc`（写作时的 main；本分支已 merge 该提交，闸门 2 与闸门 6 的 base 就是它）。真库臂用 `E:\GengYunCommander\.pg17\pgsql\bin` 里的 PostgreSQL 17.11。
 - 真库臂本身（不在六道闸门里，但本页所有「本机读数」都出自它）：`node tests/integration/deidentify-account-pg.mjs` ⇒ **EXIT 0、11 秒**，A1–A11 十一条全过。集群端口由 `pickFreePort()` 现分配（本次 62982），数据库名 `gengyun_i19_deidentify_test`，数据目录建在 `E:\GengYunCommander\.pg17\i19pg\gy-i19-deidentify-pg-<随机后缀>`（默认 `tmpdir()` 下 `initdb` 会 `could not create directory ... Permission denied`，所以显式给了根目录），收尾 `pg_ctl stop -m immediate` 并删目录；完整日志留在 `E:\GengYunCommander\.pg17\r90i19page-arm.log`。
 
 | # | 命令 | EXIT | 尾行 / 关键读数 |
 | --- | --- | --- | --- |
-| 1 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `PASS: --strict 下没有基线之外的新增`（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT、COMMENT_ANCHOR 均按基线内条目只计数）；读数行：`BARE-ORPHAN` 命中 3469 条、基线外新增 0 条、面内陈旧 0 条；`ANCHOR-COUNT` 进判据锚点 8991 条 / 298 份文档、计数下降的文档 0 份（上升 109 份，清册只判下降） |
-| 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `pass 37` / `fail 0`；判定面 `base=d7160e4070ce`、`documented files=3 docLines=2 tokens=50 pairs=50 judged=50 identical=50 relocated=0 registered=0 corrected=0 carried=685 removed=0 unresolved=0 hunks(pair=2 add=1 del=0)` ⇒ **不需要任何登记**：本页两个提交都只有新增的文档行（`add=1` 的纯新增 hunk 不进判定面），被改的两行是台账 JSON 与中文镜像的同一行 blocker，其中 `services/api/src/privacy/deletion-requests-pg.ts:255-325` 这个锚点改前改后逐字相同 |
-| 3 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。`；另有 `PASS: 中文表格一致`、`PASS: 覆盖 130 条契约操作；已装配 130 条；implemented 19 / partial 111 / planned 0` |
-| 4 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 360 页（扫描面 365 页：docs/verification）——读数七条判据全部自洽` |
-| 5 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 29 / 演练 21 条 / 测试文件 608（glob 合计 578）`；生长型读数按下界判，8 条滞后已逐行打印 |
-| 6 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 输出只有一行 tree OID，`--name-only` 没有任何路径 ⇒ 与 `origin/main` 无冲突、无重叠改动面；tree OID 随提交内容变化，本页不复述具体值 |
+| 1 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 0 | `PASS: --strict 下没有基线之外的新增`（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT、COMMENT_ANCHOR 均按基线内条目只计数）；读数行：`BARE-ORPHAN` 命中 3469 条、基线外新增 0 条、面内陈旧 0 条；`ANCHOR-COUNT` 进判据锚点 **9530 条 / 304 份文档**、计数下降的文档 0 份（上升 115 份，清册只判下降）；`SYMBOL-COVERAGE-VERIFICATION`：不在区间 44、UNDECLARED 258、配成对 1315（低于基线 UNDECLARED 265，只提示收紧、不判红） |
+| 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 0 | `pass 37` / `fail 0`（`tests 37`）；判定面 `base=a372bd91f420`（`git merge-base HEAD origin/main`）、`documented files=3 docLines=2 tokens=50 pairs=50 judged=50 identical=50 relocated=0 registered=0 corrected=0 carried=685 removed=0 unresolved=0 hunks(pair=2 add=1 del=0)` ⇒ **不需要任何登记**：本页三个提交里，本页本身只有新增行（`add=1` 的纯新增 hunk 不进判定面），被改的两行是台账 JSON 与中文镜像的同一行 blocker，其锚点改前改后逐字相同 |
+| 3 | `node tools/verify-contract-status.mjs` | 0 | `PASS: 中文表格一致`；`PASS: 覆盖 130 条契约操作；已装配 130 条；implemented 19 / partial 111 / planned 0；横切维度 8 条；形状错误 0 项；语义错误 0 项`；尾行 `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。` |
+| 4 | `npm run test:docs` | 0 | `PASS: 识别 5 页 / 跳过 366 页（扫描面 371 页：docs/verification）——读数七条判据全部自洽` |
+| 5 | `node tools/verify-g-drill-readings.mjs --check` | 0 | `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 608（glob 合计 578）`；生长型读数按**下界**判（`--tolerant-growth`），8 条滞后已逐行打印 |
+| 6 | `git merge-tree --write-tree --name-only origin/main HEAD` | 0 | 输出只有一行 tree OID，`--name-only` 没有任何路径 ⇒ 与 `origin/main` 无冲突、无重叠改动面；tree OID 随提交内容变化（本页每改一次都会变），故只报形态、不复述具体值 |
 
 闸门 2 与 6 的判定面都来自**提交**（`git diff merge-base..HEAD`）：分支上还没有提交时，闸门 2 会以「base 与 HEAD 同一提交 …… 不允许静默通过」拒绝——我第一次跑正是撞在这条上，那是该闸门自己的自证而不是锚点问题，所以上表读数都是提交之后跑的。
 

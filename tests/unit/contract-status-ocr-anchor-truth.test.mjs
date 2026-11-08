@@ -532,10 +532,19 @@ test('T4 进度台账：docs/development-progress.md 不再引用旧地址', () 
  * 中文对照表同次手工镜像同一句（`verify-contract-status.mjs` 的「中文表格一致」判据仍 PASS）。第一次追加 +1316 字节、
  * 同次再补媒体口径 +141 字节 ⇒ 两份台账各 +1457 字节、行数都不变（285758 / 4460、208385 / 220）。
  * 仍是「正常改台账、非回归」，故同步基线；没有改判定、没有加豁免条目。
+ * 2026-11-09 第二十八次同步（GY-R90 / #19 片1 证据页：把「未接 CI」改成「CI 已接线」）：
+ * `#1128` 已把真库臂接进 `.github/workflows/real-pg-integration.yml` 的 job `real-pg-deidentify-17-11`
+ * 并在 main 上跑绿，故 `requestAccountDeletion` 的 blocker 里「未接 CI」一句改成「CI 已接线（job
+ * `real-pg-deidentify-17-11`，`#1128` 合入）」，「未接 CI 的登记见 …」改成「CI 接线的登记见 …（「已接线（workflow）」；
+ * 接线前为「未接线（真缺口）」）」；仍未验的三条（取消注销不回滚身份、7/30 日生命周期、第三方证据）原样保留，
+ * `status` 仍 `partial`（改判属监工权限）；中文对照表同次手工镜像同一段
+ * （`verify-contract-status.mjs` 的「中文表格一致」判据仍 PASS）。
+ * 两份台账各 +135 字节、行数都不变（285893 / 4460、208520 / 220）。
+ * 仍是「正常改台账、非回归」，故同步基线；没有改判定、没有加豁免条目。
  */
 const DELIVERY_SIZE_BASELINE = [
-  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 285758, lines: 4460 },
-  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 208385, lines: 220 },
+  { label: 'docs/architecture/contract-status.json', path: STATUS_JSON, bytes: 285893, lines: 4460 },
+  { label: 'docs/architecture/contract-implementation-status.md', path: STATUS_MD, bytes: 208520, lines: 220 },
 ];
 
 test('T5 本片交付时两个台账文件的体积（等长替换 ⇒ 行数与字节数都不许变）', () => {
