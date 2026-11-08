@@ -5,8 +5,9 @@
 - **基线**：`origin/main = af39bfe657b965042dec81a6c397509d04166a5d`（**写作时的 main**；本页所有行号都按这个树读）。
 - **被取证对象**：三次提交——`#1101` `8515518473476dfe596e85d8f045decaaca5fa5a`（改代码）、`#1112` `ed423956dfeec4b23fe7bbad9948a96ff3d5a560`（加断言）、`#1118` `bef0ba63eb80b30f0855b4fbbfa4f4256caa79e4`（换掉无判别力断言）。
 - **本页建立提交**：只新增本文件（`docs/verification/`）；**0 行产品代码改动、0 行测试代码改动**。因此「被取证代码的 SHA」= 基线 `af39bfe6`，「本页所在提交」是另一个 SHA，两者不可混用。
+- **本页修订提交**：只改本文件（独立审查 `2d8c7d69` 的 P1-1／P1-2／P1-3 与 4 条 nit）；同样 **0 行产品代码改动、0 行测试代码改动**。§5 的读数按修订后的树实跑，不沿用建立提交时的输出。
 - **复跑入口**：单测 `node --test tests/unit/miniprogram-voice-hardening.test.mjs`；变异读数用仓外探针（逐字复制同一份假端口，见 §2 末、§5 末），**探针不入库**。
-- **一句话结论**：`#1101` 在 `replay()` 里插了一行「先 `stop()`」（`miniprogram/utils/audio-playback.js:400`），`#1112`／`#1118` 在注入端口侧钉住「旧句柄已销毁、重播只留一个新句柄、新句柄的 src 回到 `plan[0]`」；本机读数单段 `created 2 / destroyed 1 / live 1`、多段 `created 3 / destroyed 2 / live 1` 且 `srcs` 末项 `a.mp3`。**真机项（不叠音、从头发起、后台切回）未取得**，故 `#23` 不可关。
+- **一句话结论**：`#1101` 在 `replay()` 里插了一行「先 `stop()`」（`miniprogram/utils/audio-playback.js:400`），`#1112`／`#1118` 在注入端口侧钉住「旧句柄已销毁、重播只留一个新句柄、新句柄的 src 回到 `plan[0]`」；本机读数单段 `created 2 / destroyed 1 / live 1`、多段 `created 3 / destroyed 2 / live 1` 且 `srcs` 末项 `a.mp3`。**真机项（不叠音、从头发起、后台切回，以及 `#23` 验收第 2 条要的静音／蓝牙／拒权／断网下的重播可见状态）均未取得**，故 `#23` 不可关。
 
 ## 0 本页不声称什么
 
@@ -42,7 +43,7 @@ bef0ba63 test(miniprogram): 修正 #1112 断言判别力 (#1118)
 
 ⇒ 产品代码只被 `#1101` 动过，且只有 **2 行**（1 行注释 + 1 行代码）；`#1112`／`#1118` 是**纯测试/文档**，不改变行为。
 
-### 1.2 `replay()` 逐行（`miniprogram/utils/audio-playback.js`，全文 446 行）
+### 1.2 `replay()` 逐行（`miniprogram/utils/audio-playback.js`，全文 445 行）
 
 | 行锚 | 原文 | 性质 |
 | --- | --- | --- |
@@ -121,6 +122,8 @@ bef0ba63 test(miniprogram): 修正 #1112 断言判别力 (#1118)
 | `tests/unit/miniprogram-voice-hardening.test.mjs:943-947` | `handles.filter((h) => h.isDestroyed() === false).map((h) => h.src)` deepEqual `['a.mp3']` | 端口侧「活下来的是哪一个」：M1／M2 都只剩 `['b.mp3']` ⇒ 红 | 基线 `['a.mp3']`；M1／M2 `['b.mp3']` |
 | `tests/unit/miniprogram-voice-hardening.test.mjs:948` | `isListened() === false` | 红法：中段重播记「已听取」 | 三变体均 `false` ⇒ 不红 |
 
+上两表「为什么能红」一列是**反事实**：它答的是「若只留下这一条、其余条件不变，它会不会红」，**不是**逐条实跑记录。真实执行时 `node --test` 在**第一条**失败断言处就抛错、该用例余下的断言**不执行**——单段用例首红在 `tests/unit/miniprogram-voice-hardening.test.mjs:897`，多段用例首红在 `tests/unit/miniprogram-voice-hardening.test.mjs:927`，两处都是同一条 `replayed.ok` 断言；因此失败日志里看不到 `created`/`destroyed`/`live` 这些后续读数。表内「本机读数」来自仓外探针逐项读计数（见本节前置），**不是**失败输出。
+
 ### 2.3 判据面的净读数
 
 - **有判别力（本片实测能红）**：单段用例里 `replayed.ok`／`state.created`／`state.destroyed`／`isDestroyed()` 数组四条（对「有没有先停」）；多段用例里 `replayed.ok`／`state.srcs` 末项／`state.destroyed`／`state.created`／存活句柄 `src` 数组五条（对「有没有先停」）；多段用例里 `state.srcs` 末项／`snapshot().total`／存活句柄 `src` 数组三条（对「接着播」假修法）。逐行锚与原文见 §2.1、§2.2 两表。
@@ -134,7 +137,7 @@ bef0ba63 test(miniprogram): 修正 #1112 断言判别力 (#1118)
 | 维度 | 实际情况 | 依据 |
 | --- | --- | --- |
 | 没有 `wx` | 全文件 0 处 `wx.`（grep 计数 0）；控制器只接收注入的 `player` 端口对象 | `tests/unit/miniprogram-voice-hardening.test.mjs:50-111`（`spyPlayer()`） |
-| 没有 `wx.createInnerAudioContext` 桩 | 真端口在 `miniprogram/utils/inner-audio-port.js:203` 调用 `wx.createInnerAudioContext()`；**本用例不经过它** | 全仓 `createInnerAudioContext` 只出现在真端口与该文件外的另一套用例 `tests/unit/miniprogram-voice-playback.test.mjs:682` |
+| 没有 `wx.createInnerAudioContext` 桩 | 真端口在 `miniprogram/utils/inner-audio-port.js:203` 调用 `wx.createInnerAudioContext()`；**本用例不经过它** | 全仓 11 个文件、21 处提及（其中 2 处在本页，`git grep -o` 计数）；**唯一实际调用处**是 `miniprogram/utils/inner-audio-port.js:203`，**唯一桩**是 `tests/unit/miniprogram-voice-playback.test.mjs:682` |
 | 没有时钟 | `miniprogram/utils/audio-playback.js` 内 `setTimeout`/`setInterval`/`clearTimeout`/`Promise`/`Date.now`/`Math.random` **0 命中** ⇒ 模块本来就没有计时器可假 | grep 实测 |
 | 事件是同步投递的 | 假端口 `play()` 直接 `emitActive('play')`（`tests/unit/miniprogram-voice-hardening.test.mjs:83`），`stop()` 只在 `emitStopOnStop === true` 时才回发（`tests/unit/miniprogram-voice-hardening.test.mjs:87`） | 同上 |
 | 迟到的平台回调 | `deliver()` 遍历**追加式** `log` 直投包装器，**故意绕过退订与 `destroyed`**（`tests/unit/miniprogram-voice-hardening.test.mjs:97-99`），模拟「回调还在飞行」 | 同上 |
@@ -154,38 +157,56 @@ bef0ba63 test(miniprogram): 修正 #1112 断言判别力 (#1118)
 
 - `snapshot().index` / `snapshot().total` 是**状态机内部字段**，不是端口可观察行为（`tests/unit/miniprogram-voice-hardening.test.mjs:933-938` 这段把主判据说成端口侧 `src`、把 `index`/`total` 降为「辅助读数」；本页实测 M2 印证：`index 0` 仍绿、`total 1` 才红）。
 - 端口侧能证的只有两件：**最后一次 `create()` 的 `src` 是 `plan[0]`**（`tests/unit/miniprogram-voice-hardening.test.mjs:933`）、**存活句柄只有一个且其 `src` 是 `plan[0]`**（`tests/unit/miniprogram-voice-hardening.test.mjs:943-947`）。
-- 这三条都**证不了「从头播放」的听感**：没有播放位置、没有时长、没有真实 `currentTime`；也**证不了「不叠音」的听感**：只证句柄计数与存活集合，不证音频输出。真实端口的中断/路由（`miniprogram/utils/inner-audio-port.js:201` 的 `bindInterruptionOnce()`）在本用例完全没被覆盖。
+- 这三条都**证不了「从头播放」的听感**：没有播放位置、没有时长、没有真实 `currentTime`；也**证不了「不叠音」的听感**：只证句柄计数与存活集合，不证音频输出。真实端口的音频中断绑定在本用例完全没被覆盖：`miniprogram/utils/inner-audio-port.js:201` 是那句绑定调用的**调用点**，函数本身声明在 `miniprogram/utils/inner-audio-port.js:121`。
 
 ## 4 不在本页的手动／真机项（全部**未取得**）
+
+### 4.1 `#23` 三条验收 → 本文证据／缺口（逐条对，不挑能证的那条）
+
+`#23` 的「验收」段落恰好三条（`gh issue view 23` 原文），逐条对如下：
+
+| # | 验收原文 | 本文能给的证据 | 缺口 |
+| --- | --- | --- | --- |
+| 1 | 记录设备系统微信／资源／缓存／网络和完整样本，不挑最快次数 | 无 | 取证口径：真机上逐次记录**设备型号与系统版本、微信版本、音频资源（时长／体积／来源）、缓存状态、网络条件**，并保留**完整样本**、不挑最快的一次；本页 0 条此类记录，只有单元测试与仓外探针读数 |
+| 2 | 静音蓝牙拒权断网重播可见状态，生成回答审查前不播放 | 无 | 需真机 + 三种系统态：**静音／蓝牙路由、麦克风权限被拒、断网**；要看的是「重播可见状态」（语音球／按钮态与真实播报状态一致）与「生成回答**审查前**不播放」这条时序。本页假端口没有 `wx`、没有权限／网络／蓝牙路由层、没有音频输出，这两件 0 覆盖 |
+| 3 | 不把内部替身压测称外部AI容量，未测部分明确未测 | 口径遵守：本页不给任何容量／时延读数，也不把单测绿当容量证据 | 本页不是该条的取证材料（该条要的是容量报告与「隔离替身 vs 真实额度」的区分） |
+
+⇒ 第 1、2 条都是**真机项**，本页**全部未取得**；第 3 条是口径项，本页只做到「不自称」，不代替取证。
+
+### 4.2 与本页最接近的真机项（仍全部**未取得**）
 
 | 项 | 依据 | 本页状态 | 为什么本片不能代 |
 | --- | --- | --- | --- |
 | 真机重播不叠音（听感：两次播报不同时出声） | `docs/initial-issues.md:392`（提交证据「Android／iOS真机音频及交互记录」） | **未取得** | 假端口无音频输出，只能数句柄 |
-| 真机从头发起（听感：从第 1 段第 0 秒开始） | 同上 | **未取得** | 无播放位置、无时长 |
+| 真机从头发起（听感：从第 1 段第 0 秒开始） | `docs/initial-issues.md:392`（同上） | **未取得** | 无播放位置、无时长 |
+| 静音／蓝牙／拒权／断网下的重播可见状态 | `docs/initial-issues.md:380`（「统一语音球与等效播放／暂停／停止／重播按钮…」）＋`#23` 验收第 2 条 | **未取得** | 假端口无 `wx`、无权限／网络／蓝牙路由层，看不到按钮态与真实播放态是否一致 |
 | 后台切回后的行为（切后台/回前台不重复播报、不留残留） | `docs/initial-issues.md:380`（「页面退出取消任务、释放音频和监听，避免重复播报和后台残留」） | **未取得** | 假端口无 `appHide`/`appShow`、无中断事件 |
 | 30 段普通话播报样例准确 | `docs/initial-issues.md:385` | **未取得**（属真实音频样例项） | 本页 0 音频 |
 
-⇒ 这四项都必须由**真机 + 真实音频**取得；本页不提供、也不推断它们的结论。
+⇒ 这五项都必须由**真机 + 真实音频**取得；本页不提供、也不推断它们的结论。
 
 ## 5 闸门读数（实跑，逐字）
 
-基线 `origin/main = af39bfe657b965042dec81a6c397509d04166a5d`；六道闸门在**本页所在提交**上按下列顺序实跑，全部 `EXIT=0`。
+基线（行号口径）`origin/main = af39bfe657b965042dec81a6c397509d04166a5d`；六道闸门在**本页修订提交**上按下列顺序实跑，全部 `EXIT=0`。其中涉及「今日 main」的读数（§5 末的影子闸门）另按 `a372bd91f420f869c8f3b0b122ef3e9576411ffc` 记。
 
 | # | 闸门命令 | 读数（逐字，EXIT 均 0） | 结论 |
 | --- | --- | --- | --- |
 | 1 | `node tools/verify-doc-anchors.mjs --strict --symbol=strict --symbol-coverage=strict --symbol-coverage-verification=strict --scan docs` | 尾行 `PASS: --strict 下没有基线之外的新增（结构四判据、ANCHOR_DRIFT、BARE_ORPHAN、ANCHOR-COUNT 与 COMMENT_ANCHOR 都按基线内条目只计数、不判红；陈旧条目见 STALE／STALE-DRIFT／STALE-ORPHAN／STALE-SYMBOL）` | `EXIT=0` |
-| 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 用例 1（本提交的位移恒等）打出 `# SKIP: 本次文档提交只有新增行，没有锚点位移面（1 个纯新增 hunk）`；汇总 `ℹ tests 37` / `ℹ pass 36` / `ℹ fail 0` / `ℹ skipped 1` | `EXIT=0` |
+| 2 | `node --test tests/unit/doc-anchor-relocation-identity.test.mjs` | 用例 1（本提交的位移恒等）判在 `base=a372bd91f420`（`git merge-base HEAD origin/main`）上：`judged=4 identical=4 relocated=0 registered=0 corrected=0 carried=685 removed=2 unresolved=0`（判红 0 条）；汇总 `ℹ tests 37` / `ℹ pass 37` / `ℹ fail 0` / `ℹ skipped 0` | `EXIT=0` |
 | 3 | `node tools/verify-contract-status.mjs` | 尾行 `PASS: 状态为人工判定；脚本不证明语义正确、真实能力或整项验收。` | `EXIT=0` |
-| 4 | `npm run test:docs` | 尾行 `PASS: 识别 5 页 / 跳过 361 页（扫描面 366 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）` | `EXIT=0` |
-| 5 | `node tools/verify-g-drill-readings.mjs --check` | 尾行 `✓ 八条判据全过：workflows 15 / jobs 29 / 演练 21 条 / 测试文件 608（glob 合计 578）；生长型读数按**下界**判（--tolerant-growth），其中 8 条滞后已逐行打印` | `EXIT=0` |
+| 4 | `npm run test:docs` | 尾行 `PASS: 识别 5 页 / 跳过 365 页（扫描面 370 页：docs/verification）——读数七条判据全部自洽（①总量恒等 ②same 分解 ③对照组不重复计数 ④族加总 ⑤Δ/基线 ⑥跨页逐字 ⑦同页副本一致）` | `EXIT=0` |
+| 5 | `node tools/verify-g-drill-readings.mjs --check` | 尾行 `✓ 八条判据全过：workflows 15 / jobs 30 / 演练 21 条 / 测试文件 608（glob 合计 578）；生长型读数按**下界**判（--tolerant-growth），其中 8 条滞后已逐行打印` | `EXIT=0` |
 | 6 | `git merge-tree --write-tree --name-only origin/main HEAD` | 只输出一行内容派生的树对象 SHA，无冲突行 | `EXIT=0` |
 
-闸门 1 的 verification 面另有逐字读数（同一次运行）：`不在区间 44、UNDECLARED 252、配成对 1271`（基线册 `tools/doc-anchors-symbol-coverage-verification-baseline.json` 记 `44 / 265 / 1051`）——该面只判「不在区间」上升；把本页**单独**扫描得到 `SYMBOL-COVERAGE-VERIFICATION: 可判 4 条——OK 4、符号不在区间 0`。
+闸门 1 的 verification 面另有逐字读数（**在本页所在树的当前内容上实跑**，不是历史输出）：`不在区间 44、UNDECLARED 253、配成对 1286`（基线册 `tools/doc-anchors-symbol-coverage-verification-baseline.json` 记 `44 / 265 / 1051`）——该面只判「不在区间」上升；把本页**单独**扫描得到 `SYMBOL-COVERAGE-VERIFICATION: 可判 5 条——OK 5、符号不在区间 0`。这几个数随树变，必须连同树一起读：上一版页内写的 `配成对 1271`／`可判 4 条` 是 `ee791642` 的读数被误标成 `ff3703ed` 的；同一个 `ff3703ed` 树上实跑是 `配成对 1272`／`可判 5 条`；本页并入 `a372bd91` 的 main 之后（本提交）是 `1286`／`5 条`。
 
-- 闸门 2 必须**排在 commit 之后**：纯新增 docs 提交在提交前会让「base 与 HEAD 同一提交」这一条自证判红，提交后应显式 SKIP。
-- 闸门 2／6 的逐字输出里都带**由本页内容派生的 SHA**（2 是 `base..HEAD` 提交对，6 是树对象）。把它们抄进本页会改变本页内容、从而改变它们自己，故本表只登记**不变部分**（2 的 SKIP 判据文本 + 用例计数、6 的「无冲突行」形态）；带 SHA 的原文留在 PR 正文与对话记录里，可按上列命令复跑复现。
-- 本页是纯新增文档：`doc-anchor-relocation-identity` 的「旧锚点搬迁」面不适用；锚点闸门真正会判红的只有 BROKEN／OUT_OF_RANGE／SUSPECT（区间无实质行）／BARE_ORPHAN（裸 `:NNN`）／ANCHOR-COUNT 下降，本页**零裸锚点**、每条锚点都落在实质行上。
-- 影子闸门（**不在上面六道之内**，且本页基线树上还没有这个工具）：`origin/main` 在本页写作之后前进到 `7835bfe5ef5ff4a72ecaefacd5a49091214466e8`（`#1129` 引入 `tools/verify-verification-comment-anchors.mjs`，专判 `docs/verification/**` 里锚在**注释行**上的引用）。把本页放进那棵树实跑该工具：`VERIFICATION-COMMENT-ANCHOR-GATE: 本次命中 1422、基线 1422、基线外新增 0、可收紧 0`，`EXIT=0`。本页先前有 1 条锚在注释区间上（测试文件 `tests/unit/miniprogram-voice-hardening.test.mjs` 的解释性注释），已按该闸门要求改锚到 `miniprogram/utils/audio-playback.js:358` 与 `miniprogram/utils/audio-playback.js:343` 两处实质行。
+- 闸门 3／4／5 的计数是**扫描面读数**，随 `main` 变动：本表抄的是**本修订提交的树**（`a372bd91` ＋ 本页）上的实跑尾行；上一版页写的 `识别 5 页 / 跳过 361 页（扫描面 366 页）`、`jobs 29` 是当时基线 `af39bfe6` 树上的读数，已随 `main` 前进而变（`365／370`、`jobs 30`）。这类计数不能跨树照抄，必须连同树一起读。
+- 闸门 2 必须**排在 commit 之后**：提交前「base 与 HEAD 同一提交」会让这条自证判红。上一版是**纯新增文档**（base 上还没有这一页），提交后走的是 `# SKIP: 本次文档提交只有新增行，没有锚点位移面（1 个纯新增 hunk）`；**本修订提交改的是旧行**，全部落在已存在页面的改动面上，所以走判定面：4 条锚点 `identical`、0 `relocated`／0 `registered`，被整行替换掉的旧 bullet 里那两条锚点进 `removed` 桶（工具自己的口径：`整行被删（含锚点）—— 已删（已知限制：只观测不判红）`）。
+- 闸门 2／6 的逐字输出里都带**由本页内容派生的 SHA**（2 是 `base..HEAD` 提交对，6 是树对象）。把它们抄进本页会改变本页内容、从而改变它们自己，故本表只登记**不变部分**（2 的用例计数与各桶读数、6 的「无冲突行」形态）；同理，2 的 `docLines`／`hunks` 两个**结构计数**会随本页改动行数变动（每改一次页就变），故本表不抄它们，只抄判定桶（`judged/identical/relocated/registered/corrected/carried/removed/unresolved`），这八格与页内措辞无关、只与「哪几行带锚点、锚点落在哪」有关。带 SHA 与结构计数的原文留在 PR 正文与对话记录里，可按上列命令复跑复现。
+- 本页的**文档主体**是纯新增；但本修订提交是**改旧行**（只改本页，见 §0 第 7–8 项），所以 `doc-anchor-relocation-identity` 的位移面这次确实判了（读数见闸门 2）。锚点闸门真正会判红的仍是 BROKEN／OUT_OF_RANGE／SUSPECT（区间无实质行）／BARE_ORPHAN（裸 `:NNN`）／ANCHOR-COUNT 下降，本页**零裸锚点**、每条锚点都落在实质行上。
+- 影子闸门（**不在上面六道之内**）：`tools/verify-verification-comment-anchors.mjs` 在基线 `af39bfe657b965042dec81a6c397509d04166a5d` 上**就已经存在**（blob `253e8ec3`），由 `e7c273e7`（`#1119`）新增（工具 441 行、基线册 `tools/verification-comment-anchor-baseline.json` 11424 行、文档 95 行、测试 196 行）；`7835bfe5`（`#1129`）**只重收基线**（基线册 426 行增删、文档 37 行、测试 2 行）。它专判 `docs/verification/**` 里锚在**注释行**上的引用，规则是「本次命中数 > 基线 ⇒ `EXIT=1`」，并且本页写作时它**没有**被 CI 或 npm script 接线（`.github/` 与 `package.json` 里都没有它的调用点）——所以它是影子闸门，不是第七道闸门。
+- 它的读数是**与环境绑定**的，不能脱离 main 的 SHA 转述：在 `7835bfe5` 的树上（上一版页所在的环境）实测 `VERIFICATION-COMMENT-ANCHOR-GATE: 本次命中 1422、基线 1422、基线外新增 0、可收紧 0`、`EXIT=0`；在今日 `origin/main`（`a372bd91f420f869c8f3b0b122ef3e9576411ffc`）的树上放入本页实测 `本次命中 1431、基线 1422、基线外新增 9`、`EXIT=1`——9 条 NEW **全部**出自别人的页（3 条出自 `docs/verification/gy-r90-i19-deidentify-ci-wiring-20261109.md`＝`#1128`，6 条出自 `docs/verification/gy-r90-i1003-ac-reconciliation-20261109.md`＝`#1130`），**本页自身贡献 0 条 NEW**。同一工具在 `5a54b262` 上只有 3 条 NEW（那时 `#1130` 的页还没进 main），说明这个数只能连同 main 的 SHA 一起引用。
+- 本页自己曾经有 1 条锚在注释区间上（测试文件里的解释性注释），已改锚到 `miniprogram/utils/audio-playback.js:358` 与 `miniprogram/utils/audio-playback.js:343` 两处实质行；这次修订也是本页在 `a372bd91` 树上仍贡献 0 条 NEW 的原因。
 
 ## 6 边界
 
