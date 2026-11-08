@@ -234,6 +234,9 @@ const MANAGED_SCRIPTS = Object.freeze([
   // R87（`#29` 的最后一块）：provider 调用记账臂住**独立 job** `real-pg-ledger-17.11`（它要建库 + 建全局角色，
   // 而 `real-pg-17-11` 里多条臂对「集群里有没有同名角色」有顺序依赖），故在清单与顺序表里都排最后。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
+  // R88：jobs 台账臂同样住**独立 job** `real-pg-jobs-ledger-17.11`（它要求一个**全新空库**：脚本先断言
+  // `public` 下 0 个关系，再跑全链迁移），与 `real-pg-17-11` 的「先跑过多条臂的库」互不相容，故排最后。
+  'tests/integration/jobs-ledger-pg.mjs',
 ]);
 
 const FROZEN_MANAGED_SCRIPTS = Object.freeze([
@@ -291,6 +294,8 @@ const FROZEN_MANAGED_SCRIPTS = Object.freeze([
   'tests/integration/media-row-purge-pg.mjs',
   // R87（`#29`）：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
+  // R88：与 `MANAGED_SCRIPTS` 同位置插入（同一份集合，只允许顺序不同）。
+  'tests/integration/jobs-ledger-pg.mjs',
 ]);
 
 /**
@@ -580,6 +585,10 @@ export const REQUIRED_STEP_ORDER = Object.freeze([
   //     `20-login-roles.sql` 的授权区）⇒ 住独立 job `real-pg-ledger-17.11`，在文件里排最后，
   //     故这里也排最后；它与上面 23 条之间**没有任何状态依赖**（不同集群）。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
+  // 25. `jobs-ledger-pg`：**要求全新空库**（脚本先断言 `public` 下 0 个关系，再跑全链迁移），
+  //     所以它不能与上面任何一条共享库 ⇒ 住独立 job `real-pg-jobs-ledger-17.11`，在文件里排最后，
+  //     故这里也排最后；它与上面 24 条之间**没有任何状态依赖**（不同集群）。
+  'tests/integration/jobs-ledger-pg.mjs',
 ]);
 
 /**
