@@ -39,7 +39,7 @@
 
 **④ 更硬的一层：就算鉴权改通，取消也不落库。**
 
-- `services/api/src/privacy/deletion-requests-pg.ts:109` 的注释自陈「注销请求的持久化端口（只暴露「受理」这一个动作）」；接口 `DeletionRequestStore` 唯一方法是 `createRequest`（`services/api/src/privacy/deletion-requests-pg.ts:116`）。
+- `services/api/src/privacy/deletion-requests-pg.ts:134` 的注释自陈「注销请求的持久化端口（只暴露「受理」这一个动作）」；接口 `DeletionRequestStore` 唯一方法是 `createRequest`（`services/api/src/privacy/deletion-requests-pg.ts:141`）。
 - 该文件里 `cancel` / `cancelled` / `withdraw` 三个词 `git grep -in` **零命中**（exit 1）。
 - 台账 `docs/architecture/contract-implementation-status.md:70` 把 `cancelDeletion` 记为 `partial`，blocker 逐字：「取消只推进**进程内**协调器状态（deletion.mjs/deletion-modules.mjs），数据库侧 `deletion_requests.state` 的 `cancelled` 写路径未接线（本片只做 0039 枚举值 + 契约/应用层闭集，持久化取消属后续片）」。
 

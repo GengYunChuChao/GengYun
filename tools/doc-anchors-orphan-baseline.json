@@ -386,6 +386,18 @@
       "accept": 0,
       "orphans": 3469,
       "outsideRed": 117
+    },
+    {
+      "why": "0057 注销去身份在 20-login-roles.sql 第 251 行后新增 24 行登记段、在 \\echo 汇总块再加 1 行，文件尾部整体下移 +24/+25；docs/verification 里 4 条指向该文件的裸锚点（:559/:770/:980/:511 及其同段兄弟）按实测行号重指。重指后 gy-r31-i15-s1-s6 的 :511 落在实质代码行，那条 outsideRed 的 SUSPECT 自然消失 ⇒ 按纪律删行，净新增 0 条。",
+      "accept": 0,
+      "orphans": 3469,
+      "outsideRed": 116
+    },
+    {
+      "why": "0057 注销去身份在 20-login-roles.sql 251 行后新增 24 行登记段、在 \\echo 汇总块再加 1 行，文件尾部整体下移 +24/+25。docs/verification/gy-r31-i15-s1-s6-20261022.md:134 那句的 5 条裸锚点（posts/comments/reports/likes/idempotency）在父提交 0221e69c 上已经全部陈旧（:505-517 等落在 F2 功能开关段），按本片纪律只做纯位移 +24、不重新推导语义；其中 likes 那条 :511 位移到 :535 恰落在 #endregion 后的空行 ⇒ 新增 1 条 SUSPECT。docs/verification/gy-r29-i19-closure-20261022.md:35 的 :262 位移到 :313 后不再是 ambiguous-block ⇒ 册上那条陈旧条目按纪律删除。合计差分 2 条（+1 / -1）。",
+      "accept": 2,
+      "orphans": 3469,
+      "outsideRed": 117
     }
   ],
   "orphans": [
@@ -2685,7 +2697,7 @@
     "docs/verification/gy-r29-i19-closure-20261022.md|:185-207|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:240|ambiguous-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:247-249|ambiguous-block",
-    "docs/verification/gy-r29-i19-closure-20261022.md|:262|ambiguous-block",
+    "docs/verification/gy-r29-i19-closure-20261022.md|:313|ambiguous-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:315|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:322|no-explicit-in-block",
     "docs/verification/gy-r29-i19-closure-20261022.md|:347|no-explicit-in-block",
@@ -3938,7 +3950,7 @@
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:765|SUSPECT",
     "docs/verification/gy-r31-i07-sort-20261022.md|docs/architecture/contract-status.json:799|SUSPECT",
     "docs/verification/gy-r31-i14-recon-20261022.md|docs/architecture/contract-status.json:684|SUSPECT",
-    "docs/verification/gy-r31-i15-s1-s6-20261022.md|20-login-roles.sql:511|SUSPECT",
+    "docs/verification/gy-r31-i15-s1-s6-20261022.md|20-login-roles.sql:535|SUSPECT",
     "docs/verification/gy-r31-i17-recon-20261022.md|miniprogram/pages/messages/messages.js:195|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|ocr-http.mjs:1996|SUSPECT",
     "docs/verification/gy-r31-i22-failure-matrix-20261022.md|services/api/src/routes/admin.ts:179-180|SUSPECT",

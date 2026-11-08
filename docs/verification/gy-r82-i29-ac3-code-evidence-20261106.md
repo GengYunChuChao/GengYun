@@ -36,10 +36,10 @@
 | # | 结论 | 代码锚点（全路径 + 行号） | 机检（测试文件 + 用例数 + 实跑读数） | 怎么跑出来的 |
 | --- | --- | --- | --- | --- |
 | 2.1 | 必需模块是**闭集**（常量四域：favorites / history / messages / conversations，扩大而非替换）；非闭集模块注册即拒 | `services/api/src/privacy/user-data-deletion.ts:194`（`USER_DATA_DELETION_MODULES` 四域闭集）；抛 `INVALID_REQUEST` 的闭集校验在 `packages/privacy/deletion-modules.mjs:114` | `tests/unit/user-data-deletion.test.mjs:81`（用例名「F13：必需模块闭集含四域（扩大而非替换），且非闭集模块注册即拒（复用同一协议）」）；该文件 **5 用例**，**5 pass / 0 fail**；断言 `requiredModules()` 恰为四域、`registerModule('other-module')` 抛 `/不在必需模块闭集内/`、`missingRegistrations()` 为空 | `node tests/unit/user-data-deletion.test.mjs`，exit 0 |
-| 2.2 | 注册覆盖度：每张用户数据表必须被已注册模块覆盖，或显式声明未注册并写明原因与归属编号 | `tests/unit/deletion-registration-coverage.test.mjs:219`（闭集与覆盖映射逐项对齐）；`tests/unit/deletion-registration-coverage.test.mjs:251`（覆盖或显式声明的棘轮） | 该文件 **7 用例**，**7 pass / 0 fail**；从 `services/api/db/migrations/*.sql` 静态枚举用户数据表，与 `USER_DATA_DELETION_MODULES` 同源比对 | `node tests/unit/deletion-registration-coverage.test.mjs`，exit 0 |
+| 2.2 | 注册覆盖度：每张用户数据表必须被已注册模块覆盖，或显式声明未注册并写明原因与归属编号 | `tests/unit/deletion-registration-coverage.test.mjs:225`（闭集与覆盖映射逐项对齐）；`tests/unit/deletion-registration-coverage.test.mjs:257`（覆盖或显式声明的棘轮） | 该文件 **7 用例**，**7 pass / 0 fail**；从 `services/api/db/migrations/*.sql` 静态枚举用户数据表，与 `USER_DATA_DELETION_MODULES` 同源比对 | `node tests/unit/deletion-registration-coverage.test.mjs`，exit 0 |
 | 2.3 | 按主体清理、其它主体不受影响；备份如实 `pending`、不谎称完成 | `tests/unit/user-data-deletion.test.mjs:101`（用例名「F13：按主体清理，其它主体不受影响；在线证据非空，备份如实 pending（不谎称完成）」） | 同文件 **5 pass / 0 fail**；断言 A 的四域数据清零、B 的收藏/历史/消息/会话各行保留；四个模块行 `online_state='completed'`、`backup_state='pending'`、`error_code=null`；`completionStatus(requestId).completed === false` | 同上 |
 
-> 2.1 的口径说明：常量闭集是四域；生产装配会按注入条件追加社区域、识别域、语音域、OCR 域与统一作业台账 `jobs`，生产生效闭集为 9 项（`tests/unit/deletion-registration-coverage.test.mjs:309`）。追加仍走同一个 `registerModule` 协议（`packages/privacy/deletion-modules.mjs:112`），不绕过 2.1 的闭集校验。
+> 2.1 的口径说明：常量闭集是四域；生产装配会按注入条件追加社区域、识别域、语音域、OCR 域与统一作业台账 `jobs`，生产生效闭集为 9 项（`tests/unit/deletion-registration-coverage.test.mjs:315`）。追加仍走同一个 `registerModule` 协议（`packages/privacy/deletion-modules.mjs:112`），不绕过 2.1 的闭集校验。
 
 ## 3 表 3：训练开关状态（AC-3 第三项）
 

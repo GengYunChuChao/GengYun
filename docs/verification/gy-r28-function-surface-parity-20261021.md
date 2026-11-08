@@ -228,7 +228,7 @@ PR #363 的 `deploy-sql-gate.yml` / job `deploy-sql-17.11`（run 39547572436，h
 FAIL: runtime_function_grantee_sets (catalog_ops.apply_source_operation（少授 gengyun_source_operator） /
       staging_intake.apply_import（少授 gengyun_staging_importer） /
       staging_intake.rollback_import（少授 gengyun_staging_importer）)
-psql:…/deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2667: ERROR:  90-assert-least-privilege FAIL:
+psql:…/deploy/postgres-cvm/sql/90-assert-least-privilege.sql:2673: ERROR:  90-assert-least-privilege FAIL:
       1 条断言未通过：runtime_function_grantee_sets
 退出码=3 末行='CONTEXT: ...'
 ```

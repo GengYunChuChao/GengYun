@@ -2091,6 +2091,12 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
     -- 操作者存在 + active + 当前有效持 sources:write ⇒ 调用方伪造不了 actor、动作文本或 target。
     ('public',         'record_admin_report_disposition_audit', 'runtime',
      ARRAY['gengyun_api_runtime']::text[]),
+    -- 迁移 0057（#19 第 1 片）：注销去身份。运行时对 `users` 的 nickname/avatar_media_id/
+    -- wechat_subject_cipher/wechat_subject_lookup/deletion_generation 与
+    -- `exports.provider_request_ref_cipher` **仍然零列权限**（`protected_columns` 一句未动），
+    -- 唯一写路径就是这条函数；擦除只发生在受理事务内，且幂等（identity=0 时不再自增 generation）。
+    ('public',         'deidentify_account',                 'runtime',
+     ARRAY['gengyun_api_runtime']::text[]),
     ('staging_intake', 'apply_import',                       'internal',
      ARRAY['gengyun_staging_importer']::text[]),
     ('staging_intake', 'rollback_import',                    'internal',
@@ -2777,6 +2783,91 @@ WITH domain_manifest(tbl, classification, required) AS (VALUES
          '注销受理函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
 
          '运行时应能连接业务库'
+
+  UNION ALL
+  -- ---------------------------------------------------------------------------
+  -- GY-I19（#19 片1 / 迁移 0057）追加：注销**去身份**唯一写路径的函数级契约断言。
+  -- 背景：运行时对 public.users 的 nickname/avatar_media_id/wechat_subject_cipher/
+  -- wechat_subject_lookup/deletion_generation 与 public.exports.provider_request_ref_cipher
+  -- **没有**任何直接列权限（`protected_columns` 一句未动），擦除只能经窄口径
+  -- SECURITY DEFINER 函数完成；因此必须把「函数确实存在且签名恰为一个 uuid 形参、确实是
+  -- SECURITY DEFINER、search_path 确实固定、属主确实是能改这些列的运营方角色且运行时无法
+  -- SET ROLE 成为它、EXECUTE 确实只授予运行时角色」全部钉死。
+  -- ⛔ 这五条**不**放松任何既有断言，也**不**给运行时角色补任何列权限。
+  -- ---------------------------------------------------------------------------
+  UNION ALL
+  -- 16a. 唯一写路径必须恰存在一个（名字 + 精确签名 `(p_user_id uuid)`）
+  SELECT 'deidentify_function_exists',
+         to_regprocedure('public.deidentify_account(uuid)') IS NOT NULL
+         AND (SELECT count(*) FROM pg_proc
+               WHERE proname = 'deidentify_account'
+                 AND pronamespace = 'public'::regnamespace) = 1
+         AND (SELECT pg_get_function_identity_arguments(p.oid)
+                FROM pg_proc p
+               WHERE p.pronamespace = 'public'::regnamespace
+                 AND p.proname = 'deidentify_account') = 'p_user_id uuid',
+         '注销去身份唯一写路径必须恰为 public.deidentify_account(p_user_id uuid)'
+
+  UNION ALL
+  -- 17a. 必须真的是 SECURITY DEFINER（否则函数以调用者身份执行，四列擦除必然 42501）
+  SELECT 'deidentify_function_security_definer',
+         (SELECT p.prosecdef
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'deidentify_account'),
+         '注销去身份函数必须声明 SECURITY DEFINER'
+
+  UNION ALL
+  -- 18a. search_path 必须固定为 pg_catalog（不做 search_path 劫持的入口），且时区固定为 UTC
+  SELECT 'deidentify_function_search_path',
+         (SELECT p.proconfig @> ARRAY['search_path=pg_catalog', 'TimeZone=UTC']
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'deidentify_account'),
+         '注销去身份函数必须设 SET search_path = pg_catalog 与 SET TimeZone = UTC'
+
+  UNION ALL
+  -- 19a. 属主正确：必须是能改 users 的 PII 四列与 deletion_generation、且能改
+  --      exports.provider_request_ref_cipher 的角色，且运行时角色既不是它、也不能 SET ROLE 成为它
+  SELECT 'deidentify_function_owner',
+         (SELECT pg_get_userbyid(p.proowner) <> 'gengyun_api_runtime'
+                 AND NOT pg_has_role('gengyun_api_runtime', p.proowner, 'MEMBER')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'nickname', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'avatar_media_id', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'wechat_subject_cipher', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'wechat_subject_lookup', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.users', 'deletion_generation', 'UPDATE')
+                 AND has_column_privilege(pg_get_userbyid(p.proowner), 'public.exports', 'provider_request_ref_cipher', 'UPDATE')
+            FROM pg_proc p
+           WHERE p.pronamespace = 'public'::regnamespace
+             AND p.proname = 'deidentify_account'),
+         '函数属主必须是能改 users 的 PII 四列/deletion_generation 与 exports.provider_request_ref_cipher 的运营方角色，且运行时角色无法成为它'
+
+  UNION ALL
+  -- 20a. EXECUTE 只授予运行时角色：PUBLIC（grantee=0）与任何其它角色一律不得执行
+  SELECT 'deidentify_function_execute',
+         has_function_privilege(
+           'gengyun_api_runtime',
+           'public.deidentify_account(uuid)',
+           'EXECUTE'
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'deidentify_account'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee NOT IN (0, 'gengyun_api_runtime'::regrole, p.proowner)
+         )
+         AND NOT EXISTS (
+           SELECT 1
+             FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.pronamespace = 'public'::regnamespace
+              AND p.proname = 'deidentify_account'
+              AND a.privilege_type = 'EXECUTE'
+              AND a.grantee = 0
+         ),
+         '注销去身份函数的 EXECUTE 只应授予 gengyun_api_runtime（PUBLIC 与其它角色一律不得执行）'
 
   UNION ALL
   -- ---------------------------------------------------------------------------

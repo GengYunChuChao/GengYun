@@ -111,8 +111,8 @@
 
 | 面 | 事实 | 证据 |
 | --- | --- | --- |
-| 四域在线清空 | 运行时角色**已有** `DELETE ON public.messages`（`20-login-roles.sql:572`）、`favorites`（`:770`）、`history`（`:780`）、`conversations`（`:807`），以及两张幂等台账（`:790`/`:799`） | 真库臂 [1]：`has_table_privilege(current_user,'public.<t>','DELETE')` 四域全 true |
-| 清单读 | 只用 `gy-i19-backup-copies-grant` 已授的列（`20-login-roles.sql:361-382`）：`module/scope/state/retention_until/payload_digest/evidence_ref`；**不读 `payload`** | 真库臂 [1]：表级 SELECT=false、`evidence_ref` 列级 SELECT=true、`payload` 列级 SELECT=false |
+| 四域在线清空 | 运行时角色**已有** `DELETE ON public.messages`（`20-login-roles.sql:596`）、`favorites`（`:794`）、`history`（`:804`）、`conversations`（`:831`），以及两张幂等台账（`:814`/`:823`） | 真库臂 [1]：`has_table_privilege(current_user,'public.<t>','DELETE')` 四域全 true |
+| 清单读 | 只用 `gy-i19-backup-copies-grant` 已授的列（`20-login-roles.sql:385-406`）：`module/scope/state/retention_until/payload_digest/evidence_ref`；**不读 `payload`** | 真库臂 [1]：表级 SELECT=false、`evidence_ref` 列级 SELECT=true、`payload` 列级 SELECT=false |
 | `deletion_requests` 读 | 运行时角色**没有**任何表级/列级权限（`90-assert-least-privilege.sql:1068-1070` 判 `forbidden`，`:2555-2560` 第 48 项反向控制） | 真库臂 [1]：实跑 `SELECT id FROM public.deletion_requests` ⇒ **SQLSTATE 42501** |
 | ⇒ 命令用哪个角色 | 必须用**属主/运维角色**（`DATABASE_URL`，与 `npm run db:migrate` 同源）。这不是新增授权，而是**如实承认**「到期枚举读的是受保护表」。若要改成运行时角色，需新增 SECURITY DEFINER 函数 ⇒ 需新迁移 ⇒ 本片红线，见 §8-D1 | 同上 |
 | 证据落库 | **未落库**：`deletion_handlers` 对运行时角色 `forbidden`，`admin_audit_events` 连 SELECT 都没有，且当前没有任何「在线证据」列 | §7-3 |

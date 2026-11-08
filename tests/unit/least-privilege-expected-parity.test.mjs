@@ -270,6 +270,37 @@ test('函数面成对：EXECUTE 授给运行时的函数必须都在 function_su
   }
 });
 
+test('注销去身份（`#19` 片1）：`deidentify_account` 两侧成对，kind=runtime 且 grantee 恰运行时角色', () => {
+  const rolesSql = readFileSync(ROLES_SQL_URL, 'utf8');
+  const assertSql = readFileSync(ASSERT_SQL_URL, 'utf8');
+
+  // ① 20-login-roles.sql 必须把 EXECUTE 授给运行时（迁移本身零 GRANT，授权只能在这里）。
+  assert.equal(
+    grantedRuntimeExecuteFunctions(rolesSql).has('deidentify_account'),
+    true,
+    '`20-login-roles.sql` 必须有 `GRANT EXECUTE ON FUNCTION public.deidentify_account(uuid) TO gengyun_api_runtime;`',
+  );
+  // ② 90-assert 的清单必须把它登记成 runtime（否则断言 92 会按 grantee 集合不符判红）。
+  assert.equal(
+    functionManifestKinds(assertSql).get('deidentify_account'),
+    'runtime',
+    '`function_surface_manifest` 必须把 `deidentify_account` 登记为 runtime',
+  );
+  // ③ grantee 必须**恰**是运行时角色：多一个组就是放宽最小权限面，少一个则运行时根本调不动。
+  //    这里直接咬清单里的 ARRAY 字面量（含 0057 的迁移号注释在前一行，故按 `[\s\S]` 跨行找）。
+  const row = /\(\s*'public'\s*,\s*'deidentify_account'\s*,\s*'runtime'\s*,\s*ARRAY\[([^\]]*)\]::text\[\]\)/.exec(
+    stripNoise(assertSql),
+  );
+  assert.notEqual(row, null, '`function_surface_manifest` 里必须有 `(\'public\', \'deidentify_account\', \'runtime\', ARRAY[…]::text[])` 这一行');
+  const grantees = [...row[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  assert.deepEqual(
+    grantees,
+    ['gengyun_api_runtime'],
+    '`deidentify_account` 的 allowed_grantees 必须恰是 `[\'gengyun_api_runtime\']`'
+      + '（SECURITY DEFINER 函数只授运行时；PUBLIC 已在迁移里 REVOKE）',
+  );
+});
+
 test('解析器自检：两侧清单都不为空，且本片两条函数与五张表都被解析到', () => {
   const rolesSql = readFileSync(ROLES_SQL_URL, 'utf8');
   const assertSql = readFileSync(ASSERT_SQL_URL, 'utf8');
