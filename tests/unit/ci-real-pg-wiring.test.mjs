@@ -235,8 +235,7 @@ const MANAGED_SCRIPTS = Object.freeze([
   // 而 `real-pg-17-11` 里多条臂对「集群里有没有同名角色」有顺序依赖），故在清单与顺序表里都排最后。
   'tests/integration/recognitions-provider-call-ledger-pg.mjs',
   // R88：jobs 台账臂同样住**独立 job** `real-pg-jobs-ledger-17.11`（它要求一个**全新空库**：脚本先断言
-  // `public` 下 0 个关系，再跑全链迁移），与 `real-pg-17-11` 的「先跑过多条臂的库」互不相容，
-  // 故排在 `real-pg-17-11` 之后、HTTP 臂之前（两者互不相容，各占一个 job）。
+  // `public` 下 0 个关系，再跑全链迁移），与 `real-pg-17-11` 的「先跑过多条臂的库」互不相容，故排在 HTTP 臂之前。
   'tests/integration/jobs-ledger-pg.mjs',
   // R88（`GY-I30` 的尾巴）：媒体挂载的**真 HTTP 端到端**（8 组 PASS：路由层 + 信封层复验 0056 的
   // 「每帖 ≤3 张」）住独立 job `real-pg-http-17.11`；它要一条能建库的超管连接，故与其它臂
