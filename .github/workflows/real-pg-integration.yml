@@ -1530,3 +1530,133 @@ jobs:
           PGUSER: gengyun_ci_owner
           PGPASSWORD: synthetic-ci-owner-only
           PGDATABASE: gengyun_ci_bootstrap
+
+  # jobs 台账真库臂（R88：白名单里最后一条「未接线（真缺口）」）：
+  # `tests/integration/jobs-ledger-pg.mjs`。接线前它不在任何 workflow 的 `run:` 里
+  # （`tests/unit/ci-integration-chain-structure.test.mjs` 白名单原文「未接线（真缺口）：…」），
+  # 所以「本机有实跑读数」不等于「CI 覆盖了它」——这个 job 是它的第一个 CI 读数口。
+  #
+  # 它钉的是 jobs 台账在**真库**上的裁决面：全链迁移落地（`discoverMigrations` 一次跑完）→
+  # 生命周期（insert / claim / finish / fail）→ 幂等（同一 job 重复写）→ answer 源与取消 →
+  # 单事务（反向：记录行冲突整笔回滚，台账仍停在 running / revision=2）→ 计数总账（`public.jobs` 恰 4 行、无孤儿）→
+  # 注销清理（`purgeJobLedgerByOwner` 删本主体 4 行、他人 1 行不动；重复调用 0 行且不抛）。这些全是「数据库怎么裁决」，stub 钉不住。
+  #
+  # ⛔ 本臂**要求空库**，这是它与 `real-pg-ledger-17-11` 最实质的差异：
+  #   脚本在跑迁移之前先数 `pg_class ⋈ pg_namespace WHERE nspname = 'public'`，必须 == 0 个关系
+  #   （脚本 `:98-104`，断言原文「public 下 0 个关系」）。service 容器里 `POSTGRES_DB: gengyun_ci_bootstrap`
+  #   不是它要的库，所以 step 里先 `DROP DATABASE IF EXISTS … WITH (FORCE)` 再 `CREATE DATABASE`，
+  #   **不是**为了清场好看，而是这条断言只有在全新空库上才有意义；给个「跑过一次迁移」的库，它会直接红在第一条断言上。
+  #
+  # 库名从哪来：脚本 `:52 const DB = 'gengyun_jobs_ledger_test'`，`:73 assert.equal(url.pathname, '/' + DB)`
+  #   ⇒ 库名被脚本硬钉，step 里 `CREATE DATABASE` 的名字必须与 env URL 的 path 同名，三处（env / CREATE / 脚本常量）一致。
+  # ⛔ 门变量**只认** `JOBS_LEDGER_PG_TEST_URL`（脚本 `:51 const ENV = 'JOBS_LEDGER_PG_TEST_URL'`，只读 env、不读 argv）：
+  #   本臂里一行 argv 解析都没有，写成 `node … <url>` 就是假接线（URL 会被忽略，脚本照样打 SKIP + 77）。
+  #   脚本还断言 URL 不带查询串、host 只允许回环（`127.0.0.1` / `localhost` / `[::1]`）⇒ 下面用的是 `127.0.0.1:5432`。
+  #
+  # ⛔ 本 job 不写 `readings=$(…); -lt N` 那套计数闸门：本臂的读数是 15 条 `PASS n: …` 分段日志
+  #   （`[M]/[L]/[I]/[A]/[C]/[T]/[N]/[P]` 八组），没有一条能当计数的机器口径；硬编一个数只会变成「数字对不上就改数字」。
+  #   代之以三道不信 exit 0 的闸（脚本**没有** `[√] ALL PASS` 那行，别照抄隔壁 job 的文案）：
+  #     ① 输出里必须出现 SUMMARY 行 `项实测通过（真库 gengyun_jobs_ledger_test）`（脚本 `:461`，只在全部断言走完后打）；
+  #     ② 输出里必须出现末条 PASS 行 `PASS 15: 注销清理（真库）：重复调用 0 行且不抛`（脚本 `:459`）——
+  #        只有 ① 时，删掉最后一组注销清理断言脚本仍会 exit 0 并打 SUMMARY；
+  #     ③ service 先行自证「主版本 17 + 当前用户是超管 + 回环可达」（否则红的原因会被读成产品缺陷）。
+  #   ⚠️ ②是**文本锚**不是计数：它只保证最后一条 PASS 行还在，不保证前面 14 条一条不少。
+  #
+  # 退出码语义（与上面四个 job 同款）：77 = **未取得**（本臂真有这条路径：拿不到 `JOBS_LEDGER_PG_TEST_URL` 就打 SKIP + 77），
+  #   下面把它显式升级成 exit 1（不是通过）；其它非 0 = 真失败，原样透出 rc。
+  #
+  # `timeout-minutes: 45`：**封顶之和 35 + 前置余量 10 = job 级 45**。
+  #   · 35 = 三条前置 25（`actions/checkout` 5 + `actions/setup-node` 5 + `npm ci` 15）
+  #         + service 自证 5 + 真库臂 5；
+  #   · 10 = job 级的显式常量余量（三条前置已各自封顶并计入 35）。
+  real-pg-jobs-ledger-17-11:
+    name: real-pg-jobs-ledger-17.11
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_DB: gengyun_ci_bootstrap
+          POSTGRES_USER: gengyun_ci_owner
+          POSTGRES_PASSWORD: synthetic-ci-owner-only
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        timeout-minutes: 5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        timeout-minutes: 5
+        with:
+          node-version: '24.16.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+        timeout-minutes: 15
+      # service 自证：把「真 17」与「这条臂要的超管连接」变成读数，而不是靠镜像名相信。
+      # 台账臂要建库（`CREATE DATABASE` + 全链迁移 40+ 条），非超管会在半路 42501，
+      # 那时红的是「授权面」而不是「service 装错了」—— 两种红必须分得开。
+      - name: service 自证（服务端主版本 = 17、当前用户是超管、回环可达）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          server_version=$(psql -v ON_ERROR_STOP=1 -tAc 'show server_version')
+          echo "service server_version = $server_version"
+          server_major=$(printf '%s\n' "$server_version" | sed -e 's/^\([0-9][0-9]*\).*/\1/')
+          if [ "$server_major" != "17" ]; then
+            echo "::error::service 的服务端不是 17（实测 $server_version）⇒ 台账臂会拿到错的大版本，等于没验证。"
+            exit 1
+          fi
+          is_super=$(psql -v ON_ERROR_STOP=1 -tAc 'select rolsuper from pg_roles where rolname = current_user')
+          echo "service current_user rolsuper = $is_super"
+          if [ "$is_super" != "t" ]; then
+            echo "::error::service 的当前用户不是超管（rolsuper = $is_super）⇒ 台账臂建库/迁移会 42501，红的原因会被读成产品缺陷。"
+            exit 1
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+      # 臂本体：先 `DROP … WITH (FORCE)` + `CREATE DATABASE` 拿一个**全新空库**（脚本第一条断言就是
+      # 「public 下 0 个关系」），再把连接串**只经 `JOBS_LEDGER_PG_TEST_URL`** 传进去（脚本不读 argv）。
+      # `&&` 不在这里用：脚本失败要拿到它自己的 rc（77 与非 0 是两种红），所以用 `|| rc=$?` 接住再判。
+      # 末两道 `grep -Fq` 是本臂的真实文案（脚本末行是 SUMMARY，没有 `[√] ALL PASS`）。
+      - name: jobs 台账真库臂（R88：空库 ⇒ 迁移链/生命周期/幂等/单事务/计数总账/注销清理）
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          log=/tmp/jobs-ledger.log
+          psql -v ON_ERROR_STOP=1 -c 'DROP DATABASE IF EXISTS gengyun_jobs_ledger_test WITH (FORCE)'
+          psql -v ON_ERROR_STOP=1 -c 'CREATE DATABASE gengyun_jobs_ledger_test'
+          rc=0
+          node tests/integration/jobs-ledger-pg.mjs 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -eq 77 ]; then
+            echo "::error::jobs 台账真库臂被跳过（exit 77）：JOBS_LEDGER_PG_TEST_URL 没传到 / 空库没建起来。77 = 未取得，不是通过。"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::jobs 台账真库臂失败（exit $rc）。"
+            exit "$rc"
+          fi
+          if ! grep -Fq '项实测通过（真库 gengyun_jobs_ledger_test）' "$log"; then
+            echo "::error::jobs 台账真库臂退 0，但日志里没有 SUMMARY 行（脚本 :461）⇒ 读数不可信，按未取得处理。"
+            exit 1
+          fi
+          if ! grep -Fq 'PASS 15: 注销清理（真库）：重复调用 0 行且不抛' "$log"; then
+            echo "::error::jobs 台账真库臂退 0，但末条 PASS 行（脚本 :459 的注销清理组）不在日志里 ⇒ 最后一组断言被删也会退 0，按未取得处理。"
+            exit 1
+          fi
+        env:
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGUSER: gengyun_ci_owner
+          PGPASSWORD: synthetic-ci-owner-only
+          PGDATABASE: gengyun_ci_bootstrap
+          JOBS_LEDGER_PG_TEST_URL: postgres://gengyun_ci_owner:synthetic-ci-owner-only@127.0.0.1:5432/gengyun_jobs_ledger_test

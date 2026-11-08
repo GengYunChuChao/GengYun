@@ -630,13 +630,18 @@ const UNWIRED_DECLARATIONS = Object.freeze([
   },
   {
     path: 'tests/integration/jobs-ledger-pg.mjs',
-    reason: '未接线（真缺口）：`package.json` 的 `test:integration:http` 链只跑本机回环 HTTP、没有 PG'
-      + '（既没有真库、也没有能跑迁移的超管连接），`.github/workflows/real-pg-integration.yml` 也还没有它的 step，'
-      + '而本脚本要一个**空库**（先断言 public 下 0 张表）再自己按 `discoverMigrations` 顺序跑完整 48 条迁移链。'
+    reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-jobs-ledger-17-11` 的 step「jobs 台账真库臂'
+      + '（R88：空库 ⇒ 迁移链/生命周期/幂等/单事务/计数总账/注销清理）'
+      + '」跑 `node tests/integration/jobs-ledger-pg.mjs`'
+      + '（该 step 先 `DROP DATABASE IF EXISTS gengyun_jobs_ledger_test WITH (FORCE)` + `CREATE DATABASE gengyun_jobs_ledger_test`，'
+      + '带 `2>&1 | tee "$log" || rc=$?`，并用两道 `grep -Fq` 认 SUMMARY 行与末条 PASS 行）。'
+      + '它要一个**空库**（先断言 public 下 0 个关系）再自己按 `discoverMigrations` 顺序跑完整迁移链，'
+      + '所以住独立 job、不并进 `real-pg-17-11`。'
       + '它的门是自己那条 `JOBS_LEDGER_PG_TEST_URL`（缺它即 `SKIP` + 77），**刻意不用** `GY_PG_BIN`：'
       + '后者那一组脚本的条数被 `tests/unit/ai-ops-ledger-pins.test.mjs` 的钉子⑤冻结，本片不去动那份清单。'
-      + '它证的是「台账与源表同一事务 / ON CONFLICT 幂等 / answer 源 / 取消」四件事（13 条 PASS 读数）；'
-      + '接进真库 job 是后续片的事，在那之前这条缺口如实登记为"未接线"。'
+      + '它证的是「台账与源表同一事务 / ON CONFLICT 幂等 / answer 源 / 取消 / 计数总账 / 注销清理」（15 条 PASS 读数）。'
+      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
+      + '（无 PG 回环链：既没有真库、也没有能跑迁移的超管连接），真库 job 不算接线 ⇒ 条目必须留在白名单。'
   },
 ]);
 
