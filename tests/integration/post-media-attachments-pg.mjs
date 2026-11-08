@@ -39,10 +39,12 @@
  *        把 IN 列表缩窄就会漏计。删掉/放宽任一过滤 ⇒ 第 `COMMUNITY_MAX_IMAGES_PER_POST` 张
  *        （或第 N+1 张）就会被错拒/错放成 400、201。
  *        单测的五条 SQL 文本正则抓不到这两条（见第 14 节注释）。
- *   ⚠️ ⑩/⑪ **不在 workflow 的读数闸门覆盖范围内**：`.github/workflows/real-pg-integration.yml` 仍是
- *   `readings < 13`，而本文件现在真跑产出 19 条 `PASS n:` —— 把这两节整段删掉，step 照样绿（16 ≥ 13）。
- *   补位的是**静态守卫** `tests/unit/post-media-attachments-say-floor.test.mjs`：数本文件的 `say(`
- *   调用点（下限 19，⑩ 占 1、⑪ 占 2）并钉住两节的文案/结构锚点 ⇒ 删节在 `tests/unit` 就红。
+ *   ✅ ⑩/⑪ 已有两层闸门覆盖：`.github/workflows/real-pg-integration.yml` 的读数闸门是
+ *   `readings < 19`（19 = 本文件当前真跑产出的 `PASS n:` 条数）—— 把这两节整段删掉只剩 16 条 < 19，
+ *   step 当场红。更快的静态补位是**已在 main 上**的 `tests/unit/post-media-attachments-say-floor.test.mjs`
+ *   （A 档，数本文件的可执行 `say(` 调用点，下限 19，⑩ 占 1、⑪ 占 2，并钉住两节的文案/结构锚点）
+ *   ⇒ 删节在 `tests/unit` 就先红。两者互补 —— 那边守「脚本里的断言点」，这边 workflow 守「真跑读数」；
+ *   两个数字必须同时改（`READING_GATE_BASELINES` 的 `baseline` 与 `SAY_FLOOR`）。
  *   另加一条计数口径的实证：挂载后待用池为 0、删帖后回到 3，而 `liveCommunityImageCount`（owner 累计）
  *   始终是 3 —— 这条差就是本 issue 的全部理由。
  *
@@ -508,15 +510,13 @@ async function main() {
     say('⑨ 注销：清 media_ids 的两处都同事务删掉 post_media_attachments 行；media-only 帖的 title/body/revision 原样保留');
 
     // ---- 13. ⑩ 并发（帖子级）：同一帖子同时挂两张**不同**的图 ⇒ 恰好 1 笔成功 ------
-    // ⚠️ **本两节（⑩/⑪）不在 workflow 的读数闸门覆盖范围内**（#1037 审查 P3）：
-    // `.github/workflows/real-pg-integration.yml` 的读数闸门是 `if [ "$readings" -lt 13 ]`，基线 13；
-    // 本文件现在真跑产出 19 条 `PASS n:` ⇒ 把本节与第 14 节整段删掉，`readings` 仍是 16 ≥ 13，
-    // CI step 照样绿。要真覆盖，得同时改 workflow 的基线、
-    // `tests/unit/ci-real-pg-readings-gates.test.mjs` 的 `READING_GATE_BASELINES`
-    // （守卫逐条比对表 ↔ 文件，只改一边就红）和两处注释里的数字。
-    // 本提交不改 CI（那会把 PR 升成 B 档）；补位的是静态守卫
-    // `tests/unit/post-media-attachments-say-floor.test.mjs`（数 `say(` 调用点 ≥ 19 + 钉本节与
-    // 第 14 节的文案/结构锚点）—— 删掉任一节，`tests/unit` 立刻红。
+    // ✅ **本两节（⑩/⑪）已有两层闸门覆盖**（#1037 审查 P3 指出的洞已堵）：workflow 侧的读数闸门是
+    // `if [ "$readings" -lt 19 ]`，基线 19；本文件现在真跑产出 19 条 `PASS n:` ⇒ 把本节与第 14 节整段
+    // 删掉，`readings` 只剩 16 < 19，CI step 当场红。数字由
+    // `tests/unit/ci-real-pg-readings-gates.test.mjs` 的 `READING_GATE_BASELINES` 与 workflow 逐条互校
+    // （只改一边就红）。更快的静态补位是**已在 main 上**的 A 档守卫
+    // `tests/unit/post-media-attachments-say-floor.test.mjs`（数可执行 `say(` 调用点 ≥ 19 + 钉本节与
+    // 第 14 节的文案/结构锚点）—— 删掉任一节，`tests/unit` 立刻红；两个数字必须同时改。
     // `#1037` 的并发闸门有两道，都不是「帖子级」：
     //   * `claimPostMedia` → `lockClaimedMedia` 只按 **media_id** 取 `pg_advisory_xact_lock`
     //     （挡的是「同一张图同时挂两帖」，见第 11 节）；
@@ -619,7 +619,8 @@ async function main() {
     // 会读到 `actual 5, expected 0`（A 名下 5 张待用媒体被算进了 C 的池子），全量跑根本走不到本节。
     // 本节这两条 201/400 断言是**第二道**防线（把第 7 节那两条计数断言拿掉时才轮到它咬住；
     // 实测：注掉之后同一个变异改红在本节的待用池基线断言 —— `actual 25, expected 2`）。
-    // ⚠️ 计数闸门：本两节目前无 CI 计数闸门覆盖（读数闸门仍是 `-lt 13`，详见第 13 节节头）。
+    // ✅ 计数闸门：本两节已被 CI 读数闸门覆盖（`-lt 19`，详见第 13 节节头）；删掉本节两条 `say(` ⇒ 读数
+    // 17 条 < 19，workflow step 当场红（另有 A 档静态守卫 `tests/unit/post-media-attachments-say-floor.test.mjs`）。
     // 上限一律从常量派生、⛔ 不硬编码 2/3/4（#1037 审查 P3-b）：
     // `packages/media/constants.mjs:75` 的 `COMMUNITY_MAX_IMAGES_PER_POST` 是上传侧配额的唯一权威
     // （`services/api/src/media/service.ts` 也是 import 同一个常量），写死数字会在常量改动后变成

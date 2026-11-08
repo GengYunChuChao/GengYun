@@ -94,14 +94,14 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
+    path: 'tests/integration/post-media-attach-http-pg.mjs',
+    reason: '未接线（真缺口）：缺 CI 接线——脚本自起临时 PG 17 簇（`GY_PG_BIN` 闸门，缺则 SKIP + 77）并把全链迁移跑到 0056，再用 real 装配 + `app.inject` 走完整路由（上传／发帖／PATCH／删除）；本片未改 `.github/workflows/**` ⇒ 追踪号：并入 #1058 的接线，接线时骨架照 `.github/workflows/real-pg-integration.yml` 里现成的 `real-pg-17-11` job（`apt-get install postgresql-17` + `GY_PG_BIN: /usr/lib/postgresql/17/bin`，由脚本自建一次性簇）；⛔ 别照 #1058 新加的 `real-pg-ledger-17-11`——那是 `services.postgres` 形态（`image: postgres:17.11`，不含 PG 服务端二进制），照抄只会让本脚本 `exit 77` 静默跳过（job 绿、零覆盖）——77 是「未取得」不是通过（`tests/unit/ai-ops-ledger-pins.test.mjs` 的钉子⑤冻结的正是这份跳过清单）；接线时在那个自起簇 job 里加一步 `node tests/integration/post-media-attach-http-pg.mjs` 即可（脚本自建簇，不依赖 service 容器）。'
+  },
+  {
     path: 'tests/integration/account-suspend-pg.mjs',
     reason: '已接线（workflow）：`.github/workflows/real-pg-integration.yml#real-pg-17-11` 的无名 step 真跑它'
-      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_suspend_test`，只给 owner URL 作 argv[2]）。'
-      + '该臂证账号停用／恢复接真实认证权威：要求空库，自己 apply 0001–0017 后把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；'
-      + 'argv[3]（运行时角色 URL）可省略——省略时脚本自己生成口令、建／改同一个角色，给了 argv[3] 就取 URL 里的口令去建／改'
-      + '（旧版把 `CREATE ROLE … PASSWORD` 与 argv[3] 的口令割裂 ⇒ scram 下必 28P01，本版两种形态在 scram-sha-256 上都自洽）；'
-      + '判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链'
-      + '（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
+      + '（同一 `run:` 行先 `CREATE DATABASE gengyun_suspend_test`，只给 owner URL 作 argv[2]）。该臂证账号停用／恢复接真实认证权威：要求空库，自己 apply 0001–0017 后把 0017 单独跑 UP/ROLLBACK/REPLAY 三连；argv[3]（运行时角色 URL）可省略——省略时脚本自己生成口令、建／改同一个角色，给了 argv[3] 就取 URL 里的口令去建／改'
+      + '（旧版把 `CREATE ROLE … PASSWORD` 与 argv[3] 的口令割裂 ⇒ scram 下必 28P01，本版两种形态在 scram-sha-256 上都自洽）；判据 4 的 `wired` 只认 `package.json` 的 `test:integration:http` 链（无 PG 回环链），真库 job 不算接线 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/admin-accounts-read-pg.mjs',
@@ -484,18 +484,31 @@ const UNWIRED_DECLARATIONS = Object.freeze([
       + '判据 4 只认 npm 回环链，真库 job 不算接线 ⇒ 仍登记。'
   },
   {
-    // GY-R83（#1003 剩余两条口径）：识别外发记账台账。它是**自起集群 / 需要真库**的臂
-    // （要跑 migrate.ts up 到 0055、抽 `20-login-roles.sql` 的授权区、再验证 42501 与级联删除），
-    // 既不在 `test:integration:http`（回环 HTTP，无 PG）里，也没有 workflow step 跑它：
-    // 本片按派单**不改 CI 工作流**，故如实登记为「未接线」而不是写成「已接线（workflow）」。
+    // GY-R87（`#29` 尾巴）：识别外发记账台账**已接线**。R83 那一片按派单不许改 `.github/workflows/**`，
+    // 所以当时如实登记为「未接线（真缺口）：缺一个真库 CI step」；本片补的正是那个 step ——
+    // 独立 job `real-pg-ledger-17.11`（自带的 `services.postgres:17.11` 就是它的库）。
+    // 为什么独立 job 而不是塞进 `real-pg-17-11`：这条臂要建库 + 建**全局角色**（`gy_r83_pcl_probe` 与
+    // `20-login-roles.sql` 的授权区），而那个 job 里多条臂对「集群里有没有同名角色」有硬顺序依赖
+    // （见 `tests/unit/ci-real-pg-wiring.test.mjs` 的 `REQUIRED_STEP_ORDER` 里 `account-deletion-pg` /
+    // `admin-flags-pg` 的注释）。条目仍留在白名单里：判据 4 的 `wired` 只认 npm 回环链。
     path: 'tests/integration/recognitions-provider-call-ledger-pg.mjs',
-    reason: '未接线（真缺口）：缺一个真库 CI step —— 本片按派单不改 `.github/workflows/**`，所以它今天没有任何 workflow 的 `run:` 跑到；'
-      + '该臂要真实 PostgreSQL 17 —— 先 `DROP DATABASE … WITH (FORCE)` + `CREATE DATABASE`'
-      + '（默认库名 `gengyun_provider_call_ledger_test`，只允许 `127.0.0.1`），再跑生产路径 `migrate.ts up` 到 0055，'
-      + '然后钉三件事：表形状与 9 条约束、`UNIQUE (export_id, attempt)` 与 `export_id` 级联删除、'
-      + '以及「迁移本身零 GRANT（运行时 42501）」到「`20-login-roles.sql` 的 `gy-r83-provider-call-ledger-grant` 区执行后 2 列 SELECT（export_id / attempt）/ 11 列 INSERT 可用、整行回读与 UPDATE/DELETE 仍 42501」的翻转。'
+    reason: '已接线（workflow）：'
+      + '`.github/workflows/real-pg-integration.yml#real-pg-ledger-17-11` 的 step「provider 调用记账真库臂'
+      + '（R87：0055 表形状/约束/写原语/授权翻转/回滚件）」先按库名建库'
+      + '（`psql -v ON_ERROR_STOP=1` 建 `gengyun_provider_call_ledger_test`），再 '
+      + '`node tests/integration/recognitions-provider-call-ledger-pg.mjs` 并把连接串经 `argv[2]` 传进去'
+      + '（`2>&1 | tee "$log" || rc=$?`；77 ⇒ exit 1（本臂脚本没有 77 分支，这一支是前瞻兜底），其它非 0 原样透出；'
+      + '输出中必须出现 `[√] ALL PASS`，而且脚本内部的段落计数闸（`[√] 分段 27/27`，少于 27 就 assert 红）也要达标）。'
+      + '该臂只认 `argv[2]` 且硬断言只允许回环（`assert.equal(serverUrl.hostname, "127.0.0.1")`，源码用单引号），'
+      + '库名硬钉 `gengyun_provider_call_ledger_test`（脚本自己 `DROP DATABASE … WITH (FORCE)` 后重建）；'
+      + '故该 job 用 `services.postgres:17.11` 把它发布在 `127.0.0.1:5432`（`POSTGRES_USER` 即超管），'
+      + '并在前一步自证「服务端主版本 = 17 + `current_user` 是超管 + 回环可达」。'
+      + '它真跑生产路径 `migrate.ts up` 到 0055，并钉三件事：表形状与 9 条约束、`UNIQUE (export_id, attempt)` 与 '
+      + '`export_id` 级联删除、以及「迁移本身零 GRANT（运行时 42501）」到「`20-login-roles.sql` 的 '
+      + '`gy-r83-provider-call-ledger-grant` 区执行后 2 列 SELECT（export_id / attempt）/ 11 列 INSERT 可用、'
+      + '整行回读与 UPDATE/DELETE 仍 42501」的翻转。'
       + '`test:integration:http` 是回环 HTTP 链（无真库、也无能建角色的超管连接），装不下它；'
-      + '判据 4 的 `wired` 只认该链 ⇒ 条目留在白名单。缺 `GY_PG_BIN` 时本机跑不了（如实登记为「未跑」）。'
+      + '判据 4 的 `wired` 只认该链 ⇒ 条目留在白名单。'
   },
   {
     path: 'tests/integration/recognitions-speech-purge-pg.mjs',
