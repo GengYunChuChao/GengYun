@@ -33,12 +33,12 @@
 
 ### 1.4 A/B 档判据
 
-按 `docs/pr-review-policy.md:162`（默认 B、A 为例外）、`:166`（`tests/**`）、`:167`（`docs/**` 的证据与进度记录）、`:169`（受保护文档清单）、`:173`（正面清单外一律 B）、`:175`（以合并时最终 diff 为准）逐文件核对 `pulls/{n}/files`：
+按 `docs/pr-review-policy.md:162`（默认 B、A 为例外）、`docs/pr-review-policy.md:166`（`tests/**`）、`docs/pr-review-policy.md:167`（`docs/**` 的证据与进度记录）、`docs/pr-review-policy.md:169`（受保护文档清单）、`docs/pr-review-policy.md:173`（正面清单外一律 B）、`docs/pr-review-policy.md:175`（以合并时最终 diff 为准）逐文件核对 `pulls/{n}/files`：
 
 - A 档：全部改动落在 `tests/**` 或 `docs/**` 的证据/进度记录，且未命中 `docs/pr-review-policy.md:169` 的受保护文档。
 - B 档：任一文件落在 `.github/**`、`tools/**`、`miniprogram/**`、`services/**`、`packages/**`、`.env*`，或命中受保护文档（含 `docs/architecture/contract-status.json`）。
 - 表中带 `*` 的 6 张没有任何 review，档位由路径规则反推（这 6 张的改动全部落在 `tests/**` 或 `docs/verification/**`，故为 A，仅 `#1093` 因 `.github/workflows/**` 为 B）。
-- 21 张有 review 的 PR 中，review 正文自述的档位与上述路径判定逐张一致。
+- 21 张有 review 的 PR 中，17 张正文自述档位且与上述路径判定逐张一致；另 4 张只自述改动面（实质同为 A 档）。
 
 B 档 6 张的触发路径：
 
@@ -87,7 +87,7 @@ B 档 6 张的触发路径：
 
 - `†` #1095：合并前最后一条 review 绑 `7faeadb3`（旧 head，+3274s）；最终被合入的 head `773b805b` 的 review 出现在合并**之后** 228 秒（`2026-11-08T13:52:21Z`，merge 为 `13:48:33Z`）。
 - `‡` #1099：首条是 `CHANGES_REQUESTED`（`e2abed09`，+1200s），返修后第二条 `COMMENTED`（`a09367b6`，+115s，即最终 head）。
-- 除 #1095 外，其余 26 张的最终 head 在合并前均已有绑定同一 SHA 的 review。
+- 除 #1095 外，其余 20 张有 review 的 PR 的最终 head 在合并前均已有绑定同一 SHA 的 review；另 6 张合并前无任何 review（见 §3.1）。
 
 ## 3 统计（逐行可加）
 
@@ -187,7 +187,7 @@ B 档 6 张的触发路径：
 ### 5.3 把 ready 与「存在非合并者的 COMMENT/APPROVED」绑定
 
 - 动作：bot 只有在 `reviews` 中存在 `user.login ≠ merged_by.login` 的 `COMMENTED`／`APPROVED` 时才允许把 draft 置 ready；代贴评论按 `docs/pr-review-policy.md:183` 另记 `代贴` 标志并保留原文。
-- 覆盖：今天 11 张 bot 自动 ready 全部发生在 bot 自己 review 之后 0–3 秒内，该闸门会把它们全部挡在 draft。
+- 覆盖：今天 11 张 bot 自动 ready 里 6 张发生在 bot 自己 review 之后 0–2 秒内，另 5 张在 20–267 秒内（#1104 20s / #1103 42s / #1099 102s / #1102 155s / #1101 267s）；该闸门会把它们全部挡在 draft。
 - 代价：需要改 `.github/workflows/**` 或 bot 的合并脚本（B 档 + 自测 + 一轮 CI）；代贴评论的发布账号仍是 `Sek1ro-oka`，账号级无法核验，仍需人工确认是否为真实第三方结论。
 - 残余：无法阻止「先由 bot 置 ready、再由 Sek1ro-oka 合并」的等价路径（今天 #1091–#1098 即此形态）。
 
@@ -228,7 +228,7 @@ B 档 6 张的触发路径：
 
 ```powershell
 # repro-self-merge-audit.ps1 -- 复跑 #1084..#1113 的自审自合时序表
-param([int]$From = 1084, [int]$To = 1113)
+param([int]$From = 1084, [int]$To = 1113, [string]$MergedBefore = '2026-11-08T17:06:00Z')
 $ErrorActionPreference = 'Stop'
 $env:GH_TOKEN = (Get-Content E:\GengYunPrivate\github-pat.txt -Raw).Trim()
 $repo = 'GengYunChuChao/GengYun'
@@ -248,6 +248,7 @@ $rows = @()
 for ($n = $From; $n -le $To; $n++) {
   $pr = Get-Api "repos/$repo/pulls/$n"
   if (-not $pr.merged_at) { continue }
+  if ([datetimeoffset]::Parse($pr.merged_at) -gt [datetimeoffset]::Parse($MergedBefore)) { continue }
   $revs = @(Get-Api "repos/$repo/pulls/$n/reviews?per_page=100")
   $cms  = @(Get-Api "repos/$repo/issues/$n/comments?per_page=100")
   $tl   = @(Get-Api "repos/$repo/issues/$n/timeline?per_page=100")
