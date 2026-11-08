@@ -89,12 +89,12 @@
  *     过渡、库内实际只会落 `initiated`/`ready`/`rejected`/`deleted`），造这两种状态**只能**走 SQL ——
  *     这本身就是本组要证的事：谓词读的是**行**，不是某条已知写入路径的形状。
  *
- * ## 运行（自己起一次性的 PG 17 簇，仅回环、跑完即删）
- *   $env:GY_PG_BIN = 'E:\GengYunCommander\.pg17\pgsql\bin'   # 必填：含 initdb/pg_ctl 的目录
+ * ## 运行（二选一：① CI 的 `services.postgres` 空库；② 自己起一次性的 PG 17 簇，仅回环、跑完即删）
+ *   node tests/integration/post-media-attach-http-pg.mjs postgres://…/<空库>   # ① 库由 job 先 CREATE DATABASE
+ *   $env:GY_PG_BIN = 'E:\GengYunCommander\.pg17\pgsql\bin'   # ② 必填：含 initdb/pg_ctl 的目录
  *   node tests/integration/post-media-attach-http-pg.mjs
- * 未设 `GY_PG_BIN`（或目录里没有 initdb/pg_ctl）⇒ 打印 SKIP 并以 **77** 退出（未取得，不是通过）。
- * 可选 `GY_R87_PG_ROOT`：临时簇数据目录的父目录（默认 `GY_PG_BIN` 的上一级，即 `.pg17\`；
- * 本机 `%TEMP%` 下 initdb 会 Permission denied，所以默认不落 `os.tmpdir()`）。
+ * 两种都没给（或目录里没有 initdb/pg_ctl）⇒ 打印 SKIP 并以 **77** 退出（未取得，不是通过）。
+ * 可选 `GY_R87_PG_ROOT`：② 的临时簇数据目录父目录（默认 `GY_PG_BIN` 的上一级，即 `.pg17\`；本机 `%TEMP%` 下 initdb 会 Permission denied）。
  *
  * ## 变异自证（负控制，本脚本不自己改生产代码）
  * 见证据页「变异自证」一节：手工把 `services/api/src/media/store-pg.ts` 的三处过滤条件依次改宽
@@ -149,13 +149,23 @@ const UNWIRED_MESSAGE =
   '每帖上限计数未接线：无法判定「每帖 ≤3 张」图片槽位（缺权威每帖计数，社区图片上传暂不可用）';
 
 // ---------------------------------------------------------------------------
-// GY_PG_BIN 闸门（含 initdb/pg_ctl 的目录）；缺 ⇒ SKIP + 77
+// 起库闸门（两种形态，见上「运行」）：
+//   ① CI：`argv[2]`（或 `POST_MEDIA_HTTP_PG_TEST_URL`）给一条到**空库**的连接串，库由 job 先
+//      `CREATE DATABASE` —— `tests/unit/ci-real-pg-wiring.test.mjs` 判据⑦⑧ 要求「先建库再 node」
+//      且 step 里的库名必须与这里拿到的**逐字相同**，所以连接串只认这两个入口，⛔ 不认其它变量；
+//   ② 本机：`GY_PG_BIN` 指向含 initdb/pg_ctl 的目录，自己起一次性簇。
+// 两种都没有 ⇒ SKIP + 77（未取得，不是通过；CI 里那道 step 把 77 显式升级成 exit 1）。
 // ---------------------------------------------------------------------------
+const argvUrl = (process.argv[2] ?? '').trim();
+// 只认 `postgres://` 形状：防止 `node --test <file>` 一类调用把文件路径当成连接串塞进来。
+const externalUrl = /^postgres(?:ql)?:\/\//.test(argvUrl)
+  ? argvUrl
+  : (process.env.POST_MEDIA_HTTP_PG_TEST_URL ?? '').trim();
 const binDir = (process.env.GY_PG_BIN ?? '').trim();
 const tool = (name) => join(binDir, process.platform === 'win32' ? `${name}.exe` : name);
-if (binDir === '' || !existsSync(tool('initdb')) || !existsSync(tool('pg_ctl'))) {
+if (externalUrl === '' && (binDir === '' || !existsSync(tool('initdb')) || !existsSync(tool('pg_ctl')))) {
   console.log(
-    'SKIP: 未设置 GY_PG_BIN（含 initdb/pg_ctl 的目录）⇒ 真库臂跳过，'
+    'SKIP: 既没给外部连接串（argv[2]／POST_MEDIA_HTTP_PG_TEST_URL），也没设置 GY_PG_BIN（含 initdb/pg_ctl 的目录）⇒ 真库臂跳过，'
       + '没有验证「真 SQL → 路由 → 响应信封」的图片上限端到端（未取得，不是通过）。',
   );
   console.log('EXITCODE=77 表示未取得，不是通过（POSIX 惯例 skipped；本脚本不提供 --allow-skip）。');
@@ -264,11 +274,17 @@ let app = null;
 let unwiredApp = null;
 
 try {
-  await startCluster();
-  const admin = await connectWithRetry(`${adminBase}/postgres`);
-  await admin.query(`DROP DATABASE IF EXISTS ${DB_NAME}`);
-  await admin.query(`CREATE DATABASE ${DB_NAME}`);
-  await admin.end();
+  if (externalUrl === '') {
+    await startCluster();
+    const admin = await connectWithRetry(`${adminBase}/postgres`);
+    await admin.query(`DROP DATABASE IF EXISTS ${DB_NAME}`);
+    await admin.query(`CREATE DATABASE ${DB_NAME}`);
+    await admin.end();
+  } else {
+    // 外部库形态：库是 job 刚 `CREATE DATABASE` 建的空库，这里既不建也不删（删了就没得跑了）。
+    targetUrl = externalUrl;
+    note(`外部库（services.postgres，库由 job 先建）：${externalUrl.replace(/\/\/[^@/]*@/, '//***@')}`);
+  }
 
   owner = await connectWithRetry(targetUrl);
   const version = (await owner.query('SHOW server_version')).rows[0].server_version;
@@ -914,17 +930,21 @@ try {
     + `＋待用池的 24h 自衰减 / state 四值矩阵 / complete 迁移，共 ${passed} 组 PASS`);
 } catch (error) {
   console.error(`FAIL: ${error?.stack ?? error}`);
-  console.error(`工具日志：${serverLog}`);
+  console.error(externalUrl === ''
+    ? `工具日志：${serverLog}`
+    : '工具日志：（外部库形态，本臂没有临时簇日志；连不上就看 job 里 service 的健康检查）');
   process.exitCode = 1;
 } finally {
   if (app !== null) await app.close().catch(() => {});
   if (unwiredApp !== null) await unwiredApp.close().catch(() => {});
   if (pool !== null) await pool.end().catch(() => {});
   if (owner !== null) await owner.end().catch(() => {});
-  try {
-    stopCluster();
-  } catch (error) {
-    console.error(`清理临时集群失败：${error?.message ?? error}`);
-    process.exitCode = process.exitCode === 0 ? 1 : process.exitCode;
+  if (externalUrl === '') {
+    try {
+      stopCluster();
+    } catch (error) {
+      console.error(`清理临时集群失败：${error?.message ?? error}`);
+      process.exitCode = process.exitCode === 0 ? 1 : process.exitCode;
+    }
   }
 }

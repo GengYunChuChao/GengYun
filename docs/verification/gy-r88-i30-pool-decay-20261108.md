@@ -66,7 +66,7 @@ SELECT count(*) AS count FROM public.media m
 
 | # | 动作 | 断言 |
 | --- | --- | --- |
-| 1 | 四态各 1 行（`initiated` 是种子本身） | 聚合查询（`tests/integration/post-media-attach-http-pg.mjs:813`）逐字等于四态各 1 行 |
+| 1 | 四态各 1 行（`initiated` 是种子本身） | 聚合查询（`tests/integration/post-media-attach-http-pg.mjs:829`）逐字等于四态各 1 行 |
 | 2 | 读待用池 | **必须 4**（断言文案：`initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4`） |
 | 3 | 再克隆 `deleted` + `rejected` 各 1 行 | 六态清单（`tests/integration/post-media-attach-http-pg.mjs:838`）逐字等于 `['deleted','initiated','processing','ready','rejected','uploaded']` |
 | 4 | 再读待用池 | **仍 4**（断言文案：`deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4`）；第 5 张上传 **400** |
@@ -82,7 +82,7 @@ SELECT count(*) AS count FROM public.media m
 | 1 | 用 `jpegWithExif()`（`tests/media/_fixtures.mjs:46`）走真上传端点 | 201，`state='initiated'` | 真 JPEG 字节（含 `GPSDATA-1.2345,103.9876` 的 APP1 段） |
 | 2 | `serverObjectKeys(e1)`（`tests/integration/post-media-attach-http-pg.mjs:872`）→ `putObject(rawRef, jpegBytes, 'image/jpeg')`（`tests/integration/post-media-attach-http-pg.mjs:874`） | 步骤本身无断言，只为让 `completeUpload` 的 `getObject(record.rawRef)` 有字节 | 合成 S3 端点不发网络请求，故本脚本给它包了一层进程内 `Map`（`tests/integration/post-media-attach-http-pg.mjs:396` 起，`kind` 仍是 `'s3_compatible'`——`services/api/src/media/service.ts:611` 的 real 模式硬闸只认这个 `kind`） |
 | 3 | `POST ${API}/media/uploads/${e1}/complete`（`tests/integration/post-media-attach-http-pg.mjs:877`），headers 带 `idempotency-key` 与 `if-match: "1"` | **202**、`body.data.state==='ready'`、`revision===2`、`failure_code===null`、`headers.etag==='"2"'` | 信封是 `body.data.*`，不是上传的 `body.data.media.*` |
-| 4 | 回查 `public.media`（`tests/integration/post-media-attach-http-pg.mjs:886`） | 库内 `state='ready'`、`revision=2` | 证明迁移**落库**，不只是响应好看 |
+| 4 | 回查 `public.media`（`tests/integration/post-media-attach-http-pg.mjs:902`） | 库内 `state='ready'`、`revision=2` | 证明迁移**落库**，不只是响应好看 |
 | 5 | 取回衍生件（`tests/integration/post-media-attach-http-pg.mjs:897`） | 字节里**不含** `GPSDATA` | 迁移真的走了 `stripImageMetadata` |
 | 6 | `POST /posts` 带 `media_ids:[e1]`（`tests/integration/post-media-attach-http-pg.mjs:902`） | 201 且 `media_ids` 逐字等于 `[e1]`；待用池 **1 → 0** | `ready` 的行照样占位（第 3 步后读数仍是 1），挂上帖子才释放 |
 | 7 | 收尾 | `syntheticRealStore.externalRequestCount === 0` | 全程零外呼：注入的包装只碰进程内 `Map` |
@@ -123,9 +123,9 @@ PASS 11: /complete 迁移：真 JPEG 种字节 → complete ⇒ 202 + ETag "2" +
 | 变异 | 改法 | 首个变红的用例（行） | 读数（本版实测） |
 | --- | --- | --- | --- |
 | M1 放宽时间窗 | `services/api/src/media/store-pg.ts:371` 的 `interval '24 hours'` → `'48 hours'` | PASS 9（`tests/integration/post-media-attach-http-pg.mjs:751`） | `AssertionError: 3 行都拨到 25h 前 ⇒ 25h 前的不该占位（待用池读数必须 0，实际 3）`，退出码 1；PASS 1-8 仍绿 |
-| M2 状态谓词漏 `processing` | `services/api/src/media/store-pg.ts:370` 的 `state IN ('initiated','uploaded','processing','ready')` → 去掉 `'processing'` | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:804`） | `AssertionError: initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4，实际 3`，退出码 1；PASS 9 仍绿 |
+| M2 状态谓词漏 `processing` | `services/api/src/media/store-pg.ts:370` 的 `state IN ('initiated','uploaded','processing','ready')` → 去掉 `'processing'` | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:820`） | `AssertionError: initiated/uploaded/processing/ready 各 1 张 ⇒ 待用池必须读到 4，实际 3`，退出码 1；PASS 9 仍绿 |
 | M3 状态谓词混进已删除态 | `services/api/src/media/store-pg.ts:370` 的 `state IN (…)` 末尾追加「已删除」那一档枚举值（值名见下一行） | **既有 PASS 6**（`tests/integration/post-media-attach-http-pg.mjs:682`），不是 PASS 10 | `AssertionError: A 第 7 张（删一张之后）：上传必须 201，实际 400 {"error":{"code":"INVALID_REQUEST","message":"每个帖子最多 3 张图片","retryable":false,"details":[{"field":"/purpose","code":"post_image_limit"}]}}`，退出码 1 |
-| M3′ 隔离探针（只为归因） | 同一改法（塞进的是 `deleted`），另在临时副本里把 PASS 6 造的那张已删行拨到 25h 前，使既有组不再先红 | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:804`） | `AssertionError: deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4，实际 5`，退出码 1；PASS 6、PASS 9 均绿 |
+| M3′ 隔离探针（只为归因） | 同一改法（塞进的是 `deleted`），另在临时副本里把 PASS 6 造的那张已删行拨到 25h 前，使既有组不再先红 | PASS 10（`tests/integration/post-media-attach-http-pg.mjs:820`） | `AssertionError: deleted/rejected 各 1 张不占位 ⇒ 读数必须仍是 4，实际 5`，退出码 1；PASS 6、PASS 9 均绿 |
 | M4 跳过 `/complete` | 把 PASS 11 的 complete 调用换成「直接复用上传响应」 | PASS 11（`tests/integration/post-media-attach-http-pg.mjs:861`） | `AssertionError: complete 必须 202，实际 201 {"data":{"media":{…"state":"initiated"…`，退出码 1 |
 
 两件必须如实交代的事：
