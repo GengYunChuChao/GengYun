@@ -35,7 +35,7 @@
  *          `toISOString()` 取「今天」会在 HKT 00:00–07:59 把合法的今天判成未来，故取本地日期）、
  *          **落在 `docs/verification/assets/` 下的截图证据**（扩展名限 png/jpg/jpeg/webp，
  *          故指向 `docs/requirements.md` 或台账自身都不算证据）、该文件真实存在、是文件、
- *          且 ≥1024 字节（只防 0 字节占位，不是画质判据），以及**仍可执行的复核入口**
+ *          且 ≥8192 字节（只挡几 KB 的占位物，不是画质判据），以及**仍可执行的复核入口**
  *          —— 只验「路径存在」时，一行字没动就能靠 `docs/requirements.md` 变绿；
  *        · **逐行唯一**：同一条证据路径不得同时点亮多个设备行（`Set` 收已用路径，重复即红），
  *          否则拿到一张图就能一次「取得」五条设备项，台账上看不出哪一行对应哪张图；
@@ -118,8 +118,8 @@ const LEDGER_EVIDENCE_CLAIM = /证据见|截图见|已留存|已归档|已验|�
  *  同时排除了台账自身（台账是 `.md`，被扩展名挡掉）。 */
 const LEDGER_EVIDENCE_DIR = 'docs/verification/assets/'
 const LEDGER_EVIDENCE_EXT = /\.(?:png|jpe?g|webp)$/i
-/** 证据文件下限：只防 0 字节/占位文件，**不是画质判据**（清晰度、是否真机仍靠人看）。 */
-const LEDGER_MIN_EVIDENCE_BYTES = 1024
+/** 证据文件下限：只把「几 KB 的占位物」挡在门外（8 KB 抬高占位成本），**不是画质判据**，也不是内容去重。 */
+const LEDGER_MIN_EVIDENCE_BYTES = 8192
 /** 截图资产路径：欠账行出现它等于声称「截图已经拿到了」。
  *  字符类必须放宽到「非空白非分隔符」——中文文件名（如 `不存在的文件.png`）不在 `\w`
  *  里，收窄会把「证据不存在」误报成「没有证据」。 */
@@ -428,7 +428,7 @@ function deviceRowViolations(cells, isRepoFile = isRepoFileOnDisk, bytesOf = evi
     const bytes = bytesOf(repoPath)
     if (bytes < LEDGER_MIN_EVIDENCE_BYTES) {
       violations.push(
-        `「${label}」的证据文件只有 ${bytes} 字节（< ${LEDGER_MIN_EVIDENCE_BYTES}，防 0 字节占位）：${repoPath}`
+        `「${label}」的证据文件只有 ${bytes} 字节（< ${LEDGER_MIN_EVIDENCE_BYTES}，防几 KB 的占位物）：${repoPath}`
       )
     }
   }
