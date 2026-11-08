@@ -1,10 +1,11 @@
 # 开放 issue 的验收现状索引（2026-11-08 快照，R89）
 
-> 读数快照：2026-11-08T15:01:27+08:00（Asia/Hong_Kong）。基线 `55f86ef8ef0af73b444057cd64d7c465edd32f74`（`origin/main`，2026-11-08 14:49:12 +0800，`ci(real-pg): 把真库臂读数下限从 13 抬到 19，并给「三处数字」加跨文件互校 (#1073)`）。开工后 `git fetch origin --prune` 复核一次，`origin/main` 仍停在这个 SHA，本页所有行号都按它核。
+> 读数快照：2026-11-08T15:29:30+08:00（Asia/Hong_Kong）。基线 `55f86ef8ef0af73b444057cd64d7c465edd32f74`（`origin/main`，2026-11-08 14:49:12 +0800，`ci(real-pg): 把真库臂读数下限从 13 抬到 19，并给「三处数字」加跨文件互校 (#1073)`）：本页全部行号与 issue／依赖读数按这一版核。此后 `origin/main` 已前进到 `f7a4d0d9a19dc3a5065fd7705b9717293d0b804c`（`#1078`→`c031023d`、`#1080`→`f7a4d0d9` 两笔合入，见 §一 1.2）；本页不按新基线重排已核过的行号，凡被这两笔碰过的文件另行注明（见第六节末两条）。
 
 ## 怎么读这张表
 
-- 读数快照：本页每个数字都是在上面的基线上当次跑出来的——开放 issue 清单来自 `gh issue list --state open --limit 100`，开放 PR 来自 `gh pr list --json number,title,headRefOid,mergeable,mergeStateStatus`，依赖关系来自仓内 `docs/initial-issues.json` 的 `tasks[].dependencies` 实算，本期合入清单来自 `git log fd6a225c..55f86ef8`。没有一条从上一页抄。
+- 读数快照：本页每个数字都是在上面的基线上当次跑出来的——开放 issue 清单来自 `gh issue list --state open --limit 100`，开放 PR 来自 `gh pr list --state open`（第五节只冻结号集、标题与档位，不冻结 head 与 merge 状态），依赖关系来自仓内 `docs/initial-issues.json` 的 `tasks[].dependencies` 实算，本期合入清单来自 `git log fd6a225c..55f86ef8`。没有一条从上一页抄。
+- 为什么 PR 那节不写 head/状态：PR 的 head 与 mergeable 是分钟级变动的，本页是小时级生命周期的快照；把前者写进后者必然过期（本页第一版就栽在这上面，更正见第八节最后一条）。
 - 本页不背书关单：本页只写「现在卡在哪、缺的那件事由谁提供」，不构成对任何一张 issue 的结论；关单由指挥按各证据页另行裁定。
 - 不回填旧读数：按 `docs/pr-review-policy.md:214`，「不得为了一致而回填旧读数」。旧页与本页冲突处一律按今天的事实写，逐条列在第八节。
 - `#1055` 属外部线，不据它计数：外部贡献者 `cxhhandsome` 的日志脱敏单测（`74861494`）仍是 main 的祖先（`git merge-base --is-ancestor 74861494 HEAD` 退出 0），但它早于上一页快照，`git log fd6a225c..55f86ef8` 里没有它，不进本期任何计数。
@@ -15,7 +16,9 @@
   - 待裁定：需要产品或监工先给一句口径，代码怎么改取决于这句话。
 - 行号锚点一律写「仓库相对路径 + `:行`」：本页不写裸 `:行`，因为闸门会把归不到路径的裸锚点记成孤儿。
 
-## 一、今天变了的事（11 次本仓合入 + 0 条新增外部线）
+## 一、今天变了的事
+
+### 1.1 基线窗口内：11 次本仓合入（`git log fd6a225c..55f86ef8` 实跑）
 
 1. `#1068` → `2aa5d433`（04:19:26，`test(post-media): 给 ⑩/⑪ 补静态守卫 + ⑪ 的 state 支补 processing/rejected`）：新增 `tests/unit/post-media-attachments-say-floor.test.mjs`（现 379 行），把「⑩ 同帖并发 / ⑪ `owner_id`、`state` 过滤」两节从「只有真库臂里有」变成「整节被悄悄删掉就红」——计数面是**可执行** `say(` 调用点，结构面是每条关键文案（`tests/unit/post-media-attachments-say-floor.test.mjs:114`）；该文件自己声明不判语义正确性（`tests/unit/post-media-attachments-say-floor.test.mjs:31`），语义仍在真库臂。
 2. `#1067` → `21dd86eb`（04:38:29，`docs(verification): 出 R88 开放 issue 验收现状快照（21 张逐行，今天可关 0 张）`）：纯文档，出的是上一版快照 `docs/verification/gy-r88-open-issue-acceptance-index-20261108.md`；不改行为，本节其余各条才是行为变化。
@@ -29,7 +32,15 @@
 10. `#1079` → `c0e7dac0`（14:20:48，`docs(verification): 热修 R88 索引页 #1030 行漂到空行的两条锚点`）：上一页 `#1030` 行有两条锚点落在空行上（`159→161`、`161→163`），本提交改页面并在 `tests/unit/doc-anchor-relocations.json` 追加 2 条登记——理由是目标文件本提交没改，行号必须恒等，属锚点漂移而不是内容变化。
 11. `#1073` → `55f86ef8`（14:49:12，`ci(real-pg): 把真库臂读数下限从 13 抬到 19，并给「三处数字」加跨文件互校`）：读数闸门 `-lt 13`→`-lt 19`（`.github/workflows/real-pg-integration.yml:868`，失败文案在 `.github/workflows/real-pg-integration.yml:869`），`SAY_FLOOR = 19`（`tests/unit/post-media-attachments-say-floor.test.mjs:54`，对应 19 个**可执行** `say(` 调用点——裸 grep 会数出 22，另有 3 处只在注释里），并加跨文件互校：workflow 阈值 ⇔ 读数表 `baseline: 19`（`tests/unit/ci-real-pg-readings-gates.test.mjs:206`）⇔ `SAY_FLOOR` 三者必须相等。
 
-本期没有新的外部线贡献；在飞 PR 见第五节（4 张，全部在线上，`gh pr list` 实跑）。
+### 1.2 本页成文窗口内：main 又前进 2 笔、PR 集换血 2 次
+
+这一段是本页第一版（`04fe1868`，快照 15:01:27）之后发生的事，如实列在这里，因为它们正好也是第一版第五节出错的原因：
+
+- `#1078` → `c031023d`（合入 2026-11-08T06:59:57Z = 14:59:57 HKT，比第一版快照早 90 秒）：撤回导致的 job 终态写 `CONSENT_WITHDRAWN`（新增 `tests/unit/job-terminal-reason-consent-withdrawn.test.mjs` 353 行、证据页 `docs/verification/gy-r87-i29-terminal-reason-20261107.md` 263 行，`tests/integration/egress-ledger-pg.mjs` +116 行，共 28 个文件 +944/-55）。提交正文写的是 `References: #29 (do not close)`——所以它落地不等于 `#29` 能关。
+- `#1080` → `f7a4d0d9`（合入 2026-11-08T07:09:26Z = 15:09:26 HKT）：新增 job `real-pg-jobs-ledger-17-11`（`name: real-pg-jobs-ledger-17.11`）跑 `tests/integration/jobs-ledger-pg.mjs`，workflow +130 行；同提交出 `docs/verification/gy-r88-i29-jobs-ledger-wiring-20261108.md`（178 行）。**注意别把它和 `#1070` 混**：`#1070` 接的是**识别 provider 调用账本**臂，`#1080` 接的是 **jobs 账本**臂。
+- `#1077` 于 2026-11-08T06:56:49Z（14:56:49 HKT）**关闭**，不是合入——它的改动没有落 main；同一件事（锚点闸门跳过围栏代码块）由新开的 `#1082` 承接，仍在飞。
+
+本期没有新的外部线贡献（`#1055` 仍是唯一一条，见「怎么读」）。在飞 PR 见第五节：抓取时刻 3 张，`gh pr list --state open` 实跑；那一节只保证号集与标题在该时刻成立。
 
 ## 二、21 张开放 issue 总表
 
@@ -55,7 +66,7 @@
 | #24 | 比赛版部署、备份恢复与交付材料都没有正式环境读数 | 外部条件 | `docs/verification/gy-r79-demo-readiness-20261106.md:18`（预览/体验版不可用）、`docs/verification/gy-r79-demo-readiness-20261106.md:47`（正式 HTTPS 基址未提供） | 域名与备案、服务器与备份目标、材料口径（用户/业主） |
 | #27 | 正式 AppID、真机域名与外部服务接入一项都没落地 | 外部条件 | `project.config.json:5`、`docs/verification/gy-r79-demo-readiness-20261106.md:45`（主体/类目/隐私指引/备案未核对） | 微信 AppID 与主体类目、隐私指引、备案，腾讯云审核（用户/业主） |
 | #28 | 五 Tab 骨架与台账闸门都硬了；今天证据下限从 1 KB 抬到 8 KB | 外部条件 | `tests/reference/i26-tabbar-skeleton.test.mjs:122`（`LEDGER_MIN_EVIDENCE_BYTES = 8192`）、`docs/verification/gy-i26-demo-align-20261014.md:783`（同句与已知限制） | 真机截图与原 demo 并排、Android/iOS 各一台（用户/业主） |
-| #29 | 用途授权与外发账本有作用域负控制；级联终止经查不是漏洞；媒体三域折叠今天补上归属 | 待裁定 | `tests/integration/egress-ledger-pg.mjs:720-731`（撤回的跨用户／跨用途负控制）、`services/api/src/privacy/ledger-pg.ts:765`（生产侧 `guardWriteback`）、`docs/architecture/acceptance-map.md:299`（三域折叠登记为相邻面） | 「三域失败保留原码」是否必修（产品/监工）；终态原因改写见在飞 #1078 |
+| #29 | 用途授权与外发账本有作用域负控制；级联终止经查不是漏洞；媒体三域折叠今天补上归属；job 终态原因与 jobs 账本 CI 臂今天都落地 | 待裁定 | `tests/integration/egress-ledger-pg.mjs:720-731`（撤回的跨用户／跨用途负控制；按基线 `55f86ef8` 核，`c031023d` 之后该块在 main 上已下移，见第六节）、`services/api/src/privacy/ledger-pg.ts:765`（生产侧 `guardWriteback`）、`docs/architecture/acceptance-map.md:299`（三域折叠登记为相邻面） | 「三域失败保留原码」是否必修（产品/监工）；`#1078`（终态原因）与 `#1080`（jobs 账本 CI 臂）已落地，但两条都不构成关单依据 |
 | #1003 | 识别协议适配层在仓内（`openai-vision-v1` + 真实 fetch） | 外部条件 | `services/api/src/recognitions/openai-vision-adapter.ts:46`、`services/api/src/recognitions/openai-vision-adapter.ts:271` | 真实厂商端点与密钥、一次真调用读数（用户/业主） |
 | #1030 | real 模式每帖 ≤3 是结构约束；今天补上 24h 衰减、`state` 四值、`/complete` 迁移三组读数，但 HTTP 臂仍未接 CI | 代码在飞 | `services/api/src/media/store-pg.ts:371`（24h 窗口写在 SQL 里）、`tests/integration/post-media-attach-http-pg.mjs:751`（衰减）、`tests/integration/post-media-attach-http-pg.mjs:861`（`/complete`） | 把 HTTP 臂接进 CI（在飞 #1081，写手+指挥）；真实桶（用户，B4）；`store` 侧 `postImageLimitError()` 仍无 HTTP 证据（`docs/verification/gy-r87-i30-http-e2e-20261107.md:164`） |
 
@@ -119,28 +130,32 @@
 
 ## 五、在飞 PR 清单
 
-实跑 `gh pr list -R GengYunChuChao/GengYun --state open --json number,title,headRefOid,mergeable,mergeStateStatus` 得 **4 张**（上一页只有 1 张，且那张今天已合入）：
+本节在 **2026-11-08T15:29:30+08:00（Asia/Hong_Kong）** 抓取，只保证**号集与标题**在该时刻成立；head 与 merge 状态变动比本页快，凡与本页冲突以现场 `gh pr list` 为准。第一版这一节写的是 head 与 mergeable，结果三个小时内两行就作废了（见第八节最后一条），所以改成本版：**只冻结「谁开着、标题是什么、干什么用的」**。
 
-| PR | 标题 | head | mergeable / mergeStateStatus | 档位 |
-| --- | --- | --- | --- | --- |
-| #1081 | `ci(media): 把 HTTP 端到端臂接进真库 CI（real-pg-http-17.11）` | `1549c3b3d4a509a9046fa50683a55471e4217465` | MERGEABLE / CLEAN | B |
-| #1080 | `ci(privacy): 把 jobs 账本臂接进 CI（real-pg-jobs-ledger-17.11）` | `89a76d0413197ee68410e155d713eb9d4b769ab6` | MERGEABLE / CLEAN | B |
-| #1078 | `feat(privacy): 撤回导致的 job 终态写 CONSENT_WITHDRAWN，读面可自证（#29）` | `215ffd6798f43606dc40dc169e16ab32a945b0ae` | MERGEABLE / UNSTABLE | B |
-| #1077 | `test(tools): 锚点闸门跳过围栏代码块，并把「目标文件不存在」纳入零容忍` | `fee28e82117dc66292e13c02cd85aea5f1274bd7` | CONFLICTING / DIRTY | B |
+实跑 `gh pr list -R GengYunChuChao/GengYun --state open` 得 **3 张**（上一页只有 1 张，且那张 `#1058` 今天已由 `#1070` 合入）：
 
-- 四张都是 B 档的依据：`#1077` 改 `tools/**`，`#1080`、`#1081` 改 `.github/workflows/**`，`#1078` 改 `services/api/src/**` 与 `tests/**`——只要有一条路径不在 A 档正面清单里就是 B 档（`docs/pr-review-policy.md:173`；正面清单见 `docs/pr-review-policy.md:164`）。
-- `#1078` 的 `UNSTABLE` 是「CI 还在跑或有一项未过」，不是冲突；它与 `#1077` 的 `DIRTY` 是两种不同状态，`#1077` 要先 rebase 才能谈合并面。
-- 本表只列 `gh pr list` 能看到的东西。别人机器上未推送的本地分支本页看不到，我不声称「除这四张之外没有在飞改动」。
+| PR | 标题（完整） | 档位 | 这一张在做什么（一句） |
+| --- | --- | --- | --- |
+| #1083 | `docs(verification): 出 R89 开放 issue 验收现状快照（21 张逐行，今天可关 0 张）` | A | 就是本页所在的 PR：只新增 `docs/verification/**` 证据页 |
+| #1082 | `test(tools): 锚点闸门跳过围栏代码块，并把「目标文件不存在」纳入零容忍（承接 #1077）` | B | 承接已关闭的 `#1077`，继续改 `tools/**` 的锚点闸门 |
+| #1081 | `ci(media): 把 HTTP 端到端臂接进真库 CI（real-pg-http-17.11）` | B | 把 `#1071`／`#1075` 那支 HTTP 臂真正接进 workflow |
+
+- 档位依据：`#1083` 只改 `docs/**` 下的证据页，落在 A 档正面清单（`docs/pr-review-policy.md:167`）；`#1082` 改 `tools/**`、`#1081` 改 `.github/**`，都在正面清单外 ⇒ 一律 B 档（`docs/pr-review-policy.md:173`）。A 档不取消独立审查，只是不经监工批复。
+- 本节不写 head、不写 mergeable：这两项在本页成文期间变了不止一次（下一条就是记录），写进快照页只会再错一次。
+- **本页成文期间发生的事**（如实记，也作为「本表会过期」的证据）：`#1078` 已于 14:59:57 HKT 合入 main（`c031023d`，比第一版快照 15:01:27 早 90 秒）；`#1080` 已于 15:09:26 合入（`f7a4d0d9`）；`#1077` 已于 14:56:49 关闭并由 `#1082` 承接（关闭不等于合入：它的改动没有落 main）。
+- 本表只列 `gh pr list` 能看到的东西。别人机器上未推送的本地分支本页看不到，我不声称「除这三张之外没有在飞改动」。
 
 ## 六、待裁定与已知限制
 
 - `#19`：撤销注销要不要另立需求单，待产品/监工一句话。事实是受理即撤，连管理员都 restore 不了（`services/api/db/migrations/0017_account_suspend_authority.sql:272-273` 抛 `G0004`）。
-- `#29`：「三域把 provider 异常吞成 `PROVIDER_OUTCOME_UNKNOWN`」是否必修，待裁定；今天 `#1072` 只补了归属与锚点（`docs/architecture/acceptance-map.md:299`），判定没变（仍未修、相邻面、需另行裁定）。终态原因那一半在在飞 PR `#1078` 里改。
+- `#29`：「三域把 provider 异常吞成 `PROVIDER_OUTCOME_UNKNOWN`」是否必修，待裁定；今天 `#1072` 只补了归属与锚点（`docs/architecture/acceptance-map.md:299`），判定没变（仍未修、相邻面、需另行裁定）。终态原因那一半已经不在飞了：`#1078` 于 14:59:57 合入（`c031023d`），但它的提交正文写的是 `References: #29 (do not close)`，落地不等于可关。
 - `#6`：证据页 §6 留了两条待裁定（上传取消是否入契约、帖子收藏/历史是否属 #15 的口径），本页不替谁拍（`docs/verification/gy-r87-i06-i15-ac-evidence-20261108.md:133`）。
 - `#28` 台账闸门的已知限制写在测试里：只比路径、不比字节，同一张图另存 4 份物理拷贝仍能点亮多行（`tests/reference/i26-tabbar-skeleton.test.mjs:950-951`）；证据下限 8192 字节（`tests/reference/i26-tabbar-skeleton.test.mjs:122`）只抬高占位成本，不是画质判据。
 - `#1030` 的 HTTP 臂是**本地一次性簇**上跑的：对象存储是合成端点、审核域是合成端口、PG 临时簇跑完即删（`docs/verification/gy-r87-i30-http-e2e-20261107.md:160`），并且它现在还没接 CI（`.github/workflows/real-pg-integration.yml:857` 跑的是另一支 store 级臂）。
 - 读数页闸门（`tools/verify-reading-pages.mjs`）只做页内算术：不与上游 json 产物对账（`tools/verify-reading-pages.mjs:32`）；页内没有「这一行属于哪一组」的声明时会误报（`tools/verify-reading-pages.mjs:30`）。
 - `SAY_FLOOR` 只挡「整节被悄悄拿走」：它按可执行 `say(` 调用点与结构串判定，不判断言语义（`tests/unit/post-media-attachments-say-floor.test.mjs:31`）。
+- `#29` 那行第三条锚（`tests/integration/egress-ledger-pg.mjs:720-731`）是按基线 `55f86ef8` 核的：`#1078`（`c031023d`）在同一文件前段插了 32 行，同一块在 `f7a4d0d9` 上已下移到后段。本页没在新基线上重核这条行号——按 main 查时请用注释块原文 `12. 撤回的作用域负控制` 定位，别用本页的行号。
+- 同理，`c031023d`／`f7a4d0d9` 碰过的其它文件本页没有锚点（`services/api/src/privacy/task-egress.ts`、`services/api/src/errors.ts` 等），不受影响；`#1030` 行那两条 workflow 锚（`.github/workflows/real-pg-integration.yml:857`、`.github/workflows/real-pg-integration.yml:868`）我在 `f7a4d0d9` 上复核过，行号与原文都没变（`#1080` 的 130 行加在文件后段）。
 
 ## 七、本页不声称什么
 
@@ -152,17 +167,20 @@
 - 本页不声称台账闸门能防住重复证据：它只比归一化后的路径，不比字节内容。
 - 本页不声称依赖图完整反映真实阻塞：它只反映 `docs/initial-issues.json` 里写下的 `dependencies`，外部条件与待裁定项不在图里，所以「今天可关 0 张」是这两类叠加的结果，不是图算出来的。
 - 本页不声称 `#1055` 属本仓验收范围：那是外部线贡献，只记存在，不据它计数。
-- 本页不声称本期合入清单完整覆盖 main 上的全部提交：它只覆盖 `fd6a225c..55f86ef8` 这一段（11 个提交，`git log` 实跑）。
+- 本页不声称本期合入清单完整覆盖 main 上的全部提交：§一 1.1 只覆盖 `fd6a225c..55f86ef8` 这一段（11 个提交，`git log` 实跑），1.2 那三笔是成文期间追加记录的。
+- 本页不声称第五节的号集在成文后仍然成立：它只冻结 2026-11-08T15:29:30+08:00 那一刻的号集与标题，头 SHA 与 merge 状态一律不写（成文窗口内就有三张变了，见 §一 1.2）。
+- 本页不声称已在新基线上复核过全部行号：基线仍是 `55f86ef8`，`c031023d`／`f7a4d0d9` 之后只在第六节注明的那几处做过抽查。
 
 ## 八、更正上一页（R88）
 
 旧页 = `docs/verification/gy-r88-open-issue-acceptance-index-20261108.md`（快照 2026-11-08T03:51:50+08:00，基线 `fd6a225c5c032857411f186765c94497b604f21e`）。以下逐条按今天的事实更正，每条给依据：
 
-- 旧页第五节「实跑 `gh pr list --state open` 得 1 张」：今天实跑是 4 张，且那唯一一张 `#1058` 已由 `#1070`（`841bc1c3`）合入 main——那张表的唯一一行整行失效，不只是数字变了。
+- 旧页第五节「实跑 `gh pr list --state open` 得 1 张」：本页抓取时刻是 3 张（`#1083`、`#1082`、`#1081`），且那唯一一张 `#1058` 已由 `#1070`（`841bc1c3`）合入 main——那张表的唯一一行整行失效，不只是数字变了。
 - 旧页 `#1030` 行「24h 自衰减未测」：`#1075`（`49b68743`）已补 PASS 9（`tests/integration/post-media-attach-http-pg.mjs:751`），做法是把 `public.media.created_at` 拨到 `now() - interval '25 hours'`（`tests/integration/post-media-attach-http-pg.mjs:770`）——「需要时间穿越」这个理由本身成立，但今天已经穿过去了。
 - 旧页 `#1030` 行「上传完成 ⇒ ready 的 `/complete` 状态迁移未覆盖」：`#1075` 已补 PASS 11（`tests/integration/post-media-attach-http-pg.mjs:861`）。
 - 旧页把 `#6`、`#15` 判成「代码在飞」：`#1069` 出的证据页自陈这个判定对这两张已不成立（`docs/verification/gy-r87-i06-i15-ac-evidence-20261108.md:157`、`docs/verification/gy-r87-i06-i15-ac-evidence-20261108.md:158`），且 HTTP 端到端用例已在 main ⇒ 本页把这两行改判为「外部条件」为主（最卡的是 B1 真实凭据）。
 - 旧页 `#14` 行把 `services/api/src/moderation/provider.ts:9`、`services/api/src/moderation/provider.ts:11` 当证据：这两行是文件头 JSDoc 的**注释**（讲口径），不是判定代码。判定在 `services/api/src/moderation/service.ts:421-427`（真抛 503 + `retryable: false`）与 `services/api/src/moderation/decisions.ts:210`（无结论支落 `quarantined`）。注释锚能过闸门（区间全是注释不判 SUSPECT），但它不是证据，本页改锚。
 - 旧页 `#23` 行用 `docs/verification/gy-r79-device-walkthrough-20261106.md:74` 证「不能证明分布」：那一行只是小标题「**不能证明**」，正文没有分布结论。本页改用该页 `docs/verification/gy-r79-device-walkthrough-20261106.md:5`（「本页只记录这一次会话的实际读数，不构成准确率、容量或正式发布验收」）。
-- 旧页第三节把「今天可关 0 张」的理由之一写成「`#29` 卡裁定加 `#1058` 的 `CONFLICTING`」：`#1058` 已合入（`841bc1c3`），这条理由今天不成立，`#29` 只剩裁定（以及它在飞的分支改动 `#1078`）。
-- 旧页第一节尾注写在飞的「`#29` 终态原因：本地分支 `feat/gy-r87-i29-terminal-reason` @ `a4eb4400`，未推、未开 PR」：今天它已经是线上 PR `#1078`（head `215ffd6798f43606dc40dc169e16ab32a945b0ae`，MERGEABLE / UNSTABLE），「本地分支、未开 PR」这个状态描述已过期。
+- 旧页第三节把「今天可关 0 张」的理由之一写成「`#29` 卡裁定加 `#1058` 的 `CONFLICTING`」：`#1058` 已合入（`841bc1c3`），这条理由今天不成立；`#29` 只剩裁定——它的终态原因改动已于 14:59:57 随 `c031023d` 合入 main（`#1078`），不再是在飞项。
+- 旧页第一节尾注写在飞的「`#29` 终态原因：本地分支 `feat/gy-r87-i29-terminal-reason` @ `a4eb4400`，未推、未开 PR」：它已走完 PR 流程并合入 main（`#1078` → `c031023d`，2026-11-08T06:59:57Z），「本地分支、未开 PR」这个状态描述两层都过期。
+- 本页第一版（`04fe1868`）第五节自己也犯了同一类错，一并纠正：它把 `gh pr list` 数成 4 张，其中 `#1078`（14:59:57 已合入）、`#1077`（14:56:49 已关闭）当时都不在 open 里，还漏了承接 `#1077` 的 `#1082`；`#1080` 也在 15:09:26 合入。根因是把分钟级变动的 PR 头 SHA／merge 状态写进小时级生命周期的快照页——第二版起第五节只冻结号集与标题，节末另记成文窗口内的变动。
