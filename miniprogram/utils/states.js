@@ -13,8 +13,8 @@
  *   denied   无权（已登录但无权限）→ status="denied"
  *
  * `denied` 与 `guest` 必须分开：`guest` 是「还没登录」（401 SESSION_REQUIRED 系列），
- * `denied` 是「登录了但这件东西不给你」（403 SCOPE_DENIED / CONSENT_REQUIRED / ACCOUNT_INACTIVE /
- * SELF_SCOPE_GRANT_DENIED）。把后者折叠成「请先登录」会让用户反复登录却不明白为什么还是不行。
+ * `denied` 是「登录了但这件东西不给你」（403 SCOPE_DENIED / CONSENT_REQUIRED / CONSENT_WITHDRAWN /
+ * ACCOUNT_INACTIVE / SELF_SCOPE_GRANT_DENIED）。把后者折叠成「请先登录」会让用户反复登录却不明白为什么还是不行。
  * `refused` 是第三类拒绝：登录了、也有这项权限，但这条业务规则不让做（409 LAST_SCOPE_MANAGER /
  * SELF_DISABLE_DENIED）。它既不是「权限不够」（换账号也还是不行），也不是「内容已变更」（重读无用）。
  *
@@ -35,6 +35,7 @@ const CODE_KIND = {
   // —— 403 权限类：登录了也不给，走 denied ——
   SCOPE_DENIED: 'denied',
   CONSENT_REQUIRED: 'denied',
+  CONSENT_WITHDRAWN: 'denied',
   ACCOUNT_INACTIVE: 'denied',
   SELF_SCOPE_GRANT_DENIED: 'denied',
   // —— 404 找不到：可能是下架/不可见，走 invalid（不是网络错） ——

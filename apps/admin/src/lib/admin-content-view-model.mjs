@@ -317,6 +317,7 @@ export const READ_FAILURE_CODE_LABELS = Object.freeze({
   // 403：权限与账号状态（重试无效，要找管理员）
   SCOPE_DENIED: '权限范围不足（由服务端判定），重试无效',
   CONSENT_REQUIRED: '缺少用途授权，未授权时服务端不返回该数据',
+  CONSENT_WITHDRAWN: '用途授权已撤回：该对象因撤回而终止处理，结果未产出',
   ACCOUNT_INACTIVE: '账号当前不可用（已停用或注销中），请联系管理员',
   SELF_SCOPE_GRANT_DENIED: '不允许给自己授予权限（自授权被拒）',
   SELF_DISABLE_DENIED: '不允许停用自己的账号',
